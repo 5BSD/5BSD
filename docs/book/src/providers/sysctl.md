@@ -6,7 +6,7 @@ BSDSysctl is the `system.Sysctl` provider: it reads and, policy permitting, writ
 
 The broker is itself born in capability mode. What lets it reach the tree is a `SYS_GATE_SYSCTL` "system" gate token, minted by [Capsule](../plane/capsule.md) from the unit's veriexec-verified manifest declaration `capabilities { system = ["sysctl"]; }`, delivered by switchboard and authorized with `service_provider_authorize_capabilities(3)`. A GET or SET goes through `service_system_sysctl(3)`, which the kernel executes in kernel context after verifying the held claim (`SCTL_GATED` in `sys/kern/kern_sysctl.c`). The raw syscall stays confined; the gate claim replaces `PRIV_SYSCTL_WRITE`, and the daemon runs as the unprivileged `capability` user. The token is close-on-fork, so BSDSysctl serves every client inline in the single token-holding process rather than from a `pdfork(2)` worker, with a 30 second idle deadline per session so an idle client cannot hold the loop. See [System Gates](../capability/system-gates.md) for the gate mechanism.
 
-The same manifest also declares `isolate = ["kern.maxfiles"]`. A non-empty `isolate` list makes switchboard ask Capsule to mint the SYSCTL token scoped to exactly those OIDs, and BSDSysctl becomes the sole writer of them outside Capsule: a direct `__sysctl(2)` write to an isolated OID from any other process is denied by the mac_capability sysctl hook, whatever its uid. The isolate set governs only which tunables are protected from other writers; what BSDSysctl may touch through the gate is bounded separately by `sysctl.conf`. The design is `docs/capability-sysctl-isolation.md`.
+The same manifest also declares `isolate = ["kern.maxfiles"]`. A non-empty `isolate` list makes switchboard ask Capsule to mint the SYSCTL token scoped to exactly those OIDs, and BSDSysctl becomes the sole writer of them outside Capsule: a direct `__sysctl(2)` write to an isolated OID from any other process is denied by the mac_capability sysctl hook, whatever its uid. The isolate set governs only which tunables are protected from other writers; what BSDSysctl may touch through the gate is bounded separately by `sysctl.conf`. The design is `docs/book/src/capability/system-gates.md`.
 
 ## Unit
 
@@ -129,7 +129,7 @@ Status: shipped; capmode; user `capability`; gate `sysctl` plus `isolate`; ops H
 
 Known gaps and drift:
 
-- The provider tests do not cover the gate path or the isolation hook; a foreign-writer-denied test for `kern.maxfiles` exists only as a design requirement in `docs/capability-sysctl-isolation.md`.
+- The provider tests do not cover the gate path or the isolation hook; a foreign-writer-denied test for `kern.maxfiles` exists only as a design requirement in `docs/book/src/capability/system-gates.md`.
 - Inline serving means one slow or malicious client occupies the single process until the 30 second idle deadline; there is no per-client worker and no concurrency.
 - The book chapter this one replaces described BSDSysctl as an ambient provider; that was true before the gate framework and is no longer accurate.
 - Only one OID is isolated. Extending `isolate` is the intended way to bring more tunables under sole-broker protection, but nothing beyond `kern.maxfiles` has been done.

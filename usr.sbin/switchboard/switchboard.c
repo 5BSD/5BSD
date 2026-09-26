@@ -127,7 +127,7 @@ switchboard_dispatch_event(struct kevent *kev)
 	}
 
 	/*
-	 * Label-reclaim bridge listener (docs/capability-lifecycle-cleanup.md
+	 * Label-reclaim bridge listener (docs/book/src/plane/containers-and-storage.md
 	 * §5b) — the sole deliberate UNIX socket.  Its listener fd carries
 	 * udata == NULL, so it is routed by fd identity here, before the generic
 	 * udata-keyed channel handling below.
@@ -556,7 +556,7 @@ main(int argc, char *argv[])
 	registry_watch_arm(switchboard_kq);
 
 	/*
-	 * Bring up the label-reclaim bridge (docs/capability-lifecycle-cleanup.md
+	 * Bring up the label-reclaim bridge (docs/book/src/plane/containers-and-storage.md
 	 * §5b) — the sole deliberate UNIX socket, whose only function is to let a
 	 * pkg(8) post-deinstall script (a plain root context with no ambient
 	 * discovery channel) trigger a bundle-label reclaim.  Done AFTER

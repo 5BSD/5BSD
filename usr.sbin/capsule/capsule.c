@@ -37,7 +37,7 @@
  * Capsule PID 1 personality.
  *
  * A port of init(8)'s state machine (see
- * docs/freebsd-init-behavior-audit.md for the behavior contract) with
+ * docs/book/src/plane/capsule.md for the behavior contract) with
  * one additional state: after /etc/rc completes, ESTABLISH_CAPSULE
  * brings up the Capsule capability engine (mac_capability, control
  * socket, switchboard under a procdesc) before multi-user session
@@ -45,7 +45,7 @@
  * engine's control socket, switchboard procdesc/channel, and restart
  * timers are switchboard from PID 1 without threads.
  *
- * Compatibility contract (docs/capsule-todo.md):
+ * Compatibility contract (docs/book/src/plane/capsule.md):
  *  - never daemonize, never exit: every stock init exit path becomes a
  *    logged emergency followed by deliberate reboot or recovery;
  *  - PID 1 is already the real-init reaper: verify, don't acquire;
@@ -1160,7 +1160,7 @@ capsule_await_convergence(void)
  * Close the signal ABI, idempotently.  Called from capsule_engine_start (before
  * /etc/rc) and again after convergence.
  *
- * P4b (docs/lifecycle-capability-design.md): the getpeereid control socket is
+ * P4b (docs/book/src/plane/capsule.md): the getpeereid control socket is
  * retired.  Lifecycle, status, and reload are reached through capsulectl(8)
  * over switchboard's ADMIN-gated capability plane, and reboot(8)/shutdown(8)
  * delegate to it (falling back to reboot(2), the kernel escape).  Nothing drives

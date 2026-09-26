@@ -42,7 +42,7 @@
  * System lifecycle operations.  Valid only when capsule is PID 1
  * (capsule); an ordinary daemon rejects them with EPERM.  These
  * replace init(8)'s traditional signal ABI (see
- * docs/capsule-control-abi-design.md).  All require root.  Opcodes 7-9
+ * docs/book/src/plane/capsule.md).  All require root.  Opcodes 7-9
  * remain reserved (removed check/load/services); do not reuse them.
  */
 #define	CTL_OP_REBOOT		4	/* reboot (RB_AUTOBOOT) */

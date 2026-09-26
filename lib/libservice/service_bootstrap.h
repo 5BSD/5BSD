@@ -111,7 +111,7 @@ _Static_assert(sizeof(struct service_bootstrap) == 3456,
  * service_ambient_lookup_channel() is the discovery-path entry the ambient
  * client uses (service_connect_ambient): it returns this process's PRIVATE
  * lookup channel once it has lazily registered one with switchboard
- * (docs/capability-ambient-lookup-per-process.md P2), and otherwise the
+ * (docs/book/src/plane/discovery-and-lookup.md P2), and otherwise the
  * inherited shared fd exactly as service_ambient_lookup_fd() would.  The result
  * is borrowed and memoized once per process; -1 means no ambient channel at
  * all.  login/su and native providers do not use it — they keep their own

@@ -4494,7 +4494,7 @@ service_helper_open(struct service_context *context, const char *name,
  * login program will install, then forwards it to that program — so it is minted
  * with SVC_MINT_FLAG_RESEND (delivered transferable), and the caller re-attenuates
  * to CAP_XFER_ONCE before the single forwarding send so the leaf lands at
- * CAP_XFER_NONE.  See docs/auth-agent-design.md.  Runs over the same serialized
+ * CAP_XFER_NONE.  See docs/book/src/providers/auth.md.  Runs over the same serialized
  * bootstrap RPC as service_helper_open(), so it does not race the provider
  * protocol on that channel.
  */

@@ -55,7 +55,7 @@ struct capbundle_service {
 	char	provides[CAPBUNDLE_MAX_PROVIDES][CAPBUNDLE_NAME_MAX + 1];
 	unsigned nprovides;
 	/*
-	 * IPC anointments (docs/ipc-anointments-design.md).  requires[i] is the
+	 * IPC anointments (docs/book/src/plane/anointments.md).  requires[i] is the
 	 * set of names a connecting program must hold (all of them) to resolve
 	 * provides[i]; nrequires[i] == 0 leaves that endpoint open.  anointments
 	 * is the set this unit declares it holds.  Names are bounded at parse
@@ -107,7 +107,7 @@ struct capbundle_service {
 	int	management;		/* SVC_MGMT_* (default SVC_MGMT_SYSTEM) */
 	uint32_t cap_system;		/* SYS_GATE_* bitmask */
 	/*
-	 * Per-OID sysctl isolation set (docs/capability-sysctl-isolation.md,
+	 * Per-OID sysctl isolation set (docs/book/src/capability/system-gates.md,
 	 * Phase 2).  Dotted sysctl OID names; only meaningful with the "sysctl"
 	 * gate.  Copied verbatim into svc_manifest by fill_manifest.
 	 */

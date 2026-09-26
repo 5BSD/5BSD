@@ -356,7 +356,7 @@ policy.
 
 Reference: switchboard(5) (IPC ANOINTMENTS), BSDAuth(8), anoint(1),
 switchboardctl(8), libcapbundle(3), libservice(3). Design:
-`docs/ipc-anointments-design.md`. Related: [The Authority
+`docs/book/src/plane/anointments.md`. Related: [The Authority
 Model](../capability/authority-model.md), [The Management
 Model](management-model.md), [system.Notify](../providers/notify.md),
 [system.Auth](../providers/auth.md).

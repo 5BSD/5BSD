@@ -310,7 +310,7 @@ handle_ping(uint64_t reply_token)
  */
 /*
  * Apply a system lifecycle transition switchboard relayed from its ADMIN-gated
- * system.lifecycle capability (docs/lifecycle-capability-design.md, P4b).  The
+ * system.lifecycle capability (docs/book/src/plane/capsule.md, P4b).  The
  * ack is queued before the transition runs — capsule_lifecycle() only
  * *sets* the requested transition, which the state-machine loop applies after
  * this dispatch returns, so the caller's reply precedes the death sweep (same

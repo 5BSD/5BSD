@@ -1,7 +1,7 @@
 # Linuxulator QEMU gate
 
 The acceptance contract is
-[linuxulator-implementation-gate.md](../../../docs/linuxulator-implementation-gate.md).
+[linuxulator-implementation-gate.md](../../../docs/book/src/compat/linux/overview.md).
 The current executable gate covers memfd validation, 64-bit syscall parity,
 shared OFD locks on ZFS and tmpfs, future-write seals, and openat2 link,
 mount-crossing and scoped-root restrictions, native squeue, Linux io_uring,
@@ -323,7 +323,7 @@ and invalid opcode/flag combinations. The Linux front end alone advertises
 but does not advertise that Linux policy bit. Every `squeue_options` setup
 asserts the bit is present under the Linux ABI and absent under the native ABI;
 `setup_features` independently checks the Linux io_uring response.
-The [feature-flag audit](../../../docs/linuxulator-iouring-feature-flags.md)
+The [feature-flag audit](../../../docs/book/src/compat/linux/io-uring.md)
 records the shared SQPOLL_NONFIXED, CQE_SKIP, LINKED_FILE and
 REG_REG_RING contracts and their positive/negative VM tests.
 
@@ -504,7 +504,7 @@ Build all seven probes with the freestanding Linux amd64 flags above and
 The registration, signal, thread, lifecycle, auxiliary-vector and same-CPU
 preemption probes also passed the pinned Linux 6.18.35 reference VM.
 The unload check is BSD guest specific.
-`docs/linuxulator-rseq-implementation.md` tracks the remaining descriptor
+`docs/book/src/compat/linux/syscalls.md` tracks the remaining descriptor
 copyin and unregister-race stress qualification. Linux32 and arm64 rseq
 remain ENOSYS; the ELF auxiliary vector advertises these fields only for
 Linux64 amd64.
@@ -518,7 +518,7 @@ times on tmpfs; each run requires exit zero. The QEMU parser requires exactly
 those six results alongside the existing regression matrix. Use the kernel
 and `zfs.ko`, `linux64.ko`, and `linux_common.ko` built from the same current
 source and kernel configuration. The passing run is recorded in
-`docs/linuxulator-remap-file-pages.md`.
+`docs/book/src/compat/linux/syscalls.md`.
 
 ## Linux64 ioperm gate
 
@@ -526,7 +526,7 @@ Stage the branded freestanding Linux amd64 `linux_ioperm.c` probe and the
 static native amd64 `ioperm_native.c` probe in the manifest. The guest runs
 each three times on ZFS and three times on tmpfs; the runner requires all
 twelve results and the rest of the full regression matrix. See
-`docs/linuxulator-ioperm-implementation.md` for the reference oracle, tested
+`docs/book/src/compat/linux/syscalls.md` for the reference oracle, tested
 cases and final QEMU result.
 
 ## Linux64 iopl option gate
@@ -535,7 +535,7 @@ Stage the branded freestanding `linux_iopl_options.c` amd64 probe in the
 manifest. The guest runs it three times on ZFS and three times on tmpfs; the
 runner requires all six results and the full regression matrix. The pinned
 Linux reference result and final QEMU evidence are in
-`docs/linuxulator-iopl-options.md`.
+`docs/book/src/compat/linux/syscalls.md`.
 
 ## Linux64 modify_ldt gate
 
@@ -544,7 +544,7 @@ manifest. The guest runs it three times on ZFS and three times on tmpfs; the
 runner requires all six results and the full regression matrix. It covers
 read, default-table read, modern and legacy write, clear, high entry, fork
 and negative ABI cases. The Linux reference and final VM results are in
-`docs/linuxulator-modify-ldt-implementation.md`.
+`docs/book/src/compat/linux/syscalls.md`.
 
 ## Linux swapoff gate
 
@@ -555,7 +555,7 @@ manifest. Attach a separate 64 MiB raw virtio disk using
 runs begin with an unchanged backing disk. The guest gate checks positive
 activation/deactivation and negative errno/privilege behavior on each of six
 runs. The pinned Linux oracle and supported subset are documented in
-[linuxulator-swapoff-implementation.md](../../../docs/linuxulator-swapoff-implementation.md).
+[linuxulator-swapoff-implementation.md](../../../docs/book/src/compat/linux/syscalls.md).
 
 ## Linux swapon flag gate
 
@@ -563,7 +563,7 @@ Stage and Linux-brand `tests/sys/kern/linux_swapon_flags.c` as
 `/root/linux_swapon_flags`. The guest runs it three times each from ZFS and
 tmpfs against the same disposable second virtio disk and requires a separate
 `GATE_SWAPON_FLAGS` result row for each run. Its supported subset and flag-validation behavior are documented in
-[linuxulator-swapon-flags.md](../../../docs/linuxulator-swapon-flags.md).
+[linuxulator-swapon-flags.md](../../../docs/book/src/compat/linux/syscalls.md).
 
 ## Linux swap priority gate
 
@@ -585,7 +585,7 @@ attached with `discard=unmap`. The guest checks five Linux flag combinations,
 negative policy cases, per-swap discard counters, and page-free deletion using
 a swap-backed `mdconfig` device. The runner requires six successful results
 across ZFS and tmpfs; see
-[the swap discard contract](../../../docs/linuxulator-swapon-discard.md).
+[the swap discard contract](../../../docs/book/src/compat/linux/syscalls.md).
 
 ## unshare path-state subset
 
@@ -595,7 +595,7 @@ flags above and `-DUNSHARE_BSD_SUBSET`, brand it Linux, and stage it as
 66 executions: eleven supported-contract/rejection cases, three rounds each on
 ZFS and tmpfs. Build without that define for the complete Linux reference
 matrix. Some reference cases describe future functionality and intentionally
-cannot pass on BSD yet. See [the contract](../../../docs/linuxulator-unshare.md).
+cannot pass on BSD yet. See [the contract](../../../docs/book/src/compat/linux/syscalls.md).
 
 Also build `linux_unshare_capmode.c` as static native `unshare_capmode`, and
 with the Linux freestanding flags plus `-DLINUX_PROBE` as
@@ -622,7 +622,7 @@ upgrades only its disposable pool, creates a separate ZFS dataset, and removes
 it after 33 named quota executions, six capability checks, three native
 interoperability/permission groups and five filesystem checks. This must
 never be run against the host pool. The full runner requires all 47 results.
-See [the quota contract](../../../docs/linuxulator-quota.md) for limitations.
+See [the quota contract](../../../docs/book/src/compat/linux/syscalls.md) for limitations.
 
 ## amd64 ptrace register options
 
@@ -640,7 +640,7 @@ so its unprivileged exec test can traverse the path. The amd64 runner uses
 QEMU `-cpu max` to exercise XSAVE and AVX; the separate `no_xsave` case must
 also run in a disposable guest without XSAVE. No Linux32 support is claimed.
 The exact contracts, limitations and artifact paths are recorded in
-[the ptrace register implementation](../../../docs/linuxulator-ptrace-registers.md).
+[the ptrace register implementation](../../../docs/book/src/compat/linux/sandboxing.md).
 
 ### Linux64 debugger and socket-cookie follow-ups
 
@@ -662,8 +662,8 @@ native descriptor-right checks. The optional GDB 16.3 smoke test uses a
 separate image with its Linux userland; do not add that userland to the full
 gate, whose pathname tests assume the baseline filesystem.
 
-Contracts and evidence: [debugger options](../../../docs/linuxulator-ptrace-debugger-options.md)
-and [socket cookie](../../../docs/linuxulator-socket-cookie.md).
+Contracts and evidence: [debugger options](../../../docs/book/src/compat/linux/sandboxing.md)
+and [socket cookie](../../../docs/book/src/compat/linux/syscalls.md).
 
 ### Linux64 XSAVE writes and multicast filters
 
@@ -680,7 +680,7 @@ uses 10.0.2.15 and fd00::1 on vtnet0 for deterministic local packet-filter tests
 It runs root/unprivileged matrices three times. The native tracer tests removed
 GETSOCKOPT/SETSOCKOPT rights and capability-mode rejection across Linux exec.
 Run `linux_ptrace_xstate no_xsave` separately with XSAVE/AVX disabled; the normal
-matrix needs `-cpu max`. See [the contract and evidence](../../../docs/linuxulator-xstate-mcast-options.md).
+matrix needs `-cpu max`. See [the contract and evidence](../../../docs/book/src/compat/linux/syscalls.md).
 
 ### Linux64 peer names and process ptrace events
 
@@ -696,7 +696,7 @@ The parser requires 42 peer-name cases, 60 process-event cases, three native
 capability checks and three native exit-event checks. Multicast now includes
 mixed full-state/delta updates, duplicate removal with packet delivery, and
 shared-descriptor concurrent updates. Process ptrace events do not provide
-complete Linux thread tracing. See [contracts and VM evidence](../../../docs/linuxulator-peer-events-options.md).
+complete Linux thread tracing. See [contracts and VM evidence](../../../docs/book/src/compat/linux/syscalls.md).
 
 ### Pending signals, tracing reattach and multicast mode transitions
 
@@ -718,7 +718,7 @@ vtnet0. Require `zpool status -x` to report `all pools are healthy`, emit
 TCG `-cpu max` and a snapshot disk. It requires exactly 405 named successful
 records, suite completion markers, pool health, clean power-off and no
 recognized kernel diagnostics. It does not run io_uring/squeue suites or need
-swap test disks. See [the contract and evidence](../../../docs/linuxulator-signal-modes-options.md).
+swap test disks. See [the contract and evidence](../../../docs/book/src/compat/linux/sandboxing.md).
 
 ### Linux compatibility filesystem probes
 
@@ -759,7 +759,7 @@ The Linux-reference run executes the same 16 root and four unprivileged cases
 using the unbranded binary. Linux dummy interfaces provide the corresponding
 up/down/rename/removal/churn fixture. VNET jail tests are BSD-specific.
 No io_uring or squeue suites are invoked. See
-`docs/linuxulator-filesystems-handoff.md` for evidence and remaining gaps.
+`docs/book/src/compat/linux/procfs-sysfs.md` for evidence and remaining gaps.
 
 `filesystems-client.py` supplies a real Linux Python smoke test through the
 existing Linux GDB runtime: run GDB in batch mode with
@@ -876,7 +876,7 @@ not apply a pseudofs fix to that configuration. Rebuild the kernel itself.
 
 Passing these gates qualifies the listed behavior. It does not establish
 compatibility with arbitrary production applications or complete Linux
-procfs/FUSE semantics; see docs/linuxulator-production-readiness.md.
+procfs/FUSE semantics; see docs/book/src/compat/linux/overview.md.
 
 The procfs extension suite now includes `tasklinks`, `fdextra`, `fdscale` and
 `sockettables`. Build `tests/sys/kern/linux_proc_net_jail.c` as a native static
@@ -884,11 +884,11 @@ The procfs extension suite now includes `tasklinks`, `fdextra`, `fdscale` and
 The stress inventory requires three `PROC_NET_JAIL` passes and eight rounds of
 eight cases, four iterations each, as both root and unprivileged users, plus
 64 `PROC_EXEC_STRESS` passes.
-See `docs/linuxulator-proc-extra.md` for semantics and remaining limits.
+See `docs/book/src/compat/linux/procfs-sysfs.md` for semantics and remaining limits.
 
 ## IPC, notifications, network discovery and writable FUSE
 
-See [the four-batch implementation and qualification record](../../../docs/linuxulator-compat-next.md) for the Linux64 additions, reproducible guest fixtures, and remaining gaps.
+See [the four-batch implementation and qualification record](../../../docs/book/src/compat/linux/overview.md) for the Linux64 additions, reproducible guest fixtures, and remaining gaps.
 
 ## Linux64 UNIX socket diagnostics
 
@@ -929,4 +929,4 @@ and agreement between packet properties and the device's sysfs uevent file.
 and unloads/reloads the compatibility modules. This batch supplies actual network
 device events. PCI/DRM hotplug, user-injected events, and the userspace libudev
 relay are separate contracts. See
-[the qualification record](../../../docs/linuxulator-remaining-compat.md).
+[the qualification record](../../../docs/book/src/compat/linux/overview.md).

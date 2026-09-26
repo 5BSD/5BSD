@@ -1,6 +1,6 @@
 #!/usr/libexec/atf-sh
 #
-# Observability contract for IPC anointments (docs/ipc-anointments-design.md):
+# Observability contract for IPC anointments (docs/book/src/plane/anointments.md):
 # the switchboard anoint-* / mint-anoint probes, the shipped
 # share/dtrace/switchboard-anoint script, and the bsdinstruments profile
 # clauses that consume them.  Source-tree greps, so these skip on an

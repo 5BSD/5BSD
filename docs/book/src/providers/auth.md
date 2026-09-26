@@ -212,7 +212,7 @@ the first-match principal policy and the management model's split between
 seeing (`"*"`) and managing (`admin_rights`). The BSDAuth(8) manual page
 writes the wire name as `system.auth` in lowercase in several places; the
 manifest and `AUTHAGENTD_NAME` say `system.Auth`, and lookups are exact.
-The design document `docs/auth-agent-design.md` still describes the
+The design document `docs/book/src/providers/auth.md` still describes the
 protocol as one operation and getty's channel as scoped to `{system.auth}`;
 the shipped protocol has three ops and the visibility mechanism is the
 unit's `visible = ["user"]`. The legacy top-level `admin { uids; groups; }`

@@ -59,10 +59,10 @@ cleanup_work()
 	rm -rf "$(pwd)/work.$$"
 }
 
-# Group containers (docs/capability-container-model.md): Bundle.ucl `groups` is
+# Group containers (docs/book/src/plane/containers-and-storage.md): Bundle.ucl `groups` is
 # an optional array of at most four safe single-component names.
 
-# Group containers (docs/capability-container-model.md): Bundle.ucl `groups` is
+# Group containers (docs/book/src/plane/containers-and-storage.md): Bundle.ucl `groups` is
 # an optional array of at most four safe single-component names.
 atf_test_case groups_contract cleanup
 groups_contract_body()

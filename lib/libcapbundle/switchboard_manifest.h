@@ -29,7 +29,7 @@
 #define	SWITCHBOARD_MAX_PROVIDES		8
 #define	SWITCHBOARD_LABEL_MAX		64
 /*
- * IPC anointments (docs/ipc-anointments-design.md): per-endpoint required
+ * IPC anointments (docs/book/src/plane/anointments.md): per-endpoint required
  * names and per-unit held names.  Mirror CAPBUNDLE_MAX_REQUIRES /
  * CAPBUNDLE_MAX_ANOINTMENTS in libcapbundle.h.
  */
@@ -42,7 +42,7 @@
 #define	SWITCHBOARD_MAX_ACTIVATION_SOCKETS	4
 #define	SWITCHBOARD_MAX_RESOURCE_DIRS	8
 /*
- * Per-OID sysctl isolation set (docs/capability-sysctl-isolation.md, Phase 2).
+ * Per-OID sysctl isolation set (docs/book/src/capability/system-gates.md, Phase 2).
  * A "sysctl"-gated provider (bsdsysctl) may declare an `isolate` list of
  * sysctl OID names; switchboard resolves each name to a MIB and asks Capsule
  * to mint a SYSCTL token scoped to exactly those OIDs.  The count cap mirrors
@@ -233,7 +233,7 @@ struct svc_manifest {
 	uint32_t	cap_system;	/* SYS_GATE_* bitmask */
 
 	/*
-	 * Per-OID sysctl isolation set (docs/capability-sysctl-isolation.md,
+	 * Per-OID sysctl isolation set (docs/book/src/capability/system-gates.md,
 	 * Phase 2).  Only meaningful when cap_system carries SYS_GATE_SYSCTL.
 	 * Each entry is a dotted sysctl OID name (e.g. "kern.maxfiles"); switchboard
 	 * resolves them to MIBs at launch and asks Capsule to mint a SYSCTL
@@ -287,7 +287,7 @@ struct svc_manifest {
 	 * bundle (bundle_registry_is_system), exactly as it does `ambient`, so an
 	 * application bundle that self-declares it is ignored.  Set on BSDAuth's
 	 * bsdauth unit alone; see usr.sbin/switchboard/svc_proto.c and
-	 * docs/auth-agent-design.md.
+	 * docs/book/src/providers/auth.md.
 	 */
 	bool		mint_authority;
 

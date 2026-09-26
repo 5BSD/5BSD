@@ -50,7 +50,7 @@ int	mac_capability_release_vsock(const struct ort_vsock_claim *vc);
 int	mac_capability_release_system_gates(uint32_t gates);
 
 /*
- * Per-OID sysctl isolation (docs/capability-sysctl-isolation.md, Phase 2).
+ * Per-OID sysctl isolation (docs/book/src/capability/system-gates.md, Phase 2).
  *
  * A standing, scoped SYS_GATE_SYSCTL claim owned by Capsule on a
  * dedicated "system" connection, refcounted independently of the coarse

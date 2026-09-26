@@ -159,7 +159,7 @@ struct bsdfilesystem_request {
 	char		session[BSDFILESYSTEM_SESSION_MAX];
 	/*
 	 * Container scope of a durable (persistent/cache) claim
-	 * (docs/capability-container-model.md "Storage and delivery"):
+	 * (docs/book/src/plane/containers-and-storage.md "Storage and delivery"):
 	 *   UNIT    Data/<bundle>/<unit>/   the caller's private container;
 	 *   SHARED  Data/<bundle>/shared/   shared by the bundle's units;
 	 *   GROUP   Data/Shared/<group>/    a cross-bundle group container the

@@ -4,7 +4,7 @@
  * Copyright (c) 2026 Kory Heard
  *
  * The principal policy (docs/capability-authority-model.md, P1;
- * docs/ipc-anointments-design.md, "Domains and sessions").
+ * docs/book/src/plane/anointments.md, "Domains and sessions").
  *
  * This is the single, explicit place a login session's grant is decided: which
  * IPC anointments it holds from login, which it may elevate to per command,
@@ -592,7 +592,7 @@ capbundle_principal_is_admin_at(const struct passwd *pwd, const char *policy_pat
 		return (false);
 	n = libc_member_gids(pwd, members, nitems(members));
 	/* O_VERIFY: verified when mac_veriexec enforces, a no-op otherwise
-	 * (docs/ipc-anointments-design.md).  The principal policy decides every
+	 * (docs/book/src/plane/anointments.md).  The principal policy decides every
 	 * session's anointment set, so it is integrity-protected alongside the
 	 * bundle policy files. */
 	fd = open(policy_path, O_RDONLY | O_CLOEXEC | O_VERIFY);

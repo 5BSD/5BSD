@@ -7,7 +7,7 @@
 /*
  * USDT provider for the libservice ambient discovery path.  Each probe exposes
  * one step of a process installing its OWN private lookup channel with switchboard
- * (docs/capability-ambient-lookup-per-process.md P2), so the fail-soft fallback
+ * (docs/book/src/plane/discovery-and-lookup.md P2), so the fail-soft fallback
  * to the inherited shared channel is observable in production rather than
  * silent.  Trace with:  dtrace -n 'service_ambient*:::'
  */

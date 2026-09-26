@@ -1,5 +1,5 @@
 #!/bin/sh
-# Group containers e2e (docs/capability-container-model.md item 4):
+# Group containers e2e (docs/book/src/plane/containers-and-storage.md item 4):
 #  A.cap, B.cap declare groups=["test.shared"]; C.cap does not.  Each runs a
 #  groupprobe unit (A claims group claim "astate", B "bstate", C tries "cstate").
 #  boot#1: Data/A/shared, Data/B/shared, Data/Shared/test.shared/{astate,bstate}

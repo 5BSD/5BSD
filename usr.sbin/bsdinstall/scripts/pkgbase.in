@@ -372,7 +372,7 @@ local function pkgbase()
 	-- registration hook: the switchboard discovers .cap bundles by scanning
 	-- /Capabilities/System and /Capabilities at boot and watches the install
 	-- folders afterwards, and per-provider cleanup is a reconcile over the
-	-- installed set (docs/capability-container-model.md).
+	-- installed set (docs/book/src/plane/containers-and-storage.md).
 	if not os.execute(pkg .. "install -U -y -r 5BSD-base " .. packages) then
 		os.exit(1)
 	end

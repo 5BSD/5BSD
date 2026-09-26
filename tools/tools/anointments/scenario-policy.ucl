@@ -1,6 +1,6 @@
 # Scenario principal policy for tools/tools/anointments/live-scenarios.sh.
 # Install as /Capabilities/Config/principal-policy.ucl on a disposable test VM.
-# See docs/ipc-anointments-design.md, "Domains and sessions".
+# See docs/book/src/plane/anointments.md, "Domains and sessions".
 principals {
     admin {
         groups = [ "wheel" ];

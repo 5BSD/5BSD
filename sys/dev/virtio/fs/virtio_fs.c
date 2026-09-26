@@ -49,7 +49,7 @@
  *     fuse_device_write() would, preserving ticket unique IDs and the FUSE
  *     session error path -- without forging a userspace uio or a daemon.
  *
- * First-slice scope (see docs/waspnest-virtio-fs-5bsd-driver-plan.md): no DAX,
+ * First-slice scope (see docs/book/src/compat/virtual-machines.md): no DAX,
  * no notification queue, no packed-ring/queue-reset/suspend negotiation.
  * Split and packed rings are both supported by the shared virtqueue layer;
  * this driver simply does not advertise the packed-ring feature yet.

@@ -100,7 +100,7 @@ bsdinstall writes that line on every installed system and the release tooling wr
 
 ## Coexistence rules
 
-The rc integration handbook (`docs/rc-integration-handbook.md`, section 23) sets the rule that makes the mixed system stable: every long-running daemon has exactly one owner, rc or switchboard, and no heuristic on process names or pidfiles substitutes for that record. The adoption list is that record for rc.d services. A daemon migrated to a bundle keeps its rc.d script as an adapter that preserves the `PROVIDE`, `REQUIRE` and `BEFORE` metadata and delegates start, stop and status to switchboardctl, so downstream rc.d scripts keep their ordering. `rcorder` establishes invocation order, not readiness; an adapter that returns immediately can let a dependent script run before the managed daemon is usable, so an adapter must wait for the unit's readiness where a downstream script needs a live provider.
+The rc integration handbook (`docs/book/src/compat/rc-and-service.md`, section 23) sets the rule that makes the mixed system stable: every long-running daemon has exactly one owner, rc or switchboard, and no heuristic on process names or pidfiles substitutes for that record. The adoption list is that record for rc.d services. A daemon migrated to a bundle keeps its rc.d script as an adapter that preserves the `PROVIDE`, `REQUIRE` and `BEFORE` metadata and delegates start, stop and status to switchboardctl, so downstream rc.d scripts keep their ordering. `rcorder` establishes invocation order, not readiness; an adapter that returns immediately can let a dependent script run before the managed daemon is usable, so an adapter must wait for the unit's readiness where a downstream script needs a live provider.
 
 ## Status
 

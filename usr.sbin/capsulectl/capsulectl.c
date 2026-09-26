@@ -6,7 +6,7 @@
  * capsulectl -- capability-native control CLI for Capsule (the PID 1
  * spine), the parallel of switchboardctl(8) for switchboard.  It presents a lifecycle
  * op over the ADMIN-gated system.lifecycle capability, which switchboard relays to
- * capsule (docs/lifecycle-capability-design.md, P4b).
+ * capsule (docs/book/src/plane/capsule.md, P4b).
  *
  * This is the capability path.  The everyday reboot(8)/halt(8)/shutdown(8) keep
  * their stock BSD signal-to-init behaviour; capsulectl sits beside them for a

@@ -1,7 +1,7 @@
 # Capability container proofs
 
 End-to-end proofs of the capability container model
-(`docs/capability-container-model.md`) on a real guest: a fresh image is built
+(`docs/book/src/plane/containers-and-storage.md`) on a real guest: a fresh image is built
 from an installed guest root, booted under qemu, driven over its serial
 console, and asserted on from the outside (datasets, mounts, markers, the
 units' own result files).  These are the runs behind every "proven on the VM"

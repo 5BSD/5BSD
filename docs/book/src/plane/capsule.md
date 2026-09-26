@@ -133,7 +133,7 @@ that gate.
 
 Classic init is administered by unauthenticated signals to PID 1. Capsule
 retires that ABI. The design record is
-`docs/capsule-control-abi-design.md`; the shipped shape is a held capability,
+`docs/book/src/plane/capsule.md`; the shipped shape is a held capability,
 not a socket. The opcodes are the ones in `lib/libcapsulert/capsule_ctl.h`:
 
 | capsulectl verb | Opcode | Effect |
@@ -282,4 +282,4 @@ capsulectl "sits beside" the stock tools predates `reboot(8)`'s delegation.
 Follow the code paths named above.
 
 Reference: capsule(8), capsule.conf(5), capsulectl(8),
-`docs/capsule-control-abi-design.md`.
+`docs/book/src/plane/capsule.md`.

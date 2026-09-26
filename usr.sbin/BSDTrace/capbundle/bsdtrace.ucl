@@ -1,6 +1,6 @@
 # system.Trace is gated on the system.trace.client anointment: tracing reads
 # arbitrary kernel and process state, so it is a privileged surface (see
-# docs/ipc-anointments-design.md).  The shipped principal policy grants it to
+# docs/book/src/plane/anointments.md).  The shipped principal policy grants it to
 # the admin principal (via "*"); an operator can be granted just
 # system.trace.client to trace without being an administrator.  A session that
 # holds neither gets ENOENT on system.Trace, the same answer as an unknown

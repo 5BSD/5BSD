@@ -11,9 +11,9 @@
  * (capbundle_principal_resolve) and mints the scoped session lookup channel
  * over its OWN bootstrap channel to switchboard, then forwards it to the
  * login program.  The login program never holds mint authority itself.  See
- * docs/auth-agent-design.md.
+ * docs/book/src/providers/auth.md.
  *
- * IPC anointments v1 (docs/ipc-anointments-design.md, "Domains and sessions"
+ * IPC anointments v1 (docs/book/src/plane/anointments.md, "Domains and sessions"
  * and "Elevation"): the mint carries the principal's anointment set from
  * principal-policy.ucl, and a second operation, ELEVATE, is the sudo/doas
  * replacement -- a process on a session channel asks for ONE name from its
@@ -548,7 +548,7 @@ accept_rate_exceeded(const char *label, time_t now)
 #endif
 
 /*
- * The mint caller-gate predicate (docs/auth-agent-design.md, P1c), factored out
+ * The mint caller-gate predicate (docs/book/src/providers/auth.md, P1c), factored out
  * of handle_request() so the privilege-escalation regression is unit-testable
  * without a live plane.  A caller may ask us to mint iff switchboard stamped
  * SERVICE_RIGHTS_ADMIN on its brokered session — the bit switchboard (naming.c)
@@ -607,7 +607,7 @@ authagent_mint_kind(int policy_fd, uid_t uid, const gid_t *member_gids,
 }
 
 /*
- * ELEVATE caller gate (docs/ipc-anointments-design.md "Elevation", step 1;
+ * ELEVATE caller gate (docs/book/src/plane/anointments.md "Elevation", step 1;
  * scenario E5).  Only a process on a login-session channel may elevate: its
  * brokered connection is stamped with the session label switchboard uses for
  * an ambient (requester == NULL) lookup.  A unit -- whose label is its
@@ -1094,7 +1094,7 @@ handle_mint(struct client *c, const void *data, size_t len, size_t nfds,
 	int error, fd, status;
 
 	/*
-	 * Caller gate — the mint boundary (docs/auth-agent-design.md, P1c).
+	 * Caller gate — the mint boundary (docs/book/src/providers/auth.md, P1c).
 	 * bsdauth gates the MINTER (only its own whitelisted bootstrap
 	 * channel can call switchboard's SVC_OP_MINT_DOMAIN), but that says
 	 * nothing about WHO may ask us to mint.  system.Auth is now
@@ -1188,7 +1188,7 @@ handle_mint(struct client *c, const void *data, size_t len, size_t nfds,
 }
 
 /*
- * Serve one AUTHAGENT_OP_ELEVATE request (docs/ipc-anointments-design.md
+ * Serve one AUTHAGENT_OP_ELEVATE request (docs/book/src/plane/anointments.md
  * "Elevation").  The caller's uid comes ONLY from the kernel-stamped sender
  * credential on the message (E4); the payload contributes the requested name
  * and the password for the caller's own account, nothing else.  Order of
@@ -1689,7 +1689,7 @@ open_with_retry(const char *path)
 }
 
 /*
- * The capability user is not a principal (docs/ipc-anointments-design.md):
+ * The capability user is not a principal (docs/book/src/plane/anointments.md):
  * it is the unprivileged uid switchboard runs units as, and units never
  * consult this file.  An entry that nonetheless grants it something is
  * almost certainly a misunderstanding of the model; warn so it is visible.

@@ -94,7 +94,7 @@ static int capsulectl_run(const char *verb);
 static void die_you_gravy_sucking_pig_dog(void);
 
 /*
- * Run capsulectl(8) once and wait for it (docs/lifecycle-capability-design.md).
+ * Run capsulectl(8) once and wait for it (docs/book/src/plane/capsule.md).
  * Returns 0 if it accepted the request, -1 otherwise (exec failed -- no /usr /
  * plane down -- or Capsule refused).  shutdown(8) is a /sbin tool and keeps
  * no capability/protocol code and no /usr runtime dependency: it fork+execs the
@@ -452,7 +452,7 @@ die_you_gravy_sucking_pig_dog(void)
 			    docycle ? "powercycle" : "single";
 			/*
 			 * Delegate the transition to the capability plane via
-			 * capsulectl(8) (docs/lifecycle-capability-design.md):
+			 * capsulectl(8) (docs/book/src/plane/capsule.md):
 			 * on success Capsule is bringing the system down.
 			 * On failure (plane down, single-user) fall through to
 			 * the fast exec path, which ends in reboot(2).

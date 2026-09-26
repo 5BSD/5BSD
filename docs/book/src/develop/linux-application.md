@@ -175,7 +175,7 @@ works.
 
 GDB 16.3 is gate-passed: it starts a freestanding target, reads general,
 x87 and SSE registers, changes `r12` and continues to a normal exit
-(`docs/linuxulator-ptrace-debugger-options.md`). Behind that sit
+(`docs/book/src/compat/linux/sandboxing.md`). Behind that sit
 `PTRACE_SEIZE`, `PTRACE_INTERRUPT` and `PTRACE_LISTEN`, `GETREGSET` and
 `SETREGSET` for general, floating-point and XSAVE state, `PEEKUSER` and
 `POKEUSER` including the debug registers, `PTRACE_ARCH_PRCTL`,
@@ -201,7 +201,7 @@ Linux processes too.
 ## The QEMU gate
 
 Anything you care about is qualified in a disposable guest, never on the
-host. The acceptance contract is `docs/linuxulator-implementation-gate.md`
+host. The acceptance contract is `docs/book/src/compat/linux/overview.md`
 and its rule is unambiguous: QEMU is the correctness gate, the host only
 builds artifacts and runs QEMU, and every guest image must boot from ZFS. A
 UFS-root run fails the gate, because the base system is supported only on
@@ -256,7 +256,7 @@ State these before someone discovers them in production.
 | 32-bit and arm64 | i386 Linux binaries do not run; arm64 carries a larger stub set and is regated only when an arm64-specific path changes |
 
 Two documents keep this list current: `docs/linuxulator-missing-syscalls-handoff.md`
-for the 41 calls still needing work, and `docs/linuxulator-option-review.md`
+for the 41 calls still needing work, and `docs/book/src/compat/linux/syscalls.md`
 for option-level gaps inside calls that otherwise exist. When your census
 from the first section hits either list, the answer is there before you file
 a bug.

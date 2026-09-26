@@ -4,7 +4,7 @@
  * Copyright (c) 2026 Kory Heard
  *
  * Unit tests for the principal policy (docs/capability-authority-model.md,
- * P1; docs/ipc-anointments-design.md, "Domains and sessions").  The
+ * P1; docs/book/src/plane/anointments.md, "Domains and sessions").  The
  * path-parameterized core capbundle_principal_is_admin_at() and the grant
  * resolver capbundle_principal_resolve() are driven with temporary policy
  * files and a synthetic group resolver -- no host group database is consulted.

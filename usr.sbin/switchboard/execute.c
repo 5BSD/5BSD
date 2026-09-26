@@ -104,7 +104,7 @@ _Static_assert(SWITCHBOARD_LABEL_MAX <= SERVICE_BOOTSTRAP_LABEL_MAX,
 
 /*
  * Marshal a manifest's per-OID sysctl isolation list into a packed
- * sys_sysctl_oidset (docs/capability-sysctl-isolation.md, Phase 2).  Each
+ * sys_sysctl_oidset (docs/book/src/capability/system-gates.md, Phase 2).  Each
  * `isolate` name is resolved to a MIB via sysctlnametomib(3); an unresolved
  * name is skipped with a warning (a single bad OID never fails the whole set)
  * and the set is capped at SYS_SYSCTL_MAXOIDS.  Writes the packed oidset into
@@ -721,7 +721,7 @@ child_exec(struct svc_manifest *m, int child_channel_fd,
 		 * mac_veriexec is loaded and enforcing, an unfingerprinted or
 		 * tampered image already fails the open (EAUTH); when veriexec
 		 * is absent or not enforcing it is a silent no-op
-		 * (docs/ipc-anointments-design.md).
+		 * (docs/book/src/plane/anointments.md).
 		 */
 		tgtfd = open(m->program, O_EXEC | O_VERIFY);
 		if (tgtfd == -1)
@@ -1387,7 +1387,7 @@ svc_exec_native(struct svc_runtime *svc, int kq)
 	svc->domain.uid = 0;
 	/*
 	 * The unit's anointment set is its policy file's `anointments`
-	 * (docs/ipc-anointments-design.md), recomputed on every exec so a reload
+	 * (docs/book/src/plane/anointments.md), recomputed on every exec so a reload
 	 * or restart picks up the current policy.  Never "*", never ADMIN.
 	 */
 	svc_anoint_set_from_manifest(&svc->domain.anoint, m);
@@ -1602,7 +1602,7 @@ svc_exec_native(struct svc_runtime *svc, int kq)
 	if (m->cap_system != 0) {
 		int tfd;
 		/*
-		 * Per-OID sysctl isolation (docs/capability-sysctl-isolation.md,
+		 * Per-OID sysctl isolation (docs/book/src/capability/system-gates.md,
 		 * Phase 2) is the one extension to the module-only delegation
 		 * rule.  It is admitted ONLY in the scoped form: cap_system is
 		 * exactly SYS_GATE_SYSCTL and the manifest carries a non-empty

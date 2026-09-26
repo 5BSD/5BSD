@@ -4,7 +4,7 @@
  * Copyright (c) 2026 Kory Heard
  *
  * switchboard private-lookup-channel adoption decision
- * (docs/capability-ambient-lookup-per-process.md, P2).
+ * (docs/book/src/plane/discovery-and-lookup.md, P2).
  *
  * SVC_OP_REGISTER_LOOKUP lets a process hand switchboard one endpoint of a channel
  * pair it created for itself, which switchboard adopts as that process's private

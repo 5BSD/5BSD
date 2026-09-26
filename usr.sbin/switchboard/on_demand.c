@@ -558,7 +558,7 @@ od_launch(const char *name, struct svc_runtime *requester,
 		return (-1);  /* not found — caller should return ENOENT */
 
 	/*
-	 * IPC anointments (docs/ipc-anointments-design.md): a requester that could
+	 * IPC anointments (docs/book/src/plane/anointments.md): a requester that could
 	 * not reach the endpoint once it is up must not be able to start its
 	 * provider either.  Check the registry's requires against the requester's
 	 * set -- a unit's own, or the set captured on the ambient session channel

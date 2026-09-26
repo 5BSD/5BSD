@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: BSD-2-Clause
 #
 # Tests for switchboardctl graph: the IPC anointment reach graph drawn from
-# the bundle registry on disk (docs/ipc-anointments-design.md, rows G1-G3).
+# the bundle registry on disk (docs/book/src/plane/anointments.md, rows G1-G3).
 # Purely static: no running plane, no root.
 #
 

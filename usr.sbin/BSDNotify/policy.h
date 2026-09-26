@@ -16,7 +16,7 @@
 #define	NOTIFY_POLICY_FILE_MAX	(64 * 1024)
 
 /*
- * Tiers (docs/ipc-anointments-design.md, "bsdnotify").  Which tier a session
+ * Tiers (docs/book/src/plane/anointments.md, "bsdnotify").  Which tier a session
  * is on is decided by the endpoint it was accepted on, never by the client:
  *   open   = NOTIFY_INTERFACE        ("system.Notify"), resolvable by every
  *            session; policy from the conf "default {}" block.

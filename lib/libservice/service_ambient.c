@@ -197,7 +197,7 @@ service_install_ambient_lookup(int fd)
 }
 
 /*
- * Per-process private lookup channel (docs/capability-ambient-lookup-per-process.md
+ * Per-process private lookup channel (docs/book/src/plane/discovery-and-lookup.md
  * P2).  The inherited SERVICE_LOOKUP_FD is ONE shared endpoint whose single
  * kernel receive queue races: a sibling process can pump the queue and discard
  * a reply meant for another, hanging the other until timeout.  To escape it a

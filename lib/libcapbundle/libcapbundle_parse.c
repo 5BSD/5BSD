@@ -36,7 +36,7 @@
  * Always opens with O_VERIFY so that, when mac_veriexec is loaded and
  * enforcing, the kernel refuses the open unless the file has a registered
  * fingerprint -- the integrity backstop for "declaration is the grant"
- * (docs/ipc-anointments-design.md).  When veriexec is absent, not loaded, or
+ * (docs/book/src/plane/anointments.md).  When veriexec is absent, not loaded, or
  * not enforcing, O_VERIFY is a silent no-op, so this is safe on an unhardened
  * system.  Returns true iff the file opened and parsed.  libucl reads the
  * whole descriptor during add_fd_full, so the fd is closed immediately after.
@@ -228,7 +228,7 @@ validate_string_list(const ucl_object_t *root, const char *key, unsigned max,
 }
 
 /*
- * IPC anointments (docs/ipc-anointments-design.md).
+ * IPC anointments (docs/book/src/plane/anointments.md).
  *
  * Validate one anointment-name list under `where`: a bare string or an array
  * of strings, each a reverse-domain name bounded by SWITCHBOARD_LABEL_MAX,
@@ -1007,7 +1007,7 @@ validate_unit_schema(const ucl_object_t *root, char *errbuf, size_t errlen)
 	}
 	/*
 	 * holds — the anointments this unit holds when it looks endpoints up
-	 * (docs/ipc-anointments-design.md).  A string or array of reverse-domain
+	 * (docs/book/src/plane/anointments.md).  A string or array of reverse-domain
 	 * names; "*" is never legal here.  Absent = the empty set.
 	 */
 	v = ucl_object_lookup(root, "holds");
@@ -1727,7 +1727,7 @@ parse_cap_system(const ucl_object_t *obj, const char *path)
 }
 
 /*
- * Per-OID sysctl isolation set (docs/capability-sysctl-isolation.md, Phase 2).
+ * Per-OID sysctl isolation set (docs/book/src/capability/system-gates.md, Phase 2).
  *
  * Parses capabilities.isolate = ["kern.foo", ...] into svc->sysctl_isolate.
  * The list is only meaningful when the "sysctl" system gate is declared; that

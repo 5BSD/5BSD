@@ -24,7 +24,7 @@
  */
 #define	SWITCHBOARD_CONTROL_NAME	"system.switchboard"
 /*
- * The capability lifecycle endpoint (docs/lifecycle-capability-design.md, P4b).
+ * The capability lifecycle endpoint (docs/book/src/plane/capsule.md, P4b).
  * switchboard self-serves this SYSTEM name over the ambient discovery plane; an
  * admin login session's lookup receives an ADMIN-bearing channel over which
  * capsulectl(8) presents a lifecycle op (reboot/halt/...).  switchboard relays the

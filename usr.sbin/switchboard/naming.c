@@ -482,7 +482,7 @@ naming_lookup(const char *name, struct svc_runtime *requester,
 	}
 
 	/*
-	 * IPC anointments (docs/ipc-anointments-design.md): the endpoint's
+	 * IPC anointments (docs/book/src/plane/anointments.md): the endpoint's
 	 * `requires` -- from the running provider's own policy (the manifest it
 	 * was launched with), falling back to the registry for a name the unit
 	 * manifest does not list -- must be covered by the requester's set: a

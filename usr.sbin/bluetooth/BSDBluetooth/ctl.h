@@ -146,7 +146,7 @@ void	ctl_gatt_conn_gone(const struct blued_conn *conn);
 void	ctl_gatt_set_base_count(void);
 void	ctl_gatt_load_persisted_services(int dirfd);
 /*
- * Container model (docs/capability-container-model.md): runtime services a
+ * Container model (docs/book/src/plane/containers-and-storage.md): runtime services a
  * plane client registers are attributed to its bundle (the requester, set by
  * the control dispatcher from the stamped identity), persisted beside the
  * gattsrv artifact, and reconciled against the installed bundles on a timer.

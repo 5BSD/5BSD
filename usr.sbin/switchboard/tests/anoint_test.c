@@ -3,7 +3,7 @@
  *
  * Copyright (c) 2026 Kory Heard
  *
- * IPC anointments, v1 (docs/ipc-anointments-design.md): the set
+ * IPC anointments, v1 (docs/book/src/plane/anointments.md): the set
  * representation, the endpoint match, the session-set plumbing on minted
  * channels, the on-demand pre-check, the refusal audit record, and the nonce
  * and ABI identity in the NEW_CLIENT grant.  Rows of the design's acceptance

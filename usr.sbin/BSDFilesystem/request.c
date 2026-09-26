@@ -425,7 +425,7 @@ valid_container(const char *c)
 /*
  * The caller's DURABLE namespace under the Data root: its per-bundle container's
  * persistent or cache subdir, Data/<bundle>/<unit>/{persistent,cache}
- * (docs/capability-container-model.md).  Fails when the caller has no valid
+ * (docs/book/src/plane/containers-and-storage.md).  Fails when the caller has no valid
  * container (no bundle), so a bundleless client holds no durable storage.
  */
 static bool
@@ -440,7 +440,7 @@ container_ns(const char *container, uint32_t lifetime, char *out, size_t outsz)
 
 /*
  * The caller's durable namespace for a claim's scope
- * (docs/capability-container-model.md "Storage and delivery"):
+ * (docs/book/src/plane/containers-and-storage.md "Storage and delivery"):
  *   UNIT    Data/<bundle>/<unit>/{persistent,cache}   (container_ns)
  *   SHARED  Data/<bundle>/shared/{persistent,cache}   any unit of the bundle
  *   GROUP   Data/Shared/<group>/{persistent,cache}    only if the bundle

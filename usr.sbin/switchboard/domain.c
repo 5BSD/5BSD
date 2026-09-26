@@ -382,7 +382,7 @@ fd_is_mac_capability_channel(int fd)
 
 /*
  * Handle SVC_OP_REGISTER_LOOKUP arriving on the lookup channel `lc`
- * (docs/capability-ambient-lookup-per-process.md, P2).  The request carries
+ * (docs/book/src/plane/discovery-and-lookup.md, P2).  The request carries
  * exactly one descriptor: an endpoint of a channel pair the client created for
  * itself.  switchboard adopts it as a private per-client lookup channel scoped to
  * `lc`'s domain — the domain of the channel the request ARRIVED on, never a
@@ -819,7 +819,7 @@ domain_mint_system_channel(int *out_fd, int kq)
  * the recorded uid, SVC_DOMAIN_SYSTEM ignores it (a SYSTEM channel resolves
  * every name, so uid is meaningless and recorded as 0).  `set` is the
  * anointment set the auth agent decided from the principal policy; the minted
- * channel carries it beside the kind (docs/ipc-anointments-design.md).  The
+ * channel carries it beside the kind (docs/book/src/plane/anointments.md).  The
  * caller has already run svc_mint_domain_kind() to authorize the requested
  * kind and svc_anoint_set_from_mint() to validate the set.
  */

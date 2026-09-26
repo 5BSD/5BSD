@@ -3,7 +3,7 @@
  *
  * Copyright (c) 2026 Kory Heard
  *
- * bsdnamespace's reconcile client (docs/capability-container-model.md "Cleanup"):
+ * bsdnamespace's reconcile client (docs/book/src/plane/containers-and-storage.md "Cleanup"):
  * a persistent jail outlives the unit that entered it -- by design, so a
  * relaunched consumer reattaches -- but it must not outlive the BUNDLE.  A
  * jail is named "wj_" + hash of the unit's resource owner, which is one-way,

@@ -4,7 +4,7 @@
  * Copyright (c) 2026 Kory Heard
  *
  * libservice private-lookup registration fail-soft decision
- * (docs/capability-ambient-lookup-per-process.md, P2).
+ * (docs/book/src/plane/discovery-and-lookup.md, P2).
  *
  * On first ambient use a process tries to register a private lookup channel;
  * these cases pin the pure fail-soft decision (service_ambient_reg_decide,

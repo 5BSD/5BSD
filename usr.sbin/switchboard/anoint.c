@@ -3,7 +3,7 @@
  *
  * Copyright (c) 2026 Kory Heard
  *
- * IPC anointments, v1 (docs/ipc-anointments-design.md).
+ * IPC anointments, v1 (docs/book/src/plane/anointments.md).
  *
  * An endpoint may declare, in its bundle's policy file, the anointment names a
  * connecting program must hold (all of them).  A unit declares what it holds

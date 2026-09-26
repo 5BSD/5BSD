@@ -90,7 +90,7 @@ void	logcmp_store_set_retention(struct logcmp_store *, uint64_t, uint64_t);
 int	logcmp_store_enforce_retention(struct logcmp_store *);
 
 /*
- * Involuntary capability cleanup (docs/capability-lifecycle-cleanup.md).  When a
+ * Involuntary capability cleanup (docs/book/src/plane/containers-and-storage.md).  When a
  * consumer bundle's label is retired, drop that label's records from the store.
  *
  * Mechanism: a durable per-label reclaim *high-water mark* (an install epoch

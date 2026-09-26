@@ -12,7 +12,7 @@ enforcement state does, and the honest status: compiled in, wired up, and
 not yet enforcing on any shipped image.
 
 Reference: veriexec(8), veriexec(4), mac_veriexec(4). Design:
-`docs/ipc-anointments-design.md` ("Later, separately" and step 1).
+`docs/book/src/plane/anointments.md` ("Later, separately" and step 1).
 
 ## Declaration is the grant
 
@@ -163,7 +163,7 @@ wants verified execution now can build the manifest from
 the gate-minting comment in `execute.c` describes exactly what it buys: a
 unit's gate set becomes what its verified bundle declares and cannot be
 tampered into requesting more. The hardening plan in
-`docs/security/5bsd-platform-hardening-plan.md` places this under its
+`docs/book/src/compat/bsd-side.md` places this under its
 Protected and Locked modes; shipped images are in Compatible mode.
 
 ## Relation to the other policies

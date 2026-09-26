@@ -553,7 +553,7 @@ ATF_TC_BODY(timers_and_pending_request, tc)
 }
 
 /*
- * Tier authorization (docs/ipc-anointments-design.md rows B1-B6).  The
+ * Tier authorization (docs/book/src/plane/anointments.md rows B1-B6).  The
  * decision point is router_session_authorized(): the session's tier picked
  * its policy at admission via notify_policy_db_select(), and ADMIN rights
  * bypass policy on either tier.  Positive rows are also pushed through

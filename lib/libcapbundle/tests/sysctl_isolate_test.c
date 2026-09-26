@@ -4,7 +4,7 @@
  * Copyright (c) 2026 Kory Heard
  *
  * Manifest parsing coverage for the per-OID sysctl isolation set
- * (docs/capability-sysctl-isolation.md, Phase 2): capabilities.isolate.
+ * (docs/book/src/capability/system-gates.md, Phase 2): capabilities.isolate.
  * Exercises capbundle_parse_unit_ucl() and capbundle_svc_fill_manifest() at
  * their boundaries — no daemon or capability kernel required.
  */

@@ -19,7 +19,7 @@ This chapter says what is in scope, how the table is counted, which feature grou
 | STUB-reject | a hand-written handler that only rejects requests (`seccomp`) | 1 |
 | UNIMPL-ancient | deliberately absent: removed from Linux long ago or x86-64 relics (`uselib`, `create_module`, `epoll_ctl_old`, ...) | 15 |
 
-Slot 472 is `fchroot`, the last named entry. The option-level audit in `docs/linuxulator-option-review.md` is done against the Linux 7.3 uapi headers, and the reference guests used to check behaviour are Linux 6.18.35 and 7.1.5. Two cautions apply to every number in this Part. A handler being present is not evidence that every flag of that call works; the option review tracks flags individually with its own vocabulary (mapped, no-op-hint, rejected-correctly, rejected-unimplementable, BUG, GAP). And the counts describe dispatch, not conformance.
+Slot 472 is `fchroot`, the last named entry. The option-level audit in `docs/book/src/compat/linux/syscalls.md` is done against the Linux 7.3 uapi headers, and the reference guests used to check behaviour are Linux 6.18.35 and 7.1.5. Two cautions apply to every number in this Part. A handler being present is not evidence that every flag of that call works; the option review tracks flags individually with its own vocabulary (mapped, no-op-hint, rejected-correctly, rejected-unimplementable, BUG, GAP). And the counts describe dispatch, not conformance.
 
 The 36 DUMMY stubs plus `seccomp` plus four partial handlers make the 41-call remaining-work queue in `docs/linuxulator-missing-syscalls-handoff.md`; [System Calls](syscalls.md) lists them.
 
@@ -80,13 +80,13 @@ The userland itself (`/compat/linux/bin`, `/lib`, `/usr`) is not part of the bas
 
 ## The correctness bar: the QEMU ZFS-root gate
 
-No Linuxulator change counts as done because it compiles, or because a happy-path test passes on the development host. `docs/linuxulator-implementation-gate.md` is the acceptance contract: every syscall, option and shared kernel primitive must have a per-contract record linking it to named positive and negative cases, and those cases must pass inside a disposable amd64 ZFS-root QEMU guest running the exact candidate kernel and modules, with INVARIANTS and WITNESS, on at least two vCPUs, with the same portable cases run against a real Linux reference guest. UFS-root runs are supplemental evidence only; a UFS-root guest fails the gate. The runner (`tools/test/linuxulator/qemu-gate.py`) fails closed: a missing result, a timeout, a recognized kernel diagnostic in the console, a leaked tracked resource (`kern.squeue.live_requests`, wired pages, registered files, issuer tokens must all return to zero) or an unhealthy pool fails the run.
+No Linuxulator change counts as done because it compiles, or because a happy-path test passes on the development host. `docs/book/src/compat/linux/overview.md` is the acceptance contract: every syscall, option and shared kernel primitive must have a per-contract record linking it to named positive and negative cases, and those cases must pass inside a disposable amd64 ZFS-root QEMU guest running the exact candidate kernel and modules, with INVARIANTS and WITNESS, on at least two vCPUs, with the same portable cases run against a real Linux reference guest. UFS-root runs are supplemental evidence only; a UFS-root guest fails the gate. The runner (`tools/test/linuxulator/qemu-gate.py`) fails closed: a missing result, a timeout, a recognized kernel diagnostic in the console, a leaked tracked resource (`kern.squeue.live_requests`, wired pages, registered files, issuer tokens must all return to zero) or an unhealthy pool fails the run.
 
 That discipline is why this Part distinguishes three evidence classes. **Gate-passed** means a named contract passed the full VM matrix and a Linux oracle. **Claimed** means source review or a host-side run only. **Not qualified** means the documents say so explicitly. [Running Real Applications](running-apps.md) sorts the workloads by those classes.
 
 ## What is explicitly not qualified
 
-Electron and Chromium are the named gap. `docs/linuxulator-production-readiness.md` records that no Electron VM execution has been completed, that the Chromium sandbox installs seccomp filters which the committed `linux_seccomp` handler rejects, and that a launch with `--no-sandbox` is a testing switch, not a qualification. Native FreeBSD Electron from Ports is a separate track that does not exercise the Linuxulator. Docker, Steam, systemd and Wine have never been claimed; the namespace, new-mount-API, keyring, BPF and syscall-user-dispatch projects they would need are on the missing-syscalls queue or listed as separate future projects in the implementation gate.
+Electron and Chromium are the named gap. `docs/book/src/compat/linux/overview.md` records that no Electron VM execution has been completed, that the Chromium sandbox installs seccomp filters which the committed `linux_seccomp` handler rejects, and that a launch with `--no-sandbox` is a testing switch, not a qualification. Native FreeBSD Electron from Ports is a separate track that does not exercise the Linuxulator. Docker, Steam, systemd and Wine have never been claimed; the namespace, new-mount-API, keyring, BPF and syscall-user-dispatch projects they would need are on the missing-syscalls queue or listed as separate future projects in the implementation gate.
 
 Status: seccomp and Landlock exist as in-progress working-tree files and are not inventoried or described in this book as shipped; see [Sandboxing and Debugging](sandboxing.md).
 
@@ -95,8 +95,8 @@ Status: seccomp and Landlock exist as in-progress working-tree files and are not
 | Question | Document |
 |---|---|
 | Is syscall N dispatched, and how | `docs/linuxulator-syscall-coverage.md` section 5 |
-| Which flags of an implemented call work | `docs/linuxulator-option-review.md`, `docs/linuxulator-next-phase-options.md` |
+| Which flags of an implemented call work | `docs/book/src/compat/linux/syscalls.md`, `docs/book/src/compat/linux/overview.md` |
 | What is still missing, and who owns it | `docs/linuxulator-missing-syscalls-handoff.md` |
-| The acceptance contract and every batch's evidence | `docs/linuxulator-implementation-gate.md` |
-| Filesystem, procfs, FUSE and discovery batches | `docs/linuxulator-filesystems-handoff.md`, `-remaining-compat.md`, `-compat-next.md`, `-proc-extra.md` |
+| The acceptance contract and every batch's evidence | `docs/book/src/compat/linux/overview.md` |
+| Filesystem, procfs, FUSE and discovery batches | `docs/book/src/compat/linux/procfs-sysfs.md`, `-remaining-compat.md`, `-compat-next.md`, `-proc-extra.md` |
 | Behaviour knobs | linux(4), linprocfs(4), linsysfs(4), squeue(2) |

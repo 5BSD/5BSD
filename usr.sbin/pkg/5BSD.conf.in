@@ -3,7 +3,7 @@
 # the FreeBSD-ports repositories configured in FreeBSD.conf.
 #
 # After building and cataloguing packages, enable a local repository in
-# /usr/local/etc/pkg/repos/5BSD.conf.  See docs/pkgbase-install.md and
+# /usr/local/etc/pkg/repos/5BSD.conf.  See docs/book/src/operations/upgrading.md and
 # docs/pkg/5BSD.conf.sample in the source tree.  Keep this entry disabled
 # until its URL points to an existing repository.
 5BSD-base: {

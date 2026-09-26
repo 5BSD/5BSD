@@ -5,7 +5,7 @@
  *
  * reclaimstat -- show what each capability provider is managing.
  *
- * Every reconcile client (docs/capability-container-model.md) records, after
+ * Every reconcile client (docs/book/src/plane/containers-and-storage.md) records, after
  * each pass, the set of bundles whose resources it currently holds -- plus the
  * pass's counts -- to /var/run/reclaim/<provider> via libcapreclaim.  This
  * reads those records and prints, per provider, what it manages and how its

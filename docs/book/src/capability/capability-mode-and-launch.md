@@ -112,7 +112,7 @@ without a kernel change by having switchboard exec the static rtld with
 `-f <fd>`; it worked, but every unit then appeared as `ld-elf.so.1` to
 top(1), ps(1), pgrep(1), audit and core naming, and the kernel's exec-time
 veriexec check never saw the program. That is why the narrow kernel rule
-was chosen (`docs/capmode-launch-and-casper-removal-plan.md` records the
+was chosen (`docs/book/src/capability/capability-mode-and-launch.md` records the
 decision): because the kernel executes the program itself, the process
 carries the program's own `p_comm` and `AT_EXECPATH`, and
 [Verified Execution](veriexec.md) sees the real image.
@@ -147,7 +147,7 @@ delivered descriptor. There is no "before `cap_enter`" in a native unit.
 Units that need privileged primitives get them as held gate tokens
 (BSDTime, BSDSysctl, BSDExtension, BSDNamespace, BSDPower) rather than by
 running un-sandboxed; the plan in
-`docs/capmode-launch-and-casper-removal-plan.md` is to retire libcasper
+`docs/book/src/capability/capability-mode-and-launch.md` is to retire libcasper
 from daemons on the same principle, by concentrating privilege in the
 system providers. That retirement is the plan's end state, not its current
 one: `lib/libcasper` is still in the tree and still used outside the plane.

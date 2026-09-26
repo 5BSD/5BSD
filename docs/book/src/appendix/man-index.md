@@ -24,7 +24,7 @@ All of these are in `lib/libsys` and ship in `clibs`. The
 `mac_capability_channel_create(2)` syscall (a `SYSCALL_MODULE` whose number
 is assigned at load) has no page of its own; the wrapper is
 `lib/libchannel/channel_syscall.c` and
-`docs/capability-ambient-lookup-per-process.md` describes it.
+`docs/book/src/plane/discovery-and-lookup.md` describes it.
 
 | Page | Description | Also documents |
 |---|---|---|

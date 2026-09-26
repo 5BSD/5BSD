@@ -20,7 +20,7 @@ user = "capability";
 # capability user — the token, not uid, is the authority; the per-label
 # sysctl.conf ACL bounds what each client may read/write.
 
-# Per-OID sysctl isolation (docs/capability-sysctl-isolation.md, Phase 2).  The
+# Per-OID sysctl isolation (docs/book/src/capability/system-gates.md, Phase 2).  The
 # "sysctl" gate plus a non-empty `isolate` list makes switchboard ask Capsule
 # to mint a SYSCTL token scoped to exactly these OIDs; BSDSysctl authorizes the
 # delivered token and becomes the sole writer outside Capsule of them: any OTHER

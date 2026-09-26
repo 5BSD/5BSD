@@ -33,7 +33,7 @@ enum service_mint_kind authagent_mint_kind_for_grant(
 	    const struct capbundle_principal_grant *grant);
 
 /*
- * ELEVATE (docs/ipc-anointments-design.md "Elevation"), factored into pure
+ * ELEVATE (docs/book/src/plane/anointments.md "Elevation"), factored into pure
  * pieces so every decision is unit-testable without a plane.
  */
 

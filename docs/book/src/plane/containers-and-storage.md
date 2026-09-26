@@ -281,4 +281,4 @@ ledger are gone and must not be relied on.
 
 Reference: `BSDFilesystem(8)`, `tzfs.conf(5)`, `libservice(3)`,
 `capreclaim(3)`, `reclaimstat(8)`, `tzfsctl(8)`. Design:
-`docs/capability-container-model.md`, `docs/bsdfilesystem-design.md`.
+`docs/book/src/plane/containers-and-storage.md`, `docs/bsdfilesystem-design.md`.

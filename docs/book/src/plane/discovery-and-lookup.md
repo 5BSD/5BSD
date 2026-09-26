@@ -11,7 +11,7 @@ global namespace, and because every session channel is unforgeable, so
 a pathname.
 
 The model is recorded in `docs/service-discovery-model.md` and
-`docs/capability-ambient-lookup-per-process.md`; the code is
+`docs/book/src/plane/discovery-and-lookup.md`; the code is
 `usr.sbin/switchboard/naming.c`, `domain.c`, `on_demand.c` and
 `lib/libservice/service_client.c`, `service_ambient.c`.
 
@@ -263,4 +263,4 @@ check.
 
 Reference: switchboard(8) NAMING REGISTRY, switchboard(5) IPC ANOINTMENTS,
 libservice(3), `docs/service-discovery-model.md`,
-`docs/capability-ambient-lookup-per-process.md`.
+`docs/book/src/plane/discovery-and-lookup.md`.

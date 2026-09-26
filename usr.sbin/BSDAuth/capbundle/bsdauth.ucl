@@ -8,7 +8,7 @@ activation { boot = true; ipc = ["system.Auth"]; }
 # label; honored only because this is a base-system bundle.  See svc_proto.c.
 mint_authority = true;
 # Reachable from every login session, not only SYSTEM ones: ELEVATE (the
-# anoint(1) path, docs/ipc-anointments-design.md "Elevation") is sent by a
+# anoint(1) path, docs/book/src/plane/anointments.md "Elevation") is sent by a
 # process on its own session channel, and a default user's channel is USER
 # domain.  This opens ONLY ELEVATE to sessions -- MINT_SESSION stays gated on
 # the held SERVICE_RIGHTS_ADMIN bit, which switchboard stamps only on the

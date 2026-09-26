@@ -6,7 +6,7 @@
 # Tests for capsule's PID 1 lifecycle control operations
 # (CTL_OP_REBOOT/HALT/POWEROFF/POWERCYCLE/SINGLE/REROOT/RESCAN/
 # CATATONIA), the authenticated socket replacement for init(8)'s signal
-# ABI.  See docs/capsule-control-abi-design.md.
+# ABI.  See docs/book/src/plane/capsule.md.
 #
 # These run against the live control socket and exercise only the paths
 # that CANNOT reboot the machine:

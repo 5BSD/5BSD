@@ -459,7 +459,7 @@ cmd_install(const char *bundle_path)
 	 * Publish atomically: the verified staged tree becomes the installed
 	 * bundle by one rename, then an fsync of the install directory.  The
 	 * bundle's presence in /Capabilities is itself the record that it is
-	 * installed (docs/capability-container-model.md).
+	 * installed (docs/book/src/plane/containers-and-storage.md).
 	 */
 	if (rename(stage, dst) == -1) {
 		warn("install: cannot publish %s", dst);

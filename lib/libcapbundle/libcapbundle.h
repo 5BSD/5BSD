@@ -27,7 +27,7 @@
 #define	CAPBUNDLE_MAX_SERVICES		32
 #define	CAPBUNDLE_MAX_PROVIDES		8
 /*
- * IPC anointments (docs/ipc-anointments-design.md).  Per published endpoint,
+ * IPC anointments (docs/book/src/plane/anointments.md).  Per published endpoint,
  * the names a connecting program must hold (all of them); per unit, the names
  * it declares it holds.  CAPBUNDLE_LABEL_MAX bounds one such name and equals
  * SWITCHBOARD_LABEL_MAX (asserted in libcapbundle_internal.h).
@@ -63,7 +63,7 @@ const char	*capbundle_path(const struct capbundle *b);
 const char	*capbundle_name(const struct capbundle *b);  /* dir basename */
 
 /*
- * Group containers (App Groups, docs/capability-container-model.md): the
+ * Group containers (App Groups, docs/book/src/plane/containers-and-storage.md): the
  * Data/Shared/<group>/ containers the bundle declares membership in via
  * Bundle.ucl `groups = ["..."]`.  A group name is a single safe component
  * (letters, digits, '.', '-', '_'; 1..63 chars; no leading '.' or '-').
@@ -216,7 +216,7 @@ bool	capbundle_principal_is_admin_resolved(int policy_fd, uid_t uid,
 	    capbundle_group_gid_fn name2gid, void *ctx);
 
 /*
- * Principal grants (docs/ipc-anointments-design.md, "Domains and sessions").
+ * Principal grants (docs/book/src/plane/anointments.md, "Domains and sessions").
  * What a login session holds, per /Capabilities/Config/principal-policy.ucl:
  *
  *   principals {

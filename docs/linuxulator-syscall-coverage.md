@@ -793,7 +793,7 @@ IOCBs have a qualified readiness, cancellation, fd-lifetime and
 eventfd-publication subset; other read/write flags, positive file-I/O
 cancellation races and full
 lifetime tests remain in the qualification matrix in
-`docs/linuxulator-implementation-gate.md`.  The `io_getevents` and
+`docs/book/src/compat/linux/overview.md`.  The `io_getevents` and
 `io_pgetevents` timeout conversion and signal interruption paths now have
 Linux-reference and amd64 ZFS-root VM coverage, including noncanonical and
 negative timespec values.  Both completion calls and `io_submit` also

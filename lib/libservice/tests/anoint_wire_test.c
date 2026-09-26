@@ -1,7 +1,7 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
- * IPC anointments v1 (docs/ipc-anointments-design.md): wire and identity
+ * IPC anointments v1 (docs/book/src/plane/anointments.md): wire and identity
  * contract between the kernel stamp, libchannel, libservice, switchboard
  * (proto 13) and system.Auth (proto 2).
  *

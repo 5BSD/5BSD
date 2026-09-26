@@ -50,7 +50,7 @@
 #define	CAPSULE_OP_RELOAD		28	/* reload Capsule configuration claims (P4b) */
 
 /*
- * CAPSULE_OP_RELOAD (docs/lifecycle-capability-design.md, P4b): the reloadable
+ * CAPSULE_OP_RELOAD (docs/book/src/plane/capsule.md, P4b): the reloadable
  * half of the capsule control surface, re-homed onto the Capsule channel so
  * capsulectl(8) reaches it through switchboard's ADMIN-gated system.lifecycle
  * capability and the getpeereid socket can be deleted.  Status-only:
@@ -68,7 +68,7 @@
  *          sweep — same ordering as the legacy control-socket path)
  *
  * switchboard relays a lifecycle request it received over its ADMIN-gated
- * system.lifecycle capability (docs/lifecycle-capability-design.md, P4b).
+ * system.lifecycle capability (docs/book/src/plane/capsule.md, P4b).
  * Capsule, which is PID 1, translates lifecycle_op into a state transition
  * via oi_lifecycle_apply() exactly as the control-socket path does.  lifecycle_op
  * is a CTL_OP_* lifecycle opcode (capsule_ctl.h): REBOOT/HALT/POWEROFF/
@@ -202,7 +202,7 @@ struct capsule_service_req {
  * held and reference-counts service ownership before minting.
  *
  * OPTIONAL TRAILING PAYLOAD (per-OID sysctl isolation, Phase 2 —
- * docs/capability-sysctl-isolation.md).  A CAPSULE_OP_MINT_SYSTEM request
+ * docs/book/src/capability/system-gates.md).  A CAPSULE_OP_MINT_SYSTEM request
  * MAY carry an opaque byte payload immediately after the fixed
  * capsule_system_req header; Capsule detects it by
  *     req_len > sizeof(struct capsule_system_req)

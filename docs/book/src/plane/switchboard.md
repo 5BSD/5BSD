@@ -305,6 +305,6 @@ vestigial since manifests carry no dependency key and startup launches every
 boot unit in one tier; and a microsecond-simultaneous burst of eight or more
 first lookups from ambient clients can degrade to the shared channel (fail
 soft, no hang), documented in
-`docs/capability-ambient-lookup-per-process.md`.
+`docs/book/src/plane/discovery-and-lookup.md`.
 
 Reference: switchboard(8), switchboard(5), switchboardctl(8), libservice(3).

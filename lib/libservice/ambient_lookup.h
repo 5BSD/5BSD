@@ -4,7 +4,7 @@
  * Copyright (c) 2026 Kory Heard
  *
  * libservice per-process private-lookup-channel registration decision
- * (docs/capability-ambient-lookup-per-process.md, P2).
+ * (docs/book/src/plane/discovery-and-lookup.md, P2).
  *
  * On first ambient use a process tries to register its OWN private lookup
  * channel with switchboard (create a pair, hand switchboard one end, keep the other),

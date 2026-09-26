@@ -161,7 +161,7 @@ Environment: session runs under Linuxulator/GNU userland; ATF/libatf not install
   from Core 5.2, RFC 4493 and BlueZ — not a reason to treat the feature as
   unwanted. **`S-M3` and the SignKey fixes are straightforwardly correct
   conformance work against the target.** Full write-up:
-  `docs/bluetooth-conformance.md` §6.8.
+  `docs/book/src/providers/bluetooth.md` §6.8.
 - `S-M3` — signed-write CMAC byte-order — SETTLED. Wire MAC = `reverse(T[0..7])` (RFC 4493 MSB truncation, sent LSB-first); pinned by the RFC 4493 Example 2 known-answer vector in `smp_crypto_test:test_smp_verify_signature_rfc4493_kat`, re-derived with OpenSSL CMAC independently of `reference_signature()`. Only a live BlueZ-capture smoke test remains.
 
 **Privacy batch:** `H-H5`, `H-H6`, `H-H7` (peer-RPA resolution + RPA rotation defeated by mesh scan).

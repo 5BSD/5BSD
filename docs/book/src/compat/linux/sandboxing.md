@@ -25,11 +25,11 @@ Debuggers were the first real Linux client the ptrace work was measured against,
 
 | Request | Behaviour | Document |
 |---|---|---|
-| `PTRACE_SEIZE` | attach without stopping and without an initial wait status; options installed atomically with the attach; `PTRACE_O_TRACEEXIT` reports an exit that happens immediately after the seize | `docs/linuxulator-ptrace-seize.md` |
-| `PTRACE_INTERRUPT` | a signal-free `PTRACE_EVENT_STOP` on a seized tracee; remembered if the tracee is already stopped; `EIO` on a plain `ATTACH` relationship | `docs/linuxulator-ptrace-interrupt.md` |
-| `PTRACE_LISTEN` | wait in a group stop for a state change or an interrupt without resuming; the full SIGSTOP, group-stop and SIGCONT sequence matches the Linux 6.18.35 and 7.1.5 oracles | `docs/linuxulator-ptrace-listen.md` |
-| `GETREGSET`/`SETREGSET` | `NT_PRSTATUS` (216-byte record, prefix writes commit in order), `NT_PRFPREG` (512-byte FXSAVE, complete writes only), `NT_X86_XSTATE` read and write, `NT_386_IOPERM` read of the 8 KiB bitmap; unknown notes `EINVAL`; no XSAVE reports `ENODEV` | `docs/linuxulator-ptrace-registers.md`, `-xstate-mcast-options.md` |
-| `PEEKUSER`/`POKEUSER` | the 27 general-register words with native 64-bit CS and SS translated to Linux selectors; DR0 to DR3, DR6, DR7 with validation before mutation; live hardware watchpoints; children start without inherited breakpoints | `docs/linuxulator-ptrace-debugger-options.md` |
+| `PTRACE_SEIZE` | attach without stopping and without an initial wait status; options installed atomically with the attach; `PTRACE_O_TRACEEXIT` reports an exit that happens immediately after the seize | `docs/book/src/compat/linux/sandboxing.md` |
+| `PTRACE_INTERRUPT` | a signal-free `PTRACE_EVENT_STOP` on a seized tracee; remembered if the tracee is already stopped; `EIO` on a plain `ATTACH` relationship | `docs/book/src/compat/linux/sandboxing.md` |
+| `PTRACE_LISTEN` | wait in a group stop for a state change or an interrupt without resuming; the full SIGSTOP, group-stop and SIGCONT sequence matches the Linux 6.18.35 and 7.1.5 oracles | `docs/book/src/compat/linux/sandboxing.md` |
+| `GETREGSET`/`SETREGSET` | `NT_PRSTATUS` (216-byte record, prefix writes commit in order), `NT_PRFPREG` (512-byte FXSAVE, complete writes only), `NT_X86_XSTATE` read and write, `NT_386_IOPERM` read of the 8 KiB bitmap; unknown notes `EINVAL`; no XSAVE reports `ENODEV` | `docs/book/src/compat/linux/sandboxing.md`, `-xstate-mcast-options.md` |
+| `PEEKUSER`/`POKEUSER` | the 27 general-register words with native 64-bit CS and SS translated to Linux selectors; DR0 to DR3, DR6, DR7 with validation before mutation; live hardware watchpoints; children start without inherited breakpoints | `docs/book/src/compat/linux/sandboxing.md` |
 | `ARCH_PRCTL`, `GET_RSEQ_CONFIGURATION`, `GETSIGMASK`/`SETSIGMASK`, `PEEKSIGINFO` | FS and GS bases, the rseq registration record, Linux-numbered masks with SIGKILL and SIGSTOP removed | same |
 | SIGKILL of a traced Linux64 process | terminates without the debugger resuming it (a sysent-vector flag selects this; native behaviour is unchanged) | same |
 

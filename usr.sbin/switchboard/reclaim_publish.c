@@ -7,7 +7,7 @@
  *
  * Cleanup of per-capability storage is a reconcile, never an event: a provider
  * compares the containers it holds (Data/<bundle>/) against the live set and
- * reaps the rest (docs/capability-container-model.md).  The live set is
+ * reaps the rest (docs/book/src/plane/containers-and-storage.md).  The live set is
  * installed OR running.  "Installed" needs no help from switchboard -- it is the
  * pkg-owned System/ and Apps/ directories, which the provider reads directly.
  * "Running" is switchboard's to express: this writes one marker per running
@@ -192,7 +192,7 @@ svc_reclaim_publish_live(void)
  * Publish the installed-claimed group containers as Run/groups/<group>
  * markers: one per group any INSTALLED bundle declares in its Bundle.ucl
  * `groups`.  This is the live view bsdfilesystem's group reconcile compares
- * Data/Shared/<group>/ against (docs/capability-container-model.md: a group
+ * Data/Shared/<group>/ against (docs/book/src/plane/containers-and-storage.md: a group
  * container is an orphan only when no installed bundle still claims it).
  * Installed, not running: membership is an install-time property.
  */

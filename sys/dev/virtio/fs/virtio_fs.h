@@ -40,7 +40,7 @@
 /*
  * Device-specific feature bits.  Only VIRTIO_FS_F_NOTIFICATION is defined by
  * the device; the first driver slice does NOT negotiate it (see the design
- * plan, docs/waspnest-virtio-fs-5bsd-driver-plan.md).  DAX, packed rings,
+ * plan, docs/book/src/compat/virtual-machines.md).  DAX, packed rings,
  * queue reset and suspend are transport/common features negotiated (or not)
  * elsewhere and are likewise out of scope for this slice.
  */

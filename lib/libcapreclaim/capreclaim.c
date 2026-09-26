@@ -3,7 +3,7 @@
  * Copyright (c) 2026 Kory Heard
  *
  * libcapreclaim implementation.  See capreclaim.h and
- * docs/capability-container-model.md.
+ * docs/book/src/plane/containers-and-storage.md.
  */
 #include <sys/param.h>
 #include <sys/types.h>

@@ -60,7 +60,7 @@ container
 through
 .Xr service_storage_open_group 3 ;
 the container is reaped only when no installed bundle claims the group
-(docs/capability-container-model.md).
+(docs/book/src/plane/containers-and-storage.md).
 A name is a single safe component: letters, digits,
 .Ql \&. ,
 .Ql - ,
@@ -543,7 +543,7 @@ sole writer of exactly those OIDs outside
 any other process's direct
 .Xr sysctl 3
 write to an isolated OID is denied by the kernel and must go through the broker
-.Pq docs/capability-sysctl-isolation.md .
+.Pq docs/book/src/capability/system-gates.md .
 A
 .Dq sysctl
 gate is delegated only in this scoped form: a bare

@@ -23,7 +23,7 @@ int	capsule_set_ambient_lookup(int fd);
 
 /*
  * Apply a system lifecycle transition requested over the capability plane
- * (docs/lifecycle-capability-design.md, P4b).  op is a CTL_OP_* lifecycle
+ * (docs/book/src/plane/capsule.md, P4b).  op is a CTL_OP_* lifecycle
  * opcode.  Returns 0 when applied, EPERM when Capsule is not PID 1.
  */
 int	capsule_lifecycle(int op);

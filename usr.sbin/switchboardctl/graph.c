@@ -4,7 +4,7 @@
  * Copyright (c) 2026 Kory Heard
  *
  * switchboardctl graph: draw the IPC anointment reach graph from the bundle
- * registry on disk (docs/ipc-anointments-design.md, "Graph tool").  No
+ * registry on disk (docs/book/src/plane/anointments.md, "Graph tool").  No
  * running plane is consulted.  Nodes are every unit plus the two session
  * classes the principal policy defines; an edge exists where the consumer's
  * anointment set covers the endpoint's `requires`, or the endpoint is open.

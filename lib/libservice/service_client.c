@@ -1296,7 +1296,7 @@ service_connect_ambient(const char *name, int *session_fdp)
 	}
 	/*
 	 * Resolve over this process's PRIVATE lookup channel — registered lazily
-	 * on first use and memoized (docs/capability-ambient-lookup-per-process.md
+	 * on first use and memoized (docs/book/src/plane/discovery-and-lookup.md
 	 * P2) — so replies land only in this process's own queue and never race a
 	 * sibling on the shared discovery endpoint.  Fail-soft: if registration
 	 * was unavailable this returns the inherited shared fd, exactly as before.
@@ -1427,7 +1427,7 @@ service_mint_session_via_agent(int lookup_chan, uid_t uid, uint32_t flags,
 }
 
 /*
- * Authenticated session mint (docs/ipc-anointments-design.md, the non-admin
+ * Authenticated session mint (docs/book/src/plane/anointments.md, the non-admin
  * `su` case).  service_mint_session_via_agent() works only when switchboard
  * stamped SERVICE_RIGHTS_ADMIN on the caller's channel -- the login family on
  * a full-discovery channel.  A su from an ordinary, non-admin session has no
@@ -1540,7 +1540,7 @@ service_mint_session_authenticated(int lookup_chan, uid_t uid,
 }
 
 /*
- * Elevation (docs/ipc-anointments-design.md).  Ask system.Auth, reached
+ * Elevation (docs/book/src/plane/anointments.md).  Ask system.Auth, reached
  * over the caller's own ambient lookup channel, for a session channel holding
  * the caller's current anointment set plus `name`.  The agent identifies the
  * caller by the kernel stamp on the request (uid, session nonce), never by

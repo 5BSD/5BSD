@@ -281,6 +281,6 @@ own event class is a source change to `auditcmp_policy.c` and
 Reference: BSDLog(8), liblogcmp(3), logctl(8), BSDAudit(8),
 libauditcmp(3), BSDTrace(8), libtracecmp(3), tracectl(8),
 dtrace_fdopen(3), audit(4), praudit(1). Design:
-`docs/logcmp-unified-logging-design.md`. Related: [system.Log](../providers/log.md),
+`docs/book/src/providers/log.md`. Related: [system.Log](../providers/log.md),
 [system.Audit](../providers/audit.md), [system.Trace](../providers/trace.md),
 [Containers and Storage](containers-and-storage.md).

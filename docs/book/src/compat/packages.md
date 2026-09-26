@@ -68,7 +68,7 @@ FreeBSD-base: { enabled: no }
 
 ## Building and upgrading
 
-The loop from source to an upgraded machine, from `docs/pkgbase-install.md`:
+The loop from source to an upgraded machine, from `docs/book/src/operations/upgrading.md`:
 
 ```sh
 cd /usr/src

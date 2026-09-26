@@ -119,7 +119,7 @@ The `kern_*_gated()` entry points (`kern_jail_set_gated`, `kern_kldload_gated`, 
 
 ## Hardening defaults
 
-Three things were taken from HardenedBSD, deliberately few. `BIND_NOW` is on by default in `share/mk/bsd.opts.mk`, so every binary is linked with `DF_BIND_NOW` and gets full RELRO; `WITHOUT_BIND_NOW` in src.conf(5) turns it off. jail(8) allocates its configuration strings with `calloc` and `recallocarray` instead of `malloc` and `realloc` (`usr.sbin/jail/config.c`, `jail.c`), and `usr.sbin/jail/tests/jail_config_test.sh` grows strings across allocation size classes to prove it. Three defensive driver and tool fixes (logger(1) hostname buffer, qlnxe allocation, mrsas DCMD leak) came with them. PaX, ASLR hardening, SEGVGUARD and TPE were not imported; `docs/security/hardenedbsd-import.md` records the triage.
+Three things were taken from HardenedBSD, deliberately few. `BIND_NOW` is on by default in `share/mk/bsd.opts.mk`, so every binary is linked with `DF_BIND_NOW` and gets full RELRO; `WITHOUT_BIND_NOW` in src.conf(5) turns it off. jail(8) allocates its configuration strings with `calloc` and `recallocarray` instead of `malloc` and `realloc` (`usr.sbin/jail/config.c`, `jail.c`), and `usr.sbin/jail/tests/jail_config_test.sh` grows strings across allocation size classes to prove it. Three defensive driver and tool fixes (logger(1) hostname buffer, qlnxe allocation, mrsas DCMD leak) came with them. PaX, ASLR hardening, SEGVGUARD and TPE were not imported; `docs/book/src/compat/bsd-side.md` records the triage.
 
 ## Tools that learned new descriptor types
 

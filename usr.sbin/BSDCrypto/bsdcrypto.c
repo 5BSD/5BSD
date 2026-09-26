@@ -555,7 +555,7 @@ bsdcrypto_test_serve(int fd, const char *owner_label)
 #ifndef BSDCRYPTO_TESTING
 
 /*
- * Container-model key reclaim (docs/capability-container-model.md, keys in the
+ * Container-model key reclaim (docs/book/src/plane/containers-and-storage.md, keys in the
  * kernel).  Named keys are owned by the connecting unit's bundle; a forked
  * reconcile child compares the keystore's owners against the installed bundles
  * (System/, Apps/) and drops the keys of any bundle that is gone.

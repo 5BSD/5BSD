@@ -230,7 +230,7 @@ struct blued_persist_accept_entry {
  * Ownership sidecar of the runtime GATT server DB (container model): one
  * record per runtime service registered by a plane client, attributing the
  * service's handle range to the client's bundle so it can be reclaimed once
- * the bundle is uninstalled (docs/capability-container-model.md).  The
+ * the bundle is uninstalled (docs/book/src/plane/containers-and-storage.md).  The
  * uuid pins the record to the declaration it was written for: handles at the
  * tail of the DB are reused, so a record whose start handle no longer holds
  * that declaration is stale and dropped.  Services registered over the

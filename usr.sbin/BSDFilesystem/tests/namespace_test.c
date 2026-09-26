@@ -645,7 +645,7 @@ ATF_TC_BODY(destroy_tree_rejects_malformed_relnames, tc)
 }
 
 /*
- * Container scopes (docs/capability-container-model.md): UNIT is the private
+ * Container scopes (docs/book/src/plane/containers-and-storage.md): UNIT is the private
  * container, SHARED the bundle's shared one, GROUP a cross-bundle container the
  * caller's bundle must be a stamped member of.  A bundleless client has none,
  * and a group name is validated as a single safe component even when listed.

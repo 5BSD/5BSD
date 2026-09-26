@@ -258,7 +258,7 @@ capsule_mint_system(int channel_fd, uint32_t gates)
 
 /*
  * Mint a system gate token carrying an optional opaque OID-set payload
- * (docs/capability-sysctl-isolation.md, Phase 2).  The payload — a marshalled
+ * (docs/book/src/capability/system-gates.md, Phase 2).  The payload — a marshalled
  * sys_sysctl_oidset built by the caller (execute.c) from the manifest isolate
  * list — is appended verbatim after the fixed capsule_system_req header; the
  * Capsule relays it into a scoped kernel SYS_OP_CLAIM without interpreting it.

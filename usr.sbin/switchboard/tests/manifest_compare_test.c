@@ -114,7 +114,7 @@ ATF_TC_BODY(sysctl_isolate_changes, tc)
 }
 
 /*
- * IPC anointments (docs/ipc-anointments-design.md): per-endpoint `requires`
+ * IPC anointments (docs/book/src/plane/anointments.md): per-endpoint `requires`
  * and the unit's own `anointments` are reach policy, so any change -- a
  * name, a count, or (DOCUMENTED) merely the order of the same names -- must
  * compare unequal so reload restarts the unit with the new policy.  Unused

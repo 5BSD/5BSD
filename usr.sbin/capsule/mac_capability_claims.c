@@ -33,7 +33,7 @@
 #include "mac_capability_priv.h"
 
 /*
- * Per-OID sysctl isolation (docs/capability-sysctl-isolation.md, Phase 2):
+ * Per-OID sysctl isolation (docs/book/src/capability/system-gates.md, Phase 2):
  * the standing scoped SYS_GATE_SYSCTL claim's dedicated connection and its
  * independent reference count.  Kept on a connection SEPARATE from the coarse
  * mac_capability_system_fd so the kernel's per-connection claim bookkeeping
@@ -295,7 +295,7 @@ apply_integrity(void)
 
 	/*
 	 * The CP_SF_SIGNAL shield is UNCONDITIONAL, including when Capsule is
-	 * PID 1 (docs/lifecycle-capability-design.md, P4b).  Lifecycle/status/
+	 * PID 1 (docs/book/src/plane/capsule.md, P4b).  Lifecycle/status/
 	 * reload are reached through capsulectl(8) over switchboard's capability
 	 * plane, and reboot(8)/shutdown(8)/halt(8) delegate to it (falling back to
 	 * reboot(2), the kernel escape) rather than signalling init.  Nothing

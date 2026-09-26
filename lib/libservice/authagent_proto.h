@@ -8,7 +8,7 @@
  * A login program (login/su/sshd), after authenticating a principal, asks the
  * auth-agent to mint that session's capability bundle.  The auth-agent holds the
  * principal->bundle policy and the mint authority; the login program holds only
- * a channel to system.Auth.  See docs/auth-agent-design.md.
+ * a channel to system.Auth.  See docs/book/src/providers/auth.md.
  */
 #ifndef	AUTHAGENTD_PROTO_H
 #define	AUTHAGENTD_PROTO_H
@@ -18,7 +18,7 @@
 
 #define	AUTHAGENTD_NAME			"system.Auth"
 /*
- * v2: AUTHAGENT_OP_ELEVATE (docs/ipc-anointments-design.md "Elevation").
+ * v2: AUTHAGENT_OP_ELEVATE (docs/book/src/plane/anointments.md "Elevation").
  * v3: AUTHAGENT_OP_MINT_AUTH -- a non-admin caller (an ordinary session's
  *     su) mints another principal's session by proving that principal's
  *     password, instead of holding SERVICE_RIGHTS_ADMIN.

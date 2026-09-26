@@ -11,7 +11,7 @@ every one of those operations. OES follows the client and event model of
 Apple's Endpoint Security API; the resemblance is behavioural, not a
 compatibility claim, and the events are native FreeBSD operations.
 
-Reference: oes(4), liboes(3), oeslogger(8), `docs/security/oes-endpoint-security.md`.
+Reference: oes(4), liboes(3), oeslogger(8), `docs/book/src/capability/oes.md`.
 Source: `sys/security/oes/` (seven files, the hook table in `oes_mac.c`),
 `lib/liboes/`, `usr.sbin/oeslogger/`, examples in `share/examples/oes/`.
 
@@ -281,7 +281,7 @@ assertion (an earlier version did not, and that was fixed).
 
 Open: a live kyua qualification of the whole suite on a VM, together with
 KASAN and KUBSAN runs and the DTrace scripts, is recorded as pending in
-`docs/security/oes-endpoint-security.md`. Apple's `KILL` deadline-miss mode,
+`docs/book/src/capability/oes.md`. Apple's `KILL` deadline-miss mode,
 exec entitlements and code-signing fields are not implemented; 5BSD has no
 signing authority yet, and opening `/dev/oes` is gated by device permission
 rather than an entitlement. Bootstrap, XPC and TCC events have no truthful

@@ -35,15 +35,15 @@
  * capability daemons are always built and run together (never mixed versions):
  * a bump is a hard "rebuild every peer" marker, not a negotiated compatibility
  * knob.  v10 added SVC_OP_REGISTER_LOOKUP (per-process private lookup channels,
- * docs/capability-ambient-lookup-per-process.md P2).  v13 added IPC
- * anointments (docs/ipc-anointments-design.md): client_nonce/client_abi in
+ * docs/book/src/plane/discovery-and-lookup.md P2).  v13 added IPC
+ * anointments (docs/book/src/plane/anointments.md): client_nonce/client_abi in
  * svc_new_client_msg and the anointment set in svc_mint_domain_req.
  */
 #define	SWITCHBOARD_SVC_PROTO_VERSION	15
 #define	SVC_GROUPS_MAX			4	/* group containers per bundle */
 
 /*
- * Anointments (docs/ipc-anointments-design.md).  A name is a reverse-domain
+ * Anointments (docs/book/src/plane/anointments.md).  A name is a reverse-domain
  * string, at most SVC_ANOINT_NAME_MAX - 1 characters plus NUL, the same bound
  * as a bundle label (svc_new_client_msg.client_label).  A single principal or
  * unit carries at most SVC_ANOINT_MAX names on the wire.
@@ -187,7 +187,7 @@ struct svc_heartbeat_req {
 #define	SVC_MINT_FLAG_RESEND	0x1U
 
 /*
- * Anointment set carried on a mint (docs/ipc-anointments-design.md,
+ * Anointment set carried on a mint (docs/book/src/plane/anointments.md,
  * "Domains and sessions").  The minted session channel records the set;
  * naming_lookup() matches it against each endpoint's per-endpoint `requires`
  * after the existing domain check, and refuses (masked to ENOENT) when the
@@ -252,7 +252,7 @@ struct svc_ambient_hello_reply {
 };
 
 /*
- * SVC_OP_REGISTER_LOOKUP  (docs/capability-ambient-lookup-per-process.md, P2)
+ * SVC_OP_REGISTER_LOOKUP  (docs/book/src/plane/discovery-and-lookup.md, P2)
  *   req:  svc_register_lookup_req { .op = SVC_OP_REGISTER_LOOKUP, .flags = 0 }
  *         + EXACTLY ONE descriptor: one endpoint of a self-owned
  *           mac_capability channel pair the caller created with
@@ -458,7 +458,7 @@ struct svc_new_client_msg {
 	char		resource_owner[64];
 	uint8_t		generation[16];
 	/*
-	 * v13 identity (docs/ipc-anointments-design.md "Switchboard").  The
+	 * v13 identity (docs/book/src/plane/anointments.md "Switchboard").  The
 	 * label above is the persistent identity; the nonce is the running
 	 * instance — the kernel's per-exec program nonce taken from the stamp
 	 * on the lookup request.  client_abi is SVC_CLIENT_ABI_* from the same
@@ -468,7 +468,7 @@ struct svc_new_client_msg {
 	uint8_t		client_abi;
 	uint8_t		reserved8[7];	/* must be 0 */
 	/*
-	 * Container-model identity (docs/capability-container-model.md): the
+	 * Container-model identity (docs/book/src/plane/containers-and-storage.md): the
 	 * installed bundle the connecting unit belongs to, so a storage provider
 	 * can root the unit's data in its per-bundle container Data/<bundle>/ and
 	 * reclaim it by comparing against the installed bundle set.  Empty for a

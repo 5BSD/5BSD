@@ -3,7 +3,7 @@
  *
  * Copyright (c) 2026 Kory Heard
  *
- * bsdextension's reconcile client (docs/capability-container-model.md "Cleanup"):
+ * bsdextension's reconcile client (docs/book/src/plane/containers-and-storage.md "Cleanup"):
  * a kernel module loaded on a bundle's behalf stays loaded after the bundle
  * is uninstalled, with nothing attributing it.  bsdextension keeps a module ->
  * bundle map, written by the worker that served the ENSURE from the stamped

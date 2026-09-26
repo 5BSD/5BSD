@@ -82,7 +82,7 @@ directories therefore come from `DIRS=` in the bundle's own Makefile.
 METALOG records a `type=dir` line with that tag, and the plist gets
 `@dir(root,wheel,0755,) /Capabilities/System/Log.cap` and its children.
 
-This is a rule, not a convenience. `docs/capability-container-model.md`
+This is a rule, not a convenience. `docs/book/src/plane/containers-and-storage.md`
 states it: a package must own its bundle directories so that removing the
 package removes the directory and not only the files. The folder watch
 reacts to the bundle directory disappearing; a package that leaves an empty
@@ -241,7 +241,7 @@ moved from `System/` to `Apps/` with no reload) and `upgradeflow.sh` (same
 
 There is no remote base repository; `usr.sbin/pkg/5BSD.conf.in` ships the
 `5BSD-base` entry disabled with a comment saying so. The loop from
-`docs/pkgbase-install.md` is:
+`docs/book/src/operations/upgrading.md` is:
 
 ```sh
 cd /usr/src

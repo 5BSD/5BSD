@@ -3,7 +3,7 @@
  *
  * Copyright (c) 2026 Kory Heard
  *
- * IPC anointments in a bundle's policy file (docs/ipc-anointments-design.md):
+ * IPC anointments in a bundle's policy file (docs/book/src/plane/anointments.md):
  * the object form of activation.ipc entries ({ name; requires }) and the
  * top-level `anointments` key.  Exercises capbundle_parse_unit_ucl() at the
  * parser boundary plus the accessors and svc_manifest conversion -- no daemon

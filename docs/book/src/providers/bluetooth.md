@@ -231,7 +231,7 @@ emulator or ng_hci_virt(4).
 
 Shipped in the tree, never released: BSDBluetooth.8 and the inventory both
 say the IPC and persistence formats are unstable. Conformance numbers come
-from `docs/bluetooth-conformance.md` (assessment dated 2026-09-08,
+from `docs/book/src/providers/bluetooth.md` (assessment dated 2026-09-08,
 reproducible with `spec_conf_generate.sh`) and carry caveats: the stack
 targets Bluetooth 5.2 plus Connection Subrating, measured against the Core
 6.3 text; of 2013 applicable normative sentences, 834 (41.4%) have

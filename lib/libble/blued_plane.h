@@ -11,7 +11,7 @@
  * control protocol (ipc_proto.h).  blued keeps the other end as a control
  * client that knows which bundle it serves, so the GATT services that client
  * registers are attributed to the bundle and reclaimed once it is gone
- * (docs/capability-container-model.md).
+ * (docs/book/src/plane/containers-and-storage.md).
  *
  * Private, shared source contract between libble and blued -- not installed.
  */

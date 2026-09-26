@@ -3,7 +3,7 @@
 #
 # Copyright (c) 2026 Kory Heard
 #
-# Live-plane elevation tests (docs/ipc-anointments-design.md, scenarios S6,
+# Live-plane elevation tests (docs/book/src/plane/anointments.md, scenarios S6,
 # P3-P5, P9, E1, E3, E6): drive anoint(1) against the running
 # system.auth from a login session.  The success paths need a live
 # switchboard to mint session-set-plus-one, so they are integration tests

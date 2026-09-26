@@ -3,7 +3,7 @@
  *
  * Copyright (c) 2026 Kory Heard
  *
- * ELEVATE (docs/ipc-anointments-design.md "Elevation"), unit-tested through
+ * ELEVATE (docs/book/src/plane/anointments.md "Elevation"), unit-tested through
  * the pure pieces the daemon factored out of handle_elevate(): the session
  * label gate (E5), the name validator, the may_elevate policy check (S6, P5,
  * P9), in-agent password verification against a master.passwd snapshot (P3,

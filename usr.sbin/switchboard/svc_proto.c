@@ -578,7 +578,7 @@ handle_mint_domain(struct svc_runtime *svc, struct channel_message *request)
 	req = channel_message_data(request);
 	/*
 	 * Validate flags and the carried anointment set together
-	 * (docs/ipc-anointments-design.md, "Domains and sessions"): only
+	 * (docs/book/src/plane/anointments.md, "Domains and sessions"): only
 	 * RESEND / ANOINT_ALL / ADMIN_RIGHTS are known, the count is bounded,
 	 * every name is NUL-terminated and non-empty, and "*" is refused as a
 	 * name (it travels as the ANOINT_ALL flag).  The set is what the auth
@@ -594,7 +594,7 @@ handle_mint_domain(struct svc_runtime *svc, struct channel_message *request)
 	 * CAP_XFER_UNLIMITED, skipping the CAP_XFER_ONCE attenuation) so a broker
 	 * that forwards it over one more SCM_RIGHTS hop before it is installed —
 	 * the auth-agent minting a session for a login program — is not left
-	 * holding an exhausted descriptor.  See docs/auth-agent-design.md.
+	 * holding an exhausted descriptor.  See docs/book/src/providers/auth.md.
 	 */
 	resend = (req->flags & SVC_MINT_FLAG_RESEND) != 0;
 	/*

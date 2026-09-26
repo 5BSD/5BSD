@@ -12,7 +12,7 @@ the suites with the command that runs them.
 
 The tree also records testing mandates in its design documents, and they are
 enforced by the runners rather than left as advice. The one to carry around
-is from `docs/capability-components-validation.md`: a skipped privileged test
+is from `docs/book/src/develop/testing.md`: a skipped privileged test
 is not a pass.
 
 ## Four execution tiers
@@ -180,7 +180,7 @@ fails the case, and the run stops at the first failure to avoid contaminated
 results.
 
 The rules those tests follow are written down in
-`docs/capability-daemon-test-suite.md`. The test owns every process it starts
+`docs/book/src/develop/testing.md`. The test owns every process it starts
 and stops its stack before passing; `pkill -f`, `killall` and PID guesses are
 forbidden; readiness is event-driven with a monotonic deadline, never a fixed
 sleep; fixtures are built with the tree, not compiled from heredocs at run
@@ -229,7 +229,7 @@ device.
 ## The QEMU gates
 
 Some subsystems are never considered tested on the host. The Linuxulator
-gate, `docs/linuxulator-implementation-gate.md`, is explicit: "QEMU is the
+gate, `docs/book/src/compat/linux/overview.md`, is explicit: "QEMU is the
 correctness gate", the host only builds artifacts and runs QEMU, and every
 supplied image must boot from ZFS; a UFS-root run fails. The runner is
 
@@ -366,15 +366,15 @@ shell tests, or in the Kyuafile.
 ## The mandates
 
 The design documents state what a suite must contain, and the wording is
-worth knowing because reviewers apply it. `docs/linuxulator-option-review.md`
+worth knowing because reviewers apply it. `docs/book/src/compat/linux/syscalls.md`
 sets the target as a conformance suite where every row has at least one
 positive and one negative check, plus adversarial, stress and lifecycle
-coverage. `docs/linuxulator-implementation-gate.md` adds that tests assert
+coverage. `docs/book/src/compat/linux/overview.md` adds that tests assert
 semantics rather than duplicate implementation branches (an OFD lock test
 proves an unrelated close does not release the lock; a seal test attempts the
 prohibited write), that a library's fallback must not be mistaken for use of
 the new feature, and that infrastructure errors fail the gate.
-`docs/capability-daemon-test-suite.md` states the objective for the plane:
+`docs/book/src/develop/testing.md` states the objective for the plane:
 the suite must show that authority is created, confined, transferred, used,
 revoked and recovered correctly under success, denial, concurrency, crash and
 timeout conditions. `docs/service-discovery-model.md` heads its test matrix
@@ -397,7 +397,7 @@ its recorded line or branch coverage.
 Two BSDFilesystem tests are disabled pending a fake-service harness for that
 library (`tests/sys/tzfs/Makefile`). The lane metadata
 (`quick`, `kernel`, `stack`, `installed`, `stress`, `hardware`) described in
-`docs/capability-daemon-test-suite.md` is a design; CI selection by lane is
+`docs/book/src/develop/testing.md` is a design; CI selection by lane is
 not fully implemented. The Linuxulator and squeue wrappers compile their
 payloads at run time in the guest, which the capability daemon rules forbid
 for daemon tests; the two disciplines are scoped to different subsystems.

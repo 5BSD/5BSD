@@ -4,7 +4,7 @@
  * Copyright (c) 2026 Kory Heard
  *
  * anoint(1) -- run one command holding one additional anointment.  The
- * sudo/doas replacement of the capability system (docs/ipc-anointments-design.md
+ * sudo/doas replacement of the capability system (docs/book/src/plane/anointments.md
  * "Elevation"): ask system.Auth, over this session's own lookup channel,
  * for a channel that holds the session's set plus NAME, authenticating with
  * the caller's own password; install it as the ambient lookup channel; exec

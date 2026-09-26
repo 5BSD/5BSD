@@ -127,7 +127,7 @@ service_epoch_live(service_epoch_t minted, service_epoch_t current)
  * SV_ABI_* from <sys/sysent.h>.  UNKNOWN is reported for kernel-originated
  * messages and by a kernel that predates the stamp.  Information for the
  * provider only: ABI never gates reach, only anointments do
- * (docs/ipc-anointments-design.md).
+ * (docs/book/src/plane/anointments.md).
  */
 #define	SERVICE_GROUPS_MAX		4	/* group containers per bundle (Bundle.ucl groups) */
 #define	SERVICE_CLIENT_ABI_UNKNOWN	0
@@ -146,7 +146,7 @@ struct service_identity {
 	uint8_t	reserved8[7];
 	char	container[64];			/* installed bundle for per-bundle
 						 * container storage; "" if none
-						 * (docs/capability-container-model.md) */
+						 * (docs/book/src/plane/containers-and-storage.md) */
 	uint64_t reserved[1];
 	/*
 	 * Group containers the client's bundle declares membership in
@@ -443,7 +443,7 @@ int	service_storage_release_group(struct service_context *,
 	    const char *group, const char *name);
 
 /*
- * Container scopes (docs/capability-container-model.md "Storage and
+ * Container scopes (docs/book/src/plane/containers-and-storage.md "Storage and
  * delivery").  service_storage_open(3) claims live in the unit's PRIVATE
  * container Data/<bundle>/<unit>/persistent/<name>.  The bundle-SHARED variant
  * claims Data/<bundle>/shared/persistent/<name>, reachable by every unit of the
@@ -922,13 +922,13 @@ int	service_mint_session_authenticated(int lookup_chan, uid_t uid,
  * Mint a session lookup channel over the provider's OWN bootstrap channel to
  * switchboard (not a borrowed syschan).  Delivered transferable (RESEND) so the
  * caller can forward it over one more hop.  The auth-agent path; see
- * docs/auth-agent-design.md.
+ * docs/book/src/providers/auth.md.
  */
 int	service_context_mint_domain(struct service_context *context,
 	    enum service_mint_kind kind, uid_t uid, int *out_fd);
 
 /*
- * Anointments (docs/ipc-anointments-design.md).  A mint may carry the set of
+ * Anointments (docs/book/src/plane/anointments.md).  A mint may carry the set of
  * anointment names the minted session holds; switchboard matches that set
  * against each endpoint's per-endpoint `requires` at lookup time, after the
  * existing domain check.  Names are NUL-terminated reverse-domain strings of
@@ -957,7 +957,7 @@ int	service_mint_session_domain_anointed(int syschan,
 
 /*
  * Elevate: obtain a session lookup channel that holds the caller's current
- * anointment set plus `name` (docs/ipc-anointments-design.md "Elevation").
+ * anointment set plus `name` (docs/book/src/plane/anointments.md "Elevation").
  * system.Auth is resolved over the caller's ambient lookup channel
  * (service_ambient_lookup_fd()); the agent takes the caller's uid and session
  * from the kernel-stamped sender, never from the payload, checks the

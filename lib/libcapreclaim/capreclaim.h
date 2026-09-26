@@ -3,7 +3,7 @@
  * Copyright (c) 2026 Kory Heard
  *
  * libcapreclaim: the shared cleanup primitive for the capability container
- * model (docs/capability-container-model.md).  A provider that stores
+ * model (docs/book/src/plane/containers-and-storage.md).  A provider that stores
  * per-capability resources keyed by a stable owner name reclaims them by
  * reconciling its owned set against the live set -- the capabilities that are
  * installed OR running, read straight from the filesystem -- and destroying

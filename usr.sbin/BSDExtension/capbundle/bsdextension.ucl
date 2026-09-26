@@ -30,7 +30,7 @@
 # ungated, so no kldstat declaration is needed.
 activation { boot = true; ipc = ["system.SystemExtension"]; }
 # Container model: bsdextension reconciles the modules it loaded on bundles' behalf
-# against the installed-or-running bundles (docs/capability-container-model.md);
+# against the installed-or-running bundles (docs/book/src/plane/containers-and-storage.md);
 # the live set is read from these delivered directories, never opened by path.
 # BSDEXTENSION_RECLAIM_INTERVAL (environment { ... }) sets the timer/grace seconds.
 directories = ["/Capabilities/System", "/Capabilities/Apps", "/Capabilities/Run/live"];

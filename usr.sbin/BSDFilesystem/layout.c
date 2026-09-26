@@ -39,7 +39,7 @@
 extern char **environ;
 
 /*
- * The container-model live set (docs/capability-container-model.md): the
+ * The container-model live set (docs/book/src/plane/containers-and-storage.md): the
  * installed bundles are the pkg-owned System/ and Apps/ directories (read
  * directly -- they are always authoritative, so no marker or sentinel is
  * needed), and switchboard adds a marker per running bundle under Run/live/ so a

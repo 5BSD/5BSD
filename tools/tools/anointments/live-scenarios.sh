@@ -1,7 +1,7 @@
 #!/bin/sh
 #-
 # live-scenarios.sh -- run the IPC anointment acceptance matrix
-# (docs/ipc-anointments-design.md, "Scenarios") on a live capability plane.
+# (docs/book/src/plane/anointments.md, "Scenarios") on a live capability plane.
 #
 # This is the repeatable form of the by-hand validation: bugs in the mint and
 # elevation paths surfaced only when the suites first ran on a real plane, so
@@ -19,7 +19,7 @@
 #   printf '%s\n' "$(openssl passwd -6 plain-pass)" | pw usermod plainuser -H 0
 #   install -m 0644 scenario-policy.ucl /Capabilities/Config/principal-policy.ucl
 #   # scenario-policy.ucl grants operators system.trace.client and
-#   # may_elevate system.notify.system (see docs/ipc-anointments-design.md).
+#   # may_elevate system.notify.system (see docs/book/src/plane/anointments.md).
 #   reboot
 #
 # Then, as root: sh live-scenarios.sh

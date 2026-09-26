@@ -172,7 +172,7 @@ requires `flags` to be zero where unused, and restricts named-key names to
 `A-Z`, `a-z`, `0-9`, `.`, `_` and `-`. The
 per-request flag `CRYPTOCMP_GENERATE_F_NIST_APPROVED_ONLY` narrows a
 request to AES-CBC, AES-GCM and HMAC-SHA2; it is a selection guardrail, not
-a FIPS 140 validation claim, and `docs/crypto-compliance-readiness.md`
+a FIPS 140 validation claim, and `docs/book/src/providers/crypto.md`
 states the boundary exactly. Owner scoping is not a policy entry but an
 invariant: the owner is the channel label. There is no admin bypass and no
 per-label allow-list; any unit that can resolve `system.Crypto` may mint
@@ -204,7 +204,7 @@ could not load early enough; making it static resolved that. Open findings:
 caller's `max` is below `CRYPTODESC_NAMED_LIST_MAX` (inventory section 14,
 finding 4); there is no cryptodesc(4) or cryptodesc(9) manual page for the
 kernel ABI, only libcryptodesc(3); RSA, ECDSA and certificate validation
-are design-only (`docs/crypto-asymmetric-design.md`). BSDCrypto runs as
+are design-only (`docs/book/src/providers/crypto.md`). BSDCrypto runs as
 root for the `PRIV_DRIVER` snapshot and is on the list of providers to move
 to a gate-based launch. This is not a key vault and there is no plan to
 add one: persistence would put recoverable keys outside the kernel.

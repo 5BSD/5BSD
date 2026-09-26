@@ -50,7 +50,7 @@
 	    send_ok, ack_ok)
 
 /*
- * service_elevate(3) (docs/ipc-anointments-design.md "Elevation"): the
+ * service_elevate(3) (docs/book/src/plane/anointments.md "Elevation"): the
  * requested anointment name at entry, and the name with the outcome (0, or
  * the errno the auth agent or the transport answered) at every exit.  Never
  * the password.

@@ -180,7 +180,7 @@ switchboard delegates the sysctl gate only in this scoped form. A manifest
 with `system = ["sysctl"]` and no `isolate` list, or `sysctl` mixed with
 another gate, is refused at launch, because a coarse claim would force
 every privileged write on the machine through one broker. The design and
-its verification are in `docs/capability-sysctl-isolation.md`.
+its verification are in `docs/book/src/capability/system-gates.md`.
 
 The perform side is separate from the isolate set: `SYS_OP_SYSCTL` accesses
 the node with `SCTL_GATED`, which lifts the capability-mode node

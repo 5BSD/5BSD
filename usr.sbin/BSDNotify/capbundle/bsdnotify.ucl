@@ -1,4 +1,4 @@
-# Two endpoints (docs/ipc-anointments-design.md, "bsdnotify"):
+# Two endpoints (docs/book/src/plane/anointments.md, "bsdnotify"):
 #   system.Notify        open tier, resolvable by every session
 #   system.Notify.System gated tier, only for callers anointed with
 #                        system.notify.system (switchboard enforces reach;

@@ -90,7 +90,7 @@ enum svc_domain_kind {
 };
 
 /*
- * IPC anointments (docs/ipc-anointments-design.md).  The set of anointment
+ * IPC anointments (docs/book/src/plane/anointments.md).  The set of anointment
  * names a requester holds: a unit's comes from its policy file (manifest) at
  * every exec; a login session's is decided by the auth agent's principal
  * policy at mint and carried on the session channel.  `all` is the principal
@@ -328,7 +328,7 @@ int	capsule_send_ready(int channel_fd);
 int	capsule_set_ambient_lookup(int channel_fd, int lookup_fd);
 /*
  * Relay a system lifecycle op (a CTL_OP_* lifecycle opcode) to capsule
- * (docs/lifecycle-capability-design.md, P4b).  Returns the Capsule's status
+ * (docs/book/src/plane/capsule.md, P4b).  Returns the Capsule's status
  * (0 = accepted), or -1 on a channel/transport failure.
  */
 int	capsule_lifecycle(int channel_fd, uint32_t lifecycle_op);
@@ -384,7 +384,7 @@ struct svc_new_client_msg;
  * unit (svc->installation / svc->resource_owner) and on each client connection
  * (msg->generation / msg->resource_owner).  There is no store and no gate --
  * cleanup is structural, by the per-provider reconcile over /Capabilities/Data
- * (docs/capability-container-model.md).
+ * (docs/book/src/plane/containers-and-storage.md).
  */
 int svc_lifecycle_identity(struct svc_runtime *);
 int svc_lifecycle_client(struct svc_runtime *, struct svc_runtime *,
@@ -402,7 +402,7 @@ void svc_reclaim_publish_if_dirty(void);
 
 /* registry_watch.c — watch the install roots (System/, Apps/) and reload on a
  * settled change, so pkg install/remove/upgrade loads and unloads units without
- * an explicit `switchboardctl reload` (docs/capability-container-model.md). */
+ * an explicit `switchboardctl reload` (docs/book/src/plane/containers-and-storage.md). */
 void registry_watch_arm(int kq);
 bool registry_watch_owns(int fd);
 void registry_watch_event(const struct kevent *kev, int kq);

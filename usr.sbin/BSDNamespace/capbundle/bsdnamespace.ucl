@@ -1,6 +1,6 @@
 # switchboard unit for the namespace (jail) broker (bsdnamespace), which owns jail
 # construction (jail_set(2)).  Launched and supervised by switchboard like every
-# other daemon (docs/capsule-switchboard-layering-cleanup.md, Phase 3) — PID 1
+# other daemon (docs/book/src/plane/capsule.md, Phase 3) — PID 1
 # no longer creates jails, and switchboard never brokers one.
 #
 # bsdnamespace is a socket-free service_provider exposing system.Namespace.  It is
@@ -22,7 +22,7 @@
 # (self-jailing is self-confinement).
 activation { ipc = ["system.Namespace"]; }
 # Container model: bsdnamespace reconciles the persistent jails it created against
-# the installed-or-running bundles (docs/capability-container-model.md); the
+# the installed-or-running bundles (docs/book/src/plane/containers-and-storage.md); the
 # live set is read from these delivered directories, never opened by path.
 directories = ["/Capabilities/System", "/Capabilities/Apps", "/Capabilities/Run/live"];
 control = "system";
