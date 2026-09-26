@@ -1,136 +1,381 @@
 # 5BSD
 
-5BSD is a hybrid: a capability operating system and a UNIX system on one
-kernel. The UNIX side is BSD, kept whole, and it runs Linux binaries. The
-capability side has no root. Authority lives in processes, as
-capabilities the kernel makes unforgeable, and the secure realm keeps
-root out.
+## Why 5BSD exists
 
-Here is what that lets you do. Run Linux containers under podman on the
-UNIX side, and right next to them run payment processing in the secure
-realm, where the process starts sandboxed, holds exactly the sockets,
-keys and storage it was handed, and leaves an audit record with its
-identity on every action. Give a program authority root does not have,
-and take authority away from root: a shielded process cannot be traced
-by root, a core service refuses root's stop, and nobody becomes root to
-run the machine, they hold an anointment for the one thing they need.
-Remove an application and everything it owned, storage, logs, keys,
-jails, goes with it in one revoke. Trace any of it with DTrace without
-being root.
+No open source operating system on the market gives you the security
+posture of iOS or QNX behind an API that an ordinary developer with UNIX
+experience can pick up in an afternoon. The systems that have that
+posture are closed, or are microkernels with their own programming
+model, or bolt a policy language onto UNIX that nobody but the policy
+author understands. The systems developers actually know are UNIX, and
+on UNIX a program's power is whoever it runs as: root can do anything,
+and any code running as you has all of your power.
 
-The rule underneath is simple. A program may do what it holds a
-capability for, and nothing else. Being root, owning a file, knowing a
-path, or being on the other end of a socket does not count. Beside the
-familiar system runs the capability plane: capsule as PID 1, switchboard
-to launch and connect services, and sixteen system capabilities that
-hand out storage, logs, sockets, devices, keys, time and traces to
-programs that start sandboxed and hold only what they were given.
+5BSD is the attempt to close that gap. It is one BSD kernel that runs
+two systems side by side. The first is classic UNIX, kept whole, so that
+everything you already run keeps running. The second is a capability
+system with no root, in which a program's authority is the set of
+unforgeable descriptors it holds and nothing else. The API for the
+second system is file descriptors, `openat(2)`, kqueue, and a small C
+library, because those are the things a UNIX developer already
+understands.
 
-The secure realm is protected today. mac_capability, compiled into the
-kernel, keeps it out of UNIX's reach: root cannot open the plane's
-device, forge a process's identity, read a channel it was not handed, or
-strip the shield from a protected process. What is early is how much of
-the system has moved into that realm. Root, mode bits and uid checks
-still govern the UNIX side, and some privileged operations the plane
-needs are done for it through gates rather than held outright. The
-direction is fixed: more interfaces become capabilities, root loses what
-it can still do, and 5BSD moves further from the BSDs it forked from.
-The [Where this is going](#where-this-is-going) section says what that
-means.
+A modern application environment needs three more things, and 5BSD
+treats each as a first-class target rather than an add-on:
 
-This file is the map. The book, **The 5BSD Epic** under
-[`docs/book/`](docs/book/), is the territory: seventy-two chapters written
-from this tree, and the source of truth wherever 5BSD differs from the BSD
-base it inherits. For inherited behaviour the
+- **A modern hypervisor.** bhyve, extended with a modern VirtIO
+  transport, packed rings, multiqueue, ten new device models, vsock end
+  to end, checkpoint and live migration, and nested VMX.
+  See [Virtual Machines](docs/book/src/compat/virtual-machines.md).
+- **Binary compatibility with Linux.** The compatible UNIX of choice for
+  application software is Linux, so 5BSD invests heavily in running
+  unmodified Linux binaries: the 64-bit Linux system call table is
+  covered to Linux 7.3 numbering, with a native io_uring engine, pidfd,
+  futex2, openat2, signalfd, rseq, netlink, and a full procfs and sysfs
+  view. Every Linux call is translated into a native kernel operation
+  before it executes, so the whole 5BSD security stack polices Linux
+  programs from beneath a boundary they cannot see.
+  See [Linux Emulation](docs/book/src/compat/linux/overview.md).
+- **Containers.** Jails, both the classic kind and the kind a sandboxed
+  program asks for at run time, plus per-application storage namespaces
+  on ZFS that are created by the program that owns them and revoked in
+  one operation when it is removed.
+  See [Jails](docs/book/src/compat/jails.md) and
+  [Containers and Storage](docs/book/src/plane/containers-and-storage.md).
+
+On top of that sits the thing no other open source UNIX offers: a secure
+software API through which a program protects itself and declares its
+resources to the system. A program says what it is allowed to hold, is
+started already inside a sandbox, and receives each resource as a
+rights-limited descriptor from a service that decided by the program's
+identity, not by its uid. System policy becomes per-application policy
+instead of per-machine policy, and the person who sets it is the
+application author, not root.
+
+The rest of this file walks through the technologies in the order they
+stack up. Each section ends with the book chapter that explains the
+interface with code. The book, **The 5BSD Epic** under
+[`docs/book/`](docs/book/), is the full account, written from this tree.
+
+## Part one: classic UNIX, hardened
+
+The UNIX side of 5BSD is BSD as you know it: `sh`, `cc`, ZFS, jails,
+rc(8), ports and packages, the man pages you have in muscle memory.
+Where 5BSD behaves as FreeBSD does, the
 [FreeBSD Handbook](https://docs.freebsd.org/en/books/handbook/) still
-applies and the book does not repeat it.
+applies and 5BSD's own documentation does not repeat it.
 
-## What is different
+What 5BSD adds on this side is a set of kernel policy hooks and two
+policy modules that use them.
 
-| Area | What 5BSD adds | Read |
-|---|---|---|
-| Kernel | The MAC_CAPABILITY framework: unforgeable process identity, capability channels, coalitions, system gates, capprotect shields, all compiled into GENERIC | [The Capability System](docs/book/src/capability/mac-capability.md) |
-| Policy | 62 new MAC hooks, mac_abac, OpenEndpointSecurity, verified execution, and a single map of every place policy is decided | [Policy Points](docs/book/src/capability/policy-points.md) |
-| Runtime | capsule as PID 1, switchboard as launcher and name switchboard, bundles with manifests as policy, per-app containers on TrustedZFS, anointments in place of sudo | [The Plane](docs/book/src/plane/capsule.md) |
-| Services | Sixteen system capabilities, each a born-in-capability-mode daemon with a typed client library, a ctl tool and tests | [Reference](docs/book/src/providers/overview.md) |
-| Compatibility | rc and service(8) run alongside the plane; login, su and ssh mint sessions through the plane; jails, pkgbase, bhyve virtual machines, and a Linux emulation layer at Linux 7.3 syscall parity with a native io_uring engine | [Backward Compatibility](docs/book/src/compat/bsd-side.md) |
-| Development | How to write a provider, a consumer, a per-user agent, a Linux application, a driver bundle or a kernel extension, with examples that compile | [Writing Software](docs/book/src/develop/choosing.md) |
-| Operations | Building, installing, upgrading from a local repository, boot knobs, observability, troubleshooting | [Operations](docs/book/src/operations/building.md) |
+### The kernel hooks
 
-The full account of what changed relative to the inherited base, subsystem by
-subsystem with file paths, man pages and tests, is
-[`docs/5bsd-inventory.md`](docs/5bsd-inventory.md).
+The TrustedBSD MAC framework is the kernel's policy backbone: every
+loaded policy sees an operation and any one of them can deny it. 5BSD
+keeps the upstream hook set and adds over sixty new entry points at
+places FreeBSD never had them: process fork, core dump, ktrace, anonymous
+mmap, mprotect, syscall dispatch, descriptor dup, inherit, ioctl and
+`SCM_RIGHTS` receive, vnode close and truncate, AF_UNIX bind and connect
+by path, exec relabel, bhyve VM lifecycle and guest memory, ZFS dataset
+and pool destruction and key operations, snapshot lifecycle, vsock
+attach, kernel module unload, rctl rules and pseudo-terminal open. Each
+hook is documented with its call site, lock context and whether it may
+sleep. A hook is only a place where a policy can look; the modules
+below are what look.
 
-## What kind of capability system this is
+Read: [Policy Points](docs/book/src/capability/policy-points.md) for the
+map of every hook and which module implements it, and
+[`docs/macf-new-hooks.md`](docs/macf-new-hooks.md) for the reference.
 
-In UNIX, a process carries an identity, and code all over the kernel and
-userland re-derives "is this allowed" from that identity: the uid against
-the file's owner and mode bits, root against everything. Authority is
-ambient. Any code running as you has all of your power, and a program
-cannot be given less than its user has.
+### mac_abac: attribute-based access control
 
-In 5BSD, authority is an object the program holds. The building block is
-the file descriptor, made unforgeable and rights-limited by the kernel:
-Capsicum's capability mode, where a process can reach nothing by path or
-by global name and can only use descriptors it already holds, plus a
-kernel framework, MAC_CAPABILITY, that adds what Capsicum lacks. That
-framework gives every process a cryptographic identity the kernel stamps
-on every message, capability channels over which requests and descriptors
-travel, labels that name services without a filesystem path, coalitions
-that group processes for accounting and teardown, and system gates that
-let a sandboxed daemon ask the kernel to perform one privileged operation
-on its behalf without holding the privilege.
+`mac_abac` is a label-based mandatory access control policy compiled
+into every 5BSD kernel. Files and processes carry sets of `key=value`
+attributes, and an ordered rule table decides, per operation, whether a
+subject label may act on an object label. It answers the questions the
+capability side does not ask: which labeled file a labeled process may
+read, which process it may signal, whether an executable of one type
+may run at all. It is type enforcement in the SELinux style without a
+compile-time policy, with rules that hot-swap in sets, a permissive mode
+for rollout, and context constraints such as "only from a terminal" or
+"only when sandboxed".
 
-On that base runs a plane of brokers. A program does not open `/dev/x`,
-a socket, a log file or a dataset. It asks a named capability for one and
-receives a descriptor narrowed to exactly the rights it was granted,
-under a policy keyed by the program's label rather than its uid. Authority
-is minted at a single boundary and flows by delegation:
+```
+mode = "enforcing";
+default_policy = "deny";
+rules = [
+    { action = "transition"; operations = ["exec"];
+      object = "type=entrypoint,app=nginx";
+      newlabel = "domain=web,app=nginx,restricted=true"; },
+    { action = "allow"; operations = ["all"];
+      subject = { domain = "web"; }; object = { domain = "web"; }; },
+    { action = "deny"; operations = ["debug"]; obj_ctx = { sandboxed = true; }; }
+];
+```
+
+Read: [Attribute-Based Access Control](docs/book/src/capability/mac-abac.md)
+for labels, the thirty operations, the rule syntax, the tools and the
+DTrace provider.
+
+### OpenEndpointSecurity
+
+OES turns the same hooks into an event stream for userland. A program
+opens `/dev/oes`, subscribes to a set of events, and either observes them
+or authorizes them: each exec, open, unlink, rename, mount, module load,
+signal or credential change becomes a message, and for the thirty-six
+authorization events the originating thread waits for the subscriber's
+verdict. It follows the client model of Apple's Endpoint Security API,
+with per-client muting, deadlines, a decision cache, and a
+descendants-scoped mode in which a process supervises only its own
+subtree. A privileged opener hands rights-limited passive views to third
+parties, so an unprivileged consumer never touches the device.
+
+```c
+client = oes_client_create();
+oes_set_mode(client, OES_MODE_AUTH, 0, 0);
+oes_subscribe_all(client, true, true);
+oes_mute_self(client);
+while (oes_read_event(client, &msg, false) == 0)
+        if (oes_is_auth_event(msg))
+                oes_respond_allow(client, msg);
+```
+
+Read: [Endpoint Security](docs/book/src/capability/oes.md) for the
+event table, the library, and a complete subscriber.
+
+## Part two: the capability system
+
+The capability side rests on three kernel ideas: Capsicum extended until
+a descriptor is the authority, transfer semantics that make delegation
+safe, and a message framework that gives every process an identity and a
+channel.
+
+### Extended Capsicum
+
+Capsicum is FreeBSD's sandbox: after `cap_enter(2)` a process can use
+only the descriptors it holds and can never again name anything in a
+global namespace, and each descriptor is bounded by a rights mask. 5BSD
+extends it in four directions so that holding a descriptor is
+sufficient authority and nothing else counts.
+
+- **Descriptors that cannot leak.** Capsicum rights say what a holder
+  may do with a descriptor but nothing about where it may go. 5BSD adds
+  per-descriptor states that only tighten: close-on-exec and
+  close-on-fork that the kernel enforces regardless of what the process
+  sets, a flag that permits `mmap(2)` of the descriptor only from
+  capability mode, and a flag that permits a directory descriptor as a
+  `*at(2)` base only from capability mode.
+- **Process descriptors as capabilities.** `pdkill(2)` and `pdwait(2)`
+  no longer consult uid, jail or MAC; the descriptor's rights are the
+  only gate. Process descriptors report the child entering capability
+  mode, being jailed, changing uid or root, so a supervisor observes
+  readiness rather than trusting a report.
+- **Shields.** A launcher puts a kernel shield on a child before it runs.
+  A shielded process cannot be traced, signalled, suspended, waited for,
+  rescheduled or core-dumped by any process not holding a token for it,
+  root included, and can restrict itself from forking, executing, opening
+  sockets, receiving descriptors or exercising any privilege.
+- **Dynamic binaries in the sandbox.** The kernel permits exactly one
+  path lookup from capability mode: the ELF brand's own interpreter. The
+  linker then finds libraries through directory descriptors. A
+  dynamically linked daemon therefore has no un-sandboxed instant.
+
+```c
+/* confine a descriptor: cannot be sent, cannot survive exec or fork */
+cap_xfer_limit(fd, CAP_XFER_NONE);
+cap_cloexec_limit(fd, CAP_CLOEXEC_LOCKED);
+cap_clofork_limit(fd, CAP_CLOFORK_LOCKED);
+```
+
+Read: [Descriptor and Process Protections](docs/book/src/capability/descriptor-protections.md)
+for every new system call with its number and man page, and
+[Capability Mode and the Born-Sandboxed Launch](docs/book/src/capability/capability-mode-and-launch.md).
+
+### Transfer semantics: what 5BSD took from Mach
+
+A capability that can be copied without limit is not a capability. Mach
+solved this with send-once rights: a port right that is consumed by the
+message that carries it. 5BSD puts the same idea on the file descriptor.
+Every descriptor carries a transfer state, `CAP_XFER_UNLIMITED`,
+`CAP_XFER_ONCE` or `CAP_XFER_NONE`, and the state is monotonic: it can
+be tightened by `cap_xfer_limit(2)`, never loosened, and it follows the
+descriptor through `dup(2)`, `fork(2)`, `SCM_RIGHTS` and capability
+messages alike. A `CAP_XFER_ONCE` descriptor is exhausted by a single
+send: after it both the sender's and the receiver's copies are
+`CAP_XFER_NONE`. A multi-hop delegation therefore exists only if every
+forwarder deliberately re-grants it, which is how a login session's
+channel arrives non-transferable and how a launcher hands a child a
+bootstrap channel that survives exactly one exec.
+
+The sender can also cap what the receiver gets. `cap_xfer_rights_limit(2)`
+and its ioctl and fcntl forms set a ceiling that is intersected with the
+descriptor's rights on a permitted transfer, so a process can pass on a
+read-and-write descriptor and know the receiver holds it read-only, while
+its own copy is unchanged.
+
+Read: [Descriptor and Process Protections](docs/book/src/capability/descriptor-protections.md)
+under "The new system calls", and the tests in
+`tests/sys/kern/cap_xfer_test.c`.
+
+### The MAC capability framework
+
+`mac_capability` is the kernel substrate that turns those descriptors
+into a system. Every kernel service and every process-to-process channel
+is reached through one descriptor type, and holding it is holding the
+authority.
+
+- **Identity.** Every credential carries a 64-bit nonce the kernel
+  generates, inherits on fork and rotates on exec. Userspace cannot set
+  it. Every message a process sends arrives with a kernel-stamped
+  trailer naming the sender's nonce, uid, gid and jail, so a service
+  decides by who is actually speaking and never by what the message
+  claims.
+- **Channels.** A connected endpoint pair over which requests,
+  replies and attached descriptors travel, with kqueue readiness and
+  backpressure. Descriptors ride inside messages under the same rights
+  and transfer discipline as anywhere else.
+- **Coalitions.** Resource groups that are accounted and torn down
+  together, so killing an application kills everything it spawned.
+- **System gates.** A kernel-held claim on one privileged operation:
+  load a module, step the clock, create a jail, write a protected
+  sysctl. A sandboxed daemon holds a gate token and asks the kernel to
+  perform the operation in kernel context. Root is not exempt from a
+  claimed gate.
+
+```c
+/* provider side: the kernel says who sent this, not the message */
+const struct channel_sender *who = channel_message_sender(request);
+if (!policy_allows(who->badge, who->nonce))
+        answer.status = EPERM;
+channel_send_reply(request, &rep);
+```
+
+Read: [The MAC Capability Framework](docs/book/src/capability/mac-capability.md)
+for the nine kernel services, the ioctl surface, a synchronous call and
+a channel round trip in code;
+[System Gates](docs/book/src/capability/system-gates.md);
+[Coalitions and Accounting](docs/book/src/capability/coalitions-and-accounting.md);
+and [The Authority Model](docs/book/src/capability/authority-model.md)
+for the rule underneath all of it.
+
+## Part three: the process model
+
+Three kinds of program run on a 5BSD machine, and each is supported as
+it is.
+
+**Linux programs** run through the emulation layer as ordinary
+processes with a different system call table. They keep their own
+userland under `/compat/linux` or a Linux jail, and they are confined by
+capability mode, coalitions, MAC policy and OES exactly as native
+programs are, because the enforcement sits beneath the translation.
+Read: [A Linux Application](docs/book/src/develop/linux-application.md)
+and [Sandboxing and Debugging](docs/book/src/compat/linux/sandboxing.md).
+
+**BSD programs under rc** keep working. `/etc/rc`, `/etc/rc.d`, rc.conf(5)
+and service(8) are the FreeBSD ones, and every rc.d daemon starts as it
+does on FreeBSD. What changed is who runs `/etc/rc`: the plane's service
+manager, which launches its own units in parallel with rc and can adopt
+chosen rc.d services into its supervision from a one-line-per-service
+list. Read: [rc and service(8)](docs/book/src/compat/rc-and-service.md)
+and [Migrating an rc Daemon](docs/book/src/develop/migrating-an-rc-daemon.md).
+
+**Capability bundles** are the third kind, and the reason 5BSD exists.
+
+### Bundles, manifests and declared isolation
+
+A bundle is a `.cap` directory: one `Bundle.ucl` naming the bundle and
+its units, and one `Unit.ucl` per unit saying how to run a program. The
+manifest is the secure software API from the top of this file. It
+describes the program, its user, its activation, its resource ceilings,
+its shield, and its visibility. It grants nothing. Everything the program
+needs at run time it acquires by name, and it starts already sandboxed.
+
+```ucl
+activation { boot = true; ipc = ["system.Time"]; }
+control = "core";                      # nobody stops it at runtime, not root
+protect = ["ptrace", "signal", "wait", "sigkill", "sigcont",
+           "sched", "core", "ktrace"]; # kernel shield before the first instruction
+program = "BSDTime";
+user = "capability";                   # unprivileged; the token is the authority
+capabilities { system = ["settime"]; } # one gate token, delivered at fd 6
+limits { nofile = 256; nproc = 64; core = 0; }
+umask = "0077";
+```
+
+That is the whole manifest of the daemon that sets the system clock. It
+runs as an unprivileged user in capability mode; the one line under
+`capabilities` is what lets it step the clock, and the kernel refuses
+the same operation to root while the claim stands. A manifest can also
+declare `directories` to be delivered as descriptors, a `Config/`
+directory delivered read-only, a `watchdog` interval, a `domain` that
+bounds which names the unit may resolve, `visible` to say who may reach
+it, and `holds` for the anointments it presents.
+
+Read: [Bundles and Manifests](docs/book/src/plane/bundles-and-manifests.md)
+for the closed key set, every activation trigger, and two complete
+manifests.
+
+### Switchboard: the launcher and the switchboard
+
+Capsule is PID 1. It claims the capability device, claims the gates it is
+configured to hold, shields itself, and starts one child: switchboard,
+the service manager. Switchboard does two jobs. As a launcher it turns
+bundles into supervised processes that are born in capability mode: it
+places the unit's channel at fd 3, a shield at fd 4, a sealed bootstrap
+record at fd 5, gate tokens from fd 6, opens the library and config
+directories as descriptors, drops to the manifest's user, applies its
+limits, enters capability mode itself, and only then executes the
+program. As a switchboard it resolves reverse-domain names to live
+channels, launching the provider on demand when nothing is listening.
 
 ```
 capsule (PID 1)      claims the plane at boot, supervises switchboard
    |
-switchboard          launches units from their manifests, born in capability mode,
-   |                 and answers every name lookup over a per-process channel
+switchboard          launches units born in capability mode and answers
+   |                 every name lookup over a per-process channel
    |
-BSDAuth              the mint boundary: login, su and sshd authenticate, then
-   |                 ask it for a session channel scoped by the principal policy
+BSDAuth              the mint boundary: login, su and sshd authenticate,
+   |                 then ask it for a session channel scoped by policy
    |
-your session         holds a lookup channel; every capability it reaches is a
-                     descriptor it was handed, never a path or a uid it has
+your program         holds a lookup channel; every capability it reaches
+                     is a descriptor it was handed, never a path or a uid
 ```
 
-A unit's manifest says how to launch it and what it is allowed to hold.
-It does not grant resources. The unit acquires what it needs at run time,
-by name, over its lookup channel, and fails soft when a provider is down.
-Storage is a per-application namespace on TrustedZFS, so removing an
-application is one revoke. Everything a plane program does is a DTrace
-probe.
+A unit that needs storage, a socket, a log, a key, a device or a jail
+asks the provider for it by name over its channel. The lookup yields a
+fresh direct channel between the two parties, stamped by the kernel with
+the caller's label; switchboard is then out of the path. The provider
+decides from its own configuration what that label may have and hands
+back a descriptor narrowed to exactly those rights. A provider being
+down is a delay, not a crash: the client libraries acquire lazily and
+retry.
 
-What this buys you, concretely:
+```c
+/* a consumer: ask system.Network for a connected socket, by name */
+networkcmp_client_open(&net);
+networkcmp_getaddrinfo(net, host, port, &hints, &res);
+networkcmp_connect_ex(net, res->ai_addr, res->ai_addrlen, 5000, &fd);
+write(fd, request, len);          /* an ordinary socket, rights-limited */
 
-| Property | How 5BSD provides it |
-|---|---|
-| Least authority | A program starts in capability mode holding only the descriptors switchboard delivered; everything else it must be handed by name, narrowed to the rights the policy allows |
-| No confused deputy | A provider acts on the caller's label, which the kernel stamps and nothing can forge; it never acts on a uid the caller claims |
-| Delegation without escalation | Capabilities are descriptors, so passing one on is an ordinary descriptor transfer, and the receiver can only narrow it, never widen it |
-| Revocation | An application's storage, logs, keys and jails hang off one namespace; removing the bundle revokes them all |
-| Attribution | Audit records, logs and traces carry the label and the unforgeable identity, so every action has a provenance |
-| Containment of privilege | The privileged operations the system still needs (load a module, set the clock, make a jail, write a sysctl) are performed by the kernel through a gate a specific daemon holds, not by a process running as root |
-| A single mint boundary | Sessions become capabilities in one place, BSDAuth, under one policy file, whether the user arrived through login, su or ssh |
+/* the same program: its own storage, as a directory descriptor */
+service_acquire(&ctx);
+service_storage_open(ctx, "spool", &dirfd);
+openat(dirfd, "last-reply", O_WRONLY | O_CREAT | O_TRUNC, 0600);
+```
 
-This is not a microkernel and not typed memory in the seL4 sense. It is
-a monolithic BSD kernel whose authority model has been rebuilt around
-unforgeable descriptors and a broker plane. The trade is deliberate: the
-whole of BSD and its software keep working, and the capability model is
-adopted one interface at a time.
+Read: [Switchboard](docs/book/src/plane/switchboard.md) for the launch
+path step by step and the lifecycle;
+[Capsule, PID 1](docs/book/src/plane/capsule.md);
+[Discovery and the Lookup Channel](docs/book/src/plane/discovery-and-lookup.md);
+and [A Consumer Application](docs/book/src/develop/consumer-app.md),
+which builds a complete program that runs both as a sealed unit and from
+a shell.
 
-The plane is optional at boot. With `capability_plane="NO"` in loader.conf,
-capsule hands off to stock init and the machine is an ordinary BSD
-system. The book's [From Power-On to Login](docs/book/src/orientation/boot-to-login.md)
-narrates the whole sequence with the real log lines.
+### The sixteen system capabilities
 
-## The sixteen system capabilities
+Each facility a program might need is brokered by one provider under one
+wire name, and each provider is itself a born-in-capability-mode unit
+with its own config file, client library, control tool and tests.
 
 | Wire name | Provider | What it brokers |
 |---|---|---|
@@ -151,9 +396,55 @@ narrates the whole sequence with the real log lines.
 | system.VM | BSDVM | vsock endpoint brokering for virtual machines |
 | system.Bluetooth | BSDBluetooth | The BLE host, GAP through HOGP, as a service |
 
-Each has a chapter in the book on a fixed template: what it brokers, its
-unit, every wire operation, the client library, the tool, the policy, the
-tests, and an honest status.
+Read: [How to Read a Provider Chapter](docs/book/src/providers/overview.md),
+then any provider, for its wire operations, client library, policy file
+and tool. To write one, read
+[A Capability Provider](docs/book/src/develop/provider.md), which builds
+an echo service end to end.
+
+### Nesting, visibility and who may manage what
+
+Programs nest, and each level sees less than the one above it.
+
+- **Domains.** A unit from `/Capabilities/System` resolves every name.
+  A unit from `/Capabilities/Apps` resolves only names whose provider
+  declares itself visible to users. A refusal is `ENOENT`,
+  indistinguishable from an unregistered name.
+- **Per-user agents.** A user drops a bundle under their own agent root
+  and switchboard launches, supervises and restarts it with no operator
+  involved. Whatever the manifest declares, the agent is forced to the
+  user domain and the user management class, cannot be ambient, cannot
+  hold gates and cannot mint sessions. A user's unverified code is
+  confined by construction.
+- **Private helpers.** A unit marked `helper` publishes no name and is
+  reachable only by a sibling unit in the same bundle.
+- **Sessions.** login, su and sshd authenticate, then ask BSDAuth for a
+  session channel scoped by the principal policy. A shell holds the
+  channel and reaches plane services by name; what it may reach is fixed
+  at mint. Nobody becomes root to run the machine; an administrator holds
+  an anointment for the one thing they need, and `anoint(1)` replaces
+  sudo.
+- **Management.** A unit's `control` class says who may stop, restart or
+  unload it. `core` refuses everyone, root included.
+
+Read: [A Per-User Agent](docs/book/src/develop/per-user-agent.md);
+[Anointments and Principal Policy](docs/book/src/plane/anointments.md);
+[The Management Model](docs/book/src/plane/management-model.md);
+[Sessions: login, su, ssh and cron](docs/book/src/compat/sessions.md).
+
+## Where to go next
+
+| I want to | Read |
+|---|---|
+| See a whole boot, both systems, with the real log lines | [From Power-On to Login](docs/book/src/orientation/boot-to-login.md) |
+| Write a program that uses the plane | [A Consumer Application](docs/book/src/develop/consumer-app.md) |
+| Offer a service to other programs | [A Capability Provider](docs/book/src/develop/provider.md) |
+| Run a Linux binary, and know what it cannot do | [A Linux Application](docs/book/src/develop/linux-application.md) |
+| Move an rc daemon into the plane | [Migrating an rc Daemon](docs/book/src/develop/migrating-an-rc-daemon.md) |
+| Ship a driver or a kernel service | [A Device Driver Bundle](docs/book/src/develop/device-driver-bundle.md), [A Kernel Extension](docs/book/src/develop/kernel-extension.md) |
+| Find every place policy is decided | [Policy Points](docs/book/src/capability/policy-points.md) |
+| Look up a name | [Glossary of Names](docs/book/src/appendix/glossary.md), [Manual Page Index](docs/book/src/appendix/man-index.md) |
+| See every divergence from the BSD base, with paths and tests | [`docs/5bsd-inventory.md`](docs/5bsd-inventory.md) |
 
 ## Building
 
@@ -167,22 +458,17 @@ make -j$(sysctl -n hw.ncpu) buildkernel
 make -j$(sysctl -n hw.ncpu) packages PKG_CMD=/usr/local/sbin/pkg-static
 ```
 
-The last step writes a complete pkgbase repository, 5BSD-prefixed packages
-with sets and a catalogue, under `/usr/obj/usr/src/repo/`. The static pkg
-is required because the ports pkg tracks a newer libc ABI. Installer media
-come from `make -C release memstick`. Details and the knobs that matter are
-in [Building](docs/book/src/operations/building.md).
+The last step writes a complete pkgbase repository under
+`/usr/obj/usr/src/repo/`. The static pkg is required because the ports
+pkg tracks a newer libc ABI. Installer media come from
+`make -C release memstick`. There is no public package service; base
+updates come from a repository you built, and third-party software from
+the FreeBSD ports repositories. See
+[Building](docs/book/src/operations/building.md),
+[Installing](docs/book/src/operations/installing.md) and
+[Upgrading](docs/book/src/operations/upgrading.md).
 
-There is no public package service. Base updates come from a repository
-you built, configured as `5BSD` in `pkg.conf`, and third-party software
-comes from the FreeBSD ports repositories. See
-[Upgrading](docs/book/src/operations/upgrading.md) and
-[Installing](docs/book/src/operations/installing.md).
-
-## Testing
-
-Every capability daemon and library ships an ATF suite, packaged as
-`5BSD-<name>-tests`. On an installed system:
+Every capability daemon and library ships an ATF suite:
 
 ```sh
 kyua test -k /usr/tests/usr.sbin/BSDLog/Kyuafile
@@ -190,9 +476,8 @@ kyua test -k /usr/tests/sys/mac_capability/Kyuafile   # needs the plane off
 ```
 
 Tests that open the capability device directly need a boot with
-`capability_plane="NO"`, because a live plane owns it. Tests that need a
-live plane, the Linux QEMU gate and the virtualization harnesses are
-described in [Testing](docs/book/src/develop/testing.md).
+`capability_plane="NO"`, because a live plane owns it. See
+[Testing](docs/book/src/develop/testing.md).
 
 ## Where things live
 
@@ -200,6 +485,7 @@ described in [Testing](docs/book/src/develop/testing.md).
 |---|---|
 | Capability kernel framework | `sys/dev/mac_capability/` |
 | Policy modules | `sys/security/mac_abac/`, `sys/security/oes/`, `sys/security/mac/` |
+| Capsicum extensions | `sys/kern/sys_capability.c`, `sys/sys/capsicum.h` |
 | Native io_uring engine | `sys/kern/sys_squeue.c`, `lib/libsqueue/` |
 | TrustedZFS | `sys/contrib/openzfs/module/os/freebsd/zfs/zfs_handle.c`, `lib/libtrustedzfs/` |
 | capsule, switchboard and their tools | `usr.sbin/{capsule,capsulectl,switchboard,switchboardctl}` |
@@ -210,61 +496,37 @@ described in [Testing](docs/book/src/develop/testing.md).
 | Virtualization | `usr.sbin/bhyve/`, `sys/amd64/vmm/`, `sys/dev/virtio/`, `usr.sbin/BSDVM/` |
 | Packages | `packages/`, `release/packages/ucl/` |
 | The book | `docs/book/` |
-| Design documents | `docs/`, indexed in the book's [Design Document Index](docs/book/src/appendix/design-docs.md) |
+| Specifications and ledgers | `docs/`, indexed in [Design Document Index](docs/book/src/appendix/design-docs.md) |
 
-## Lineage
+## Lineage and status
 
-5BSD descends from the BSD family and inherits its base, ZFS, jails, the
-network stack, rc(8) and the standard userland, from the FreeBSD tree at
-one point in time; later upstream work is merged selectively, not
-tracked. 5BSD is 64-bit only: no 32-bit compatibility layer, no lib32, no
-i386 or armv7 targets. ZFS is required. Where 5BSD has added, changed or
-removed a subsystem, the book applies and upstream documentation does
-not; the [BSD Side](docs/book/src/compat/bsd-side.md) chapter lists what
-a developer coming from another BSD will notice.
-
-## Status
+5BSD descends from the BSD family and inherits its base from the FreeBSD
+tree at one point in time; later upstream work is merged selectively,
+not tracked. 5BSD is 64-bit only: no 32-bit compatibility layer, no
+lib32, no i386 or armv7 targets. ZFS is required. The
+[BSD Side](docs/book/src/compat/bsd-side.md) chapter lists what a
+developer coming from another BSD will notice.
 
 The capability core, the plane, the sixteen providers, TrustedZFS, the
-Linux emulation layer, the virtualization stack and the Bluetooth host are
-committed and tested, and a from-scratch build packages and boots. Where
-a book chapter describes designed or partially delivered work it says so
-in a Status paragraph. Verified execution is present but not yet
-enforcing. Linux seccomp and Landlock are in progress.
+Linux emulation layer, the virtualization stack and the Bluetooth host
+are committed and tested, and a from-scratch build packages and boots.
+Where a book chapter describes designed or partially delivered work it
+says so in a Status paragraph.
 
 What is still UNIX today, stated plainly: on the UNIX side root exists
 and can do what root does elsewhere, though not inside the plane; file
-access outside the plane is mode bits and ACLs; a number of kernel checks
-are still uid checks with a capability path beside them; six of the
-sixteen providers run as root because the operation they broker has no
-gate yet; and the manifest still carries a system-gate declaration that
-will one day be a held capability like everything else.
-
-## Where this is going
-
-The throughline of the project is moving every authority decision off
-ambient identity and onto held capabilities, and it runs in phases so
-the machine works at every step. The order is roughly:
-
-1. Every privileged operation the plane needs becomes a system gate a
-   sandboxed daemon holds, until no provider runs as root.
-2. The remaining uid checks in the kernel's capability paths are replaced
-   by a process flag, set only through a held capability, that makes the
-   kernel accept capabilities as authority in place of `priv_check`.
-3. Resource authority follows: memory, CPU and object budgets become
-   derivable, revocable grants rather than limits attached to a uid.
-4. More of the classic system is reached through the plane: the daemons
-   that still run under rc migrate to units, and the interfaces they
-   expose become capabilities.
-5. Root is removed. An administrator is a principal with anointments and
-   a session channel, not uid 0, and there is nothing left for uid 0 to
-   mean.
-
-Each step moves 5BSD further from the BSDs it forked from. The plane-off
-boot knob, the rc coexistence and the uid fallbacks are scaffolding for
-the migration, not the destination. The book's
+access outside the plane is mode bits and ACLs unless `mac_abac` is
+enforcing; a number of kernel checks are still uid checks with a
+capability path beside them; some providers still run as root because
+the operation they broker has no gate yet; verified execution is present
+but not yet enforcing; and Linux seccomp and Landlock are in progress.
+The direction is fixed: every privileged operation becomes a gate,
+remaining uid checks become a held-capability flag, resource authority
+follows, the rc daemons migrate to units, and root is removed. The
 [Authority Model](docs/book/src/capability/authority-model.md) chapter
-tracks where each phase stands.
+tracks where each phase stands. The plane is optional at boot: with
+`capability_plane="NO"` in loader.conf, capsule hands off to stock init
+and the machine is an ordinary BSD system.
 
 ## Contributing
 

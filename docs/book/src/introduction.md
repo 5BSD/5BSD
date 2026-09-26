@@ -15,6 +15,46 @@ diverges, the Epic is the source of truth, and it is written from the source
 tree, not from memory: every command, path, manifest key and function named
 here exists at the tree's head.
 
+## Why 5BSD exists
+
+No open source operating system on the market gives you the security posture
+of iOS or QNX behind an API that an ordinary developer with UNIX experience
+can pick up quickly. The systems that have that posture are closed, or are
+microkernels with a programming model of their own, or attach a policy
+language to UNIX that only its author understands. The systems developers
+know are UNIX, and on UNIX a program's power is whoever it runs as: root can
+do anything, and any code running as you has all of your power.
+
+5BSD closes that gap with one BSD kernel that runs two systems side by side:
+classic UNIX, kept whole so that everything you already run keeps running,
+and a capability system with no root, in which a program's authority is the
+set of unforgeable descriptors it holds. The API for the second system is
+file descriptors, `openat(2)`, kqueue and a small C library, the things a
+UNIX developer already knows.
+
+A modern application environment also needs a modern hypervisor, binary
+compatibility and containers, and 5BSD treats each as a first-class target.
+The hypervisor is bhyve, extended with a modern VirtIO transport, new device
+models, vsock, checkpointing and nested VMX
+([Virtual Machines](compat/virtual-machines.md)). The compatible UNIX of
+choice for application software is Linux, so 5BSD invests heavily in running
+unmodified Linux binaries, and every Linux system call is translated into a
+native operation before it executes, so the whole 5BSD security stack polices
+Linux code from beneath a boundary it cannot see
+([Linux Emulation](compat/linux/overview.md)). Containers are jails, classic
+and self-service, plus per-application storage namespaces that are revoked in
+one operation ([Jails](compat/jails.md),
+[Containers and Storage](plane/containers-and-storage.md)).
+
+On top of that sits a secure software API through which a program protects
+itself and declares its resources to the system: it says what it may hold,
+starts already inside a sandbox, and receives each resource as a
+rights-limited descriptor from a service that decided by the program's
+identity rather than its uid. System policy becomes per-application policy,
+set by the application author instead of root. The repository
+[README](../../../README.md) walks the technologies in order; this book is
+the full account.
+
 ## Two systems, one machine
 
 5BSD is a FreeBSD derivative that runs two systems side by side.
