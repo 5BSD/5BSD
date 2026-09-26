@@ -1,12 +1,22 @@
 # 5BSD
 
 5BSD is an operating system from the BSD lineage in which authority is a
-held capability, not a user id. The classic BSD system is kept whole.
-Beside it runs a capability plane: a PID 1 called capsule, a service
-manager called switchboard, and sixteen system capabilities that broker
-storage, logging, networking, devices, crypto, time, tracing and more to
-programs that start in capability mode and hold nothing they were not
-given. Linux binaries run on the same kernel under the same policy.
+held capability, not UNIX permissions. A program may do what it holds a
+capability for. Its user id, its group, the mode bits on a file, the path
+it opened and the peer credentials on a socket grant it nothing. The
+classic BSD system is kept whole and runs as it always has. Beside it
+runs a capability plane: a PID 1 called capsule, a service manager called
+switchboard, and sixteen system capabilities that broker storage,
+logging, networking, devices, crypto, time, tracing and more to programs
+that start in capability mode and hold nothing they were not given.
+Linux binaries run on the same kernel under the same policy.
+
+This is early work. The plane is real, boots, and is tested, but today
+it runs beside a UNIX system that still has root, still has mode bits,
+and still answers many questions by uid. The direction is fixed: over
+time more interfaces become capabilities, root is removed, and 5BSD moves
+further from the BSDs it forked from. The [Where this is going](#where-this-is-going)
+section says what that means.
 
 This file is the map. The book, **The 5BSD Epic** under
 [`docs/book/`](docs/book/), is the territory: seventy-two chapters written
@@ -31,12 +41,31 @@ The full account of what changed relative to the inherited base, subsystem by
 subsystem with file paths, man pages and tests, is
 [`docs/5bsd-inventory.md`](docs/5bsd-inventory.md).
 
-## The idea in one page
+## What kind of capability system this is
 
-A traditional UNIX process carries a uid, and code all over the kernel and
-userland re-derives "is this allowed" from it. 5BSD moves that decision to
-one place. Authority is minted at a single boundary and flows by
-delegation:
+In UNIX, a process carries an identity, and code all over the kernel and
+userland re-derives "is this allowed" from that identity: the uid against
+the file's owner and mode bits, root against everything. Authority is
+ambient. Any code running as you has all of your power, and a program
+cannot be given less than its user has.
+
+In 5BSD, authority is an object the program holds. The building block is
+the file descriptor, made unforgeable and rights-limited by the kernel:
+Capsicum's capability mode, where a process can reach nothing by path or
+by global name and can only use descriptors it already holds, plus a
+kernel framework, MAC_CAPABILITY, that adds what Capsicum lacks. That
+framework gives every process a cryptographic identity the kernel stamps
+on every message, capability channels over which requests and descriptors
+travel, labels that name services without a filesystem path, coalitions
+that group processes for accounting and teardown, and system gates that
+let a sandboxed daemon ask the kernel to perform one privileged operation
+on its behalf without holding the privilege.
+
+On that base runs a plane of brokers. A program does not open `/dev/x`,
+a socket, a log file or a dataset. It asks a named capability for one and
+receives a descriptor narrowed to exactly the rights it was granted,
+under a policy keyed by the program's label rather than its uid. Authority
+is minted at a single boundary and flows by delegation:
 
 ```
 capsule (PID 1)      claims the plane at boot, supervises switchboard
@@ -57,6 +86,24 @@ by name, over its lookup channel, and fails soft when a provider is down.
 Storage is a per-application namespace on TrustedZFS, so removing an
 application is one revoke. Everything a plane program does is a DTrace
 probe.
+
+What this buys you, concretely:
+
+| Property | How 5BSD provides it |
+|---|---|
+| Least authority | A program starts in capability mode holding only the descriptors switchboard delivered; everything else it must be handed by name, narrowed to the rights the policy allows |
+| No confused deputy | A provider acts on the caller's label, which the kernel stamps and nothing can forge; it never acts on a uid the caller claims |
+| Delegation without escalation | Capabilities are descriptors, so passing one on is an ordinary descriptor transfer, and the receiver can only narrow it, never widen it |
+| Revocation | An application's storage, logs, keys and jails hang off one namespace; removing the bundle revokes them all |
+| Attribution | Audit records, logs and traces carry the label and the unforgeable identity, so every action has a provenance |
+| Containment of privilege | The privileged operations the system still needs (load a module, set the clock, make a jail, write a sysctl) are performed by the kernel through a gate a specific daemon holds, not by a process running as root |
+| A single mint boundary | Sessions become capabilities in one place, BSDAuth, under one policy file, whether the user arrived through login, su or ssh |
+
+This is not a microkernel and not typed memory in the seL4 sense. It is
+a monolithic BSD kernel whose authority model has been rebuilt around
+unforgeable descriptors and a broker plane. The trade is deliberate: the
+whole of BSD and its software keep working, and the capability model is
+adopted one interface at a time.
 
 The plane is optional at boot. With `capability_plane="NO"` in loader.conf,
 capsule hands off to stock init and the machine is an ordinary BSD
@@ -160,12 +207,44 @@ a developer coming from another BSD will notice.
 
 The capability core, the plane, the sixteen providers, TrustedZFS, the
 Linux emulation layer, the virtualization stack and the Bluetooth host are
-committed and tested, and a from-scratch build packages and boots. The
-migration of every authority decision off ambient uid checks and onto held
-capabilities is the ongoing throughline; where a chapter describes designed
-or partially delivered work it says so in a Status paragraph. Verified
-execution is present but not yet enforcing. Linux seccomp and Landlock are
-in progress.
+committed and tested, and a from-scratch build packages and boots. Where
+a book chapter describes designed or partially delivered work it says so
+in a Status paragraph. Verified execution is present but not yet
+enforcing. Linux seccomp and Landlock are in progress.
+
+What is still UNIX today, stated plainly: root exists and can do most of
+what root does elsewhere; file access outside the plane is mode bits and
+ACLs; a number of kernel checks are still uid checks with a capability
+path beside them; six of the sixteen providers run as root because the
+operation they broker has no gate yet; and the manifest still carries a
+system-gate declaration that will one day be a held capability like
+everything else.
+
+## Where this is going
+
+The throughline of the project is moving every authority decision off
+ambient identity and onto held capabilities, and it runs in phases so
+the machine works at every step. The order is roughly:
+
+1. Every privileged operation the plane needs becomes a system gate a
+   sandboxed daemon holds, until no provider runs as root.
+2. The remaining uid checks in the kernel's capability paths are replaced
+   by a process flag, set only through a held capability, that makes the
+   kernel accept capabilities as authority in place of `priv_check`.
+3. Resource authority follows: memory, CPU and object budgets become
+   derivable, revocable grants rather than limits attached to a uid.
+4. More of the classic system is reached through the plane: the daemons
+   that still run under rc migrate to units, and the interfaces they
+   expose become capabilities.
+5. Root is removed. An administrator is a principal with anointments and
+   a session channel, not uid 0, and there is nothing left for uid 0 to
+   mean.
+
+Each step moves 5BSD further from the BSDs it forked from. The plane-off
+boot knob, the rc coexistence and the uid fallbacks are scaffolding for
+the migration, not the destination. The book's
+[Authority Model](docs/book/src/capability/authority-model.md) chapter
+tracks where each phase stands.
 
 ## Contributing
 
