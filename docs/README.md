@@ -12,11 +12,12 @@ files beside it are the ones that are not prose.
 | `service-discovery-model.md` | Names, domains, channels and session provisioning |
 | `trustedzfs-design.md`, `bsdfilesystem-design.md` | The storage substrate and its broker |
 | `macf-new-hooks.md` | Reference for the MAC hooks 5BSD added |
+| `descriptor-addressing-ledger.md` | How every kernel control surface names its target, and which ambient forms still lack a descriptor form |
 | `linuxulator-io_uring-design.md` | The squeue engine and the io_uring front end |
 | `bhyve-virtio-state-nested-architecture.md` | Device state, snapshot and nested virtualization |
 | `linuxulator-syscall-coverage.md` | The Linux syscall table, call by call |
 | `waspnest-completion-matrix.md` | Virtualization status, requirement by requirement |
-| `linuxulator-missing-syscalls-handoff.md`, `rpi5-bringup-plan.md` | Live work lists |
+| `capability-plane-work-list.md`, `linuxulator-missing-syscalls-handoff.md`, `rpi5-bringup-plan.md` | Live work lists |
 | `pkg/` | Sample pkg repository configurations |
 
 Add a document here only when it is a specification the book cannot
