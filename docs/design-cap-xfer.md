@@ -1,5 +1,12 @@
 # Descriptor Transfer Control
 
+Status: shipped as `cap_xfer_limit(2)` (syscall 603) with three states.
+The two-hop state `CAP_XFER_TWICE` in the original design was removed in
+b729acbf6eb7: a hop counter in the kernel cannot express who may forward,
+so a multi-hop delegation is built per hop, each forwarder re-attenuating
+the descriptor to `ONCE` before passing it on. The rest of this document
+is the design as built.
+
 ## Requirements
 
 1. Per-fd state controlling SCM_RIGHTS transfer: unlimited, once, or never.
@@ -17,7 +24,9 @@ A `uint8_t fde_xfer_state` field on `struct filedescent`, orthogonal to
 | 0 | `CAP_XFER_UNLIMITED` | No restriction (default) |
 | 1 | `CAP_XFER_ONCE` | One send, then both sides exhausted |
 | 2 | `CAP_XFER_NONE` | Transfer blocked (`ENOTCAPABLE`) |
-| 3 | `CAP_XFER_TWICE` | Two-hop linear transfer budget |
+
+A fourth state, `CAP_XFER_TWICE` (a two-hop budget), was removed; see the
+status note above.
 
 ## Transfer Semantics
 
@@ -60,7 +69,7 @@ NONE      → send → ENOTCAPABLE
 
 | File | What |
 |------|------|
-| `sys/sys/capsicum.h` | `CAP_XFER_UNLIMITED`, `CAP_XFER_ONCE`, `CAP_XFER_NONE`, `CAP_XFER_TWICE` |
+| `sys/sys/capsicum.h` | `CAP_XFER_UNLIMITED`, `CAP_XFER_ONCE`, `CAP_XFER_NONE` |
 | `sys/sys/filedesc.h` | `fde_xfer_state` field, `fde_copy()` line |
 | `sys/kern/kern_descrip.c` | Zero in `_finstall()` and `fdfree()` |
 | `sys/kern/uipc_usrreq.c` | Validate + consume in `unp_internalize()` (XLOCK), propagate in `unp_externalize()` |
