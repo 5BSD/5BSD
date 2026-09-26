@@ -8,14 +8,15 @@ against for now, with the reason).
 
 ## Attribution: coalition identity and responsibility
 
-**building** (2026-09-26). Every coalition carries a permanent 64-bit id and a
-set-once responsible-parent edge; the switchboard records the parent under the
-management model; login sessions are coalitions; kinfo_proc, ps, procstat,
+**done** (b381a270e2e5, 2026-09-26, VM-validated). Every coalition carries a
+permanent 64-bit id and a set-once responsible-parent edge; the switchboard
+records the parent under the management model; login sessions are coalitions
+their leaders join; pdfork helpers inherit; kinfo_proc, ps, procstat,
 switchboardctl, audit records and OES events expose it. Book:
 `book/src/capability/coalitions-and-accounting.md`, "Identity and
-responsibility". Remaining: VM validation, then commit. rc-adopted and oneshot
-units have no coalition and therefore no identity; giving them one is a
-separate small item (**later**).
+responsibility". Open: rc-adopted and oneshot units have no coalition and
+therefore no identity (**later**, small); su from a login shell stays in the
+login session's coalition (by design, EBUSY on join).
 
 ## Imports from Darwin and Plan 9, ranked
 
