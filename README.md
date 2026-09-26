@@ -1,20 +1,18 @@
 # 5BSD
 
-5BSD is a hybrid: a capability operating system and a UNIX system on one
-kernel. It is built on BSD, runs Linux binaries, and carries a full
-rootless capability system in which system authority lives in processes,
-held as unforgeable capabilities, and which protects itself from root
-authority rather than relying on it.
+5BSD is a hybrid. It is a capability operating system and a UNIX system
+sharing one kernel. The UNIX side is BSD, kept whole, and it runs Linux
+binaries too. The capability side has no root. Authority lives in
+processes, as capabilities the kernel makes unforgeable, and the
+capability system protects itself from root instead of trusting it.
 
-Authority is a held capability, not UNIX permissions. A program may do
-what it holds a capability for. Its user id, its group, the mode bits on
-a file, the path it opened and the peer credentials on a socket grant it
-nothing. The classic BSD system is kept whole and runs as it always has.
-Beside it runs the capability plane: a PID 1 called capsule, a service
-manager called switchboard, and sixteen system capabilities that broker
-storage, logging, networking, devices, crypto, time, tracing and more to
-programs that start in capability mode and hold nothing they were not
-given. Linux binaries run on the same kernel under the same policy.
+The rule is simple. A program may do what it holds a capability for, and
+nothing else. Being root, owning a file, knowing a path, or being on the
+other end of a socket does not count. Beside the familiar system runs a
+capability plane: capsule as PID 1, switchboard to launch and connect
+services, and sixteen system capabilities that hand out storage, logs,
+sockets, devices, keys, time and traces to programs that start sandboxed
+and hold only what they were given.
 
 This is early work. The plane is real, boots, and is tested, but today
 it runs beside a UNIX system that still has root, still has mode bits,
