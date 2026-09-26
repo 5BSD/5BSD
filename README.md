@@ -1,10 +1,10 @@
 # 5BSD
 
-5BSD is a capability operating system and a UNIX hybrid. It is built on
-BSD, runs Linux binaries, and carries a full rootless capability system
-in which system authority lives in processes, held as unforgeable
-capabilities, and in which that system protects itself from UNIX rather
-than relying on it.
+5BSD is a hybrid: a capability operating system and a UNIX system on one
+kernel. It is built on BSD, runs Linux binaries, and carries a full
+rootless capability system in which system authority lives in processes,
+held as unforgeable capabilities, and which protects itself from root
+authority rather than relying on it.
 
 Authority is a held capability, not UNIX permissions. A program may do
 what it holds a capability for. Its user id, its group, the mode bits on
