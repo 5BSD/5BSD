@@ -662,6 +662,8 @@ od_launch(const char *name, struct svc_runtime *requester,
 					errno = ECANCELED;
 					goto fail_timer;
 				}
+				svc_responsibility_decide(target, requester,
+				    ambient_lc);
 				if (svc_launch_or_await(target, kq) == -1) {
 					syslog(LOG_ERR,
 				    "on_demand: failed to launch '%s': %m", name);
@@ -713,10 +715,14 @@ od_launch(const char *name, struct svc_runtime *requester,
 		if (requester != NULL)
 			strlcpy(target->launched_by, requester->manifest.label,
 			    sizeof(target->launched_by));
+		else if (ambient_lc != NULL)
+			strlcpy(target->launched_by, "session",
+			    sizeof(target->launched_by));
 		else
 			strlcpy(target->launched_by, "unknown",
 			    sizeof(target->launched_by));
 		clock_gettime(CLOCK_MONOTONIC, &target->launch_time);
+		svc_responsibility_decide(target, requester, ambient_lc);
 
 		sd.nservices++;
 

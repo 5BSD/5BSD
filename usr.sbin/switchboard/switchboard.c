@@ -394,6 +394,12 @@ main(int argc, char *argv[])
 	}
 	if (sd.coalition_svc_fd >= 0)
 		(void)fcntl(sd.coalition_svc_fd, F_SETFL, O_NONBLOCK);
+	/*
+	 * The system's attribution root (responsibility.c).  Best-effort: without
+	 * it boot-launched units root themselves, which is still walkable.
+	 */
+	if (svc_responsibility_root_init() == -1)
+		syslog(LOG_NOTICE, "no system root coalition: %m");
 
 	/* Override bundle directories from environment (for testing). */
 	s = getenv("SWITCHBOARD_BUNDLE_DIR_SYSTEM");

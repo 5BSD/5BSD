@@ -458,6 +458,9 @@ accounting flag (alias
 command and arguments
 .It Cm class
 login class
+.It Cm coal
+capability-plane coalition ID of the process (0 if in none); see
+.Xr mac_capability_coalition 4
 .It Cm comm
 command
 .It Cm command
@@ -562,10 +565,15 @@ parent process ID
 scheduling priority
 .It Cm re
 core residency time (in seconds; 127 = infinity)
+.It Cm rcoal
+responsible coalition ID: the capability-plane coalition on whose behalf
+the process's coalition exists (0 if not set)
 .It Cm rgid
 real group ID
 .It Cm rgroup
 group name (from rgid)
+.It Cm rpid
+leader process ID of the responsible coalition (0 if none)
 .It Cm rss
 resident set size in KiB
 .It Cm rtprio

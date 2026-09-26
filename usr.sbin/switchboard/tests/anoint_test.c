@@ -350,6 +350,52 @@ real_channel_pair(int *our_end, int *child_end)
 	return (0);
 }
 
+/*
+ * Coalition identity helpers used by domain.c's session coalition: the
+ * pure-logic tests never mint a session, and the device-gated mint case
+ * treats a missing coalition as "unattributed session" (best-effort), so
+ * these report ENODEV.
+ */
+int
+mac_cap_create_coalition(void)
+{
+
+	errno = ENODEV;
+	return (-1);
+}
+
+int
+mac_cap_coalition_set_signal(int coalition_fd, int sig)
+{
+
+	(void)coalition_fd;
+	(void)sig;
+	errno = ENODEV;
+	return (-1);
+}
+
+int
+mac_cap_coalition_set_responsible(int coalition_fd, int parent_fd,
+    uint32_t flags)
+{
+
+	(void)coalition_fd;
+	(void)parent_fd;
+	(void)flags;
+	errno = ENODEV;
+	return (-1);
+}
+
+int
+mac_cap_coalition_stat(int coalition_fd, struct coalition_stat_reply *sr)
+{
+
+	(void)coalition_fd;
+	(void)sr;
+	errno = ENODEV;
+	return (-1);
+}
+
 int
 mac_cap_create_channel(int *our_end, int *child_end)
 {

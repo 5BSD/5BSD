@@ -122,6 +122,9 @@ ATF_TC_BODY(unknown_op_requires_admin, tc)
 	    "opcode 0 must be treated as privileged");
 	ATF_CHECK_MSG(sctl_op_requires_admin(0xffffffffu),
 	    "an unknown opcode must be treated as privileged");
+	/* The responsibility tree is read-only status: any caller. */
+	ATF_CHECK_MSG(!sctl_op_requires_admin(SCTL_OP_TREE),
+	    "TREE must not require admin");
 	/* Opcode 6 was retired (SCTL_OP_PROVISION_SESSION): still deny. */
 	ATF_CHECK_MSG(sctl_op_requires_admin(6),
 	    "a retired opcode must not become an open read-only op");

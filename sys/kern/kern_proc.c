@@ -96,6 +96,7 @@
 #include <vm/uma.h>
 
 #include <security/mac/mac_framework.h>
+#include <dev/mac_capability/mac_capability_label.h>
 
 #include <fs/devfs/devfs.h>
 
@@ -1200,6 +1201,15 @@ fill_kinfo_proc_only(struct proc *p, struct kinfo_proc *kp)
 		if (p->p_flag & P_TRACED)
 			kp->ki_tracer = p->p_pptr->p_pid;
 	}
+	{
+		struct mac_capability_proc_coalition mc;
+
+		if (mac_capability_proc_coalition(p, &mc)) {
+			kp->ki_coalition = mc.id;
+			kp->ki_rcoalition = mc.responsible_id;
+			kp->ki_rpid = mc.responsible_leader_pid;
+		}
+	}
 }
 
 /*
@@ -1510,6 +1520,9 @@ freebsd32_kinfo_proc_out(const struct kinfo_proc *ki, struct kinfo_proc32 *ki32)
 	CP(*ki, *ki32, ki_jid);
 	CP(*ki, *ki32, ki_reaper);
 	CP(*ki, *ki32, ki_reapsubtree);
+	CP(*ki, *ki32, ki_rpid);
+	CP(*ki, *ki32, ki_coalition);
+	CP(*ki, *ki32, ki_rcoalition);
 	CP(*ki, *ki32, ki_numthreads);
 	CP(*ki, *ki32, ki_tid);
 	CP(*ki, *ki32, ki_pri);

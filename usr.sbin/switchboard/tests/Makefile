@@ -61,6 +61,7 @@ ATF_TESTS_C+=	fd_budget_test
 ATF_TESTS_C+=	launch_limits_test
 ATF_TESTS_C+=	manifest_compare_test
 ATF_TESTS_C+=	management_enforce_test
+ATF_TESTS_C+=	responsibility_test
 ATF_TESTS_C+=	bundle_selection_test
 ATF_TESTS_C+=	rc_ingest_test
 # registry_watch_test drives the install-root watch through a real kqueue with
@@ -237,6 +238,9 @@ CFLAGS.manifest_compare_test+=	-I${SRCTOP}/sys
 # daemon event loop).  management.c comes from the switchboard source dir via the
 # .PATH above; referencing it by basename keeps its object in the objdir.
 SRCS.management_enforce_test=	management_enforce_test.c management.c
+# responsibility_test: the responsible-parent decision, with the kernel
+# coalition calls and the session accessors stubbed in the test.
+SRCS.responsibility_test=	responsibility_test.c responsibility.c
 CFLAGS.management_enforce_test+=	-I${SRCTOP}/usr.sbin/switchboard
 CFLAGS.management_enforce_test+=	-I${SRCTOP}/lib/libcapbundle
 CFLAGS.management_enforce_test+=	-I${SRCTOP}/lib/libcapsulert

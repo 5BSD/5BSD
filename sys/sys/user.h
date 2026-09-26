@@ -85,7 +85,7 @@
  * function kvm_proclist in lib/libkvm/kvm_proc.c .
  */
 #define	KI_NSPARE_INT	2
-#define	KI_NSPARE_LONG	12
+#define	KI_NSPARE_LONG	10
 #define	KI_NSPARE_PTR	4
 
 #ifndef _KERNEL
@@ -186,8 +186,9 @@ struct kinfo_proc {
 	 * front of ki_sparestrings, and ints from the end of ki_spareints.
 	 * That way the spare room from both arrays will remain contiguous.
 	 */
-	char	ki_sparestrings[38];	/* spare string space */
+	char	ki_sparestrings[34];	/* spare string space */
 	int	ki_spareints[KI_NSPARE_INT];	/* spare room for growth */
+	pid_t	ki_rpid;		/* leader pid of responsible coalition */
 	pid_t	ki_reaper;		/* pid of reaper process */
 	pid_t	ki_reapsubtree;		/* reaper subtree id */
 	uint64_t ki_tdev;		/* controlling tty dev */
@@ -217,6 +218,8 @@ struct kinfo_proc {
 	void	*ki_uerrmsg;		/* address of the ext err msg place */
 	void	*ki_spareptrs[KI_NSPARE_PTR];	/* spare room for growth */
 	long	ki_sparelongs[KI_NSPARE_LONG];	/* spare room for growth */
+	uint64_t ki_coalition;		/* coalition id, 0 = none */
+	uint64_t ki_rcoalition;		/* responsible coalition id, 0 = unset */
 	long	ki_sflag;		/* PS_* flags */
 	long	ki_tdflags;		/* kthread flag */
 };

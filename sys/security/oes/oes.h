@@ -28,7 +28,7 @@
 /*
  * API Version - increment when the public API or ioctl contract changes
  */
-#define OES_API_VERSION		1
+#define OES_API_VERSION		2
 
 /*
  * Event Types
@@ -217,6 +217,20 @@ typedef struct {
 	uint32_t	ep_pad2;	/* Alignment */
 	uint32_t	ep_meta_flags;	/* OES_PROC_META_* */
 	uint32_t	ep_reserved;	/* Must be zero */
+
+	/*
+	 * Capability-plane identity (5BSD).  A coalition is the unit the
+	 * switchboard launches and supervises; its id is permanent and never
+	 * reused.  The responsible coalition is the one on whose behalf this
+	 * process's coalition exists (the requesting unit, a login session, or
+	 * itself for a shared provider), the analogue of EndpointSecurity's
+	 * responsible audit token.  All zero when the process is in no
+	 * coalition or the coalition module is not loaded.
+	 */
+	uint64_t	ep_coalition;		/* coalition id, 0 = none */
+	uint64_t	ep_responsible_coalition; /* responsible id, 0 = unset */
+	pid_t		ep_responsible_pid;	/* responsible coalition's leader */
+	uint32_t	ep_pad3;
 } oes_process_t;
 
 /* Process flags */
@@ -711,7 +725,7 @@ typedef struct {
 	} em_event_data;
 } oes_message_t;
 
-#define OES_MESSAGE_VERSION	1
+#define OES_MESSAGE_VERSION	2
 
 /* Message flags */
 #define OES_MSG_FLAG_STRINGS_TRUNCATED	0x00000001

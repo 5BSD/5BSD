@@ -30,6 +30,14 @@
  *   COALITION_OP_HEARTBEAT   — reset watchdog
  *   COALITION_OP_SET_LEADER  — designate leader (death triggers term)
  *   COALITION_OP_RUSAGE      — aggregate resource usage
+ *   COALITION_OP_SET_RESPONSIBLE — record the responsible parent (set once)
+ *
+ * Identity: every coalition carries a permanent 64-bit id (co_id) and an
+ * optional, immutable "responsible parent" edge (co_responsible): the
+ * coalition on whose behalf this one exists.  The edge is attribution only —
+ * it never affects membership, signals, nesting, or lifetime — and it pins
+ * the parent structure (not its members) so a chain can always be walked
+ * back from a live process to the session or system that caused it.
  *
  * Lock order:
  *   coalition_proc_hash_lock (rwlock, global)
@@ -76,6 +84,7 @@
 
 #include "mac_capability.h"
 #include "mac_capability_internal.h"
+#include "mac_capability_label.h"
 #include "mac_capability_coalition_proto.h"
 
 /* ----------------------------------------------------------------
@@ -108,6 +117,8 @@ SDT_PROBE_DEFINE1(mac_capability_coalition, , , watchdog__expire,
     "int");
 SDT_PROBE_DEFINE3(mac_capability_coalition, , , graceful,
     "int", "uint32_t", "int");
+SDT_PROBE_DEFINE3(mac_capability_coalition, , , responsible__set,
+    "uint64_t", "uint64_t", "int");
 
 MALLOC_DEFINE(M_COALITION, "mac_capability_coalition",
     "mac_capability coalition structures");
@@ -153,6 +164,16 @@ struct coalition {
 	struct task		co_leader_task;
 	/* Back-reference for timer tasks */
 	struct mac_capability_instance	*co_instance;
+	/* Identity (I) — immutable after creation */
+	uint64_t		co_id;
+	/*
+	 * Responsible parent (set once under coalition_nest_lock + co_sx;
+	 * immutable afterwards, so readers need no lock once non-NULL).
+	 * Holds a reference on the parent released only in coalition_free().
+	 * NULL with COF_RESPONSIBLE set means "responsible for itself".
+	 */
+	struct coalition	*co_responsible;
+	uint64_t		co_responsible_id;
 };
 
 /* ----------------------------------------------------------------
@@ -270,6 +291,9 @@ coalition_ref(struct coalition *co)
 	refcount_acquire(&co->co_refcount);
 }
 
+static void	coalition_rel(struct coalition *co);
+static void	coalition_rehome_inherited(struct proc *p);
+
 static void
 coalition_free(struct coalition *co)
 {
@@ -279,6 +303,20 @@ coalition_free(struct coalition *co)
 	KASSERT(co->co_refcount == 0,
 	    ("coalition_free: refcount %u", co->co_refcount));
 	sx_destroy(&co->co_sx);
+	/*
+	 * Drop the responsible-parent pin last.  Chains are acyclic (enforced
+	 * at set time), so the recursion this may cause is bounded by the
+	 * chain length limit.
+	 */
+	if (co->co_responsible != NULL) {
+		struct coalition *parent = co->co_responsible;
+
+		co->co_responsible = NULL;
+		uma_zfree(coalition_zone, co);
+		atomic_subtract_int(&coalition_count, 1);
+		coalition_rel(parent);
+		return;
+	}
 	uma_zfree(coalition_zone, co);
 	atomic_subtract_int(&coalition_count, 1);
 }
@@ -812,6 +850,15 @@ coalition_enlist(struct coalition *co, struct thread *td, struct file *fp,
 		cm->cm_data = p;
 
 		/*
+		 * A membership the process merely inherited (fork, pdfork,
+		 * JOIN: cm_fp == NULL) yields to an explicit enlist by a holder
+		 * of its process descriptor: detach it from the old coalition
+		 * first, then insert as usual.  An explicit procdesc membership
+		 * (cm_fp != NULL) is pinned and fails below with EBUSY.
+		 */
+		coalition_rehome_inherited(p);
+
+		/*
 		 * Lock order: co_sx → hash_lock.
 		 * Take co_sx first to match timer task paths.
 		 */
@@ -1117,6 +1164,8 @@ coalition_signal_processes_locked(struct coalition *co, int sig)
 
 	sx_assert(&co->co_sx, SA_XLOCKED);
 
+	if (sig == 0)
+		return;
 	TAILQ_FOREACH(cm, &co->co_members, cm_link) {
 		struct proc *p;
 
@@ -1341,7 +1390,7 @@ coalition_terminate_members_locked(struct coalition *co, struct thread *td,
 				if (p != NULL) {
 					PROC_LOCK(p);
 					sx_sunlock(&proctree_lock);
-					if (!(skip_self && p == self))
+					if (!(skip_self && p == self) && sig != 0)
 						kern_psignal(p, sig);
 					PROC_UNLOCK(p);
 				} else {
@@ -1352,7 +1401,7 @@ coalition_terminate_members_locked(struct coalition *co, struct thread *td,
 				    (uintptr_t *)&cm->cm_data);
 				if (skip_self && p == self)
 					continue;
-				if (p != NULL) {
+				if (p != NULL && sig != 0) {
 					PROC_LOCK(p);
 					kern_psignal(p, sig);
 					PROC_UNLOCK(p);
@@ -1881,17 +1930,15 @@ coalition_process_fork(void *arg __unused, struct proc *parent,
 	struct coalition *co;
 
 	/*
-	 * A process descriptor child (pdfork(2)) is not part of its creator's
-	 * process family: it is an independently launched process that whoever
-	 * holds its procdesc enlists into the appropriate coalition explicitly
-	 * (a factory hands a session worker to the consumer's coalition, for
-	 * example).  Auto-inheriting the creator's coalition would wrongly bind
-	 * it and make that later enlist fail (a process joins only one
-	 * coalition).  Ordinary fork children still inherit.
+	 * Every child of a member inherits membership, pdfork(2) children
+	 * included: a unit's helpers must carry the unit's identity or the
+	 * attribution chain (kinfo, audit, OES) breaks at the first helper.
+	 * The launcher pattern still works: a process descriptor holder may
+	 * re-home an INHERITED membership by enlisting the procdesc elsewhere
+	 * (coalition_enlist), so a factory that hands a worker to a consumer's
+	 * coalition just enlists it there.  Only an explicit procdesc enlist is
+	 * pinned (EBUSY on a second enlist).
 	 */
-	if ((flags & RFPROCDESC) != 0)
-		return;
-
 	rw_rlock(&coalition_proc_hash_lock);
 	pcm = coalition_proc_hash_lookup(parent);
 	if (pcm == NULL) {
@@ -2154,10 +2201,218 @@ coalition_close_internal(struct coalition *co, struct thread *td)
 }
 
 /* ----------------------------------------------------------------
+ * Re-homing an inherited membership
+ * ---------------------------------------------------------------- */
+
+/*
+ * Detach p from a coalition it belongs to only by inheritance (fork, pdfork
+ * or JOIN: no held file).  Mirrors the exit path: unhash under the hash
+ * lock, then re-find the member under the old coalition's lock.  A moved
+ * leader stops being the leader; it does not terminate the old coalition,
+ * because the process is alive and merely changing hands.  No-op when p is
+ * in no coalition or its membership is an explicit procdesc enlist.
+ */
+static void
+coalition_rehome_inherited(struct proc *p)
+{
+	struct coalition_member *cm;
+	struct coalition *old;
+
+	rw_wlock(&coalition_proc_hash_lock);
+	cm = coalition_proc_hash_lookup(p);
+	if (cm == NULL || cm->cm_fp != NULL) {
+		rw_wunlock(&coalition_proc_hash_lock);
+		return;
+	}
+	old = cm->cm_coalition;
+	coalition_ref(old);
+	LIST_REMOVE(cm, cm_hash);
+	cm->cm_hash.le_prev = NULL;
+	rw_wunlock(&coalition_proc_hash_lock);
+
+	cm = NULL;
+	sx_xlock(&old->co_sx);
+	TAILQ_FOREACH(cm, &old->co_members, cm_link) {
+		if (cm->cm_data == p && cm->cm_fp == NULL)
+			break;
+	}
+	if (cm != NULL) {
+		TAILQ_REMOVE(&old->co_members, cm, cm_link);
+		cm->cm_link.tqe_prev = NULL;
+		if ((old->co_flags & COF_HAS_LEADER) != 0 &&
+		    old->co_leader == cm) {
+			old->co_leader = NULL;
+			old->co_flags &= ~COF_HAS_LEADER;
+		}
+		atomic_subtract_int(&old->co_member_count, 1);
+		atomic_subtract_int(&coalition_total_members, 1);
+		coalition_notify_event(old, COALITION_NOTE_MEMBER_REMOVED);
+	}
+	sx_xunlock(&old->co_sx);
+	if (cm != NULL) {
+		uma_zfree(coalition_member_zone, cm);
+		coalition_rel(old);	/* the member's reference */
+	}
+	coalition_rel(old);
+}
+
+/* ----------------------------------------------------------------
+ * Identity and responsible parent
+ * ---------------------------------------------------------------- */
+
+#define	COALITION_RESP_CHAIN_MAX	64
+
+/*
+ * Leader pid of the coalition this one is responsible to.  Unlocked read of
+ * a plain int on a pinned structure: the parent may be terminated, in which
+ * case COF_HAS_LEADER is clear and 0 is returned.
+ */
+static pid_t
+coalition_responsible_leader_pid(struct coalition *co)
+{
+	struct coalition *parent;
+
+	if ((co->co_flags & COF_RESPONSIBLE) == 0)
+		return (0);
+	parent = co->co_responsible != NULL ? co->co_responsible : co;
+	if ((atomic_load_int(&parent->co_flags) & COF_HAS_LEADER) == 0)
+		return (0);
+	return (parent->co_leader_pid);
+}
+
+/*
+ * Coalition of a process, referenced.  ESRCH if it belongs to none.
+ */
+static int
+coalition_of_proc_ref(struct proc *p, struct coalition **cop)
+{
+	struct coalition_member *cm;
+
+	rw_rlock(&coalition_proc_hash_lock);
+	cm = coalition_proc_hash_lookup(p);
+	if (cm == NULL) {
+		rw_runlock(&coalition_proc_hash_lock);
+		return (ESRCH);
+	}
+	*cop = cm->cm_coalition;
+	coalition_ref(*cop);
+	rw_runlock(&coalition_proc_hash_lock);
+	return (0);
+}
+
+/*
+ * Resolve the attached fd of SET_RESPONSIBLE to a referenced coalition:
+ * a coalition instance fd names that coalition; a process descriptor names
+ * the coalition its process is a member of.  Caller holds
+ * coalition_nest_lock, which pins instance -> coalition.
+ */
+static int
+coalition_resolve_responsible_fd(struct file *fp, struct coalition **cop)
+{
+	struct mac_capability_instance *ci;
+	struct coalition *target;
+	struct procdesc *pd;
+	struct proc *p;
+	int error;
+
+	sx_assert(&coalition_nest_lock, SA_XLOCKED);
+
+	if (coalition_is_nested(fp)) {
+		ci = fp->f_data;
+		target = mac_capability_instance_get_priv(ci);
+		if (target == NULL)
+			return (EBADF);
+		coalition_ref(target);
+		*cop = target;
+		return (0);
+	}
+	if (fp->f_type == DTYPE_PROCDESC) {
+		pd = fp->f_data;
+		sx_slock(&proctree_lock);
+		p = pd->pd_proc;
+		if (p == NULL) {
+			sx_sunlock(&proctree_lock);
+			return (ESRCH);
+		}
+		error = coalition_of_proc_ref(p, cop);
+		sx_sunlock(&proctree_lock);
+		return (error);
+	}
+	return (EBADF);
+}
+
+/*
+ * Make 'target' the responsible parent of 'co'.  Set once (EALREADY).
+ * 'target == co' records a self-root.  Cycles are refused (ELOOP) by
+ * walking the immutable edges from target upward; the walk is bounded so
+ * a hostile chain cannot spin the kernel.  On success the edge holds its
+ * own reference on target (nothing when self).
+ */
+static int
+coalition_set_responsible_locked(struct coalition *co,
+    struct coalition *target)
+{
+	struct coalition *t;
+	int depth, error;
+
+	sx_assert(&coalition_nest_lock, SA_XLOCKED);
+
+	for (t = target, depth = 0; t != NULL; t = t->co_responsible) {
+		if (t == co && t != target)
+			return (ELOOP);
+		if (++depth > COALITION_RESP_CHAIN_MAX)
+			return (ELOOP);
+	}
+
+	sx_xlock(&co->co_sx);
+	if ((co->co_flags & COF_RESPONSIBLE) != 0)
+		error = EALREADY;
+	else {
+		if (target != co) {
+			coalition_ref(target);
+			co->co_responsible = target;
+		}
+		co->co_responsible_id = target->co_id;
+		co->co_flags |= COF_RESPONSIBLE;
+		error = 0;
+	}
+	sx_xunlock(&co->co_sx);
+	return (error);
+}
+
+/*
+ * Provider for mac_capability_proc_coalition(): identity of the coalition a
+ * process belongs to.  May run with the process lock held, so only the
+ * hash rwlock (non-sleepable) is taken.
+ */
+static bool
+coalition_proc_info(struct proc *p, struct mac_capability_proc_coalition *out)
+{
+	struct coalition_member *cm;
+	struct coalition *co;
+
+	rw_rlock(&coalition_proc_hash_lock);
+	cm = coalition_proc_hash_lookup(p);
+	if (cm == NULL) {
+		rw_runlock(&coalition_proc_hash_lock);
+		return (false);
+	}
+	co = cm->cm_coalition;
+	out->id = co->co_id;
+	out->responsible_id = co->co_responsible_id;
+	out->leader_pid = (atomic_load_int(&co->co_flags) & COF_HAS_LEADER) != 0 ?
+	    co->co_leader_pid : 0;
+	out->responsible_leader_pid = coalition_responsible_leader_pid(co);
+	rw_runlock(&coalition_proc_hash_lock);
+	return (true);
+}
+
+/* ----------------------------------------------------------------
  * mac_capability service callbacks
  * ---------------------------------------------------------------- */
 
 static volatile uint64_t coalition_next_badge = 1;
+static volatile uint64_t coalition_next_id = 1;	/* 0 is never issued */
 
 static int
 coalition_connect(struct ucred *cred __unused, void *arg __unused,
@@ -2182,6 +2437,7 @@ coalition_init(struct mac_capability_instance *s, void *arg __unused)
 
 	co = coalition_alloc();
 	co->co_instance = s;
+	co->co_id = atomic_fetchadd_64(&coalition_next_id, 1);
 	mac_capability_instance_set_priv(s, co);
 
 	SDT_PROBE1(mac_capability_coalition, , , create,
@@ -2279,16 +2535,31 @@ coalition_call(struct mac_capability_instance *s,
 	{
 		struct coalition_stat_reply *sr;
 		struct coalition_member *cm;
+		bool full;
 
-		if (reply_avail < sizeof(*sr)) {
+		/*
+		 * Callers built before the identity extension offer only the
+		 * original layout; serve them that.  Anything shorter is an
+		 * error, as before.
+		 */
+		if (reply_avail < COALITION_STAT_REPLY_V1_LEN) {
 			*replylenp = sizeof(*sr);
 			error = EMSGSIZE;
 			goto out;
 		}
+		full = reply_avail >= sizeof(*sr);
 		sr = reply;
-		*replylenp = sizeof(*sr);
+		*replylenp = full ? sizeof(*sr) : COALITION_STAT_REPLY_V1_LEN;
 
 		sx_slock(&co->co_sx);
+		if (full) {
+			sr->id = co->co_id;
+			sr->responsible_id = co->co_responsible_id;
+			sr->leader_pid = (co->co_flags & COF_HAS_LEADER) != 0 ?
+			    co->co_leader_pid : 0;
+			sr->responsible_leader_pid =
+			    coalition_responsible_leader_pid(co);
+		}
 		sr->status = 0;
 		sr->member_count = co->co_member_count;
 		sr->flags = co->co_flags;
@@ -2325,7 +2596,13 @@ coalition_call(struct mac_capability_instance *s,
 			break;
 		}
 		ssr = req;
-		if (ssr->signal <= 0 || ssr->signal >= NSIG) {
+		/*
+		 * Signal 0 means "release": when the coalition ends, process
+		 * members are dropped from it but not signalled.  Attribution
+		 * coalitions (login sessions) use this so ending the session
+		 * record never kills a detached process that outlived it.
+		 */
+		if (ssr->signal < 0 || ssr->signal >= NSIG) {
 			rpl->status = EINVAL;
 			break;
 		}
@@ -2621,6 +2898,63 @@ coalition_call(struct mac_capability_instance *s,
 		break;
 	}
 
+	case COALITION_OP_SET_RESPONSIBLE:
+	{
+		const struct coalition_set_responsible_req *rr;
+		struct coalition *target;
+		uint32_t flags;
+
+		if (reqlen < sizeof(*rr)) {
+			rpl->status = EINVAL;
+			break;
+		}
+		rr = req;
+		flags = rr->flags;
+		if (nfds > 1 || (nfds == 0 &&
+		    (flags & ~(COALITION_RESP_SELF | COALITION_RESP_CALLER)) != 0)) {
+			rpl->status = EINVAL;
+			break;
+		}
+		if (nfds == 0 && (flags == 0 ||
+		    (flags & (COALITION_RESP_SELF | COALITION_RESP_CALLER)) ==
+		    (COALITION_RESP_SELF | COALITION_RESP_CALLER))) {
+			rpl->status = EINVAL;
+			break;
+		}
+
+		/*
+		 * coalition_nest_lock serialises every responsible-edge
+		 * mutation and pins the target's instance -> coalition link
+		 * (same idiom as nested enlist), so the cycle walk below sees
+		 * a stable graph.  Lock order: nest_lock -> hash_lock, and
+		 * nest_lock -> co_sx, both already established.
+		 */
+		sx_xlock(&coalition_nest_lock);
+		if (nfds == 1)
+			rpl->status = coalition_resolve_responsible_fd(fds[0],
+			    &target);
+		else if ((flags & COALITION_RESP_CALLER) != 0)
+			rpl->status = coalition_of_proc_ref(curproc, &target);
+		else {
+			target = co;
+			coalition_ref(target);
+			rpl->status = 0;
+		}
+		if (rpl->status != 0) {
+			sx_xunlock(&coalition_nest_lock);
+			SDT_PROBE3(mac_capability_coalition, , , responsible__set,
+			    co->co_id, 0, rpl->status);
+			break;
+		}
+		rpl->status = coalition_set_responsible_locked(co, target);
+		sx_xunlock(&coalition_nest_lock);
+		SDT_PROBE3(mac_capability_coalition, , , responsible__set,
+		    co->co_id, target->co_id, rpl->status);
+		/* The edge, when made, took its own reference. */
+		coalition_rel(target);
+		break;
+	}
+
 	case COALITION_OP_RUSAGE:
 	{
 		struct coalition_rusage_reply *rr;
@@ -2843,6 +3177,7 @@ coalition_mod_init(void)
 	if (error != 0)
 		goto fail_svc;
 
+	mac_capability_proc_coalition_hook_set(coalition_proc_info);
 	log(LOG_INFO, "mac_capability_coalition: loaded\n");
 	return (0);
 
@@ -2877,6 +3212,7 @@ coalition_modevent(module_t mod __unused, int type, void *arg __unused)
 			return (EBUSY);
 		}
 
+		mac_capability_proc_coalition_hook_set(NULL);
 		mac_capability_service_destroy(coalition_svc);
 		EVENTHANDLER_DEREGISTER(process_exit, coalition_exit_tag);
 		EVENTHANDLER_DEREGISTER(process_fork, coalition_fork_tag);

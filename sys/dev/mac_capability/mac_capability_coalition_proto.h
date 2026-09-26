@@ -32,6 +32,7 @@
 #define	COALITION_OP_JOIN		10
 #define	COALITION_OP_RUSAGE		11
 #define	COALITION_OP_ENLIST_SET		12
+#define	COALITION_OP_SET_RESPONSIBLE	13
 
 /*
  * Common request header.
@@ -141,6 +142,18 @@ struct coalition_set_watchdog_req {
  * COALITION_OP_STAT
  *   req:  coalition_req_hdr { .op = COALITION_OP_STAT }
  *   reply: coalition_stat_reply
+ *
+ * Identity fields (id and later) were appended after the first release.
+ * A caller that offers only COALITION_STAT_REPLY_V1_LEN bytes receives the
+ * original layout; a caller that offers the full structure receives it all.
+ * Every coalition carries a permanent 64-bit id, assigned at creation and
+ * never reused for the lifetime of the kernel; 0 is never a valid id.
+ *
+ * The responsible parent is the coalition on whose behalf this one exists
+ * (see COALITION_OP_SET_RESPONSIBLE).  responsible_id is 0 until it is set.
+ * A coalition responsible for itself (the root of a chain) reports its own
+ * id.  responsible_leader_pid is the responsible coalition's current leader
+ * pid, or 0 when it has none or is gone.
  */
 struct coalition_stat_reply {
 	int32_t		status;
@@ -153,6 +166,37 @@ struct coalition_stat_reply {
 	uint32_t	process_count;
 	uint32_t	jail_count;
 	uint32_t	other_count;
+	/* --- identity extension --- */
+	uint64_t	id;		/* permanent coalition id */
+	uint64_t	responsible_id;	/* responsible parent id, 0 = unset */
+	int32_t		leader_pid;	/* current leader pid, 0 = none */
+	int32_t		responsible_leader_pid;
+};
+#define	COALITION_STAT_REPLY_V1_LEN	(10 * sizeof(uint32_t))
+
+/*
+ * COALITION_OP_SET_RESPONSIBLE
+ *   req:  coalition_set_responsible_req
+ *   fds:  req_fds[0] = the responsible parent: a coalition fd, or a process
+ *         descriptor whose process is a coalition member (that coalition
+ *         becomes the parent).  Omit fds and pass a COALITION_RESP_* flag
+ *         instead to name the caller's own coalition or the target itself.
+ *   reply: coalition_reply
+ *
+ * Records which coalition this one exists on behalf of.  Set once: a
+ * second call fails with EALREADY.  Naming the target itself makes it the
+ * root of a responsibility chain (a shared provider that answers for its
+ * own existence).  A chain may not loop: ELOOP.  The edge is immutable and
+ * survives the parent's termination, so an audit trail can always be
+ * walked back from a process to the session or system that caused it.
+ * Membership, signals, and lifetime are NOT affected: this is attribution,
+ * not nesting.
+ */
+#define	COALITION_RESP_SELF	0x1	/* target is its own root */
+#define	COALITION_RESP_CALLER	0x2	/* caller process's coalition */
+struct coalition_set_responsible_req {
+	uint32_t	op;
+	uint32_t	flags;		/* COALITION_RESP_*, ignored with an fd */
 };
 
 /*
@@ -184,6 +228,7 @@ struct coalition_rusage_reply {
 #define	COF_LEADER_MONITOR	0x0020	/* mac_capability leader monitor holds a ref */
 #define	COF_GRACE_ACTIVE	0x0040	/* grace period — reject new members */
 #define	COF_CLOSING		0x0080	/* close_internal draining; no (re)arm */
+#define	COF_RESPONSIBLE		0x0100	/* responsible parent has been set */
 
 /*
  * Asynchronous state-change notifications are delivered as MAC_CAPABILITY_RECVMSG

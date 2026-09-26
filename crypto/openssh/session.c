@@ -1549,6 +1549,13 @@ child_close_fds(struct ssh *ssh)
 		(void)cap_clofork_limit(SERVICE_LOOKUP_FIXED_FD,
 		    CAP_CLOFORK_UNLOCKED);
 		closefrom(SERVICE_LOOKUP_FIXED_FD + 1);
+		/*
+		 * 5BSD: this child is the session leaf; join the login
+		 * session's coalition so the user's shell carries the session
+		 * identity.  Attribution only, never fatal.
+		 */
+		if (service_session_join_coalition(SERVICE_LOOKUP_FIXED_FD) == -1)
+			debug("session coalition join: %s", strerror(errno));
 	} else {
 		if (ambient_prov_fd >= 0) {
 			(void)close(ambient_prov_fd);

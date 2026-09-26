@@ -30,6 +30,7 @@
 
 #include <security/oes/oes.h>
 #include <security/oes/oes_internal.h>
+#include <dev/mac_capability/mac_capability_label.h>
 
 MALLOC_DECLARE(M_OES);
 
@@ -2325,6 +2326,17 @@ oes_fill_process(oes_process_t *ep, struct proc *p, struct ucred *cred_override,
 		ep->ep_ppid = p->p_oppid;
 		ep->ep_meta_flags |= OES_PROC_META_PARENT_UNAVAILABLE |
 		    OES_PROC_META_SESSION_UNAVAILABLE;
+	}
+
+	/* Capability-plane coalition identity (non-sleepable lookup). */
+	{
+		struct mac_capability_proc_coalition mc;
+
+		if (mac_capability_proc_coalition(p, &mc)) {
+			ep->ep_coalition = mc.id;
+			ep->ep_responsible_coalition = mc.responsible_id;
+			ep->ep_responsible_pid = mc.responsible_leader_pid;
+		}
 	}
 
 	/* Credential information */

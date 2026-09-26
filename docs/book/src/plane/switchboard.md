@@ -253,13 +253,18 @@ switchboard: running
 services: 23 loaded (19 running, 2 stopped, 0 starting, 0 stopping, 2 done)
 fd-budget: soft=229672 hard=229672 reserve=8 denied=0 control-shed=0
 
-  system.Log/bsdlog    running  pid 611 restart=on-failure mgmt=core by=system conns=14
+  system.Log/bsdlog    running  pid 611 restart=on-failure mgmt=core by=system coal=12 resp=switchboard[3] conns=14
   system.Time/bsdtime  running  pid 618 restart=on-failure mgmt=core by=system
   system.Notify/notifyd stopped          restart=on-failure mgmt=system by=system
   cron                 running  pid 702 restart=on-failure mgmt=system by=system
   etc-rc               done             restart=never mgmt=system by=system
 ```
 
+`coal=` is the unit's kernel coalition id and `resp=` who it exists on
+behalf of, with that coalition's id (`switchboard`, `self`, a unit label,
+or `session:uid=N`); `switchboardctl tree` draws the same relation as a
+tree, and `ps -o coal,rcoal,rpid` shows it per process
+([Coalitions and Accounting](../capability/coalitions-and-accounting.md)).
 `restarts=N` appears once a unit has been restarted; `by=` is `system` for
 boot launches, `operator` after `switchboardctl start`, `activation` for a
 demand source, or the requesting unit's label for an on-demand launch. The

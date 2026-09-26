@@ -167,6 +167,17 @@ sctl_cmd_status(struct sctl_reply *reply, char *summary, size_t sumlen)
 				BUF_APPEND(summary, sumlen, &off,
 				    " by=%s", svc->launched_by);
 
+			if (svc->coalition_id != 0) {
+				char rbuf[64];
+
+				BUF_APPEND(summary, sumlen, &off,
+				    " coal=%ju resp=%s[%ju]",
+				    (uintmax_t)svc->coalition_id,
+				    svc_responsibility_name(&svc->responsible,
+				    rbuf, sizeof(rbuf)),
+				    (uintmax_t)svc->responsible.parent_id);
+			}
+
 			if (svc->connection_count > 0)
 				BUF_APPEND(summary, sumlen, &off,
 				    " conns=%u", svc->connection_count);
@@ -205,6 +216,99 @@ conn_destroy(struct sctl_conn *c)
 
 
 /*
+ * Responsibility tree: every live unit under the coalition it answers to.
+ * Roots are switchboard's own coalition, each login session's coalition,
+ * and the self-rooted shared providers; a unit's children are the units
+ * whose recorded parent is its coalition.  Depth is bounded so a stale or
+ * hostile record can never spin the formatter.
+ */
+#define	SCTL_TREE_MAX_DEPTH	8
+
+static void
+sctl_tree_children(char *summary, size_t sumlen, size_t *off,
+    uint64_t parent_id, unsigned depth)
+{
+	unsigned i;
+
+	if (depth > SCTL_TREE_MAX_DEPTH)
+		return;
+	for (i = 0; i < sd.nservices; i++) {
+		struct svc_runtime *svc = &sd.services[i];
+
+		if (svc->coalition_id == 0 ||
+		    svc->responsible.parent_id != parent_id ||
+		    svc->coalition_id == parent_id)
+			continue;
+		BUF_APPEND(summary, sumlen, off, "%*s%s [%ju]",
+		    (int)(2 * depth), "", svc->manifest.label,
+		    (uintmax_t)svc->coalition_id);
+		if (svc->pid > 0)
+			BUF_APPEND(summary, sumlen, off, " pid %jd",
+			    (intmax_t)svc->pid);
+		BUF_APPEND(summary, sumlen, off, "\n");
+		sctl_tree_children(summary, sumlen, off, svc->coalition_id,
+		    depth + 1);
+	}
+}
+
+static void
+sctl_cmd_tree(struct sctl_reply *reply, char *summary, size_t sumlen)
+{
+	size_t off;
+	unsigned i;
+	bool any;
+
+	off = 0;
+	BUF_APPEND(summary, sumlen, &off, "responsibility tree [coalition]\n");
+	if (sd.root_coalition_id != 0) {
+		BUF_APPEND(summary, sumlen, &off, "switchboard [%ju]\n",
+		    (uintmax_t)sd.root_coalition_id);
+		sctl_tree_children(summary, sumlen, &off, sd.root_coalition_id,
+		    1);
+	}
+	off = domain_sessions_format(summary, sumlen, off);
+	/* Units activated by a session, under it. */
+	for (i = 0; i < sd.nservices; i++) {
+		struct svc_runtime *svc = &sd.services[i];
+
+		if (svc->coalition_id == 0 ||
+		    svc->responsible.kind != SVC_RESP_SESSION)
+			continue;
+		BUF_APPEND(summary, sumlen, &off,
+		    "    %s [%ju] session uid=%u [%ju]",
+		    svc->manifest.label, (uintmax_t)svc->coalition_id,
+		    (unsigned)svc->responsible.uid,
+		    (uintmax_t)svc->responsible.parent_id);
+		if (svc->pid > 0)
+			BUF_APPEND(summary, sumlen, &off, " pid %jd",
+			    (intmax_t)svc->pid);
+		BUF_APPEND(summary, sumlen, &off, "\n");
+		sctl_tree_children(summary, sumlen, &off, svc->coalition_id, 3);
+	}
+	any = false;
+	for (i = 0; i < sd.nservices; i++) {
+		struct svc_runtime *svc = &sd.services[i];
+
+		if (svc->coalition_id == 0 ||
+		    svc->responsible.parent_id != svc->coalition_id)
+			continue;
+		if (!any) {
+			BUF_APPEND(summary, sumlen, &off, "self-rooted\n");
+			any = true;
+		}
+		BUF_APPEND(summary, sumlen, &off, "  %s [%ju]",
+		    svc->manifest.label, (uintmax_t)svc->coalition_id);
+		if (svc->pid > 0)
+			BUF_APPEND(summary, sumlen, &off, " pid %jd",
+			    (intmax_t)svc->pid);
+		BUF_APPEND(summary, sumlen, &off, "\n");
+		sctl_tree_children(summary, sumlen, &off, svc->coalition_id, 2);
+	}
+	reply->status = 0;
+	reply->flags = (uint32_t)off;
+}
+
+/*
  * Execute a transport-neutral control operation — the fd-less ops shared by the
  * socket path and the capability control path: STATUS, SERVICES, RELOAD, START,
  * STOP.  is_admin is the caller's already-made authorization decision (the socket
@@ -228,6 +332,7 @@ sctl_execute_op(uint32_t op, const char *payload, uint32_t datalen,
 	switch (op) {
 	case SCTL_OP_STATUS:
 	case SCTL_OP_SERVICES:
+	case SCTL_OP_TREE:
 	case SCTL_OP_RELOAD:
 		if (datalen != 0) {
 			reply->status = EINVAL;
@@ -237,6 +342,10 @@ sctl_execute_op(uint32_t op, const char *payload, uint32_t datalen,
 		}
 		if (op == SCTL_OP_STATUS || op == SCTL_OP_SERVICES) {
 			sctl_cmd_status(reply, summary, summary_cap);
+			break;
+		}
+		if (op == SCTL_OP_TREE) {
+			sctl_cmd_tree(reply, summary, summary_cap);
 			break;
 		}
 		/* SCTL_OP_RELOAD */
@@ -459,6 +568,7 @@ sctl_cap_request(struct channel *ch __unused, struct channel_message *request,
 			switch (req->op) {
 			case SCTL_OP_STATUS:
 			case SCTL_OP_SERVICES:
+			case SCTL_OP_TREE:
 			case SCTL_OP_RELOAD:
 			case SCTL_OP_START_SVC:
 			case SCTL_OP_STOP_SVC:

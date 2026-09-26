@@ -681,6 +681,16 @@ main(int argc, char *argv[])
 		    service_install_ambient_lookup(user_fd) == 0) {
 			syslog(LOG_DEBUG, "login: lookup channel for uid %u "
 			    "on fd %d", (unsigned)pwd->pw_uid, user_fd);
+			/*
+			 * Become the session's coalition member so the shell
+			 * and everything it starts carry the session identity
+			 * (ps -o coal / procstat coalition).  Attribution
+			 * only: never fatal.
+			 */
+			if (service_session_join_coalition(user_fd) == -1)
+				syslog(errno == EBUSY ? LOG_DEBUG : LOG_NOTICE,
+				    "login: session coalition for uid %u: %m",
+				    (unsigned)pwd->pw_uid);
 		} else {
 			syslog(LOG_NOTICE, "login: no lookup channel for "
 			    "uid %u: %m", (unsigned)pwd->pw_uid);

@@ -44,6 +44,7 @@
 #include "fd_budget.h"
 #include "switchboard_probes.h"
 #include "switchboard_svc_proto.h"
+#include <dev/mac_capability/mac_capability_coalition_proto.h>
 #include "register_lookup_gate.h"
 
 /*
@@ -89,6 +90,17 @@ struct svc_lookup_channel {
 	struct channel			*channel;
 	int				 fd;	/* channel_fd(), registered on kq */
 	struct svc_domain		 domain;
+	/*
+	 * The session's coalition (USER-domain sessions only): a self-rooted,
+	 * signal-less coalition standing for the login session.  Units
+	 * activated on the session's behalf are responsible to it, and the
+	 * session leader joins it over SVC_OP_SESSION_COALITION so its
+	 * processes carry the session id.  Private per-process lookup channels
+	 * registered from this session share it (dup).  Closed with the
+	 * channel; signal 0 means members are released, never killed.
+	 */
+	int				 coalition_fd;
+	uint64_t			 coalition_id;
 };
 
 static struct svc_lookup_channel *lookup_channels;
@@ -288,7 +300,93 @@ lookup_channel_close(struct svc_lookup_channel *lc)
 		channel_destroy(lc->channel);
 	else if (lc->fd >= 0)
 		close(lc->fd);
+	if (lc->coalition_fd >= 0)
+		(void)close(lc->coalition_fd);
 	free(lc);
+}
+
+int
+lookup_channel_coalition_fd(const struct svc_lookup_channel *lc)
+{
+
+	return (lc != NULL ? lc->coalition_fd : -1);
+}
+
+uint64_t
+lookup_channel_coalition_id(const struct svc_lookup_channel *lc)
+{
+
+	return (lc != NULL ? lc->coalition_id : 0);
+}
+
+uid_t
+lookup_channel_uid(const struct svc_lookup_channel *lc)
+{
+
+	return (lc != NULL ? lc->domain.uid : (uid_t)-1);
+}
+
+/*
+ * Mint the session coalition for a freshly minted USER-domain lookup
+ * channel.  Best-effort: a session without one is simply unattributed.
+ */
+static void
+session_coalition_create(struct svc_lookup_channel *lc)
+{
+	struct coalition_stat_reply sr;
+	int fd, error;
+
+	if (switchboard_fd_budget_check(1, "session coalition") == -1)
+		return;
+	fd = mac_cap_create_coalition();
+	if (fd == -1) {
+		syslog(LOG_NOTICE, "domain: no session coalition for uid %u: %m",
+		    (unsigned)lc->domain.uid);
+		return;
+	}
+	if (cap_clofork_limit(fd, CAP_CLOFORK_LOCKED) == -1 ||
+	    cap_cloexec_limit(fd, CAP_CLOEXEC_LOCKED) == -1 ||
+	    mac_cap_coalition_set_signal(fd, 0) != 0 ||
+	    mac_cap_coalition_set_responsible(fd, -1, COALITION_RESP_SELF) != 0 ||
+	    mac_cap_coalition_stat(fd, &sr) != 0) {
+		error = errno;
+		(void)close(fd);
+		syslog(LOG_NOTICE, "domain: session coalition for uid %u: %s",
+		    (unsigned)lc->domain.uid, strerror(error));
+		return;
+	}
+	lc->coalition_fd = fd;
+	lc->coalition_id = sr.id;
+	syslog(LOG_INFO, "domain: session coalition %ju for uid %u",
+	    (uintmax_t)sr.id, (unsigned)lc->domain.uid);
+}
+
+/*
+ * Sessions with a coalition, for the responsibility tree.
+ */
+size_t
+domain_sessions_format(char *buf, size_t len, size_t off)
+{
+	struct svc_lookup_channel *lc, *prev;
+	int n;
+
+	for (lc = lookup_channels; lc != NULL; lc = lc->next) {
+		if (lc->coalition_fd < 0 || off >= len)
+			continue;
+		/* Private per-process channels share their session's coalition. */
+		for (prev = lookup_channels; prev != lc; prev = prev->next)
+			if (prev->coalition_id == lc->coalition_id)
+				break;
+		if (prev != lc)
+			continue;
+		n = snprintf(buf + off, len - off,
+		    "  session uid=%u [%ju]\n", (unsigned)lc->domain.uid,
+		    (uintmax_t)lc->coalition_id);
+		if (n < 0)
+			break;
+		off += (size_t)n < len - off ? (size_t)n : len - off - 1;
+	}
+	return (off);
 }
 
 /*
@@ -451,6 +549,12 @@ lookup_channel_register(struct svc_lookup_channel *lc,
 	ack.op = SVC_OP_REGISTER_LOOKUP;
 	ack.status = 0;
 	ack.magic = SVC_REGISTER_LOOKUP_MAGIC;
+	/* A private channel of a session shares the session's coalition. */
+	if (lc->coalition_fd >= 0) {
+		adopted->coalition_fd = fcntl(lc->coalition_fd,
+		    F_DUPFD_CLOEXEC, 0);
+		adopted->coalition_id = lc->coalition_id;
+	}
 	if (channel_send_event(adopted->channel,
 	    &(struct channel_outgoing){
 		.size = sizeof(struct channel_outgoing),
@@ -531,6 +635,27 @@ lookup_channel_request(struct channel *channel,
 		 * bootstrap-channel path that still uses them.
 		 */
 		lookup_channel_reply(request, EPERM, NULL, 0);
+		goto out;
+	}
+	if (op == SVC_OP_SESSION_COALITION) {
+		/*
+		 * Hand the session leader its session coalition so it can
+		 * join (service_session_join_coalition).  Only a USER session
+		 * channel carries one; SYSTEM carries answer ENOENT.
+		 */
+		int cfd;
+
+		if (lc->coalition_fd < 0) {
+			lookup_channel_reply(request, ENOENT, NULL, 0);
+			goto out;
+		}
+		cfd = fcntl(lc->coalition_fd, F_DUPFD_CLOEXEC, 0);
+		if (cfd == -1) {
+			lookup_channel_reply(request, errno, NULL, 0);
+			goto out;
+		}
+		lookup_channel_reply(request, 0, &cfd, 1);
+		(void)close(cfd);
 		goto out;
 	}
 	if (op == SVC_OP_AMBIENT_HELLO) {
@@ -675,6 +800,8 @@ lookup_channel_adopt(int switchboard_end, enum svc_domain_kind kind, uid_t uid,
 		return (NULL);
 	}
 	lc->fd = -1;
+	lc->coalition_fd = -1;
+	lc->coalition_id = 0;
 	lc->domain.kind = kind;
 	lc->domain.uid = uid;
 	/*
@@ -724,7 +851,7 @@ lookup_channel_adopt(int switchboard_end, enum svc_domain_kind kind, uid_t uid,
 
 static int
 domain_mint_channel(enum svc_domain_kind kind, uid_t uid,
-    const struct svc_anoint_set *set, int *out_fd, int kq)
+    const struct svc_anoint_set *set, bool session, int *out_fd, int kq)
 {
 	struct svc_lookup_channel *lc;
 	int switchboard_end, client_end, error;
@@ -748,6 +875,13 @@ domain_mint_channel(enum svc_domain_kind kind, uid_t uid,
 		errno = error;
 		return (-1);
 	}
+	/*
+	 * A login session gets a session coalition whatever its kind: an admin
+	 * principal's session is SYSTEM-kind and must be attributable too.  The
+	 * boot ambient carry is not a session and gets none.
+	 */
+	if (session)
+		session_coalition_create(lc);
 	/* The set this session channel will carry, as decided by the minter. */
 	SWITCHBOARD_PROBE_ANOINT_SET(SVC_SESSION_LABEL,
 	    (set != NULL ? set->n : 0U), (int)(set != NULL && set->all),
@@ -788,7 +922,8 @@ domain_mint_user_channel(uid_t uid, int *out_fd, int kq)
 
 	/* A plain user mint holds no anointments and carries no admin rights. */
 	memset(&none, 0, sizeof(none));
-	return (domain_mint_channel(SVC_DOMAIN_USER, uid, &none, out_fd, kq));
+	return (domain_mint_channel(SVC_DOMAIN_USER, uid, &none, true, out_fd,
+	    kq));
 }
 
 /*
@@ -811,7 +946,8 @@ domain_mint_system_channel(int *out_fd, int kq)
 	memset(&all, 0, sizeof(all));
 	all.all = true;
 	all.admin_rights = true;
-	return (domain_mint_channel(SVC_DOMAIN_SYSTEM, 0, &all, out_fd, kq));
+	return (domain_mint_channel(SVC_DOMAIN_SYSTEM, 0, &all, false, out_fd,
+	    kq));
 }
 
 /*
@@ -829,7 +965,7 @@ domain_mint_session_channel(enum svc_domain_kind kind, uid_t uid,
 {
 
 	return (domain_mint_channel(kind,
-	    kind == SVC_DOMAIN_USER ? uid : 0, set, out_fd, kq));
+	    kind == SVC_DOMAIN_USER ? uid : 0, set, true, out_fd, kq));
 }
 
 bool

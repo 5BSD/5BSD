@@ -10,6 +10,7 @@
 #include <sys/resource.h>
 #include <sys/stat.h>
 #include <sys/sysctl.h>
+#include <sys/user.h>
 #include <sys/wait.h>
 
 #include <errno.h>
@@ -222,6 +223,32 @@ check_process_metadata(const oes_message_t *msg, const oes_process_t *proc,
 	}
 	PROC_CHECK(proc->ep_token.ept_id == (uint64_t)child,
 	    "process token pid mismatch");
+	/*
+	 * Capability-plane identity: a fork child inherits its parent's
+	 * coalition, so the event's coalition fields must equal what the
+	 * kernel exports for us in kinfo_proc (0 when we are in none).
+	 */
+	{
+		struct kinfo_proc kp;
+		int mib[4] = { CTL_KERN, KERN_PROC, KERN_PROC_PID, getpid() };
+		size_t len = sizeof(kp);
+
+		if (sysctl(mib, 4, &kp, &len, NULL, 0) == 0 &&
+		    len == sizeof(kp)) {
+			PROC_CHECK(proc->ep_coalition == kp.ki_coalition,
+			    "coalition id mismatch with kinfo_proc");
+			PROC_CHECK(proc->ep_responsible_coalition ==
+			    kp.ki_rcoalition,
+			    "responsible coalition mismatch with kinfo_proc");
+			PROC_CHECK(proc->ep_responsible_pid == kp.ki_rpid,
+			    "responsible pid mismatch with kinfo_proc");
+			if (kp.ki_coalition != 0)
+				printf("  coalition %ju responsible %ju (leader %d)\n",
+				    (uintmax_t)proc->ep_coalition,
+				    (uintmax_t)proc->ep_responsible_coalition,
+				    (int)proc->ep_responsible_pid);
+		}
+	}
 	PROC_CHECK(proc->ep_token.ept_genid != 0, "process generation is zero");
 	PROC_CHECK(proc->ep_exec_id != 0, "execution ID is zero");
 	if (getresuid(&ruid, &euid, &suid) == 0) {

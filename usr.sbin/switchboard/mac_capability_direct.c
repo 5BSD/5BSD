@@ -228,6 +228,60 @@ mac_cap_coalition_set_leader(int coalition_fd, int leader_fd)
 }
 
 int
+mac_cap_coalition_set_responsible(int coalition_fd, int parent_fd,
+    uint32_t flags)
+{
+	struct coalition_set_responsible_req req;
+	struct coalition_reply reply;
+
+	memset(&req, 0, sizeof(req));
+	req.op = COALITION_OP_SET_RESPONSIBLE;
+	req.flags = flags;
+
+	if (kernel_call(coalition_fd, &req, sizeof(req),
+	    parent_fd >= 0 ? &parent_fd : NULL, parent_fd >= 0 ? 1 : 0,
+	    &reply, sizeof(reply)) == -1)
+		return (-1);
+	if (reply.status != 0)
+		errno = reply.status;
+	return (reply.status);
+}
+
+int
+mac_cap_coalition_set_signal(int coalition_fd, int sig)
+{
+	struct coalition_set_signal_req req;
+	struct coalition_reply reply;
+
+	memset(&req, 0, sizeof(req));
+	req.op = COALITION_OP_SET_SIGNAL;
+	req.signal = sig;
+
+	if (kernel_call(coalition_fd, &req, sizeof(req), NULL, 0,
+	    &reply, sizeof(reply)) == -1)
+		return (-1);
+	if (reply.status != 0)
+		errno = reply.status;
+	return (reply.status);
+}
+
+int
+mac_cap_coalition_stat(int coalition_fd, struct coalition_stat_reply *sr)
+{
+	struct coalition_req_hdr req;
+
+	memset(&req, 0, sizeof(req));
+	req.op = COALITION_OP_STAT;
+
+	if (kernel_call(coalition_fd, &req, sizeof(req), NULL, 0,
+	    sr, sizeof(*sr)) == -1)
+		return (-1);
+	if (sr->status != 0)
+		errno = sr->status;
+	return (sr->status);
+}
+
+int
 mac_cap_coalition_graceful(int coalition_fd, int sig, unsigned timeout_ms)
 {
 	struct coalition_graceful_req req;

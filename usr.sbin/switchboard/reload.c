@@ -63,6 +63,7 @@ svc_remove(unsigned idx)
 	 * own start/stop cycles, so removal is the only point they are dropped.
 	 */
 	activation_source_teardown(&sd.services[idx], switchboard_kq);
+	svc_responsibility_clear(&sd.services[idx]);
 
 	for (i = idx; i < sd.nservices - 1; i++) {
 		sd.services[i] = sd.services[i + 1];

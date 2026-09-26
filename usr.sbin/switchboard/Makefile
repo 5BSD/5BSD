@@ -6,7 +6,7 @@ BINDIR=	/usr/libexec
 MAN=	switchboard.5 switchboard.8
 SRCS=	switchboard.c activation.c anoint.c activation_calendar.c bundle_registry.c bundle_selection.c domain.c mac_capability_direct.c execute.c \
 	lifecycle.c reclaim_publish.c registry_watch.c fd_budget.c management.c manifest_compare.c \
-	naming.c on_demand.c capsule_client.c rc_adopt.c \
+	naming.c on_demand.c capsule_client.c rc_adopt.c responsibility.c \
 	rc_ingest.c \
 	reload.c sctl.c switchboard_audit.c startup.c svc_proto.c supervisor.c
 HAS_TESTS=

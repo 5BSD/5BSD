@@ -149,6 +149,27 @@ mac_cap_coalition_graceful(int coalition_fd, int sig, unsigned timeout_ms)
 	return (0);
 }
 
+/*
+ * Responsibility is decided by responsibility.c from the requester and the
+ * session; on_demand.c only records that decision.  Remember the last call
+ * so tests can assert the requester was threaded through.
+ */
+static const struct svc_runtime *resp_last_requester;
+static const struct svc_lookup_channel *resp_last_session;
+static unsigned resp_decide_calls;
+
+void
+svc_responsibility_decide(struct svc_runtime *unit,
+    const struct svc_runtime *requester,
+    const struct svc_lookup_channel *session)
+{
+
+	(void)unit;
+	resp_last_requester = requester;
+	resp_last_session = session;
+	resp_decide_calls++;
+}
+
 int
 mac_cap_coalition_terminate(int coalition_fd)
 {

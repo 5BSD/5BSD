@@ -21,6 +21,7 @@
 #include <sys/mutex.h>
 #include <sys/proc.h>
 #include <sys/refcount.h>
+#include <sys/rmlock.h>
 #include <sys/smp.h>
 #include <sys/sx.h>
 #include <sys/taskqueue.h>
@@ -906,6 +907,51 @@ mac_capability_instance_get_badge(struct mac_capability_instance *s)
 {
 
 	return (s->ci_badge);
+}
+
+/*
+ * Process -> coalition identity provider hook.
+ *
+ * An rmlock keeps a reader from racing the coalition module's unload:
+ * readers take the shared side (cheap, non-sleepable, so callers may hold a
+ * process lock); the module takes the exclusive side only to install or
+ * clear its provider.
+ */
+static struct rmlock mac_capability_proc_coalition_lock;
+static mac_capability_proc_coalition_fn mac_capability_proc_coalition_hook;
+
+static void
+mac_capability_proc_coalition_lock_init(void *arg __unused)
+{
+
+	rm_init(&mac_capability_proc_coalition_lock, "mac_capability_proccoal");
+}
+SYSINIT(mac_capability_proccoal, SI_SUB_LOCK, SI_ORDER_ANY,
+    mac_capability_proc_coalition_lock_init, NULL);
+
+void
+mac_capability_proc_coalition_hook_set(mac_capability_proc_coalition_fn fn)
+{
+
+	rm_wlock(&mac_capability_proc_coalition_lock);
+	mac_capability_proc_coalition_hook = fn;
+	rm_wunlock(&mac_capability_proc_coalition_lock);
+}
+
+bool
+mac_capability_proc_coalition(struct proc *p,
+    struct mac_capability_proc_coalition *out)
+{
+	struct rm_priotracker tracker;
+	mac_capability_proc_coalition_fn fn;
+	bool found;
+
+	bzero(out, sizeof(*out));
+	rm_rlock(&mac_capability_proc_coalition_lock, &tracker);
+	fn = mac_capability_proc_coalition_hook;
+	found = fn != NULL && fn(p, out);
+	rm_runlock(&mac_capability_proc_coalition_lock, &tracker);
+	return (found);
 }
 
 

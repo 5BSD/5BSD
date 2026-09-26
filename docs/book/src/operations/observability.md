@@ -197,7 +197,11 @@ tracectl configtest /Capabilities/System/Trace.cap/Units/bsdtrace.unit/Config/bs
 switchboardctl restart system.Trace/bsdtrace
 ```
 
-(Unit labels are `<bundle_id>/<unit>`; `switchboardctl services` lists them.)
+(Unit labels are `<bundle_id>/<unit>`; `switchboardctl services` lists them,
+with each unit's coalition id and responsible parent; `switchboardctl tree`
+draws the chains, and `ps -o pid,coal,rcoal,rpid,comm` or `procstat
+coalition` walks any process back to the unit, session, or system that
+caused it.)
 
 `tracectl configtest` uses the daemon's parser and rejects wildcard,
 duplicate, malformed and oversized entries; with no argument it reads

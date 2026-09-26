@@ -686,6 +686,19 @@ main(int argc, char *argv[])
 			    service_install_ambient_lookup(user_fd) == 0) {
 				syslog(LOG_DEBUG, "su: lookup channel for "
 				    "uid %u", (unsigned)pwd->pw_uid);
+				/*
+				 * Join the new session's coalition.  From a
+				 * login shell this is EBUSY (already a member
+				 * of the login session's coalition, which
+				 * stays the attribution); from a non-session
+				 * context it takes.  Never fatal.
+				 */
+				if (service_session_join_coalition(user_fd) ==
+				    -1)
+					syslog(errno == EBUSY ? LOG_DEBUG :
+					    LOG_NOTICE, "su: session "
+					    "coalition for uid %u: %m",
+					    (unsigned)pwd->pw_uid);
 			} else {
 				syslog(LOG_NOTICE, "su: no lookup channel for "
 				    "uid %u: %m", (unsigned)pwd->pw_uid);

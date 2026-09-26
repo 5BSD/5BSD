@@ -132,6 +132,29 @@ struct svc_domain {
  */
 struct svc_launch;	/* opaque async-launch context, defined in execute.c */
 
+/*
+ * Responsible parent — the coalition on whose behalf a unit exists
+ * (docs/book/src/capability/coalitions-and-accounting.md, "Responsibility").
+ * Decided when a launch is requested (svc_responsibility_decide) and recorded
+ * on the unit's kernel coalition at every launch (svc_responsibility_apply),
+ * so a restart keeps its attribution.  parent_fd is an OWNED dup of the
+ * parent's coalition fd, held until the slot is removed; -1 for roots.
+ */
+enum svc_responsible_kind {
+	SVC_RESP_UNSET = 0,
+	SVC_RESP_SELF,		/* a shared provider: answers for itself */
+	SVC_RESP_SWITCHBOARD,	/* boot, operator, or adopted: the system */
+	SVC_RESP_UNIT,		/* the unit that requested it (helper, owner) */
+	SVC_RESP_SESSION,	/* a login session (per-user unit) */
+};
+struct svc_responsible {
+	enum svc_responsible_kind kind;
+	char		label[SWITCHBOARD_LABEL_MAX];	/* UNIT: parent label */
+	uid_t		uid;				/* SESSION: session uid */
+	uint64_t	parent_id;			/* parent coalition id */
+	int		parent_fd;			/* owned dup, or -1 */
+};
+
 struct svc_runtime {
 	struct svc_manifest	manifest;
 	enum svc_kind	kind;		/* launch method + readiness contract */
@@ -228,6 +251,8 @@ struct svc_runtime {
 
 	/* Attribution */
 	char		launched_by[SWITCHBOARD_LABEL_MAX]; /* who triggered launch */
+	struct svc_responsible responsible;	/* responsible parent */
+	uint64_t	coalition_id;		/* kernel id of the live coalition */
 	struct timespec	launch_time;
 	unsigned	connection_count;	/* client connections brokered via lookup (cumulative) */
 
@@ -272,6 +297,15 @@ struct switchboard_state {
 	int		coalition_svc_fd;	/* coalition service instance (fd 5) */
 	int		capprotect_fd;		/* capprotect service instance (fd 6) */
 	int		identity_fd;		/* mac_capability_identity service instance */
+	/*
+	 * The system's own attribution root: a member-less coalition that
+	 * stands for switchboard itself.  Boot-launched and operator-started
+	 * units are responsible to it, so every chain that does not end in a
+	 * session or a self-rooted provider ends here.  -1 when unavailable
+	 * (such units then root themselves).
+	 */
+	int		root_coalition_fd;
+	uint64_t	root_coalition_id;
 	bool		running;
 	bool		shutting_down;
 
@@ -317,6 +351,27 @@ int	mac_cap_coalition_graceful(int coalition_fd, int sig, unsigned timeout_ms);
 int	mac_cap_coalition_terminate(int coalition_fd);
 int	mac_cap_mint_capprotect(void);
 int	mac_cap_protect(int capprotect_fd, int pd_fd, uint32_t flags);
+struct coalition_stat_reply;
+int	mac_cap_coalition_set_responsible(int coalition_fd, int parent_fd,
+	    uint32_t flags);
+int	mac_cap_coalition_set_signal(int coalition_fd, int sig);
+int	mac_cap_coalition_stat(int coalition_fd, struct coalition_stat_reply *sr);
+
+/* responsibility.c — responsible-parent attribution of launched units */
+struct svc_lookup_channel;
+void	svc_responsibility_decide(struct svc_runtime *unit,
+	    const struct svc_runtime *requester,
+	    const struct svc_lookup_channel *session);
+void	svc_responsibility_clear(struct svc_runtime *svc);
+void	svc_responsibility_apply(struct svc_runtime *svc, int coalition_fd);
+int	svc_responsibility_root_init(void);
+const char *svc_responsibility_name(const struct svc_responsible *r,
+	    char *buf, size_t len);
+/* domain.c — per-session coalition carried on a lookup channel */
+int	lookup_channel_coalition_fd(const struct svc_lookup_channel *lc);
+uint64_t lookup_channel_coalition_id(const struct svc_lookup_channel *lc);
+uid_t	lookup_channel_uid(const struct svc_lookup_channel *lc);
+size_t	domain_sessions_format(char *buf, size_t len, size_t off);
 
 /* capsule_client.c — channel protocol client to capsule */
 int	capsule_mint_system(int channel_fd, uint32_t gates);
@@ -548,6 +603,7 @@ svc_runtime_init_fds(struct svc_runtime *svc)
 	svc->channel_fd = -1;
 	svc->control_channel = NULL;
 	svc->coalition_fd = -1;
+	svc->responsible.parent_fd = -1;
 	svc->activation_path_fd = -1;
 	svc->activation_queue_fd = -1;
 	svc->activation_mount_ident = 0;

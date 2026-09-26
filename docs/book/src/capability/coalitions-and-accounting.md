@@ -47,7 +47,8 @@ The operations, from `sys/dev/mac_capability/mac_capability_coalition_proto.h`:
 | `SET_DEADLINE` | time-bounded lifetime: signal at `timeout_ms`, optional grace, then `SIGKILL` |
 | `SET_WATCHDOG`, `HEARTBEAT` | dead-man switch: terminate unless a heartbeat arrives within `timeout_ms` |
 | `SET_LEADER` | name a process whose exit terminates the whole coalition |
-| `STAT` | member counts by type, flags (`COF_*`), signal, nesting depth |
+| `SET_RESPONSIBLE` | record, once, the coalition this one exists on behalf of (see below) |
+| `STAT` | member counts by type, flags (`COF_*`), signal, nesting depth, the permanent id, the responsible id, both leader pids |
 | `RUSAGE` | aggregate RSS, VSZ, CPU time, faults and block I/O across process members |
 
 Notifications carry a `COALITION_NOTE_*` bitmask: `MEMBER_ADDED`,
@@ -60,14 +61,16 @@ the reply's `status` field; the man page lists them.
 ## Fork, pdfork and jails
 
 Membership follows the process family. The service registers a
-`process_fork` event handler: an ordinary `fork(2)` child of a member is
-enlisted automatically (the `fork-inherit` probe fires), so a unit that
-forks workers keeps them under its supervisor's handle without any
-cooperation. A `pdfork(2)` child is deliberately not inherited: a process
-created with a descriptor is an independently launched process, and
-whoever holds its procdesc enlists it into the right coalition explicitly.
-Auto-enlisting it would bind it to its creator's group and make the
-intended enlist fail, since a process joins only one coalition.
+`process_fork` event handler: every child of a member, `fork(2)` and
+`pdfork(2)` alike, is enlisted automatically (the `fork-inherit` probe
+fires), so a unit that forks or pdforks helpers keeps them under its
+supervisor's handle and its identity without any cooperation. A membership
+that was only inherited (or taken with `JOIN`) is not pinned: whoever holds
+the process's descriptor may re-home it by enlisting the procdesc into
+another coalition, which is how a factory hands a worker it created to a
+consumer's coalition. An explicit procdesc enlist is pinned and a second
+enlist fails with `EBUSY`. The launcher itself is in no coalition, so the
+units it pdforks start unbound and are enlisted into their fresh coalition.
 
 A jail is held while it is a member: enlisting a jail descriptor takes a
 `prison_hold()` and refuses a prison that is no longer valid. On
@@ -111,6 +114,60 @@ is `pdkill(SIGTERM)` on the leader plus `COALITION_OP_GRACEFUL` with
 that ignored it (`usr.sbin/switchboard/supervisor.c`). capsule's own wrappers in
 `usr.sbin/capsule/mac_capability_coal.c` cover enlist, set-leader,
 set-deadline and terminate.
+
+## Identity and responsibility
+
+Every coalition carries a permanent 64-bit id, assigned when it is created
+and never reused while the kernel runs. It is the stable name for a unit:
+pids recycle and the unit's own process may fork helpers, but the coalition
+id names the whole launch. `STAT` reports it, and the kernel exports it for
+every member process as `ki_coalition` in `kinfo_proc`, so `ps -o coal`
+and `procstat coalition` print it without any plane call.
+
+A coalition may also record, once, its responsible parent: the coalition
+on whose behalf it exists (`SET_RESPONSIBLE`, attaching the parent's
+coalition or process descriptor, or naming the caller's own coalition, or
+itself). This is the answer to "who caused this?", which the process tree
+cannot give because switchboard is the fork parent of everything it
+launches. The edge is attribution only. It never changes membership,
+signals, nesting or lifetime; it cannot be changed after it is set; a chain
+cannot loop and is bounded in length; and it survives the parent's
+termination, pinning only the parent's record, so a chain can be walked
+from any live process to its origin long after the origin exited. macOS
+has the same concept as launchd's responsible process, which its endpoint
+security and consent subsystems attribute to rather than to launchd.
+
+switchboard decides the parent from the launch context, following the
+[management model](../plane/management-model.md):
+
+| Launched how | Responsible parent |
+|---|---|
+| a private helper opened by a unit | the requesting unit |
+| a per-user unit requested by a unit with the same owner | the requesting unit |
+| a per-user unit activated from its owner's login session | the session |
+| a shared `system`/`core` provider activated on demand by any client | itself (a client that touched `system.Crypto` first does not own it) |
+| boot, an operator `start`, or an adopted rc service | switchboard's own root coalition |
+
+The root coalition is a member-less, self-rooted coalition switchboard
+mints at startup, so every chain that does not end in a session or a
+self-rooted provider ends at the system. A login session is a coalition
+too: every session mint (USER or SYSTEM kind; the boot ambient carry is
+not a session) creates one with the release signal (0), and the session
+leader joins it over
+`SVC_OP_SESSION_COALITION` (`service_session_join_coalition(3)`, called by
+login, su, and the sshd session child before they exec the shell), so the
+shell and everything it starts carry the session id. Because the
+signal is 0, closing the session record when the channel goes away never
+kills a detached process that outlived the login.
+
+What consumes it: `switchboardctl services` prints `coal=` and `resp=` per
+unit and `switchboardctl tree` draws the chains; `ps -o coal,rcoal,rpid`
+and `procstat coalition` read the kinfo export; every switchboard launch
+audit record carries `coalition=` and `responsible=`; and OES stamps
+`ep_coalition`, `ep_responsible_coalition` and `ep_responsible_pid` into
+each event's process record, the analogue of EndpointSecurity's
+responsible audit token. rc-adopted and oneshot units have no coalition
+today, so they show no identity.
 
 The kernel watchdog is not what the manifest `watchdog { interval }` key
 uses. That feature is implemented by switchboard over the unit's service
@@ -204,7 +261,12 @@ rule, or a supervisor must use the accounting service, today.
 
 `tests/sys/mac_capability/mac_capability_coalition_test.c` covers enlist by
 type, nesting and cycle rejection, deadline, watchdog, leader death,
-graceful termination, fork inheritance, jail members and limit exhaustion;
+graceful termination, fork inheritance, jail members, limit exhaustion,
+permanent ids, the responsible edge (set-once, self-root, caller and
+procdesc naming, cycle and depth refusal, survival of the parent's close),
+the kinfo export, and the release signal;
+`usr.sbin/switchboard/tests/responsibility_test.c` pins the parent decision
+against the management model;
 `mac_capability_accounting_test.c` covers charge, release, set and rules;
 `lib/libcapbundle/tests` pins the `limits` parser. The coalition and
 accounting services are shipped and static. Open items: the coalition

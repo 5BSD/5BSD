@@ -34,6 +34,32 @@ is the administrative client for
 Show daemon and service state.
 .It Cm services
 List loaded service runtimes.
+Each running unit also shows
+.Ql coal=
+(its kernel coalition id) and
+.Ql resp=
+(who it exists on behalf of, with that coalition's id):
+.Ql switchboard
+for boot-launched and operator-started units,
+.Ql self
+for a shared provider activated on demand,
+the requesting unit's label for a private helper or a per-user unit
+started by another unit of the same owner, or
+.Ql session:uid=N
+for a per-user unit activated from that user's login session.
+.It Cm tree
+Show the responsibility tree: every running unit indented under the
+coalition it answers to, starting from the switchboard's own root
+coalition, then each login session, then the self-rooted providers.
+The ids shown are the same ones
+.Xr ps 1
+prints with
+.Fl o Cm coal,rcoal,rpid
+and
+.Xr procstat 1
+prints with
+.Cm coalition ,
+so a process can be walked back to the session or system that caused it.
 .It Cm reload
 Transactionally rescan bundles, validate the dependency graph, and apply
 additions, changes, and removals.

@@ -81,6 +81,7 @@
 #define	SVC_OP_HELPER_OPEN	11	/* launch + connect a bundle-local private helper */
 #define	SVC_OP_HEARTBEAT	12	/* provider liveness ping (watchdog reset) */
 #define	SVC_OP_REGISTER_LOOKUP	13	/* adopt a caller-created private lookup channel */
+#define	SVC_OP_SESSION_COALITION 14	/* hand the session its coalition fd (join) */
 
 /*
  * SwitchBoard → service (notifications):

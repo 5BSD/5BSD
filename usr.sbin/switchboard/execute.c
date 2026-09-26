@@ -1998,6 +1998,8 @@ svc_launch_finish(struct svc_runtime *svc, int kq)
 	if (mac_cap_coalition_set_leader(L->coalition_fd, pd_fd) != 0)
 		syslog(LOG_WARNING, "svc_exec %s: coalition set_leader "
 		    "(non-fatal, descendant cleanup degraded): %m", m->label);
+	/* Who this unit exists on behalf of; attribution, never fatal. */
+	svc_responsibility_apply(svc, L->coalition_fd);
 	{
 		cap_rights_t rights;
 
@@ -2064,10 +2066,25 @@ svc_launch_finish(struct svc_runtime *svc, int kq)
 	syslog(LOG_INFO, "service %s: started pid %jd uid %ju gid %ju",
 	    m->label, (intmax_t)pid, (uintmax_t)L->uid, (uintmax_t)L->gid);
 	SWITCHBOARD_PROBE_SVC_START(m->label, pid);
-	switchboard_audit(AUE_SWITCHBOARD_SVC_EXEC, getuid(), 0,
-	    "svc=%s pid=%jd uid=%u gid=%u creds_changed=%d", m->label,
-	    (intmax_t)pid, (unsigned)L->uid, (unsigned)L->gid,
-	    L->have_creds ? 1 : 0);
+	{
+		char rbuf[64];
+
+		/*
+		 * The responsibility token: this unit's coalition id, the id
+		 * of the coalition it answers to, and who that is.  Together
+		 * with the kernel's kinfo export this is what lets an audit
+		 * reader walk from a pid to the session or system that caused
+		 * it.
+		 */
+		switchboard_audit(AUE_SWITCHBOARD_SVC_EXEC, getuid(), 0,
+		    "svc=%s pid=%jd uid=%u gid=%u creds_changed=%d "
+		    "coalition=%ju responsible=%ju:%s", m->label,
+		    (intmax_t)pid, (unsigned)L->uid, (unsigned)L->gid,
+		    L->have_creds ? 1 : 0, (uintmax_t)svc->coalition_id,
+		    (uintmax_t)svc->responsible.parent_id,
+		    svc_responsibility_name(&svc->responsible, rbuf,
+		    sizeof(rbuf)));
+	}
 
 	{
 		struct timespec exec_end;

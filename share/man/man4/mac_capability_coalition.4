@@ -122,8 +122,62 @@ struct coalition_stat_reply {
 	uint32_t	process_count;
 	uint32_t	jail_count;
 	uint32_t	other_count;
+	/* identity extension */
+	uint64_t	id;             /* permanent coalition id */
+	uint64_t	responsible_id; /* responsible parent id, 0 = unset */
+	int32_t		leader_pid;     /* current leader, 0 = none */
+	int32_t		responsible_leader_pid;
 };
 .Ed
+.Pp
+Every coalition carries a permanent 64-bit
+.Fa id ,
+assigned at creation and never reused while the kernel runs; 0 is never
+issued.
+The fields from
+.Fa id
+on were appended after the first release: a caller that offers only
+.Dv COALITION_STAT_REPLY_V1_LEN
+bytes receives the original layout, one that offers the full structure
+receives it all.
+A coalition responsible for itself reports its own id in
+.Fa responsible_id .
+.Fa responsible_leader_pid
+is the responsible coalition's current leader, or 0 when it has none or is
+gone.
+.It Dv COALITION_OP_SET_RESPONSIBLE
+Record the coalition's responsible parent: the coalition on whose behalf
+this one exists.
+.Bd -literal -offset indent
+struct coalition_set_responsible_req {
+	uint32_t	op;
+	uint32_t	flags;   /* COALITION_RESP_* when no fd is attached */
+};
+.Ed
+.Pp
+The parent is named by the attached descriptor: a coalition instance names
+that coalition, and a process descriptor names the coalition its process is a
+member of.
+With no descriptor,
+.Dv COALITION_RESP_CALLER
+names the calling process's own coalition and
+.Dv COALITION_RESP_SELF
+makes the target the root of its own chain (a shared provider that answers
+for its own existence).
+The edge is set once
+.Pq Er EALREADY
+and is immutable afterwards; a chain may not loop
+.Pq Er ELOOP
+and is bounded in length.
+It is attribution only: membership, signals, nesting, and lifetime are not
+affected, and the edge outlives the parent's termination so a process can
+always be walked back, through
+.Xr ps 1
+.Pq Fl o Cm coal , rcoal , rpid
+or
+.Xr procstat 1
+.Pq Cm coalition ,
+to the session or system that caused it.
 .It Dv COALITION_OP_SET_SIGNAL
 Configure the signal used for group termination.
 .Bd -literal -offset indent
@@ -132,6 +186,17 @@ struct coalition_set_signal_req {
 	int32_t		signal;
 };
 .Ed
+.Pp
+A
+.Fa signal
+of 0 selects release: when the coalition terminates or is closed, its
+process members are dropped from it but not signalled.
+An attribution-only coalition, such as the one that stands for a login
+session, uses this so that ending the record never kills a detached process
+that outlived it.
+Graceful and deadline escalation still deliver
+.Dv SIGKILL
+explicitly.
 .Pp
 Returns
 .Vt struct coalition_reply .
@@ -328,6 +393,7 @@ contains a bitmask of:
 .It Dv COF_HAS_LEADER Ta 0x0010 Ta A leader process is designated
 .It Dv COF_LEADER_MONITOR Ta 0x0020 Ta Leader monitor holds a reference
 .It Dv COF_GRACE_ACTIVE Ta 0x0040 Ta Grace period active, new members rejected
+.It Dv COF_RESPONSIBLE Ta 0x0100 Ta Responsible parent has been set
 .El
 .Ss Sysctl Tunables
 .Bl -tag -width "Va kern.mac_capability_coalition.max_members"
@@ -394,6 +460,11 @@ Fired when a heartbeat resets the watchdog.
 is the remaining timeout.
 .It Fn graceful signal timeout_ms 0
 Fired when graceful termination is initiated.
+.It Fn responsible-set id parent_id error
+Fired after every
+.Dv COALITION_OP_SET_RESPONSIBLE ;
+.Ar parent_id
+is 0 when the parent could not be resolved.
 .It Fn call-done op error time
 Fired after every operation completes.
 .Ar op
@@ -475,8 +546,17 @@ or create a cycle.
 Insufficient memory for a new member.
 .It Bq Er EBUSY
 The coalition is in a terminating or grace state and rejects new members.
+.It Bq Er EALREADY
+The responsible parent has already been set.
+.It Bq Er EBADF
+The descriptor attached to
+.Dv COALITION_OP_SET_RESPONSIBLE
+is neither a coalition nor a process descriptor, or names a coalition that
+is gone.
 .El
 .Sh SEE ALSO
+.Xr procstat 1 ,
+.Xr ps 1 ,
 .Xr kqueue 2 ,
 .Xr mac_capability 4 ,
 .Xr mac_capability_capprotect 4 ,

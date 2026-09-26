@@ -947,6 +947,41 @@ descriptors remain library-owned and are closed.
 .Fn service_session_close
 cancels active waiters, closes queued event descriptors, and consumes the
 session.
+.Sh LOGIN SESSIONS
+A session leader
+.Po
+.Xr login 1 ,
+.Xr su 1 ,
+the
+.Xr sshd 8
+session child
+.Pc
+obtains its narrowed lookup channel from the auth agent and installs it with
+.Fn service_install_ambient_lookup ,
+which makes the descriptor survive every fork and exec and advertises its
+number in
+.Ev SERVICE_LOOKUP_FD .
+A USER-domain session channel is paired switchboard-side with a session
+coalition, an attribution-only
+.Xr mac_capability_coalition 4
+that stands for the login session.
+.Fn service_session_join_coalition
+asks for it over the channel and joins the calling process, so the shell and
+everything it starts carry the session's coalition id
+.Po
+.Xr ps 1
+.Fl o Cm coal ,
+.Xr procstat 1
+.Cm coalition
+.Pc
+and units activated on the session's behalf are recorded as responsible to it.
+Call it before forking anything, and treat failure as informational:
+.Er ENOENT
+means the channel carries no session coalition (a SYSTEM channel),
+.Er EBUSY
+that the caller is already a coalition member (a
+.Xr su 1
+from a login shell stays attributed to the login session).
 .Sh DESCRIPTOR OWNERSHIP
 .Bl -bullet
 .It

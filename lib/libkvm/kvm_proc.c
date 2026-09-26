@@ -55,6 +55,7 @@
 #include <sys/jail.h>
 #include <sys/exec.h>
 #include <sys/stat.h>
+#include <stdbool.h>
 #include <sys/sysent.h>
 #include <sys/ioctl.h>
 #include <sys/tty.h>
@@ -373,6 +374,12 @@ nopgrp:
 		}
 		kp->ki_reaper = rproc.p_pid;
 		kp->ki_reapsubtree = proc.p_reapsubtree;
+		/*
+		 * Coalition identity (ki_coalition, ki_rcoalition, ki_rpid) is
+		 * kept by the mac_capability coalition module in a hash keyed
+		 * by proc pointer; it is not reconstructed from a crash dump
+		 * and stays 0 here.  The live sysctl path fills it.
+		 */
 		kp->ki_tdev_freebsd11 = kp->ki_tdev; /* truncate */
 
 		/* Per-thread items; iterate as appropriate. */

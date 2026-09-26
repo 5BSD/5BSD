@@ -392,8 +392,9 @@ struct kinfo_proc32 {
 	char	ki_emul[KI_EMULNAMELEN+1];
 	char	ki_loginclass[LOGINCLASSLEN+1];
 	char	ki_moretdname[MAXCOMLEN-TDNAMLEN+1];
-	char	ki_sparestrings[38];
+	char	ki_sparestrings[34];
 	int	ki_spareints[KI_NSPARE_INT];
+	pid_t	ki_rpid;
 	pid_t	ki_reaper;
 	pid_t	ki_reapsubtree;
 	freebsd32_uint64_t ki_tdev;
@@ -416,7 +417,9 @@ struct kinfo_proc32 {
 	uint32_t ki_pd;
 	uint32_t ki_uerrmsg;
 	uint32_t ki_spareptrs[KI_NSPARE_PTR];	/* spare room for growth */
-	int	ki_sparelongs[KI_NSPARE_LONG];
+	int	ki_sparelongs[KI_NSPARE_LONG - 2];
+	freebsd32_uint64_t ki_coalition;
+	freebsd32_uint64_t ki_rcoalition;
 	int	ki_sflag;
 	int	ki_tdflags;
 };

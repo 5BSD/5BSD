@@ -212,6 +212,23 @@ cmd_services(void)
 }
 
 static int
+cmd_tree(void)
+{
+	char summary[SWITCHBOARD_CTL_SUMMARY_MAX];
+	int error;
+
+	summary[0] = '\0';
+	error = sctl_rpc(SCTL_OP_TREE, 0, NULL, summary, sizeof(summary));
+	if (error != 0) {
+		warnx("tree: %s", strerror(error));
+		return (1);
+	}
+	if (summary[0] != '\0')
+		printf("%s", summary);
+	return (0);
+}
+
+static int
 cmd_reload(void)
 {
 	char summary[SWITCHBOARD_CTL_SUMMARY_MAX];
@@ -450,6 +467,7 @@ usage(void)
 	    "commands:\n"
 	    "  status              show switchboard status and service list\n"
 	    "  services            list loaded services\n"
+	    "  tree                show who each running unit exists on behalf of\n"
 	    "  reload              reload service bundles\n"
 	    "  start <label>       start a loaded service\n"
 	    "  stop <label>        stop a running service\n"
@@ -487,6 +505,8 @@ main(int argc, char *argv[])
 
 	if (strcmp(cmd, "status") == 0 && argc == 1)
 		return (cmd_status());
+	if (strcmp(cmd, "tree") == 0 && argc == 1)
+		return (cmd_tree());
 	if (strcmp(cmd, "services") == 0 && argc == 1)
 		return (cmd_services());
 	if (strcmp(cmd, "reload") == 0 && argc == 1)

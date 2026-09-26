@@ -121,6 +121,13 @@ __BEGIN_DECLS
 int	service_ambient_lookup_fd(void);
 int	service_ambient_lookup_channel(void);
 int	service_install_ambient_lookup(int fd);
+/*
+ * Join the caller to the login session coalition paired with a USER-domain
+ * lookup channel (see service_ambient.c).  Best-effort; call before forking.
+ * Returns 0, or -1 with errno (ENOENT: no session coalition on this channel;
+ * EBUSY: already a coalition member).
+ */
+int	service_session_join_coalition(int lookup_fd);
 __END_DECLS
 
 #endif /* !_SERVICE_BOOTSTRAP_H_ */

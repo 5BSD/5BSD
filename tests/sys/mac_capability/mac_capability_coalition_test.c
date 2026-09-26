@@ -23,6 +23,7 @@
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/sysctl.h>
+#include <sys/user.h>
 #include <sys/wait.h>
 
 #include <errno.h>
@@ -1104,6 +1105,756 @@ ATF_TC_BODY(fork_inherits_membership, tc)
 	close(fd);
 }
 
+
+/* ================================================================
+ * Identity and responsible parent
+ * ================================================================ */
+
+static int
+coalition_set_responsible(int cfd, const int *fdp, uint32_t flags,
+    int32_t *status_out)
+{
+	struct coalition_set_responsible_req rr;
+	struct coalition_reply rpl;
+	int ret;
+
+	memset(&rr, 0, sizeof(rr));
+	rr.op = COALITION_OP_SET_RESPONSIBLE;
+	rr.flags = flags;
+	ret = coalition_call(cfd, &rr, sizeof(rr), fdp, fdp != NULL ? 1 : 0,
+	    &rpl, sizeof(rpl));
+	if (ret == 0 && status_out != NULL)
+		*status_out = rpl.status;
+	return (ret);
+}
+
+static unsigned
+coalition_count(void)
+{
+	unsigned v = 0;
+	size_t len = sizeof(v);
+
+	(void)sysctlbyname("kern.mac_capability_coalition.count", &v, &len,
+	    NULL, 0);
+	return (v);
+}
+
+/* Wait up to ~5s for a child to be reaped; returns true if it exited. */
+static bool
+wait_exit_bounded(pid_t pid, int *wstatus)
+{
+	int i;
+
+	for (i = 0; i < 100; i++) {
+		pid_t r = waitpid(pid, wstatus, WNOHANG);
+
+		if (r == pid)
+			return (true);
+		if (r == -1 && errno != EINTR)
+			return (false);
+		usleep(50000);
+	}
+	return (false);
+}
+
+static int
+kinfo_of(pid_t pid, struct kinfo_proc *kp)
+{
+	int mib[4] = { CTL_KERN, KERN_PROC, KERN_PROC_PID, pid };
+	size_t len = sizeof(*kp);
+
+	if (sysctl(mib, 4, kp, &len, NULL, 0) == -1)
+		return (-1);
+	return (len == sizeof(*kp) ? 0 : -1);
+}
+
+ATF_TC(identity_unique_ids);
+ATF_TC_HEAD(identity_unique_ids, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Every coalition carries a permanent nonzero id that is never "
+	    "reused, even after its predecessor is closed");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_coalition");
+}
+ATF_TC_BODY(identity_unique_ids, tc)
+{
+	struct coalition_stat_reply a, b, c;
+	int fa, fb, fc;
+
+	fa = mac_capability_connect("coalition");
+	fb = mac_capability_connect("coalition");
+	ATF_REQUIRE(fa >= 0 && fb >= 0);
+	ATF_REQUIRE(coalition_stat(fa, &a) == 0);
+	ATF_REQUIRE(coalition_stat(fb, &b) == 0);
+	ATF_CHECK(a.id != 0);
+	ATF_CHECK(b.id != 0);
+	ATF_CHECK(a.id != b.id);
+	ATF_CHECK(b.id > a.id);
+	/* Unset until SET_RESPONSIBLE. */
+	ATF_CHECK_EQ(a.responsible_id, 0);
+	ATF_CHECK_EQ(a.responsible_leader_pid, 0);
+	ATF_CHECK_EQ(a.leader_pid, 0);
+	ATF_CHECK_EQ(a.flags & COF_RESPONSIBLE, 0);
+	/* Ids are not recycled once a coalition is gone. */
+	close(fa);
+	fc = mac_capability_connect("coalition");
+	ATF_REQUIRE(fc >= 0);
+	ATF_REQUIRE(coalition_stat(fc, &c) == 0);
+	ATF_CHECK(c.id != a.id);
+	ATF_CHECK(c.id > b.id);
+	close(fb);
+	close(fc);
+}
+
+ATF_TC(identity_stat_old_layout);
+ATF_TC_HEAD(identity_stat_old_layout, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "A caller offering only the pre-identity STAT layout still gets a "
+	    "successful reply of exactly that size");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_coalition");
+}
+ATF_TC_BODY(identity_stat_old_layout, tc)
+{
+	struct coalition_req_hdr hdr;
+	struct mac_capability_call_args ca;
+	unsigned char buf[sizeof(struct coalition_stat_reply)];
+	struct coalition_stat_reply *sr = (void *)buf;
+	int fd;
+
+	fd = mac_capability_connect("coalition");
+	ATF_REQUIRE(fd >= 0);
+	memset(buf, 0xa5, sizeof(buf));
+	hdr.op = COALITION_OP_STAT;
+	memset(&ca, 0, sizeof(ca));
+	ca.req = &hdr;
+	ca.req_len = sizeof(hdr);
+	ca.reply = buf;
+	ca.reply_len = COALITION_STAT_REPLY_V1_LEN;
+	ATF_REQUIRE_MSG(ioctl(fd, MAC_CAPABILITY_CALL, &ca) == 0, "ioctl: %s",
+	    strerror(errno));
+	ATF_CHECK_EQ(ca.reply_len, COALITION_STAT_REPLY_V1_LEN);
+	ATF_CHECK_EQ(sr->status, 0);
+	ATF_CHECK_EQ(sr->member_count, 0);
+	/* Bytes beyond the old layout were not written. */
+	ATF_CHECK_EQ(buf[COALITION_STAT_REPLY_V1_LEN], 0xa5);
+	/* Shorter than the old layout is still an error. */
+	ca.reply_len = COALITION_STAT_REPLY_V1_LEN - 4;
+	ATF_CHECK(ioctl(fd, MAC_CAPABILITY_CALL, &ca) == -1);
+	ATF_CHECK_EQ(errno, EMSGSIZE);
+	close(fd);
+}
+
+ATF_TC(responsible_set_once);
+ATF_TC_HEAD(responsible_set_once, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "SET_RESPONSIBLE with a coalition fd records the parent id, "
+	    "sets COF_RESPONSIBLE, and refuses a second call with EALREADY");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_coalition");
+}
+ATF_TC_BODY(responsible_set_once, tc)
+{
+	struct coalition_stat_reply parent, child;
+	int pfd, cfd, other;
+	int32_t status;
+
+	pfd = mac_capability_connect("coalition");
+	cfd = mac_capability_connect("coalition");
+	other = mac_capability_connect("coalition");
+	ATF_REQUIRE(pfd >= 0 && cfd >= 0 && other >= 0);
+	ATF_REQUIRE(coalition_stat(pfd, &parent) == 0);
+
+	ATF_REQUIRE(coalition_set_responsible(cfd, &pfd, 0, &status) == 0);
+	ATF_CHECK_EQ(status, 0);
+	ATF_REQUIRE(coalition_stat(cfd, &child) == 0);
+	ATF_CHECK_EQ(child.responsible_id, parent.id);
+	ATF_CHECK(child.responsible_id != child.id);
+	ATF_CHECK(child.flags & COF_RESPONSIBLE);
+	ATF_CHECK_EQ(child.responsible_leader_pid, 0);
+	/* The parent is unaffected: no members, no edge of its own. */
+	ATF_REQUIRE(coalition_stat(pfd, &parent) == 0);
+	ATF_CHECK_EQ(parent.member_count, 0);
+	ATF_CHECK_EQ(parent.responsible_id, 0);
+
+	/* Immutable. */
+	ATF_REQUIRE(coalition_set_responsible(cfd, &other, 0, &status) == 0);
+	ATF_CHECK_EQ(status, EALREADY);
+	ATF_REQUIRE(coalition_set_responsible(cfd, NULL, COALITION_RESP_SELF,
+	    &status) == 0);
+	ATF_CHECK_EQ(status, EALREADY);
+	ATF_REQUIRE(coalition_stat(cfd, &child) == 0);
+	ATF_CHECK_EQ(child.responsible_id, parent.id);
+
+	close(other);
+	close(cfd);
+	close(pfd);
+}
+
+ATF_TC(responsible_self_root);
+ATF_TC_HEAD(responsible_self_root, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "COALITION_RESP_SELF makes a coalition the root of its own chain; "
+	    "attaching its own fd means the same");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_coalition");
+}
+ATF_TC_BODY(responsible_self_root, tc)
+{
+	struct coalition_stat_reply sr;
+	int fd, fd2;
+	int32_t status;
+
+	fd = mac_capability_connect("coalition");
+	ATF_REQUIRE(fd >= 0);
+	ATF_REQUIRE(coalition_set_responsible(fd, NULL, COALITION_RESP_SELF,
+	    &status) == 0);
+	ATF_CHECK_EQ(status, 0);
+	ATF_REQUIRE(coalition_stat(fd, &sr) == 0);
+	ATF_CHECK_EQ(sr.responsible_id, sr.id);
+	ATF_CHECK(sr.flags & COF_RESPONSIBLE);
+
+	fd2 = mac_capability_connect("coalition");
+	ATF_REQUIRE(fd2 >= 0);
+	ATF_REQUIRE(coalition_set_responsible(fd2, &fd2, 0, &status) == 0);
+	ATF_CHECK_EQ(status, 0);
+	ATF_REQUIRE(coalition_stat(fd2, &sr) == 0);
+	ATF_CHECK_EQ(sr.responsible_id, sr.id);
+
+	/* A self-root's leader is reported as the responsible leader. */
+	ATF_REQUIRE(coalition_op(fd2, COALITION_OP_JOIN, &status) == 0);
+	ATF_CHECK_EQ(status, 0);
+	close(fd);
+	close(fd2);
+}
+
+ATF_TC(responsible_bad_args);
+ATF_TC_HEAD(responsible_bad_args, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "SET_RESPONSIBLE rejects malformed requests: no fd and no flag, "
+	    "both flags, unknown flags, a non-coalition fd, and a short "
+	    "request; the edge stays unset");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_coalition");
+}
+ATF_TC_BODY(responsible_bad_args, tc)
+{
+	struct coalition_stat_reply sr;
+	struct coalition_req_hdr hdr;
+	struct coalition_reply rpl;
+	int fd, sock;
+	int32_t status;
+
+	fd = mac_capability_connect("coalition");
+	ATF_REQUIRE(fd >= 0);
+
+	ATF_REQUIRE(coalition_set_responsible(fd, NULL, 0, &status) == 0);
+	ATF_CHECK_EQ(status, EINVAL);
+	ATF_REQUIRE(coalition_set_responsible(fd, NULL,
+	    COALITION_RESP_SELF | COALITION_RESP_CALLER, &status) == 0);
+	ATF_CHECK_EQ(status, EINVAL);
+	ATF_REQUIRE(coalition_set_responsible(fd, NULL, 0x80, &status) == 0);
+	ATF_CHECK_EQ(status, EINVAL);
+
+	/* A socket is neither a coalition nor a procdesc. */
+	sock = socket(AF_UNIX, SOCK_STREAM, 0);
+	ATF_REQUIRE(sock >= 0);
+	ATF_REQUIRE(coalition_set_responsible(fd, &sock, 0, &status) == 0);
+	ATF_CHECK_EQ(status, EBADF);
+	close(sock);
+
+	/* Short request. */
+	hdr.op = COALITION_OP_SET_RESPONSIBLE;
+	ATF_REQUIRE(coalition_call(fd, &hdr, sizeof(hdr), NULL, 0, &rpl,
+	    sizeof(rpl)) == 0);
+	ATF_CHECK_EQ(rpl.status, EINVAL);
+
+	/* Caller not in any coalition. */
+	ATF_REQUIRE(coalition_set_responsible(fd, NULL, COALITION_RESP_CALLER,
+	    &status) == 0);
+	ATF_CHECK_EQ(status, ESRCH);
+
+	ATF_REQUIRE(coalition_stat(fd, &sr) == 0);
+	ATF_CHECK_EQ(sr.responsible_id, 0);
+	ATF_CHECK_EQ(sr.flags & COF_RESPONSIBLE, 0);
+	close(fd);
+}
+
+ATF_TC(responsible_caller_and_procdesc);
+ATF_TC_HEAD(responsible_caller_and_procdesc, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "COALITION_RESP_CALLER names the caller's own coalition, and a "
+	    "process descriptor names the coalition its process belongs to; "
+	    "a procdesc for a member-less process fails with ESRCH");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_coalition");
+}
+ATF_TC_BODY(responsible_caller_and_procdesc, tc)
+{
+	struct coalition_stat_reply mine, sr;
+	int me, a, b, pd, wstatus;
+	int32_t status;
+	pid_t pid;
+
+	me = mac_capability_connect("coalition");
+	a = mac_capability_connect("coalition");
+	b = mac_capability_connect("coalition");
+	ATF_REQUIRE(me >= 0 && a >= 0 && b >= 0);
+	ATF_REQUIRE(coalition_op(me, COALITION_OP_JOIN, &status) == 0);
+	ATF_CHECK_EQ(status, 0);
+	ATF_REQUIRE(coalition_stat(me, &mine) == 0);
+
+	ATF_REQUIRE(coalition_set_responsible(a, NULL, COALITION_RESP_CALLER,
+	    &status) == 0);
+	ATF_CHECK_EQ(status, 0);
+	ATF_REQUIRE(coalition_stat(a, &sr) == 0);
+	ATF_CHECK_EQ(sr.responsible_id, mine.id);
+
+	/* A child of ours inherits membership; its procdesc names 'mine'. */
+	pid = pdfork(&pd, 0);
+	ATF_REQUIRE(pid >= 0);
+	if (pid == 0) {
+		close(me);
+		close(a);
+		close(b);
+		pause();
+		_exit(0);
+	}
+	/*
+	 * A pdfork child inherits its creator's membership, so its procdesc
+	 * resolves to 'mine' at once.
+	 */
+	usleep(50000);
+	ATF_REQUIRE(coalition_set_responsible(b, &pd, 0, &status) == 0);
+	ATF_CHECK_EQ(status, 0);
+	ATF_REQUIRE(coalition_stat(b, &sr) == 0);
+	ATF_CHECK_EQ(sr.responsible_id, mine.id);
+
+	pdkill(pd, SIGKILL);
+	waitpid(pid, &wstatus, 0);
+	close(pd);
+	close(b);
+	close(a);
+	close(me);
+}
+
+ATF_TC(responsible_no_cycles);
+ATF_TC_HEAD(responsible_no_cycles, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "A responsibility chain may not loop: closing A->B->C->A is "
+	    "refused with ELOOP and leaves the graph unchanged");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_coalition");
+}
+ATF_TC_BODY(responsible_no_cycles, tc)
+{
+	struct coalition_stat_reply sa, sb, sc;
+	int a, b, c;
+	int32_t status;
+
+	a = mac_capability_connect("coalition");
+	b = mac_capability_connect("coalition");
+	c = mac_capability_connect("coalition");
+	ATF_REQUIRE(a >= 0 && b >= 0 && c >= 0);
+	/* b is responsible to a; c is responsible to b. */
+	ATF_REQUIRE(coalition_set_responsible(b, &a, 0, &status) == 0);
+	ATF_CHECK_EQ(status, 0);
+	ATF_REQUIRE(coalition_set_responsible(c, &b, 0, &status) == 0);
+	ATF_CHECK_EQ(status, 0);
+	/* a -> c would close the loop. */
+	ATF_REQUIRE(coalition_set_responsible(a, &c, 0, &status) == 0);
+	ATF_CHECK_EQ(status, ELOOP);
+	/* a -> b likewise (two-node loop). */
+	ATF_REQUIRE(coalition_set_responsible(a, &b, 0, &status) == 0);
+	ATF_CHECK_EQ(status, ELOOP);
+	ATF_REQUIRE(coalition_stat(a, &sa) == 0);
+	ATF_REQUIRE(coalition_stat(b, &sb) == 0);
+	ATF_REQUIRE(coalition_stat(c, &sc) == 0);
+	ATF_CHECK_EQ(sa.responsible_id, 0);
+	ATF_CHECK_EQ(sb.responsible_id, sa.id);
+	ATF_CHECK_EQ(sc.responsible_id, sb.id);
+	/* a may still take a root. */
+	ATF_REQUIRE(coalition_set_responsible(a, NULL, COALITION_RESP_SELF,
+	    &status) == 0);
+	ATF_CHECK_EQ(status, 0);
+	close(c);
+	close(b);
+	close(a);
+}
+
+ATF_TC(responsible_survives_parent_close);
+ATF_TC_HEAD(responsible_survives_parent_close, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "The responsible id stays readable after the parent coalition is "
+	    "closed; its leader pid reads as 0 once it is gone");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_coalition");
+}
+ATF_TC_BODY(responsible_survives_parent_close, tc)
+{
+	struct coalition_stat_reply parent, child;
+	int pfd, cfd, pd, wstatus;
+	int32_t status;
+	pid_t pid;
+
+	pfd = mac_capability_connect("coalition");
+	cfd = mac_capability_connect("coalition");
+	ATF_REQUIRE(pfd >= 0 && cfd >= 0);
+
+	pid = pdfork(&pd, 0);
+	ATF_REQUIRE(pid >= 0);
+	if (pid == 0) {
+		close(pfd);
+		close(cfd);
+		pause();
+		_exit(0);
+	}
+	ATF_REQUIRE(coalition_enlist(pfd, pd, &status) == 0);
+	ATF_CHECK_EQ(status, 0);
+	{
+		struct coalition_req_hdr hdr;
+		struct coalition_reply rpl;
+
+		hdr.op = COALITION_OP_SET_LEADER;
+		ATF_REQUIRE(coalition_call(pfd, &hdr, sizeof(hdr), &pd, 1,
+		    &rpl, sizeof(rpl)) == 0);
+		ATF_CHECK_EQ(rpl.status, 0);
+	}
+	ATF_REQUIRE(coalition_stat(pfd, &parent) == 0);
+	ATF_CHECK_EQ(parent.leader_pid, pid);
+
+	ATF_REQUIRE(coalition_set_responsible(cfd, &pfd, 0, &status) == 0);
+	ATF_CHECK_EQ(status, 0);
+	ATF_REQUIRE(coalition_stat(cfd, &child) == 0);
+	ATF_CHECK_EQ(child.responsible_id, parent.id);
+	ATF_CHECK_EQ(child.responsible_leader_pid, pid);
+
+	/* Close the parent: its members are terminated, the edge remains. */
+	fprintf(stderr, "count before close(parent)=%u\n", coalition_count());
+	close(pfd);
+	fprintf(stderr, "count after close(parent)=%u alive=%d\n",
+	    coalition_count(), kill(pid, 0) == 0);
+	if (!wait_exit_bounded(pid, &wstatus)) {
+		atf_tc_fail_nonfatal("member not terminated by closing the "
+		    "parent coalition (count=%u)", coalition_count());
+		pdkill(pd, SIGKILL);
+		(void)wait_exit_bounded(pid, &wstatus);
+	}
+	close(pd);
+	usleep(100000);
+	ATF_REQUIRE(coalition_stat(cfd, &child) == 0);
+	ATF_CHECK_EQ(child.responsible_id, parent.id);
+	ATF_CHECK_EQ(child.responsible_leader_pid, 0);
+	ATF_CHECK(child.flags & COF_RESPONSIBLE);
+	close(cfd);
+}
+
+ATF_TC(responsible_kinfo_export);
+ATF_TC_HEAD(responsible_kinfo_export, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "kinfo_proc reports a member's coalition id, responsible id and "
+	    "responsible leader pid; a fork child inherits all three; a "
+	    "process in no coalition reports zeros");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_coalition");
+}
+ATF_TC_BODY(responsible_kinfo_export, tc)
+{
+	struct coalition_stat_reply parent, mine;
+	struct kinfo_proc kp;
+	int pfd, me, ppd, wstatus;
+	int32_t status;
+	pid_t leader, child;
+
+	/* Not in a coalition yet: all zero. */
+	ATF_REQUIRE(kinfo_of(getpid(), &kp) == 0);
+	ATF_CHECK_EQ(kp.ki_coalition, 0);
+	ATF_CHECK_EQ(kp.ki_rcoalition, 0);
+	ATF_CHECK_EQ(kp.ki_rpid, 0);
+
+	pfd = mac_capability_connect("coalition");
+	me = mac_capability_connect("coalition");
+	ATF_REQUIRE(pfd >= 0 && me >= 0);
+
+	/* Parent coalition with a leader process. */
+	leader = pdfork(&ppd, 0);
+	ATF_REQUIRE(leader >= 0);
+	if (leader == 0) {
+		close(pfd);
+		close(me);
+		pause();
+		_exit(0);
+	}
+	ATF_REQUIRE(coalition_enlist(pfd, ppd, &status) == 0);
+	ATF_CHECK_EQ(status, 0);
+	{
+		struct coalition_req_hdr hdr;
+		struct coalition_reply rpl;
+
+		hdr.op = COALITION_OP_SET_LEADER;
+		ATF_REQUIRE(coalition_call(pfd, &hdr, sizeof(hdr), &ppd, 1,
+		    &rpl, sizeof(rpl)) == 0);
+		ATF_CHECK_EQ(rpl.status, 0);
+	}
+	ATF_REQUIRE(coalition_stat(pfd, &parent) == 0);
+
+	ATF_REQUIRE(coalition_op(me, COALITION_OP_JOIN, &status) == 0);
+	ATF_CHECK_EQ(status, 0);
+	ATF_REQUIRE(coalition_set_responsible(me, &pfd, 0, &status) == 0);
+	ATF_CHECK_EQ(status, 0);
+	ATF_REQUIRE(coalition_stat(me, &mine) == 0);
+
+	ATF_REQUIRE(kinfo_of(getpid(), &kp) == 0);
+	ATF_CHECK_EQ(kp.ki_coalition, mine.id);
+	ATF_CHECK_EQ(kp.ki_rcoalition, parent.id);
+	ATF_CHECK_EQ(kp.ki_rpid, leader);
+	/* The leader itself: own coalition, no edge. */
+	ATF_REQUIRE(kinfo_of(leader, &kp) == 0);
+	ATF_CHECK_EQ(kp.ki_coalition, parent.id);
+	ATF_CHECK_EQ(kp.ki_rcoalition, 0);
+	ATF_CHECK_EQ(kp.ki_rpid, 0);
+
+	/* A plain fork child inherits membership and so the identity. */
+	child = fork();
+	ATF_REQUIRE(child >= 0);
+	if (child == 0) {
+		pause();
+		_exit(0);
+	}
+	usleep(50000);
+	ATF_REQUIRE(kinfo_of(child, &kp) == 0);
+	ATF_CHECK_EQ(kp.ki_coalition, mine.id);
+	ATF_CHECK_EQ(kp.ki_rcoalition, parent.id);
+	ATF_CHECK_EQ(kp.ki_rpid, leader);
+	kill(child, SIGKILL);
+	waitpid(child, &wstatus, 0);
+
+	/* Leader exit: the responsible leader pid decays to 0. */
+	pdkill(ppd, SIGKILL);
+	waitpid(leader, &wstatus, 0);
+	usleep(100000);
+	ATF_REQUIRE(kinfo_of(getpid(), &kp) == 0);
+	ATF_CHECK_EQ(kp.ki_coalition, mine.id);
+	ATF_CHECK_EQ(kp.ki_rcoalition, parent.id);
+	ATF_CHECK_EQ(kp.ki_rpid, 0);
+	close(ppd);
+	close(pfd);
+	close(me);
+}
+
+ATF_TC(responsible_chain_depth_limit);
+ATF_TC_HEAD(responsible_chain_depth_limit, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "A responsibility chain longer than the kernel bound is refused "
+	    "with ELOOP rather than walked without limit");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_coalition");
+}
+ATF_TC_BODY(responsible_chain_depth_limit, tc)
+{
+	int fds[70];
+	int i, n = 70;
+	int32_t status;
+	bool hit_limit = false;
+
+	for (i = 0; i < n; i++) {
+		fds[i] = mac_capability_connect("coalition");
+		ATF_REQUIRE(fds[i] >= 0);
+	}
+	for (i = 1; i < n; i++) {
+		ATF_REQUIRE(coalition_set_responsible(fds[i], &fds[i - 1], 0,
+		    &status) == 0);
+		if (status == ELOOP) {
+			hit_limit = true;
+			break;
+		}
+		ATF_CHECK_EQ(status, 0);
+	}
+	ATF_CHECK(hit_limit);
+	for (i = 0; i < n; i++)
+		close(fds[i]);
+}
+
+
+ATF_TC(set_signal_zero_releases);
+ATF_TC_HEAD(set_signal_zero_releases, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "SET_SIGNAL 0 makes teardown release process members instead of "
+	    "signalling them: closing the coalition leaves the member alive "
+	    "and no longer in any coalition");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_coalition");
+}
+ATF_TC_BODY(set_signal_zero_releases, tc)
+{
+	struct coalition_set_signal_req ssr;
+	struct coalition_reply rpl;
+	struct kinfo_proc kp;
+	int cfd, pd, wstatus;
+	int32_t status;
+	pid_t pid;
+
+	cfd = mac_capability_connect("coalition");
+	ATF_REQUIRE(cfd >= 0);
+	memset(&ssr, 0, sizeof(ssr));
+	ssr.op = COALITION_OP_SET_SIGNAL;
+	ssr.signal = 0;
+	ATF_REQUIRE(coalition_call(cfd, &ssr, sizeof(ssr), NULL, 0, &rpl,
+	    sizeof(rpl)) == 0);
+	ATF_CHECK_EQ(rpl.status, 0);
+	ssr.signal = -1;
+	ATF_REQUIRE(coalition_call(cfd, &ssr, sizeof(ssr), NULL, 0, &rpl,
+	    sizeof(rpl)) == 0);
+	ATF_CHECK_EQ(rpl.status, EINVAL);
+
+	pid = pdfork(&pd, 0);
+	ATF_REQUIRE(pid >= 0);
+	if (pid == 0) {
+		close(cfd);
+		pause();
+		_exit(0);
+	}
+	ATF_REQUIRE(coalition_enlist(cfd, pd, &status) == 0);
+	ATF_CHECK_EQ(status, 0);
+	ATF_REQUIRE(kinfo_of(pid, &kp) == 0);
+	ATF_CHECK(kp.ki_coalition != 0);
+
+	/* Explicit terminate: the member survives. */
+	ATF_REQUIRE(coalition_op(cfd, COALITION_OP_TERMINATE, &status) == 0);
+	ATF_CHECK_EQ(status, 0);
+	usleep(100000);
+	ATF_CHECK_EQ(waitpid(pid, &wstatus, WNOHANG), 0);
+	/* Close: the member survives and is no longer in any coalition. */
+	fprintf(stderr, "count before close=%u\n", coalition_count());
+	close(cfd);
+	usleep(200000);
+	fprintf(stderr, "count after close=%u\n", coalition_count());
+	ATF_CHECK_EQ(waitpid(pid, &wstatus, WNOHANG), 0);
+	ATF_REQUIRE(kinfo_of(pid, &kp) == 0);
+	ATF_CHECK_EQ_MSG(kp.ki_coalition, 0, "member still in coalition %ju "
+	    "after close (count=%u)", (uintmax_t)kp.ki_coalition,
+	    coalition_count());
+	pdkill(pd, SIGKILL);
+	waitpid(pid, &wstatus, 0);
+	close(pd);
+}
+
+
+ATF_TC(pdfork_inherits_and_rehomes);
+ATF_TC_HEAD(pdfork_inherits_and_rehomes, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "A pdfork child of a member inherits the coalition; a holder of "
+	    "its process descriptor may re-home that inherited membership by "
+	    "enlisting it elsewhere, after which it is pinned (EBUSY)");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_coalition");
+}
+ATF_TC_BODY(pdfork_inherits_and_rehomes, tc)
+{
+	struct coalition_stat_reply sa, sb;
+	struct kinfo_proc kp;
+	int a, b, c, pd, wstatus;
+	int32_t status;
+	pid_t pid;
+
+	a = mac_capability_connect("coalition");
+	b = mac_capability_connect("coalition");
+	c = mac_capability_connect("coalition");
+	ATF_REQUIRE(a >= 0 && b >= 0 && c >= 0);
+	ATF_REQUIRE(coalition_op(a, COALITION_OP_JOIN, &status) == 0);
+	ATF_CHECK_EQ(status, 0);
+	ATF_REQUIRE(coalition_stat(a, &sa) == 0);
+
+	pid = pdfork(&pd, 0);
+	ATF_REQUIRE(pid >= 0);
+	if (pid == 0) {
+		close(a);
+		close(b);
+		close(c);
+		pause();
+		_exit(0);
+	}
+	usleep(50000);
+	/* Inherited: the child carries a's id. */
+	ATF_REQUIRE(kinfo_of(pid, &kp) == 0);
+	ATF_CHECK_EQ(kp.ki_coalition, sa.id);
+	ATF_REQUIRE(coalition_stat(a, &sa) == 0);
+	ATF_CHECK_EQ(sa.process_count, 2);
+
+	/* Re-home: enlist the child's procdesc into b. */
+	ATF_REQUIRE(coalition_enlist(b, pd, &status) == 0);
+	ATF_CHECK_EQ(status, 0);
+	ATF_REQUIRE(coalition_stat(a, &sa) == 0);
+	ATF_REQUIRE(coalition_stat(b, &sb) == 0);
+	ATF_CHECK_EQ(sa.process_count, 1);
+	ATF_CHECK_EQ(sb.process_count, 1);
+	ATF_REQUIRE(kinfo_of(pid, &kp) == 0);
+	ATF_CHECK_EQ(kp.ki_coalition, sb.id);
+
+	/* Pinned now: an explicit membership does not move again. */
+	ATF_REQUIRE(coalition_enlist(c, pd, &status) == 0);
+	ATF_CHECK_EQ(status, EBUSY);
+	ATF_REQUIRE(kinfo_of(pid, &kp) == 0);
+	ATF_CHECK_EQ(kp.ki_coalition, sb.id);
+
+	/* The creator itself is untouched. */
+	ATF_REQUIRE(kinfo_of(getpid(), &kp) == 0);
+	ATF_CHECK_EQ(kp.ki_coalition, sa.id);
+
+	pdkill(pd, SIGKILL);
+	waitpid(pid, &wstatus, 0);
+	close(pd);
+	close(c);
+	close(b);
+	close(a);
+}
+
+
+ATF_TC(close_terminates_live_member);
+ATF_TC_HEAD(close_terminates_live_member, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Closing the last descriptor of a coalition with a live procdesc "
+	    "member terminates the member (default SIGKILL) and frees the "
+	    "coalition");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_coalition");
+}
+ATF_TC_BODY(close_terminates_live_member, tc)
+{
+	unsigned before, mid, after;
+	int cfd, pd, wstatus;
+	int32_t status;
+	pid_t pid;
+
+	before = coalition_count();
+	cfd = mac_capability_connect("coalition");
+	ATF_REQUIRE(cfd >= 0);
+	mid = coalition_count();
+	ATF_CHECK_EQ(mid, before + 1);
+	pid = pdfork(&pd, 0);
+	ATF_REQUIRE(pid >= 0);
+	if (pid == 0) {
+		/* The child must not pin the coalition's file. */
+		close(cfd);
+		pause();
+		_exit(0);
+	}
+	ATF_REQUIRE(coalition_enlist(cfd, pd, &status) == 0);
+	ATF_CHECK_EQ(status, 0);
+	close(cfd);
+	if (!wait_exit_bounded(pid, &wstatus)) {
+		atf_tc_fail_nonfatal("live member survived close (count=%u)",
+		    coalition_count());
+		pdkill(pd, SIGKILL);
+		(void)wait_exit_bounded(pid, &wstatus);
+	}
+	close(pd);
+	usleep(200000);
+	after = coalition_count();
+	ATF_CHECK_EQ_MSG(after, before, "coalition not freed after close: "
+	    "before=%u after=%u", before, after);
+}
+
 /* ================================================================
  * Signal and watchdog tests
  * ================================================================ */
@@ -1127,9 +1878,9 @@ ATF_TC_BODY(set_signal, tc)
 	cfd = mac_capability_connect("coalition");
 	ATF_REQUIRE(cfd >= 0);
 
-	/* Invalid signal */
+	/* Invalid signal (0 is the release mode; out of range is refused) */
 	ssr.op = COALITION_OP_SET_SIGNAL;
-	ssr.signal = 0;
+	ssr.signal = NSIG;
 	ATF_REQUIRE(coalition_call(cfd, &ssr, sizeof(ssr), NULL, 0,
 	    &rpl, sizeof(rpl)) == 0);
 	ATF_CHECK_EQ(rpl.status, EINVAL);
@@ -3103,6 +3854,21 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, terminate_revokes_multiple_services);
 	ATF_TP_ADD_TC(tp, coalition_is_mac_capability_type);
 	ATF_TP_ADD_TC(tp, mac_capability_revoke_send_on_coalition);
+
+	/* Identity + responsible parent */
+	ATF_TP_ADD_TC(tp, identity_unique_ids);
+	ATF_TP_ADD_TC(tp, identity_stat_old_layout);
+	ATF_TP_ADD_TC(tp, responsible_set_once);
+	ATF_TP_ADD_TC(tp, responsible_self_root);
+	ATF_TP_ADD_TC(tp, responsible_bad_args);
+	ATF_TP_ADD_TC(tp, responsible_caller_and_procdesc);
+	ATF_TP_ADD_TC(tp, responsible_no_cycles);
+	ATF_TP_ADD_TC(tp, responsible_survives_parent_close);
+	ATF_TP_ADD_TC(tp, responsible_kinfo_export);
+	ATF_TP_ADD_TC(tp, responsible_chain_depth_limit);
+	ATF_TP_ADD_TC(tp, set_signal_zero_releases);
+	ATF_TP_ADD_TC(tp, pdfork_inherits_and_rehomes);
+	ATF_TP_ADD_TC(tp, close_terminates_live_member);
 
 	/* Resource exhaustion + teardown-race stress */
 	ATF_TP_ADD_TC(tp, exhaust_coalition_max);

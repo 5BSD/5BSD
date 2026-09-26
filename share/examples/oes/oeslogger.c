@@ -328,6 +328,12 @@ emit_process(FILE *fp, int depth, const char *key, const oes_message_t *msg,
 	json_kv_int(fp, depth + 1, "original_ppid",
 	    proc->ep_original_ppid, true);
 	json_kv_int(fp, depth + 1, "reaper_pid", proc->ep_reaper_pid, true);
+	/* Capability-plane coalition identity (0 when in no coalition) */
+	json_kv_uint(fp, depth + 1, "coalition", proc->ep_coalition, true);
+	json_kv_uint(fp, depth + 1, "responsible_coalition",
+	    proc->ep_responsible_coalition, true);
+	json_kv_int(fp, depth + 1, "responsible_pid",
+	    proc->ep_responsible_pid, true);
 	json_kv_str(fp, depth + 1, "pcomm", proc->ep_pcomm, true);
 	json_kv_int(fp, depth + 1, "pgid", proc->ep_pgid, true);
 	json_kv_int(fp, depth + 1, "sid", proc->ep_sid, true);

@@ -12,14 +12,21 @@
 
 #include <security/oes/oes.h>
 
-_Static_assert(OES_API_VERSION == 1, "update API version coverage");
-_Static_assert(OES_MESSAGE_VERSION == 1,
+_Static_assert(OES_API_VERSION == 2, "update API version coverage");
+_Static_assert(OES_MESSAGE_VERSION == 2,
     "scope API must not silently change the message ABI");
 _Static_assert(sizeof(void *) == 8, "OES is available only on LP64 targets");
-_Static_assert(sizeof(oes_message_t) == 1200,
-    "message v1 wire size changed");
-_Static_assert(sizeof(oes_process_t) == 408,
-    "process v1 wire size changed");
+/*
+ * v2 (API 2): oes_process_t grew by 24 bytes at its end for the capability
+ * plane's coalition identity (ep_coalition, ep_responsible_coalition,
+ * ep_responsible_pid), which moves the event payload by the same amount.
+ */
+_Static_assert(sizeof(oes_message_t) == 1248,
+    "message v2 wire size changed");
+_Static_assert(sizeof(oes_process_t) == 432,
+    "process v2 wire size changed");
+_Static_assert(offsetof(oes_process_t, ep_coalition) == 408,
+    "coalition identity must follow the v1 process layout unchanged");
 _Static_assert(sizeof(oes_file_t) == 208,
     "file v1 wire size changed");
 _Static_assert(sizeof(oes_thread_t) == 40,
@@ -40,7 +47,7 @@ _Static_assert(offsetof(oes_message_t, em_thread) == 104,
     "thread metadata offset changed");
 _Static_assert(offsetof(oes_message_t, em_process) == 144,
     "process metadata offset changed");
-_Static_assert(offsetof(oes_message_t, em_event_data) == 552,
+_Static_assert(offsetof(oes_message_t, em_event_data) == 576,
     "event payload offset changed");
 _Static_assert(sizeof(oes_event_type_t) == 4,
     "event enum elements must remain 32-bit-wide on the ioctl ABI");
