@@ -1,15 +1,20 @@
 # 5BSD
 
-5BSD is an operating system from the BSD lineage in which authority is a
-held capability, not UNIX permissions. A program may do what it holds a
-capability for. Its user id, its group, the mode bits on a file, the path
-it opened and the peer credentials on a socket grant it nothing. The
-classic BSD system is kept whole and runs as it always has. Beside it
-runs a capability plane: a PID 1 called capsule, a service manager called
-switchboard, and sixteen system capabilities that broker storage,
-logging, networking, devices, crypto, time, tracing and more to programs
-that start in capability mode and hold nothing they were not given.
-Linux binaries run on the same kernel under the same policy.
+5BSD is a capability operating system and a UNIX hybrid. It is built on
+BSD, runs Linux binaries, and carries a full rootless capability system
+in which system authority lives in processes, held as unforgeable
+capabilities, and in which that system protects itself from UNIX rather
+than relying on it.
+
+Authority is a held capability, not UNIX permissions. A program may do
+what it holds a capability for. Its user id, its group, the mode bits on
+a file, the path it opened and the peer credentials on a socket grant it
+nothing. The classic BSD system is kept whole and runs as it always has.
+Beside it runs the capability plane: a PID 1 called capsule, a service
+manager called switchboard, and sixteen system capabilities that broker
+storage, logging, networking, devices, crypto, time, tracing and more to
+programs that start in capability mode and hold nothing they were not
+given. Linux binaries run on the same kernel under the same policy.
 
 This is early work. The plane is real, boots, and is tested, but today
 it runs beside a UNIX system that still has root, still has mode bits,
