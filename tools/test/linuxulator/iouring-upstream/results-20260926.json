@@ -1,0 +1,2100 @@
+{
+  "date": "2026-09-26",
+  "qualification": "failed",
+  "kernel_sha256": "cae50f3dc0615a828226d57f5d21a78eafc5544bbbffc1c7b77a681611d9f984",
+  "liburing_version": "2.12",
+  "fio_version": "3.41",
+  "selected_cases": 70,
+  "candidate": {
+    "complete": true,
+    "cases": {
+      "version": {
+        "exit": 0,
+        "status": "pass",
+        "output": "",
+        "internal_skip_message": false
+      },
+      "nop": {
+        "exit": 0,
+        "status": "pass",
+        "output": "",
+        "internal_skip_message": false
+      },
+      "sq-full": {
+        "exit": 0,
+        "status": "pass",
+        "output": "",
+        "internal_skip_message": false
+      },
+      "sq-space_left": {
+        "exit": 0,
+        "status": "pass",
+        "output": "",
+        "internal_skip_message": false
+      },
+      "cq-ready": {
+        "exit": 0,
+        "status": "pass",
+        "output": "",
+        "internal_skip_message": false
+      },
+      "cq-size": {
+        "exit": 0,
+        "status": "pass",
+        "output": "",
+        "internal_skip_message": false
+      },
+      "cq-peek-batch": {
+        "exit": 0,
+        "status": "pass",
+        "output": "",
+        "internal_skip_message": false
+      },
+      "io_uring_setup": {
+        "exit": 0,
+        "status": "pass",
+        "output": "",
+        "internal_skip_message": false
+      },
+      "io_uring_enter": {
+        "exit": 0,
+        "status": "pass",
+        "output": "",
+        "internal_skip_message": false
+      },
+      "io_uring_register": {
+        "exit": 124,
+        "status": "timeout",
+        "output": "Unable to map a huge page.  Try increasing /proc/sys/vm/nr_hugepages by at least 1.\nexpected No error information, but call succeeded",
+        "internal_skip_message": false
+      },
+      "file-register": {
+        "exit": 1,
+        "status": "fail",
+        "output": "test_huge: register ret=-22\ntest_huge failed",
+        "internal_skip_message": false
+      },
+      "file-update": {
+        "exit": 0,
+        "status": "pass",
+        "output": "",
+        "internal_skip_message": false
+      },
+      "open-close": {
+        "exit": 1,
+        "status": "fail",
+        "output": "test_close ring_fd failed",
+        "internal_skip_message": false
+      },
+      "read-write": {
+        "exit": 124,
+        "status": "timeout",
+        "output": "",
+        "internal_skip_message": false
+      },
+      "short-read": {
+        "exit": 0,
+        "status": "pass",
+        "output": "",
+        "internal_skip_message": false
+      },
+      "fsync": {
+        "exit": 0,
+        "status": "pass",
+        "output": "",
+        "internal_skip_message": false
+      },
+      "statx": {
+        "exit": 0,
+        "status": "pass",
+        "output": "",
+        "internal_skip_message": false
+      },
+      "truncate": {
+        "exit": 0,
+        "status": "pass",
+        "output": "",
+        "internal_skip_message": false
+      },
+      "unlink": {
+        "exit": 0,
+        "status": "pass",
+        "output": "",
+        "internal_skip_message": false
+      },
+      "rename": {
+        "exit": 254,
+        "status": "fail",
+        "output": "test_badaddr 0 failed: -2",
+        "internal_skip_message": false
+      },
+      "mkdir": {
+        "exit": 0,
+        "status": "pass",
+        "output": "",
+        "internal_skip_message": false
+      },
+      "symlink": {
+        "exit": 0,
+        "status": "pass",
+        "output": "",
+        "internal_skip_message": false
+      },
+      "link": {
+        "exit": 1,
+        "status": "fail",
+        "output": "poll_ring setup failed",
+        "internal_skip_message": false
+      },
+      "link_drain": {
+        "exit": 0,
+        "status": "pass",
+        "output": "",
+        "internal_skip_message": false
+      },
+      "submit-link-fail": {
+        "exit": 1,
+        "status": "fail",
+        "output": "drain failed -29\nfailed 1, hard 0, drain 1,link_last 0, size 1, idx 0",
+        "internal_skip_message": false
+      },
+      "skip-cqe": {
+        "exit": 1,
+        "status": "fail",
+        "output": "single CQE expected 4\ntest_link_fail mid failed",
+        "internal_skip_message": false
+      },
+      "timeout": {
+        "exit": 124,
+        "status": "timeout",
+        "output": "",
+        "internal_skip_message": false
+      },
+      "timeout-new": {
+        "exit": 0,
+        "status": "pass",
+        "output": "",
+        "internal_skip_message": false
+      },
+      "link-timeout": {
+        "exit": 1,
+        "status": "fail",
+        "output": "Req 1 got -29\ntest_single_link_chain1 failed",
+        "internal_skip_message": false
+      },
+      "wait-timeout": {
+        "exit": 0,
+        "status": "pass",
+        "output": "",
+        "internal_skip_message": false
+      },
+      "poll": {
+        "exit": 1,
+        "status": "fail",
+        "output": "fail, polling stuck\ntest_disabled_ring_lazy_polling(false) failed 1",
+        "internal_skip_message": false
+      },
+      "poll-cancel": {
+        "exit": 0,
+        "status": "pass",
+        "output": "",
+        "internal_skip_message": false
+      },
+      "poll-link": {
+        "exit": 0,
+        "status": "pass",
+        "output": "",
+        "internal_skip_message": false
+      },
+      "poll-mshot-update": {
+        "exit": 1,
+        "status": "fail",
+        "output": "kern.ipc.maxpipekva exceeded; see tuning(7)\npipe: Out of memory\nrun(1024) failed\npoll-many failed",
+        "internal_skip_message": false
+      },
+      "io-cancel": {
+        "exit": 1,
+        "status": "fail",
+        "output": "read got canceled or wait failed\ntest_dont_cancel_another_ring() failed",
+        "internal_skip_message": false
+      },
+      "sync-cancel": {
+        "exit": 1,
+        "status": "fail",
+        "output": "sync_cancel=-2\ntest_sync_cancel 0 0 0 failed",
+        "internal_skip_message": false
+      },
+      "eventfd": {
+        "exit": 1,
+        "status": "fail",
+        "output": "read: -29",
+        "internal_skip_message": false
+      },
+      "eventfd-reg": {
+        "exit": 0,
+        "status": "pass",
+        "output": "",
+        "internal_skip_message": false
+      },
+      "eventfd-disable": {
+        "exit": 1,
+        "status": "fail",
+        "output": "eventfd unexpected: 0\n/root/upstream/tests/eventfd-disable.t: test(false) failed",
+        "internal_skip_message": false
+      },
+      "pipe-eof": {
+        "exit": 1,
+        "status": "fail",
+        "output": "Read error: Invalid seek",
+        "internal_skip_message": false
+      },
+      "send_recv": {
+        "exit": 1,
+        "status": "fail",
+        "output": "failed cqe: -11\ntest sqthread=1 reg=1 1 0 failed",
+        "internal_skip_message": false
+      },
+      "send_recvmsg": {
+        "exit": 0,
+        "status": "pass",
+        "output": "",
+        "internal_skip_message": false
+      },
+      "connect": {
+        "exit": 77,
+        "status": "skip",
+        "output": "No connect support, skipping\nNo connect support, skipping\nNo connect support, skipping",
+        "internal_skip_message": true
+      },
+      "shutdown": {
+        "exit": 1,
+        "status": "fail",
+        "output": "writev: -29",
+        "internal_skip_message": false
+      },
+      "socket": {
+        "exit": 1,
+        "status": "fail",
+        "output": "failed cqe: -11\ntest sqthread=1 reg=1 failed",
+        "internal_skip_message": false
+      },
+      "single-issuer": {
+        "exit": 0,
+        "status": "pass",
+        "output": "",
+        "internal_skip_message": false
+      },
+      "defer-taskrun": {
+        "exit": 1,
+        "status": "fail",
+        "output": "defer-taskrun.c:159 io_uring_get_events(&td.ring) == -EEXIST failed\ntest_thread_shutdown failed",
+        "internal_skip_message": false
+      },
+      "register-restrictions": {
+        "exit": 1,
+        "status": "fail",
+        "output": "write res: -29\ntest_restrictions_sqe_op failed",
+        "internal_skip_message": false
+      },
+      "reg-reg-ring": {
+        "exit": 0,
+        "status": "pass",
+        "output": "",
+        "internal_skip_message": false
+      },
+      "reg-fd-only": {
+        "exit": 77,
+        "status": "skip",
+        "output": "Enable huge pages to test big rings",
+        "internal_skip_message": false
+      },
+      "buf-ring": {
+        "exit": 0,
+        "status": "pass",
+        "output": "",
+        "internal_skip_message": false
+      },
+      "buf-ring-nommap": {
+        "exit": 1,
+        "status": "fail",
+        "output": "cqe res -29",
+        "internal_skip_message": false
+      },
+      "ringbuf-status": {
+        "exit": 1,
+        "status": "fail",
+        "output": "cqe res -29\ntest 0 failed",
+        "internal_skip_message": false
+      },
+      "read-mshot": {
+        "exit": 124,
+        "status": "timeout",
+        "output": "",
+        "internal_skip_message": false
+      },
+      "recv-multishot": {
+        "exit": 1,
+        "status": "fail",
+        "output": "setsockopt failed 22\ntest stream=0 wait_each=0 recvmsg=0 early_error=0  defer=0 failed",
+        "internal_skip_message": false
+      },
+      "msg-ring": {
+        "exit": 1,
+        "status": "fail",
+        "output": "ring setup failed: -22\nring flags 0 failed",
+        "internal_skip_message": false
+      },
+      "msg-ring-fd": {
+        "exit": 1,
+        "status": "fail",
+        "output": "cqe res -29\ntest local failed\nring flags 0 failed",
+        "internal_skip_message": false
+      },
+      "resize-rings": {
+        "exit": 1,
+        "status": "fail",
+        "output": "cqe res -29\ntest_pipes 3000 failed",
+        "internal_skip_message": false
+      },
+      "sqpoll-sleep": {
+        "exit": 0,
+        "status": "pass",
+        "output": "",
+        "internal_skip_message": false
+      },
+      "sq-poll-share": {
+        "exit": 0,
+        "status": "pass",
+        "output": "",
+        "internal_skip_message": false
+      },
+      "sqpoll-exit-hang": {
+        "exit": 0,
+        "status": "pass",
+        "output": "",
+        "internal_skip_message": false
+      },
+      "sqpoll-disable-exit": {
+        "exit": 124,
+        "status": "timeout",
+        "output": "pid 415 (sqpoll-disable-exit), jid 0, uid 0: exited on signal 11 (no core dump - coredumpsize limit is 0)\npid 416 (sqpoll-disable-exit), jid 0, uid 0: exited on signal 11 (no core dump - coredumpsize limit is 0)\npid 417 (sqpoll-disable-exit), jid 0, uid 0: exited on signal 11 (no core dump - coredumpsize limit is 0)\npid 418 (sqpoll-disable-exit), jid 0, uid 0: exited on signal 11 (no core dump - coredumpsize limit is 0)\npid 419 (sqpoll-disable-exit), jid 0, uid 0: exited on signal 11 (no core dump - coredumpsize limit is 0)\npid 420 (sqpoll-disable-exit), jid 0, uid 0: exited on signal 11 (no core dump - coredumpsize limit is 0)",
+        "internal_skip_message": false
+      },
+      "exit-no-cleanup": {
+        "exit": 1,
+        "status": "fail",
+        "output": "exit-no-cleanup.t: read failed: exit-no-cleanup.t: read failed: Invalid seek\nexit-no-cleanup.t: read failed: Invalid seek\nexit-no-cleanup.t: read failed: Invalid seek",
+        "internal_skip_message": false
+      },
+      "thread-exit": {
+        "exit": 0,
+        "status": "pass",
+        "output": "",
+        "internal_skip_message": false
+      },
+      "across-fork": {
+        "exit": 0,
+        "status": "pass",
+        "output": "",
+        "internal_skip_message": false
+      },
+      "file-exit-unreg": {
+        "exit": 0,
+        "status": "pass",
+        "output": "",
+        "internal_skip_message": false
+      },
+      "ring-leak": {
+        "exit": 124,
+        "status": "timeout",
+        "output": "",
+        "internal_skip_message": false
+      },
+      "ring-leak2": {
+        "exit": 0,
+        "status": "pass",
+        "output": "",
+        "internal_skip_message": false
+      },
+      "teardowns": {
+        "exit": 0,
+        "status": "pass",
+        "output": "",
+        "internal_skip_message": false
+      }
+    },
+    "counts": {
+      "pass": 35,
+      "timeout": 6,
+      "fail": 26,
+      "skip": 2
+    },
+    "quarantined": [
+      "hardlink known-namei-assertion"
+    ],
+    "fio": {
+      "buffered": 0,
+      "direct": 0,
+      "registered": 0,
+      "sqpoll": 0
+    },
+    "resources": {
+      "live_requests": 0,
+      "registered_files": 4,
+      "issuer_refs": 0,
+      "issuer_tokens": 0,
+      "wired_pages": 2
+    }
+  },
+  "linux": {
+    "complete": true,
+    "cases": {
+      "version": {
+        "exit": 0,
+        "status": "pass",
+        "output": "",
+        "internal_skip_message": false
+      },
+      "nop": {
+        "exit": 0,
+        "status": "pass",
+        "output": "",
+        "internal_skip_message": false
+      },
+      "sq-full": {
+        "exit": 0,
+        "status": "pass",
+        "output": "",
+        "internal_skip_message": false
+      },
+      "sq-space_left": {
+        "exit": 0,
+        "status": "pass",
+        "output": "",
+        "internal_skip_message": false
+      },
+      "cq-ready": {
+        "exit": 0,
+        "status": "pass",
+        "output": "",
+        "internal_skip_message": false
+      },
+      "cq-size": {
+        "exit": 0,
+        "status": "pass",
+        "output": "",
+        "internal_skip_message": false
+      },
+      "cq-peek-batch": {
+        "exit": 0,
+        "status": "pass",
+        "output": "",
+        "internal_skip_message": false
+      },
+      "io_uring_setup": {
+        "exit": 0,
+        "status": "pass",
+        "output": "",
+        "internal_skip_message": false
+      },
+      "io_uring_enter": {
+        "exit": 0,
+        "status": "pass",
+        "output": "",
+        "internal_skip_message": false
+      },
+      "io_uring_register": {
+        "exit": 0,
+        "status": "pass",
+        "output": "Unable to map a huge page.  Try increasing /proc/sys/vm/nr_hugepages by at least 1.\nSkipping the hugepage test",
+        "internal_skip_message": true
+      },
+      "file-register": {
+        "exit": 0,
+        "status": "pass",
+        "output": "test_huge: No huge file set support, skipping",
+        "internal_skip_message": true
+      },
+      "file-update": {
+        "exit": 0,
+        "status": "pass",
+        "output": "",
+        "internal_skip_message": false
+      },
+      "open-close": {
+        "exit": 0,
+        "status": "pass",
+        "output": "",
+        "internal_skip_message": false
+      },
+      "read-write": {
+        "exit": 0,
+        "status": "pass",
+        "output": "",
+        "internal_skip_message": false
+      },
+      "short-read": {
+        "exit": 0,
+        "status": "pass",
+        "output": "",
+        "internal_skip_message": false
+      },
+      "fsync": {
+        "exit": 0,
+        "status": "pass",
+        "output": "",
+        "internal_skip_message": false
+      },
+      "statx": {
+        "exit": 0,
+        "status": "pass",
+        "output": "",
+        "internal_skip_message": false
+      },
+      "truncate": {
+        "exit": 0,
+        "status": "pass",
+        "output": "",
+        "internal_skip_message": false
+      },
+      "unlink": {
+        "exit": 0,
+        "status": "pass",
+        "output": "",
+        "internal_skip_message": false
+      },
+      "rename": {
+        "exit": 0,
+        "status": "pass",
+        "output": "",
+        "internal_skip_message": false
+      },
+      "mkdir": {
+        "exit": 0,
+        "status": "pass",
+        "output": "",
+        "internal_skip_message": false
+      },
+      "symlink": {
+        "exit": 0,
+        "status": "pass",
+        "output": "",
+        "internal_skip_message": false
+      },
+      "hardlink": {
+        "exit": 0,
+        "status": "pass",
+        "output": "",
+        "internal_skip_message": false
+      },
+      "link": {
+        "exit": 0,
+        "status": "pass",
+        "output": "",
+        "internal_skip_message": false
+      },
+      "link_drain": {
+        "exit": 0,
+        "status": "pass",
+        "output": "",
+        "internal_skip_message": false
+      },
+      "submit-link-fail": {
+        "exit": 0,
+        "status": "pass",
+        "output": "",
+        "internal_skip_message": false
+      },
+      "skip-cqe": {
+        "exit": 0,
+        "status": "pass",
+        "output": "",
+        "internal_skip_message": false
+      },
+      "timeout": {
+        "exit": 0,
+        "status": "pass",
+        "output": "",
+        "internal_skip_message": false
+      },
+      "timeout-new": {
+        "exit": 0,
+        "status": "pass",
+        "output": "",
+        "internal_skip_message": false
+      },
+      "link-timeout": {
+        "exit": 0,
+        "status": "pass",
+        "output": "",
+        "internal_skip_message": false
+      },
+      "wait-timeout": {
+        "exit": 0,
+        "status": "pass",
+        "output": "",
+        "internal_skip_message": false
+      },
+      "poll": {
+        "exit": 0,
+        "status": "pass",
+        "output": "",
+        "internal_skip_message": false
+      },
+      "poll-cancel": {
+        "exit": 0,
+        "status": "pass",
+        "output": "",
+        "internal_skip_message": false
+      },
+      "poll-link": {
+        "exit": 0,
+        "status": "pass",
+        "output": "",
+        "internal_skip_message": false
+      },
+      "poll-mshot-update": {
+        "exit": 0,
+        "status": "pass",
+        "output": "",
+        "internal_skip_message": false
+      },
+      "io-cancel": {
+        "exit": 0,
+        "status": "pass",
+        "output": "",
+        "internal_skip_message": false
+      },
+      "sync-cancel": {
+        "exit": 0,
+        "status": "pass",
+        "output": "",
+        "internal_skip_message": false
+      },
+      "eventfd": {
+        "exit": 0,
+        "status": "pass",
+        "output": "",
+        "internal_skip_message": false
+      },
+      "eventfd-reg": {
+        "exit": 0,
+        "status": "pass",
+        "output": "",
+        "internal_skip_message": false
+      },
+      "eventfd-disable": {
+        "exit": 0,
+        "status": "pass",
+        "output": "",
+        "internal_skip_message": false
+      },
+      "pipe-eof": {
+        "exit": 0,
+        "status": "pass",
+        "output": "",
+        "internal_skip_message": false
+      },
+      "send_recv": {
+        "exit": 0,
+        "status": "pass",
+        "output": "",
+        "internal_skip_message": false
+      },
+      "send_recvmsg": {
+        "exit": 0,
+        "status": "pass",
+        "output": "",
+        "internal_skip_message": false
+      },
+      "connect": {
+        "exit": 0,
+        "status": "pass",
+        "output": "",
+        "internal_skip_message": false
+      },
+      "shutdown": {
+        "exit": 0,
+        "status": "pass",
+        "output": "",
+        "internal_skip_message": false
+      },
+      "socket": {
+        "exit": 0,
+        "status": "pass",
+        "output": "",
+        "internal_skip_message": false
+      },
+      "single-issuer": {
+        "exit": 0,
+        "status": "pass",
+        "output": "",
+        "internal_skip_message": false
+      },
+      "defer-taskrun": {
+        "exit": 0,
+        "status": "pass",
+        "output": "",
+        "internal_skip_message": false
+      },
+      "register-restrictions": {
+        "exit": 0,
+        "status": "pass",
+        "output": "",
+        "internal_skip_message": false
+      },
+      "reg-reg-ring": {
+        "exit": 0,
+        "status": "pass",
+        "output": "",
+        "internal_skip_message": false
+      },
+      "reg-fd-only": {
+        "exit": 77,
+        "status": "skip",
+        "output": "Enable huge pages to test big rings",
+        "internal_skip_message": false
+      },
+      "buf-ring": {
+        "exit": 0,
+        "status": "pass",
+        "output": "",
+        "internal_skip_message": false
+      },
+      "buf-ring-nommap": {
+        "exit": 0,
+        "status": "pass",
+        "output": "",
+        "internal_skip_message": false
+      },
+      "ringbuf-status": {
+        "exit": 0,
+        "status": "pass",
+        "output": "",
+        "internal_skip_message": false
+      },
+      "read-mshot": {
+        "exit": 0,
+        "status": "pass",
+        "output": "",
+        "internal_skip_message": false
+      },
+      "recv-multishot": {
+        "exit": 0,
+        "status": "pass",
+        "output": "",
+        "internal_skip_message": false
+      },
+      "msg-ring": {
+        "exit": 0,
+        "status": "pass",
+        "output": "",
+        "internal_skip_message": false
+      },
+      "msg-ring-fd": {
+        "exit": 0,
+        "status": "pass",
+        "output": "",
+        "internal_skip_message": false
+      },
+      "resize-rings": {
+        "exit": 0,
+        "status": "pass",
+        "output": "",
+        "internal_skip_message": false
+      },
+      "sqpoll-sleep": {
+        "exit": 0,
+        "status": "pass",
+        "output": "",
+        "internal_skip_message": false
+      },
+      "sq-poll-share": {
+        "exit": 0,
+        "status": "pass",
+        "output": "",
+        "internal_skip_message": false
+      },
+      "sqpoll-exit-hang": {
+        "exit": 0,
+        "status": "pass",
+        "output": "",
+        "internal_skip_message": false
+      },
+      "sqpoll-disable-exit": {
+        "exit": 0,
+        "status": "pass",
+        "output": "",
+        "internal_skip_message": false
+      },
+      "exit-no-cleanup": {
+        "exit": 0,
+        "status": "pass",
+        "output": "",
+        "internal_skip_message": false
+      },
+      "thread-exit": {
+        "exit": 0,
+        "status": "pass",
+        "output": "",
+        "internal_skip_message": false
+      },
+      "across-fork": {
+        "exit": 0,
+        "status": "pass",
+        "output": "",
+        "internal_skip_message": false
+      },
+      "file-exit-unreg": {
+        "exit": 0,
+        "status": "pass",
+        "output": "",
+        "internal_skip_message": false
+      },
+      "ring-leak": {
+        "exit": 77,
+        "status": "skip",
+        "output": "",
+        "internal_skip_message": false
+      },
+      "ring-leak2": {
+        "exit": 0,
+        "status": "pass",
+        "output": "",
+        "internal_skip_message": false
+      },
+      "teardowns": {
+        "exit": 0,
+        "status": "pass",
+        "output": "",
+        "internal_skip_message": false
+      }
+    },
+    "counts": {
+      "pass": 68,
+      "skip": 2
+    },
+    "quarantined": [],
+    "fio": {
+      "buffered": 0,
+      "direct": 0,
+      "registered": 0,
+      "sqpoll": 0
+    },
+    "resources": {}
+  },
+  "retry": {
+    "complete": true,
+    "cases": {
+      "io_uring_register": {
+        "exit": 124,
+        "status": "timeout",
+        "output": "Unable to map a huge page.  Try increasing /proc/sys/vm/nr_hugepages by at least 1.\nexpected No error information, but call succeeded",
+        "internal_skip_message": false
+      },
+      "read-write": {
+        "exit": 124,
+        "status": "timeout",
+        "output": "",
+        "internal_skip_message": false
+      },
+      "timeout": {
+        "exit": 124,
+        "status": "timeout",
+        "output": "",
+        "internal_skip_message": false
+      },
+      "poll-mshot-update": {
+        "exit": 124,
+        "status": "timeout",
+        "output": "",
+        "internal_skip_message": false
+      }
+    },
+    "counts": {
+      "timeout": 4
+    },
+    "quarantined": [],
+    "fio": {},
+    "resources": {
+      "live_requests": 0,
+      "registered_files": 0,
+      "issuer_refs": 0,
+      "issuer_tokens": 0,
+      "wired_pages": 0
+    }
+  },
+  "panic": {
+    "case": "hardlink",
+    "assertion": "(cnp->cn_flags & (LOCKPARENT | WANTPARENT)) == 0",
+    "location": "sys/kern/vfs_lookup.c:518",
+    "path": "linux_io_uring_enter -> linux_linkat -> kern_linkat -> namei_emptypath",
+    "fixed": false
+  },
+  "fio_candidate": {
+    "complete": true,
+    "cases": {},
+    "counts": {},
+    "quarantined": [],
+    "fio": {
+      "buffered": 0,
+      "direct": 0,
+      "registered": 0,
+      "sqpoll": 0
+    },
+    "resources": {
+      "live_requests": 0,
+      "registered_files": 0,
+      "issuer_refs": 0,
+      "issuer_tokens": 0,
+      "wired_pages": 0
+    }
+  },
+  "stress": {
+    "results": [
+      {
+        "test": "squeue_stress",
+        "argument": 1,
+        "exit": 0
+      },
+      {
+        "test": "squeue_fuzz",
+        "argument": 1,
+        "exit": 0
+      },
+      {
+        "test": "squeue_stress",
+        "argument": 2,
+        "exit": 0
+      },
+      {
+        "test": "squeue_fuzz",
+        "argument": 2,
+        "exit": 0
+      },
+      {
+        "test": "squeue_stress",
+        "argument": 3,
+        "exit": 0
+      },
+      {
+        "test": "squeue_fuzz",
+        "argument": 3,
+        "exit": 0
+      },
+      {
+        "test": "squeue_stress",
+        "argument": 4,
+        "exit": 0
+      },
+      {
+        "test": "squeue_fuzz",
+        "argument": 4,
+        "exit": 0
+      },
+      {
+        "test": "squeue_stress",
+        "argument": 5,
+        "exit": 0
+      },
+      {
+        "test": "squeue_fuzz",
+        "argument": 5,
+        "exit": 0
+      },
+      {
+        "test": "squeue_stress",
+        "argument": 6,
+        "exit": 0
+      },
+      {
+        "test": "squeue_fuzz",
+        "argument": 6,
+        "exit": 0
+      },
+      {
+        "test": "squeue_stress",
+        "argument": 7,
+        "exit": 0
+      },
+      {
+        "test": "squeue_fuzz",
+        "argument": 7,
+        "exit": 0
+      },
+      {
+        "test": "squeue_stress",
+        "argument": 8,
+        "exit": 0
+      },
+      {
+        "test": "squeue_fuzz",
+        "argument": 8,
+        "exit": 0
+      },
+      {
+        "test": "squeue_stress",
+        "argument": 9,
+        "exit": 0
+      },
+      {
+        "test": "squeue_fuzz",
+        "argument": 9,
+        "exit": 0
+      },
+      {
+        "test": "squeue_stress",
+        "argument": 10,
+        "exit": 0
+      },
+      {
+        "test": "squeue_fuzz",
+        "argument": 10,
+        "exit": 0
+      },
+      {
+        "test": "squeue_stress",
+        "argument": 11,
+        "exit": 0
+      },
+      {
+        "test": "squeue_fuzz",
+        "argument": 11,
+        "exit": 0
+      },
+      {
+        "test": "squeue_stress",
+        "argument": 12,
+        "exit": 0
+      },
+      {
+        "test": "squeue_fuzz",
+        "argument": 12,
+        "exit": 0
+      },
+      {
+        "test": "squeue_stress",
+        "argument": 13,
+        "exit": 0
+      },
+      {
+        "test": "squeue_fuzz",
+        "argument": 13,
+        "exit": 0
+      },
+      {
+        "test": "squeue_stress",
+        "argument": 14,
+        "exit": 0
+      },
+      {
+        "test": "squeue_fuzz",
+        "argument": 14,
+        "exit": 0
+      },
+      {
+        "test": "squeue_stress",
+        "argument": 15,
+        "exit": 0
+      },
+      {
+        "test": "squeue_fuzz",
+        "argument": 15,
+        "exit": 0
+      },
+      {
+        "test": "squeue_stress",
+        "argument": 16,
+        "exit": 0
+      },
+      {
+        "test": "squeue_fuzz",
+        "argument": 16,
+        "exit": 0
+      },
+      {
+        "test": "squeue_stress",
+        "argument": 17,
+        "exit": 0
+      },
+      {
+        "test": "squeue_fuzz",
+        "argument": 17,
+        "exit": 0
+      },
+      {
+        "test": "squeue_stress",
+        "argument": 18,
+        "exit": 0
+      },
+      {
+        "test": "squeue_fuzz",
+        "argument": 18,
+        "exit": 0
+      },
+      {
+        "test": "squeue_stress",
+        "argument": 19,
+        "exit": 0
+      },
+      {
+        "test": "squeue_fuzz",
+        "argument": 19,
+        "exit": 0
+      },
+      {
+        "test": "squeue_stress",
+        "argument": 20,
+        "exit": 0
+      },
+      {
+        "test": "squeue_fuzz",
+        "argument": 20,
+        "exit": 0
+      },
+      {
+        "test": "squeue_stress",
+        "argument": 21,
+        "exit": 0
+      },
+      {
+        "test": "squeue_fuzz",
+        "argument": 21,
+        "exit": 0
+      },
+      {
+        "test": "squeue_stress",
+        "argument": 22,
+        "exit": 0
+      },
+      {
+        "test": "squeue_fuzz",
+        "argument": 22,
+        "exit": 0
+      },
+      {
+        "test": "squeue_stress",
+        "argument": 23,
+        "exit": 0
+      },
+      {
+        "test": "squeue_fuzz",
+        "argument": 23,
+        "exit": 0
+      },
+      {
+        "test": "squeue_stress",
+        "argument": 24,
+        "exit": 0
+      },
+      {
+        "test": "squeue_fuzz",
+        "argument": 24,
+        "exit": 0
+      },
+      {
+        "test": "squeue_stress",
+        "argument": 25,
+        "exit": 0
+      },
+      {
+        "test": "squeue_fuzz",
+        "argument": 25,
+        "exit": 0
+      },
+      {
+        "test": "squeue_stress",
+        "argument": 26,
+        "exit": 0
+      },
+      {
+        "test": "squeue_fuzz",
+        "argument": 26,
+        "exit": 0
+      },
+      {
+        "test": "squeue_stress",
+        "argument": 27,
+        "exit": 0
+      },
+      {
+        "test": "squeue_fuzz",
+        "argument": 27,
+        "exit": 0
+      },
+      {
+        "test": "squeue_stress",
+        "argument": 28,
+        "exit": 0
+      },
+      {
+        "test": "squeue_fuzz",
+        "argument": 28,
+        "exit": 0
+      },
+      {
+        "test": "squeue_stress",
+        "argument": 29,
+        "exit": 0
+      },
+      {
+        "test": "squeue_fuzz",
+        "argument": 29,
+        "exit": 0
+      },
+      {
+        "test": "squeue_stress",
+        "argument": 30,
+        "exit": 0
+      },
+      {
+        "test": "squeue_fuzz",
+        "argument": 30,
+        "exit": 0
+      },
+      {
+        "test": "squeue_stress",
+        "argument": 31,
+        "exit": 0
+      },
+      {
+        "test": "squeue_fuzz",
+        "argument": 31,
+        "exit": 0
+      },
+      {
+        "test": "squeue_stress",
+        "argument": 32,
+        "exit": 0
+      },
+      {
+        "test": "squeue_fuzz",
+        "argument": 32,
+        "exit": 0
+      },
+      {
+        "test": "squeue_stress",
+        "argument": 33,
+        "exit": 0
+      },
+      {
+        "test": "squeue_fuzz",
+        "argument": 33,
+        "exit": 0
+      },
+      {
+        "test": "squeue_stress",
+        "argument": 34,
+        "exit": 0
+      },
+      {
+        "test": "squeue_fuzz",
+        "argument": 34,
+        "exit": 0
+      },
+      {
+        "test": "squeue_stress",
+        "argument": 35,
+        "exit": 0
+      },
+      {
+        "test": "squeue_fuzz",
+        "argument": 35,
+        "exit": 0
+      },
+      {
+        "test": "squeue_stress",
+        "argument": 36,
+        "exit": 0
+      },
+      {
+        "test": "squeue_fuzz",
+        "argument": 36,
+        "exit": 0
+      },
+      {
+        "test": "squeue_stress",
+        "argument": 37,
+        "exit": 0
+      },
+      {
+        "test": "squeue_fuzz",
+        "argument": 37,
+        "exit": 0
+      },
+      {
+        "test": "squeue_stress",
+        "argument": 38,
+        "exit": 0
+      },
+      {
+        "test": "squeue_fuzz",
+        "argument": 38,
+        "exit": 0
+      },
+      {
+        "test": "squeue_stress",
+        "argument": 39,
+        "exit": 0
+      },
+      {
+        "test": "squeue_fuzz",
+        "argument": 39,
+        "exit": 0
+      },
+      {
+        "test": "squeue_stress",
+        "argument": 40,
+        "exit": 0
+      },
+      {
+        "test": "squeue_fuzz",
+        "argument": 40,
+        "exit": 0
+      },
+      {
+        "test": "squeue_stress",
+        "argument": 41,
+        "exit": 0
+      },
+      {
+        "test": "squeue_fuzz",
+        "argument": 41,
+        "exit": 0
+      },
+      {
+        "test": "squeue_stress",
+        "argument": 42,
+        "exit": 0
+      },
+      {
+        "test": "squeue_fuzz",
+        "argument": 42,
+        "exit": 0
+      },
+      {
+        "test": "squeue_stress",
+        "argument": 43,
+        "exit": 0
+      },
+      {
+        "test": "squeue_fuzz",
+        "argument": 43,
+        "exit": 0
+      },
+      {
+        "test": "squeue_stress",
+        "argument": 44,
+        "exit": 0
+      },
+      {
+        "test": "squeue_fuzz",
+        "argument": 44,
+        "exit": 0
+      },
+      {
+        "test": "squeue_stress",
+        "argument": 45,
+        "exit": 0
+      },
+      {
+        "test": "squeue_fuzz",
+        "argument": 45,
+        "exit": 0
+      },
+      {
+        "test": "squeue_stress",
+        "argument": 46,
+        "exit": 0
+      },
+      {
+        "test": "squeue_fuzz",
+        "argument": 46,
+        "exit": 0
+      },
+      {
+        "test": "squeue_stress",
+        "argument": 47,
+        "exit": 0
+      },
+      {
+        "test": "squeue_fuzz",
+        "argument": 47,
+        "exit": 0
+      },
+      {
+        "test": "squeue_stress",
+        "argument": 48,
+        "exit": 0
+      },
+      {
+        "test": "squeue_fuzz",
+        "argument": 48,
+        "exit": 0
+      },
+      {
+        "test": "squeue_stress",
+        "argument": 49,
+        "exit": 0
+      },
+      {
+        "test": "squeue_fuzz",
+        "argument": 49,
+        "exit": 0
+      },
+      {
+        "test": "squeue_stress",
+        "argument": 50,
+        "exit": 0
+      },
+      {
+        "test": "squeue_fuzz",
+        "argument": 50,
+        "exit": 0
+      },
+      {
+        "test": "squeue_stress",
+        "argument": 51,
+        "exit": 0
+      },
+      {
+        "test": "squeue_fuzz",
+        "argument": 51,
+        "exit": 0
+      },
+      {
+        "test": "squeue_stress",
+        "argument": 52,
+        "exit": 0
+      },
+      {
+        "test": "squeue_fuzz",
+        "argument": 52,
+        "exit": 0
+      },
+      {
+        "test": "squeue_stress",
+        "argument": 53,
+        "exit": 0
+      },
+      {
+        "test": "squeue_fuzz",
+        "argument": 53,
+        "exit": 0
+      },
+      {
+        "test": "squeue_stress",
+        "argument": 54,
+        "exit": 0
+      },
+      {
+        "test": "squeue_fuzz",
+        "argument": 54,
+        "exit": 0
+      },
+      {
+        "test": "squeue_stress",
+        "argument": 55,
+        "exit": 0
+      },
+      {
+        "test": "squeue_fuzz",
+        "argument": 55,
+        "exit": 0
+      },
+      {
+        "test": "squeue_stress",
+        "argument": 56,
+        "exit": 0
+      },
+      {
+        "test": "squeue_fuzz",
+        "argument": 56,
+        "exit": 0
+      },
+      {
+        "test": "squeue_stress",
+        "argument": 57,
+        "exit": 0
+      },
+      {
+        "test": "squeue_fuzz",
+        "argument": 57,
+        "exit": 0
+      },
+      {
+        "test": "squeue_stress",
+        "argument": 58,
+        "exit": 0
+      },
+      {
+        "test": "squeue_fuzz",
+        "argument": 58,
+        "exit": 0
+      },
+      {
+        "test": "squeue_stress",
+        "argument": 59,
+        "exit": 0
+      },
+      {
+        "test": "squeue_fuzz",
+        "argument": 59,
+        "exit": 0
+      },
+      {
+        "test": "squeue_stress",
+        "argument": 60,
+        "exit": 0
+      },
+      {
+        "test": "squeue_fuzz",
+        "argument": 60,
+        "exit": 0
+      },
+      {
+        "test": "squeue_stress",
+        "argument": 61,
+        "exit": 0
+      },
+      {
+        "test": "squeue_fuzz",
+        "argument": 61,
+        "exit": 0
+      },
+      {
+        "test": "squeue_stress",
+        "argument": 62,
+        "exit": 0
+      },
+      {
+        "test": "squeue_fuzz",
+        "argument": 62,
+        "exit": 0
+      },
+      {
+        "test": "squeue_stress",
+        "argument": 63,
+        "exit": 0
+      },
+      {
+        "test": "squeue_fuzz",
+        "argument": 63,
+        "exit": 0
+      },
+      {
+        "test": "squeue_stress",
+        "argument": 64,
+        "exit": 0
+      },
+      {
+        "test": "squeue_fuzz",
+        "argument": 64,
+        "exit": 0
+      },
+      {
+        "test": "squeue_stress",
+        "argument": 65,
+        "exit": 0
+      },
+      {
+        "test": "squeue_fuzz",
+        "argument": 65,
+        "exit": 0
+      },
+      {
+        "test": "squeue_stress",
+        "argument": 66,
+        "exit": 0
+      },
+      {
+        "test": "squeue_fuzz",
+        "argument": 66,
+        "exit": 0
+      },
+      {
+        "test": "squeue_stress",
+        "argument": 67,
+        "exit": 0
+      },
+      {
+        "test": "squeue_fuzz",
+        "argument": 67,
+        "exit": 0
+      },
+      {
+        "test": "squeue_stress",
+        "argument": 68,
+        "exit": 0
+      },
+      {
+        "test": "squeue_fuzz",
+        "argument": 68,
+        "exit": 0
+      },
+      {
+        "test": "squeue_stress",
+        "argument": 69,
+        "exit": 0
+      },
+      {
+        "test": "squeue_fuzz",
+        "argument": 69,
+        "exit": 0
+      },
+      {
+        "test": "squeue_stress",
+        "argument": 70,
+        "exit": 0
+      },
+      {
+        "test": "squeue_fuzz",
+        "argument": 70,
+        "exit": 0
+      },
+      {
+        "test": "squeue_stress",
+        "argument": 71,
+        "exit": 0
+      },
+      {
+        "test": "squeue_fuzz",
+        "argument": 71,
+        "exit": 0
+      },
+      {
+        "test": "squeue_stress",
+        "argument": 72,
+        "exit": 0
+      },
+      {
+        "test": "squeue_fuzz",
+        "argument": 72,
+        "exit": 0
+      },
+      {
+        "test": "squeue_stress",
+        "argument": 73,
+        "exit": 0
+      },
+      {
+        "test": "squeue_fuzz",
+        "argument": 73,
+        "exit": 0
+      },
+      {
+        "test": "squeue_stress",
+        "argument": 74,
+        "exit": 0
+      },
+      {
+        "test": "squeue_fuzz",
+        "argument": 74,
+        "exit": 0
+      },
+      {
+        "test": "squeue_stress",
+        "argument": 75,
+        "exit": 0
+      },
+      {
+        "test": "squeue_fuzz",
+        "argument": 75,
+        "exit": 0
+      },
+      {
+        "test": "squeue_stress",
+        "argument": 76,
+        "exit": 0
+      },
+      {
+        "test": "squeue_fuzz",
+        "argument": 76,
+        "exit": 0
+      },
+      {
+        "test": "squeue_stress",
+        "argument": 77,
+        "exit": 0
+      },
+      {
+        "test": "squeue_fuzz",
+        "argument": 77,
+        "exit": 0
+      },
+      {
+        "test": "squeue_stress",
+        "argument": 78,
+        "exit": 0
+      },
+      {
+        "test": "squeue_fuzz",
+        "argument": 78,
+        "exit": 0
+      },
+      {
+        "test": "squeue_stress",
+        "argument": 79,
+        "exit": 0
+      },
+      {
+        "test": "squeue_fuzz",
+        "argument": 79,
+        "exit": 0
+      },
+      {
+        "test": "squeue_stress",
+        "argument": 80,
+        "exit": 0
+      },
+      {
+        "test": "squeue_fuzz",
+        "argument": 80,
+        "exit": 0
+      },
+      {
+        "test": "squeue_stress",
+        "argument": 81,
+        "exit": 0
+      },
+      {
+        "test": "squeue_fuzz",
+        "argument": 81,
+        "exit": 0
+      },
+      {
+        "test": "squeue_stress",
+        "argument": 82,
+        "exit": 0
+      },
+      {
+        "test": "squeue_fuzz",
+        "argument": 82,
+        "exit": 0
+      },
+      {
+        "test": "squeue_stress",
+        "argument": 83,
+        "exit": 0
+      },
+      {
+        "test": "squeue_fuzz",
+        "argument": 83,
+        "exit": 0
+      },
+      {
+        "test": "squeue_stress",
+        "argument": 84,
+        "exit": 0
+      },
+      {
+        "test": "squeue_fuzz",
+        "argument": 84,
+        "exit": 0
+      },
+      {
+        "test": "squeue_stress",
+        "argument": 85,
+        "exit": 0
+      },
+      {
+        "test": "squeue_fuzz",
+        "argument": 85,
+        "exit": 0
+      },
+      {
+        "test": "squeue_stress",
+        "argument": 86,
+        "exit": 0
+      },
+      {
+        "test": "squeue_fuzz",
+        "argument": 86,
+        "exit": 0
+      },
+      {
+        "test": "squeue_stress",
+        "argument": 87,
+        "exit": 0
+      },
+      {
+        "test": "squeue_fuzz",
+        "argument": 87,
+        "exit": 0
+      },
+      {
+        "test": "squeue_stress",
+        "argument": 88,
+        "exit": 0
+      },
+      {
+        "test": "squeue_fuzz",
+        "argument": 88,
+        "exit": 0
+      },
+      {
+        "test": "squeue_stress",
+        "argument": 89,
+        "exit": 0
+      },
+      {
+        "test": "squeue_fuzz",
+        "argument": 89,
+        "exit": 0
+      },
+      {
+        "test": "squeue_stress",
+        "argument": 90,
+        "exit": 0
+      },
+      {
+        "test": "squeue_fuzz",
+        "argument": 90,
+        "exit": 0
+      },
+      {
+        "test": "squeue_stress",
+        "argument": 91,
+        "exit": 0
+      },
+      {
+        "test": "squeue_fuzz",
+        "argument": 91,
+        "exit": 0
+      },
+      {
+        "test": "squeue_stress",
+        "argument": 92,
+        "exit": 0
+      },
+      {
+        "test": "squeue_fuzz",
+        "argument": 92,
+        "exit": 0
+      },
+      {
+        "test": "squeue_stress",
+        "argument": 93,
+        "exit": 0
+      },
+      {
+        "test": "squeue_fuzz",
+        "argument": 93,
+        "exit": 0
+      },
+      {
+        "test": "squeue_stress",
+        "argument": 94,
+        "exit": 0
+      },
+      {
+        "test": "squeue_fuzz",
+        "argument": 94,
+        "exit": 0
+      },
+      {
+        "test": "squeue_stress",
+        "argument": 95,
+        "exit": 0
+      },
+      {
+        "test": "squeue_fuzz",
+        "argument": 95,
+        "exit": 0
+      },
+      {
+        "test": "squeue_stress",
+        "argument": 96,
+        "exit": 0
+      },
+      {
+        "test": "squeue_fuzz",
+        "argument": 96,
+        "exit": 0
+      },
+      {
+        "test": "squeue_stress",
+        "argument": 97,
+        "exit": 0
+      },
+      {
+        "test": "squeue_fuzz",
+        "argument": 97,
+        "exit": 0
+      },
+      {
+        "test": "squeue_stress",
+        "argument": 98,
+        "exit": 0
+      },
+      {
+        "test": "squeue_fuzz",
+        "argument": 98,
+        "exit": 0
+      },
+      {
+        "test": "squeue_stress",
+        "argument": 99,
+        "exit": 0
+      },
+      {
+        "test": "squeue_fuzz",
+        "argument": 99,
+        "exit": 0
+      },
+      {
+        "test": "squeue_stress",
+        "argument": 100,
+        "exit": 0
+      },
+      {
+        "test": "squeue_fuzz",
+        "argument": 100,
+        "exit": 0
+      },
+      {
+        "test": "squeue_soak",
+        "argument": 40000,
+        "exit": 124
+      }
+    ],
+    "complete": true,
+    "pressure_bytes": 536870912,
+    "pressure_alive_at_end": true,
+    "counters": {
+      "live_requests": 0,
+      "registered_files": 0,
+      "issuer_refs": 0,
+      "issuer_tokens": 0,
+      "wired_pages": 0
+    },
+    "short_soak_4000_passed": true,
+    "extended_soak_timeout_seconds": 300
+  },
+  "hardware": {
+    "kernel": {
+      "system": "FreeBSD",
+      "node": "VBSD-MINIPC",
+      "release": "16.0-CURRENT",
+      "version": "5BSD 16.0-CURRENT #2 n287186-d456e37690c0-dirty: Thu Sep 24 19:39:03 CDT 2026     koryheard@VBSD-MINIPC:/usr/obj/tmp/5bsd-upgrade.K4ViW6/src/amd64.amd64/sys/GENERIC",
+      "machine": "amd64",
+      "processor": "amd64"
+    },
+    "machine": {
+      "exit": 0,
+      "output": "hw.model: 12th Gen Intel(R) Core(TM) i7-12700H\nhw.ncpu: 20\nhw.physmem: 34054381568\ndebug.witness.watch: 1"
+    },
+    "load": {
+      "exit": 0,
+      "output": "11:41AM  up 1 day, 15:57, 4 users, load averages: 4.89, 6.68, 8.22"
+    },
+    "filesystem": {
+      "exit": 0,
+      "output": "Filesystem  Type 1K-blocks      Used     Avail Capacity  Mounted on\nzroot/tmp   zfs  298092552 177806808 120285744    60%    /tmp"
+    },
+    "memlock_limit_bytes": [
+      65536,
+      65536
+    ],
+    "all_16_runs_passed": true,
+    "median_of_three_runs": {
+      "psync-q1": {
+        "iops": 58815.061646,
+        "read_p99_us": 13.504,
+        "write_p99_us": 44.288,
+        "usr_cpu": 7.4,
+        "sys_cpu": 90.533333,
+        "submission_delta": 0
+      },
+      "io_uring-q1": {
+        "iops": 53876.082611000005,
+        "read_p99_us": 19.072,
+        "write_p99_us": 53.504,
+        "usr_cpu": 6.966667,
+        "sys_cpu": 93.0,
+        "submission_delta": 218819
+      },
+      "io_uring-q8": {
+        "iops": 66695.434855,
+        "read_p99_us": 292.864,
+        "write_p99_us": 309.248,
+        "usr_cpu": 7.333333,
+        "sys_cpu": 91.866667,
+        "submission_delta": 249913
+      },
+      "io_uring-q32": {
+        "iops": 50534.821726,
+        "read_p99_us": 1417.216,
+        "write_p99_us": 1466.368,
+        "usr_cpu": 9.133333,
+        "sys_cpu": 87.4,
+        "submission_delta": 227196
+      },
+      "io_uring-q32-sqpoll": {
+        "iops": 161308.563812,
+        "read_p99_us": 428.032,
+        "write_p99_us": 460.8,
+        "usr_cpu": 99.5,
+        "sys_cpu": 0.0,
+        "submission_delta": 652434
+      }
+    },
+    "resources_after": {
+      "exit": 0,
+      "output": "kern.squeue.live_requests: 0\nkern.squeue.registered_files: 0\nkern.squeue.issuer_refs: 0\nkern.squeue.issuer_tokens: 0\nkern.squeue.wired_pages: 0"
+    },
+    "limits": [
+      "Installed older kernel, not candidate",
+      "WITNESS enabled",
+      "Shared host with concurrent VM/build activity",
+      "64 MiB regular file; short warm-cache runs",
+      "No native Linux hardware baseline",
+      "No raw-device durability or throughput claim"
+    ]
+  },
+  "build_reproduced": true,
+  "evidence": {
+    "candidate-panic.log": {
+      "path": "evidence-20260926/candidate-panic.log.gz",
+      "uncompressed_sha256": "2da60bfd35ddde041781b00cdb7f2a7821f3ce4aeff368807c3d9ec25ee19b61"
+    },
+    "candidate.log": {
+      "path": "evidence-20260926/candidate.log.gz",
+      "uncompressed_sha256": "9aa45df2fb65ad81dd22295546cf48b8a17aee3f46a587b44cc854a0ae652e02"
+    },
+    "linux.log": {
+      "path": "evidence-20260926/linux.log.gz",
+      "uncompressed_sha256": "59da5ad3dfe71c9d17f8c0da56966f21ff9fa91bc295faf095f078d3cae3f849"
+    },
+    "fio-candidate.log": {
+      "path": "evidence-20260926/fio-candidate.log.gz",
+      "uncompressed_sha256": "e32ff4eb8d1bcf2e028a07dd9e4f38b6e431cc183396b9b0a5fbdf7fc2d45bc2"
+    },
+    "stress-short.log": {
+      "path": "evidence-20260926/stress-short.log.gz",
+      "uncompressed_sha256": "b975b6f9935e5fab581566dfe37e9583b9276b36362bc72262b6d311e815184d"
+    },
+    "stress-extended.log": {
+      "path": "evidence-20260926/stress-extended.log.gz",
+      "uncompressed_sha256": "d59e623a3f3df3af0c9069da286c4b304e076948837dcf8de2a0ea70082df2ff"
+    },
+    "retries.log": {
+      "path": "evidence-20260926/retries.log.gz",
+      "uncompressed_sha256": "050463d3c309d6e8e160da724b325d89bf0c6af669016200d252e125a97a9239"
+    },
+    "build.log": {
+      "path": "evidence-20260926/build.log.gz",
+      "uncompressed_sha256": "c25c4b7c218c23c1c6ad9fd0585fe0f3513a4183b3989e708be74f12b667588a"
+    }
+  },
+  "native_sources": {
+    "squeue_stress": "299f93e5b80c440a5b8ac1f8904630240556a0cc464b06291e6802aa7331e3b0",
+    "squeue_fuzz": "6f6412a2f6bee1e33d4c1fd63a0c3d9d6eabcf33f764759fc58405361f73095b",
+    "squeue_soak": "834b46bdc2ba1f4fb3cbd3f68c7ee865b47dd5e9f47cbdc2bd624eda22fc688a"
+  },
+  "native_binaries": {
+    "squeue_stress": "475add32b08b3c9ab9910aa6e137a30106cb9d9d0832e3fdc0707b5479adc62e",
+    "squeue_fuzz": "94ea42aa033ebb3c6c923457a6aa60ab99c7578abcaa4aa67ff39c2ae7213471",
+    "squeue_soak": "4cea28344b2ba983eb62d3763aa29ca5f0189f4c94bc9823e3d675e98cfee711"
+  }
+}

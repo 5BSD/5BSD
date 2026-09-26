@@ -2,6 +2,23 @@
 
 squeue ("shared queue") is 5BSD's native completion-ring interface: an application submits I/O through a submission ring and reaps results from a completion ring, both shared with the kernel, so many operations cost one system call and completions cost none. It adopts the Linux io_uring wire format verbatim, and the Linux `io_uring_*` syscalls are a thin front end over the same engine, in the same relationship that kqueue(2) bears to Linux epoll. 5BSD built it because the runtimes that matter (Bun, Node and libuv, databases) probe for io_uring and either use it or fall back silently, and a fallback is not compatibility. The design is in `docs/linuxulator-io_uring-design.md`; every qualified contract is in `docs/book/src/compat/linux/overview.md`.
 
+## Upstream qualification warning (September 26, 2026)
+
+The in-tree gates below establish the named contracts, not general liburing
+compatibility. A new 70-case liburing 2.12 comparison found 35 candidate passes,
+26 failures, six timeouts, two skips, and a hard-link kernel assertion captured
+in a separate run. Linux passed 68 cases and skipped two. Several failures
+involve ordinary cancellation, linked requests, and pipe/eventfd operations;
+the missing advanced backends are not the only remaining work. The continuation
+run also ended with four registered files and two wired pages still accounted
+for, whose ownership needs investigation.
+
+Fio 3.41 passed checksum verification in buffered, direct, registered-buffer/file,
+and SQPOLL modes on the candidate. That success does not supersede the upstream
+failures. See the [upstream qualification results](../../../../../tools/test/linuxulator/iouring-upstream/results-20260926.md)
+for the exact payload, stress results, hardware-baseline limits, and follow-up
+priorities. No kernel fix is claimed by this qualification run.
+
 ## The native engine
 
 The engine lives in `sys/kern/sys_squeue.c` with its KPI in `sys/sys/squeue.h` and the wire structures in `sys/sys/io_uring.h`, installed as `<sys/io_uring.h>`. Nothing in the engine is Linux-specific: it dispatches onto the same `kern_*` primitives the rest of the kernel uses (`kern_readv`, `kern_fsync`, `kern_accept4`, `kern_kevent`, the umtx futex code, and so on), and each front end supplies a `struct sq_frontend` carrying its errno translator and opcode extensions.
@@ -40,7 +57,7 @@ Capsicum applies to native rings with one extra rule. The three syscalls are `CA
 
 ## What is rejected or negotiated, and why
 
-The compatibility guarantee is that every unsupported item is reported through the same channel Linux uses for its own build-time feature gating, and never returns a wrong result. `REGISTER_PROBE` is built from the support matrix by the same loop Linux uses, so liburing's `io_uring_opcode_supported` and `io_uring_queue_init_params` see an older-kernel-shaped truth and degrade as they already do across Linux versions.
+The intended compatibility contract is that unsupported items use Linux-compatible feature negotiation. The upstream failures above show that this contract is not yet established for all combinations. `REGISTER_PROBE` is built from the support matrix by the same loop Linux uses, so liburing's `io_uring_opcode_supported` and `io_uring_queue_init_params` see an older-kernel-shaped truth and degrade as they already do across Linux versions.
 
 | Item | Behaviour | Signal to the application |
 |---|---|---|
@@ -113,4 +130,72 @@ fstat -p $(pgrep sqread)          # shows the ring as [squeue]
 
 ## Tests and evidence
 
-Native: `squeue_native`, `squeue_options` (191 option groups, run through both front ends), `squeue_stress`, `squeue_soak`, `squeue_fuzz`, `squeue_jail`, `squeue_copy`, `squeue_hold`, `squeue_dtrace`, `squeue_fstat` and `squeue_lib`, all under `tests/sys/kern/`. Linux: `linux_iouring` with the 477-case inventory in `tools/test/linuxulator/iouring-cases.json` (the JSON is authoritative; changing the binary's list requires reconciling it), plus `linux_iouring_sqpoll`, `_nommap`, `_query`, `_resize` and `_mem_region`. The gate runs every option group three times on ZFS and tmpfs through both APIs, requires the resource counters to return to zero, and runs the portable groups on the Linux reference guest. Historical design matrices in the design document are targets, not certification; the implementation-gate batches are the record.
+Native: `squeue_native`, `squeue_options` (194 option groups, run through both front ends), `squeue_stress`, `squeue_soak`, `squeue_fuzz`, `squeue_jail`, `squeue_copy`, `squeue_hold`, `squeue_dtrace`, `squeue_fstat` and `squeue_lib`, all under `tests/sys/kern/`. Linux: `linux_iouring` with the 477-case inventory in `tools/test/linuxulator/iouring-cases.json` (the JSON is authoritative; changing the binary's list requires reconciling it), plus `linux_iouring_sqpoll`, `_nommap`, `_query`, `_resize` and `_mem_region`. The gate runs every option group three times on ZFS through both APIs, repeats selected contracts on tmpfs, requires the resource counters to return to zero, and runs portable groups on the Linux reference guest. Historical design matrices in the design document are targets, not certification; the implementation-gate batches are the record.
+
+### September 26 restart checkpoint
+
+The latest io_uring implementation commit is `672ddb5c9e86` (September 24),
+which added NAPI registration state after worker-ownership and BPF-filter work.
+All 38 locally declared ordinary register commands now dispatch. NAPI remains
+an advisory setting without a driver busy-poll backend.
+
+The retained September 24 amd64 ZFS-root shared-suite log,
+`/tmp/iouring-napi-20260924/full.console.log`, contains 193 cases in each of
+three rounds through each frontend: 1,158 successful executions. Its six
+resource reports each contain ten zero values, and it records healthy ZFS,
+gate exit zero and synchronized shutdown. On September 26 the case names and
+multiplicities were checked against the then-current source inventory; no recognized
+panic, debugger-entry, lock-order, non-sleepable-lock or fatal-trap diagnostics
+were found. The log's SHA256 is
+`311a27c5f3c014075b093d307f677cf7c55214bc81b0670aadda04bf851228b3`.
+This is recovered evidence for those guest artifacts, not a new runtime
+qualification of the current working tree or a run of the separate 477-case
+Linux suite. The log includes the guest kernel, module and test binary hashes.
+
+The resumed audit targets CPU-affinity behavior when a process's cpuset changes
+after setup. The detailed historical matrix is recoverable from
+`44cce4c970c1^:docs/linuxulator-sqpoll.md` and the option backlog from
+`44cce4c970c1^:docs/linuxulator-next-phase-options.md`.
+
+### SQPOLL cpuset inheritance
+
+The audit found that `kthread_add()` placed the poller in the kernel cpuset.
+Checking the requested CPU at setup did not make that thread a member of the
+creator's named cpuset, so later changes to the creator's set did not constrain
+the poller. Startup now creates the thread stopped, inherits the creator's named
+set under the process and thread locks, then starts it. `SQ_AFF` applies its
+pin within that hierarchy. Per-thread caller affinity remains independent,
+matching the separate setup contract in
+[Linux v6.18 sqpoll.c](https://github.com/torvalds/linux/blob/v6.18/io_uring/sqpoll.c).
+
+The permanent `sqpoll_affinity_transitions_shared` case changes the caller's
+thread mask after setup and requires continued completions through both APIs.
+Its native half creates private cpusets and checks actual poller membership and
+masks, narrowing and widening, attached-ring progress after source close, and
+final pin release. FreeBSD rejects an empty cpuset, or a parent change that
+would empty a pinned child, with `EDEADLK`; the rejected change must preserve
+the original set. A poller without `SQ_AFF` follows valid parent-set changes.
+
+The September 26 amd64 WITNESS/INVARIANTS qualification passed 36 focused
+ZFS/tmpfs executions, all 194 shared cases in three rounds through both APIs
+(1,164 executions), the 477-case Linux suite, 117 dedicated SQPOLL/NO_MMAP/
+memory-region/query executions, and three native smoke runs. Linux 6.18.35
+passed six caller-affinity oracle executions. Final request, registered-file,
+issuer-reference, issuer-token and wired-page counters were zero; completed
+guests reported healthy ZFS and synchronized shutdown with no recognized
+kernel diagnostics. Arm64 Linux test compilation passed with warnings treated
+as errors; runtime qualification is amd64 only.
+
+The [qualification record](../../../../../tools/test/linuxulator/sqpoll-affinity-qualification-20260926.json)
+pins source, guest artifacts and logs, including the baseline membership
+failure, an intermediate scheduler-unlock panic, and fixture corrections.
+The first main-suite attempt omitted loopback setup; its shared phase passed,
+and the separate main/dedicated phase passed after correcting that fixture.
+The gate inventories now include BPF and NAPI registration as well as the new
+affinity case. This qualification covers io_uring/squeue, not the entire
+Linuxulator syscall/filesystem matrix. No candidate kernel was installed on
+the host.
+
+Linux cgroup-controller transitions and CPU hotplug remain unqualified.
+Other open backend boundaries are polled block I/O, hardware/import/export
+ZCRX, device-specific URING_CMD and actual network busy polling.
