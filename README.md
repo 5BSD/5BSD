@@ -14,12 +14,17 @@ services, and sixteen system capabilities that hand out storage, logs,
 sockets, devices, keys, time and traces to programs that start sandboxed
 and hold only what they were given.
 
-This is early work. The plane is real, boots, and is tested, but today
-it runs beside a UNIX system that still has root, still has mode bits,
-and still answers many questions by uid. The direction is fixed: over
-time more interfaces become capabilities, root is removed, and 5BSD moves
-further from the BSDs it forked from. The [Where this is going](#where-this-is-going)
-section says what that means.
+The capability side is protected today. mac_capability, compiled into
+the kernel, keeps the secure realm out of UNIX's reach: root cannot open
+the plane's device, forge a process's identity, read a channel it was
+not handed, or strip the shield from a protected process. What is early
+is how much of the system has moved into that realm. Root, mode bits and
+uid checks still govern the UNIX side, and some privileged operations
+the plane needs are still done for it through gates rather than held
+outright. The direction is fixed: more interfaces become capabilities,
+root loses what it can still do, and 5BSD moves further from the BSDs it
+forked from. The [Where this is going](#where-this-is-going) section
+says what that means.
 
 This file is the map. The book, **The 5BSD Epic** under
 [`docs/book/`](docs/book/), is the territory: seventy-two chapters written
@@ -215,13 +220,13 @@ a book chapter describes designed or partially delivered work it says so
 in a Status paragraph. Verified execution is present but not yet
 enforcing. Linux seccomp and Landlock are in progress.
 
-What is still UNIX today, stated plainly: root exists and can do most of
-what root does elsewhere; file access outside the plane is mode bits and
-ACLs; a number of kernel checks are still uid checks with a capability
-path beside them; six of the sixteen providers run as root because the
-operation they broker has no gate yet; and the manifest still carries a
-system-gate declaration that will one day be a held capability like
-everything else.
+What is still UNIX today, stated plainly: on the UNIX side root exists
+and can do what root does elsewhere, though not inside the plane; file
+access outside the plane is mode bits and ACLs; a number of kernel checks
+are still uid checks with a capability path beside them; six of the
+sixteen providers run as root because the operation they broker has no
+gate yet; and the manifest still carries a system-gate declaration that
+will one day be a held capability like everything else.
 
 ## Where this is going
 
