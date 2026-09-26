@@ -1,30 +1,42 @@
 # 5BSD
 
-5BSD is a hybrid. It is a capability operating system and a UNIX system
-sharing one kernel. The UNIX side is BSD, kept whole, and it runs Linux
-binaries too. The capability side has no root. Authority lives in
-processes, as capabilities the kernel makes unforgeable, and the
-capability system protects itself from root instead of trusting it.
+5BSD is a hybrid: a capability operating system and a UNIX system on one
+kernel. The UNIX side is BSD, kept whole, and it runs Linux binaries. The
+capability side has no root. Authority lives in processes, as
+capabilities the kernel makes unforgeable, and the secure realm keeps
+root out.
 
-The rule is simple. A program may do what it holds a capability for, and
-nothing else. Being root, owning a file, knowing a path, or being on the
-other end of a socket does not count. Beside the familiar system runs a
-capability plane: capsule as PID 1, switchboard to launch and connect
-services, and sixteen system capabilities that hand out storage, logs,
-sockets, devices, keys, time and traces to programs that start sandboxed
-and hold only what they were given.
+Here is what that lets you do. Run Linux containers under podman on the
+UNIX side, and right next to them run payment processing in the secure
+realm, where the process starts sandboxed, holds exactly the sockets,
+keys and storage it was handed, and leaves an audit record with its
+identity on every action. Give a program authority root does not have,
+and take authority away from root: a shielded process cannot be traced
+by root, a core service refuses root's stop, and nobody becomes root to
+run the machine, they hold an anointment for the one thing they need.
+Remove an application and everything it owned, storage, logs, keys,
+jails, goes with it in one revoke. Trace any of it with DTrace without
+being root.
 
-The capability side is protected today. mac_capability, compiled into
-the kernel, keeps the secure realm out of UNIX's reach: root cannot open
-the plane's device, forge a process's identity, read a channel it was
-not handed, or strip the shield from a protected process. What is early
-is how much of the system has moved into that realm. Root, mode bits and
-uid checks still govern the UNIX side, and some privileged operations
-the plane needs are still done for it through gates rather than held
-outright. The direction is fixed: more interfaces become capabilities,
-root loses what it can still do, and 5BSD moves further from the BSDs it
-forked from. The [Where this is going](#where-this-is-going) section
-says what that means.
+The rule underneath is simple. A program may do what it holds a
+capability for, and nothing else. Being root, owning a file, knowing a
+path, or being on the other end of a socket does not count. Beside the
+familiar system runs the capability plane: capsule as PID 1, switchboard
+to launch and connect services, and sixteen system capabilities that
+hand out storage, logs, sockets, devices, keys, time and traces to
+programs that start sandboxed and hold only what they were given.
+
+The secure realm is protected today. mac_capability, compiled into the
+kernel, keeps it out of UNIX's reach: root cannot open the plane's
+device, forge a process's identity, read a channel it was not handed, or
+strip the shield from a protected process. What is early is how much of
+the system has moved into that realm. Root, mode bits and uid checks
+still govern the UNIX side, and some privileged operations the plane
+needs are done for it through gates rather than held outright. The
+direction is fixed: more interfaces become capabilities, root loses what
+it can still do, and 5BSD moves further from the BSDs it forked from.
+The [Where this is going](#where-this-is-going) section says what that
+means.
 
 This file is the map. The book, **The 5BSD Epic** under
 [`docs/book/`](docs/book/), is the territory: seventy-two chapters written
