@@ -35,6 +35,8 @@
 #include <time.h>
 #include <unistd.h>
 
+#include <dev/mac_capability/mac_capability_coalition_proto.h>
+
 #include "switchboard.h"
 #include "switchboard_audit.h"
 #include "switchboard_ctl.h"
@@ -89,6 +91,24 @@ static unsigned nconns;
 /*
  * Format status summary.
  */
+/*
+ * BUF_APPEND clamps at the end of the buffer and then stops silently, so a
+ * listing that outgrows the reply would simply end mid-line with no sign
+ * that anything is missing.  Say so instead: an operator knows to look
+ * another way, and a script can detect it.  Costs nothing when the output
+ * fits, which is the normal case.
+ */
+static void
+sctl_mark_truncated(char *summary, size_t sumlen, size_t *off)
+{
+	static const char marker[] = "... output truncated\n";
+
+	if (*off < sumlen - 1 || sumlen < sizeof(marker))
+		return;
+	memcpy(summary + sumlen - sizeof(marker), marker, sizeof(marker));
+	*off = sumlen - 1;
+}
+
 static void
 sctl_cmd_status(struct sctl_reply *reply, char *summary, size_t sumlen)
 {
@@ -168,6 +188,7 @@ sctl_cmd_status(struct sctl_reply *reply, char *summary, size_t sumlen)
 				    " by=%s", svc->launched_by);
 
 			if (svc->coalition_id != 0) {
+				struct coalition_band_reply br;
 				char rbuf[64];
 
 				BUF_APPEND(summary, sumlen, &off,
@@ -176,6 +197,27 @@ sctl_cmd_status(struct sctl_reply *reply, char *summary, size_t sumlen)
 				    svc_responsibility_name(&svc->responsible,
 				    rbuf, sizeof(rbuf)),
 				    (uintmax_t)svc->responsible.parent_id);
+
+				/*
+				 * The band as the kernel has it now, not as we
+				 * set it: an assertion someone is holding shows
+				 * up here as an effective band above the floor,
+				 * which is the thing an operator needs to see
+				 * when a unit will not be given up under
+				 * pressure.
+				 */
+				if (svc->coalition_fd >= 0 &&
+				    mac_cap_coalition_get_band(
+				    svc->coalition_fd, &br) == 0) {
+					BUF_APPEND(summary, sumlen, &off,
+					    " band=%s",
+					    svc_band_name(br.effective));
+					if (br.effective != br.floor)
+						BUF_APPEND(summary, sumlen,
+						    &off, "(floor=%s,held=%u)",
+						    svc_band_name(br.floor),
+						    br.nassert[br.effective]);
+				}
 			}
 
 			if (svc->connection_count > 0)
@@ -186,6 +228,7 @@ sctl_cmd_status(struct sctl_reply *reply, char *summary, size_t sumlen)
 		}
 	}
 
+	sctl_mark_truncated(summary, sumlen, &off);
 	reply->status = 0;
 	reply->flags = (uint32_t)off;
 }
@@ -310,6 +353,7 @@ sctl_cmd_tree(struct sctl_reply *reply, char *summary, size_t sumlen)
 		BUF_APPEND(summary, sumlen, &off, "\n");
 		sctl_tree_children(summary, sumlen, &off, svc->coalition_id, 2);
 	}
+	sctl_mark_truncated(summary, sumlen, &off);
 	reply->status = 0;
 	reply->flags = (uint32_t)off;
 }

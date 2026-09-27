@@ -297,7 +297,80 @@ struct coalition_rusage_reply {
 	uint64_t	minflt;
 };
 .Ed
+.It Dv COALITION_OP_LEDGER
+Return the cached resource sample: the footprint of the coalition's process
+members as of the last time it was taken, with
+.Va age_ms
+saying how stale that is
+.Pq Dv UINT64_MAX if it has never been sampled .
+Unlike
+.Dv COALITION_OP_RUSAGE
+this never walks the member list, so it is safe to call often and from a
+policy that must not block.
+The sample is refreshed automatically under memory pressure, which is when a
+ranking matters, and on request with
+.Dv COALITION_LEDGER_REFRESH .
+Returns
+.Vt struct coalition_ledger_reply .
+.It Dv COALITION_OP_BAND
+Read the coalition's bands, and with
+.Dv COALITION_BAND_SET_FLOOR
+set the floor first.
+Returns
+.Vt struct coalition_band_reply ,
+describing the state after any change.
+.It Dv COALITION_OP_ASSERT
+Return a new descriptor that asserts a band.
+Returns
+.Vt struct coalition_band_reply
+and one file descriptor.
+See
+.Sx Bands And Assertions .
 .El
+.Ss Bands And Assertions
+A coalition has a band: how hard the system should try to keep it running when
+memory runs short.
+Bands are ordered, from
+.Dv COALITION_BAND_IDLE
+through
+.Dv COALITION_BAND_BACKGROUND ,
+.Dv COALITION_BAND_STANDARD ,
+.Dv COALITION_BAND_INTERACTIVE ,
+to
+.Dv COALITION_BAND_CRITICAL .
+.Pp
+The band is not a single value somebody sets and must then remember to take
+back.
+It has two parts.
+The
+.Em floor
+is the band the coalition always has, set by its launcher from the bundle
+manifest.
+An
+.Em assertion
+is a descriptor:
+.Dv COALITION_OP_ASSERT
+returns a new descriptor, and while that descriptor is open the coalition's
+band is at least the asserted one.
+When it is closed, deliberately or because the process holding it exited or
+crashed, the assertion goes away with it.
+.Pp
+The effective band is the highest asserted band, or the floor if nothing is
+asserted.
+Because an assertion is an ordinary capability it can be transferred, so a
+client may hand a provider the right to keep the client's own work alive while
+a request is in flight, and it can be revoked like anything else.
+Nothing has to reconcile a table of who asked for what, and no crash can leave
+a coalition pinned at a high band.
+.Pp
+An assertion descriptor accepts only
+.Dv COALITION_OP_BAND ,
+which reports the band it asserts and the coalition's effective band.
+It carries no other authority: it cannot enlist, signal, or read the membership
+of the coalition it holds up, and the assertion service cannot be connected to
+directly.
+Computing the effective band takes no lock, so a memory policy can rank every
+coalition from a context in which it can wait for nothing.
 .Ss Member Types
 The following descriptor types are accepted by
 .Dv COALITION_OP_ENLIST :
@@ -467,6 +540,22 @@ Fired when the coalition handle is closed.
 Fired when a member process exits.
 .It Fn leader-exit pid
 Fired when the designated leader process exits.
+.It Fn band-floor coalition_id band effective
+Fired when a launcher sets a coalition's band floor.
+.It Fn band-assert coalition_id band effective pid
+Fired when an assertion descriptor is minted.
+.Ar pid
+is the process that asked for it, which is the answer to
+.Dq who is holding this coalition up .
+.It Fn band-release coalition_id band effective pid
+Fired when an assertion goes away, whether it was closed, revoked, or died
+with its holder.
+An assertion count that only rises is a leak; the
+.Pa /usr/share/dtrace/mac_capability-bands
+script names the holder.
+.It Fn ledger-sample coalition_id rss_bytes nprocs
+Fired when a coalition's resource sample is refreshed.
+This is the input a pressure policy ranks on.
 .It Fn member-kill coalition_id responsible_id pid signal
 Fired for each process member as a coalition tears down, before the signal
 is sent.

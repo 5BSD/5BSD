@@ -33,12 +33,26 @@ login session's coalition (by design, EBUSY on join).
 2. **Sealed launch record over envfd** (Plan 9 `/env` lineage; Darwin audit
    token) — **next**. See "envfd" below. Gives every unit an attested
    self-description, and retires the environment strings.
-3. **Coalition ledgers and pressure bands** (XNU coalitions) — **later**,
-   after the two above. A CPU budget and period plus a memory band on the
-   coalition, kernel accounting into it, work done by a provider on a client's
-   behalf charged to the client (donation across channel calls), exhaustion as
-   a coalition notification, and memory-pressure kill ordering by band. This
-   is the substrate a coalition-aware scheduler policy would consume; the
+3. **Coalition ledgers and pressure bands** (XNU coalitions) — **partly
+   done**. Done: a cached footprint sample per coalition
+   (`COALITION_OP_LEDGER`, refreshed under pressure and on request, read with
+   atomics so a policy needs no lock), and bands with assertion descriptors
+   (`COALITION_OP_BAND`, `COALITION_OP_ASSERT`). A band has a floor the
+   launcher derives from the management class — CORE is critical, everything
+   else maps its declared scheduling band — and assertions raise it: an
+   assertion is a descriptor, so it is transferable, revocable, and released
+   by the kernel when its holder dies, which is the RunningBoard model
+   (item I2) without a daemon reconciling a table. Computing the effective
+   band takes no lock, so the kill walk can run where it cannot wait.
+   The pass runs on its own taskqueue thread: it walks every coalition, and
+   sharing a thread with the per-coalition lifecycle tasks let a walk stall an
+   unrelated coalition's teardown, since every close drains those tasks.
+   Remaining: a CPU budget and period, racct accounting into a coalition
+   subject, work a provider does on a client's behalf charged to the client
+   (donation across channel calls, item C2), exhaustion as a coalition
+   notification, and the kill walk itself, ordering by band and footprint at
+   the top of `vm_pageout_oom()` with the stock path as the fallback. This is
+   the substrate a coalition-aware scheduler policy would consume; the
    scheduler itself stays on hold.
 4. **Factotum-style key custody** (Plan 9) — **later**. BSDCrypto or BSDAuth
    holds ssh and TLS private keys and runs the handshake on the client's
@@ -218,7 +232,7 @@ QNX 7.1/8.0 references and the XNU sources; only items absent above.
 | # | From | Feature | Buys 5BSD | Status |
 |---|---|---|---|---|
 | I1 | QNX unblock protocol, seL4 MCS timeout faults | CALL lifecycle: a deadline on a call, a cancel notice with the call id delivered to the provider when the caller dies or times out (provider finishes or rolls back, then replies), and a fault raised on the callee's responsible parent when it exceeds its budget serving someone | closes the half-done-transaction hole (tzfsd commit, warden destroy) when a caller is killed; per-request liveness beside the per-unit watchdog | next, M |
-| I2 | Darwin RunningBoard | assertion-derived coalition state: the responsible parent holds assertion capabilities on the coalition descriptor; state (active, background, idle, frozen) and band follow from what is held, and dropping them demotes automatically | one rule instead of separate band, idle-exit and freezer knobs; `procstat` shows *why* a unit is alive; decide before building A4 and the ledgers | next (design), L |
+| I2 | Darwin RunningBoard | assertion-derived coalition state: the responsible parent holds assertion capabilities on the coalition descriptor; state (active, background, idle, frozen) and band follow from what is held, and dropping them demotes automatically | one rule instead of separate band, idle-exit and freezer knobs; `procstat` shows *why* a unit is alive; decide before building A4 and the ledgers | **band half done** (2026-09-27): `COALITION_OP_ASSERT` mints an assertion descriptor, the effective band is the highest asserted band over the manifest-derived floor, and the kernel releases an assertion when its holder dies. Remaining: idle and frozen as asserted states rather than separate knobs, and a switchboard op so a unit can be handed an assertion on its own coalition without being handed the coalition | S |
 | I3 | Inferno `/prog` fd and ns files, QNX `DCMD_PROC_*`, Darwin task-port flavors | inspection on a held procdesc or coalition: the fd table with rights and delivery origin, a replayable namespace, held channels, STOP/RUN/WAITSTOP, an exclusive debugger right, and canonical CONTROL/READ/INSPECT/NAME rights profiles | the live twin of the capability dump; debugging and triage without pid or path | next, M |
 | I4 | seL4 Acacia/sdfgen, QNX secpolgenerate | the system bundle as a generator: one program emits unit manifests, policy files, the reachability graph and VM fixtures; learn mode traces a run and reports unused capabilities | hand-edited manifests become lint-checked exceptions; manifests shrink to what is used | next, M (tooling) |
 | I5 | Darwin os_activity | a 64-bit activity id on every CALL, inherited by child calls, stamped by BSDLog and BSDAudit | one request (login, auth agent, tzfsd, logd) greppable end to end; correlation, distinct from cost attribution (C2) | next, S-M |

@@ -265,6 +265,51 @@ mac_cap_coalition_set_signal(int coalition_fd, int sig)
 	return (reply.status);
 }
 
+/*
+ * Set the coalition's band floor: the band it always has, regardless of what
+ * anyone asserts on top.  Assertions can only raise it.
+ */
+int
+mac_cap_coalition_set_band_floor(int coalition_fd, uint32_t floor)
+{
+	struct coalition_band_req req;
+	struct coalition_band_reply reply;
+
+	memset(&req, 0, sizeof(req));
+	req.op = COALITION_OP_BAND;
+	req.flags = COALITION_BAND_SET_FLOOR;
+	req.floor = floor;
+
+	if (kernel_call(coalition_fd, &req, sizeof(req), NULL, 0,
+	    &reply, sizeof(reply)) == -1)
+		return (-1);
+	if (reply.status != 0)
+		errno = reply.status;
+	return (reply.status);
+}
+
+/*
+ * Read the bands without changing anything: the floor, the effective band
+ * after assertions, and how many assertions are live at each band.
+ */
+int
+mac_cap_coalition_get_band(int coalition_fd, struct coalition_band_reply *br)
+{
+	struct coalition_band_req req;
+
+	memset(&req, 0, sizeof(req));
+	req.op = COALITION_OP_BAND;
+
+	if (kernel_call(coalition_fd, &req, sizeof(req), NULL, 0,
+	    br, sizeof(*br)) == -1)
+		return (-1);
+	if (br->status != 0) {
+		errno = br->status;
+		return (-1);
+	}
+	return (0);
+}
+
 int
 mac_cap_coalition_stat(int coalition_fd, struct coalition_stat_reply *sr)
 {

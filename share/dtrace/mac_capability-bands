@@ -1,0 +1,132 @@
+#!/usr/sbin/dtrace -s
+/*
+ * Copyright (c) 2026 Kory Heard
+ *
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * mac_capability-bands -- what the system is being asked to keep alive, and
+ * who is asking.
+ *
+ * A coalition's band says how hard the system should try to keep it running
+ * when memory runs short.  It has two parts: a floor its launcher sets from
+ * the bundle manifest, and assertions.  An assertion is a descriptor: while
+ * someone holds it open, the coalition's band is at least the asserted one,
+ * and when the descriptor is closed -- deliberately, or because its holder
+ * exited or crashed -- the assertion goes away with it.
+ *
+ * That makes two questions worth watching.  The first is why a coalition is
+ * sitting at a high band: this script names the process that took each
+ * assertion, so a coalition that will not fall back to idle can be traced to
+ * whoever is holding it up.  The second is whether assertions are being
+ * released: a steady climb in the live count for a band, printed in the
+ * summary, means something is taking assertions and not letting go.
+ *
+ * The pressure lines tie it together.  When memory gets short every
+ * coalition is sampled and notified, and the footprint printed here is the
+ * number a kill policy would rank on, next to the band that says whether it
+ * may be given up at all.
+ *
+ * See "procstat coalition" and "switchboardctl tree" for the same state at
+ * rest, and mac_capability-responsibility for who caused a coalition to
+ * exist in the first place.
+ *
+ * Usage: mac_capability-bands
+ */
+
+#pragma D option quiet
+#pragma D option switchrate=10hz
+
+dtrace:::BEGIN
+{
+	/*
+	 * Band names, lowest first.  Kept here rather than in a macro so the
+	 * printed output reads the way an operator thinks about it.
+	 */
+	bandname[0] = "idle";
+	bandname[1] = "background";
+	bandname[2] = "standard";
+	bandname[3] = "interactive";
+	bandname[4] = "critical";
+
+	printf("Tracing coalition bands... Ctrl-C for summary.\n\n");
+	printf("%-12s %-14s %-12s %-12s %-12s %s\n", "TIME", "EVENT",
+	    "COALITION", "BAND", "EFFECTIVE", "HOLDER");
+}
+
+/* ---- A launcher sets the floor from the manifest ---- */
+
+mac_capability_coalition:::band-floor
+{
+	printf("%-12s %-14s %-12d %-12s %-12s %s\n",
+	    strftime(walltimestamp, "%H:%M:%S"), "floor", arg0,
+	    bandname[arg1], bandname[arg2], execname);
+	@floor[arg0, bandname[arg1]] = count();
+}
+
+/* ---- An assertion descriptor is taken ---- */
+
+mac_capability_coalition:::band-assert
+{
+	printf("%-12s %-14s %-12d %-12s %-12s %s (pid %d)\n",
+	    strftime(walltimestamp, "%H:%M:%S"), "assert", arg0,
+	    bandname[arg1], bandname[arg2], execname, arg3);
+	@taken[execname, bandname[arg1]] = count();
+	live[arg0, arg1] = live[arg0, arg1] + 1;
+	/* Record the peak per holder, so an unreleased assertion has a name. */
+	@held[arg0, bandname[arg1], execname] = max(live[arg0, arg1]);
+}
+
+/* ---- An assertion goes away: closed, revoked, or died with its holder ---- */
+
+mac_capability_coalition:::band-release
+{
+	printf("%-12s %-14s %-12d %-12s %-12s %s (pid %d)\n",
+	    strftime(walltimestamp, "%H:%M:%S"), "release", arg0,
+	    bandname[arg1], bandname[arg2], execname, arg3);
+	@released[execname, bandname[arg1]] = count();
+	live[arg0, arg1] = live[arg0, arg1] > 0 ? live[arg0, arg1] - 1 : 0;
+}
+
+/* ---- Memory pressure: the moment a band actually decides something ---- */
+
+mac_capability_coalition:::pressure
+{
+	printf("\n%-12s %-14s %d coalitions, %d notified\n",
+	    strftime(walltimestamp, "%H:%M:%S"), "PRESSURE", arg0, arg1);
+}
+
+mac_capability_coalition:::ledger-sample
+{
+	printf("%-12s %-14s %-12d %10d KB in %d process%s\n",
+	    strftime(walltimestamp, "%H:%M:%S"), "footprint", arg0,
+	    arg1 / 1024, arg2, arg2 == 1 ? "" : "es");
+	@footprint[arg0] = max(arg1);
+}
+
+/* ---- A coalition's members are being signalled or released ---- */
+
+mac_capability_coalition:::member-kill
+/arg3 != 0/
+{
+	printf("%-12s %-14s %-12d responsible %-8d pid %d signal %d\n",
+	    strftime(walltimestamp, "%H:%M:%S"), "member-kill", arg0,
+	    arg1, arg2, arg3);
+}
+
+dtrace:::END
+{
+	printf("\n--- Assertions taken (holder, band) ---\n");
+	printa("  %-28s %-14s %@8d\n", @taken);
+	printf("\n--- Assertions released (holder, band) ---\n");
+	printa("  %-28s %-14s %@8d\n", @released);
+	printf("\n--- Floors set (coalition, band) ---\n");
+	printa("  %-12d %-14s %@8d\n", @floor);
+	printf("\n--- Largest footprint seen per coalition (bytes) ---\n");
+	printa("  %-12d %@12d\n", @footprint);
+	printf("\n--- Most assertions held at once (coalition, band, holder) ---\n");
+	printa("  %-12d %-14s %-20s %@6d\n", @held);
+	printf("\nCompare the taken and released counts for a holder.  A holder\n");
+	printf("that takes and never releases is keeping that coalition at its\n");
+	printf("band for as long as it lives, and the system cannot give the\n");
+	printf("coalition up under memory pressure while that is true.\n");
+}
