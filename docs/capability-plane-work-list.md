@@ -8,7 +8,7 @@ against for now, with the reason).
 
 ## Attribution: coalition identity and responsibility
 
-**done** (b381a270e2e5, 2026-09-26, VM-validated). Every coalition carries a
+**done** (b381a270e2e5 + 773dbd56eb5b; from-scratch build of HEAD validated on the plane 2026-09-27: helper under parent, per-user agent under its owner's session, ssh session join, forty-session churn, audit, boot id, tools). Every coalition carries a
 permanent 64-bit id and a set-once responsible-parent edge; the switchboard
 records the parent under the management model; login sessions are coalitions
 their leaders join; pdfork helpers inherit; kinfo_proc, ps, procstat,
