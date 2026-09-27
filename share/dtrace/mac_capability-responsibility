@@ -108,6 +108,13 @@ mac_capability_coalition:::responsible-set
 	@events["edge refused"] = count();
 }
 
+mac_capability_coalition:::member-spared
+{
+	printf("%-12s %-14s %-12d spared pid %d (it closed the coalition)\n",
+	    strftime(walltimestamp, "%H:%M:%S"), "member-spared", arg0, arg1);
+	@spared[arg0] = count();
+}
+
 mac_capability_coalition:::member-kill
 {
 	printf("%-12Y %-18s %-26s pid=%d responsible=%llu%s\n", walltimestamp,

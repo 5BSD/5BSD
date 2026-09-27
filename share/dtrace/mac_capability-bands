@@ -105,6 +105,13 @@ mac_capability_coalition:::ledger-sample
 
 /* ---- A coalition's members are being signalled or released ---- */
 
+mac_capability_coalition:::member-spared
+{
+	printf("%-12s %-14s %-12d spared pid %d (it closed the coalition)\n",
+	    strftime(walltimestamp, "%H:%M:%S"), "member-spared", arg0, arg1);
+	@spared[arg0] = count();
+}
+
 mac_capability_coalition:::member-kill
 /arg3 != 0/
 {
@@ -123,6 +130,8 @@ dtrace:::END
 	printa("  %-12d %-14s %@8d\n", @floor);
 	printf("\n--- Largest footprint seen per coalition (bytes) ---\n");
 	printa("  %-12d %@12d\n", @footprint);
+	printf("\n--- Members spared in a teardown because they closed it ---\n");
+	printa("  %-12d %@8d\n", @spared);
 	printf("\n--- Most assertions held at once (coalition, band, holder) ---\n");
 	printa("  %-12d %-14s %-20s %@6d\n", @held);
 	printf("\nCompare the taken and released counts for a holder.  A holder\n");

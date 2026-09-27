@@ -76,6 +76,8 @@ static VAR keywords[] = {
 	{"caught", {"sigcatch"}, NULL, NULL, 0, NULL, 0, UNSPEC, NULL},
 	{"class", {NULL}, "CLASS", "login-class", LJUST, loginclass, 0,
 	 UNSPEC, NULL},
+	{"band", {NULL}, "BAND", "coalition-band", LJUST, coalitionband, 0,
+	 CHAR, NULL},
 	{"coal", {NULL}, "COAL", "coalition", 0, kvar, KOFF(ki_coalition),
 	 LONG, "lu"},
 	{"comm", {NULL}, "COMMAND", "command", LJUST, ucomm, 0, UNSPEC, NULL},

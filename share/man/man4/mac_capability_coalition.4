@@ -556,6 +556,13 @@ script names the holder.
 .It Fn ledger-sample coalition_id rss_bytes nprocs
 Fired when a coalition's resource sample is refreshed.
 This is the input a pressure policy ranks on.
+.It Fn member-spared coalition_id pid
+Fired when a member is deliberately not signalled during a teardown because it
+is the process doing the closing: a unit that tears down its own coalition does
+not kill itself.
+Without this a teardown trace shows every member but the survivor and gives no
+reason for it, and which process that is depends on which holder closed the
+coalition last.
 .It Fn member-kill coalition_id responsible_id pid signal
 Fired for each process member as a coalition tears down, before the signal
 is sent.

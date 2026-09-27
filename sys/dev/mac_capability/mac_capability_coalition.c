@@ -166,6 +166,15 @@ SDT_PROBE_DEFINE3(mac_capability_coalition, , , ledger__sample,
  * effective band after the change, so a script can answer "why is this
  * coalition still being kept alive, and who did that".
  */
+/*
+ * A member was deliberately NOT signalled during a teardown because it is the
+ * process doing the closing: a unit that tears down its own coalition should
+ * not kill itself.  Without this probe a teardown trace shows N-1 kills and no
+ * reason for the survivor, and which process that is depends on who closed the
+ * coalition last, so it is worth being able to see.
+ */
+SDT_PROBE_DEFINE2(mac_capability_coalition, , , member__spared,
+    "uint64_t", "pid_t");
 SDT_PROBE_DEFINE3(mac_capability_coalition, , , band__floor,
     "uint64_t", "u_int", "u_int");
 SDT_PROBE_DEFINE4(mac_capability_coalition, , , band__assert,
@@ -251,6 +260,7 @@ struct coalition {
 	 */
 	volatile u_int		co_band_floor;
 	volatile u_int		co_band_assert[COALITION_BAND_COUNT];
+	volatile u_int		co_band_nassert;	/* live assertions */
 	/* Identity (I) — immutable after creation */
 	uint64_t		co_id;
 	/*
@@ -358,6 +368,13 @@ static volatile uint64_t coalition_next_id = 1;
  */
 static u_int coalition_max = 1024;
 static u_int coalition_max_members = 8192;
+/*
+ * Assertions live in file descriptors, so a holder that keeps asking for them
+ * would otherwise consume the assertion service's whole instance budget and
+ * leave no way for anything else to hold a coalition at a band.  Cap them per
+ * coalition as well.
+ */
+static u_int coalition_max_assertions = 64;
 
 SYSCTL_NODE(_kern, OID_AUTO, mac_capability_coalition,
     CTLFLAG_RW | CTLFLAG_MPSAFE, 0, "mac_capability coalition");
@@ -373,6 +390,9 @@ SYSCTL_UINT(_kern_mac_capability_coalition, OID_AUTO, max_members, CTLFLAG_RW,
 SYSCTL_UINT(_kern_mac_capability_coalition, OID_AUTO, members, CTLFLAG_RD,
     __DEVOLATILE(u_int *, &coalition_total_members), 0,
     "Total members across all coalitions");
+SYSCTL_UINT(_kern_mac_capability_coalition, OID_AUTO, max_assertions,
+    CTLFLAG_RW, &coalition_max_assertions, 0,
+    "Maximum live band assertions per coalition (0 = unlimited)");
 
 /* Forward declarations */
 static void	coalition_terminate_members_locked(struct coalition *co,
@@ -1537,7 +1557,11 @@ coalition_terminate_members_locked(struct coalition *co, struct thread *td,
 						    p->p_pid, sig);
 						if (sig != 0)
 							kern_psignal(p, sig);
-					}
+					} else
+						SDT_PROBE2(
+						    mac_capability_coalition, , ,
+						    member__spared, co->co_id,
+						    p->p_pid);
 					PROC_UNLOCK(p);
 				} else {
 					sx_sunlock(&proctree_lock);
@@ -1545,8 +1569,12 @@ coalition_terminate_members_locked(struct coalition *co, struct thread *td,
 			} else if (cm->cm_data != NULL) {
 				p = (struct proc *)atomic_load_acq_ptr(
 				    (uintptr_t *)&cm->cm_data);
-				if (skip_self && p == self)
+				if (skip_self && p == self) {
+					SDT_PROBE2(mac_capability_coalition, , ,
+					    member__spared, co->co_id,
+					    p->p_pid);
 					continue;
+				}
 				if (p != NULL) {
 					SDT_PROBE4(mac_capability_coalition, , ,
 					    member__kill, co->co_id,
@@ -2496,6 +2524,7 @@ coalition_assert_drop(struct coalition_assert *ca)
 	u_int eff;
 
 	atomic_subtract_int(&co->co_band_assert[ca->ca_band], 1);
+	atomic_subtract_int(&co->co_band_nassert, 1);
 	eff = coalition_band_effective(co);
 	SDT_PROBE4(mac_capability_coalition, , , band__release, co->co_id,
 	    ca->ca_band, eff, curthread->td_proc->p_pid);
@@ -2513,16 +2542,28 @@ coalition_band_assert(struct coalition *co, u_int band, struct file **fpp)
 {
 	struct coalition_assert *ca;
 	struct file *fp;
+	u_int max;
 	int error;
 
 	if (band >= COALITION_BAND_COUNT)
 		return (EINVAL);
+
+	/*
+	 * Soft limit, like the coalition and member caps above: concurrent
+	 * requests can overshoot by the number of racing threads, which is
+	 * acceptable for resource control and avoids a global lock on a path
+	 * that is otherwise lock-free.
+	 */
+	max = coalition_max_assertions;
+	if (max != 0 && atomic_load_int(&co->co_band_nassert) >= max)
+		return (EAGAIN);
 
 	ca = malloc(sizeof(*ca), M_COALITION, M_WAITOK | M_ZERO);
 	ca->ca_band = band;
 	ca->ca_co = co;
 	coalition_ref(co);
 	atomic_add_int(&co->co_band_assert[band], 1);
+	atomic_add_int(&co->co_band_nassert, 1);
 
 	error = mac_capability_mint_fp(coalition_assert_svc, 0, &fp);
 	if (error != 0) {
@@ -2936,6 +2977,7 @@ coalition_proc_info(struct proc *p, struct mac_capability_proc_coalition *out)
 	out->leader_pid = (atomic_load_int(&co->co_flags) & COF_HAS_LEADER) != 0 ?
 	    co->co_leader_pid : 0;
 	out->responsible_leader_pid = coalition_responsible_leader_pid(co);
+	out->band = coalition_band_effective(co);
 	smr_exit(coalition_smr);
 	return (true);
 }
@@ -3865,6 +3907,15 @@ coalition_mod_init(void)
 	p.name = "coalition_assert";
 	p.ops = &coalition_assert_ops;
 	p.flags = MAC_CAPABILITY_SVC_MINTABLE;
+	/*
+	 * Assertions are meant to be ordinary: a client handing a provider the
+	 * right to keep its work alive for the duration of a call takes one
+	 * every time.  The default instance budget is sized for services with a
+	 * handful of endpoints and would run out across a few dozen coalitions,
+	 * so give this one room.  The per-coalition cap above is what stops a
+	 * single holder from taking it all.
+	 */
+	p.instance_limit = 4096;
 	error = mac_capability_service_create(&p, &coalition_assert_svc);
 	if (error != 0) {
 		mac_capability_service_destroy(coalition_svc);

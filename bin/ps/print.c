@@ -819,6 +819,22 @@ emulname(KINFO *k, VARENT *ve __unused)
 	return (strdup(k->ki_p->ki_emul));
 }
 
+/*
+ * The pressure band of the process's coalition: how hard the system tries to
+ * keep it when memory runs short.  A process in no coalition has none.
+ */
+char *
+coalitionband(KINFO *k, VARENT *ve __unused)
+{
+	static const char *const names[] = { "idle", "background", "standard",
+	    "interactive", "critical" };
+	int band = k->ki_p->ki_coalition_band;
+
+	if (band < 0 || band >= (int)nitems(names))
+		return (strdup("-"));
+	return (strdup(names[band]));
+}
+
 char *
 label(KINFO *k, VARENT *ve __unused)
 {

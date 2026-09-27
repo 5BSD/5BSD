@@ -1204,10 +1204,16 @@ fill_kinfo_proc_only(struct proc *p, struct kinfo_proc *kp)
 	{
 		struct mac_capability_proc_coalition mc;
 
+		/*
+		 * A process in no coalition reports band -1 rather than 0, so
+		 * a reader can tell "no coalition" from the lowest band.
+		 */
+		kp->ki_coalition_band = -1;
 		if (mac_capability_proc_coalition(p, &mc)) {
 			kp->ki_coalition = mc.id;
 			kp->ki_rcoalition = mc.responsible_id;
 			kp->ki_rpid = mc.responsible_leader_pid;
+			kp->ki_coalition_band = (int)mc.band;
 		}
 	}
 }
@@ -1520,6 +1526,7 @@ freebsd32_kinfo_proc_out(const struct kinfo_proc *ki, struct kinfo_proc32 *ki32)
 	CP(*ki, *ki32, ki_jid);
 	CP(*ki, *ki32, ki_reaper);
 	CP(*ki, *ki32, ki_reapsubtree);
+	CP(*ki, *ki32, ki_coalition_band);
 	CP(*ki, *ki32, ki_rpid);
 	CP(*ki, *ki32, ki_coalition);
 	CP(*ki, *ki32, ki_rcoalition);

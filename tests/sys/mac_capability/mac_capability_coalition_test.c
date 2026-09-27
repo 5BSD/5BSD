@@ -1161,6 +1161,52 @@ wait_exit_bounded(pid_t pid, int *wstatus)
 	return (false);
 }
 
+/*
+ * Fork a pdfork child that drops its inherited copy of the coalition
+ * descriptor and then sleeps, returning only once it has actually dropped it.
+ *
+ * The handshake is not politeness.  A coalition's close path deliberately
+ * skips the process doing the closing -- a unit tearing down its own coalition
+ * should not kill itself -- so whichever holder closes the coalition LAST is
+ * the one that revokes it, and if that turns out to be the child then the
+ * child is the skipped "self" and is never signalled.  Without the handshake,
+ * "closing the coalition terminates its members" is a race the parent loses
+ * whenever the machine is busy enough to delay the child's close, and the
+ * failure looks like a live member surviving a close.
+ *
+ * Returns the child pid with its process descriptor in *pdp, or -1.
+ */
+static pid_t
+coalition_fork_member(int cfd, int *pdp)
+{
+	int ready[2];
+	char tok;
+	pid_t pid;
+
+	if (pipe(ready) != 0)
+		return (-1);
+	pid = pdfork(pdp, 0);
+	if (pid < 0) {
+		(void)close(ready[0]);
+		(void)close(ready[1]);
+		return (-1);
+	}
+	if (pid == 0) {
+		(void)close(ready[0]);
+		(void)close(cfd);
+		(void)write(ready[1], "r", 1);
+		pause();
+		_exit(0);
+	}
+	(void)close(ready[1]);
+	if (read(ready[0], &tok, 1) != 1) {
+		(void)close(ready[0]);
+		return (-1);
+	}
+	(void)close(ready[0]);
+	return (pid);
+}
+
 static int
 kinfo_of(pid_t pid, struct kinfo_proc *kp)
 {
@@ -1711,13 +1757,8 @@ ATF_TC_BODY(set_signal_zero_releases, tc)
 	    sizeof(rpl)) == 0);
 	ATF_CHECK_EQ(rpl.status, EINVAL);
 
-	pid = pdfork(&pd, 0);
-	ATF_REQUIRE(pid >= 0);
-	if (pid == 0) {
-		close(cfd);
-		pause();
-		_exit(0);
-	}
+	pid = coalition_fork_member(cfd, &pd);
+	ATF_REQUIRE(pid > 0);
 	ATF_REQUIRE(coalition_enlist(cfd, pd, &status) == 0);
 	ATF_CHECK_EQ(status, 0);
 	ATF_REQUIRE(kinfo_of(pid, &kp) == 0);
@@ -1835,14 +1876,12 @@ ATF_TC_BODY(close_terminates_live_member, tc)
 	ATF_REQUIRE(cfd >= 0);
 	mid = coalition_count();
 	ATF_CHECK_EQ(mid, before + 1);
-	pid = pdfork(&pd, 0);
-	ATF_REQUIRE(pid >= 0);
-	if (pid == 0) {
-		/* The child must not pin the coalition's file. */
-		close(cfd);
-		pause();
-		_exit(0);
-	}
+	/*
+	 * The child must have dropped its inherited copy of the coalition
+	 * before we drop ours, so that OUR close is the one that revokes it.
+	 */
+	pid = coalition_fork_member(cfd, &pd);
+	ATF_REQUIRE(pid > 0);
 	ATF_REQUIRE(coalition_enlist(cfd, pd, &status) == 0);
 	ATF_CHECK_EQ(status, 0);
 	close(cfd);
@@ -4612,6 +4651,132 @@ ATF_TC_BODY(band_assertion_churn_under_readers, tc)
 		ATF_CHECK(waitpid(readers[r], &wstatus, 0) == readers[r]);
 }
 
+ATF_TC(band_assertions_are_capped);
+ATF_TC_HEAD(band_assertions_are_capped, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "A coalition's live assertions are capped, so one holder cannot "
+	    "consume the assertion service's whole budget and leave nothing "
+	    "for anyone else; the cap is released as assertions are closed");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_coalition");
+}
+ATF_TC_BODY(band_assertions_are_capped, tc)
+{
+	struct coalition_band_reply br;
+	u_int cap = 0;
+	size_t len = sizeof(cap);
+	int fd, afd, i, got = 0, refused = 0;
+	int *afds;
+
+	if (sysctlbyname("kern.mac_capability_coalition.max_assertions", &cap,
+	    &len, NULL, 0) != 0)
+		atf_tc_skip("max_assertions sysctl unavailable: %s",
+		    strerror(errno));
+	ATF_REQUIRE(cap > 0 && cap < 4096);
+
+	fd = mac_capability_connect("coalition");
+	ATF_REQUIRE(fd >= 0);
+	afds = calloc(cap + 8, sizeof(*afds));
+	ATF_REQUIRE(afds != NULL);
+
+	/*
+	 * Ask for more than the cap allows.  The limit is a soft one, so a few
+	 * extra may slip through when threads race; what must not happen is
+	 * that it keeps handing them out without bound.
+	 */
+	for (i = 0; i < (int)cap + 8; i++) {
+		if (coalition_assert(fd, COALITION_BAND_STANDARD, &br,
+		    &afd) == 0 && br.status == 0 && afd >= 0) {
+			afds[got++] = afd;
+		} else {
+			refused++;
+			afds[i] = -1;
+		}
+	}
+	ATF_CHECK_MSG(refused > 0, "the cap never refused an assertion: "
+	    "granted %d with a cap of %u", got, cap);
+	ATF_CHECK_MSG((u_int)got <= cap + 8,
+	    "granted %d assertions with a cap of %u", got, cap);
+
+	/* Closing them frees the budget again. */
+	for (i = 0; i < got; i++)
+		close(afds[i]);
+	ATF_REQUIRE(coalition_band(fd, 0, 0, &br) == 0);
+	ATF_CHECK_EQ_MSG(0, br.nassert[COALITION_BAND_STANDARD],
+	    "assertions still counted after every one was closed: %u",
+	    br.nassert[COALITION_BAND_STANDARD]);
+	ATF_REQUIRE(coalition_assert(fd, COALITION_BAND_STANDARD, &br,
+	    &afd) == 0);
+	ATF_CHECK_EQ_MSG(br.status, 0,
+	    "the cap did not recover after closing every assertion");
+	if (afd >= 0)
+		close(afd);
+	free(afds);
+	close(fd);
+}
+
+ATF_TC(band_visible_in_kinfo);
+ATF_TC_HEAD(band_visible_in_kinfo, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "A process's effective band is exported through kinfo_proc, so ps "
+	    "and procstat can show it: a process in no coalition reports -1, a "
+	    "member reports its coalition's band, and an assertion raising the "
+	    "band shows up there");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_coalition");
+}
+ATF_TC_BODY(band_visible_in_kinfo, tc)
+{
+	struct coalition_band_reply br;
+	struct kinfo_proc kp;
+	int cfd, pd, afd, wstatus;
+	int32_t status;
+	pid_t pid;
+
+	/* We are in no coalition: -1, distinguishable from the idle band. */
+	ATF_REQUIRE(kinfo_of(getpid(), &kp) == 0);
+	ATF_CHECK_EQ_MSG(-1, kp.ki_coalition_band,
+	    "a process in no coalition reported band %d",
+	    kp.ki_coalition_band);
+
+	cfd = mac_capability_connect("coalition");
+	ATF_REQUIRE(cfd >= 0);
+	ATF_REQUIRE(coalition_band(cfd, COALITION_BAND_SET_FLOOR,
+	    COALITION_BAND_BACKGROUND, &br) == 0);
+	ATF_REQUIRE_EQ(br.status, 0);
+
+	pid = coalition_fork_member(cfd, &pd);
+	ATF_REQUIRE(pid > 0);
+	ATF_REQUIRE(coalition_enlist(cfd, pd, &status) == 0);
+	ATF_REQUIRE_EQ(status, 0);
+
+	ATF_REQUIRE(kinfo_of(pid, &kp) == 0);
+	ATF_CHECK_EQ_MSG(COALITION_BAND_BACKGROUND, kp.ki_coalition_band,
+	    "member reported band %d, expected the floor",
+	    kp.ki_coalition_band);
+
+	/* An assertion raises it, and the member's kinfo follows. */
+	ATF_REQUIRE(coalition_assert(cfd, COALITION_BAND_CRITICAL, &br,
+	    &afd) == 0);
+	ATF_REQUIRE_EQ(br.status, 0);
+	ATF_REQUIRE(kinfo_of(pid, &kp) == 0);
+	ATF_CHECK_EQ_MSG(COALITION_BAND_CRITICAL, kp.ki_coalition_band,
+	    "member reported band %d while an assertion held it critical",
+	    kp.ki_coalition_band);
+
+	/* Closing the assertion drops it back to the floor. */
+	ATF_REQUIRE(close(afd) == 0);
+	ATF_REQUIRE(kinfo_of(pid, &kp) == 0);
+	ATF_CHECK_EQ_MSG(COALITION_BAND_BACKGROUND, kp.ki_coalition_band,
+	    "member reported band %d after the assertion was closed",
+	    kp.ki_coalition_band);
+
+	pdkill(pd, SIGKILL);
+	waitpid(pid, &wstatus, 0);
+	close(pd);
+	close(cfd);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 	/* Lifecycle */
@@ -4739,6 +4904,8 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, band_assertion_carries_no_authority);
 	ATF_TP_ADD_TC(tp, band_assertion_outlives_coalition_fd);
 	ATF_TP_ADD_TC(tp, band_assertion_churn_under_readers);
+	ATF_TP_ADD_TC(tp, band_assertions_are_capped);
+	ATF_TP_ADD_TC(tp, band_visible_in_kinfo);
 
 	/* Resource exhaustion + teardown-race stress */
 	ATF_TP_ADD_TC(tp, exhaust_coalition_max);
