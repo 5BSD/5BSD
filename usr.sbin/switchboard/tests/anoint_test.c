@@ -396,6 +396,15 @@ mac_cap_coalition_stat(int coalition_fd, struct coalition_stat_reply *sr)
 	return (-1);
 }
 
+/* Session teardown reaches the supervisor; no unit runs in this test. */
+void
+svc_graceful_stop(struct svc_runtime *svc, int kq)
+{
+
+	(void)svc;
+	(void)kq;
+}
+
 int
 mac_cap_create_channel(int *our_end, int *child_end)
 {

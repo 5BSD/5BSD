@@ -247,8 +247,15 @@ struct coalition_event_msg {
 #define	COALITION_NOTE_DEADLINE_FIRED	0x0020
 #define	COALITION_NOTE_WATCHDOG_FIRED	0x0040
 #define	COALITION_NOTE_GRACE_STARTED	0x0080
+/*
+ * The system is short of memory.  Delivered to every coalition with a live
+ * instance when the kernel fires its low-memory event, so a unit can drop
+ * caches before anything is killed.  Advisory: nothing is terminated by
+ * this notification, and a coalition that ignores it is not penalised.
+ */
+#define	COALITION_NOTE_PRESSURE		0x0100
 
-#define	COALITION_NOTE_ALL		0x00ff
+#define	COALITION_NOTE_ALL		0x01ff
 
 /*
  * Maximum parent-chain nesting depth.  A root coalition has depth 0.

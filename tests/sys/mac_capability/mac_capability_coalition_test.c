@@ -41,6 +41,9 @@
 
 #include "mac_capability_ioctl.h"
 #include "mac_capability_test_helpers.h"
+/* vm_lowmem flags; the header is kernel-only. */
+#define	TEST_VM_LOW_PAGES	0x02
+
 #include "mac_capability_coalition_proto.h"
 
 #define	COALITION_TEST_JAIL_NAME	"mac_capability_coalition_jail_member_test"
@@ -2024,6 +2027,130 @@ ATF_TC_BODY(set_signal_zero_releases_joined, tc)
 	kill(joiner, SIGKILL);
 	waitpid(joiner, &wstatus, 0);
 	close(holder[0]);
+}
+
+
+/* ================================================================
+ * Memory pressure
+ * ================================================================ */
+
+/*
+ * debug.vm_lowmem fires the kernel's low-memory event synchronously.  The
+ * coalition module answers it on a taskqueue, so a reader has to wait a
+ * moment; drain up to `tries` notifications looking for the pressure note.
+ */
+static bool
+wait_for_pressure(int fd, int tries)
+{
+	struct coalition_event_msg ev;
+	int i, lowmem = TEST_VM_LOW_PAGES;
+
+	if (sysctlbyname("debug.vm_lowmem", NULL, NULL, &lowmem,
+	    sizeof(lowmem)) != 0)
+		atf_tc_skip("debug.vm_lowmem unavailable: %s",
+		    strerror(errno));
+	for (i = 0; i < tries; i++) {
+		while (coalition_recv_event(fd, &ev) == 0)
+			if ((ev.flags & COALITION_NOTE_PRESSURE) != 0)
+				return (true);
+		usleep(100000);
+	}
+	return (false);
+}
+
+ATF_TC(pressure_notifies_coalitions);
+ATF_TC_HEAD(pressure_notifies_coalitions, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "A low-memory event delivers COALITION_NOTE_PRESSURE to every "
+	    "live coalition, so a unit can drop caches before anything is "
+	    "killed; nothing is terminated and members are untouched");
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_coalition");
+}
+ATF_TC_BODY(pressure_notifies_coalitions, tc)
+{
+	struct coalition_stat_reply sr;
+	struct kinfo_proc kp;
+	int a, b, pd, wstatus;
+	int32_t status;
+	pid_t pid;
+
+	a = mac_capability_connect("coalition");
+	b = mac_capability_connect("coalition");
+	ATF_REQUIRE(a >= 0 && b >= 0);
+
+	/* A member so we can prove the notification kills nothing. */
+	pid = pdfork(&pd, 0);
+	ATF_REQUIRE(pid >= 0);
+	if (pid == 0) {
+		close(a);
+		close(b);
+		pause();
+		_exit(0);
+	}
+	ATF_REQUIRE(coalition_enlist(a, pd, &status) == 0);
+	ATF_CHECK_EQ(status, 0);
+
+	ATF_CHECK_MSG(wait_for_pressure(a, 20),
+	    "no pressure notification on the first coalition");
+	/* Every live coalition is told, not just the one with members. */
+	ATF_CHECK_MSG(wait_for_pressure(b, 20),
+	    "no pressure notification on the second coalition");
+
+	/* Advisory only: the member is alive and the coalition intact. */
+	ATF_CHECK_EQ_MSG(waitpid(pid, &wstatus, WNOHANG), 0,
+	    "pressure notification killed a member");
+	ATF_REQUIRE(kinfo_of(pid, &kp) == 0);
+	ATF_REQUIRE(coalition_stat(a, &sr) == 0);
+	ATF_CHECK_EQ(kp.ki_coalition, sr.id);
+	ATF_CHECK_EQ(sr.process_count, 1);
+	ATF_CHECK_EQ(sr.flags & COF_TERMINATING, 0);
+
+	pdkill(pd, SIGKILL);
+	waitpid(pid, &wstatus, 0);
+	close(pd);
+	close(b);
+	close(a);
+}
+
+ATF_TC(pressure_after_close_is_safe);
+ATF_TC_HEAD(pressure_after_close_is_safe, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "A low-memory event during and after coalition teardown is "
+	    "harmless: the pass skips closing coalitions and the count "
+	    "returns to its baseline");
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_coalition");
+}
+ATF_TC_BODY(pressure_after_close_is_safe, tc)
+{
+	unsigned before, after;
+	int lowmem = TEST_VM_LOW_PAGES;
+	int fds[16];
+	int i;
+
+	before = coalition_count();
+	for (i = 0; i < 16; i++) {
+		fds[i] = mac_capability_connect("coalition");
+		ATF_REQUIRE(fds[i] >= 0);
+	}
+	/* Churn the list while the pass runs. */
+	for (i = 0; i < 16; i++) {
+		if (sysctlbyname("debug.vm_lowmem", NULL, NULL, &lowmem,
+		    sizeof(lowmem)) != 0)
+			atf_tc_skip("debug.vm_lowmem unavailable: %s",
+			    strerror(errno));
+		close(fds[i]);
+	}
+	usleep(500000);
+	(void)sysctlbyname("debug.vm_lowmem", NULL, NULL, &lowmem,
+	    sizeof(lowmem));
+	usleep(500000);
+	after = coalition_count();
+	ATF_CHECK_EQ_MSG(after, before, "coalitions leaked across pressure: "
+	    "before=%u after=%u", before, after);
 }
 
 /* ================================================================
@@ -4042,6 +4169,8 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, close_terminates_live_member);
 	ATF_TP_ADD_TC(tp, refattach_confined_descriptors);
 	ATF_TP_ADD_TC(tp, set_signal_zero_releases_joined);
+	ATF_TP_ADD_TC(tp, pressure_notifies_coalitions);
+	ATF_TP_ADD_TC(tp, pressure_after_close_is_safe);
 
 	/* Resource exhaustion + teardown-race stress */
 	ATF_TP_ADD_TC(tp, exhaust_coalition_max);

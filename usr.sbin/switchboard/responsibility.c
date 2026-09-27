@@ -40,6 +40,7 @@
 #include <dev/mac_capability/mac_capability_coalition_proto.h>
 
 #include "switchboard.h"
+#include "switchboard_probes.h"
 
 /*
  * Does `requester` manage `unit`, in the sense that a launch it caused is
@@ -263,10 +264,17 @@ svc_responsibility_apply(struct svc_runtime *svc, int coalition_fd)
 	}
 	svc->coalition_id = sr.id;
 	r->parent_id = sr.responsible_id;
-	syslog(LOG_INFO, "service %s: coalition %ju responsible to %s (%ju)",
-	    svc->manifest.label, (uintmax_t)sr.id,
-	    svc_responsibility_name(r, nbuf, sizeof(nbuf)),
-	    (uintmax_t)sr.responsible_id);
+	{
+		const char *who = svc_responsibility_name(r, nbuf,
+		    sizeof(nbuf));
+
+		SWITCHBOARD_PROBE_RESPONSIBLE(svc->manifest.label, who, sr.id,
+		    sr.responsible_id);
+		syslog(LOG_INFO,
+		    "service %s: coalition %ju responsible to %s (%ju)",
+		    svc->manifest.label, (uintmax_t)sr.id, who,
+		    (uintmax_t)sr.responsible_id);
+	}
 }
 
 /*

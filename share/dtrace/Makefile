@@ -17,6 +17,7 @@ SCRIPTS=	blued-att \
 		capsicum-denials \
 		capsicum-xfer \
 		mac_capability-calls \
+		mac_capability-coalitions \
 		mac_capability-delegation \
 		mac_capability-denials \
 		mac_capability-errors \
@@ -27,6 +28,7 @@ SCRIPTS=	blued-att \
 		mac_capability-services \
 		mac_capability-shield \
 		mac_capability-summary \
+		mac_capability-responsibility \
 		mac_capability-who \
 		trustedzfs-handles \
 		trustedzfs-denials \

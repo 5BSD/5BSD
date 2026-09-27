@@ -210,6 +210,29 @@
 #define	SWITCHBOARD_PROBE_STARTUP_DONE(duration_ms)	\
 	DTRACE_PROBE1(switchboard, startup__done, duration_ms)
 
+/*
+ * The responsible party recorded for `label` at launch (responsibility.c):
+ * `who` as svc_responsibility_name() renders it, and the coalition ids of
+ * the unit and of that party.  Pairs with the kernel's
+ * mac_capability_coalition:::responsible-set.
+ */
+#define	SWITCHBOARD_PROBE_RESPONSIBLE(label, who, coal, parent)	\
+	DTRACE_PROBE4(switchboard, responsible, label, who, coal, parent)
+
+/*
+ * A session coalition was minted for a login session (domain.c), or the
+ * mint failed and the session is unattributed (id 0, errno in `error`).
+ */
+#define	SWITCHBOARD_PROBE_SESSION_COALITION(uid, coal, error)	\
+	DTRACE_PROBE3(switchboard, session__coalition, uid, coal, error)
+
+/*
+ * A login session ended and the unit `label` that existed on its behalf is
+ * being stopped (domain.c).
+ */
+#define	SWITCHBOARD_PROBE_SESSION_END(label, uid)	\
+	DTRACE_PROBE2(switchboard, session__end, label, uid)
+
 /* On-demand launch */
 #define	SWITCHBOARD_PROBE_ON_DEMAND_LAUNCH(name, requester)	\
 	DTRACE_PROBE2(switchboard, on__demand__launch, name, requester)

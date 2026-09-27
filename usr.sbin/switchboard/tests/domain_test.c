@@ -293,6 +293,21 @@ mac_cap_coalition_stat(int coalition_fd, struct coalition_stat_reply *sr)
 	return (-1);
 }
 
+/*
+ * Session teardown calls into the supervisor; the pure-logic and
+ * device-gated cases here never run a unit, so record the calls instead.
+ */
+static unsigned graceful_stop_calls;
+
+void
+svc_graceful_stop(struct svc_runtime *svc, int kq)
+{
+
+	(void)svc;
+	(void)kq;
+	graceful_stop_calls++;
+}
+
 int
 mac_cap_create_channel(int *our_end, int *child_end)
 {

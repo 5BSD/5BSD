@@ -415,12 +415,33 @@ Soft limit, best-effort enforcement.
 .It Va kern.mac_capability_coalition.members
 Total members across all coalitions (read-only).
 .El
+.Sh OBSERVING COALITIONS
+Two scripts ship in
+.Pa /usr/share/dtrace
+and are installed by default:
+.Pa mac_capability-coalitions
+traces this service in depth (every operation, timer, membership change and
+teardown, with per-event counts on exit), and
+.Pa mac_capability-responsibility
+follows the whole story across both halves of the plane, pairing the
+launcher's decisions (which party a unit answers to, a login session
+getting its coalition, a session's units being withdrawn, a launch
+constraint refusing an activation) with the kernel's outcomes (coalitions
+created and closed, members signalled or released, memory-pressure passes).
+.Pp
+For the same relation at rest, without tracing:
+.Xr ps 1
+.Fl o Cm coal , rcoal , rpid ,
+.Xr procstat 1
+.Cm coalition ,
+and
+.Nm switchboardctl Cm tree .
 .Sh DTRACE PROBES
 The following DTrace probes are available under the
 .Nm mac_capability_coalition
 provider:
 .Bl -tag -width "deadline-expire(phase, signal)"
-.It Fn create badge
+.It Fn create coalition_id badge
 Fired when a coalition is created.
 .Ar badge
 is the instance badge.
@@ -446,6 +467,32 @@ Fired when the coalition handle is closed.
 Fired when a member process exits.
 .It Fn leader-exit pid
 Fired when the designated leader process exits.
+.It Fn member-kill coalition_id responsible_id pid signal
+Fired for each process member as a coalition tears down, before the signal
+is sent.
+A
+.Ar signal
+of 0 means the member is released rather than killed (see
+.Dv COALITION_OP_SET_SIGNAL ) ,
+so this probe reports both outcomes.
+.Ar responsible_id
+names the coalition on whose behalf this one existed, which is what makes
+"why did my process die, and for whom" answerable from the probe alone.
+.It Fn rehome pid from_coalition_id to_coalition_id
+Fired when a membership that was only inherited is moved to another
+coalition by a holder of the process descriptor.
+.Ar to_coalition_id
+is 0: the destination is reported by the
+.Fn enlist
+that follows.
+.It Fn pressure coalitions notified
+Fired once per low-memory pass, after every live coalition has been told.
+.It Fn pressure-notify coalition_id members error
+Fired per coalition during that pass;
+.Ar error
+is
+.Er ESHUTDOWN
+for a coalition that was terminating or closing and was skipped.
 .It Fn fork-inherit parent_pid child_pid
 Fired when a child process inherits coalition membership via
 .Xr fork 2 .

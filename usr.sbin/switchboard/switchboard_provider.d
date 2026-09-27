@@ -110,6 +110,14 @@ provider switchboard {
 	probe startup__tier(unsigned int tier, unsigned int launched);
 	probe startup__done(uint64_t duration_ms);
 
+	/* The responsible party recorded for a unit at launch */
+	probe responsible(const char *label, const char *who, uint64_t coal,
+	    uint64_t parent);
+	/* A session coalition was minted (or not: id 0 and an errno) */
+	probe session__coalition(unsigned uid, uint64_t coal, int error);
+	/* A session ended; a unit that existed on its behalf is stopped */
+	probe session__end(const char *label, unsigned uid);
+
 	/* On-demand launch */
 	probe on__demand__launch(const char *name, const char *requester);
 	probe on__demand__coalesce(const char *name);

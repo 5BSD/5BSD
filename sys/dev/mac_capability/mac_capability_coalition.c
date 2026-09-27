@@ -79,6 +79,8 @@
 
 #include <machine/atomic.h>
 #include <vm/uma.h>
+#include <vm/vm.h>
+#include <vm/vm_pageout.h>
 #include <sys/resourcevar.h>
 #include <sys/user.h>
 
@@ -91,7 +93,8 @@
  * DTrace SDT probes
  * ---------------------------------------------------------------- */
 SDT_PROVIDER_DEFINE(mac_capability_coalition);
-SDT_PROBE_DEFINE1(mac_capability_coalition, , , create, "uint64_t");
+SDT_PROBE_DEFINE2(mac_capability_coalition, , , create, "uint64_t",
+    "uint64_t");
 SDT_PROBE_DEFINE2(mac_capability_coalition, , , enlist, "int", "int");
 SDT_PROBE_DEFINE2(mac_capability_coalition, , , join, "pid_t", "int");
 SDT_PROBE_DEFINE2(mac_capability_coalition, , , terminate, "u_int", "int");
@@ -119,6 +122,23 @@ SDT_PROBE_DEFINE3(mac_capability_coalition, , , graceful,
     "int", "uint32_t", "int");
 SDT_PROBE_DEFINE3(mac_capability_coalition, , , responsible__set,
     "uint64_t", "uint64_t", "int");
+SDT_PROBE_DEFINE2(mac_capability_coalition, , , pressure,
+    "uint32_t", "unsigned");
+SDT_PROBE_DEFINE3(mac_capability_coalition, , , pressure__notify,
+    "uint64_t", "u_int", "int");
+/*
+ * One process member is being signalled (sig) or, with sig 0, released
+ * without a signal, as the coalition tears down.  This is the probe that
+ * answers "what killed my process, and on whose behalf".
+ */
+SDT_PROBE_DEFINE4(mac_capability_coalition, , , member__kill,
+    "uint64_t", "uint64_t", "pid_t", "int");
+/*
+ * A membership that was only inherited (fork, pdfork, JOIN) has been moved
+ * to another coalition by a holder of the process descriptor.
+ */
+SDT_PROBE_DEFINE3(mac_capability_coalition, , , rehome,
+    "pid_t", "uint64_t", "uint64_t");
 
 MALLOC_DEFINE(M_COALITION, "mac_capability_coalition",
     "mac_capability coalition structures");
@@ -164,6 +184,9 @@ struct coalition {
 	struct task		co_leader_task;
 	/* Back-reference for timer tasks */
 	struct mac_capability_instance	*co_instance;
+	/* All live coalitions (coalition_list_lock) */
+	LIST_ENTRY(coalition)	co_all_link;
+	bool			co_listed;
 	/* Identity (I) — immutable after creation */
 	uint64_t		co_id;
 	/*
@@ -231,6 +254,19 @@ struct coalition_jail_osd {
 
 static eventhandler_tag coalition_fork_tag;
 static eventhandler_tag coalition_exit_tag;
+static eventhandler_tag coalition_lowmem_tag;
+
+/*
+ * Every live coalition, for system-wide passes (memory pressure today).
+ * Guarded by its own sx so a pass can take a reference on each coalition
+ * and then drop the list lock before doing anything that sleeps.  Lock
+ * order: coalition_list_lock is a leaf -- never take co_sx or the process
+ * hash under it.
+ */
+static struct sx coalition_list_lock;
+static LIST_HEAD(, coalition) coalition_list =
+    LIST_HEAD_INITIALIZER(coalition_list);
+static struct task coalition_pressure_task;
 
 /*
  * Sysctl tunables — soft limits, best-effort enforcement.
@@ -302,6 +338,12 @@ coalition_free(struct coalition *co)
 	    ("coalition_free: members not empty"));
 	KASSERT(co->co_refcount == 0,
 	    ("coalition_free: refcount %u", co->co_refcount));
+	sx_xlock(&coalition_list_lock);
+	if (co->co_listed) {
+		LIST_REMOVE(co, co_all_link);
+		co->co_listed = false;
+	}
+	sx_xunlock(&coalition_list_lock);
 	sx_destroy(&co->co_sx);
 	/*
 	 * Drop the responsible-parent pin last.  Chains are acyclic (enforced
@@ -347,6 +389,10 @@ coalition_alloc(void)
 	callout_init(&co->co_leader_callout, 1);
 	TASK_INIT(&co->co_leader_task, 0, coalition_leader_task_fn, co);
 	atomic_add_int(&coalition_count, 1);
+	sx_xlock(&coalition_list_lock);
+	LIST_INSERT_HEAD(&coalition_list, co, co_all_link);
+	co->co_listed = true;
+	sx_xunlock(&coalition_list_lock);
 	return (co);
 }
 
@@ -1390,8 +1436,15 @@ coalition_terminate_members_locked(struct coalition *co, struct thread *td,
 				if (p != NULL) {
 					PROC_LOCK(p);
 					sx_sunlock(&proctree_lock);
-					if (!(skip_self && p == self) && sig != 0)
-						kern_psignal(p, sig);
+					if (!(skip_self && p == self)) {
+						SDT_PROBE4(
+						    mac_capability_coalition, , ,
+						    member__kill, co->co_id,
+						    co->co_responsible_id,
+						    p->p_pid, sig);
+						if (sig != 0)
+							kern_psignal(p, sig);
+					}
 					PROC_UNLOCK(p);
 				} else {
 					sx_sunlock(&proctree_lock);
@@ -1401,10 +1454,16 @@ coalition_terminate_members_locked(struct coalition *co, struct thread *td,
 				    (uintptr_t *)&cm->cm_data);
 				if (skip_self && p == self)
 					continue;
-				if (p != NULL && sig != 0) {
-					PROC_LOCK(p);
-					kern_psignal(p, sig);
-					PROC_UNLOCK(p);
+				if (p != NULL) {
+					SDT_PROBE4(mac_capability_coalition, , ,
+					    member__kill, co->co_id,
+					    co->co_responsible_id, p->p_pid,
+					    sig);
+					if (sig != 0) {
+						PROC_LOCK(p);
+						kern_psignal(p, sig);
+						PROC_UNLOCK(p);
+					}
 				}
 			}
 			continue;
@@ -2250,10 +2309,77 @@ coalition_rehome_inherited(struct proc *p)
 	}
 	sx_xunlock(&old->co_sx);
 	if (cm != NULL) {
+		SDT_PROBE3(mac_capability_coalition, , , rehome, p->p_pid,
+		    old->co_id, (uint64_t)0);
 		uma_zfree(coalition_member_zone, cm);
 		coalition_rel(old);	/* the member's reference */
 	}
 	coalition_rel(old);
+}
+
+/* ----------------------------------------------------------------
+ * Memory pressure
+ * ---------------------------------------------------------------- */
+
+/*
+ * Tell every coalition that the system is short of memory, so a unit can
+ * drop caches before the kernel starts killing.  Runs on a taskqueue, not
+ * in the page daemon: notification takes co_sx and may sleep, and the page
+ * daemon must not wait on a service's queue.
+ *
+ * A coalition that is terminating, closing, or has no live instance is
+ * skipped.  Delivery is best effort by construction: mac_capability_notify()
+ * drops the message if the instance's queue is full, which is the right
+ * answer under memory pressure.
+ */
+static void
+coalition_pressure_task_fn(void *ctx __unused, int pending __unused)
+{
+	struct coalition *co, *next;
+	unsigned notified = 0;
+
+	sx_xlock(&coalition_list_lock);
+	LIST_FOREACH_SAFE(co, &coalition_list, co_all_link, next) {
+		coalition_ref(co);
+		sx_xunlock(&coalition_list_lock);
+
+		sx_xlock(&co->co_sx);
+		if ((co->co_flags & (COF_TERMINATING | COF_CLOSING)) == 0 &&
+		    co->co_instance != NULL) {
+			coalition_notify_event(co, COALITION_NOTE_PRESSURE);
+			notified++;
+			SDT_PROBE3(mac_capability_coalition, , ,
+			    pressure__notify, co->co_id,
+			    atomic_load_int(&co->co_member_count), 0);
+		} else
+			SDT_PROBE3(mac_capability_coalition, , ,
+			    pressure__notify, co->co_id, 0U, ESHUTDOWN);
+		sx_xunlock(&co->co_sx);
+
+		sx_xlock(&coalition_list_lock);
+		/*
+		 * The list may have changed while it was unlocked.  A
+		 * coalition is unlinked before it is freed, and our
+		 * reference keeps this one alive, so its link is still
+		 * valid; re-read the successor from it.
+		 */
+		next = co->co_listed ? LIST_NEXT(co, co_all_link) : NULL;
+		coalition_rel(co);
+	}
+	sx_xunlock(&coalition_list_lock);
+	SDT_PROBE2(mac_capability_coalition, , , pressure,
+	    (uint32_t)atomic_load_int(&coalition_count), notified);
+}
+
+/*
+ * The kernel's low-memory event.  Runs in the page daemon (or whoever
+ * triggered the reclaim), so it does nothing but schedule the pass.
+ */
+static void
+coalition_lowmem(void *arg __unused, int flags __unused)
+{
+
+	taskqueue_enqueue(taskqueue_thread, &coalition_pressure_task);
 }
 
 /* ----------------------------------------------------------------
@@ -2440,8 +2566,8 @@ coalition_init(struct mac_capability_instance *s, void *arg __unused)
 	co->co_id = atomic_fetchadd_64(&coalition_next_id, 1);
 	mac_capability_instance_set_priv(s, co);
 
-	SDT_PROBE1(mac_capability_coalition, , , create,
-	    mac_capability_instance_get_badge(s));
+	SDT_PROBE2(mac_capability_coalition, , , create,
+	    co->co_id, mac_capability_instance_get_badge(s));
 	return (0);
 }
 
@@ -3144,6 +3270,9 @@ coalition_mod_init(void)
 
 	rw_init(&coalition_proc_hash_lock, "coalition_proc_hash");
 	sx_init(&coalition_nest_lock, "coalition_nest");
+	sx_init(&coalition_list_lock, "coalition_list");
+	TASK_INIT(&coalition_pressure_task, 0, coalition_pressure_task_fn,
+	    NULL);
 	for (i = 0; i < COALITION_PROC_HASH_SIZE; i++)
 		LIST_INIT(&coalition_proc_hash[i]);
 
@@ -3168,6 +3297,16 @@ coalition_mod_init(void)
 		goto fail_exit;
 	}
 
+	/*
+	 * Memory pressure: tell units to shrink before the kernel kills
+	 * anything.  Advisory, so a registration failure is not fatal.
+	 */
+	coalition_lowmem_tag = EVENTHANDLER_REGISTER(vm_lowmem,
+	    coalition_lowmem, NULL, EVENTHANDLER_PRI_ANY);
+	if (coalition_lowmem_tag == NULL)
+		log(LOG_NOTICE, "mac_capability_coalition: no low-memory "
+		    "notification\n");
+
 	memset(&p, 0, sizeof(p));
 	p.name = "coalition";
 	p.ops = &coalition_ops;
@@ -3190,6 +3329,7 @@ fail_fork:
 	osd_jail_deregister(coalition_jail_osd_slot);
 fail_osd:
 	sx_destroy(&coalition_nest_lock);
+	sx_destroy(&coalition_list_lock);
 	rw_destroy(&coalition_proc_hash_lock);
 	uma_zdestroy(coalition_member_zone);
 	uma_zdestroy(coalition_zone);
@@ -3214,11 +3354,16 @@ coalition_modevent(module_t mod __unused, int type, void *arg __unused)
 		}
 
 		mac_capability_proc_coalition_hook_set(NULL);
+		if (coalition_lowmem_tag != NULL)
+			EVENTHANDLER_DEREGISTER(vm_lowmem,
+			    coalition_lowmem_tag);
+		taskqueue_drain(taskqueue_thread, &coalition_pressure_task);
 		mac_capability_service_destroy(coalition_svc);
 		EVENTHANDLER_DEREGISTER(process_exit, coalition_exit_tag);
 		EVENTHANDLER_DEREGISTER(process_fork, coalition_fork_tag);
 		osd_jail_deregister(coalition_jail_osd_slot);
 		sx_destroy(&coalition_nest_lock);
+		sx_destroy(&coalition_list_lock);
 		rw_destroy(&coalition_proc_hash_lock);
 		uma_zdestroy(coalition_member_zone);
 		uma_zdestroy(coalition_zone);

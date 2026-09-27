@@ -197,6 +197,20 @@ tracectl configtest /Capabilities/System/Trace.cap/Units/bsdtrace.unit/Config/bs
 switchboardctl restart system.Trace/bsdtrace
 ```
 
+To answer "what killed this process and on whose behalf", watch
+`mac_capability_coalition:::member-kill`: it carries the coalition, the
+coalition responsible for it, the pid, and the signal, where a signal of
+zero means the member was released rather than killed. The shipped script
+`/usr/share/dtrace/mac_capability-coalitions` prints that alongside
+creation, enlistment, re-homing, memory-pressure passes, and the
+responsibility edge, and summarises members signalled per coalition on
+exit. The switchboard side pairs with it: `switchboard:::responsible`
+fires when a unit's party is recorded at launch,
+`switchboard:::session-coalition` when a login session gets its coalition,
+`switchboard:::session-end` when a session's units are withdrawn, and
+`switchboard:::on-demand-deny` when a launch constraint refuses an
+activation.
+
 (Unit labels are `<bundle_id>/<unit>`; `switchboardctl services` lists them,
 with each unit's coalition id and responsible parent; `switchboardctl tree`
 draws the chains, and `ps -o pid,coal,rcoal,rpid,comm` or `procstat
