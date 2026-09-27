@@ -1847,8 +1847,29 @@ ATF_TC_BODY(close_terminates_live_member, tc)
 	ATF_CHECK_EQ(status, 0);
 	close(cfd);
 	if (!wait_exit_bounded(pid, &wstatus)) {
-		atf_tc_fail_nonfatal("live member survived close (count=%u)",
-		    coalition_count());
+		struct kinfo_proc kp;
+		const char *state = "gone";
+		int signalled = kill(pid, 0);
+
+		/*
+		 * Say which of the two possible failures this is.  A process
+		 * descriptor keeps a dead child from being reaped by wait(2),
+		 * so waitpid() reporting nothing does not by itself mean the
+		 * member was spared: a zombie means the kernel did terminate
+		 * it and only the reap is pending, while a running or sleeping
+		 * process means the close really did not reach it.
+		 */
+		if (kinfo_of(pid, &kp) == 0) {
+			switch (kp.ki_stat) {
+			case SZOMB:	state = "zombie"; break;
+			case SRUN:	state = "running"; break;
+			case SSLEEP:	state = "sleeping"; break;
+			case SSTOP:	state = "stopped"; break;
+			default:	state = "other"; break;
+			}
+		}
+		atf_tc_fail_nonfatal("live member survived close: state=%s "
+		    "kill0=%d count=%u", state, signalled, coalition_count());
 		pdkill(pd, SIGKILL);
 		(void)wait_exit_bounded(pid, &wstatus);
 	}
@@ -2151,6 +2172,231 @@ ATF_TC_BODY(pressure_after_close_is_safe, tc)
 	after = coalition_count();
 	ATF_CHECK_EQ_MSG(after, before, "coalitions leaked across pressure: "
 	    "before=%u after=%u", before, after);
+}
+
+
+/* ================================================================
+ * Resource ledger
+ * ================================================================ */
+
+static int
+coalition_ledger(int fd, uint32_t flags, struct coalition_ledger_reply *lr)
+{
+	struct coalition_ledger_req lq;
+
+	memset(&lq, 0, sizeof(lq));
+	lq.op = COALITION_OP_LEDGER;
+	lq.flags = flags;
+	return (coalition_call(fd, &lq, sizeof(lq), NULL, 0, lr, sizeof(*lr)));
+}
+
+static int
+coalition_band(int fd, uint32_t flags, uint32_t floor,
+    struct coalition_band_reply *br)
+{
+	struct coalition_band_req bq;
+
+	memset(&bq, 0, sizeof(bq));
+	bq.op = COALITION_OP_BAND;
+	bq.flags = flags;
+	bq.floor = floor;
+	return (coalition_call(fd, &bq, sizeof(bq), NULL, 0, br, sizeof(*br)));
+}
+
+/*
+ * Ask for an assertion at band.  Returns the ioctl result; on success the
+ * assertion descriptor is stored in *afd and the reply in *br.
+ */
+static int
+coalition_assert(int fd, uint32_t band, struct coalition_band_reply *br,
+    int *afd)
+{
+	struct mac_capability_call_args ca;
+	struct coalition_band_req bq;
+	uint32_t nfds = 1;
+	int ret;
+
+	memset(&bq, 0, sizeof(bq));
+	bq.op = COALITION_OP_ASSERT;
+	bq.band = band;
+	memset(&ca, 0, sizeof(ca));
+	ca.req = &bq;
+	ca.req_len = sizeof(bq);
+	ca.reply = br;
+	ca.reply_len = sizeof(*br);
+	ca.reply_fds = afd;
+	ca.reply_nfds = nfds;
+	*afd = -1;
+	ret = ioctl(fd, MAC_CAPABILITY_CALL, &ca);
+	return (ret);
+}
+
+ATF_TC(ledger_never_sampled);
+ATF_TC_HEAD(ledger_never_sampled, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "A coalition that has never been sampled reports zeroed counters "
+	    "and an age of UINT64_MAX, and rejects unknown flags");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_coalition");
+}
+ATF_TC_BODY(ledger_never_sampled, tc)
+{
+	struct coalition_ledger_reply lr;
+	struct coalition_stat_reply sr;
+	int fd;
+
+	fd = mac_capability_connect("coalition");
+	ATF_REQUIRE(fd >= 0);
+	ATF_REQUIRE(coalition_stat(fd, &sr) == 0);
+	ATF_REQUIRE(coalition_ledger(fd, 0, &lr) == 0);
+	ATF_CHECK_EQ(lr.status, 0);
+	ATF_CHECK_EQ(lr.id, sr.id);
+	ATF_CHECK_EQ(lr.rss_bytes, 0);
+	ATF_CHECK_EQ(lr.vsz_bytes, 0);
+	ATF_CHECK_EQ(lr.nprocs, 0);
+	ATF_CHECK_EQ(lr.age_ms, UINT64_MAX);
+
+	/* Unknown flags are refused. */
+	ATF_REQUIRE(coalition_ledger(fd, 0x80, &lr) == 0);
+	ATF_CHECK_EQ(lr.status, EINVAL);
+	close(fd);
+}
+
+ATF_TC(ledger_refresh_counts_members);
+ATF_TC_HEAD(ledger_refresh_counts_members, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "A forced refresh sums the footprint of process members: the "
+	    "sample tracks members joining, reports a fresh age, and agrees "
+	    "with the exact walk COALITION_OP_RUSAGE performs");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_coalition");
+}
+ATF_TC_BODY(ledger_refresh_counts_members, tc)
+{
+	struct coalition_ledger_reply lr;
+	struct coalition_rusage_reply rr;
+	struct coalition_req_hdr hdr;
+	int cfd, pd, wstatus, ready[2];
+	int32_t status;
+	char tok;
+	pid_t pid;
+
+	cfd = mac_capability_connect("coalition");
+	ATF_REQUIRE(cfd >= 0);
+
+	/* Empty: a refresh is valid and reports nothing. */
+	ATF_REQUIRE(coalition_ledger(cfd, COALITION_LEDGER_REFRESH, &lr) == 0);
+	ATF_CHECK_EQ(lr.status, 0);
+	ATF_CHECK_EQ(lr.nprocs, 0);
+	ATF_CHECK(lr.age_ms != UINT64_MAX);
+
+	/*
+	 * The member has to be settled before either snapshot is taken.  A
+	 * child that is still faulting in its first pages has a resident set
+	 * that changes between the cheap sample and the exact walk, which
+	 * would make the comparison below a race rather than a check.  It
+	 * tells us when it has stopped growing, and only then do we look.
+	 */
+	ATF_REQUIRE(pipe(ready) == 0);
+	pid = pdfork(&pd, 0);
+	ATF_REQUIRE(pid >= 0);
+	if (pid == 0) {
+		close(cfd);
+		close(ready[0]);
+		(void)write(ready[1], "r", 1);
+		pause();
+		_exit(0);
+	}
+	close(ready[1]);
+	ATF_REQUIRE(read(ready[0], &tok, 1) == 1);
+	close(ready[0]);
+	ATF_REQUIRE(coalition_enlist(cfd, pd, &status) == 0);
+	ATF_CHECK_EQ(status, 0);
+	/* Let the child reach pause() and stop touching memory. */
+	usleep(200000);
+
+	ATF_REQUIRE(coalition_ledger(cfd, COALITION_LEDGER_REFRESH, &lr) == 0);
+	ATF_CHECK_EQ(lr.status, 0);
+	ATF_CHECK_EQ_MSG(lr.nprocs, 1, "member not counted");
+	ATF_CHECK(lr.nthreads >= 1);
+	ATF_CHECK_MSG(lr.rss_bytes > 0, "no resident memory attributed");
+	ATF_CHECK_MSG(lr.vsz_bytes >= lr.rss_bytes,
+	    "address space smaller than resident set: vsz=%ju rss=%ju",
+	    (uintmax_t)lr.vsz_bytes, (uintmax_t)lr.rss_bytes);
+	ATF_CHECK(lr.age_ms < 5000);
+
+	/* The cheap sample and the exact walk see the same thing. */
+	hdr.op = COALITION_OP_RUSAGE;
+	ATF_REQUIRE(coalition_call(cfd, &hdr, sizeof(hdr), NULL, 0, &rr,
+	    sizeof(rr)) == 0);
+	ATF_CHECK_EQ(rr.status, 0);
+	ATF_CHECK_EQ(rr.nprocs, lr.nprocs);
+	/*
+	 * The address space of a paused process does not move, so the two
+	 * paths must agree on it exactly.  The resident set can still be
+	 * trimmed by the pager between the two calls, so it is compared as
+	 * the same order of magnitude rather than bit for bit.
+	 */
+	ATF_CHECK_EQ_MSG(rr.vsz_bytes, lr.vsz_bytes,
+	    "address space disagrees: walk=%ju sample=%ju",
+	    (uintmax_t)rr.vsz_bytes, (uintmax_t)lr.vsz_bytes);
+	ATF_CHECK_MSG(rr.rss_bytes > 0 && lr.rss_bytes > 0 &&
+	    rr.rss_bytes < lr.rss_bytes * 4 &&
+	    lr.rss_bytes < rr.rss_bytes * 4,
+	    "resident set disagrees: walk=%ju sample=%ju",
+	    (uintmax_t)rr.rss_bytes, (uintmax_t)lr.rss_bytes);
+
+	pdkill(pd, SIGKILL);
+	waitpid(pid, &wstatus, 0);
+	close(pd);
+	close(cfd);
+}
+
+ATF_TC(ledger_cached_between_refreshes);
+ATF_TC_HEAD(ledger_cached_between_refreshes, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Without a refresh the reply is the cached sample and its age "
+	    "grows; a memory-pressure pass refreshes it without being asked");
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_coalition");
+}
+ATF_TC_BODY(ledger_cached_between_refreshes, tc)
+{
+	struct coalition_ledger_reply a, b, c;
+	int lowmem = TEST_VM_LOW_PAGES;
+	int fd;
+
+	fd = mac_capability_connect("coalition");
+	ATF_REQUIRE(fd >= 0);
+	ATF_REQUIRE(coalition_ledger(fd, COALITION_LEDGER_REFRESH, &a) == 0);
+	ATF_CHECK_EQ(a.status, 0);
+	/*
+	 * Let the sample get demonstrably old before the trigger, and read it
+	 * back promptly afterwards.  The waits have to be this way round: the
+	 * age after a refresh is the time since the refresh, so if the second
+	 * wait were the longer one a successful refresh would still report a
+	 * larger age than the stale reading it replaced, and the check would
+	 * fail on working code.
+	 */
+	usleep(800000);
+	ATF_REQUIRE(coalition_ledger(fd, 0, &b) == 0);
+	ATF_CHECK_EQ(b.status, 0);
+	ATF_CHECK_MSG(b.age_ms >= a.age_ms + 400,
+	    "cached sample did not age: %ju then %ju",
+	    (uintmax_t)a.age_ms, (uintmax_t)b.age_ms);
+
+	/* A pressure pass refreshes every coalition's sample. */
+	if (sysctlbyname("debug.vm_lowmem", NULL, NULL, &lowmem,
+	    sizeof(lowmem)) != 0)
+		atf_tc_skip("debug.vm_lowmem unavailable: %s",
+		    strerror(errno));
+	usleep(200000);
+	ATF_REQUIRE(coalition_ledger(fd, 0, &c) == 0);
+	ATF_CHECK_MSG(c.age_ms < b.age_ms,
+	    "pressure did not refresh the sample: %ju then %ju",
+	    (uintmax_t)b.age_ms, (uintmax_t)c.age_ms);
+	close(fd);
 }
 
 /* ================================================================
@@ -4053,6 +4299,319 @@ ATF_TC_BODY(coalition_churn_no_leak, tc)
  * Test registration
  * ================================================================ */
 
+
+ATF_TC(band_floor_default_and_set);
+ATF_TC_HEAD(band_floor_default_and_set, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "A new coalition starts at the standard band; the holder may move "
+	    "the floor, out-of-range bands are refused, and with no assertions "
+	    "the effective band is the floor");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_coalition");
+}
+ATF_TC_BODY(band_floor_default_and_set, tc)
+{
+	struct coalition_band_reply br;
+	struct coalition_stat_reply sr;
+	int fd, b;
+
+	fd = mac_capability_connect("coalition");
+	ATF_REQUIRE(fd >= 0);
+	ATF_REQUIRE(coalition_stat(fd, &sr) == 0);
+
+	ATF_REQUIRE(coalition_band(fd, 0, 0, &br) == 0);
+	ATF_CHECK_EQ(br.status, 0);
+	ATF_CHECK_EQ(br.id, sr.id);
+	ATF_CHECK_EQ(br.floor, COALITION_BAND_STANDARD);
+	ATF_CHECK_EQ(br.effective, COALITION_BAND_STANDARD);
+	for (b = 0; b < COALITION_BAND_COUNT; b++)
+		ATF_CHECK_EQ(br.nassert[b], 0);
+
+	/* Every valid band can be set, and reads back as the effective band. */
+	for (b = 0; b < COALITION_BAND_COUNT; b++) {
+		ATF_REQUIRE(coalition_band(fd, COALITION_BAND_SET_FLOOR,
+		    (uint32_t)b, &br) == 0);
+		ATF_CHECK_EQ(br.status, 0);
+		ATF_CHECK_EQ(br.floor, (uint32_t)b);
+		ATF_CHECK_EQ(br.effective, (uint32_t)b);
+	}
+
+	/* Out of range, and unknown flags, are refused without changing it. */
+	ATF_REQUIRE(coalition_band(fd, COALITION_BAND_SET_FLOOR,
+	    COALITION_BAND_COUNT, &br) == 0);
+	ATF_CHECK_EQ(br.status, EINVAL);
+	ATF_REQUIRE(coalition_band(fd, 0x80, 0, &br) == 0);
+	ATF_CHECK_EQ(br.status, EINVAL);
+	ATF_REQUIRE(coalition_band(fd, 0, 0, &br) == 0);
+	ATF_CHECK_EQ(br.floor, COALITION_BAND_CRITICAL);
+	close(fd);
+}
+
+ATF_TC(band_assertion_raises_and_close_drops);
+ATF_TC_HEAD(band_assertion_raises_and_close_drops, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "An assertion descriptor raises the effective band while it is "
+	    "open and drops it when closed; assertions below the floor do not "
+	    "lower it; the highest assertion wins");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_coalition");
+}
+ATF_TC_BODY(band_assertion_raises_and_close_drops, tc)
+{
+	struct coalition_band_reply br;
+	int fd, a_int, a_crit, a_idle;
+
+	fd = mac_capability_connect("coalition");
+	ATF_REQUIRE(fd >= 0);
+	/* Put the floor at the bottom so assertions are what moves it. */
+	ATF_REQUIRE(coalition_band(fd, COALITION_BAND_SET_FLOOR,
+	    COALITION_BAND_IDLE, &br) == 0);
+	ATF_REQUIRE_EQ(br.status, 0);
+
+	ATF_REQUIRE(coalition_assert(fd, COALITION_BAND_INTERACTIVE,
+	    &br, &a_int) == 0);
+	ATF_REQUIRE_EQ(br.status, 0);
+	ATF_REQUIRE(a_int >= 0);
+	ATF_CHECK_EQ(br.asserted, COALITION_BAND_INTERACTIVE);
+	ATF_CHECK_EQ(br.effective, COALITION_BAND_INTERACTIVE);
+	ATF_CHECK_EQ(br.nassert[COALITION_BAND_INTERACTIVE], 1);
+
+	/* A lower assertion cannot pull the band back down. */
+	ATF_REQUIRE(coalition_assert(fd, COALITION_BAND_IDLE,
+	    &br, &a_idle) == 0);
+	ATF_REQUIRE_EQ(br.status, 0);
+	ATF_CHECK_EQ(br.effective, COALITION_BAND_INTERACTIVE);
+
+	/* A higher one raises it further. */
+	ATF_REQUIRE(coalition_assert(fd, COALITION_BAND_CRITICAL,
+	    &br, &a_crit) == 0);
+	ATF_REQUIRE_EQ(br.status, 0);
+	ATF_CHECK_EQ(br.effective, COALITION_BAND_CRITICAL);
+
+	/* Closing the top assertion falls back to the next one down. */
+	ATF_REQUIRE(close(a_crit) == 0);
+	ATF_REQUIRE(coalition_band(fd, 0, 0, &br) == 0);
+	ATF_CHECK_EQ(br.effective, COALITION_BAND_INTERACTIVE);
+	ATF_CHECK_EQ(br.nassert[COALITION_BAND_CRITICAL], 0);
+
+	ATF_REQUIRE(close(a_int) == 0);
+	ATF_REQUIRE(coalition_band(fd, 0, 0, &br) == 0);
+	ATF_CHECK_EQ(br.effective, COALITION_BAND_IDLE);
+
+	ATF_REQUIRE(close(a_idle) == 0);
+	ATF_REQUIRE(coalition_band(fd, 0, 0, &br) == 0);
+	ATF_CHECK_EQ(br.effective, COALITION_BAND_IDLE);
+	ATF_CHECK_EQ(br.nassert[COALITION_BAND_IDLE], 0);
+	close(fd);
+}
+
+ATF_TC(band_assertion_dies_with_holder);
+ATF_TC_HEAD(band_assertion_dies_with_holder, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "An assertion held only by a process that exits is released by the "
+	    "kernel: a crashed holder cannot pin a coalition at a high band");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_coalition");
+}
+ATF_TC_BODY(band_assertion_dies_with_holder, tc)
+{
+	struct coalition_band_reply br;
+	int fd, afd, wstatus;
+	pid_t pid;
+
+	fd = mac_capability_connect("coalition");
+	ATF_REQUIRE(fd >= 0);
+	ATF_REQUIRE(coalition_band(fd, COALITION_BAND_SET_FLOOR,
+	    COALITION_BAND_IDLE, &br) == 0);
+	ATF_REQUIRE(coalition_assert(fd, COALITION_BAND_CRITICAL,
+	    &br, &afd) == 0);
+	ATF_REQUIRE_EQ(br.status, 0);
+	ATF_CHECK_EQ(br.effective, COALITION_BAND_CRITICAL);
+
+	/*
+	 * Hand the only copy to a child and let it die.  The parent closes its
+	 * copy first, so the child's exit is the last reference.
+	 */
+	pid = fork();
+	ATF_REQUIRE(pid >= 0);
+	if (pid == 0) {
+		/* Hold it, then die abruptly. */
+		_exit(0);
+	}
+	ATF_REQUIRE(close(afd) == 0);
+	ATF_REQUIRE(waitpid(pid, &wstatus, 0) == pid);
+
+	ATF_REQUIRE(coalition_band(fd, 0, 0, &br) == 0);
+	ATF_CHECK_EQ(br.effective, COALITION_BAND_IDLE);
+	ATF_CHECK_EQ(br.nassert[COALITION_BAND_CRITICAL], 0);
+	close(fd);
+}
+
+ATF_TC(band_assertion_carries_no_authority);
+ATF_TC_HEAD(band_assertion_carries_no_authority, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "An assertion descriptor reports the band and nothing else: it is "
+	    "not a coalition, so terminate, stat and enlist are all refused, "
+	    "and it cannot be obtained by connecting to the service");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_coalition");
+}
+ATF_TC_BODY(band_assertion_carries_no_authority, tc)
+{
+	struct coalition_band_reply br, abr;
+	struct coalition_stat_reply sr;
+	struct coalition_req_hdr hdr;
+	int fd, afd;
+
+	/* The assertion service refuses a direct connection. */
+	ATF_CHECK(mac_capability_connect("coalition_assert") < 0);
+
+	fd = mac_capability_connect("coalition");
+	ATF_REQUIRE(fd >= 0);
+	ATF_REQUIRE(coalition_stat(fd, &sr) == 0);
+	ATF_REQUIRE(coalition_assert(fd, COALITION_BAND_INTERACTIVE,
+	    &br, &afd) == 0);
+	ATF_REQUIRE_EQ(br.status, 0);
+
+	/* It answers COALITION_OP_BAND, naming its own band. */
+	memset(&abr, 0, sizeof(abr));
+	ATF_REQUIRE(coalition_band(afd, 0, 0, &abr) == 0);
+	ATF_CHECK_EQ(abr.id, sr.id);
+	ATF_CHECK_EQ(abr.asserted, COALITION_BAND_INTERACTIVE);
+	ATF_CHECK_EQ(abr.effective, COALITION_BAND_INTERACTIVE);
+
+	/* It answers nothing else. */
+	hdr.op = COALITION_OP_TERMINATE;
+	ATF_CHECK(coalition_call(afd, &hdr, sizeof(hdr), NULL, 0,
+	    &abr, sizeof(abr)) != 0);
+	hdr.op = COALITION_OP_STAT;
+	ATF_CHECK(coalition_call(afd, &hdr, sizeof(hdr), NULL, 0,
+	    &sr, sizeof(sr)) != 0);
+
+	/* Setting a floor through an assertion is refused, not honoured. */
+	ATF_CHECK(coalition_band(afd, COALITION_BAND_SET_FLOOR,
+	    COALITION_BAND_IDLE, &abr) != 0);
+	ATF_REQUIRE(coalition_band(fd, 0, 0, &br) == 0);
+	ATF_CHECK_EQ(br.floor, COALITION_BAND_STANDARD);
+
+	/* The coalition is still alive and still holds the assertion. */
+	ATF_REQUIRE(coalition_stat(fd, &sr) == 0);
+	ATF_CHECK_EQ(br.nassert[COALITION_BAND_INTERACTIVE], 1);
+	close(afd);
+	close(fd);
+}
+
+ATF_TC(band_assertion_outlives_coalition_fd);
+ATF_TC_HEAD(band_assertion_outlives_coalition_fd, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "An assertion keeps the coalition object alive after the coalition "
+	    "descriptor is closed: the assertion still answers, and closing it "
+	    "releases the last reference without a panic");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_coalition");
+}
+ATF_TC_BODY(band_assertion_outlives_coalition_fd, tc)
+{
+	struct coalition_band_reply br;
+	int fd, afd;
+
+	fd = mac_capability_connect("coalition");
+	ATF_REQUIRE(fd >= 0);
+	ATF_REQUIRE(coalition_assert(fd, COALITION_BAND_CRITICAL,
+	    &br, &afd) == 0);
+	ATF_REQUIRE_EQ(br.status, 0);
+	ATF_REQUIRE(afd >= 0);
+
+	/* Drop the coalition; the assertion is the only thing holding it. */
+	ATF_REQUIRE(close(fd) == 0);
+
+	memset(&br, 0, sizeof(br));
+	ATF_REQUIRE(coalition_band(afd, 0, 0, &br) == 0);
+	ATF_CHECK_EQ(br.asserted, COALITION_BAND_CRITICAL);
+	ATF_REQUIRE(close(afd) == 0);
+}
+
+ATF_TC(band_assertion_churn_under_readers);
+ATF_TC_HEAD(band_assertion_churn_under_readers, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Coalitions and assertions churn while other processes enumerate "
+	    "every process repeatedly: exercises the lock-free process-hash and "
+	    "coalition-list read paths against concurrent create and free");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_coalition");
+}
+ATF_TC_BODY(band_assertion_churn_under_readers, tc)
+{
+	struct coalition_band_reply br;
+	int i, r, wstatus, nreaders = 4;
+	pid_t readers[4], pid;
+
+	/*
+	 * The readers hammer the exporter: every kinfo_proc fill calls into
+	 * the coalition process hash with no lock held, so this is the race
+	 * the SMR read side has to survive.
+	 */
+	for (r = 0; r < nreaders; r++) {
+		pid = fork();
+		ATF_REQUIRE(pid >= 0);
+		if (pid == 0) {
+			size_t len;
+			int mib[3] = { CTL_KERN, KERN_PROC, KERN_PROC_ALL };
+
+			for (i = 0; i < 400; i++) {
+				len = 0;
+				(void)sysctl(mib, 3, NULL, &len, NULL, 0);
+				if (len != 0) {
+					void *buf = malloc(len);
+
+					if (buf != NULL) {
+						(void)sysctl(mib, 3, buf, &len,
+						    NULL, 0);
+						free(buf);
+					}
+				}
+			}
+			_exit(0);
+		}
+		readers[r] = pid;
+	}
+
+	for (i = 0; i < 300; i++) {
+		int fd, afd, pd;
+		pid_t child;
+
+		fd = mac_capability_connect("coalition");
+		ATF_REQUIRE(fd >= 0);
+		/* A real process member, so the hash is written too. */
+		child = pdfork(&pd, 0);
+		ATF_REQUIRE(child >= 0);
+		if (child == 0) {
+			pause();
+			_exit(0);
+		}
+		(void)coalition_enlist(fd, pd, NULL);
+		if (coalition_assert(fd, (uint32_t)(i % COALITION_BAND_COUNT),
+		    &br, &afd) == 0 && afd >= 0) {
+			if ((i & 1) == 0)
+				close(afd);
+			else {
+				/* Close order reversed for half the rounds. */
+				close(fd);
+				fd = -1;
+				close(afd);
+			}
+		}
+		if (fd >= 0)
+			close(fd);
+		close(pd);
+		(void)kill(child, SIGKILL);
+		(void)waitpid(child, &wstatus, 0);
+	}
+
+	for (r = 0; r < nreaders; r++)
+		ATF_CHECK(waitpid(readers[r], &wstatus, 0) == readers[r]);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 	/* Lifecycle */
@@ -4171,6 +4730,15 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, set_signal_zero_releases_joined);
 	ATF_TP_ADD_TC(tp, pressure_notifies_coalitions);
 	ATF_TP_ADD_TC(tp, pressure_after_close_is_safe);
+	ATF_TP_ADD_TC(tp, ledger_never_sampled);
+	ATF_TP_ADD_TC(tp, ledger_refresh_counts_members);
+	ATF_TP_ADD_TC(tp, ledger_cached_between_refreshes);
+	ATF_TP_ADD_TC(tp, band_floor_default_and_set);
+	ATF_TP_ADD_TC(tp, band_assertion_raises_and_close_drops);
+	ATF_TP_ADD_TC(tp, band_assertion_dies_with_holder);
+	ATF_TP_ADD_TC(tp, band_assertion_carries_no_authority);
+	ATF_TP_ADD_TC(tp, band_assertion_outlives_coalition_fd);
+	ATF_TP_ADD_TC(tp, band_assertion_churn_under_readers);
 
 	/* Resource exhaustion + teardown-race stress */
 	ATF_TP_ADD_TC(tp, exhaust_coalition_max);

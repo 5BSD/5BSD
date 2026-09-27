@@ -33,6 +33,9 @@
 #define	COALITION_OP_RUSAGE		11
 #define	COALITION_OP_ENLIST_SET		12
 #define	COALITION_OP_SET_RESPONSIBLE	13
+#define	COALITION_OP_LEDGER		14
+#define	COALITION_OP_BAND		15
+#define	COALITION_OP_ASSERT		16
 
 /*
  * Common request header.
@@ -197,6 +200,108 @@ struct coalition_stat_reply {
 struct coalition_set_responsible_req {
 	uint32_t	op;
 	uint32_t	flags;		/* COALITION_RESP_*, ignored with an fd */
+};
+
+/*
+ * COALITION_OP_LEDGER
+ *   req:  coalition_ledger_req
+ *   reply: coalition_ledger_reply
+ *
+ * The coalition's cached resource sample: the footprint of its process
+ * members, summed.  Unlike COALITION_OP_RUSAGE this never walks the member
+ * list, so it is cheap enough to poll and cheap enough for a policy pass to
+ * rank every coalition on the system.
+ *
+ * The sample is refreshed whenever the kernel reports memory pressure (see
+ * COALITION_NOTE_PRESSURE), which is when a ranking is about to matter, and
+ * on request with COALITION_LEDGER_REFRESH.  age_ms says how stale the
+ * returned sample is; a coalition that has never been sampled reports
+ * age_ms of UINT64_MAX and zeroed counters.
+ */
+#define	COALITION_LEDGER_REFRESH	0x1	/* walk members before replying */
+struct coalition_ledger_req {
+	uint32_t	op;
+	uint32_t	flags;		/* COALITION_LEDGER_* */
+};
+struct coalition_ledger_reply {
+	int32_t		status;
+	uint32_t	nprocs;
+	uint32_t	nthreads;
+	uint32_t	_pad;
+	uint64_t	id;
+	uint64_t	rss_bytes;
+	uint64_t	vsz_bytes;
+	uint64_t	age_ms;		/* UINT64_MAX = never sampled */
+};
+
+/*
+ * Bands and assertions
+ * --------------------
+ * A coalition has a band: how much the system wants to keep it running when
+ * memory or CPU runs short.  Bands are ordered; IDLE is given up first and
+ * CRITICAL last.
+ *
+ * The band is not a number somebody writes down and then has to remember to
+ * take back.  It has two parts:
+ *
+ *   floor      the band the coalition always has, set by its launcher from
+ *              the bundle manifest.  One value, changed by whoever holds
+ *              the coalition.
+ *   assertions descriptors.  COALITION_OP_ASSERT on a coalition returns a
+ *              NEW descriptor that asserts a band.  While that descriptor is
+ *              open the coalition's band is at least the asserted one; when
+ *              it is closed -- deliberately, or because the process holding
+ *              it exited or crashed -- the assertion goes away with it.
+ *
+ * The effective band is the highest asserted band, or the floor if nothing is
+ * asserted.  An assertion is an ordinary capability: it can be transferred,
+ * so a client can hand a provider the right to keep the client's own work
+ * alive while a request is in flight, and can be revoked like anything else.
+ * Nothing has to reconcile a table of who asked for what, and a crash cannot
+ * leave a coalition pinned at a high band forever.
+ *
+ * COALITION_OP_BAND
+ *   req:  coalition_band_req { .op = COALITION_OP_BAND, flags, floor }
+ *   rep:  coalition_band_reply
+ *   Reads the bands.  With COALITION_BAND_SET_FLOOR, also sets the floor
+ *   first.  The reply always describes the state after any change.
+ *
+ * COALITION_OP_ASSERT
+ *   req:  coalition_band_req { .op = COALITION_OP_ASSERT, band }
+ *   rep:  coalition_band_reply
+ *   fds:  one, the assertion.  Close it to drop the assertion.
+ *   The reply's effective band already accounts for the new assertion.
+ *
+ * An assertion descriptor accepts one operation of its own,
+ * COALITION_OP_BAND with no flags, which reports the band it asserts and the
+ * coalition's current effective band.  It carries no other authority: it
+ * cannot enlist, signal, or read the membership of the coalition it holds up.
+ */
+
+/* Bands, lowest first.  Values are wire values; do not renumber. */
+#define	COALITION_BAND_IDLE		0
+#define	COALITION_BAND_BACKGROUND	1
+#define	COALITION_BAND_STANDARD		2
+#define	COALITION_BAND_INTERACTIVE	3
+#define	COALITION_BAND_CRITICAL		4
+#define	COALITION_BAND_COUNT		5
+
+#define	COALITION_BAND_SET_FLOOR	0x1	/* apply .floor */
+
+struct coalition_band_req {
+	uint32_t	op;
+	uint32_t	flags;		/* COALITION_BAND_* */
+	uint32_t	floor;		/* with COALITION_BAND_SET_FLOOR */
+	uint32_t	band;		/* band to assert (COALITION_OP_ASSERT) */
+};
+struct coalition_band_reply {
+	int32_t		status;
+	uint32_t	floor;
+	uint32_t	effective;
+	uint32_t	asserted;	/* this descriptor's band, or floor */
+	uint64_t	id;
+	uint32_t	nassert[COALITION_BAND_COUNT];
+	uint32_t	_pad;
 };
 
 /*
