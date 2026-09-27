@@ -154,6 +154,14 @@ struct mac_capability_ops {
  */
 #define	MAC_CAPABILITY_SVC_NOTIFY		0x0002	/* emits async RECVMSG notifications */
 #define	MAC_CAPABILITY_SVC_MINTABLE		0x0004	/* instances can mint new instances */
+/*
+ * Attached fds are REFERENCES the kernel service holds or inspects itself
+ * and never delivers to another process (the coalition service: enlist,
+ * set-leader, set-responsible).  Attaching is then not a transfer: a
+ * CAP_XFER_NONE descriptor may be attached and a CAP_XFER_ONCE one is not
+ * consumed.  A service that forwards attachments to a peer must not set it.
+ */
+#define	MAC_CAPABILITY_SVC_REFATTACH		0x0008
 
 struct mac_capability_service_params {
 	const char		*name;

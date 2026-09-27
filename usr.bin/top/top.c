@@ -90,6 +90,7 @@ static const struct option longopts[] = {
     { "thread", no_argument, NULL, 'H' },
     { "idle-procs", no_argument, NULL, 'I' },
 	{ "jail", required_argument, NULL, 'J' },
+	{ "coalition", no_argument, NULL, 'c' },
 	{ "per-cpu", no_argument, NULL, 'P' },
     { "system-procs", no_argument, NULL, 'S' },
     { "thread-id", no_argument, NULL, 'T' }, /* differs from orignal */
@@ -282,6 +283,7 @@ main(int argc, const char *argv[])
     ps.wcpu    = 1;
     ps.jid     = -1;
     ps.jail    = false;
+    ps.coalition = false;
     ps.swap    = false;
     ps.kidle   = true;
     ps.pid     = -1;
@@ -311,7 +313,7 @@ main(int argc, const char *argv[])
 	    optind = 1;
 	}
 
-	while ((i = getopt_long(ac, __DECONST(char * const *, av), "CSIHPabijJ:nquvzs:d:U:m:o:p:Ttw", longopts, NULL)) != EOF)
+	while ((i = getopt_long(ac, __DECONST(char * const *, av), "CSIHPabcijJ:nquvzs:d:U:m:o:p:Ttw", longopts, NULL)) != EOF)
 	{
 	    switch(i)
 	    {
@@ -438,6 +440,10 @@ main(int argc, const char *argv[])
 
 	      case 'j':
 		ps.jail = !ps.jail;
+		break;
+
+	      case 'c':			/* display coalition ids */
+		ps.coalition = !ps.coalition;
 		break;
 
 	      case 'J':			/* display only jail's processes */

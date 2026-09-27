@@ -201,6 +201,41 @@ are value / effort; status as above.
 | H4 | L4Re factories | the right to create coalitions/containers as a delegatable capability with a quota | agents create instances without asking the switchboard by name | later, M |
 | H5 | Hydra amplification, E sealer/unsealer | provider-sealed opaque handles that only the issuing provider can unseal | cross-provider handoff through untrusted clients without path or id leaks | later, M |
 
+### Second survey (2026-09-26): Inferno, seL4 ecosystem, QNX, Darwin
+
+Verified against the Inferno 4E manuals, the Microkit and sDDF sources, the
+QNX 7.1/8.0 references and the XNU sources; only items absent above.
+
+| # | From | Feature | Buys 5BSD | Status |
+|---|---|---|---|---|
+| I1 | QNX unblock protocol, seL4 MCS timeout faults | CALL lifecycle: a deadline on a call, a cancel notice with the call id delivered to the provider when the caller dies or times out (provider finishes or rolls back, then replies), and a fault raised on the callee's responsible parent when it exceeds its budget serving someone | closes the half-done-transaction hole (tzfsd commit, warden destroy) when a caller is killed; per-request liveness beside the per-unit watchdog | next, M |
+| I2 | Darwin RunningBoard | assertion-derived coalition state: the responsible parent holds assertion capabilities on the coalition descriptor; state (active, background, idle, frozen) and band follow from what is held, and dropping them demotes automatically | one rule instead of separate band, idle-exit and freezer knobs; `procstat` shows *why* a unit is alive; decide before building A4 and the ledgers | next (design), L |
+| I3 | Inferno `/prog` fd and ns files, QNX `DCMD_PROC_*`, Darwin task-port flavors | inspection on a held procdesc or coalition: the fd table with rights and delivery origin, a replayable namespace, held channels, STOP/RUN/WAITSTOP, an exclusive debugger right, and canonical CONTROL/READ/INSPECT/NAME rights profiles | the live twin of the capability dump; debugging and triage without pid or path | next, M |
+| I4 | seL4 Acacia/sdfgen, QNX secpolgenerate | the system bundle as a generator: one program emits unit manifests, policy files, the reachability graph and VM fixtures; learn mode traces a run and reports unused capabilities | hand-edited manifests become lint-checked exceptions; manifests shrink to what is used | next, M (tooling) |
+| I5 | Darwin os_activity | a 64-bit activity id on every CALL, inherited by child calls, stamped by BSDLog and BSDAudit | one request (login, auth agent, tzfsd, logd) greppable end to end; correlation, distinct from cost attribution (C2) | next, S-M |
+| I6 | Darwin corpses, stackshot/kcdata, tailspin | post-mortem procdesc (CORPSE state with read and inspect rights, memory plus a self-describing record) and a coalition-scoped snapshot op in BSDTrace with delta snapshots and a trace ring | crash reporting and hang triage (who waits on whom across a coalition) without root or core paths | later, M |
+| I7 | QNX MsgDeliverEvent, pulses | a trigger-only event capability (mint, trigger, revoke; bound to one knote on the client's kqueue) and an allocation-free kevent class with code, value and band, with a reserved per-channel pool | providers notify without holding client channel ends; notifications that cannot fail under memory pressure; transport for I1 and I9 | later, M |
+| I8 | sDDF shared-memory queues, QNX slogger2 | SPSC free/active ring pair over a delivered memfd with ownership tags and a one-queue invariant, channel used only to notify; a ring-backed mode of the Log capability with a lost-records marker | bulk path for log, trace, audit, net and block providers; rings survive a writer crash | later, M |
+| I9 | seL4 CancelBadgedSends, QNX `_NTO_CHF_DISCONNECT` | `REVOKE_INSTANCE`: cancel queued and in-flight calls of one minted instance with ECANCELED while the endpoint survives; a "last endpoint of coalition X closed" notice keyed by coalition id | per-holder cleanup beyond no-senders and epitaphs | later, S |
+| I10 | QNX priority inheritance, seL4 ppcall rule | lint now: CALL edges form a DAG and the callee's band is at least the caller's; later, lend the caller's band for the duration of a call with a manifest ceiling and revert on reply | bounded priority inversion across providers | lint next, kernel after SCHED_MIC |
+| I11 | Inferno `exceptions propagate/notifyleader`, Microkit monitor | manifest `on_member_fault = isolate/notify-leader/propagate`; faults answered by the responsible parent; a zero-dependency monitor unit for parentless units and the switchboard itself | helpers die together and the parent gets one fault; who restarts the switchboard | later, S-M |
+| I12 | launchd LaunchEvents, Inferno registry, QNX pathspace | activation on a device match or a topic with the matched fd delivered; do not answer lookups before ready; descriptor-lifetime registry entries with a version watch; prefix ownership and explicit BEFORE/AFTER/OPAQUE shadowing in the registry | device- and event-driven activation; a registry shape the deferred namespace item needs anyway | later, S-M |
+
+Smaller adopts: BSDLog field privacy flags and signpost intervals; manifest
+`budget`/`period` defaults mapped to rctl; CALL metadata fields (reply-buffer
+length, ABI bit, jail id); a coalition-scoped signer set for code loading
+(Inferno `#Σ`). Larger and later: sDDF-style split drivers with an interrupt
+descriptor minted by BSDDevice; export of a container view over a held
+channel (Inferno export/rstyxd); a file facade over a held channel (Inferno
+file2chan); an OES flow-verdict event class (NetworkExtension filters).
+
+Skipped from this pass: Inferno caphash bearer strings and Styx-as-only-wire
+(identity by attach name, rights by mode bits), hosted `emu` as a plane
+emulator; seL4 untyped/CNode/VSpace, domain scheduler, verified-artifact reuse;
+QNX Qnet (authority carried as uid), sandbox, pathtrust, ability lock/inherit;
+Darwin ES mute sets (already in OES), XPC code-signing checks, AMFI, SIP,
+DriverKit entitlements, kdebug, work intervals, spawn attributes.
+
 ### Skip (decided, do not re-propose)
 
 - Bearer authority in user memory: Amoeba check fields, macOS sandbox extensions as path tokens, Cap'n Proto sturdyrefs as bearer refs. A delivered descriptor is strictly better.

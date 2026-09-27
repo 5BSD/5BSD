@@ -51,6 +51,11 @@ for a per-user unit activated from that user's login session.
 Show the responsibility tree: every running unit indented under the
 coalition it answers to, starting from the switchboard's own root
 coalition, then each login session, then the self-rooted providers.
+The header carries the kernel's boot id
+.Pq Va kern.boot_id :
+coalition ids are unique within one boot only, and the switchboard start
+audit record pairs the same boot id with the root coalition id so records
+from different boots are never confused.
 The ids shown are the same ones
 .Xr ps 1
 prints with

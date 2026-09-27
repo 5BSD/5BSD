@@ -41,6 +41,14 @@ mac_capability_coalition:::join
 	@events["join"] = count();
 }
 
+mac_capability_coalition:::responsible-set
+{
+	printf("%-6d %-16s %-18s coalition=%llu responsible=%llu error=%d\n",
+	    pid, execname, "responsible-set", (unsigned long long)arg0,
+	    (unsigned long long)arg1, arg2);
+	@events["responsible-set"] = count();
+}
+
 mac_capability_coalition:::terminate
 {
 	printf("%-6d %-16s %-18s members=%u error=%d\n",

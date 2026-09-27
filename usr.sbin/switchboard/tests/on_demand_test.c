@@ -150,6 +150,22 @@ mac_cap_coalition_graceful(int coalition_fd, int sig, unsigned timeout_ms)
 }
 
 /*
+ * Bundle-derived slot policy (startup.c): a fresh on-demand slot must get
+ * its owner uid and agent confinement exactly as a boot-loaded one.  Count
+ * the applications so a test can assert on-demand went through it.
+ */
+static unsigned slot_policy_calls;
+
+void
+svc_slot_apply_bundle_policy(struct svc_runtime *svc, unsigned bundle_idx)
+{
+
+	(void)bundle_idx;
+	svc->owner_uid = (uid_t)-1;
+	slot_policy_calls++;
+}
+
+/*
  * Responsibility is decided by responsibility.c from the requester and the
  * session; on_demand.c only records that decision.  Remember the last call
  * so tests can assert the requester was threaded through.

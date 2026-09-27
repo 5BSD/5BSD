@@ -709,6 +709,14 @@ od_launch(const char *name, struct svc_runtime *requester,
 			    capbundle_svc_label(asvc));
 			goto fail_timer;
 		}
+		/*
+		 * Same bundle-derived policy the boot loader applies: owner
+		 * uid (so a per-user agent is attributed to its owner's
+		 * session and managed by its owner) and the agent confinement
+		 * that clamps its manifest.  Without this an on-demand agent
+		 * ran un-clamped and rooted itself.
+		 */
+		svc_slot_apply_bundle_policy(target, bundle_idx);
 		target->lookup_activated = true;
 
 		/* Attribution. */

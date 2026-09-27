@@ -71,6 +71,7 @@ struct process_select
     bool wcpu;		/* show weighted cpu */
     int jid;		/* only this jid (unless jid == -1) */
     bool jail;		/* show jail ID */
+    bool coalition;	/* show coalition ID and responsible coalition */
     bool swap;		/* show swap usage */
     bool kidle;		/* show per-CPU idle threads */
     int pid;		/* only this pid (unless pid == -1) */

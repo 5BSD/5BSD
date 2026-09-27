@@ -537,9 +537,19 @@ main(int argc, char *argv[])
 	sd.running = true;
 	syslog(LOG_INFO, "switchboard started, %u bundles registered",
 	    bundle_registry_count());
-	switchboard_audit(AUE_SWITCHBOARD_START, getuid(), 0,
-	    "switchboard started, %u bundles registered",
-	    bundle_registry_count());
+	{
+		char bid[40];
+
+		/*
+		 * The boot id and root coalition id let an audit reader scope
+		 * every coalition= / responsible= that follows to this boot.
+		 */
+		switchboard_audit(AUE_SWITCHBOARD_START, getuid(), 0,
+		    "switchboard started, %u bundles registered boot=%s "
+		    "root_coalition=%ju", bundle_registry_count(),
+		    svc_boot_id(bid, sizeof(bid)),
+		    (uintmax_t)sd.root_coalition_id);
+	}
 
 	/* Reclaim any runtime containers stranded by a prior crash. */
 	svc_run_container_sweep();

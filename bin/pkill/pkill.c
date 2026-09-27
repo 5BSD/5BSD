@@ -119,6 +119,7 @@ static struct listhead ppidlist = SLIST_HEAD_INITIALIZER(ppidlist);
 static struct listhead tdevlist = SLIST_HEAD_INITIALIZER(tdevlist);
 static struct listhead sidlist = SLIST_HEAD_INITIALIZER(sidlist);
 static struct listhead jidlist = SLIST_HEAD_INITIALIZER(jidlist);
+static struct listhead coallist = SLIST_HEAD_INITIALIZER(coallist);
 static struct listhead classlist = SLIST_HEAD_INITIALIZER(classlist);
 
 static void	usage(void) __attribute__((__noreturn__));
@@ -185,7 +186,7 @@ main(int argc, char **argv)
 	execf = NULL;
 	coref = _PATH_DEVNULL;
 
-	while ((ch = getopt(argc, argv, "DF:G:ILM:N:P:SU:ac:d:fg:ij:lnoqs:t:u:vx")) != -1)
+	while ((ch = getopt(argc, argv, "C:DF:G:ILM:N:P:SU:ac:d:fg:ij:lnoqs:t:u:vx")) != -1)
 		switch (ch) {
 		case 'D':
 			debug_opt++;
@@ -249,6 +250,10 @@ main(int argc, char **argv)
 			break;
 		case 'j':
 			makelist(&jidlist, LT_JAIL, optarg);
+			criteria = 1;
+			break;
+		case 'C':
+			makelist(&coallist, LT_GENERIC, optarg);
 			criteria = 1;
 			break;
 		case 'l':
@@ -507,6 +512,19 @@ main(int argc, char **argv)
 			continue;
 		}
 
+		SLIST_FOREACH(li, &coallist, li_chain) {
+			/* A particular coalition id, or 0 for "in none". */
+			if ((long)kp->ki_coalition == li->li_number)
+				break;
+			/* Any coalition */
+			if (kp->ki_coalition != 0 && li->li_number == -1)
+				break;
+		}
+		if (SLIST_FIRST(&coallist) != NULL && li == NULL) {
+			selected[i] = 0;
+			continue;
+		}
+
 		SLIST_FOREACH(li, &classlist, li_chain) {
 			/*
 			 * We skip P_SYSTEM processes to match ps(1) output.
@@ -615,9 +633,9 @@ usage(void)
 		ustr = "[-signal] [-ILfilnovx]";
 
 	fprintf(stderr,
-		"usage: %s %s [-F pidfile] [-G gid] [-M core] [-N system]\n"
-		"             [-P ppid] [-U uid] [-c class] [-g pgrp] [-j jail]\n"
-		"             [-s sid] [-t tty] [-u euid] pattern ...\n",
+		"usage: %s %s [-C coalition] [-F pidfile] [-G gid] [-M core]\n"
+		"             [-N system] [-P ppid] [-U uid] [-c class] [-g pgrp]\n"
+		"             [-j jail] [-s sid] [-t tty] [-u euid] pattern ...\n",
 		getprogname(), ustr);
 
 	exit(STATUS_BADUSAGE);

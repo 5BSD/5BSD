@@ -158,6 +158,13 @@ struct coalition_set_responsible_req {
 The parent is named by the attached descriptor: a coalition instance names
 that coalition, and a process descriptor names the coalition its process is a
 member of.
+The coalition service holds attached descriptors in the kernel and never
+delivers them onward, so attaching is not a transfer: a descriptor confined
+with
+.Dv CAP_XFER_NONE
+may be attached (to this and every other coalition operation), and a
+.Dv CAP_XFER_ONCE
+descriptor is not consumed.
 With no descriptor,
 .Dv COALITION_RESP_CALLER
 names the calling process's own coalition and

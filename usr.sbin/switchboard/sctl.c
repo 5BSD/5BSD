@@ -259,7 +259,13 @@ sctl_cmd_tree(struct sctl_reply *reply, char *summary, size_t sumlen)
 	bool any;
 
 	off = 0;
-	BUF_APPEND(summary, sumlen, &off, "responsibility tree [coalition]\n");
+	{
+		char bid[40];
+
+		BUF_APPEND(summary, sumlen, &off,
+		    "responsibility tree [coalition] boot=%s\n",
+		    svc_boot_id(bid, sizeof(bid)));
+	}
 	if (sd.root_coalition_id != 0) {
 		BUF_APPEND(summary, sumlen, &off, "switchboard [%ju]\n",
 		    (uintmax_t)sd.root_coalition_id);

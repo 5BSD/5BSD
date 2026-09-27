@@ -3171,7 +3171,8 @@ coalition_mod_init(void)
 	memset(&p, 0, sizeof(p));
 	p.name = "coalition";
 	p.ops = &coalition_ops;
-	p.flags = MAC_CAPABILITY_SVC_NOTIFY | MAC_CAPABILITY_SVC_MINTABLE;
+	p.flags = MAC_CAPABILITY_SVC_NOTIFY | MAC_CAPABILITY_SVC_MINTABLE |
+	    MAC_CAPABILITY_SVC_REFATTACH;
 
 	error = mac_capability_service_create(&p, &coalition_svc);
 	if (error != 0)

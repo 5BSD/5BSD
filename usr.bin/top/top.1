@@ -6,7 +6,7 @@
 .Nd display and update information about the top cpu processes
 .Sh SYNOPSIS
 .Nm
-.Op Fl abCHIijnPqSTtuvwz
+.Op Fl abCHIijnPqSTtuvwzc
 .Op Fl d Ar count
 .Op Fl J Ar jail
 .Op Fl m Ar cpu | io
@@ -133,6 +133,12 @@ Using this option implies
 Display the
 .Xr jail 8
 ID.
+.It Fl c
+Display the capability-plane coalition ID of each process and the ID of the
+coalition responsible for it
+(see
+.Xr mac_capability_coalition 4 ;
+0 means none).
 .It Fl m Ar mode
 Display statistics in the specified
 .Ar mode .

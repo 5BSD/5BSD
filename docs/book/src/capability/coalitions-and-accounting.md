@@ -118,7 +118,10 @@ set-deadline and terminate.
 ## Identity and responsibility
 
 Every coalition carries a permanent 64-bit id, assigned when it is created
-and never reused while the kernel runs. It is the stable name for a unit:
+and never reused while the kernel runs. Across boots the id restarts, so
+the switchboard pairs it with the kernel's boot id (`kern.boot_id`) in its
+start audit record and in the tree header; a durable name for the thing
+behind a coalition is the unit label or the session's uid, not the number. It is the stable name for a unit:
 pids recycle and the unit's own process may fork helpers, but the coalition
 id names the whole launch. `STAT` reports it, and the kernel exports it for
 every member process as `ki_coalition` in `kinfo_proc`, so `ps -o coal`

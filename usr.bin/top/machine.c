@@ -57,6 +57,8 @@ enum displaymodes displaymode;
 static const int namelength = 10;
 /* TOP_JID_LEN based on max of 999999 */
 #define TOP_JID_LEN 6
+/* Coalition ids: one boot's worth of launches fits in 7 digits. */
+#define TOP_COAL_LEN 8
 #define TOP_SWAP_LEN 5
 
 /* get_process_info passes back a handle.  This is what it looks like: */
@@ -484,6 +486,9 @@ format_header(const char *uname_field)
 		sbuf_printf(header, "  %s", ps.thread_id ? " THR" : "PID");
 		sbuf_printf(header, "%*s", ps.jail ? TOP_JID_LEN : 0,
 									ps.jail ? " JID" : "");
+		if (ps.coalition)
+			sbuf_printf(header, "%*s%*s", TOP_COAL_LEN, "COAL",
+			    TOP_COAL_LEN, "RCOAL");
 		sbuf_printf(header, " %-*.*s  ", namelength, namelength, uname_field);
 		if (!ps.thread) {
 			sbuf_cat(header, "THR ");
@@ -503,10 +508,13 @@ format_header(const char *uname_field)
 		break;
 	}
 	case DISP_IO: {
-		sbuf_printf(header, "  %s%*s %-*.*s",
+		sbuf_printf(header, "  %s%*s",
 			ps.thread_id ? " THR" : "PID",
-		    ps.jail ? TOP_JID_LEN : 0, ps.jail ? " JID" : "",
-		    namelength, namelength, uname_field);
+		    ps.jail ? TOP_JID_LEN : 0, ps.jail ? " JID" : "");
+		if (ps.coalition)
+			sbuf_printf(header, "%*s%*s", TOP_COAL_LEN, "COAL",
+			    TOP_COAL_LEN, "RCOAL");
+		sbuf_printf(header, " %-*.*s", namelength, namelength, uname_field);
 		sbuf_cat(header, "   VCSW  IVCSW   READ  WRITE  FAULT  TOTAL PERCENT COMMAND");
 		sbuf_finish(header);
 		break;
@@ -1225,6 +1233,11 @@ format_next_process(struct handle * xhandle, char *(*get_userid)(int), int flags
 		if (ps.jail) {
 			sbuf_printf(procbuf, "%*d ", TOP_JID_LEN - 1, pp->ki_jid);
 		}
+		if (ps.coalition) {
+			sbuf_printf(procbuf, "%*ju%*ju ", TOP_COAL_LEN - 1,
+			    (uintmax_t)pp->ki_coalition, TOP_COAL_LEN,
+			    (uintmax_t)pp->ki_rcoalition);
+		}
 		sbuf_printf(procbuf, "%-*.*s", namelength, namelength, (*get_userid)(pp->ki_ruid));
 		sbuf_printf(procbuf, "%6ld ", rup->ru_nvcsw);
 		sbuf_printf(procbuf, "%6ld ", rup->ru_nivcsw);
@@ -1238,6 +1251,11 @@ format_next_process(struct handle * xhandle, char *(*get_userid)(int), int flags
 		sbuf_printf(procbuf, "%5d ", (ps.thread_id) ? pp->ki_tid : pp->ki_pid);
 		if (ps.jail) {
 			sbuf_printf(procbuf, "%*d ", TOP_JID_LEN - 1, pp->ki_jid);
+		}
+		if (ps.coalition) {
+			sbuf_printf(procbuf, "%*ju%*ju ", TOP_COAL_LEN - 1,
+			    (uintmax_t)pp->ki_coalition, TOP_COAL_LEN,
+			    (uintmax_t)pp->ki_rcoalition);
 		}
 		sbuf_printf(procbuf, "%-*.*s ", namelength, namelength, (*get_userid)(pp->ki_ruid));
 

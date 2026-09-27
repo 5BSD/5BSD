@@ -223,6 +223,59 @@ startup_launch_stopped(int kq)
 }
 
 /*
+ * Policy every runtime slot takes from the bundle it was loaded from, applied
+ * wherever a slot is created (boot load here, on-demand activation in
+ * on_demand.c): the owning uid, the per-user agent confinement, and the
+ * service-level boost gate.  A slot that skipped this would run a per-user
+ * agent's manifest un-clamped and could never be attributed to its owner.
+ */
+void
+svc_slot_apply_bundle_policy(struct svc_runtime *svc, unsigned bundle_idx)
+{
+	int eff;
+
+	/*
+	 * Owning uid comes from the bundle's root: (uid_t)-1 for a
+	 * System/Apps bundle (management keys on class + operator authority
+	 * there, never a uid -- a zero would falsely make every unit
+	 * root-owned), or the real owner for a per-user agent scanned from
+	 * /Capabilities/Users/<uid>/Agents.
+	 */
+	svc->owner_uid = bundle_registry_owner_uid(bundle_idx);
+	/*
+	 * Confine a per-user agent: whatever its own manifest declared, a
+	 * unit loaded from a user's agent directory is FORCED to
+	 * management=user (only its owner or an operator may manage it) and
+	 * domain=user (it discovers only user-visible names -- no system
+	 * reach).  A user's own, unverified code can therefore never claim
+	 * core/system management or a SYSTEM discovery domain.
+	 */
+	if (svc->owner_uid != (uid_t)-1) {
+		svc->manifest.management = SVC_MGMT_USER;
+		svc->manifest.domain = SVC_MANIFEST_DOMAIN_USER;
+		svc->manifest.user_resolvable = false;
+		svc->manifest.mint_authority = false;
+		svc->manifest.ambient = false;
+		svc->manifest.cap_system = 0;
+	}
+	/*
+	 * Service level: a CPU/IO priority BOOST is a privilege, honoured
+	 * only for a trusted system bundle -- whose verified manifest IS the
+	 * declaration, exactly as ambient and mint_authority are.  A
+	 * non-system unit (an app or a per-user agent) that asks for a boost
+	 * is clamped to STANDARD; throttling DOWN needs no privilege.
+	 */
+	eff = svc_effective_band(svc->manifest.band,
+	    bundle_registry_is_system(bundle_idx));
+	if (eff != svc->manifest.band) {
+		syslog(LOG_NOTICE, "startup: %s: interactive band "
+		    "requires a system bundle; using standard",
+		    svc->manifest.label);
+		svc->manifest.band = eff;
+	}
+}
+
+/*
  * Launch all system services in parallel.
  *
  * 1. Scan bundle registry for non-on-demand services
@@ -327,51 +380,8 @@ startup_launch_system(int kq)
 		sd.services[i].manifest = entries[i].manifest;
 		sd.services[i].bundle_idx = entries[i].bundle_idx;
 		sd.services[i].bundle_svc_idx = entries[i].service_idx;
-		/*
-		 * Owning uid comes from the bundle's root: (uid_t)-1 for a
-		 * System/Apps bundle (management keys on class + operator authority
-		 * there, never a uid -- a zero would falsely make every unit
-		 * root-owned), or the real owner for a per-user agent scanned from
-		 * /Capabilities/Users/<uid>/Agents.
-		 */
-		sd.services[i].owner_uid =
-		    bundle_registry_owner_uid(entries[i].bundle_idx);
-		/*
-		 * Confine a per-user agent: whatever its own manifest declared, a
-		 * unit loaded from a user's agent directory is FORCED to
-		 * management=user (only its owner or an operator may manage it) and
-		 * domain=user (it discovers only user-visible names -- no system
-		 * reach).  A user's own, unverified code can therefore never claim
-		 * core/system management or a SYSTEM discovery domain.
-		 */
-		if (sd.services[i].owner_uid != (uid_t)-1) {
-			sd.services[i].manifest.management = SVC_MGMT_USER;
-			sd.services[i].manifest.domain = SVC_MANIFEST_DOMAIN_USER;
-			sd.services[i].manifest.user_resolvable = false;
-			sd.services[i].manifest.mint_authority = false;
-			sd.services[i].manifest.ambient = false;
-			sd.services[i].manifest.cap_system = 0;
-		}
-		/*
-		 * Service level: a CPU/IO priority BOOST is a privilege, honoured
-		 * only for a trusted system bundle -- whose verified manifest IS the
-		 * declaration, exactly as ambient and mint_authority are.  A
-		 * non-system unit (an app or a per-user agent) that asks for a boost
-		 * is clamped to STANDARD; throttling DOWN needs no privilege.  (A
-		 * finer per-unit scheduler capability through a kernel mac_capability
-		 * gate is the future extension.)
-		 */
-		{
-			int eff = svc_effective_band(sd.services[i].manifest.band,
-			    bundle_registry_is_system(entries[i].bundle_idx));
-
-			if (eff != sd.services[i].manifest.band) {
-				syslog(LOG_NOTICE, "startup: %s: interactive band "
-				    "requires a system bundle; using standard",
-				    sd.services[i].manifest.label);
-				sd.services[i].manifest.band = eff;
-			}
-		}
+		svc_slot_apply_bundle_policy(&sd.services[i],
+		    entries[i].bundle_idx);
 		svc_runtime_init_fds(&sd.services[i]);
 		sd.services[i].state = SVC_STATE_STOPPED;
 		strlcpy(sd.services[i].launched_by, "system",

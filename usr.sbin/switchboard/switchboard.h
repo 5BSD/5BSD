@@ -367,6 +367,7 @@ void	svc_responsibility_apply(struct svc_runtime *svc, int coalition_fd);
 int	svc_responsibility_root_init(void);
 const char *svc_responsibility_name(const struct svc_responsible *r,
 	    char *buf, size_t len);
+const char *svc_boot_id(char *buf, size_t len);
 /* domain.c — per-session coalition carried on a lookup channel */
 int	lookup_channel_coalition_fd(const struct svc_lookup_channel *lc);
 uint64_t lookup_channel_coalition_id(const struct svc_lookup_channel *lc);
@@ -475,6 +476,8 @@ int	bundle_registry_lookup(const char *name, unsigned *bundle_idx,
 struct capbundle *bundle_registry_get(unsigned idx);
 bool	bundle_registry_is_system(unsigned idx);
 uid_t	bundle_registry_owner_uid(unsigned idx);
+/* startup.c — bundle-derived slot policy (owner uid, agent confinement, band) */
+void	svc_slot_apply_bundle_policy(struct svc_runtime *svc, unsigned bundle_idx);
 int	bundle_registry_ensure_user_dir(uid_t uid);
 unsigned bundle_registry_count(void);
 unsigned bundle_registry_quarantined(void);

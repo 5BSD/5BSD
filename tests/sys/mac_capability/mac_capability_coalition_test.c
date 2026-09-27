@@ -23,6 +23,7 @@
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/sysctl.h>
+#include <sys/proc.h>
 #include <sys/user.h>
 #include <sys/wait.h>
 
@@ -1853,6 +1854,176 @@ ATF_TC_BODY(close_terminates_live_member, tc)
 	after = coalition_count();
 	ATF_CHECK_EQ_MSG(after, before, "coalition not freed after close: "
 	    "before=%u after=%u", before, after);
+}
+
+
+ATF_TC(refattach_confined_descriptors);
+ATF_TC_HEAD(refattach_confined_descriptors, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Coalition operations hold attached descriptors in the kernel, "
+	    "so a CAP_XFER_NONE coalition fd may name a responsible parent, a "
+	    "CAP_XFER_NONE procdesc may be enlisted, and a CAP_XFER_ONCE "
+	    "attachment is not consumed");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_coalition");
+}
+ATF_TC_BODY(refattach_confined_descriptors, tc)
+{
+	struct coalition_stat_reply parent, child;
+	int pfd, cfd, pd, wstatus;
+	int32_t status;
+	pid_t pid;
+
+	pfd = mac_capability_connect("coalition");
+	cfd = mac_capability_connect("coalition");
+	ATF_REQUIRE(pfd >= 0 && cfd >= 0);
+	/* Confine the parent's fd the way the launcher does. */
+	ATF_REQUIRE(cap_xfer_limit(pfd, CAP_XFER_NONE) == 0);
+	ATF_REQUIRE(coalition_set_responsible(cfd, &pfd, 0, &status) == 0);
+	ATF_CHECK_EQ_MSG(status, 0, "confined parent fd refused: %d", status);
+	ATF_REQUIRE(coalition_stat(pfd, &parent) == 0);
+	ATF_REQUIRE(coalition_stat(cfd, &child) == 0);
+	ATF_CHECK_EQ(child.responsible_id, parent.id);
+
+	/* A confined procdesc can still be enlisted. */
+	pid = pdfork(&pd, 0);
+	ATF_REQUIRE(pid >= 0);
+	if (pid == 0) {
+		close(pfd);
+		close(cfd);
+		pause();
+		_exit(0);
+	}
+	ATF_REQUIRE(cap_xfer_limit(pd, CAP_XFER_NONE) == 0);
+	ATF_REQUIRE(coalition_enlist(cfd, pd, &status) == 0);
+	ATF_CHECK_EQ_MSG(status, 0, "confined procdesc refused: %d", status);
+	ATF_REQUIRE(coalition_stat(cfd, &child) == 0);
+	ATF_CHECK_EQ(child.process_count, 1);
+
+	/*
+	 * A ONCE attachment is a reference, not a transfer: the descriptor
+	 * can still be sent once over a socket afterwards (a consumed one
+	 * would be CAP_XFER_NONE and the send would fail).
+	 */
+	{
+		int ofd = mac_capability_connect("coalition");
+		int other = mac_capability_connect("coalition");
+		int sv[2];
+		struct msghdr mh;
+		struct iovec iov;
+		union { struct cmsghdr h; char buf[CMSG_SPACE(sizeof(int))]; } cm;
+		char c = 'x';
+
+		ATF_REQUIRE(ofd >= 0 && other >= 0);
+		ATF_REQUIRE(cap_xfer_limit(ofd, CAP_XFER_ONCE) == 0);
+		ATF_REQUIRE(coalition_set_responsible(other, &ofd, 0,
+		    &status) == 0);
+		ATF_CHECK_EQ(status, 0);
+		ATF_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, sv) == 0);
+		memset(&mh, 0, sizeof(mh));
+		memset(&cm, 0, sizeof(cm));
+		iov.iov_base = &c;
+		iov.iov_len = 1;
+		mh.msg_iov = &iov;
+		mh.msg_iovlen = 1;
+		mh.msg_control = &cm;
+		mh.msg_controllen = CMSG_LEN(sizeof(int));
+		cm.h.cmsg_len = CMSG_LEN(sizeof(int));
+		cm.h.cmsg_level = SOL_SOCKET;
+		cm.h.cmsg_type = SCM_RIGHTS;
+		memcpy(CMSG_DATA(&cm.h), &ofd, sizeof(int));
+		ATF_CHECK_MSG(sendmsg(sv[0], &mh, 0) == 1,
+		    "attachment consumed the ONCE transfer state: %s",
+		    strerror(errno));
+		close(sv[0]);
+		close(sv[1]);
+		close(other);
+		close(ofd);
+	}
+	pdkill(pd, SIGKILL);
+	waitpid(pid, &wstatus, 0);
+	close(pd);
+	close(cfd);
+	close(pfd);
+}
+
+
+ATF_TC(set_signal_zero_releases_joined);
+ATF_TC_HEAD(set_signal_zero_releases_joined, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "With signal 0, closing a coalition whose members JOINed (and "
+	    "their fork children) releases them: nobody is signalled and the "
+	    "children report no coalition afterwards");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_coalition");
+}
+ATF_TC_BODY(set_signal_zero_releases_joined, tc)
+{
+	struct coalition_set_signal_req ssr;
+	struct coalition_reply rpl;
+	struct kinfo_proc kp;
+	int cfd, holder[2], wstatus;
+	pid_t joiner, grandchild;
+
+	/*
+	 * The joiner is a separate process (like a session leader): it JOINs,
+	 * forks a child that inherits, and both keep only the child-side of a
+	 * pipe.  The coalition fd is closed by THIS process, the only holder,
+	 * exactly like a session record going away.
+	 */
+	cfd = mac_capability_connect("coalition");
+	ATF_REQUIRE(cfd >= 0);
+	memset(&ssr, 0, sizeof(ssr));
+	ssr.op = COALITION_OP_SET_SIGNAL;
+	ssr.signal = 0;
+	ATF_REQUIRE(coalition_call(cfd, &ssr, sizeof(ssr), NULL, 0, &rpl,
+	    sizeof(rpl)) == 0);
+	ATF_CHECK_EQ(rpl.status, 0);
+	ATF_REQUIRE(pipe(holder) == 0);
+	joiner = fork();
+	ATF_REQUIRE(joiner >= 0);
+	if (joiner == 0) {
+		int32_t st;
+
+		close(holder[0]);
+		if (coalition_op(cfd, COALITION_OP_JOIN, &st) != 0 || st != 0)
+			_exit(2);
+		close(cfd);
+		grandchild = fork();
+		if (grandchild == 0) {
+			pause();
+			_exit(0);
+		}
+		/* report the grandchild pid, then linger */
+		(void)write(holder[1], &grandchild, sizeof(grandchild));
+		pause();
+		_exit(0);
+	}
+	close(holder[1]);
+	ATF_REQUIRE(read(holder[0], &grandchild, sizeof(grandchild)) ==
+	    (ssize_t)sizeof(grandchild));
+	usleep(50000);
+	ATF_REQUIRE(kinfo_of(grandchild, &kp) == 0);
+	ATF_CHECK(kp.ki_coalition != 0);
+
+	close(cfd);	/* last holder: the coalition ends */
+	usleep(300000);
+	/*
+	 * The grandchild is not our child (waitpid cannot see it): judge
+	 * liveness by kill(0) plus a non-zombie kinfo state.
+	 */
+	ATF_CHECK_EQ_MSG(waitpid(joiner, &wstatus, WNOHANG), 0,
+	    "joiner was signalled at close");
+	ATF_CHECK_MSG(kill(grandchild, 0) == 0, "grandchild gone at close");
+	ATF_REQUIRE(kinfo_of(grandchild, &kp) == 0);
+	ATF_CHECK_MSG(kp.ki_stat != SZOMB, "grandchild died at close");
+	ATF_CHECK_EQ_MSG(kp.ki_coalition, 0, "grandchild still in coalition");
+	ATF_REQUIRE(kinfo_of(joiner, &kp) == 0);
+	ATF_CHECK_EQ(kp.ki_coalition, 0);
+	kill(grandchild, SIGKILL);
+	kill(joiner, SIGKILL);
+	waitpid(joiner, &wstatus, 0);
+	close(holder[0]);
 }
 
 /* ================================================================
@@ -3869,6 +4040,8 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, set_signal_zero_releases);
 	ATF_TP_ADD_TC(tp, pdfork_inherits_and_rehomes);
 	ATF_TP_ADD_TC(tp, close_terminates_live_member);
+	ATF_TP_ADD_TC(tp, refattach_confined_descriptors);
+	ATF_TP_ADD_TC(tp, set_signal_zero_releases_joined);
 
 	/* Resource exhaustion + teardown-race stress */
 	ATF_TP_ADD_TC(tp, exhaust_coalition_max);

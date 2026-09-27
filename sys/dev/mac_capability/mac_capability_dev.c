@@ -315,7 +315,9 @@ mac_capability_instance_do_sendmsg(struct mac_capability_instance *s,
 					error = EBADF;
 					goto sendmsg_fd_err;
 				}
-				if (fde->fde_xfer_state == CAP_XFER_NONE) {
+				if (fde->fde_xfer_state == CAP_XFER_NONE &&
+				    (svc->csvc_svc_flags &
+				    MAC_CAPABILITY_SVC_REFATTACH) == 0) {
 					FILEDESC_XUNLOCK(fdesc);
 					error = ENOTCAPABLE;
 					goto sendmsg_fd_err;
@@ -351,7 +353,9 @@ mac_capability_instance_do_sendmsg(struct mac_capability_instance *s,
 			}
 			for (i = 0; i < (int)args->nfds; i++) {
 				fde = &fdesc->fd_ofiles[fdbuf[i]];
-				if (fde->fde_xfer_state == CAP_XFER_ONCE) {
+				if (fde->fde_xfer_state == CAP_XFER_ONCE &&
+				    (svc->csvc_svc_flags &
+				    MAC_CAPABILITY_SVC_REFATTACH) == 0) {
 					fde->fde_xfer_state = CAP_XFER_NONE;
 					msg->cm_xfer_state[i] = CAP_XFER_NONE;
 				} else {
@@ -744,7 +748,9 @@ mac_capability_instance_ioctl(struct file *fp, u_long cmd, void *data,
 						break;
 					}
 					if (fde->fde_xfer_state ==
-					    CAP_XFER_NONE) {
+					    CAP_XFER_NONE &&
+					    (svc->csvc_svc_flags &
+					    MAC_CAPABILITY_SVC_REFATTACH) == 0) {
 						error = ENOTCAPABLE;
 						break;
 					}
@@ -763,7 +769,9 @@ mac_capability_instance_ioctl(struct file *fp, u_long cmd, void *data,
 						    &call_fcaps[i],
 						    &fde->fde_xfer_caps);
 						if (fde->fde_xfer_state ==
-						    CAP_XFER_ONCE) {
+						    CAP_XFER_ONCE &&
+						    (svc->csvc_svc_flags &
+						    MAC_CAPABILITY_SVC_REFATTACH) == 0) {
 							fde->fde_xfer_state =
 							    CAP_XFER_NONE;
 							call_xfer_state[i] =

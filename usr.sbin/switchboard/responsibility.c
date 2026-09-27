@@ -28,6 +28,7 @@
 
 #include <sys/types.h>
 #include <sys/capsicum.h>
+#include <sys/sysctl.h>
 
 #include <errno.h>
 #include <fcntl.h>
@@ -210,6 +211,33 @@ svc_responsibility_apply(struct svc_runtime *svc, int coalition_fd)
 }
 
 /*
+ * Coalition ids are unique for one boot only (a kernel counter).  Pair them
+ * with the kernel's boot id so a record from one boot can never be confused
+ * with the same number from another.  Hex, 32 chars; "unknown" if the
+ * sysctl is unavailable.
+ */
+const char *
+svc_boot_id(char *buf, size_t len)
+{
+	static const char hex[] = "0123456789abcdef";
+	unsigned char id[16];
+	size_t n = sizeof(id), i;
+
+	if (len < 2 * sizeof(id) + 1 ||
+	    sysctlbyname("kern.boot_id", id, &n, NULL, 0) == -1 ||
+	    n != sizeof(id)) {
+		(void)strlcpy(buf, "unknown", len);
+		return (buf);
+	}
+	for (i = 0; i < sizeof(id); i++) {
+		buf[2 * i] = hex[id[i] >> 4];
+		buf[2 * i + 1] = hex[id[i] & 0xf];
+	}
+	buf[2 * sizeof(id)] = '\0';
+	return (buf);
+}
+
+/*
  * The system's attribution root: a member-less, self-rooted coalition with
  * no termination signal, held for switchboard's lifetime.
  */
@@ -236,7 +264,11 @@ svc_responsibility_root_init(void)
 	}
 	sd.root_coalition_fd = fd;
 	sd.root_coalition_id = sr.id;
-	syslog(LOG_INFO, "responsibility: system root coalition %ju",
-	    (uintmax_t)sr.id);
+	{
+		char bid[40];
+
+		syslog(LOG_NOTICE, "responsibility: boot %s root coalition %ju",
+		    svc_boot_id(bid, sizeof(bid)), (uintmax_t)sr.id);
+	}
 	return (0);
 }
