@@ -89,7 +89,12 @@ datum rides on `char *env[]` strings and bare descriptor numbers.
    attenuated endpoint records its parent; revoking a parent invalidates the
    subtree (logout, anointment withdrawal, container teardown, unit
    quarantine, extension unload). Listed as missing in
-   `capability-authority-model.md`.
+   `capability-authority-model.md`. The *coarse* half of the logout case is
+   **done** (c0c94a4efe3a, 2026-09-27, VM-validated): ending a login session
+   gracefully stops the units that existed on its behalf, and a stopped unit
+   no longer carries the id of a coalition that is gone. What remains is the
+   fine half: capabilities the session handed to *other* coalitions, which
+   is what the derivation tree is for.
 2. **Quota lending between coalitions** — **later**, after ledgers. A
    coalition lends part of its memory, descriptor or time budget to a child
    and reclaims it on termination; exhaustion becomes local.
@@ -125,6 +130,7 @@ are value / effort; status as above.
 
 | # | From | Feature | Buys 5BSD | Status |
 |---|---|---|---|---|
+| A0 | XNU memorystatus | memory-pressure notification: the kernel's low-memory event reaches every live coalition as an advisory note, so units drop caches before anything is killed | **done** (c0c94a4efe3a, 2026-09-27, VM-validated): a global coalition list, a taskqueue pass off the page daemon, `COALITION_NOTE_PRESSURE`, and two kernel tests driven by the low-memory debug trigger. The ledger, bands and kill walk remain (theme C) | done, S |
 | A1 | systemd FDSTORE | a unit deposits open descriptors with the launcher and gets them back on restart | providers restart without losing listeners, vsock ports, storage handles; `service_fdstore_put/take(3)` keyed by coalition id | next, S-M |
 | A2 | Solaris contracts, Zircon exception channels, KeyKOS keepers | a coalition event/fault stream on a descriptor, adoptable by a new holder, with a keeper who may repair and resume before escalation up the responsibility tree | switchboard and per-user agents can restart themselves and re-adopt units; crash recovery becomes a capability decision; audit gets "handled by" | next, M |
 | A3 | Windows job objects | nested coalitions with tighten-only limits, kill-on-close of the last holder's descriptor, event port | the responsible party's descriptor is the unit's lifeline; per-user agents cannot exceed their own ceiling | next, M |
