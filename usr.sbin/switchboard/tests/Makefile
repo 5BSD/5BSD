@@ -95,6 +95,36 @@ CFLAGS+=	-I${SRCTOP}/lib/libcapsulert
 CFLAGS+=	-I${SRCTOP}/usr.sbin/switchboard
 CFLAGS+=	-I${SRCTOP}/sys
 
+# A source shared by more than one test program -- rc_ingest.c, management.c,
+# bundle_selection.c and activation_calendar.c below -- is compiled once, by a
+# rule that does NOT generate a dependfile: the compile line carries no -MD, so
+# make keeps no record of which headers that object was built from and will
+# never rebuild it when one of them changes.
+#
+# A stale shared object still links cleanly, and the way it fails afterwards
+# looks nothing like a build problem.  When a struct in one of these headers
+# grows, the shared object goes on reading fields at the offsets they had when
+# it was last compiled while the test program that links it reads them at the
+# current ones, so a test hands the shared code a value and the shared code
+# acts on a different field entirely.  That cost a long debugging session:
+# management.c had an object three days old, so the management-class gate read
+# the class 516 bytes away from where the test wrote it, decided every CORE
+# unit was an ordinary system unit, and reported that CORE units may be stopped
+# by an operator -- with correct source, correct flags, and a correct-looking
+# disassembly.
+#
+# Depend on the headers explicitly so that cannot happen again.  The globs
+# over-approximate, which only ever costs a rebuild.
+SWITCHBOARD_SHARED_HDRS= \
+	${SRCTOP}/usr.sbin/switchboard/*.h \
+	${SRCTOP}/lib/libcapbundle/*.h \
+	${SRCTOP}/lib/libcapsulert/*.h
+
+rc_ingest.o rc_ingest.pieo \
+management.o management.pieo \
+bundle_selection.o bundle_selection.pieo \
+activation_calendar.o activation_calendar.pieo: ${SWITCHBOARD_SHARED_HDRS}
+
 # rc_ingest_test compiles the parser directly (pure logic, no daemon deps).
 # rc_ingest.c comes from the switchboard source dir via .PATH above; referencing
 # it by basename keeps its object in the objdir (an absolute ${SRCTOP} path in

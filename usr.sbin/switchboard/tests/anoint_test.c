@@ -76,14 +76,26 @@ switchboard_fd_budget_check(size_t count, const char *what)
 	return (0);
 }
 
+/* What the control plane was granted on the last adopt (see the stub below). */
+static unsigned adopt_count;
+static uint64_t last_adopt_rights;
+static uid_t last_adopt_uid;
+
 int
 sctl_adopt_channel(int provider_fd, uint64_t rights, uid_t uid,
     bool capsule_relay)
 {
 
-	(void)rights;
-	(void)uid;
 	(void)capsule_relay;
+	/*
+	 * Record what the control plane was actually granted.  Admission to the
+	 * control plane is no longer the decision that matters -- any
+	 * authenticated session reaches it -- so what a test has to be able to
+	 * see is whether the connection carries the administrative bypass.
+	 */
+	adopt_count++;
+	last_adopt_rights = rights;
+	last_adopt_uid = uid;
 	if (provider_fd >= 0)
 		(void)close(provider_fd);
 	return (0);
@@ -175,6 +187,9 @@ static void
 audit_reset(void)
 {
 
+	adopt_count = 0;
+	last_adopt_rights = 0;
+	last_adopt_uid = (uid_t)-1;
 	last_audit[0] = '\0';
 	last_audit_event = 0;
 	last_audit_error = 0;
@@ -1280,8 +1295,13 @@ ATF_TC_BODY(self_control_requires_switchboard_admin, tc)
 	memset(&sender, 0, sizeof(sender));
 	sender.uid = 0;
 
-	/* A session on a SYSTEM-kind channel WITHOUT the anointment (P9-style
-	 * strict admin) is refused and audited; the kind does not help. */
+	/*
+	 * A session WITHOUT the anointment reaches the control plane: admission
+	 * is not the decision.  What it must not receive is the administrative
+	 * bypass, and `admin_rights` on the channel must not stand in for the
+	 * anointment.  A session that can only look is not worth auditing, so
+	 * nothing is recorded.
+	 */
 	audit_reset();
 	memset(&session, 0, sizeof(session));
 	session.kind = SVC_DOMAIN_SYSTEM;
@@ -1289,20 +1309,27 @@ ATF_TC_BODY(self_control_requires_switchboard_admin, tc)
 	error = 0;
 	fd = naming_lookup(SWITCHBOARD_CONTROL_NAME, NULL, &session, &sender,
 	    &error, NULL);
-	ATF_CHECK_EQ(-1, fd);
-	ATF_CHECK_EQ(EACCES, error);
-	ATF_CHECK_EQ(1U, audit_count);
-	ATF_CHECK_EQ(AUE_SWITCHBOARD_ANOINT, last_audit_event);
-	ATF_CHECK_STREQ("anointment refused: org.5bsd.user-session -> "
-	    SWITCHBOARD_CONTROL_NAME " missing " SVC_ANOINT_SWITCHBOARD_ADMIN,
-	    last_audit);
+	ATF_CHECK_MSG(fd >= 0, "control plane refused a plain session: %d",
+	    error);
+	if (fd >= 0)
+		close(fd);
+	ATF_CHECK_EQ(1U, adopt_count);
+	ATF_CHECK_EQ_MSG(0, (int)(last_adopt_rights & SVC_RIGHTS_ADMIN),
+	    "a session without the anointment was granted the admin bypass");
+	ATF_CHECK_EQ(0U, audit_count);
 
-	/* The lifecycle plane is gated identically. */
+	/* The lifecycle plane is treated identically. */
+	audit_reset();
 	fd = naming_lookup(SWITCHBOARD_LIFECYCLE_NAME, NULL, &session, &sender,
 	    &error, NULL);
-	ATF_CHECK_EQ(-1, fd);
-	ATF_CHECK_EQ(EACCES, error);
-	ATF_CHECK_EQ(2U, audit_count);
+	ATF_CHECK_MSG(fd >= 0, "lifecycle plane refused a plain session: %d",
+	    error);
+	if (fd >= 0)
+		close(fd);
+	ATF_CHECK_EQ_MSG(0, (int)(last_adopt_rights & SVC_RIGHTS_ADMIN),
+	    "a session without the anointment was granted the admin bypass "
+	    "on the lifecycle plane");
+	ATF_CHECK_EQ(0U, audit_count);
 
 	/* A NULL domain is refused too. */
 	fd = naming_lookup(SWITCHBOARD_CONTROL_NAME, NULL, NULL, &sender, &error,
@@ -1330,6 +1357,9 @@ ATF_TC_BODY(self_control_requires_switchboard_admin, tc)
 	else
 		ATF_CHECK_MSG(error != EACCES && error != ENOENT,
 		    "gate passed but error is %d", error);
+	ATF_CHECK_EQ_MSG(SVC_RIGHTS_ADMIN,
+	    last_adopt_rights & SVC_RIGHTS_ADMIN,
+	    "the anointment did not grant the admin bypass");
 	ATF_CHECK_EQ(0U, audit_count);
 
 	/* "*" (the boot carry, the shipped-default wheel session) passes. */
@@ -1343,6 +1373,9 @@ ATF_TC_BODY(self_control_requires_switchboard_admin, tc)
 	else
 		ATF_CHECK_MSG(error != EACCES && error != ENOENT,
 		    "gate passed but error is %d", error);
+	ATF_CHECK_EQ_MSG(SVC_RIGHTS_ADMIN,
+	    last_adopt_rights & SVC_RIGHTS_ADMIN,
+	    "the boot carry did not grant the admin bypass");
 	ATF_CHECK_EQ(0U, audit_count);
 
 	/* A unit never opens control, whatever it declares (U8-style). */
@@ -2870,6 +2903,10 @@ ATF_TC_BODY(lookup_self_control_holder_variants, tc)
 			ATF_CHECK_MSG(error != EACCES && error != ENOENT,
 			    "%s: gate passed but error is %d",
 			    control_names[i], error);
+		ATF_CHECK_EQ_MSG(SVC_RIGHTS_ADMIN,
+		    last_adopt_rights & SVC_RIGHTS_ADMIN,
+		    "%s: the anointment did not grant the admin bypass",
+		    control_names[i]);
 		ATF_CHECK_EQ(0U, audit_count);
 
 		/* `all` without admin_rights. */
@@ -2884,9 +2921,29 @@ ATF_TC_BODY(lookup_self_control_holder_variants, tc)
 			ATF_CHECK_MSG(error != EACCES && error != ENOENT,
 			    "%s: all: gate passed but error is %d",
 			    control_names[i], error);
+		ATF_CHECK_EQ_MSG(SVC_RIGHTS_ADMIN,
+		    last_adopt_rights & SVC_RIGHTS_ADMIN,
+		    "%s: the boot carry did not grant the admin bypass",
+		    control_names[i]);
 		ATF_CHECK_EQ(0U, audit_count);
 
-		/* Near-misses of the name: refused, one audit record each. */
+		/*
+		 * Near-misses of the name must not be mistaken for it.  The
+		 * name is matched exactly, so a different case, a longer or
+		 * shorter string, or a prefix grants nothing: the session
+		 * still reaches the control plane, as every session does, but
+		 * without the administrative bypass.  This is the check that
+		 * would catch a sloppy prefix or case-insensitive comparison
+		 * handing out operator authority.
+		 *
+		 * The literal "*" belongs in this list rather than among the
+		 * grants: the boot carry is the `all` flag on the set, not a
+		 * name, so a set holding the STRING "*" holds one oddly spelt
+		 * anointment and nothing more.  Honouring it as the wildcard
+		 * would make an operator of any session that can name an
+		 * anointment, so it is refused like every other miss.  The
+		 * real boot carry is covered above, where `all` is set.
+		 */
 		for (j = 0; j < nitems(near_misses); j++) {
 			audit_reset();
 			memset(&session, 0, sizeof(session));
@@ -2895,11 +2952,15 @@ ATF_TC_BODY(lookup_self_control_holder_variants, tc)
 			set_one(&session.anoint, near_misses[j]);
 			fd = naming_lookup(control_names[i], NULL, &session,
 			    &sender, &error, NULL);
-			ATF_CHECK_EQ(-1, fd);
-			ATF_CHECK_EQ(EACCES, error);
-			ATF_CHECK_EQ_MSG(1U, audit_count, "%s holding '%s'",
+			ATF_CHECK_MSG(fd >= 0, "%s refused for '%s': %d",
+			    control_names[i], near_misses[j], error);
+			if (fd >= 0)
+				close(fd);
+			ATF_CHECK_EQ_MSG(0, (int)(last_adopt_rights &
+			    SVC_RIGHTS_ADMIN),
+			    "%s: '%s' was accepted as the anointment",
 			    control_names[i], near_misses[j]);
-			ATF_CHECK_EQ(0, last_audit_uid);
+			ATF_CHECK_EQ(0U, audit_count);
 		}
 
 		/* A unit, even with `all` and the admin name: EACCES, no

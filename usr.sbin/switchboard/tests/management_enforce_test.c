@@ -30,19 +30,23 @@
 #define	OWNER_UID	1001
 #define	STRANGER_UID	1002
 
-/* A minimal unit of a given management class, owned by `owner` ((uid_t)-1 = none). */
-static struct svc_runtime
-unit_of(int management, uid_t owner)
+/*
+ * A minimal unit of a given management class, owned by `owner`
+ * ((uid_t)-1 = none).  Filled in place: struct svc_runtime is well over a
+ * hundred kilobytes, so returning one by value puts two copies of it on the
+ * stack for every fixture and makes what the caller is actually inspecting
+ * hard to follow.
+ */
+static void
+unit_of(struct svc_runtime *svc, int management, uid_t owner)
 {
-	struct svc_runtime svc;
 
-	memset(&svc, 0, sizeof(svc));
-	strlcpy(svc.manifest.label, "org.test.bundle/worker",
-	    sizeof(svc.manifest.label));
-	svc.manifest.management = management;
-	svc.owner_uid = owner;
-	svc.state = SVC_STATE_RUNNING;
-	return (svc);
+	memset(svc, 0, sizeof(*svc));
+	strlcpy(svc->manifest.label, "org.test.bundle/worker",
+	    sizeof(svc->manifest.label));
+	svc->manifest.management = management;
+	svc->owner_uid = owner;
+	svc->state = SVC_STATE_RUNNING;
 }
 
 /* The verbs every runtime management op reaches the gate under. */
@@ -52,8 +56,19 @@ static const char *const ops[] = { "stopped", "started", "restarted",
 ATF_TC_WITHOUT_HEAD(core_refuses_everyone);
 ATF_TC_BODY(core_refuses_everyone, tc)
 {
-	struct svc_runtime svc = unit_of(SVC_MGMT_CORE, (uid_t)-1);
+	struct svc_runtime svc;
 	unsigned i;
+
+	unit_of(&svc, SVC_MGMT_CORE, (uid_t)-1);
+
+	/*
+	 * Prove the fixture before trusting what the gate says about it: if the
+	 * class did not survive being set, every check below would be testing
+	 * the default class instead and would fail for the wrong reason.
+	 */
+	ATF_REQUIRE_EQ_MSG(SVC_MGMT_CORE, svc.manifest.management,
+	    "fixture did not keep the management class: got %d",
+	    svc.manifest.management);
 
 	/*
 	 * A core unit is refused for EVERY caller and EVERY op -- an operator,
@@ -63,6 +78,16 @@ ATF_TC_BODY(core_refuses_everyone, tc)
 	for (i = 0; i < nitems(ops); i++) {
 		ATF_CHECK_EQ_MSG(EPERM, svc_management_check_op(&svc, ops[i],
 		    0, true), "core op '%s' allowed for operator", ops[i]);
+		/*
+		 * The class gate reached directly as well as through the
+		 * wrapper.  The two disagreeing means the wrapper is reading
+		 * the unit's class from somewhere other than where the caller
+		 * wrote it, which is how a stale shared object shows up.
+		 */
+		ATF_CHECK_EQ_MSG(EPERM, svc_management_check_class(
+		    SVC_MGMT_CORE, "org.test/core", ops[i], 0, true,
+		    (uid_t)-1), "core op '%s' allowed by the class gate",
+		    ops[i]);
 		ATF_CHECK_EQ_MSG(EPERM, svc_management_check_op(&svc, ops[i],
 		    0, false), "core op '%s' allowed for uid 0", ops[i]);
 		ATF_CHECK_EQ_MSG(EPERM, svc_management_check_op(&svc, ops[i],
@@ -74,7 +99,9 @@ ATF_TC_BODY(core_refuses_everyone, tc)
 ATF_TC_WITHOUT_HEAD(system_requires_operator);
 ATF_TC_BODY(system_requires_operator, tc)
 {
-	struct svc_runtime svc = unit_of(SVC_MGMT_SYSTEM, (uid_t)-1);
+	struct svc_runtime svc;
+
+	unit_of(&svc, SVC_MGMT_SYSTEM, (uid_t)-1);
 	unsigned i;
 
 	for (i = 0; i < nitems(ops); i++) {
@@ -94,8 +121,10 @@ ATF_TC_BODY(system_requires_operator, tc)
 ATF_TC_WITHOUT_HEAD(user_owner_or_operator);
 ATF_TC_BODY(user_owner_or_operator, tc)
 {
-	struct svc_runtime svc = unit_of(SVC_MGMT_USER, OWNER_UID);
+	struct svc_runtime svc;
 	unsigned i;
+
+	unit_of(&svc, SVC_MGMT_USER, OWNER_UID);
 
 	for (i = 0; i < nitems(ops); i++) {
 		/* The owning uid manages its own agent (self-service). */
@@ -117,7 +146,9 @@ ATF_TC_BODY(user_unowned_needs_operator, tc)
 {
 	/* A user-class unit with no recorded owner ((uid_t)-1) is manageable
 	 * only by an operator: an unknown caller uid must never match -1. */
-	struct svc_runtime svc = unit_of(SVC_MGMT_USER, (uid_t)-1);
+	struct svc_runtime svc;
+
+	unit_of(&svc, SVC_MGMT_USER, (uid_t)-1);
 
 	ATF_CHECK_EQ(EPERM, svc_management_check_op(&svc, "stopped",
 	    (uid_t)-1, false));
@@ -187,8 +218,10 @@ ATF_TC_BODY(management_names, tc)
 ATF_TC_WITHOUT_HEAD(core_gate_is_pure_class_function);
 ATF_TC_BODY(core_gate_is_pure_class_function, tc)
 {
-	struct svc_runtime a = unit_of(SVC_MGMT_CORE, (uid_t)-1);
-	struct svc_runtime b = unit_of(SVC_MGMT_CORE, (uid_t)-1);
+	struct svc_runtime a, b;
+
+	unit_of(&a, SVC_MGMT_CORE, (uid_t)-1);
+	unit_of(&b, SVC_MGMT_CORE, (uid_t)-1);
 
 	a.state = SVC_STATE_RUNNING;
 	b.state = SVC_STATE_STARTING;
