@@ -1,0 +1,79 @@
+{
+  "passed": true,
+  "date": "2026-09-26",
+  "scope": "SQPOLL named-cpuset inheritance, native cpuset transitions, shared caller-thread affinity and lifecycle regression",
+  "platform": "amd64, four CPUs, ZFS root, WITNESS/INVARIANTS; focused tests also on tmpfs",
+  "oracle": {
+    "path": "/tmp/iouring-affinity-20260926/oracle.console.log",
+    "sha256": "748cc2438e6b2e31ac3ef8b60decff4e56ef0c3be02bba2eda4f42527d9aa374",
+    "kernel": "Linux 6.18.35-0-virt",
+    "executions": 6
+  },
+  "focus": {
+    "path": "/tmp/iouring-affinity-20260926/focus-final/console.log",
+    "sha256": "63b56dbcf403106da2ca388bf29b950f0bcf608876a4d0ec8ceceec96167d045",
+    "executions": 36,
+    "resource_rows": 12
+  },
+  "shared_rounds": [
+    {
+      "path": "/tmp/iouring-affinity-20260926/full-round1/console.log",
+      "sha256": "ac624838b05e857f4362bfc840d8b69d33a220183d8187e048c89bbef10cd522",
+      "round": 1,
+      "shared_executions": 388,
+      "resource_rows": 2
+    },
+    {
+      "path": "/tmp/iouring-affinity-20260926/full-round2/console.log",
+      "sha256": "531217e1b3d8318aaa4055c97867a7d6501d20bd1af4687bd2bde44a2ea3413c",
+      "round": 2,
+      "shared_executions": 388,
+      "resource_rows": 3
+    },
+    {
+      "path": "/tmp/iouring-affinity-20260926/full-round3/console.log",
+      "sha256": "21ab6cf4bfcd68e2c2a9170af80a7b71ae9824118d482fee35eff6c1f533143b",
+      "round": 3,
+      "shared_executions": 388,
+      "resource_rows": 3
+    }
+  ],
+  "main_and_dedicated": {
+    "path": "/tmp/iouring-affinity-20260926/main-final/console.log",
+    "sha256": "2ae55f480cf9a6d61fa5b3e1c0852adaf885ac96a1a45d8477106bf088cb3be3"
+  },
+  "main_linux_cases": 477,
+  "dedicated_executions": 117,
+  "native_executions": 3,
+  "guest_artifacts": {
+    "/boot/kernel/kernel": "cae50f3dc0615a828226d57f5d21a78eafc5544bbbffc1c7b77a681611d9f984",
+    "/boot/kernel/linux_common.ko": "fb0433187a2daf576d0d4deadc8774a0eaed47e5c8d1b6046555a69e9a708548",
+    "/boot/kernel/linux64.ko": "475d37d924403e1634fa9719f9ccebd5f3395bf0f42720aab4b21eca703c2aff",
+    "/root/squeue_options_native": "49aab1918d9eb2d86726486eb552e0312945feb71f140ef4603d0a3a26c859df",
+    "/root/squeue_options_linux": "efcf0cf8f198965a2ea1e555174b94294c0918714fabfaf62effa1191ecfa62c",
+    "/root/linux_iouring": "84cb42a525bc68633bbd5953ec8c5b860f2224f09b24f1879c98b3f2b84fb0e2"
+  },
+  "source_sha256": {
+    "sys/compat/linux/linux_time.h": "42aa9cfa6b6456f18403c502a8f8d77c113d6f2b3e770dca6bd725975f5572b9",
+    "sys/kern/kern_cpuset.c": "9f416258f288266189b823b3c78a0c28cb85ae1b5f55066a4cf0ffb5729eed2f",
+    "sys/kern/sys_squeue.c": "5e6a4feb6fbbd060211cf96be76ad2ab84d060d281b45cf1adbf9b4d46ce1b29",
+    "sys/sys/cpuset.h": "cde0650941cf2c22e15f59495e03de03e3b8fb0490445d0f7b4e711d520ea116",
+    "tests/sys/kern/squeue_options.c": "db73064b968df8ae6af8ae59ecf01b4803e0b9c0c4859f97ce4597cd09e409d0",
+    "tests/sys/kern/squeue_options_test.sh": "8d51552af6ae75ccf816a7e733aadc85a3a617ae1276f478c07319b624241c54",
+    "tools/test/linuxulator/guest-gate.sh": "ef0bb3ca87ca88245507c228f41180dbdd400c2dbbd128a3c840c0740e2486ae",
+    "tools/test/linuxulator/qemu-gate.py": "5f1002cc2daa71e8770c3e711d6f0c0940e14663a3a81eac59449a4685582ab1"
+  },
+  "limits": [
+    "Linux cgroup/cpuset-controller transitions and CPU hotplug are not qualified.",
+    "This is the io_uring/squeue gate, not the entire Linuxulator filesystem/syscall gate.",
+    "Arm64 Linux test compilation only; no arm64 runtime gate."
+  ],
+  "excluded_runs": {
+    "baseline-run": "Initial test used Linux errno for an empty native thread mask; corrected to native EDEADLK.",
+    "baseline-run2": "Existing kernel reproduced failed poller cpuset membership; Linux caller-affinity case passed.",
+    "focus-run": "Staged nullfs dependency mismatch prevented testing.",
+    "focus-run2": "WITNESS caught an extra unlock after sched_add; fixed.",
+    "focus-run3": "Stopped after native transition test passed; reduced NOP repetition for test runtime.",
+    "full-round1 main-suite portion": "All shared cases and both shared cleanup checkpoints passed. Subsequent main socket_bind_listen failed because the fixture omitted loopback setup. Shared-phase results are retained; main and dedicated suites were rerun in main-final with loopback configured."
+  }
+}

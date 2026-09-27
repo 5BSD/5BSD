@@ -1789,6 +1789,30 @@ cpuset_kernthread(struct thread *td)
 }
 
 /*
+ * A stopped kernel thread serving a user process must remain in that
+ * process's cpuset hierarchy.  Inherit the creator's named set, not its
+ * per-thread affinity mask.  The caller starts the new thread afterwards.
+ */
+void
+cpuset_kernthread_inherit(struct thread *td, struct thread *parent)
+{
+	struct cpuset *set, *oldset;
+	struct proc *p;
+
+	p = parent->td_proc;
+	KASSERT(td->td_proc == p, ("cpuset inheritance across processes"));
+	PROC_LOCK(p);
+	thread_lock(parent);
+	set = cpuset_refbase(parent->td_cpuset);
+	thread_unlock(parent);
+	thread_lock(td);
+	oldset = cpuset_update_thread(td, set);
+	thread_unlock(td);
+	PROC_UNLOCK(p);
+	cpuset_rel(oldset);
+}
+
+/*
  * Create a cpuset, which would be cpuset_create() but
  * mark the new 'set' as root.
  *

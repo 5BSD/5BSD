@@ -77,6 +77,8 @@ SQUEUE_OPTIONS_CASES |= {"param_region_mmap_shared", "param_region_invalid_share
                          "min_wait_shared", "nommap_shared", "nommap_fdonly_shared"}
 SQUEUE_OPTIONS_CASES |= SQUEUE_RESIZE_CASES
 SQUEUE_OPTIONS_CASES.add('close_direct_shared')
+SQUEUE_OPTIONS_CASES.update({'bpf_filter_shared', 'napi_register_shared',
+                             'sqpoll_affinity_transitions_shared'})
 SQUEUE_OPTIONS_CASES.add('fadvise_options_shared')
 SQUEUE_OPTIONS_CASES.add('fsync_options_shared')
 SQUEUE_OPTIONS_CASES.add('fallocate_options_shared')

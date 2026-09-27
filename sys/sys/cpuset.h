@@ -175,6 +175,7 @@ int	cpuset_setproc_mask(struct proc *, cpuset_t *);
 int	cpuset_which(cpuwhich_t, id_t, struct proc **,
 	    struct thread **, struct cpuset **);
 void	cpuset_kernthread(struct thread *);
+void	cpuset_kernthread_inherit(struct thread *, struct thread *);
 
 char	*cpusetobj_strprint(char *, const cpuset_t *);
 int	cpusetobj_strscan(cpuset_t *, const char *);

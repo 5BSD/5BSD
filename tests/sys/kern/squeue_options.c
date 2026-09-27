@@ -4948,6 +4948,157 @@ sqpoll_affinity_shared(void)
  return 0;
 }
 
+/* A caller's thread mask is distinct from the poller's cpuset membership. */
+static long
+sqpoll_caller_affinity(int set, void *mask, u32 size)
+{
+#ifdef LINUX_ABI
+ return sc(set?NR(203,122):NR(204,123),0,size,(long)mask,0,0,0);
+#else
+ int rc;
+ if(set)rc=cpuset_setaffinity(CPU_LEVEL_WHICH,CPU_WHICH_TID,-1,size,mask);
+ else rc=cpuset_getaffinity(CPU_LEVEL_WHICH,CPU_WHICH_TID,-1,size,mask);
+ return rc==0?0:-errno;
+#endif
+}
+
+static int
+sqpoll_affinity_progress(struct ring *r, u64 key)
+{
+ struct sqe q;struct cqe c;
+ for(u32 i=0;i<4;i++){
+  zero(&q,sizeof(q));q.ud=key+i;queue(r,q,0);
+  CHECK(sc(N_ENTER,r->fd,0,0,SQ_WAKEUP,0,0)==0);
+  CHECK(lget(r,&c,1)==0&&c.ud==key+i&&c.res==0);
+ }
+ return 0;
+}
+
+#ifndef LINUX_ABI
+static int
+native_sqpoll_cpuset(cpusetid_t expected, const cpuset_t *mask)
+{
+ struct kinfo_proc *procs;cpuset_t actual;cpusetid_t setid;
+ size_t size;int found=0,result=0;
+ int mib[4]={CTL_KERN,KERN_PROC,KERN_PROC_PID|KERN_PROC_INC_THREAD,getpid()};
+ CHECK(sysctl(mib,4,0,&size,0,0)==0&&size!=0);
+ procs=malloc(size*2);CHECK(procs!=0);size*=2;
+ if(sysctl(mib,4,procs,&size,0,0)!=0){free(procs);return __LINE__;}
+ for(size_t i=0;i<size/sizeof(*procs);i++){
+  if(strcmp(procs[i].ki_tdname,"squeue-sqpoll")!=0)continue;
+  found++;CPU_ZERO(&actual);
+  if(cpuset_getid(CPU_LEVEL_CPUSET,CPU_WHICH_TID,procs[i].ki_tid,&setid)!=0||
+      setid!=expected||cpuset_getaffinity(CPU_LEVEL_WHICH,CPU_WHICH_TID,
+      procs[i].ki_tid,sizeof(actual),&actual)!=0||CPU_CMP(&actual,mask)!=0)
+   result=__LINE__;
+ }
+ free(procs);CHECK(found==1);return result;
+}
+
+static int
+native_sqpoll_cpuset_transitions(int first, int second, int pinned)
+{
+ cpusetid_t setid;cpuset_t both,one,other,actual,empty;
+ struct ring source,attached;
+ CPU_ZERO(&both);CPU_SET(first,&both);CPU_SET(second,&both);
+ CPU_ZERO(&one);CPU_SET(first,&one);
+ CPU_ZERO(&other);CPU_SET(second,&other);CPU_ZERO(&empty);
+ CHECK(cpuset(&setid)==0);
+ CHECK(cpuset_setaffinity(CPU_LEVEL_CPUSET,CPU_WHICH_CPUSET,setid,
+     sizeof(both),&both)==0);
+ CHECK(init_ex(&source,SSQPOLL|(pinned?SSQ_AFF:0),8,first)==0);
+ CHECK(init_ex_wq(&attached,SSQPOLL|(1U<<5),8,0,source.fd)==0);
+ CHECK(native_sqpoll_cpuset(setid,pinned?&one:&both)==0);
+ CHECK(sqpoll_affinity_progress(&source,0xc000)==0);
+ CHECK(cpuset_setaffinity(CPU_LEVEL_CPUSET,CPU_WHICH_CPUSET,setid,
+     sizeof(empty),&empty)==-1&&errno==EDEADLK);
+ CHECK(native_sqpoll_cpuset(setid,pinned?&one:&both)==0);
+ if(pinned){
+  CHECK(cpuset_setaffinity(CPU_LEVEL_CPUSET,CPU_WHICH_CPUSET,setid,
+      sizeof(other),&other)==-1&&errno==EDEADLK);
+  CPU_ZERO(&actual);
+  CHECK(cpuset_getaffinity(CPU_LEVEL_CPUSET,CPU_WHICH_CPUSET,setid,
+      sizeof(actual),&actual)==0&&CPU_CMP(&actual,&both)==0);
+ }
+ CHECK(cpuset_setaffinity(CPU_LEVEL_CPUSET,CPU_WHICH_CPUSET,setid,
+     sizeof(one),&one)==0);
+ CHECK(native_sqpoll_cpuset(setid,&one)==0);
+ CHECK(sqpoll_affinity_progress(&source,0xc100)==0);
+ CHECK(sqpoll_affinity_progress(&attached,0xc200)==0);
+ CHECK(finish(&source)==0);
+ CHECK(cpuset_setaffinity(CPU_LEVEL_CPUSET,CPU_WHICH_CPUSET,setid,
+     sizeof(both),&both)==0);
+ CHECK(native_sqpoll_cpuset(setid,pinned?&one:&both)==0);
+ /* Widening the parent does not widen the caller's anonymous mask. */
+ CHECK(cpuset_setaffinity(CPU_LEVEL_WHICH,CPU_WHICH_TID,-1,
+     sizeof(both),&both)==0);
+ CHECK(sqpoll_affinity_progress(&attached,0xc300)==0);
+ if(!pinned){
+  CHECK(cpuset_setaffinity(CPU_LEVEL_CPUSET,CPU_WHICH_CPUSET,setid,
+      sizeof(other),&other)==0);
+  CHECK(native_sqpoll_cpuset(setid,&other)==0);
+  CHECK(sqpoll_affinity_progress(&attached,0xc400)==0);
+ }
+ CHECK(finish(&attached)==0);
+ /* Closing the last ring must release the pinned child cpuset. */
+ int changed=0;
+ for(int i=0;i<2000;i++){
+  if(cpuset_setaffinity(CPU_LEVEL_CPUSET,CPU_WHICH_CPUSET,setid,
+      sizeof(other),&other)==0){changed=1;break;}
+  CHECK(errno==EDEADLK);lpause(1000000);
+ }
+ CHECK(changed);
+ CHECK(init_ex(&source,SSQPOLL|SSQ_AFF,8,second)==0);
+ CHECK(native_sqpoll_cpuset(setid,&other)==0);
+ CHECK(sqpoll_affinity_progress(&source,0xc500)==0);
+ CHECK(finish(&source)==0);return 0;
+}
+#endif
+
+static int
+sqpoll_affinity_transitions_shared(void)
+{
+ unsigned char saved[128],one[128];struct ring r;
+ int first=-1,second=-1;long rc;
+ zero(saved,sizeof(saved));CHECK(sqpoll_caller_affinity(0,saved,sizeof(saved))>=0);
+ for(u32 cpu=0;cpu<sizeof(saved)*8;cpu++){
+  if(!(saved[cpu/8]&(1U<<(cpu%8))))continue;
+  if(first<0)first=cpu;else{second=cpu;break;}
+ }
+ CHECK(second>=0);
+ CHECK(init_ex(&r,SSQPOLL|SSQ_AFF,8,first)==0);
+ for(int i=0;i<4;i++){
+  u32 cpu=i%2?first:second;
+  zero(one,sizeof(one));one[cpu/8]=1U<<(cpu%8);
+  CHECK(sqpoll_caller_affinity(1,one,sizeof(one))==0);
+#ifndef LINUX_ABI
+  CHECK(native_sqpoll_pinned(first)==0);
+#endif
+  CHECK(sqpoll_affinity_progress(&r,0xa000+i*16)==0);
+ }
+ zero(one,sizeof(one));rc=sqpoll_caller_affinity(1,one,sizeof(one));
+#ifdef LINUX_ABI
+ CHECK(rc==-22);
+#else
+ CHECK(rc==-EDEADLK);
+#endif
+ CHECK(sqpoll_affinity_progress(&r,0xb000)==0);
+ CHECK(sqpoll_caller_affinity(1,saved,sizeof(saved))==0);
+ CHECK(finish(&r)==0);
+#ifndef LINUX_ABI
+ for(int pinned=0;pinned<2;pinned++){
+  pid_t child=fork();int status;CHECK(child>=0);
+  if(child==0){
+   int result=native_sqpoll_cpuset_transitions(first,second,pinned);
+   if(result){put("cpuset transition line ");putnum(result);put("\n");}
+   _exit(result!=0);
+  }
+  CHECK(waitpid(child,&status,0)==child&&WIFEXITED(status)&&WEXITSTATUS(status)==0);
+ }
+#endif
+ return 0;
+}
+
 static int
 sqpoll_taskrun_shared(void)
 {
@@ -5064,6 +5215,7 @@ static const struct { const char *name; int (*fn)(void); } cases[]={
  {"sqpoll_attach_crossabi_shared",sqpoll_attach_crossabi_shared},
  {"sqpoll_attach_waitid_close_shared",sqpoll_attach_waitid_close_shared},
  {"sqpoll_affinity_shared",sqpoll_affinity_shared},
+ {"sqpoll_affinity_transitions_shared",sqpoll_affinity_transitions_shared},
  {"sqpoll_taskrun_shared",sqpoll_taskrun_shared},
  {"sqpoll_layout_shared",sqpoll_layout_shared},
  {"pbuf_ring_shared",pbuf_ring_shared},

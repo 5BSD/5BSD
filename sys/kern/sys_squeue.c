@@ -39,6 +39,7 @@
 #include <sys/racct.h>
 #include <sys/resourcevar.h>
 #include <sys/sched.h>
+#include <sys/unistd.h>
 #include <sys/refcount.h>
 #include <sys/rwlock.h>
 #include <sys/sdt.h>
@@ -6843,7 +6844,7 @@ sq_sqpoll_start(struct squeue_ctx *ctx, struct thread *td)
 	ctx->sqpoll_running = true;
 	mtx_unlock(&ctx->mtx);
 	error = kthread_add(sq_sqpoll_thread, ctx, td->td_proc,
-	    &ctx->sqpoll_td, 0, 0, "squeue-sqpoll");
+	    &ctx->sqpoll_td, RFSTOPPED, 0, "squeue-sqpoll");
 	if (error != 0) {
 		ctx->sqpoll_running = false;
 		atomic_subtract_int(&ctx->refs, 1);
@@ -6855,6 +6856,11 @@ sq_sqpoll_start(struct squeue_ctx *ctx, struct thread *td)
 		}
 #endif
 	} else {
+		/* kthread_add() defaults to the kernel cpuset.  Rejoin the
+		 * creator's hierarchy before running any owner-context work. */
+		cpuset_kernthread_inherit(ctx->sqpoll_td, td);
+		thread_lock(ctx->sqpoll_td);
+		sched_add(ctx->sqpoll_td, SRQ_BORING);
 		mtx_lock(&ctx->mtx);
 		while (!ctx->sqpoll_ready)
 			cv_wait(&ctx->sqpoll_cv, &ctx->mtx);

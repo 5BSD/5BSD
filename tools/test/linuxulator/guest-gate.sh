@@ -733,7 +733,7 @@ echo GATE_SQUEUE_WORKER_SYSCTLS "$worker_limit_before"
 # New option contracts run through both front ends on both architectures.
 for abi in native linux; do
     /root/squeue_options_$abi -l >squeue-options-cases.txt || exit 1
-    [ "$(wc -l <squeue-options-cases.txt | tr -d ' ')" -eq 191 ] || exit 1
+    [ "$(wc -l <squeue-options-cases.txt | tr -d ' ')" -eq 194 ] || exit 1
     for round in 1 2 3; do
         while read -r name; do
             dir="squeue-options-$abi-$round-$name"
