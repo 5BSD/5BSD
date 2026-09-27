@@ -943,7 +943,8 @@ pipe_read(struct file *fp, struct uio *uio, struct ucred *active_cred,
 	 * spawned with a high -j number can find itself with over half of the
 	 * calls failing to find anything.
 	 */
-	if ((fp->f_flag & FNONBLOCK) != 0 &&
+	if (((fp->f_flag & FNONBLOCK) != 0 ||
+	    (flags & FOF_NBIO) != 0) &&
 	    !mac_pipe_check_read_enabled()) {
 		if (__predict_false(uio->uio_resid == 0))
 			return (0);
@@ -1066,7 +1067,8 @@ pipe_read(struct file *fp, struct uio *uio, struct ucred *active_cred,
 			 * Handle non-blocking mode operation or
 			 * wait for more data.
 			 */
-			if (fp->f_flag & FNONBLOCK) {
+			if ((fp->f_flag & FNONBLOCK) != 0 ||
+			    (flags & FOF_NBIO) != 0) {
 				error = EAGAIN;
 			} else {
 				SDT_PROBE1(pipe, , , read__blocked, rpipe);
@@ -1405,7 +1407,7 @@ pipe_write(struct file *fp, struct uio *uio, struct ucred *active_cred,
 		if (uio->uio_segflg == UIO_USERSPACE &&
 		    uio->uio_iov->iov_len >= pipe_mindirect &&
 		    wpipe->pipe_buffer.size >= pipe_mindirect &&
-		    (fp->f_flag & FNONBLOCK) == 0) {
+		    (fp->f_flag & FNONBLOCK) == 0 && (flags & FOF_NBIO) == 0) {
 			error = pipe_direct_write(wpipe, uio);
 			if (error != 0)
 				break;
@@ -1520,7 +1522,8 @@ pipe_write(struct file *fp, struct uio *uio, struct ucred *active_cred,
 			/*
 			 * don't block on non-blocking I/O
 			 */
-			if (fp->f_flag & FNONBLOCK) {
+			if ((fp->f_flag & FNONBLOCK) != 0 ||
+			    (flags & FOF_NBIO) != 0) {
 				error = EAGAIN;
 				break;
 			}

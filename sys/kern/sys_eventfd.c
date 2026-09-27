@@ -223,7 +223,8 @@ eventfd_read(struct file *fp, struct uio *uio, struct ucred *active_cred,
 	efd = fp->f_data;
 	mtx_lock(&efd->efd_lock);
 	while (error == 0 && efd->efd_count == 0) {
-		if ((fp->f_flag & FNONBLOCK) != 0) {
+		if ((fp->f_flag & FNONBLOCK) != 0 ||
+		    (flags & FOF_NBIO) != 0) {
 			mtx_unlock(&efd->efd_lock);
 			SDT_PROBE1(eventfd, , , read__eagain, td->td_proc->p_pid);
 			return (EAGAIN);
@@ -274,7 +275,8 @@ eventfd_write(struct file *fp, struct uio *uio, struct ucred *active_cred,
 	mtx_lock(&efd->efd_lock);
 retry:
 	if (UINT64_MAX - efd->efd_count <= count) {
-		if ((fp->f_flag & FNONBLOCK) != 0) {
+		if ((fp->f_flag & FNONBLOCK) != 0 ||
+		    (flags & FOF_NBIO) != 0) {
 			mtx_unlock(&efd->efd_lock);
 			/* Do not not return the number of bytes written */
 			uio->uio_resid += sizeof(eventfd_t);

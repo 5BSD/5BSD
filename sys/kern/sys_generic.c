@@ -553,13 +553,15 @@ kern_rwv(struct thread *td, int fd, struct uio *auio, off_t offset,
 {
 	struct file *fp;
 	int error;
-	bool positioned;
+	bool positioned, stream;
 
 	if ((flags & ~(FOF_SYNC | FOF_DSYNC | FOF_APPEND | FOF_NOAPPEND |
-	    FOF_NOSIGPIPE)) != 0 ||
+	    FOF_NOSIGPIPE | FOF_STREAM)) != 0 ||
 	    (flags & (FOF_APPEND | FOF_NOAPPEND)) == (FOF_APPEND | FOF_NOAPPEND))
 		return (EINVAL);
 	positioned = offset != -1;
+	stream = (flags & FOF_STREAM) != 0;
+	flags &= ~FOF_STREAM;
 	if (writing)
 		error = fget_write(td, fd, positioned ? &cap_pwrite_rights :
 		    &cap_write_rights, &fp);
@@ -568,6 +570,21 @@ kern_rwv(struct thread *td, int fd, struct uio *auio, off_t offset,
 		    &cap_read_rights, &fp);
 	if (error != 0)
 		return (error);
+	if (stream && !(fp->f_ops->fo_flags & DFLAG_SEEKABLE)) {
+		if (offset < -1) {
+			fdrop(fp, td);
+			return (EINVAL);
+		}
+		if (fp->f_type == DTYPE_SOCKET && offset > 0) {
+			fdrop(fp, td);
+			return (ESPIPE);
+		}
+		positioned = false;
+		offset = -1;
+		if (fp->f_type == DTYPE_PIPE || fp->f_type == DTYPE_SOCKET ||
+		    fp->f_type == DTYPE_EVENTFD)
+			flags |= FOF_NBIO;
+	}
 	if (positioned && !(fp->f_ops->fo_flags & DFLAG_SEEKABLE))
 		error = ESPIPE;
 	else if (positioned && offset < 0 &&
@@ -578,7 +595,7 @@ kern_rwv(struct thread *td, int fd, struct uio *auio, off_t offset,
 		    flags | (positioned ? FOF_OFFSET : 0));
 	else
 		error = dofileread(td, fd, fp, auio, offset,
-		    positioned ? FOF_OFFSET : 0);
+		    (flags & FOF_NBIO) | (positioned ? FOF_OFFSET : 0));
 	fdrop(fp, td);
 	return (error);
 }

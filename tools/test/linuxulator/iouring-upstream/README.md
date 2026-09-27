@@ -147,8 +147,33 @@ this release. Record the advertised identity and any diagnostic override
 separately. A cancellation race may legitimately finish every request before it
 can be cancelled; that outcome does not qualify cancellation of blocked I/O.
 This harness does not establish Bun, Node, or database compatibility, and does
-not cover blocked stream reads or the known stream-teardown problem.
+not cover blocked stream reads; use the separate stream regression below.
 
 The [September 26 libuv results](libuv-results-20260926.md) record working
 filesystem/epoll paths and a reproducible synchronous cancellation mismatch in
-the diagnostic newer-version profile.
+the diagnostic newer-version profile. The [stream/cancellation follow-up](stream-fixes-20260926.md)
+records the subsequent fixes and remaining task-exit cancellation failure.
+
+## Stream and cancellation regression
+
+Build `stream-compat.c` against the pinned liburing headers and static library,
+using a Linux compiler (or the musl wrapper above):
+
+```sh
+$LINUX_CC -O2 -Wall -Wextra -Werror \
+    -I/path/to/liburing/src/include stream-compat.c \
+    /path/to/liburing/src/liburing.a -o stream-compat
+```
+
+Run the same binary in disposable Linux and candidate VMs. It checks pipes,
+socket pairs, and eventfds with ordinary, forced-async, and SQPOLL submissions;
+raw and registered files; replacement of a registered slot while a read is
+pending; cancellation; and writes waiting for buffer space. Descriptor flags
+must remain unchanged. Another 32 iterations make the process that initialized
+the private readiness queue exit before the parent closes the last ring handle.
+The executable has a 90-second alarm; also apply an external VM deadline and
+check for kernel panics, shutdown, and the five squeue resource counters.
+
+Repeat the diagnostic libuv SQPOLL cancellation case separately: stream tests
+exercise parked requests, while the libuv case races queued and executing
+regular-file reads.

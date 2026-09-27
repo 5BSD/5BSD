@@ -121,14 +121,15 @@ soo_read(struct file *fp, struct uio *uio, struct ucred *active_cred,
     int flags, struct thread *td)
 {
 	struct socket *so = fp->f_data;
-	int error;
+	int error, msgflags;
 
 #ifdef MAC
 	error = mac_socket_check_receive(active_cred, so);
 	if (error)
 		return (error);
 #endif
-	error = soreceive(so, 0, uio, 0, 0, 0);
+	msgflags = (flags & FOF_NBIO) != 0 ? MSG_NBIO : 0;
+	error = soreceive(so, 0, uio, 0, 0, &msgflags);
 	return (error);
 }
 
@@ -145,7 +146,8 @@ soo_write(struct file *fp, struct uio *uio, struct ucred *active_cred,
 		return (error);
 #endif
 	error = sousrsend(so, NULL, uio, NULL,
-	    (flags & FOF_NOSIGPIPE) != 0 ? MSG_NOSIGNAL : 0, NULL);
+	    ((flags & FOF_NOSIGPIPE) != 0 ? MSG_NOSIGNAL : 0) |
+	    ((flags & FOF_NBIO) != 0 ? MSG_NBIO : 0), NULL);
 	return (error);
 }
 

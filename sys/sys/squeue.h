@@ -174,6 +174,8 @@ struct sq_req {
 	struct squeue_ctx	*poll_target_ctx; /* held by internal poll proxy */
 	/* Prepared Linux OPENAT2/CONNECT data for request BPF filters. */
 	uint8_t		bpf_pdu[24];
+	uint32_t		tmo_start; /* count-timeout origin, for wrap-safe distance */
+	bool			ostream; /* worker owns interruptible stream I/O */
 
 };
 
@@ -408,6 +410,8 @@ struct squeue_ctx {
 	uint32_t	napi_nids;
 	uint8_t		napi_prefer_busy_poll;
 	uint8_t		napi_track_mode;
+	/* Storage hold only: the private kqueue may outlive its creator. */
+	struct filedesc *kq_fdp;
 };
 
 /*

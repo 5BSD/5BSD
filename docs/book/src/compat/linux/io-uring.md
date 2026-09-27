@@ -19,19 +19,27 @@ failures. See the [upstream qualification results](../../../../../tools/test/lin
 for the exact payload, stress results, hardware-baseline limits, and follow-up
 priorities. No kernel fix is claimed by this qualification run.
 
-The [subsequent hard-link follow-up](../../../../../tools/test/linuxulator/iouring-upstream/fixes-20260926.md)
-fixed the empty-path assertion. Its stream-offset changes were reverted after a
-cancellation/teardown panic, so ordinary pipe and eventfd I/O remain open work.
-Further compatibility work should prioritize those shared semantics and named
-application workloads before optional device-specific backends.
+The [hard-link follow-up](../../../../../tools/test/linuxulator/iouring-upstream/fixes-20260926.md)
+fixed the empty-path assertion. Its first stream-offset patch was reverted after
+a cancellation/teardown panic. The [subsequent stream and cancellation fixes](../../../../../tools/test/linuxulator/iouring-upstream/stream-fixes-20260926.md)
+retain the private kqueue's descriptor-table storage through teardown, enable
+ordinary pipe/eventfd/socket I/O with readiness retries, preserve forced-async
+worker progress, and retain registered-file generations across retries.
 
-The [libuv 1.53.0 application check](../../../../../tools/test/linuxulator/iouring-upstream/libuv-results-20260926.md)
-passes the tested filesystem and epoll paths, with actual ring completions
-verified separately from thread-pool use. The candidate's normal 5.15.0 identity
-passes all six cases. A disposable-VM version override exposes a synchronous
-cancellation race: 12 of 20 repetitions report cancellation success followed by
-a successful read, whereas the same binary passes all 20 repetitions on Linux.
-This remains an unresolved application-contract failure.
+The [initial libuv 1.53.0 application check](../../../../../tools/test/linuxulator/iouring-upstream/libuv-results-20260926.md)
+verified filesystem and epoll ring use but exposed a cancellation race under a
+VM-only newer-version identity: 12 of 20 repetitions reported successful
+cancellation followed by a successful read. The follow-up distinguishes queued
+work from executing regular-file I/O; its final candidate passes all six cases
+under each identity and all 20 cancellation repetitions. Completed I/O retains
+its real result instead of being relabelled as cancelled.
+
+The focused follow-up passes 15 of 16 upstream cases. `io-cancel` still fails
+when a child exits after submitting a linked poll of an inherited ring retained
+by its parent: readiness is returned where Linux cancels the request. This is
+remaining task-exit ownership work, not an optional backend. The focused run
+also passes the native regression checks and returns all five resource counters
+to zero, but does not supersede the earlier full 70-case inventory.
 
 ## The native engine
 

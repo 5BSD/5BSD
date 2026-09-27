@@ -1290,7 +1290,7 @@ static bool sq_pbuf_group_exists(struct squeue_ctx *ctx, uint16_t bgid);
 static void sq_req_free(struct sq_req *req);
 static void sq_finish_link(struct sq_req *req);
 static void sq_unissue(struct sq_req *req);
-static int sq_cancel_req(struct sq_req *req);
+static int sq_cancel_req(struct sq_req *req, bool force);
 static void sq_link_timeout_cb(void *arg);
 static void sq_timeout_cb(void *arg);
 static void sq_ctx_rele(struct squeue_ctx *ctx);
@@ -1341,8 +1341,10 @@ sq_ctx_free(struct squeue_ctx *ctx)
 	ctx->kqfp = NULL;
 	mtx_unlock(&ctx->mtx);
 	taskqueue_drain(taskqueue_thread, &ctx->kq_wake_task);
-	if (kqfp != NULL)
+	if (kqfp != NULL) {
 		fdrop(kqfp, curthread);
+		fddrop(ctx->kq_fdp);
+	}
 	/*
 	 * A pending IORING_OP_TIMEOUT still has a live callout that fires under
 	 * ctx->mtx and mutates ctx->pending/ready.  Splice every list to a local
@@ -1987,7 +1989,7 @@ sq_interrupt_cb(void *arg)
 }
 
 static int
-sq_cancel_req(struct sq_req *req)
+sq_cancel_req(struct sq_req *req, bool force)
 {
 	struct squeue_ctx *ctx = req->ctx;
 
@@ -2017,9 +2019,15 @@ sq_cancel_req(struct sq_req *req)
 		mtx_unlock(&sq_wq_mtx);
 	}
 	if (req->worker_owned || req->issuing) {
+		/* Once execution starts, a successful transfer cannot be undone. */
+		if (!force && !req->ostream)
+			return (EALREADY);
 		req->cancel_requested = true;
 		sq_interrupt_cb(req);
-		return (0);
+		/* An executing stream can be interrupted, but may have transferred
+		 * data already. Async cancellation reports that race; synchronous
+		 * cancellation waits for the worker to stop accessing its buffer. */
+		return (force ? 0 : EALREADY);
 	}
 	if (req->state != SQ_ST_ARMED)
 		return (ENOENT);
@@ -2050,6 +2058,7 @@ struct sq_cancel_match {
 	struct file	*fp;
 	uint32_t	flags;
 	uint8_t		opcode;
+	bool		running;
 };
 
 static bool
@@ -2081,48 +2090,44 @@ sq_cancel_matches(const struct sq_req *req, const struct sq_cancel_match *match,
 }
 
 static int
-sq_cancel_match(struct squeue_ctx *ctx, const struct sq_cancel_match *criteria,
+sq_cancel_match(struct squeue_ctx *ctx, struct sq_cancel_match *criteria,
     bool timeout_only, bool all, struct sq_req *exclude)
 {
-	struct sq_req *req, *match;
-	int count = 0;
-	bool already = false, external = false;
+	struct sq_req *req, *next;
+	struct sq_reqq *head;
+	int count, error, list;
+	bool already, external;
 
 	mtx_assert(&ctx->mtx, MA_OWNED);
-	for (;;) {
-		match = NULL;
-		TAILQ_FOREACH(req, &ctx->pending, entry) {
-			if (!sq_cancel_matches(req, criteria, timeout_only))
+	count = 0;
+	already = false;
+	criteria->running = false;
+	/* Restart after cancellation, which can also retire a linked timeout. */
+	for (list = 0; list < (timeout_only ? 1 : 3); list++) {
+		head = list == 0 ? &ctx->pending :
+		    list == 1 ? &ctx->polls : &ctx->issuing;
+		for (req = TAILQ_FIRST(head); req != NULL; req = next) {
+			next = list == 2 ? TAILQ_NEXT(req, issue_entry) :
+			    TAILQ_NEXT(req, entry);
+			if (req == exclude ||
+			    !sq_cancel_matches(req, criteria, timeout_only))
 				continue;
-			if (req->cancel_requested) { already = true; continue; }
-			match = req;
-			break;
-		}
-		if (!timeout_only && match == NULL) {
-			TAILQ_FOREACH(req, &ctx->polls, entry) {
-				if (sq_cancel_matches(req, criteria, false)) {
-					match = req;
-					break;
-				}
+			external = req->ext_cancel != NULL;
+			/* Cancel-all counts matches, including running work. */
+			error = sq_cancel_req(req, all || !ctx->is_linux);
+			if (error == EALREADY) {
+				already = true;
+				if (!req->cancel_requested)
+					criteria->running = true;
+				continue;
 			}
+			if (error != 0)
+				continue;
+			count++;
+			if (!all)
+				return (external && ctx->is_linux ? 1 : 0);
+			next = TAILQ_FIRST(head);
 		}
-		if (!timeout_only && match == NULL) {
-			TAILQ_FOREACH(req, &ctx->issuing, issue_entry) {
-				if (req == exclude ||
-				    !sq_cancel_matches(req, criteria, false))
-					continue;
-				if (req->cancel_requested) { already = true; continue; }
-				match = req;
-				break;
-			}
-		}
-		if (match == NULL)
-			break;
-		external = match->ext_cancel != NULL;
-		(void)sq_cancel_req(match);
-		count++;
-		if (!all)
-			return (external && ctx->is_linux ? 1 : 0);
 	}
 	if (all && ctx->is_linux && count != 0 &&
 	    (criteria->flags & IORING_ASYNC_CANCEL_OP) != 0 &&
@@ -2181,7 +2186,7 @@ sq_rw1(struct squeue_ctx *ctx, struct thread *td, int fd, void *buf,
 	auio.uio_resid = len;
 	auio.uio_segflg = UIO_USERSPACE;
 	auio.uio_td = td;
-	error = kern_rwv(td, fd, &auio, cur ? -1 : off, write, foflags);
+	error = kern_rwv(td, fd, &auio, cur ? -1 : off, write, foflags | FOF_STREAM);
 	return (sq_result(ctx, td, error));
 }
 
@@ -3093,7 +3098,7 @@ sq_issue_inline(struct squeue_ctx *ctx, struct sq_req *req,
 			return (sq_err(ctx, error));
 		uiop = cloneuio(req->buf_uio);
 		error = kern_rwv(td, sqe->fd, uiop, cur ? -1 : off, wr,
-		    req->rw_foflags);
+		    req->rw_foflags | FOF_STREAM);
 		if (!wr)
 			sq_fixed_dirty(req);
 		free(uiop, M_IOV);
@@ -3138,7 +3143,7 @@ sq_issue_inline(struct squeue_ctx *ctx, struct sq_req *req,
 		if (error != 0)
 			return (sq_err(ctx, error));
 		error = kern_rwv(td, sqe->fd, uiop, cur ? -1 : off, wr,
-		    req->rw_foflags);
+		    req->rw_foflags | FOF_STREAM);
 		free(uiop, M_IOV);
 		return (sq_result(ctx, td, error));
 	}
@@ -3738,7 +3743,7 @@ sq_link_timeout_cb(void *arg)
 	    target->opcode == IORING_OP_WAITID);
 	target->link_timeout = NULL;
 	lt->link_target = NULL;
-	error = sq_cancel_req(target);
+	error = sq_cancel_req(target, true);
 	lt->res = error == 0 ? (linux_external ? 1 : sq_etime(ctx)) :
 	    sq_err(ctx, error);
 	lt->state = SQ_ST_READY;
@@ -3851,7 +3856,8 @@ sq_check_count_timeouts(struct squeue_ctx *ctx)
 	TAILQ_FOREACH_SAFE(req, &ctx->pending, entry, tmp) {
 		if (!req->tmo_count || req->state != SQ_ST_ARMED)
 			continue;
-		if (ctx->cq_count < req->tmo_target)
+		if ((uint32_t)(ctx->cq_count - req->tmo_start) <
+		    (uint32_t)(req->tmo_target - req->tmo_start))
 			continue;
 		/* Requested number of completions reached before the timer. */
 		callout_stop(&req->co);
@@ -3964,7 +3970,8 @@ sq_arm_async(struct squeue_ctx *ctx, struct sq_req *req, struct thread *td)
 	req->state = SQ_ST_ARMED;
 	if (sqe->off != 0 && (flags & IORING_TIMEOUT_MULTISHOT) == 0) {
 		req->tmo_count = true;
-		req->tmo_target = ctx->cq_count + (uint32_t)sqe->off;
+		req->tmo_start = ctx->cq_count;
+		req->tmo_target = req->tmo_start + (uint32_t)sqe->off;
 	}
 	TAILQ_INSERT_TAIL(&ctx->pending, req, entry);
 	ctx->npending++;
@@ -4349,10 +4356,21 @@ sq_offload_submit(struct squeue_ctx *ctx, struct sq_req *req,
 	if (error != 0)
 		return (sq_err(ctx, error));
 
-	if (!cur && (fp->f_ops->fo_flags & DFLAG_SEEKABLE) == 0) {
+	req->ostream = fp->f_type == DTYPE_PIPE ||
+	    fp->f_type == DTYPE_SOCKET || fp->f_type == DTYPE_EVENTFD;
+	/* SQPOLL can service readiness retries itself. Forced-async streams
+	 * keep worker ownership so they progress without another enter call. */
+	if (ctx->is_linux && req->ostream &&
+	    (req->sqe_flags & IOSQE_ASYNC) == 0) {
+		fdrop(fp, td);
+		return (SQ_NOTHANDLED);
+	}
+	if (!cur && fp->f_type == DTYPE_SOCKET && off > 0) {
 		fdrop(fp, td);
 		return (sq_err(ctx, ESPIPE));
 	}
+	if (!cur && (fp->f_ops->fo_flags & DFLAG_SEEKABLE) == 0)
+		cur = true;
 
 	/* Ordinary vectors are copied in; fixed vectors already own their pages. */
 	if (fixed) {
@@ -4598,12 +4616,9 @@ sq_run_chain(struct squeue_ctx *ctx, struct sq_req *req, struct thread *td)
 			if (req->pbuf_ring == NULL)
 				sq_recycle_buffer(req);
 
-			/* Fixed files need a held-file knote because sqe.fd is a
-			 * registered index. EPOLL_WAIT can use the captured identity;
-			 * other fast-poll opcodes retain their descriptor path. */
+			/* Fixed files use the captured file and registered generation. */
 			if ((req->sqe_flags & IOSQE_FIXED_FILE) != 0 &&
-			    (req->opcode != IORING_OP_EPOLL_WAIT ||
-			    req->match_fp == NULL))
+			    req->match_fp == NULL)
 				ev = 0;
 			if (ev != 0) {
 				/* Arm and retry by captured file identity, so closing or
@@ -5464,6 +5479,9 @@ sq_prepare(struct squeue_ctx *ctx, struct sq_req *req, struct sq_req *prev)
 			    ctx->reg_files[q->fd] != NULL &&
 			    fhold(ctx->reg_files[q->fd]->fp)) {
 				req->match_fp = ctx->reg_files[q->fd]->fp;
+				if (sq_pollable_events(q->opcode) != 0)
+					req->file_node = sq_file_node_hold_locked(ctx,
+					    q->fd);
 				if (q->opcode == IORING_OP_POLL_ADD)
 					req->poll_event_error = cap_check(
 					    &ctx->reg_files[q->fd]->caps.fc_rights,
@@ -5721,6 +5739,7 @@ static int
 sq_kq_ensure(struct squeue_ctx *ctx, struct thread *td)
 {
 	struct file *fp;
+	struct filedesc *fdp;
 	struct kevent kev;
 	int error, fd;
 
@@ -5729,8 +5748,15 @@ sq_kq_ensure(struct squeue_ctx *ctx, struct thread *td)
 		sx_xunlock(&ctx->kq_sx);
 		return (0);
 	}
+	/* kqueue_close needs the creator's descriptor-table lock and list.
+	 * Hold the storage, not the descriptors (which would form a cycle). */
+	PROC_LOCK(td->td_proc);
+	fdp = fdhold(td->td_proc);
+	PROC_UNLOCK(td->td_proc);
+	KASSERT(fdp != NULL, ("squeue kqueue without descriptor table"));
 	error = kern_kqueue(td, 0, false, NULL);
 	if (error != 0) {
+		fddrop(fdp);
 		sx_xunlock(&ctx->kq_sx);
 		return (error);
 	}
@@ -5739,6 +5765,7 @@ sq_kq_ensure(struct squeue_ctx *ctx, struct thread *td)
 	error = fget(td, fd, &cap_no_rights, &fp);
 	(void)kern_close(td, fd);
 	if (error != 0) {
+		fddrop(fdp);
 		sx_xunlock(&ctx->kq_sx);
 		return (error);
 	}
@@ -5746,11 +5773,13 @@ sq_kq_ensure(struct squeue_ctx *ctx, struct thread *td)
 	error = sq_kevent_fp(fp, td, &kev, 1, NULL, 0, NULL);
 	if (error != 0) {
 		fdrop(fp, td);
+		fddrop(fdp);
 		sx_xunlock(&ctx->kq_sx);
 		return (error);
 	}
 	mtx_lock(&ctx->mtx);
 	ctx->kqfp = fp;
+	ctx->kq_fdp = fdp;
 	mtx_unlock(&ctx->mtx);
 	sx_xunlock(&ctx->kq_sx);
 	return (0);
@@ -5901,7 +5930,7 @@ sq_poll_remove_update(struct squeue_ctx *ctx, struct sq_req *update,
 		TAILQ_FOREACH(p, &ctx->polls, entry) {
 			if (p->opcode == IORING_OP_POLL_ADD &&
 			    p->user_data == sqe->addr) {
-				error = sq_cancel_req(p);
+				error = sq_cancel_req(p, true);
 				break;
 			}
 		}
@@ -6959,7 +6988,7 @@ sq_fo_close(struct file *fp, struct thread *td)
 		restart_ext:
 		TAILQ_FOREACH(r, &ctx->pending, entry) {
 			if (r->ext_cancel != NULL && !r->cancel_requested) {
-				(void)sq_cancel_req(r);
+				(void)sq_cancel_req(r, true);
 				goto restart_ext;
 			}
 		}
@@ -6979,12 +7008,12 @@ sq_fo_close(struct file *fp, struct thread *td)
 		restart:
 		TAILQ_FOREACH(r, &ctx->pending, entry) {
 			if (!r->cancel_requested) {
-				(void)sq_cancel_req(r);
+				(void)sq_cancel_req(r, true);
 				goto restart;
 			}
 		}
 		while ((r = TAILQ_FIRST(&ctx->polls)) != NULL)
-			(void)sq_cancel_req(r);
+			(void)sq_cancel_req(r, true);
 		mtx_unlock(&ctx->mtx);
 		/* A deferred poll may hold a proxy for this very context.  Retire
 		 * ready requests and cancel both linked successors and drain-held
@@ -8445,7 +8474,7 @@ sq_register_sync_cancel(struct squeue_ctx *ctx, void *arg, uint32_t nr,
 	struct sq_cancel_match match;
 	sbintime_t deadline;
 	bool all, waited;
-	int error, result;
+	int error, result, wait_error;
 
 	if (arg == NULL || nr != 1)
 		return (EINVAL);
@@ -8482,10 +8511,11 @@ sq_register_sync_cancel(struct squeue_ctx *ctx, void *arg, uint32_t nr,
 	all = (reg.flags & (IORING_ASYNC_CANCEL_ALL |
 	    IORING_ASYNC_CANCEL_ANY)) != 0;
 	waited = false;
+	wait_error = 0;
 	mtx_lock(&ctx->mtx);
 	for (;;) {
 		result = sq_cancel_match(ctx, &match, false, all, NULL);
-		if (result != sq_err(ctx, EALREADY))
+		if (result != sq_err(ctx, EALREADY) || match.running)
 			break;
 		if (!waited && (reg.timeout.tv_sec != -1 ||
 		    reg.timeout.tv_nsec != -1)) {
@@ -8511,15 +8541,15 @@ sq_register_sync_cancel(struct squeue_ctx *ctx, void *arg, uint32_t nr,
 		    "sqsync", deadline, 0, deadline != 0 ? C_ABSOLUTE : 0);
 		ctx->cq_waiters--;
 		if (error != 0) {
-			result = error == EWOULDBLOCK ? ETIMEDOUT : EINTR;
+			wait_error = error == EWOULDBLOCK ? ETIMEDOUT : EINTR;
 			break;
 		}
 	}
 	mtx_unlock(&ctx->mtx);
 	if (match.fp != NULL)
 		fdrop(match.fp, td);
-	if (result == ETIMEDOUT || result == EINTR)
-		return (result);
+	if (wait_error != 0)
+		return (wait_error);
 	if (result == sq_err(ctx, ENOENT))
 		return (waited ? 0 : ENOENT);
 	if (result == sq_err(ctx, EALREADY))

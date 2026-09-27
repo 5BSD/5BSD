@@ -1,0 +1,587 @@
+{
+  "date": "2026-09-26",
+  "scope": "Stream readiness, private-kqueue lifetime, libuv cancellation, selected upstream and native regressions; not full io_uring qualification",
+  "source_base": "bc76c4a8af17",
+  "kernel_sha256": "eeed7c2181fa44aa2d174f9935f2c51989519f38e496af07d642061df54a96f0",
+  "module_sha256": {
+    "linux64.ko": "772a26abfc1242c7d909d06c88dc782ec009c126a9d80b3aece419f6c01f0604",
+    "linux_common.ko": "b149b3137ac8582b89a4b7751ad35780542d32db7741c6b40004ee9c48f42008",
+    "zfs.ko": "aee9f85a7a6da5b18faeefed96a116e0f06d94a7b2e0ebab7648d8c7b931cba9"
+  },
+  "source_sha256": {
+    "sys/kern/sys_eventfd.c": "76fcf46e90444a411ea1a6a89ae2c5a7ee1fdc608fc21aeaf2b3593d945b3c97",
+    "sys/kern/sys_generic.c": "2f66284a31cc063d0b9cfb7f6068108470843a374fd632b6f6a1cf98dad7a51c",
+    "sys/kern/sys_pipe.c": "89b61c14fe9ad0392d2cfcdd554df0c41f963ad6df9c0d29688a48db9c77b764",
+    "sys/kern/sys_socket.c": "400f328e0b519404e7f5633531a42264a03aa03ee8d598a59234bca2273f99f4",
+    "sys/kern/sys_squeue.c": "83f67935f6aa4212a98d499f346b4ca50ff0f47786d2c15c47a48869e7d7c92f",
+    "sys/sys/file.h": "23a9af62e43c25585b67d761aa69ebddc530e9b3cb0d9b79a41361815c505bbe",
+    "sys/sys/squeue.h": "b8397a60997570870794baa13f5dabde749019d086fae872260a35da3eef3cc5"
+  },
+  "kernel_patch_sha256": "4e8bc50e62a327442ff7ed0dcc964946d33b88cc2fd6667200422f367e5c628b",
+  "stream_source_sha256": "fb89c54b06eb58b3e745ba701dc4833ed675021bf983f92ee443dd0bbdcb09ef",
+  "stream_binary_sha256": "29d069718308af5d9a90ca383a78365d0061d03aadd0d1620801c0593a276afb",
+  "libuv_binary_sha256": "7ea391bb2761904001a4ed95a46d03718efbdb4a2ae7656465e084b237989b36",
+  "candidate_run": {
+    "command": [
+      "/tmp/linuxulator-gate-20260919/linuxgate-vm-executor",
+      "-L",
+      "/home/koryheard/qemu-root/usr/local/share/qemu",
+      "-accel",
+      "tcg,thread=multi",
+      "-machine",
+      "q35",
+      "-cpu",
+      "max",
+      "-m",
+      "1536",
+      "-smp",
+      "4",
+      "-nic",
+      "user,model=virtio-net-pci,restrict=on",
+      "-display",
+      "none",
+      "-monitor",
+      "none",
+      "-serial",
+      "stdio",
+      "-no-reboot",
+      "-drive",
+      "file=/tmp/iouring-fix-20260926/release.img,format=raw,if=virtio,cache=writeback"
+    ],
+    "kernel_sha256": "eeed7c2181fa44aa2d174f9935f2c51989519f38e496af07d642061df54a96f0",
+    "console_sha256": "be90bca2d5012269ad493f728e2856f699977bac2ab3ffb6b9daa2748c55de9e"
+  },
+  "candidate_stream": {
+    "exit": 0,
+    "modes": [
+      "kind=0 fixed=0 setup=0 async=0",
+      "kind=0 fixed=0 setup=0 async=1",
+      "kind=0 fixed=0 setup=2 async=0",
+      "kind=0 fixed=1 setup=0 async=0",
+      "kind=0 fixed=1 setup=0 async=1",
+      "kind=0 fixed=1 setup=2 async=0",
+      "kind=1 fixed=0 setup=0 async=0",
+      "kind=1 fixed=0 setup=0 async=1",
+      "kind=1 fixed=0 setup=2 async=0",
+      "kind=1 fixed=1 setup=0 async=0",
+      "kind=1 fixed=1 setup=0 async=1",
+      "kind=1 fixed=1 setup=2 async=0",
+      "kind=2 fixed=0 setup=0 async=0",
+      "kind=2 fixed=0 setup=0 async=1",
+      "kind=2 fixed=0 setup=2 async=0",
+      "kind=2 fixed=1 setup=0 async=0",
+      "kind=2 fixed=1 setup=0 async=1",
+      "kind=2 fixed=1 setup=2 async=0"
+    ],
+    "backpressure": [
+      "kind=0",
+      "kind=1",
+      "kind=2"
+    ],
+    "creator_exit": [
+      "iterations=32"
+    ]
+  },
+  "linux_stream": {
+    "exit": 0,
+    "modes": [
+      "kind=0 fixed=0 setup=0 async=0",
+      "kind=0 fixed=0 setup=0 async=1",
+      "kind=0 fixed=0 setup=2 async=0",
+      "kind=0 fixed=1 setup=0 async=0",
+      "kind=0 fixed=1 setup=0 async=1",
+      "kind=0 fixed=1 setup=2 async=0",
+      "kind=1 fixed=0 setup=0 async=0",
+      "kind=1 fixed=0 setup=0 async=1",
+      "kind=1 fixed=0 setup=2 async=0",
+      "kind=1 fixed=1 setup=0 async=0",
+      "kind=1 fixed=1 setup=0 async=1",
+      "kind=1 fixed=1 setup=2 async=0",
+      "kind=2 fixed=0 setup=0 async=0",
+      "kind=2 fixed=0 setup=0 async=1",
+      "kind=2 fixed=0 setup=2 async=0",
+      "kind=2 fixed=1 setup=0 async=0",
+      "kind=2 fixed=1 setup=0 async=1",
+      "kind=2 fixed=1 setup=2 async=0"
+    ],
+    "backpressure": [
+      "kind=0",
+      "kind=1",
+      "kind=2"
+    ],
+    "creator_exit": [
+      "iterations=32"
+    ]
+  },
+  "candidate_libuv": [
+    {
+      "profile": "advertised",
+      "mode": "default",
+      "case": "fs",
+      "exit": 0
+    },
+    {
+      "profile": "advertised",
+      "mode": "default",
+      "case": "poll",
+      "exit": 0
+    },
+    {
+      "profile": "advertised",
+      "mode": "default",
+      "case": "cancel",
+      "exit": 0
+    },
+    {
+      "profile": "advertised",
+      "mode": "sqpoll",
+      "case": "fs",
+      "exit": 0
+    },
+    {
+      "profile": "advertised",
+      "mode": "sqpoll",
+      "case": "poll",
+      "exit": 0
+    },
+    {
+      "profile": "advertised",
+      "mode": "sqpoll",
+      "case": "cancel",
+      "exit": 0
+    },
+    {
+      "profile": "diagnostic-6.18.35",
+      "mode": "default",
+      "case": "fs",
+      "exit": 0
+    },
+    {
+      "profile": "diagnostic-6.18.35",
+      "mode": "default",
+      "case": "poll",
+      "exit": 0
+    },
+    {
+      "profile": "diagnostic-6.18.35",
+      "mode": "default",
+      "case": "cancel",
+      "exit": 0
+    },
+    {
+      "profile": "diagnostic-6.18.35",
+      "mode": "sqpoll",
+      "case": "fs",
+      "exit": 0
+    },
+    {
+      "profile": "diagnostic-6.18.35",
+      "mode": "sqpoll",
+      "case": "poll",
+      "exit": 0
+    },
+    {
+      "profile": "diagnostic-6.18.35",
+      "mode": "sqpoll",
+      "case": "cancel",
+      "exit": 0
+    }
+  ],
+  "candidate_libuv_cancel_repeats": [
+    {
+      "iteration": 1,
+      "exit": 0
+    },
+    {
+      "iteration": 2,
+      "exit": 0
+    },
+    {
+      "iteration": 3,
+      "exit": 0
+    },
+    {
+      "iteration": 4,
+      "exit": 0
+    },
+    {
+      "iteration": 5,
+      "exit": 0
+    },
+    {
+      "iteration": 6,
+      "exit": 0
+    },
+    {
+      "iteration": 7,
+      "exit": 0
+    },
+    {
+      "iteration": 8,
+      "exit": 0
+    },
+    {
+      "iteration": 9,
+      "exit": 0
+    },
+    {
+      "iteration": 10,
+      "exit": 0
+    },
+    {
+      "iteration": 11,
+      "exit": 0
+    },
+    {
+      "iteration": 12,
+      "exit": 0
+    },
+    {
+      "iteration": 13,
+      "exit": 0
+    },
+    {
+      "iteration": 14,
+      "exit": 0
+    },
+    {
+      "iteration": 15,
+      "exit": 0
+    },
+    {
+      "iteration": 16,
+      "exit": 0
+    },
+    {
+      "iteration": 17,
+      "exit": 0
+    },
+    {
+      "iteration": 18,
+      "exit": 0
+    },
+    {
+      "iteration": 19,
+      "exit": 0
+    },
+    {
+      "iteration": 20,
+      "exit": 0
+    }
+  ],
+  "cancel_summaries": [
+    {
+      "cancelled": 0,
+      "busy": 32
+    },
+    {
+      "cancelled": 29,
+      "busy": 3
+    },
+    {
+      "cancelled": 10,
+      "busy": 22
+    },
+    {
+      "cancelled": 4,
+      "busy": 28
+    },
+    {
+      "cancelled": 0,
+      "busy": 32
+    },
+    {
+      "cancelled": 0,
+      "busy": 32
+    },
+    {
+      "cancelled": 1,
+      "busy": 31
+    },
+    {
+      "cancelled": 5,
+      "busy": 27
+    },
+    {
+      "cancelled": 4,
+      "busy": 28
+    },
+    {
+      "cancelled": 11,
+      "busy": 21
+    },
+    {
+      "cancelled": 1,
+      "busy": 31
+    },
+    {
+      "cancelled": 4,
+      "busy": 28
+    },
+    {
+      "cancelled": 8,
+      "busy": 24
+    },
+    {
+      "cancelled": 2,
+      "busy": 30
+    },
+    {
+      "cancelled": 4,
+      "busy": 28
+    },
+    {
+      "cancelled": 0,
+      "busy": 32
+    },
+    {
+      "cancelled": 4,
+      "busy": 28
+    },
+    {
+      "cancelled": 6,
+      "busy": 26
+    },
+    {
+      "cancelled": 0,
+      "busy": 32
+    },
+    {
+      "cancelled": 7,
+      "busy": 25
+    },
+    {
+      "cancelled": 19,
+      "busy": 13
+    },
+    {
+      "cancelled": 9,
+      "busy": 23
+    }
+  ],
+  "upstream": [
+    {
+      "case": "pipe-eof",
+      "exit": 0,
+      "output": ""
+    },
+    {
+      "case": "eventfd",
+      "exit": 0,
+      "output": ""
+    },
+    {
+      "case": "eventfd-reg",
+      "exit": 0,
+      "output": ""
+    },
+    {
+      "case": "eventfd-disable",
+      "exit": 0,
+      "output": ""
+    },
+    {
+      "case": "io-cancel",
+      "exit": 1,
+      "output": "user_data 1 res 1\ntest_cancel_inflight_exit() failed"
+    },
+    {
+      "case": "sync-cancel",
+      "exit": 0,
+      "output": ""
+    },
+    {
+      "case": "socket-rw-offset",
+      "exit": 0,
+      "output": ""
+    },
+    {
+      "case": "shutdown",
+      "exit": 0,
+      "output": ""
+    },
+    {
+      "case": "poll-cancel",
+      "exit": 0,
+      "output": ""
+    },
+    {
+      "case": "link-timeout",
+      "exit": 0,
+      "output": ""
+    },
+    {
+      "case": "hardlink",
+      "exit": 0,
+      "output": ""
+    },
+    {
+      "case": "file-update",
+      "exit": 0,
+      "output": ""
+    },
+    {
+      "case": "file-exit-unreg",
+      "exit": 0,
+      "output": ""
+    },
+    {
+      "case": "sqpoll-exit-hang",
+      "exit": 0,
+      "output": ""
+    },
+    {
+      "case": "exit-no-cleanup",
+      "exit": 0,
+      "output": ""
+    },
+    {
+      "case": "across-fork",
+      "exit": 0,
+      "output": ""
+    }
+  ],
+  "native": [
+    {
+      "case": "links_worker",
+      "exit": 0,
+      "output": ""
+    },
+    {
+      "case": "links_race",
+      "exit": 0,
+      "output": ""
+    },
+    {
+      "case": "links_close",
+      "exit": 0,
+      "output": ""
+    },
+    {
+      "case": "buffers_retry",
+      "exit": 0,
+      "output": ""
+    },
+    {
+      "case": "buffers_async",
+      "exit": 0,
+      "output": ""
+    },
+    {
+      "case": "rwf_retry",
+      "exit": 0,
+      "output": ""
+    },
+    {
+      "case": "rwf_nosignal",
+      "exit": 0,
+      "output": ""
+    },
+    {
+      "case": "rwf_fixed_file",
+      "exit": 0,
+      "output": ""
+    },
+    {
+      "case": "poll_lifetime_shared",
+      "exit": 0,
+      "output": ""
+    },
+    {
+      "case": "poll_ring_target_shared",
+      "exit": 0,
+      "output": ""
+    },
+    {
+      "case": "fork_lifetime",
+      "exit": 0,
+      "output": ""
+    }
+  ],
+  "resource_samples": [
+    {
+      "name": "live_requests",
+      "value": 0
+    },
+    {
+      "name": "registered_files",
+      "value": 0
+    },
+    {
+      "name": "issuer_refs",
+      "value": 0
+    },
+    {
+      "name": "issuer_tokens",
+      "value": 0
+    },
+    {
+      "name": "wired_pages",
+      "value": 0
+    },
+    {
+      "name": "live_requests",
+      "value": 0
+    },
+    {
+      "name": "registered_files",
+      "value": 0
+    },
+    {
+      "name": "issuer_refs",
+      "value": 0
+    },
+    {
+      "name": "issuer_tokens",
+      "value": 0
+    },
+    {
+      "name": "wired_pages",
+      "value": 0
+    },
+    {
+      "name": "live_requests",
+      "value": 0
+    },
+    {
+      "name": "registered_files",
+      "value": 0
+    },
+    {
+      "name": "issuer_refs",
+      "value": 0
+    },
+    {
+      "name": "issuer_tokens",
+      "value": 0
+    },
+    {
+      "name": "wired_pages",
+      "value": 0
+    }
+  ],
+  "healthy_zfs": true,
+  "evidence": {
+    "stream-candidate": {
+      "path": "evidence-20260926/stream-candidate.log.gz",
+      "sha256": "988e76cc1aac82cf91bdbe8878112dc9e6514c6ef19e4c133cb6ba13ea1e20c6",
+      "uncompressed_sha256": "be90bca2d5012269ad493f728e2856f699977bac2ab3ffb6b9daa2748c55de9e"
+    },
+    "stream-oracle": {
+      "path": "evidence-20260926/stream-oracle.log.gz",
+      "sha256": "ddc53f36f24bc9caa1cc4757b28ffae49cf046b47e478d988fd7e7bedf488171",
+      "uncompressed_sha256": "41bd066d83b51d5a4924ba297412f8c7aa9ba0f42d4f5e8ead0176d1a083de13"
+    }
+  },
+  "guest_script": "#!/bin/sh\nset -eu\ntrap 'rc=$?; echo QUALIFICATION_EXIT \"$rc\"; /sbin/halt -p' EXIT\nPATH=/sbin:/bin:/usr/sbin:/usr/bin\nexport PATH\nmount -uw /\nmount -t devfs devfs /dev 2>/dev/null || true\nchmod 1777 /tmp\nifconfig lo0 inet 127.0.0.1 up\nkldload linux64\nsysctl kern.ipc.maxpipekva\necho STREAM_BEGIN\nrc=0\ntimeout -k 5 120 /root/stream-compat || rc=$?\necho STREAM_RESULT $rc\necho LIBUV_PROFILE advertised\nsh /root/libuv-guest.sh /root/libuv-compat || true\nsleep 2\necho UPSTREAM_RESOURCES\nsysctl kern.squeue.live_requests kern.squeue.registered_files kern.squeue.issuer_refs kern.squeue.issuer_tokens kern.squeue.wired_pages\necho LIBUV_PROFILE diagnostic-6.18.35\nsysctl compat.linux.osrelease=6.18.35\nsh /root/libuv-guest.sh /root/libuv-compat || true\nfor n in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do\n echo LIBUV_RACE_BEGIN $n\n rc=0\n timeout -k 5 45 /root/libuv-compat sqpoll cancel || rc=$?\n echo LIBUV_RACE_RESULT $n $rc\ndone\nsleep 2\necho LIBUV_DIAGNOSTIC_RESOURCES\nsysctl kern.squeue.live_requests kern.squeue.registered_files kern.squeue.issuer_refs kern.squeue.issuer_tokens kern.squeue.wired_pages\nCASE_TIMEOUT=45 sh /root/upstream/guest.sh /root/upstream /tmp/upstream\nfor name in links_worker links_race links_close buffers_retry buffers_async rwf_retry rwf_nosignal rwf_fixed_file poll_lifetime_shared poll_ring_target_shared fork_lifetime; do\n echo NATIVE_BEGIN $name\n rc=0\n timeout -k 5 45 /root/squeue_options_native $name || rc=$?\n echo NATIVE_RESULT $name $rc\ndone\nsleep 2\necho FINAL_RESOURCES\nsysctl kern.squeue.live_requests kern.squeue.registered_files kern.squeue.issuer_refs kern.squeue.issuer_tokens kern.squeue.wired_pages\nzpool sync linuxgate\nzpool status -x\necho QUALIFICATION_DONE\n",
+  "oracle_guest_script": "cp /mnt/gate/stream-compat /tmp/stream-compat\nchmod +x /tmp/stream-compat\n/tmp/stream-compat\necho STREAM_RESULT $?\necho QUALIFICATION_DONE\n",
+  "oracle_driver": "import os, subprocess, time, re\nfrom pathlib import Path\nw=Path('/tmp/linuxulator-gate-20260917')\nq='/home/koryheard/qemu-root/usr/local'\nenv=dict(os.environ,LD_LIBRARY_PATH=q+'/lib',LD_PRELOAD='/home/koryheard/vm/libfreesized.so')\ncmd=['/tmp/linuxulator-gate-20260919/linuxgate-vm-executor','-L',q+'/share/qemu','-accel','tcg,thread=multi','-machine','q35','-cpu','max','-m','1024','-smp','4','-nic','user,model=virtio-net-pci,restrict=on','-display','none','-monitor','none','-serial','stdio','-no-reboot','-kernel',str(w/'oracle-boot/boot/vmlinuz-virt'),'-initrd',str(w/'oracle-boot/boot/initramfs-virt'),'-append','console=ttyS0 modules=loop,squashfs,sd-mod,usb-storage quiet','-cdrom','/tmp/alpine-virt-3.24.1-x86_64.iso','-drive','file=/tmp/iouring-fix-20260926/oracle.img,format=raw,if=virtio,readonly=on']\nlog=Path('/tmp/iouring-fix-20260926/oracle.console.log')\nwith log.open('wb') as f:\n p=subprocess.Popen(cmd,stdin=subprocess.PIPE,stdout=f,stderr=subprocess.STDOUT,env=env)\n def until(text,timeout=1200):\n  deadline=time.monotonic()+timeout\n  while time.monotonic()<deadline:\n   data=log.read_text(errors='replace').replace('\\r','')\n   if text in data:return\n   if p.poll() is not None:raise RuntimeError('QEMU exited '+str(p.returncode)+' before '+text)\n   time.sleep(.2)\n  raise RuntimeError('Timeout waiting for '+text)\n def send(s):p.stdin.write((s+'\\n').encode());p.stdin.flush()\n try:\n  until('localhost login:');send('root');until('localhost:~#')\n  send('mkdir /mnt/gate; mount -t vfat -o ro /dev/vda /mnt/gate; sh /mnt/gate/guest.sh')\n  until('\\nQUALIFICATION_DONE\\n')\n  send('poweroff');p.wait(timeout=180)\n finally:\n  if p.poll() is None:p.kill();p.wait()\ntext=log.read_text(errors='replace').replace('\\r','')\nprint(text[text.index('STREAM_PASS '):])\nassert 'QUALIFICATION_DONE' in text\n",
+  "build_commands": [
+    "git archive bc76c4a8af17 sys include share/mk tools/build Makefile.inc1 Makefile Makefile.libcompat Makefile.sys.inc",
+    "Apply the changes recorded in source_sha256 to the isolated source snapshot",
+    "config -d /tmp/iouring-fix-20260926/kernel GENERIC",
+    "make -j8 NO_MODULES=yes SRCTOP=/tmp/iouring-fix-20260926/src",
+    "Build linux_common, linux64 and zfs modules against that KERNBUILDDIR",
+    "/tmp/iouring-upstream-20260926/linux-cc -O2 -Wall -Wextra -Werror -I/tmp/iouring-upstream-20260926/liburing-liburing-2.12/src/include tools/test/linuxulator/iouring-upstream/stream-compat.c /tmp/iouring-upstream-20260926/liburing-liburing-2.12/src/liburing.a -o /tmp/iouring-fix-20260926/stream-compat"
+  ]
+}
