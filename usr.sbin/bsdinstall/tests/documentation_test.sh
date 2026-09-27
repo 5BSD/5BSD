@@ -9,11 +9,16 @@ native_book_is_installed_with_base_body()
 	    DESTDIR="$(pwd)/root" MK_INSTALL_AS_USER=yes install
 	atf_check -s exit:0 test -f root/usr/share/doc/5bsd/SUMMARY.md
 	atf_check -s exit:0 test -f \
-	    root/usr/share/doc/5bsd/security/rootless-hardening.md
+	    root/usr/share/doc/5bsd/capability/capability-mode-and-launch.md
 	atf_check -s exit:0 test -f \
-	    root/usr/share/doc/5bsd/development/writing-components.md
+	    root/usr/share/doc/5bsd/develop/provider.md
 	atf_check -s exit:0 test -f \
 	    root/usr/share/doc/5bsd/operations/building.md
+	# Check the entire book, including new and nested chapters.
+	for chapter in $(find @SRCTOP@/docs/book/src -type f -name '*.md'); do
+		relative=${chapter#@SRCTOP@/docs/book/src/}
+		atf_check -s exit:0 cmp "$chapter" "root/usr/share/doc/5bsd/$relative"
+	done
 	atf_check -s exit:0 -o inline:'runtime\n' make \
 	    -C @SRCTOP@/share/doc/5bsd -V PACKAGE
 }
