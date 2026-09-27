@@ -47,11 +47,31 @@ login session's coalition (by design, EBUSY on join).
    The pass runs on its own taskqueue thread: it walks every coalition, and
    sharing a thread with the per-coalition lifecycle tasks let a walk stall an
    unrelated coalition's teardown, since every close drains those tasks.
-   Remaining: a CPU budget and period, racct accounting into a coalition
-   subject, work a provider does on a client's behalf charged to the client
-   (donation across channel calls, item C2), exhaustion as a coalition
-   notification, and the kill walk itself, ordering by band and footprint at
-   the top of `vm_pageout_oom()` with the stock path as the fallback. This is
+   The pressure pass now acts, not just notifies: it ranks coalitions by band
+   and footprint and **hands down** the low bands, advising their members'
+   address spaces `MADV_DONTNEED` so their pages go to the front of the
+   reclaim queue with nothing discarded and nothing terminated. On by default,
+   ceiling at the background band so CORE is never touched, four coalitions per
+   pass, ten seconds between repeats, 8 MB floor, all sysctl-tunable, with a
+   `pressure-reclaim` probe and a counter.
+   And the kill walk itself, which is what XNU actually does: a victim policy
+   hook at the top of `vm_pageout_oom()` picks the lowest band first and the
+   largest footprint within a band, and terminates the whole coalition, so a
+   unit and its helpers go together. The stock choice is the single largest
+   process, which is often the most important one on the machine precisely
+   because it is the biggest. On by default; ceiling at the interactive band so
+   CORE is out of reach; an assertion lifts a coalition out of reach for as long
+   as it is held; sited after the existing OOM rate limit so it is throttled the
+   same way; declines to the stock path when nothing is eligible, so it can only
+   change which process dies. `oom-kill` and `oom-decline` probes plus a logged
+   report naming the coalition, the responsible party, the band, the footprint
+   and the member count.
+   Remaining: a coalition-wide memory ceiling whose breach kills regardless of
+   band (XNU's highwater kills); idle-exit of clean idle units under pressure
+   (XNU's idle-exit rung, needs the switchboard as the actor); a CPU budget and
+   period; racct accounting into a coalition subject; and work a provider does
+   on a client's behalf charged to the client (donation across channel calls,
+   item C2). This is
    the substrate a coalition-aware scheduler policy would consume; the
    scheduler itself stays on hold.
 4. **Factotum-style key custody** (Plan 9) — **later**. BSDCrypto or BSDAuth

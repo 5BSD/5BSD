@@ -100,6 +100,7 @@
 
 #include <machine/atomic.h>
 #include <vm/uma.h>
+#include <sys/mman.h>
 #include <vm/vm.h>
 #include <vm/vm_param.h>
 #include <vm/pmap.h>
@@ -175,6 +176,25 @@ SDT_PROBE_DEFINE3(mac_capability_coalition, , , ledger__sample,
  */
 SDT_PROBE_DEFINE2(mac_capability_coalition, , , member__spared,
     "uint64_t", "pid_t");
+/*
+ * A coalition was handed down: its pages were advised reclaimable because the
+ * system is short of memory and this coalition is in a band it is willing to
+ * give up first.  Nothing was terminated.  Arguments are the coalition, its
+ * band, the footprint that got it chosen, and how many process members were
+ * advised.
+ */
+SDT_PROBE_DEFINE4(mac_capability_coalition, , , pressure__reclaim,
+    "uint64_t", "u_int", "uint64_t", "u_int");
+/*
+ * A coalition was terminated to reclaim its memory.  This is the report an
+ * operator needs after processes disappear: which coalition, whose work it was
+ * (the responsible parent), the band that made it expendable, the footprint
+ * that made it the choice, and how many process members went with it.
+ */
+SDT_PROBE_DEFINE5(mac_capability_coalition, , , oom__kill,
+    "uint64_t", "uint64_t", "u_int", "uint64_t", "u_int");
+/* No coalition was eligible; the stock largest-process choice will run. */
+SDT_PROBE_DEFINE1(mac_capability_coalition, , , oom__decline, "uint32_t");
 SDT_PROBE_DEFINE3(mac_capability_coalition, , , band__floor,
     "uint64_t", "u_int", "u_int");
 SDT_PROBE_DEFINE4(mac_capability_coalition, , , band__assert,
@@ -261,6 +281,7 @@ struct coalition {
 	volatile u_int		co_band_floor;
 	volatile u_int		co_band_assert[COALITION_BAND_COUNT];
 	volatile u_int		co_band_nassert;	/* live assertions */
+	volatile sbintime_t	co_press_time;	/* last handed down, 0 = never */
 	/* Identity (I) — immutable after creation */
 	uint64_t		co_id;
 	/*
@@ -376,6 +397,47 @@ static u_int coalition_max_members = 8192;
  */
 static u_int coalition_max_assertions = 64;
 
+/*
+ * What a memory-pressure pass does about the coalitions it finds.
+ *
+ * It hands them down rather than killing them.  Every coalition is notified so
+ * it can drop caches of its own accord, and then the ones the system is least
+ * interested in keeping -- the low bands, largest first -- have their address
+ * spaces advised MADV_DONTNEED, which moves their pages to the front of the
+ * reclaim queue without discarding anything.  Nothing is lost and nothing is
+ * terminated: a coalition handed down keeps running and faults its pages back
+ * if it turns out to need them, having in the meantime given the rest of the
+ * system first claim on that memory.
+ *
+ * That is the whole ladder for now.  Terminating a coalition to reclaim its
+ * memory is a further rung that is deliberately not taken here, because
+ * handing down is reversible and killing is not.
+ */
+static int coalition_pressure_reclaim = 1;
+static u_int coalition_pressure_band_ceiling = COALITION_BAND_BACKGROUND;
+static u_int coalition_pressure_max_targets = 4;
+static u_int coalition_pressure_interval_ms = 10000;
+static u_int coalition_pressure_min_kb = 8192;
+static volatile u_int coalition_pressure_reclaims;
+
+/*
+ * Out-of-memory kills.  When the system is about to run out of memory the
+ * stock choice is the single largest process, which is very often the most
+ * important thing on the machine simply because it is the biggest.  This
+ * policy chooses instead by what the system is willing to lose: the lowest
+ * band first, and within a band the largest footprint, because that frees the
+ * most for the least.  The unit is the coalition, so a unit and its helpers go
+ * together rather than leaving a decapitated remainder behind.
+ *
+ * A coalition above the ceiling is never chosen, which is what keeps CORE
+ * units safe.  If nothing is eligible the policy declines and the stock
+ * largest-process choice runs unchanged, so this can only improve the decision,
+ * never prevent one.
+ */
+static int coalition_oom_kill = 1;
+static u_int coalition_oom_band_ceiling = COALITION_BAND_INTERACTIVE;
+static volatile u_int coalition_oom_kills;
+
 SYSCTL_NODE(_kern, OID_AUTO, mac_capability_coalition,
     CTLFLAG_RW | CTLFLAG_MPSAFE, 0, "mac_capability coalition");
 SYSCTL_UINT(_kern_mac_capability_coalition, OID_AUTO, count, CTLFLAG_RD,
@@ -393,6 +455,33 @@ SYSCTL_UINT(_kern_mac_capability_coalition, OID_AUTO, members, CTLFLAG_RD,
 SYSCTL_UINT(_kern_mac_capability_coalition, OID_AUTO, max_assertions,
     CTLFLAG_RW, &coalition_max_assertions, 0,
     "Maximum live band assertions per coalition (0 = unlimited)");
+SYSCTL_INT(_kern_mac_capability_coalition, OID_AUTO, pressure_reclaim,
+    CTLFLAG_RW, &coalition_pressure_reclaim, 0,
+    "Under memory pressure, advise low-band coalitions' pages reclaimable");
+SYSCTL_UINT(_kern_mac_capability_coalition, OID_AUTO, pressure_band_ceiling,
+    CTLFLAG_RW, &coalition_pressure_band_ceiling, 0,
+    "Highest band handed down under pressure (COALITION_BAND_*)");
+SYSCTL_UINT(_kern_mac_capability_coalition, OID_AUTO, pressure_max_targets,
+    CTLFLAG_RW, &coalition_pressure_max_targets, 0,
+    "Coalitions handed down per pressure pass");
+SYSCTL_UINT(_kern_mac_capability_coalition, OID_AUTO, pressure_interval_ms,
+    CTLFLAG_RW, &coalition_pressure_interval_ms, 0,
+    "Minimum time before the same coalition is handed down again");
+SYSCTL_UINT(_kern_mac_capability_coalition, OID_AUTO, pressure_min_kb,
+    CTLFLAG_RW, &coalition_pressure_min_kb, 0,
+    "Ignore coalitions smaller than this when handing down");
+SYSCTL_UINT(_kern_mac_capability_coalition, OID_AUTO, pressure_reclaims,
+    CTLFLAG_RD, __DEVOLATILE(u_int *, &coalition_pressure_reclaims), 0,
+    "Total coalitions handed down since boot");
+SYSCTL_INT(_kern_mac_capability_coalition, OID_AUTO, oom_kill, CTLFLAG_RW,
+    &coalition_oom_kill, 0,
+    "Choose an out-of-memory victim by band and footprint, by coalition");
+SYSCTL_UINT(_kern_mac_capability_coalition, OID_AUTO, oom_band_ceiling,
+    CTLFLAG_RW, &coalition_oom_band_ceiling, 0,
+    "Highest band an out-of-memory kill may choose (COALITION_BAND_*)");
+SYSCTL_UINT(_kern_mac_capability_coalition, OID_AUTO, oom_kills, CTLFLAG_RD,
+    __DEVOLATILE(u_int *, &coalition_oom_kills), 0,
+    "Total coalitions terminated for memory since boot");
 
 /* Forward declarations */
 static void	coalition_terminate_members_locked(struct coalition *co,
@@ -2737,11 +2826,262 @@ coalition_sample_locked(struct coalition *co)
  * drops the message if the instance's queue is full, which is the right
  * answer under memory pressure.
  */
+/* ----------------------------------------------------------------
+ * Handing a coalition down under memory pressure
+ * ---------------------------------------------------------------- */
+
+#define	COALITION_PRESS_MAX	8
+
+struct coalition_press_target {
+	struct coalition	*pt_co;		/* reference held */
+	u_int			pt_band;
+	uint64_t		pt_rss;
+};
+
+/*
+ * Advise every process member's address space reclaimable.  MADV_DONTNEED
+ * keeps dirty data -- the page is dirtied first if the pmap says it was
+ * modified -- and only clears references and moves pages to the front of the
+ * inactive queue, so the pager takes memory from here before anywhere else.
+ * The coalition keeps running throughout and faults back whatever it still
+ * needs.
+ *
+ * Caller holds a reference on co.  Takes co_sx shared; the map advice sleeps,
+ * which is why the pressure pass has a thread of its own.
+ */
+static u_int
+coalition_press_down(struct coalition *co)
+{
+	struct coalition_member *cm;
+	struct proc *p;
+	struct vmspace *vm;
+	vm_map_t map;
+	u_int pressed = 0;
+
+	sx_slock(&co->co_sx);
+	if ((co->co_flags & (COF_TERMINATING | COF_CLOSING)) != 0) {
+		sx_sunlock(&co->co_sx);
+		return (0);
+	}
+	TAILQ_FOREACH(cm, &co->co_members, cm_link) {
+		if (cm->cm_dtype != DTYPE_PROCDESC)
+			continue;
+		p = NULL;
+		if (cm->cm_fp != NULL) {
+			struct procdesc *pd = cm->cm_fp->f_data;
+
+			if (pd == NULL)
+				continue;
+			sx_slock(&proctree_lock);
+			p = pd->pd_proc;
+			if (p != NULL)
+				PROC_LOCK(p);
+			sx_sunlock(&proctree_lock);
+		} else if (cm->cm_data != NULL) {
+			p = (struct proc *)atomic_load_acq_ptr(
+			    (uintptr_t *)&cm->cm_data);
+			if (p != NULL)
+				PROC_LOCK(p);
+		}
+		if (p == NULL)
+			continue;
+		if (p->p_state == PRS_ZOMBIE || (p->p_flag & P_WEXIT) != 0) {
+			PROC_UNLOCK(p);
+			continue;
+		}
+		vm = vmspace_acquire_ref(p);
+		PROC_UNLOCK(p);
+		if (vm == NULL)
+			continue;
+		map = &vm->vm_map;
+		if (vm_map_madvise(map, vm_map_min(map), vm_map_max(map),
+		    MADV_DONTNEED) == 0)
+			pressed++;
+		vmspace_free(vm);
+	}
+	sx_sunlock(&co->co_sx);
+	return (pressed);
+}
+
+/*
+ * Is this coalition one the system should hand down, and is it due?  Called
+ * with only atomic loads, so it costs nothing to ask about every coalition.
+ */
+static bool
+coalition_press_eligible(struct coalition *co, sbintime_t now, u_int *bandp,
+    uint64_t *rssp)
+{
+	sbintime_t last;
+	uint64_t rss;
+	u_int band, interval;
+
+	if (coalition_pressure_reclaim == 0)
+		return (false);
+	band = coalition_band_effective(co);
+	if (band > coalition_pressure_band_ceiling)
+		return (false);
+	rss = atomic_load_64(&co->co_rss_bytes);
+	if (rss < (uint64_t)coalition_pressure_min_kb * 1024)
+		return (false);
+	interval = coalition_pressure_interval_ms;
+	last = (sbintime_t)atomic_load_64(
+	    (volatile uint64_t *)&co->co_press_time);
+	if (last != 0 && interval != 0 &&
+	    now - last < (sbintime_t)interval * SBT_1MS)
+		return (false);
+	*bandp = band;
+	*rssp = rss;
+	return (true);
+}
+
+/*
+ * Keep the best candidates seen so far: lowest band first, and within a band
+ * the largest footprint, since that is where handing down frees the most for
+ * the least disruption.  The array owns a reference on everything it holds.
+ */
+static void
+coalition_press_offer(struct coalition_press_target *t, u_int max, u_int *nt,
+    struct coalition *co, u_int band, uint64_t rss)
+{
+	u_int i, worst;
+
+	if (max > COALITION_PRESS_MAX)
+		max = COALITION_PRESS_MAX;
+	if (max == 0)
+		return;
+	if (*nt < max) {
+		coalition_ref(co);
+		t[*nt].pt_co = co;
+		t[*nt].pt_band = band;
+		t[*nt].pt_rss = rss;
+		(*nt)++;
+		return;
+	}
+	/* Find the least deserving entry and displace it if we are better. */
+	worst = 0;
+	for (i = 1; i < *nt; i++) {
+		if (t[i].pt_band > t[worst].pt_band ||
+		    (t[i].pt_band == t[worst].pt_band &&
+		    t[i].pt_rss < t[worst].pt_rss))
+			worst = i;
+	}
+	if (band > t[worst].pt_band ||
+	    (band == t[worst].pt_band && rss <= t[worst].pt_rss))
+		return;
+	coalition_rel(t[worst].pt_co);
+	coalition_ref(co);
+	t[worst].pt_co = co;
+	t[worst].pt_band = band;
+	t[worst].pt_rss = rss;
+}
+
+/*
+ * The out-of-memory victim policy.  Runs in the page daemon, which may sleep,
+ * so the candidates are sampled for real rather than trusted from the cache:
+ * at this moment the footprint is the whole basis of the decision and a stale
+ * one would pick the wrong coalition.
+ *
+ * Returns true if a coalition was terminated.
+ */
+static bool
+coalition_oom_policy(int shortage __unused)
+{
+	struct coalition_press_target cand[COALITION_PRESS_MAX];
+	struct coalition *co, *victim;
+	uint64_t rss, best_rss;
+	u_int band, ncand = 0, i, best, members;
+
+	if (coalition_oom_kill == 0)
+		return (false);
+
+	/* Collect eligible coalitions, lock-free, with a reference on each. */
+	smr_enter(coalition_smr);
+	CK_LIST_FOREACH(co, &coalition_list, co_all_link) {
+		if (ncand >= nitems(cand))
+			break;
+		if (coalition_band_effective(co) > coalition_oom_band_ceiling)
+			continue;
+		if (!refcount_acquire_if_not_zero(&co->co_refcount))
+			continue;
+		cand[ncand].pt_co = co;
+		cand[ncand].pt_band = 0;
+		cand[ncand].pt_rss = 0;
+		ncand++;
+	}
+	smr_exit(coalition_smr);
+
+	/* Sample each for real, then choose. */
+	best = ncand;
+	best_rss = 0;
+	for (i = 0; i < ncand; i++) {
+		co = cand[i].pt_co;
+		sx_slock(&co->co_sx);
+		if ((co->co_flags & (COF_TERMINATING | COF_CLOSING)) == 0)
+			coalition_sample_locked(co);
+		sx_sunlock(&co->co_sx);
+		band = coalition_band_effective(co);
+		rss = atomic_load_64(&co->co_rss_bytes);
+		cand[i].pt_band = band;
+		cand[i].pt_rss = rss;
+		if (rss == 0 || band > coalition_oom_band_ceiling)
+			continue;
+		if (best == ncand || band < cand[best].pt_band ||
+		    (band == cand[best].pt_band && rss > best_rss)) {
+			best = i;
+			best_rss = rss;
+		}
+	}
+
+	victim = best < ncand ? cand[best].pt_co : NULL;
+	if (victim != NULL) {
+		coalition_ref(victim);
+		members = atomic_load_int(&victim->co_member_count);
+		SDT_PROBE5(mac_capability_coalition, , , oom__kill,
+		    victim->co_id, victim->co_responsible_id,
+		    cand[best].pt_band, cand[best].pt_rss, members);
+		/*
+		 * Say this out loud.  Processes are about to disappear and the
+		 * only honest thing is to leave a record of which coalition was
+		 * given up, on whose behalf it was running, and why it was the
+		 * one chosen.
+		 */
+		log(LOG_WARNING, "mac_capability_coalition: out of memory: "
+		    "terminating coalition %ju (responsible %ju, band %u, "
+		    "%ju KB, %u members)\n", (uintmax_t)victim->co_id,
+		    (uintmax_t)victim->co_responsible_id, cand[best].pt_band,
+		    (uintmax_t)(cand[best].pt_rss / 1024), members);
+		atomic_add_int(&coalition_oom_kills, 1);
+	} else
+		SDT_PROBE1(mac_capability_coalition, , , oom__decline,
+		    (uint32_t)atomic_load_int(&coalition_count));
+
+	for (i = 0; i < ncand; i++)
+		coalition_rel(cand[i].pt_co);
+
+	if (victim == NULL)
+		return (false);
+
+	/*
+	 * Terminate with SIGKILL regardless of the coalition's configured
+	 * signal: the system needs the memory now, and a coalition that was
+	 * set up to be released without a signal must still be reclaimable.
+	 */
+	sx_xlock(&victim->co_sx);
+	coalition_terminate_members_locked(victim, curthread, false, SIGKILL);
+	sx_xunlock(&victim->co_sx);
+	coalition_rel(victim);
+	return (true);
+}
+
 static void
 coalition_pressure_task_fn(void *ctx __unused, int pending __unused)
 {
+	struct coalition_press_target targets[COALITION_PRESS_MAX];
 	struct coalition *co, *next;
-	unsigned notified = 0;
+	sbintime_t now = getsbinuptime();
+	unsigned notified = 0, handed = 0;
+	u_int band, ntargets = 0, i;
+	uint64_t rss;
 
 	/*
 	 * Enumerate lock-free.  A reference is taken on each coalition inside
@@ -2780,6 +3120,17 @@ coalition_pressure_task_fn(void *ctx __unused, int pending __unused)
 			    pressure__notify, co->co_id, 0U, ESHUTDOWN);
 		sx_xunlock(&co->co_sx);
 
+		/*
+		 * The sample is fresh now, so decide whether this is one of the
+		 * coalitions to hand down.  The choice is made across the whole
+		 * walk rather than greedily, so a big background coalition
+		 * found late still wins over a small one found early.
+		 */
+		if (coalition_press_eligible(co, now, &band, &rss))
+			coalition_press_offer(targets,
+			    coalition_pressure_max_targets, &ntargets, co,
+			    band, rss);
+
 		smr_enter(coalition_smr);
 		for (next = CK_LIST_NEXT(co, co_all_link); next != NULL;
 		    next = CK_LIST_NEXT(next, co_all_link)) {
@@ -2796,8 +3147,33 @@ coalition_pressure_task_fn(void *ctx __unused, int pending __unused)
 		coalition_rel(co);
 		co = next;
 	}
+
+	/*
+	 * Hand the chosen ones down, outside the enumeration: advising an
+	 * address space takes the map lock and sleeps, and doing it here keeps
+	 * that off the walk entirely.
+	 */
+	for (i = 0; i < ntargets; i++) {
+		u_int pressed = coalition_press_down(targets[i].pt_co);
+
+		if (pressed != 0) {
+			atomic_store_64((volatile uint64_t *)
+			    &targets[i].pt_co->co_press_time, (uint64_t)now);
+			atomic_add_int(&coalition_pressure_reclaims, 1);
+			handed++;
+			SDT_PROBE4(mac_capability_coalition, , ,
+			    pressure__reclaim, targets[i].pt_co->co_id,
+			    targets[i].pt_band, targets[i].pt_rss, pressed);
+		}
+		coalition_rel(targets[i].pt_co);
+	}
+
 	SDT_PROBE2(mac_capability_coalition, , , pressure,
 	    (uint32_t)atomic_load_int(&coalition_count), notified);
+	if (handed != 0)
+		log(LOG_INFO, "mac_capability_coalition: memory pressure: "
+		    "handed down %u coalition%s\n", handed,
+		    handed == 1 ? "" : "s");
 }
 
 /*
@@ -3923,6 +4299,7 @@ coalition_mod_init(void)
 	}
 
 	mac_capability_proc_coalition_hook_set(coalition_proc_info);
+	vm_pageout_oom_policy_set(coalition_oom_policy);
 	log(LOG_INFO, "mac_capability_coalition: loaded\n");
 	return (0);
 
@@ -3963,6 +4340,7 @@ coalition_modevent(module_t mod __unused, int type, void *arg __unused)
 			return (EBUSY);
 		}
 
+		vm_pageout_oom_policy_set(NULL);
 		mac_capability_proc_coalition_hook_set(NULL);
 		if (coalition_lowmem_tag != NULL)
 			EVENTHANDLER_DEREGISTER(vm_lowmem,

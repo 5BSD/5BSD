@@ -108,6 +108,23 @@ mac_capability_coalition:::responsible-set
 	@events["edge refused"] = count();
 }
 
+/* ---- A coalition was given up entirely to reclaim memory ---- */
+
+mac_capability_coalition:::oom-kill
+{
+	printf("\n%-12s %-14s coalition %d responsible %d band %d %d KB, %d members\n",
+	    strftime(walltimestamp, "%H:%M:%S"), "OOM-KILL", arg0, arg1, arg2,
+	    arg3 / 1024, arg4);
+	@oomkill[arg0, arg1] = count();
+}
+
+mac_capability_coalition:::oom-decline
+{
+	printf("%-12s %-14s no coalition was eligible (%d live); the stock\n",
+	    strftime(walltimestamp, "%H:%M:%S"), "OOM-DECLINE", arg0);
+	printf("%-12s %-14s largest-process choice will run instead\n", "", "");
+}
+
 mac_capability_coalition:::member-spared
 {
 	printf("%-12s %-14s %-12d spared pid %d (it closed the coalition)\n",

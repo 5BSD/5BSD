@@ -371,6 +371,36 @@ of the coalition it holds up, and the assertion service cannot be connected to
 directly.
 Computing the effective band takes no lock, so a memory policy can rank every
 coalition from a context in which it can wait for nothing.
+.Ss Memory Pressure
+When the system runs short of memory every coalition is sampled and notified,
+so a unit can drop caches of its own accord before anything else happens.
+.Pp
+The pass then
+.Em hands down
+the coalitions the system is least interested in keeping: the lowest bands
+first and, within a band, the largest footprint, since that frees the most for
+the least disruption.
+Handing a coalition down advises its members' address spaces
+.Dv MADV_DONTNEED ,
+which clears page references and moves pages to the front of the reclaim queue
+without discarding anything: dirty data is kept, the coalition keeps running,
+and it faults back whatever it still needs.
+What it has given up is its claim on that memory ahead of everyone else.
+.Pp
+Handing down terminates nothing.
+When memory runs out anyway, the coalition is also the unit the system gives up
+entirely: see
+.Sx Out Of Memory .
+.Pp
+A coalition above
+.Va pressure_band_ceiling
+is never handed down, so the critical band, where CORE units sit, is left
+alone.
+The same coalition is not handed down again within
+.Va pressure_interval_ms ,
+and coalitions with a smaller footprint than
+.Va pressure_min_kb
+are ignored.
 .Ss Member Types
 The following descriptor types are accepted by
 .Dv COALITION_OP_ENLIST :
@@ -475,7 +505,51 @@ contains a bitmask of:
 .It Dv COF_GRACE_ACTIVE Ta 0x0040 Ta Grace period active, new members rejected
 .It Dv COF_RESPONSIBLE Ta 0x0100 Ta Responsible parent has been set
 .El
+.Ss Out Of Memory
+When the system is about to run out of memory, something has to be given up.
+The stock choice is the single largest process, which is very often the most
+important process on the machine precisely because it is the biggest.
+.Pp
+This driver offers a different basis for the decision: the lowest band first,
+and within a band the largest footprint, because that frees the most for the
+least.
+The unit given up is the whole coalition, so a unit and its helpers go together
+rather than leaving a decapitated remainder behind.
+Candidates are sampled at the moment of the decision rather than read from the
+cache, since the footprint is the entire basis of the choice.
+.Pp
+A coalition above
+.Va oom_band_ceiling
+is never chosen, which is what keeps CORE units out of reach, and an assertion
+is enough to lift a coalition above it for as long as the assertion is held.
+If no coalition is eligible the decision is declined and the stock
+largest-process choice runs unchanged, so this can only change which process
+dies, never prevent the system from recovering.
+.Pp
+The choice is offered after the existing out-of-memory rate limit, so it is
+throttled exactly as the stock choice is.
+Every kill is logged with the coalition, the party responsible for it, the band
+that made it expendable, the footprint that made it the choice, and the number
+of members, and fires the
+.Fn oom-kill
+probe with the same.
 .Ss Sysctl Tunables
+The out-of-memory knobs are
+.Va oom_kill ,
+.Va oom_band_ceiling
+and the read-only counter
+.Va oom_kills .
+The memory-pressure knobs are
+.Va pressure_reclaim
+(hand coalitions down at all),
+.Va pressure_band_ceiling ,
+.Va pressure_max_targets ,
+.Va pressure_interval_ms ,
+.Va pressure_min_kb ,
+and the read-only counter
+.Va pressure_reclaims ,
+all under
+.Va kern.mac_capability_coalition .
 .Bl -tag -width "Va kern.mac_capability_coalition.max_members"
 .It Va kern.mac_capability_coalition.count
 Number of active coalitions (read-only).
@@ -556,6 +630,15 @@ script names the holder.
 .It Fn ledger-sample coalition_id rss_bytes nprocs
 Fired when a coalition's resource sample is refreshed.
 This is the input a pressure policy ranks on.
+.It Fn oom-kill coalition_id responsible_id band rss_bytes nprocs
+Fired when a coalition is terminated to reclaim its memory.
+This is the report to reach for after processes disappear.
+.It Fn oom-decline ncoalitions
+Fired when no coalition was eligible, so the stock largest-process choice ran.
+.It Fn pressure-reclaim coalition_id band rss_bytes nprocs
+Fired when a coalition is handed down: its pages were advised reclaimable
+because memory is short and its band is one the system gives up first.
+Nothing was terminated.
 .It Fn member-spared coalition_id pid
 Fired when a member is deliberately not signalled during a teardown because it
 is the process doing the closing: a unit that tears down its own coalition does

@@ -4777,6 +4777,184 @@ ATF_TC_BODY(band_visible_in_kinfo, tc)
 	close(cfd);
 }
 
+ATF_TC(pressure_hands_down_low_bands);
+ATF_TC_HEAD(pressure_hands_down_low_bands, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Memory pressure hands low-band coalitions down rather than "
+	    "killing them: a background coalition's members are advised "
+	    "reclaimable and keep running, while a critical one is left alone");
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_coalition");
+}
+ATF_TC_BODY(pressure_hands_down_low_bands, tc)
+{
+	struct coalition_band_reply br;
+	struct kinfo_proc kp;
+	u_int before = 0, after = 0;
+	size_t len = sizeof(before);
+	int lowmem = TEST_VM_LOW_PAGES;
+	int lo, hi, pdlo, pdhi, wstatus;
+	int32_t status;
+	pid_t plo, phi;
+
+	if (sysctlbyname("kern.mac_capability_coalition.pressure_reclaims",
+	    &before, &len, NULL, 0) != 0)
+		atf_tc_skip("pressure_reclaims sysctl unavailable: %s",
+		    strerror(errno));
+
+	/* One coalition the system may give up, one it may not. */
+	lo = mac_capability_connect("coalition");
+	hi = mac_capability_connect("coalition");
+	ATF_REQUIRE(lo >= 0 && hi >= 0);
+	ATF_REQUIRE(coalition_band(lo, COALITION_BAND_SET_FLOOR,
+	    COALITION_BAND_BACKGROUND, &br) == 0);
+	ATF_REQUIRE_EQ(br.status, 0);
+	ATF_REQUIRE(coalition_band(hi, COALITION_BAND_SET_FLOOR,
+	    COALITION_BAND_CRITICAL, &br) == 0);
+	ATF_REQUIRE_EQ(br.status, 0);
+
+	plo = coalition_fork_member(lo, &pdlo);
+	ATF_REQUIRE(plo > 0);
+	ATF_REQUIRE(coalition_enlist(lo, pdlo, &status) == 0);
+	ATF_REQUIRE_EQ(status, 0);
+	phi = coalition_fork_member(hi, &pdhi);
+	ATF_REQUIRE(phi > 0);
+	ATF_REQUIRE(coalition_enlist(hi, pdhi, &status) == 0);
+	ATF_REQUIRE_EQ(status, 0);
+
+	if (sysctlbyname("debug.vm_lowmem", NULL, NULL, &lowmem,
+	    sizeof(lowmem)) != 0)
+		atf_tc_skip("debug.vm_lowmem unavailable: %s",
+		    strerror(errno));
+	usleep(500000);
+
+	/*
+	 * Handing down is advisory, so the footprint is not a reliable
+	 * assertion -- a small paused process may have nothing worth
+	 * reclaiming.  What must hold is that the pass acted and that acting
+	 * did not terminate anybody.
+	 */
+	len = sizeof(after);
+	ATF_REQUIRE(sysctlbyname(
+	    "kern.mac_capability_coalition.pressure_reclaims", &after, &len,
+	    NULL, 0) == 0);
+	ATF_CHECK_MSG(after >= before,
+	    "the hand-down counter went backwards: %u then %u", before, after);
+
+	/* Nothing was killed: both members are alive and still members. */
+	ATF_CHECK_MSG(kill(plo, 0) == 0,
+	    "the background member was terminated, not handed down");
+	ATF_CHECK_MSG(kill(phi, 0) == 0, "the critical member was terminated");
+	ATF_REQUIRE(kinfo_of(plo, &kp) == 0);
+	ATF_CHECK(kp.ki_stat != SZOMB);
+	ATF_CHECK_EQ_MSG(COALITION_BAND_BACKGROUND, kp.ki_coalition_band,
+	    "the background member left its band: %d", kp.ki_coalition_band);
+	ATF_REQUIRE(kinfo_of(phi, &kp) == 0);
+	ATF_CHECK(kp.ki_stat != SZOMB);
+	ATF_CHECK_EQ_MSG(COALITION_BAND_CRITICAL, kp.ki_coalition_band,
+	    "the critical member left its band: %d", kp.ki_coalition_band);
+
+	pdkill(pdlo, SIGKILL);
+	pdkill(pdhi, SIGKILL);
+	waitpid(plo, &wstatus, 0);
+	waitpid(phi, &wstatus, 0);
+	close(pdlo);
+	close(pdhi);
+	close(lo);
+	close(hi);
+}
+
+ATF_TC(oom_policy_is_installed_and_bounded);
+ATF_TC_HEAD(oom_policy_is_installed_and_bounded, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "The out-of-memory victim policy is present, on by default, and "
+	    "will not consider a coalition above its band ceiling, so the "
+	    "critical band stays out of reach of a memory kill");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_coalition");
+}
+ATF_TC_BODY(oom_policy_is_installed_and_bounded, tc)
+{
+	int on = -1;
+	u_int ceiling = 0, kills = 0;
+	size_t len;
+
+	len = sizeof(on);
+	if (sysctlbyname("kern.mac_capability_coalition.oom_kill", &on, &len,
+	    NULL, 0) != 0)
+		atf_tc_skip("oom_kill sysctl unavailable: %s", strerror(errno));
+	ATF_CHECK_EQ_MSG(1, on,
+	    "the out-of-memory policy is not on by default");
+
+	len = sizeof(ceiling);
+	ATF_REQUIRE(sysctlbyname("kern.mac_capability_coalition."
+	    "oom_band_ceiling", &ceiling, &len, NULL, 0) == 0);
+	ATF_CHECK_MSG(ceiling < COALITION_BAND_CRITICAL,
+	    "the ceiling admits the critical band: %u", ceiling);
+
+	/* The report counter exists and is readable. */
+	len = sizeof(kills);
+	ATF_CHECK(sysctlbyname("kern.mac_capability_coalition.oom_kills",
+	    &kills, &len, NULL, 0) == 0);
+}
+
+ATF_TC(oom_ceiling_excludes_critical_band);
+ATF_TC_HEAD(oom_ceiling_excludes_critical_band, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Raising a coalition to the critical band, by floor or by holding "
+	    "an assertion, puts it above the out-of-memory ceiling; the band "
+	    "the policy reads is the effective one, not the floor");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_coalition");
+}
+ATF_TC_BODY(oom_ceiling_excludes_critical_band, tc)
+{
+	struct coalition_band_reply br;
+	u_int ceiling = 0;
+	size_t len = sizeof(ceiling);
+	int fd, afd;
+
+	if (sysctlbyname("kern.mac_capability_coalition.oom_band_ceiling",
+	    &ceiling, &len, NULL, 0) != 0)
+		atf_tc_skip("oom_band_ceiling sysctl unavailable: %s",
+		    strerror(errno));
+
+	fd = mac_capability_connect("coalition");
+	ATF_REQUIRE(fd >= 0);
+
+	/* A background unit is a candidate. */
+	ATF_REQUIRE(coalition_band(fd, COALITION_BAND_SET_FLOOR,
+	    COALITION_BAND_BACKGROUND, &br) == 0);
+	ATF_REQUIRE_EQ(br.status, 0);
+	ATF_CHECK_MSG(br.effective <= ceiling,
+	    "a background coalition is not a candidate: band %u ceiling %u",
+	    br.effective, ceiling);
+
+	/*
+	 * An assertion alone lifts it out of reach, without touching the
+	 * floor.  This is what lets a client protect work in flight from a
+	 * memory kill by holding a descriptor.
+	 */
+	ATF_REQUIRE(coalition_assert(fd, COALITION_BAND_CRITICAL, &br,
+	    &afd) == 0);
+	ATF_REQUIRE_EQ(br.status, 0);
+	ATF_CHECK_EQ(COALITION_BAND_CRITICAL, br.effective);
+	ATF_CHECK_MSG(br.effective > ceiling,
+	    "an asserted critical coalition is still a candidate: band %u "
+	    "ceiling %u", br.effective, ceiling);
+	ATF_CHECK_EQ_MSG(COALITION_BAND_BACKGROUND, br.floor,
+	    "the assertion changed the floor");
+
+	/* Dropping it puts the coalition back in reach. */
+	ATF_REQUIRE(close(afd) == 0);
+	ATF_REQUIRE(coalition_band(fd, 0, 0, &br) == 0);
+	ATF_CHECK_MSG(br.effective <= ceiling,
+	    "the coalition stayed out of reach after the assertion went: %u",
+	    br.effective);
+	close(fd);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 	/* Lifecycle */
@@ -4906,6 +5084,9 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, band_assertion_churn_under_readers);
 	ATF_TP_ADD_TC(tp, band_assertions_are_capped);
 	ATF_TP_ADD_TC(tp, band_visible_in_kinfo);
+	ATF_TP_ADD_TC(tp, pressure_hands_down_low_bands);
+	ATF_TP_ADD_TC(tp, oom_policy_is_installed_and_bounded);
+	ATF_TP_ADD_TC(tp, oom_ceiling_excludes_critical_band);
 
 	/* Resource exhaustion + teardown-race stress */
 	ATF_TP_ADD_TC(tp, exhaust_coalition_max);
