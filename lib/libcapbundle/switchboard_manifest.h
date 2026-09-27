@@ -35,6 +35,11 @@
  */
 #define	SWITCHBOARD_MAX_REQUIRES		8
 #define	SWITCHBOARD_MAX_ANOINTMENTS	32
+/*
+ * Launch constraint: the parties that may be recorded as a unit's responsible
+ * party.  Mirror CAPBUNDLE_MAX_LAUNCH_RESPONSIBLE in libcapbundle.h.
+ */
+#define	SWITCHBOARD_MAX_LAUNCH_RESPONSIBLE	8
 #define	SWITCHBOARD_MAX_ARGUMENTS		32
 #define	SWITCHBOARD_ARGUMENT_MAX		256
 #define	SWITCHBOARD_MAX_ENVIRONMENT	32
@@ -192,6 +197,17 @@ struct svc_manifest {
 	unsigned	nrequires[SWITCHBOARD_MAX_PROVIDES];
 	char		anointments[SWITCHBOARD_MAX_ANOINTMENTS][SWITCHBOARD_LABEL_MAX];
 	unsigned	nanointments;
+	/*
+	 * Launch constraint (manifest `launch { responsible = [...] }`): the
+	 * allow-list of parties that may cause this unit to exist, matched
+	 * against the responsible party the launcher decides before it forks
+	 * anything (see responsibility.c).  Tokens are "self", "switchboard",
+	 * "session", "session:uid=<n>", "bundle" (any unit of this unit's own
+	 * bundle), or a full unit label.  Empty means unconstrained.
+	 */
+	char		launch_responsible[SWITCHBOARD_MAX_LAUNCH_RESPONSIBLE]
+			    [SWITCHBOARD_LABEL_MAX];
+	unsigned	nlaunch_responsible;
 
 	/*
 	 * Resource directories the daemon needs delivered as descriptors (§

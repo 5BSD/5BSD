@@ -43,7 +43,8 @@ switchboard_manifest_equal(const struct svc_manifest *a,
 	    (a->has_calendar &&
 	    memcmp(&a->calendar, &b->calendar, sizeof(a->calendar)) != 0) ||
 	    a->nactivation_sockets != b->nactivation_sockets ||
-	    a->nanointments != b->nanointments)
+	    a->nanointments != b->nanointments ||
+	    a->nlaunch_responsible != b->nlaunch_responsible)
 		return (false);
 	/*
 	 * Compare every activation source, not just the timer and path: a change
@@ -88,6 +89,10 @@ switchboard_manifest_equal(const struct svc_manifest *a,
 	}
 	for (i = 0; i < a->nanointments; i++)
 		if (strcmp(a->anointments[i], b->anointments[i]) != 0)
+			return (false);
+	for (i = 0; i < a->nlaunch_responsible; i++)
+		if (strcmp(a->launch_responsible[i],
+		    b->launch_responsible[i]) != 0)
 			return (false);
 	/*
 	 * Per-OID sysctl isolation set (Phase 2): a changed isolate list must be

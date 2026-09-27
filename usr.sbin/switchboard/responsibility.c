@@ -139,6 +139,65 @@ svc_responsibility_decide(struct svc_runtime *unit,
 	r->kind = SVC_RESP_SELF;
 }
 
+/*
+ * Does this unit's launch constraint allow the party that is about to be
+ * recorded as responsible for it?  An empty constraint allows anyone.  The
+ * token vocabulary is the one svc_responsibility_name() prints and
+ * libcapbundle validates: self, switchboard, session, session:uid=<n>,
+ * bundle (any unit of this unit's own bundle), or a full unit label.
+ */
+bool
+svc_responsible_allowed(const struct svc_manifest *m,
+    const struct svc_responsible *r)
+{
+	char uidtok[32];
+	unsigned i;
+
+	if (m->nlaunch_responsible == 0)
+		return (true);
+	(void)snprintf(uidtok, sizeof(uidtok), "session:uid=%u",
+	    (unsigned)r->uid);
+	for (i = 0; i < m->nlaunch_responsible; i++) {
+		const char *t = m->launch_responsible[i];
+
+		switch (r->kind) {
+		case SVC_RESP_SELF:
+			if (strcmp(t, "self") == 0)
+				return (true);
+			break;
+		case SVC_RESP_SWITCHBOARD:
+			if (strcmp(t, "switchboard") == 0)
+				return (true);
+			break;
+		case SVC_RESP_SESSION:
+			if (strcmp(t, "session") == 0 ||
+			    strcmp(t, uidtok) == 0)
+				return (true);
+			break;
+		case SVC_RESP_UNIT:
+			if (strcmp(t, r->label) == 0)
+				return (true);
+			if (strcmp(t, "bundle") == 0) {
+				const char *a = strchr(m->label, '/');
+				const char *b = strchr(r->label, '/');
+				size_t la = a != NULL ?
+				    (size_t)(a - m->label) : strlen(m->label);
+				size_t lb = b != NULL ?
+				    (size_t)(b - r->label) : strlen(r->label);
+
+				if (la != 0 && la == lb &&
+				    strncmp(m->label, r->label, la) == 0)
+					return (true);
+			}
+			break;
+		case SVC_RESP_UNSET:
+		default:
+			break;
+		}
+	}
+	return (false);
+}
+
 const char *
 svc_responsibility_name(const struct svc_responsible *r, char *buf,
     size_t len)

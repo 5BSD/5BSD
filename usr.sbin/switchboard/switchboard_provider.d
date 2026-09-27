@@ -113,6 +113,9 @@ provider switchboard {
 	/* On-demand launch */
 	probe on__demand__launch(const char *name, const char *requester);
 	probe on__demand__coalesce(const char *name);
+	/* Launch-constraint refusal: endpoint, unit, the refused party */
+	probe on__demand__deny(const char *name, const char *label,
+	    const char *responsible);
 	probe on__demand__ready(const char *name, unsigned int nwaiters);
 	probe on__demand__fail(const char *name, int error_code,
 		    unsigned int nwaiters);

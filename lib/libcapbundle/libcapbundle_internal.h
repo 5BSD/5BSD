@@ -41,6 +41,10 @@ _Static_assert(CAPBUNDLE_MAX_REQUIRES == SWITCHBOARD_MAX_REQUIRES,
     "CAPBUNDLE_MAX_REQUIRES must equal SWITCHBOARD_MAX_REQUIRES");
 _Static_assert(CAPBUNDLE_MAX_ANOINTMENTS == SWITCHBOARD_MAX_ANOINTMENTS,
     "CAPBUNDLE_MAX_ANOINTMENTS must equal SWITCHBOARD_MAX_ANOINTMENTS");
+_Static_assert(CAPBUNDLE_MAX_LAUNCH_RESPONSIBLE ==
+    SWITCHBOARD_MAX_LAUNCH_RESPONSIBLE,
+    "CAPBUNDLE_MAX_LAUNCH_RESPONSIBLE must equal "
+    "SWITCHBOARD_MAX_LAUNCH_RESPONSIBLE");
 _Static_assert(CAPBUNDLE_MAX_PROVIDES == SWITCHBOARD_MAX_PROVIDES,
     "CAPBUNDLE_MAX_PROVIDES must equal SWITCHBOARD_MAX_PROVIDES");
 
@@ -66,6 +70,10 @@ struct capbundle_service {
 	unsigned nrequires[CAPBUNDLE_MAX_PROVIDES];
 	char	anointments[CAPBUNDLE_MAX_ANOINTMENTS][SWITCHBOARD_LABEL_MAX];
 	unsigned nanointments;
+	/* Launch constraint: who may cause this unit to exist. */
+	char	launch_responsible[CAPBUNDLE_MAX_LAUNCH_RESPONSIBLE]
+		    [SWITCHBOARD_LABEL_MAX];
+	unsigned nlaunch_responsible;
 	/* Resource directories delivered as descriptors (born-in-capmode). */
 	char	resource_dirs[SWITCHBOARD_MAX_RESOURCE_DIRS][PATH_MAX];
 	unsigned nresource_dirs;

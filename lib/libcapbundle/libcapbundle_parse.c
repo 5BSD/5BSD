@@ -131,6 +131,109 @@ valid_unit_name(const char *name)
 	return (true);
 }
 
+/*
+ * A launch-constraint token (manifest `launch { responsible = [...] }`): who
+ * may cause this unit to exist.  The vocabulary matches
+ * svc_responsibility_name() in the switchboard, so a manifest, a log line and
+ * an audit record all spell a party the same way:
+ *
+ *	self		the unit answers for its own existence
+ *	switchboard	boot, an operator start, or rc adoption
+ *	session		any login session
+ *	session:uid=N	a login session of that uid
+ *	bundle		any unit of this unit's own bundle
+ *	<id>/<unit>	one named unit
+ */
+static bool
+valid_responsible_token(const char *s)
+{
+	char buf[SWITCHBOARD_LABEL_MAX];
+	const char *slash;
+	size_t len;
+
+	if (strcmp(s, "self") == 0 || strcmp(s, "switchboard") == 0 ||
+	    strcmp(s, "session") == 0 || strcmp(s, "bundle") == 0)
+		return (true);
+	len = strlen(s);
+	if (len == 0 || len >= sizeof(buf))
+		return (false);
+	if (strncmp(s, "session:uid=", 12) == 0) {
+		const unsigned char *p = (const unsigned char *)s + 12;
+
+		if (*p == '\0')
+			return (false);
+		for (; *p != '\0'; p++)
+			if (*p < '0' || *p > '9')
+				return (false);
+		return (true);
+	}
+	/* Otherwise a unit label, "<bundle-id>/<unit>". */
+	slash = strchr(s, '/');
+	if (slash == NULL || slash == s || slash[1] == '\0' ||
+	    strchr(slash + 1, '/') != NULL)
+		return (false);
+	memcpy(buf, s, len + 1);
+	buf[slash - s] = '\0';
+	return (capbundle_valid_service_name(buf, sizeof(buf)) &&
+	    valid_unit_name(buf + (slash - s) + 1));
+}
+
+static int
+validate_responsible_names(const ucl_object_t *v, char *errbuf, size_t errlen)
+{
+	const ucl_object_t *e;
+	ucl_object_iter_t it = NULL;
+	const char *seen[CAPBUNDLE_MAX_LAUNCH_RESPONSIBLE];
+	unsigned n = 0, i;
+
+	if (ucl_object_type(v) != UCL_STRING &&
+	    ucl_object_type(v) != UCL_ARRAY) {
+		snprintf(errbuf, errlen, "launch.responsible must be a string "
+		    "or an array of strings");
+		return (-1);
+	}
+	while ((e = ucl_iterate_object(v, &it, true)) != NULL) {
+		const char *s;
+
+		if (ucl_object_type(e) != UCL_STRING) {
+			snprintf(errbuf, errlen,
+			    "launch.responsible entries must be strings");
+			return (-1);
+		}
+		s = ucl_object_tostring(e);
+		if (!valid_responsible_token(s)) {
+			snprintf(errbuf, errlen, "launch.responsible entry "
+			    "\"%s\" must be \"self\", \"switchboard\", "
+			    "\"session\", \"session:uid=<n>\", \"bundle\", "
+			    "or a \"<bundle-id>/<unit>\" label", s);
+			return (-1);
+		}
+		if (n >= CAPBUNDLE_MAX_LAUNCH_RESPONSIBLE) {
+			snprintf(errbuf, errlen, "launch.responsible has more "
+			    "than %u entries",
+			    CAPBUNDLE_MAX_LAUNCH_RESPONSIBLE);
+			return (-1);
+		}
+		for (i = 0; i < n; i++)
+			if (strcmp(seen[i], s) == 0) {
+				snprintf(errbuf, errlen, "launch.responsible "
+				    "contains duplicate \"%s\"", s);
+				return (-1);
+			}
+		seen[n++] = s;
+	}
+	/*
+	 * An empty list would be ambiguous between "nobody" and "anybody".
+	 * Omit the block to leave a unit unconstrained.
+	 */
+	if (n == 0) {
+		snprintf(errbuf, errlen,
+		    "launch.responsible must name at least one party");
+		return (-1);
+	}
+	return (0);
+}
+
 /* A group-container name: a safe single component, reverse-DNS style allowed. */
 static bool
 valid_group_name(const char *name)
@@ -905,8 +1008,9 @@ validate_unit_schema(const ucl_object_t *root, char *errbuf, size_t errlen)
 	    "restart", "control", "capabilities", "user", "group",
 	    "stop_timeout", "max_failures", "arguments", "environment",
 	    "protect", "limits", "umask", "level", "ambient", "mint_authority",
-	    "watchdog", "visible", "domain", "directories", "holds" };
+	    "watchdog", "visible", "domain", "directories", "holds", "launch" };
 	static const char *const watchdogkeys[] = { "interval" };
+	static const char *const launchkeys[] = { "responsible" };
 	static const char *const activationkeys[] = { "boot", "ipc", "timer",
 	    "path", "socket", "schedule", "persistent", "queue_directory",
 	    "on_mount", "helper" };
@@ -1069,6 +1173,58 @@ validate_unit_schema(const ucl_object_t *root, char *errbuf, size_t errlen)
 	 * integer `interval` (seconds); a RUNNING unit that fails to ping within
 	 * it is presumed wedged and restarted.
 	 */
+	/*
+	 * launch { responsible = [...] } — who may cause this unit to exist,
+	 * matched against the party the launcher records before it forks
+	 * anything.  Absent leaves the unit unconstrained.
+	 */
+	v = ucl_object_lookup(root, "launch");
+	if (v != NULL) {
+		const ucl_object_t *resp, *act, *boot;
+
+		if (ucl_object_type(v) != UCL_OBJECT) {
+			snprintf(errbuf, errlen, "launch must be an object "
+			    "with a 'responsible' string or array");
+			return (-1);
+		}
+		if (validate_keys(v, "launch", launchkeys,
+		    nitems(launchkeys), errbuf, errlen) != 0)
+			return (-1);
+		resp = ucl_object_lookup(v, "responsible");
+		if (resp == NULL) {
+			snprintf(errbuf, errlen,
+			    "launch requires a 'responsible' list");
+			return (-1);
+		}
+		if (validate_responsible_names(resp, errbuf, errlen) != 0)
+			return (-1);
+		/*
+		 * A boot-activated unit is launched by the switchboard, so a
+		 * constraint that excludes it would refuse the unit's own boot.
+		 */
+		act = ucl_object_lookup(root, "activation");
+		boot = act != NULL ? ucl_object_lookup(act, "boot") : NULL;
+		if (boot != NULL && ucl_object_type(boot) == UCL_BOOLEAN &&
+		    ucl_object_toboolean(boot)) {
+			const ucl_object_t *re;
+			ucl_object_iter_t rit = NULL;
+			bool ok = false;
+
+			while ((re = ucl_iterate_object(resp, &rit,
+			    true)) != NULL)
+				if (ucl_object_type(re) == UCL_STRING &&
+				    strcmp(ucl_object_tostring(re),
+				    "switchboard") == 0)
+					ok = true;
+			if (!ok) {
+				snprintf(errbuf, errlen, "a boot-activated "
+				    "unit must allow \"switchboard\" in "
+				    "launch.responsible");
+				return (-1);
+			}
+		}
+	}
+
 	v = ucl_object_lookup(root, "watchdog");
 	if (v != NULL) {
 		const ucl_object_t *interval;
@@ -2178,6 +2334,53 @@ capbundle_parse_unit_ucl(const char *path, const char *unit_path,
 	parse_string_array_n(root, "holds", svc->anointments,
 	    sizeof(svc->anointments[0]), CAPBUNDLE_MAX_ANOINTMENTS,
 	    &svc->nanointments);
+
+	/* Launch constraint; shape validated in validate_unit_schema(). */
+	{
+		const ucl_object_t *launch = ucl_object_lookup(root, "launch");
+		unsigned li;
+
+		if (launch != NULL)
+			parse_string_array_n(launch, "responsible",
+			    svc->launch_responsible,
+			    sizeof(svc->launch_responsible[0]),
+			    CAPBUNDLE_MAX_LAUNCH_RESPONSIBLE,
+			    &svc->nlaunch_responsible);
+		/*
+		 * A label naming this unit's own bundle must name a unit that
+		 * exists in it; a typo would otherwise silently constrain the
+		 * unit to a party that can never appear.  A label in another
+		 * bundle is legitimate and cannot be checked here.
+		 */
+		for (li = 0; li < svc->nlaunch_responsible; li++) {
+			const char *t = svc->launch_responsible[li];
+			const char *slash = strchr(t, '/');
+			size_t idlen;
+			unsigned ui;
+			bool found;
+
+			if (slash == NULL)
+				continue;
+			idlen = (size_t)(slash - t);
+			if (strlen(bundle->bundle_id) != idlen ||
+			    strncmp(bundle->bundle_id, t, idlen) != 0)
+				continue;
+			found = false;
+			for (ui = 0; ui < bundle->nunit_names; ui++)
+				if (strcmp(bundle->unit_names[ui],
+				    slash + 1) == 0)
+					found = true;
+			if (!found) {
+				if (errbuf)
+					snprintf(errbuf, errlen,
+					    "launch.responsible names \"%s\", "
+					    "which is not a unit of this bundle",
+					    t);
+				ucl_object_unref(root);
+				return (-1);
+			}
+		}
+	}
 
 	/*
 	 * Activation sources (Phase 5).  Validated by validate_unit_schema()

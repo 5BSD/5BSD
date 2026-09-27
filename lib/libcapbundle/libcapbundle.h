@@ -34,6 +34,11 @@
  */
 #define	CAPBUNDLE_MAX_REQUIRES		8
 #define	CAPBUNDLE_MAX_ANOINTMENTS	32
+/*
+ * Launch constraint (manifest `launch { responsible = [...] }`): the parties
+ * that may cause this unit to exist.  One entry bounds at CAPBUNDLE_LABEL_MAX.
+ */
+#define	CAPBUNDLE_MAX_LAUNCH_RESPONSIBLE	8
 #define	CAPBUNDLE_LABEL_MAX		64
 #define	CAPBUNDLE_ID_MAX		128
 #define	CAPBUNDLE_VERSION_MAX		32
@@ -126,6 +131,9 @@ unsigned	 capbundle_svc_nrequires(const struct capbundle_service *s,
 const char	*capbundle_svc_requires(const struct capbundle_service *s,
 		    unsigned provides_idx, unsigned j);
 unsigned	 capbundle_svc_nanointments(const struct capbundle_service *s);
+unsigned	 capbundle_svc_nlaunch_responsible(const struct capbundle_service *s);
+const char	*capbundle_svc_launch_responsible(const struct capbundle_service *s,
+		    unsigned i);
 const char	*capbundle_svc_anointment(const struct capbundle_service *s,
 		    unsigned i);
 int		 capbundle_svc_provides_index(const struct capbundle_service *s,

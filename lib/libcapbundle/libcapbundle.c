@@ -372,6 +372,23 @@ capbundle_svc_requires(const struct capbundle_service *s, unsigned provides_idx,
 }
 
 unsigned
+capbundle_svc_nlaunch_responsible(const struct capbundle_service *s)
+{
+
+	return (s != NULL ? MIN(s->nlaunch_responsible,
+	    CAPBUNDLE_MAX_LAUNCH_RESPONSIBLE) : 0);
+}
+
+const char *
+capbundle_svc_launch_responsible(const struct capbundle_service *s, unsigned i)
+{
+
+	if (i >= capbundle_svc_nlaunch_responsible(s))
+		return (NULL);
+	return (s->launch_responsible[i]);
+}
+
+unsigned
 capbundle_svc_nanointments(const struct capbundle_service *s)
 {
 
@@ -445,6 +462,7 @@ capbundle_svc_fill_manifest(const struct capbundle_service *s,
 	    s->nenvironment > SWITCHBOARD_MAX_ENVIRONMENT ||
 	    s->nprovides > SWITCHBOARD_MAX_PROVIDES ||
 	    s->nanointments > SWITCHBOARD_MAX_ANOINTMENTS ||
+	    s->nlaunch_responsible > SWITCHBOARD_MAX_LAUNCH_RESPONSIBLE ||
 	    s->nactivation_sockets > SWITCHBOARD_MAX_ACTIVATION_SOCKETS) {
 		errno = EOVERFLOW;
 		return (-1);
@@ -491,6 +509,14 @@ capbundle_svc_fill_manifest(const struct capbundle_service *s,
 	for (i = 0; i < s->nanointments; i++)
 		if (manifest_copy(s->anointments[i], m->anointments[i],
 		    sizeof(m->anointments[i])) == -1)
+			return (-1);
+
+	/* Launch constraint: who may cause this unit to exist. */
+	m->nlaunch_responsible = s->nlaunch_responsible;
+	for (i = 0; i < s->nlaunch_responsible; i++)
+		if (manifest_copy(s->launch_responsible[i],
+		    m->launch_responsible[i],
+		    sizeof(m->launch_responsible[i])) == -1)
 			return (-1);
 
 	m->cap_system = s->cap_system;

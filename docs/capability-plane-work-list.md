@@ -20,13 +20,16 @@ login session's coalition (by design, EBUSY on join).
 
 ## Imports from Darwin and Plan 9, ranked
 
-1. **Launch constraints** (Darwin, macOS 13) — **next**. A unit's manifest
-   declares who may cause it to exist: `launch { responsible = [labels |
-   "session" | "switchboard"]; }`, checked by the switchboard at on-demand time
-   against the responsible parent it is about to record. Turns the
-   attribution edge into policy (a helper only on behalf of its bundle, a
-   per-user unit only from its owner's session) with no new kernel
-   mechanism. Refusal is audited like an anointment refusal.
+1. **Launch constraints** (Darwin, macOS 13) — **done** (2026-09-27,
+   VM-validated). A unit's manifest declares who may cause it to exist:
+   `launch { responsible = [...] }` over the vocabulary `self`,
+   `switchboard`, `session`, `session:uid=<n>`, `bundle`, or a unit label,
+   checked at on-demand activation against the responsible party the
+   launcher is about to record, before anything is forked. Refusals are
+   logged, audited under the on-demand event, traced, and answered to the
+   client as an unregistered name. The parser refuses an empty list, a
+   label naming a unit this bundle does not have, and a boot-activated unit
+   that excludes the switchboard.
 2. **Sealed launch record over envfd** (Plan 9 `/env` lineage; Darwin audit
    token) — **next**. See "envfd" below. Gives every unit an attested
    self-description, and retires the environment strings.

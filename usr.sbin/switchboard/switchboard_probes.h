@@ -213,6 +213,13 @@
 /* On-demand launch */
 #define	SWITCHBOARD_PROBE_ON_DEMAND_LAUNCH(name, requester)	\
 	DTRACE_PROBE2(switchboard, on__demand__launch, name, requester)
+/*
+ * Launch-constraint refusal (on_demand.c): unit `label` does not allow
+ * `responsible` to cause `name` to be activated.  Fires next to the
+ * AUE_SWITCHBOARD_ONDEMAND audit record.
+ */
+#define	SWITCHBOARD_PROBE_ON_DEMAND_DENY(name, label, responsible)	\
+	DTRACE_PROBE3(switchboard, on__demand__deny, name, label, responsible)
 #define	SWITCHBOARD_PROBE_ON_DEMAND_COALESCE(name)	\
 	DTRACE_PROBE1(switchboard, on__demand__coalesce, name)
 #define	SWITCHBOARD_PROBE_ON_DEMAND_READY(name, nwaiters)	\

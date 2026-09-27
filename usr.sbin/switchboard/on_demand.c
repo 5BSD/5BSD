@@ -325,6 +325,32 @@ on_demand_circuit_open(const struct svc_runtime *svc)
  * the requester can't become ready until that lookup completes, but
  * that lookup is waiting for the requester.
  */
+/*
+ * Launch constraint (manifest `launch { responsible = [...] }`): refuse an
+ * activation whose responsible party the unit does not allow, before any
+ * process state changes.  Audited and traced like an anointment refusal.
+ * Both callers answer a failed activation with ENOENT, so the wire cannot
+ * tell a refusal from an unregistered name.
+ */
+static bool
+od_launch_constraint_ok(struct svc_runtime *target, const char *name)
+{
+	char buf[64];
+	const char *who;
+
+	if (svc_responsible_allowed(&target->manifest, &target->responsible))
+		return (true);
+	who = svc_responsibility_name(&target->responsible, buf, sizeof(buf));
+	syslog(LOG_NOTICE, "on_demand: refusing '%s': %s does not allow %s to "
+	    "cause it", name, target->manifest.label, who);
+	switchboard_audit(AUE_SWITCHBOARD_ONDEMAND, getuid(), EACCES,
+	    "launch constraint refused svc=%s name=%s responsible=%s",
+	    target->manifest.label, name, who);
+	SWITCHBOARD_PROBE_ON_DEMAND_DENY(name, target->manifest.label, who);
+	svc_responsibility_clear(target);
+	return (false);
+}
+
 static bool
 would_deadlock(const char *name, struct svc_runtime *requester)
 {
@@ -664,6 +690,10 @@ od_launch(const char *name, struct svc_runtime *requester,
 				}
 				svc_responsibility_decide(target, requester,
 				    ambient_lc);
+				if (!od_launch_constraint_ok(target, name)) {
+					errno = EACCES;
+					goto fail_timer;
+				}
 				if (svc_launch_or_await(target, kq) == -1) {
 					syslog(LOG_ERR,
 				    "on_demand: failed to launch '%s': %m", name);
@@ -731,6 +761,17 @@ od_launch(const char *name, struct svc_runtime *requester,
 			    sizeof(target->launched_by));
 		clock_gettime(CLOCK_MONOTONIC, &target->launch_time);
 		svc_responsibility_decide(target, requester, ambient_lc);
+		if (!od_launch_constraint_ok(target, name)) {
+			/*
+			 * Roll the unused slot back.  The constraint check
+			 * already released any parent descriptor it held, so
+			 * this clear leaks nothing.
+			 */
+			memset(target, 0, sizeof(*target));
+			svc_runtime_init_fds(target);
+			errno = EACCES;
+			goto fail_timer;
+		}
 
 		sd.nservices++;
 

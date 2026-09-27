@@ -174,16 +174,62 @@ static const struct svc_runtime *resp_last_requester;
 static const struct svc_lookup_channel *resp_last_session;
 static unsigned resp_decide_calls;
 
+/*
+ * The party the stub records.  A test sets these to drive the launch
+ * constraint check in od_launch(), which reads unit->responsible.
+ */
+static enum svc_responsible_kind resp_stub_kind = SVC_RESP_SWITCHBOARD;
+static char resp_stub_label[SWITCHBOARD_LABEL_MAX];
+static uid_t resp_stub_uid;
+
 void
 svc_responsibility_decide(struct svc_runtime *unit,
     const struct svc_runtime *requester,
     const struct svc_lookup_channel *session)
 {
 
-	(void)unit;
 	resp_last_requester = requester;
 	resp_last_session = session;
 	resp_decide_calls++;
+	memset(&unit->responsible, 0, sizeof(unit->responsible));
+	unit->responsible.parent_fd = -1;
+	unit->responsible.kind = resp_stub_kind;
+	unit->responsible.uid = resp_stub_uid;
+	strlcpy(unit->responsible.label, resp_stub_label,
+	    sizeof(unit->responsible.label));
+}
+
+void
+svc_responsibility_clear(struct svc_runtime *svc)
+{
+
+	memset(&svc->responsible, 0, sizeof(svc->responsible));
+	svc->responsible.parent_fd = -1;
+}
+
+bool
+svc_responsible_allowed(const struct svc_manifest *m,
+    const struct svc_responsible *r)
+{
+	unsigned i;
+
+	if (m->nlaunch_responsible == 0)
+		return (true);
+	/* Enough of the real rule for the on-demand path: kinds by name. */
+	for (i = 0; i < m->nlaunch_responsible; i++) {
+		const char *t = m->launch_responsible[i];
+
+		if (r->kind == SVC_RESP_SWITCHBOARD &&
+		    strcmp(t, "switchboard") == 0)
+			return (true);
+		if (r->kind == SVC_RESP_SESSION && strcmp(t, "session") == 0)
+			return (true);
+		if (r->kind == SVC_RESP_UNIT && strcmp(t, r->label) == 0)
+			return (true);
+		if (r->kind == SVC_RESP_SELF && strcmp(t, "self") == 0)
+			return (true);
+	}
+	return (false);
 }
 
 int

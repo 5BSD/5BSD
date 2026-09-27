@@ -112,6 +112,37 @@ Absent keys take the default shown; `capbundle_parse_unit_ucl()` fills the
 | `domain` | string | by bundle class | `system` or `user` | which names the unit's own lookups may resolve; system bundles default to `system`, applications to `user` |
 | `directories` | array | none | at most 8 absolute paths without `/../`, each under `PATH_MAX` | opened read-only pre-capmode and delivered as `CAPABILITY_DIR_FDS` |
 | `holds` | string or array | none | at most 32 unique reverse-domain names; `*` refused | anointments the unit presents at lookup |
+| `launch` | object | none | `{ responsible = [...] }`, see below | who may cause this unit to exist |
+
+### launch
+
+The launcher records, for every unit it starts, the party that caused it to
+exist (see [Coalitions and
+Accounting](../capability/coalitions-and-accounting.md), "Identity and
+responsibility"). A `launch` block turns that record into policy: an
+activation whose responsible party is not in the list is refused before
+anything is forked, audited, and reported to the client as if the name were
+not registered. Omitting the block leaves the unit unconstrained.
+
+| Key | Type | Constraint | Effect |
+|---|---|---|---|
+| `responsible` | string or array | 1 to 8 unique tokens from the vocabulary below | the parties that may cause this unit to exist |
+
+The vocabulary is the one the tools print, so a manifest, a log line, and an
+audit record spell a party the same way:
+
+| Token | Matches |
+|---|---|
+| `self` | a shared provider activated by an arbitrary client, which answers for its own existence |
+| `switchboard` | boot, an operator start, or rc adoption |
+| `session` | any login session |
+| `session:uid=N` | a login session of that user |
+| `bundle` | any unit of this unit's own bundle, the usual choice for a private helper |
+| `<bundle-id>/<unit>` | one named unit; a label naming this bundle must name a unit that exists in it |
+
+A boot-activated unit is launched by the switchboard, so its list must
+include `switchboard` or its own boot would be refused; the parser rejects
+that combination.
 
 ### activation
 

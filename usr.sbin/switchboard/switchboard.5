@@ -285,6 +285,37 @@ names (anointments) the unit holds when it looks endpoints up (see
 .Sx IPC ANOINTMENTS ) .
 Absent means the empty set.
 .Pp
+.Va launch
+is an optional top-level object whose only key,
+.Va responsible ,
+is a string or array of 1 to 8 unique tokens naming the parties that may
+cause this unit to exist.
+The launcher records a responsible party for every unit it starts; an
+activation whose party is not listed is refused before anything is forked,
+audited under
+.Dv AUE_SWITCHBOARD_ONDEMAND ,
+and reported to the client as
+.Er ENOENT ,
+indistinguishable from an unregistered name.
+The tokens are
+.Dq Li self
+(a shared provider that answers for its own existence),
+.Dq Li switchboard
+(boot, an operator start, or rc adoption),
+.Dq Li session
+(any login session),
+.Dq Li session:uid= Ns Ar n
+(a login session of that user),
+.Dq Li bundle
+(any unit of this unit's own bundle), and a full
+.Dq Ar bundle-id Ns Li / Ns Ar unit
+label.
+A label naming this unit's own bundle must name a unit that exists in it.
+A boot-activated unit must list
+.Dq Li switchboard ,
+or its own boot would be refused.
+Absent leaves the unit unconstrained.
+.Pp
 .Va stop_timeout
 is 1 through 300 seconds and
 .Va max_failures

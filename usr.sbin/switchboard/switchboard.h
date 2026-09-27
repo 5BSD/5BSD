@@ -367,6 +367,8 @@ void	svc_responsibility_apply(struct svc_runtime *svc, int coalition_fd);
 int	svc_responsibility_root_init(void);
 const char *svc_responsibility_name(const struct svc_responsible *r,
 	    char *buf, size_t len);
+bool	svc_responsible_allowed(const struct svc_manifest *m,
+	    const struct svc_responsible *r);
 const char *svc_boot_id(char *buf, size_t len);
 /* domain.c — per-session coalition carried on a lookup channel */
 int	lookup_channel_coalition_fd(const struct svc_lookup_channel *lc);
