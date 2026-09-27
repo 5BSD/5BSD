@@ -109,3 +109,46 @@ fit the account's 64 KiB memlock limit. The workload file is removed afterward.
 These are short, warm-cache measurements of the installed kernel on a shared
 host with WITNESS enabled. They are not a comparison with native Linux, a
 candidate-kernel hardware qualification, or a sustained device-throughput result.
+
+## Libuv application compatibility
+
+`build-libuv.py` builds unmodified libuv 1.53.0 and `libuv-compat.c` as a static
+Linux executable. The archive is pinned by SHA-256. The build uses the Linux
+source list from that release's CMakeLists.txt, without requiring
+CMake or autotools. Pass a Linux compiler, or the existing musl wrapper:
+
+```sh
+python3 build-libuv.py --output /tmp/iouring-libuv \
+    --cc /tmp/iouring-upstream/linux-cc
+```
+
+Stage `libuv-compat` and `libuv-guest.sh` in disposable Linux and candidate VMs:
+
+```sh
+sh libuv-guest.sh /path/to/libuv-compat
+```
+
+The same binary runs filesystem, epoll descriptor-reuse, and cancellation-race
+checks in default and explicitly enabled SQPOLL modes. File contents and metadata
+are checked, each request must complete exactly once, and each loop must close.
+Every invocation creates its own temporary directory and has a 45-second limit.
+The harness reports failures individually and exits nonzero if any case fails.
+
+The check observes the pinned library's internal ring state without modifying
+upstream source. Each filesystem operation reports initial ring/thread-pool
+selection and completion path. Required core filesystem operations must use the
+ring in SQPOLL mode; a successful retry through the pool is not recorded as a
+successful ring operation. Epoll checks require positive ring submission counts.
+Default filesystem mode intentionally uses the thread pool and provides a control.
+
+Kernel identity matters: libuv uses version checks in addition to ring feature
+bits. Linux 5.15.0 disables ring close, truncate, and synchronous cancellation in
+this release. Record the advertised identity and any diagnostic override
+separately. A cancellation race may legitimately finish every request before it
+can be cancelled; that outcome does not qualify cancellation of blocked I/O.
+This harness does not establish Bun, Node, or database compatibility, and does
+not cover blocked stream reads or the known stream-teardown problem.
+
+The [September 26 libuv results](libuv-results-20260926.md) record working
+filesystem/epoll paths and a reproducible synchronous cancellation mismatch in
+the diagnostic newer-version profile.

@@ -1,6 +1,6 @@
 # io_uring and squeue
 
-squeue ("shared queue") is 5BSD's native completion-ring interface: an application submits I/O through a submission ring and reaps results from a completion ring, both shared with the kernel, so many operations cost one system call and completions cost none. It adopts the Linux io_uring wire format verbatim, and the Linux `io_uring_*` syscalls are a thin front end over the same engine, in the same relationship that kqueue(2) bears to Linux epoll. 5BSD built it because the runtimes that matter (Bun, Node and libuv, databases) probe for io_uring and either use it or fall back silently, and a fallback is not compatibility. The design is in `docs/linuxulator-io_uring-design.md`; every qualified contract is in `docs/book/src/compat/linux/overview.md`.
+squeue ("shared queue") is 5BSD's native completion-ring interface: an application submits I/O through a submission ring and reaps results from a completion ring, both shared with the kernel, so many operations cost one system call and completions cost none. It adopts the Linux io_uring wire format verbatim, and the Linux `io_uring_*` syscalls are a thin front end over the same engine, in the same relationship that kqueue(2) bears to Linux epoll. The compatibility goal is correct behavior for application workloads, including accurate feature discovery and Linux-compatible rejection of unsupported optional facilities. Qualification records actual ring use separately from application fallback: a working fallback can preserve application behavior, but does not establish that the io_uring operation works. The design is in `docs/linuxulator-io_uring-design.md`; every qualified contract is in `docs/book/src/compat/linux/overview.md`.
 
 ## Upstream qualification warning (September 26, 2026)
 
@@ -18,6 +18,20 @@ and SQPOLL modes on the candidate. That success does not supersede the upstream
 failures. See the [upstream qualification results](../../../../../tools/test/linuxulator/iouring-upstream/results-20260926.md)
 for the exact payload, stress results, hardware-baseline limits, and follow-up
 priorities. No kernel fix is claimed by this qualification run.
+
+The [subsequent hard-link follow-up](../../../../../tools/test/linuxulator/iouring-upstream/fixes-20260926.md)
+fixed the empty-path assertion. Its stream-offset changes were reverted after a
+cancellation/teardown panic, so ordinary pipe and eventfd I/O remain open work.
+Further compatibility work should prioritize those shared semantics and named
+application workloads before optional device-specific backends.
+
+The [libuv 1.53.0 application check](../../../../../tools/test/linuxulator/iouring-upstream/libuv-results-20260926.md)
+passes the tested filesystem and epoll paths, with actual ring completions
+verified separately from thread-pool use. The candidate's normal 5.15.0 identity
+passes all six cases. A disposable-VM version override exposes a synchronous
+cancellation race: 12 of 20 repetitions report cancellation success followed by
+a successful read, whereas the same binary passes all 20 repetitions on Linux.
+This remains an unresolved application-contract failure.
 
 ## The native engine
 
