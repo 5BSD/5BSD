@@ -195,6 +195,23 @@ SDT_PROBE_DEFINE5(mac_capability_coalition, , , oom__kill,
     "uint64_t", "uint64_t", "u_int", "uint64_t", "u_int");
 /* No coalition was eligible; the stock largest-process choice will run. */
 SDT_PROBE_DEFINE1(mac_capability_coalition, , , oom__decline, "uint32_t");
+/*
+ * A coalition is over the ceiling declared for it.  Arguments are the
+ * coalition, the party responsible for it, the footprint, the ceiling, and
+ * whether it is being terminated for it (1) or only told (0).  This is the
+ * probe that answers "which unit is over budget", as opposed to oom-kill,
+ * which answers "what did the system give up because it ran out".
+ */
+/*
+ * A coalition died, and why.  One probe for every death whatever caused it, so
+ * "what happened to my unit" has a single answer: the coalition, the party
+ * responsible for it, the reason, the footprint it was holding and the band it
+ * was in.
+ */
+SDT_PROBE_DEFINE5(mac_capability_coalition, , , coalition__kill,
+    "uint64_t", "uint64_t", "u_int", "uint64_t", "u_int");
+SDT_PROBE_DEFINE5(mac_capability_coalition, , , limit__breach,
+    "uint64_t", "uint64_t", "uint64_t", "uint64_t", "int");
 SDT_PROBE_DEFINE3(mac_capability_coalition, , , band__floor,
     "uint64_t", "u_int", "u_int");
 SDT_PROBE_DEFINE4(mac_capability_coalition, , , band__assert,
@@ -282,6 +299,15 @@ struct coalition {
 	volatile u_int		co_band_assert[COALITION_BAND_COUNT];
 	volatile u_int		co_band_nassert;	/* live assertions */
 	volatile sbintime_t	co_press_time;	/* last handed down, 0 = never */
+	/* Declared footprint ceiling for the whole coalition; 0 = none. */
+	volatile uint64_t	co_limit_bytes;
+	volatile u_int		co_limit_flags;
+	volatile u_int		co_limit_breached;	/* notified already */
+	int			co_kill_reason;	/* COALITION_KILL_*, set once */
+	/* Idle exit: declared eligibility, and how long it has been idle. */
+	volatile u_int		co_idle_flags;
+	volatile u_int		co_idle_min_age_ms;
+	volatile sbintime_t	co_idle_since;	/* 0 = not idle */
 	/* Identity (I) — immutable after creation */
 	uint64_t		co_id;
 	/*
@@ -299,6 +325,7 @@ struct coalition {
  * ---------------------------------------------------------------- */
 
 static struct mac_capability_service *coalition_svc;
+static u_int coalition_band_effective(struct coalition *);
 
 static uma_zone_t coalition_zone;
 static uma_zone_t coalition_member_zone;
@@ -377,6 +404,16 @@ static CK_LIST_HEAD(, coalition) coalition_list =
  */
 static struct taskqueue *coalition_pressure_tq;
 static struct task coalition_pressure_task;
+/*
+ * A periodic sweep, so a ceiling and an idle timer mean something without
+ * waiting for the system to run short.  Footprint here is sampled rather than
+ * accounted continuously, so a figure is only ever as fresh as the last sweep;
+ * the interval is what bounds that staleness.
+ */
+static struct callout coalition_sweep_callout;
+static struct task coalition_sweep_task;
+static int coalition_sweep_enable = 1;
+static u_int coalition_sweep_interval_ms = 10000;
 
 /* Permanent coalition ids.  Never reused; 0 is never issued. */
 static volatile uint64_t coalition_next_id = 1;
@@ -436,7 +473,65 @@ static volatile u_int coalition_pressure_reclaims;
  */
 static int coalition_oom_kill = 1;
 static u_int coalition_oom_band_ceiling = COALITION_BAND_INTERACTIVE;
+/*
+ * Kills by reason.  Counted separately because they mean different things: a
+ * coalition over its own figure is a unit misbehaving, one given up for system
+ * memory is the machine being short, and an idle exit is neither -- it is work
+ * being put away because it can be brought back.
+ */
 static volatile u_int coalition_oom_kills;
+static volatile u_int coalition_limit_kills;
+static volatile u_int coalition_idle_kills;
+
+/*
+ * Idle exit.  Eligibility is per coalition and off unless declared, so these
+ * only decide how a coalition that HAS been declared eligible is treated.
+ */
+static int coalition_idle_exit = 1;
+static u_int coalition_idle_min_age_ms = 300000;
+
+static const char *
+coalition_kill_reason_name(int reason)
+{
+
+	switch (reason) {
+	case COALITION_KILL_REQUESTED:
+		return ("asked for");
+	case COALITION_KILL_DEADLINE:
+		return ("past its deadline");
+	case COALITION_KILL_WATCHDOG:
+		return ("stopped answering");
+	case COALITION_KILL_LEADER:
+		return ("its leader went away");
+	case COALITION_KILL_OVER_CEILING:
+		return ("over its own ceiling");
+	case COALITION_KILL_SYSTEM_MEMORY:
+		return ("the system ran out of memory");
+	case COALITION_KILL_IDLE:
+		return ("idle, and able to come back");
+	default:
+		return ("handle closed");
+	}
+}
+
+static void
+coalition_kill_count(int reason)
+{
+
+	switch (reason) {
+	case COALITION_KILL_OVER_CEILING:
+		atomic_add_int(&coalition_limit_kills, 1);
+		break;
+	case COALITION_KILL_SYSTEM_MEMORY:
+		atomic_add_int(&coalition_oom_kills, 1);
+		break;
+	case COALITION_KILL_IDLE:
+		atomic_add_int(&coalition_idle_kills, 1);
+		break;
+	default:
+		break;
+	}
+}
 
 SYSCTL_NODE(_kern, OID_AUTO, mac_capability_coalition,
     CTLFLAG_RW | CTLFLAG_MPSAFE, 0, "mac_capability coalition");
@@ -482,10 +577,29 @@ SYSCTL_UINT(_kern_mac_capability_coalition, OID_AUTO, oom_band_ceiling,
 SYSCTL_UINT(_kern_mac_capability_coalition, OID_AUTO, oom_kills, CTLFLAG_RD,
     __DEVOLATILE(u_int *, &coalition_oom_kills), 0,
     "Total coalitions terminated for memory since boot");
+SYSCTL_UINT(_kern_mac_capability_coalition, OID_AUTO, limit_kills, CTLFLAG_RD,
+    __DEVOLATILE(u_int *, &coalition_limit_kills), 0,
+    "Total coalitions terminated for exceeding their own ceiling since boot");
+SYSCTL_UINT(_kern_mac_capability_coalition, OID_AUTO, idle_kills, CTLFLAG_RD,
+    __DEVOLATILE(u_int *, &coalition_idle_kills), 0,
+    "Total coalitions put away for being idle since boot");
+SYSCTL_INT(_kern_mac_capability_coalition, OID_AUTO, sweep, CTLFLAG_RW,
+    &coalition_sweep_enable, 0,
+    "Periodically sample footprints, enforce ceilings and put idle work away");
+SYSCTL_UINT(_kern_mac_capability_coalition, OID_AUTO, sweep_interval_ms,
+    CTLFLAG_RW, &coalition_sweep_interval_ms, 0,
+    "How often the periodic sweep runs, and so how stale a footprint may be");
+SYSCTL_INT(_kern_mac_capability_coalition, OID_AUTO, idle_exit, CTLFLAG_RW,
+    &coalition_idle_exit, 0,
+    "Put declared-eligible coalitions away once they have been idle");
+SYSCTL_UINT(_kern_mac_capability_coalition, OID_AUTO, idle_min_age_ms,
+    CTLFLAG_RW, &coalition_idle_min_age_ms, 0,
+    "Default time a coalition must be idle before it is put away");
 
 /* Forward declarations */
 static void	coalition_terminate_members_locked(struct coalition *co,
-		    struct thread *td, bool skip_self, int sig_override);
+		    struct thread *td, bool skip_self, int sig_override,
+		    int reason);
 static void	coalition_collect_external_members_locked(
 		    struct coalition *co, struct file ***jail_fpsp,
 		    int *jail_countp,
@@ -658,6 +772,7 @@ coalition_notify_event(struct coalition *co, uint32_t flags)
 	sx_assert(&co->co_sx, SA_XLOCKED);
 
 	ev.flags = flags;
+	ev.reason = (uint32_t)co->co_kill_reason;
 	error = mac_capability_notify(co->co_instance, &ev, sizeof(ev), NULL, NULL, 0);
 	if (error != 0 && error != EAGAIN && error != ENOBUFS &&
 	    error != ECONNRESET)
@@ -1592,7 +1707,7 @@ coalition_terminate_external_members(struct thread *td, struct file **jail_fps,
  */
 static void
 coalition_terminate_members_locked(struct coalition *co, struct thread *td,
-    bool skip_self, int sig_override)
+    bool skip_self, int sig_override, int reason)
 {
 	struct coalition_member *cm;
 	struct proc *self;
@@ -1602,6 +1717,33 @@ coalition_terminate_members_locked(struct coalition *co, struct thread *td,
 	if (co->co_flags & COF_TERMINATING)
 		return;
 	co->co_flags |= COF_TERMINATING;
+	/*
+	 * Record why before anything is signalled, so the notification a holder
+	 * receives, the probe and any later report all say the same thing.  A
+	 * coalition dies once, for one reason.
+	 */
+	co->co_kill_reason = reason;
+	SDT_PROBE5(mac_capability_coalition, , , coalition__kill, co->co_id,
+	    co->co_responsible_id, (u_int)reason,
+	    atomic_load_64(&co->co_rss_bytes), coalition_band_effective(co));
+	if (reason != COALITION_KILL_NONE &&
+	    reason != COALITION_KILL_REQUESTED) {
+		coalition_kill_count(reason);
+		/*
+		 * Say it out loud for anything the system decided by itself.
+		 * A holder asking for a termination already knows; a unit
+		 * disappearing because of a policy is the case that needs a
+		 * record an operator can find afterwards.
+		 */
+		log(LOG_WARNING, "mac_capability_coalition: terminating "
+		    "coalition %ju (responsible %ju): %s; %ju KB, band %u, "
+		    "%u members\n", (uintmax_t)co->co_id,
+		    (uintmax_t)co->co_responsible_id,
+		    coalition_kill_reason_name(reason),
+		    (uintmax_t)(atomic_load_64(&co->co_rss_bytes) / 1024),
+		    coalition_band_effective(co),
+		    atomic_load_int(&co->co_member_count));
+	}
 	coalition_notify_event(co, COALITION_NOTE_TERMINATING);
 
 	/* Clean up leader tracking */
@@ -1714,7 +1856,8 @@ coalition_terminate(struct coalition *co)
 	    &jail_count, &mac_capability_cis, &mac_capability_count);
 
 	/* Terminate processes, sockets, shm under lock */
-	coalition_terminate_members_locked(co, td, false, 0);
+	coalition_terminate_members_locked(co, td, false, 0,
+	    COALITION_KILL_REQUESTED);
 	sx_xunlock(&co->co_sx);
 
 	coalition_terminate_external_members(td, jail_fps, jail_count,
@@ -1793,7 +1936,7 @@ coalition_terminate_graceful(struct coalition *co, int sig, u_int timeout_ms)
 		coalition_collect_external_members_locked(co, &jail_fps,
 		    &jail_count, &mac_capability_cis, &mac_capability_count);
 		coalition_terminate_members_locked(co, curthread, false,
-		    force_kill ? SIGKILL : 0);
+		    force_kill ? SIGKILL : 0, COALITION_KILL_REQUESTED);
 		sx_xunlock(&co->co_sx);
 		coalition_terminate_external_members(curthread, jail_fps,
 		    jail_count, mac_capability_cis, mac_capability_count);
@@ -1899,7 +2042,8 @@ coalition_deadline_task_fn(void *context, int pending __unused)
 		coalition_notify_event(co, COALITION_NOTE_DEADLINE_FIRED);
 		coalition_collect_external_members_locked(co, &jail_fps,
 		    &jail_count, &mac_capability_cis, &mac_capability_count);
-		coalition_terminate_members_locked(co, td, false, SIGKILL);
+		coalition_terminate_members_locked(co, td, false, SIGKILL,
+		    COALITION_KILL_DEADLINE);
 		sx_xunlock(&co->co_sx);
 		coalition_terminate_external_members(td, jail_fps, jail_count,
 		    mac_capability_cis, mac_capability_count);
@@ -1928,7 +2072,8 @@ coalition_deadline_task_fn(void *context, int pending __unused)
 		    &jail_count, &mac_capability_cis, &mac_capability_count);
 		sig_override = (co->co_deadline_signal != 0) ?
 		    co->co_deadline_signal : SIGKILL;
-		coalition_terminate_members_locked(co, td, false, sig_override);
+		coalition_terminate_members_locked(co, td, false, sig_override,
+		    COALITION_KILL_DEADLINE);
 		sx_xunlock(&co->co_sx);
 		coalition_terminate_external_members(td, jail_fps, jail_count,
 		    mac_capability_cis, mac_capability_count);
@@ -1974,7 +2119,8 @@ coalition_watchdog_task_fn(void *context, int pending __unused)
 	coalition_notify_event(co, COALITION_NOTE_WATCHDOG_FIRED);
 	coalition_collect_external_members_locked(co, &jail_fps,
 	    &jail_count, &mac_capability_cis, &mac_capability_count);
-	coalition_terminate_members_locked(co, curthread, false, SIGKILL);
+	coalition_terminate_members_locked(co, curthread, false, SIGKILL,
+	    COALITION_KILL_WATCHDOG);
 	sx_xunlock(&co->co_sx);
 	coalition_terminate_external_members(curthread, jail_fps, jail_count,
 	    mac_capability_cis, mac_capability_count);
@@ -2345,7 +2491,8 @@ coalition_close_internal(struct coalition *co, struct thread *td)
 		coalition_rel(co);
 	}
 
-	coalition_terminate_members_locked(co, td, true, co->co_signal);
+	coalition_terminate_members_locked(co, td, true, co->co_signal,
+	    COALITION_KILL_NONE);
 	sx_xunlock(&co->co_sx);
 
 	/*
@@ -2596,6 +2743,56 @@ coalition_band_fill_reply(struct coalition *co, struct coalition_band_reply *br,
 }
 
 /*
+ * Recompute whether the coalition counts as idle, and when it started being so.
+ *
+ * Idle here means two things and only two: somebody declared this work able to
+ * come back, and nothing holds an assertion on it.  Taking an assertion resets
+ * the clock, so work that is used again is not put away for having been quiet
+ * before.  Lock-free: this runs from the assertion paths, which are themselves
+ * lock-free.
+ */
+static void
+coalition_idle_update(struct coalition *co)
+{
+	bool idle;
+
+	idle = (atomic_load_int(&co->co_idle_flags) &
+	    COALITION_IDLE_EXIT_ENABLE) != 0 &&
+	    atomic_load_int(&co->co_band_nassert) == 0;
+	if (!idle)
+		atomic_store_64((volatile uint64_t *)&co->co_idle_since, 0);
+	else if (atomic_load_64((volatile uint64_t *)&co->co_idle_since) == 0)
+		atomic_store_64((volatile uint64_t *)&co->co_idle_since,
+		    (uint64_t)getsbinuptime());
+}
+
+/*
+ * Has this coalition been idle long enough to be put away?
+ */
+static bool
+coalition_idle_expired(struct coalition *co, sbintime_t now)
+{
+	sbintime_t since;
+	u_int age;
+
+	if (coalition_idle_exit == 0)
+		return (false);
+	if ((atomic_load_int(&co->co_idle_flags) &
+	    COALITION_IDLE_EXIT_ENABLE) == 0)
+		return (false);
+	if (atomic_load_int(&co->co_band_nassert) != 0)
+		return (false);
+	since = (sbintime_t)atomic_load_64(
+	    (volatile uint64_t *)&co->co_idle_since);
+	if (since == 0)
+		return (false);
+	age = atomic_load_int(&co->co_idle_min_age_ms);
+	if (age == 0)
+		age = coalition_idle_min_age_ms;
+	return (now - since >= (sbintime_t)age * SBT_1MS);
+}
+
+/*
  * An assertion: a descriptor that holds a coalition at a band for as long as
  * it is open.  It pins the coalition structure but holds no authority over it.
  */
@@ -2614,6 +2811,7 @@ coalition_assert_drop(struct coalition_assert *ca)
 
 	atomic_subtract_int(&co->co_band_assert[ca->ca_band], 1);
 	atomic_subtract_int(&co->co_band_nassert, 1);
+	coalition_idle_update(co);
 	eff = coalition_band_effective(co);
 	SDT_PROBE4(mac_capability_coalition, , , band__release, co->co_id,
 	    ca->ca_band, eff, curthread->td_proc->p_pid);
@@ -2653,6 +2851,7 @@ coalition_band_assert(struct coalition *co, u_int band, struct file **fpp)
 	coalition_ref(co);
 	atomic_add_int(&co->co_band_assert[band], 1);
 	atomic_add_int(&co->co_band_nassert, 1);
+	coalition_idle_update(co);
 
 	error = mac_capability_mint_fp(coalition_assert_svc, 0, &fp);
 	if (error != 0) {
@@ -2809,6 +3008,51 @@ coalition_sample_locked(struct coalition *co)
 	    (uint64_t)getsbinuptime());
 	SDT_PROBE3(mac_capability_coalition, , , ledger__sample, co->co_id,
 	    rss, nprocs);
+}
+
+/*
+ * Act on a coalition's declared footprint ceiling, if it has one.  Called with
+ * a fresh sample and co_sx held EXCLUSIVE: a breach notifies, and delivering a
+ * notification requires the exclusive lock.
+ *
+ * Returns true if the coalition should be terminated for the breach.  The
+ * caller does the terminating, because that needs co_sx exclusive and this is
+ * reached from paths that hold it shared.
+ *
+ * A coalition that comes back under the ceiling is rearmed, so a unit that
+ * drifts over and recovers is told once per excursion rather than once per
+ * sample.
+ */
+static bool
+coalition_limit_check_locked(struct coalition *co)
+{
+	uint64_t limit, rss;
+	u_int flags;
+
+	sx_assert(&co->co_sx, SA_XLOCKED);
+	limit = atomic_load_64(&co->co_limit_bytes);
+	if (limit == 0)
+		return (false);
+	rss = atomic_load_64(&co->co_rss_bytes);
+	if (rss <= limit) {
+		atomic_store_int(&co->co_limit_breached, 0);
+		return (false);
+	}
+	flags = atomic_load_int(&co->co_limit_flags);
+	if (atomic_load_int(&co->co_limit_breached) == 0) {
+		atomic_store_int(&co->co_limit_breached, 1);
+		SDT_PROBE5(mac_capability_coalition, , , limit__breach,
+		    co->co_id, co->co_responsible_id, rss, limit,
+		    (flags & COALITION_LIMIT_KILL) != 0 ? 1 : 0);
+		coalition_notify_event(co, COALITION_NOTE_LIMIT);
+		log(LOG_WARNING, "mac_capability_coalition: coalition %ju "
+		    "(responsible %ju) is over its ceiling: %ju KB of %ju KB%s\n",
+		    (uintmax_t)co->co_id, (uintmax_t)co->co_responsible_id,
+		    (uintmax_t)(rss / 1024), (uintmax_t)(limit / 1024),
+		    (flags & COALITION_LIMIT_KILL) != 0 ?
+		    "; terminating it" : "");
+	}
+	return ((flags & COALITION_LIMIT_KILL) != 0);
 }
 
 /* ----------------------------------------------------------------
@@ -3050,7 +3294,6 @@ coalition_oom_policy(int shortage __unused)
 		    "%ju KB, %u members)\n", (uintmax_t)victim->co_id,
 		    (uintmax_t)victim->co_responsible_id, cand[best].pt_band,
 		    (uintmax_t)(cand[best].pt_rss / 1024), members);
-		atomic_add_int(&coalition_oom_kills, 1);
 	} else
 		SDT_PROBE1(mac_capability_coalition, , , oom__decline,
 		    (uint32_t)atomic_load_int(&coalition_count));
@@ -3067,10 +3310,85 @@ coalition_oom_policy(int shortage __unused)
 	 * set up to be released without a signal must still be reclaimable.
 	 */
 	sx_xlock(&victim->co_sx);
-	coalition_terminate_members_locked(victim, curthread, false, SIGKILL);
+	coalition_terminate_members_locked(victim, curthread, false, SIGKILL,
+	    COALITION_KILL_SYSTEM_MEMORY);
 	sx_xunlock(&victim->co_sx);
 	coalition_rel(victim);
 	return (true);
+}
+
+/*
+ * The periodic sweep.  Samples every coalition, acts on any that is over the
+ * ceiling declared for it, and puts away any that has been idle long enough.
+ *
+ * Deliberately does not notify and does not hand anything down: those belong to
+ * memory pressure, which is a different question.  This is about promises a
+ * coalition made about itself being kept whether or not the machine is busy.
+ */
+static void
+coalition_sweep_task_fn(void *ctx __unused, int pending __unused)
+{
+	struct coalition *co, *next;
+	sbintime_t now = getsbinuptime();
+	unsigned overlimit = 0, idled = 0;
+	int reason;
+
+	smr_enter(coalition_smr);
+	CK_LIST_FOREACH(co, &coalition_list, co_all_link) {
+		if (refcount_acquire_if_not_zero(&co->co_refcount))
+			break;
+	}
+	smr_exit(coalition_smr);
+
+	while (co != NULL) {
+		reason = COALITION_KILL_NONE;
+		sx_xlock(&co->co_sx);
+		if ((co->co_flags & (COF_TERMINATING | COF_CLOSING)) == 0) {
+			coalition_sample_locked(co);
+			if (coalition_limit_check_locked(co))
+				reason = COALITION_KILL_OVER_CEILING;
+			else if (coalition_idle_expired(co, now))
+				reason = COALITION_KILL_IDLE;
+			if (reason != COALITION_KILL_NONE)
+				coalition_terminate_members_locked(co,
+				    curthread, false, SIGKILL, reason);
+		}
+		sx_xunlock(&co->co_sx);
+		if (reason == COALITION_KILL_OVER_CEILING)
+			overlimit++;
+		else if (reason == COALITION_KILL_IDLE)
+			idled++;
+
+		smr_enter(coalition_smr);
+		for (next = CK_LIST_NEXT(co, co_all_link); next != NULL;
+		    next = CK_LIST_NEXT(next, co_all_link)) {
+			if (refcount_acquire_if_not_zero(&next->co_refcount))
+				break;
+		}
+		smr_exit(coalition_smr);
+		coalition_rel(co);
+		co = next;
+	}
+
+	if (overlimit != 0 || idled != 0)
+		log(LOG_INFO, "mac_capability_coalition: sweep: %u over "
+		    "ceiling, %u put away idle\n", overlimit, idled);
+}
+
+static void
+coalition_sweep_callout_fn(void *ctx __unused)
+{
+	u_int interval;
+
+	if (coalition_sweep_enable != 0)
+		taskqueue_enqueue(coalition_pressure_tq,
+		    &coalition_sweep_task);
+	interval = coalition_sweep_interval_ms;
+	if (interval < 1000)
+		interval = 1000;
+	callout_reset_sbt(&coalition_sweep_callout,
+	    (sbintime_t)interval * SBT_1MS, SBT_1S, coalition_sweep_callout_fn,
+	    NULL, C_PREL(1));
 }
 
 static void
@@ -3079,9 +3397,10 @@ coalition_pressure_task_fn(void *ctx __unused, int pending __unused)
 	struct coalition_press_target targets[COALITION_PRESS_MAX];
 	struct coalition *co, *next;
 	sbintime_t now = getsbinuptime();
-	unsigned notified = 0, handed = 0;
+	unsigned notified = 0, handed = 0, limited = 0;
 	u_int band, ntargets = 0, i;
 	uint64_t rss;
+	bool overlimit;
 
 	/*
 	 * Enumerate lock-free.  A reference is taken on each coalition inside
@@ -3118,7 +3437,21 @@ coalition_pressure_task_fn(void *ctx __unused, int pending __unused)
 		} else
 			SDT_PROBE3(mac_capability_coalition, , ,
 			    pressure__notify, co->co_id, 0U, ESHUTDOWN);
+		overlimit = coalition_limit_check_locked(co);
 		sx_xunlock(&co->co_sx);
+
+		/*
+		 * A coalition over the ceiling declared for it is terminated
+		 * here whatever its band: it is over budget, and the band only
+		 * decides what to give up first among coalitions that are not.
+		 */
+		if (overlimit) {
+			sx_xlock(&co->co_sx);
+			coalition_terminate_members_locked(co, curthread,
+			    false, SIGKILL, COALITION_KILL_OVER_CEILING);
+			sx_xunlock(&co->co_sx);
+			limited++;
+		}
 
 		/*
 		 * The sample is fresh now, so decide whether this is one of the
@@ -3170,10 +3503,10 @@ coalition_pressure_task_fn(void *ctx __unused, int pending __unused)
 
 	SDT_PROBE2(mac_capability_coalition, , , pressure,
 	    (uint32_t)atomic_load_int(&coalition_count), notified);
-	if (handed != 0)
+	if (handed != 0 || limited != 0)
 		log(LOG_INFO, "mac_capability_coalition: memory pressure: "
-		    "handed down %u coalition%s\n", handed,
-		    handed == 1 ? "" : "s");
+		    "handed down %u coalition%s, terminated %u over ceiling\n",
+		    handed, handed == 1 ? "" : "s", limited);
 }
 
 /*
@@ -3904,6 +4237,50 @@ coalition_call(struct mac_capability_instance *s,
 		break;
 	}
 
+	case COALITION_OP_SET_LIMIT:
+	{
+		const struct coalition_limit_req *lq;
+
+		if (reqlen < sizeof(*lq)) {
+			rpl->status = EINVAL;
+			break;
+		}
+		lq = req;
+		if ((lq->flags & ~COALITION_LIMIT_KILL) != 0) {
+			rpl->status = EINVAL;
+			break;
+		}
+		/*
+		 * Published with atomics, and the breach flag is rearmed, so a
+		 * ceiling raised above the current footprint takes effect at
+		 * once rather than leaving the coalition marked over.
+		 */
+		atomic_store_int(&co->co_limit_flags, lq->flags);
+		atomic_store_64(&co->co_limit_bytes, lq->memory_bytes);
+		atomic_store_int(&co->co_limit_breached, 0);
+		break;
+	}
+
+	case COALITION_OP_SET_IDLE_EXIT:
+	{
+		const struct coalition_idle_req *iq;
+
+		if (reqlen < sizeof(*iq)) {
+			rpl->status = EINVAL;
+			break;
+		}
+		iq = req;
+		if ((iq->flags & ~COALITION_IDLE_EXIT_ENABLE) != 0) {
+			rpl->status = EINVAL;
+			break;
+		}
+		atomic_store_int(&co->co_idle_min_age_ms, iq->min_age_ms);
+		atomic_store_int(&co->co_idle_flags, iq->flags);
+		/* Start or stop the clock to match what was just declared. */
+		coalition_idle_update(co);
+		break;
+	}
+
 	case COALITION_OP_BAND:
 	{
 		const struct coalition_band_req *bq;
@@ -4000,9 +4377,23 @@ coalition_call(struct mac_capability_instance *s,
 		memset(lr, 0, sizeof(*lr));
 
 		if ((lq->flags & COALITION_LEDGER_REFRESH) != 0) {
-			sx_slock(&co->co_sx);
+			bool over;
+
+			/*
+			 * Exclusive, not shared: the ceiling check notifies on
+			 * a breach and a notification needs the exclusive lock.
+			 */
+			sx_xlock(&co->co_sx);
 			coalition_sample_locked(co);
-			sx_sunlock(&co->co_sx);
+			over = coalition_limit_check_locked(co);
+			sx_xunlock(&co->co_sx);
+			if (over) {
+				sx_xlock(&co->co_sx);
+				coalition_terminate_members_locked(co,
+				    curthread, false, SIGKILL,
+				    COALITION_KILL_OVER_CEILING);
+				sx_xunlock(&co->co_sx);
+			}
 		}
 		lr->id = co->co_id;
 		lr->rss_bytes = atomic_load_64(&co->co_rss_bytes);
@@ -4229,6 +4620,9 @@ coalition_mod_init(void)
 	    M_WAITOK, taskqueue_thread_enqueue, &coalition_pressure_tq);
 	(void)taskqueue_start_threads(&coalition_pressure_tq, 1, PWAIT,
 	    "coalition pressure");
+	TASK_INIT(&coalition_sweep_task, 0, coalition_sweep_task_fn, NULL);
+	callout_init(&coalition_sweep_callout, 1);
+	coalition_sweep_callout_fn(NULL);
 	for (i = 0; i < COALITION_PROC_HASH_SIZE; i++)
 		CK_LIST_INIT(&coalition_proc_hash[i]);
 
@@ -4345,6 +4739,8 @@ coalition_modevent(module_t mod __unused, int type, void *arg __unused)
 		if (coalition_lowmem_tag != NULL)
 			EVENTHANDLER_DEREGISTER(vm_lowmem,
 			    coalition_lowmem_tag);
+		callout_drain(&coalition_sweep_callout);
+		taskqueue_drain(coalition_pressure_tq, &coalition_sweep_task);
 		taskqueue_drain(coalition_pressure_tq, &coalition_pressure_task);
 		taskqueue_free(coalition_pressure_tq);
 		coalition_pressure_tq = NULL;

@@ -2229,6 +2229,76 @@ coalition_ledger(int fd, uint32_t flags, struct coalition_ledger_reply *lr)
 	return (coalition_call(fd, &lq, sizeof(lq), NULL, 0, lr, sizeof(*lr)));
 }
 
+
+static int
+coalition_set_limit(int fd, uint32_t flags, uint64_t bytes, int32_t *status_out)
+{
+	struct coalition_limit_req lq;
+	struct coalition_reply rpl;
+	int ret;
+
+	memset(&lq, 0, sizeof(lq));
+	lq.op = COALITION_OP_SET_LIMIT;
+	lq.flags = flags;
+	lq.memory_bytes = bytes;
+	ret = coalition_call(fd, &lq, sizeof(lq), NULL, 0, &rpl, sizeof(rpl));
+	if (ret == 0 && status_out != NULL)
+		*status_out = rpl.status;
+	return (ret);
+}
+
+
+
+/*
+ * The periodic sweep is what enforces ceilings and puts idle work away, and it
+ * runs every ten seconds by default.  A test that waits less than that learns
+ * nothing: one expecting an action times out, and -- worse -- one expecting NO
+ * action passes whether the mechanism works or not, because the sweep never
+ * ran.  So tests about the sweep shorten its interval to the shortest the
+ * kernel accepts, and put it back afterwards.
+ */
+#define	SWEEP_FAST_MS	1000
+
+static u_int
+sweep_interval_set(u_int ms)
+{
+	u_int old = 0;
+	size_t len = sizeof(old);
+
+	if (sysctlbyname("kern.mac_capability_coalition.sweep_interval_ms",
+	    &old, &len, &ms, sizeof(ms)) != 0)
+		return (0);
+	return (old);
+}
+
+static void
+sweep_interval_restore(u_int ms)
+{
+
+	if (ms != 0)
+		(void)sysctlbyname(
+		    "kern.mac_capability_coalition.sweep_interval_ms", NULL,
+		    NULL, &ms, sizeof(ms));
+}
+
+static int
+coalition_set_idle_exit(int fd, uint32_t flags, uint32_t min_age_ms,
+    int32_t *status_out)
+{
+	struct coalition_idle_req iq;
+	struct coalition_reply rpl;
+	int ret;
+
+	memset(&iq, 0, sizeof(iq));
+	iq.op = COALITION_OP_SET_IDLE_EXIT;
+	iq.flags = flags;
+	iq.min_age_ms = min_age_ms;
+	ret = coalition_call(fd, &iq, sizeof(iq), NULL, 0, &rpl, sizeof(rpl));
+	if (ret == 0 && status_out != NULL)
+		*status_out = rpl.status;
+	return (ret);
+}
+
 static int
 coalition_band(int fd, uint32_t flags, uint32_t floor,
     struct coalition_band_reply *br)
@@ -4955,6 +5025,324 @@ ATF_TC_BODY(oom_ceiling_excludes_critical_band, tc)
 	close(fd);
 }
 
+ATF_TC(limit_absent_by_default_and_settable);
+ATF_TC_HEAD(limit_absent_by_default_and_settable, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "A coalition has no footprint ceiling unless one is declared, a "
+	    "ceiling can be set and removed, and unknown flags are refused");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_coalition");
+}
+ATF_TC_BODY(limit_absent_by_default_and_settable, tc)
+{
+	struct coalition_ledger_reply lr;
+	int32_t status = -1;
+	int fd;
+
+	fd = mac_capability_connect("coalition");
+	ATF_REQUIRE(fd >= 0);
+
+	/*
+	 * No ceiling to begin with: a refresh, which is where the ceiling is
+	 * enforced, must be harmless on a coalition that has none.
+	 */
+	ATF_REQUIRE(coalition_ledger(fd, COALITION_LEDGER_REFRESH, &lr) == 0);
+	ATF_CHECK_EQ(lr.status, 0);
+
+	/* Set one generously, notify-only. */
+	ATF_REQUIRE(coalition_set_limit(fd, 0, 1ULL << 40, &status) == 0);
+	ATF_CHECK_EQ_MSG(status, 0, "a ceiling was refused: %d", status);
+	ATF_REQUIRE(coalition_ledger(fd, COALITION_LEDGER_REFRESH, &lr) == 0);
+	ATF_CHECK_EQ(lr.status, 0);
+
+	/* Ask for termination on breach, still generous, still harmless. */
+	ATF_REQUIRE(coalition_set_limit(fd, COALITION_LIMIT_KILL, 1ULL << 40,
+	    &status) == 0);
+	ATF_CHECK_EQ(status, 0);
+	ATF_REQUIRE(coalition_ledger(fd, COALITION_LEDGER_REFRESH, &lr) == 0);
+	ATF_CHECK_EQ(lr.status, 0);
+
+	/* Remove it. */
+	ATF_REQUIRE(coalition_set_limit(fd, 0, 0, &status) == 0);
+	ATF_CHECK_EQ(status, 0);
+
+	/* Unknown flags are refused. */
+	ATF_REQUIRE(coalition_set_limit(fd, 0x80, 1ULL << 40, &status) == 0);
+	ATF_CHECK_EQ(status, EINVAL);
+	close(fd);
+}
+
+ATF_TC(limit_breach_terminates_regardless_of_band);
+ATF_TC_HEAD(limit_breach_terminates_regardless_of_band, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "A coalition over the ceiling declared for it is terminated even "
+	    "in the critical band, because it is over budget rather than "
+	    "merely expendable; the counter records it");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_coalition");
+}
+ATF_TC_BODY(limit_breach_terminates_regardless_of_band, tc)
+{
+	struct coalition_band_reply br;
+	struct coalition_ledger_reply lr;
+	u_int before = 0, after = 0;
+	size_t len = sizeof(before);
+	int fd, pd, wstatus;
+	int32_t status;
+	pid_t pid;
+
+	if (sysctlbyname("kern.mac_capability_coalition.limit_kills", &before,
+	    &len, NULL, 0) != 0)
+		atf_tc_skip("limit_kills sysctl unavailable: %s",
+		    strerror(errno));
+
+	fd = mac_capability_connect("coalition");
+	ATF_REQUIRE(fd >= 0);
+	/* Critical band: this must not save it from its own ceiling. */
+	ATF_REQUIRE(coalition_band(fd, COALITION_BAND_SET_FLOOR,
+	    COALITION_BAND_CRITICAL, &br) == 0);
+	ATF_REQUIRE_EQ(br.status, 0);
+
+	pid = coalition_fork_member(fd, &pd);
+	ATF_REQUIRE(pid > 0);
+	ATF_REQUIRE(coalition_enlist(fd, pd, &status) == 0);
+	ATF_REQUIRE_EQ(status, 0);
+
+	/* A ceiling of one byte is breached by any live member. */
+	ATF_REQUIRE(coalition_set_limit(fd, COALITION_LIMIT_KILL, 1,
+	    &status) == 0);
+	ATF_REQUIRE_EQ(status, 0);
+
+	/* The refresh both samples and enforces. */
+	ATF_REQUIRE(coalition_ledger(fd, COALITION_LEDGER_REFRESH, &lr) == 0);
+	ATF_CHECK_EQ(lr.status, 0);
+	ATF_CHECK_MSG(lr.rss_bytes > 1,
+	    "the member had no footprint to exceed the ceiling with");
+
+	ATF_CHECK_MSG(wait_exit_bounded(pid, &wstatus),
+	    "a coalition over its own ceiling was not terminated");
+
+	len = sizeof(after);
+	ATF_REQUIRE(sysctlbyname("kern.mac_capability_coalition.limit_kills",
+	    &after, &len, NULL, 0) == 0);
+	ATF_CHECK_MSG(after > before,
+	    "the ceiling termination was not counted: %u then %u", before,
+	    after);
+
+	close(pd);
+	close(fd);
+}
+
+ATF_TC(limit_under_ceiling_is_left_alone);
+ATF_TC_HEAD(limit_under_ceiling_is_left_alone, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "A coalition within its ceiling is not touched by a refresh, and "
+	    "raising a ceiling above a footprint that had breached it rearms "
+	    "the coalition rather than leaving it marked over");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_coalition");
+}
+ATF_TC_BODY(limit_under_ceiling_is_left_alone, tc)
+{
+	struct coalition_ledger_reply lr;
+	int fd, pd, wstatus;
+	int32_t status;
+	pid_t pid;
+
+	fd = mac_capability_connect("coalition");
+	ATF_REQUIRE(fd >= 0);
+	pid = coalition_fork_member(fd, &pd);
+	ATF_REQUIRE(pid > 0);
+	ATF_REQUIRE(coalition_enlist(fd, pd, &status) == 0);
+	ATF_REQUIRE_EQ(status, 0);
+
+	/* Notify-only, and breached: the member must survive it. */
+	ATF_REQUIRE(coalition_set_limit(fd, 0, 1, &status) == 0);
+	ATF_REQUIRE_EQ(status, 0);
+	ATF_REQUIRE(coalition_ledger(fd, COALITION_LEDGER_REFRESH, &lr) == 0);
+	ATF_CHECK_MSG(kill(pid, 0) == 0,
+	    "a notify-only ceiling terminated the coalition");
+
+	/* Raise it out of reach; the coalition is rearmed and still alive. */
+	ATF_REQUIRE(coalition_set_limit(fd, COALITION_LIMIT_KILL, 1ULL << 40,
+	    &status) == 0);
+	ATF_REQUIRE_EQ(status, 0);
+	ATF_REQUIRE(coalition_ledger(fd, COALITION_LEDGER_REFRESH, &lr) == 0);
+	ATF_CHECK_MSG(kill(pid, 0) == 0,
+	    "raising the ceiling did not clear the breach");
+
+	pdkill(pd, SIGKILL);
+	waitpid(pid, &wstatus, 0);
+	close(pd);
+	close(fd);
+}
+
+ATF_TC(idle_exit_is_opt_in);
+ATF_TC_HEAD(idle_exit_is_opt_in, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "A coalition is never put away for being idle unless it was "
+	    "declared able to come back; a quiet coalition that never declared "
+	    "it survives the sweep, and unknown flags are refused");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_coalition");
+}
+ATF_TC_BODY(idle_exit_is_opt_in, tc)
+{
+	int fd, pd, wstatus;
+	int32_t status = -1;
+	u_int saved;
+	pid_t pid;
+
+	saved = sweep_interval_set(SWEEP_FAST_MS);
+	if (saved == 0)
+		atf_tc_skip("sweep_interval_ms sysctl unavailable: %s",
+		    strerror(errno));
+
+	fd = mac_capability_connect("coalition");
+	ATF_REQUIRE(fd >= 0);
+	pid = coalition_fork_member(fd, &pd);
+	ATF_REQUIRE(pid > 0);
+	ATF_REQUIRE(coalition_enlist(fd, pd, &status) == 0);
+	ATF_REQUIRE_EQ(status, 0);
+
+	/* Never declared: several sweeps must go by without touching it. */
+	usleep(3500000);
+	ATF_CHECK_MSG(kill(pid, 0) == 0,
+	    "a coalition that never opted in was put away");
+
+	/* Unknown flags are refused. */
+	ATF_REQUIRE(coalition_set_idle_exit(fd, 0x80, 0, &status) == 0);
+	ATF_CHECK_EQ(status, EINVAL);
+
+	/* Declaring it with a long age keeps it safe for now. */
+	ATF_REQUIRE(coalition_set_idle_exit(fd, COALITION_IDLE_EXIT_ENABLE,
+	    3600000, &status) == 0);
+	ATF_CHECK_EQ(status, 0);
+	usleep(3500000);
+	ATF_CHECK_MSG(kill(pid, 0) == 0,
+	    "a coalition idle for seconds was put away with an hour's age");
+
+	pdkill(pd, SIGKILL);
+	waitpid(pid, &wstatus, 0);
+	close(pd);
+	close(fd);
+	sweep_interval_restore(saved);
+}
+
+ATF_TC(idle_exit_puts_away_after_its_age);
+ATF_TC_HEAD(idle_exit_puts_away_after_its_age, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "A coalition declared able to come back, holding no assertion, is "
+	    "put away once it has been idle for its declared age, and the "
+	    "reason is counted as an idle exit rather than a memory kill");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_coalition");
+}
+ATF_TC_BODY(idle_exit_puts_away_after_its_age, tc)
+{
+	u_int before = 0, after = 0, oom_before = 0, oom_after = 0, saved;
+	size_t len = sizeof(before);
+	int fd, pd, wstatus;
+	int32_t status;
+	pid_t pid;
+
+	saved = sweep_interval_set(SWEEP_FAST_MS);
+	if (saved == 0)
+		atf_tc_skip("sweep_interval_ms sysctl unavailable: %s",
+		    strerror(errno));
+	if (sysctlbyname("kern.mac_capability_coalition.idle_kills", &before,
+	    &len, NULL, 0) != 0)
+		atf_tc_skip("idle_kills sysctl unavailable: %s",
+		    strerror(errno));
+	len = sizeof(oom_before);
+	ATF_REQUIRE(sysctlbyname("kern.mac_capability_coalition.oom_kills",
+	    &oom_before, &len, NULL, 0) == 0);
+
+	fd = mac_capability_connect("coalition");
+	ATF_REQUIRE(fd >= 0);
+	pid = coalition_fork_member(fd, &pd);
+	ATF_REQUIRE(pid > 0);
+	ATF_REQUIRE(coalition_enlist(fd, pd, &status) == 0);
+	ATF_REQUIRE_EQ(status, 0);
+
+	/* Eligible immediately: no assertions, and no age to wait out. */
+	ATF_REQUIRE(coalition_set_idle_exit(fd, COALITION_IDLE_EXIT_ENABLE, 1,
+	    &status) == 0);
+	ATF_REQUIRE_EQ(status, 0);
+
+	ATF_CHECK_MSG(wait_exit_bounded(pid, &wstatus),
+	    "an idle coalition was not put away");
+
+	len = sizeof(after);
+	ATF_REQUIRE(sysctlbyname("kern.mac_capability_coalition.idle_kills",
+	    &after, &len, NULL, 0) == 0);
+	ATF_CHECK_MSG(after > before,
+	    "the idle exit was not counted: %u then %u", before, after);
+
+	/* And it was not mistaken for the machine running out of memory. */
+	len = sizeof(oom_after);
+	ATF_REQUIRE(sysctlbyname("kern.mac_capability_coalition.oom_kills",
+	    &oom_after, &len, NULL, 0) == 0);
+	ATF_CHECK_EQ_MSG(oom_before, oom_after,
+	    "an idle exit was counted as an out-of-memory kill");
+
+	close(pd);
+	close(fd);
+	sweep_interval_restore(saved);
+}
+
+ATF_TC(idle_exit_is_held_off_by_an_assertion);
+ATF_TC_HEAD(idle_exit_is_held_off_by_an_assertion, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "An assertion means the work is in use: it holds off an idle exit "
+	    "however long the coalition has been quiet, and dropping it starts "
+	    "the idle clock again rather than resuming where it left off");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_coalition");
+}
+ATF_TC_BODY(idle_exit_is_held_off_by_an_assertion, tc)
+{
+	struct coalition_band_reply br;
+	int fd, pd, afd, wstatus;
+	int32_t status;
+	u_int saved;
+	pid_t pid;
+
+	saved = sweep_interval_set(SWEEP_FAST_MS);
+	if (saved == 0)
+		atf_tc_skip("sweep_interval_ms sysctl unavailable: %s",
+		    strerror(errno));
+
+	fd = mac_capability_connect("coalition");
+	ATF_REQUIRE(fd >= 0);
+	pid = coalition_fork_member(fd, &pd);
+	ATF_REQUIRE(pid > 0);
+	ATF_REQUIRE(coalition_enlist(fd, pd, &status) == 0);
+	ATF_REQUIRE_EQ(status, 0);
+
+	/* Hold the work, then declare it eligible with no age to wait. */
+	ATF_REQUIRE(coalition_assert(fd, COALITION_BAND_BACKGROUND, &br,
+	    &afd) == 0);
+	ATF_REQUIRE_EQ(br.status, 0);
+	ATF_REQUIRE(coalition_set_idle_exit(fd, COALITION_IDLE_EXIT_ENABLE, 1,
+	    &status) == 0);
+	ATF_REQUIRE_EQ(status, 0);
+
+	/* Several sweeps must go by without it being taken. */
+	usleep(2500000);
+	ATF_CHECK_MSG(kill(pid, 0) == 0,
+	    "an idle exit ignored a held assertion");
+
+	/* Dropping it makes the coalition eligible, and it goes. */
+	ATF_REQUIRE(close(afd) == 0);
+	ATF_CHECK_MSG(wait_exit_bounded(pid, &wstatus),
+	    "the coalition was not put away after its assertion went");
+
+	close(pd);
+	close(fd);
+	sweep_interval_restore(saved);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 	/* Lifecycle */
@@ -5087,6 +5475,12 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, pressure_hands_down_low_bands);
 	ATF_TP_ADD_TC(tp, oom_policy_is_installed_and_bounded);
 	ATF_TP_ADD_TC(tp, oom_ceiling_excludes_critical_band);
+	ATF_TP_ADD_TC(tp, limit_absent_by_default_and_settable);
+	ATF_TP_ADD_TC(tp, limit_breach_terminates_regardless_of_band);
+	ATF_TP_ADD_TC(tp, limit_under_ceiling_is_left_alone);
+	ATF_TP_ADD_TC(tp, idle_exit_is_opt_in);
+	ATF_TP_ADD_TC(tp, idle_exit_puts_away_after_its_age);
+	ATF_TP_ADD_TC(tp, idle_exit_is_held_off_by_an_assertion);
 
 	/* Resource exhaustion + teardown-race stress */
 	ATF_TP_ADD_TC(tp, exhaust_coalition_max);

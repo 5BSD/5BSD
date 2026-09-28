@@ -312,6 +312,20 @@ ranking matters, and on request with
 .Dv COALITION_LEDGER_REFRESH .
 Returns
 .Vt struct coalition_ledger_reply .
+.It Dv COALITION_OP_SET_LIMIT
+Declare a ceiling on the coalition's own footprint, or remove it with a size of
+zero.
+See
+.Sx Memory Ceiling .
+Returns
+.Vt struct coalition_reply .
+.It Dv COALITION_OP_SET_IDLE_EXIT
+Declare the coalition able to be put away when nothing is using it, or clear
+that again.
+See
+.Sx Idle Exit .
+Returns
+.Vt struct coalition_reply .
 .It Dv COALITION_OP_BAND
 Read the coalition's bands, and with
 .Dv COALITION_BAND_SET_FLOOR
@@ -505,6 +519,122 @@ contains a bitmask of:
 .It Dv COF_GRACE_ACTIVE Ta 0x0040 Ta Grace period active, new members rejected
 .It Dv COF_RESPONSIBLE Ta 0x0100 Ta Responsible parent has been set
 .El
+.Ss What A Coalition Declares, And What Decides
+The coalition is the only subject.
+Nothing is ever declared about a process: a process takes part only by being a
+member, which is how its footprint is counted, or by holding an assertion,
+which is a capability it was given rather than a property of being a process.
+There is consequently nothing to reconcile between the members of a coalition.
+.Pp
+Three things are declared, by whoever holds the coalition, which in practice
+means the launcher acting on a bundle's manifest: a band floor, how much the
+system should want to keep this work; optionally a footprint ceiling, what it
+may hold; and optionally idle-exit eligibility, whether it can be put away and
+brought back.
+.Pp
+One thing is dynamic: assertions.
+Holding one raises the band and means the work is in use.
+Nothing else modulates any of it.
+.Pp
+Band and idle-exit eligibility answer different questions and are kept apart.
+The band decides what to give up first when memory is short.
+Eligibility decides whether something can be put away when nobody is using it.
+An idle exit therefore does not consult the band, and a low band does not imply
+that anything is idle.
+.Ss Why A Coalition Died
+Every coalition death has exactly one reason, reported identically in the event
+its holder receives, in the log, and in the
+.Fn coalition-kill
+probe, so that
+.Dq what happened to my unit
+has one answer wherever it is asked.
+.Pp
+.Bl -tag -width "Dv COALITION_KILL_SYSTEM_MEMORY" -compact
+.It Dv COALITION_KILL_NONE
+the handle was closed; no policy was involved
+.It Dv COALITION_KILL_REQUESTED
+a holder asked
+.It Dv COALITION_KILL_DEADLINE
+it ran past its deadline
+.It Dv COALITION_KILL_WATCHDOG
+it stopped answering
+.It Dv COALITION_KILL_LEADER
+its leader went away
+.It Dv COALITION_KILL_OVER_CEILING
+it exceeded the figure declared for it
+.It Dv COALITION_KILL_SYSTEM_MEMORY
+the machine ran out and this was the least wanted
+.It Dv COALITION_KILL_IDLE
+it was idle, and able to come back
+.El
+.Pp
+The three memory reasons are counted separately, in
+.Va limit_kills ,
+.Va oom_kills
+and
+.Va idle_kills ,
+because a unit over its own budget, the machine being short, and work being put
+away to be brought back are three different situations and should not be read
+off one number.
+.Ss Idle Exit
+Some work can be put away and brought back without losing anything, such as an
+on-demand unit that starts again the next time somebody asks for it.
+Whether a coalition is that kind of work cannot be inferred, so it is declared
+with
+.Dv COALITION_OP_SET_IDLE_EXIT ,
+and no coalition is eligible by default.
+A unit that would be restarted immediately should not be declared, because
+putting it away achieves nothing.
+.Pp
+Eligibility says the work
+.Em can
+be put away.
+Assertions say whether it should be right now: a coalition with any live
+assertion is in use and is left alone, and taking an assertion restarts the
+idle clock.
+An eligible coalition with no assertions must also have been that way for its
+declared age before it is put away, so work that goes quiet for a moment is not
+taken from under its user.
+.Ss The Periodic Sweep
+A ceiling and an idle timer would mean nothing if they were only examined when
+the system ran short, so a sweep runs every
+.Va sweep_interval_ms .
+It samples every coalition's footprint, acts on any that is over its ceiling,
+and puts away any that has been idle long enough.
+.Pp
+It deliberately does not notify and does not hand anything down; those belong to
+memory pressure, which is a different question.
+This is about promises a coalition made about itself being kept whether or not
+the machine is busy.
+.Pp
+Footprint is sampled here rather than accounted continuously, so a figure is
+only ever as fresh as the last sweep and the interval is what bounds how stale
+it can be.
+.Ss Memory Ceiling
+A coalition may be given a ceiling on its footprint.
+This is not a per-process limit, which a unit escapes by forking: it is a figure
+for the unit and every helper it starts, taken together.
+.Pp
+A coalition with no ceiling is never limited, so nothing happens until
+something declares one.
+The ceiling is checked whenever the coalition's footprint is sampled, which is
+when the system is under memory pressure and whenever a ledger refresh is
+asked for.
+It is therefore a ceiling on what a coalition may be holding when memory
+matters rather than an instantaneous one: a coalition that goes over and comes
+back before anyone looks is never penalised, which is the right behaviour for a
+figure describing a whole unit's working set.
+.Pp
+A breach always notifies, through
+.Dv COALITION_NOTE_LIMIT .
+With
+.Dv COALITION_LIMIT_KILL
+it also terminates the coalition, and it does so regardless of band: a
+coalition that has exceeded a figure declared for it is over budget whether or
+not the system happens to be short, and the band only decides what to give up
+first among coalitions that are within theirs.
+A coalition that comes back under its ceiling is rearmed, so a unit that drifts
+over and recovers is told once per excursion rather than once per sample.
 .Ss Out Of Memory
 When the system is about to run out of memory, something has to be given up.
 The stock choice is the single largest process, which is very often the most
@@ -539,6 +669,20 @@ The out-of-memory knobs are
 .Va oom_band_ceiling
 and the read-only counter
 .Va oom_kills .
+Terminations for a coalition's own ceiling are counted separately in
+.Va limit_kills ,
+since exceeding a declared figure and being given up because the machine ran
+out are different events.
+The idle-exit knobs are
+.Va idle_exit
+and
+.Va idle_min_age_ms ,
+with
+.Va idle_kills
+counting what has been put away; the sweep is controlled by
+.Va sweep
+and
+.Va sweep_interval_ms .
 The memory-pressure knobs are
 .Va pressure_reclaim
 (hand coalitions down at all),
@@ -630,6 +774,21 @@ script names the holder.
 .It Fn ledger-sample coalition_id rss_bytes nprocs
 Fired when a coalition's resource sample is refreshed.
 This is the input a pressure policy ranks on.
+.It Fn coalition-kill coalition_id responsible_id reason rss_bytes band
+Fired once for every coalition death, whatever caused it, carrying the
+.Dv COALITION_KILL_*
+reason.
+This is the probe to trace when something disappeared and the question is why.
+.It Fn limit-breach coalition_id responsible_id rss_bytes limit_bytes killed
+Fired when a coalition goes over the ceiling declared for it.
+.Ar killed
+is 1 if it is being terminated for it and 0 if it is only being told.
+This is the probe for
+.Dq which unit is over budget ,
+as against
+.Fn oom-kill ,
+which answers
+.Dq what did the system give up because it ran out .
 .It Fn oom-kill coalition_id responsible_id band rss_bytes nprocs
 Fired when a coalition is terminated to reclaim its memory.
 This is the report to reach for after processes disappear.

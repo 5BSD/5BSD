@@ -118,6 +118,17 @@ mac_capability_coalition:::ledger-sample
 
 /* ---- A coalition was given up entirely to reclaim memory ---- */
 
+/* ---- A coalition went over the ceiling declared for it ---- */
+
+mac_capability_coalition:::limit-breach
+{
+	printf("%-12s %-14s coalition %d responsible %d %d KB of %d KB%s\n",
+	    strftime(walltimestamp, "%H:%M:%S"), "over-ceiling", arg0, arg1,
+	    arg2 / 1024, arg3 / 1024,
+	    arg4 == 1 ? " -- terminating it" : " (told only)");
+	@overceiling[arg0, arg4 == 1 ? "terminated" : "told"] = count();
+}
+
 mac_capability_coalition:::oom-kill
 {
 	printf("\n%-12s %-14s coalition %d responsible %d band %d %d KB, %d members\n",
@@ -158,6 +169,8 @@ dtrace:::END
 	printa("  %-12d %-14s %@8d\n", @floor);
 	printf("\n--- Largest footprint seen per coalition (bytes) ---\n");
 	printa("  %-12d %@12d\n", @footprint);
+	printf("\n--- Coalitions over their own ceiling ---\n");
+	printa("  %-12d %-12s %@8d\n", @overceiling);
 	printf("\n--- Coalitions GIVEN UP for memory (coalition, responsible) ---\n");
 	printa("  %-12d %-12d %@8d\n", @oomkill);
 	printf("\n--- Coalitions handed down (coalition, band) ---\n");

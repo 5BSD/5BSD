@@ -110,6 +110,17 @@ mac_capability_coalition:::responsible-set
 
 /* ---- A coalition was given up entirely to reclaim memory ---- */
 
+/* ---- A coalition went over the ceiling declared for it ---- */
+
+mac_capability_coalition:::limit-breach
+{
+	printf("%-12s %-14s coalition %d responsible %d %d KB of %d KB%s\n",
+	    strftime(walltimestamp, "%H:%M:%S"), "over-ceiling", arg0, arg1,
+	    arg2 / 1024, arg3 / 1024,
+	    arg4 == 1 ? " -- terminating it" : " (told only)");
+	@overceiling[arg0, arg4 == 1 ? "terminated" : "told"] = count();
+}
+
 mac_capability_coalition:::oom-kill
 {
 	printf("\n%-12s %-14s coalition %d responsible %d band %d %d KB, %d members\n",

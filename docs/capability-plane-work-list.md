@@ -66,12 +66,29 @@ login session's coalition (by design, EBUSY on join).
    change which process dies. `oom-kill` and `oom-decline` probes plus a logged
    report naming the coalition, the responsible party, the band, the footprint
    and the member count.
-   Remaining: a coalition-wide memory ceiling whose breach kills regardless of
-   band (XNU's highwater kills); idle-exit of clean idle units under pressure
-   (XNU's idle-exit rung, needs the switchboard as the actor); a CPU budget and
-   period; racct accounting into a coalition subject; and work a provider does
-   on a client's behalf charged to the client (donation across channel calls,
-   item C2). This is
+   A coalition-wide memory ceiling (`COALITION_OP_SET_LIMIT`), whose breach
+   notifies and optionally terminates regardless of band -- over budget is not
+   the same as expendable, and the band only orders the coalitions that are
+   within theirs. Idle exit (`COALITION_OP_SET_IDLE_EXIT`): opt-in per
+   coalition, gated on holding no assertion, and only after a declared age, so
+   a held assertion means "in use" for idleness exactly as it does for the
+   band. A periodic sweep enforces both, so a ceiling and an idle timer mean
+   something without waiting for the machine to run short.
+   **The model, stated:** the coalition is the only subject. Nothing is
+   declared about a process; a process takes part by being a member, which is
+   how its footprint counts, or by holding an assertion, which is a capability
+   rather than a property of being a process. Three declarations (band floor,
+   ceiling, idle eligibility), one dynamic input (assertions), and band and
+   idleness kept as separate questions. XNU instead puts dirty flags and bands
+   on the process with coalitions alongside, which is two subjects needing
+   reconciliation; we deliberately did not copy that.
+   Every death carries exactly one of seven reasons, reported identically in
+   the holder's event, the log and the `coalition-kill` probe, with the three
+   memory reasons counted separately.
+   Remaining: a CPU budget and period; racct accounting into a coalition
+   subject, which is what would make footprint continuous rather than sampled;
+   and work a provider does on a client's behalf charged to the client
+   (donation across channel calls, item C2). This is
    the substrate a coalition-aware scheduler policy would consume; the
    scheduler itself stays on hold.
 4. **Factotum-style key custody** (Plan 9) — **later**. BSDCrypto or BSDAuth

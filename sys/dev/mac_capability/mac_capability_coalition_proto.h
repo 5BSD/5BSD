@@ -36,6 +36,8 @@
 #define	COALITION_OP_LEDGER		14
 #define	COALITION_OP_BAND		15
 #define	COALITION_OP_ASSERT		16
+#define	COALITION_OP_SET_LIMIT		17
+#define	COALITION_OP_SET_IDLE_EXIT	18
 
 /*
  * Common request header.
@@ -294,6 +296,23 @@ struct coalition_band_req {
 	uint32_t	floor;		/* with COALITION_BAND_SET_FLOOR */
 	uint32_t	band;		/* band to assert (COALITION_OP_ASSERT) */
 };
+#define	COALITION_LIMIT_KILL	0x1	/* terminate on breach, not just notify */
+
+#define	COALITION_IDLE_EXIT_ENABLE	0x1	/* may be put away when idle */
+
+struct coalition_idle_req {
+	uint32_t	op;
+	uint32_t	flags;		/* COALITION_IDLE_EXIT_* */
+	uint32_t	min_age_ms;	/* 0 = system default */
+	uint32_t	_pad;
+};
+
+struct coalition_limit_req {
+	uint32_t	op;
+	uint32_t	flags;		/* COALITION_LIMIT_* */
+	uint64_t	memory_bytes;	/* 0 = no ceiling */
+};
+
 struct coalition_band_reply {
 	int32_t		status;
 	uint32_t	floor;
@@ -305,6 +324,62 @@ struct coalition_band_reply {
 };
 
 /*
+ * Memory ceiling
+ * --------------
+ * A coalition may be given a ceiling on its own footprint: not a per-process
+ * rlimit, which a unit escapes by forking, but a figure for the unit and every
+ * helper it starts, taken together.
+ *
+ * A coalition with no ceiling is never limited, so this does nothing until
+ * something declares one.  The ceiling is checked when the coalition's
+ * footprint is sampled, which happens when the system is under memory pressure
+ * and whenever a ledger refresh is asked for.  It is therefore a ceiling on
+ * what a coalition may be holding when memory matters, not an instantaneous
+ * one: a coalition that goes over and comes back before anyone looks is never
+ * penalised, which is the behaviour a ceiling on a whole unit's working set
+ * wants.
+ *
+ * A breach always notifies (COALITION_NOTE_LIMIT).  With COALITION_LIMIT_KILL
+ * it also terminates the coalition, regardless of its band -- a coalition that
+ * has exceeded a figure declared for it is over budget whether or not the
+ * system happens to be short, and the band only says what to give up first
+ * when everyone is within budget.
+ *
+ * COALITION_OP_SET_LIMIT
+ *   req:  coalition_limit_req { .op, flags, memory_bytes }
+ *   rep:  coalition_reply
+ *   A memory_bytes of 0 removes the ceiling.
+ *
+ * Idle exit
+ * ---------
+ * Some work can be put away and brought back without losing anything: an
+ * on-demand unit that is started again the next time somebody asks for it.
+ * Such a coalition may be stopped when nothing is using it, which is cheaper
+ * for the system than keeping it resident and cheaper for the user than
+ * having it killed later under pressure.
+ *
+ * Whether a coalition is that kind of work is not something the kernel can
+ * know, so it is declared: COALITION_OP_SET_IDLE_EXIT marks the coalition
+ * eligible.  A coalition is never eligible by default, and a unit that would
+ * be restarted immediately should not be marked, since putting it away
+ * achieves nothing.
+ *
+ * Eligibility says the work CAN be put away.  Assertions say whether it should
+ * be right now: a coalition with any live assertion is in use and is left
+ * alone.  Nothing else is consulted -- in particular the band is a separate
+ * question, about what to give up first when memory is short, not about
+ * whether something is idle.
+ *
+ * An eligible coalition with no assertions must also have been that way for
+ * min_age_ms before it is put away, so work that goes quiet for a moment is
+ * not taken from under its user.  Taking an assertion resets the clock.
+ *
+ * COALITION_OP_SET_IDLE_EXIT
+ *   req:  coalition_idle_req { .op, flags, min_age_ms }
+ *   rep:  coalition_reply
+ *   Clearing COALITION_IDLE_EXIT_ENABLE makes the coalition ineligible again.
+ *   A min_age_ms of 0 means the system default.
+ *
  * COALITION_OP_RUSAGE
  *   req:  coalition_req_hdr { .op = COALITION_OP_RUSAGE }
  *   reply: coalition_rusage_reply
@@ -340,9 +415,37 @@ struct coalition_rusage_reply {
  * payloads.  EVFILT_READ indicates that one or more notifications are
  * pending on the coalition fd.
  */
+/*
+ * Why a coalition died.
+ *
+ * Every coalition death has exactly one reason, and it is reported the same way
+ * everywhere: on the event a holder receives, in the log line, and in the
+ * coalition-kill probe.  An operator asking "what happened to my unit" should
+ * get the same answer from all three.
+ *
+ * The first group are lifecycle: somebody or something asked.  The second are
+ * memory policy, and are the ones that happen without anybody asking, which is
+ * exactly why they have to be named.
+ */
+#define	COALITION_KILL_NONE		0	/* handle closed, no policy */
+#define	COALITION_KILL_REQUESTED	1	/* asked for, by a holder */
+#define	COALITION_KILL_DEADLINE		2	/* ran past its deadline */
+#define	COALITION_KILL_WATCHDOG		3	/* stopped answering */
+#define	COALITION_KILL_LEADER		4	/* its leader went away */
+#define	COALITION_KILL_OVER_CEILING	5	/* over its own declared figure */
+#define	COALITION_KILL_SYSTEM_MEMORY	6	/* the machine ran out */
+#define	COALITION_KILL_IDLE		7	/* idle, and able to come back */
+
+/*
+ * Event delivered to a coalition's holder.  A message longer than
+ * COALITION_EVENT_V1_LEN carries a reason; older readers see only the flags,
+ * and a reason of COALITION_KILL_NONE means no memory policy was involved.
+ */
 struct coalition_event_msg {
 	uint32_t	flags;		/* COALITION_NOTE_* */
+	uint32_t	reason;		/* COALITION_KILL_* */
 };
+#define	COALITION_EVENT_V1_LEN	(sizeof(uint32_t))
 
 #define	COALITION_NOTE_MEMBER_ADDED	0x0001
 #define	COALITION_NOTE_MEMBER_REMOVED	0x0002
@@ -359,8 +462,10 @@ struct coalition_event_msg {
  * this notification, and a coalition that ignores it is not penalised.
  */
 #define	COALITION_NOTE_PRESSURE		0x0100
+/* The coalition is over its declared memory ceiling. */
+#define	COALITION_NOTE_LIMIT		0x0200
 
-#define	COALITION_NOTE_ALL		0x01ff
+#define	COALITION_NOTE_ALL		0x03ff
 
 /*
  * Maximum parent-chain nesting depth.  A root coalition has depth 0.
