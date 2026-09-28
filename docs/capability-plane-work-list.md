@@ -106,12 +106,13 @@ login session's coalition (by design, EBUSY on join).
    - **Address space**: the module's own hook and running total are gone; the
      ceiling reads the container, which the framework charges at the mapping
      path, so it is exact and the mapping path costs nothing again.
-   - **Resident set**: the ceiling, the ledger and the kill report read the
-     container. The victim rankings -- pressure hand-down and the
-     out-of-memory choice -- still sample at the moment of the decision, which
-     is the one deliberate exception: a ranking made on a page-daemon-old
-     figure picks the wrong coalition, and picking the wrong one is the whole
-     failure.
+   - **Resident set**: everything reads the container -- the ceilings, the
+     ledger, the kill report AND both victim rankings. The rankings were the
+     one exception for a while, on the argument that a page-daemon-old figure
+     picks the wrong coalition; that was wrong twice, because a member walk
+     cannot see a held jail's processes at all and because walking means
+     locking in the page daemon. The sampler, the cached footprint and the
+     ledger-sample probe are all gone.
    - **CPU**: entirely the container's, as RACCT_PCTCPU. The module kept its
      own rate and its own tally of departed members' CPU; both are gone.
      racct_sub_racct() only gives back what is reclaimable or decaying, and

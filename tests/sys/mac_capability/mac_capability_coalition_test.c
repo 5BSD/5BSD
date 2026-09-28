@@ -3761,6 +3761,133 @@ ATF_TC_CLEANUP(jail_members_are_accounted, tc)
 	remove_jail_by_name(COALITION_TEST_JAIL_NAME);
 }
 
+ATF_TC_WITH_CLEANUP(a_jail_held_coalition_is_visible_to_pressure);
+ATF_TC_HEAD(a_jail_held_coalition_is_visible_to_pressure, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "A coalition whose memory is all inside a jail it holds is ranked "
+	    "on that memory and handed down under pressure. Ranking on a walk "
+	    "of the member list instead counted process members only, so such "
+	    "a coalition looked empty and was never chosen");
+	atf_tc_set_md_var(tc, "require.kmods",
+	    "mac_capability mac_capability_coalition");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(a_jail_held_coalition_is_visible_to_pressure, tc)
+{
+	struct coalition_ledger_reply lr;
+	struct coalition_band_reply br;
+	u_int before = 0, after = 0;
+	size_t len = sizeof(before);
+	int cfd, jail_fd, jid, wstatus, ready[2], lowmem = TEST_VM_LOW_PAGES;
+	int32_t status;
+	char tok;
+	pid_t pid;
+	int i;
+
+	if (sysctlbyname("kern.mac_capability_coalition.pressure_reclaims",
+	    &before, &len, NULL, 0) != 0)
+		atf_tc_skip("pressure_reclaims sysctl unavailable: %s",
+		    strerror(errno));
+
+	remove_jail_by_name(COALITION_TEST_JAIL_NAME);
+	jail_fd = create_jail_with_desc(COALITION_TEST_JAIL_NAME);
+	ATF_REQUIRE_MSG(jail_fd >= 0, "create_jail_with_desc: %s",
+	    strerror(errno));
+	jid = jail_getid(COALITION_TEST_JAIL_NAME);
+	ATF_REQUIRE(jid > 0);
+
+	cfd = mac_capability_connect("coalition");
+	ATF_REQUIRE(cfd >= 0);
+	ATF_REQUIRE(coalition_enlist(cfd, jail_fd, &status) == 0);
+	ATF_REQUIRE_EQ(status, 0);
+
+	/* Low enough a band that the pressure pass may hand it down. */
+	ATF_REQUIRE(coalition_band(cfd, COALITION_BAND_SET_FLOOR,
+	    COALITION_BAND_BACKGROUND, &br) == 0);
+	ATF_REQUIRE_EQ(br.status, 0);
+
+	/*
+	 * All of the memory is inside the jail, and the process holding it is
+	 * never enlisted: the coalition holds the jail, not the process.
+	 */
+	ATF_REQUIRE(pipe(ready) == 0);
+	pid = fork();
+	ATF_REQUIRE(pid >= 0);
+	if (pid == 0) {
+		char *m;
+		size_t n = 32UL << 20;
+
+		close(ready[0]);
+		if (jail_attach(jid) != 0)
+			_exit(1);
+		m = mmap(NULL, n, PROT_READ | PROT_WRITE,
+		    MAP_ANON | MAP_PRIVATE, -1, 0);
+		if (m == MAP_FAILED)
+			_exit(2);
+		/* Touch it so it is resident, not merely mapped. */
+		memset(m, 1, n);
+		(void)write(ready[1], "r", 1);
+		pause();
+		_exit(0);
+	}
+	close(ready[1]);
+	ATF_REQUIRE(read(ready[0], &tok, 1) == 1);
+	close(ready[0]);
+
+	/*
+	 * Wait for the page daemon to attribute that resident memory to the
+	 * container; until it has, there is genuinely nothing to rank on.
+	 */
+	memset(&lr, 0, sizeof(lr));
+	for (i = 0; i < 100; i++) {
+		if (coalition_ledger(cfd, 0, &lr) == 0 && lr.status == 0 &&
+		    lr.rss_bytes >= (8UL << 20))
+			break;
+		usleep(100000);
+	}
+	if (lr.rss_bytes < (8UL << 20)) {
+		(void)kill(pid, SIGKILL);
+		(void)waitpid(pid, &wstatus, 0);
+		close(cfd);
+		close(jail_fd);
+		atf_tc_skip("the jail's memory was not attributed to the "
+		    "coalition (%ju bytes); nothing to rank",
+		    (uintmax_t)lr.rss_bytes);
+	}
+
+	if (sysctlbyname("debug.vm_lowmem", NULL, NULL, &lowmem,
+	    sizeof(lowmem)) != 0) {
+		(void)kill(pid, SIGKILL);
+		(void)waitpid(pid, &wstatus, 0);
+		close(cfd);
+		close(jail_fd);
+		atf_tc_skip("debug.vm_lowmem unavailable: %s",
+		    strerror(errno));
+	}
+	for (i = 0; i < 50; i++) {
+		len = sizeof(after);
+		if (sysctlbyname(
+		    "kern.mac_capability_coalition.pressure_reclaims",
+		    &after, &len, NULL, 0) == 0 && after > before)
+			break;
+		usleep(100000);
+	}
+	ATF_CHECK_MSG(after > before,
+	    "a coalition holding %ju KB inside its jail was never handed "
+	    "down: %u then %u", (uintmax_t)(lr.rss_bytes / 1024), before,
+	    after);
+
+	(void)kill(pid, SIGKILL);
+	(void)waitpid(pid, &wstatus, 0);
+	close(cfd);
+	close(jail_fd);
+}
+ATF_TC_CLEANUP(a_jail_held_coalition_is_visible_to_pressure, tc)
+{
+	remove_jail_by_name(COALITION_TEST_JAIL_NAME);
+}
+
 ATF_TC_WITH_CLEANUP(a_nested_jail_is_charged_to_the_held_one);
 ATF_TC_HEAD(a_nested_jail_is_charged_to_the_held_one, tc)
 {
@@ -6636,6 +6763,7 @@ ATF_TP_ADD_TCS(tp)
 		ATF_TP_ADD_TC(tp, process_exit_decrements_count);
 		ATF_TP_ADD_TC(tp, terminate_removes_jaildesc_member);
 		ATF_TP_ADD_TC(tp, jail_members_are_accounted);
+	ATF_TP_ADD_TC(tp, a_jail_held_coalition_is_visible_to_pressure);
 	ATF_TP_ADD_TC(tp, a_nested_jail_is_charged_to_the_held_one);
 	ATF_TP_ADD_TC(tp, enlistment_beats_the_jail_it_is_in);
 	ATF_TP_ADD_TC(tp, close_removes_jaildesc_member);

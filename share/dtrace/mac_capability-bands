@@ -21,10 +21,11 @@
  * released: a steady climb in the live count for a band, printed in the
  * summary, means something is taking assertions and not letting go.
  *
- * The pressure lines tie it together.  When memory gets short every
- * coalition is sampled and notified, and the footprint printed here is the
- * number a kill policy would rank on, next to the band that says whether it
- * may be given up at all.
+ * The pressure lines tie it together.  When memory gets short every coalition
+ * is notified, and the footprint on the hand-down and kill lines is the number
+ * a policy ranked on, next to the band that says whether it may be given up at
+ * all.  That figure comes from the coalition's accounting container, so it
+ * counts a held jail's processes as well as its own members.
  *
  * See "procstat coalition" and "switchboardctl tree" for the same state at
  * rest, and mac_capability-responsibility for who caused a coalition to
@@ -104,14 +105,7 @@ mac_capability_coalition:::pressure-reclaim
 	    bandname[arg1], arg2 / 1024, arg3, arg3 == 1 ? "" : "es");
 	@handed[arg0, bandname[arg1]] = count();
 	@handedkb[arg0] = sum(arg2 / 1024);
-}
-
-mac_capability_coalition:::ledger-sample
-{
-	printf("%-12s %-14s %-12d %10d KB in %d process%s\n",
-	    strftime(walltimestamp, "%H:%M:%S"), "footprint", arg0,
-	    arg1 / 1024, arg2, arg2 == 1 ? "" : "es");
-	@footprint[arg0] = max(arg1);
+	@footprint[arg0] = max(arg2);
 }
 
 /* ---- A coalition's members are being signalled or released ---- */
@@ -186,7 +180,7 @@ dtrace:::END
 	printa("  %-28s %-14s %@8d\n", @released);
 	printf("\n--- Floors set (coalition, band) ---\n");
 	printa("  %-12d %-14s %@8d\n", @floor);
-	printf("\n--- Largest footprint seen per coalition (bytes) ---\n");
+	printf("\n--- Largest footprint a policy ranked on, per coalition ---\n");
 	printa("  %-12d %@12d\n", @footprint);
 	printf("\n--- Coalitions over their own ceiling ---\n");
 	printa("  %-12d %-12s %@8d\n", @overceiling);

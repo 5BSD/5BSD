@@ -160,8 +160,6 @@ SDT_PROBE_DEFINE3(mac_capability_coalition, , , pressure__notify,
  * the number of process members it was summed from.  This is the input a
  * pressure policy ranks on.
  */
-SDT_PROBE_DEFINE3(mac_capability_coalition, , , ledger__sample,
-    "uint64_t", "uint64_t", "u_int");
 /*
  * Band changes.  band__floor fires when a launcher sets the floor;
  * band__assert and band__release fire when an assertion descriptor is minted
@@ -307,16 +305,6 @@ struct coalition {
 	/* All live coalitions (coalition_list_mtx to write, SMR to read) */
 	CK_LIST_ENTRY(coalition)	co_all_link;
 	bool			co_listed;
-	/*
-	 * Cached footprint, published with atomics so a policy pass can rank
-	 * coalitions without taking co_sx.  Taken only when something makes
-	 * a victim ranking, which is the one place a maintained figure will not
-	 * do: an out-of-memory choice made on a stale footprint picks the wrong
-	 * coalition, and the page daemon's last pass can be a second old.
-	 * Everything else -- the ceilings, the ledger, the kill report -- reads
-	 * the container instead.
-	 */
-	volatile uint64_t	co_rss_bytes;
 	/*
 	 * Band: the floor set by the launcher, plus a count of live assertion
 	 * descriptors per band.  Both are plain atomics with no lock, because
@@ -3315,76 +3303,6 @@ static const struct mac_capability_ops coalition_assert_ops = {
 };
 
 /*
- * Sample the coalition's footprint for a victim ranking.
- *
- * nowait is set by the out-of-memory policy, which runs in the page daemon and
- * may not wait on anything: a member whose process cannot be reached without
- * blocking is left out of the sum rather than waited for.  That can only make
- * a coalition look smaller than it is, which costs it a place in the ranking
- * and never picks the wrong victim outright.
- */
-static void
-coalition_sample_locked(struct coalition *co, bool nowait)
-{
-	struct coalition_member *cm;
-	struct proc *p;
-	struct vmspace *vm;
-	uint64_t rss = 0;
-	u_int nprocs = 0;
-
-	sx_assert(&co->co_sx, SA_LOCKED);
-
-	TAILQ_FOREACH(cm, &co->co_members, cm_link) {
-		if (cm->cm_dtype != DTYPE_PROCDESC)
-			continue;
-		p = NULL;
-		if (cm->cm_fp != NULL) {
-			struct procdesc *pd = cm->cm_fp->f_data;
-
-			if (nowait) {
-				if (sx_try_slock(&proctree_lock) == 0)
-					continue;
-			} else
-				sx_slock(&proctree_lock);
-			p = pd->pd_proc;
-			if (p != NULL)
-				PROC_LOCK(p);
-			sx_sunlock(&proctree_lock);
-		} else if (cm->cm_data != NULL) {
-			p = (struct proc *)atomic_load_acq_ptr(
-			    (uintptr_t *)&cm->cm_data);
-			if (p != NULL)
-				PROC_LOCK(p);
-		}
-		if (p == NULL)
-			continue;
-		if (p->p_state == PRS_ZOMBIE || (p->p_flag & P_WEXIT) != 0) {
-			PROC_UNLOCK(p);
-			continue;
-		}
-		/*
-		 * Read the footprint straight off the address space rather
-		 * than through fill_kinfo_proc(), which needs proctree_lock
-		 * for the session and process-group walk and fills in a great
-		 * deal we do not want.  Four numbers is all a ranking needs,
-		 * and taking only the vmspace reference keeps this usable from
-		 * a pressure pass that must not wait on the process tree.
-		 */
-		vm = vmspace_acquire_ref(p);
-		PROC_UNLOCK(p);
-		if (vm == NULL)
-			continue;
-		rss += (uint64_t)vmspace_resident_count(vm) * PAGE_SIZE;
-		vmspace_free(vm);
-		nprocs++;
-	}
-
-	atomic_store_64(&co->co_rss_bytes, rss);
-	SDT_PROBE3(mac_capability_coalition, , , ledger__sample, co->co_id,
-	    rss, nprocs);
-}
-
-/*
  * Act on a coalition's declared ceilings, if it has any.  Called with co_sx
  * held EXCLUSIVE: a breach notifies, and delivering a notification requires
  * the exclusive lock.  Every figure it judges comes from the container, so it
@@ -3527,6 +3445,85 @@ struct coalition_press_target {
 };
 
 /*
+ * At most this many of a held jail's processes are handed down per jail per
+ * pass.  It bounds the stack this takes and the time allproc_lock is held; the
+ * pressure pass repeats, so nothing is permanently missed.
+ */
+#define	COALITION_PRESS_JAIL_BATCH	32
+
+/* Held jails handed down per coalition per pass. */
+#define	COALITION_PRESS_MAX_JAILS	4
+
+/*
+ * Hand down the processes inside a jail this coalition holds.
+ *
+ * They are charged to the coalition and were counted when it was ranked, so
+ * leaving them out would mean choosing a coalition because of its jail and
+ * then not relieving it.  Descendant jails are included: a process in a jail
+ * nested inside this one is inside this one too.
+ *
+ * The address spaces are collected first and advised afterwards.
+ * vm_map_madvise() sleeps, and the process lists must not be walked with
+ * allproc_lock held across a sleep -- that would stall every fork and exit on
+ * the machine while the pager is being asked to do work.
+ */
+static u_int
+coalition_press_down_jail(struct prison *pr)
+{
+	struct vmspace *vms[COALITION_PRESS_JAIL_BATCH];
+	struct prison *cpr;
+	struct proc *p;
+	vm_map_t map;
+	u_int n = 0, pressed = 0, i;
+	int descend;
+
+	sx_slock(&allproc_lock);
+	sx_slock(&allprison_lock);
+	LIST_FOREACH(p, &pr->pr_proclist, p_jaillist) {
+		if (n >= nitems(vms))
+			break;
+		PROC_LOCK(p);
+		if (p->p_state != PRS_NORMAL || (p->p_flag & P_WEXIT) != 0) {
+			PROC_UNLOCK(p);
+			continue;
+		}
+		vms[n] = vmspace_acquire_ref(p);
+		PROC_UNLOCK(p);
+		if (vms[n] != NULL)
+			n++;
+	}
+	FOREACH_PRISON_DESCENDANT(pr, cpr, descend) {
+		if (n >= nitems(vms))
+			break;
+		LIST_FOREACH(p, &cpr->pr_proclist, p_jaillist) {
+			if (n >= nitems(vms))
+				break;
+			PROC_LOCK(p);
+			if (p->p_state != PRS_NORMAL ||
+			    (p->p_flag & P_WEXIT) != 0) {
+				PROC_UNLOCK(p);
+				continue;
+			}
+			vms[n] = vmspace_acquire_ref(p);
+			PROC_UNLOCK(p);
+			if (vms[n] != NULL)
+				n++;
+		}
+	}
+	sx_sunlock(&allprison_lock);
+	sx_sunlock(&allproc_lock);
+
+	for (i = 0; i < n; i++) {
+		map = &vms[i]->vm_map;
+		if (vm_map_madvise(map, vm_map_min(map), vm_map_max(map),
+		    MADV_DONTNEED) == 0)
+			pressed++;
+		vmspace_free(vms[i]);
+	}
+	return (pressed);
+}
+
+/*
  * Advise every process member's address space reclaimable.  MADV_DONTNEED
  * keeps dirty data -- the page is dirtied first if the pmap says it was
  * modified -- and only clears references and moves pages to the front of the
@@ -3541,10 +3538,11 @@ static u_int
 coalition_press_down(struct coalition *co)
 {
 	struct coalition_member *cm;
+	struct prison *jails[COALITION_PRESS_MAX_JAILS];
 	struct proc *p;
 	struct vmspace *vm;
 	vm_map_t map;
-	u_int pressed = 0;
+	u_int pressed = 0, njails = 0, i;
 
 	sx_slock(&co->co_sx);
 	if ((co->co_flags & (COF_TERMINATING | COF_CLOSING)) != 0) {
@@ -3587,7 +3585,31 @@ coalition_press_down(struct coalition *co)
 			pressed++;
 		vmspace_free(vm);
 	}
+	/*
+	 * Then the jails this coalition holds, so what is relieved matches
+	 * what it was ranked on.
+	 *
+	 * The prisons are taken here and worked on after co_sx is dropped.
+	 * Walking a prison's process list needs allproc_lock, and taking that
+	 * under co_sx would invent a lock order that exists nowhere else in
+	 * this module -- everything else goes allproc first.  Holding a
+	 * reference on each prison is enough to work on it afterwards.
+	 */
+	TAILQ_FOREACH(cm, &co->co_members, cm_link) {
+		if (njails >= nitems(jails))
+			break;
+		if (cm->cm_dtype != DTYPE_JAILDESC || cm->cm_data == NULL)
+			continue;
+		jails[njails] = (struct prison *)cm->cm_data;
+		prison_hold(jails[njails]);
+		njails++;
+	}
 	sx_sunlock(&co->co_sx);
+
+	for (i = 0; i < njails; i++) {
+		pressed += coalition_press_down_jail(jails[i]);
+		prison_free(jails[i]);
+	}
 	return (pressed);
 }
 
@@ -3608,7 +3630,12 @@ coalition_press_eligible(struct coalition *co, sbintime_t now, u_int *bandp,
 	band = coalition_band_effective(co);
 	if (band > coalition_pressure_band_ceiling)
 		return (false);
-	rss = atomic_load_64(&co->co_rss_bytes);
+	/*
+	 * From the container, for the same reason the victim ranking reads it:
+	 * it is the only figure that includes a held jail's processes, which
+	 * are charged to the coalition without being members of it.
+	 */
+	rss = racct_read(co->co_racct, RACCT_RSS);
 	if (rss < (uint64_t)coalition_pressure_min_kb * 1024)
 		return (false);
 	interval = coalition_pressure_interval_ms;
@@ -3664,10 +3691,21 @@ coalition_press_offer(struct coalition_press_target *t, u_int max, u_int *nt,
 }
 
 /*
- * The out-of-memory victim policy.  Runs in the page daemon, which may sleep,
- * so the candidates are sampled for real rather than trusted from the cache:
- * at this moment the footprint is the whole basis of the decision and a stale
- * one would pick the wrong coalition.
+ * The out-of-memory victim policy.
+ *
+ * Every figure comes from the coalition's accounting container, which is the
+ * only place that knows the whole of what a coalition is holding: a coalition
+ * may hold a jail, and a jail's processes are charged to it without being
+ * members of it.  Walking the member list instead, as this once did, counted
+ * process members only -- so a unit that did its work inside a jail it held
+ * looked empty and was never chosen, which is the wrong answer in exactly the
+ * case the ceilings were extended to cover.
+ *
+ * Reading counters also costs no lock that can block, which matters more here
+ * than anywhere else: this runs in the page daemon, and a page daemon that
+ * waits is a page daemon waiting on itself.  The figure is as fresh as the
+ * page daemon's own last pass, which is the cadence this decision is made at
+ * anyway.
  *
  * Returns true if a coalition was terminated.
  */
@@ -3698,32 +3736,13 @@ coalition_oom_policy(int shortage __unused)
 	}
 	smr_exit(coalition_smr);
 
-	/*
-	 * Sample each for real, then choose.
-	 *
-	 * Every lock taken from here on is tried, never waited for.  This runs
-	 * in the page daemon, and co_sx is held elsewhere across allocations
-	 * that wait for free memory -- enlisting a jail is one.  Blocking here
-	 * would put the page daemon behind a thread that is itself waiting for
-	 * the page daemon, at exactly the moment the machine has run out.  A
-	 * coalition whose lock is busy is simply not ranked this time; the
-	 * worst outcome is that this policy declines and the stock choice runs,
-	 * which it is already designed to do.
-	 */
+	/* Rank them.  No lock is taken: the band and the counter answer alone. */
 	best = ncand;
 	best_rss = 0;
 	for (i = 0; i < ncand; i++) {
 		co = cand[i].pt_co;
-		if (sx_try_slock(&co->co_sx) == 0) {
-			cand[i].pt_band = COALITION_BAND_CRITICAL;
-			cand[i].pt_rss = 0;
-			continue;
-		}
-		if ((co->co_flags & (COF_TERMINATING | COF_CLOSING)) == 0)
-			coalition_sample_locked(co, true);
-		sx_sunlock(&co->co_sx);
 		band = coalition_band_effective(co);
-		rss = atomic_load_64(&co->co_rss_bytes);
+		rss = racct_read(co->co_racct, RACCT_RSS);
 		cand[i].pt_band = band;
 		cand[i].pt_rss = rss;
 		if (rss == 0 || band > coalition_oom_band_ceiling)
@@ -4061,14 +4080,6 @@ coalition_pressure_task_fn(void *ctx __unused, int pending __unused)
 
 	while (co != NULL) {
 		sx_xlock(&co->co_sx);
-		if ((co->co_flags & (COF_TERMINATING | COF_CLOSING)) == 0) {
-			/*
-			 * Refresh the ranking input while we are here: this
-			 * is exactly when a policy needs it, and this pass
-			 * already holds the right locks in the right thread.
-			 */
-			coalition_sample_locked(co, false);
-		}
 		if ((co->co_flags & (COF_TERMINATING | COF_CLOSING)) == 0 &&
 		    co->co_instance != NULL) {
 			coalition_notify_event(co, COALITION_NOTE_PRESSURE);

@@ -746,8 +746,15 @@ and within a band the largest footprint, because that frees the most for the
 least.
 The unit given up is the whole coalition, so a unit and its helpers go together
 rather than leaving a decapitated remainder behind.
-Candidates are sampled at the moment of the decision rather than read from the
-cache, since the footprint is the entire basis of the choice.
+Candidates are ranked on the footprint their accounting container carries,
+which is the only figure that counts everything a coalition is holding: a
+coalition may hold a jail, and a jail's processes are charged to it without
+being members of it.
+Walking the member list instead would count process members only, so a unit
+doing its work inside a jail it held would look empty and never be chosen.
+Reading a counter also takes no lock that can block, which matters here more
+than anywhere: this runs in the page daemon, and a page daemon that waits is
+waiting on itself.
 .Pp
 A coalition above
 .Va oom_band_ceiling
@@ -877,11 +884,6 @@ script names the holder.
 .It Fn racct-jail coalition_id pid
 Fired when a process is charged to a coalition because of the jail it is in,
 rather than because it was enlisted.
-.It Fn ledger-sample coalition_id rss_bytes nprocs
-Fired when a coalition's footprint is sampled for a victim ranking, which is
-the only thing that samples: memory pressure choosing what to hand down, and
-the out-of-memory policy choosing what to give up.
-Everything else reads the accounting container instead.
 This is the input a pressure policy ranks on.
 .It Fn coalition-kill coalition_id responsible_id reason rss_bytes band
 Fired once for every coalition death, whatever caused it, carrying the

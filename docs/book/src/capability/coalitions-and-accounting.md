@@ -308,10 +308,13 @@ number now has one owner:
   the same whatever a coalition is made of, and adding a fourth resource needs
   no code in the module at all.
 - The **victim rankings** — memory pressure choosing what to hand down, and the
-  out-of-memory policy choosing what to give up — still sample the member list
-  at the moment of the decision. This is the one deliberate exception: a
-  ranking made on a figure that is a page-daemon pass old picks the wrong
-  coalition, and picking the wrong one is the whole failure.
+  out-of-memory policy choosing what to give up — read the container too. They
+  once walked the member list at the moment of the decision, on the argument
+  that a figure one page-daemon pass old would pick the wrong coalition. That
+  was the wrong trade twice over: the walk counts process members only, so a
+  unit doing its work inside a jail it held looked *empty* and was never
+  chosen — a systematic blindness, not a one-second lag — and walking meant
+  taking locks in the page daemon, where a wait is a wait on itself.
 - **CPU** is kept entirely by the container, as `RACCT_PCTCPU`. The driver
   once maintained its own rate and its own tally of departed members' CPU;
   both were removed. `racct_sub_racct()` only gives back resources that are
@@ -327,6 +330,9 @@ the member limit and what a termination signals are unchanged. A process
 enlisted in its own right is never displaced by a jail it happens to be in,
 and where jails nest, the innermost held one wins — in both cases because the
 more specific statement about whose work a process is should stand.
+
+Nothing in the driver samples a footprint any more. There is one figure for
+how big a coalition is, and every consumer reads it.
 
 Ceilings are held in one array indexed by the framework's own resource
 numbers rather than a field per figure, because every one is judged the same
