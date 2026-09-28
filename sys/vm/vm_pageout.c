@@ -1921,20 +1921,6 @@ vm_pageout_oom_pagecount(struct vmspace *vmspace)
 }
 
 static int vm_oom_ratelim_last;
-/*
- * Optional out-of-memory victim policy; see vm_pageout_oom_policy_set().  Read
- * with an atomic load in the page daemon, so a policy may be installed or
- * removed while the system is running.
- */
-static vm_pageout_oom_policy_fn vm_pageout_oom_policy;
-
-void
-vm_pageout_oom_policy_set(vm_pageout_oom_policy_fn fn)
-{
-
-	atomic_store_ptr(&vm_pageout_oom_policy, fn);
-}
-
 static int vm_oom_pf_secs = 10;
 SYSCTL_INT(_vm, OID_AUTO, oom_pf_secs, CTLFLAG_RWTUN, &vm_oom_pf_secs, 0,
     "");
@@ -1971,21 +1957,6 @@ vm_pageout_oom(int shortage)
 	}
 	vm_oom_ratelim_last = now;
 	mtx_unlock(&vm_oom_ratelim_mtx);
-
-	/*
-	 * Offer the decision to a registered policy first.  It is placed after
-	 * the rate limit deliberately, so a policy is throttled exactly as the
-	 * default choice is and cannot be driven to kill repeatedly by a
-	 * faulting process.  If it terminated something we are done; otherwise
-	 * fall through to the largest-process choice below.
-	 */
-	{
-		vm_pageout_oom_policy_fn policy;
-
-		policy = atomic_load_ptr(&vm_pageout_oom_policy);
-		if (policy != NULL && policy(shortage))
-			return;
-	}
 
 	/*
 	 * We keep the process bigproc locked once we find it to keep anyone

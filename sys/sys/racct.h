@@ -152,16 +152,6 @@ struct racct {
 	LIST_HEAD(, rctl_rule_link)	r_rule_links;
 	uint64_t			r_runtime;
 	struct timeval			r_time;
-	/*
-	 * References, used only by containers that processes point at directly
-	 * rather than reaching through a credential.  A coalition's container
-	 * is one: a process holds a pointer to it for as long as it is a
-	 * member, and the coalition can be destroyed by policy while that is
-	 * true, so the container has to outlive the coalition that owns it.
-	 * Zero means nobody is counting, which is how every other container
-	 * behaves.
-	 */
-	volatile u_int			r_refs;
 };
 
 SYSCTL_DECL(_kern_racct);
@@ -197,11 +187,6 @@ void	racct_sub_cred(struct ucred *cred, int resource, uint64_t amount);
 uint64_t	racct_get_limit(struct proc *p, int resource);
 uint64_t	racct_get_available(struct proc *p, int resource);
 
-void	racct_proc_join_coalition(struct proc *p, struct racct *coalition);
-void	racct_release(struct racct **racctp);
-void	racct_proc_detach_coalition(struct proc *p);
-uint64_t racct_read(struct racct *racct, int resource);
-void	racct_updatepcpu(struct racct *racct);
 void	racct_create(struct racct **racctp);
 void	racct_destroy(struct racct **racctp);
 
@@ -272,11 +257,6 @@ racct_get_available(struct proc *p, int resource)
 	return (UINT64_MAX);
 }
 
-#define	racct_proc_join_coalition(p, c)
-#define	racct_release(r)
-#define	racct_proc_detach_coalition(p)
-#define	racct_read(r, res)	0
-#define	racct_updatepcpu(r)
 #define	racct_create(x)
 #define	racct_destroy(x)
 

@@ -86,24 +86,6 @@ the end rather than listed one by one.
 | `kern.mac_capability_coalition.max` | uint RW | 1024 | Maximum coalitions (0 = unlimited) | same |
 | `kern.mac_capability_coalition.max_members` | uint RW | 8192 | Maximum members across all coalitions (0 = unlimited) | same |
 | `kern.mac_capability_coalition.members` | uint RD | | Members across all coalitions | same |
-| `kern.mac_capability_coalition.max_assertions` | uint RW | 64 | Live band assertions per coalition (0 = unlimited) | same |
-| `kern.mac_capability_coalition.sweep` | int RW | 1 | Run the periodic sweep: sample footprints, enforce ceilings, put idle work away | same |
-| `kern.mac_capability_coalition.sweep_interval_ms` | uint RW | 10000 | How often the sweep runs, and so how stale a footprint may be | same |
-| `kern.mac_capability_coalition.pressure_reclaim` | int RW | 1 | Under memory pressure, advise low-band coalitions' pages reclaimable | same |
-| `kern.mac_capability_coalition.pressure_band_ceiling` | uint RW | BACKGROUND | Highest band handed down under pressure | same |
-| `kern.mac_capability_coalition.pressure_max_targets` | uint RW | 4 | Coalitions handed down per pressure pass | same |
-| `kern.mac_capability_coalition.pressure_interval_ms` | uint RW | 10000 | Minimum time before the same coalition is handed down again | same |
-| `kern.mac_capability_coalition.pressure_min_kb` | uint RW | 8192 | Ignore coalitions smaller than this when handing down | same |
-| `kern.mac_capability_coalition.pressure_reclaims` | uint RD | | Coalitions handed down since boot | same |
-| `kern.mac_capability_coalition.oom_kill` | int RW | 1 | Choose an out-of-memory victim by band and footprint, by coalition | same |
-| `kern.mac_capability_coalition.oom_band_ceiling` | uint RW | INTERACTIVE | Highest band an out-of-memory kill may choose | same |
-| `kern.mac_capability_coalition.oom_kills` | uint RD | | Coalitions terminated for system memory since boot | same |
-| `kern.mac_capability_coalition.limit_kills` | uint RD | | Coalitions terminated for their own memory ceiling since boot | same |
-| `kern.mac_capability_coalition.cpu_kills` | uint RD | | Coalitions terminated for their own CPU ceiling since boot | same |
-| `kern.mac_capability_coalition.idle_exit` | int RW | 1 | Put declared-eligible coalitions away once they have been idle | same |
-| `kern.mac_capability_coalition.idle_min_age_ms` | uint RW | 300000 | Default time a coalition must be idle before it is put away | same |
-| `kern.mac_capability_coalition.idle_max_per_min` | uint RW | 6 | Give up putting a responsible party's work away after this many a minute | same |
-| `kern.mac_capability_coalition.idle_kills` | uint RD | | Coalitions put away for being idle since boot | same |
 | `kern.mac_capability_isolation.max_auth` | uint RDTUN | 4096 | Cap on outstanding isolation tokens (0 = unlimited) | `mac_capability_isolation.c` |
 | `kern.mac_capability_isolation.auth_count` | uint RD | | Current tokens | same |
 | `kern.mac_capability_isolation.enforce` | int RDTUN | 1 | 0 traces resource-access denials instead of enforcing them; ownership denials stay enforced | same |

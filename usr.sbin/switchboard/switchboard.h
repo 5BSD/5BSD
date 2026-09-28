@@ -352,15 +352,9 @@ int	mac_cap_coalition_terminate(int coalition_fd);
 int	mac_cap_mint_capprotect(void);
 int	mac_cap_protect(int capprotect_fd, int pd_fd, uint32_t flags);
 struct coalition_stat_reply;
-struct coalition_band_reply;
 int	mac_cap_coalition_set_responsible(int coalition_fd, int parent_fd,
 	    uint32_t flags);
 int	mac_cap_coalition_set_signal(int coalition_fd, int sig);
-int	mac_cap_coalition_set_band_floor(int coalition_fd, uint32_t floor);
-uint32_t svc_band_floor(const struct svc_manifest *m);
-int	mac_cap_coalition_get_band(int coalition_fd,
-	    struct coalition_band_reply *br);
-const char *svc_band_name(uint32_t band);
 int	mac_cap_coalition_stat(int coalition_fd, struct coalition_stat_reply *sr);
 
 /* responsibility.c — responsible-parent attribution of launched units */

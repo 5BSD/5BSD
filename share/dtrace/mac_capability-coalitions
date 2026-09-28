@@ -22,56 +22,9 @@ dtrace:::BEGIN
 
 mac_capability_coalition:::create
 {
-	printf("%-6d %-16s %-18s coalition=%llu badge=%llu\n",
-	    pid, execname, "create", (unsigned long long)arg0,
-	    (unsigned long long)arg1);
+	printf("%-6d %-16s %-18s badge=%llu\n",
+	    pid, execname, "create", (unsigned long long)arg0);
 	@events["create"] = count();
-}
-
-/*
- * The one to watch when a process disappears: which coalition took it, on
- * whose behalf that coalition existed, and with what signal.  Signal 0 is
- * a release, not a kill -- an attribution-only coalition (a login session)
- * lets its members go rather than killing them.
- */
-mac_capability_coalition:::member-kill
-{
-	printf("%-6d %-16s %-18s coalition=%llu responsible=%llu pid=%d %s\n",
-	    pid, execname, arg3 == 0 ? "member-release" : "member-kill",
-	    (unsigned long long)arg0, (unsigned long long)arg1, arg2,
-	    arg3 == 0 ? "released" : strjoin("signal=",
-	    lltostr((long long)arg3)));
-	@events[arg3 == 0 ? "member-release" : "member-kill"] = count();
-	@killed_by[(unsigned long long)arg0] = count();
-}
-
-/*
- * An inherited membership moved: a holder of the process descriptor
- * enlisted the process into another coalition.  A launcher handing a
- * worker it created to a consumer looks like this.
- */
-mac_capability_coalition:::rehome
-{
-	printf("%-6d %-16s %-18s pid=%d from=%llu\n",
-	    pid, execname, "rehome", arg0, (unsigned long long)arg1);
-	@events["rehome"] = count();
-}
-
-/* ---- Memory pressure ---- */
-
-mac_capability_coalition:::pressure
-{
-	printf("%-6d %-16s %-18s coalitions=%u notified=%u\n",
-	    pid, execname, "pressure", arg0, arg1);
-	@events["pressure"] = count();
-}
-
-mac_capability_coalition:::pressure-notify
-/arg2 == 0/
-{
-	printf("%-6d %-16s %-18s coalition=%llu members=%u\n",
-	    pid, execname, "pressure-notify", (unsigned long long)arg0, arg1);
-	@events["pressure-notify"] = count();
 }
 
 mac_capability_coalition:::enlist
@@ -224,8 +177,6 @@ dtrace:::END
 {
 	printf("\n--- Coalition events ---\n");
 	printa("%-20s %@d\n", @events);
-	printf("\nMembers signalled or released, by coalition:\n");
-	printa("  coalition %-12llu %@d\n", @killed_by);
 
 	printf("\n--- Timers armed ---\n");
 	printa("%-20s %@d\n", @timers);

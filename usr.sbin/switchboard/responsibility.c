@@ -40,7 +40,6 @@
 #include <dev/mac_capability/mac_capability_coalition_proto.h>
 
 #include "switchboard.h"
-#include "switchboard_probes.h"
 
 /*
  * Does `requester` manage `unit`, in the sense that a launch it caused is
@@ -220,55 +219,6 @@ svc_responsibility_name(const struct svc_responsible *r, char *buf,
 }
 
 /*
- * The band floor a unit's coalition gets.  Derived, never declared: a bundle
- * does not get to call itself critical.  What it declares is a scheduling
- * band, which says how it wants to be treated while it runs; what the system
- * decides is how hard to hold on to it when memory runs short, and that
- * follows from how the unit is managed.
- *
- * CORE units are the ones the system cannot function without, so they sit at
- * the critical band and a memory policy must leave them alone.  Everything
- * else maps its declared scheduling band onto the matching pressure band:
- * background work is the first to be given up, interactive work the last
- * before critical.  A unit that declares nothing lands at standard.
- */
-const char *
-svc_band_name(uint32_t band)
-{
-
-	switch (band) {
-	case COALITION_BAND_IDLE:
-		return ("idle");
-	case COALITION_BAND_BACKGROUND:
-		return ("background");
-	case COALITION_BAND_STANDARD:
-		return ("standard");
-	case COALITION_BAND_INTERACTIVE:
-		return ("interactive");
-	case COALITION_BAND_CRITICAL:
-		return ("critical");
-	default:
-		return ("?");
-	}
-}
-
-uint32_t
-svc_band_floor(const struct svc_manifest *m)
-{
-
-	if (m->management == SVC_MGMT_CORE)
-		return (COALITION_BAND_CRITICAL);
-	switch (m->band) {
-	case SVC_BAND_BACKGROUND:
-		return (COALITION_BAND_BACKGROUND);
-	case SVC_BAND_INTERACTIVE:
-		return (COALITION_BAND_INTERACTIVE);
-	default:
-		return (COALITION_BAND_STANDARD);
-	}
-}
-
-/*
  * Record the decided parent on a freshly minted coalition and learn both
  * ids.  Best-effort: attribution must never fail a launch.  A parent whose
  * coalition is gone (EBADF/ESRCH) degrades to a self-root, logged.
@@ -306,16 +256,6 @@ svc_responsibility_apply(struct svc_runtime *svc, int coalition_fd)
 	if (rc != 0)
 		syslog(LOG_WARNING, "responsibility: %s: set_responsible: %m",
 		    svc->manifest.label);
-	/*
-	 * Band floor, derived from how the unit is managed.  Best-effort like
-	 * the rest of this: a unit that cannot be given a floor runs at the
-	 * default rather than not running.
-	 */
-	if (mac_cap_coalition_set_band_floor(coalition_fd,
-	    svc_band_floor(&svc->manifest)) != 0)
-		syslog(LOG_NOTICE, "responsibility: %s: set band floor: %m",
-		    svc->manifest.label);
-
 	if (mac_cap_coalition_stat(coalition_fd, &sr) != 0) {
 		syslog(LOG_WARNING, "responsibility: %s: coalition stat: %m",
 		    svc->manifest.label);
@@ -323,17 +263,10 @@ svc_responsibility_apply(struct svc_runtime *svc, int coalition_fd)
 	}
 	svc->coalition_id = sr.id;
 	r->parent_id = sr.responsible_id;
-	{
-		const char *who = svc_responsibility_name(r, nbuf,
-		    sizeof(nbuf));
-
-		SWITCHBOARD_PROBE_RESPONSIBLE(svc->manifest.label, who, sr.id,
-		    sr.responsible_id);
-		syslog(LOG_INFO,
-		    "service %s: coalition %ju responsible to %s (%ju)",
-		    svc->manifest.label, (uintmax_t)sr.id, who,
-		    (uintmax_t)sr.responsible_id);
-	}
+	syslog(LOG_INFO, "service %s: coalition %ju responsible to %s (%ju)",
+	    svc->manifest.label, (uintmax_t)sr.id,
+	    svc_responsibility_name(r, nbuf, sizeof(nbuf)),
+	    (uintmax_t)sr.responsible_id);
 }
 
 /*

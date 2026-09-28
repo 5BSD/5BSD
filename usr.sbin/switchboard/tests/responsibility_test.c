@@ -55,8 +55,6 @@ static int set_resp_calls, set_resp_parent, set_resp_status;
 static uint32_t set_resp_flags;
 static int stat_status;
 static uint64_t stat_id = 700, stat_rid = 600;
-static int band_floor_calls, band_floor_status;
-static uint32_t band_floor_set = UINT32_MAX;
 
 int
 mac_cap_coalition_set_responsible(int coalition_fd, int parent_fd,
@@ -95,32 +93,6 @@ mac_cap_coalition_set_signal(int coalition_fd, int sig)
 
 	(void)coalition_fd;
 	(void)sig;
-	return (0);
-}
-
-int
-mac_cap_coalition_set_band_floor(int coalition_fd, uint32_t floor)
-{
-
-	(void)coalition_fd;
-	band_floor_calls++;
-	band_floor_set = floor;
-	if (band_floor_status != 0) {
-		errno = band_floor_status;
-		return (band_floor_status);
-	}
-	return (0);
-}
-
-int
-mac_cap_coalition_get_band(int coalition_fd, struct coalition_band_reply *br)
-{
-
-	(void)coalition_fd;
-	memset(br, 0, sizeof(*br));
-	br->floor = band_floor_set == UINT32_MAX ? COALITION_BAND_STANDARD :
-	    band_floor_set;
-	br->effective = br->floor;
 	return (0);
 }
 
@@ -599,80 +571,6 @@ ATF_TC_BODY(constraint_any_entry_suffices, tc)
 	ATF_CHECK(!svc_responsible_allowed(&u.manifest, &u.responsible));
 }
 
-
-ATF_TC_WITHOUT_HEAD(band_floor_is_derived_not_declared);
-ATF_TC_BODY(band_floor_is_derived_not_declared, tc)
-{
-	struct svc_manifest m;
-
-	/*
-	 * A CORE unit is critical whatever it declares: the manifest's band is
-	 * a scheduling request, not a claim on the system's willingness to
-	 * keep it.
-	 */
-	memset(&m, 0, sizeof(m));
-	m.management = SVC_MGMT_CORE;
-	m.band = SVC_BAND_BACKGROUND;
-	ATF_CHECK_EQ(svc_band_floor(&m), COALITION_BAND_CRITICAL);
-
-	/* Everything else maps its declared band. */
-	memset(&m, 0, sizeof(m));
-	m.management = SVC_MGMT_SYSTEM;
-	ATF_CHECK_EQ(svc_band_floor(&m), COALITION_BAND_STANDARD);
-	m.band = SVC_BAND_BACKGROUND;
-	ATF_CHECK_EQ(svc_band_floor(&m), COALITION_BAND_BACKGROUND);
-	m.band = SVC_BAND_INTERACTIVE;
-	ATF_CHECK_EQ(svc_band_floor(&m), COALITION_BAND_INTERACTIVE);
-
-	/* A user unit gets the same mapping, never the critical band. */
-	m.management = SVC_MGMT_USER;
-	m.band = SVC_BAND_INTERACTIVE;
-	ATF_CHECK_EQ(svc_band_floor(&m), COALITION_BAND_INTERACTIVE);
-	ATF_CHECK(svc_band_floor(&m) != COALITION_BAND_CRITICAL);
-}
-
-ATF_TC_WITHOUT_HEAD(band_floor_applied_on_launch);
-ATF_TC_BODY(band_floor_applied_on_launch, tc)
-{
-	struct svc_runtime svc;
-
-	memset(&svc, 0, sizeof(svc));
-	(void)strlcpy(svc.manifest.label, "com.example.core",
-	    sizeof(svc.manifest.label));
-	svc.manifest.management = SVC_MGMT_CORE;
-	svc.responsible.kind = SVC_RESP_SELF;
-	svc.responsible.parent_fd = -1;
-	band_floor_calls = 0;
-	band_floor_set = UINT32_MAX;
-
-	svc_responsibility_apply(&svc, 3);
-	ATF_CHECK_EQ(band_floor_calls, 1);
-	ATF_CHECK_EQ(band_floor_set, COALITION_BAND_CRITICAL);
-	/* The coalition id was still learned. */
-	ATF_CHECK_EQ(svc.coalition_id, stat_id);
-}
-
-ATF_TC_WITHOUT_HEAD(band_floor_failure_does_not_fail_launch);
-ATF_TC_BODY(band_floor_failure_does_not_fail_launch, tc)
-{
-	struct svc_runtime svc;
-
-	memset(&svc, 0, sizeof(svc));
-	(void)strlcpy(svc.manifest.label, "com.example.svc",
-	    sizeof(svc.manifest.label));
-	svc.manifest.management = SVC_MGMT_SYSTEM;
-	svc.responsible.kind = SVC_RESP_SELF;
-	svc.responsible.parent_fd = -1;
-	band_floor_status = EPERM;
-	band_floor_calls = 0;
-
-	svc_responsibility_apply(&svc, 3);
-	band_floor_status = 0;
-	ATF_CHECK_EQ(band_floor_calls, 1);
-	/* Attribution still recorded; a band that cannot be set is not fatal. */
-	ATF_CHECK_EQ(svc.coalition_id, stat_id);
-}
-
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -693,8 +591,5 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, constraint_session_any_and_by_uid);
 	ATF_TP_ADD_TC(tp, constraint_unit_label_and_bundle);
 	ATF_TP_ADD_TC(tp, constraint_any_entry_suffices);
-	ATF_TP_ADD_TC(tp, band_floor_is_derived_not_declared);
-	ATF_TP_ADD_TC(tp, band_floor_applied_on_launch);
-	ATF_TP_ADD_TC(tp, band_floor_failure_does_not_fail_launch);
 	return (atf_no_error());
 }

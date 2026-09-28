@@ -253,107 +253,12 @@ not shared across the processes of a coalition, and nothing enforces it
 against the unit's forked children beyond their inheriting the same
 per-process rlimit. The same is true of every key in the block: they are
 the classic setrlimit(2) ceilings, applied early and made unraisable. A
-unit that wants an exact aggregate for right now can read
-`COALITION_OP_RUSAGE`, which walks the process members and sums them, but that
-is observation, not enforcement.
-
-## Ceilings for the whole unit
-
-Enforcement for a unit rather than a process is a separate mechanism, and
-it does not go through rlimits at all. A coalition is a container in the
-kernel's own accounting framework, charged beside the process, user, login
-class and jail containers a process already belongs to, so its figures are
-maintained by racct(9) rather than by anything this driver samples. A
-holder declares ceilings on that container with `COALITION_OP_SET_LIMIT`:
-
-| figure | unit | how the counter behaves |
-| --- | --- | --- |
-| `memory_bytes` | resident bytes | refreshed by the page daemon's pass |
-| `vmem_bytes` | address space in bytes | charged at the mapping path, exact |
-| `cpu_percent` | percentage of one processor | a rate, measured over a window |
-
-Because every ceiling is judged from the container, a kernel booted without
-resource accounting (`kern.racct.enable=0`) has nothing to judge, and
-`COALITION_OP_SET_LIMIT` answers `EOPNOTSUPP` rather than accepting a figure
-nothing would act on.
-
-Zero removes any of them and they are independent. A breach always
-notifies through `COALITION_NOTE_LIMIT`; with `COALITION_LIMIT_KILL` it
-also terminates the coalition, regardless of band, because a unit over a
-figure declared for it is over budget whether or not the machine is short.
-
-The CPU ceiling is a rate rather than a total, since a total only grows and
-a unit running for a week breaches any figure worth setting. What is judged
-is `RACCT_PCTCPU` on the coalition's container — the decaying average the
-accounting framework already keeps beside every other figure, clamped there
-to the number of processors on the machine. Nothing in the driver measures
-it. It covers CPU spent by members that have since left, and that falls out
-of the framework rather than being arranged: CPU is neither reclaimable nor
-decaying, so it is never taken back out of a container when a member leaves.
-A unit therefore cannot stay under its ceiling by working in short-lived
-children. Darwin has no equivalent: its CPU limits are per-task and report
-through an exception port rather than describing a unit.
-
-Nothing in the plane declares these from a manifest yet: they are a kernel
-interface a supervisor calls, and switchboard does not call it.
-
-## One source per figure
-
-The container arrived after the module had already built several of these
-figures by hand, and keeping both would have been the worst of the two. Each
-number now has one owner:
-
-- The **ceilings**, the **ledger** (`COALITION_OP_LEDGER`) and the **kill
-  report** read the container. None of them walks a member list, so they cost
-  the same whatever a coalition is made of, and adding a fourth resource needs
-  no code in the module at all.
-- The **victim rankings** — memory pressure choosing what to hand down, and the
-  out-of-memory policy choosing what to give up — read the container too. They
-  once walked the member list at the moment of the decision, on the argument
-  that a figure one page-daemon pass old would pick the wrong coalition. That
-  was the wrong trade twice over: the walk counts process members only, so a
-  unit doing its work inside a jail it held looked *empty* and was never
-  chosen — a systematic blindness, not a one-second lag — and walking meant
-  taking locks in the page daemon, where a wait is a wait on itself.
-- **CPU** is kept entirely by the container, as `RACCT_PCTCPU`. The driver
-  once maintained its own rate and its own tally of departed members' CPU;
-  both were removed. `racct_sub_racct()` only gives back resources that are
-  reclaimable or decaying, and CPU is neither, so a container already keeps
-  what its departed members spent — the second tally counted it twice.
-
-A coalition may also hold a jail, and then it accounts for what runs inside
-it. Only a process carries a container pointer, so the jail's processes are
-charged individually — on attach, on fork inside the jail, and, for work
-already running, by one walk when the jail is enlisted. They do not become
-members: a jail's processes are accounted, not enlisted, so the member count,
-the member limit and what a termination signals are unchanged. A process
-enlisted in its own right is never displaced by a jail it happens to be in,
-and where jails nest, the innermost held one wins — in both cases because the
-more specific statement about whose work a process is should stand.
-
-Nothing in the driver samples a footprint any more. There is one figure for
-how big a coalition is, and every consumer reads it.
-
-Ceilings are held in one array indexed by the framework's own resource
-numbers rather than a field per figure, because every one is judged the same
-way: read the counter, compare. Limiting a resource the driver has never
-heard of needs no code in it, only a caller willing to name it — the wire
-carries three today. Breaches are reported with rctl's names for resources
-rather than a second table that could drift from the first.
-
-The natural end state is for these to be `rctl(8)` rules against a coalition
-subject, which would bring operator tooling and persistence with them. That
-is not a cleanup but a project, and it has a real conflict to settle first:
-rctl's actions are per-process, and this model's whole point is that the unit
-dies together. Until that is decided, the array keeps the driver honest and
-makes the migration a mapping rather than a rewrite.
-
-Consequences worth knowing. `age_ms` in the ledger reply is always zero —
-nothing is sampled, so nothing goes stale — and `COALITION_LEDGER_REFRESH` no
-longer refreshes anything; it now means "judge the ceilings before replying"
-rather than waiting for the next sweep. Resident memory in the ledger is zero
-for a process too young for the page daemon to have looked at, which is the
-difference `COALITION_OP_RUSAGE` exists to span.
+unit that wants an aggregate view can read `COALITION_OP_RUSAGE`, which
+reports summed RSS and VSZ across its process members, but that is
+observation, not enforcement. Group-wide enforcement is what rctl(8) rules
+are for, and the plane does not create any from the manifest; an operator
+who needs a per-unit memory cap that survives forking must add an rctl
+rule, or a supervisor must use the accounting service, today.
 
 ## Tests and status
 
@@ -362,13 +267,11 @@ type, nesting and cycle rejection, deadline, watchdog, leader death,
 graceful termination, fork inheritance, jail members, limit exhaustion,
 permanent ids, the responsible edge (set-once, self-root, caller and
 procdesc naming, cycle and depth refusal, survival of the parent's close),
-the kinfo export, the release signal, the resident, address-space and CPU
-ceilings, idle exit, the periodic sweep and the out-of-memory ranking;
+the kinfo export, and the release signal;
 `usr.sbin/switchboard/tests/responsibility_test.c` pins the parent decision
 against the management model;
 `mac_capability_accounting_test.c` covers charge, release, set and rules;
 `lib/libcapbundle/tests` pins the `limits` parser. The coalition and
 accounting services are shipped and static. Open items: the coalition
 watchdog has no plane user, the accounting service has no plane user, and
-the unit-wide ceilings have no manifest field, so a supervisor must set
-them through `COALITION_OP_SET_LIMIT` itself.
+manifest limits remain per-process rlimits with no racct-backed group cap.

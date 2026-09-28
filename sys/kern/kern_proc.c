@@ -219,14 +219,6 @@ proc_ctor(void *mem, int size, void *arg, int flags)
 	struct thread *td;
 
 	p = (struct proc *)mem;
-	p->p_textpath = NULL;
-	/*
-	 * A process structure is reused, and nothing else clears this.  A
-	 * stale pointer here is a pointer into a coalition container that was
-	 * freed during some earlier process's life, and the first thing this
-	 * process accounts for would write into it.
-	 */
-	p->p_coalition_racct = NULL;
 #ifdef KDTRACE_HOOKS
 	kdtrace_proc_ctor(p);
 #endif
@@ -1212,16 +1204,10 @@ fill_kinfo_proc_only(struct proc *p, struct kinfo_proc *kp)
 	{
 		struct mac_capability_proc_coalition mc;
 
-		/*
-		 * A process in no coalition reports band -1 rather than 0, so
-		 * a reader can tell "no coalition" from the lowest band.
-		 */
-		kp->ki_coalition_band = -1;
 		if (mac_capability_proc_coalition(p, &mc)) {
 			kp->ki_coalition = mc.id;
 			kp->ki_rcoalition = mc.responsible_id;
 			kp->ki_rpid = mc.responsible_leader_pid;
-			kp->ki_coalition_band = (int)mc.band;
 		}
 	}
 }
@@ -1534,7 +1520,6 @@ freebsd32_kinfo_proc_out(const struct kinfo_proc *ki, struct kinfo_proc32 *ki32)
 	CP(*ki, *ki32, ki_jid);
 	CP(*ki, *ki32, ki_reaper);
 	CP(*ki, *ki32, ki_reapsubtree);
-	CP(*ki, *ki32, ki_coalition_band);
 	CP(*ki, *ki32, ki_rpid);
 	CP(*ki, *ki32, ki_coalition);
 	CP(*ki, *ki32, ki_rcoalition);

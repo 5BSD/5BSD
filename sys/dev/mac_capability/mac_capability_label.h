@@ -45,12 +45,10 @@ struct mac_capability_proc_coalition {
 	uint64_t	responsible_id;		/* its responsible parent, 0 = unset */
 	pid_t		leader_pid;		/* coalition leader, 0 = none */
 	pid_t		responsible_leader_pid;	/* responsible parent's leader */
-	u_int		band;			/* effective pressure band */
 };
 typedef bool (*mac_capability_proc_coalition_fn)(struct proc *,
     struct mac_capability_proc_coalition *);
 void	mac_capability_proc_coalition_hook_set(mac_capability_proc_coalition_fn);
-
 bool	mac_capability_proc_coalition(struct proc *p,
 	    struct mac_capability_proc_coalition *out);
 

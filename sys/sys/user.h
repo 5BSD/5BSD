@@ -84,7 +84,7 @@
  * it in two places: function fill_kinfo_proc in sys/kern/kern_proc.c and
  * function kvm_proclist in lib/libkvm/kvm_proc.c .
  */
-#define	KI_NSPARE_INT	1
+#define	KI_NSPARE_INT	2
 #define	KI_NSPARE_LONG	10
 #define	KI_NSPARE_PTR	4
 
@@ -188,7 +188,6 @@ struct kinfo_proc {
 	 */
 	char	ki_sparestrings[34];	/* spare string space */
 	int	ki_spareints[KI_NSPARE_INT];	/* spare room for growth */
-	int	ki_coalition_band;	/* effective pressure band, -1 = none */
 	pid_t	ki_rpid;		/* leader pid of responsible coalition */
 	pid_t	ki_reaper;		/* pid of reaper process */
 	pid_t	ki_reapsubtree;		/* reaper subtree id */

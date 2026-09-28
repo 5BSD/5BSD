@@ -83,20 +83,6 @@ extern int vm_pageout_page_count;
  */
 #define	VM_LOW_KMEM	0x01
 #define	VM_LOW_PAGES	0x02
-
-/*
- * Out-of-memory victim policy.  A policy is offered the decision before the
- * default one, which picks the single largest process in the system.  It
- * returns true if it terminated something, in which case the default choice is
- * not made; returning false falls through unchanged, so a policy that cannot
- * decide never prevents the system from recovering.
- *
- * The point of a policy is to choose by what the system is willing to lose
- * rather than by size alone: the default answer is often the most important
- * process on the machine simply because it is the biggest.
- */
-typedef bool (*vm_pageout_oom_policy_fn)(int shortage);
-void	vm_pageout_oom_policy_set(vm_pageout_oom_policy_fn fn);
 #define	VM_LOW_MBUFS	0x04
 
 /*

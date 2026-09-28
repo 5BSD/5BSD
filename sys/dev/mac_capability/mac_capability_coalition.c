@@ -31,7 +31,6 @@
  *   COALITION_OP_SET_LEADER  — designate leader (death triggers term)
  *   COALITION_OP_RUSAGE      — aggregate resource usage
  *   COALITION_OP_SET_RESPONSIBLE — record the responsible parent (set once)
- *   COALITION_OP_LEDGER      — cached footprint sample (cheap; no walk)
  *
  * Identity: every coalition carries a permanent 64-bit id (co_id) and an
  * optional, immutable "responsible parent" edge (co_responsible): the
@@ -41,27 +40,9 @@
  * back from a live process to the session or system that caused it.
  *
  * Lock order:
- *   co_sx (sx lock, per-coalition)
- *     → child co_sx (parent before child for nested coalitions)
- *       → coalition_proc_hash_mtx / coalition_list_mtx (leaf mutexes)
- *
- * Lock-free reads: the process hash and the global coalition list are CK
- * lists whose readers are protected by safe memory reclamation (SMR), not by
- * a lock.  Both object zones share one SMR context, so anything a reader
- * reaches inside smr_enter()/smr_exit() stays allocated for the duration of
- * the section even if it is concurrently unlinked and freed.  The two write
- * sides serialize on leaf mutexes.
- *
- * This matters because coalition_proc_info() -- the kinfo_proc and audit
- * event exporter -- runs under PROC_LOCK for every process every time
- * anything enumerates processes.  A global reader/writer lock there put a
- * contended atomic on that path for all CPUs; an SMR section is a pair of
- * per-CPU sequence stores.  It also lets a future memory-pressure kill walk
- * enumerate coalitions from a context that cannot sleep.
- *
- * An SMR reader may therefore touch only fields that are immutable after
- * creation (co_id, co_responsible_id) or published with atomics; it must
- * never take co_sx, whose destruction is not deferred.
+ *   coalition_proc_hash_lock (rwlock, global)
+ *     → co_sx (sx lock, per-coalition)
+ *       → child co_sx (parent before child for nested coalitions)
  */
 
 #include <sys/param.h>
@@ -75,8 +56,6 @@
 #include <sys/sx.h>
 #include <sys/mutex.h>
 #include <sys/rwlock.h>
-#include <sys/ck.h>
-#include <sys/smr.h>
 #include <sys/malloc.h>
 #include <sys/queue.h>
 #include <sys/refcount.h>
@@ -87,7 +66,6 @@
 #include <sys/procdesc.h>
 #include <sys/jail.h>
 #include <sys/jaildesc.h>
-#include <security/mac/mac_policy.h>
 #include <sys/limits.h>
 #include <sys/signalvar.h>
 #include <sys/sysctl.h>
@@ -101,15 +79,6 @@
 
 #include <machine/atomic.h>
 #include <vm/uma.h>
-#include <sys/mman.h>
-#include <sys/racct.h>
-#include <sys/rctl.h>
-#include <vm/vm.h>
-#include <vm/vm_param.h>
-#include <vm/pmap.h>
-#include <vm/vm_map.h>
-#include <vm/vm_extern.h>
-#include <vm/vm_pageout.h>
 #include <sys/resourcevar.h>
 #include <sys/user.h>
 
@@ -122,8 +91,7 @@
  * DTrace SDT probes
  * ---------------------------------------------------------------- */
 SDT_PROVIDER_DEFINE(mac_capability_coalition);
-SDT_PROBE_DEFINE2(mac_capability_coalition, , , create, "uint64_t",
-    "uint64_t");
+SDT_PROBE_DEFINE1(mac_capability_coalition, , , create, "uint64_t");
 SDT_PROBE_DEFINE2(mac_capability_coalition, , , enlist, "int", "int");
 SDT_PROBE_DEFINE2(mac_capability_coalition, , , join, "pid_t", "int");
 SDT_PROBE_DEFINE2(mac_capability_coalition, , , terminate, "u_int", "int");
@@ -151,112 +119,6 @@ SDT_PROBE_DEFINE3(mac_capability_coalition, , , graceful,
     "int", "uint32_t", "int");
 SDT_PROBE_DEFINE3(mac_capability_coalition, , , responsible__set,
     "uint64_t", "uint64_t", "int");
-SDT_PROBE_DEFINE2(mac_capability_coalition, , , pressure,
-    "uint32_t", "unsigned");
-SDT_PROBE_DEFINE3(mac_capability_coalition, , , pressure__notify,
-    "uint64_t", "u_int", "int");
-/*
- * A coalition's resource sample was refreshed: its footprint in bytes and
- * the number of process members it was summed from.  This is the input a
- * pressure policy ranks on.
- */
-/*
- * Band changes.  band__floor fires when a launcher sets the floor;
- * band__assert and band__release fire when an assertion descriptor is minted
- * and when it goes away, whether it was closed, revoked, or died with its
- * holder.  Arguments are the coalition id, the band in question, and the
- * effective band after the change, so a script can answer "why is this
- * coalition still being kept alive, and who did that".
- */
-/*
- * A member was deliberately NOT signalled during a teardown because it is the
- * process doing the closing: a unit that tears down its own coalition should
- * not kill itself.  Without this probe a teardown trace shows N-1 kills and no
- * reason for the survivor, and which process that is depends on who closed the
- * coalition last, so it is worth being able to see.
- */
-SDT_PROBE_DEFINE2(mac_capability_coalition, , , member__spared,
-    "uint64_t", "pid_t");
-/*
- * A coalition was handed down: its pages were advised reclaimable because the
- * system is short of memory and this coalition is in a band it is willing to
- * give up first.  Nothing was terminated.  Arguments are the coalition, its
- * band, the footprint that got it chosen, and how many process members were
- * advised.
- */
-SDT_PROBE_DEFINE4(mac_capability_coalition, , , pressure__reclaim,
-    "uint64_t", "u_int", "uint64_t", "u_int");
-/*
- * A coalition was terminated to reclaim its memory.  This is the report an
- * operator needs after processes disappear: which coalition, whose work it was
- * (the responsible parent), the band that made it expendable, the footprint
- * that made it the choice, and how many process members went with it.
- */
-SDT_PROBE_DEFINE5(mac_capability_coalition, , , oom__kill,
-    "uint64_t", "uint64_t", "u_int", "uint64_t", "u_int");
-/* No coalition was eligible; the stock largest-process choice will run. */
-SDT_PROBE_DEFINE1(mac_capability_coalition, , , oom__decline, "uint32_t");
-/*
- * Membership of the resource container, which is where the accounting bugs
- * live.  Every process that joins must later leave or detach exactly once: a
- * join without one leaves a process pointing at a container that is about to
- * be freed, and that is a write to freed memory on the next charge rather
- * than anything that shows up as a wrong number.
- *
- * racct-drain says what a container was still holding when it was emptied.
- * CPU is expected there, because a terminated member leaves it behind on
- * purpose.  Anything reclaimable appearing here means a member left without
- * giving it back.
- */
-SDT_PROBE_DEFINE2(mac_capability_coalition, , , racct__join,
-    "uint64_t", "pid_t");
-SDT_PROBE_DEFINE3(mac_capability_coalition, , , racct__leave,
-    "uint64_t", "pid_t", "uint64_t");
-SDT_PROBE_DEFINE2(mac_capability_coalition, , , racct__jail,
-    "uint64_t", "pid_t");
-SDT_PROBE_DEFINE3(mac_capability_coalition, , , racct__drain,
-    "uint64_t", "uint64_t", "uint64_t");
-/*
- * A coalition is over the ceiling declared for it.  Arguments are the
- * coalition, the party responsible for it, the footprint, the ceiling, and
- * whether it is being terminated for it (1) or only told (0).  This is the
- * probe that answers "which unit is over budget", as opposed to oom-kill,
- * which answers "what did the system give up because it ran out".
- */
-/*
- * A coalition died, and why.  One probe for every death whatever caused it, so
- * "what happened to my unit" has a single answer: the coalition, the party
- * responsible for it, the reason, the footprint it was holding and the band it
- * was in.
- */
-SDT_PROBE_DEFINE5(mac_capability_coalition, , , coalition__kill,
-    "uint64_t", "uint64_t", "u_int", "uint64_t", "u_int");
-/*
- * The figure and the ceiling are bytes for a memory ceiling and a percentage
- * of one processor for a CPU ceiling, so the last argument says which, rather
- * than leaving a script to print a percentage as kilobytes.
- */
-SDT_PROBE_DEFINE6(mac_capability_coalition, , , limit__breach,
-    "uint64_t", "uint64_t", "uint64_t", "uint64_t", "int", "u_int");
-SDT_PROBE_DEFINE3(mac_capability_coalition, , , band__floor,
-    "uint64_t", "u_int", "u_int");
-SDT_PROBE_DEFINE4(mac_capability_coalition, , , band__assert,
-    "uint64_t", "u_int", "u_int", "pid_t");
-SDT_PROBE_DEFINE4(mac_capability_coalition, , , band__release,
-    "uint64_t", "u_int", "u_int", "pid_t");
-/*
- * One process member is being signalled (sig) or, with sig 0, released
- * without a signal, as the coalition tears down.  This is the probe that
- * answers "what killed my process, and on whose behalf".
- */
-SDT_PROBE_DEFINE4(mac_capability_coalition, , , member__kill,
-    "uint64_t", "uint64_t", "pid_t", "int");
-/*
- * A membership that was only inherited (fork, pdfork, JOIN) has been moved
- * to another coalition by a holder of the process descriptor.
- */
-SDT_PROBE_DEFINE3(mac_capability_coalition, , , rehome,
-    "pid_t", "uint64_t", "uint64_t");
 
 MALLOC_DEFINE(M_COALITION, "mac_capability_coalition",
     "mac_capability coalition structures");
@@ -267,7 +129,7 @@ MALLOC_DEFINE(M_COALITION, "mac_capability_coalition",
 
 struct coalition_member {
 	TAILQ_ENTRY(coalition_member)	cm_link;
-	CK_LIST_ENTRY(coalition_member)	cm_hash;	/* process hash (SMR) */
+	LIST_ENTRY(coalition_member)	cm_hash;	/* process hash */
 	struct file		*cm_fp;		/* held reference (NULL for JOIN) */
 	struct coalition	*cm_coalition;
 	void			*cm_data;	/* proc ptr for process members */
@@ -302,72 +164,6 @@ struct coalition {
 	struct task		co_leader_task;
 	/* Back-reference for timer tasks */
 	struct mac_capability_instance	*co_instance;
-	/* All live coalitions (coalition_list_mtx to write, SMR to read) */
-	CK_LIST_ENTRY(coalition)	co_all_link;
-	bool			co_listed;
-	/*
-	 * Band: the floor set by the launcher, plus a count of live assertion
-	 * descriptors per band.  Both are plain atomics with no lock, because
-	 * the effective band has to be readable from the page daemon while it
-	 * decides what to give up, which cannot wait on anything.
-	 */
-	volatile u_int		co_band_floor;
-	volatile u_int		co_band_assert[COALITION_BAND_COUNT];
-	volatile u_int		co_band_nassert;	/* live assertions */
-	volatile sbintime_t	co_press_time;	/* last handed down, 0 = never */
-	/*
-	 * Declared ceilings for the whole coalition, indexed by the accounting
-	 * framework's own resource numbers; 0 means no ceiling on that one.
-	 *
-	 * One array rather than a field per figure, because every one of them
-	 * is judged the same way -- read the container, compare -- and the
-	 * container already carries all of them.  Limiting a resource this
-	 * module has never heard of needs no code here, only a caller willing
-	 * to name it.
-	 */
-	volatile uint64_t	co_limits[RACCT_MAX + 1];
-	/*
-	 * The coalition's resource container.  A real one, alongside the user,
-	 * login class and jail containers a process is already charged to, so
-	 * every resource the system already accounts for is accounted for per
-	 * coalition without this module counting anything itself.  CPU is not
-	 * reclaimable, so a member that exits leaves its CPU behind here --
-	 * which is what stops a unit spending freely in short-lived children.
-	 */
-	struct racct		*co_racct;
-	volatile u_int		co_limit_flags;
-	/*
-	 * Which resources are over their ceiling right now, one bit per
-	 * accounting resource.  A set, not a flag: with a single flag a
-	 * coalition that went over one ceiling was never told when it went
-	 * over a second, because the flag was already up.  A coalition that
-	 * comes back under a ceiling loses that bit and will be told again if
-	 * it goes over once more.
-	 */
-	volatile uint32_t	co_limit_over;
-	int			co_kill_reason;	/* COALITION_KILL_*, set once */
-	/* Idle exit: declared eligibility, and how long it has been idle. */
-	volatile u_int		co_idle_flags;
-	volatile u_int		co_idle_min_age_ms;
-	volatile sbintime_t	co_idle_since;	/* 0 = not idle */
-	/*
-	 * Idle exits attributed to this coalition as a responsible party.  A
-	 * coalition is a fresh object every launch, so the responsible edge is
-	 * the only thing that persists across a relaunch -- which makes it the
-	 * right place to notice that putting this work away keeps failing to
-	 * achieve anything because it comes straight back.
-	 */
-	volatile u_int		co_idle_exits;
-	volatile sbintime_t	co_idle_window;
-	/*
-	 * Live assertions, so an operator can be told who is holding this
-	 * coalition up rather than only how many are.  A leaf mutex of its own:
-	 * minting an assertion already allocates and mints a descriptor, so an
-	 * uncontended lock costs nothing next to that, and it keeps the list
-	 * off co_sx.
-	 */
-	struct mtx		co_assert_mtx;
-	LIST_HEAD(, coalition_assert)	co_asserts;
 	/* Identity (I) — immutable after creation */
 	uint64_t		co_id;
 	/*
@@ -385,7 +181,6 @@ struct coalition {
  * ---------------------------------------------------------------- */
 
 static struct mac_capability_service *coalition_svc;
-static u_int coalition_band_effective(struct coalition *);
 
 static uma_zone_t coalition_zone;
 static uma_zone_t coalition_member_zone;
@@ -410,16 +205,9 @@ static struct sx coalition_nest_lock;
 
 /* Process hash for exit handler lookup */
 #define	COALITION_PROC_HASH_SIZE	256
-static CK_LIST_HEAD(, coalition_member)
+static LIST_HEAD(, coalition_member)
     coalition_proc_hash[COALITION_PROC_HASH_SIZE];
-static struct mtx coalition_proc_hash_mtx;
-
-/*
- * One SMR context shared by both object zones, so a reader that finds a
- * member may follow it to its coalition and up the responsible chain without
- * any of that memory being recycled underneath it.
- */
-static smr_t coalition_smr;
+static struct rwlock coalition_proc_hash_lock;
 
 static inline u_int
 coalition_proc_hash_idx(struct proc *p)
@@ -432,14 +220,6 @@ coalition_proc_hash_idx(struct proc *p)
 
 /* Jail OSD for fork inheritance */
 static u_int coalition_jail_osd_slot;
-/*
- * How many jails are held by a coalition right now.
- *
- * Every fork in the system reaches the jail-charging path, and the
- * overwhelming majority of them are not in any held jail.  Zero here means
- * there is nothing to look for, and the whole path costs one atomic load.
- */
-static volatile u_int coalition_held_jails;
 
 struct coalition_jail_osd {
 	struct coalition	*cjo_coalition;
@@ -451,40 +231,6 @@ struct coalition_jail_osd {
 
 static eventhandler_tag coalition_fork_tag;
 static eventhandler_tag coalition_exit_tag;
-static eventhandler_tag coalition_lowmem_tag;
-
-/*
- * Every live coalition, for system-wide passes (memory pressure today).
- * Writers serialize on a leaf mutex; readers walk it inside an SMR section
- * and take a reference on each coalition before doing anything that sleeps.
- * Never take co_sx or the process hash under the list mutex.
- */
-static struct mtx coalition_list_mtx;
-static CK_LIST_HEAD(, coalition) coalition_list =
-    CK_LIST_HEAD_INITIALIZER(coalition_list);
-/*
- * The pressure pass gets its own taskqueue thread rather than sharing
- * taskqueue_thread with the per-coalition deadline, watchdog and leader tasks.
- * A pass walks every coalition and samples every member, which takes a while
- * on a busy system; the close path drains those per-coalition tasks and would
- * otherwise have to wait behind a system-wide walk on a single shared thread,
- * delaying a coalition's teardown for as long as the walk takes.
- */
-static struct taskqueue *coalition_pressure_tq;
-static struct task coalition_pressure_task;
-/*
- * A periodic sweep, so a ceiling and an idle timer mean something without
- * waiting for the system to run short.  Footprint here is sampled rather than
- * accounted continuously, so a figure is only ever as fresh as the last sweep;
- * the interval is what bounds that staleness.
- */
-static struct callout coalition_sweep_callout;
-static struct task coalition_sweep_task;
-static int coalition_sweep_enable = 1;
-static u_int coalition_sweep_interval_ms = 10000;
-
-/* Permanent coalition ids.  Never reused; 0 is never issued. */
-static volatile uint64_t coalition_next_id = 1;
 
 /*
  * Sysctl tunables — soft limits, best-effort enforcement.
@@ -494,119 +240,6 @@ static volatile uint64_t coalition_next_id = 1;
  */
 static u_int coalition_max = 1024;
 static u_int coalition_max_members = 8192;
-/*
- * Assertions live in file descriptors, so a holder that keeps asking for them
- * would otherwise consume the assertion service's whole instance budget and
- * leave no way for anything else to hold a coalition at a band.  Cap them per
- * coalition as well.
- */
-static u_int coalition_max_assertions = 64;
-
-/*
- * What a memory-pressure pass does about the coalitions it finds.
- *
- * It hands them down rather than killing them.  Every coalition is notified so
- * it can drop caches of its own accord, and then the ones the system is least
- * interested in keeping -- the low bands, largest first -- have their address
- * spaces advised MADV_DONTNEED, which moves their pages to the front of the
- * reclaim queue without discarding anything.  Nothing is lost and nothing is
- * terminated: a coalition handed down keeps running and faults its pages back
- * if it turns out to need them, having in the meantime given the rest of the
- * system first claim on that memory.
- *
- * That is the whole ladder for now.  Terminating a coalition to reclaim its
- * memory is a further rung that is deliberately not taken here, because
- * handing down is reversible and killing is not.
- */
-static int coalition_pressure_reclaim = 1;
-static u_int coalition_pressure_band_ceiling = COALITION_BAND_BACKGROUND;
-static u_int coalition_pressure_max_targets = 4;
-static u_int coalition_pressure_interval_ms = 10000;
-static u_int coalition_pressure_min_kb = 8192;
-static volatile u_int coalition_pressure_reclaims;
-
-/*
- * Out-of-memory kills.  When the system is about to run out of memory the
- * stock choice is the single largest process, which is very often the most
- * important thing on the machine simply because it is the biggest.  This
- * policy chooses instead by what the system is willing to lose: the lowest
- * band first, and within a band the largest footprint, because that frees the
- * most for the least.  The unit is the coalition, so a unit and its helpers go
- * together rather than leaving a decapitated remainder behind.
- *
- * A coalition above the ceiling is never chosen, which is what keeps CORE
- * units safe.  If nothing is eligible the policy declines and the stock
- * largest-process choice runs unchanged, so this can only improve the decision,
- * never prevent one.
- */
-static int coalition_oom_kill = 1;
-static u_int coalition_oom_band_ceiling = COALITION_BAND_INTERACTIVE;
-/*
- * Kills by reason.  Counted separately because they mean different things: a
- * coalition over its own figure is a unit misbehaving, one given up for system
- * memory is the machine being short, and an idle exit is neither -- it is work
- * being put away because it can be brought back.
- */
-static volatile u_int coalition_oom_kills;
-static volatile u_int coalition_limit_kills;
-static volatile u_int coalition_idle_kills;
-static volatile u_int coalition_cpu_kills;
-
-/*
- * Idle exit.  Eligibility is per coalition and off unless declared, so these
- * only decide how a coalition that HAS been declared eligible is treated.
- */
-static int coalition_idle_exit = 1;
-static u_int coalition_idle_min_age_ms = 300000;
-static u_int coalition_idle_max_per_min = 6;
-
-static const char *
-coalition_kill_reason_name(int reason)
-{
-
-	switch (reason) {
-	case COALITION_KILL_REQUESTED:
-		return ("asked for");
-	case COALITION_KILL_DEADLINE:
-		return ("past its deadline");
-	case COALITION_KILL_WATCHDOG:
-		return ("stopped answering");
-	case COALITION_KILL_LEADER:
-		return ("its leader went away");
-	case COALITION_KILL_OVER_CEILING:
-		return ("over its own ceiling");
-	case COALITION_KILL_OVER_CPU:
-		return ("over its own CPU ceiling");
-	case COALITION_KILL_SYSTEM_MEMORY:
-		return ("the system ran out of memory");
-	case COALITION_KILL_IDLE:
-		return ("idle, and able to come back");
-	default:
-		return ("handle closed");
-	}
-}
-
-static void
-coalition_kill_count(int reason)
-{
-
-	switch (reason) {
-	case COALITION_KILL_OVER_CEILING:
-		atomic_add_int(&coalition_limit_kills, 1);
-		break;
-	case COALITION_KILL_OVER_CPU:
-		atomic_add_int(&coalition_cpu_kills, 1);
-		break;
-	case COALITION_KILL_SYSTEM_MEMORY:
-		atomic_add_int(&coalition_oom_kills, 1);
-		break;
-	case COALITION_KILL_IDLE:
-		atomic_add_int(&coalition_idle_kills, 1);
-		break;
-	default:
-		break;
-	}
-}
 
 SYSCTL_NODE(_kern, OID_AUTO, mac_capability_coalition,
     CTLFLAG_RW | CTLFLAG_MPSAFE, 0, "mac_capability coalition");
@@ -622,73 +255,10 @@ SYSCTL_UINT(_kern_mac_capability_coalition, OID_AUTO, max_members, CTLFLAG_RW,
 SYSCTL_UINT(_kern_mac_capability_coalition, OID_AUTO, members, CTLFLAG_RD,
     __DEVOLATILE(u_int *, &coalition_total_members), 0,
     "Total members across all coalitions");
-SYSCTL_UINT(_kern_mac_capability_coalition, OID_AUTO, max_assertions,
-    CTLFLAG_RW, &coalition_max_assertions, 0,
-    "Maximum live band assertions per coalition (0 = unlimited)");
-SYSCTL_INT(_kern_mac_capability_coalition, OID_AUTO, pressure_reclaim,
-    CTLFLAG_RW, &coalition_pressure_reclaim, 0,
-    "Under memory pressure, advise low-band coalitions' pages reclaimable");
-SYSCTL_UINT(_kern_mac_capability_coalition, OID_AUTO, pressure_band_ceiling,
-    CTLFLAG_RW, &coalition_pressure_band_ceiling, 0,
-    "Highest band handed down under pressure (COALITION_BAND_*)");
-SYSCTL_UINT(_kern_mac_capability_coalition, OID_AUTO, pressure_max_targets,
-    CTLFLAG_RW, &coalition_pressure_max_targets, 0,
-    "Coalitions handed down per pressure pass");
-SYSCTL_UINT(_kern_mac_capability_coalition, OID_AUTO, pressure_interval_ms,
-    CTLFLAG_RW, &coalition_pressure_interval_ms, 0,
-    "Minimum time before the same coalition is handed down again");
-SYSCTL_UINT(_kern_mac_capability_coalition, OID_AUTO, pressure_min_kb,
-    CTLFLAG_RW, &coalition_pressure_min_kb, 0,
-    "Ignore coalitions smaller than this when handing down");
-SYSCTL_UINT(_kern_mac_capability_coalition, OID_AUTO, pressure_reclaims,
-    CTLFLAG_RD, __DEVOLATILE(u_int *, &coalition_pressure_reclaims), 0,
-    "Total coalitions handed down since boot");
-SYSCTL_INT(_kern_mac_capability_coalition, OID_AUTO, oom_kill, CTLFLAG_RW,
-    &coalition_oom_kill, 0,
-    "Choose an out-of-memory victim by band and footprint, by coalition");
-SYSCTL_UINT(_kern_mac_capability_coalition, OID_AUTO, oom_band_ceiling,
-    CTLFLAG_RW, &coalition_oom_band_ceiling, 0,
-    "Highest band an out-of-memory kill may choose (COALITION_BAND_*)");
-SYSCTL_UINT(_kern_mac_capability_coalition, OID_AUTO, oom_kills, CTLFLAG_RD,
-    __DEVOLATILE(u_int *, &coalition_oom_kills), 0,
-    "Total coalitions terminated for memory since boot");
-SYSCTL_UINT(_kern_mac_capability_coalition, OID_AUTO, limit_kills, CTLFLAG_RD,
-    __DEVOLATILE(u_int *, &coalition_limit_kills), 0,
-    "Total coalitions terminated for exceeding their own ceiling since boot");
-SYSCTL_UINT(_kern_mac_capability_coalition, OID_AUTO, cpu_kills, CTLFLAG_RD,
-    __DEVOLATILE(u_int *, &coalition_cpu_kills), 0,
-    "Total coalitions terminated for exceeding their own CPU ceiling since boot");
-SYSCTL_UINT(_kern_mac_capability_coalition, OID_AUTO, idle_kills, CTLFLAG_RD,
-    __DEVOLATILE(u_int *, &coalition_idle_kills), 0,
-    "Total coalitions put away for being idle since boot");
-SYSCTL_INT(_kern_mac_capability_coalition, OID_AUTO, sweep, CTLFLAG_RW,
-    &coalition_sweep_enable, 0,
-    "Periodically sample footprints, enforce ceilings and put idle work away");
-SYSCTL_UINT(_kern_mac_capability_coalition, OID_AUTO, sweep_interval_ms,
-    CTLFLAG_RW, &coalition_sweep_interval_ms, 0,
-    "How often the periodic sweep runs, and so how stale a footprint may be");
-SYSCTL_INT(_kern_mac_capability_coalition, OID_AUTO, idle_exit, CTLFLAG_RW,
-    &coalition_idle_exit, 0,
-    "Put declared-eligible coalitions away once they have been idle");
-SYSCTL_UINT(_kern_mac_capability_coalition, OID_AUTO, idle_min_age_ms,
-    CTLFLAG_RW, &coalition_idle_min_age_ms, 0,
-    "Default time a coalition must be idle before it is put away");
-SYSCTL_UINT(_kern_mac_capability_coalition, OID_AUTO, idle_max_per_min,
-    CTLFLAG_RW, &coalition_idle_max_per_min, 0,
-    "Give up putting a responsible party's work away after this many a minute");
 
 /* Forward declarations */
 static void	coalition_terminate_members_locked(struct coalition *co,
-		    struct thread *td, bool skip_self, int sig_override,
-		    int reason);
-static void	coalition_notify_responsible(struct coalition *co, int reason);
-static void	coalition_racct_join(struct proc *p, struct coalition *co);
-static struct coalition_member *coalition_proc_hash_lookup(struct proc *p);
-static void	coalition_charge_jailed_child(struct proc *child);
-static void	coalition_racct_leave(struct proc *p, struct coalition *co);
-static struct coalition *coalition_responsible_or_self(struct coalition *co);
-static bool	coalition_idle_exit_worthwhile(struct coalition *co,
-		    sbintime_t now);
+		    struct thread *td, bool skip_self, int sig_override);
 static void	coalition_collect_external_members_locked(
 		    struct coalition *co, struct file ***jail_fpsp,
 		    int *jail_countp,
@@ -732,24 +302,7 @@ coalition_free(struct coalition *co)
 	    ("coalition_free: members not empty"));
 	KASSERT(co->co_refcount == 0,
 	    ("coalition_free: refcount %u", co->co_refcount));
-	mtx_lock(&coalition_list_mtx);
-	if (co->co_listed) {
-		CK_LIST_REMOVE(co, co_all_link);
-		co->co_listed = false;
-	}
-	mtx_unlock(&coalition_list_mtx);
 	sx_destroy(&co->co_sx);
-	mtx_destroy(&co->co_assert_mtx);
-	/*
-	 * Give up this coalition's own reference on the container.  It is NOT
-	 * destroyed here: a member part way through exiting still points at it
-	 * and still has accounting to do, so the container outlives the
-	 * coalition and the last holder frees it.
-	 */
-	SDT_PROBE3(mac_capability_coalition, , , racct__drain, co->co_id,
-	    racct_read(co->co_racct, RACCT_CPU),
-	    racct_read(co->co_racct, RACCT_RSS));
-	racct_release(&co->co_racct);
 	/*
 	 * Drop the responsible-parent pin last.  Chains are acyclic (enforced
 	 * at set time), so the recursion this may cause is bounded by the
@@ -759,12 +312,12 @@ coalition_free(struct coalition *co)
 		struct coalition *parent = co->co_responsible;
 
 		co->co_responsible = NULL;
-		uma_zfree_smr(coalition_zone, co);
+		uma_zfree(coalition_zone, co);
 		atomic_subtract_int(&coalition_count, 1);
 		coalition_rel(parent);
 		return;
 	}
-	uma_zfree_smr(coalition_zone, co);
+	uma_zfree(coalition_zone, co);
 	atomic_subtract_int(&coalition_count, 1);
 }
 
@@ -781,21 +334,11 @@ coalition_alloc(void)
 {
 	struct coalition *co;
 
-	co = uma_zalloc_smr(coalition_zone, M_WAITOK | M_ZERO);
+	co = uma_zalloc(coalition_zone, M_WAITOK | M_ZERO);
 	sx_init_flags(&co->co_sx, "mac_capability_coalition", SX_DUPOK);
-	mtx_init(&co->co_assert_mtx, "coalition_asserts", NULL, MTX_DEF);
-	LIST_INIT(&co->co_asserts);
-	racct_create(&co->co_racct);
 	TAILQ_INIT(&co->co_members);
 	co->co_signal = SIGKILL;
-	co->co_band_floor = COALITION_BAND_STANDARD;
 	co->co_nesting_depth = 0;
-	/*
-	 * The permanent id has to be set before the coalition is published to
-	 * the global list: a lock-free pass walking that list must never see a
-	 * live coalition whose id is still zero.
-	 */
-	co->co_id = atomic_fetchadd_64(&coalition_next_id, 1);
 	refcount_init(&co->co_refcount, 1);
 	callout_init(&co->co_deadline_callout, 1);
 	TASK_INIT(&co->co_deadline_task, 0, coalition_deadline_task_fn, co);
@@ -804,10 +347,6 @@ coalition_alloc(void)
 	callout_init(&co->co_leader_callout, 1);
 	TASK_INIT(&co->co_leader_task, 0, coalition_leader_task_fn, co);
 	atomic_add_int(&coalition_count, 1);
-	mtx_lock(&coalition_list_mtx);
-	CK_LIST_INSERT_HEAD(&coalition_list, co, co_all_link);
-	co->co_listed = true;
-	mtx_unlock(&coalition_list_mtx);
 	return (co);
 }
 
@@ -875,8 +414,6 @@ coalition_notify_event(struct coalition *co, uint32_t flags)
 	sx_assert(&co->co_sx, SA_XLOCKED);
 
 	ev.flags = flags;
-	ev.reason = (uint32_t)co->co_kill_reason;
-	ev.subject_id = 0;
 	error = mac_capability_notify(co->co_instance, &ev, sizeof(ev), NULL, NULL, 0);
 	if (error != 0 && error != EAGAIN && error != ENOBUFS &&
 	    error != ECONNRESET)
@@ -955,172 +492,6 @@ coalition_jail_set_member(struct prison *pr, struct coalition_member *cm)
 	prison_unlock(pr);
 }
 
-/*
- * The coalition that holds this prison, or the innermost one holding a prison
- * that encloses it.
- *
- * A jail may sit inside another jail, and a different coalition may hold each.
- * The innermost wins, being the more specific statement about whose work this
- * is -- the same reason an individual enlistment beats either of them.
- *
- * Returns with a reference held, or NULL.
- */
-static struct coalition *
-coalition_of_prison(struct prison *pr)
-{
-	struct coalition_jail_osd *cjo;
-	struct coalition *co = NULL;
-
-	if (coalition_jail_osd_slot == 0 ||
-	    atomic_load_int(&coalition_held_jails) == 0)
-		return (NULL);
-	for (; pr != NULL && co == NULL; pr = pr->pr_parent) {
-		prison_lock(pr);
-		cjo = osd_jail_get(pr, coalition_jail_osd_slot);
-		if (cjo != NULL && cjo->cjo_coalition != NULL &&
-		    refcount_acquire_if_not_zero(
-		    &cjo->cjo_coalition->co_refcount))
-			co = cjo->cjo_coalition;
-		prison_unlock(pr);
-	}
-	return (co);
-}
-
-/*
- * Charge a process to the coalition holding the jail it is in.
- *
- * Only a process carries a container pointer, so without this a coalition that
- * holds a jail would govern that jail's lifetime while accounting for nothing
- * inside it: the processes in there were never enlisted one at a time and have
- * no pointer of their own.
- *
- * A process enlisted in its own right is left alone.  An individual enlistment
- * is the more specific statement, and it is not overridden by a jail the
- * process merely happens to be in.  Nothing is undone when a process leaves a
- * jail or the jail stops being held: the container is reference counted, so a
- * pointer into it is always safe, and exit gives back everything reclaimable
- * and drops the reference on its own.
- */
-static void
-coalition_charge_jailed_proc(struct proc *p, struct prison *pr)
-{
-	struct coalition *co;
-
-	/*
-	 * The cheap refusals first, in the order that rejects the most for the
-	 * least: no jail is held at all, or this process is not in a jail.
-	 * Only then is it worth looking at the process's membership.
-	 */
-	if (!racct_enable || p == NULL || pr == NULL || pr == &prison0 ||
-	    atomic_load_int(&coalition_held_jails) == 0)
-		return;
-
-	smr_enter(coalition_smr);
-	if (coalition_proc_hash_lookup(p) != NULL) {
-		smr_exit(coalition_smr);
-		return;
-	}
-	smr_exit(coalition_smr);
-
-	co = coalition_of_prison(pr);
-	if (co == NULL)
-		return;
-	SDT_PROBE2(mac_capability_coalition, , , racct__jail, co->co_id,
-	    p->p_pid);
-	coalition_racct_join(p, co);
-	coalition_rel(co);
-}
-
-/*
- * Charge everything already inside a jail that has just been enlisted.
- *
- * Walking once here is what makes a jail's existing work count; anything that
- * enters afterwards is caught when it attaches or when it forks.  Descendant
- * prisons are included, because a process in a nested jail is inside this one
- * too -- coalition_of_prison() gives each one the innermost answer.
- */
-static void
-coalition_jail_charge_existing(struct prison *pr)
-{
-	struct prison *cpr;
-	struct proc *p;
-	int descend;
-
-	if (!racct_enable)
-		return;
-
-	/*
-	 * allproc before allprison: that is the order the rest of the kernel
-	 * takes them in, and witness has it hardcoded.  pr_proclist is the one
-	 * allproc protects here; allprison is for walking pr_children.
-	 */
-	sx_slock(&allproc_lock);
-	sx_slock(&allprison_lock);
-	LIST_FOREACH(p, &pr->pr_proclist, p_jaillist)
-		coalition_charge_jailed_proc(p, pr);
-	FOREACH_PRISON_DESCENDANT(pr, cpr, descend) {
-		LIST_FOREACH(p, &cpr->pr_proclist, p_jaillist)
-			coalition_charge_jailed_proc(p, cpr);
-	}
-	sx_sunlock(&allprison_lock);
-	sx_sunlock(&allproc_lock);
-}
-
-/*
- * A newly forked process whose parent is in no coalition of its own.  It may
- * still have been born inside a jail that a coalition holds.
- *
- * The prison comes from the child's own credential, which at this point is the
- * parent's, so this is the jail it was born into.
- */
-static void
-coalition_charge_jailed_child(struct proc *child)
-{
-	struct prison *pr;
-	bool locked;
-
-	if (!racct_enable || coalition_jail_osd_slot == 0 ||
-	    atomic_load_int(&coalition_held_jails) == 0)
-		return;
-
-	/*
-	 * The fork hook runs with no process lock held, but take it the way
-	 * the rest of this module does rather than assuming that stays true.
-	 */
-	locked = PROC_LOCKED(child);
-	if (!locked)
-		PROC_LOCK(child);
-	pr = child->p_ucred != NULL ? child->p_ucred->cr_prison : NULL;
-	if (pr != NULL)
-		prison_hold(pr);
-	if (!locked)
-		PROC_UNLOCK(child);
-	if (pr == NULL)
-		return;
-	coalition_charge_jailed_proc(child, pr);
-	prison_free(pr);
-}
-
-/*
- * A process attached to a jail.  If that jail is held by a coalition, this is
- * where the process starts being accounted for.
- */
-static void
-coalition_mac_prison_attached(struct ucred *cred __unused, struct prison *pr,
-    struct label *prlabel __unused, struct proc *p, struct label *plabel __unused)
-{
-
-	coalition_charge_jailed_proc(p, pr);
-}
-
-static struct mac_policy_ops coalition_mac_ops = {
-	.mpo_prison_attached		= coalition_mac_prison_attached,
-};
-
-MAC_POLICY_SET(&coalition_mac_ops, mac_mac_capability_coalition,
-    "MAC_CAPABILITY coalition jail accounting",
-    MPC_LOADTIME_FLAG_UNLOADOK, NULL);
-
 static void
 coalition_jail_cleanup_task_fn(void *context, int pending __unused)
 {
@@ -1174,10 +545,9 @@ coalition_jail_cleanup_task_fn(void *context, int pending __unused)
 			struct prison *pr = cm->cm_data;
 
 			cm->cm_data = NULL;
-			atomic_subtract_int(&coalition_held_jails, 1);
 			prison_free(pr);
 		}
-		uma_zfree_smr(coalition_member_zone, cm);
+		uma_zfree(coalition_member_zone, cm);
 		coalition_rel(co);
 	}
 
@@ -1238,29 +608,7 @@ coalition_jail_terminate(struct file *fp)
 	prison_hold(pr);
 	JAILDESC_UNLOCK(jd);
 
-	/*
-	 * In the page daemon this lock is tried, never waited for.
-	 * allprison_lock is held exclusive while a jail is being created, and
-	 * creating one allocates and can wait for free memory -- which only
-	 * the page daemon produces.  Waiting here would be the page daemon
-	 * queueing behind a thread that is waiting for the page daemon.
-	 *
-	 * Giving up means the jail outlives the coalition that held it until
-	 * something else removes it, which is worse than removing it now and
-	 * much better than wedging reclaim.  The right answer is to defer the
-	 * teardown to the module's taskqueue instead of doing it inline; this
-	 * keeps the page daemon safe until that exists.
-	 */
-	if (curproc == pageproc) {
-		if (sx_try_xlock(&allprison_lock) == 0) {
-			prison_free(pr);
-			log(LOG_WARNING, "mac_capability_coalition: leaving "
-			    "jail %d in place: cannot remove it from the page "
-			    "daemon without waiting\n", pr->pr_id);
-			return (EWOULDBLOCK);
-		}
-	} else
-		sx_xlock(&allprison_lock);
+	sx_xlock(&allprison_lock);
 	mtx_lock(&pr->pr_mtx);
 	if (prison_isalive(pr)) {
 		/*
@@ -1303,9 +651,9 @@ coalition_proc_hash_insert(struct coalition_member *cm, struct proc *p)
 {
 	u_int idx;
 
-	mtx_assert(&coalition_proc_hash_mtx, MA_OWNED);
+	rw_assert(&coalition_proc_hash_lock, RA_WLOCKED);
 	idx = coalition_proc_hash_idx(p);
-	CK_LIST_INSERT_HEAD(&coalition_proc_hash[idx], cm, cm_hash);
+	LIST_INSERT_HEAD(&coalition_proc_hash[idx], cm, cm_hash);
 }
 
 static struct coalition_member *
@@ -1314,13 +662,9 @@ coalition_proc_hash_lookup(struct proc *p)
 	struct coalition_member *cm;
 	u_int idx;
 
-	/*
-	 * Callers either hold coalition_proc_hash_mtx (writers, and readers
-	 * that go on to mutate) or are inside an SMR section (coalition_
-	 * proc_info).  There is no assertion that covers both.
-	 */
+	rw_assert(&coalition_proc_hash_lock, RA_LOCKED);
 	idx = coalition_proc_hash_idx(p);
-	CK_LIST_FOREACH(cm, &coalition_proc_hash[idx], cm_hash) {
+	LIST_FOREACH(cm, &coalition_proc_hash[idx], cm_hash) {
 		if (cm->cm_data == p)
 			return (cm);
 	}
@@ -1472,7 +816,7 @@ coalition_enlist(struct coalition *co, struct thread *td, struct file *fp,
 	if (!fhold(fp))
 		return (EBADF);
 
-	cm = uma_zalloc_smr(coalition_member_zone, M_WAITOK | M_ZERO);
+	cm = uma_zalloc(coalition_member_zone, M_WAITOK | M_ZERO);
 	cm->cm_dtype = dtype;
 	cm->cm_svc_name[0] = '\0';
 
@@ -1495,7 +839,7 @@ coalition_enlist(struct coalition *co, struct thread *td, struct file *fp,
 		p = pd->pd_proc;
 		if (p == NULL) {
 			sx_sunlock(&proctree_lock);
-			uma_zfree_smr(coalition_member_zone, cm);
+			uma_zfree(coalition_member_zone, cm);
 			fdrop(fp, td);
 			SDT_PROBE3(mac_capability_coalition, , , deny,
 			    "enlist-dead", ESRCH, td->td_proc->p_pid);
@@ -1521,18 +865,18 @@ coalition_enlist(struct coalition *co, struct thread *td, struct file *fp,
 		sx_xlock(&co->co_sx);
 		if (co->co_flags & (COF_TERMINATING | COF_GRACE_ACTIVE)) {
 			sx_xunlock(&co->co_sx);
-			uma_zfree_smr(coalition_member_zone, cm);
+			uma_zfree(coalition_member_zone, cm);
 			fdrop(fp, td);
 			SDT_PROBE3(mac_capability_coalition, , , deny,
 			    "enlist-shutdown", ESHUTDOWN, td->td_proc->p_pid);
 			return (ESHUTDOWN);
 		}
 
-		mtx_lock(&coalition_proc_hash_mtx);
+		rw_wlock(&coalition_proc_hash_lock);
 		if (coalition_proc_hash_lookup(p) != NULL) {
-			mtx_unlock(&coalition_proc_hash_mtx);
+			rw_wunlock(&coalition_proc_hash_lock);
 			sx_xunlock(&co->co_sx);
-			uma_zfree_smr(coalition_member_zone, cm);
+			uma_zfree(coalition_member_zone, cm);
 			fdrop(fp, td);
 			SDT_PROBE3(mac_capability_coalition, , , deny,
 			    "enlist-busy", EBUSY, td->td_proc->p_pid);
@@ -1540,8 +884,7 @@ coalition_enlist(struct coalition *co, struct thread *td, struct file *fp,
 		}
 
 		coalition_proc_hash_insert(cm, p);
-		coalition_racct_join(p, co);
-		mtx_unlock(&coalition_proc_hash_mtx);
+		rw_wunlock(&coalition_proc_hash_lock);
 
 	} else if (dtype == DTYPE_JAILDESC) {
 		struct jaildesc *jd = fp->f_data;
@@ -1551,7 +894,7 @@ coalition_enlist(struct coalition *co, struct thread *td, struct file *fp,
 		pr = jd->jd_prison;
 		if (pr == NULL || !prison_isvalid(pr)) {
 			JAILDESC_UNLOCK(jd);
-			uma_zfree_smr(coalition_member_zone, cm);
+			uma_zfree(coalition_member_zone, cm);
 			fdrop(fp, td);
 			SDT_PROBE3(mac_capability_coalition, , , deny,
 			    "enlist-invalid-jail", ENOENT,
@@ -1567,7 +910,7 @@ coalition_enlist(struct coalition *co, struct thread *td, struct file *fp,
 		if (co->co_flags & (COF_TERMINATING | COF_GRACE_ACTIVE)) {
 			sx_xunlock(&co->co_sx);
 			prison_free(pr);
-			uma_zfree_smr(coalition_member_zone, cm);
+			uma_zfree(coalition_member_zone, cm);
 			fdrop(fp, td);
 			SDT_PROBE3(mac_capability_coalition, , , deny,
 			    "enlist-shutdown", ESHUTDOWN,
@@ -1586,7 +929,7 @@ coalition_enlist(struct coalition *co, struct thread *td, struct file *fp,
 				coalition_rel(co);
 				sx_xunlock(&co->co_sx);
 			prison_free(pr);
-			uma_zfree_smr(coalition_member_zone, cm);
+			uma_zfree(coalition_member_zone, cm);
 			fdrop(fp, td);
 			return (error);
 		}
@@ -1613,7 +956,7 @@ coalition_enlist(struct coalition *co, struct thread *td, struct file *fp,
 		nested_co = mac_capability_instance_get_priv(ci);
 		if (nested_co == NULL) {
 			sx_xunlock(&coalition_nest_lock);
-			uma_zfree_smr(coalition_member_zone, cm);
+			uma_zfree(coalition_member_zone, cm);
 			fdrop(fp, td);
 			return (EBADF);
 		}
@@ -1622,7 +965,7 @@ coalition_enlist(struct coalition *co, struct thread *td, struct file *fp,
 		if (nested_co == co) {
 			coalition_rel(nested_co);
 			sx_xunlock(&coalition_nest_lock);
-			uma_zfree_smr(coalition_member_zone, cm);
+			uma_zfree(coalition_member_zone, cm);
 			fdrop(fp, td);
 			return (EINVAL);
 		}
@@ -1632,7 +975,7 @@ coalition_enlist(struct coalition *co, struct thread *td, struct file *fp,
 		if (error != 0) {
 			coalition_rel(nested_co);
 			sx_xunlock(&coalition_nest_lock);
-			uma_zfree_smr(coalition_member_zone, cm);
+			uma_zfree(coalition_member_zone, cm);
 			fdrop(fp, td);
 			SDT_PROBE3(mac_capability_coalition, , , deny,
 			    "enlist-cycle", error, td->td_proc->p_pid);
@@ -1645,7 +988,7 @@ coalition_enlist(struct coalition *co, struct thread *td, struct file *fp,
 			sx_xunlock(&co->co_sx);
 			coalition_rel(nested_co);
 			sx_xunlock(&coalition_nest_lock);
-			uma_zfree_smr(coalition_member_zone, cm);
+			uma_zfree(coalition_member_zone, cm);
 			fdrop(fp, td);
 			SDT_PROBE3(mac_capability_coalition, , , deny,
 			    "enlist-shutdown", ESHUTDOWN,
@@ -1657,7 +1000,7 @@ coalition_enlist(struct coalition *co, struct thread *td, struct file *fp,
 			sx_xunlock(&co->co_sx);
 			coalition_rel(nested_co);
 			sx_xunlock(&coalition_nest_lock);
-			uma_zfree_smr(coalition_member_zone, cm);
+			uma_zfree(coalition_member_zone, cm);
 			fdrop(fp, td);
 			SDT_PROBE3(mac_capability_coalition, , , deny,
 			    "enlist-busy", EBUSY,
@@ -1671,7 +1014,7 @@ coalition_enlist(struct coalition *co, struct thread *td, struct file *fp,
 			sx_xunlock(&co->co_sx);
 			coalition_rel(nested_co);
 			sx_xunlock(&coalition_nest_lock);
-			uma_zfree_smr(coalition_member_zone, cm);
+			uma_zfree(coalition_member_zone, cm);
 			fdrop(fp, td);
 			SDT_PROBE3(mac_capability_coalition, , , deny,
 			    "enlist-busy", EBUSY,
@@ -1686,7 +1029,7 @@ coalition_enlist(struct coalition *co, struct thread *td, struct file *fp,
 			sx_xunlock(&co->co_sx);
 			coalition_rel(nested_co);
 			sx_xunlock(&coalition_nest_lock);
-			uma_zfree_smr(coalition_member_zone, cm);
+			uma_zfree(coalition_member_zone, cm);
 			fdrop(fp, td);
 			return (error);
 		}
@@ -1703,7 +1046,7 @@ coalition_enlist(struct coalition *co, struct thread *td, struct file *fp,
 		sx_xlock(&co->co_sx);
 		if (co->co_flags & (COF_TERMINATING | COF_GRACE_ACTIVE)) {
 			sx_xunlock(&co->co_sx);
-			uma_zfree_smr(coalition_member_zone, cm);
+			uma_zfree(coalition_member_zone, cm);
 			fdrop(fp, td);
 			SDT_PROBE3(mac_capability_coalition, , , deny,
 			    "enlist-shutdown", ESHUTDOWN,
@@ -1713,7 +1056,7 @@ coalition_enlist(struct coalition *co, struct thread *td, struct file *fp,
 
 		if (coalition_has_member(co, fp)) {
 			sx_xunlock(&co->co_sx);
-			uma_zfree_smr(coalition_member_zone, cm);
+			uma_zfree(coalition_member_zone, cm);
 			fdrop(fp, td);
 			SDT_PROBE3(mac_capability_coalition, , , deny,
 			    "enlist-busy", EBUSY,
@@ -1735,7 +1078,6 @@ coalition_enlist(struct coalition *co, struct thread *td, struct file *fp,
 		 * keep that reference until member teardown.
 		 */
 		coalition_jail_set_member(pr, cm);
-		atomic_add_int(&coalition_held_jails, 1);
 	}
 
 	atomic_add_int(&co->co_member_count, 1);
@@ -1743,16 +1085,6 @@ coalition_enlist(struct coalition *co, struct thread *td, struct file *fp,
 	coalition_ref(co);
 	coalition_notify_event(co, COALITION_NOTE_MEMBER_ADDED);
 	sx_xunlock(&co->co_sx);
-
-	/*
-	 * Now that the jail is held, charge what is already running inside it.
-	 * Done after co_sx is dropped: the walk takes allprison_lock and
-	 * allproc_lock and then the process lock, and holding co_sx across
-	 * those would put this module in the middle of two of the heaviest
-	 * locks in the kernel for no reason.
-	 */
-	if (dtype == DTYPE_JAILDESC)
-		coalition_jail_charge_existing((struct prison *)cm->cm_data);
 
 	SDT_PROBE2(mac_capability_coalition, , , enlist, dtype, 0);
 	return (0);
@@ -1777,7 +1109,7 @@ coalition_join(struct coalition *co, struct thread *td)
 	}
 
 	p = td->td_proc;
-	cm = uma_zalloc_smr(coalition_member_zone, M_WAITOK | M_ZERO);
+	cm = uma_zalloc(coalition_member_zone, M_WAITOK | M_ZERO);
 
 	/*
 	 * Lock order: co_sx → hash_lock.
@@ -1785,17 +1117,17 @@ coalition_join(struct coalition *co, struct thread *td)
 	sx_xlock(&co->co_sx);
 	if (co->co_flags & (COF_TERMINATING | COF_GRACE_ACTIVE)) {
 		sx_xunlock(&co->co_sx);
-		uma_zfree_smr(coalition_member_zone, cm);
+		uma_zfree(coalition_member_zone, cm);
 		SDT_PROBE3(mac_capability_coalition, , , deny,
 		    "join-shutdown", ESHUTDOWN, p->p_pid);
 		return (ESHUTDOWN);
 	}
 
-	mtx_lock(&coalition_proc_hash_mtx);
+	rw_wlock(&coalition_proc_hash_lock);
 	if (coalition_proc_hash_lookup(p) != NULL) {
-		mtx_unlock(&coalition_proc_hash_mtx);
+		rw_wunlock(&coalition_proc_hash_lock);
 		sx_xunlock(&co->co_sx);
-		uma_zfree_smr(coalition_member_zone, cm);
+		uma_zfree(coalition_member_zone, cm);
 		SDT_PROBE3(mac_capability_coalition, , , deny,
 		    "join-busy", EBUSY, p->p_pid);
 		return (EBUSY);
@@ -1807,8 +1139,7 @@ coalition_join(struct coalition *co, struct thread *td)
 	cm->cm_dtype = DTYPE_PROCDESC;
 
 	coalition_proc_hash_insert(cm, p);
-	coalition_racct_join(p, co);
-	mtx_unlock(&coalition_proc_hash_mtx);
+	rw_wunlock(&coalition_proc_hash_lock);
 	TAILQ_INSERT_TAIL(&co->co_members, cm, cm_link);
 
 	atomic_add_int(&co->co_member_count, 1);
@@ -2013,7 +1344,7 @@ coalition_terminate_external_members(struct thread *td, struct file **jail_fps,
  */
 static void
 coalition_terminate_members_locked(struct coalition *co, struct thread *td,
-    bool skip_self, int sig_override, int reason)
+    bool skip_self, int sig_override)
 {
 	struct coalition_member *cm;
 	struct proc *self;
@@ -2023,33 +1354,6 @@ coalition_terminate_members_locked(struct coalition *co, struct thread *td,
 	if (co->co_flags & COF_TERMINATING)
 		return;
 	co->co_flags |= COF_TERMINATING;
-	/*
-	 * Record why before anything is signalled, so the notification a holder
-	 * receives, the probe and any later report all say the same thing.  A
-	 * coalition dies once, for one reason.
-	 */
-	co->co_kill_reason = reason;
-	SDT_PROBE5(mac_capability_coalition, , , coalition__kill, co->co_id,
-	    co->co_responsible_id, (u_int)reason,
-	    racct_read(co->co_racct, RACCT_RSS), coalition_band_effective(co));
-	if (reason != COALITION_KILL_NONE &&
-	    reason != COALITION_KILL_REQUESTED) {
-		coalition_kill_count(reason);
-		/*
-		 * Say it out loud for anything the system decided by itself.
-		 * A holder asking for a termination already knows; a unit
-		 * disappearing because of a policy is the case that needs a
-		 * record an operator can find afterwards.
-		 */
-		log(LOG_WARNING, "mac_capability_coalition: terminating "
-		    "coalition %ju (responsible %ju): %s; %ju KB, band %u, "
-		    "%u members\n", (uintmax_t)co->co_id,
-		    (uintmax_t)co->co_responsible_id,
-		    coalition_kill_reason_name(reason),
-		    (uintmax_t)(racct_read(co->co_racct, RACCT_RSS) / 1024),
-		    coalition_band_effective(co),
-		    atomic_load_int(&co->co_member_count));
-	}
 	coalition_notify_event(co, COALITION_NOTE_TERMINATING);
 
 	/* Clean up leader tracking */
@@ -2086,19 +1390,8 @@ coalition_terminate_members_locked(struct coalition *co, struct thread *td,
 				if (p != NULL) {
 					PROC_LOCK(p);
 					sx_sunlock(&proctree_lock);
-					if (!(skip_self && p == self)) {
-						SDT_PROBE4(
-						    mac_capability_coalition, , ,
-						    member__kill, co->co_id,
-						    co->co_responsible_id,
-						    p->p_pid, sig);
-						if (sig != 0)
-							kern_psignal(p, sig);
-					} else
-						SDT_PROBE2(
-						    mac_capability_coalition, , ,
-						    member__spared, co->co_id,
-						    p->p_pid);
+					if (!(skip_self && p == self) && sig != 0)
+						kern_psignal(p, sig);
 					PROC_UNLOCK(p);
 				} else {
 					sx_sunlock(&proctree_lock);
@@ -2106,22 +1399,12 @@ coalition_terminate_members_locked(struct coalition *co, struct thread *td,
 			} else if (cm->cm_data != NULL) {
 				p = (struct proc *)atomic_load_acq_ptr(
 				    (uintptr_t *)&cm->cm_data);
-				if (skip_self && p == self) {
-					SDT_PROBE2(mac_capability_coalition, , ,
-					    member__spared, co->co_id,
-					    p->p_pid);
+				if (skip_self && p == self)
 					continue;
-				}
-				if (p != NULL) {
-					SDT_PROBE4(mac_capability_coalition, , ,
-					    member__kill, co->co_id,
-					    co->co_responsible_id, p->p_pid,
-					    sig);
-					if (sig != 0) {
-						PROC_LOCK(p);
-						kern_psignal(p, sig);
-						PROC_UNLOCK(p);
-					}
+				if (p != NULL && sig != 0) {
+					PROC_LOCK(p);
+					kern_psignal(p, sig);
+					PROC_UNLOCK(p);
 				}
 			}
 			continue;
@@ -2162,8 +1445,7 @@ coalition_terminate(struct coalition *co)
 	    &jail_count, &mac_capability_cis, &mac_capability_count);
 
 	/* Terminate processes, sockets, shm under lock */
-	coalition_terminate_members_locked(co, td, false, 0,
-	    COALITION_KILL_REQUESTED);
+	coalition_terminate_members_locked(co, td, false, 0);
 	sx_xunlock(&co->co_sx);
 
 	coalition_terminate_external_members(td, jail_fps, jail_count,
@@ -2242,7 +1524,7 @@ coalition_terminate_graceful(struct coalition *co, int sig, u_int timeout_ms)
 		coalition_collect_external_members_locked(co, &jail_fps,
 		    &jail_count, &mac_capability_cis, &mac_capability_count);
 		coalition_terminate_members_locked(co, curthread, false,
-		    force_kill ? SIGKILL : 0, COALITION_KILL_REQUESTED);
+		    force_kill ? SIGKILL : 0);
 		sx_xunlock(&co->co_sx);
 		coalition_terminate_external_members(curthread, jail_fps,
 		    jail_count, mac_capability_cis, mac_capability_count);
@@ -2348,8 +1630,7 @@ coalition_deadline_task_fn(void *context, int pending __unused)
 		coalition_notify_event(co, COALITION_NOTE_DEADLINE_FIRED);
 		coalition_collect_external_members_locked(co, &jail_fps,
 		    &jail_count, &mac_capability_cis, &mac_capability_count);
-		coalition_terminate_members_locked(co, td, false, SIGKILL,
-		    COALITION_KILL_DEADLINE);
+		coalition_terminate_members_locked(co, td, false, SIGKILL);
 		sx_xunlock(&co->co_sx);
 		coalition_terminate_external_members(td, jail_fps, jail_count,
 		    mac_capability_cis, mac_capability_count);
@@ -2378,8 +1659,7 @@ coalition_deadline_task_fn(void *context, int pending __unused)
 		    &jail_count, &mac_capability_cis, &mac_capability_count);
 		sig_override = (co->co_deadline_signal != 0) ?
 		    co->co_deadline_signal : SIGKILL;
-		coalition_terminate_members_locked(co, td, false, sig_override,
-		    COALITION_KILL_DEADLINE);
+		coalition_terminate_members_locked(co, td, false, sig_override);
 		sx_xunlock(&co->co_sx);
 		coalition_terminate_external_members(td, jail_fps, jail_count,
 		    mac_capability_cis, mac_capability_count);
@@ -2425,8 +1705,7 @@ coalition_watchdog_task_fn(void *context, int pending __unused)
 	coalition_notify_event(co, COALITION_NOTE_WATCHDOG_FIRED);
 	coalition_collect_external_members_locked(co, &jail_fps,
 	    &jail_count, &mac_capability_cis, &mac_capability_count);
-	coalition_terminate_members_locked(co, curthread, false, SIGKILL,
-	    COALITION_KILL_WATCHDOG);
+	coalition_terminate_members_locked(co, curthread, false, SIGKILL);
 	sx_xunlock(&co->co_sx);
 	coalition_terminate_external_members(curthread, jail_fps, jail_count,
 	    mac_capability_cis, mac_capability_count);
@@ -2580,30 +1859,10 @@ coalition_process_exit(void *arg __unused, struct proc *p)
 	struct coalition *co;
 	bool was_leader = false;
 
-	mtx_lock(&coalition_proc_hash_mtx);
+	rw_wlock(&coalition_proc_hash_lock);
 	cm = coalition_proc_hash_lookup(p);
 	if (cm == NULL) {
-		mtx_unlock(&coalition_proc_hash_mtx);
-		/*
-		 * Not a member, which does not mean it is not charged
-		 * anywhere: a process inside a jail that a coalition holds is
-		 * accounted without ever being enlisted.
-		 *
-		 * The pointer is deliberately left alone.  This handler runs
-		 * at the top of exit, long before the address space is torn
-		 * down, and it is that teardown which gives the container back
-		 * everything reclaimable; cutting the pointer here would keep
-		 * the charges on the container for good.  racct_proc_exit()
-		 * drops the reference and clears the pointer once the giving
-		 * back is done.
-		 *
-		 * Detaching here used to guard against a container being freed
-		 * under an exiting process.  The container is reference
-		 * counted now -- a process holds one for as long as it points
-		 * at one -- so that cannot happen, and a coalition torn down
-		 * while this process was alive has already taken the pointer
-		 * away itself.
-		 */
+		rw_wunlock(&coalition_proc_hash_lock);
 		return;
 	}
 
@@ -2611,9 +1870,9 @@ coalition_process_exit(void *arg __unused, struct proc *p)
 
 	co = cm->cm_coalition;
 	coalition_ref(co);
-	CK_LIST_REMOVE(cm, cm_hash);
-	cm->cm_hash.cle_prev = NULL;
-	mtx_unlock(&coalition_proc_hash_mtx);
+	LIST_REMOVE(cm, cm_hash);
+	cm->cm_hash.le_prev = NULL;
+	rw_wunlock(&coalition_proc_hash_lock);
 
 	/*
 	 * Re-find the member on the coalition's TAILQ under co_sx.
@@ -2657,7 +1916,7 @@ coalition_process_exit(void *arg __unused, struct proc *p)
 	if (cm != NULL) {
 		if (cm->cm_fp != NULL)
 			fdrop(cm->cm_fp, curthread);
-		uma_zfree_smr(coalition_member_zone, cm);
+		uma_zfree(coalition_member_zone, cm);
 		coalition_rel(co);	/* member's ref */
 	}
 	coalition_rel(co);	/* our local ref */
@@ -2680,30 +1939,17 @@ coalition_process_fork(void *arg __unused, struct proc *parent,
 	 * coalition just enlists it there.  Only an explicit procdesc enlist is
 	 * pinned (EBUSY on a second enlist).
 	 */
-	smr_enter(coalition_smr);
+	rw_rlock(&coalition_proc_hash_lock);
 	pcm = coalition_proc_hash_lookup(parent);
-	if (pcm == NULL || (co = pcm->cm_coalition) == NULL) {
-		smr_exit(coalition_smr);
-		/*
-		 * The parent is in no coalition of its own, but it may be
-		 * inside a jail that one holds, in which case the child is
-		 * too and is charged there.  It does not become a member:
-		 * a jail's processes are accounted, not enlisted.
-		 */
-		coalition_charge_jailed_child(child);
+	if (pcm == NULL) {
+		rw_runlock(&coalition_proc_hash_lock);
 		return;
 	}
-	/*
-	 * The parent's coalition may already be on its way out, in which case
-	 * there is no identity left to inherit.
-	 */
-	if (!refcount_acquire_if_not_zero(&co->co_refcount)) {
-		smr_exit(coalition_smr);
-		return;
-	}
-	smr_exit(coalition_smr);
+	co = pcm->cm_coalition;
+	coalition_ref(co);
+	rw_runlock(&coalition_proc_hash_lock);
 
-	ccm = uma_zalloc_smr(coalition_member_zone, M_WAITOK | M_ZERO);
+	ccm = uma_zalloc(coalition_member_zone, M_WAITOK | M_ZERO);
 
 	/*
 	 * Lock order: co_sx → hash_lock.
@@ -2712,7 +1958,7 @@ coalition_process_fork(void *arg __unused, struct proc *parent,
 
 	if (co->co_flags & (COF_TERMINATING | COF_GRACE_ACTIVE)) {
 		sx_xunlock(&co->co_sx);
-		uma_zfree_smr(coalition_member_zone, ccm);
+		uma_zfree(coalition_member_zone, ccm);
 		coalition_rel(co);
 		return;
 	}
@@ -2720,7 +1966,7 @@ coalition_process_fork(void *arg __unused, struct proc *parent,
 	/* Enforce member limits — refuse fork inheritance if exceeded */
 	if (coalition_check_limits() != 0) {
 		sx_xunlock(&co->co_sx);
-		uma_zfree_smr(coalition_member_zone, ccm);
+		uma_zfree(coalition_member_zone, ccm);
 		coalition_rel(co);
 		SDT_PROBE3(mac_capability_coalition, , , deny, (uintptr_t)"fork-limit",
 		    ENOMEM, child->p_pid);
@@ -2734,9 +1980,9 @@ coalition_process_fork(void *arg __unused, struct proc *parent,
 	ccm->cm_coalition = co;
 	ccm->cm_dtype = DTYPE_PROCDESC;
 
-	mtx_lock(&coalition_proc_hash_mtx);
+	rw_wlock(&coalition_proc_hash_lock);
 	coalition_proc_hash_insert(ccm, child);
-	mtx_unlock(&coalition_proc_hash_mtx);
+	rw_wunlock(&coalition_proc_hash_lock);
 	TAILQ_INSERT_TAIL(&co->co_members, ccm, cm_link);
 
 	atomic_add_int(&co->co_member_count, 1);
@@ -2824,8 +2070,7 @@ coalition_close_internal(struct coalition *co, struct thread *td)
 		coalition_rel(co);
 	}
 
-	coalition_terminate_members_locked(co, td, true, co->co_signal,
-	    COALITION_KILL_NONE);
+	coalition_terminate_members_locked(co, td, true, co->co_signal);
 	sx_xunlock(&co->co_sx);
 
 	/*
@@ -2851,32 +2096,10 @@ coalition_close_internal(struct coalition *co, struct thread *td)
 		cm->cm_link.tqe_prev = NULL;	/* sentinel for exit handler */
 
 		if (cm->cm_dtype == DTYPE_PROCDESC) {
-			/*
-			 * Every member leaves the same way, whether it is
-			 * being released (signal zero) or killed: everything
-			 * reclaimable goes back to the container, and the CPU
-			 * it spent stays there because the framework does not
-			 * take a non-reclaimable resource back out.  A
-			 * released member therefore takes its usage with it
-			 * and leaves its CPU behind, which is what a process
-			 * changing uid does too.
-			 */
-			if (cm->cm_data != NULL)
-				coalition_racct_leave((struct proc *)cm->cm_data,
-				    co);
-			mtx_lock(&coalition_proc_hash_mtx);
-			if (cm->cm_hash.cle_prev != NULL) {
-				CK_LIST_REMOVE(cm, cm_hash);
-				/*
-				 * Clear the sentinel as well: removing the
-				 * same node twice would write through a stale
-				 * back pointer and corrupt the bucket, and a
-				 * reader walking it lock-free has no lock to
-				 * protect it from that.
-				 */
-				cm->cm_hash.cle_prev = NULL;
-			}
-			mtx_unlock(&coalition_proc_hash_mtx);
+			rw_wlock(&coalition_proc_hash_lock);
+			if (cm->cm_hash.le_prev != NULL)
+				LIST_REMOVE(cm, cm_hash);
+			rw_wunlock(&coalition_proc_hash_lock);
 		}
 
 		if (cm->cm_dtype == DTYPE_JAILDESC) {
@@ -2922,7 +2145,7 @@ coalition_close_internal(struct coalition *co, struct thread *td)
 		if (cm->cm_fp != NULL)
 			fdrop(cm->cm_fp, td);
 
-		uma_zfree_smr(coalition_member_zone, cm);
+		uma_zfree(coalition_member_zone, cm);
 		coalition_rel(co);
 		cm = next;
 	}
@@ -2960,7 +2183,6 @@ coalition_close_internal(struct coalition *co, struct thread *td)
 			if (cm->cm_data != NULL) {
 				pr = cm->cm_data;
 				cm->cm_data = NULL;
-				atomic_subtract_int(&coalition_held_jails, 1);
 				prison_free(pr);
 			}
 
@@ -2970,7 +2192,7 @@ coalition_close_internal(struct coalition *co, struct thread *td)
 		if (cm->cm_fp != NULL)
 			fdrop(cm->cm_fp, td);
 
-		uma_zfree_smr(coalition_member_zone, cm);
+		uma_zfree(coalition_member_zone, cm);
 		coalition_rel(co);
 		cm = next;
 	}
@@ -2996,17 +2218,17 @@ coalition_rehome_inherited(struct proc *p)
 	struct coalition_member *cm;
 	struct coalition *old;
 
-	mtx_lock(&coalition_proc_hash_mtx);
+	rw_wlock(&coalition_proc_hash_lock);
 	cm = coalition_proc_hash_lookup(p);
 	if (cm == NULL || cm->cm_fp != NULL) {
-		mtx_unlock(&coalition_proc_hash_mtx);
+		rw_wunlock(&coalition_proc_hash_lock);
 		return;
 	}
 	old = cm->cm_coalition;
 	coalition_ref(old);
-	CK_LIST_REMOVE(cm, cm_hash);
-	cm->cm_hash.cle_prev = NULL;
-	mtx_unlock(&coalition_proc_hash_mtx);
+	LIST_REMOVE(cm, cm_hash);
+	cm->cm_hash.le_prev = NULL;
+	rw_wunlock(&coalition_proc_hash_lock);
 
 	cm = NULL;
 	sx_xlock(&old->co_sx);
@@ -3028,1149 +2250,10 @@ coalition_rehome_inherited(struct proc *p)
 	}
 	sx_xunlock(&old->co_sx);
 	if (cm != NULL) {
-		SDT_PROBE3(mac_capability_coalition, , , rehome, p->p_pid,
-		    old->co_id, (uint64_t)0);
-		uma_zfree_smr(coalition_member_zone, cm);
+		uma_zfree(coalition_member_zone, cm);
 		coalition_rel(old);	/* the member's reference */
 	}
 	coalition_rel(old);
-}
-
-/* ----------------------------------------------------------------
- * Resource ledger
- * ---------------------------------------------------------------- */
-
-/*
- * Sum the footprint of this coalition's process members and publish it.
- *
- * Walking members and reading each process is far too heavy for the page
- * daemon, so the walk happens here -- on a taskqueue under pressure, or in
- * a caller's own thread on request -- and the result is published with
- * atomics for a policy pass to read cheaply.  Nested coalitions are not
- * summed: each is ranked on its own footprint, which is what a kill walk
- * wants, since terminating a parent takes its children with it anyway.
- *
- * Caller holds co_sx (shared is enough; the published values are atomics).
- */
-/* ----------------------------------------------------------------
- * Bands
- * ---------------------------------------------------------------- */
-
-/*
- * The effective band: the highest band with a live assertion, or the floor if
- * there are none.  Lock-free and non-sleeping by construction -- a memory
- * pressure pass ranks every coalition through this function, from a context
- * where it can take nothing.
- */
-static u_int
-coalition_band_effective(struct coalition *co)
-{
-	int b;
-
-	for (b = COALITION_BAND_COUNT - 1; b > 0; b--) {
-		if (atomic_load_int(&co->co_band_assert[b]) != 0)
-			break;
-	}
-	return (MAX((u_int)b, atomic_load_int(&co->co_band_floor)));
-}
-
-static void
-coalition_band_fill_reply(struct coalition *co, struct coalition_band_reply *br,
-    u_int asserted)
-{
-	int b;
-
-	memset(br, 0, sizeof(*br));
-	br->id = co->co_id;
-	br->floor = atomic_load_int(&co->co_band_floor);
-	br->effective = coalition_band_effective(co);
-	br->asserted = asserted;
-	for (b = 0; b < COALITION_BAND_COUNT; b++)
-		br->nassert[b] = atomic_load_int(&co->co_band_assert[b]);
-}
-
-/*
- * Recompute whether the coalition counts as idle, and when it started being so.
- *
- * Idle here means two things and only two: somebody declared this work able to
- * come back, and nothing holds an assertion on it.  Taking an assertion resets
- * the clock, so work that is used again is not put away for having been quiet
- * before.  Lock-free: this runs from the assertion paths, which are themselves
- * lock-free.
- */
-static void
-coalition_idle_update(struct coalition *co)
-{
-	bool idle;
-
-	idle = (atomic_load_int(&co->co_idle_flags) &
-	    COALITION_IDLE_EXIT_ENABLE) != 0 &&
-	    atomic_load_int(&co->co_band_nassert) == 0;
-	if (!idle)
-		atomic_store_64((volatile uint64_t *)&co->co_idle_since, 0);
-	else if (atomic_load_64((volatile uint64_t *)&co->co_idle_since) == 0)
-		atomic_store_64((volatile uint64_t *)&co->co_idle_since,
-		    (uint64_t)getsbinuptime());
-}
-
-/*
- * Has this coalition been idle long enough to be put away?
- */
-static bool
-coalition_idle_expired(struct coalition *co, sbintime_t now)
-{
-	sbintime_t since;
-	u_int age;
-
-	if (coalition_idle_exit == 0)
-		return (false);
-	if ((atomic_load_int(&co->co_idle_flags) &
-	    COALITION_IDLE_EXIT_ENABLE) == 0)
-		return (false);
-	if (atomic_load_int(&co->co_band_nassert) != 0)
-		return (false);
-	since = (sbintime_t)atomic_load_64(
-	    (volatile uint64_t *)&co->co_idle_since);
-	if (since == 0)
-		return (false);
-	age = atomic_load_int(&co->co_idle_min_age_ms);
-	if (age == 0)
-		age = coalition_idle_min_age_ms;
-	return (now - since >= (sbintime_t)age * SBT_1MS);
-}
-
-/*
- * An assertion: a descriptor that holds a coalition at a band for as long as
- * it is open.  It pins the coalition structure but holds no authority over it.
- */
-struct coalition_assert {
-	struct coalition	*ca_co;
-	u_int			ca_band;
-	pid_t			ca_pid;		/* who took it */
-	sbintime_t		ca_time;	/* when */
-	LIST_ENTRY(coalition_assert)	ca_link;
-};
-
-static struct mac_capability_service *coalition_assert_svc;
-
-static void
-coalition_assert_drop(struct coalition_assert *ca)
-{
-	struct coalition *co = ca->ca_co;
-	u_int eff;
-
-	mtx_lock(&co->co_assert_mtx);
-	LIST_REMOVE(ca, ca_link);
-	mtx_unlock(&co->co_assert_mtx);
-	atomic_subtract_int(&co->co_band_assert[ca->ca_band], 1);
-	atomic_subtract_int(&co->co_band_nassert, 1);
-	coalition_idle_update(co);
-	eff = coalition_band_effective(co);
-	SDT_PROBE4(mac_capability_coalition, , , band__release, co->co_id,
-	    ca->ca_band, eff, curthread->td_proc->p_pid);
-	free(ca, M_COALITION);
-	coalition_rel(co);
-}
-
-/*
- * Mint an assertion on co at band.  On success the caller's reply carries the
- * new descriptor; the count is raised before the descriptor exists so the band
- * can never dip between the two.
- */
-static int
-coalition_band_assert(struct coalition *co, u_int band, struct file **fpp)
-{
-	struct coalition_assert *ca;
-	struct file *fp;
-	u_int max;
-	int error;
-
-	if (band >= COALITION_BAND_COUNT)
-		return (EINVAL);
-
-	/*
-	 * Soft limit, like the coalition and member caps above: concurrent
-	 * requests can overshoot by the number of racing threads, which is
-	 * acceptable for resource control and avoids a global lock on a path
-	 * that is otherwise lock-free.
-	 */
-	max = coalition_max_assertions;
-	if (max != 0 && atomic_load_int(&co->co_band_nassert) >= max)
-		return (EAGAIN);
-
-	ca = malloc(sizeof(*ca), M_COALITION, M_WAITOK | M_ZERO);
-	ca->ca_band = band;
-	ca->ca_co = co;
-	ca->ca_pid = curthread->td_proc->p_pid;
-	ca->ca_time = getsbinuptime();
-	coalition_ref(co);
-	mtx_lock(&co->co_assert_mtx);
-	LIST_INSERT_HEAD(&co->co_asserts, ca, ca_link);
-	mtx_unlock(&co->co_assert_mtx);
-	atomic_add_int(&co->co_band_assert[band], 1);
-	atomic_add_int(&co->co_band_nassert, 1);
-	coalition_idle_update(co);
-
-	error = mac_capability_mint_fp(coalition_assert_svc, 0, &fp);
-	if (error != 0) {
-		coalition_assert_drop(ca);
-		return (error);
-	}
-	mac_capability_instance_set_priv(fp->f_data, ca);
-	SDT_PROBE4(mac_capability_coalition, , , band__assert, co->co_id, band,
-	    coalition_band_effective(co), curthread->td_proc->p_pid);
-	*fpp = fp;
-	return (0);
-}
-
-/*
- * An assertion is not connectable: the only way to get one is to hold the
- * coalition it applies to and ask for it.
- */
-static int
-coalition_assert_connect(struct ucred *cred __unused, void *arg __unused,
-    uint64_t *badgep __unused)
-{
-
-	return (EPERM);
-}
-
-static void
-coalition_assert_revoke(struct mac_capability_instance *s,
-    uint64_t badge __unused, enum mac_capability_revoke_reason reason __unused,
-    void *arg __unused)
-{
-	struct coalition_assert *ca;
-
-	ca = mac_capability_instance_get_priv(s);
-	if (ca == NULL)
-		return;
-	mac_capability_instance_set_priv(s, NULL);
-	coalition_assert_drop(ca);
-}
-
-/*
- * The only operation an assertion answers: what it asserts, and what the
- * coalition's band is now.  Deliberately no way back to the coalition's
- * membership or controls.
- */
-static int
-coalition_assert_call(struct mac_capability_instance *s,
-    const void *req, size_t reqlen,
-    struct file **fds __unused, struct filecaps *fcaps __unused,
-    int nfds __unused, void *reply, size_t *replylenp,
-    struct file **reply_fds __unused, int *reply_nfdsp __unused,
-    void *arg __unused)
-{
-	const struct coalition_req_hdr *hdr;
-	struct coalition_assert *ca;
-	struct coalition_band_reply *br;
-
-	ca = mac_capability_instance_get_priv(s);
-	if (ca == NULL)
-		return (EBADF);
-	if (reqlen < sizeof(*hdr))
-		return (EINVAL);
-	hdr = req;
-	if (hdr->op != COALITION_OP_BAND)
-		return (EOPNOTSUPP);
-	/*
-	 * Read-only.  An assertion must refuse a request to change the band
-	 * rather than quietly answer as though it had done nothing: a caller
-	 * that asks an assertion to set a floor has the wrong descriptor, and
-	 * silently succeeding would hide that.
-	 */
-	if (reqlen >= sizeof(struct coalition_band_req)) {
-		const struct coalition_band_req *bq = req;
-
-		if (bq->flags != 0)
-			return (EPERM);
-	}
-	if (*replylenp < sizeof(*br)) {
-		*replylenp = sizeof(*br);
-		return (EMSGSIZE);
-	}
-	br = reply;
-	*replylenp = sizeof(*br);
-	coalition_band_fill_reply(ca->ca_co, br, ca->ca_band);
-	return (0);
-}
-
-static const struct mac_capability_ops coalition_assert_ops = {
-	.co_connect	= coalition_assert_connect,
-	.co_call	= coalition_assert_call,
-	.co_revoke	= coalition_assert_revoke,
-};
-
-/*
- * Act on a coalition's declared ceilings, if it has any.  Called with co_sx
- * held EXCLUSIVE: a breach notifies, and delivering a notification requires
- * the exclusive lock.  Every figure it judges comes from the container, so it
- * walks nothing and costs the same whatever a coalition's size.
- *
- * Returns true if the coalition should be terminated for the breach.  The
- * caller does the terminating, because that needs co_sx exclusive and this is
- * reached from paths that hold it shared.
- *
- * A coalition that comes back under the ceiling is rearmed, so a unit that
- * drifts over and recovers is told once per excursion rather than once per
- * sample.
- */
-/*
- * The accounting framework's name for a resource.  rctl already keeps the
- * table an operator sees in rctl(8) rules; using it means one set of names on
- * the machine rather than a second set that can drift from the first.
- */
-static const char *
-coalition_resource_name(int resource)
-{
-
-#ifdef RCTL
-	return (rctl_resource_name(resource));
-#else
-	return ("resource");
-#endif
-}
-
-/*
- * One bit of co_limit_over per accounting resource.
- */
-CTASSERT(RACCT_MAX < 32);
-
-/*
- * Say that one ceiling has been crossed, in the units the accounting framework
- * keeps that resource in and under the framework's own name for it.
- */
-static void
-coalition_report_breach(struct coalition *co, int resource, uint64_t used,
-    uint64_t limit, u_int flags)
-{
-	bool millions = RACCT_IS_IN_MILLIONS(resource);
-
-	SDT_PROBE6(mac_capability_coalition, , , limit__breach, co->co_id,
-	    co->co_responsible_id, used, limit,
-	    (flags & COALITION_LIMIT_KILL) != 0 ? 1 : 0,
-	    resource == RACCT_PCTCPU ? COALITION_LIMIT_KIND_CPU :
-	    COALITION_LIMIT_KIND_BYTES);
-	log(LOG_WARNING, "mac_capability_coalition: coalition %ju "
-	    "(responsible %ju) is over its %s ceiling: %ju of %ju%s\n",
-	    (uintmax_t)co->co_id, (uintmax_t)co->co_responsible_id,
-	    coalition_resource_name(resource),
-	    (uintmax_t)(millions ? used / 1000000 : used),
-	    (uintmax_t)(millions ? limit / 1000000 : limit),
-	    (flags & COALITION_LIMIT_KILL) != 0 ? "; terminating it" : "");
-}
-
-static int
-coalition_limit_check_locked(struct coalition *co)
-{
-	uint64_t limit, used;
-	uint32_t over = 0, was, bit;
-	u_int flags;
-	int i, first = -1;
-
-	sx_assert(&co->co_sx, SA_XLOCKED);
-	flags = atomic_load_int(&co->co_limit_flags);
-	was = atomic_load_32(&co->co_limit_over);
-
-	/*
-	 * Every ceiling is judged the same way: read the counter the
-	 * accounting framework keeps for this container and compare.  Nothing
-	 * here measures anything, walks anything, or knows what a resource
-	 * means -- address space is charged at the mapping path, resident
-	 * memory is refreshed by the page daemon's pass, and RACCT_PCTCPU is a
-	 * decaying rate the framework maintains and clamps to the number of
-	 * processors.  CPU spent by members that have since left is still in
-	 * there, because CPU is neither reclaimable nor decaying and so is
-	 * never taken back out of a container.
-	 *
-	 * Every ceiling is examined, not just until one is found to be over.
-	 * Each one that has newly gone over is reported on its own, because
-	 * "this unit is also out of file descriptors" is a different fact from
-	 * the memory breach that may already have been announced.  The reason
-	 * returned is still a single answer -- the lowest resource over -- as
-	 * a death has one reason.
-	 */
-	for (i = 0; i <= RACCT_MAX; i++) {
-		limit = atomic_load_64(&co->co_limits[i]);
-		if (limit == 0)
-			continue;
-		used = racct_read(co->co_racct, i);
-		if (used <= limit)
-			continue;
-		bit = (uint32_t)1 << i;
-		over |= bit;
-		if (first < 0)
-			first = i;
-		if ((was & bit) == 0)
-			coalition_report_breach(co, i, used, limit, flags);
-	}
-	atomic_store_32(&co->co_limit_over, over);
-	if (first < 0)
-		return (COALITION_KILL_NONE);
-	/* One notification per excursion, however many ceilings it crossed. */
-	if ((was & over) != over)
-		coalition_notify_event(co, COALITION_NOTE_LIMIT);
-	if ((flags & COALITION_LIMIT_KILL) == 0)
-		return (COALITION_KILL_NONE);
-	return (first == RACCT_PCTCPU ? COALITION_KILL_OVER_CPU :
-	    COALITION_KILL_OVER_CEILING);
-}
-
-/* ----------------------------------------------------------------
- * Memory pressure
- * ---------------------------------------------------------------- */
-
-/*
- * Tell every coalition that the system is short of memory, so a unit can
- * drop caches before the kernel starts killing.  Runs on a taskqueue, not
- * in the page daemon: notification takes co_sx and may sleep, and the page
- * daemon must not wait on a service's queue.
- *
- * A coalition that is terminating, closing, or has no live instance is
- * skipped.  Delivery is best effort by construction: mac_capability_notify()
- * drops the message if the instance's queue is full, which is the right
- * answer under memory pressure.
- */
-/* ----------------------------------------------------------------
- * Handing a coalition down under memory pressure
- * ---------------------------------------------------------------- */
-
-#define	COALITION_PRESS_MAX	8
-
-struct coalition_press_target {
-	struct coalition	*pt_co;		/* reference held */
-	u_int			pt_band;
-	uint64_t		pt_rss;
-};
-
-/*
- * At most this many of a held jail's processes are handed down per jail per
- * pass.  It bounds the stack this takes and the time allproc_lock is held; the
- * pressure pass repeats, so nothing is permanently missed.
- */
-#define	COALITION_PRESS_JAIL_BATCH	32
-
-/* Held jails handed down per coalition per pass. */
-#define	COALITION_PRESS_MAX_JAILS	4
-
-/*
- * Hand down the processes inside a jail this coalition holds.
- *
- * They are charged to the coalition and were counted when it was ranked, so
- * leaving them out would mean choosing a coalition because of its jail and
- * then not relieving it.  Descendant jails are included: a process in a jail
- * nested inside this one is inside this one too.
- *
- * The address spaces are collected first and advised afterwards.
- * vm_map_madvise() sleeps, and the process lists must not be walked with
- * allproc_lock held across a sleep -- that would stall every fork and exit on
- * the machine while the pager is being asked to do work.
- */
-static u_int
-coalition_press_down_jail(struct prison *pr)
-{
-	struct vmspace *vms[COALITION_PRESS_JAIL_BATCH];
-	struct prison *cpr;
-	struct proc *p;
-	vm_map_t map;
-	u_int n = 0, pressed = 0, i;
-	int descend;
-
-	sx_slock(&allproc_lock);
-	sx_slock(&allprison_lock);
-	LIST_FOREACH(p, &pr->pr_proclist, p_jaillist) {
-		if (n >= nitems(vms))
-			break;
-		PROC_LOCK(p);
-		if (p->p_state != PRS_NORMAL || (p->p_flag & P_WEXIT) != 0) {
-			PROC_UNLOCK(p);
-			continue;
-		}
-		vms[n] = vmspace_acquire_ref(p);
-		PROC_UNLOCK(p);
-		if (vms[n] != NULL)
-			n++;
-	}
-	FOREACH_PRISON_DESCENDANT(pr, cpr, descend) {
-		if (n >= nitems(vms))
-			break;
-		LIST_FOREACH(p, &cpr->pr_proclist, p_jaillist) {
-			if (n >= nitems(vms))
-				break;
-			PROC_LOCK(p);
-			if (p->p_state != PRS_NORMAL ||
-			    (p->p_flag & P_WEXIT) != 0) {
-				PROC_UNLOCK(p);
-				continue;
-			}
-			vms[n] = vmspace_acquire_ref(p);
-			PROC_UNLOCK(p);
-			if (vms[n] != NULL)
-				n++;
-		}
-	}
-	sx_sunlock(&allprison_lock);
-	sx_sunlock(&allproc_lock);
-
-	for (i = 0; i < n; i++) {
-		map = &vms[i]->vm_map;
-		if (vm_map_madvise(map, vm_map_min(map), vm_map_max(map),
-		    MADV_DONTNEED) == 0)
-			pressed++;
-		vmspace_free(vms[i]);
-	}
-	return (pressed);
-}
-
-/*
- * Advise every process member's address space reclaimable.  MADV_DONTNEED
- * keeps dirty data -- the page is dirtied first if the pmap says it was
- * modified -- and only clears references and moves pages to the front of the
- * inactive queue, so the pager takes memory from here before anywhere else.
- * The coalition keeps running throughout and faults back whatever it still
- * needs.
- *
- * Caller holds a reference on co.  Takes co_sx shared; the map advice sleeps,
- * which is why the pressure pass has a thread of its own.
- */
-static u_int
-coalition_press_down(struct coalition *co)
-{
-	struct coalition_member *cm;
-	struct prison *jails[COALITION_PRESS_MAX_JAILS];
-	struct proc *p;
-	struct vmspace *vm;
-	vm_map_t map;
-	u_int pressed = 0, njails = 0, i;
-
-	sx_slock(&co->co_sx);
-	if ((co->co_flags & (COF_TERMINATING | COF_CLOSING)) != 0) {
-		sx_sunlock(&co->co_sx);
-		return (0);
-	}
-	TAILQ_FOREACH(cm, &co->co_members, cm_link) {
-		if (cm->cm_dtype != DTYPE_PROCDESC)
-			continue;
-		p = NULL;
-		if (cm->cm_fp != NULL) {
-			struct procdesc *pd = cm->cm_fp->f_data;
-
-			if (pd == NULL)
-				continue;
-			sx_slock(&proctree_lock);
-			p = pd->pd_proc;
-			if (p != NULL)
-				PROC_LOCK(p);
-			sx_sunlock(&proctree_lock);
-		} else if (cm->cm_data != NULL) {
-			p = (struct proc *)atomic_load_acq_ptr(
-			    (uintptr_t *)&cm->cm_data);
-			if (p != NULL)
-				PROC_LOCK(p);
-		}
-		if (p == NULL)
-			continue;
-		if (p->p_state == PRS_ZOMBIE || (p->p_flag & P_WEXIT) != 0) {
-			PROC_UNLOCK(p);
-			continue;
-		}
-		vm = vmspace_acquire_ref(p);
-		PROC_UNLOCK(p);
-		if (vm == NULL)
-			continue;
-		map = &vm->vm_map;
-		if (vm_map_madvise(map, vm_map_min(map), vm_map_max(map),
-		    MADV_DONTNEED) == 0)
-			pressed++;
-		vmspace_free(vm);
-	}
-	/*
-	 * Then the jails this coalition holds, so what is relieved matches
-	 * what it was ranked on.
-	 *
-	 * The prisons are taken here and worked on after co_sx is dropped.
-	 * Walking a prison's process list needs allproc_lock, and taking that
-	 * under co_sx would invent a lock order that exists nowhere else in
-	 * this module -- everything else goes allproc first.  Holding a
-	 * reference on each prison is enough to work on it afterwards.
-	 */
-	TAILQ_FOREACH(cm, &co->co_members, cm_link) {
-		if (njails >= nitems(jails))
-			break;
-		if (cm->cm_dtype != DTYPE_JAILDESC || cm->cm_data == NULL)
-			continue;
-		jails[njails] = (struct prison *)cm->cm_data;
-		prison_hold(jails[njails]);
-		njails++;
-	}
-	sx_sunlock(&co->co_sx);
-
-	for (i = 0; i < njails; i++) {
-		pressed += coalition_press_down_jail(jails[i]);
-		prison_free(jails[i]);
-	}
-	return (pressed);
-}
-
-/*
- * Is this coalition one the system should hand down, and is it due?  Called
- * with only atomic loads, so it costs nothing to ask about every coalition.
- */
-static bool
-coalition_press_eligible(struct coalition *co, sbintime_t now, u_int *bandp,
-    uint64_t *rssp)
-{
-	sbintime_t last;
-	uint64_t rss;
-	u_int band, interval;
-
-	if (coalition_pressure_reclaim == 0)
-		return (false);
-	band = coalition_band_effective(co);
-	if (band > coalition_pressure_band_ceiling)
-		return (false);
-	/*
-	 * From the container, for the same reason the victim ranking reads it:
-	 * it is the only figure that includes a held jail's processes, which
-	 * are charged to the coalition without being members of it.
-	 */
-	rss = racct_read(co->co_racct, RACCT_RSS);
-	if (rss < (uint64_t)coalition_pressure_min_kb * 1024)
-		return (false);
-	interval = coalition_pressure_interval_ms;
-	last = (sbintime_t)atomic_load_64(
-	    (volatile uint64_t *)&co->co_press_time);
-	if (last != 0 && interval != 0 &&
-	    now - last < (sbintime_t)interval * SBT_1MS)
-		return (false);
-	*bandp = band;
-	*rssp = rss;
-	return (true);
-}
-
-/*
- * Keep the best candidates seen so far: lowest band first, and within a band
- * the largest footprint, since that is where handing down frees the most for
- * the least disruption.  The array owns a reference on everything it holds.
- */
-static void
-coalition_press_offer(struct coalition_press_target *t, u_int max, u_int *nt,
-    struct coalition *co, u_int band, uint64_t rss)
-{
-	u_int i, worst;
-
-	if (max > COALITION_PRESS_MAX)
-		max = COALITION_PRESS_MAX;
-	if (max == 0)
-		return;
-	if (*nt < max) {
-		coalition_ref(co);
-		t[*nt].pt_co = co;
-		t[*nt].pt_band = band;
-		t[*nt].pt_rss = rss;
-		(*nt)++;
-		return;
-	}
-	/* Find the least deserving entry and displace it if we are better. */
-	worst = 0;
-	for (i = 1; i < *nt; i++) {
-		if (t[i].pt_band > t[worst].pt_band ||
-		    (t[i].pt_band == t[worst].pt_band &&
-		    t[i].pt_rss < t[worst].pt_rss))
-			worst = i;
-	}
-	if (band > t[worst].pt_band ||
-	    (band == t[worst].pt_band && rss <= t[worst].pt_rss))
-		return;
-	coalition_rel(t[worst].pt_co);
-	coalition_ref(co);
-	t[worst].pt_co = co;
-	t[worst].pt_band = band;
-	t[worst].pt_rss = rss;
-}
-
-/*
- * The out-of-memory victim policy.
- *
- * Every figure comes from the coalition's accounting container, which is the
- * only place that knows the whole of what a coalition is holding: a coalition
- * may hold a jail, and a jail's processes are charged to it without being
- * members of it.  Walking the member list instead, as this once did, counted
- * process members only -- so a unit that did its work inside a jail it held
- * looked empty and was never chosen, which is the wrong answer in exactly the
- * case the ceilings were extended to cover.
- *
- * Reading counters also costs no lock that can block, which matters more here
- * than anywhere else: this runs in the page daemon, and a page daemon that
- * waits is a page daemon waiting on itself.  The figure is as fresh as the
- * page daemon's own last pass, which is the cadence this decision is made at
- * anyway.
- *
- * Returns true if a coalition was terminated.
- */
-static bool
-coalition_oom_policy(int shortage __unused)
-{
-	struct coalition_press_target cand[COALITION_PRESS_MAX];
-	struct coalition *co, *victim;
-	uint64_t rss, best_rss;
-	u_int band, ncand = 0, i, best, members;
-
-	if (coalition_oom_kill == 0)
-		return (false);
-
-	/* Collect eligible coalitions, lock-free, with a reference on each. */
-	smr_enter(coalition_smr);
-	CK_LIST_FOREACH(co, &coalition_list, co_all_link) {
-		if (ncand >= nitems(cand))
-			break;
-		if (coalition_band_effective(co) > coalition_oom_band_ceiling)
-			continue;
-		if (!refcount_acquire_if_not_zero(&co->co_refcount))
-			continue;
-		cand[ncand].pt_co = co;
-		cand[ncand].pt_band = 0;
-		cand[ncand].pt_rss = 0;
-		ncand++;
-	}
-	smr_exit(coalition_smr);
-
-	/* Rank them.  No lock is taken: the band and the counter answer alone. */
-	best = ncand;
-	best_rss = 0;
-	for (i = 0; i < ncand; i++) {
-		co = cand[i].pt_co;
-		band = coalition_band_effective(co);
-		rss = racct_read(co->co_racct, RACCT_RSS);
-		cand[i].pt_band = band;
-		cand[i].pt_rss = rss;
-		if (rss == 0 || band > coalition_oom_band_ceiling)
-			continue;
-		if (best == ncand || band < cand[best].pt_band ||
-		    (band == cand[best].pt_band && rss > best_rss)) {
-			best = i;
-			best_rss = rss;
-		}
-	}
-
-	victim = best < ncand ? cand[best].pt_co : NULL;
-	if (victim != NULL) {
-		coalition_ref(victim);
-		members = atomic_load_int(&victim->co_member_count);
-		SDT_PROBE5(mac_capability_coalition, , , oom__kill,
-		    victim->co_id, victim->co_responsible_id,
-		    cand[best].pt_band, cand[best].pt_rss, members);
-		/*
-		 * Say this out loud.  Processes are about to disappear and the
-		 * only honest thing is to leave a record of which coalition was
-		 * given up, on whose behalf it was running, and why it was the
-		 * one chosen.
-		 */
-		log(LOG_WARNING, "mac_capability_coalition: out of memory: "
-		    "terminating coalition %ju (responsible %ju, band %u, "
-		    "%ju KB, %u members)\n", (uintmax_t)victim->co_id,
-		    (uintmax_t)victim->co_responsible_id, cand[best].pt_band,
-		    (uintmax_t)(cand[best].pt_rss / 1024), members);
-	} else
-		SDT_PROBE1(mac_capability_coalition, , , oom__decline,
-		    (uint32_t)atomic_load_int(&coalition_count));
-
-	for (i = 0; i < ncand; i++)
-		coalition_rel(cand[i].pt_co);
-
-	if (victim == NULL)
-		return (false);
-
-	/*
-	 * Terminate with SIGKILL regardless of the coalition's configured
-	 * signal: the system needs the memory now, and a coalition that was
-	 * set up to be released without a signal must still be reclaimable.
-	 */
-	if (sx_try_xlock(&victim->co_sx) == 0) {
-		/*
-		 * Busy, and this is the page daemon: decline rather than wait.
-		 * The stock largest-process choice then runs, so the machine
-		 * still recovers.
-		 */
-		SDT_PROBE1(mac_capability_coalition, , , oom__decline,
-		    (uint32_t)atomic_load_int(&coalition_count));
-		coalition_rel(victim);
-		return (false);
-	}
-	coalition_terminate_members_locked(victim, curthread, false, SIGKILL,
-	    COALITION_KILL_SYSTEM_MEMORY);
-	sx_xunlock(&victim->co_sx);
-	coalition_notify_responsible(victim, COALITION_KILL_SYSTEM_MEMORY);
-	coalition_rel(victim);
-	return (true);
-}
-
-/*
- * The periodic sweep.  Samples every coalition, acts on any that is over the
- * ceiling declared for it, and puts away any that has been idle long enough.
- *
- * Deliberately does not notify and does not hand anything down: those belong to
- * memory pressure, which is a different question.  This is about promises a
- * coalition made about itself being kept whether or not the machine is busy.
- */
-/*
- * The coalition that answers for this one: its responsible parent, or itself.
- */
-static struct coalition *
-coalition_responsible_or_self(struct coalition *co)
-{
-
-	return (co->co_responsible != NULL ? co->co_responsible : co);
-}
-
-/*
- * Would putting this coalition away be worth doing?
- *
- * Idle exit is only a good deal if the work stays away until somebody wants it.
- * A unit the launcher restarts immediately comes straight back, so putting it
- * away costs two context switches and achieves nothing, and doing that in a
- * loop is worse than leaving it resident.  Eligibility is declared precisely so
- * that such units are not marked, but a wrong declaration should degrade rather
- * than spin, so the same work coming back repeatedly stops being taken.
- *
- * "The same work" across relaunches is the responsible party: the coalition is
- * a new object every launch, the party that caused it is not.
- */
-static bool
-coalition_idle_exit_worthwhile(struct coalition *co, sbintime_t now)
-{
-	struct coalition *owner = coalition_responsible_or_self(co);
-	sbintime_t window;
-	u_int max, n;
-
-	max = coalition_idle_max_per_min;
-	if (max == 0)
-		return (true);
-	window = (sbintime_t)atomic_load_64(
-	    (volatile uint64_t *)&owner->co_idle_window);
-	if (window == 0 || now - window >= 60 * SBT_1S) {
-		atomic_store_64((volatile uint64_t *)&owner->co_idle_window,
-		    (uint64_t)now);
-		atomic_store_int(&owner->co_idle_exits, 0);
-		return (true);
-	}
-	n = atomic_load_int(&owner->co_idle_exits);
-	if (n < max)
-		return (true);
-	if (n == max) {
-		/* Say it once, when the decision changes. */
-		atomic_add_int(&owner->co_idle_exits, 1);
-		log(LOG_NOTICE, "mac_capability_coalition: no longer putting "
-		    "coalition %ju's work away: %u came back within a minute\n",
-		    (uintmax_t)owner->co_id, n);
-	}
-	return (false);
-}
-
-/*
- * Tell the party responsible for a coalition that it was terminated by a
- * policy, so it can relaunch, back off, or report.  Called with no coalition
- * lock held: the lock order is parent before child, and the caller has just
- * finished with the child.
- */
-static void
-coalition_notify_responsible(struct coalition *co, int reason)
-{
-	struct coalition_event_msg ev;
-	struct coalition *owner;
-	uint64_t child_id = co->co_id;
-
-	if (co->co_responsible == NULL)
-		return;
-	owner = co->co_responsible;
-	if (!refcount_acquire_if_not_zero(&owner->co_refcount))
-		return;
-	/*
-	 * Tried, not waited for.  One caller is the out-of-memory policy
-	 * running in the page daemon, where waiting on a lock that is held
-	 * across an allocation would be a deadlock.  Telling the responsible
-	 * party is best effort in any case -- mac_capability_notify() already
-	 * drops the message if the holder's queue is full.
-	 */
-	if (sx_try_xlock(&owner->co_sx) == 0) {
-		coalition_rel(owner);
-		return;
-	}
-	if (owner->co_instance != NULL) {
-		ev.flags = COALITION_NOTE_CHILD_KILLED;
-		ev.reason = (uint32_t)reason;
-		ev.subject_id = child_id;
-		(void)mac_capability_notify(owner->co_instance, &ev,
-		    sizeof(ev), NULL, NULL, 0);
-	}
-	sx_xunlock(&owner->co_sx);
-	coalition_rel(owner);
-}
-
-/*
- * Put a process into, or take it out of, the coalition's resource container.
- *
- * Everything it has already accounted for moves with it, which is what the
- * framework does when a process changes uid or jail, and is the right answer
- * for the same reason: the container answers what this coalition is using, and
- * memory a process brings with it is memory the coalition is using.
- *
- * The process lock is what the framework wants here, and the caller may or may
- * not already hold it, so this takes it when needed.
- */
-/*
- * Take a process out of its coalition's container.
- *
- * Leaving always gives everything back, whatever the reason.  The alternative
- * -- detaching and letting the container keep the charges -- looked cheaper and
- * was wrong: a process exits long before the accounting framework tears its
- * container down, so a coalition can be freed while an exiting member still
- * points at it, and that member's own accounting then writes to a container
- * that has gone.  Subtracting on the way out makes the container hold only what
- * its current members hold, which is an invariant that cannot race.
- *
- * "Everything" is the framework's definition of it, and that definition is
- * what makes a departed member's CPU stay behind with no help from here: CPU
- * is neither reclaimable nor decaying, so racct_sub_racct() does not touch it.
- * Keeping a second tally of departed CPU, as this once did, counted it twice.
- */
-static void
-coalition_racct_leave(struct proc *p, struct coalition *co)
-{
-
-	if (p == NULL || co == NULL)
-		return;
-	SDT_PROBE3(mac_capability_coalition, , , racct__leave, co->co_id,
-	    p->p_pid, racct_read(p->p_racct, RACCT_CPU));
-	coalition_racct_join(p, NULL);
-}
-
-static void
-coalition_racct_join(struct proc *p, struct coalition *co)
-{
-	bool locked;
-
-	if (p == NULL)
-		return;
-	locked = PROC_LOCKED(p);
-	if (!locked)
-		PROC_LOCK(p);
-	if (co != NULL) {
-		SDT_PROBE2(mac_capability_coalition, , , racct__join,
-		    co->co_id, p->p_pid);
-	}
-	racct_proc_join_coalition(p, co != NULL ? co->co_racct : NULL);
-	if (!locked)
-		PROC_UNLOCK(p);
-}
-
-static void
-coalition_sweep_task_fn(void *ctx __unused, int pending __unused)
-{
-	struct coalition *co, *next;
-	sbintime_t now = getsbinuptime();
-	unsigned overlimit = 0, idled = 0;
-	int reason;
-
-	smr_enter(coalition_smr);
-	CK_LIST_FOREACH(co, &coalition_list, co_all_link) {
-		if (refcount_acquire_if_not_zero(&co->co_refcount))
-			break;
-	}
-	smr_exit(coalition_smr);
-
-	while (co != NULL) {
-		reason = COALITION_KILL_NONE;
-		sx_xlock(&co->co_sx);
-		if ((co->co_flags & (COF_TERMINATING | COF_CLOSING)) == 0) {
-			/*
-			 * The sweep is the one regular cadence this module
-			 * has, so it is what drives the decaying CPU rate the
-			 * accounting framework keeps.  Refreshing here and
-			 * reading everywhere else leaves the rate with a
-			 * single owner and a single interval.
-			 */
-			racct_updatepcpu(co->co_racct);
-			reason = coalition_limit_check_locked(co);
-			if (reason == COALITION_KILL_NONE &&
-			    coalition_idle_expired(co, now) &&
-			    coalition_idle_exit_worthwhile(co, now))
-				reason = COALITION_KILL_IDLE;
-			if (reason != COALITION_KILL_NONE)
-				coalition_terminate_members_locked(co,
-				    curthread, false, SIGKILL, reason);
-		}
-		sx_xunlock(&co->co_sx);
-		if (reason == COALITION_KILL_OVER_CEILING ||
-		    reason == COALITION_KILL_OVER_CPU)
-			overlimit++;
-		else if (reason == COALITION_KILL_IDLE) {
-			struct coalition *owner =
-			    coalition_responsible_or_self(co);
-
-			atomic_add_int(&owner->co_idle_exits, 1);
-			idled++;
-		}
-		/*
-		 * Told after the child's lock is dropped: the lock order is
-		 * parent before child, so the parent cannot be notified while
-		 * the child is still held.
-		 */
-		if (reason != COALITION_KILL_NONE)
-			coalition_notify_responsible(co, reason);
-
-		smr_enter(coalition_smr);
-		for (next = CK_LIST_NEXT(co, co_all_link); next != NULL;
-		    next = CK_LIST_NEXT(next, co_all_link)) {
-			if (refcount_acquire_if_not_zero(&next->co_refcount))
-				break;
-		}
-		smr_exit(coalition_smr);
-		coalition_rel(co);
-		co = next;
-	}
-
-	if (overlimit != 0 || idled != 0)
-		log(LOG_INFO, "mac_capability_coalition: sweep: %u over "
-		    "ceiling, %u put away idle\n", overlimit, idled);
-}
-
-static void
-coalition_sweep_callout_fn(void *ctx __unused)
-{
-	u_int interval;
-
-	if (coalition_sweep_enable != 0)
-		taskqueue_enqueue(coalition_pressure_tq,
-		    &coalition_sweep_task);
-	interval = coalition_sweep_interval_ms;
-	if (interval < 1000)
-		interval = 1000;
-	callout_reset_sbt(&coalition_sweep_callout,
-	    (sbintime_t)interval * SBT_1MS, SBT_1S, coalition_sweep_callout_fn,
-	    NULL, C_PREL(1));
-}
-
-static void
-coalition_pressure_task_fn(void *ctx __unused, int pending __unused)
-{
-	struct coalition_press_target targets[COALITION_PRESS_MAX];
-	struct coalition *co, *next;
-	sbintime_t now = getsbinuptime();
-	unsigned notified = 0, handed = 0, limited = 0;
-	u_int band, ntargets = 0, i;
-	uint64_t rss;
-	int overreason;
-
-	/*
-	 * Enumerate lock-free.  A reference is taken on each coalition inside
-	 * the SMR section and held across the sleeping work, so the successor
-	 * link can be re-read afterwards even if this coalition has since
-	 * been unlinked: SMR keeps the memory, the reference keeps the object.
-	 * A coalition whose refcount already reached zero is skipped -- it is
-	 * on its way out and has nothing to free on our behalf.
-	 */
-	smr_enter(coalition_smr);
-	CK_LIST_FOREACH(co, &coalition_list, co_all_link) {
-		if (refcount_acquire_if_not_zero(&co->co_refcount))
-			break;
-	}
-	smr_exit(coalition_smr);
-
-	while (co != NULL) {
-		sx_xlock(&co->co_sx);
-		if ((co->co_flags & (COF_TERMINATING | COF_CLOSING)) == 0 &&
-		    co->co_instance != NULL) {
-			coalition_notify_event(co, COALITION_NOTE_PRESSURE);
-			notified++;
-			SDT_PROBE3(mac_capability_coalition, , ,
-			    pressure__notify, co->co_id,
-			    atomic_load_int(&co->co_member_count), 0);
-		} else
-			SDT_PROBE3(mac_capability_coalition, , ,
-			    pressure__notify, co->co_id, 0U, ESHUTDOWN);
-		overreason = coalition_limit_check_locked(co);
-		sx_xunlock(&co->co_sx);
-
-		/*
-		 * A coalition over the ceiling declared for it is terminated
-		 * here whatever its band: it is over budget, and the band only
-		 * decides what to give up first among coalitions that are not.
-		 */
-		if (overreason != COALITION_KILL_NONE) {
-			sx_xlock(&co->co_sx);
-			coalition_terminate_members_locked(co, curthread,
-			    false, SIGKILL, overreason);
-			sx_xunlock(&co->co_sx);
-			limited++;
-		}
-
-		/*
-		 * The sample is fresh now, so decide whether this is one of the
-		 * coalitions to hand down.  The choice is made across the whole
-		 * walk rather than greedily, so a big background coalition
-		 * found late still wins over a small one found early.
-		 */
-		if (coalition_press_eligible(co, now, &band, &rss))
-			coalition_press_offer(targets,
-			    coalition_pressure_max_targets, &ntargets, co,
-			    band, rss);
-
-		smr_enter(coalition_smr);
-		for (next = CK_LIST_NEXT(co, co_all_link); next != NULL;
-		    next = CK_LIST_NEXT(next, co_all_link)) {
-			if (refcount_acquire_if_not_zero(&next->co_refcount))
-				break;
-		}
-		smr_exit(coalition_smr);
-
-		/*
-		 * Release outside the section: the last reference frees the
-		 * coalition, and a deferred free must not be issued from
-		 * inside a read section of its own SMR context.
-		 */
-		coalition_rel(co);
-		co = next;
-	}
-
-	/*
-	 * Hand the chosen ones down, outside the enumeration: advising an
-	 * address space takes the map lock and sleeps, and doing it here keeps
-	 * that off the walk entirely.
-	 */
-	for (i = 0; i < ntargets; i++) {
-		u_int pressed = coalition_press_down(targets[i].pt_co);
-
-		if (pressed != 0) {
-			atomic_store_64((volatile uint64_t *)
-			    &targets[i].pt_co->co_press_time, (uint64_t)now);
-			atomic_add_int(&coalition_pressure_reclaims, 1);
-			handed++;
-			SDT_PROBE4(mac_capability_coalition, , ,
-			    pressure__reclaim, targets[i].pt_co->co_id,
-			    targets[i].pt_band, targets[i].pt_rss, pressed);
-		}
-		coalition_rel(targets[i].pt_co);
-	}
-
-	SDT_PROBE2(mac_capability_coalition, , , pressure,
-	    (uint32_t)atomic_load_int(&coalition_count), notified);
-	if (handed != 0 || limited != 0)
-		log(LOG_INFO, "mac_capability_coalition: memory pressure: "
-		    "handed down %u coalition%s, terminated %u over ceiling\n",
-		    handed, handed == 1 ? "" : "s", limited);
-}
-
-/*
- * The kernel's low-memory event.  Runs in the page daemon (or whoever
- * triggered the reclaim), so it does nothing but schedule the pass.
- */
-static void
-coalition_lowmem(void *arg __unused, int flags __unused)
-{
-
-	taskqueue_enqueue(coalition_pressure_tq, &coalition_pressure_task);
 }
 
 /* ----------------------------------------------------------------
@@ -4205,18 +2288,15 @@ coalition_of_proc_ref(struct proc *p, struct coalition **cop)
 {
 	struct coalition_member *cm;
 
-	smr_enter(coalition_smr);
+	rw_rlock(&coalition_proc_hash_lock);
 	cm = coalition_proc_hash_lookup(p);
-	if (cm == NULL || cm->cm_coalition == NULL) {
-		smr_exit(coalition_smr);
+	if (cm == NULL) {
+		rw_runlock(&coalition_proc_hash_lock);
 		return (ESRCH);
 	}
 	*cop = cm->cm_coalition;
-	if (!refcount_acquire_if_not_zero(&(*cop)->co_refcount)) {
-		smr_exit(coalition_smr);
-		return (ESRCH);
-	}
-	smr_exit(coalition_smr);
+	coalition_ref(*cop);
+	rw_runlock(&coalition_proc_hash_lock);
 	return (0);
 }
 
@@ -4311,36 +2391,19 @@ coalition_proc_info(struct proc *p, struct mac_capability_proc_coalition *out)
 	struct coalition_member *cm;
 	struct coalition *co;
 
-	/*
-	 * Lock-free.  This runs under PROC_LOCK for every process on every
-	 * kinfo_proc fill and every audit event, so it takes no lock at all:
-	 * the SMR section keeps the member, its coalition, and the responsible
-	 * chain allocated while we copy out of them.  Everything read here is
-	 * either immutable after creation or published with an atomic store,
-	 * and nothing here sleeps or takes co_sx.
-	 *
-	 * A coalition that is being torn down concurrently may still be
-	 * reported for one more sample.  That is what a snapshot means; the
-	 * ids are permanent, so a stale id is never a wrong id.
-	 */
-	smr_enter(coalition_smr);
+	rw_rlock(&coalition_proc_hash_lock);
 	cm = coalition_proc_hash_lookup(p);
 	if (cm == NULL) {
-		smr_exit(coalition_smr);
+		rw_runlock(&coalition_proc_hash_lock);
 		return (false);
 	}
 	co = cm->cm_coalition;
-	if (co == NULL) {
-		smr_exit(coalition_smr);
-		return (false);
-	}
 	out->id = co->co_id;
 	out->responsible_id = co->co_responsible_id;
 	out->leader_pid = (atomic_load_int(&co->co_flags) & COF_HAS_LEADER) != 0 ?
 	    co->co_leader_pid : 0;
 	out->responsible_leader_pid = coalition_responsible_leader_pid(co);
-	out->band = coalition_band_effective(co);
-	smr_exit(coalition_smr);
+	rw_runlock(&coalition_proc_hash_lock);
 	return (true);
 }
 
@@ -4349,6 +2412,7 @@ coalition_proc_info(struct proc *p, struct mac_capability_proc_coalition *out)
  * ---------------------------------------------------------------- */
 
 static volatile uint64_t coalition_next_badge = 1;
+static volatile uint64_t coalition_next_id = 1;	/* 0 is never issued */
 
 static int
 coalition_connect(struct ucred *cred __unused, void *arg __unused,
@@ -4373,10 +2437,11 @@ coalition_init(struct mac_capability_instance *s, void *arg __unused)
 
 	co = coalition_alloc();
 	co->co_instance = s;
+	co->co_id = atomic_fetchadd_64(&coalition_next_id, 1);
 	mac_capability_instance_set_priv(s, co);
 
-	SDT_PROBE2(mac_capability_coalition, , , create,
-	    co->co_id, mac_capability_instance_get_badge(s));
+	SDT_PROBE1(mac_capability_coalition, , , create,
+	    mac_capability_instance_get_badge(s));
 	return (0);
 }
 
@@ -4385,7 +2450,7 @@ coalition_call(struct mac_capability_instance *s,
     const void *req, size_t reqlen,
     struct file **fds, struct filecaps *fcaps, int nfds,
     void *reply, size_t *replylenp,
-    struct file **reply_fds, int *reply_nfdsp,
+    struct file **reply_fds __unused, int *reply_nfdsp __unused,
     void *arg __unused)
 {
 	struct coalition *co;
@@ -4890,250 +2955,6 @@ coalition_call(struct mac_capability_instance *s,
 		break;
 	}
 
-	case COALITION_OP_SET_LIMIT:
-	{
-		const struct coalition_limit_req *lq;
-		uint32_t cpu_pct;
-
-		if (reqlen < COALITION_LIMIT_REQ_V1_LEN) {
-			rpl->status = EINVAL;
-			break;
-		}
-		lq = req;
-		/*
-		 * Every ceiling is judged from the coalition's container, so on
-		 * a kernel booted without resource accounting there is nothing
-		 * to judge and nothing would ever enforce a figure set here.
-		 * Say so rather than accept one and silently never act on it.
-		 * kern.racct.enable is read-only after boot, so this answer
-		 * cannot go stale.
-		 */
-		if (!racct_enable) {
-			rpl->status = EOPNOTSUPP;
-			break;
-		}
-		/* An older caller offers no CPU ceiling, which means none. */
-		cpu_pct = reqlen >= sizeof(*lq) ? lq->cpu_percent : 0;
-		if ((lq->flags & ~COALITION_LIMIT_KILL) != 0) {
-			rpl->status = EINVAL;
-			break;
-		}
-		/*
-		 * Published with atomics, and the breach flag is rearmed, so a
-		 * ceiling raised above the current footprint takes effect at
-		 * once rather than leaving the coalition marked over.
-		 */
-		atomic_store_int(&co->co_limit_flags, lq->flags);
-		/*
-		 * The three figures the wire carries today, placed in the
-		 * framework's own resource slots.  A CPU percentage becomes
-		 * RACCT_PCTCPU, which is kept in millionths like every other
-		 * IN_MILLIONS resource.
-		 */
-		atomic_store_64(&co->co_limits[RACCT_RSS], lq->memory_bytes);
-		atomic_store_64(&co->co_limits[RACCT_VMEM], lq->vmem_bytes);
-		atomic_store_64(&co->co_limits[RACCT_PCTCPU],
-		    (uint64_t)cpu_pct * 1000000);
-		atomic_store_32(&co->co_limit_over, 0);
-		break;
-	}
-
-	case COALITION_OP_ASSERTIONS:
-	{
-		struct coalition_assertions_reply *ar;
-		struct coalition_assert *ca;
-		sbintime_t now = getsbinuptime();
-		size_t room;
-		u_int n = 0;
-
-		if (reply_avail < sizeof(*ar)) {
-			*replylenp = sizeof(*ar);
-			error = EMSGSIZE;
-			goto out;
-		}
-		ar = reply;
-		memset(ar, 0, sizeof(*ar));
-		room = (reply_avail - sizeof(*ar)) / sizeof(ar->held[0]);
-		mtx_lock(&co->co_assert_mtx);
-		LIST_FOREACH(ca, &co->co_asserts, ca_link) {
-			ar->live++;
-			if (n >= room)
-				continue;
-			ar->held[n].band = ca->ca_band;
-			ar->held[n].pid = ca->ca_pid;
-			ar->held[n].age_ms = now > ca->ca_time ?
-			    (uint64_t)((now - ca->ca_time) / SBT_1MS) : 0;
-			n++;
-		}
-		mtx_unlock(&co->co_assert_mtx);
-		ar->returned = n;
-		/*
-		 * live is the true count whether or not they all fitted, so a
-		 * caller with a small buffer still learns that it is being
-		 * shown only part of the answer.
-		 */
-		*replylenp = sizeof(*ar) + n * sizeof(ar->held[0]);
-		break;
-	}
-
-	case COALITION_OP_SET_IDLE_EXIT:
-	{
-		const struct coalition_idle_req *iq;
-
-		if (reqlen < sizeof(*iq)) {
-			rpl->status = EINVAL;
-			break;
-		}
-		iq = req;
-		if ((iq->flags & ~COALITION_IDLE_EXIT_ENABLE) != 0) {
-			rpl->status = EINVAL;
-			break;
-		}
-		atomic_store_int(&co->co_idle_min_age_ms, iq->min_age_ms);
-		atomic_store_int(&co->co_idle_flags, iq->flags);
-		/* Start or stop the clock to match what was just declared. */
-		coalition_idle_update(co);
-		break;
-	}
-
-	case COALITION_OP_BAND:
-	{
-		const struct coalition_band_req *bq;
-		struct coalition_band_reply *br;
-
-		if (reqlen < sizeof(*bq)) {
-			rpl->status = EINVAL;
-			break;
-		}
-		bq = req;
-		if ((bq->flags & ~COALITION_BAND_SET_FLOOR) != 0) {
-			rpl->status = EINVAL;
-			break;
-		}
-		if (reply_avail < sizeof(*br)) {
-			*replylenp = sizeof(*br);
-			error = EMSGSIZE;
-			goto out;
-		}
-		if ((bq->flags & COALITION_BAND_SET_FLOOR) != 0) {
-			if (bq->floor >= COALITION_BAND_COUNT) {
-				rpl->status = EINVAL;
-				break;
-			}
-			atomic_store_int(&co->co_band_floor, bq->floor);
-			SDT_PROBE3(mac_capability_coalition, , , band__floor,
-			    co->co_id, bq->floor,
-			    coalition_band_effective(co));
-		}
-		br = reply;
-		*replylenp = sizeof(*br);
-		coalition_band_fill_reply(co, br,
-		    atomic_load_int(&co->co_band_floor));
-		break;
-	}
-
-	case COALITION_OP_ASSERT:
-	{
-		const struct coalition_band_req *bq;
-		struct coalition_band_reply *br;
-		struct file *afp;
-
-		if (reqlen < sizeof(*bq)) {
-			rpl->status = EINVAL;
-			break;
-		}
-		bq = req;
-		if (bq->flags != 0 || bq->band >= COALITION_BAND_COUNT) {
-			rpl->status = EINVAL;
-			break;
-		}
-		if (reply_avail < sizeof(*br)) {
-			*replylenp = sizeof(*br);
-			error = EMSGSIZE;
-			goto out;
-		}
-		if (reply_nfdsp == NULL || *reply_nfdsp < 1) {
-			rpl->status = EINVAL;
-			break;
-		}
-		rpl->status = coalition_band_assert(co, bq->band, &afp);
-		if (rpl->status != 0)
-			break;
-		br = reply;
-		*replylenp = sizeof(*br);
-		coalition_band_fill_reply(co, br, bq->band);
-		reply_fds[0] = afp;
-		*reply_nfdsp = 1;
-		break;
-	}
-
-	case COALITION_OP_LEDGER:
-	{
-		struct coalition_ledger_reply *lr;
-		const struct coalition_ledger_req *lq;
-
-		if (reqlen < sizeof(*lq)) {
-			rpl->status = EINVAL;
-			break;
-		}
-		lq = req;
-		if ((lq->flags & ~COALITION_LEDGER_REFRESH) != 0) {
-			rpl->status = EINVAL;
-			break;
-		}
-		if (reply_avail < sizeof(*lr)) {
-			*replylenp = sizeof(*lr);
-			error = EMSGSIZE;
-			goto out;
-		}
-		lr = reply;
-		*replylenp = sizeof(*lr);
-		memset(lr, 0, sizeof(*lr));
-
-		if ((lq->flags & COALITION_LEDGER_REFRESH) != 0) {
-			int over;
-
-			/*
-			 * Nothing to refresh any more -- the figures are
-			 * maintained by the accounting framework -- so what
-			 * this asks for now is that the ceilings be judged at
-			 * once rather than at the next sweep.  Exclusive, not
-			 * shared: a breach notifies, and that needs the
-			 * exclusive lock.
-			 */
-			sx_xlock(&co->co_sx);
-			over = coalition_limit_check_locked(co);
-			sx_xunlock(&co->co_sx);
-			if (over != COALITION_KILL_NONE) {
-				sx_xlock(&co->co_sx);
-				coalition_terminate_members_locked(co,
-				    curthread, false, SIGKILL, over);
-				sx_xunlock(&co->co_sx);
-				/*
-				 * Same event, same reason, so the party
-				 * responsible hears about it whichever code
-				 * noticed the breach.  Told after the lock is
-				 * dropped: the order is parent before child.
-				 */
-				coalition_notify_responsible(co, over);
-			}
-		}
-		/*
-		 * Every figure comes from the container.  There is no walk of
-		 * the member list and nothing to go stale, so age_ms is zero:
-		 * the field is kept because it is part of the reply, and zero
-		 * is the truthful answer for a figure that is maintained
-		 * rather than sampled.
-		 */
-		lr->id = co->co_id;
-		lr->rss_bytes = racct_read(co->co_racct, RACCT_RSS);
-		lr->vsz_bytes = racct_read(co->co_racct, RACCT_VMEM);
-		lr->nprocs = (uint32_t)racct_read(co->co_racct, RACCT_NPROC);
-		lr->nthreads = (uint32_t)racct_read(co->co_racct, RACCT_NTHR);
-		lr->age_ms = 0;
-		break;
-	}
-
 	case COALITION_OP_RUSAGE:
 	{
 		struct coalition_rusage_reply *rr;
@@ -5229,7 +3050,6 @@ coalition_handler(struct mac_capability_instance *s, const struct mac_capability
 		struct coalition_enlist_set_reply cesr;
 		struct coalition_stat_reply csr;
 		struct coalition_rusage_reply crr;
-		struct coalition_ledger_reply clr;
 	} reply;
 	const struct coalition_req_hdr *hdr;
 	const void *req;
@@ -5322,30 +3142,10 @@ coalition_mod_init(void)
 	    sizeof(struct coalition_member), NULL, NULL, NULL, NULL,
 	    UMA_ALIGN_PTR, 0);
 
-	/*
-	 * Both zones share one SMR context: a reader holding a member may
-	 * follow cm_coalition and the responsible chain, so all of that
-	 * memory has to stay valid for the same read section.
-	 */
-	coalition_smr = smr_create("mac_capability_coalition", 0, 0);
-	uma_zone_set_smr(coalition_zone, coalition_smr);
-	uma_zone_set_smr(coalition_member_zone, coalition_smr);
-
-	mtx_init(&coalition_proc_hash_mtx, "coalition_proc_hash", NULL,
-	    MTX_DEF);
-	mtx_init(&coalition_list_mtx, "coalition_list", NULL, MTX_DEF);
+	rw_init(&coalition_proc_hash_lock, "coalition_proc_hash");
 	sx_init(&coalition_nest_lock, "coalition_nest");
-	TASK_INIT(&coalition_pressure_task, 0, coalition_pressure_task_fn,
-	    NULL);
-	coalition_pressure_tq = taskqueue_create("coalition_pressure",
-	    M_WAITOK, taskqueue_thread_enqueue, &coalition_pressure_tq);
-	(void)taskqueue_start_threads(&coalition_pressure_tq, 1, PWAIT,
-	    "coalition pressure");
-	TASK_INIT(&coalition_sweep_task, 0, coalition_sweep_task_fn, NULL);
-	callout_init(&coalition_sweep_callout, 1);
-	coalition_sweep_callout_fn(NULL);
 	for (i = 0; i < COALITION_PROC_HASH_SIZE; i++)
-		CK_LIST_INIT(&coalition_proc_hash[i]);
+		LIST_INIT(&coalition_proc_hash[i]);
 
 	coalition_jail_osd_slot = osd_jail_register(
 	    coalition_jail_osd_dtor, NULL);
@@ -5368,16 +3168,6 @@ coalition_mod_init(void)
 		goto fail_exit;
 	}
 
-	/*
-	 * Memory pressure: tell units to shrink before the kernel kills
-	 * anything.  Advisory, so a registration failure is not fatal.
-	 */
-	coalition_lowmem_tag = EVENTHANDLER_REGISTER(vm_lowmem,
-	    coalition_lowmem, NULL, EVENTHANDLER_PRI_ANY);
-	if (coalition_lowmem_tag == NULL)
-		log(LOG_NOTICE, "mac_capability_coalition: no low-memory "
-		    "notification\n");
-
 	memset(&p, 0, sizeof(p));
 	p.name = "coalition";
 	p.ops = &coalition_ops;
@@ -5388,33 +3178,7 @@ coalition_mod_init(void)
 	if (error != 0)
 		goto fail_svc;
 
-	/*
-	 * Assertions are a separate service so that an assertion descriptor
-	 * is a different kind of object from a coalition descriptor and can
-	 * never be mistaken for one.  Mintable, but not connectable: the only
-	 * way to obtain one is to already hold the coalition.
-	 */
-	memset(&p, 0, sizeof(p));
-	p.name = "coalition_assert";
-	p.ops = &coalition_assert_ops;
-	p.flags = MAC_CAPABILITY_SVC_MINTABLE;
-	/*
-	 * Assertions are meant to be ordinary: a client handing a provider the
-	 * right to keep its work alive for the duration of a call takes one
-	 * every time.  The default instance budget is sized for services with a
-	 * handful of endpoints and would run out across a few dozen coalitions,
-	 * so give this one room.  The per-coalition cap above is what stops a
-	 * single holder from taking it all.
-	 */
-	p.instance_limit = 4096;
-	error = mac_capability_service_create(&p, &coalition_assert_svc);
-	if (error != 0) {
-		mac_capability_service_destroy(coalition_svc);
-		goto fail_svc;
-	}
-
 	mac_capability_proc_coalition_hook_set(coalition_proc_info);
-	vm_pageout_oom_policy_set(coalition_oom_policy);
 	log(LOG_INFO, "mac_capability_coalition: loaded\n");
 	return (0);
 
@@ -5425,16 +3189,10 @@ fail_exit:
 fail_fork:
 	osd_jail_deregister(coalition_jail_osd_slot);
 fail_osd:
-	if (coalition_pressure_tq != NULL) {
-		taskqueue_free(coalition_pressure_tq);
-		coalition_pressure_tq = NULL;
-	}
 	sx_destroy(&coalition_nest_lock);
-	mtx_destroy(&coalition_list_mtx);
-	mtx_destroy(&coalition_proc_hash_mtx);
+	rw_destroy(&coalition_proc_hash_lock);
 	uma_zdestroy(coalition_member_zone);
 	uma_zdestroy(coalition_zone);
-	smr_destroy(coalition_smr);
 	return (error);
 }
 
@@ -5455,27 +3213,15 @@ coalition_modevent(module_t mod __unused, int type, void *arg __unused)
 			return (EBUSY);
 		}
 
-		vm_pageout_oom_policy_set(NULL);
 		mac_capability_proc_coalition_hook_set(NULL);
-		if (coalition_lowmem_tag != NULL)
-			EVENTHANDLER_DEREGISTER(vm_lowmem,
-			    coalition_lowmem_tag);
-		callout_drain(&coalition_sweep_callout);
-		taskqueue_drain(coalition_pressure_tq, &coalition_sweep_task);
-		taskqueue_drain(coalition_pressure_tq, &coalition_pressure_task);
-		taskqueue_free(coalition_pressure_tq);
-		coalition_pressure_tq = NULL;
-		mac_capability_service_destroy(coalition_assert_svc);
 		mac_capability_service_destroy(coalition_svc);
 		EVENTHANDLER_DEREGISTER(process_exit, coalition_exit_tag);
 		EVENTHANDLER_DEREGISTER(process_fork, coalition_fork_tag);
 		osd_jail_deregister(coalition_jail_osd_slot);
 		sx_destroy(&coalition_nest_lock);
-		mtx_destroy(&coalition_proc_hash_mtx);
-		mtx_destroy(&coalition_list_mtx);
+		rw_destroy(&coalition_proc_hash_lock);
 		uma_zdestroy(coalition_member_zone);
 		uma_zdestroy(coalition_zone);
-		smr_destroy(coalition_smr);
 
 		log(LOG_INFO, "mac_capability_coalition: unloaded\n");
 		return (0);

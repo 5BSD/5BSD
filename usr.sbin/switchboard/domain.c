@@ -279,60 +279,10 @@ lookup_channel_find(uintptr_t ident)
 	return (NULL);
 }
 
-/*
- * A login session has ended: stop the units that exist on its behalf.
- *
- * "Responsible to this session" is exactly the set of units the session
- * caused to be launched, so ending the session withdraws them.  A unit that
- * must outlive a login is not a session's doing: it is boot-activated, or a
- * shared provider that answers for itself, and neither is touched here.
- * Stops are graceful (the unit's own stop timeout applies); units already
- * stopping or stopped are left alone.
- */
-static void
-session_units_stop(uint64_t coalition_id, uid_t uid, int kq)
-{
-	unsigned i;
-
-	if (coalition_id == 0 || sd.services == NULL)
-		return;
-	for (i = 0; i < sd.nservices; i++) {
-		struct svc_runtime *svc = &sd.services[i];
-
-		if (svc->responsible.kind != SVC_RESP_SESSION ||
-		    svc->responsible.parent_id != coalition_id)
-			continue;
-		if (svc->state != SVC_STATE_RUNNING &&
-		    svc->state != SVC_STATE_STARTING)
-			continue;
-		syslog(LOG_INFO, "domain: session uid=%u ended; stopping %s",
-		    (unsigned)uid, svc->manifest.label);
-		SWITCHBOARD_PROBE_SESSION_END(svc->manifest.label,
-		    (unsigned)uid);
-		svc_graceful_stop(svc, kq);
-	}
-}
-
-/* Is any other live channel still part of this session? */
-static bool
-session_has_other_channel(uint64_t coalition_id)
-{
-	struct svc_lookup_channel *lc;
-
-	if (coalition_id == 0)
-		return (false);
-	for (lc = lookup_channels; lc != NULL; lc = lc->next)
-		if (lc->coalition_id == coalition_id)
-			return (true);
-	return (false);
-}
-
 static void
 lookup_channel_close(struct svc_lookup_channel *lc)
 {
 	struct svc_lookup_channel **pp;
-	uint64_t coalition_id;
-	uid_t uid;
 
 	/*
 	 * Drop any on-demand lookups still parked on this channel before the
@@ -346,13 +296,6 @@ lookup_channel_close(struct svc_lookup_channel *lc)
 			break;
 		}
 	}
-	/*
-	 * Unlinked above, so the scan below sees only the channels that
-	 * remain.  A session's private per-process channels share its
-	 * coalition, so the session ends when the last of them is gone.
-	 */
-	coalition_id = lc->coalition_id;
-	uid = lc->domain.uid;
 	if (lc->channel != NULL)
 		channel_destroy(lc->channel);
 	else if (lc->fd >= 0)
@@ -360,8 +303,6 @@ lookup_channel_close(struct svc_lookup_channel *lc)
 	if (lc->coalition_fd >= 0)
 		(void)close(lc->coalition_fd);
 	free(lc);
-	if (!session_has_other_channel(coalition_id))
-		session_units_stop(coalition_id, uid, switchboard_kq);
 }
 
 int
@@ -399,8 +340,6 @@ session_coalition_create(struct svc_lookup_channel *lc)
 		return;
 	fd = mac_cap_create_coalition();
 	if (fd == -1) {
-		SWITCHBOARD_PROBE_SESSION_COALITION((unsigned)lc->domain.uid,
-		    (uint64_t)0, errno);
 		syslog(LOG_NOTICE, "domain: no session coalition for uid %u: %m",
 		    (unsigned)lc->domain.uid);
 		return;
@@ -412,15 +351,12 @@ session_coalition_create(struct svc_lookup_channel *lc)
 	    mac_cap_coalition_stat(fd, &sr) != 0) {
 		error = errno;
 		(void)close(fd);
-		SWITCHBOARD_PROBE_SESSION_COALITION((unsigned)lc->domain.uid,
-		    (uint64_t)0, error);
 		syslog(LOG_NOTICE, "domain: session coalition for uid %u: %s",
 		    (unsigned)lc->domain.uid, strerror(error));
 		return;
 	}
 	lc->coalition_fd = fd;
 	lc->coalition_id = sr.id;
-	SWITCHBOARD_PROBE_SESSION_COALITION((unsigned)lc->domain.uid, sr.id, 0);
 	syslog(LOG_INFO, "domain: session coalition %ju for uid %u",
 	    (uintmax_t)sr.id, (unsigned)lc->domain.uid);
 }

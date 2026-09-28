@@ -394,7 +394,6 @@ struct kinfo_proc32 {
 	char	ki_moretdname[MAXCOMLEN-TDNAMLEN+1];
 	char	ki_sparestrings[34];
 	int	ki_spareints[KI_NSPARE_INT];
-	int	ki_coalition_band;
 	pid_t	ki_rpid;
 	pid_t	ki_reaper;
 	pid_t	ki_reapsubtree;

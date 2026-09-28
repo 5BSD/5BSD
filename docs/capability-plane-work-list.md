@@ -33,129 +33,12 @@ login session's coalition (by design, EBUSY on join).
 2. **Sealed launch record over envfd** (Plan 9 `/env` lineage; Darwin audit
    token) — **next**. See "envfd" below. Gives every unit an attested
    self-description, and retires the environment strings.
-3. **Coalition ledgers and pressure bands** (XNU coalitions) — **partly
-   done**. Done: a cached footprint sample per coalition
-   (`COALITION_OP_LEDGER`, refreshed under pressure and on request, read with
-   atomics so a policy needs no lock), and bands with assertion descriptors
-   (`COALITION_OP_BAND`, `COALITION_OP_ASSERT`). A band has a floor the
-   launcher derives from the management class — CORE is critical, everything
-   else maps its declared scheduling band — and assertions raise it: an
-   assertion is a descriptor, so it is transferable, revocable, and released
-   by the kernel when its holder dies, which is the RunningBoard model
-   (item I2) without a daemon reconciling a table. Computing the effective
-   band takes no lock, so the kill walk can run where it cannot wait.
-   The pass runs on its own taskqueue thread: it walks every coalition, and
-   sharing a thread with the per-coalition lifecycle tasks let a walk stall an
-   unrelated coalition's teardown, since every close drains those tasks.
-   The pressure pass now acts, not just notifies: it ranks coalitions by band
-   and footprint and **hands down** the low bands, advising their members'
-   address spaces `MADV_DONTNEED` so their pages go to the front of the
-   reclaim queue with nothing discarded and nothing terminated. On by default,
-   ceiling at the background band so CORE is never touched, four coalitions per
-   pass, ten seconds between repeats, 8 MB floor, all sysctl-tunable, with a
-   `pressure-reclaim` probe and a counter.
-   And the kill walk itself, which is what XNU actually does: a victim policy
-   hook at the top of `vm_pageout_oom()` picks the lowest band first and the
-   largest footprint within a band, and terminates the whole coalition, so a
-   unit and its helpers go together. The stock choice is the single largest
-   process, which is often the most important one on the machine precisely
-   because it is the biggest. On by default; ceiling at the interactive band so
-   CORE is out of reach; an assertion lifts a coalition out of reach for as long
-   as it is held; sited after the existing OOM rate limit so it is throttled the
-   same way; declines to the stock path when nothing is eligible, so it can only
-   change which process dies. `oom-kill` and `oom-decline` probes plus a logged
-   report naming the coalition, the responsible party, the band, the footprint
-   and the member count.
-   A coalition-wide memory ceiling (`COALITION_OP_SET_LIMIT`), whose breach
-   notifies and optionally terminates regardless of band -- over budget is not
-   the same as expendable, and the band only orders the coalitions that are
-   within theirs. Idle exit (`COALITION_OP_SET_IDLE_EXIT`): opt-in per
-   coalition, gated on holding no assertion, and only after a declared age, so
-   a held assertion means "in use" for idleness exactly as it does for the
-   band. A periodic sweep enforces both, so a ceiling and an idle timer mean
-   something without waiting for the machine to run short.
-   **The model, stated:** the coalition is the only subject. Nothing is
-   declared about a process; a process takes part by being a member, which is
-   how its footprint counts, or by holding an assertion, which is a capability
-   rather than a property of being a process. Three declarations (band floor,
-   ceiling, idle eligibility), one dynamic input (assertions), and band and
-   idleness kept as separate questions. XNU instead puts dirty flags and bands
-   on the process with coalitions alongside, which is two subjects needing
-   reconciliation; we deliberately did not copy that.
-   Every death carries exactly one of eight reasons, reported identically in
-   the holder's event, the log and the `coalition-kill` probe, with the three
-   memory reasons counted separately.
-   A coalition is now a real resource container in racct, charged alongside
-   the user, login class and jail containers a process already has. Every
-   resource the system accounts for is therefore accounted per coalition,
-   continuously, without this module counting anything itself. CPU is not
-   reclaimable, so a member that exits leaves its CPU behind, which is the
-   rollup XNU does by hand with `ledger_rollup`, and a process that re-homes
-   takes its usage with it, which is what racct already does for a uid change.
-   A CPU ceiling (`cpu_percent` on `COALITION_OP_SET_LIMIT`) rides on that
-   container: a share of one processor averaged between one look and the next,
-   judged over the whole unit including what departed members spent, breaching
-   with `COALITION_KILL_OVER_CPU` and counted apart from a memory breach. It is
-   a rate rather than a total because a total only grows. Darwin has no
-   equivalent -- its CPU limits are per-task and report through an exception
-   port, which describes a process rather than a unit.
-
-   **Consolidation phase — done.**
-   The container arrived after several figures had already been built by hand,
-   and each number now has one owner:
-   - **Address space**: the module's own hook and running total are gone; the
-     ceiling reads the container, which the framework charges at the mapping
-     path, so it is exact and the mapping path costs nothing again.
-   - **Resident set**: everything reads the container -- the ceilings, the
-     ledger, the kill report AND both victim rankings. The rankings were the
-     one exception for a while, on the argument that a page-daemon-old figure
-     picks the wrong coalition; that was wrong twice, because a member walk
-     cannot see a held jail's processes at all and because walking means
-     locking in the page daemon. The sampler, the cached footprint and the
-     ledger-sample probe are all gone.
-   - **CPU**: entirely the container's, as RACCT_PCTCPU. The module kept its
-     own rate and its own tally of departed members' CPU; both are gone.
-     racct_sub_racct() only gives back what is reclaimable or decaying, and
-     CPU is neither, so a container already keeps what departed members spent
-     -- the second tally counted it twice, and a member leaving read as a
-     burst that could kill the unit.
-   - **The sweep** walks no member lists at all now; it is a pass over
-     counters, costing the same whatever the coalitions are made of.
-   - **The ledger** reads the container, so `age_ms` is always 0 and
-     `COALITION_LEDGER_REFRESH` now means "judge the ceilings now" rather than
-     "sample now". `COALITION_OP_SET_LIMIT` answers EOPNOTSUPP on a kernel
-     booted without racct, rather than accepting a figure nothing would act on.
-   - **Limits**: the three hardcoded ceiling fields are now one array indexed
-     by racct resource, so limiting a resource the module has never heard of
-     needs no code in it, and breaches are named with rctl_resource_name()
-     rather than a second table. Moving them to real rctl(8) rules is NOT
-     done and is deliberately deferred -- see below.
-   - **Members that are not processes**: done for jails. A process is charged
-     to the coalition holding its jail when it attaches (a small MAC policy on
-     `mpo_prison_attached`, so no core file is touched), when it is forked
-     inside one, and, for work already running, by one walk at enlist. They are
-     accounted, not enlisted, so membership, the member limit and what a
-     termination signals are unchanged. An individual enlistment wins over the
-     jail, and the innermost held jail wins where they nest. Sockets and shared
-     memory are still members for lifetime only and raise the same question
-     more narrowly; they are not charged, and nothing yet needs them to be.
-
-   **The one open design question: limits as rctl rules.** A coalition subject
-   in rctl would bring operator tooling, persistence and every action with it,
-   and rctl already dispatches through p_racct->r_rule_links, so the work is a
-   new subject type plus link maintenance on join and leave. What blocks it is
-   not effort but a conflict: rctl's actions are PER PROCESS, and this model's
-   whole point is that the unit dies together, so RCTL_ACTION_SIGKILL would
-   kill the one process that tripped the rule and leave the decapitated
-   remainder the out-of-memory work exists to avoid. Taking rctl for storage
-   while keeping our own action would be two mechanisms rather than one. Settle
-   the action question before building. The resource array makes the migration
-   a mapping rather than a rewrite.
-
-   Remaining after that: work a provider does on a client's behalf charged to the client (donation
-   across channel calls, item C2), which a container makes nearly free -- it is
-   moving entries between two of them. This is
-   the substrate a coalition-aware scheduler policy would consume; the
+3. **Coalition ledgers and pressure bands** (XNU coalitions) — **later**,
+   after the two above. A CPU budget and period plus a memory band on the
+   coalition, kernel accounting into it, work done by a provider on a client's
+   behalf charged to the client (donation across channel calls), exhaustion as
+   a coalition notification, and memory-pressure kill ordering by band. This
+   is the substrate a coalition-aware scheduler policy would consume; the
    scheduler itself stays on hold.
 4. **Factotum-style key custody** (Plan 9) — **later**. BSDCrypto or BSDAuth
    holds ssh and TLS private keys and runs the handshake on the client's
@@ -206,12 +89,7 @@ datum rides on `char *env[]` strings and bare descriptor numbers.
    attenuated endpoint records its parent; revoking a parent invalidates the
    subtree (logout, anointment withdrawal, container teardown, unit
    quarantine, extension unload). Listed as missing in
-   `capability-authority-model.md`. The *coarse* half of the logout case is
-   **done** (c0c94a4efe3a, 2026-09-27, VM-validated): ending a login session
-   gracefully stops the units that existed on its behalf, and a stopped unit
-   no longer carries the id of a coalition that is gone. What remains is the
-   fine half: capabilities the session handed to *other* coalitions, which
-   is what the derivation tree is for.
+   `capability-authority-model.md`.
 2. **Quota lending between coalitions** — **later**, after ledgers. A
    coalition lends part of its memory, descriptor or time budget to a child
    and reclaims it on termination; exhaustion becomes local.
@@ -247,7 +125,6 @@ are value / effort; status as above.
 
 | # | From | Feature | Buys 5BSD | Status |
 |---|---|---|---|---|
-| A0 | XNU memorystatus | memory-pressure notification: the kernel's low-memory event reaches every live coalition as an advisory note, so units drop caches before anything is killed | **done** (c0c94a4efe3a, 2026-09-27, VM-validated): a global coalition list, a taskqueue pass off the page daemon, `COALITION_NOTE_PRESSURE`, and two kernel tests driven by the low-memory debug trigger. The ledger, bands and kill walk remain (theme C) | done, S |
 | A1 | systemd FDSTORE | a unit deposits open descriptors with the launcher and gets them back on restart | providers restart without losing listeners, vsock ports, storage handles; `service_fdstore_put/take(3)` keyed by coalition id | next, S-M |
 | A2 | Solaris contracts, Zircon exception channels, KeyKOS keepers | a coalition event/fault stream on a descriptor, adoptable by a new holder, with a keeper who may repair and resume before escalation up the responsibility tree | switchboard and per-user agents can restart themselves and re-adopt units; crash recovery becomes a capability decision; audit gets "handled by" | next, M |
 | A3 | Windows job objects | nested coalitions with tighten-only limits, kill-on-close of the last holder's descriptor, event port | the responsible party's descriptor is the unit's lifeline; per-user agents cannot exceed their own ceiling | next, M |
@@ -335,7 +212,7 @@ QNX 7.1/8.0 references and the XNU sources; only items absent above.
 | # | From | Feature | Buys 5BSD | Status |
 |---|---|---|---|---|
 | I1 | QNX unblock protocol, seL4 MCS timeout faults | CALL lifecycle: a deadline on a call, a cancel notice with the call id delivered to the provider when the caller dies or times out (provider finishes or rolls back, then replies), and a fault raised on the callee's responsible parent when it exceeds its budget serving someone | closes the half-done-transaction hole (tzfsd commit, warden destroy) when a caller is killed; per-request liveness beside the per-unit watchdog | next, M |
-| I2 | Darwin RunningBoard | assertion-derived coalition state: the responsible parent holds assertion capabilities on the coalition descriptor; state (active, background, idle, frozen) and band follow from what is held, and dropping them demotes automatically | one rule instead of separate band, idle-exit and freezer knobs; `procstat` shows *why* a unit is alive; decide before building A4 and the ledgers | **band half done** (2026-09-27): `COALITION_OP_ASSERT` mints an assertion descriptor, the effective band is the highest asserted band over the manifest-derived floor, and the kernel releases an assertion when its holder dies. Remaining: idle and frozen as asserted states rather than separate knobs, and a switchboard op so a unit can be handed an assertion on its own coalition without being handed the coalition | S |
+| I2 | Darwin RunningBoard | assertion-derived coalition state: the responsible parent holds assertion capabilities on the coalition descriptor; state (active, background, idle, frozen) and band follow from what is held, and dropping them demotes automatically | one rule instead of separate band, idle-exit and freezer knobs; `procstat` shows *why* a unit is alive; decide before building A4 and the ledgers | next (design), L |
 | I3 | Inferno `/prog` fd and ns files, QNX `DCMD_PROC_*`, Darwin task-port flavors | inspection on a held procdesc or coalition: the fd table with rights and delivery origin, a replayable namespace, held channels, STOP/RUN/WAITSTOP, an exclusive debugger right, and canonical CONTROL/READ/INSPECT/NAME rights profiles | the live twin of the capability dump; debugging and triage without pid or path | next, M |
 | I4 | seL4 Acacia/sdfgen, QNX secpolgenerate | the system bundle as a generator: one program emits unit manifests, policy files, the reachability graph and VM fixtures; learn mode traces a run and reports unused capabilities | hand-edited manifests become lint-checked exceptions; manifests shrink to what is used | next, M (tooling) |
 | I5 | Darwin os_activity | a 64-bit activity id on every CALL, inherited by child calls, stamped by BSDLog and BSDAudit | one request (login, auth agent, tzfsd, logd) greppable end to end; correlation, distinct from cost attribution (C2) | next, S-M |

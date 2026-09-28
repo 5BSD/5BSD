@@ -76,14 +76,6 @@ svc_close_fds(struct svc_runtime *svc)
 		close(svc->coalition_fd);
 		svc->coalition_fd = -1;
 	}
-	/*
-	 * The coalition dies with its last descriptor, so the id this unit
-	 * carried names nothing now.  Clearing it keeps a stopped unit out
-	 * of the responsibility tree and off the status line; the next
-	 * launch mints a fresh coalition and records the party again.  The
-	 * recorded parent is kept, so a restart keeps its attribution.
-	 */
-	svc->coalition_id = 0;
 
 	/* Remove the per-instance runtime container (recreated on next launch). */
 	svc_run_container_remove(svc->manifest.label);

@@ -207,19 +207,7 @@ mac_capability_msg_alloc_full(const void *data, size_t datalen,
 	KASSERT(nfds <= MAC_CAPABILITY_MAX_FDS,
 	    ("%s: nfds %d > MAC_CAPABILITY_MAX_FDS", __func__, nfds));
 
-	/*
-	 * The page daemon must never wait for memory: the only thing that can
-	 * satisfy that wait is the page daemon itself, and vm_wait_domain()
-	 * puts it to sleep indefinitely when it tries.  A notification
-	 * delivered from there -- the out-of-memory policy telling a holder
-	 * its coalition is being given up -- takes what is free and gives up
-	 * if there is none.  Delivery is best effort in any case: the queue is
-	 * allowed to be full.
-	 */
-	msg = uma_zalloc(mac_capability_msg_zone, M_ZERO |
-	    (curproc == pageproc ? M_NOWAIT : M_WAITOK));
-	if (msg == NULL)
-		return (NULL);
+	msg = uma_zalloc(mac_capability_msg_zone, M_WAITOK | M_ZERO);
 
 	if (datalen > 0 && data != NULL) {
 		memcpy(msg->cm_data, data, datalen);
@@ -940,7 +928,6 @@ mac_capability_proc_coalition_lock_init(void *arg __unused)
 }
 SYSINIT(mac_capability_proccoal, SI_SUB_LOCK, SI_ORDER_ANY,
     mac_capability_proc_coalition_lock_init, NULL);
-
 
 void
 mac_capability_proc_coalition_hook_set(mac_capability_proc_coalition_fn fn)
