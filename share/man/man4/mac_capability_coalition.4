@@ -881,10 +881,22 @@ with its holder.
 An assertion count that only rises is a leak; the
 .Pa /usr/share/dtrace/mac_capability-bands
 script names the holder.
+.It Fn racct-join coalition_id pid
+Fired when a process is charged to a coalition's accounting container, which
+is what makes its resources count towards that coalition's ceilings.
+.It Fn racct-leave coalition_id pid cpu_usec
+Fired when a process leaves that container.
+Everything reclaimable goes back; the CPU reported here stays with the
+coalition, because the accounting framework never takes a non-reclaimable
+resource back out.
 .It Fn racct-jail coalition_id pid
 Fired when a process is charged to a coalition because of the jail it is in,
 rather than because it was enlisted.
-This is the input a pressure policy ranks on.
+Such a process is accounted for, not enlisted: it never becomes a member.
+.It Fn racct-drain coalition_id cpu_usec rss_bytes
+Fired when a coalition gives up its container, reporting what it still held.
+CPU is expected there and resident memory is not: a non-zero figure means a
+member left without giving it back.
 .It Fn coalition-kill coalition_id responsible_id reason rss_bytes band
 Fired once for every coalition death, whatever caused it, carrying the
 .Dv COALITION_KILL_*
