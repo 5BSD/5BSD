@@ -343,35 +343,44 @@ struct coalition_idle_req {
 };
 
 /*
- * Two ceilings, because the two figures can be known in different ways.
+ * Three ceilings, each judged the same way -- read the counter the accounting
+ * framework keeps for this coalition's container, compare -- and differing
+ * only in how that counter behaves.
  *
- * vmem_bytes is address space, accumulated as members take it, so the ceiling
- * is exact and cannot be slipped past between one look and the next.  This is
- * the one that catches a runaway allocation.
+ * vmem_bytes is address space, charged at the mapping path, so the figure is
+ * exact and never behind.
  *
- * memory_bytes is resident memory, which moves on every page fault and is
- * therefore sampled.  Its ceiling is about what a coalition is holding when
- * somebody looks, which is the right question for a working set but is not a
- * guarantee about any instant.
+ * memory_bytes is resident memory, refreshed from the page daemon's pass, so
+ * the figure is at most one of those passes old and is zero for a process too
+ * young to have been looked at.
  *
- * Either may be zero, meaning no ceiling of that kind.
+ * cpu_percent is RACCT_PCTCPU: the decaying average of the share of a
+ * processor the whole unit is using, which the framework keeps for every
+ * container and clamps to the number of processors present.
+ *
+ * Exact describes a figure, not how soon a breach is acted on.  Nothing is
+ * enforced at the moment a resource is taken; a ceiling is judged when
+ * something looks, which is the periodic sweep, a memory-pressure pass, or a
+ * request carrying COALITION_LEDGER_REFRESH.
+ *
+ * Any may be zero, meaning no ceiling of that kind.
  */
 struct coalition_limit_req {
 	uint32_t	op;
 	uint32_t	flags;		/* COALITION_LIMIT_* */
-	uint64_t	memory_bytes;	/* resident, sampled; 0 = none */
-	uint64_t	vmem_bytes;	/* address space, exact; 0 = none */
+	uint64_t	memory_bytes;	/* resident; 0 = none */
+	uint64_t	vmem_bytes;	/* address space; 0 = none */
 	/*
-	 * CPU, as a percentage of one processor measured over the interval
-	 * between one look and the next, so 100 is one processor's worth and
-	 * 400 is four.  It is a rate rather than a total, because a total only
-	 * ever grows and a unit that has been running for a week would breach
-	 * any figure worth setting.
+	 * CPU as a percentage of one processor, so 100 is one processor's
+	 * worth and 400 is four.  A rate rather than a total, because a total
+	 * only ever grows and a unit running for a week would breach any
+	 * figure worth setting.
 	 *
-	 * Measured for the coalition as a whole and across its whole life:
-	 * time spent by a member that has since exited still counts, or a unit
-	 * could spend as much as it liked in short-lived children.  0 = no
-	 * ceiling.
+	 * It covers the whole unit including CPU spent by members that have
+	 * since left, so a coalition cannot stay under it by working in
+	 * short-lived children.  That is the framework's doing, not this
+	 * driver's: CPU is neither reclaimable nor decaying, so it is never
+	 * taken back out of a container when a member leaves.  0 = none.
 	 */
 	uint32_t	cpu_percent;
 	uint32_t	_pad2;

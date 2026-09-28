@@ -928,19 +928,31 @@ racct_proc_join_coalition(struct proc *p, struct racct *coalition)
 	if (coalition != NULL) {
 		racct_add_racct(coalition, p->p_racct);
 		/*
-		 * The joiner brings its whole life's CPU with it, which is
-		 * right for a total and wrong for the decaying rate kept
-		 * beside it: that would read a process enlisted after an hour
-		 * of work as an hour of work in one interval.  Start the rate
-		 * again from here, so the next look measures what the unit
-		 * spends from now on.
+		 * Two things about CPU do not survive that copy unaltered.
 		 *
-		 * Leaving needs no such thing.  CPU is neither reclaimable nor
+		 * A rate does not add across a join.  racct_add_racct() copies
+		 * every resource, RACCT_PCTCPU included, so the container
+		 * would take on the joiner's own decayed rate -- and then
+		 * count the same CPU again through its own runtime delta at
+		 * the next look.  A process that had been busy would push the
+		 * container over a ceiling the unit had not earned.  Take it
+		 * back out; the joiner's future CPU arrives on its own.
+		 *
+		 * The total does transfer, and that is right, but it is a step
+		 * the rate never saw happen: a process enlisted after an hour
+		 * of work would read as an hour of work in one interval.  Move
+		 * the rate's starting point with it.
+		 *
+		 * Leaving needs neither.  CPU is neither reclaimable nor
 		 * decaying, so racct_sub_racct() does not take it away, and a
 		 * container keeps what its departed members spent -- which is
 		 * exactly what stops a unit spending freely in children that
 		 * exit.
 		 */
+		coalition->r_resources[RACCT_PCTCPU] -=
+		    p->p_racct->r_resources[RACCT_PCTCPU];
+		if (coalition->r_resources[RACCT_PCTCPU] < 0)
+			coalition->r_resources[RACCT_PCTCPU] = 0;
 		coalition->r_runtime = coalition->r_resources[RACCT_CPU];
 		microuptime(&coalition->r_time);
 	}

@@ -201,6 +201,30 @@ create_jail_with_desc(const char *name)
 	return (atoi(desc_str));
 }
 
+/*
+ * Like create_jail_with_desc(), but the jail may contain one of its own.
+ * Needed to reach the case where a process sits in a jail nested inside the
+ * jail a coalition actually holds.
+ */
+static int
+create_parent_jail_with_desc(const char *name)
+{
+	char desc_str[16] = "";
+	int jid;
+
+	jid = jail_setv(JAIL_CREATE | JAIL_GET_DESC,
+	    "name", name,
+	    "path", "/",
+	    "persist", NULL,
+	    "children.max", "1",
+	    "desc", desc_str,
+	    NULL);
+	if (jid < 0)
+		return (-1);
+
+	return (atoi(desc_str));
+}
+
 static void
 remove_jail_by_name(const char *name)
 {
@@ -3737,6 +3761,92 @@ ATF_TC_CLEANUP(jail_members_are_accounted, tc)
 	remove_jail_by_name(COALITION_TEST_JAIL_NAME);
 }
 
+ATF_TC_WITH_CLEANUP(a_nested_jail_is_charged_to_the_held_one);
+ATF_TC_HEAD(a_nested_jail_is_charged_to_the_held_one, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "A process inside a jail nested within the jail a coalition holds "
+	    "is charged to that coalition: the search walks out through the "
+	    "enclosing jails rather than looking only at the one the process "
+	    "is directly in");
+	atf_tc_set_md_var(tc, "require.kmods",
+	    "mac_capability mac_capability_coalition");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(a_nested_jail_is_charged_to_the_held_one, tc)
+{
+	struct coalition_ledger_reply lr;
+	int cfd, jail_fd, jid, wstatus, ready[2];
+	int32_t status;
+	char tok;
+	pid_t pid;
+	int i;
+
+	remove_jail_by_name(COALITION_TEST_JAIL_NAME);
+	jail_fd = create_parent_jail_with_desc(COALITION_TEST_JAIL_NAME);
+	if (jail_fd < 0)
+		atf_tc_skip("could not create a jail allowing children: %s",
+		    strerror(errno));
+	jid = jail_getid(COALITION_TEST_JAIL_NAME);
+	ATF_REQUIRE(jid > 0);
+
+	cfd = mac_capability_connect("coalition");
+	ATF_REQUIRE(cfd >= 0);
+	ATF_REQUIRE(coalition_enlist(cfd, jail_fd, &status) == 0);
+	ATF_REQUIRE_EQ(status, 0);
+
+	ATF_REQUIRE(pipe(ready) == 0);
+	pid = fork();
+	ATF_REQUIRE(pid >= 0);
+	if (pid == 0) {
+		int inner;
+
+		close(cfd);
+		close(ready[0]);
+		/* Into the held jail, then into one nested inside it. */
+		if (jail_attach(jid) != 0)
+			_exit(1);
+		inner = jail_setv(JAIL_CREATE,
+		    "name", "inner", "path", "/", "persist", NULL, NULL);
+		if (inner < 0)
+			_exit(2);
+		if (jail_attach(inner) != 0)
+			_exit(3);
+		(void)write(ready[1], "r", 1);
+		pause();
+		_exit(0);
+	}
+	close(ready[1]);
+	if (read(ready[0], &tok, 1) != 1) {
+		(void)waitpid(pid, &wstatus, 0);
+		close(ready[0]);
+		close(cfd);
+		close(jail_fd);
+		atf_tc_skip("could not nest a jail inside the held one");
+	}
+	close(ready[0]);
+
+	memset(&lr, 0, sizeof(lr));
+	for (i = 0; i < 50; i++) {
+		if (coalition_ledger(cfd, 0, &lr) == 0 && lr.status == 0 &&
+		    lr.nprocs > 0)
+			break;
+		usleep(100000);
+	}
+	ATF_CHECK_MSG(lr.nprocs > 0,
+	    "a process in a jail nested inside the held jail was not charged "
+	    "to the coalition holding it");
+
+	(void)kill(pid, SIGKILL);
+	(void)waitpid(pid, &wstatus, 0);
+	close(cfd);
+	close(jail_fd);
+}
+ATF_TC_CLEANUP(a_nested_jail_is_charged_to_the_held_one, tc)
+{
+	remove_jail_by_name(COALITION_TEST_JAIL_NAME);
+}
+
 ATF_TC_WITH_CLEANUP(enlistment_beats_the_jail_it_is_in);
 ATF_TC_HEAD(enlistment_beats_the_jail_it_is_in, tc)
 {
@@ -6052,14 +6162,88 @@ ATF_TC_BODY(cpu_ceiling_leaves_a_quiet_coalition_alone, tc)
 	sweep_interval_restore(saved_sweep);
 }
 
+ATF_TC(a_breach_does_not_mask_another_resource);
+ATF_TC_HEAD(a_breach_does_not_mask_another_resource, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Going over one ceiling does not silence the next: a coalition "
+	    "already over its address-space ceiling is still told when it "
+	    "goes over a different one, because being out of one thing is a "
+	    "different fact from being out of another");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_coalition");
+}
+ATF_TC_BODY(a_breach_does_not_mask_another_resource, tc)
+{
+	struct coalition_ledger_reply lr;
+	struct coalition_event_msg ev;
+	int fd, pd, wstatus;
+	int32_t status;
+	pid_t pid;
+
+	fd = mac_capability_connect("coalition");
+	ATF_REQUIRE(fd >= 0);
+	pid = coalition_fork_member(fd, &pd);
+	ATF_REQUIRE(pid > 0);
+	ATF_REQUIRE(coalition_enlist(fd, pd, &status) == 0);
+	ATF_REQUIRE_EQ(status, 0);
+
+	/*
+	 * Notify only, so nothing dies and the coalition stays available to
+	 * breach a second time.  Address space first: it is exact, so the
+	 * breach is certain the moment the member is enlisted.
+	 */
+	ATF_REQUIRE(coalition_set_limit_full(fd, 0, 0, 1, &status) == 0);
+	ATF_REQUIRE_EQ(status, 0);
+	ATF_REQUIRE(coalition_ledger(fd, COALITION_LEDGER_REFRESH, &lr) == 0);
+	memset(&ev, 0, sizeof(ev));
+	ATF_REQUIRE_MSG(coalition_wait_note(fd, COALITION_NOTE_LIMIT, &ev, 50),
+	    "no notification for the first ceiling");
+
+	/*
+	 * Now add a second ceiling on a different resource, with the first
+	 * still breached.  Under a single breach latch this second one would
+	 * be silent, because the coalition was already marked as over.
+	 */
+	ATF_REQUIRE(coalition_set_limit_full(fd, 0, 0, 1, &status) == 0);
+	ATF_REQUIRE_EQ(status, 0);
+	if (!wait_for_resident_accounting(fd))
+		atf_tc_skip("the page daemon did not attribute resident "
+		    "memory to the coalition");
+	{
+		struct coalition_limit_req lq;
+		struct coalition_reply rpl;
+
+		memset(&lq, 0, sizeof(lq));
+		lq.op = COALITION_OP_SET_LIMIT;
+		lq.memory_bytes = 1;	/* resident, now also breached */
+		lq.vmem_bytes = 1;	/* address space, still breached */
+		ATF_REQUIRE(coalition_call(fd, &lq, sizeof(lq), NULL, 0, &rpl,
+		    sizeof(rpl)) == 0);
+		ATF_REQUIRE_EQ(rpl.status, 0);
+	}
+	ATF_REQUIRE(coalition_ledger(fd, COALITION_LEDGER_REFRESH, &lr) == 0);
+	memset(&ev, 0, sizeof(ev));
+	ATF_CHECK_MSG(coalition_wait_note(fd, COALITION_NOTE_LIMIT, &ev, 50),
+	    "a second ceiling on a different resource was never reported; "
+	    "the first breach masked it");
+
+	pdkill(pd, SIGKILL);
+	(void)wait_exit_bounded(pid, &wstatus);
+	close(pd);
+	close(fd);
+}
+
 ATF_TC(cpu_ceiling_survives_a_member_joining_with_history);
 ATF_TC_HEAD(cpu_ceiling_survives_a_member_joining_with_history, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
-	    "Enlisting a process that has already spent CPU does not read as a "
-	    "burst: joining moves the whole of a process's accounting into the "
-	    "container, which for a rate is a step that never happened, so the "
-	    "measurement window starts again on a join");
+    "Enlisting a process that has already spent CPU does not read as a "
+	    "burst. Joining copies the whole of a process's accounting into "
+	    "the container, total AND decaying rate, and neither transfers "
+	    "meaningfully: the total is a step the rate never saw, and the "
+	    "rate would then be counted a second time through the container's "
+	    "own runtime. The ceiling here is tight enough that either mistake "
+	    "breaches it.");
 	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_coalition");
 	atf_tc_set_md_var(tc, "timeout", "120");
 }
@@ -6106,7 +6290,13 @@ ATF_TC_BODY(cpu_ceiling_survives_a_member_joining_with_history, tc)
 	/* Now enlist it, carrying all that CPU into the container at once. */
 	ATF_REQUIRE(coalition_enlist(fd, pd, &status) == 0);
 	ATF_REQUIRE_EQ(status, 0);
-	ATF_REQUIRE(coalition_set_cpu_limit(fd, COALITION_LIMIT_KILL, 50,
+	/*
+	 * Five percent, not fifty.  A joiner fresh from a busy loop carries a
+	 * decayed rate near one whole processor; importing it would show up as
+	 * roughly a third of that on the first look, which a fifty percent
+	 * ceiling would quietly tolerate and a five percent one will not.
+	 */
+	ATF_REQUIRE(coalition_set_cpu_limit(fd, COALITION_LIMIT_KILL, 5,
 	    &status) == 0);
 	ATF_REQUIRE_EQ(status, 0);
 
@@ -6446,6 +6636,7 @@ ATF_TP_ADD_TCS(tp)
 		ATF_TP_ADD_TC(tp, process_exit_decrements_count);
 		ATF_TP_ADD_TC(tp, terminate_removes_jaildesc_member);
 		ATF_TP_ADD_TC(tp, jail_members_are_accounted);
+	ATF_TP_ADD_TC(tp, a_nested_jail_is_charged_to_the_held_one);
 	ATF_TP_ADD_TC(tp, enlistment_beats_the_jail_it_is_in);
 	ATF_TP_ADD_TC(tp, close_removes_jaildesc_member);
 
@@ -6524,6 +6715,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, cpu_ceiling_absent_by_default_and_settable);
 	ATF_TP_ADD_TC(tp, cpu_ceiling_terminates_a_spinner);
 	ATF_TP_ADD_TC(tp, cpu_ceiling_leaves_a_quiet_coalition_alone);
+	ATF_TP_ADD_TC(tp, a_breach_does_not_mask_another_resource);
 	ATF_TP_ADD_TC(tp, cpu_ceiling_survives_a_member_joining_with_history);
 	ATF_TP_ADD_TC(tp, assertions_name_their_holders);
 	ATF_TP_ADD_TC(tp, kill_reason_reaches_the_holder);
