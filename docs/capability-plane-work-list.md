@@ -112,21 +112,23 @@ login session's coalition (by design, EBUSY on join).
      is the one deliberate exception: a ranking made on a page-daemon-old
      figure picks the wrong coalition, and picking the wrong one is the whole
      failure.
-   - **CPU**: the container keeps it, plus one figure the module owns -- the
-     CPU of members that have since left, without which a unit could spend
-     freely in short-lived children because the container gives a departing
-     member's charges back.
+   - **CPU**: entirely the container's, as RACCT_PCTCPU. The module kept its
+     own rate and its own tally of departed members' CPU; both are gone.
+     racct_sub_racct() only gives back what is reclaimable or decaying, and
+     CPU is neither, so a container already keeps what departed members spent
+     -- the second tally counted it twice, and a member leaving read as a
+     burst that could kill the unit.
    - **The sweep** walks no member lists at all now; it is a pass over
      counters, costing the same whatever the coalitions are made of.
    - **The ledger** reads the container, so `age_ms` is always 0 and
      `COALITION_LEDGER_REFRESH` now means "judge the ceilings now" rather than
      "sample now". `COALITION_OP_SET_LIMIT` answers EOPNOTSUPP on a kernel
      booted without racct, rather than accepting a figure nothing would act on.
-   - **Limits through rctl**: NOT done, deliberately deferred. rctl has rules,
-     subjects and operator tooling, and a coalition subject there would replace
-     the module's ceiling fields; it is the right end state but it is a
-     separate piece of work against kern_rctl.c, not part of pointing the
-     existing figures at one source.
+   - **Limits**: the three hardcoded ceiling fields are now one array indexed
+     by racct resource, so limiting a resource the module has never heard of
+     needs no code in it, and breaches are named with rctl_resource_name()
+     rather than a second table. Moving them to real rctl(8) rules is NOT
+     done and is deliberately deferred -- see below.
    - **Members that are not processes**: done for jails. A process is charged
      to the coalition holding its jail when it attaches (a small MAC policy on
      `mpo_prison_attached`, so no core file is touched), when it is forked
@@ -137,9 +139,19 @@ login session's coalition (by design, EBUSY on join).
      memory are still members for lifetime only and raise the same question
      more narrowly; they are not charged, and nothing yet needs them to be.
 
-   Remaining after that: the CPU ceiling re-expressed as an rctl rule once
-   coalitions are an rctl subject, so operators reach it with the tools they
-   have rather than through this op; and work a provider does on a client's behalf charged to the client (donation
+   **The one open design question: limits as rctl rules.** A coalition subject
+   in rctl would bring operator tooling, persistence and every action with it,
+   and rctl already dispatches through p_racct->r_rule_links, so the work is a
+   new subject type plus link maintenance on join and leave. What blocks it is
+   not effort but a conflict: rctl's actions are PER PROCESS, and this model's
+   whole point is that the unit dies together, so RCTL_ACTION_SIGKILL would
+   kill the one process that tripped the rule and leave the decapitated
+   remainder the out-of-memory work exists to avoid. Taking rctl for storage
+   while keeping our own action would be two mechanisms rather than one. Settle
+   the action question before building. The resource array makes the migration
+   a mapping rather than a rewrite.
+
+   Remaining after that: work a provider does on a client's behalf charged to the client (donation
    across channel calls, item C2), which a container makes nearly free -- it is
    moving entries between two of them. This is
    the substrate a coalition-aware scheduler policy would consume; the
