@@ -298,18 +298,18 @@ struct coalition_rusage_reply {
 };
 .Ed
 .It Dv COALITION_OP_LEDGER
-Return the cached resource sample: the footprint of the coalition's process
-members as of the last time it was taken, with
-.Va age_ms
-saying how stale that is
-.Pq Dv UINT64_MAX if it has never been sampled .
+Return the coalition's resource counters, read from the container the kernel's
+accounting framework maintains for it.
 Unlike
 .Dv COALITION_OP_RUSAGE
 this never walks the member list, so it is safe to call often and from a
 policy that must not block.
-The sample is refreshed automatically under memory pressure, which is when a
-ranking matters, and on request with
-.Dv COALITION_LEDGER_REFRESH .
+Nothing is sampled, so nothing goes stale and
+.Va age_ms
+is always zero; the field is kept because it is part of the reply.
+.Dv COALITION_LEDGER_REFRESH
+no longer refreshes anything and instead means: judge the declared ceilings
+before replying, rather than waiting for the next sweep.
 Returns
 .Vt struct coalition_ledger_reply .
 .It Dv COALITION_OP_SET_LIMIT
@@ -604,17 +604,19 @@ taken from under its user.
 A ceiling and an idle timer would mean nothing if they were only examined when
 the system ran short, so a sweep runs every
 .Va sweep_interval_ms .
-It samples every coalition's footprint, acts on any that is over its ceiling,
-and puts away any that has been idle long enough.
+It acts on any coalition that is over a ceiling and puts away any that has been
+idle long enough.
 .Pp
 It deliberately does not notify and does not hand anything down; those belong to
 memory pressure, which is a different question.
 This is about promises a coalition made about itself being kept whether or not
 the machine is busy.
 .Pp
-Footprint is sampled here rather than accounted continuously, so a figure is
-only ever as fresh as the last sweep and the interval is what bounds how stale
-it can be.
+The sweep walks no member lists.
+Every figure it judges is a counter the accounting framework already maintains,
+so a pass costs the same whatever the coalitions on the machine are made of,
+and the interval decides only how promptly a breach is noticed, not how stale
+the figures are.
 .Ss Memory Ceiling
 A coalition may be given a ceiling on its footprint.
 This is not a per-process limit, which a unit escapes by forking: it is a figure
@@ -622,13 +624,28 @@ for the unit and every helper it starts, taken together.
 .Pp
 A coalition with no ceiling is never limited, so nothing happens until
 something declares one.
-The ceiling is checked whenever the coalition's footprint is sampled, which is
-when the system is under memory pressure and whenever a ledger refresh is
-asked for.
-It is therefore a ceiling on what a coalition may be holding when memory
-matters rather than an instantaneous one: a coalition that goes over and comes
-back before anyone looks is never penalised, which is the right behaviour for a
-figure describing a whole unit's working set.
+Two figures may be declared.
+.Va vmem_bytes
+is a ceiling on address space, which the framework charges at the mapping path,
+so it is exact and a member that maps past it is acted on without waiting for
+anything.
+.Va memory_bytes
+is a ceiling on resident memory, which the framework refreshes from the page
+daemon's pass, so it is at most one of those passes old and is zero for a
+process too young to have been looked at.
+.Pp
+A coalition that goes over and comes back between two looks is never penalised,
+which is the right behaviour for a figure describing a whole unit's working
+set.
+.Pp
+Because every ceiling is judged from the container, a kernel booted without
+resource accounting
+.Pq Va kern.racct.enable Ns =0
+has nothing to judge, and
+.Dv COALITION_OP_SET_LIMIT
+answers
+.Er EOPNOTSUPP
+rather than accepting a figure nothing would act on.
 .Pp
 A breach always notifies, through
 .Dv COALITION_NOTE_LIMIT .
@@ -639,7 +656,7 @@ coalition that has exceeded a figure declared for it is over budget whether or
 not the system happens to be short, and the band only decides what to give up
 first among coalitions that are within theirs.
 A coalition that comes back under its ceiling is rearmed, so a unit that drifts
-over and recovers is told once per excursion rather than once per sample.
+over and recovers is told once per excursion rather than once per look.
 .Ss CPU Ceiling
 A coalition may also be given a CPU ceiling, declared with the same
 .Dv COALITION_OP_SET_LIMIT
@@ -820,7 +837,10 @@ An assertion count that only rises is a leak; the
 .Pa /usr/share/dtrace/mac_capability-bands
 script names the holder.
 .It Fn ledger-sample coalition_id rss_bytes nprocs
-Fired when a coalition's resource sample is refreshed.
+Fired when a coalition's footprint is sampled for a victim ranking, which is
+the only thing that samples: memory pressure choosing what to hand down, and
+the out-of-memory policy choosing what to give up.
+Everything else reads the accounting container instead.
 This is the input a pressure policy ranks on.
 .It Fn coalition-kill coalition_id responsible_id reason rss_bytes band
 Fired once for every coalition death, whatever caused it, carrying the

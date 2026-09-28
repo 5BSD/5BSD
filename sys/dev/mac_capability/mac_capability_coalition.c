@@ -304,15 +304,15 @@ struct coalition {
 	CK_LIST_ENTRY(coalition)	co_all_link;
 	bool			co_listed;
 	/*
-	 * Cached resource sample, published with atomics so a policy pass can
-	 * rank coalitions without taking co_sx.  Refreshed under memory
-	 * pressure and on request; co_sample_time 0 means never sampled.
+	 * Cached footprint, published with atomics so a policy pass can rank
+	 * coalitions without taking co_sx.  Taken only when something makes
+	 * a victim ranking, which is the one place a maintained figure will not
+	 * do: an out-of-memory choice made on a stale footprint picks the wrong
+	 * coalition, and the page daemon's last pass can be a second old.
+	 * Everything else -- the ceilings, the ledger, the kill report -- reads
+	 * the container instead.
 	 */
 	volatile uint64_t	co_rss_bytes;
-	volatile uint64_t	co_vsz_bytes;
-	volatile u_int		co_sample_nprocs;
-	volatile u_int		co_sample_nthreads;
-	volatile sbintime_t	co_sample_time;
 	/*
 	 * Band: the floor set by the launcher, plus a count of live assertion
 	 * descriptors per band.  Both are plain atomics with no lock, because
@@ -1831,7 +1831,7 @@ coalition_terminate_members_locked(struct coalition *co, struct thread *td,
 	co->co_kill_reason = reason;
 	SDT_PROBE5(mac_capability_coalition, , , coalition__kill, co->co_id,
 	    co->co_responsible_id, (u_int)reason,
-	    atomic_load_64(&co->co_rss_bytes), coalition_band_effective(co));
+	    racct_read(co->co_racct, RACCT_RSS), coalition_band_effective(co));
 	if (reason != COALITION_KILL_NONE &&
 	    reason != COALITION_KILL_REQUESTED) {
 		coalition_kill_count(reason);
@@ -1846,7 +1846,7 @@ coalition_terminate_members_locked(struct coalition *co, struct thread *td,
 		    "%u members\n", (uintmax_t)co->co_id,
 		    (uintmax_t)co->co_responsible_id,
 		    coalition_kill_reason_name(reason),
-		    (uintmax_t)(atomic_load_64(&co->co_rss_bytes) / 1024),
+		    (uintmax_t)(racct_read(co->co_racct, RACCT_RSS) / 1024),
 		    coalition_band_effective(co),
 		    atomic_load_int(&co->co_member_count));
 	}
@@ -3101,8 +3101,8 @@ coalition_sample_locked(struct coalition *co)
 	struct coalition_member *cm;
 	struct proc *p;
 	struct vmspace *vm;
-	uint64_t rss = 0, vsz = 0;
-	u_int nprocs = 0, nthreads = 0, nthr;
+	uint64_t rss = 0;
+	u_int nprocs = 0;
 
 	sx_assert(&co->co_sx, SA_LOCKED);
 
@@ -3138,33 +3138,25 @@ coalition_sample_locked(struct coalition *co)
 		 * and taking only the vmspace reference keeps this usable from
 		 * a pressure pass that must not wait on the process tree.
 		 */
-		nthr = p->p_numthreads;
 		vm = vmspace_acquire_ref(p);
 		PROC_UNLOCK(p);
 		if (vm == NULL)
 			continue;
 		rss += (uint64_t)vmspace_resident_count(vm) * PAGE_SIZE;
-		vsz += (uint64_t)vm->vm_map.size;
 		vmspace_free(vm);
-
 		nprocs++;
-		nthreads += nthr;
 	}
 
 	atomic_store_64(&co->co_rss_bytes, rss);
-	atomic_store_64(&co->co_vsz_bytes, vsz);
-	atomic_store_int(&co->co_sample_nprocs, nprocs);
-	atomic_store_int(&co->co_sample_nthreads, nthreads);
-	atomic_store_64((volatile uint64_t *)&co->co_sample_time,
-	    (uint64_t)getsbinuptime());
 	SDT_PROBE3(mac_capability_coalition, , , ledger__sample, co->co_id,
 	    rss, nprocs);
 }
 
 /*
- * Act on a coalition's declared footprint ceiling, if it has one.  Called with
- * a fresh sample and co_sx held EXCLUSIVE: a breach notifies, and delivering a
- * notification requires the exclusive lock.
+ * Act on a coalition's declared ceilings, if it has any.  Called with co_sx
+ * held EXCLUSIVE: a breach notifies, and delivering a notification requires
+ * the exclusive lock.  Every figure it judges comes from the container, so it
+ * walks nothing and costs the same whatever a coalition's size.
  *
  * Returns true if the coalition should be terminated for the breach.  The
  * caller does the terminating, because that needs co_sx exclusive and this is
@@ -3224,19 +3216,17 @@ coalition_limit_check_locked(struct coalition *co)
 		    (uint64_t)now);
 	}
 	/*
-	 * Two ceilings, each judged by the figure it can actually be judged by.
-	 * Address space is accumulated as members take it, so that ceiling is
-	 * exact.  Resident memory is sampled, so its ceiling is about what a
-	 * coalition is holding when somebody looks.
+	 * Both memory figures come from the container, which is the whole point
+	 * of having one: the framework charges address space at the mapping
+	 * path, so that figure is exact, and refreshes resident memory from the
+	 * page daemon's pass, so that one is at most a pass old.  Neither is
+	 * anything this module maintains, and adding a fourth resource needs no
+	 * code here at all.
 	 */
 	vlimit = atomic_load_64(&co->co_limit_vmem);
-	/*
-	 * From the container, which the framework charges at the mapping path,
-	 * rather than from anything this module maintains.
-	 */
 	vmem = racct_read(co->co_racct, RACCT_VMEM);
 	limit = atomic_load_64(&co->co_limit_bytes);
-	rss = atomic_load_64(&co->co_rss_bytes);
+	rss = racct_read(co->co_racct, RACCT_RSS);
 	over_vmem = vlimit != 0 && vmem > vlimit;
 	over_rss = limit != 0 && rss > limit;
 	if (!over_vmem && !over_rss && !over_cpu) {
@@ -3692,9 +3682,22 @@ coalition_racct_join(struct proc *p, struct coalition *co)
 	locked = PROC_LOCKED(p);
 	if (!locked)
 		PROC_LOCK(p);
-	if (co != NULL)
+	if (co != NULL) {
 		SDT_PROBE2(mac_capability_coalition, , , racct__join,
 		    co->co_id, p->p_pid);
+		/*
+		 * Joining moves the whole of the process's accounting into the
+		 * container, CPU included -- racct does that for a change of
+		 * uid too.  For a total that is right; for a RATE it is a step
+		 * that never happened, and a process enlisted after an hour of
+		 * work would arrive looking like an hour of work in one window
+		 * and breach any CPU ceiling instantly.  So a join starts the
+		 * window again: zero means no baseline, and the next look sets
+		 * one from the total as it stands then.  One window of
+		 * measurement is given up per join, which is the right trade.
+		 */
+		atomic_store_64((volatile uint64_t *)&co->co_cpu_last_time, 0);
+	}
 	racct_proc_join_coalition(p, co != NULL ? co->co_racct : NULL);
 	if (!locked)
 		PROC_UNLOCK(p);
@@ -3719,7 +3722,6 @@ coalition_sweep_task_fn(void *ctx __unused, int pending __unused)
 		reason = COALITION_KILL_NONE;
 		sx_xlock(&co->co_sx);
 		if ((co->co_flags & (COF_TERMINATING | COF_CLOSING)) == 0) {
-			coalition_sample_locked(co);
 			reason = coalition_limit_check_locked(co);
 			if (reason == COALITION_KILL_NONE &&
 			    coalition_idle_expired(co, now) &&
@@ -4636,6 +4638,18 @@ coalition_call(struct mac_capability_instance *s,
 			break;
 		}
 		lq = req;
+		/*
+		 * Every ceiling is judged from the coalition's container, so on
+		 * a kernel booted without resource accounting there is nothing
+		 * to judge and nothing would ever enforce a figure set here.
+		 * Say so rather than accept one and silently never act on it.
+		 * kern.racct.enable is read-only after boot, so this answer
+		 * cannot go stale.
+		 */
+		if (!racct_enable) {
+			rpl->status = EOPNOTSUPP;
+			break;
+		}
 		/* An older caller offers no CPU ceiling, which means none. */
 		cpu_pct = reqlen >= sizeof(*lq) ? lq->cpu_percent : 0;
 		if ((lq->flags & ~COALITION_LIMIT_KILL) != 0) {
@@ -4788,7 +4802,6 @@ coalition_call(struct mac_capability_instance *s,
 	{
 		struct coalition_ledger_reply *lr;
 		const struct coalition_ledger_req *lq;
-		sbintime_t sampled;
 
 		if (reqlen < sizeof(*lq)) {
 			rpl->status = EINVAL;
@@ -4812,11 +4825,14 @@ coalition_call(struct mac_capability_instance *s,
 			int over;
 
 			/*
-			 * Exclusive, not shared: the ceiling check notifies on
-			 * a breach and a notification needs the exclusive lock.
+			 * Nothing to refresh any more -- the figures are
+			 * maintained by the accounting framework -- so what
+			 * this asks for now is that the ceilings be judged at
+			 * once rather than at the next sweep.  Exclusive, not
+			 * shared: a breach notifies, and that needs the
+			 * exclusive lock.
 			 */
 			sx_xlock(&co->co_sx);
-			coalition_sample_locked(co);
 			over = coalition_limit_check_locked(co);
 			sx_xunlock(&co->co_sx);
 			if (over != COALITION_KILL_NONE) {
@@ -4833,21 +4849,19 @@ coalition_call(struct mac_capability_instance *s,
 				coalition_notify_responsible(co, over);
 			}
 		}
+		/*
+		 * Every figure comes from the container.  There is no walk of
+		 * the member list and nothing to go stale, so age_ms is zero:
+		 * the field is kept because it is part of the reply, and zero
+		 * is the truthful answer for a figure that is maintained
+		 * rather than sampled.
+		 */
 		lr->id = co->co_id;
-		lr->rss_bytes = atomic_load_64(&co->co_rss_bytes);
-		lr->vsz_bytes = atomic_load_64(&co->co_vsz_bytes);
-		lr->nprocs = atomic_load_int(&co->co_sample_nprocs);
-		lr->nthreads = atomic_load_int(&co->co_sample_nthreads);
-		sampled = (sbintime_t)atomic_load_64(
-		    (volatile uint64_t *)&co->co_sample_time);
-		if (sampled == 0)
-			lr->age_ms = UINT64_MAX;
-		else {
-			sbintime_t now = getsbinuptime();
-
-			lr->age_ms = now > sampled ?
-			    (uint64_t)((now - sampled) / SBT_1MS) : 0;
-		}
+		lr->rss_bytes = racct_read(co->co_racct, RACCT_RSS);
+		lr->vsz_bytes = racct_read(co->co_racct, RACCT_VMEM);
+		lr->nprocs = (uint32_t)racct_read(co->co_racct, RACCT_NPROC);
+		lr->nthreads = (uint32_t)racct_read(co->co_racct, RACCT_NTHR);
+		lr->age_ms = 0;
 		break;
 	}
 

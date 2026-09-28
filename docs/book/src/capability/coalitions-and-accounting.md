@@ -253,9 +253,9 @@ not shared across the processes of a coalition, and nothing enforces it
 against the unit's forked children beyond their inheriting the same
 per-process rlimit. The same is true of every key in the block: they are
 the classic setrlimit(2) ceilings, applied early and made unraisable. A
-unit that wants an aggregate view can read `COALITION_OP_RUSAGE`, which
-reports summed RSS and VSZ across its process members, but that is
-observation, not enforcement.
+unit that wants an exact aggregate for right now can read
+`COALITION_OP_RUSAGE`, which walks the process members and sums them, but that
+is observation, not enforcement.
 
 ## Ceilings for the whole unit
 
@@ -266,11 +266,16 @@ class and jail containers a process already belongs to, so its figures are
 maintained by racct(9) rather than by anything this driver samples. A
 holder declares ceilings on that container with `COALITION_OP_SET_LIMIT`:
 
-| figure | unit | judged |
+| figure | unit | how the counter behaves |
 | --- | --- | --- |
-| `memory_bytes` | resident bytes | when the footprint is sampled |
-| `vmem_bytes` | address space in bytes | as memory is taken |
-| `cpu_percent` | percentage of one processor | as a rate, over a window |
+| `memory_bytes` | resident bytes | refreshed by the page daemon's pass |
+| `vmem_bytes` | address space in bytes | charged at the mapping path, exact |
+| `cpu_percent` | percentage of one processor | a rate, measured over a window |
+
+Because every ceiling is judged from the container, a kernel booted without
+resource accounting (`kern.racct.enable=0`) has nothing to judge, and
+`COALITION_OP_SET_LIMIT` answers `EOPNOTSUPP` rather than accepting a figure
+nothing would act on.
 
 Zero removes any of them and they are independent. A breach always
 notifies through `COALITION_NOTE_LIMIT`; with `COALITION_LIMIT_KILL` it
@@ -291,6 +296,33 @@ report through an exception port rather than describing a unit.
 
 Nothing in the plane declares these from a manifest yet: they are a kernel
 interface a supervisor calls, and switchboard does not call it.
+
+## One source per figure
+
+The container arrived after the module had already built several of these
+figures by hand, and keeping both would have been the worst of the two. Each
+number now has one owner:
+
+- The **ceilings**, the **ledger** (`COALITION_OP_LEDGER`) and the **kill
+  report** read the container. None of them walks a member list, so they cost
+  the same whatever a coalition is made of, and adding a fourth resource needs
+  no code in the module at all.
+- The **victim rankings** — memory pressure choosing what to hand down, and the
+  out-of-memory policy choosing what to give up — still sample the member list
+  at the moment of the decision. This is the one deliberate exception: a
+  ranking made on a figure that is a page-daemon pass old picks the wrong
+  coalition, and picking the wrong one is the whole failure.
+- **CPU** is kept by the container with one addition the module owns: the CPU
+  of members that have since left. Without it a coalition could spend as much
+  as it liked in short-lived children, because the container gives a departing
+  member's charges back.
+
+Consequences worth knowing. `age_ms` in the ledger reply is always zero —
+nothing is sampled, so nothing goes stale — and `COALITION_LEDGER_REFRESH` no
+longer refreshes anything; it now means "judge the ceilings before replying"
+rather than waiting for the next sweep. Resident memory in the ledger is zero
+for a process too young for the page daemon to have looked at, which is the
+difference `COALITION_OP_RUSAGE` exists to span.
 
 ## Tests and status
 

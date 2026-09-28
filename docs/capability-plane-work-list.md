@@ -100,44 +100,44 @@ login session's coalition (by design, EBUSY on join).
    equivalent -- its CPU limits are per-task and report through an exception
    port, which describes a process rather than a unit.
 
-   **Consolidation phase — do this before adding anything else.**
+   **Consolidation phase — done.**
    The container arrived after several figures had already been built by hand,
-   and keeping both would be the worst of the two. Each number needs one owner
-   and a reason, because they are not interchangeable:
-   - **Address space**: racct charges it at the mapping path already, so the
-     module's own hook, the per-member charged size, the running total and the
-     ceiling built on them are redundant. Delete them, and the hook in
-     `vm_mmap.c` with them; the mapping path then costs nothing again.
-   - **Resident set**: racct has it, but only as fresh as the page daemon's
-     last pass, which is not a cadence we control. The ceiling should read
-     racct. The out-of-memory victim ranking should keep sampling at the moment
-     of the decision, because a stale figure there picks the wrong coalition.
-     Two consumers, two sources, stated rather than assumed.
-   - **CPU**: racct has it including the rollup, so the module should never
-     accumulate it.
-   - **The sweep** then stops sampling and becomes a policy pass over counters,
-     which is a net deletion of work proportional to the number of members.
-   - **Limits**: rctl already has rules, subjects and operator tooling. A
-     coalition subject there replaces the module's own ceiling fields and gives
-     operators `rctl` rules against coalitions with tools they have. Do this
-     rather than growing a third ceiling by hand.
-   - **Members that are not processes.** Only a process carries the container
-     pointer, so only process members are accounted. A coalition may also hold
-     a jail, and today that governs the jail's lifetime -- it dies with the
-     coalition -- while accounting for nothing inside it, because the processes
-     in that jail were never enlisted individually and have no pointer. Sockets
-     and shared memory are members for lifetime only and raise the same
-     question more narrowly. The fix is not to charge at the mapping or jail
-     chain, which would put a lookup on every charge: it is to set the pointer
-     when a process enters an enlisted jail, using the fork handling the module
-     already has, and to walk the jail's existing processes once at enlist.
-     That needs a rule for a process that is in an enlisted jail *and*
-     individually enlisted elsewhere; the individual enlistment should win,
-     being the more specific statement.
-   The test of whether this phase is done: the module holds no resource counter
-   of its own except the one deliberate exception above, adding a fourth
-   resource requires no new code in it at all, and a coalition holding a jail
-   reports the resources used inside it.
+   and each number now has one owner:
+   - **Address space**: the module's own hook and running total are gone; the
+     ceiling reads the container, which the framework charges at the mapping
+     path, so it is exact and the mapping path costs nothing again.
+   - **Resident set**: the ceiling, the ledger and the kill report read the
+     container. The victim rankings -- pressure hand-down and the
+     out-of-memory choice -- still sample at the moment of the decision, which
+     is the one deliberate exception: a ranking made on a page-daemon-old
+     figure picks the wrong coalition, and picking the wrong one is the whole
+     failure.
+   - **CPU**: the container keeps it, plus one figure the module owns -- the
+     CPU of members that have since left, without which a unit could spend
+     freely in short-lived children because the container gives a departing
+     member's charges back.
+   - **The sweep** walks no member lists at all now; it is a pass over
+     counters, costing the same whatever the coalitions are made of.
+   - **The ledger** reads the container, so `age_ms` is always 0 and
+     `COALITION_LEDGER_REFRESH` now means "judge the ceilings now" rather than
+     "sample now". `COALITION_OP_SET_LIMIT` answers EOPNOTSUPP on a kernel
+     booted without racct, rather than accepting a figure nothing would act on.
+   - **Limits through rctl**: NOT done, deliberately deferred. rctl has rules,
+     subjects and operator tooling, and a coalition subject there would replace
+     the module's ceiling fields; it is the right end state but it is a
+     separate piece of work against kern_rctl.c, not part of pointing the
+     existing figures at one source.
+   - **Members that are not processes**: NOT done, and the one real gap left.
+     Only a process carries the container pointer, so only process members are
+     accounted. A coalition may also hold a jail, and today that governs the
+     jail's lifetime while accounting for nothing inside it, because the
+     processes in that jail were never enlisted individually and have no
+     pointer. The fix is not to charge at the jail chain, which would put a
+     lookup on every charge: it is to set the pointer when a process enters an
+     enlisted jail, using the fork handling the module already has, and to walk
+     the jail's existing processes once at enlist. That needs a rule for a
+     process in an enlisted jail *and* individually enlisted elsewhere; the
+     individual enlistment should win, being the more specific statement.
 
    Remaining after that: the CPU ceiling re-expressed as an rctl rule once
    coalitions are an rctl subject, so operators reach it with the tools they

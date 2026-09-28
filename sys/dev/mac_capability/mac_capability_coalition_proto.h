@@ -210,18 +210,24 @@ struct coalition_set_responsible_req {
  *   req:  coalition_ledger_req
  *   reply: coalition_ledger_reply
  *
- * The coalition's cached resource sample: the footprint of its process
- * members, summed.  Unlike COALITION_OP_RUSAGE this never walks the member
- * list, so it is cheap enough to poll and cheap enough for a policy pass to
- * rank every coalition on the system.
+ * The coalition's resource counters, read from the container the kernel's
+ * accounting framework maintains for it.  Unlike COALITION_OP_RUSAGE this
+ * never walks the member list, so it is cheap enough to poll and cheap enough
+ * for a policy pass to rank every coalition on the system.
  *
- * The sample is refreshed whenever the kernel reports memory pressure (see
- * COALITION_NOTE_PRESSURE), which is when a ranking is about to matter, and
- * on request with COALITION_LEDGER_REFRESH.  age_ms says how stale the
- * returned sample is; a coalition that has never been sampled reports
- * age_ms of UINT64_MAX and zeroed counters.
+ * Nothing here is sampled, so nothing goes stale and age_ms is always 0; the
+ * field is kept because it is part of the reply.  Address space, process count
+ * and thread count are charged and discharged as they happen and are exact.
+ * Resident memory is whatever the page daemon last wrote, so it can be up to
+ * one of its passes old and is zero for a process too young to have been
+ * looked at yet -- which is the difference COALITION_OP_RUSAGE exists to span
+ * when an exact answer for right now is wanted.
+ *
+ * COALITION_LEDGER_REFRESH no longer refreshes anything, since there is
+ * nothing to refresh.  It now means: judge the declared ceilings before
+ * replying, rather than waiting for the next sweep to do it.
  */
-#define	COALITION_LEDGER_REFRESH	0x1	/* walk members before replying */
+#define	COALITION_LEDGER_REFRESH	0x1	/* judge ceilings before replying */
 struct coalition_ledger_req {
 	uint32_t	op;
 	uint32_t	flags;		/* COALITION_LEDGER_* */
@@ -234,7 +240,7 @@ struct coalition_ledger_reply {
 	uint64_t	id;
 	uint64_t	rss_bytes;
 	uint64_t	vsz_bytes;
-	uint64_t	age_ms;		/* UINT64_MAX = never sampled */
+	uint64_t	age_ms;		/* always 0; kept for the reply's shape */
 };
 
 /*
@@ -424,6 +430,9 @@ struct coalition_band_reply {
  *         cpu_percent }
  *   rep:  coalition_reply
  *   A figure of 0 removes that ceiling; each is independent of the others.
+ *   Every ceiling is judged from the coalition's container, so on a kernel
+ *   booted without resource accounting (kern.racct.enable=0) this returns
+ *   EOPNOTSUPP rather than accepting a figure nothing would ever act on.
  *
  * Idle exit
  * ---------

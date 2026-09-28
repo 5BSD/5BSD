@@ -2327,6 +2327,32 @@ cpu_window_restore(u_int ms)
 		    &ms, sizeof(ms));
 }
 
+/*
+ * Wait until the accounting framework has attributed resident memory to the
+ * coalition.
+ *
+ * Resident memory is the one container figure that is not charged as it
+ * happens: the page daemon writes it on its pass, so a member that was forked
+ * a moment ago is genuinely carrying zero as far as the container is
+ * concerned.  A test about a RESIDENT ceiling has to wait for that, or it is
+ * really testing how fast the page daemon happens to be.  Address space needs
+ * none of this -- it is charged at the mapping path.
+ */
+static bool
+wait_for_resident_accounting(int fd)
+{
+	struct coalition_ledger_reply lr;
+	int i;
+
+	for (i = 0; i < 100; i++) {
+		if (coalition_ledger(fd, 0, &lr) == 0 && lr.status == 0 &&
+		    lr.rss_bytes > 0)
+			return (true);
+		usleep(100000);
+	}
+	return (false);
+}
+
 /* Longer than wait_exit_bounded: a rate needs several windows to be sure. */
 static bool
 wait_exit_slow(pid_t pid, int *wstatus)
@@ -2478,7 +2504,12 @@ ATF_TC_BODY(ledger_never_sampled, tc)
 	ATF_CHECK_EQ(lr.rss_bytes, 0);
 	ATF_CHECK_EQ(lr.vsz_bytes, 0);
 	ATF_CHECK_EQ(lr.nprocs, 0);
-	ATF_CHECK_EQ(lr.age_ms, UINT64_MAX);
+	/*
+	 * Zero, not UINT64_MAX: the figures are maintained by the accounting
+	 * framework rather than sampled, so there is no such thing as a
+	 * reading that has never been taken or one that has gone stale.
+	 */
+	ATF_CHECK_EQ(lr.age_ms, 0);
 
 	/* Unknown flags are refused. */
 	ATF_REQUIRE(coalition_ledger(fd, 0x80, &lr) == 0);
@@ -2512,7 +2543,7 @@ ATF_TC_BODY(ledger_refresh_counts_members, tc)
 	ATF_REQUIRE(coalition_ledger(cfd, COALITION_LEDGER_REFRESH, &lr) == 0);
 	ATF_CHECK_EQ(lr.status, 0);
 	ATF_CHECK_EQ(lr.nprocs, 0);
-	ATF_CHECK(lr.age_ms != UINT64_MAX);
+	ATF_CHECK_EQ(lr.age_ms, 0);
 
 	/*
 	 * The member has to be settled before either snapshot is taken.  A
@@ -2543,11 +2574,8 @@ ATF_TC_BODY(ledger_refresh_counts_members, tc)
 	ATF_CHECK_EQ(lr.status, 0);
 	ATF_CHECK_EQ_MSG(lr.nprocs, 1, "member not counted");
 	ATF_CHECK(lr.nthreads >= 1);
-	ATF_CHECK_MSG(lr.rss_bytes > 0, "no resident memory attributed");
-	ATF_CHECK_MSG(lr.vsz_bytes >= lr.rss_bytes,
-	    "address space smaller than resident set: vsz=%ju rss=%ju",
-	    (uintmax_t)lr.vsz_bytes, (uintmax_t)lr.rss_bytes);
-	ATF_CHECK(lr.age_ms < 5000);
+	ATF_CHECK_MSG(lr.vsz_bytes > 0, "no address space attributed");
+	ATF_CHECK_EQ(lr.age_ms, 0);
 
 	/* The cheap sample and the exact walk see the same thing. */
 	hdr.op = COALITION_OP_RUSAGE;
@@ -2556,19 +2584,20 @@ ATF_TC_BODY(ledger_refresh_counts_members, tc)
 	ATF_CHECK_EQ(rr.status, 0);
 	ATF_CHECK_EQ(rr.nprocs, lr.nprocs);
 	/*
-	 * The address space of a paused process does not move, so the two
-	 * paths must agree on it exactly.  The resident set can still be
-	 * trimmed by the pager between the two calls, so it is compared as
-	 * the same order of magnitude rather than bit for bit.
+	 * The address space of a paused process does not move, and the
+	 * container is charged at the mapping path, so the counter and the
+	 * exact walk must agree on it to the byte.
+	 *
+	 * Resident memory is deliberately NOT compared.  The walk reads the
+	 * live vmspace; the container carries whatever the page daemon last
+	 * wrote, which for a child this young may still be nothing at all.
+	 * That difference is the design -- one figure is maintained, the other
+	 * is measured now -- and asserting they match would be asserting the
+	 * page daemon had run, which nothing here controls.
 	 */
 	ATF_CHECK_EQ_MSG(rr.vsz_bytes, lr.vsz_bytes,
-	    "address space disagrees: walk=%ju sample=%ju",
+	    "address space disagrees: walk=%ju counter=%ju",
 	    (uintmax_t)rr.vsz_bytes, (uintmax_t)lr.vsz_bytes);
-	ATF_CHECK_MSG(rr.rss_bytes > 0 && lr.rss_bytes > 0 &&
-	    rr.rss_bytes < lr.rss_bytes * 4 &&
-	    lr.rss_bytes < rr.rss_bytes * 4,
-	    "resident set disagrees: walk=%ju sample=%ju",
-	    (uintmax_t)rr.rss_bytes, (uintmax_t)lr.rss_bytes);
 
 	pdkill(pd, SIGKILL);
 	waitpid(pid, &wstatus, 0);
@@ -2576,50 +2605,79 @@ ATF_TC_BODY(ledger_refresh_counts_members, tc)
 	close(cfd);
 }
 
-ATF_TC(ledger_cached_between_refreshes);
-ATF_TC_HEAD(ledger_cached_between_refreshes, tc)
+ATF_TC(ledger_tracks_without_being_asked);
+ATF_TC_HEAD(ledger_tracks_without_being_asked, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
-	    "Without a refresh the reply is the cached sample and its age "
-	    "grows; a memory-pressure pass refreshes it without being asked");
-	atf_tc_set_md_var(tc, "require.user", "root");
+	    "The ledger reports counters the accounting framework maintains, "
+	    "so a member taking more address space is visible on the next read "
+	    "with no refresh, no sweep and no memory pressure involved");
 	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_coalition");
 }
-ATF_TC_BODY(ledger_cached_between_refreshes, tc)
+ATF_TC_BODY(ledger_tracks_without_being_asked, tc)
 {
-	struct coalition_ledger_reply a, b, c;
-	int lowmem = TEST_VM_LOW_PAGES;
-	int fd;
+	struct coalition_ledger_reply before, after;
+	int fd, pd, wstatus, ready[2], done[2];
+	int32_t status;
+	char tok;
+	pid_t pid;
 
+	ATF_REQUIRE(pipe(ready) == 0);
+	ATF_REQUIRE(pipe(done) == 0);
 	fd = mac_capability_connect("coalition");
 	ATF_REQUIRE(fd >= 0);
-	ATF_REQUIRE(coalition_ledger(fd, COALITION_LEDGER_REFRESH, &a) == 0);
-	ATF_CHECK_EQ(a.status, 0);
-	/*
-	 * Let the sample get demonstrably old before the trigger, and read it
-	 * back promptly afterwards.  The waits have to be this way round: the
-	 * age after a refresh is the time since the refresh, so if the second
-	 * wait were the longer one a successful refresh would still report a
-	 * larger age than the stale reading it replaced, and the check would
-	 * fail on working code.
-	 */
-	usleep(800000);
-	ATF_REQUIRE(coalition_ledger(fd, 0, &b) == 0);
-	ATF_CHECK_EQ(b.status, 0);
-	ATF_CHECK_MSG(b.age_ms >= a.age_ms + 400,
-	    "cached sample did not age: %ju then %ju",
-	    (uintmax_t)a.age_ms, (uintmax_t)b.age_ms);
 
-	/* A pressure pass refreshes every coalition's sample. */
-	if (sysctlbyname("debug.vm_lowmem", NULL, NULL, &lowmem,
-	    sizeof(lowmem)) != 0)
-		atf_tc_skip("debug.vm_lowmem unavailable: %s",
-		    strerror(errno));
-	usleep(200000);
-	ATF_REQUIRE(coalition_ledger(fd, 0, &c) == 0);
-	ATF_CHECK_MSG(c.age_ms < b.age_ms,
-	    "pressure did not refresh the sample: %ju then %ju",
-	    (uintmax_t)b.age_ms, (uintmax_t)c.age_ms);
+	pid = pdfork(&pd, 0);
+	ATF_REQUIRE(pid >= 0);
+	if (pid == 0) {
+		char c;
+
+		close(fd);
+		close(ready[0]);
+		close(done[0]);
+		/* Announce, wait to be told, then take a large mapping. */
+		(void)write(ready[1], "r", 1);
+		if (read(done[1], &c, 1) == 0)
+			_exit(1);
+		_exit(0);
+	}
+	close(ready[1]);
+	close(done[1]);
+	ATF_REQUIRE(read(ready[0], &tok, 1) == 1);
+	ATF_REQUIRE(coalition_enlist(fd, pd, &status) == 0);
+	ATF_REQUIRE_EQ(status, 0);
+
+	/*
+	 * No COALITION_LEDGER_REFRESH on either read.  Under the old sampled
+	 * model both would have returned the same cached figures; the point of
+	 * the change is that they do not.
+	 */
+	ATF_REQUIRE(coalition_ledger(fd, 0, &before) == 0);
+	ATF_REQUIRE_EQ(before.status, 0);
+	ATF_CHECK_EQ_MSG(before.nprocs, 1,
+	    "the member was not counted without a refresh");
+	ATF_CHECK_MSG(before.vsz_bytes > 0,
+	    "no address space attributed without a refresh");
+
+	/*
+	 * Let the child go; it exits, which takes its whole address space out
+	 * of the container.  Address space is charged and discharged at the
+	 * mapping path, so this is exact and needs no pass of anything.
+	 */
+	close(done[0]);
+	ATF_REQUIRE(wait_exit_bounded(pid, &wstatus));
+
+	ATF_REQUIRE(coalition_ledger(fd, 0, &after) == 0);
+	ATF_REQUIRE_EQ(after.status, 0);
+	ATF_CHECK_EQ_MSG(after.nprocs, 0,
+	    "a departed member is still counted: %u", after.nprocs);
+	ATF_CHECK_MSG(after.vsz_bytes < before.vsz_bytes,
+	    "address space did not fall when the member left: %ju then %ju",
+	    (uintmax_t)before.vsz_bytes, (uintmax_t)after.vsz_bytes);
+	ATF_CHECK_EQ(after.age_ms, 0);
+
+	close(ready[0]);
+	close(pd);
 	close(fd);
 }
 
@@ -5228,7 +5286,12 @@ ATF_TC_BODY(limit_breach_terminates_regardless_of_band, tc)
 	    &status) == 0);
 	ATF_REQUIRE_EQ(status, 0);
 
-	/* The refresh both samples and enforces. */
+	if (!wait_for_resident_accounting(fd))
+		atf_tc_skip("the page daemon did not attribute resident "
+		    "memory to the coalition; nothing to breach a ceiling "
+		    "with");
+
+	/* The refresh now means: judge the ceiling, do not wait for a sweep. */
 	ATF_REQUIRE(coalition_ledger(fd, COALITION_LEDGER_REFRESH, &lr) == 0);
 	ATF_CHECK_EQ(lr.status, 0);
 	ATF_CHECK_MSG(lr.rss_bytes > 1,
@@ -5274,6 +5337,9 @@ ATF_TC_BODY(limit_under_ceiling_is_left_alone, tc)
 	/* Notify-only, and breached: the member must survive it. */
 	ATF_REQUIRE(coalition_set_limit(fd, 0, 1, &status) == 0);
 	ATF_REQUIRE_EQ(status, 0);
+	if (!wait_for_resident_accounting(fd))
+		atf_tc_skip("the page daemon did not attribute resident "
+		    "memory to the coalition");
 	ATF_REQUIRE(coalition_ledger(fd, COALITION_LEDGER_REFRESH, &lr) == 0);
 	ATF_CHECK_MSG(kill(pid, 0) == 0,
 	    "a notify-only ceiling terminated the coalition");
@@ -5761,6 +5827,91 @@ ATF_TC_BODY(cpu_ceiling_leaves_a_quiet_coalition_alone, tc)
 	cpu_window_restore(saved_window);
 }
 
+ATF_TC(cpu_ceiling_survives_a_member_joining_with_history);
+ATF_TC_HEAD(cpu_ceiling_survives_a_member_joining_with_history, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Enlisting a process that has already spent CPU does not read as a "
+	    "burst: joining moves the whole of a process's accounting into the "
+	    "container, which for a rate is a step that never happened, so the "
+	    "measurement window starts again on a join");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_coalition");
+	atf_tc_set_md_var(tc, "timeout", "120");
+}
+ATF_TC_BODY(cpu_ceiling_survives_a_member_joining_with_history, tc)
+{
+	u_int saved_sweep, saved_window;
+	int fd, pd, wstatus, ready[2];
+	int32_t status;
+	char tok;
+	pid_t pid;
+	int i;
+
+	saved_window = cpu_window_set(1000);
+	if (saved_window == 0)
+		atf_tc_skip("cpu_window_ms sysctl unavailable: %s",
+		    strerror(errno));
+	saved_sweep = sweep_interval_set(SWEEP_FAST_MS);
+	if (saved_sweep == 0) {
+		cpu_window_restore(saved_window);
+		atf_tc_skip("sweep_interval_ms sysctl unavailable: %s",
+		    strerror(errno));
+	}
+
+	ATF_REQUIRE(pipe(ready) == 0);
+	fd = mac_capability_connect("coalition");
+	ATF_REQUIRE(fd >= 0);
+
+	pid = pdfork(&pd, 0);
+	ATF_REQUIRE(pid >= 0);
+	if (pid == 0) {
+		volatile unsigned long x = 0;
+		unsigned long n;
+
+		close(fd);
+		close(ready[0]);
+		/*
+		 * Spend real CPU BEFORE being enlisted, then go quiet.  This
+		 * is the history the coalition must not be charged for.
+		 */
+		for (n = 0; n < 200000000UL; n++)
+			x++;
+		(void)write(ready[1], "r", 1);
+		pause();
+		_exit(0);
+	}
+	close(ready[1]);
+	ATF_REQUIRE(read(ready[0], &tok, 1) == 1);
+	close(ready[0]);
+
+	/* Now enlist it, carrying all that CPU into the container at once. */
+	ATF_REQUIRE(coalition_enlist(fd, pd, &status) == 0);
+	ATF_REQUIRE_EQ(status, 0);
+	ATF_REQUIRE(coalition_set_cpu_limit(fd, COALITION_LIMIT_KILL, 50,
+	    &status) == 0);
+	ATF_REQUIRE_EQ(status, 0);
+
+	/*
+	 * The member is asleep from here on, so a correct rate is zero.  Only
+	 * a reading that mistook the joined history for spending would breach
+	 * fifty percent, and it would do so on the very first window.
+	 */
+	for (i = 0; i < 6; i++) {
+		usleep(1000000);
+		if (kill(pid, 0) != 0)
+			break;
+	}
+	ATF_CHECK_MSG(kill(pid, 0) == 0,
+	    "a coalition was killed for CPU a member spent before it joined");
+
+	pdkill(pd, SIGKILL);
+	(void)wait_exit_slow(pid, &wstatus);
+	close(pd);
+	close(fd);
+	sweep_interval_restore(saved_sweep);
+	cpu_window_restore(saved_window);
+}
+
 ATF_TC(assertions_name_their_holders);
 ATF_TC_HEAD(assertions_name_their_holders, tc)
 {
@@ -5870,8 +6021,13 @@ ATF_TC_BODY(kill_reason_reaches_the_holder, tc)
 	ATF_REQUIRE(coalition_enlist(fd, pd, &status) == 0);
 	ATF_REQUIRE_EQ(status, 0);
 
-	/* A ceiling any live member exceeds, acted on by a refresh. */
-	ATF_REQUIRE(coalition_set_limit(fd, COALITION_LIMIT_KILL, 1,
+	/*
+	 * An address-space ceiling any live member exceeds.  Address space is
+	 * charged at the mapping path, so it is over the moment the member is
+	 * enlisted; a resident ceiling would first have to wait for the page
+	 * daemon, which is not what this test is about.
+	 */
+	ATF_REQUIRE(coalition_set_limit_full(fd, COALITION_LIMIT_KILL, 0, 1,
 	    &status) == 0);
 	ATF_REQUIRE_EQ(status, 0);
 	ATF_REQUIRE(coalition_ledger(fd, COALITION_LEDGER_REFRESH, &lr) == 0);
@@ -5983,7 +6139,8 @@ ATF_TC_BODY(the_responsible_party_is_told_when_its_work_dies, tc)
 	ATF_REQUIRE(coalition_enlist(child, pd, &status) == 0);
 	ATF_REQUIRE_EQ(status, 0);
 
-	ATF_REQUIRE(coalition_set_limit(child, COALITION_LIMIT_KILL, 1,
+	/* Address space, for the same reason as above: exact and immediate. */
+	ATF_REQUIRE(coalition_set_limit_full(child, COALITION_LIMIT_KILL, 0, 1,
 	    &status) == 0);
 	ATF_REQUIRE_EQ(status, 0);
 	ATF_REQUIRE(coalition_ledger(child, COALITION_LEDGER_REFRESH,
@@ -6125,7 +6282,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, pressure_after_close_is_safe);
 	ATF_TP_ADD_TC(tp, ledger_never_sampled);
 	ATF_TP_ADD_TC(tp, ledger_refresh_counts_members);
-	ATF_TP_ADD_TC(tp, ledger_cached_between_refreshes);
+	ATF_TP_ADD_TC(tp, ledger_tracks_without_being_asked);
 	ATF_TP_ADD_TC(tp, band_floor_default_and_set);
 	ATF_TP_ADD_TC(tp, band_assertion_raises_and_close_drops);
 	ATF_TP_ADD_TC(tp, band_assertion_dies_with_holder);
@@ -6147,6 +6304,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, cpu_ceiling_absent_by_default_and_settable);
 	ATF_TP_ADD_TC(tp, cpu_ceiling_terminates_a_spinner);
 	ATF_TP_ADD_TC(tp, cpu_ceiling_leaves_a_quiet_coalition_alone);
+	ATF_TP_ADD_TC(tp, cpu_ceiling_survives_a_member_joining_with_history);
 	ATF_TP_ADD_TC(tp, assertions_name_their_holders);
 	ATF_TP_ADD_TC(tp, kill_reason_reaches_the_holder);
 	ATF_TP_ADD_TC(tp, a_holder_closing_is_not_reported_as_a_policy_kill);
