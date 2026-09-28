@@ -84,6 +84,7 @@ MTX_SYSINIT(racct_lock, &racct_lock, "racct lock", MTX_DEF);
 static uma_zone_t racct_zone;
 
 static void racct_sub_racct(struct racct *dest, const struct racct *src);
+static void	racct_release_locked(struct racct *racct);
 static void racct_sub_cred_locked(struct ucred *cred, int resource,
 		uint64_t amount);
 static void racct_add_cred_locked(struct ucred *cred, int resource,
@@ -247,6 +248,13 @@ racct_create(struct racct **racctp)
 	KASSERT(*racctp == NULL, ("racct already allocated"));
 
 	*racctp = uma_zalloc(racct_zone, M_WAITOK | M_ZERO);
+	/*
+	 * The creator's reference.  Containers reached through a credential are
+	 * destroyed directly and never look at this; the one a coalition owns
+	 * is given back with racct_release(), and starting at one here means a
+	 * creation site cannot forget to take it.
+	 */
+	(*racctp)->r_refs = 1;
 }
 
 static void
@@ -313,6 +321,36 @@ racct_adjust_resource(struct racct *racct, int resource,
 	}
 }
 
+/*
+ * Adjust a coalition's container.
+ *
+ * Separate from racct_adjust_resource(), and deliberately clamps where that
+ * one asserts.  The difference is not laziness, it is that the two kinds of
+ * container have different invariants.
+ *
+ * A process's user, login class and jail containers are derived from its
+ * credential.  Membership of those cannot change underneath a charge, so a
+ * charge that would take one negative means the accounting is corrupt and
+ * asserting is right.
+ *
+ * A coalition is not derived from anything: a process joins and leaves while
+ * it is running and while charges are in flight, and a coalition can be torn
+ * down by policy at any moment.  A charge that arrives just after a member has
+ * been taken out is therefore an ordinary race, not corruption, and the honest
+ * answer for an aggregate is that it never goes below zero.  Treating it as
+ * corruption panics a machine over a coalition's statistic.
+ */
+static void
+racct_adjust_coalition(struct racct *racct, int resource, int64_t amount)
+{
+
+	RACCT_LOCK_ASSERT();
+
+	racct->r_resources[resource] += amount;
+	if (racct->r_resources[resource] < 0)
+		racct->r_resources[resource] = 0;
+}
+
 static int
 racct_add_locked(struct proc *p, int resource, uint64_t amount, int force)
 {
@@ -336,6 +374,8 @@ racct_add_locked(struct proc *p, int resource, uint64_t amount, int force)
 #endif
 	racct_adjust_resource(p->p_racct, resource, amount);
 	racct_add_cred_locked(p->p_ucred, resource, amount);
+	if (p->p_coalition_racct != NULL)
+		racct_adjust_coalition(p->p_coalition_racct, resource, amount);
 
 	return (0);
 }
@@ -509,6 +549,9 @@ racct_set_locked(struct proc *p, int resource, uint64_t amount, int force)
 		racct_add_cred_locked(p->p_ucred, resource, diff_cred);
 	else if (diff_cred < 0)
 		racct_sub_cred_locked(p->p_ucred, resource, -diff_cred);
+	if (p->p_coalition_racct != NULL)
+		racct_adjust_coalition(p->p_coalition_racct, resource,
+		    diff_proc);
 
 	return (0);
 }
@@ -665,6 +708,9 @@ racct_sub(struct proc *p, int resource, uint64_t amount)
 
 	racct_adjust_resource(p->p_racct, resource, -amount);
 	racct_sub_cred_locked(p->p_ucred, resource, amount);
+	if (p->p_coalition_racct != NULL)
+		racct_adjust_coalition(p->p_coalition_racct, resource,
+		    -amount);
 	RACCT_UNLOCK();
 }
 
@@ -720,6 +766,12 @@ racct_proc_fork(struct proc *parent, struct proc *child)
 	 * Create racct for the child process.
 	 */
 	racct_create(&child->p_racct);
+	/*
+	 * A child starts in no coalition.  Membership is established by the
+	 * coalition's own fork handling, which is what charges the child to a
+	 * container; inheriting the pointer here would charge it twice.
+	 */
+	child->p_coalition_racct = NULL;
 
 	PROC_LOCK(parent);
 	PROC_LOCK(child);
@@ -810,6 +862,16 @@ racct_proc_exit(struct proc *p)
 #ifdef RCTL
 	rctl_racct_release(p->p_racct);
 #endif
+	/*
+	 * Whatever the process still had charged has been given back above for
+	 * everything reclaimable; what is left, such as CPU time, stays with
+	 * the coalition on purpose, so a unit cannot spend freely by spending
+	 * in children that exit.  Drop the reference either way.
+	 */
+	if (p->p_coalition_racct != NULL) {
+		racct_release_locked(p->p_coalition_racct);
+		p->p_coalition_racct = NULL;
+	}
 	racct_destroy_locked(&p->p_racct);
 	RACCT_UNLOCK();
 	PROC_UNLOCK(p);
@@ -821,6 +883,137 @@ racct_proc_exit(struct proc *p)
  * the credentials change itself (i.e., without the proc lock being unlocked
  * between the two), but the order does not matter.
  */
+/*
+ * Move a process into or out of a coalition's resource container.
+ *
+ * Everything the process has already accounted for moves with it, exactly as
+ * it does when a process changes uid, login class or jail: the container is
+ * meant to answer "what is this coalition using", and a process that brings
+ * its memory with it is using that memory whether it arrived a moment ago or
+ * an hour ago.  Passing NULL takes the process out of whatever it was in.
+ *
+ * Callers hold the process lock.
+ */
+void
+racct_proc_join_coalition(struct proc *p, struct racct *coalition)
+{
+
+	if (!racct_enable)
+		return;
+	PROC_LOCK_ASSERT(p, MA_OWNED);
+
+	RACCT_LOCK();
+	if (p->p_coalition_racct == coalition) {
+		/*
+		 * Already where it is being asked to go.  Worth checking for
+		 * its own sake, and because the reference dance below would
+		 * otherwise drop the last reference to a container and then
+		 * immediately use it again.
+		 */
+		RACCT_UNLOCK();
+		return;
+	}
+	/*
+	 * Take the new reference before giving up the old one.  The other way
+	 * round can free the container between the two, and what follows then
+	 * charges into memory that has been given back.
+	 */
+	if (coalition != NULL)
+		coalition->r_refs++;
+	if (p->p_coalition_racct != NULL) {
+		racct_sub_racct(p->p_coalition_racct, p->p_racct);
+		racct_release_locked(p->p_coalition_racct);
+	}
+	p->p_coalition_racct = coalition;
+	if (coalition != NULL)
+		racct_add_racct(coalition, p->p_racct);
+	RACCT_UNLOCK();
+}
+
+/*
+ * Give back a reference on a container, and free it when the last one goes.
+ *
+ * Only containers that processes point at directly need this.  A coalition's
+ * container is pointed at by every member for as long as it is a member, and
+ * the coalition itself can be destroyed by policy at any moment, so the
+ * container has to outlive its owner: the last member out turns off the light.
+ * Without it, a process that is still exiting writes its final accounting into
+ * memory that has been given back.
+ */
+static void
+racct_release_locked(struct racct *racct)
+{
+	int i;
+
+	RACCT_LOCK_ASSERT();
+	KASSERT(racct->r_refs > 0, ("racct_release: no references"));
+	if (--racct->r_refs > 0)
+		return;
+	/*
+	 * Nobody is left pointing at it.  Empty it first: what it holds is a
+	 * second copy of charges the process, user and jail containers hold as
+	 * well, so this un-accounts nothing.
+	 */
+	for (i = 0; i <= RACCT_MAX; i++)
+		racct->r_resources[i] = 0;
+	racct_destroy_locked(&racct);
+}
+
+void
+racct_release(struct racct **racctp)
+{
+	struct racct *racct;
+
+	if (!racct_enable || racctp == NULL || *racctp == NULL)
+		return;
+	racct = *racctp;
+	*racctp = NULL;
+	RACCT_LOCK();
+	racct_release_locked(racct);
+	RACCT_UNLOCK();
+}
+
+/*
+ * Detach a process from its coalition container without moving anything.
+ *
+ * Used when the container itself is going away and its members are being
+ * terminated: what it holds is a second copy of charges the process, user and
+ * jail containers also hold, so there is nothing to give back, and the only
+ * thing that matters is that no process is left pointing at memory about to be
+ * freed.  Subtracting here would also undo the CPU a terminated member is
+ * meant to leave behind.
+ */
+void
+racct_proc_detach_coalition(struct proc *p)
+{
+
+	if (!racct_enable)
+		return;
+	RACCT_LOCK();
+	if (p->p_coalition_racct != NULL) {
+		racct_release_locked(p->p_coalition_racct);
+		p->p_coalition_racct = NULL;
+	}
+	RACCT_UNLOCK();
+}
+
+/*
+ * Read one resource from a container.  A coalition's usage is read from many
+ * places that have no business knowing how a container is locked.
+ */
+uint64_t
+racct_read(struct racct *racct, int resource)
+{
+	uint64_t v;
+
+	if (!racct_enable || racct == NULL)
+		return (0);
+	RACCT_LOCK();
+	v = (uint64_t)racct->r_resources[resource];
+	RACCT_UNLOCK();
+	return (v);
+}
+
 void
 racct_proc_ucred_changed(struct proc *p, struct ucred *oldcred,
     struct ucred *newcred)

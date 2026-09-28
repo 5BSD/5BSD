@@ -13,6 +13,7 @@ SCRIPTS=	blued-att \
 		blued-scan \
 		blocking \
 		mac_capability-audit \
+		mac_capability-accounting \
 		mac_capability-bands \
 		capsicum-changes \
 		capsicum-denials \

@@ -38,6 +38,7 @@
 #define	COALITION_OP_ASSERT		16
 #define	COALITION_OP_SET_LIMIT		17
 #define	COALITION_OP_SET_IDLE_EXIT	18
+#define	COALITION_OP_ASSERTIONS		19
 
 /*
  * Common request header.
@@ -300,6 +301,34 @@ struct coalition_band_req {
 
 #define	COALITION_IDLE_EXIT_ENABLE	0x1	/* may be put away when idle */
 
+/*
+ * Who is holding this coalition up.
+ *
+ * An assertion count alone answers the wrong question.  Knowing that three
+ * assertions are held does not tell an operator why a coalition will not fall
+ * back to its floor, or which process to go and look at; in a system where the
+ * holder of a capability is the whole point, the holder is the answer.  The
+ * kernel knows it, so it says so.
+ *
+ * The pid recorded is whoever asked for the assertion.  A descriptor can be
+ * passed on afterwards, so this is where it came from rather than a claim about
+ * where it is now; the process that took it is the one that decided the
+ * coalition should be held, which is usually what is being looked for.
+ */
+struct coalition_assert_info {
+	uint32_t	band;
+	int32_t		pid;		/* the process that took it */
+	uint64_t	age_ms;		/* how long it has been held */
+};
+
+struct coalition_assertions_reply {
+	int32_t		status;
+	uint32_t	live;		/* assertions held right now */
+	uint32_t	returned;	/* how many fitted in this reply */
+	uint32_t	_pad;
+	struct coalition_assert_info	held[];
+};
+
 struct coalition_idle_req {
 	uint32_t	op;
 	uint32_t	flags;		/* COALITION_IDLE_EXIT_* */
@@ -307,10 +336,25 @@ struct coalition_idle_req {
 	uint32_t	_pad;
 };
 
+/*
+ * Two ceilings, because the two figures can be known in different ways.
+ *
+ * vmem_bytes is address space, accumulated as members take it, so the ceiling
+ * is exact and cannot be slipped past between one look and the next.  This is
+ * the one that catches a runaway allocation.
+ *
+ * memory_bytes is resident memory, which moves on every page fault and is
+ * therefore sampled.  Its ceiling is about what a coalition is holding when
+ * somebody looks, which is the right question for a working set but is not a
+ * guarantee about any instant.
+ *
+ * Either may be zero, meaning no ceiling of that kind.
+ */
 struct coalition_limit_req {
 	uint32_t	op;
 	uint32_t	flags;		/* COALITION_LIMIT_* */
-	uint64_t	memory_bytes;	/* 0 = no ceiling */
+	uint64_t	memory_bytes;	/* resident, sampled; 0 = none */
+	uint64_t	vmem_bytes;	/* address space, exact; 0 = none */
 };
 
 struct coalition_band_reply {
@@ -444,8 +488,10 @@ struct coalition_rusage_reply {
 struct coalition_event_msg {
 	uint32_t	flags;		/* COALITION_NOTE_* */
 	uint32_t	reason;		/* COALITION_KILL_* */
+	uint64_t	subject_id;	/* coalition concerned, 0 = this one */
 };
 #define	COALITION_EVENT_V1_LEN	(sizeof(uint32_t))
+#define	COALITION_EVENT_V2_LEN	(2 * sizeof(uint32_t))
 
 #define	COALITION_NOTE_MEMBER_ADDED	0x0001
 #define	COALITION_NOTE_MEMBER_REMOVED	0x0002
@@ -464,8 +510,15 @@ struct coalition_event_msg {
 #define	COALITION_NOTE_PRESSURE		0x0100
 /* The coalition is over its declared memory ceiling. */
 #define	COALITION_NOTE_LIMIT		0x0200
+/*
+ * A coalition this one is responsible for was terminated by a policy.  The
+ * party that caused work to exist is the party that can do something about it
+ * having been taken away -- relaunch it, back off, or tell somebody -- so it is
+ * told, with the reason and the id of the coalition concerned.
+ */
+#define	COALITION_NOTE_CHILD_KILLED	0x0400
 
-#define	COALITION_NOTE_ALL		0x03ff
+#define	COALITION_NOTE_ALL		0x07ff
 
 /*
  * Maximum parent-chain nesting depth.  A root coalition has depth 0.

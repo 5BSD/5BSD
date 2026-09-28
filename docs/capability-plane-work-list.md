@@ -85,10 +85,57 @@ login session's coalition (by design, EBUSY on join).
    Every death carries exactly one of seven reasons, reported identically in
    the holder's event, the log and the `coalition-kill` probe, with the three
    memory reasons counted separately.
-   Remaining: a CPU budget and period; racct accounting into a coalition
-   subject, which is what would make footprint continuous rather than sampled;
-   and work a provider does on a client's behalf charged to the client
-   (donation across channel calls, item C2). This is
+   A coalition is now a real resource container in racct, charged alongside
+   the user, login class and jail containers a process already has. Every
+   resource the system accounts for is therefore accounted per coalition,
+   continuously, without this module counting anything itself. CPU is not
+   reclaimable, so a member that exits leaves its CPU behind, which is the
+   rollup XNU does by hand with `ledger_rollup`, and a process that re-homes
+   takes its usage with it, which is what racct already does for a uid change.
+
+   **Consolidation phase — do this before adding anything else.**
+   The container arrived after several figures had already been built by hand,
+   and keeping both would be the worst of the two. Each number needs one owner
+   and a reason, because they are not interchangeable:
+   - **Address space**: racct charges it at the mapping path already, so the
+     module's own hook, the per-member charged size, the running total and the
+     ceiling built on them are redundant. Delete them, and the hook in
+     `vm_mmap.c` with them; the mapping path then costs nothing again.
+   - **Resident set**: racct has it, but only as fresh as the page daemon's
+     last pass, which is not a cadence we control. The ceiling should read
+     racct. The out-of-memory victim ranking should keep sampling at the moment
+     of the decision, because a stale figure there picks the wrong coalition.
+     Two consumers, two sources, stated rather than assumed.
+   - **CPU**: racct has it including the rollup, so the module should never
+     accumulate it.
+   - **The sweep** then stops sampling and becomes a policy pass over counters,
+     which is a net deletion of work proportional to the number of members.
+   - **Limits**: rctl already has rules, subjects and operator tooling. A
+     coalition subject there replaces the module's own ceiling fields and gives
+     operators `rctl` rules against coalitions with tools they have. Do this
+     rather than growing a third ceiling by hand.
+   - **Members that are not processes.** Only a process carries the container
+     pointer, so only process members are accounted. A coalition may also hold
+     a jail, and today that governs the jail's lifetime -- it dies with the
+     coalition -- while accounting for nothing inside it, because the processes
+     in that jail were never enlisted individually and have no pointer. Sockets
+     and shared memory are members for lifetime only and raise the same
+     question more narrowly. The fix is not to charge at the mapping or jail
+     chain, which would put a lookup on every charge: it is to set the pointer
+     when a process enters an enlisted jail, using the fork handling the module
+     already has, and to walk the jail's existing processes once at enlist.
+     That needs a rule for a process that is in an enlisted jail *and*
+     individually enlisted elsewhere; the individual enlistment should win,
+     being the more specific statement.
+   The test of whether this phase is done: the module holds no resource counter
+   of its own except the one deliberate exception above, adding a fourth
+   resource requires no new code in it at all, and a coalition holding a jail
+   reports the resources used inside it.
+
+   Remaining after that: a CPU budget and period expressed through rctl; and
+   work a provider does on a client's behalf charged to the client (donation
+   across channel calls, item C2), which a container makes nearly free -- it is
+   moving entries between two of them. This is
    the substrate a coalition-aware scheduler policy would consume; the
    scheduler itself stays on hold.
 4. **Factotum-style key custody** (Plan 9) — **later**. BSDCrypto or BSDAuth

@@ -1,0 +1,124 @@
+#!/usr/sbin/dtrace -s
+/*
+ * Copyright (c) 2026 Kory Heard
+ *
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * mac_capability-accounting -- prove that coalition resource accounting is
+ * telling the truth.
+ *
+ * A coalition is a resource container in the kernel's own accounting
+ * framework, charged alongside the user, login class and jail containers a
+ * process already belongs to.  That makes the numbers cheap and correct, and
+ * it moves the ways it can go wrong out of arithmetic and into lifetime: a
+ * process that joins a container and never leaves it is still pointing at
+ * that container when the coalition is freed, and the next thing it charges
+ * is a write to memory that has been given back.  A wrong number would be an
+ * annoyance; that is a crash, and it will not look like an accounting bug
+ * when it happens.
+ *
+ * So this watches membership rather than totals.  The rule it checks is
+ * simple: every join is matched by exactly one leave or detach.  The summary
+ * prints any coalition where they did not balance, and the running output
+ * shows each one as it happens so an imbalance can be traced to the operation
+ * that caused it.
+ *
+ * It also reports what each container was still holding when it was emptied.
+ * CPU is expected there: a member that is terminated leaves its CPU behind on
+ * purpose, so a unit cannot spend freely by spending in short-lived children.
+ * Resident memory is not expected, and a non-zero figure means a member left
+ * without giving it back.
+ *
+ * Usage: mac_capability-accounting
+ */
+
+#pragma D option quiet
+#pragma D option switchrate=10hz
+#pragma D option dynvarsize=8m
+
+dtrace:::BEGIN
+{
+	printf("Watching coalition accounting... Ctrl-C for the verdict.\n\n");
+	printf("%-12s %-14s %-12s %s\n", "TIME", "EVENT", "COALITION",
+	    "DETAIL");
+	joins = 0;
+	leaves = 0;
+}
+
+/* ---- A process joined a coalition's container ---- */
+
+mac_capability_coalition:::racct-join
+{
+	printf("%-12s %-14s %-12d pid %d\n",
+	    strftime(walltimestamp, "%H:%M:%S"), "join", arg0, arg1);
+	live[arg0] = live[arg0] + 1;
+	joins++;
+	@joined[arg0] = count();
+}
+
+/*
+ * ---- A process left, or was detached ----
+ *
+ * A leave gives the usage back, which is what happens when a process moves to
+ * another coalition or is released rather than killed.  A detach only stops
+ * it pointing at the container, which is what a terminated member does so the
+ * CPU it spent stays charged.  Both end membership, which is what has to
+ * balance.
+ */
+
+mac_capability_coalition:::racct-leave
+{
+	printf("%-12s %-14s %-12d pid %d (%s)\n",
+	    strftime(walltimestamp, "%H:%M:%S"),
+	    arg2 == 1 ? "detach" : "leave", arg0, arg1,
+	    arg2 == 1 ? "terminated, keeps its CPU charged" : "gave it back");
+	live[arg0] = live[arg0] > 0 ? live[arg0] - 1 : 0;
+	leaves++;
+	@left[arg0] = count();
+}
+
+/* ---- A container was emptied so it could be destroyed ---- */
+
+mac_capability_coalition:::racct-drain
+{
+	printf("%-12s %-14s %-12d %d members still attached, %d ms CPU, "
+	    "%d KB resident\n", strftime(walltimestamp, "%H:%M:%S"), "drain",
+	    arg0, live[arg0], arg1 / 1000, arg2 / 1024);
+	@drained_cpu[arg0] = max(arg1);
+	/*
+	 * Resident memory left behind at drain is the interesting case: a
+	 * member gave nothing back.  CPU left behind is by design.
+	 */
+	@leftover_rss[arg0] = max(arg2);
+	/* Anything still attached here is a process pointing at freed memory. */
+	@still_attached[arg0] = max(live[arg0]);
+	live[arg0] = 0;
+}
+
+/* ---- What the coalition was terminated for, for correlation ---- */
+
+mac_capability_coalition:::coalition-kill
+{
+	printf("%-12s %-14s %-12d reason %d, %d KB, band %d\n",
+	    strftime(walltimestamp, "%H:%M:%S"), "kill", arg0, arg2,
+	    arg3 / 1024, arg4);
+}
+
+dtrace:::END
+{
+	printf("\n=== Verdict ===\n");
+	printf("joins %d, leaves and detaches %d\n", joins, leaves);
+	printf("\nMembership that did not balance (should be empty):\n");
+	printa("  coalition %-12d still attached at drain: %@d\n",
+	    @still_attached);
+	printf("\nResident memory left in a container at drain, in bytes\n");
+	printf("(should be zero -- a member left without giving it back):\n");
+	printa("  coalition %-12d %@d\n", @leftover_rss);
+	printf("\nCPU left behind at drain, in microseconds\n");
+	printf("(expected: terminated members leave their CPU charged):\n");
+	printa("  coalition %-12d %@d\n", @drained_cpu);
+	printf("\nA coalition appearing in the first two lists is a real bug.\n");
+	printf("A process still attached to a freed container writes to freed\n");
+	printf("memory on its next charge, which will not look like an\n");
+	printf("accounting problem by the time it is noticed.\n");
+}

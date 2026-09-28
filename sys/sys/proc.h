@@ -766,6 +766,14 @@ struct proc {
 	struct kdtrace_proc	*p_dtrace; /* (*) DTrace-specific data. */
 	struct cv	p_pwait;	/* (*) wait cv for exit/exec. */
 	struct racct	*p_racct;	/* (b) Resource accounting. */
+	/*
+	 * (b) Resource container for the coalition this process belongs to, or
+	 * NULL.  A coalition is a property of the process, not of its
+	 * credential -- it does not change when the process changes uid -- so
+	 * it hangs here beside p_racct rather than off the cred with the user,
+	 * login class and jail containers, and is charged alongside them.
+	 */
+	struct racct	*p_coalition_racct;
 	int		p_throttled;	/* (c) Flag for racct pcpu throttling */
 	/*
 	 * An orphan is the child that has been re-parented to the

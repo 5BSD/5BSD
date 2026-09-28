@@ -50,6 +50,7 @@ struct mac_capability_proc_coalition {
 typedef bool (*mac_capability_proc_coalition_fn)(struct proc *,
     struct mac_capability_proc_coalition *);
 void	mac_capability_proc_coalition_hook_set(mac_capability_proc_coalition_fn);
+
 bool	mac_capability_proc_coalition(struct proc *p,
 	    struct mac_capability_proc_coalition *out);
 

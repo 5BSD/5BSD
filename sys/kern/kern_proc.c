@@ -219,6 +219,14 @@ proc_ctor(void *mem, int size, void *arg, int flags)
 	struct thread *td;
 
 	p = (struct proc *)mem;
+	p->p_textpath = NULL;
+	/*
+	 * A process structure is reused, and nothing else clears this.  A
+	 * stale pointer here is a pointer into a coalition container that was
+	 * freed during some earlier process's life, and the first thing this
+	 * process accounts for would write into it.
+	 */
+	p->p_coalition_racct = NULL;
 #ifdef KDTRACE_HOOKS
 	kdtrace_proc_ctor(p);
 #endif

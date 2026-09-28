@@ -2118,6 +2118,39 @@ wait_for_pressure(int fd, int tries)
 	return (false);
 }
 
+
+/*
+ * Wait for a note to arrive on a coalition, and hand back the event that
+ * carried it.  Events are a queue, so the one we want may be behind others;
+ * anything else is discarded rather than treated as a failure.
+ */
+static bool
+coalition_wait_note(int fd, uint32_t want, struct coalition_event_msg *out,
+    int tries)
+{
+	struct coalition_event_msg ev;
+	int i;
+
+	/*
+	 * Non-blocking: receiving an event waits for one otherwise, and a note
+	 * that never arrives would hang the test rather than fail it, which
+	 * costs a five-minute timeout instead of a useful message.
+	 */
+	if (fcntl(fd, F_SETFL, fcntl(fd, F_GETFL, 0) | O_NONBLOCK) == -1)
+		return (false);
+	for (i = 0; i < tries; i++) {
+		while (coalition_recv_event(fd, &ev) == 0) {
+			if ((ev.flags & want) != 0) {
+				if (out != NULL)
+					*out = ev;
+				return (true);
+			}
+		}
+		usleep(100000);
+	}
+	return (false);
+}
+
 ATF_TC(pressure_notifies_coalitions);
 ATF_TC_HEAD(pressure_notifies_coalitions, tc)
 {
@@ -2229,6 +2262,25 @@ coalition_ledger(int fd, uint32_t flags, struct coalition_ledger_reply *lr)
 	return (coalition_call(fd, &lq, sizeof(lq), NULL, 0, lr, sizeof(*lr)));
 }
 
+
+static int
+coalition_set_limit_full(int fd, uint32_t flags, uint64_t bytes,
+    uint64_t vmem, int32_t *status_out)
+{
+	struct coalition_limit_req lq;
+	struct coalition_reply rpl;
+	int ret;
+
+	memset(&lq, 0, sizeof(lq));
+	lq.op = COALITION_OP_SET_LIMIT;
+	lq.flags = flags;
+	lq.memory_bytes = bytes;
+	lq.vmem_bytes = vmem;
+	ret = coalition_call(fd, &lq, sizeof(lq), NULL, 0, &rpl, sizeof(rpl));
+	if (ret == 0 && status_out != NULL)
+		*status_out = rpl.status;
+	return (ret);
+}
 
 static int
 coalition_set_limit(int fd, uint32_t flags, uint64_t bytes, int32_t *status_out)
@@ -5343,6 +5395,328 @@ ATF_TC_BODY(idle_exit_is_held_off_by_an_assertion, tc)
 	sweep_interval_restore(saved);
 }
 
+ATF_TC(vmem_ceiling_is_exact_not_sampled);
+ATF_TC_HEAD(vmem_ceiling_is_exact_not_sampled, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "An address-space ceiling is kept as memory is taken rather than "
+	    "when somebody next looks: a member that maps past it is acted on "
+	    "without waiting for a sweep interval");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_coalition");
+}
+ATF_TC_BODY(vmem_ceiling_is_exact_not_sampled, tc)
+{
+	u_int before = 0, after = 0, saved;
+	size_t len = sizeof(before);
+	int fd, pd, ready[2], wstatus;
+	int32_t status;
+	char tok;
+	pid_t pid;
+
+	if (sysctlbyname("kern.mac_capability_coalition.limit_kills", &before,
+	    &len, NULL, 0) != 0)
+		atf_tc_skip("limit_kills sysctl unavailable: %s",
+		    strerror(errno));
+	/*
+	 * Deliberately leave the sweep SLOW.  The point of an address-space
+	 * ceiling is that it does not depend on the sweep, so if this passes
+	 * with a long interval the accounting really is being done as the
+	 * memory is taken.
+	 */
+	saved = sweep_interval_set(3600000);
+	if (saved == 0)
+		atf_tc_skip("sweep_interval_ms sysctl unavailable: %s",
+		    strerror(errno));
+
+	ATF_REQUIRE(pipe(ready) == 0);
+	fd = mac_capability_connect("coalition");
+	ATF_REQUIRE(fd >= 0);
+
+	pid = pdfork(&pd, 0);
+	ATF_REQUIRE(pid >= 0);
+	if (pid == 0) {
+		char c;
+
+		close(ready[1]);
+		close(fd);
+		/* Wait to be told, then take a large mapping. */
+		if (read(ready[0], &c, 1) == 1)
+			(void)mmap(NULL, 256UL << 20, PROT_READ | PROT_WRITE,
+			    MAP_ANON | MAP_PRIVATE, -1, 0);
+		pause();
+		_exit(0);
+	}
+	close(ready[0]);
+	ATF_REQUIRE(coalition_enlist(fd, pd, &status) == 0);
+	ATF_REQUIRE_EQ(status, 0);
+
+	/* A ceiling the child is under now and will exceed when it maps. */
+	ATF_REQUIRE(coalition_set_limit_full(fd, COALITION_LIMIT_KILL, 0,
+	    64UL << 20, &status) == 0);
+	ATF_REQUIRE_EQ(status, 0);
+
+	ATF_REQUIRE(write(ready[1], "g", 1) == 1);
+	close(ready[1]);
+
+	ATF_CHECK_MSG(wait_exit_bounded(pid, &wstatus),
+	    "a coalition past its address-space ceiling was not acted on "
+	    "without a sweep");
+	len = sizeof(after);
+	ATF_REQUIRE(sysctlbyname("kern.mac_capability_coalition.limit_kills",
+	    &after, &len, NULL, 0) == 0);
+	ATF_CHECK_MSG(after > before,
+	    "the address-space breach was not counted: %u then %u", before,
+	    after);
+	(void)tok;
+	close(pd);
+	close(fd);
+	sweep_interval_restore(saved);
+}
+
+ATF_TC(assertions_name_their_holders);
+ATF_TC_HEAD(assertions_name_their_holders, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "An operator can find out who is holding a coalition up, not just "
+	    "how many are: each assertion reports the process that took it, "
+	    "its band and its age, and the live count is honest when the "
+	    "caller's buffer is too small for the list");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_coalition");
+}
+ATF_TC_BODY(assertions_name_their_holders, tc)
+{
+	struct coalition_band_reply br;
+	/*
+	 * The reply ends in a flexible array, so the buffer is bytes and the
+	 * reply is read through a pointer rather than being a struct member.
+	 */
+	char buf[sizeof(struct coalition_assertions_reply) +
+	    4 * sizeof(struct coalition_assert_info)];
+	struct coalition_assertions_reply *big =
+	    (struct coalition_assertions_reply *)buf;
+	struct coalition_assertions_reply small;
+	struct coalition_req_hdr hdr;
+	int fd, a1, a2;
+	unsigned i;
+	bool saw_background = false, saw_critical = false;
+
+	fd = mac_capability_connect("coalition");
+	ATF_REQUIRE(fd >= 0);
+
+	/* Nothing held yet. */
+	memset(buf, 0, sizeof(buf));
+	hdr.op = COALITION_OP_ASSERTIONS;
+	ATF_REQUIRE(coalition_call(fd, &hdr, sizeof(hdr), NULL, 0, buf,
+	    sizeof(buf)) == 0);
+	ATF_CHECK_EQ(big->status, 0);
+	ATF_CHECK_EQ_MSG(0, big->live, "a fresh coalition reported %u held",
+	    big->live);
+
+	ATF_REQUIRE(coalition_assert(fd, COALITION_BAND_BACKGROUND, &br,
+	    &a1) == 0);
+	ATF_REQUIRE_EQ(br.status, 0);
+	ATF_REQUIRE(coalition_assert(fd, COALITION_BAND_CRITICAL, &br,
+	    &a2) == 0);
+	ATF_REQUIRE_EQ(br.status, 0);
+
+	memset(buf, 0, sizeof(buf));
+	ATF_REQUIRE(coalition_call(fd, &hdr, sizeof(hdr), NULL, 0, buf,
+	    sizeof(buf)) == 0);
+	ATF_CHECK_EQ_MSG(2, big->live, "expected two held, got %u", big->live);
+	ATF_CHECK_EQ(2, big->returned);
+	for (i = 0; i < big->returned; i++) {
+		ATF_CHECK_EQ_MSG(getpid(), big->held[i].pid,
+		    "assertion %u names pid %d, not the process that took it",
+		    i, big->held[i].pid);
+		if (big->held[i].band == COALITION_BAND_BACKGROUND)
+			saw_background = true;
+		if (big->held[i].band == COALITION_BAND_CRITICAL)
+			saw_critical = true;
+	}
+	ATF_CHECK_MSG(saw_background && saw_critical,
+	    "the bands of the held assertions were not both reported");
+
+	/* A buffer with room for none still learns the true count. */
+	memset(&small, 0, sizeof(small));
+	ATF_REQUIRE(coalition_call(fd, &hdr, sizeof(hdr), NULL, 0, &small,
+	    sizeof(small)) == 0);
+	ATF_CHECK_EQ_MSG(2, small.live,
+	    "a short reply understated the live count as %u", small.live);
+	ATF_CHECK_EQ_MSG(0, small.returned,
+	    "a reply with no room returned %u entries", small.returned);
+
+	/* Releasing one is reflected. */
+	ATF_REQUIRE(close(a2) == 0);
+	memset(buf, 0, sizeof(buf));
+	ATF_REQUIRE(coalition_call(fd, &hdr, sizeof(hdr), NULL, 0, buf,
+	    sizeof(buf)) == 0);
+	ATF_CHECK_EQ_MSG(1, big->live, "after releasing one, %u remain",
+	    big->live);
+	ATF_CHECK_EQ(COALITION_BAND_BACKGROUND, big->held[0].band);
+
+	close(a1);
+	close(fd);
+}
+
+ATF_TC(kill_reason_reaches_the_holder);
+ATF_TC_HEAD(kill_reason_reaches_the_holder, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "A coalition terminated by a policy tells its holder why, and the "
+	    "reason on the event is the one the policy acted on rather than a "
+	    "generic termination");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_coalition");
+}
+ATF_TC_BODY(kill_reason_reaches_the_holder, tc)
+{
+	struct coalition_event_msg ev;
+	struct coalition_ledger_reply lr;
+	int fd, pd, wstatus;
+	int32_t status;
+	pid_t pid;
+
+	fd = mac_capability_connect("coalition");
+	ATF_REQUIRE(fd >= 0);
+	pid = coalition_fork_member(fd, &pd);
+	ATF_REQUIRE(pid > 0);
+	ATF_REQUIRE(coalition_enlist(fd, pd, &status) == 0);
+	ATF_REQUIRE_EQ(status, 0);
+
+	/* A ceiling any live member exceeds, acted on by a refresh. */
+	ATF_REQUIRE(coalition_set_limit(fd, COALITION_LIMIT_KILL, 1,
+	    &status) == 0);
+	ATF_REQUIRE_EQ(status, 0);
+	ATF_REQUIRE(coalition_ledger(fd, COALITION_LEDGER_REFRESH, &lr) == 0);
+
+	memset(&ev, 0, sizeof(ev));
+	ATF_REQUIRE_MSG(coalition_wait_note(fd, COALITION_NOTE_TERMINATING,
+	    &ev, 50), "the holder was never told its coalition was going");
+	ATF_CHECK_EQ_MSG(COALITION_KILL_OVER_CEILING, ev.reason,
+	    "the holder was told reason %u, not that it was over its ceiling",
+	    ev.reason);
+	(void)wait_exit_bounded(pid, &wstatus);
+	close(pd);
+	close(fd);
+}
+
+ATF_TC(a_holder_closing_is_not_reported_as_a_policy_kill);
+ATF_TC_HEAD(a_holder_closing_is_not_reported_as_a_policy_kill, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Asking for a termination is not a memory policy: the reason on "
+	    "the event distinguishes a holder's own request from something "
+	    "the system decided, and the policy counters do not move");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_coalition");
+}
+ATF_TC_BODY(a_holder_closing_is_not_reported_as_a_policy_kill, tc)
+{
+	struct coalition_event_msg ev;
+	u_int oom0 = 0, lim0 = 0, idle0 = 0, oom1 = 0, lim1 = 0, idle1 = 0;
+	size_t len;
+	int fd, pd, wstatus;
+	int32_t status;
+	pid_t pid;
+
+	len = sizeof(oom0);
+	if (sysctlbyname("kern.mac_capability_coalition.oom_kills", &oom0,
+	    &len, NULL, 0) != 0)
+		atf_tc_skip("oom_kills sysctl unavailable: %s",
+		    strerror(errno));
+	len = sizeof(lim0);
+	ATF_REQUIRE(sysctlbyname("kern.mac_capability_coalition.limit_kills",
+	    &lim0, &len, NULL, 0) == 0);
+	len = sizeof(idle0);
+	ATF_REQUIRE(sysctlbyname("kern.mac_capability_coalition.idle_kills",
+	    &idle0, &len, NULL, 0) == 0);
+
+	fd = mac_capability_connect("coalition");
+	ATF_REQUIRE(fd >= 0);
+	pid = coalition_fork_member(fd, &pd);
+	ATF_REQUIRE(pid > 0);
+	ATF_REQUIRE(coalition_enlist(fd, pd, &status) == 0);
+	ATF_REQUIRE_EQ(status, 0);
+
+	ATF_REQUIRE(coalition_op(fd, COALITION_OP_TERMINATE, &status) == 0);
+	ATF_CHECK_EQ(status, 0);
+	memset(&ev, 0, sizeof(ev));
+	if (coalition_wait_note(fd, COALITION_NOTE_TERMINATING, &ev, 30))
+		ATF_CHECK_EQ_MSG(COALITION_KILL_REQUESTED, ev.reason,
+		    "an asked-for termination reported reason %u", ev.reason);
+
+	/* None of the memory counters moved. */
+	len = sizeof(oom1);
+	ATF_REQUIRE(sysctlbyname("kern.mac_capability_coalition.oom_kills",
+	    &oom1, &len, NULL, 0) == 0);
+	len = sizeof(lim1);
+	ATF_REQUIRE(sysctlbyname("kern.mac_capability_coalition.limit_kills",
+	    &lim1, &len, NULL, 0) == 0);
+	len = sizeof(idle1);
+	ATF_REQUIRE(sysctlbyname("kern.mac_capability_coalition.idle_kills",
+	    &idle1, &len, NULL, 0) == 0);
+	ATF_CHECK_EQ_MSG(oom0, oom1, "a requested termination was counted as "
+	    "an out-of-memory kill");
+	ATF_CHECK_EQ_MSG(lim0, lim1, "a requested termination was counted as "
+	    "a ceiling breach");
+	ATF_CHECK_EQ_MSG(idle0, idle1, "a requested termination was counted as "
+	    "an idle exit");
+
+	(void)wait_exit_bounded(pid, &wstatus);
+	close(pd);
+	close(fd);
+}
+
+ATF_TC(the_responsible_party_is_told_when_its_work_dies);
+ATF_TC_HEAD(the_responsible_party_is_told_when_its_work_dies, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "The party a coalition is responsible to is told when a policy "
+	    "takes that work away, with the reason and which coalition it "
+	    "was, because it is the party that can do something about it");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_coalition");
+}
+ATF_TC_BODY(the_responsible_party_is_told_when_its_work_dies, tc)
+{
+	struct coalition_event_msg ev;
+	struct coalition_stat_reply child_stat;
+	struct coalition_ledger_reply lr;
+	int parent, child, pd, wstatus;
+	int32_t status;
+	pid_t pid;
+
+	parent = mac_capability_connect("coalition");
+	child = mac_capability_connect("coalition");
+	ATF_REQUIRE(parent >= 0 && child >= 0);
+	ATF_REQUIRE(coalition_set_responsible(child, &parent, 0, &status) == 0);
+	ATF_REQUIRE_EQ_MSG(status, 0, "could not record the responsible party");
+	ATF_REQUIRE(coalition_stat(child, &child_stat) == 0);
+
+	pid = coalition_fork_member(child, &pd);
+	ATF_REQUIRE(pid > 0);
+	ATF_REQUIRE(coalition_enlist(child, pd, &status) == 0);
+	ATF_REQUIRE_EQ(status, 0);
+
+	ATF_REQUIRE(coalition_set_limit(child, COALITION_LIMIT_KILL, 1,
+	    &status) == 0);
+	ATF_REQUIRE_EQ(status, 0);
+	ATF_REQUIRE(coalition_ledger(child, COALITION_LEDGER_REFRESH,
+	    &lr) == 0);
+
+	memset(&ev, 0, sizeof(ev));
+	ATF_REQUIRE_MSG(coalition_wait_note(parent,
+	    COALITION_NOTE_CHILD_KILLED, &ev, 50),
+	    "the responsible party was never told its work had been taken");
+	ATF_CHECK_EQ_MSG(COALITION_KILL_OVER_CEILING, ev.reason,
+	    "told reason %u rather than the ceiling breach", ev.reason);
+	ATF_CHECK_EQ_MSG(child_stat.id, ev.subject_id,
+	    "told about coalition %ju, not the one that died (%ju)",
+	    (uintmax_t)ev.subject_id, (uintmax_t)child_stat.id);
+
+	(void)wait_exit_bounded(pid, &wstatus);
+	close(pd);
+	close(child);
+	close(parent);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 	/* Lifecycle */
@@ -5481,6 +5855,11 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, idle_exit_is_opt_in);
 	ATF_TP_ADD_TC(tp, idle_exit_puts_away_after_its_age);
 	ATF_TP_ADD_TC(tp, idle_exit_is_held_off_by_an_assertion);
+	ATF_TP_ADD_TC(tp, vmem_ceiling_is_exact_not_sampled);
+	ATF_TP_ADD_TC(tp, assertions_name_their_holders);
+	ATF_TP_ADD_TC(tp, kill_reason_reaches_the_holder);
+	ATF_TP_ADD_TC(tp, a_holder_closing_is_not_reported_as_a_policy_kill);
+	ATF_TP_ADD_TC(tp, the_responsible_party_is_told_when_its_work_dies);
 
 	/* Resource exhaustion + teardown-race stress */
 	ATF_TP_ADD_TC(tp, exhaust_coalition_max);

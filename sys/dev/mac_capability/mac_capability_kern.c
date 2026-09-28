@@ -929,6 +929,7 @@ mac_capability_proc_coalition_lock_init(void *arg __unused)
 SYSINIT(mac_capability_proccoal, SI_SUB_LOCK, SI_ORDER_ANY,
     mac_capability_proc_coalition_lock_init, NULL);
 
+
 void
 mac_capability_proc_coalition_hook_set(mac_capability_proc_coalition_fn fn)
 {
