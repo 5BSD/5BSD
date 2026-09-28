@@ -43,6 +43,7 @@ dtrace:::BEGIN
 	    "DETAIL");
 	joins = 0;
 	leaves = 0;
+	jailcharges = 0;
 }
 
 /* ---- A process joined a coalition's container ---- */
@@ -95,6 +96,23 @@ mac_capability_coalition:::racct-drain
 	live[arg0] = 0;
 }
 
+/*
+ * ---- A process was charged because of the jail it is in ----
+ *
+ * These never appear as a join: a jail's processes are accounted, not
+ * enlisted, so they have no membership to balance.  A charge here with no
+ * matching drain below is normal -- the process gives its charges back when it
+ * exits, through the accounting framework rather than through this module.
+ */
+
+mac_capability_coalition:::racct-jail
+{
+	printf("%-12s %-14s %-12d pid %d\n",
+	    strftime(walltimestamp, "%H:%M:%S"), "jail-charge", arg0, arg1);
+	@jailed[arg0] = count();
+	jailcharges++;
+}
+
 /* ---- What the coalition was terminated for, for correlation ---- */
 
 mac_capability_coalition:::coalition-kill
@@ -108,6 +126,8 @@ dtrace:::END
 {
 	printf("\n=== Verdict ===\n");
 	printf("joins %d, leaves and detaches %d\n", joins, leaves);
+	printf("processes charged for the jail they are in: %d\n", jailcharges);
+	printa("  coalition %-12d %@d\n", @jailed);
 	printf("\nMembership that did not balance (should be empty):\n");
 	printa("  coalition %-12d still attached at drain: %@d\n",
 	    @still_attached);

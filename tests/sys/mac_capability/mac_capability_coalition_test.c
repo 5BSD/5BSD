@@ -2328,6 +2328,45 @@ cpu_window_restore(u_int ms)
 }
 
 /*
+ * Switch the periodic sweep off, and back on again afterwards.
+ *
+ * Lengthening sweep_interval_ms is not the same thing: it does not cancel the
+ * callout that is already armed, so one more sweep still lands at the old
+ * interval.  A test that must see NOTHING enforce a ceiling has to use the
+ * on/off knob, or it is racing a straggler.
+ *
+ * Returns the previous value, or -1 if the knob is not there.
+ */
+static int
+sweep_enable_set(int enable)
+{
+	int old = -1;
+	size_t len = sizeof(old);
+
+	if (sysctlbyname("kern.mac_capability_coalition.sweep", &old, &len,
+	    &enable, sizeof(enable)) != 0)
+		return (-1);
+	return (old);
+}
+
+static void
+sweep_enable_restore(int enable)
+{
+
+	if (enable >= 0)
+		(void)sysctlbyname("kern.mac_capability_coalition.sweep",
+		    NULL, NULL, &enable, sizeof(enable));
+}
+
+/*
+ * Remembered across the cleanup routine.  This knob is global to the machine,
+ * so a test that fails part way through must still put it back: leaving the
+ * sweep off would make every later test about a ceiling or an idle exit fail
+ * for a reason that has nothing to do with what it is testing.
+ */
+static int sweep_enable_saved = -1;
+
+/*
  * Wait until the accounting framework has attributed resident memory to the
  * coalition.
  *
@@ -3622,6 +3661,205 @@ ATF_TC_BODY(terminate_removes_jaildesc_member, tc)
 	close(jail_fd);
 }
 ATF_TC_CLEANUP(terminate_removes_jaildesc_member, tc)
+{
+	remove_jail_by_name(COALITION_TEST_JAIL_NAME);
+}
+
+ATF_TC_WITH_CLEANUP(jail_members_are_accounted);
+ATF_TC_HEAD(jail_members_are_accounted, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "A coalition holding a jail reports the resources used inside it: "
+	    "a process that enters the jail is charged without ever being "
+	    "enlisted, and what it was charged is given back when it exits, so "
+	    "a jail that churns processes does not inflate the container");
+	atf_tc_set_md_var(tc, "require.kmods",
+	    "mac_capability mac_capability_coalition");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(jail_members_are_accounted, tc)
+{
+	struct coalition_ledger_reply empty, occupied, after;
+	int cfd, jail_fd, jid, wstatus;
+	int32_t status;
+	pid_t pid;
+	int i;
+
+	memset(&empty, 0, sizeof(empty));
+	memset(&occupied, 0, sizeof(occupied));
+	memset(&after, 0, sizeof(after));
+
+	remove_jail_by_name(COALITION_TEST_JAIL_NAME);
+	jail_fd = create_jail_with_desc(COALITION_TEST_JAIL_NAME);
+	ATF_REQUIRE_MSG(jail_fd >= 0, "create_jail_with_desc: %s",
+	    strerror(errno));
+	jid = jail_getid(COALITION_TEST_JAIL_NAME);
+	ATF_REQUIRE(jid > 0);
+
+	cfd = mac_capability_connect("coalition");
+	ATF_REQUIRE(cfd >= 0);
+	ATF_REQUIRE(coalition_enlist(cfd, jail_fd, &status) == 0);
+	ATF_REQUIRE_EQ(status, 0);
+
+	/* Nothing is running in it yet. */
+	ATF_REQUIRE(coalition_ledger(cfd, 0, &empty) == 0);
+	ATF_REQUIRE_EQ(empty.status, 0);
+	ATF_CHECK_EQ_MSG(empty.nprocs, 0,
+	    "an empty jail was credited with %u processes", empty.nprocs);
+
+	/*
+	 * Put a process inside.  It is never enlisted -- the coalition holds
+	 * the jail, not the process -- so if it is accounted at all it is
+	 * because entering the jail charged it.
+	 */
+	pid = fork();
+	ATF_REQUIRE(pid >= 0);
+	if (pid == 0) {
+		if (jail_attach(jid) != 0)
+			_exit(1);
+		/* Take a mapping big enough to be unmistakable, then wait. */
+		if (mmap(NULL, 64UL << 20, PROT_READ | PROT_WRITE,
+		    MAP_ANON | MAP_PRIVATE, -1, 0) == MAP_FAILED)
+			_exit(2);
+		pause();
+		_exit(0);
+	}
+	/* Give the child time to attach and map. */
+	for (i = 0; i < 100; i++) {
+		if (coalition_ledger(cfd, 0, &occupied) == 0 &&
+		    occupied.status == 0 && occupied.nprocs > 0)
+			break;
+		usleep(100000);
+	}
+	ATF_CHECK_MSG(occupied.nprocs > 0,
+	    "a process inside a held jail was not accounted for");
+	ATF_CHECK_MSG(occupied.vsz_bytes > empty.vsz_bytes,
+	    "the jailed process's address space was not charged: %ju then %ju",
+	    (uintmax_t)empty.vsz_bytes, (uintmax_t)occupied.vsz_bytes);
+
+	/*
+	 * Now let it go.  Everything reclaimable must come back, or a jail
+	 * that starts and stops work would inflate the container for good.
+	 */
+	ATF_REQUIRE(kill(pid, SIGKILL) == 0);
+	ATF_REQUIRE(waitpid(pid, &wstatus, 0) == pid);
+	for (i = 0; i < 100; i++) {
+		if (coalition_ledger(cfd, 0, &after) == 0 &&
+		    after.status == 0 && after.nprocs == 0)
+			break;
+		usleep(100000);
+	}
+	ATF_CHECK_EQ_MSG(after.nprocs, 0,
+	    "a departed jailed process is still counted: %u", after.nprocs);
+	ATF_CHECK_MSG(after.vsz_bytes <= empty.vsz_bytes,
+	    "address space was not given back when the jailed process exited: "
+	    "%ju empty, %ju after", (uintmax_t)empty.vsz_bytes,
+	    (uintmax_t)after.vsz_bytes);
+
+	close(cfd);
+	close(jail_fd);
+}
+ATF_TC_CLEANUP(jail_members_are_accounted, tc)
+{
+	remove_jail_by_name(COALITION_TEST_JAIL_NAME);
+}
+
+ATF_TC_WITH_CLEANUP(enlistment_beats_the_jail_it_is_in);
+ATF_TC_HEAD(enlistment_beats_the_jail_it_is_in, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "A process enlisted in its own right is charged there and not to "
+	    "the coalition holding the jail it happens to be in: an individual "
+	    "enlistment is the more specific statement");
+	atf_tc_set_md_var(tc, "require.kmods",
+	    "mac_capability mac_capability_coalition");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(enlistment_beats_the_jail_it_is_in, tc)
+{
+	struct coalition_ledger_reply jl, ol;
+	int jailco, owner, jail_fd, pd, jid, wstatus, ready[2], go[2];
+	int32_t status;
+	char tok;
+	pid_t pid;
+	int i;
+
+	memset(&jl, 0, sizeof(jl));
+	memset(&ol, 0, sizeof(ol));
+
+	remove_jail_by_name(COALITION_TEST_JAIL_NAME);
+	jail_fd = create_jail_with_desc(COALITION_TEST_JAIL_NAME);
+	ATF_REQUIRE_MSG(jail_fd >= 0, "create_jail_with_desc: %s",
+	    strerror(errno));
+	jid = jail_getid(COALITION_TEST_JAIL_NAME);
+	ATF_REQUIRE(jid > 0);
+
+	/* One coalition holds the jail; a different one owns the process. */
+	jailco = mac_capability_connect("coalition");
+	ATF_REQUIRE(jailco >= 0);
+	ATF_REQUIRE(coalition_enlist(jailco, jail_fd, &status) == 0);
+	ATF_REQUIRE_EQ(status, 0);
+	owner = mac_capability_connect("coalition");
+	ATF_REQUIRE(owner >= 0);
+
+	ATF_REQUIRE(pipe(ready) == 0);
+	ATF_REQUIRE(pipe(go) == 0);
+	pid = pdfork(&pd, 0);
+	ATF_REQUIRE(pid >= 0);
+	if (pid == 0) {
+		char c;
+
+		close(jailco);
+		close(owner);
+		close(ready[0]);
+		close(go[1]);
+		/* Announce, wait to be enlisted, then enter the jail. */
+		(void)write(ready[1], "r", 1);
+		if (read(go[0], &c, 1) != 1)
+			_exit(1);
+		if (jail_attach(jid) != 0)
+			_exit(2);
+		pause();
+		_exit(0);
+	}
+	close(ready[1]);
+	close(go[0]);
+	ATF_REQUIRE(read(ready[0], &tok, 1) == 1);
+	close(ready[0]);
+
+	/* Enlisted first, so the enlistment is the statement that stands. */
+	ATF_REQUIRE(coalition_enlist(owner, pd, &status) == 0);
+	ATF_REQUIRE_EQ(status, 0);
+
+	/*
+	 * Now let it move into the held jail.  Entering the jail must not
+	 * take it away from the coalition that enlisted it.
+	 */
+	ATF_REQUIRE(write(go[1], "g", 1) == 1);
+	close(go[1]);
+	for (i = 0; i < 50; i++) {
+		if (coalition_ledger(jailco, 0, &jl) == 0 && jl.status == 0 &&
+		    coalition_ledger(owner, 0, &ol) == 0 && ol.status == 0 &&
+		    ol.nprocs > 0)
+			break;
+		usleep(100000);
+	}
+	ATF_CHECK_EQ_MSG(ol.nprocs, 1,
+	    "the enlisted process was not charged to the coalition that "
+	    "enlisted it (%u)", ol.nprocs);
+	ATF_REQUIRE(coalition_ledger(jailco, 0, &jl) == 0);
+	ATF_CHECK_EQ_MSG(jl.nprocs, 0,
+	    "the jail's coalition claimed a process enlisted elsewhere (%u)",
+	    jl.nprocs);
+
+	pdkill(pd, SIGKILL);
+	(void)wait_exit_bounded(pid, &wstatus);
+	close(pd);
+	close(owner);
+	close(jailco);
+	close(jail_fd);
+}
+ATF_TC_CLEANUP(enlistment_beats_the_jail_it_is_in, tc)
 {
 	remove_jail_by_name(COALITION_TEST_JAIL_NAME);
 }
@@ -5524,38 +5762,43 @@ ATF_TC_BODY(idle_exit_is_held_off_by_an_assertion, tc)
 	sweep_interval_restore(saved);
 }
 
-ATF_TC(vmem_ceiling_is_exact_not_sampled);
-ATF_TC_HEAD(vmem_ceiling_is_exact_not_sampled, tc)
+ATF_TC_WITH_CLEANUP(vmem_ceiling_needs_no_sample);
+ATF_TC_HEAD(vmem_ceiling_needs_no_sample, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
-	    "An address-space ceiling is kept as memory is taken rather than "
-	    "when somebody next looks: a member that maps past it is acted on "
-	    "without waiting for a sweep interval");
+	    "An address-space ceiling is judged from a counter the accounting "
+	    "framework maintains, not from a walk of the members: with the "
+	    "periodic sweep switched off entirely, one request to judge the "
+	    "ceilings catches a member that has mapped past it");
 	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_coalition");
 }
-ATF_TC_BODY(vmem_ceiling_is_exact_not_sampled, tc)
+ATF_TC_BODY(vmem_ceiling_needs_no_sample, tc)
 {
-	u_int before = 0, after = 0, saved;
+	struct coalition_ledger_reply lr;
+	u_int before = 0, after = 0;
+	int saved_sweep;
 	size_t len = sizeof(before);
 	int fd, pd, ready[2], wstatus;
 	int32_t status;
-	char tok;
 	pid_t pid;
+	int i;
 
 	if (sysctlbyname("kern.mac_capability_coalition.limit_kills", &before,
 	    &len, NULL, 0) != 0)
 		atf_tc_skip("limit_kills sysctl unavailable: %s",
 		    strerror(errno));
+
 	/*
-	 * Deliberately leave the sweep SLOW.  The point of an address-space
-	 * ceiling is that it does not depend on the sweep, so if this passes
-	 * with a long interval the accounting really is being done as the
-	 * memory is taken.
+	 * Switch the sweep OFF rather than lengthening its interval.  Writing
+	 * a long interval does not cancel the callout that is already armed,
+	 * so one more sweep still lands at the old interval and would enforce
+	 * the ceiling for us -- which is exactly what this test must not let
+	 * happen, or it proves nothing about where the figure came from.
 	 */
-	saved = sweep_interval_set(3600000);
-	if (saved == 0)
-		atf_tc_skip("sweep_interval_ms sysctl unavailable: %s",
-		    strerror(errno));
+	saved_sweep = sweep_enable_set(0);
+	if (saved_sweep < 0)
+		atf_tc_skip("sweep sysctl unavailable: %s", strerror(errno));
+	sweep_enable_saved = saved_sweep;
 
 	ATF_REQUIRE(pipe(ready) == 0);
 	fd = mac_capability_connect("coalition");
@@ -5568,7 +5811,6 @@ ATF_TC_BODY(vmem_ceiling_is_exact_not_sampled, tc)
 
 		close(ready[1]);
 		close(fd);
-		/* Wait to be told, then take a large mapping. */
 		if (read(ready[0], &c, 1) == 1)
 			(void)mmap(NULL, 256UL << 20, PROT_READ | PROT_WRITE,
 			    MAP_ANON | MAP_PRIVATE, -1, 0);
@@ -5587,24 +5829,48 @@ ATF_TC_BODY(vmem_ceiling_is_exact_not_sampled, tc)
 	ATF_REQUIRE(write(ready[1], "g", 1) == 1);
 	close(ready[1]);
 
+	/*
+	 * The charge lands as the mapping is made, with nothing sampling
+	 * anything, so the ledger shows it without a refresh being asked for.
+	 */
+	memset(&lr, 0, sizeof(lr));
+	for (i = 0; i < 100; i++) {
+		if (coalition_ledger(fd, 0, &lr) == 0 && lr.status == 0 &&
+		    lr.vsz_bytes > (64UL << 20))
+			break;
+		usleep(100000);
+	}
+	ATF_CHECK_MSG(lr.vsz_bytes > (64UL << 20),
+	    "the mapping was not charged without a sample: %ju",
+	    (uintmax_t)lr.vsz_bytes);
+
+	/* Still alive: with the sweep off, nothing has judged it yet. */
+	ATF_CHECK_MSG(kill(pid, 0) == 0,
+	    "the coalition was acted on with the sweep switched off");
+
+	/* Now ask for the ceilings to be judged.  That is all it takes. */
+	ATF_REQUIRE(coalition_ledger(fd, COALITION_LEDGER_REFRESH, &lr) == 0);
 	ATF_CHECK_MSG(wait_exit_bounded(pid, &wstatus),
-	    "a coalition past its address-space ceiling was not acted on "
-	    "without a sweep");
+	    "a coalition past its address-space ceiling was not acted on when "
+	    "the ceilings were judged");
+
 	len = sizeof(after);
 	ATF_REQUIRE(sysctlbyname("kern.mac_capability_coalition.limit_kills",
 	    &after, &len, NULL, 0) == 0);
 	ATF_CHECK_MSG(after > before,
 	    "the address-space breach was not counted: %u then %u", before,
 	    after);
-	(void)tok;
+
 	close(pd);
 	close(fd);
-	sweep_interval_restore(saved);
+	sweep_enable_restore(saved_sweep);
+	sweep_enable_saved = -1;
 }
+ATF_TC_CLEANUP(vmem_ceiling_needs_no_sample, tc)
+{
 
-/* ================================================================
- * CPU ceiling
- * ================================================================ */
+	sweep_enable_restore(sweep_enable_saved);
+}
 
 ATF_TC(cpu_ceiling_absent_by_default_and_settable);
 ATF_TC_HEAD(cpu_ceiling_absent_by_default_and_settable, tc)
@@ -6227,7 +6493,9 @@ ATF_TP_ADD_TCS(tp)
 		ATF_TP_ADD_TC(tp, terminate_kills_process);
 		ATF_TP_ADD_TC(tp, process_exit_decrements_count);
 		ATF_TP_ADD_TC(tp, terminate_removes_jaildesc_member);
-		ATF_TP_ADD_TC(tp, close_removes_jaildesc_member);
+		ATF_TP_ADD_TC(tp, jail_members_are_accounted);
+	ATF_TP_ADD_TC(tp, enlistment_beats_the_jail_it_is_in);
+	ATF_TP_ADD_TC(tp, close_removes_jaildesc_member);
 
 	/* Graceful termination */
 	ATF_TP_ADD_TC(tp, graceful_terminate);
@@ -6300,7 +6568,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, idle_exit_is_opt_in);
 	ATF_TP_ADD_TC(tp, idle_exit_puts_away_after_its_age);
 	ATF_TP_ADD_TC(tp, idle_exit_is_held_off_by_an_assertion);
-	ATF_TP_ADD_TC(tp, vmem_ceiling_is_exact_not_sampled);
+	ATF_TP_ADD_TC(tp, vmem_ceiling_needs_no_sample);
 	ATF_TP_ADD_TC(tp, cpu_ceiling_absent_by_default_and_settable);
 	ATF_TP_ADD_TC(tp, cpu_ceiling_terminates_a_spinner);
 	ATF_TP_ADD_TC(tp, cpu_ceiling_leaves_a_quiet_coalition_alone);

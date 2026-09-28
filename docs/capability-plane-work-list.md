@@ -127,17 +127,15 @@ login session's coalition (by design, EBUSY on join).
      the module's ceiling fields; it is the right end state but it is a
      separate piece of work against kern_rctl.c, not part of pointing the
      existing figures at one source.
-   - **Members that are not processes**: NOT done, and the one real gap left.
-     Only a process carries the container pointer, so only process members are
-     accounted. A coalition may also hold a jail, and today that governs the
-     jail's lifetime while accounting for nothing inside it, because the
-     processes in that jail were never enlisted individually and have no
-     pointer. The fix is not to charge at the jail chain, which would put a
-     lookup on every charge: it is to set the pointer when a process enters an
-     enlisted jail, using the fork handling the module already has, and to walk
-     the jail's existing processes once at enlist. That needs a rule for a
-     process in an enlisted jail *and* individually enlisted elsewhere; the
-     individual enlistment should win, being the more specific statement.
+   - **Members that are not processes**: done for jails. A process is charged
+     to the coalition holding its jail when it attaches (a small MAC policy on
+     `mpo_prison_attached`, so no core file is touched), when it is forked
+     inside one, and, for work already running, by one walk at enlist. They are
+     accounted, not enlisted, so membership, the member limit and what a
+     termination signals are unchanged. An individual enlistment wins over the
+     jail, and the innermost held jail wins where they nest. Sockets and shared
+     memory are still members for lifetime only and raise the same question
+     more narrowly; they are not charged, and nothing yet needs them to be.
 
    Remaining after that: the CPU ceiling re-expressed as an rctl rule once
    coalitions are an rctl subject, so operators reach it with the tools they

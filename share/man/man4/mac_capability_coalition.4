@@ -627,12 +627,21 @@ something declares one.
 Two figures may be declared.
 .Va vmem_bytes
 is a ceiling on address space, which the framework charges at the mapping path,
-so it is exact and a member that maps past it is acted on without waiting for
-anything.
+so the figure is exact: it needs no sampling and is never behind.
 .Va memory_bytes
 is a ceiling on resident memory, which the framework refreshes from the page
-daemon's pass, so it is at most one of those passes old and is zero for a
-process too young to have been looked at.
+daemon's pass, so that figure is at most one of those passes old and is zero
+for a process too young to have been looked at.
+.Pp
+Exact describes the figure, not how soon a breach is acted on.
+No ceiling is enforced at the moment a resource is taken; charging at the
+mapping path is what keeps the count honest, and a ceiling is judged when
+something looks: the periodic sweep, a memory-pressure pass, or a request
+carrying
+.Dv COALITION_LEDGER_REFRESH .
+Putting the judgement on the charge path would mean a coalition lookup on every
+mapping the system makes, which is a price the whole machine would pay for a
+figure very few units declare.
 .Pp
 A coalition that goes over and comes back between two looks is never penalised,
 which is the right behaviour for a figure describing a whole unit's working
@@ -698,6 +707,30 @@ window under the coalition it is asking about.
 .Pp
 This has no equivalent in Darwin, whose CPU limits are per-task and report
 through an exception port rather than describing a unit.
+.Ss Jails
+A coalition may hold a jail, which governs that jail's lifetime: the jail is
+removed when the coalition goes.
+It also accounts for what runs inside it.
+.Pp
+Only a process carries a pointer to a container, so a jail's processes are
+charged individually even though none of them is enlisted.
+A process is charged when it attaches to the jail, when it is forked inside
+one, and, for work already running, when the jail is enlisted.
+They do not become members: a jail's processes are accounted, not enlisted, so
+the member count, the member limit and what a termination signals are all
+unchanged.
+.Pp
+A process enlisted in its own right is charged there and nothing overrides it.
+An individual enlistment is the more specific statement about whose work a
+process is, and a jail the process merely happens to be in does not displace
+it.
+Where jails are nested and more than one is held, the innermost wins, for the
+same reason.
+.Pp
+Nothing is undone when a process leaves a jail or a jail stops being held.
+A container is reference counted, so a pointer into one is always safe, and
+when a process exits it gives back everything reclaimable and drops its
+reference on its own.
 .Ss Out Of Memory
 When the system is about to run out of memory, something has to be given up.
 The stock choice is the single largest process, which is very often the most
@@ -836,6 +869,9 @@ with its holder.
 An assertion count that only rises is a leak; the
 .Pa /usr/share/dtrace/mac_capability-bands
 script names the holder.
+.It Fn racct-jail coalition_id pid
+Fired when a process is charged to a coalition because of the jail it is in,
+rather than because it was enlisted.
 .It Fn ledger-sample coalition_id rss_bytes nprocs
 Fired when a coalition's footprint is sampled for a victim ranking, which is
 the only thing that samples: memory pressure choosing what to hand down, and

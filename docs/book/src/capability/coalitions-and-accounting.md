@@ -317,6 +317,16 @@ number now has one owner:
   as it liked in short-lived children, because the container gives a departing
   member's charges back.
 
+A coalition may also hold a jail, and then it accounts for what runs inside
+it. Only a process carries a container pointer, so the jail's processes are
+charged individually — on attach, on fork inside the jail, and, for work
+already running, by one walk when the jail is enlisted. They do not become
+members: a jail's processes are accounted, not enlisted, so the member count,
+the member limit and what a termination signals are unchanged. A process
+enlisted in its own right is never displaced by a jail it happens to be in,
+and where jails nest, the innermost held one wins — in both cases because the
+more specific statement about whose work a process is should stand.
+
 Consequences worth knowing. `age_ms` in the ledger reply is always zero —
 nothing is sampled, so nothing goes stale — and `COALITION_LEDGER_REFRESH` no
 longer refreshes anything; it now means "judge the ceilings before replying"

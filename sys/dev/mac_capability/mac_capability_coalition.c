@@ -87,6 +87,7 @@
 #include <sys/procdesc.h>
 #include <sys/jail.h>
 #include <sys/jaildesc.h>
+#include <security/mac/mac_policy.h>
 #include <sys/limits.h>
 #include <sys/signalvar.h>
 #include <sys/sysctl.h>
@@ -212,6 +213,8 @@ SDT_PROBE_DEFINE2(mac_capability_coalition, , , racct__join,
     "uint64_t", "pid_t");
 SDT_PROBE_DEFINE3(mac_capability_coalition, , , racct__leave,
     "uint64_t", "pid_t", "int");
+SDT_PROBE_DEFINE2(mac_capability_coalition, , , racct__jail,
+    "uint64_t", "pid_t");
 SDT_PROBE_DEFINE3(mac_capability_coalition, , , racct__drain,
     "uint64_t", "uint64_t", "uint64_t");
 /*
@@ -438,6 +441,14 @@ coalition_proc_hash_idx(struct proc *p)
 
 /* Jail OSD for fork inheritance */
 static u_int coalition_jail_osd_slot;
+/*
+ * How many jails are held by a coalition right now.
+ *
+ * Every fork in the system reaches the jail-charging path, and the
+ * overwhelming majority of them are not in any held jail.  Zero here means
+ * there is nothing to look for, and the whole path costs one atomic load.
+ */
+static volatile u_int coalition_held_jails;
 
 struct coalition_jail_osd {
 	struct coalition	*cjo_coalition;
@@ -685,6 +696,8 @@ static void	coalition_terminate_members_locked(struct coalition *co,
 		    int reason);
 static void	coalition_notify_responsible(struct coalition *co, int reason);
 static void	coalition_racct_join(struct proc *p, struct coalition *co);
+static struct coalition_member *coalition_proc_hash_lookup(struct proc *p);
+static void	coalition_charge_jailed_child(struct proc *child);
 static void	coalition_racct_leave(struct proc *p, struct coalition *co);
 static struct coalition *coalition_responsible_or_self(struct coalition *co);
 static bool	coalition_idle_exit_worthwhile(struct coalition *co,
@@ -955,6 +968,172 @@ coalition_jail_set_member(struct prison *pr, struct coalition_member *cm)
 	prison_unlock(pr);
 }
 
+/*
+ * The coalition that holds this prison, or the innermost one holding a prison
+ * that encloses it.
+ *
+ * A jail may sit inside another jail, and a different coalition may hold each.
+ * The innermost wins, being the more specific statement about whose work this
+ * is -- the same reason an individual enlistment beats either of them.
+ *
+ * Returns with a reference held, or NULL.
+ */
+static struct coalition *
+coalition_of_prison(struct prison *pr)
+{
+	struct coalition_jail_osd *cjo;
+	struct coalition *co = NULL;
+
+	if (coalition_jail_osd_slot == 0 ||
+	    atomic_load_int(&coalition_held_jails) == 0)
+		return (NULL);
+	for (; pr != NULL && co == NULL; pr = pr->pr_parent) {
+		prison_lock(pr);
+		cjo = osd_jail_get(pr, coalition_jail_osd_slot);
+		if (cjo != NULL && cjo->cjo_coalition != NULL &&
+		    refcount_acquire_if_not_zero(
+		    &cjo->cjo_coalition->co_refcount))
+			co = cjo->cjo_coalition;
+		prison_unlock(pr);
+	}
+	return (co);
+}
+
+/*
+ * Charge a process to the coalition holding the jail it is in.
+ *
+ * Only a process carries a container pointer, so without this a coalition that
+ * holds a jail would govern that jail's lifetime while accounting for nothing
+ * inside it: the processes in there were never enlisted one at a time and have
+ * no pointer of their own.
+ *
+ * A process enlisted in its own right is left alone.  An individual enlistment
+ * is the more specific statement, and it is not overridden by a jail the
+ * process merely happens to be in.  Nothing is undone when a process leaves a
+ * jail or the jail stops being held: the container is reference counted, so a
+ * pointer into it is always safe, and exit gives back everything reclaimable
+ * and drops the reference on its own.
+ */
+static void
+coalition_charge_jailed_proc(struct proc *p, struct prison *pr)
+{
+	struct coalition *co;
+
+	/*
+	 * The cheap refusals first, in the order that rejects the most for the
+	 * least: no jail is held at all, or this process is not in a jail.
+	 * Only then is it worth looking at the process's membership.
+	 */
+	if (!racct_enable || p == NULL || pr == NULL || pr == &prison0 ||
+	    atomic_load_int(&coalition_held_jails) == 0)
+		return;
+
+	smr_enter(coalition_smr);
+	if (coalition_proc_hash_lookup(p) != NULL) {
+		smr_exit(coalition_smr);
+		return;
+	}
+	smr_exit(coalition_smr);
+
+	co = coalition_of_prison(pr);
+	if (co == NULL)
+		return;
+	SDT_PROBE2(mac_capability_coalition, , , racct__jail, co->co_id,
+	    p->p_pid);
+	coalition_racct_join(p, co);
+	coalition_rel(co);
+}
+
+/*
+ * Charge everything already inside a jail that has just been enlisted.
+ *
+ * Walking once here is what makes a jail's existing work count; anything that
+ * enters afterwards is caught when it attaches or when it forks.  Descendant
+ * prisons are included, because a process in a nested jail is inside this one
+ * too -- coalition_of_prison() gives each one the innermost answer.
+ */
+static void
+coalition_jail_charge_existing(struct prison *pr)
+{
+	struct prison *cpr;
+	struct proc *p;
+	int descend;
+
+	if (!racct_enable)
+		return;
+
+	/*
+	 * allproc before allprison: that is the order the rest of the kernel
+	 * takes them in, and witness has it hardcoded.  pr_proclist is the one
+	 * allproc protects here; allprison is for walking pr_children.
+	 */
+	sx_slock(&allproc_lock);
+	sx_slock(&allprison_lock);
+	LIST_FOREACH(p, &pr->pr_proclist, p_jaillist)
+		coalition_charge_jailed_proc(p, pr);
+	FOREACH_PRISON_DESCENDANT(pr, cpr, descend) {
+		LIST_FOREACH(p, &cpr->pr_proclist, p_jaillist)
+			coalition_charge_jailed_proc(p, cpr);
+	}
+	sx_sunlock(&allprison_lock);
+	sx_sunlock(&allproc_lock);
+}
+
+/*
+ * A newly forked process whose parent is in no coalition of its own.  It may
+ * still have been born inside a jail that a coalition holds.
+ *
+ * The prison comes from the child's own credential, which at this point is the
+ * parent's, so this is the jail it was born into.
+ */
+static void
+coalition_charge_jailed_child(struct proc *child)
+{
+	struct prison *pr;
+	bool locked;
+
+	if (!racct_enable || coalition_jail_osd_slot == 0 ||
+	    atomic_load_int(&coalition_held_jails) == 0)
+		return;
+
+	/*
+	 * The fork hook runs with no process lock held, but take it the way
+	 * the rest of this module does rather than assuming that stays true.
+	 */
+	locked = PROC_LOCKED(child);
+	if (!locked)
+		PROC_LOCK(child);
+	pr = child->p_ucred != NULL ? child->p_ucred->cr_prison : NULL;
+	if (pr != NULL)
+		prison_hold(pr);
+	if (!locked)
+		PROC_UNLOCK(child);
+	if (pr == NULL)
+		return;
+	coalition_charge_jailed_proc(child, pr);
+	prison_free(pr);
+}
+
+/*
+ * A process attached to a jail.  If that jail is held by a coalition, this is
+ * where the process starts being accounted for.
+ */
+static void
+coalition_mac_prison_attached(struct ucred *cred __unused, struct prison *pr,
+    struct label *prlabel __unused, struct proc *p, struct label *plabel __unused)
+{
+
+	coalition_charge_jailed_proc(p, pr);
+}
+
+static struct mac_policy_ops coalition_mac_ops = {
+	.mpo_prison_attached		= coalition_mac_prison_attached,
+};
+
+MAC_POLICY_SET(&coalition_mac_ops, mac_mac_capability_coalition,
+    "MAC_CAPABILITY coalition jail accounting",
+    MPC_LOADTIME_FLAG_UNLOADOK, NULL);
+
 static void
 coalition_jail_cleanup_task_fn(void *context, int pending __unused)
 {
@@ -1008,6 +1187,7 @@ coalition_jail_cleanup_task_fn(void *context, int pending __unused)
 			struct prison *pr = cm->cm_data;
 
 			cm->cm_data = NULL;
+			atomic_subtract_int(&coalition_held_jails, 1);
 			prison_free(pr);
 		}
 		uma_zfree_smr(coalition_member_zone, cm);
@@ -1546,6 +1726,7 @@ coalition_enlist(struct coalition *co, struct thread *td, struct file *fp,
 		 * keep that reference until member teardown.
 		 */
 		coalition_jail_set_member(pr, cm);
+		atomic_add_int(&coalition_held_jails, 1);
 	}
 
 	atomic_add_int(&co->co_member_count, 1);
@@ -1553,6 +1734,16 @@ coalition_enlist(struct coalition *co, struct thread *td, struct file *fp,
 	coalition_ref(co);
 	coalition_notify_event(co, COALITION_NOTE_MEMBER_ADDED);
 	sx_xunlock(&co->co_sx);
+
+	/*
+	 * Now that the jail is held, charge what is already running inside it.
+	 * Done after co_sx is dropped: the walk takes allprison_lock and
+	 * allproc_lock and then the process lock, and holding co_sx across
+	 * those would put this module in the middle of two of the heaviest
+	 * locks in the kernel for no reason.
+	 */
+	if (dtype == DTYPE_JAILDESC)
+		coalition_jail_charge_existing((struct prison *)cm->cm_data);
 
 	SDT_PROBE2(mac_capability_coalition, , , enlist, dtype, 0);
 	return (0);
@@ -2385,18 +2576,25 @@ coalition_process_exit(void *arg __unused, struct proc *p)
 	if (cm == NULL) {
 		mtx_unlock(&coalition_proc_hash_mtx);
 		/*
-		 * Not a member any more, but it may still be pointing at a
-		 * container.  A coalition torn down while this process was
-		 * alive removed it from the hash, and the rest of exit still
-		 * accounts -- tearing down the address space gives back what
-		 * it was charged, after this handler has run.  Left pointing at
-		 * a container that is about to be freed, that becomes a write
-		 * to freed memory, so the pointer goes now.  There is nothing
-		 * to give back: whoever removed it from the hash already did.
+		 * Not a member, which does not mean it is not charged
+		 * anywhere: a process inside a jail that a coalition holds is
+		 * accounted without ever being enlisted.
+		 *
+		 * The pointer is deliberately left alone.  This handler runs
+		 * at the top of exit, long before the address space is torn
+		 * down, and it is that teardown which gives the container back
+		 * everything reclaimable; cutting the pointer here would keep
+		 * the charges on the container for good.  racct_proc_exit()
+		 * drops the reference and clears the pointer once the giving
+		 * back is done.
+		 *
+		 * Detaching here used to guard against a container being freed
+		 * under an exiting process.  The container is reference
+		 * counted now -- a process holds one for as long as it points
+		 * at one -- so that cannot happen, and a coalition torn down
+		 * while this process was alive has already taken the pointer
+		 * away itself.
 		 */
-		PROC_LOCK(p);
-		racct_proc_detach_coalition(p);
-		PROC_UNLOCK(p);
 		return;
 	}
 
@@ -2477,6 +2675,13 @@ coalition_process_fork(void *arg __unused, struct proc *parent,
 	pcm = coalition_proc_hash_lookup(parent);
 	if (pcm == NULL || (co = pcm->cm_coalition) == NULL) {
 		smr_exit(coalition_smr);
+		/*
+		 * The parent is in no coalition of its own, but it may be
+		 * inside a jail that one holds, in which case the child is
+		 * too and is charged there.  It does not become a member:
+		 * a jail's processes are accounted, not enlisted.
+		 */
+		coalition_charge_jailed_child(child);
 		return;
 	}
 	/*
@@ -2754,6 +2959,7 @@ coalition_close_internal(struct coalition *co, struct thread *td)
 			if (cm->cm_data != NULL) {
 				pr = cm->cm_data;
 				cm->cm_data = NULL;
+				atomic_subtract_int(&coalition_held_jails, 1);
 				prison_free(pr);
 			}
 
