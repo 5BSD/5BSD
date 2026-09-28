@@ -121,12 +121,31 @@ mac_capability_coalition:::ledger-sample
 /* ---- A coalition went over the ceiling declared for it ---- */
 
 mac_capability_coalition:::limit-breach
+/arg5 == 0/
 {
 	printf("%-12s %-14s coalition %d responsible %d %d KB of %d KB%s\n",
 	    strftime(walltimestamp, "%H:%M:%S"), "over-ceiling", arg0, arg1,
 	    arg2 / 1024, arg3 / 1024,
 	    arg4 == 1 ? " -- terminating it" : " (told only)");
 	@overceiling[arg0, arg4 == 1 ? "terminated" : "told"] = count();
+}
+
+/*
+ * ---- A coalition went over the CPU ceiling declared for it ----
+ *
+ * The same probe, but the figures are a percentage of one processor averaged
+ * between one look and the next rather than a size, so 400 is four processors
+ * kept busy by the unit as a whole.
+ */
+
+mac_capability_coalition:::limit-breach
+/arg5 == 1/
+{
+	printf("%-12s %-14s coalition %d responsible %d %d%% of %d%%%s\n",
+	    strftime(walltimestamp, "%H:%M:%S"), "over-cpu", arg0, arg1,
+	    arg2, arg3,
+	    arg4 == 1 ? " -- terminating it" : " (told only)");
+	@overcpu[arg0, arg4 == 1 ? "terminated" : "told"] = count();
 }
 
 mac_capability_coalition:::oom-kill
@@ -171,6 +190,8 @@ dtrace:::END
 	printa("  %-12d %@12d\n", @footprint);
 	printf("\n--- Coalitions over their own ceiling ---\n");
 	printa("  %-12d %-12s %@8d\n", @overceiling);
+	printf("\n--- Coalitions over their own CPU ceiling ---\n");
+	printa("  %-12d %-12s %@8d\n", @overcpu);
 	printf("\n--- Coalitions GIVEN UP for memory (coalition, responsible) ---\n");
 	printa("  %-12d %-12d %@8d\n", @oomkill);
 	printf("\n--- Coalitions handed down (coalition, band) ---\n");

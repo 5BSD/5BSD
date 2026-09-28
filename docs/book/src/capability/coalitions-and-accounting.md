@@ -255,10 +255,42 @@ per-process rlimit. The same is true of every key in the block: they are
 the classic setrlimit(2) ceilings, applied early and made unraisable. A
 unit that wants an aggregate view can read `COALITION_OP_RUSAGE`, which
 reports summed RSS and VSZ across its process members, but that is
-observation, not enforcement. Group-wide enforcement is what rctl(8) rules
-are for, and the plane does not create any from the manifest; an operator
-who needs a per-unit memory cap that survives forking must add an rctl
-rule, or a supervisor must use the accounting service, today.
+observation, not enforcement.
+
+## Ceilings for the whole unit
+
+Enforcement for a unit rather than a process is a separate mechanism, and
+it does not go through rlimits at all. A coalition is a container in the
+kernel's own accounting framework, charged beside the process, user, login
+class and jail containers a process already belongs to, so its figures are
+maintained by racct(9) rather than by anything this driver samples. A
+holder declares ceilings on that container with `COALITION_OP_SET_LIMIT`:
+
+| figure | unit | judged |
+| --- | --- | --- |
+| `memory_bytes` | resident bytes | when the footprint is sampled |
+| `vmem_bytes` | address space in bytes | as memory is taken |
+| `cpu_percent` | percentage of one processor | as a rate, over a window |
+
+Zero removes any of them and they are independent. A breach always
+notifies through `COALITION_NOTE_LIMIT`; with `COALITION_LIMIT_KILL` it
+also terminates the coalition, regardless of band, because a unit over a
+figure declared for it is over budget whether or not the machine is short.
+
+The CPU ceiling is a rate rather than a total, since a total only grows and
+a unit running for a week breaches any figure worth setting. What is
+judged is the share of one processor the coalition averaged between one
+look and the next — 100 is one processor, 400 is four — measured across
+what its current members have spent plus what members that have since left
+spent while they were in, so a unit cannot stay under its ceiling by doing
+its work in short-lived children. It is judged only over a window at least
+`kern.mac_capability_coalition.cpu_window_ms` long, because the per-process
+CPU figure it reads is refreshed by the accounting daemon rather than
+continuously. Darwin has no equivalent: its CPU limits are per-task and
+report through an exception port rather than describing a unit.
+
+Nothing in the plane declares these from a manifest yet: they are a kernel
+interface a supervisor calls, and switchboard does not call it.
 
 ## Tests and status
 
@@ -267,11 +299,13 @@ type, nesting and cycle rejection, deadline, watchdog, leader death,
 graceful termination, fork inheritance, jail members, limit exhaustion,
 permanent ids, the responsible edge (set-once, self-root, caller and
 procdesc naming, cycle and depth refusal, survival of the parent's close),
-the kinfo export, and the release signal;
+the kinfo export, the release signal, the resident, address-space and CPU
+ceilings, idle exit, the periodic sweep and the out-of-memory ranking;
 `usr.sbin/switchboard/tests/responsibility_test.c` pins the parent decision
 against the management model;
 `mac_capability_accounting_test.c` covers charge, release, set and rules;
 `lib/libcapbundle/tests` pins the `limits` parser. The coalition and
 accounting services are shipped and static. Open items: the coalition
 watchdog has no plane user, the accounting service has no plane user, and
-manifest limits remain per-process rlimits with no racct-backed group cap.
+the unit-wide ceilings have no manifest field, so a supervisor must set
+them through `COALITION_OP_SET_LIMIT` itself.

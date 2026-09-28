@@ -82,7 +82,7 @@ login session's coalition (by design, EBUSY on join).
    idleness kept as separate questions. XNU instead puts dirty flags and bands
    on the process with coalitions alongside, which is two subjects needing
    reconciliation; we deliberately did not copy that.
-   Every death carries exactly one of seven reasons, reported identically in
+   Every death carries exactly one of eight reasons, reported identically in
    the holder's event, the log and the `coalition-kill` probe, with the three
    memory reasons counted separately.
    A coalition is now a real resource container in racct, charged alongside
@@ -92,6 +92,13 @@ login session's coalition (by design, EBUSY on join).
    reclaimable, so a member that exits leaves its CPU behind, which is the
    rollup XNU does by hand with `ledger_rollup`, and a process that re-homes
    takes its usage with it, which is what racct already does for a uid change.
+   A CPU ceiling (`cpu_percent` on `COALITION_OP_SET_LIMIT`) rides on that
+   container: a share of one processor averaged between one look and the next,
+   judged over the whole unit including what departed members spent, breaching
+   with `COALITION_KILL_OVER_CPU` and counted apart from a memory breach. It is
+   a rate rather than a total because a total only grows. Darwin has no
+   equivalent -- its CPU limits are per-task and report through an exception
+   port, which describes a process rather than a unit.
 
    **Consolidation phase — do this before adding anything else.**
    The container arrived after several figures had already been built by hand,
@@ -132,8 +139,9 @@ login session's coalition (by design, EBUSY on join).
    resource requires no new code in it at all, and a coalition holding a jail
    reports the resources used inside it.
 
-   Remaining after that: a CPU budget and period expressed through rctl; and
-   work a provider does on a client's behalf charged to the client (donation
+   Remaining after that: the CPU ceiling re-expressed as an rctl rule once
+   coalitions are an rctl subject, so operators reach it with the tools they
+   have rather than through this op; and work a provider does on a client's behalf charged to the client (donation
    across channel calls, item C2), which a container makes nearly free -- it is
    moving entries between two of them. This is
    the substrate a coalition-aware scheduler policy would consume; the

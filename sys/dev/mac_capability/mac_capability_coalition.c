@@ -229,8 +229,13 @@ SDT_PROBE_DEFINE3(mac_capability_coalition, , , racct__drain,
  */
 SDT_PROBE_DEFINE5(mac_capability_coalition, , , coalition__kill,
     "uint64_t", "uint64_t", "u_int", "uint64_t", "u_int");
-SDT_PROBE_DEFINE5(mac_capability_coalition, , , limit__breach,
-    "uint64_t", "uint64_t", "uint64_t", "uint64_t", "int");
+/*
+ * The figure and the ceiling are bytes for a memory ceiling and a percentage
+ * of one processor for a CPU ceiling, so the last argument says which, rather
+ * than leaving a script to print a percentage as kilobytes.
+ */
+SDT_PROBE_DEFINE6(mac_capability_coalition, , , limit__breach,
+    "uint64_t", "uint64_t", "uint64_t", "uint64_t", "int", "u_int");
 SDT_PROBE_DEFINE3(mac_capability_coalition, , , band__floor,
     "uint64_t", "u_int", "u_int");
 SDT_PROBE_DEFINE4(mac_capability_coalition, , , band__assert,
@@ -327,6 +332,14 @@ struct coalition {
 	 * spend freely by spending in children that exit.
 	 */
 	volatile uint64_t	co_cpu_departed;
+	/*
+	 * A CPU ceiling is a rate, so it needs what the last look saw.  A
+	 * total only grows, and a unit running for a week would breach any
+	 * figure worth setting.
+	 */
+	volatile u_int		co_limit_cpu_pct;
+	volatile uint64_t	co_cpu_last;
+	volatile sbintime_t	co_cpu_last_time;
 	/*
 	 * The coalition's resource container.  A real one, alongside the user,
 	 * login class and jail containers a process is already charged to, so
@@ -535,6 +548,7 @@ static u_int coalition_oom_band_ceiling = COALITION_BAND_INTERACTIVE;
 static volatile u_int coalition_oom_kills;
 static volatile u_int coalition_limit_kills;
 static volatile u_int coalition_idle_kills;
+static volatile u_int coalition_cpu_kills;
 
 /*
  * Idle exit.  Eligibility is per coalition and off unless declared, so these
@@ -559,6 +573,8 @@ coalition_kill_reason_name(int reason)
 		return ("its leader went away");
 	case COALITION_KILL_OVER_CEILING:
 		return ("over its own ceiling");
+	case COALITION_KILL_OVER_CPU:
+		return ("over its own CPU ceiling");
 	case COALITION_KILL_SYSTEM_MEMORY:
 		return ("the system ran out of memory");
 	case COALITION_KILL_IDLE:
@@ -575,6 +591,9 @@ coalition_kill_count(int reason)
 	switch (reason) {
 	case COALITION_KILL_OVER_CEILING:
 		atomic_add_int(&coalition_limit_kills, 1);
+		break;
+	case COALITION_KILL_OVER_CPU:
+		atomic_add_int(&coalition_cpu_kills, 1);
 		break;
 	case COALITION_KILL_SYSTEM_MEMORY:
 		atomic_add_int(&coalition_oom_kills, 1);
@@ -634,6 +653,13 @@ SYSCTL_UINT(_kern_mac_capability_coalition, OID_AUTO, oom_kills, CTLFLAG_RD,
 SYSCTL_UINT(_kern_mac_capability_coalition, OID_AUTO, limit_kills, CTLFLAG_RD,
     __DEVOLATILE(u_int *, &coalition_limit_kills), 0,
     "Total coalitions terminated for exceeding their own ceiling since boot");
+static u_int coalition_cpu_window_ms = 2000;
+SYSCTL_UINT(_kern_mac_capability_coalition, OID_AUTO, cpu_window_ms,
+    CTLFLAG_RW, &coalition_cpu_window_ms, 0,
+    "Shortest interval a CPU ceiling is judged over, in milliseconds");
+SYSCTL_UINT(_kern_mac_capability_coalition, OID_AUTO, cpu_kills, CTLFLAG_RD,
+    __DEVOLATILE(u_int *, &coalition_cpu_kills), 0,
+    "Total coalitions terminated for exceeding their own CPU ceiling since boot");
 SYSCTL_UINT(_kern_mac_capability_coalition, OID_AUTO, idle_kills, CTLFLAG_RD,
     __DEVOLATILE(u_int *, &coalition_idle_kills), 0,
     "Total coalitions put away for being idle since boot");
@@ -3148,14 +3174,55 @@ coalition_sample_locked(struct coalition *co)
  * drifts over and recovers is told once per excursion rather than once per
  * sample.
  */
-static bool
+static int
 coalition_limit_check_locked(struct coalition *co)
 {
-	uint64_t limit, rss, vlimit, vmem;
-	u_int flags;
-	bool over_vmem, over_rss;
+	uint64_t limit, rss, vlimit, vmem, cpu, used, elapsed;
+	sbintime_t now, last;
+	u_int flags, cpu_limit, pct = 0;
+	bool over_vmem, over_rss, over_cpu = false;
 
 	sx_assert(&co->co_sx, SA_XLOCKED);
+
+	/*
+	 * CPU first, and unconditionally, because a rate is measured between
+	 * one look and the next: the window has to be carried forward whether
+	 * or not anything turns out to be over, or the next reading would span
+	 * two windows and read as twice the real rate.
+	 */
+	cpu_limit = atomic_load_int(&co->co_limit_cpu_pct);
+	cpu = racct_read(co->co_racct, RACCT_CPU) +
+	    atomic_load_64(&co->co_cpu_departed);
+	now = getsbinuptime();
+	last = (sbintime_t)atomic_load_64(
+	    (volatile uint64_t *)&co->co_cpu_last_time);
+	elapsed = last != 0 && now > last ?
+	    (uint64_t)((now - last) / SBT_1US) : 0;
+	/*
+	 * Only judged, and only moved on, once the window is long enough to
+	 * mean something.  The per-process CPU figure this reads is refreshed
+	 * by the accounting daemon rather than continuously, so a short window
+	 * lands between two refreshes and reads either nothing or a whole
+	 * refresh at once.  It also keeps a caller that asks for a ledger
+	 * refresh in a tight loop from shrinking the window under the
+	 * coalition it is asking about.
+	 */
+	if (elapsed >= (uint64_t)coalition_cpu_window_ms * 1000) {
+		if (cpu_limit != 0) {
+			used = cpu > atomic_load_64(&co->co_cpu_last) ?
+			    cpu - atomic_load_64(&co->co_cpu_last) : 0;
+			pct = (u_int)((used * 100) / elapsed);
+			over_cpu = pct > cpu_limit;
+		}
+		atomic_store_64(&co->co_cpu_last, cpu);
+		atomic_store_64((volatile uint64_t *)&co->co_cpu_last_time,
+		    (uint64_t)now);
+	} else if (last == 0) {
+		/* First look: start the window rather than judging from boot. */
+		atomic_store_64(&co->co_cpu_last, cpu);
+		atomic_store_64((volatile uint64_t *)&co->co_cpu_last_time,
+		    (uint64_t)now);
+	}
 	/*
 	 * Two ceilings, each judged by the figure it can actually be judged by.
 	 * Address space is accumulated as members take it, so that ceiling is
@@ -3172,29 +3239,51 @@ coalition_limit_check_locked(struct coalition *co)
 	rss = atomic_load_64(&co->co_rss_bytes);
 	over_vmem = vlimit != 0 && vmem > vlimit;
 	over_rss = limit != 0 && rss > limit;
-	if (!over_vmem && !over_rss) {
+	if (!over_vmem && !over_rss && !over_cpu) {
 		atomic_store_int(&co->co_limit_breached, 0);
-		return (false);
+		return (COALITION_KILL_NONE);
 	}
-	if (over_vmem) {
+	if (over_cpu) {
+		/*
+		 * Reported as a percentage rather than a size.  CPU wins when a
+		 * coalition is over more than one ceiling at once: it is the
+		 * one that says the unit is still doing something, and a reason
+		 * has to be a single answer.
+		 */
+		limit = cpu_limit;
+		rss = pct;
+	} else if (over_vmem) {
 		limit = vlimit;
 		rss = vmem;
 	}
 	flags = atomic_load_int(&co->co_limit_flags);
 	if (atomic_load_int(&co->co_limit_breached) == 0) {
 		atomic_store_int(&co->co_limit_breached, 1);
-		SDT_PROBE5(mac_capability_coalition, , , limit__breach,
+		SDT_PROBE6(mac_capability_coalition, , , limit__breach,
 		    co->co_id, co->co_responsible_id, rss, limit,
-		    (flags & COALITION_LIMIT_KILL) != 0 ? 1 : 0);
+		    (flags & COALITION_LIMIT_KILL) != 0 ? 1 : 0,
+		    over_cpu ? COALITION_LIMIT_KIND_CPU :
+		    COALITION_LIMIT_KIND_BYTES);
 		coalition_notify_event(co, COALITION_NOTE_LIMIT);
-		log(LOG_WARNING, "mac_capability_coalition: coalition %ju "
-		    "(responsible %ju) is over its ceiling: %ju KB of %ju KB%s\n",
-		    (uintmax_t)co->co_id, (uintmax_t)co->co_responsible_id,
-		    (uintmax_t)(rss / 1024), (uintmax_t)(limit / 1024),
-		    (flags & COALITION_LIMIT_KILL) != 0 ?
-		    "; terminating it" : "");
+		if (over_cpu)
+			log(LOG_WARNING, "mac_capability_coalition: coalition "
+			    "%ju (responsible %ju) is over its CPU ceiling: "
+			    "%u%% of %u%%%s\n", (uintmax_t)co->co_id,
+			    (uintmax_t)co->co_responsible_id, pct, cpu_limit,
+			    (flags & COALITION_LIMIT_KILL) != 0 ?
+			    "; terminating it" : "");
+		else
+			log(LOG_WARNING, "mac_capability_coalition: coalition "
+			    "%ju (responsible %ju) is over its ceiling: "
+			    "%ju KB of %ju KB%s\n", (uintmax_t)co->co_id,
+			    (uintmax_t)co->co_responsible_id,
+			    (uintmax_t)(rss / 1024), (uintmax_t)(limit / 1024),
+			    (flags & COALITION_LIMIT_KILL) != 0 ?
+			    "; terminating it" : "");
 	}
-	return ((flags & COALITION_LIMIT_KILL) != 0);
+	if ((flags & COALITION_LIMIT_KILL) == 0)
+		return (COALITION_KILL_NONE);
+	return (over_cpu ? COALITION_KILL_OVER_CPU : COALITION_KILL_OVER_CEILING);
 }
 
 /* ----------------------------------------------------------------
@@ -3631,9 +3720,9 @@ coalition_sweep_task_fn(void *ctx __unused, int pending __unused)
 		sx_xlock(&co->co_sx);
 		if ((co->co_flags & (COF_TERMINATING | COF_CLOSING)) == 0) {
 			coalition_sample_locked(co);
-			if (coalition_limit_check_locked(co))
-				reason = COALITION_KILL_OVER_CEILING;
-			else if (coalition_idle_expired(co, now) &&
+			reason = coalition_limit_check_locked(co);
+			if (reason == COALITION_KILL_NONE &&
+			    coalition_idle_expired(co, now) &&
 			    coalition_idle_exit_worthwhile(co, now))
 				reason = COALITION_KILL_IDLE;
 			if (reason != COALITION_KILL_NONE)
@@ -3641,7 +3730,8 @@ coalition_sweep_task_fn(void *ctx __unused, int pending __unused)
 				    curthread, false, SIGKILL, reason);
 		}
 		sx_xunlock(&co->co_sx);
-		if (reason == COALITION_KILL_OVER_CEILING)
+		if (reason == COALITION_KILL_OVER_CEILING ||
+		    reason == COALITION_KILL_OVER_CPU)
 			overlimit++;
 		else if (reason == COALITION_KILL_IDLE) {
 			struct coalition *owner =
@@ -3699,7 +3789,7 @@ coalition_pressure_task_fn(void *ctx __unused, int pending __unused)
 	unsigned notified = 0, handed = 0, limited = 0;
 	u_int band, ntargets = 0, i;
 	uint64_t rss;
-	bool overlimit;
+	int overreason;
 
 	/*
 	 * Enumerate lock-free.  A reference is taken on each coalition inside
@@ -3736,7 +3826,7 @@ coalition_pressure_task_fn(void *ctx __unused, int pending __unused)
 		} else
 			SDT_PROBE3(mac_capability_coalition, , ,
 			    pressure__notify, co->co_id, 0U, ESHUTDOWN);
-		overlimit = coalition_limit_check_locked(co);
+		overreason = coalition_limit_check_locked(co);
 		sx_xunlock(&co->co_sx);
 
 		/*
@@ -3744,10 +3834,10 @@ coalition_pressure_task_fn(void *ctx __unused, int pending __unused)
 		 * here whatever its band: it is over budget, and the band only
 		 * decides what to give up first among coalitions that are not.
 		 */
-		if (overlimit) {
+		if (overreason != COALITION_KILL_NONE) {
 			sx_xlock(&co->co_sx);
 			coalition_terminate_members_locked(co, curthread,
-			    false, SIGKILL, COALITION_KILL_OVER_CEILING);
+			    false, SIGKILL, overreason);
 			sx_xunlock(&co->co_sx);
 			limited++;
 		}
@@ -4539,12 +4629,15 @@ coalition_call(struct mac_capability_instance *s,
 	case COALITION_OP_SET_LIMIT:
 	{
 		const struct coalition_limit_req *lq;
+		uint32_t cpu_pct;
 
-		if (reqlen < sizeof(*lq)) {
+		if (reqlen < COALITION_LIMIT_REQ_V1_LEN) {
 			rpl->status = EINVAL;
 			break;
 		}
 		lq = req;
+		/* An older caller offers no CPU ceiling, which means none. */
+		cpu_pct = reqlen >= sizeof(*lq) ? lq->cpu_percent : 0;
 		if ((lq->flags & ~COALITION_LIMIT_KILL) != 0) {
 			rpl->status = EINVAL;
 			break;
@@ -4557,6 +4650,7 @@ coalition_call(struct mac_capability_instance *s,
 		atomic_store_int(&co->co_limit_flags, lq->flags);
 		atomic_store_64(&co->co_limit_bytes, lq->memory_bytes);
 		atomic_store_64(&co->co_limit_vmem, lq->vmem_bytes);
+		atomic_store_int(&co->co_limit_cpu_pct, cpu_pct);
 		atomic_store_int(&co->co_limit_breached, 0);
 		break;
 	}
@@ -4715,7 +4809,7 @@ coalition_call(struct mac_capability_instance *s,
 		memset(lr, 0, sizeof(*lr));
 
 		if ((lq->flags & COALITION_LEDGER_REFRESH) != 0) {
-			bool over;
+			int over;
 
 			/*
 			 * Exclusive, not shared: the ceiling check notifies on
@@ -4725,11 +4819,10 @@ coalition_call(struct mac_capability_instance *s,
 			coalition_sample_locked(co);
 			over = coalition_limit_check_locked(co);
 			sx_xunlock(&co->co_sx);
-			if (over) {
+			if (over != COALITION_KILL_NONE) {
 				sx_xlock(&co->co_sx);
 				coalition_terminate_members_locked(co,
-				    curthread, false, SIGKILL,
-				    COALITION_KILL_OVER_CEILING);
+				    curthread, false, SIGKILL, over);
 				sx_xunlock(&co->co_sx);
 				/*
 				 * Same event, same reason, so the party
@@ -4737,8 +4830,7 @@ coalition_call(struct mac_capability_instance *s,
 				 * noticed the breach.  Told after the lock is
 				 * dropped: the order is parent before child.
 				 */
-				coalition_notify_responsible(co,
-				    COALITION_KILL_OVER_CEILING);
+				coalition_notify_responsible(co, over);
 			}
 		}
 		lr->id = co->co_id;

@@ -2283,6 +2283,69 @@ coalition_set_limit_full(int fd, uint32_t flags, uint64_t bytes,
 }
 
 static int
+coalition_set_cpu_limit(int fd, uint32_t flags, uint32_t pct,
+    int32_t *status_out)
+{
+	struct coalition_limit_req lq;
+	struct coalition_reply rpl;
+	int ret;
+
+	memset(&lq, 0, sizeof(lq));
+	lq.op = COALITION_OP_SET_LIMIT;
+	lq.flags = flags;
+	lq.cpu_percent = pct;
+	ret = coalition_call(fd, &lq, sizeof(lq), NULL, 0, &rpl, sizeof(rpl));
+	if (ret == 0 && status_out != NULL)
+		*status_out = rpl.status;
+	return (ret);
+}
+
+/*
+ * A CPU ceiling is a rate, so nothing can be concluded until a whole window
+ * has passed and the sweep has looked at least once afterwards.  Both are
+ * shortened here, and put back, the same way the sweep interval is.
+ */
+static u_int
+cpu_window_set(u_int ms)
+{
+	u_int old = 0;
+	size_t len = sizeof(old);
+
+	if (sysctlbyname("kern.mac_capability_coalition.cpu_window_ms",
+	    &old, &len, &ms, sizeof(ms)) != 0)
+		return (0);
+	return (old);
+}
+
+static void
+cpu_window_restore(u_int ms)
+{
+
+	if (ms != 0)
+		(void)sysctlbyname(
+		    "kern.mac_capability_coalition.cpu_window_ms", NULL, NULL,
+		    &ms, sizeof(ms));
+}
+
+/* Longer than wait_exit_bounded: a rate needs several windows to be sure. */
+static bool
+wait_exit_slow(pid_t pid, int *wstatus)
+{
+	int i;
+
+	for (i = 0; i < 300; i++) {
+		pid_t r = waitpid(pid, wstatus, WNOHANG);
+
+		if (r == pid)
+			return (true);
+		if (r == -1 && errno != EINTR)
+			return (false);
+		usleep(100000);
+	}
+	return (false);
+}
+
+static int
 coalition_set_limit(int fd, uint32_t flags, uint64_t bytes, int32_t *status_out)
 {
 	struct coalition_limit_req lq;
@@ -5473,6 +5536,231 @@ ATF_TC_BODY(vmem_ceiling_is_exact_not_sampled, tc)
 	sweep_interval_restore(saved);
 }
 
+/* ================================================================
+ * CPU ceiling
+ * ================================================================ */
+
+ATF_TC(cpu_ceiling_absent_by_default_and_settable);
+ATF_TC_HEAD(cpu_ceiling_absent_by_default_and_settable, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "A coalition has no CPU ceiling until one is declared, a ceiling "
+	    "of zero removes it again, and the three ceilings are independent "
+	    "of one another");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_coalition");
+}
+ATF_TC_BODY(cpu_ceiling_absent_by_default_and_settable, tc)
+{
+	int fd;
+	int32_t status = -1;
+
+	fd = mac_capability_connect("coalition");
+	ATF_REQUIRE(fd >= 0);
+
+	/* Accepted on its own, with and without the kill flag. */
+	ATF_REQUIRE(coalition_set_cpu_limit(fd, 0, 50, &status) == 0);
+	ATF_CHECK_EQ_MSG(status, 0, "a notify-only CPU ceiling was refused");
+	status = -1;
+	ATF_REQUIRE(coalition_set_cpu_limit(fd, COALITION_LIMIT_KILL, 400,
+	    &status) == 0);
+	ATF_CHECK_EQ_MSG(status, 0, "a CPU ceiling above one processor was "
+	    "refused; 400 means four processors, not an error");
+	status = -1;
+	ATF_REQUIRE(coalition_set_cpu_limit(fd, 0, 0, &status) == 0);
+	ATF_CHECK_EQ_MSG(status, 0, "removing a CPU ceiling was refused");
+
+	/*
+	 * A request that stops before cpu_percent is a caller built against
+	 * the older header, and must still be accepted as meaning no CPU
+	 * ceiling rather than refused for being short.
+	 */
+	{
+		struct coalition_limit_req lq;
+		struct coalition_reply rpl;
+
+		memset(&lq, 0, sizeof(lq));
+		lq.op = COALITION_OP_SET_LIMIT;
+		lq.memory_bytes = 1ULL << 40;
+		ATF_REQUIRE(coalition_call(fd, &lq,
+		    COALITION_LIMIT_REQ_V1_LEN, NULL, 0, &rpl,
+		    sizeof(rpl)) == 0);
+		ATF_CHECK_EQ_MSG(rpl.status, 0,
+		    "a request carrying only the memory ceilings was refused");
+
+		/* One byte short of even that is still a malformed request. */
+		ATF_REQUIRE(coalition_call(fd, &lq,
+		    COALITION_LIMIT_REQ_V1_LEN - 1, NULL, 0, &rpl,
+		    sizeof(rpl)) == 0);
+		ATF_CHECK_EQ_MSG(rpl.status, EINVAL,
+		    "a truncated limit request was accepted");
+	}
+
+	/* The same op carries all three, and unknown flags are still refused. */
+	status = -1;
+	ATF_REQUIRE(coalition_set_limit_full(fd, COALITION_LIMIT_KILL,
+	    1ULL << 40, 1ULL << 40, &status) == 0);
+	ATF_CHECK_EQ_MSG(status, 0, "setting the memory ceilings after a CPU "
+	    "ceiling was refused");
+	status = -1;
+	ATF_REQUIRE(coalition_set_cpu_limit(fd, 0x80, 50, &status) == 0);
+	ATF_CHECK_EQ_MSG(status, EINVAL,
+	    "an unknown flag was accepted on a CPU ceiling");
+
+	close(fd);
+}
+
+ATF_TC(cpu_ceiling_terminates_a_spinner);
+ATF_TC_HEAD(cpu_ceiling_terminates_a_spinner, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "A coalition averaging more than its declared share of a processor "
+	    "is terminated with COALITION_KILL_OVER_CPU, and the termination "
+	    "is counted apart from a memory breach");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_coalition");
+	atf_tc_set_md_var(tc, "timeout", "120");
+}
+ATF_TC_BODY(cpu_ceiling_terminates_a_spinner, tc)
+{
+	u_int before = 0, after = 0, mem_before = 0, mem_after = 0;
+	u_int saved_sweep, saved_window;
+	size_t len = sizeof(before);
+	int fd, pd, wstatus;
+	int32_t status;
+	pid_t pid;
+
+	if (sysctlbyname("kern.mac_capability_coalition.cpu_kills", &before,
+	    &len, NULL, 0) != 0)
+		atf_tc_skip("cpu_kills sysctl unavailable: %s",
+		    strerror(errno));
+	len = sizeof(mem_before);
+	ATF_REQUIRE(sysctlbyname("kern.mac_capability_coalition.limit_kills",
+	    &mem_before, &len, NULL, 0) == 0);
+
+	saved_window = cpu_window_set(1000);
+	if (saved_window == 0)
+		atf_tc_skip("cpu_window_ms sysctl unavailable: %s",
+		    strerror(errno));
+	saved_sweep = sweep_interval_set(SWEEP_FAST_MS);
+	if (saved_sweep == 0) {
+		cpu_window_restore(saved_window);
+		atf_tc_skip("sweep_interval_ms sysctl unavailable: %s",
+		    strerror(errno));
+	}
+
+	fd = mac_capability_connect("coalition");
+	ATF_REQUIRE(fd >= 0);
+
+	pid = pdfork(&pd, 0);
+	ATF_REQUIRE(pid >= 0);
+	if (pid == 0) {
+		volatile unsigned long x = 0;
+
+		close(fd);
+		/* Burn a processor until somebody stops us. */
+		for (;;)
+			x++;
+		_exit(0);
+	}
+	ATF_REQUIRE(coalition_enlist(fd, pd, &status) == 0);
+	ATF_REQUIRE_EQ(status, 0);
+
+	/*
+	 * Ten percent of one processor, which a busy loop exceeds by an order
+	 * of magnitude, so the verdict does not depend on how the window
+	 * happens to line up with the accounting daemon.
+	 */
+	ATF_REQUIRE(coalition_set_cpu_limit(fd, COALITION_LIMIT_KILL, 10,
+	    &status) == 0);
+	ATF_REQUIRE_EQ(status, 0);
+
+	ATF_CHECK_MSG(wait_exit_slow(pid, &wstatus),
+	    "a coalition far over its CPU ceiling was never terminated");
+	if (kill(pid, 0) == 0) {
+		pdkill(pd, SIGKILL);
+		(void)wait_exit_slow(pid, &wstatus);
+	}
+
+	len = sizeof(after);
+	ATF_REQUIRE(sysctlbyname("kern.mac_capability_coalition.cpu_kills",
+	    &after, &len, NULL, 0) == 0);
+	ATF_CHECK_MSG(after > before,
+	    "the CPU breach was not counted as one: %u then %u", before,
+	    after);
+	len = sizeof(mem_after);
+	ATF_REQUIRE(sysctlbyname("kern.mac_capability_coalition.limit_kills",
+	    &mem_after, &len, NULL, 0) == 0);
+	ATF_CHECK_MSG(mem_after == mem_before,
+	    "a CPU breach was counted as a memory breach: %u then %u",
+	    mem_before, mem_after);
+
+	close(pd);
+	close(fd);
+	sweep_interval_restore(saved_sweep);
+	cpu_window_restore(saved_window);
+}
+
+ATF_TC(cpu_ceiling_leaves_a_quiet_coalition_alone);
+ATF_TC_HEAD(cpu_ceiling_leaves_a_quiet_coalition_alone, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "A coalition that is not spending CPU survives a CPU ceiling "
+	    "across several sweeps: the ceiling is a rate, so the total a "
+	    "long-lived unit has accumulated must not be what is judged");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_coalition");
+	atf_tc_set_md_var(tc, "timeout", "120");
+}
+ATF_TC_BODY(cpu_ceiling_leaves_a_quiet_coalition_alone, tc)
+{
+	u_int saved_sweep, saved_window;
+	int fd, pd, wstatus;
+	int32_t status;
+	pid_t pid;
+	int i;
+
+	saved_window = cpu_window_set(1000);
+	if (saved_window == 0)
+		atf_tc_skip("cpu_window_ms sysctl unavailable: %s",
+		    strerror(errno));
+	saved_sweep = sweep_interval_set(SWEEP_FAST_MS);
+	if (saved_sweep == 0) {
+		cpu_window_restore(saved_window);
+		atf_tc_skip("sweep_interval_ms sysctl unavailable: %s",
+		    strerror(errno));
+	}
+
+	fd = mac_capability_connect("coalition");
+	ATF_REQUIRE(fd >= 0);
+	pid = coalition_fork_member(fd, &pd);
+	ATF_REQUIRE(pid > 0);
+	ATF_REQUIRE(coalition_enlist(fd, pd, &status) == 0);
+	ATF_REQUIRE_EQ(status, 0);
+
+	/*
+	 * One percent: low enough that a total would breach it the moment the
+	 * process had run at all, and high enough that a sleeping member
+	 * cannot reach it as a rate.
+	 */
+	ATF_REQUIRE(coalition_set_cpu_limit(fd, COALITION_LIMIT_KILL, 1,
+	    &status) == 0);
+	ATF_REQUIRE_EQ(status, 0);
+
+	/* Several windows and several sweeps, not one of each. */
+	for (i = 0; i < 6; i++) {
+		usleep(1000000);
+		if (kill(pid, 0) != 0)
+			break;
+	}
+	ATF_CHECK_MSG(kill(pid, 0) == 0,
+	    "a sleeping coalition was terminated for CPU it was not spending");
+
+	pdkill(pd, SIGKILL);
+	(void)wait_exit_slow(pid, &wstatus);
+	close(pd);
+	close(fd);
+	sweep_interval_restore(saved_sweep);
+	cpu_window_restore(saved_window);
+}
+
 ATF_TC(assertions_name_their_holders);
 ATF_TC_HEAD(assertions_name_their_holders, tc)
 {
@@ -5856,6 +6144,9 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, idle_exit_puts_away_after_its_age);
 	ATF_TP_ADD_TC(tp, idle_exit_is_held_off_by_an_assertion);
 	ATF_TP_ADD_TC(tp, vmem_ceiling_is_exact_not_sampled);
+	ATF_TP_ADD_TC(tp, cpu_ceiling_absent_by_default_and_settable);
+	ATF_TP_ADD_TC(tp, cpu_ceiling_terminates_a_spinner);
+	ATF_TP_ADD_TC(tp, cpu_ceiling_leaves_a_quiet_coalition_alone);
 	ATF_TP_ADD_TC(tp, assertions_name_their_holders);
 	ATF_TP_ADD_TC(tp, kill_reason_reaches_the_holder);
 	ATF_TP_ADD_TC(tp, a_holder_closing_is_not_reported_as_a_policy_kill);

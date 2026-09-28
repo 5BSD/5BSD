@@ -355,7 +355,29 @@ struct coalition_limit_req {
 	uint32_t	flags;		/* COALITION_LIMIT_* */
 	uint64_t	memory_bytes;	/* resident, sampled; 0 = none */
 	uint64_t	vmem_bytes;	/* address space, exact; 0 = none */
+	/*
+	 * CPU, as a percentage of one processor measured over the interval
+	 * between one look and the next, so 100 is one processor's worth and
+	 * 400 is four.  It is a rate rather than a total, because a total only
+	 * ever grows and a unit that has been running for a week would breach
+	 * any figure worth setting.
+	 *
+	 * Measured for the coalition as a whole and across its whole life:
+	 * time spent by a member that has since exited still counts, or a unit
+	 * could spend as much as it liked in short-lived children.  0 = no
+	 * ceiling.
+	 */
+	uint32_t	cpu_percent;
+	uint32_t	_pad2;
 };
+
+/*
+ * The CPU ceiling was added after the two memory ceilings.  A request that
+ * carries only the older fields is still accepted and means no CPU ceiling,
+ * the same way an older event reader sees only the flags.
+ */
+#define	COALITION_LIMIT_REQ_V1_LEN	(2 * sizeof(uint32_t) + \
+					    2 * sizeof(uint64_t))
 
 struct coalition_band_reply {
 	int32_t		status;
@@ -389,10 +411,19 @@ struct coalition_band_reply {
  * system happens to be short, and the band only says what to give up first
  * when everyone is within budget.
  *
+ * A CPU ceiling is the third figure, and is a rate rather than a total: the
+ * share of one processor a coalition may average between one look and the
+ * next.  A total would be useless, since it only ever grows and a unit running
+ * for a week breaches any figure worth setting.  What is measured is the whole
+ * unit -- what its current members have spent plus what members that have
+ * since left spent while they were in -- so a coalition cannot stay under a
+ * ceiling by spending in short-lived children.
+ *
  * COALITION_OP_SET_LIMIT
- *   req:  coalition_limit_req { .op, flags, memory_bytes }
+ *   req:  coalition_limit_req { .op, flags, memory_bytes, vmem_bytes,
+ *         cpu_percent }
  *   rep:  coalition_reply
- *   A memory_bytes of 0 removes the ceiling.
+ *   A figure of 0 removes that ceiling; each is independent of the others.
  *
  * Idle exit
  * ---------
@@ -479,6 +510,14 @@ struct coalition_rusage_reply {
 #define	COALITION_KILL_OVER_CEILING	5	/* over its own declared figure */
 #define	COALITION_KILL_SYSTEM_MEMORY	6	/* the machine ran out */
 #define	COALITION_KILL_IDLE		7	/* idle, and able to come back */
+#define	COALITION_KILL_OVER_CPU		8	/* over its own CPU ceiling */
+
+/*
+ * What a limit-breach figure is measured in, so an observer is not left
+ * guessing whether to read it as a size or a rate.
+ */
+#define	COALITION_LIMIT_KIND_BYTES	0
+#define	COALITION_LIMIT_KIND_CPU	1
 
 /*
  * Event delivered to a coalition's holder.  A message longer than

@@ -313,10 +313,12 @@ ranking matters, and on request with
 Returns
 .Vt struct coalition_ledger_reply .
 .It Dv COALITION_OP_SET_LIMIT
-Declare a ceiling on the coalition's own footprint, or remove it with a size of
-zero.
+Declare ceilings on the coalition's own resident memory, address space and CPU,
+or remove any of them with a figure of zero.
 See
-.Sx Memory Ceiling .
+.Sx Memory Ceiling
+and
+.Sx CPU Ceiling .
 Returns
 .Vt struct coalition_reply .
 .It Dv COALITION_OP_SET_IDLE_EXIT
@@ -566,16 +568,19 @@ it exceeded the figure declared for it
 the machine ran out and this was the least wanted
 .It Dv COALITION_KILL_IDLE
 it was idle, and able to come back
+.It Dv COALITION_KILL_OVER_CPU
+it exceeded the CPU ceiling declared for it
 .El
 .Pp
-The three memory reasons are counted separately, in
+The policy reasons are counted separately, in
 .Va limit_kills ,
-.Va oom_kills
+.Va oom_kills ,
+.Va idle_kills
 and
-.Va idle_kills ,
-because a unit over its own budget, the machine being short, and work being put
-away to be brought back are three different situations and should not be read
-off one number.
+.Va cpu_kills ,
+because a unit over its own memory budget, the machine being short, work being
+put away to be brought back, and a unit spinning are four different situations
+and should not be read off one number.
 .Ss Idle Exit
 Some work can be put away and brought back without losing anything, such as an
 on-demand unit that starts again the next time somebody asks for it.
@@ -635,6 +640,47 @@ not the system happens to be short, and the band only decides what to give up
 first among coalitions that are within theirs.
 A coalition that comes back under its ceiling is rearmed, so a unit that drifts
 over and recovers is told once per excursion rather than once per sample.
+.Ss CPU Ceiling
+A coalition may also be given a CPU ceiling, declared with the same
+.Dv COALITION_OP_SET_LIMIT
+as a percentage of one processor: 100 is one processor's worth, 400 is four,
+and zero is no ceiling.
+.Pp
+It is a rate, not a total.
+A total only ever grows, so a unit that has been running for a week breaches
+any figure worth setting; what is judged instead is the share of a processor
+the coalition averaged between one look and the next.
+.Pp
+What is measured is the whole unit: what its current members have spent plus
+what members that have since left spent while they were in.
+A coalition therefore cannot stay under its ceiling by doing its work in
+short-lived children, which is the same reason the memory ceiling is a figure
+for the unit rather than for a process.
+.Pp
+A breach notifies through
+.Dv COALITION_NOTE_LIMIT
+and, with
+.Dv COALITION_LIMIT_KILL ,
+terminates the coalition with
+.Dv COALITION_KILL_OVER_CPU .
+The CPU ceiling shares the
+.Dv COALITION_LIMIT_KILL
+flag and the rearm behaviour with the memory ceilings, so a unit that goes over
+and settles is told once per excursion.
+.Pp
+A rate needs a window, and the window is only carried forward when something
+looks, which in practice is the periodic sweep.
+A look closer together than
+.Va cpu_window_ms
+is not judged and does not move the window, because the per-process CPU figure
+underneath is refreshed by the accounting daemon rather than continuously, and
+a shorter window would land between two refreshes and read as nothing or as a
+whole refresh at once.
+It also means a caller asking for a ledger refresh in a loop cannot shrink the
+window under the coalition it is asking about.
+.Pp
+This has no equivalent in Darwin, whose CPU limits are per-task and report
+through an exception port rather than describing a unit.
 .Ss Out Of Memory
 When the system is about to run out of memory, something has to be given up.
 The stock choice is the single largest process, which is very often the most
@@ -671,6 +717,8 @@ and the read-only counter
 .Va oom_kills .
 Terminations for a coalition's own ceiling are counted separately in
 .Va limit_kills ,
+and for its CPU ceiling in
+.Va cpu_kills ,
 since exceeding a declared figure and being given up because the machine ran
 out are different events.
 The idle-exit knobs are
