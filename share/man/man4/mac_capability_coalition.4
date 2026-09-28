@@ -674,14 +674,20 @@ and zero is no ceiling.
 .Pp
 It is a rate, not a total.
 A total only ever grows, so a unit that has been running for a week breaches
-any figure worth setting; what is judged instead is the share of a processor
-the coalition averaged between one look and the next.
+any figure worth setting.
+What is judged is
+.Dv RACCT_PCTCPU
+on the coalition's container: the decaying average the accounting framework
+already keeps beside every other figure, clamped there to the number of
+processors the machine has.
+Nothing in this driver measures it.
 .Pp
-What is measured is the whole unit: what its current members have spent plus
-what members that have since left spent while they were in.
+It covers the whole unit, including CPU spent by members that have since left.
+That falls out of the framework rather than being arranged here: CPU is neither
+reclaimable nor decaying, so it is never taken back out of a container when a
+member leaves.
 A coalition therefore cannot stay under its ceiling by doing its work in
-short-lived children, which is the same reason the memory ceiling is a figure
-for the unit rather than for a process.
+short-lived children.
 .Pp
 A breach notifies through
 .Dv COALITION_NOTE_LIMIT
@@ -694,16 +700,15 @@ The CPU ceiling shares the
 flag and the rearm behaviour with the memory ceilings, so a unit that goes over
 and settles is told once per excursion.
 .Pp
-A rate needs a window, and the window is only carried forward when something
-looks, which in practice is the periodic sweep.
-A look closer together than
-.Va cpu_window_ms
-is not judged and does not move the window, because the per-process CPU figure
-underneath is refreshed by the accounting daemon rather than continuously, and
-a shorter window would land between two refreshes and read as nothing or as a
-whole refresh at once.
-It also means a caller asking for a ledger refresh in a loop cannot shrink the
-window under the coalition it is asking about.
+The rate is refreshed once per sweep and read everywhere else, so it has one
+owner and one cadence.
+A coalition that is not swept therefore has no CPU ceiling in effect, which is
+the same thing as saying the sweep is what enforces it.
+.Pp
+Enlisting a process that has already spent CPU does not read as a burst.
+Joining moves the whole of a process's accounting into the container, which for
+a total is right and for a rate is a step that never happened, so the rate's
+starting point is moved with it.
 .Pp
 This has no equivalent in Darwin, whose CPU limits are per-task and report
 through an exception port rather than describing a unit.

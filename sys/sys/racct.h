@@ -201,6 +201,7 @@ void	racct_proc_join_coalition(struct proc *p, struct racct *coalition);
 void	racct_release(struct racct **racctp);
 void	racct_proc_detach_coalition(struct proc *p);
 uint64_t racct_read(struct racct *racct, int resource);
+void	racct_updatepcpu(struct racct *racct);
 void	racct_create(struct racct **racctp);
 void	racct_destroy(struct racct **racctp);
 
@@ -275,6 +276,7 @@ racct_get_available(struct proc *p, int resource)
 #define	racct_release(r)
 #define	racct_proc_detach_coalition(p)
 #define	racct_read(r, res)	0
+#define	racct_updatepcpu(r)
 #define	racct_create(x)
 #define	racct_destroy(x)
 

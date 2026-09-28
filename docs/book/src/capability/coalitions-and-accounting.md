@@ -283,16 +283,16 @@ also terminates the coalition, regardless of band, because a unit over a
 figure declared for it is over budget whether or not the machine is short.
 
 The CPU ceiling is a rate rather than a total, since a total only grows and
-a unit running for a week breaches any figure worth setting. What is
-judged is the share of one processor the coalition averaged between one
-look and the next — 100 is one processor, 400 is four — measured across
-what its current members have spent plus what members that have since left
-spent while they were in, so a unit cannot stay under its ceiling by doing
-its work in short-lived children. It is judged only over a window at least
-`kern.mac_capability_coalition.cpu_window_ms` long, because the per-process
-CPU figure it reads is refreshed by the accounting daemon rather than
-continuously. Darwin has no equivalent: its CPU limits are per-task and
-report through an exception port rather than describing a unit.
+a unit running for a week breaches any figure worth setting. What is judged
+is `RACCT_PCTCPU` on the coalition's container — the decaying average the
+accounting framework already keeps beside every other figure, clamped there
+to the number of processors on the machine. Nothing in the driver measures
+it. It covers CPU spent by members that have since left, and that falls out
+of the framework rather than being arranged: CPU is neither reclaimable nor
+decaying, so it is never taken back out of a container when a member leaves.
+A unit therefore cannot stay under its ceiling by working in short-lived
+children. Darwin has no equivalent: its CPU limits are per-task and report
+through an exception port rather than describing a unit.
 
 Nothing in the plane declares these from a manifest yet: they are a kernel
 interface a supervisor calls, and switchboard does not call it.
@@ -312,10 +312,11 @@ number now has one owner:
   at the moment of the decision. This is the one deliberate exception: a
   ranking made on a figure that is a page-daemon pass old picks the wrong
   coalition, and picking the wrong one is the whole failure.
-- **CPU** is kept by the container with one addition the module owns: the CPU
-  of members that have since left. Without it a coalition could spend as much
-  as it liked in short-lived children, because the container gives a departing
-  member's charges back.
+- **CPU** is kept entirely by the container, as `RACCT_PCTCPU`. The driver
+  once maintained its own rate and its own tally of departed members' CPU;
+  both were removed. `racct_sub_racct()` only gives back resources that are
+  reclaimable or decaying, and CPU is neither, so a container already keeps
+  what its departed members spent — the second tally counted it twice.
 
 A coalition may also hold a jail, and then it accounts for what runs inside
 it. Only a process carries a container pointer, so the jail's processes are
@@ -326,6 +327,20 @@ the member limit and what a termination signals are unchanged. A process
 enlisted in its own right is never displaced by a jail it happens to be in,
 and where jails nest, the innermost held one wins — in both cases because the
 more specific statement about whose work a process is should stand.
+
+Ceilings are held in one array indexed by the framework's own resource
+numbers rather than a field per figure, because every one is judged the same
+way: read the counter, compare. Limiting a resource the driver has never
+heard of needs no code in it, only a caller willing to name it — the wire
+carries three today. Breaches are reported with rctl's names for resources
+rather than a second table that could drift from the first.
+
+The natural end state is for these to be `rctl(8)` rules against a coalition
+subject, which would bring operator tooling and persistence with them. That
+is not a cleanup but a project, and it has a real conflict to settle first:
+rctl's actions are per-process, and this model's whole point is that the unit
+dies together. Until that is decided, the array keeps the driver honest and
+makes the migration a mapping rather than a rewrite.
 
 Consequences worth knowing. `age_ms` in the ledger reply is always zero —
 nothing is sampled, so nothing goes stale — and `COALITION_LEDGER_REFRESH` no

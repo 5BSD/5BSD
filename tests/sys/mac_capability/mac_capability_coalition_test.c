@@ -2301,33 +2301,6 @@ coalition_set_cpu_limit(int fd, uint32_t flags, uint32_t pct,
 }
 
 /*
- * A CPU ceiling is a rate, so nothing can be concluded until a whole window
- * has passed and the sweep has looked at least once afterwards.  Both are
- * shortened here, and put back, the same way the sweep interval is.
- */
-static u_int
-cpu_window_set(u_int ms)
-{
-	u_int old = 0;
-	size_t len = sizeof(old);
-
-	if (sysctlbyname("kern.mac_capability_coalition.cpu_window_ms",
-	    &old, &len, &ms, sizeof(ms)) != 0)
-		return (0);
-	return (old);
-}
-
-static void
-cpu_window_restore(u_int ms)
-{
-
-	if (ms != 0)
-		(void)sysctlbyname(
-		    "kern.mac_capability_coalition.cpu_window_ms", NULL, NULL,
-		    &ms, sizeof(ms));
-}
-
-/*
  * Switch the periodic sweep off, and back on again afterwards.
  *
  * Lengthening sweep_interval_ms is not the same thing: it does not cancel the
@@ -5954,7 +5927,7 @@ ATF_TC_HEAD(cpu_ceiling_terminates_a_spinner, tc)
 ATF_TC_BODY(cpu_ceiling_terminates_a_spinner, tc)
 {
 	u_int before = 0, after = 0, mem_before = 0, mem_after = 0;
-	u_int saved_sweep, saved_window;
+	u_int saved_sweep;
 	size_t len = sizeof(before);
 	int fd, pd, wstatus;
 	int32_t status;
@@ -5968,16 +5941,10 @@ ATF_TC_BODY(cpu_ceiling_terminates_a_spinner, tc)
 	ATF_REQUIRE(sysctlbyname("kern.mac_capability_coalition.limit_kills",
 	    &mem_before, &len, NULL, 0) == 0);
 
-	saved_window = cpu_window_set(1000);
-	if (saved_window == 0)
-		atf_tc_skip("cpu_window_ms sysctl unavailable: %s",
-		    strerror(errno));
 	saved_sweep = sweep_interval_set(SWEEP_FAST_MS);
-	if (saved_sweep == 0) {
-		cpu_window_restore(saved_window);
+	if (saved_sweep == 0)
 		atf_tc_skip("sweep_interval_ms sysctl unavailable: %s",
 		    strerror(errno));
-	}
 
 	fd = mac_capability_connect("coalition");
 	ATF_REQUIRE(fd >= 0);
@@ -6028,7 +5995,6 @@ ATF_TC_BODY(cpu_ceiling_terminates_a_spinner, tc)
 	close(pd);
 	close(fd);
 	sweep_interval_restore(saved_sweep);
-	cpu_window_restore(saved_window);
 }
 
 ATF_TC(cpu_ceiling_leaves_a_quiet_coalition_alone);
@@ -6043,22 +6009,16 @@ ATF_TC_HEAD(cpu_ceiling_leaves_a_quiet_coalition_alone, tc)
 }
 ATF_TC_BODY(cpu_ceiling_leaves_a_quiet_coalition_alone, tc)
 {
-	u_int saved_sweep, saved_window;
+	u_int saved_sweep;
 	int fd, pd, wstatus;
 	int32_t status;
 	pid_t pid;
 	int i;
 
-	saved_window = cpu_window_set(1000);
-	if (saved_window == 0)
-		atf_tc_skip("cpu_window_ms sysctl unavailable: %s",
-		    strerror(errno));
 	saved_sweep = sweep_interval_set(SWEEP_FAST_MS);
-	if (saved_sweep == 0) {
-		cpu_window_restore(saved_window);
+	if (saved_sweep == 0)
 		atf_tc_skip("sweep_interval_ms sysctl unavailable: %s",
 		    strerror(errno));
-	}
 
 	fd = mac_capability_connect("coalition");
 	ATF_REQUIRE(fd >= 0);
@@ -6090,7 +6050,6 @@ ATF_TC_BODY(cpu_ceiling_leaves_a_quiet_coalition_alone, tc)
 	close(pd);
 	close(fd);
 	sweep_interval_restore(saved_sweep);
-	cpu_window_restore(saved_window);
 }
 
 ATF_TC(cpu_ceiling_survives_a_member_joining_with_history);
@@ -6106,23 +6065,17 @@ ATF_TC_HEAD(cpu_ceiling_survives_a_member_joining_with_history, tc)
 }
 ATF_TC_BODY(cpu_ceiling_survives_a_member_joining_with_history, tc)
 {
-	u_int saved_sweep, saved_window;
+	u_int saved_sweep;
 	int fd, pd, wstatus, ready[2];
 	int32_t status;
 	char tok;
 	pid_t pid;
 	int i;
 
-	saved_window = cpu_window_set(1000);
-	if (saved_window == 0)
-		atf_tc_skip("cpu_window_ms sysctl unavailable: %s",
-		    strerror(errno));
 	saved_sweep = sweep_interval_set(SWEEP_FAST_MS);
-	if (saved_sweep == 0) {
-		cpu_window_restore(saved_window);
+	if (saved_sweep == 0)
 		atf_tc_skip("sweep_interval_ms sysctl unavailable: %s",
 		    strerror(errno));
-	}
 
 	ATF_REQUIRE(pipe(ready) == 0);
 	fd = mac_capability_connect("coalition");
@@ -6175,7 +6128,6 @@ ATF_TC_BODY(cpu_ceiling_survives_a_member_joining_with_history, tc)
 	close(pd);
 	close(fd);
 	sweep_interval_restore(saved_sweep);
-	cpu_window_restore(saved_window);
 }
 
 ATF_TC(assertions_name_their_holders);

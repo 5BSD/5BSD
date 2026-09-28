@@ -925,8 +925,25 @@ racct_proc_join_coalition(struct proc *p, struct racct *coalition)
 		racct_release_locked(p->p_coalition_racct);
 	}
 	p->p_coalition_racct = coalition;
-	if (coalition != NULL)
+	if (coalition != NULL) {
 		racct_add_racct(coalition, p->p_racct);
+		/*
+		 * The joiner brings its whole life's CPU with it, which is
+		 * right for a total and wrong for the decaying rate kept
+		 * beside it: that would read a process enlisted after an hour
+		 * of work as an hour of work in one interval.  Start the rate
+		 * again from here, so the next look measures what the unit
+		 * spends from now on.
+		 *
+		 * Leaving needs no such thing.  CPU is neither reclaimable nor
+		 * decaying, so racct_sub_racct() does not take it away, and a
+		 * container keeps what its departed members spent -- which is
+		 * exactly what stops a unit spending freely in children that
+		 * exit.
+		 */
+		coalition->r_runtime = coalition->r_resources[RACCT_CPU];
+		microuptime(&coalition->r_time);
+	}
 	RACCT_UNLOCK();
 }
 
@@ -1263,6 +1280,30 @@ racct_updatepcpu_locked(struct proc *p)
 	PROC_LOCK_ASSERT(p, MA_OWNED);
 
 	racct_updatepcpu_racct_locked(p->p_racct);
+}
+
+/*
+ * Refresh the decaying %CPU figure for one container.
+ *
+ * racctd does this for the containers it knows about; a container reached
+ * another way -- a coalition's -- has to be driven by whatever looks at it, at
+ * whatever cadence that is.  The decay is a weighted average, so any regular
+ * cadence works; what it cannot take is two looks in the same instant, which
+ * would divide by zero, so anything under a millisecond is left alone.
+ */
+void
+racct_updatepcpu(struct racct *racct)
+{
+	struct timeval diff;
+
+	if (!racct_enable || racct == NULL)
+		return;
+	RACCT_LOCK();
+	microuptime(&diff);
+	timevalsub(&diff, &racct->r_time);
+	if (diff.tv_sec != 0 || diff.tv_usec >= 1000)
+		racct_updatepcpu_racct_locked(racct);
+	RACCT_UNLOCK();
 }
 
 static void

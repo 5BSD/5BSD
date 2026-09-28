@@ -103,6 +103,7 @@
 #include <vm/uma.h>
 #include <sys/mman.h>
 #include <sys/racct.h>
+#include <sys/rctl.h>
 #include <vm/vm.h>
 #include <vm/vm_param.h>
 #include <vm/pmap.h>
@@ -326,23 +327,17 @@ struct coalition {
 	volatile u_int		co_band_assert[COALITION_BAND_COUNT];
 	volatile u_int		co_band_nassert;	/* live assertions */
 	volatile sbintime_t	co_press_time;	/* last handed down, 0 = never */
-	/* Declared ceilings for the whole coalition; 0 = none. */
-	volatile uint64_t	co_limit_vmem;
-	volatile uint64_t	co_limit_bytes;
 	/*
-	 * CPU spent by members that have since left.  The container holds what
-	 * current members have spent; this keeps the rest, so a unit cannot
-	 * spend freely by spending in children that exit.
+	 * Declared ceilings for the whole coalition, indexed by the accounting
+	 * framework's own resource numbers; 0 means no ceiling on that one.
+	 *
+	 * One array rather than a field per figure, because every one of them
+	 * is judged the same way -- read the container, compare -- and the
+	 * container already carries all of them.  Limiting a resource this
+	 * module has never heard of needs no code here, only a caller willing
+	 * to name it.
 	 */
-	volatile uint64_t	co_cpu_departed;
-	/*
-	 * A CPU ceiling is a rate, so it needs what the last look saw.  A
-	 * total only grows, and a unit running for a week would breach any
-	 * figure worth setting.
-	 */
-	volatile u_int		co_limit_cpu_pct;
-	volatile uint64_t	co_cpu_last;
-	volatile sbintime_t	co_cpu_last_time;
+	volatile uint64_t	co_limits[RACCT_MAX + 1];
 	/*
 	 * The coalition's resource container.  A real one, alongside the user,
 	 * login class and jail containers a process is already charged to, so
@@ -664,10 +659,6 @@ SYSCTL_UINT(_kern_mac_capability_coalition, OID_AUTO, oom_kills, CTLFLAG_RD,
 SYSCTL_UINT(_kern_mac_capability_coalition, OID_AUTO, limit_kills, CTLFLAG_RD,
     __DEVOLATILE(u_int *, &coalition_limit_kills), 0,
     "Total coalitions terminated for exceeding their own ceiling since boot");
-static u_int coalition_cpu_window_ms = 2000;
-SYSCTL_UINT(_kern_mac_capability_coalition, OID_AUTO, cpu_window_ms,
-    CTLFLAG_RW, &coalition_cpu_window_ms, 0,
-    "Shortest interval a CPU ceiling is judged over, in milliseconds");
 SYSCTL_UINT(_kern_mac_capability_coalition, OID_AUTO, cpu_kills, CTLFLAG_RD,
     __DEVOLATILE(u_int *, &coalition_cpu_kills), 0,
     "Total coalitions terminated for exceeding their own CPU ceiling since boot");
@@ -3372,114 +3363,89 @@ coalition_sample_locked(struct coalition *co)
  * drifts over and recovers is told once per excursion rather than once per
  * sample.
  */
+/*
+ * The accounting framework's name for a resource.  rctl already keeps the
+ * table an operator sees in rctl(8) rules; using it means one set of names on
+ * the machine rather than a second set that can drift from the first.
+ */
+static const char *
+coalition_resource_name(int resource)
+{
+
+#ifdef RCTL
+	return (rctl_resource_name(resource));
+#else
+	return ("resource");
+#endif
+}
+
 static int
 coalition_limit_check_locked(struct coalition *co)
 {
-	uint64_t limit, rss, vlimit, vmem, cpu, used, elapsed;
-	sbintime_t now, last;
-	u_int flags, cpu_limit, pct = 0;
-	bool over_vmem, over_rss, over_cpu = false;
+	uint64_t limit = 0, used = 0;
+	u_int flags;
+	int i, breached = -1;
 
 	sx_assert(&co->co_sx, SA_XLOCKED);
 
 	/*
-	 * CPU first, and unconditionally, because a rate is measured between
-	 * one look and the next: the window has to be carried forward whether
-	 * or not anything turns out to be over, or the next reading would span
-	 * two windows and read as twice the real rate.
+	 * Every ceiling is judged the same way: read the counter the
+	 * accounting framework keeps for this container and compare.  Nothing
+	 * here measures anything, walks anything, or knows what a resource
+	 * means -- address space is charged at the mapping path, resident
+	 * memory is refreshed by the page daemon's pass, and RACCT_PCTCPU is a
+	 * decaying rate the framework maintains and clamps to the number of
+	 * processors.  CPU spent by members that have since left is still in
+	 * there, because CPU is neither reclaimable nor decaying and so is
+	 * never taken back out of a container.
+	 *
+	 * The first breach in resource order is the one reported: a reason has
+	 * to be a single answer, and a coalition over two ceilings at once is
+	 * over budget either way.
 	 */
-	cpu_limit = atomic_load_int(&co->co_limit_cpu_pct);
-	cpu = racct_read(co->co_racct, RACCT_CPU) +
-	    atomic_load_64(&co->co_cpu_departed);
-	now = getsbinuptime();
-	last = (sbintime_t)atomic_load_64(
-	    (volatile uint64_t *)&co->co_cpu_last_time);
-	elapsed = last != 0 && now > last ?
-	    (uint64_t)((now - last) / SBT_1US) : 0;
-	/*
-	 * Only judged, and only moved on, once the window is long enough to
-	 * mean something.  The per-process CPU figure this reads is refreshed
-	 * by the accounting daemon rather than continuously, so a short window
-	 * lands between two refreshes and reads either nothing or a whole
-	 * refresh at once.  It also keeps a caller that asks for a ledger
-	 * refresh in a tight loop from shrinking the window under the
-	 * coalition it is asking about.
-	 */
-	if (elapsed >= (uint64_t)coalition_cpu_window_ms * 1000) {
-		if (cpu_limit != 0) {
-			used = cpu > atomic_load_64(&co->co_cpu_last) ?
-			    cpu - atomic_load_64(&co->co_cpu_last) : 0;
-			pct = (u_int)((used * 100) / elapsed);
-			over_cpu = pct > cpu_limit;
+	for (i = 0; i <= RACCT_MAX; i++) {
+		limit = atomic_load_64(&co->co_limits[i]);
+		if (limit == 0)
+			continue;
+		used = racct_read(co->co_racct, i);
+		if (used > limit) {
+			breached = i;
+			break;
 		}
-		atomic_store_64(&co->co_cpu_last, cpu);
-		atomic_store_64((volatile uint64_t *)&co->co_cpu_last_time,
-		    (uint64_t)now);
-	} else if (last == 0) {
-		/* First look: start the window rather than judging from boot. */
-		atomic_store_64(&co->co_cpu_last, cpu);
-		atomic_store_64((volatile uint64_t *)&co->co_cpu_last_time,
-		    (uint64_t)now);
 	}
-	/*
-	 * Both memory figures come from the container, which is the whole point
-	 * of having one: the framework charges address space at the mapping
-	 * path, so that figure is exact, and refreshes resident memory from the
-	 * page daemon's pass, so that one is at most a pass old.  Neither is
-	 * anything this module maintains, and adding a fourth resource needs no
-	 * code here at all.
-	 */
-	vlimit = atomic_load_64(&co->co_limit_vmem);
-	vmem = racct_read(co->co_racct, RACCT_VMEM);
-	limit = atomic_load_64(&co->co_limit_bytes);
-	rss = racct_read(co->co_racct, RACCT_RSS);
-	over_vmem = vlimit != 0 && vmem > vlimit;
-	over_rss = limit != 0 && rss > limit;
-	if (!over_vmem && !over_rss && !over_cpu) {
+	if (breached < 0) {
 		atomic_store_int(&co->co_limit_breached, 0);
 		return (COALITION_KILL_NONE);
 	}
-	if (over_cpu) {
-		/*
-		 * Reported as a percentage rather than a size.  CPU wins when a
-		 * coalition is over more than one ceiling at once: it is the
-		 * one that says the unit is still doing something, and a reason
-		 * has to be a single answer.
-		 */
-		limit = cpu_limit;
-		rss = pct;
-	} else if (over_vmem) {
-		limit = vlimit;
-		rss = vmem;
-	}
 	flags = atomic_load_int(&co->co_limit_flags);
 	if (atomic_load_int(&co->co_limit_breached) == 0) {
+		/*
+		 * Reported in the units the framework keeps the resource in,
+		 * with the framework's own name for it rather than a second
+		 * table of names kept here.
+		 */
+		bool millions = RACCT_IS_IN_MILLIONS(breached);
+
 		atomic_store_int(&co->co_limit_breached, 1);
 		SDT_PROBE6(mac_capability_coalition, , , limit__breach,
-		    co->co_id, co->co_responsible_id, rss, limit,
+		    co->co_id, co->co_responsible_id, used, limit,
 		    (flags & COALITION_LIMIT_KILL) != 0 ? 1 : 0,
-		    over_cpu ? COALITION_LIMIT_KIND_CPU :
+		    breached == RACCT_PCTCPU ? COALITION_LIMIT_KIND_CPU :
 		    COALITION_LIMIT_KIND_BYTES);
 		coalition_notify_event(co, COALITION_NOTE_LIMIT);
-		if (over_cpu)
-			log(LOG_WARNING, "mac_capability_coalition: coalition "
-			    "%ju (responsible %ju) is over its CPU ceiling: "
-			    "%u%% of %u%%%s\n", (uintmax_t)co->co_id,
-			    (uintmax_t)co->co_responsible_id, pct, cpu_limit,
-			    (flags & COALITION_LIMIT_KILL) != 0 ?
-			    "; terminating it" : "");
-		else
-			log(LOG_WARNING, "mac_capability_coalition: coalition "
-			    "%ju (responsible %ju) is over its ceiling: "
-			    "%ju KB of %ju KB%s\n", (uintmax_t)co->co_id,
-			    (uintmax_t)co->co_responsible_id,
-			    (uintmax_t)(rss / 1024), (uintmax_t)(limit / 1024),
-			    (flags & COALITION_LIMIT_KILL) != 0 ?
-			    "; terminating it" : "");
+		log(LOG_WARNING, "mac_capability_coalition: coalition %ju "
+		    "(responsible %ju) is over its %s ceiling: %ju of %ju%s\n",
+		    (uintmax_t)co->co_id, (uintmax_t)co->co_responsible_id,
+		    coalition_resource_name(breached),
+		    (uintmax_t)(millions ? used / 1000000 : used),
+		    (uintmax_t)(millions ? limit / 1000000 : limit),
+		    (flags & COALITION_LIMIT_KILL) != 0 ?
+		    "; terminating it" : "");
 	}
 	if ((flags & COALITION_LIMIT_KILL) == 0)
 		return (COALITION_KILL_NONE);
-	return (over_cpu ? COALITION_KILL_OVER_CPU : COALITION_KILL_OVER_CEILING);
+	return (breached == RACCT_PCTCPU ? COALITION_KILL_OVER_CPU :
+	    COALITION_KILL_OVER_CEILING);
 }
 
 /* ----------------------------------------------------------------
@@ -3849,7 +3815,7 @@ coalition_notify_responsible(struct coalition *co, int reason)
  * not already hold it, so this takes it when needed.
  */
 /*
- * Take a process out of its coalition's container, keeping the CPU it spent.
+ * Take a process out of its coalition's container.
  *
  * Leaving always gives everything back, whatever the reason.  The alternative
  * -- detaching and letting the container keep the charges -- looked cheaper and
@@ -3859,22 +3825,19 @@ coalition_notify_responsible(struct coalition *co, int reason)
  * that has gone.  Subtracting on the way out makes the container hold only what
  * its current members hold, which is an invariant that cannot race.
  *
- * CPU is the one thing that must survive a member, or a unit could spend as
- * much as it liked by spending in children that exit.  So it is taken out of
- * the container with everything else and added to a total of its own.
+ * "Everything" is the framework's definition of it, and that definition is
+ * what makes a departed member's CPU stay behind with no help from here: CPU
+ * is neither reclaimable nor decaying, so racct_sub_racct() does not touch it.
+ * Keeping a second tally of departed CPU, as this once did, counted it twice.
  */
 static void
 coalition_racct_leave(struct proc *p, struct coalition *co)
 {
-	uint64_t cpu;
 
 	if (p == NULL || co == NULL)
 		return;
-	cpu = racct_read(p->p_racct, RACCT_CPU);
-	if (cpu != 0)
-		atomic_add_64(&co->co_cpu_departed, cpu);
 	SDT_PROBE3(mac_capability_coalition, , , racct__leave, co->co_id,
-	    p->p_pid, (int)cpu);
+	    p->p_pid, (int)racct_read(p->p_racct, RACCT_CPU));
 	coalition_racct_join(p, NULL);
 }
 
@@ -3891,18 +3854,6 @@ coalition_racct_join(struct proc *p, struct coalition *co)
 	if (co != NULL) {
 		SDT_PROBE2(mac_capability_coalition, , , racct__join,
 		    co->co_id, p->p_pid);
-		/*
-		 * Joining moves the whole of the process's accounting into the
-		 * container, CPU included -- racct does that for a change of
-		 * uid too.  For a total that is right; for a RATE it is a step
-		 * that never happened, and a process enlisted after an hour of
-		 * work would arrive looking like an hour of work in one window
-		 * and breach any CPU ceiling instantly.  So a join starts the
-		 * window again: zero means no baseline, and the next look sets
-		 * one from the total as it stands then.  One window of
-		 * measurement is given up per join, which is the right trade.
-		 */
-		atomic_store_64((volatile uint64_t *)&co->co_cpu_last_time, 0);
 	}
 	racct_proc_join_coalition(p, co != NULL ? co->co_racct : NULL);
 	if (!locked)
@@ -3928,6 +3879,14 @@ coalition_sweep_task_fn(void *ctx __unused, int pending __unused)
 		reason = COALITION_KILL_NONE;
 		sx_xlock(&co->co_sx);
 		if ((co->co_flags & (COF_TERMINATING | COF_CLOSING)) == 0) {
+			/*
+			 * The sweep is the one regular cadence this module
+			 * has, so it is what drives the decaying CPU rate the
+			 * accounting framework keeps.  Refreshing here and
+			 * reading everywhere else leaves the rate with a
+			 * single owner and a single interval.
+			 */
+			racct_updatepcpu(co->co_racct);
 			reason = coalition_limit_check_locked(co);
 			if (reason == COALITION_KILL_NONE &&
 			    coalition_idle_expired(co, now) &&
@@ -4868,9 +4827,16 @@ coalition_call(struct mac_capability_instance *s,
 		 * once rather than leaving the coalition marked over.
 		 */
 		atomic_store_int(&co->co_limit_flags, lq->flags);
-		atomic_store_64(&co->co_limit_bytes, lq->memory_bytes);
-		atomic_store_64(&co->co_limit_vmem, lq->vmem_bytes);
-		atomic_store_int(&co->co_limit_cpu_pct, cpu_pct);
+		/*
+		 * The three figures the wire carries today, placed in the
+		 * framework's own resource slots.  A CPU percentage becomes
+		 * RACCT_PCTCPU, which is kept in millionths like every other
+		 * IN_MILLIONS resource.
+		 */
+		atomic_store_64(&co->co_limits[RACCT_RSS], lq->memory_bytes);
+		atomic_store_64(&co->co_limits[RACCT_VMEM], lq->vmem_bytes);
+		atomic_store_64(&co->co_limits[RACCT_PCTCPU],
+		    (uint64_t)cpu_pct * 1000000);
 		atomic_store_int(&co->co_limit_breached, 0);
 		break;
 	}

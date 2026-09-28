@@ -99,7 +99,6 @@ the end rather than listed one by one.
 | `kern.mac_capability_coalition.oom_band_ceiling` | uint RW | INTERACTIVE | Highest band an out-of-memory kill may choose | same |
 | `kern.mac_capability_coalition.oom_kills` | uint RD | | Coalitions terminated for system memory since boot | same |
 | `kern.mac_capability_coalition.limit_kills` | uint RD | | Coalitions terminated for their own memory ceiling since boot | same |
-| `kern.mac_capability_coalition.cpu_window_ms` | uint RW | 2000 | Shortest interval a CPU ceiling is judged over | same |
 | `kern.mac_capability_coalition.cpu_kills` | uint RD | | Coalitions terminated for their own CPU ceiling since boot | same |
 | `kern.mac_capability_coalition.idle_exit` | int RW | 1 | Put declared-eligible coalitions away once they have been idle | same |
 | `kern.mac_capability_coalition.idle_min_age_ms` | uint RW | 300000 | Default time a coalition must be idle before it is put away | same |
