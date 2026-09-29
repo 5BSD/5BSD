@@ -247,68 +247,128 @@ a context where a wait is a wait on oneself.
 
 ---
 
-## Beyond Darwin and Linux
+## Beyond Darwin and Linux: what current research says
 
-Where the target is battery, solar and trust, there is research neither system
-has had reason to adopt. These are **unproven** and listed in descending order
-of how well they fit the identity.
+Surveyed from arXiv listings (cs.OS and adjacent), 2020–2026. Two caveats
+before the findings.
 
-### Peak power, not just average energy
+**The field has moved to datacenters and LLM inference.** The overwhelming
+majority of current power- and thermal-aware scheduling work targets GPU
+serving, not battery devices. That is an opportunity — the embedded energy
+problem is comparatively under-served — and a warning: datacenter results
+assume a wall socket, a fan, and a workload that can be batched. Very little
+lifts directly.
 
-Battery chemistry and solar-plus-supercapacitor delivery are limited by
-**instantaneous draw**, not by joules over an hour. High-current bursts cost
-disproportionate capacity and shorten cell life. Neither Linux nor Darwin
-schedules against a *current* ceiling; both optimise energy.
+**arXiv is the wrong venue for some of this.** OS memory compression and
+side-channel work live in ASPLOS, OSDI, ATC, ISCA and USENIX Security. The
+compression search returned almost nothing classical. Treat the compression
+section below as thinner than the others.
 
-For a solar camera the constraint is literally "what the panel can deliver
-right now." Scheduling against a power ceiling — deliberately *not*
-racing-to-idle when the envelope is narrow — is a real and under-served
-problem. There is an academic literature on battery-aware scheduling to draw
-on.
+### Transferable findings, power and thermal
 
-### Intermittent and energy-harvesting computation
+Four results change what I would build, and all four argue for *less*
+machinery than Darwin or Linux carry.
 
-A solar device loses power mid-computation, routinely. The research lineage
-here (Mementos, Hibernus, Chain, Alpaca, InK, Chinchilla) is about
-checkpointing and idempotent re-execution so a computation *survives* power
-loss rather than restarting.
+**There is a static energy-optimal operating point, and chasing it dynamically
+may not pay.** "The Joule Point" (2026) finds a *static* cap at 43–46% of
+rated power cuts energy per unit of work by ~30% for modest latency cost.
+Related work on efficiency sweet spots finds power–frequency transitions are
+nonlinear, so efficiency regimes are workload-dependent but *identifiable*.
+For a fixed-function appliance whose workload is known at build time, this
+suggests characterise-and-pin may beat a closed-loop controller — which is a
+much smaller thing to build and a far more testable one.
 
-Neither Darwin nor Linux has anything in this space, because neither targets
-devices that brown out as a normal operating mode. For harvest-powered
-products this is arguably the defining capability, and it interacts directly
-with our storage story: ZFS transactional semantics and boot environments are
-a better substrate for "resume exactly where we were" than most systems have.
+**Frequency control beats power capping as an instrument.** Several 2026
+papers converge on this: caps are blunt, memory-bound phases leave headroom
+unused, and locking clocks recovers energy that capping does not. If we build
+one mechanism first, it should be the governor, not the cap.
 
-### DVFS as a side channel — the trust angle
+**Two time scales, not one.** Datacenter power modulation separates fast
+throttling from slow state transitions under one budget. The pattern
+transfers directly: a fast path that reacts in microseconds and a slow path
+that changes operating points, rather than one loop trying to do both.
 
-**Hertzbleed** (2022) showed that frequency scaling leaks data: a
-data-dependent workload changes power, which changes frequency, which changes
-timing, which is observable remotely. Linux's mitigation was largely "disable
-turbo." Darwin has said little publicly.
+**Thermal should be feed-forward, not reactive.** The strongest thermal
+results stage cooling *before* heat arrives, using job-class intent. For us
+there is no coolant to stage — the equivalent is shedding or down-clocking
+*before* the trip point, driven by the declared class. This validates
+predictive thermal management as the direction and gives it a mechanism: the
+same declared classes used for OOM victim choice and core placement.
 
-For a system whose identity is *trusted* embedded compute, "our power
-management is a side channel" is not an acceptable answer. A principled
-approach — constant-frequency islands for attested workloads, or declaring
-which units require DVFS isolation — would be genuinely differentiating and
-fits the capability model exactly: it is another thing a manifest could
-declare and the kernel could enforce.
+### Transferable findings, intermittent and harvest power
 
-### Attested energy accounting
+This is the liveliest area for our target, and it has moved on from the
+checkpointing lineage I cited earlier.
 
-If a device is trusted, can it *prove* how much energy a workload consumed?
-For multi-tenant edge, for regulatory claims, for billing solar-harvested
-compute — an attested energy ledger is a plausible product feature nobody
-offers. It builds on the accounting substrate and the attestation story we
-already have.
+**Checkpoint-free is the modern direction.** Several 2024–2025 papers pursue
+intermittent execution *without* checkpoints — adapting the computation to
+available energy rather than saving and restoring state. "Energy-Adaptive
+Checkpoint-Free Intermittent Inference" (2025) reduces work during scarcity
+instead of persisting it. Checkpointing is now the fallback, not the plan.
 
-### Thermal prediction rather than reaction
+**Compile-time volatile/non-volatile placement is where the big wins are.**
+ALFRED (2021) presents a virtual-memory abstraction that maps application
+state across volatile and non-volatile memory automatically, reporting up to
+**100x** energy reduction. That is an OS/VM-level idea, not an application
+one, and it is the single largest effect size in this literature.
 
-Both mainstream systems throttle *after* crossing a trip point. Predictive
-thermal management — modelling the enclosure and migrating work before the
-trip — matters far more in a sealed, fanless case than in a server with fans
-and headroom.
+**Formal foundations exist, and matter for us specifically.** "Towards a
+Formal Foundation of Intermittent Computing" (2020) proves correctness
+properties about memory consistency and repeated inputs under re-execution.
+For a system whose identity is *trusted*, "does this computation still mean
+what it meant before the power failed" is not academic.
 
----
+**PEARL** (2025) extends intermittent computing to *multicore* with voltage
+tracking and NVM — relevant because our targets increasingly are not
+single-core microcontrollers.
+
+### The security findings, which are the TEC-specific ones
+
+Two results place this squarely in our identity rather than in general
+embedded work.
+
+**DVFS side channels are practical, in software, on the platforms we target.**
+DF-SCA (2022) exploits frequency scaling on Linux and Android for website
+fingerprinting and keystroke inference, reporting an **88% password recovery
+rate**. This is not a laboratory result requiring physical access; it reads
+`cpufreq` state. Any power management we build is an attack surface, and
+Linux's answer — largely "disable turbo" — is not one we should copy.
+
+**Energy attacks are a distinct threat class for harvest-powered devices.**
+"Uncharted Territory: Energy Attacks in the Battery-less IoT" (2023)
+demonstrates inducing livelock and denial of service by manipulating the
+energy environment, with detection reported at 92%+. A device that browns out
+as a normal operating mode has a failure mode an attacker can *drive*. Neither
+Darwin nor Linux has a threat model for this, because neither targets it.
+
+Together these are the strongest argument that TEC is a real position and not
+a marketing one: there are attacks specific to trusted, harvest-powered
+computing that the incumbents have no reason to address.
+
+### Where the open space actually is
+
+Having read the field, I would revise my earlier list. These remain genuinely
+unaddressed:
+
+1. **Peak power as a scheduling constraint.** Research optimises joules and
+   caps average watts. A solar panel plus supercapacitor limits *instantaneous
+   draw*, and battery chemistry punishes bursts disproportionately. I found no
+   work scheduling against a current ceiling for this device class.
+2. **The power envelope as a declared, enforced contract.** "Energy-Based Fair
+   Queuing" (2026) proposes proportional power sharing at OS level, which is
+   the closest thing found, and it is a *scheduler discipline*, not a declared
+   budget with a defined consequence. Our manifest-declares/kernel-enforces
+   pattern has no equivalent in the literature.
+3. **Attested energy accounting.** Nothing found. Proving how much energy a
+   workload consumed, to an operator or a regulator, appears unexplored.
+4. **DVFS isolation as a declared property.** Given DF-SCA, a unit being able
+   to declare "I require constant-frequency execution" and have the kernel
+   honour it is an obvious construction that nobody appears to have built.
+
+Items 2–4 are all the same shape, and it is the shape this system is already
+built around: a manifest declares, the kernel enforces, the result is
+attestable. That is the strongest argument for doing this work *here* rather
+than adopting someone else's.
 
 ## Sequence
 
@@ -360,5 +420,10 @@ the order the user asked for and the order the dependencies require.
   `osfmk/kern/sched_clutch.h`, `osfmk/kern/thread_group.h`,
   `bsd/sys/kern_memorystatus.h`, via
   [apple-oss-distributions/xnu](https://github.com/apple-oss-distributions/xnu)
-- Hertzbleed and the intermittent-computing literature are named as
-  directions, not read for this note.
+- Research survey from [arXiv](https://arxiv.org/) listings, cs.OS and
+  adjacent, 2020-2026. Named works include ALFRED (2021), PureVM (2021),
+  "Towards a Formal Foundation of Intermittent Computing" (2020), PEARL
+  (2025), "Energy-Adaptive Checkpoint-Free Intermittent Inference" (2025),
+  DF-SCA (2022), "Uncharted Territory: Energy Attacks in the Battery-less
+  IoT" (2023), "The Joule Point" (2026), "Energy-Based Fair Queuing Scheduler
+  for Mobile Systems" (2026). Titles and abstracts read; full papers not.
