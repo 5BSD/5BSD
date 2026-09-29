@@ -1683,24 +1683,6 @@ struct linux_pidfd_send_signal_args {
 	char info_l_[PADL_(l_siginfo_t *)]; l_siginfo_t * info; char info_r_[PADR_(l_siginfo_t *)];
 	char flags_l_[PADL_(l_uint)]; l_uint flags; char flags_r_[PADR_(l_uint)];
 };
-struct linux_io_uring_setup_args {
-	char entries_l_[PADL_(l_uint)]; l_uint entries; char entries_r_[PADR_(l_uint)];
-	char params_l_[PADL_(void *)]; void * params; char params_r_[PADR_(void *)];
-};
-struct linux_io_uring_enter_args {
-	char fd_l_[PADL_(l_uint)]; l_uint fd; char fd_r_[PADR_(l_uint)];
-	char to_submit_l_[PADL_(l_uint)]; l_uint to_submit; char to_submit_r_[PADR_(l_uint)];
-	char min_complete_l_[PADL_(l_uint)]; l_uint min_complete; char min_complete_r_[PADR_(l_uint)];
-	char flags_l_[PADL_(l_uint)]; l_uint flags; char flags_r_[PADR_(l_uint)];
-	char arg_l_[PADL_(void *)]; void * arg; char arg_r_[PADR_(void *)];
-	char argsz_l_[PADL_(l_size_t)]; l_size_t argsz; char argsz_r_[PADR_(l_size_t)];
-};
-struct linux_io_uring_register_args {
-	char fd_l_[PADL_(l_uint)]; l_uint fd; char fd_r_[PADR_(l_uint)];
-	char opcode_l_[PADL_(l_uint)]; l_uint opcode; char opcode_r_[PADR_(l_uint)];
-	char arg_l_[PADL_(void *)]; void * arg; char arg_r_[PADR_(void *)];
-	char nr_args_l_[PADL_(l_uint)]; l_uint nr_args; char nr_args_r_[PADR_(l_uint)];
-};
 struct linux_open_tree_args {
 	syscallarg_t dummy;
 };
@@ -2263,9 +2245,6 @@ int	linux_rt_sigtimedwait_time64(struct thread *, struct linux_rt_sigtimedwait_t
 int	linux_sys_futex_time64(struct thread *, struct linux_sys_futex_time64_args *);
 int	linux_sched_rr_get_interval_time64(struct thread *, struct linux_sched_rr_get_interval_time64_args *);
 int	linux_pidfd_send_signal(struct thread *, struct linux_pidfd_send_signal_args *);
-int	linux_io_uring_setup(struct thread *, struct linux_io_uring_setup_args *);
-int	linux_io_uring_enter(struct thread *, struct linux_io_uring_enter_args *);
-int	linux_io_uring_register(struct thread *, struct linux_io_uring_register_args *);
 int	linux_open_tree(struct thread *, struct linux_open_tree_args *);
 int	linux_move_mount(struct thread *, struct linux_move_mount_args *);
 int	linux_fsopen(struct thread *, struct linux_fsopen_args *);
@@ -2661,9 +2640,6 @@ int	linux_fchroot(struct thread *, struct linux_fchroot_args *);
 #define	LINUX_SYS_AUE_linux_sys_futex_time64	AUE_NULL
 #define	LINUX_SYS_AUE_linux_sched_rr_get_interval_time64	AUE_SCHED_RR_GET_INTERVAL
 #define	LINUX_SYS_AUE_linux_pidfd_send_signal	AUE_NULL
-#define	LINUX_SYS_AUE_linux_io_uring_setup	AUE_NULL
-#define	LINUX_SYS_AUE_linux_io_uring_enter	AUE_NULL
-#define	LINUX_SYS_AUE_linux_io_uring_register	AUE_NULL
 #define	LINUX_SYS_AUE_linux_open_tree	AUE_NULL
 #define	LINUX_SYS_AUE_linux_move_mount	AUE_NULL
 #define	LINUX_SYS_AUE_linux_fsopen	AUE_NULL

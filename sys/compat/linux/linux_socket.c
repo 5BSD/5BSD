@@ -36,7 +36,6 @@
 #include <sys/capsicum.h>
 #include <sys/domain.h>
 #include <sys/filedesc.h>
-#include <sys/io_uring.h>
 #include <sys/limits.h>
 #include <sys/malloc.h>
 #include <sys/mbuf.h>
@@ -3451,43 +3450,6 @@ linux_recvmsg_kbuf_uring(struct thread *td, l_int s, l_uint flags,
 	bzero(&msg, sizeof(msg));
 	return (linux_recvmsg_common(td, s, &msg, flags, &bsd_msg, NULL, 0,
 	    true, false, uio));
-}
-
-int
-linux_recvmsg_mshot_uring(struct thread *td, l_int s, l_uint flags,
-    void *buf, size_t len, uint32_t namelen, uint32_t controllen,
-    int32_t *result, int32_t *payload)
-{
-	struct io_uring_recvmsg_out out;
-	struct l_msghdr msg;
-	struct msghdr bsd_msg;
-	uintptr_t base;
-	size_t hdr;
-	int error;
-
-	hdr = sizeof(out) + (size_t)namelen + controllen;
-	if (len < hdr)
-		return (EFAULT);
-	base = (uintptr_t)buf;
-	bzero(&msg, sizeof(msg));
-	msg.msg_name = base + sizeof(out);
-	msg.msg_namelen = namelen;
-	msg.msg_control = base + sizeof(out) + namelen;
-	msg.msg_controllen = controllen;
-	error = linux_recvmsg_common(td, s, &msg, flags, &bsd_msg,
-	    (void *)(base + hdr), len - hdr, true, true, NULL);
-	if (error != 0)
-		return (error);
-	*payload = (int32_t)td->td_retval[0];
-	out.namelen = msg.msg_namelen;
-	out.controllen = msg.msg_controllen;
-	out.payloadlen = *payload;
-	out.flags = msg.msg_flags;
-	error = copyout(&out, buf, sizeof(out));
-	if (error != 0)
-		return (error);
-	*result = (int32_t)(hdr + *payload);
-	return (0);
 }
 
 static int

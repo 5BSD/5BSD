@@ -297,6 +297,11 @@ struct vn_file_context {
 	struct file *fp;
 	struct file *fp2;
 	int openflags;
+	struct vn_retained_path *exec_path; /* borrowed for executable-open checks */
+	bool access_checked; /* this context's fp was already permission-checked */
+	bool pre_access_checked; /* fp/fp2 ranges were checked by the outer operation */
+	bool space_append_checked; /* fp space operation checked append policy */
+	bool space_keep_size; /* allocation must not change the file size */
 };
 
 struct vattr {
@@ -678,6 +683,15 @@ void	cache_enter_time(struct vnode *dvp, struct vnode *vp,
 	    struct timespec *dtsp);
 int	cache_lookup(struct vnode *dvp, struct vnode **vpp,
 	    struct componentname *cnp, struct timespec *tsp, int *ticksp);
+int cache_path_access(struct vnode *, struct vnode *, uint64_t,
+    uint64_t (*)(struct vnode *, void *), void *, struct vnode **, uint64_t *);
+struct vnode_path_pair_access {
+	uint64_t source_parent, target_parent, source_object, target_object;
+};
+int cache_path_pair_access(struct vnode *, struct vnode *, struct vnode *,
+    struct vnode *, uint64_t, uint64_t (*)(struct vnode *, void *), void *,
+    struct vnode_path_pair_access *, struct vnode **);
+int cache_path_prepare(struct vnode *);
 int	cache_parent_name(struct vnode *, struct vnode **, char *, size_t *);
 void	cache_vnode_init(struct vnode *vp);
 void	cache_purge(struct vnode *vp);
@@ -689,6 +703,12 @@ void	cache_symlink_free(char *string, size_t size);
 int	cache_symlink_resolve(struct cache_fpl *fpl, const char *string,
 	    size_t len);
 void	cache_vop_inotify(struct vnode *vp, int event, uint32_t cookie);
+void	cache_vop_exchange(struct vnode *fdvp, struct vnode *fvp,
+	    struct vnode *tdvp, struct vnode *tvp, struct componentname *fcnp,
+	    struct componentname *tcnp);
+int	vn_rename_exchange_check(struct vnode *fdvp, struct vnode *fvp,
+	    struct vnode *tdvp, struct vnode *tvp, struct componentname *fcnp,
+	    struct componentname *tcnp);
 void	cache_vop_rename(struct vnode *fdvp, struct vnode *fvp, struct vnode *tdvp,
     struct vnode *tvp, struct componentname *fcnp, struct componentname *tcnp);
 void	cache_vop_rmdir(struct vnode *dvp, struct vnode *vp);
@@ -807,6 +827,8 @@ int	vn_open_cred(struct nameidata *ndp, int *flagp, int cmode,
 	    u_int vn_open_flags, struct ucred *cred, struct file *fp);
 int	vn_open_vnode(struct vnode *vp, int fmode, struct ucred *cred,
 	    struct thread *td, struct file *fp);
+int	vn_open_vnode_notification(struct vnode *, int, struct ucred *,
+	    struct thread *, struct file *);
 void	vn_pages_remove(struct vnode *vp, vm_pindex_t start, vm_pindex_t end);
 void	vn_pages_remove_valid(struct vnode *vp, vm_pindex_t start,
 	    vm_pindex_t end);
@@ -1120,6 +1142,7 @@ do {									\
 
 void	vput(struct vnode *vp);
 void	vrele(struct vnode *vp);
+void	vrele_deferred(struct vnode *vp);
 void	vref(struct vnode *vp);
 void	vrefact(struct vnode *vp);
 void 	v_addpollinfo(struct vnode *vp);

@@ -385,9 +385,6 @@
 #define	LINUX32_SYS_linux_sys_futex_time64	422
 #define	LINUX32_SYS_linux_sched_rr_get_interval_time64	423
 #define	LINUX32_SYS_linux_pidfd_send_signal	424
-#define	LINUX32_SYS_linux_io_uring_setup	425
-#define	LINUX32_SYS_linux_io_uring_enter	426
-#define	LINUX32_SYS_linux_io_uring_register	427
 #define	LINUX32_SYS_linux_open_tree	428
 #define	LINUX32_SYS_linux_move_mount	429
 #define	LINUX32_SYS_linux_fsopen	430

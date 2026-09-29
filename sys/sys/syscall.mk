@@ -455,7 +455,4 @@ MIASM =  \
 	pdcmp.o \
 	pdincapmode.o \
 	cap_mmap_capmode.o \
-	cap_lookup_capmode.o \
-	squeue_setup.o \
-	squeue_enter.o \
-	squeue_register.o
+	cap_lookup_capmode.o

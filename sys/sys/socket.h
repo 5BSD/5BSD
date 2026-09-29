@@ -120,6 +120,7 @@ typedef	__uintptr_t	uintptr_t;
  */
 #define ACCEPT4_INHERIT 0x1
 #define ACCEPT4_COMPAT  0x2
+#define ACCEPT4_DONTWAIT 0x4 /* do not wait on the listening socket */
 #endif	/* _KERNEL */
 #endif	/* __BSD_VISIBLE */
 

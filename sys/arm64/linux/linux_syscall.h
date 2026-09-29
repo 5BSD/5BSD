@@ -276,9 +276,6 @@
 #define	LINUX_SYS_linux_rseq	293
 #define	LINUX_SYS_linux_kexec_file_load	294
 #define	LINUX_SYS_linux_pidfd_send_signal	424
-#define	LINUX_SYS_linux_io_uring_setup	425
-#define	LINUX_SYS_linux_io_uring_enter	426
-#define	LINUX_SYS_linux_io_uring_register	427
 #define	LINUX_SYS_linux_open_tree	428
 #define	LINUX_SYS_linux_move_mount	429
 #define	LINUX_SYS_linux_fsopen	430

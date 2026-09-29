@@ -11,6 +11,7 @@ CFLAGS+=	-I${SRCTOP}/tests
 
 ATF_TESTS_C+=	basic_signal
 .if ${MACHINE_ARCH} == "amd64"
+# Audit registration and the seccomp action mask are global guest state.
 ATF_TESTS_SH+=	linux_vectored2_test
 ${PACKAGE}FILES+=	linux_vectored2.c
 ATF_TESTS_SH+=	linux_pidfd_test
@@ -96,29 +97,9 @@ ATF_TESTS_SH+=	linux_break_mseal_test
 ${PACKAGE}FILES+=	linux_break_mseal.c
 ATF_TESTS_SH+=	linux_break_signalfd_test
 ${PACKAGE}FILES+=	linux_break_signalfd.c
-ATF_TESTS_SH+=	linux_iouring_test
-${PACKAGE}FILES+=	linux_iouring.c
 ATF_TESTS_SH+=	linux_perf_event_test
 ${PACKAGE}FILES+=	linux_perf_event.c
 ${PACKAGE}FILES+=	perf_native_hold.c
-ATF_TESTS_SH+=	squeue_native_test
-${PACKAGE}FILES+=	squeue_native.c
-ATF_TESTS_SH+=	squeue_stress_test
-${PACKAGE}FILES+=	squeue_stress.c
-ATF_TESTS_SH+=	squeue_fuzz_test
-${PACKAGE}FILES+=	squeue_fuzz.c
-ATF_TESTS_SH+=	squeue_jail_test
-${PACKAGE}FILES+=	squeue_jail.c
-ATF_TESTS_SH+=	squeue_fstat_test
-${PACKAGE}FILES+=	squeue_hold.c
-ATF_TESTS_SH+=	squeue_lib_test
-${PACKAGE}FILES+=	squeue_lib.c
-ATF_TESTS_SH+=	squeue_copy_test
-${PACKAGE}FILES+=	squeue_copy.c
-ATF_TESTS_SH+=	squeue_dtrace_test
-${PACKAGE}FILES+=	squeue_dtrace_workload.c
-ATF_TESTS_SH+=	squeue_soak_test
-${PACKAGE}FILES+=	squeue_soak.c
 ATF_TESTS_SH+=	linux_procfs_test
 ${PACKAGE}FILES+=	linux_procfs.c
 ATF_TESTS_SH+=	linux_numa_test

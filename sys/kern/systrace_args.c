@@ -3642,36 +3642,6 @@ systrace_args(int sysnum, void *params, uint64_t *uarg, int *n_args)
 		*n_args = 1;
 		break;
 	}
-	/* squeue_setup */
-	case 636: {
-		struct squeue_setup_args *p = params;
-		uarg[a++] = p->entries; /* u_int */
-		uarg[a++] = (intptr_t)p->params; /* struct io_uring_params * */
-		*n_args = 2;
-		break;
-	}
-	/* squeue_enter */
-	case 637: {
-		struct squeue_enter_args *p = params;
-		iarg[a++] = p->fd; /* int */
-		uarg[a++] = p->to_submit; /* u_int */
-		uarg[a++] = p->min_complete; /* u_int */
-		uarg[a++] = p->flags; /* u_int */
-		uarg[a++] = (intptr_t)p->arg; /* const void * */
-		uarg[a++] = p->argsz; /* size_t */
-		*n_args = 6;
-		break;
-	}
-	/* squeue_register */
-	case 638: {
-		struct squeue_register_args *p = params;
-		iarg[a++] = p->fd; /* int */
-		uarg[a++] = p->op; /* u_int */
-		uarg[a++] = (intptr_t)p->arg; /* void * */
-		uarg[a++] = p->nr_args; /* u_int */
-		*n_args = 4;
-		break;
-	}
 	default:
 		*n_args = 0;
 		break;
@@ -9778,63 +9748,6 @@ systrace_entry_setargdesc(int sysnum, int ndx, char *desc, size_t descsz)
 			break;
 		};
 		break;
-	/* squeue_setup */
-	case 636:
-		switch (ndx) {
-		case 0:
-			p = "u_int";
-			break;
-		case 1:
-			p = "userland struct io_uring_params *";
-			break;
-		default:
-			break;
-		};
-		break;
-	/* squeue_enter */
-	case 637:
-		switch (ndx) {
-		case 0:
-			p = "int";
-			break;
-		case 1:
-			p = "u_int";
-			break;
-		case 2:
-			p = "u_int";
-			break;
-		case 3:
-			p = "u_int";
-			break;
-		case 4:
-			p = "userland const void *";
-			break;
-		case 5:
-			p = "size_t";
-			break;
-		default:
-			break;
-		};
-		break;
-	/* squeue_register */
-	case 638:
-		switch (ndx) {
-		case 0:
-			p = "int";
-			break;
-		case 1:
-			p = "u_int";
-			break;
-		case 2:
-			p = "userland void *";
-			break;
-		case 3:
-			p = "u_int";
-			break;
-		default:
-			break;
-		};
-		break;
 	default:
 		break;
 	};
@@ -11915,21 +11828,6 @@ systrace_return_setargdesc(int sysnum, int ndx, char *desc, size_t descsz)
 		break;
 	/* cap_lookup_capmode */
 	case 635:
-		if (ndx == 0 || ndx == 1)
-			p = "int";
-		break;
-	/* squeue_setup */
-	case 636:
-		if (ndx == 0 || ndx == 1)
-			p = "int";
-		break;
-	/* squeue_enter */
-	case 637:
-		if (ndx == 0 || ndx == 1)
-			p = "int";
-		break;
-	/* squeue_register */
-	case 638:
 		if (ndx == 0 || ndx == 1)
 			p = "int";
 		break;

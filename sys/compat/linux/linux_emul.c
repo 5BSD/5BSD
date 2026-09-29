@@ -37,9 +37,7 @@
 #include <sys/mutex.h>
 #include <sys/proc.h>
 #include <sys/resourcevar.h>
-#include <sys/io_uring.h>
 #include <sys/selinfo.h>
-#include <sys/squeue.h>
 #include <sys/sx.h>
 #include <sys/syscallsubr.h>
 #include <sys/sysent.h>
@@ -185,9 +183,6 @@ linux_proc_init(struct thread *td, struct thread *newtd, bool init_thread)
 		microuptime(&uptime);
 		em->em_proc_start = (uint64_t)uptime.tv_sec * 100 +
 		    uptime.tv_usec / 10000;
-		if (newtd != td && em_find(td) != NULL)
-			em->iou_bpf = kern_squeue_bpf_task_clone(
-			    em_find(td)->iou_bpf);
 		if (init_thread) {
 			LINUX_CTR1(proc_init, "thread newtd(%d)",
 			    newtd->td_tid);
@@ -365,7 +360,6 @@ linux_common_execve(struct thread *td, struct image_args *eargs)
 		p->p_emuldata = NULL;
 		PROC_UNLOCK(p);
 
-		kern_squeue_bpf_task_free(em->iou_bpf);
 		free(em, M_LINUX);
 #ifdef __amd64__
 		linux_aio_proc_release(pem, td);
@@ -448,7 +442,6 @@ linux_thread_dtor(struct thread *td)
 
 	LINUX_CTR1(thread_dtor, "thread(%d)", em->em_tid);
 
-	kern_squeue_bpf_task_free(em->iou_bpf);
 	free(em, M_LINUX);
 }
 

@@ -70,8 +70,6 @@ int linux_sendmsg_kbuf_uring(struct thread *, l_int, struct l_msghdr *,
 int linux_recvmsg_pbuf(struct thread *, l_int, struct l_msghdr *, l_uint,
     void *, size_t);
 int linux_recvmsg_kbuf_uring(struct thread *, l_int, l_uint, struct uio *);
-int linux_recvmsg_mshot_uring(struct thread *, l_int, l_uint, void *,
-    size_t, uint32_t, uint32_t, int32_t *, int32_t *);
 #endif
 
 struct l_mmsghdr {
