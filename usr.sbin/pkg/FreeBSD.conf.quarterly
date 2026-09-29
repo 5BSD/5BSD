@@ -7,7 +7,8 @@
 #   echo "FreeBSD-ports: { enabled: no }" >> /usr/local/etc/pkg/repos/FreeBSD.conf
 #   echo "FreeBSD-ports-kmods: { enabled: no }" >> /usr/local/etc/pkg/repos/FreeBSD.conf
 #
-# Note that the FreeBSD-base repository is disabled by default.
+# FreeBSD-base and FreeBSD-ports-kmods are disabled by default.
+# Kernel modules must come from the matching 5BSD-hardware repository.
 #
 
 FreeBSD-ports: {
@@ -22,7 +23,7 @@ FreeBSD-ports-kmods: {
   mirror_type: "srv",
   signature_type: "fingerprints",
   fingerprints: "/usr/share/keys/pkg",
-  enabled: yes
+  enabled: no
 }
 FreeBSD-base: {
   url: "pkg+https://pkg.FreeBSD.org/${ABI}/base_latest",

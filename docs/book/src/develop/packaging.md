@@ -321,3 +321,111 @@ a duplicate sequence is a conflict. An upgrade is therefore the same
 `bundle_id` with a bumped `sequence`, in place; bump both numbers in
 `Bundle.ucl` when you cut a release, and let the package version track the
 build.
+
+## Release hardware packages
+
+External drivers and firmware must be released with the 5BSD kernel they were
+built against. `FreeBSD:16:amd64` and `__FreeBSD_version` alone do not describe
+the fork's kernel interfaces. FreeBSD's binary kmods repository is disabled by
+default; ordinary userland ports remain available.
+
+`release/scripts/hardware-packages.py build` builds a hardware profile from a
+pinned ports tree in a **disposable native-architecture build root**. Prepare
+that root with the release world, pkg, the exact source snapshot and retained
+kernel build directory used to produce the kernel package, and the ports tree.
+Mount devfs in the build root and provide DNS for fetching distfiles. Do not use
+the installed system as the build root. The script rejects preinstalled ports
+other than pkg, checks the build kernel against the packaged kernel, and sets
+`SRC_BASE`, `OSVERSION` and `KERNBUILDDIR` for recursive ports builds. Preserve
+the source snapshot unchanged throughout the kernel and hardware builds.
+
+For amd64 the default profile is `release/tools/hardware-ports.amd64`. It builds
+DRM and the full graphics and Wi-Fi firmware metaports, including USB Wi-Fi,
+plus Intel and Realtek Bluetooth firmware. The inclusion and qualification
+policy is in `release/tools/hardware-amd64.md`.
+Extend the profile for other device families; use a separate validated profile
+for other architectures. The build checks the literal package names in all
+fwget providers against the produced dependency closure. A missing dependency
+or supported-device package fails the build instead of fetching a binary module.
+Firmware already shipped in the base kernel remains part of the base packages.
+Raw board firmware (for example the RPi profile's boot firmware) retains its
+board-specific staging process; its compatibility is not inferred from a kernel
+version number. Additional raw firmware ports can also be included in a profile.
+
+Example, with paths inside the build root for `--source` and `--kernel-build`,
+and host paths for the other arguments:
+
+```sh
+python3 release/scripts/hardware-packages.py build \
+    --root /build/5bsd-hardware-root \
+    --source /usr/src \
+    --kernel-build /usr/obj/usr/src/amd64.amd64/sys/GENERIC \
+    --kernel-package /build/base/5BSD-kernel-generic-RELEASE_VERSION.pkg \
+    --port-list release/tools/hardware-ports.amd64 \
+    --epoch "$SOURCE_DATE_EPOCH" \
+    --output /build/hardware-repo
+make -C release HARDWARE_REPO=/build/hardware-repo release
+```
+
+Python 3.11 or later is required only on the build host. `--epoch` must be a
+positive, monotonically increasing release timestamp and remain fixed when
+reproducing a release. The ports revision, source snapshot, kernel configuration
+and build toolchain should be retained with the release artifacts. The output
+must be a new empty directory; failed builds are not published.
+
+The tool gives packages `5BSD-hw-` names and rewrites their runtime dependency
+closure. This avoids replacing them with same-named FreeBSD binaries. Kernel modules, support packages, metapackages and the repackaged kernel depend
+on a package named for the SHA-256 of the kernel. Data-only firmware packages
+retain their upstream version and have no exact-kernel dependency. Those identity packages own the same file, so pkg cannot
+install two kernel identities together. The kernel is marked vital. This makes
+kernel and hardware updates a single compatible transaction, or a transaction
+that explicitly removes unsupported hardware packages. Modules, data-only firmware, metapackages and other support packages are
+recorded separately in `hardware.json`. Raw firmware is still selected and
+tested with the driver release, but does not require compilation or acquire a
+kernel ABI dependency.
+
+GPU firmware produced by the pinned ports tree is converted from kernel module
+wrappers to byte-identical data under `/boot/firmware`, retaining its firmware
+name and license files. The release tool rejects unexpected payloads or missing
+binary symbols. Only DRM driver code remains tied to the exact kernel identity.
+On installed systems, the `kld_list` startup service uses `sysextctl` and the
+explicit SystemExtension allowlist. The broker policy, rather than a GPU-name
+list in the startup script, decides which modules are permitted. A broker denial
+is not retried through `kldload`. Early boot module helpers keep their existing
+direct-loading path until the filesystems and services needed by the broker
+are available.
+The kernel permits an authorized module-loading capability holder to request
+firmware during driver attachment, while retaining the securelevel restriction.
+
+
+The release makefile verifies the kernel identity, replaces the kernel package
+in its base repository, and stages hardware on disc, DVD and bootonly media.
+Wi-Fi, graphics and Bluetooth firmware are installed into the live image as well as carried
+as packages for the target. Kernel modules are never loaded by the build tool.
+`WITHOUT_HARDWARE_PACKAGES=yes` explicitly builds media without this external
+hardware support; the normal build fails if `HARDWARE_REPO` is missing or wrong.
+
+Publish the **repackaged** base kernel, identity package and complete hardware
+repository together. Do not publish the original unsealed kernel package over
+this repository. Sign the final pkg repositories with the release signing key
+and configure `5BSD-hardware` with that URL and signature verification on
+installed systems. The installer defaults to a retained offline repository,
+which supports later fwget use but does not receive new releases automatically.
+Use a boot environment for upgrades. Existing systems with upstream module
+packages need a reviewed replacement transaction; the new installer does not
+force-remove conflicting installed packages.
+
+Validation:
+
+```sh
+python3 release/tests/hardware_packages_test.py
+make -C usr.sbin/bsdinstall/tests obj all
+# Run firmware_fetch_test with kyua from the resulting object directory.
+```
+
+The tests use real pkg archives and an isolated package database to exercise
+matching and mismatched kernels, dependency closure, firmware classification,
+media staging and coordinated updates. Installer tests cover PCI graphics plus
+USB Wi-Fi selection, offline persistence, rejected mismatches and missing
+dependencies, and catalogue retry with revalidation. Device initialization still
+requires boot tests on the supported hardware before publishing a release.

@@ -1,0 +1,8 @@
+# Build all firmware supported by fwget, including PCI and USB Wi-Fi.
+# Extend this profile when adding a hardware provider to fwget.
+graphics/drm-kmod
+graphics/gpu-firmware-kmod
+net/wifi-firmware-kmod
+# Raw Bluetooth firmware loaded by the base iwmbtfw/rtlbtfw utilities.
+comms/iwmbt-firmware
+comms/rtlbt-firmware

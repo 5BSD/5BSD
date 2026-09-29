@@ -134,6 +134,12 @@ fi
 # Configure bootloader if needed
 bsdinstall bootconfig
 
+# Install detected hardware support and retain the on-media repository before
+# config assembles rc.conf, including any graphics module startup fragment.
+if [ -z "${BSDINSTALL_SKIP_FIRMWARE:-}" ]; then
+	bsdinstall firmware-fetch --auto
+fi
+
 # Finalize install
 bsdinstall config
 

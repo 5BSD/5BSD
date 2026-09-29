@@ -63,18 +63,16 @@ log_verbose()
 
 addpkg()
 {
-	local _p
-
-	_p=$1
-
-	case "${packages}" in
-	"")	packages="${_p}" ;;
-	*)	# Avoid duplicates.
+	local _p IFS=$' \t\n'
+	for _p in $1; do
 		case " ${packages} " in
-		*\ ${_p}\ *) ;;	# duplicate
-		*)	packages="${packages} ${_p}" ;;
+		*" ${_p} "*) continue ;;
 		esac
-	esac
+		packages="${packages:+${packages} }${_p}"
+		case "${_p}" in
+		gpu-firmware-*) addpkg "drm-kmod" ;;
+		esac
+	done
 }
 
 DRY_RUN=n
@@ -120,12 +118,12 @@ done
 
 case "${packages}" in
 ""|^[[:space:]]*$)
-	log "No firmware packages to install."
+	log "No hardware packages to install."
 	exit 0
 	;;
 esac
 
-log "Needed firmware packages: '${packages}'"
+log "Needed hardware packages: '${packages}'"
 if [ "${DRY_RUN}" = "y" ]; then
 	if [ "${QUIET}" = "y" ]; then
 		for pkg in ${packages}; do
@@ -138,4 +136,4 @@ if [ "${DRY_RUN}" = "y" ]; then
 	exit 0
 fi
 
-pkg install -qy ${packages}
+exec "${FWGET_HARDWARE_INSTALL:-/usr/libexec/fwget/hardware-install}" ${packages}

@@ -19,7 +19,7 @@ PKGCONFBRANCH?=	latest
 . endif
 .endif
 PKGCONF?=	FreeBSD.conf.${PKGCONFBRANCH}
-CONFS=		${PKGCONF} 5BSD.conf
+CONFS=		${PKGCONF} 5BSD.conf 5BSD-hardware.conf
 CONFSNAME_${PKGCONF}=	${PKGCONF:C/\.conf.+$/.conf/}
 CONFSDIR=	/etc/pkg
 CONFSMODE=	644

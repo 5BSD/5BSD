@@ -35,7 +35,7 @@ changed are marked; the rest are upstream.
 | `zfsboot` | Guided root-on-ZFS | The only guided path; UFS guided install is gone. Manual and shell partitioning remain |
 | `pkgbase` | Selects components and installs packages into `/mnt` | replaces dist-set extraction |
 | `tzfspool` | Records the pool in the storage broker's config | new |
-| `rootpass`, `netconfig`, `time`, `services`, `hardening`, `firmware`, `adduser` | Post-install configuration | `firmware` uses fwget(8); `firmware-fetch` pulls from the `FreeBSD-ports-kmods` repository when networking was configured |
+| `rootpass`, `netconfig`, `time`, `services`, `hardening`, `firmware`, `adduser` | Post-install configuration | `firmware` uses fwget(8); `firmware-fetch` installs matching drivers and firmware from the offline `5BSD-hardware` repository or a configured 5BSD hardware service |
 | `capabilitypolicy` | Writes the principal policy | new |
 | `finalconfig`, manual shell | Last chance to edit `/mnt` | unchanged |
 
@@ -227,3 +227,23 @@ you give it a local one ([Upgrading](upgrading.md)). The installer knows one
 kernel package. And `capabilitypolicy` decides who gets a SYSTEM session; it
 does not make root unable to do anything, which is the separate topic of
 rootless hardening in [The Management Model](../plane/management-model.md).
+
+## Hardware support
+
+The firmware menu includes the graphics driver when GPU firmware is selected,
+and includes PCI/USB Wi-Fi and Intel/Realtek Bluetooth firmware detected by
+fwget. Packages come from
+`5BSD-hardware`, with kernel modules built for the exact installed kernel and data-only
+firmware supplied separately. Full release media keeps
+an offline copy in `/usr/5bsd-packages/hardware` on the target, so networking is
+not required for this step. Wi-Fi firmware is also available to the live installer.
+
+Missing or incompatible packages are reported; the installer does not fall
+back to FreeBSD's binary module repository. For network installation or updates,
+configure a signed 5BSD hardware repository matching the base release. The
+shared fwget installer validates the target kernel and the complete package
+dependency closure before installing. GPU module startup is written to the
+installer's rc.conf fragments after successful installation.
+
+The release build and update contract is described in
+[Release hardware packages](../develop/packaging.md#release-hardware-packages).

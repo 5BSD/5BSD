@@ -28,6 +28,10 @@
 #            make installkernel installworld.
 #  PKGBASE_PKG_PACKAGE: target-architecture pkg package to embed when building
 #            without a ports tree.  PKGBASE_PKG_SHA256 may pin its checksum.
+#  HARDWARE_REPO: repository produced by scripts/hardware-packages.py build
+#            for this exact release kernel. Required unless hardware support is
+#            explicitly omitted with WITHOUT_HARDWARE_PACKAGES=yes.
+#  HARDWARE_PYTHON: Python 3.11+ on the release build host.
 #  PORTSDIR: location of ports tree to distribute (default: /usr/ports)
 #  XTRADIR:  xtra-bits-dir argument for <arch>/mkisoimages.sh
 #  NOPKG:    if set, do not distribute third-party packages
@@ -45,6 +49,11 @@
 
 WORLDDIR?=	${.CURDIR:H}
 PORTSDIR?=	/usr/ports
+RELEASE_OSVERSION!= awk '/^\#define[[:space:]]+__FreeBSD_version[[:space:]]/ { print $$3 }' ${WORLDDIR}/sys/sys/param.h
+HARDWARE_PYTHON?= python3
+HARDWARE_STAGE= ${HARDWARE_PYTHON} ${.CURDIR}/scripts/hardware-packages.py stage \
+		--pkg ${PKG_CMD:Q} --repository ${HARDWARE_REPO:U:Q}
+
 OSNAME?=	${BRAND}
 
 # Release construction operates on a world that may be newer than the host.
@@ -106,6 +115,10 @@ PKG_ENV+=	INSTALL_AS_USER=yes
 PKG_ENV+=	ASSUME_ALWAYS_YES=yes
 PKG_ARGS+=	-o METALOG=METALOG
 PKG_ARGS+=	-o ABI=${PKG_ABI}
+PKG_ARGS+=	-o OSVERSION=${RELEASE_OSVERSION}
+# INSTALL_AS_USER builds must use the media database and cache explicitly.
+PKG_ARGS+=	-o PKG_DBDIR=${.OBJDIR}/${.TARGET}/var/db/pkg
+PKG_ARGS+=	-o PKG_CACHEDIR=${.OBJDIR}/${.TARGET}/var/cache/pkg
 PKG_ARGS+=	-r ${.TARGET}
 PKG_REPO_ARGS=	-o REPOS_DIR=${.CURDIR}/pkg_repos
 PKGBASE_REPO_ARGS=-o REPOS_DIR=${.OBJDIR}/pkgbase-repo-dir
@@ -243,6 +256,12 @@ DVD_STAGING_DEPS+=	${.CURDIR}/scripts/pkgbase-stage.lua \
 			${.CURDIR}/scripts/5BSD-base-offline.conf
 .endif
 
+.if defined(HARDWARE_REPO) && !empty(HARDWARE_REPO)
+DISC_STAGING_DEPS+= ${HARDWARE_REPO}/hardware.json ${.CURDIR}/scripts/hardware-packages.py
+BOOTONLY_STAGING_DEPS+= ${HARDWARE_REPO}/hardware.json ${.CURDIR}/scripts/hardware-packages.py
+DVD_STAGING_DEPS+= ${HARDWARE_REPO}/hardware.json ${.CURDIR}/scripts/hardware-packages.py
+.endif
+
 disc1: ${DISC_STAGING_DEPS}
 bootonly: ${BOOTONLY_STAGING_DEPS}
 dvd: ${DVD_STAGING_DEPS}
@@ -253,6 +272,10 @@ dvd: ${DVD_STAGING_DEPS}
 .PHONY: pkgbase-repo pkgbase-repo-dir
 
 pkgbase-repo:
+.if !defined(WITHOUT_HARDWARE_PACKAGES) || empty(WITHOUT_HARDWARE_PACKAGES)
+	@test -n ${HARDWARE_REPO:U:Q} && test -f ${HARDWARE_REPO:U:Q}/hardware.json || \
+	    (echo "Build a matching HARDWARE_REPO, or explicitly set WITHOUT_HARDWARE_PACKAGES=yes" >&2; false)
+.endif
 	mkdir -p pkgbase-repo
 	mkdir -p /tmp/ports /tmp/distfiles
 .if defined(PKGBASE_PKG_PACKAGE) && !empty(PKGBASE_PKG_PACKAGE)
@@ -269,6 +292,13 @@ pkgbase-repo:
 	        (echo "PKGBASE_PKG_PACKAGE is not the pkg package: $${pkgname}" >&2; false); \
 	    test "$${pkgabi}" = "${PKG_ABI}" || \
 	        (echo "PKGBASE_PKG_PACKAGE ABI $${pkgabi} does not match ${PKG_ABI}" >&2; false)
+	@pkgos=$$(${PKG_CMD} query -F ${PKGBASE_PKG_PACKAGE:Q} '%At=%Av' | \
+	    sed -n 's/^FreeBSD_version=//p'); \
+	    targetos=$$(awk '/^#define[[:space:]]+__FreeBSD_version[[:space:]]/ { print $$3 }' ${WORLDDIR}/sys/sys/param.h); \
+	    case "$${pkgos}" in ''|*[!0-9]*) \
+	        echo "PKGBASE_PKG_PACKAGE has no valid FreeBSD_version annotation" >&2; exit 1 ;; esac; \
+	    test "$${pkgos}" -le "$${targetos}" || \
+	        (echo "PKGBASE_PKG_PACKAGE requires OSVERSION $${pkgos}, newer than target $${targetos}; build pkg for the release world" >&2; false)
 	( ${IMAKE} -C ${WORLDDIR} packages PKG_CMD=${PKG_CMD:Q} \
 	    REPODIR=${.OBJDIR}/pkgbase-repo )
 	@pkgdir=$$(readlink pkgbase-repo/${PKG_ABI}/latest); \
@@ -281,6 +311,11 @@ pkgbase-repo:
 	( ${IMAKE} -C ${WORLDDIR} packages PKG_CMD=${PKG_CMD:Q} \
 	    REPODIR=${.OBJDIR}/pkgbase-repo \
 	    INCLUDE_PKG_IN_PKGBASE_REPO=YES BOOTSTRAP_PKG_FROM_PORTS=YES )
+.endif
+
+.if !defined(WITHOUT_HARDWARE_PACKAGES) || empty(WITHOUT_HARDWARE_PACKAGES)
+	${HARDWARE_STAGE} --base-repository \
+	    ${.OBJDIR}/pkgbase-repo/${PKG_ABI}/latest
 .endif
 
 pkgbase-repo.tar: pkgbase-repo
@@ -337,8 +372,13 @@ disc1:
 .else
 	${PKG_INSTALL} pkg
 .endif
-	${PKG_INSTALL} wifi-firmware-kmod-release || true
 	${PKG_CLEAN} || true
+.endif
+.if !defined(WITHOUT_HARDWARE_PACKAGES) || empty(WITHOUT_HARDWARE_PACKAGES)
+	${HARDWARE_STAGE} --media ${.OBJDIR}/${.TARGET}
+	mtree -c -p ${.TARGET}/usr/5bsd-packages | \
+	    mtree -C -k type,mode,link,size | \
+	    sed 's|^\.|./usr/5bsd-packages|g' >> ${.TARGET}/METALOG
 .endif
 # Set up installation environment
 	ln -fs /tmp/bsdinstall_etc/resolv.conf ${.TARGET}/etc/resolv.conf
@@ -394,8 +434,13 @@ bootonly:
 .else
 	${PKG_INSTALL} pkg
 .endif
-	${PKG_INSTALL} wifi-firmware-iwlwifi-kmod wifi-firmware-rtw88-kmod || true
 	${PKG_CLEAN} || true
+.endif
+.if !defined(WITHOUT_HARDWARE_PACKAGES) || empty(WITHOUT_HARDWARE_PACKAGES)
+	${HARDWARE_STAGE} --media ${.OBJDIR}/${.TARGET}
+	mtree -c -p ${.TARGET}/usr/5bsd-packages | \
+	    mtree -C -k type,mode,link,size | \
+	    sed 's|^\.|./usr/5bsd-packages|g' >> ${.TARGET}/METALOG
 .endif
 # Set up installation environment
 	ln -fs /tmp/bsdinstall_etc/resolv.conf ${.TARGET}/etc/resolv.conf
@@ -465,8 +510,13 @@ dvd:
 .else
 	${PKG_INSTALL} pkg
 .endif
-	${PKG_INSTALL} wifi-firmware-kmod-release || true
 	${PKG_CLEAN} || true
+.endif
+.if !defined(WITHOUT_HARDWARE_PACKAGES) || empty(WITHOUT_HARDWARE_PACKAGES)
+	${HARDWARE_STAGE} --media ${.OBJDIR}/${.TARGET}
+	mtree -c -p ${.TARGET}/usr/5bsd-packages | \
+	    mtree -C -k type,mode,link,size | \
+	    sed 's|^\.|./usr/5bsd-packages|g' >> ${.TARGET}/METALOG
 .endif
 # Set up installation environment
 	ln -fs /tmp/bsdinstall_etc/resolv.conf ${.TARGET}/etc/resolv.conf

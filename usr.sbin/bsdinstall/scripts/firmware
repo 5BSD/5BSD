@@ -16,9 +16,9 @@ f_include $BSDCFG_SHARE/dialog.subr
 f_include $BSDCFG_SHARE/mustberoot.subr
 f_include $BSDCFG_SHARE/packages/packages.subr
 
-msg_firmware_installation="$OSNAME Firmware Installation"
+msg_firmware_installation="$OSNAME Hardware Support"
 msg_installer="$OSNAME Installer"
-msg_firmware_menu_text="This menu allows you to install firmware packages for your system"
+msg_firmware_menu_text="This menu allows you to install drivers and firmware packages for your system"
 hline_arrows_space_tab_enter="Use arrows, SPACE, TAB or ENTER"
 hline_ok="Press OK to continue"
 
@@ -33,11 +33,11 @@ dialog_menu_main()
 
 	fwlist=`chroot $BSDINSTALL_CHROOT fwget -q -n`
 	case "${fwlist}" in
-	"")	# No firmware to install
+	"")	# No additional hardware packages to install
 		# Print a dialog with OK and a 3 line timeout bar.
 		local height width rows msg
 
-		msg="No firmware to install, continuing..."
+		msg="No additional hardware packages to install, continuing..."
 		hline="$hline_ok"
 
 		eval f_dialog_checklist_size height width rows \
@@ -102,20 +102,24 @@ f_dialog_backtitle "$msg_installer"
 dialog_menu_main || f_die
 f_dialog_menutag_fetch selected
 
-# Nothing to install?
+firmware_fetch=${BSDINSTALL_FIRMWARE_FETCH:-/usr/libexec/bsdinstall/firmware-fetch}
+
+# Preserve the offline repository even when no device needs extra firmware.
 if [ "${selected}" == "" ]; then
-	exit 0
+	"${firmware_fetch}"
+	exit $?
 fi
 
 f_mustberoot_init
 
-# pkg(8) needs name servers (unless we could use a local repo in the future).
-f_quietly cp -f $BSDINSTALL_TMPETC/resolv.conf $BSDINSTALL_CHROOT/etc/
+# Online repositories need name servers; offline installation does not.
+if [ -f "$BSDINSTALL_TMPETC/resolv.conf" ]; then
+	f_quietly cp -f "$BSDINSTALL_TMPETC/resolv.conf" "$BSDINSTALL_CHROOT/etc/"
+fi
 
 ${DIALOG} --title "$DIALOG_TITLE" --backtitle "$DIALOG_BACKTITLE" \
-	--infobox "Installing firmware. This may take a moment." 0 0
+	--infobox "Installing drivers and firmware. This may take a moment." 0 0
 
-firmware_fetch=${BSDINSTALL_FIRMWARE_FETCH:-/usr/libexec/bsdinstall/firmware-fetch}
 pkg_install_fail=$(${firmware_fetch} ${selected})
 pkg_install_status=$?
 if [ ${pkg_install_status} -ne 0 ]; then
@@ -123,7 +127,7 @@ if [ ${pkg_install_status} -ne 0 ]; then
 	# to read them.
 	sleep 5
 	bsddialog --backtitle "$OSNAME Installer" --title "Error" \
-	    --msgbox "Error fetching firmware file(s)$pkg_install_fail" 0 0
+	    --msgbox "Error installing matching hardware packages$pkg_install_fail" 0 0
 		exit 1
 fi
 

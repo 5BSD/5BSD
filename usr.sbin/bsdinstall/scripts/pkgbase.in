@@ -321,12 +321,11 @@ local function parse_options()
 end
 
 -- Fetch and install pkgbase packages to BSDINSTALL_CHROOT.
--- Respect BSDINSTALL_PKG_REPOS_DIR if set, otherwise use the 5BSD base repo.
+-- Respect an explicit repository, otherwise prefer packages on install media.
 local function pkgbase()
 	local options = parse_options()
 
-	-- TODO Support fully offline pkgbase installation by taking a new enough
-	-- version of pkg.pkg as input.
+	-- Release media embeds a pkg bootstrap built for the release world.
 	if not os.execute("pkg -N > /dev/null 2>&1") then
 		print("Bootstrapping pkg on the host system")
 		assert(os.execute("pkg bootstrap -y"))
@@ -336,6 +335,14 @@ local function pkgbase()
 	assert(os.execute("mkdir -p " .. shell_quote(chroot)))
 
 	local repos_dir = os.getenv("BSDINSTALL_PKG_REPOS_DIR")
+	if not repos_dir then
+		local media_repos = "/usr/5bsd-packages/repos/"
+		local offline = io.open(media_repos .. "5BSD-base-offline.conf", "r")
+		if offline then
+			offline:close()
+			repos_dir = media_repos
+		end
+	end
 	if not repos_dir then
 		repos_dir = "/usr/share/bsdinstall/"
 		-- Since pkg always interprets fingerprints paths as relative to
@@ -351,7 +358,8 @@ local function pkgbase()
 		" --repo-conf-dir " .. shell_quote(repos_dir) .. " -o IGNORE_OSVERSION=yes "
 
 	while not os.execute(pkg .. "update") do
-		if not prompt_yn("Updating repositories failed, try again?") then
+		if options.non_interactive or
+		    not prompt_yn("Updating repositories failed, try again?") then
 			os.exit(1)
 		end
 	end
@@ -363,7 +371,8 @@ local function pkgbase()
 	local packages = table.concat(selected, " ")
 
 	while not os.execute(pkg .. "install -U -F -y -r 5BSD-base " .. packages) do
-		if not prompt_yn("Fetching packages failed, try again?") then
+		if options.non_interactive or
+		    not prompt_yn("Fetching packages failed, try again?") then
 			os.exit(1)
 		end
 	end

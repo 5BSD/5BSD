@@ -1,47 +1,57 @@
 #!/bin/sh
-#-
 # SPDX-License-Identifier: BSD-2-Clause
-
-# Firmware returned by fwget is published in the FreeBSD kmods repository,
-# independently of the 5BSD base repository.  Refresh it unconditionally: a
-# cached kmods catalogue can briefly name packages which have already rotated
-# off a mirror.  If an install still fails, refresh and retry it once.
-
+set -eu
 : ${BSDINSTALL_CHROOT:=/mnt}
-: ${BSDINSTALL_FIRMWARE_REPO:=FreeBSD-ports-kmods}
+: ${BSDINSTALL_FIRMWARE_REPO:=5BSD-hardware}
+: ${BSDINSTALL_HARDWARE_MEDIA:=/usr/5bsd-packages/hardware}
+: ${BSDINSTALL_HARDWARE_INSTALL:=/usr/libexec/fwget/hardware-install}
 
-if [ "$#" -eq 0 ]; then
-	exit 0
+# Scripted installs select the same packages as the interactive checklist.
+# Detection failure must not silently produce an installation without firmware.
+if [ "${1:-}" = --auto ]; then
+	[ "$#" -eq 1 ] || exit 1
+	selected=$(chroot "${BSDINSTALL_CHROOT}" fwget -q -n)
+	set -- ${selected}
 fi
 
-pkg_chroot()
-{
-	ASSUME_ALWAYS_YES=YES chroot "${BSDINSTALL_CHROOT}" pkg "$@"
-}
+# Keep an offline repository on the target so fwget also works after reboot.
+# Do not fall back to FreeBSD's module repository on a missing package.
+if [ -f "${BSDINSTALL_HARDWARE_MEDIA}/hardware.json" ]; then
+	dest="${BSDINSTALL_CHROOT%/}/usr/5bsd-packages/hardware"
+	mkdir -p "${dest}" "${BSDINSTALL_CHROOT%/}/etc/pkg"
+	cp -R "${BSDINSTALL_HARDWARE_MEDIA}/." "${dest}/"
+	cat >"${BSDINSTALL_CHROOT%/}/etc/pkg/5BSD-hardware.conf" <<-'EOF'
+	5BSD-hardware: {
+	  url: "file:///usr/5bsd-packages/hardware",
+	  enabled: yes
+	}
+	EOF
+fi
 
-refresh_catalog()
-{
-	pkg_chroot update -fq -r "${BSDINSTALL_FIRMWARE_REPO}"
-}
+[ "$#" -gt 0 ] || exit 0
 
-# Continue even if this refresh fails.  A package may already be cached, and a
-# failed install below gets one more refresh attempt before it is reported.
-refresh_catalog || true
+if ! FWGET_ROOT="${BSDINSTALL_CHROOT}" \
+    FWGET_REPOSITORY="${BSDINSTALL_FIRMWARE_REPO}" \
+    "${BSDINSTALL_HARDWARE_INSTALL}" "$@"; then
+	printf ' %s' "$@"
+	printf '\n'
+	exit 1
+fi
 
-failed=
-for firmware_package in "$@"; do
-	if pkg_chroot install -qy -r "${BSDINSTALL_FIRMWARE_REPO}" \
-	    "${firmware_package}"; then
-		continue
-	fi
-	if refresh_catalog && \
-	    pkg_chroot install -qy -r "${BSDINSTALL_FIRMWARE_REPO}" \
-	    "${firmware_package}"; then
-		continue
-	fi
-	failed="${failed} ${firmware_package}"
-done
-
-[ -z "${failed}" ] && exit 0
-printf '%s\n' "${failed}"
-exit 1
+# The config step assembles rc.conf from these fragments. Preserve any other
+# modules selected by earlier fragments when rc.conf is sourced.
+if [ -n "${BSDINSTALL_TMPETC:-}" ]; then
+	for name in "$@"; do
+		case "${name}" in
+		gpu-firmware-intel-*) module=i915kms ;;
+		gpu-firmware-amd-*) module=amdgpu ;;
+		gpu-firmware-radeon-*) module=radeonkms ;;
+		*) continue ;;
+		esac
+		fragment="${BSDINSTALL_TMPETC}/rc.conf.hardware"
+		line='kld_list="${kld_list} '"${module}"'"'
+		if [ ! -f "${fragment}" ] || ! grep -qFx "${line}" "${fragment}"; then
+			printf '%s\n' "${line}" >>"${fragment}"
+		fi
+	done
+fi

@@ -36,9 +36,7 @@ x11/xorg
 x11-wm/sway
 "
 
-_DVD_PACKAGES_KMODS="
-net/wifi-firmware-kmod@release
-"
+# Hardware packages are built and staged separately by hardware-packages.py.
 
 # If NOPORTS is set for the release, do not attempt to build pkg(8).
 if [ ! -f ${PORTSDIR}/Makefile ]; then
@@ -88,16 +86,8 @@ for _P in ${_DVD_PACKAGES_MAIN}; do
 		echo "*** Skipping nonexistent port: ${_P%%@*}"
 	fi
 done
-for _P in ${_DVD_PACKAGES_KMODS}; do
-	if [ -d "${PORTSDIR}/${_P%%@*}" ]; then
-		DVD_PACKAGES_KMODS="${DVD_PACKAGES_KMODS} ${_P}"
-	else
-		echo "*** Skipping nonexistent port: ${_P%%@*}"
-	fi
-done
-
 # Make sure the package list is not empty.
-if [ -z "${DVD_PACKAGES_MAIN}${DVD_PACKAGES_KMODS}" ]; then
+if [ -z "${DVD_PACKAGES_MAIN}" ]; then
 	echo "*** The package list is empty."
 	echo "*** Something is very wrong."
 	# Exit '0' so the rest of the build process continues
@@ -109,7 +99,6 @@ fi
 ${PKGCMD} -vv
 ${PKGCMD} update -f
 ${PKGCMD} fetch -o ${PKG_REPODIR} -r release -d ${DVD_PACKAGES_MAIN}
-${PKGCMD} fetch -o ${PKG_REPODIR} -r release-kmods -d ${DVD_PACKAGES_KMODS}
 
 # Create the 'Latest/pkg.pkg' symlink so 'pkg bootstrap' works
 # using the on-disc packages.

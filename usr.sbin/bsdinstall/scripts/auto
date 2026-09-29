@@ -197,7 +197,7 @@ if [ -z "$BSDINSTALL_SKIP_HOSTNAME" ]; then bsdinstall hostname || error "Set ho
 if [ -f /usr/5bsd-packages/repos/5BSD-base-offline.conf ]; then
 	bsddialog --backtitle "$OSNAME Installer" --title "Network Configuration" \
 	    --yes-label "Configure Network" --no-label "Offline" --yesno \
-	    "The base system will be installed from the packages included in this installation media. Would you like to configure networking for firmware and other packages?" 0 0
+	    "The base system will be installed from the packages included in this installation media. Would you like to configure networking for additional downloads? Matching hardware packages are included on full installation media." 0 0
 	if [ $? -eq 1 ]; then
 		export BSDINSTALL_PKG_REPOS_DIR=/usr/5bsd-packages/repos/
 	else

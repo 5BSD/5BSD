@@ -21,23 +21,56 @@ usb_get_device()
 
 }
 
+# Request multiline descriptors so Bluetooth interface information and device
+# IDs can be matched together, rather than using device-only one-line output.
+usb_device_records()
+{
+	usbconfig dump_device_desc dump_curr_config_desc | awk '
+	function interface_done() {
+		if ((iface == "0x00" || iface == "0") && cls == "0xe0" &&
+		    subcls == "0x01" && proto == "0x01") bt = 1
+	}
+	function emit() {
+		interface_done()
+		if (vendor != "" && product != "")
+			print "idVendor=" vendor " idProduct=" product " bluetooth=" (bt ? 1 : 0)
+	}
+	/^ugen[0-9]+[.][0-9]+:/ {
+		emit()
+		vendor = product = iface = cls = subcls = proto = ""
+		bt = 0
+	}
+	{
+		gsub(/[[:space:]]*=[[:space:]]*/, "=")
+		split($1, field, "=")
+		key = field[1]; value = tolower(field[2])
+		if (key == "idVendor") vendor = value
+		if (key == "idProduct") product = value
+		if (key == "bInterfaceNumber") {
+			interface_done()
+			iface = value; cls = subcls = proto = ""
+		}
+		if (key == "bInterfaceClass") cls = value
+		if (key == "bInterfaceSubClass") subcls = value
+		if (key == "bInterfaceProtocol") proto = value
+	}
+	END { emit() }'
+}
+
 usb_search_packages()
 {
-	local IFS
-
-	oldifs=$IFS
+	local IFS fulldevice vendor device hexvendor bluetooth
 	IFS=$'\n'
-	for fulldevice in $(usbconfig -l dump_device_desc); do
+	. "${LIBEXEC_PATH}/usb_bluetooth"
+	for fulldevice in $(usb_device_records); do
 		vendor=$(usb_get_vendor "${fulldevice}")
-		if [ -z "${vendor}" ]; then
-			continue
-		fi
 		device=$(usb_get_device "${fulldevice}")
-		log_verbose "Trying to match device ${device} and vendor ${vendor} with usb_${vendor}"
-		if [ -f  ${LIBEXEC_PATH}/usb_${vendor} ]; then
-			. ${LIBEXEC_PATH}/usb_${vendor}
-			usb_${vendor} ${device}
+		hexvendor=$(printf '%s\n' "${fulldevice}" | sed 's/.*idVendor=\(0x[0-9a-f]*\).*/\1/')
+		bluetooth=${fulldevice##*bluetooth=}
+		usb_bluetooth "${hexvendor}" "${device}" "${bluetooth}"
+		if [ -n "${vendor}" ] && [ -f "${LIBEXEC_PATH}/usb_${vendor}" ]; then
+			. "${LIBEXEC_PATH}/usb_${vendor}"
+			usb_${vendor} "${device}"
 		fi
 	done
-	IFS=${oldifs}
 }
