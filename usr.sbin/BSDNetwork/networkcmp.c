@@ -1007,7 +1007,6 @@ dispatch(struct channel_message *request_message,
 	switch (message->opcode) {
 	case NETWORKCMP_OP_HELLO:
 		memset(&hello, 0, sizeof(hello));
-		hello.version = NETWORKCMP_ABI_VERSION;
 		hello.features =
 		    (state->policy.resolve ? NETWORKCMP_FEATURE_DNS : 0) |
 		    (state->policy.allow_connect ? NETWORKCMP_FEATURE_TCP : 0) |

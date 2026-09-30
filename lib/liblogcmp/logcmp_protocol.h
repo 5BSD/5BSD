@@ -8,9 +8,7 @@
 #include <stdint.h>
 
 #define	LOGCMP_INTERFACE		"system.Log"
-#define	LOGCMP_INTERFACE_VERSION	"6.0.0"
 #define	LOGCMP_MAGIC			0x4c4f4743U	/* "LOGC" */
-#define	LOGCMP_ABI_VERSION		6
 #define	LOGCMP_MAX_MESSAGE		8192
 #define	LOGCMP_MAX_RECORD		4096
 #define	LOGCMP_MAX_TEXT			2048
@@ -43,7 +41,7 @@
  * QUERY filter match modes.  When a subsystem/category filter is non-empty the
  * default is a substring match; the EXACT bit demands a full-length equality
  * instead.  A zero-length filter is "no constraint" regardless of the bit, so a
- * zeroed request keeps the pre-filter behaviour (back-compat).
+ * zeroed request keeps the pre-filter behaviour.
  */
 #define	LOGCMP_QUERY_MATCH_SUBSYSTEM_EXACT	0x00000001U
 #define	LOGCMP_QUERY_MATCH_CATEGORY_EXACT	0x00000002U
@@ -115,8 +113,7 @@ enum logcmp_message_role {
 
 struct logcmp_msg {
 	uint32_t	magic;
-	uint16_t	version;
-	uint16_t	opcode;
+	uint32_t	opcode;
 	uint32_t	flags;
 	int32_t		status;
 };
@@ -125,14 +122,11 @@ _Static_assert(sizeof(struct logcmp_msg) == 16,
     "logcmp message header ABI");
 
 struct logcmp_hello {
-	uint32_t	min_version;
-	uint32_t	max_version;
 	uint32_t	features;
 	uint32_t	reserved;
 };
 
 struct logcmp_hello_reply {
-	uint32_t	version;
 	uint32_t	features;
 	uint32_t	ring_size;
 	uint32_t	max_record;

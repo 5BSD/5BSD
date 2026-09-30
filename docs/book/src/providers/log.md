@@ -69,17 +69,17 @@ bundles that are no longer installed or running.
 ## Wire operations
 
 The protocol is `lib/liblogcmp/logcmp_protocol.h`: magic `LOGC`,
-`LOGCMP_ABI_VERSION` 6, interface version `6.0.0`. Every message begins
-with a 16-byte `logcmp_msg` (magic, version, opcode, flags, status). A
-session opens with HELLO carrying `min_version`, `max_version` and a
+Every message begins
+with a 16-byte `logcmp_msg` (magic, opcode, flags, status). A
+session opens with HELLO carrying a
 feature bitmap (`LOGCMP_FEATURE_INLINE`, `SHM_RING`, `TYPED_RECORDS`,
-`PRIVACY`, `TRACE_CONTEXT`, `EDGE_WAKEUP`, `SCOPED_QUERY`); the reply fixes
-the version and reports `ring_size`, `max_record` (4096), `max_text`
+`PRIVACY`, `TRACE_CONTEXT`, `EDGE_WAKEUP`, `SCOPED_QUERY`); the reply reports the granted features,
+`ring_size`, `max_record` (4096), `max_text`
 (2048) and `max_fields`.
 
 | Op | Request | Reply | Errors |
 |---|---|---|---|
-| 1 HELLO | `logcmp_hello` | `logcmp_hello_reply` | version outside the accepted range |
+| 1 HELLO | `logcmp_hello` | `logcmp_hello_reply` | malformed request |
 | 2 ATTACH | `logcmp_attach_request` (generation, `ring_size`, `max_record`) + 5 fds in `logcmp_attach_fd_slot` order | header | `EINVAL` (ring shape or `max_record` over the session's limit), `EBUSY` (a ring is already attached) |
 | 3 NOTIFY | header | none (event; the worker drains) | none |
 | 4 WRITE | `logcmp_record` followed by subsystem, category, event name, message and `logcmp_attribute_wire` entries | header | `EINVAL` (malformed; counted as rejected), `EMSGSIZE` (over the session's `max_record`) |
@@ -229,9 +229,7 @@ provider `bsdlog` exports `session-start`, `record-write`, `record-drop`,
 Shipped and VM-proven: inline and ring ingestion, the segmented store with
 rotation, retention and crash recovery, scoped queries with subsystem,
 category and time filters, privacy classes, the owner reconcile, and the
-`logcmp_log` fallback path. The BSDLog(8) manual page still describes the
-interface as version `5.0.0` while the header ships ABI 6 and
-`LOGCMP_INTERFACE_VERSION` `6.0.0`. The inventory lists further query
+`logcmp_log` fallback path.  The inventory lists further query
 filters (beyond subsystem, category and time) as deferred. A capability-mode
 unit that calls syslog(3) directly writes nothing, and `LOG_INFO` lines do
 not appear in `/var/log/messages`; use `logcmp_log(3)`.

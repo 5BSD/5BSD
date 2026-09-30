@@ -171,7 +171,6 @@ service_session_call(struct service_session *session,
 	length = sizeof(*response);
 	if (request->opcode == NETWORKCMP_OP_HELLO) {
 		hello = (void *)(response + 1);
-		hello->version = NETWORKCMP_ABI_VERSION;
 		hello->features = NETWORKCMP_FEATURE_TCP | NETWORKCMP_FEATURE_UDP |
 		    NETWORKCMP_FEATURE_IPV6 | NETWORKCMP_FEATURE_DNS;
 		hello->max_resolve_results = NETWORKCMP_RESOLVE_MAX_RESULTS;

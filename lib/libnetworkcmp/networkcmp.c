@@ -35,7 +35,6 @@
 static const char networkcmp_dependency_note[]
     __attribute__((section(".note.5bsd.descriptors"), used)) =
     "interface=system.Network\n"
-    "version=1.0.0\n"
     "local-name=network\n"
     "required=true\n";
 
@@ -127,7 +126,6 @@ networkcmp_header_validate(const struct networkcmp_msg *msg, size_t received,
 	    role != NETWORKCMP_MESSAGE_REPLY &&
 	    role != NETWORKCMP_MESSAGE_EVENT) ||
 	    msg->magic != NETWORKCMP_MAGIC ||
-	    msg->version != NETWORKCMP_ABI_VERSION ||
 	    msg->opcode < NETWORKCMP_OP_HELLO ||
 	    msg->opcode > NETWORKCMP_OP_LISTEN ||
 	    (msg->flags & ~NETWORKCMP_MSG_F_MASK) != 0 ||
@@ -153,7 +151,6 @@ networkcmp_message_init(struct networkcmp_msg *msg, uint16_t opcode,
 	}
 	memset(msg, 0, sizeof(*msg));
 	msg->magic = NETWORKCMP_MAGIC;
-	msg->version = NETWORKCMP_ABI_VERSION;
 	msg->opcode = opcode;
 	msg->flags = flags;
 	return (0);
@@ -173,7 +170,6 @@ networkcmp_message_init_reply(struct networkcmp_msg *reply,
 	}
 	memset(reply, 0, sizeof(*reply));
 	reply->magic = NETWORKCMP_MAGIC;
-	reply->version = NETWORKCMP_ABI_VERSION;
 	reply->opcode = request->opcode;
 	reply->status = status;
 	return (0);
@@ -202,8 +198,7 @@ networkcmp_validate_message(const struct networkcmp_msg *msg,
 			expected = sizeof(struct networkcmp_hello_reply);
 			if (payload == expected) {
 				hello = (const void *)(msg + 1);
-				if (hello->version != NETWORKCMP_ABI_VERSION ||
-				    hello->reserved != 0 ||
+				if (hello->reserved != 0 ||
 				    (hello->features &
 				    ~(NETWORKCMP_FEATURE_TCP |
 				    NETWORKCMP_FEATURE_UDP |
@@ -292,11 +287,6 @@ networkcmp_validate_message(const struct networkcmp_msg *msg,
 			if (payload == expected) {
 				hello = (const void *)(msg + 1);
 				if (hello->reserved != 0 ||
-				    hello->min_version > hello->max_version ||
-				    hello->min_version >
-				    NETWORKCMP_ABI_VERSION ||
-				    hello->max_version <
-				    NETWORKCMP_ABI_VERSION ||
 				    (hello->features &
 				    ~(NETWORKCMP_FEATURE_TCP |
 				    NETWORKCMP_FEATURE_UDP |
@@ -494,8 +484,6 @@ networkcmp_hello(struct networkcmp_client *client,
 		return (-1);
 	}
 	memset(&request, 0, sizeof(request));
-	request.min_version = NETWORKCMP_ABI_VERSION;
-	request.max_version = NETWORKCMP_ABI_VERSION;
 	request.features = NETWORKCMP_FEATURE_TCP | NETWORKCMP_FEATURE_UDP |
 	    NETWORKCMP_FEATURE_IPV6 | NETWORKCMP_FEATURE_DNS;
 	if (networkcmp_call(client, NETWORKCMP_OP_HELLO, &request,

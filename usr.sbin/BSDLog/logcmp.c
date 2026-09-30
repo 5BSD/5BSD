@@ -581,7 +581,6 @@ handle_request(struct channel *channel __unused,
 	switch (message->opcode) {
 	case LOGCMP_OP_HELLO:
 		memset(&hello, 0, sizeof(hello));
-		hello.version = LOGCMP_ABI_VERSION;
 		hello.features = LOGCMP_FEATURE_INLINE |
 		    LOGCMP_FEATURE_SHM_RING | LOGCMP_FEATURE_SYSLOG |
 		    LOGCMP_FEATURE_TYPED_RECORDS | LOGCMP_FEATURE_PRIVACY |

@@ -339,7 +339,6 @@ logcmp_header_validate(const struct logcmp_msg *msg, size_t length,
 	    (role != LOGCMP_MESSAGE_REQUEST &&
 	    role != LOGCMP_MESSAGE_REPLY && role != LOGCMP_MESSAGE_EVENT) ||
 	    msg->magic != LOGCMP_MAGIC ||
-	    msg->version != LOGCMP_ABI_VERSION ||
 	    msg->opcode < LOGCMP_OP_HELLO || msg->opcode > LOGCMP_OP_QUERY ||
 	    (msg->flags & ~LOGCMP_MSG_F_MASK) != 0 ||
 	    (role != LOGCMP_MESSAGE_REPLY && msg->status != 0) ||
@@ -362,7 +361,6 @@ logcmp_message_init(struct logcmp_msg *msg, uint16_t opcode, uint32_t flags)
 	}
 	memset(msg, 0, sizeof(*msg));
 	msg->magic = LOGCMP_MAGIC;
-	msg->version = LOGCMP_ABI_VERSION;
 	msg->opcode = opcode;
 	msg->flags = flags;
 	return (0);
@@ -382,7 +380,6 @@ logcmp_message_init_reply(struct logcmp_msg *reply,
 	}
 	memset(reply, 0, sizeof(*reply));
 	reply->magic = LOGCMP_MAGIC;
-	reply->version = LOGCMP_ABI_VERSION;
 	reply->opcode = request->opcode;
 	reply->status = status;
 	return (0);
@@ -411,8 +408,7 @@ logcmp_validate_message(const struct logcmp_msg *msg, size_t length,
 			if (payload != sizeof(struct logcmp_hello_reply))
 				goto invalid;
 			hello = (const void *)(msg + 1);
-			if (hello->version != LOGCMP_ABI_VERSION ||
-		    (hello->features & ~(LOGCMP_FEATURE_INLINE |
+			if ((hello->features & ~(LOGCMP_FEATURE_INLINE |
 		    LOGCMP_FEATURE_SHM_RING | LOGCMP_FEATURE_SYSLOG |
 			    LOGCMP_FEATURE_TYPED_RECORDS | LOGCMP_FEATURE_PRIVACY |
 		    LOGCMP_FEATURE_TRACE_CONTEXT |
@@ -475,9 +471,6 @@ logcmp_validate_message(const struct logcmp_msg *msg, size_t length,
 			goto invalid;
 		hello = (const void *)(msg + 1);
 		if (hello->reserved != 0 ||
-		    hello->min_version > hello->max_version ||
-		    hello->min_version > LOGCMP_ABI_VERSION ||
-		    hello->max_version < LOGCMP_ABI_VERSION ||
 		    (hello->features & ~(LOGCMP_FEATURE_INLINE |
 		    LOGCMP_FEATURE_SHM_RING | LOGCMP_FEATURE_SYSLOG |
 		    LOGCMP_FEATURE_TYPED_RECORDS | LOGCMP_FEATURE_PRIVACY |
@@ -921,8 +914,6 @@ client_establish(struct logcmp_client *client)
 		return (-1);
 	}
 	memset(&hello, 0, sizeof(hello));
-	hello.min_version = LOGCMP_ABI_VERSION;
-	hello.max_version = LOGCMP_ABI_VERSION;
 	hello.features = LOGCMP_FEATURE_INLINE | LOGCMP_FEATURE_SHM_RING |
 	    LOGCMP_FEATURE_TYPED_RECORDS | LOGCMP_FEATURE_PRIVACY |
 	    LOGCMP_FEATURE_TRACE_CONTEXT | LOGCMP_FEATURE_EDGE_WAKEUP |
@@ -931,8 +922,7 @@ client_establish(struct logcmp_client *client)
 	    &reply) == -1)
 		goto fail;
 	memcpy(&client->limits, &reply.wire.msg + 1, sizeof(client->limits));
-	if (client->limits.version != LOGCMP_ABI_VERSION ||
-	    (client->limits.features & (LOGCMP_FEATURE_SHM_RING |
+	if ((client->limits.features & (LOGCMP_FEATURE_SHM_RING |
 	    LOGCMP_FEATURE_INLINE)) == 0 ||
 	    (client->limits.features & (LOGCMP_FEATURE_TYPED_RECORDS |
 	    LOGCMP_FEATURE_PRIVACY | LOGCMP_FEATURE_TRACE_CONTEXT |

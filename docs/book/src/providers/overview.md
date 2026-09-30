@@ -90,9 +90,9 @@ The shapes differ per protocol and the chapters say which applies:
 |---|---|
 | Bare HELLO carrying a magic and ABI version, empty reply on match | system.Crypto (op 11), system.Time, system.Power, system.Sysctl |
 | HELLO header answered with a reply that states the provider's version (and, for Notify, its features and limits) | system.Audit (ABI 1), system.Device, system.Notify |
-| HELLO with `min_version`/`max_version` and a feature bitmap, reply selects the version | system.Log (ABI 6, `LOGCMP_FEATURE_*`), system.Network |
+| HELLO carrying a feature bitmap, reply reports the granted features and limits | system.Log (`LOGCMP_FEATURE_*`), system.Network |
 | A `version` field in every request; the daemon accepts a minimum version | system.Auth (`AUTHAGENTD_PROTO_VERSION` 3, minimum 2) |
-| No handshake; the request's `op` field is the whole contract | system.Filesystem (`BSDFILESYSTEM_PROTO_VERSION` 6 is a header constant, not sent on the wire), system.Namespace, system.SystemExtension, system.VM |
+| No handshake; the request's `op` field is the whole contract | system.Filesystem, system.Namespace, system.SystemExtension, system.VM |
 
 ## Reading the ops tables
 

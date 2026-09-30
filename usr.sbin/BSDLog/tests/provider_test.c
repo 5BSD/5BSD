@@ -297,8 +297,6 @@ ATF_TC_BODY(provider_dispatch_and_ring_lifecycle, tc)
 	struct fixture fixture;
 	fixture_create(&fixture, 0);
 	hello = (struct logcmp_hello){
-		.min_version = LOGCMP_ABI_VERSION,
-		.max_version = LOGCMP_ABI_VERSION,
 		.features = LOGCMP_FEATURE_INLINE,
 	};
 	ATF_REQUIRE_EQ(0, call(&fixture, LOGCMP_OP_HELLO, &hello,
@@ -421,8 +419,7 @@ ATF_TC_BODY(provider_malformed_descriptor_is_terminal, tc)
 	fixture_create(&fixture, 0);
 	ATF_REQUIRE_EQ(0, pipe(pipefd));
 	hello = (struct logcmp_hello){
-		.min_version = LOGCMP_ABI_VERSION,
-		.max_version = LOGCMP_ABI_VERSION,
+		.features = 0,
 	};
 	ATF_CHECK(call(&fixture, LOGCMP_OP_HELLO, &hello, sizeof(hello),
 	    &pipefd[1], 1, &reply, &length) == -1);

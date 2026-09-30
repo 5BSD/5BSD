@@ -35,7 +35,6 @@ networkcmp_client_open(struct networkcmp_client **result)
 	memset(&client, 0, sizeof(client));
 	client.open = 1;
 	client.limits = (struct networkcmp_hello_reply){
-	    .version = 1,
 	    .features = NETWORKCMP_FEATURE_TCP | NETWORKCMP_FEATURE_UDP |
 	        NETWORKCMP_FEATURE_DNS,
 	    .max_resolve_results = 16,

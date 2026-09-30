@@ -8,9 +8,7 @@
 .Sh DESCRIPTION
 .Nm
 is the initial base-system provider for
-.Dq system.Network
-version
-.Dq 1.0.0 .
+.Dq system.Network .
 It is installed in
 .Pa /Capabilities/System/Network.cap
 and launched only by
@@ -76,9 +74,7 @@ The bound applies to TCP
 only; a
 .Em udp
 request ignores it.
-The version 1 protocol exposes only DNS, connect, and udp; protocol space for
-future userspace networking is reserved but implemented as none, and any such
-behavior requires a separately negotiated protocol version.
+The protocol exposes only DNS, connect, and udp.
 .Pp
 Resolver requests cap host and service lengths, flags, address families, and
 result counts.
@@ -124,7 +120,7 @@ A session whose granted channel carries the administrative right receives the
 full policy, including internal destinations; every other session is scoped by
 the provider's per-client policy configuration described below, keyed by the
 unforgeable switchboard manifest label.
-Listener authority is not part of the version 1 client API.
+Listener authority is not part of the client API.
 Socket options are not restricted by the broker: the consumer sets them itself
 on the delivered descriptor within the delegated
 .Dv CAP_SETSOCKOPT

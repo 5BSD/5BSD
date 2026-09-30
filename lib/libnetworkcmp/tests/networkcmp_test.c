@@ -38,7 +38,6 @@ make_message(union message_buffer *buffer, uint16_t opcode, bool reply,
 	memset(buffer, 0, sizeof(*buffer));
 	msg = &buffer->wire.msg;
 	msg->magic = NETWORKCMP_MAGIC;
-	msg->version = NETWORKCMP_ABI_VERSION;
 	msg->opcode = opcode;
 	wire_length = sizeof(*msg) + payload;
 	wire_role = reply ? NETWORKCMP_MESSAGE_REPLY :
@@ -81,7 +80,6 @@ ATF_TC_BODY(common_header, tc)
 	reject(msg, wire_length);					\
 } while (0)
 	REJECT(magic, 0);
-	REJECT(version, NETWORKCMP_ABI_VERSION + 1);
 	REJECT(opcode, 0);
 	REJECT(opcode, NETWORKCMP_OP_UDP + 1);
 	REJECT(flags, 0x80000000U);
@@ -140,8 +138,6 @@ ATF_TC_BODY(request_shapes, tc)
 	/* HELLO */
 	msg = make_message(&buffer, NETWORKCMP_OP_HELLO, false,
 	    sizeof(struct networkcmp_hello));
-	((struct networkcmp_hello *)(msg + 1))->max_version =
-	    NETWORKCMP_ABI_VERSION;
 	ATF_CHECK_EQ(0, networkcmp_validate_message(msg, wire_length,
 	    wire_role));
 	wire_length++;
@@ -207,7 +203,7 @@ ATF_TC_BODY(reply_shapes, tc)
 	    sizeof(struct networkcmp_hello_reply));
 	*(struct networkcmp_hello_reply *)(msg + 1) =
 	    (struct networkcmp_hello_reply){
-		.version = NETWORKCMP_ABI_VERSION,
+		.features = NETWORKCMP_FEATURE_DNS,
 		.max_resolve_results = 1,
 	    };
 	ATF_CHECK_EQ(0, networkcmp_validate_message(msg, wire_length,
@@ -269,17 +265,11 @@ ATF_TC_BODY(semantic_invariants, tc)
 	msg = make_message(&buffer, NETWORKCMP_OP_HELLO, false,
 	    sizeof(*hello));
 	hello = (void *)(msg + 1);
-	hello->max_version = NETWORKCMP_ABI_VERSION;
 	ATF_REQUIRE_EQ(0, networkcmp_validate_message(msg, wire_length,
 	    wire_role));
 	hello->reserved = 1;
 	reject(msg, wire_length);
 	hello->reserved = 0;
-	hello->min_version = NETWORKCMP_ABI_VERSION + 1;
-	hello->max_version = NETWORKCMP_ABI_VERSION + 1;
-	reject(msg, wire_length);
-	hello->min_version = 0;
-	hello->max_version = NETWORKCMP_ABI_VERSION;
 	hello->features = 0x80000000U;
 	reject(msg, wire_length);
 
@@ -304,16 +294,13 @@ ATF_TC_BODY(semantic_invariants, tc)
 	msg = make_message(&buffer, NETWORKCMP_OP_HELLO, true,
 	    sizeof(*hello_reply));
 	hello_reply = (void *)(msg + 1);
-	hello_reply->version = NETWORKCMP_ABI_VERSION;
+	hello_reply->features = NETWORKCMP_FEATURE_DNS;
 	hello_reply->max_resolve_results = NETWORKCMP_RESOLVE_MAX_RESULTS;
 	ATF_REQUIRE_EQ(0, networkcmp_validate_message(msg, wire_length,
 	    wire_role));
-	hello_reply->version = 0;
-	reject(msg, wire_length);
-	hello_reply->version = NETWORKCMP_ABI_VERSION;
 	hello_reply->features = 0x80000000U;
 	reject(msg, wire_length);
-	hello_reply->features = 0;
+	hello_reply->features = NETWORKCMP_FEATURE_DNS;
 	hello_reply->reserved = 1;
 	reject(msg, wire_length);
 	hello_reply->reserved = 0;
@@ -381,10 +368,9 @@ ATF_TC_BODY(abi, tc)
 
 	ATF_CHECK_EQ(0x4e434d50U, NETWORKCMP_MAGIC);
 	ATF_CHECK_STREQ("system.Network", NETWORKCMP_INTERFACE);
-	ATF_CHECK_STREQ("1.0.0", NETWORKCMP_INTERFACE_VERSION);
 	ATF_CHECK_EQ(16, sizeof(struct networkcmp_msg));
-	ATF_CHECK_EQ(16, sizeof(struct networkcmp_hello));
-	ATF_CHECK_EQ(16, sizeof(struct networkcmp_hello_reply));
+	ATF_CHECK_EQ(8, sizeof(struct networkcmp_hello));
+	ATF_CHECK_EQ(12, sizeof(struct networkcmp_hello_reply));
 	ATF_CHECK_EQ(24, sizeof(struct networkcmp_endpoint));
 	/*
 	 * connect_request grew by the connect-timeout (timeout_ms + reserved),

@@ -60,8 +60,8 @@ info(void)
 		errno = error;
 		err(EX_PROTOCOL, "limits");
 	}
-	printf("version=%u features=0x%08x max_resolve_results=%u\n",
-	    limits->version, limits->features, limits->max_resolve_results);
+	printf("features=0x%08x max_resolve_results=%u\n",
+	    limits->features, limits->max_resolve_results);
 	networkcmp_client_close(client);
 	return (0);
 }

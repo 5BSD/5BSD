@@ -16,7 +16,7 @@ Source: `usr.sbin/BSDNetwork/capbundle/bsdnetwork.ucl` and `Bundle.ucl`.
 
 | Field | Value |
 |---|---|
-| Wire name | `system.Network` (interface version `1.0.0`, ABI 1) |
+| Wire name | `system.Network` |
 | Bundle | `/Capabilities/System/Network.cap` (`bundle_id = "system.Network"`) |
 | Program | `/Capabilities/System/Network.cap/Units/bsdnetwork.unit/bin/BSDNetwork` |
 | Unit | `bsdnetwork` |
@@ -31,7 +31,7 @@ Source: `usr.sbin/BSDNetwork/capbundle/bsdnetwork.ucl` and `Bundle.ucl`.
 
 ## Wire operations
 
-Defined in `lib/libnetworkcmp/networkcmp_protocol.h`. Every message starts with `struct networkcmp_msg` (magic `NCMP`, `version`, `opcode`, `flags`, `status`); a reply's `status` is 0 or a negative errno. HELLO negotiates: the client sends `min_version`/`max_version`/`features`, the broker answers with the ABI version, the feature bits its session policy grants (`TCP`, `UDP`, `IPV6`, `DNS`, `LISTEN`) and `max_resolve_results`. A client should treat the HELLO reply as the binding contract for the session.
+Defined in `lib/libnetworkcmp/networkcmp_protocol.h`. Every message starts with `struct networkcmp_msg` (magic `NCMP`, `opcode`, `flags`, `status`); a reply's `status` is 0 or a negative errno. HELLO exchanges features: the client sends `features`, the broker answers with the feature bits its session policy grants (`TCP`, `UDP`, `IPV6`, `DNS`, `LISTEN`) and `max_resolve_results`. A client should treat the HELLO reply as the binding contract for the session.
 
 | Op | Request | Reply | Errors |
 |---|---|---|---|
@@ -87,7 +87,7 @@ networkcmpctl(8) is a bounded diagnostic client that reaches the broker only thr
 | Verb | Example | Output shape |
 |---|---|---|
 | `config` | `networkcmpctl config` | the canonical manifest declaration for this component |
-| `info` | `networkcmpctl info` | `version=1 features=0x0000000f max_resolve_results=16` |
+| `info` | `networkcmpctl info` | `features=0x0000000f max_resolve_results=16` |
 | `resolve host [service]` | `networkcmpctl resolve www.freebsd.org https` | `count=2 ttl_seconds=0 canonname=...` then `result[0].family=inet6 address=... port=443 scope_id=0 ...` per entry |
 | `connect addr port` | `networkcmpctl connect 96.47.72.84 443` | `connect ok: connected to 96.47.72.84:443` |
 | `udp addr port` | `networkcmpctl udp 9.9.9.9 53` | `udp ok: connected datagram socket to 9.9.9.9:53` |
@@ -136,7 +136,6 @@ Status: shipped, committed on `dev`, VM-proven; the inventory (section 4 and sec
 
 Known gaps and drift:
 
-- BSDNetwork(8) still says version 1 exposes only DNS, connect and udp and that listener authority is not in the client API; the header, library, ctl tool and man page libnetworkcmp(3) all ship LISTEN. The daemon page is stale on this point.
 - `bundle_test.sh` refers to the pre-rename source directory `usr.sbin/bsdnetwork` and binary name, so it skips or fails outside the source tree layout it was written for.
 - A timeout op for resolve (as opposed to the fixed 30 second deadline) is deferred, per the inventory.
 - `AI_ADDRCONFIG` is a no-op: the resolver never suppresses a family based on the host's configured addresses.

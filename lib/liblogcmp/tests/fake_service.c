@@ -473,7 +473,6 @@ service_session_call(struct service_session *session,
 	length = sizeof(*response);
 	if (request->opcode == LOGCMP_OP_HELLO) {
 		hello = (void *)(response + 1);
-		hello->version = LOGCMP_ABI_VERSION;
 		hello->features = LOGCMP_FEATURE_INLINE |
 		    LOGCMP_FEATURE_TYPED_RECORDS | LOGCMP_FEATURE_PRIVACY |
 		    LOGCMP_FEATURE_TRACE_CONTEXT | LOGCMP_FEATURE_EDGE_WAKEUP |

@@ -421,7 +421,7 @@ ATF_TC_HEAD(provider_hello, tc)
 {
 	atf_tc_set_md_var(tc, "require.user", "root");
 	atf_tc_set_md_var(tc, "descr",
-	    "HELLO negotiates the version-1 broker features and resolve bound");
+	    "HELLO reports the broker features and resolve bound");
 }
 ATF_TC_BODY(provider_hello, tc)
 {
@@ -438,13 +438,10 @@ ATF_TC_BODY(provider_hello, tc)
 	ATF_REQUIRE_EQ(0, networkcmp_message_init(message,
 	    NETWORKCMP_OP_HELLO, 0));
 	hello_request = (void *)(message + 1);
-	hello_request->min_version = NETWORKCMP_ABI_VERSION;
-	hello_request->max_version = NETWORKCMP_ABI_VERSION;
 	ATF_REQUIRE_EQ(0, call(&fixture, message,
 	    sizeof(*message) + sizeof(*hello_request), &reply, &length, NULL));
 	ATF_REQUIRE_EQ(0, reply_status(&reply, length, NETWORKCMP_OP_HELLO));
 	hello = (void *)(reply.bytes + sizeof(*message));
-	ATF_CHECK_EQ(NETWORKCMP_ABI_VERSION, hello->version);
 	ATF_CHECK((hello->features & NETWORKCMP_FEATURE_TCP) != 0);
 	ATF_CHECK((hello->features & NETWORKCMP_FEATURE_UDP) != 0);
 	ATF_CHECK((hello->features & NETWORKCMP_FEATURE_DNS) != 0);
@@ -668,8 +665,6 @@ ATF_TC_BODY(provider_malformed_channel, tc)
 	    NETWORKCMP_OP_HELLO, 0));
 	memcpy(request, &message, sizeof(message));
 	hello = (void *)(request + sizeof(message));
-	hello->min_version = NETWORKCMP_ABI_VERSION;
-	hello->max_version = NETWORKCMP_ABI_VERSION;
 	memset(&outgoing, 0, sizeof(outgoing));
 	outgoing.size = sizeof(outgoing);
 	outgoing.data = request;
@@ -880,8 +875,6 @@ hello_features(struct fixture *fixture)
 	ATF_REQUIRE_EQ(0, networkcmp_message_init(message,
 	    NETWORKCMP_OP_HELLO, 0));
 	hello_request = (void *)(message + 1);
-	hello_request->min_version = NETWORKCMP_ABI_VERSION;
-	hello_request->max_version = NETWORKCMP_ABI_VERSION;
 	ATF_REQUIRE_EQ(0, call(fixture, message,
 	    sizeof(*message) + sizeof(*hello_request), &reply, &length, NULL));
 	ATF_REQUIRE_EQ(0, reply_status(&reply, length, NETWORKCMP_OP_HELLO));

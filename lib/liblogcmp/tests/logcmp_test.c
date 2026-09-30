@@ -31,7 +31,6 @@ message(union test_buffer *buffer, uint16_t opcode)
 	memset(buffer, 0, sizeof(*buffer));
 	msg = (void *)buffer;
 	msg->magic = LOGCMP_MAGIC;
-	msg->version = LOGCMP_ABI_VERSION;
 	msg->opcode = opcode;
 	return (msg);
 }
@@ -44,8 +43,8 @@ ATF_TC_HEAD(abi, tc)
 ATF_TC_BODY(abi, tc)
 {
 	ATF_CHECK_EQ(16, sizeof(struct logcmp_msg));
-	ATF_CHECK_EQ(16, sizeof(struct logcmp_hello));
-	ATF_CHECK_EQ(24, sizeof(struct logcmp_hello_reply));
+	ATF_CHECK_EQ(8, sizeof(struct logcmp_hello));
+	ATF_CHECK_EQ(20, sizeof(struct logcmp_hello_reply));
 	ATF_CHECK_EQ(16, sizeof(struct logcmp_attach_request));
 	ATF_CHECK_EQ(104, sizeof(struct logcmp_record));
 	ATF_CHECK_EQ(8, sizeof(struct logcmp_attribute_wire));
@@ -75,15 +74,12 @@ ATF_TC_BODY(message_validation, tc)
 	msg = message(&buffer, LOGCMP_OP_HELLO);
 	length = sizeof(*msg) + sizeof(struct logcmp_hello);
 	hello = (void *)(msg + 1);
-	hello->min_version = LOGCMP_ABI_VERSION;
-	hello->max_version = LOGCMP_ABI_VERSION;
 	hello->features = LOGCMP_FEATURE_SHM_RING;
 	ATF_CHECK_EQ(0, logcmp_validate_message(msg, length,
 	    LOGCMP_MESSAGE_REQUEST));
 	msg = message(&buffer, LOGCMP_OP_HELLO);
 	length = sizeof(*msg) + sizeof(struct logcmp_hello_reply);
 	hello_reply = (void *)(msg + 1);
-	hello_reply->version = LOGCMP_ABI_VERSION;
 	hello_reply->features = LOGCMP_FEATURE_SHM_RING;
 	hello_reply->ring_size = 4096;
 	hello_reply->max_record = 512;

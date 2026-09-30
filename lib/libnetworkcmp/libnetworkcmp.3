@@ -46,8 +46,7 @@
 .Sh DESCRIPTION
 The
 .Nm
-library is the client for the version
-.Dv 1.0.0
+library is the client for the
 .Dv system.Network
 system network broker.
 The broker follows the Casper model: it performs DNS and socket operations
@@ -68,7 +67,7 @@ and records the negotiated values; repeated opens return references to that
 same authority.
 The reply returned by
 .Fn networkcmp_client_limits
-is the binding contract for the protocol version, features, and the resolve
+is the binding contract for the features, and the resolve
 result bound.
 There is no global lookup or fallback path.
 .Pp
@@ -164,7 +163,7 @@ and
 any other flag fails with
 .Dv EAI_BADFLAGS .
 .Dv AI_ADDRCONFIG
-is accepted for source compatibility but is a documented no-op in the in-process
+is accepted but is a documented no-op in the in-process
 resolver.
 .Dv AI_V4MAPPED
 and
@@ -196,7 +195,7 @@ After
 the child cannot reuse the parent's session and must open a separately
 injected authority if one exists.
 .Pp
-Version 1 provides DNS resolution, connected TCP and UDP sockets, and, for a
+The broker provides DNS resolution, connected TCP and UDP sockets, and, for a
 label whose
 .Ql listen
 policy permits it,
@@ -214,8 +213,7 @@ A
 .Fa backlog
 of 0 selects
 .Dv SOMAXCONN .
-Protocol space for further userspace networking is reserved but not implemented;
-any such behavior requires a separately negotiated protocol version.
+Listeners beyond those described above are not implemented.
 .Pp
 The
 .Ql networkcmp
