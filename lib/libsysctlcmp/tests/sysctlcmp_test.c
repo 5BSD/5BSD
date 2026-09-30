@@ -51,7 +51,6 @@ ATF_TC_BODY(message_init, tc)
 
 	ATF_REQUIRE_EQ(0, sysctlcmp_message_init(&msg, SYSCTLCMP_OP_GET, 0));
 	ATF_CHECK_EQ(SYSCTLCMP_MAGIC, msg.magic);
-	ATF_CHECK_EQ(SYSCTLCMP_ABI_VERSION, msg.version);
 	ATF_CHECK_EQ(SYSCTLCMP_OP_GET, msg.opcode);
 	/* Bad opcode and nonzero flags are rejected. */
 	ATF_CHECK_ERRNO(EINVAL, sysctlcmp_message_init(&msg, 0, 0) == -1);

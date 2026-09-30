@@ -63,12 +63,11 @@ init_reply(struct timecmp_msg *reply, const struct timecmp_msg *request,
 
 	memset(reply, 0, sizeof(*reply));
 	reply->magic = TIMECMP_MAGIC;
-	reply->version = TIMECMP_ABI_VERSION;
 	reply->opcode = request->opcode;
 	reply->status = status;		/* 0 or -errno */
 }
 
-/* Reply carrying only a header (HELLO, SET, or an error). */
+/* Reply carrying only a header (SET, or an error). */
 static int
 send_status(struct channel_message *request_message,
     const struct timecmp_msg *request, int status)
@@ -139,9 +138,6 @@ handle_request(struct channel *channel __unused,
 	body = (const void *)(request + 1);
 
 	switch (request->opcode) {
-	case TIMECMP_OP_HELLO:
-		result = send_status(message, request, 0);
-		break;
 	case TIMECMP_OP_GET: {
 		struct timespec ts;
 

@@ -92,7 +92,7 @@ struct session {
 	int				 error;
 };
 
-/* Header-only reply (HELLO, or an error status = -errno). */
+/* Header-only reply (an error status = -errno). */
 static int
 send_status(struct channel_message *request_message,
     const struct sysctlcmp_msg *request, int status)
@@ -365,9 +365,6 @@ handle_request(struct channel *channel __unused,
 		goto out;
 	}
 	switch (request->opcode) {
-	case SYSCTLCMP_OP_HELLO:
-		result = send_status(message, request, 0);
-		break;
 	case SYSCTLCMP_OP_GET:
 		body = (const void *)(request + 1);
 		name = (const char *)(body + 1);

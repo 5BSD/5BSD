@@ -136,8 +136,7 @@ raw_fixture_destroy(struct raw_fixture *fixture, int expected_status)
 }
 
 /*
- * Build and send one sysctlcmp request over the session.  HELLO carries only
- * the header; every other opcode carries a NUL-terminated name (and, for SET,
+ * Build and send one sysctlcmp request over the session.  Every opcode carries a NUL-terminated name (and, for SET,
  * the new value bytes).  Returns the daemon's errno-style status (0 on success,
  * positive errno on a policy/kernel rejection).  On a value-bearing success the
  * reply value is copied through out/outlen (outlen carries the buffer size in,
@@ -161,22 +160,17 @@ sysctl_op(struct service_session *session, uint16_t opcode, const char *name,
 	memset(request, 0, sizeof(request));
 	msg = (void *)request;
 	msg->magic = SYSCTLCMP_MAGIC;
-	msg->version = SYSCTLCMP_ABI_VERSION;
 	msg->opcode = opcode;
-	if (opcode == SYSCTLCMP_OP_HELLO) {
-		length = sizeof(*msg);
-	} else {
-		name_len = strlen(name) + 1;
-		ATF_REQUIRE(name_len <= SYSCTLCMP_MAX_NAME);
-		ATF_REQUIRE(newlen <= SYSCTLCMP_MAX_VALUE);
-		body = (void *)(msg + 1);
-		body->name_length = (uint16_t)name_len;
-		body->value_length = (uint32_t)newlen;
-		memcpy(body + 1, name, name_len);
-		if (newlen != 0)
-			memcpy((uint8_t *)(body + 1) + name_len, newval, newlen);
-		length = sizeof(*msg) + sizeof(*body) + name_len + newlen;
-	}
+	name_len = strlen(name) + 1;
+	ATF_REQUIRE(name_len <= SYSCTLCMP_MAX_NAME);
+	ATF_REQUIRE(newlen <= SYSCTLCMP_MAX_VALUE);
+	body = (void *)(msg + 1);
+	body->name_length = (uint16_t)name_len;
+	body->value_length = (uint32_t)newlen;
+	memcpy(body + 1, name, name_len);
+	if (newlen != 0)
+		memcpy((uint8_t *)(body + 1) + name_len, newval, newlen);
+	length = sizeof(*msg) + sizeof(*body) + name_len + newlen;
 	memset(&outgoing, 0, sizeof(outgoing));
 	outgoing.size = sizeof(outgoing);
 	outgoing.data = request;
@@ -205,8 +199,7 @@ sysctl_op(struct service_session *session, uint16_t opcode, const char *name,
 }
 
 /*
- * The dispatch handlers honour the per-label read/write policy: HELLO succeeds;
- * a GET of a policy-permitted read-only variable returns a value; a GET of a
+ * The dispatch handlers honour the per-label read/write policy: a GET of a policy-permitted read-only variable returns a value; a GET of a
  * non-permitted variable is refused EPERM before any sysctl(3); a SET is
  * refused EPERM because the policy grants no writes.
  */
@@ -226,10 +219,6 @@ ATF_TC_BODY(policy_gated_get_and_set, tc)
 	require_plane();
 	make_config(&config);
 	raw_fixture_create(&fixture, TEST_LABEL, &config);
-
-	/* HELLO: header-only handshake succeeds. */
-	ATF_CHECK_EQ(0, sysctl_op(fixture.session, SYSCTLCMP_OP_HELLO, NULL,
-	    NULL, 0, NULL, NULL));
 
 	/* GET of the one permitted variable returns a non-empty value. */
 	len = sizeof(value);
@@ -368,7 +357,11 @@ ATF_TC_BODY(malformed_request_fails_closed, tc)
 	struct raw_fixture fixture;
 	struct service_message outgoing;
 	struct service_reply incoming;
-	struct sysctlcmp_msg msg;
+	struct {
+		struct sysctlcmp_msg msg;
+		struct sysctlcmp_body body;
+		char name[12];
+	} frame;
 	uint8_t reply[SYSCTLCMP_MAX_MESSAGE];
 	int status;
 
@@ -377,14 +370,15 @@ ATF_TC_BODY(malformed_request_fails_closed, tc)
 	raw_fixture_create(&fixture, TEST_LABEL, &config);
 
 	/* A header with a corrupted magic: sysctlcmp_validate_message rejects it. */
-	memset(&msg, 0, sizeof(msg));
-	msg.magic = SYSCTLCMP_MAGIC ^ 0xffU;
-	msg.version = SYSCTLCMP_ABI_VERSION;
-	msg.opcode = SYSCTLCMP_OP_HELLO;
+	memset(&frame, 0, sizeof(frame));
+	frame.msg.magic = SYSCTLCMP_MAGIC ^ 0xffU;
+	frame.msg.opcode = SYSCTLCMP_OP_GET;
+	frame.body.name_length = sizeof(frame.name);
+	memcpy(frame.name, "kern.ostype", sizeof(frame.name));
 	memset(&outgoing, 0, sizeof(outgoing));
 	outgoing.size = sizeof(outgoing);
-	outgoing.data = &msg;
-	outgoing.length = sizeof(msg);
+	outgoing.data = &frame;
+	outgoing.length = sizeof(frame);
 	memset(reply, 0, sizeof(reply));
 	memset(&incoming, 0, sizeof(incoming));
 	incoming.size = sizeof(incoming);

@@ -35,7 +35,7 @@ timecmp_validate_message(const struct timecmp_msg *msg, size_t length,
 
 	if (msg == NULL || length < sizeof(*msg))
 		return (-1);
-	if (msg->magic != TIMECMP_MAGIC || msg->version != TIMECMP_ABI_VERSION)
+	if (msg->magic != TIMECMP_MAGIC)
 		return (-1);
 	if (msg->flags != 0)		/* reserved header field, must be zero */
 		return (-1);
@@ -43,7 +43,6 @@ timecmp_validate_message(const struct timecmp_msg *msg, size_t length,
 	    length != sizeof(*msg) + sizeof(struct timecmp_time))
 		return (-1);
 	switch (msg->opcode) {
-	case TIMECMP_OP_HELLO:
 	case TIMECMP_OP_GET:
 	case TIMECMP_OP_SET:
 	case TIMECMP_OP_ADJUST:
@@ -107,16 +106,13 @@ build_header(union timecmp_buffer *buf, uint16_t opcode)
 
 	memset(buf, 0, sizeof(*buf));
 	msg->magic = TIMECMP_MAGIC;
-	msg->version = TIMECMP_ABI_VERSION;
 	msg->opcode = opcode;
 }
 
 int
 timecmp_client_open(struct timecmp_client **clientp)
 {
-	union timecmp_buffer request, reply;
 	struct timecmp_client *client;
-	size_t reply_len;
 	int error, fd, owned;
 
 	if (clientp == NULL)
@@ -146,13 +142,6 @@ timecmp_client_open(struct timecmp_client **clientp)
 		error = errno;
 		(void)close(owned);
 		free(client);
-		return (errno = error, -1);
-	}
-	build_header(&request, TIMECMP_OP_HELLO);
-	if (call(client, &request, sizeof(struct timecmp_msg), &reply,
-	    &reply_len) == -1) {
-		error = errno;
-		timecmp_client_close(client);
 		return (errno = error, -1);
 	}
 	*clientp = client;

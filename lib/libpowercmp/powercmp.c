@@ -35,13 +35,12 @@ powercmp_validate_message(const struct powercmp_msg *msg, size_t length,
 
 	if (msg == NULL || length < sizeof(*msg))
 		return (-1);
-	if (msg->magic != POWERCMP_MAGIC || msg->version != POWERCMP_ABI_VERSION)
+	if (msg->magic != POWERCMP_MAGIC)
 		return (-1);
 	if (length != sizeof(*msg) &&
 	    length != sizeof(*msg) + sizeof(struct powercmp_body))
 		return (-1);
 	switch (msg->opcode) {
-	case POWERCMP_OP_HELLO:
 	case POWERCMP_OP_STATES:
 	case POWERCMP_OP_SUSPEND:
 		break;
@@ -100,16 +99,13 @@ build_header(union powercmp_buffer *buf, uint16_t opcode)
 
 	memset(buf, 0, sizeof(*buf));
 	msg->magic = POWERCMP_MAGIC;
-	msg->version = POWERCMP_ABI_VERSION;
 	msg->opcode = opcode;
 }
 
 int
 powercmp_client_open(struct powercmp_client **clientp)
 {
-	union powercmp_buffer request, reply;
 	struct powercmp_client *client;
-	size_t reply_len;
 	int error, fd, owned;
 
 	if (clientp == NULL)
@@ -139,13 +135,6 @@ powercmp_client_open(struct powercmp_client **clientp)
 		error = errno;
 		(void)close(owned);
 		free(client);
-		return (errno = error, -1);
-	}
-	build_header(&request, POWERCMP_OP_HELLO);
-	if (call(client, &request, sizeof(struct powercmp_msg), &reply,
-	    &reply_len) == -1) {
-		error = errno;
-		powercmp_client_close(client);
 		return (errno = error, -1);
 	}
 	*clientp = client;

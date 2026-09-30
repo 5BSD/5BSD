@@ -226,7 +226,6 @@ call(struct fixture *fixture, uint16_t opcode, const struct timecmp_time *body,
 
 	memset(&req, 0, sizeof(req));
 	req.magic = TIMECMP_MAGIC;
-	req.version = TIMECMP_ABI_VERSION;
 	req.opcode = opcode;
 	memcpy(obuf, &req, sizeof(req));
 	len = hdr_len;
@@ -263,23 +262,6 @@ call(struct fixture *fixture, uint16_t opcode, const struct timecmp_time *body,
 }
 
 /* -------- positive: protocol + read -------- */
-
-ATF_TC(hello_ok);
-ATF_TC_HEAD(hello_ok, tc) { atf_tc_set_md_var(tc, "require.user", "root"); }
-ATF_TC_BODY(hello_ok, tc)
-{
-	struct fixture fixture;
-	struct timecmp_config config;
-	struct timecmp_msg reply;
-
-	require_plane();
-	make_config(&config, false);
-	fixture_create(&fixture, &config, false);
-	ATF_REQUIRE_EQ(0, call(&fixture, TIMECMP_OP_HELLO, NULL,
-	    sizeof(struct timecmp_msg), -1, &reply, NULL));
-	ATF_CHECK_EQ(0, reply.status);
-	fixture_destroy(&fixture);
-}
 
 ATF_TC(get_reads_clock);
 ATF_TC_HEAD(get_reads_clock, tc) { atf_tc_set_md_var(tc, "require.user", "root"); }
@@ -453,7 +435,7 @@ ATF_TC_BODY(rejects_attached_fd, tc)
 	/* An SCM descriptor on any request is a terminal protocol rejection. */
 	null = open("/dev/null", O_RDONLY | O_CLOEXEC);
 	ATF_REQUIRE(null >= 0);
-	check_rejected(TIMECMP_OP_HELLO, NULL, sizeof(struct timecmp_msg), null);
+	check_rejected(TIMECMP_OP_GET, NULL, sizeof(struct timecmp_msg), null);
 	close(null);
 }
 
@@ -512,8 +494,7 @@ ATF_TC_BODY(gate_roundtrip_noop, tc)
 ATF_TP_ADD_TCS(tp)
 {
 
-	ATF_TP_ADD_TC(tp, hello_ok);
-	ATF_TP_ADD_TC(tp, get_reads_clock);
+		ATF_TP_ADD_TC(tp, get_reads_clock);
 	ATF_TP_ADD_TC(tp, set_denied_by_default_policy);
 	ATF_TP_ADD_TC(tp, adjust_denied_by_default_policy);
 	ATF_TP_ADD_TC(tp, set_allowed_reaches_gate);

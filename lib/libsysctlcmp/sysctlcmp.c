@@ -43,8 +43,7 @@ header_validate(const struct sysctlcmp_msg *msg, size_t length,
 	    (role != SYSCTLCMP_MESSAGE_REQUEST &&
 	    role != SYSCTLCMP_MESSAGE_REPLY) ||
 	    msg->magic != SYSCTLCMP_MAGIC ||
-	    msg->version != SYSCTLCMP_ABI_VERSION ||
-	    msg->opcode < SYSCTLCMP_OP_HELLO ||
+	    msg->opcode < SYSCTLCMP_OP_GET ||
 	    msg->opcode > SYSCTLCMP_OP_NEXT ||
 	    msg->flags != 0 ||
 	    (role != SYSCTLCMP_MESSAGE_REPLY && msg->status != 0) ||
@@ -61,14 +60,13 @@ sysctlcmp_message_init(struct sysctlcmp_msg *msg, uint16_t opcode,
     uint32_t flags)
 {
 
-	if (msg == NULL || opcode < SYSCTLCMP_OP_HELLO ||
+	if (msg == NULL || opcode < SYSCTLCMP_OP_GET ||
 	    opcode > SYSCTLCMP_OP_NEXT || flags != 0) {
 		errno = EINVAL;
 		return (-1);
 	}
 	memset(msg, 0, sizeof(*msg));
 	msg->magic = SYSCTLCMP_MAGIC;
-	msg->version = SYSCTLCMP_ABI_VERSION;
 	msg->opcode = opcode;
 	return (0);
 }
@@ -87,7 +85,6 @@ sysctlcmp_message_init_reply(struct sysctlcmp_msg *reply,
 	}
 	memset(reply, 0, sizeof(*reply));
 	reply->magic = SYSCTLCMP_MAGIC;
-	reply->version = SYSCTLCMP_ABI_VERSION;
 	reply->opcode = request->opcode;
 	reply->status = status;
 	return (0);
@@ -101,9 +98,8 @@ sysctlcmp_validate_message(const struct sysctlcmp_msg *msg, size_t length,
 
 	if (header_validate(msg, length, role) == -1)
 		return (-1);
-	/* HELLO carries no body; a rejected reply (status != 0) carries none. */
-	if (msg->opcode == SYSCTLCMP_OP_HELLO ||
-	    (role == SYSCTLCMP_MESSAGE_REPLY && msg->status != 0)) {
+	/* A rejected reply (status != 0) carries no body. */
+	if (role == SYSCTLCMP_MESSAGE_REPLY && msg->status != 0) {
 		if (length != sizeof(*msg)) {
 			errno = EPROTO;
 			return (-1);
@@ -358,10 +354,7 @@ sysctlcmp_set(struct sysctlcmp_client *client, const char *name,
 int
 sysctlcmp_client_open(struct sysctlcmp_client **clientp)
 {
-	union sysctlcmp_buffer request, reply;
 	struct sysctlcmp_client *client;
-	struct sysctlcmp_msg *msg;
-	size_t req_len;
 	int error, fd, owned;
 
 	if (clientp == NULL)
@@ -392,19 +385,6 @@ sysctlcmp_client_open(struct sysctlcmp_client **clientp)
 		error = errno;
 		close(owned);
 		free(client);
-		return (errno = error, -1);
-	}
-	memset(&request, 0, sizeof(request));
-	msg = (void *)request.bytes;
-	if (sysctlcmp_message_init(msg, SYSCTLCMP_OP_HELLO, 0) == -1) {
-		error = errno;
-		sysctlcmp_client_close(client);
-		return (errno = error, -1);
-	}
-	req_len = sizeof(*msg);
-	if (call(client, request.bytes, req_len, &reply, NULL) == -1) {
-		error = errno;
-		sysctlcmp_client_close(client);
 		return (errno = error, -1);
 	}
 	*clientp = client;

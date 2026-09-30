@@ -15,13 +15,10 @@
 #include <stdint.h>
 
 #define	TIMECMP_INTERFACE		"system.Time"
-#define	TIMECMP_INTERFACE_VERSION	"1.0.0"
 #define	TIMECMP_MAGIC			0x54494d45U	/* "TIME" */
-#define	TIMECMP_ABI_VERSION		1
 
 enum timecmp_opcode {
-	TIMECMP_OP_HELLO = 1,
-	TIMECMP_OP_GET,		/* read CLOCK_REALTIME (reply: timecmp_time) */
+	TIMECMP_OP_GET = 1,	/* read CLOCK_REALTIME (reply: timecmp_time) */
 	TIMECMP_OP_SET,		/* clock_settime(CLOCK_REALTIME) -- privileged */
 	TIMECMP_OP_ADJUST	/* adjtime() slew -- privileged; reply: old delta */
 };
@@ -33,8 +30,7 @@ enum timecmp_message_role {
 
 struct timecmp_msg {
 	uint32_t	magic;
-	uint16_t	version;
-	uint16_t	opcode;
+	uint32_t	opcode;
 	uint32_t	flags;
 	int32_t		status;		/* reply: 0 or -errno */
 };
@@ -53,11 +49,6 @@ struct timecmp_time {
 	uint32_t	present;
 };
 
-struct timecmp_hello_reply {
-	uint32_t	version;
-	uint32_t	reserved[3];
-};
-
 /* A message is the header, optionally followed by exactly one timecmp_time. */
 #define	TIMECMP_MAX_MESSAGE	(sizeof(struct timecmp_msg) + \
 				 sizeof(struct timecmp_time))
@@ -66,7 +57,7 @@ _Static_assert(sizeof(struct timecmp_msg) == 16, "timecmp header ABI");
 _Static_assert(sizeof(struct timecmp_time) == 16, "timecmp time ABI");
 
 /*
- * Validate a received message of the given role: magic, version, a known
+ * Validate a received message of the given role: magic, a known
  * opcode, and a length that is either the bare header or header + one
  * timecmp_time.  Returns 0 if well-formed, -1 otherwise.  Shared by the client
  * and the BSDTime daemon (both link libtimecmp).

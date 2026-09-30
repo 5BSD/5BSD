@@ -14,7 +14,7 @@ Source: `usr.sbin/BSDSysctl/capbundle/bsdsysctl.ucl` and `Bundle.ucl`.
 
 | Field | Value |
 |---|---|
-| Wire name | `system.Sysctl` (interface version `1.0.0`, ABI 1) |
+| Wire name | `system.Sysctl` |
 | Bundle | `/Capabilities/System/Sysctl.cap` (`bundle_id = "system.Sysctl"`) |
 | Program | `/Capabilities/System/Sysctl.cap/Units/bsdsysctl.unit/bin/BSDSysctl` |
 | Unit | `bsdsysctl` |
@@ -29,16 +29,15 @@ Source: `usr.sbin/BSDSysctl/capbundle/bsdsysctl.ucl` and `Bundle.ucl`.
 
 ## Wire operations
 
-Defined in `lib/libsysctlcmp/sysctlcmp_protocol.h`. Header `struct sysctlcmp_msg` (magic `SCTP`, `version`, `opcode`, `flags`, `status` = 0 or negative errno) followed by `struct sysctlcmp_body { name_length, value_length }` and then the NUL-terminated name and the value bytes. Names are at most `SYSCTLCMP_MAX_NAME` (256), values at most `SYSCTLCMP_MAX_VALUE` (8192). HELLO is a bare liveness exchange returning `sysctlcmp_hello_reply { version }`. A malformed request, or one carrying an attached fd, is `EPROTO` and ends the session.
+Defined in `lib/libsysctlcmp/sysctlcmp_protocol.h`. Header `struct sysctlcmp_msg` (magic `SCTP`, `opcode`, `flags`, `status` = 0 or negative errno) followed by `struct sysctlcmp_body { name_length, value_length }` and then the NUL-terminated name and the value bytes. Names are at most `SYSCTLCMP_MAX_NAME` (256), values at most `SYSCTLCMP_MAX_VALUE` (8192). A malformed request, or one carrying an attached fd, is `EPROTO` and ends the session.
 
 | Op | Request | Reply | Errors |
 |---|---|---|---|
-| `HELLO` (1) | header | `sysctlcmp_hello_reply` | `EPROTO` |
-| `GET` (2) | name, `value_length = 0` | raw value bytes | `EPERM` name outside read policy; `ENOENT` no such OID; `EOVERFLOW` value exceeds 8192 |
-| `SET` (3) | name + value as text | empty body | `EPERM` outside write policy; `EINVAL` text does not parse for the OID's type, or NODE/OPAQUE; `ENOMEM`; kernel errors |
-| `OIDFMT` (4) | name | `sysctlcmp_oidfmt { kind, fmt[] }` (`CTLTYPE` low bits, `CTLFLAG_*` high bits, printf-style format) | `EPERM` read policy |
-| `DESCR` (5) | name | description string (as `sysctl -d`) | `EPERM` read policy |
-| `NEXT` (6) | cursor name (empty = root) | next permitted name | `ENOENT` past the last permitted variable; `ENOMEM` |
+| `GET` (1) | name, `value_length = 0` | raw value bytes | `EPERM` name outside read policy; `ENOENT` no such OID; `EOVERFLOW` value exceeds 8192 |
+| `SET` (2) | name + value as text | empty body | `EPERM` outside write policy; `EINVAL` text does not parse for the OID's type, or NODE/OPAQUE; `ENOMEM`; kernel errors |
+| `OIDFMT` (3) | name | `sysctlcmp_oidfmt { kind, fmt[] }` (`CTLTYPE` low bits, `CTLFLAG_*` high bits, printf-style format) | `EPERM` read policy |
+| `DESCR` (4) | name | description string (as `sysctl -d`) | `EPERM` read policy |
+| `NEXT` (5) | cursor name (empty = root) | next permitted name | `ENOENT` past the last permitted variable; `ENOMEM` |
 
 The SET value on the wire is text; the broker looks up the OID's kind, encodes the text to the native binary width (int, uint, long, s8 through u64, or a string) and then performs the gated write, so a client never has to know the kernel type. NEXT walks `CTL_SYSCTL_NEXT` and skips every name the label may not read, so enumeration never reveals a name outside the caller's read policy; the cursor itself is not gated. The `bsdsysctl` DTrace provider fires `request-start` and `request-done` (label, opcode, bytes, status, transport error) around every op.
 
@@ -125,7 +124,7 @@ Run with `kyua test -k /usr/tests/usr.sbin/BSDSysctl/Kyuafile` on a booted plane
 
 ## Status and gaps
 
-Status: shipped; capmode; user `capability`; gate `sysctl` plus `isolate`; ops HELLO, GET, SET, NEXT, OIDFMT, DESCR (inventory section 4). The inventory flags this provider as sitting at the fleet-minimum test count (10 daemon cases).
+Status: shipped; capmode; user `capability`; gate `sysctl` plus `isolate`; ops GET, SET, NEXT, OIDFMT, DESCR (inventory section 4). The inventory flags this provider as sitting at the fleet-minimum test count (10 daemon cases).
 
 Known gaps and drift:
 

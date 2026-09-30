@@ -77,7 +77,6 @@ init_reply(struct powercmp_msg *reply, const struct powercmp_msg *request,
 
 	memset(reply, 0, sizeof(*reply));
 	reply->magic = POWERCMP_MAGIC;
-	reply->version = POWERCMP_ABI_VERSION;
 	reply->opcode = request->opcode;
 	reply->status = status;
 }
@@ -152,9 +151,6 @@ handle_request(struct channel *channel __unused,
 	body = (const void *)(request + 1);
 
 	switch (request->opcode) {
-	case POWERCMP_OP_HELLO:
-		result = send_status(message, request, 0);
-		break;
 	case POWERCMP_OP_STATES:
 		memset(&out, 0, sizeof(out));
 		out.supported = g_states;	/* cached pre-capmode at startup */
@@ -254,7 +250,7 @@ serve_session(int fd, const char *label, const struct powercmp_config *config)
  * Test entrypoints.  Expose the per-session channel worker and the two
  * startup-cached globals (the supported-state mask and the narrowed /dev/acpi
  * descriptor) to the ATF suite so a test can drive the real request handler
- * (protocol validation, per-label SUSPEND policy, HELLO/STATES/SUSPEND
+ * (protocol validation, per-label SUSPEND policy, STATES/SUSPEND
  * dispatch) over a connected provider channel without the switchboard launch
  * path.  The daemon build (no -DBSDPOWER_TESTING) compiles main() below
  * instead and never these.

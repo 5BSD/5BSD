@@ -6,7 +6,7 @@
 
 /*
  * Test-only entrypoint.  Runs the real per-label serve path (the GET/SET/
- * OIDFMT/DESCR/NEXT/HELLO dispatch) on a caller-owned channel descriptor with a
+ * OIDFMT/DESCR/NEXT dispatch) on a caller-owned channel descriptor with a
  * caller-supplied client label and policy, so the per-label read/write gating
  * can be driven over the plane without switchboard or a config-directory overlay.
  */

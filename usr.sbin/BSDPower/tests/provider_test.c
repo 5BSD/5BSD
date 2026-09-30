@@ -9,7 +9,7 @@
  * exactly as it would over a held system.Power channel.
  *
  * The cases exercise the DAEMON's decision logic -- protocol validation
- * (magic, ABI version, framing), the per-label suspend policy, and opcode
+ * (magic, framing), the per-label suspend policy, and opcode
  * dispatch -- without ever touching /dev/acpi: the worker is started with no
  * ACPI descriptor, so a SUSPEND that policy lets through is answered ENODEV
  * (the last check before the ioctl), which distinguishes "policy allowed it"
@@ -213,7 +213,7 @@ call_raw(struct fixture *fixture, const void *data, size_t len, int fd,
 }
 
 /*
- * Issue one well-formed request: a header (magic, ABI version, opcode) plus an
+ * Issue one well-formed request: a header (magic, opcode) plus an
  * optional powercmp_body.  hdr_len lets a caller send a deliberately short or
  * long header when body == NULL.
  */
@@ -230,7 +230,6 @@ call(struct fixture *fixture, uint16_t opcode, const struct powercmp_body *body,
 	memset(obuf, 0, sizeof(obuf));
 	memset(&req, 0, sizeof(req));
 	req.magic = POWERCMP_MAGIC;
-	req.version = POWERCMP_ABI_VERSION;
 	req.opcode = opcode;
 	memcpy(obuf, &req, sizeof(req));
 	len = hdr_len;
@@ -290,27 +289,7 @@ ATF_TC_BODY(supported_states_matches_sysctl, tc)
 	ATF_CHECK_EQ(0, mask & ~(uint32_t)0x3e);
 }
 
-/* -------- positive: HELLO + STATES -------- */
-
-ATF_TC(hello_ok);
-ATF_TC_HEAD(hello_ok, tc) { atf_tc_set_md_var(tc, "require.user", "root"); }
-ATF_TC_BODY(hello_ok, tc)
-{
-	struct fixture fixture;
-	struct powercmp_config config;
-	struct powercmp_msg reply;
-
-	require_plane();
-	make_config(&config, false, NULL);
-	fixture_create(&fixture, &config);
-	ATF_REQUIRE_EQ(0, call(&fixture, POWERCMP_OP_HELLO, NULL,
-	    sizeof(struct powercmp_msg), -1, &reply, NULL));
-	ATF_CHECK_EQ(0, reply.status);
-	ATF_CHECK_EQ(POWERCMP_MAGIC, reply.magic);
-	ATF_CHECK_EQ(POWERCMP_ABI_VERSION, reply.version);
-	ATF_CHECK_EQ(POWERCMP_OP_HELLO, reply.opcode);
-	fixture_destroy(&fixture);
-}
+/* -------- positive: STATES -------- */
 
 ATF_TC(states_reports_cached_mask);
 ATF_TC_HEAD(states_reports_cached_mask, tc)
@@ -464,7 +443,7 @@ ATF_TC_BODY(suspend_bad_state_is_einval, tc)
 		    bad[i], reply.status);
 	}
 	/* The range check is not terminal: the session still answers. */
-	ATF_REQUIRE_EQ(0, call(&fixture, POWERCMP_OP_HELLO, NULL,
+	ATF_REQUIRE_EQ(0, call(&fixture, POWERCMP_OP_STATES, NULL,
 	    sizeof(struct powercmp_msg), -1, &reply, NULL));
 	ATF_CHECK_EQ(0, reply.status);
 	fixture_destroy(&fixture);
@@ -498,7 +477,7 @@ ATF_TC_BODY(suspend_denied_before_state_check, tc)
 /* -------- adversarial / edge: malformed framing -------- */
 
 /*
- * A top-level protocol violation (bad magic or ABI version, unknown opcode, a
+ * A top-level protocol violation (bad magic, unknown opcode, a
  * header truncated below sizeof(powercmp_msg), a message longer than header +
  * body, or an attached SCM descriptor) is rejected AND terminates the session
  * (the handler sets session->error).  The reply, if it arrives, is EPROTO; but
@@ -534,38 +513,21 @@ check_rejected(uint16_t opcode, size_t hdr_len, int fd)
 	memset(obuf, 0, sizeof(obuf));
 	memset(&req, 0, sizeof(req));
 	req.magic = POWERCMP_MAGIC;
-	req.version = POWERCMP_ABI_VERSION;
 	req.opcode = opcode;
 	memcpy(obuf, &req, sizeof(req));
 	check_rejected_raw(obuf, hdr_len, fd);
 }
 
-ATF_TC(hello_wrong_abi_version_is_rejected);
-ATF_TC_HEAD(hello_wrong_abi_version_is_rejected, tc)
+ATF_TC(wrong_magic_is_rejected);
+ATF_TC_HEAD(wrong_magic_is_rejected, tc)
 { atf_tc_set_md_var(tc, "require.user", "root"); }
-ATF_TC_BODY(hello_wrong_abi_version_is_rejected, tc)
-{
-	struct powercmp_msg req;
-
-	/* Version negotiation is strict: only POWERCMP_ABI_VERSION is spoken. */
-	memset(&req, 0, sizeof(req));
-	req.magic = POWERCMP_MAGIC;
-	req.version = POWERCMP_ABI_VERSION + 1;
-	req.opcode = POWERCMP_OP_HELLO;
-	check_rejected_raw(&req, sizeof(req), -1);
-}
-
-ATF_TC(hello_wrong_magic_is_rejected);
-ATF_TC_HEAD(hello_wrong_magic_is_rejected, tc)
-{ atf_tc_set_md_var(tc, "require.user", "root"); }
-ATF_TC_BODY(hello_wrong_magic_is_rejected, tc)
+ATF_TC_BODY(wrong_magic_is_rejected, tc)
 {
 	struct powercmp_msg req;
 
 	memset(&req, 0, sizeof(req));
 	req.magic = POWERCMP_MAGIC ^ 0xffU;
-	req.version = POWERCMP_ABI_VERSION;
-	req.opcode = POWERCMP_OP_HELLO;
+	req.opcode = POWERCMP_OP_STATES;
 	check_rejected_raw(&req, sizeof(req), -1);
 }
 
@@ -584,7 +546,7 @@ ATF_TC_HEAD(zero_opcode_is_rejected, tc)
 ATF_TC_BODY(zero_opcode_is_rejected, tc)
 {
 
-	/* Opcodes start at 1; an all-zero opcode field is not HELLO. */
+	/* Opcodes start at 1; an all-zero opcode field is not a valid op. */
 	check_rejected(0, sizeof(struct powercmp_msg), -1);
 }
 
@@ -636,7 +598,7 @@ ATF_TC_BODY(suspend_missing_body_is_eproto, tc)
 	    sizeof(struct powercmp_msg), -1, &reply, NULL));
 	ATF_CHECK_EQ(EPROTO, -reply.status);
 	/* Opcode-level framing is not terminal: the session still answers. */
-	ATF_REQUIRE_EQ(0, call(&fixture, POWERCMP_OP_HELLO, NULL,
+	ATF_REQUIRE_EQ(0, call(&fixture, POWERCMP_OP_STATES, NULL,
 	    sizeof(struct powercmp_msg), -1, &reply, NULL));
 	ATF_CHECK_EQ(0, reply.status);
 	fixture_destroy(&fixture);
@@ -652,7 +614,7 @@ ATF_TC_BODY(rejects_attached_fd, tc)
 	/* An SCM descriptor on any request is a terminal protocol rejection. */
 	null = open("/dev/null", O_RDONLY | O_CLOEXEC);
 	ATF_REQUIRE(null >= 0);
-	check_rejected(POWERCMP_OP_HELLO, sizeof(struct powercmp_msg), null);
+	check_rejected(POWERCMP_OP_STATES, sizeof(struct powercmp_msg), null);
 	close(null);
 }
 
@@ -661,7 +623,6 @@ ATF_TP_ADD_TCS(tp)
 
 	ATF_TP_ADD_TC(tp, serve_session_rejects_bad_arguments);
 	ATF_TP_ADD_TC(tp, supported_states_matches_sysctl);
-	ATF_TP_ADD_TC(tp, hello_ok);
 	ATF_TP_ADD_TC(tp, states_reports_cached_mask);
 	ATF_TP_ADD_TC(tp, states_reports_zero_without_acpi);
 	ATF_TP_ADD_TC(tp, suspend_denied_by_default_policy);
@@ -669,8 +630,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, suspend_policy_is_per_label);
 	ATF_TP_ADD_TC(tp, suspend_bad_state_is_einval);
 	ATF_TP_ADD_TC(tp, suspend_denied_before_state_check);
-	ATF_TP_ADD_TC(tp, hello_wrong_abi_version_is_rejected);
-	ATF_TP_ADD_TC(tp, hello_wrong_magic_is_rejected);
+	ATF_TP_ADD_TC(tp, wrong_magic_is_rejected);
 	ATF_TP_ADD_TC(tp, unknown_opcode_is_rejected);
 	ATF_TP_ADD_TC(tp, zero_opcode_is_rejected);
 	ATF_TP_ADD_TC(tp, short_message_is_rejected);

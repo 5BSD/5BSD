@@ -14,7 +14,7 @@ Source: `usr.sbin/BSDTime/capbundle/BSDTime.ucl` and `Bundle.ucl`.
 
 | Field | Value |
 |---|---|
-| Wire name | `system.Time` (interface version `1.0.0`, ABI 1) |
+| Wire name | `system.Time` |
 | Bundle | `/Capabilities/System/Time.cap` (`bundle_id = "system.Time"`) |
 | Program | `/Capabilities/System/Time.cap/Units/bsdtime.unit/bin/BSDTime` |
 | Unit | `bsdtime` |
@@ -29,14 +29,13 @@ Source: `usr.sbin/BSDTime/capbundle/BSDTime.ucl` and `Bundle.ucl`.
 
 ## Wire operations
 
-Defined in `lib/libtimecmp/timecmp_protocol.h`. Messages are fixed size: `struct timecmp_msg` (magic `TIME`, `version`, `opcode`, `flags`, `status`) optionally followed by exactly one `struct timecmp_time { sec, nsec, present }`. `timecmp_validate_message()` is shared by client and daemon and rejects anything that is not the bare header or header plus one time body. HELLO is a bare liveness exchange. A request with an attached descriptor, a bad magic, a wrong ABI version, an unknown opcode or a short or oversized body is `EPROTO` and ends the session.
+Defined in `lib/libtimecmp/timecmp_protocol.h`. Messages are fixed size: `struct timecmp_msg` (magic `TIME`, `opcode`, `flags`, `status`) optionally followed by exactly one `struct timecmp_time { sec, nsec, present }`. `timecmp_validate_message()` is shared by client and daemon and rejects anything that is not the bare header or header plus one time body. A request with an attached descriptor, a bad magic, an unknown opcode or a short or oversized body is `EPROTO` and ends the session.
 
 | Op | Request | Reply | Errors |
 |---|---|---|---|
-| `HELLO` (1) | header | header, status 0 | `EPROTO` |
-| `GET` (2) | header | `timecmp_time` (`present = 1`) with `CLOCK_REALTIME` | `clock_gettime(2)` errors |
-| `SET` (3) | `timecmp_time` absolute, `nsec` in `[0, 999999999]` | header | `EPROTO` body missing; `EPERM` label not granted `set`; `EINVAL` nsec out of range; gate errors |
-| `ADJUST` (4) | `timecmp_time` signed delta (sign in `sec`, `nsec` magnitude) | `timecmp_time` = correction still pending (`present = 0` if none) | `EPROTO`; `EPERM`; `EINVAL`; gate errors |
+| `GET` (1) | header | `timecmp_time` (`present = 1`) with `CLOCK_REALTIME` | `clock_gettime(2)` errors |
+| `SET` (2) | `timecmp_time` absolute, `nsec` in `[0, 999999999]` | header | `EPROTO` body missing; `EPERM` label not granted `set`; `EINVAL` nsec out of range; gate errors |
+| `ADJUST` (3) | `timecmp_time` signed delta (sign in `sec`, `nsec` magnitude) | `timecmp_time` = correction still pending (`present = 0` if none) | `EPROTO`; `EPERM`; `EINVAL`; gate errors |
 
 The policy check precedes the range check, so a denied label learns nothing about argument validity. ADJUST scales the sub-second part to microseconds for `adjtime(2)` and returns the previously pending correction in the same shape.
 
@@ -104,14 +103,14 @@ The shipped file is exactly the `default` block plus a commented example. A miss
 
 | Where | Programs | What they prove |
 |---|---|---|
-| `usr.sbin/BSDTime/tests` (package `runtime-tests`, `/usr/tests/usr.sbin/BSDTime`) | `provider_test` (10 cases), `config_test` (8) | provider_test compiles `BSDTime.c` with `-DBSDTIME_TESTING` and drives the real session handler over a mac_capability channel: HELLO answers, GET reads the clock, SET and ADJUST are denied by the default policy, an allowed label reaches the gate, unknown opcode, short message and missing body are rejected (`EPROTO`), an attached fd is rejected, and a gate round trip with a no-op delta succeeds. config_test covers `default`/`clients` parsing, exact-label matching and fail-soft loading. |
+| `usr.sbin/BSDTime/tests` (package `runtime-tests`, `/usr/tests/usr.sbin/BSDTime`) | `provider_test` (9 cases), `config_test` (8) | provider_test compiles `BSDTime.c` with `-DBSDTIME_TESTING` and drives the real session handler over a mac_capability channel: GET reads the clock, SET and ADJUST are denied by the default policy, an allowed label reaches the gate, unknown opcode, short message and missing body are rejected (`EPROTO`), an attached fd is rejected, and a gate round trip with a no-op delta succeeds. config_test covers `default`/`clients` parsing, exact-label matching and fail-soft loading. |
 | `lib/libtimecmp/tests` (`libtimecmp-tests`) | `protocol_test` (6) | `timecmp_validate_message()` accepts the two legal shapes and rejects everything else for both roles |
 
 Run with `kyua test -k /usr/tests/usr.sbin/BSDTime/Kyuafile`. `set_allowed_reaches_gate` and `gate_roundtrip_noop` need a held settime token, so they are meaningful only on a booted plane in the VM rig ([Testing](../develop/testing.md)); elsewhere they skip. BSDTime is the reference pattern the BSDPower suite was copied from.
 
 ## Status and gaps
 
-Status: shipped; capmode; user `capability`; gate `settime`; ops HELLO, GET, SET, ADJUST (inventory section 4).
+Status: shipped; capmode; user `capability`; gate `settime`; ops GET, SET, ADJUST (inventory section 4).
 
 Known gaps and drift:
 

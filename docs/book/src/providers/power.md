@@ -14,7 +14,7 @@ Source: `usr.sbin/BSDPower/capbundle/BSDPower.ucl` and `Bundle.ucl`.
 
 | Field | Value |
 |---|---|
-| Wire name | `system.Power` (interface version `1.0.0`, ABI 1) |
+| Wire name | `system.Power` |
 | Bundle | `/Capabilities/System/Power.cap` (`bundle_id = "system.Power"`) |
 | Program | `/Capabilities/System/Power.cap/Units/bsdpower.unit/bin/BSDPower` |
 | Unit | `bsdpower` |
@@ -30,13 +30,12 @@ Source: `usr.sbin/BSDPower/capbundle/BSDPower.ucl` and `Bundle.ucl`.
 
 ## Wire operations
 
-Defined in `lib/libpowercmp/powercmp_protocol.h`. Fixed-size messages: `struct powercmp_msg` (magic `PWR\0`, `version`, `opcode`, `flags`, `status`) optionally followed by one `struct powercmp_body { state, supported, reserved[2] }`. `powercmp_validate_message()` is shared by client and daemon. HELLO is a bare liveness exchange. A request with an attached descriptor, wrong magic, wrong ABI version, zero or unknown opcode, or a short, oversized or partial body is `EPROTO` and ends the session.
+Defined in `lib/libpowercmp/powercmp_protocol.h`. Fixed-size messages: `struct powercmp_msg` (magic `PWR\0`, `opcode`, `flags`, `status`) optionally followed by one `struct powercmp_body { state, supported, reserved[2] }`. `powercmp_validate_message()` is shared by client and daemon. A request with an attached descriptor, wrong magic, zero or unknown opcode, or a short, oversized or partial body is `EPROTO` and ends the session.
 
 | Op | Request | Reply | Errors |
 |---|---|---|---|
-| `HELLO` (1) | header | header, status 0 | `EPROTO` |
-| `STATES` (2) | header | `powercmp_body.supported`: bit N set means SN is supported, e.g. `(1<<3)|(1<<4)|(1<<5)` for "S3 S4 S5" | none beyond transport |
-| `SUSPEND` (3) | `powercmp_body.state` in 1..5 | header | `EPROTO` body missing; `EPERM` label not granted `suspend`; `EINVAL` state outside 1..5; `ENODEV` no `/dev/acpi`; ioctl errors |
+| `STATES` (1) | header | `powercmp_body.supported`: bit N set means SN is supported, e.g. `(1<<3)|(1<<4)|(1<<5)` for "S3 S4 S5" | none beyond transport |
+| `SUSPEND` (2) | `powercmp_body.state` in 1..5 | header | `EPROTO` body missing; `EPERM` label not granted `suspend`; `EINVAL` state outside 1..5; `ENODEV` no `/dev/acpi`; ioctl errors |
 
 The checks run in that order: policy first, then range, then device presence, so a denied label learns nothing about arguments or hardware. A granted SUSPEND is logged with the caller's label and fires the `BSDPower` provider's `suspend` probe before the reply; the machine may sleep before the reply is read.
 
@@ -101,14 +100,14 @@ The shipped file is exactly the `default` block plus a commented example. A miss
 
 | Where | Programs | What they prove |
 |---|---|---|
-| `usr.sbin/BSDPower/tests` (package `runtime-tests`, `/usr/tests/usr.sbin/BSDPower`) | `provider_test` (19 cases), `config_test` (8) | provider_test compiles `BSDPower.c` with `-DBSDPOWER_TESTING`, which exposes the per-session worker and the two startup-cached globals (the state mask and the narrowed ACPI descriptor) so a test can drive the real request handler over a mac_capability channel without the switchboard launch path and without holding a real `/dev/acpi`. Cases: bad serve arguments, the supported mask matches the sysctl, HELLO answers, STATES reports the cached mask and zero without ACPI, SUSPEND is denied by default policy, an allowed label reaches the device, policy is per label, a bad state is `EINVAL`, denial precedes the state check, wrong ABI version and wrong magic, unknown and zero opcode, short, oversized and partial bodies, missing SUSPEND body is `EPROTO`, and an attached fd is rejected. Two of the cases are plane-free and run anywhere. config_test covers the parser and fail-soft loading. |
+| `usr.sbin/BSDPower/tests` (package `runtime-tests`, `/usr/tests/usr.sbin/BSDPower`) | `provider_test` (17 cases), `config_test` (8) | provider_test compiles `BSDPower.c` with `-DBSDPOWER_TESTING`, which exposes the per-session worker and the two startup-cached globals (the state mask and the narrowed ACPI descriptor) so a test can drive the real request handler over a mac_capability channel without the switchboard launch path and without holding a real `/dev/acpi`. Cases: bad serve arguments, the supported mask matches the sysctl, STATES reports the cached mask and zero without ACPI, SUSPEND is denied by default policy, an allowed label reaches the device, policy is per label, a bad state is `EINVAL`, denial precedes the state check, wrong magic, unknown and zero opcode, short, oversized and partial bodies, missing SUSPEND body is `EPROTO`, and an attached fd is rejected. Two of the cases are plane-free and run anywhere. config_test covers the parser and fail-soft loading. |
 | `lib/libpowercmp/tests` (`libpowercmp-tests`) | `protocol_test` (6) | `powercmp_validate_message()` for both roles |
 
 Run with `kyua test -k /usr/tests/usr.sbin/BSDPower/Kyuafile` on a booted plane ([Testing](../develop/testing.md)). The suite was added on the BSDTime pattern in commit 5692d3ef2c5e; the worker never touches real hardware under test, so `suspend_allowed_reaches_device` proves the ioctl is issued on the injected descriptor, not that the machine sleeps.
 
 ## Status and gaps
 
-Status: shipped; capmode; user `capability`; `/dev/acpi` via delivered `/dev` with `cap_ioctls_limit`; ops HELLO, STATES, SUSPEND; provider_test present since 5692d3ef2c5e (inventory section 4).
+Status: shipped; capmode; user `capability`; `/dev/acpi` via delivered `/dev` with `cap_ioctls_limit`; ops STATES, SUSPEND; provider_test present since 5692d3ef2c5e (inventory section 4).
 
 Known gaps and drift:
 

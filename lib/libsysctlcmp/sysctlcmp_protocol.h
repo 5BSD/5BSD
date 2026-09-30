@@ -8,9 +8,7 @@
 #include <stdint.h>
 
 #define	SYSCTLCMP_INTERFACE		"system.Sysctl"
-#define	SYSCTLCMP_INTERFACE_VERSION	"1.0.0"
 #define	SYSCTLCMP_MAGIC			0x53435450U	/* "SCTP" */
-#define	SYSCTLCMP_ABI_VERSION		1
 
 #define	SYSCTLCMP_MAX_NAME		256
 #define	SYSCTLCMP_MAX_VALUE		8192
@@ -19,8 +17,7 @@
 					 SYSCTLCMP_MAX_NAME + SYSCTLCMP_MAX_VALUE)
 
 enum sysctlcmp_opcode {
-	SYSCTLCMP_OP_HELLO = 1,
-	SYSCTLCMP_OP_GET,	/* read raw value by name */
+	SYSCTLCMP_OP_GET = 1,/* read raw value by name */
 	SYSCTLCMP_OP_SET,	/* write raw value by name */
 	SYSCTLCMP_OP_OIDFMT,	/* type/flags: reply = u32 kind + format string */
 	SYSCTLCMP_OP_DESCR,	/* description string (sysctl -d) */
@@ -44,8 +41,7 @@ enum sysctlcmp_message_role {
 
 struct sysctlcmp_msg {
 	uint32_t	magic;
-	uint16_t	version;
-	uint16_t	opcode;
+	uint32_t	opcode;
 	uint32_t	flags;
 	int32_t		status;		/* reply: 0 or -errno */
 };
@@ -60,11 +56,6 @@ struct sysctlcmp_body {
 	uint16_t	name_length;	/* includes trailing NUL */
 	uint16_t	reserved;
 	uint32_t	value_length;
-};
-
-struct sysctlcmp_hello_reply {
-	uint32_t	version;
-	uint32_t	reserved[3];
 };
 
 _Static_assert(sizeof(struct sysctlcmp_msg) == 16,

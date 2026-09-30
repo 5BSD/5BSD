@@ -15,13 +15,10 @@
 #include <stdint.h>
 
 #define	POWERCMP_INTERFACE		"system.Power"
-#define	POWERCMP_INTERFACE_VERSION	"1.0.0"
 #define	POWERCMP_MAGIC			0x50575200U	/* "PWR\0" */
-#define	POWERCMP_ABI_VERSION		1
 
 enum powercmp_opcode {
-	POWERCMP_OP_HELLO = 1,
-	POWERCMP_OP_STATES,	/* reply: supported S-state bitmask (unpriv) */
+	POWERCMP_OP_STATES = 1,	/* reply: supported S-state bitmask (unpriv) */
 	POWERCMP_OP_SUSPEND	/* request: enter S-state N -- privileged */
 };
 
@@ -32,8 +29,7 @@ enum powercmp_message_role {
 
 struct powercmp_msg {
 	uint32_t	magic;
-	uint16_t	version;
-	uint16_t	opcode;
+	uint32_t	opcode;
 	uint32_t	flags;
 	int32_t		status;		/* reply: 0 or -errno */
 };

@@ -12,12 +12,11 @@
 #include "timecmp_protocol.h"
 
 static void
-init(struct timecmp_msg *m, uint16_t op)
+init(struct timecmp_msg *m, uint32_t op)
 {
 
 	memset(m, 0, sizeof(*m));
 	m->magic = TIMECMP_MAGIC;
-	m->version = TIMECMP_ABI_VERSION;
 	m->opcode = op;
 }
 
@@ -42,17 +41,13 @@ ATF_TC_BODY(header_plus_one_time_is_valid, tc)
 	    sizeof(*m) + sizeof(struct timecmp_time), TIMECMP_MESSAGE_REQUEST));
 }
 
-ATF_TC_WITHOUT_HEAD(bad_magic_and_version_are_rejected);
-ATF_TC_BODY(bad_magic_and_version_are_rejected, tc)
+ATF_TC_WITHOUT_HEAD(bad_magic_is_rejected);
+ATF_TC_BODY(bad_magic_is_rejected, tc)
 {
 	struct timecmp_msg m;
 
 	init(&m, TIMECMP_OP_GET);
 	m.magic = 0xdeadbeef;
-	ATF_CHECK_EQ(-1, timecmp_validate_message(&m, sizeof(m),
-	    TIMECMP_MESSAGE_REQUEST));
-	init(&m, TIMECMP_OP_GET);
-	m.version = TIMECMP_ABI_VERSION + 1;
 	ATF_CHECK_EQ(-1, timecmp_validate_message(&m, sizeof(m),
 	    TIMECMP_MESSAGE_REQUEST));
 }
@@ -108,7 +103,7 @@ ATF_TP_ADD_TCS(tp)
 
 	ATF_TP_ADD_TC(tp, bare_header_is_valid);
 	ATF_TP_ADD_TC(tp, header_plus_one_time_is_valid);
-	ATF_TP_ADD_TC(tp, bad_magic_and_version_are_rejected);
+	ATF_TP_ADD_TC(tp, bad_magic_is_rejected);
 	ATF_TP_ADD_TC(tp, unknown_opcode_is_rejected);
 	ATF_TP_ADD_TC(tp, odd_lengths_are_rejected);
 	ATF_TP_ADD_TC(tp, reply_with_positive_status_is_rejected);
