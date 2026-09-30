@@ -8,9 +8,7 @@
 #include <stdint.h>
 
 #define	TRACECMP_INTERFACE		"system.Trace"
-#define	TRACECMP_INTERFACE_VERSION	"1.0.0"
 #define	TRACECMP_MAGIC			0x54524343U	/* "TRCC" */
-#define	TRACECMP_ABI_VERSION		1
 #define	TRACECMP_MAX_MESSAGE		256
 
 #define	TRACECMP_FEATURE_RAW_DTRACE_FD	0x00000001U
@@ -31,8 +29,7 @@ enum tracecmp_message_role {
 
 struct tracecmp_msg {
 	uint32_t	magic;
-	uint16_t	version;
-	uint16_t	opcode;
+	uint32_t	opcode;
 	uint32_t	flags;
 	int32_t		status;
 };
@@ -52,9 +49,8 @@ enum tracecmp_open_fd_slot {
 };
 
 struct tracecmp_hello_reply {
-	uint32_t	version;
 	uint32_t	features;
-	uint32_t	reserved[2];
+	uint32_t	reserved;
 };
 
 struct tracecmp_stats {

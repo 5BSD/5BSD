@@ -17,8 +17,7 @@ has nothing to do with this provider. This chapter is about BSDTrace, the
 the SDT and USDT catalog) is in [Observability](../operations/observability.md)
 and [Logging, Audit and Trace](../plane/logging-audit-trace.md).
 
-A client opens `system.Trace` over its lookup channel, negotiates version
-1.0.0 with HELLO, and asks OPEN for one independently opened DTrace consumer
+A client opens `system.Trace` over its lookup channel, learns with HELLO whether it may receive a descriptor, and asks OPEN for one independently opened DTrace consumer
 descriptor. BSDTrace forks a capability-mode worker per connection; the
 worker checks the caller's switchboard-authenticated label against the
 allow-list and, if listed, opens `/dev/dtrace` through the delivered `/dev`
@@ -59,7 +58,7 @@ Source: `usr.sbin/BSDTrace/capbundle/Bundle.ucl` and
 
 | Field | Value |
 |---|---|
-| Wire name | `system.Trace`, interface version `1.0.0` |
+| Wire name | `system.Trace` |
 | Bundle | `/Capabilities/System/Trace.cap` (bundle_id `system.Trace`) |
 | Unit | `Units/bsdtrace.unit` |
 | Program | `Units/bsdtrace.unit/bin/BSDTrace` |
@@ -76,14 +75,13 @@ Source: `usr.sbin/BSDTrace/capbundle/Bundle.ucl` and
 ## Wire operations
 
 Protocol header: `lib/libtracecmp/tracecmp_protocol.h`. Every message
-starts with a 16-byte `struct tracecmp_msg { magic, version, opcode, flags,
-status }`; magic is `TRACECMP_MAGIC` (`0x54524343`, "TRCC"), version is
-`TRACECMP_ABI_VERSION` (1), flags must be zero, and a message is at most
+starts with a 16-byte `struct tracecmp_msg { magic, opcode, flags,
+status }`; magic is `TRACECMP_MAGIC` (`0x54524343`, "TRCC"), flags must be zero, and a message is at most
 `TRACECMP_MAX_MESSAGE` (256) bytes. Roles are REQUEST, REPLY and EVENT.
 
 | Op | Request | Reply | Errors |
 |---|---|---|---|
-| `TRACECMP_OP_HELLO` (1) | header only | `tracecmp_hello_reply { version, features }`; `TRACECMP_FEATURE_RAW_DTRACE_FD` is set only for a listed label or an ADMIN session | `EPROTO` on a bad header; version mismatch fails the handshake |
+| `TRACECMP_OP_HELLO` (1) | header only | `tracecmp_hello_reply { features }`; `TRACECMP_FEATURE_RAW_DTRACE_FD` is set only for a listed label or an ADMIN session | `EPROTO` on a bad header |
 | `TRACECMP_OP_OPEN` (2) | header only | header with one attachment in slot `TRACECMP_OPEN_FD_DTRACE`: the consumer descriptor | `EACCES` label not listed; `EPROTO` malformed or unexpected attached descriptor (poisons the session); a second OPEN on one session is refused (one-shot) |
 | `TRACECMP_OP_STATS` (3) | header only | `tracecmp_stats { opened, rejected }` | `EPROTO` |
 

@@ -232,7 +232,6 @@ handle_request(struct channel *channel __unused,
 	switch (message->opcode) {
 	case TRACECMP_OP_HELLO:
 		memset(&hello, 0, sizeof(hello));
-		hello.version = TRACECMP_ABI_VERSION;
 		hello.features = (admin || state->authorized) &&
 		    state->dtrace_fd >= 0 ? TRACECMP_FEATURE_RAW_DTRACE_FD : 0;
 		if (send_reply(request_message, message, 0, &hello,

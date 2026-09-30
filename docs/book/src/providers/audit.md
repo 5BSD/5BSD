@@ -68,15 +68,13 @@ Records reach the trail only when auditd(8) is running; the plane's
 
 ## Wire operations
 
-The protocol is `lib/libauditcmp/auditcmp_protocol.h`: magic `AUDC`,
-`AUDITCMP_ABI_VERSION` 1, interface version `1.0.0`. Every message starts
-with a 16-byte `auditcmp_msg` (magic, version, opcode, flags, status).
+The protocol is `lib/libauditcmp/auditcmp_protocol.h`: magic `AUDC`. Every message starts
+with a 16-byte `auditcmp_msg` (magic, opcode, flags, status).
 
 | Op | Request | Reply | Errors |
 |---|---|---|---|
-| 1 HELLO | header | `auditcmp_hello_reply` (version) | version mismatch |
-| 2 SUBMIT | `auditcmp_submit_request` (140 bytes: `error`, `subject_length`, `operation_length`, `subject[64]`, `operation[64]`) | header with `status` | `EINVAL` (length or character set), `EAGAIN` (rate bucket empty), the errno from audit(2) |
-| 3 STATS | header | `auditcmp_stats` (`submitted`, `rejected`) | none |
+| 1 SUBMIT | `auditcmp_submit_request` (140 bytes: `error`, `subject_length`, `operation_length`, `subject[64]`, `operation[64]`) | header with `status` | `EINVAL` (length or character set), `EAGAIN` (rate bucket empty), the errno from audit(2) |
+| 2 STATS | header | `auditcmp_stats` (`submitted`, `rejected`) | none |
 
 The event number is not on the wire in either direction. The daemon's
 compiled table (`usr.sbin/BSDAudit/auditcmp_policy.c`) maps the bundle-id
@@ -101,7 +99,7 @@ libauditcmp(3) (`<auditcmp.h>`, `-lauditcmp`) has four functions:
 
 | Function | Purpose |
 |---|---|
-| `auditcmp_client_open(struct auditcmp_client **)` | resolve `system.Audit` with `service_open(3)` and complete HELLO |
+| `auditcmp_client_open(struct auditcmp_client **)` | resolve `system.Audit` with `service_open(3)` |
 | `auditcmp_submit(client, subject, operation, error)` | one SUBMIT; `error` is 0 for success or the errno the audited decision produced |
 | `auditcmp_stats(client, struct auditcmp_stats *)` | the session's counters |
 | `auditcmp_client_close(client)` | drop the channel |
@@ -165,7 +163,7 @@ code change to `auditcmp_policy.c` plus a new `AUE_*` number in
 | Suite | Location | Installed under | What it proves |
 |---|---|---|---|
 | `policy_test` (10), `rate_test` (10), `submit_test` (12), `session_test` (11), `bundle_test.sh` | `usr.sbin/BSDAudit/tests` | `/usr/tests/usr.sbin/BSDAudit` | label-to-event mapping including the `elevate/` and `mint/` split, token-bucket timing and burst recovery across sessions, field validation, worker admission and quiesce under `AUDITCMP_TESTING`, the installed bundle layout |
-| `auditcmp_test` (8), `client_lifecycle_test` (12) | `lib/libauditcmp/tests` | `/usr/tests/lib/libauditcmp` | HELLO, SUBMIT and STATS encoding against `fake_service`, and reopen after a dead worker |
+| `auditcmp_test` (8), `client_lifecycle_test` (12) | `lib/libauditcmp/tests` | `/usr/tests/lib/libauditcmp` | SUBMIT and STATS encoding against `fake_service`, and reopen after a dead worker |
 
 Run with `kyua test -k /usr/tests/usr.sbin/BSDAudit/Kyuafile`; the packages
 are `5BSD-bsdaudit-tests` and `5BSD-libauditcmp-tests`. End-to-end proof

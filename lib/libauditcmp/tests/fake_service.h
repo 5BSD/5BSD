@@ -8,8 +8,7 @@ enum fake_reply_mode {
 	FAKE_REPLY_UNEXPECTED_FD,
 	FAKE_REPLY_BAD_STATS,
 	FAKE_REPLY_TRUNCATED,
-	FAKE_REPLY_STATUS,
-	FAKE_REPLY_BAD_HELLO
+	FAKE_REPLY_STATUS
 };
 
 void	 fake_service_reset(void);

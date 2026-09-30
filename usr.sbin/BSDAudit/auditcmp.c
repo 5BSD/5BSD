@@ -120,7 +120,6 @@ handle_request(struct channel *channel __unused,
 {
 	const struct auditcmp_submit_request *submit;
 	const struct auditcmp_msg *request;
-	struct auditcmp_hello_reply hello;
 	struct session *session;
 	int error, result;
 
@@ -139,11 +138,6 @@ handle_request(struct channel *channel __unused,
 		goto out;
 	}
 	switch (request->opcode) {
-	case AUDITCMP_OP_HELLO:
-		memset(&hello, 0, sizeof(hello));
-		hello.version = AUDITCMP_ABI_VERSION;
-		result = send_reply(message, request, 0, &hello, sizeof(hello));
-		break;
 	case AUDITCMP_OP_SUBMIT:
 		submit = (const void *)(request + 1);
 		error = auditcmp_submit_record(session->provider, session->event,

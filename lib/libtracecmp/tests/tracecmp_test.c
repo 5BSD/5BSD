@@ -22,7 +22,6 @@ message(uint16_t opcode)
 
 	memset(&msg, 0, sizeof(msg));
 	msg.magic = TRACECMP_MAGIC;
-	msg.version = TRACECMP_ABI_VERSION;
 	msg.opcode = opcode;
 	return (msg);
 }
@@ -35,7 +34,7 @@ ATF_TC_HEAD(abi, tc)
 ATF_TC_BODY(abi, tc)
 {
 	ATF_CHECK_EQ(16, sizeof(struct tracecmp_msg));
-	ATF_CHECK_EQ(16, sizeof(struct tracecmp_hello_reply));
+	ATF_CHECK_EQ(8, sizeof(struct tracecmp_hello_reply));
 	ATF_CHECK_EQ(32, sizeof(struct tracecmp_stats));
 	ATF_CHECK_EQ(3, TRACECMP_OP_STATS);
 }
@@ -55,7 +54,6 @@ ATF_TC_BODY(validation, tc)
 
 	memset(&wire, 0, sizeof(wire));
 	wire.msg = message(TRACECMP_OP_HELLO);
-	wire.hello.version = TRACECMP_ABI_VERSION;
 	wire.hello.features = TRACECMP_FEATURE_RAW_DTRACE_FD;
 	ATF_CHECK_EQ(0, tracecmp_validate_message(&wire.msg, sizeof(wire),
 	    TRACECMP_MESSAGE_REPLY));

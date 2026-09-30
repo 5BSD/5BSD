@@ -149,22 +149,18 @@ service_session_call(struct service_session *session,
 		goto fail;
 	memset(&response, 0, sizeof(response));
 	response.msg.magic = TRACECMP_MAGIC;
-	response.msg.version = TRACECMP_ABI_VERSION;
 	response.msg.opcode = selected == FAKE_REPLY_BAD_OPCODE ?
 	    TRACECMP_OP_STATS : request->opcode;
 	if (selected == FAKE_REPLY_BAD_MAGIC)
 		response.msg.magic ^= 1;
-	else if (selected == FAKE_REPLY_BAD_VERSION)
-		response.msg.version++;
 	else if (selected == FAKE_REPLY_BAD_FLAGS)
 		response.msg.flags = 1;
 	length = sizeof(response.msg);
 	if (request->opcode == TRACECMP_OP_HELLO) {
-		response.body.hello.version = TRACECMP_ABI_VERSION;
 		response.body.hello.features = selected == FAKE_REPLY_NO_FEATURE ?
 		    0 : TRACECMP_FEATURE_RAW_DTRACE_FD;
 		if (selected == FAKE_REPLY_BAD_HELLO_RESERVED)
-			response.body.hello.reserved[0] = 1;
+			response.body.hello.reserved = 1;
 		length += sizeof(response.body.hello);
 	} else if (request->opcode == TRACECMP_OP_STATS) {
 		response.body.stats.opened = FAKE_STATS_OPENED;

@@ -77,14 +77,12 @@ ATF_TC_BODY(feature_and_attachment_validation, tc)
 	ATF_CHECK_EQ(-1, fd);
 	fake_service_reply_mode(FAKE_REPLY_BAD_MAGIC);
 	ATF_CHECK_ERRNO(EPROTO, tracecmp_open(&fd) == -1);
-	fake_service_reply_mode(FAKE_REPLY_BAD_VERSION);
-	ATF_CHECK_ERRNO(EPROTO, tracecmp_open(&fd) == -1);
 	fake_service_reply_mode(FAKE_REPLY_BAD_FLAGS);
 	ATF_CHECK_ERRNO(EPROTO, tracecmp_open(&fd) == -1);
 	fake_service_reply_mode(FAKE_REPLY_BAD_HELLO_RESERVED);
 	ATF_CHECK_ERRNO(EPROTO, tracecmp_open(&fd) == -1);
-	ATF_CHECK_EQ(8, fake_service_created());
-	ATF_CHECK_EQ(8, fake_service_closed());
+	ATF_CHECK_EQ(7, fake_service_created());
+	ATF_CHECK_EQ(7, fake_service_closed());
 }
 
 ATF_TC_WITHOUT_HEAD(delegated_fd_is_not_inherited);

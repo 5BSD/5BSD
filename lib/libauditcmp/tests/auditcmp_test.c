@@ -73,17 +73,15 @@ ATF_TC_WITHOUT_HEAD(replies);
 ATF_TC_BODY(replies, tc)
 {
 	union buffer buffer;
-	struct auditcmp_hello_reply *hello;
 	struct auditcmp_msg *msg;
 
-	msg = message(&buffer, AUDITCMP_OP_HELLO);
-	hello = (void *)(msg + 1);
-	hello->version = AUDITCMP_ABI_VERSION;
+	msg = message(&buffer, AUDITCMP_OP_STATS);
 	ATF_CHECK_EQ(0, auditcmp_validate_message(msg,
-	    sizeof(*msg) + sizeof(*hello), AUDITCMP_MESSAGE_REPLY));
-	hello->reserved[1] = 1;
+	    sizeof(*msg) + sizeof(struct auditcmp_stats),
+	    AUDITCMP_MESSAGE_REPLY));
 	ATF_CHECK_ERRNO(EPROTO, auditcmp_validate_message(msg,
-	    sizeof(*msg) + sizeof(*hello), AUDITCMP_MESSAGE_REPLY) == -1);
+	    sizeof(*msg) + sizeof(struct auditcmp_stats) - 1,
+	    AUDITCMP_MESSAGE_REPLY) == -1);
 	msg = message(&buffer, AUDITCMP_OP_SUBMIT);
 	msg->status = -EACCES;
 	ATF_CHECK_EQ(0, auditcmp_validate_message(msg, sizeof(*msg),
@@ -99,7 +97,7 @@ ATF_TC_BODY(descriptors_and_api, tc)
 	struct auditcmp_msg msg;
 	int descriptors[2];
 
-	ATF_REQUIRE_EQ(0, auditcmp_message_init(&msg, AUDITCMP_OP_HELLO, 0));
+	ATF_REQUIRE_EQ(0, auditcmp_message_init(&msg, AUDITCMP_OP_STATS, 0));
 	ATF_CHECK_EQ(0, auditcmp_validate_fds(&msg, 0,
 	    AUDITCMP_MESSAGE_REQUEST));
 	ATF_CHECK_ERRNO(EPROTO, auditcmp_validate_fds(&msg, 1,

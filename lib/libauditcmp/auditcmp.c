@@ -75,8 +75,7 @@ header_validate(const struct auditcmp_msg *msg, size_t length,
 	    role != AUDITCMP_MESSAGE_REPLY &&
 	    role != AUDITCMP_MESSAGE_EVENT) ||
 	    msg->magic != AUDITCMP_MAGIC ||
-	    msg->version != AUDITCMP_ABI_VERSION ||
-	    msg->opcode < AUDITCMP_OP_HELLO ||
+	    msg->opcode < AUDITCMP_OP_SUBMIT ||
 	    msg->opcode > AUDITCMP_OP_STATS ||
 	    (msg->flags & ~AUDITCMP_MSG_F_MASK) != 0 ||
 	    (role != AUDITCMP_MESSAGE_REPLY && msg->status != 0) ||
@@ -93,7 +92,7 @@ auditcmp_message_init(struct auditcmp_msg *msg, uint16_t opcode,
     uint32_t flags)
 {
 
-	if (msg == NULL || opcode < AUDITCMP_OP_HELLO ||
+	if (msg == NULL || opcode < AUDITCMP_OP_SUBMIT ||
 	    opcode > AUDITCMP_OP_STATS ||
 	    (flags & ~AUDITCMP_MSG_F_MASK) != 0) {
 		errno = EINVAL;
@@ -101,7 +100,6 @@ auditcmp_message_init(struct auditcmp_msg *msg, uint16_t opcode,
 	}
 	memset(msg, 0, sizeof(*msg));
 	msg->magic = AUDITCMP_MAGIC;
-	msg->version = AUDITCMP_ABI_VERSION;
 	msg->opcode = opcode;
 	return (0);
 }
@@ -120,7 +118,6 @@ auditcmp_message_init_reply(struct auditcmp_msg *reply,
 	}
 	memset(reply, 0, sizeof(*reply));
 	reply->magic = AUDITCMP_MAGIC;
-	reply->version = AUDITCMP_ABI_VERSION;
 	reply->opcode = request->opcode;
 	reply->status = status;
 	return (0);
@@ -131,7 +128,6 @@ auditcmp_validate_message(const struct auditcmp_msg *msg, size_t length,
     enum auditcmp_message_role role)
 {
 	const struct auditcmp_submit_request *submit;
-	const struct auditcmp_hello_reply *hello;
 	size_t payload;
 
 	if (header_validate(msg, length, role) == -1)
@@ -143,16 +139,6 @@ auditcmp_validate_message(const struct auditcmp_msg *msg, size_t length,
 		if (msg->status != 0)
 			return (payload == 0 ? 0 : (errno = EPROTO, -1));
 		switch (msg->opcode) {
-		case AUDITCMP_OP_HELLO:
-			if (payload != sizeof(*hello))
-				goto invalid;
-			hello = (const void *)(msg + 1);
-			if (hello->version != AUDITCMP_ABI_VERSION ||
-			    hello->reserved[0] != 0 ||
-			    hello->reserved[1] != 0 ||
-			    hello->reserved[2] != 0)
-				goto invalid;
-			break;
 		case AUDITCMP_OP_STATS:
 			if (payload != sizeof(struct auditcmp_stats))
 				goto invalid;
@@ -165,7 +151,6 @@ auditcmp_validate_message(const struct auditcmp_msg *msg, size_t length,
 		return (0);
 	}
 	switch (msg->opcode) {
-	case AUDITCMP_OP_HELLO:
 	case AUDITCMP_OP_STATS:
 		if (payload != 0)
 			goto invalid;
@@ -282,7 +267,6 @@ call(struct auditcmp_client *client, uint16_t opcode, const void *payload,
 int
 auditcmp_client_adopt(int fd, struct auditcmp_client **clientp)
 {
-	union auditcmp_buffer reply;
 	struct auditcmp_client *client;
 	int error, owned;
 
@@ -305,10 +289,6 @@ auditcmp_client_adopt(int fd, struct auditcmp_client **clientp)
 		close(owned);
 		free(client);
 		return (errno = error, -1);
-	}
-	if (call(client, AUDITCMP_OP_HELLO, NULL, 0, &reply) == -1) {
-		auditcmp_client_close(client);
-		return (-1);
 	}
 	*clientp = client;
 	return (0);

@@ -36,7 +36,6 @@ tracecmp_header_validate(const struct tracecmp_msg *msg, size_t length,
 	    role != TRACECMP_MESSAGE_REPLY &&
 	    role != TRACECMP_MESSAGE_EVENT) ||
 	    msg->magic != TRACECMP_MAGIC ||
-	    msg->version != TRACECMP_ABI_VERSION ||
 	    msg->opcode < TRACECMP_OP_HELLO ||
 	    msg->opcode > TRACECMP_OP_STATS ||
 	    (msg->flags & ~TRACECMP_MSG_F_MASK) != 0 ||
@@ -62,7 +61,6 @@ tracecmp_message_init(struct tracecmp_msg *msg, uint16_t opcode,
 	}
 	memset(msg, 0, sizeof(*msg));
 	msg->magic = TRACECMP_MAGIC;
-	msg->version = TRACECMP_ABI_VERSION;
 	msg->opcode = opcode;
 	msg->flags = flags;
 	return (0);
@@ -82,7 +80,6 @@ tracecmp_message_init_reply(struct tracecmp_msg *reply,
 	}
 	memset(reply, 0, sizeof(*reply));
 	reply->magic = TRACECMP_MAGIC;
-	reply->version = TRACECMP_ABI_VERSION;
 	reply->opcode = request->opcode;
 	reply->status = status;
 	return (0);
@@ -120,9 +117,8 @@ tracecmp_validate_message(const struct tracecmp_msg *msg, size_t length,
 		if (payload != sizeof(*hello))
 			goto invalid;
 		hello = (const void *)(msg + 1);
-		if (hello->version != TRACECMP_ABI_VERSION ||
-		    (hello->features & ~TRACECMP_FEATURE_RAW_DTRACE_FD) != 0 ||
-		    hello->reserved[0] != 0 || hello->reserved[1] != 0)
+		if ((hello->features & ~TRACECMP_FEATURE_RAW_DTRACE_FD) != 0 ||
+		    hello->reserved != 0)
 			goto invalid;
 	} else if (msg->opcode == TRACECMP_OP_STATS) {
 		if (payload != sizeof(struct tracecmp_stats))

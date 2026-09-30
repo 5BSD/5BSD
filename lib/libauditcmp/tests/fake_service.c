@@ -157,7 +157,6 @@ service_session_call(struct service_session *session,
 	} response;
 	const struct auditcmp_msg *request;
 	struct auditcmp_msg *message;
-	struct auditcmp_hello_reply *hello;
 	struct auditcmp_stats *stats;
 	enum fake_reply_mode mode;
 	size_t length;
@@ -187,18 +186,11 @@ service_session_call(struct service_session *session,
 	memset(&response, 0, sizeof(response));
 	message = (void *)response.bytes;
 	message->magic = AUDITCMP_MAGIC;
-	message->version = AUDITCMP_ABI_VERSION;
 	message->opcode = mode == FAKE_REPLY_BAD_OPCODE ?
 	    (request->opcode == AUDITCMP_OP_STATS ? AUDITCMP_OP_SUBMIT :
 	    AUDITCMP_OP_STATS) : request->opcode;
 	length = sizeof(*message);
-	if (request->opcode == AUDITCMP_OP_HELLO) {
-		hello = (void *)(message + 1);
-		hello->version = AUDITCMP_ABI_VERSION;
-		if (mode == FAKE_REPLY_BAD_HELLO)
-			hello->version++;
-		length += sizeof(*hello);
-	} else if (request->opcode == AUDITCMP_OP_STATS) {
+	if (request->opcode == AUDITCMP_OP_STATS) {
 		stats = (void *)(message + 1);
 		stats->submitted = 7;
 		length += sizeof(*stats);

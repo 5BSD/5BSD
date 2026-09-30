@@ -162,7 +162,7 @@ raw_call_with_attachment(struct service_session *session, int fd)
 	struct auditcmp_msg request;
 	uint8_t reply[AUDITCMP_MAX_MESSAGE];
 
-	ATF_REQUIRE_EQ(0, auditcmp_message_init(&request, AUDITCMP_OP_HELLO, 0));
+	ATF_REQUIRE_EQ(0, auditcmp_message_init(&request, AUDITCMP_OP_STATS, 0));
 	outgoing = (struct service_message){
 		.size = sizeof(outgoing),
 		.data = &request,

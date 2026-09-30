@@ -169,8 +169,6 @@ ATF_TC_BODY(protocol_errors_fail_closed, tc)
 		auditcmp_client_close(client);
 	}
 	fake_service_reset();
-	fake_service_reply_mode(FAKE_REPLY_BAD_HELLO);
-	ATF_CHECK_ERRNO(EPROTO, auditcmp_client_open(&client) == -1);
 	ATF_REQUIRE_EQ(0, auditcmp_client_open(&client));
 	auditcmp_client_close(client);
 }
