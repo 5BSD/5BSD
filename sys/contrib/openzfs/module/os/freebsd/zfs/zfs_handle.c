@@ -2354,17 +2354,10 @@ zfshandle_anon_mount(struct thread *td, const char *osname,
 	struct uio auio;
 	struct iovec iov[6];
 	struct vfsoptlist *opts;
-	struct vfsconf *vfsp;
-	struct mount *mp;
 	cred_t *saved_cred;
 	int error, niov;
 	static const char fstype[] = "zfs";
-	static const char fspath[] = "[anon]";
 	static const char ro[] = "ro";
-
-	vfsp = vfs_byname_kld(fstype, td, &error);
-	if (vfsp == NULL)
-		return (error != 0 ? error : SET_ERROR(ENODEV));
 
 	/* nmount-style option list: name/value string pairs. */
 	niov = 0;
@@ -2378,7 +2371,7 @@ zfshandle_anon_mount(struct thread *td, const char *osname,
 		niov++;							\
 	} while (0)
 	ZH_OPT("from", osname);
-	ZH_OPT("fspath", fspath);
+	ZH_OPT("fspath", VFS_ANON_FSPATH);
 	if (rdonly)
 		ZH_OPT(ro, "");
 #undef ZH_OPT
@@ -2393,72 +2386,16 @@ zfshandle_anon_mount(struct thread *td, const char *osname,
 	/*
 	 * ZFD_MOUNT verified ZH_MOUNT on the handle before dispatching here, so
 	 * the capability — not the caller's uid — is the authorization.  Install
-	 * the kernel cred across mount allocation and VFS_MOUNT so the ambient
-	 * secpolicy_fs_mount() re-check (which reads curthread's cred) does not
-	 * reject an unprivileged capability holder; the mount is thus root-owned
-	 * exactly as a switchboard-initiated mount was.  The dir fd opened below
-	 * still uses the caller's restored cred.
+	 * the kernel cred across the mount so the ambient secpolicy_fs_mount()
+	 * re-check (which reads curthread's cred) does not reject an
+	 * unprivileged capability holder; the mount is thus root-owned exactly
+	 * as a switchboard-initiated mount was.  The dir fd opened below still
+	 * uses the caller's restored cred.
 	 */
 	saved_cred = zfshandle_cred_enter();
-	mp = vfs_mount_alloc(NULL, vfsp, fspath, curthread->td_ucred);
-	mp->mnt_optnew = opts;
-	if (rdonly)
-		mp->mnt_flag |= MNT_RDONLY;
-
-	error = VFS_MOUNT(mp);
+	error = vfs_mount_anon(td, fstype, opts, rdonly ? MNT_RDONLY : 0, mpp);
 	zfshandle_cred_exit(saved_cred);
-	if (error != 0) {
-		vfs_freeopts(mp->mnt_optnew);
-		mp->mnt_optnew = NULL;
-		vfs_unbusy(mp);		/* vfs_mount_alloc busies the mount */
-		vfs_mount_destroy(mp);
-		return (error);
-	}
-	(void) VFS_STATFS(mp, &mp->mnt_stat);
-
-	if (mp->mnt_opt != NULL)
-		vfs_freeopts(mp->mnt_opt);
-	mp->mnt_opt = mp->mnt_optnew;
-	mp->mnt_optnew = NULL;
-
-	MNT_ILOCK(mp);
-	if ((mp->mnt_flag & MNT_ASYNC) != 0 &&
-	    (mp->mnt_kern_flag & MNTK_NOASYNC) == 0)
-		mp->mnt_kern_flag |= MNTK_ASYNC;
-	else
-		mp->mnt_kern_flag &= ~MNTK_ASYNC;
-	MNT_IUNLOCK(mp);
-
-	/*
-	 * On mountlist (dounmount at shutdown requires it; the syncer and
-	 * fsid lookup want it) but never attached to a covered vnode —
-	 * invisible to namei by construction.
-	 */
-	mtx_lock(&mountlist_mtx);
-	TAILQ_INSERT_TAIL(&mountlist, mp, mnt_list);
-	mtx_unlock(&mountlist_mtx);
-	if (!rdonly)
-		vfs_allocate_syncvnode(mp);
-	/*
-	 * vfs_mount_alloc returns the mount busied (mnt_lockref held) and
-	 * in vfs_ops mode (mnt_vfs_ops == 1).  vfs_domount_first releases
-	 * BOTH once mounted (vfs_op_exit then vfs_unbusy, lines ~1315-16)
-	 * and so must we: a missed unbusy makes the eventual dounmount()
-	 * sleep forever on the busy drain, and a missed op_exit trips
-	 * vfs_mount_destroy's MPASSERT(mnt_vfs_ops == 1) panic.  Both were
-	 * found the hard way.
-	 */
-	vfs_op_exit(mp);
-	/*
-	 * Hand the mount back referenced: between unbusy and the caller's
-	 * bookkeeping an unmount-all or a forced unmount by fsid could
-	 * otherwise destroy an unreferenced mount under us.
-	 */
-	vfs_ref(mp);
-	vfs_unbusy(mp);
-
-	*mpp = mp;
-	return (0);
+	return (error);
 }
 
 /* zfshandle_anon_mtx must be held. */

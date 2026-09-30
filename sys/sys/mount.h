@@ -240,6 +240,8 @@ struct mount {
 	struct vfsconf	*mnt_vfc;		/* configuration info */
 	struct mtx __aligned(CACHE_LINE_SIZE)	mnt_mtx; /* mount structure interlock */
 	int		mnt_gen;		/* struct mount generation */
+	uint64_t	mnt_unique_id;		/* never reused during this boot */
+	uint64_t	mnt_parent_unique_id;	/* (m) parent, or self for a root */
 #define	mnt_startzero	mnt_list
 	TAILQ_ENTRY(mount) mnt_list;		/* (m) mount list */
 	struct vnode	*mnt_syncer;		/* syncer vnode */
@@ -507,7 +509,7 @@ struct mntoptnames {
 					      insmntque */
 #define	MNTK_UNMAPPED_BUFS	0x00002000
 #define	MNTK_USES_BCACHE	0x00004000 /* FS uses the buffer cache. */
-/* UNUSED			0x00008000 */
+#define	MNTK_PRE_ACCESS		0x00008000 /* supports pre-content range waits */
 #define	MNTK_VMSETSIZE_BUG	0x00010000
 #define	MNTK_UNIONFS		0x00020000 /* A hack for F_ISUNIONSTACK */
 #define	MNTK_FPLOOKUP		0x00040000 /* fast path lookup is supported */
@@ -1096,6 +1098,15 @@ void	vfs_notify_upper(struct vnode *, enum vfs_notify_upper_type);
 struct mount *vfs_ref_from_vp(struct vnode *);
 void	vfs_ref(struct mount *);
 void	vfs_rel(struct mount *);
+void	vfs_mount_set_parent(struct mount *, struct mount *);
+/*
+ * Mount a filesystem outside the namespace.  The mount is reachable only
+ * through a descriptor on its root; mnt_vnodecovered stays NULL and path
+ * lookup can never find it.  See vfs_mount_anon() in vfs_mount.c.
+ */
+#define	VFS_ANON_FSPATH	"[anon]"
+int	vfs_mount_anon(struct thread *, const char *, struct vfsoptlist *,
+	    uint64_t, struct mount **);
 struct mount *vfs_mount_alloc(struct vnode *, struct vfsconf *, const char *,
 	    struct ucred *);
 int	vfs_suser(struct mount *, struct thread *);

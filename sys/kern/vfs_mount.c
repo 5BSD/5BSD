@@ -128,6 +128,9 @@ struct mtx_padalign __exclusive_cache_line mountlist_mtx;
 EVENTHANDLER_LIST_DEFINE(vfs_mounted);
 EVENTHANDLER_LIST_DEFINE(vfs_unmounted);
 
+/* Disjoint from positive signed-int legacy mount identifiers. */
+static uint64_t mount_unique_id = 1ULL << 31;
+
 static void vfs_deferred_unmount(void *arg, int pending);
 static struct timeout_task deferred_unmount_task;
 static struct mtx deferred_unmount_lock;
@@ -693,6 +696,9 @@ vfs_mount_alloc(struct vnode *vp, struct vfsconf *vfsp, const char *fspath,
 	mp->mnt_vfc = vfsp;
 	mp->mnt_stat.f_type = vfsp->vfc_typenum;
 	mp->mnt_gen++;
+	mp->mnt_unique_id = atomic_fetchadd_64(&mount_unique_id, 1) + 1;
+	mp->mnt_parent_unique_id = vp != NULL ? vp->v_mount->mnt_unique_id :
+	    mp->mnt_unique_id;
 	strlcpy(mp->mnt_stat.f_fstypename, vfsp->vfc_name, MFSNAMELEN);
 	mp->mnt_vnodecovered = vp;
 	mp->mnt_cred = crdup(cred);
@@ -710,6 +716,17 @@ vfs_mount_alloc(struct vnode *vp, struct vfsconf *vfsp, const char *fspath,
 	mp->mnt_taskqueue_flags = 0;
 	mp->mnt_unmount_retries = 0;
 	return (mp);
+}
+
+/* Caller keeps both mounts alive while changing a published root attachment. */
+void
+vfs_mount_set_parent(struct mount *mp, struct mount *parent)
+{
+
+	mtx_lock(&mountlist_mtx);
+	mp->mnt_parent_unique_id = parent != NULL ? parent->mnt_unique_id :
+	    mp->mnt_unique_id;
+	mtx_unlock(&mountlist_mtx);
 }
 
 /*
@@ -1320,6 +1337,86 @@ vfs_domount_first(
 		vfs_allocate_syncvnode(mp);
 	vfs_op_exit(mp);
 	vfs_unbusy(mp);
+	return (0);
+}
+
+/*
+ * Mount a filesystem that is not attached to the namespace.
+ *
+ * This is vfs_domount_first() minus the two namespace-attach steps (covered
+ * vnode / v_mountedhere): the mount is instantiated and placed on mountlist,
+ * so fsid lookup, the syncer and shutdown's unmount-all all see it, but it is
+ * unreachable by path lookup.  mnt_vnodecovered stays NULL, a state the VFS
+ * already supports for the root mount and which namei() and the name cache
+ * handle explicitly.  A descriptor on the mount root is the only way in.
+ *
+ * The caller owns the option list on entry and must not free it afterwards:
+ * on success it becomes mp->mnt_opt, and on failure it is freed here.  The
+ * mount is returned referenced (vfs_ref) and unbusied, so the caller's own
+ * bookkeeping cannot race an unmount-all or a forced unmount by fsid.
+ *
+ * Callers that authorize by held capability rather than by uid should install
+ * the credential they want the mount owned by around this call; VFS_MOUNT
+ * re-checks secpolicy_fs_mount() against curthread's cred.
+ */
+int
+vfs_mount_anon(struct thread *td, const char *fstype, struct vfsoptlist *opts,
+    uint64_t mntflags, struct mount **mpp)
+{
+	struct vfsconf *vfsp;
+	struct mount *mp;
+	int error;
+
+	vfsp = vfs_byname_kld(fstype, td, &error);
+	if (vfsp == NULL) {
+		vfs_freeopts(opts);
+		return (error != 0 ? error : ENODEV);
+	}
+
+	mp = vfs_mount_alloc(NULL, vfsp, VFS_ANON_FSPATH, td->td_ucred);
+	mp->mnt_optnew = opts;
+	mp->mnt_flag |= (mntflags & MNT_UPDATEMASK);
+
+	error = VFS_MOUNT(mp);
+	if (error != 0) {
+		vfs_freeopts(mp->mnt_optnew);
+		mp->mnt_optnew = NULL;
+		vfs_unbusy(mp);		/* vfs_mount_alloc busies the mount */
+		vfs_mount_destroy(mp);
+		return (error);
+	}
+	(void)VFS_STATFS(mp, &mp->mnt_stat);
+
+	if (mp->mnt_opt != NULL)
+		vfs_freeopts(mp->mnt_opt);
+	mp->mnt_opt = mp->mnt_optnew;
+	mp->mnt_optnew = NULL;
+
+	MNT_ILOCK(mp);
+	if ((mp->mnt_flag & MNT_ASYNC) != 0 &&
+	    (mp->mnt_kern_flag & MNTK_NOASYNC) == 0)
+		mp->mnt_kern_flag |= MNTK_ASYNC;
+	else
+		mp->mnt_kern_flag &= ~MNTK_ASYNC;
+	MNT_IUNLOCK(mp);
+
+	mtx_lock(&mountlist_mtx);
+	TAILQ_INSERT_TAIL(&mountlist, mp, mnt_list);
+	mtx_unlock(&mountlist_mtx);
+	if ((mp->mnt_flag & MNT_RDONLY) == 0)
+		vfs_allocate_syncvnode(mp);
+	/*
+	 * vfs_mount_alloc returns the mount busied (mnt_lockref held) and in
+	 * vfs_ops mode (mnt_vfs_ops == 1).  vfs_domount_first releases both
+	 * once mounted and so must we: a missed unbusy makes the eventual
+	 * dounmount() sleep forever on the busy drain, and a missed op_exit
+	 * trips vfs_mount_destroy's MPASSERT(mnt_vfs_ops == 1).
+	 */
+	vfs_op_exit(mp);
+	vfs_ref(mp);
+	vfs_unbusy(mp);
+
+	*mpp = mp;
 	return (0);
 }
 
