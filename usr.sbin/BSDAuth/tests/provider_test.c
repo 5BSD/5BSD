@@ -392,7 +392,6 @@ well_formed_mint(void)
 	struct authagent_mint_req req;
 
 	memset(&req, 0, sizeof(req));
-	req.version = AUTHAGENTD_PROTO_VERSION;
 	req.op = AUTHAGENT_OP_MINT_SESSION;
 	req.uid = 0;
 	req.flags = 0;
@@ -405,7 +404,6 @@ well_formed_mint_auth(uid_t uid, const char *password)
 	struct authagent_mint_auth_req req;
 
 	memset(&req, 0, sizeof(req));
-	req.version = AUTHAGENTD_PROTO_VERSION;
 	req.op = AUTHAGENT_OP_MINT_AUTH;
 	req.uid = (uint32_t)uid;
 	req.flags = 0;
@@ -433,7 +431,6 @@ well_formed_elevate(const char *name, const char *password)
 	struct authagent_elevate_req req;
 
 	memset(&req, 0, sizeof(req));
-	req.version = AUTHAGENTD_PROTO_VERSION;
 	req.op = AUTHAGENT_OP_ELEVATE;
 	strlcpy(req.name, name, sizeof(req.name));
 	strlcpy(req.password, password, sizeof(req.password));
@@ -592,7 +589,7 @@ ATF_TC_BODY(session_caller_cannot_mint, tc)
 
 /*
  * An ADMIN caller sending a malformed request is rejected EINVAL: a bad
- * version, a bad op, reserved flag bits set, a short body, or an unexpected
+ * op, reserved flag bits set, a short body, or an unexpected
  * attached descriptor.  Validation runs after the gate but before any mint, so
  * these need no switchboard or identity state.
  */
@@ -610,14 +607,6 @@ ATF_TC_BODY(admin_caller_malformed_request_is_einval, tc)
 	int devnull;
 
 	fixture_create_simple(&fixture, SERVICE_RIGHTS_ADMIN, "org.test.login");
-
-	/* Bad protocol version. */
-	req = well_formed_mint();
-	req.version = AUTHAGENTD_PROTO_VERSION + 1;
-	ATF_REQUIRE_EQ(0, agent_call(fixture.session, &req, sizeof(req), -1,
-	    &status, &nfds));
-	ATF_CHECK_EQ(EINVAL, status);
-	ATF_CHECK_EQ(0, nfds);
 
 	/* Unknown opcode. */
 	req = well_formed_mint();
@@ -639,7 +628,7 @@ ATF_TC_BODY(admin_caller_malformed_request_is_einval, tc)
 	    &status, &nfds));
 	ATF_CHECK_EQ(EINVAL, status);
 
-	/* Too short to even carry (version, op). */
+	/* Too short to even carry the op. */
 	req = well_formed_mint();
 	ATF_REQUIRE_EQ(0, agent_call(fixture.session, &req, 4, -1,
 	    &status, &nfds));
@@ -810,14 +799,6 @@ ATF_TC_BODY(elevate_malformed_is_einval, tc)
 		    AUTHAGENT_SESSION_LABEL);
 		free(mpw);
 	}
-
-	/* Bad version. */
-	req = well_formed_elevate("system.notify.system", GOOD_PASSWORD);
-	req.version = AUTHAGENTD_PROTO_VERSION + 1;
-	ATF_REQUIRE_EQ(0, agent_call(fixture.session, &req, sizeof(req), -1,
-	    &status, &nfds));
-	ATF_CHECK_EQ(EINVAL, status);
-	ATF_CHECK_EQ(0, nfds);
 
 	/* Flags set. */
 	req = well_formed_elevate("system.notify.system", GOOD_PASSWORD);
@@ -1111,7 +1092,7 @@ ATF_TC_BODY(elevate_short_by_one_is_einval, tc)
 	shape_fixture(&fixture);
 	req = well_formed_elevate("system.notify.system", GOOD_PASSWORD);
 	ATF_CHECK_EQ(EINVAL, raw_status(&fixture, &req, sizeof(req) - 1, -1));
-	/* Half a request, and just the (version, op) words. */
+	/* Half a request, and just the op word. */
 	ATF_CHECK_EQ(EINVAL, raw_status(&fixture, &req, sizeof(req) / 2, -1));
 	ATF_CHECK_EQ(EINVAL, raw_status(&fixture, &req, 8, -1));
 	/* The correct length still passes validation afterwards. */
@@ -1145,78 +1126,17 @@ ATF_TC_BODY(elevate_long_by_one_is_einval, tc)
 	fixture_destroy(&fixture);
 }
 
-ATF_TC(elevate_version_1_is_einval);
-ATF_TC_HEAD(elevate_version_1_is_einval, tc)
-{
-	atf_tc_set_md_var(tc, "require.user", "root");
-	atf_tc_set_md_var(tc, "descr",
-	    "ELEVATE did not exist in proto 1: a v1-stamped ELEVATE is EINVAL");
-}
-ATF_TC_BODY(elevate_version_1_is_einval, tc)
-{
-	struct fixture fixture;
-	struct authagent_elevate_req req;
-
-	shape_fixture(&fixture);
-	req = well_formed_elevate("system.notify.system", GOOD_PASSWORD);
-	req.version = 1;
-	ATF_CHECK_EQ(EINVAL, raw_status(&fixture, &req, sizeof(req), -1));
-	req.version = 0;
-	ATF_CHECK_EQ(EINVAL, raw_status(&fixture, &req, sizeof(req), -1));
-	fixture_destroy(&fixture);
-}
-
-ATF_TC(elevate_version_range_enforced);
-ATF_TC_HEAD(elevate_version_range_enforced, tc)
-{
-	atf_tc_set_md_var(tc, "require.user", "root");
-	atf_tc_set_md_var(tc, "descr",
-	    "ELEVATE accepts v2 (oldest) through v3 (current); older or newer is EINVAL");
-}
-ATF_TC_BODY(elevate_version_range_enforced, tc)
-{
-	struct fixture fixture;
-	struct authagent_elevate_req req;
-
-	ATF_REQUIRE(AUTHAGENTD_PROTO_VERSION >= 3U);
-	shape_fixture(&fixture);
-	/*
-	 * A name the principal may NOT elevate to is refused EPERM at the
-	 * policy stage -- but only once the version gate has passed.  So v2
-	 * (oldest) and v3 (current) reach EPERM, while a version below the
-	 * floor or above the ceiling is EINVAL before policy is consulted.
-	 * (Using a not-permitted name keeps the version outcome distinct from
-	 * the mint-stage EINVAL a permitted name would hit in this fixture.)
-	 */
-	req = well_formed_elevate("system.storage.admin", GOOD_PASSWORD);
-	req.version = AUTHAGENTD_PROTO_VERSION_MIN;		/* 2 */
-	ATF_CHECK_EQ(EPERM, raw_status(&fixture, &req, sizeof(req), -1));
-	req.version = AUTHAGENTD_PROTO_VERSION;			/* 3 */
-	ATF_CHECK_EQ(EPERM, raw_status(&fixture, &req, sizeof(req), -1));
-	req.version = AUTHAGENTD_PROTO_VERSION_MIN - 1;		/* 1 */
-	ATF_CHECK_EQ(EINVAL, raw_status(&fixture, &req, sizeof(req), -1));
-	req.version = AUTHAGENTD_PROTO_VERSION + 1;		/* 4 */
-	ATF_CHECK_EQ(EINVAL, raw_status(&fixture, &req, sizeof(req), -1));
-	req.version = UINT32_MAX;
-	ATF_CHECK_EQ(EINVAL, raw_status(&fixture, &req, sizeof(req), -1));
-	fixture_destroy(&fixture);
-}
-
 /*
- * MINT_SESSION still works under proto 2.  With no identity database the
- * resolved-grant step answers ENOENT for uid 0; that is the marker "the
- * request passed the ADMIN gate and shape validation", distinct from the
- * EINVAL a wrong version earns before any lookup.
+ * FORWARDABLE is the one legal MINT_SESSION flag.  With no identity database
+ * the resolved-grant step answers ENOENT for uid 0: the marker that the
+ * request passed the ADMIN gate and shape validation.
  */
-ATF_TC(mint_version_2_still_accepted);
-ATF_TC_HEAD(mint_version_2_still_accepted, tc)
+ATF_TC(mint_forwardable_flag_accepted);
+ATF_TC_HEAD(mint_forwardable_flag_accepted, tc)
 {
 	atf_tc_set_md_var(tc, "require.user", "root");
-	atf_tc_set_md_var(tc, "descr",
-	    "MINT_SESSION accepts v2 (oldest) and v3 (current) -- a v2 login/su "
-	    "keeps working against a v3 agent -- and rejects older or newer");
 }
-ATF_TC_BODY(mint_version_2_still_accepted, tc)
+ATF_TC_BODY(mint_forwardable_flag_accepted, tc)
 {
 	struct fixture fixture;
 	struct authagent_mint_req req;
@@ -1224,40 +1144,10 @@ ATF_TC_BODY(mint_version_2_still_accepted, tc)
 	size_t nfds;
 
 	fixture_create_simple(&fixture, SERVICE_RIGHTS_ADMIN, "org.test.login");
-	/*
-	 * MINT_SESSION is wire-identical from v2 on, so the oldest supported
-	 * version and the current one both pass the version+shape gate and
-	 * reach identity resolution, which ENOENTs in this fixture (no passwd).
-	 * A version below the floor or above the ceiling is refused EINVAL
-	 * before anything is resolved.
-	 */
 	req = well_formed_mint();
-	req.version = AUTHAGENTD_PROTO_VERSION_MIN;	/* 2, oldest */
 	ATF_REQUIRE_EQ(0, agent_call(fixture.session, &req, sizeof(req), -1,
 	    &status, &nfds));
-	ATF_CHECK_EQ(ENOENT, status);			/* accepted */
-	req = well_formed_mint();
-	req.version = AUTHAGENTD_PROTO_VERSION;		/* 3, current */
-	ATF_REQUIRE_EQ(0, agent_call(fixture.session, &req, sizeof(req), -1,
-	    &status, &nfds));
-	ATF_CHECK_EQ(ENOENT, status);			/* accepted */
-	req = well_formed_mint();
-	req.version = AUTHAGENTD_PROTO_VERSION_MIN - 1;	/* 1, too old */
-	ATF_REQUIRE_EQ(0, agent_call(fixture.session, &req, sizeof(req), -1,
-	    &status, &nfds));
-	ATF_CHECK_EQ(EINVAL, status);
-	req = well_formed_mint();
-	req.version = AUTHAGENTD_PROTO_VERSION + 1;	/* 4, too new */
-	ATF_REQUIRE_EQ(0, agent_call(fixture.session, &req, sizeof(req), -1,
-	    &status, &nfds));
-	ATF_CHECK_EQ(EINVAL, status);
-	req = well_formed_mint();
-	req.version = UINT32_MAX;
-	ATF_REQUIRE_EQ(0, agent_call(fixture.session, &req, sizeof(req), -1,
-	    &status, &nfds));
-	ATF_CHECK_EQ(EINVAL, status);
-	/* FORWARDABLE is the one legal flag and does not change acceptance. */
-	req = well_formed_mint();
+	ATF_CHECK_EQ(ENOENT, status);
 	req.flags = AUTHAGENT_FLAG_FORWARDABLE;
 	ATF_REQUIRE_EQ(0, agent_call(fixture.session, &req, sizeof(req), -1,
 	    &status, &nfds));
@@ -1481,7 +1371,7 @@ ATF_TC_BODY(elevate_rate_limit_spans_sessions, tc)
 }
 
 /*
- * A body too short to carry (version, op) -- 0, 4 or 7 bytes -- cannot be
+ * A body too short to carry the op word -- 0, 1 or 3 bytes -- cannot be
  * classified and takes the MINT path, whose ADMIN gate answers first: a
  * session learns EPERM, an ADMIN caller EINVAL.  Neither wedges.
  */
@@ -1503,8 +1393,8 @@ ATF_TC_BODY(elevate_unclassifiable_body, tc)
 	errno = 0;
 	ATF_CHECK_ERRNO(EINVAL, agent_call(fixture.session, &req, 0, -1,
 	    &(int32_t){ 0 }, &nfds) == -1);
-	ATF_CHECK_EQ(EPERM, raw_status(&fixture, &req, 4, -1));
-	ATF_CHECK_EQ(EPERM, raw_status(&fixture, &req, 7, -1));
+	ATF_CHECK_EQ(EPERM, raw_status(&fixture, &req, 1, -1));
+	ATF_CHECK_EQ(EPERM, raw_status(&fixture, &req, 3, -1));
 	ATF_CHECK_EQ(EINVAL, elevate_status(&fixture, "system.notify.system",
 	    GOOD_PASSWORD, &nfds));
 	fixture_destroy(&fixture);
@@ -1513,8 +1403,8 @@ ATF_TC_BODY(elevate_unclassifiable_body, tc)
 	errno = 0;
 	ATF_CHECK_ERRNO(EINVAL, agent_call(fixture.session, &req, 0, -1,
 	    &(int32_t){ 0 }, &nfds) == -1);
-	ATF_CHECK_EQ(EINVAL, raw_status(&fixture, &req, 4, -1));
-	ATF_CHECK_EQ(EINVAL, raw_status(&fixture, &req, 7, -1));
+	ATF_CHECK_EQ(EINVAL, raw_status(&fixture, &req, 1, -1));
+	ATF_CHECK_EQ(EINVAL, raw_status(&fixture, &req, 3, -1));
 	fixture_destroy(&fixture);
 }
 
@@ -1800,7 +1690,7 @@ ATF_TC_BODY(audit_elevate_caller_and_shape, tc)
 		free(mpw);
 	}
 	req = well_formed_elevate("system.notify.system", GOOD_PASSWORD);
-	req.version = AUTHAGENTD_PROTO_VERSION + 1;
+	req.flags = 1;
 	ATF_REQUIRE_EQ(0, agent_call(fixture.session, &req, sizeof(req), -1,
 	    &status, &nfds));
 	ATF_CHECK_EQ(EINVAL, status);
@@ -1990,7 +1880,7 @@ ATF_TC_BODY(audit_mint_records, tc)
 	audited_mint_fixture(&fixture, SERVICE_RIGHTS_ADMIN, "org.test.login",
 	    POLICY_ROOT_MAY_ELEVATE, PASSWD_TEXT);
 	req = well_formed_mint();
-	req.version = AUTHAGENTD_PROTO_VERSION + 1;
+	req.op = AUTHAGENT_OP_ELEVATE + 99;
 	ATF_REQUIRE_EQ(0, agent_call(fixture.session, &req, sizeof(req), -1,
 	    &status, &nfds));
 	ATF_CHECK_EQ(EINVAL, status);
@@ -2196,9 +2086,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, elevate_attached_fd_is_einval);
 	ATF_TP_ADD_TC(tp, elevate_short_by_one_is_einval);
 	ATF_TP_ADD_TC(tp, elevate_long_by_one_is_einval);
-	ATF_TP_ADD_TC(tp, elevate_version_1_is_einval);
-	ATF_TP_ADD_TC(tp, elevate_version_range_enforced);
-	ATF_TP_ADD_TC(tp, mint_version_2_still_accepted);
+	ATF_TP_ADD_TC(tp, mint_forwardable_flag_accepted);
 	ATF_TP_ADD_TC(tp, elevate_unterminated_name_is_einval);
 	ATF_TP_ADD_TC(tp, elevate_unterminated_password_is_einval);
 	ATF_TP_ADD_TC(tp, elevate_back_to_back_after_failure_no_wedge);

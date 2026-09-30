@@ -71,18 +71,15 @@ through [system.Audit](audit.md) and logged to `LOG_AUTHPRIV`.
 ## Wire operations
 
 The protocol is `lib/libservice/authagent_proto.h`. There is no HELLO;
-every request begins with `version` (`AUTHAGENTD_PROTO_VERSION` 3) and
-`op`. The daemon accepts `AUTHAGENTD_PROTO_VERSION_MIN` 2 for MINT_SESSION
-and ELEVATE, which are wire-identical from v2, so a v2 login program keeps
-working across a rolling upgrade; MINT_AUTH requires v3. Every reply is a
+every request begins with `op`. Every reply is a
 `authagent_mint_reply` (`status`, `flags`) with the minted channel attached
 as one SCM_RIGHTS fd on success and none on failure.
 
 | Op | Request | Reply | Errors, in check order |
 |---|---|---|---|
 | 1 MINT_SESSION | `authagent_mint_req` (uid, flags: 0 or `FORWARDABLE`) | reply + session channel fd | `EPERM` (caller lacks `SERVICE_RIGHTS_ADMIN`), `EINVAL` (shape), `ENOENT` (uid has no passwd entry), mint transport errors |
-| 2 ELEVATE | `authagent_elevate_req` (336 bytes: name[64], password[256]) | reply + channel fd holding the session set plus `name` | `EPERM` (caller is a unit, not a session), `EINVAL` (size, version, flags, unterminated field, attached fd, name not reverse-domain), `EPERM` (name not in `may_elevate`), `EAGAIN` (five failures within sixty seconds for this uid), `ENXIO` (no `/etc/master.passwd` grant), `EACCES` (wrong password), `EPERM` (empty or locked hash), `ENOENT` (no record), `E2BIG` (set full) |
-| 3 MINT_AUTH | `authagent_mint_auth_req` (272 bytes: target uid, flags, password[256]) | reply + the target's session channel fd | `EPERM` (caller is a unit), `EINVAL`, `EAGAIN` (separate per-uid limiter), `EACCES`, `ENOENT` |
+| 2 ELEVATE | `authagent_elevate_req` (332 bytes: name[64], password[256]) | reply + channel fd holding the session set plus `name` | `EPERM` (caller is a unit, not a session), `EINVAL` (size, flags, unterminated field, attached fd, name not reverse-domain), `EPERM` (name not in `may_elevate`), `EAGAIN` (five failures within sixty seconds for this uid), `ENXIO` (no `/etc/master.passwd` grant), `EACCES` (wrong password), `EPERM` (empty or locked hash), `ENOENT` (no record), `E2BIG` (set full) |
+| 3 MINT_AUTH | `authagent_mint_auth_req` (268 bytes: target uid, flags, password[256]) | reply + the target's session channel fd | `EPERM` (caller is a unit), `EINVAL`, `EAGAIN` (separate per-uid limiter), `EACCES`, `ENOENT` |
 
 Both sides `explicit_bzero(3)` the request after use; nothing is cached
 and every elevation authenticates again. The uid for ELEVATE is never in
