@@ -79,10 +79,7 @@ capd_find_switchboard()
 	machine=$(uname -m)
 	machine_arch=$(uname -p)
 	# Prefer the source-build switchboard: qualification must exercise the
-	# same revision as the staged libraries.  An installed switchboard from an
-	# older world silently reintroduces userland ABI skew (svc_manifest
-	# grew without an SHLIB_MAJOR bump, which manifested as stack-protector
-	# aborts when the installed binary ran against newer libraries).
+	# same revision as the staged libraries.
 	for candidate in \
 	    "${CAPD_TEST_SWITCHBOARD:-}" \
 	    "/usr/obj/usr/src/${machine}.${machine_arch}/usr.sbin/switchboard/switchboard" \

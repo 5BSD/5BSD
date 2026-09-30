@@ -107,7 +107,6 @@ sctl_rpc_capability(uint32_t op, uint32_t flags, const char *payload,
 
 	req = (struct sctl_request *)reqbuf;
 	memset(req, 0, sizeof(*req));
-	req->version = SWITCHBOARD_CTL_VERSION;
 	req->op = op;
 	req->flags = flags;
 	req->datalen = (uint32_t)payload_length;

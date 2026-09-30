@@ -315,7 +315,6 @@ create_service_bootstrap(const struct svc_manifest *m, unsigned ntokens,
 		return (-1);
 	memset(&bootstrap, 0, sizeof(bootstrap));
 	bootstrap.magic = SERVICE_BOOTSTRAP_MAGIC;
-	bootstrap.version = SERVICE_BOOTSTRAP_VERSION;
 	bootstrap.header_size = offsetof(struct service_bootstrap, label);
 	bootstrap.total_size = sizeof(bootstrap);
 	bootstrap.flags = have_capprotect ?

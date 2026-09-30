@@ -940,8 +940,8 @@ domain_mint_system_channel(int *out_fd, int kq)
 	/*
 	 * The boot carry holds every anointment and the admin bypass: login,
 	 * sshd and getty run on it before there is a session, and it must reach
-	 * the auth agent and mint exactly as before.  v1 keeps it "*" (the design
-	 * narrows it to an explicit small set later, in switchboard's own config).
+	 * the auth agent and mint.  It is "*" (the design narrows it to an
+	 * explicit small set later, in switchboard's own config).
 	 */
 	memset(&all, 0, sizeof(all));
 	all.all = true;

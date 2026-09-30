@@ -553,9 +553,7 @@ sctl_cap_request(struct channel *ch __unused, struct channel_message *request,
 		reply.status = EINVAL;
 	} else {
 		req = data;
-		if (req->version != SWITCHBOARD_CTL_VERSION) {
-			reply.status = EPROTONOSUPPORT;
-		} else if (req->flags != 0 ||
+		if (req->flags != 0 ||
 		    req->datalen > SWITCHBOARD_CTL_MAX_PAYLOAD ||
 		    len != sizeof(*req) + (size_t)req->datalen ||
 		    (req->datalen > 0 &&
@@ -643,8 +641,7 @@ sctl_capsule_request(struct channel *ch __unused,
 		reply.status = EINVAL;
 	} else {
 		req = data;
-		if (req->version != CTL_VERSION || req->flags != 0 ||
-		    req->datalen != 0) {
+		if (req->flags != 0 || req->datalen != 0) {
 			reply.status = EINVAL;
 		} else if (!sctl_rights_is_admin(c->cap_rights)) {
 			reply.status = EPERM;

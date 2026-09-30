@@ -3,7 +3,7 @@
  *
  * Copyright (c) 2026 Kory Heard
  *
- * IPC anointments, v1 (docs/book/src/plane/anointments.md): the set
+ * IPC anointments (docs/book/src/plane/anointments.md): the set
  * representation, the endpoint match, the session-set plumbing on minted
  * channels, the on-demand pre-check, the refusal audit record, and the nonce
  * and ABI identity in the NEW_CLIENT grant.  Rows of the design's acceptance
@@ -2512,8 +2512,8 @@ ATF_TC_BODY(set_from_mint_all_with_names, tc)
  * The wire shape handle_mint_domain() length-checks against.  The handler
  * itself is not linked here (svc_proto.c owns the channel dispatch), but its
  * one guard is `length != sizeof(struct svc_mint_domain_req)` -> EINVAL, so
- * pin the size the guard compares with: a v12 (pre-anointment) request or a
- * truncated list can never alias a valid one.
+ * pin the size the guard compares with: a short or
+ * truncated request can never alias a valid one.
  */
 ATF_TC_WITHOUT_HEAD(mint_req_wire_shape);
 ATF_TC_BODY(mint_req_wire_shape, tc)

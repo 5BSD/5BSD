@@ -214,35 +214,6 @@ control_socket_status_uptime_cleanup()
 	:
 }
 
-atf_test_case control_socket_bad_version cleanup
-control_socket_bad_version_head()
-{
-	atf_set "descr" "control socket rejects bad protocol version"
-	atf_set "require.user" "root"
-}
-control_socket_bad_version_body()
-{
-	require_pidfile
-	# Send version=99, op=STATUS, expect ENOTSUP in reply.
-	# The first 4 bytes of the reply are the status (uint32 LE).
-	# ENOTSUP is 45 (0x2d) on FreeBSD.  Use octal escapes: the
-	# FreeBSD printf(1)/sh builtin supports \NNN but NOT \xHH, so hex
-	# would emit literal text and corrupt the request (it would still
-	# mismatch the version, passing this test for the wrong reason).
-	atf_check -s exit:0 -o match:"2d" sh -c '
-		{
-			printf "\\143\\000\\000\\000"
-			printf "\\002\\000\\000\\000"
-			printf "\\000\\000\\000\\000"
-			printf "\\000\\000\\000\\000"
-		} | nc -U /var/run/capsule.sock | od -A n -t x1 | head -1
-	'
-}
-control_socket_bad_version_cleanup()
-{
-	:
-}
-
 atf_test_case control_socket_unknown_op cleanup
 control_socket_unknown_op_head()
 {
@@ -252,13 +223,11 @@ control_socket_unknown_op_head()
 control_socket_unknown_op_body()
 {
 	require_pidfile
-	# Send version=1, op=255 (unknown), expect ENOTSUP.  Octal escapes
-	# (see control_socket_bad_version): with hex, version=1 would not
-	# be emitted, so this would test version mismatch, not the unknown
-	# opcode it claims to.
+	# Send op=255 (unknown), expect ENOTSUP.  Octal escapes:
+	# the FreeBSD printf(1)/sh builtin supports \NNN but NOT \xHH, so hex
+	# would emit literal text and corrupt the request.
 	atf_check -s exit:0 -o match:"2d" sh -c '
 		{
-			printf "\\001\\000\\000\\000"
 			printf "\\377\\000\\000\\000"
 			printf "\\000\\000\\000\\000"
 			printf "\\000\\000\\000\\000"
@@ -281,13 +250,12 @@ control_socket_status_with_payload_head()
 control_socket_status_with_payload_body()
 {
 	require_pidfile
-	# Send version=1, op=STATUS(2), flags=0, datalen=4 + 4 bytes
+	# Send op=STATUS(2), flags=0, datalen=4 + 4 bytes
 	# of junk payload.  The server must return a non-zero status
 	# (EINVAL or similar).  Verify the first 4 bytes of the reply
 	# are not all zeros (status != 0).
 	atf_check -s exit:0 sh -c '
 		reply=$({
-			printf "\\x01\\x00\\x00\\x00"
 			printf "\\x02\\x00\\x00\\x00"
 			printf "\\x00\\x00\\x00\\x00"
 			printf "\\x04\\x00\\x00\\x00"
@@ -863,11 +831,10 @@ control_socket_reload_with_payload_head()
 control_socket_reload_with_payload_body()
 {
 	require_pidfile
-	# Send version=1, op=RELOAD(3), flags=0, datalen=4 + 4 bytes junk.
+	# Send op=RELOAD(3), flags=0, datalen=4 + 4 bytes junk.
 	# Must return non-zero status (EINVAL).
 	atf_check -s exit:0 sh -c '
 		reply=$({
-			printf "\\x01\\x00\\x00\\x00"
 			printf "\\x03\\x00\\x00\\x00"
 			printf "\\x00\\x00\\x00\\x00"
 			printf "\\x04\\x00\\x00\\x00"
@@ -891,10 +858,9 @@ control_socket_shutdown_with_payload_head()
 control_socket_shutdown_with_payload_body()
 {
 	require_pidfile
-	# Send version=1, op=SHUTDOWN(1), flags=0, datalen=4 + 4 bytes junk.
+	# Send op=SHUTDOWN(1), flags=0, datalen=4 + 4 bytes junk.
 	atf_check -s exit:0 sh -c '
 		reply=$({
-			printf "\\x01\\x00\\x00\\x00"
 			printf "\\x01\\x00\\x00\\x00"
 			printf "\\x00\\x00\\x00\\x00"
 			printf "\\x04\\x00\\x00\\x00"
@@ -918,10 +884,9 @@ control_socket_unknown_op_with_payload_head()
 control_socket_unknown_op_with_payload_body()
 {
 	require_pidfile
-	# Send version=1, op=6 (unused), flags=0, datalen=4 + 4 bytes junk.
+	# Send op=6 (unused), flags=0, datalen=4 + 4 bytes junk.
 	atf_check -s exit:0 sh -c '
 		reply=$({
-			printf "\\x01\\x00\\x00\\x00"
 			printf "\\x06\\x00\\x00\\x00"
 			printf "\\x00\\x00\\x00\\x00"
 			printf "\\x04\\x00\\x00\\x00"
@@ -945,10 +910,9 @@ control_socket_services_with_payload_head()
 control_socket_services_with_payload_body()
 {
 	require_pidfile
-	# Send version=1, op=SERVICES(9), flags=0, datalen=4 + 4 bytes junk.
+	# Send op=SERVICES(9), flags=0, datalen=4 + 4 bytes junk.
 	atf_check -s exit:0 sh -c '
 		reply=$({
-			printf "\\x01\\x00\\x00\\x00"
 			printf "\\x09\\x00\\x00\\x00"
 			printf "\\x00\\x00\\x00\\x00"
 			printf "\\x04\\x00\\x00\\x00"
@@ -1070,12 +1034,12 @@ control_socket_client_timeout_head()
 control_socket_client_timeout_body()
 {
 	require_pidfile
-	# Connect and send a partial request (only 8 of 16 header bytes).
+	# Connect and send a partial request (only 8 of 12 header bytes).
 	# The daemon should time out and close the connection.
 	atf_check -s exit:0 sh -c '
 		{
-			printf "\\x01\\x00\\x00\\x00"
 			printf "\\x02\\x00\\x00\\x00"
+			printf "\\x00\\x00\\x00\\x00"
 			sleep 5
 		} | nc -U /var/run/capsule.sock >/dev/null 2>&1 || true
 	'
@@ -1123,7 +1087,6 @@ control_socket_early_close_status_body()
 	# This triggers a write to a closed socket — must not SIGPIPE.
 	atf_check -s exit:0 sh -c '
 		{
-			printf "\\x01\\x00\\x00\\x00"
 			printf "\\x02\\x00\\x00\\x00"
 			printf "\\x00\\x00\\x00\\x00"
 			printf "\\x00\\x00\\x00\\x00"
@@ -1149,7 +1112,6 @@ control_socket_early_close_services_body()
 	# Send SERVICES request, read 1 byte of response, then close.
 	atf_check -s exit:0 sh -c '
 		{
-			printf "\\x01\\x00\\x00\\x00"
 			printf "\\x09\\x00\\x00\\x00"
 			printf "\\x00\\x00\\x00\\x00"
 			printf "\\x00\\x00\\x00\\x00"
@@ -1174,7 +1136,6 @@ control_socket_early_close_reload_body()
 	# Send RELOAD request, read 1 byte, close.
 	atf_check -s exit:0 sh -c '
 		{
-			printf "\\x01\\x00\\x00\\x00"
 			printf "\\x03\\x00\\x00\\x00"
 			printf "\\x00\\x00\\x00\\x00"
 			printf "\\x00\\x00\\x00\\x00"
@@ -1334,7 +1295,6 @@ atf_init_test_cases()
 	atf_add_test_case control_socket_permissions
 	atf_add_test_case control_socket_status
 	atf_add_test_case control_socket_status_uptime
-	atf_add_test_case control_socket_bad_version
 	atf_add_test_case control_socket_unknown_op
 	atf_add_test_case control_socket_status_with_payload
 	atf_add_test_case control_socket_rapid

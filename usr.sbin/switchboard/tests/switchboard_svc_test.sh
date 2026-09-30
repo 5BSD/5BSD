@@ -756,7 +756,7 @@ capmode_is_authoritative_readiness_body()
 
 	if ! wait_for_file protocol-ready.out; then
 		cat "$logfile" 2>/dev/null
-		atf_fail "fixture did not send the legacy READY message"
+		atf_fail "fixture did not send the READY message"
 	fi
 	atf_check -s exit:0 -o match:"org.test.capmode.gate.*starting" \
 	    switchboardctl status

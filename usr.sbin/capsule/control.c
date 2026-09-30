@@ -161,11 +161,6 @@ conn_dispatch(struct ctl_conn *c)
 	c->summary_len = 0;
 	c->action = CTL_ACTION_NONE;
 
-	if (req->version != CTL_VERSION) {
-		reply->status = ENOTSUP;
-		goto write;
-	}
-
 	CAPSULE_PROBE_CTL_CMD(req->op, c->euid);
 
 	switch (req->op) {
@@ -213,7 +208,6 @@ conn_dispatch(struct ctl_conn *c)
 		break;
 	}
 
-write:
 	if ((req->op == CTL_OP_STATUS || req->op == CTL_OP_RELOAD) &&
 	    reply->flags > 0)
 		c->summary_len = reply->flags;

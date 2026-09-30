@@ -689,9 +689,7 @@ svc_request(struct channel *channel, struct channel_message *request,
 	SWITCHBOARD_PROBE_IPC_RECV(svc->manifest.label, op);
 	switch (op) {
 	case SVC_OP_READY:
-		if (channel_message_length(request) != sizeof(struct svc_ready_req) ||
-		    ((const struct svc_ready_req *)channel_message_data(request))->version !=
-		    SWITCHBOARD_SVC_PROTO_VERSION)
+		if (channel_message_length(request) != sizeof(struct svc_ready_req))
 			(void)svc_channel_reply(svc, request, op, EINVAL,
 			    NULL, 0);
 		else

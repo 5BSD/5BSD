@@ -587,7 +587,7 @@ naming_lookup(const char *name, struct svc_runtime *requester,
 	    requester != NULL ? requester->manifest.label :
 	    NAMING_SESSION_LABEL, sizeof(notify.client_label));
 	/*
-	 * Identity of the running instance (v13): the kernel's per-exec program
+	 * Identity of the running instance: the kernel's per-exec program
 	 * nonce and the sender ABI, both from the stamp on the lookup request.
 	 * The label above is the persistent identity; the nonce tells one
 	 * incarnation from the next (U10).  ABI is information for the provider

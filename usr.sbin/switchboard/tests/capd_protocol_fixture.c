@@ -36,7 +36,7 @@
  * bytes actually follow it (they may deliberately disagree).
  */
 static int
-control_send(uint32_t version, uint32_t op, uint32_t flags, uint32_t datalen,
+control_send(uint32_t op, uint32_t flags, uint32_t datalen,
     const void *payload, size_t paylen)
 {
 	struct service_session *session;
@@ -63,7 +63,6 @@ control_send(uint32_t version, uint32_t op, uint32_t flags, uint32_t datalen,
 
 	req = (struct sctl_request *)reqbuf;
 	memset(req, 0, sizeof(*req));
-	req->version = version;
 	req->op = op;
 	req->flags = flags;
 	req->datalen = datalen;
@@ -104,7 +103,7 @@ static int
 control_oversized(void)
 {
 
-	return (control_send(SWITCHBOARD_CTL_VERSION, SCTL_OP_START_SVC, 0,
+	return (control_send(SCTL_OP_START_SVC, 0,
 	    SWITCHBOARD_CTL_MAX_PAYLOAD + 1, NULL, 0));
 }
 
@@ -119,10 +118,10 @@ control_invalid(const char *kind)
 	static const char embedded_nul[] = { 'u', '\0', 'n', 'i', 't' };
 
 	if (strcmp(kind, "flags") == 0)
-		return (control_send(SWITCHBOARD_CTL_VERSION, SCTL_OP_START_SVC,
+		return (control_send(SCTL_OP_START_SVC,
 		    1, 0, NULL, 0));
 	if (strcmp(kind, "nul") == 0)
-		return (control_send(SWITCHBOARD_CTL_VERSION, SCTL_OP_START_SVC,
+		return (control_send(SCTL_OP_START_SVC,
 		    0, (uint32_t)sizeof(embedded_nul), embedded_nul,
 		    sizeof(embedded_nul)));
 	errx(2, "unknown invalid request kind: %s", kind);

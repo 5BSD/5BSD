@@ -109,8 +109,7 @@ service_session_call(struct service_session *session,
 		return (-1);
 	}
 	req = message->data;
-	if (req->version != CTL_VERSION || req->flags != 0 ||
-	    req->datalen != 0) {
+	if (req->flags != 0 || req->datalen != 0) {
 		errno = EPROTO;
 		return (-1);
 	}

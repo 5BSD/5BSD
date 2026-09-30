@@ -314,7 +314,7 @@ handle_ping(uint64_t reply_token)
  * ack is queued before the transition runs — capsule_lifecycle() only
  * *sets* the requested transition, which the state-machine loop applies after
  * this dispatch returns, so the caller's reply precedes the death sweep (same
- * ordering as the legacy control-socket path).
+ * ordering as the former control-socket path).
  */
 static void
 handle_lifecycle(const void *payload, uint32_t len, uint64_t reply_token)

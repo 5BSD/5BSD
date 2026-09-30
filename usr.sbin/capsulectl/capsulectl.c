@@ -82,7 +82,6 @@ capsulectl_call(uint32_t op, bool show)
 	}
 
 	memset(&req, 0, sizeof(req));
-	req.version = CTL_VERSION;
 	req.op = op;
 
 	memset(&message, 0, sizeof(message));

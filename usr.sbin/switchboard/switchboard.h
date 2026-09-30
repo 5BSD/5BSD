@@ -541,7 +541,7 @@ int	naming_lookup(const char *name, struct svc_runtime *requester,
 	    const struct svc_domain *domain, const struct channel_sender *sender,
 	    int *errp, bool *sendablep);
 
-/* anoint.c — IPC anointment sets and the endpoint match (v1) */
+/* anoint.c — IPC anointment sets and the endpoint match */
 void	svc_anoint_set_from_manifest(struct svc_anoint_set *set,
 	    const struct svc_manifest *m);
 int	svc_anoint_set_from_mint(const struct svc_mint_domain_req *req,

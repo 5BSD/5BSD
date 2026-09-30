@@ -522,15 +522,15 @@ untrusted_bundle_rejected_cleanup()
 	cleanup_common
 }
 
-atf_test_case legacy_kmod_prerequisite_is_rejected cleanup
-legacy_kmod_prerequisite_is_rejected_head()
+atf_test_case kmod_prerequisite_is_rejected cleanup
+kmod_prerequisite_is_rejected_head()
 {
 	atf_set "descr" "Legacy module prerequisites are rejected; modules are owned by bsdextension"
 	atf_set "require.user" "root"
 	require_capsule_stack_kmods
 	atf_set "timeout" "60"
 }
-legacy_kmod_prerequisite_is_rejected_body()
+kmod_prerequisite_is_rejected_body()
 {
 	build_ready_svc
 	start_stack
@@ -538,13 +538,13 @@ legacy_kmod_prerequisite_is_rejected_body()
 	    'kmod_requires = ["mac_capability"];' "$(pwd)/ready_svc"
 	reload_stack
 	wait_for_log "unknown key 'kmod_requires'" ||
-	    atf_fail "legacy module-loading field was not rejected"
+	    atf_fail "module-loading field was not rejected"
 	atf_check test ! -e kmod-prereq.ready
 	wait_for_log 'previous registry and running services retained' ||
 	    atf_fail "invalid system manifest did not preserve the prior registry"
 	stop_stack
 }
-legacy_kmod_prerequisite_is_rejected_cleanup()
+kmod_prerequisite_is_rejected_cleanup()
 {
 	cleanup_common
 }
@@ -775,5 +775,5 @@ atf_init_test_cases()
 	atf_add_test_case remaining_token_families_activate
 	atf_add_test_case malformed_reload_is_transactional
 	atf_add_test_case untrusted_bundle_rejected
-	atf_add_test_case legacy_kmod_prerequisite_is_rejected
+	atf_add_test_case kmod_prerequisite_is_rejected
 }
