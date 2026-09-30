@@ -107,7 +107,6 @@ ATF_TC_BODY(boot_destroys_orphans_immediately, tc)
 	const char *owned[] = { "Live", "Gone" };
 	struct fake f = { .owned = owned, .nowned = 2 };
 	struct capreclaim r = {
-		.struct_size = sizeof(struct capreclaim),
 		.sources = { { .fd = make_dir(installed, 1), .strip_cap = true } },
 		.nsources = 1,
 		.enumerate = fake_enumerate, .destroy = fake_destroy, .arg = &f,
@@ -127,7 +126,6 @@ ATF_TC_BODY(timer_requires_seen_gone_twice, tc)
 	const char *owned[] = { "Live", "Gone" };
 	struct fake f = { .owned = owned, .nowned = 2 };
 	struct capreclaim r = {
-		.struct_size = sizeof(struct capreclaim),
 		.sources = { { .fd = make_dir(installed, 1), .strip_cap = true } },
 		.nsources = 1,
 		.enumerate = fake_enumerate, .destroy = fake_destroy, .arg = &f,
@@ -153,7 +151,6 @@ ATF_TC_BODY(transient_absence_survives_upgrade, tc)
 	struct fake f = { .owned = owned, .nowned = 1 };
 	int fd_gone = make_dir(gone, 0), fd_back = make_dir(back, 1);
 	struct capreclaim r = {
-		.struct_size = sizeof(struct capreclaim),
 		.sources = { { .fd = fd_gone, .strip_cap = true } },
 		.nsources = 1,
 		.enumerate = fake_enumerate, .destroy = fake_destroy, .arg = &f,
@@ -179,7 +176,6 @@ ATF_TC_BODY(running_counts_as_live, tc)
 	const char *owned[] = { "Loaded" };
 	struct fake f = { .owned = owned, .nowned = 1 };
 	struct capreclaim r = {
-		.struct_size = sizeof(struct capreclaim),
 		.sources = {
 			{ .fd = make_dir(installed, 0), .strip_cap = true },
 			{ .fd = make_dir(running, 1), .strip_cap = false },
@@ -209,7 +205,6 @@ ATF_TC_BODY(empty_live_set_reaps_nothing, tc)
 	const char *owned[] = { "A", "B", "C" };
 	struct fake f = { .owned = owned, .nowned = 3 };
 	struct capreclaim r = {
-		.struct_size = sizeof(struct capreclaim),
 		.sources = { { .fd = make_dir(installed, 0), .strip_cap = true } },
 		.nsources = 1,
 		.enumerate = fake_enumerate, .destroy = fake_destroy, .arg = &f,
@@ -227,8 +222,7 @@ ATF_TC_WITHOUT_HEAD(missing_callbacks_are_einval);
 ATF_TC_BODY(missing_callbacks_are_einval, tc)
 {
 	struct fake f = { 0 };
-	struct capreclaim r = {
-		.struct_size = sizeof(struct capreclaim), .nsources = 0, .arg = &f };
+	struct capreclaim r = { .nsources = 0, .arg = &f };
 
 	ATF_CHECK_ERRNO(EINVAL, capreclaim_run(NULL, CAPRECLAIM_BOOT) == -1);
 	r.destroy = fake_destroy;		/* enumerate missing */
@@ -249,7 +243,6 @@ ATF_TC_BODY(non_directory_source_is_a_hard_error, tc)
 	char tmpl[] = "/tmp/capreclaim.file.XXXXXX";
 	int fd = mkstemp(tmpl);
 	struct capreclaim r = {
-		.struct_size = sizeof(struct capreclaim),
 		.sources = { { .fd = fd, .strip_cap = true } }, .nsources = 1,
 		.enumerate = fake_enumerate, .destroy = fake_destroy, .arg = &f,
 	};
@@ -271,7 +264,6 @@ ATF_TC_BODY(all_sources_absent_reaps_nothing, tc)
 	struct fake f = { .owned = owned, .nowned = 2 };
 	struct capreclaim_stats st;
 	struct capreclaim r = {
-		.struct_size = sizeof(struct capreclaim),
 		.sources = { { .fd = -1, .strip_cap = true },
 			     { .fd = -1, .strip_cap = false } }, .nsources = 2,
 		.enumerate = fake_enumerate, .destroy = fake_destroy, .arg = &f,
@@ -295,7 +287,6 @@ ATF_TC_BODY(strip_cap_accepts_only_marker_dirs, tc)
 	struct fake f = { .owned = owned, .nowned = 4 };
 	struct capreclaim_stats st;
 	struct capreclaim r = {
-		.struct_size = sizeof(struct capreclaim),
 		.sources = { { .fd = make_dir(installed, 4), .strip_cap = true } },
 		.nsources = 1,
 		.enumerate = fake_enumerate, .destroy = fake_destroy, .arg = &f,
@@ -337,7 +328,6 @@ ATF_TC_BODY(overlong_names_are_ignored, tc)
 	f.owned = owned;
 	f.nowned = 2;
 	memset(&r, 0, sizeof(r));
-	r.struct_size = sizeof(r);
 	r.sources[0].fd = make_dir(installed, 2);
 	r.sources[0].strip_cap = true;
 	r.nsources = 1;
@@ -362,7 +352,6 @@ ATF_TC_BODY(enumerate_failure_destroys_nothing, tc)
 	const char *owned[] = { "Live", "Gone" };
 	struct fake f = { .owned = owned, .nowned = 2, .enumerate_rc = -1 };
 	struct capreclaim r = {
-		.struct_size = sizeof(struct capreclaim),
 		.sources = { { .fd = make_dir(installed, 1), .strip_cap = true } },
 		.nsources = 1,
 		.enumerate = fake_enumerate, .destroy = fake_destroy, .arg = &f,
@@ -384,7 +373,6 @@ ATF_TC_BODY(destroy_failure_is_not_counted_and_retried, tc)
 	struct fake f = { .owned = owned, .nowned = 2, .destroy_rc = -1 };
 	struct capreclaim_stats st;
 	struct capreclaim r = {
-		.struct_size = sizeof(struct capreclaim),
 		.sources = { { .fd = make_dir(installed, 1), .strip_cap = true } },
 		.nsources = 1,
 		.enumerate = fake_enumerate, .destroy = fake_destroy, .arg = &f,
@@ -414,7 +402,6 @@ ATF_TC_BODY(grace_resets_when_owner_reappears, tc)
 	const char *owned[] = { "Live", "Flap" };
 	struct fake f = { .owned = owned, .nowned = 2 };
 	struct capreclaim r = {
-		.struct_size = sizeof(struct capreclaim),
 		.sources = { { .fd = make_dir(installed, 1), .strip_cap = true } },
 		.nsources = 1,
 		.enumerate = fake_enumerate, .destroy = fake_destroy, .arg = &f,
@@ -444,7 +431,6 @@ ATF_TC_BODY(boot_pass_does_not_seed_grace, tc)
 	const char *owned[] = { "Live", "Gone" };
 	struct fake f = { .owned = owned, .nowned = 2, .destroy_rc = -1 };
 	struct capreclaim r = {
-		.struct_size = sizeof(struct capreclaim),
 		.sources = { { .fd = make_dir(installed, 1), .strip_cap = true } },
 		.nsources = 1,
 		.enumerate = fake_enumerate, .destroy = fake_destroy, .arg = &f,
@@ -468,7 +454,6 @@ ATF_TC_BODY(live_set_deduplicates_across_sources, tc)
 	struct fake f = { .owned = owned, .nowned = 4 };
 	struct capreclaim_stats st;
 	struct capreclaim r = {
-		.struct_size = sizeof(struct capreclaim),
 		.sources = { { .fd = make_dir(installed, 2), .strip_cap = true },
 			     { .fd = make_dir(running, 2), .strip_cap = false } },
 		.nsources = 2,
@@ -493,7 +478,6 @@ ATF_TC_BODY(duplicate_owned_names_destroy_once, tc)
 	const char *owned[] = { "Gone", "Gone", "Gone" };
 	struct fake f = { .owned = owned, .nowned = 3 };
 	struct capreclaim r = {
-		.struct_size = sizeof(struct capreclaim),
 		.sources = { { .fd = make_dir(installed, 1), .strip_cap = true } },
 		.nsources = 1,
 		.enumerate = fake_enumerate, .destroy = fake_destroy, .arg = &f,
@@ -528,7 +512,6 @@ ATF_TC_BODY(many_owners_reconcile_exactly, tc)
 		installed[i] = caps[i];
 	}
 	memset(&r, 0, sizeof(r));
-	r.struct_size = sizeof(r);
 	r.sources[0].fd = make_dir(installed, INSTALLED);
 	r.sources[0].strip_cap = true;
 	r.nsources = 1;
@@ -553,7 +536,6 @@ ATF_TC_BODY(fini_is_null_safe_and_idempotent, tc)
 	const char *owned[] = { "Gone" };
 	struct fake f = { .owned = owned, .nowned = 1 };
 	struct capreclaim r = {
-		.struct_size = sizeof(struct capreclaim),
 		.sources = { { .fd = make_dir(installed, 1), .strip_cap = true } },
 		.nsources = 1,
 		.enumerate = fake_enumerate, .destroy = fake_destroy, .arg = &f,
@@ -581,7 +563,6 @@ ATF_TC_BODY(allow_empty_live_reaps_the_last_owner, tc)
 	struct fake f = { .owned = owned, .nowned = 2 };
 	struct capreclaim_stats st;
 	struct capreclaim r = {
-		.struct_size = sizeof(struct capreclaim),
 		.sources = { { .fd = make_dir(NULL, 0), .strip_cap = false } },
 		.nsources = 1,
 		.enumerate = fake_enumerate, .destroy = fake_destroy, .arg = &f,
@@ -619,7 +600,6 @@ ATF_TC_BODY(unreadable_source_fails_the_pass, tc)
 	struct fake f = { .owned = owned, .nowned = 1 };
 	struct capreclaim_stats st;
 	struct capreclaim r = {
-		.struct_size = sizeof(struct capreclaim),
 		.sources = { { .fd = make_dir(installed, 1), .strip_cap = true } },
 		.nsources = 1,
 		.enumerate = fake_enumerate, .destroy = fake_destroy, .arg = &f,
@@ -644,7 +624,6 @@ ATF_TC_BODY(too_many_sources_is_einval, tc)
 	const char *owned[] = { "Gone" };
 	struct fake f = { .owned = owned, .nowned = 1 };
 	struct capreclaim r = {
-		.struct_size = sizeof(struct capreclaim),
 		.nsources = 5,
 		.enumerate = fake_enumerate, .destroy = fake_destroy, .arg = &f,
 	};
@@ -665,7 +644,6 @@ ATF_TC_BODY(floored_pass_is_reported, tc)
 	struct fake f = { .owned = owned, .nowned = 1 };
 	struct capreclaim_stats st;
 	struct capreclaim r = {
-		.struct_size = sizeof(struct capreclaim),
 		.sources = { { .fd = make_dir(NULL, 0), .strip_cap = true } },
 		.nsources = 1,
 		.enumerate = fake_enumerate, .destroy = fake_destroy, .arg = &f,
@@ -697,7 +675,6 @@ ATF_TC_BODY(unobserved_pass_restarts_the_grace, tc)
 	const char *owned[] = { "Live", "Gone" };
 	struct fake f = { .owned = owned, .nowned = 2 };
 	struct capreclaim r = {
-		.struct_size = sizeof(struct capreclaim),
 		.sources = { { .fd = make_dir(installed, 1), .strip_cap = true } },
 		.nsources = 1,
 		.enumerate = fake_enumerate, .destroy = fake_destroy, .arg = &f,
@@ -762,7 +739,6 @@ ATF_TC_BODY(long_owner_marker_is_still_live, tc)
 	f.owned = owned;
 	f.nowned = 1;
 	memset(&r, 0, sizeof(r));
-	r.struct_size = sizeof(r);
 	r.sources[0].fd = make_dir(installed, 1);
 	r.sources[0].strip_cap = true;
 	r.nsources = 1;
@@ -797,7 +773,6 @@ ATF_TC_BODY(live_match_is_exact_not_prefix, tc)
 	f.owned = owned;
 	f.nowned = 2;
 	memset(&r, 0, sizeof(r));
-	r.struct_size = sizeof(r);
 	r.sources[0].fd = make_dir(installed, 1);
 	r.sources[0].strip_cap = true;
 	r.nsources = 1;
@@ -833,7 +808,6 @@ ATF_TC_BODY(strip_cap_edge_names, tc)
 	f.owned = owned;
 	f.nowned = 2;
 	memset(&r, 0, sizeof(r));
-	r.struct_size = sizeof(r);
 	r.sources[0].fd = make_dir(installed, 2);
 	r.sources[0].strip_cap = true;
 	r.nsources = 1;
@@ -865,7 +839,6 @@ ATF_TC_BODY(partial_destroy_continues_past_a_failure, tc)
 	    .prune_destroyed = true };
 	struct capreclaim_stats st;
 	struct capreclaim r = {
-		.struct_size = sizeof(struct capreclaim),
 		.sources = { { .fd = make_dir(installed, 1), .strip_cap = true } },
 		.nsources = 1,
 		.enumerate = fake_enumerate, .destroy = fake_destroy, .arg = &f,
@@ -900,7 +873,6 @@ ATF_TC_BODY(status_record_lists_the_managed_set, tc)
 	struct fake f = { .owned = owned, .nowned = 2, .prune_destroyed = true };
 	struct capreclaim_stats st;
 	struct capreclaim r = {
-		.struct_size = sizeof(struct capreclaim),
 		.sources = { { .fd = make_dir(installed, 1), .strip_cap = true } },
 		.nsources = 1,
 		.enumerate = fake_enumerate, .destroy = fake_destroy, .arg = &f,
@@ -933,71 +905,8 @@ ATF_TC_BODY(status_record_lists_the_managed_set, tc)
 	capreclaim_fini(&r);
 }
 
-/*
- * The struct_size guard: a reconciler that was never initialised with
- * CAPRECLAIM_INIT (struct_size 0), or whose struct_size is out of range, is
- * refused up front with EINVAL and destroys nothing -- so a stale stack struct
- * can never drive a reap.
- */
-ATF_TC_WITHOUT_HEAD(bad_struct_size_is_einval);
-ATF_TC_BODY(bad_struct_size_is_einval, tc)
-{
-	const char *installed[] = { "Live.cap" };
-	const char *owned[] = { "Live", "Gone" };
-	struct fake f = { .owned = owned, .nowned = 2 };
-	struct capreclaim r = {
-		.struct_size = sizeof(struct capreclaim),
-		.sources = { { .fd = make_dir(installed, 1), .strip_cap = true } },
-		.nsources = 1,
-		.enumerate = fake_enumerate, .destroy = fake_destroy, .arg = &f,
-	};
-
-	r.struct_size = 0;			/* never initialised */
-	ATF_CHECK_ERRNO(EINVAL, capreclaim_run(&r, CAPRECLAIM_BOOT) == -1);
-	r.struct_size = sizeof(struct capreclaim) + 1;	/* impossibly large */
-	ATF_CHECK_ERRNO(EINVAL, capreclaim_run(&r, CAPRECLAIM_BOOT) == -1);
-	r.struct_size = CAPRECLAIM_SIZE_MIN - 1;	/* below the minimum */
-	ATF_CHECK_ERRNO(EINVAL, capreclaim_run(&r, CAPRECLAIM_BOOT) == -1);
-	ATF_CHECK(!was_destroyed(&f, "Gone"));		/* nothing acted on */
-	(void)close(r.sources[0].fd);
-	capreclaim_fini(&r);
-}
-
-/*
- * ABI-skew guard: a caller compiled against an older, smaller struct (no
- * optional tail) reports the smaller struct_size.  The library must still
- * reconcile correctly yet never touch a field past that size -- here the stats
- * pointer, which such a caller does not really have, must be left untouched.
- */
-ATF_TC_WITHOUT_HEAD(old_caller_without_tail_still_reconciles);
-ATF_TC_BODY(old_caller_without_tail_still_reconciles, tc)
-{
-	const char *installed[] = { "Live.cap" };
-	const char *owned[] = { "Live", "Gone" };
-	struct fake f = { .owned = owned, .nowned = 2 };
-	struct capreclaim_stats canary;
-	struct capreclaim r = {
-		.struct_size = sizeof(struct capreclaim),
-		.sources = { { .fd = make_dir(installed, 1), .strip_cap = true } },
-		.nsources = 1,
-		.enumerate = fake_enumerate, .destroy = fake_destroy, .arg = &f,
-		.stats = &canary,
-	};
-
-	memset(&canary, 0xa5, sizeof(canary));	/* must survive unread */
-	r.struct_size = CAPRECLAIM_SIZE_MIN;	/* stats is past the tail edge */
-	ATF_CHECK_EQ(1, capreclaim_run(&r, CAPRECLAIM_BOOT));	/* still reaps */
-	ATF_CHECK(was_destroyed(&f, "Gone"));
-	ATF_CHECK(!was_destroyed(&f, "Live"));
-	ATF_CHECK_EQ(0xa5a5a5a5u, canary.nlive);	/* stats untouched */
-	(void)close(r.sources[0].fd);
-	capreclaim_fini(&r);
-}
-
 ATF_TP_ADD_TCS(tp)
 {
-	ATF_TP_ADD_TC(tp, bad_struct_size_is_einval);
-	ATF_TP_ADD_TC(tp, old_caller_without_tail_still_reconciles);
 	ATF_TP_ADD_TC(tp, unreadable_source_fails_the_pass);
 	ATF_TP_ADD_TC(tp, too_many_sources_is_einval);
 	ATF_TP_ADD_TC(tp, floored_pass_is_reported);

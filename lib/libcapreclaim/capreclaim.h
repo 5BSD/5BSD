@@ -84,17 +84,6 @@ typedef int (*capreclaim_destroy_fn)(void *arg, const char *owner);
 struct capreclaim_state;
 
 struct capreclaim {
-	/*
-	 * Must equal sizeof(struct capreclaim) at the CALLER's compile time;
-	 * CAPRECLAIM_INIT sets it.  It is the ABI-skew guard: a provider built
-	 * against one libcapreclaim and dynamically linked against another
-	 * reports the size of the struct it actually allocated, so the library
-	 * never reads an optional field past the end of an older, smaller
-	 * struct.  capreclaim_run() rejects a struct_size of zero or one out of
-	 * range (which also catches a struct that was never initialised), so
-	 * every reconciler MUST be initialised with CAPRECLAIM_INIT.
-	 */
-	size_t			 struct_size;
 	struct capreclaim_source sources[4];	/* live-set sources */
 	unsigned		 nsources;
 	capreclaim_enumerate_fn	 enumerate;
@@ -119,12 +108,7 @@ struct capreclaim {
 	 */
 	bool			 allow_empty_live;
 	struct capreclaim_state	*state;		/* opaque; library-owned */
-	/*
-	 * --- Optional tail.  Each field below is read only when struct_size
-	 * shows the caller's struct is large enough to contain it, so a future
-	 * field may be appended here without breaking an already-compiled
-	 * caller.  Everything above is mandatory (part of CAPRECLAIM_SIZE_MIN). ---
-	 */
+	/* Optional. */
 	struct capreclaim_stats	*stats;			/* optional */
 	/*
 	 * Operability: if status_dirfd >= 0, each pass rewrites an
@@ -139,23 +123,15 @@ struct capreclaim {
 };
 
 /*
- * The mandatory prefix of struct capreclaim: a caller's struct_size below this
- * cannot describe a usable reconciler and is rejected.  Fields from `stats`
- * onward are the size-gated optional tail.
- */
-#define	CAPRECLAIM_SIZE_MIN	offsetof(struct capreclaim, stats)
-
-/*
  * The one correct way to initialise a reconciler: zeroes every field (so the
- * opaque state starts NULL, allow_empty_live false, optional fds absent) and
- * stamps struct_size with the caller's own sizeof for the ABI-skew guard.
+ * opaque state starts NULL, allow_empty_live false, optional fds absent).
  * Use it, then set the fields you need:
  *
  *	struct capreclaim r = CAPRECLAIM_INIT;
  *	r.sources[0].fd = sys_fd; r.sources[0].strip_cap = true;
  *	r.nsources = 1; r.enumerate = ...; r.destroy = ...; r.arg = ...;
  */
-#define	CAPRECLAIM_INIT		{ .struct_size = sizeof(struct capreclaim) }
+#define	CAPRECLAIM_INIT		{ 0 }
 
 /*
  * Run one reconcile pass.  Reads the live set from the sources, asks the

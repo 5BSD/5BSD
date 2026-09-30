@@ -41,15 +41,6 @@ struct capreclaim_state {
 	unsigned	  n, cap;
 };
 
-/*
- * True when the caller's struct_size shows its struct actually contains field
- * `f`.  Used to read an optional tail field only when an older, smaller caller
- * really has it -- the ABI-skew guard in action.
- */
-#define	CAPRECLAIM_HAS(r, f)						\
-	((r)->struct_size >= offsetof(struct capreclaim, f) +		\
-	    sizeof(((struct capreclaim *)0)->f))
-
 static bool
 set_contains(const struct owner_set *s, const char *name)
 {
@@ -252,9 +243,7 @@ write_status(const struct capreclaim *r, enum capreclaim_when when,
 	unsigned i;
 	int fd;
 
-	if (!CAPRECLAIM_HAS(r, status_dirfd) ||
-	    !CAPRECLAIM_HAS(r, status_name) ||
-	    r->status_dirfd < 0 || r->status_name == NULL)
+	if (r->status_dirfd < 0 || r->status_name == NULL)
 		return;
 	if (snprintf(tmp, sizeof(tmp), "%s.tmp", r->status_name) >=
 	    (int)sizeof(tmp))
@@ -298,11 +287,10 @@ capreclaim_run(struct capreclaim *r, enum capreclaim_when when)
 	int destroyed = 0, error = 0;
 	bool floored = false, completed = false;
 
-	if (r == NULL || r->struct_size < CAPRECLAIM_SIZE_MIN ||
-	    r->struct_size > sizeof(*r) || r->enumerate == NULL ||
+	if (r == NULL || r->enumerate == NULL ||
 	    r->destroy == NULL || r->nsources > nitems(r->sources))
 		return (errno = EINVAL, -1);
-	if (CAPRECLAIM_HAS(r, stats) && r->stats != NULL)
+	if (r->stats != NULL)
 		memset(r->stats, 0, sizeof(*r->stats));
 
 	/* 1. Build the live set from the delivered sources. */
@@ -369,7 +357,7 @@ capreclaim_run(struct capreclaim *r, enum capreclaim_when when)
 		else
 			failed++;
 	}
-	if (CAPRECLAIM_HAS(r, stats) && r->stats != NULL) {
+	if (r->stats != NULL) {
 		r->stats->nlive = live.n;
 		r->stats->nowned = owned.n;
 		r->stats->norphans = orphans.n;
@@ -390,7 +378,7 @@ out:
 	 */
 	if (!completed && when != CAPRECLAIM_BOOT)
 		forget_prev(r);
-	if (CAPRECLAIM_HAS(r, stats) && r->stats != NULL)
+	if (r->stats != NULL)
 		r->stats->floored = floored;
 	write_status(r, when, live.n, &owned, &orphans, destroyed, failed,
 	    floored, error);
