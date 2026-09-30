@@ -322,13 +322,28 @@ end
 
 -- Fetch and install pkgbase packages to BSDINSTALL_CHROOT.
 -- Respect an explicit repository, otherwise prefer packages on install media.
+-- Paths the release media stages: the offline pkgbase repository and the
+-- repository config that points at it.
+local MEDIA_OFFLINE_DIR = "/usr/5bsd-packages/offline"
+local MEDIA_REPOS_DIR = "/usr/5bsd-packages/repos/"
+
 local function pkgbase()
 	local options = parse_options()
 
 	-- Release media embeds a pkg bootstrap built for the release world.
+	-- Use it: an offline install has no route to pkg.FreeBSD.org, and the
+	-- network bootstrap would also fetch a pkg built for a different world.
 	if not os.execute("pkg -N > /dev/null 2>&1") then
-		print("Bootstrapping pkg on the host system")
-		assert(os.execute("pkg bootstrap -y"))
+		local embedded = capture("ls " ..
+		    shell_quote(MEDIA_OFFLINE_DIR) .. "/pkg-*.pkg 2>/dev/null " ..
+		    "| head -1")
+		if embedded and embedded ~= "" then
+			print("Bootstrapping pkg from install media")
+			assert(os.execute("pkg add " .. shell_quote(embedded)))
+		else
+			print("Bootstrapping pkg on the host system")
+			assert(os.execute("pkg bootstrap -y"))
+		end
 	end
 
 	local chroot = assert(os.getenv("BSDINSTALL_CHROOT"))
@@ -336,7 +351,7 @@ local function pkgbase()
 
 	local repos_dir = os.getenv("BSDINSTALL_PKG_REPOS_DIR")
 	if not repos_dir then
-		local media_repos = "/usr/5bsd-packages/repos/"
+		local media_repos = MEDIA_REPOS_DIR
 		local offline = io.open(media_repos .. "5BSD-base-offline.conf", "r")
 		if offline then
 			offline:close()
