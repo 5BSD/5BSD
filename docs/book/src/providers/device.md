@@ -37,8 +37,8 @@ Defined in `lib/libdevicecmp/devicecmp_protocol.h`. The header is `struct device
 
 | Op | Request | Reply | Errors |
 |---|---|---|---|
-| `OPEN` (2) | `devicecmp_open_body { rights, name_length }` + NUL-terminated leaf name | same body with `rights` = granted mask, plus one delivered fd | `EINVAL` bad name; `EACCES` no policy entry or empty intersection; `openat(2)` errors such as `ENOENT` |
-| `LIST` (3) | `devicecmp_list_request { cursor, flags = 0, reserved = 0 }` | `devicecmp_list_reply { count, next_cursor, entries[] }`, at most `DEVICECMP_LIST_MAX` (32) per page, no fd | `EINVAL` nonzero additive fields |
+| `OPEN` (1) | `devicecmp_open_body { rights, name_length }` + NUL-terminated leaf name | same body with `rights` = granted mask, plus one delivered fd | `EINVAL` bad name; `EACCES` no policy entry or empty intersection; `openat(2)` errors such as `ENOENT` |
+| `LIST` (2) | `devicecmp_list_request { cursor, flags = 0, reserved = 0 }` | `devicecmp_list_reply { count, next_cursor, entries[] }`, at most `DEVICECMP_LIST_MAX` (32) per page, no fd | `EINVAL` nonzero additive fields |
 
 Rights bits are `DEVICECMP_RIGHT_READ`, `WRITE`, `IOCTL`, `MMAP`, `SEEK` and `EVENT` (kqueue/poll). Each `devicecmp_list_entry` carries the leaf name, the policy-maximum rights for this label and device, and `DEVICECMP_LIST_FLAG_IOCTL_WHITELIST` when an ioctl whitelist would further narrow a delivered `IOCTL` descriptor. The list walk is filtered on the connecting channel's unforgeable label, never on a wire argument, and a label with no policy lists empty (count 0) rather than failing.
 
