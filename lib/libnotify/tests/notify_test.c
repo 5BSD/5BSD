@@ -203,7 +203,6 @@ ATF_TC_BODY(reply_validation, tc)
 	msg = (void *)storage.bytes;
 	*msg = message(NOTIFY_OP_HELLO);
 	hello = (void *)(msg + 1);
-	hello->version = NOTIFY_ABI_VERSION;
 	hello->features = NOTIFY_FEATURE_PUBSUB |
 	    NOTIFY_FEATURE_TIMERS | NOTIFY_FEATURE_BOUNDED_QUEUE |
 	    NOTIFY_FEATURE_STATE | NOTIFY_FEATURE_LOSS_REPORTING;

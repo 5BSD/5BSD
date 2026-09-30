@@ -654,7 +654,6 @@ router_handle_request(struct router *router, struct router_session *session,
 	switch (message->opcode) {
 	case NOTIFY_OP_HELLO:
 		memset(&hello, 0, sizeof(hello));
-		hello.version = NOTIFY_ABI_VERSION;
 		hello.features = NOTIFY_FEATURE_PUBSUB |
 		    NOTIFY_FEATURE_TIMERS |
 		    NOTIFY_FEATURE_BOUNDED_QUEUE |

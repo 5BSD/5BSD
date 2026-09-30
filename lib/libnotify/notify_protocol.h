@@ -10,9 +10,7 @@
 #define	NOTIFY_INTERFACE		"system.Notify"
 /* Gated tier: publish under system.*, timers, state (ipc-anointments v1). */
 #define	NOTIFY_SYSTEM_INTERFACE		"system.Notify.System"
-#define	NOTIFY_INTERFACE_VERSION	"2.0.0"
 #define	NOTIFY_MAGIC			0x4e544643U	/* "NTFC" */
-#define	NOTIFY_ABI_VERSION		2
 
 #define	NOTIFY_MAX_TOPIC		128
 #define	NOTIFY_MAX_PAYLOAD		2048
@@ -74,8 +72,7 @@ enum notify_message_role {
 
 struct notify_msg {
 	uint32_t	magic;
-	uint16_t	version;
-	uint16_t	opcode;
+	uint32_t	opcode;
 	uint32_t	flags;
 	int32_t		status;
 };
@@ -84,7 +81,6 @@ _Static_assert(sizeof(struct notify_msg) == 16,
     "notify message header ABI");
 
 struct notify_hello_reply {
-	uint32_t	version;
 	uint32_t	features;
 	uint32_t	max_topic;
 	uint32_t	max_payload;

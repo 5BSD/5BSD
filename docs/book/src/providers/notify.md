@@ -16,7 +16,7 @@ Source: `usr.sbin/BSDNotify/capbundle/bsdnotify.ucl` and `Bundle.ucl`.
 
 | Field | Value |
 |---|---|
-| Wire names | `system.Notify` (open tier); `system.Notify.System` with `requires = ["system.notify.system"]` (gated tier). Interface version `2.0.0`, ABI 2 |
+| Wire names | `system.Notify` (open tier); `system.Notify.System` with `requires = ["system.notify.system"]` (gated tier). |
 | Bundle | `/Capabilities/System/Notify.cap` (`bundle_id = "system.Notify"`) |
 | Program | `/Capabilities/System/Notify.cap/Units/bsdnotify.unit/bin/BSDNotify` |
 | Unit | `bsdnotify` |
@@ -32,7 +32,7 @@ Source: `usr.sbin/BSDNotify/capbundle/bsdnotify.ucl` and `Bundle.ucl`.
 
 ## Wire operations
 
-Defined in `lib/libnotify/notify_protocol.h`. Header `struct notify_msg` (magic `NTFC`, `version`, `opcode`, `flags`, `status`). HELLO returns `notify_hello_reply` with the ABI version, feature bits (`PUBSUB`, `TIMERS`, `BOUNDED_QUEUE`, `STATE`, `LOSS_REPORTING`), the limits (`max_topic` 128, `max_payload` 2048, `max_subscriptions` 64, `queue_depth` 256, `max_timers` 64, `max_states` 4096) and the `router_epoch`. Any operation the tier's policy does not permit fails with `EACCES` and is audited; a second request while a long-poll `NEXT` is outstanding fails with `EBUSY`; a malformed message is `EPROTO`.
+Defined in `lib/libnotify/notify_protocol.h`. Header `struct notify_msg` (magic `NTFC`, `opcode`, `flags`, `status`). HELLO returns `notify_hello_reply` with feature bits (`PUBSUB`, `TIMERS`, `BOUNDED_QUEUE`, `STATE`, `LOSS_REPORTING`), the limits (`max_topic` 128, `max_payload` 2048, `max_subscriptions` 64, `queue_depth` 256, `max_timers` 64, `max_states` 4096) and the `router_epoch`. Any operation the tier's policy does not permit fails with `EACCES` and is audited; a second request while a long-poll `NEXT` is outstanding fails with `EBUSY`; a malformed message is `EPROTO`.
 
 | Op | Request | Reply | Errors |
 |---|---|---|---|

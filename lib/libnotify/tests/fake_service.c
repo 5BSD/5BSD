@@ -432,7 +432,6 @@ service_session_call(struct service_session *session,
 	switch (request->opcode) {
 	case NOTIFY_OP_HELLO:
 		hello = (void *)(response + 1);
-		hello->version = NOTIFY_ABI_VERSION;
 		hello->features = NOTIFY_FEATURE_PUBSUB |
 		    NOTIFY_FEATURE_TIMERS | NOTIFY_FEATURE_BOUNDED_QUEUE |
 		    NOTIFY_FEATURE_STATE | NOTIFY_FEATURE_LOSS_REPORTING;

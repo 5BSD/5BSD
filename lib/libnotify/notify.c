@@ -211,7 +211,6 @@ notify_header_validate(const struct notify_msg *msg, size_t length,
 	    role != NOTIFY_MESSAGE_REPLY &&
 	    role != NOTIFY_MESSAGE_EVENT) ||
 	    msg->magic != NOTIFY_MAGIC ||
-	    msg->version != NOTIFY_ABI_VERSION ||
 	    msg->opcode < NOTIFY_OP_HELLO ||
 	    msg->opcode > NOTIFY_OP_MAX ||
 	    (msg->flags & ~NOTIFY_MSG_F_MASK) != 0 ||
@@ -237,7 +236,6 @@ notify_message_init(struct notify_msg *msg, uint16_t opcode,
 	}
 	memset(msg, 0, sizeof(*msg));
 	msg->magic = NOTIFY_MAGIC;
-	msg->version = NOTIFY_ABI_VERSION;
 	msg->opcode = opcode;
 	msg->flags = flags;
 	return (0);
@@ -257,7 +255,6 @@ notify_message_init_reply(struct notify_msg *reply,
 	}
 	memset(reply, 0, sizeof(*reply));
 	reply->magic = NOTIFY_MAGIC;
-	reply->version = NOTIFY_ABI_VERSION;
 	reply->opcode = request->opcode;
 	reply->status = status;
 	return (0);
@@ -287,8 +284,7 @@ notify_validate_message(const struct notify_msg *msg, size_t length,
 			if (payload != sizeof(*hello))
 				goto invalid;
 			hello = (const void *)(msg + 1);
-			if (hello->version != NOTIFY_ABI_VERSION ||
-			    hello->features != (NOTIFY_FEATURE_PUBSUB |
+			if (hello->features != (NOTIFY_FEATURE_PUBSUB |
 			    NOTIFY_FEATURE_TIMERS |
 			    NOTIFY_FEATURE_BOUNDED_QUEUE |
 			    NOTIFY_FEATURE_STATE |
