@@ -223,7 +223,7 @@ additionally invalidates the lineage
 (`ENXIO`). This gives switchboard/bsdfilesystem an unforgeable "one backup stream,
 then spent" grant. The output fd's lifetime remains the caller's business.
 
-Events: kqueue on the handle. v1 fires `INVALIDATED` (EVFILT_READ-style
+Events: kqueue on the handle. Only `INVALIDATED` fires (EVFILT_READ-style
 readiness); richer notes (`SNAP_CREATED`, `CHILD_CREATED`, `PROP_CHANGED`,
 `SPACE_THRESHOLD`) are Phase 4 and gated on acceptable hook cost in shared
 code (§8).

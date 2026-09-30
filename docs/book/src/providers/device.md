@@ -119,5 +119,5 @@ Known gaps and drift:
 - No ctl tool and no operator-facing enumeration of the effective policy beyond reading `device.conf`.
 - BSDDevice(8) FILES names the unit directory `BSDDevice.unit`; the Makefile installs `bsddevice.unit`. Use the lowercase path.
 - The shipped policy grants only sample entries for `system.Example`; a fresh install brokers no real device until an operator writes entries.
-- The protocol is deliberately a thin v1 (a narrowed fd, optionally ioctl-whitelisted). Richer driver semantics behind the same name are reserved, not built.
+- The protocol is deliberately thin (a narrowed fd, optionally ioctl-whitelisted). Richer driver semantics behind the same name are reserved, not built.
 - Test coverage is at the fleet minimum (10 provider cases); there is no stress or concurrency case for the worker cap (`DEVICECMP_MAX_WORKERS` 4096).

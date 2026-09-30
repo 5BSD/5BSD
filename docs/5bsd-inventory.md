@@ -88,7 +88,7 @@ The kernel capability core is the trusted computing base of the 5BSD capability 
 | New CAP_* rights and CAPENABLED marking | CAP_JAIL_ATTACH/REMOVE/SET, CAP_TIMERFD_*, CAP_FCNTL_READAHEAD, CAP_POSIX_FADVISE; reboot(55), kld*(304-309,444), audit(445), jail_attach_jd/remove_jd(597/598) now CAPENABLED, gated by the system service | sys/sys/capsicum.h; sys/kern/syscalls.master | cap_rights_limit.2 | jaildesc/timerfd/fcntl_readahead/posix_fadvise _cap_test | none | shipped |
 | libcapability | Sync wrapper: `capability_get_info`, `capability_kernel_call`, `capability_service_connect`, `capability_service_call[_fds]`, `capability_confine_fd` | lib/libcapability (capability.h) | libcapability.3 (all six functions with MLINKS since 4b24f728d376) | libcapability_test.c (5) | writing-components.md | shipped, SHLIB 1 |
 | libchannel | Nonblocking event-loop channel: create/destroy/abandon, send_request/event/reply, dispatch/flush/wait, request cancel/status; USDT provider | lib/libchannel (channel.h) | libchannel.3 | channel_test.c (13) | writing-components.md | shipped, SHLIB 1 |
-| libcapsulert | Shared constants/types (`ort_net_claim`, `ort_vsock_claim`, storage lifetimes, `mac_capability_versions.h`), UCL claim parsers, and wire headers for capsule/switchboard/BSDFilesystem/BSDNamespace/BSDExtension/BSDVM | lib/libcapsulert | `libcapsulert.3` (capsule control and broker wire protocols; added in 4b24f728d376) | claim_parse_test.c (7) | none | shipped, SHLIB 2 |
+| libcapsulert | Shared constants/types (`ort_net_claim`, `ort_vsock_claim`, storage lifetimes, UCL claim parsers, and wire headers for capsule/switchboard/BSDFilesystem/BSDNamespace/BSDExtension/BSDVM | lib/libcapsulert | `libcapsulert.3` (capsule control and broker wire protocols; added in 4b24f728d376) | claim_parse_test.c (7) | none | shipped, SHLIB 2 |
 
 ### Policy points
 - `kern.mac_capability_isolation.enforce` (RDTUN, default 1) -> enforce or only trace resource-access denials (ownership denials always enforced) -> loader.conf.
@@ -133,7 +133,7 @@ The kernel capability core is the trusted computing base of the 5BSD capability 
 8. capprotect shields and launcher-applied protection (manifest `protect`).
 9. Capability-mode exec: `SYF_CAPREQUIRED`, `capmode_interp`, why daemons no longer appear as `ld-elf.so.1`.
 10. envfd as the capmode-safe carrier for configuration values.
-11. Testing on a real plane: plane-free boot, run_tests.sh, `mac_capability_versions.h`.
+11. Testing on a real plane: plane-free boot, run_tests.sh.
 12. Doc drift fixed since the baseline (4b24f728d376): mac_capability_system.4 and _capprotect.4 regenerated from the code, libcapsulert.3 added, libcapability.3 covers all six functions. Still open: the capprotect proto header comment (section 14, open finding 3).
 
 ## 2. Security policy modules and MAC framework changes (non-plane)

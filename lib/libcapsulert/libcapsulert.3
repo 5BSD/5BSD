@@ -69,7 +69,6 @@
 .In bsdnamespace_proto.h
 .In sysext_proto.h
 .In bsdvm_proto.h
-.In mac_capability_versions.h
 .Sh DESCRIPTION
 .Nm
 is the runtime library shared by
@@ -152,16 +151,6 @@ are inline helpers returning a constant display name
 for a claim field, or
 .Dq any
 for an unrecognized or wildcard value.
-.Pp
-.In mac_capability_versions.h
-defines the
-.Dv MAC_CAPABILITY_VERSION_*
-constants (core, channel, coalition, isolation, system, capprotect,
-node, accounting, identity, mount) that
-.Xr capsule 8
-compares at startup against the loaded
-.Xr mac_capability 4
-modules to detect a partial upgrade.
 .Ss UCL claim parsers
 .In claim_parse.h
 declares the parsers shared by the Capsule configuration reader and

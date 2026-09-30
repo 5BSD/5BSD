@@ -470,7 +470,7 @@ ATF_TC_BODY(load_rejects_unsafe_files, tc)
 
 /*
  * ---------------------------------------------------------------------------
- * Edge-case and negative coverage for the ipc-anointments v1 conf schema
+ * Edge-case and negative coverage for the ipc-anointments conf schema
  * (tiers, prefix patterns, limits, selection).  Each case is narrow on
  * purpose so a regression names the rule it broke.
  * ---------------------------------------------------------------------------

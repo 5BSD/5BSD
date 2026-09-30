@@ -22,7 +22,7 @@
  * attenuation is monotone (a child grant can only clear, never set, bits).
  *
  * SERVICE_RIGHTS_ADMIN (the reserved top bit) is the cross-service admin bypass:
- * it authorizes every operation, including reaching internal ranges.  A legacy
+ * it authorizes every operation, including reaching internal ranges.  A
  * lookup that carries no explicit rights receives SERVICE_RIGHTS_ALL (all bits,
  * including ADMIN), so it continues to receive full network authority; a session
  * granted SERVICE_RIGHTS_NONE receives nothing and is denied (default-deny).

@@ -39,7 +39,7 @@ manifest_body()
 	chmod 0444 "${bundle}/Bundle.ucl" "${unit}/Unit.ucl"
 	atf_check -s exit:0 -o match:'bsdnotify.conf' \
 	    grep bsdnotify.conf "${srcdir}/Makefile"
-	# ipc-anointments v1: both tiers are declared, the gated one with its
+	# ipc-anointments: both tiers are declared, the gated one with its
 	# requires set, and the open one stays resolvable by user sessions.
 	unitucl="${srcdir}/capbundle/bsdnotify.ucl"
 	atf_check -s exit:0 -o match:'"system.Notify",' grep -F '"system.Notify",' "${unitucl}"
