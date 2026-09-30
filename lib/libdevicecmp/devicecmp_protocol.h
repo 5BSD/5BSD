@@ -19,9 +19,7 @@
 #include <stdint.h>
 
 #define	DEVICECMP_INTERFACE		"system.Device"
-#define	DEVICECMP_INTERFACE_VERSION	"1.0.0"
 #define	DEVICECMP_MAGIC			0x44455643U	/* "DEVC" */
-#define	DEVICECMP_ABI_VERSION		1
 
 #define	DEVICECMP_MAX_NAME		256
 
@@ -41,8 +39,7 @@
 	 DEVICECMP_RIGHT_MMAP | DEVICECMP_RIGHT_SEEK | DEVICECMP_RIGHT_EVENT)
 
 enum devicecmp_opcode {
-	DEVICECMP_OP_HELLO = 1,
-	DEVICECMP_OP_OPEN,	/* open a named /dev node; reply delivers the fd */
+	DEVICECMP_OP_OPEN = 1,	/* open a named /dev node; reply delivers the fd */
 	DEVICECMP_OP_LIST	/* enumerate the caller-label's openable devices */
 };
 
@@ -53,8 +50,7 @@ enum devicecmp_message_role {
 
 struct devicecmp_msg {
 	uint32_t	magic;
-	uint16_t	version;
-	uint16_t	opcode;
+	uint32_t	opcode;
 	uint32_t	flags;
 	int32_t		status;		/* reply: 0 or -errno */
 };
@@ -70,11 +66,6 @@ struct devicecmp_open_body {
 	uint32_t	rights;		/* request: wanted; reply: granted */
 	uint16_t	name_length;	/* includes trailing NUL (request only) */
 	uint16_t	reserved;
-};
-
-struct devicecmp_hello_reply {
-	uint32_t	version;
-	uint32_t	reserved[3];
 };
 
 /*

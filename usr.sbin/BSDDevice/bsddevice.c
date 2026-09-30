@@ -156,10 +156,6 @@ request(struct channel *c __unused, struct channel_message *m, void *arg)
 	} open_out;
 	struct {
 		struct devicecmp_msg msg;
-		struct devicecmp_hello_reply hello;
-	} hello_out;
-	struct {
-		struct devicecmp_msg msg;
 		struct devicecmp_list_reply list;
 	} list_out;
 	const void *reply_data;
@@ -174,20 +170,15 @@ request(struct channel *c __unused, struct channel_message *m, void *arg)
 	reply_length = 0;
 	memset(&out, 0, sizeof(out));
 	memset(&open_out, 0, sizeof(open_out));
-	memset(&hello_out, 0, sizeof(hello_out));
 	memset(&list_out, 0, sizeof(list_out));
 
 	in = channel_message_data(m);
 	if (channel_message_length(m) >= sizeof(*in) &&
 	    channel_message_fd_count(m) == 0 &&
 	    in->magic == DEVICECMP_MAGIC &&
-	    in->version == DEVICECMP_ABI_VERSION &&
 	    in->flags == 0) {	/* reserved header field, must be zero */
 		out.opcode = in->opcode;
-		if (in->opcode == DEVICECMP_OP_HELLO &&
-		    channel_message_length(m) == sizeof(*in)) {
-			error = 0;
-		} else if (in->opcode == DEVICECMP_OP_OPEN &&
+		if (in->opcode == DEVICECMP_OP_OPEN &&
 		    channel_message_length(m) >= sizeof(*in) + sizeof(*body)) {
 			const char *name;
 			size_t name_length, header;
@@ -243,16 +234,9 @@ request(struct channel *c __unused, struct channel_message *m, void *arg)
 	}
 
 	out.magic = DEVICECMP_MAGIC;
-	out.version = DEVICECMP_ABI_VERSION;
 	out.status = error == 0 ? 0 : -error;
 
 	switch (out.opcode) {
-	case DEVICECMP_OP_HELLO:
-		hello_out.msg = out;
-		hello_out.hello.version = DEVICECMP_ABI_VERSION;
-		reply_data = &hello_out;
-		reply_length = sizeof(hello_out);
-		break;
 	case DEVICECMP_OP_OPEN:
 		if (error == 0) {
 			open_out.msg = out;

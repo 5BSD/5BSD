@@ -37,8 +37,6 @@ enum fault {
 	FAULT_LIST_RIGHTS,
 	FAULT_LIST_FLAGS,
 	FAULT_LIST_CURSOR,
-	FAULT_HELLO_VERSION,
-	FAULT_HELLO_RESERVED,
 };
 
 static enum fault next_fault;
@@ -111,12 +109,11 @@ service_session_fail(struct service_session *session, int error)
 }
 
 static void
-reply_header(struct devicecmp_msg *reply, uint16_t opcode)
+reply_header(struct devicecmp_msg *reply, uint32_t opcode)
 {
 
 	memset(reply, 0, sizeof(*reply));
 	reply->magic = DEVICECMP_MAGIC;
-	reply->version = DEVICECMP_ABI_VERSION;
 	reply->opcode = opcode;
 }
 
@@ -222,26 +219,6 @@ service_session_call(struct service_session *session,
 		}
 		break;
 	}
-	case DEVICECMP_OP_HELLO: {
-		struct {
-			struct devicecmp_msg msg;
-			struct devicecmp_hello_reply hello;
-		} *reply = incoming->data;
-
-		memset(reply, 0, sizeof(*reply));
-		reply_header(&reply->msg, request->opcode);
-		reply->hello.version = DEVICECMP_ABI_VERSION;
-		incoming->length = sizeof(*reply);
-		if (fault == FAULT_STATUS) {
-			reply->msg.status = -EPERM;
-			incoming->length = sizeof(reply->msg);
-		} else if (fault == FAULT_HELLO_VERSION) {
-			reply->hello.version++;
-		} else if (fault == FAULT_HELLO_RESERVED) {
-			reply->hello.reserved[1] = 1;
-		}
-		break;
-	}
 	default:
 		ATF_REQUIRE_MSG(0, "unexpected opcode %u", request->opcode);
 	}
@@ -253,6 +230,19 @@ service_session_call(struct service_session *session,
 	return (0);
 }
 
+/* Cheapest round trip through the client: open "null" read-only. */
+static int
+probe(void)
+{
+	uint32_t granted;
+	int fd, rc;
+
+	rc = devicecmp_open(NULL, "null", DEVICECMP_RIGHT_READ, &granted, &fd);
+	if (rc == 0)
+		close(fd);
+	return (rc);
+}
+
 ATF_TC_WITHOUT_HEAD(success_matrix);
 ATF_TC_BODY(success_matrix, tc)
 {
@@ -261,7 +251,6 @@ ATF_TC_BODY(success_matrix, tc)
 	int fd;
 
 	fake_reset();
-	ATF_REQUIRE_EQ(0, devicecmp_hello(NULL));
 	ATF_REQUIRE_EQ(0, devicecmp_open(NULL, "null", DEVICECMP_RIGHT_READ,
 	    &granted, &fd));
 	ATF_CHECK_EQ(DEVICECMP_RIGHT_READ, granted);
@@ -286,8 +275,8 @@ ATF_TC_BODY(transport_failure_reconnects, tc)
 
 	fake_reset();
 	fake_fault(FAULT_CALL);
-	ATF_CHECK_ERRNO(ECONNRESET, devicecmp_hello(NULL) == -1);
-	ATF_REQUIRE_EQ(0, devicecmp_hello(NULL));
+	ATF_CHECK_ERRNO(ECONNRESET, probe() == -1);
+	ATF_REQUIRE_EQ(0, probe());
 	ATF_CHECK_EQ(2, open_count);
 	ATF_CHECK_EQ(1, close_count);
 }
@@ -298,8 +287,8 @@ ATF_TC_BODY(semantic_error_keeps_session, tc)
 
 	fake_reset();
 	fake_fault(FAULT_STATUS);
-	ATF_CHECK_ERRNO(EPERM, devicecmp_hello(NULL) == -1);
-	ATF_REQUIRE_EQ(0, devicecmp_hello(NULL));
+	ATF_CHECK_ERRNO(EPERM, probe() == -1);
+	ATF_REQUIRE_EQ(0, probe());
 	ATF_CHECK_EQ(1, open_count);
 	ATF_CHECK_EQ(0, fail_count);
 }
@@ -357,23 +346,6 @@ ATF_TC_BODY(list_reply_validation, tc)
 	ATF_CHECK_EQ(nitems(faults), fail_count);
 }
 
-ATF_TC_WITHOUT_HEAD(hello_reply_validation);
-ATF_TC_BODY(hello_reply_validation, tc)
-{
-	static const enum fault faults[] = {
-		FAULT_WRONG_OPCODE, FAULT_NONZERO_FLAGS, FAULT_HELLO_VERSION,
-		FAULT_HELLO_RESERVED,
-	};
-	size_t i;
-
-	fake_reset();
-	for (i = 0; i < nitems(faults); i++) {
-		fake_fault(faults[i]);
-		ATF_CHECK_ERRNO(EPROTO, devicecmp_hello(NULL) == -1);
-	}
-	ATF_CHECK_EQ(nitems(faults), fail_count);
-}
-
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -382,6 +354,5 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, semantic_error_keeps_session);
 	ATF_TP_ADD_TC(tp, open_reply_validation);
 	ATF_TP_ADD_TC(tp, list_reply_validation);
-	ATF_TP_ADD_TC(tp, hello_reply_validation);
 	return (atf_no_error());
 }

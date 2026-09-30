@@ -190,7 +190,6 @@ device_list(struct raw_fixture *fixture, uint32_t cursor,
 
 	memset(&request, 0, sizeof(request));
 	request.msg.magic = DEVICECMP_MAGIC;
-	request.msg.version = DEVICECMP_ABI_VERSION;
 	request.msg.opcode = DEVICECMP_OP_LIST;
 	request.body.cursor = cursor;
 
@@ -249,7 +248,6 @@ device_open(struct raw_fixture *fixture, const char *name, uint32_t rights,
 	ATF_REQUIRE(name_length <= DEVICECMP_MAX_NAME);
 	memset(&msg, 0, sizeof(msg));
 	msg.magic = DEVICECMP_MAGIC;
-	msg.version = DEVICECMP_ABI_VERSION;
 	msg.opcode = DEVICECMP_OP_OPEN;
 	memset(&body, 0, sizeof(body));
 	body.rights = rights;
@@ -489,10 +487,10 @@ ATF_TC_BODY(unsafe_names_rejected, tc)
 }
 
 /*
- * The provider fails closed on malformed requests: a bad magic, a bad version,
+ * The provider fails closed on malformed requests: a bad magic,
  * an out-of-range opcode, a truncated body, a length not matching
  * header+name_length, and a non-NUL-terminated name are all rejected without
- * reaching openat(2).  A bad header (magic/version/opcode) is EPROTO; a
+ * reaching openat(2).  A bad header (magic/opcode) is EPROTO; a
  * well-formed header with a malformed OPEN body is EINVAL, exactly as request()
  * dictates.  An attached descriptor on any request is EPROTO.
  */
@@ -522,7 +520,6 @@ ATF_TC_BODY(malformed_request_is_rejected, tc)
 	/* Helper builds a valid OPEN of "null" then the case mutates it. */
 	memset(&msg, 0, sizeof(msg));
 	msg.magic = DEVICECMP_MAGIC;
-	msg.version = DEVICECMP_ABI_VERSION;
 	msg.opcode = DEVICECMP_OP_OPEN;
 	memset(&body, 0, sizeof(body));
 	body.rights = DEVICECMP_RIGHT_READ;
@@ -540,17 +537,8 @@ ATF_TC_BODY(malformed_request_is_rejected, tc)
 	    &status));
 	ATF_CHECK_EQ(EPROTO, status);
 
-	/* Bad version: header rejected EPROTO. */
-	msg.magic = DEVICECMP_MAGIC;
-	msg.version = DEVICECMP_ABI_VERSION + 1;
-	memcpy(request, &msg, sizeof(msg));
-	status = 0;
-	ATF_CHECK_EQ(0, send_raw(fixture.session, request, base + 5, -1,
-	    &status));
-	ATF_CHECK_EQ(EPROTO, status);
-
 	/* Out-of-range opcode: header ok, opcode falls through to EPROTO. */
-	msg.version = DEVICECMP_ABI_VERSION;
+	msg.magic = DEVICECMP_MAGIC;
 	msg.opcode = 99;
 	memcpy(request, &msg, sizeof(msg));
 	status = 0;
@@ -760,7 +748,6 @@ ATF_TC_BODY(malformed_list_is_rejected, tc)
 
 	memset(&request, 0, sizeof(request));
 	request.msg.magic = DEVICECMP_MAGIC;
-	request.msg.version = DEVICECMP_ABI_VERSION;
 	request.msg.opcode = DEVICECMP_OP_LIST;
 
 	/* Nonzero reserved flags: EINVAL. */
@@ -789,53 +776,6 @@ ATF_TC_BODY(malformed_list_is_rejected, tc)
 	raw_fixture_destroy(&fixture, 0);
 }
 
-/* A HELLO liveness probe over the raw session returns a valid, fd-free reply. */
-ATF_TC(hello_liveness);
-ATF_TC_HEAD(hello_liveness, tc)
-{
-	atf_tc_set_md_var(tc, "require.user", "root");
-	atf_tc_set_md_var(tc, "descr", "HELLO returns a valid liveness reply");
-}
-ATF_TC_BODY(hello_liveness, tc)
-{
-	struct service_call_options options = SERVICE_CALL_OPTIONS_INITIALIZER;
-	struct service_message outgoing;
-	struct service_reply incoming;
-	struct raw_fixture fixture;
-	struct devicecmp_msg msg;
-	struct {
-		struct devicecmp_msg msg;
-		struct devicecmp_hello_reply hello;
-	} reply;
-
-	require_plane();
-	set_single_policy("org.test.dev", "null", DEVICECMP_RIGHT_READ);
-	raw_fixture_create(&fixture, "org.test.dev");
-
-	memset(&msg, 0, sizeof(msg));
-	msg.magic = DEVICECMP_MAGIC;
-	msg.version = DEVICECMP_ABI_VERSION;
-	msg.opcode = DEVICECMP_OP_HELLO;
-	memset(&outgoing, 0, sizeof(outgoing));
-	outgoing.size = sizeof(outgoing);
-	outgoing.data = &msg;
-	outgoing.length = sizeof(msg);
-	memset(&reply, 0, sizeof(reply));
-	memset(&incoming, 0, sizeof(incoming));
-	incoming.size = sizeof(incoming);
-	incoming.data = &reply;
-	incoming.capacity = sizeof(reply);
-	options.timeout_ms = 2000;
-	ATF_REQUIRE_EQ(0, service_session_call(fixture.session, &outgoing,
-	    &incoming, &options));
-	ATF_CHECK_EQ(sizeof(reply), incoming.length);
-	ATF_CHECK_EQ(0, incoming.nfds);
-	ATF_CHECK_EQ(0, reply.msg.status);
-	ATF_CHECK_EQ(DEVICECMP_OP_HELLO, reply.msg.opcode);
-	ATF_CHECK_EQ((uint32_t)DEVICECMP_ABI_VERSION, reply.hello.version);
-	raw_fixture_destroy(&fixture, 0);
-}
-
 ATF_TC_WITHOUT_HEAD(arguments);
 ATF_TC_BODY(arguments, tc)
 {
@@ -856,7 +796,6 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, list_is_label_scoped);
 	ATF_TP_ADD_TC(tp, list_empty_for_unpolicied_label);
 	ATF_TP_ADD_TC(tp, malformed_list_is_rejected);
-	ATF_TP_ADD_TC(tp, hello_liveness);
 	ATF_TP_ADD_TC(tp, arguments);
 	return (atf_no_error());
 }

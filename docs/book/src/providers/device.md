@@ -16,7 +16,7 @@ Source: `usr.sbin/BSDDevice/capbundle/device.ucl` and `Bundle.ucl`.
 
 | Field | Value |
 |---|---|
-| Wire name | `system.Device` (interface version `1.0.0`, ABI 1) |
+| Wire name | `system.Device` |
 | Bundle | `/Capabilities/System/Device.cap` (`bundle_id = "system.Device"`) |
 | Program | `/Capabilities/System/Device.cap/Units/bsddevice.unit/bin/BSDDevice` |
 | Unit | `bsddevice` |
@@ -33,11 +33,10 @@ Source: `usr.sbin/BSDDevice/capbundle/device.ucl` and `Bundle.ucl`.
 
 ## Wire operations
 
-Defined in `lib/libdevicecmp/devicecmp_protocol.h`. The header is `struct devicecmp_msg` (magic `DEVC`, `version`, `opcode`, `flags`, `status` = 0 or negative errno). HELLO is a liveness probe answered by `devicecmp_hello_reply { version }`; there is no feature negotiation because the op set is fixed.
+Defined in `lib/libdevicecmp/devicecmp_protocol.h`. The header is `struct devicecmp_msg` (magic `DEVC`, `opcode`, `flags`, `status` = 0 or negative errno).
 
 | Op | Request | Reply | Errors |
 |---|---|---|---|
-| `HELLO` (1) | header | `devicecmp_hello_reply` | `EPROTO` malformed |
 | `OPEN` (2) | `devicecmp_open_body { rights, name_length }` + NUL-terminated leaf name | same body with `rights` = granted mask, plus one delivered fd | `EINVAL` bad name; `EACCES` no policy entry or empty intersection; `openat(2)` errors such as `ENOENT` |
 | `LIST` (3) | `devicecmp_list_request { cursor, flags = 0, reserved = 0 }` | `devicecmp_list_reply { count, next_cursor, entries[] }`, at most `DEVICECMP_LIST_MAX` (32) per page, no fd | `EINVAL` nonzero additive fields |
 
@@ -51,7 +50,6 @@ Header `<devicecmp.h>` (installs `devicecmp.h` and `devicecmp_protocol.h`); link
 |---|---|
 | Open | `devicecmp_open(ctx, name, want_rights, &granted, &fd)` |
 | Discovery | `devicecmp_list(ctx, cursor, entries, max, &count, &next_cursor)` |
-| Liveness | `devicecmp_hello(ctx)` |
 
 `ctx` is the process libservice context and may be `NULL` for a standalone caller; the `system.Device` session is opened by name once and cached for the process. All three fail closed, returning -1 with `errno` set and leaving `*fdp` at -1. If `max` is smaller than the page the provider returned, `devicecmp_list()` fails with `ENOMEM`, stores the required count in `*countp` and does not advance the cursor.
 
@@ -107,14 +105,14 @@ The shipped file contains only these two sample entries for a label that no real
 
 | Where | Programs | What they prove |
 |---|---|---|
-| `usr.sbin/BSDDevice/tests` (package `bsddevice-tests`, `/usr/tests/usr.sbin/BSDDevice`) | `provider_test` (10 cases), `policy_test` (5) | provider_test drives the real session worker over a channel with the daemon compiled `-DBSDDEVICE_TESTING`: a granted open reads and writes, rights are narrowed to the policy maximum, an ungranted label or device is denied, unsafe names are rejected, malformed OPEN and LIST requests are rejected, LIST is label-scoped and empty for an unpolicied label, HELLO answers. policy_test covers the UCL parser and lookup. |
+| `usr.sbin/BSDDevice/tests` (package `bsddevice-tests`, `/usr/tests/usr.sbin/BSDDevice`) | `provider_test` (9 cases), `policy_test` (5) | provider_test drives the real session worker over a channel with the daemon compiled `-DBSDDEVICE_TESTING`: a granted open reads and writes, rights are narrowed to the policy maximum, an ungranted label or device is denied, unsafe names are rejected, malformed OPEN and LIST requests are rejected, LIST is label-scoped and empty for an unpolicied label. policy_test covers the UCL parser and lookup. |
 | `lib/libdevicecmp/tests` (`libdevicecmp-tests`) | `devicecmp_api_test` (3), `client_protocol_test` (6) | argument validation, message encoding, fail-closed behaviour without a provider |
 
 Run with `kyua test -k /usr/tests/usr.sbin/BSDDevice/Kyuafile`. provider_test needs mac_capability channels, so it runs on a booted plane in the VM rig ([Testing](../develop/testing.md)); the inventory records it as VM-verified. The daemon exports the `BSDDevice` DTrace provider with `open` (label, leaf, granted rights, errno) and `list` (label, cursor, count, errno) probes; device contents are never probe arguments.
 
 ## Status and gaps
 
-Status: shipped; capmode; user `capability`; `visible = ["system"]`; ops HELLO, OPEN, LIST; default-deny `device.conf` (inventory section 4).
+Status: shipped; capmode; user `capability`; `visible = ["system"]`; ops OPEN, LIST; default-deny `device.conf` (inventory section 4).
 
 Known gaps and drift:
 

@@ -5,8 +5,7 @@
 .Os
 .Sh NAME
 .Nm devicecmp_open ,
-.Nm devicecmp_list ,
-.Nm devicecmp_hello
+.Nm devicecmp_list
 .Nd public client for the system device broker
 .Sh LIBRARY
 .Li libdevicecmp
@@ -17,15 +16,12 @@
 .Fn devicecmp_open "struct service_context *ctx" "const char *name" "uint32_t want_rights" "uint32_t *granted_rights" "int *fdp"
 .Ft int
 .Fn devicecmp_list "struct service_context *ctx" "uint32_t cursor" "struct devicecmp_list_entry *entries" "uint32_t max" "uint32_t *countp" "uint32_t *next_cursor"
-.Ft int
-.Fn devicecmp_hello "struct service_context *ctx"
 .Sh DESCRIPTION
 The
 .Nm
 library is the client for the
 .Dv system.Device
-broker (interface version
-.Dv 1.0.0 ) .
+broker.
 The broker opens a named
 .Pa /dev
 leaf under the caller's switchboard-authenticated, per-label policy and delivers a
@@ -120,11 +116,8 @@ word whose
 bit notes that a per-device ioctl whitelist further narrows a delivered
 .Dv DEVICECMP_RIGHT_IOCTL
 descriptor.
-.Pp
-.Fn devicecmp_hello
-is a liveness probe that exchanges a HELLO with the provider.
 .Sh RETURN VALUES
-.Rv -std devicecmp_open devicecmp_list devicecmp_hello
+.Rv -std devicecmp_open devicecmp_list
 .Sh SEE ALSO
 .Xr libservice 3 ,
 .Xr bsddevice 8

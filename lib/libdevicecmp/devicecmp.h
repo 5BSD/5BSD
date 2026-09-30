@@ -39,12 +39,6 @@ int	devicecmp_open(struct service_context *ctx, const char *name,
 int	devicecmp_list(struct service_context *ctx, uint32_t cursor,
 	    struct devicecmp_list_entry *entries, uint32_t max,
 	    uint32_t *countp, uint32_t *next_cursor);
-
-/*
- * Liveness probe: exchange a HELLO with the provider.  Returns 0 on a valid
- * reply, -1 with errno otherwise.
- */
-int	devicecmp_hello(struct service_context *ctx);
 __END_DECLS
 
 #endif /* !_DEVICECMP_H_ */

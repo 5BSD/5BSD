@@ -46,8 +46,7 @@ valid_reply_header(const struct devicecmp_msg *msg, uint16_t opcode)
 {
 
 	return (msg->magic == DEVICECMP_MAGIC &&
-	    msg->version == DEVICECMP_ABI_VERSION && msg->opcode == opcode &&
-	    msg->flags == 0 && valid_status(msg->status));
+	    msg->opcode == opcode && msg->flags == 0 && valid_status(msg->status));
 }
 
 /*
@@ -168,7 +167,6 @@ devicecmp_open(struct service_context *ctx, const char *name,
 
 	memset(&wire, 0, sizeof(wire));
 	wire.msg.magic = DEVICECMP_MAGIC;
-	wire.msg.version = DEVICECMP_ABI_VERSION;
 	wire.msg.opcode = DEVICECMP_OP_OPEN;
 	wire.body.rights = want_rights;
 	wire.body.name_length = (uint16_t)(name_length + 1);
@@ -238,7 +236,6 @@ devicecmp_list(struct service_context *ctx, uint32_t cursor,
 
 	memset(&wire, 0, sizeof(wire));
 	wire.msg.magic = DEVICECMP_MAGIC;
-	wire.msg.version = DEVICECMP_ABI_VERSION;
 	wire.msg.opcode = DEVICECMP_OP_LIST;
 	wire.body.cursor = cursor;
 
@@ -293,53 +290,5 @@ devicecmp_list(struct service_context *ctx, uint32_t cursor,
 		*countp = count;
 	if (next_cursorp != NULL)
 		*next_cursorp = reply.body.next_cursor;
-	return (0);
-}
-
-int
-devicecmp_hello(struct service_context *ctx)
-{
-	struct devicecmp_msg out;
-	struct {
-		struct devicecmp_msg msg;
-		struct devicecmp_hello_reply hello;
-	} reply;
-	struct service_message outgoing;
-	struct service_reply incoming;
-	struct service_call_options options = SERVICE_CALL_OPTIONS_INITIALIZER;
-	struct service_session *used;
-
-	(void)ctx;
-	memset(&out, 0, sizeof(out));
-	out.magic = DEVICECMP_MAGIC;
-	out.version = DEVICECMP_ABI_VERSION;
-	out.opcode = DEVICECMP_OP_HELLO;
-	memset(&outgoing, 0, sizeof(outgoing));
-	outgoing.size = sizeof(outgoing);
-	outgoing.data = &out;
-	outgoing.length = sizeof(out);
-	memset(&reply, 0, sizeof(reply));
-	memset(&incoming, 0, sizeof(incoming));
-	incoming.size = sizeof(incoming);
-	incoming.data = &reply;
-	incoming.capacity = sizeof(reply);
-	incoming.fd_capacity = 0;
-	options.timeout_ms = 30000;
-
-	if (session_call_locked(&outgoing, &incoming, &options, &used) == -1)
-		return (-1);
-	if (!valid_reply_header(&reply.msg, DEVICECMP_OP_HELLO) ||
-	    incoming.nfds != 0)
-		return (protocol_error(used, -1));
-	if (reply.msg.status != 0) {
-		if (incoming.length != sizeof(reply.msg))
-			return (protocol_error(used, -1));
-		return (errno = -reply.msg.status, -1);
-	}
-	if (incoming.length != sizeof(reply) ||
-	    reply.hello.version != DEVICECMP_ABI_VERSION ||
-	    reply.hello.reserved[0] != 0 || reply.hello.reserved[1] != 0 ||
-	    reply.hello.reserved[2] != 0)
-		return (protocol_error(used, -1));
 	return (0);
 }
