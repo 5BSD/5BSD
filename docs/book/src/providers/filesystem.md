@@ -76,8 +76,7 @@ serving begins.
 
 ## Wire operations
 
-The protocol is `lib/libcapsulert/bsdfilesystem_proto.h`, version
-`BSDFILESYSTEM_PROTO_VERSION` 6 (0.5.0). There is no HELLO: the first four
+The protocol is `lib/libcapsulert/bsdfilesystem_proto.h`. There is no HELLO: the first four
 bytes of every request are the `op`. Opcode 3 is unassigned. A successful
 REQUEST, OPEN, OPEN_VERSION or TXN_BEGIN delivers its descriptor as the
 reply's single SCM_RIGHTS fd. Every claim-addressed op resolves the claim

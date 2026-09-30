@@ -26,11 +26,6 @@
 #include <sys/types.h>
 #include <sys/param.h>		/* PATH_MAX */
 
-#define	BSDFILESYSTEM_PROTO_VERSION_MAJOR	0
-#define	BSDFILESYSTEM_PROTO_VERSION_MINOR	5
-#define	BSDFILESYSTEM_PROTO_VERSION_PATCH	0
-#define	BSDFILESYSTEM_PROTO_VERSION		6
-
 /* The well-known name a client resolves with service_open(3) to reach bsdfilesystem. */
 #define	BSDFILESYSTEM_SERVICE_NAME		"system.Filesystem"
 
