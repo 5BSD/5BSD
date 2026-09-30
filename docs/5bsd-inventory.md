@@ -845,7 +845,7 @@ This area is everything between `git clone` and a booted 5BSD machine: the build
 
 - `capability_plane` (loader tunable) -> capsule hands PID 1 to `/sbin/init`, plane never starts -> `/boot/loader.conf`, set by release media.
 - `init_path` (loader) -> PID 1 candidate order, capsule first -> `stand/defaults/loader.conf`.
-- `/Capabilities/Config/principal-policy.ucl` (`admin { uids; groups }`) -> who gets SYSTEM sessions -> written by `bsdinstall capabilitypolicy` / `BSDINSTALL_CAPABILITY_ADMIN_*`.
+- `/Capabilities/Config/principal-policy.ucl` (`principals { admin { uids; groups; … } }`) -> who gets SYSTEM sessions -> written by `bsdinstall capabilitypolicy` / `BSDINSTALL_CAPABILITY_ADMIN_*`.
 - `/Capabilities/Config/bsdfilesystem.ucl` `pool=` -> pool the storage plane binds to -> `bsdinstall tzfspool` from `ZFSBOOT_POOL_NAME`.
 - `/usr/local/etc/pkg/repos/5BSD.conf` + `/etc/pkg/5BSD.conf` -> where base updates come from (disabled until local repo exists).
 - `NOPKGBASE`, `NODISTSETS`, `PKGBASE_PKG_PACKAGE[_SHA256]`, `PKG_CMD` -> media composition and pkg provenance -> `release/Makefile`.

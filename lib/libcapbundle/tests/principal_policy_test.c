@@ -77,7 +77,7 @@ ATF_TC_BODY(policy_grants_by_uid, tc)
 	struct passwd other = principal(5678);
 	char path[64];
 
-	write_policy(path, sizeof(path), "admin { uids = [ 1234 ] }\n");
+	write_policy(path, sizeof(path), "principals { admin { uids = [ 1234 ]; anointments = [\"*\"]; } }\n");
 	ATF_CHECK(capbundle_principal_is_admin_at(&granted, path));
 	ATF_CHECK(!capbundle_principal_is_admin_at(&other, path));
 	(void)unlink(path);
@@ -92,7 +92,7 @@ ATF_TC_BODY(valid_policy_is_authoritative, tc)
 	/* A valid policy that lists no uids is authoritative: even root is not
 	 * an administrator unless the policy names it.  (This is the model --
 	 * root is not automatically privileged.) */
-	write_policy(path, sizeof(path), "admin { uids = [ 1234 ] }\n");
+	write_policy(path, sizeof(path), "principals { admin { uids = [ 1234 ]; anointments = [\"*\"]; } }\n");
 	ATF_CHECK(!capbundle_principal_is_admin_at(&root, path));
 	(void)unlink(path);
 }
@@ -107,7 +107,7 @@ ATF_TC_BODY(malformed_policy_fails_closed, tc)
 	/* An unparseable policy fails CLOSED to least privilege: nobody, not even
 	 * root, is admin.  A corrupted policy must never silently grant authority;
 	 * recovery is via the pre-plane single-user shell, not a login. */
-	write_policy(path, sizeof(path), "admin { uids = [ this is not ucl \n");
+	write_policy(path, sizeof(path), "principals { admin { uids = [ this is not ucl \n");
 	ATF_CHECK(!capbundle_principal_is_admin_at(&root, path));
 	ATF_CHECK(!capbundle_principal_is_admin_at(&user, path));
 	(void)unlink(path);
@@ -130,7 +130,7 @@ ATF_TC_BODY(policy_fd_grants_by_uid, tc)
 	char path[64];
 	int fd;
 
-	write_policy(path, sizeof(path), "admin { uids = [ 4242 ] }\n");
+	write_policy(path, sizeof(path), "principals { admin { uids = [ 4242 ]; anointments = [\"*\"]; } }\n");
 	fd = open(path, O_RDONLY);
 	ATF_REQUIRE(fd >= 0);
 	ATF_CHECK(capbundle_principal_is_admin_fd(&granted, fd));
@@ -489,35 +489,32 @@ ATF_TC_BODY(grant_selectors_forms, tc)
 	ATF_CHECK_EQ(1U, g.nanointments);
 }
 
-ATF_TC_WITHOUT_HEAD(grant_legacy_admin_block);
-ATF_TC_BODY(grant_legacy_admin_block, tc)
+ATF_TC_WITHOUT_HEAD(grant_principals_admin_entry);
+ATF_TC_BODY(grant_principals_admin_entry, tc)
 {
 	struct capbundle_principal_grant g;
 	gid_t wheel[] = { GID_WHEEL };
 	gid_t staff[] = { GID_STAFF };
+	const char *pol = "principals { admin { uids = [ 1234 ];"
+	    " groups = [ \"wheel\" ]; anointments = [\"*\"]; } }\n";
 
-	resolve("admin { uids = [ 1234 ]; groups = [ \"wheel\" ]; }\n",
-	    1234, NULL, 0, &g);
+	resolve(pol, 1234, NULL, 0, &g);
 	check_full_admin_grant(&g);
 	ATF_CHECK(!g.from_default_rule);
-
-	resolve("admin { uids = [ 1234 ]; groups = [ \"wheel\" ]; }\n",
-	    5678, wheel, 1, &g);
+	resolve(pol, 5678, wheel, 1, &g);
 	check_full_admin_grant(&g);
 	ATF_CHECK(!g.from_default_rule);
-
-	resolve("admin { uids = [ 1234 ]; groups = [ \"wheel\" ]; }\n",
-	    5678, staff, 1, &g);
+	resolve(pol, 5678, staff, 1, &g);
 	check_empty_grant(&g);
 	ATF_CHECK(!g.from_default_rule);
 
-	/* Legacy and authoritative: root not listed gets nothing. */
-	resolve("admin { uids = [ 1234 ] }\n", 0, NULL, 0, &g);
+	/* Authoritative: root not listed gets nothing. */
+	resolve(pol, 0, NULL, 0, &g);
 	check_empty_grant(&g);
 	ATF_CHECK(!g.from_default_rule);
 
-	/* A valid file with neither block: nobody is anything. */
-	resolve("# nothing here\nother = 1;\n", 0, NULL, 0, &g);
+	/* An empty principals block: nobody is anything. */
+	resolve("principals {}\n", 0, NULL, 0, &g);
 	check_empty_grant(&g);
 	ATF_CHECK(!g.from_default_rule);
 }
@@ -603,8 +600,17 @@ ATF_TC_BODY(grant_unknown_key_in_entry_is_malformed, tc)
 	    "  r { uids = [0]; anointments = [\"*\"]; }\n"
 	    "  default { anointments = []; elevate = []; }\n"
 	    "}\n");
-	/* Legacy block is closed too. */
-	check_falls_back("admin { uids = [0]; anointments = [\"*\"]; }\n");
+}
+
+/* The removed top-level admin block is an unknown key, not a policy. */
+ATF_TC_WITHOUT_HEAD(grant_rejects_removed_admin_block);
+ATF_TC_BODY(grant_rejects_removed_admin_block, tc)
+{
+
+	check_falls_back("admin { uids = [ 1234 ]; groups = [ \"wheel\" ]; }\n");
+	check_falls_back("admin { uids = [0]; }\nprincipals {}\n");
+	check_falls_back("principals {}\nadmin = 7;\n");
+	check_falls_back("# nothing here\nother = 1;\n");
 }
 
 ATF_TC_WITHOUT_HEAD(grant_bad_types_are_malformed);
@@ -628,8 +634,6 @@ ATF_TC_BODY(grant_bad_types_are_malformed, tc)
 	check_falls_back("principals { r { uids = [0]; admin_rights = 1; } }\n");
 	check_falls_back("principals { r { uids = [0];"
 	    " admin_rights = \"true\"; } }\n");
-	check_falls_back("admin = 7;\n");
-	check_falls_back("admin { uids = \"root\"; }\n");
 }
 
 ATF_TC_WITHOUT_HEAD(grant_invalid_names_are_malformed);
@@ -1419,53 +1423,6 @@ ATF_TC_BODY(holds_and_may_elevate_exact_match_only, tc)
 	ATF_CHECK(!capbundle_principal_may_elevate(&g, "a.b"));
 }
 
-/*
- * When both the legacy admin block and a principals block are present the
- * principals block is authoritative and the legacy block is ignored
- * entirely -- it is not even validated.  Document that precedence.
- */
-ATF_TC_WITHOUT_HEAD(legacy_and_principals_both_present);
-ATF_TC_BODY(legacy_and_principals_both_present, tc)
-{
-	struct capbundle_principal_grant g;
-	gid_t wheel[] = { GID_WHEEL };
-
-	/* Legacy would make root admin; principals {} says nothing does. */
-	resolve_uid("admin { uids = [0]; groups = [\"wheel\"]; }\n"
-	    "principals {}\n", 0, &g);
-	check_empty_grant(&g);
-	ATF_CHECK(!g.from_default_rule);
-	resolve("principals {}\nadmin { uids = [0]; groups = [\"wheel\"]; }\n",
-	    1001, wheel, 1, &g);
-	check_empty_grant(&g);
-	ATF_CHECK(!g.from_default_rule);
-	/* Legacy names root, principals names someone else: principals. */
-	resolve_uid("admin { uids = [0]; }\n"
-	    "principals { ops { uids = [7]; anointments = [\"a.ops\"]; } }\n",
-	    0, &g);
-	check_empty_grant(&g);
-	resolve_uid("admin { uids = [0]; }\n"
-	    "principals { ops { uids = [7]; anointments = [\"a.ops\"]; } }\n",
-	    7, &g);
-	ATF_CHECK_STREQ("a.ops", g.anointments[0]);
-	/* A malformed legacy block beside a valid principals block does not
-	 * trigger the fallback: it is simply not looked at. */
-	resolve_uid("admin = 7;\n"
-	    "principals { ops { uids = [7]; anointments = [\"a.ops\"]; } }\n",
-	    7, &g);
-	ATF_CHECK(!g.from_default_rule);
-	ATF_CHECK_STREQ("a.ops", g.anointments[0]);
-	resolve_uid("admin { uids = \"root\"; bogus = 1; }\n"
-	    "principals { ops { uids = [7]; anointments = [\"a.ops\"]; } }\n",
-	    0, &g);
-	ATF_CHECK(!g.from_default_rule);
-	check_empty_grant(&g);
-	/* Whereas a malformed principals block beside a valid legacy block
-	 * does fall back (principals is looked at first). */
-	check_falls_back("admin { uids = [0]; }\nprincipals = 7;\n");
-	check_falls_back("admin { uids = [0]; }\nprincipals { r = 1; }\n");
-}
-
 ATF_TC_WITHOUT_HEAD(unknown_group_never_matches_gid_minus_one);
 ATF_TC_BODY(unknown_group_never_matches_gid_minus_one, tc)
 {
@@ -1627,7 +1584,8 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, grant_star_sets_all_flags);
 	ATF_TP_ADD_TC(tp, grant_admin_rights_defaults);
 	ATF_TP_ADD_TC(tp, grant_selectors_forms);
-	ATF_TP_ADD_TC(tp, grant_legacy_admin_block);
+	ATF_TP_ADD_TC(tp, grant_principals_admin_entry);
+	ATF_TP_ADD_TC(tp, grant_rejects_removed_admin_block);
 	ATF_TP_ADD_TC(tp, grant_missing_file_is_least_privilege);
 	ATF_TP_ADD_TC(tp, grant_malformed_file_is_least_privilege);
 	ATF_TP_ADD_TC(tp, grant_unknown_key_in_entry_is_malformed);
@@ -1653,7 +1611,6 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, policy_size_cap);
 	ATF_TP_ADD_TC(tp, policy_fd_not_regular_falls_back);
 	ATF_TP_ADD_TC(tp, holds_and_may_elevate_exact_match_only);
-	ATF_TP_ADD_TC(tp, legacy_and_principals_both_present);
 	ATF_TP_ADD_TC(tp, unknown_group_never_matches_gid_minus_one);
 	ATF_TP_ADD_TC(tp, repeated_keys_are_malformed);
 	ATF_TP_ADD_TC(tp, declared_names_unions_grants_and_may_elevate);

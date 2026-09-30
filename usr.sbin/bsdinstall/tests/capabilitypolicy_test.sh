@@ -39,6 +39,13 @@ defaults_body()
 	    grep 'uids' root/Capabilities/Config/principal-policy.ucl
 	atf_check -s exit:0 -o match:'groups = \[ "wheel" \];' \
 	    grep 'groups' root/Capabilities/Config/principal-policy.ucl
+	# Only the principals form is written; the removed top-level admin block is not.
+	atf_check -s exit:0 -o ignore grep -q '^principals {' \
+	    root/Capabilities/Config/principal-policy.ucl
+	atf_check -s exit:0 -o match:'anointments = \[ "\*" \];' \
+	    grep anointments root/Capabilities/Config/principal-policy.ucl
+	atf_check -s exit:1 -o ignore grep -q '^admin' \
+	    root/Capabilities/Config/principal-policy.ucl
 }
 
 atf_test_case additional_principals

@@ -86,7 +86,7 @@ capbundle_open(const char *path, struct capbundle **bp,
 		capbundle_close(b);
 		return (-1);
 	}
-	/* The root is intentionally small and closed to legacy layouts. */
+	/* The root is intentionally small and closed. */
 	d = opendir(b->path);
 	if (d == NULL) {
 		capbundle_close(b);

@@ -4,8 +4,8 @@
  * Copyright (c) 2026 Kory Heard
  *
  * The SYSTEM-vs-USER mint decision, unit-tested through the pure predicate
- * authagent_mint_kind() the daemon factored out of handle_request().  Since
- * IPC anointments v1 the decision is grant-based, and VISIBILITY is decoupled
+ * authagent_mint_kind() the daemon factored out of handle_request().  The
+ * decision is grant-based, and VISIBILITY is decoupled
  * from management: a principal whose grant holds "*" (see-everything) mints a
  * full-discovery SYSTEM channel; every other principal -- including an operator
  * carrying admin_rights but not "*" -- mints a per-uid USER channel that carries
@@ -118,16 +118,17 @@ ATF_TC_BODY(default_nonadmin_mints_user, tc)
 	    authagent_mint_kind(-1, 1234, members, 1, no_groups, NULL));
 }
 
-/* Legacy admin { uids } policy: SYSTEM for it and USER for everyone else. */
-ATF_TC_WITHOUT_HEAD(legacy_policy_admin_uid_mints_system);
-ATF_TC_BODY(legacy_policy_admin_uid_mints_system, tc)
+/* Policy with one admin entry: SYSTEM for it and USER for everyone else. */
+ATF_TC_WITHOUT_HEAD(policy_admin_uid_mints_system);
+ATF_TC_BODY(policy_admin_uid_mints_system, tc)
 {
 	gid_t granted_groups[] = { 1234 };
 	gid_t other_groups[] = { 5678 };
 	char path[64];
 	int fd;
 
-	fd = open_policy(path, sizeof(path), "admin { uids = [ 1234 ] }\n");
+	fd = open_policy(path, sizeof(path),
+	    "principals { admin { uids = [ 1234 ]; anointments = [\"*\"]; } }\n");
 	ATF_CHECK_EQ(SERVICE_MINT_SYSTEM,
 	    authagent_mint_kind(fd, 1234, granted_groups, 1, no_groups, NULL));
 	ATF_CHECK_EQ(SERVICE_MINT_USER,
@@ -137,23 +138,24 @@ ATF_TC_BODY(legacy_policy_admin_uid_mints_system, tc)
 }
 
 /*
- * An authoritative legacy policy that names no uids denies even root: root
+ * An authoritative policy that names no root entry denies even root: root
  * is not automatically privileged in the capability model, so it mints USER.
  */
-ATF_TC_WITHOUT_HEAD(legacy_policy_without_root_mints_user_for_root);
-ATF_TC_BODY(legacy_policy_without_root_mints_user_for_root, tc)
+ATF_TC_WITHOUT_HEAD(policy_without_root_mints_user_for_root);
+ATF_TC_BODY(policy_without_root_mints_user_for_root, tc)
 {
 	char path[64];
 	int fd;
 
-	fd = open_policy(path, sizeof(path), "admin { uids = [ 1234 ] }\n");
+	fd = open_policy(path, sizeof(path),
+	    "principals { admin { uids = [ 1234 ]; anointments = [\"*\"]; } }\n");
 	ATF_CHECK_EQ(SERVICE_MINT_USER,
 	    authagent_mint_kind(fd, 0, NULL, 0, no_groups, NULL));
 	(void)close(fd);
 	(void)unlink(path);
 }
 
-/* New format: admin -> SYSTEM, default -> USER, operators -> USER. */
+/* admin -> SYSTEM, default -> USER, operators -> USER. */
 ATF_TC_WITHOUT_HEAD(new_format_kinds);
 ATF_TC_BODY(new_format_kinds, tc)
 {
@@ -389,8 +391,8 @@ ATF_TP_ADD_TCS(tp)
 
 	ATF_TP_ADD_TC(tp, default_root_mints_user);
 	ATF_TP_ADD_TC(tp, default_nonadmin_mints_user);
-	ATF_TP_ADD_TC(tp, legacy_policy_admin_uid_mints_system);
-	ATF_TP_ADD_TC(tp, legacy_policy_without_root_mints_user_for_root);
+	ATF_TP_ADD_TC(tp, policy_admin_uid_mints_system);
+	ATF_TP_ADD_TC(tp, policy_without_root_mints_user_for_root);
 	ATF_TP_ADD_TC(tp, new_format_kinds);
 	ATF_TP_ADD_TC(tp, new_format_set_passed_through);
 	ATF_TP_ADD_TC(tp, kind_only_from_see_all);

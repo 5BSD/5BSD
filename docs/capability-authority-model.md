@@ -232,7 +232,7 @@ policy *reproduce today's behavior* so nothing breaks while the mechanism moves.
   - **P1b — explicit policy (done).** The decision now reads an explicit UCL
     principal→bundle policy at `/Capabilities/Config/principal-policy.ucl`
     (`capbundle_principal_is_admin` in libcapbundle, which owns UCL); login/su
-    call it (the libservice P1a seam is retired). `admin { uids=[…] groups=[…] }`
+    call it (the libservice P1a seam is retired). `principals { admin { uids=[…] groups=[…] … } }`
     names the admin principals; an absent or invalid policy falls back to the
     historical root/wheel rule, so it is behavior-neutral by default. Login is
     not PID 1, so decision-4's hard "not in PID 1" constraint holds; moving the

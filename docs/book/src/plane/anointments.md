@@ -152,8 +152,8 @@ named `default`. Entry names are for the operator; only the lists match.
 | `admin_rights` | whether the session's connections carry `SERVICE_RIGHTS_ADMIN`, the in-endpoint bypass providers honour; defaults to true only when `anointments` is `["*"]` |
 
 `*` is legal in `anointments` and `may_elevate` here and nowhere else. The
-legacy top-level `admin { uids; groups; }` form is accepted and means the
-same as the `admin` entry.
+top level is closed: `principals` is the only key, and anything else (a
+stray `admin { ... }` block included) makes the file malformed.
 
 The session kind is SYSTEM (full discovery) when the grant holds `*` or
 carries admin rights, and a per-uid USER channel carrying the listed set

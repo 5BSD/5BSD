@@ -40,15 +40,6 @@
  * here and nowhere else.  `admin_rights` is a boolean; it defaults to true for
  * an entry granting anointments = ["*"] and to false otherwise.
  *
- * Legacy format, still honoured when there is no `principals` block:
- *
- *   admin {
- *       uids   = [ 0 ]        # principals by uid
- *       groups = [ "wheel" ]  # principals in any of these groups
- *   }
- *
- * maps a matching principal to "*" + admin_rights and everyone else to nothing.
- *
  * A present-but-invalid policy (unparseable, unknown key, bad type, bad name)
  * fails safe to the historical default -- uid 0 or a member of "wheel" gets
  * "*" + admin_rights, everyone else nothing -- and reports it through
@@ -78,8 +69,8 @@
 /* Closed per-entry schema. */
 static const char *const entry_keys[] = {
 	"uids", "groups", "anointments", "may_elevate", "admin_rights" };
-/* Closed legacy admin-block schema. */
-static const char *const legacy_admin_keys[] = { "uids", "groups" };
+/* Closed top-level schema. */
+static const char *const root_keys[] = { "principals" };
 
 /* ---- the data-only decision core ------------------------------------- */
 
@@ -313,7 +304,6 @@ policy_grant(const ucl_object_t *root, uid_t uid, const gid_t *members,
     struct capbundle_principal_grant *out)
 {
 	const ucl_object_t *principals, *entry, *chosen, *fallback;
-	const ucl_object_t *admin, *uids, *groups;
 	ucl_object_iter_t it = NULL;
 	bool match, is_default;
 
@@ -321,29 +311,10 @@ policy_grant(const ucl_object_t *root, uid_t uid, const gid_t *members,
 	if (ucl_object_type(root) != UCL_OBJECT)
 		return (false);
 	principals = ucl_object_lookup(root, "principals");
-	if (principals == NULL) {
-		/* Legacy: admin { uids; groups } -> "*" + ADMIN, else nothing. */
-		admin = ucl_object_lookup(root, "admin");
-		if (admin == NULL)
-			return (true);
-		if (ucl_object_type(admin) != UCL_OBJECT ||
-		    !keys_allowed(admin, legacy_admin_keys,
-		    nitems(legacy_admin_keys)))
-			return (false);
-		match = false;
-		uids = ucl_object_lookup(admin, "uids");
-		groups = ucl_object_lookup(admin, "groups");
-		if (uids != NULL && !match_uids(uids, uid, &match))
-			return (false);
-		if (groups != NULL && !match_groups(groups, members, nmember,
-		    name2gid, ctx, &match))
-			return (false);
-		if (match) {
-			out->anoint_all = true;
-			out->admin_rights = true;
-		}
+	if (!keys_allowed(root, root_keys, nitems(root_keys)))
+		return (false);
+	if (principals == NULL)
 		return (true);
-	}
 	if (ucl_object_type(principals) != UCL_OBJECT)
 		return (false);
 

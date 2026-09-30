@@ -212,7 +212,7 @@ manifest and `AUTHAGENTD_NAME` say `system.Auth`, and lookups are exact.
 The design document `docs/book/src/providers/auth.md` still describes the
 protocol as one operation and getty's channel as scoped to `{system.auth}`;
 the shipped protocol has three ops and the visibility mechanism is the
-unit's `visible = ["user"]`. The legacy top-level `admin { uids; groups; }`
-form of the policy file is still accepted and slated for removal. BSDAuth
+unit's `visible = ["user"]`. The policy file has one form, a top-level `principals`
+block; any other top-level key makes it malformed. BSDAuth
 runs as root and is one of the providers not yet moved to a gate-based
 launch as user `capability`.
