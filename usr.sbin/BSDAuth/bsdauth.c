@@ -13,7 +13,7 @@
  * login program.  The login program never holds mint authority itself.  See
  * docs/book/src/providers/auth.md.
  *
- * IPC anointments v1 (docs/book/src/plane/anointments.md, "Domains and sessions"
+ * IPC anointments (docs/book/src/plane/anointments.md, "Domains and sessions"
  * and "Elevation"): the mint carries the principal's anointment set from
  * principal-policy.ucl, and a second operation, ELEVATE, is the sudo/doas
  * replacement -- a process on a session channel asks for ONE name from its
@@ -1127,9 +1127,7 @@ handle_mint(struct client *c, const void *data, size_t len, size_t nfds,
 	req = data;
 	t->uid = req->uid;
 	t->flags = req->flags;
-	if (req->version < AUTHAGENTD_PROTO_VERSION_MIN ||
-	    req->version > AUTHAGENTD_PROTO_VERSION ||
-	    req->op != AUTHAGENT_OP_MINT_SESSION ||
+	if (req->op != AUTHAGENT_OP_MINT_SESSION ||
 	    (req->flags & ~AUTHAGENT_FLAG_FORWARDABLE) != 0)
 		return (EINVAL);
 	t->stage = "identity";
@@ -1233,9 +1231,7 @@ handle_elevate(struct client *c, struct channel_message *request,
 	if (nfds != 0 || data == NULL || len != sizeof(req))
 		goto out;
 	memcpy(&req, data, sizeof(req));
-	if (req.version < AUTHAGENTD_PROTO_VERSION_MIN ||
-	    req.version > AUTHAGENTD_PROTO_VERSION ||
-	    req.op != AUTHAGENT_OP_ELEVATE || req.flags != 0 ||
+	if (req.op != AUTHAGENT_OP_ELEVATE || req.flags != 0 ||
 	    req.reserved != 0 ||
 	    memchr(req.name, '\0', sizeof(req.name)) == NULL ||
 	    memchr(req.password, '\0', sizeof(req.password)) == NULL ||
@@ -1393,8 +1389,7 @@ handle_mint_auth(struct client *c, const void *data, size_t len, size_t nfds,
 	if (nfds != 0 || data == NULL || len != sizeof(req))
 		goto out;
 	memcpy(&req, data, sizeof(req));
-	if (req.version != AUTHAGENTD_PROTO_VERSION ||
-	    req.op != AUTHAGENT_OP_MINT_AUTH ||
+	if (req.op != AUTHAGENT_OP_MINT_AUTH ||
 	    (req.flags & ~AUTHAGENT_FLAG_FORWARDABLE) != 0 ||
 	    memchr(req.password, '\0', sizeof(req.password)) == NULL)
 		goto out;
@@ -1474,8 +1469,8 @@ handle_mint_auth(struct client *c, const void *data, size_t len, size_t nfds,
 	 * ADMIN gate), while a su target is a leaf that execs in place and never
 	 * forwards.  Honoring FORWARDABLE here (as MINT_SESSION does behind the
 	 * admin gate) would hand a non-admin caller a re-delegable target/SYSTEM
-	 * channel; instead the flag is accepted on the wire for compatibility but
-	 * never widens the grant.
+	 * channel; instead the flag is accepted on the wire but never widens the
+	 * grant.
 	 */
 	t->stage = "mint";
 	fd = -1;
@@ -1510,8 +1505,8 @@ handle_mint_auth(struct client *c, const void *data, size_t len, size_t nfds,
 }
 
 /*
- * Dispatch one request.  The first two words of every request are
- * (version, op); the op selects its own caller gate, so the gate is applied
+ * Dispatch one request.  The first word of every request is the
+ * op; the op selects its own caller gate, so the gate is applied
  * before anything else in the payload is looked at.
  */
 static void
@@ -1536,9 +1531,9 @@ handle_request(struct channel *ch __unused, struct channel_message *request,
 	data = channel_message_data(request);
 	len = channel_message_length(request);
 	nfds = channel_message_fd_count(request);
-	if (data != NULL && len >= 2 * sizeof(uint32_t)) {
+	if (data != NULL && len >= sizeof(uint32_t)) {
 		words = data;
-		op = words[1];
+		op = words[0];
 	}
 
 	if (op == AUTHAGENT_OP_ELEVATE) {
