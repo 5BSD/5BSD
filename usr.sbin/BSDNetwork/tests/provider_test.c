@@ -650,7 +650,6 @@ ATF_TC_BODY(provider_malformed_channel, tc)
 	struct fixture fixture;
 	union wire_buffer reply;
 	struct networkcmp_msg message;
-	struct networkcmp_hello *hello;
 	struct service_call_options options = SERVICE_CALL_OPTIONS_INITIALIZER;
 	struct service_message outgoing;
 	struct service_reply response;
@@ -664,7 +663,6 @@ ATF_TC_BODY(provider_malformed_channel, tc)
 	ATF_REQUIRE_EQ(0, networkcmp_message_init(&message,
 	    NETWORKCMP_OP_HELLO, 0));
 	memcpy(request, &message, sizeof(message));
-	hello = (void *)(request + sizeof(message));
 	memset(&outgoing, 0, sizeof(outgoing));
 	outgoing.size = sizeof(outgoing);
 	outgoing.data = request;
