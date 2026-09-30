@@ -331,15 +331,27 @@ local function pkgbase()
 	local options = parse_options()
 
 	-- Release media embeds a pkg bootstrap built for the release world.
-	-- Use it: an offline install has no route to pkg.FreeBSD.org, and the
-	-- network bootstrap would also fetch a pkg built for a different world.
+	-- Use it rather than the network: an offline install has no route to
+	-- pkg.FreeBSD.org, the network bootstrap prompts (which hangs a
+	-- scripted install outright), and it would fetch a pkg built against a
+	-- different world than the target.
+	--
+	-- `pkg add` is not usable here: the live installer root is read-only, so
+	-- it cannot extract pkg-static into /usr/local/sbin.  Unpack the static
+	-- binary to a writable path instead and drive the install with it.
+	local pkg_cmd = "pkg"
 	if not os.execute("pkg -N > /dev/null 2>&1") then
 		local embedded = capture("ls " ..
 		    shell_quote(MEDIA_OFFLINE_DIR) .. "/pkg-*.pkg 2>/dev/null " ..
 		    "| head -1")
 		if embedded and embedded ~= "" then
-			print("Bootstrapping pkg from install media")
-			assert(os.execute("pkg add " .. shell_quote(embedded)))
+			print("Using the pkg bootstrap from install media")
+			local tmpdir = os.getenv("TMPDIR") or "/tmp"
+			assert(os.execute("tar -xf " .. shell_quote(embedded) ..
+			    " -C " .. shell_quote(tmpdir) ..
+			    " '*sbin/pkg-static'"))
+			pkg_cmd = tmpdir .. "/usr/local/sbin/pkg-static"
+			assert(os.execute("chmod 755 " .. shell_quote(pkg_cmd)))
 		else
 			print("Bootstrapping pkg on the host system")
 			assert(os.execute("pkg bootstrap -y"))
@@ -369,7 +381,7 @@ local function pkgbase()
 	-- We must use --repo-conf-dir rather than -o REPOS_DIR here as the latter
 	-- is interpreted relative to the --rootdir. BSDINSTALL_PKG_REPOS_DIR must
 	-- be allowed to point to a path outside the chroot.
-	local pkg = "pkg --rootdir " .. shell_quote(chroot) ..
+	local pkg = shell_quote(pkg_cmd) .. " --rootdir " .. shell_quote(chroot) ..
 		" --repo-conf-dir " .. shell_quote(repos_dir) .. " -o IGNORE_OSVERSION=yes "
 
 	while not os.execute(pkg .. "update") do
