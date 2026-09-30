@@ -18,7 +18,7 @@ reader can compare two providers side by side.
 |---|---|
 | What it brokers | Which resource the daemon holds on the caller's behalf, and why that resource is not ambient |
 | Unit | The unit manifest: wire name, program path in the bundle, unit name, user, launch mode, declared gates, restart policy, `protect` set |
-| Wire operations | Every op in the protocol header: request, reply, errors, and the version handshake |
+| Wire operations | Every op in the protocol header: request, reply, and errors |
 | Client library | Header, link flag, every public function, one compiling example |
 | Command-line tool | The operator ctl verbs, with invocations and output shape |
 | Policy | The provider's policy file or per-label rules, what is denied by default, and whether admin sessions bypass it |
@@ -81,18 +81,11 @@ channel is also the unit of isolation on the provider side: what one client
 can do is bounded by the label switchboard stamped on its channel, and the
 provider reads that label from the kernel, never from the payload.
 
-**HELLO and ABI negotiation.** Most protocols begin with a version
-handshake. The typed libraries send it inside `*_open()` so a mismatched
-client and provider fail at open time rather than on the first real call.
-The shapes differ per protocol and the chapters say which applies:
-
-| Shape | Providers |
-|---|---|
-| Bare HELLO carrying a magic and ABI version, empty reply on match | system.Crypto (op 11), system.Time, system.Power, system.Sysctl |
-| HELLO header answered with a reply that states the provider's version (and, for Notify, its features and limits) | system.Audit (ABI 1), system.Device, system.Notify |
-| HELLO carrying a feature bitmap, reply reports the granted features and limits | system.Log (`LOGCMP_FEATURE_*`), system.Network |
-| A `version` field in every request; the daemon accepts a minimum version | system.Auth (`AUTHAGENTD_PROTO_VERSION` 3, minimum 2) |
-| No handshake; the request's `op` field is the whole contract | system.Filesystem, system.Namespace, system.SystemExtension, system.VM |
+**Feature exchange.** Log, Network, Notify and Trace begin with a HELLO that
+exchanges a feature bitmap and limits; the typed libraries send it inside
+`*_open()`. The other providers have no handshake: the request's `op` field is
+the whole contract. There is one current protocol shape and no version
+negotiation.
 
 ## Reading the ops tables
 
