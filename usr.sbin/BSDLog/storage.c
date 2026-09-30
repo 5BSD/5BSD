@@ -67,13 +67,11 @@ reclaim_interval(void)
 }
 
 #define	STORAGE_MAGIC		0x4c535450U	/* LSTP */
-#define	STORAGE_VERSION		1U
 #define	STORAGE_MAX_SESSIONS	256U
 #define	STORAGE_LABEL_MAX	63U
 #define	STORAGE_DRAIN_BATCH	256U
 #define	STORAGE_DRAIN_QUANTUM_MS	10U
 #define	STORAGE_MULTIPLEX_LABEL	"@multiplex"
-#define	STORAGE_RECORD_VERSION	1U
 
 enum storage_operation {
 	STORAGE_OP_READY = 1,
@@ -113,8 +111,8 @@ struct storage_count_reply {
 
 struct storage_message {
 	uint32_t magic;
-	uint16_t version;
 	uint16_t operation;
+	uint16_t reserved0;
 	int32_t status;
 	uint32_t flags;
 	uint32_t length;
@@ -145,7 +143,6 @@ struct storage_query {
 };
 
 struct storage_record {
-	uint16_t version;
 	uint16_t label_length;
 	uint32_t record_length;
 	char label[STORAGE_LABEL_MAX + 1];
@@ -174,7 +171,6 @@ message_init(struct storage_message *message, uint16_t operation,
 
 	memset(message, 0, sizeof(*message));
 	message->magic = STORAGE_MAGIC;
-	message->version = STORAGE_VERSION;
 	message->operation = operation;
 	message->status = status;
 	message->length = length;
@@ -188,7 +184,7 @@ message_valid(const struct storage_message *message, size_t received,
 	return (received >= sizeof(*message) &&
 	    received == sizeof(*message) + message->length &&
 	    message->magic == STORAGE_MAGIC &&
-	    message->version == STORAGE_VERSION &&
+	    message->reserved0 == 0 &&
 	    message->operation >= STORAGE_OP_READY &&
 	    message->operation <= STORAGE_OP_NOTE_OWNER &&
 	    message->flags == 0 && message->reserved == 0 &&
@@ -208,8 +204,8 @@ message_error(const struct storage_message *message, size_t received)
 		return (EOVERFLOW);
 	if (message->magic != STORAGE_MAGIC)
 		return (EBADMSG);
-	if (message->version != STORAGE_VERSION)
-		return (EPROTONOSUPPORT);
+	if (message->reserved0 != 0)
+		return (EINVAL);
 	if (message->operation < STORAGE_OP_READY ||
 	    message->operation > STORAGE_OP_NOTE_OWNER)
 		return (ENOSYS);
@@ -587,7 +583,6 @@ drain_storage_session(struct storage_session *session,
 			continue;
 		}
 		if ((size_t)length < offsetof(struct storage_record, record) ||
-		    envelope.version != STORAGE_RECORD_VERSION ||
 		    envelope.label_length == 0 ||
 		    envelope.label_length > STORAGE_LABEL_MAX ||
 		    envelope.record_length > LOGCMP_MAX_RECORD ||
@@ -1362,7 +1357,6 @@ logcmp_storage_append_for(struct logcmp_storage_session *session,
 	if (!session->multiplex && strcmp(session->label, label) != 0)
 		return (errno = EACCES, -1);
 	memset(&envelope, 0, offsetof(struct storage_record, record));
-	envelope.version = STORAGE_RECORD_VERSION;
 	envelope.label_length = (uint16_t)label_length;
 	envelope.record_length = (uint32_t)length;
 	memcpy(envelope.label, label, label_length);

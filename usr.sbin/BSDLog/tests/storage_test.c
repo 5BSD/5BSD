@@ -998,13 +998,13 @@ ATF_TC_BODY(retired_pool_owner_cannot_write_or_disrupt_peer, tc)
  * Raw storage-protocol wire access for NOTE_OWNER negatives.  The layout
  * mirrors storage.c's private struct storage_message / storage_note_owner_request
  * exactly (the test deliberately speaks the wire, not the API): header = magic4
- * ver2 op2 status4 flags4 length4 reserved4; NOTE_OWNER request = olen2 blen2
+ * op2 rsvd2 status4 flags4 length4 reserved4; NOTE_OWNER request = olen2 blen2
  * rsvd4 owner[64] bundle[64].
  */
 #define	WIRE_MAGIC	0x4c535450U
 #define	WIRE_OP_NOTE_OWNER	9
 struct wire_hdr {
-	uint32_t magic; uint16_t version; uint16_t op; int32_t status;
+	uint32_t magic; uint16_t op; uint16_t rsvd; int32_t status;
 	uint32_t flags; uint32_t length; uint32_t reserved;
 };
 struct wire_note {
@@ -1023,7 +1023,7 @@ send_wire(int fd, uint16_t op, uint32_t declared_len, const void *payload,
 	union { struct cmsghdr c; uint8_t b[CMSG_SPACE(sizeof(int))]; } ctl;
 
 	memset(buf, 0, sizeof(buf));
-	h->magic = WIRE_MAGIC; h->version = 1; h->op = op; h->length = declared_len;
+	h->magic = WIRE_MAGIC; h->op = op; h->length = declared_len;
 	memcpy(buf + sizeof(*h), payload, payload_len);
 	iov.iov_base = buf; iov.iov_len = sizeof(*h) + payload_len;
 	memset(&msg, 0, sizeof(msg));

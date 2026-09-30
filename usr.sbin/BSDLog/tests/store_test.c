@@ -330,6 +330,39 @@ ATF_TC_BODY(corruption_is_not_silently_truncated, tc)
 	fixture_destroy(&fixture);
 }
 
+/* Flipping any byte of the file header (magic, reserved, length, generation,
+ * timestamp, checksum) must make the open fail closed. */
+ATF_TC_WITHOUT_HEAD(rejects_any_corrupt_header_byte);
+ATF_TC_BODY(rejects_any_corrupt_header_byte, tc)
+{
+	struct fixture fixture;
+	struct logcmp_store *store;
+	uint8_t byte;
+	int fd, off;
+
+	fixture_create(&fixture);
+	ATF_REQUIRE_EQ(0, logcmp_store_open(fixture.dirfd,
+	    LOGCMP_STORE_SEGMENT_MIN, LOGCMP_STORE_SEGMENTS_DEFAULT, &store));
+	logcmp_store_close(store);
+	fd = openat(fixture.dirfd, "active.segment", O_RDWR | O_CLOEXEC);
+	ATF_REQUIRE(fd >= 0);
+	for (off = 0; off < 28; off++) {
+		ATF_REQUIRE_EQ(1, pread(fd, &byte, 1, off));
+		byte ^= 0x5a;
+		ATF_REQUIRE_EQ(1, pwrite(fd, &byte, 1, off));
+		ATF_CHECK_ERRNO(EILSEQ, logcmp_store_open(fixture.dirfd,
+		    LOGCMP_STORE_SEGMENT_MIN, LOGCMP_STORE_SEGMENTS_DEFAULT,
+		    &store) == -1);
+		byte ^= 0x5a;
+		ATF_REQUIRE_EQ(1, pwrite(fd, &byte, 1, off));
+	}
+	close(fd);
+	ATF_REQUIRE_EQ(0, logcmp_store_open(fixture.dirfd,
+	    LOGCMP_STORE_SEGMENT_MIN, LOGCMP_STORE_SEGMENTS_DEFAULT, &store));
+	logcmp_store_close(store);
+	fixture_destroy(&fixture);
+}
+
 ATF_TC_WITHOUT_HEAD(rejects_corrupt_file_header);
 ATF_TC_BODY(rejects_corrupt_file_header, tc)
 {
@@ -370,7 +403,7 @@ ATF_TC_BODY(incomplete_record_body_is_truncated, tc)
 	logcmp_store_close(store);
 	memset(header, 0, sizeof(header));
 	le32enc(header, 0x4c524543U);
-	le16enc(header + 4, 1);
+	le16enc(header + 4, 0);
 	le16enc(header + 6, sizeof(header));
 	le32enc(header + 8, 128);
 	iov[0] = (struct iovec){ .iov_base = header, .iov_len = sizeof(header) };
@@ -1900,6 +1933,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, torn_tail_is_truncated);
 	ATF_TP_ADD_TC(tp, corruption_is_not_silently_truncated);
 	ATF_TP_ADD_TC(tp, rejects_corrupt_file_header);
+	ATF_TP_ADD_TC(tp, rejects_any_corrupt_header_byte);
 	ATF_TP_ADD_TC(tp, incomplete_record_body_is_truncated);
 	ATF_TP_ADD_TC(tp, rejects_symlink_store);
 	ATF_TP_ADD_TC(tp, rotation);

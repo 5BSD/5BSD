@@ -30,7 +30,6 @@
 #define	STORE_FILE		"active.segment"
 #define	STORE_FILE_MAGIC	0x4c534547U	/* LSEG */
 #define	STORE_RECORD_MAGIC	0x4c524543U	/* LREC */
-#define	STORE_VERSION		1U
 #define	STORE_FILE_HEADER	32U
 #define	STORE_RECORD_HEADER	24U
 #define	STORE_BODY_HEADER	4U
@@ -226,7 +225,7 @@ write_file_header(int fd, uint64_t generation)
 
 	memset(header, 0, sizeof(header));
 	le32enc(header, STORE_FILE_MAGIC);
-	le16enc(header + 4, STORE_VERSION);
+	le16enc(header + 4, 0);
 	le16enc(header + 6, STORE_FILE_HEADER);
 	le64enc(header + 8, generation);
 	if (clock_gettime(CLOCK_REALTIME, &now) == -1)
@@ -248,7 +247,7 @@ read_file_header(int fd, uint64_t *generationp)
 	if (full_pread(fd, header, sizeof(header), 0, &amount) == -1)
 		return (-1);
 	if (amount != sizeof(header) || le32dec(header) != STORE_FILE_MAGIC ||
-	    le16dec(header + 4) != STORE_VERSION ||
+	    le16dec(header + 4) != 0 ||
 	    le16dec(header + 6) != STORE_FILE_HEADER ||
 	    le32dec(header + 24) != crc32c_update(0, header, 24)) {
 		errno = EILSEQ;
@@ -279,7 +278,7 @@ recover_tail(int fd, off_t size, off_t *offsetp)
 			goto truncate_tail;
 		body_length = le32dec(header + 8);
 		if (le32dec(header) != STORE_RECORD_MAGIC ||
-		    le16dec(header + 4) != STORE_VERSION ||
+		    le16dec(header + 4) != 0 ||
 		    le16dec(header + 6) != STORE_RECORD_HEADER ||
 		    body_length < STORE_BODY_HEADER ||
 		    body_length > STORE_LABEL_MAX + STORE_BODY_HEADER +
@@ -702,7 +701,7 @@ write_reclaim_meta(struct logcmp_store *store)
 		return (-1);
 	memset(header, 0, sizeof(header));
 	le32enc(header, STORE_RECLAIM_MAGIC);
-	le16enc(header + 4, STORE_VERSION);
+	le16enc(header + 4, 0);
 	le16enc(header + 6, 0);
 	le64enc(header + 8, (uint64_t)store->nreclaimed);
 	le32enc(header + 16, crc32c_update(0, header, 16));
@@ -783,7 +782,7 @@ read_reclaim_meta(struct logcmp_store *store)
 	    full_pread(fd, header, sizeof(header), 0, &amount) == -1 ||
 	    amount != sizeof(header) ||
 	    le32dec(header) != STORE_RECLAIM_MAGIC ||
-	    le16dec(header + 4) != STORE_VERSION || le16dec(header + 6) != 0 ||
+	    le16dec(header + 4) != 0 || le16dec(header + 6) != 0 ||
 	    le32dec(header + 16) != crc32c_update(0, header, 16)) {
 		close(fd);
 		return (errno = EILSEQ, -1);
@@ -900,7 +899,7 @@ write_owner_map(struct logcmp_store *store)
 		return (-1);
 	memset(header, 0, sizeof(header));
 	le32enc(header, STORE_OWNER_MAGIC);
-	le16enc(header + 4, STORE_VERSION);
+	le16enc(header + 4, 0);
 	le16enc(header + 6, 0);
 	le64enc(header + 8, (uint64_t)store->nowners);
 	le32enc(header + 16, crc32c_update(0, header, 16));
@@ -1003,7 +1002,7 @@ read_owner_map(struct logcmp_store *store)
 	    full_pread(fd, header, sizeof(header), 0, &amount) == -1 ||
 	    amount != sizeof(header) ||
 	    le32dec(header) != STORE_OWNER_MAGIC ||
-	    le16dec(header + 4) != STORE_VERSION || le16dec(header + 6) != 0 ||
+	    le16dec(header + 4) != 0 || le16dec(header + 6) != 0 ||
 	    le32dec(header + 16) != crc32c_update(0, header, 16)) {
 		close(fd);
 		return;
@@ -1440,7 +1439,7 @@ logcmp_store_append(struct logcmp_store *store, const char *label,
 	checksum = crc32c_update(checksum, redacted, redacted_length);
 	memset(header, 0, sizeof(header));
 	le32enc(header, STORE_RECORD_MAGIC);
-	le16enc(header + 4, STORE_VERSION);
+	le16enc(header + 4, 0);
 	le16enc(header + 6, STORE_RECORD_HEADER);
 	le32enc(header + 8, STORE_BODY_HEADER + label_length + redacted_length);
 	le32enc(header + 12, checksum);
@@ -1622,7 +1621,7 @@ logcmp_store_query_next_filtered(struct logcmp_store *store, const char *label,
 				goto read_fail;
 			if (amount != sizeof(header) ||
 			    le32dec(header) != STORE_RECORD_MAGIC ||
-			    le16dec(header + 4) != STORE_VERSION ||
+			    le16dec(header + 4) != 0 ||
 			    le16dec(header + 6) != STORE_RECORD_HEADER ||
 			    le32dec(header + 16) != 0 || le32dec(header + 20) != 0)
 				goto corrupt;
