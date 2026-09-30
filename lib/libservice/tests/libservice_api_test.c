@@ -313,7 +313,6 @@ valid_empty_bootstrap(struct service_bootstrap *bootstrap)
 
 	memset(bootstrap, 0, sizeof(*bootstrap));
 	bootstrap->magic = SERVICE_BOOTSTRAP_MAGIC;
-	bootstrap->version = SERVICE_BOOTSTRAP_VERSION;
 	bootstrap->header_size = offsetof(struct service_bootstrap, label);
 	bootstrap->total_size = sizeof(*bootstrap);
 	bootstrap->channel_fd = 3;
@@ -326,7 +325,7 @@ enum bootstrap_case {
 	BOOTSTRAP_ABSENT,
 	BOOTSTRAP_TRUNCATED,
 	BOOTSTRAP_ZERO,
-	BOOTSTRAP_VERSION,
+	BOOTSTRAP_HEADER_SIZE,
 	BOOTSTRAP_RESERVED,
 	BOOTSTRAP_FLAGS,
 	BOOTSTRAP_COUNT,
@@ -366,8 +365,8 @@ run_bootstrap_case(enum bootstrap_case test_case, int expected_errno)
 			if (test_case != BOOTSTRAP_TRUNCATED &&
 			    test_case != BOOTSTRAP_ZERO)
 				valid_empty_bootstrap(&bootstrap);
-			if (test_case == BOOTSTRAP_VERSION)
-				bootstrap.version++;
+			if (test_case == BOOTSTRAP_HEADER_SIZE)
+				bootstrap.header_size++;
 			if (test_case == BOOTSTRAP_RESERVED)
 				bootstrap.reserved[3] = 1;
 			if (test_case == BOOTSTRAP_FLAGS)
@@ -640,7 +639,7 @@ ATF_TC_BODY(bootstrap_validation, tc)
 	ATF_CHECK_EQ(0, run_bootstrap_case(BOOTSTRAP_ABSENT, EBADF));
 	ATF_CHECK_EQ(0, run_bootstrap_case(BOOTSTRAP_TRUNCATED, EPROTO));
 	ATF_CHECK_EQ(0, run_bootstrap_case(BOOTSTRAP_ZERO, EPROTO));
-	ATF_CHECK_EQ(0, run_bootstrap_case(BOOTSTRAP_VERSION, EPROTO));
+	ATF_CHECK_EQ(0, run_bootstrap_case(BOOTSTRAP_HEADER_SIZE, EPROTO));
 	ATF_CHECK_EQ(0, run_bootstrap_case(BOOTSTRAP_RESERVED, EPROTO));
 	ATF_CHECK_EQ(0, run_bootstrap_case(BOOTSTRAP_FLAGS, EPROTO));
 	ATF_CHECK_EQ(0, run_bootstrap_case(BOOTSTRAP_COUNT, EPROTO));

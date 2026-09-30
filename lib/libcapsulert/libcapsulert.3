@@ -94,10 +94,7 @@ status that is zero on success or a positive
 value, and any descriptor a reply delivers rides as an attached
 .Dv SCM_RIGHTS
 descriptor, never as an integer in the payload.
-The headers are built and run together with their peers; a protocol
-version bump is a
-.Dq rebuild every peer
-marker, not a negotiated compatibility knob.
+The headers are built and run together with their peers.
 .Ss Shared constants and types
 .In capsulert.h
 defines the canonical claim descriptors.
@@ -299,14 +296,12 @@ presents to
 .Xr capsule 8 :
 a
 .Vt struct ctl_request
-.Pq Va version , op , flags , datalen
+.Pq Va op , flags , datalen
 optionally followed by
 .Va datalen
 payload bytes, answered by a
 .Vt struct ctl_reply
 .Pq Va status , flags , uptime_usec .
-.Dv CTL_VERSION
-is 1.
 Opcodes:
 .Bl -tag -width CTL_OP_POWERCYCLE -compact
 .It Dv CTL_OP_SHUTDOWN
@@ -435,14 +430,12 @@ and
 .Pq Dq system.lifecycle .
 A
 .Vt struct sctl_request
-.Pq Va version , op , flags , datalen
+.Pq Va op , flags , datalen
 is answered by a
 .Vt struct sctl_reply
 whose
 .Va flags
 carries the length of the summary text that follows.
-.Dv SWITCHBOARD_CTL_VERSION
-is 2.
 .Bl -tag -width SCTL_OP_START_SVC -compact
 .It Dv SCTL_OP_STATUS
 query switchboard status.
@@ -463,9 +456,7 @@ over the unit's inherited channel (descriptor 3), and between any
 process and switchboard over an ambient lookup channel.
 .Xr libservice 3
 implements it; services do not normally speak it directly.
-.Dv SWITCHBOARD_SVC_PROTO_VERSION
-is 15.
-Requests carry a
+Every request begins with a 32-bit op word and draws a
 .Vt struct svc_reply
 .Pq Va status
 answer.
@@ -564,8 +555,6 @@ reached by opening
 Every claim is resolved under the caller's own container, derived from
 the connecting channel's unforgeable label, so a caller can never name
 another label's storage.
-.Dv BSDFILESYSTEM_PROTO_VERSION
-is 6.
 Requests are a
 .Vt struct bsdfilesystem_request
 .Pq Va rights , quota , lifetime , deliver , scope , dataset , group , ...

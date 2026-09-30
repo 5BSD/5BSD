@@ -2,7 +2,7 @@
 
 PACKAGE=lib${LIB}
 LIB=	capsulert
-SHLIB_MAJOR=	2
+SHLIB_MAJOR=	1
 
 MAN=	libcapsulert.3
 MLINKS+=	libcapsulert.3 parse_port_range_string.3

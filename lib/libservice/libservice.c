@@ -366,7 +366,6 @@ parse_service_bootstrap(void)
 		goto fail_close;
 	}
 	if (bootstrap->magic != SERVICE_BOOTSTRAP_MAGIC ||
-	    bootstrap->version != SERVICE_BOOTSTRAP_VERSION ||
 	    bootstrap->header_size != offsetof(struct service_bootstrap, label) ||
 	    bootstrap->total_size != sizeof(*bootstrap) ||
 	    (bootstrap->flags & ~SERVICE_BOOTSTRAP_FLAGS_MASK) != 0 ||
@@ -1759,7 +1758,6 @@ service_ready(struct service_context *context)
 	}
 	memset(&req, 0, sizeof(req));
 	ready.op = SVC_OP_READY;
-	ready.version = SWITCHBOARD_SVC_PROTO_VERSION;
 	if (rpc(&ready, sizeof(ready), NULL) == -1)
 		return (-1);
 	context->ready = true;
@@ -4891,7 +4889,7 @@ service_listener_accept_fd(struct service_listener *listener,
 		memcpy(identity->installation, connection.msg.generation,
 		    sizeof(identity->installation));
 		/*
-		 * v13 identity: the label above is the persistent identity,
+		 * Identity: the label above is the persistent identity,
 		 * the nonce the running instance, the ABI informational.
 		 */
 		identity->client_nonce = connection.msg.client_nonce;
@@ -4903,7 +4901,7 @@ service_listener_accept_fd(struct service_listener *listener,
 		 */
 		strlcpy(identity->container, connection.msg.container,
 		    sizeof(identity->container));
-		/* Group-container membership (v15). */
+		/* Group-container membership. */
 		{
 			unsigned gi;
 

@@ -1395,7 +1395,6 @@ service_mint_session_via_agent(int lookup_chan, uid_t uid, uint32_t flags,
 
 	memset(&req, 0, sizeof(req));
 	memset(&reply_data, 0, sizeof(reply_data));
-	req.version = AUTHAGENTD_PROTO_VERSION;
 	req.op = AUTHAGENT_OP_MINT_SESSION;
 	req.uid = (uint32_t)uid;
 	req.flags = (flags & SERVICE_MINT_AGENT_FORWARDABLE) ?
@@ -1508,7 +1507,6 @@ service_mint_session_authenticated(int lookup_chan, uid_t uid,
 		return (-1);
 	}
 
-	req.version = AUTHAGENTD_PROTO_VERSION;
 	req.op = AUTHAGENT_OP_MINT_AUTH;
 	req.uid = (uint32_t)uid;
 	req.flags = (flags & SERVICE_MINT_AGENT_FORWARDABLE) ?
@@ -1615,7 +1613,6 @@ service_elevate(const char *name, const char *password, unsigned timeout_ms,
 
 	memset(&req, 0, sizeof(req));
 	memset(&reply_data, 0, sizeof(reply_data));
-	req.version = AUTHAGENTD_PROTO_VERSION;
 	req.op = AUTHAGENT_OP_ELEVATE;
 	memcpy(req.name, name, name_len);
 	memcpy(req.password, password, password_len);
@@ -1686,17 +1683,5 @@ service_open(const char *name, int *session_fdp)
 
 	/* No bootstrap: a CLI or ambient client.  Use the login lookup channel. */
 	return (service_connect_ambient(name, session_fdp));
-}
-
-/*
- * Backward-compatible wrapper for existing USER-domain callers: mint a per-uid
- * scoped session channel.  See service_mint_session_domain().
- */
-int
-service_mint_user_domain(int syschan, uid_t uid, int *out_fd)
-{
-
-	return (service_mint_session_domain(syschan, SERVICE_MINT_USER, uid,
-	    out_fd));
 }
 

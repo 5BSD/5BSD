@@ -1,9 +1,9 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
- * IPC anointments v1 (docs/book/src/plane/anointments.md): wire and identity
+ * IPC anointments (docs/book/src/plane/anointments.md): wire and identity
  * contract between the kernel stamp, libchannel, libservice, switchboard
- * (proto 13) and system.Auth (proto 2).
+ * and system.Auth.
  *
  * Layout cases need no live capability plane.  The sender-ABI cases build a
  * real channel pair over /dev/mac_capability and skip when it is absent.
@@ -38,30 +38,28 @@
 /*
  * --- Layout contract (compile-time) ---------------------------------------
  */
-_Static_assert(SWITCHBOARD_SVC_PROTO_VERSION == 15, "proto 15 expected");
-_Static_assert(AUTHAGENTD_PROTO_VERSION == 3, "authagent proto 3 expected");
 _Static_assert(sizeof(struct svc_new_client_msg) == 752,
-    "svc_new_client_msg is 432 (v13) + container[64] (v14) + groups[4][64] (v15)");
+    "svc_new_client_msg wire layout");
 _Static_assert(offsetof(struct svc_new_client_msg, client_nonce) == 416,
-    "client_nonce appended after the v12 body");
+    "client_nonce layout");
 _Static_assert(offsetof(struct svc_new_client_msg, client_abi) == 424,
     "client_abi follows client_nonce");
 _Static_assert(sizeof(struct svc_mint_domain_req) ==
     24 + SVC_ANOINT_MAX * SVC_ANOINT_NAME_MAX,
     "mint request carries the anointment set");
 _Static_assert(offsetof(struct svc_mint_domain_req, nanointments) == 16,
-    "v12 mint request prefix unchanged");
+    "mint request prefix layout");
 _Static_assert(sizeof(struct service_identity) == 760,
-    "service_identity is 440 + container[64] (container-model) + groups[4][64]");
+    "service_identity layout");
 _Static_assert(sizeof(struct service_message_metadata) == 56,
-    "service_message_metadata size unchanged by sender_abi");
+    "service_message_metadata layout");
 _Static_assert(sizeof(struct channel_sender) == 32,
-    "channel_sender size unchanged by abi");
+    "channel_sender layout");
 _Static_assert(sizeof(struct mac_capability_cred_trailer) == 24,
     "cred trailer size is part of the ioctl numbers");
-_Static_assert(sizeof(struct authagent_elevate_req) == 336,
+_Static_assert(sizeof(struct authagent_elevate_req) == 332,
     "authagent_elevate_req layout");
-_Static_assert(sizeof(struct authagent_mint_auth_req) == 272,
+_Static_assert(sizeof(struct authagent_mint_auth_req) == 268,
     "authagent_mint_auth_req layout");
 _Static_assert(SERVICE_ANOINT_NAME_MAX == SVC_ANOINT_NAME_MAX &&
     SERVICE_ANOINT_MAX == SVC_ANOINT_MAX &&
@@ -84,19 +82,15 @@ ATF_TC_BODY(wire_layout, tc)
 
 	(void)tc;
 	/* Runtime mirrors of the static asserts, so a report shows numbers. */
-	ATF_CHECK_EQ(13, SWITCHBOARD_SVC_PROTO_VERSION);
-	ATF_CHECK_EQ(432u, (unsigned)sizeof(nc));
+	ATF_CHECK_EQ(752u, (unsigned)sizeof(nc));
 	ATF_CHECK_EQ(64u, (unsigned)sizeof(nc.client_label));
-	ATF_CHECK_EQ(440u, (unsigned)sizeof(id));
+	ATF_CHECK_EQ(760u, (unsigned)sizeof(id));
 	ATF_CHECK_EQ(56u, (unsigned)sizeof(md));
 	ATF_CHECK_EQ(0x2u, SVC_MINT_FLAG_ANOINT_ALL);
 	ATF_CHECK_EQ(0x4u, SVC_MINT_FLAG_ADMIN_RIGHTS);
 	ATF_CHECK((SVC_MINT_FLAG_RESEND & SVC_MINT_FLAG_ANOINT_ALL) == 0);
 	ATF_CHECK((SVC_MINT_FLAG_RESEND & SVC_MINT_FLAG_ADMIN_RIGHTS) == 0);
-	/*
-	 * The identity fields overlay what used to be reserved[3]: a v12
-	 * provider that zero-checked reserved[] reads nonce/abi there now.
-	 */
+	/* The identity stamp fields follow rights in order. */
 	ATF_CHECK_EQ(offsetof(struct service_identity, rights) + 8,
 	    offsetof(struct service_identity, client_nonce));
 	ATF_CHECK_EQ(offsetof(struct service_identity, client_nonce) + 8,

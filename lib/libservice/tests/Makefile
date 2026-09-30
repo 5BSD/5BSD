@@ -49,8 +49,7 @@ CFLAGS.libservice_api_test+=	-I${SRCTOP}/lib/libcapsulert
 CFLAGS.libservice_api_test+=	-I${SRCTOP}/sys
 
 
-# anoint_wire_test: IPC anointments v1 wire/identity contract (proto 13,
-# identity + metadata layouts, authagent ELEVATE, service_elevate argument
+# anoint_wire_test: IPC anointments wire/identity contract (identity + metadata layouts, authagent ELEVATE, service_elevate argument
 # validation).  Needs no live plane; the sender-ABI case uses a channel pair
 # when /dev/mac_capability is present and skips otherwise.
 LIBADD.anoint_wire_test+=	service

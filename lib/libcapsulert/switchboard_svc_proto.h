@@ -30,16 +30,6 @@
 
 #include <sys/types.h>
 
-/*
- * Bump whenever the wire contract below changes.  switchboard, libservice, and the
- * capability daemons are always built and run together (never mixed versions):
- * a bump is a hard "rebuild every peer" marker, not a negotiated compatibility
- * knob.  v10 added SVC_OP_REGISTER_LOOKUP (per-process private lookup channels,
- * docs/book/src/plane/discovery-and-lookup.md P2).  v13 added IPC
- * anointments (docs/book/src/plane/anointments.md): client_nonce/client_abi in
- * svc_new_client_msg and the anointment set in svc_mint_domain_req.
- */
-#define	SWITCHBOARD_SVC_PROTO_VERSION	15
 #define	SVC_GROUPS_MAX			4	/* group containers per bundle */
 
 /*
@@ -298,7 +288,7 @@ struct svc_register_lookup_ack {
 /*
  * Common request header — for ops with no extra params (READY).
  */
-struct svc_ready_req { uint32_t op; uint32_t version; };
+struct svc_ready_req { uint32_t op; };
 
 struct svc_req_hdr {
 	uint32_t	op;
@@ -459,7 +449,7 @@ struct svc_new_client_msg {
 	char		resource_owner[64];
 	uint8_t		generation[16];
 	/*
-	 * v13 identity (docs/book/src/plane/anointments.md "Switchboard").  The
+	 * Identity (docs/book/src/plane/anointments.md "Switchboard").  The
 	 * label above is the persistent identity; the nonce is the running
 	 * instance — the kernel's per-exec program nonce taken from the stamp
 	 * on the lookup request.  client_abi is SVC_CLIENT_ABI_* from the same
@@ -478,14 +468,14 @@ struct svc_new_client_msg {
 	 */
 	char		container[64];
 	/*
-	 * v15: the group containers (App Groups) the connecting unit's bundle
+	 * The group containers (App Groups) the connecting unit's bundle
 	 * declares membership in (Bundle.ucl `groups`), so a storage provider can
 	 * authorize a Data/Shared/<group>/ claim.  Empty slots are "".
 	 */
 	char		groups[SVC_GROUPS_MAX][64];
 };
 _Static_assert(sizeof(struct svc_new_client_msg) == 752,
-    "svc_new_client_msg wire layout (v15)");
+    "svc_new_client_msg wire layout");
 _Static_assert(sizeof(((struct svc_new_client_msg *)0)->client_label) ==
     SVC_ANOINT_NAME_MAX, "anointment names share the bundle-label bound");
 

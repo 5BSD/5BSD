@@ -32,7 +32,6 @@
  * everyday reboot/halt/shutdown(8) keep their stock BSD signal-to-init path.
  */
 #define	SWITCHBOARD_LIFECYCLE_NAME	"system.lifecycle"
-#define	SWITCHBOARD_CTL_VERSION	2
 #define	SWITCHBOARD_CTL_MAX_PAYLOAD	1024
 #define	SWITCHBOARD_CTL_SUMMARY_MAX	4096
 
@@ -47,7 +46,6 @@
 #define	SCTL_OP_TREE		7	/* responsibility tree (any); 6 is retired */
 
 struct sctl_request {
-	uint32_t	version;
 	uint32_t	op;
 	uint32_t	flags;
 	uint32_t	datalen;

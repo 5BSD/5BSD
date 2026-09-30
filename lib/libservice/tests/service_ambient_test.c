@@ -592,13 +592,13 @@ ATF_TC_BODY(mint_session_domain_rejects_bad_kind, tc)
 }
 
 /*
- * Drive service_mint_session_domain()/service_mint_user_domain() against the
+ * Drive service_mint_session_domain() against the
  * capture responder and assert the wire `domain` field carried the expected
  * value.  Gated on the channel device.
  */
 static void
-check_mint_transmits_domain(const atf_tc_t *tc, bool use_wrapper,
-    enum service_mint_kind kind, uid_t uid, uint32_t expect_domain)
+check_mint_transmits_domain(const atf_tc_t *tc, enum service_mint_kind kind,
+    uid_t uid, uint32_t expect_domain)
 {
 	struct responder r;
 	int client_end, switchboard_end, out;
@@ -614,10 +614,7 @@ check_mint_transmits_domain(const atf_tc_t *tc, bool use_wrapper,
 	 * joins the pump thread (happens-before).
 	 */
 	out = -1;
-	if (use_wrapper)
-		(void)service_mint_user_domain(client_end, uid, &out);
-	else
-		(void)service_mint_session_domain(client_end, kind, uid, &out);
+	(void)service_mint_session_domain(client_end, kind, uid, &out);
 
 	responder_stop(&r);
 
@@ -639,7 +636,7 @@ ATF_TC_HEAD(mint_session_domain_user_sets_wire_user, tc)
 ATF_TC_BODY(mint_session_domain_user_sets_wire_user, tc)
 {
 
-	check_mint_transmits_domain(tc, false, SERVICE_MINT_USER, 1001,
+	check_mint_transmits_domain(tc, SERVICE_MINT_USER, 1001,
 	    SVC_MINT_DOMAIN_USER);
 }
 
@@ -653,23 +650,8 @@ ATF_TC_HEAD(mint_session_domain_system_sets_wire_system, tc)
 ATF_TC_BODY(mint_session_domain_system_sets_wire_system, tc)
 {
 
-	check_mint_transmits_domain(tc, false, SERVICE_MINT_SYSTEM, 0,
+	check_mint_transmits_domain(tc, SERVICE_MINT_SYSTEM, 0,
 	    SVC_MINT_DOMAIN_SYSTEM);
-}
-
-ATF_TC(mint_user_domain_wrapper_sets_wire_user);
-ATF_TC_HEAD(mint_user_domain_wrapper_sets_wire_user, tc)
-{
-
-	atf_tc_set_md_var(tc, "descr",
-	    "the service_mint_user_domain() compat wrapper transmits the USER "
-	    "domain (SVC_MINT_DOMAIN_USER), preserving existing-caller behavior");
-}
-ATF_TC_BODY(mint_user_domain_wrapper_sets_wire_user, tc)
-{
-
-	check_mint_transmits_domain(tc, true, SERVICE_MINT_USER, 4242,
-	    SVC_MINT_DOMAIN_USER);
 }
 
 ATF_TP_ADD_TCS(tp)
@@ -688,6 +670,5 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, mint_session_domain_rejects_bad_kind);
 	ATF_TP_ADD_TC(tp, mint_session_domain_user_sets_wire_user);
 	ATF_TP_ADD_TC(tp, mint_session_domain_system_sets_wire_system);
-	ATF_TP_ADD_TC(tp, mint_user_domain_wrapper_sets_wire_user);
 	return (atf_no_error());
 }

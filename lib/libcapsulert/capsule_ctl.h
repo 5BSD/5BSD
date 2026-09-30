@@ -24,7 +24,6 @@
  * The daemon reads its actual path from config. */
 #define	CAPSULE_CTL_SOCK	"/var/run/capsule.sock"
 
-#define	CTL_VERSION		1
 #define	CTL_MAX_PAYLOAD		1024
 
 /*
@@ -59,7 +58,6 @@
  * payload follow immediately after the header.
  */
 struct ctl_request {
-	uint32_t	version;
 	uint32_t	op;
 	uint32_t	flags;		/* op-specific */
 	uint32_t	datalen;	/* payload bytes following header */

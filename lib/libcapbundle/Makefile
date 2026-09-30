@@ -2,7 +2,7 @@
 
 PACKAGE=lib${LIB}
 LIB=	capbundle
-SHLIB_MAJOR=	2
+SHLIB_MAJOR=	1
 MAN=	libcapbundle.3
 
 SRCS=	libcapbundle.c libcapbundle_parse.c libcapbundle_verify.c \

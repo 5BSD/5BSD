@@ -328,7 +328,6 @@ legacy_ready_only(void)
 
 	memset(&req, 0, sizeof(req));
 	req.op = SVC_OP_READY;
-	req.version = SWITCHBOARD_SVC_PROTO_VERSION;
 	fd = fcntl(fixture_service_channel_fd(), F_DUPFD_CLOEXEC, 0);
 	if (fd == -1)
 		return (-1);

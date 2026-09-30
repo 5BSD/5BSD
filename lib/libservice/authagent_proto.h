@@ -17,23 +17,7 @@
 #include <stdint.h>
 
 #define	AUTHAGENTD_NAME			"system.Auth"
-/*
- * v2: AUTHAGENT_OP_ELEVATE (docs/book/src/plane/anointments.md "Elevation").
- * v3: AUTHAGENT_OP_MINT_AUTH -- a non-admin caller (an ordinary session's
- *     su) mints another principal's session by proving that principal's
- *     password, instead of holding SERVICE_RIGHTS_ADMIN.
- */
-#define	AUTHAGENTD_PROTO_VERSION	3U
-/*
- * Oldest version the agent still accepts.  MINT_SESSION and ELEVATE are
- * wire-identical from v2 on (v3 only ADDED the MINT_AUTH op and its own
- * request struct), so a v2 login/su/sshd keeps working against a v3 agent
- * across a rolling upgrade.  MINT_AUTH itself requires the exact current
- * version -- no v2 client emits it.
- */
-#define	AUTHAGENTD_PROTO_VERSION_MIN	2U
-
-/* Request op codes (second field of every request, after `version`). */
+/* Request op codes (first field of every request). */
 #define	AUTHAGENT_OP_MINT_SESSION	1U
 #define	AUTHAGENT_OP_ELEVATE		2U
 #define	AUTHAGENT_OP_MINT_AUTH		3U
@@ -61,7 +45,6 @@
  * re-delegate it.
  */
 struct authagent_mint_req {
-	uint32_t	version;	/* AUTHAGENTD_PROTO_VERSION */
 	uint32_t	op;		/* AUTHAGENT_OP_MINT_SESSION */
 	uint32_t	uid;		/* the authenticated principal, by name */
 	uint32_t	flags;		/* reserved, must be 0 */
@@ -95,14 +78,13 @@ struct authagent_mint_reply {
 #define	AUTHAGENT_PASSWORD_MAX	256
 
 struct authagent_elevate_req {
-	uint32_t	version;	/* AUTHAGENTD_PROTO_VERSION */
 	uint32_t	op;		/* AUTHAGENT_OP_ELEVATE */
 	uint32_t	flags;		/* reserved, must be 0 */
 	uint32_t	reserved;	/* must be 0 */
 	char		name[AUTHAGENT_NAME_MAX];	/* NUL-terminated */
 	char		password[AUTHAGENT_PASSWORD_MAX];	/* NUL-terminated */
 };
-_Static_assert(sizeof(struct authagent_elevate_req) == 336,
+_Static_assert(sizeof(struct authagent_elevate_req) == 332,
     "authagent_elevate_req wire layout");
 
 /*
@@ -128,13 +110,12 @@ _Static_assert(sizeof(struct authagent_elevate_req) == 336,
  * zero (explicit_bzero) their copy after use.
  */
 struct authagent_mint_auth_req {
-	uint32_t	version;	/* AUTHAGENTD_PROTO_VERSION */
 	uint32_t	op;		/* AUTHAGENT_OP_MINT_AUTH */
 	uint32_t	uid;		/* the target principal being switched to */
 	uint32_t	flags;		/* FORWARDABLE, else 0 */
 	char		password[AUTHAGENT_PASSWORD_MAX];	/* NUL-terminated */
 };
-_Static_assert(sizeof(struct authagent_mint_auth_req) == 272,
+_Static_assert(sizeof(struct authagent_mint_auth_req) == 268,
     "authagent_mint_auth_req wire layout");
 
 #endif /* AUTHAGENTD_PROTO_H */

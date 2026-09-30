@@ -78,8 +78,8 @@ typedef int (*service_activation_handler)(const char *name, void *context);
  * bitmask of the operations the holder of a granted session may perform; bit
  * meanings are per-service (Capsicum-shaped).  Attenuation is monotone: a child
  * capability may only clear bits, never set them.  SERVICE_RIGHTS_ALL is the
- * unattenuated grant a legacy lookup (one that carries no explicit rights) still
- * receives, so a service that ignores rights behaves exactly as before.
+ * unattenuated grant a lookup that carries no explicit rights receives, so a
+ * service that ignores rights sees every bit set.
  */
 typedef uint64_t service_rights_t;
 #define	SERVICE_RIGHTS_NONE	((service_rights_t)0)
@@ -151,8 +151,7 @@ struct service_identity {
 	/*
 	 * Group containers the client's bundle declares membership in
 	 * (Bundle.ucl `groups`); "" slots are empty.  `size` must be exactly
-	 * sizeof(struct service_identity) (the accept contract); growing the
-	 * struct is a library ABI change (SHLIB_MAJOR 7).
+	 * sizeof(struct service_identity) (the accept contract).
 	 */
 	char	groups[SERVICE_GROUPS_MAX][64];
 };
@@ -307,7 +306,7 @@ int	service_provider_heartbeat(struct service_provider *);
  * descriptor in *fdp.  Prefers the switchboard-delivered Config directory
  * descriptor (SERVICE_CONFIG_FD_ENV) via openat(2) -- capability-mode safe and
  * usable after cap_enter(2) -- and falls back to <CAPABILITY_UNIT_DIR>/Config/
- * by path for a legacy/pre-capmode launch.  O_NOFOLLOW, no directory escape.
+ * by path for a launch that delivered no directory descriptor.  O_NOFOLLOW, no directory escape.
  */
 int	service_config_open(const char *name, int *fdp);
 
@@ -860,12 +859,6 @@ enum service_mint_kind {
  */
 int	service_mint_session_domain(int syschan, enum service_mint_kind kind,
 	    uid_t uid, int *out_fd);
-
-/*
- * Thin backward-compatible wrapper: mint a per-uid USER-domain channel.
- * Equivalent to service_mint_session_domain(syschan, SERVICE_MINT_USER, ...).
- */
-int	service_mint_user_domain(int syschan, uid_t uid, int *out_fd);
 
 /*
  * Like service_mint_session_domain() but delivers a transferable descriptor for

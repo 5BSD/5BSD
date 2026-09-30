@@ -3,7 +3,7 @@
  *
  * Copyright (c) 2026 Kory Heard
  *
- * Versioned, descriptor-only bootstrap ABI between switchboard and libservice.
+ * Descriptor-only bootstrap ABI between switchboard and libservice.
  */
 
 #ifndef _SERVICE_BOOTSTRAP_H_
@@ -14,7 +14,6 @@
 #include <stdint.h>
 
 #define	SERVICE_BOOTSTRAP_MAGIC		0x53425643U	/* "CVBS" */
-#define	SERVICE_BOOTSTRAP_VERSION	4
 #define	SERVICE_BOOTSTRAP_FD		5
 #define	SERVICE_BOOTSTRAP_ENV		"SERVICE_BOOTSTRAP_FD"
 #define	SERVICE_BOOTSTRAP_ENVFD_NAME	"org.5bsd.switchboard.bootstrap"
@@ -68,8 +67,7 @@ struct service_bootstrap_named_fd {
 
 struct service_bootstrap {
 	uint32_t	magic;
-	uint16_t	version;
-	uint16_t	header_size;
+	uint32_t	header_size;
 	uint32_t	total_size;
 	uint32_t	flags;
 	int32_t		channel_fd;

@@ -24,11 +24,6 @@
 #include <sys/types.h>
 #include <sys/param.h>		/* PATH_MAX */
 
-#define	CAPSULE_PROTO_VERSION_MAJOR	0
-#define	CAPSULE_PROTO_VERSION_MINOR	0
-#define	CAPSULE_PROTO_VERSION_PATCH	3
-#define	CAPSULE_PROTO_VERSION		1
-
 /*
  * Operation codes — first 4 bytes of every request payload.
  */
@@ -65,7 +60,7 @@
  *   req:  capsule_lifecycle_req
  *   reply: capsule_reply { .status }  (0 = accepted; the transition runs
  *          after the reply is queued, so the caller's ack precedes the death
- *          sweep — same ordering as the legacy control-socket path)
+ *          sweep)
  *
  * switchboard relays a lifecycle request it received over its ADMIN-gated
  * system.lifecycle capability (docs/book/src/plane/capsule.md, P4b).
@@ -206,9 +201,8 @@ struct capsule_service_req {
  * MAY carry an opaque byte payload immediately after the fixed
  * capsule_system_req header; Capsule detects it by
  *     req_len > sizeof(struct capsule_system_req)
- * exactly as the kernel detects the SYSCTL OID-set on SYS_OP_CLAIM.  The fixed
- * header is unchanged (compatibility floor): a request with no trailing bytes
- * is the historical coarse mint.
+ * exactly as the kernel detects the SYSCTL OID-set on SYS_OP_CLAIM.  A request
+ * with no trailing bytes is the coarse mint.
  *
  * The payload is a marshalled struct sys_sysctl_oidset (see
  * <dev/mac_capability/mac_capability_system_proto.h>): switchboard resolves the
