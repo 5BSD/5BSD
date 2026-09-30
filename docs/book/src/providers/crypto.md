@@ -74,8 +74,8 @@ device, 20 capability mode), listed in BSDCrypto(8).
 ## Wire operations
 
 The protocol is `lib/libcryptocmp/cryptocmp_protocol.h`: magic
-`CRYPTOCMP_MAGIC`, `CRYPTOCMP_VERSION` 3, interface version `3.3.0`. Every
-message starts with an 8-byte-aligned `cryptocmp_msg` (magic, version,
+`CRYPTOCMP_MAGIC`. Every
+message starts with an 8-byte-aligned `cryptocmp_msg` (magic,
 opcode, status). A descriptor rides back as the reply's SCM_RIGHTS fd.
 
 | Op | Request | Reply | Errors |
@@ -90,10 +90,7 @@ opcode, status). A descriptor rides back as the reply's SCM_RIGHTS fd.
 | 8 RANDOM | `cryptocmp_random` (nbytes, at most 1024) | `cryptocmp_random_reply` (nbytes, data) | `EINVAL` |
 | 9 NAMED_STAT | `cryptocmp_named_stat` (name) | `cryptocmp_named_stat_reply` (`cryptocmp_named_info`: generation, rights, cipher, mac, keylen, mackeylen) | `ENOENT` |
 | 10 NAMED_LIST | `cryptocmp_named_list` (cursor, flags) | `cryptocmp_named_list_reply` (count, `next_cursor`, up to 16 entries of name, generation, rights) | none; an out-of-range cursor is an empty page |
-| 11 HELLO | header (magic + version, no body) | header, status 0 | version mismatch |
 
-HELLO was added as opcode 11 rather than 1 so no existing opcode moved;
-`cryptocmp_open(3)` sends it first, and a mismatched pair fails at open.
 Rotating or deleting a named key invalidates every outstanding lease and
 its derived lineage, which the holders observe as `NOTE_CRYPTODESC_KEY_*`.
 
@@ -184,7 +181,7 @@ within the profile set, and every request is audited through
 | Suite | Location | Installed under | What it proves |
 |---|---|---|---|
 | `policy_test` (24), `provider_test` (28), `bundle_test.sh` | `usr.sbin/BSDCrypto/tests` | `/usr/tests/usr.sbin/BSDCrypto` | every profile rule and rejection, the worker path under `BSDCRYPTO_TESTING` (mint, lease, rotate-invalidates-lease, owner isolation, reclaim), the installed bundle |
-| `cryptocmp_api_test` (6), `client_protocol_test` (16) | `lib/libcryptocmp/tests` | `/usr/tests/lib/libcryptocmp` | wire encoding of all eleven ops against `fake_service`, HELLO at open |
+| `cryptocmp_api_test` (6), `client_protocol_test` (16) | `lib/libcryptocmp/tests` | `/usr/tests/lib/libcryptocmp` | wire encoding of all ten ops against `fake_service` |
 | `cryptodesc_api_test` (6) | `lib/libcryptodesc/tests` | `/usr/tests/lib/libcryptodesc` | the ioctl wrappers |
 | `cryptodesc_test` (17) | `tests/sys/opencrypto` | `/usr/tests/sys/opencrypto` | the kernel: rights attenuation, revoke, expiry, HKDF known answers, named-key generations, `EVFILT_CRYPTODESC` |
 

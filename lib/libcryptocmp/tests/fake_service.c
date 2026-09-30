@@ -214,7 +214,6 @@ service_session_call(struct service_session *session,
 	}
 	memset(&response, 0, sizeof(response));
 	response.msg.magic = CRYPTOCMP_MAGIC;
-	response.msg.version = CRYPTOCMP_VERSION;
 	response.msg.opcode = request->opcode;
 	response.msg.status = -status;
 	length = sizeof(response.msg);
@@ -267,9 +266,6 @@ service_session_call(struct service_session *session,
 		break;
 	case FAKE_SERVICE_FAULT_WRONG_MAGIC:
 		response.msg.magic ^= 1;
-		break;
-	case FAKE_SERVICE_FAULT_WRONG_VERSION:
-		response.msg.version++;
 		break;
 	case FAKE_SERVICE_FAULT_WRONG_OPCODE:
 		response.msg.opcode++;

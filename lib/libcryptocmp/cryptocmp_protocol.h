@@ -3,9 +3,7 @@
 #define _CRYPTOCMP_PROTOCOL_H_
 #include <stdint.h>
 #define CRYPTOCMP_MAGIC 0x43434d50U
-#define CRYPTOCMP_VERSION 3
 #define CRYPTOCMP_INTERFACE "system.Crypto"
-#define CRYPTOCMP_INTERFACE_VERSION "3.3.0"
 #define CRYPTOCMP_OP_GENERATE 1
 #define CRYPTOCMP_OP_GENERATE_KEY 2
 #define CRYPTOCMP_OP_NAMED_CREATE 3
@@ -16,26 +14,12 @@
 #define CRYPTOCMP_OP_RANDOM 8
 #define CRYPTOCMP_OP_NAMED_STAT 9
 #define CRYPTOCMP_OP_NAMED_LIST 10
-/*
- * Version-negotiation handshake, mirroring the sibling *cmp capabilities
- * (system.Time/timecmp, system.Power, system.Sysctl): the client sends a bare
- * HELLO (magic + ABI version, no body) as the first message on a freshly opened
- * session and the provider validates magic/version and replies with a bare
- * header (status 0), so a version-mismatched client/provider fails fast at
- * open() rather than on the first real crypto call.  Added as the next free
- * opcode (11) rather than at value 1 so the existing contiguous GENERATE..
- * NAMED_LIST range keeps its wire values -- no existing opcode is renumbered and
- * the on-wire ABI of every current operation is unchanged.  CRYPTOCMP_VERSION is
- * NOT bumped: exactly as timecmp keeps TIMECMP_ABI_VERSION stable, HELLO
- * validates the current ABI version rather than introducing a new one.
- */
-#define CRYPTOCMP_OP_HELLO 11
 #define CRYPTOCMP_GENERATE_F_NIST_APPROVED_ONLY 0x00000001U
 /* Maximum named-key entries returned by a single NAMED_LIST reply. */
 #define CRYPTOCMP_NAMED_LIST_MAX 16U
 /* Upper bound on a single CRYPTOCMP_OP_RANDOM request/reply payload. */
 #define CRYPTOCMP_MAX_RANDOM_BYTES 1024U
-struct cryptocmp_msg { uint32_t magic; uint16_t version, opcode; int32_t status; } __attribute__((aligned(8)));
+struct cryptocmp_msg { uint32_t magic; uint32_t opcode; int32_t status; } __attribute__((aligned(8)));
 /* This selects an algorithm profile; it is not a FIPS validation claim. */
 struct cryptocmp_generate { uint32_t cipher, mac, keylen, mackeylen, rights, ttl, flags; int32_t crid, ivlen, maclen; };
 struct cryptocmp_key_generate { uint32_t type, rights, ttl, flags; };

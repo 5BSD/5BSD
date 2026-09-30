@@ -58,51 +58,6 @@ reject_reply(struct cryptocmp_client *client, int fd)
 	errno = EPROTO;
 	return (-1);
 }
-/*
- * Perform the open-time HELLO handshake on a freshly created session.  Sends a
- * bare header (magic + ABI version, opcode HELLO, no body) and validates the
- * reply exactly as the sibling *cmp clients do: a well-formed bare header with a
- * matching opcode, a valid non-positive status, and no descriptor.  Returns 0 on
- * agreement; on any protocol violation the session is failed and errno is set to
- * EPROTO, and on a mapped provider status errno carries that error.
- */
-static int
-cryptocmp_hello(struct cryptocmp_client *client)
-{
-	struct cryptocmp_msg request, reply;
-	struct service_message outgoing;
-	struct service_reply incoming;
-	struct service_call_options options = SERVICE_CALL_OPTIONS_INITIALIZER;
-	int fd = -1;
-
-	memset(&request, 0, sizeof(request));
-	request.magic = CRYPTOCMP_MAGIC;
-	request.version = CRYPTOCMP_VERSION;
-	request.opcode = CRYPTOCMP_OP_HELLO;
-	memset(&outgoing, 0, sizeof(outgoing));
-	outgoing.size = sizeof(outgoing);
-	outgoing.data = &request;
-	outgoing.length = sizeof(request);
-	memset(&reply, 0, sizeof(reply));
-	memset(&incoming, 0, sizeof(incoming));
-	incoming.size = sizeof(incoming);
-	incoming.data = &reply;
-	incoming.capacity = sizeof(reply);
-	incoming.fds = &fd;
-	incoming.fd_capacity = 0;
-	options.timeout_ms = 30000;
-	if (service_session_call(client->session, &outgoing, &incoming, &options) == -1)
-		return (-1);
-	if (incoming.length != sizeof(reply) || reply.magic != CRYPTOCMP_MAGIC ||
-	    reply.version != CRYPTOCMP_VERSION ||
-	    reply.opcode != CRYPTOCMP_OP_HELLO || !valid_status(reply.status) ||
-	    incoming.nfds != 0)
-		return (reject_reply(client, incoming.nfds != 0 ? fd : -1));
-	if (reply.status != 0)
-		return (errno = -reply.status, -1);
-	return (0);
-}
-
 int
 cryptocmp_open(struct cryptocmp_client **out)
 {
@@ -130,16 +85,6 @@ cryptocmp_open(struct cryptocmp_client **out)
 		error = errno; (void)close(owned); errno = error; goto fail;
 	}
 	client->owner = getpid();
-	/*
-	 * Version-negotiation handshake, mirroring the sibling *cmp clients
-	 * (timecmp/powercmp/sysctlcmp): send a bare HELLO (magic + ABI version)
-	 * as the first message on the session and require a well-formed bare-
-	 * header reply.  A magic/version-mismatched provider is rejected here so
-	 * open() fails fast rather than the first real crypto call.
-	 */
-	if (cryptocmp_hello(client) == -1) {
-		error = errno; cryptocmp_close(client); return (errno = error, -1);
-	}
 	*out = client; return (0);
 fail: free(client); return (-1);
 }
@@ -154,11 +99,11 @@ cryptocmp_generate(struct cryptocmp_client *client, const struct cryptocmp_gener
 	struct service_call_options options = SERVICE_CALL_OPTIONS_INITIALIZER; int fd = -1;
 	if (client == NULL || request == NULL || descriptor == NULL || client->owner != getpid()) return (errno = EINVAL, -1);
 	*descriptor = -1;
-	memset(&wire, 0, sizeof(wire)); wire.msg.magic = CRYPTOCMP_MAGIC; wire.msg.version = CRYPTOCMP_VERSION; wire.msg.opcode = CRYPTOCMP_OP_GENERATE; wire.generate = *request;
+	memset(&wire, 0, sizeof(wire)); wire.msg.magic = CRYPTOCMP_MAGIC; wire.msg.opcode = CRYPTOCMP_OP_GENERATE; wire.generate = *request;
 	memset(&outgoing, 0, sizeof(outgoing)); outgoing.size = sizeof(outgoing); outgoing.data = &wire; outgoing.length = sizeof(wire);
 	memset(&incoming, 0, sizeof(incoming)); incoming.size = sizeof(incoming); incoming.data = &reply; incoming.capacity = sizeof(reply); incoming.fds = &fd; incoming.fd_capacity = 1; options.timeout_ms = 30000;
 	if (service_session_call(client->session, &outgoing, &incoming, &options) == -1) return (-1);
-	if (incoming.length != sizeof(reply) || reply.magic != CRYPTOCMP_MAGIC || reply.version != CRYPTOCMP_VERSION || reply.opcode != CRYPTOCMP_OP_GENERATE || !valid_status(reply.status) || incoming.nfds != (reply.status == 0 ? 1 : 0)) return (reject_reply(client, incoming.nfds != 0 ? fd : -1));
+	if (incoming.length != sizeof(reply) || reply.magic != CRYPTOCMP_MAGIC || reply.opcode != CRYPTOCMP_OP_GENERATE || !valid_status(reply.status) || incoming.nfds != (reply.status == 0 ? 1 : 0)) return (reject_reply(client, incoming.nfds != 0 ? fd : -1));
 	if (reply.status != 0) return (errno = -reply.status, -1);
 	*descriptor = fd; return (0);
 }
@@ -182,7 +127,6 @@ cryptocmp_generate_key(struct cryptocmp_client *client,
 	memset(public_key, 0, 32);
 	memset(&wire, 0, sizeof(wire));
 	wire.msg.magic = CRYPTOCMP_MAGIC;
-	wire.msg.version = CRYPTOCMP_VERSION;
 	wire.msg.opcode = CRYPTOCMP_OP_GENERATE_KEY;
 	wire.key = *request;
 	memset(&outgoing, 0, sizeof(outgoing));
@@ -200,7 +144,6 @@ cryptocmp_generate_key(struct cryptocmp_client *client,
 	if (service_session_call(client->session, &outgoing, &incoming, &options) == -1)
 		return (-1);
 	if (incoming.length != sizeof(reply) || reply.msg.magic != CRYPTOCMP_MAGIC ||
-	    reply.msg.version != CRYPTOCMP_VERSION ||
 	    reply.msg.opcode != CRYPTOCMP_OP_GENERATE_KEY ||
 	    !valid_status(reply.msg.status) ||
 	    incoming.nfds != (reply.msg.status == 0 ? 1 : 0))
@@ -231,7 +174,6 @@ cryptocmp_digest(struct cryptocmp_client *client, uint32_t alg, uint32_t ttl,
 		return (errno = EINVAL, -1);
 	memset(&wire, 0, sizeof(wire));
 	wire.msg.magic = CRYPTOCMP_MAGIC;
-	wire.msg.version = CRYPTOCMP_VERSION;
 	wire.msg.opcode = CRYPTOCMP_OP_DIGEST;
 	wire.digest.alg = alg;
 	wire.digest.ttl = ttl;
@@ -251,7 +193,7 @@ cryptocmp_digest(struct cryptocmp_client *client, uint32_t alg, uint32_t ttl,
 	if (service_session_call(client->session, &outgoing, &incoming, &options) == -1)
 		return (-1);
 	if (incoming.length != sizeof(reply) || reply.magic != CRYPTOCMP_MAGIC ||
-	    reply.version != CRYPTOCMP_VERSION ||
+	   
 	    reply.opcode != CRYPTOCMP_OP_DIGEST || !valid_status(reply.status) ||
 	    incoming.nfds != (reply.status == 0 ? 1 : 0))
 		return (reject_reply(client, incoming.nfds != 0 ? fd : -1));
@@ -277,7 +219,6 @@ cryptocmp_random(struct cryptocmp_client *client, void *buf, size_t nbytes)
 	memset(buf, 0, nbytes);
 	memset(&wire, 0, sizeof(wire));
 	wire.msg.magic = CRYPTOCMP_MAGIC;
-	wire.msg.version = CRYPTOCMP_VERSION;
 	wire.msg.opcode = CRYPTOCMP_OP_RANDOM;
 	wire.random.nbytes = (uint32_t)nbytes;
 	memset(&outgoing, 0, sizeof(outgoing));
@@ -296,7 +237,6 @@ cryptocmp_random(struct cryptocmp_client *client, void *buf, size_t nbytes)
 		return (-1);
 	if (incoming.length < offsetof(struct cryptocmp_random_reply, data) ||
 	    reply.msg.magic != CRYPTOCMP_MAGIC ||
-	    reply.msg.version != CRYPTOCMP_VERSION ||
 	    reply.msg.opcode != CRYPTOCMP_OP_RANDOM ||
 	    !valid_status(reply.msg.status) || incoming.nfds != 0) {
 		explicit_bzero(&reply, sizeof(reply));
@@ -341,7 +281,6 @@ cryptocmp_named_call(struct cryptocmp_client *client, uint16_t opcode,
 		*descriptor = -1;
 	memset(&wire, 0, sizeof(wire));
 	wire.msg.magic = CRYPTOCMP_MAGIC;
-	wire.msg.version = CRYPTOCMP_VERSION;
 	wire.msg.opcode = opcode;
 	memcpy(wire.payload, payload, payload_length);
 	memset(&outgoing, 0, sizeof(outgoing));
@@ -358,8 +297,7 @@ cryptocmp_named_call(struct cryptocmp_client *client, uint16_t opcode,
 	options.timeout_ms = 30000;
 	if (service_session_call(client->session, &outgoing, &incoming, &options) == -1)
 		return (-1);
-	if (incoming.length != sizeof(reply) || reply.msg.magic != CRYPTOCMP_MAGIC ||
-	    reply.msg.version != CRYPTOCMP_VERSION || reply.msg.opcode != opcode ||
+	if (incoming.length != sizeof(reply) || reply.msg.magic != CRYPTOCMP_MAGIC || reply.msg.opcode != opcode ||
 	    !valid_status(reply.msg.status) ||
 	    incoming.nfds != (reply.msg.status == 0 && descriptor != NULL ? 1 : 0))
 		return (reject_reply(client, incoming.nfds != 0 ? fd : -1));
@@ -447,7 +385,6 @@ cryptocmp_named_stat(struct cryptocmp_client *client, const char *name,
 	strlcpy(request.name, name, sizeof(request.name));
 	memset(&wire, 0, sizeof(wire));
 	wire.msg.magic = CRYPTOCMP_MAGIC;
-	wire.msg.version = CRYPTOCMP_VERSION;
 	wire.msg.opcode = CRYPTOCMP_OP_NAMED_STAT;
 	memcpy(wire.payload, &request, sizeof(request));
 	memset(&outgoing, 0, sizeof(outgoing));
@@ -465,7 +402,6 @@ cryptocmp_named_stat(struct cryptocmp_client *client, const char *name,
 	if (service_session_call(client->session, &outgoing, &incoming, &options) == -1)
 		return (-1);
 	if (incoming.length != sizeof(reply) || reply.msg.magic != CRYPTOCMP_MAGIC ||
-	    reply.msg.version != CRYPTOCMP_VERSION ||
 	    reply.msg.opcode != CRYPTOCMP_OP_NAMED_STAT ||
 	    !valid_status(reply.msg.status) || incoming.nfds != 0)
 		return (reject_reply(client, incoming.nfds != 0 ? fd : -1));
@@ -515,7 +451,6 @@ cryptocmp_named_list(struct cryptocmp_client *client, uint32_t cursor,
 	request.cursor = cursor;
 	memset(&wire, 0, sizeof(wire));
 	wire.msg.magic = CRYPTOCMP_MAGIC;
-	wire.msg.version = CRYPTOCMP_VERSION;
 	wire.msg.opcode = CRYPTOCMP_OP_NAMED_LIST;
 	memcpy(wire.payload, &request, sizeof(request));
 	memset(&outgoing, 0, sizeof(outgoing));
@@ -533,7 +468,6 @@ cryptocmp_named_list(struct cryptocmp_client *client, uint32_t cursor,
 	if (service_session_call(client->session, &outgoing, &incoming, &options) == -1)
 		return (-1);
 	if (incoming.length != sizeof(reply) || reply.msg.magic != CRYPTOCMP_MAGIC ||
-	    reply.msg.version != CRYPTOCMP_VERSION ||
 	    reply.msg.opcode != CRYPTOCMP_OP_NAMED_LIST ||
 	    !valid_status(reply.msg.status) || incoming.nfds != 0)
 		return (reject_reply(client, incoming.nfds != 0 ? fd : -1));

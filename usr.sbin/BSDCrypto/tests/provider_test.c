@@ -153,7 +153,6 @@ named_op(struct raw_fixture *fixture, uint16_t opcode, const void *payload,
 	ATF_REQUIRE(paylen <= sizeof(request) - sizeof(msg));
 	memset(&msg, 0, sizeof(msg));
 	msg.magic = CRYPTOCMP_MAGIC;
-	msg.version = CRYPTOCMP_VERSION;
 	msg.opcode = opcode;
 	memset(request, 0, sizeof(request));
 	memcpy(request, &msg, sizeof(msg));
@@ -203,7 +202,6 @@ stat_op(struct raw_fixture *fixture, const char *name,
 
 	memset(&msg, 0, sizeof(msg));
 	msg.magic = CRYPTOCMP_MAGIC;
-	msg.version = CRYPTOCMP_VERSION;
 	msg.opcode = CRYPTOCMP_OP_NAMED_STAT;
 	memset(&req, 0, sizeof(req));
 	strlcpy(req.name, name, sizeof(req.name));
@@ -250,7 +248,6 @@ list_op(struct raw_fixture *fixture, uint32_t cursor,
 
 	memset(&msg, 0, sizeof(msg));
 	msg.magic = CRYPTOCMP_MAGIC;
-	msg.version = CRYPTOCMP_VERSION;
 	msg.opcode = CRYPTOCMP_OP_NAMED_LIST;
 	memset(&req, 0, sizeof(req));
 	req.cursor = cursor;
@@ -363,7 +360,6 @@ digest_op(struct raw_fixture *fixture, uint32_t alg, uint32_t ttl, int *out_fd)
 
 	memset(&msg, 0, sizeof(msg));
 	msg.magic = CRYPTOCMP_MAGIC;
-	msg.version = CRYPTOCMP_VERSION;
 	msg.opcode = CRYPTOCMP_OP_DIGEST;
 	memset(&digest, 0, sizeof(digest));
 	digest.alg = alg;
@@ -410,7 +406,6 @@ random_op(struct raw_fixture *fixture, uint32_t nbytes, uint8_t *buf,
 
 	memset(&msg, 0, sizeof(msg));
 	msg.magic = CRYPTOCMP_MAGIC;
-	msg.version = CRYPTOCMP_VERSION;
 	msg.opcode = CRYPTOCMP_OP_RANDOM;
 	memset(&request, 0, sizeof(request));
 	request.nbytes = nbytes;
@@ -566,7 +561,6 @@ ATF_TC_BODY(digest_random_malformed, tc)
 	/* A digest request with a truncated body (header only). */
 	memset(&msg, 0, sizeof(msg));
 	msg.magic = CRYPTOCMP_MAGIC;
-	msg.version = CRYPTOCMP_VERSION;
 	msg.opcode = CRYPTOCMP_OP_DIGEST;
 	memcpy(reqbuf, &msg, sizeof(msg));
 	status = 0;
@@ -592,7 +586,6 @@ ATF_TC_BODY(digest_random_malformed, tc)
 	ATF_REQUIRE_EQ(0, pipe(pipefd));
 	memset(&msg, 0, sizeof(msg));
 	msg.magic = CRYPTOCMP_MAGIC;
-	msg.version = CRYPTOCMP_VERSION;
 	msg.opcode = CRYPTOCMP_OP_DIGEST;
 	memset(&digest, 0, sizeof(digest));
 	digest.alg = CRYPTO_SHA2_256;
@@ -905,7 +898,7 @@ ATF_TC_BODY(named_key_list_paginates, tc)
 }
 
 /*
- * The provider fails closed on malformed requests: a bad magic/version, an
+ * The provider fails closed on malformed requests: a bad magic, an
  * out-of-range opcode, a length that does not match the opcode, and any attached
  * descriptor (the handler requires a zero fd count) are all rejected with EPROTO
  * rather than reaching the crypto control device.
@@ -930,10 +923,9 @@ ATF_TC_BODY(malformed_request_is_rejected, tc)
 	raw_fixture_create(&fixture, "org.test.malformed");
 	generate = sample_generate();
 
-	/* Wrong protocol version. */
+	/* Bad magic. */
 	memset(&msg, 0, sizeof(msg));
-	msg.magic = CRYPTOCMP_MAGIC;
-	msg.version = CRYPTOCMP_VERSION + 1;
+	msg.magic = CRYPTOCMP_MAGIC ^ 1;
 	msg.opcode = CRYPTOCMP_OP_GENERATE;
 	memset(request, 0, sizeof(request));
 	memcpy(request, &msg, sizeof(msg));
@@ -944,7 +936,7 @@ ATF_TC_BODY(malformed_request_is_rejected, tc)
 	ATF_CHECK_EQ(EPROTO, status);
 
 	/* Out-of-range opcode. */
-	msg.version = CRYPTOCMP_VERSION;
+	msg.magic = CRYPTOCMP_MAGIC;
 	msg.opcode = 99;
 	memcpy(request, &msg, sizeof(msg));
 	status = 0;
@@ -971,7 +963,6 @@ ATF_TC_BODY(malformed_request_is_rejected, tc)
 	ATF_REQUIRE_EQ(0, pipe(pipefd));
 	memset(&msg, 0, sizeof(msg));
 	msg.magic = CRYPTOCMP_MAGIC;
-	msg.version = CRYPTOCMP_VERSION;
 	msg.opcode = CRYPTOCMP_OP_GENERATE;
 	memcpy(request, &msg, sizeof(msg));
 	memcpy(request + sizeof(msg), &generate, sizeof(generate));
