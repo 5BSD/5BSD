@@ -15,7 +15,7 @@ stage() { # name bundle_id claim groups_line
   chmod -R u+w "$TC" 2>/dev/null; rm -rf "$TC"; mkdir -p "$TC/Units/groupprobe.unit/bin"
   cp "$PROBES/groupprobe" "$TC/Units/groupprobe.unit/bin/groupprobe"; chmod 0555 "$TC/Units/groupprobe.unit/bin/groupprobe"
   printf 'activation { boot = true; }\nprogram = "groupprobe";\narguments = ["%s"];\nrestart = "never";\nuser = "root";\n' "$3" > "$TC/Units/groupprobe.unit/Unit.ucl"
-  printf 'schema = "org.5bsd.capability-bundle";\nschema_version = 1;\nbundle_id = "%s";\nversion = "1.0.0";\nsequence = 1;\nauthor = "5BSD";\npublisher = "org.5bsd.base";\nunits = ["groupprobe"];\n%s' "$2" "$4" > "$TC/Bundle.ucl"
+  printf 'schema = "org.5bsd.capability-bundle";\nbundle_id = "%s";\nversion = "1.0.0";\nsequence = 1;\nauthor = "5BSD";\npublisher = "org.5bsd.base";\nunits = ["groupprobe"];\n%s' "$2" "$4" > "$TC/Bundle.ucl"
   for p in "" /Bundle.ucl /Units /Units/groupprobe.unit /Units/groupprobe.unit/Unit.ucl /Units/groupprobe.unit/bin /Units/groupprobe.unit/bin/groupprobe; do
     case "$p" in *.ucl) t="type=file uname=root gname=wheel mode=0644";; *groupprobe) t="type=file uname=root gname=wheel mode=0555";; *) t="type=dir uname=root gname=wheel mode=0755";; esac
     echo "./Capabilities/System/$1.cap$p $t" >> "$R/METALOG"; done

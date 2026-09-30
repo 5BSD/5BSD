@@ -74,7 +74,6 @@ policy keys are rejected, never translated.
 | Key | Type | Required | Constraint |
 |---|---|---|---|
 | `schema` | string | yes | exactly `org.5bsd.capability-bundle` |
-| `schema_version` | int | yes | exactly 1 |
 | `bundle_id` | string | yes | reverse-domain name, `[A-Za-z0-9._-]` with at least one dot, under 128 bytes |
 | `version` | string | yes | display only, under 32 bytes |
 | `sequence` | int | yes | positive; the registry keeps the highest sequence per `bundle_id` |
@@ -203,7 +202,6 @@ to `control = user`, `domain = user`, no `visible = user`, no `ambient`, no
 
 ```ucl
 schema = "org.5bsd.capability-bundle";
-schema_version = 1;
 bundle_id = "system.Log";          # the runtime identity prefix
 version = "1.0.0";                 # display only
 sequence = 1;                      # bumped on every shipped change

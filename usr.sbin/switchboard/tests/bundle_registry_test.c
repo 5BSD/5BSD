@@ -67,7 +67,7 @@ mkbundle(const char *root, const char *name, const char *bid, const char *unit,
 	    snprintf(cmd, sizeof(cmd), "mkdir -p '%s'", p); cmd; })));
 	snprintf(p, sizeof(p), "%s/%s.cap/Bundle.ucl", root, name);
 	snprintf(t, sizeof(t), "schema = \"org.5bsd.capability-bundle\";\n"
-	    "schema_version = 1;\nbundle_id = \"%s\";\nversion = \"1.0.0\";\n"
+	    "bundle_id = \"%s\";\nversion = \"1.0.0\";\n"
 	    "sequence = 1;\nauthor = \"t\";\npublisher = \"org.test\";\n"
 	    "units = [\"%s\"];\n", bid, unit);
 	writef(p, t, 0644);

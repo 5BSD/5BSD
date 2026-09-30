@@ -128,7 +128,7 @@ stage_bundle() {
 	local d=$R/Capabilities/$root/$name.cap
 	mkdir -p "$d/Units/$unit.unit/bin"
 	cp "$PROBES/$probe" "$d/Units/$unit.unit/bin/$unit"; chmod 0555 "$d/Units/$unit.unit/bin/$unit"
-	printf 'schema = "org.5bsd.capability-bundle";\nschema_version = 1;\nbundle_id = "%s";\nversion = "1.0.0";\nsequence = 1;\nauthor = "5BSD";\npublisher = "org.5bsd.base";\nunits = ["%s"];\n%s\n' "$bid" "$unit" "$groups" > "$d/Bundle.ucl"
+	printf 'schema = "org.5bsd.capability-bundle";\nbundle_id = "%s";\nversion = "1.0.0";\nsequence = 1;\nauthor = "5BSD";\npublisher = "org.5bsd.base";\nunits = ["%s"];\n%s\n' "$bid" "$unit" "$groups" > "$d/Bundle.ucl"
 	printf 'activation { boot = true; }\nprogram = "%s";\n%s\nrestart = "never";\nuser = "root";\n%s\n' "$unit" "$args" "$extra" > "$d/Units/$unit.unit/Unit.ucl"
 	meta_bundle "./Capabilities/$root/$name.cap" "$unit" >> "$R/METALOG"
 	echo "$d"

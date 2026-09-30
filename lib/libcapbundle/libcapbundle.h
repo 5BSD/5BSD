@@ -23,7 +23,6 @@
 
 /* Limits */
 #define	CAPBUNDLE_SCHEMA		"org.5bsd.capability-bundle"
-#define	CAPBUNDLE_SCHEMA_VERSION	1
 #define	CAPBUNDLE_MAX_SERVICES		32
 #define	CAPBUNDLE_MAX_PROVIDES		8
 /*
@@ -240,10 +239,8 @@ bool	capbundle_principal_is_admin_resolved(int policy_fd, uid_t uid,
  * principal wins; an entry with neither (conventionally "default") is the
  * fallback.  "*" (only legal in this file) grants every name and sets the
  * matching *_all flag; admin_rights defaults to true for an entry granting
- * anointments = ["*"] and false otherwise.  A legacy top-level
- * admin { uids; groups } block maps to admin -> "*" + admin_rights, everyone
- * else -> nothing.  An absent or malformed policy applies the historical rule
- * (uid 0 or "wheel" -> "*" + admin_rights, else nothing) and sets
+ * anointments = ["*"] and false otherwise.  An absent or malformed policy
+ * applies the historical rule (uid 0 or "wheel" -> "*" + admin_rights, else nothing) and sets
  * from_default_rule so the caller can log the fallback.
  */
 #define	CAPBUNDLE_PRINCIPAL_MAX_NAMES	32

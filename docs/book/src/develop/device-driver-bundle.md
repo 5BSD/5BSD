@@ -46,11 +46,10 @@ directory descriptor.
 ## The OPEN path
 
 The wire protocol lives in `lib/libdevicecmp/devicecmp_protocol.h` and has
-three operations.
+two operations.
 
 | Op | Request | Reply |
 |---|---|---|
-| `DEVICECMP_OP_HELLO` | header only | ABI version (`DEVICECMP_ABI_VERSION` is 1) |
 | `DEVICECMP_OP_OPEN` | leaf name, wanted-rights mask | granted-rights mask plus one delivered descriptor |
 | `DEVICECMP_OP_LIST` | cursor (0 for the first page) | up to 32 entries of leaf, policy-maximum rights, flags; next cursor |
 
@@ -211,7 +210,6 @@ default (switchboard(5), `domain`).
 ```
 # /Capabilities/System/Hid.cap/Bundle.ucl
 schema = "org.5bsd.capability-bundle";
-schema_version = 1;
 bundle_id = "org.example.hid";
 version = "1.0.0";
 sequence = 1;

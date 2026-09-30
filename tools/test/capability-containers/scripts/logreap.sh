@@ -17,7 +17,6 @@ mkdir -p "$TC/Units/logprobe.unit/bin"
 cp "$PROBES/logprobe" "$TC/Units/logprobe.unit/bin/logprobe"; chmod 0555 "$TC/Units/logprobe.unit/bin/logprobe"
 cat > "$TC/Bundle.ucl" <<-'EOF'
 	schema = "org.5bsd.capability-bundle";
-	schema_version = 1;
 	bundle_id = "app.Test";
 	version = "1.0.0";
 	sequence = 1;

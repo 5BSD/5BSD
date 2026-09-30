@@ -37,12 +37,10 @@ The verified tree is limited to 4096 entries, 512 MiB per file, and 2 GiB in
 total.
 .Sh BUNDLE.UCL
 Required keys are:
-.Bl -tag -width schema_version
+.Bl -tag -width bundle_id
 .It Va schema
 Must be
 .Dq org.5bsd.capability-bundle .
-.It Va schema_version
-Integer 1.
 .It Va bundle_id
 Globally unique reverse-domain identity.
 .It Va version
@@ -342,7 +340,7 @@ It applies to
 and
 .Dv USER
 units alike and is disabled unless declared.
-The legacy
+The
 .Va kmod_requires
 key is rejected.
 Services request allowed kernel modules through
@@ -601,7 +599,6 @@ capabilities {
 .Bd -literal -offset indent
 # App.cap/Bundle.ucl
 schema = "org.5bsd.capability-bundle";
-schema_version = 1;
 bundle_id = "org.example.app";
 version = "2.0.0";
 sequence = 12;

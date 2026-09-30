@@ -12,7 +12,7 @@ echo "==> stage Test.cap (reclaimprobe) in System/ and a pristine copy at /root/
 TC=$R/Capabilities/System/Test.cap; chmod -R u+w "$TC" 2>/dev/null; rm -rf "$TC"; mkdir -p "$TC/Units/reclaimprobe.unit/bin"
 cp "$PROBES/reclaimprobe" "$TC/Units/reclaimprobe.unit/bin/reclaimprobe"; chmod 0555 "$TC/Units/reclaimprobe.unit/bin/reclaimprobe"
 printf 'activation { boot = true; }\nprogram = "reclaimprobe";\nrestart = "never";\nuser = "root";\n' > "$TC/Units/reclaimprobe.unit/Unit.ucl"
-printf 'schema = "org.5bsd.capability-bundle";\nschema_version = 1;\nbundle_id = "app.Test";\nversion = "1.0.0";\nsequence = 1;\nauthor = "5BSD";\npublisher = "org.5bsd.base";\nunits = ["reclaimprobe"];\n' > "$TC/Bundle.ucl"
+printf 'schema = "org.5bsd.capability-bundle";\nbundle_id = "app.Test";\nversion = "1.0.0";\nsequence = 1;\nauthor = "5BSD";\npublisher = "org.5bsd.base";\nunits = ["reclaimprobe"];\n' > "$TC/Bundle.ucl"
 rm -rf $R/root/Test.cap.bak; cp -R "$TC" $R/root/Test.cap.bak
 chmod u+w "$R/METALOG"; grep -vE 'Capabilities/System/(Test|A|B|C)\.cap|^\./root/Test\.cap\.bak' "$R/METALOG" > "$R/METALOG.new" && mv "$R/METALOG.new" "$R/METALOG"
 for n in A B C; do chmod -R u+w $R/Capabilities/System/$n.cap 2>/dev/null; rm -rf $R/Capabilities/System/$n.cap; done

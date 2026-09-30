@@ -43,7 +43,6 @@ install_fixture()
 	chmod 0555 "${dir}/Units/${unit}.unit/bin/${unit}"
 	cat >"${dir}/Bundle.ucl" <<EOF
 schema = "org.5bsd.capability-bundle";
-schema_version = 1;
 bundle_id = "${label}";
 version = "1.0.0";
 sequence = 1;

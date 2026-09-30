@@ -17,7 +17,6 @@ for u in reclaimprobe logprobe; do mkdir -p "$TC/Units/$u.unit/bin"; cp "$PROBES
   printf 'activation { boot = true; }\nprogram = "%s";\nrestart = "never";\nuser = "root";\n' "$u" > "$TC/Units/$u.unit/Unit.ucl"; done
 cat > "$TC/Bundle.ucl" <<-'EOF'
 	schema = "org.5bsd.capability-bundle";
-	schema_version = 1;
 	bundle_id = "app.Test";
 	version = "1.0.0";
 	sequence = 1;

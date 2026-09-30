@@ -257,7 +257,6 @@ write_test_bundle()
 	mkdir -p "$dir/Units/$prog.unit/bin"
 	cat > "$dir/Bundle.ucl" <<-UCL
 	schema = "org.5bsd.capability-bundle";
-	schema_version = 1;
 	bundle_id = "${bid}";
 	version = "1.0.0";
 	sequence = 1;

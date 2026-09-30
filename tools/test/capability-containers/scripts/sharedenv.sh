@@ -20,11 +20,11 @@ chmod u+w "$R/METALOG"; grep -vE 'Capabilities/System/(Test|A|B|C|Env)\.cap|^\./
 for n in Test A B C Env; do chmod -R u+w $R/Capabilities/System/$n.cap 2>/dev/null; rm -rf $R/Capabilities/System/$n.cap; done; rm -rf $R/root/Test.cap.bak
 E=$R/Capabilities/System/Env.cap; mkdir -p $E/Units/envwriter.unit/bin $E/Units/envreader.unit/bin
 cp $PROBES/envprobe $E/Units/envwriter.unit/bin/envwriter; cp $PROBES/envprobe $E/Units/envreader.unit/bin/envreader; chmod 0555 $E/Units/*/bin/*
-printf 'schema = "org.5bsd.capability-bundle";\nschema_version = 1;\nbundle_id = "app.Env";\nversion = "1.0.0";\nsequence = 1;\nauthor = "5BSD";\npublisher = "org.5bsd.base";\nunits = ["envwriter", "envreader"];\n' > $E/Bundle.ucl
+printf 'schema = "org.5bsd.capability-bundle";\nbundle_id = "app.Env";\nversion = "1.0.0";\nsequence = 1;\nauthor = "5BSD";\npublisher = "org.5bsd.base";\nunits = ["envwriter", "envreader"];\n' > $E/Bundle.ucl
 printf 'activation { boot = true; }\nprogram = "envwriter";\narguments = ["writer"];\nrestart = "never";\nprotect = [];\nuser = "root";\n' > $E/Units/envwriter.unit/Unit.ucl
 printf 'activation { boot = true; }\nprogram = "envreader";\narguments = ["reader"];\nrestart = "always";\nprotect = [];\nuser = "root";\n' > $E/Units/envreader.unit/Unit.ucl
 T=$R/Capabilities/System/Test.cap; mkdir -p $T/Units/reclaimprobe.unit/bin; cp $PROBES/reclaimprobe $T/Units/reclaimprobe.unit/bin/reclaimprobe; chmod 0555 $T/Units/reclaimprobe.unit/bin/reclaimprobe
-printf 'schema = "org.5bsd.capability-bundle";\nschema_version = 1;\nbundle_id = "app.Test";\nversion = "1.0.0";\nsequence = 1;\nauthor = "5BSD";\npublisher = "org.5bsd.base";\nunits = ["reclaimprobe"];\n' > $T/Bundle.ucl
+printf 'schema = "org.5bsd.capability-bundle";\nbundle_id = "app.Test";\nversion = "1.0.0";\nsequence = 1;\nauthor = "5BSD";\npublisher = "org.5bsd.base";\nunits = ["reclaimprobe"];\n' > $T/Bundle.ucl
 printf 'activation { boot = true; }\nprogram = "reclaimprobe";\nrestart = "never";\nuser = "root";\n' > $T/Units/reclaimprobe.unit/Unit.ucl
 { meta ./Capabilities/System/Env.cap envwriter envreader; meta ./Capabilities/System/Test.cap reclaimprobe; } >> $R/METALOG
 echo "==> build image"; build_image se

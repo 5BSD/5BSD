@@ -12,7 +12,6 @@ mkdir -p "$TC/Units/cryptoprobe.unit/bin"; cp "$PROBES/cryptoprobe" "$TC/Units/c
 printf 'activation { boot = true; }\nprogram = "cryptoprobe";\nrestart = "never";\nuser = "root";\n' > "$TC/Units/cryptoprobe.unit/Unit.ucl"
 cat > "$TC/Bundle.ucl" <<-'EOF'
 	schema = "org.5bsd.capability-bundle";
-	schema_version = 1;
 	bundle_id = "app.Test";
 	version = "1.0.0";
 	sequence = 1;

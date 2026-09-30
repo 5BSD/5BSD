@@ -1430,8 +1430,8 @@ validate_unit_schema(const ucl_object_t *root, char *errbuf, size_t errlen)
 	x = ucl_object_lookup(arr, "ipc");
 
 	/*
-	 * activation.timer — monotonic interval source (Phase 5).  v1 supports
-	 * only a fixed monotonic period, so interval must be a positive integer
+	 * activation.timer — monotonic interval source (Phase 5).  Only a fixed
+	 *  monotonic period, so interval must be a positive integer
 	 * count of seconds.  Calendar/cron strings, persistent catch-up, and
 	 * user schedules are deliberately rejected (fail closed) until their
 	 * clock-change/suspend/duplicate-fire/crash semantics are specified.
@@ -2100,7 +2100,7 @@ int
 capbundle_parse_bundle_ucl(const char *path, struct capbundle *bundle,
     char *errbuf, size_t errlen)
 {
-	static const char *const keys[] = { "schema", "schema_version",
+	static const char *const keys[] = { "schema",
 	    "bundle_id", "version", "sequence", "author", "publisher",
 	    "units", "groups" };
 	struct ucl_parser *parser;
@@ -2154,13 +2154,6 @@ capbundle_parse_bundle_ucl(const char *path, struct capbundle *bundle,
 	if (v == NULL || ucl_object_type(v) != UCL_STRING ||
 	    strcmp(ucl_object_tostring(v), CAPBUNDLE_SCHEMA) != 0) {
 		snprintf(errbuf, errlen, "schema must be '%s'", CAPBUNDLE_SCHEMA);
-		goto invalid;
-	}
-	v = ucl_object_lookup(root, "schema_version");
-	if (v == NULL || ucl_object_type(v) != UCL_INT ||
-	    ucl_object_toint(v) != CAPBUNDLE_SCHEMA_VERSION) {
-		snprintf(errbuf, errlen, "schema_version must be %d",
-		    CAPBUNDLE_SCHEMA_VERSION);
 		goto invalid;
 	}
 	v = ucl_object_lookup(root, "bundle_id");

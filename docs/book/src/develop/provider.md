@@ -291,7 +291,6 @@ Echo.cap/
 ```ucl
 # Echo.cap/Bundle.ucl
 schema = "org.5bsd.capability-bundle";
-schema_version = 1;
 bundle_id = "org.example.echo";
 version = "1.0.0";
 sequence = 1;

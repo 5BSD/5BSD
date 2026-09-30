@@ -1,5 +1,4 @@
 schema = "org.5bsd.capability-bundle";
-schema_version = 1;
 bundle_id = "app.Pkgtest";
 version = "1.0.0";
 sequence = 1;

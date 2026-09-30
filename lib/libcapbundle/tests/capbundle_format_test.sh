@@ -23,7 +23,6 @@ make_bundle()
 	mkdir -p "$dir/Units/$unit.unit/bin"
 	cat > "$dir/Bundle.ucl" <<-EOF
 	schema = "org.5bsd.capability-bundle";
-	schema_version = 1;
 	bundle_id = "$bid";
 	version = "1.2.3";
 	sequence = 7;
@@ -198,14 +197,13 @@ bundle_required_matrix_head() { atf_set descr "Every bundle identity field is ma
 bundle_required_matrix_body()
 {
 	setup_work
-	for key in schema schema_version bundle_id version sequence units; do
+	for key in schema bundle_id version sequence units; do
 		dir=$(make_bundle "missing-$key")
 		sed -i '' "/^$key =/d" "$dir/Bundle.ucl"
 		verify_bad "$key|units|schema" "$dir"
 	done
 	for replacement in \
 	    'schema = 1;' \
-	    'schema_version = "1";' \
 	    'bundle_id = 4;' \
 	    'version = 4;' \
 	    'sequence = "7";' \
@@ -290,6 +288,12 @@ clean_break_rejections_body()
 	dir=$(make_bundle oldroot)
 	mv "$dir/Bundle.ucl" "$dir/Old.ucl"
 	verify_bad 'Bundle.ucl' "$dir"
+	# A stray schema_version is an unknown key in the closed root.
+	dir=$(make_bundle stray-version)
+	sed -i '' '/^schema =/a\
+schema_version = 1;
+' "$dir/Bundle.ucl"
+	verify_bad 'unknown key' "$dir"
 	dir=$(make_bundle oldunit)
 	unit="$dir/Units/worker.unit/Unit.ucl"
 	for declaration in \

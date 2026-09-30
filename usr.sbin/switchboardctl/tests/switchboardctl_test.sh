@@ -105,7 +105,6 @@ write_bundle()
 	mkdir -p "$root/Units/$unit.unit/bin"
 	cat > "$root/Bundle.ucl" <<EOF
 schema = "org.5bsd.capability-bundle";
-schema_version = 1;
 bundle_id = "$id";
 version = "1.0.$sequence";
 sequence = $sequence;

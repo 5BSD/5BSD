@@ -723,7 +723,6 @@ multi_binary_bundle_activation_body() {
 	    "${bundle}/Units/lazyd.unit/bin"
 	cat > "$bundle/Bundle.ucl" <<'UCL'
 schema = "org.5bsd.capability-bundle";
-schema_version = 1;
 bundle_id = "org.test.multibin";
 version = "1.0.0";
 sequence = 1;
