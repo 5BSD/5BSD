@@ -6,6 +6,15 @@ commit messages and the book; this file holds only the queue. Status words:
 **building** (in a working tree), **next**, **later**, **deferred** (decided
 against for now, with the reason).
 
+## Boot ordering: launch the daemons before /etc/rc
+
+Switchboard launches the native boot units after `/etc/rc` (a8aa4422b00f),
+because root is read-only and `/Capabilities/Run` is not mounted until rc runs;
+launching earlier failed 11 of 14 providers with EROFS on a fresh install. The
+proper fix is for the service manager to own the writable runtime container
+itself (an anonymous mount, see `vfs_mount_anon`) so the daemons can launch in
+parallel with rc again and boot is no longer serialized behind it.
+
 ## Attribution: coalition identity and responsibility
 
 **done** (b381a270e2e5 + 773dbd56eb5b; from-scratch build of HEAD validated on the plane 2026-09-27: helper under parent, per-user agent under its owner's session, ssh session join, forty-session churn, audit, boot id, tools). Every coalition carries a
