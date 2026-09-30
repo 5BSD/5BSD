@@ -148,6 +148,142 @@ ATF_TC_BODY(limits_size_overflow_rejected, tc)
 	ATF_CHECK(strstr(err, "overflow") != NULL);
 }
 
+/* ---- soft/hard limits, new rlimits, nice, throttle, sockets ------------ */
+
+ATF_TC_WITHOUT_HEAD(limits_extra_keys_parse);
+ATF_TC_BODY(limits_extra_keys_parse, tc)
+{
+	struct capbundle_service svc;
+	char err[256];
+
+	ATF_REQUIRE_EQ_MSG(0, parse_unit(
+	    "activation { boot = true; }\n"
+	    "limits { data = \"64M\"; memlock = \"1M\"; rss = \"32M\"; }\n",
+	    &svc, err, sizeof(err)), "unexpected error: %s", err);
+	ATF_CHECK_EQ(64 * 1024 * 1024, svc.limits.data);
+	ATF_CHECK_EQ(1024 * 1024, svc.limits.memlock);
+	ATF_CHECK_EQ(32 * 1024 * 1024, svc.limits.rss);
+	ATF_CHECK_EQ(SVC_LIMIT_UNSET, svc.soft.data);
+}
+
+ATF_TC_WITHOUT_HEAD(limits_soft_hard_split);
+ATF_TC_BODY(limits_soft_hard_split, tc)
+{
+	struct capbundle_service svc;
+	char err[256];
+
+	ATF_REQUIRE_EQ_MSG(0, parse_unit(
+	    "activation { boot = true; }\n"
+	    "limits { nofile { soft = 256; hard = 1024; } cpu = 30; }\n",
+	    &svc, err, sizeof(err)), "unexpected error: %s", err);
+	ATF_CHECK_EQ(1024, svc.limits.nofile);
+	ATF_CHECK_EQ(256, svc.soft.nofile);
+	ATF_CHECK_EQ(30, svc.limits.cpu);
+	ATF_CHECK_EQ(SVC_LIMIT_UNSET, svc.soft.cpu);
+}
+
+ATF_TC_WITHOUT_HEAD(limits_soft_above_hard_rejected);
+ATF_TC_BODY(limits_soft_above_hard_rejected, tc)
+{
+	struct capbundle_service svc;
+	char err[256];
+
+	ATF_CHECK_EQ(-1, parse_unit(
+	    "activation { boot = true; }\n"
+	    "limits { nofile { soft = 2048; hard = 1024; } }\n",
+	    &svc, err, sizeof(err)));
+	ATF_CHECK(strstr(err, "soft exceeds hard") != NULL);
+}
+
+ATF_TC_WITHOUT_HEAD(limits_split_needs_both);
+ATF_TC_BODY(limits_split_needs_both, tc)
+{
+	struct capbundle_service svc;
+	char err[256];
+
+	ATF_CHECK_EQ(-1, parse_unit(
+	    "activation { boot = true; }\nlimits { nofile { soft = 8; } }\n",
+	    &svc, err, sizeof(err)));
+	ATF_CHECK_EQ(-1, parse_unit(
+	    "activation { boot = true; }\n"
+	    "limits { nofile { soft = 8; hard = 9; extra = 1; } }\n",
+	    &svc, err, sizeof(err)));
+}
+
+ATF_TC_WITHOUT_HEAD(nice_and_throttle_parse);
+ATF_TC_BODY(nice_and_throttle_parse, tc)
+{
+	struct capbundle_service svc;
+	char err[256];
+
+	ATF_REQUIRE_EQ_MSG(0, parse_unit(
+	    "activation { boot = true; }\nnice = -3;\nthrottle = 30;\n"
+	    "restart = \"on-crash\";\n", &svc, err, sizeof(err)),
+	    "unexpected error: %s", err);
+	ATF_CHECK(svc.nice_set);
+	ATF_CHECK_EQ(-3, svc.nice_val);
+	ATF_CHECK_EQ(30, svc.throttle_interval);
+	ATF_CHECK_EQ(CAPBUNDLE_RESTART_ON_CRASH, svc.restart);
+}
+
+ATF_TC_WITHOUT_HEAD(nice_throttle_defaults_and_bounds);
+ATF_TC_BODY(nice_throttle_defaults_and_bounds, tc)
+{
+	struct capbundle_service svc;
+	char err[256];
+
+	ATF_REQUIRE_EQ(0, parse_unit("activation { boot = true; }\n", &svc,
+	    err, sizeof(err)));
+	ATF_CHECK(!svc.nice_set);
+	ATF_CHECK_EQ(0, svc.throttle_interval);
+	ATF_CHECK_EQ(-1, parse_unit(
+	    "activation { boot = true; }\nnice = 21;\n", &svc, err,
+	    sizeof(err)));
+	ATF_CHECK_EQ(-1, parse_unit(
+	    "activation { boot = true; }\nthrottle = 0;\n", &svc, err,
+	    sizeof(err)));
+	ATF_CHECK_EQ(-1, parse_unit(
+	    "activation { boot = true; }\nrestart = \"sometimes\";\n", &svc,
+	    err, sizeof(err)));
+}
+
+ATF_TC_WITHOUT_HEAD(socket_mode_owner_group_parse);
+ATF_TC_BODY(socket_mode_owner_group_parse, tc)
+{
+	struct capbundle_service svc;
+	char err[256];
+
+	ATF_REQUIRE_EQ_MSG(0, parse_unit(
+	    "activation { socket { name = \"s\"; listen = \"unix:/run/s.sock\"; "
+	    "mode = \"0660\"; owner = \"daemon\"; group = \"operator\"; } }\n",
+	    &svc, err, sizeof(err)), "unexpected error: %s", err);
+	ATF_REQUIRE_EQ(1, svc.nactivation_sockets);
+	ATF_CHECK_EQ(0660, svc.activation_sockets[0].path_mode);
+	ATF_CHECK_STREQ("daemon", svc.activation_sockets[0].path_owner);
+	ATF_CHECK_STREQ("operator", svc.activation_sockets[0].path_group);
+}
+
+ATF_TC_WITHOUT_HEAD(socket_mode_rejects);
+ATF_TC_BODY(socket_mode_rejects, tc)
+{
+	struct capbundle_service svc;
+	char err[256];
+
+	/* Not valid octal, out of range, an integer, or a non-unix socket. */
+	ATF_CHECK_EQ(-1, parse_unit(
+	    "activation { socket { name = \"s\"; listen = \"unix:/run/s\"; "
+	    "mode = \"0999\"; } }\n", &svc, err, sizeof(err)));
+	ATF_CHECK_EQ(-1, parse_unit(
+	    "activation { socket { name = \"s\"; listen = \"unix:/run/s\"; "
+	    "mode = \"01777\"; } }\n", &svc, err, sizeof(err)));
+	ATF_CHECK_EQ(-1, parse_unit(
+	    "activation { socket { name = \"s\"; listen = \"unix:/run/s\"; "
+	    "mode = 660; } }\n", &svc, err, sizeof(err)));
+	ATF_CHECK_EQ(-1, parse_unit(
+	    "activation { socket { name = \"s\"; listen = \"tcp:*:80\"; "
+	    "mode = \"0600\"; } }\n", &svc, err, sizeof(err)));
+}
+
 /* ---- umask ------------------------------------------------------------ */
 
 ATF_TC_WITHOUT_HEAD(umask_octal_string_parses);
@@ -537,6 +673,14 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, limits_defaults_when_absent);
 	ATF_TP_ADD_TC(tp, limits_integers_parse);
 	ATF_TP_ADD_TC(tp, limits_size_suffixes_parse);
+	ATF_TP_ADD_TC(tp, limits_extra_keys_parse);
+	ATF_TP_ADD_TC(tp, limits_soft_hard_split);
+	ATF_TP_ADD_TC(tp, limits_soft_above_hard_rejected);
+	ATF_TP_ADD_TC(tp, limits_split_needs_both);
+	ATF_TP_ADD_TC(tp, nice_and_throttle_parse);
+	ATF_TP_ADD_TC(tp, nice_throttle_defaults_and_bounds);
+	ATF_TP_ADD_TC(tp, socket_mode_owner_group_parse);
+	ATF_TP_ADD_TC(tp, socket_mode_rejects);
 	ATF_TP_ADD_TC(tp, limits_negative_rejected);
 	ATF_TP_ADD_TC(tp, limits_bad_suffix_rejected);
 	ATF_TP_ADD_TC(tp, limits_unknown_key_rejected);

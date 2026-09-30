@@ -57,7 +57,27 @@ policy_parse_add(struct ucl_parser *parser, const char *path)
 }
 
 /* Keys accepted inside an activation.socket object (Phase 4). */
-static const char *const socket_object_keys[] = { "name", "listen", "backlog" };
+static const char *const socket_object_keys[] = { "name", "listen", "backlog",
+    "mode", "owner", "group" };
+
+/* limits{} keys and the svc_limits field each one sets. */
+static const struct {
+	const char *key;
+	size_t off;
+} limit_table[] = {
+	{ "memory", offsetof(struct svc_limits, mem) },
+	{ "cpu", offsetof(struct svc_limits, cpu) },
+	{ "nproc", offsetof(struct svc_limits, nproc) },
+	{ "nofile", offsetof(struct svc_limits, nofile) },
+	{ "stack", offsetof(struct svc_limits, stack) },
+	{ "fsize", offsetof(struct svc_limits, fsize) },
+	{ "core", offsetof(struct svc_limits, core) },
+	{ "data", offsetof(struct svc_limits, data) },
+	{ "memlock", offsetof(struct svc_limits, memlock) },
+	{ "rss", offsetof(struct svc_limits, rss) },
+};
+#define	LIMIT_FIELD(lp, i) \
+	((int64_t *)(void *)((char *)(lp) + limit_table[i].off))
 
 static bool
 key_in(const char *key, const char *const *allowed, size_t nallowed)
@@ -718,6 +738,51 @@ validate_socket_object(const ucl_object_t *obj, const char *const *socketkeys,
 		}
 		out->backlog = (int)ucl_object_toint(backlogobj);
 	}
+
+	{
+		const ucl_object_t *mo, *oo, *go;
+		char *endp = NULL;
+		long m;
+
+		mo = ucl_object_lookup(obj, "mode");
+		oo = ucl_object_lookup(obj, "owner");
+		go = ucl_object_lookup(obj, "group");
+		if ((mo != NULL || oo != NULL || go != NULL) &&
+		    out->domain != AF_UNIX) {
+			snprintf(errbuf, errlen, "activation.socket mode, owner "
+			    "and group apply only to unix sockets");
+			return (-1);
+		}
+		if (mo != NULL) {
+			if (ucl_object_type(mo) != UCL_STRING ||
+			    (m = strtol(ucl_object_tostring(mo), &endp, 8),
+			    endp == ucl_object_tostring(mo) || *endp != '\0' ||
+			    m < 1 || m > 0777)) {
+				snprintf(errbuf, errlen, "activation.socket.mode "
+				    "must be an octal string 0001..0777");
+				return (-1);
+			}
+			out->path_mode = (int)m;
+		}
+		if (oo != NULL) {
+			if (ucl_object_type(oo) != UCL_STRING ||
+			    strlcpy(out->path_owner, ucl_object_tostring(oo),
+			    sizeof(out->path_owner)) >= sizeof(out->path_owner)) {
+				snprintf(errbuf, errlen,
+				    "activation.socket.owner must be a short name");
+				return (-1);
+			}
+		}
+		if (go != NULL) {
+			if (ucl_object_type(go) != UCL_STRING ||
+			    strlcpy(out->path_group, ucl_object_tostring(go),
+			    sizeof(out->path_group)) >= sizeof(out->path_group)) {
+				snprintf(errbuf, errlen,
+				    "activation.socket.group must be a short name");
+				return (-1);
+			}
+		}
+	}
 	return (0);
 }
 
@@ -883,6 +948,42 @@ cap_parse_umask(const ucl_object_t *o, int *out, char *err, size_t errlen)
 }
 
 /*
+ * Parse one limits{} entry: a value (soft == hard) or an object
+ * { soft = V; hard = V; } with soft <= hard.  *soft stays SVC_LIMIT_UNSET when
+ * the entry is a plain value.
+ */
+static int
+cap_parse_limit(const ucl_object_t *o, const char *key, int64_t *hard,
+    int64_t *soft, char *err, size_t errlen)
+{
+	static const char *const splitkeys[] = { "soft", "hard" };
+	const ucl_object_t *sv, *hv;
+	char sub[64];
+
+	*soft = SVC_LIMIT_UNSET;
+	if (ucl_object_type(o) != UCL_OBJECT)
+		return (cap_parse_size(o, key, hard, err, errlen));
+	snprintf(sub, sizeof(sub), "limits.%s", key);
+	if (validate_keys(o, sub, splitkeys, nitems(splitkeys), err,
+	    errlen) != 0)
+		return (-1);
+	sv = ucl_object_lookup(o, "soft");
+	hv = ucl_object_lookup(o, "hard");
+	if (sv == NULL || hv == NULL) {
+		snprintf(err, errlen, "limits.%s needs both soft and hard", key);
+		return (-1);
+	}
+	if (cap_parse_size(hv, key, hard, err, errlen) != 0 ||
+	    cap_parse_size(sv, key, soft, err, errlen) != 0)
+		return (-1);
+	if (*soft > *hard) {
+		snprintf(err, errlen, "limits.%s: soft exceeds hard", key);
+		return (-1);
+	}
+	return (0);
+}
+
+/*
  * Parse the "level" key into SVC_BAND_*.  Returns 0 or -1 (with *err).
  */
 static int
@@ -1008,7 +1109,8 @@ validate_unit_schema(const ucl_object_t *root, char *errbuf, size_t errlen)
 	    "restart", "control", "capabilities", "user", "group",
 	    "stop_timeout", "max_failures", "arguments", "environment",
 	    "protect", "limits", "umask", "level", "ambient", "mint_authority",
-	    "watchdog", "visible", "domain", "directories", "holds", "launch" };
+	    "watchdog", "visible", "domain", "directories", "holds", "launch",
+	    "throttle", "nice" };
 	static const char *const watchdogkeys[] = { "interval" };
 	static const char *const launchkeys[] = { "responsible" };
 	static const char *const activationkeys[] = { "boot", "ipc", "timer",
@@ -1017,7 +1119,7 @@ validate_unit_schema(const ucl_object_t *root, char *errbuf, size_t errlen)
 	static const char *const timerkeys[] = { "interval" };
 	static const char *const pathkeys[] = { "path" };
 	static const char *const limitskeys[] = { "memory", "cpu", "nproc",
-	    "nofile", "stack", "fsize", "core" };
+	    "nofile", "stack", "fsize", "core", "data", "memlock", "rss" };
 	static const char *const capkeys[] = { "system", "isolate" };
 	const ucl_object_t *caps, *arr, *v, *x;
 	ucl_object_iter_t it;
@@ -1051,7 +1153,8 @@ validate_unit_schema(const ucl_object_t *root, char *errbuf, size_t errlen)
 	if (v != NULL && (ucl_object_type(v) != UCL_STRING ||
 	    (strcmp(ucl_object_tostring(v), "never") != 0 &&
 	    strcmp(ucl_object_tostring(v), "always") != 0 &&
-	    strcmp(ucl_object_tostring(v), "on-failure") != 0))) {
+	    strcmp(ucl_object_tostring(v), "on-failure") != 0 &&
+	    strcmp(ucl_object_tostring(v), "on-crash") != 0))) {
 		snprintf(errbuf, errlen, "invalid restart policy");
 		return (-1);
 	}
@@ -1167,6 +1270,18 @@ validate_unit_schema(const ucl_object_t *root, char *errbuf, size_t errlen)
 		snprintf(errbuf, errlen, "max_failures must be between 1 and 100");
 		return (-1);
 	}
+	v = ucl_object_lookup(root, "throttle");
+	if (v != NULL && (ucl_object_type(v) != UCL_INT ||
+	    ucl_object_toint(v) < 1 || ucl_object_toint(v) > 3600)) {
+		snprintf(errbuf, errlen, "throttle must be between 1 and 3600");
+		return (-1);
+	}
+	v = ucl_object_lookup(root, "nice");
+	if (v != NULL && (ucl_object_type(v) != UCL_INT ||
+	    ucl_object_toint(v) < -20 || ucl_object_toint(v) > 20)) {
+		snprintf(errbuf, errlen, "nice must be between -20 and 20");
+		return (-1);
+	}
 
 	/*
 	 * watchdog{} — liveness heartbeat deadline.  An object carrying a single
@@ -1262,7 +1377,7 @@ validate_unit_schema(const ucl_object_t *root, char *errbuf, size_t errlen)
 	if (v != NULL) {
 		const ucl_object_t *lv;
 		unsigned li;
-		int64_t scratch;
+		int64_t scratch, scratch_soft;
 
 		if (ucl_object_type(v) != UCL_OBJECT) {
 			snprintf(errbuf, errlen, "limits must be an object");
@@ -1273,8 +1388,8 @@ validate_unit_schema(const ucl_object_t *root, char *errbuf, size_t errlen)
 			return (-1);
 		for (li = 0; li < nitems(limitskeys); li++) {
 			lv = ucl_object_lookup(v, limitskeys[li]);
-			if (lv != NULL && cap_parse_size(lv, limitskeys[li],
-			    &scratch, errbuf, errlen) != 0)
+			if (lv != NULL && cap_parse_limit(lv, limitskeys[li],
+			    &scratch, &scratch_soft, errbuf, errlen) != 0)
 				return (-1);
 		}
 	}
@@ -1807,6 +1922,8 @@ parse_restart_policy(const ucl_object_t *obj, const char *path)
 		return (CAPBUNDLE_RESTART_NEVER);
 	if (strcmp(s, "on-failure") == 0)
 		return (CAPBUNDLE_RESTART_ON_FAILURE);
+	if (strcmp(s, "on-crash") == 0)
+		return (CAPBUNDLE_RESTART_ON_CRASH);
 	syslog(LOG_WARNING, "capbundle %s: unknown restart policy: %s",
 	    path, s);
 	return (CAPBUNDLE_RESTART_NEVER);
@@ -2191,9 +2308,11 @@ capbundle_parse_unit_ucl(const char *path, const char *unit_path,
 	 * no-core default from memset).  umask_val -1 means "apply the plane
 	 * default (0077)".  band 0 is SVC_BAND_STANDARD already.
 	 */
-	svc->limits.mem = svc->limits.cpu = svc->limits.nproc =
-	    svc->limits.nofile = svc->limits.stack = svc->limits.fsize =
-	    SVC_LIMIT_UNSET;
+	for (size_t li = 0; li < nitems(limit_table); li++) {
+		if (strcmp(limit_table[li].key, "core") != 0)
+			*LIMIT_FIELD(&svc->limits, li) = SVC_LIMIT_UNSET;
+		*LIMIT_FIELD(&svc->soft, li) = SVC_LIMIT_UNSET;
+	}
 	svc->umask_val = -1;
 
 	/* Reject unreasonably large files before parsing. */
@@ -2535,28 +2654,14 @@ capbundle_parse_unit_ucl(const char *path, const char *unit_path,
 
 		lim = ucl_object_lookup(root, "limits");
 		if (lim != NULL) {
-			if ((lv = ucl_object_lookup(lim, "memory")) != NULL)
-				(void)cap_parse_size(lv, "memory", &svc->limits.mem,
-				    errscratch, sizeof(errscratch));
-			if ((lv = ucl_object_lookup(lim, "cpu")) != NULL)
-				(void)cap_parse_size(lv, "cpu", &svc->limits.cpu,
-				    errscratch, sizeof(errscratch));
-			if ((lv = ucl_object_lookup(lim, "nproc")) != NULL)
-				(void)cap_parse_size(lv, "nproc", &svc->limits.nproc,
-				    errscratch, sizeof(errscratch));
-			if ((lv = ucl_object_lookup(lim, "nofile")) != NULL)
-				(void)cap_parse_size(lv, "nofile",
-				    &svc->limits.nofile, errscratch,
-				    sizeof(errscratch));
-			if ((lv = ucl_object_lookup(lim, "stack")) != NULL)
-				(void)cap_parse_size(lv, "stack", &svc->limits.stack,
-				    errscratch, sizeof(errscratch));
-			if ((lv = ucl_object_lookup(lim, "fsize")) != NULL)
-				(void)cap_parse_size(lv, "fsize", &svc->limits.fsize,
-				    errscratch, sizeof(errscratch));
-			if ((lv = ucl_object_lookup(lim, "core")) != NULL)
-				(void)cap_parse_size(lv, "core", &svc->limits.core,
-				    errscratch, sizeof(errscratch));
+			for (size_t li = 0; li < nitems(limit_table); li++)
+				if ((lv = ucl_object_lookup(lim,
+				    limit_table[li].key)) != NULL)
+					(void)cap_parse_limit(lv,
+					    limit_table[li].key,
+					    LIMIT_FIELD(&svc->limits, li),
+					    LIMIT_FIELD(&svc->soft, li),
+					    errscratch, sizeof(errscratch));
 		}
 		if ((lv = ucl_object_lookup(root, "umask")) != NULL)
 			(void)cap_parse_umask(lv, &svc->umask_val, errscratch,
@@ -2564,6 +2669,13 @@ capbundle_parse_unit_ucl(const char *path, const char *unit_path,
 		if ((lv = ucl_object_lookup(root, "level")) != NULL)
 			(void)cap_parse_band(lv, &svc->band, errscratch,
 			    sizeof(errscratch));
+		if ((lv = ucl_object_lookup(root, "nice")) != NULL) {
+			svc->nice_set = true;
+			svc->nice_val = (int)ucl_object_toint(lv);
+		}
+		if ((lv = ucl_object_lookup(root, "throttle")) != NULL)
+			svc->throttle_interval =
+			    (unsigned)ucl_object_toint(lv);
 	}
 
 	/* System capabilities */

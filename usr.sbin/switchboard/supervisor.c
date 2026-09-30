@@ -109,6 +109,8 @@ schedule_restart(struct svc_runtime *svc, int kq)
 		delay = 1;
 	if (delay > RESTART_MAX_DELAY_SEC)
 		delay = RESTART_MAX_DELAY_SEC;
+	if (delay < svc->manifest.throttle_interval)
+		delay = svc->manifest.throttle_interval;
 
 	syslog(LOG_INFO, "service %s: scheduling restart in %us",
 	    svc->manifest.label, delay);
@@ -620,6 +622,10 @@ supervisor_handle_procdesc(struct kevent *kev)
 			    WEXITSTATUS(exit_status) == 0)
 				return;
 			break;
+		case SVC_RESTART_ON_CRASH:
+			if (!WIFSIGNALED(exit_status))
+				return;
+			break;
 		case SVC_RESTART_ALWAYS:
 			break;
 		}
@@ -644,7 +650,8 @@ supervisor_handle_procdesc(struct kevent *kev)
 		}
 
 		/* Backoff if it died too fast. */
-		if (uptime_sec < RESTART_MIN_UPTIME_SEC) {
+		if (uptime_sec < (time_t)(svc->manifest.throttle_interval != 0 ?
+		    svc->manifest.throttle_interval : RESTART_MIN_UPTIME_SEC)) {
 			schedule_restart(svc, switchboard_kq);
 		} else {
 			syslog(LOG_INFO, "service %s: restarting "

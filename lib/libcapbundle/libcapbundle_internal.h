@@ -131,6 +131,7 @@ struct capbundle_service {
 	/* Stop timeout */
 	int	stop_timeout;
 	unsigned max_failures;
+	unsigned throttle_interval;	/* seconds; 0 = plane default */
 
 	/* Liveness watchdog interval in seconds (0 = disabled). */
 	unsigned watchdog_interval;
@@ -143,6 +144,9 @@ struct capbundle_service {
 
 	/* Pre-exec process policy (setrlimit / scheduling band / umask). */
 	struct svc_limits limits;
+	struct svc_limits soft;		/* SVC_LIMIT_UNSET = same as hard */
+	bool	nice_set;
+	int	nice_val;
 	int	band;			/* SVC_BAND_* (default SVC_BAND_STANDARD) */
 	int	umask_val;		/* mask, or -1 for the plane default */
 

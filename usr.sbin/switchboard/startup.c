@@ -272,6 +272,12 @@ svc_slot_apply_bundle_policy(struct svc_runtime *svc, unsigned bundle_idx)
 		    svc->manifest.label);
 		svc->manifest.band = eff;
 	}
+	if (svc->manifest.nice_set && svc->manifest.nice_val < 0 &&
+	    !bundle_registry_is_system(bundle_idx)) {
+		syslog(LOG_NOTICE, "startup: %s: negative nice requires a "
+		    "system bundle; using 0", svc->manifest.label);
+		svc->manifest.nice_val = 0;
+	}
 }
 
 /*

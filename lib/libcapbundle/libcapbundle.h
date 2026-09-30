@@ -179,6 +179,7 @@ int	capbundle_scan_dir(const char *dirpath, capbundle_scan_cb cb, void *ctx);
 #define	CAPBUNDLE_RESTART_NEVER		0
 #define	CAPBUNDLE_RESTART_ALWAYS	1
 #define	CAPBUNDLE_RESTART_ON_FAILURE	2
+#define	CAPBUNDLE_RESTART_ON_CRASH	3
 
 /* Management class constants (matches switchboard SVC_MGMT_*, §5). */
 #define	CAPBUNDLE_MGMT_SYSTEM		0

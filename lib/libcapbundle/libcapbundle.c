@@ -560,6 +560,10 @@ capbundle_svc_fill_manifest(const struct capbundle_service *s,
 
 	/* Pre-exec process policy: limits / band / umask. */
 	m->limits = s->limits;
+	m->soft = s->soft;
+	m->nice_set = s->nice_set;
+	m->nice_val = s->nice_val;
+	m->throttle_interval = s->throttle_interval;
 	m->band = s->band;
 	m->umask_val = s->umask_val;
 

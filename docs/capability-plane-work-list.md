@@ -15,6 +15,27 @@ proper fix is for the service manager to own the writable runtime container
 itself (an anonymous mount, see `vfs_mount_anon`) so the daemons can launch in
 parallel with rc again and boot is no longer serialized behind it.
 
+## launchd.plist parity (researched 2026-09-30)
+
+Sources: launchd.plist(5), xpcservice.plist(5). Landed: `limits` completed
+(`data`, `memlock`, `rss`) with a soft/hard split; `restart = "on-crash"`;
+`throttle` (respawn interval); explicit `nice`; unix-socket `mode`/`owner`/`group`;
+reload now detects limit, band, umask and nice edits. Still open:
+
+- Idle exit and transactions (`EnableTransactions`, `EnablePressuredExit`) and
+  timer coalescing. Power-relevant for TEC; needs a design pass (client
+  transaction count via `service_heartbeat`-style calls; coalesced kevent timers).
+- Adaptive band (Apple moves a job between Background and Interactive by
+  activity). Needs a kernel priority-adjust signal; FreeBSD has no per-process
+  I/O priority, so `LowPriorityIO` has no target.
+- Hard per-unit caps beyond per-process rlimits: a separate `rctl{}` over racct,
+  not more `limits{}` keys.
+- `KeepAlive` `PathState` (alive while a path exists) and `AfterInitialDemand`.
+- `LaunchEvents` (device arrival) and `LimitLoadToHardware`; fits the hardware
+  package work.
+- Skipped on purpose: `RootDirectory`, `Standard*Path`, inetd, Bonjour, Mach
+  keys, `OnDemand`, `TimeOut`.
+
 ## Attribution: coalition identity and responsibility
 
 **done** (b381a270e2e5 + 773dbd56eb5b; from-scratch build of HEAD validated on the plane 2026-09-27: helper under parent, per-user agent under its owner's session, ssh session join, forty-session churn, audit, boot id, tools). Every coalition carries a

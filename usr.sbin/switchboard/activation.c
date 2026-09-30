@@ -45,11 +45,13 @@
 #include <sys/mount.h>
 #include <sys/param.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <sys/un.h>
 
 #include <netinet/in.h>
 
-#include <sys/stat.h>
+#include <grp.h>
+#include <pwd.h>
 
 #include <dirent.h>
 #include <errno.h>
@@ -282,7 +284,8 @@ listener_create(const struct svc_activation_socket *s)
 {
 	struct sockaddr_storage ss;
 	socklen_t slen;
-	int fd, on, saved;
+	int fd, on, saved, rv;
+	mode_t old_umask;
 
 	memset(&ss, 0, sizeof(ss));
 	switch (s->domain) {
@@ -334,11 +337,45 @@ listener_create(const struct svc_activation_socket *s)
 	 */
 	if (s->domain == AF_UNIX)
 		(void)unlink(s->unixpath);
-	if (bind(fd, (struct sockaddr *)&ss, slen) == -1) {
-		saved = errno;
+	/*
+	 * Create the node with its final permission bits: the umask narrows the
+	 * mode at bind time, so there is no window where it is more open.
+	 */
+	old_umask = umask(0);
+	(void)umask(s->domain == AF_UNIX && s->path_mode != 0 ?
+	    (mode_t)(~s->path_mode & 0777) : old_umask);
+	rv = bind(fd, (struct sockaddr *)&ss, slen);
+	saved = errno;
+	(void)umask(old_umask);
+	if (rv == -1) {
 		(void)close(fd);
 		errno = saved;
 		return (-1);
+	}
+	if (s->domain == AF_UNIX &&
+	    (s->path_owner[0] != '\0' || s->path_group[0] != '\0')) {
+		uid_t uid = (uid_t)-1;
+		gid_t gid = (gid_t)-1;
+		struct passwd *pw;
+		struct group *gr;
+
+		if (s->path_owner[0] != '\0') {
+			if ((pw = getpwnam(s->path_owner)) == NULL)
+				goto chown_fail;
+			uid = pw->pw_uid;
+		}
+		if (s->path_group[0] != '\0') {
+			if ((gr = getgrnam(s->path_group)) == NULL)
+				goto chown_fail;
+			gid = gr->gr_gid;
+		}
+		if (chown(s->unixpath, uid, gid) == -1) {
+chown_fail:
+			(void)unlink(s->unixpath);
+			(void)close(fd);
+			errno = EINVAL;
+			return (-1);
+		}
 	}
 	if (s->socktype == SOCK_STREAM && listen(fd, s->backlog) == -1) {
 		saved = errno;

@@ -64,6 +64,7 @@
 #define	SVC_RESTART_NEVER		0
 #define	SVC_RESTART_ALWAYS		1
 #define	SVC_RESTART_ON_FAILURE		2
+#define	SVC_RESTART_ON_CRASH		3	/* only when killed by a signal */
 
 /*
  * Service management class (§5 of the service-discovery model).  Governs who
@@ -120,6 +121,10 @@
  * inherited limit in place.  switchboard applies these in the child after pdfork
  * and before exec, so the ceilings are in force from the first instruction of
  * the program image.  core defaults to 0 (no core dumps) unless overridden.
+ *
+ * Each limit has a hard ceiling (manifest.limits) and an optional soft value
+ * (manifest.soft).  A soft field of SVC_LIMIT_UNSET means soft == hard; a soft
+ * field is only meaningful when the matching hard field is set.
  */
 #define	SVC_LIMIT_UNSET			((int64_t)-1)
 struct svc_limits {
@@ -130,6 +135,9 @@ struct svc_limits {
 	int64_t		stack;		/* RLIMIT_STACK, bytes */
 	int64_t		fsize;		/* RLIMIT_FSIZE, bytes */
 	int64_t		core;		/* RLIMIT_CORE, bytes (default 0) */
+	int64_t		data;		/* RLIMIT_DATA, bytes */
+	int64_t		memlock;	/* RLIMIT_MEMLOCK, bytes */
+	int64_t		rss;		/* RLIMIT_RSS, bytes */
 };
 
 /*
@@ -165,6 +173,9 @@ struct svc_activation_socket {
 	uint16_t	port;			/* host order; 0 for AF_UNIX */
 	char		unixpath[104];		/* AF_UNIX path; empty otherwise */
 	int		backlog;		/* listen(2) backlog; default 128 */
+	int		path_mode;		/* AF_UNIX node mode; 0 = default */
+	char		path_owner[32];		/* AF_UNIX node owner; empty = root */
+	char		path_group[32];		/* AF_UNIX node group; empty = wheel */
 };
 
 /*
@@ -266,6 +277,12 @@ struct svc_manifest {
 	int		stop_timeout;	/* seconds before SIGKILL (default 5) */
 	unsigned	max_failures;	/* circuit breaker threshold (default 10) */
 	/*
+	 * Respawn throttle (launchd ThrottleInterval): a unit that dies within
+	 * this many seconds of starting is restarted after a backoff rather than
+	 * at once.  0 = the plane default (5).
+	 */
+	unsigned	throttle_interval;
+	/*
 	 * Liveness watchdog (manifest `watchdog { interval = N }`).  A RUNNING
 	 * unit must send SVC_OP_HEARTBEAT at least every watchdog_interval
 	 * seconds; a miss terminates the process and lets the restart policy
@@ -280,8 +297,11 @@ struct svc_manifest {
 	 *   umask:   file-creation mask, or -1 for the plane default (0077).
 	 */
 	struct svc_limits limits;
+	struct svc_limits soft;		/* optional soft values; UNSET = hard */
 	int		band;
 	int		umask_val;
+	bool		nice_set;	/* explicit nice overrides the band's */
+	int		nice_val;	/* -20..20; negative needs a system unit */
 
 	/*
 	 * An ambient-authority provider legitimately runs OUTSIDE capability mode: its

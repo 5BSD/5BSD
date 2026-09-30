@@ -27,6 +27,13 @@ switchboard_manifest_equal(const struct svc_manifest *a,
 	    a->management != b->management ||
 	    a->stop_timeout != b->stop_timeout ||
 	    a->max_failures != b->max_failures ||
+	    a->throttle_interval != b->throttle_interval ||
+	    a->band != b->band ||
+	    a->umask_val != b->umask_val ||
+	    a->nice_set != b->nice_set ||
+	    a->nice_val != b->nice_val ||
+	    memcmp(&a->limits, &b->limits, sizeof(a->limits)) != 0 ||
+	    memcmp(&a->soft, &b->soft, sizeof(a->soft)) != 0 ||
 	    a->watchdog_interval != b->watchdog_interval ||
 	    a->nprovides != b->nprovides ||
 	    a->cap_system != b->cap_system ||
@@ -61,7 +68,10 @@ switchboard_manifest_equal(const struct svc_manifest *a,
 		    sa->domain != sb->domain || sa->socktype != sb->socktype ||
 		    sa->port != sb->port || sa->backlog != sb->backlog ||
 		    memcmp(sa->addr, sb->addr, sizeof(sa->addr)) != 0 ||
-		    strcmp(sa->unixpath, sb->unixpath) != 0)
+		    strcmp(sa->unixpath, sb->unixpath) != 0 ||
+		    sa->path_mode != sb->path_mode ||
+		    strcmp(sa->path_owner, sb->path_owner) != 0 ||
+		    strcmp(sa->path_group, sb->path_group) != 0)
 			return (false);
 	}
 	for (i = 0; i < a->narguments; i++)

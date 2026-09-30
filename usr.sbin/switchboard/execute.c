@@ -767,38 +767,43 @@ child_exec(struct svc_manifest *m, int child_channel_fd,
 	{
 		struct rlimit rl;
 
-		/* core=0 (no dumps) applies even when limits{} is omitted. */
-		rl.rlim_cur = rl.rlim_max = (rlim_t)m->limits.core;
-		if (setrlimit(RLIMIT_CORE, &rl) == -1)
-			_exit(126);
-		if (m->limits.mem != SVC_LIMIT_UNSET) {
-			rl.rlim_cur = rl.rlim_max = (rlim_t)m->limits.mem;
-			if (setrlimit(RLIMIT_AS, &rl) == -1)
-				_exit(126);
-		}
-		if (m->limits.cpu != SVC_LIMIT_UNSET) {
-			rl.rlim_cur = rl.rlim_max = (rlim_t)m->limits.cpu;
-			if (setrlimit(RLIMIT_CPU, &rl) == -1)
-				_exit(126);
-		}
-		if (m->limits.nproc != SVC_LIMIT_UNSET) {
-			rl.rlim_cur = rl.rlim_max = (rlim_t)m->limits.nproc;
-			if (setrlimit(RLIMIT_NPROC, &rl) == -1)
-				_exit(126);
-		}
-		if (m->limits.nofile != SVC_LIMIT_UNSET) {
-			rl.rlim_cur = rl.rlim_max = (rlim_t)m->limits.nofile;
-			if (setrlimit(RLIMIT_NOFILE, &rl) == -1)
-				_exit(126);
-		}
-		if (m->limits.stack != SVC_LIMIT_UNSET) {
-			rl.rlim_cur = rl.rlim_max = (rlim_t)m->limits.stack;
-			if (setrlimit(RLIMIT_STACK, &rl) == -1)
-				_exit(126);
-		}
-		if (m->limits.fsize != SVC_LIMIT_UNSET) {
-			rl.rlim_cur = rl.rlim_max = (rlim_t)m->limits.fsize;
-			if (setrlimit(RLIMIT_FSIZE, &rl) == -1)
+		static const struct {
+			int	resource;
+			size_t	off;
+		} lim_table[] = {
+			{ RLIMIT_CORE, offsetof(struct svc_limits, core) },
+			{ RLIMIT_AS, offsetof(struct svc_limits, mem) },
+			{ RLIMIT_CPU, offsetof(struct svc_limits, cpu) },
+			{ RLIMIT_NPROC, offsetof(struct svc_limits, nproc) },
+			{ RLIMIT_NOFILE, offsetof(struct svc_limits, nofile) },
+			{ RLIMIT_STACK, offsetof(struct svc_limits, stack) },
+			{ RLIMIT_FSIZE, offsetof(struct svc_limits, fsize) },
+			{ RLIMIT_DATA, offsetof(struct svc_limits, data) },
+			{ RLIMIT_MEMLOCK, offsetof(struct svc_limits, memlock) },
+			{ RLIMIT_RSS, offsetof(struct svc_limits, rss) },
+		};
+		unsigned li;
+		int nice_val;
+
+		/*
+		 * Hard ceiling from limits, soft from soft (UNSET = same as
+		 * hard).  core=0 (no dumps) applies even when limits{} is
+		 * omitted, because its hard field defaults to 0, not UNSET.
+		 */
+		for (li = 0; li < nitems(lim_table); li++) {
+			int64_t hard, soft;
+
+			memcpy(&hard, (const char *)&m->limits +
+			    lim_table[li].off, sizeof(hard));
+			memcpy(&soft, (const char *)&m->soft +
+			    lim_table[li].off, sizeof(soft));
+
+			if (hard == SVC_LIMIT_UNSET)
+				continue;
+			rl.rlim_max = (rlim_t)hard;
+			rl.rlim_cur = soft == SVC_LIMIT_UNSET ? rl.rlim_max :
+			    (rlim_t)soft;
+			if (setrlimit(lim_table[li].resource, &rl) == -1)
 				_exit(126);
 		}
 
@@ -808,13 +813,20 @@ child_exec(struct svc_manifest *m, int child_channel_fd,
 		 * because this runs as root before the credential drop).  The boost
 		 * is a privilege: startup already clamped INTERACTIVE to STANDARD
 		 * for any non-system unit, so a boost only ever reaches here for a
-		 * trusted bundle.  FreeBSD has no base per-process I/O-priority API,
-		 * so band maps to CPU nice only.
+		 * trusted bundle, and an explicit negative nice is clamped the same
+		 * way at load.  FreeBSD has no base per-process I/O-priority API,
+		 * so band maps to CPU nice only.  An explicit nice wins over the
+		 * band's.
 		 */
+		nice_val = 0;
 		if (m->band == SVC_BAND_BACKGROUND)
-			(void)setpriority(PRIO_PROCESS, 0, 10);
+			nice_val = 10;
 		else if (m->band == SVC_BAND_INTERACTIVE)
-			(void)setpriority(PRIO_PROCESS, 0, -5);
+			nice_val = -5;
+		if (m->nice_set)
+			nice_val = m->nice_val;
+		if (nice_val != 0)
+			(void)setpriority(PRIO_PROCESS, 0, nice_val);
 
 		/* File-creation mask: explicit value, else the plane default. */
 		(void)umask(m->umask_val >= 0 ? (mode_t)m->umask_val : 0077);

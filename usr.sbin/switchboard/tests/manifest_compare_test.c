@@ -74,6 +74,30 @@ ATF_TC_BODY(identity_and_execution_changes, tc)
 	CHECK_CHANGE(b.provides[0][0] = 'x');
 }
 
+ATF_TC_WITHOUT_HEAD(process_policy_changes);
+ATF_TC_BODY(process_policy_changes, tc)
+{
+	struct svc_manifest a, b;
+
+	/* A limit, soft value, band, nice, umask or throttle edit must reload. */
+	CHECK_CHANGE(b.limits.nofile++);
+	CHECK_CHANGE(b.limits.data++);
+	CHECK_CHANGE(b.soft.nofile++);
+	CHECK_CHANGE(b.band++);
+	CHECK_CHANGE(b.nice_set = !b.nice_set);
+	CHECK_CHANGE(b.nice_val++);
+	CHECK_CHANGE(b.umask_val++);
+	CHECK_CHANGE(b.throttle_interval++);
+	a = sample_manifest();
+	a.nactivation_sockets = 1;
+	b = a;
+	b.activation_sockets[0].path_mode = 0660;
+	ATF_CHECK(!switchboard_manifest_equal(&a, &b));
+	b = a;
+	b.activation_sockets[0].path_group[0] = 'x';
+	ATF_CHECK(!switchboard_manifest_equal(&a, &b));
+}
+
 ATF_TC_WITHOUT_HEAD(capsule_changes);
 ATF_TC_BODY(capsule_changes, tc)
 {
@@ -251,6 +275,7 @@ ATF_TP_ADD_TCS(tp)
 
 	ATF_TP_ADD_TC(tp, equal_and_unused_tail);
 	ATF_TP_ADD_TC(tp, identity_and_execution_changes);
+	ATF_TP_ADD_TC(tp, process_policy_changes);
 	ATF_TP_ADD_TC(tp, capsule_changes);
 	ATF_TP_ADD_TC(tp, sysctl_isolate_changes);
 	ATF_TP_ADD_TC(tp, anointment_policy_changes);

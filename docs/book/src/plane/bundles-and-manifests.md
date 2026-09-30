@@ -92,17 +92,19 @@ Absent keys take the default shown; `capbundle_parse_unit_ucl()` fills the
 |---|---|---|---|---|
 | `program` | string | unit name | one filename, no `/`, no control characters | `bin/<program>` is opened `O_EXEC|O_VERIFY` and `fexecve`d |
 | `activation` | object | required | see below | when the unit runs and which names it reserves |
-| `restart` | string | `never` | `never`, `always`, `on-failure` | relaunch after exit |
+| `restart` | string | `never` | `never`, `always`, `on-failure`, `on-crash` | relaunch after exit; `on-failure` skips a clean exit, `on-crash` restarts only a unit killed by a signal |
 | `control` | string | `system` | `core`, `system`, `user` | who may stop, start, unload or disable it; `core` refuses everyone |
 | `capabilities` | object | none | see below | system gates a broker holds |
 | `user` | string | `capability` | non-empty, under 64 bytes | credentials after `setuid` |
 | `group` | string | `capability` | non-empty, under 64 bytes | `setgid` and supplementary groups |
 | `stop_timeout` | int | 5 | 1 to 300 seconds | SIGTERM to SIGKILL grace |
 | `max_failures` | int | 10 | 1 to 100 | circuit breaker threshold |
+| `throttle` | int | 5 | 1 to 3600 seconds | a unit that dies sooner than this after starting is restarted after a backoff, never below this many seconds |
 | `arguments` | array | none | at most 32 strings, each under 256 bytes; never shell-split | `argv[1..]` |
 | `environment` | object | none | at most 32 `NAME = "value"` pairs, each under 1024 bytes; names `[A-Za-z0-9_]` not starting with a digit; `CAPSULE_*`, `SWITCHBOARD_*`, `SERVICE_BOOTSTRAP_FD`, `CAPABILITY_UNIT_DIR`, `NETWORKCMP`, `CRYPTOCMP`, `LOGCMP`, `TRACECMP`, `NOTIFY` rejected | child environment; may override `PATH`, `USER`, `HOME` |
 | `protect` | array | none | flag names, no duplicates or overlaps: `ptrace`, `signal`, `visible`, `wait`, `sigkill`, `sigcont`, `sched`, `core`, `ktrace`, `noprivs`, `nofork`, `noipc`, `nofdrecv`, `noexec`, `nosock`, aliases `protect`, `restrict`, `all` | capprotect shield applied by switchboard on the process descriptor right after `pdfork(2)` |
-| `limits` | object | inherit | keys `memory`, `cpu`, `nproc`, `nofile`, `stack`, `fsize`, `core`; integers or byte strings with `K`/`M`/`G`/`T` | `setrlimit(2)` before exec; `core` is 0 even when the object is absent |
+| `limits` | object | inherit | keys `memory` (`RLIMIT_AS`), `cpu`, `nproc`, `nofile`, `stack`, `fsize`, `core`, `data`, `memlock`, `rss`; each an integer or byte string with `K`/`M`/`G`/`T`, or `{ soft = V; hard = V; }` with soft no greater than hard | `setrlimit(2)` before exec; a plain value sets soft and hard; `core` is 0 even when the object is absent |
+| `nice` | int | from `level` | -20 to 20 | explicit `setpriority(2)`, overriding the level's; a negative value is honoured only for a system bundle and clamped to 0 otherwise |
 | `umask` | octal string or int | `0077` | 0000 to 0777 | file-creation mask |
 | `level` | string | `standard` | `background`, `standard`, `interactive` | `nice` +10, 0, or -5; `interactive` is honoured only for a `/Capabilities/System` bundle and clamped otherwise |
 | `ambient` | bool | false | honoured only for system bundles | skip `cap_enter(2)`; readiness is `SVC_OP_READY` |
@@ -158,7 +160,7 @@ or `helper` must be present; publishing a name does not imply boot.
 | `schedule` | string | five-field cron (`min hour mday month wday`, numbers or `*`) or `hourly`, `daily`, `midnight`, `weekly`, `monthly`, `yearly`, `annually` | wall-clock activation, all fields must match |
 | `persistent` | bool | requires `schedule` | one catch-up run at startup for a match missed while down |
 | `path` | object | `{ path = "/abs" }` | activate on `NOTE_WRITE`, `DELETE`, `RENAME`, `EXTEND`, `ATTRIB`; a hint only |
-| `socket` | object or array | 1 to 4 objects of `{ name; listen; backlog }`; `listen` is `tcp:ADDR:PORT`, `tcp6:`, `udp:`, `udp6:` (ADDR `*` or empty for any, port 1 to 65535) or `unix:/abs/path`; `backlog` 1 to 1024, default 128 | switchboard binds and holds the listener; the first connection launches the unit; delivered by `name` through `service_activation_socket(3)` |
+| `socket` | object or array | 1 to 4 objects of `{ name; listen; backlog; mode; owner; group }`; `listen` is `tcp:ADDR:PORT`, `tcp6:`, `udp:`, `udp6:` (ADDR `*` or empty for any, port 1 to 65535) or `unix:/abs/path`; `backlog` 1 to 1024, default 128; unix sockets also take `mode` (octal string 0001 to 0777, applied at `bind(2)`), `owner` and `group` (names) | switchboard binds and holds the listener; the first connection launches the unit; delivered by `name` through `service_activation_socket(3)` |
 | `queue_directory` | string | absolute path | relaunch after each exit while the directory has entries |
 | `on_mount` | bool | | relaunch on any mount |
 | `helper` | bool | no `ipc` allowed | private helper reachable only by a sibling through `service_helper_open(3)` under the synthetic name `helper.<bundle_id>.<unit>` |
