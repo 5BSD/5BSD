@@ -94,7 +94,7 @@ consumer (libservice), one shape; `ENVFD_CAPMODE_ONLY`, the generation
 counter and `EVFILT_ENVFD` have no production user; every other launch-time
 datum rides on `char *env[]` strings and bare descriptor numbers.
 
-1. **Extend the unit bootstrap record** (bump `SERVICE_BOOTSTRAP_VERSION`) —
+1. **Extend the unit bootstrap record** —
    **next**. Carry the config, unit and resource directory descriptors by role,
    the library directory descriptors, and identity: label, installation id,
    resource owner, coalition id, responsible id. libservice validates each
