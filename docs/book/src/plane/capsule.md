@@ -77,8 +77,7 @@ single_user -> runcom -> establish_capsule -> read_ttys -> multi_user
                               +- failure: single_user (recovery shell)
 ```
 
-switchboard runs `/etc/rc` as a oneshot and launches native boot units in
-parallel with it, then sends `CAPSULE_OP_READY` over its per-instance channel
+switchboard runs `/etc/rc` as a oneshot, then launches the native boot units and sends `CAPSULE_OP_READY` over its per-instance channel
 (`usr.sbin/switchboard/switchboard.c`). Only then does Capsule read
 `/etc/ttys` and start gettys. There is no clock on this wait: `/etc/rc` has no
 knowable duration, and init historically waited forever. Recovery is

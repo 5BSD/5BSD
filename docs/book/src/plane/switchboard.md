@@ -35,7 +35,6 @@ switchboard[42]: switchboard started, 17 bundles registered
 switchboard[42]: startup: loaded system.Log/bsdlog restart=on-failure
 switchboard[42]: startup: system.Log/bsdlog provides: system.Log
 switchboard[42]: startup: 23 services loaded
-switchboard[42]: startup: launched 11 native services
 switchboard[42]: startup: system ambient lookup channel on fd 9
 switchboard[42]: startup: ambient lookup channel handed to capsule for logins
 switchboard[42]: startup: running /etc/rc
@@ -45,10 +44,10 @@ switchboard[42]: startup: launched 12 services
 switchboard[42]: startup: complete in 4180 ms
 ```
 
-`startup: launched N native services` appears before `running /etc/rc`
-because the native boot units are launched first and reach readiness while rc
-runs (`usr.sbin/switchboard/startup.c`). Born-in-capmode units take their
-resources from delivered descriptors, never from rc, so nothing waits on it.
+The native boot units are launched after `/etc/rc` completes
+(`usr.sbin/switchboard/startup.c`). The kernel mounts root read-only; rc
+remounts it read-write and mounts the tmpfs on `/Capabilities/Run`, where every
+unit's runtime container lives, so a launch before rc would fail with EROFS.
 If Capsule's channel goes EOF at any point, switchboard logs `Capsule exited,
 stopping all services`, audits it, and stops everything.
 

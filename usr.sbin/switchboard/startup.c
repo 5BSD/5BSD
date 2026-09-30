@@ -198,8 +198,7 @@ run_rc_bootstrap(int kqunused)
  * Launch every populated service still in the STOPPED state, in parallel with
  * no ordering (inter-service needs are satisfied on demand via IPC activation).
  * Idempotent: a unit a lookup already activated is skipped -- so this is safe to
- * call in more than one phase (the native boot units before /etc/rc, the adopted
- * rc.d units after).  Returns how many it launched.
+ * call more than once.  Returns how many it launched.
  */
 static unsigned
 startup_launch_stopped(int kq)
@@ -280,19 +279,11 @@ svc_slot_apply_bundle_policy(struct svc_runtime *svc, unsigned bundle_idx)
  *
  * 1. Scan bundle registry for non-on-demand services
  * 2. Fill svc_runtime array with entries from bundles
- * 3. Launch native boot units, then run /etc/rc in parallel with them
+ * 3. Run /etc/rc, then launch the native boot units
  */
 int
 startup_launch_system(int kq)
 {
-	/*
-	 * Run/live must exist before the first launch, whatever else this
-	 * startup does: providers that reconcile against the running set receive
-	 * it as a delivered directory descriptor at exec time, and Run/ is
-	 * recreated every boot.
-	 */
-	svc_reclaim_live_prepare();
-	svc_reclaim_publish_groups();	/* installed-claimed groups: known now */
 	struct startup_entry {
 		struct svc_manifest manifest;
 		unsigned bundle_idx;
@@ -310,12 +301,6 @@ startup_launch_system(int kq)
 	skip_rc = skip_rc_env != NULL && skip_rc_env[0] == '1';
 
 	clock_gettime(CLOCK_MONOTONIC, &start_ts);
-
-	/*
-	 * /etc/rc is run further down, AFTER the native boot units are launched,
-	 * so the born-in-capability-mode services come up in parallel with rc
-	 * instead of waiting for the whole rc sequence to finish first.
-	 */
 
 	/* Collect all non-on-demand service entries from bundles. */
 	entries = calloc(SWITCHBOARD_MAX_SERVICES, sizeof(*entries));
@@ -392,17 +377,14 @@ startup_launch_system(int kq)
 	free(entries);
 
 	/*
-	 * Launch the native boot units NOW, before /etc/rc.  run_rc_bootstrap
-	 * below drives the shared switchboard dispatch loop, so these units reach
-	 * readiness WHILE rc runs rather than after the whole rc sequence.  Born-
-	 * in-capability-mode services take their resources from the descriptors
-	 * switchboard delivers and the loader-imported pool, never from rc, so they
-	 * do not depend on rc having finished; anything transiently unavailable is
-	 * retried on demand (no hard dependencies).
+	 * Do NOT launch the native boot units before /etc/rc.  The kernel mounts
+	 * root read-only; rc remounts it read-write and mounts the tmpfs on
+	 * /Capabilities/Run.  Every unit needs a runtime container under Run/, so a
+	 * launch before that fails with EROFS and the provider never comes up.
+	 * The native units are launched after rc, below.
 	 */
 	SWITCHBOARD_PROBE_STARTUP_BEGIN(sd.nservices, 1);
-	launched = startup_launch_stopped(kq);
-	syslog(LOG_INFO, "startup: launched %u native services", launched);
+	launched = 0;
 
 	/*
 	 * Transitional rc world: run /etc/rc once (a oneshot) and block until it
@@ -435,6 +417,9 @@ startup_launch_system(int kq)
 	 * svc_exec_rc first uses "onestatus" to adopt an instance /etc/rc already
 	 * started, and runs "onestart" only if absent.
 	 */
+	/* Run/live must exist before the first launch (delivered as a dirfd). */
+	svc_reclaim_live_prepare();
+	svc_reclaim_publish_groups();
 	if (!skip_rc)
 		(void)rc_adopt_register(kq);
 	launched += startup_launch_stopped(kq);
