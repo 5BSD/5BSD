@@ -23,6 +23,8 @@
 #include <sys/event.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
+#include <sys/mount.h>
+#include <sys/uio.h>
 #include <sys/procdesc.h>
 #include <sys/resource.h>
 #include <sys/stat.h>
@@ -32,6 +34,7 @@
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <mntopts.h>
 #include <grp.h>
 #include <pwd.h>
 #include <poll.h>
@@ -242,6 +245,63 @@ svc_rmtree_at(int parent, const char *name)
 	}
 	(void)closedir(dir);
 	(void)unlinkat(parent, name, AT_REMOVEDIR);
+}
+
+/*
+ * Guarantee the runtime container directory is writable before anything is
+ * launched.
+ *
+ * Run/ is meant to be volatile (see svc_run_container_sweep below), and both
+ * the install media and zfsboot's generated fstab declare it as a tmpfs.  But
+ * capsule starts switchboard before /etc/rc processes fstab and remounts root
+ * read-write, so on a fresh boot the directory is still on the read-only root:
+ * every runtime container fails with EROFS and no capability provider starts
+ * at all.  Mount the tmpfs here rather than depending on rc ordering.  If rc
+ * (or the media) got there first the probe simply succeeds and this is a no-op,
+ * and a later fstab mount over the same path is harmless.
+ */
+void
+svc_run_dir_ensure(void)
+{
+	struct iovec *iov;
+	char probe[PATH_MAX], errmsg[255];
+	int fd, iovlen;
+
+	(void)mkdir(switchboard_run_dir, 0700);
+	if (snprintf(probe, sizeof(probe), "%s/.writable",
+	    switchboard_run_dir) >= (int)sizeof(probe))
+		return;
+	fd = open(probe, O_CREAT | O_WRONLY | O_CLOEXEC, 0600);
+	if (fd != -1) {
+		(void)close(fd);
+		(void)unlink(probe);
+		return;
+	}
+	if (errno != EROFS) {
+		syslog(LOG_WARNING, "run: %s is unusable: %m",
+		    switchboard_run_dir);
+		return;
+	}
+
+	iov = NULL;
+	iovlen = 0;
+	memset(errmsg, 0, sizeof(errmsg));
+	build_iovec(&iov, &iovlen, "fstype", __DECONST(void *, "tmpfs"),
+	    (size_t)-1);
+	build_iovec(&iov, &iovlen, "fspath",
+	    __DECONST(void *, switchboard_run_dir), (size_t)-1);
+	build_iovec(&iov, &iovlen, "mode", __DECONST(void *, "0700"),
+	    (size_t)-1);
+	build_iovec(&iov, &iovlen, "errmsg", errmsg, sizeof(errmsg));
+	if (nmount(iov, iovlen, 0) == -1) {
+		syslog(LOG_ERR, "run: cannot mount tmpfs on %s: %s%m",
+		    switchboard_run_dir,
+		    *errmsg != '\0' ? errmsg : "");
+	} else {
+		syslog(LOG_INFO, "run: mounted tmpfs on %s (root still "
+		    "read-only)", switchboard_run_dir);
+	}
+	free_iovec(&iov, &iovlen);
 }
 
 /*

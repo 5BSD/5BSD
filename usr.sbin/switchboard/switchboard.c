@@ -551,6 +551,12 @@ main(int argc, char *argv[])
 		    (uintmax_t)sd.root_coalition_id);
 	}
 
+	/*
+	 * Make Run/ writable before anything touches it: capsule starts us
+	 * ahead of rc, so on a fresh boot the root is still read-only.
+	 */
+	svc_run_dir_ensure();
+
 	/* Reclaim any runtime containers stranded by a prior crash. */
 	svc_run_container_sweep();
 
