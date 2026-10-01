@@ -42,6 +42,8 @@ sys/*/compile
 /src.conf
 
 # --- local scratch & generated artifacts (repo-root litter) ---
+/artifacts/
+/.claude/
 /*.plist
 /*.tsv
 /*.log
