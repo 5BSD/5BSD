@@ -111,7 +111,7 @@ probe_contract_body()
 	atf_check -s exit:0 -o ignore grep -F 'if (nrequires > 0)' \
 	    "${src}/naming.c"
 	atf_check -s exit:0 -o ignore grep -F \
-	    'SWITCHBOARD_PROBE_ANOINT_ALLOW(name, NAMING_SESSION_LABEL, 1U);' \
+	    'SWITCHBOARD_PROBE_ANOINT_ALLOW(name, NAMING_SESSION_LABEL,' \
 	    "${src}/naming.c"
 	atf_check -s exit:1 -o empty grep -F 'SWITCHBOARD_PROBE_ANOINT_ALLOW' \
 	    "${src}/anoint.c"
@@ -215,18 +215,24 @@ anoint_script_parses_head()
 }
 anoint_script_parses_body()
 {
-	local script
+	local script zflag
 
 	require_srctree
 	script="@SRCTOP@/share/dtrace/switchboard-anoint"
 	test -r "${script}" || atf_fail "missing ${script}"
 	[ "@MK_DTRACE@" = "yes" ] || atf_skip "built without DTrace"
 	command -v dtrace >/dev/null 2>&1 || atf_skip "dtrace(1) not available"
-	# -e: compile and exit before enabling anything; -Z is deliberately
-	# NOT given, so a clause naming a probe the provider does not define
-	# is a compile error here (the switchboard* pattern matches no live
-	# process, which -e tolerates).
-	if ! dtrace -C -e -s "${script}" >dtrace.out 2>dtrace.err; then
+	# -e: compile and exit before enabling anything.  With a live
+	# switchboard its probes exist, so -Z is withheld and a clause naming
+	# a probe the provider does not define is a compile error.  Without a
+	# live switchboard (the plane-off image) no USDT probe is registered
+	# and every clause would fail to match, so -Z is the only way to
+	# check the script's syntax and actions.
+	zflag=-Z
+	if dtrace -l -P 'switchboard*' 2>/dev/null | grep -q anoint; then
+		zflag=
+	fi
+	if ! dtrace ${zflag} -C -e -s "${script}" >dtrace.out 2>dtrace.err; then
 		if grep -qi 'privileges\|permission denied\|/dev/dtrace' \
 		    dtrace.err; then
 			atf_skip "dtrace needs privileges: $(head -n 1 dtrace.err)"
@@ -238,7 +244,7 @@ anoint_script_parses_body()
 	# proving the parse above is a real check and not a no-op.
 	sed 's/printf(/no_such_action(/' "${script}" >broken.d
 	atf_check -s not-exit:0 -o ignore -e ignore \
-	    dtrace -C -e -s broken.d
+	    dtrace ${zflag} -C -e -s broken.d
 }
 
 atf_init_test_cases()

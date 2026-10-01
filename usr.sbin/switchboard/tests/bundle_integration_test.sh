@@ -1158,13 +1158,13 @@ partial_system_install_is_admitted_when_complete_body() {
 	    atf_fail "no settled retry was armed for the quarantined bundle"
 	grep -q 'rescan failed' "$logfile" &&
 	    atf_fail "a new System bundle failed the whole rescan"
-	pgrep -f '[/ ]slowd( |$)' >/dev/null && atf_fail "slowd ran from a half-written bundle"
+	pgrep -f '(^|[/ ])slowd( |$)' >/dev/null && atf_fail "slowd ran from a half-written bundle"
 
 	# Step 2: the units arrive BELOW Units/ -- no watched directory changes.
 	cp -R "$stage/Units/slowd.unit" "$dst/Units/"
 	wait_for_file "${WORK}/slowd.ready" 12 ||
 	    atf_fail "the completed bundle was not admitted by the settled retry"
-	pgrep -f '[/ ]slowd( |$)' >/dev/null || atf_fail "slowd is not running"
+	pgrep -f '(^|[/ ])slowd( |$)' >/dev/null || atf_fail "slowd is not running"
 	[ -e "${WORK}/Run/live/Slow" ] || atf_fail "no Run/live marker for the admitted bundle"
 	# The admission came from the retry, not from an explicit reload.
 	grep -q "reload: .*switchboardctl" "$logfile" && atf_fail "an explicit reload happened"
@@ -1207,7 +1207,7 @@ broken_new_system_bundle_does_not_block_installs_body() {
 	grep -q 'retry 8/8' "$logfile" || atf_fail "the retry budget was never exhausted (no 8/8)"
 	sleep 3
 	grep -q 'retry 9/8' "$logfile" && atf_fail "retries continued past the budget"
-	pgrep -f '[/ ]fined( |$)' >/dev/null || atf_fail "fined is not running"
+	pgrep -f '(^|[/ ])fined( |$)' >/dev/null || atf_fail "fined is not running"
 }
 broken_new_system_bundle_does_not_block_installs_cleanup() {
 	cleanup_common
@@ -1232,7 +1232,7 @@ registered_system_bundle_survives_half_written_upgrade_body() {
 	sed -i '' -e 's/ipc = \[[^]]*\];//' -e 's/arguments = \["compat-ready", "[^"]*"\];/arguments = ["compat-ready"];/' "${bundle}/Units/keepd.unit/Unit.ucl"
 	start_stack
 	wait_for_file "${WORK}/keepd.ready" 10 || atf_fail "keepd did not start"
-	pid=$(pgrep -f '[/ ]keepd( |$)' | head -1)
+	pid=$(pgrep -f '(^|[/ ])keepd( |$)' | head -1)
 	[ -n "$pid" ] || atf_fail "cannot find keepd pid"
 	unit="${bundle}/Units/keepd.unit"
 
@@ -1289,7 +1289,7 @@ registered_apps_bundle_survives_half_written_upgrade_body() {
 	sed -i '' -e 's/ipc = \[[^]]*\];/boot = true;/' -e 's/arguments = \["compat-ready", "[^"]*"\];/arguments = ["compat-ready"];/' "${bundle}/Units/keepud.unit/Unit.ucl"
 	start_stack
 	wait_for_file "${WORK}/keepud.ready" 10 || atf_fail "keepud did not start"
-	pid=$(pgrep -f '[/ ]keepud( |$)' | head -1)
+	pid=$(pgrep -f '(^|[/ ])keepud( |$)' | head -1)
 	[ -n "$pid" ] || atf_fail "cannot find keepud pid"
 	unit="${bundle}/Units/keepud.unit"
 	loads0=$(grep -c 'bundle_registry: [0-9]* bundles loaded' "$logfile")
@@ -1343,7 +1343,7 @@ conflicting_user_bundle_is_quarantined_not_fatal_body() {
 	    { grep -E "Squatter" "$logfile" | head -10; atf_fail "quarantined for a reason other than the duplicate provided name"; }
 	grep -q "bundle registry init failed" "$logfile" && atf_fail "boot was aborted by a user bundle"
 	sleep 2
-	pgrep -f '[/ ]squatterd( |$)' >/dev/null && atf_fail "the quarantined bundle's unit ran"
+	pgrep -f '(^|[/ ])squatterd( |$)' >/dev/null && atf_fail "the quarantined bundle's unit ran"
 	[ -e "${WORK}/Run/live/Squatter" ] && atf_fail "a quarantined bundle got a Run/live marker"
 	[ -e "${WORK}/Run/live/Owner" ] || atf_fail "the System unit has no marker"
 }
@@ -1369,7 +1369,7 @@ vanished_system_root_retains_registry_body() {
 	sed -i '' -e 's/ipc = \[[^]]*\];//' -e 's/arguments = \["compat-ready", "[^"]*"\];/arguments = ["compat-ready"];/' "${bundle}/Units/rootedd.unit/Unit.ucl"
 	start_stack
 	wait_for_file "${WORK}/rootedd.ready" 10 || atf_fail "rootedd did not start"
-	pid=$(pgrep -f '[/ ]rootedd( |$)' | head -1)
+	pid=$(pgrep -f '(^|[/ ])rootedd( |$)' | head -1)
 	[ -n "$pid" ] || atf_fail "cannot find rootedd pid"
 
 	mv "${APPS_DIR}" "${APPS_DIR}.gone"
@@ -1413,8 +1413,8 @@ folder_watch_loads_and_unloads_body() {
 	wait_for_log 'registry: install folders changed; reloading' ||
 	    atf_fail "the folder watch did not trigger a reload"
 	wait_for_file "${WORK}/autod.ready" 10
-	# Units run as "ld-elf.so.1 -f <fd> <program>": match the command line.
-	pgrep -f '[/ ]autod( |$)' >/dev/null || atf_fail "autod is not running after the watch-triggered load"
+	# Units run fexecve()d with argv[0] = the program basename.
+	pgrep -f '(^|[/ ])autod( |$)' >/dev/null || atf_fail "autod is not running after the watch-triggered load"
 	[ -e "${WORK}/Run/live/Auto" ] || atf_fail "no Run/live marker for the loaded bundle"
 
 	# Remove the bundle: the watch must unload the unit, again with no reload.
@@ -1423,8 +1423,8 @@ folder_watch_loads_and_unloads_body() {
 	    atf_fail "the removed bundle was not unloaded by the folder watch"
 	wait_for_log 'reload: 1 services marked for removal' ||
 	    atf_fail "removal was not completed"
-	i=0; while pgrep -f '[/ ]autod( |$)' >/dev/null && [ $i -lt 100 ]; do i=$((i+1)); sleep 0.1; done
-	pgrep -f '[/ ]autod( |$)' >/dev/null && atf_fail "autod still running after its bundle was removed"
+	i=0; while pgrep -f '(^|[/ ])autod( |$)' >/dev/null && [ $i -lt 100 ]; do i=$((i+1)); sleep 0.1; done
+	pgrep -f '(^|[/ ])autod( |$)' >/dev/null && atf_fail "autod still running after its bundle was removed"
 	sleep 1
 	[ ! -e "${WORK}/Run/live/Auto" ] || atf_fail "Run/live marker survived removal"
 }
@@ -1497,14 +1497,14 @@ run_live_markers_follow_units_body() {
 	[ -e "${WORK}/Run/live/Mark" ] || atf_fail "no marker for the loaded bundle"
 	# Kill the unit: restart=always relaunches it asynchronously; the marker
 	# must be re-published for the relaunched unit, not lost.
-	pid=$(pgrep -f '[/ ]markd( |$)' | head -1)
+	pid=$(pgrep -f '(^|[/ ])markd( |$)' | head -1)
 	[ -n "$pid" ] || atf_fail "cannot find markd pid"
 	rm -f "${WORK}/markd.ready"
 	kill -KILL "$pid" || atf_fail "kill -KILL $pid denied (shield?): rc=$?"
 	# restart=always relaunches it: a NEW pid reports ready again.
 	wait_for_file "${WORK}/markd.ready" 10
 	i=0; while [ $i -lt 100 ]; do
-		new=$(pgrep -f '[/ ]markd( |$)' | head -1)
+		new=$(pgrep -f '(^|[/ ])markd( |$)' | head -1)
 		[ -n "$new" ] && [ "$new" != "$pid" ] && break
 		i=$((i+1)); sleep 0.1
 	done

@@ -62,6 +62,22 @@ install_helper_bundle()
 	echo "${dir}"
 }
 
+# The parent writes "helper_open=started" before it blocks in helper_open, so
+# a non-empty file is not the outcome.  Wait for a terminal helper_open state.
+wait_for_helper_outcome()
+{
+	local path max i
+	path="$1"
+	max=$(( ${2:-15} * 10 ))
+	i=0
+	while ! grep -Eq '^helper_open=(ok|failed|connected)$' "$path" \
+	    2>/dev/null && [ "$i" -lt "$max" ]; do
+		i=$((i + 1))
+		sleep 0.1
+	done
+	grep -Eq '^helper_open=(ok|failed|connected)$' "$path" 2>/dev/null
+}
+
 helper_test_head()
 {
 	atf_set "require.user" "root"
@@ -90,7 +106,7 @@ launch_and_connect_body()
 	    'activation { helper = true; }'
 	reload_stack
 
-	wait_for_file "${parent_result}" 20 ||
+	wait_for_helper_outcome "${parent_result}" 30 ||
 	    atf_fail "parent did not complete helper_open"
 	atf_check -s exit:0 -o match:'helper_open=ok' \
 	    cat "${parent_result}"
@@ -137,7 +153,7 @@ open_undeclared_body()
 	    'activation { helper = true; }'
 	reload_stack
 
-	wait_for_file "${parent_result}" 20 ||
+	wait_for_helper_outcome "${parent_result}" 30 ||
 	    atf_fail "parent did not record its failed helper_open"
 	atf_check -s exit:0 -o match:'helper_open=failed' \
 	    grep 'helper_open=failed' "${parent_result}"

@@ -9,6 +9,7 @@ TESTSDIR=	${TESTSBASE}/usr.sbin/switchboard
 
 ATF_TESTS_SH+=	switchboard_naming_test
 ATF_TESTS_SH+=	switchboard_svc_test
+ATF_TESTS_SH+=	launch_policy_test
 ATF_TESTS_SH+=	switchboard_integration_test
 ATF_TESTS_SH+=	switchboard_dynamic_claims_test
 ATF_TESTS_SH+=	bundle_integration_test

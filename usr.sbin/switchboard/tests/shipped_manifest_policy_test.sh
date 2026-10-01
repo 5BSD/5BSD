@@ -13,7 +13,7 @@ manifest_inventory()
 	    -path '*/bluetooth/BSDBluetooth/blued.ucl' \) \
 	    ! -name Bundle.ucl |
 	    sed 's,^@SRCTOP@/,,' |
-	    sort
+	    LC_ALL=C sort
 }
 
 write_expected_inventory()
@@ -21,18 +21,20 @@ write_expected_inventory()
 	cat >expected <<'EOF'
 usr.sbin/BSDAudit/capbundle/bsdaudit.ucl
 usr.sbin/BSDAuth/capbundle/bsdauth.ucl
-usr.sbin/bluetooth/BSDBluetooth/blued.ucl
-usr.sbin/BSDNotify/capbundle/bsdnotify.ucl
 usr.sbin/BSDCrypto/capbundle/crypto.ucl
 usr.sbin/BSDDevice/capbundle/device.ucl
-usr.sbin/BSDNetwork/capbundle/bsdnetwork.ucl
-usr.sbin/BSDSysctl/capbundle/bsdsysctl.ucl
-usr.sbin/BSDLog/capbundle/bsdlog.ucl
 usr.sbin/BSDExtension/capbundle/bsdextension.ucl
-usr.sbin/BSDTrace/capbundle/bsdtrace.ucl
 usr.sbin/BSDFilesystem/capbundle/bsdfilesystem.ucl
+usr.sbin/BSDLog/capbundle/bsdlog.ucl
 usr.sbin/BSDNamespace/capbundle/bsdnamespace.ucl
-usr.sbin/BSDVM/capbundle/waspnest.ucl
+usr.sbin/BSDNetwork/capbundle/bsdnetwork.ucl
+usr.sbin/BSDNotify/capbundle/bsdnotify.ucl
+usr.sbin/BSDPower/capbundle/BSDPower.ucl
+usr.sbin/BSDSysctl/capbundle/bsdsysctl.ucl
+usr.sbin/BSDTime/capbundle/BSDTime.ucl
+usr.sbin/BSDTrace/capbundle/bsdtrace.ucl
+usr.sbin/BSDVM/capbundle/bsdvm.ucl
+usr.sbin/bluetooth/BSDBluetooth/blued.ucl
 EOF
 }
 
@@ -46,10 +48,10 @@ every_shipped_unit_is_explicit_body()
 
 	while read -r manifest; do
 		count=$(grep -Ec \
-		    '^[[:space:]]*management = "(core|system|user)";' \
+		    '^[[:space:]]*control = "(core|system|user)";' \
 		    "@SRCTOP@/$manifest")
 		if [ "$count" -ne 1 ]; then
-			atf_fail "$manifest must declare exactly one management class"
+			atf_fail "$manifest must declare exactly one control class"
 		fi
 	done <actual
 }
@@ -64,11 +66,13 @@ trust_spine_is_core_and_shielded_body()
 	    usr.sbin/BSDSysctl/capbundle/bsdsysctl.ucl \
 	    usr.sbin/BSDLog/capbundle/bsdlog.ucl \
 	    usr.sbin/BSDExtension/capbundle/bsdextension.ucl \
-	    usr.sbin/BSDFilesystem/capbundle/bsdfilesystem.ucl
+	    usr.sbin/BSDFilesystem/capbundle/bsdfilesystem.ucl \
+	    usr.sbin/BSDPower/capbundle/BSDPower.ucl \
+	    usr.sbin/BSDTime/capbundle/BSDTime.ucl
 	do
 		path="@SRCTOP@/$manifest"
 		atf_check -s exit:0 -o ignore grep -Fx \
-		    'management = "core";' "$path"
+		    'control = "core";' "$path"
 		for flag in ptrace signal wait sigkill sigcont sched core ktrace; do
 			atf_check -s exit:0 -o ignore grep -Fw "$flag" "$path"
 		done
@@ -87,10 +91,10 @@ non_tcb_units_are_system_managed_body()
 	    usr.sbin/BSDNetwork/capbundle/bsdnetwork.ucl \
 	    usr.sbin/BSDTrace/capbundle/bsdtrace.ucl \
 	    usr.sbin/BSDNamespace/capbundle/bsdnamespace.ucl \
-	    usr.sbin/BSDVM/capbundle/waspnest.ucl
+	    usr.sbin/BSDVM/capbundle/bsdvm.ucl
 	do
 		atf_check -s exit:0 -o ignore grep -Fx \
-		    'management = "system";' "@SRCTOP@/$manifest"
+		    'control = "system";' "@SRCTOP@/$manifest"
 	done
 }
 
@@ -102,7 +106,7 @@ live_core_change_reaches_management_gate_body()
 	atf_check -s exit:0 -o ignore grep -F \
 	    'A core image and its launch policy belong to the' "$reload"
 	atf_check -s exit:0 -o ignore grep -F \
-	    '"changed at runtime") != 0' "$reload"
+	    '"changed at runtime", (uid_t)-1, true) != 0' "$reload"
 }
 
 atf_init_test_cases()
