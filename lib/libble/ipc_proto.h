@@ -13,7 +13,7 @@
  *   offset  size  field
  *   0       4     payload length, excluding the header
  *   4       2     IPC_T_* frame type
- *   6       2     protocol version, error code, or operation domain
+ *   6       2     reserved, error code, or operation domain
  *
  * Operation requests, replies, and events use IPC_T_OP_* and an 8-byte
  * prefix.  Requests carry a nonzero request ID and zero status/flags.  Replies
@@ -21,11 +21,15 @@
  * events use request ID zero; events produced by a pending operation repeat
  * its request ID.  Domain payloads are binary and length-delimited.
  *
- * IPC_T_HELLO must be the first frame.  ih_arg is IPC_PROTO_VERSION and the
- * payload is a little-endian IPC_FEATURE_* bitmask.  The reply carries the
- * accepted feature mask.  A version mismatch receives IPC_T_ERROR and the
- * session is not activated.  The current protocol exposes only typed binary
- * operations, replies, and events.
+ * IPC_T_HELLO must be the first frame.  ih_arg is reserved and must be zero in
+ * both directions; the payload is a little-endian IPC_FEATURE_* bitmask and
+ * the reply carries the accepted feature mask.  The handshake negotiates
+ * features only: there is no protocol version on the wire, so a peer built
+ * against a different ipc_proto.h is not detectable here and both ends must be
+ * built together.  A nonzero ih_arg, or a payload that is not exactly
+ * IPC_HELLO_FEATURES_SIZE bytes, receives IPC_T_ERROR and the session is not
+ * activated.  The current protocol exposes only typed binary operations,
+ * replies, and events.
  *
  * Event delivery requires IPC_FEATURE_EVENTS.  Mesh additionally requires
  * IPC_FEATURE_MESH and uid 0; the daemon validates mesh AD types and treats
@@ -38,9 +42,6 @@
 
 #include <stddef.h>
 #include <stdint.h>
-
-/* Current protocol version.  Bump on an incompatible wire change. */
-#define	IPC_PROTO_VERSION	6u
 
 /* Fixed header size and maximum payload carried in a single frame. */
 #define	IPC_HDR_SIZE		8u

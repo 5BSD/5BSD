@@ -35,7 +35,7 @@ stage_hello(int srv, uint32_t features)
 	uint8_t payload[IPC_HELLO_FEATURES_SIZE];
 
 	ipc_put_le32(payload, features);
-	ipc_hdr_encode(hdr, sizeof(payload), IPC_T_HELLO, IPC_PROTO_VERSION);
+	ipc_hdr_encode(hdr, sizeof(payload), IPC_T_HELLO, 0);
 	ATF_REQUIRE(write(srv, hdr, sizeof(hdr)) == (ssize_t)sizeof(hdr));
 	ATF_REQUIRE(write(srv, payload, sizeof(payload)) ==
 	    (ssize_t)sizeof(payload));

@@ -1160,7 +1160,7 @@ run_main_with_mock(int argc, char **argv, bool empty_stdin)
 	ipc_put_le32(features, IPC_FEATURE_EVENTS | IPC_FEATURE_FDPASS |
 	    IPC_FEATURE_MESH);
 	ipc_hdr_encode(header, sizeof(features), IPC_T_HELLO,
-	    IPC_PROTO_VERSION);
+	    0);
 	ATF_REQUIRE_EQ((ssize_t)sizeof(header), send(client_fd, header,
 	    sizeof(header), 0));
 	ATF_REQUIRE_EQ((ssize_t)sizeof(features), send(client_fd, features,
@@ -1170,7 +1170,7 @@ run_main_with_mock(int argc, char **argv, bool empty_stdin)
 	ATF_REQUIRE(len <= sizeof(payload));
 	mock_read_all(client_fd, payload, len);
 	ATF_CHECK_EQ(IPC_T_HELLO, type);
-	ATF_CHECK_EQ(IPC_PROTO_VERSION, arg);
+	ATF_CHECK_EQ(0, arg);
 	close(client_fd);
 	close(listen_fd);
 	(void)unlink(path);

@@ -284,7 +284,7 @@ ptap_ctl_internal_completion(void)
 		    sizeof(envelope));
 
 		/* HELLO has an independently checked feature-vector length. */
-		ctl_process_frame(&owner, IPC_T_HELLO, IPC_PROTO_VERSION,
+		ctl_process_frame(&owner, IPC_T_HELLO, 0,
 		    envelope, 0);
 
 		/* ISO was the one framed domain not represented by the generic

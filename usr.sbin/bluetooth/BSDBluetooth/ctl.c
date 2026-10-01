@@ -2883,20 +2883,19 @@ ctl_client_privileged(const struct blued_ctl_client *client)
 }
 
 /*
- * Handle a HELLO handshake frame from a framed client: negotiate protocol
- * version and features, reply with a HELLO frame (or a clean IPC_ERR_PROTO
- * error frame on version mismatch).
+ * Handle a HELLO handshake frame from a framed client: negotiate features,
+ * reply with a HELLO frame (or a clean IPC_ERR_PROTO error frame on a
+ * malformed handshake).  ih_arg is reserved and must be zero.
  */
 static void
-ctl_process_hello(struct blued_ctl_client *client, uint16_t cli_ver,
+ctl_process_hello(struct blued_ctl_client *client, uint16_t cli_arg,
     const uint8_t *payload, size_t plen)
 {
 	uint8_t reply[IPC_HELLO_FEATURES_SIZE];
 	uint32_t accepted, requested;
 
-	if (cli_ver != IPC_PROTO_VERSION ||
-	    plen != IPC_HELLO_FEATURES_SIZE) {
-		static const char m[] = "protocol version mismatch";
+	if (cli_arg != 0 || plen != IPC_HELLO_FEATURES_SIZE) {
+		static const char m[] = "malformed handshake";
 
 		ctl_send_frame(client, IPC_T_ERROR, IPC_ERR_PROTO,
 		    m, sizeof(m) - 1);
@@ -2927,8 +2926,7 @@ ctl_process_hello(struct blued_ctl_client *client, uint16_t cli_ver,
 	}
 	client->handshaked = true;
 	ipc_put_le32(reply, accepted);
-	ctl_send_frame(client, IPC_T_HELLO, IPC_PROTO_VERSION,
-	    reply, sizeof(reply));
+	ctl_send_frame(client, IPC_T_HELLO, 0, reply, sizeof(reply));
 }
 
 static void
@@ -6528,11 +6526,9 @@ ctl_process_frame(struct blued_ctl_client *client, uint16_t type,
 		uint16_t status, flags;
 
 		/*
-		 * The HELLO handshake is the only defense against struct-layout
-		 * skew (ipc_proto.h): a client that never handshaked, or whose
-		 * version was rejected (ctl_process_hello leaves handshaked
-		 * false), must not have its operation frames dispatched
-		 * (finding 35).
+		 * A client that never handshaked, or whose handshake was
+		 * rejected (ctl_process_hello leaves handshaked false), must
+		 * not have its operation frames dispatched (finding 35).
 		 */
 		if (!client->handshaked) {
 			ctl_send_frame(client, IPC_T_ERROR, IPC_ERR_PROTO,
@@ -7046,7 +7042,6 @@ plane_request(struct channel *ch __unused, struct channel_message *m, void *arg)
 
 	memset(&rp, 0, sizeof(rp));
 	rp.magic = BLUED_PLANE_MAGIC;
-	rp.version = BLUED_PLANE_VERSION;
 	memset(&out, 0, sizeof(out));
 	out.size = sizeof(out);
 	out.data = &rp;
@@ -7057,8 +7052,7 @@ plane_request(struct channel *ch __unused, struct channel_message *m, void *arg)
 	} else {
 		rq = channel_message_data(m);
 		rp.opcode = rq->opcode;
-		if (rq->magic != BLUED_PLANE_MAGIC ||
-		    rq->version != BLUED_PLANE_VERSION)
+		if (rq->magic != BLUED_PLANE_MAGIC)
 			rp.status = EPROTO;
 		else if (rq->opcode != BLUED_PLANE_OP_ATTACH)
 			rp.status = EINVAL;

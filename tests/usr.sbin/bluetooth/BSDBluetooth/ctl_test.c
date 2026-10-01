@@ -1549,7 +1549,7 @@ make_client(int sp[2])
 	return (client);
 }
 
-static void ipc_handshake(struct blued_ctl_client *, int, uint16_t,
+static void ipc_handshake(struct blued_ctl_client *, int,
     uint32_t, char *, size_t);
 static void ipc_send_raw(int, uint16_t, uint16_t, const void *, size_t);
 static uint32_t ipc_test_request_id;
@@ -1981,7 +1981,7 @@ ATF_TC_BODY(test_ctl_gatt_worker_io, tc)
 	client = make_client(sp);
 	client->peer_uid = 0;
 	LIST_INSERT_HEAD(&blued_g.ctl_clients, client, entries);
-	ipc_handshake(client, sp[1], IPC_PROTO_VERSION, IPC_FEATURE_EVENTS,
+	ipc_handshake(client, sp[1], IPC_FEATURE_EVENTS,
 	    feat, sizeof(feat));
 
 	memset(body, 0, sizeof(body));
@@ -3237,7 +3237,7 @@ ipc_recv_operation(int fd, uint16_t domain, uint32_t expected_id,
 
 /* Drive a HELLO handshake; returns the accepted-features payload via feat. */
 static void
-ipc_handshake(struct blued_ctl_client *client, int peer, uint16_t version,
+ipc_handshake(struct blued_ctl_client *client, int peer,
     uint32_t req_features, char *feat, size_t featsz)
 {
 	uint8_t request[IPC_HELLO_FEATURES_SIZE];
@@ -3245,15 +3245,15 @@ ipc_handshake(struct blued_ctl_client *client, int peer, uint16_t version,
 
 	ATF_REQUIRE(featsz > IPC_HELLO_FEATURES_SIZE);
 	ipc_put_le32(request, req_features);
-	ipc_send_raw(peer, IPC_T_HELLO, version, request, sizeof(request));
+	ipc_send_raw(peer, IPC_T_HELLO, 0, request, sizeof(request));
 	ATF_CHECK_EQ(blued_ctl_dispatch(client), 0);
 	(void)ipc_recv(peer, &type, &arg, feat, featsz);
 	ATF_CHECK_EQ(type, IPC_T_HELLO);
-	ATF_CHECK_EQ(arg, IPC_PROTO_VERSION);
+	ATF_CHECK_EQ(arg, 0);
 	ATF_CHECK(client->handshaked);
 }
 
-/* HELLO with a matching version + push-events feature is accepted. */
+/* A well-formed HELLO with the push-events feature is accepted. */
 ATF_TC_WITHOUT_HEAD(test_ipc_hello_match);
 ATF_TC_BODY(test_ipc_hello_match, tc)
 {
@@ -3264,8 +3264,7 @@ ATF_TC_BODY(test_ipc_hello_match, tc)
 	test_init();
 	client = make_client(sp);
 
-	ipc_handshake(client, sp[1], IPC_PROTO_VERSION,
-	    IPC_FEATURE_EVENTS, feat, sizeof(feat));
+	ipc_handshake(client, sp[1], IPC_FEATURE_EVENTS, feat, sizeof(feat));
 	ATF_CHECK((ipc_get_le32((const uint8_t *)feat) &
 	    IPC_FEATURE_EVENTS) != 0);
 	ATF_CHECK(client->wants_events);
@@ -3275,9 +3274,9 @@ ATF_TC_BODY(test_ipc_hello_match, tc)
 	free(client);
 }
 
-/* HELLO with a mismatched major version yields a clean IPC_ERR_PROTO frame. */
-ATF_TC_WITHOUT_HEAD(test_ipc_hello_version_mismatch);
-ATF_TC_BODY(test_ipc_hello_version_mismatch, tc)
+/* HELLO with a nonzero reserved ih_arg yields a clean IPC_ERR_PROTO frame. */
+ATF_TC_WITHOUT_HEAD(test_ipc_hello_bad_reserved_arg);
+ATF_TC_BODY(test_ipc_hello_bad_reserved_arg, tc)
 {
 	struct blued_ctl_client *client;
 	char pl[128];
@@ -3287,7 +3286,7 @@ ATF_TC_BODY(test_ipc_hello_version_mismatch, tc)
 	test_init();
 	client = make_client(sp);
 
-	ipc_send(sp[1], IPC_T_HELLO, IPC_PROTO_VERSION + 99, "");
+	ipc_send(sp[1], IPC_T_HELLO, 99, "");
 	ATF_CHECK_EQ(blued_ctl_dispatch(client), 0);
 	(void)ipc_recv(sp[1], &type, &arg, pl, sizeof(pl));
 	ATF_CHECK_EQ(type, IPC_T_ERROR);
@@ -3310,8 +3309,7 @@ ATF_TC_BODY(test_ipc_feature_negotiation, tc)
 	test_init();
 	client = make_client(sp);
 
-	ipc_handshake(client, sp[1], IPC_PROTO_VERSION,
-	    IPC_FEATURE_EVENTS | 0x80000000u, feat, sizeof(feat));
+	ipc_handshake(client, sp[1], IPC_FEATURE_EVENTS | 0x80000000u, feat, sizeof(feat));
 	ATF_CHECK_EQ(ipc_get_le32((const uint8_t *)feat), IPC_FEATURE_EVENTS);
 
 	close(sp[0]);
@@ -3347,8 +3345,7 @@ ATF_TC_BODY(test_ipc_event_optin_gating, tc)
 
 	/* Opted-in client. */
 	cli_on = make_client(spon);
-	ipc_handshake(cli_on, spon[1], IPC_PROTO_VERSION,
-	    IPC_FEATURE_EVENTS, feat, sizeof(feat));
+	ipc_handshake(cli_on, spon[1], IPC_FEATURE_EVENTS, feat, sizeof(feat));
 	LIST_INSERT_HEAD(&blued_g.ctl_clients, cli_on, entries);
 	memcpy(&cli_on->subs[0].addr, &addr, sizeof(addr));
 	cli_on->subs[0].handle = 0x0007;
@@ -3356,7 +3353,7 @@ ATF_TC_BODY(test_ipc_event_optin_gating, tc)
 
 	/* Framed client that did NOT request push-events. */
 	cli_off = make_client(spoff);
-	ipc_handshake(cli_off, spoff[1], IPC_PROTO_VERSION, 0, feat,
+	ipc_handshake(cli_off, spoff[1], 0, feat,
 	    sizeof(feat));
 	LIST_INSERT_HEAD(&blued_g.ctl_clients, cli_off, entries);
 	memcpy(&cli_off->subs[0].addr, &addr, sizeof(addr));
@@ -3425,8 +3422,7 @@ ATF_TC_BODY(test_ipc_typed_status, tc)
 	LIST_INSERT_HEAD(&blued_g.ctl_clients, client, entries);
 	blued_g.periph_active = true;
 
-	ipc_handshake(client, sp[1], IPC_PROTO_VERSION,
-	    IPC_FEATURE_EVENTS, feat, sizeof(feat));
+	ipc_handshake(client, sp[1], IPC_FEATURE_EVENTS, feat, sizeof(feat));
 
 	request_id = ipc_send_ctl_operation(sp[1], IPC_CTL_STATUS, 0, 0, 0);
 	ATF_CHECK_EQ(blued_ctl_dispatch(client), 0);
@@ -3542,8 +3538,7 @@ ATF_TC_BODY(test_ipc_typed_adapter_caps, tc)
 
 	client = make_client(sp);
 	LIST_INSERT_HEAD(&blued_g.ctl_clients, client, entries);
-	ipc_handshake(client, sp[1], IPC_PROTO_VERSION,
-	    IPC_FEATURE_EVENTS, feat, sizeof(feat));
+	ipc_handshake(client, sp[1], IPC_FEATURE_EVENTS, feat, sizeof(feat));
 
 	request_id = ipc_send_ctl_operation(sp[1], IPC_CTL_ADAPTER_CAPS, 0,
 	    2, 0);
@@ -3599,7 +3594,7 @@ ATF_TC_BODY(test_ipc_periodic_routes_adapter, tc)
 	client->peer_known = true;
 	client->peer_uid = 0;
 	LIST_INSERT_HEAD(&blued_g.ctl_clients, client, entries);
-	ipc_handshake(client, sp[1], IPC_PROTO_VERSION, 0, feat, sizeof(feat));
+	ipc_handshake(client, sp[1], 0, feat, sizeof(feat));
 
 	request_id = ++ipc_test_request_id;
 	ipc_op_prefix_encode(request, request_id, 0, 0);
@@ -3753,7 +3748,7 @@ ATF_TC_BODY(test_ipc_gatt_hid_feature_handle, tc)
 	client = make_client(sp);
 	client->peer_uid = 0;
 	LIST_INSERT_HEAD(&blued_g.ctl_clients, client, entries);
-	ipc_handshake(client, sp[1], IPC_PROTO_VERSION, IPC_FEATURE_EVENTS,
+	ipc_handshake(client, sp[1], IPC_FEATURE_EVENTS,
 	    feat, sizeof(feat));
 
 	memset(body, 0, sizeof(body));
@@ -3822,8 +3817,7 @@ ATF_TC_BODY(test_ipc_typed_control_validation, tc)
 	LIST_INSERT_HEAD(&blued_g.adapters, &adp, entries);
 	client = make_client(sp);
 	LIST_INSERT_HEAD(&blued_g.ctl_clients, client, entries);
-	ipc_handshake(client, sp[1], IPC_PROTO_VERSION,
-	    IPC_FEATURE_EVENTS, feat, sizeof(feat));
+	ipc_handshake(client, sp[1], IPC_FEATURE_EVENTS, feat, sizeof(feat));
 
 	request_id = ++ipc_test_request_id;
 	ipc_op_prefix_encode(req, request_id, IPC_ERR_NONE, 0);
@@ -3882,8 +3876,7 @@ ATF_TC_BODY(test_ipc_typed_control_set_mtu, tc)
 	test_init();
 	client = make_client(sp);
 	LIST_INSERT_HEAD(&blued_g.ctl_clients, client, entries);
-	ipc_handshake(client, sp[1], IPC_PROTO_VERSION,
-	    IPC_FEATURE_EVENTS, feat, sizeof(feat));
+	ipc_handshake(client, sp[1], IPC_FEATURE_EVENTS, feat, sizeof(feat));
 
 	request_id = ipc_send_ctl_operation(sp[1], IPC_CTL_SET_MTU, 0, 247, 0);
 	ATF_CHECK_EQ(blued_ctl_dispatch(client), 0);
@@ -3916,8 +3909,7 @@ ATF_TC_BODY(test_ipc_correlated_control, tc)
 	test_init();
 	client = make_client(sp);
 	LIST_INSERT_HEAD(&blued_g.ctl_clients, client, entries);
-	ipc_handshake(client, sp[1], IPC_PROTO_VERSION,
-	    0, feat, sizeof(feat));
+	ipc_handshake(client, sp[1], 0, feat, sizeof(feat));
 
 	ipc_op_prefix_encode(req, 0x10203040u, 0, 0);
 	ipc_ctl_req_encode(req + IPC_OP_PREFIX_SIZE, IPC_CTL_SET_MTU, 0,
@@ -3977,8 +3969,7 @@ ATF_TC_BODY(test_ipc_correlated_gatt_database, tc)
 	client->peer_known = true;
 	client->peer_uid = 0;
 	LIST_INSERT_HEAD(&blued_g.ctl_clients, client, entries);
-	ipc_handshake(client, sp[1], IPC_PROTO_VERSION,
-	    0, feat, sizeof(feat));
+	ipc_handshake(client, sp[1], 0, feat, sizeof(feat));
 
 	memset(req, 0, sizeof(req));
 	ipc_op_prefix_encode(req, 0x71000001u, 0, 0);
@@ -4060,8 +4051,7 @@ ATF_TC_BODY(test_ipc_correlated_security, tc)
 	client->peer_known = true;
 	client->peer_uid = 0;
 	LIST_INSERT_HEAD(&blued_g.ctl_clients, client, entries);
-	ipc_handshake(client, sp[1], IPC_PROTO_VERSION,
-	    IPC_FEATURE_EVENTS, feat, sizeof(feat));
+	ipc_handshake(client, sp[1], IPC_FEATURE_EVENTS, feat, sizeof(feat));
 	ATF_REQUIRE(bt_aton("11:22:33:44:55:66", &addr));
 	conn = blued_conn_alloc();
 	ATF_REQUIRE(conn != NULL);
@@ -4225,8 +4215,7 @@ ATF_TC_BODY(test_ipc_correlated_gap_disconnect, tc)
 	test_init();
 	client = make_client(sp);
 	LIST_INSERT_HEAD(&blued_g.ctl_clients, client, entries);
-	ipc_handshake(client, sp[1], IPC_PROTO_VERSION,
-	    0, feat, sizeof(feat));
+	ipc_handshake(client, sp[1], 0, feat, sizeof(feat));
 	ipc_op_prefix_encode(req, 0x11223344u, 0, 0);
 	ipc_gap_req_encode(req + IPC_OP_PREFIX_SIZE, IPC_GAP_DISCONNECT, 0,
 	    1, address, 0);
@@ -4335,8 +4324,7 @@ ATF_TC_BODY(test_ipc_typed_control_runtime_settings, tc)
 
 	client = make_client(sp);
 	LIST_INSERT_HEAD(&blued_g.ctl_clients, client, entries);
-	ipc_handshake(client, sp[1], IPC_PROTO_VERSION,
-	    IPC_FEATURE_EVENTS, feat, sizeof(feat));
+	ipc_handshake(client, sp[1], IPC_FEATURE_EVENTS, feat, sizeof(feat));
 
 	for (size_t i = 0; i < nitems(lifecycle); i++) {
 		request_id = ipc_send_ctl_operation(sp[1], lifecycle[i].opcode,
@@ -4551,7 +4539,7 @@ ATF_TC_BODY(test_ctl_acquire_coc_typed, tc)
 	LIST_INSERT_HEAD(&blued_g.adapters, &adp, entries);
 	client = make_client(sp);
 	LIST_INSERT_HEAD(&blued_g.ctl_clients, client, entries);
-	ipc_handshake(client, sp[1], IPC_PROTO_VERSION, IPC_FEATURE_FDPASS,
+	ipc_handshake(client, sp[1], IPC_FEATURE_FDPASS,
 	    feat, sizeof(feat));
 	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_SEQPACKET, 0, channel) == 0);
 	mock_broker_fds[0] = channel[1];
@@ -4622,7 +4610,7 @@ ATF_TC_BODY(test_ctl_acquire_coc_handout_failure_shuts_client, tc)
 	LIST_INSERT_HEAD(&blued_g.adapters, &adp, entries);
 	client = make_client(sp);
 	LIST_INSERT_HEAD(&blued_g.ctl_clients, client, entries);
-	ipc_handshake(client, sp[1], IPC_PROTO_VERSION, IPC_FEATURE_FDPASS,
+	ipc_handshake(client, sp[1], IPC_FEATURE_FDPASS,
 	    feat, sizeof(feat));
 	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_SEQPACKET, 0, channel) == 0);
 	mock_broker_fds[0] = channel[1];
@@ -4711,7 +4699,7 @@ acq_setup(int sp[2], struct blued_conn **conn_out, struct att_conn *att,
 
 	client = make_client(sp);
 	LIST_INSERT_HEAD(&blued_g.ctl_clients, client, entries);
-	ipc_handshake(client, sp[1], IPC_PROTO_VERSION, IPC_FEATURE_FDPASS,
+	ipc_handshake(client, sp[1], IPC_FEATURE_FDPASS,
 	    feat, sizeof(feat));
 	client->peer_known = true;
 	client->peer_uid = 0;
@@ -5206,7 +5194,7 @@ ATF_TC_BODY(test_ctl_mesh_hello_implies_events, tc)
 
 	test_init();
 	client = make_client(sp);
-	ipc_handshake(client, sp[1], IPC_PROTO_VERSION, IPC_FEATURE_MESH,
+	ipc_handshake(client, sp[1], IPC_FEATURE_MESH,
 	    feat, sizeof(feat));
 	ATF_CHECK((ipc_get_le32((const uint8_t *)feat) & IPC_FEATURE_MESH) != 0);
 	ATF_CHECK((ipc_get_le32((const uint8_t *)feat) & IPC_FEATURE_EVENTS) != 0);
@@ -5248,7 +5236,7 @@ ATF_TC_BODY(test_ctl_mesh_rx_malformed_ad, tc)
 
 	test_init();
 	sub = make_client(sps);
-	ipc_handshake(sub, sps[1], IPC_PROTO_VERSION, IPC_FEATURE_MESH,
+	ipc_handshake(sub, sps[1], IPC_FEATURE_MESH,
 	    feat, sizeof(feat));
 	sub->mesh_sub = true;
 	LIST_INSERT_HEAD(&blued_g.ctl_clients, sub, entries);
@@ -5447,7 +5435,7 @@ ATF_TC_BODY(test_ctl_advertise_legacy_reclaim, tc)
 	blued_g.periph_active = true;
 	client = make_client(sp);
 	LIST_INSERT_HEAD(&blued_g.ctl_clients, client, entries);
-	ipc_handshake(client, sp[1], IPC_PROTO_VERSION, IPC_FEATURE_EVENTS,
+	ipc_handshake(client, sp[1], IPC_FEATURE_EVENTS,
 	    pl, sizeof(pl));
 
 	/* ADVERTISE on: reclaim runs first, with OUR scan response. */
@@ -7212,7 +7200,7 @@ ATF_TC_BODY(test_typed_gatt_server_matrix, tc)
 	client->peer_known = true;
 	client->peer_uid = 0;
 	LIST_INSERT_HEAD(&blued_g.ctl_clients, client, entries);
-	ipc_handshake(client, sp[1], IPC_PROTO_VERSION, IPC_FEATURE_EVENTS,
+	ipc_handshake(client, sp[1], IPC_FEATURE_EVENTS,
 	    feat, sizeof(feat));
 
 	memset(body, 0, sizeof(body));
@@ -7350,8 +7338,7 @@ ATF_TC_BODY(test_typed_domain_opcode_sweep, tc)
 	client = make_client(sp);
 	client->peer_uid = 0;
 	LIST_INSERT_HEAD(&blued_g.ctl_clients, client, entries);
-	ipc_handshake(client, sp[1], IPC_PROTO_VERSION,
-	    IPC_FEATURE_EVENTS | IPC_FEATURE_MESH, feat, sizeof(feat));
+	ipc_handshake(client, sp[1], IPC_FEATURE_EVENTS | IPC_FEATURE_MESH, feat, sizeof(feat));
 
 	/* GAP has a 12-byte common prefix; the extra byte makes every arm reject. */
 	for (opcode = IPC_GAP_DISCONNECT; opcode <= IPC_GAP_GET_CONNECTIONS;
@@ -7646,7 +7633,7 @@ ATF_TC_BODY(test_typed_security_valid_matrix, tc)
 	client = make_client(sp);
 	client->peer_uid = 0;
 	LIST_INSERT_HEAD(&blued_g.ctl_clients, client, entries);
-	ipc_handshake(client, sp[1], IPC_PROTO_VERSION, IPC_FEATURE_EVENTS,
+	ipc_handshake(client, sp[1], IPC_FEATURE_EVENTS,
 	    feat, sizeof(feat));
 
 	/* Absence and controller failures are observable through the wire API. */
@@ -8090,7 +8077,7 @@ ATF_TC_BODY(test_typed_validation_operand_matrix, tc)
 	client = make_client(sp);
 	client->peer_uid = 0;
 	LIST_INSERT_HEAD(&blued_g.ctl_clients, client, entries);
-	ipc_handshake(client, sp[1], IPC_PROTO_VERSION, IPC_FEATURE_EVENTS,
+	ipc_handshake(client, sp[1], IPC_FEATURE_EVENTS,
 	    feat, sizeof(feat));
 
 	/* Isolate every common typed-GATT guard. */
@@ -8353,7 +8340,7 @@ ATF_TC_BODY(test_typed_gap_valid_matrix, tc)
 	client = make_client(sp);
 	client->peer_uid = 0;
 	LIST_INSERT_HEAD(&blued_g.ctl_clients, client, entries);
-	ipc_handshake(client, sp[1], IPC_PROTO_VERSION, IPC_FEATURE_EVENTS,
+	ipc_handshake(client, sp[1], IPC_FEATURE_EVENTS,
 	    feat, sizeof(feat));
 
 	/* Serialize scan events at both UUID-count bounds and a named result. */
@@ -8856,15 +8843,13 @@ ATF_TC_BODY(test_ctl_event_notification_matrix, tc)
 	client = make_client(sp);
 	client->peer_uid = 0;
 	LIST_INSERT_HEAD(&blued_g.ctl_clients, client, entries);
-	ipc_handshake(client, sp[1], IPC_PROTO_VERSION,
-	    IPC_FEATURE_EVENTS | IPC_FEATURE_MESH, feat, sizeof(feat));
+	ipc_handshake(client, sp[1], IPC_FEATURE_EVENTS | IPC_FEATURE_MESH, feat, sizeof(feat));
 	/* Security prompts are intentionally delivered only to root-owned event
 	 * clients (or the registered pairing agent). */
 	unprivileged = make_client(unprivileged_sp);
 	unprivileged->peer_uid = 1000;
 	LIST_INSERT_HEAD(&blued_g.ctl_clients, unprivileged, entries);
-	ipc_handshake(unprivileged, unprivileged_sp[1], IPC_PROTO_VERSION,
-	    IPC_FEATURE_EVENTS, feat, sizeof(feat));
+	ipc_handshake(unprivileged, unprivileged_sp[1], IPC_FEATURE_EVENTS, feat, sizeof(feat));
 
 	client->nsubs = 1;
 	client->subs[0].addr = addr;
@@ -8948,7 +8933,7 @@ ATF_TC_BODY(test_ctl_gatt_event_value_bounds, tc)
 	client = make_client(sp);
 	client->peer_uid = 0;
 	LIST_INSERT_HEAD(&blued_g.ctl_clients, client, entries);
-	ipc_handshake(client, sp[1], IPC_PROTO_VERSION, IPC_FEATURE_EVENTS,
+	ipc_handshake(client, sp[1], IPC_FEATURE_EVENTS,
 	    feat, sizeof(feat));
 	ATF_REQUIRE_EQ(0, setsockopt(sp[1], SOL_SOCKET, SO_RCVTIMEO, &tv,
 	    sizeof(tv)));
@@ -9165,7 +9150,7 @@ ATF_TC_BODY(test_typed_advertising_valid_lifecycle, tc)
 	client = make_client(sp);
 	client->peer_uid = 0;
 	LIST_INSERT_HEAD(&blued_g.ctl_clients, client, entries);
-	ipc_handshake(client, sp[1], IPC_PROTO_VERSION, IPC_FEATURE_EVENTS,
+	ipc_handshake(client, sp[1], IPC_FEATURE_EVENTS,
 	    feat, sizeof(feat));
 
 	memset(body, 0, IPC_ADV_PARAMS_REQ_SIZE);
@@ -9280,7 +9265,7 @@ ATF_TC_BODY(test_typed_periodic_valid_matrix, tc)
 	client = make_client(sp);
 	client->peer_uid = 0;
 	LIST_INSERT_HEAD(&blued_g.ctl_clients, client, entries);
-	ipc_handshake(client, sp[1], IPC_PROTO_VERSION, IPC_FEATURE_EVENTS,
+	ipc_handshake(client, sp[1], IPC_FEATURE_EVENTS,
 	    feat, sizeof(feat));
 
 	memset(body, 0, IPC_PERIODIC_PARAMS_REQ_SIZE);
@@ -9563,8 +9548,7 @@ ATF_TC_BODY(test_typed_adv_periodic_l2cap_guards, tc)
 	client = make_client(sp);
 	client->peer_uid = 0;
 	LIST_INSERT_HEAD(&blued_g.ctl_clients, client, entries);
-	ipc_handshake(client, sp[1], IPC_PROTO_VERSION,
-	    IPC_FEATURE_EVENTS | IPC_FEATURE_FDPASS, feat, sizeof(feat));
+	ipc_handshake(client, sp[1], IPC_FEATURE_EVENTS | IPC_FEATURE_FDPASS, feat, sizeof(feat));
 
 	/* Advertising permission, framing, flags, resources, and ownership. */
 	client->peer_uid = 1000;
@@ -9719,7 +9703,7 @@ ATF_TC_BODY(test_finding35_handshake_gate, tc)
 	ATF_CHECK(!client->handshaked);
 
 	/* After a HELLO handshake, the same request is dispatched. */
-	ipc_handshake(client, sp[1], IPC_PROTO_VERSION, IPC_FEATURE_EVENTS,
+	ipc_handshake(client, sp[1], IPC_FEATURE_EVENTS,
 	    feat, sizeof(feat));
 	ipc_op_prefix_encode(req, 0x22222222u, 0, 0);
 	ipc_ctl_req_encode(req + IPC_OP_PREFIX_SIZE, IPC_CTL_STATUS, 0, 0, 0);
@@ -9770,7 +9754,7 @@ ATF_TC_BODY(test_finding28_security_event_layout, tc)
 	client->peer_known = true;
 	client->peer_uid = 0;
 	LIST_INSERT_HEAD(&blued_g.ctl_clients, client, entries);
-	ipc_handshake(client, sp[1], IPC_PROTO_VERSION, IPC_FEATURE_EVENTS,
+	ipc_handshake(client, sp[1], IPC_FEATURE_EVENTS,
 	    feat, sizeof(feat));
 
 	blued_ctl_passkey_display(&addr, 123456);
@@ -9823,7 +9807,7 @@ ATF_TC_BODY(test_finding31_wildcard_subscribe, tc)
 	client->peer_known = true;
 	client->peer_uid = 0;
 	LIST_INSERT_HEAD(&blued_g.ctl_clients, client, entries);
-	ipc_handshake(client, sp[1], IPC_PROTO_VERSION, IPC_FEATURE_EVENTS,
+	ipc_handshake(client, sp[1], IPC_FEATURE_EVENTS,
 	    feat, sizeof(feat));
 
 	/* Wildcard subscribe: opcode only, address and handle all zero. */
@@ -10014,8 +9998,7 @@ ATF_TC_BODY(dispatch_broadcast_under_held_lock, tc)
 	client = make_client(sp);
 	client->peer_uid = 0;
 	LIST_INSERT_HEAD(&blued_g.ctl_clients, client, entries);
-	ipc_handshake(client, sp[1], IPC_PROTO_VERSION,
-	    IPC_FEATURE_EVENTS, feat, sizeof(feat));
+	ipc_handshake(client, sp[1], IPC_FEATURE_EVENTS, feat, sizeof(feat));
 
 	/* Simulate dispatch holding the lock across the verb handler. */
 	ATF_REQUIRE_EQ(0, tsa_lock());
@@ -10368,8 +10351,7 @@ ATF_TC_BODY(test_ctl_mesh_proxy_data_in_event, tc)
 	client = make_client(sp);
 	client->peer_uid = 0;
 	LIST_INSERT_HEAD(&blued_g.ctl_clients, client, entries);
-	ipc_handshake(client, sp[1], IPC_PROTO_VERSION,
-	    IPC_FEATURE_EVENTS | IPC_FEATURE_MESH, feat, sizeof(feat));
+	ipc_handshake(client, sp[1], IPC_FEATURE_EVENTS | IPC_FEATURE_MESH, feat, sizeof(feat));
 
 	memset(body, 0, sizeof(body));
 	ipc_put_le16(body, IPC_MESH_PROXY_SERVICE);
@@ -10588,7 +10570,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, dispatch_lock_recursive_holds_across_reacquire);
 	ATF_TP_ADD_TC(tp, dispatch_broadcast_under_held_lock);
 	ATF_TP_ADD_TC(tp, test_ipc_hello_match);
-	ATF_TP_ADD_TC(tp, test_ipc_hello_version_mismatch);
+	ATF_TP_ADD_TC(tp, test_ipc_hello_bad_reserved_arg);
 	ATF_TP_ADD_TC(tp, test_ipc_feature_negotiation);
 	ATF_TP_ADD_TC(tp, test_ipc_event_optin_gating);
 	ATF_TP_ADD_TC(tp, test_ipc_typed_status);

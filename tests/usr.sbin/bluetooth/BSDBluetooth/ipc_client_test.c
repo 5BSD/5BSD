@@ -7,7 +7,7 @@
 
 /*
  * ATF tests for the libble side of the framed control protocol: the HELLO
- * handshake (version match and mismatch), structured error codes surfacing
+ * handshake (well-formed and malformed), structured error codes surfacing
  * through ble_errno()/ble_strerror(), and the finding-C8 event-routing fix
  * (an EVENT frame arriving while a command is in flight must not be misrouted
  * into the command's response stream).
@@ -77,12 +77,12 @@ stage_frame(int srv, uint16_t type, uint16_t arg, const char *pl)
 static void stage_raw_frame(int, uint16_t, uint16_t, const void *, size_t);
 
 static void
-stage_hello(int srv, uint16_t version, uint32_t features)
+stage_hello(int srv, uint16_t arg, uint32_t features)
 {
 	uint8_t payload[IPC_HELLO_FEATURES_SIZE];
 
 	ipc_put_le32(payload, features);
-	stage_raw_frame(srv, IPC_T_HELLO, version, payload, sizeof(payload));
+	stage_raw_frame(srv, IPC_T_HELLO, arg, payload, sizeof(payload));
 }
 
 static void
@@ -124,7 +124,7 @@ ATF_TC_BODY(client_handshake_match, tc)
 	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, sp) == 0);
 
 	/* Server accepts the current version and event capability. */
-	stage_hello(sp[1], IPC_PROTO_VERSION, IPC_FEATURE_EVENTS);
+	stage_hello(sp[1], 0, IPC_FEATURE_EVENTS);
 
 	ctx = ble_open_fd(sp[0]);
 	ATF_REQUIRE(ctx != NULL);
@@ -136,18 +136,19 @@ ATF_TC_BODY(client_handshake_match, tc)
 }
 
 /* ================================================================
- * Test: HELLO version MISMATCH fails cleanly (BLE_ERR_PROTO), no hang.
+ * Test: a HELLO reply with a nonzero reserved ih_arg fails cleanly
+ * (BLE_ERR_PROTO), no hang.
  * ================================================================ */
-ATF_TC_WITHOUT_HEAD(client_handshake_version_mismatch);
-ATF_TC_BODY(client_handshake_version_mismatch, tc)
+ATF_TC_WITHOUT_HEAD(client_handshake_bad_reserved_arg);
+ATF_TC_BODY(client_handshake_bad_reserved_arg, tc)
 {
 	ble_ctx_t *ctx;
 	int sp[2];
 
 	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, sp) == 0);
 
-	/* Server advertises an incompatible version. */
-	stage_hello(sp[1], IPC_PROTO_VERSION + 99, 0);
+	/* ih_arg is reserved and must be zero in both directions. */
+	stage_hello(sp[1], 99, 0);
 
 	ctx = ble_open_fd(sp[0]);
 	ATF_REQUIRE(ctx != NULL);
@@ -171,7 +172,7 @@ ATF_TC_BODY(client_handshake_rejected, tc)
 	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, sp) == 0);
 
 	stage_frame(sp[1], IPC_T_ERROR, IPC_ERR_PROTO,
-	    "protocol version mismatch");
+	    "malformed handshake");
 
 	ctx = ble_open_fd(sp[0]);
 	ATF_REQUIRE(ctx != NULL);
@@ -193,7 +194,7 @@ ATF_TC_BODY(client_handshake_short_sendmsg, tc)
 	int sp[2];
 
 	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, sp) == 0);
-	stage_hello(sp[1], IPC_PROTO_VERSION, IPC_FEATURE_EVENTS);
+	stage_hello(sp[1], 0, IPC_FEATURE_EVENTS);
 
 	ctx = ble_open_fd(sp[0]);
 	ATF_REQUIRE(ctx != NULL);
@@ -208,7 +209,7 @@ ATF_TC_BODY(client_handshake_short_sendmsg, tc)
 	read_exact(sp[1], hdr, sizeof(hdr));
 	ipc_hdr_decode(hdr, &plen, &type, &arg);
 	ATF_CHECK_EQ(IPC_T_HELLO, type);
-	ATF_CHECK_EQ(IPC_PROTO_VERSION, arg);
+	ATF_CHECK_EQ(0, arg);
 	ATF_REQUIRE_EQ(plen, IPC_HELLO_FEATURES_SIZE);
 	read_exact(sp[1], payload, plen);
 	ATF_CHECK((ipc_get_le32(payload) & IPC_FEATURE_EVENTS) != 0);
@@ -231,7 +232,7 @@ ATF_TC_BODY(client_correlated_control, tc)
 	int sp[2];
 
 	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, sp) == 0);
-	stage_hello(sp[1], IPC_PROTO_VERSION, 0);
+	stage_hello(sp[1], 0, 0);
 	ctx = ble_open_fd(sp[0]);
 	ATF_REQUIRE(ctx != NULL);
 	ATF_REQUIRE_EQ(ble_handshake(ctx), 0);
@@ -298,7 +299,7 @@ ATF_TC_BODY(client_correlated_status_and_adapter_caps, tc)
 	int sp[2];
 
 	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, sp) == 0);
-	stage_hello(sp[1], IPC_PROTO_VERSION, 0);
+	stage_hello(sp[1], 0, 0);
 	ctx = ble_open_fd(sp[0]);
 	ATF_REQUIRE(ctx != NULL);
 	ATF_REQUIRE_EQ(ble_handshake(ctx), 0);
@@ -397,7 +398,7 @@ ATF_TC_BODY(client_sync_query_rejects_bad_replies, tc)
 
 	for (i = 0; i < nitems(cases); i++) {
 		ATF_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, sp) == 0);
-		stage_hello(sp[1], IPC_PROTO_VERSION, 0);
+		stage_hello(sp[1], 0, 0);
 		ctx = ble_open_fd(sp[0]);
 		ATF_REQUIRE(ctx != NULL);
 		ATF_REQUIRE_EQ(ble_handshake(ctx), 0);
@@ -432,7 +433,7 @@ ATF_TC_BODY(client_adapter_caps_rejects_bad_results, tc)
 
 	for (i = 0; i < 3; i++) {
 		ATF_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, sp) == 0);
-		stage_hello(sp[1], IPC_PROTO_VERSION, 0);
+		stage_hello(sp[1], 0, 0);
 		ctx = ble_open_fd(sp[0]);
 		ATF_REQUIRE(ctx != NULL);
 		ATF_REQUIRE_EQ(ble_handshake(ctx), 0);
@@ -462,7 +463,7 @@ ATF_TC_BODY(client_unknown_accepted_capability_rejected, tc)
 	int sp[2];
 
 	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, sp) == 0);
-	stage_hello(sp[1], IPC_PROTO_VERSION, 0x80000000u);
+	stage_hello(sp[1], 0, 0x80000000u);
 	ctx = ble_open_fd(sp[0]);
 	ATF_REQUIRE(ctx != NULL);
 	ATF_CHECK_EQ(ble_handshake(ctx), -1);
@@ -487,7 +488,7 @@ ATF_TC_BODY(client_typed_disconnect, tc)
 	int sp[2];
 
 	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, sp) == 0);
-	stage_hello(sp[1], IPC_PROTO_VERSION, 0);
+	stage_hello(sp[1], 0, 0);
 	ctx = ble_open_fd(sp[0]);
 	ATF_REQUIRE(ctx != NULL);
 	ATF_REQUIRE_EQ(ble_handshake(ctx), 0);
@@ -534,7 +535,7 @@ ATF_TC_BODY(client_typed_connection_controls, tc)
 	int sp[2];
 
 	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, sp) == 0);
-	stage_hello(sp[1], IPC_PROTO_VERSION, 0);
+	stage_hello(sp[1], 0, 0);
 	ctx = ble_open_fd(sp[0]);
 	ATF_REQUIRE(ctx != NULL);
 	ATF_REQUIRE_EQ(ble_handshake(ctx), 0);
@@ -626,7 +627,7 @@ ATF_TC_BODY(client_typed_connect, tc)
 
 	memset(&state, 0, sizeof(state));
 	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, sp) == 0);
-	stage_hello(sp[1], IPC_PROTO_VERSION, 0);
+	stage_hello(sp[1], 0, 0);
 	ctx = ble_open_fd(sp[0]);
 	ATF_REQUIRE(ctx != NULL);
 	ATF_REQUIRE_EQ(ble_handshake(ctx), 0);
@@ -678,7 +679,7 @@ ATF_TC_BODY(client_typed_connect_name, tc)
 
 	memset(&state, 0, sizeof(state));
 	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, sp) == 0);
-	stage_hello(sp[1], IPC_PROTO_VERSION, 0);
+	stage_hello(sp[1], 0, 0);
 	ctx = ble_open_fd(sp[0]);
 	ATF_REQUIRE(ctx != NULL);
 	ATF_REQUIRE_EQ(ble_handshake(ctx), 0);
@@ -763,7 +764,7 @@ ATF_TC_BODY(client_typed_connection_lifecycle, tc)
 
 	memset(&state, 0, sizeof(state));
 	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, sp) == 0);
-	stage_hello(sp[1], IPC_PROTO_VERSION, IPC_FEATURE_EVENTS);
+	stage_hello(sp[1], 0, IPC_FEATURE_EVENTS);
 	ctx = ble_open_fd(sp[0]);
 	ATF_REQUIRE(ctx != NULL);
 	ATF_REQUIRE_EQ(ble_handshake(ctx), 0);
@@ -888,7 +889,7 @@ ATF_TC_BODY(client_typed_scan, tc)
 	params.rssi_min = -70;
 	strlcpy(params.name_sub, "Tag", sizeof(params.name_sub));
 	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, sp) == 0);
-	stage_hello(sp[1], IPC_PROTO_VERSION, 0);
+	stage_hello(sp[1], 0, 0);
 	ctx = ble_open_fd(sp[0]);
 	ATF_REQUIRE(ctx != NULL);
 	ATF_REQUIRE_EQ(ble_handshake(ctx), 0);
@@ -985,7 +986,7 @@ ATF_TC_BODY(client_typed_gatt_io, tc)
 
 	memset(&state, 0, sizeof(state));
 	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, sp) == 0);
-	stage_hello(sp[1], IPC_PROTO_VERSION, 0);
+	stage_hello(sp[1], 0, 0);
 	ctx = ble_open_fd(sp[0]);
 	ATF_REQUIRE(ctx != NULL);
 	ATF_REQUIRE_EQ(ble_handshake(ctx), 0);
@@ -1067,7 +1068,7 @@ ATF_TC_BODY(client_gatt_reads_out_of_order, tc)
 	memset(&first, 0, sizeof(first));
 	memset(&second, 0, sizeof(second));
 	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, sp) == 0);
-	stage_hello(sp[1], IPC_PROTO_VERSION, 0);
+	stage_hello(sp[1], 0, 0);
 	ctx = ble_open_fd(sp[0]);
 	ATF_REQUIRE(ctx != NULL);
 	ATF_REQUIRE_EQ(ble_handshake(ctx), 0);
@@ -1155,7 +1156,7 @@ ATF_TC_BODY(client_typed_gatt_discover, tc)
 
 	memset(&state, 0, sizeof(state));
 	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, sp) == 0);
-	stage_hello(sp[1], IPC_PROTO_VERSION, 0);
+	stage_hello(sp[1], 0, 0);
 	ctx = ble_open_fd(sp[0]);
 	ATF_REQUIRE(ctx != NULL);
 	ATF_REQUIRE_EQ(ble_handshake(ctx), 0);
@@ -1224,7 +1225,7 @@ ATF_TC_BODY(client_typed_gatt_local_value_ops, tc)
 	int sp[2];
 
 	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, sp) == 0);
-	stage_hello(sp[1], IPC_PROTO_VERSION, 0);
+	stage_hello(sp[1], 0, 0);
 	ctx = ble_open_fd(sp[0]);
 	ATF_REQUIRE(ctx != NULL);
 	ATF_REQUIRE_EQ(ble_handshake(ctx), 0);
@@ -1298,7 +1299,7 @@ ATF_TC_BODY(client_typed_gatt_database_ops, tc)
 	int sp[2];
 
 	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, sp) == 0);
-	stage_hello(sp[1], IPC_PROTO_VERSION, 0);
+	stage_hello(sp[1], 0, 0);
 	ctx = ble_open_fd(sp[0]);
 	ATF_REQUIRE(ctx != NULL);
 	ATF_REQUIRE_EQ(ble_handshake(ctx), 0);
@@ -1465,7 +1466,7 @@ ATF_TC_BODY(client_typed_gatt_server_events, tc)
 
 	memset(&state, 0, sizeof(state));
 	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, sp) == 0);
-	stage_hello(sp[1], IPC_PROTO_VERSION, IPC_FEATURE_EVENTS);
+	stage_hello(sp[1], 0, IPC_FEATURE_EVENTS);
 	ctx = ble_open_fd(sp[0]);
 	ATF_REQUIRE(ctx != NULL);
 	ATF_REQUIRE_EQ(ble_handshake(ctx), 0);
@@ -1562,7 +1563,7 @@ ATF_TC_BODY(client_typed_security_ops, tc)
 	int sp[2];
 
 	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, sp) == 0);
-	stage_hello(sp[1], IPC_PROTO_VERSION, IPC_FEATURE_EVENTS);
+	stage_hello(sp[1], 0, IPC_FEATURE_EVENTS);
 	ctx = ble_open_fd(sp[0]);
 	ATF_REQUIRE(ctx != NULL);
 	ATF_REQUIRE_EQ(ble_handshake(ctx), 0);
@@ -1651,7 +1652,7 @@ framed_ctx(int sp[2])
 	ble_ctx_t *ctx;
 
 	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, sp) == 0);
-	stage_hello(sp[1], IPC_PROTO_VERSION, IPC_FEATURE_EVENTS);
+	stage_hello(sp[1], 0, IPC_FEATURE_EVENTS);
 	ctx = ble_open_fd(sp[0]);
 	ATF_REQUIRE(ctx != NULL);
 	ATF_REQUIRE_EQ(ble_handshake(ctx), 0);
@@ -1725,7 +1726,7 @@ ATF_TC_BODY(client_typed_security_event, tc)
 
 	memset(&st, 0, sizeof(st));
 	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, sp) == 0);
-	stage_hello(sp[1], IPC_PROTO_VERSION, IPC_FEATURE_EVENTS);
+	stage_hello(sp[1], 0, IPC_FEATURE_EVENTS);
 	ctx = ble_open_fd(sp[0]);
 	ATF_REQUIRE(ctx != NULL);
 	ATF_REQUIRE_EQ(ble_handshake(ctx), 0);
@@ -1759,7 +1760,7 @@ ATF_TC_BODY(client_typed_security_policy, tc)
 	int sp[2];
 
 	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, sp) == 0);
-	stage_hello(sp[1], IPC_PROTO_VERSION, 0);
+	stage_hello(sp[1], 0, 0);
 	ctx = ble_open_fd(sp[0]);
 	ATF_REQUIRE(ctx != NULL);
 	ATF_REQUIRE_EQ(ble_handshake(ctx), 0);
@@ -1835,7 +1836,7 @@ ATF_TC_BODY(client_typed_security_oob_resolving, tc)
 	for (size_t i = 0; i < sizeof(pkx); i++)
 		pkx[i] = (uint8_t)(0x40 + i);
 	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, sp) == 0);
-	stage_hello(sp[1], IPC_PROTO_VERSION, 0);
+	stage_hello(sp[1], 0, 0);
 	ctx = ble_open_fd(sp[0]);
 	ATF_REQUIRE(ctx != NULL);
 	ATF_REQUIRE_EQ(ble_handshake(ctx), 0);
@@ -1931,7 +1932,7 @@ ATF_TC_BODY(client_typed_advertising_ops, tc)
 	int sp[2];
 
 	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, sp) == 0);
-	stage_hello(sp[1], IPC_PROTO_VERSION, 0);
+	stage_hello(sp[1], 0, 0);
 	ctx = ble_open_fd(sp[0]);
 	ATF_REQUIRE(ctx != NULL);
 	ATF_REQUIRE_EQ(ble_handshake(ctx), 0);
@@ -2031,7 +2032,7 @@ ATF_TC_BODY(client_typed_snapshots_and_bond_records, tc)
 	int sp[2];
 
 	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, sp) == 0);
-	stage_hello(sp[1], IPC_PROTO_VERSION, 0);
+	stage_hello(sp[1], 0, 0);
 	ctx = ble_open_fd(sp[0]);
 	ATF_REQUIRE(ctx != NULL);
 	ATF_REQUIRE_EQ(ble_handshake(ctx), 0);
@@ -2156,7 +2157,7 @@ ATF_TP_ADD_TCS(tp)
 {
 
 	ATF_TP_ADD_TC(tp, client_handshake_match);
-	ATF_TP_ADD_TC(tp, client_handshake_version_mismatch);
+	ATF_TP_ADD_TC(tp, client_handshake_bad_reserved_arg);
 	ATF_TP_ADD_TC(tp, client_handshake_rejected);
 	ATF_TP_ADD_TC(tp, client_handshake_short_sendmsg);
 	ATF_TP_ADD_TC(tp, client_correlated_control);

@@ -521,18 +521,17 @@ meshd_blued_attach(struct meshd_blued *bc, int fd)
 	if (flags < 0 || fcntl(fd, F_SETFL, flags | O_NONBLOCK) < 0)
 		goto fail;
 	ipc_put_le32(features, IPC_FEATURE_MESH);
-	if (mbw_send_frame(fd, IPC_T_HELLO, IPC_PROTO_VERSION,
+	if (mbw_send_frame(fd, IPC_T_HELLO, 0,
 	    features, sizeof(features), &deadline) != 0)
 		goto fail;
 	if (mbw_read_all(fd, hdr, sizeof(hdr), &deadline) != 0)
 		goto fail;
 	ipc_hdr_decode(hdr, &plen, &type, &arg);
-	(void)arg;
 	if (plen != IPC_HELLO_FEATURES_SIZE)
 		goto fail;
 	if (mbw_read_all(fd, features, sizeof(features), &deadline) != 0)
 		goto fail;
-	if (type != IPC_T_HELLO || arg != IPC_PROTO_VERSION)
+	if (type != IPC_T_HELLO || arg != 0)
 		goto fail;
 	if ((ipc_get_le32(features) &
 	    (IPC_FEATURE_MESH | IPC_FEATURE_EVENTS)) !=
@@ -639,7 +638,7 @@ meshd_blued_connect(struct meshd_blued *bc)
 	bc->rxn = 0;
 	bc->txoff = bc->txlen = 0;
 	ipc_put_le32(features, IPC_FEATURE_MESH);
-	if (mbw_queue_frame(bc, IPC_T_HELLO, IPC_PROTO_VERSION, features,
+	if (mbw_queue_frame(bc, IPC_T_HELLO, 0, features,
 	    sizeof(features)) != 0) {
 		meshd_blued_close(bc);
 		return (-1);
@@ -1795,7 +1794,7 @@ mbw_handshake_frame(struct meshd_blued *bc, uint16_t type, uint16_t arg,
 	uint16_t status, flags;
 
 	if (bc->state == MESHD_BLUED_HELLO) {
-		if (type != IPC_T_HELLO || arg != IPC_PROTO_VERSION ||
+		if (type != IPC_T_HELLO || arg != 0 ||
 		    plen != IPC_HELLO_FEATURES_SIZE ||
 		    (ipc_get_le32(payload) &
 		    (IPC_FEATURE_MESH | IPC_FEATURE_EVENTS)) !=

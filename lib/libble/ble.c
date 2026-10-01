@@ -943,7 +943,7 @@ ble_handshake(ble_ctx_t *ctx)
 	ble_clear_error(ctx);
 
 	ipc_put_le32(features, IPC_FEATURE_EVENTS | IPC_FEATURE_FDPASS);
-	if (ble_send_frame(ctx, IPC_T_HELLO, IPC_PROTO_VERSION,
+	if (ble_send_frame(ctx, IPC_T_HELLO, 0,
 	    features, sizeof(features)) < 0) {
 		ble_set_error(ctx, BLE_ERR_SOCKET, "handshake send failed");
 		return (-1);
@@ -965,8 +965,8 @@ ble_handshake(ble_ctx_t *ctx)
 		ble_set_error(ctx, BLE_ERR_PROTO, "bad handshake reply");
 		return (-1);
 	}
-	if (arg != IPC_PROTO_VERSION || plen != IPC_HELLO_FEATURES_SIZE) {
-		ble_set_error(ctx, BLE_ERR_PROTO, "protocol version mismatch");
+	if (arg != 0 || plen != IPC_HELLO_FEATURES_SIZE) {
+		ble_set_error(ctx, BLE_ERR_PROTO, "malformed handshake reply");
 		return (-1);
 	}
 	accepted = ipc_get_le32(payload);
@@ -1055,7 +1055,6 @@ ble_open_plane(void)
 	}
 	memset(&req, 0, sizeof(req));
 	req.magic = BLUED_PLANE_MAGIC;
-	req.version = BLUED_PLANE_VERSION;
 	req.opcode = BLUED_PLANE_OP_ATTACH;
 	memset(&out, 0, sizeof(out));
 	out.size = sizeof(out);
@@ -1076,7 +1075,6 @@ ble_open_plane(void)
 	}
 	service_session_close(session);
 	if (in.length != sizeof(rep) || rep.magic != BLUED_PLANE_MAGIC ||
-	    rep.version != BLUED_PLANE_VERSION ||
 	    rep.opcode != BLUED_PLANE_OP_ATTACH ||
 	    in.nfds != (rep.status == 0 ? 1 : 0)) {
 		if (in.nfds != 0 && fd >= 0)

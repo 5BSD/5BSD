@@ -85,13 +85,13 @@ enable_features(ble_ctx_t *ctx, int daemon_fd, uint32_t feature_mask)
 	size_t payload_len;
 
 	ipc_put_le32(features, feature_mask);
-	send_frame(daemon_fd, IPC_T_HELLO, IPC_PROTO_VERSION,
+	send_frame(daemon_fd, IPC_T_HELLO, 0,
 	    features, sizeof(features));
 	ATF_REQUIRE_EQ(ble_handshake(ctx), 0);
 	read_frame(daemon_fd, &type, &arg, payload, sizeof(payload),
 	    &payload_len);
 	ATF_CHECK_EQ(type, IPC_T_HELLO);
-	ATF_CHECK_EQ(arg, IPC_PROTO_VERSION);
+	ATF_CHECK_EQ(arg, 0);
 	ATF_CHECK_EQ(payload_len, IPC_HELLO_FEATURES_SIZE);
 	ATF_CHECK_EQ(ipc_get_le32(payload), IPC_FEATURE_EVENTS |
 	    IPC_FEATURE_FDPASS);

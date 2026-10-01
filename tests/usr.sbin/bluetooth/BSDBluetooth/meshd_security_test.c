@@ -769,12 +769,12 @@ ATF_TC_BODY(blued_bearer_async_handshake, tc)
 	ATF_REQUIRE_EQ((ssize_t)sizeof(hdr), read(pfd, hdr, sizeof(hdr)));
 	ipc_hdr_decode(hdr, &plen, &type, &arg);
 	ATF_REQUIRE_EQ(IPC_T_HELLO, type);
-	ATF_REQUIRE_EQ(IPC_PROTO_VERSION, arg);
+	ATF_REQUIRE_EQ(0, arg);
 	ATF_REQUIRE_EQ(IPC_HELLO_FEATURES_SIZE, plen);
 	ATF_REQUIRE_EQ((ssize_t)plen, read(pfd, payload, plen));
 
 	ipc_put_le32(features, IPC_FEATURE_MESH | IPC_FEATURE_EVENTS);
-	bearer_write_frame(pfd, IPC_T_HELLO, IPC_PROTO_VERSION, features,
+	bearer_write_frame(pfd, IPC_T_HELLO, 0, features,
 	    sizeof(features));
 	ATF_CHECK_EQ(0, meshd_blued_pump_rx(&bc, nd, NULL, meshd_now()));
 	ATF_REQUIRE_EQ(MESHD_BLUED_SUBSCRIBING, bc.state);
@@ -1213,12 +1213,12 @@ ATF_TC_BODY(blued_bearer_attach_and_link_loss, tc)
 		ATF_REQUIRE_EQ((ssize_t)sizeof(hdr), read(sp[1], hdr, sizeof(hdr)));
 		ipc_hdr_decode(hdr, &plen, &type, &arg);
 		ATF_REQUIRE_EQ(IPC_T_HELLO, type);
-		ATF_REQUIRE_EQ(IPC_PROTO_VERSION, arg);
+		ATF_REQUIRE_EQ(0, arg);
 		ATF_REQUIRE_EQ(IPC_HELLO_FEATURES_SIZE, plen);
 		ATF_REQUIRE_EQ((ssize_t)sizeof(features), read(sp[1], features,
 		    sizeof(features)));
 		ipc_put_le32(features, IPC_FEATURE_MESH | IPC_FEATURE_EVENTS);
-		ipc_hdr_encode(hdr, sizeof(features), IPC_T_HELLO, IPC_PROTO_VERSION);
+		ipc_hdr_encode(hdr, sizeof(features), IPC_T_HELLO, 0);
 		ATF_REQUIRE_EQ((ssize_t)sizeof(hdr), write(sp[1], hdr, sizeof(hdr)));
 		ATF_REQUIRE_EQ((ssize_t)sizeof(features), write(sp[1], features,
 		    sizeof(features)));
@@ -1282,7 +1282,7 @@ ATF_TC_BODY(blued_bearer_attach_and_link_loss, tc)
 	/* A syntactically complete but incompatible HELLO reply is rejected. */
 	ATF_REQUIRE_EQ(0, socketpair(AF_UNIX, SOCK_STREAM, 0, sp));
 	meshd_blued_init(&bc, NULL);
-	ipc_hdr_encode(hdr, 0, IPC_T_HELLO, IPC_PROTO_VERSION);
+	ipc_hdr_encode(hdr, 0, IPC_T_HELLO, 0);
 	ATF_REQUIRE_EQ((ssize_t)sizeof(hdr), write(sp[1], hdr, sizeof(hdr)));
 	ATF_CHECK_EQ(-1, meshd_blued_attach(&bc, sp[0]));
 	ATF_REQUIRE_EQ(0, close(sp[1]));
@@ -1290,7 +1290,7 @@ ATF_TC_BODY(blued_bearer_attach_and_link_loss, tc)
 	ATF_REQUIRE_EQ(0, socketpair(AF_UNIX, SOCK_STREAM, 0, sp));
 	meshd_blued_init(&bc, NULL);
 	ipc_put_le32(features, IPC_FEATURE_EVENTS);
-	ipc_hdr_encode(hdr, sizeof(features), IPC_T_HELLO, IPC_PROTO_VERSION);
+	ipc_hdr_encode(hdr, sizeof(features), IPC_T_HELLO, 0);
 	ATF_REQUIRE_EQ((ssize_t)sizeof(hdr), write(sp[1], hdr, sizeof(hdr)));
 	ATF_REQUIRE_EQ((ssize_t)sizeof(features), write(sp[1], features,
 	    sizeof(features)));

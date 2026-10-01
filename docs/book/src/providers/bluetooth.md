@@ -57,7 +57,7 @@ Source: `usr.sbin/bluetooth/BSDBluetooth/capbundle/Bundle.ucl` and
 
 | Field | Value |
 |---|---|
-| Wire name | `system.Bluetooth` (plane attach protocol `BLUED_PLANE_VERSION` 1) |
+| Wire name | `system.Bluetooth` (one `BLUED_PLANE_OP_ATTACH` message, tagged `BLUED_PLANE_MAGIC`) |
 | Bundle | `/Capabilities/System/Bluetooth.cap` (bundle_id `org.5bsd.Blued`; label `org.5bsd.Blued/blued`) |
 | Unit | `Units/blued.unit` |
 | Program | `Units/blued.unit/bin/BSDBluetooth`; `/usr/sbin/blued` is a symlink to it |
@@ -81,9 +81,12 @@ Outside the plane the same program runs from `libexec/rc/rc.d/blued`
 
 The protocol is not a flat op list. `lib/libble/ipc_proto.h` (private,
 explicitly unstable) defines length-prefixed binary framing: an 8-byte
-header, payloads up to `IPC_MAX_PAYLOAD` (4096), `IPC_PROTO_VERSION` 6.
-The first frame must be `IPC_T_HELLO` with the version and a feature
-bitmask; a mismatch gets `IPC_T_ERROR` and no session. `IPC_T_OP_REQ`
+header and payloads up to `IPC_MAX_PAYLOAD` (4096). There is no version on
+the wire; both ends are built from one source tree. The first frame must be
+`IPC_T_HELLO` carrying a feature bitmask, with the header's reserved
+argument word zero; a nonzero argument or a wrong payload length gets
+`IPC_T_ERROR` and no session, and the reply returns the accepted feature
+mask. `IPC_T_OP_REQ`
 frames are answered by `IPC_T_OP_REPLY` with the same request id, plus
 unsolicited `IPC_T_OP_EVENT` frames when `IPC_FEATURE_EVENTS` was
 negotiated. Each op is a domain plus an opcode; controller-scoped ops carry

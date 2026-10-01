@@ -110,7 +110,7 @@ hello_responder(void *arg)
 
 	ipc_put_le32(features, IPC_FEATURE_EVENTS);
 	ipc_hdr_encode(rh, sizeof(features), IPC_T_HELLO,
-	    IPC_PROTO_VERSION);
+	    0);
 	(void)write(c, rh, sizeof(rh));
 	(void)write(c, features, sizeof(features));
 	close(c);
