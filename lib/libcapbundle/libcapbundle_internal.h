@@ -22,7 +22,7 @@
 /*
  * Upper bound on a monotonic activation.timer interval: 366 days in seconds.
  * A period longer than a year is far past the point where a monotonic timer is
- * the right mechanism (that is calendar/persistent territory, deferred in v1).
+ * the right mechanism (that is calendar/persistent territory, out of scope).
  */
 #define	CAPBUNDLE_MAX_TIMER_INTERVAL	(366 * 24 * 3600)
 

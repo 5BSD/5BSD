@@ -336,10 +336,12 @@ vfs_mountroot_shuffle(struct thread *td, struct mount *mpdevfs)
 	VI_UNLOCK(vporoot);
 	mporoot->mnt_flag &= ~MNT_ROOTFS;
 	mporoot->mnt_vnodecovered = NULL;
+	vfs_mount_set_parent(mporoot, NULL);
 	vput(vporoot);
 
 	/* Set up the new rootvnode, and purge the cache */
 	mpnroot->mnt_vnodecovered = NULL;
+	vfs_mount_set_parent(mpnroot, NULL);
 	set_rootvnode();
 	cache_purgevfs(rootvnode->v_mount);
 
@@ -362,6 +364,7 @@ vfs_mountroot_shuffle(struct thread *td, struct mount *mpdevfs)
 				error = vinvalbuf(vp, V_SAVE, 0, 0);
 			if (!error) {
 				cache_purge(vp);
+				vfs_mount_set_parent(mporoot, vp->v_mount);
 				VI_LOCK(vp);
 				mporoot->mnt_vnodecovered = vp;
 				vn_irflag_set_locked(vp, VIRF_MOUNTPOINT);
@@ -398,6 +401,7 @@ vfs_mountroot_shuffle(struct thread *td, struct mount *mpdevfs)
 				VI_UNLOCK(vpdevfs);
 				vrele(vpdevfs);
 			}
+			vfs_mount_set_parent(mpdevfs, vp->v_mount);
 			VI_LOCK(vp);
 			mpdevfs->mnt_vnodecovered = vp;
 			vn_irflag_set_locked(vp, VIRF_MOUNTPOINT);

@@ -736,7 +736,8 @@ kern_proc_setrlimit(struct thread *td, struct proc *p, u_int which,
 	p->p_limit = newlim;
 	PROC_UPDATE_COW(p);
 	oldlim_td = NULL;
-	if (td == curthread && PROC_COW_CHANGECOUNT(td, p) == 1) {
+	if (td == curthread && td->td_proc == p &&
+	    PROC_COW_CHANGECOUNT(td, p) == 1) {
 		oldlim_td = lim_cowsync();
 		thread_cow_synced(td);
 	}

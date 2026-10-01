@@ -1989,8 +1989,8 @@ vm_map_findspace(vm_map_t map, vm_offset_t start, vm_size_t length)
 	if (length <= gap_end - start)
 		return (start);
 
-	/* With max_free, can immediately tell if no solution. */
-	if (root->right == header || length > root->right->max_free)
+	/* Include the trailing gap when the right subtree is empty. */
+	if (length > vm_map_entry_max_free_right(root, header))
 		return (vm_map_max(map) - length + 1);
 
 	/*

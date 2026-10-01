@@ -117,7 +117,10 @@ struct nvme_request {
 #define NVME_IOQ_DEFAULT		0xffff
 	bool				payload_valid;
 	bool				timeout;
-	bool				spare[2];		/* Future use */
+	bool				no_retry; /* explicit passthrough policy */
+	bool				abort_sent;
+	bool				timeout_reset;
+	uint32_t			timeout_ms;
 	STAILQ_ENTRY(nvme_request)	stailq;
 };
 
@@ -240,6 +243,7 @@ struct nvme_controller {
 
 	int			msi_count;
 	uint32_t		enable_aborts;
+	u_int			outstanding_aborts;
 
 	uint32_t		num_io_queues;
 	uint32_t		max_hw_pend_io;
@@ -387,7 +391,7 @@ void	nvme_ctrlr_cmd_set_num_queues(struct nvme_controller *ctrlr,
 void	nvme_ctrlr_cmd_set_async_event_config(struct nvme_controller *ctrlr,
 					      uint32_t state,
 					      nvme_cb_fn_t cb_fn, void *cb_arg);
-void	nvme_ctrlr_cmd_abort(struct nvme_controller *ctrlr, uint16_t cid,
+int	nvme_ctrlr_cmd_abort(struct nvme_controller *ctrlr, uint16_t cid,
 			     uint16_t sqid, nvme_cb_fn_t cb_fn, void *cb_arg);
 
 void	nvme_completion_poll_cb(void *arg, const struct nvme_completion *cpl);
@@ -395,7 +399,7 @@ void	nvme_completion_poll_cb(void *arg, const struct nvme_completion *cpl);
 int	nvme_ctrlr_construct(struct nvme_controller *ctrlr, device_t dev);
 void	nvme_ctrlr_destruct(struct nvme_controller *ctrlr, device_t dev);
 void	nvme_ctrlr_shutdown(struct nvme_controller *ctrlr);
-void	nvme_ctrlr_reset(struct nvme_controller *ctrlr);
+bool	nvme_ctrlr_reset(struct nvme_controller *ctrlr);
 /* ctrlr defined as void * to allow use with config_intrhook. */
 void	nvme_ctrlr_start_config_hook(void *ctrlr_arg);
 void	nvme_ctrlr_submit_admin_request(struct nvme_controller *ctrlr,

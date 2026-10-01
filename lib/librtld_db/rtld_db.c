@@ -117,14 +117,19 @@ rd_event_addr(rd_agent_t *rdap, rd_event_e event, rd_notify_t *notify)
 		ret = RD_ERR;
 		break;
 	}
+	if (ret == RD_OK && event != RD_NONE && notify->u.bptaddr == 0)
+		return (RD_NOCAPAB);
 	return (ret);
 }
 
 rd_err_e
-rd_event_enable(rd_agent_t *rdap __unused, int onoff)
+rd_event_enable(rd_agent_t *rdap, int onoff)
 {
 	DPRINTF("%s onoff %d\n", __func__, onoff);
 
+	if (rdap->rda_preinit_addr == 0 && rdap->rda_postinit_addr == 0 &&
+	    rdap->rda_dlactivity_addr == 0)
+		return (RD_NOCAPAB);
 	return (RD_OK);
 }
 
@@ -340,6 +345,48 @@ err:
 	return (ret);
 }
 
+/* Static ELF images have mappings, but no runtime-linker event addresses. */
+static int
+rd_static_image(rd_agent_t *rdap, struct kinfo_proc *kp)
+{
+	char path[PATH_MAX];
+	GElf_Ehdr ehdr;
+	GElf_Phdr phdr;
+	Elf *elf;
+	size_t nphdr, i;
+	int fd, result;
+
+	if (procstat_getpathname(rdap->rda_procstat, kp, path, sizeof(path)) != 0)
+		return (-1);
+	fd = open(path, O_RDONLY);
+	if (fd < 0)
+		return (-1);
+	elf = NULL;
+	result = -1;
+	if (elf_version(EV_CURRENT) == EV_NONE ||
+	    (elf = elf_begin(fd, ELF_C_READ, NULL)) == NULL ||
+	    gelf_getehdr(elf, &ehdr) == NULL ||
+	    (ehdr.e_type != ET_EXEC && ehdr.e_type != ET_DYN) ||
+	    elf_getphdrnum(elf, &nphdr) != 0 || nphdr == 0)
+		goto out;
+	result = 1;
+	for (i = 0; i < nphdr; i++) {
+		if (gelf_getphdr(elf, i, &phdr) == NULL) {
+			result = -1;
+			break;
+		}
+		if (phdr.p_type == PT_INTERP) {
+			result = 0;
+			break;
+		}
+	}
+out:
+	if (elf != NULL)
+		elf_end(elf);
+	close(fd);
+	return (result);
+}
+
 rd_err_e
 rd_reset(rd_agent_t *rdap)
 {
@@ -361,6 +408,17 @@ rd_reset(rd_agent_t *rdap)
 	if (kp == NULL)
 		return (RD_ERR);
 	assert(count == 1);
+
+	/* Reset event addresses even when reusing an agent after exec. */
+	rdap->rda_preinit_addr = 0;
+	rdap->rda_postinit_addr = 0;
+	rdap->rda_dlactivity_addr = 0;
+	i = rd_static_image(rdap, kp);
+	if (i != 0) {
+		if (i > 0)
+			rderr = RD_OK;
+		goto err;
+	}
 
 	auxv = procstat_getauxv(rdap->rda_procstat, kp, &count);
 	if (auxv == NULL)

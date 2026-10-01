@@ -403,7 +403,9 @@ randomdev_modevent(module_t mod __unused, int type, void *data __unused)
 		printf("random: entropy device external interface\n");
 		random_dev = make_dev_credf(MAKEDEV_ETERNAL_KLD, &random_cdevsw,
 		    RANDOM_UNIT, NULL, UID_ROOT, GID_WHEEL, 0644, "random");
-		make_dev_alias(random_dev, "urandom"); /* compatibility */
+		/* Keep identity distinct for ABIs with different poll semantics. */
+		make_dev_credf(MAKEDEV_ETERNAL_KLD, &random_cdevsw,
+		    RANDOM_UNIT + 1, NULL, UID_ROOT, GID_WHEEL, 0644, "urandom");
 		break;
 	case MOD_UNLOAD:
 		error = EBUSY;

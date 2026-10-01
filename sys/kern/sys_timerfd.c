@@ -230,7 +230,8 @@ retry:
 		tfd->tfd_jumped = TFD_NOJUMP;
 	}
 	if (tfd->tfd_count == 0) {
-		if ((fp->f_flag & FNONBLOCK) != 0) {
+		if ((fp->f_flag & FNONBLOCK) != 0 ||
+		    (flags & FOF_NBIO) != 0) {
 			mtx_unlock(&tfd->tfd_lock);
 			SDT_PROBE1(timerfd, , , read__eagain, td->td_proc->p_pid);
 			return (EAGAIN);

@@ -219,7 +219,8 @@ nvme_qpair_complete_tracker(struct nvme_tracker *tr,
 	req = tr->req;
 	error = nvme_completion_is_error(cpl);
 	retriable = nvme_completion_is_retry(cpl);
-	retry = error && retriable && req->retries < nvme_retry_count;
+	retry = error && retriable && !req->no_retry &&
+	    req->retries < nvme_retry_count;
 	if (retry)
 		qpair->num_retries++;
 	if (error && req->retries >= nvme_retry_count && retriable)
@@ -562,8 +563,10 @@ nvme_qpair_construct(struct nvme_qpair *qpair,
 	 * embedded in the command (prp1), and the rest of the PRP entries
 	 * will be in a list pointed to by the command (prp2).
 	 */
-	prpsz = sizeof(uint64_t) *
-	    howmany(ctrlr->max_xfer_size, ctrlr->page_size);
+	/* The same DMA area holds either PRPs or a data SGL descriptor list. */
+	prpsz = sizeof(struct nvme_sgl_descriptor) *
+	    (howmany(ctrlr->max_xfer_size, ctrlr->page_size) + 1);
+	prpsz = 1UL << flsl(prpsz - 1);
 	prpmemsz = qpair->num_trackers * prpsz;
 	allocsz = cmdsz + cplsz + prpmemsz;
 
@@ -629,7 +632,7 @@ nvme_qpair_construct(struct nvme_qpair *qpair,
 		 * overflow to another nvme page.
 		 */
 		if (trunc_page(list_phys) !=
-		    trunc_page(list_phys + prpsz - 1)) {
+		    trunc_page(list_phys + MIN(prpsz, ctrlr->page_size) - 1)) {
 			list_phys = roundup2(list_phys, ctrlr->page_size);
 			prp_list =
 			    (uint8_t *)roundup2((uintptr_t)prp_list, ctrlr->page_size);
@@ -797,40 +800,26 @@ nvme_io_qpair_destroy(struct nvme_qpair *qpair)
 }
 
 static void
-nvme_abort_complete(void *arg, const struct nvme_completion *status)
+nvme_abort_complete(void *arg, const struct nvme_completion *status __unused)
 {
-	struct nvme_tracker     *tr = arg;
+	struct nvme_controller *ctrlr = arg;
 
-	/*
-	 * If cdw0 bit 0 == 1, the controller was not able to abort the command
-	 * we requested.  We still need to check the active tracker array, to
-	 * cover race where I/O timed out at same time controller was completing
-	 * the I/O. An abort command always is on the admin queue, but affects
-	 * either an admin or an I/O queue, so take the appropriate qpair lock
-	 * for the original command's queue, since we'll need it to avoid races
-	 * with the completion code and to complete the command manually.
-	 */
-	mtx_lock(&tr->qpair->lock);
-	if ((status->cdw0 & 1) == 1 && tr->qpair->act_tr[tr->cid] != NULL) {
-		/*
-		 * An I/O has timed out, and the controller was unable to abort
-		 * it for some reason.  And we've not processed a completion for
-		 * it yet. Construct a fake completion status, and then complete
-		 * the I/O's tracker manually.
-		 */
-		nvme_printf(tr->qpair->ctrlr,
-		    "abort command failed, aborting command manually\n");
-		nvme_qpair_manual_complete_tracker(tr,
-		    NVME_SCT_GENERIC, NVME_SC_ABORTED_BY_REQUEST, 0, ERROR_PRINT_ALL);
-	}
-	/*
-	 * XXX We don't check status for the possible 'Could not abort because
-	 * excess aborts were submitted to the controller'. We don't prevent
-	 * that, either. Document for the future here, since the standard is
-	 * squishy and only says 'may generate' but implies anything is possible
-	 * including hangs if you exceed the ACL.
-	 */
-	mtx_unlock(&tr->qpair->lock);
+	/* An abort acknowledgement does not retire the original command.
+	 * In particular, a failed abort cannot make its DMA mappings safe to
+	 * release. Never retain a tracker pointer that may have been reused. */
+	atomic_subtract_int(&ctrlr->outstanding_aborts, 1);
+}
+
+static sbintime_t
+nvme_request_timeout(struct nvme_qpair *qpair, struct nvme_request *req)
+{
+	if (req->timeout_ms != 0)
+		return ((sbintime_t)req->timeout_ms * SBT_1MS);
+	if (req->cb_fn == nvme_completion_poll_cb)
+		return (SBT_1S);
+	return ((sbintime_t)(qpair->id == 0 ?
+	    qpair->ctrlr->admin_timeout_period : qpair->ctrlr->timeout_period) *
+	    SBT_1S);
 }
 
 static void
@@ -839,6 +828,7 @@ nvme_qpair_timeout(void *arg)
 	struct nvme_qpair	*qpair = arg;
 	struct nvme_controller	*ctrlr = qpair->ctrlr;
 	struct nvme_tracker	*tr;
+	struct nvme_request	*expired_req = NULL;
 	sbintime_t		now;
 	bool			idle = true;
 	bool			is_admin = qpair == &ctrlr->adminq;
@@ -900,11 +890,18 @@ nvme_qpair_timeout(void *arg)
 			 * the controller.
 			 */
 do_reset:
-			nvme_printf(ctrlr, "Resetting controller due to a timeout%s.\n",
-			    (csts == 0xffffffff) ? " and possible hot unplug" :
-			    (cfs ? " and fatal error status" : ""));
-			qpair->recovery_state = RECOVERY_WAITING;
-			nvme_ctrlr_reset(ctrlr);
+			/* Detach may be draining cdev ioctls and refuse reset.
+			 * Keep servicing completions instead of waiting for a
+			 * reset task that will never run. */
+			if (nvme_ctrlr_reset(ctrlr)) {
+				if (expired_req != NULL)
+					expired_req->timeout_reset = true;
+				nvme_printf(ctrlr,
+				    "Resetting controller due to a timeout%s.\n",
+				    (csts == NVME_GONE) ? " and possible hot unplug" :
+				    (cfs ? " and fatal error status" : ""));
+				qpair->recovery_state = RECOVERY_WAITING;
+			}
 			idle = false;
 			break;
 		}
@@ -915,7 +912,7 @@ do_reset:
 		 * see if anything could have timed out. If not, then skip
 		 * everything else.
 		 */
-		fast = false;
+		fast = true;
 		mtx_lock(&qpair->lock);
 		now = getsbinuptime();
 		TAILQ_FOREACH(tr, &qpair->outstanding_tr, tailq) {
@@ -926,14 +923,12 @@ do_reset:
 			if (tr->deadline == SBT_MAX)
 				continue;
 
-			/*
-			 * If the first real transaction is not in timeout, then
-			 * we're done. Otherwise, we try recovery.
-			 */
+			/* Deadlines may differ from submission order. */
 			idle = false;
-			if (now <= tr->deadline)
-				fast = true;
-			break;
+			if (now > tr->deadline) {
+				fast = false;
+				break;
+			}
 		}
 		mtx_unlock(&qpair->lock);
 		if (idle || fast)
@@ -965,36 +960,33 @@ do_reset:
 			if (tr->deadline == SBT_MAX)
 				continue;
 
-			/*
-			 * If we know this tracker hasn't timed out, we also
-			 * know all subsequent ones haven't timed out. The tr
-			 * queue is in submission order and all normal commands
-			 * in a queue have the same timeout (or the timeout was
-			 * changed by the user, but we eventually timeout then).
-			 */
 			idle = false;
 			if (now <= tr->deadline)
-				break;
+				continue;
 
 			/*
 			 * Timeout expired, abort it or reset controller.
 			 */
-			if (ctrlr->enable_aborts &&
-			    tr->req->cb_fn != nvme_abort_complete) {
-				/*
-				 * This isn't an abort command, ask for a
-				 * hardware abort. This goes to the admin
-				 * queue which will reset the card if it
-				 * times out.
-				 */
-				nvme_ctrlr_cmd_abort(ctrlr, tr->cid, qpair->id,
-				    nvme_abort_complete, tr);
+			if (!is_admin && !tr->req->abort_sent &&
+			    (ctrlr->enable_aborts || tr->req->timeout_ms != 0)) {
+				/* ACL is zero-based. Exhaustion or allocation failure
+				 * leaves the request due for the next watchdog pass. */
+				if (atomic_fetchadd_int(&ctrlr->outstanding_aborts, 1) >
+				    ctrlr->cdata.acl) {
+					atomic_subtract_int(&ctrlr->outstanding_aborts, 1);
+					continue;
+				}
+				if (nvme_ctrlr_cmd_abort(ctrlr, tr->cid, qpair->id,
+				    nvme_abort_complete, ctrlr) != 0) {
+					atomic_subtract_int(&ctrlr->outstanding_aborts, 1);
+					continue;
+				}
+				tr->req->abort_sent = true;
+				tr->deadline = now + nvme_request_timeout(qpair, tr->req);
 			} else {
-				/*
-				 * We have a live command in the card (either
-				 * one we couldn't abort, or aborts weren't
-				 * enabled).  We can only reset.
-				 */
+				/* A second expiry (or an admin command) needs a
+				 * quiesced controller before mappings can be released. */
+				expired_req = tr->req;
 				mtx_unlock(&qpair->lock);
 				goto do_reset;
 			}
@@ -1035,7 +1027,6 @@ nvme_qpair_submit_tracker(struct nvme_qpair *qpair, struct nvme_tracker *tr)
 {
 	struct nvme_request	*req;
 	struct nvme_controller	*ctrlr;
-	int timeout;
 
 	mtx_assert(&qpair->lock, MA_OWNED);
 
@@ -1045,13 +1036,8 @@ nvme_qpair_submit_tracker(struct nvme_qpair *qpair, struct nvme_tracker *tr)
 	ctrlr = qpair->ctrlr;
 
 	if (req->timeout) {
-		if (req->cb_fn == nvme_completion_poll_cb)
-			timeout = 1;
-		else if (qpair->id == 0)
-			timeout = ctrlr->admin_timeout_period;
-		else
-			timeout = ctrlr->timeout_period;
-		tr->deadline = getsbinuptime() + timeout * SBT_1S;
+		req->abort_sent = false;
+		tr->deadline = getsbinuptime() + nvme_request_timeout(qpair, req);
 		if (!qpair->timer_armed) {
 			qpair->timer_armed = true;
 			callout_reset_sbt_on(&qpair->timer, SBT_1S / 2, SBT_1S / 2,
@@ -1089,6 +1075,28 @@ nvme_payload_map(void *arg, bus_dma_segment_t *seg, int nseg, int error)
 		return;
 	}
 
+	if (NVMEV(NVME_CMD_PSDT, tr->req->cmd.fuse) == NVME_PSDT_SGL_MPTR) {
+		struct nvme_sgl_descriptor *sgl = (void *)tr->prp;
+
+		for (cur_nseg = 0; cur_nseg < nseg; cur_nseg++) {
+			bzero(&sgl[cur_nseg], sizeof(sgl[cur_nseg]));
+			sgl[cur_nseg].address = htole64(seg[cur_nseg].ds_addr);
+			sgl[cur_nseg].length = htole32(seg[cur_nseg].ds_len);
+			sgl[cur_nseg].type = NVME_SGL_TYPE(NVME_SGL_TYPE_DATA_BLOCK,
+			    NVME_SGL_SUBTYPE_ADDRESS);
+		}
+		if (nseg == 1)
+			tr->req->cmd.sgl = sgl[0];
+		else {
+			bzero(&tr->req->cmd.sgl, sizeof(tr->req->cmd.sgl));
+			tr->req->cmd.sgl.address = htole64(tr->prp_bus_addr);
+			tr->req->cmd.sgl.length = htole32(nseg * sizeof(*sgl));
+			tr->req->cmd.sgl.type = NVME_SGL_TYPE(
+			    NVME_SGL_TYPE_LAST_SEGMENT, NVME_SGL_SUBTYPE_ADDRESS);
+		}
+		goto mapped;
+	}
+
 	/*
 	 * Note that we specified ctrlr->page_size for alignment and max
 	 * segment size when creating the bus dma tags.  So here we can safely
@@ -1115,6 +1123,7 @@ nvme_payload_map(void *arg, bus_dma_segment_t *seg, int nseg, int error)
 		tr->req->cmd.prp2 = 0;
 	}
 
+mapped:
 	bus_dmamap_sync(tr->qpair->dma_tag_payload, tr->payload_dma_map,
 	    BUS_DMASYNC_PREREAD | BUS_DMASYNC_PREWRITE);
 	nvme_qpair_submit_tracker(tr->qpair, tr);
@@ -1291,6 +1300,7 @@ nvme_io_qpair_enable(struct nvme_qpair *qpair)
 		nvme_printf(qpair->ctrlr, "aborting outstanding i/o\n");
 	TAILQ_FOREACH_SAFE(tr, &qpair->outstanding_tr, tailq, tr_temp) {
 		nvme_qpair_manual_complete_tracker(tr, NVME_SCT_GENERIC,
+		    tr->req->no_retry ? NVME_SC_ABORTED_SQ_DELETION :
 		    NVME_SC_ABORTED_BY_REQUEST, 0, ERROR_PRINT_NO_RETRY);
 	}
 	if (report)

@@ -2377,6 +2377,7 @@ int
 suj_check(const char *filesys)
 {
 	struct inodesc idesc;
+	struct bufarea *cgbp;
 	struct csum *cgsum;
 	union dinode *dp, *jip;
 	struct inode ip;
@@ -2502,8 +2503,20 @@ suj_check(const char *filesys)
 		check_blkcnt(&snaplist[i]);
 	snapflush(suj_checkblkavail);
 	/*
-	 * Recompute the fs summary info from correct cs summaries.
+	 * A cylinder group can reach disk before its summary block.  Its
+	 * allocation records can then leave the journal, so replay need not
+	 * have dirtied (or even visited) that group.  Refresh every summary
+	 * from the cylinder group before marking the filesystem clean.
+	 * Flush recovered groups first so cg_write() updates their counters.
 	 */
+	for (i = 0; i < fs->fs_ncg; i++) {
+		cgbp = cglookup(i);
+		if (cgbp->b_errs != 0 || !check_cgmagic(i, cgbp))
+			err_suj("UNABLE TO READ CYLINDER GROUP %d", i);
+		flush(fswritefd, cgbp);
+		fs->fs_cs(fs, i) = cgbp->b_un.b_cg->cg_cs;
+	}
+	/* Recompute the filesystem totals from the refreshed summaries. */
 	bzero(&fs->fs_cstotal, sizeof(struct csum_total));
 	for (i = 0; i < fs->fs_ncg; i++) {
 		cgsum = &fs->fs_cs(fs, i);

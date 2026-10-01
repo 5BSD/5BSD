@@ -76,6 +76,9 @@ nvme_ns_ioctl(struct cdev *cdev, u_long cmd, caddr_t arg, int flag,
 	case NVME_BIO_TEST:
 		nvme_ns_test(ns, cmd, arg);
 		break;
+	case NVME_PASSTHROUGH_META:
+		return (nvme_ns_passthrough_metadata(ns,
+		    (struct nvme_pt_metadata *)arg));
 	case NVME_PASSTHROUGH_CMD:
 		pt = (struct nvme_pt_command *)arg;
 		return (nvme_ctrlr_passthrough_cmd(ctrlr, pt, ns->id,
@@ -172,7 +175,7 @@ nvme_ns_strategy(struct bio *bp)
 
 static struct cdevsw nvme_ns_cdevsw = {
 	.d_version =	D_VERSION,
-	.d_flags =	D_DISK,
+	.d_flags =	D_DISK | D_NVME,
 	.d_read =	physread,
 	.d_write =	physwrite,
 	.d_open =	nvme_ns_open,

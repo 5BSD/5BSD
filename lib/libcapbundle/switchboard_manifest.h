@@ -334,7 +334,7 @@ struct svc_manifest {
 	 * creates demand for it when it fires (§13).
 	 *
 	 * timer_interval_sec: monotonic period in seconds; 0 = no timer source.
-	 *   v1 supports monotonic intervals only — calendar/cron expressions are
+	 *   Only monotonic intervals are supported — calendar/cron expressions are
 	 *   rejected at parse time.
 	 * activation_path: absolute path watched via kqueue vnode events; empty =
 	 *   no path source.  Events are hints, never proof the path is unchanged.

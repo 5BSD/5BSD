@@ -41,6 +41,7 @@
 struct sbuf;
 
 #define	NVME_PASSTHROUGH_CMD		_IOWR('n', 0, struct nvme_pt_command)
+#define	NVME_PASSTHROUGH_META		_IOWR('n', 5, struct nvme_pt_metadata)
 #define	NVME_RESET_CONTROLLER		_IO('n', 1)
 #define	NVME_GET_NSID			_IOR('n', 2, struct nvme_get_nsid)
 #define	NVME_GET_MAX_XFER_SIZE		_IOR('n', 3, uint64_t)
@@ -1856,7 +1857,7 @@ struct nvme_pt_command {
 	 *
 	 * The following fields will be filled out by the driver, for
 	 *  consumption by the caller:
-	 *	* cdw0
+	 *	* cdw0 and rsvd1 (completion result DWORDs 0 and 1)
 	 *	* status (except for phase)
 	 *
 	 * Remaining fields will be set to 0 by the driver.
@@ -1886,6 +1887,17 @@ struct nvme_pt_command {
 	 *  by the caller.
 	 */
 	struct mtx *		driver_lock;
+};
+
+/* Extended transport; metadata is optional. Original passthrough ABI stays intact. */
+#define NVME_PT_NO_RETRY 0x1
+struct nvme_pt_metadata {
+	struct nvme_pt_command pt;
+	void *metadata;
+	uint32_t metadata_len;
+	uint32_t flags;
+	uint32_t timeout_ms;	/* zero selects the controller default */
+	uint32_t reserved;
 };
 
 struct nvme_get_nsid {
@@ -1929,6 +1941,9 @@ int	nvme_ctrlr_passthrough_cmd(struct nvme_controller *ctrlr,
 				   struct nvme_pt_command *pt,
 				   uint32_t nsid, int is_user_buffer,
 				   int is_admin_cmd);
+
+int	nvme_ns_passthrough_metadata(struct nvme_namespace *ns,
+				    struct nvme_pt_metadata *pm);
 
 int	nvme_ctrlr_linux_passthru_cmd(struct nvme_controller *ctrlr,
 				      struct nvme_passthru_cmd *npc,

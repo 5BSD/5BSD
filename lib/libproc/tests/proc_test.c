@@ -35,6 +35,7 @@
 #include <atf-c.h>
 #include <libelf.h>
 #include <libproc.h>
+#include <rtld_db.h>
 
 static const char *aout_object = "a.out";
 static const char *ldelf_object = "ld-elf.so.1";
@@ -181,6 +182,38 @@ ATF_TC_BODY(map_alias_name2map, tc)
 	ATF_CHECK_EQ_MSG(proc_continue(phdl), 0, "failed to resume execution");
 
 	proc_detach(phdl, 0);
+}
+
+ATF_TC(static_symbol_lookup);
+ATF_TC_HEAD(static_symbol_lookup, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Static ELF mappings and symbols are available without rtld events");
+}
+ATF_TC_BODY(static_symbol_lookup, tc)
+{
+	struct proc_handle *phdl;
+	rd_agent_t *agent;
+	rd_notify_t notify;
+	GElf_Sym sym1, sym2;
+	prmap_t *map;
+
+	target_prog_file = "target_prog_static";
+	phdl = start_prog(tc, false);
+	agent = proc_rdagent(phdl);
+	ATF_REQUIRE_MSG(agent != NULL, "static image has no mapping agent");
+	ATF_CHECK(proc_rdagent(phdl) == agent);
+	ATF_CHECK_EQ(rd_event_enable(agent, 1), RD_NOCAPAB);
+	ATF_CHECK_EQ(rd_event_addr(agent, RD_POSTINIT, &notify), RD_NOCAPAB);
+	map = proc_name2map(phdl, aout_object);
+	ATF_REQUIRE(map != NULL);
+	ATF_CHECK(strstr(map->pr_mapname, target_prog_file) != NULL);
+	ATF_REQUIRE_EQ(proc_name2sym(phdl, target_prog_file, "main", &sym1,
+	    NULL), 0);
+	ATF_REQUIRE_EQ(proc_name2sym(phdl, aout_object, "main", &sym2, NULL), 0);
+	ATF_CHECK_EQ(sym1.st_value, sym2.st_value);
+	ATF_CHECK(sym1.st_size > 0);
+	ATF_CHECK_EQ(proc_detach(phdl, 0), 0);
 }
 
 ATF_TC(map_prefix_name2map);
@@ -466,6 +499,7 @@ ATF_TP_ADD_TCS(tp)
 {
 
 	ATF_TP_ADD_TC(tp, map_alias_name2map);
+	ATF_TP_ADD_TC(tp, static_symbol_lookup);
 	ATF_TP_ADD_TC(tp, map_prefix_name2map);
 	ATF_TP_ADD_TC(tp, map_alias_name2sym);
 	ATF_TP_ADD_TC(tp, symbol_lookup);

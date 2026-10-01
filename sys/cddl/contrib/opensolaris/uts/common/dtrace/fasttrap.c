@@ -2526,7 +2526,7 @@ fasttrap_unload(void)
 	 */
 	if (fasttrap_meta_id != DTRACE_METAPROVNONE &&
 	    dtrace_meta_unregister(fasttrap_meta_id) != 0)
-		return (-1);
+		return (EBUSY);
 
 	/*
 	 * Iterate over all of our providers. If there's still a process
@@ -2565,7 +2565,7 @@ fasttrap_unload(void)
 		(void) dtrace_meta_register("fasttrap", &fasttrap_mops, NULL,
 		    &fasttrap_meta_id);
 
-		return (-1);
+		return (EBUSY);
 	}
 
 	/*
@@ -2639,6 +2639,7 @@ fasttrap_modevent(module_t mod __unused, int type, void *data __unused)
 		break;
 
 	case MOD_UNLOAD:
+		error = fasttrap_unload();
 		break;
 
 	case MOD_SHUTDOWN:
@@ -2653,8 +2654,7 @@ fasttrap_modevent(module_t mod __unused, int type, void *data __unused)
 
 SYSINIT(fasttrap_load, SI_SUB_DTRACE_PROVIDER, SI_ORDER_ANY, fasttrap_load,
     NULL);
-SYSUNINIT(fasttrap_unload, SI_SUB_DTRACE_PROVIDER, SI_ORDER_ANY,
-    fasttrap_unload, NULL);
+/* A busy provider must veto unload through MOD_UNLOAD. */
 
 DEV_MODULE(fasttrap, fasttrap_modevent, NULL);
 MODULE_VERSION(fasttrap, 1);

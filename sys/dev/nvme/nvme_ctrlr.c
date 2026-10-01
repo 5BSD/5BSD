@@ -439,22 +439,20 @@ out:
 	return (err);
 }
 
-void
+/* Return false when detach cannot service a reset request. */
+bool
 nvme_ctrlr_reset(struct nvme_controller *ctrlr)
 {
-	int cmpset;
-
-	cmpset = atomic_cmpset_32(&ctrlr->is_resetting, 0, 1);
-
-	if (cmpset == 0)
-		/*
-		 * Controller is already resetting.  Return immediately since
-		 * there is no need to kick off another reset.
-		 */
-		return;
-
-	if (!ctrlr->is_dying)
-		taskqueue_enqueue(ctrlr->taskqueue, &ctrlr->reset_task);
+	if (ctrlr->is_dying)
+		return (false);
+	if (atomic_cmpset_32(&ctrlr->is_resetting, 0, 1) == 0)
+		return (true); /* An existing reset will restore the queues. */
+	if (ctrlr->is_dying) {
+		atomic_store_rel_32(&ctrlr->is_resetting, 0);
+		return (false);
+	}
+	taskqueue_enqueue(ctrlr->taskqueue, &ctrlr->reset_task);
+	return (true);
 }
 
 static int
@@ -1352,15 +1350,18 @@ nvme_page_count(vm_offset_t start, size_t len)
 }
 
 static int
-nvme_user_ioctl_req(vm_offset_t addr, size_t len, bool is_read,
-    vm_page_t **upages, int max_pages, int *npagesp, struct nvme_request **req,
-    nvme_cb_fn_t cb_fn, void *cb_arg)
+nvme_user_hold_pages(vm_offset_t addr, size_t len, bool is_read,
+    vm_page_t **upages, int max_pages, int *npagesp,
+    struct vm_map_pin **pin)
 {
-	vm_prot_t prot = VM_PROT_READ;
 	int err, npages;
 	vm_page_t *upages_us;
 
+	*pin = NULL;
 	upages_us = *upages;
+	if (len == 0 || addr > VM_MAXUSER_ADDRESS ||
+	    len > VM_MAXUSER_ADDRESS - addr)
+		return (EFAULT);
 	npages = nvme_page_count(addr, len);
 	if (npages > atop(maxphys))
 		return (EINVAL);
@@ -1368,44 +1369,84 @@ nvme_user_ioctl_req(vm_offset_t addr, size_t len, bool is_read,
 		upages_us = malloc(npages * sizeof(vm_page_t), M_NVME,
 		    M_ZERO | M_WAITOK);
 
-	if (is_read)
-		prot |= VM_PROT_WRITE;	/* Device will write to host memory */
-	err = vm_fault_hold_pages(&curproc->p_vmspace->vm_map,
-	    addr, len, prot, upages_us, npages, npagesp);
+	if (is_read) {
+		/* Fork must copy the child's private mapping before device writes.
+		 * The pin also retains the original mapping across munmap/reuse. */
+		err = vm_map_pin_pages(&curproc->p_vmspace->vm_map, addr, len,
+		    upages_us, npages, pin);
+		if (err == 0)
+			*npagesp = npages;
+	} else {
+		err = vm_fault_hold_pages(&curproc->p_vmspace->vm_map,
+		    addr, len, VM_PROT_READ, upages_us, npages, npagesp);
+	}
 	if (err != 0) {
 		if (*upages != upages_us)
 			free(upages_us, M_NVME);
 		return (err);
 	}
-	*req = nvme_allocate_request_null(M_WAITOK, cb_fn, cb_arg);
-	(*req)->payload = memdesc_vmpages(upages_us, len, addr & PAGE_MASK);
-	(*req)->payload_valid = true;
 	if (*upages != upages_us)
 		*upages = upages_us;
 	return (0);
 }
 
-static void
-nvme_user_ioctl_free(vm_page_t *pages, int npage, bool freeit)
+static int
+nvme_user_ioctl_req(vm_offset_t addr, size_t len, bool is_read,
+    vm_page_t **upages, int max_pages, int *npagesp, struct nvme_request **req,
+    nvme_cb_fn_t cb_fn, void *cb_arg, struct vm_map_pin **pin)
 {
-	vm_page_unhold_pages(pages, npage);
+	int error;
+
+	error = nvme_user_hold_pages(addr, len, is_read, upages, max_pages,
+	    npagesp, pin);
+	if (error != 0)
+		return (error);
+	*req = nvme_allocate_request_null(M_WAITOK, cb_fn, cb_arg);
+	(*req)->payload = memdesc_vmpages(*upages, len, addr & PAGE_MASK);
+	(*req)->payload_valid = true;
+	return (0);
+}
+
+static void
+nvme_user_ioctl_free(vm_page_t *pages, int npage, bool freeit,
+    struct vm_map_pin *pin)
+{
+	if (pin != NULL)
+		vm_map_unpin_pages(&curproc->p_vmspace->vm_map, pin);
+	else
+		vm_page_unhold_pages(pages, npage);
 	if (freeit)
 		free(pages, M_NVME);
 }
 
+struct nvme_pt_context {
+	struct nvme_pt_command *pt;
+	struct nvme_request *req;
+	int error;
+};
+
 static void
 nvme_pt_done(void *arg, const struct nvme_completion *cpl)
 {
-	struct nvme_pt_command *pt = arg;
+	struct nvme_pt_context *ctx = arg;
+	struct nvme_pt_command *pt = ctx->pt;
 	struct mtx *mtx = pt->driver_lock;
 	uint16_t status;
 
 	bzero(&pt->cpl, sizeof(pt->cpl));
 	pt->cpl.cdw0 = cpl->cdw0;
+	/* Completion DWORD 1 carries the upper half of a 64-bit result. */
+	pt->cpl.rsvd1 = le32toh(cpl->rsvd1);
 
 	status = cpl->status;
 	status &= ~NVMEM(NVME_STATUS_P);
 	pt->cpl.status = status;
+
+	/* A host timeout reset is not a device completion status.  Keep the
+	 * synchronous caller and its pinned pages until this real completion,
+	 * then report the fail-fast passthrough cancellation separately. */
+	if (ctx->req->no_retry && ctx->req->timeout_reset)
+		ctx->error = EINTR;
 
 	mtx_lock(mtx);
 	pt->driver_lock = NULL;
@@ -1413,14 +1454,17 @@ nvme_pt_done(void *arg, const struct nvme_completion *cpl)
 	mtx_unlock(mtx);
 }
 
-int
-nvme_ctrlr_passthrough_cmd(struct nvme_controller *ctrlr,
+static int
+nvme_ctrlr_passthrough_impl(struct nvme_controller *ctrlr,
     struct nvme_pt_command *pt, uint32_t nsid, int is_user,
-    int is_admin_cmd)
+    int is_admin_cmd, bus_addr_t metadata, bool metadata_sgl, bool no_retry,
+    uint32_t timeout_ms)
 {
 	struct nvme_request *req;
+	struct nvme_pt_context ctx = { .pt = pt };
 	struct mtx *mtx;
 	int ret = 0;
+	struct vm_map_pin *pin = NULL;
 	int npages = 0;
 	vm_page_t upages_small[NVME_MAX_PAGES];
 	vm_page_t *upages = upages_small;
@@ -1435,18 +1479,25 @@ nvme_ctrlr_passthrough_cmd(struct nvme_controller *ctrlr,
 		if (is_user) {
 			ret = nvme_user_ioctl_req((vm_offset_t)pt->buf, pt->len,
 			    pt->is_read, &upages, nitems(upages_small), &npages, &req,
-			    nvme_pt_done, pt);
+			    nvme_pt_done, &ctx, &pin);
 			if (ret != 0)
 				return (ret);
 		} else
 			req = nvme_allocate_request_vaddr(pt->buf, pt->len,
-			    M_WAITOK, nvme_pt_done, pt);
+			    M_WAITOK, nvme_pt_done, &ctx);
 	} else
-		req = nvme_allocate_request_null(M_WAITOK, nvme_pt_done, pt);
+		req = nvme_allocate_request_null(M_WAITOK, nvme_pt_done, &ctx);
+
+	ctx.req = req;
+	req->no_retry = no_retry;
+	req->timeout_ms = timeout_ms;
 
 	/* Assume user space already converted to little-endian */
 	req->cmd.opc = pt->cmd.opc;
 	req->cmd.fuse = pt->cmd.fuse;
+	if (metadata_sgl)
+		req->cmd.fuse = (req->cmd.fuse & ~NVMEM(NVME_CMD_PSDT)) |
+		    (NVME_PSDT_SGL_MPTR << NVME_CMD_PSDT_SHIFT);
 	req->cmd.rsvd2 = pt->cmd.rsvd2;
 	req->cmd.rsvd3 = pt->cmd.rsvd3;
 	req->cmd.cdw10 = pt->cmd.cdw10;
@@ -1457,6 +1508,7 @@ nvme_ctrlr_passthrough_cmd(struct nvme_controller *ctrlr,
 	req->cmd.cdw15 = pt->cmd.cdw15;
 
 	req->cmd.nsid = htole32(nsid);
+	req->cmd.mptr = htole64(metadata);
 
 	mtx = mtx_pool_find(mtxpool_sleep, pt);
 	pt->driver_lock = mtx;
@@ -1472,9 +1524,154 @@ nvme_ctrlr_passthrough_cmd(struct nvme_controller *ctrlr,
 	mtx_unlock(mtx);
 
 	if (npages > 0)
-		nvme_user_ioctl_free(upages, npages, upages != upages_small);
+		nvme_user_ioctl_free(upages, npages, upages != upages_small, pin);
 
-	return (ret);
+	return (ctx.error);
+}
+
+int
+nvme_ctrlr_passthrough_cmd(struct nvme_controller *ctrlr,
+    struct nvme_pt_command *pt, uint32_t nsid, int is_user, int is_admin_cmd)
+{
+	return (nvme_ctrlr_passthrough_impl(ctrlr, pt, nsid, is_user,
+	    is_admin_cmd, 0, false, false, 0));
+}
+
+struct nvme_metadata_map {
+	bus_addr_t address;
+	int error;
+};
+
+static void
+nvme_metadata_map(void *arg, bus_dma_segment_t *segs, int nsegs, int error)
+{
+	struct nvme_metadata_map *map = arg;
+
+	map->error = error;
+	if (error == 0) {
+		KASSERT(nsegs == 1, ("NVMe metadata mapping fragmented"));
+		map->address = segs[0].ds_addr;
+	}
+}
+
+/* Use the held page generation even if its userspace mapping changes. */
+static void
+nvme_metadata_copy(vm_page_t *pages, vm_offset_t offset, void *buffer,
+    size_t len, bool to_user)
+{
+	char *kva;
+	size_t count;
+	unsigned int i = 0;
+
+	while (len != 0) {
+		count = MIN(len, PAGE_SIZE - offset);
+		kva = pmap_quick_enter_page(pages[i]);
+		if (to_user)
+			memcpy((void *)(kva + offset), buffer, count);
+		else
+			memcpy(buffer, (void *)(kva + offset), count);
+		pmap_quick_remove_page(kva);
+		if (to_user)
+			vm_page_dirty(pages[i]);
+		i++;
+		offset = 0;
+		buffer = (char *)buffer + count;
+		len -= count;
+	}
+}
+
+int
+nvme_ns_passthrough_metadata(struct nvme_namespace *ns,
+    struct nvme_pt_metadata *pm)
+{
+	struct nvme_controller *ctrlr = ns->ctrlr;
+	struct nvme_pt_command *pt = &pm->pt;
+	struct nvme_metadata_map map = { .error = EIO };
+	vm_page_t small[NVME_MAX_PAGES], *pages = small;
+	bus_dma_tag_t tag;
+	bus_dmamap_t dmamap;
+	void *buffer;
+	struct nvme_sgl_descriptor *descriptor;
+	size_t dma_len, descriptor_offset;
+	bool use_sgl;
+	uint32_t format, ms, blocks;
+	struct vm_map_pin *pin = NULL;
+	int error, npages = 0;
+
+	if ((pm->flags & ~NVME_PT_NO_RETRY) != 0 || pm->reserved != 0)
+		return (EINVAL);
+	if (pm->metadata == NULL && pm->metadata_len == 0)
+		return (nvme_ctrlr_passthrough_impl(ctrlr, pt, ns->id, 1, 0,
+		    0, false, (pm->flags & NVME_PT_NO_RETRY) != 0, pm->timeout_ms));
+	if (pm->metadata == NULL || pm->metadata_len == 0)
+		return (EINVAL);
+	if (pt->cmd.opc != NVME_OPC_READ && pt->cmd.opc != NVME_OPC_WRITE &&
+	    pt->cmd.opc != NVME_OPC_COMPARE)
+		return (EOPNOTSUPP);
+	format = NVMEV(NVME_NS_DATA_FLBAS_FORMAT, ns->data.flbas);
+	ms = NVMEV(NVME_NS_DATA_LBAF_MS, ns->data.lbaf[format]);
+	blocks = (le32toh(pt->cmd.cdw12) & 0xffff) + 1;
+	use_sgl = NVMEV(NVME_CTRLR_DATA_SGLS_NVM_COMMAND_SET,
+	    ctrlr->cdata.sgls) != 0 &&
+	    NVMEV(NVME_CTRLR_DATA_SGLS_MPTR_SGL, ctrlr->cdata.sgls) != 0;
+	if (ms == 0 || NVMEV(NVME_NS_DATA_FLBAS_EXTENDED, ns->data.flbas))
+		return (EINVAL);
+	/* Plain pointers do not describe a DMA bound to the controller. */
+	if (!use_sgl && ((uint64_t)ms * blocks != pm->metadata_len ||
+	    (uint64_t)nvme_ns_get_sector_size(ns) * blocks != pt->len))
+		return (EINVAL);
+	if (pm->metadata_len > ctrlr->max_xfer_size)
+		return (EIO);
+	descriptor_offset = roundup2((size_t)pm->metadata_len, 16);
+	dma_len = use_sgl ? descriptor_offset + sizeof(*descriptor) :
+	    pm->metadata_len;
+	error = nvme_user_hold_pages((vm_offset_t)pm->metadata, pm->metadata_len,
+	    pt->is_read, &pages, nitems(small), &npages, &pin);
+	if (error != 0)
+		return (error);
+	error = bus_dma_tag_create(bus_get_dma_tag(ctrlr->dev), 16, 0,
+	    BUS_SPACE_MAXADDR, BUS_SPACE_MAXADDR, NULL, NULL, dma_len,
+	    1, dma_len, 0, NULL, NULL, &tag);
+	if (error != 0)
+		goto unhold;
+	error = bus_dmamem_alloc(tag, &buffer, BUS_DMA_WAITOK | BUS_DMA_ZERO,
+	    &dmamap);
+	if (error != 0)
+		goto destroy;
+	if (!pt->is_read)
+		nvme_metadata_copy(pages, (vm_offset_t)pm->metadata & PAGE_MASK,
+		    buffer, pm->metadata_len, false);
+	error = bus_dmamap_load(tag, dmamap, buffer, dma_len,
+	    nvme_metadata_map, &map, BUS_DMA_NOWAIT);
+	if (error != 0)
+		goto free_dma;
+	if (map.error != 0) {
+		error = map.error;
+		goto free_dma;
+	}
+	if (use_sgl) {
+		descriptor = (void *)((char *)buffer + descriptor_offset);
+		descriptor->address = htole64(map.address);
+		descriptor->length = htole32(pm->metadata_len);
+		descriptor->type = NVME_SGL_TYPE(NVME_SGL_TYPE_DATA_BLOCK,
+		    NVME_SGL_SUBTYPE_ADDRESS);
+	}
+	bus_dmamap_sync(tag, dmamap, BUS_DMASYNC_PREREAD | BUS_DMASYNC_PREWRITE);
+	error = nvme_ctrlr_passthrough_impl(ctrlr, pt, ns->id, 1, 0,
+	    map.address + (use_sgl ? descriptor_offset : 0), use_sgl,
+	    (pm->flags & NVME_PT_NO_RETRY) != 0, pm->timeout_ms);
+	bus_dmamap_sync(tag, dmamap, BUS_DMASYNC_POSTREAD | BUS_DMASYNC_POSTWRITE);
+	if (error == 0 && pt->is_read)
+		nvme_metadata_copy(pages, (vm_offset_t)pm->metadata & PAGE_MASK,
+		    buffer, pm->metadata_len, true);
+	bus_dmamap_unload(tag, dmamap);
+free_dma:
+	bus_dmamem_free(tag, buffer, dmamap);
+destroy:
+	bus_dma_tag_destroy(tag);
+unhold:
+	nvme_user_ioctl_free(pages, npages, pages != small, pin);
+	return (error);
 }
 
 static void
@@ -1499,6 +1696,7 @@ nvme_ctrlr_linux_passthru_cmd(struct nvme_controller *ctrlr,
 	struct nvme_request	*req;
 	struct mtx		*mtx;
 	int			ret = 0;
+	struct vm_map_pin *pin = NULL;
 	int			npages = 0;
 	vm_page_t		upages_small[NVME_MAX_PAGES];
 	vm_page_t		*upages = upages_small;
@@ -1517,9 +1715,10 @@ nvme_ctrlr_linux_passthru_cmd(struct nvme_controller *ctrlr,
 			return (EIO);
 		}
 		if (is_user) {
+			/* Opcode bit 1 denotes controller-to-host data. */
 			ret = nvme_user_ioctl_req(npc->addr, npc->data_len,
-			    npc->opcode & 0x1, &upages, nitems(upages_small),
-			    &npages, &req, nvme_npc_done, npc);
+			    (npc->opcode & 0x2) != 0, &upages, nitems(upages_small),
+			    &npages, &req, nvme_npc_done, npc, &pin);
 			if (ret != 0)
 				return (ret);
 		} else
@@ -1529,6 +1728,9 @@ nvme_ctrlr_linux_passthru_cmd(struct nvme_controller *ctrlr,
 	} else
 		req = nvme_allocate_request_null(M_WAITOK, nvme_npc_done, npc);
 
+	/* Linux passthrough requests are fail-fast, including during reset. */
+	req->no_retry = true;
+	req->timeout_ms = npc->timeout_ms;
 	req->cmd.opc = npc->opcode;
 	req->cmd.fuse = npc->flags;
 	req->cmd.rsvd2 = htole32(npc->cdw2);
@@ -1557,7 +1759,7 @@ nvme_ctrlr_linux_passthru_cmd(struct nvme_controller *ctrlr,
 	mtx_unlock(mtx);
 
 	if (npages > 0)
-		nvme_user_ioctl_free(upages, npages, upages != upages_small);
+		nvme_user_ioctl_free(upages, npages, upages != upages_small, pin);
 
 	return (ret);
 }
@@ -1576,6 +1778,16 @@ nvme_ctrlr_ioctl(struct cdev *cdev, u_long cmd, caddr_t arg, int flag,
 	case NVME_RESET_CONTROLLER:
 		nvme_ctrlr_reset(ctrlr);
 		break;
+	case NVME_PASSTHROUGH_META: {
+		struct nvme_pt_metadata *pm = (struct nvme_pt_metadata *)arg;
+
+		if ((pm->flags & ~NVME_PT_NO_RETRY) != 0 || pm->reserved != 0 ||
+		    pm->metadata != NULL || pm->metadata_len != 0)
+			return (EINVAL);
+		return (nvme_ctrlr_passthrough_impl(ctrlr, &pm->pt,
+		    le32toh(pm->pt.cmd.nsid), 1, 1, 0, false,
+		    (pm->flags & NVME_PT_NO_RETRY) != 0, pm->timeout_ms));
+	}
 	case NVME_PASSTHROUGH_CMD:
 		pt = (struct nvme_pt_command *)arg;
 		return (nvme_ctrlr_passthrough_cmd(ctrlr, pt, le32toh(pt->cmd.nsid),
@@ -1621,7 +1833,7 @@ nvme_ctrlr_ioctl(struct cdev *cdev, u_long cmd, caddr_t arg, int flag,
 
 static struct cdevsw nvme_ctrlr_cdevsw = {
 	.d_version =	D_VERSION,
-	.d_flags =	0,
+	.d_flags =	D_NVME,
 	.d_ioctl =	nvme_ctrlr_ioctl
 };
 

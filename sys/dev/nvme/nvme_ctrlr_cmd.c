@@ -322,7 +322,7 @@ nvme_ctrlr_cmd_get_firmware_page(struct nvme_controller *ctrlr,
 	    cb_arg);
 }
 
-void
+int
 nvme_ctrlr_cmd_abort(struct nvme_controller *ctrlr, uint16_t cid,
     uint16_t sqid, nvme_cb_fn_t cb_fn, void *cb_arg)
 {
@@ -334,10 +334,13 @@ nvme_ctrlr_cmd_abort(struct nvme_controller *ctrlr, uint16_t cid,
 	 * context and abort commands as part of that.
 	 */
 	req = nvme_allocate_request_null(M_NOWAIT, cb_fn, cb_arg);
+	if (req == NULL)
+		return (ENOMEM);
 
 	cmd = &req->cmd;
 	cmd->opc = NVME_OPC_ABORT;
 	cmd->cdw10 = htole32((cid << 16) | sqid);
 
 	nvme_ctrlr_submit_admin_request(ctrlr, req);
+	return (0);
 }
