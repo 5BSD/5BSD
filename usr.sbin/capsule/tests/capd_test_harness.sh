@@ -153,7 +153,6 @@ capd_capsule_ctl()
 	*) return 64 ;;
 	esac
 	{
-		printf '\001\000\000\000'
 		printf "\\$(printf '%03o' "$op")\\000\\000\\000"
 		printf '\000\000\000\000\000\000\000\000'
 	} | nc -U "$1" >"$reply" || {
