@@ -2196,6 +2196,55 @@ scenario_lifecycle_rlimit(const char *result)
 }
 
 static int
+scenario_launch_report(const char *result)
+{
+	struct rlimit nofile, data, core;
+	mode_t mask;
+
+	if (getrlimit(RLIMIT_NOFILE, &nofile) == -1 ||
+	    getrlimit(RLIMIT_DATA, &data) == -1 ||
+	    getrlimit(RLIMIT_CORE, &core) == -1)
+		err(1, "getrlimit");
+	mask = umask(0);
+	umask(mask);
+	errno = 0;
+	write_result(result,
+	    "nofile_soft=%jd\nnofile_hard=%jd\ndata_soft=%jd\ndata_hard=%jd\n"
+	    "core_soft=%jd\ncore_hard=%jd\nnice=%d\numask=%04o\neuid=%ju\n",
+	    (intmax_t)nofile.rlim_cur, (intmax_t)nofile.rlim_max,
+	    (intmax_t)data.rlim_cur, (intmax_t)data.rlim_max,
+	    (intmax_t)core.rlim_cur, (intmax_t)core.rlim_max,
+	    getpriority(PRIO_PROCESS, 0), (unsigned)mask,
+	    (uintmax_t)geteuid());
+	if (fixture_service_initialize() == -1 || fixture_service_ready() == -1)
+		err(1, "launch-report readiness");
+	hold();
+}
+
+static int
+scenario_launch_count(const char *counts, const char *mode)
+{
+	struct timespec now;
+	char line[64];
+	int fd, len;
+
+	clock_gettime(CLOCK_MONOTONIC, &now);
+	len = snprintf(line, sizeof(line), "%jd\n",
+	    (intmax_t)now.tv_sec * 1000 + now.tv_nsec / 1000000);
+	fd = openat(result_dir_fd, result_relative(counts),
+	    O_WRONLY | O_CREAT | O_APPEND, 0600);
+	if (fd == -1 || write(fd, line, len) != len || close(fd) == -1)
+		err(1, "record launch %s", counts);
+	if (strcmp(mode, "signal") == 0)
+		kill(getpid(), SIGKILL);
+	if (strcmp(mode, "exit0") == 0)
+		return (0);
+	if (strcmp(mode, "exit1") == 0)
+		return (1);
+	errx(64, "launch-count mode %s", mode);
+}
+
+static int
 scenario_lifecycle_identity(const char *result)
 {
 
@@ -2219,6 +2268,9 @@ usage(void)
 
 	fprintf(stderr,
 	    "usage: capd_service_fixture ready result\n"
+	    "       capd_service_fixture launch-report result\n"
+	    "       capd_service_fixture launch-count counts "
+	    "signal|exit0|exit1\n"
 	    "       capd_service_fixture provider registered result\n"
 	    "       capd_service_fixture client result\n"
 	    "       capd_service_fixture multi-provider first second "
@@ -2369,6 +2421,10 @@ main(int argc, char **argv)
 		return (scenario_lifecycle_environment(argv[2]));
 	if (argc == 3 && strcmp(argv[1], "lifecycle-rlimit") == 0)
 		return (scenario_lifecycle_rlimit(argv[2]));
+	if (argc == 3 && strcmp(argv[1], "launch-report") == 0)
+		return (scenario_launch_report(argv[2]));
+	if (argc == 4 && strcmp(argv[1], "launch-count") == 0)
+		return (scenario_launch_count(argv[2], argv[3]));
 	if (argc == 3 && strcmp(argv[1], "lifecycle-identity") == 0)
 		return (scenario_lifecycle_identity(argv[2]));
 	if (argc == 2 && strcmp(argv[1], "lifecycle-no-ready") == 0)
