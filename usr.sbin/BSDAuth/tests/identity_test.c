@@ -105,7 +105,7 @@ ATF_TC_BODY(oversized_snapshot_fails_closed, tc)
 
 	pwfd = text_fd("root:*:0:0:root:/root:/bin/sh\n");
 	memset(chunk, 'x', sizeof(chunk));
-	for (i = 0; i < 33; i++)
+	for (i = 0; i < 257; i++)
 		ATF_REQUIRE_EQ((ssize_t)sizeof(chunk),
 		    write(pwfd, chunk, sizeof(chunk)));
 	grfd = text_fd("wheel:*:0:root\n");

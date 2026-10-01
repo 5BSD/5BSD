@@ -2016,15 +2016,16 @@ ATF_TC_BODY(kind_anoint_all_is_system, tc)
 	ATF_CHECK(!g.admin_rights);
 }
 
-ATF_TC_WITHOUT_HEAD(kind_admin_rights_only_is_system);
-ATF_TC_BODY(kind_admin_rights_only_is_system, tc)
+/* admin_rights is the management axis; only "*" widens visibility. */
+ATF_TC_WITHOUT_HEAD(kind_admin_rights_only_is_user);
+ATF_TC_BODY(kind_admin_rights_only_is_user, tc)
 {
 	struct capbundle_principal_grant g;
 
 	memset(&g, 0, sizeof(g));
 	g.admin_rights = true;
-	ATF_CHECK_EQ(SERVICE_MINT_SYSTEM, authagent_mint_kind_for_grant(&g));
-	/* Both set is also SYSTEM. */
+	ATF_CHECK_EQ(SERVICE_MINT_USER, authagent_mint_kind_for_grant(&g));
+	/* "*" together with admin_rights is SYSTEM. */
 	g.anoint_all = true;
 	ATF_CHECK_EQ(SERVICE_MINT_SYSTEM, authagent_mint_kind_for_grant(&g));
 }
@@ -2048,9 +2049,9 @@ ATF_TC_BODY(kind_neither_is_user, tc)
 	ATF_CHECK_EQ(SERVICE_MINT_USER, authagent_mint_kind_for_grant(&g));
 }
 
-/* Policy absent: the historical rule makes root SYSTEM and others USER. */
-ATF_TC_WITHOUT_HEAD(kind_default_rule_root_is_system);
-ATF_TC_BODY(kind_default_rule_root_is_system, tc)
+/* Policy absent: least privilege for every principal, root included. */
+ATF_TC_WITHOUT_HEAD(kind_default_rule_everyone_is_user);
+ATF_TC_BODY(kind_default_rule_everyone_is_user, tc)
 {
 	struct capbundle_principal_grant g;
 	gid_t root_gids[] = { 0 };
@@ -2060,13 +2061,12 @@ ATF_TC_BODY(kind_default_rule_root_is_system, tc)
 	ATF_REQUIRE_EQ(0, capbundle_principal_resolve(-1, 0, root_gids, 1,
 	    groups, NULL, &g));
 	ATF_CHECK(g.from_default_rule);
-	ATF_CHECK_EQ(SERVICE_MINT_SYSTEM, authagent_mint_kind_for_grant(&g));
-	/* A wheel member likewise. */
+	ATF_CHECK_EQ(SERVICE_MINT_USER, authagent_mint_kind_for_grant(&g));
+	ATF_CHECK(!g.admin_rights);
 	ATF_REQUIRE_EQ(0, capbundle_principal_resolve(-1, 1001, wheel_gids, 2,
 	    groups, NULL, &g));
 	ATF_CHECK(g.from_default_rule);
-	ATF_CHECK_EQ(SERVICE_MINT_SYSTEM, authagent_mint_kind_for_grant(&g));
-	/* An ordinary user is USER with nothing. */
+	ATF_CHECK_EQ(SERVICE_MINT_USER, authagent_mint_kind_for_grant(&g));
 	ATF_REQUIRE_EQ(0, capbundle_principal_resolve(-1, 1001, user_gids, 1,
 	    groups, NULL, &g));
 	ATF_CHECK(g.from_default_rule);
@@ -2198,8 +2198,8 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, label_63_chars_denied);
 	ATF_TP_ADD_TC(tp, label_unit_shaped_denied);
 	ATF_TP_ADD_TC(tp, kind_anoint_all_is_system);
-	ATF_TP_ADD_TC(tp, kind_admin_rights_only_is_system);
+	ATF_TP_ADD_TC(tp, kind_admin_rights_only_is_user);
 	ATF_TP_ADD_TC(tp, kind_neither_is_user);
-	ATF_TP_ADD_TC(tp, kind_default_rule_root_is_system);
+	ATF_TP_ADD_TC(tp, kind_default_rule_everyone_is_user);
 	return (atf_no_error());
 }

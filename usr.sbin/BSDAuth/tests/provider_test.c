@@ -1909,8 +1909,8 @@ ATF_TC_BODY(audit_mint_records, tc)
 	audit_expect(&fixture, "org.test.login/uid0", "mint/user/n1", status);
 	fixture_destroy(&fixture);
 
-	/* No policy at all: the historical rule gives root "*" + admin, so
-	 * the kind is system and the record says the default rule applied. */
+	/* No policy at all: least privilege even for root, so the kind is user
+	 * with nothing and the record says the default rule applied. */
 	audited_mint_fixture(&fixture, SERVICE_RIGHTS_ADMIN, "org.test.login",
 	    NULL, PASSWD_TEXT);
 	req = well_formed_mint();
@@ -1918,7 +1918,7 @@ ATF_TC_BODY(audit_mint_records, tc)
 	    &status, &nfds));
 	ATF_CHECK(status != 0 && status != EPERM);
 	audit_expect(&fixture, "org.test.login/uid0",
-	    "mint/system/n0/all/admin/default", status);
+	    "mint/user/n0/default", status);
 	fixture_destroy(&fixture);
 
 	/* The principal has no passwd entry: refused at identity. */

@@ -34,7 +34,7 @@ dtrace_contract_body()
 		atf_check -s exit:0 -o ignore grep -F "${clause}" "${profile}"
 	done
 	if [ "@MK_DTRACE@" = "yes" ]; then
-		binary="@OBJTOP@/usr.sbin/BSDAuth/bsdauth"
+		binary="@OBJTOP@/usr.sbin/BSDAuth/BSDAuth"
 		test -x "${binary}" ||
 		    atf_fail "missing AuthAgent binary: ${binary}"
 		atf_check -s exit:0 -o match:'.SUNW_dof' readelf -S "${binary}"
