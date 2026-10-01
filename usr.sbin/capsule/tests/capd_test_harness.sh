@@ -150,7 +150,9 @@ capd_capsule_ctl()
 {
 	local op reply status verb
 
-	reply=".capd-control-reply.$$"
+	# Unique per call: $$ is the shell's pid, not a subshell's, so
+	# parallel callers would otherwise share one file.
+	reply=$(mktemp -t capd-control-reply) || return 1
 	verb=$2
 	case "$verb" in
 	shutdown) op=1 ;;

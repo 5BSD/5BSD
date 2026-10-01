@@ -216,9 +216,7 @@ lifecycle_rejects_payload_head()
 lifecycle_rejects_payload_body()
 {
 	local reply
-	if [ ! -S "$SOCK" ]; then
-		atf_skip "capsule control socket not present"
-	fi
+	require_daemon_not_pid1
 	# datalen != 0 is rejected in control.c before cmd_lifecycle() runs,
 	# so this is safe even against a PID 1 capsule.  EINVAL = 22 (16).
 	reply=$(send_op 4 4)
@@ -240,9 +238,7 @@ lifecycle_reserved_op_unsupported_head()
 lifecycle_reserved_op_unsupported_body()
 {
 	local reply
-	if [ ! -S "$SOCK" ]; then
-		atf_skip "capsule control socket not present"
-	fi
+	require_daemon_not_pid1
 	# op=7 (removed 'check') must not be silently wired.  ENOTSUP = 45 (2d).
 	reply=$(send_op 7 0)
 	[ "$reply" = "2d" ] ||

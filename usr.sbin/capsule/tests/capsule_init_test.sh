@@ -47,6 +47,21 @@ capsule_ctl()
 	capd_capsule_ctl "$capsule_sock" "$1"
 }
 
+# atf_check(1) execs its command directly, so it cannot see a shell
+# function: assert on the helper's output here instead.  $1 = verb,
+# remaining arguments = patterns every reply must contain.
+capsule_ctl_expect()
+{
+	local verb="$1" out pattern
+	shift
+	out=$(capsule_ctl "$verb" 2>&1) ||
+	    atf_fail "control socket $verb failed: $out"
+	for pattern in "$@"; do
+		printf '%s\n' "$out" | grep -q -- "$pattern" ||
+		    atf_fail "$verb reply lacks '$pattern': $out"
+	done
+}
+
 # --- isolation ---
 
 atf_test_case isolation_mac_capability_module_loaded cleanup
@@ -217,14 +232,14 @@ control_socket_exists_cleanup()
 atf_test_case control_socket_status cleanup
 control_socket_status_head()
 {
-	atf_set "descr" "capsule_ctl status returns valid output"
+	atf_set "descr" "the control socket status reply is valid"
 	atf_set "require.user" "root"
 	capd_require_stack_kmods
 }
 control_socket_status_body()
 {
 	require_pidfile
-	atf_check -s exit:0 -o match:"capsule: running" capsule_ctl status
+	capsule_ctl_expect status "capsule: running"
 }
 control_socket_status_cleanup()
 {
@@ -234,7 +249,7 @@ control_socket_status_cleanup()
 atf_test_case control_socket_status_uptime cleanup
 control_socket_status_uptime_head()
 {
-	atf_set "descr" "capsule_ctl status reports uptime"
+	atf_set "descr" "the control socket status reply reports uptime"
 	atf_set "require.user" "root"
 	capd_require_stack_kmods
 }
@@ -332,7 +347,7 @@ control_socket_rapid_body()
 	require_pidfile
 	local i
 	for i in 1 2 3 4 5; do
-		atf_check -s exit:0 -o match:"running" capsule_ctl status
+		capsule_ctl_expect status "running"
 	done
 }
 control_socket_rapid_cleanup()
@@ -409,7 +424,7 @@ stale_socket_cleanup_body()
 	# passes) with a control socket means it either created a new
 	# socket or cleaned up a stale one from a previous crash.
 	# Verify the socket works.
-	atf_check -s exit:0 -o match:"running" capsule_ctl status
+	capsule_ctl_expect status "running"
 }
 stale_socket_cleanup_cleanup()
 {
@@ -996,7 +1011,7 @@ control_socket_empty_connect_body()
 	atf_check -s exit:0 sh -c \
 	    "echo '' | nc -U $capsule_sock || true"
 	# Daemon should still be responsive.
-	atf_check -s exit:0 -o match:"running" capsule_ctl status
+	capsule_ctl_expect status "running"
 }
 control_socket_empty_connect_cleanup()
 {
@@ -1006,7 +1021,7 @@ control_socket_empty_connect_cleanup()
 atf_test_case control_socket_status_shows_claims cleanup
 control_socket_status_shows_claims_head()
 {
-	atf_set "descr" "capsule_ctl status shows mac_capability claims on live daemon"
+	atf_set "descr" "the control socket status reply shows mac_capability claims"
 	atf_set "require.user" "root"
 	capd_require_stack_kmods
 }
@@ -1014,13 +1029,13 @@ control_socket_status_shows_claims_body()
 {
 	require_pidfile
 	# Live daemon should show /dev/mac_capability in claims.
-	atf_check -s exit:0 -o match:"/dev/mac_capability" capsule_ctl status
+	capsule_ctl_expect status "/dev/mac_capability"
 	# Should show path count.
-	atf_check -s exit:0 -o match:"paths:" capsule_ctl status
+	capsule_ctl_expect status "paths:"
 	# Should show network count.
-	atf_check -s exit:0 -o match:"network:" capsule_ctl status
+	capsule_ctl_expect status "network:"
 	# Should show system gates.
-	atf_check -s exit:0 -o match:"system:" capsule_ctl status
+	capsule_ctl_expect status "system:"
 }
 control_socket_status_shows_claims_cleanup()
 {
@@ -1046,8 +1061,8 @@ control_socket_slow_client_body()
 	sleep 0.2
 
 	# While the slow client is connected, the daemon must still respond.
-	atf_check -s exit:0 -o match:"running" capsule_ctl status
-	atf_check -s exit:0 -o match:"running" capsule_ctl status
+	capsule_ctl_expect status "running"
+	capsule_ctl_expect status "running"
 
 	kill "$slow_pid" 2>/dev/null || true
 	wait "$slow_pid" 2>/dev/null || true
@@ -1066,12 +1081,19 @@ control_socket_concurrent_clients_head()
 }
 control_socket_concurrent_clients_body()
 {
+	local i pids=
+
 	require_pidfile
-	# Launch 5 status queries in parallel.
+	# Launch 5 status queries in parallel.  Wait on these jobs by pid: a
+	# bare wait would also block on the harness guardian, which lives
+	# until the stack is torn down.
 	for i in 1 2 3 4 5; do
 		capsule_ctl status > "/tmp/ctl_concurrent_${i}.out" 2>&1 &
+		pids="$pids $!"
 	done
-	wait
+	for i in $pids; do
+		wait "$i" || atf_fail "concurrent status query $i failed"
+	done
 
 	# All must have received a valid response.
 	for i in 1 2 3 4 5; do
@@ -1105,7 +1127,7 @@ control_socket_client_timeout_body()
 		} | nc -U $capsule_sock >/dev/null 2>&1 || true
 	'
 	# Daemon must still be responsive after the timeout.
-	atf_check -s exit:0 -o match:"running" capsule_ctl status
+	capsule_ctl_expect status "running"
 }
 control_socket_client_timeout_cleanup()
 {
@@ -1126,7 +1148,7 @@ control_socket_sighup_nonblocking_body()
 
 	# Send SIGHUP and immediately query status.
 	kill -HUP "$pid"
-	atf_check -s exit:0 -o match:"running" capsule_ctl status
+	capsule_ctl_expect status "running"
 }
 control_socket_sighup_nonblocking_cleanup()
 {
@@ -1156,7 +1178,7 @@ control_socket_early_close_status_body()
 		} | nc -U $capsule_sock | dd bs=16 count=1 of=/dev/null 2>/dev/null
 	'
 	# Daemon must still be alive.
-	atf_check -s exit:0 -o match:"running" capsule_ctl status
+	capsule_ctl_expect status "running"
 }
 control_socket_early_close_status_cleanup()
 {
@@ -1181,7 +1203,7 @@ control_socket_early_close_services_body()
 			printf "\\000\\000\\000\\000"
 		} | nc -U $capsule_sock | dd bs=1 count=1 of=/dev/null 2>/dev/null
 	'
-	atf_check -s exit:0 -o match:"running" capsule_ctl status
+	capsule_ctl_expect status "running"
 }
 control_socket_early_close_services_cleanup()
 {
@@ -1206,7 +1228,7 @@ control_socket_early_close_reload_body()
 			printf "\\000\\000\\000\\000"
 		} | nc -U $capsule_sock | dd bs=1 count=1 of=/dev/null 2>/dev/null
 	'
-	atf_check -s exit:0 -o match:"running" capsule_ctl status
+	capsule_ctl_expect status "running"
 }
 control_socket_early_close_reload_cleanup()
 {
@@ -1230,7 +1252,7 @@ sighup_during_status_body()
 	# Fire off status queries while sending SIGHUPs.
 	for i in 1 2 3 4 5; do
 		kill -HUP "$pid"
-		atf_check -s exit:0 -o match:"running" capsule_ctl status
+		capsule_ctl_expect status "running"
 	done
 }
 sighup_during_status_cleanup()
@@ -1241,7 +1263,7 @@ sighup_during_status_cleanup()
 atf_test_case sighup_during_reload cleanup
 sighup_during_reload_head()
 {
-	atf_set "descr" "SIGHUP interleaved with capsule_ctl reload is safe"
+	atf_set "descr" "SIGHUP interleaved with a control-socket reload is safe"
 	atf_set "require.user" "root"
 	capd_require_stack_kmods
 }
@@ -1252,12 +1274,12 @@ sighup_during_reload_body()
 
 	# Interleave SIGHUP and control socket reloads.
 	kill -HUP "$pid"
-	atf_check -s exit:0 -o ignore capsule_ctl reload
+	capsule_ctl_expect reload
 	kill -HUP "$pid"
-	atf_check -s exit:0 -o ignore capsule_ctl reload
+	capsule_ctl_expect reload
 	# Daemon must be healthy.
-	atf_check -s exit:0 -o match:"running" capsule_ctl status
-	atf_check -s exit:0 -o match:"CLAIMS:" capsule_ctl status
+	capsule_ctl_expect status "running"
+	capsule_ctl_expect status "CLAIMS:"
 }
 sighup_during_reload_cleanup()
 {
