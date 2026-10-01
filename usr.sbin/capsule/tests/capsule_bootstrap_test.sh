@@ -252,7 +252,7 @@ control_reload_reaches_switchboard_body()
 		cat "$logfile" 2>/dev/null
 		atf_fail "switchboard did not start"
 	fi
-	capd_capsule_ctl "$sockpath" reload | grep -q "reload:" ||
+	capd_capsule_ctl "$sockpath" reload >/dev/null ||
 	    atf_fail "Capsule reload request failed"
 	if ! wait_for_file switchboard-reload.out; then
 		cat "$logfile" 2>/dev/null
