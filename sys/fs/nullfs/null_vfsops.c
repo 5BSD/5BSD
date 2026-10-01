@@ -506,3 +506,4 @@ static struct vfsops null_vfsops = {
 };
 
 VFS_SET(null_vfsops, nullfs, VFCF_LOOPBACK | VFCF_JAIL | VFCF_FILEMOUNT);
+MODULE_VERSION(nullfs, 1);

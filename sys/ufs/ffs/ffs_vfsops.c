@@ -1149,7 +1149,7 @@ ffs_mountfs(struct vnode *odevvp, struct mount *mp, struct thread *td)
 	 * Initialize filesystem state information in mount struct.
 	 */
 	MNT_ILOCK(mp);
-	mp->mnt_kern_flag |= MNTK_LOOKUP_SHARED | MNTK_EXTENDED_SHARED |
+	mp->mnt_kern_flag |= MNTK_PRE_ACCESS | MNTK_LOOKUP_SHARED | MNTK_EXTENDED_SHARED |
 	    MNTK_NO_IOPF | MNTK_UNMAPPED_BUFS | MNTK_USES_BCACHE;
 	MNT_IUNLOCK(mp);
 #ifdef UFS_EXTATTR

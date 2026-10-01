@@ -283,7 +283,7 @@ cd9660_read(struct vop_read_args *ap)
 	if (VN_ISDEV(vp))
 		return (EOPNOTSUPP);
 
-	seqcount = ap->a_ioflag >> IO_SEQSHIFT;
+	seqcount = (ap->a_ioflag >> IO_SEQSHIFT) & IO_SEQMAX;
 
 	if (uio->uio_resid == 0)
 		return (0);

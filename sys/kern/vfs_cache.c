@@ -3111,6 +3111,25 @@ cache_vop_rename(struct vnode *fdvp, struct vnode *fvp, struct vnode *tdvp,
 	cache_enter(tdvp, fvp, tcnp);
 }
 
+/* Both objects survive an exchange; invalidate and install both new edges. */
+void
+cache_vop_exchange(struct vnode *fdvp, struct vnode *fvp, struct vnode *tdvp,
+    struct vnode *tvp, struct componentname *fcnp, struct componentname *tcnp)
+{
+	ASSERT_VOP_IN_SEQC(fdvp);
+	ASSERT_VOP_IN_SEQC(fvp);
+	ASSERT_VOP_IN_SEQC(tdvp);
+	ASSERT_VOP_IN_SEQC(tvp);
+	vn_inotify_path_rename(fvp, fdvp, fcnp, NULL, tdvp, tcnp);
+	vn_inotify_path_rename(tvp, tdvp, tcnp, NULL, fdvp, fcnp);
+	cache_purge(fvp);
+	cache_purge(tvp);
+	cache_remove_cnp(fdvp, fcnp);
+	cache_remove_cnp(tdvp, tcnp);
+	cache_enter(fdvp, tvp, fcnp);
+	cache_enter(tdvp, fvp, tcnp);
+}
+
 void
 cache_vop_rmdir(struct vnode *dvp, struct vnode *vp)
 {
@@ -6569,5 +6588,234 @@ out:
 		ndp->ni_dvp = fpl.dvp;
 		ndp->ni_vp = fpl.tvp;
 	}
+	return (error);
+}
+
+/*
+ * Evaluate object-based ancestry permissions without resolving a second path.
+ * Every traversed directory sequence is rechecked before granting access.  A
+ * missing cache entry, concurrent rename, mount transition, or excessive depth
+ * fails closed.  The callback must not sleep or acquire locks (VFS SMR held).
+ * vp and dvp, when non-NULL, are referenced by the caller; dvp is the parent
+ * from the actual lookup, not an arbitrary hard-link alias of vp.
+ * denied receives the ungranted rights from a sequence-validated walk.  An
+ * incomplete or invalidated walk conservatively reports the entire request.
+ */
+int
+cache_path_access(struct vnode *vp, struct vnode *dvp, uint64_t need,
+    uint64_t (*match)(struct vnode *, void *), void *arg,
+    struct vnode **missing, uint64_t *denied)
+{
+	struct { struct vnode *vp; seqc_t seq; } path[128];
+	struct namecache *ncp;
+	struct mount *mp;
+	struct vnode *v, *next;
+	uint64_t granted = 0;
+	unsigned int count = 0, i;
+	int error = EACCES;
+
+	if (denied != NULL)
+		*denied = need;
+	vfs_smr_enter();
+	if (vp != NULL) {
+		if (VN_IS_DOOMED(vp))
+			goto out;
+		granted = match(vp, arg);
+	}
+	v = vp != NULL && vp->v_type == VDIR ? vp : dvp;
+	while ((granted & need) != need && v != NULL && count < nitems(path)) {
+		path[count].vp = v;
+		path[count].seq = vn_seqc_read_any(v);
+		if (v->v_type != VDIR || seqc_in_modify(path[count].seq) ||
+		    VN_IS_DOOMED(v))
+			goto out;
+		count++;
+		granted |= match(v, arg);
+		if ((granted & need) == need)
+			break;
+		if ((v->v_vflag & VV_ROOT) != 0) {
+			mp = atomic_load_ptr(&v->v_mount);
+			if (mp == NULL)
+				goto out;
+			next = atomic_load_ptr(&mp->mnt_vnodecovered);
+		} else {
+			ncp = atomic_load_consume_ptr(&v->v_cache_dd);
+			if (ncp == NULL) {
+				if (missing != NULL && vhold_smr(v)) {
+					*missing = v;
+					error = ERELOOKUP;
+				}
+				goto out;
+			}
+			if ((atomic_load_char(&ncp->nc_flag) & NCF_NEGATIVE) != 0)
+				goto out;
+			next = (atomic_load_char(&ncp->nc_flag) & NCF_ISDOTDOT) != 0 ?
+			    ncp->nc_vp : ncp->nc_dvp;
+			if (!cache_ncp_canuse(ncp))
+				goto out;
+		}
+		if (next == v)
+			goto out;
+		v = next;
+	}
+	if (v != NULL && count == nitems(path) && (granted & need) != need)
+		goto out;
+	for (i = 0; i < count; i++)
+		if (!vn_seqc_consistent(path[i].vp, path[i].seq))
+			goto out;
+	if (denied != NULL)
+		*denied = need & ~granted;
+	if ((granted & need) != need)
+		goto out;
+	error = 0;
+out:
+	vfs_smr_exit();
+	return (error);
+}
+
+struct cache_access_snapshot {
+	struct vnode *vp;
+	seqc_t seq;
+};
+
+/* Caller holds VFS SMR across both walks and the final sequence checks. */
+static int
+cache_collect_access(struct vnode *v, uint64_t mask,
+    uint64_t (*match)(struct vnode *, void *), void *arg, uint64_t *granted,
+    struct cache_access_snapshot *path, u_int *count, struct vnode **missing)
+{
+	struct namecache *ncp;
+	struct mount *mp;
+	struct vnode *next;
+	u_int depth;
+
+	*granted = 0;
+	if (v == NULL)
+		return (EACCES);
+	for (depth = 0; v != NULL && depth < 128; depth++) {
+		path[*count].vp = v;
+		path[*count].seq = vn_seqc_read_any(v);
+		if (v->v_type != VDIR || VN_IS_DOOMED(v) ||
+		    seqc_in_modify(path[*count].seq))
+			return (EACCES);
+		(*count)++;
+		*granted |= match(v, arg) & mask;
+		if ((*granted & mask) == mask)
+			return (0);
+		if ((v->v_vflag & VV_ROOT) != 0) {
+			mp = atomic_load_ptr(&v->v_mount);
+			if (mp == NULL)
+				return (EACCES);
+			next = atomic_load_ptr(&mp->mnt_vnodecovered);
+		} else {
+			ncp = atomic_load_consume_ptr(&v->v_cache_dd);
+			if (ncp == NULL) {
+				if (missing != NULL && vhold_smr(v)) {
+					*missing = v;
+					return (ERELOOKUP);
+				}
+				return (EACCES);
+			}
+			if ((atomic_load_char(&ncp->nc_flag) & NCF_NEGATIVE) != 0)
+				return (EACCES);
+			next = (atomic_load_char(&ncp->nc_flag) & NCF_ISDOTDOT) != 0 ?
+			    ncp->nc_vp : ncp->nc_dvp;
+			if (!cache_ncp_canuse(ncp))
+				return (EACCES);
+		}
+		if (next == v)
+			return (EACCES);
+		v = next;
+	}
+	return (v == NULL ? 0 : EACCES);
+}
+
+/*
+ * Collect both parent hierarchies in one SMR read section.  Revalidate both
+ * walks together so a cross-directory policy comparison never combines
+ * grants from independently accepted ancestry snapshots.  Leaf grants are
+ * separate: the caller decides which rights follow an object when it moves.
+ */
+int
+cache_path_pair_access(struct vnode *source, struct vnode *sourceparent,
+    struct vnode *target, struct vnode *targetparent, uint64_t mask,
+    uint64_t (*match)(struct vnode *, void *), void *arg,
+    struct vnode_path_pair_access *grants, struct vnode **missing)
+{
+	struct cache_access_snapshot path[256];
+	u_int count = 0, i;
+	int error;
+
+	bzero(grants, sizeof(*grants));
+	vfs_smr_enter();
+	if (source == NULL || VN_IS_DOOMED(source) ||
+	    (target != NULL && VN_IS_DOOMED(target))) {
+		error = EACCES;
+		goto out;
+	}
+	grants->source_object = match(source, arg) & mask;
+	if (target != NULL)
+		grants->target_object = match(target, arg) & mask;
+	error = cache_collect_access(sourceparent, mask, match, arg,
+	    &grants->source_parent, path, &count, missing);
+	if (error != 0)
+		goto out;
+	error = cache_collect_access(targetparent, mask, match, arg,
+	    &grants->target_parent, path, &count, missing);
+	if (error != 0)
+		goto out;
+	for (i = 0; i < count; i++) {
+		if (!vn_seqc_consistent(path[i].vp, path[i].seq)) {
+			error = EACCES;
+			break;
+		}
+	}
+out:
+	vfs_smr_exit();
+	return (error);
+}
+
+/* Populate one cold directory edge, with no caller pathname locks held. */
+int
+cache_path_prepare(struct vnode *vp)
+{
+	struct vnode *dvp;
+	struct componentname cn;
+	char name[NAME_MAX + 1];
+	size_t offset = NAME_MAX;
+	seqc_t seq;
+	int error;
+
+	error = vget(vp, LK_SHARED | LK_RETRY);
+	if (error != 0)
+		return (error);
+	if (VN_IS_DOOMED(vp) || vp->v_type != VDIR) {
+		vput(vp);
+		return (ENOENT);
+	}
+	/* VPTOCNP may temporarily drop vp's lock to acquire its parent. */
+	seq = vn_seqc_read_any(vp);
+	error = VOP_VPTOCNP(vp, &dvp, name, &offset);
+	if (error == 0) {
+		if (dvp == vp || offset >= NAME_MAX)
+			error = ENOENT;
+		else if (vn_lock(dvp, LK_SHARED | LK_NOWAIT) == 0) {
+			if (VN_IS_DOOMED(dvp) || VN_IS_DOOMED(vp) ||
+			    !vn_seqc_consistent(vp, seq))
+				error = ENOENT;
+			else {
+				bzero(&cn, sizeof(cn));
+				cn.cn_nameiop = LOOKUP;
+				cn.cn_flags = MAKEENTRY;
+				cn.cn_nameptr = name + offset;
+				cn.cn_namelen = NAME_MAX - offset;
+				cache_enter(dvp, vp, &cn);
+			}
+			VOP_UNLOCK(dvp);
+		} else
+			error = EBUSY;
+		vrele(dvp);
+	}
+	vput(vp);
 	return (error);
 }

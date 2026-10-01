@@ -120,6 +120,7 @@ struct oes_rename_ctx {
 
 static LIST_HEAD(, oes_rename_ctx) oes_rename_list =
     LIST_HEAD_INITIALIZER(oes_rename_list);
+static u_int oes_rename_cache_populated;
 
 #define SLOT(l)	((struct oes_cred_label *)mac_label_get((l), oes_slot))
 #define SLOT_SET(l, v) mac_label_set((l), oes_slot, (uintptr_t)(v))
@@ -1086,14 +1087,27 @@ oes_dispatch_event(struct oes_pending *ep, struct proc *p, struct ucred *cred,
 	return (error);
 }
 
+static struct oes_rename_ctx *oes_rename_cache_take(struct thread *);
+
+/* Match the no-client AUTH policy in oes_generate_vnode_event(). */
+static bool
+oes_no_clients_permit_auth(void)
+{
+
+	return (atomic_load_acq_int(&oes_softc.sc_nclients) == 0 &&
+	    !oes_require_auth_clients && !oes_auth_fail_closed &&
+	    oes_default_deadline_miss_mode != OES_DEADLINE_MISS_FAIL_CLOSED);
+}
+
 static void
 oes_rename_cache_init(void)
 {
 	mtx_init(&oes_rename_mtx, "oes_rename", NULL, MTX_DEF);
 	LIST_INIT(&oes_rename_list);
+	atomic_store_rel_int(&oes_rename_cache_populated, 0);
 }
 
-static void
+static int
 oes_rename_cache_store(struct thread *td,
     const struct oes_vnode_event_info *info)
 {
@@ -1102,11 +1116,25 @@ oes_rename_cache_store(struct thread *td,
 	bool found_self = false;
 
 	if (info == NULL)
-		return;
+		return (EINVAL);
+
+	/*
+	 * Avoid allocation and vnode/path metadata when nobody can consume it.
+	 * Discard an aborted rename's context so a later client cannot mistake
+	 * stale metadata for this operation. The destination hook rechecks the
+	 * policy and requests a complete lookup retry if a snapshot is needed.
+	 * This applies equally to native and emulated callers.
+	 */
+	if (oes_no_clients_permit_auth()) {
+		ctx = oes_rename_cache_take(td);
+		if (ctx != NULL)
+			free(ctx, M_OES);
+		return (0);
+	}
 
 	ctx = malloc(sizeof(*ctx), M_OES, M_NOWAIT | M_ZERO);
 	if (ctx == NULL)
-		return;
+		return (ENOMEM);
 
 	now = time_second;
 	ctx->er_tid = td->td_tid;
@@ -1181,7 +1209,9 @@ oes_rename_cache_store(struct thread *td,
 		}
 	}
 	LIST_INSERT_HEAD(&oes_rename_list, ctx, er_link);
+	atomic_store_rel_int(&oes_rename_cache_populated, 1);
 	mtx_unlock(&oes_rename_mtx);
+	return (0);
 }
 
 static struct oes_rename_ctx *
@@ -1189,12 +1219,21 @@ oes_rename_cache_take(struct thread *td)
 {
 	struct oes_rename_ctx *ctx;
 
-
+	/*
+	 * Only this thread can insert its own context. Its prior publication
+	 * therefore cannot race this lookup; an insertion by another thread
+	 * cannot supply a matching entry. Keep stale-context cleanup when the
+	 * cache is populated, but avoid the mutex for the empty no-client case.
+	 */
+	if (atomic_load_acq_int(&oes_rename_cache_populated) == 0)
+		return (NULL);
 	mtx_lock(&oes_rename_mtx);
 	LIST_FOREACH(ctx, &oes_rename_list, er_link) {
 		if (ctx->er_tid == td->td_tid &&
 		    ctx->er_pid == td->td_proc->p_pid) {
 			LIST_REMOVE(ctx, er_link);
+			atomic_store_rel_int(&oes_rename_cache_populated,
+			    !LIST_EMPTY(&oes_rename_list));
 			mtx_unlock(&oes_rename_mtx);
 			return (ctx);
 		}
@@ -1219,6 +1258,8 @@ oes_rename_cache_purge_pid(pid_t pid)
 		LIST_REMOVE(ctx, er_link);
 		free(ctx, M_OES);
 	}
+	atomic_store_rel_int(&oes_rename_cache_populated,
+	    !LIST_EMPTY(&oes_rename_list));
 	mtx_unlock(&oes_rename_mtx);
 }
 
@@ -2566,6 +2607,21 @@ oes_generate_vnode_event(oes_event_type_t event,
 
 	if (!oes_softc.sc_active || p == NULL)
 		return (0);
+	/*
+	 * A notification cannot be consumed before any client has opened OES.
+	 * Avoid allocating a full message and collecting process/path metadata
+	 * on every pipe read/write in that case.  Open reserves the count before
+	 * publishing its client, so a concurrent open conservatively takes the
+	 * normal path.  With no clients there are also no published per-client
+	 * cache entries to invalidate.  AUTH can use the same fast path only
+	 * when all no-client/allocation-failure policies permit the operation;
+	 * strict modes retain normal allocation, audit, and dispatch behavior.
+	 */
+	if (atomic_load_acq_int(&oes_softc.sc_nclients) == 0 &&
+	    (!OES_EVENT_IS_AUTH(event) ||
+	    (!oes_require_auth_clients && !oes_auth_fail_closed &&
+	    oes_default_deadline_miss_mode != OES_DEADLINE_MISS_FAIL_CLOSED)))
+		return (0);
 
 	notify_event = OES_EVENT_IS_AUTH(event) ? oes_auth_to_notify(event) : event;
 
@@ -2953,6 +3009,8 @@ oes_generate_exec_event(struct ucred *cred, struct vnode *vp,
 	 */
 	if (imgp == NULL || imgp->execpath == NULL)
 		return (0);
+	if (oes_no_clients_permit_auth())
+		return (0);
 
 	notify_event = oes_auth_to_notify(event);
 
@@ -3171,8 +3229,7 @@ oes_mac_vnode_check_rename_from(struct ucred *cred, struct vnode *dvp,
 	info.cnp = cnp;
 
 
-	oes_rename_cache_store(curthread, &info);
-	return (0);
+	return (oes_rename_cache_store(curthread, &info));
 }
 
 /*
@@ -3195,8 +3252,10 @@ oes_mac_vnode_check_rename_to(struct ucred *cred, struct vnode *dvp,
 	(void)samedir;
 	ctx = oes_rename_cache_take(curthread);
 	info.rename_ctx = ctx;
-	if (ctx == NULL)
-		return (0);
+	if (ctx == NULL) {
+		/* New clients or stricter policy require a fresh source snapshot. */
+		return (oes_no_clients_permit_auth() ? 0 : ERELOOKUP);
+	}
 
 	error = oes_generate_vnode_event(OES_EVENT_AUTH_RENAME, &info);
 	free(ctx, M_OES);
@@ -3272,7 +3331,8 @@ oes_mac_vnode_check_truncate(struct ucred *cred, struct vnode *vp,
 	struct vattr va;
 
 	(void)vplabel;
-	if (!oes_softc.sc_active)
+	if (!oes_softc.sc_active ||
+	    atomic_load_acq_int(&oes_softc.sc_nclients) == 0)
 		return (0);
 	if (VOP_GETATTR(vp, &va, cred) == 0) {
 		token.eft_id = va.va_fileid;
@@ -3640,10 +3700,16 @@ oes_mac_proc_check_signal(struct ucred *cred, struct proc *p, int signum)
 	struct oes_pending *ep;
 	struct proc *curp = curthread->td_proc;
 
-	if (!oes_softc.sc_active)
+	/*
+	 * The caller can hold the target's PROC_LOCK.  Even M_NOWAIT
+	 * allocation can acquire VM locks, so avoid it without a consumer,
+	 * as in the ptrace notification hook below.
+	 */
+	if (!oes_softc.sc_active ||
+	    atomic_load_acq_int(&oes_softc.sc_nclients) == 0)
 		return (0);
 
-	ep = oes_pending_alloc(OES_EVENT_NOTIFY_SIGNAL, curp);
+	ep = oes_pending_alloc_signal(curp);
 	if (ep == NULL)
 		return (0);
 
@@ -3679,7 +3745,8 @@ oes_mac_cred_check_setuid(struct ucred *cred, uid_t uid)
 	struct oes_pending *ep;
 	struct proc *curp = curthread->td_proc;
 
-	if (!oes_softc.sc_active)
+	if (!oes_softc.sc_active ||
+	    atomic_load_acq_int(&oes_softc.sc_nclients) == 0)
 		return (0);
 
 	ep = oes_pending_alloc(OES_EVENT_NOTIFY_SETUID, curp);
@@ -3701,7 +3768,8 @@ oes_mac_cred_check_setgid(struct ucred *cred, gid_t gid)
 	struct oes_pending *ep;
 	struct proc *curp = curthread->td_proc;
 
-	if (!oes_softc.sc_active)
+	if (!oes_softc.sc_active ||
+	    atomic_load_acq_int(&oes_softc.sc_nclients) == 0)
 		return (0);
 
 	ep = oes_pending_alloc(OES_EVENT_NOTIFY_SETGID, curp);
@@ -3727,9 +3795,11 @@ oes_mac_proc_check_debug(struct ucred *cred, struct proc *p)
 	struct oes_pending *ep;
 	struct proc *curp = curthread->td_proc;
 
-	if (!oes_softc.sc_active)
+	if (!oes_softc.sc_active ||
+	    atomic_load_acq_int(&oes_softc.sc_nclients) == 0)
 		return (0);
 
+	/* No notification allocation under PROC_LOCK without a consumer. */
 	ep = oes_pending_alloc(OES_EVENT_NOTIFY_PTRACE, curp);
 	if (ep == NULL)
 		return (0);

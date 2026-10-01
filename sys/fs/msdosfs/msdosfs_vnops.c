@@ -550,7 +550,7 @@ msdosfs_read(struct vop_read_args *ap)
 	 * offsets cannot cause overflow even in theory.
 	 */
 
-	seqcount = ap->a_ioflag >> IO_SEQSHIFT;
+	seqcount = (ap->a_ioflag >> IO_SEQSHIFT) & IO_SEQMAX;
 
 	isadir = dep->de_Attributes & ATTR_DIRECTORY;
 	do {
@@ -704,7 +704,7 @@ msdosfs_write(struct vop_write_args *ap)
 	} else
 		lastcn = de_clcount(pmp, osize) - 1;
 
-	seqcount = ioflag >> IO_SEQSHIFT;
+	seqcount = (ioflag >> IO_SEQSHIFT) & IO_SEQMAX;
 	do {
 		if (de_cluster(pmp, uio->uio_offset) > lastcn) {
 			error = ENOSPC;

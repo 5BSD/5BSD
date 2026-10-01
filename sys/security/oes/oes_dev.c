@@ -239,14 +239,17 @@ oes_open(struct cdev *dev __unused, int oflags __unused, int devtype __unused,
 		OES_UNLOCK();
 		return (EAGAIN);
 	}
-	oes_softc.sc_nclients++;
+	atomic_add_int(&oes_softc.sc_nclients, 1);
 	OES_UNLOCK();
+
+	/* Allocate outside OES/process locks, before publishing this client. */
+	oes_signal_reserve_prepare();
 
 	/* Allocate client state */
 	ec = oes_client_alloc();
 	if (ec == NULL) {
 		OES_LOCK();
-		oes_softc.sc_nclients--;
+		atomic_subtract_int(&oes_softc.sc_nclients, 1);
 		OES_UNLOCK();
 		return (ENOMEM);
 	}
@@ -271,7 +274,7 @@ oes_open(struct cdev *dev __unused, int oflags __unused, int devtype __unused,
 	if (error) {
 		oes_client_free(ec);
 		OES_LOCK();
-		oes_softc.sc_nclients--;
+		atomic_subtract_int(&oes_softc.sc_nclients, 1);
 		OES_UNLOCK();
 		return (error);
 	}
@@ -307,7 +310,7 @@ oes_client_dtor(void *data)
 	/* Remove from global list */
 	OES_LOCK();
 	LIST_REMOVE(ec, ec_link);
-	oes_softc.sc_nclients--;
+	atomic_subtract_int(&oes_softc.sc_nclients, 1);
 	OES_UNLOCK();
 
 	/* Wake any waiters and clean up */

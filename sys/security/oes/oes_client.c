@@ -2461,7 +2461,8 @@ oes_fill_file(oes_file_t *ef, struct vnode *vp, struct ucred *cred,
 		ef->ef_size = va.va_size;
 		ef->ef_blocks = va.va_bytes / 512;
 		ef->ef_allocated_bytes = va.va_bytes;
-		ef->ef_block_size = va.va_blocksize;
+		/* Match the preferred I/O size reported by vop_stdstat(). */
+		ef->ef_block_size = max(PAGE_SIZE, va.va_blocksize);
 		ef->ef_generation = va.va_gen;
 		ef->ef_rdev = va.va_rdev;
 		ef->ef_filerev = va.va_filerev;

@@ -25,7 +25,7 @@
 .\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
 .\" SUCH DAMAGE.
 .\"
-.Dd August 25, 2024
+.Dd September 25, 2026
 .Dt RENAME 2
 .Os
 .Sh NAME
@@ -143,6 +143,14 @@ and
 .Fa to
 exists, the request fails with the error
 .Er EEXIST .
+.It Dv AT_RENAME_EXCHANGE
+Atomically exchange the two directory entries.
+Both paths must exist, but they may have different types and may refer to
+nonempty directories.
+Neither object is removed.
+This flag cannot be combined with
+.Dv AT_RENAME_NOREPLACE .
+ZFS and tmpfs support this operation.
 .El
 .Sh RETURN VALUES
 .Rv -std rename
@@ -342,6 +350,21 @@ The
 .Dv AT_RENAME_NOREPLACE
 flag was provided, and a file exists at the path specified by
 .Fa to .
+.It Bq Er EINVAL
+The
+.Dv AT_RENAME_EXCHANGE
+and
+.Dv AT_RENAME_NOREPLACE
+flags were specified together.
+.It Bq Er ENOENT
+The
+.Dv AT_RENAME_EXCHANGE
+flag was specified and the destination does not exist.
+.It Bq Er ENOTCAPABLE
+An exchange was requested and either directory descriptor lacks
+.Dv CAP_RENAMEAT_SOURCE
+or
+.Dv CAP_RENAMEAT_TARGET .
 .It Bq Er EOPNOTSUPP
 One of the
 .Fa flags

@@ -684,14 +684,15 @@ do_zfs_replay_rename(zfsvfs_t *zfsvfs, _lr_rename_t *lr, char *sname,
 	znode_t *sdzp, *tdzp;
 	int error, vflg = 0;
 
-	/* Only Linux currently supports RENAME_* flags. */
+	/* Whiteouts remain Linux-only; both platforms support exchange. */
 #ifdef __linux__
 	VERIFY0(rflags & ~(RENAME_EXCHANGE | RENAME_WHITEOUT));
 
 	/* wo_vap must be non-NULL iff. we're doing RENAME_WHITEOUT */
 	VERIFY_EQUIV(rflags & RENAME_WHITEOUT, wo_vap != NULL);
 #else
-	VERIFY0(rflags);
+	VERIFY0(rflags & ~RENAME_EXCHANGE);
+	VERIFY0(wo_vap != NULL);
 #endif
 
 	if ((error = zfs_zget(zfsvfs, lr->lr_sdoid, &sdzp)) != 0)
@@ -739,7 +740,6 @@ zfs_replay_rename(void *arg1, void *arg2, boolean_t byteswap)
 static int
 zfs_replay_rename_exchange(void *arg1, void *arg2, boolean_t byteswap)
 {
-#ifdef __linux__
 	zfsvfs_t *zfsvfs = arg1;
 	lr_rename_t *lrr = arg2;
 	_lr_rename_t *lr = &lrr->lr_rename;
@@ -754,9 +754,6 @@ zfs_replay_rename_exchange(void *arg1, void *arg2, boolean_t byteswap)
 	char *tname = (char *)&lrr->lr_data[strlen(sname)+1];
 	return (do_zfs_replay_rename(zfsvfs, lr, sname, tname, RENAME_EXCHANGE,
 	    NULL));
-#else
-	return (SET_ERROR(ENOTSUP));
-#endif
 }
 
 static int

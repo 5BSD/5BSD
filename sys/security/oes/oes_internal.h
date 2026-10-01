@@ -238,6 +238,7 @@ struct oes_pending {
 #define EP_FLAG_AUTH		0x0001	/* This is an AUTH event */
 #define EP_FLAG_DELIVERED	0x0002	/* Delivered to userspace */
 #define EP_FLAG_EXPIRED		0x0004	/* Deadline expired */
+#define EP_FLAG_SIGNAL_RESERVE	0x0008	/* Allocated from signal capture zone */
 
 /*
  * Muted process entry
@@ -507,6 +508,8 @@ bool	oes_client_cache_lookup(struct oes_client *ec,
  * Function prototypes - oes_event.c
  */
 struct oes_pending *oes_pending_alloc(oes_event_type_t event, struct proc *p);
+void	oes_signal_reserve_prepare(void);
+struct oes_pending *oes_pending_alloc_signal(struct proc *p);
 void	oes_pending_free(struct oes_pending *ep);
 void	oes_pending_hold(struct oes_pending *ep);
 void	oes_pending_rele(struct oes_pending *ep);

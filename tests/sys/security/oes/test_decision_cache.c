@@ -171,7 +171,8 @@ sleep_ms(int ms)
 int
 main(void)
 {
-	int fd;
+	int fd, file_fd;
+	char path[] = "oes-cache.XXXXXX";
 	struct oes_mode_args mode;
 	struct oes_subscribe_args sub;
 	oes_event_type_t events[] = {
@@ -189,6 +190,9 @@ main(void)
 	oes_cache_key_t key;
 	struct oes_stats stats;
 
+	file_fd = mkstemp(path);
+	if (file_fd < 0)
+		return (1);
 	fd = open("/dev/oes", O_RDWR | O_NONBLOCK);
 	if (fd < 0) {
 		perror("open /dev/oes");
@@ -232,6 +236,7 @@ main(void)
 		int err = 0;
 
 		close(fd);
+		close(file_fd);
 		close(ctl_pipe[1]);
 		close(res_pipe[0]);
 		for (;;) {
@@ -240,7 +245,7 @@ main(void)
 			if (cmd == 'q')
 				break;
 			if (cmd == 'o') {
-				child_fd = open("/etc/hosts", O_RDONLY);
+				child_fd = open(path, O_RDONLY);
 				if (child_fd < 0)
 					err = errno;
 				else {
@@ -361,6 +366,27 @@ main(void)
 		goto fail;
 	}
 
+	/* A connected client's cached allow must be removed by truncate. */
+	entry.ece_ttl_ms = 10000;
+	if (ioctl(fd, OES_IOC_CACHE_CLEAR) != 0 ||
+	    ioctl(fd, OES_IOC_CACHE_ADD, &entry) != 0)
+		goto fail;
+	cmd = 'o';
+	(void)write(ctl_pipe[1], &cmd, 1);
+	if (wait_for_child_errno(res_pipe[0], 2000, &child_err) != 0 ||
+	    child_err != 0 || wait_for_no_open_event(fd, child, 20) != 0)
+		goto fail;
+	if (ftruncate(file_fd, 1) != 0 ||
+	    ioctl(fd, OES_IOC_GET_STATS, &stats) != 0 || stats.es_cache_entries != 0) {
+		fprintf(stderr, "truncate did not invalidate the connected client cache\n");
+		goto fail;
+	}
+	(void)write(ctl_pipe[1], &cmd, 1);
+	if (wait_for_open_event(fd, child, 2000, msg) != 0 ||
+	    respond_allow(fd, msg->em_id) != 0 ||
+	    wait_for_child_errno(res_pipe[0], 2000, &child_err) != 0 || child_err != 0)
+		goto fail;
+
 	memset(&entry, 0, sizeof(entry));
 	entry.ece_key.eck_event = OES_EVENT_AUTH_OPEN;
 	entry.ece_key.eck_flags = OES_CACHE_KEY_PROCESS | OES_CACHE_KEY_FILE;
@@ -420,6 +446,8 @@ main(void)
 	close(ctl_pipe[1]);
 	close(res_pipe[0]);
 	close(fd);
+	close(file_fd);
+	unlink(path);
 	return (0);
 
 fail:
@@ -429,5 +457,7 @@ fail:
 	close(ctl_pipe[1]);
 	close(res_pipe[0]);
 	close(fd);
+	close(file_fd);
+	unlink(path);
 	return (1);
 }

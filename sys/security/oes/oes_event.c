@@ -20,11 +20,47 @@
 #include <sys/time.h>
 #include <sys/sdt.h>
 #include <machine/atomic.h>
+#include <vm/uma.h>
 
 #include <security/oes/oes.h>
 #include <security/oes/oes_internal.h>
 
 MALLOC_DECLARE(M_OES);
+
+/*
+ * Provision once at client open; signal hooks may not ask VM for memory.
+ * OES cannot unload, so keep this bounded reserve for the rest of the boot.
+ * No reserve pages or recurring refill work are needed before the first open.
+ */
+#define OES_SIGNAL_RESERVE 128
+static uma_zone_t oes_signal_zone;
+static struct sx oes_signal_init_lock;
+SX_SYSINIT(oes_signal_init, &oes_signal_init_lock, "oes signal reserve");
+
+void
+oes_signal_reserve_prepare(void)
+{
+	uma_zone_t zone;
+
+	if (atomic_load_acq_ptr((uintptr_t *)&oes_signal_zone) != 0)
+		return;
+	sx_xlock(&oes_signal_init_lock);
+	if (oes_signal_zone == NULL) {
+		zone = uma_zcreate("oes signal", offsetof(struct oes_pending,
+		    ep_msg) + OES_MSG_MAX_SIZE, NULL, NULL, NULL, NULL,
+		    UMA_ALIGN_PTR, UMA_ZONE_NOFREE | UMA_ZONE_NOBUCKET);
+		uma_zone_set_max(zone, OES_SIGNAL_RESERVE);
+		/* set_max() recalculates caches, overriding UMA_ZONE_NOBUCKET. */
+		uma_zone_set_maxcache(zone, 0);
+		uma_prealloc(zone, OES_SIGNAL_RESERVE);
+		atomic_store_rel_ptr((uintptr_t *)&oes_signal_zone,
+		    (uintptr_t)zone);
+	}
+	sx_xunlock(&oes_signal_init_lock);
+}
+
+static struct oes_pending *oes_pending_init(struct oes_pending *,
+    oes_event_type_t, struct proc *);
 
 /* proctree_lock stabilizes proc_realparent() while ancestry is captured. */
 extern struct sx proctree_lock;
@@ -396,7 +432,6 @@ struct oes_pending *
 oes_pending_alloc(oes_event_type_t event, struct proc *p)
 {
 	struct oes_pending *ep;
-	struct oes_strtab st;
 	size_t alloc_size;
 
 	/*
@@ -407,6 +442,31 @@ oes_pending_alloc(oes_event_type_t event, struct proc *p)
 	ep = malloc(alloc_size, M_OES, M_NOWAIT | M_ZERO);
 	if (ep == NULL)
 		return (NULL);
+	return (oes_pending_init(ep, event, p));
+}
+
+struct oes_pending *
+oes_pending_alloc_signal(struct proc *p)
+{
+	struct oes_pending *ep;
+	uma_zone_t zone;
+
+	zone = (uma_zone_t)atomic_load_acq_ptr((uintptr_t *)&oes_signal_zone);
+	/* The bounded reserve is shared across all memory domains. */
+	ep = zone != NULL ? uma_zalloc(zone,
+	    M_NOWAIT | M_NOVM | M_USE_RESERVE | M_ZERO) : NULL;
+	if (ep == NULL) {
+		atomic_add_64(&oes_softc.sc_alloc_failures, 1);
+		return (NULL);
+	}
+	ep->ep_flags = EP_FLAG_SIGNAL_RESERVE;
+	return (oes_pending_init(ep, OES_EVENT_NOTIFY_SIGNAL, p));
+}
+
+static struct oes_pending *
+oes_pending_init(struct oes_pending *ep, oes_event_type_t event, struct proc *p)
+{
+	struct oes_strtab st;
 
 	ep->ep_refcount = 1;
 	ep->ep_msg.em_version = OES_MESSAGE_VERSION;
@@ -526,7 +586,10 @@ oes_pending_free(struct oes_pending *ep)
 	if (ep->ep_group != NULL)
 		oes_auth_group_rele(ep->ep_group);
 
-	free(ep, M_OES);
+	if ((ep->ep_flags & EP_FLAG_SIGNAL_RESERVE) != 0)
+		uma_zfree(oes_signal_zone, ep);
+	else
+		free(ep, M_OES);
 }
 
 void

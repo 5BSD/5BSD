@@ -30,7 +30,8 @@ test_chdir_event(void)
 		return (1);
 	}
 
-	if (test_subscribe(fd, events, 1, OES_SUB_REPLACE) < 0) {
+	if (test_unmute_self(fd) < 0 ||
+	    test_subscribe(fd, events, 1, OES_SUB_REPLACE) < 0) {
 		close(fd);
 		return (1);
 	}
@@ -52,7 +53,8 @@ test_chdir_event(void)
 	/* Check for chdir event */
 	for (int i = 0; i < 3; i++) {
 		if (test_wait_event(fd, msg, 500) == 0) {
-			if (msg->em_event == OES_EVENT_NOTIFY_CHDIR) {
+			if (msg->em_event == OES_EVENT_NOTIFY_CHDIR &&
+			    msg->em_process.ep_pid == getpid()) {
 				got_chdir = 1;
 				printf("    INFO: chdir event received\n");
 			}
@@ -60,7 +62,7 @@ test_chdir_event(void)
 	}
 
 	if (!got_chdir)
-		printf("    INFO: no chdir event received\n");
+		TEST_FAIL("no chdir event received");
 
 	/* Restore original directory */
 	(void)chdir(origdir);
@@ -91,7 +93,8 @@ test_fchdir_event(void)
 		return (1);
 	}
 
-	if (test_subscribe(fd, events, 1, OES_SUB_REPLACE) < 0) {
+	if (test_unmute_self(fd) < 0 ||
+	    test_subscribe(fd, events, 1, OES_SUB_REPLACE) < 0) {
 		close(fd);
 		return (1);
 	}
@@ -121,7 +124,8 @@ test_fchdir_event(void)
 	/* Check for chdir event */
 	for (int i = 0; i < 3; i++) {
 		if (test_wait_event(fd, msg, 500) == 0) {
-			if (msg->em_event == OES_EVENT_NOTIFY_CHDIR) {
+			if (msg->em_event == OES_EVENT_NOTIFY_CHDIR &&
+			    msg->em_process.ep_pid == getpid()) {
 				got_chdir = 1;
 				printf("    INFO: fchdir event received\n");
 			}
@@ -129,7 +133,7 @@ test_fchdir_event(void)
 	}
 
 	if (!got_chdir)
-		printf("    INFO: no fchdir event received\n");
+		TEST_FAIL("no fchdir event received");
 
 	(void)chdir(origdir);
 	close(dirfd);
@@ -166,7 +170,8 @@ test_chroot_event(void)
 		return (1);
 	}
 
-	if (test_subscribe(fd, events, 1, OES_SUB_REPLACE) < 0) {
+	if (test_unmute_self(fd) < 0 ||
+	    test_subscribe(fd, events, 1, OES_SUB_REPLACE) < 0) {
 		close(fd);
 		return (1);
 	}
@@ -206,7 +211,7 @@ test_chroot_event(void)
 
 	/* Wait for child result */
 	if (read(pipefd[0], &buf, 1) != 1 || buf != 'D') {
-		printf("    INFO: child chroot failed (expected on some systems)\n");
+		TEST_FAIL("child chroot failed");
 		waitpid(child, NULL, 0);
 		close(pipefd[0]);
 		close(fd);
@@ -218,7 +223,8 @@ test_chroot_event(void)
 	/* Check for chroot event */
 	for (int i = 0; i < 3; i++) {
 		if (test_wait_event(fd, msg, 500) == 0) {
-			if (msg->em_event == OES_EVENT_NOTIFY_CHROOT) {
+			if (msg->em_event == OES_EVENT_NOTIFY_CHROOT &&
+			    msg->em_process.ep_pid == child) {
 				got_chroot = 1;
 				printf("    INFO: chroot event received\n");
 			}
@@ -226,7 +232,7 @@ test_chroot_event(void)
 	}
 
 	if (!got_chroot)
-		printf("    INFO: no chroot event received\n");
+		TEST_FAIL("no chroot event received");
 
 	waitpid(child, NULL, 0);
 	close(fd);
@@ -257,7 +263,8 @@ test_sysctl_event(void)
 		return (1);
 	}
 
-	if (test_subscribe(fd, events, 1, OES_SUB_REPLACE) < 0) {
+	if (test_unmute_self(fd) < 0 ||
+	    test_subscribe(fd, events, 1, OES_SUB_REPLACE) < 0) {
 		close(fd);
 		return (1);
 	}
@@ -275,7 +282,8 @@ test_sysctl_event(void)
 	/* Check for sysctl event */
 	for (int i = 0; i < 3; i++) {
 		if (test_wait_event(fd, msg, 500) == 0) {
-			if (msg->em_event == OES_EVENT_NOTIFY_SYSCTL) {
+			if (msg->em_event == OES_EVENT_NOTIFY_SYSCTL &&
+			    msg->em_process.ep_pid == getpid()) {
 				got_sysctl = 1;
 				printf("    INFO: sysctl event received\n");
 			}
@@ -283,7 +291,7 @@ test_sysctl_event(void)
 	}
 
 	if (!got_sysctl)
-		printf("    INFO: no sysctl event received\n");
+		TEST_FAIL("no sysctl event received");
 
 	close(fd);
 	TEST_PASS();
@@ -297,7 +305,7 @@ test_kenv_event(void)
 	oes_event_type_t events[] = { OES_EVENT_NOTIFY_KENV };
 	test_msg_buf _msg_buf;
 	oes_message_t *msg = &_msg_buf.msg;
-	char value[256];
+	char value[256], name[64];
 	int got_kenv = 0;
 
 	TEST_BEGIN("kenv event");
@@ -311,29 +319,46 @@ test_kenv_event(void)
 		return (1);
 	}
 
-	if (test_subscribe(fd, events, 1, OES_SUB_REPLACE) < 0) {
+	if (test_unmute_self(fd) < 0 ||
+	    test_subscribe(fd, events, 1, OES_SUB_REPLACE) < 0) {
 		close(fd);
 		return (1);
 	}
 
-	/* Try to get a kernel environment variable */
-	if (kenv(KENV_GET, "kern.ostype", value, sizeof(value)) < 0) {
-		/* kenv may not be available or variable may not exist */
-		printf("    INFO: kenv GET failed: %s\n", strerror(errno));
+	/* KENV notifications currently cover mutations, not reads. */
+	snprintf(name, sizeof(name), "oes.test.kenv.%d", getpid());
+	if (kenv(KENV_GET, name, value, sizeof(value)) >= 0 || errno != ENOENT) {
+		TEST_FAIL("temporary kenv name is not available");
+		close(fd);
+		return (1);
+	}
+	strlcpy(value, "oes-test", sizeof(value));
+	if (kenv(KENV_SET, name, value, strlen(value) + 1) < 0) {
+		TEST_FAIL("kenv SET: %s", strerror(errno));
+		close(fd);
+		return (1);
 	}
 
 	/* Check for kenv event */
 	for (int i = 0; i < 3; i++) {
 		if (test_wait_event(fd, msg, 500) == 0) {
-			if (msg->em_event == OES_EVENT_NOTIFY_KENV) {
-				got_kenv = 1;
-				printf("    INFO: kenv event received\n");
+			if (msg->em_event == OES_EVENT_NOTIFY_KENV &&
+			    msg->em_process.ep_pid == getpid()) {
+				got_kenv = msg->em_event_data.kenv.op == 1 &&
+				    strcmp(oes_msg_string(msg,
+				    msg->em_event_data.kenv.name_off), name) == 0;
 			}
 		}
 	}
 
 	if (!got_kenv)
-		printf("    INFO: no kenv event received\n");
+		TEST_FAIL("no kenv event received");
+	if (kenv(KENV_UNSET, name, NULL, 0) < 0)
+		TEST_FAIL("kenv cleanup: %s", strerror(errno));
+	if (test_wait_event_pid(fd, getpid(), OES_EVENT_NOTIFY_KENV, 2000,
+	    msg) != 0 || msg->em_event_data.kenv.op != 2 ||
+	    strcmp(oes_msg_string(msg, msg->em_event_data.kenv.name_off), name) != 0)
+		TEST_FAIL("missing or incorrect kenv UNSET event");
 
 	close(fd);
 	TEST_PASS();
@@ -386,7 +411,11 @@ test_auth_chdir(void)
 	memset(&invert, 0, sizeof(invert));
 	invert.emi_type = OES_MUTE_INVERT_PROCESS;
 	invert.emi_invert = 1;
-	(void)ioctl(fd, OES_IOC_SET_MUTE_INVERT, &invert);
+	if (ioctl(fd, OES_IOC_SET_MUTE_INVERT, &invert) < 0) {
+		TEST_FAIL("invert process muting: %s", strerror(errno));
+		close(fd);
+		return (1);
+	}
 
 	if (pipe(pipefd) < 0) {
 		TEST_FAIL("pipe: %s", strerror(errno));
@@ -414,7 +443,7 @@ test_auth_chdir(void)
 
 		/* Try to chdir - should be denied */
 		if (chdir("/tmp") < 0) {
-			_exit(0);  /* Expected failure */
+			_exit(errno == EACCES ? 0 : 2);
 		}
 		_exit(1);  /* Unexpected success */
 	}
@@ -424,29 +453,30 @@ test_auth_chdir(void)
 	/* Mute child */
 	memset(&mute, 0, sizeof(mute));
 	mute.emu_token.ept_id = child;
-	(void)ioctl(fd, OES_IOC_MUTE_PROCESS, &mute);
+	if (ioctl(fd, OES_IOC_MUTE_PROCESS, &mute) < 0)
+		TEST_FAIL("select AUTH child: %s", strerror(errno));
 
 	/* Signal child */
 	(void)write(pipefd[1], "G", 1);
 	close(pipefd[1]);
 
 	/* Wait for AUTH_CHDIR event */
-	if (test_wait_event_type(fd, msg, OES_EVENT_AUTH_CHDIR, 3000) == 0) {
+	if (test_wait_event_pid(fd, child, OES_EVENT_AUTH_CHDIR, 3000, msg) == 0) {
 		printf("    INFO: got AUTH_CHDIR event, denying\n");
 		memset(&resp, 0, sizeof(resp));
 		resp.er_id = msg->em_id;
 		resp.er_result = OES_AUTH_DENY;
-		(void)write(fd, &resp, sizeof(resp));
+		if (write(fd, &resp, sizeof(resp)) != sizeof(resp))
+			TEST_FAIL("AUTH_CHDIR deny response: %s", strerror(errno));
 	} else {
-		printf("    INFO: no AUTH_CHDIR event received\n");
+		TEST_FAIL("no AUTH_CHDIR event received");
 	}
 
 	waitpid(child, &status, 0);
 	if (WIFEXITED(status) && WEXITSTATUS(status) == 0) {
 		printf("    INFO: child chdir denied as expected\n");
 	} else {
-		printf("    INFO: child exit status: %d\n",
-		    WIFEXITED(status) ? WEXITSTATUS(status) : -1);
+		TEST_FAIL("child chdir was not denied, status=%d", status);
 	}
 
 	close(fd);
@@ -457,14 +487,17 @@ test_auth_chdir(void)
 int
 main(void)
 {
+	int failed = 0;
+
 	TEST_SUITE_BEGIN("chdir/chroot/sysctl events");
 
-	test_chdir_event();
-	test_fchdir_event();
-	test_chroot_event();
-	test_sysctl_event();
-	test_kenv_event();
-	test_auth_chdir();
+	failed += test_chdir_event();
+	failed += test_fchdir_event();
+	failed += test_chroot_event();
+	failed += test_sysctl_event();
+	failed += test_kenv_event();
+	failed += test_auth_chdir();
 
 	TEST_SUITE_END("chdir/chroot/sysctl events");
+	return (failed != 0);
 }

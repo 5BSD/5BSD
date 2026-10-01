@@ -63,6 +63,7 @@
 #include <ufs/ufs/ufsmount.h>
 #include <ufs/ufs/ufs_extern.h>
 #include <ufs/ffs/ffs_extern.h>
+#include <ufs/ffs/fs.h>
 
 #ifdef DIAGNOSTIC
 static int	dirchk = 1;
@@ -1212,6 +1213,188 @@ out:
 	 */
 	if (ip != NULL && IS_SNAPSHOT(ip) && ip->i_effnlink == 0)
 		UFS_SNAPGONE(ip);
+	return (error);
+}
+
+/*
+ * Exchange existing directory references with all affected vnodes locked.
+ * Prepare link dependencies and read every directory block before changing
+ * a name.  In particular, a failed read must not leave a half exchange.
+ */
+int
+ufs_direxchange(struct vnode *fdvp, struct vnode *fvp, struct vnode *tdvp,
+    struct vnode *tvp, struct componentname *fcnp, struct componentname *tcnp,
+    bool *changed)
+{
+	struct exchange_entry {
+		struct inode *dp, *oldip, *newip;
+		off_t offset;
+		struct buf *bp;
+		struct direct *ep;
+		bool owner;
+	} entries[4], *e;
+	struct inode *fdp = VTOI(fdvp), *fip = VTOI(fvp);
+	struct inode *tdp = VTOI(tdvp), *tip = VTOI(tvp);
+	struct fs *fs = ITOFS(fdp);
+	ino_t ino;
+	int n, i, j, holds, unlinks, error, error2;
+	bool softdep;
+
+	*changed = false;
+	softdep = DOINGSOFTDEP(fdvp);
+	bzero(entries, sizeof(entries));
+	error = ufs_delete_denied(fdvp, fvp, fcnp->cn_cred, curthread);
+	if (error == 0)
+		error = ufs_delete_denied(tdvp, tvp, tcnp->cn_cred, curthread);
+	if (error != 0)
+		return (error);
+	error = ufs_lookup_ino(fdvp, NULL, fcnp, &ino);
+	if (error != 0 || ino != fip->i_number)
+		return (error != 0 ? error : ERELOOKUP);
+	entries[0].dp = fdp;
+	entries[0].oldip = fip;
+	entries[0].newip = tip;
+	entries[0].offset = I_OFFSET(fdp);
+	error = ufs_lookup_ino(tdvp, NULL, tcnp, &ino);
+	if (error != 0 || ino != tip->i_number)
+		return (error != 0 ? error : ERELOOKUP);
+	entries[1].dp = tdp;
+	entries[1].oldip = tip;
+	entries[1].newip = fip;
+	entries[1].offset = I_OFFSET(tdp);
+	n = 2;
+	if (fdvp != tdvp) {
+		if (fvp->v_type == VDIR) {
+			entries[n].dp = fip;
+			entries[n].oldip = fdp;
+			entries[n].newip = tdp;
+			entries[n++].offset = offsetof(struct dirtemplate, dotdot_ino);
+		}
+		if (tvp->v_type == VDIR) {
+			entries[n].dp = tip;
+			entries[n].oldip = tdp;
+			entries[n].newip = fdp;
+			entries[n++].offset = offsetof(struct dirtemplate, dotdot_ino);
+		}
+	}
+	for (i = 0; i < n; i++)
+		if (entries[i].newip->i_nlink >= UFS_LINK_MAX)
+			return (EMLINK);
+
+	/* Dependency allocation can sleep; do it before locking any buffers. */
+	holds = unlinks = 0;
+	for (i = 0; i < n; i++) {
+		e = &entries[i];
+		e->newip->i_effnlink++;
+		e->newip->i_nlink++;
+		DIP_SET_NLINK(e->newip, e->newip->i_nlink);
+		UFS_INODE_SET_FLAG(e->newip, IN_CHANGE);
+		if (softdep) {
+			if (i < 2)
+				softdep_setup_link(e->dp, e->newip);
+			else
+				softdep_setup_dotdot_link(e->newip, e->dp);
+		}
+		holds++;
+		error = UFS_UPDATE(ITOV(e->newip),
+		    !softdep && !DOINGASYNC(fdvp));
+		if (error != 0)
+			goto rollback;
+	}
+	for (i = 0; i < n; i++) {
+		e = &entries[i];
+		e->oldip->i_effnlink--;
+		UFS_INODE_SET_FLAG(e->oldip, IN_CHANGE);
+		if (softdep)
+			softdep_setup_unlink(e->dp, e->oldip);
+		else {
+			e->oldip->i_nlink--;
+			DIP_SET_NLINK(e->oldip, e->oldip->i_nlink);
+		}
+		unlinks++;
+	}
+	for (i = 0; i < n; i++) {
+		e = &entries[i];
+		/* Both names may occupy the same locked filesystem block. */
+		for (j = 0; j < i; j++)
+			if (entries[j].dp == e->dp &&
+			    lblkno(fs, entries[j].offset) == lblkno(fs, e->offset))
+				break;
+		if (j < i) {
+			e->bp = entries[j].bp;
+			e->ep = (struct direct *)(e->bp->b_data +
+			    blkoff(fs, e->offset));
+		} else {
+			error = UFS_BLKATOFF(ITOV(e->dp), e->offset,
+			    (char **)&e->ep, &e->bp);
+			if (error != 0)
+				goto rollback;
+			e->owner = true;
+		}
+		if (e->ep->d_ino != e->oldip->i_number ||
+		    (i >= 2 && (e->ep->d_namlen != 2 ||
+		    e->ep->d_name[0] != '.' || e->ep->d_name[1] != '.'))) {
+			error = EIO;
+			goto rollback;
+		}
+	}
+	for (i = 0; i < n; i++) {
+		e = &entries[i];
+		e->ep->d_ino = e->newip->i_number;
+		if (!OFSFMT(ITOV(e->dp)))
+			e->ep->d_type = IFTODT(e->newip->i_mode);
+		UFS_INODE_SET_FLAG(e->dp, IN_CHANGE | IN_UPDATE);
+	}
+	if (softdep) {
+		softdep_setup_directory_exchange(entries[0].bp, fdp, fip,
+		    entries[0].offset, entries[1].bp, tdp, tip, entries[1].offset);
+		for (i = 2; i < n; i++) {
+			e = &entries[i];
+			SET_I_OFFSET(e->dp, e->offset);
+			softdep_setup_directory_change(e->bp, e->dp, e->oldip,
+			    e->newip->i_number, 0);
+		}
+	}
+	*changed = true;
+	error = 0;
+	for (i = 0; i < n; i++) {
+		e = &entries[i];
+		if (!e->owner)
+			continue;
+		if (softdep || DOINGASYNC(fdvp))
+			bdwrite(e->bp);
+		else {
+			error2 = bwrite(e->bp);
+			if (error == 0)
+				error = error2;
+		}
+	}
+	return (error);
+
+rollback:
+	for (i = 0; i < n; i++)
+		if (entries[i].owner)
+			brelse(entries[i].bp);
+	for (i = unlinks - 1; i >= 0; i--) {
+		e = &entries[i];
+		e->oldip->i_effnlink++;
+		if (softdep)
+			softdep_change_linkcnt(e->oldip);
+		else {
+			e->oldip->i_nlink++;
+			DIP_SET_NLINK(e->oldip, e->oldip->i_nlink);
+		}
+		UFS_INODE_SET_FLAG(e->oldip, IN_CHANGE);
+	}
+	for (i = holds - 1; i >= 0; i--) {
+		e = &entries[i];
+		e->newip->i_effnlink--;
+		e->newip->i_nlink--;
+		DIP_SET_NLINK(e->newip, e->newip->i_nlink);
+		UFS_INODE_SET_FLAG(e->newip, IN_CHANGE);
+		if (softdep)
+			softdep_revert_link(e->dp, e->newip);
+	}
 	return (error);
 }
 

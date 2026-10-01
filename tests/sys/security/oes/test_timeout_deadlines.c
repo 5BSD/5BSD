@@ -678,10 +678,11 @@ test_queue_full_fail_closed(void)
 	struct oes_mode_args mode;
 	struct oes_subscribe_args sub;
 	struct oes_deadline_miss_mode_args action;
+	struct oes_stats stats;
 	oes_event_type_t event = OES_EVENT_AUTH_OPEN;
 	struct pollfd pfd;
 	pid_t first, second;
-	int fd, i, status;
+	int fd, i, status, saturated;
 
 	printf("  Testing fail-closed AUTH queue saturation...\n");
 	fd = open("/dev/oes", O_RDWR | O_NONBLOCK | O_CLOEXEC);
@@ -738,7 +739,8 @@ test_queue_full_fail_closed(void)
 		int target, saved_errno;
 
 		close(fd);
-		target = open("/etc/passwd", O_RDONLY);
+		/* The first AUTH wait holds its vnode lock; use another vnode. */
+		target = open("/etc/group", O_RDONLY);
 		saved_errno = errno;
 		if (target >= 0)
 			close(target);
@@ -750,6 +752,10 @@ test_queue_full_fail_closed(void)
 			break;
 		usleep(10000);
 	}
+	memset(&stats, 0, sizeof(stats));
+	saturated = ioctl(fd, OES_IOC_GET_STATS, &stats) == 0 &&
+	    stats.es_queue_max == 1 && stats.es_queue_current == 1 &&
+	    stats.es_events_dropped >= 1;
 	close(fd); /* Releases the queued first request with DENY as well. */
 	(void)waitpid(first, NULL, 0);
 	if (i == 200) {
@@ -760,6 +766,10 @@ test_queue_full_fail_closed(void)
 	}
 	if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
 		printf("    FAIL: queue-full AUTH request did not fail closed\n");
+		return (1);
+	}
+	if (!saturated) {
+		printf("    FAIL: AUTH queue saturation was not observed\n");
 		return (1);
 	}
 	printf("    PASS: per-client DENY applies to dropped AUTH messages\n");

@@ -26,7 +26,7 @@
 .\" (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
 .\" THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 .\"
-.Dd July 24, 1996
+.Dd September 25, 2026
 .Dt VOP_RENAME 9
 .Os
 .Sh NAME
@@ -35,11 +35,12 @@
 .Sh SYNOPSIS
 .In sys/param.h
 .In sys/vnode.h
+.In sys/fcntl.h
 .Ft int
-.Fn VOP_RENAME "struct vnode *fdvp" "struct vnode *fvp" "struct componentname *fcnp" "struct vnode *tdvp" "struct vnode *tvp" "struct componentname *tcnp"
+.Fn VOP_RENAME "struct vnode *fdvp" "struct vnode *fvp" "struct componentname *fcnp" "struct vnode *tdvp" "struct vnode *tvp" "struct componentname *tcnp" "u_int flags"
 .Sh DESCRIPTION
 This renames a file and possibly changes its parent directory.
-If the destination object exists, it will be removed first.
+Unless an exchange is requested, an existing destination object is removed.
 .Pp
 Its arguments are:
 .Bl -tag -width fdvp
@@ -55,7 +56,34 @@ The vnode of the new parent directory.
 The vnode of the target file (if it exists).
 .It Fa tcnp
 Pathname information about the file's new name.
+.It Fa flags
+Zero or one of
+.Dv AT_RENAME_NOREPLACE
+and
+.Dv AT_RENAME_EXCHANGE .
+The first rejects an existing destination.
+The second atomically exchanges two existing directory entries; the objects
+may have different types and directories need not be empty.
+Unsupported flags must be rejected with
+.Er EOPNOTSUPP
+before any modification.
 .El
+.Pp
+Filesystems implementing exchange must authorize both directions.
+After acquiring locks on the final four vnodes, call
+.Fn vn_rename_exchange_check
+with the six vnode and component-name arguments before modifying either entry.
+This checks native MAC permissions; the filesystem must also enforce
+its native access, immutability, and directory-cycle checks in both directions.
+ABI sandbox checks apply to the accessed VFS path, which can have different
+ancestry from the underlying filesystem path.
+For either ordinary rename or exchange, if relocking changes an object, return
+.Er ERELOOKUP
+so the VFS can repeat lookup, recheck permissions on the accessed path,
+and retain the correct objects for notifications.
+The objects and parent directories must be in vnode sequence-counter write
+sections while changing the entries and updating the name cache with
+.Fn cache_vop_exchange .
 .Sh LOCKS
 The source directory and file are unlocked but are expected to have their
 ref count bumped on entry.
@@ -82,8 +110,12 @@ An attempt was made to rename
 or
 .Pa .. ,
 or to perform an operation which would break the directory tree structure.
+.It Bq Er EOPNOTSUPP
+The filesystem does not support the requested flags.
+.It Bq Er ENOENT
+An exchange was requested and either directory entry is missing.
 .It Bq Er ENOTDIR
-An attempt was made to rename a directory to a file or vice versa.
+An ordinary rename attempted to replace a directory with a file or vice versa.
 .It Bq Er ENOTEMPTY
 An attempt was made to remove a directory which is not empty.
 .El

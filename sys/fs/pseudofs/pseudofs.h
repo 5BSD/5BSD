@@ -80,6 +80,7 @@ typedef enum {
 #define PFS_AUTODRAIN	0x0040	/* sbuf_print can sleep to drain */
 #define PFS_MAGICLINK	0x0080	/* Kernel-generated object link */
 #define PFS_FDNAME	0x0400	/* Numeric descriptor template */
+#define PFS_DEBUGOPEN	0x0800	/* Check debugger access at open, not lookup */
 #define PFS_TIDNAME	0x0200	/* Enumerate thread IDs using pi_thread_id */
 #define PFS_PIDNAME	0x0100	/* Name is the inherited process ID */
 
@@ -203,6 +204,8 @@ struct pfs_info {
 	pfs_init_t		 pi_uninit;
 	/* Called with the process locked; zero means this thread is hidden. */
 	pid_t (*pi_thread_id)(struct thread *, uint64_t *);
+	/* Optional filesystem ownership policy; process locked, must not sleep. */
+	void (*pi_proc_attr)(struct proc *, struct vattr *);
 
 	/* members below this line are initialized at run time */
 	struct pfs_node		*pi_root;

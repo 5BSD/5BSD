@@ -292,6 +292,8 @@ pfs_getattr(struct vop_getattr_args *va)
 
 	if (pn->pn_attr != NULL)
 		error = pn_attr(curthread, proc, pn, vap);
+	if (error == 0 && proc != NULL && pn->pn_info->pi_proc_attr != NULL)
+		pn->pn_info->pi_proc_attr(proc, vap);
 
 	if(proc != NULL)
 		PROC_UNLOCK(proc);
@@ -706,9 +708,21 @@ pfs_open(struct vop_open_args *va)
 	struct pfs_vdata *pvd = vn->v_data;
 	struct pfs_node *pn = pvd->pvd_pn;
 	int mode = va->a_mode;
+	struct proc *proc;
+	int error;
 
 	PFS_TRACE(("%s (mode 0x%x)", pn->pn_name, mode));
 	pfs_assert_not_owned(pn);
+
+	if ((pn->pn_flags & PFS_DEBUGOPEN) != 0) {
+		if (!pfs_visible(va->a_td, pn, pvd->pvd_pid, pvd->pvd_tid,
+		    pvd->pvd_cookie, &proc) || proc == NULL)
+			PFS_RETURN (ENOENT);
+		error = p_candebug(va->a_td, proc);
+		PROC_UNLOCK(proc);
+		if (error != 0)
+			PFS_RETURN (EACCES);
+	}
 
 	/* check if the requested mode is permitted */
 	if (((mode & FREAD) && !(mode & PFS_RD)) ||
@@ -803,6 +817,11 @@ pfs_read(struct vop_read_args *va)
 		pvd->pvd_cookie, &proc))
 		PFS_RETURN (EIO);
 	if (proc != NULL) {
+		if ((pn->pn_flags & PFS_DEBUGOPEN) != 0 &&
+		    p_candebug(curthread, proc) != 0) {
+			PROC_UNLOCK(proc);
+			PFS_RETURN (EACCES);
+		}
 		_PHOLD(proc);
 		PROC_UNLOCK(proc);
 	}

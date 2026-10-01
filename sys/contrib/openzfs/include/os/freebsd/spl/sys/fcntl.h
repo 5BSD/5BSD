@@ -36,4 +36,12 @@
 #define	O_DSYNC		0
 #endif
 
+/*
+ * Shared ZIL replay code spells the rename flags the way Linux does; FreeBSD
+ * carries the same bits under the AT_ prefix.
+ */
+#ifndef RENAME_EXCHANGE
+#define	RENAME_EXCHANGE	AT_RENAME_EXCHANGE
+#endif
+
 #endif	/* _SPL_SYS_FCNTL_H_ */

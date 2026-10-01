@@ -281,6 +281,15 @@ softdep_setup_remove(struct buf *bp,
 }
 
 void
+softdep_setup_directory_exchange(struct buf *fbp, struct inode *fdp,
+    struct inode *fip, off_t foff, struct buf *tbp, struct inode *tdp,
+    struct inode *tip, off_t toff)
+{
+
+	panic("softdep_setup_directory_exchange called");
+}
+
+void
 softdep_setup_directory_change(struct buf *bp,
 	struct inode *dp,
 	struct inode *ip,
@@ -9323,6 +9332,7 @@ journal_jremref(struct dirrem *dirrem,
 	struct jremref *jremref,
 	struct inodedep *inodedep)
 {
+	struct inoref *inoref;
 
 	if (inodedep == NULL)
 		if (inodedep_lookup(jremref->jr_list.wk_mp,
@@ -9330,6 +9340,19 @@ journal_jremref(struct dirrem *dirrem,
 			panic("journal_jremref: Lost inodedep");
 	LIST_INSERT_HEAD(&dirrem->dm_jremrefhd, jremref, jr_deps);
 	TAILQ_INSERT_TAIL(&inodedep->id_inoreflst, &jremref->jr_ref, if_deps);
+	/*
+	 * An exchange reserves the replacement link before removing the old
+	 * name.  Do not journal its removal ahead of that unfinished add:
+	 * recovery uses the first record's pre-operation link count.
+	 * Directory-change setup queues the deferred removes when the add
+	 * has acquired its directory dependency.
+	 */
+	TAILQ_FOREACH(inoref, &inodedep->id_inoreflst, if_deps) {
+		if (inoref == &jremref->jr_ref)
+			break;
+		if ((inoref->if_state & DEPCOMPLETE) == 0)
+			return;
+	}
 	add_to_journal(&jremref->jr_list);
 }
 
@@ -9519,28 +9542,12 @@ newdirrem(
  * decremented by the calling procedure -- the soft updates
  * code will perform this task when it is safe.
  */
-void 
-softdep_setup_directory_change(
-	struct buf *bp,		/* buffer containing directory block */
-	struct inode *dp,	/* inode for the directory being modified */
-	struct inode *ip,	/* inode for directory entry being removed */
-	ino_t newinum,		/* new inode number for changed entry */
-	u_int newparent)	/* indicates if doing RMDIR */
+static struct diradd *
+newdirchange(struct inode *dp, ino_t newinum, off_t diroff)
 {
-	int offset;
 	struct diradd *dap = NULL;
-	struct dirrem *dirrem, *prevdirrem;
-	struct pagedep *pagedep;
-	struct inodedep *inodedep;
-	struct jaddref *jaddref;
-	struct mount *mp;
-	struct ufsmount *ump;
-
-	mp = ITOVFS(dp);
-	ump = VFSTOUFS(mp);
-	offset = blkoff(ump->um_fs, I_OFFSET(dp));
-	KASSERT(MOUNTEDSOFTDEP(mp) != 0,
-	   ("softdep_setup_directory_change called on non-softdep filesystem"));
+	struct mount *mp = ITOVFS(dp);
+	int offset = blkoff(ITOFS(dp), diroff);
 
 	/*
 	 * Whiteouts do not need diradd dependencies.
@@ -9554,6 +9561,34 @@ softdep_setup_directory_change(
 		dap->da_newinum = newinum;
 		LIST_INIT(&dap->da_jwork);
 	}
+
+	return (dap);
+}
+
+static void
+softdep_setup_directory_change_common(
+	struct buf *bp,		/* buffer containing directory block */
+	struct inode *dp,	/* inode for the directory being modified */
+	struct inode *ip,	/* inode for directory entry being removed */
+	ino_t newinum,		/* new inode number for changed entry */
+	u_int newparent,	/* indicates if doing RMDIR */
+	struct diradd *dap)
+{
+	int offset;
+	struct dirrem *dirrem, *prevdirrem;
+	struct pagedep *pagedep;
+	struct inodedep *inodedep;
+	struct inoref *inoref;
+	struct jaddref *jaddref;
+	struct mount *mp;
+	struct ufsmount *ump;
+
+	mp = ITOVFS(dp);
+	ump = VFSTOUFS(mp);
+	offset = blkoff(ump->um_fs, I_OFFSET(dp));
+	KASSERT(MOUNTEDSOFTDEP(mp) != 0,
+	   ("softdep_setup_directory_change called on non-softdep filesystem"));
+
 
 	/*
 	 * Allocate a new dirrem and ACQUIRE_LOCK.
@@ -9636,9 +9671,19 @@ softdep_setup_directory_change(
 	 */
 	inodedep_lookup(mp, newinum, DEPALLOC, &inodedep);
 	if (MOUNTEDSUJ(mp)) {
-		jaddref = (struct jaddref *)TAILQ_LAST(&inodedep->id_inoreflst,
-		    inoreflst);
-		KASSERT(jaddref != NULL && jaddref->ja_parent == dp->i_number,
+		/* An exchange may already have queued the old name's removal. */
+		jaddref = NULL;
+		TAILQ_FOREACH_REVERSE(inoref, &inodedep->id_inoreflst,
+		    inoreflst, if_deps) {
+			if (inoref->if_list.wk_type != D_JADDREF ||
+			    inoref->if_parent != dp->i_number)
+				continue;
+			jaddref = (struct jaddref *)inoref;
+			if (jaddref->ja_diradd == NULL)
+				break;
+			jaddref = NULL;
+		}
+		KASSERT(jaddref != NULL,
 		    ("softdep_setup_directory_change: bad jaddref %p",
 		    jaddref));
 		jaddref->ja_diroff = I_OFFSET(dp);
@@ -9646,6 +9691,15 @@ softdep_setup_directory_change(
 		LIST_INSERT_HEAD(&pagedep->pd_diraddhd[DIRADDHASH(offset)],
 		    dap, da_pdlist);
 		add_to_journal(&jaddref->ja_list);
+		/* Preserve inode-reference order for exchange's deferred removes. */
+		for (inoref = TAILQ_NEXT(&jaddref->ja_ref, if_deps);
+		    inoref != NULL; inoref = TAILQ_NEXT(inoref, if_deps)) {
+			if ((inoref->if_state & DEPCOMPLETE) != 0)
+				continue;
+			if (inoref->if_list.wk_type != D_JREMREF)
+				break;
+			add_to_journal(&inoref->if_list);
+		}
 	} else if ((inodedep->id_state & ALLCOMPLETE) == ALLCOMPLETE) {
 		dap->da_state |= COMPLETE;
 		LIST_INSERT_HEAD(&pagedep->pd_pendinghd, dap, da_pdlist);
@@ -9660,10 +9714,56 @@ softdep_setup_directory_change(
 	 * committed when need to move the dot and dotdot references to
 	 * this new name.
 	 */
-	if (inodedep->id_mkdiradd && I_OFFSET(dp) != DOTDOT_OFFSET)
+	if (inodedep->id_mkdiradd != NULL && inodedep->id_mkdiradd != dap &&
+	    I_OFFSET(dp) != DOTDOT_OFFSET)
 		merge_diradd(inodedep, dap);
 	FREE_LOCK(ump);
 }
+
+void
+softdep_setup_directory_change(struct buf *bp, struct inode *dp,
+    struct inode *ip, ino_t newinum, u_int newparent)
+{
+	struct diradd *dap;
+
+	dap = newdirchange(dp, newinum, I_OFFSET(dp));
+	softdep_setup_directory_change_common(bp, dp, ip, newinum, newparent,
+	    dap);
+}
+
+/*
+ * Both names must acquire their new mkdir dependencies before either old
+ * name is canceled.  A directory exchange is not an rmdir: its dot and
+ * dotdot journal references must survive at the other name.
+ */
+void
+softdep_setup_directory_exchange(struct buf *fbp, struct inode *fdp,
+    struct inode *fip, off_t foff, struct buf *tbp, struct inode *tdp,
+    struct inode *tip, off_t toff)
+{
+	struct diradd *fdap, *tdap;
+	struct inodedep *inodedep;
+	struct ufsmount *ump;
+
+	ump = ITOUMP(fdp);
+	fdap = newdirchange(fdp, tip->i_number, foff);
+	tdap = newdirchange(tdp, fip->i_number, toff);
+	ACQUIRE_LOCK(ump);
+	if (inodedep_lookup(ITOVFS(fdp), tip->i_number, 0, &inodedep) != 0 &&
+	    inodedep->id_mkdiradd != NULL)
+		merge_diradd(inodedep, fdap);
+	if (inodedep_lookup(ITOVFS(fdp), fip->i_number, 0, &inodedep) != 0 &&
+	    inodedep->id_mkdiradd != NULL)
+		merge_diradd(inodedep, tdap);
+	FREE_LOCK(ump);
+	SET_I_OFFSET(fdp, foff);
+	softdep_setup_directory_change_common(fbp, fdp, fip, tip->i_number,
+	    0, fdap);
+	SET_I_OFFSET(tdp, toff);
+	softdep_setup_directory_change_common(tbp, tdp, tip, fip->i_number,
+	    0, tdap);
+}
+
 
 /*
  * Called whenever the link count on an inode is changed.
