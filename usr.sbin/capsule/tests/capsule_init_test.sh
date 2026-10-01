@@ -37,6 +37,9 @@ require_pidfile()
 	if [ -z "$pid" ]; then
 		atf_skip "capsule pidfile is empty"
 	fi
+	# Several cases hand a single-quoted script to sh(1) via atf_check:
+	# the path has to reach that shell through the environment.
+	export capsule_pidfile capsule_sock
 }
 
 # Address the instance under test over its own control socket.  capsulectl(8)
