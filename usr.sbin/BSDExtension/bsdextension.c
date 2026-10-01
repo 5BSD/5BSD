@@ -446,6 +446,10 @@ sysext_request(struct channel *ch __unused, struct channel_message *m, void *arg
 		}
 	}
 	if (rq->op == SYSEXT_OP_RELOAD) {
+		if (!service_rights_allow(identity->rights, SERVICE_RIGHTS_ADMIN)) {
+			rp.status = EPERM;
+			goto reply;
+		}
 		/*
 		 * Reload capmode-safely: in production the operator allow-list is read
 		 * through the switchboard-delivered Config descriptor (an absolute
