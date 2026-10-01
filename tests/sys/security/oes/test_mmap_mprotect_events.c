@@ -31,7 +31,8 @@ test_mmap_file(void)
 		return (1);
 	}
 
-	if (test_subscribe(fd, events, 1, OES_SUB_REPLACE) < 0) {
+	if (test_unmute_self(fd) < 0 ||
+	    test_subscribe(fd, events, 1, OES_SUB_REPLACE) < 0) {
 		close(fd);
 		return (1);
 	}
@@ -57,7 +58,8 @@ test_mmap_file(void)
 	/* Check for mmap event */
 	for (int i = 0; i < 3; i++) {
 		if (test_wait_event(fd, msg, 500) == 0) {
-			if (msg->em_event == OES_EVENT_NOTIFY_MMAP) {
+			if (msg->em_event == OES_EVENT_NOTIFY_MMAP &&
+			    msg->em_process.ep_pid == getpid()) {
 				got_mmap = 1;
 				printf("    INFO: mmap event: prot=0x%x flags=0x%x\n",
 				    msg->em_event_data.mmap.prot,
@@ -67,7 +69,7 @@ test_mmap_file(void)
 	}
 
 	if (!got_mmap)
-		printf("    INFO: no mmap event received\n");
+		TEST_FAIL("no file mmap event received");
 
 	munmap(addr, 4096);
 	close(testfd);
@@ -87,7 +89,7 @@ test_mmap_anon(void)
 	void *addr;
 	int got_mmap = 0;
 
-	TEST_BEGIN("mmap anonymous event");
+	TEST_BEGIN("anonymous mmap has no vnode event");
 
 	fd = test_open_oes();
 	if (fd < 0)
@@ -98,7 +100,8 @@ test_mmap_anon(void)
 		return (1);
 	}
 
-	if (test_subscribe(fd, events, 1, OES_SUB_REPLACE) < 0) {
+	if (test_unmute_self(fd) < 0 ||
+	    test_subscribe(fd, events, 1, OES_SUB_REPLACE) < 0) {
 		close(fd);
 		return (1);
 	}
@@ -112,15 +115,88 @@ test_mmap_anon(void)
 		return (1);
 	}
 
-	/* Check for mmap event (anonymous mmap may or may not generate events) */
+	/* The vnode hook must not invent a file event for an anonymous mapping. */
 	for (int i = 0; i < 3; i++) {
 		if (test_wait_event(fd, msg, 500) == 0) {
-			if (msg->em_event == OES_EVENT_NOTIFY_MMAP)
+			if (msg->em_event == OES_EVENT_NOTIFY_MMAP &&
+			    msg->em_process.ep_pid == getpid())
 				got_mmap = 1;
 		}
 	}
 
-	printf("    INFO: anonymous mmap event: %s\n", got_mmap ? "yes" : "no");
+	if (got_mmap)
+		TEST_FAIL("unexpected anonymous file mmap event");
+
+	munmap(addr, 4096);
+	close(fd);
+	TEST_PASS();
+	return (0);
+}
+
+/*
+ * oes_event_mprotect_t documents the backing file as optional, so an
+ * anonymous mapping must still report the mprotect -- with an empty file --
+ * rather than being dropped for want of a vnode.
+ */
+static int
+test_mprotect_anon(void)
+{
+	int fd;
+	oes_event_type_t events[] = { OES_EVENT_NOTIFY_MPROTECT };
+	test_msg_buf _msg_buf;
+	oes_message_t *msg = &_msg_buf.msg;
+	void *addr;
+	int got_mprotect = 0, got_file = 0;
+
+	TEST_BEGIN("anonymous mprotect event has no file");
+
+	fd = test_open_oes();
+	if (fd < 0)
+		return (1);
+
+	if (test_set_mode(fd, OES_MODE_NOTIFY) < 0) {
+		close(fd);
+		return (1);
+	}
+
+	if (test_unmute_self(fd) < 0 ||
+	    test_subscribe(fd, events, 1, OES_SUB_REPLACE) < 0) {
+		close(fd);
+		return (1);
+	}
+
+	addr = mmap(NULL, 4096, PROT_READ | PROT_WRITE,
+	    MAP_PRIVATE | MAP_ANON, -1, 0);
+	if (addr == MAP_FAILED) {
+		TEST_FAIL("mmap: %s", strerror(errno));
+		close(fd);
+		return (1);
+	}
+
+	if (mprotect(addr, 4096, PROT_READ) < 0) {
+		TEST_FAIL("mprotect: %s", strerror(errno));
+		munmap(addr, 4096);
+		close(fd);
+		return (1);
+	}
+
+	for (int i = 0; i < 3; i++) {
+		if (test_wait_event(fd, msg, 500) == 0) {
+			if (msg->em_event == OES_EVENT_NOTIFY_MPROTECT &&
+			    msg->em_process.ep_pid == getpid() &&
+			    msg->em_event_data.mprotect.prot == PROT_READ) {
+				got_mprotect = 1;
+				if (msg->em_event_data.mprotect.file.ef_ino != 0 ||
+				    msg->em_event_data.mprotect.file.ef_fstype[0] != '\0')
+					got_file = 1;
+			}
+		}
+	}
+
+	if (!got_mprotect)
+		TEST_FAIL("no anonymous mprotect event received");
+	if (got_file)
+		TEST_FAIL("anonymous mprotect event reported a backing file");
 
 	munmap(addr, 4096);
 	close(fd);
@@ -131,7 +207,8 @@ test_mmap_anon(void)
 static int
 test_mprotect(void)
 {
-	int fd;
+	int fd, testfd;
+	char temppath[64];
 	oes_event_type_t events[] = { OES_EVENT_NOTIFY_MPROTECT };
 	test_msg_buf _msg_buf;
 	oes_message_t *msg = &_msg_buf.msg;
@@ -149,14 +226,29 @@ test_mprotect(void)
 		return (1);
 	}
 
-	if (test_subscribe(fd, events, 1, OES_SUB_REPLACE) < 0) {
+	if (test_unmute_self(fd) < 0 ||
+	    test_subscribe(fd, events, 1, OES_SUB_REPLACE) < 0) {
 		close(fd);
 		return (1);
 	}
 
-	/* Allocate memory */
+	/* mprotect's OES hook observes vnode-backed mappings. */
+	testfd = test_create_temp_file(temppath, sizeof(temppath));
+	if (testfd < 0) {
+		close(fd);
+		return (1);
+	}
+	if (ftruncate(testfd, 4096) < 0) {
+		TEST_FAIL("ftruncate: %s", strerror(errno));
+		close(testfd);
+		unlink(temppath);
+		close(fd);
+		return (1);
+	}
 	addr = mmap(NULL, 4096, PROT_READ | PROT_WRITE,
-	    MAP_PRIVATE | MAP_ANON, -1, 0);
+	    MAP_SHARED, testfd, 0);
+	close(testfd);
+	unlink(temppath);
 	if (addr == MAP_FAILED) {
 		TEST_FAIL("mmap: %s", strerror(errno));
 		close(fd);
@@ -174,7 +266,9 @@ test_mprotect(void)
 	/* Check for mprotect event */
 	for (int i = 0; i < 3; i++) {
 		if (test_wait_event(fd, msg, 500) == 0) {
-			if (msg->em_event == OES_EVENT_NOTIFY_MPROTECT) {
+			if (msg->em_event == OES_EVENT_NOTIFY_MPROTECT &&
+			    msg->em_process.ep_pid == getpid() &&
+			    msg->em_event_data.mprotect.prot == PROT_READ) {
 				got_mprotect = 1;
 				printf("    INFO: mprotect event: new_prot=0x%x\n",
 				    msg->em_event_data.mprotect.prot);
@@ -183,7 +277,7 @@ test_mprotect(void)
 	}
 
 	if (!got_mprotect)
-		printf("    INFO: no mprotect event received\n");
+		TEST_FAIL("no file mprotect event received");
 
 	munmap(addr, 4096);
 	close(fd);
@@ -213,7 +307,8 @@ test_mmap_exec(void)
 		return (1);
 	}
 
-	if (test_subscribe(fd, events, 1, OES_SUB_REPLACE) < 0) {
+	if (test_unmute_self(fd) < 0 ||
+	    test_subscribe(fd, events, 1, OES_SUB_REPLACE) < 0) {
 		close(fd);
 		return (1);
 	}
@@ -227,19 +322,18 @@ test_mmap_exec(void)
 	/* Write some bytes */
 	char buf[4096];
 	memset(buf, 0x90, sizeof(buf));  /* NOP sled */
-	(void)write(testfd, buf, sizeof(buf));
+	if (write(testfd, buf, sizeof(buf)) != sizeof(buf) ||
+	    fchmod(testfd, 0700) < 0) {
+		TEST_FAIL("prepare executable mapping: %s", strerror(errno));
+		close(testfd);
+		unlink(temppath);
+		close(fd);
+		return (1);
+	}
 
 	/* mmap with PROT_EXEC */
 	addr = mmap(NULL, 4096, PROT_READ | PROT_EXEC, MAP_SHARED, testfd, 0);
 	if (addr == MAP_FAILED) {
-		if (errno == EACCES) {
-			printf("    INFO: PROT_EXEC denied (W^X enforcement)\n");
-			close(testfd);
-			unlink(temppath);
-			close(fd);
-			TEST_PASS();
-			return (0);
-		}
 		TEST_FAIL("mmap exec: %s", strerror(errno));
 		close(testfd);
 		unlink(temppath);
@@ -250,7 +344,9 @@ test_mmap_exec(void)
 	/* Check for mmap event */
 	for (int i = 0; i < 3; i++) {
 		if (test_wait_event(fd, msg, 500) == 0) {
-			if (msg->em_event == OES_EVENT_NOTIFY_MMAP) {
+			if (msg->em_event == OES_EVENT_NOTIFY_MMAP &&
+			    msg->em_process.ep_pid == getpid() &&
+			    (msg->em_event_data.mmap.prot & PROT_EXEC) != 0) {
 				got_mmap = 1;
 				if (msg->em_event_data.mmap.prot & PROT_EXEC)
 					printf("    INFO: EXEC mmap detected\n");
@@ -258,7 +354,8 @@ test_mmap_exec(void)
 		}
 	}
 
-	printf("    INFO: exec mmap event: %s\n", got_mmap ? "yes" : "no");
+	if (!got_mmap)
+		TEST_FAIL("no executable mmap event received");
 
 	munmap(addr, 4096);
 	close(testfd);
@@ -269,7 +366,7 @@ test_mmap_exec(void)
 }
 
 static int
-test_auth_mmap(void)
+test_auth_mapping(int deny, int protect)
 {
 	int fd, testfd;
 	char temppath[64];
@@ -277,7 +374,9 @@ test_auth_mmap(void)
 	struct oes_subscribe_args sub;
 	struct oes_mute_args mute;
 	struct oes_mute_invert_args invert;
-	oes_event_type_t events[] = { OES_EVENT_AUTH_MMAP };
+	oes_event_type_t events[] = {
+		protect ? OES_EVENT_AUTH_MPROTECT : OES_EVENT_AUTH_MMAP
+	};
 	test_msg_buf _msg_buf;
 	oes_message_t *msg = &_msg_buf.msg;
 	oes_response_t resp;
@@ -287,7 +386,9 @@ test_auth_mmap(void)
 	void *addr;
 	int status;
 
-	TEST_BEGIN("AUTH mmap (allow)");
+	TEST_BEGIN(protect ? (deny ? "AUTH mprotect (deny)" :
+	    "AUTH mprotect (allow)") : (deny ? "AUTH mmap (deny)" :
+	    "AUTH mmap (allow)"));
 
 	fd = test_open_oes();
 	if (fd < 0)
@@ -316,7 +417,11 @@ test_auth_mmap(void)
 	memset(&invert, 0, sizeof(invert));
 	invert.emi_type = OES_MUTE_INVERT_PROCESS;
 	invert.emi_invert = 1;
-	(void)ioctl(fd, OES_IOC_SET_MUTE_INVERT, &invert);
+	if (ioctl(fd, OES_IOC_SET_MUTE_INVERT, &invert) < 0) {
+		TEST_FAIL("invert process selection: %s", strerror(errno));
+		close(fd);
+		return (1);
+	}
 
 	/* Create temp file */
 	testfd = test_create_temp_file(temppath, sizeof(temppath));
@@ -356,11 +461,23 @@ test_auth_mmap(void)
 		close(pipefd[0]);
 
 		/* Try to mmap the file */
-		int f = open(temppath, O_RDONLY);
+		int f = open(temppath, protect ? O_RDWR : O_RDONLY);
 		if (f < 0)
 			_exit(2);
 		addr = mmap(NULL, 4096, PROT_READ, MAP_SHARED, f, 0);
+		int map_errno = errno;
 		close(f);
+		if (protect) {
+			if (addr == MAP_FAILED)
+				_exit(5);
+			int result = mprotect(addr, 4096, PROT_READ | PROT_WRITE);
+			int protect_errno = errno;
+			munmap(addr, 4096);
+			_exit(deny ? !(result == -1 && protect_errno == EACCES) :
+			    result != 0);
+		}
+		if (deny)
+			_exit(addr == MAP_FAILED && map_errno == EACCES ? 0 : 4);
 		if (addr == MAP_FAILED)
 			_exit(3);
 		munmap(addr, 4096);
@@ -372,30 +489,29 @@ test_auth_mmap(void)
 	/* Mute child so it's monitored (inverted mode) */
 	memset(&mute, 0, sizeof(mute));
 	mute.emu_token.ept_id = child;
-	(void)ioctl(fd, OES_IOC_MUTE_PROCESS, &mute);
+	if (ioctl(fd, OES_IOC_MUTE_PROCESS, &mute) < 0)
+		TEST_FAIL("select child: %s", strerror(errno));
 
 	/* Signal child to proceed */
 	(void)write(pipefd[1], "G", 1);
 	close(pipefd[1]);
 
-	/* Wait for AUTH_MMAP event */
-	if (test_wait_event_type(fd, msg, OES_EVENT_AUTH_MMAP, 3000) == 0) {
-		printf("    INFO: got AUTH_MMAP event, allowing\n");
+	/* The operation must actually reach the subscribed authorization hook. */
+	if (test_wait_event_type(fd, msg, events[0], 3000) == 0 &&
+	    msg->em_process.ep_pid == child) {
+		printf("    INFO: got mapping AUTH event, responding\n");
 		memset(&resp, 0, sizeof(resp));
 		resp.er_id = msg->em_id;
-		resp.er_result = OES_AUTH_ALLOW;
-		(void)write(fd, &resp, sizeof(resp));
+		resp.er_result = deny ? OES_AUTH_DENY : OES_AUTH_ALLOW;
+		if (write(fd, &resp, sizeof(resp)) != sizeof(resp))
+			TEST_FAIL("write AUTH response: %s", strerror(errno));
 	} else {
-		printf("    INFO: no AUTH_MMAP event received\n");
+		TEST_FAIL("no matching mapping AUTH event received");
 	}
 
-	waitpid(child, &status, 0);
-	if (WIFEXITED(status) && WEXITSTATUS(status) == 0) {
-		printf("    INFO: child mmap succeeded\n");
-	} else {
-		printf("    INFO: child exit status: %d\n",
-		    WIFEXITED(status) ? WEXITSTATUS(status) : -1);
-	}
+	if (waitpid(child, &status, 0) != child ||
+	    !WIFEXITED(status) || WEXITSTATUS(status) != 0)
+		TEST_FAIL("child did not observe requested mapping authorization");
 
 	unlink(temppath);
 	close(fd);
@@ -406,13 +522,20 @@ test_auth_mmap(void)
 int
 main(void)
 {
+	int failed = 0;
+
 	TEST_SUITE_BEGIN("mmap/mprotect events");
 
-	test_mmap_file();
-	test_mmap_anon();
-	test_mprotect();
-	test_mmap_exec();
-	test_auth_mmap();
+	failed += test_mmap_file();
+	failed += test_mmap_anon();
+	failed += test_mprotect();
+	failed += test_mprotect_anon();
+	failed += test_mmap_exec();
+	failed += test_auth_mapping(0, 0);
+	failed += test_auth_mapping(1, 0);
+	failed += test_auth_mapping(0, 1);
+	failed += test_auth_mapping(1, 1);
 
 	TEST_SUITE_END("mmap/mprotect events");
+	return (failed != 0);
 }
