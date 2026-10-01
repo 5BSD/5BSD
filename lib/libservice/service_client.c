@@ -14,6 +14,7 @@
 #include <fcntl.h>
 #include <poll.h>
 #include <pthread.h>
+#include <stdatomic.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -55,6 +56,7 @@ struct service_client {
 	struct service_event	*events_tail;
 	pid_t			 owner;
 	unsigned		 active;
+	_Atomic unsigned	 senders_waiting;
 	unsigned		 nevents;
 	int			 terminal_error;
 	bool			 closing;
@@ -383,6 +385,11 @@ pump(struct service_client *client, int timeout_ms, bool *busy)
 	int error, result, ready, wants_write;
 
 	*busy = false;
+	/* Yield the channel to a sender queued behind the pumping thread. */
+	if (atomic_load(&client->senders_waiting) != 0) {
+		*busy = true;
+		return (0);
+	}
 	error = pthread_mutex_trylock(&client->channel_lock);
 	if (error == EBUSY) {
 		*busy = true;
@@ -571,7 +578,10 @@ service_client_call_internal(struct service_client *client,
 	(void)pthread_mutex_unlock(&client->lock);
 	dispatch_attempted = false;
 
-	if (lock_mutex(&client->channel_lock) == -1) {
+	atomic_fetch_add(&client->senders_waiting, 1);
+	error = lock_mutex(&client->channel_lock);
+	atomic_fetch_sub(&client->senders_waiting, 1);
+	if (error == -1) {
 		error = errno;
 		goto fail_active;
 	}
