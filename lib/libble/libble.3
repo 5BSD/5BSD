@@ -540,7 +540,7 @@ On a successful connection it performs the protocol handshake
 and, on success, returns an opaque context.
 It returns
 .Dv NULL
-on failure, including a connection error, a protocol version mismatch, or a
+on failure, including a connection error, a malformed handshake, or a
 handshake timeout;
 the handshake is bounded by a short internal timeout so the call never blocks
 indefinitely.
@@ -578,11 +578,13 @@ on a malformed hand-off.
 .Pp
 .Fn ble_handshake
 negotiates the framed binary control protocol on an open context: it sends
-the client protocol version and feature request, waits
+the feature request, waits
 .Pq with a bounded timeout
 for the daemon's reply, and on success switches the context to the
 length-prefixed binary protocol.
-It returns 0 on success, or \-1 on a protocol version mismatch, a timeout, or
+There is no version on the wire: the handshake negotiates features only, and
+both ends are built from one source tree.
+It returns 0 on success, or \-1 on a malformed reply, a timeout, or
 an I/O error, with the specific cause available through
 .Fn ble_errno
 and

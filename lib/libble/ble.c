@@ -1015,7 +1015,7 @@ ble_open(const char *sock_path)
 
 	/*
 	 * Upgrade to the framed binary protocol via the HELLO handshake.  On a
-	 * version mismatch, timeout, or I/O error this fails cleanly (never
+	 * malformed reply, timeout, or I/O error this fails cleanly (never
 	 * hangs) and ble_open() reports failure to the caller.
 	 */
 	if (ble_handshake(ctx) < 0) {

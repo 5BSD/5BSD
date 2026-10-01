@@ -413,11 +413,11 @@ ble_ctx_t	*ble_open_plane(void);
 
 /*
  * Perform the framed-protocol HELLO handshake on an already-open context.
- * Sends the client protocol version and requested capability mask, waits for
- * the server's HELLO reply, and on success records the negotiated version and
- * capabilities.  Called automatically by ble_open(); exposed so a caller wrapping
- * a raw fd (ble_open_fd) can negotiate explicitly.  Returns 0 on success, -1
- * on version mismatch, timeout, or I/O error (the error is retrievable via
+ * Sends the requested capability mask, waits for the server's HELLO reply, and
+ * on success records the negotiated capabilities.  Called automatically by
+ * ble_open(); exposed so a caller wrapping a raw fd (ble_open_fd) can
+ * negotiate explicitly.  Returns 0 on success, -1 on a malformed reply,
+ * timeout, or I/O error (the error is retrievable via
  * ble_errno()/ble_strerror()); never blocks indefinitely.
  */
 int		 ble_handshake(ble_ctx_t *ctx);

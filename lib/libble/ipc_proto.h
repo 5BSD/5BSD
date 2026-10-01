@@ -464,7 +464,7 @@
 #define	IPC_ERR_PERM		7	/* permission denied (privilege tier) */
 #define	IPC_ERR_TOOBIG		8	/* value/line too long */
 #define	IPC_ERR_NOMEM		9	/* out of memory */
-#define	IPC_ERR_PROTO		10	/* malformed frame / version mismatch */
+#define	IPC_ERR_PROTO		10	/* malformed frame or handshake */
 #define	IPC_ERR_IO		11	/* ATT/HCI read/write failed */
 
 /* Feature bits negotiated in the fixed-width HELLO payload. */
