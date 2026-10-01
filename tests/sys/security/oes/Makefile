@@ -63,7 +63,9 @@ PLAIN_TESTS_C=	\
 	test_edge_cases \
 	test_passive_mode \
 	test_memory_pressure \
-	test_stress
+	test_stress \
+	rename_concurrent \
+	signal_concurrent
 
 ATF_TESTS_C+=	test_contract_matrix
 ATF_TESTS_SH+=	test_unsupported_32bit
