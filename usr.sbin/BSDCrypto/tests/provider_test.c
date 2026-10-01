@@ -2,6 +2,7 @@
 
 #include <sys/types.h>
 #include <sys/ioctl.h>
+#include <sys/sysctl.h>
 #include <sys/param.h>
 #include <sys/wait.h>
 #include <sys/cryptodesc.h>
@@ -46,6 +47,21 @@ require_plane(void)
 		    strerror(errno));
 	close(fd);
 }
+
+/*
+ * Minting a session descriptor needs the software crypto driver; with no
+ * hardware engine (a VM) the kernel refuses with EINVAL unless
+ * kern.cryptodevallowsoft is set.  Tests that mint sessions enable it and
+ * restore the default (0) in their cleanup.
+ */
+static void
+allow_software_crypto(int value)
+{
+	ATF_REQUIRE_MSG(sysctlbyname("kern.cryptodevallowsoft", NULL, NULL,
+	    &value, sizeof(value)) == 0, "kern.cryptodevallowsoft: %s",
+	    strerror(errno));
+}
+
 
 static int
 capability_connect(const char *name)
@@ -438,12 +454,18 @@ random_op(struct raw_fixture *fixture, uint32_t nbytes, uint8_t *buf,
  * a CIOCCRYPT authentication pass over the classic NIST input "abc" reproduces
  * the published SHA-256 vector — proving both the descriptor and its right.
  */
-ATF_TC(digest_descriptor);
+ATF_TC_WITH_CLEANUP(digest_descriptor);
 ATF_TC_HEAD(digest_descriptor, tc)
 {
 	atf_tc_set_md_var(tc, "require.user", "root");
 	atf_tc_set_md_var(tc, "descr",
 	    "An unkeyed-digest descriptor computes a known SHA-256 vector");
+}
+ATF_TC_CLEANUP(digest_descriptor, tc)
+{
+
+	(void)sysctlbyname("kern.cryptodevallowsoft", NULL, NULL,
+	    &(int){0}, sizeof(int));
 }
 ATF_TC_BODY(digest_descriptor, tc)
 {
@@ -459,10 +481,15 @@ ATF_TC_BODY(digest_descriptor, tc)
 	int fd;
 
 	require_plane();
+	allow_software_crypto(1);
 	raw_fixture_create(&fixture, "org.test.digest");
 
 	fd = -1;
-	ATF_CHECK_EQ(0, digest_op(&fixture, CRYPTO_SHA2_256, 60, &fd));
+	{
+		int status = digest_op(&fixture, CRYPTO_SHA2_256, 60, &fd);
+
+		ATF_CHECK_EQ_MSG(0, status, "digest status %d", status);
+	}
 	ATF_REQUIRE(fd >= 0);
 	memset(&cop, 0, sizeof(cop));
 	cop.op = COP_ENCRYPT;
@@ -610,12 +637,18 @@ ATF_TC_BODY(digest_random_malformed, tc)
  * fail closed (ENOENT, the kernel key store's owner-scoped miss) — while the
  * owning label reaches its own key.
  */
-ATF_TC(named_key_is_owner_scoped);
+ATF_TC_WITH_CLEANUP(named_key_is_owner_scoped);
 ATF_TC_HEAD(named_key_is_owner_scoped, tc)
 {
 	atf_tc_set_md_var(tc, "require.user", "root");
 	atf_tc_set_md_var(tc, "descr",
 	    "A named key is reachable only under the owner label that minted it");
+}
+ATF_TC_CLEANUP(named_key_is_owner_scoped, tc)
+{
+
+	(void)sysctlbyname("kern.cryptodevallowsoft", NULL, NULL,
+	    &(int){0}, sizeof(int));
 }
 ATF_TC_BODY(named_key_is_owner_scoped, tc)
 {
@@ -627,6 +660,7 @@ ATF_TC_BODY(named_key_is_owner_scoped, tc)
 	int fd;
 
 	require_plane();
+	allow_software_crypto(1);
 	raw_fixture_create(&owner_a, "org.test.owner.a");
 	raw_fixture_create(&owner_b, "org.test.owner.b");
 
