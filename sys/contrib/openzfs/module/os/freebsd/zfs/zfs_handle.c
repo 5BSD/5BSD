@@ -2424,8 +2424,8 @@ zfshandle_anon_release(struct mount *mp, struct thread *td)
 	struct zfshandle_anon *za;
 	struct mount *iter;
 	boolean_t onlist;
-	uint64_t guid = 0;
-	u_int left = 0;
+	uint64_t guid __unused = 0;
+	u_int left __unused = 0;
 
 	mtx_lock(&zfshandle_anon_mtx);
 	LIST_FOREACH(za, &zfshandle_anon_list, za_link)
@@ -2528,8 +2528,9 @@ zfshandle_op_mount(zfshandle_t *zh, struct zfd_mount_args *args,
 	dsl_pool_t *dp;
 	dsl_dataset_t *ds;
 	objset_t *os;
-	boolean_t rdonly, joined;
-	u_int refs;
+	boolean_t rdonly;
+	boolean_t joined __unused;
+	u_int refs __unused;
 	int error, fd, flags;
 
 	if (args->zm_rdonly > 1)
