@@ -633,6 +633,8 @@ restart_policy_name(int policy)
 		return ("always");
 	case SVC_RESTART_ON_FAILURE:
 		return ("on-failure");
+	case SVC_RESTART_ON_CRASH:
+		return ("on-crash");
 	default:
 		return ("never");
 	}

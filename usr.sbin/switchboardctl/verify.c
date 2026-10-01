@@ -55,6 +55,9 @@ print_bundle(const struct capbundle *b)
 		case SVC_RESTART_ON_FAILURE:
 			restart = "on-failure";
 			break;
+		case SVC_RESTART_ON_CRASH:
+			restart = "on-crash";
+			break;
 		default:
 			restart = "never";
 			break;
