@@ -56,24 +56,24 @@ write_fixture()
 
 	mkdir -p "$reg"
 	write_bundle "$reg/bsdnotify.cap" org.5bsd.bsdnotify bsdnotify \
-	    'resolvable_by = ["user"];
+	    'visible = ["user"];
 activation { ipc = ["system.Notify",
     { name = "system.Notify.System"; requires = ["system.notify.system"]; }]; }'
 	write_bundle "$reg/pub.cap" com.example.pub pub \
-	    'anointments = ["system.notify.system"];
+	    'holds = ["system.notify.system"];
 activation { boot = true; }'
 	write_bundle "$reg/app.cap" com.example.app app \
 	    'activation { boot = true; }'
 	write_bundle "$reg/both.cap" org.test.both bothd \
 	    'activation { ipc = [{ name = "system.X.Both"; requires = ["a.one", "a.two"]; }]; }'
 	write_bundle "$reg/two.cap" org.test.two twod \
-	    'anointments = ["a.one", "a.two"];
+	    'holds = ["a.one", "a.two"];
 activation { boot = true; }'
 	write_bundle "$reg/one.cap" org.test.one oned \
-	    'anointments = ["a.one"];
+	    'holds = ["a.one"];
 activation { boot = true; }'
 	write_bundle "$reg/dead.cap" org.test.dead deadd \
-	    'anointments = ["nothing.requires"];
+	    'holds = ["nothing.requires"];
 activation { boot = true; }'
 	cat > policy.ucl <<'EOF'
 principals {
@@ -239,7 +239,7 @@ graph_unreachable_split_body()
 	write_fixture
 	rm -rf "$graph_root/two.cap"
 	write_bundle "$graph_root/othertwo.cap" org.test.othertwo othertwod \
-	    'anointments = ["a.two"];
+	    'holds = ["a.two"];
 activation { boot = true; }'
 	atf_check -s exit:2 -o save:out.txt ./graph --lint
 	atf_check -o match:'^warning: unreachable: system\.X\.Both requires 2 names that no single unit or principal holds together$' \
@@ -312,7 +312,7 @@ graph_lint_exit_body()
 	    -o match:'0 warnings$' ./graph --lint
 	# Lint warnings go to stderr in DOT mode so stdout stays a graph.
 	write_bundle "$graph_root/dead.cap" org.test.dead deadd \
-	    'anointments = ["nothing.requires"];
+	    'holds = ["nothing.requires"];
 activation { boot = true; }'
 	atf_check -s exit:2 -o match:'^digraph ' -o not-match:'warning' \
 	    -e match:'^warning: dead declaration' ./graph --dot --lint
@@ -435,9 +435,12 @@ graph_default_rule_body()
 	    -e match:'using the historical principal rule' \
 	    env SWITCHBOARD_PRINCIPAL_POLICY="$(pwd)/absent.ucl" \
 	    "$switchboardctl_bin" graph --root "$graph_root"
-	atf_check -o match:'^session\.admin -> system\.X\.Both \[via a\.one,a\.two\]$' cat out.txt
+	# With no usable policy every principal, uid 0 included, holds nothing
+	# gated: fail closed.
 	atf_check -s exit:1 -o ignore \
-	    grep -q '^session\.default -> system\.Notify\.System' out.txt
+	    grep -q '^session\.admin -> system\.X\.Both' out.txt
+	atf_check -s exit:1 -o ignore \
+	    grep -q '^session\.[a-z]* -> system\.Notify\.System' out.txt
 	atf_check -o match:'historical rule\)$' cat out.txt
 }
 
@@ -460,7 +463,7 @@ graph_errors_body()
 	    "$switchboardctl_bin" graph extra
 	atf_check -s exit:1 -o empty -e match:'scanning .*absent' \
 	    "$switchboardctl_bin" graph --root "$(pwd)/absent"
-	printf 'anointments = ["*"];\nactivation { boot = true; }\n' \
+	printf 'holds = ["*"];\nactivation { boot = true; }\n' \
 	    > "$graph_root/pub.cap/Units/pub.unit/Unit.ucl"
 	atf_check -s exit:1 -o empty -e match:'scanning' ./graph
 }
@@ -537,7 +540,7 @@ graph_eight_endpoints_mixed_gates_body()
 	find_switchboardctl
 	write_empty_fixture
 	write_bundle "$graph_root/big.cap" org.test.big bigd \
-	    'resolvable_by = ["user"];
+	    'visible = ["user"];
 activation { ipc = [
     "system.Big.O1",
     { name = "system.Big.G1"; requires = ["g.one", "g.two"]; },
@@ -569,7 +572,7 @@ activation { ipc = [
 	# Every gate name is undeclared: eight unreachable warnings, exit 2.
 	atf_check -s exit:2 -o save:lint.txt ./graph --lint
 	atf_check -o inline:'8\n' ./count_lines lint.txt '^warning: unreachable: '
-	# Without resolvable_by the default session sees nothing at all.
+	# Without visible the default session sees nothing at all.
 	sed -i '' '1d' "$graph_root/big.cap/Units/bigd.unit/Unit.ucl"
 	atf_check -s exit:0 -o save:out2.txt ./graph
 	atf_check -o inline:'0\n' ./count_lines out2.txt '^session\.default -> '
@@ -588,10 +591,10 @@ graph_mutual_requires_body()
 	find_switchboardctl
 	write_empty_fixture
 	write_bundle "$graph_root/a.cap" org.test.a ad \
-	    'anointments = ["a.key"];
+	    'holds = ["a.key"];
 activation { ipc = [{ name = "system.A"; requires = ["b.key"]; }]; }'
 	write_bundle "$graph_root/b.cap" org.test.b bd \
-	    'anointments = ["b.key"];
+	    'holds = ["b.key"];
 activation { ipc = [{ name = "system.B"; requires = ["a.key"]; }]; }'
 	atf_check -s exit:0 -o save:out.txt ./graph --lint
 	atf_check -o match:'^org\.test\.a/ad -> system\.B \[via a\.key\]$' cat out.txt
@@ -606,7 +609,7 @@ activation { ipc = [{ name = "system.B"; requires = ["a.key"]; }]; }'
 	    cat out.txt
 	# A unit holding its own gate's name still gets no self edge.
 	write_bundle "$graph_root/a.cap" org.test.a ad \
-	    'anointments = ["a.key", "b.key"];
+	    'holds = ["a.key", "b.key"];
 activation { ipc = [{ name = "system.A"; requires = ["b.key"]; }]; }'
 	atf_check -s exit:0 -o save:out2.txt ./graph
 	atf_check -o inline:'0\n' ./count_lines out2.txt '^org\.test\.a/ad -> system\.A'
@@ -631,7 +634,7 @@ graph_max_anointments_and_requires_body()
 		i=$((i + 1))
 	done
 	write_bundle "$graph_root/holder.cap" org.test.holder holderd \
-	    "anointments = [$names];
+	    "holds = [$names];
 activation { boot = true; }"
 	write_bundle "$graph_root/gate.cap" org.test.gate gated \
 	    'activation { ipc = [{ name = "system.Gate.Max";
@@ -666,7 +669,7 @@ print(len(u["anointments"]), len(e["requires"]))' out.json
 	# Dropping one held name (m.k7) severs the edge: all eight are needed.
 	names=$(printf '%s' "$names" | sed 's/, "m\.k7"//')
 	write_bundle "$graph_root/holder.cap" org.test.holder holderd \
-	    "anointments = [$names];
+	    "holds = [$names];
 activation { boot = true; }"
 	atf_check -s exit:2 -o save:out2.txt ./graph --lint
 	atf_check -o inline:'0\n' ./count_lines out2.txt '^org\.test\.holder/holderd -> '
@@ -762,7 +765,7 @@ for s in d["sessions"]:
 for e in d["edges"]:
     assert set(e.keys()) == {"from", "to", "provider", "via"}
 ' out.json
-		atf_check -o inline:'True True\n' python3 -c '
+		atf_check -o inline:'True False\n' python3 -c '
 import json,sys
 d = json.load(open(sys.argv[1]))
 print(all(s["from_default_rule"] for s in d["sessions"]), [s for s in d["sessions"] if s["label"] == "session.admin"][0]["anoint_all"])' nopol.json
@@ -898,13 +901,12 @@ graph_malformed_policy_falls_back_body()
 	atf_check -s exit:0 -o save:out.txt -e match:'malformed principal policy' \
 	    ./graph
 	atf_check -o match:'absent or malformed: historical rule\)$' cat out.txt
-	atf_check -o match:'^session\.admin -> system\.X\.Both \[via a\.one,a\.two\]$' \
-	    cat out.txt
-	atf_check -o match:'^session\.admin -> system\.Notify\.System ' cat out.txt
 	atf_check -s exit:1 -o ignore \
-	    grep -q '^session\.default -> system\.Notify\.System' out.txt
+	    grep -q '^session\.admin -> system\.X\.Both' out.txt
+	atf_check -s exit:1 -o ignore \
+	    grep -q '^session\.[a-z]* -> system\.Notify\.System' out.txt
 	atf_check -s exit:0 -o save:out.json ./graph --json
-	atf_check -o match:'"label": "session.admin", "uid": 0, "anointments": \[\], "anoint_all": true, "admin_rights": true, "from_default_rule": true' \
+	atf_check -o match:'"label": "session.admin", "uid": 0, "anointments": \[\], "anoint_all": false, "admin_rights": false, "from_default_rule": true' \
 	    cat out.json
 	atf_check -o match:'"label": "session.default", "uid": 65534, "anointments": \[\], "anoint_all": false, "admin_rights": false, "from_default_rule": true' \
 	    cat out.json
@@ -962,7 +964,7 @@ graph_bad_bundle_id_rejected_body()
 	for id in 'org.t\303\251st.x' 'org.test.\tx' 'org.test.*' '*'; do
 		rm -rf "$graph_root/bad.cap"
 		write_bundle "$graph_root/bad.cap" org.test.bad badd \
-		    "anointments = [\"$(printf "$id")\"];
+		    "holds = [\"$(printf "$id")\"];
 activation { boot = true; }"
 		atf_check -s exit:1 -o empty -e match:'graph: scanning' ./graph
 		rm -rf "$graph_root/bad.cap"
@@ -989,12 +991,12 @@ activation { boot = true; }"
 	atf_check -s exit:1 -o empty -e match:'graph: scanning' ./graph
 }
 
-atf_test_case graph_gated_visible_regardless_of_resolvable_by
-graph_gated_visible_regardless_of_resolvable_by_head()
+atf_test_case graph_gated_visible_regardless_of_visible
+graph_gated_visible_regardless_of_visible_head()
 {
 	atf_set "descr" "a gate a default session covers is reachable even from a system-only provider; its open sibling is not"
 }
-graph_gated_visible_regardless_of_resolvable_by_body()
+graph_gated_visible_regardless_of_visible_body()
 {
 	find_switchboardctl
 	write_empty_fixture
@@ -1039,7 +1041,7 @@ graph_duplicate_endpoint_across_bundles_body()
 	write_bundle "$graph_root/p2.cap" org.test.p2 p2d \
 	    'activation { ipc = ["system.Dup"]; }'
 	write_bundle "$graph_root/c.cap" org.test.c cd \
-	    'anointments = ["d.key"];
+	    'holds = ["d.key"];
 activation { boot = true; }'
 	atf_check -s exit:2 -o save:out.txt ./graph --lint
 	atf_check -o match:'^summary: 3 units, 2 sessions, 2 endpoints \(1 gated\)' \
@@ -1166,7 +1168,7 @@ atf_init_test_cases()
 	atf_add_test_case graph_deterministic_output
 	atf_add_test_case graph_malformed_policy_falls_back
 	atf_add_test_case graph_bad_bundle_id_rejected
-	atf_add_test_case graph_gated_visible_regardless_of_resolvable_by
+	atf_add_test_case graph_gated_visible_regardless_of_visible
 	atf_add_test_case graph_duplicate_endpoint_across_bundles
 	atf_add_test_case base_tree_has_no_lint_errors
 	atf_add_test_case graph_principal_grant_makes_gate_reachable

@@ -57,7 +57,7 @@ int switchboard_kq = -1;
 
 /*
  * A system-only provider name (no USER visibility) and the two names the base
- * system marks resolvable_by = ["user"].  The fixture stubs below model the
+ * system marks visible = ["user"].  The fixture stubs below model the
  * bundle-registry visibility that svc_name_user_resolvable() consults.
  */
 #define	SYSTEM_ONLY_NAME	"system.Filesystem"
@@ -157,7 +157,7 @@ cancel_idle_timer(struct svc_runtime *svc, int kq)
 /*
  * Bundle-registry / manifest fixture for svc_name_user_resolvable() (domain.c).
  * USER-domain resolution now consults each provider's manifest visibility
- * (resolvable_by = ["user"]) rather than a list baked into switchboard; model that
+ * (visible = ["user"]) rather than a list baked into switchboard; model that
  * here without a live bundle registry.  system.Log and system.Notify are the
  * base system's user-visible names; every other name is SYSTEM-only.  The
  * lookup->get->service->user_resolvable call chain is synchronous and
@@ -207,7 +207,7 @@ capbundle_svc_user_resolvable(const struct capbundle_service *s)
 /*
  * IPC anointments: this suite models only OPEN endpoints (no requires), so
  * the anointment layer is inert here and every name's visibility is decided
- * by resolvable_by exactly as before.  anoint_test.c owns the gated cases.
+ * by visible exactly as before.  anoint_test.c owns the gated cases.
  */
 int
 capbundle_svc_provides_index(const struct capbundle_service *s,

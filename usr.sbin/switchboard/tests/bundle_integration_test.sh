@@ -908,7 +908,7 @@ multiple_provides_secondary_activation_body() {
 	second="org.test.multi.secondary"
 	bundle=$(make_svc_bin user multi-provider \
 	    "activation { ipc = [\"${first}\", \"${second}\"]; }
-resolvable_by = [\"user\"];
+visible = [\"user\"];
 arguments = [\"multi-provider\", \"${first}\", \"${second}\",
 		    \"${WORK}/multi-registered.out\", \"${WORK}/multi-routed.out\"];
 restart = \"on-failure\";" "${capd_service_fixture}")
@@ -966,7 +966,7 @@ multiple_provides_failure_isolated_body() {
 	second="org.test.partial.secondary"
 	bundle=$(make_svc_bin user partial-provider \
 	    "activation { ipc = [\"${first}\", \"${second}\"]; }
-resolvable_by = [\"user\"];
+visible = [\"user\"];
 arguments = [\"partial-provider\", \"${first}\",
 		    \"${WORK}/partial-ready.out\"];
 restart = \"never\";" "${capd_service_fixture}")

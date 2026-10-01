@@ -47,8 +47,8 @@ manifest_body()
 	    grep -F 'name = "system.Notify.System"' "${unitucl}"
 	atf_check -s exit:0 -o match:'requires = \["system.notify.system"\]' \
 	    grep -F 'requires = ["system.notify.system"]' "${unitucl}"
-	atf_check -s exit:0 -o match:'resolvable_by = \["user"\]' \
-	    grep -F 'resolvable_by = ["user"]' "${unitucl}"
+	atf_check -s exit:0 -o match:'visible = \["user"\]' \
+	    grep -F 'visible = ["user"]' "${unitucl}"
 	atf_check -s exit:0 -o match:'Verification: PASSED' \
 	    "${switchboardctl}" verify "${bundle}"
 }

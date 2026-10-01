@@ -881,13 +881,13 @@ ATF_TC_BODY(user_visibility_of_gated_names, tc)
 	user.uid = 1001;
 	memset(&system, 0, sizeof(system));
 
-	/* resolvable_by = ["user"] names stay visible; system-only open ones
+	/* visible = ["user"] names stay visible; system-only open ones
 	 * stay hidden — nothing changes for open endpoints. */
 	ATF_CHECK(svc_domain_resolves(&user, OPEN_USER_NAME));
 	ATF_CHECK(!svc_domain_resolves(&user, SYSTEM_ONLY_NAME));
 	ATF_CHECK(!svc_domain_resolves(&user, UNKNOWN_NAME));
 
-	/* A gated endpoint is visible in USER kind regardless of resolvable_by:
+	/* A gated endpoint is visible in USER kind regardless of visible:
 	 * the anointment match, not the domain kind, decides (P1/P2). */
 	ATF_CHECK(svc_domain_resolves(&user, GATED_NAME));
 	ATF_CHECK(svc_domain_resolves(&user, STORAGE_NAME));
