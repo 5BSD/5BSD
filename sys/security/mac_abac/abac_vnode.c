@@ -27,6 +27,11 @@
 
 #include <machine/atomic.h>
 
+#include <vm/vm.h>
+#include <vm/vm_param.h>
+#include <vm/pmap.h>
+#include <vm/vm_map.h>
+
 #include <security/mac/mac_policy.h>
 
 #include "mac_abac.h"
@@ -789,30 +794,38 @@ abac_vnode_check_mmap(struct ucred *cred, struct vnode *vp,
 }
 
 /*
- * abac_vnode_check_mprotect - Check mprotect() protection changes
+ * abac_proc_check_mprotect - Check mprotect() protection changes
  *
- * Called when a process attempts to change the protection of a memory
- * mapping that is backed by a vnode. This is useful for W^X enforcement:
- * preventing the same memory from being both writable and executable.
+ * Useful for W^X enforcement: preventing the same memory from being both
+ * writable and executable.  The 'prot' parameter contains the new protection
+ * flags (PROT_READ, PROT_WRITE, PROT_EXEC).
  *
- * The 'prot' parameter contains the new protection flags (PROT_READ,
- * PROT_WRITE, PROT_EXEC).
+ * mprotect(2) names an address range rather than a file, so this is a process
+ * check: the framework's vnode_check_mprotect entry point has no call site,
+ * and kern_mprotect() calls this one.  Resolve the mapping to recover the
+ * object label.
+ *
+ * Locking: the caller holds no map or VFS lock.  vm_map_lookup_vnode() takes
+ * and drops the map read lock and returns a reference, so nothing is held
+ * across the shared vnode lock taken here.  That lock is required by
+ * abac_vnode_lazy_load(), which reads the label extattr with IO_NODELOCKED,
+ * and is held across the rule evaluation because the label it selects belongs
+ * to the vnode and may be replaced once the lock is dropped.
  *
  * Use cases:
  *   - Prevent untrusted processes from making memory executable
- *   - Enforce W^X policy on file-backed mappings
+ *   - Enforce W^X policy on file-backed and anonymous mappings
  */
 int
-abac_vnode_check_mprotect(struct ucred *cred, struct vnode *vp,
-    struct label *vplabel, int prot)
+abac_proc_check_mprotect(struct ucred *cred, vm_offset_t addr,
+    vm_size_t size __unused, int prot __unused)
 {
 	struct abac_label *subj, *obj;
+	struct proc *p = curthread->td_proc;
+	struct vnode *vp;
 	int error;
 
 	ABAC_CHECK_ENABLED();
-
-	/* Lazy load label from extattr if needed (ZFS) */
-	abac_vnode_lazy_load(vp, vplabel);
 
 	/* Get subject label from credential */
 	if (cred == NULL || cred->cr_label == NULL)
@@ -821,15 +834,31 @@ abac_vnode_check_mprotect(struct ucred *cred, struct vnode *vp,
 	if (subj == NULL)
 		subj = &abac_default_subject;
 
-	/* Get object label from vnode */
-	if (vplabel == NULL)
-		return (0);
-	obj = SLOT(vplabel);
-	if (obj == NULL)
-		obj = &abac_default_object;
+	vp = NULL;
+	if (p != NULL && p->p_vmspace != NULL)
+		vp = vm_map_lookup_vnode(&p->p_vmspace->vm_map, addr);
 
-	/* Evaluate rules */
-	error = abac_rules_check(cred, subj, obj, ABAC_OP_MPROTECT, NULL);
+	/*
+	 * An anonymous mapping has no vnode and so no object label of its own.
+	 * Evaluate against the default object rather than returning early:
+	 * making anonymous memory executable is precisely what a W^X rule
+	 * written against the default object needs to see.  This matches what
+	 * the file-backed path does for an unlabelled vnode.
+	 */
+	obj = &abac_default_object;
+	if (vp == NULL)
+		error = abac_rules_check(cred, subj, obj, ABAC_OP_MPROTECT,
+		    NULL);
+	else {
+		vn_lock(vp, LK_SHARED | LK_RETRY);
+		/* Lazy load label from extattr if needed (ZFS) */
+		abac_vnode_lazy_load(vp, vp->v_label);
+		if (vp->v_label != NULL && SLOT(vp->v_label) != NULL)
+			obj = SLOT(vp->v_label);
+		error = abac_rules_check(cred, subj, obj, ABAC_OP_MPROTECT,
+		    NULL);
+		vput(vp);
+	}
 
 	/* In permissive mode, log but allow */
 	if (error != 0 && abac_mode == ABAC_MODE_PERMISSIVE)

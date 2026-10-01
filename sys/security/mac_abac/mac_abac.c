@@ -359,7 +359,6 @@ static struct mac_policy_ops abac_ops = {
 	.mpo_vnode_check_listextattr = abac_vnode_check_listextattr,
 	.mpo_vnode_check_lookup = abac_vnode_check_lookup,
 	.mpo_vnode_check_mmap = abac_vnode_check_mmap,
-	.mpo_vnode_check_mprotect = abac_vnode_check_mprotect,
 	.mpo_vnode_check_open = abac_vnode_check_open,
 	.mpo_vnode_check_poll = abac_vnode_check_poll,
 	.mpo_vnode_check_read = abac_vnode_check_read,
@@ -387,6 +386,7 @@ static struct mac_policy_ops abac_ops = {
 
 	/* Process checks */
 	.mpo_proc_check_debug = abac_proc_check_debug,
+	.mpo_proc_check_mprotect = abac_proc_check_mprotect,
 	.mpo_proc_check_sched = abac_proc_check_sched,
 	.mpo_proc_check_signal = abac_proc_check_signal,
 	.mpo_proc_check_wait = abac_proc_check_wait,

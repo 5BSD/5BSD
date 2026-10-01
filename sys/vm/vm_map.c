@@ -1647,6 +1647,55 @@ vm_map_lookup_entry(
 }
 
 /*
+ *	vm_map_lookup_vnode:
+ *
+ *	Return a referenced vnode backing the mapping that contains addr, or
+ *	NULL when the address is unmapped, mapped by a submap, or backed by an
+ *	anonymous object.  The caller owns the reference and releases it with
+ *	vrele(9).
+ *
+ *	Only the map read lock is taken, and it is released before returning,
+ *	so the caller may afterwards lock the vnode or sleep -- neither is
+ *	safe while the map is held.  The object chain is walked the way
+ *	kern_proc_vmmap_out() does: each shadow is read locked in turn to
+ *	reach the object that actually owns the pager.
+ */
+struct vnode *
+vm_map_lookup_vnode(vm_map_t map, vm_offset_t addr)
+{
+	vm_map_entry_t entry;
+	vm_object_t lobj, obj, tobj;
+	struct vnode *vp;
+
+	vp = NULL;
+	vm_map_lock_read(map);
+	if (!vm_map_lookup_entry(map, addr, &entry) ||
+	    (entry->eflags & MAP_ENTRY_IS_SUB_MAP) != 0 ||
+	    (obj = entry->object.vm_object) == NULL) {
+		vm_map_unlock_read(map);
+		return (NULL);
+	}
+
+	VM_OBJECT_RLOCK(obj);
+	for (lobj = tobj = obj; tobj != NULL; tobj = tobj->backing_object) {
+		if (tobj != obj)
+			VM_OBJECT_RLOCK(tobj);
+		if (lobj != obj)
+			VM_OBJECT_RUNLOCK(lobj);
+		lobj = tobj;
+	}
+	vp = vm_object_vnode(lobj);
+	if (vp != NULL)
+		vref(vp);
+	if (lobj != obj)
+		VM_OBJECT_RUNLOCK(lobj);
+	VM_OBJECT_RUNLOCK(obj);
+	vm_map_unlock_read(map);
+
+	return (vp);
+}
+
+/*
  * vm_map_insert1() is identical to vm_map_insert() except that it
  * returns the newly inserted map entry in '*res'.  In case the new
  * entry is coalesced with a neighbor or an existing entry was

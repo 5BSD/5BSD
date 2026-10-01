@@ -844,8 +844,8 @@ int abac_vnode_check_lookup(struct ucred *cred, struct vnode *dvp,
     struct label *dvplabel, struct componentname *cnp);
 int abac_vnode_check_mmap(struct ucred *cred, struct vnode *vp,
     struct label *vplabel, int prot, int flags);
-int abac_vnode_check_mprotect(struct ucred *cred, struct vnode *vp,
-    struct label *vplabel, int prot);
+int abac_proc_check_mprotect(struct ucred *cred, vm_offset_t addr,
+    vm_size_t size, int prot);
 int abac_vnode_check_open(struct ucred *cred, struct vnode *vp,
     struct label *vplabel, accmode_t accmode);
 int abac_vnode_check_poll(struct ucred *active_cred, struct ucred *file_cred,

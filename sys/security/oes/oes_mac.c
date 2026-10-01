@@ -39,6 +39,11 @@
 #include <netinet/in.h>
 #include <sys/un.h>
 
+#include <vm/vm.h>
+#include <vm/vm_param.h>
+#include <vm/pmap.h>
+#include <vm/vm_map.h>
+
 #include <security/mac/mac_policy.h>
 #include <security/audit/audit.h>
 
@@ -3537,18 +3542,46 @@ oes_mac_vnode_check_mmap(struct ucred *cred, struct vnode *vp,
 }
 
 /*
- * MAC hook: vnode_check_mprotect
+ * MAC hook: proc_check_mprotect
+ *
+ * mprotect(2) names an address range, not a file, so the framework's
+ * vnode_check_mprotect entry point has never had a call site; kern_mprotect()
+ * calls this one.  Resolve the mapping ourselves to report the backing file
+ * when there is one.  oes_event_mprotect_t documents the file as optional, and
+ * oes_fill_file() zeroes it for a NULL vnode, so an anonymous mapping is
+ * reported as an mprotect with no file rather than being dropped.
+ *
+ * Locking: the caller holds neither the map nor any VFS lock.
+ * vm_map_lookup_vnode() takes and drops the map read lock and hands back a
+ * reference, so nothing is held across the shared vnode lock taken here.  That
+ * lock satisfies VOP_GETATTR's locked-vnode contract inside oes_fill_file(),
+ * and leaves the vnode in the same state every other OES vnode hook sees --
+ * including deliberately skipping the vn_fullpath() call that can deadlock
+ * against a held VFS lock.
  */
 static int
-oes_mac_vnode_check_mprotect(struct ucred *cred, struct vnode *vp,
-    struct label *vplabel, int prot)
+oes_mac_proc_check_mprotect(struct ucred *cred, vm_offset_t addr,
+    vm_size_t size __unused, int prot)
 {
 	struct oes_vnode_event_info info = OES_VNODE_INFO_INIT(cred);
+	struct proc *p = curthread->td_proc;
+	struct vnode *vp;
+	int error;
+
+	vp = NULL;
+	if (p != NULL && p->p_vmspace != NULL)
+		vp = vm_map_lookup_vnode(&p->p_vmspace->vm_map, addr);
 
 	info.vp = vp;
 	info.prot = prot;
 
-	return (oes_generate_vnode_event(OES_EVENT_AUTH_MPROTECT, &info));
+	if (vp != NULL)
+		vn_lock(vp, LK_SHARED | LK_RETRY);
+	error = oes_generate_vnode_event(OES_EVENT_AUTH_MPROTECT, &info);
+	if (vp != NULL)
+		vput(vp);
+
+	return (error);
 }
 
 /*
@@ -4360,7 +4393,6 @@ static struct mac_policy_ops oes_mac_ops = {
 	.mpo_vnode_check_chdir = oes_mac_vnode_check_chdir,
 	.mpo_vnode_check_chroot = oes_mac_vnode_check_chroot,
 	.mpo_vnode_check_mmap = oes_mac_vnode_check_mmap,
-	.mpo_vnode_check_mprotect = oes_mac_vnode_check_mprotect,
 	.mpo_vnode_check_setextattr = oes_mac_vnode_check_setextattr,
 	.mpo_vnode_check_getextattr = oes_mac_vnode_check_getextattr,
 	.mpo_vnode_check_deleteextattr = oes_mac_vnode_check_deleteextattr,
@@ -4376,6 +4408,14 @@ static struct mac_policy_ops oes_mac_ops = {
 
 	/* KLD check - sleepable (can block for AUTH response) */
 	.mpo_kld_check_load = oes_mac_kld_check_load,
+
+	/*
+	 * mprotect is the one sleepable process check: unlike debug, signal
+	 * and sched, mac_proc_check_mprotect() runs without the process lock
+	 * and uses the sleepable MAC_POLICY_CHECK, so it can block for an AUTH
+	 * verdict.
+	 */
+	.mpo_proc_check_mprotect = oes_mac_proc_check_mprotect,
 
 	/* Process checks - NOSLEEP (cannot block for AUTH response) */
 	.mpo_proc_check_debug = oes_mac_proc_check_debug,

@@ -511,6 +511,7 @@ int vm_map_lookup_locked(vm_map_t *, vm_offset_t, vm_prot_t, vm_map_entry_t *, v
     vm_pindex_t *, vm_prot_t *, boolean_t *);
 void vm_map_lookup_done (vm_map_t, vm_map_entry_t);
 boolean_t vm_map_lookup_entry (vm_map_t, vm_offset_t, vm_map_entry_t *);
+struct vnode *vm_map_lookup_vnode(vm_map_t, vm_offset_t);
 
 static inline vm_map_entry_t
 vm_map_entry_first(vm_map_t map)
