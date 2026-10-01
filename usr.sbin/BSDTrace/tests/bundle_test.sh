@@ -26,7 +26,7 @@ manifest_body()
 	test -x "${switchboardctl}" || atf_skip "test switchboardctl is required"
 	mkdir -p "${unit}/bin"
 	cp "${srcdir}/capbundle/Bundle.ucl" "${bundle}/Bundle.ucl"
-	cp "${objdir}/BSDTrace" "${unit}/bin/Trace"
+	cp "${objdir}/BSDTrace" "${unit}/bin/BSDTrace"
 	if [ "@MK_DTRACE@" = "yes" ]; then
 		atf_check -s exit:0 -o match:'.SUNW_dof' readelf -S "${objdir}/BSDTrace"
 	else
@@ -34,7 +34,7 @@ manifest_body()
 	fi
 	cp "${srcdir}/capbundle/bsdtrace.ucl" "${unit}/Unit.ucl"
 	chmod 0555 "${bundle}" "${bundle}/Units" "${unit}" "${unit}/bin" \
-	    "${unit}/bin/Trace"
+	    "${unit}/bin/BSDTrace"
 	chmod 0444 "${bundle}/Bundle.ucl" "${unit}/Unit.ucl"
 	atf_check -s exit:0 -o match:'Verification: PASSED' \
 	    "${switchboardctl}" verify "${bundle}"

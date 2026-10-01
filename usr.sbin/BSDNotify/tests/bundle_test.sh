@@ -18,8 +18,8 @@ manifest_head()
 manifest_body()
 {
 	require_srctree
-	srcdir="@SRCTOP@/usr.sbin/bsdnotify"
-	objdir="@OBJTOP@/usr.sbin/bsdnotify"
+	srcdir="@SRCTOP@/usr.sbin/BSDNotify"
+	objdir="@OBJTOP@/usr.sbin/BSDNotify"
 	switchboardctl="${SWITCHBOARDCTL:-@OBJTOP@/usr.sbin/switchboardctl/tests/switchboardctl_test_bin}"
 	bundle="${PWD}/Notify.cap"
 	unit="${bundle}/Units/bsdnotify.unit"
@@ -27,15 +27,15 @@ manifest_body()
 	test -x "${switchboardctl}" || atf_skip "test switchboardctl is required"
 	mkdir -p "${unit}/bin"
 	cp "${srcdir}/capbundle/Bundle.ucl" "${bundle}/Bundle.ucl"
-	cp "${objdir}/bsdnotify" "${unit}/bin/Notify"
+	cp "${objdir}/BSDNotify" "${unit}/bin/BSDNotify"
 	if [ "@MK_DTRACE@" = "yes" ]; then
-		atf_check -s exit:0 -o match:'.SUNW_dof' readelf -S "${objdir}/bsdnotify"
+		atf_check -s exit:0 -o match:'.SUNW_dof' readelf -S "${objdir}/BSDNotify"
 	else
-		atf_check -s exit:0 -o not-match:'.SUNW_dof' readelf -S "${objdir}/bsdnotify"
+		atf_check -s exit:0 -o not-match:'.SUNW_dof' readelf -S "${objdir}/BSDNotify"
 	fi
 	cp "${srcdir}/capbundle/bsdnotify.ucl" "${unit}/Unit.ucl"
 	chmod 0555 "${bundle}" "${bundle}/Units" "${unit}" "${unit}/bin" \
-	    "${unit}/bin/Notify"
+	    "${unit}/bin/BSDNotify"
 	chmod 0444 "${bundle}/Bundle.ucl" "${unit}/Unit.ucl"
 	atf_check -s exit:0 -o match:'bsdnotify.conf' \
 	    grep bsdnotify.conf "${srcdir}/Makefile"

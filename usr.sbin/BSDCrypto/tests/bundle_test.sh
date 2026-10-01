@@ -17,8 +17,8 @@ manifest_head()
 }
 manifest_body()
 {
-	srcdir="@SRCTOP@/usr.sbin/bsdcrypto"
-	objdir="@OBJTOP@/usr.sbin/bsdcrypto"
+	srcdir="@SRCTOP@/usr.sbin/BSDCrypto"
+	objdir="@OBJTOP@/usr.sbin/BSDCrypto"
 	switchboardctl="${SWITCHBOARDCTL:-@OBJTOP@/usr.sbin/switchboardctl/tests/switchboardctl_test_bin}"
 	manifest="${srcdir}/capbundle/crypto.ucl"
 	bundle="${PWD}/Crypto.cap"
@@ -28,10 +28,10 @@ manifest_body()
 	test ! -e "${bundle}" || atf_fail "stale test bundle: ${bundle}"
 	atf_check -s exit:0 mkdir -p "${unit}/bin"
 	atf_check -s exit:0 cp "${srcdir}/capbundle/Bundle.ucl" "${bundle}/Bundle.ucl"
-	atf_check -s exit:0 cp "${objdir}/bsdcrypto" "${unit}/bin/Crypto"
+	atf_check -s exit:0 cp "${objdir}/BSDCrypto" "${unit}/bin/BSDCrypto"
 	atf_check -s exit:0 cp "${manifest}" "${unit}/Unit.ucl"
 	atf_check -s exit:0 chmod 0555 "${bundle}" "${bundle}/Units" "${unit}" \
-	    "${unit}/bin" "${unit}/bin/Crypto"
+	    "${unit}/bin" "${unit}/bin/BSDCrypto"
 	atf_check -s exit:0 chmod 0444 "${bundle}/Bundle.ucl" "${unit}/Unit.ucl"
 
 	atf_check -s exit:0 -o match:'Verification: PASSED' \
@@ -57,7 +57,7 @@ provider_security_contract_body()
 {
 	require_srctree
 	source="@SRCTOP@/usr.sbin/BSDCrypto/bsdcrypto.c"
-	srcdir="@SRCTOP@/usr.sbin/bsdcrypto"
+	srcdir="@SRCTOP@/usr.sbin/BSDCrypto"
 
 	for token in SERVICE_PROTECT_NOFORK SERVICE_PROTECT_NOIPC \
 	    SERVICE_PROTECT_NOFDRECV SERVICE_PROTECT_NOEXEC SERVICE_PROTECT_NOSOCK \

@@ -13,7 +13,7 @@ require_srctree()
 atf_test_case manifest
 manifest_body()
 {
-	src="@SRCTOP@/usr.sbin/bsdaudit"
+	src="@SRCTOP@/usr.sbin/BSDAudit"
 	obj="@OBJTOP@/usr.sbin/switchboardctl/tests/switchboardctl_test_bin"
 	bundle="${PWD}/Audit.cap"
 	unit="${bundle}/Units/bsdaudit.unit"
@@ -21,13 +21,13 @@ manifest_body()
 	test -x "${obj}" || atf_skip "switchboardctl test binary is required"
 	mkdir -p "${unit}/bin"
 	cp "${src}/capbundle/Bundle.ucl" "${bundle}/Bundle.ucl"
-	cp "@OBJTOP@/usr.sbin/BSDAudit/bsdaudit" "${unit}/bin/Audit"
+	cp "@OBJTOP@/usr.sbin/BSDAudit/BSDAudit" "${unit}/bin/BSDAudit"
 	if [ "@MK_DTRACE@" = "yes" ]; then
 		atf_check -s exit:0 -o match:'.SUNW_dof' readelf -S \
-		    "@OBJTOP@/usr.sbin/BSDAudit/bsdaudit"
+		    "@OBJTOP@/usr.sbin/BSDAudit/BSDAudit"
 	else
 		atf_check -s exit:0 -o not-match:'.SUNW_dof' readelf -S \
-		    "@OBJTOP@/usr.sbin/BSDAudit/bsdaudit"
+		    "@OBJTOP@/usr.sbin/BSDAudit/BSDAudit"
 	fi
 	cp "${src}/capbundle/bsdaudit.ucl" "${unit}/Unit.ucl"
 	atf_check -s exit:0 -o ignore "${obj}" verify "${bundle}"

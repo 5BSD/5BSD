@@ -17,8 +17,8 @@ manifest_head()
 }
 manifest_body()
 {
-	srcdir="@SRCTOP@/usr.sbin/bsdlog"
-	objdir="@OBJTOP@/usr.sbin/bsdlog"
+	srcdir="@SRCTOP@/usr.sbin/BSDLog"
+	objdir="@OBJTOP@/usr.sbin/BSDLog"
 	switchboardctl="${SWITCHBOARDCTL:-@OBJTOP@/usr.sbin/switchboardctl/tests/switchboardctl_test_bin}"
 	bundle="${PWD}/Log.cap"
 	unit="${bundle}/Units/bsdlog.unit"
@@ -27,16 +27,16 @@ manifest_body()
 	    atf_skip "source-built switchboardctl is required"
 	mkdir -p "${unit}/bin" "${unit}/Config"
 	cp "${srcdir}/capbundle/Bundle.ucl" "${bundle}/Bundle.ucl"
-	cp "${objdir}/bsdlog" "${unit}/bin/Log"
+	cp "${objdir}/BSDLog" "${unit}/bin/BSDLog"
 	if [ "@MK_DTRACE@" = "yes" ]; then
-		atf_check -s exit:0 -o match:'.SUNW_dof' readelf -S "${objdir}/bsdlog"
+		atf_check -s exit:0 -o match:'.SUNW_dof' readelf -S "${objdir}/BSDLog"
 	else
-		atf_check -s exit:0 -o not-match:'.SUNW_dof' readelf -S "${objdir}/bsdlog"
+		atf_check -s exit:0 -o not-match:'.SUNW_dof' readelf -S "${objdir}/BSDLog"
 	fi
 	cp "${srcdir}/capbundle/bsdlog.ucl" "${unit}/Unit.ucl"
 	cp "${srcdir}/capbundle/bsdlog.conf" "${unit}/Config/bsdlog.conf"
 	chmod 0555 "${bundle}" "${bundle}/Units" "${unit}" "${unit}/bin" \
-	    "${unit}/bin/Log" "${unit}/Config"
+	    "${unit}/bin/BSDLog" "${unit}/Config"
 	chmod 0444 "${bundle}/Bundle.ucl" "${unit}/Unit.ucl" \
 	    "${unit}/Config/bsdlog.conf"
 	atf_check -s exit:0 -o match:'Verification: PASSED' \
@@ -76,7 +76,7 @@ live_media_storage_fallback_contract_body()
 {
 	require_srctree
 	source="@SRCTOP@/usr.sbin/BSDLog/logcmp.c"
-	manual="@SRCTOP@/usr.sbin/BSDLog/bsdlog.8"
+	manual="@SRCTOP@/usr.sbin/BSDLog/BSDLog.8"
 
 	atf_check -s exit:0 -o ignore grep \
 	    'service_storage_open(context, "state"' "$source"
