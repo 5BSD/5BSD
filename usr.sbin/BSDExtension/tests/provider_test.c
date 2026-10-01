@@ -7,8 +7,8 @@
  * (sysext_worker -> sysext_request) over a REAL mac_capability channel via the
  * -DBSDEXTENSION_TESTING serve entry point, and assert the fail-closed reply framing.
  *
- * These cases require the capability plane (/dev/mac_capability + the stack
- * kmods) and root; they skip cleanly where the plane is absent.  None of them
+ * These cases use the public capability-channel syscall and need no privilege;
+ * they skip only where that syscall is unavailable.  None of them
  * exercises the ENSURE happy path, so no kldload(2) ever runs: every case is
  * refused by the allow-list or the message validator before ensure_extension is
  * reached, and we assert only the decision and the reply framing.
@@ -24,9 +24,11 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <string.h>
 #include <unistd.h>
 
+#include <channel.h>
 #include <libservice.h>
 
 #include "sysext_proto.h"
@@ -37,57 +39,20 @@ struct fixture {
 	pid_t			 child;
 };
 
-static void
-require_plane(void)
-{
-	int fd;
-
-	fd = open("/dev/mac_capability", O_RDWR | O_CLOEXEC);
-	if (fd == -1)
-		atf_tc_skip("mac_capability device unavailable: %s",
-		    strerror(errno));
-	close(fd);
-}
-
-static int
-capability_connect(const char *name)
-{
-	struct mac_capability_connect_args connect;
-	int control, error;
-
-	control = open("/dev/mac_capability", O_RDWR | O_CLOEXEC);
-	ATF_REQUIRE_MSG(control >= 0, "open mac_capability: %s", strerror(errno));
-	memset(&connect, 0, sizeof(connect));
-	strlcpy(connect.name, name, sizeof(connect.name));
-	if (ioctl(control, MAC_CAPABILITY_CONNECT, &connect) == -1) {
-		error = errno;
-		close(control);
-		errno = error;
-		return (-1);
-	}
-	close(control);
-	return (connect.fd);
-}
-
+/* Use the public channel-pair API.  The production plane deliberately
+ * denies ambient opens of /dev/mac_capability, including opens by root. */
 static void
 channel_pair(int *client, int *provider)
 {
-	struct mac_capability_recvmsg_args receive;
-	struct mac_capability_sendmsg_args send;
-	uint32_t operation;
+	int pair[2];
 
-	*client = capability_connect("channel");
-	ATF_REQUIRE(*client >= 0);
-	operation = CHANNEL_OP_CREATE;
-	memset(&send, 0, sizeof(send));
-	send.payload = &operation;
-	send.payload_len = sizeof(operation);
-	ATF_REQUIRE_EQ(0, ioctl(*client, MAC_CAPABILITY_SENDMSG, &send));
-	memset(&receive, 0, sizeof(receive));
-	receive.fds = provider;
-	receive.nfds = 1;
-	ATF_REQUIRE_EQ(0, ioctl(*client, MAC_CAPABILITY_RECVMSG, &receive));
-	ATF_REQUIRE_EQ(1, receive.nfds);
+	if (mac_capability_channel_create(pair) == -1) {
+		if (errno == ENOSYS)
+			atf_tc_skip("capability channel syscall unavailable");
+		atf_tc_fail("channel creation: %s", strerror(errno));
+	}
+	*client = pair[0];
+	*provider = pair[1];
 }
 
 /*
@@ -99,7 +64,6 @@ fixture_create_cfg(struct fixture *fixture, const struct sysext_config *cfg)
 {
 	int client, provider;
 
-	require_plane();
 	memset(fixture, 0, sizeof(*fixture));
 	channel_pair(&client, &provider);
 	fixture->child = fork();
@@ -289,7 +253,7 @@ call_stat(struct fixture *fixture, const void *data, size_t length, int fd)
 ATF_TC(provider_denies_non_allowlisted_module);
 ATF_TC_HEAD(provider_denies_non_allowlisted_module, tc)
 {
-	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "descr", "Real capability-channel request validation");
 }
 ATF_TC_BODY(provider_denies_non_allowlisted_module, tc)
 {
@@ -311,7 +275,7 @@ ATF_TC_BODY(provider_denies_non_allowlisted_module, tc)
 ATF_TC(provider_rejects_unknown_op);
 ATF_TC_HEAD(provider_rejects_unknown_op, tc)
 {
-	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "descr", "Real capability-channel request validation");
 }
 ATF_TC_BODY(provider_rejects_unknown_op, tc)
 {
@@ -333,7 +297,7 @@ ATF_TC_BODY(provider_rejects_unknown_op, tc)
 ATF_TC(provider_rejects_unterminated_name);
 ATF_TC_HEAD(provider_rejects_unterminated_name, tc)
 {
-	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "descr", "Real capability-channel request validation");
 }
 ATF_TC_BODY(provider_rejects_unterminated_name, tc)
 {
@@ -355,7 +319,7 @@ ATF_TC_BODY(provider_rejects_unterminated_name, tc)
 ATF_TC(provider_rejects_wrong_length);
 ATF_TC_HEAD(provider_rejects_wrong_length, tc)
 {
-	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "descr", "Real capability-channel request validation");
 }
 ATF_TC_BODY(provider_rejects_wrong_length, tc)
 {
@@ -376,7 +340,7 @@ ATF_TC_BODY(provider_rejects_wrong_length, tc)
 ATF_TC(provider_rejects_attached_descriptor);
 ATF_TC_HEAD(provider_rejects_attached_descriptor, tc)
 {
-	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "descr", "Real capability-channel request validation");
 }
 ATF_TC_BODY(provider_rejects_attached_descriptor, tc)
 {
@@ -406,7 +370,7 @@ ATF_TC_BODY(provider_rejects_attached_descriptor, tc)
 ATF_TC(provider_stat_reports_loaded_module);
 ATF_TC_HEAD(provider_stat_reports_loaded_module, tc)
 {
-	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "descr", "Real capability-channel request validation");
 }
 ATF_TC_BODY(provider_stat_reports_loaded_module, tc)
 {
@@ -434,7 +398,7 @@ ATF_TC_BODY(provider_stat_reports_loaded_module, tc)
 ATF_TC(provider_stat_reports_unloaded_module);
 ATF_TC_HEAD(provider_stat_reports_unloaded_module, tc)
 {
-	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "descr", "Real capability-channel request validation");
 }
 ATF_TC_BODY(provider_stat_reports_unloaded_module, tc)
 {
@@ -462,7 +426,7 @@ ATF_TC_BODY(provider_stat_reports_unloaded_module, tc)
 ATF_TC(provider_stat_denies_non_allowlisted_module);
 ATF_TC_HEAD(provider_stat_denies_non_allowlisted_module, tc)
 {
-	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "descr", "Real capability-channel request validation");
 }
 ATF_TC_BODY(provider_stat_denies_non_allowlisted_module, tc)
 {
@@ -492,7 +456,7 @@ ATF_TC_BODY(provider_stat_denies_non_allowlisted_module, tc)
 ATF_TC(provider_stat_rejects_unterminated_name);
 ATF_TC_HEAD(provider_stat_rejects_unterminated_name, tc)
 {
-	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "descr", "Real capability-channel request validation");
 }
 ATF_TC_BODY(provider_stat_rejects_unterminated_name, tc)
 {
@@ -517,7 +481,7 @@ ATF_TC_BODY(provider_stat_rejects_unterminated_name, tc)
 ATF_TC(provider_stat_rejects_malformed_framing);
 ATF_TC_HEAD(provider_stat_rejects_malformed_framing, tc)
 {
-	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "descr", "Real capability-channel request validation");
 }
 ATF_TC_BODY(provider_stat_rejects_malformed_framing, tc)
 {
@@ -550,7 +514,7 @@ ATF_TC_BODY(provider_stat_rejects_malformed_framing, tc)
 ATF_TC(provider_list_returns_allowlist);
 ATF_TC_HEAD(provider_list_returns_allowlist, tc)
 {
-	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "descr", "Real capability-channel request validation");
 }
 ATF_TC_BODY(provider_list_returns_allowlist, tc)
 {
@@ -583,7 +547,7 @@ ATF_TC_BODY(provider_list_returns_allowlist, tc)
 ATF_TC(provider_list_empty_allowlist);
 ATF_TC_HEAD(provider_list_empty_allowlist, tc)
 {
-	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "descr", "Real capability-channel request validation");
 }
 ATF_TC_BODY(provider_list_empty_allowlist, tc)
 {
@@ -610,7 +574,7 @@ ATF_TC_BODY(provider_list_empty_allowlist, tc)
 ATF_TC(provider_list_rejects_malformed_framing);
 ATF_TC_HEAD(provider_list_rejects_malformed_framing, tc)
 {
-	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "descr", "Real capability-channel request validation");
 }
 ATF_TC_BODY(provider_list_rejects_malformed_framing, tc)
 {
@@ -634,7 +598,7 @@ ATF_TC_BODY(provider_list_rejects_malformed_framing, tc)
 ATF_TC(provider_reload_requires_admin);
 ATF_TC_HEAD(provider_reload_requires_admin, tc)
 {
-	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "descr", "Real capability-channel request validation");
 }
 ATF_TC_BODY(provider_reload_requires_admin, tc)
 {
@@ -651,11 +615,65 @@ ATF_TC_BODY(provider_reload_requires_admin, tc)
 	fixture_destroy(&fixture);
 }
 
+ATF_TC(provider_management_requires_admin);
+ATF_TC_HEAD(provider_management_requires_admin, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "Real capability-channel request validation");
+}
+ATF_TC_BODY(provider_management_requires_admin, tc)
+{
+	struct fixture fixture;
+	struct sysext_request rq = {0};
+
+	fixture_create(&fixture);
+	for (rq.op = SYSEXT_OP_ALLOW; rq.op <= SYSEXT_OP_RESTORE; rq.op++) {
+		memset(rq.name, 0, sizeof(rq.name));
+		if (rq.op != SYSEXT_OP_RESTORE)
+			strlcpy(rq.name, "zfs", sizeof(rq.name));
+		ATF_CHECK_EQ(EPERM, call_status(&fixture, &rq, sizeof(rq), -1));
+	}
+	fixture_destroy(&fixture);
+}
+
+ATF_TC_WITHOUT_HEAD(provider_discovery_over_list_limit);
+ATF_TC_BODY(provider_discovery_over_list_limit, tc)
+{
+	struct fixture fixture;
+	struct sysext_config cfg = {0};
+	struct service_extension_info info;
+	char names[SERVICE_EXTENSION_LIST_MAX][SERVICE_EXTENSION_NAME_MAX];
+	char cursor[SERVICE_EXTENSION_NAME_MAX] = "";
+	size_t count, i;
+
+	cfg.nallow = SYSEXT_LIST_MAX + 8;
+	for (i = 0; i < cfg.nallow; i++)
+		snprintf(cfg.allow[i], SYSEXT_NAME_MAX, "sysext_test_%03zu", i);
+	fixture_create_cfg(&fixture, &cfg);
+	ATF_CHECK_ERRNO(EOVERFLOW, service_session_extension_list(fixture.session,
+	    names, SERVICE_EXTENSION_LIST_MAX, &count) == -1);
+	for (i = 0; i < cfg.nallow; i++) {
+		ATF_REQUIRE_EQ(0, service_session_extension_info(fixture.session,
+		    cursor, 1, &info));
+		ATF_CHECK_STREQ(cfg.allow[i], info.name);
+		ATF_CHECK(info.allowed && !info.enabled && !info.overridden);
+		strlcpy(cursor, info.name, sizeof(cursor));
+	}
+	ATF_CHECK_ERRNO(ENOENT, service_session_extension_info(fixture.session,
+	    cursor, 1, &info) == -1);
+	/* A loaded but denied module must not disclose its loaded state. */
+	ATF_REQUIRE_EQ(0, service_session_extension_info(fixture.session,
+	    "kernel", 0, &info));
+	ATF_CHECK(!info.allowed && !info.loaded);
+	fixture_destroy(&fixture);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
 	ATF_TP_ADD_TC(tp, provider_denies_non_allowlisted_module);
 	ATF_TP_ADD_TC(tp, provider_reload_requires_admin);
+	ATF_TP_ADD_TC(tp, provider_management_requires_admin);
+	ATF_TP_ADD_TC(tp, provider_discovery_over_list_limit);
 	ATF_TP_ADD_TC(tp, provider_rejects_unknown_op);
 	ATF_TP_ADD_TC(tp, provider_rejects_unterminated_name);
 	ATF_TP_ADD_TC(tp, provider_rejects_wrong_length);

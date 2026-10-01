@@ -36,7 +36,8 @@ extension_call(struct service_session *session, uint32_t op, const char *name,
 		return (-1);
 	}
 	request.op = op;
-	if (op == SYSEXT_OP_ENSURE || op == SYSEXT_OP_STAT) {
+	if (op != SYSEXT_OP_LIST && op != SYSEXT_OP_RELOAD &&
+	    op != SYSEXT_OP_RESTORE) {
 		if (name == NULL) {
 			errno = EINVAL;
 			return (-1);
@@ -46,7 +47,8 @@ extension_call(struct service_session *session, uint32_t op, const char *name,
 			return (-1);
 		}
 		(void)strlcpy(request.name, name, sizeof(request.name));
-		if (!valid_name(request.name)) {
+		if (!valid_name(request.name) &&
+		    !(op == SYSEXT_OP_NEXT && request.name[0] == '\0')) {
 			errno = EINVAL;
 			return (-1);
 		}
@@ -157,5 +159,52 @@ service_session_extension_list(struct service_session *session,
 	}
 	memcpy(names, reply.names, reply.count * sizeof(reply.names[0]));
 	*count = reply.count;
+	return (0);
+}
+
+int
+service_session_extension_manage(struct service_session *session,
+    enum service_extension_action action, const char *name)
+{
+	struct sysext_reply reply;
+	uint32_t op;
+
+	switch (action) {
+	case SERVICE_EXTENSION_ALLOW: op = SYSEXT_OP_ALLOW; break;
+	case SERVICE_EXTENSION_DENY: op = SYSEXT_OP_DENY; break;
+	case SERVICE_EXTENSION_RESET: op = SYSEXT_OP_RESET; break;
+	case SERVICE_EXTENSION_ENABLE: op = SYSEXT_OP_ENABLE; break;
+	case SERVICE_EXTENSION_DISABLE: op = SYSEXT_OP_DISABLE; break;
+	case SERVICE_EXTENSION_RESTORE: op = SYSEXT_OP_RESTORE; break;
+	default: return (errno = EINVAL, -1);
+	}
+	if (extension_call(session, op, name, &reply, sizeof(reply)) == -1)
+		return (-1);
+	if (reply._reserved != 0)
+		return (protocol_error(session));
+	return (0);
+}
+
+int
+service_session_extension_info(struct service_session *session,
+    const char *name, int next, struct service_extension_info *info)
+{
+	struct sysext_info_reply reply;
+
+	if (info == NULL || (next != 0 && next != 1))
+		return (errno = EINVAL, -1);
+	memset(info, 0, sizeof(*info));
+	if (extension_call(session, next ? SYSEXT_OP_NEXT : SYSEXT_OP_INFO,
+	    name, &reply, sizeof(reply)) == -1)
+		return (-1);
+	if (!valid_name(reply.name) || (reply.flags & ~0x1fU) != 0 ||
+	    (next ? strcmp(reply.name, name) <= 0 : strcmp(reply.name, name) != 0))
+		return (protocol_error(session));
+	strlcpy(info->name, reply.name, sizeof(info->name));
+	info->allowed = (reply.flags & SYSEXT_STATE_ALLOWED) != 0;
+	info->enabled = (reply.flags & SYSEXT_STATE_ENABLED) != 0;
+	info->loaded = (reply.flags & SYSEXT_STATE_LOADED) != 0;
+	info->overridden = (reply.flags & SYSEXT_STATE_OVERRIDE) != 0;
+	info->ready = (reply.flags & SYSEXT_STATE_READY) != 0;
 	return (0);
 }

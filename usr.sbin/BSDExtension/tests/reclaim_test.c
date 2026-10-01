@@ -287,8 +287,42 @@ ATF_TC_BODY(epoch_is_recorded_and_kept, tc)
 	(void)close(fd);
 }
 
+ATF_TC_WITHOUT_HEAD(boot_claim_prevents_bundle_unload);
+ATF_TC_BODY(boot_claim_prevents_bundle_unload, tc)
+{
+	int fd = map_dir();
+	char bundles[8][64];
+
+	ATF_REQUIRE_EQ(0, sysext_owner_note(fd, "i915kms", "app.A", true));
+	ATF_REQUIRE_EQ(0, sysext_owner_note(fd, "i915kms.ko", SYSEXT_BOOT_OWNER, false));
+	ATF_REQUIRE_EQ(1, sysext_test_enumerate(fd, bundles, 8));
+	ATF_CHECK_STREQ("app.A", bundles[0]);
+	ATF_REQUIRE_EQ(0, sysext_test_destroy(fd, "app.A"));
+	ATF_CHECK_EQ(0, nunloaded);
+	ATF_REQUIRE_EQ(0, sysext_test_enumerate(fd, bundles, 8));
+	close(fd);
+}
+
+ATF_TC_WITHOUT_HEAD(canonical_keys_survive_repeated_reads);
+ATF_TC_BODY(canonical_keys_survive_repeated_reads, tc)
+{
+	int fd = map_dir(), n;
+	struct sysext_test_entry entries[4];
+
+	ATF_REQUIRE_EQ(0, sysext_owner_note(fd, "custom.ko.ko", "app.A", true));
+	for (unsigned i = 0; i < 3; i++) {
+		ATF_REQUIRE_EQ(0, sysext_owner_note(fd, "other", "app.B", false));
+		n = sysext_test_owners_load(fd, entries, 4);
+		ATF_REQUIRE_EQ(2, n);
+		ATF_CHECK(find_entry(entries, n, "custom.ko", "app.A") >= 0);
+	}
+	close(fd);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
+	ATF_TP_ADD_TC(tp, boot_claim_prevents_bundle_unload);
+	ATF_TP_ADD_TC(tp, canonical_keys_survive_repeated_reads);
 	ATF_TP_ADD_TC(tp, note_round_trips_and_dedups);
 	ATF_TP_ADD_TC(tp, a_real_load_marks_every_claim_of_the_module);
 	ATF_TP_ADD_TC(tp, note_rejects_unsafe_names);

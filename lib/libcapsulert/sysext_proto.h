@@ -16,10 +16,9 @@
  * manifest), which authorizes ENSURE's kldload(2).  STAT's kldfind(2) query is
  * read-only and ungated — module enumeration is deliberately open.
  *
- * There is deliberately no UNLOAD operation.  Unloading a module safely needs
- * per-consumer refcounting / ownership that this broker does not track, so an
- * unload requested by one SYSTEM client could pull kernel code out from under
- * another.  Module removal stays out of the broker.
+ * Persistent policy operations require ADMIN.  Disabling activation changes
+ * the next boot; it never forcibly unloads shared kernel code.  NEXT provides
+ * bounded discovery using an exclusive lexical name cursor (empty starts).
  */
 
 #ifndef SYSEXT_PROTO_H
@@ -37,19 +36,34 @@
 #define	SYSEXT_OP_LIST		3	/* enumerate the allow-listed module names */
 #define	SYSEXT_OP_RELOAD		4	/* admin: reload the configured policy file */
 
-/*
- * Wire cap on the number of module names a single SYSEXT_OP_LIST reply carries.
- * It bounds the reply and MUST be >= the daemon's allow-list capacity
- * (SYSEXT_MAX_ALLOW in bsdextension.h) so the whole allow-list fits in one reply; the
- * daemon _Static_asserts that relationship.  The allow-list is small and fixed,
- * so LIST is a single, bounded, unpaged reply.
- */
+#define SYSEXT_OP_ALLOW 5
+#define SYSEXT_OP_DENY 6
+#define SYSEXT_OP_RESET 7
+#define SYSEXT_OP_ENABLE 8
+#define SYSEXT_OP_DISABLE 9
+#define SYSEXT_OP_RESTORE 10
+#define SYSEXT_OP_INFO 11
+#define SYSEXT_OP_NEXT 12
+
+#define SYSEXT_STATE_ALLOWED 0x01
+#define SYSEXT_STATE_ENABLED 0x02
+#define SYSEXT_STATE_LOADED 0x04
+#define SYSEXT_STATE_OVERRIDE 0x08
+#define SYSEXT_STATE_READY 0x10
+
+struct sysext_info_reply {
+    int32_t status;
+    uint32_t flags;
+    char name[SYSEXT_NAME_MAX];
+};
+
+/* LIST returns EOVERFLOW if the effective policy exceeds this cap. */
 #define	SYSEXT_LIST_MAX		32	/* max names in a LIST reply */
 
 struct sysext_request {
-	uint32_t	op;			/* SYSEXT_OP_ENSURE, _STAT or _LIST */
+	uint32_t	op;			/* SYSEXT_OP_* */
 	uint32_t	_reserved;
-	char		name[SYSEXT_NAME_MAX];	/* kernel module name (unused by LIST) */
+	char		name[SYSEXT_NAME_MAX];	/* module name or NEXT cursor */
 };
 
 struct sysext_reply {

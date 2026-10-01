@@ -2423,26 +2423,30 @@ mount_md()
 
 # Code common to scripts that need to load a kernel module
 # if it isn't in the kernel yet. Syntax:
-#   load_kld [-e regex] [-m module] file
+#   load_kld [-b] [-e regex] [-m module] file
 # where -e or -m chooses the way to check if the module
 # is already loaded:
 #   regex is egrep'd in the output from `kldstat -v',
 #   module is passed to `kldstat -m'.
 # The default way is as though `-m file' were specified.
+# -b loads through the SystemExtension broker; callers must run after local
+# filesystems and the capability discovery channel are available.
 load_kld()
 {
-	local _loaded _mod _opt _re
+	local _loaded _mod _opt _re _loader
+	_loader=kldload
 
-	while getopts "e:m:" _opt; do
+	while getopts "be:m:" _opt; do
 		case "$_opt" in
+		b) _loader="sysextctl load" ;;
 		e) _re="$OPTARG" ;;
 		m) _mod="$OPTARG" ;;
-		*) err 3 'USAGE: load_kld [-e regex] [-m module] file' ;;
+		*) err 3 'USAGE: load_kld [-b] [-e regex] [-m module] file' ;;
 		esac
 	done
 	shift $(($OPTIND - 1))
 	if [ $# -ne 1 ]; then
-		err 3 'USAGE: load_kld [-e regex] [-m module] file'
+		err 3 'USAGE: load_kld [-b] [-e regex] [-m module] file'
 	fi
 	_mod=${_mod:-$1}
 	_loaded=false
@@ -2455,8 +2459,15 @@ load_kld()
 			_loaded=true
 		fi
 	fi
+	# An already-loaded module still needs the broker's boot ownership claim.
+	if $_loaded && [ "$_loader" = "sysextctl load" ]; then
+		if ! ${_loader} "$1"; then
+			warn "Unable to claim kernel module $1"
+			return 1
+		fi
+	fi
 	if ! $_loaded; then
-		if ! kldload "$1"; then
+		if ! ${_loader} "$1"; then
 			warn "Unable to load kernel module $1"
 			return 1
 		else

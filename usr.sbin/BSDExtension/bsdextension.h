@@ -25,7 +25,7 @@
 
 #include "sysext_proto.h"	/* SYSEXT_NAME_MAX */
 
-#define	SYSEXT_MAX_ALLOW	32	/* allow-list capacity */
+#define	SYSEXT_MAX_ALLOW	256	/* allow-list capacity */
 #define	SYSEXT_DEFAULT_CONF	"/Capabilities/Config/bsdextension.ucl"
 /*
  * Bundle-relative config filename, opened via the switchboard-delivered Config
@@ -33,6 +33,7 @@
  * namespace access.
  */
 #define	SYSEXT_CONFIG_NAME	"bsdextension.ucl"
+#define SYSEXT_POLICY_DIR "/etc/bsdextension"
 
 struct sysext_config {
 	char	allow[SYSEXT_MAX_ALLOW][SYSEXT_NAME_MAX];
@@ -47,8 +48,19 @@ int sysext_policy_reload(struct sysext_policy *, const char *, service_rights_t)
 /* Reload from an already-open config descriptor (capmode-safe; borrows fd). */
 int sysext_policy_reload_fd(struct sysext_policy *, int fd, service_rights_t);
 int sysext_config_reload(struct sysext_config *, const char *);
+int sysext_config_reload_fd(struct sysext_config *, int);
 /* Parse the allow-list from an already-open descriptor (capmode-safe reload). */
 int sysext_config_load_fd(struct sysext_config *cfg, int fd);
+
+/* Administrator configuration is independent of the filesystem provider.
+ * The manifest supplies this private root-filesystem directory by descriptor;
+ * attaching before serving makes overrides effective even for bootstrap loads. */
+int sysext_policy_attach(struct sysext_policy *, int);
+int sysext_policy_change(struct sysext_policy *, uint32_t, const char *,
+    service_rights_t);
+int sysext_policy_info(struct sysext_policy *, const char *, bool,
+    struct sysext_info_reply *);
+int sysext_policy_enabled(struct sysext_policy *, struct sysext_config *);
 
 /*
  * The held SYS_GATE_KLDLOAD/KLDUNLOAD "system" token (defined in
@@ -59,6 +71,7 @@ extern int sysext_kld_token;
 
 #ifdef BSDEXTENSION_TESTING
 void sysext_test_policy_abandon(struct sysext_policy *);
+void sysext_test_policy_commit_abandon(struct sysext_policy *);
 #define	SYSEXT_STATIC		/* external linkage: reachable from tests */
 
 /* Pure-logic entry points, unit-tested directly (see allowlist_test.c). */

@@ -41,7 +41,7 @@ one_nomatch="$2"
 
 devmatch_start()
 {
-	local x m list boot_safe
+	local x m list boot_safe _plane _broker
 
 	boot_safe=$(kenv -q boot_safe || echo "NO")
 	checkyesno boot_safe && return
@@ -66,6 +66,12 @@ devmatch_start()
 	# the code required it, so accept both now. devmatch produces module
 	# names with .ko
 
+	_plane=$(kenv -q capability_plane 2>/dev/null || :)
+	case "${_plane}" in
+	[Nn][Oo]|[Oo][Ff][Ff]|0) _broker=NO ;;
+	*) _broker=YES ;;
+	esac
+
 	devctl freeze
 	x=$(echo "#${devmatch_blocklist:-${devmatch_blacklist}}#$(kenv -q devmatch_blocklist)#" | \
 		sed -e "s/ /#/g;s/\.ko#/#/g")
@@ -74,8 +80,13 @@ devmatch_start()
 		case "${x}" in
 		*"#${m}#"*) continue ;;
 		esac
-		kldstat -q -n ${m} || \
-		    (startmsg "Autoloading module: ${m}"; kldload -n ${m})
+		if [ "${_broker}" = YES ]; then
+			# ENSURE also records ownership when another consumer loaded it.
+			sysextctl load "${m}" || warn "Cannot autoload ${m}"
+		elif ! kldstat -q -n "${m}"; then
+			startmsg "Autoloading module: ${m}"
+			kldload -n "${m}"
+		fi
 	done
 	devctl thaw
 }

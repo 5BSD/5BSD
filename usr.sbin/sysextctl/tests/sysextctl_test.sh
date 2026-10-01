@@ -4,10 +4,16 @@ commands_body()
 {
 	bin="$(atf_get_srcdir)/sysextctl_test_bin"
 	atf_check -s exit:0 -o inline:"linux64\n" "$bin" list
-	atf_check -s exit:0 -o inline:"linux64: loaded\n" "$bin" status linux64
+	atf_check -s exit:0 -o match:"policy=default" "$bin" config
+	for verb in allow deny reset enable disable; do
+		atf_check -s exit:0 -o match:"$verb saved" "$bin" "$verb" linux64
+		atf_check -s exit:69 -e not-empty env SYSEXT_TEST=denied "$bin" "$verb" linux64
+	done
+	atf_check -s exit:0 -o match:"activations restored" "$bin" restore
+	atf_check -s exit:0 -o inline:"linux64: allowed, boot=disabled, loaded=yes, policy=default\n" "$bin" status linux64
 	atf_check -s exit:0 -o inline:"linux64: loaded\n" "$bin" load linux64
-	atf_check -s exit:0 -o inline:"SystemExtension policy reloaded\n" "$bin" reload
-	atf_check -s exit:1 -o inline:"linux64: not loaded\n" env SYSEXT_TEST=absent "$bin" status linux64
+	atf_check -s exit:0 -o inline:"SystemExtension defaults reloaded; administrator overrides preserved\n" "$bin" reload
+	atf_check -s exit:1 -o inline:"linux64: allowed, boot=disabled, loaded=no, policy=default\n" env SYSEXT_TEST=absent "$bin" status linux64
 }
 atf_test_case usage
 usage_body()

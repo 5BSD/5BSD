@@ -2,13 +2,13 @@ PACKAGE=	bsdextension-tests
 TESTSDIR=	${TESTSBASE}/usr.sbin/BSDExtension
 .PATH:		${SRCTOP}/usr.sbin/BSDExtension
 
-# Both suites link the bsdextension object compiled with -DBSDEXTENSION_TESTING: main()
+# These suites link the bsdextension object compiled with -DBSDEXTENSION_TESTING: main()
 # and the accept loop are compiled out, the pure-logic functions gain external
 # linkage, and the test-only sysext_test_serve() entry point is exposed.  See
 # usr.sbin/BSDExtension/bsdextension.h.  There is no runtime behavioural difference from a
 # production build.
 #
-# bsdextension.c is shared by both test programs, so it is compiled once with the
+# bsdextension.c is shared by the test programs, so it is compiled once with the
 # global flags below (per-program CFLAGS.<prog> would not reach a shared
 # source).
 CFLAGS+=	-DBSDEXTENSION_TESTING
@@ -28,8 +28,8 @@ NO_SHARED=	yes
 ATF_TESTS_C+=		allowlist_test
 SRCS.allowlist_test=	allowlist_test.c bsdextension.c policy.c reclaim.c
 
-# provider_test: plane — drives the real request handler over a real channel via
-# sysext_test_serve().  Requires /dev/mac_capability + the stack kmods and root.
+# provider_test: drives the real request handler over a public capability channel
+# via sysext_test_serve(). Requires the channel syscall, but no privilege.
 ATF_TESTS_C+=		provider_test
 SRCS.provider_test=	provider_test.c bsdextension.c policy.c reclaim.c
 
@@ -38,5 +38,8 @@ SRCS.provider_test=	provider_test.c bsdextension.c policy.c reclaim.c
 # module retried) with the kldunload seam stubbed.  No plane, no privilege.
 ATF_TESTS_C+=		reclaim_test
 SRCS.reclaim_test=	reclaim_test.c bsdextension.c policy.c reclaim.c
+
+ATF_TESTS_C+= policy_test
+SRCS.policy_test= policy_test.c bsdextension.c policy.c reclaim.c
 
 .include <bsd.test.mk>

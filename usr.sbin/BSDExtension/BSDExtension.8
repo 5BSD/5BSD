@@ -97,25 +97,47 @@ Both operations are subject to the same allow-list: a client may query only a
 module it could load, so a name that is not allow-listed is refused rather than
 answered, and a query leaks nothing about modules a client may not load.
 There is deliberately no unload operation; safe removal would require
-per-consumer module ownership that
-.Nm
-does not track.
+explicit consumer release semantics; the service conservatively retains
+session and boot claims until reboot.
 .Pp
 A LIST request enumerates the module allow-list, returning each permitted
 module name and the count.
 The allow-list is global rather than per-label, so every caller sees the same
-set; the reply carries the whole list in one message and loads nothing.
+set.
+LIST returns EOVERFLOW above 32 permitted names.
+NEXT returns one entry after an exclusive lexical name cursor, supporting
+bounded discovery of larger allow-lists.
 .Pp
 A RELOAD request requires ADMIN rights on the accepted service channel.
-It rereads only the daemon's configured policy path; clients cannot supply
-a path or policy contents.
-The replacement must be a regular file owned by the daemon's effective UID,
-not writable by group or others, with an explicit allowed_extensions array.
-An empty array denies all modules.
+It rereads the shipped configuration through the delivered Config descriptor.
+Administrator overrides are retained.
+The replacement must be a regular file, not writable by group or others,
+with an explicit allowed_extensions array.
 Missing or invalid replacements leave the last active policy intact.
 Updates are published atomically to all workers, including existing sessions.
 Requests already admitted under the previous policy may finish.
 Reload does not unload modules or restart the core service.
+.Pp
+ALLOW, DENY, RESET, ENABLE, DISABLE and RESTORE also require ADMIN rights.
+Permission overrides and desired boot activation are independent of the
+shipped policy and stored in the private administrator configuration directory.
+A successful edit syncs a replacement before publication.
+Failure after rename but before directory sync fails closed until restart,
+because durability cannot be established.
+INFO and NEXT report permission, desired activation, and readiness; current
+loaded state is reported only for permitted modules.
+.Pp
+The manifest supplies
+.Pa /etc/bsdextension
+as a directory descriptor.
+The service reads administrator configuration before serving requests,
+including bootstrap requests, without depending on the filesystem provider.
+This supports UFS, ZFS, and read-only installer media.
+A missing directory or malformed registry fails closed; an absent overrides
+file in the delivered directory means no administrator overrides.
+The late kld service restores boot activations after local filesystems mount.
+These operations do not constitute package registration or authenticate
+arbitrary module files; administrators remain responsible for installed code.
 .Pp
 .Nm
 is a reconcile client of the capability container model
@@ -158,12 +180,21 @@ block.
 .It Pa /Capabilities/System/SystemExtension.cap
 capability bundle shipping
 .Nm
-.It Pa /Capabilities/Config/bsdextension.ucl
+.It Pa /Capabilities/System/SystemExtension.cap/Units/bsdextension.unit/Config/bsdextension.ucl
 Optional allow-list policy, read at daemon startup and on authorized reload.
 The allowed_extensions array replaces the built-in list.
+The built-in list includes cryptodev, vhid, zfs, linux64, drm, i915kms,
+amdgpu, and radeonkms.
+Graphics startup uses this broker when the capability plane is enabled.
+Firmware requests made during driver attachment retain the securelevel check;
+the firmware-load privilege is available to an authorized module-loading gate
+holder, and packaged GPU firmware is loaded as data from
+.Pa /boot/firmware .
 Use
 .Xr sysextctl 8
-to reload after atomically replacing the file.
+to manage persistent permission and activation overrides, or reload defaults.
+.It Pa /etc/bsdextension/overrides.ucl
+Persistent administrator overrides, managed through sysextctl.
 .It Pa /var/run/BSDExtension/modules.meta
 The per-boot module to bundle owner map the reconcile works from.
 .El
@@ -186,8 +217,8 @@ live, owned, orphaned, destroyed and failed counts.
 .Xr mac_capability 4 ,
 .Xr capsule 8 ,
 .Xr kldload 8 ,
-.Xr sysextctl 8 ,
-.Xr switchboard 8
+.Xr switchboard 8 ,
+.Xr sysextctl 8
 .Sh HISTORY
 The
 .Nm

@@ -314,12 +314,20 @@ sysext_owner_note(int dirfd, const char *module, const char *bundle,
 {
 	struct owner_map m;
 	int lfd, rc = -1;
+	char canonical[MODULE_MAX];
+	size_t len;
 
 	if (dirfd < 0 || !safe_component(module, MODULE_MAX) ||
 	    !safe_component(bundle, CAPRECLAIM_OWNER_MAX)) {
 		errno = EINVAL;
 		return (-1);
 	}
+	/* Normalize requests once, not stored keys on every map read. */
+	strlcpy(canonical, module, sizeof(canonical));
+	len = strlen(canonical);
+	if (len > 3 && strcmp(canonical + len - 3, ".ko") == 0)
+		canonical[len - 3] = '\0';
+	module = canonical;
 	lfd = owners_lock(dirfd, LOCK_EX);
 	if (lfd == -1)
 		return (-1);
@@ -373,7 +381,8 @@ reclaim_enumerate(void *arg, void (*emit)(void *, const char *),
 	if (rc == -1)
 		return (-1);
 	for (i = 0; i < m.n; i++)
-		emit(emit_arg, m.e[i].bundle);
+		if (strcmp(m.e[i].bundle, SYSEXT_BOOT_OWNER) != 0)
+			emit(emit_arg, m.e[i].bundle);
 	map_free(&m);
 	return (0);
 }

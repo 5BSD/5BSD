@@ -81,12 +81,6 @@
 #include "bsdextension_probes.h"
 
 /*
- * A LIST reply must be able to carry the entire allow-list in one message.
- */
-_Static_assert(SYSEXT_MAX_ALLOW <= SYSEXT_LIST_MAX,
-    "allow-list capacity must fit in a SYSEXT_OP_LIST reply");
-
-/*
  * The kernel-module allow-list.  Loading is default-deny by name: only a module
  * whose name appears here may be loaded.  The built-in defaults are the exact
  * set of extensions the base system loads on demand today (see
@@ -190,6 +184,7 @@ valid_module_name(const char *name)
  *   vhid       blued (usr.sbin/bluetooth/blued):   virtual-HID transport.
  *   zfs        bsdfilesystem (usr.sbin/bsdfilesystem):             storage backing /Capabilities.
  *   linux64    sysextctl:                        Linux application runtime.
+ *   drm/i915kms/amdgpu/radeonkms:                 installed graphics drivers.
  *
  * Deliberately narrow — every entry corresponds to a concrete on-demand
  * consumer.  Do not broaden without a matching consumer.
@@ -198,7 +193,8 @@ SYSEXT_STATIC void
 sysext_config_defaults(struct sysext_config *cfg)
 {
 	static const char *const builtin[] = {
-		"cryptodev", "vhid", "zfs", "linux64"
+		"cryptodev", "vhid", "zfs", "linux64",
+		"drm", "i915kms", "amdgpu", "radeonkms"
 	};
 	size_t i;
 
@@ -339,6 +335,12 @@ sysext_config_load_fd(struct sysext_config *cfg, int fd)
 }
 
 int
+sysext_config_reload_fd(struct sysext_config *cfg, int fd)
+{
+	return (sysext_config_parse_fd(cfg, fd, true));
+}
+
+int
 sysext_config_reload(struct sysext_config *cfg, const char *path)
 {
 	return (sysext_config_read(cfg, path, true));
@@ -409,6 +411,51 @@ stat_extension(const char *name, int *loaded)
  * unforgeable label (for the audit log only; the domain layer already gated
  * reachability).  The reply is a fixed sysext_reply.
  */
+/* Pin before loading, so reclaim cannot race an administrative/boot ensure.
+ * Failed loads can retain a conservative boot claim; they never grant a load. */
+static int
+managed_ensure(const char *name, const char *bundle)
+{
+	bool loaded_now;
+	const char *owner = bundle[0] != '\0' ? bundle : SYSEXT_BOOT_OWNER;
+	int error;
+
+	if (sysext_owners_fd >= 0 &&
+	    sysext_owner_note(sysext_owners_fd, name, owner, false) == -1)
+		return (errno);
+	error = ensure_extension(name, &loaded_now);
+	if (error == 0 && sysext_owners_fd >= 0 &&
+	    sysext_owner_note(sysext_owners_fd, name, owner, loaded_now) == -1)
+		syslog(LOG_WARNING, "reclaim attribution for %s: %m", name);
+	return (error);
+}
+
+static int
+restore_extensions(void)
+{
+	struct sysext_config enabled, current;
+	size_t i;
+	int error, first = 0;
+
+	if (sysext_policy_enabled(active_policy, &enabled) == -1)
+		return (errno);
+	for (i = 0; i < enabled.nallow; i++) {
+		/* Recheck permission: a concurrent deny must not use the old list. */
+		if (sysext_policy_snapshot(active_policy, &current) == -1)
+			return (errno);
+		if (!extension_allowed(&current, enabled.allow[i]))
+			continue;
+		error = managed_ensure(enabled.allow[i], "");
+		if (error != 0) {
+			syslog(LOG_ERR, "restore %s: %s", enabled.allow[i], strerror(error));
+			if (first == 0)
+				first = error;
+		}
+	}
+	return (first);
+}
+
+
 static void
 sysext_request(struct channel *ch __unused, struct channel_message *m, void *arg)
 {
@@ -419,8 +466,8 @@ sysext_request(struct channel *ch __unused, struct channel_message *m, void *arg
 	struct sysext_reply rp;
 	struct sysext_stat_reply srp;
 	struct sysext_list_reply lrp;
+	struct sysext_info_reply irp;
 	struct channel_outgoing out;
-	bool loaded_now;
 	int loaded;
 
 	memset(&rp, 0, sizeof(rp));
@@ -434,16 +481,55 @@ sysext_request(struct channel *ch __unused, struct channel_message *m, void *arg
 	rq = channel_message_data(m);
 	if (rq->_reserved != 0 ||
 	    (rq->op != SYSEXT_OP_ENSURE && rq->op != SYSEXT_OP_STAT &&
-	    rq->op != SYSEXT_OP_LIST && rq->op != SYSEXT_OP_RELOAD)) {
+	    rq->op != SYSEXT_OP_LIST && rq->op != SYSEXT_OP_RELOAD &&
+	    (rq->op < SYSEXT_OP_ALLOW || rq->op > SYSEXT_OP_NEXT))) {
 		rp.status = EINVAL;
 		goto reply;
 	}
-	if (rq->op == SYSEXT_OP_LIST || rq->op == SYSEXT_OP_RELOAD) {
+	if (rq->op == SYSEXT_OP_LIST || rq->op == SYSEXT_OP_RELOAD ||
+	    rq->op == SYSEXT_OP_RESTORE) {
 		static const char empty[SYSEXT_NAME_MAX];
 		if (memcmp(rq->name, empty, sizeof(empty)) != 0) {
 			rp.status = EINVAL;
 			goto reply;
 		}
+	}
+	if (rq->op >= SYSEXT_OP_ALLOW && rq->op <= SYSEXT_OP_RESTORE) {
+		if (!service_rights_allow(identity->rights, SERVICE_RIGHTS_ADMIN))
+			rp.status = EPERM;
+		else if (rq->op == SYSEXT_OP_RESTORE)
+			rp.status = restore_extensions();
+		else if (sysext_policy_change(active_policy, rq->op, rq->name,
+		    identity->rights) == -1)
+			rp.status = errno;
+		goto reply;
+	}
+	if (rq->op == SYSEXT_OP_INFO || rq->op == SYSEXT_OP_NEXT) {
+		if (!valid_module_name(rq->name) &&
+		    !(rq->op == SYSEXT_OP_NEXT && rq->name[0] == '\0')) {
+			rp.status = EINVAL;
+			goto reply;
+		}
+		if (sysext_policy_info(active_policy, rq->name,
+		    rq->op == SYSEXT_OP_NEXT, &irp) == -1) {
+			rp.status = errno;
+			goto reply;
+		}
+		/* Do not disclose loaded state for a denied module. */
+		if ((irp.flags & SYSEXT_STATE_ALLOWED) != 0) {
+			rp.status = stat_extension(irp.name, &loaded);
+			if (rp.status != 0)
+				goto reply;
+			if (loaded)
+				irp.flags |= SYSEXT_STATE_LOADED;
+		}
+		memset(&out, 0, sizeof(out));
+		out.size = sizeof(out);
+		out.data = &irp;
+		out.length = sizeof(irp);
+		(void)channel_send_reply(m, &out);
+		channel_message_free(m);
+		return;
 	}
 	if (rq->op == SYSEXT_OP_RELOAD) {
 		if (!service_rights_allow(identity->rights, SERVICE_RIGHTS_ADMIN)) {
@@ -490,6 +576,10 @@ sysext_request(struct channel *ch __unused, struct channel_message *m, void *arg
 	if (rq->op == SYSEXT_OP_LIST) {
 		size_t i;
 
+		if (cfg.nallow > SYSEXT_LIST_MAX) {
+			rp.status = EOVERFLOW;
+			goto reply;
+		}
 		memset(&lrp, 0, sizeof(lrp));
 		lrp.status = 0;
 		lrp.count = (uint32_t)cfg.nallow;
@@ -534,24 +624,9 @@ sysext_request(struct channel *ch __unused, struct channel_message *m, void *arg
 		goto stat_reply;
 	}
 
-	rp.status = ensure_extension(rq->name, &loaded_now);
-	if (rp.status == 0) {
-		syslog(LOG_INFO, "ENSURE %s (client %s) -> loaded", rq->name,
-		    client);
-		/*
-		 * Attribute the module to the client's bundle (from the
-		 * stamped container, never the wire) so the reconcile can
-		 * unload it once the bundle is gone.  Units without a bundle
-		 * (sessions, rc units) are not noted.
-		 */
-		if (sysext_owners_fd >= 0 && identity->bundle[0] != '\0' &&
-		    sysext_owner_note(sysext_owners_fd, rq->name,
-		    identity->bundle, loaded_now) == -1)
-			syslog(LOG_WARNING, "reclaim: cannot note %s for bundle "
-			    "%s: %m", rq->name, identity->bundle);
-	} else
-		syslog(LOG_NOTICE, "ENSURE %s (client %s) -> %s", rq->name,
-		    client, strerror(rp.status));
+	rp.status = managed_ensure(rq->name, identity->bundle);
+	syslog(LOG_INFO, "ENSURE %s (client %s): %s", rq->name, client,
+	    rp.status == 0 ? "loaded" : strerror(rp.status));
 
 reply:
 	memset(&out, 0, sizeof(out));
@@ -909,6 +984,16 @@ main(int argc, char **argv)
 	active_policy = sysext_policy_create(&sysext_conf);
 	if (active_policy == NULL)
 		err(1, "initialize shared extension policy");
+	/* The directory is part of the root filesystem, available before ZFS.
+	 * A missing or invalid administrator store is not an empty policy. */
+	if (!conf_from_arg) {
+		int dirfd;
+
+		if (service_resource_dir(SYSEXT_POLICY_DIR, &dirfd) == -1 ||
+		    sysext_policy_attach(active_policy, dirfd) == -1)
+			err(1, "initialize administrator extension policy");
+	}
+
 
 	/*
 	 * The module -> bundle owner map (reclaim.c), opened before serving so

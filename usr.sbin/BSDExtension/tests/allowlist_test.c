@@ -61,6 +61,10 @@ ATF_TC_BODY(allowlisted_module_is_permitted, tc)
 	ATF_CHECK(extension_allowed(&cfg, "vhid"));
 	ATF_CHECK(extension_allowed(&cfg, "zfs"));
 	ATF_CHECK(extension_allowed(&cfg, "linux64"));
+	ATF_CHECK(extension_allowed(&cfg, "drm"));
+	ATF_CHECK(extension_allowed(&cfg, "i915kms"));
+	ATF_CHECK(extension_allowed(&cfg, "amdgpu"));
+	ATF_CHECK(extension_allowed(&cfg, "radeonkms"));
 }
 
 /*
@@ -136,7 +140,7 @@ ATF_TC_BODY(malformed_config_falls_back_to_defaults, tc)
 	path = write_conf("allowed_extensions = [ \"broken");
 	(void)sysext_config_load(&cfg, path);	/* return ignored: must not abort */
 	/* Built-in set survives untouched. */
-	ATF_CHECK_EQ(4, (int)cfg.nallow);
+	ATF_CHECK_EQ(8, (int)cfg.nallow);
 	ATF_CHECK(extension_allowed(&cfg, "cryptodev"));
 	ATF_CHECK(extension_allowed(&cfg, "vhid"));
 	ATF_CHECK(extension_allowed(&cfg, "zfs"));
@@ -155,7 +159,7 @@ ATF_TC_BODY(non_object_config_falls_back_to_defaults, tc)
 	sysext_config_defaults(&cfg);
 	path = write_conf("[ 1, 2, 3 ]");
 	ATF_CHECK_ERRNO(EINVAL, sysext_config_load(&cfg, path) == -1);
-	ATF_CHECK_EQ(4, (int)cfg.nallow);
+	ATF_CHECK_EQ(8, (int)cfg.nallow);
 	ATF_CHECK(extension_allowed(&cfg, "cryptodev"));
 	(void)unlink(path);
 }
@@ -171,7 +175,7 @@ ATF_TC_BODY(missing_config_uses_defaults, tc)
 
 	sysext_config_defaults(&cfg);
 	ATF_CHECK_EQ(0, sysext_config_load(&cfg, "./does-not-exist.ucl"));
-	ATF_CHECK_EQ(4, (int)cfg.nallow);
+	ATF_CHECK_EQ(8, (int)cfg.nallow);
 	ATF_CHECK(extension_allowed(&cfg, "cryptodev"));
 	ATF_CHECK(extension_allowed(&cfg, "vhid"));
 	ATF_CHECK(extension_allowed(&cfg, "zfs"));
@@ -191,7 +195,7 @@ ATF_TC_BODY(invalid_entry_config_rejected_keeps_defaults, tc)
 	sysext_config_defaults(&cfg);
 	path = write_conf("allowed_extensions = [ \"a/b\" ]");
 	ATF_CHECK(sysext_config_load(&cfg, path) == -1);
-	ATF_CHECK_EQ(4, (int)cfg.nallow);
+	ATF_CHECK_EQ(8, (int)cfg.nallow);
 	ATF_CHECK(extension_allowed(&cfg, "cryptodev"));
 	ATF_CHECK(!extension_allowed(&cfg, "a/b"));
 	(void)unlink(path);

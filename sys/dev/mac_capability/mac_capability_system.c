@@ -35,6 +35,7 @@
 #include <sys/module.h>
 #include <sys/mutex.h>
 #include <sys/proc.h>
+#include <sys/priv.h>
 #include <sys/queue.h>
 #include <sys/sdt.h>
 #include <sys/sysctl.h>
@@ -1674,7 +1675,24 @@ static const struct mac_capability_ops sys_ops = {
  * MACF policy
  * ---------------------------------------------------------------- */
 
+/*
+ * An authorized module loader must be able to request firmware during driver
+ * attach.  The broker runs as an unprivileged capability user, so the normal
+ * superuser privilege check is insufficient.  Require an actual KLDLOAD claim
+ * (or authorization), even when no gate is claimed; never grant other privileges.
+ * firmware_get_flags() retains its separate securelevel check.
+ */
+static int
+sys_mac_priv_grant(struct ucred *cred, int priv)
+{
+
+	if (priv != PRIV_FIRMWARE_LOAD)
+		return (EPERM);
+	return (sys_holds_gate(cred, SYS_GATE_KLDLOAD, "firmware-load"));
+}
+
 static struct mac_policy_ops sys_mac_ops = {
+	.mpo_priv_grant			= sys_mac_priv_grant,
 	.mpo_kld_check_load		= sys_mac_kld_check_load,
 	.mpo_kld_check_unload		= sys_mac_kld_check_unload,
 	.mpo_system_check_reboot	= sys_mac_system_check_reboot,

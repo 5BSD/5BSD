@@ -20,7 +20,7 @@ answered ([Troubleshooting](troubleshooting.md)).
 | `switchboardctl` | Control switchboard(8): status, services, bundles, reload, start/stop/restart a unit by label, enable/disable a bundle, install and verify `.cap` bundles, deps of a program, and `graph` (the anointment reach graph, `--lint` for unreachable endpoints). | switchboardctl(8) | `switchboardctl` | `switchboardctl graph --lint` |
 | `anoint` | Run one command holding one additional anointment after re-entering your password; the replacement for sudo and doas. Never changes uid. `-n` sends an empty password instead of prompting (scripts only). | anoint(1) | `runtime` | `anoint system.trace.client dtrace -l` |
 | `reclaimstat` | Per-provider view of the container-model reconcile: which bundles each provider holds resources for and the result of its last pass; `-a` lists orphans still in the grace window. Reads `/var/run/reclaim/<provider>`. | reclaimstat(8) | `runtime` | `reclaimstat -a` |
-| `sysextctl` | Client of `system.SystemExtension`: list permitted modules, status of one, ensure one is loaded, reload the allow-list. No unload. | sysextctl(8) | `sysextctl` | `sysextctl load if_wg` |
+| `sysextctl` | Inspect SystemExtension policy and loaded state; load modules, manage persistent permissions and boot activation, reload defaults, restore activations. No force unload. | sysextctl(8) | `sysextctl` | `sysextctl config` |
 | `tzfsctl` | Health and demonstration client of `system.Filesystem`: ping the broker, request a claim (`-l` lifetime, `-r` rights, `-m` mount), release it. Not a way to hold storage open. | tzfsctl(8) | `runtime` | `tzfsctl ping` |
 
 ## Per-provider clients

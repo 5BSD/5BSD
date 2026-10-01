@@ -47,19 +47,22 @@ The wire protocol is `lib/libcapsulert/sysext_proto.h`.
 |---|---|---|
 | `SYSEXT_OP_ENSURE` | load a module by name; already loaded is success | yes |
 | `SYSEXT_OP_STAT` | is it loaded, without loading | yes (a denied name is `EPERM`, not "not loaded") |
-| `SYSEXT_OP_LIST` | the names the allow-list permits | no |
-| `SYSEXT_OP_RELOAD` | re-read the policy file; needs `SERVICE_RIGHTS_ADMIN` on the session | no |
+| `SYSEXT_OP_LIST` | legacy listing; `EOVERFLOW` above 32 permitted names | no |
+| `SYSEXT_OP_RELOAD` | re-read shipped defaults, preserving overrides; needs `SERVICE_RIGHTS_ADMIN` | no |
+| `SYSEXT_OP_ALLOW`, `DENY`, `RESET` | persist or remove administrator permission overrides; needs ADMIN | ENSURE still checks effective permission |
+| `SYSEXT_OP_ENABLE`, `DISABLE`, `RESTORE` | manage desired boot activation or restore it now; needs ADMIN | enable and restore require permission |
+| `SYSEXT_OP_INFO`, `NEXT` | inspect policy or enumerate using a lexical cursor | loaded state is undisclosed for denied names |
 
 There is no unload operation. The broker unloads only what it loaded on a
 bundle's behalf, during reclaim, when the bundle is gone and no other
 bundle claims the module (`usr.sbin/BSDExtension/reclaim.c`). A module the
 broker found already loaded is recorded but never unloaded.
 
-The allow-list is `allowed_extensions` in the broker's config, delivered as
-`Config/bsdextension.ucl` under its unit directory (the man pages give the
-global `/Capabilities/Config/bsdextension.ucl` path, which is where the
-non-sandboxed `-c` mode reads it). It replaces, not extends, the built-in
-list, which is exactly the set the base system loads on demand:
+Shipped defaults are `allowed_extensions` in the broker's config, delivered as
+`Config/bsdextension.ucl` under its unit directory. The array replaces the
+built-in defaults. Persistent administrator overrides in
+`/etc/bsdextension/overrides.ucl` are applied afterward; manage them through
+`sysextctl`. The shipped set is:
 
 ```
 allowed_extensions = [
@@ -67,6 +70,10 @@ allowed_extensions = [
     "vhid",        # blued: virtual-HID transport for the Bluetooth stack
     "zfs",         # bsdfilesystem: ZFS backing /Capabilities storage
     "linux64",     # sysextctl: Linux application runtime
+    "drm",
+    "i915kms",
+    "amdgpu",
+    "radeonkms",
 ]
 ```
 
@@ -93,7 +100,7 @@ if (service_ensure_extension(ctx, "cryptodev") == -1)
 
 A built-in module is not a loadable file, so the load reports `ENOENT`; a
 daemon that treated that as fatal would loop until switchboard's circuit
-breaker disabled it. The client API is three functions in libservice(3)
+breaker disabled it. The basic consumer API is three functions in libservice(3)
 and the program below compiles with `cc -o extload extload.c -lservice`:
 
 ```c
@@ -133,11 +140,18 @@ main(void)
 ```
 
 `service_extension_list` fails with `EMSGSIZE` rather than truncating if
-the buffer is too small; a `SERVICE_EXTENSION_LIST_MAX` buffer always
-holds the whole list. Calls time out after 30 seconds. The operator tool is
-sysextctl(8): `sysextctl list | status module | load module | reload`,
-where `status` exits 1 for a permitted but unloaded module and `reload`
-needs ADMIN rights on the channel, not root.
+the caller's buffer is too small, or `EOVERFLOW` if policy exceeds the legacy
+32-name reply. For larger policies, use `service_session_extension_info`
+with `next=1`, starting with an empty cursor and advancing to each returned
+name until `ENOENT`. Calls time out after 30 seconds.
+
+The operator tool, sysextctl(8), supports inspection (`list`, `config`,
+`status`), immediate loading (`load`), persistent permission (`allow`, `deny`,
+`reset`), and activation (`enable`, `disable`, `restore`). `reload` rereads
+shipped defaults. Management requires ADMIN channel rights; UID 0 alone
+does not grant them. `status` exits 1 for a denied or unloaded module.
+See [SystemExtension](../providers/extension.md) for the full protocol,
+persistence rules, and startup integration.
 
 ## Writing a MAC policy against the new hooks
 

@@ -63,7 +63,7 @@
 .It
 .Ic is_verified Ar file
 .It
-.Ic load_kld Oo Fl e Ar regex Oc Oo Fl m Ar module Oc Ar file
+.Ic load_kld Op Fl b Oo Fl e Ar regex Oc Oo Fl m Ar module Oc Ar file
 .It
 .Ic load_rc_config Oo Ar flag Oc Op Ar service
 .It
@@ -351,10 +351,22 @@ turned on or off by the
 .Xr rc.conf 5
 variable
 .Va rc_info .
-.It Ic load_kld Oo Fl e Ar regex Oc Oo Fl m Ar module Oc Ar file
+.It Ic load_kld Op Fl b Oo Fl e Ar regex Oc Oo Fl m Ar module Oc Ar file
 Load
 .Ar file
 as a kernel module unless it is already loaded.
+With
+.Fl b ,
+request the load through
+.Xr sysextctl 8 .
+The extension broker enforces its configured policy; a denied request is not
+retried using the raw kernel-loading syscall.
+This option requires mounted local filesystems and capability discovery
+authority, and is used by the
+.Va kld_list
+startup service when the capability plane is enabled.
+Early boot callers retain the direct-loading default.
+.Pp
 For the purpose of checking the module status,
 either the exact module name can be specified using
 .Fl m ,

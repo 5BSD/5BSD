@@ -31,6 +31,8 @@ struct sysext_reclaim {
  * Open the owner map's home (resetting a map left by a previous boot) and
  * return its directory fd for the workers to note loads into, or -1.
  */
+#define SYSEXT_BOOT_OWNER "__sysext_boot__"
+
 int	sysext_reclaim_open(int container_fd);
 /* Fork the reconcile child over the delivered live-set roots. */
 void	sysext_reclaim_start(int owners_fd);

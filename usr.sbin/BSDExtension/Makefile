@@ -20,7 +20,7 @@ CONFSDIRPACKAGE=	runtime
 # rather than living at /usr/sbin and being spawned by PID 1.  The binary is the
 # unit's program.
 DIRS+=		SYSEXT_CAP SYSEXT_CAP_UNITS SYSEXT_CAP_UNIT SYSEXT_CAP_BIN \
-		SYSEXT_CAP_CONFIG
+		SYSEXT_CAP_CONFIG SYSEXT_POLICY
 SYSEXT_CAP=	/Capabilities/System/SystemExtension.cap
 SYSEXT_CAPPACKAGE=	runtime
 SYSEXT_CAP_UNITS=	${SYSEXT_CAP}/Units
@@ -31,6 +31,14 @@ SYSEXT_CAP_BIN=	${SYSEXT_CAP_UNIT}/bin
 SYSEXT_CAP_BINPACKAGE=	runtime
 SYSEXT_CAP_CONFIG=	${SYSEXT_CAP_UNIT}/Config
 SYSEXT_CAP_CONFIGPACKAGE=	runtime
+
+# Bootstrap configuration cannot depend on the ZFS-backed storage provider.
+# The private directory is delivered by descriptor; overrides are not package files.
+SYSEXT_POLICY= /etc/bsdextension
+SYSEXT_POLICY_OWN= capability
+SYSEXT_POLICY_GRP= capability
+SYSEXT_POLICY_MODE= 0700
+SYSEXT_POLICYPACKAGE= runtime
 
 BINDIR=		${SYSEXT_CAP_BIN}
 

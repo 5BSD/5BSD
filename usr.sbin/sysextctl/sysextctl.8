@@ -1,68 +1,114 @@
 .\" SPDX-License-Identifier: BSD-2-Clause
-.Dd September 10, 2026
+.Dd September 26, 2026
 .Dt SYSEXTCTL 8
 .Os
 .Sh NAME
 .Nm sysextctl
-.Nd request kernel extensions through SystemExtension
+.Nd manage kernel extension policy and boot activation
 .Sh SYNOPSIS
 .Nm
-.Cm list
+.Cm list | config | reload | restore
 .Nm
-.Cm status Ar module
-.Nm
-.Cm load Ar module
-.Nm
-.Cm reload
+.Cm status | load | allow | deny | reset | enable | disable
+.Ar module
 .Sh DESCRIPTION
 .Nm
-uses the caller's capability discovery authority to contact
-.Dq system.SystemExtension .
-It does not invoke
-.Xr kldload 2
-directly and does not manage the core service.
+contacts the
+.Dq system.SystemExtension
+capability service using the caller's discovery authority.
+All changes to policy are validated and persisted by the service.
+The client does not edit configuration files or invoke
+.Xr kldload 2 .
 .Pp
-.Cm list
-prints the permitted module names.
-.Cm status
-reports whether an allowed module is loaded.
-.Cm load
-ensures an allowed module is loaded; an already loaded module is success.
-Names must be single filename components, without paths.
-The broker resolves them through the kernel module path.
-Install a rebuilt module there before requesting a load.
-.Pp
-The broker enforces its allow-list regardless of the caller's UID.
-There is no unload command.
-.Cm reload
-rereads the broker's configured policy file and requires ADMIN rights on
-the service channel, not merely UID 0 or permission to connect.
-It does not stop or manage the core service.
-An invalid or missing file leaves the active policy unchanged.
-Editing the file alone does not change the running policy.
-.Pp
-To change policy, prepare a complete replacement file owned by root and
-not writable by group or others, then atomically rename it over the policy
-file and run
-.Nm Cm reload .
+The commands are:
+.Bl -tag -width disable
+.It Cm list
+Print permitted module names using bounded, lexical discovery.
+Each returned entry is coherent; the entire enumeration is not a snapshot
+across concurrent edits.
+.It Cm config
+Show permission, desired boot activation, current loaded state, and whether
+an administrator override exists for each known policy entry.
+This is a policy listing, not a catalogue of installed packages.
+Loaded state is not disclosed for denied modules.
+.It Cm status Ar module
+Show the same information for one module.
+.It Cm load Ar module
+Ensure a permitted module is loaded for this boot.
+An already loaded module is success.
+.It Cm allow Ar module
+Persist an administrator permission to load this module.
+Permission does not install, authenticate, or load module code.
+.It Cm deny Ar module
+Persist a denial of future load requests and restoration.
+An existing desired boot activation is retained but reported as blocked.
+.It Cm reset Ar module
+Remove the entire administrator override, including desired activation,
+returning permission to the shipped policy.
+.It Cm enable Ar module
+Persist desired boot activation of an already permitted module.
 Use
-.Nm Cm list
-to verify the active allow-list.
-The list replaces rather than augments the defaults.
-Removing a name prevents future requests; it does not unload the module
-or cancel an already admitted request.
+.Cm load
+for immediate activation, or
+.Cm restore
+to apply all enabled entries.
+.It Cm disable Ar module
+Remove desired boot activation while retaining any permission override.
+This does not forcibly unload shared kernel code.
+.It Cm reload
+Reread the service's shipped configuration through its Config descriptor.
+Administrator overrides are preserved.
+Malformed replacements leave the previous policy intact.
+.It Cm restore
+Load permitted entries with desired boot activation.
+The late
+.Pa /etc/rc.d/kld
+service invokes this after local filesystems mount, even with an empty
+.Va kld_list .
+.El
+.Pp
+.Cm allow , deny , reset , enable , disable , reload ,
+and
+.Cm restore
+require ADMIN rights on the service channel, not merely UID 0.
+Persistent overrides live in
+.Pa /etc/bsdextension/overrides.ucl ,
+in a private directory delivered to the service by descriptor.
+They survive package updates.
+The service validates and syncs a replacement before publishing it to clients.
+Requests already admitted under an earlier policy may finish.
+.Pp
+The administrator directory is on the root filesystem and is read before
+serving requests, including bootstrap loads.
+It does not depend on the ZFS-backed filesystem service, which may itself
+need an extension to start.
+This supports UFS installations and read-only installer media; edits on
+read-only media fail without changing the active policy.
+Missing or corrupt administrator state fails closed, except that an absent
+overrides file in the delivered directory means no overrides.
+.Pp
+There is no force-unload command.
+Disabling activation or denying permission leaves existing kernel code loaded
+until reboot or normal ownership reclamation permits removal.
+Session and boot loads carry a boot-long ownership claim.
 .Sh FILES
 .Bl -tag -width indent
-.It Pa /Capabilities/Config/bsdextension.ucl
-Broker policy; the allowed_extensions array replaces the built-in list.
+.It Pa /Capabilities/System/SystemExtension.cap/Units/bsdextension.unit/Config/bsdextension.ucl
+Shipped defaults; the allowed_extensions array replaces built-in defaults.
+.It Pa /etc/bsdextension/overrides.ucl
+Versioned administrator state.
+Manage it through this command rather than editing storage internals.
 .El
 .Sh EXIT STATUS
 Zero indicates success.
 .Cm status
-returns 1 when the permitted module is not loaded.
-Other failures use
+returns 1 for a denied or unloaded module.
+Persistent operations return
+.Dv EX_TEMPFAIL
+if administrator configuration has not been attached.
+Other errors use
 .Xr sysexits 3
 codes.
 .Sh SEE ALSO
-.Xr kldload 8 ,
-.Xr bsdextension 8
+.Xr BSDExtension 8 ,
+.Xr kldload 8

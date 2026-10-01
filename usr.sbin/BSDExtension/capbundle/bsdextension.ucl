@@ -33,7 +33,7 @@ activation { boot = true; ipc = ["system.SystemExtension"]; }
 # against the installed-or-running bundles (docs/book/src/plane/containers-and-storage.md);
 # the live set is read from these delivered directories, never opened by path.
 # BSDEXTENSION_RECLAIM_INTERVAL (environment { ... }) sets the timer/grace seconds.
-directories = ["/Capabilities/System", "/Capabilities/Apps", "/Capabilities/Run/live"];
+directories = ["/etc/bsdextension", "/Capabilities/System", "/Capabilities/Apps", "/Capabilities/Run/live"];
 control = "core";
 protect = ["ptrace", "signal", "wait", "sigkill", "sigcont", "sched",
     "core", "ktrace"];

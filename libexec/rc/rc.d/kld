@@ -39,14 +39,29 @@ stop_cmd=':'
 
 kld_start()
 {
-	[ -n "$kld_list" ] || return
 	[ -z "$(kenv -q kld_disable 2>/dev/null)" ] || return
 
-	local _kld
+	local _kld _broker _plane
+
+	# This service runs after mountcritlocal, unlike early load_kld callers.
+	# Match capsule's loader knob; absent or unknown values retain the plane.
+	_plane=$(kenv -q capability_plane 2>/dev/null || :)
+	case "${_plane}" in
+	[Nn][Oo]|[Oo][Ff][Ff]|0) _broker= ;;
+	*) _broker=-b ;;
+	esac
+
+	if [ -n "${_broker}" ]; then
+		if ! sysextctl restore; then
+			warn "Cannot restore SystemExtension activations"
+			return 1
+		fi
+	fi
+	[ -n "$kld_list" ] || return 0
 
 	startmsg "Loading kernel modules: ${kld_list}"
 	for _kld in $kld_list ; do
-		load_kld -e ${_kld}.ko $_kld
+		load_kld ${_broker} -e "${_kld}.ko" "${_kld}"
 	done
 }
 

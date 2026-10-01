@@ -33,7 +33,13 @@
  */
 #define	SWITCHBOARD_LIFECYCLE_NAME	"system.lifecycle"
 #define	SWITCHBOARD_CTL_MAX_PAYLOAD	1024
-#define	SWITCHBOARD_CTL_SUMMARY_MAX	4096
+/*
+ * Reply text cap.  The responsibility tree grows with units and sessions, so
+ * 4 KiB truncated on a busy system.  The reply carries its own length and the
+ * client reads into a buffer of its own size.  Truncation is marked, never
+ * silent.
+ */
+#define	SWITCHBOARD_CTL_SUMMARY_MAX	16384
 
 /*
  * Control opcodes.

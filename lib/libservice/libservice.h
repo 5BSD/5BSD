@@ -606,9 +606,10 @@ int	service_extension_stat(struct service_context *, const char *module,
  * the same set; the reply reveals only which names may load, never any loaded/
  * not-loaded state.  Up to `max` names are written into `names` (each a
  * SERVICE_EXTENSION_NAME_MAX-byte NUL-terminated buffer) and their number is
- * stored in *countp.  A buffer of SERVICE_EXTENSION_LIST_MAX entries always holds
- * the whole list; a smaller `max` that cannot hold it fails EMSGSIZE (never a
- * silent truncation).  Returns 0, or -1 with errno.
+ * stored in *countp.  This operation returns EOVERFLOW if the policy
+ * exceeds SERVICE_EXTENSION_LIST_MAX entries; use extension_info with next=1
+ * for bounded enumeration of larger policies.  A smaller `max` that cannot
+ * hold a successful reply fails EMSGSIZE (never silent truncation).
  */
 #define	SERVICE_EXTENSION_NAME_MAX	64	/* == bsdextension SYSEXT_NAME_MAX */
 #define	SERVICE_EXTENSION_LIST_MAX	32	/* == bsdextension SYSEXT_LIST_MAX */
@@ -628,6 +629,23 @@ int	service_session_extension_stat(struct service_session *, const char *,
 	    int *);
 int	service_session_extension_list(struct service_session *,
 	    char (*)[SERVICE_EXTENSION_NAME_MAX], size_t, size_t *);
+
+/* ADMIN-only durable overrides. ENABLE/DISABLE affect future restoration;
+ * LOAD remains the immediate idempotent operation. RESET removes an override. */
+enum service_extension_action {
+    SERVICE_EXTENSION_ALLOW, SERVICE_EXTENSION_DENY, SERVICE_EXTENSION_RESET,
+    SERVICE_EXTENSION_ENABLE, SERVICE_EXTENSION_DISABLE, SERVICE_EXTENSION_RESTORE
+};
+struct service_extension_info {
+    char name[SERVICE_EXTENSION_NAME_MAX];
+    int allowed, enabled, loaded, overridden, ready;
+};
+int service_session_extension_manage(struct service_session *,
+    enum service_extension_action, const char *);
+/* next=1: first policy entry lexically after name; ENOENT ends enumeration.
+ * Each entry is coherent; enumeration is not a snapshot across transactions. */
+int service_session_extension_info(struct service_session *, const char *, int,
+    struct service_extension_info *);
 
 /*
  * Confine this process to a jail via bsdnamespace (system.Namespace).  Consumer self-

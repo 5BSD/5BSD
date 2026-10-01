@@ -7,7 +7,8 @@
 #
 # This file is optional.  When it is absent, bsdextension's built-in allow-list
 # stands: the exact set of extensions the base system loads on demand today
-# (cryptodev, vhid, zfs, linux64).  When present, "allowed_extensions" REPLACES that
+# (cryptodev, vhid, zfs, linux64 and the graphics drivers below).
+# When present, "allowed_extensions" REPLACES that
 # built-in set — so an operator narrows or extends the policy in one place.
 # Each entry must be a single, safe module name (no "/", not "." or "..").
 #
@@ -20,4 +21,8 @@ allowed_extensions = [
     "vhid",        # blued: virtual-HID transport for the Bluetooth stack
     "zfs",         # bsdfilesystem: ZFS backing /Capabilities storage
     "linux64",     # sysextctl: Linux application runtime
+    "drm",         # graphics core
+    "i915kms",     # Intel graphics
+    "amdgpu",      # AMD graphics
+    "radeonkms",   # older Radeon graphics
 ]
