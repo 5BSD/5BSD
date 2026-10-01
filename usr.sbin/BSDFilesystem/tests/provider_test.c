@@ -325,16 +325,15 @@ ATF_TC_BODY(channel_validation_is_fail_closed, tc)
 	    call_status(fx.client, &rq, sizeof(rq), NULL, 0));
 
 	/*
-	 * A well-formed DESTROY reaches the handler but, with no imported pool
-	 * (persistent_fd == -1 in this zeroed fixture), fails closed with ENXIO
-	 * rather than touching any ZFS state.  This proves the op is wired into
-	 * dispatch and validated without needing a live pool.
+	 * A well-formed DESTROY from a bundleless client (the zeroed fixture has
+	 * no "<bundle>/<unit>" container) holds no durable namespace, so it fails
+	 * closed with EINVAL before touching any ZFS state.
 	 */
 	memset(&rq, 0, sizeof(rq));
 	rq.op = BSDFILESYSTEM_OP_DESTROY;
 	rq.lifetime = BSDFILESYSTEM_PERSISTENT;
 	(void)strlcpy(rq.dataset, "claim", sizeof(rq.dataset));
-	ATF_CHECK_EQ(ENXIO,
+	ATF_CHECK_EQ(EINVAL,
 	    call_status(fx.client, &rq, sizeof(rq), NULL, 0));
 
 	/* An attached descriptor on a DESTROY is a protocol error. */
