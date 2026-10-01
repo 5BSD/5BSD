@@ -263,6 +263,7 @@ typedef	__pid_t		pid_t;
 #define	AT_RENAME_NOREPLACE	0x0001	/* Fail rename if target exists */
 #define	RENAME_NOREPLACE	AT_RENAME_NOREPLACE
 #define	AT_RENAME_EXCHANGE	0x0002	/* Atomically exchange existing entries */
+#define	RENAME_EXCHANGE		AT_RENAME_EXCHANGE
 #endif	/* __BSD_VISIBLE */
 
 /*
