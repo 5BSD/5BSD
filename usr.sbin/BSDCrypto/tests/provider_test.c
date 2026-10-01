@@ -51,14 +51,14 @@ require_plane(void)
 /*
  * Minting a session descriptor needs the software crypto driver; with no
  * hardware engine (a VM) the kernel refuses with EINVAL unless
- * kern.cryptodevallowsoft is set.  Tests that mint sessions enable it and
+ * kern.crypto.allow_soft is set.  Tests that mint sessions enable it and
  * restore the default (0) in their cleanup.
  */
 static void
 allow_software_crypto(int value)
 {
-	ATF_REQUIRE_MSG(sysctlbyname("kern.cryptodevallowsoft", NULL, NULL,
-	    &value, sizeof(value)) == 0, "kern.cryptodevallowsoft: %s",
+	ATF_REQUIRE_MSG(sysctlbyname("kern.crypto.allow_soft", NULL, NULL,
+	    &value, sizeof(value)) == 0, "kern.crypto.allow_soft: %s",
 	    strerror(errno));
 }
 
@@ -464,7 +464,7 @@ ATF_TC_HEAD(digest_descriptor, tc)
 ATF_TC_CLEANUP(digest_descriptor, tc)
 {
 
-	(void)sysctlbyname("kern.cryptodevallowsoft", NULL, NULL,
+	(void)sysctlbyname("kern.crypto.allow_soft", NULL, NULL,
 	    &(int){0}, sizeof(int));
 }
 ATF_TC_BODY(digest_descriptor, tc)
@@ -647,7 +647,7 @@ ATF_TC_HEAD(named_key_is_owner_scoped, tc)
 ATF_TC_CLEANUP(named_key_is_owner_scoped, tc)
 {
 
-	(void)sysctlbyname("kern.cryptodevallowsoft", NULL, NULL,
+	(void)sysctlbyname("kern.crypto.allow_soft", NULL, NULL,
 	    &(int){0}, sizeof(int));
 }
 ATF_TC_BODY(named_key_is_owner_scoped, tc)
