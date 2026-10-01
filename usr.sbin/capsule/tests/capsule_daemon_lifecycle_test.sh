@@ -8,8 +8,8 @@
 # CATATONIA), the authenticated socket replacement for init(8)'s signal
 # ABI.  See docs/book/src/plane/capsule.md.
 #
-# These run against the live control socket and exercise only the paths
-# that CANNOT reboot the machine:
+# These run against a test-local daemon's control socket and exercise only
+# the paths that CANNOT reboot the machine:
 #
 #   - a daemon-mode capsule (getpid() != 1) rejects every lifecycle op
 #     with EPERM — the request never reaches the accept path;
@@ -24,17 +24,22 @@
 # as a little-endian uint32.  EPERM=1 (01), EINVAL=22 (16), ENOTSUP=45
 # (2d).
 
-SOCK=/var/run/capsule.sock
+. "$(atf_get_srcdir)/capd_test_harness.sh"
 
-# Skip when the live daemon is PID 1 (capsule): sending an accepted
-# lifecycle op there would reboot the test machine.
+SOCK=
+
+#
+# These cases need a capsule running as an ordinary DAEMON (getpid() != 1)
+# with a private control socket.  The PID 1 personality creates no socket
+# and accepted lifecycle ops there would reboot the test machine, so start
+# a test-local stack through the canonical harness and address that.
+#
 require_daemon_not_pid1()
 {
+	capd_start_stack
+	SOCK=$CAPD_CAPSULE_SOCKET
 	if [ ! -S "$SOCK" ]; then
-		atf_skip "capsule control socket not present"
-	fi
-	if [ "$(ps -o comm= -p 1 2>/dev/null)" = "capsule" ]; then
-		atf_skip "capsule is PID 1; lifecycle ops would reboot the host"
+		atf_fail "test-local capsule did not create its control socket"
 	fi
 }
 
@@ -66,7 +71,6 @@ send_op()
 {
 	local op="$1" dlen="${2:-0}" i
 	{
-		emit_u32 1		# version = 1
 		emit_u32 "$op"		# op
 		emit_u32 0		# flags
 		emit_u32 "$dlen"	# datalen
@@ -98,75 +102,116 @@ assert_denied_off_pid1()
 	esac
 }
 
-atf_test_case lifecycle_reboot_denied_off_pid1
+atf_test_case lifecycle_reboot_denied_off_pid1 cleanup
 lifecycle_reboot_denied_off_pid1_head()
 {
 	atf_set "descr" "CTL_OP_REBOOT is denied (EPERM) off PID 1"
 	atf_set "require.user" "root"
+	capd_require_stack_kmods
 }
 lifecycle_reboot_denied_off_pid1_body() { assert_denied_off_pid1 4; }
+lifecycle_reboot_denied_off_pid1_cleanup()
+{
+	capd_cleanup_stack
+}
 
-atf_test_case lifecycle_halt_denied_off_pid1
+atf_test_case lifecycle_halt_denied_off_pid1 cleanup
 lifecycle_halt_denied_off_pid1_head()
 {
 	atf_set "descr" "CTL_OP_HALT is denied (EPERM) off PID 1"
 	atf_set "require.user" "root"
+	capd_require_stack_kmods
 }
 lifecycle_halt_denied_off_pid1_body() { assert_denied_off_pid1 5; }
+lifecycle_halt_denied_off_pid1_cleanup()
+{
+	capd_cleanup_stack
+}
 
-atf_test_case lifecycle_poweroff_denied_off_pid1
+atf_test_case lifecycle_poweroff_denied_off_pid1 cleanup
 lifecycle_poweroff_denied_off_pid1_head()
 {
 	atf_set "descr" "CTL_OP_POWEROFF is denied (EPERM) off PID 1"
 	atf_set "require.user" "root"
+	capd_require_stack_kmods
 }
 lifecycle_poweroff_denied_off_pid1_body() { assert_denied_off_pid1 6; }
+lifecycle_poweroff_denied_off_pid1_cleanup()
+{
+	capd_cleanup_stack
+}
 
-atf_test_case lifecycle_powercycle_denied_off_pid1
+atf_test_case lifecycle_powercycle_denied_off_pid1 cleanup
 lifecycle_powercycle_denied_off_pid1_head()
 {
 	atf_set "descr" "CTL_OP_POWERCYCLE is denied (EPERM) off PID 1"
 	atf_set "require.user" "root"
+	capd_require_stack_kmods
 }
 lifecycle_powercycle_denied_off_pid1_body() { assert_denied_off_pid1 10; }
+lifecycle_powercycle_denied_off_pid1_cleanup()
+{
+	capd_cleanup_stack
+}
 
-atf_test_case lifecycle_single_denied_off_pid1
+atf_test_case lifecycle_single_denied_off_pid1 cleanup
 lifecycle_single_denied_off_pid1_head()
 {
 	atf_set "descr" "CTL_OP_SINGLE is denied (EPERM) off PID 1"
 	atf_set "require.user" "root"
+	capd_require_stack_kmods
 }
 lifecycle_single_denied_off_pid1_body() { assert_denied_off_pid1 11; }
+lifecycle_single_denied_off_pid1_cleanup()
+{
+	capd_cleanup_stack
+}
 
-atf_test_case lifecycle_reroot_denied_off_pid1
+atf_test_case lifecycle_reroot_denied_off_pid1 cleanup
 lifecycle_reroot_denied_off_pid1_head()
 {
 	atf_set "descr" "CTL_OP_REROOT is denied (EPERM) off PID 1"
 	atf_set "require.user" "root"
+	capd_require_stack_kmods
 }
 lifecycle_reroot_denied_off_pid1_body() { assert_denied_off_pid1 12; }
+lifecycle_reroot_denied_off_pid1_cleanup()
+{
+	capd_cleanup_stack
+}
 
-atf_test_case lifecycle_rescan_denied_off_pid1
+atf_test_case lifecycle_rescan_denied_off_pid1 cleanup
 lifecycle_rescan_denied_off_pid1_head()
 {
 	atf_set "descr" "CTL_OP_RESCAN is denied (EPERM) off PID 1"
 	atf_set "require.user" "root"
+	capd_require_stack_kmods
 }
 lifecycle_rescan_denied_off_pid1_body() { assert_denied_off_pid1 13; }
+lifecycle_rescan_denied_off_pid1_cleanup()
+{
+	capd_cleanup_stack
+}
 
-atf_test_case lifecycle_catatonia_denied_off_pid1
+atf_test_case lifecycle_catatonia_denied_off_pid1 cleanup
 lifecycle_catatonia_denied_off_pid1_head()
 {
 	atf_set "descr" "CTL_OP_CATATONIA is denied (EPERM) off PID 1"
 	atf_set "require.user" "root"
+	capd_require_stack_kmods
 }
 lifecycle_catatonia_denied_off_pid1_body() { assert_denied_off_pid1 14; }
+lifecycle_catatonia_denied_off_pid1_cleanup()
+{
+	capd_cleanup_stack
+}
 
-atf_test_case lifecycle_rejects_payload
+atf_test_case lifecycle_rejects_payload cleanup
 lifecycle_rejects_payload_head()
 {
 	atf_set "descr" "a lifecycle op carrying a payload is rejected (EINVAL)"
 	atf_set "require.user" "root"
+	capd_require_stack_kmods
 }
 lifecycle_rejects_payload_body()
 {
@@ -180,12 +225,17 @@ lifecycle_rejects_payload_body()
 	[ "$reply" = "16" ] ||
 	    atf_fail "expected EINVAL (16) for payload, got status $reply"
 }
+lifecycle_rejects_payload_cleanup()
+{
+	capd_cleanup_stack
+}
 
-atf_test_case lifecycle_reserved_op_unsupported
+atf_test_case lifecycle_reserved_op_unsupported cleanup
 lifecycle_reserved_op_unsupported_head()
 {
 	atf_set "descr" "reserved opcodes 7-9 stay unimplemented (ENOTSUP)"
 	atf_set "require.user" "root"
+	capd_require_stack_kmods
 }
 lifecycle_reserved_op_unsupported_body()
 {
@@ -197,6 +247,10 @@ lifecycle_reserved_op_unsupported_body()
 	reply=$(send_op 7 0)
 	[ "$reply" = "2d" ] ||
 	    atf_fail "expected ENOTSUP (2d) for reserved op 7, got status $reply"
+}
+lifecycle_reserved_op_unsupported_cleanup()
+{
+	capd_cleanup_stack
 }
 
 atf_test_case reboot_path_healthy_on_pid1

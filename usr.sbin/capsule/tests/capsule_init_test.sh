@@ -9,18 +9,42 @@
 # active.  They run against the live system daemon and require root.
 #
 
+. "$(atf_get_srcdir)/capd_test_harness.sh"
+
 PATH="$(dirname "$(atf_get_srcdir)"):${PATH}"
 export PATH
 
+capsule_pidfile=
+capsule_sock=
+
+#
+# These cases need a capsule DAEMON instance: one with a pidfile and a
+# private root control socket.  The PID 1 personality deliberately creates
+# neither (see capsule_main() in capsule.c) and capsulectl(8) addresses the
+# plane rather than a socket, so a live plane cannot satisfy them.  Start a
+# test-local stack through the canonical harness instead of skipping.
+#
 require_pidfile()
 {
-	if [ ! -f /var/run/capsule.pid ]; then
-		atf_skip "capsule pidfile not found"
+	capsule_pidfile=/var/run/capsule.pid
+	capsule_sock=/var/run/capsule.sock
+	if [ ! -f "$capsule_pidfile" ]; then
+		capd_start_stack
+		capsule_pidfile=$CAPD_PIDFILE
+		capsule_sock=$CAPD_CAPSULE_SOCKET
 	fi
-	pid=$(cat /var/run/capsule.pid 2>/dev/null)
+	pid=$(cat "$capsule_pidfile" 2>/dev/null)
 	if [ -z "$pid" ]; then
 		atf_skip "capsule pidfile is empty"
 	fi
+}
+
+# Address the instance under test over its own control socket.  capsulectl(8)
+# intentionally speaks to the plane and has no socket override, so it cannot
+# reach a test-local daemon.
+capsule_ctl()
+{
+	capd_capsule_ctl "$capsule_sock" "$1"
 }
 
 # --- isolation ---
@@ -45,6 +69,7 @@ isolation_mac_capability_open_denied_head()
 {
 	atf_set "descr" "/dev/mac_capability cannot be opened by foreign nonce"
 	atf_set "require.user" "root"
+	capd_require_stack_kmods
 }
 isolation_mac_capability_open_denied_body()
 {
@@ -56,7 +81,7 @@ isolation_mac_capability_open_denied_body()
 }
 isolation_mac_capability_open_denied_cleanup()
 {
-	:
+	capd_cleanup_stack
 }
 
 atf_test_case isolation_mac_capability_stat_denied cleanup
@@ -64,6 +89,7 @@ isolation_mac_capability_stat_denied_head()
 {
 	atf_set "descr" "/dev/mac_capability cannot be stat'd by foreign nonce"
 	atf_set "require.user" "root"
+	capd_require_stack_kmods
 }
 isolation_mac_capability_stat_denied_body()
 {
@@ -73,7 +99,7 @@ isolation_mac_capability_stat_denied_body()
 }
 isolation_mac_capability_stat_denied_cleanup()
 {
-	:
+	capd_cleanup_stack
 }
 
 # --- capprotect: visibility ---
@@ -83,11 +109,12 @@ capprotect_visible_config_head()
 {
 	atf_set "descr" "capsule visibility matches integrity.visible config"
 	atf_set "require.user" "root"
+	capd_require_stack_kmods
 }
 capprotect_visible_config_body()
 {
 	require_pidfile
-	pid=$(cat /var/run/capsule.pid)
+	pid=$(cat "$capsule_pidfile")
 	# Check the config file for visible setting.
 	if grep -q 'visible.*true' /etc/capsule.conf 2>/dev/null; then
 		# visible=true: ps must NOT find the process.
@@ -101,7 +128,7 @@ capprotect_visible_config_body()
 }
 capprotect_visible_config_cleanup()
 {
-	:
+	capd_cleanup_stack
 }
 
 # --- capprotect: ptrace ---
@@ -111,17 +138,18 @@ capprotect_ptrace_denied_head()
 {
 	atf_set "descr" "ptrace attach to capsule is denied (CP_SF_PTRACE)"
 	atf_set "require.user" "root"
+	capd_require_stack_kmods
 }
 capprotect_ptrace_denied_body()
 {
 	require_pidfile
-	pid=$(cat /var/run/capsule.pid)
+	pid=$(cat "$capsule_pidfile")
 	# truss uses ptrace; must be denied.
 	atf_check -s not-exit:0 -e ignore truss -p "$pid" -e exit
 }
 capprotect_ptrace_denied_cleanup()
 {
-	:
+	capd_cleanup_stack
 }
 
 # --- capprotect: ktrace ---
@@ -131,17 +159,19 @@ capprotect_ktrace_denied_head()
 {
 	atf_set "descr" "ktrace on capsule is denied (CP_SF_KTRACE)"
 	atf_set "require.user" "root"
+	capd_require_stack_kmods
 }
 capprotect_ktrace_denied_body()
 {
 	require_pidfile
-	pid=$(cat /var/run/capsule.pid)
+	pid=$(cat "$capsule_pidfile")
 	atf_check -s not-exit:0 -e ignore \
 	    ktrace -p "$pid" -t c
 }
 capprotect_ktrace_denied_cleanup()
 {
 	rm -f ktrace.out
+	capd_cleanup_stack
 }
 
 # --- capprotect: scheduler ---
@@ -151,17 +181,18 @@ capprotect_sched_denied_head()
 {
 	atf_set "descr" "scheduler manipulation of capsule is denied (CP_SF_SCHED)"
 	atf_set "require.user" "root"
+	capd_require_stack_kmods
 }
 capprotect_sched_denied_body()
 {
 	require_pidfile
-	pid=$(cat /var/run/capsule.pid)
+	pid=$(cat "$capsule_pidfile")
 	# Attempt to renice capsule from a foreign nonce.
 	atf_check -s not-exit:0 -e ignore renice 10 -p "$pid"
 }
 capprotect_sched_denied_cleanup()
 {
-	:
+	capd_cleanup_stack
 }
 
 # --- control socket ---
@@ -169,49 +200,63 @@ capprotect_sched_denied_cleanup()
 atf_test_case control_socket_exists cleanup
 control_socket_exists_head()
 {
-	atf_set "descr" "control socket exists at /var/run/capsule.sock"
+	atf_set "descr" "control socket exists at the instance path"
 	atf_set "require.user" "root"
+	capd_require_stack_kmods
 }
 control_socket_exists_body()
 {
 	require_pidfile
-	atf_check -s exit:0 test -S /var/run/capsule.sock
+	atf_check -s exit:0 test -S $capsule_sock
 }
 control_socket_exists_cleanup()
 {
-	:
+	capd_cleanup_stack
 }
 
 atf_test_case control_socket_status cleanup
 control_socket_status_head()
 {
-	atf_set "descr" "capsulectl status returns valid output"
+	atf_set "descr" "capsule_ctl status returns valid output"
 	atf_set "require.user" "root"
+	capd_require_stack_kmods
 }
 control_socket_status_body()
 {
 	require_pidfile
-	atf_check -s exit:0 -o match:"capsule: running" capsulectl status
+	atf_check -s exit:0 -o match:"capsule: running" capsule_ctl status
 }
 control_socket_status_cleanup()
 {
-	:
+	capd_cleanup_stack
 }
 
 atf_test_case control_socket_status_uptime cleanup
 control_socket_status_uptime_head()
 {
-	atf_set "descr" "capsulectl status reports uptime"
+	atf_set "descr" "capsule_ctl status reports uptime"
 	atf_set "require.user" "root"
+	capd_require_stack_kmods
 }
 control_socket_status_uptime_body()
 {
+	local uptime
+
 	require_pidfile
-	atf_check -s exit:0 -o match:"uptime:" capsulectl status
+	# struct ctl_reply carries uptime_usec as a binary field, not summary
+	# text: a freshly started daemon must report a nonzero uptime.
+	uptime=$({
+		printf '\002\000\000\000'
+		printf '\000\000\000\000'
+		printf '\000\000\000\000'
+	} | nc -U "$capsule_sock" | od -A n -t u8 -j 8 -N 8 | awk '{ print $1 }')
+	if [ -z "$uptime" ] || [ "$uptime" -le 0 ]; then
+		atf_fail "control socket reported no uptime (got '"'"'$uptime'"'"')"
+	fi
 }
 control_socket_status_uptime_cleanup()
 {
-	:
+	capd_cleanup_stack
 }
 
 atf_test_case control_socket_unknown_op cleanup
@@ -219,6 +264,7 @@ control_socket_unknown_op_head()
 {
 	atf_set "descr" "control socket rejects unknown opcode"
 	atf_set "require.user" "root"
+	capd_require_stack_kmods
 }
 control_socket_unknown_op_body()
 {
@@ -231,12 +277,12 @@ control_socket_unknown_op_body()
 			printf "\\377\\000\\000\\000"
 			printf "\\000\\000\\000\\000"
 			printf "\\000\\000\\000\\000"
-		} | nc -U /var/run/capsule.sock | od -A n -t x1 | head -1
+		} | nc -U $capsule_sock | od -A n -t x1 | head -1
 	'
 }
 control_socket_unknown_op_cleanup()
 {
-	:
+	capd_cleanup_stack
 }
 
 # --- control socket: payload validation ---
@@ -246,6 +292,7 @@ control_socket_status_with_payload_head()
 {
 	atf_set "descr" "status with unexpected payload is rejected"
 	atf_set "require.user" "root"
+	capd_require_stack_kmods
 }
 control_socket_status_with_payload_body()
 {
@@ -256,11 +303,11 @@ control_socket_status_with_payload_body()
 	# are not all zeros (status != 0).
 	atf_check -s exit:0 sh -c '
 		reply=$({
-			printf "\\x02\\x00\\x00\\x00"
-			printf "\\x00\\x00\\x00\\x00"
-			printf "\\x04\\x00\\x00\\x00"
+			printf "\\002\\000\\000\\000"
+			printf "\\000\\000\\000\\000"
+			printf "\\004\\000\\000\\000"
 			printf "JUNK"
-		} | nc -U /var/run/capsule.sock | od -A n -t x1 | head -1)
+		} | nc -U $capsule_sock | od -A n -t x1 | head -1)
 		# First 4 bytes are status — must not be "00 00 00 00"
 		status=$(echo "$reply" | awk "{print \$1 \$2 \$3 \$4}")
 		test "$status" != "00000000"
@@ -268,7 +315,7 @@ control_socket_status_with_payload_body()
 }
 control_socket_status_with_payload_cleanup()
 {
-	:
+	capd_cleanup_stack
 }
 
 # --- control socket: multiple rapid connections ---
@@ -278,18 +325,19 @@ control_socket_rapid_head()
 {
 	atf_set "descr" "daemon handles multiple rapid status queries"
 	atf_set "require.user" "root"
+	capd_require_stack_kmods
 }
 control_socket_rapid_body()
 {
 	require_pidfile
 	local i
 	for i in 1 2 3 4 5; do
-		atf_check -s exit:0 -o match:"running" capsulectl status
+		atf_check -s exit:0 -o match:"running" capsule_ctl status
 	done
 }
 control_socket_rapid_cleanup()
 {
-	:
+	capd_cleanup_stack
 }
 
 # --- control socket: permission ---
@@ -299,18 +347,19 @@ control_socket_permissions_head()
 {
 	atf_set "descr" "control socket is mode 0700"
 	atf_set "require.user" "root"
+	capd_require_stack_kmods
 }
 control_socket_permissions_body()
 {
 	require_pidfile
 	# Verify the socket file has restrictive permissions.
 	local mode
-	mode=$(stat -f '%Lp' /var/run/capsule.sock)
+	mode=$(stat -f '%Lp' $capsule_sock)
 	atf_check_equal "700" "$mode"
 }
 control_socket_permissions_cleanup()
 {
-	:
+	capd_cleanup_stack
 }
 
 # --- test mode ---
@@ -351,6 +400,7 @@ stale_socket_cleanup_head()
 {
 	atf_set "descr" "capsule cleans up stale socket on start"
 	atf_set "require.user" "root"
+	capd_require_stack_kmods
 }
 stale_socket_cleanup_body()
 {
@@ -359,11 +409,11 @@ stale_socket_cleanup_body()
 	# passes) with a control socket means it either created a new
 	# socket or cleaned up a stale one from a previous crash.
 	# Verify the socket works.
-	atf_check -s exit:0 -o match:"running" capsulectl status
+	atf_check -s exit:0 -o match:"running" capsule_ctl status
 }
 stale_socket_cleanup_cleanup()
 {
-	:
+	capd_cleanup_stack
 }
 
 # --- configuration ---
@@ -790,11 +840,12 @@ syslog_init_complete_head()
 {
 	atf_set "descr" "capsule logs successful initialization"
 	atf_set "require.user" "root"
+	capd_require_stack_kmods
 }
 syslog_init_complete_body()
 {
 	require_pidfile
-	pid=$(cat /var/run/capsule.pid)
+	pid=$(cat "$capsule_pidfile")
 	local logfile="/var/log/daemon.log"
 	if [ ! -r "$logfile" ]; then
 		atf_skip "daemon.log not readable"
@@ -817,7 +868,7 @@ syslog_init_complete_body()
 }
 syslog_init_complete_cleanup()
 {
-	:
+	capd_cleanup_stack
 }
 
 # --- control socket: negative / edge cases ---
@@ -827,6 +878,7 @@ control_socket_reload_with_payload_head()
 {
 	atf_set "descr" "reload with unexpected payload is rejected"
 	atf_set "require.user" "root"
+	capd_require_stack_kmods
 }
 control_socket_reload_with_payload_body()
 {
@@ -835,18 +887,18 @@ control_socket_reload_with_payload_body()
 	# Must return non-zero status (EINVAL).
 	atf_check -s exit:0 sh -c '
 		reply=$({
-			printf "\\x03\\x00\\x00\\x00"
-			printf "\\x00\\x00\\x00\\x00"
-			printf "\\x04\\x00\\x00\\x00"
+			printf "\\003\\000\\000\\000"
+			printf "\\000\\000\\000\\000"
+			printf "\\004\\000\\000\\000"
 			printf "JUNK"
-		} | nc -U /var/run/capsule.sock | od -A n -t x1 | head -1)
+		} | nc -U $capsule_sock | od -A n -t x1 | head -1)
 		status=$(echo "$reply" | awk "{print \$1 \$2 \$3 \$4}")
 		test "$status" != "00000000"
 	'
 }
 control_socket_reload_with_payload_cleanup()
 {
-	:
+	capd_cleanup_stack
 }
 
 atf_test_case control_socket_shutdown_with_payload cleanup
@@ -854,6 +906,7 @@ control_socket_shutdown_with_payload_head()
 {
 	atf_set "descr" "shutdown with unexpected payload is rejected"
 	atf_set "require.user" "root"
+	capd_require_stack_kmods
 }
 control_socket_shutdown_with_payload_body()
 {
@@ -861,18 +914,18 @@ control_socket_shutdown_with_payload_body()
 	# Send op=SHUTDOWN(1), flags=0, datalen=4 + 4 bytes junk.
 	atf_check -s exit:0 sh -c '
 		reply=$({
-			printf "\\x01\\x00\\x00\\x00"
-			printf "\\x00\\x00\\x00\\x00"
-			printf "\\x04\\x00\\x00\\x00"
+			printf "\\001\\000\\000\\000"
+			printf "\\000\\000\\000\\000"
+			printf "\\004\\000\\000\\000"
 			printf "JUNK"
-		} | nc -U /var/run/capsule.sock | od -A n -t x1 | head -1)
+		} | nc -U $capsule_sock | od -A n -t x1 | head -1)
 		status=$(echo "$reply" | awk "{print \$1 \$2 \$3 \$4}")
 		test "$status" != "00000000"
 	'
 }
 control_socket_shutdown_with_payload_cleanup()
 {
-	:
+	capd_cleanup_stack
 }
 
 atf_test_case control_socket_unknown_op_with_payload cleanup
@@ -880,6 +933,7 @@ control_socket_unknown_op_with_payload_head()
 {
 	atf_set "descr" "unknown op with unexpected payload is rejected"
 	atf_set "require.user" "root"
+	capd_require_stack_kmods
 }
 control_socket_unknown_op_with_payload_body()
 {
@@ -887,18 +941,18 @@ control_socket_unknown_op_with_payload_body()
 	# Send op=6 (unused), flags=0, datalen=4 + 4 bytes junk.
 	atf_check -s exit:0 sh -c '
 		reply=$({
-			printf "\\x06\\x00\\x00\\x00"
-			printf "\\x00\\x00\\x00\\x00"
-			printf "\\x04\\x00\\x00\\x00"
+			printf "\\006\\000\\000\\000"
+			printf "\\000\\000\\000\\000"
+			printf "\\004\\000\\000\\000"
 			printf "JUNK"
-		} | nc -U /var/run/capsule.sock | od -A n -t x1 | head -1)
+		} | nc -U $capsule_sock | od -A n -t x1 | head -1)
 		status=$(echo "$reply" | awk "{print \$1 \$2 \$3 \$4}")
 		test "$status" != "00000000"
 	'
 }
 control_socket_unknown_op_with_payload_cleanup()
 {
-	:
+	capd_cleanup_stack
 }
 
 atf_test_case control_socket_services_with_payload cleanup
@@ -906,6 +960,7 @@ control_socket_services_with_payload_head()
 {
 	atf_set "descr" "services with unexpected payload is rejected"
 	atf_set "require.user" "root"
+	capd_require_stack_kmods
 }
 control_socket_services_with_payload_body()
 {
@@ -913,18 +968,18 @@ control_socket_services_with_payload_body()
 	# Send op=SERVICES(9), flags=0, datalen=4 + 4 bytes junk.
 	atf_check -s exit:0 sh -c '
 		reply=$({
-			printf "\\x09\\x00\\x00\\x00"
-			printf "\\x00\\x00\\x00\\x00"
-			printf "\\x04\\x00\\x00\\x00"
+			printf "\\011\\000\\000\\000"
+			printf "\\000\\000\\000\\000"
+			printf "\\004\\000\\000\\000"
 			printf "JUNK"
-		} | nc -U /var/run/capsule.sock | od -A n -t x1 | head -1)
+		} | nc -U $capsule_sock | od -A n -t x1 | head -1)
 		status=$(echo "$reply" | awk "{print \$1 \$2 \$3 \$4}")
 		test "$status" != "00000000"
 	'
 }
 control_socket_services_with_payload_cleanup()
 {
-	:
+	capd_cleanup_stack
 }
 
 atf_test_case control_socket_empty_connect cleanup
@@ -932,42 +987,44 @@ control_socket_empty_connect_head()
 {
 	atf_set "descr" "daemon handles client that connects and disconnects"
 	atf_set "require.user" "root"
+	capd_require_stack_kmods
 }
 control_socket_empty_connect_body()
 {
 	require_pidfile
 	# Connect and immediately close — should not crash daemon.
 	atf_check -s exit:0 sh -c \
-	    "echo '' | nc -U /var/run/capsule.sock || true"
+	    "echo '' | nc -U $capsule_sock || true"
 	# Daemon should still be responsive.
-	atf_check -s exit:0 -o match:"running" capsulectl status
+	atf_check -s exit:0 -o match:"running" capsule_ctl status
 }
 control_socket_empty_connect_cleanup()
 {
-	:
+	capd_cleanup_stack
 }
 
 atf_test_case control_socket_status_shows_claims cleanup
 control_socket_status_shows_claims_head()
 {
-	atf_set "descr" "capsulectl status shows mac_capability claims on live daemon"
+	atf_set "descr" "capsule_ctl status shows mac_capability claims on live daemon"
 	atf_set "require.user" "root"
+	capd_require_stack_kmods
 }
 control_socket_status_shows_claims_body()
 {
 	require_pidfile
 	# Live daemon should show /dev/mac_capability in claims.
-	atf_check -s exit:0 -o match:"/dev/mac_capability" capsulectl status
+	atf_check -s exit:0 -o match:"/dev/mac_capability" capsule_ctl status
 	# Should show path count.
-	atf_check -s exit:0 -o match:"paths:" capsulectl status
+	atf_check -s exit:0 -o match:"paths:" capsule_ctl status
 	# Should show network count.
-	atf_check -s exit:0 -o match:"network:" capsulectl status
+	atf_check -s exit:0 -o match:"network:" capsule_ctl status
 	# Should show system gates.
-	atf_check -s exit:0 -o match:"system:" capsulectl status
+	atf_check -s exit:0 -o match:"system:" capsule_ctl status
 }
 control_socket_status_shows_claims_cleanup()
 {
-	:
+	capd_cleanup_stack
 }
 
 # --- nonblocking control socket ---
@@ -977,26 +1034,27 @@ control_socket_slow_client_head()
 {
 	atf_set "descr" "slow client does not block daemon from serving others"
 	atf_set "require.user" "root"
+	capd_require_stack_kmods
 }
 control_socket_slow_client_body()
 {
 	require_pidfile
 	# Open a connection that sends nothing (holds the socket open).
 	# Use nc in the background with a sleep to keep it connected.
-	(sleep 3 | nc -U /var/run/capsule.sock) &
+	(sleep 3 | nc -U $capsule_sock) &
 	slow_pid=$!
 	sleep 0.2
 
 	# While the slow client is connected, the daemon must still respond.
-	atf_check -s exit:0 -o match:"running" capsulectl status
-	atf_check -s exit:0 -o match:"running" capsulectl status
+	atf_check -s exit:0 -o match:"running" capsule_ctl status
+	atf_check -s exit:0 -o match:"running" capsule_ctl status
 
 	kill "$slow_pid" 2>/dev/null || true
 	wait "$slow_pid" 2>/dev/null || true
 }
 control_socket_slow_client_cleanup()
 {
-	:
+	capd_cleanup_stack
 }
 
 atf_test_case control_socket_concurrent_clients cleanup
@@ -1004,13 +1062,14 @@ control_socket_concurrent_clients_head()
 {
 	atf_set "descr" "multiple clients get responses concurrently"
 	atf_set "require.user" "root"
+	capd_require_stack_kmods
 }
 control_socket_concurrent_clients_body()
 {
 	require_pidfile
 	# Launch 5 status queries in parallel.
 	for i in 1 2 3 4 5; do
-		capsulectl status > "/tmp/ctl_concurrent_${i}.out" 2>&1 &
+		capsule_ctl status > "/tmp/ctl_concurrent_${i}.out" 2>&1 &
 	done
 	wait
 
@@ -1023,6 +1082,7 @@ control_socket_concurrent_clients_body()
 control_socket_concurrent_clients_cleanup()
 {
 	rm -f /tmp/ctl_concurrent_*.out
+	capd_cleanup_stack
 }
 
 atf_test_case control_socket_client_timeout cleanup
@@ -1030,6 +1090,7 @@ control_socket_client_timeout_head()
 {
 	atf_set "descr" "unresponsive client is disconnected after timeout"
 	atf_set "require.user" "root"
+	capd_require_stack_kmods
 }
 control_socket_client_timeout_body()
 {
@@ -1038,17 +1099,17 @@ control_socket_client_timeout_body()
 	# The daemon should time out and close the connection.
 	atf_check -s exit:0 sh -c '
 		{
-			printf "\\x02\\x00\\x00\\x00"
-			printf "\\x00\\x00\\x00\\x00"
+			printf "\\002\\000\\000\\000"
+			printf "\\000\\000\\000\\000"
 			sleep 5
-		} | nc -U /var/run/capsule.sock >/dev/null 2>&1 || true
+		} | nc -U $capsule_sock >/dev/null 2>&1 || true
 	'
 	# Daemon must still be responsive after the timeout.
-	atf_check -s exit:0 -o match:"running" capsulectl status
+	atf_check -s exit:0 -o match:"running" capsule_ctl status
 }
 control_socket_client_timeout_cleanup()
 {
-	:
+	capd_cleanup_stack
 }
 
 atf_test_case control_socket_sighup_nonblocking cleanup
@@ -1056,19 +1117,20 @@ control_socket_sighup_nonblocking_head()
 {
 	atf_set "descr" "SIGHUP reload does not block status queries"
 	atf_set "require.user" "root"
+	capd_require_stack_kmods
 }
 control_socket_sighup_nonblocking_body()
 {
 	require_pidfile
-	pid=$(cat /var/run/capsule.pid)
+	pid=$(cat "$capsule_pidfile")
 
 	# Send SIGHUP and immediately query status.
 	kill -HUP "$pid"
-	atf_check -s exit:0 -o match:"running" capsulectl status
+	atf_check -s exit:0 -o match:"running" capsule_ctl status
 }
 control_socket_sighup_nonblocking_cleanup()
 {
-	:
+	capd_cleanup_stack
 }
 
 # --- early-close and SIGPIPE ---
@@ -1078,6 +1140,7 @@ control_socket_early_close_status_head()
 {
 	atf_set "descr" "client that closes before reading summary does not crash daemon"
 	atf_set "require.user" "root"
+	capd_require_stack_kmods
 }
 control_socket_early_close_status_body()
 {
@@ -1087,17 +1150,17 @@ control_socket_early_close_status_body()
 	# This triggers a write to a closed socket — must not SIGPIPE.
 	atf_check -s exit:0 sh -c '
 		{
-			printf "\\x02\\x00\\x00\\x00"
-			printf "\\x00\\x00\\x00\\x00"
-			printf "\\x00\\x00\\x00\\x00"
-		} | nc -U /var/run/capsule.sock | dd bs=16 count=1 of=/dev/null 2>/dev/null
+			printf "\\002\\000\\000\\000"
+			printf "\\000\\000\\000\\000"
+			printf "\\000\\000\\000\\000"
+		} | nc -U $capsule_sock | dd bs=16 count=1 of=/dev/null 2>/dev/null
 	'
 	# Daemon must still be alive.
-	atf_check -s exit:0 -o match:"running" capsulectl status
+	atf_check -s exit:0 -o match:"running" capsule_ctl status
 }
 control_socket_early_close_status_cleanup()
 {
-	:
+	capd_cleanup_stack
 }
 
 atf_test_case control_socket_early_close_services cleanup
@@ -1105,6 +1168,7 @@ control_socket_early_close_services_head()
 {
 	atf_set "descr" "services client closing mid-summary does not crash daemon"
 	atf_set "require.user" "root"
+	capd_require_stack_kmods
 }
 control_socket_early_close_services_body()
 {
@@ -1112,16 +1176,16 @@ control_socket_early_close_services_body()
 	# Send SERVICES request, read 1 byte of response, then close.
 	atf_check -s exit:0 sh -c '
 		{
-			printf "\\x09\\x00\\x00\\x00"
-			printf "\\x00\\x00\\x00\\x00"
-			printf "\\x00\\x00\\x00\\x00"
-		} | nc -U /var/run/capsule.sock | dd bs=1 count=1 of=/dev/null 2>/dev/null
+			printf "\\011\\000\\000\\000"
+			printf "\\000\\000\\000\\000"
+			printf "\\000\\000\\000\\000"
+		} | nc -U $capsule_sock | dd bs=1 count=1 of=/dev/null 2>/dev/null
 	'
-	atf_check -s exit:0 -o match:"running" capsulectl status
+	atf_check -s exit:0 -o match:"running" capsule_ctl status
 }
 control_socket_early_close_services_cleanup()
 {
-	:
+	capd_cleanup_stack
 }
 
 atf_test_case control_socket_early_close_reload cleanup
@@ -1129,6 +1193,7 @@ control_socket_early_close_reload_head()
 {
 	atf_set "descr" "reload client closing mid-summary does not crash daemon"
 	atf_set "require.user" "root"
+	capd_require_stack_kmods
 }
 control_socket_early_close_reload_body()
 {
@@ -1136,16 +1201,16 @@ control_socket_early_close_reload_body()
 	# Send RELOAD request, read 1 byte, close.
 	atf_check -s exit:0 sh -c '
 		{
-			printf "\\x03\\x00\\x00\\x00"
-			printf "\\x00\\x00\\x00\\x00"
-			printf "\\x00\\x00\\x00\\x00"
-		} | nc -U /var/run/capsule.sock | dd bs=1 count=1 of=/dev/null 2>/dev/null
+			printf "\\003\\000\\000\\000"
+			printf "\\000\\000\\000\\000"
+			printf "\\000\\000\\000\\000"
+		} | nc -U $capsule_sock | dd bs=1 count=1 of=/dev/null 2>/dev/null
 	'
-	atf_check -s exit:0 -o match:"running" capsulectl status
+	atf_check -s exit:0 -o match:"running" capsule_ctl status
 }
 control_socket_early_close_reload_cleanup()
 {
-	:
+	capd_cleanup_stack
 }
 
 # --- concurrent SIGHUP plus operations ---
@@ -1155,46 +1220,48 @@ sighup_during_status_head()
 {
 	atf_set "descr" "SIGHUP during rapid status queries does not corrupt responses"
 	atf_set "require.user" "root"
+	capd_require_stack_kmods
 }
 sighup_during_status_body()
 {
 	require_pidfile
-	pid=$(cat /var/run/capsule.pid)
+	pid=$(cat "$capsule_pidfile")
 
 	# Fire off status queries while sending SIGHUPs.
 	for i in 1 2 3 4 5; do
 		kill -HUP "$pid"
-		atf_check -s exit:0 -o match:"running" capsulectl status
+		atf_check -s exit:0 -o match:"running" capsule_ctl status
 	done
 }
 sighup_during_status_cleanup()
 {
-	:
+	capd_cleanup_stack
 }
 
 atf_test_case sighup_during_reload cleanup
 sighup_during_reload_head()
 {
-	atf_set "descr" "SIGHUP interleaved with capsulectl reload is safe"
+	atf_set "descr" "SIGHUP interleaved with capsule_ctl reload is safe"
 	atf_set "require.user" "root"
+	capd_require_stack_kmods
 }
 sighup_during_reload_body()
 {
 	require_pidfile
-	pid=$(cat /var/run/capsule.pid)
+	pid=$(cat "$capsule_pidfile")
 
 	# Interleave SIGHUP and control socket reloads.
 	kill -HUP "$pid"
-	atf_check -s exit:0 -o ignore capsulectl reload
+	atf_check -s exit:0 -o ignore capsule_ctl reload
 	kill -HUP "$pid"
-	atf_check -s exit:0 -o ignore capsulectl reload
+	atf_check -s exit:0 -o ignore capsule_ctl reload
 	# Daemon must be healthy.
-	atf_check -s exit:0 -o match:"running" capsulectl status
-	atf_check -s exit:0 -o match:"CLAIMS:" capsulectl status
+	atf_check -s exit:0 -o match:"running" capsule_ctl status
+	atf_check -s exit:0 -o match:"CLAIMS:" capsule_ctl status
 }
 sighup_during_reload_cleanup()
 {
-	:
+	capd_cleanup_stack
 }
 
 # --- services available to non-root ---
@@ -1204,18 +1271,27 @@ control_socket_services_any_user_head()
 {
 	atf_set "descr" "services listing does not require root"
 	atf_set "require.user" "root"
+	capd_require_stack_kmods
 }
 control_socket_services_any_user_body()
 {
 	require_pidfile
-	# The control socket is mode 0700 owned by root, so non-root
-	# can't connect at all.  But verify the daemon doesn't return
-	# EPERM for root — the permission check was removed.
-	atf_check -s exit:0 -o match:"switchboard" capsulectl services
+	# The control socket is mode 0700 owned by root, so non-root cannot
+	# connect at all.  Verify root is not turned away by a permission
+	# check: the service inventory moved to switchboardctl(8) (opcode 9
+	# is retired), so the daemon must answer with that refusal rather
+	# than EPERM.
+	atf_check -s exit:0 -o not-match:"^00000001" sh -c '
+		{
+			printf "\\011\\000\\000\\000"
+			printf "\\000\\000\\000\\000"
+			printf "\\000\\000\\000\\000"
+		} | nc -U '"$capsule_sock"' | od -A n -t x1 | head -1
+	'
 }
 control_socket_services_any_user_cleanup()
 {
-	:
+	capd_cleanup_stack
 }
 
 atf_test_case config_claims_files_alias cleanup
