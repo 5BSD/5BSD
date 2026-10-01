@@ -29,9 +29,17 @@ mode_and_default_body()
 {
 	reset_policy
 	atf_check -s exit:0 -o match:permissive mac_abac_ctl mode
-	atf_check -s exit:0 -o ignore mac_abac_ctl mode enforcing
-	atf_check -s exit:0 -o match:enforcing mac_abac_ctl mode
+	# The round trip goes through "disabled", never "enforcing".  Enforcing
+	# is global: for as long as it is set, any rule that matches denies for
+	# real, and a test that aborts before restoring the mode leaves the
+	# machine in that state.  rtld needs mprotect(2), so the result is a
+	# system where nothing can exec.  "disabled" exercises the same
+	# setter and getter -- the mode short-circuits every check -- without
+	# that exposure.
+	atf_check -s exit:0 -o ignore mac_abac_ctl mode disabled
+	atf_check -s exit:0 -o match:disabled mac_abac_ctl mode
 	atf_check -s exit:0 -o ignore mac_abac_ctl mode permissive
+	atf_check -s exit:0 -o match:permissive mac_abac_ctl mode
 	atf_check -s exit:0 -o ignore mac_abac_ctl default deny
 	atf_check -s exit:0 -o match:deny mac_abac_ctl default
 	atf_check -s exit:0 -o ignore mac_abac_ctl default allow
