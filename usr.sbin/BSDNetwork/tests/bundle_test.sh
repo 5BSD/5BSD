@@ -19,8 +19,8 @@ manifest_head()
 manifest_body()
 {
 	require_srctree
-	srcdir="@SRCTOP@/usr.sbin/bsdnetwork"
-	objdir="@OBJTOP@/usr.sbin/bsdnetwork"
+	srcdir="@SRCTOP@/usr.sbin/BSDNetwork"
+	objdir="@OBJTOP@/usr.sbin/BSDNetwork"
 	switchboardctl="${SWITCHBOARDCTL:-@OBJTOP@/usr.sbin/switchboardctl/tests/switchboardctl_test_bin}"
 	manifest="${srcdir}/capbundle/bsdnetwork.ucl"
 	bundle="${PWD}/Network.cap"
@@ -30,17 +30,17 @@ manifest_body()
 	    atf_skip "source-built switchboardctl is required"
 	mkdir -p "${unit}/bin"
 	cp "${srcdir}/capbundle/Bundle.ucl" "${bundle}/Bundle.ucl"
-	cp "${objdir}/bsdnetwork" "${unit}/bin/Network"
+	cp "${objdir}/BSDNetwork" "${unit}/bin/BSDNetwork"
 	if [ "@MK_DTRACE@" = "yes" ]; then
 		atf_check -s exit:0 -o match:'.SUNW_dof' readelf -S \
-		    "${objdir}/bsdnetwork"
+		    "${objdir}/BSDNetwork"
 	else
 		atf_check -s exit:0 -o not-match:'.SUNW_dof' readelf -S \
-		    "${objdir}/bsdnetwork"
+		    "${objdir}/BSDNetwork"
 	fi
 	cp "${manifest}" "${unit}/Unit.ucl"
 	chmod 0555 "${bundle}" "${bundle}/Units" "${unit}" "${unit}/bin" \
-	    "${unit}/bin/Network"
+	    "${unit}/bin/BSDNetwork"
 	chmod 0444 "${bundle}/Bundle.ucl" "${unit}/Unit.ucl"
 
 	atf_check -s exit:0 -o match:'Verification: PASSED' \
