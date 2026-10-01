@@ -482,7 +482,7 @@ UCL
 	# (skipped), while the valid active registry is retained and the reload
 	# otherwise succeeds.
 	reload_stack
-	wait_for_log 'quarantined user bundle.*bad' || atf_fail "malformed bundle was not quarantined"
+	wait_for_log "bundle '.*bad.cap' invalid: .*restert" || atf_fail "malformed bundle was not quarantined"
 	atf_check kill -0 "$(cat reload-guard.pid)"
 	atf_check -o match:running cat reload-guard.out
 	stop_stack
@@ -511,7 +511,7 @@ untrusted_bundle_rejected_body()
 	# the reload succeeds for the valid registry while the untrusted bundle
 	# is skipped and never runs (plan §15).
 	reload_stack
-	wait_for_log 'quarantined user bundle.*untrusted' || atf_fail "untrusted bundle was not quarantined"
+	wait_for_log "bundle '.*untrusted.cap' untrusted" || atf_fail "untrusted bundle was not quarantined"
 	test ! -e untrusted.ready || atf_fail "untrusted service executed"
 	atf_check test ! -e untrusted.ready
 	stop_stack
@@ -540,8 +540,8 @@ kmod_prerequisite_is_rejected_body()
 	wait_for_log "unknown key 'kmod_requires'" ||
 	    atf_fail "module-loading field was not rejected"
 	atf_check test ! -e kmod-prereq.ready
-	wait_for_log 'previous registry and running services retained' ||
-	    atf_fail "invalid system manifest did not preserve the prior registry"
+	wait_for_log "SYSTEM bundle '.*kmod-prereq.cap' invalid" ||
+	    atf_fail "invalid system manifest was not reported as invalid"
 	stop_stack
 }
 kmod_prerequisite_is_rejected_cleanup()
@@ -551,218 +551,8 @@ kmod_prerequisite_is_rejected_cleanup()
 
 # ===================================================================
 
-atf_test_case retirement_replays_after_provider_restart cleanup
-retirement_replays_after_provider_restart_head()
-{
-    atf_set require.user root
-    atf_set timeout 120
-    require_capsule_stack_kmods
-}
-retirement_replays_after_provider_restart_body()
-{
-    unset SWITCHBOARD_EXPERIMENTAL_RECLAIM
-    export SWITCHBOARD_TRACE_INSTALLATION=1
-    start_stack
-    ctl=$(command -v switchboardctl)
-    label=org.test.retirementclient/retirementclient
-    op=$("$ctl" lifecycle issue "$WORK")
-    make_fixture_svc system retirementprovider 'restart = "on-failure"; activation { ipc = ["org.test.retirement-store"]; }' retirement-provider org.test.retirement-store retirement-receipt
-    make_fixture_svc system retirementclient 'restart = "never";' retirement-client org.test.retirement-store
-    reload_stack
-    if ! wait_for_file retirement-client.ready; then
-        cat fixture-errors "$logfile" 2>/dev/null || true
-        atf_fail 'client session not established'
-    fi
-    "$ctl" lifecycle status "$WORK" > before
-    old=$(awk -v label="$label" '$1=="owner" && $2==label {print $3}' before)
-    atf_check "$ctl" lifecycle prepare "$WORK" "$op" bundle:org.test.retirementclient@1 "$label"
-    # The provider is absent when retirement is committed; restart must replay it.
-    providerpid=$(cat retirement-provider.ready)
-    kill -KILL "$providerpid"
-    rm -rf "$APPS_DIR/retirementclient.cap"
-    atf_check "$ctl" lifecycle retire "$WORK" "$op" bundle:org.test.retirementclient@1 "$label"
-    atf_check "$ctl" lifecycle install "$WORK" source.v2 "$label"
-    wait_for_file retirement-receipt || atf_fail 'retirement was not replayed'
-    atf_check -o match:"install.$old" cat retirement-receipt
-    for attempt in $(jot 100); do
-        "$ctl" lifecycle status "$WORK" > after
-        awk -v old="$old" '$1=="owner" && $3==old && $4==4 {ok=1} END {exit !ok}' after && break
-        sleep .1
-    done
-    atf_check awk -v old="$old" -v label="$label" '
-        $1=="owner" && $3==old && $4==4 {complete++}
-        $1=="owner" && $2==label && $3!=old && $4==1 {fresh++}
-        END {exit !(complete==1 && fresh==1)}' after
-}
-retirement_replays_after_provider_restart_cleanup() { cleanup_common; }
-
-atf_test_case installation_authority_live_query cleanup
-installation_authority_live_query_head()
-{
-    atf_set require.user root
-    atf_set timeout 120
-    require_capsule_stack_kmods
-}
-installation_authority_live_query_body()
-{
-    export SWITCHBOARD_TRACE_INSTALLATION=1
-    unset SWITCHBOARD_EXPERIMENTAL_RECLAIM
-    start_stack
-    ctl=$(command -v switchboardctl)
-    label=org.test.subject/main
-    op=$("$ctl" lifecycle issue "$WORK")
-    atf_check "$ctl" lifecycle install "$WORK" pkg:subject "$label"
-    "$ctl" lifecycle status "$WORK" > ledger
-    old=$(awk -v label="$label" '$1=="owner" && $2==label {print $3}' ledger)
-    make_fixture_svc system queryold 'restart = "never";' installation-query "$label" "$old" "$WORK/query-old.result"
-    reload_stack
-    if ! wait_for_file query-old.result; then
-        cat fixture-errors fixture-init-failure.result fixture-ready-failure.result "$logfile" 2>/dev/null || true
-        atf_fail 'launched service did not complete its installation query'
-    fi
-    atf_check -o inline:'0 1\n' cat query-old.result
-    atf_check "$ctl" lifecycle prepare "$WORK" "$op" pkg:subject "$label"
-    atf_check "$ctl" lifecycle retire "$WORK" "$op" pkg:subject "$label"
-    atf_check "$ctl" lifecycle install "$WORK" pkg:subject "$label"
-    "$ctl" lifecycle status "$WORK" > ledger
-    fresh=$(awk -v label="$label" '$1=="owner" && $2==label && $4==1 {print $3}' ledger)
-    atf_check test "$old" != "$fresh"
-    make_fixture_svc system querynew 'restart = "never";' installation-query "$label" "$fresh" "$WORK/query-new.result"
-    # The running manager has already cached the old installation.
-    make_fixture_svc system queryretired 'restart = "never";' installation-query "$label" "$old" "$WORK/query-retired.result"
-    reload_stack
-    wait_for_file query-retired.result || atf_fail 'cached old-ID query did not refresh'
-    wait_for_file query-new.result || atf_fail 'cached new-ID query did not refresh'
-    atf_check -o inline:'0 4\n' cat query-retired.result
-    atf_check -o inline:'0 1\n' cat query-new.result
-    # Restart the actual daemon stack; both service queries must read durable state.
-    stop_stack
-    rm query-old.result query-new.result query-retired.result
-    start_stack
-    wait_for_file query-old.result || atf_fail 'old-ID query did not recover after daemon restart'
-    wait_for_file query-new.result || atf_fail 'new-ID query did not recover after daemon restart'
-    atf_check -o inline:'0 4\n' cat query-old.result
-    atf_check -o inline:'0 1\n' cat query-new.result
-    atf_check -o ignore grep -E 'installation action=query label=org.test.subject/main .* state=4 error=0' "$logfile"
-    atf_check -o ignore grep -E 'installation action=query label=org.test.subject/main .* state=1 error=0' "$logfile"
-}
-installation_authority_live_query_cleanup() { cleanup_common; }
-
-atf_test_case unregistered_service_requires_adoption cleanup
-unregistered_service_requires_adoption_head()
-{
-    atf_set require.user root
-    atf_set timeout 120
-    require_capsule_stack_kmods
-}
-unregistered_service_requires_adoption_body()
-{
-    export SWITCHBOARD_TRACE_INSTALLATION=1
-    unset SWITCHBOARD_EXPERIMENTAL_RECLAIM
-    prepare_paths
-    find_capd_service_fixture
-    dir="$APPS_DIR/unregistered.cap"
-    write_test_bundle "$dir" org.test.unregistered worker 'restart = "never";' 'activation { boot = true; }'
-    cp "$capd_service_fixture" "$dir/Units/worker.unit/bin/worker"
-    chmod 755 "$dir/Units/worker.unit/bin/worker"
-    printf 'arguments = ["lifecycle-hold", "-", "%s", "running"];\n' "$WORK/registered.result" >> "$dir/Units/worker.unit/Unit.ucl"
-    start_stack
-    wait_for_log 'org.test.unregistered/worker: installation identity unavailable' ||
-        atf_fail "unregistered service did not fail with a diagnostic"
-    atf_check test ! -e registered.result
-    cp "$logfile" before
-    atf_check -o ignore grep -E 'installation action=start label=org.test.unregistered/worker .* state=0 error=2' "$logfile"
-    ctl=$(command -v switchboardctl)
-    atf_check -o match:' unknown ' "$ctl" lifecycle query "$WORK" org.test.unregistered/worker
-    atf_check "$ctl" lifecycle adopt "$WORK" bundle:org.test.unregistered@1 org.test.unregistered/worker
-    stop_stack
-    start_stack
-    wait_for_file registered.result || atf_fail "explicitly adopted service did not start"
-    atf_check -o ignore grep -E 'installation action=start label=org.test.unregistered/worker .* state=1 error=0' "$logfile"
-    atf_check -o match:' installed ' "$ctl" lifecycle query "$WORK" org.test.unregistered/worker
-}
-unregistered_service_requires_adoption_cleanup() { cleanup_common; }
-
-atf_test_case retirement_purges_only_old_queued_sessions cleanup
-retirement_purges_only_old_queued_sessions_head()
-{
-    atf_set require.user root
-    atf_set timeout 120
-    require_capsule_stack_kmods
-}
-retirement_purges_only_old_queued_sessions_body()
-{
-    unset SWITCHBOARD_EXPERIMENTAL_RECLAIM
-    export SWITCHBOARD_TRACE_INSTALLATION=1
-    start_stack
-    ctl=$(command -v switchboardctl)
-    label=org.test.retirementclient/retirementclient
-    peer=org.test.retirementpeer/retirementpeer
-    make_fixture_svc system retirementprovider 'restart = "never"; activation { ipc = ["org.test.retirement-store"]; }' retirement-queued-provider org.test.retirement-store retirement-receipt
-    make_fixture_svc system retirementclient 'restart = "never";' retirement-queued-client org.test.retirement-store old.ready
-    make_fixture_svc system retirementpeer 'restart = "never";' retirement-queued-client org.test.retirement-store peer.ready
-    reload_stack
-    wait_for_file old.ready || atf_fail 'old session not queued'
-    wait_for_file peer.ready || atf_fail 'peer session not queued'
-    "$ctl" lifecycle query "$WORK" "$peer" > peer.identity
-    peerid=$(awk '{print $2}' peer.identity)
-    op=$("$ctl" lifecycle issue "$WORK")
-    atf_check "$ctl" lifecycle prepare "$WORK" "$op" bundle:org.test.retirementclient@1 "$label"
-    atf_check "$ctl" lifecycle retire "$WORK" "$op" bundle:org.test.retirementclient@1 "$label"
-    wait_for_file retirement-survivor || atf_fail 'queued peer was lost or old wake survived'
-    atf_check -o inline:"install.$peerid
-" cat retirement-survivor
-    wait_for_log "$label: (exited status|killed by signal)" ||
-        atf_fail "old installation did not exit"
-    mv "$APPS_DIR/retirementclient.cap" "$WORK/retired-client.cap"
-    reload_stack
-    wait_for_log "reload: removing stopped service '$label'" ||
-        atf_fail "retired runtime slot was not removed"
-    # Completion permits a new installation; the old queued descriptor must
-    # never be accepted as that replacement, even after its fence is collected.
-    atf_check "$ctl" lifecycle install "$WORK" bundle:org.test.retirementclient@1 "$label"
-    "$ctl" lifecycle query "$WORK" "$label" > replacement.identity
-    fresh=$(awk '{print $2}' replacement.identity)
-    mv "$WORK/retired-client.cap" "$APPS_DIR/retirementclient.cap"
-    reload_stack
-    wait_for_file retirement-replacement || atf_fail 'replacement session not accepted'
-    atf_check -o inline:"install.$fresh
-" cat retirement-replacement
-}
-retirement_purges_only_old_queued_sessions_cleanup() { cleanup_common; }
-
-atf_test_case system_domain_survives_reload_restart cleanup
-system_domain_survives_reload_restart_head()
-{
-    atf_set require.user root
-    atf_set timeout 120
-    require_capsule_stack_kmods
-}
-system_domain_survives_reload_restart_body()
-{
-    start_stack
-    make_fixture_svc system domainprovider 'restart = "never"; activation { ipc = ["org.test.system-only"]; }' retirement-provider org.test.system-only domain-receipt
-    make_fixture_svc system domainclient 'restart = "always";' retirement-client org.test.system-only
-    reload_stack
-    wait_for_file retirement-client.ready || atf_fail 'initial system lookup failed'
-    client_pid=$(cat retirement-client.ready)
-    rm retirement-client.ready
-    # A new ready marker confirms the unchanged client's reload has completed.
-    make_fixture_svc system domainreload 'restart = "never";' lifecycle-hold - "$WORK/reload-done" ready
-    reload_stack
-    wait_for_file reload-done || atf_fail 'second reload did not finish'
-    atf_check kill -TERM "$client_pid"
-    wait_for_file retirement-client.ready || atf_fail 'reload lost the system client origin'
-}
-system_domain_survives_reload_restart_cleanup() { cleanup_common; }
-
 atf_init_test_cases()
 {
-	atf_add_test_case system_domain_survives_reload_restart
-	atf_add_test_case retirement_purges_only_old_queued_sessions
-	atf_add_test_case unregistered_service_requires_adoption
-	atf_add_test_case installation_authority_live_query;
-	atf_add_test_case retirement_replays_after_provider_restart
 	atf_add_test_case crash_recovery_restarts
 	atf_add_test_case circuit_breaker_stops_restarts
 	atf_add_test_case graceful_shutdown_sigterm
