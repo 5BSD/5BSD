@@ -27,7 +27,7 @@ dtrace_contract_body()
 		atf_check -s exit:0 -o ignore grep -F "${clause}" "${profile}"
 	done
 	if [ "@MK_DTRACE@" = "yes" ]; then
-		binary="@OBJTOP@/usr.sbin/BSDSysctl/bsdsysctl"
+		binary="@OBJTOP@/usr.sbin/BSDSysctl/BSDSysctl"
 		test -x "${binary}" ||
 		    atf_fail "missing LocalSysctl binary: ${binary}"
 		atf_check -s exit:0 -o match:'.SUNW_dof' readelf -S "${binary}"

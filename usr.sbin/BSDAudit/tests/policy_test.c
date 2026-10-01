@@ -211,9 +211,9 @@ ATF_TC_BODY(operation_event_other_labels_unaffected, tc)
 	    "elevate/policy/a.b", 0));
 	ATF_CHECK_EQ(0, auditcmp_policy_operation_event("system.AuthX",
 	    "mint/user/n1", 0));
-	ATF_CHECK_EQ(0, auditcmp_policy_operation_event("system.Auth",
+	ATF_CHECK_EQ(0, auditcmp_policy_operation_event("system.AuthAgent",
 	    "elevate", 0));
-	ATF_CHECK_EQ(0, auditcmp_policy_operation_event("system.AuthAgen",
+	ATF_CHECK_EQ(0, auditcmp_policy_operation_event("system.Aut",
 	    "elevate", 0));
 	ATF_CHECK_EQ(0, auditcmp_policy_operation_event("",
 	    "elevate", 0));
