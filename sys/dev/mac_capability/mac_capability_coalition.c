@@ -883,6 +883,11 @@ coalition_enlist(struct coalition *co, struct thread *td, struct file *fp,
 			return (EBUSY);
 		}
 
+		/*
+		 * Lock-free-of-co_sx readers (the OES/proc info hook) find the
+		 * member as soon as it is hashed; it must be complete by then.
+		 */
+		cm->cm_coalition = co;
 		coalition_proc_hash_insert(cm, p);
 		rw_wunlock(&coalition_proc_hash_lock);
 
