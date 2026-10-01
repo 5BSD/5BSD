@@ -59,7 +59,7 @@ live_admin_bundle()
 	printf 'directories = ["%s"];\narguments = ["lifecycle-hold", "pid", "ready", "ready"];\nrestart = "never";\n' "$(pwd)" >> "$dir/Units/worker.unit/Unit.ucl"
 	# The bundle is now installed by dropping it under System/; switchboard
 	# picks it up on a registry rescan.
-	atf_check "$switchboardctl_bin" reload
+	atf_check -o ignore "$switchboardctl_bin" reload
 }
 
 live_admin_wait()

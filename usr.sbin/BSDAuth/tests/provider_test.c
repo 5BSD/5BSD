@@ -217,6 +217,13 @@ capability_connect(const char *name)
 	int control, error;
 
 	control = open("/dev/mac_capability", O_RDWR | O_CLOEXEC);
+	/*
+	 * Under a live plane the control device is already claimed, so a
+	 * private channel is unobtainable: that is the environment, not a
+	 * regression.  Any other errno is a real failure.
+	 */
+	if (control == -1 && errno == EPERM)
+		atf_tc_skip("mac_capability device is claimed by a live plane");
 	ATF_REQUIRE_MSG(control >= 0, "open mac_capability: %s",
 	    strerror(errno));
 	memset(&connect, 0, sizeof(connect));

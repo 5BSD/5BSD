@@ -46,6 +46,12 @@ capd_require_device()
 	if [ ! -c /dev/mac_capability ]; then
 		atf_skip "mac_capability device not available"
 	fi
+	# A test-local stack needs its own claim on the control device.  Under a
+	# live plane PID 1 already holds it, so the private Capsule would exit
+	# on EPERM: that is the environment, not a regression.
+	if [ "$(ps -o comm= -p 1 2>/dev/null)" = "capsule" ]; then
+		atf_skip "mac_capability device is claimed by the live plane"
+	fi
 }
 
 capd_find_guardian()

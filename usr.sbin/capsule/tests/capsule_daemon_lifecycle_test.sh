@@ -202,42 +202,33 @@ lifecycle_reserved_op_unsupported_body()
 atf_test_case reboot_path_healthy_on_pid1
 reboot_path_healthy_on_pid1_head()
 {
-	atf_set "descr" "on a live plane, reboot(8)'s control socket is present" \
-	    "and answers, and the signal fallback stays shielded"
+	atf_set "descr" "on a live plane, reboot(8) reaches PID 1 through" \
+	    "capsulectl(8) and the signal fallback stays shielded"
 	atf_set "require.user" "root"
 }
 reboot_path_healthy_on_pid1_body()
 {
-	local status
-
 	# Only meaningful when capsule is PID 1 (a live plane); off PID 1
 	# the reboot path is validated by the *_denied_off_pid1 cases above.
 	if [ "$(ps -o comm= -p 1 2>/dev/null)" != "capsule" ]; then
 		atf_skip "capsule is not PID 1; nothing to guard here"
 	fi
 
-	# 1. reboot(8)/halt(8)/shutdown(8) connect to $SOCK and fall back to the
-	#    (shielded) signal ABI only when it is absent.  The 2026-08 scare was
-	#    a rename skew -- PID 1 served oracled.sock while reboot(8) looked for
-	#    capsule.sock -- so reboot fell back to the signal and died with
-	#    EPERM.  Guard the exact socket path reboot(8) uses.
-	if [ ! -S "$SOCK" ]; then
-		atf_fail "control socket $SOCK absent; reboot(8) would fall back" \
+	# 1. reboot(8) drives the transition through capsulectl(8) over the
+	#    plane.  The 2026-08 scare was a rename skew that sent reboot(8)
+	#    down the signal fallback, where it died with EPERM; guard the
+	#    tool reboot(8) actually execs.
+	if [ ! -x /usr/sbin/capsulectl ]; then
+		atf_fail "capsulectl(8) absent; reboot(8) would fall back" \
 		    "to the shielded signal and fail"
 	fi
+	atf_check -s exit:0 -o not-empty -e ignore capsulectl status
 
-	# 2. The socket must actually answer -- a live transport, not a stale
-	#    node.  CTL_OP_STATUS (op 2) is non-destructive and safe against PID 1.
-	status=$(send_op 2 0)
-	if [ -z "$status" ]; then
-		atf_fail "control socket did not answer CTL_OP_STATUS; transport dead"
-	fi
-
-	# 3. The signal fallback MUST stay shielded, or reboot(8) could silently
-	#    use it instead of the authenticated socket.  SIGHUP is used because
-	#    it is non-destructive even if (wrongly) delivered -- init would only
-	#    re-read /etc/ttys -- so a broken shield fails the test without
-	#    rebooting or wedging the host.  Expect kill(1) to fail with EPERM.
+	# 2. The signal fallback MUST stay shielded, or reboot(8) could
+	#    silently use it instead of the authenticated plane path.  SIGHUP
+	#    is used because it is non-destructive even if (wrongly)
+	#    delivered -- init would only re-read /etc/ttys -- so a broken
+	#    shield fails the test without rebooting or wedging the host.
 	if kill -s HUP 1 2>/dev/null; then
 		atf_fail "SIGHUP to PID 1 was not shielded; the signal ABI is open"
 	fi
