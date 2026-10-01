@@ -11,7 +11,10 @@ ATF_TESTS_C+=	mint_decision_test
 ATF_TESTS_C+=	provider_test
 
 # Interactive pty driver for the elevation integration test (see the source).
+# PROGS installs to BINDIR, which defaults to /bin: the helper belongs beside
+# the test that execs it as $(atf_get_srcdir)/pty_askpass.
 PROGS+=		pty_askpass
+BINDIR=		${TESTSDIR}
 MAN.pty_askpass=	# helper, no manual page
 LIBADD.pty_askpass=	util
 CFLAGS.pty_askpass=	# no daemon seam; a plain program
