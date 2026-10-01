@@ -82,8 +82,25 @@ SYSCTL_INT(_security_mac, OID_AUTO, mmap_revocation_via_cow, CTLFLAG_RW,
     &mac_mmap_revocation_via_cow, 0, "Revoke mmap access to files via "
     "copy-on-write semantics, or by removing all write access");
 
+/*
+ * Number of times a revocation walk was restarted because a vnode lock could
+ * not be taken without blocking.  See mac_proc_vm_revoke_recurse().
+ */
+static volatile int mac_mmap_revocation_restarts;
+SYSCTL_INT(_security_mac, OID_AUTO, mmap_revocation_restarts, CTLFLAG_RD,
+    __DEVOLATILE(int *, &mac_mmap_revocation_restarts), 0,
+    "Revocation walks restarted to acquire a vnode lock in order");
+
+/*
+ * Cap on those restarts.  The wait-then-release step below means a restart
+ * follows a completed acquisition by whoever held the lock, so the walk makes
+ * progress unless the vnode is under sustained contention from other threads.
+ * Give up loudly rather than spin indefinitely in that case.
+ */
+#define	MAC_MMAP_REVOKE_MAX_RESTARTS	64
+
 static void	mac_proc_vm_revoke_recurse(struct thread *td,
-		    struct ucred *cred, struct vm_map *map);
+		    struct ucred *cred, struct vm_map *map, bool nested);
 
 static struct label *
 mac_proc_label_alloc(void)
@@ -216,7 +233,7 @@ mac_proc_vm_revoke(struct thread *td)
 
 	/* XXX freeze all other threads */
 	mac_proc_vm_revoke_recurse(td, cred,
-	    &td->td_proc->p_vmspace->vm_map);
+	    &td->td_proc->p_vmspace->vm_map, false);
 	/* XXX allow other threads to continue */
 
 	crfree(cred);
@@ -248,10 +265,10 @@ prot2str(vm_prot_t prot)
 
 static void
 mac_proc_vm_revoke_recurse(struct thread *td, struct ucred *cred,
-    struct vm_map *map)
+    struct vm_map *map, bool nested)
 {
 	vm_map_entry_t prev, vme;
-	int result;
+	int restarts, result;
 	vm_prot_t revokeperms;
 	vm_object_t backing_object, object;
 	vm_ooffset_t offset;
@@ -261,13 +278,15 @@ mac_proc_vm_revoke_recurse(struct thread *td, struct ucred *cred,
 	if (!mac_mmap_revocation)
 		return;
 
+	restarts = 0;
+restart:
 	prev = &map->header;
 	vm_map_lock(map);
 	for (vme = vm_map_entry_first(map); vme != &map->header;
 	    prev = vme, vme = vm_map_entry_succ(prev)) {
 		if (vme->eflags & MAP_ENTRY_IS_SUB_MAP) {
 			mac_proc_vm_revoke_recurse(td, cred,
-			    vme->object.sub_map);
+			    vme->object.sub_map, true);
 			continue;
 		}
 		/*
@@ -299,7 +318,55 @@ mac_proc_vm_revoke_recurse(struct thread *td, struct ucred *cred,
 		if (object->type != OBJT_VNODE)
 			continue;
 		vp = (struct vnode *)object->handle;
-		vn_lock(vp, LK_EXCLUSIVE | LK_RETRY);
+		/*
+		 * The map lock is held, but the established order is the
+		 * reverse: vm_mmap_vnode() takes the vnode lock and then the
+		 * map lock.  Acquire without blocking, which cannot form a
+		 * deadlock cycle and which WITNESS does not order-check, and
+		 * keep that as the common case.
+		 *
+		 * When the try fails, hold the vnode so it cannot be freed,
+		 * drop the map lock, wait for the vnode lock in the correct
+		 * order, release it immediately and start the walk over.
+		 * Waiting and releasing rather than retrying at once keeps us
+		 * from spinning behind the holder; ufs_rename() resolves its
+		 * own out-of-order path acquisitions the same way.  Nothing
+		 * decided under the dropped lock is carried across the
+		 * restart -- the entry pointers and the object chain are
+		 * re-derived -- so no stale decision can be applied.
+		 */
+		if (vn_lock(vp, LK_EXCLUSIVE | LK_NOWAIT) != 0) {
+			/*
+			 * A nested walk must not do that: unlocking this map
+			 * leaves the caller's map lock held, which reinstates
+			 * the reversal one level up.  Submaps exist only in
+			 * the kernel map (kmem_subinit() is the sole
+			 * vm_map_submap() caller), so this is unreachable from
+			 * mac_proc_vm_revoke(); report it instead of blocking
+			 * should that ever change.
+			 */
+			if (nested) {
+				printf("pid %ld: skipping mmap revocation for "
+				    "%#lx:%ld, vnode busy in a nested map\n",
+				    (long)td->td_proc->p_pid,
+				    (u_long)vme->start,
+				    (long)(vme->end - vme->start));
+				continue;
+			}
+			vhold(vp);
+			vm_map_unlock(map);
+			vn_lock(vp, LK_EXCLUSIVE | LK_RETRY);
+			VOP_UNLOCK(vp);
+			vdrop(vp);
+			atomic_add_int(&mac_mmap_revocation_restarts, 1);
+			if (++restarts > MAC_MMAP_REVOKE_MAX_RESTARTS) {
+				printf("pid %ld: abandoning mmap revocation "
+				    "after %d restarts\n",
+				    (long)td->td_proc->p_pid, restarts);
+				return;
+			}
+			goto restart;
+		}
 		result = vme->max_protection;
 		mac_vnode_check_mmap_downgrade(cred, vp, &result);
 		VOP_UNLOCK(vp);
@@ -331,8 +398,82 @@ mac_proc_vm_revoke_recurse(struct thread *td, struct ucred *cred,
 				 * copy-on-write.
 				 */
 				vm_object_reference(object);
-				(void) vn_start_write(vp, &mp, V_WAIT);
-				vn_lock(vp, LK_EXCLUSIVE | LK_RETRY);
+				/*
+				 * Both acquisitions below are out of order
+				 * against the held map lock, and V_WAIT would
+				 * additionally sleep on a suspended file
+				 * system with that lock held.  Take them
+				 * without blocking and fall back to the same
+				 * wait-then-restart path as the downgrade
+				 * check above.  The restart re-derives
+				 * revokeperms, so dropping out here loses no
+				 * decision.
+				 */
+				if (vn_start_write(vp, &mp, V_NOWAIT) != 0) {
+					vm_object_deallocate(object);
+					if (nested) {
+						printf("pid %ld: skipping mmap "
+						    "revocation for %#lx:%ld, "
+						    "write suspended in a "
+						    "nested map\n",
+						    (long)td->td_proc->p_pid,
+						    (u_long)vme->start,
+						    (long)(vme->end -
+						    vme->start));
+						continue;
+					}
+					vhold(vp);
+					vm_map_unlock(map);
+					if (vn_start_write(vp, &mp,
+					    V_WAIT) == 0)
+						vn_finished_write(mp);
+					vdrop(vp);
+					atomic_add_int(
+					    &mac_mmap_revocation_restarts, 1);
+					if (++restarts >
+					    MAC_MMAP_REVOKE_MAX_RESTARTS) {
+						printf("pid %ld: abandoning "
+						    "mmap revocation after %d "
+						    "restarts\n",
+						    (long)td->td_proc->p_pid,
+						    restarts);
+						return;
+					}
+					goto restart;
+				}
+				if (vn_lock(vp, LK_EXCLUSIVE | LK_NOWAIT) !=
+				    0) {
+					vn_finished_write(mp);
+					vm_object_deallocate(object);
+					if (nested) {
+						printf("pid %ld: skipping mmap "
+						    "revocation for %#lx:%ld, "
+						    "vnode busy in a nested "
+						    "map\n",
+						    (long)td->td_proc->p_pid,
+						    (u_long)vme->start,
+						    (long)(vme->end -
+						    vme->start));
+						continue;
+					}
+					vhold(vp);
+					vm_map_unlock(map);
+					vn_lock(vp, LK_EXCLUSIVE | LK_RETRY);
+					VOP_UNLOCK(vp);
+					vdrop(vp);
+					atomic_add_int(
+					    &mac_mmap_revocation_restarts, 1);
+					if (++restarts >
+					    MAC_MMAP_REVOKE_MAX_RESTARTS) {
+						printf("pid %ld: abandoning "
+						    "mmap revocation after %d "
+						    "restarts\n",
+						    (long)td->td_proc->p_pid,
+						    restarts);
+						return;
+					}
+					goto restart;
+				}
 				VM_OBJECT_WLOCK(object);
 				vm_object_page_clean(object, offset, offset +
 				    vme->end - vme->start, OBJPC_SYNC);
