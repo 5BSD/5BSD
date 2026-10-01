@@ -1109,7 +1109,7 @@ ctl_test:test_ipc_event_optin_gating	implementation	Implementation contract: tes
 ctl_test:test_ipc_feature_negotiation	implementation	Implementation contract: tests/usr.sbin/bluetooth/blued/ctl_test.c and linked production interfaces	IMPL-ctl_test	source/ABI contract	verified
 ctl_test:test_ipc_framing_guard_matrix	implementation	Implementation contract: tests/usr.sbin/bluetooth/blued/ctl_test.c and linked production interfaces	IMPL-ctl_test	source/ABI contract	verified
 ctl_test:test_ipc_hello_match	implementation	Implementation contract: tests/usr.sbin/bluetooth/blued/ctl_test.c and linked production interfaces	IMPL-ctl_test	source/ABI contract	verified
-ctl_test:test_ipc_hello_version_mismatch	implementation	Implementation contract: tests/usr.sbin/bluetooth/blued/ctl_test.c and linked production interfaces	IMPL-ctl_test	source/ABI contract	verified
+ctl_test:test_ipc_hello_bad_reserved_arg	implementation	Implementation contract: tests/usr.sbin/bluetooth/blued/ctl_test.c and linked production interfaces	IMPL-ctl_test	source/ABI contract	verified
 ctl_test:test_ipc_periodic_routes_adapter	implementation	Implementation contract: tests/usr.sbin/bluetooth/blued/ctl_test.c and linked production interfaces	IMPL-ctl_test	source/ABI contract	verified
 ctl_test:test_ipc_typed_adapter_caps	implementation	Implementation contract: tests/usr.sbin/bluetooth/blued/ctl_test.c and linked production interfaces	IMPL-ctl_test	source/ABI contract	verified
 ctl_test:test_ipc_typed_control_runtime_settings	implementation	Implementation contract: tests/usr.sbin/bluetooth/blued/ctl_test.c and linked production interfaces	IMPL-ctl_test	source/ABI contract	verified
@@ -1771,7 +1771,7 @@ ipc_client_test:client_handshake_match	implementation	Implementation contract: t
 ipc_client_test:client_handshake_rejected	implementation	Implementation contract: tests/usr.sbin/bluetooth/blued/ipc_client_test.c and linked production interfaces	IMPL-ipc_client_test	source/ABI contract	verified
 ipc_client_test:client_handshake_short_sendmsg	implementation	Implementation contract: tests/usr.sbin/bluetooth/blued/ipc_client_test.c and linked production interfaces	IMPL-ipc_client_test	source/ABI contract	verified
 ipc_client_test:client_handshake_timeout	implementation	Implementation contract: tests/usr.sbin/bluetooth/blued/ipc_client_test.c and linked production interfaces	IMPL-ipc_client_test	source/ABI contract	verified
-ipc_client_test:client_handshake_version_mismatch	implementation	Implementation contract: tests/usr.sbin/bluetooth/blued/ipc_client_test.c and linked production interfaces	IMPL-ipc_client_test	source/ABI contract	verified
+ipc_client_test:client_handshake_bad_reserved_arg	implementation	Implementation contract: tests/usr.sbin/bluetooth/blued/ipc_client_test.c and linked production interfaces	IMPL-ipc_client_test	source/ABI contract	verified
 ipc_client_test:client_sync_query_rejects_bad_replies	implementation	Implementation contract: tests/usr.sbin/bluetooth/blued/ipc_client_test.c and linked production interfaces	IMPL-ipc_client_test	source/ABI contract	verified
 ipc_client_test:client_typed_advertising_ops	implementation	Implementation contract: tests/usr.sbin/bluetooth/blued/ipc_client_test.c and linked production interfaces	IMPL-ipc_client_test	source/ABI contract	verified
 ipc_client_test:client_typed_connect	implementation	Implementation contract: tests/usr.sbin/bluetooth/blued/ipc_client_test.c and linked production interfaces	IMPL-ipc_client_test	source/ABI contract	verified

@@ -107,9 +107,10 @@ the adapter index in the flags word.
 Structured errors are `IPC_ERR_NONE`, `_GENERIC`, `_UNKNOWN_CMD`,
 `_INVAL`, `_NOT_FOUND`, `_NOT_CONN`, `_BUSY`, `_PERM`, `_TOOBIG`, `_NOMEM`
 and `_PROTO`. The plane handshake, `lib/libble/blued_plane.h`, is a
-single 16-byte `struct blued_plane_msg { magic 'BLUE', version, opcode,
-status }` with one op, `BLUED_PLANE_OP_ATTACH`; the reply carries status 0
-and the socket end.
+single 12-byte `struct blued_plane_msg { magic 'BLUE', opcode, status }`
+with one op, `BLUED_PLANE_OP_ATTACH`; the reply carries status 0 and the
+socket end. The magic, that length and the descriptor count are the whole
+shape check, and the layout is pinned by static assertions in both ends.
 
 ## Client library
 
