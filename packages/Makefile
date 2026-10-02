@@ -217,7 +217,14 @@ SUBDIR.${MK_TESTS}+=		netmap-tests
 SUBDIR.${MK_TESTS}+=		bsdnetwork-tests
 SUBDIR.${MK_TESTS}+=		bsdcrypto-tests bsddevice-tests
 SUBDIR.${MK_TESTS}+=		libdevicecmp-tests
-SUBDIR.${MK_TESTS}+=		bsdlog-tests bsdnotify-tests bsdtrace-tests
+SUBDIR.${MK_TESTS}+=		bsdlog-tests bsdnotify-tests
+# bsdtrace is the Intel PT tool and is built only on amd64 (see
+# usr.sbin/Makefile.amd64), so on every other architecture nothing is staged
+# under package=bsdtrace, no bsdtrace-tests.plist is generated, and the
+# packages run dies with "don't know how to make bsdtrace-tests.plist".
+.if ${MACHINE_ARCH} == "amd64"
+SUBDIR.${MK_TESTS}+=		bsdtrace-tests
+.endif
 SUBDIR.${MK_TESTS}+=		bsdtrace-provider-tests
 SUBDIR.${MK_TESTS}+=		bsdextension-tests tzfs-tests
 SUBDIR.${MK_TESTS}+=		sysextctl-tests
