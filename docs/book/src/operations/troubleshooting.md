@@ -12,6 +12,52 @@ switchboard launches (opened by switchboard as root before the unit enters
 its sandbox, so a daemon that can reach nothing else can still write there).
 `switchboardctl status` and `switchboardctl services` show the live view.
 
+## USB mouse is detected but does not work in the desktop
+
+**Symptom.** Plasma Wayland starts and the keyboard works, but a USB mouse
+produces no pointer movement. Kernel messages show the mouse attaching to
+`usbhid` and `hidbus`, with no `hms` attachment or corresponding mouse entry
+in `kern.evdev.input`.
+
+**Cause.** The HID mouse driver, `hms.ko`, can be installed but unloaded and
+excluded from the BSDExtension allow-list. USB detection alone does not mean
+the mouse input driver is active. A broker denial prevents `devmatch` from
+autoloading it. This was observed with a USB optical mouse on 5BSD; it is
+separate from Plasma login or GPU configuration.
+
+**Check.**
+
+```sh
+dmesg | grep -E 'usbhid|hidbus|hms|Mouse'
+sysctl kern.evdev
+sysextctl status hms
+ls -l /boot/kernel/hms.ko
+```
+
+A denied module's loaded state is intentionally undisclosed by `sysextctl`.
+Confirm driver attachment with the kernel messages and evdev device names.
+
+**Fix.** From a session with ADMIN rights on the extension service:
+
+```sh
+sysextctl allow hms
+sysextctl load hms
+sysextctl enable hms
+sysextctl status hms
+```
+
+`allow` persists permission, `load` activates the driver now, and `enable`
+persists activation for subsequent boots. Use `sysextctl`, not direct
+`kldload`, on a system whose capability plane owns the loading gate.
+See [BSDExtension](../providers/extension.md#command-line-tool).
+
+Verify that kernel messages now show an `hms` attachment and `sysctl
+kern.evdev` lists the USB mouse. In the tested Plasma Wayland session, KWin
+opened the new event device immediately and no desktop restart was needed.
+These commands save a local administrator override; they do not change the
+shipped hardware defaults. Other pointing devices, including multitouch
+trackpads, may require a different driver.
+
 ## A unit failed to launch
 
 **Symptom.** `switchboardctl services` does not list a unit you expect;

@@ -215,6 +215,10 @@ disabling the capability plane retains direct loading in these startup services.
 Neither disabling activation nor denying permission forcibly unloads shared
 kernel code; existing loads remain until reboot or normal ownership reclamation.
 
+For a USB mouse detected by `usbhid` but lacking an active input driver, see
+[USB mouse troubleshooting](../operations/troubleshooting.md#usb-mouse-is-detected-but-does-not-work-in-the-desktop)
+for the `hms` permission, immediate load, and persistent boot activation steps.
+
 ## Policy
 
 The allow-list is default-deny and global (not per label). It is read from
