@@ -38,17 +38,17 @@ freebsd_docs_are_optional_upstream_reference_body()
 	    '[ -z "$docsets" ] && exit 0' "$script"
 }
 
-atf_test_case installer_explains_hybrid_rootless_design
-installer_explains_hybrid_rootless_design_body()
+atf_test_case installer_explains_type2_capability_design
+installer_explains_type2_capability_design_body()
 {
 	script=@SRCTOP@/usr.sbin/bsdinstall/startbsdinstall
 	atf_check -s exit:0 -o ignore grep -F \
-	    'hybrid operating system that interposes capability-based security' \
+	    'Type2 capability system with a microkernel userland' \
 	    "$script"
 	atf_check -s exit:0 -o ignore grep -F \
-	    'inspired by seL4 and iOS' "$script"
+	    'on top of a monolithic BSD kernel.' "$script"
 	atf_check -s exit:0 -o ignore grep -F \
-	    'BSD UNIX userspace to achieve a rootless design' "$script"
+	    'Thanks to the people who built Darwin, FreeBSD, seL4, and QNX for their inspiration.' "$script"
 }
 
 atf_test_case installer_defaults_to_5bsd_branding
@@ -66,6 +66,6 @@ atf_init_test_cases()
 {
 	atf_add_test_case native_book_is_installed_with_base
 	atf_add_test_case freebsd_docs_are_optional_upstream_reference
-	atf_add_test_case installer_explains_hybrid_rootless_design
+	atf_add_test_case installer_explains_type2_capability_design
 	atf_add_test_case installer_defaults_to_5bsd_branding
 }
