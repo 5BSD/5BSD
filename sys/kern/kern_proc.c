@@ -1521,8 +1521,14 @@ freebsd32_kinfo_proc_out(const struct kinfo_proc *ki, struct kinfo_proc32 *ki32)
 	CP(*ki, *ki32, ki_reaper);
 	CP(*ki, *ki32, ki_reapsubtree);
 	CP(*ki, *ki32, ki_rpid);
-	CP(*ki, *ki32, ki_coalition);
-	CP(*ki, *ki32, ki_rcoalition);
+	/*
+	 * ki_coalition and ki_rcoalition are freebsd32_uint64_t in the 32-bit
+	 * view: a struct, laid out as two 32-bit words on amd64 and as one
+	 * 64-bit word elsewhere, so CP()'s assignment does not type check.
+	 * Copy the eight bytes the way the ffclock conversions do.
+	 */
+	memcpy(&ki32->ki_coalition, &ki->ki_coalition, sizeof(uint64_t));
+	memcpy(&ki32->ki_rcoalition, &ki->ki_rcoalition, sizeof(uint64_t));
 	CP(*ki, *ki32, ki_numthreads);
 	CP(*ki, *ki32, ki_tid);
 	CP(*ki, *ki32, ki_pri);
