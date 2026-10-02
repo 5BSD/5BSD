@@ -1,5 +1,7 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
 #include <sys/param.h>
+#include <sys/stat.h>
+#include <sys/sysctl.h>
 #include <err.h>
 #include <errno.h>
 #include <stdio.h>
@@ -17,13 +19,59 @@ usage(void)
 	exit(EX_USAGE);
 }
 
+/* Report matching files, independently of policy and kernel residency. */
+static const char *
+installed_state(const char *name)
+{
+	struct stat st;
+	char file[MAXPATHLEN], *paths, *cursor, *dir;
+	const char *suffixes[] = { "", ".ko" };
+	size_t len, i;
+	int n, uncertain = 0;
+
+	if (sysctlbyname("kern.module_path", NULL, &len, NULL, 0) == -1 ||
+	    len == 0 || (paths = malloc(len + 1)) == NULL)
+		return ("unknown");
+	if (sysctlbyname("kern.module_path", paths, &len, NULL, 0) == -1) {
+		free(paths);
+		return ("unknown");
+	}
+	paths[len] = '\0';
+	cursor = paths;
+	while ((dir = strsep(&cursor, ";")) != NULL) {
+		/* Relative paths cannot reliably describe the broker's view. */
+		if (dir[0] != '/') {
+			uncertain = 1;
+			continue;
+		}
+		for (i = 0; i < nitems(suffixes); i++) {
+			n = snprintf(file, sizeof(file), "%s/%s%s", dir, name,
+			    suffixes[i]);
+			if (n < 0 || (size_t)n >= sizeof(file)) {
+				uncertain = 1;
+				continue;
+			}
+			if (stat(file, &st) == 0) {
+				if (S_ISREG(st.st_mode)) {
+					free(paths);
+					return ("yes");
+				}
+			} else if (errno != ENOENT && errno != ENOTDIR)
+				uncertain = 1;
+		}
+	}
+	free(paths);
+	return (uncertain ? "unknown" : "no");
+}
+
 static void
 print_info(const struct service_extension_info *info)
 {
-	printf("%s: %s, boot=%s, loaded=%s, policy=%s%s\n", info->name,
+	printf("%s: %s, boot=%s, loaded=%s, installed=%s, policy=%s%s\n", info->name,
 	    info->allowed ? "allowed" : "denied",
 	    info->enabled ? (info->allowed ? "enabled" : "blocked") : "disabled",
 	    info->allowed ? (info->loaded ? "yes" : "no") : "undisclosed",
+	    installed_state(info->name),
 	    info->overridden ? "override" : "default",
 	    info->ready ? "" : " (bootstrap; persistent policy not ready)");
 }
@@ -88,8 +136,9 @@ main(int argc, char **argv)
 			if (operation == 1)
 				print_info(&info);
 			else if (info.allowed)
-				printf("%s: %s\n", info.name,
-				    info.loaded ? "loaded" : "not loaded");
+				printf("%s: %s, installed=%s\n", info.name,
+				    info.loaded ? "loaded" : "allowed",
+				    installed_state(info.name));
 			strlcpy(cursor, info.name, sizeof(cursor));
 		}
 		if (errno == ENOENT)

@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
 #include <sys/types.h>
+#include <sys/sysctl.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <stdlib.h>
@@ -90,5 +91,31 @@ service_session_call(struct service_session *s,
 		errno = EIO;
 		return (-1);
 	}
+	return (0);
+}
+
+/* Keep filesystem probes independent of the host's installed modules. */
+int
+sysctlbyname(const char *name, void *oldp, size_t *oldlenp,
+    const void *newp, size_t newlen)
+{
+	const char *path = getenv("SYSEXT_TEST_MODULE_PATH");
+	size_t len;
+
+	if (strcmp(name, "kern.module_path") != 0 || newp != NULL || newlen != 0)
+		abort();
+	if (path == NULL) {
+		errno = EACCES;
+		return (-1);
+	}
+	len = strlen(path) + 1;
+	if (oldp != NULL) {
+		if (*oldlenp < len) {
+			errno = ENOMEM;
+			return (-1);
+		}
+		memcpy(oldp, path, len);
+	}
+	*oldlenp = len;
 	return (0);
 }

@@ -26,13 +26,26 @@ The commands are:
 Print permitted module names and their current state,
 .Dq loaded
 or
-.Dq not loaded ,
+.Dq allowed ,
 using bounded, lexical discovery.
-This does not indicate whether an unloaded module is installed on disk.
+An entry marked allowed is permitted but not currently loaded.
+Each entry also includes an
+.Dq installed
+field: yes, no, or unknown.
+This checks for a regular file named after the entry, with an optional
+.Pa .ko
+suffix, in the directories specified by
+.Va kern.module_path
+as visible to the caller.
+An inaccessible search path or failed query yields unknown unless a file is found.
+This is a file-presence check; it does not resolve module aliases through
+.Pa linker.hints
+or verify dependencies, compatibility, or package registration.
 Each returned entry is coherent; the entire enumeration is not a snapshot
 across concurrent edits.
 .It Cm config
-Show permission, desired boot activation, current loaded state, and whether
+Show permission, desired boot activation, current loaded state, installed file
+presence, and whether
 an administrator override exists for each known policy entry.
 This is a policy listing, not a catalogue of installed packages.
 Loaded state is not disclosed for denied modules.
