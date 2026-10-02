@@ -338,7 +338,16 @@ disc1:
 	    MK_RESCUE=no MK_DICT=no \
 	    MK_KERNEL_SYMBOLS=no MK_TESTS=no MK_DEBUG_FILES=no)
 .if !defined(NOPKGBASE) || empty(NOPKGBASE)
-# Create offline pkgbase repo on release media
+# Create offline pkgbase repo on release media.
+#
+# Start from an empty offline directory and pkgdb.  pkgbase-stage.lua fetches
+# with "pkg fetch -o", which adds to whatever is already there, so a staging
+# tree left behind by an earlier build contributes its packages too.  The media
+# then carries two package generations, and the installer's
+# assert(#components["kernel"] == 1) in bsdinstall pkgbase fails on the
+# ambiguity -- an install that partitions the disk and then stops, leaving an
+# empty root.  Media assembly has to be idempotent.
+	rm -rf ${.TARGET}/usr/5bsd-packages ${.OBJDIR}/pkgdb-disc1
 	mkdir -p ${.TARGET}/usr/5bsd-packages/repos/
 	env PKG_CMD=${PKG_CMD:Q} ${.CURDIR}/scripts/pkgbase-stage.lua disc \
 	    ${.OBJDIR}/pkgbase-repo-dir \
