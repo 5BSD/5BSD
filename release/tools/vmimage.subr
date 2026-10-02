@@ -423,6 +423,15 @@ vm_create_disk() {
 	local BOOTFILES BOOTPARTSOFFSET FSPARTTYPE X86GPTBOOTFILE esp_fstab
 
 	if [ -z "${NOSWAP}" ]; then
+		# An empty SWAPSIZE yields "-p freebsd-swap/swapfs::", which mkimg
+		# rejects with a bare "partition N: Invalid argument" only after the
+		# whole root has been staged.  release/Makefile.vm always sets
+		# SWAPSIZE, but mk-vmimage.sh is also driven directly (board images
+		# do this, and they avoid the trap by setting NOSWAP), so say which
+		# variable is missing rather than failing late and opaquely.
+		if [ -z "${SWAPSIZE}" ]; then
+			err "SWAPSIZE is unset and NOSWAP is not set: either give a swap size (Makefile.vm uses 1g) or set NOSWAP=yes."
+		fi
 		SWAPOPT="-p freebsd-swap/swapfs::${SWAPSIZE}"
 	fi
 
