@@ -184,6 +184,7 @@ valid_module_name(const char *name)
  *   vhid       blued (usr.sbin/bluetooth/blued):   virtual-HID transport.
  *   zfs        bsdfilesystem (usr.sbin/bsdfilesystem):             storage backing /Capabilities.
  *   linux64    sysextctl:                        Linux application runtime.
+ *   pty/fdescfs/linprocfs/linsysfs:               Linux terminals and filesystems.
  *   drm/i915kms/amdgpu/radeonkms:                 installed graphics drivers.
  *
  * Deliberately narrow — every entry corresponds to a concrete on-demand
@@ -194,6 +195,7 @@ sysext_config_defaults(struct sysext_config *cfg)
 {
 	static const char *const builtin[] = {
 		"cryptodev", "vhid", "zfs", "linux64",
+		"pty", "fdescfs", "linprocfs", "linsysfs",
 		"drm", "i915kms", "amdgpu", "radeonkms"
 	};
 	size_t i;

@@ -23,7 +23,7 @@
 .\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
 .\" SUCH DAMAGE.
 .\"
-.Dd December 20, 2023
+.Dd October 2, 2026
 .Dt KLDLOAD 8
 .Os
 .Sh NAME
@@ -68,6 +68,33 @@ Be more verbose.
 Silence any extraneous warnings.
 .El
 .Sh NOTES
+On 5BSD, use
+.Xr sysextctl 8
+to load modules through the SystemExtension broker:
+.Bd -literal -offset indent
+sysextctl load foo
+.Ed
+.Pp
+Once the capability plane claims the module-loading gate, direct loads
+by callers without gate authority are denied, including callers running
+as root.
+Early startup before the gate is claimed can still use
+.Nm .
+The broker requires a SYSTEM-domain discovery channel and permits only
+allow-listed module names, without directory paths.
+Inspect effective policy with
+.Cm sysextctl config .
+An administrator with ADMIN rights on the service channel can persist
+permission with
+.Cm sysextctl allow foo
+and then retry
+.Cm sysextctl load foo .
+UID 0 alone does not grant discovery or ADMIN authority.
+.Pp
+A permission error from
+.Nm
+does not by itself identify which security check denied the load.
+.Pp
 The kernel security level settings may prevent a module from being
 loaded or unloaded by giving
 .Em "Operation not permitted" .
@@ -122,7 +149,8 @@ required for mounting the root filesystem, should be handled by
 .Xr kldconfig 8 ,
 .Xr kldstat 8 ,
 .Xr kldunload 8 ,
-.Xr kldxref 8
+.Xr kldxref 8 ,
+.Xr sysextctl 8
 .Sh HISTORY
 The
 .Nm

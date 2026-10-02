@@ -170,6 +170,14 @@ main(int argc, char** argv)
 				} else {
 					if (!quiet) {
 						switch (errno) {
+						case EPERM:
+							warn("can't load %s", argv[0]);
+							warnx("on 5BSD, the SystemExtension "
+							    "gate restricts direct module "
+							    "loading; use 'sysextctl load "
+							    "<module>' from a SYSTEM-domain "
+							    "session (see sysextctl(8))");
+							break;
 						case EEXIST:
 							warnx("can't load %s: module "
 							    "already loaded or "

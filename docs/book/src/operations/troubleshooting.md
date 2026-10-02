@@ -248,6 +248,60 @@ showing the old name.
 **Fix.** Upgrade the kernel package and reboot, and make sure the knob is
 not set to `0` in `/boot/loader.conf` or `/etc/sysctl.conf`.
 
+## Module loading reports `Operation not permitted`
+
+On a running capability-plane system, use `sysextctl load MODULE` rather
+than `kldload MODULE`. The kernel denies direct loads from callers that
+lack authority for the claimed module-loading gate, including root.
+BSDExtension performs authorized loads through that gate and checks its
+own module allow-list. A permission error alone does not distinguish these
+checks from ordinary privilege or securelevel checks.
+
+From a session with SYSTEM-domain discovery access, inspect effective
+policy and request the load:
+
+```sh
+sysextctl config
+sysextctl load linprocfs
+```
+
+If policy denies a module you intend to permit, a session with ADMIN rights
+on the SystemExtension channel can persist permission, then load it:
+
+```sh
+sysextctl allow linprocfs
+sysextctl load linprocfs
+```
+
+`allow` persists permission; it does not load the module or enable boot
+activation. `enable` records boot activation separately. If `allow` itself
+returns `Operation not permitted`, check the session's ADMIN authority.
+UID 0 alone is insufficient. An unreachable broker (`No such file or
+directory`) can mean missing discovery authority or a USER-domain session;
+it does not by itself mean the daemon is stopped. See
+[SystemExtension](../providers/extension.md) and
+[The Management Model](../plane/management-model.md).
+
+Linux startup now preloads `linux_common`, `linux64`, `pty`, `fdescfs`,
+`linprocfs` and `linsysfs` through the bootloader defaults, before the
+module-loading gate is claimed. The broker also permits `linux64` and all
+four support modules by default. Older installations shipped only
+`linux_common` and `linux64` preloads and omitted the support modules from
+the broker allow-list; administrator overrides can also deny them.
+
+In particular, `pty.ko` supplies
+`/dev/ptmx` for Linux terminal allocation as well as legacy BSD PTY names;
+it is not merely a legacy-terminal option. Permit and load each through
+the broker before retrying Linux startup from a session with mount privilege.
+Their module files must be installed and match the
+running kernel. Loading a filesystem module and mounting it are separate
+operations; `sysextctl` does not grant mount permission.
+
+A mount can also fail because its filesystem module is absent: the kernel's
+`vfs_byname_kld()` attempts a direct load and maps a failed load to `ENODEV`
+(`Operation not supported by device`). Load the module through the broker
+first, then retry the mount and inspect its actual error.
+
 ## Stale kernel modules versus packages
 
 **Symptom.** After `pkg upgrade` from a repository you built, a gate

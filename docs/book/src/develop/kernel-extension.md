@@ -70,6 +70,10 @@ allowed_extensions = [
     "vhid",        # blued: virtual-HID transport for the Bluetooth stack
     "zfs",         # bsdfilesystem: ZFS backing /Capabilities storage
     "linux64",     # sysextctl: Linux application runtime
+    "pty",         # Linux /dev/ptmx and legacy BSD PTYs
+    "fdescfs",     # Linux /dev/fd (linrdlnk)
+    "linprocfs",   # Linux /proc
+    "linsysfs",    # Linux /sys
     "drm",
     "i915kms",
     "amdgpu",

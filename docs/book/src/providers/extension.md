@@ -167,6 +167,13 @@ pulled up on demand and may be restarting. Retry later, as described in
 sysextctl(8) is a thin session client. It uses the caller's own discovery
 authority, never calls kldload(2), and does not manage the unit.
 
+For interactive module loading on 5BSD, use `sysextctl load MODULE`, not
+`kldload MODULE`. Once the capability plane claims the loading gate, direct
+loads from callers without gate authority fail with `Operation not permitted`,
+even as root. The `kldload` permission diagnostic points callers to `sysextctl`;
+ordinary privilege or securelevel checks can also deny a load.
+Early startup before the gate is claimed retains its direct loading path.
+
 ```sh
 sysextctl list                 # permitted names, using NEXT
 sysextctl config               # permission, boot activation, loaded state, override
@@ -205,7 +212,8 @@ The allow-list is default-deny and global (not per label). It is read from
 `/Capabilities/System/SystemExtension.cap/Units/bsdextension.unit/Config/bsdextension.ucl`
 (installed from `usr.sbin/BSDExtension/bsdextension.ucl`). When the file is
 absent the compiled-in set stands: `cryptodev`, `vhid`, `zfs`, `linux64`,
-`drm`, `i915kms`, `amdgpu`, `radeonkms`. When present, `allowed_extensions`
+`pty`, `fdescfs`, `linprocfs`, `linsysfs`, `drm`, `i915kms`, `amdgpu`,
+`radeonkms`. When present, `allowed_extensions`
 replaces those defaults. Administrator overrides are then applied.
 
 ```ucl
@@ -214,6 +222,10 @@ allowed_extensions = [
     "vhid",        # BSDBluetooth: virtual HID transport
     "zfs",         # BSDFilesystem
     "linux64",     # Linux application runtime
+    "pty",         # Linux /dev/ptmx and legacy BSD PTYs
+    "fdescfs",     # Linux /dev/fd (linrdlnk)
+    "linprocfs",   # Linux /proc
+    "linsysfs",    # Linux /sys
     "drm",
     "i915kms",
     "amdgpu",

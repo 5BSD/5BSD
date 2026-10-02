@@ -73,7 +73,8 @@ There is no 5BSD package for a Linux userland.
 
 The default configuration is already on. `libexec/rc/rc.conf` sets
 `linux_enable="YES"` and `linux_mounts_enable="YES"`; `stand/defaults/loader.conf`
-loads `linux_common` and `linux64`; and `libexec/rc/rc.d/linux` mounts, with `nocover`,
+preloads `linux_common`, `linux64`, `pty`, `fdescfs`, `linprocfs` and
+`linsysfs`; and `libexec/rc/rc.d/linux` mounts, with `nocover`,
 linprocfs on `/compat/linux/proc`, linsysfs on `/compat/linux/sys`, devfs on
 `/compat/linux/dev`, fdescfs with `linrdlnk` on `/compat/linux/dev/fd` and a
 tmpfs on `/compat/linux/dev/shm`, then sets `kern.elf64.fallback_brand=3` so
@@ -81,6 +82,16 @@ an unbranded ELF is treated as Linux. 5BSD is 64-bit only: the 32-bit
 `linux.ko` is neither built nor loadable on amd64 (`sys/modules/Makefile`,
 `nooptions COMPAT_FREEBSD32` in GENERIC), so an i386 Linux binary does not
 run.
+
+On a running capability-plane system, direct `kldload` from an ordinary
+administrator session is denied once the module-loading gate is claimed.
+Use `sysextctl` to inspect policy, permit and load required modules. The
+shipped broker allow-list includes `linux64`, `pty`, `fdescfs`, `linprocfs`
+and `linsysfs`. Older installations or administrator overrides may deny
+these names; inspect effective policy before changing it. See
+[Module loading reports Operation not permitted](../operations/troubleshooting.md#module-loading-reports-operation-not-permitted)
+for the diagnostic and recovery steps. Mounting still requires separate
+mount privilege.
 
 The advertised kernel is 5.15.0. The knobs are `compat.linux.*` sysctls
 (`sys/compat/linux/linux_mib.c`), and the identity ones are per-jail
