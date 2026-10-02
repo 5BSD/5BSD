@@ -88,7 +88,8 @@ main(int argc, char **argv)
 			if (operation == 1)
 				print_info(&info);
 			else if (info.allowed)
-				puts(info.name);
+				printf("%s: %s\n", info.name,
+				    info.loaded ? "loaded" : "not loaded");
 			strlcpy(cursor, info.name, sizeof(cursor));
 		}
 		if (errno == ENOENT)

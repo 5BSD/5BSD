@@ -3,7 +3,10 @@ atf_test_case commands
 commands_body()
 {
 	bin="$(atf_get_srcdir)/sysextctl_test_bin"
-	atf_check -s exit:0 -o inline:"linux64\n" "$bin" list
+	atf_check -s exit:0 -o inline:"linux64: loaded\n" "$bin" list
+	atf_check -s exit:0 -o inline:"linux64: not loaded\n" env SYSEXT_TEST=absent "$bin" list
+	atf_check -s exit:0 -o empty env SYSEXT_TEST=hidden "$bin" list
+	atf_check -s exit:0 -o match:"loaded=undisclosed" env SYSEXT_TEST=hidden "$bin" config
 	atf_check -s exit:0 -o match:"policy=default" "$bin" config
 	for verb in allow deny reset enable disable; do
 		atf_check -s exit:0 -o match:"$verb saved" "$bin" "$verb" linux64

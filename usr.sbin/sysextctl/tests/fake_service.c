@@ -80,6 +80,8 @@ service_session_call(struct service_session *s,
 		memset(info->name, 'x', sizeof(info->name));
 	else if (strcmp(mode, "state") == 0)
 		basic->loaded = 0x80000000;
+	else if (strcmp(mode, "hidden") == 0)
+		info->flags = SYSEXT_STATE_READY;
 	else if (strcmp(mode, "absent") == 0)
 		info->flags &= ~SYSEXT_STATE_LOADED;
 	else if (strcmp(mode, "errno") == 0)

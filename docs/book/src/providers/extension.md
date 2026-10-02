@@ -175,7 +175,7 @@ ordinary privilege or securelevel checks can also deny a load.
 Early startup before the gate is claimed retains its direct loading path.
 
 ```sh
-sysextctl list                 # permitted names, using NEXT
+sysextctl list                 # permitted modules: loaded or not loaded
 sysextctl config               # permission, boot activation, loaded state, override
 sysextctl status i915kms
 sysextctl allow i915kms        # persist permission
@@ -187,6 +187,11 @@ sysextctl reset i915kms        # remove the entire administrator override
 sysextctl reload               # reread shipped defaults
 sysextctl restore              # apply all permitted boot activations now
 ```
+
+`list` shows each permitted module as `NAME: loaded` or `NAME: not loaded`.
+It reports the kernel's loaded state, not whether the module package is
+installed. Denied entries stay omitted; `config` includes their policy but
+keeps their loaded state undisclosed.
 
 `status` exits 1 for a denied or unloaded module. `EINVAL`/`ENAMETOOLONG`
 map to `EX_USAGE`, an unreachable broker to `EX_UNAVAILABLE`, a protocol

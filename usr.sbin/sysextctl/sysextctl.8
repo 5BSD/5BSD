@@ -1,5 +1,5 @@
 .\" SPDX-License-Identifier: BSD-2-Clause
-.Dd September 26, 2026
+.Dd October 2, 2026
 .Dt SYSEXTCTL 8
 .Os
 .Sh NAME
@@ -23,7 +23,12 @@ The client does not edit configuration files or invoke
 The commands are:
 .Bl -tag -width disable
 .It Cm list
-Print permitted module names using bounded, lexical discovery.
+Print permitted module names and their current state,
+.Dq loaded
+or
+.Dq not loaded ,
+using bounded, lexical discovery.
+This does not indicate whether an unloaded module is installed on disk.
 Each returned entry is coherent; the entire enumeration is not a snapshot
 across concurrent edits.
 .It Cm config
