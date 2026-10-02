@@ -70,19 +70,40 @@ login session's coalition (by design, EBUSY on join).
    a coalition notification, and memory-pressure kill ordering by band. This
    is the substrate a coalition-aware scheduler policy would consume; the
    scheduler itself stays on hold.
-4. **Factotum-style key custody** (Plan 9) — **later**. BSDCrypto or BSDAuth
+4. **Split the coarse ADMIN right** (QNX `procmgr_ability` ranges) — **later**,
+   parked beside the scheduler. `SVC_RIGHTS_ADMIN` is a single bit
+   (`switchboard_svc_proto.h`, 1 << 63) tested by `sctl_rights_is_admin()`, and
+   it is the whole authority for every privileged control op: reboot, halt,
+   reroot and rescan over `system.lifecycle` alongside reload, start and stop
+   over `system.switchboard`. A unit that may reboot therefore necessarily may
+   also stop services, and a watchdog that only needs the former cannot be
+   expressed. E5 in Theme E is the shape — gate ops parameterised and lockable
+   rather than one bypass flag.
+
+   Recorded with it, because it is the frame rather than a defect: as a hybrid
+   hosting a POSIX userland, something must translate a human principal into
+   capabilities, since a process can inherit a handle but a person logging in
+   arrives holding nothing. QNX keys that on uid, Darwin on code signature for
+   entitlements plus uid for POSIX, seL4 and Genode resolve it at build time,
+   and Fuchsia escapes it only by having no uid at all. 5BSD confines the
+   translation to one component and one file (`bsdauth`,
+   `principal-policy.ucl`), with a lint keeping `getuid`/`getpeereid`/`cred`
+   out of every other authorization path — which is a stronger claim than the
+   systems it resembles. The uid-keyed policy table is the accepted cost of
+   being a UNIX; the coarse right above is not, and is the part worth fixing.
+5. **Factotum-style key custody** (Plan 9) — **later**. BSDCrypto or BSDAuth
    holds ssh and TLS private keys and runs the handshake on the client's
    behalf; sshd and servers hand over the conversation, never the key.
-5. **Transactions for idle exit** (launchd) — **later**, small. A "busy"
+6. **Transactions for idle exit** (launchd) — **later**, small. A "busy"
    assertion beside the existing idle op so an idle-exit can never reap a unit
    that just accepted work. Check first whether the current protocol already
    closes the race.
-6. **Consent keyed by the responsible party** (Darwin TCC) — **later**. Device
+7. **Consent keyed by the responsible party** (Darwin TCC) — **later**. Device
    and policy prompts attributed to the responsible label rather than the
    immediate helper; the mechanism exists, this is the consumer.
-7. **Plumber-style typed routing** (Plan 9) — **deferred** until there are
+8. **Plumber-style typed routing** (Plan 9) — **deferred** until there are
    applications to route between; BSDNotify topics cover today's needs.
-8. **Per-coalition mount namespaces with union binds** (Plan 9) —
+9. **Per-coalition mount namespaces with union binds** (Plan 9) —
    **deferred**. Containers, BSDNamespace and TrustedZFS anchors cover the
    coarse case; revisit only if capmode path restrictions become the thing
    units fight most.
