@@ -60,6 +60,30 @@ validate()
 	done
 }
 
+# Use the same activation policy for an installed system and bsdinstall's
+# rc.conf fragment. Do this only after the entire package transaction succeeds.
+configure_boot()
+{
+	local name module fragment line
+	fragment=${FWGET_RC_CONF:-${FWGET_ROOT%/}/etc/rc.conf.d/kld}
+	if [ -d "${fragment}" ]; then
+		fragment="${fragment}/5bsd-hardware"
+	fi
+	for name in "$@"; do
+		case "${name}" in
+		gpu-firmware-intel-*) module=i915kms ;;
+		gpu-firmware-amd-*) module=amdgpu ;;
+		gpu-firmware-radeon-*) module=radeonkms ;;
+		*) continue ;;
+		esac
+		mkdir -p "${fragment%/*}" || return 1
+		line='kld_list="${kld_list} '"${module}"'"'
+		if [ ! -f "${fragment}" ] || ! grep -qFx "${line}" "${fragment}"; then
+			printf '%s\n' "${line}" >>"${fragment}" || return 1
+		fi
+	done
+}
+
 # Never let the base pkg stub open a bootstrap prompt behind an installer
 # dialog. bsdinstall supplies the release media's pkg-static when needed.
 # -N also fails for a usable pkg with an empty database on live media.
@@ -75,6 +99,10 @@ fi
 for attempt in 1 2; do
 	pkg_target update -fq -r "${FWGET_REPOSITORY}" >&2 || true
 	if validate && pkg_target install -U -qy -r "${FWGET_REPOSITORY}" ${selected} >&2; then
+		if ! configure_boot "$@"; then
+			echo "Hardware packages installed, but saving GPU boot activation failed." >&2
+			exit 1
+		fi
 		exit 0
 	fi
 done

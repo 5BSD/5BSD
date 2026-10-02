@@ -37,8 +37,11 @@ qualification separately from the package inventory. In particular, do not
 advertise every Intel Arc generation, every AMD GPU, or every Wi-Fi 6/7 device
 merely because its firmware appears in a package.
 
-The first qualification targets are this machine's Intel Alder Lake graphics,
-at least one supported Intel Wi-Fi adapter, and a supported USB Wi-Fi adapter.
+The first qualification targets include AMD Hawk Point graphics (PCI
+`1002:1900`), Intel Alder Lake graphics, at least one supported Intel Wi-Fi
+adapter, and a supported USB Wi-Fi adapter. Hawk Point firmware selection
+shares the Phoenix1 IP-block packages; a successful package build is not
+a substitute for booting and checking DRM attachment on that hardware.
 Expand the tested list with AMD graphics, Realtek Wi-Fi and Intel/Realtek
 Bluetooth hardware as available. A VM boot/install test covers installation
 logic and virtual drivers, not physical radio or graphics initialization.

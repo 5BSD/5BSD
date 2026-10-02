@@ -176,7 +176,7 @@ class HardwarePackages(unittest.TestCase):
         self.assertFalse((root / 'boot/firmware/unneeded.bin').exists())
 
     def test_live_media_module_index(self):
-        module = Path('/boot/modules/i915kms.ko')
+        module = Path(os.environ.get('HARDWARE_TEST_MODULE', '/boot/modules/i915kms.ko'))
         if not module.is_file():
             self.skipTest('requires a real module to exercise kldxref')
         kernel, repo = self.repository()

@@ -405,6 +405,38 @@ as packages for the target. Kernel modules are never loaded by the build tool.
 `WITHOUT_HARDWARE_PACKAGES=yes` explicitly builds media without this external
 hardware support; the normal build fails if `HARDWARE_REPO` is missing or wrong.
 
+### Installing the hardware collection on an existing system
+
+The same offline collection serves bsdinstall and an already installed system.
+Use a collection built for the installed kernel; the shared installer verifies
+that identity before installing driver packages. A firmware package alone does
+not supply a missing driver. In particular, MT7925 still requires completion of
+its LinuxKPI/mt76 driver support.
+
+With the current fwget providers and hardware-install helper installed, root can
+copy the collection to the standard location using bsdinstall's helper, then
+install packages selected for the machine:
+
+```sh
+BSDINSTALL_CHROOT=/ BSDINSTALL_HARDWARE_MEDIA=/build/hardware-repo \
+    /usr/libexec/bsdinstall/firmware-fetch --auto
+```
+
+The source collection must be outside `/usr/5bsd-packages/hardware` for this
+copying step. Subsequent runs can use `fwget` directly. Successful GPU package
+installation records the selected driver in `/etc/rc.conf.d/kld`, preserving
+other module selections. During bsdinstall it instead writes the temporary
+`rc.conf.hardware` fragment for the target configuration. Neither path loads
+modules immediately; startup requests them through SystemExtension. A failed
+package transaction does not configure GPU startup.
+
+When provisioning an older installation whose kernel package has not yet been
+sealed with the hardware identity dependency, reinstall the **matching sealed
+kernel package** from the collection as part of provisioning. This preserves
+the coordinated kernel/module upgrade behavior described above. Do not substitute
+a collection for a different kernel, or use the media-staging command on `/`:
+media staging installs the full live firmware selection and writes a METALOG.
+
 Publish the **repackaged** base kernel, identity package and complete hardware
 repository together. Do not publish the original unsealed kernel package over
 this repository. Sign the final pkg repositories with the release signing key

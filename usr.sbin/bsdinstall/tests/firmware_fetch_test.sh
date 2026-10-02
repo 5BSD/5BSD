@@ -327,8 +327,75 @@ firmware_failure_retains_stderr_body()
 	atf_check -s exit:0 -o ignore grep -F 'hardware catalogue unavailable' bsdinstall-firmware-log.*
 }
 
+atf_test_case local_graphics_startup
+local_graphics_startup_body()
+{
+	setup
+	for repeat in 1 2; do
+		atf_check -s exit:0 -o empty -e empty sh "${HELPER}" gpu-firmware-intel-kmod-alderlake
+	done
+	atf_check -s exit:0 -o inline:'if_iwlwifi i915kms\n' \
+	    sh -c 'kld_list=if_iwlwifi; . ./root/etc/rc.conf.d/kld; echo "$kld_list"'
+	mkdir -p alternate
+	export FWGET_RC_CONF=$(pwd)/alternate
+	atf_check -s exit:0 -o empty -e empty sh "${HELPER}" gpu-firmware-amd-kmod-navi10
+	atf_check -s exit:0 -o inline:'amdgpu\n' \
+	    sh -c '. ./alternate/5bsd-hardware; echo "${kld_list# }"'
+}
+
+atf_test_case failed_install_no_activation
+failed_install_no_activation_body()
+{
+	setup
+	atf_check -s exit:1 -o empty -e match:'does not match' \
+	    env TEST_MODE=mismatch sh "${HELPER}" gpu-firmware-intel-kmod-alderlake
+	[ ! -e root/etc/rc.conf.d/kld ] || atf_fail 'failed installation configured startup'
+}
+
+atf_test_case hawkpoint_graphics_selection
+hawkpoint_graphics_selection_body()
+{
+	setup
+	mkdir detect
+	cp @SRCTOP@/usr.sbin/fwget/pci/pci* detect/
+	cp @SRCTOP@/usr.sbin/fwget/usb/usb* detect/
+	cat >bin/pciconf <<-'EOF'
+	#!/bin/sh
+	echo 'vgapci0@pci0:196:0:0: class=0x030000 rev=0xba hdr=0x00 vendor=0x1002 device=0x1900 subvendor=0x1f4c subdevice=0xb022'
+	EOF
+	cat >bin/usbconfig <<-'EOF'
+	#!/bin/sh
+	exit 0
+	EOF
+	chmod +x bin/pciconf bin/usbconfig
+	cat >expected <<-'EOF'
+	gpu-firmware-amd-kmod-gc-11-0-1
+	drm-kmod
+	gpu-firmware-amd-kmod-psp-13-0-4
+	gpu-firmware-amd-kmod-dcn-3-1-4
+	gpu-firmware-amd-kmod-sdma-6-0-1
+	gpu-firmware-amd-kmod-vcn-4-0-2
+	EOF
+	atf_check -s exit:0 -e empty -o file:expected \
+	    env LIBEXEC_PATH="$(pwd)/detect" sh @SRCTOP@/usr.sbin/fwget/fwget.sh -qn
+}
+
+atf_test_case activation_write_failure
+activation_write_failure_body()
+{
+	setup
+	touch blocked
+	atf_check -s exit:1 -o empty -e match:'saving GPU boot activation failed' \
+	    env FWGET_RC_CONF="$(pwd)/blocked/kld" sh "${HELPER}" gpu-firmware-amd-kmod-gc-11-0-1
+	atf_check -s exit:0 -o inline:'1\n' grep -c 'install -U' state/calls
+}
+
 atf_init_test_cases()
 {
+	atf_add_test_case activation_write_failure
+	atf_add_test_case hawkpoint_graphics_selection
+	atf_add_test_case local_graphics_startup
+	atf_add_test_case failed_install_no_activation
 	atf_add_test_case missing_pkg_does_not_bootstrap
 	atf_add_test_case missing_media_bootstrap_is_reported
 	atf_add_test_case embedded_pkg_static_is_used

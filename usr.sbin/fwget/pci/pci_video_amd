@@ -160,7 +160,8 @@ pci_video_amd()
 			addpkg "gpu-firmware-amd-kmod-smu-13-0-0"
 			addpkg "gpu-firmware-amd-kmod-vcn-4-0-0"
 			;;
-		0x15bf)
+		# Phoenix1 and its Hawk Point refresh use the same IP firmware.
+		0x15bf|0x1900)
 			addpkg "gpu-firmware-amd-kmod-gc-11-0-1"
 			addpkg "gpu-firmware-amd-kmod-psp-13-0-4"
 			addpkg "gpu-firmware-amd-kmod-dcn-3-1-4"

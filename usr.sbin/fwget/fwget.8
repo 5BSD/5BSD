@@ -57,6 +57,9 @@ and
 .Bl -tag -width /etc/pkg/5BSD-hardware.conf
 .It Pa /etc/pkg/5BSD-hardware.conf
 Configuration for the release-specific hardware repository.
+.It Pa /etc/rc.conf.d/kld
+GPU boot activation saved after successful installation.
+Existing module selections are preserved.
 .It Pa /usr/5bsd-packages/hardware
 Offline hardware repository retained by the installer.
 .El
@@ -69,6 +72,10 @@ A mismatch fails without falling back to
 .Fx
 binary kernel modules.
 Graphics firmware selection also includes the DRM driver package.
+After successful installation, the selected GPU driver is added to
+.Va kld_list
+for subsequent boots through the SystemExtension broker.
+Installation does not load a driver into the running kernel.
 The dry-run output uses the upstream package names; installed hardware packages
 have the
 .Cm 5BSD-hw-

@@ -64,28 +64,17 @@ if [ ! -f "${BSDINSTALL_HARDWARE_MEDIA}/hardware.json" ]; then
 	echo "No offline 5BSD hardware repository on this media; attempting configured repository ${BSDINSTALL_FIRMWARE_REPO}." >&2
 fi
 
+# The shared helper also configures graphics startup for ordinary fwget runs.
+# During installation, contribute to the rc.conf assembled by the config step.
+if [ -n "${BSDINSTALL_TMPETC:-}" ]; then
+	FWGET_RC_CONF="${BSDINSTALL_TMPETC}/rc.conf.hardware"
+	export FWGET_RC_CONF
+fi
+
 if ! FWGET_ROOT="${BSDINSTALL_CHROOT}" \
     FWGET_REPOSITORY="${BSDINSTALL_FIRMWARE_REPO}" \
     "${BSDINSTALL_HARDWARE_INSTALL}" "$@"; then
 	printf ' %s' "$@"
 	printf '\n'
 	exit 1
-fi
-
-# The config step assembles rc.conf from these fragments. Preserve any other
-# modules selected by earlier fragments when rc.conf is sourced.
-if [ -n "${BSDINSTALL_TMPETC:-}" ]; then
-	for name in "$@"; do
-		case "${name}" in
-		gpu-firmware-intel-*) module=i915kms ;;
-		gpu-firmware-amd-*) module=amdgpu ;;
-		gpu-firmware-radeon-*) module=radeonkms ;;
-		*) continue ;;
-		esac
-		fragment="${BSDINSTALL_TMPETC}/rc.conf.hardware"
-		line='kld_list="${kld_list} '"${module}"'"'
-		if [ ! -f "${fragment}" ] || ! grep -qFx "${line}" "${fragment}"; then
-			printf '%s\n' "${line}" >>"${fragment}"
-		fi
-	done
 fi
