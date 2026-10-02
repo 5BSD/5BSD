@@ -50,6 +50,10 @@ user_env_vars=""
 #
 error() {
 	local msg
+	if [ "${nonInteractive:-}" = YES ]; then
+		echo "bsdinstall jail: ${1:-Installation failed}" >&2
+		exit 1
+	fi
 	if [ -n "$1" ]; then
 		msg="$1\n\n"
 	fi
@@ -115,7 +119,12 @@ if [ -n "$SCRIPT" ]; then
 	. $TMPDIR/bsdinstall-installscript-preamble
 fi
 
-bsdinstall pkgbase --jail || error "Installation of base system packages failed"
+if [ "${nonInteractive:-}" = YES ]; then
+	bsdinstall pkgbase --jail --non-interactive ||
+	    error "Installation of base system packages failed"
+else
+	bsdinstall pkgbase --jail || error "Installation of base system packages failed"
+fi
 
 if [ ! "$nonInteractive" == "YES" ]
 then

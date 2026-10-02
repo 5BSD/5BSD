@@ -44,12 +44,12 @@ rm -f "$BSDINSTALL_TMPETC"/capability-policy.users \
     "$BSDINSTALL_TMPETC"/capability-policy.groups \
     "$BSDINSTALL_TMPETC"/bsdfilesystem.pool
 
-cp $BSDINSTALL_TMPETC/* $BSDINSTALL_CHROOT/etc
+cp "$BSDINSTALL_TMPETC"/* "$BSDINSTALL_CHROOT/etc" || exit 1
 
 cat $BSDINSTALL_TMPBOOT/loader.conf.* >> $BSDINSTALL_TMPBOOT/loader.conf
 rm $BSDINSTALL_TMPBOOT/loader.conf.*
 
-cp $BSDINSTALL_TMPBOOT/* $BSDINSTALL_CHROOT/boot
+cp "$BSDINSTALL_TMPBOOT"/* "$BSDINSTALL_CHROOT/boot" || exit 1
 
 [ "${debugFile#+}" ] && cp "${debugFile#+}" $BSDINSTALL_CHROOT/var/log/
 

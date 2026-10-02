@@ -105,11 +105,13 @@ you rename the pool later, edit this line. See
 ### The `capabilitypolicy` step
 
 `bsdinstall capabilitypolicy` writes `/Capabilities/Config/principal-policy.ucl`
-in the new system. The dialog explains the default: root is a powerful
-compatibility administrator, and root plus every member of `wheel` receive a
-SYSTEM capability session, which permits discovery of and connection to
-SYSTEM and CORE services. It does not permit CORE services to be stopped,
-restarted, unloaded or disabled at runtime, by root or by anyone else. You
+in the new system. The **System Control Policy** dialog explains who may
+manage SYSTEM daemons and access protected services. Root and members of
+`wheel` are included by default; additional existing users and groups can be
+selected. The screen grants administration rights rather than creating accounts;
+use **Add User** first when an account is needed. CORE daemons cannot be
+stopped, restarted, unloaded or disabled through administrative commands by
+anyone, including root. Their lifecycle remains under system control. You
 may add more users (names or numeric uids) and groups; each is checked
 against the installed `master.passwd` and `group`. The generated file looks
 like this:
@@ -244,6 +246,21 @@ fwget. Packages come from
 firmware supplied separately. Full release media keeps
 an offline copy in `/usr/5bsd-packages/hardware` on the target, so networking is
 not required for this step. Wi-Fi firmware is also available to the live installer.
+
+The firmware step reuses the release's embedded `pkg-static` when the live
+system has no installed package manager, extracting it into a private temporary
+directory. It must not prompt to bootstrap pkg from the network behind the
+installer dialog. Failed installation displays the helper's stderr and retains
+the complete output in a temporary log as well as the installer debug log.
+Media built with `WITHOUT_HARDWARE_PACKAGES=yes` has no offline hardware
+repository; a configured 5BSD hardware service is then required.
+
+Firmware detection is not a driver-support check. For example, the MediaTek
+MT7925 (`14c3:7925`) is detected by fwget, but the imported mt76 driver is
+not enabled in the base module build. It has unresolved LinuxKPI build and
+page-pool implementation requirements. Its firmware package alone cannot
+create a Wi-Fi interface; do not report this chipset as supported until the
+driver is implemented, built and tested on hardware.
 
 Missing or incompatible packages are reported; the installer does not fall
 back to FreeBSD's binary module repository. For network installation or updates,

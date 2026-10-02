@@ -30,6 +30,40 @@ fi
 
 [ "$#" -gt 0 ] || exit 0
 
+# pkgbase extracts the media's pkg-static only for its own invocation. The
+# firmware step must also avoid the live root's interactive pkg bootstrap.
+# Prefer a caller-selected tool or an installed pkg; otherwise unpack the
+# release bootstrap into a private writable directory, never /usr/local.
+if [ -z "${FWGET_PKG:-}" ] && ! ASSUME_ALWAYS_YES=no pkg -v </dev/null >/dev/null 2>&1; then
+	: ${BSDINSTALL_PKG_MEDIA:=/usr/5bsd-packages/offline}
+	bootstrap=
+	for archive in "${BSDINSTALL_PKG_MEDIA}"/pkg-*.pkg; do
+		[ -f "${archive}" ] || continue
+		bootstrap=${archive}
+		break
+	done
+	if [ -z "${bootstrap}" ]; then
+		echo "Firmware installation needs pkg-static, but this media has no pkg bootstrap in ${BSDINSTALL_PKG_MEDIA}." >&2
+		echo "Use complete 5BSD release media or set FWGET_PKG to a matching pkg-static executable." >&2
+		exit 1
+	fi
+	pkg_tmp=$(mktemp -d "${TMPDIR:-/tmp}/bsdinstall-firmware.XXXXXX")
+	trap 'rm -rf "${pkg_tmp}"' EXIT
+	trap 'exit 1' HUP INT TERM
+	tar -xf "${bootstrap}" -C "${pkg_tmp}" '*sbin/pkg-static'
+	FWGET_PKG="${pkg_tmp}/usr/local/sbin/pkg-static"
+	[ -f "${FWGET_PKG}" ] || {
+		echo "Release bootstrap does not contain usr/local/sbin/pkg-static: ${bootstrap}" >&2
+		exit 1
+	}
+	chmod 755 "${FWGET_PKG}"
+	export FWGET_PKG
+fi
+
+if [ ! -f "${BSDINSTALL_HARDWARE_MEDIA}/hardware.json" ]; then
+	echo "No offline 5BSD hardware repository on this media; attempting configured repository ${BSDINSTALL_FIRMWARE_REPO}." >&2
+fi
+
 if ! FWGET_ROOT="${BSDINSTALL_CHROOT}" \
     FWGET_REPOSITORY="${BSDINSTALL_FIRMWARE_REPO}" \
     "${BSDINSTALL_HARDWARE_INSTALL}" "$@"; then

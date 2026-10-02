@@ -11,6 +11,11 @@ setup()
 	export HELPER=@SRCTOP@/usr.sbin/fwget/hardware-install.sh
 	cat >bin/pkg <<-'EOF'
 	#!/bin/sh
+	if [ "$1" = -v ]; then
+		[ "${ASSUME_ALWAYS_YES:-}" = no ] || exit 97
+		[ ! -t 0 ] || exit 96
+		exit "${TEST_PKG_MISSING:-0}"
+	fi
 	printf '%s\n' "$*" >>"${TEST_STATE}/calls"
 	[ "$1" = -c ] && [ "$2" = "${FWGET_ROOT}" ] || exit 99
 	shift 2
@@ -119,7 +124,7 @@ graphics_startup_preserves_modules_body()
 	setup
 	mkdir config
 	for repeat in 1 2; do
-		atf_check -s exit:0 -o empty -e empty env \
+		atf_check -s exit:0 -o empty -e ignore env \
 		    BSDINSTALL_CHROOT="${FWGET_ROOT}" \
 		    BSDINSTALL_HARDWARE_MEDIA="$(pwd)/no-media" \
 		    BSDINSTALL_HARDWARE_INSTALL="${HELPER}" \
@@ -215,7 +220,7 @@ automatic_selection_body()
 	export BSDINSTALL_HARDWARE_MEDIA=$(pwd)/absent
 	export BSDINSTALL_HARDWARE_INSTALL="${HELPER}"
 	export BSDINSTALL_TMPETC=$(pwd)/fragments
-	atf_check -s exit:0 -o empty -e empty sh @SRCTOP@/usr.sbin/bsdinstall/scripts/firmware-fetch --auto
+	atf_check -s exit:0 -o empty -e ignore sh @SRCTOP@/usr.sbin/bsdinstall/scripts/firmware-fetch --auto
 	atf_check -s exit:0 -o ignore grep -F 'install -U -qy -r 5BSD-hardware 5BSD-hw-test-firmware 5BSD-hw-gpu-firmware-intel-kmod-alderlake' state/calls
 	atf_check -s exit:0 -o ignore grep -F i915kms fragments/rc.conf.hardware
 	rm state/calls
@@ -240,8 +245,94 @@ mediatek_split_firmware_body()
 	done
 }
 
+atf_test_case missing_pkg_does_not_bootstrap
+missing_pkg_does_not_bootstrap_body()
+{
+	setup
+	atf_check -s exit:1 -o empty -e match:'requires pkg' \
+	    env TEST_PKG_MISSING=1 sh "${HELPER}" test-firmware
+	[ ! -f state/calls ] || atf_fail 'pkg bootstrap or repository operation was attempted'
+}
+
+atf_test_case missing_media_bootstrap_is_reported
+missing_media_bootstrap_is_reported_body()
+{
+	setup
+	atf_check -s exit:1 -o empty -e match:'media has no pkg bootstrap' env \
+	    TEST_PKG_MISSING=1 BSDINSTALL_CHROOT="${FWGET_ROOT}" \
+	    BSDINSTALL_PKG_MEDIA="$(pwd)/absent" \
+	    BSDINSTALL_HARDWARE_MEDIA="$(pwd)/absent" \
+	    BSDINSTALL_HARDWARE_INSTALL="${HELPER}" \
+	    sh @SRCTOP@/usr.sbin/bsdinstall/scripts/firmware-fetch test-firmware
+	[ ! -f state/calls ] || atf_fail 'pkg bootstrap or repository operation was attempted'
+}
+
+atf_test_case embedded_pkg_static_is_used
+embedded_pkg_static_is_used_body()
+{
+	setup
+	mkdir -p media bootstrap/usr/local/sbin private-tmp
+	echo '{}' >media/hardware.json
+	# The live pkg is only a stub; the archived executable is usable.
+	sed 's/exit "${TEST_PKG_MISSING:-0}"/exit 0/' bin/pkg >bootstrap/usr/local/sbin/pkg-static
+	chmod +x bootstrap/usr/local/sbin/pkg-static
+	tar -cf media/pkg-1.pkg -C bootstrap usr/local/sbin/pkg-static
+	atf_check -s exit:0 -o empty -e empty env \
+	    TEST_PKG_MISSING=1 BSDINSTALL_CHROOT="${FWGET_ROOT}" \
+	    BSDINSTALL_PKG_MEDIA="$(pwd)/media" \
+	    BSDINSTALL_HARDWARE_MEDIA="$(pwd)/media" \
+	    BSDINSTALL_HARDWARE_INSTALL="${HELPER}" TMPDIR="$(pwd)/private-tmp" \
+	    sh @SRCTOP@/usr.sbin/bsdinstall/scripts/firmware-fetch test-firmware
+	atf_check -s exit:0 -o ignore grep -F 'install -U -qy' state/calls
+	atf_check -s exit:0 -o empty ls private-tmp
+}
+
+atf_test_case firmware_failure_retains_stderr
+firmware_failure_retains_stderr_body()
+{
+	setup
+	# Exercise the dialog's installation path without running detection or
+	# opening a real terminal. Keep the actual execution/logging code.
+	sed -n '/^# Initialize/,$p' @SRCTOP@/usr.sbin/bsdinstall/scripts/firmware >dialog-body
+	cat >dialog <<-'EOF'
+	#!/bin/sh
+	printf '%s\n' "$*" >>"${TEST_STATE}/dialog"
+	EOF
+	cat >fail-install <<-'EOF'
+	#!/bin/sh
+	echo 'hardware catalogue unavailable' >&2
+	exit 1
+	EOF
+	chmod +x dialog fail-install
+	cat >run-dialog <<-'EOF'
+	#!/bin/sh
+	f_dialog_title() { DIALOG_TITLE=$1; }
+	f_dialog_backtitle() { DIALOG_BACKTITLE=$1; }
+	dialog_menu_main() { return 0; }
+	f_dialog_menutag_fetch() { selected=test-firmware; }
+	f_mustberoot_init() { :; }
+	f_dprintf() { printf "$@" >>"${TEST_STATE}/debug"; }
+	msg_firmware_installation=Hardware
+	msg_installer=Installer
+	OSNAME=5BSD
+	DIALOG="$(pwd)/dialog"
+	BSDINSTALL_FIRMWARE_FETCH="$(pwd)/fail-install"
+	BSDINSTALL_TMPETC="$(pwd)/absent"
+	TMPDIR="$(pwd)"
+	. ./dialog-body
+	EOF
+	atf_check -s exit:1 -o empty -e empty sh run-dialog
+	atf_check -s exit:0 -o ignore grep -F 'hardware catalogue unavailable' state/dialog
+	atf_check -s exit:0 -o ignore grep -F 'hardware catalogue unavailable' state/debug
+	atf_check -s exit:0 -o ignore grep -F 'hardware catalogue unavailable' bsdinstall-firmware-log.*
+}
+
 atf_init_test_cases()
 {
+	atf_add_test_case missing_pkg_does_not_bootstrap
+	atf_add_test_case missing_media_bootstrap_is_reported
+	atf_add_test_case embedded_pkg_static_is_used
+	atf_add_test_case firmware_failure_retains_stderr
 	atf_add_test_case mediatek_split_firmware
 	atf_add_test_case automatic_selection
 	atf_add_test_case target_kernel_and_dependencies

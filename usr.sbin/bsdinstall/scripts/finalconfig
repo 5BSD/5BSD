@@ -38,14 +38,14 @@ while true; do
 	    "Setup of your $OSNAME system is nearly complete. You can now modify your configuration choices. After this screen, you will have an opportunity to make more complex changes using a shell." 0 0 0 \
 		"Finish" "Apply configuration and exit installer" \
 		"Add User" "Add a user to the system" \
-		"Capability Administrators" "Set users and groups receiving SYSTEM capabilities" \
+		"System Control Policy" "Choose administrators for SYSTEM daemons and services" \
 		"Root Password" "Change root password" \
 		"Hostname" "Set system hostname" \
 		"Network" "Networking configuration" \
 		"Services" "Set daemons to run on startup" \
 		"System Hardening" "Set security options" \
 		"Time Zone" "Set system timezone" \
-		"Firmware" "Install Firmware (requires network)" \
+		"Firmware" "Install hardware packages from media or a 5BSD repository" \
 		"Handbook" "Install $OSNAME Handbook (requires network)" 2>&1 1>&5)
 	retval=$?
 	exec 5>&-
@@ -61,7 +61,7 @@ while true; do
 	"Add User")
 		bsdinstall adduser
 		;;
-	"Capability Administrators")
+	"System Control Policy")
 		bsdinstall capabilitypolicy
 		;;
 	"Root Password")

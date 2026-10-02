@@ -95,16 +95,32 @@ atf_test_case explains_core_boundary
 explains_core_boundary_body()
 {
 	atf_check -s exit:0 -o ignore grep -F \
-	    'discovery of and connection to SYSTEM and CORE services' \
+	    'Administrators can manage SYSTEM daemons' \
 	    "$(policy_script)"
 	atf_check -s exit:0 -o ignore grep -F \
-	    'CORE services cannot be managed even by root' "$(policy_script)"
+	    'CORE daemons cannot be managed at runtime by anyone, including root' "$(policy_script)"
 	atf_check -s exit:0 -o ignore grep -F \
-	    'but cannot manage CORE services' "$(policy_script)"
+	    'but cannot manage CORE daemons' "$(policy_script)"
+}
+
+atf_test_case missing_database_preserves_policy
+missing_database_preserves_policy_body()
+{
+	make_root
+	echo sentinel >root/Capabilities/Config/principal-policy.ucl
+	rm root/etc/group
+	atf_check -s exit:1 -e match:'group database is unavailable' env \
+	    BSDINSTALL_CAPABILITY_POLICY_NONINTERACTIVE=yes \
+	    BSDINSTALL_CHROOT="$(pwd)/root" \
+	    BSDINSTALL_TMPETC="$(pwd)/state" \
+	    /bin/sh "$(policy_script)"
+	atf_check -s exit:0 -o inline:'sentinel\n' \
+	    cat root/Capabilities/Config/principal-policy.ucl
 }
 
 atf_init_test_cases()
 {
+	atf_add_test_case missing_database_preserves_policy
 	atf_add_test_case defaults
 	atf_add_test_case additional_principals
 	atf_add_test_case rejects_unknown

@@ -134,6 +134,12 @@ fi
 # Configure bootloader if needed
 bsdinstall bootconfig
 
+# The hardware helper uses pkg -c: online repositories need DNS inside the
+# target before fetching firmware, not only before the post-install script.
+if [ ! -f "${BSDINSTALL_CHROOT}/etc/resolv.conf" ] && [ -f /etc/resolv.conf ]; then
+	cp /etc/resolv.conf "${BSDINSTALL_CHROOT}/etc/resolv.conf"
+fi
+
 # Install detected hardware support and retain the on-media repository before
 # config assembles rc.conf, including any graphics module startup fragment.
 if [ -z "${BSDINSTALL_SKIP_FIRMWARE:-}" ]; then
@@ -142,11 +148,6 @@ fi
 
 # Finalize install
 bsdinstall config
-
-# Make sure networking is functional, if we can arrange that
-if [ ! -f $BSDINSTALL_CHROOT/etc/resolv.conf -a -f /etc/resolv.conf ]; then
-	cp /etc/resolv.conf $BSDINSTALL_CHROOT/etc/resolv.conf
-fi
 
 # Run post-install script
 if [ -f $TMPDIR/bsdinstall-installscript-setup ]; then

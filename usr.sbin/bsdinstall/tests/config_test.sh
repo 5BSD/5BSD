@@ -40,7 +40,30 @@ installer_state_is_not_copied_to_etc_body()
 	    grep hostname root/etc/rc.conf
 }
 
+atf_test_case configuration_copy_failure_is_reported
+configuration_copy_failure_is_reported_body()
+{
+	mkdir -p root/etc root/boot state boot-state bin
+	: >root/etc/sysctl.conf
+	echo 'hostname="fivebsd"' >state/rc.conf.hostname
+	echo 'kern.randompid=1' >state/sysctl.conf.hardening
+	echo 'autoboot_delay="3"' >boot-state/loader.conf.install
+	cat >bin/cp <<-'EOF'
+	#!/bin/sh
+	echo 'simulated configuration write failure' >&2
+	exit 23
+	EOF
+	chmod +x bin/cp
+	atf_check -s exit:1 -o empty -e match:'configuration write failure' env \
+	    PATH="$(pwd)/bin:/bin:/usr/bin" \
+	    BSDINSTALL_CHROOT="$(pwd)/root" \
+	    BSDINSTALL_TMPETC="$(pwd)/state" \
+	    BSDINSTALL_TMPBOOT="$(pwd)/boot-state" \
+	    /bin/sh "$(config_script)"
+}
+
 atf_init_test_cases()
 {
+	atf_add_test_case configuration_copy_failure_is_reported
 	atf_add_test_case installer_state_is_not_copied_to_etc
 }

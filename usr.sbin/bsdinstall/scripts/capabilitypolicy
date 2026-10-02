@@ -24,7 +24,7 @@ fail()
 		echo "capabilitypolicy: $*" >&2
 	else
 		bsddialog --backtitle "$OSNAME Installer" \
-		    --title "Invalid Capability Administrator" \
+		    --title "Invalid System Administrator" \
 		    --msgbox "$*" 0 0
 	fi
 	return 1
@@ -77,8 +77,14 @@ write_policy()
 	local user_input="$1" group_input="$2"
 	local entry uid group uids="0" groups="wheel" tmp separator
 
-	[ -r "$passwd_file" ] || fail "The installed user database is unavailable."
-	[ -r "$group_file" ] || fail "The installed group database is unavailable."
+	[ -r "$passwd_file" ] || {
+		fail "The installed user database is unavailable."
+		return 1
+	}
+	[ -r "$group_file" ] || {
+		fail "The installed group database is unavailable."
+		return 1
+	}
 
 	user_input=$(printf '%s' "$user_input" | tr ',' ' ')
 	group_input=$(printf '%s' "$group_input" | tr ',' ' ')
@@ -148,15 +154,19 @@ users=$(cat "$users_state" 2>/dev/null)
 groups=$(cat "$groups_state" 2>/dev/null)
 
 bsddialog --backtitle "$OSNAME Installer" \
-    --title "Capability Administrator Policy" --msgbox \
-    "The default 5BSD policy is permissive: root remains a powerful compatibility administrator, and root plus every member of wheel receive a SYSTEM capability session. This permits discovery of and connection to SYSTEM and CORE services. It does not permit CORE services to be stopped, restarted, unloaded, or disabled at runtime; CORE services cannot be managed even by root or another capability administrator. Add entries only for trusted system administrators. Ordinary users receive restricted USER sessions.\n\nA hardened deployment can make UID 0 insufficient for protected operations, but durable root resistance also requires verified system storage and separate recovery authority. Leave additional entries empty and see Security > Rootless Hardening in the 5BSD Handbook." 0 0
+    --title "System Control Policy" --msgbox \
+    "Choose which users and groups may control this system. Administrators can manage SYSTEM daemons, including starting, stopping, restarting and disabling them. They also receive access to protected system services.
+
+CORE daemons cannot be managed at runtime by anyone, including root and system administrators. They cannot be stopped, restarted, unloaded or disabled through administrative commands. Their lifecycle is controlled by the system itself.
+
+This installer includes root and the wheel group as administrators. You can add other existing users and groups on the next screens. Ordinary users retain restricted USER sessions. These settings grant system-control permissions; they do not create accounts. Use Add User to create an account first." 0 0
 
 while :; do
 	exec 5>&1
 	users=$(bsddialog --backtitle "$OSNAME Installer" \
-	    --title "Additional Capability Administrator Users" \
+	    --title "Additional System Administrators" \
 	    --ok-label "Continue" --cancel-label "Keep Current" \
-	    --inputbox "Enter additional usernames or numeric UIDs, separated by spaces or commas. Listed users can discover and connect to SYSTEM and CORE services, but cannot manage CORE services. Root is always included by this installer profile." \
+	    --inputbox "Enter existing usernames or numeric UIDs, separated by spaces or commas. These users may manage SYSTEM daemons, but cannot manage CORE daemons. Root is already included. Leave empty to keep the default administrators." \
 	    0 0 "$users" 2>&1 1>&5)
 	result=$?
 	exec 5>&-
@@ -164,9 +174,9 @@ while :; do
 
 	exec 5>&1
 	groups=$(bsddialog --backtitle "$OSNAME Installer" \
-	    --title "Additional Capability Administrator Groups" \
+	    --title "Additional Administrator Groups" \
 	    --ok-label "Save Policy" --cancel-label "Back" \
-	    --inputbox "Enter additional group names, separated by spaces or commas. Listed groups can discover and connect to SYSTEM and CORE services, but cannot manage CORE services. The wheel group is always included by this installer profile." \
+	    --inputbox "Enter existing group names, separated by spaces or commas. Members may manage SYSTEM daemons, but cannot manage CORE daemons. The wheel group is already included. Leave empty to keep the default groups." \
 	    0 0 "$groups" 2>&1 1>&5)
 	result=$?
 	exec 5>&-

@@ -31,7 +31,12 @@ dialog_menu_main()
 	local check_list=	# Empty; filled below
 	local fwlist _fw
 
-	fwlist=`chroot $BSDINSTALL_CHROOT fwget -q -n`
+	if ! fwlist=$(chroot "${BSDINSTALL_CHROOT}" fwget -q -n); then
+		f_dprintf "Hardware detection failed for target %s" "${BSDINSTALL_CHROOT}"
+		${DIALOG} --title "Hardware detection failed" --msgbox \
+		    "Could not detect hardware packages. See the installer log; this does not mean that no firmware is needed." 0 0
+		return 1
+	fi
 	case "${fwlist}" in
 	"")	# No additional hardware packages to install
 		# Print a dialog with OK and a 3 line timeout bar.
@@ -104,11 +109,8 @@ f_dialog_menutag_fetch selected
 
 firmware_fetch=${BSDINSTALL_FIRMWARE_FETCH:-/usr/libexec/bsdinstall/firmware-fetch}
 
-# Preserve the offline repository even when no device needs extra firmware.
-if [ "${selected}" == "" ]; then
-	"${firmware_fetch}"
-	exit $?
-fi
+# Run the helper even with no selected devices to preserve the repository;
+# copying failures use the same visible error path as package failures.
 
 f_mustberoot_init
 
@@ -120,15 +122,23 @@ fi
 ${DIALOG} --title "$DIALOG_TITLE" --backtitle "$DIALOG_BACKTITLE" \
 	--infobox "Installing drivers and firmware. This may take a moment." 0 0
 
-pkg_install_fail=$(${firmware_fetch} ${selected})
+# Keep stderr too: pkg and the hardware helper put the useful cause there.
+# A file preserves full output without putting an unbounded log in the dialog.
+pkg_install_log=$(mktemp "${TMPDIR:-/tmp}/bsdinstall-firmware-log.XXXXXX") || exit 1
+"${firmware_fetch}" ${selected} >"${pkg_install_log}" 2>&1
 pkg_install_status=$?
+f_dprintf "Hardware installation (status %s): %s" "${pkg_install_status}" "$(cat "${pkg_install_log}")"
 if [ ${pkg_install_status} -ne 0 ]; then
-	# Error(s) were likely spammed to the console; give the user a moment
-	# to read them.
-	sleep 5
-	bsddialog --backtitle "$OSNAME Installer" --title "Error" \
-	    --msgbox "Error installing matching hardware packages$pkg_install_fail" 0 0
-		exit 1
+	pkg_install_fail=$(tail -n 20 "${pkg_install_log}")
+	${DIALOG} --backtitle "$OSNAME Installer" --title "Hardware installation failed" \
+	    --msgbox "Selected packages were not installed successfully.
+
+${pkg_install_fail}
+
+Full output: ${pkg_install_log}
+Drivers or firmware may be missing after reboot." 0 0
+	exit 1
 fi
+rm -f "${pkg_install_log}"
 
 # end

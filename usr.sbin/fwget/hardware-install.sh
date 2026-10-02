@@ -60,6 +60,16 @@ validate()
 	done
 }
 
+# Never let the base pkg stub open a bootstrap prompt behind an installer
+# dialog. bsdinstall supplies the release media's pkg-static when needed.
+# -N also fails for a usable pkg with an empty database on live media.
+# A version probe needs no database; closed stdin and an explicit no prevent
+# the base stub from bootstrapping or prompting.
+if ! ASSUME_ALWAYS_YES=no "${FWGET_PKG}" -v </dev/null >/dev/null 2>&1; then
+	echo "Hardware installation requires pkg; set FWGET_PKG to the release pkg-static executable." >&2
+	exit 1
+fi
+
 # A rotated catalogue gets one retry. Revalidate every dependency after each
 # refresh, and freeze the catalogue during installation with -U.
 for attempt in 1 2; do
@@ -68,5 +78,6 @@ for attempt in 1 2; do
 		exit 0
 	fi
 done
-echo "Unable to install matching 5BSD hardware packages: $*" >&2
+echo "Unable to install matching 5BSD hardware packages from ${FWGET_REPOSITORY}: $*" >&2
+echo "Use release media containing /usr/5bsd-packages/hardware, or configure a 5BSD hardware repository for this release. FreeBSD binary modules are not a fallback." >&2
 exit 1
