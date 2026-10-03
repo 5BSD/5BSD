@@ -122,15 +122,6 @@ bsdinstall pkgbase --non-interactive
 # Use the exact ZFSBOOT_POOL_NAME accepted by zpool(8), not bsdfilesystem's fallback.
 bsdinstall tzfspool
 
-# The packaged root/wheel policy is already the default.  Generate a custom
-# policy only when the install script explicitly requests one.
-if [ "${BSDINSTALL_CAPABILITY_POLICY_NONINTERACTIVE:-}" = yes ] ||
-    [ "${BSDINSTALL_CAPABILITY_ADMIN_USERS+x}" = x ] ||
-    [ "${BSDINSTALL_CAPABILITY_ADMIN_GROUPS+x}" = x ]; then
-	BSDINSTALL_CAPABILITY_POLICY_NONINTERACTIVE=yes \
-	    bsdinstall capabilitypolicy
-fi
-
 # Configure bootloader if needed
 bsdinstall bootconfig
 
@@ -156,6 +147,17 @@ if [ -f $TMPDIR/bsdinstall-installscript-setup ]; then
 	chmod a+x $BSDINSTALL_CHROOT/tmp/installscript
 	chroot $BSDINSTALL_CHROOT /tmp/installscript $@ 2>&1
 	rm $BSDINSTALL_CHROOT/tmp/installscript
+fi
+
+# Resolve policy principals after the post-install script has created accounts.
+# The packaged root/wheel policy remains the default unless explicitly requested.
+if [ "${BSDINSTALL_CAPABILITY_POLICY_NONINTERACTIVE:-}" = yes ] ||
+    [ "${BSDINSTALL_CAPABILITY_ADMIN_USERS+x}" = x ] ||
+    [ "${BSDINSTALL_CAPABILITY_ADMIN_GROUPS+x}" = x ] ||
+    [ "${BSDINSTALL_CAPABILITY_MANAGE_USERS+x}" = x ] ||
+    [ "${BSDINSTALL_CAPABILITY_COMPAT+x}" = x ]; then
+	BSDINSTALL_CAPABILITY_POLICY_NONINTERACTIVE=yes \
+	    bsdinstall capabilitypolicy
 fi
 
 bsdinstall entropy

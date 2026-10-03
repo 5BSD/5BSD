@@ -59,7 +59,7 @@ while true; do
 		break
 		;;
 	"Add User")
-		bsdinstall adduser
+		bsdinstall adduser && bsdinstall capabilitypolicy
 		;;
 	"System Control Policy")
 		bsdinstall capabilitypolicy

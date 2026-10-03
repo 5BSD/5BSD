@@ -130,17 +130,19 @@ If
 .Ev BSDINSTALL_CONFIGCURRENT
 is set, also sets the host name of the current system.
 .It Cm capabilitypolicy
-Explains the permissive default capability policy and allows additional
-administrator users and groups to be granted SYSTEM sessions that can discover
-and connect to SYSTEM and CORE services.
+Lists installed accounts with their UIDs and configures their capability grants.
+Full access grants all anointments, provider ADMIN, and session impersonation.
+Management-only access grants
+.Dq system.switchboard.admin
+without provider ADMIN or other protected endpoint access.
 CORE services cannot be stopped, restarted, unloaded, or disabled at runtime,
 even by root or another capability administrator.
 The generated policy is written to
 .Pa /Capabilities/Config/principal-policy.ucl
 in the new system.
-Root and the
-.Dq wheel
-group remain included by this installer profile.
+The compatibility choice explicitly grants full access to root and wheel.
+The explicit-grants choice does not include either automatically.
+Ordinary UNIX permissions are unchanged.
 .It Cm netconfig
 Interactively configures network interfaces (first invoking
 .Cm wlanconfig
@@ -455,16 +457,31 @@ target will not invoke the interactive
 .Cm capabilitypolicy
 target.
 .It Ev BSDINSTALL_CAPABILITY_ADMIN_USERS
-A space- or comma-separated list of additional usernames or numeric UIDs to
-grant administrator SYSTEM sessions during a scripted installation.
+A space- or comma-separated list of usernames or numeric UIDs to grant full
+capability access during a scripted installation.
 .It Ev BSDINSTALL_CAPABILITY_ADMIN_GROUPS
-A space- or comma-separated list of additional group names to grant
-administrator SYSTEM sessions during a scripted installation.
+A space- or comma-separated list of group names to grant full capability access
+during a scripted installation.
+.It Ev BSDINSTALL_CAPABILITY_MANAGE_USERS
+A space- or comma-separated list of usernames or numeric UIDs to grant
+SYSTEM service management without provider ADMIN.
+Full-access grants take precedence when an account matches both entries.
+.It Ev BSDINSTALL_CAPABILITY_COMPAT
+Set to
+.Dq no
+to omit automatic root and wheel full-access grants.
+The default for scripted installations is
+.Dq yes
+for compatibility.
+With no other grants, setting this to
+.Dq no
+creates an empty capability policy.
+Account names are resolved after the post-install script has run.
 .It Ev BSDINSTALL_CAPABILITY_POLICY_NONINTERACTIVE
 If set to
 .Dq yes
 during a scripted installation, generates the policy without prompting, even
-when neither additional-principal variable is set.
+when no grant variables are set.
 .It Ev BSDINSTALL_SKIP_FINALCONFIG
 If not empty, the
 .Cm auto
