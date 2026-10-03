@@ -43,6 +43,7 @@
 #include <capability.h>
 
 #include "switchboard.h"
+#include "management_policy.h"
 #include "switchboard_audit.h"
 #include "fd_budget.h"
 #include "switchboard_probes.h"
@@ -400,6 +401,8 @@ main(int argc, char *argv[])
 	 */
 	if (svc_responsibility_root_init() == -1)
 		syslog(LOG_NOTICE, "no system root coalition: %m");
+
+	svc_management_policy_init();
 
 	/* Override bundle directories from environment (for testing). */
 	s = getenv("SWITCHBOARD_BUNDLE_DIR_SYSTEM");

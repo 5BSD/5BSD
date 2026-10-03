@@ -6,13 +6,12 @@
  * switchboard capability control plane.
  *
  * switchboard self-serves the "system.switchboard" (control) and "system.lifecycle"
- * discovery names over the ambient plane; an admin login session's lookup
- * mints a channel whose grant carries SVC_RIGHTS_ADMIN, and switchboard adopts the
- * provider end here (sctl_adopt_channel).  Administrative commands (status,
- * reload, services, start, stop) arrive as single libchannel request/reply
- * messages and are authorized by the held ADMIN right — never a peer uid.  The
- * getpeereid(2) unix-domain control socket this file used to bind was retired
- * (docs/capability-authority-model.md).
+ * discovery names over the ambient plane. Authenticated login sessions obtain
+ * control channels carrying a BSDAuth-minted uid and anointment-derived rights.
+ * Status and inventory remain readable; service management and reload use
+ * management_policy.c, which selects legacy authorization or the opt-in
+ * attribute policy. Lifecycle requests retain their separate ADMIN check.
+ * The former getpeereid(2) UNIX-domain control socket is retired.
  */
 
 #include <sys/types.h>
@@ -42,6 +41,7 @@
 #include "capsule_ctl.h"
 #include "fd_budget.h"
 #include "management.h"
+#include "management_policy.h"
 #include "sctl_gate.h"
 #include "switchboard_probes.h"
 
@@ -316,11 +316,10 @@ sctl_cmd_tree(struct sctl_reply *reply, char *summary, size_t sumlen)
 
 /*
  * Execute a transport-neutral control operation — the fd-less ops shared by the
- * socket path and the capability control path: STATUS, SERVICES, RELOAD, START,
- * STOP.  is_admin is the caller's already-made authorization decision (the socket
- * path passes peer-euid == 0; the capability path passes SVC_RIGHTS_ADMIN held on
- * the grant); audit_uid is what the audit trail records (the socket peer euid, or
- * (uid_t)-1 for a capability caller whose authority is the held right, not a uid).
+ * capability control path: STATUS, SERVICES, RELOAD, START and STOP.
+ * is_admin records the legacy anointment-derived operator grant; audit_uid is
+ * the authenticated identity recorded on the channel, not a request payload.
+ * Attribute-policy mode evaluates that identity for each managed operation.
  * Fills reply->status and reply->flags (the summary length) and up to summary_cap
  * bytes of summary text.  PROVISION_SESSION (fd-passing) and unknown ops are the
  * caller's responsibility, not handled here.
@@ -355,7 +354,8 @@ sctl_execute_op(uint32_t op, const char *payload, uint32_t datalen,
 			break;
 		}
 		/* SCTL_OP_RELOAD */
-		if (sctl_op_requires_admin(op) && !is_admin) {
+		if (svc_management_authorize(NULL, "reload", audit_uid,
+		    is_admin) != 0) {
 			reply->status = EPERM;
 			snprintf(summary, summary_cap,
 			    "reload: permission denied");
@@ -389,13 +389,11 @@ sctl_execute_op(uint32_t op, const char *payload, uint32_t datalen,
 				reply->status = ENOENT;
 				snprintf(summary, summary_cap,
 				    "start: service \"%s\" not found", payload);
-			} else if (svc_management_check_op(svc, "started",
+			} else if (svc_management_authorize(svc, "start",
 			    audit_uid, is_admin) != 0) {
 				/*
-				 * Class gate (§5): core is refused absolutely,
-				 * system needs operator authority, a user agent
-				 * needs the owning uid or an operator.  The check
-				 * has logged the refusal.
+				 * CORE protection and USER ownership apply in both
+				 * modes; other grants follow the selected policy.
 				 */
 				reply->status = EPERM;
 				snprintf(summary, summary_cap,
@@ -451,7 +449,7 @@ sctl_execute_op(uint32_t op, const char *payload, uint32_t datalen,
 				reply->status = ENOENT;
 				snprintf(summary, summary_cap,
 				    "stop: service \"%s\" not found", payload);
-			} else if (svc_management_check_op(svc, "stopped",
+			} else if (svc_management_authorize(svc, "stop",
 			    audit_uid, is_admin) != 0) {
 				/*
 				 * Management-class gate (§5): a core unit cannot

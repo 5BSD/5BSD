@@ -1,0 +1,23 @@
+# Opt-in SYSTEM service authorization. This example is NOT installed as policy.
+# Copy to /Capabilities/Config/switchboard/management-policy.ucl, root:wheel 0644,
+# customize identities/labels, then enable switchboard_management_policy="YES"
+# in loader.conf for the next boot. See switchboard(8).
+version = 1;
+subjects = [
+    { uid = 1001; attributes = { deployment = "workstation"; subsystem = "network"; }; }
+];
+targets = [
+    { label = "system.Network/bsdnetwork";
+      attributes = { deployment = "workstation"; subsystem = "network"; }; }
+];
+rules = [
+    { id = "matching-maintenance-scope";
+      effect = "allow";
+      operations = ["start", "stop"];
+      target = { class = "system"; };
+      equal = [
+          { subject = "deployment"; target = "deployment"; },
+          { subject = "subsystem"; target = "subsystem"; }
+      ];
+    }
+];
