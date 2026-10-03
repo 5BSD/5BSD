@@ -15,6 +15,7 @@ import subprocess
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--output', type=Path, required=True)
+parser.add_argument('--filesystem', choices=['ufs', 'zfs'], default='ufs')
 parser.add_argument('--source', type=Path, default=Path('/usr/src'))
 parser.add_argument('--repository', type=Path,
                     default=Path('/usr/obj/usr/src/repo/FreeBSD:16:amd64/latest'))
@@ -61,12 +62,20 @@ accounts = (args.source / 'etc/master.passwd').read_text()
 accounts += 'policyuser:*:2001:2001::0:0:Policy test:/home/policyuser:/bin/sh\n'
 accounts += 'otheruser:*:2002:2001::0:0:Other test:/home/otheruser:/bin/sh\n'
 write('etc/master.passwd', accounts, 0o600)
+accounts += 'adminuser:*:2003:2001::0:0:Admin test:/home/adminuser:/bin/sh\n'
+accounts += 'alluser:*:2004:2001::0:0:All test:/home/alluser:/bin/sh\n'
+write('etc/master.passwd', accounts, 0o600)
+for user in ['adminuser', 'alluser']:
+    (root / 'home' / user).mkdir(parents=True, exist_ok=True)
 write('etc/group', (args.source / 'etc/group').read_text() + 'policytest:*:2001:policyuser,otheruser\n')
 subprocess.run(['pwd_mkdb', '-p', '-d', str(root / 'etc'), str(root / 'etc/master.passwd')], check=True)
 write('etc/rc.conf', 'hostname="auth-policy-vm"\nzfs_enable="YES"\nsshd_enable="NO"\nsendmail_enable="NONE"\ndevmatch_enable="NO"\n')
 write('etc/fstab', 'tmpfs /Capabilities/Run tmpfs rw,mode=0700 0 0\n')
 write('etc/sysctl.conf', 'debug.debugger_on_panic=0\n')
 write('boot/loader.conf', 'console="comconsole"\nautoboot_delay="1"\nzfs_load="YES"\nvfs.root.mountfrom="ufs:/dev/vtbd0p2"\ninit_path="/sbin/capsule"\n')
+if args.filesystem == 'zfs':
+    write('boot/loader.conf', 'console="comconsole"\nautoboot_delay="1"\nzfs_load="YES"\ninit_path="/sbin/capsule"\n')
+    write('root/policy-zfs-test', 'yes\n')
 # Test-only auto-login; QEMU is launched without networking.
 write('etc/ttys', 'ttyu0 "/usr/libexec/getty policy" vt100 on secure\n')
 with (root / 'etc/gettytab').open('a') as f:
@@ -80,47 +89,41 @@ if [ ! -f /root/policy-build-passed ]; then
 elif [ ! -f /root/policy-integration-passed ]; then
     if sh /usr/src/tools/test/management-policy/guest-test.sh; then
         touch /root/policy-integration-passed
-        sysrc -f /boot/loader.conf switchboard_management_policy=NO
+        # The file changed during the test takes effect only after reboot.
         shutdown -r now
     else
         echo POLICY_VM_FAIL
     fi
-else
-    if sh /usr/src/tools/test/management-policy/legacy-test.sh; then
+elif [ -f /root/policy-rollback-test ]; then
+    if sh /usr/src/tools/test/management-policy/rollback-test.sh; then
         echo POLICY_GUEST_COMPLETE
+    else
+        echo POLICY_VM_FAIL
+    fi
+else
+    if sh /usr/src/tools/test/management-policy/next-boot-test.sh; then
+        if [ -f /root/policy-zfs-test ]; then
+            sh /usr/src/tools/test/management-policy/prepare-rollback.sh || echo POLICY_VM_FAIL
+        else
+            echo POLICY_GUEST_COMPLETE
+        fi
     else
         echo POLICY_VM_FAIL
     fi
 fi
 ''')
-# Root remains the explicit compatibility principal. Test users receive no admin
-# anointment and share a UNIX group; only their assigned attributes differ.
+# Root has an explicit all grant. Test users share a UNIX group but receive
+# independent endpoint and management anointments.
 write('Capabilities/Config/principal-policy.ucl', '''principals {
     admin { uids=[0]; anointments=["*"]; admin_rights=true; }
     user { uids=[2001]; anointments=["system.trace.client"];
            may_elevate=["system.notify.system"]; admin_rights=false; }
+    adminonly { uids=[2003]; anointments=[]; admin_rights=true; }
+    alluser { uids=[2004]; anointments=["*"]; admin_rights=true; }
+    operator { uids=[2002]; anointments=["system.switchboard.admin"]; admin_rights=false; }
     default { anointments=[]; }
 }
 ''')
-policy = '''version=1;
-subjects=[
- {uid=2001;attributes={deployment=lab;subsystem=network;};},
- {uid=2002;attributes={deployment=other;subsystem=network;};}
-];
-targets=[
- {label="test.policy.network/worker";attributes={deployment=lab;subsystem=network;};},
- {label="test.policy.storage/worker";attributes={deployment=lab;subsystem=storage;};}
-];
-rules=[
- {id=maintenance;effect=allow;operations=[start,stop];target={class=system;};
-  equal=[{subject=deployment;target=deployment;},{subject=subsystem;target=subsystem;}];},
- {id=root-revocation-fixture;effect=allow;operations=[start,stop];subject={uid="0";};
-  target={label="test.policy.network/worker";};},
- {id=core-cannot-be-overridden;effect=allow;operations=[start,stop];target={class=core;};}
-];
-'''
-write('Capabilities/Config/switchboard/management-policy.ucl', policy)
-write('root/policy.allow', policy)
 for user in ['policyuser', 'otheruser']:
     write('home/' + user + '/.profile', """if [ "${POLICY_TEST_LOGIN:-}" = 1 ]; then
     /bin/sh /usr/src/tools/test/management-policy/session-test.sh
@@ -169,6 +172,10 @@ with (work / 'METALOG').open('w') as f:
             mode = 0o700
         if rel.startswith('home/policyuser'):
             uid = gid = 2001
+        if rel.startswith('home/adminuser'):
+            uid, gid = 2003, 2001
+        if rel.startswith('home/alluser'):
+            uid, gid = 2004, 2001
         if rel.startswith('home/otheruser'):
             uid, gid = 2002, 2001
         line = f'./{escape(rel)} uid={uid} gid={gid} mode={mode:o}'
@@ -178,11 +185,25 @@ with (work / 'METALOG').open('w') as f:
             f.write(line + ' type=dir\n')
         elif p.is_file():
             f.write(line + ' type=file\n')
-subprocess.run(['makefs', '-t', 'ffs', '-B', 'little', '-s', '16g',
-                '-o', 'version=2', '-F', str(work / 'METALOG'),
-                str(work / 'root.ufs'), str(root)], check=True)
+if args.filesystem == 'zfs':
+    filesystem = work / 'root.zfs'
+    subprocess.run(['makefs', '-t', 'zfs', '-s', '24g', '-F', str(work / 'METALOG'),
+                    '-o', 'poolname=policyvm,rootpath=/,bootfs=policyvm/ROOT/default',
+                    '-o', 'fs=policyvm;mountpoint=none;canmount=off',
+                    '-o', 'fs=policyvm/ROOT;mountpoint=none;canmount=off',
+                    '-o', 'fs=policyvm/ROOT/default;mountpoint=/;canmount=noauto',
+                    str(filesystem), str(root)], check=True)
+    boot = 'gptzfsboot'
+    partition = 'freebsd-zfs'
+else:
+    filesystem = work / 'root.ufs'
+    subprocess.run(['makefs', '-t', 'ffs', '-B', 'little', '-s', '16g',
+                    '-o', 'version=2', '-F', str(work / 'METALOG'),
+                    str(filesystem), str(root)], check=True)
+    boot = 'gptboot'
+    partition = 'freebsd-ufs'
 subprocess.run(['mkimg', '-s', 'gpt', '-f', 'raw', '-b', str(root / 'boot/pmbr'),
-                '-p', 'freebsd-boot:=' + str(root / 'boot/gptboot'),
-                '-p', 'freebsd-ufs:=' + str(work / 'root.ufs'),
+                '-p', 'freebsd-boot:=' + str(root / 'boot' / boot),
+                '-p', partition + ':=' + str(filesystem),
                 '-o', str(work / 'guest.img')], check=True)
 print('VM image ready:', work / 'guest.img', flush=True)

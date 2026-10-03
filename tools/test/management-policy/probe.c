@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
-/* Guest-only control probe; "revoke" replaces the disposable guest's policy. */
+/* Guest-only endpoint, authentication and control probe. */
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <err.h>
@@ -44,13 +44,22 @@ int
 main(int argc, char **argv)
 {
 	struct service_session *session;
-	const char *deny = "version=1;subjects=[];targets=[];rules=[];\n";
-	const char *temp = "/Capabilities/Config/switchboard/management-policy.next";
 	int fd, status, expected;
 	unsigned op, attempt;
 
 	if (argc != 4)
-		errx(1, "usage: probe start|stop|reload|revoke|open label expected-status");
+		errx(1, "usage: probe start|stop|reload|open|mint label expected-status");
+	if (strcmp(argv[1], "mint") == 0) {
+		fd = -1;
+		status = service_mint_session_via_agent(service_ambient_lookup_fd(),
+		    (uid_t)strtoul(argv[2], NULL, 10), 0, 10000, &fd);
+		status = status == 0 ? 0 : errno;
+		if (fd >= 0) close(fd);
+		if (status != atoi(argv[3]))
+			errx(1, "mint status %d expected %s", status, argv[3]);
+		puts("SESSION_MINT_BOUNDARY_PASS");
+		return (0);
+	}
 	if (strcmp(argv[1], "open") == 0) {
 		if (service_ambient_lookup_fd() < 0)
 			errx(1, "missing ambient session channel");
@@ -78,16 +87,7 @@ main(int argc, char **argv)
 	}
 	if (status != expected)
 		errx(1, "%s %s: status %d expected %d", argv[1], argv[2], status, expected);
-	if (strcmp(argv[1], "revoke") == 0) {
-		fd = open(temp, O_WRONLY | O_CREAT | O_EXCL, 0644);
-		if (fd < 0 || write(fd, deny, strlen(deny)) != (ssize_t)strlen(deny) ||
-		    close(fd) != 0 || rename(temp,
-		    "/Capabilities/Config/switchboard/management-policy.ucl") != 0)
-			err(1, "publish deny policy");
-		status = request(session, SCTL_OP_START_SVC, argv[2]);
-		if (status != EPERM)
-			errx(1, "retained channel survived revocation: %d", status);
-	}
+
 	service_session_close(session);
 	printf("POLICY_PROBE uid=%u op=%s target=%s PASS\n", getuid(), argv[1], argv[2]);
 	return (0);

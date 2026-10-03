@@ -3,10 +3,10 @@
 set -eu
 [ "$(hostname)" = auth-policy-vm ] || exit 1
 exec > /root/ssh-tests.log 2>&1
-trap 'result=$?; trap - EXIT; [ ! -f /var/run/sshd-policy.pid ] || kill "$(cat /var/run/sshd-policy.pid)"; cat /root/ssh-tests.log > /dev/console; exit "$result"' EXIT
+trap 'result=$?; trap - EXIT; [ ! -f /var/run/sshd-policy.pid ] || kill "$(cat /var/run/sshd-policy.pid)"; for log in /root/concurrent-user.log /root/concurrent-other.log; do [ ! -f "$log" ] || cat "$log" >> /root/ssh-tests.log; done; cat /root/ssh-tests.log > /dev/console; exit "$result"' EXIT
 ssh-keygen -q -t ed25519 -N '' -f /root/policy-client-key
 ssh-keygen -q -t ed25519 -N '' -f /root/policy-host-key
-for user in policyuser otheruser; do
+for user in policyuser otheruser adminuser alluser; do
     install -d -m 0700 -o "$user" -g policytest "/home/$user/.ssh"
     install -m 0600 -o "$user" -g policytest /root/policy-client-key.pub "/home/$user/.ssh/authorized_keys"
 done
@@ -20,7 +20,7 @@ PasswordAuthentication yes
 KbdInteractiveAuthentication no
 PubkeyAuthentication yes
 UsePAM yes
-AllowUsers policyuser otheruser
+AllowUsers policyuser otheruser adminuser alluser
 AllowTcpForwarding no
 X11Forwarding no
 Subsystem sftp internal-sftp
@@ -46,6 +46,14 @@ for user in policyuser otheruser; do
     timeout 120 ssh -F /root/ssh-client.conf -o BatchMode=yes "$user@policy-vm" \
         'sh /usr/src/tools/test/management-policy/session-test.sh'
 done
+# ADMIN-only authority must not permit arbitrary session minting.
+timeout 60 ssh -F /root/ssh-client.conf -o BatchMode=yes adminuser@policy-vm \
+    'set -e; /usr/bin/policy-probe mint 0 1; /usr/bin/policy-probe open system.Trace 2; /usr/bin/policy-probe stop test.policy.network/worker 1'
+# A deliberately all-granted non-root user retains its actual session identity.
+timeout 60 ssh -F /root/ssh-client.conf -o BatchMode=yes alluser@policy-vm \
+    'test "$(id -u)" = 2004 && switchboardctl tree' > /root/all-user-tree.log
+grep -q 'session uid=2004' /root/all-user-tree.log
+echo ALL_GRANT_IDENTITY_PASS
 echo SSH_KEY_SESSIONS_PASS
 # Password authentication over SSH exercises PAM as well as session minting.
 timeout 120 policy-askpass policy-vm-only ssh -F /root/ssh-client.conf \
@@ -87,7 +95,7 @@ timeout 60 ssh -F /root/ssh-client.conf -o BatchMode=yes policyuser@policy-vm \
     'set -e; for n in 1 2 3; do /usr/bin/policy-probe open system.Trace 0; /usr/bin/policy-probe stop test.policy.storage/worker 1; done' > /root/concurrent-user.log 2>&1 &
 first=$!
 timeout 60 ssh -F /root/ssh-client.conf -o BatchMode=yes otheruser@policy-vm \
-    'set -e; for n in 1 2 3; do /usr/bin/policy-probe open system.Trace 2; /usr/bin/policy-probe stop test.policy.network/worker 1; done' > /root/concurrent-other.log 2>&1 &
+    'set -e; for n in 1 2 3; do /usr/bin/policy-probe open system.Trace 2; /usr/bin/policy-probe open system.Notify 0; done' > /root/concurrent-other.log 2>&1 &
 second=$!
 wait "$first"
 wait "$second"
