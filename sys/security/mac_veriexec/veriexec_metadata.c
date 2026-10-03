@@ -465,28 +465,19 @@ mac_veriexec_metadata_get_file_flags(dev_t fsid, long fileid, unsigned long gen,
  *     error code
  */
 int
-mac_veriexec_metadata_get_executable_flags(struct ucred *cred, struct proc *p,
-    int *flags, int check_files)
+mac_veriexec_metadata_get_executable_flags(struct ucred *cred __unused,
+    struct proc *p, int *flags, int check_files)
 {
-	struct vnode *proc_vn;
 	struct vattr vap;
 	int error;
 
-	/* Get the text vnode for the process */
-	proc_vn = p->p_textvp;
-	if (proc_vn == NULL)
-		return EINVAL;
-
-	/* Get vnode attributes */
-	error = VOP_GETATTR(proc_vn, &vap, cred);
-	if (error)
-		return error;
-
-	error = mac_veriexec_metadata_get_file_flags(vap.va_fsid,
+	/* Process/privilege hooks cannot take vnode locks or sleep in getattr. */
+	error = mac_veriexec_get_executable_identity(p, &vap);
+	if (error != 0)
+		return (error);
+	return (mac_veriexec_metadata_get_file_flags(vap.va_fsid,
 	    vap.va_fileid, vap.va_gen, flags,
-	    (check_files == VERIEXEC_FILES_FIRST));
-
-	return (error);
+	    check_files == VERIEXEC_FILES_FIRST));
 }
 
 /**

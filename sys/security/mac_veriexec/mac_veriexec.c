@@ -42,6 +42,7 @@
 #include <sys/jail.h>
 #include <sys/kernel.h>
 #include <sys/mac.h>
+#include <sys/malloc.h>
 #include <sys/mount.h>
 #include <sys/namei.h>
 #include <sys/priv.h>
@@ -107,6 +108,85 @@ SYSCTL_INT(_security_mac_veriexec, OID_AUTO, block_unlink, CTLFLAG_RDTUN,
     &mac_veriexec_block_unlink, 0, "Veriexec unlink protection");
 
 MALLOC_DEFINE(M_VERIEXEC, "veriexec", "Verified execution data");
+
+/*
+ * Executable identity is immutable credential state, captured at successful
+ * exec and copied on fork/credential changes.  Process and privilege hooks
+ * hold process mutexes and must not issue sleeping vnode operations.  Keep the
+ * identity, not the policy flags: enrollment after exec must remain visible.
+ */
+struct veriexec_exec_identity {
+	dev_t fsid;
+	ino_t fileid;
+	u_long gen;
+	bool valid;
+};
+
+#define EXEC_ID(label) ((struct veriexec_exec_identity *)SLOT(label))
+
+static void
+mac_veriexec_cred_init_label(struct label *label)
+{
+
+	SLOT_SET(label, (uintptr_t)malloc(sizeof(struct veriexec_exec_identity),
+	    M_VERIEXEC, M_WAITOK | M_ZERO));
+}
+
+static void
+mac_veriexec_cred_destroy_label(struct label *label)
+{
+
+	free(EXEC_ID(label), M_VERIEXEC);
+	SLOT_SET(label, 0);
+}
+
+static void
+mac_veriexec_cred_copy_label(struct label *src, struct label *dest)
+{
+
+	*EXEC_ID(dest) = *EXEC_ID(src);
+}
+
+static int
+mac_veriexec_execve_will_relabel(struct ucred *old __unused,
+    struct vnode *vp __unused, struct label *vplabel __unused,
+    struct label *interpvplabel __unused, struct image_params *imgp __unused,
+    struct label *execlabel __unused)
+{
+
+	return (1);
+}
+
+static void
+mac_veriexec_execve_relabel(struct ucred *old __unused, struct ucred *new,
+    struct vnode *vp __unused, struct label *vplabel __unused,
+    struct label *interpvplabel __unused, struct image_params *imgp,
+    struct label *execlabel __unused)
+{
+	struct veriexec_exec_identity *id;
+
+	id = EXEC_ID(new->cr_label);
+	id->fsid = imgp->attr->va_fsid;
+	id->fileid = imgp->attr->va_fileid;
+	id->gen = imgp->attr->va_gen;
+	id->valid = true;
+}
+
+/* Caller holds the process lock; no vnode locks or filesystem I/O here. */
+int
+mac_veriexec_get_executable_identity(struct proc *p, struct vattr *vap)
+{
+	const struct veriexec_exec_identity *id;
+
+	PROC_LOCK_ASSERT(p, MA_OWNED);
+	id = EXEC_ID(p->p_ucred->cr_label);
+	if (p->p_textvp == NULL || !id->valid)
+		return (EINVAL);
+	vap->va_fsid = id->fsid;
+	vap->va_fileid = id->fileid;
+	vap->va_gen = id->gen;
+	return (0);
+}
 
 /**
  * @internal
@@ -853,10 +933,9 @@ mac_veriexec_syscall(struct thread *td, int call, void *arg)
 	struct mac_veriexec_file_info *ip;
 	struct proc *proc;
 	struct vnode *textvp;
-	int error, flags, proc_locked;
+	int error, flags;
 
 	nd.ni_vp = NULL;
-	proc_locked = 0;
 	textvp = NULL;
 	switch (call) {
 	case MAC_VERIEXEC_GET_PARAMS_PID_SYSCALL:
@@ -946,32 +1025,33 @@ cleanup_file:
 	case MAC_VERIEXEC_GET_PARAMS_PID_SYSCALL:
 		if (pargs.u.pid == 0 || pargs.u.pid == curproc->p_pid) {
 			proc = curproc;
+			PROC_LOCK(proc);
 		} else {
 			proc = pfind(pargs.u.pid);
 			if (proc == NULL)
 				return (EINVAL);
-			proc_locked = 1;
 		}
+		error = mac_veriexec_get_executable_identity(proc, &va);
+		/* Retain the executable while consulting its filesystem metadata. */
 		textvp = proc->p_textvp;
-		/* FALLTHROUGH */
-	case MAC_VERIEXEC_GET_PARAMS_PATH_SYSCALL:
-		if (textvp == NULL) {
-			/* Look up the path to get the vnode */
-			NDINIT(&nd, LOOKUP, FOLLOW | LOCKLEAF | AUDITVNODE1,
-			    UIO_USERSPACE, pargs.u.filename);
-			flags = FREAD;
-			error = vn_open(&nd, &flags, 0, NULL);
-			if (error != 0)
-				break;
-
-			NDFREE_PNBUF(&nd);
-			textvp = nd.ni_vp;
-		}
-		error = VOP_GETATTR(textvp, &va, curproc->p_ucred);
-		if (proc_locked)
-			PROC_UNLOCK(proc);
+		if (textvp != NULL)
+			vref(textvp);
+		PROC_UNLOCK(proc);
 		if (error != 0)
 			break;
+		goto lookup_metadata;
+	case MAC_VERIEXEC_GET_PARAMS_PATH_SYSCALL:
+		NDINIT(&nd, LOOKUP, FOLLOW | LOCKLEAF | AUDITVNODE1,
+		    UIO_USERSPACE, pargs.u.filename);
+		flags = FREAD;
+		error = vn_open(&nd, &flags, 0, NULL);
+		if (error != 0)
+			break;
+		NDFREE_PNBUF(&nd);
+		error = VOP_GETATTR(nd.ni_vp, &va, curproc->p_ucred);
+		if (error != 0)
+			break;
+lookup_metadata:
 
 		error = mac_veriexec_metadata_get_file_info(va.va_fsid,
 		    va.va_fileid, va.va_gen, NULL, &ip, FALSE);
@@ -1010,6 +1090,8 @@ cleanup_file:
 	default:
 		error = EOPNOTSUPP;
 	}
+	if (textvp != NULL)
+		vrele(textvp);
 	if (nd.ni_vp != NULL) {
 		VOP_UNLOCK(nd.ni_vp);
 		vn_close(nd.ni_vp, FREAD, td->td_ucred, td);
@@ -1019,6 +1101,11 @@ cleanup_file:
 
 static struct mac_policy_ops mac_veriexec_ops =
 {
+	.mpo_cred_init_label = mac_veriexec_cred_init_label,
+	.mpo_cred_destroy_label = mac_veriexec_cred_destroy_label,
+	.mpo_cred_copy_label = mac_veriexec_cred_copy_label,
+	.mpo_vnode_execve_will_relabel = mac_veriexec_execve_will_relabel,
+	.mpo_vnode_execve_relabel = mac_veriexec_execve_relabel,
 	.mpo_init = mac_veriexec_init,
 	.mpo_kld_check_load = mac_veriexec_kld_check_load,
 	.mpo_mount_destroy_label = mac_veriexec_mount_destroy_label,

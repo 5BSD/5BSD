@@ -72,6 +72,7 @@ struct ucred;
 struct vattr;
 struct vnode;
 
+int	mac_veriexec_get_executable_identity(struct proc *p, struct vattr *vap);
 int	mac_veriexec_metadata_fetch_fingerprint_status(struct vnode *vp,
 	    struct vattr *vap, struct thread *td, int check_files);
 int	mac_veriexec_metadata_get_executable_flags(struct ucred *cred,
