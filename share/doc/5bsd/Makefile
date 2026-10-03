@@ -89,6 +89,7 @@ BOOK_PLANE=	${BOOKSRC}/plane/anointments.md \
 		${BOOKSRC}/plane/discovery-and-lookup.md \
 		${BOOKSRC}/plane/logging-audit-trace.md \
 		${BOOKSRC}/plane/management-model.md \
+		${BOOKSRC}/plane/management-policy.md \
 		${BOOKSRC}/plane/switchboard.md
 BOOK_PLANEDIR=	${BOOKDEST}/plane
 

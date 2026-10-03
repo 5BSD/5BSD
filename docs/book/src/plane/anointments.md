@@ -360,3 +360,9 @@ switchboardctl(8), libcapbundle(3), libservice(3). Design:
 Model](../capability/authority-model.md), [The Management
 Model](management-model.md), [system.Notify](../providers/notify.md),
 [system.Auth](../providers/auth.md).
+
+## Scoped management policy
+
+For opt-in attribute rules governing SYSTEM service start/stop and global
+reload, see [Attribute policy for service management](management-policy.md).
+It preserves ordinary UNIX execution and does not change login grants.

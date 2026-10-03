@@ -29,6 +29,7 @@
 - [Discovery and the Lookup Channel](plane/discovery-and-lookup.md)
 - [Containers and Storage](plane/containers-and-storage.md)
 - [Anointments and Principal Policy](plane/anointments.md)
+- [Attribute Management Policy](plane/management-policy.md)
 - [The Management Model](plane/management-model.md)
 - [Logging, Audit and Trace](plane/logging-audit-trace.md)
 

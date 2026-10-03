@@ -940,6 +940,33 @@ Error occurred in subsystem.
 .It Li capsule-disconnected()
 Capsule channel closed unexpectedly.
 .El
+.Sh ATTRIBUTE MANAGEMENT POLICY
+The optional boot variable
+.Va switchboard_management_policy
+selects attribute authorization for service start/stop and global reload.
+Absent or explicitly
+.Dq NO
+retains existing operator authorization.
+Other configured values require a valid root-owned, non-group/world-writable
+.Pa /Capabilities/Config/switchboard/management-policy.ucl .
+A missing or invalid policy denies those operations, including for uid 0
+and holders of the administrative anointment.
+.Pp
+Rules match the authenticated session identity and the resolved service,
+with exact attribute matches and subject/target equality constraints.
+Matching deny rules take precedence; otherwise a matching allow is required.
+Each operation reads a complete policy snapshot, including operations on
+already-open control connections.
+Publish changes by atomic rename.
+.Pp
+CORE management remains prohibited and users retain control of their own
+USER agents.
+This policy does not change UNIX execution or file permissions, internal
+supervision, login grants, or authorization at other endpoints.
+The example is installed in
+.Pa /usr/share/examples/switchboard/management-policy.ucl .
+The complete format and scope are documented in
+.Pa /usr/share/doc/5bsd/plane/management-policy.md .
 .Sh FILES
 .Bl -tag -width "/Capabilities/System/"
 .It Pa /Capabilities/System/
