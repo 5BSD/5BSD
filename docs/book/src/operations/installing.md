@@ -143,7 +143,7 @@ The env vars bsdinstall(8) documents for the new steps:
 
 | Variable | Effect |
 |---|---|
-| `BSDINSTALL_PKG_REPOS_DIR` | Directory of pkg repository files for the `pkgbase` step; unset, the template `/usr/share/bsdinstall/5BSD-base.conf` is used, which is disabled until a local repository exists |
+| `BSDINSTALL_PKG_REPOS_DIR` | Directory of pkg repository files for the `pkgbase` step; unset, the template `/usr/share/bsdinstall/5BSD-base.conf` is used, which points at the standard local build repository; the installer explicitly selects `5BSD-base`, even with its disabled default |
 | `BSDINSTALL_SKIP_CAPABILITY_POLICY` | `auto` skips the interactive `capabilitypolicy` dialog |
 | `BSDINSTALL_CAPABILITY_ADMIN_USERS` | Extra users or uids, space or comma separated |
 | `BSDINSTALL_CAPABILITY_ADMIN_GROUPS` | Extra groups |

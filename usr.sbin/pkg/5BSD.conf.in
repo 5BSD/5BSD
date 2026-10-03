@@ -1,11 +1,13 @@
-# 5BSD base updates currently come from locally built packages on disk.
-# There is no public 5BSD package service.  Third-party applications use
-# the FreeBSD-ports repositories configured in FreeBSD.conf.
-#
-# After building and cataloguing packages, enable a local repository in
-# /usr/local/etc/pkg/repos/5BSD.conf.  See docs/book/src/operations/upgrading.md and
-# docs/pkg/5BSD.conf.sample in the source tree.  Keep this entry disabled
-# until its URL points to an existing repository.
+# Local 5BSD base packages; there is no public 5BSD package service.
+# A standard build from /usr/src publishes make packages output at this URL.
+# No override is needed: select this repository explicitly with
+#   pkg update -f -r 5BSD-base
+#   pkg upgrade -r 5BSD-base
+# Explicit -r selection works even with enabled: no. Keeping the default
+# disabled avoids probing an absent build tree during ordinary ports updates.
+# Custom locations may override this entry in /usr/local/etc/pkg/repos/5BSD.conf.
+# See /usr/share/doc/5bsd/operations/upgrading.md for the complete workflow,
+# including boot environments and matching hardware packages.
 5BSD-base: {
   url: "file:///usr/obj/usr/src/repo/${ABI}/latest",
   enabled: no

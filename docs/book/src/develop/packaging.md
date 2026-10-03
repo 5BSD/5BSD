@@ -239,56 +239,35 @@ moved from `System/` to `Apps/` with no reload) and `upgradeflow.sh` (same
 
 ## The local repository loop
 
-There is no remote base repository; `usr.sbin/pkg/5BSD.conf.in` ships the
-`5BSD-base` entry disabled with a comment saying so. The loop from
-`docs/book/src/operations/upgrading.md` is:
+The shipped `5BSD-base` entry already points at a standard `/usr/src`
+build's repository under `/usr/obj/usr/src/repo/${ABI}/latest`. Explicit
+`-r 5BSD-base` works with its disabled default; no override file is required.
 
 ```sh
 cd /usr/src
-make -j$(sysctl -n hw.ncpu) buildworld buildkernel packages \
-    PKG_CMD=/usr/local/sbin/pkg-static
-pkg repo /usr/obj/usr/src/repo/${ABI}/<version>
-ln -snf <version> /usr/obj/usr/src/repo/${ABI}/latest
-```
-
-`buildkernel` is part of the same invocation because `create-world-packages`
-reads the kernel stage's METALOG for module packaging; `PKG_CMD` names the
-static pkg because the dynamic ports pkg can predate the freshly built libc.
-The repository is `${REPODIR}/${PKG_ABI}/${PKG_VERSION}`, with `REPODIR`
-defaulting to `${OBJROOT}repo`. The ABI stays `FreeBSD:16:amd64`: uname's
-type is `FreeBSD` for ports compatibility while `BRAND` is `5BSD`.
-
-On the consuming machine, `docs/pkg/5BSD.conf.sample` becomes
-`/usr/local/etc/pkg/repos/5BSD.conf`, disabling the template entry and
-pointing at the tree:
-
-```
-5BSD-base: { enabled: no }
-
-5BSD: {
-  url: "file:///usr/obj/usr/src/repo/${ABI}/latest",
-  enabled: yes,
-  priority: 100
-}
-```
-
-and `FreeBSD-base` is disabled in `FreeBSD.conf` so a `pkg upgrade` can
-never replace 5BSD packages with upstream ones. Then, under a boot
-environment:
-
-```sh
+make -j$(sysctl -n hw.ncpu) buildworld buildkernel
+make packages PKG_CMD=/usr/local/sbin/pkg-static
 bectl create pre-upgrade
-pkg update -f -r 5BSD
-pkg upgrade -r 5BSD
+pkg update -f -r 5BSD-base
+pkg upgrade -n -r 5BSD-base
+pkg upgrade -r 5BSD-base
 reboot
 ```
 
-A first migration from FreeBSD pkgbase is
-`pkg install -r 5BSD 5BSD-set-base 5BSD-kernel-generic` after
-`pkg delete -fa`; rollback is `bectl activate` of the saved environment.
-Third-party software keeps coming from the FreeBSD ports repositories
-(`pkg upgrade -r FreeBSD-ports`). For a single bundle, `pkg install -r 5BSD 5BSD-<name>`
-is the whole deployment: the watch does the rest.
+`make packages` creates the catalogue and updates `latest`. The repository
+is `${REPODIR}/${PKG_ABI}/${PKG_VERSION}`, with `REPODIR` defaulting to
+`${OBJROOT}repo`. Set `REPODIR=/usr/obj/usr/src/repo` when publishing a build
+whose objects live elsewhere, or use the optional repository override
+sample for a custom URL. The ABI remains `FreeBSD:16:amd64` on amd64 for
+ports compatibility. Keep upstream base and kernel-module repositories
+disabled.
+
+The complete procedure, including matching hardware packages, boot
+environments and FreeBSD-to-5BSD migration, is in
+[Upgrading](../operations/upgrading.md). Applications upgrade separately
+with `pkg upgrade -r FreeBSD-ports`. For a single bundle,
+`pkg install -r 5BSD-base 5BSD-<name>` deploys it; the registry watch handles
+the lifecycle change.
 
 ## Versioning
 

@@ -21,12 +21,13 @@ FreeBSD kernel or libc beside the 5BSD one. There is no kernel without the
 plane compiled in, no `capability` identity in a foreign `master.passwd`,
 and no `/Capabilities` in a foreign runtime package. Disabling
 `FreeBSD-base` is therefore the first step everywhere below;
-`FreeBSD-ports` and `FreeBSD-ports-kmods` stay enabled.
+`FreeBSD-ports` stays enabled. Keep `FreeBSD-ports-kmods` disabled;
+kernel-bound drivers come from the matching `5BSD-hardware` repository.
 
-## Repository configuration
+## The standard repository needs no configuration
 
-`/etc/pkg/5BSD.conf` (from `usr.sbin/pkg/5BSD.conf.in`) ships with the base
-entry disabled:
+`/etc/pkg/5BSD.conf`, shipped by `usr.sbin/pkg/5BSD.conf.in`, already names
+the repository produced by a standard build from `/usr/src`:
 
 ```
 5BSD-base: {
@@ -35,39 +36,42 @@ entry disabled:
 }
 ```
 
-Leave it alone. Configuration goes in `/usr/local/etc/pkg/repos/`, and the
-tree ships both files you need as `docs/pkg/5BSD.conf.sample` and
-`docs/pkg/FreeBSD.conf.sample`:
+`pkg update -r 5BSD-base` and `pkg upgrade -r 5BSD-base` explicitly select
+this entry even when `enabled` is `no`. No new repository file or enable
+step is required. The disabled default keeps ordinary ports operations
+from trying to read a build repository before one exists. The path does not
+scan `/usr/obj`: it must contain the catalogue and package archives under
+`repo/${ABI}/latest` (`${ABI}` is `FreeBSD:16:amd64` on amd64).
 
-```sh
-mkdir -p /usr/local/etc/pkg/repos
-cat > /usr/local/etc/pkg/repos/FreeBSD.conf <<'EOF'
-FreeBSD-base: { enabled: no }
-EOF
-cat > /usr/local/etc/pkg/repos/5BSD.conf <<'EOF'
-5BSD-base: { enabled: no }
+These defaults are included in world and release images. The installer uses
+its separate offline repository on installation media when present. A new
+installation does not thereby acquire future updates or a populated build
+tree: build or publish a repository at the standard path before upgrading.
+The native book is installed under `/usr/share/doc/5bsd`, including this
+chapter and [Building](building.md).
 
-5BSD: {
-  url: "file:///usr/obj/usr/src/repo/${ABI}/latest",
-  enabled: yes,
-  priority: 100
-}
-EOF
-```
+### Custom paths and existing overrides
 
-Adjust the `url` to your object tree (`${ABI}` expands to
-`FreeBSD:16:amd64`). The `5BSD-base: { enabled: no }` line overrides the
-remote entry that some older installations carried and stops the DNS lookups
-for `pkg.5bsd.org` they produced. `priority: 100` makes the local packages
-win any tie. `pkg -vv` prints the effective repository set; confirm that
-`5BSD` is enabled, `5BSD-base` and `FreeBSD-base` are not, and the ports
-repositories are.
+Only a nonstandard location or repository name needs configuration.
+`MAKEOBJDIRPREFIX`, a different source path, or `REPODIR` can change where
+packages land. Check `pkg -vv` against the actual output path. You may keep
+objects elsewhere and publish with `make packages REPODIR=/usr/obj/usr/src/repo`
+(using the same object prefix as the build); this retains the standard URL.
+Publishing there requires write access to that directory.
 
-If the build host and the target are different machines, copy the whole
-`repo/${ABI}/<version>` directory (catalogue files and the package files
-they reference, paths preserved) somewhere persistent on the target and
-point the `url` there. Regenerate the catalogue with `pkg repo <dir>` after
-every publish.
+For a different URL, copy `docs/pkg/5BSD.conf.sample` to
+`/usr/local/etc/pkg/repos/5BSD.conf` and adjust it. Keep the name `5BSD-base`
+so the commands below stay the same. The sample enables unqualified updates
+as an optional choice; explicit `-r` commands do not need it. Keep
+`FreeBSD-base` and `FreeBSD-ports-kmods` disabled, as the shipped defaults do.
+Older overrides can replace the shipped URL, so inspect the effective
+configuration before relying on the default.
+
+If publishing to another machine, copy the complete version directory,
+including catalogue files and the archives they reference, then update
+`latest` after the copy succeeds. A complete existing repository can be
+published at the standard path without recompiling world or the kernel.
+If package contents change, regenerate the catalogue with `pkg repo`.
 
 ## The 5BSD-to-5BSD loop
 
@@ -83,16 +87,45 @@ the directory and move the symlink yourself. Then, on the target:
 
 ```sh
 bectl create pre-upgrade
-pkg update -f -r 5BSD
-pkg upgrade -r 5BSD
+pkg update -f -r 5BSD-base
+pkg upgrade -n -r 5BSD-base
+pkg upgrade -r 5BSD-base
 reboot
 ```
 
-A `bectl` checkpoint costs nothing on ZFS and is the rollback path: the
-whole base generation, `/Capabilities/System` bundles included, lives in
-the boot environment, and `/Capabilities/Run` is tmpfs so no stale launch
-state crosses the reboot. `/usr/local`, `/home` and `/var` are separate
-datasets and are not rolled back.
+With the default ZFS layout, the root boot environment contains the base
+system, `/Capabilities/System`, and `/var/db/pkg`. The parent `zroot/var`
+has `canmount=off`; its existence does not mean all of `/var` is shared.
+Only `/var/audit`, `/var/crash`, `/var/log`, `/var/mail`, and `/var/tmp` are
+separate shared datasets under `/var`. `/usr/local` and home are shared too.
+`/Capabilities/Run` is transient. `bectl create` therefore preserves the
+package database with base; do not restore it separately after BE rollback.
+Check `df /var/db/pkg` and `zfs list -o name,mountpoint,canmount,mounted` for
+custom layouts. A BE does not roll back ports files in shared `/usr/local`.
+
+### Include matching hardware when replacing the kernel
+
+The base build packages in-tree kernel modules. External drivers such as
+DRM require a matching hardware collection built against the new kernel.
+Publish that collection at the shipped hardware URL,
+`/usr/5bsd-packages/hardware`, or configure its actual location. Use the
+release hardware tooling to stage the kernel identity dependency into the
+base repository; see [Packaging](../develop/packaging.md).
+Upgrade base and hardware in one transaction, after creating the BE:
+
+```sh
+pkg update -f -r 5BSD-base -r 5BSD-hardware
+pkg upgrade -n -r 5BSD-base -r 5BSD-hardware
+pkg upgrade -r 5BSD-base -r 5BSD-hardware
+reboot
+```
+
+A hash-named old hardware identity may be replaced by the new identity.
+Review the final plan for matching kernel/driver versions and unexpected
+application removals. Do not use upstream FreeBSD kernel modules as a
+substitute. An automated upgrade wrapper can perform these same steps,
+but `make packages` publishes artifacts; it does not upgrade or reboot the
+running host.
 
 The reboot is not optional after a kernel or switchboard upgrade. The
 kernel package replaces `/boot/kernel`, and switchboard, capsule and the
@@ -112,7 +145,7 @@ Verify after the reboot:
 ```sh
 uname -i                      # GENERIC
 pkg info 5BSD-kernel-generic  # the version you built
-pkg query '%n' | grep -vc '^5BSD-'   # 0 base packages from anywhere else
+pkg query '%n' | grep '^FreeBSD-'   # investigate any upstream base packages
 ps -p 1 -o comm=              # capsule
 switchboardctl services
 ```
@@ -131,14 +164,15 @@ pkg upgrade -r FreeBSD-ports codex     # one package and its dependencies
 A FreeBSD 16-CURRENT pkgbase system can be converted in one operation. The
 package names differ (`FreeBSD-*` to `5BSD-*`), so `pkg upgrade` cannot do
 it; the base set is deleted and reinstalled from the 5BSD repository inside
-one boot environment. Build the repository and configure the repositories as
-above (the `FreeBSD.conf` override is essential here), then:
+one boot environment. Build the repository, install the repository sample
+as a `5BSD-base` entry on the FreeBSD host, and disable `FreeBSD-base`
+with `docs/pkg/FreeBSD.conf.sample`, then:
 
 ```sh
 bectl create pre-5bsd-migration
-pkg update
+pkg update -f -r 5BSD-base
 pkg delete -fa
-pkg install -r 5BSD 5BSD-set-base 5BSD-kernel-generic
+pkg install -r 5BSD-base 5BSD-set-base 5BSD-kernel-generic
 reboot
 ```
 
@@ -161,24 +195,16 @@ compiled in, so there is no `mac_capability.ko` to look for in `kldstat`;
 `kldstat -m mac_capability` still reports it because static modules register
 too. Roll back with `bectl activate pre-5bsd-migration && reboot`.
 
-## Older installations with a remote base entry
+## Older installations and custom repository names
 
-Installations made before the local-repository template may carry an
-enabled `5BSD-base` entry with a remote URL and fail `pkg update` with DNS
-errors even when ports upgrades succeed. If your local repository is named
-`5BSD`, add the override:
-
-```sh
-cat > /usr/local/etc/pkg/repos/5BSD-base-disabled.conf <<'EOF'
-5BSD-base: { enabled: no }
-EOF
-```
-
-If your local repository is itself named `5BSD-base`, keep that entry
-enabled with its `file://` URL and use `-r 5BSD-base` in the commands
-above instead of `-r 5BSD`. Do not disable the entry that works. Editing the
-source tree changes nothing on an installed machine until the `pkg` package
-is upgraded and its configuration merged; apply the override directly.
+An older installation may still point `5BSD-base` at `pkg.5bsd.org`.
+Replace that URL with the local URL using `docs/pkg/5BSD.conf.sample`;
+explicit `-r` selects a disabled entry, so disabling a stale URL alone does
+not fix a command that names it. If you deliberately keep a custom
+repository named `5BSD`, use `-r 5BSD` for that entry instead. Inspect
+`pkg -vv` to avoid selecting the wrong generation. Source template changes
+reach an installed system through `5BSD-pkg-bootstrap` and configuration
+merging; local overrides continue to take precedence.
 
 ## Checklist
 
@@ -186,16 +212,17 @@ is upgraded and its configuration merged; apply the override directly.
 |---|---|---|
 | Build kernel and world together | `make buildworld buildkernel` | Modules are packaged from the kernel tree; a world-only build ships stale modules |
 | Package with the static pkg | `make packages PKG_CMD=/usr/local/sbin/pkg-static` | The dynamic ports pkg can fail on libc symbol versions |
-| Confirm repository set | `pkg -vv` | `5BSD` enabled, `5BSD-base` and `FreeBSD-base` disabled |
+| Confirm repository set | `pkg -vv` | `5BSD-base` has the expected local URL; upstream base and kmods disabled |
 | Checkpoint | `bectl create pre-upgrade` | Rollback for the whole base generation |
-| Upgrade base only from 5BSD | `pkg update -f -r 5BSD; pkg upgrade -r 5BSD` | Never from a FreeBSD repository |
+| Upgrade base only from 5BSD | `pkg update -f -r 5BSD-base; pkg upgrade -r 5BSD-base` | Never from a FreeBSD repository |
 | Reboot at once | `reboot` | Kernel, capsule and switchboard binaries are only replaced at boot |
 | Verify | `uname -i`, `ps -p 1 -o comm=`, `switchboardctl services` | GENERIC, capsule, all expected units |
 
 ## What does not upgrade this way
 
-Ports and kernel modules from `FreeBSD-ports-kmods` follow FreeBSD's rules
-and their own ABI. The `5BSD-*-tests` packages and `5BSD-set-tests` upgrade
+Applications upgrade separately from `FreeBSD-ports`. External kernel
+modules come from the matching `5BSD-hardware` collection, not
+`FreeBSD-ports-kmods`. The `5BSD-*-tests` packages and `5BSD-set-tests` upgrade
 with the base but are not installed by default. A custom `KERNCONF` produces
 a `5BSD-kernel-<name>` package that `pkg install` accepts; keep
 `5BSD-kernel-generic` installed alongside it as the recovery kernel. Finally,

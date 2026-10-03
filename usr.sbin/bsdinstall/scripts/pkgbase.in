@@ -384,7 +384,9 @@ local function pkgbase()
 	local pkg = shell_quote(pkg_cmd) .. " --rootdir " .. shell_quote(chroot) ..
 		" --repo-conf-dir " .. shell_quote(repos_dir) .. " -o IGNORE_OSVERSION=yes "
 
-	while not os.execute(pkg .. "update") do
+	-- The installed default is disabled for ordinary ports updates. Select
+	-- it explicitly, as the query, fetch and install steps already do.
+	while not os.execute(pkg .. "update -r 5BSD-base") do
 		if options.non_interactive or
 		    not prompt_yn("Updating repositories failed, try again?") then
 			os.exit(1)

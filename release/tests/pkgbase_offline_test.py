@@ -10,21 +10,22 @@ import unittest
 SOURCE = Path(__file__).resolve().parents[2] / 'usr.sbin/bsdinstall/scripts/pkgbase.in'
 
 class OfflinePkgbase(unittest.TestCase):
-    def run_installer(self, mode='', override=False):
+    def run_installer(self, mode='', override=False, offline=True):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             bindir = root / 'bin'
             bindir.mkdir()
             media = root / 'media'
             media.mkdir()
-            (media / '5BSD-base-offline.conf').write_text('fixture')
+            if offline:
+                (media / '5BSD-base-offline.conf').write_text('fixture')
             script = root / 'pkgbase'
             script.write_text(SOURCE.read_text().replace('/usr/5bsd-packages/repos/', str(media) + '/').replace('%%_ALL_libcompats%%', '32'))
             (bindir / 'pkg').write_text('''#!/bin/sh
 printf '%s\\n' "$*" >> "$TEST_LOG"
 case "$*" in
 -N) exit 0 ;;
-*' update') [ "$TEST_MODE" != update ] ;;
+*' update -r 5BSD-base') [ "$TEST_MODE" != update ] ;;
 *'rquery '*) printf '%s\\n' 5BSD-set-minimal 5BSD-set-base 5BSD-kernel-generic pkg ;;
 *'install -U -F '*) [ "$TEST_MODE" != fetch ] ;;
 *) exit 0 ;;
@@ -43,22 +44,29 @@ esac
                                     env=env, capture_output=True, text=True, timeout=10)
             calls = (root / 'calls').read_text()
             self.assertNotIn('UNEXPECTED_DIALOG', calls)
-            expected = root / ('explicit' if override else 'media')
+            expected = root / 'explicit' if override else (media if offline else Path('/usr/share/bsdinstall/'))
             self.assertIn('--repo-conf-dir ' + str(expected), calls)
             return result.returncode, calls
 
     def test_media_selected_without_interactive_setup(self):
         code, calls = self.run_installer()
         self.assertEqual(code, 0)
+        self.assertIn('update -r 5BSD-base', calls)
         self.assertIn('install -U -y -r 5BSD-base', calls)
 
     def test_explicit_repository_wins(self):
         self.assertEqual(self.run_installer(override=True)[0], 0)
 
+    def test_default_repository_selected_without_media(self):
+        code, calls = self.run_installer(offline=False)
+        self.assertEqual(code, 0)
+        self.assertIn('update -r 5BSD-base', calls)
+        self.assertIn('install -U -y -r 5BSD-base', calls)
+
     def test_update_failure_exits_without_prompt(self):
         code, calls = self.run_installer('update')
         self.assertEqual(code, 1)
-        self.assertEqual(sum(line.endswith(' update') for line in calls.splitlines()), 1)
+        self.assertEqual(sum(line.endswith(' update -r 5BSD-base') for line in calls.splitlines()), 1)
 
     def test_fetch_failure_exits_without_prompt(self):
         code, calls = self.run_installer('fetch')

@@ -46,25 +46,14 @@ What lives in `runtime` versus its own package is a deliberate split:
 }
 ```
 
-It stays disabled until a repository exists at that path. The FreeBSD ports repositories in `/etc/pkg/FreeBSD.conf` remain enabled; only `FreeBSD-base` must be disabled so `pkg upgrade` never replaces 5BSD base packages with FreeBSD ones. `docs/pkg/5BSD.conf.sample` and `docs/pkg/FreeBSD.conf.sample` are the two override files:
-
-```
-# /usr/local/etc/pkg/repos/5BSD.conf
-5BSD-base: { enabled: no }
-
-5BSD: {
-  url: "file:///usr/obj/usr/src/repo/${ABI}/latest",
-  enabled: yes,
-  priority: 100
-}
-```
-
-```
-# /usr/local/etc/pkg/repos/FreeBSD.conf
-FreeBSD-base: { enabled: no }
-```
-
-`${ABI}` expands to `FreeBSD:16:amd64`; `usr.sbin/pkg/config.c` computes it from `__FreeBSD_version` and registers `OSNAME` as `FreeBSD`, which is why FreeBSD ports packages resolve. The repository may be copied to any directory on the target machine as long as the catalogue and package paths are preserved; regenerate the catalogue with `pkg repo` whenever packages are published. `pkg -vv` shows the effective configuration. An older installation that still names `pkg.5bsd.org` gets DNS errors on `pkg update`; the `5BSD-base: { enabled: no }` line is the fix.
+No override is needed for a standard build. `pkg update -r 5BSD-base`
+and `pkg upgrade -r 5BSD-base` use this entry even while disabled; ordinary
+ports operations skip it until explicitly selected. `${ABI}` expands to
+`FreeBSD:16:amd64` on amd64. Only custom paths or unqualified base updates
+need `docs/pkg/5BSD.conf.sample`. Keep `FreeBSD-base` and
+`FreeBSD-ports-kmods` disabled; applications use `FreeBSD-ports` and external
+kernel modules use matching `5BSD-hardware` packages. See
+[Upgrading](../operations/upgrading.md) for overrides and older configurations.
 
 ## Building and upgrading
 
@@ -72,25 +61,29 @@ The loop from source to an upgraded machine, from `docs/book/src/operations/upgr
 
 ```sh
 cd /usr/src
-make -j$(sysctl -n hw.ncpu) buildworld buildkernel packages \
-    PKG_CMD=/usr/local/sbin/pkg-static
-pkg repo /usr/obj/usr/src/repo/${ABI}/<version>
-ln -snf <version> /usr/obj/usr/src/repo/${ABI}/latest
+make -j$(sysctl -n hw.ncpu) buildworld buildkernel
+make packages PKG_CMD=/usr/local/sbin/pkg-static
 bectl create pre-upgrade
-pkg update -f -r 5BSD
-pkg upgrade -r 5BSD
+pkg update -f -r 5BSD-base
+pkg upgrade -n -r 5BSD-base
+pkg upgrade -r 5BSD-base
 reboot
 ```
 
-`PKG_CMD=/usr/local/sbin/pkg-static` is required: the dynamic ports pkg(8) links against a libc symbol version the tree does not export and fails, while `pkg-static` is self-contained. Build the kernel before `make packages`, so the module packages match it. `pkg upgrade -r 5BSD` restricts the upgrade to the local repository: it upgrades every `5BSD-*` package to the catalogue's version, touches nothing from the ports repositories, and leaves the previous boot environment intact for `bectl activate pre-upgrade`. Applications are upgraded separately with `pkg upgrade -r FreeBSD-ports`.
+`PKG_CMD=/usr/local/sbin/pkg-static` is required: the dynamic ports pkg(8) links against a libc symbol version the tree does not export and fails, while `pkg-static` is self-contained. Build the kernel before `make packages`, so the module packages match it. `make packages` creates the catalogue and updates `latest`.
+`pkg upgrade -r 5BSD-base` restricts the upgrade to the local repository: it upgrades installed base packages from that catalogue, and leaves the previous boot environment intact for `bectl activate pre-upgrade`. Applications are upgraded separately with `pkg upgrade -r FreeBSD-ports`.
 
-Migrating a FreeBSD 16-CURRENT pkgbase system is a one-time replacement, because `FreeBSD-*` and `5BSD-*` are different package names and `pkg upgrade` cannot cross them:
+When replacing a kernel used by external drivers, follow the combined base
+and hardware transaction in [Upgrading](../operations/upgrading.md).
+
+Migrating a FreeBSD 16-CURRENT pkgbase system requires the repository sample
+to be installed first, and is a one-time replacement, because `FreeBSD-*` and `5BSD-*` are different package names and `pkg upgrade` cannot cross them:
 
 ```sh
 bectl create pre-5bsd-migration
-pkg update
+pkg update -f -r 5BSD-base
 pkg delete -fa
-pkg install -r 5BSD 5BSD-set-base 5BSD-kernel-generic
+pkg install -r 5BSD-base 5BSD-set-base 5BSD-kernel-generic
 reboot
 ```
 

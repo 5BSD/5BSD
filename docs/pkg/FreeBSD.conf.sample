@@ -3,7 +3,8 @@
 #
 # Copy this file to /usr/local/etc/pkg/repos/FreeBSD.conf.
 #
-# The default FreeBSD-ports and FreeBSD-ports-kmods repositories from
-# /etc/pkg/FreeBSD.conf remain enabled — only base is overridden here.
+# Applications continue to use FreeBSD-ports. Kernel modules must come
+# from the matching 5BSD-hardware collection, not FreeBSD-ports-kmods.
 
 FreeBSD-base: { enabled: no }
+FreeBSD-ports-kmods: { enabled: no }

@@ -153,13 +153,23 @@ The plists and the repository are unaffected by where staging happens.
 
 ### Repository configuration
 
-There is no public 5BSD package service, so the base repository is a local
-`file://` one. `usr.sbin/pkg/5BSD.conf.in` installs `/etc/pkg/5BSD.conf` with
-a disabled `5BSD-base` entry pointing at
-`file:///usr/obj/usr/src/repo/${ABI}/latest`; `docs/pkg/5BSD.conf.sample` is
-the enabled form (`priority: 100`) to copy to
-`/usr/local/etc/pkg/repos/5BSD.conf`, and `docs/pkg/FreeBSD.conf.sample`
-disables `FreeBSD-base`. [Upgrading](upgrading.md) walks through both.
+The standard output location already matches `/etc/pkg/5BSD.conf`:
+`file:///usr/obj/usr/src/repo/${ABI}/latest`, named `5BSD-base`.
+No repository override is needed for a standard `/usr/src` build. Use
+`pkg update -f -r 5BSD-base` and `pkg upgrade -r 5BSD-base`; explicit `-r`
+selects the entry even though it ships with `enabled: no`. Ordinary ports
+operations therefore do not probe an absent build tree.
+
+For objects built elsewhere, retain the same `MAKEOBJDIRPREFIX` and pass
+`REPODIR=/usr/obj/usr/src/repo` to `make packages` to publish at the standard
+location. This requires write access there but no world/kernel rebuild.
+Alternatively, use `docs/pkg/5BSD.conf.sample` to override the URL.
+`make packages` already creates the catalogue and updates `latest`; do not
+repeat those steps unless publishing modified archives by hand.
+
+[Upgrading](upgrading.md) documents the BE checkpoint, package preview,
+matching hardware collection, reboot and rollback. This chapter and that
+workflow ship in the image under `/usr/share/doc/5bsd/operations/`.
 
 ## Release media
 
