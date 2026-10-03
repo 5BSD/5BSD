@@ -29,7 +29,8 @@ def verify(log, artifacts):
                 'SSH_CONCURRENT_GRANTS_PASS', 'SSH_WRONG_KEY_DENIED_PASS']
     if a.require_zfs:
         required += ['ZFS_BE_STAGED_PASS', 'ZFS_BE_ACTIVATED_PASS',
-                     'ZFS_BE_ROLLBACK_READY', 'ZFS_BE_ROLLBACK_PASS']
+                     'ZFS_BE_ROLLBACK_READY', 'ZFS_BE_ROLLBACK_PASS',
+                     'VERIFIED_POLICY_ENFORCEMENT_PASS', 'VERIFIED_EXEC_IDENTITY_PASS']
     bad = ['POLICY_BUILD_FAIL', 'POLICY_VM_FAIL', 'panic:', 'Fatal trap',
            'lock order reversal', 'KDB: enter']
     if not all(marker in text for marker in required) or any(marker in text for marker in bad):
@@ -40,7 +41,7 @@ def verify(log, artifacts):
         with tarfile.open(artifacts) as archive:
             build = archive.extractfile('root/build.log').read().decode(errors='replace')
         return ('INSTALLER_GRANTS_PASS' in build and 'POLICY_TOOL_PASS' in build and 'POLICY_BUILD_PASS' in build and
-                '163/163 passed (0 broken, 0 failed, 0 skipped)' in build)
+                '195/195 passed (0 broken, 0 failed, 0 skipped)' in build)
     except (OSError, tarfile.TarError, KeyError, AttributeError):
         return False
 

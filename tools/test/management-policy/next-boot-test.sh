@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 [ "$(hostname)" = auth-policy-vm ] || exit 1
-trap 'result=$?; trap - EXIT; set +e; tar -cf /dev/vtbd1 -C / usr/obj root/build.log root/sshd.log root/ssh-tests.log root/login-test.log var/log/capability.log var/log/messages; sync; exit "$result"' EXIT
+trap 'result=$?; trap - EXIT; set +e; tar --exclude=usr/obj/usr/src/amd64.amd64/sys -cf /dev/vtbd1 -C / usr/obj boot/kernel/kernel root/build.log root/sshd.log root/ssh-tests.log root/login-test.log var/log/capability.log var/log/messages; sync; exit "$result"' EXIT
 if [ -f /root/policy-zfs-test ]; then
     test "$(df -T / | awk 'NR==2 {print $1}')" = policyvm/ROOT/policy-empty
     echo ZFS_BE_ACTIVATED_PASS

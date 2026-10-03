@@ -6,6 +6,21 @@ jobs=$(sysctl -n hw.ncpu)
 echo "BUILD_CPUS=$jobs"
 export MAKEOBJDIRPREFIX=/usr/obj
 src=/usr/src/usr.sbin/switchboard
+# A seeded, matching GENERIC object tree permits an incremental guest kernel
+# rebuild for the veriexec regression.  No host installation is performed.
+if [ -f /root/policy-kernel-seed.sha256 ]; then
+    kobj=/usr/obj/usr/src/amd64.amd64/sys/GENERIC
+    test "$(uname -i)" = GENERIC
+    test "$(sysctl -n hw.machine_arch)" = amd64
+    test "$(sha256 -q /boot/kernel/kernel)" = "$(cat /root/policy-kernel-seed.sha256)"
+    make -C "$kobj" -j"$jobs" MK_META_MODE=no kernel
+    config -x /boot/kernel/kernel > /root/original-kernel.conf
+    config -x "$kobj/kernel" > /root/rebuilt-kernel.conf
+    cmp /root/original-kernel.conf /root/rebuilt-kernel.conf
+    install -m 0555 "$kobj/kernel" /boot/kernel/kernel
+    touch /root/policy-kernel-rebuilt
+    echo POLICY_KERNEL_BUILD_PASS
+fi
 out=/usr/obj/usr/src/amd64.amd64
 mkdir -p "$out/usr.sbin/switchboard/tests"
 # Build changed libraries and consumers in the standard guest object tree.
@@ -72,6 +87,38 @@ for test in gate_test elevate_test identity_test mint_decision_test; do
     cp "$obj/$test" "$test"
     printf 'atf_test_program{name="%s"}\n' "$test" >> Kyuafile
 done
+# Exercise the actual filesystem grant boundary, then its kernel verification
+# in the final disposable-VM phase after the BE rollback evidence is exported.
+fs=/usr/src/usr.sbin/BSDFilesystem
+for sub in "$fs" "$fs/tests"; do
+    case "$sub" in */tests) testmode=yes ;; *) testmode=no ;; esac
+    make -C "$sub" MK_DTRACE=no MK_TESTS="$testmode" obj
+    make -C "$sub" -j"$jobs" MK_DTRACE=no MK_TESTS="$testmode" all \
+        LIBTRUSTEDZFS=/usr/lib/libtrustedzfs.a LIBUCL=/usr/lib/libprivateucl.a \
+        LIBNVPAIR=/usr/lib/libnvpair.a LIBSERVICE=/usr/lib/libservice.a \
+        LIBCHANNEL=/usr/lib/libchannel.a LIBMD=/usr/lib/libmd.a \
+        LIBCAPRECLAIM=/usr/lib/libcapreclaim.a LIBLOGCMP=/usr/lib/liblogcmp.a \
+        LIBSPL=/usr/lib/libspl.a LIBM=/usr/lib/libm.a \
+        LIBCAPABILITY=/usr/lib/libcapability.a LIBCAPSULERT=/usr/lib/libcapsulert.a \
+        LIBSHMRING=/usr/lib/libshmring.a LIBTHR=/usr/lib/libthr.a \
+        LIBC=/usr/lib/libc.a LIBSYS=/usr/lib/libsys.a \
+        LIBCOMPILER_RT=/usr/lib/libcompiler_rt.a
+done
+obj=$(make -C "$fs" MK_DTRACE=no -V .OBJDIR)
+install -m 0555 "$obj/BSDFilesystem" /Capabilities/System/Filesystem.cap/Units/bsdfilesystem.unit/bin/BSDFilesystem
+install -m 0644 "$fs/bsdfilesystem.ucl" /Capabilities/Config/bsdfilesystem.ucl
+obj=$(make -C "$fs/tests" MK_DTRACE=no -V .OBJDIR)
+cp "$obj/namespace_test" ./namespace_test
+printf 'atf_test_program{name="namespace_test"}\n' >> Kyuafile
+cc -O2 -Wall -Wextra -static -DBSDFILESYSTEM_TESTING \
+    -I"$fs" -I/usr/src/sys -I/usr/src/lib/libcapsulert \
+    -I/usr/src/lib/libtrustedzfs -I/usr/src/lib/libservice \
+    /usr/src/tools/test/management-policy/verified-open-vm.c \
+    "$obj/request.o" "$obj/layout.o" "$obj/nvwalk.o" "$obj/config.o" \
+    -Wl,--start-group -ltrustedzfs -lprivateucl -lnvpair -lspl -lservice \
+    -lcapability -lchannel -lcapsulert -lcapreclaim -llogcmp -lshmring \
+    -lmd -lm -lpthread -Wl,--end-group \
+    -o /root/verified-open-vm
 kyua test -k ./Kyuafile
 policyctl init > /root/empty-policy.ucl
 policyctl validate /root/empty-policy.ucl

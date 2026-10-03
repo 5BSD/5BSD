@@ -7,6 +7,7 @@ The output directory must be new; existing images/evidence are never overwritten
 """
 import argparse
 import json
+import hashlib
 import os
 from pathlib import Path
 import shutil
@@ -16,6 +17,7 @@ import subprocess
 parser = argparse.ArgumentParser()
 parser.add_argument('--output', type=Path, required=True)
 parser.add_argument('--filesystem', choices=['ufs', 'zfs'], default='ufs')
+parser.add_argument('--kernel-objects', type=Path, help='matching GENERIC object tree for an incremental guest kernel rebuild')
 parser.add_argument('--source', type=Path, default=Path('/usr/src'))
 parser.add_argument('--repository', type=Path,
                     default=Path('/usr/obj/usr/src/repo/FreeBSD:16:amd64/latest'))
@@ -81,6 +83,11 @@ write('etc/ttys', 'ttyu0 "/usr/libexec/getty policy" vt100 on secure\n')
 with (root / 'etc/gettytab').open('a') as f:
     f.write('\npolicy|Policy VM console:\\\n\t:al=root:tc=3wire:\n')
 write('root/.profile', '''
+# getty can respawn briefly during shutdown; run the harness once per boot.
+boot_id=$(sysctl -n kern.boottime | sha256 -q)
+if ! mkdir "/var/run/policy-vm-$boot_id" 2>/dev/null; then
+    exec sleep 3600
+fi
 if [ ! -f /root/policy-build-passed ]; then
     sh /usr/src/tools/test/management-policy/guest-build.sh > /root/build.log 2>&1
     result=$?
@@ -96,7 +103,7 @@ elif [ ! -f /root/policy-integration-passed ]; then
     fi
 elif [ -f /root/policy-rollback-test ]; then
     if sh /usr/src/tools/test/management-policy/rollback-test.sh; then
-        echo POLICY_GUEST_COMPLETE
+        exec /root/verified-open-vm --disposable-vm-only
     else
         echo POLICY_VM_FAIL
     fi
@@ -146,6 +153,28 @@ author="VM test";publisher="org.test";units=["worker"];
     target.parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(root / 'usr/bin/true', target)
     target.chmod(0o555)
+# Optional kernel cache must exactly match the repository's starting kernel.
+# Copy into the canonical GUEST object root; never build in the cache source.
+if args.kernel_objects is not None:
+    seed = args.kernel_objects.resolve()
+    def digest(path):
+        with path.open('rb') as stream:
+            return hashlib.file_digest(stream, 'sha256').hexdigest()
+    seed_hash = digest(seed / 'kernel')
+    if seed_hash != digest(root / 'boot/kernel/kernel'):
+        raise SystemExit('Kernel object seed does not match the pkgbase kernel')
+    kobj = root / 'usr/obj/usr/src/amd64.amd64/sys/GENERIC'
+    shutil.copytree(seed, kobj, symlinks=True,
+                    ignore=shutil.ignore_patterns('modules', '*.meta'))
+    # Dependencies emitted by the old cross-build may name its private sysroot.
+    # The guest compiles natively against the same installed base headers.
+    old_include = str(seed.parent.parent / 'tmp/usr/include')
+    for dependency in kobj.glob('.depend*'):
+        if dependency.is_file():
+            dependency.write_text(dependency.read_text().replace(old_include, '/usr/include'))
+    write('root/policy-kernel-seed.sha256', seed_hash + '\n')
+    print('Matching kernel objects staged under guest /usr/obj', flush=True)
+
 # mkfs metadata gives the image correct ownership without host root privileges.
 users = {line.split(':')[0]: int(line.split(':')[2])
          for line in accounts.splitlines() if line and not line.startswith('#')}
