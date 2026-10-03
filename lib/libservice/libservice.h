@@ -91,6 +91,8 @@ typedef uint64_t service_rights_t;
  * session's grants.  Per-service rights use the low bits; this reserves the top.
  */
 #define	SERVICE_RIGHTS_ADMIN	((service_rights_t)1 << 63)
+/* Explicit authority to request sessions for a named UID; not an admin bypass. */
+#define	SERVICE_RIGHTS_AUTHENTICATE	((service_rights_t)1 << 62)
 
 /* A held capability permits an operation iff it holds every needed right. */
 static __inline bool
@@ -921,8 +923,8 @@ int	service_mint_session_via_agent(int lookup_chan, uid_t uid,
  * Authenticated session mint for a non-admin caller: like
  * service_mint_session_via_agent(), but the caller proves the TARGET uid's
  * `password` (as su collected it through PAM) instead of holding
- * SERVICE_RIGHTS_ADMIN.  Used by su from an ordinary session, whose channel
- * carries no admin bit.  `flags` accepts SERVICE_MINT_AGENT_FORWARDABLE.  The
+ * SERVICE_RIGHTS_AUTHENTICATE. Used by su from a session without explicit
+ * session-mint authority.  `flags` accepts SERVICE_MINT_AGENT_FORWARDABLE.  The
  * password buffer is zeroed before return.
  */
 int	service_mint_session_authenticated(int lookup_chan, uid_t uid,

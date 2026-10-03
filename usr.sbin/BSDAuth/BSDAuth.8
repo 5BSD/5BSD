@@ -133,43 +133,30 @@ runs units as, and units take their set from their own policy file.
 logs a warning at startup if the policy grants that uid anything.
 When the policy is missing or malformed
 .Nm
-falls back to the historical rule
-.Pq uid 0 or a member of group Dq wheel holds everything with admin rights
-and logs the fallback so it is observable.
+grants nothing to any principal, including root and wheel, and logs the failure.
+The policy is validated and loaded once at startup; subsequent file edits
+do not change the running snapshot.
 Every mint logs at
 .Dv LOG_INFO
 the kind and the shape of the grant applied.
 .Ss Caller gate for minting
-Minting is gated on a held right, not on a name.
-Only a caller holding
-.Dv SERVICE_RIGHTS_ADMIN
-on its channel may request a mint.
+Minting requires the dedicated
+.Dv SERVICE_RIGHTS_AUTHENTICATE
+right on the connection.
 .Xr switchboard 8
-stamps that right on a brokered session only for an ambient login-session
-lookup over a SYSTEM (full-discovery) channel, which is exactly and only the
-channel the login family
-.Pq Xr login 1 , Xr su 1 , Xr sshd 8
-reaches
-.Nm
-over.
-Every ordinary unit, and every login session reaching
-.Nm
-for elevation, is stamped without the admin bit and is refused a mint with
-.Er EPERM
-before the request is parsed or any channel is minted.
-This closes the proxy escalation in which a service or a user would
-otherwise mint itself an admin session.
+issues it to session holders of
+.Li system.auth.mint
+or an explicit wildcard grant.
+This is impersonation authority for trusted authenticators.
+The general ADMIN right alone does not authorize minting.
+Ordinary managed units cannot acquire this right through endpoint lookup.
 .Pp
 The minted leaf channel is re-attenuated to
 .Dv CAP_XFER_ONCE
-before it is sent, so the reply's own descriptor pass consumes it to
-.Dv CAP_XFER_NONE
-at the login program: the session leaf receives a non-re-delegable lookup
-channel.
-A forwarding authenticator (an
-.Xr sshd 8
-monitor) may instead request a still-transferable channel and re-attenuate it
-before its single forward.
+before delivery; the reply consumes it to
+.Dv CAP_XFER_NONE .
+A forwarding authenticator may request a transferable channel and restrict
+it before forwarding to the session.
 .Ss Authenticated mint
 The
 .Dv AUTHAGENT_OP_MINT_AUTH
@@ -346,7 +333,7 @@ and
 .Cm admin_rights
 flags, and
 .Li default
-that the historical root-or-wheel rule stood in for an absent policy.
+that an empty grant stood in for unavailable or invalid policy.
 .It Li mint/ Ns Ar stage
 a mint refused before a grant was resolved
 .Pq Li caller , Li shape , Li identity .

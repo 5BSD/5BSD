@@ -101,6 +101,7 @@ SUBDIR=	adduser \
 	rtprio \
 	rwhod \
 	service \
+	policyctl \
 	switchboardctl \
 	switchboard \
 	services_mkdb \

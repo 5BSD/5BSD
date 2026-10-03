@@ -100,9 +100,25 @@ whether it carries admin rights, per
 and
 .Fn capbundle_principal_may_elevate
 query a grant.
-An absent or malformed policy applies the historical root-or-wheel rule and
+An absent or malformed policy grants nothing to any principal and
 sets
 .Fa from_default_rule .
+.Ss Immutable principal policy
+.Fn capbundle_principal_policy_load
+validates an open regular file and constructs an immutable snapshot of at most
+128 principal entries.
+The caller may close the input descriptor after loading.
+.Fn capbundle_principal_policy_resolve
+selects a precomputed grant using the authenticated UID and group membership;
+it performs no policy-file I/O or parsing.
+A NULL snapshot grants nothing.
+.Fn capbundle_principal_policy_format
+returns a caller-owned JSON string, released with
+.Xr free 3 .
+.Fn capbundle_principal_policy_free
+releases a snapshot after all readers have finished.
+Concurrent evaluations may share a snapshot if the caller's group resolver
+is also safe for concurrent use.
 .Sh TRUST
 .Nm
 rejects symlinks and special objects but does not establish ownership policy.

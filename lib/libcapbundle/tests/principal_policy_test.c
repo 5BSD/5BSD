@@ -1154,12 +1154,14 @@ ATF_TC_BODY(selector_bad_values_are_malformed, tc)
 	check_falls_back("principals { r { groups = [\"wheel\", \"\"]; } }\n");
 	check_falls_back("principals { r { groups = [[\"wheel\"]]; } }\n");
 	check_falls_back("principals { r { groups = { name = \"wheel\" }; } }\n");
-	/* The largest uid_t is representable and matches that principal. */
-	resolve_uid("principals { r { uids = [4294967295]; anointments = [\"a.max\"]; } }\n",
-	    (uid_t)4294967295U, &g);
+	/* UID -1 is reserved for unknown identity, never an account selector. */
+	check_falls_back("principals { r { uids = [4294967295]; } }");
+	/* The largest usable uid_t still matches exactly. */
+	resolve_uid("principals { r { uids = [4294967294]; anointments = [\"a.max\"]; } }\n",
+	    (uid_t)4294967294U, &g);
 	ATF_CHECK(!g.from_default_rule);
 	ATF_CHECK_STREQ("a.max", g.anointments[0]);
-	resolve_uid("principals { r { uids = [4294967295]; anointments = [\"a.max\"]; } }\n",
+	resolve_uid("principals { r { uids = [4294967294]; anointments = [\"a.max\"]; } }\n",
 	    0, &g);
 	check_empty_grant(&g);
 	ATF_CHECK(!g.from_default_rule);
@@ -1564,8 +1566,66 @@ ATF_TC_BODY(declared_names_absent_policy_is_empty, tc)
 	    capbundle_principal_declared_names(-1, NULL, 8, &n) == -1);
 }
 
+
+ATF_TC_WITHOUT_HEAD(immutable_snapshot);
+ATF_TC_BODY(immutable_snapshot, tc)
+{
+	struct capbundle_principal_policy *snapshot, *replacement;
+	struct capbundle_principal_grant g;
+	char path[64], next[64], *formatted;
+	int fd;
+
+	write_policy(path, sizeof(path),
+	    "principals { user { uids=[1234]; anointments=[system.trace.client]; } }");
+	fd = open(path, O_RDWR);
+	ATF_REQUIRE(fd >= 0);
+	ATF_REQUIRE_EQ(0, capbundle_principal_policy_load(fd, &snapshot));
+	/* In-place corruption cannot change already validated grants. */
+	ATF_REQUIRE_EQ(0, ftruncate(fd, 0));
+	ATF_REQUIRE_EQ(6, write(fd, "broken", 6));
+	ATF_REQUIRE_EQ(-1, capbundle_principal_policy_load(fd, &replacement));
+	ATF_REQUIRE(replacement == NULL);
+	close(fd);
+	ATF_REQUIRE_EQ(0, capbundle_principal_policy_resolve(snapshot, 1234,
+	    NULL, 0, stub_name2gid, NULL, &g));
+	ATF_CHECK(capbundle_principal_holds(&g, "system.trace.client"));
+	/* Atomic replacement also leaves the boot snapshot unchanged. */
+	write_policy(next, sizeof(next), "principals { default { anointments=[]; } }");
+	ATF_REQUIRE_EQ(0, rename(next, path));
+	ATF_REQUIRE_EQ(0, capbundle_principal_policy_resolve(snapshot, 1234,
+	    NULL, 0, stub_name2gid, NULL, &g));
+	ATF_CHECK(capbundle_principal_holds(&g, "system.trace.client"));
+	fd = open(path, O_RDONLY);
+	ATF_REQUIRE_EQ(0, capbundle_principal_policy_load(fd, &replacement));
+	close(fd);
+	ATF_REQUIRE_EQ(0, capbundle_principal_policy_resolve(replacement, 1234,
+	    NULL, 0, stub_name2gid, NULL, &g));
+	ATF_CHECK_EQ(0, g.nanointments);
+	formatted = capbundle_principal_policy_format(snapshot);
+	ATF_REQUIRE(formatted != NULL);
+	unlink(path);
+	write_policy(path, sizeof(path), formatted);
+	free(formatted);
+	capbundle_principal_policy_free(replacement);
+	fd = open(path, O_RDONLY);
+	ATF_REQUIRE_EQ(0, capbundle_principal_policy_load(fd, &replacement));
+	close(fd);
+	ATF_REQUIRE_EQ(0, capbundle_principal_policy_resolve(replacement, 1234,
+	    NULL, 0, stub_name2gid, NULL, &g));
+	ATF_CHECK(capbundle_principal_holds(&g, "system.trace.client"));
+	capbundle_principal_policy_free(snapshot);
+	capbundle_principal_policy_free(replacement);
+	unlink(path);
+	/* Missing snapshots never promote root. */
+	ATF_REQUIRE_EQ(0, capbundle_principal_policy_resolve(NULL, 0,
+	    NULL, 0, stub_name2gid, NULL, &g));
+	ATF_CHECK(g.from_default_rule);
+	ATF_CHECK(!g.anoint_all && !g.admin_rights && !g.elevate_all);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
+	ATF_TP_ADD_TC(tp, immutable_snapshot);
 
 	ATF_TP_ADD_TC(tp, no_policy_is_least_privilege);
 	ATF_TP_ADD_TC(tp, policy_grants_by_uid);

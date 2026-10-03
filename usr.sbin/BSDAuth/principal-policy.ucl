@@ -1,6 +1,7 @@
 # 5BSD principal policy: what a login session holds in the capability world.
-# Consulted only by bsdauth (system.Auth) when login(1), su(1) or
-# sshd(8) mint a session, and again on every anoint(1) request.  It is a
+# Loaded once by bsdauth (system.Auth) at startup. The immutable snapshot
+# decides grants for login, su, SSH, and anoint requests. Stage persistent
+# changes in an inactive boot environment and reboot to activate them.  It is a
 # configuration file: local changes survive bsdauth package upgrades.
 #
 # Entries are matched in file order against the authenticated principal's
@@ -42,6 +43,10 @@
 # The shipped default below changes nothing on day one: wheel and uid 0 hold
 # everything with the bypass; everyone else holds nothing and may elevate
 # nothing.
+# system.auth.mint (also included in "*") grants session impersonation to
+# trusted authenticators. ADMIN alone does not grant this authority.
+# system.switchboard.admin grants SYSTEM lifecycle control independently
+# of protected provider access. Invalid/missing policy grants nothing.
 principals {
     admin {
         groups = [ "wheel" ];

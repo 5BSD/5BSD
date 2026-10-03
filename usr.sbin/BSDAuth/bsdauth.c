@@ -57,13 +57,9 @@
 /* Our own consumer handle on the bootstrap channel, used to mint. */
 static struct service_context	*g_context;
 static int			 g_kq = -1;
-/*
- * The principal policy, delivered as a read-only descriptor (capabilities.open)
- * so the daemon never opens a path in capability mode.  -1 when absent, in
- * which case capbundle_principal_resolve applies the historical root-or-wheel
- * rule (root/wheel hold "*" with admin rights, everyone else nothing).
- */
-static int			 g_policy_fd = -1;
+/* Validated startup snapshot, loaded through the filesystem provider.
+ * NULL means no protected grants for any principal, including root. */
+static struct capbundle_principal_policy *g_policy;
 /*
  * In-process NSS for authoritative passwd/group resolution inside the sandbox.
  * The agent NEVER trusts principal attributes from the wire — it resolves the
@@ -441,7 +437,7 @@ agent_resolve_grant(uid_t uid, struct capbundle_principal_grant *grant)
 	if (pw == NULL)
 		return (ENOENT);
 	nmember = agent_member_gids(pw, members, nitems(members));
-	if (capbundle_principal_resolve(g_policy_fd, uid, members, nmember,
+	if (capbundle_principal_policy_resolve(g_policy, uid, members, nmember,
 	    agent_name2gid, NULL, grant) == -1)
 		return (errno != 0 ? errno : EINVAL);
 	BSDAUTH_PROBE_POLICY_RESOLVE(uid, grant->nanointments,
@@ -547,23 +543,14 @@ accept_rate_exceeded(const char *label, time_t now)
 }
 #endif
 
-/*
- * The mint caller-gate predicate (docs/book/src/providers/auth.md, P1c), factored out
- * of handle_request() so the privilege-escalation regression is unit-testable
- * without a live plane.  A caller may ask us to mint iff switchboard stamped
- * SERVICE_RIGHTS_ADMIN on its brokered session — the bit switchboard (naming.c)
- * grants only to an ambient login-session lookup (requester==NULL) on a
- * full-discovery (root/wheel) channel, i.e. exactly and only the login family
- * (login/su/sshd).  Every ordinary unit, including a compromised SYSTEM unit
- * that looks us up over its own bootstrap channel, is stamped without the admin
- * bit and refused.  Fail closed: an unknown or empty identity (no rights) is
- * denied.  The gate logic is identical to its former inline form.
+/* Session minting is a separate, explicitly granted authority. ADMIN alone
+ * cannot impersonate another principal. The boot carry holds all anointments;
+ * a configured session needs system.auth.mint (or an intentional "*" grant).
  */
 bool
 authagent_caller_allowed(service_rights_t rights)
 {
-
-	return (service_rights_allow(rights, SERVICE_RIGHTS_ADMIN));
+	return (service_rights_allow(rights, SERVICE_RIGHTS_AUTHENTICATE));
 }
 
 /*
@@ -1093,26 +1080,8 @@ handle_mint(struct client *c, const void *data, size_t len, size_t nfds,
 	bool forwardable;
 	int error, fd, status;
 
-	/*
-	 * Caller gate — the mint boundary (docs/book/src/providers/auth.md, P1c).
-	 * bsdauth gates the MINTER (only its own whitelisted bootstrap
-	 * channel can call switchboard's SVC_OP_MINT_DOMAIN), but that says
-	 * nothing about WHO may ask us to mint.  system.Auth is now
-	 * reachable from every session ((visible user, for ELEVATE)), so
-	 * any session or SYSTEM unit could otherwise send MINT_SESSION{uid=0}
-	 * and be handed a SYSTEM admin channel — the exact proxy escalation
-	 * the switchboard mint-gate was written to close.
-	 *
-	 * In this OS authority is a held right, not a name string.  switchboard
-	 * (naming.c) stamps SERVICE_RIGHTS_ADMIN on a brokered session only for
-	 * an ambient login-session lookup (requester==NULL) on a SYSTEM
-	 * (full-discovery, i.e. root/wheel) channel — which is exactly, and only,
-	 * the channel the login family (login, su, sshd) reaches us over.  Every
-	 * ordinary unit — including a compromised SYSTEM unit that looks us up
-	 * over its own bootstrap channel — is stamped requester!=NULL and thus
-	 * WITHOUT the admin bit.  Gate on that right and fail closed: any caller
-	 * that does not hold SERVICE_RIGHTS_ADMIN (unknown/empty identity
-	 * included) is refused before we mint or even parse the request.
+	/* Authenticate authority comes from trusted connection metadata, never
+	 * the requested UID or a provider's general ADMIN bypass.
 	 */
 	if (!authagent_caller_allowed(c->rights)) {
 		syslog(LOG_AUTHPRIV | LOG_WARNING,
@@ -1168,7 +1137,7 @@ handle_mint(struct client *c, const void *data, size_t len, size_t nfds,
 	}
 	/*
 	 * Log which grant applied (no secrets): the kind, whether the
-	 * historical rule stood in for a missing/malformed policy (P10), and
+	 * empty grant stood in for a missing/malformed policy (P10), and
 	 * the shape of the set.  The policy engine does not surface the
 	 * matching entry's key, so the grant's shape is what is logged.
 	 */
@@ -1180,7 +1149,7 @@ handle_mint(struct client *c, const void *data, size_t len, size_t nfds,
 	    grant.anoint_all ? "*+" : "", grant.nanointments,
 	    grant.elevate_all ? "*+" : "", grant.nmay_elevate,
 	    grant.admin_rights ? 1 : 0,
-	    grant.from_default_rule ? " (policy absent: historical rule)" : "",
+	    grant.from_default_rule ? " (policy unavailable: no grants)" : "",
 	    status);
 	return (status);
 }
@@ -1255,7 +1224,7 @@ handle_elevate(struct client *c, struct channel_message *request,
 		    "may_elevate%s", (unsigned)uid,
 		    (int)sizeof(c->client_label), c->client_label, req.name,
 		    grant.from_default_rule ?
-		    " (policy absent: historical rule)" : "");
+		    " (policy unavailable: no grants)" : "");
 		goto out;
 	}
 
@@ -1350,9 +1319,8 @@ handle_elevate(struct client *c, struct channel_message *request,
 
 /*
  * Serve one AUTHAGENT_OP_MINT_AUTH request -- an authenticated session mint
- * for a caller that does NOT hold SERVICE_RIGHTS_ADMIN (docs/ipc-anointments-
- * design.md, the non-admin `su` open item).  MINT_SESSION trusts the admin
- * bit as the assertion "I authenticated this principal"; a su from an ordinary
+ * for a caller that does NOT hold SERVICE_RIGHTS_AUTHENTICATE.
+ * MINT_SESSION trusts that dedicated right as the assertion "I authenticated this principal"; a su from an ordinary
  * session has no such bit.  Here the caller instead supplies the TARGET
  * principal's password (the one su collected through PAM), and the agent
  * authenticates it against master.passwd itself -- as ELEVATE does -- before
@@ -1697,7 +1665,7 @@ warn_if_capability_user_granted(void)
 	struct capbundle_principal_grant grant;
 	uid_t uid;
 
-	if (g_policy_fd == -1 || !id_getpwnam_uid("capability", &uid))
+	if (g_policy == NULL || !id_getpwnam_uid("capability", &uid))
 		return;
 	if (agent_resolve_grant(uid, &grant) != 0 || grant.from_default_rule)
 		return;
@@ -1734,26 +1702,17 @@ main(void)
 	    service_provider_expose(provider, AUTHAGENTD_NAME, &listener) == -1)
 		err(1, "initialize");
 
-	/*
-	 * Adopt the principal policy from the filesystem daemon (bsdfilesystem): ask it
-	 * to open /Capabilities/Config/principal-policy.ucl on our behalf and
-	 * hand back a read-only descriptor.  Nothing is declared in the
-	 * manifest; bsdfilesystem's own per-label policy decides whether this service
-	 * may read it.  It is optional: an unreadable or ungranted policy
-	 * leaves g_policy_fd == -1 and every grant falls back to the
-	 * historical root-or-wheel rule (P10).  Done before cap_enter so no
-	 * path is ever consulted at request time.  Make the fallback
-	 * observable: a missing file (ENOENT) is the normal optional case —
-	 * INFO; anything else (denied, or bsdfilesystem never came up) is unexpected —
-	 * WARNING, because an operator-configured policy is then silently not
-	 * in effect.
-	 */
-	g_policy_fd = open_with_retry("/Capabilities/Config/principal-policy.ucl");
-	if (g_policy_fd == -1)
-		syslog(errno == ENOENT ? (LOG_AUTHPRIV | LOG_INFO) :
-		    (LOG_AUTHPRIV | LOG_WARNING),
-		    "principal policy unavailable (%m); "
-		    "mint uses the root-or-wheel default");
+	/* Freeze the BE's validated grants before accepting any sessions. */
+	{
+		int policy_fd;
+
+		policy_fd = open_with_retry("/Capabilities/Config/principal-policy.ucl");
+		if (capbundle_principal_policy_load(policy_fd, &g_policy) != 0)
+			syslog(LOG_AUTHPRIV | LOG_ERR,
+			    "principal policy unavailable or invalid; all protected grants denied");
+		if (policy_fd >= 0)
+			close(policy_fd);
+	}
 
 	/*
 	 * Open the identity databases (/etc/passwd, /etc/group) before entering
@@ -1878,7 +1837,8 @@ bsdauth_test_configure(struct service_context *context, int policy_fd)
 {
 
 	g_context = context;
-	g_policy_fd = policy_fd;
+	capbundle_principal_policy_free(g_policy);
+	(void)capbundle_principal_policy_load(policy_fd, &g_policy);
 	/*
 	 * Identity descriptors stay at -1 unless a parser test configures them.
 	 * Provider tests drive the caller gate and protocol paths, not live

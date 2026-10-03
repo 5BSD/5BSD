@@ -40,11 +40,8 @@
  * here and nowhere else.  `admin_rights` is a boolean; it defaults to true for
  * an entry granting anointments = ["*"] and to false otherwise.
  *
- * A present-but-invalid policy (unparseable, unknown key, bad type, bad name)
- * fails safe to the historical default -- uid 0 or a member of "wheel" gets
- * "*" + admin_rights, everyone else nothing -- and reports it through
- * from_default_rule so a parse error can never lock out root yet is never
- * silent.  A valid policy is authoritative, even if it omits root.
+ * Missing or invalid policy gives every principal an empty grant, including
+ * uid 0 and wheel. from_default_rule records this fail-closed result.
  */
 
 #include <sys/param.h>
@@ -87,34 +84,6 @@ member_of(const gid_t *members, unsigned nmember, gid_t g)
 	return (false);
 }
 
-/*
- * Historical default when no usable policy is configured: uid 0 or a "wheel"
- * member holds everything and carries ADMIN; everyone else holds nothing.
- */
-static void
-default_grant(uid_t uid, const gid_t *members, unsigned nmember,
-    capbundle_group_gid_fn name2gid, void *ctx,
-    struct capbundle_principal_grant *out)
-{
-
-	(void)uid;
-	(void)members;
-	(void)nmember;
-	(void)name2gid;
-	(void)ctx;
-	/*
-	 * Least privilege for EVERY principal, uid 0 included: with no principal
-	 * policy present, a login holds nothing gated and carries no admin bypass.
-	 * uid 0 is not magic here -- operator authority is granted only by an
-	 * explicit principal-policy.ucl entry (declaration-is-the-grant), never by
-	 * being root.  A machine with no policy at all is administered from the
-	 * pre-plane recovery shell (capsule single-user), not from a logged-in
-	 * session, so this fail-closed default cannot lock the operator out.
-	 */
-	memset(out, 0, sizeof(*out));
-	out->from_default_rule = true;
-}
-
 static bool
 keys_allowed(const ucl_object_t *obj, const char *const *allowed,
     size_t nallowed)
@@ -126,7 +95,7 @@ keys_allowed(const ucl_object_t *obj, const char *const *allowed,
 
 	while ((v = ucl_object_iterate(obj, &it, true)) != NULL) {
 		key = ucl_object_key(v);
-		if (key == NULL)
+		if (key == NULL || v->next != NULL || strlen(key) != v->keylen)
 			return (false);
 		for (i = 0; i < nallowed; i++)
 			if (strcmp(key, allowed[i]) == 0)
@@ -154,7 +123,7 @@ match_uids(const ucl_object_t *uids, uid_t uid, bool *match)
 		if (ucl_object_type(u) != UCL_INT)
 			return (false);
 		v = ucl_object_toint(u);
-		if (v < 0 || v > (int64_t)UINT32_MAX)
+		if (v < 0 || v >= (int64_t)UINT32_MAX)
 			return (false);
 		if ((uid_t)v == uid)
 			*match = true;
@@ -182,7 +151,7 @@ match_groups(const ucl_object_t *groups, const gid_t *members, unsigned nmember,
 		if (ucl_object_type(g) != UCL_STRING)
 			return (false);
 		name = ucl_object_tostring(g);
-		if (name[0] == '\0')
+		if (name[0] == '\0' || strlen(name) != g->len)
 			return (false);
 		if (member_of(members, nmember, name2gid(ctx, name)))
 			*match = true;
@@ -212,6 +181,8 @@ grant_names(const ucl_object_t *v, char (*dst)[CAPBUNDLE_LABEL_MAX],
 		if (ucl_object_type(e) != UCL_STRING)
 			return (false);
 		name = ucl_object_tostring(e);
+		if (strlen(name) != e->len)
+			return (false);
 		if (strcmp(name, "*") == 0) {
 			*all = true;
 			continue;
@@ -295,7 +266,7 @@ inspect_entry(const ucl_object_t *entry, uid_t uid, const gid_t *members,
 
 /*
  * Resolve the grant against a parsed policy `root`.  Returns false when the
- * policy is malformed, in which case the caller applies the historical rule.
+ * policy is malformed, in which case the caller grants nothing.
  * A valid policy always yields a grant (possibly empty) and returns true.
  */
 static bool
@@ -326,7 +297,8 @@ policy_grant(const ucl_object_t *root, uid_t uid, const gid_t *members,
 	 */
 	chosen = fallback = NULL;
 	while ((entry = ucl_object_iterate(principals, &it, true)) != NULL) {
-		if (!inspect_entry(entry, uid, members, nmember, name2gid, ctx,
+		if (entry->next != NULL ||
+		    !inspect_entry(entry, uid, members, nmember, name2gid, ctx,
 		    &match, &is_default))
 			return (false);
 		if (match && chosen == NULL)
@@ -367,6 +339,106 @@ load_policy(int policy_fd)
 	}
 	free(buf);
 	return (root);
+}
+
+/* Immutable boot policy: parse and validate once, precompute each grant. */
+struct principal_entry {
+	const ucl_object_t *selectors;
+	struct capbundle_principal_grant grant;
+};
+struct capbundle_principal_policy {
+	ucl_object_t *root;
+	unsigned count;
+	struct principal_entry entries[];
+};
+
+static gid_t
+unknown_group(void *ctx __unused, const char *name __unused)
+{
+	return ((gid_t)-1);
+}
+
+int
+capbundle_principal_policy_load(int fd, struct capbundle_principal_policy **out)
+{
+	struct capbundle_principal_policy *p;
+	struct capbundle_principal_grant scratch;
+	const ucl_object_t *principals, *entry;
+	ucl_object_iter_t it = NULL;
+	ucl_object_t *root;
+	unsigned count = 0, i = 0;
+
+	if (out == NULL) { errno = EINVAL; return (-1); }
+	*out = NULL;
+	root = load_policy(fd);
+	if (root == NULL) { errno = EINVAL; return (-1); }
+	if (!policy_grant(root, (uid_t)-1, NULL, 0, unknown_group, NULL, &scratch)) {
+		ucl_object_unref(root); errno = EINVAL; return (-1);
+	}
+	principals = ucl_object_lookup(root, "principals");
+	if (principals != NULL)
+		count = principals->len;
+	/* Bound memory and per-session work independently of file size. */
+	if (count > 128) { ucl_object_unref(root); errno = E2BIG; return (-1); }
+	p = calloc(1, sizeof(*p) + count * sizeof(p->entries[0]));
+	if (p == NULL) { ucl_object_unref(root); return (-1); }
+	p->root = root;
+	p->count = count;
+	while (principals != NULL &&
+	    (entry = ucl_object_iterate(principals, &it, true)) != NULL) {
+		p->entries[i].selectors = entry;
+		(void)apply_entry(entry, &p->entries[i].grant);
+		i++;
+	}
+	*out = p;
+	return (0);
+}
+
+void
+capbundle_principal_policy_free(struct capbundle_principal_policy *p)
+{
+	if (p == NULL) return;
+	ucl_object_unref(p->root);
+	free(p);
+}
+
+char *
+capbundle_principal_policy_format(const struct capbundle_principal_policy *p)
+{
+	return (p == NULL ? NULL : (char *)ucl_object_emit(p->root, UCL_EMIT_JSON));
+}
+
+int
+capbundle_principal_policy_resolve(const struct capbundle_principal_policy *p,
+    uid_t uid, const gid_t *members, unsigned nmember,
+    capbundle_group_gid_fn name2gid, void *ctx,
+    struct capbundle_principal_grant *out)
+{
+	const ucl_object_t *entry, *uids, *groups;
+	const struct capbundle_principal_grant *fallback = NULL;
+	bool match;
+	unsigned i;
+
+	if (out == NULL || name2gid == NULL || (members == NULL && nmember > 0)) {
+		errno = EINVAL; return (-1);
+	}
+	memset(out, 0, sizeof(*out));
+	if (p == NULL) { out->from_default_rule = true; return (0); }
+	for (i = 0; i < p->count; i++) {
+		entry = p->entries[i].selectors;
+		uids = ucl_object_lookup(entry, "uids");
+		groups = ucl_object_lookup(entry, "groups");
+		match = false;
+		if (uids != NULL) (void)match_uids(uids, uid, &match);
+		if (groups != NULL)
+			(void)match_groups(groups, members, nmember, name2gid, ctx, &match);
+		if (match) { *out = p->entries[i].grant; return (0); }
+		if (fallback == NULL && ((uids == NULL && groups == NULL) ||
+		    strcmp(ucl_object_key(entry), "default") == 0))
+			fallback = &p->entries[i].grant;
+	}
+	if (fallback != NULL) *out = *fallback;
+	return (0);
 }
 
 /*
@@ -442,28 +514,22 @@ capbundle_principal_declared_names(int policy_fd,
  * Public data-only entry point (see libcapbundle.h).  This is what the
  * sandboxed auth-agent calls: it resolves the principal via Casper and passes
  * the results plus a cap_grp-backed resolver, so no group database is touched
- * here.  A bad, absent, or malformed policy fails safe to the historical rule
- * and says so through from_default_rule.
+ * here. A bad, absent, or malformed policy grants nothing and reports
+ * from_default_rule.
  */
 int
 capbundle_principal_resolve(int policy_fd, uid_t uid, const gid_t *member_gids,
     unsigned nmember, capbundle_group_gid_fn name2gid, void *ctx,
     struct capbundle_principal_grant *out)
 {
-	ucl_object_t *root;
+	struct capbundle_principal_policy *policy = NULL;
+	int result;
 
-	if (out == NULL || name2gid == NULL ||
-	    (member_gids == NULL && nmember > 0)) {
-		errno = EINVAL;
-		return (-1);
-	}
-	root = load_policy(policy_fd);
-	if (root == NULL || !policy_grant(root, uid, member_gids, nmember,
-	    name2gid, ctx, out))
-		default_grant(uid, member_gids, nmember, name2gid, ctx, out);
-	if (root != NULL)
-		ucl_object_unref(root);
-	return (0);
+	(void)capbundle_principal_policy_load(policy_fd, &policy);
+	result = capbundle_principal_policy_resolve(policy, uid, member_gids,
+	    nmember, name2gid, ctx, out);
+	capbundle_principal_policy_free(policy);
+	return (result);
 }
 
 static bool
@@ -566,7 +632,7 @@ capbundle_principal_is_admin_at(const struct passwd *pwd, const char *policy_pat
 	 * (docs/book/src/plane/anointments.md).  The principal policy decides every
 	 * session's anointment set, so it is integrity-protected alongside the
 	 * bundle policy files. */
-	fd = open(policy_path, O_RDONLY | O_CLOEXEC | O_VERIFY);
+	fd = open(policy_path, O_RDONLY | O_CLOEXEC | O_VERIFY | O_NOFOLLOW | O_NONBLOCK);
 	result = capbundle_principal_is_admin_resolved(fd, pwd->pw_uid, members,
 	    n, libc_name2gid, NULL);
 	if (fd >= 0)

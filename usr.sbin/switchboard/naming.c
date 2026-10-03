@@ -26,6 +26,7 @@
 #include <unistd.h>
 
 #include <channel.h>
+#include <libservice.h>
 
 #include "switchboard.h"
 #include "switchboard_ctl.h"
@@ -602,22 +603,19 @@ naming_lookup(const char *name, struct svc_runtime *requester,
 		return (-1);
 	}
 
-	/*
-	 * Rights granted to this session (capability-authority-model.md).  The
-	 * administrative right -- the capability replacement for the old "root
-	 * may do anything" bypass -- is a separate knob from reach: the holder's
-	 * admin_rights flag, set by the auth agent's principal policy at mint
-	 * (and by the boot carry, which holds everything).  A unit's set never
-	 * carries it (a service is not an admin principal, whatever its domain
-	 * kind), so a session with admin_rights = false gets no bypass even on a
-	 * SYSTEM channel (P8).  All non-admin rights are still granted in full
-	 * until a policy scopes them, so a provider that ignores rights, or
-	 * checks them, behaves exactly as before.
+	/* Provider ADMIN and session authentication are separate authorities.
+	 * Only session channels holding the explicit mint anointment (or "*")
+	 * can ask Auth to establish another principal's session. Managed units
+	 * never gain this right through ordinary endpoint lookup.
 	 */
+	notify.rights = SVC_RIGHTS_ALL &
+	    ~(SERVICE_RIGHTS_ADMIN | SERVICE_RIGHTS_AUTHENTICATE);
 	if (domain != NULL && domain->anoint.admin_rights)
-		notify.rights = SVC_RIGHTS_ALL;
-	else
-		notify.rights = SVC_RIGHTS_ALL & ~SVC_RIGHTS_ADMIN;
+		notify.rights |= SERVICE_RIGHTS_ADMIN;
+	if (requester == NULL && domain != NULL &&
+	    strcmp(name, "system.Auth") == 0 &&
+	    svc_anoint_holds(&domain->anoint, "system.auth.mint"))
+		notify.rights |= SERVICE_RIGHTS_AUTHENTICATE;
 
 	if (svc_channel_send_event(provider, &notify, sizeof(notify),
 	    &provider_end, 1, switchboard_kq) == -1) {

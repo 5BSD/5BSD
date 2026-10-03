@@ -1,0 +1,48 @@
+.\" SPDX-License-Identifier: BSD-2-Clause
+.Dd October 3, 2026
+.Dt POLICYCTL 8
+.Os
+.Sh NAME
+.Nm policyctl
+.Nd validate and inspect capability principal policy
+.Sh SYNOPSIS
+.Nm
+.Cm init
+.Nm
+.Cm validate | format
+.Ar file
+.Nm
+.Cm explain
+.Ar file user
+.Sh DESCRIPTION
+.Nm
+uses the same principal-policy parser as BSDAuth.
+.Cm init
+prints an empty, least-privilege policy suitable for editing.
+.Cm validate
+checks the complete document, including entries that do not match a user.
+.Cm format
+prints the validated document as JSON, preserving policy entry order.
+.Cm explain
+prints the grants for a named account using the current system's user and
+group databases; it does not inspect a running session or change authority.
+For an offline boot environment, run it within that environment so account
+resolution uses the matching databases.
+.Pp
+Input must be a bounded regular file; symbolic links are refused.
+Validation checks syntax and schema, not ownership, executable integrity,
+boot selection, or whether requested endpoints exist.
+.Pp
+Persistent principal policy is loaded into an immutable snapshot by BSDAuth
+at startup.
+Editing or replacing its file does not revoke existing grants or
+change the loaded snapshot.
+Stage policy with its matching system in an
+inactive boot environment and reboot to activate it.
+.Sh EXIT STATUS
+.Ex -std
+Invalid policy or an unavailable account returns 2.
+Invalid command usage returns 64.
+.Sh SEE ALSO
+.Xr bectl 8 ,
+.Xr BSDAuth 8

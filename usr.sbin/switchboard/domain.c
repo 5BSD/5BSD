@@ -952,8 +952,8 @@ domain_mint_system_channel(int *out_fd, int kq)
 
 /*
  * Mint the session channel a mint request selected (§6): SVC_DOMAIN_USER binds
- * the recorded uid, SVC_DOMAIN_SYSTEM ignores it (a SYSTEM channel resolves
- * every name, so uid is meaningless and recorded as 0).  `set` is the
+ * the recorded uid. SYSTEM sessions preserve that same authenticated uid;
+ * broader discovery never changes principal identity.  `set` is the
  * anointment set the auth agent decided from the principal policy; the minted
  * channel carries it beside the kind (docs/book/src/plane/anointments.md).  The
  * caller has already run svc_mint_domain_kind() to authorize the requested
@@ -965,7 +965,7 @@ domain_mint_session_channel(enum svc_domain_kind kind, uid_t uid,
 {
 
 	return (domain_mint_channel(kind,
-	    kind == SVC_DOMAIN_USER ? uid : 0, set, true, out_fd, kq));
+	    uid, set, true, out_fd, kq));
 }
 
 bool

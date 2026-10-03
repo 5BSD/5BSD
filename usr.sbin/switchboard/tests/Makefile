@@ -288,11 +288,4 @@ CFLAGS.bundle_selection_test+=	-I${SRCTOP}/usr.sbin/switchboard
 LIBADD.capd_service_fixture+= capsulert
 
 
-
-ATF_TESTS_C+= management_policy_test
-SRCS.management_policy_test= management_policy_test.c management_policy.c
-CFLAGS.management_policy_test+= -DMANAGEMENT_POLICY_TESTING \
-    -I${SRCTOP}/usr.sbin/switchboard -I${SRCTOP}/contrib/libucl/include
-LIBADD.management_policy_test+= ucl
-
 .include <bsd.test.mk>

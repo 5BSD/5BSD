@@ -517,7 +517,7 @@ elevate_fixture(struct fixture *fixture, const char *policy,
 
 /*
  * THE escalation regression, driven over the plane: a caller without
- * SERVICE_RIGHTS_ADMIN — modelled as every right but ADMIN — is refused EPERM
+ * SERVICE_RIGHTS_AUTHENTICATE — modelled as every right but ADMIN — is refused EPERM
  * before any mint, and receives no descriptor.
  */
 ATF_TC(non_admin_caller_is_denied_eperm);
@@ -525,7 +525,7 @@ ATF_TC_HEAD(non_admin_caller_is_denied_eperm, tc)
 {
 	atf_tc_set_md_var(tc, "require.user", "root");
 	atf_tc_set_md_var(tc, "descr",
-	    "A caller lacking SERVICE_RIGHTS_ADMIN is refused a mint (EPERM) "
+	    "A caller lacking SERVICE_RIGHTS_AUTHENTICATE is refused a mint (EPERM) "
 	    "with no descriptor -- the proxy privilege-escalation guard");
 }
 ATF_TC_BODY(non_admin_caller_is_denied_eperm, tc)
@@ -535,7 +535,7 @@ ATF_TC_BODY(non_admin_caller_is_denied_eperm, tc)
 	int32_t status;
 	size_t nfds;
 
-	fixture_create_simple(&fixture, SERVICE_RIGHTS_ALL & ~SERVICE_RIGHTS_ADMIN,
+	fixture_create_simple(&fixture, SERVICE_RIGHTS_ALL & ~SERVICE_RIGHTS_AUTHENTICATE,
 	    "org.test.caller");
 	ATF_REQUIRE_EQ(0, agent_call(fixture.session, &req, sizeof(req), -1,
 	    &status, &nfds));
@@ -613,7 +613,7 @@ ATF_TC_BODY(admin_caller_malformed_request_is_einval, tc)
 	size_t nfds;
 	int devnull;
 
-	fixture_create_simple(&fixture, SERVICE_RIGHTS_ADMIN, "org.test.login");
+	fixture_create_simple(&fixture, SERVICE_RIGHTS_AUTHENTICATE, "org.test.login");
 
 	/* Unknown opcode. */
 	req = well_formed_mint();
@@ -1150,7 +1150,7 @@ ATF_TC_BODY(mint_forwardable_flag_accepted, tc)
 	int32_t status;
 	size_t nfds;
 
-	fixture_create_simple(&fixture, SERVICE_RIGHTS_ADMIN, "org.test.login");
+	fixture_create_simple(&fixture, SERVICE_RIGHTS_AUTHENTICATE, "org.test.login");
 	req = well_formed_mint();
 	ATF_REQUIRE_EQ(0, agent_call(fixture.session, &req, sizeof(req), -1,
 	    &status, &nfds));
@@ -1406,7 +1406,7 @@ ATF_TC_BODY(elevate_unclassifiable_body, tc)
 	    GOOD_PASSWORD, &nfds));
 	fixture_destroy(&fixture);
 
-	fixture_create_simple(&fixture, SERVICE_RIGHTS_ADMIN, "org.test.login");
+	fixture_create_simple(&fixture, SERVICE_RIGHTS_AUTHENTICATE, "org.test.login");
 	errno = 0;
 	ATF_CHECK_ERRNO(EINVAL, agent_call(fixture.session, &req, 0, -1,
 	    &(int32_t){ 0 }, &nfds) == -1);
@@ -1864,7 +1864,7 @@ ATF_TC_BODY(audit_mint_records, tc)
 
 	require_plane();
 	/* The caller gate: no uid is known, so the subject is the label. */
-	audited_mint_fixture(&fixture, SERVICE_RIGHTS_ALL & ~SERVICE_RIGHTS_ADMIN,
+	audited_mint_fixture(&fixture, SERVICE_RIGHTS_ALL & ~SERVICE_RIGHTS_AUTHENTICATE,
 	    "org.test.caller", POLICY_ROOT_MAY_ELEVATE, PASSWD_TEXT);
 	req = well_formed_mint();
 	ATF_REQUIRE_EQ(0, agent_call(fixture.session, &req, sizeof(req), -1,
@@ -1884,7 +1884,7 @@ ATF_TC_BODY(audit_mint_records, tc)
 
 	/* Shape: a full-size body names the principal uid; a short one
 	 * cannot. */
-	audited_mint_fixture(&fixture, SERVICE_RIGHTS_ADMIN, "org.test.login",
+	audited_mint_fixture(&fixture, SERVICE_RIGHTS_AUTHENTICATE, "org.test.login",
 	    POLICY_ROOT_MAY_ELEVATE, PASSWD_TEXT);
 	req = well_formed_mint();
 	req.op = AUTHAGENT_OP_ELEVATE + 99;
@@ -1918,7 +1918,7 @@ ATF_TC_BODY(audit_mint_records, tc)
 
 	/* No policy at all: least privilege even for root, so the kind is user
 	 * with nothing and the record says the default rule applied. */
-	audited_mint_fixture(&fixture, SERVICE_RIGHTS_ADMIN, "org.test.login",
+	audited_mint_fixture(&fixture, SERVICE_RIGHTS_AUTHENTICATE, "org.test.login",
 	    NULL, PASSWD_TEXT);
 	req = well_formed_mint();
 	ATF_REQUIRE_EQ(0, agent_call(fixture.session, &req, sizeof(req), -1,
@@ -1929,7 +1929,7 @@ ATF_TC_BODY(audit_mint_records, tc)
 	fixture_destroy(&fixture);
 
 	/* The principal has no passwd entry: refused at identity. */
-	audited_mint_fixture(&fixture, SERVICE_RIGHTS_ADMIN, "org.test.login",
+	audited_mint_fixture(&fixture, SERVICE_RIGHTS_AUTHENTICATE, "org.test.login",
 	    POLICY_ROOT_MAY_ELEVATE, "someone:*:5:5:x:/:/bin/sh\n");
 	req = well_formed_mint();
 	ATF_REQUIRE_EQ(0, agent_call(fixture.session, &req, sizeof(req), -1,

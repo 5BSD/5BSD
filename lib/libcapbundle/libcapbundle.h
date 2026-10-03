@@ -188,8 +188,8 @@ int	capbundle_scan_dir(const char *dirpath, capbundle_scan_cb cb, void *ctx);
 /*
  * The principal->bundle admin policy (docs/capability-authority-model.md, P1).
  * Whether a principal is entitled to an admin (full-discovery) session, per the
- * UCL policy at /Capabilities/Config/principal-policy.ucl, defaulting to the
- * historical rule (root or a member of "wheel") when no policy is configured.
+ * UCL policy at /Capabilities/Config/principal-policy.ucl, granting nothing
+ * when no valid policy is configured.
  */
 struct passwd;
 bool	capbundle_principal_is_admin(const struct passwd *pwd);
@@ -198,8 +198,7 @@ bool	capbundle_principal_is_admin(const struct passwd *pwd);
  * As above, but read the policy from an already-open read-only descriptor
  * rather than by path — the capsicum-clean form for a sandboxed auth-agent that
  * obtains principal-policy.ucl from the filesystem daemon (bsdfilesystem) via
- * service_open_isolated(3).  A bad or absent fd fails safe to the historical
- * default.
+ * service_open_isolated(3).  A bad or absent fd grants nothing.
  */
 bool	capbundle_principal_is_admin_fd(const struct passwd *pwd, int policy_fd);
 
@@ -214,7 +213,7 @@ typedef gid_t (*capbundle_group_gid_fn)(void *ctx, const char *group_name);
 /*
  * The data-only decision core.  Decide admin-ness for a principal already
  * resolved to a uid and its set of member group ids, against the policy on
- * `policy_fd` (or the historical default when the fd is absent/unreadable),
+ * `policy_fd` (or an empty grant when the fd is absent/unreadable),
  * using `name2gid` to resolve any group names the policy references.  This is
  * the entry point a sandboxed auth-agent uses after resolving the principal
  * itself (never trusting caller-supplied attributes).
@@ -240,7 +239,7 @@ bool	capbundle_principal_is_admin_resolved(int policy_fd, uid_t uid,
  * fallback.  "*" (only legal in this file) grants every name and sets the
  * matching *_all flag; admin_rights defaults to true for an entry granting
  * anointments = ["*"] and false otherwise.  An absent or malformed policy
- * applies the historical rule (uid 0 or "wheel" -> "*" + admin_rights, else nothing) and sets
+ * grants nothing to any principal and sets
  * from_default_rule so the caller can log the fallback.
  */
 #define	CAPBUNDLE_PRINCIPAL_MAX_NAMES	32
@@ -252,12 +251,12 @@ struct capbundle_principal_grant {
 	unsigned nmay_elevate;
 	bool	 elevate_all;		/* may_elevate contained "*" */
 	bool	 admin_rights;
-	bool	 from_default_rule;	/* policy absent/malformed: historical rule */
+	bool	 from_default_rule;	/* policy absent/malformed: empty grant */
 };
 
 /*
  * Resolve the grant for a principal already reduced to (uid, member gid set)
- * against the policy on policy_fd (or the historical rule when the fd is
+ * against the policy on policy_fd (or an empty grant when the fd is
  * absent/unreadable/malformed).  Always fills *out and returns 0; -1 with
  * errno EINVAL only for NULL out/name2gid or a NULL member_gids with nmember
  * > 0.
@@ -268,6 +267,21 @@ int	capbundle_principal_resolve(int policy_fd, uid_t uid,
 	    const gid_t *member_gids, unsigned nmember,
 	    capbundle_group_gid_fn name2gid, void *ctx,
 	    struct capbundle_principal_grant *out);
+/* Immutable policy snapshot. Load once at boot; close the input descriptor.
+ * Load returns -1 with errno for invalid/unreadable policy and sets *out=NULL.
+ * Resolve performs no policy I/O or allocation. NULL snapshot grants nothing.
+ * Concurrent readers may share a snapshot; free only after all readers finish.
+ * Format returns malloc-owned JSON. No ownership/integrity checks: callers
+ * must obtain the input from their trusted boot/update boundary. */
+struct capbundle_principal_policy;
+int capbundle_principal_policy_load(int fd, struct capbundle_principal_policy **out);
+void capbundle_principal_policy_free(struct capbundle_principal_policy *policy);
+char *capbundle_principal_policy_format(const struct capbundle_principal_policy *policy);
+int capbundle_principal_policy_resolve(const struct capbundle_principal_policy *policy,
+    uid_t uid, const gid_t *members, unsigned nmember,
+    capbundle_group_gid_fn name2gid, void *ctx,
+    struct capbundle_principal_grant *out);
+
 /* Whether the grant holds `name` from login (anoint_all or listed). */
 bool	capbundle_principal_holds(const struct capbundle_principal_grant *g,
 	    const char *name);

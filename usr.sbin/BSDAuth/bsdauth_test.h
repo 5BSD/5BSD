@@ -14,7 +14,7 @@
 /*
  * The mint caller-gate predicate, factored out of handle_request() so the
  * privilege-escalation regression can be unit-tested without a live plane.
- * True iff the switchboard-stamped caller holds SERVICE_RIGHTS_ADMIN.  Non-static
+ * True iff the switchboard-stamped caller holds SERVICE_RIGHTS_AUTHENTICATE.  Non-static
  * for testability and declared here so the daemon build keeps a prototype in
  * scope; the runtime behaviour is unchanged.
  */

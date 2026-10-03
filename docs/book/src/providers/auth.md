@@ -16,9 +16,9 @@ Lookup Channel](../plane/discovery-and-lookup.md). Switchboard performs the
 actual mint (`SVC_OP_MINT_DOMAIN`); BSDAuth is the unit whose manifest says
 `mint_authority = true`, which is the only way a unit obtains a
 mint-capable bootstrap channel. Given a uid, BSDAuth decides what to mint:
-a SYSTEM channel (full discovery, with `SERVICE_RIGHTS_ADMIN`) for an admin
-principal, or a per-uid USER channel carrying the listed anointment set
-otherwise. The decision comes from `/Capabilities/Config/principal-policy.ucl`
+a SYSTEM channel for a wildcard grant, or a per-uid USER channel otherwise.
+Both retain the authenticated UID and carry the selected anointment set;
+provider ADMIN is controlled independently by `admin_rights`. The decision comes from `/Capabilities/Config/principal-policy.ucl`
 and from identity BSDAuth resolves itself. Before entering capability mode
 it obtains read-only descriptors for `/etc/passwd`, `/etc/group` and
 `/etc/master.passwd` from [system.Filesystem](filesystem.md) through
@@ -26,14 +26,13 @@ it obtains read-only descriptors for `/etc/passwd`, `/etc/group` and
 full group membership in-process. A compromised login program cannot claim
 a group it is not in.
 
-Three things arrive over the channel and nothing else. MINT_SESSION is
-gated on a held right, not a name: only a caller whose channel carries
-`SERVICE_RIGHTS_ADMIN` may ask, and switchboard stamps that bit only on an
-ambient login-session lookup over a SYSTEM channel, which is exactly the
-channel the login family reaches BSDAuth over. Every unit, and every
-session reaching BSDAuth for elevation, is refused a mint with `EPERM`
-before the request is parsed. MINT_AUTH exists for su(1) from an ordinary
-session, whose channel has no admin bit: the caller proves the target's
+Three request types arrive over the channel. MINT_SESSION requires
+`SERVICE_RIGHTS_AUTHENTICATE`, which SwitchBoard grants on a session's
+connection to Auth only when it holds `system.auth.mint` or `*`. This is explicit
+impersonation authority, distinct from provider ADMIN or SYSTEM management.
+Managed units do not receive this bit through ordinary endpoint lookup.
+A caller lacking it is refused with `EPERM` before the request is parsed.
+MINT_AUTH exists for su(1) from an ordinary session: the caller proves the target's
 password and BSDAuth verifies it against `/etc/master.passwd` with
 crypt(3) inside the sandbox, then mints the target's own set. ELEVATE takes
 the caller's uid from the kernel-stamped sender, checks the requested name
@@ -77,7 +76,7 @@ as one SCM_RIGHTS fd on success and none on failure.
 
 | Op | Request | Reply | Errors, in check order |
 |---|---|---|---|
-| 1 MINT_SESSION | `authagent_mint_req` (uid, flags: 0 or `FORWARDABLE`) | reply + session channel fd | `EPERM` (caller lacks `SERVICE_RIGHTS_ADMIN`), `EINVAL` (shape), `ENOENT` (uid has no passwd entry), mint transport errors |
+| 1 MINT_SESSION | `authagent_mint_req` (uid, flags: 0 or `FORWARDABLE`) | reply + session channel fd | `EPERM` (caller lacks `SERVICE_RIGHTS_AUTHENTICATE`), `EINVAL` (shape), `ENOENT` (uid has no passwd entry), mint transport errors |
 | 2 ELEVATE | `authagent_elevate_req` (332 bytes: name[64], password[256]) | reply + channel fd holding the session set plus `name` | `EPERM` (caller is a unit, not a session), `EINVAL` (size, flags, unterminated field, attached fd, name not reverse-domain), `EPERM` (name not in `may_elevate`), `EAGAIN` (five failures within sixty seconds for this uid), `ENXIO` (no `/etc/master.passwd` grant), `EACCES` (wrong password), `EPERM` (empty or locked hash), `ENOENT` (no record), `E2BIG` (set full) |
 | 3 MINT_AUTH | `authagent_mint_auth_req` (268 bytes: target uid, flags, password[256]) | reply + the target's session channel fd | `EPERM` (caller is a unit), `EINVAL`, `EAGAIN` (separate per-uid limiter), `EACCES`, `ENOENT` |
 
@@ -173,16 +172,16 @@ principals {
 | `may_elevate` | names the principal may ask for one command at a time through anoint(1); absent means never |
 | `admin_rights` | whether connections from the session carry `SERVICE_RIGHTS_ADMIN`, the in-endpoint bypass some providers honour; defaults to true only when `anointments` is `"*"` |
 
-Session kind is SYSTEM when the grant holds `"*"` or carries admin rights,
+Session kind is SYSTEM when the grant holds `"*"`,
 USER otherwise. Default-deny is the `default` entry: an unlisted principal
 holds nothing and may elevate to nothing. The `capability` uid is not a
 principal and BSDAuth warns if the policy grants it anything. A missing or
-malformed policy falls back to the historical rule (uid 0 or group
-`wheel` holds everything with admin rights) and logs the fallback. Admin
-sessions do not bypass BSDAuth's own gates: an admin session still cannot
-elevate to a name outside its `may_elevate` (though `"*"` covers all), and
-MINT_SESSION still requires the admin bit on the channel, which a unit
-never has. The full model is in [Anointments and Principal
+malformed policy grants nothing, including to root/wheel. BSDAuth validates
+and loads one immutable policy snapshot at startup. Later file edits do not
+change that snapshot. MINT_SESSION requires the dedicated AUTHENTICATE right,
+issued to session holders of `system.auth.mint` (or `*`), never merely ADMIN.
+Ordinary managed units cannot obtain it through endpoint lookup.
+The full model is in [Anointments and Principal
 Policy](../plane/anointments.md).
 
 ## Tests

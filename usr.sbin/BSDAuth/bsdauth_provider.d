@@ -37,7 +37,7 @@ provider bsdauth {
 	/*
 	 * The principal policy resolved a uid's grant (both MINT and ELEVATE
 	 * pass here): anointment count, whether it holds "*", whether it
-	 * carries admin rights, and whether the historical root-or-wheel rule
+	 * carries admin rights, and whether an empty grant
 	 * stood in for an absent/malformed policy file.
 	 */
 	probe policy__resolve(uint32_t uid, unsigned int count, int all,

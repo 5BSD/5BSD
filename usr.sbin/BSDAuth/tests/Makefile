@@ -29,6 +29,7 @@ CFLAGS+=	-DBSDAUTH_TESTING
 CFLAGS+=	-I${SRCTOP}/usr.sbin/BSDAuth
 CFLAGS+=	-I${SRCTOP}/lib/libchannel
 CFLAGS+=	-I${SRCTOP}/lib/libservice
+CFLAGS+=	-I${SRCTOP}/lib/libauditcmp
 CFLAGS+=	-I${SRCTOP}/lib/libcapbundle
 CFLAGS+=	-I${SRCTOP}/sys
 CFLAGS.mint_decision_test+= \
@@ -41,7 +42,7 @@ SRCS.mint_decision_test=	mint_decision_test.c bsdauth.c
 SRCS.provider_test=		provider_test.c bsdauth.c
 
 # crypt: the daemon object's in-agent password verification (ELEVATE).
-LIBADD=		service channel capability capbundle crypt
+LIBADD=		service channel capability capbundle crypt auditcmp
 
 ATF_TESTS_SH_SED_observability_test+=	-e 's,@SRCTOP@,${SRCTOP},g'
 ATF_TESTS_SH_SED_observability_test+=	-e 's,@OBJTOP@,${OBJTOP},g'

@@ -172,10 +172,10 @@ admin { groups = ["wheel"]; uids = [0]; anointments = [];
 
 The `capability` uid is not a principal. It is the unprivileged uid
 switchboard runs units as; units never consult this file, and BSDAuth logs a
-warning at startup if an entry grants it anything. A missing or malformed
-file falls back to the historical rule (uid 0 or a member of `wheel` holds
-everything with admin rights, everyone else nothing) and logs the fallback,
-so a damaged file cannot lock out root. The parser is the strict one used for
+warning at startup if an entry grants it anything. Missing or malformed
+policy grants nothing to any principal, including root and wheel. BSDAuth
+loads one immutable policy snapshot at startup; file edits do not update it.
+The parser is the strict one used for
 manifests: a repeated array, object or boolean key is a parse error and
 `.include` is refused.
 
@@ -212,18 +212,15 @@ control = "core";
 
 `mint_authority` is honoured only for a base-system bundle under
 `/Capabilities/System`; a per-user agent that declares it has it stripped.
-Within BSDAuth, minting is then gated on a held right, not on a name: only a
-caller whose channel carries `SERVICE_RIGHTS_ADMIN` may request a session
-mint, and switchboard stamps that right on a brokered session only for an
-ambient login-session lookup over a SYSTEM channel, which is exactly the
-channel the login family reaches BSDAuth over. Every ordinary unit, and every
-login session reaching BSDAuth for elevation, is stamped without the bit and
-is refused a mint with `EPERM` before the request is parsed. That closes the
-proxy escalation in which a service or a user would ask the agent to mint an
-admin session on its behalf.
+Within BSDAuth, unauthenticated-by-password mint requests require the held
+`SERVICE_RIGHTS_AUTHENTICATE` right. SwitchBoard adds that right only to a
+session's Auth connection when the session holds `system.auth.mint` or `*`.
+Provider ADMIN and SYSTEM management alone do not permit impersonation.
+Managed units do not receive this right through ordinary lookup.
 
-`visible = ["user"]` opens only elevation to user sessions; a user session
-that connects and sends a mint request is refused exactly as before.
+`visible = ["user"]` lets ordinary sessions reach Auth for password-verified
+operations. A session without authentication authority cannot request an
+arbitrary UID's grants without proving the target account's password.
 
 Non-admin su is the other mint path. `su` changes uid and re-mints the whole
 session; for an admin session that mint rides the caller's admin bit. An
@@ -361,8 +358,8 @@ Model](../capability/authority-model.md), [The Management
 Model](management-model.md), [system.Notify](../providers/notify.md),
 [system.Auth](../providers/auth.md).
 
-## Scoped management policy
+## Principal policy and management
 
-For opt-in attribute rules governing SYSTEM service start/stop and global
-reload, see [Attribute policy for service management](management-policy.md).
-It preserves ordinary UNIX execution and does not change login grants.
+See [Principal grants and service management](management-policy.md) for
+explicit session grants, independent lifecycle authority, policy tools,
+and the boot-environment update boundary.
