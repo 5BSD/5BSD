@@ -27,14 +27,22 @@ linux_mount() {
 
 linux_start()
 {
-	local _emul_path _tmpdir
+	local _emul_path _tmpdir _plane _broker
+
+	# Use SystemExtension when the capability plane owns module loading.
+	# Keep the direct loader for an explicitly disabled plane, like rc.d/kld.
+	_plane=$(kenv -q capability_plane 2>/dev/null || :)
+	case "${_plane}" in
+	[Nn][Oo]|[Oo][Ff][Ff]|0) _broker= ;;
+	*) _broker=-b ;;
+	esac
 
 	# 5BSD is 64-bit only (no COMPAT_FREEBSD32 / 32-bit ELF), so the
 	# 32-bit 'linux' module is neither built nor loadable; load the
 	# 64-bit ABI (linux64) exclusively.
 	case `sysctl -n hw.machine_arch` in
 	aarch64|amd64)
-		load_kld -e 'linux64elf' linux64
+		load_kld ${_broker} -e 'linux64elf' linux64 || return 1
 		;;
 	esac
 
@@ -50,13 +58,13 @@ linux_start()
 	fi
 
 	# Linux uses the pre-pts(4) tty naming scheme.
-	load_kld pty
+	load_kld ${_broker} pty || return 1
 
 	# Explicitly load the filesystem modules; they are usually required,
 	# even with linux_mounts_enable="NO".
-	load_kld fdescfs
-	load_kld linprocfs
-	load_kld linsysfs
+	load_kld ${_broker} fdescfs || return 1
+	load_kld ${_broker} linprocfs || return 1
+	load_kld ${_broker} linsysfs || return 1
 
 	# Handle unbranded ELF executables by defaulting to ELFOSABI_LINUX.
 	if [ `sysctl -ni kern.elf64.fallback_brand` -eq "-1" ]; then

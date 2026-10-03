@@ -12,7 +12,7 @@ setup()
 	. @SRCTOP@/libexec/rc/rc.subr
 	kenv() {
 		case "$2" in
-		capability_plane) echo "${PLANE:-YES}" ;;
+		capability_plane) echo "${PLANE-YES}" ;;
 		*) return 1 ;;
 		esac
 	}
@@ -76,9 +76,55 @@ devmatch_broker_body()
 	    env PLANE=NO sh -c '. ./seams.sh; . ./devmatch.sh; devmatch_start'
 }
 
+atf_test_case linux_broker
+linux_broker_body()
+{
+	setup
+	sed '/^\. \/etc\/rc.subr$/d; /^load_rc_config /d; /^run_rc_command /d' \
+	    @SRCTOP@/libexec/rc/rc.d/linux > linux.sh
+	cat > linux-seams.sh <<-'EOF'
+	. ./seams.sh
+	. ./linux.sh
+	sysctl() {
+		case "$*" in
+		'-n hw.machine_arch') echo amd64 ;;
+		'-n compat.linux.emul_path') echo /nonexistent ;;
+		'-ni kern.elf64.fallback_brand') echo 3 ;;
+		esac
+	}
+	checkyesno() { [ "${TEST_MOUNTS:-NO}" = YES ]; }
+	linux_mount() { echo "mount $*"; }
+	sysextctl() {
+		echo "broker $*"
+		[ "$2" != "${FAIL_MODULE:-}" ] && return "${BROKER_STATUS:-0}"
+		return 1
+	}
+	EOF
+	for plane in YES "" NO off 0; do
+		case "$plane" in
+		NO|off|0) loader=direct ;;
+		*) loader='broker load' ;;
+		esac
+		printf '%s\n' "$loader linux64" "$loader pty" \
+		    "$loader fdescfs" "$loader linprocfs" "$loader linsysfs" > expected
+		atf_check -s exit:0 -e empty -o file:expected env PLANE="$plane" \
+		    sh -c '. ./linux-seams.sh; linux_start'
+	done
+	# A broker refusal must not fall back to kldload or attempt mounts.
+	atf_check -s exit:1 -e match:'Unable to load' \
+	    -o inline:'broker load linux64\n' env BROKER_STATUS=1 TEST_MOUNTS=YES \
+	    sh -c '. ./linux-seams.sh; linux_start'
+	# A later filesystem-module refusal must also stop before mounting.
+	atf_check -s exit:1 -e match:'Unable to load kernel module fdescfs' \
+	    -o inline:'broker load linux64\nbroker load pty\nbroker load fdescfs\n' \
+	    env FAIL_MODULE=fdescfs TEST_MOUNTS=YES \
+	    sh -c '. ./linux-seams.sh; linux_start'
+}
+
 atf_init_test_cases()
 {
 	atf_add_test_case restore_and_kld_list
 	atf_add_test_case loaded_claim_and_denial
+	atf_add_test_case linux_broker
 	atf_add_test_case devmatch_broker
 }

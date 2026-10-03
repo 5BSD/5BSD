@@ -70,6 +70,19 @@ switchboard: running
 
 There is no `pid` on the cron line even though cron is running: the pid switchboard prints is that of the process it holds a descriptor for, and the `onestart` wrapper has exited. A unit that has stopped through `onestop` shows `stopped`. `switchboardctl services` prints the same list.
 
+## Linux compatibility
+
+Linux compatibility is enabled by the base defaults: `linux_enable` and
+`linux_mounts_enable` are both `YES`. The loader preloads `linux64` and
+`linux_common`; `rc.d/linux` ensures `linux64`, `pty`, `fdescfs`, `linprocfs`
+and `linsysfs` through BSDExtension using `load_kld -b`. Only an explicitly
+disabled capability plane uses direct `kldload`. A required module failure
+stops Linux setup rather than continuing with missing filesystems.
+The Linux rc script mounts the compatibility filesystems under
+`compat.linux.emul_path` (normally `/compat/linux`). A Linux distribution's
+libraries and applications are installed separately; kernel compatibility
+being enabled does not install a Linux userland.
+
 ## rc.d scripts added and changed
 
 Three scripts are new in `libexec/rc/rc.d`; all default to off and all carry `KEYWORD: nojail shutdown`.
