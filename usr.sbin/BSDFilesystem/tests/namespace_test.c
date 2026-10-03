@@ -253,7 +253,7 @@ ATF_TC_BODY(config_accepts_selected_pool_name, tc)
  * is a config error rather than a silently clamped grace window.
  */
 static int
-load_text(struct bsdfilesystem_config *cfg, const char *text)
+overlay_text(struct bsdfilesystem_config *cfg, const char *text)
 {
 	char path[] = "/tmp/bsdfilesystem-config.XXXXXX";
 	int fd, rc;
@@ -262,10 +262,17 @@ load_text(struct bsdfilesystem_config *cfg, const char *text)
 	ATF_REQUIRE(fd >= 0);
 	ATF_REQUIRE_EQ((ssize_t)strlen(text), write(fd, text, strlen(text)));
 	ATF_REQUIRE_EQ(0, close(fd));
-	bsdfilesystem_config_defaults(cfg);
 	rc = bsdfilesystem_config_load(cfg, path);
 	(void)unlink(path);
 	return (rc);
+}
+
+static int
+load_text(struct bsdfilesystem_config *cfg, const char *text)
+{
+
+	bsdfilesystem_config_defaults(cfg);
+	return (overlay_text(cfg, text));
 }
 
 ATF_TC_WITHOUT_HEAD(config_reclaim_interval_is_bounded);
@@ -1408,8 +1415,73 @@ ATF_TC_BODY(stat_and_set_quota_request_shape, tc)
 	ATF_CHECK(!bsdfilesystem_test_valid_request(&rq));
 }
 
+ATF_TC_WITHOUT_HEAD(config_verified_paths);
+ATF_TC_BODY(config_verified_paths, tc)
+{
+	struct bsdfilesystem_config cfg;
+	const char *bad[] = {
+	    "verify=1; rights=[read];",
+	    "verify=true; prefix=true; rights=[read];",
+	    "verify=true; rights=[write];",
+	    "verify=true; rights=[lookup];",
+	    "verify=true; rights=[ioctl];",
+	    "verify=true; prefix=1; rights=[read];"
+	};
+	char text[256];
+	unsigned i;
+
+	bsdfilesystem_config_defaults(&cfg);
+	ATF_REQUIRE_EQ(0, load_text(&cfg,
+	    "open_paths=[{label=auth; path=/policy; rights=[read]; verify=true;}];"));
+	ATF_CHECK(cfg.open_policy[0].verify);
+	for (i = 0; i < nitems(bad); i++) {
+		snprintf(text, sizeof(text),
+		    "open_paths=[{label=auth; path=/policy; %s}];", bad[i]);
+		ATF_CHECK_EQ(-1, overlay_text(&cfg, text));
+		ATF_CHECK_EQ(1, cfg.nopen_policy);
+		ATF_CHECK_STREQ("auth", cfg.open_policy[0].label);
+		ATF_CHECK_STREQ("/policy", cfg.open_policy[0].path);
+		ATF_CHECK_EQ(BSDFILESYSTEM_OPEN_READ, cfg.open_policy[0].rights);
+		ATF_CHECK(cfg.open_policy[0].verify);
+		ATF_CHECK(!cfg.open_policy[0].prefix);
+	}
+}
+
+ATF_TC_WITHOUT_HEAD(grant_open_verified_types);
+ATF_TC_BODY(grant_open_verified_types, tc)
+{
+	struct bsdfilesystem_state st;
+	struct bsdfilesystem_open_request rq;
+	char dir[] = "/tmp/bsdfs-verify.XXXXXX", path[PATH_MAX];
+
+	ATF_REQUIRE(mkdtemp(dir) != NULL);
+	open_state_init(&st, open("/", O_RDONLY | O_DIRECTORY));
+	ATF_REQUIRE(st.root_fd >= 0);
+	snprintf(path, sizeof(path), "%s/fifo", dir);
+	ATF_REQUIRE_EQ(0, mkfifo(path, 0600));
+	open_policy_set(&st, "auth", path, BSDFILESYSTEM_OPEN_READ, false);
+	st.cfg.open_policy[0].verify = true;
+	open_request_set(&rq, path, BSDFILESYSTEM_OPEN_READ);
+	/* Must reject without waiting for a FIFO writer. */
+	alarm(5);
+	ATF_CHECK_EQ(-1, bsdfilesystem_test_grant_open(&st, "auth", &rq));
+	alarm(0);
+	ATF_REQUIRE_EQ(0, unlink(path));
+	open_policy_set(&st, "auth", dir, BSDFILESYSTEM_OPEN_READ, false);
+	st.cfg.open_policy[0].verify = true;
+	open_request_set(&rq, dir, BSDFILESYSTEM_OPEN_READ);
+	ATF_CHECK_EQ(-1, bsdfilesystem_test_grant_open(&st, "auth", &rq));
+	rq.is_dir = 1;
+	ATF_CHECK_EQ(-1, bsdfilesystem_test_grant_open(&st, "auth", &rq));
+	ATF_CHECK_EQ(EINVAL, errno);
+	ATF_REQUIRE_EQ(0, close(st.root_fd));
+	ATF_REQUIRE_EQ(0, rmdir(dir));
+}
+
 ATF_TP_ADD_TCS(tp)
 {
+	ATF_TP_ADD_TC(tp, config_verified_paths);
+	ATF_TP_ADD_TC(tp, grant_open_verified_types);
 
 	ATF_TP_ADD_TC(tp, distinct_labels_derive_distinct_namespaces);
 	ATF_TP_ADD_TC(tp, same_label_is_deterministic);

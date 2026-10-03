@@ -122,6 +122,18 @@ matches the path itself or a single trailing component
 .Pq a device unit, e.g. Pa /dev/vhid No matching Pa /dev/vhidN ,
 never a deeper subdirectory.
 When false or absent, only an exact path match is granted.
+.It Va verify
+Optional boolean, default false.
+When true, open with
+.Dv O_VERIFY
+and require a regular file.
+Only exact paths and read or execute rights are permitted.
+The shipped authentication policy and account-file entries enable this option.
+The broker also opens its own configuration with
+.Dv O_VERIFY .
+These checks depend on the system's veriexec enforcement state and enrolled
+fingerprints; enabling this option alone does not establish a trusted boot
+or prevent changes while veriexec is inactive.
 .El
 .El
 .Sh FILES

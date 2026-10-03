@@ -332,8 +332,13 @@ config_parse_fd(struct bsdfilesystem_config *cfg, int fd)
 				const ucl_object_t *px = ucl_object_lookup(ent,
 				    "prefix");
 
-				pol->prefix = px != NULL &&
-				    ucl_object_toboolean(px);
+				if (px != NULL && ucl_object_type(px) != UCL_BOOLEAN)
+					goto invalid;
+				pol->prefix = px != NULL && ucl_object_toboolean(px);
+				px = ucl_object_lookup(ent, "verify");
+				if (px != NULL && ucl_object_type(px) != UCL_BOOLEAN)
+					goto invalid;
+				pol->verify = px != NULL && ucl_object_toboolean(px);
 			}
 			while ((rv = ucl_object_iterate(ri, &rit, true)) != NULL) {
 				const char *s = ucl_object_tostring(rv);
@@ -353,7 +358,9 @@ config_parse_fd(struct bsdfilesystem_config *cfg, int fd)
 				else
 					goto invalid;
 			}
-			if (pol->rights == 0)
+			if (pol->rights == 0 || (pol->verify &&
+			    (pol->prefix || (pol->rights &
+			    ~(BSDFILESYSTEM_OPEN_READ | BSDFILESYSTEM_OPEN_EXEC)) != 0)))
 				goto invalid;
 			cfg->nopen_policy++;
 		}
@@ -388,7 +395,7 @@ bsdfilesystem_config_load(struct bsdfilesystem_config *cfg, const char *path)
 
 	if (cfg == NULL || path == NULL)
 		return (errno = EINVAL, -1);
-	fd = open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+	fd = open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_VERIFY | O_NONBLOCK);
 	if (fd == -1)
 		return (errno == ENOENT ? 0 : -1);
 	if (fstat(fd, &sb) == -1) {

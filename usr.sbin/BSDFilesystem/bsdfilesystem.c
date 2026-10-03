@@ -141,7 +141,7 @@ main(int argc, char **argv)
 		}
 	} else if (st.root_fd != -1) {
 		cfgfd = openat(st.root_fd, "Capabilities/Config/bsdfilesystem.ucl",
-		    O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+		    O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_VERIFY | O_NONBLOCK);
 		if (cfgfd != -1) {
 			if (bsdfilesystem_config_load_fd(&st.cfg, cfgfd) == -1)
 				syslog(LOG_WARNING, "config unparseable (%m); "

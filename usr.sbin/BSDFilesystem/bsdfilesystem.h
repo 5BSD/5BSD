@@ -54,6 +54,7 @@ struct bsdfilesystem_open_policy {
 	char		label[64];		/* == service_identity.client_label */
 	char		path[BSDFILESYSTEM_MAXPATH];	/* absolute path (or prefix) granted */
 	uint32_t	rights;			/* BSDFILESYSTEM_OPEN_* the label may request */
+	bool		verify;			/* require O_VERIFY on a regular file */
 	bool		prefix;			/* path is a prefix: matches path + one
 						 * trailing non-'/' component (e.g. a
 						 * device unit /dev/vhid -> /dev/vhidN),

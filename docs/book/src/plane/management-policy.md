@@ -121,6 +121,35 @@ A reboot destroys the previous processes and channels. Merely editing a file,
 logging out, or removing an anointment does not promise revocation of every
 already-issued descriptor. There is no general live policy-update API.
 
+## Verified authentication inputs
+
+BSDFilesystem's `open_paths` entries can require `verify = true`. This is a
+broker option for exact, read/execute-only regular files, not a new kind of
+anointment. The shipped entries enable it for principal policy, passwd, group,
+and master.passwd. The broker also uses `O_VERIFY` for its own configuration,
+so an enforcing system will not silently accept an unregistered replacement
+that disables the option. A failed configuration read leaves default-deny open
+rules in place.
+
+With veriexec **enforcing** and the corresponding fingerprints enrolled, the
+kernel checks these broker reads and refuses writes to enrolled files. A
+replacement inode without an enrolled fingerprint cannot supply new policy to
+a restarted consumer. With veriexec inactive, ordinary installations retain
+their existing behavior; `verify = true` alone does not turn enforcement on.
+
+Enrollment must cover the broker configuration as well as all four authentication
+inputs. Updating account files in such a protected profile belongs in the same
+candidate BE transaction as policy. Protecting login/PAM/SSH configuration and
+executables is also necessary: those trusted authenticators can establish
+sessions without BSDAuth rechecking their password authentication.
+
+Fingerprint verification does not bind a pathname to a particular approved
+object: substituting another enrolled object or mounting a different tree must
+also be prevented by the protected namespace and boot/update boundary. Do not
+use this check as a substitute for that boundary. Global veriexec enforcement
+also restricts unregistered executables and libraries, so simply enabling it on
+a general-purpose installation is not a qualified UNIX-compatible profile.
+
 ## Security qualification still required
 
 A policy snapshot is not a filesystem seal. An authorized boot/update boundary

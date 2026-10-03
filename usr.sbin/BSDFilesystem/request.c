@@ -14,6 +14,7 @@
  */
 
 #include <sys/types.h>
+#include <sys/stat.h>
 #include <sys/param.h>
 #include <sys/procdesc.h>
 #include <sys/capsicum.h>
@@ -862,6 +863,7 @@ grant_open(struct bsdfilesystem_state *st, const char *client,
     const struct bsdfilesystem_open_request *rq)
 {
 	const struct bsdfilesystem_config *cfg = &st->cfg;
+	struct stat sb;
 	cap_rights_t rights;
 	unsigned i;
 	int flags, fd, saved;
@@ -929,6 +931,13 @@ grant_open(struct bsdfilesystem_state *st, const char *client,
 	else
 		flags = O_RDONLY;	/* read/exec/lookup all open read-only */
 	flags |= O_CLOEXEC | O_NOCTTY;
+	if (cfg->open_policy[i].verify) {
+		if (rq->is_dir) {
+			errno = EINVAL;
+			return (-1);
+		}
+		flags |= O_VERIFY | O_NONBLOCK;
+	}
 	if (rq->is_dir)
 		flags |= O_DIRECTORY;
 	/*
@@ -949,6 +958,19 @@ grant_open(struct bsdfilesystem_state *st, const char *client,
 	fd = openat(st->root_fd, rq->path + 1, flags);
 	if (fd == -1)
 		return (-1);
+	if (cfg->open_policy[i].verify) {
+		if (fstat(fd, &sb) == -1) {
+			saved = errno;
+			close(fd);
+			errno = saved;
+			return (-1);
+		}
+		if (!S_ISREG(sb.st_mode)) {
+			close(fd);
+			errno = EINVAL;
+			return (-1);
+		}
+	}
 
 	cap_rights_init(&rights, 0);
 	if (rq->rights & BSDFILESYSTEM_OPEN_READ)
