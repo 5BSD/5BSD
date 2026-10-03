@@ -83,6 +83,22 @@ The Linux rc script mounts the compatibility filesystems under
 libraries and applications are installed separately; kernel compatibility
 being enabled does not install a Linux userland.
 
+## rc bootstrap signal compatibility
+
+SwitchBoard runs `/etc/rc` with a controlling console session and the same
+ignored `SIGHUP` and `SIGTSTP` dispositions as init(8)'s script launcher.
+This lets background startup jobs survive the bootstrap session exiting.
+The exception applies only to the console rc bootstrap. Ordinary rc and
+oneshot service commands retain default signal dispositions, and `SIGTERM`
+remains at its default disposition in the bootstrap too.
+
+This is general rc compatibility: it does not select or enable a desktop
+or any other optional service. Scripts retain their ordinary `rc.conf`
+enable settings and `service` start/stop interface. Native bundle selection
+through `switchboardctl enable` and `disable` does not edit `rc.conf`.
+The rc adoption scan covers `/etc/rc.d`, not `/usr/local/etc/rc.d`, and
+tracks the start/stop wrapper rather than the daemon's lifetime.
+
 ## rc.d scripts added and changed
 
 Three scripts are new in `libexec/rc/rc.d`; all default to off and all carry `KEYWORD: nojail shutdown`.

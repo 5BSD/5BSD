@@ -1162,6 +1162,16 @@ svc_exec_command(struct svc_runtime *svc, int kq, char *argv[], bool for_stop)
 		 */
 		for (int sig = 1; sig < NSIG; sig++)
 			(void)signal(sig, SIG_DFL);
+		/*
+		 * Match init's execute_script() for the console rc bootstrap.
+		 * Its background startup jobs must survive the controlling
+		 * session's exit.  Keep SIGTERM and ordinary RC service commands
+		 * at their default disposition.
+		 */
+		if (svc->want_console) {
+			(void)signal(SIGHUP, SIG_IGN);
+			(void)signal(SIGTSTP, SIG_IGN);
+		}
 		sigemptyset(&mask);
 		(void)sigprocmask(SIG_SETMASK, &mask, NULL);
 		execv(argv[0], argv);
