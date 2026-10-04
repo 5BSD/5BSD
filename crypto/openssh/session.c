@@ -1572,11 +1572,11 @@ do_child(struct ssh *ssh, Session *s, const char *command)
 	if (!options.use_pam)
 		do_nologin(pw);
 	/*
-	 * 5BSD §21: while still privileged, ask switchboard (over its
-	 * getpeereid-authenticated control socket) to mint this session's
-	 * ambient lookup channel, scoped to the target uid.  Best-effort and
-	 * non-fatal — on any failure the session simply gets no channel; it is
-	 * installed at the fixed descriptor and spared from the closefrom below.
+	 * 5BSD §21: ask the privileged monitor to obtain a principal-scoped
+	 * channel from BSDAuth.  Install it in kernel process state after the
+	 * credential transition.  Provisioning failure leaves this UNIX session
+	 * without discovery authority; descriptor cleanup cannot erase an
+	 * installed process context.
 	 */
 	ambient_prov_fd = -1;
 	(void)mm_provision_session(pw->pw_uid, &ambient_prov_fd);

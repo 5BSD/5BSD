@@ -1009,9 +1009,9 @@ session child
 .Pc
 obtains its narrowed lookup channel from the auth agent and installs it with
 .Fn service_install_ambient_lookup ,
-which makes the descriptor survive every fork and exec and advertises its
-number in
-.Ev SERVICE_LOOKUP_FD .
+which stores a held reference in kernel process state across fork and exec.
+Descriptor cleanup and environment changes do not remove that reference.
+The library obtains an owned descriptor when it needs to perform discovery.
 A USER-domain session channel is paired switchboard-side with a session
 coalition, an attribution-only
 .Xr mac_capability_coalition 4

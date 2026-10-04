@@ -219,10 +219,11 @@ HTTP/1.0 200 OK
 Nothing was sealed: the process holds the ambient authority of the login,
 as any BSD program does. What changed is discovery. A login session inherits
 a lookup channel that `login(1)`, `su(1)` or `sshd(8)` had `system.Auth` mint
-for the principal, advertised as `SERVICE_LOOKUP_FD`; `service_open()` finds
-no bootstrap descriptor, so it resolves over that channel through
-`service_connect_ambient(3)`, and the first ambient lookup registers a private
-per-process channel so replies never race a sibling's. The two paths differ in
+for the principal and installs it in kernel process state; `service_open()`
+finds no managed-unit bootstrap, so it resolves through
+`service_connect_ambient(3)`. Each lookup handle registers a private reply
+channel so concurrent clients and sibling processes cannot consume one
+another's replies. The two paths differ in
 one respect the program must accept: `service_acquire()` fails with `EBADF`
 from a shell, so `spool_open()` logs "no switchboard context" and the spool is
 skipped; storage is a per-unit container, and a shell process is not a unit.

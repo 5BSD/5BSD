@@ -840,7 +840,7 @@ int	service_helper_open(struct service_context *, const char *name,
 
 /*
  * Client-side connect.  service_connect_ambient() resolves a name over the
- * §21 ambient lookup channel a login session inherits (SERVICE_LOOKUP_FD),
+ * §21 lookup context held in kernel process state,
  * for a program run from a shell that has no switchboard bootstrap context.
  * service_open() is the context-agnostic front door: it uses the bootstrap
  * dispatch channel when switchboard launched the caller, and falls back to the
