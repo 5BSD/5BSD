@@ -89,26 +89,27 @@ struct worker_state {
 	int			 terminal_error;
 };
 
-#ifndef TRACECMP_TESTING
 static int
-open_dtrace_directory(void)
+open_dtrace_directory_at(int devdir)
 {
 	cap_rights_t rights;
-	int fd, devdir;
+	int fd;
 
 	/*
 	 * Born in capability mode: switchboard delivered /dev as a directory
 	 * descriptor (manifest directories = ["/dev"]); open the dtrace node
 	 * directory beneath it with openat(2) rather than a global path.
 	 */
-	if (service_resource_dir("/dev", &devdir) == -1)
-		return (-1);
 	fd = openat(devdir, "dtrace", O_RDONLY | O_DIRECTORY | O_CLOEXEC |
 	    O_NOFOLLOW);
 	if (fd == -1)
 		return (-1);
-	cap_rights_init(&rights, CAP_LOOKUP, CAP_READ, CAP_WRITE, CAP_FSTAT,
-	    CAP_IOCTL);
+	/*
+	 * O_RDWR openat requires CAP_SEEK even for a non-seekable device.
+	 * The consumer is separately narrowed below before delegation.
+	 */
+	cap_rights_init(&rights, CAP_LOOKUP, CAP_READ, CAP_WRITE, CAP_SEEK,
+	    CAP_FSTAT, CAP_IOCTL);
 	if (cap_rights_limit(fd, &rights) == -1 ||
 	    cap_fcntls_limit(fd, 0) == -1 ||
 	    cap_xfer_limit(fd, CAP_XFER_NONE) == -1 ||
@@ -153,6 +154,32 @@ open_dtrace_consumer(int directory)
 		return (-1);
 	}
 	return (fd);
+}
+
+#ifdef TRACECMP_TESTING
+int
+tracecmp_test_open_consumer(int devdir)
+{
+	int directory, fd, error;
+
+	directory = open_dtrace_directory_at(devdir);
+	if (directory == -1)
+		return (-1);
+	fd = open_dtrace_consumer(directory);
+	error = errno;
+	close(directory);
+	errno = error;
+	return (fd);
+}
+#else
+static int
+open_dtrace_directory(void)
+{
+	int devdir;
+
+	if (service_resource_dir("/dev", &devdir) == -1)
+		return (-1);
+	return (open_dtrace_directory_at(devdir));
 }
 #endif
 

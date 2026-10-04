@@ -11,5 +11,6 @@
 
 int tracecmp_test_serve(int, int, bool, int, const char *, service_rights_t);
 int tracecmp_test_prepare_worker_fd(int);
+int tracecmp_test_open_consumer(int);
 
 #endif

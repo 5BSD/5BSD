@@ -5,6 +5,7 @@
 #include <sys/ioctl.h>
 #include <sys/param.h>
 #include <sys/capsicum.h>
+#include <sys/stat.h>
 #include <sys/wait.h>
 
 #include <dev/mac_capability/mac_capability_channel_proto.h>
@@ -434,6 +435,42 @@ ATF_TC_BODY(worker_descriptors_cross_exactly_one_fork, tc)
 	close(fd);
 }
 
+/*
+ * Exercise the production directory/open/hardening path without requiring
+ * root or loaded DTrace modules. Capability lookup checks precede device open.
+ */
+ATF_TC_WITHOUT_HEAD(consumer_open_retains_only_delegated_rights);
+ATF_TC_BODY(consumer_open_retains_only_delegated_rights, tc)
+{
+	cap_rights_t rights;
+	int devdir, fd;
+
+	ATF_REQUIRE_EQ(0, mkdir("dtrace", 0700));
+	fd = open("dtrace/dtrace", O_CREAT | O_RDWR | O_EXCL, 0600);
+	ATF_REQUIRE(fd >= 0);
+	close(fd);
+	/* Reproduce the old directory mask: O_RDWR fails before device open. */
+	devdir = open("dtrace", O_RDONLY | O_DIRECTORY);
+	ATF_REQUIRE(devdir >= 0);
+	cap_rights_init(&rights, CAP_LOOKUP, CAP_READ, CAP_WRITE, CAP_FSTAT,
+	    CAP_IOCTL);
+	ATF_REQUIRE_EQ(0, cap_rights_limit(devdir, &rights));
+	ATF_REQUIRE_ERRNO(ENOTCAPABLE,
+	    openat(devdir, "dtrace", O_RDWR | O_CLOEXEC | O_NOFOLLOW) == -1);
+	close(devdir);
+	devdir = open(".", O_RDONLY | O_DIRECTORY);
+	ATF_REQUIRE(devdir >= 0);
+	fd = tracecmp_test_open_consumer(devdir);
+	ATF_REQUIRE_MSG(fd >= 0, "consumer open: %s", strerror(errno));
+	ATF_REQUIRE_EQ(0, cap_rights_get(fd, &rights));
+	ATF_CHECK(cap_rights_is_set(&rights, CAP_READ, CAP_WRITE, CAP_FSTAT,
+	    CAP_IOCTL));
+	ATF_CHECK(!cap_rights_is_set(&rights, CAP_SEEK));
+	ATF_CHECK(!cap_rights_is_set(&rights, CAP_LOOKUP));
+	close(fd);
+	close(devdir);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -443,6 +480,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, authorized_label_open_delivers_consumer_fd);
 	ATF_TP_ADD_TC(tp, unexpected_descriptor_poison_session);
 	ATF_TP_ADD_TC(tp, arguments);
+	ATF_TP_ADD_TC(tp, consumer_open_retains_only_delegated_rights);
 	ATF_TP_ADD_TC(tp, worker_descriptors_cross_exactly_one_fork);
 	return (atf_no_error());
 }
