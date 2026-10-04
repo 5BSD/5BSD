@@ -55,8 +55,11 @@ utility is a command-line client for the
 Bluetooth Low Energy daemon.
 It uses
 .Xr libble 3
-to issue typed, correlated operations over the daemon's Unix domain
-control socket.
+to discover
+.Dq system.Bluetooth
+and issue typed, correlated operations over the connection delegated by the
+capability provider. The calling session must have a working discovery channel.
+There is no automatic fallback to a filesystem socket.
 .Pp
 In one-shot mode,
 .Nm
@@ -85,8 +88,9 @@ or press Ctrl-D to exit.
 Emit machine-readable JSON output: one JSON object per result or event,
 suitable for scripting.
 .It Fl s Ar socket
-Connect to the specified Unix domain socket path instead of the default
-.Pa /var/run/blued.sock .
+Connect to the specified Unix domain socket path instead of discovering
+.Dq system.Bluetooth .
+This explicit override is for deployments using a control socket.
 .El
 .Sh COMMANDS
 .Bl -tag -width "unsubscribe"

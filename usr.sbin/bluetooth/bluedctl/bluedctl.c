@@ -2478,7 +2478,7 @@ usage(void)
 	    "Options:\n"
 	    "  -i         interactive mode\n"
 	    "  -j         machine-readable (JSON) output\n"
-	    "  -s socket  control-socket path (default /var/run/blued.sock)\n"
+	    "  -s socket  explicit control socket (default: system.Bluetooth capability)\n"
 	    "\n"
 	    "Commands:\n"
 	    "  scan                           Scan for BLE devices\n"
@@ -2634,9 +2634,9 @@ main(int argc, char *argv[])
 		return (EX_USAGE);
 	}
 
-	ctx = ble_open(sock_path);
+	ctx = sock_path != NULL ? ble_open(sock_path) : ble_open_plane();
 	if (ctx == NULL) {
-		warn("connect: %s", sock_path ? sock_path : "/var/run/blued.sock");
+		warn("connect: %s", sock_path ? sock_path : "system.Bluetooth");
 		return (1);
 	}
 
