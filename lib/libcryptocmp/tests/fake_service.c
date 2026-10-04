@@ -199,6 +199,12 @@ service_session_call(struct service_session *session,
 		return (-1);
 	}
 	request = outgoing->data;
+	/* Match the provider's exact wire framing, including no tail padding. */
+	if ((request->opcode == CRYPTOCMP_OP_DIGEST &&
+	    outgoing->length != sizeof(*request) + sizeof(struct cryptocmp_digest)) ||
+	    (request->opcode == CRYPTOCMP_OP_RANDOM &&
+	    outgoing->length != sizeof(*request) + sizeof(struct cryptocmp_random)))
+		return (errno = EPROTO, -1);
 	if (session->failed != 0)
 		return (errno = session->failed, -1);
 	pthread_mutex_lock(&lock);

@@ -181,7 +181,8 @@ cryptocmp_digest(struct cryptocmp_client *client, uint32_t alg, uint32_t ttl,
 	memset(&outgoing, 0, sizeof(outgoing));
 	outgoing.size = sizeof(outgoing);
 	outgoing.data = &wire;
-	outgoing.length = sizeof(wire);
+	/* Do not send the enclosing C structure's tail padding. */
+	outgoing.length = sizeof(wire.msg) + sizeof(wire.digest);
 	memset(&reply, 0, sizeof(reply));
 	memset(&incoming, 0, sizeof(incoming));
 	incoming.size = sizeof(incoming);
@@ -224,7 +225,8 @@ cryptocmp_random(struct cryptocmp_client *client, void *buf, size_t nbytes)
 	memset(&outgoing, 0, sizeof(outgoing));
 	outgoing.size = sizeof(outgoing);
 	outgoing.data = &wire;
-	outgoing.length = sizeof(wire);
+	/* Do not send the enclosing C structure's tail padding. */
+	outgoing.length = sizeof(wire.msg) + sizeof(wire.random);
 	memset(&reply, 0, sizeof(reply));
 	memset(&incoming, 0, sizeof(incoming));
 	incoming.size = sizeof(incoming);
