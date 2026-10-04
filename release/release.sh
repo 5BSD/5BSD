@@ -90,11 +90,11 @@ env_setup() {
 
 	# The default source and ports checkout servers and branches.
 	SRCGITROOT="https://github.com/5BSD/"
-	PORTGITROOT="https://git.FreeBSD.org/"
+	PORTGITROOT="https://github.com/klheard/"
 	SRCBRANCH="main"
 	PORTBRANCH="main"
 	GITSRC="5BSD.git"
-	GITPORTS="ports.git"
+	GITPORTS="5BSD-ports.git"
 
 	# Set for embedded device builds.
 	EMBEDDEDBUILD=

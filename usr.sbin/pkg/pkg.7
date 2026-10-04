@@ -136,9 +136,9 @@ debug output is enabled.
 Configuration varies in whether it is in a repository configuration file
 or the global configuration file.
 The default repository configuration for
-.Fx
+5BSD
 is stored in
-.Pa /etc/pkg/FreeBSD.conf ,
+.Pa /etc/pkg/5BSD-ports.conf ,
 and additional repository configuration files will be searched for in
 .Ev REPOS_DIR ,
 or
@@ -152,9 +152,9 @@ by default.
 .Pp
 Repository configuration is stored in the following format:
 .Bd -literal -offset indent
-FreeBSD: {
-  url: "pkg+http://pkg.FreeBSD.org/${ABI}/latest",
-  mirror_type: "srv",
+5BSD-ports: {
+  url: "file:///usr/5bsd-packages/ports",
+  mirror_type: "none",
   signature_type: "none",
   fingerprints: "/usr/share/keys/pkg",
   enabled: yes
@@ -197,8 +197,8 @@ Global configuration can be stored in
 .Pa /usr/local/etc/pkg.conf
 in the following format:
 .Bd -literal -offset indent
-PACKAGESITE: "pkg+http://pkg.FreeBSD.org/${ABI}/latest",
-MIRROR_TYPE: "srv",
+PACKAGESITE: "file:///usr/5bsd-packages/ports",
+MIRROR_TYPE: "none",
 SIGNATURE_TYPE: "none",
 FINGERPRINTS: "/usr/share/keys/pkg",
 ASSUME_ALWAYS_YES: "yes"
@@ -257,7 +257,7 @@ The last enabled repository is the one used for bootstrapping
 .Xr pkg 8 .
 .Bl -tag -width "/usr/local/etc/pkg/repos/*.conf"
 .It Pa /usr/local/etc/pkg.conf
-.It Pa /etc/pkg/FreeBSD.conf
+.It Pa /etc/pkg/5BSD-ports.conf
 .It Pa /usr/local/etc/pkg/repos/*.conf
 .El
 .Sh EXAMPLES

@@ -91,8 +91,21 @@ class HardwarePackages(unittest.TestCase):
                 enabled = dict(re.findall(
                     r'^  ([\w-]+): \{\s*.*?enabled\s*:\s*(yes|no)',
                     output, re.M | re.S))
-                self.assertEqual(enabled[userland], 'yes')
+                self.assertEqual(enabled[userland],
+                                 'yes' if userland == 'release' else 'no')
                 self.assertEqual(enabled[modules], 'no')
+
+    def test_5bsd_ports_default_is_local_native_catalogue(self):
+        repos = self.base / 'repos'
+        repos.mkdir()
+        (repos / '5BSD-ports.conf').write_text(
+            (SRC / 'usr.sbin/pkg/5BSD-ports.conf').read_text())
+        output = hw.run(PKG, '-C', '/dev/null', '-o',
+                        'REPOS_DIR=' + str(repos), '-vv',
+                        capture_output=True).stdout.split('Repositories:', 1)[1]
+        self.assertIn('5BSD-ports:', output)
+        self.assertIn('file:///usr/5bsd-packages/ports', output)
+        self.assertRegex(output, r'enabled\s*:\s*yes')
 
     def test_gpu_wrapper_becomes_exact_raw_data(self):
         obj = self.base / 'firmware.o'

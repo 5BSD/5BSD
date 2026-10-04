@@ -12,11 +12,11 @@ CHROOTDIR="/scratch"
 
 ## Do not explicitly require the devel/git port to be installed.
 #NOGIT=1
-## Set the 5BSD source and upstream FreeBSD ports hosts.
+## Set the 5BSD source and ports hosts.
 SRCGITROOT="https://github.com/5BSD/"
-PORTGITROOT="https://git.freebsd.org/"
+PORTGITROOT="https://github.com/klheard/"
 GITSRC="5BSD.git"
-GITPORTS="ports.git"
+GITPORTS="5BSD-ports.git"
 
 ## Set the src/, ports/, and doc/ branches or tags.
 SRCBRANCH="main"

@@ -64,7 +64,7 @@ static struct config_entry c[] = {
 	[PACKAGESITE] = {
 		PKG_CONFIG_STRING,
 		"PACKAGESITE",
-		URL_SCHEME_PREFIX "http://pkg.FreeBSD.org/${ABI}/latest",
+		"file:///usr/5bsd-packages/ports",
 		NULL,
 		NULL,
 		false,

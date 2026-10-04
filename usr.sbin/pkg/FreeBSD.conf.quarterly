@@ -16,7 +16,7 @@ FreeBSD-ports: {
   mirror_type: "srv",
   signature_type: "fingerprints",
   fingerprints: "/usr/share/keys/pkg",
-  enabled: yes
+  enabled: no
 }
 FreeBSD-ports-kmods: {
   url: "pkg+https://pkg.FreeBSD.org/${ABI}/kmods_quarterly",
