@@ -40,7 +40,7 @@ There is no AF_UNIX socket and no path to name. A client reaches a provider
 by calling `service_open(3)` with the wire name; libservice resolves the name
 over the per-process lookup channel that switchboard installed at launch
 (or, for a program run from a login shell, over the ambient lookup channel
-the session inherited at `SERVICE_LOOKUP_FIXED_FD`), and the result is a
+held in the session’s kernel process context), and the result is a
 held mac_capability channel to a worker inside the provider. The mechanics
 of that lookup are in [Discovery and the Lookup
 Channel](../plane/discovery-and-lookup.md).

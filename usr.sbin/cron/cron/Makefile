@@ -13,7 +13,8 @@ SRCS+=	cron_provider.d
 CFLAGS+= -DWITH_DTRACE
 .endif
 
-LIBADD=	cron pam util
+LIBADD=	cron pam util service
+CFLAGS+= -I${SRCTOP}/lib/libservice -I${SRCTOP}/sys
 
 WARNS?=	2
 

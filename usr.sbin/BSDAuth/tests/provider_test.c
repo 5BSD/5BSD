@@ -40,6 +40,7 @@
 #include <unistd.h>
 
 #include <libservice.h>
+#include <channel.h>
 
 #include <authagent_proto.h>
 
@@ -201,62 +202,27 @@ audit_expect_none(struct fixture *fixture)
 static void
 require_plane(void)
 {
-	int fd;
+	int pair[2];
 
-	fd = open("/dev/mac_capability", O_RDWR | O_CLOEXEC);
-	if (fd == -1)
-		atf_tc_skip("mac_capability channel device unavailable: %s",
-		    strerror(errno));
-	close(fd);
-}
-
-static int
-capability_connect(const char *name)
-{
-	struct mac_capability_connect_args connect;
-	int control, error;
-
-	control = open("/dev/mac_capability", O_RDWR | O_CLOEXEC);
-	/*
-	 * Under a live plane the control device is already claimed, so a
-	 * private channel is unobtainable: that is the environment, not a
-	 * regression.  Any other errno is a real failure.
-	 */
-	if (control == -1 && errno == EPERM)
-		atf_tc_skip("mac_capability device is claimed by a live plane");
-	ATF_REQUIRE_MSG(control >= 0, "open mac_capability: %s",
-	    strerror(errno));
-	memset(&connect, 0, sizeof(connect));
-	strlcpy(connect.name, name, sizeof(connect.name));
-	if (ioctl(control, MAC_CAPABILITY_CONNECT, &connect) == -1) {
-		error = errno;
-		close(control);
-		errno = error;
-		return (-1);
+	if (mac_capability_channel_create(pair) == -1) {
+		if (errno == ENOSYS)
+			atf_tc_skip("kernel channel creation syscall unavailable");
+		atf_tc_fail("channel creation: %s", strerror(errno));
 	}
-	close(control);
-	return (connect.fd);
+	close(pair[0]);
+	close(pair[1]);
 }
+
+
 
 static void
 channel_pair(int *client, int *provider)
 {
-	struct mac_capability_recvmsg_args receive;
-	struct mac_capability_sendmsg_args send;
-	uint32_t operation;
+	int pair[2];
 
-	*client = capability_connect("channel");
-	ATF_REQUIRE(*client >= 0);
-	operation = CHANNEL_OP_CREATE;
-	memset(&send, 0, sizeof(send));
-	send.payload = &operation;
-	send.payload_len = sizeof(operation);
-	ATF_REQUIRE_EQ(0, ioctl(*client, MAC_CAPABILITY_SENDMSG, &send));
-	memset(&receive, 0, sizeof(receive));
-	receive.fds = provider;
-	receive.nfds = 1;
-	ATF_REQUIRE_EQ(0, ioctl(*client, MAC_CAPABILITY_RECVMSG, &receive));
-	ATF_REQUIRE_EQ(1, receive.nfds);
+	ATF_REQUIRE_EQ(0, mac_capability_channel_create(pair));
+	*client = pair[0];
+	*provider = pair[1];
 }
 
 /* Write `text` to an unlinked temp file and return a read-only fd. */
@@ -1134,7 +1100,7 @@ ATF_TC_BODY(elevate_long_by_one_is_einval, tc)
 }
 
 /*
- * FORWARDABLE is the one legal MINT_SESSION flag.  With no identity database
+ * FORWARDABLE is accepted by MINT_SESSION.  With no identity database
  * the resolved-grant step answers ENOENT for uid 0: the marker that the
  * request passed the ADMIN gate and shape validation.
  */
@@ -2069,6 +2035,43 @@ ATF_TC_BODY(mint_auth_malformed_is_einval, tc)
 	fixture_destroy(&fixture);
 }
 
+ATF_TC(mint_unprivileged_attenuates);
+ATF_TC_HEAD(mint_unprivileged_attenuates, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Background mint strips wildcard and admin grants without bypassing authentication");
+}
+ATF_TC_BODY(mint_unprivileged_attenuates, tc)
+{
+	struct fixture fixture;
+	struct authagent_mint_req req;
+	int32_t status;
+	size_t nfds;
+	const char policy[] =
+	    "principals { root { uids=[0]; anointments=[\"*\"]; admin_rights=true; } }";
+
+	require_plane();
+	audited_mint_fixture(&fixture, SERVICE_RIGHTS_AUTHENTICATE,
+	    "org.test.login", policy, PASSWD_TEXT);
+	req = well_formed_mint();
+	req.flags = AUTHAGENT_FLAG_UNPRIVILEGED;
+	ATF_REQUIRE_EQ(0, agent_call(fixture.session, &req, sizeof(req), -1,
+	    &status, &nfds));
+	ATF_CHECK_EQ(0, nfds);
+	ATF_CHECK(status != 0 && status != EPERM);
+	audit_expect(&fixture, "org.test.login/uid0", "mint/user/n0", status);
+	fixture_destroy(&fixture);
+
+	audited_mint_fixture(&fixture, SERVICE_RIGHTS_ADMIN,
+	    "org.test.caller", policy, PASSWD_TEXT);
+	ATF_REQUIRE_EQ(0, agent_call(fixture.session, &req, sizeof(req), -1,
+	    &status, &nfds));
+	ATF_CHECK_EQ(EPERM, status);
+	ATF_CHECK_EQ(0, nfds);
+	audit_expect(&fixture, "org.test.caller", "mint/caller", EPERM);
+	fixture_destroy(&fixture);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -2109,5 +2112,6 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, audit_elevate_mint_stage);
 	ATF_TP_ADD_TC(tp, audit_elevate_name_in_second_record_when_too_long);
 	ATF_TP_ADD_TC(tp, audit_mint_records);
+	ATF_TP_ADD_TC(tp, mint_unprivileged_attenuates);
 	return (atf_no_error());
 }

@@ -165,6 +165,7 @@ main(int argc, char *argv[])
 	}
 	if (session_fd != fd)
 		(void)close(session_fd);
+	(void)close(fd);
 
 	execvp(argv[1], argv + 1);
 	err(errno == ENOENT ? EXIT_NOTFOUND : EXIT_NOEXEC, "%s", argv[1]);

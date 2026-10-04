@@ -49,6 +49,8 @@ CONFSNAME_capbundle/bsdnetwork.conf=	bsdnetwork.conf
 CONFSDIRPACKAGE=	bsdnetwork
 CONFSPACKAGE=	bsdnetwork
 
+SUBDIR+=	pf
+
 HAS_TESTS=
 SUBDIR.${MK_TESTS}+=	tests
 

@@ -342,10 +342,16 @@ parse_service_bootstrap(void)
 
 	memset(&envinfo, 0, sizeof(envinfo));
 	envinfo.ei_size = sizeof(envinfo);
-	if (ioctl(SERVICE_BOOTSTRAP_FD, ENVFD_GETINFO, &envinfo) == -1)
-		goto invalid_descriptor_close;
-	if (strcmp(envinfo.ei_name, SERVICE_BOOTSTRAP_ENVFD_NAME) != 0 ||
-	    envinfo.ei_flags != ENVFD_WRITE_ONCE ||
+	if (ioctl(SERVICE_BOOTSTRAP_FD, ENVFD_GETINFO, &envinfo) == -1) {
+		errno = EINVAL;
+		return (-1);
+	}
+	/* An inherited environment variable does not convey ownership of fd 5. */
+	if (strcmp(envinfo.ei_name, SERVICE_BOOTSTRAP_ENVFD_NAME) != 0) {
+		errno = EPROTO;
+		return (-1);
+	}
+	if (envinfo.ei_flags != ENVFD_WRITE_ONCE ||
 	    envinfo.ei_state != ENVFD_STATE_SEALED ||
 	    envinfo.ei_value_size != sizeof(storage) ||
 	    envinfo.ei_max_value_size != sizeof(storage) ||
@@ -532,8 +538,6 @@ fail_storage:
 	close(SERVICE_BOOTSTRAP_FD);
 	errno = error;
 	return (-1);
-invalid_descriptor_close:
-	errno = EINVAL;
 fail_close:
 	error = errno;
 	close(SERVICE_BOOTSTRAP_FD);

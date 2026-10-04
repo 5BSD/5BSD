@@ -94,7 +94,7 @@ the callers are the login programs and anoint(1), not typed consumers:
 | `service_mint_session_via_agent(lookup_chan, uid, flags, timeout_ms, &fd)` | login, su, sshd monitor | MINT_SESSION over the inherited SYSTEM channel; `SERVICE_MINT_AGENT_FORWARDABLE` for sshd; `SERVICE_MINT_SESSION_TIMEOUT_MS` (10 s) bounds the exchange |
 | `service_mint_session_authenticated(lookup_chan, uid, password, flags, timeout_ms, &fd)` | su from a non-admin session | MINT_AUTH; su tries this only after the admin mint returns `EPERM` |
 | `service_elevate(name, password, timeout_ms, &fd)` | anoint(1), any session program | ELEVATE over the caller's ambient lookup channel; errors `EINVAL`, `ENOENT` (no channel or no agent), `EPERM`, `EACCES`, `EBADMSG`, `ETIMEDOUT` |
-| `service_install_ambient_lookup(fd)` (`<service_bootstrap.h>`) | all of the above | install the minted channel at `SERVICE_LOOKUP_FIXED_FD` before exec |
+| `service_install_ambient_lookup(fd)` (`<libservice_session.h>`) | all of the above | install a kernel-held reference before exec; caller closes its working fd |
 | `service_context_mint_domain`, `service_context_mint_domain_anointed` | BSDAuth itself | the mint over the provider's own bootstrap channel |
 
 How a session program runs one command with an extra anointment:

@@ -470,6 +470,13 @@ main(int argc, char *argv[])
 	if (setusercontext(lc, pwd, pwd->pw_uid, LOGIN_SETGROUP) < 0)
 		err(1, "setusercontext");
 
+	/*
+	 * Capture before PAM credentials/session modules can replace or clear
+	 * discovery for the target principal. Authentication has already passed;
+	 * the child still mints its own target-scoped channel after changing UID.
+	 */
+	syschan = service_ambient_lookup_fd();
+
 	retcode = pam_setcred(pamh, PAM_ESTABLISH_CRED);
 	if (retcode != PAM_SUCCESS) {
 		syslog(LOG_ERR, "pam_setcred: %s",
@@ -498,13 +505,6 @@ main(int argc, char *argv[])
 	sa.sa_handler = SIG_DFL;
 	sigaction(SIGTSTP, &sa, NULL);
 	statusp = 1;
-	/*
-	 * Capture the inherited SYSTEM ambient lookup channel (§21) before the
-	 * child may replace its environment: SERVICE_LOOKUP_FD names it there.
-	 * Best-effort discovery only — a -1 here means the session gets no
-	 * ambient channel and su proceeds exactly as before.
-	 */
-	syschan = service_ambient_lookup_fd();
 	if (pipe(fds) == -1) {
 		PAM_END();
 		err(1, "pipe");
@@ -512,6 +512,8 @@ main(int argc, char *argv[])
 	child_pid = fork();
 	switch (child_pid) {
 	default:
+		if (syschan >= 0)
+			close(syschan);
 		sa.sa_handler = SIG_IGN;
 		sigaction(SIGTTOU, &sa, NULL);
 		close(fds[0]);
@@ -608,50 +610,22 @@ main(int argc, char *argv[])
 		login_close(lc);
 
 		/*
-		 * fd hygiene across the uid transition (§11a D4).  su changed
-		 * principal above (setusercontext ran setuid), so no descriptor
-		 * inherited from the caller may leak into the target shell —
-		 * most dangerously a capability channel carried in from a
-		 * bootstrap-launched service (its unit control/bootstrap fds all
-		 * sit at numbers >= 3).  Relocate the captured ambient channel to
-		 * the fixed slot the same way login does, then reclaim every
-		 * other inherited descriptor above it; the fresh USER channel
-		 * minted just below is the only channel that survives.  A stale
-		 * SERVICE_LOOKUP_FD (su -m preserves the caller's environ) is
-		 * unset here so it never names a now-closed or reused fd; the
-		 * successful narrow below re-advertises a correct one.
+		 * Keep only the private authentication handle until provisioning
+		 * completes.  Neither it nor the caller's process context may be
+		 * inherited by the target shell if provisioning fails.
 		 */
-		if (syschan >= 3 && syschan != SERVICE_LOOKUP_FIXED_FD) {
-			if (dup2(syschan, SERVICE_LOOKUP_FIXED_FD) ==
-			    SERVICE_LOOKUP_FIXED_FD) {
-				(void)close(syschan);
-				syschan = SERVICE_LOOKUP_FIXED_FD;
-			} else {
-				(void)close(syschan);
-				syschan = -1;
-			}
-		}
-		if (syschan == SERVICE_LOOKUP_FIXED_FD)
-			closefrom(SERVICE_LOOKUP_FIXED_FD + 1);
-		else
+		if (service_clear_ambient_lookup() == -1 && errno != ENOSYS)
+			err(1, "clear discovery context");
+		if (syschan >= 3) {
+			if (syschan > 3 && close_range(3, syschan - 1, 0) == -1)
+				err(1, "close_range");
+			closefrom(syschan + 1);
+		} else {
 			closefrom(3);
+		}
 		(void)unsetenv(SERVICE_LOOKUP_ENV);
 
-		/*
-		 * Provision this session's ambient lookup channel from the
-		 * inherited SYSTEM ambient channel (§6/§7/§21/§22), keyed to the
-		 * TARGET principal: the target uid 0 or a member of group wheel
-		 * gets a SYSTEM (admin) channel with full discovery; every other
-		 * target gets a per-uid USER channel scoped to that user.  We are
-		 * already the target uid here (setusercontext above ran setuid).
-		 * This is a fresh provision, not a re-narrow: an su from a
-		 * root/admin session holds the mintable SYSTEM channel, so
-		 * `su <user>` now mints the target USER channel and `su root`
-		 * mints SYSTEM — fixing the previously-EPERMing re-narrow (§7).
-		 * Best-effort only: on any failure the session carries no ambient
-		 * channel (the unnarrowed SYSTEM channel is never handed to the
-		 * shell) and su proceeds exactly as before.  Never fatal.
-		 */
+		/* BSDAuth selects the target principal's grants after authentication. */
 		if (syschan >= 0) {
 			int user_fd = -1;
 
@@ -702,9 +676,9 @@ main(int argc, char *argv[])
 			} else {
 				syslog(LOG_NOTICE, "su: no lookup channel for "
 				    "uid %u: %m", (unsigned)pwd->pw_uid);
-				if (user_fd >= 0)
-					(void)close(user_fd);
 			}
+			if (user_fd >= 0)
+				(void)close(user_fd);
 			(void)close(syschan);
 		}
 		explicit_bzero(authtok, sizeof(authtok));

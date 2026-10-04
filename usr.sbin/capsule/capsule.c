@@ -106,7 +106,7 @@
 #include "capsule_plane.h"	/* capsule_plane_disabled */
 #include "mac_capability_priv.h"
 #include "probes.h"		/* CAPSULE_PROBE_CAPSULE_* USDT probes */
-#include "service_bootstrap.h"	/* SERVICE_LOOKUP_FIXED_FD (§21 getty carry) */
+#include "service_bootstrap.h"	/* process-held getty discovery */
 
 #define	_PATH_INITLOG		"/var/log/init.log"
 #define	_PATH_RUNCOM		"/etc/rc"
@@ -186,12 +186,10 @@ static bool capsule_engine_up;
 static bool capsule_mac_up;
 
 /*
- * Ambient lookup channel (§21) carried into interactive logins.  switchboard
- * hands us a dup of its SYSTEM ambient lookup client end over the Capsule
- * channel (CAPSULE_OP_SET_AMBIENT_LOOKUP); we pin it here and dup2() it to
- * SERVICE_LOOKUP_FIXED_FD in each getty child so login inherits it across the
- * hand-built getty environment.  -1 means "no channel"; the whole mechanism is
- * best-effort and never gates getty, login, or boot.
+ * Discovery channel supplied by SwitchBoard for trusted login providers.
+ * The master descriptor is retained by Capsule; each getty child installs a
+ * held reference in its kernel process context before exec. No environment
+ * variable or fixed descriptor is needed across getty and login.
  */
 static int capsule_ambient_lookup_fd = -1;
 static void capsule_engine_start(void);
@@ -1875,17 +1873,10 @@ start_window_system(session_t *sp)
 }
 
 /*
- * Store the ambient lookup channel client end switchboard forwarded (§21).  The
- * master must survive the getty fork(2) so the child can dup2 it onto the fixed
- * lookup fd, so unlock its clofork limit — but it must KEEP FD_CLOEXEC set so it
- * closes on the getty child's execve(2).  Only the dup2'd copy at
- * SERVICE_LOOKUP_FIXED_FD (whose FD_CLOEXEC start_getty clears) is meant to reach
- * login/the session; if the master itself survived exec, every interactive
- * session would inherit a second, stray copy of the SYSTEM ambient channel at an
- * unpredictable fd.  A previously installed channel is replaced (switchboard sends
- * this once per session, but a switchboard restart may resend).  Best-effort
- * throughout: on any failure the fd is dropped and capsule_ambient_lookup_fd left
- * at -1, so getty spawning simply proceeds without an ambient channel.
+ * Retain the lookup channel supplied by the supervised SwitchBoard instance.
+ * It must survive fork so the getty child can install its process context,
+ * but remain CLOEXEC so no extra master descriptor leaks into the session.
+ * Replacing this master affects future gettys, not existing sessions.
  */
 int
 capsule_set_ambient_lookup(int fd)
@@ -1940,6 +1931,13 @@ start_getty(session_t *sp)
 		sleep((unsigned) GETTY_SLEEP);
 	}
 
+	/* Install before either the window-system fork or getty exec. */
+	if (capsule_ambient_lookup_fd >= 0) {
+		CAPSULE_PROBE_CAPSULE_AMBIENT_CARRY(capsule_ambient_lookup_fd);
+		if (service_install_ambient_lookup(capsule_ambient_lookup_fd) == -1)
+			(void)service_clear_ambient_lookup();
+	}
+
 	if (sp->se_window) {
 		start_window_system(sp);
 		sleep(WINDOW_WAIT);
@@ -1957,23 +1955,7 @@ start_getty(session_t *sp)
 		env[1] = NULL;
 	} else
 		env[0] = NULL;
-	/*
-	 * §21 getty carry: pin the ambient lookup channel at the fixed
-	 * descriptor number so login (which getty execs with a rebuilt
-	 * environment, dropping SERVICE_LOOKUP_FD) inherits it.  Post-fork
-	 * child: async-signal-safe calls only (dup2/fcntl), no malloc, no
-	 * logging.  Best-effort -- a dup2/fcntl failure must never stop getty,
-	 * so we ignore errors and fall through to execve regardless.
-	 */
-	if (capsule_ambient_lookup_fd >= 0) {
-		CAPSULE_PROBE_CAPSULE_AMBIENT_CARRY(capsule_ambient_lookup_fd);
-		if (capsule_ambient_lookup_fd != SERVICE_LOOKUP_FIXED_FD) {
-			if (dup2(capsule_ambient_lookup_fd,
-			    SERVICE_LOOKUP_FIXED_FD) != -1)
-				(void)fcntl(SERVICE_LOOKUP_FIXED_FD, F_SETFD, 0);
-		} else
-			(void)fcntl(SERVICE_LOOKUP_FIXED_FD, F_SETFD, 0);
-	}
+
 	execve(sp->se_getty_argv[0], sp->se_getty_argv, env);
 	stall("can't exec getty '%s' for port %s: %m",
 		sp->se_getty_argv[0], sp->se_device);

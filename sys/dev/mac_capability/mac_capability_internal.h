@@ -55,6 +55,7 @@ struct mac_capability_msg {
 	STAILQ_ENTRY(mac_capability_msg) cm_link;
 
 	/* Message metadata — kernel-stamped, unforgeable. */
+	struct mac_capability_process_stamp cm_process;
 	uint64_t	cm_badge;
 	uint64_t	cm_reply_token;
 	struct ucred	*cm_cred;

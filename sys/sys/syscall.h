@@ -552,4 +552,5 @@
 #define	SYS_pdincapmode	633
 #define	SYS_cap_mmap_capmode	634
 #define	SYS_cap_lookup_capmode	635
-#define	SYS_MAXSYSCALL	636
+#define	SYS_cap_process	636
+#define	SYS_MAXSYSCALL	637

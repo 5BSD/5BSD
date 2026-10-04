@@ -818,6 +818,7 @@ mac_capability_forward(struct mac_capability_instance *s, const struct mac_capab
 	    src->cm_badge, src->cm_reply_token, src->cm_cred, src->cm_abi);
 	if (msg == NULL)
 		return (src->cm_nfds > 0 ? EBADF : ENOMEM);
+	msg->cm_process = src->cm_process;
 	if (src->cm_nfds > 0) {
 		memcpy(msg->cm_cloexec_state, src->cm_cloexec_state,
 		    src->cm_nfds * sizeof(uint8_t));

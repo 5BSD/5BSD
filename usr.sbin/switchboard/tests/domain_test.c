@@ -296,53 +296,12 @@ mac_cap_coalition_stat(int coalition_fd, struct coalition_stat_reply *sr)
 int
 mac_cap_create_channel(int *our_end, int *child_end)
 {
-	struct mac_capability_connect_args connect;
-	struct mac_capability_sendmsg_args send;
-	struct mac_capability_recvmsg_args receive;
-	uint32_t op;
-	int control, first, second, error;
+	int pair[2];
 
-	control = open("/dev/mac_capability", O_RDWR);
-	if (control == -1) {
-		errno = ENODEV;
+	if (mac_capability_channel_create(pair) == -1)
 		return (-1);
-	}
-	memset(&connect, 0, sizeof(connect));
-	strlcpy(connect.name, "channel", sizeof(connect.name));
-	if (ioctl(control, MAC_CAPABILITY_CONNECT, &connect) == -1) {
-		error = errno;
-		close(control);
-		errno = error;
-		return (-1);
-	}
-	close(control);
-	first = connect.fd;
-
-	op = CHANNEL_OP_CREATE;
-	memset(&send, 0, sizeof(send));
-	send.payload = &op;
-	send.payload_len = sizeof(op);
-	if (ioctl(first, MAC_CAPABILITY_SENDMSG, &send) == -1) {
-		error = errno;
-		close(first);
-		errno = error;
-		return (-1);
-	}
-	second = -1;
-	memset(&receive, 0, sizeof(receive));
-	receive.fds = &second;
-	receive.nfds = 1;
-	if (ioctl(first, MAC_CAPABILITY_RECVMSG, &receive) == -1 ||
-	    receive.nfds != 1 || second < 0) {
-		error = errno != 0 ? errno : EIO;
-		close(first);
-		errno = error;
-		return (-1);
-	}
-	(void)fcntl(first, F_SETFD, FD_CLOEXEC);
-	(void)fcntl(second, F_SETFD, FD_CLOEXEC);
-	*our_end = first;
-	*child_end = second;
+	*our_end = pair[0];
+	*child_end = pair[1];
 	return (0);
 }
 
@@ -1256,7 +1215,6 @@ ATF_TC_BODY(register_private_system_channel_resolves, tc)
 	struct svc_runtime provider;
 	struct pump_ctx ctx;
 	pthread_t pump;
-	char envbuf[16];
 	int minted_fd, kq, before, priv, sfd;
 
 	require_channel_create_syscall(tc);
@@ -1278,12 +1236,10 @@ ATF_TC_BODY(register_private_system_channel_resolves, tc)
 	ctx.stop = 0;
 	ATF_REQUIRE_EQ(0, pthread_create(&pump, NULL, domain_pump_thread, &ctx));
 
-	/* Advertise the inherited shared channel exactly as boot/login does. */
-	ATF_REQUIRE(snprintf(envbuf, sizeof(envbuf), "%d", minted_fd) <
-	    (int)sizeof(envbuf));
-	ATF_REQUIRE_EQ(0, setenv(SERVICE_LOOKUP_ENV, envbuf, 1));
+	/* Install the inherited channel in the kernel process context. */
+	ATF_REQUIRE_EQ(0, service_install_ambient_lookup(minted_fd));
 
-	/* First ambient use registers a private channel and memoizes it. */
+	/* Each owned lookup handle registers a private reply channel. */
 	priv = service_ambient_lookup_channel();
 	ATF_REQUIRE_MSG(priv >= 0, "expected an ambient channel");
 	ATF_CHECK_MSG(priv != minted_fd,
@@ -1302,8 +1258,11 @@ ATF_TC_BODY(register_private_system_channel_resolves, tc)
 
 	/* Exactly one private SYSTEM channel was adopted (in addition to the
 	 * shared one). */
-	ATF_CHECK_EQ(before + 1,
-	    count_domain_entries(SVC_DOMAIN_SYSTEM, 0, false));
+	/* The RPC's separate temporary endpoint may still await EOF dispatch. */
+	ATF_CHECK(count_domain_entries(SVC_DOMAIN_SYSTEM, 0, false) >= before + 1);
+	ATF_CHECK(count_domain_entries(SVC_DOMAIN_SYSTEM, 0, false) <= before + 2);
+	(void)close(priv);
+	ATF_REQUIRE_EQ(0, service_clear_ambient_lookup());
 
 	naming_remove_owner(&provider);
 	domain_channel_teardown();
@@ -1330,7 +1289,6 @@ ATF_TC_BODY(register_private_user_channel_hides, tc)
 	struct svc_runtime provider;
 	struct pump_ctx ctx;
 	pthread_t pump;
-	char envbuf[16];
 	int minted_fd, kq, before, priv, sfd;
 
 	require_channel_create_syscall(tc);
@@ -1352,9 +1310,7 @@ ATF_TC_BODY(register_private_user_channel_hides, tc)
 	ctx.stop = 0;
 	ATF_REQUIRE_EQ(0, pthread_create(&pump, NULL, domain_pump_thread, &ctx));
 
-	ATF_REQUIRE(snprintf(envbuf, sizeof(envbuf), "%d", minted_fd) <
-	    (int)sizeof(envbuf));
-	ATF_REQUIRE_EQ(0, setenv(SERVICE_LOOKUP_ENV, envbuf, 1));
+	ATF_REQUIRE_EQ(0, service_install_ambient_lookup(minted_fd));
 
 	priv = service_ambient_lookup_channel();
 	ATF_REQUIRE_MSG(priv >= 0, "expected an ambient channel");
@@ -1371,8 +1327,11 @@ ATF_TC_BODY(register_private_user_channel_hides, tc)
 	(void)pthread_join(pump, NULL);
 
 	/* The adopted private channel is tagged {USER, 4321}, not widened. */
-	ATF_CHECK_EQ(before + 1,
-	    count_domain_entries(SVC_DOMAIN_USER, 4321, true));
+	/* The RPC's separate temporary endpoint may still await EOF dispatch. */
+	ATF_CHECK(count_domain_entries(SVC_DOMAIN_USER, 4321, true) >= before + 1);
+	ATF_CHECK(count_domain_entries(SVC_DOMAIN_USER, 4321, true) <= before + 2);
+	(void)close(priv);
+	ATF_REQUIRE_EQ(0, service_clear_ambient_lookup());
 	ATF_CHECK_EQ(0, count_domain_entries(SVC_DOMAIN_SYSTEM, 0, false));
 
 	naming_remove_owner(&provider);
@@ -1490,8 +1449,84 @@ ATF_TC_BODY(register_multi_fd_rejected, tc)
 	(void)close(kq);
 }
 
+ATF_TC(unit_context_generation);
+ATF_TC_HEAD(unit_context_generation, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Unit discovery clones retain manifest scope and exact launch identity across runtime movement");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(unit_context_generation, tc)
+{
+	struct svc_runtime original, moved;
+	struct svc_lookup_channel *lc;
+	struct pump_ctx ctx;
+	pthread_t pump;
+	int unit_fd, other_fd, private_fd, kq, count, error;
+
+	require_channel_create_syscall(tc);
+	memset(&original, 0, sizeof(original));
+	strlcpy(original.manifest.label, "test.Context/worker",
+	    sizeof(original.manifest.label));
+	original.launch_id = 42;
+	original.domain.kind = SVC_DOMAIN_SYSTEM;
+	original.domain.anoint.n = 1;
+	strlcpy(original.domain.anoint.names[0], "test.grant",
+	    sizeof(original.domain.anoint.names[0]));
+	sd.services = &original;
+	sd.nservices = 1;
+	kq = kqueue();
+	ATF_REQUIRE(kq >= 0);
+	switchboard_kq = kq;
+	ATF_REQUIRE_EQ(0, domain_mint_unit_channel(&original, 976, &unit_fd, kq));
+	ATF_REQUIRE_EQ(0, domain_mint_user_channel(1002, &other_fd, kq));
+	ATF_REQUIRE_EQ(0, service_install_ambient_lookup(unit_fd));
+	ctx.kq = kq;
+	ctx.stop = 0;
+	ATF_REQUIRE_EQ(0, pthread_create(&pump, NULL, domain_pump_thread, &ctx));
+	private_fd = service_ambient_lookup_fd();
+	ATF_REQUIRE(private_fd >= 0);
+	ctx.stop = 1;
+	(void)pthread_join(pump, NULL);
+
+	moved = original;
+	sd.services = &moved;
+	moved.domain.anoint.all = true;
+	count = 0;
+	for (lc = lookup_channels; lc != NULL; lc = lc->next) {
+		if (lc->owner_label[0] == '\0')
+			continue;
+		count++;
+		ATF_CHECK(lookup_channel_requester(lc) == &moved);
+		ATF_CHECK(lookup_channel_is_live(lc));
+		ATF_CHECK(!lc->domain.anoint.all);
+		ATF_CHECK_EQ(1U, lc->domain.anoint.n);
+		ATF_CHECK_STREQ("test.grant", lc->domain.anoint.names[0]);
+		ATF_CHECK_EQ(-1, naming_lookup_self_control(SWITCHBOARD_CONTROL_NAME,
+		    &moved, &lc->domain, NULL, false, &error));
+		ATF_CHECK_EQ(EACCES, error);
+		moved.launch_id++;
+		ATF_CHECK(!lookup_channel_is_live(lc));
+		moved.launch_id--;
+	}
+	ATF_CHECK_EQ(2, count);
+	domain_unit_channels_close(&moved);
+	ATF_REQUIRE(lookup_channels != NULL);
+	ATF_CHECK(lookup_channels->next == NULL);
+	ATF_CHECK_EQ(1002, lookup_channels->domain.uid);
+	close(private_fd);
+	close(unit_fd);
+	close(other_fd);
+	ATF_REQUIRE_EQ(0, service_clear_ambient_lookup());
+	domain_channel_teardown();
+	close(kq);
+	sd.services = NULL;
+	sd.nservices = 0;
+}
+
 ATF_TP_ADD_TCS(tp)
 {
+	ATF_TP_ADD_TC(tp, unit_context_generation);
 
 	ATF_TP_ADD_TC(tp, scope_system_resolves_all);
 	ATF_TP_ADD_TC(tp, scope_user_allow_list);

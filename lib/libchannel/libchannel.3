@@ -253,6 +253,14 @@ Returns the kernel-reported payload length.
 Returns the channel token; events return zero.
 .It Fn channel_message_sender
 Returns borrowed authenticated badge, nonce, uid, gid, and prison metadata.
+.It Fn channel_message_process
+Returns borrowed kernel-stamped process lifetime and responsible-process
+identities, with diagnostic PIDs, when versioned metadata is available.
+The original sender is preserved through kernel channel forwarding.
+A null pointer means the kernel or descriptor rights supplied only legacy
+metadata; callers must not invent attribution from an untrusted payload.
+Responsible-process association is delegated attribution, not authorization
+or proof that the origin approved every subsequent request.
 .It Fn channel_message_fd_count
 Returns the exact attachment count.
 .It Fn channel_message_borrow_fd

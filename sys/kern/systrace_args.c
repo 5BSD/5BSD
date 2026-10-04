@@ -3642,6 +3642,16 @@ systrace_args(int sysnum, void *params, uint64_t *uarg, int *n_args)
 		*n_args = 1;
 		break;
 	}
+	/* cap_process */
+	case 636: {
+		struct cap_process_args *p = params;
+		iarg[a++] = p->op; /* int */
+		iarg[a++] = p->fd; /* int */
+		uarg[a++] = p->uid; /* uid_t */
+		uarg[a++] = (intptr_t)p->data; /* void * */
+		*n_args = 4;
+		break;
+	}
 	default:
 		*n_args = 0;
 		break;
@@ -9748,6 +9758,25 @@ systrace_entry_setargdesc(int sysnum, int ndx, char *desc, size_t descsz)
 			break;
 		};
 		break;
+	/* cap_process */
+	case 636:
+		switch (ndx) {
+		case 0:
+			p = "int";
+			break;
+		case 1:
+			p = "int";
+			break;
+		case 2:
+			p = "uid_t";
+			break;
+		case 3:
+			p = "userland void *";
+			break;
+		default:
+			break;
+		};
+		break;
 	default:
 		break;
 	};
@@ -11828,6 +11857,11 @@ systrace_return_setargdesc(int sysnum, int ndx, char *desc, size_t descsz)
 		break;
 	/* cap_lookup_capmode */
 	case 635:
+		if (ndx == 0 || ndx == 1)
+			p = "int";
+		break;
+	/* cap_process */
+	case 636:
 		if (ndx == 0 || ndx == 1)
 			p = "int";
 		break;

@@ -8,7 +8,7 @@ CONFS=	README \
 	login \
 	other \
 	passwd pop3 \
-	sshd su system \
+	sddm-greeter sshd su system \
 	xdm
 
 CONFDIR=	/etc/pam.d

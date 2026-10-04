@@ -13,6 +13,7 @@ account		required	pam_nologin.so
 account		include		system
 
 # session
+session		required	pam_capability.so
 session		include		system
 
 # password

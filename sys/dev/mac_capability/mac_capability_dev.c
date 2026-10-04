@@ -19,6 +19,7 @@
 #include "opt_capsicum.h"
 
 #include <sys/param.h>
+#include <sys/cap_process.h>
 #include <sys/systm.h>
 #include <sys/sdt.h>
 #include <sys/capsicum.h>
@@ -267,6 +268,18 @@ mac_capability_instance_do_sendmsg(struct mac_capability_instance *s,
 	}
 
 	msg = uma_zalloc(mac_capability_msg_zone, M_WAITOK | M_ZERO);
+	/* Snapshot before taking fd-table or channel locks. */
+	{
+		struct mac_cap_process_info info;
+
+		PROC_LOCK(td->td_proc);
+		mac_capability_process_info(td->td_proc, &info);
+		PROC_UNLOCK(td->td_proc);
+		msg->cm_process.identity = info.identity;
+		msg->cm_process.responsible_identity = info.responsible_identity;
+		msg->cm_process.pid = info.pid;
+		msg->cm_process.responsible_pid = info.responsible_pid;
+	}
 
 	/* Copyin payload directly into inline buffer. */
 	if (args->payload_len > 0) {
@@ -413,7 +426,8 @@ out:
 
 static int
 mac_capability_instance_do_recvmsg(struct mac_capability_instance *s, struct file *fp,
-    struct mac_capability_recvmsg_args *args, struct thread *td)
+    struct mac_capability_recvmsg_args *args, struct thread *td,
+    struct mac_capability_process_stamp *process)
 {
 	struct mac_capability_msg *msg;
 	sbintime_t start __unused;
@@ -510,6 +524,8 @@ mac_capability_instance_do_recvmsg(struct mac_capability_instance *s, struct fil
 	args->payload_len = msg->cm_datalen;
 
 	/* Fill metadata. */
+	if (process != NULL)
+		*process = msg->cm_process;
 	args->badge = msg->cm_badge;
 	args->reply_token = msg->cm_reply_token;
 	if (msg->cm_cred != NULL) {
@@ -629,7 +645,17 @@ mac_capability_instance_ioctl(struct file *fp, u_long cmd, void *data,
 			return (EACCES);
 		}
 		return (mac_capability_instance_do_recvmsg(s, fp,
-		    (struct mac_capability_recvmsg_args *)data, td));
+		    (struct mac_capability_recvmsg_args *)data, td, NULL));
+	case MAC_CAPABILITY_RECVMSG_V2: {
+		struct mac_capability_recvmsg_v2_args *args =
+		    (struct mac_capability_recvmsg_v2_args *)data;
+
+		bzero(&args->process, sizeof(args->process));
+		if (s->ci_restricted & MAC_CAPABILITY_RF_NO_RECV)
+			return (EACCES);
+		return (mac_capability_instance_do_recvmsg(s, fp,
+		    &args->message, td, &args->process));
+	}
 	case MAC_CAPABILITY_CALL: {
 		struct mac_capability_call_args *ca = (struct mac_capability_call_args *)data;
 		struct mac_capability_service *svc = s->ci_service;

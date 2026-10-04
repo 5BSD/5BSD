@@ -1,3 +1,10 @@
+> Current transport note (2026-10-04): process-held discovery replaces the
+> historical fixed-FD/environment carry described below. Those sections record
+> the problems that motivated the change, not the current transport contract.
+> See [Discovery and the Lookup Channel](book/src/plane/discovery-and-lookup.md)
+> and [Sessions](book/src/compat/sessions.md) for implementation behavior and
+> remaining restart-recovery limitations.
+
 # Service discovery and management model
 
 Status: design, in implementation. Foundation (§21 ambient carry, §21.3 session

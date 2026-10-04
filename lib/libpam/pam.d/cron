@@ -8,4 +8,5 @@ account		required	pam_nologin.so
 account		required	pam_unix.so
 
 # session
+session		required	pam_capability.so	unprivileged
 session		required	pam_permit.so

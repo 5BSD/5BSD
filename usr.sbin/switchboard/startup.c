@@ -93,14 +93,15 @@ run_rc_bootstrap(int kqunused)
 	/*
 	 * Install the SYSTEM ambient lookup channel (§21) before exec'ing rc so
 	 * rc, getty, login, su, and every other boot descendant inherits system
-	 * service discovery.  switchboard keeps the retained client end open for the
-	 * life of the daemon; svc_exec_command spares it from the rc child's
-	 * closefrom(2) and SERVICE_LOOKUP_FD (set in switchboard's environment by
-	 * service_install_ambient_lookup) names it for the child's execv(2).
+	 * service discovery. SwitchBoard retains a client endpoint for boot
+	 * descendants; svc_exec_command installs it in the rc child's kernel
+	 * process context before exec. Ordinary descriptor and environment
+	 * cleanup cannot remove that reference.
 	 *
-	 * This is best-effort discovery, never authority: if minting or install
-	 * fails, log and run rc exactly as before with no ambient channel.  A
-	 * broken ambient carry must never prevent the system from booting.
+	 * This boot scope carries authentication authority. Login providers must
+	 * replace it with a principal-scoped context before launching user code.
+	 * If provisioning fails, rc still runs without discovery so a broken
+	 * channel does not prevent ordinary UNIX boot.
 	 */
 	if (switchboard_ambient_lookup_fd < 0) {
 		int lookup_fd = -1;
@@ -120,12 +121,10 @@ run_rc_bootstrap(int kqunused)
 	}
 
 	/*
-	 * Carry the ambient lookup channel into interactive logins (§21).  rc
-	 * and its descendants inherit SERVICE_LOOKUP_FD by environment, but the
-	 * getty/login sessions capsule spawns from /etc/ttys are siblings of
-	 * rc and never see that environment.  Hand capsule (PID 1) a dup of
-	 * the retained client end so it can pin the channel at
-	 * SERVICE_LOOKUP_FIXED_FD when it execs each getty.
+	 * Supply Capsule with the boot discovery context for getty/login children.
+	 * The rc subtree receives its context separately at launch. Capsule keeps
+	 * this client endpoint and installs it in each getty child's kernel state
+	 * before exec, independent of environment or descriptor numbering.
 	 *
 	 * Strictly best-effort: the rc path already works, so any failure here
 	 * (no channel, no Capsule link, dup or send error) is logged at
@@ -164,7 +163,7 @@ run_rc_bootstrap(int kqunused)
 	 * Drive the FULL switchboard dispatch on the shared switchboard_kq while
 	 * waiting, rather than blocking on a private kqueue that only sees rc's
 	 * exit.  rc and its rc.d children inherit the ambient lookup channel
-	 * (SERVICE_LOOKUP_FD, installed above) and may make synchronous
+	 * (the process context installed above) and may make synchronous
 	 * capability lookups — which switchboard itself answers on switchboard_kq — so
 	 * a private-kqueue wait would deadlock any rc child that blocks on a
 	 * lookup that rc then waits on.  Each kevent() retrieves one ready event and

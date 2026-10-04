@@ -702,4 +702,5 @@ struct sysent sysent[] = {
 	{ .sy_narg = AS(pdincapmode_args), .sy_call = (sy_call_t *)sys_pdincapmode, .sy_auevent = AUE_PDINCAPMODE, .sy_flags = SYF_CAPENABLED, .sy_thrcnt = SY_THR_STATIC },	/* 633 = pdincapmode */
 	{ .sy_narg = AS(cap_mmap_capmode_args), .sy_call = (sy_call_t *)sys_cap_mmap_capmode, .sy_auevent = AUE_CAP_MMAP_CAPMODE, .sy_flags = SYF_CAPENABLED, .sy_thrcnt = SY_THR_STATIC },	/* 634 = cap_mmap_capmode */
 	{ .sy_narg = AS(cap_lookup_capmode_args), .sy_call = (sy_call_t *)sys_cap_lookup_capmode, .sy_auevent = AUE_CAP_LOOKUP_CAPMODE, .sy_flags = SYF_CAPENABLED, .sy_thrcnt = SY_THR_STATIC },	/* 635 = cap_lookup_capmode */
+	{ .sy_narg = AS(cap_process_args), .sy_call = (sy_call_t *)sys_cap_process, .sy_auevent = AUE_NULL, .sy_flags = SYF_CAPENABLED, .sy_thrcnt = SY_THR_STATIC },	/* 636 = cap_process */
 };

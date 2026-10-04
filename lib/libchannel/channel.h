@@ -14,6 +14,15 @@
 
 struct channel;
 struct channel_message;
+
+/* Kernel-stamped process attribution, independent of authorization. */
+struct channel_process_identity {
+	uint64_t identity;
+	uint64_t responsible_identity;
+	int32_t pid;
+	int32_t responsible_pid;
+};
+
 struct channel_request;
 
 enum channel_role {
@@ -129,6 +138,9 @@ size_t	channel_message_length(const struct channel_message *);
 uint64_t channel_message_token(const struct channel_message *);
 const struct channel_sender *
 	channel_message_sender(const struct channel_message *);
+/* NULL when the kernel or descriptor rights provide only legacy metadata. */
+const struct channel_process_identity *
+	channel_message_process(const struct channel_message *);
 size_t	channel_message_fd_count(const struct channel_message *);
 int	channel_message_borrow_fd(const struct channel_message *, size_t);
 int	channel_message_take_fd(struct channel_message *, size_t);

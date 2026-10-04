@@ -10,14 +10,17 @@
  * mac_capability channel endpoints — the socketpair(2)-equivalent
  * primitive with no service connection and no authority.  Because it is a
  * SYSCALL_MODULE its number is assigned dynamically at module load, so we
- * resolve it once via modfind(2)/modstat(2) and memoize it.
+ * resolve it through a read-only sysctl, with modfind(2)/modstat(2)
+ * as an older-kernel fallback, and memoize it atomically.
  */
 
 #include <sys/param.h>
 #include <sys/module.h>
 #include <sys/syscall.h>
+#include <sys/sysctl.h>
 
 #include <errno.h>
+#include <stdatomic.h>
 #include <stddef.h>
 #include <unistd.h>
 
@@ -28,22 +31,31 @@
  *   INT_RESOLVE_PENDING  not yet resolved
  *   -1                   resolved: syscall unavailable (old kernel/module)
  *   >= 0                 resolved syscall number
- * A benign race on concurrent first use just re-resolves; the result is
- * identical, so no lock is required.
+ * Concurrent first use may resolve the same number more than once; atomic
+ * publication avoids a data race.
  */
-#define	CHANNEL_SYSNO_PENDING	(-2)
-static int channel_create_sysno = CHANNEL_SYSNO_PENDING;
+#define CHANNEL_SYSNO_PENDING (-2)
+static _Atomic int channel_create_sysno = CHANNEL_SYSNO_PENDING;
 
 static int
 channel_resolve_sysno(void)
 {
 	struct module_stat stat;
 	int modid, sysno;
+	size_t len = sizeof(sysno);
 
 	sysno = channel_create_sysno;
 	if (sysno != CHANNEL_SYSNO_PENDING)
 		return (sysno);
 
+	/* modfind is forbidden after cap_enter; this read grants no authority.
+	 */
+	if (sysctlbyname("kern.mac_capability.channel_create_syscall", &sysno,
+		&len, NULL, 0) == 0 &&
+	    sysno >= 0) {
+		channel_create_sysno = sysno;
+		return (sysno);
+	}
 	modid = modfind("sys/mac_capability_channel_create");
 	if (modid < 0) {
 		channel_create_sysno = -1;
@@ -66,8 +78,8 @@ channel_resolve_sysno(void)
  * cred nonce.  Grants no authority.
  *
  * Returns 0 on success, or -1 with errno set (ENOSYS if the kernel does
- * not provide the syscall — callers should fail soft to the inherited
- * shared lookup channel).
+ * not provide the syscall). Discovery must fail rather than receive replies
+ * from a shared inherited queue.
  */
 int
 mac_capability_channel_create(int fds[2])

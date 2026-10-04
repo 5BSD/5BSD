@@ -3517,4 +3517,12 @@
 		    int fd
 		);
 	}
+636	AUE_NULL	STD|CAPENABLED {
+        int cap_process(
+            int op,
+            int fd,
+            uid_t uid,
+            _Inout_opt_ void *data
+        );
+    }
 ; vim: syntax=off

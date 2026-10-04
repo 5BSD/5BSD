@@ -7,3 +7,6 @@
 # in jobs discarded, not just delayed, during a no-login period.
 #account	required	pam_nologin.so
 account		required	pam_unix.so
+
+# session: replace scheduler authority with the job owner
+session		required	pam_capability.so	unprivileged

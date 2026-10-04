@@ -778,6 +778,13 @@ struct proc {
 
 	TAILQ_HEAD(, kq_timer_cb_data)	p_kqtim_stop;	/* (c) */
 	LIST_ENTRY(proc) p_jaillist;	/* (d) Jail process linkage. */
+
+	struct mac_cap_process_context *p_cap_context; /* (c) Held discovery. */
+	uint64_t	p_cap_identity; /* (c) Process lifetime identity. */
+	uint64_t	p_cap_responsible; /* (c) Responsible process identity. */
+	uint64_t	p_cap_generation; /* (c) Discovery replacement generation. */
+	pid_t		p_cap_responsible_pid; /* (c) Diagnostic only. */
+
 };
 
 #define	p_session	p_pgrp->pg_session

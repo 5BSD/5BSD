@@ -218,10 +218,8 @@ _Static_assert(sizeof(struct svc_mint_domain_req) ==
  *
  * A behavioral handshake that lets an inheriting process confirm the fd it
  * probes really is a switchboard ambient LOOKUP channel and not some other
- * mac_capability channel that happens to answer MAC_CAPABILITY_GETINFO — most
- * dangerously a service's unit control channel, which shares fd 3
- * (SVC_CHANNEL_FD == SERVICE_LOOKUP_FIXED_FD) and the generic per-instance
- * channel identity, so name/badge cannot discriminate it.
+ * mac_capability channel that happens to answer MAC_CAPABILITY_GETINFO — a unit control channel has the same generic
+ * per-instance channel identity, so name/badge cannot discriminate it.
  *
  * Only a lookup-channel handler (domain.c) answers this op with status 0 and
  * the magic ack.  A unit control channel's dispatcher (svc_proto.c) does NOT

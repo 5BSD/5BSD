@@ -206,7 +206,7 @@ require_mac_capability()
 # the VM boot smoke test.
 require_ambient_control()
 {
-	if [ -z "${SERVICE_LOOKUP_FD:-}" ]; then
+	if ! switchboardctl status >/dev/null 2>&1; then
 		atf_skip "no ambient control channel in this harness (control is validated by the VM boot smoke test)"
 	fi
 }

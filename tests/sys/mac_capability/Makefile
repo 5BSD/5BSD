@@ -16,6 +16,13 @@ PROGS+=		mac_capability_exec_helper
 PROGS+=		mac_capability_channel_helper
 PROGS+=		mac_capability_isolation_helper
 PROGS+=		mac_capability_shield_helper
+ATF_TESTS_SH+=	process_context_test
+PROGS+=		process_context_helper process_context_edge_helper \
+		process_context_ipc_helper
+.for helper in process_context_helper process_context_edge_helper process_context_ipc_helper
+CFLAGS.${helper}+=	-I${SRCTOP}/sys -I${SRCTOP}/lib/libchannel
+LIBADD.${helper}+=	channel capability pthread
+.endfor
 SCRIPTS+=	run_tests.sh
 BINDIR=		${TESTSDIR}
 

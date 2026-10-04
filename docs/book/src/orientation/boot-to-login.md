@@ -79,14 +79,12 @@ the wait early is switchboard dying permanently: its restart circuit breaker
 trips after ten fast crashes, and capsule then drops to a single-user
 recovery shell rather than leaving a multi-user system with no rc world.
 
-The last thing capsule does before multi-user is receive a descriptor from
-switchboard: a duplicate of the system ambient lookup channel. Capsule pins
-it and, when it later spawns each getty, dup2(2)s it to fd 3
-(`SERVICE_LOOKUP_FIXED_FD` in `lib/libservice/service_bootstrap.h`) with
-close-on-exec cleared. The getty environment is hand-built and cannot carry
-an environment variable across, so this one hop uses a fixed descriptor
-number instead. Everything about the carry is best-effort: if it fails, getty
-and login run with no channel and the boot is not gated.
+Before multi-user, Capsule receives a duplicate of SwitchBoard's boot lookup
+channel. In each getty child it installs a kernel-held reference before either
+the configured window-system fork or getty exec. Descriptor cleanup and the
+hand-built getty environment do not affect that reference. Login's PAM session
+module replaces it with the authenticated principal's scope. If discovery is
+unavailable, UNIX login can proceed without capability-service access.
 
 ## Switchboard
 

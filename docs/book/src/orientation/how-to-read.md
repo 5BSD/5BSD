@@ -176,7 +176,7 @@ rather than restating it.
 (`system.Filesystem`). Manifest keys appear in backticks with their UCL
 spelling (`activation { boot = true }`). Function names carry their section
 (`service_open(3)`); wire operations and constants are in backticks
-(`SVC_OP_READY`, `SERVICE_LOOKUP_FIXED_FD`). Anything you would type is in a
+(`SVC_OP_READY`, `MAC_CAP_PROCESS_GET`). Anything you would type is in a
 code block, with `$` for a command an ordinary user may run and `#` for one
 that needs a privileged session.
 

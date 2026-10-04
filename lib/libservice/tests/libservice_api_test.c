@@ -73,45 +73,19 @@ test_session_call(struct service_session *session, const void *request,
 	return (0);
 }
 
-static int
-capability_connect(const char *name)
-{
-	struct mac_capability_connect_args connect;
-	int control, error;
 
-	control = open("/dev/mac_capability", O_RDWR);
-	ATF_REQUIRE(control >= 0);
-	memset(&connect, 0, sizeof(connect));
-	strlcpy(connect.name, name, sizeof(connect.name));
-	if (ioctl(control, MAC_CAPABILITY_CONNECT, &connect) == -1) {
-		error = errno;
-		close(control);
-		errno = error;
-		return (-1);
-	}
-	close(control);
-	return (connect.fd);
-}
 
 static void
 capability_channel_pair(int *first, int *second)
 {
-	struct mac_capability_recvmsg_args receive;
-	struct mac_capability_sendmsg_args send;
-	uint32_t op;
+	int pair[2], error;
 
-	*first = capability_connect("channel");
-	ATF_REQUIRE(*first >= 0);
-	op = CHANNEL_OP_CREATE;
-	memset(&send, 0, sizeof(send));
-	send.payload = &op;
-	send.payload_len = sizeof(op);
-	ATF_REQUIRE(ioctl(*first, MAC_CAPABILITY_SENDMSG, &send) == 0);
-	memset(&receive, 0, sizeof(receive));
-	receive.fds = second;
-	receive.nfds = 1;
-	ATF_REQUIRE(ioctl(*first, MAC_CAPABILITY_RECVMSG, &receive) == 0);
-	ATF_REQUIRE_EQ(1, receive.nfds);
+	error = mac_capability_channel_create(pair);
+	if (error == -1 && errno == ENOSYS)
+		atf_tc_skip("kernel channel creation syscall unavailable");
+	ATF_REQUIRE_MSG(error == 0, "channel pair: %s", strerror(errno));
+	*first = pair[0];
+	*second = pair[1];
 }
 
 static void *
@@ -1256,12 +1230,37 @@ ATF_TC_BODY(provider_reply_validation, tc)
 	ATF_CHECK(!service_provider_component_valid(name, sizeof(name)));
 }
 
+ATF_TC_WITHOUT_HEAD(stale_bootstrap_preserves_descriptor);
+ATF_TC_BODY(stale_bootstrap_preserves_descriptor, tc)
+{
+	struct service_context *context;
+	pid_t child;
+	int fd, status;
+
+	(void)tc;
+	child = fork();
+	ATF_REQUIRE(child >= 0);
+	if (child == 0) {
+		fd = open("/dev/null", O_RDWR);
+		if (fd < 0 || dup2(fd, SERVICE_BOOTSTRAP_FD) < 0 ||
+		    setenv(SERVICE_BOOTSTRAP_ENV, "5", 1) < 0)
+			_exit(1);
+		if (service_acquire(&context) != -1 || errno != EINVAL)
+			_exit(2);
+		_exit(fcntl(SERVICE_BOOTSTRAP_FD, F_GETFD) >= 0 ? 0 : 3);
+	}
+	ATF_REQUIRE(waitpid(child, &status, 0) == child);
+	ATF_CHECK_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
+	    "stale bootstrap closed unrelated descriptor: status=%#x", status);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
 	ATF_TP_ADD_TC(tp, capability_rights_algebra);
 	ATF_TP_ADD_TC(tp, provider_reply_validation);
 	ATF_TP_ADD_TC(tp, bootstrap_validation);
+	ATF_TP_ADD_TC(tp, stale_bootstrap_preserves_descriptor);
 	ATF_TP_ADD_TC(tp, shared_context);
 	ATF_TP_ADD_TC(tp, named_directory_bootstrap);
 	ATF_TP_ADD_TC(tp, resource_directory_colon_path);

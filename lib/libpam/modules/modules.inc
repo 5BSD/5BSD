@@ -2,6 +2,7 @@
 .include <src.opts.mk>
 
 MODULES		 =
+MODULES		+= pam_capability
 MODULES		+= pam_chroot
 MODULES		+= pam_deny
 MODULES		+= pam_echo

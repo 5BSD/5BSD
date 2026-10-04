@@ -12,6 +12,7 @@
 #include <sys/types.h>
 
 #include <stdint.h>
+#include "libservice_session.h"
 
 #define	SERVICE_BOOTSTRAP_MAGIC		0x53425643U	/* "CVBS" */
 #define	SERVICE_BOOTSTRAP_FD		5
@@ -19,32 +20,10 @@
 #define	SERVICE_BOOTSTRAP_ENVFD_NAME	"org.5bsd.switchboard.bootstrap"
 
 /*
- * Ambient lookup-channel convention (§21).  Distinct from the typed bootstrap
- * descriptor above: SERVICE_BOOTSTRAP_FD is the per-unit launch table switchboard
- * hands a service it starts, whereas the ambient lookup channel is a bare
- * "ask switchboard" discovery channel carried through the boot/login path into
- * every process — including interactive sessions switchboard never launched.  The
- * environment variable names the inherited fd number, and is the sole
- * discovery mechanism for the login->shell hop and for any process switchboard or
- * a login shell launched directly (they inherit and re-advertise it per
- * session).
- *
- * The getty path is the one hop the environment cannot cross.  capsule
- * (PID 1) spawns getty from /etc/ttys with a hand-built minimal environment
- * ({TERM,NULL}), so SERVICE_LOOKUP_ENV does not survive capsule -> getty ->
- * login.  For that single hop the ambient channel is instead carried as a bare
- * inherited descriptor pinned to a fixed number, SERVICE_LOOKUP_FIXED_FD:
- * capsule dup2()s the channel there (clearing FD_CLOEXEC) just before
- * exec'ing getty, getty's login_tty(3) closes only its controlling tty, and so
- * login inherits an open channel at the fixed number.  The discovery helper
- * validates the fixed fd with MAC_CAPABILITY_GETINFO exactly as it validates
- * the env-named fd, so a stale or unrelated descriptor at fd 3 is rejected and
- * the caller safely falls back to "no ambient channel".  The environment
- * variable takes precedence: the fixed fd is only probed when the env is absent
- * or malformed, so the login->shell and direct-launch hops are unaffected.
+ * Session discovery is carried in kernel process state (libservice_session.h).
+ * This descriptor table remains the typed provider-launch ABI for capability
+ * handles and lifecycle control, separate from ordinary service discovery.
  */
-#define	SERVICE_LOOKUP_ENV		"SERVICE_LOOKUP_FD"
-#define	SERVICE_LOOKUP_FIXED_FD		3
 #define	SERVICE_UNIT_DIR_ENV		"CAPABILITY_UNIT_DIR"
 #define	SERVICE_CONFIG_FD_ENV		"CAPABILITY_CONFIG_FD"
 #define	SERVICE_DIR_FDS_ENV		"CAPABILITY_DIR_FDS"
@@ -89,43 +68,18 @@ _Static_assert(sizeof(struct service_bootstrap) == 3456,
     "service bootstrap ABI drift");
 
 /*
- * Ambient lookup-channel helpers (§21), shared by switchboard, login, and su.
- * Both are best-effort discovery plumbing and never authority: a caller that
- * gets -1 must degrade to its prior behavior, never fail.
- *
- * service_ambient_lookup_fd() returns the inherited ambient lookup fd named by
- * SERVICE_LOOKUP_ENV, after validating that it is an open mac_capability
- * channel.  When the environment variable is absent or unparsable it falls back
- * to probing SERVICE_LOOKUP_FIXED_FD (the getty-path carry) under the same
- * validation.  It returns -1 (errno set) when neither source yields an open
- * mac_capability channel.
- *
- * service_install_ambient_lookup() makes fd ambient (survives every fork via
- * CAP_CLOFORK_UNLOCKED, survives exec by clearing FD_CLOEXEC) and advertises
- * its number in SERVICE_LOOKUP_ENV so descendants inherit it.  The descriptor
- * is left at its own number.  Returns 0 on success, -1 (errno set) on failure.
- */
-/*
- * service_ambient_lookup_channel() is the discovery-path entry the ambient
- * client uses (service_connect_ambient): it returns this process's PRIVATE
- * lookup channel once it has lazily registered one with switchboard
- * (docs/book/src/plane/discovery-and-lookup.md P2), and otherwise the
- * inherited shared fd exactly as service_ambient_lookup_fd() would.  The result
- * is borrowed and memoized once per process; -1 means no ambient channel at
- * all.  login/su and native providers do not use it — they keep their own
- * per-session/per-unit channels.
+ * Obtain an owned CLOEXEC private lookup endpoint from process context.
+ * The caller must close it. Registration failure returns -1; neither an
+ * environment variable nor a shared receive queue is used as a fallback.
  */
 __BEGIN_DECLS
-int	service_ambient_lookup_fd(void);
 int	service_ambient_lookup_channel(void);
-int	service_install_ambient_lookup(int fd);
 /*
  * Join the caller to the login session coalition paired with a USER-domain
  * lookup channel (see service_ambient.c).  Best-effort; call before forking.
  * Returns 0, or -1 with errno (ENOENT: no session coalition on this channel;
  * EBUSY: already a coalition member).
  */
-int	service_session_join_coalition(int lookup_fd);
 __END_DECLS
 
 #endif /* !_SERVICE_BOOTSTRAP_H_ */

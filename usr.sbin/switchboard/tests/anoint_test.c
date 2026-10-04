@@ -315,53 +315,12 @@ static bool want_real_channel;
 static int
 real_channel_pair(int *our_end, int *child_end)
 {
-	struct mac_capability_connect_args connect;
-	struct mac_capability_sendmsg_args send;
-	struct mac_capability_recvmsg_args receive;
-	uint32_t op;
-	int control, first, second, error;
+	int pair[2];
 
-	control = open("/dev/mac_capability", O_RDWR);
-	if (control == -1) {
-		errno = ENODEV;
+	if (mac_capability_channel_create(pair) == -1)
 		return (-1);
-	}
-	memset(&connect, 0, sizeof(connect));
-	strlcpy(connect.name, "channel", sizeof(connect.name));
-	if (ioctl(control, MAC_CAPABILITY_CONNECT, &connect) == -1) {
-		error = errno;
-		close(control);
-		errno = error;
-		return (-1);
-	}
-	close(control);
-	first = connect.fd;
-
-	op = CHANNEL_OP_CREATE;
-	memset(&send, 0, sizeof(send));
-	send.payload = &op;
-	send.payload_len = sizeof(op);
-	if (ioctl(first, MAC_CAPABILITY_SENDMSG, &send) == -1) {
-		error = errno;
-		close(first);
-		errno = error;
-		return (-1);
-	}
-	second = -1;
-	memset(&receive, 0, sizeof(receive));
-	receive.fds = &second;
-	receive.nfds = 1;
-	if (ioctl(first, MAC_CAPABILITY_RECVMSG, &receive) == -1 ||
-	    receive.nfds != 1 || second < 0) {
-		error = errno != 0 ? errno : EIO;
-		close(first);
-		errno = error;
-		return (-1);
-	}
-	(void)fcntl(first, F_SETFD, FD_CLOEXEC);
-	(void)fcntl(second, F_SETFD, FD_CLOEXEC);
-	*our_end = first;
-	*child_end = second;
+	*our_end = pair[0];
+	*child_end = pair[1];
 	return (0);
 }
 
@@ -942,9 +901,10 @@ ATF_TC_BODY(unit_covered_connects_with_identity, tc)
 	ATF_CHECK_STREQ("com.example.pub/pub", last_grant.client_label);
 	ATF_CHECK_EQ(0x1122334455667788ULL, last_grant.client_nonce);
 	ATF_CHECK_EQ(SVC_CLIENT_ABI_NATIVE, last_grant.client_abi);
-	/* A unit never gets the admin bypass (U1: rights without ADMIN). */
+	/* Units get neither operator bypass nor session authentication rights. */
 	ATF_CHECK_EQ(0, last_grant.rights & SVC_RIGHTS_ADMIN);
-	ATF_CHECK_EQ(SVC_RIGHTS_ALL & ~SVC_RIGHTS_ADMIN, last_grant.rights);
+	ATF_CHECK_EQ(SVC_RIGHTS_ALL &
+	    ~(SVC_RIGHTS_ADMIN | SERVICE_RIGHTS_AUTHENTICATE), last_grant.rights);
 	ATF_CHECK_EQ(0U, audit_count);
 	ATF_CHECK_EQ(1U, provider.connection_count);
 
@@ -1175,7 +1135,8 @@ ATF_TC_BODY(session_sets, tc)
 	ATF_REQUIRE(fd >= 0);
 	close(fd);
 	ATF_CHECK_STREQ("org.5bsd.user-session", last_grant.client_label);
-	ATF_CHECK_EQ(SVC_RIGHTS_ALL, last_grant.rights);
+	ATF_CHECK_EQ(SVC_RIGHTS_ALL & ~SERVICE_RIGHTS_AUTHENTICATE,
+	    last_grant.rights);
 	ATF_CHECK_EQ(0U, audit_count);
 
 	/* P1: an operator session holding exactly the name, in USER kind
@@ -1244,7 +1205,8 @@ ATF_TC_BODY(rights_follow_admin_rights_knob, tc)
 	fd = naming_lookup(OPEN_USER_NAME, NULL, &session, NULL, &error, NULL);
 	ATF_REQUIRE(fd >= 0);
 	close(fd);
-	ATF_CHECK_EQ(SVC_RIGHTS_ALL & ~SVC_RIGHTS_ADMIN, last_grant.rights);
+	ATF_CHECK_EQ(SVC_RIGHTS_ALL &
+	    ~(SVC_RIGHTS_ADMIN | SERVICE_RIGHTS_AUTHENTICATE), last_grant.rights);
 
 	/* admin_rights = true carries it, even on a USER-kind channel and
 	 * with an otherwise empty set (reach and bypass are independent). */
@@ -1255,7 +1217,8 @@ ATF_TC_BODY(rights_follow_admin_rights_knob, tc)
 	fd = naming_lookup(OPEN_USER_NAME, NULL, &session, NULL, &error, NULL);
 	ATF_REQUIRE(fd >= 0);
 	close(fd);
-	ATF_CHECK_EQ(SVC_RIGHTS_ALL, last_grant.rights);
+	ATF_CHECK_EQ(SVC_RIGHTS_ALL & ~SERVICE_RIGHTS_AUTHENTICATE,
+	    last_grant.rights);
 	ATF_CHECK(last_grant.rights & SVC_RIGHTS_ADMIN);
 
 	/* The boot carry's shape (all + admin) is the old SYSTEM behaviour. */
@@ -1266,7 +1229,8 @@ ATF_TC_BODY(rights_follow_admin_rights_knob, tc)
 	fd = naming_lookup(OPEN_USER_NAME, NULL, &session, NULL, &error, NULL);
 	ATF_REQUIRE(fd >= 0);
 	close(fd);
-	ATF_CHECK_EQ(SVC_RIGHTS_ALL, last_grant.rights);
+	ATF_CHECK_EQ(SVC_RIGHTS_ALL & ~SERVICE_RIGHTS_AUTHENTICATE,
+	    last_grant.rights);
 
 	naming_remove_owner(&provider);
 }
@@ -1757,7 +1721,6 @@ ATF_TC_BODY(registered_private_channel_keeps_set, tc)
 	struct svc_lookup_channel *lc;
 	struct pump_ctx ctx;
 	pthread_t pump;
-	char envbuf[16];
 	int minted_fd, kq, priv, count;
 
 	kq = kqueue();
@@ -1775,9 +1738,7 @@ ATF_TC_BODY(registered_private_channel_keeps_set, tc)
 	ctx.stop = 0;
 	ATF_REQUIRE_EQ(0, pthread_create(&pump, NULL, domain_pump_thread, &ctx));
 
-	ATF_REQUIRE(snprintf(envbuf, sizeof(envbuf), "%d", minted_fd) <
-	    (int)sizeof(envbuf));
-	ATF_REQUIRE_EQ(0, setenv(SERVICE_LOOKUP_ENV, envbuf, 1));
+	ATF_REQUIRE_EQ(0, service_install_ambient_lookup(minted_fd));
 	priv = service_ambient_lookup_channel();
 	if (priv < 0 || priv == minted_fd) {
 		ctx.stop = 1;
@@ -1804,6 +1765,8 @@ ATF_TC_BODY(registered_private_channel_keeps_set, tc)
 		count++;
 	}
 	ATF_CHECK_EQ(2, count);
+	close(priv);
+	ATF_REQUIRE_EQ(0, service_clear_ambient_lookup());
 
 	domain_channel_teardown();
 	close(minted_fd);
@@ -2716,7 +2679,8 @@ ATF_TC_BODY(lookup_identity_without_stamp_and_linux_abi, tc)
 	ATF_CHECK_EQ(3, last_grant.client_abi);
 	ATF_CHECK_EQ(SVC_CLIENT_ABI_LINUX, last_grant.client_abi);
 	ATF_CHECK_EQ(0xabcdULL, last_grant.client_nonce);
-	ATF_CHECK_EQ(SVC_RIGHTS_ALL & ~SVC_RIGHTS_ADMIN, last_grant.rights);
+	ATF_CHECK_EQ(SVC_RIGHTS_ALL &
+	    ~(SVC_RIGHTS_ADMIN | SERVICE_RIGHTS_AUTHENTICATE), last_grant.rights);
 	ATF_CHECK_EQ(1U, audit_count);
 
 	/* Linux ABI, non-holder: still refused -- ABI never gates reach. */
@@ -2776,7 +2740,8 @@ ATF_TC_BODY(lookup_unit_never_admin_even_with_all, tc)
 	close(fd);
 	ATF_CHECK_EQ(1U, audit_count);
 	ATF_CHECK_EQ(0, last_grant.rights & SVC_RIGHTS_ADMIN);
-	ATF_CHECK_EQ(SVC_RIGHTS_ALL & ~SVC_RIGHTS_ADMIN, last_grant.rights);
+	ATF_CHECK_EQ(SVC_RIGHTS_ALL &
+	    ~(SVC_RIGHTS_ADMIN | SERVICE_RIGHTS_AUTHENTICATE), last_grant.rights);
 	ATF_CHECK_STREQ("com.example.pub/pub", last_grant.client_label);
 
 	/* Re-deriving from the manifest drops `all` and a planted admin bit. */
@@ -2826,7 +2791,8 @@ ATF_TC_BODY(lookup_session_admin_rights_without_reach, tc)
 	ATF_REQUIRE(fd >= 0);
 	close(fd);
 	ATF_CHECK(last_grant.rights & SVC_RIGHTS_ADMIN);
-	ATF_CHECK_EQ(SVC_RIGHTS_ALL, last_grant.rights);
+	ATF_CHECK_EQ(SVC_RIGHTS_ALL & ~SERVICE_RIGHTS_AUTHENTICATE,
+	    last_grant.rights);
 	ATF_CHECK_EQ(0U, audit_count);
 
 	/* Gated: refused, audited under uid 0, no grant pushed. */

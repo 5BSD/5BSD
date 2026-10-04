@@ -106,18 +106,7 @@
 /* Re-exec fds */
 #define REEXEC_DEVCRYPTO_RESERVED_FD	(STDERR_FILENO + 1)
 #define REEXEC_CONFIG_PASS_FD		(STDERR_FILENO + 2)
-/*
- * 5BSD capability world: the inherited SYSTEM ambient lookup channel
- * (SERVICE_LOOKUP_FD, handed down by switchboard through rc) is pinned at this
- * reserved slot so it survives sshd's fd cull, the SIGHUP self-re-exec, and
- * the per-connection re-exec into sshd-session.  The listener mints a private
- * per-connection channel over it and passes that to each child at this same
- * slot; the monitor then mints the session's uid-scoped lookup channel over
- * the private channel.  This replaces the getpeereid(2) control socket that
- * session provisioning used to dial (docs/capability-authority-model.md).
- */
-#define REEXEC_AMBIENT_LOOKUP_FD	(STDERR_FILENO + 3)
-#define REEXEC_MIN_FREE_FD		(STDERR_FILENO + 4)
+#define REEXEC_MIN_FREE_FD		(STDERR_FILENO + 3)
 
 extern char *__progname;
 
@@ -135,15 +124,7 @@ int debug_flag = 0;
 /* Saved arguments to main(). */
 static char **saved_argv;
 
-/*
- * 5BSD: the inherited SYSTEM ambient lookup channel, pinned at
- * REEXEC_AMBIENT_LOOKUP_FD for the listener's whole life (across the fd cull,
- * daemon(), and the SIGHUP self-re-exec).  -1 when switchboard handed us none, in
- * which case ssh sessions simply carry no ambient channel.  Used ONLY to mint a
- * private per-connection channel for each accepted connection — the listener
- * never lets a session share this master descriptor.
- */
-static int ambient_master_fd = -1;
+
 static int saved_argc;
 
 /*
@@ -951,41 +932,6 @@ server_listen(void)
 }
 
 /*
- * 5BSD: capture the inherited SYSTEM ambient lookup channel (SERVICE_LOOKUP_FD)
- * and pin it at REEXEC_AMBIENT_LOOKUP_FD so it survives the fd cull below,
- * daemon(), and the SIGHUP self-re-exec.  SERVICE_LOOKUP_FD is rewritten in the
- * environment to name the pinned slot, so a re-exec'd listener re-captures the
- * same descriptor.  Best-effort: on any problem ambient_master_fd stays -1 and
- * ssh sessions carry no ambient channel — never fatal.  Runs BEFORE the cull.
- */
-static void
-capture_ambient_master(void)
-{
-	const char *e;
-	char *end, slot[16];
-	long v;
-	int fd;
-
-	e = getenv("SERVICE_LOOKUP_FD");
-	if (e == NULL || *e == '\0')
-		return;
-	errno = 0;
-	v = strtol(e, &end, 10);
-	if (*end != '\0' || errno != 0 || v < 0 || v > INT_MAX)
-		return;
-	fd = (int)v;
-	if (fd != REEXEC_AMBIENT_LOOKUP_FD) {
-		if (dup2(fd, REEXEC_AMBIENT_LOOKUP_FD) == -1)
-			return;	/* original fd is closed by the cull that follows */
-	}
-	ambient_master_fd = REEXEC_AMBIENT_LOOKUP_FD;
-	/* Keep it open across exec (not CLOEXEC) so the re-exec inherits it. */
-	(void)fcntl(REEXEC_AMBIENT_LOOKUP_FD, F_SETFD, 0);
-	(void)snprintf(slot, sizeof(slot), "%d", REEXEC_AMBIENT_LOOKUP_FD);
-	(void)setenv("SERVICE_LOOKUP_FD", slot, 1);
-}
-
-/*
  * The main TCP accept loop. Note that, for the non-debug case, returns
  * from this function are in a forked subprocess.
  */
@@ -1277,12 +1223,8 @@ server_accept_loop(int *sock_in, int *sock_out, int *newsock, int *config_s,
 			 * Got connection.  Fork a child to handle it, unless
 			 * we are in debugging mode.
 			 *
-			 * 5BSD: the child inherits the listener's SYSTEM ambient
-			 * lookup channel, pinned at REEXEC_AMBIENT_LOOKUP_FD, and
-			 * carries it through the re-exec into sshd-session, whose
-			 * monitor mints the session's uid-scoped channel over it
-			 * (serialized across monitors, since the endpoint is
-			 * shared).  Nothing per-connection happens here.
+			 * The kernel discovery context survives fork and re-exec.
+			 * sshd-session obtains its own private reply endpoint.
 			 */
 			if (debug_flag) {
 				/*
@@ -1324,13 +1266,7 @@ server_accept_loop(int *sock_in, int *sock_out, int *newsock, int *config_s,
 				close_listen_socks();
 				*sock_in = *newsock;
 				*sock_out = *newsock;
-				/*
-				 * 5BSD: the SYSTEM ambient lookup channel is
-				 * already inherited at REEXEC_AMBIENT_LOOKUP_FD
-				 * (the listener pinned it, non-close-on-exec), so
-				 * it carries through this re-exec to the monitor
-				 * unchanged — nothing to do here.
-				 */
+
 				log_init(__progname,
 				    options.log_level,
 				    options.log_facility,
@@ -1591,25 +1527,10 @@ main(int ac, char **av)
 	if (!test_flag && !inetd_flag && !do_dump_cfg && !path_absolute(av[0]))
 		fatal("sshd requires execution with an absolute path");
 
-	/*
-	 * 5BSD: pin the inherited ambient lookup channel before the cull, then
-	 * cull every OTHER inherited descriptor.  When we keep it, slots 3 and 4
-	 * are closed explicitly and the cull starts above the pinned slot so it
-	 * alone is spared; otherwise the stock closefrom() culls all of >= 3.
-	 */
-	capture_ambient_master();
-	if (ambient_master_fd >= 0) {
-		(void)close(REEXEC_DEVCRYPTO_RESERVED_FD);
-		(void)close(REEXEC_CONFIG_PASS_FD);
-		closefrom(REEXEC_MIN_FREE_FD);
-	} else
-		closefrom(STDERR_FILENO + 1);
+	/* The kernel carries discovery across cleanup and listener re-exec. */
+	closefrom(STDERR_FILENO + 1);
 
-	/*
-	 * Reserve fds we'll need later for reexec things.  dup() skips the pinned
-	 * ambient slot (it is occupied), so the reserved /dev/null placeholders
-	 * land around it exactly as they would without it.
-	 */
+	/* Reserve the descriptors used by the re-exec protocol. */
 	if ((devnull = open(_PATH_DEVNULL, O_RDWR)) == -1)
 		fatal("open %s: %s", _PATH_DEVNULL, strerror(errno));
 	while (devnull < REEXEC_MIN_FREE_FD) {

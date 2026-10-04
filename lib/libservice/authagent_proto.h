@@ -29,6 +29,7 @@
  * non-transferable at this caller.  A session leaf (login/su) passes 0.
  */
 #define	AUTHAGENT_FLAG_FORWARDABLE	0x1U
+#define	AUTHAGENT_FLAG_UNPRIVILEGED	0x2U
 
 /*
  * AUTHAGENT_OP_MINT_SESSION
@@ -47,7 +48,7 @@
 struct authagent_mint_req {
 	uint32_t	op;		/* AUTHAGENT_OP_MINT_SESSION */
 	uint32_t	uid;		/* the authenticated principal, by name */
-	uint32_t	flags;		/* reserved, must be 0 */
+	uint32_t	flags;		/* AUTHAGENT_FLAG_* */
 };
 
 struct authagent_mint_reply {

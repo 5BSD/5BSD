@@ -37,6 +37,7 @@
 #include <sys/sdt.h>
 #include <sys/syscall.h>
 #include <sys/sysent.h>
+#include <sys/sysctl.h>
 #include <sys/ucred.h>
 
 #include <bsm/audit_kevents.h>
@@ -381,6 +382,10 @@ static struct sysent mac_capability_channel_create_sysent = {
 };
 
 static int mac_capability_channel_create_offset = NO_SYSCALL;
+SYSCTL_DECL(_kern_mac_capability);
+SYSCTL_INT(_kern_mac_capability, OID_AUTO, channel_create_syscall,
+    CTLFLAG_RD | CTLFLAG_CAPRD, &mac_capability_channel_create_offset, 0,
+    "Native channel-pair syscall number, available inside Capsicum");
 
 SYSCALL_MODULE(mac_capability_channel_create,
     &mac_capability_channel_create_offset,

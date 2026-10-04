@@ -1207,19 +1207,6 @@ do_setup_env(struct ssh *ssh, Session *s, const char *shell)
 			fprintf(stderr, "  %.200s\n", env[i]);
 	}
 
-	/*
-	 * 5BSD §21: advertise the provisioned ambient lookup channel to the
-	 * session.  The descriptor itself is installed at SERVICE_LOOKUP_FIXED_FD
-	 * by do_child just before execve; a stale value here (if that install
-	 * later fails) is caught by the client's channel-identity handshake, so
-	 * this is safe to set unconditionally when a channel was provisioned.
-	 */
-	if (ambient_prov_fd >= 0) {
-		char fdbuf[16];
-
-		snprintf(fdbuf, sizeof(fdbuf), "%d", SERVICE_LOOKUP_FIXED_FD);
-		child_set_env(&env, &envsize, "SERVICE_LOOKUP_FD", fdbuf);
-	}
 	return env;
 }
 
@@ -1527,42 +1514,21 @@ child_close_fds(struct ssh *ssh)
 	log_redirect_stderr_to(NULL);
 
 	/*
-	 * Close any extra open file descriptors so that we don't have them
-	 * hanging around in clients.  Note that we want to do this after
-	 * initgroups, because at least on Solaris 2.3 it leaves file
-	 * descriptors open.
-	 *
-	 * 5BSD Â§21: the ambient lookup channel was provisioned into a high fd and
-	 * SERVICE_LOOKUP_FD was already advertised as SERVICE_LOOKUP_FIXED_FD in
-	 * the child env.  This closefrom() is what closes that provisioned fd,
-	 * so the later install in do_child dup2()s an already-closed source and
-	 * the shell inherits SERVICE_LOOKUP_FD pointing at a dead fd.  Install
-	 * it at the fixed descriptor here -- where it is still valid -- and
-	 * closefrom() above it so it survives into the user's shell.
+	 * Only the authenticated monitor may provision this session. Replace
+	 * the inherited provider context even if provisioning failed, before
+	 * any user command runs. The installed reference needs no spare fd.
 	 */
-	if (ambient_prov_fd >= 0 &&
-	    dup2(ambient_prov_fd, SERVICE_LOOKUP_FIXED_FD) != -1) {
-		if (ambient_prov_fd != SERVICE_LOOKUP_FIXED_FD)
-			(void)close(ambient_prov_fd);
-		ambient_prov_fd = SERVICE_LOOKUP_FIXED_FD;
-		(void)fcntl(SERVICE_LOOKUP_FIXED_FD, F_SETFD, 0);
-		(void)cap_clofork_limit(SERVICE_LOOKUP_FIXED_FD,
-		    CAP_CLOFORK_UNLOCKED);
-		closefrom(SERVICE_LOOKUP_FIXED_FD + 1);
-		/*
-		 * 5BSD: this child is the session leaf; join the login
-		 * session's coalition so the user's shell carries the session
-		 * identity.  Attribution only, never fatal.
-		 */
-		if (service_session_join_coalition(SERVICE_LOOKUP_FIXED_FD) == -1)
+	if (service_clear_ambient_lookup() == -1 && errno != ENOSYS)
+		fatal("clear discovery context: %s", strerror(errno));
+	if (ambient_prov_fd >= 0) {
+		if (service_install_ambient_lookup(ambient_prov_fd) == -1)
+			debug("session discovery install: %s", strerror(errno));
+		else if (service_session_join_coalition(ambient_prov_fd) == -1)
 			debug("session coalition join: %s", strerror(errno));
-	} else {
-		if (ambient_prov_fd >= 0) {
-			(void)close(ambient_prov_fd);
-			ambient_prov_fd = -1;
-		}
-		closefrom(STDERR_FILENO + 1);
+		(void)close(ambient_prov_fd);
+		ambient_prov_fd = -1;
 	}
+	closefrom(STDERR_FILENO + 1);
 }
 
 /*
@@ -1704,31 +1670,7 @@ do_child(struct ssh *ssh, Session *s, const char *command)
 			exit(1);
 	}
 
-	/*
-	 * 5BSD §21: install the provisioned ambient lookup channel at the fixed
-	 * descriptor and spare it from the closefrom, so the user's shell and
-	 * its descendants inherit it.  Non-fatal: a failed install just drops the
-	 * channel and the normal closefrom runs.
-	 */
-	{
-		int spared = 0;
-
-		if (ambient_prov_fd >= 0) {
-			if (dup2(ambient_prov_fd, SERVICE_LOOKUP_FIXED_FD) != -1) {
-				(void)fcntl(SERVICE_LOOKUP_FIXED_FD, F_SETFD, 0);
-				(void)cap_clofork_limit(SERVICE_LOOKUP_FIXED_FD,
-				    CAP_CLOFORK_UNLOCKED);
-				spared = 1;
-			}
-			if (ambient_prov_fd != SERVICE_LOOKUP_FIXED_FD)
-				close(ambient_prov_fd);
-			ambient_prov_fd = -1;
-		}
-		if (spared)
-			closefrom(SERVICE_LOOKUP_FIXED_FD + 1);
-		else
-			closefrom(STDERR_FILENO + 1);
-	}
+	closefrom(STDERR_FILENO + 1);
 
 	do_rc_files(ssh, s, shell);
 

@@ -48,6 +48,7 @@ struct channel_queue_entry {
 };
 
 struct channel {
+	int receive_version;
 	int			 fd;
 	int			 kqueue_fd;	/* lazy kqueue for channel_wait */
 	pid_t			 owner;
@@ -75,6 +76,7 @@ struct channel {
 };
 
 struct channel_message {
+	struct channel_process_identity process;
 	struct channel		*channel;
 	pid_t			 owner;
 	enum channel_message_kind kind;
@@ -767,6 +769,7 @@ static struct channel_message *
 channel_message_receive(struct channel *channel)
 {
 	struct mac_capability_recvmsg_args receive;
+	struct mac_capability_recvmsg_v2_args extended;
 	struct channel_message *message;
 	void *data;
 	int error;
@@ -792,7 +795,25 @@ channel_message_receive(struct channel *channel)
 	receive.payload_len = MAC_CAPABILITY_MAX_MSG;
 	receive.fds = fds;
 	receive.nfds = MAC_CAPABILITY_MAX_FDS;
-	if (ioctl(channel->fd, MAC_CAPABILITY_RECVMSG, &receive) == -1)
+	if (channel->receive_version >= 0) {
+		memset(&extended, 0, sizeof(extended));
+		extended.message = receive;
+		if (ioctl(channel->fd, MAC_CAPABILITY_RECVMSG_V2, &extended) == 0) {
+			channel->receive_version = 2;
+			receive = extended.message;
+			message->process.identity = extended.process.identity;
+			message->process.responsible_identity = extended.process.responsible_identity;
+			message->process.pid = extended.process.pid;
+			message->process.responsible_pid = extended.process.responsible_pid;
+		} else if (errno == ENOTTY || errno == ENOTCAPABLE) {
+			/* Compatibility never fabricates missing sender attribution. */
+			channel->receive_version = -1;
+		} else {
+			goto fail;
+		}
+	}
+	if (channel->receive_version == -1 &&
+	    ioctl(channel->fd, MAC_CAPABILITY_RECVMSG, &receive) == -1)
 		goto fail;
 	message->channel = channel;
 	message->owner = getpid();
@@ -984,6 +1005,14 @@ channel_message_sender(const struct channel_message *message)
 {
 
 	return (message == NULL ? NULL : &message->sender);
+}
+
+const struct channel_process_identity *
+channel_message_process(const struct channel_message *message)
+{
+	if (message == NULL || message->process.identity == 0)
+		return (NULL);
+	return (&message->process);
 }
 
 size_t

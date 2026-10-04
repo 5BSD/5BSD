@@ -57,35 +57,55 @@ for a non-admin `su`, which proves the target's password instead); BSDAuth,
 the one unit with `mint_authority = true`, decides from
 `/Capabilities/Config/principal-policy.ucl` what the session holds and asks
 switchboard to mint a channel bound to `(uid, domain, anointments, rights)`.
-`login` pins the inherited channel at fd 3 (`SERVICE_LOOKUP_FIXED_FD`) before
-its `closefrom(3)`, which is how a console session gets one at all: Capsule
-`dup2`s the channel to fd 3 in each getty it spawns. See
-[Anointments and Principal Policy](anointments.md) for the policy file and
-[Sessions](../compat/sessions.md) for the per-program details.
+Capsule installs a held discovery reference in each getty child's kernel
+process context. The rc launch path does the same for its existing authorized
+launches. Ordinary programs inherit that reference across fork and exec;
+`closefrom()` and environment replacement do not remove it. Authentication
+boundaries replace the provider reference with the target principal's scope.
+An unprovisioned change of real UID or prison denies access to the old context.
+Temporary effective-UID changes do not select a different principal's grants.
 
-## The per-process private lookup channel
+A parent may fork, install an already possessed channel in the child, then
+exec its program. Only that child and its future descendants inherit the new
+selection. There is no operation to become the global bootstrap provider or
+replace unrelated processes' references.
 
-The ambient channel rc inherits is one shared endpoint with one kernel receive
-queue. Lookups are token-correlated request and reply, and libchannel drops a
-reply whose token matches no pending request in the receiving process, so two
-siblings looking up at once could discard each other's replies. The fix is the
-Darwin shape: a caller-owned reply mailbox.
+## Managed-service children
 
-On its first ambient lookup a process calls
-`mac_capability_channel_create(fds[2])`, an ungated, `SYF_CAPENABLED` syscall
-that returns a connected pair it owns and that carries no authority. It sends
-one end to switchboard in a one-way `SVC_OP_REGISTER_LOOKUP` over the shared
-channel, never awaiting a reply there. switchboard validates that the
-descriptor is a channel, derives the domain from the sender's kernel-attested
-nonce (never from the wire), and adopts the endpoint into its kqueue as this
-process's private lookup channel. Every later lookup goes over the private
-end, whose queue only this process holds. The state is memoized per process
-(`AMBIENT_PENDING`, `AMBIENT_PRIVATE`, `AMBIENT_FALLBACK` in
-`service_ambient.c`), an `atfork` handler drops the private end in a child so
-it registers its own, and every failure (no syscall, send failure, no ACK
-within 2 s) falls back to the shared channel, resolved live on each call.
-Staggered clients register cleanly; a microsecond-simultaneous burst of eight
-or more first lookups can push some onto the fallback, which degrades soft.
+A managed unit has two separate channels: its typed provider bootstrap for
+checking in and publishing endpoints, and a kernel-held lookup-only channel for
+ordinary descendants. The latter carries a snapshot of the unit's domain and
+`holds` grants, plus its bundle/unit label and launch generation. It does not
+inherit a login principal's wildcard grants or permit session minting merely
+because the service runs as root. Private lookup registrations retain that same
+scope and service identity.
+
+Restarting or removing a unit closes its generation's discovery channels.
+Changing its manifest affects the next launch, not the grants on an existing
+channel. Runtime registry reallocation does not change identity: the broker
+resolves the stored label and generation instead of retaining a pointer into the
+registry array. Responsibility attribution remains separate from these grants.
+
+## Private lookup handles
+
+The inherited channel is used only to send `SVC_OP_REGISTER_LOOKUP`. Each
+owned working handle gets a newly registered reply endpoint whose scope is
+copied from the arriving channel's server-side domain record, never supplied
+by the client. Separate processes and independent library sessions therefore
+cannot consume each other's replies. Registration waits on kqueue readiness,
+with a bounded deadline. Failure returns an error and may be retried; it never
+falls back to receiving from the inherited shared queue.
+
+Callers close returned handles. The kernel-held reference needs no advertised
+FD number, descriptor cache, or atfork repair. Explicit clearing affects the
+caller and future descendants; it does not revoke existing bearer descriptors
+or other processes' inherited references.
+
+A SwitchBoard restart currently destroys its server-side channel/domain state.
+Keeping a client reference alive does not reconnect it. Recovery must preserve
+or reauthenticate each session's scope; substituting a global privileged
+bootstrap channel is not an acceptable recovery path. This restart work is
+still pending validation.
 
 ## How a name resolves end to end
 

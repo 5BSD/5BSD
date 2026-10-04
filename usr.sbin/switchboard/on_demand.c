@@ -439,6 +439,7 @@ on_demand_broker(struct pending_lookup *pl, int kq)
 			channel_message_free(request);
 			return (false);
 		}
+		req_svc = lookup_channel_requester(pl->ambient_lc);
 		domain = &pl->ambient_domain;
 	} else {
 		req_svc = pending_requester(pl);
@@ -599,10 +600,10 @@ od_launch(const char *name, struct svc_runtime *requester,
 
 		sender = request != NULL ? channel_message_sender(request) : NULL;
 		uid = sender != NULL ? (uid_t)sender->uid : getuid();
-		if (requester != NULL)
-			set = &requester->domain.anoint;
-		else if (ambient_domain != NULL)
+		if (ambient_domain != NULL)
 			set = &ambient_domain->anoint;
+		else if (requester != NULL)
+			set = &requester->domain.anoint;
 		else
 			set = NULL;
 		if (od_anoint_precheck(name, set, requester != NULL ?
@@ -645,12 +646,14 @@ od_launch(const char *name, struct svc_runtime *requester,
 		strlcpy(pl->requester_label, "ambient",
 		    sizeof(pl->requester_label));
 		pl->requester_pid = -1;
-		pl->ambient_lc = ambient_lc;
-		pl->ambient_domain = *ambient_domain;
 	} else {
 		strlcpy(pl->requester_label, "unknown",
 		    sizeof(pl->requester_label));
 		pl->requester_pid = -1;
+	}
+	if (ambient_lc != NULL) {
+		pl->ambient_lc = ambient_lc;
+		pl->ambient_domain = *ambient_domain;
 	}
 	pl->request = request;
 	if (arm_timeout(kq, pl) == -1) {
@@ -845,7 +848,7 @@ on_demand_launch_ambient(const char *name, struct svc_lookup_channel *lc,
     const struct svc_domain *domain, struct channel_message *request, int kq)
 {
 
-	return (od_launch(name, NULL, lc, domain, request, kq));
+	return (od_launch(name, lookup_channel_requester(lc), lc, domain, request, kq));
 }
 
 /*

@@ -6,7 +6,7 @@
  * service_probe <service-name> -- integration-test helper.
  *
  * Resolves a named capability service the way an ordinary CLI does: over the
- * ambient lookup channel a login session inherits (SERVICE_LOOKUP_FD), via
+ * ambient lookup channel a login session inherits (process context), via
  * service_open().  This is the exact path a shell-run tool (networkcmpctl,
  * notifyctl, ...) takes, so a successful probe proves the service is
  * registered and reachable/activatable from a login session -- including the
@@ -32,7 +32,7 @@
 int
 main(int argc, char **argv)
 {
-	int fd, rv;
+	int fd, rv, lookup;
 
 	if (argc != 2) {
 		fprintf(stderr, "usage: service_probe <service-name>\n");
@@ -44,11 +44,13 @@ main(int argc, char **argv)
 	 * (e.g. run on the host, off the plane): the caller should skip rather
 	 * than fail.  Exit 2 is the distinct "not applicable here" signal.
 	 */
-	if (service_ambient_lookup_fd() < 0) {
+	lookup = service_ambient_lookup_fd();
+	if (lookup < 0) {
 		printf("SKIP %s no-ambient-channel\n", argv[1]);
 		return (2);
 	}
 
+	(void)close(lookup);
 	fd = -1;
 	rv = service_open(argv[1], &fd);
 	if (rv == 0 && fd >= 0) {

@@ -84,6 +84,7 @@
 #include "dispatch.h"
 #include "channels.h"
 #include "session.h"
+#include "service_bootstrap.h"
 #include "monitor.h"
 #ifdef GSSAPI
 #include "ssh-gss.h"
@@ -100,23 +101,9 @@
 /* Re-exec fds */
 #define REEXEC_DEVCRYPTO_RESERVED_FD	(STDERR_FILENO + 1)
 #define REEXEC_CONFIG_PASS_FD		(STDERR_FILENO + 2)
-/*
- * 5BSD capability world: the private per-connection SYSTEM lookup channel the
- * listener minted arrives here.  main() adopts it off this slot into a private
- * CLOEXEC descriptor early (before the privsep fds below reuse the slot), and
- * the monitor mints the session's uid-scoped lookup channel over it in
- * mm_answer_provision().  Must stay in lockstep with sshd.c.
- */
-#define REEXEC_AMBIENT_LOOKUP_FD	(STDERR_FILENO + 3)
-#define REEXEC_MIN_FREE_FD		(STDERR_FILENO + 4)
+#define REEXEC_MIN_FREE_FD		(STDERR_FILENO + 3)
 
-/*
- * Privsep fds.  PRIVSEP_MIN_FREE_FD numerically coincides with the
- * ambient-lookup slot (both == STDERR_FILENO+3): harmless, because main()
- * adopts the ambient channel off that slot into a high CLOEXEC descriptor and
- * closes the slot before any privsep fd setup runs, so the two uses never
- * overlap in time.
- */
+/* Privilege-separation descriptors. */
 #define PRIVSEP_MONITOR_FD		(STDERR_FILENO + 1)
 #define PRIVSEP_LOG_FD			(STDERR_FILENO + 2)
 #define PRIVSEP_MIN_FREE_FD		(STDERR_FILENO + 3)
@@ -127,8 +114,8 @@ extern char *__progname;
 ServerOptions options;
 
 /*
- * 5BSD: this connection's private SYSTEM lookup channel, adopted off the
- * reserved re-exec slot early in main() into a high CLOEXEC descriptor.  The
+ * 5BSD: this connection's private provider lookup channel, acquired from the
+ * kernel process context early in main() as a high CLOEXEC descriptor.  The
  * monitor (monitor.c, mm_answer_provision) mints the session's uid-scoped
  * lookup channel over it, replacing the getpeereid(2) provisioning socket.
  * -1 when this session inherited no channel.
@@ -972,17 +959,18 @@ main(int ac, char **av)
 	closefrom(REEXEC_MIN_FREE_FD);
 
 	/*
-	 * 5BSD: adopt this connection's private lookup channel off its reserved
-	 * re-exec slot into a high CLOEXEC descriptor the monitor keeps.  Do it
-	 * now — before the reserved fds and privsep fds below reuse the slot —
-	 * so REEXEC_AMBIENT_LOOKUP_FD is free for its later privsep role, and so
-	 * the channel never leaks into sshd-auth or the user's shell (CLOEXEC).
-	 * If this session inherited no channel the slot is already closed and the
-	 * dup fails harmlessly, leaving ambient_session_lookup_fd at -1.
+	 * Obtain a private working channel from the inherited process context.
+	 * Keep the monitor's handle above its internal protocol descriptors.
 	 */
-	ambient_session_lookup_fd = fcntl(REEXEC_AMBIENT_LOOKUP_FD,
-	    F_DUPFD_CLOEXEC, REEXEC_MIN_FREE_FD);
-	(void)close(REEXEC_AMBIENT_LOOKUP_FD);
+	{
+		int lookup_fd = service_ambient_lookup_fd();
+
+		if (lookup_fd >= 0) {
+			ambient_session_lookup_fd = fcntl(lookup_fd,
+			    F_DUPFD_CLOEXEC, PRIVSEP_MIN_FREE_FD);
+			(void)close(lookup_fd);
+		}
+	}
 
 	platform_pre_session_start();
 

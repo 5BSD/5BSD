@@ -486,6 +486,7 @@ typedef int (__sys_pdcmp_t)(int, int, int *);
 typedef int (__sys_pdincapmode_t)(int);
 typedef int (__sys_cap_mmap_capmode_t)(int);
 typedef int (__sys_cap_lookup_capmode_t)(int);
+typedef int (__sys_cap_process_t)(int, int, uid_t, void *);
 
 _Noreturn void __sys__exit(int rval);
 int __sys_fork(void);
@@ -907,6 +908,7 @@ int __sys_pdcmp(int fd1, int fd2, int * result);
 int __sys_pdincapmode(int fd);
 int __sys_cap_mmap_capmode(int fd);
 int __sys_cap_lookup_capmode(int fd);
+int __sys_cap_process(int op, int fd, uid_t uid, void * data);
 __END_DECLS
 
 #endif /* __LIBSYS_H_ */

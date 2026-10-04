@@ -531,4 +531,5 @@
 #define	FREEBSD32_SYS_pdincapmode	633
 #define	FREEBSD32_SYS_cap_mmap_capmode	634
 #define	FREEBSD32_SYS_cap_lookup_capmode	635
-#define	FREEBSD32_SYS_MAXSYSCALL	636
+#define	FREEBSD32_SYS_cap_process	636
+#define	FREEBSD32_SYS_MAXSYSCALL	637

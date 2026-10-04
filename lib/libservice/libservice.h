@@ -906,6 +906,8 @@ int	service_mint_session_domain_resend(int syschan, enum service_mint_kind kind,
  * re-attenuate it (cap_xfer_limit CAP_XFER_ONCE) before the single forward.
  */
 #define	SERVICE_MINT_AGENT_FORWARDABLE	0x1u
+/* Request public USER discovery with no principal anointments or admin rights. */
+#define	SERVICE_MINT_AGENT_UNPRIVILEGED	0x2u
 /*
  * Bound of one lookup RPC to switchboard (a parked lookup -- the provider is
  * launched but has not checked in yet -- times out and may be retried), and

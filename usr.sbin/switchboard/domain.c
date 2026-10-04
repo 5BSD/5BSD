@@ -87,6 +87,9 @@ svc_name_user_resolvable(const char *name)
  */
 struct svc_lookup_channel {
 	struct svc_lookup_channel	*next;
+	/* A launch identity, never a pointer into the reloadable runtime array. */
+	char owner_label[SWITCHBOARD_LABEL_MAX];
+	uint64_t owner_launch_id;
 	struct channel			*channel;
 	int				 fd;	/* channel_fd(), registered on kq */
 	struct svc_domain		 domain;
@@ -389,6 +392,35 @@ domain_sessions_format(char *buf, size_t len, size_t off)
 	return (off);
 }
 
+/* Resolve the exact service generation; stopped/replaced units never rebind. */
+struct svc_runtime *
+lookup_channel_requester(const struct svc_lookup_channel *lc)
+{
+	unsigned i;
+
+	if (lc == NULL || lc->owner_label[0] == '\0')
+		return (NULL);
+	for (i = 0; i < sd.nservices; i++) {
+		struct svc_runtime *svc = &sd.services[i];
+		if (svc->launch_id == lc->owner_launch_id &&
+		    strcmp(svc->manifest.label, lc->owner_label) == 0)
+			return (svc);
+	}
+	return (NULL);
+}
+
+void
+domain_unit_channels_close(const struct svc_runtime *svc)
+{
+	struct svc_lookup_channel *lc, *next;
+
+	for (lc = lookup_channels; lc != NULL; lc = next) {
+		next = lc->next;
+		if (strcmp(lc->owner_label, svc->manifest.label) == 0)
+			lookup_channel_close(lc);
+	}
+}
+
 /*
  * Whether `lc` is still a live, registered lookup channel.  on_demand uses this
  * to confirm an ambient requester survived the async activation gap before
@@ -401,7 +433,8 @@ lookup_channel_is_live(const struct svc_lookup_channel *lc)
 
 	for (p = lookup_channels; p != NULL; p = p->next) {
 		if (p == lc)
-			return (true);
+			return (p->owner_label[0] == '\0' ||
+			    lookup_channel_requester(p) != NULL);
 	}
 	return (false);
 }
@@ -546,6 +579,9 @@ lookup_channel_register(struct svc_lookup_channel *lc,
 		return;
 	}
 
+	strlcpy(adopted->owner_label, lc->owner_label,
+	    sizeof(adopted->owner_label));
+	adopted->owner_launch_id = lc->owner_launch_id;
 	ack.op = SVC_OP_REGISTER_LOOKUP;
 	ack.status = 0;
 	ack.magic = SVC_REGISTER_LOOKUP_MAGIC;
@@ -596,6 +632,10 @@ lookup_channel_request(struct channel *channel,
 
 	(void)channel;
 	lc = context;
+	if (!lookup_channel_is_live(lc)) {
+		lookup_channel_reply(request, ECONNRESET, NULL, 0);
+		goto out;
+	}
 	kindstr = lc->domain.kind == SVC_DOMAIN_SYSTEM ? "system" :
 	    lc->domain.kind == SVC_DOMAIN_CONTROL ? "control" : "user";
 	if (channel_message_length(request) < sizeof(op)) {
@@ -717,7 +757,7 @@ lookup_channel_request(struct channel *channel,
 		lookup_channel_reply(request, EACCES, NULL, 0);
 		goto out;
 	}
-	client_fd = naming_lookup(req->name, NULL, &lc->domain,
+	client_fd = naming_lookup(req->name, lookup_channel_requester(lc), &lc->domain,
 	    channel_message_sender(request), &error, &sendable);
 	if (client_fd < 0) {
 		/*
@@ -847,6 +887,38 @@ lookup_channel_adopt(int switchboard_end, enum svc_domain_kind kind, uid_t uid,
 	lc->next = lookup_channels;
 	lookup_channels = lc;
 	return (lc);
+}
+
+/* Lookup-only discovery for a unit and its ordinary fork/exec descendants. */
+int
+domain_mint_unit_channel(struct svc_runtime *svc, uid_t uid, int *out_fd,
+    int kq)
+{
+	struct svc_lookup_channel *lc;
+	int provider, client, error;
+
+	*out_fd = -1;
+	if (switchboard_fd_budget_check(4, "unit discovery channel") == -1)
+		return (-1);
+	if (mac_cap_create_channel(&provider, &client) != 0)
+		return (-1);
+	lc = lookup_channel_adopt(provider, svc->domain.kind, uid,
+	    &svc->domain.anoint, kq);
+	if (lc == NULL) {
+		error = errno;
+		close(client);
+		return (errno = error, -1);
+	}
+	strlcpy(lc->owner_label, svc->manifest.label, sizeof(lc->owner_label));
+	lc->owner_launch_id = svc->launch_id;
+	if (svc_fd_make_ambient(client) == -1) {
+		error = errno;
+		lookup_channel_close(lc);
+		close(client);
+		return (errno = error, -1);
+	}
+	*out_fd = client;
+	return (0);
 }
 
 static int

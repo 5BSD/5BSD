@@ -791,6 +791,7 @@ svc_channel_close(struct svc_runtime *svc)
 
 	if (svc == NULL)
 		return;
+	domain_unit_channels_close(svc);
 	if (svc->control_channel != NULL)
 		channel_destroy(svc->control_channel);
 	else if (svc->channel_fd >= 0)

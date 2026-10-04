@@ -210,7 +210,7 @@ ATF_TC_BODY(elevate_arguments, tc)
 {
 	char longname[AUTHAGENT_NAME_MAX + 1];
 	char longpw[AUTHAGENT_PASSWORD_MAX + 1];
-	int fd, nullfd, saved;
+	int fd;
 
 	(void)tc;
 	memset(longname, 'n', sizeof(longname));
@@ -243,23 +243,9 @@ ATF_TC_BODY(elevate_arguments, tc)
 	ATF_CHECK_ERRNO(EINVAL, service_elevate(longname, "pw", 100,
 	    &fd) == -1);
 
-	/*
-	 * Well-formed arguments but no ambient lookup channel: make sure
-	 * neither the env source nor the fixed-fd carry resolves, then expect
-	 * service_ambient_lookup_fd()'s ENOENT to surface unchanged.
-	 */
-	ATF_REQUIRE_EQ(0, unsetenv(SERVICE_LOOKUP_ENV));
-	nullfd = open("/dev/null", O_RDONLY);
-	ATF_REQUIRE(nullfd >= 0);
-	/*
-	 * The fixed-fd slot may already be in use by the test runner (kyua hands
-	 * ATF its results file on a low descriptor); park whatever is there and
-	 * restore it afterwards, or the results file is clobbered and the case
-	 * reports as broken.
-	 */
-	saved = fcntl(SERVICE_LOOKUP_FIXED_FD, F_DUPFD_CLOEXEC, 10);
-	ATF_REQUIRE_EQ(SERVICE_LOOKUP_FIXED_FD,
-	    dup2(nullfd, SERVICE_LOOKUP_FIXED_FD));
+	/* Well-formed arguments with no kernel discovery context fail ENOENT. */
+	if (service_clear_ambient_lookup() == -1)
+		atf_tc_skip("kernel process context is unavailable");
 	fd = 777;
 	errno = 0;
 	ATF_CHECK_ERRNO(ENOENT, service_elevate("org.5bsd.x", "pw", 100,
@@ -269,64 +255,25 @@ ATF_TC_BODY(elevate_arguments, tc)
 	errno = 0;
 	ATF_CHECK_ERRNO(ENOENT, service_elevate("org.5bsd.x", "", 100,
 	    &fd) == -1);
-	if (saved >= 0) {
-		ATF_REQUIRE_EQ(SERVICE_LOOKUP_FIXED_FD,
-		    dup2(saved, SERVICE_LOOKUP_FIXED_FD));
-		close(saved);
-	} else
-		close(SERVICE_LOOKUP_FIXED_FD);
-	close(nullfd);
+
 }
 
 /*
  * --- Sender ABI over a real channel pair ----------------------------------
  */
-static int
-capability_connect(const char *name)
-{
-	struct mac_capability_connect_args connect;
-	int control, error;
 
-	control = open("/dev/mac_capability", O_RDWR);
-	if (control < 0) {
-		if (errno == ENOENT || errno == ENXIO || errno == ENODEV ||
-		    errno == EACCES || errno == EPERM)
-			atf_tc_skip("no usable /dev/mac_capability: %s",
-			    strerror(errno));
-		atf_tc_fail("open mac_capability: %s", strerror(errno));
-	}
-	memset(&connect, 0, sizeof(connect));
-	strlcpy(connect.name, name, sizeof(connect.name));
-	if (ioctl(control, MAC_CAPABILITY_CONNECT, &connect) == -1) {
-		error = errno;
-		close(control);
-		errno = error;
-		return (-1);
-	}
-	close(control);
-	return (connect.fd);
-}
 
 static void
 capability_channel_pair(int *first, int *second)
 {
-	struct mac_capability_recvmsg_args receive;
-	struct mac_capability_sendmsg_args send;
-	uint32_t op;
+	int pair[2], error;
 
-	*first = capability_connect("channel");
-	if (*first < 0)
-		atf_tc_skip("connect channel: %s", strerror(errno));
-	op = CHANNEL_OP_CREATE;
-	memset(&send, 0, sizeof(send));
-	send.payload = &op;
-	send.payload_len = sizeof(op);
-	ATF_REQUIRE(ioctl(*first, MAC_CAPABILITY_SENDMSG, &send) == 0);
-	memset(&receive, 0, sizeof(receive));
-	receive.fds = second;
-	receive.nfds = 1;
-	ATF_REQUIRE(ioctl(*first, MAC_CAPABILITY_RECVMSG, &receive) == 0);
-	ATF_REQUIRE_EQ(1, receive.nfds);
+	error = mac_capability_channel_create(pair);
+	if (error == -1 && errno == ENOSYS)
+		atf_tc_skip("kernel channel creation syscall unavailable");
+	ATF_REQUIRE_MSG(error == 0, "channel pair: %s", strerror(errno));
+	*first = pair[0];
+	*second = pair[1];
 }
 
 struct echo_provider {
@@ -461,37 +408,21 @@ ATF_TC_CLEANUP(sender_abi_round_trip, tc)
  * Each case pins one edge of the client-side contract.  "ok-shaped" means
  * the arguments pass validation and the call proceeds to reach the agent;
  * with no ambient channel that reach fails ENOENT, which is therefore the
- * marker "accepted by the argument layer".  Every case parks whatever sits
- * on the fixed-fd slot (kyua's results file, usually) and restores it.
+ * marker "accepted by the argument layer". Each isolated case clears its own
+ * kernel context without touching the test runner's descriptors.
  */
-struct no_channel {
-	int	saved;
-	int	nullfd;
-};
+struct no_channel { int unused; };
 
 static void
-no_channel_begin(struct no_channel *nc)
+no_channel_begin(struct no_channel *nc __unused)
 {
-
-	ATF_REQUIRE_EQ(0, unsetenv(SERVICE_LOOKUP_ENV));
-	nc->nullfd = open("/dev/null", O_RDONLY);
-	ATF_REQUIRE(nc->nullfd >= 0);
-	nc->saved = fcntl(SERVICE_LOOKUP_FIXED_FD, F_DUPFD_CLOEXEC, 10);
-	ATF_REQUIRE_EQ(SERVICE_LOOKUP_FIXED_FD,
-	    dup2(nc->nullfd, SERVICE_LOOKUP_FIXED_FD));
+	if (service_clear_ambient_lookup() == -1)
+		atf_tc_skip("kernel process context is unavailable");
 }
 
 static void
-no_channel_end(struct no_channel *nc)
+no_channel_end(struct no_channel *nc __unused)
 {
-
-	if (nc->saved >= 0) {
-		ATF_REQUIRE_EQ(SERVICE_LOOKUP_FIXED_FD,
-		    dup2(nc->saved, SERVICE_LOOKUP_FIXED_FD));
-		close(nc->saved);
-	} else
-		close(SERVICE_LOOKUP_FIXED_FD);
-	close(nc->nullfd);
 }
 
 /* "a." + (len - 2) 'a's, NUL-terminated: a well-shaped name of `len`. */

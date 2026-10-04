@@ -601,7 +601,7 @@ sctl_client_reply_validation_body()
 	atf_check -s exit:1 -e match:'status: Device busy' \
 	    -e match:'session-closed' env SCTL_REPLY=status \
 	    SCTL_TRACE_CLOSE=1 "$tool" status
-	atf_check -s exit:69 -e match:'no admin discovery channel' \
+	atf_check -s exit:69 -e match:'cannot reach switchboard control plane.*Input/output error' \
 	    -e match:'session-closed' env SCTL_FAIL=call \
 	    SCTL_TRACE_CLOSE=1 "$tool" status
 	atf_check -s exit:76 -e match:'short control reply' \

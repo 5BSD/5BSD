@@ -53,7 +53,7 @@ CFLAGS+= -I${SRCTOP}/lib/libcapsulert
 CFLAGS+= -I${SRCTOP}/lib/libcapbundle
 CFLAGS+= -I${SRCTOP}/lib/libservice
 CFLAGS+= -I${SRCTOP}/contrib/libucl/include
-LIBADD= capability crypt capsulert ucl util
+LIBADD= capability crypt capsulert ucl util service
 
 .if ${MK_DTRACE} != "no"
 SRCS+= capsule_provider.d

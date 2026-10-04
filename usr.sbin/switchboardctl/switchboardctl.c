@@ -92,7 +92,7 @@ sctl_rpc_capability(uint32_t op, uint32_t flags, const char *payload,
 	char reqbuf[sizeof(struct sctl_request) + SWITCHBOARD_CTL_MAX_PAYLOAD];
 	char rplbuf[sizeof(struct sctl_reply) + SWITCHBOARD_CTL_SUMMARY_MAX];
 	size_t payload_length;
-	int fd;
+	int fd, error;
 
 	payload_length = payload != NULL ? strlen(payload) : 0;
 	if (payload_length > SWITCHBOARD_CTL_MAX_PAYLOAD)
@@ -126,7 +126,9 @@ sctl_rpc_capability(uint32_t op, uint32_t flags, const char *payload,
 	options.timeout_ms = 30000;
 
 	if (service_session_call(session, &message, &reply, &options) != 0) {
+		error = errno;
 		service_session_close(session);
+		errno = error;
 		return (-1);
 	}
 	if (reply.length < sizeof(struct sctl_reply)) {
@@ -168,9 +170,8 @@ sctl_rpc(uint32_t op, uint32_t flags, const char *payload,
 
 	if (sctl_rpc_capability(op, flags, payload, summary, sumlen,
 	    &status) != 0)
-		errx(EX_UNAVAILABLE,
-		    "cannot reach switchboard control plane (system.switchboard): "
-		    "no admin discovery channel");
+		err(EX_UNAVAILABLE,
+		    "cannot reach switchboard control plane (system.switchboard)");
 	return (status);
 }
 

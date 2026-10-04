@@ -66,16 +66,10 @@ static struct capbundle_principal_policy *g_policy;
  * uid to its passwd and group membership itself, so a compromised login client
  * cannot claim admin membership it does not have.
  *
- * The Identity fold: rather than a Casper zygote (system.pwd/system.grp), the
- * agent retains read-only descriptors on /etc/passwd and /etc/group, opened
- * before it enters capability mode.  Capability mode forbids opening a path,
- * but lseek+read on an already-open descriptor is legal, so each lookup reads a
- * fresh snapshot from the top and parses it — authoritative, Casper-free, and
- * live (a user added to a group takes effect with no restart; unbuffered raw
- * reads, unlike a cached stdio stream).  We only need uid/name/gid (fields
- * 0,2,3 of passwd; 0,2,3 plus the member list of group), at the same offsets in
- * the 7-field public passwd and 10-field master.passwd, so the parse is
- * format-agnostic.
+ * Identity databases are opened through the filesystem provider's existing
+ * read grants. Each snapshot reacquires its path to observe atomic replacement
+ * by account tools; retaining an old inode would retain obsolete credentials.
+ * Parsing is bounded and occurs inside the agent's capability sandbox.
  */
 static int			 g_pwfd = -1;	/* /etc/passwd, read-only */
 static int			 g_grfd = -1;	/* /etc/group, read-only */
@@ -261,6 +255,40 @@ id_snapshot(int fd, char *buf, size_t bufsz)
 	return ((ssize_t)off);
 }
 
+/*
+ * Account tools replace databases with rename(2). Re-reading a retained fd
+ * would keep the old inode, including obsolete password hashes. Reacquire
+ * only these already-authorized paths through the filesystem provider before
+ * reading; a broker failure must not fall back to stale credentials.
+ */
+static ssize_t
+id_snapshot_current(int *fd, const char *path, char *buf, size_t size)
+{
+#ifndef BSDAUTH_TESTING
+	int current, error;
+
+	current = -1;
+	if (service_open_isolated(g_context, path, SERVICE_OPEN_READ, 0,
+	    &current) == -1) {
+		error = errno;
+		syslog(LOG_AUTHPRIV | LOG_ERR,
+		    "identity refresh %s failed: %s", path, strerror(error));
+		explicit_bzero(buf, size);
+		errno = error;
+		return (-1);
+	}
+	if (*fd >= 0)
+		(void)close(*fd);
+	*fd = current;
+#else
+	(void)path;
+#endif
+	ssize_t length = id_snapshot(*fd, buf, size);
+	if (length < 0)
+		syslog(LOG_ERR, "identity snapshot %s failed: %m", path);
+	return (length);
+}
+
 /* Parse a canonical unsigned decimal uid/gid without signs or whitespace. */
 static bool
 id_parse_number(const char *text, uintmax_t maximum, uintmax_t *valuep)
@@ -292,7 +320,7 @@ id_getpwuid(uid_t uid)
 	char *cursor, *line, *p, *f_name, *f_uid, *f_gid;
 	uintmax_t parsed_uid, parsed_gid;
 
-	if (id_snapshot(g_pwfd, g_pwbuf, sizeof(g_pwbuf)) == -1)
+	if (id_snapshot_current(&g_pwfd, "/etc/passwd", g_pwbuf, sizeof(g_pwbuf)) == -1)
 		return (NULL);
 	cursor = g_pwbuf;
 	while ((line = strsep(&cursor, "\n")) != NULL) {
@@ -328,7 +356,7 @@ id_getpwnam_uid(const char *name, uid_t *uidp)
 	char *cursor, *line, *p, *f_name, *f_uid;
 	uintmax_t parsed_uid;
 
-	if (id_snapshot(g_pwfd, g_pwbuf, sizeof(g_pwbuf)) == -1)
+	if (id_snapshot_current(&g_pwfd, "/etc/passwd", g_pwbuf, sizeof(g_pwbuf)) == -1)
 		return (false);
 	cursor = g_pwbuf;
 	while ((line = strsep(&cursor, "\n")) != NULL) {
@@ -356,7 +384,7 @@ agent_name2gid(void *ctx __unused, const char *name)
 	uintmax_t parsed_gid;
 
 	if (name == NULL ||
-	    id_snapshot(g_grfd, g_grbuf, sizeof(g_grbuf)) == -1)
+	    id_snapshot_current(&g_grfd, "/etc/group", g_grbuf, sizeof(g_grbuf)) == -1)
 		return ((gid_t)-1);
 	cursor = g_grbuf;
 	while ((line = strsep(&cursor, "\n")) != NULL) {
@@ -392,7 +420,7 @@ agent_member_gids(const struct passwd *pw, gid_t *out, unsigned max)
 		return (0);
 	n = 0;
 	out[n++] = pw->pw_gid;
-	if (id_snapshot(g_grfd, g_grbuf, sizeof(g_grbuf)) == -1)
+	if (id_snapshot_current(&g_grfd, "/etc/group", g_grbuf, sizeof(g_grbuf)) == -1)
 		return (n);
 	cursor = g_grbuf;
 	while (n < max && (line = strsep(&cursor, "\n")) != NULL) {
@@ -434,8 +462,10 @@ agent_resolve_grant(uid_t uid, struct capbundle_principal_grant *grant)
 	unsigned nmember;
 
 	pw = id_getpwuid(uid);
-	if (pw == NULL)
+	if (pw == NULL) {
+		syslog(LOG_ERR, "identity uid %u not found", (unsigned)uid);
 		return (ENOENT);
+	}
 	nmember = agent_member_gids(pw, members, nitems(members));
 	if (capbundle_principal_policy_resolve(g_policy, uid, members, nmember,
 	    agent_name2gid, NULL, grant) == -1)
@@ -1097,12 +1127,22 @@ handle_mint(struct client *c, const void *data, size_t len, size_t nfds,
 	t->uid = req->uid;
 	t->flags = req->flags;
 	if (req->op != AUTHAGENT_OP_MINT_SESSION ||
-	    (req->flags & ~AUTHAGENT_FLAG_FORWARDABLE) != 0)
+	    (req->flags & ~(AUTHAGENT_FLAG_FORWARDABLE |
+	    AUTHAGENT_FLAG_UNPRIVILEGED)) != 0)
 		return (EINVAL);
 	t->stage = "identity";
 	error = agent_resolve_grant((uid_t)req->uid, &grant);
 	if (error != 0)
 		return (error);
+	/* Background jobs can request less than the principal's interactive grant.
+	 * Identity must still resolve; this flag never widens mint authority.
+	 */
+	if ((req->flags & AUTHAGENT_FLAG_UNPRIVILEGED) != 0) {
+		bool from_default = grant.from_default_rule;
+
+		memset(&grant, 0, sizeof(grant));
+		grant.from_default_rule = from_default;
+	}
 	forwardable = (req->flags & AUTHAGENT_FLAG_FORWARDABLE) != 0;
 	kind = authagent_mint_kind_for_grant(&grant);
 	t->kind = (int)kind;
@@ -1251,7 +1291,7 @@ handle_elevate(struct client *c, struct channel_message *request,
 	/* Authenticate the caller in-agent against master.passwd. */
 	t->stage = "password";
 	if (g_mpwfd == -1 ||
-	    id_snapshot(g_mpwfd, g_mpwbuf, sizeof(g_mpwbuf)) == -1) {
+	    id_snapshot_current(&g_mpwfd, "/etc/master.passwd", g_mpwbuf, sizeof(g_mpwbuf)) == -1) {
 		syslog(LOG_AUTHPRIV | LOG_ERR,
 		    "elevate uid=%u name=%s: master.passwd unavailable (%s)",
 		    (unsigned)uid, req.name,
@@ -1406,7 +1446,7 @@ handle_mint_auth(struct client *c, const void *data, size_t len, size_t nfds,
 	/* Authenticate the TARGET against master.passwd, in-agent. */
 	t->stage = "password";
 	if (g_mpwfd == -1 ||
-	    id_snapshot(g_mpwfd, g_mpwbuf, sizeof(g_mpwbuf)) == -1) {
+	    id_snapshot_current(&g_mpwfd, "/etc/master.passwd", g_mpwbuf, sizeof(g_mpwbuf)) == -1) {
 		syslog(LOG_AUTHPRIV | LOG_ERR,
 		    "mint-auth uid=%u: master.passwd unavailable (%s)",
 		    (unsigned)uid,
@@ -1688,7 +1728,7 @@ main(void)
 	struct kevent event, change;
 	int fd;
 
-	openlog("bsdauth", LOG_PID | LOG_NDELAY, LOG_AUTHPRIV);
+	openlog("bsdauth", LOG_PID | LOG_NDELAY | LOG_PERROR, LOG_AUTHPRIV);
 	/* ps(1) shows the unit name, not the ld-elf.so.1 launcher. */
 	service_set_proctitle();
 
@@ -1715,12 +1755,10 @@ main(void)
 	}
 
 	/*
-	 * Open the identity databases (/etc/passwd, /etc/group) before entering
-	 * the sandbox, so the agent can resolve a uid to its passwd and group
-	 * membership authoritatively after cap_enter — the security basis for not
-	 * trusting the login client's claims.  Reading the retained descriptors is
-	 * capability-mode-legal; opening the paths would not be.  This is the
-	 * Identity fold: in-process NSS, no Casper zygote.
+	 * Check the filesystem provider's account-file grants before accepting
+	 * sessions. Later snapshots reacquire these exact paths through the same
+	 * provider so atomic account updates are visible inside the sandbox.
+	 * The agent resolves identity itself rather than trusting client claims.
 	 */
 	if (id_open_databases() == -1) {
 		syslog(LOG_ERR, "identity databases unavailable: %m");

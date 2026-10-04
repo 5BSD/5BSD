@@ -231,13 +231,15 @@ claims survive. Because each unit's coalition descriptor is held by the
 switchboard instance that launched it, those descriptors close as switchboard
 dies and the units are terminated with it. The replacement switchboard rescans
 the registry and relaunches boot units, and every provider begins with all of
-its names unclaimed. Existing login sessions keep running; their lookups fail
-soft until the replacement is up. The channel Capsule hands to each new getty
-is a dup switchboard sends to PID 1 during its startup
-(`capsule_set_ambient_lookup()`), pinned at `SERVICE_LOOKUP_FIXED_FD` (fd 3)
-across the getty fork so login inherits it, and a replacement switchboard
-sends a fresh one (see
-[Discovery and the Lookup Channel](discovery-and-lookup.md)).
+its names unclaimed. Existing login sessions keep running, but their old
+lookup channels do not reconnect automatically. They need a newly authenticated
+session; preserving a kernel reference alone cannot restore the broker's lost
+scope records. A replacement switchboard sends Capsule a fresh channel through
+`capsule_set_ambient_lookup()` for future launches. Capsule installs that channel
+in the getty child's kernel process context before launching either a configured
+window-system helper or getty. Ordinary fork, exec, descriptor cleanup and
+environment replacement preserve it without a reserved discovery descriptor.
+See [Discovery and the Lookup Channel](discovery-and-lookup.md).
 
 If the breaker trips before convergence, `establish_capsule()` logs
 `switchboard did not converge; entering recovery` and drops to the

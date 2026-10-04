@@ -1,0 +1,104 @@
+.\" SPDX-License-Identifier: BSD-2-Clause
+.Dd October 4, 2026
+.Dt CAP_PROCESS 2
+.Os
+.Sh NAME
+.Nm cap_process
+.Nd manage the calling process's capability discovery context and attribution
+.Sh LIBRARY
+.Lb libc
+.Sh SYNOPSIS
+.In sys/cap_process.h
+.Ft int
+.Fn cap_process "int op" "int fd" "uid_t uid" "void *data"
+.Sh DESCRIPTION
+The discovery context is a kernel-held reference to a channel already owned
+by the caller.
+It survives descriptor cleanup and exec and is inherited by
+children.
+Replacing or clearing it affects only the calling process and future
+children, not its parent, siblings, or existing children.
+.Pp
+The following operations are supported:
+.Bl -tag -width MAC_CAP_PROCESS_ORIGIN_EXPORT
+.It Dv MAC_CAP_PROCESS_SET
+Retain channel descriptor
+.Fa fd
+for principal
+.Fa uid .
+The caller retains ownership of the descriptor.
+Its Capsicum rights are copied.
+Descriptors whose fork or exec propagation has been locked or restricted to
+one use are rejected.
+Installing a reference does not grant new authority.
+.It Dv MAC_CAP_PROCESS_GET
+Return an owned close-on-exec descriptor for the current discovery context.
+Its rights are preserved and descriptor transfer is disabled.
+The calling process's real UID and prison must match the installed context.
+.It Dv MAC_CAP_PROCESS_CLEAR
+Release the calling process's context.
+Already returned descriptors and
+contexts held by other processes remain valid.
+.It Dv MAC_CAP_PROCESS_INFO
+Copy a
+.Vt struct mac_cap_process_info
+into
+.Fa data .
+The structure reports this process's lifetime identity, responsible identity,
+context generation, process IDs, principal UID and whether a context exists.
+The same UID and prison checks as GET apply when a context exists.
+.It Dv MAC_CAP_PROCESS_ORIGIN_EXPORT
+Return an owned close-on-exec descriptor containing this process's immutable
+lifetime identity and PID.
+The token remains valid after the process exits.
+.It Dv MAC_CAP_PROCESS_ORIGIN_SET
+Associate the calling process with the origin token in
+.Fa fd .
+The token must originate in the same prison.
+The association is inherited by
+children and survives exec.
+It grants no service authority and does not change
+coalition membership or the caller's own identity.
+.El
+.Pp
+.Fa data
+must be NULL except for INFO.
+Unused descriptor and UID arguments should be
+-1 and zero respectively.
+.Pp
+A parent selects a different bootstrap for a child by forking, installing the
+child's context in the child, then executing its program.
+Authentication
+providers must install the authenticated target's policy-scoped context when
+changing principals.
+A UID change alone never selects another user's policy.
+The kernel-held reference does not reconnect to a terminated peer.
+.Sh RETURN VALUES
+GET and ORIGIN_EXPORT return a descriptor on success.
+Other operations return
+zero.
+On failure, -1 is returned and errno is set.
+.Sh ERRORS
+.Bl -tag -width ENOTCAPABLE
+.It Bq Er ENOENT
+GET was requested without an installed context.
+.It Bq Er EPERM
+The principal or prison does not match, or an origin token belongs to another
+prison.
+.It Bq Er ENOTCAPABLE
+Installing the descriptor would bypass its fork or exec restrictions, or an
+operation exceeds its Capsicum rights.
+.It Bq Er EINVAL
+The operation, object type, or data argument is invalid.
+.It Bq Er EBADF
+The supplied descriptor is invalid.
+.It Bq Er EMFILE
+The calling process cannot allocate another descriptor.
+.It Bq Er EFAULT
+The INFO output address is invalid.
+.El
+.Sh SEE ALSO
+.Xr closefrom 2 ,
+.Xr execve 2 ,
+.Xr fork 2 ,
+.Xr libservice 3

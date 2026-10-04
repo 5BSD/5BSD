@@ -32,7 +32,6 @@
 #include <sys/socket.h>
 #include <sys/tree.h>
 #include <sys/queue.h>
-#include <sys/file.h>		/* flock: serialize mints on the shared channel */
 
 #include <errno.h>
 #include <fcntl.h>
@@ -1801,48 +1800,10 @@ mm_answer_pty_cleanup(struct ssh *ssh, int sock, struct sshbuf *m)
 }
 
 /*
- * Cross-process serialization for the shared ambient SYSTEM channel.  Every
- * per-connection monitor inherited the SAME channel endpoint, and a mint is a
- * request/reply whose reply libchannel correlates per process — two monitors
- * minting at once on the shared endpoint would cross-deliver replies.  A
- * LOCK_EX flock on a root-only lockfile serializes the mint across monitors and
- * auto-releases if a monitor dies (no deadlock).  The lockfile is mode 0600 in
- * a root-only directory, so a non-root process cannot hold it to stall logins.
- * Returns the held fd (>= 0), or -1 if the lock could not be taken — in which
- * case the caller must NOT mint (racing is a correctness hazard, not just an
- * availability one), and the session simply carries no ambient channel.
- */
-#define	_PATH_SSH_MINT_LOCK	"/var/run/sshd.mint.lock"
-static int
-mint_lock(void)
-{
-	int fd;
-
-	fd = open(_PATH_SSH_MINT_LOCK, O_RDWR | O_CREAT | O_CLOEXEC, 0600);
-	if (fd == -1)
-		return (-1);
-	if (flock(fd, LOCK_EX) == -1) {
-		close(fd);
-		return (-1);
-	}
-	return (fd);
-}
-
-static void
-mint_unlock(int fd)
-{
-	if (fd < 0)
-		return;
-	(void)flock(fd, LOCK_UN);
-	(void)close(fd);
-}
-
-/*
  * 5BSD §21/§22: mint this session's ambient lookup channel in the privileged
  * monitor and pass the resulting descriptor back to the (unprivileged) user
  * child.  The monitor holds this connection's PRIVATE SYSTEM lookup channel
- * (ambient_session_lookup_fd, minted per-connection by the listener and adopted
- * in sshd-session.c); it mints the session's uid-scoped channel over it exactly
+ * (ambient_session_lookup_fd, registered by sshd-session.c before privsep); it mints the session's uid-scoped channel over it exactly
  * as login(1)/su(1) do over their inherited SYSTEM channel — replacing the old
  * getpeereid(2) control socket entirely (docs/capability-authority-model.md).
  * Holding a SYSTEM channel IS the authority (the monitor is the pre-privdrop
@@ -1877,38 +1838,21 @@ mm_answer_provision(struct ssh *ssh, int sock, struct sshbuf *m)
 		status = ENOENT;		/* no channel inherited this session */
 		fd = -1;
 	} else {
-		int lock = mint_lock();
-
-		/*
-		 * Provision for the AUTHENTICATED principal (authctxt->pw), never
-		 * the wire uid.  The auth-agent (system.Auth) resolves that
-		 * uid itself and applies the admin policy — the monitor neither
-		 * classifies the principal nor mints (direct minting is retired).
-		 * It requests a FORWARDABLE descriptor because it must forward it
-		 * to the session child; the fd arrives transferable and is
-		 * re-attenuated to CAP_XFER_ONCE so the single mm_send_fd() below
-		 * consumes it to CAP_XFER_NONE at the child — the session leaf
-		 * cannot re-delegate its lookup channel.  The round-trip runs under
-		 * mint_lock() because every monitor shares one ambient endpoint.
+		/* The privileged monitor owns a private reply endpoint. No shared
+		 * receive queue or cross-connection lock is involved. Mint only for
+		 * authctxt->pw, then attenuate the one transfer to the session child.
 		 */
-		if (lock < 0) {
-			/* Can't serialize the shared channel — skip, don't race. */
-			status = EAGAIN;
+		(void)service_mint_session_via_agent(
+		    ambient_session_lookup_fd, authctxt->pw->pw_uid,
+		    SERVICE_MINT_AGENT_FORWARDABLE,
+		    SERVICE_MINT_SESSION_TIMEOUT_MS, &fd);
+		if (fd >= 0 && cap_xfer_limit(fd, CAP_XFER_ONCE) == 0)
+			status = 0;
+		else {
+			status = errno != 0 ? errno : EIO;
+			if (fd >= 0)
+				close(fd);
 			fd = -1;
-		} else {
-			(void)service_mint_session_via_agent(
-			    ambient_session_lookup_fd, authctxt->pw->pw_uid,
-			    SERVICE_MINT_AGENT_FORWARDABLE,
-			    SERVICE_MINT_SESSION_TIMEOUT_MS, &fd);
-			if (fd >= 0 && cap_xfer_limit(fd, CAP_XFER_ONCE) == 0)
-				status = 0;
-			else {
-				status = errno != 0 ? errno : EIO;
-				if (fd >= 0)
-					close(fd);
-				fd = -1;
-			}
-			mint_unlock(lock);
 		}
 	}
 

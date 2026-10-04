@@ -455,7 +455,7 @@ _DP_nvmf=	nv
 _DP_nvpair=	spl
 _DP_opencsd=	cxxrt
 _DP_panelw=	ncursesw
-_DP_pam=	radius tacplus md util
+_DP_pam=	radius tacplus md util service
 .if ${MK_KERBEROS} != "no" && ${MK_MITKRB5} != "no"
 _DP_pam+=	krb5
 .endif

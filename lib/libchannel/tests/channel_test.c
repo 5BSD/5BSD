@@ -4,6 +4,8 @@
 
 #include <sys/types.h>
 #include <sys/ioctl.h>
+#include <sys/cap_process.h>
+#include <sys/sysctl.h>
 #include <sys/wait.h>
 
 #include <dev/mac_capability/mac_capability_channel_proto.h>
@@ -61,46 +63,19 @@ struct terminal_state {
 	int error;
 };
 
-static int
-capability_connect(const char *name)
-{
-	struct mac_capability_connect_args connect;
-	int control, error;
 
-	control = open("/dev/mac_capability", O_RDWR);
-	ATF_REQUIRE_MSG(control >= 0, "open mac_capability: %s",
-	    strerror(errno));
-	memset(&connect, 0, sizeof(connect));
-	strlcpy(connect.name, name, sizeof(connect.name));
-	if (ioctl(control, MAC_CAPABILITY_CONNECT, &connect) == -1) {
-		error = errno;
-		close(control);
-		errno = error;
-		return (-1);
-	}
-	close(control);
-	return (connect.fd);
-}
 
 static void
 capability_channel_pair(int *first, int *second)
 {
-	struct mac_capability_recvmsg_args receive;
-	struct mac_capability_sendmsg_args send;
-	uint32_t op;
+	int pair[2], error;
 
-	*first = capability_connect("channel");
-	ATF_REQUIRE_MSG(*first >= 0, "connect channel: %s", strerror(errno));
-	op = CHANNEL_OP_CREATE;
-	memset(&send, 0, sizeof(send));
-	send.payload = &op;
-	send.payload_len = sizeof(op);
-	ATF_REQUIRE(ioctl(*first, MAC_CAPABILITY_SENDMSG, &send) == 0);
-	memset(&receive, 0, sizeof(receive));
-	receive.fds = second;
-	receive.nfds = 1;
-	ATF_REQUIRE(ioctl(*first, MAC_CAPABILITY_RECVMSG, &receive) == 0);
-	ATF_REQUIRE_EQ(1, receive.nfds);
+	error = mac_capability_channel_create(pair);
+	if (error == -1 && errno == ENOSYS)
+		atf_tc_skip("kernel channel creation syscall unavailable");
+	ATF_REQUIRE_MSG(error == 0, "channel pair: %s", strerror(errno));
+	*first = pair[0];
+	*second = pair[1];
 }
 
 static int
@@ -851,6 +826,7 @@ ATF_TC_CLEANUP(channel_wait_readiness, tc)
  */
 struct sender_state {
 	struct channel_sender sender;
+	struct channel_process_identity process;
 	bool seen;
 };
 
@@ -865,6 +841,8 @@ sender_event_handler(struct channel *channel, struct channel_message *message,
 	sender = channel_message_sender(message);
 	ATF_REQUIRE(sender != NULL);
 	state->sender = *sender;
+	if (channel_message_process(message) != NULL)
+		state->process = *channel_message_process(message);
 	state->seen = true;
 	channel_message_free(message);
 }
@@ -897,6 +875,17 @@ ATF_TC_BODY(sender_identity_stamp, tc)
 	ATF_REQUIRE(channel_send_event(client, OUT("who", 3)) == 0);
 	ATF_REQUIRE(dispatch_wait(provider) >= 0);
 	ATF_REQUIRE(state.seen);
+
+	if (feature_present("cap_process")) {
+		struct mac_cap_process_info info;
+
+		ATF_REQUIRE_EQ(0, cap_process(MAC_CAP_PROCESS_INFO, -1, 0, &info));
+		ATF_CHECK_EQ(info.identity, state.process.identity);
+		ATF_CHECK_EQ(info.responsible_identity,
+		    state.process.responsible_identity);
+		ATF_CHECK_EQ(getpid(), state.process.pid);
+		ATF_CHECK_EQ(info.responsible_pid, state.process.responsible_pid);
+	}
 
 	ATF_CHECK_EQ(getuid(), state.sender.uid);
 	ATF_CHECK_EQ(getgid(), state.sender.gid);

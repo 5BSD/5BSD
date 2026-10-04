@@ -171,7 +171,6 @@ main(int argc, char *argv[])
 	struct stat st;
 	int retries, backoff;
 	int ask, ch, cnt, quietlog, rootlogin, rval;
-	int syschan;			/* inherited SYSTEM ambient lookup channel */
 	uid_t uid, euid;
 	gid_t egid;
 	char *term;
@@ -250,32 +249,8 @@ main(int argc, char *argv[])
 
 	setproctitle("-%s", getprogname());
 
-	/*
-	 * Capture the inherited SYSTEM ambient lookup channel (§21) BEFORE
-	 * reclaiming inherited descriptors: on the getty path capsule (PID
-	 * 1) carries the channel as a bare inherited descriptor pinned at
-	 * SERVICE_LOOKUP_FIXED_FD (fd 3) — precisely the range closefrom(3)
-	 * would reclaim — because getty rebuilds login's environment and drops
-	 * SERVICE_LOOKUP_FD.  The environment still names the fd on the rare
-	 * non-getty login, and service_ambient_lookup_fd() prefers it; either
-	 * way the channel is pinned to fd 3 and only descriptors above it are
-	 * reclaimed, so the capture survives.  Best-effort discovery, never
-	 * authority: a -1 (or any relocation failure) simply means this session
-	 * carries no ambient channel and login proceeds exactly as before.
-	 */
-	syschan = service_ambient_lookup_fd();
-	if (syschan >= 3 && syschan != SERVICE_LOOKUP_FIXED_FD) {
-		if (dup2(syschan, SERVICE_LOOKUP_FIXED_FD) ==
-		    SERVICE_LOOKUP_FIXED_FD) {
-			(void)close(syschan);
-			syschan = SERVICE_LOOKUP_FIXED_FD;
-		} else
-			syschan = -1;
-	}
-	if (syschan == SERVICE_LOOKUP_FIXED_FD)
-		closefrom(SERVICE_LOOKUP_FIXED_FD + 1);
-	else
-		closefrom(3);
+	/* Discovery lives in the process context, outside the descriptor table. */
+	closefrom(3);
 
 	/*
 	 * Get current TTY
@@ -556,11 +531,6 @@ main(int argc, char *argv[])
 	 * preservation - but preserve TERM in all cases
 	 */
 	term = getenv("TERM");
-	/*
-	 * The SYSTEM ambient lookup channel (§21) was already captured above,
-	 * before closefrom(3) could reclaim its fixed descriptor; syschan holds
-	 * it (or -1).  It is narrowed to a per-uid USER channel below.
-	 */
 	if (!pflag)
 		environ = envinit;
 	if (term != NULL)
@@ -652,53 +622,7 @@ main(int argc, char *argv[])
 	(void)setenv("USER", username, 1);
 	(void)setenv("PATH", rootlogin ? _PATH_STDPATH : _PATH_DEFPATH, 0);
 
-	/*
-	 * Provision this session's ambient lookup channel from the inherited
-	 * SYSTEM ambient channel (§6/§21/§22).  The mint is keyed to the target
-	 * principal: root or a member of group wheel gets a SYSTEM (admin)
-	 * channel with full discovery; every other user gets a per-uid USER
-	 * channel that resolves only user-domain names.  It is installed as this
-	 * session leader's ambient channel so the shell and its descendants
-	 * inherit it.  Entirely best-effort: on any failure the session simply
-	 * carries no ambient channel (the unnarrowed SYSTEM channel is never
-	 * handed to the user shell) and login proceeds exactly as before.  Never
-	 * fatal.
-	 */
-	if (syschan >= 0) {
-		int user_fd = -1;
-
-		/*
-		 * The auth-agent (system.Auth) resolves the principal,
-		 * applies the admin policy, and mints the scoped channel; login
-		 * neither classifies the principal nor mints — direct minting
-		 * over the ambient channel is retired (switchboard refuses it).
-		 * Best-effort: if the agent is unreachable the session simply
-		 * carries no lookup channel.
-		 */
-		(void)service_mint_session_via_agent(syschan, pwd->pw_uid, 0,
-		    SERVICE_MINT_SESSION_TIMEOUT_MS, &user_fd);
-		if (user_fd >= 0 &&
-		    service_install_ambient_lookup(user_fd) == 0) {
-			syslog(LOG_DEBUG, "login: lookup channel for uid %u "
-			    "on fd %d", (unsigned)pwd->pw_uid, user_fd);
-			/*
-			 * Become the session's coalition member so the shell
-			 * and everything it starts carry the session identity
-			 * (ps -o coal / procstat coalition).  Attribution
-			 * only: never fatal.
-			 */
-			if (service_session_join_coalition(user_fd) == -1)
-				syslog(errno == EBUSY ? LOG_DEBUG : LOG_NOTICE,
-				    "login: session coalition for uid %u: %m",
-				    (unsigned)pwd->pw_uid);
-		} else {
-			syslog(LOG_NOTICE, "login: no lookup channel for "
-			    "uid %u: %m", (unsigned)pwd->pw_uid);
-			if (user_fd >= 0)
-				(void)close(user_fd);
-		}
-		(void)close(syschan);
-	}
+	/* pam_capability established the authenticated principal's context. */
 
 	if (!quietlog) {
 		const char *cw;

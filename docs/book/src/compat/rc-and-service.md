@@ -7,7 +7,7 @@ rc(8) still boots 5BSD. `/etc/rc`, `/etc/rc.d`, rc.conf(5), rcorder(8) and servi
 capsule(8) is PID 1 and pdforks exactly one child, `/usr/libexec/switchboard`. switchboard's startup (`usr.sbin/switchboard/startup.c`) proceeds in this order:
 
 1. Scan the bundle registry under `/Capabilities/System`, `/Capabilities/Apps` and the per-user agent roots.
-2. Mint the SYSTEM ambient lookup channel and install it in its own environment as `SERVICE_LOOKUP_FD`, and hand a duplicate to capsule so getty sessions can carry it (see [Sessions](sessions.md)).
+2. Mint and retain the SYSTEM boot lookup channel for authorized rc launches, and hand a duplicate to Capsule for getty process contexts (see [Sessions](sessions.md)).
 3. Launch every native boot unit. These are born in capability mode and take what they need from descriptors switchboard delivers and from the pool the loader imported; none of them depends on `/etc/rc`.
 4. Run `/etc/rc` as a one-shot unit labelled `etc-rc`, exactly as init did: `execve("/bin/sh", {"sh", "/etc/rc", "autoboot"})` with stdio on `/dev/console` so rc's progress is visible.
 5. Block until `/etc/rc` exits, but keep dispatching events while waiting, so an rc.d script that performs a service lookup or triggers an on-demand launch does not deadlock against the manager that is waiting for rc.
@@ -16,7 +16,12 @@ capsule(8) is PID 1 and pdforks exactly one child, `/usr/libexec/switchboard`. s
 
 Native units therefore come up in parallel with rc rather than after it, and the born-sandboxed services are typically ready before rc has finished mounting. `/etc/rc` normally exits 0 even when individual scripts fail; a non-zero exit means rc itself is broken and is logged, not fatal. `/etc/rc.shutdown` and the rest of the shutdown sequence remain rc's.
 
-The whole rc world inherits one thing from switchboard that it did not have on FreeBSD: the SYSTEM ambient lookup channel, named by `SERVICE_LOOKUP_FD` in rc's environment and spared from the child's `closefrom(2)`. Every rc.d daemon started by `/etc/rc` therefore holds a descriptor through which it can resolve system-domain service names. That is what makes `switchboardctl`, `logctl` and the other client tools work from an rc-started sshd session; it is also why cron(8) and atrun(8) were patched to close it before running a user's job. [Sessions](sessions.md) covers the hygiene rules.
+Authorized rc launches inherit a kernel-held boot discovery reference. Closing
+descriptors or replacing the environment does not remove it. Authentication
+boundaries replace it with the target principal's scope; an unprovisioned real-UID
+change makes the old reference unusable. Cron and atrun deliberately provision
+unprivileged job discovery and discard unchanged scheduler authority before
+running jobs. [Sessions](sessions.md) covers these handoffs.
 
 ## rc adoption
 

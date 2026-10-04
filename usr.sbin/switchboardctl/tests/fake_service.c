@@ -78,6 +78,7 @@ service_session_close(struct service_session *session)
 		session->fd = -1;
 		if (getenv("SCTL_TRACE_CLOSE") != NULL)
 			fprintf(stderr, "session-closed\n");
+		errno = EBADF; /* Cleanup must not replace the transport error. */
 	}
 }
 

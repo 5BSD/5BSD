@@ -3,27 +3,15 @@
  *
  * Copyright (c) 2026 Kory Heard
  *
- * Ambient lookup-channel helper tests (§21, §11a D1).
- *
- * The environment round-trip, the ambient descriptor marking, and the
- * rejection of an absent, non-channel, or wrong-kind SERVICE_LOOKUP_FD run
- * anywhere that needs no capability device.  The cases that prove
- * service_ambient_lookup_fd()'s BEHAVIORAL handshake — a genuine lookup channel
- * (one that answers SVC_OP_AMBIENT_HELLO with SVC_AMBIENT_HELLO_MAGIC) is
- * accepted, while a mac_capability channel that does NOT speak the lookup
- * protocol (a stand-in for a service's unit control channel, which returns
- * ENOTSUP) is REJECTED — need the channel device and are gated: they skip
- * cleanly when it is unavailable.
- *
- * The wrong-kind rejection is the D1 fix: before the handshake, ANY
- * mac_capability channel at fd 3 (including a unit control channel that shares
- * the number and the generic channel identity) was accepted as the ambient
- * lookup channel.  Now only a channel that answers HELLO is.
+ * Process discovery authority/transport tests and session mint wire tests.
+ * Legacy environment variables and fixed descriptors never grant discovery.
  */
 
 #include <sys/types.h>
 #include <sys/capsicum.h>
 #include <sys/ioctl.h>
+#include <sys/syscall.h>
+#include <sys/wait.h>
 
 #include <dev/mac_capability/mac_capability_channel_proto.h>
 #include <dev/mac_capability/mac_capability_ioctl.h>
@@ -54,51 +42,12 @@
 static int
 create_channel_pair(int *client_end, int *switchboard_end)
 {
-	struct mac_capability_connect_args connect;
-	struct mac_capability_sendmsg_args send;
-	struct mac_capability_recvmsg_args receive;
-	uint32_t op;
-	int control, first, second, error;
+	int pair[2];
 
-	control = open("/dev/mac_capability", O_RDWR);
-	if (control == -1) {
-		errno = ENODEV;
+	if (mac_capability_channel_create(pair) == -1)
 		return (-1);
-	}
-	memset(&connect, 0, sizeof(connect));
-	strlcpy(connect.name, "channel", sizeof(connect.name));
-	if (ioctl(control, MAC_CAPABILITY_CONNECT, &connect) == -1) {
-		error = errno;
-		close(control);
-		errno = error != 0 ? error : ENODEV;
-		return (-1);
-	}
-	close(control);
-	first = connect.fd;
-
-	op = CHANNEL_OP_CREATE;
-	memset(&send, 0, sizeof(send));
-	send.payload = &op;
-	send.payload_len = sizeof(op);
-	if (ioctl(first, MAC_CAPABILITY_SENDMSG, &send) == -1) {
-		error = errno;
-		close(first);
-		errno = error;
-		return (-1);
-	}
-	second = -1;
-	memset(&receive, 0, sizeof(receive));
-	receive.fds = &second;
-	receive.nfds = 1;
-	if (ioctl(first, MAC_CAPABILITY_RECVMSG, &receive) == -1 ||
-	    receive.nfds != 1 || second < 0) {
-		error = errno != 0 ? errno : EIO;
-		close(first);
-		errno = error;
-		return (-1);
-	}
-	*switchboard_end = first;
-	*client_end = second;
+	*client_end = pair[0];
+	*switchboard_end = pair[1];
 	return (0);
 }
 
@@ -241,337 +190,83 @@ responder_stop(struct responder *r)
 static void
 isolate_ambient_lookup(void)
 {
-
+	if (service_clear_ambient_lookup() == -1)
+		atf_tc_skip("process discovery context unavailable");
 	ATF_REQUIRE_EQ(0, unsetenv(SERVICE_LOOKUP_ENV));
-	if (service_ambient_lookup_fd() == SERVICE_LOOKUP_FIXED_FD)
-		(void)close(SERVICE_LOOKUP_FIXED_FD);
 }
 
-/* ------------------------------------------------------------------ */
-/* Device-free cases (run anywhere).                                   */
-/* ------------------------------------------------------------------ */
-
-ATF_TC_WITHOUT_HEAD(absent_env_returns_minus1);
-ATF_TC_BODY(absent_env_returns_minus1, tc)
+ATF_TC_WITHOUT_HEAD(environment_cannot_grant_discovery);
+ATF_TC_BODY(environment_cannot_grant_discovery, tc)
 {
+	int pair[2];
+	char text[32];
 
-	/* No environment or fixed descriptor: discovery yields nothing. */
+	(void)tc;
 	isolate_ambient_lookup();
+	ATF_REQUIRE_EQ(0, mac_capability_channel_create(pair));
+	snprintf(text, sizeof(text), "%d", pair[0]);
+	ATF_REQUIRE_EQ(0, setenv(SERVICE_LOOKUP_ENV, text, 1));
 	ATF_CHECK_EQ(-1, service_ambient_lookup_fd());
+	ATF_CHECK_EQ(ENOENT, errno);
+	close(pair[0]);
+	close(pair[1]);
 }
 
-ATF_TC_WITHOUT_HEAD(malformed_env_returns_minus1);
-ATF_TC_BODY(malformed_env_returns_minus1, tc)
+ATF_TC_WITHOUT_HEAD(non_channel_install_rejected);
+ATF_TC_BODY(non_channel_install_rejected, tc)
 {
+	int pair[2];
 
+	(void)tc;
 	isolate_ambient_lookup();
-	/* A non-numeric or out-of-range value is rejected, not misparsed. */
-	ATF_REQUIRE_EQ(0, setenv(SERVICE_LOOKUP_ENV, "not-a-number", 1));
-	ATF_CHECK_EQ(-1, service_ambient_lookup_fd());
-	ATF_REQUIRE_EQ(0, setenv(SERVICE_LOOKUP_ENV, "-3", 1));
-	ATF_CHECK_EQ(-1, service_ambient_lookup_fd());
-	(void)unsetenv(SERVICE_LOOKUP_ENV);
+	ATF_REQUIRE_EQ(0, pipe(pair));
+	ATF_CHECK_EQ(-1, service_install_ambient_lookup(pair[0]));
+	ATF_CHECK_EQ(EINVAL, errno);
+	close(pair[0]);
+	close(pair[1]);
 }
 
-ATF_TC_WITHOUT_HEAD(non_channel_fd_rejected);
-ATF_TC_BODY(non_channel_fd_rejected, tc)
+ATF_TC_WITHOUT_HEAD(context_holds_reference);
+ATF_TC_BODY(context_holds_reference, tc)
 {
-	int pfd[2];
-	char buf[16];
+	struct mac_cap_process_info info;
+	int pair[2], fd;
 
-	/*
-	 * A SERVICE_LOOKUP_FD that names an open descriptor which is NOT a
-	 * mac_capability channel (here a pipe) is rejected at the GETINFO gate,
-	 * before any handshake: discovery must not hand back an arbitrary
-	 * inherited fd.
-	 */
+	(void)tc;
 	isolate_ambient_lookup();
-	ATF_REQUIRE_EQ(0, pipe(pfd));
-	(void)snprintf(buf, sizeof(buf), "%d", pfd[0]);
-	ATF_REQUIRE_EQ(0, setenv(SERVICE_LOOKUP_ENV, buf, 1));
+	ATF_REQUIRE_EQ(0, mac_capability_channel_create(pair));
+	ATF_REQUIRE_EQ(0, service_install_ambient_lookup(pair[0]));
+	ATF_CHECK(fcntl(pair[0], F_GETFD) & FD_CLOEXEC);
+	ATF_CHECK(getenv(SERVICE_LOOKUP_ENV) == NULL);
+	close(pair[0]);
+	ATF_REQUIRE_EQ(0, service_process_info(&info));
+	ATF_CHECK_EQ(1, info.present);
+	fd = syscall(SYS_cap_process, MAC_CAP_PROCESS_GET, -1, 0, NULL);
+	ATF_REQUIRE(fd >= 0);
+	ATF_CHECK(fcntl(fd, F_GETFD) & FD_CLOEXEC);
+	close(fd);
+	ATF_REQUIRE_EQ(0, service_clear_ambient_lookup());
 	ATF_CHECK_EQ(-1, service_ambient_lookup_fd());
-	(void)unsetenv(SERVICE_LOOKUP_ENV);
-	close(pfd[0]);
-	close(pfd[1]);
+	ATF_CHECK_EQ(ENOENT, errno);
+	close(pair[1]);
 }
 
-ATF_TC_WITHOUT_HEAD(install_marks_ambient_and_sets_env);
-ATF_TC_BODY(install_marks_ambient_and_sets_env, tc)
+ATF_TC_WITHOUT_HEAD(wrong_protocol_fails_closed);
+ATF_TC_BODY(wrong_protocol_fails_closed, tc)
 {
-	const char *value;
-	char expected[16];
-	int pfd[2], flags;
+	struct responder responder;
+	int client, provider;
 
-	/*
-	 * service_install_ambient_lookup() makes the descriptor ambient
-	 * (§21.1) and advertises its number.  The ambient marking is a property
-	 * of any descriptor, so a pipe suffices to observe it.
-	 */
-	ATF_REQUIRE_EQ(0, pipe(pfd));
-	ATF_REQUIRE_EQ(0, fcntl(pfd[0], F_SETFD, FD_CLOEXEC));
-
-	ATF_REQUIRE_EQ(0, service_install_ambient_lookup(pfd[0]));
-
-	/* Not close-on-exec: survives exec. */
-	flags = fcntl(pfd[0], F_GETFD);
-	ATF_REQUIRE(flags != -1);
-	ATF_CHECK_EQ(0, flags & FD_CLOEXEC);
-	/* CAP_CLOFORK_UNLOCKED accepted (idempotent): survives fork. */
-	ATF_CHECK_EQ(0, cap_clofork_limit(pfd[0], CAP_CLOFORK_UNLOCKED));
-
-	/* The environment names exactly this descriptor. */
-	(void)snprintf(expected, sizeof(expected), "%d", pfd[0]);
-	value = getenv(SERVICE_LOOKUP_ENV);
-	ATF_REQUIRE(value != NULL);
-	ATF_CHECK_STREQ(expected, value);
-
-	(void)unsetenv(SERVICE_LOOKUP_ENV);
-	close(pfd[0]);
-	close(pfd[1]);
-}
-
-ATF_TC_WITHOUT_HEAD(fixed_fd_non_channel_rejected);
-ATF_TC_BODY(fixed_fd_non_channel_rejected, tc)
-{
-	int pfd[2], saved;
-
-	/*
-	 * With SERVICE_LOOKUP_FD absent, discovery falls back to probing the
-	 * getty-path fixed descriptor (SERVICE_LOOKUP_FIXED_FD).  A non-channel
-	 * descriptor parked there (here a pipe) must be rejected exactly as an
-	 * env-named non-channel is, so a stale or unrelated fd 3 never leaks
-	 * through as an ambient channel.  This case needs no device.
-	 */
-	ATF_REQUIRE_EQ(0, unsetenv(SERVICE_LOOKUP_ENV));
-
-	/* Preserve whatever the harness left at fd 3, restore it afterward. */
-	saved = dup(SERVICE_LOOKUP_FIXED_FD);
-
-	ATF_REQUIRE_EQ(0, pipe(pfd));
-	ATF_REQUIRE(dup2(pfd[0], SERVICE_LOOKUP_FIXED_FD) ==
-	    SERVICE_LOOKUP_FIXED_FD);
-
+	(void)tc;
+	isolate_ambient_lookup();
+	ATF_REQUIRE_EQ(0, create_channel_pair(&client, &provider));
+	ATF_REQUIRE_EQ(0, responder_start(&responder, provider, RESP_ENOTSUP));
+	ATF_REQUIRE_EQ(0, service_install_ambient_lookup(client));
 	ATF_CHECK_EQ(-1, service_ambient_lookup_fd());
-
-	if (SERVICE_LOOKUP_FIXED_FD != pfd[0])
-		(void)close(SERVICE_LOOKUP_FIXED_FD);
-	close(pfd[0]);
-	close(pfd[1]);
-	if (saved >= 0) {
-		(void)dup2(saved, SERVICE_LOOKUP_FIXED_FD);
-		close(saved);
-	}
+	ATF_REQUIRE_EQ(0, service_clear_ambient_lookup());
+	responder_stop(&responder);
+	close(client);
 }
-
-/* ------------------------------------------------------------------ */
-/* Behavioral-handshake cases (channel device; else skip).             */
-/* ------------------------------------------------------------------ */
-
-ATF_TC(env_lookup_channel_accepted);
-ATF_TC_HEAD(env_lookup_channel_accepted, tc)
-{
-
-	atf_tc_set_md_var(tc, "descr",
-	    "an env-named channel that answers HELLO with the magic is accepted");
-}
-ATF_TC_BODY(env_lookup_channel_accepted, tc)
-{
-	struct responder r;
-	int client_end, switchboard_end, got;
-
-	if (create_channel_pair(&client_end, &switchboard_end) == -1)
-		atf_tc_skip("mac_capability channel device unavailable");
-	ATF_REQUIRE_EQ(0, responder_start(&r, switchboard_end, RESP_LOOKUP));
-
-	(void)unsetenv(SERVICE_LOOKUP_ENV);
-	ATF_REQUIRE_EQ(0, service_install_ambient_lookup(client_end));
-
-	got = service_ambient_lookup_fd();
-	ATF_CHECK_EQ(client_end, got);
-
-	(void)unsetenv(SERVICE_LOOKUP_ENV);
-	responder_stop(&r);
-	close(client_end);
-}
-
-ATF_TC(env_non_lookup_channel_rejected);
-ATF_TC_HEAD(env_non_lookup_channel_rejected, tc)
-{
-
-	atf_tc_set_md_var(tc, "descr",
-	    "an env-named mac_capability channel that returns ENOTSUP (a unit "
-	    "control channel stand-in) is rejected, not accepted");
-}
-ATF_TC_BODY(env_non_lookup_channel_rejected, tc)
-{
-	struct responder r;
-	int client_end, switchboard_end;
-	char buf[16];
-
-	/*
-	 * The D1 fix: this channel answers MAC_CAPABILITY_GETINFO (so the old
-	 * validator accepted it) but does NOT speak the lookup protocol — it
-	 * returns ENOTSUP exactly as a service's unit control channel does.  It
-	 * must be rejected.
-	 */
-	if (create_channel_pair(&client_end, &switchboard_end) == -1)
-		atf_tc_skip("mac_capability channel device unavailable");
-	ATF_REQUIRE_EQ(0, responder_start(&r, switchboard_end, RESP_ENOTSUP));
-
-	(void)snprintf(buf, sizeof(buf), "%d", client_end);
-	ATF_REQUIRE_EQ(0, setenv(SERVICE_LOOKUP_ENV, buf, 1));
-
-	ATF_CHECK_EQ(-1, service_ambient_lookup_fd());
-
-	(void)unsetenv(SERVICE_LOOKUP_ENV);
-	responder_stop(&r);
-	close(client_end);
-}
-
-ATF_TC(fixed_fd_lookup_channel_accepted);
-ATF_TC_HEAD(fixed_fd_lookup_channel_accepted, tc)
-{
-
-	atf_tc_set_md_var(tc, "descr",
-	    "env absent: a HELLO-answering channel at the fixed fd is accepted");
-}
-ATF_TC_BODY(fixed_fd_lookup_channel_accepted, tc)
-{
-	struct responder r;
-	int client_end, switchboard_end, saved, got;
-
-	/*
-	 * The getty-path carry: capsule pins the channel at
-	 * SERVICE_LOOKUP_FIXED_FD with no environment variable set.  A genuine
-	 * lookup channel parked there must pass the handshake and be returned.
-	 */
-	if (create_channel_pair(&client_end, &switchboard_end) == -1)
-		atf_tc_skip("mac_capability channel device unavailable");
-	ATF_REQUIRE_EQ(0, responder_start(&r, switchboard_end, RESP_LOOKUP));
-
-	ATF_REQUIRE_EQ(0, unsetenv(SERVICE_LOOKUP_ENV));
-
-	saved = dup(SERVICE_LOOKUP_FIXED_FD);
-	ATF_REQUIRE(dup2(client_end, SERVICE_LOOKUP_FIXED_FD) ==
-	    SERVICE_LOOKUP_FIXED_FD);
-	if (client_end != SERVICE_LOOKUP_FIXED_FD)
-		close(client_end);
-
-	got = service_ambient_lookup_fd();
-	ATF_CHECK_EQ(SERVICE_LOOKUP_FIXED_FD, got);
-
-	responder_stop(&r);
-	(void)close(SERVICE_LOOKUP_FIXED_FD);
-	if (saved >= 0) {
-		(void)dup2(saved, SERVICE_LOOKUP_FIXED_FD);
-		close(saved);
-	}
-}
-
-ATF_TC(fixed_fd_non_lookup_channel_rejected);
-ATF_TC_HEAD(fixed_fd_non_lookup_channel_rejected, tc)
-{
-
-	atf_tc_set_md_var(tc, "descr",
-	    "env absent: a unit-control-channel stand-in at fd 3 is rejected");
-}
-ATF_TC_BODY(fixed_fd_non_lookup_channel_rejected, tc)
-{
-	struct responder r;
-	int client_end, switchboard_end, saved;
-
-	/*
-	 * The core D1 scenario: a bootstrap-launched service's unit control
-	 * channel sits at fd 3 (SVC_CHANNEL_FD == SERVICE_LOOKUP_FIXED_FD) and
-	 * answers GETINFO.  A login or su probing fd 3 must NOT mistake it for
-	 * the ambient lookup channel; the handshake returns ENOTSUP, so
-	 * discovery yields -1.
-	 */
-	if (create_channel_pair(&client_end, &switchboard_end) == -1)
-		atf_tc_skip("mac_capability channel device unavailable");
-	ATF_REQUIRE_EQ(0, responder_start(&r, switchboard_end, RESP_ENOTSUP));
-
-	ATF_REQUIRE_EQ(0, unsetenv(SERVICE_LOOKUP_ENV));
-
-	saved = dup(SERVICE_LOOKUP_FIXED_FD);
-	ATF_REQUIRE(dup2(client_end, SERVICE_LOOKUP_FIXED_FD) ==
-	    SERVICE_LOOKUP_FIXED_FD);
-	if (client_end != SERVICE_LOOKUP_FIXED_FD)
-		close(client_end);
-
-	ATF_CHECK_EQ(-1, service_ambient_lookup_fd());
-
-	responder_stop(&r);
-	(void)close(SERVICE_LOOKUP_FIXED_FD);
-	if (saved >= 0) {
-		(void)dup2(saved, SERVICE_LOOKUP_FIXED_FD);
-		close(saved);
-	}
-}
-
-ATF_TC(env_takes_precedence_over_fixed_fd);
-ATF_TC_HEAD(env_takes_precedence_over_fixed_fd, tc)
-{
-
-	atf_tc_set_md_var(tc, "descr",
-	    "a valid env-named lookup channel wins over the fixed-fd fallback");
-}
-ATF_TC_BODY(env_takes_precedence_over_fixed_fd, tc)
-{
-	struct responder renv, rfixed;
-	int envc, envs, fixedc, fixeds, saved, got;
-	char buf[16];
-
-	/*
-	 * When SERVICE_LOOKUP_FD names a live lookup channel, the env source
-	 * wins even if a different lookup channel also sits at the fixed fd; the
-	 * fixed fd is only a fallback for the getty hop.  Two channels are
-	 * needed, so this is gated on the device.
-	 */
-	if (create_channel_pair(&envc, &envs) == -1)
-		atf_tc_skip("mac_capability channel device unavailable");
-	if (create_channel_pair(&fixedc, &fixeds) == -1) {
-		close(envc);
-		close(envs);
-		atf_tc_skip("mac_capability channel device unavailable");
-	}
-	ATF_REQUIRE_EQ(0, responder_start(&renv, envs, RESP_LOOKUP));
-	ATF_REQUIRE_EQ(0, responder_start(&rfixed, fixeds, RESP_LOOKUP));
-
-	saved = dup(SERVICE_LOOKUP_FIXED_FD);
-	/* Keep envc off the fixed slot so the two are distinct. */
-	if (envc == SERVICE_LOOKUP_FIXED_FD) {
-		int moved = fcntl(envc, F_DUPFD, SERVICE_LOOKUP_FIXED_FD + 1);
-
-		ATF_REQUIRE(moved >= 0);
-		close(envc);
-		envc = moved;
-	}
-	ATF_REQUIRE(dup2(fixedc, SERVICE_LOOKUP_FIXED_FD) ==
-	    SERVICE_LOOKUP_FIXED_FD);
-	if (fixedc != SERVICE_LOOKUP_FIXED_FD)
-		close(fixedc);
-
-	(void)snprintf(buf, sizeof(buf), "%d", envc);
-	ATF_REQUIRE_EQ(0, setenv(SERVICE_LOOKUP_ENV, buf, 1));
-
-	got = service_ambient_lookup_fd();
-	ATF_CHECK_EQ(envc, got);
-
-	(void)unsetenv(SERVICE_LOOKUP_ENV);
-	responder_stop(&renv);
-	responder_stop(&rfixed);
-	close(envc);
-	(void)close(SERVICE_LOOKUP_FIXED_FD);
-	if (saved >= 0) {
-		(void)dup2(saved, SERVICE_LOOKUP_FIXED_FD);
-		close(saved);
-	}
-}
-
-/* ------------------------------------------------------------------ */
-/* service_mint_session_domain() transport (§6).                        */
-/* ------------------------------------------------------------------ */
 
 ATF_TC_WITHOUT_HEAD(mint_session_domain_rejects_bad_kind);
 ATF_TC_BODY(mint_session_domain_rejects_bad_kind, tc)
@@ -657,16 +352,10 @@ ATF_TC_BODY(mint_session_domain_system_sets_wire_system, tc)
 ATF_TP_ADD_TCS(tp)
 {
 
-	ATF_TP_ADD_TC(tp, absent_env_returns_minus1);
-	ATF_TP_ADD_TC(tp, malformed_env_returns_minus1);
-	ATF_TP_ADD_TC(tp, non_channel_fd_rejected);
-	ATF_TP_ADD_TC(tp, install_marks_ambient_and_sets_env);
-	ATF_TP_ADD_TC(tp, fixed_fd_non_channel_rejected);
-	ATF_TP_ADD_TC(tp, env_lookup_channel_accepted);
-	ATF_TP_ADD_TC(tp, env_non_lookup_channel_rejected);
-	ATF_TP_ADD_TC(tp, fixed_fd_lookup_channel_accepted);
-	ATF_TP_ADD_TC(tp, fixed_fd_non_lookup_channel_rejected);
-	ATF_TP_ADD_TC(tp, env_takes_precedence_over_fixed_fd);
+	ATF_TP_ADD_TC(tp, environment_cannot_grant_discovery);
+	ATF_TP_ADD_TC(tp, non_channel_install_rejected);
+	ATF_TP_ADD_TC(tp, context_holds_reference);
+	ATF_TP_ADD_TC(tp, wrong_protocol_fails_closed);
 	ATF_TP_ADD_TC(tp, mint_session_domain_rejects_bad_kind);
 	ATF_TP_ADD_TC(tp, mint_session_domain_user_sets_wire_user);
 	ATF_TP_ADD_TC(tp, mint_session_domain_system_sets_wire_system);

@@ -1204,7 +1204,7 @@ service_mint_session_domain_resend(int syschan, enum service_mint_kind kind,
  * resolves a name over the bootstrap dispatch channel switchboard hands a
  * service it launches (SERVICE_BOOTSTRAP_FD); a program run from a shell has
  * no such bootstrap, only the §21 ambient lookup channel its login session
- * inherited (SERVICE_LOOKUP_FD).  This sends the same SVC_OP_LOOKUP over that
+ * inherited through kernel process state.  This sends the same SVC_OP_LOOKUP over that
  * ambient channel: switchboard's lookup_channel_request() dispatches it scoped to
  * the channel's domain and returns a connected session endpoint in the reply.
  *
@@ -1304,16 +1304,19 @@ service_connect_ambient(const char *name, int *session_fdp)
 		errno = ENAMETOOLONG;
 		return (-1);
 	}
-	/*
-	 * Resolve over this process's PRIVATE lookup channel — registered lazily
-	 * on first use and memoized (docs/book/src/plane/discovery-and-lookup.md
-	 * P2) — so replies land only in this process's own queue and never race a
-	 * sibling on the shared discovery endpoint.  Fail-soft: if registration
-	 * was unavailable this returns the inherited shared fd, exactly as before.
-	 * -1 (no ambient channel) makes service_lookup_over_channel report ENOENT.
-	 */
-	return (service_lookup_over_channel(service_ambient_lookup_channel(),
-	    name, session_fdp));
+	/* An owned private reply channel keeps independent calls isolated. */
+	{
+		int fd, error, result;
+
+		fd = service_ambient_lookup_channel();
+		if (fd == -1)
+			return (-1);
+		result = service_lookup_over_channel(fd, name, session_fdp);
+		error = errno;
+		(void)close(fd);
+		errno = error;
+		return (result);
+	}
 }
 
 /*
@@ -1367,7 +1370,8 @@ service_mint_session_via_agent(int lookup_chan, uid_t uid, uint32_t flags,
 	int agent_fd, error;
 
 	if (out_fd == NULL ||
-	    (flags & ~SERVICE_MINT_AGENT_FORWARDABLE) != 0) {
+	    (flags & ~(SERVICE_MINT_AGENT_FORWARDABLE |
+	    SERVICE_MINT_AGENT_UNPRIVILEGED)) != 0) {
 		errno = EINVAL;
 		return (-1);
 	}
@@ -1409,6 +1413,8 @@ service_mint_session_via_agent(int lookup_chan, uid_t uid, uint32_t flags,
 	req.uid = (uint32_t)uid;
 	req.flags = (flags & SERVICE_MINT_AGENT_FORWARDABLE) ?
 	    AUTHAGENT_FLAG_FORWARDABLE : 0;
+	if ((flags & SERVICE_MINT_AGENT_UNPRIVILEGED) != 0)
+		req.flags |= AUTHAGENT_FLAG_UNPRIVILEGED;
 
 	if (service_session_call(session, &message, &reply, &options) == -1) {
 		error = errno;
@@ -1607,9 +1613,13 @@ service_elevate(const char *name, const char *password, unsigned timeout_ms,
 	}
 	if (service_lookup_over_channel(lookup_chan, AUTHAGENTD_NAME,
 	    &agent_fd) == -1) {
-		SERVICE_AMBIENT_PROBE_ELEVATE_DONE(name, errno);
+		error = errno;
+		(void)close(lookup_chan);
+		SERVICE_AMBIENT_PROBE_ELEVATE_DONE(name, error);
+		errno = error;
 		return (-1);
 	}
+	(void)close(lookup_chan);
 
 	options.timeout_ms = timeout_ms;
 	/* service_session_create() takes ownership of agent_fd. */

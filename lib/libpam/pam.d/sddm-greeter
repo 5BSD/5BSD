@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: BSD-2-Clause
+# SDDM greeter session: UNIX setup plus public capability discovery.
+# The normal and autologin user helpers use the base login session stack.
+auth		required	pam_permit.so
+account		required	pam_permit.so
+password	required	pam_deny.so
+session		required	pam_permit.so
+session		required	pam_xdg.so
+session		required	pam_capability.so unprivileged

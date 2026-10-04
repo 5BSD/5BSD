@@ -1033,6 +1033,50 @@ means the channel carries no session coalition (a SYSTEM channel),
 that the caller is already a coalition member (a
 .Xr su 1
 from a login shell stays attributed to the login session).
+.Ss Process discovery and UNIX login providers
+The kernel holds the process discovery reference independently of its
+file descriptor table and environment.
+Fork inherits the reference; exec retains it.
+Closing descriptors or clearing the environment does not remove it.
+A child may replace its own reference without changing its parent or siblings.
+.Pp
+.Fn service_ambient_lookup_fd
+returns an owned, close-on-exec private lookup endpoint.
+The caller must close it.
+Separate handles have separate reply queues so concurrent sessions cannot
+consume one another's replies.
+.Fn service_install_ambient_lookup
+retains a reference to an existing channel and leaves ownership of the
+supplied descriptor with the caller.
+.Fn service_install_ambient_lookup_uid
+binds the reference to an explicit target real UID for a trusted login
+provider that has not yet dropped credentials.
+Neither operation creates grants: BSDAuth selects them when minting a session.
+UID 0 alone does not authorize minting.
+.Pp
+An unprovisioned real-UID or prison transition denies access to the old
+context; a temporary effective-UID change retains the session principal.
+Trusted login providers clear inherited provider authority before installing
+the authenticated user's scoped channel.
+.Fn service_clear_ambient_lookup
+clears the caller's context and affects future inheritance.
+It does not revoke previously issued descriptors or contexts already held
+by other processes.
+Stale environment variables cannot restore a cleared context.
+.Pp
+An application may fork, install a channel it already possesses in the child,
+and exec the child program. The child's descendants inherit that selection.
+Enforced descriptor fork/exec restrictions cannot be bypassed by installation.
+Returned context handles retain Capsicum rights and cannot be transferred.
+.Pp
+.Fn service_process_info
+reports the process lifetime identity and independent responsible identity.
+.Fn service_origin_export
+returns an owned attribution token for the caller;
+.Fn service_origin_set
+associates the caller with the token's origin within the same prison.
+Attribution is not authorization, and token possession does not grant service,
+process-management, signal, or tracing rights.
 .Sh DESCRIPTOR OWNERSHIP
 .Bl -bullet
 .It

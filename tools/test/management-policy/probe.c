@@ -44,16 +44,18 @@ int
 main(int argc, char **argv)
 {
 	struct service_session *session;
-	int fd, status, expected;
+	int fd, lookup, status, expected;
 	unsigned op, attempt;
 
 	if (argc != 4)
 		errx(1, "usage: probe start|stop|reload|open|mint label expected-status");
 	if (strcmp(argv[1], "mint") == 0) {
 		fd = -1;
-		status = service_mint_session_via_agent(service_ambient_lookup_fd(),
+		lookup = service_ambient_lookup_fd();
+		status = service_mint_session_via_agent(lookup,
 		    (uid_t)strtoul(argv[2], NULL, 10), 0, 10000, &fd);
 		status = status == 0 ? 0 : errno;
+		if (lookup >= 0) close(lookup);
 		if (fd >= 0) close(fd);
 		if (status != atoi(argv[3]))
 			errx(1, "mint status %d expected %s", status, argv[3]);
@@ -61,8 +63,10 @@ main(int argc, char **argv)
 		return (0);
 	}
 	if (strcmp(argv[1], "open") == 0) {
-		if (service_ambient_lookup_fd() < 0)
+		lookup = service_ambient_lookup_fd();
+		if (lookup < 0)
 			errx(1, "missing ambient session channel");
+		close(lookup);
 		status = service_open(argv[2], &fd) == 0 ? 0 : errno;
 		if (status != atoi(argv[3]))
 			errx(1, "open %s: errno %d expected %s", argv[2], status, argv[3]);

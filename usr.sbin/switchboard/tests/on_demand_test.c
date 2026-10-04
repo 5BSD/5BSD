@@ -107,6 +107,17 @@ svc_exec_rc_start(struct svc_runtime *svc, int kq)
  * only service-to-service requesters (ambient_lc == NULL), so the ambient
  * branches never run; the stubs exist only to resolve at link time.
  */
+void
+domain_unit_channels_close(const struct svc_runtime *svc __unused)
+{
+}
+
+struct svc_runtime *
+lookup_channel_requester(const struct svc_lookup_channel *lc __unused)
+{
+	return (NULL);
+}
+
 bool
 lookup_channel_is_live(const struct svc_lookup_channel *lc)
 {
@@ -653,45 +664,19 @@ ATF_TC_BODY(idle_note_exit_reactivatable, tc)
  * mac_capability channel device.  A provider thread drives svc_proto's
  * handle_idle over a genuine channel while the main thread plays the client.
  */
-static int
-idle_capability_connect(const char *name)
-{
-	struct mac_capability_connect_args connect;
-	int control, error;
 
-	control = open("/dev/mac_capability", O_RDWR);
-	ATF_REQUIRE(control >= 0);
-	memset(&connect, 0, sizeof(connect));
-	strlcpy(connect.name, name, sizeof(connect.name));
-	if (ioctl(control, MAC_CAPABILITY_CONNECT, &connect) == -1) {
-		error = errno;
-		close(control);
-		errno = error;
-		return (-1);
-	}
-	close(control);
-	return (connect.fd);
-}
 
 static void
 idle_channel_pair(int *first, int *second)
 {
-	struct mac_capability_recvmsg_args receive;
-	struct mac_capability_sendmsg_args send;
-	uint32_t op;
+	int pair[2], error;
 
-	*first = idle_capability_connect("channel");
-	ATF_REQUIRE(*first >= 0);
-	op = CHANNEL_OP_CREATE;
-	memset(&send, 0, sizeof(send));
-	send.payload = &op;
-	send.payload_len = sizeof(op);
-	ATF_REQUIRE(ioctl(*first, MAC_CAPABILITY_SENDMSG, &send) == 0);
-	memset(&receive, 0, sizeof(receive));
-	receive.fds = second;
-	receive.nfds = 1;
-	ATF_REQUIRE(ioctl(*first, MAC_CAPABILITY_RECVMSG, &receive) == 0);
-	ATF_REQUIRE_EQ(1, receive.nfds);
+	error = mac_capability_channel_create(pair);
+	if (error == -1 && errno == ENOSYS)
+		atf_tc_skip("kernel channel creation syscall unavailable");
+	ATF_REQUIRE_MSG(error == 0, "channel pair: %s", strerror(errno));
+	*first = pair[0];
+	*second = pair[1];
 }
 
 struct idle_provider_ctx {

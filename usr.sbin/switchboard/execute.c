@@ -404,7 +404,8 @@ manifest_has_env(const struct svc_manifest *m, const char *name)
  */
 static void __dead2
 child_exec(struct svc_manifest *m, int child_channel_fd,
-    int capprotect_fd, int bootstrap_fd, int *token_fds, unsigned ntokens,
+    int capprotect_fd, int bootstrap_fd, int discovery_fd,
+    int *token_fds, unsigned ntokens,
     int *service_fds, unsigned nservices,
     uid_t uid, gid_t gid, bool have_creds, const char *homedir,
     gid_t *groups, int ngroups)
@@ -421,6 +422,12 @@ child_exec(struct svc_manifest *m, int child_channel_fd,
 	bool have_capprotect;
 	unsigned i, envc;
 
+	/* Descendants inherit the unit's discovery scope, never boot authority. */
+	if (service_clear_ambient_lookup() == -1 ||
+	    service_install_ambient_lookup_uid(discovery_fd,
+	    have_creds ? uid : getuid()) == -1)
+		_exit(126);
+	close(discovery_fd);
 	tgtfd = -1;
 
 	/*
@@ -1115,40 +1122,21 @@ svc_exec_command(struct svc_runtime *svc, int kq, char *argv[], bool for_stop)
 				(void)close(nullfd);
 		}
 		/*
-		 * Scrub the fd table so the child never inherits switchboard's
-		 * Capsule channel, kqueue, or sockets — but spare the SYSTEM
-		 * ambient lookup channel (§21) when one is installed, so rc and
-		 * everything it launches keeps service discovery.  The channel
-		 * was made CAP_CLOFORK_UNLOCKED at install, so it survived the
-		 * pdfork at its parent number; SERVICE_LOOKUP_FD in the inherited
-		 * environment already names it.  closefrom cannot skip a middle
-		 * fd, so close around it explicitly.
-		 *
-		 * SECURITY: the SYSTEM ambient lookup channel confers the admin
-		 * bypass — a lookup with requester==NULL on a SYSTEM domain grants
-		 * SVC_RIGHTS_ALL, including SVC_RIGHTS_ADMIN, and resolves the
-		 * self-served control names (naming.c naming_lookup /
-		 * naming_lookup_self_control).  It must therefore NEVER survive a
-		 * transition into an unprivileged uid, exactly as login(1)/su(1)
-		 * close or re-provision it rather than let a user shell inherit it.
-		 * A oneshot/RC unit that drops to a non-root user (manifest user=/
-		 * group=) consequently gets NO ambient channel: it is closed with
-		 * the rest of the table and SERVICE_LOOKUP_FD is unset so no stale
-		 * number is named.  Units that stay root (rc, the want_console
-		 * bootstrap) keep it — root is the admin principal by the model.
+		 * Preserve the existing launch-policy decision, but carry discovery
+		 * in process state so ordinary rc programs may close all their fds.
+		 * Managed units use their separately provisioned bootstrap.
 		 */
 		lookup_fd = svc_exec_ambient_spare_fd(have_creds, uid,
 		    switchboard_ambient_lookup_fd, &drop_ambient);
-		if (lookup_fd > STDERR_FILENO) {
-			int scan;
+		if (service_clear_ambient_lookup() == -1 && errno != ENOSYS)
+			_exit(126);
+		if (!drop_ambient && lookup_fd >= 0 &&
+		    service_install_ambient_lookup_uid(lookup_fd,
+		    have_creds ? uid : getuid()) == -1)
+			_exit(126);
+		closefrom(STDERR_FILENO + 1);
+		(void)unsetenv(SERVICE_LOOKUP_ENV);
 
-			closefrom(lookup_fd + 1);
-			for (scan = STDERR_FILENO + 1; scan < lookup_fd; scan++)
-				(void)close(scan);
-		} else
-			closefrom(STDERR_FILENO + 1);
-		if (drop_ambient)
-			(void)unsetenv(SERVICE_LOOKUP_ENV);
 		if (have_creds) {
 			if (setgroups(ngroups, groups) == -1 ||
 			    setgid(gid) == -1 || setuid(uid) == -1)
@@ -1842,6 +1830,7 @@ svc_launch_abort(struct svc_runtime *svc, int error, int kq __unused)
 	struct svc_launch *L = svc->launch;
 	unsigned i;
 
+	domain_unit_channels_close(svc);
 	if (L == NULL)
 		return;
 	syslog(LOG_ERR, "svc_exec %s: launch aborted: %s",
@@ -1880,6 +1869,7 @@ svc_launch_finish(struct svc_runtime *svc, int kq)
 	struct svc_manifest *m = &svc->manifest;
 	struct kevent kev[3];
 	int bootstrap_fd = -1;
+	int discovery_fd = -1;
 	int pd_fd = -1;
 	pid_t pid;
 	int saved_errno = 0;
@@ -1924,24 +1914,27 @@ svc_launch_finish(struct svc_runtime *svc, int kq)
 			goto fail_prefork;
 	}
 
+	svc->launch_id = ++svc_launch_sequence;
+	if (svc->launch_id == 0)
+		svc->launch_id = ++svc_launch_sequence;
+	if (domain_mint_unit_channel(svc, L->have_creds ? L->uid : getuid(),
+	    &discovery_fd, kq) == -1)
+		goto fail_prefork;
 	bootstrap_fd = create_service_bootstrap(m, L->ntokens, L->nservices,
 	    L->service_names, L->service_types, L->capprotect_fd >= 0);
 	if (bootstrap_fd == -1) {
 		syslog(LOG_ERR, "svc_exec %s: bootstrap descriptor: %m",
 		    m->label);
-		svc_launch_abort(svc, errno, kq);
-		return;
+		goto fail_prefork;
 	}
 
 	pid = pdfork(&pd_fd, PD_CLOEXEC);
 	if (pid == -1) {
 		syslog(LOG_ERR, "svc_exec %s: pdfork: %m", m->label);
-		close(bootstrap_fd);
-		svc_launch_abort(svc, errno, kq);
-		return;
+		goto fail_prefork;
 	}
 	if (pid == 0) {
-		child_exec(m, L->child_end, L->capprotect_fd, bootstrap_fd,
+		child_exec(m, L->child_end, L->capprotect_fd, bootstrap_fd, discovery_fd,
 		    L->token_fds, L->ntokens, L->service_fds, L->nservices,
 		    L->uid, L->gid, L->have_creds,
 		    L->homedir[0] != '\0' ? L->homedir : NULL, L->groups,
@@ -1950,6 +1943,8 @@ svc_launch_finish(struct svc_runtime *svc, int kq)
 	}
 
 	/* Parent: the child owns its copies now. */
+	close(discovery_fd);
+	discovery_fd = -1;
 	close(L->child_end);
 	L->child_end = -1;
 	close(bootstrap_fd);
@@ -2043,9 +2038,6 @@ svc_launch_finish(struct svc_runtime *svc, int kq)
 	}
 
 	svc->pid = pid;
-	svc->launch_id = ++svc_launch_sequence;
-	if (svc->launch_id == 0)
-		svc->launch_id = ++svc_launch_sequence;
 	svc->pd_fd = pd_fd;
 	if (svc_channel_attach(svc, L->capsule_end) == -1) {
 		saved_errno = errno;
@@ -2142,6 +2134,8 @@ svc_launch_finish(struct svc_runtime *svc, int kq)
 
 fail_prefork:
 	saved_errno = errno;
+	if (discovery_fd >= 0)
+		close(discovery_fd);
 	syslog(LOG_ERR, "svc_exec %s: child descriptor confinement: %m",
 	    m->label);
 	if (bootstrap_fd >= 0)

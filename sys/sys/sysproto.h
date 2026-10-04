@@ -1975,6 +1975,12 @@ struct cap_mmap_capmode_args {
 struct cap_lookup_capmode_args {
 	char fd_l_[PADL_(int)]; int fd; char fd_r_[PADR_(int)];
 };
+struct cap_process_args {
+	char op_l_[PADL_(int)]; int op; char op_r_[PADR_(int)];
+	char fd_l_[PADL_(int)]; int fd; char fd_r_[PADR_(int)];
+	char uid_l_[PADL_(uid_t)]; uid_t uid; char uid_r_[PADR_(uid_t)];
+	char data_l_[PADL_(void *)]; void * data; char data_r_[PADR_(void *)];
+};
 int	sys__exit(struct thread *, struct _exit_args *);
 int	sys_fork(struct thread *, struct fork_args *);
 int	sys_read(struct thread *, struct read_args *);
@@ -2396,6 +2402,7 @@ int	sys_pdcmp(struct thread *, struct pdcmp_args *);
 int	sys_pdincapmode(struct thread *, struct pdincapmode_args *);
 int	sys_cap_mmap_capmode(struct thread *, struct cap_mmap_capmode_args *);
 int	sys_cap_lookup_capmode(struct thread *, struct cap_lookup_capmode_args *);
+int	sys_cap_process(struct thread *, struct cap_process_args *);
 
 #ifdef COMPAT_43
 
@@ -3409,6 +3416,7 @@ int	freebsd14_setgroups(struct thread *, struct freebsd14_setgroups_args *);
 #define	SYS_AUE_pdincapmode	AUE_PDINCAPMODE
 #define	SYS_AUE_cap_mmap_capmode	AUE_CAP_MMAP_CAPMODE
 #define	SYS_AUE_cap_lookup_capmode	AUE_CAP_LOOKUP_CAPMODE
+#define	SYS_AUE_cap_process	AUE_NULL
 
 #undef PAD_
 #undef PADL_

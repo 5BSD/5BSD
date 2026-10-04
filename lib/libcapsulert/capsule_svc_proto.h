@@ -286,7 +286,7 @@ struct capsule_system_req {
  * the parent of the getty/login sessions spawned from /etc/ttys; those are
  * siblings of /etc/rc and never inherit switchboard's SERVICE_LOOKUP_FD
  * environment.  capsule stores the fd, makes it fork/exec-durable, and
- * dup2()s it to SERVICE_LOOKUP_FIXED_FD just before exec'ing each getty so
+ * installs it in the kernel context just before exec'ing each getty so
  * login inherits the discovery channel at the fixed number.
  *
  * Strictly best-effort: the rc path already carries the channel by environment

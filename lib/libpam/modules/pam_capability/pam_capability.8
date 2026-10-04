@@ -1,0 +1,46 @@
+.\" SPDX-License-Identifier: BSD-2-Clause
+.Dd October 4, 2026
+.Dt PAM_CAPABILITY 8
+.Os
+.Sh NAME
+.Nm pam_capability
+.Nd establish a policy-scoped process discovery context
+.Sh DESCRIPTION
+The
+.Nm
+session module uses the login provider's existing discovery authority to
+request a session from BSDAuth for the PAM account.
+BSDAuth selects grants from principal policy; the module does not infer
+authority from UID 0, group membership, or an environment variable.
+The module replaces inherited provider authority before user code runs.
+A failed mint leaves discovery absent while ordinary UNIX login continues.
+Failure to clear inherited authority returns a PAM session error.
+.Pp
+The context is held by the kernel and survives fork, exec, descriptor cleanup,
+and environment replacement.
+It is bound to the target real UID and prison.
+The provider must complete its normal credential transition before launching
+the session.
+The module does not authenticate a password or change UNIX IDs.
+.Pp
+Place this module in the session stack of trusted login providers, such as
+providers including the base login stack.
+Do not add it a second time to providers that already explicitly provision
+sessions, such as the current su and SSH adapters.
+.Pp
+Closing a PAM session does not revoke contexts inherited by other processes.
+Process exit releases its held reference.
+Already issued capabilities retain
+their own lifetime and revocation semantics.
+.Sh OPTIONS
+.Bl -tag -width unprivileged
+.It Cm unprivileged
+Request USER discovery without the principal's anointments or administrative
+rights.
+The base cron and atrun session stacks use this option for unattended jobs.
+It narrows a mint and never grants authentication authority to the caller.
+.El
+.Sh SEE ALSO
+.Xr login 1 ,
+.Xr libservice 3 ,
+.Xr pam.conf 5

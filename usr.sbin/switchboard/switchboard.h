@@ -563,6 +563,9 @@ int	od_anoint_precheck(const char *name, const struct svc_anoint_set *set,
 	    const char *label, uid_t uid);
 
 /* domain.c — lookup-domain scoping and minted user-domain channels (§21/§22) */
+int domain_mint_unit_channel(struct svc_runtime *, uid_t, int *, int);
+void domain_unit_channels_close(const struct svc_runtime *);
+struct svc_runtime *lookup_channel_requester(const struct svc_lookup_channel *);
 bool	lookup_channel_is_live(const struct svc_lookup_channel *lc);
 void	lookup_channel_sync_events(struct svc_lookup_channel *lc, int kq);
 bool	svc_domain_resolves(const struct svc_domain *domain, const char *name);

@@ -89,7 +89,7 @@ SRCS=	libservice.c service_ambient.c service_client.c service_extension.c
 SRCS+=	service_ambient_provider.d
 CFLAGS+=	-DWITH_DTRACE
 .endif
-INCS=	libservice.h
+INCS=	libservice.h libservice_session.h
 CFLAGS+=	-I${SRCTOP}/lib/libtrustedzfs	# tzfs_mount() for service_storage_open()
 LIBADD=	capability channel pthread trustedzfs capsulert
 

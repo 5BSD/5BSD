@@ -4,7 +4,6 @@ NO_SHARED=	no
 NO_SHARED.capd_test_guardian=	yes
 NO_SHARED.libservice_api_test=	yes
 NO_SHARED.service_ambient_test=	yes
-NO_SHARED.ambient_lookup_test=	yes
 NO_SHARED.anoint_wire_test=	yes
 
 .PATH: ${SRCTOP}/usr.sbin/capsule/tests
@@ -17,7 +16,6 @@ CFLAGS.libservice_api_test+= -I${SRCTOP}/usr.sbin/switchboard
 ATF_TESTS_C+=	libservice_api_test
 ATF_TESTS_C+=	service_ambient_test
 .PATH: ${SRCTOP}/lib/libservice
-ATF_TESTS_C+=	ambient_lookup_test
 ATF_TESTS_C+=	anoint_wire_test
 
 PROGS+=		capd_service_fixture
@@ -59,9 +57,6 @@ CFLAGS.anoint_wire_test+=	-I${SRCTOP}/lib/libchannel
 CFLAGS.anoint_wire_test+=	-I${SRCTOP}/lib/libcapsulert
 CFLAGS.anoint_wire_test+=	-I${SRCTOP}/sys
 
-# ambient_lookup_test is header-only: the pure fail-soft registration decision
-# in ambient_lookup.h.  No daemon objects, no live plane, no LIBADD beyond ATF.
-CFLAGS.ambient_lookup_test+=	-I${SRCTOP}/lib/libservice
 
 ${PACKAGE}FILES+=	capd_test_harness.sh
 
