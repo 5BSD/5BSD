@@ -33,10 +33,12 @@
  */
 
 #include <sys/param.h>
+#include <sys/capsicum.h>
 #include <sys/procdesc.h>
 #include <sys/jail.h>
 #include <sys/socket.h>
 #include <sys/sysctl.h>
+#include <sysctlcmp.h>
 #include <sys/uio.h>
 
 #include <pthread.h>
@@ -232,10 +234,70 @@ gate_jail_set(struct jailparam *jp, unsigned njp, int flags, int *jid_out,
 	    jid_out, desc_out));
 }
 
+/* libjail's ambient metadata sysctls are unavailable in the sandbox. */
+static int
+namespace_param_init(struct jailparam *jp, const char *name)
+{
+	struct sysctlcmp_client *client;
+	char oid[256], format[256], size_text[64], *end;
+	size_t length, value_size;
+	unsigned int kind, mode;
+	unsigned long long size;
+	int result, saved;
+
+	if (cap_getmode(&mode) == -1)
+		return (-1);
+	/* Preserve the ordinary ambient path for standalone regression fixtures. */
+	if (mode == 0)
+		return (jailparam_init(jp, name));
+	/* These descriptor-only pseudo-parameters need no kernel metadata. */
+	if (strcmp(name, "desc") == 0 || strcmp(name, "lastjid") == 0)
+		return (jailparam_init(jp, name));
+	if (snprintf(oid, sizeof(oid), "security.jail.param.%s", name) >=
+	    (int)sizeof(oid))
+		return (errno = ENAMETOOLONG, -1);
+	if (sysctlcmp_client_open(&client) == -1)
+		return (-1);
+	result = -1;
+	length = sizeof(format);
+	if (sysctlcmp_oidfmt(client, oid, &kind, format, &length) == -1)
+		goto out;
+	/* jailsys parameters put their scalar metadata in an empty child. */
+	if ((kind & CTLTYPE) == CTLTYPE_NODE) {
+		if (strlcat(oid, ".", sizeof(oid)) >= sizeof(oid)) {
+			errno = ENAMETOOLONG;
+			goto out;
+		}
+		length = sizeof(format);
+		if (sysctlcmp_oidfmt(client, oid, &kind, format, &length) == -1)
+			goto out;
+	}
+	value_size = 0;
+	if ((kind & CTLTYPE) == CTLTYPE_STRING) {
+		memset(size_text, 0, sizeof(size_text));
+		length = sizeof(size_text) - 1;
+		if (sysctlcmp_get(client, oid, size_text, &length) == -1)
+			goto out;
+		errno = 0;
+		size = strtoull(size_text, &end, 10);
+		if (errno != 0 || end == size_text || *end != '\0' || size > SIZE_MAX) {
+			errno = EPROTO;
+			goto out;
+		}
+		value_size = (size_t)size;
+	}
+	result = jailparam_init_metadata(jp, name, kind, format, value_size);
+out:
+	saved = errno;
+	sysctlcmp_client_close(client);
+	errno = saved;
+	return (result);
+}
+
 /*
  * Run kern_jail_get() through the held token, reading an existing jail's
  * parameters.  A param whose jp_value the caller already imported (e.g. "name")
- * is the lookup key; a param left uninitialised by jailparam_init() is an output
+ * is the lookup key; a param left uninitialised by namespace_param_init() is an output
  * slot, given a generously-sized zeroed buffer here so a single round trip
  * suffices -- this broker only ever creates jails with one address, so an
  * address array never overflows a 512-byte slot (jailparam_get(3) instead
@@ -320,14 +382,14 @@ gate_jail_get_param(const char *name, const char *param, char *out, size_t outsz
 	if (outsz == 0)
 		return (EINVAL);
 	out[0] = '\0';
-	if (jailparam_init(&jp[0], "name") < 0)
+	if (namespace_param_init(&jp[0], "name") < 0)
 		return (errno != 0 ? errno : EINVAL);
 	if (jailparam_import(&jp[0], name) < 0) {
 		saved = errno;
 		jailparam_free(jp, 1);
 		return (saved != 0 ? saved : EINVAL);
 	}
-	if (jailparam_init(&jp[1], param) < 0) {
+	if (namespace_param_init(&jp[1], param) < 0) {
 		saved = errno;
 		jailparam_free(jp, 1);
 		return (saved != 0 ? saved : EINVAL);
@@ -363,7 +425,7 @@ gate_owning_descriptor(const char *name)
 	int jid, fd = -1, saved;
 
 	for (ninit = 0; ninit < 2; ninit++)
-		if (jailparam_init(&jp[ninit], pn[ninit]) < 0)
+		if (namespace_param_init(&jp[ninit], pn[ninit]) < 0)
 			break;
 	if (ninit < 2) {
 		saved = errno;
@@ -440,7 +502,7 @@ bsdnamespace_jail_next(int lastjid, char *name, size_t namesz)
 		return (-1);
 	}
 	name[0] = '\0';
-	if (jailparam_init(&jp[0], "lastjid") < 0)
+	if (namespace_param_init(&jp[0], "lastjid") < 0)
 		return (-1);
 	if (jailparam_import_raw(&jp[0], &lastjid, sizeof(lastjid)) < 0) {
 		saved = errno;
@@ -448,7 +510,7 @@ bsdnamespace_jail_next(int lastjid, char *name, size_t namesz)
 		errno = saved;
 		return (-1);
 	}
-	if (jailparam_init(&jp[1], "name") < 0) {
+	if (namespace_param_init(&jp[1], "name") < 0) {
 		saved = errno;
 		jailparam_free(jp, 1);
 		errno = saved;
@@ -568,7 +630,7 @@ existing_jail_descriptor(const char *name, const struct bsdnamespace_request *rq
 	 * back to enforce the immutable-definition reuse contract below.
 	 */
 	for (ninit = 0; ninit < 4; ninit++)
-		if (jailparam_init(&jp[ninit], pn[ninit]) < 0)
+		if (namespace_param_init(&jp[ninit], pn[ninit]) < 0)
 			break;
 	if (ninit < 4) {
 		saved_errno = errno;
@@ -738,7 +800,7 @@ create_jail(const char *name, const struct bsdnamespace_request *rq, int *out_ji
 	pn[n] = "desc";			pv[n++] = __DECONST(char *, "");	/* fd filled on success */
 
 	for (ninit = 0; ninit < n; ninit++) {
-		if (jailparam_init(&jp[ninit], pn[ninit]) < 0)
+		if (namespace_param_init(&jp[ninit], pn[ninit]) < 0)
 			break;
 		if (jailparam_import(&jp[ninit], pv[ninit]) < 0) {
 			ninit++;		/* this one needs freeing too */
@@ -1038,7 +1100,7 @@ handle_list_jails(struct channel_message *m, struct bsdnamespace_conn *conn)
 	}
 
 	for (ninit = 0; ninit < 3; ninit++)
-		if (jailparam_init(&jp[ninit], lpn[ninit]) < 0)
+		if (namespace_param_init(&jp[ninit], lpn[ninit]) < 0)
 			break;
 	if (ninit < 3) {
 		lr.status = errno != 0 ? errno : EINVAL;

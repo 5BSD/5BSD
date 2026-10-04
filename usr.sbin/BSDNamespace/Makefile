@@ -38,11 +38,13 @@ CAP_UNITPACKAGE=	runtime
 CFLAGS+=	-I${SRCTOP}/lib/libcapsulert
 CFLAGS+=	-I${SRCTOP}/lib/libcapreclaim
 CFLAGS+=	-I${SRCTOP}/lib/liblogcmp
+CFLAGS+=	-I${SRCTOP}/lib/libjail
+CFLAGS+=	-I${SRCTOP}/lib/libsysctlcmp
 CFLAGS+=	-I${SRCTOP}/lib/libservice
 CFLAGS+=	-I${SRCTOP}/lib/libchannel
 CFLAGS+=	-I${SRCTOP}/sys
 
-LIBADD=		service channel jail md pthread capreclaim logcmp
+LIBADD=		service channel jail md pthread capreclaim logcmp sysctlcmp
 
 HAS_TESTS=
 SUBDIR.${MK_TESTS}+=	tests

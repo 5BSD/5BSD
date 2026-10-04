@@ -1,3 +1,5 @@
+.include <src.opts.mk>
+
 PACKAGE=	runtime
 LIB=	jail
 SHLIBDIR?= /lib
@@ -14,6 +16,7 @@ MLINKS+=jail.3 jail_setv.3
 MLINKS+=jail.3 jailparam.3
 MLINKS+=jail.3 jailparam_all.3
 MLINKS+=jail.3 jailparam_init.3
+MLINKS+=jail.3 jailparam_init_metadata.3
 MLINKS+=jail.3 jailparam_import.3
 MLINKS+=jail.3 jailparam_import_raw.3
 MLINKS+=jail.3 jailparam_get.3
@@ -22,5 +25,8 @@ MLINKS+=jail.3 jailparam_export.3
 MLINKS+=jail.3 jailparam_free.3
 
 CFLAGS+=-I${.CURDIR}
+
+HAS_TESTS=
+SUBDIR.${MK_TESTS}+= tests
 
 .include <bsd.lib.mk>

@@ -59,6 +59,8 @@
 .Ft int
 .Fn jailparam_init "struct jailparam *jp" "const char *name"
 .Ft int
+.Fn jailparam_init_metadata "struct jailparam *jp" "const char *name" "unsigned int kind" "const char *format" "size_t value_size"
+.Ft int
 .Fn jailparam_import "struct jailparam *jp" "const char *value"
 .Ft int
 .Fn jailparam_import_raw "struct jailparam *jp" "void *value" "size_t valuelen"
@@ -132,6 +134,18 @@ to it.
 After use, it should be freed with
 .Fn jailparam_free .
 .Pp
+.Fn jailparam_init_metadata
+initializes a parameter from caller-supplied kernel type and format metadata,
+without sysctl access or module loading.
+A sandboxed caller may obtain this metadata through the system.Sysctl provider.
+For strings, value_size is the kernel's declared maximum size; for unknown
+structure formats it is the structure size.
+Known structure and numeric formats determine their own sizes.
+An array format ending in ,a sets the element size and starts with an empty value.
+The supplied name and format are copied; the caller retains ownership of them.
+This function grants no jail authority: operations still require their usual
+kernel authorization.
+.Pp
 The
 .Fn jailparam_import
 function adds a
@@ -196,6 +210,7 @@ function returns the number of parameters on success, or \-1 on error.
 .Pp
 The
 .Fn jailparam_init ,
+.Fn jailparam_init_metadata ,
 .Fn jailparam_import
 and
 .Fn jailparam_import_raw

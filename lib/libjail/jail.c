@@ -42,6 +42,7 @@
 #include <stdio.h>
 #include <stdarg.h>
 #include <stdlib.h>
+#include <stdbool.h>
 #include <string.h>
 
 #include "jail.h"
@@ -371,6 +372,76 @@ jailparam_all(struct jailparam **jpp)
 	jailparam_free(jp, njp);
 	free(jp);
 	return (-1);
+}
+
+/*
+ * Initialize from metadata obtained by a trusted caller (for example through
+ * system.Sysctl). No ambient syscall or module load is performed. This only
+ * describes the value representation; jail_set/get still authorize operations.
+ */
+int
+jailparam_init_metadata(struct jailparam *jp, const char *name, unsigned int kind,
+    const char *format, size_t value_size)
+{
+	const struct jp_structdef *definition;
+	char fmt[256];
+	size_t length;
+	bool array;
+
+	if (jp == NULL || name == NULL || name[0] == '\0' || format == NULL ||
+	    (length = strnlen(format, sizeof(fmt))) == 0 || length == sizeof(fmt)) {
+		errno = EINVAL;
+		strerror_r(errno, jail_errmsg, JAIL_ERRMSGLEN);
+		return (-1);
+	}
+	memset(jp, 0, sizeof(*jp));
+	jp->jp_structtype = -1;
+	jp->jp_name = strdup(name);
+	if (jp->jp_name == NULL) {
+		strerror_r(errno, jail_errmsg, JAIL_ERRMSGLEN);
+		return (-1);
+	}
+	jp->jp_ctltype = kind;
+	memcpy(fmt, format, length + 1);
+	array = length > 2 && strcmp(fmt + length - 2, ",a") == 0;
+	if (array)
+		fmt[length - 2] = '\0';
+	switch (kind & CTLTYPE) {
+	case CTLTYPE_INT:
+		if (fmt[0] == 'B')
+			jp->jp_flags |= JP_BOOL;
+		else if (strcmp(fmt, "E,jailsys") == 0)
+			jp->jp_flags |= JP_JAILSYS;
+		/* FALLTHROUGH */
+	case CTLTYPE_UINT:
+		jp->jp_valuelen = sizeof(int);
+		break;
+	case CTLTYPE_LONG:
+	case CTLTYPE_ULONG:
+		jp->jp_valuelen = sizeof(long);
+		break;
+	case CTLTYPE_S64:
+	case CTLTYPE_U64:
+		jp->jp_valuelen = sizeof(int64_t);
+		break;
+	case CTLTYPE_STRING:
+		jp->jp_valuelen = value_size;
+		break;
+	case CTLTYPE_STRUCT:
+		definition = jp_structinfo(fmt, &jp->jp_structtype);
+		jp->jp_valuelen = definition != NULL ? definition->jps_valuelen : value_size;
+		break;
+	default:
+		jailparam_free(jp, 1);
+		errno = EOPNOTSUPP;
+		strerror_r(errno, jail_errmsg, JAIL_ERRMSGLEN);
+		return (-1);
+	}
+	if (array) {
+		jp->jp_elemlen = jp->jp_valuelen;
+		jp->jp_valuelen = 0;
+	}
+	return (0);
 }
 
 /*

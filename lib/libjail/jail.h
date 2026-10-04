@@ -56,6 +56,8 @@ extern int jail_setv(int flags, ...);
 extern int jail_getv(int flags, ...);
 extern int jailparam_all(struct jailparam **jpp);
 extern int jailparam_init(struct jailparam *jp, const char *name);
+extern int jailparam_init_metadata(struct jailparam *jp, const char *name,
+    unsigned int kind, const char *format, size_t value_size);
 extern int jailparam_import(struct jailparam *jp, const char *value);
 extern int jailparam_import_raw(struct jailparam *jp, void *value,
 	       size_t valuelen);
