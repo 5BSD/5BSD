@@ -33,6 +33,7 @@ trim(char *text)
 static bool
 label_valid(const char *label)
 {
+	const char *slash, *unit;
 	size_t i, length;
 	unsigned char c;
 
@@ -40,6 +41,28 @@ label_valid(const char *label)
 	if (length == 0 || length >= TRACECMP_POLICY_LABEL_SIZE ||
 	    label[0] == '.' || label[length - 1] == '.')
 		return (false);
+	/*
+	 * Switchboard authenticates managed clients as "<bundle-id>/<unit>".
+	 * Validate both components, while retaining legacy/session labels with
+	 * no slash.  Authorization remains an exact match of the whole label.
+	 */
+	slash = strchr(label, '/');
+	if (slash != NULL) {
+		length = (size_t)(slash - label);
+		if (length == 0 || label[length - 1] == '.' ||
+		    memchr(label, '.', length) == NULL)
+			return (false);
+		unit = slash + 1;
+		if (*unit == '\0' || *unit == '-' ||
+		    unit[strlen(unit) - 1] == '-')
+			return (false);
+		for (i = 0; unit[i] != '\0'; i++) {
+			c = (unsigned char)unit[i];
+			if (!((c >= 'a' && c <= 'z') ||
+			    (c >= '0' && c <= '9') || c == '-'))
+				return (false);
+		}
+	}
 	for (i = 0; i < length; i++) {
 		c = (unsigned char)label[i];
 		if (!((c >= 'a' && c <= 'z') ||

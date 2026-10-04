@@ -51,6 +51,46 @@ ATF_TC_BODY(exact_labels, tc)
 	ATF_CHECK(!tracecmp_policy_allows(&policy, "org.test.trace.child"));
 }
 
+ATF_TC_WITHOUT_HEAD(unit_labels);
+ATF_TC_BODY(unit_labels, tc)
+{
+	struct tracecmp_policy policy;
+
+	write_policy("org.5bsd.Instruments/gui\n"
+	    "system.Trace/bsdtrace\norg.5bsd.user-session\n");
+	ATF_REQUIRE_EQ(0, tracecmp_policy_load("policy", &policy));
+	ATF_CHECK_EQ(3, policy.count);
+	ATF_CHECK(tracecmp_policy_allows(&policy, "org.5bsd.Instruments/gui"));
+	ATF_CHECK(tracecmp_policy_allows(&policy, "system.Trace/bsdtrace"));
+	ATF_CHECK(tracecmp_policy_allows(&policy, "org.5bsd.user-session"));
+	ATF_CHECK(!tracecmp_policy_allows(&policy, "org.5bsd.Instruments"));
+	ATF_CHECK(!tracecmp_policy_allows(&policy, "org.5bsd.Instruments/other"));
+	ATF_CHECK(!tracecmp_policy_allows(&policy, "org.5bsd.Instruments/gui-2"));
+	ATF_CHECK(!tracecmp_policy_allows(&policy, "org.5bsd.Instruments/gui/child"));
+	write_policy("org.5bsd.Instruments/gui\norg.5bsd.Instruments/gui\n");
+	ATF_CHECK_ERRNO(EEXIST, tracecmp_policy_load("policy", &policy) == -1);
+	ATF_CHECK_EQ(0, policy.count);
+}
+
+ATF_TC_WITHOUT_HEAD(unit_label_bounds);
+ATF_TC_BODY(unit_label_bounds, tc)
+{
+	struct tracecmp_policy policy;
+	char label[TRACECMP_POLICY_LABEL_SIZE + 1];
+
+	memset(label, 'a', sizeof(label));
+	memcpy(label, "org.test/", 9);
+	label[TRACECMP_POLICY_LABEL_SIZE - 1] = '\0';
+	write_policy(label);
+	ATF_REQUIRE_EQ(0, tracecmp_policy_load("policy", &policy));
+	ATF_CHECK(tracecmp_policy_allows(&policy, label));
+	label[TRACECMP_POLICY_LABEL_SIZE - 1] = 'a';
+	label[TRACECMP_POLICY_LABEL_SIZE] = '\0';
+	write_policy(label);
+	ATF_CHECK_ERRNO(EINVAL, tracecmp_policy_load("policy", &policy) == -1);
+	ATF_CHECK_EQ(0, policy.count);
+}
+
 ATF_TC_WITHOUT_HEAD(wildcard_rejected);
 ATF_TC_BODY(wildcard_rejected, tc)
 {
@@ -67,7 +107,12 @@ ATF_TC_BODY(malformed_labels, tc)
 {
 	static const char *const invalid[] = {
 		".leading\n", "trailing.\n", "two..dots\n", "white space\n",
-		"path/name\n", "shell$meta\n", "\t\n"
+		"path/name\n", "shell$meta\n", "\t\n",
+		"/unit\n", "org.test/\n", "org.test//unit\n",
+		"org.test/unit/child\n", "org.test./unit\n", "org..test/unit\n",
+		"org.test/Upper\n", "org.test/unit_name\n", "org.test/unit.name\n",
+		"org.test/-unit\n", "org.test/unit-\n", "org.test/..\n",
+		"org.test/*\n", "org.*/unit\n", "org.test/unit*\n"
 	};
 	struct tracecmp_policy policy;
 	size_t i;
@@ -159,6 +204,8 @@ ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, default_deny);
 	ATF_TP_ADD_TC(tp, exact_labels);
+	ATF_TP_ADD_TC(tp, unit_labels);
+	ATF_TP_ADD_TC(tp, unit_label_bounds);
 	ATF_TP_ADD_TC(tp, wildcard_rejected);
 	ATF_TP_ADD_TC(tp, malformed_labels);
 	ATF_TP_ADD_TC(tp, duplicate_rejected);
