@@ -38,6 +38,12 @@ manifest_body()
 		atf_check -s exit:0 -o not-match:'.SUNW_dof' readelf -S \
 		    "${objdir}/BSDNetwork"
 	fi
+	pfunit="${bundle}/Units/pf.unit"
+	mkdir -p "${pfunit}/bin"
+	cp "${srcdir}/pf/pf.ucl" "${pfunit}/Unit.ucl"
+	cp "${objdir}/pf/BSDPF" "${pfunit}/bin/BSDPF"
+	chmod 0555 "${pfunit}" "${pfunit}/bin" "${pfunit}/bin/BSDPF"
+	chmod 0444 "${pfunit}/Unit.ucl"
 	cp "${manifest}" "${unit}/Unit.ucl"
 	chmod 0555 "${bundle}" "${bundle}/Units" "${unit}" "${unit}/bin" \
 	    "${unit}/bin/BSDNetwork"

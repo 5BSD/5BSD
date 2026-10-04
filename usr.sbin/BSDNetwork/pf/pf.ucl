@@ -1,0 +1,10 @@
+# Read-only PF state export. Admission is enforced by switchboard.
+activation { ipc = [{ name = "system.Network.PF"; requires = ["system.network.pf.read"]; }]; }
+control = "system";
+program = "BSDPF";
+directories = ["/dev"];
+user = "root";
+protect = ["ptrace", "signal", "wait", "sigkill", "sigcont", "sched", "core", "ktrace"];
+restart = "on-failure";
+limits { nofile = 128; nproc = 8; core = 0; }
+umask = "0077";

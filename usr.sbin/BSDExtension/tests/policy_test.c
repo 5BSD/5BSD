@@ -183,12 +183,15 @@ ATF_TC_BODY(corrupt_registry_fails_closed, tc)
 ATF_TC_WITHOUT_HEAD(concurrent_updates_and_discovery);
 ATF_TC_BODY(concurrent_updates_and_discovery, tc)
 {
-	int fd, i, status, count = 0;
+	int fd, i, status;
+	size_t count = 0;
+	struct sysext_config initial;
 	pid_t children[4];
 	struct sysext_policy *p = create(&fd);
 	struct sysext_info_reply info;
 	char name[64], cursor[64] = "";
 
+	ATF_REQUIRE_EQ(0, sysext_policy_snapshot(p, &initial));
 	ATF_REQUIRE_EQ(0, sysext_policy_attach(p, fd));
 	for (i = 0; i < 4; i++) {
 		children[i] = fork();
@@ -213,7 +216,16 @@ ATF_TC_BODY(concurrent_updates_and_discovery, tc)
 		count++;
 	}
 	ATF_CHECK_EQ(ENOENT, errno);
-	ATF_CHECK_EQ(56, count);
+	ATF_CHECK_EQ(initial.nallow + 4 * 12, count);
+	/* Check each committed name, so a duplicate or lost update cannot hide
+	 * behind an unrelated change in the shipped default allow-list. */
+	for (i = 0; i < 4; i++) {
+		for (int j = 0; j < 12; j++) {
+			snprintf(name, sizeof(name), "driver%d_%02d", i, j);
+			ATF_REQUIRE_EQ(0, sysext_policy_info(p, name, false, &info));
+			ATF_CHECK(info.flags & SYSEXT_STATE_ALLOWED);
+		}
+	}
 	sysext_policy_destroy(p);
 	close(fd);
 }
