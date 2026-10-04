@@ -19,6 +19,7 @@
 #include <string.h>
 #include <unistd.h>
 
+#include <channel.h>
 #include <libservice.h>
 #include <tracecmp.h>
 #include <tracecmp_server.h>
@@ -35,46 +36,15 @@ struct fixture {
 	pid_t child;
 };
 
-static int
-capability_connect(const char *name)
-{
-	struct mac_capability_connect_args connect;
-	int control, error;
-
-	control = open("/dev/mac_capability", O_RDWR | O_CLOEXEC);
-	ATF_REQUIRE_MSG(control >= 0, "open mac_capability: %s",
-	    strerror(errno));
-	memset(&connect, 0, sizeof(connect));
-	strlcpy(connect.name, name, sizeof(connect.name));
-	if (ioctl(control, MAC_CAPABILITY_CONNECT, &connect) == -1) {
-		error = errno;
-		close(control);
-		errno = error;
-		return (-1);
-	}
-	close(control);
-	return (connect.fd);
-}
-
 static void
 channel_pair(int *client, int *provider)
 {
-	struct mac_capability_recvmsg_args receive;
-	struct mac_capability_sendmsg_args send;
-	uint32_t operation;
 
-	*client = capability_connect("channel");
-	ATF_REQUIRE(*client >= 0);
-	operation = CHANNEL_OP_CREATE;
-	memset(&send, 0, sizeof(send));
-	send.payload = &operation;
-	send.payload_len = sizeof(operation);
-	ATF_REQUIRE_EQ(0, ioctl(*client, MAC_CAPABILITY_SENDMSG, &send));
-	memset(&receive, 0, sizeof(receive));
-	receive.fds = provider;
-	receive.nfds = 1;
-	ATF_REQUIRE_EQ(0, ioctl(*client, MAC_CAPABILITY_RECVMSG, &receive));
-	ATF_REQUIRE_EQ(1, receive.nfds);
+	int pair[2];
+
+	ATF_REQUIRE_EQ(0, mac_capability_channel_create(pair));
+	*client = pair[0];
+	*provider = pair[1];
 }
 
 /*
