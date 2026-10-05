@@ -90,7 +90,7 @@ env_setup() {
 
 	# The default source and ports checkout servers and branches.
 	SRCGITROOT="https://github.com/5BSD/"
-	PORTGITROOT="https://github.com/klheard/"
+	PORTGITROOT="https://github.com/5BSD/"
 	SRCBRANCH="main"
 	PORTBRANCH="main"
 	GITSRC="5BSD.git"

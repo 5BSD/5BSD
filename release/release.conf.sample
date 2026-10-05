@@ -14,7 +14,7 @@ CHROOTDIR="/scratch"
 #NOGIT=1
 ## Set the 5BSD source and ports hosts.
 SRCGITROOT="https://github.com/5BSD/"
-PORTGITROOT="https://github.com/klheard/"
+PORTGITROOT="https://github.com/5BSD/"
 GITSRC="5BSD.git"
 GITPORTS="5BSD-ports.git"
 
