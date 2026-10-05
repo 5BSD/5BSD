@@ -458,7 +458,6 @@ linux_epoll_wait_ts(struct thread *td, int epfd, struct epoll_event *events,
 					NULL};
 	cap_rights_t rights;
 	struct file *epfp;
-	sigset_t omask;
 	int error;
 
 	if (maxevents <= 0 || maxevents > LINUX_MAX_EVENTS)
@@ -474,16 +473,10 @@ linux_epoll_wait_ts(struct thread *td, int epfd, struct epoll_event *events,
 	}
 	if (uset != NULL) {
 		error = kern_sigprocmask(td, SIG_SETMASK, uset,
-		    &omask, 0);
+		    &td->td_oldsigmask, 0);
 		if (error != 0)
 			goto leave;
 		td->td_pflags |= TDP_OLDMASK;
-		/*
-		 * Make sure that ast() is called on return to
-		 * usermode and TDP_OLDMASK is cleared, restoring old
-		 * sigmask.
-		 */
-		ast_sched(td, TDA_SIGSUSPEND);
 	}
 
 	coargs.leventlist = events;
@@ -502,9 +495,19 @@ linux_epoll_wait_ts(struct thread *td, int epfd, struct epoll_event *events,
 	if (error == 0)
 		td->td_retval[0] = coargs.count;
 
-	if (uset != NULL)
-		error = kern_sigprocmask(td, SIG_SETMASK, &omask,
-		    NULL, 0);
+	/* epoll waits are interrupted by signals, never restarted. */
+	if (error == ERESTART)
+		error = EINTR;
+	if (uset != NULL) {
+		/*
+		 * Match pselect: deliver an interrupting signal under the
+		 * temporary mask, otherwise restore the original mask before
+		 * signal delivery.  The AST and signal frame both consume
+		 * td_oldsigmask; a local copy leaves stale sigsuspend state.
+		 * Do not overwrite the wait/copyout error while restoring it.
+		 */
+		ast_sched(td, error == EINTR ? TDA_SIGSUSPEND : TDA_PSELECT);
+	}
 leave:
 	fdrop(epfp, td);
 	return (error);
