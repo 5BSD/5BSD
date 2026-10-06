@@ -24,8 +24,9 @@ The following operations are supported:
 .It Dv MAC_CAP_PROCESS_SET
 Retain channel descriptor
 .Fa fd
-for principal
+with the informational UID label
 .Fa uid .
+The label does not authenticate a user or grant authority.
 The caller retains ownership of the descriptor.
 Its Capsicum rights are copied.
 Descriptors whose fork or exec propagation has been locked or restricted to
@@ -34,7 +35,8 @@ Installing a reference does not grant new authority.
 .It Dv MAC_CAP_PROCESS_GET
 Return an owned close-on-exec descriptor for the current discovery context.
 Its rights are preserved and descriptor transfer is disabled.
-The calling process's real UID and prison must match the installed context.
+The calling process's prison must match the installed context.
+A UNIX UID change does not replace or invalidate the discovery route.
 .It Dv MAC_CAP_PROCESS_CLEAR
 Release the calling process's context.
 Already returned descriptors and
@@ -45,8 +47,9 @@ Copy a
 into
 .Fa data .
 The structure reports this process's lifetime identity, responsible identity,
-context generation, process IDs, principal UID and whether a context exists.
-The same UID and prison checks as GET apply when a context exists.
+context generation, process IDs, informational UID label and whether a
+context exists.
+The same prison check as GET applies when a context exists.
 .It Dv MAC_CAP_PROCESS_ORIGIN_EXPORT
 Return an owned close-on-exec descriptor containing this process's immutable
 lifetime identity and PID.
@@ -68,10 +71,12 @@ Unused descriptor and UID arguments should be
 .Pp
 A parent selects a different bootstrap for a child by forking, installing the
 child's context in the child, then executing its program.
-Authentication
-providers must install the authenticated target's policy-scoped context when
-changing principals.
-A UID change alone never selects another user's policy.
+The discovery context supplies a route, not software attributes or service
+authority.
+Ordinary authentication and UNIX credential changes do not require a new
+discovery context.
+Service admission uses the requesting software's protected identity and
+attributes; installing a route does not create or replace that identity.
 The kernel-held reference does not reconnect to a terminated peer.
 .Sh RETURN VALUES
 GET and ORIGIN_EXPORT return a descriptor on success.
@@ -83,8 +88,7 @@ On failure, -1 is returned and errno is set.
 .It Bq Er ENOENT
 GET was requested without an installed context.
 .It Bq Er EPERM
-The principal or prison does not match, or an origin token belongs to another
-prison.
+The discovery context or origin token belongs to another prison.
 .It Bq Er ENOTCAPABLE
 Installing the descriptor would bypass its fork or exec restrictions, or an
 operation exceeds its Capsicum rights.

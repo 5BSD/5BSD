@@ -15,19 +15,19 @@
 #include <sys/types.h>
 
 /*
- * The capability control endpoint (capability-authority-model.md, P3).  switchboard
- * self-serves this SYSTEM name over the ambient discovery plane; an admin login
- * session's lookup receives a channel carrying SVC_RIGHTS_ADMIN, which gates the
- * privileged control operations (reload/start/stop).  This is the ONLY control
- * transport: the getpeereid(2) control socket was retired, and session
- * provisioning now mints over each caller's inherited/own SYSTEM channel.
+ * The capability control endpoint (docs/book/src/plane/management-policy.md).
+ * SwitchBoard serves this name over the inherited discovery route. It checks
+ * the actual requesting software identity and attributes before issuing a
+ * control channel. SVC_RIGHTS_ADMIN gates privileged operations such as
+ * reload/start/stop; UNIX UID alone grants no administrative right. This is
+ * the only control transport; the getpeereid(2) control socket was retired.
  */
 #define	SWITCHBOARD_CONTROL_NAME	"system.switchboard"
 /*
  * The capability lifecycle endpoint (docs/book/src/plane/capsule.md, P4b).
- * switchboard self-serves this SYSTEM name over the ambient discovery plane; an
- * admin login session's lookup receives an ADMIN-bearing channel over which
- * capsulectl(8) presents a lifecycle op (reboot/halt/...).  switchboard relays the
+ * SwitchBoard serves this name over the inherited discovery route. Approved
+ * capsulectl(8) software receives an ADMIN-bearing channel according to its
+ * software attributes and presents a lifecycle op (reboot/halt/...). It relays the
  * op to capsule (the spine, PID 1) rather than handling it itself.  The
  * everyday reboot/halt/shutdown(8) keep their stock BSD signal-to-init path.
  */
@@ -46,9 +46,9 @@
  */
 #define	SCTL_OP_STATUS		1	/* query switchboard status (any) */
 #define	SCTL_OP_SERVICES	2	/* list loaded services (any) */
-#define	SCTL_OP_RELOAD		3	/* reload manifests (root) */
-#define	SCTL_OP_START_SVC	4	/* start a loaded unit (root) */
-#define	SCTL_OP_STOP_SVC	5	/* stop a loaded unit (root) */
+#define	SCTL_OP_RELOAD		3	/* reload manifests (ADMIN) */
+#define	SCTL_OP_START_SVC	4	/* start a loaded unit (ADMIN) */
+#define	SCTL_OP_STOP_SVC	5	/* stop a loaded unit (ADMIN) */
 #define	SCTL_OP_TREE		7	/* responsibility tree (any); 6 is retired */
 
 struct sctl_request {

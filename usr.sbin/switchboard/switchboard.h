@@ -90,25 +90,24 @@ enum svc_domain_kind {
 };
 
 /*
- * IPC anointments (docs/book/src/plane/anointments.md).  The set of anointment
- * names a requester holds: a unit's comes from its policy file (manifest) at
- * every exec; a login session's is decided by the auth agent's principal
- * policy at mint and carried on the session channel.  `all` is the principal
- * policy's "*" (never legal in a bundle policy file); `admin_rights` is the
- * separate knob that puts SVC_RIGHTS_ADMIN into the grants resolved from this
- * holder — reach and the in-endpoint bypass are decided independently.  The
- * boot carry (the SYSTEM channel switchboard installs ahead of rc) holds both.
+ * Software attributes (docs/book/src/plane/attributes.md). The requester set
+ * is resolved from approved software policy using the kernel sender stamp;
+ * a login identity or inherited route does not supply grants. The internal
+ * anoint names are retained for existing protocol and probe compatibility.
+ * Endpoint admission and administrative operation rights are separate checks.
+ * Wildcards are not accepted in software manifests. Boot authority has its
+ * own explicit endpoint allowlist and bounded lifetime.
  *
  * Attribute bounds are shared with the manifest representation.
  */
 #define	SVC_ANOINT_SWITCHBOARD_ADMIN	"system.switchboard.admin"
-/* The requester identity a login session carries (no policy file). */
+/* Historical fallback label for requests without a registered identity. */
 #define	SVC_SESSION_LABEL		"org.5bsd.user-session"
 
 struct svc_anoint_set {
 	char		names[SVC_ANOINT_MAX][SVC_ANOINT_NAME_MAX];
 	unsigned	n;		/* valid entries in names[] */
-	bool		all;		/* holds every anointment ("*") */
+	bool		all;		/* internal match-all representation */
 	bool		admin_rights;	/* grants carry SVC_RIGHTS_ADMIN */
 };
 _Static_assert(SVC_ANOINT_MAX == SWITCHBOARD_MAX_ANOINTMENTS,

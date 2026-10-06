@@ -74,7 +74,7 @@ struct service_provider;
 typedef int (*service_activation_handler)(const char *name, void *context);
 
 /*
- * A capability's rights (docs/capability-authority-model.md).  A service-defined
+ * A capability's rights (docs/book/src/plane/management-policy.md). A service-defined
  * bitmask of the operations the holder of a granted session may perform; bit
  * meanings are per-service (Capsicum-shaped).  Attenuation is monotone: a child
  * capability may only clear bits, never set them.  SERVICE_RIGHTS_ALL is the
@@ -87,11 +87,12 @@ typedef uint64_t service_rights_t;
 /*
  * The one cross-service well-known right: administrative access, which bypasses
  * a service's per-object policy (the capability replacement for the old
- * "root may do anything" bypass).  switchboard grants it only to an admin login
- * session's grants.  Per-service rights use the low bits; this reserves the top.
+ * "root may do anything" bypass). SwitchBoard derives grants from approved
+ * software attributes, not login identity. Per-service rights use the low
+ * bits; this reserves the top. Providers still enforce their operation rules.
  */
 #define	SERVICE_RIGHTS_ADMIN	((service_rights_t)1 << 63)
-/* Explicit authority to request sessions for a named UID; not an admin bypass. */
+/* Retired authentication protocol bit; never issued in software grants. */
 #define	SERVICE_RIGHTS_AUTHENTICATE	((service_rights_t)1 << 62)
 
 /* A held capability permits an operation iff it holds every needed right. */

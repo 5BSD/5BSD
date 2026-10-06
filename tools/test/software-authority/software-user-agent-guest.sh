@@ -5,7 +5,7 @@ set -eux
 # Earlier su tests intentionally made this account a wheel member. Remove
 # that fixture grant so a wheel group in the agent is an actual escalation.
 pw groupmod wheel -d policyuser
-su - policyuser -c 'test ! -r /root' 
+su - policyuser -c 'test ! -r /root'
 bundle=/Capabilities/Users/2001/Agents/Hostile.cap
 unit=$bundle/Units/hostile.unit
 mkdir -p "$unit/bin"
