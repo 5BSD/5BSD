@@ -851,7 +851,7 @@ ATF_TC_BODY(unit_uncovered_refused_and_audited, tc)
 	ATF_CHECK_EQ(AUE_SWITCHBOARD_ANOINT, last_audit_event);
 	ATF_CHECK_EQ(EACCES, last_audit_error);
 	ATF_CHECK_EQ(4242, last_audit_uid);
-	ATF_CHECK_STREQ("anointment refused: com.example.app/app -> "
+	ATF_CHECK_STREQ("attribute access refused: com.example.app/app -> "
 	    GATED_NAME " missing " GATED_ANOINT, last_audit);
 
 	/* Without a stamp the record is attributed to the daemon's own uid. */
@@ -903,7 +903,7 @@ ATF_TC_BODY(unit_all_of_several, tc)
 	ATF_CHECK_EQ(-1, fd);
 	ATF_CHECK_EQ(EACCES, error);
 	ATF_CHECK_EQ(1U, audit_count);
-	ATF_CHECK_STREQ("anointment refused: com.example.one/u -> " BOTH_NAME
+	ATF_CHECK_STREQ("attribute access refused: com.example.one/u -> " BOTH_NAME
 	    " missing a.two", last_audit);
 
 	fd = naming_lookup(BOTH_NAME, &both, &both.domain, NULL, &error, NULL);
@@ -996,7 +996,7 @@ ATF_TC_BODY(session_sets, tc)
 	ATF_CHECK_EQ(EACCES, error);
 	ATF_CHECK_EQ(1U, audit_count);
 	ATF_CHECK_EQ(1001, last_audit_uid);
-	ATF_CHECK_STREQ("anointment refused: org.5bsd.user-session -> "
+	ATF_CHECK_STREQ("attribute access refused: org.5bsd.user-session -> "
 	    GATED_NAME " missing " GATED_ANOINT, last_audit);
 
 	/* S3: ...and connects to the open tier, identified as a session. */
@@ -1042,7 +1042,7 @@ ATF_TC_BODY(session_sets, tc)
 	ATF_CHECK_EQ(-1, fd);
 	ATF_CHECK_EQ(EACCES, error);
 	ATF_CHECK_EQ(1U, audit_count);
-	ATF_CHECK_STREQ("anointment refused: org.5bsd.user-session -> "
+	ATF_CHECK_STREQ("attribute access refused: org.5bsd.user-session -> "
 	    STORAGE_NAME " missing " STORAGE_ANOINT, last_audit);
 
 	/* P6: root holding some, not all, in SYSTEM kind is still refused. */
@@ -1162,7 +1162,7 @@ ATF_TC_BODY(on_demand_precheck, tc)
 	ATF_CHECK_EQ(1U, audit_count);
 	ATF_CHECK_EQ(AUE_SWITCHBOARD_ANOINT, last_audit_event);
 	ATF_CHECK_EQ(1001, last_audit_uid);
-	ATF_CHECK_STREQ("anointment refused: com.example.app/app -> "
+	ATF_CHECK_STREQ("attribute access refused: com.example.app/app -> "
 	    GATED_NAME " missing " GATED_ANOINT, last_audit);
 
 	/* A NULL set (no requester, no ambient domain) holds nothing. */
@@ -1170,7 +1170,7 @@ ATF_TC_BODY(on_demand_precheck, tc)
 	ATF_CHECK_EQ(-1, od_anoint_precheck(GATED_NAME, NULL, NULL, 0));
 	ATF_CHECK_EQ(EACCES, errno);
 	ATF_CHECK_EQ(1U, audit_count);
-	ATF_CHECK_STREQ("anointment refused: org.5bsd.user-session -> "
+	ATF_CHECK_STREQ("attribute access refused: org.5bsd.user-session -> "
 	    GATED_NAME " missing " GATED_ANOINT, last_audit);
 
 	/* U5: a holder may activate it. */
@@ -1193,7 +1193,7 @@ ATF_TC_BODY(on_demand_precheck, tc)
 	set_one(&holder, "a.one");
 	ATF_CHECK_EQ(-1, od_anoint_precheck(BOTH_NAME, &holder,
 	    "com.example.one/u", 1001));
-	ATF_CHECK_STREQ("anointment refused: com.example.one/u -> " BOTH_NAME
+	ATF_CHECK_STREQ("attribute access refused: com.example.one/u -> " BOTH_NAME
 	    " missing a.two", last_audit);
 	set_with(&holder, A_BOTH, 2);
 	ATF_CHECK_EQ(0, od_anoint_precheck(BOTH_NAME, &holder,
@@ -1477,7 +1477,7 @@ ATF_TC_BODY(session_reach_over_minted_channel, tc)
 	ATF_CHECK_EQ(1U, audit_count);
 	ATF_CHECK_EQ(AUE_SWITCHBOARD_ANOINT, last_audit_event);
 	ATF_CHECK_EQ(getuid(), last_audit_uid);
-	ATF_CHECK_STREQ("anointment refused: org.5bsd.user-session -> "
+	ATF_CHECK_STREQ("attribute access refused: org.5bsd.user-session -> "
 	    GATED_NAME " missing " GATED_ANOINT, last_audit);
 
 	/* S3: and reaches the open tier. */
@@ -2080,7 +2080,7 @@ ATF_TC_BODY(lookup_two_requires_partial_and_audit_count, tc)
 	ATF_CHECK_EQ(EACCES, error);
 	ATF_CHECK_EQ(1U, audit_count);
 	ATF_CHECK_EQ(77, last_audit_uid);
-	ATF_CHECK_STREQ("anointment refused: com.example.two/u -> " BOTH_NAME
+	ATF_CHECK_STREQ("attribute access refused: com.example.two/u -> " BOTH_NAME
 	    " missing a.one", last_audit);
 	ATF_CHECK(strstr(last_audit, "a.two") == NULL);
 
@@ -2090,7 +2090,7 @@ ATF_TC_BODY(lookup_two_requires_partial_and_audit_count, tc)
 	ATF_CHECK_EQ(-1, fd);
 	ATF_CHECK_EQ(EACCES, error);
 	ATF_CHECK_EQ(2U, audit_count);
-	ATF_CHECK_STREQ("anointment refused: com.example.none/u -> " BOTH_NAME
+	ATF_CHECK_STREQ("attribute access refused: com.example.none/u -> " BOTH_NAME
 	    " missing a.one,a.two", last_audit);
 
 	/* Repeating the refusal audits again: one per attempt. */
@@ -2162,7 +2162,7 @@ ATF_TC_BODY(lookup_user_kind_unit_gated_visibility, tc)
 	ATF_CHECK_EQ(EACCES, error);
 	ATF_CHECK_EQ(1U, audit_count);
 	ATF_CHECK_EQ(AUE_SWITCHBOARD_ANOINT, last_audit_event);
-	ATF_CHECK_STREQ("anointment refused: com.example.plain/u -> "
+	ATF_CHECK_STREQ("attribute access refused: com.example.plain/u -> "
 	    GATED_NAME " missing " GATED_ANOINT, last_audit);
 
 	/* The open system-only name: out of scope for USER, not audited. */
@@ -2497,7 +2497,7 @@ ATF_TC_BODY(precheck_stopped_provider, tc)
 	ATF_CHECK_EQ(EACCES, errno);
 	ATF_CHECK_EQ(1U, audit_count);
 	ATF_CHECK_EQ(1001, last_audit_uid);
-	ATF_CHECK_STREQ("anointment refused: com.example.app/app -> " BOTH_NAME
+	ATF_CHECK_STREQ("attribute access refused: com.example.app/app -> " BOTH_NAME
 	    " missing a.one,a.two", last_audit);
 
 	errno = 0;
@@ -2505,7 +2505,7 @@ ATF_TC_BODY(precheck_stopped_provider, tc)
 	ATF_CHECK_EQ(EACCES, errno);
 	ATF_CHECK_EQ(2U, audit_count);
 	ATF_CHECK_EQ(42, last_audit_uid);
-	ATF_CHECK_STREQ("anointment refused: org.5bsd.user-session -> "
+	ATF_CHECK_STREQ("attribute access refused: org.5bsd.user-session -> "
 	    BOTH_NAME " missing a.one", last_audit);
 
 	/* Holders: permitted, nothing recorded. */
@@ -2526,7 +2526,7 @@ ATF_TC_BODY(precheck_stopped_provider, tc)
 	set_with(&partial, (const char *const[]){ "a.one", "A.two" }, 2);
 	ATF_CHECK_EQ(-1, od_anoint_precheck(BOTH_NAME, &partial, "x/y", 1));
 	ATF_CHECK_EQ(3U, audit_count);
-	ATF_CHECK_STREQ("anointment refused: x/y -> " BOTH_NAME
+	ATF_CHECK_STREQ("attribute access refused: x/y -> " BOTH_NAME
 	    " missing a.two", last_audit);
 }
 
@@ -2744,7 +2744,7 @@ ATF_TC_BODY(one_refusal_one_record_on_demand_path, tc)
 	ATF_CHECK_EQ(AUE_SWITCHBOARD_ANOINT, last_audit_event);
 	ATF_CHECK_EQ(EACCES, last_audit_error);
 	ATF_CHECK_EQ(4242, last_audit_uid);
-	ATF_CHECK_STREQ("anointment refused: com.example.app/app -> "
+	ATF_CHECK_STREQ("attribute access refused: com.example.app/app -> "
 	    GATED_NAME " missing " GATED_ANOINT, last_audit);
 	ATF_CHECK_EQ(0U, grant_count);
 
@@ -2784,7 +2784,7 @@ ATF_TC_BODY(one_refusal_one_record_on_demand_path, tc)
 	ATF_CHECK_EQ(-1, fd);
 	ATF_CHECK_EQ(EACCES, error);
 	ATF_CHECK_EQ(1U, audit_count);
-	ATF_CHECK_STREQ("anointment refused: com.example.app/app -> "
+	ATF_CHECK_STREQ("attribute access refused: com.example.app/app -> "
 	    GATED_NAME " missing " GATED_ANOINT, last_audit);
 	ATF_CHECK_EQ(0U, grant_count);
 	/* Repeating the refused lookup is a second refusal: still 1:1. */
@@ -2810,7 +2810,7 @@ ATF_TC_BODY(one_refusal_one_record_on_demand_path, tc)
 	ATF_CHECK_EQ(EACCES, error);
 	ATF_CHECK_EQ(1U, audit_count);
 	ATF_CHECK_EQ(1001, last_audit_uid);
-	ATF_CHECK_STREQ("anointment refused: org.5bsd.user-session -> "
+	ATF_CHECK_STREQ("attribute access refused: org.5bsd.user-session -> "
 	    GATED_NAME " missing " GATED_ANOINT, last_audit);
 	provider_register(&provider, "system.Notify/bsdnotify", GATED_NAME,
 	    NOTIFY_ONE, 1);
@@ -2838,7 +2838,7 @@ ATF_TC_BODY(one_refusal_one_record_on_demand_path, tc)
 	    &error);
 	ATF_CHECK_EQ(EACCES, error);
 	ATF_CHECK_EQ(1U, audit_count);
-	ATF_CHECK_STREQ("anointment refused: com.example.one/u -> " BOTH_NAME
+	ATF_CHECK_STREQ("attribute access refused: com.example.one/u -> " BOTH_NAME
 	    " missing a.two", last_audit);
 	provider_register(&provider, "system.X/x", BOTH_NAME, A_BOTH, 2);
 	audit_reset();
@@ -2846,7 +2846,7 @@ ATF_TC_BODY(one_refusal_one_record_on_demand_path, tc)
 	    &error);
 	ATF_CHECK_EQ(EACCES, error);
 	ATF_CHECK_EQ(1U, audit_count);
-	ATF_CHECK_STREQ("anointment refused: com.example.one/u -> " BOTH_NAME
+	ATF_CHECK_STREQ("attribute access refused: com.example.one/u -> " BOTH_NAME
 	    " missing a.two", last_audit);
 	naming_remove_owner(&provider);
 
