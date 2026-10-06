@@ -36,7 +36,7 @@
  * Always opens with O_VERIFY so that, when mac_veriexec is loaded and
  * enforcing, the kernel refuses the open unless the file has a registered
  * fingerprint -- the integrity backstop for "declaration is the grant"
- * (docs/book/src/plane/anointments.md).  When veriexec is absent, not loaded, or
+ * (docs/book/src/plane/attributes.md).  When veriexec is absent, not loaded, or
  * not enforcing, O_VERIFY is a silent no-op, so this is safe on an unhardened
  * system.  Returns true iff the file opened and parsed.  libucl reads the
  * whole descriptor during add_fd_full, so the fd is closed immediately after.
@@ -351,12 +351,12 @@ validate_string_list(const ucl_object_t *root, const char *key, unsigned max,
 }
 
 /*
- * IPC anointments (docs/book/src/plane/anointments.md).
+ * IPC attributes (docs/book/src/plane/attributes.md).
  *
- * Validate one anointment-name list under `where`: a bare string or an array
+ * Validate one attribute-name list under `where`: a bare string or an array
  * of strings, each a reverse-domain name bounded by SWITCHBOARD_LABEL_MAX,
- * unique, at most `max` entries.  "*" is refused by name: the wildcard is only
- * legal in the principal policy, never in a bundle's policy file (manifest).
+ * unique, at most `max` entries. Wildcards are rejected; software attributes
+ * and endpoint requirements must name their grants explicitly.
  */
 static int
 validate_anointment_names(const ucl_object_t *v, const char *where,
@@ -387,8 +387,7 @@ validate_anointment_names(const ucl_object_t *v, const char *where,
 		name = ucl_object_tostring(e);
 		if (strcmp(name, "*") == 0) {
 			snprintf(errbuf, errlen, "%s: \"*\" is not a valid name "
-			    "in a bundle policy file (the wildcard is only "
-			    "legal in the principal policy)", where);
+			    "in a bundle policy file; software attributes must be explicit", where);
 			return (-1);
 		}
 		if (!capbundle_valid_service_name(name, SWITCHBOARD_LABEL_MAX)) {
@@ -437,7 +436,7 @@ ipc_entry_name(const ucl_object_t *e)
 /*
  * activation.ipc: one name, or an array of at most CAPBUNDLE_MAX_PROVIDES
  * entries, each either a bare name (an open endpoint) or an object
- * { name; requires } whose `requires` lists the anointments a connecting
+ * { name; requires } whose `requires` lists the attributes a connecting
  * program must hold -- all of them -- to resolve that name.  An object with no
  * `requires` (or an empty list) is open, exactly like the bare form.  Names
  * follow the reverse-domain syntax, are unique across both forms, and may not
@@ -1236,7 +1235,7 @@ validate_unit_schema(const ucl_object_t *root, char *errbuf, size_t errlen)
 	}
 	/*
 	 * attributes — software attributes used when looking up endpoints
-	 * (docs/book/src/plane/anointments.md).  A string or array of reverse-domain
+	 * (docs/book/src/plane/attributes.md).  A string or array of reverse-domain
 	 * names; "*" is never legal here.  Absent = the empty set.
 	 */
 	v = ucl_object_lookup(root, "attributes");

@@ -29,7 +29,7 @@
 #define	SWITCHBOARD_MAX_PROVIDES		8
 #define	SWITCHBOARD_LABEL_MAX		64
 /*
- * IPC anointments (docs/book/src/plane/anointments.md): per-endpoint required
+ * IPC attributes (docs/book/src/plane/attributes.md): per-endpoint required
  * names and per-unit held names.  Mirror CAPBUNDLE_MAX_REQUIRES /
  * CAPBUNDLE_MAX_ANOINTMENTS in libcapbundle.h.
  */
@@ -198,10 +198,10 @@ struct svc_manifest {
 	char		provides[SWITCHBOARD_MAX_PROVIDES][SWITCHBOARD_LABEL_MAX];
 	unsigned	nprovides;
 	/*
-	 * IPC anointments.  requires[i] lists the names a program must hold
+	 * IPC attributes.  requires[i] lists the names a program must hold
 	 * (all of them) to resolve provides[i]; nrequires[i] == 0 means the
-	 * endpoint is open.  anointments lists the names this unit holds when it
-	 * looks names up.  Indexed in parallel with provides[].
+	 * endpoint is open. The legacy-named anointments field stores this unit's
+	 * software attributes. Requirements are indexed with provides[].
 	 */
 	char		requires[SWITCHBOARD_MAX_PROVIDES][SWITCHBOARD_MAX_REQUIRES]
 			    [SWITCHBOARD_LABEL_MAX];

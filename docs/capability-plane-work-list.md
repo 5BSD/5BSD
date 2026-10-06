@@ -80,18 +80,11 @@ login session's coalition (by design, EBUSY on join).
    expressed. E5 in Theme E is the shape — gate ops parameterised and lockable
    rather than one bypass flag.
 
-   Recorded with it, because it is the frame rather than a defect: as a hybrid
-   hosting a POSIX userland, something must translate a human principal into
-   capabilities, since a process can inherit a handle but a person logging in
-   arrives holding nothing. QNX keys that on uid, Darwin on code signature for
-   entitlements plus uid for POSIX, seL4 and Genode resolve it at build time,
-   and Fuchsia escapes it only by having no uid at all. 5BSD confines the
-   translation to one component and one file (`bsdauth`,
-   `principal-policy.ucl`), with a lint keeping `getuid`/`getpeereid`/`cred`
-   out of every other authorization path — which is a stronger claim than the
-   systems it resembles. The uid-keyed policy table is the accepted cost of
-   being a UNIX; the coarse right above is not, and is the part worth fixing.
-5. **Factotum-style key custody** (Plan 9) — **later**. BSDCrypto or BSDAuth
+   Software attributes are the V1 authority model. UNIX authentication does not
+   mint capability grants; BSDAuth and principal-policy.ucl are retired. The
+   inherited discovery route supplies no authority. The coarse operation right
+   above remains a possible service-policy refinement, separate from UNIX users.
+5. **Factotum-style key custody** (Plan 9) — **later**. A dedicated cryptographic provider
    holds ssh and TLS private keys and runs the handshake on the client's
    behalf; sshd and servers hand over the conversation, never the key.
 6. **Transactions for idle exit** (launchd) — **later**, small. A "busy"
@@ -126,9 +119,9 @@ datum rides on `char *env[]` strings and bare descriptor numbers.
    test toggles) in favour of one write-once envfd with magic and version, so
    the TCB's own bootstrap is validated and cannot be redirected by whoever
    controls PID 1's environment.
-3. **Session record for login, su and sshd** — **later**. uid, domain kind,
-   session coalition id and anointment summary, sealed, delivered with the
-   lookup channel; `ENVFD_CAPMODE_ONLY` for capmode consumers.
+3. **Login authority record** — **retired**. Ordinary UNIX login, su and sshd
+   need no custom authority handoff. The kernel-held route and software context
+   replace the proposed session grant; process/coalition attribution is separate.
 4. **Tooling** — **later**, small. `procstat files` and `fstat` print an
    envfd's name, state and generation instead of a type letter.
 5. **Mutable values with notification** — **deferred**: no consumer exists;
@@ -138,7 +131,7 @@ datum rides on `char *env[]` strings and bare descriptor numbers.
 
 1. **Revocation through a derivation tree** — **later**. Every minted or
    attenuated endpoint records its parent; revoking a parent invalidates the
-   subtree (logout, anointment withdrawal, container teardown, unit
+   subtree (software-authority revocation, container teardown, unit
    quarantine, extension unload). Listed as missing in
    `capability-authority-model.md`.
 2. **Quota lending between coalitions** — **later**, after ledgers. A
@@ -209,7 +202,7 @@ are value / effort; status as above.
 | D1 | Mach port guards, Apple guarded fds | `fguard(2)`: a guarded descriptor kills the process on close/dup/pass by code without the guard; coalition policy "bad fd = kill" | the ABI-skew stack-smash class turns into an immediate, audited crash instead of a silent capability leak | next, S |
 | D2 | WASI borrow handles | `SCM_RIGHTS_BORROW`: a descriptor lent for one channel call, invalidated in the callee on return | providers cannot accumulate client capabilities (the clone-accumulation finding) | later, M |
 | D3 | Mach send-once, seL4 reply objects | `CAP_ONESHOT`: consumed by first use | mint replies and consent replies become worthless if copied | later, S |
-| D4 | OpenVMS ALARM/AUDIT ACEs | `CAP_AUDIT` right: every use of a marked capability emits an audit record with its derivation path | audit-on-use for anointment roots and VM handles without provider opt-in | later, S |
+| D4 | OpenVMS ALARM/AUDIT ACEs | `CAP_AUDIT` right: every use of a marked capability emits an audit record with its derivation path | audit-on-use for software-authority roots and VM handles without provider opt-in | later, S |
 | D5 | NOVA translate, Zircon koid | `cap_same(a, b)`: do two descriptors denote one object | dedupe and identity checks without leaking anything; the storage TCB confused-identity bugs | next, S |
 | D6 | FIDL epitaphs | a final reason code written before close, readable after EOF | fail-soft clients distinguish retry from denied from exhausted | later, S |
 

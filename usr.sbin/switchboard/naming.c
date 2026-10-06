@@ -403,7 +403,7 @@ naming_lookup(const char *name, struct svc_runtime *requester,
 	 * switchboard self-serves two spine control names with no provider process:
 	 * its own control plane (P3, handled in-process) and the system lifecycle
 	 * plane (P4b, relayed to capsule).  Both are gated on the switchboard admin
-	 * anointment and always carry ADMIN rights.
+	 * attribute and always carry ADMIN rights.
 	 */
 	if (strcmp(name, SWITCHBOARD_CONTROL_NAME) == 0)
 		return (naming_lookup_self_control(name, requester, domain,
@@ -462,14 +462,12 @@ naming_lookup(const char *name, struct svc_runtime *requester,
 	}
 
 	/*
-	 * IPC anointments (docs/book/src/plane/anointments.md): the endpoint's
-	 * `requires` -- from the running provider's own policy (the manifest it
-	 * was launched with), falling back to the registry for a name the unit
-	 * manifest does not list -- must be covered by the requester's set: a
-	 * unit's policy-file anointments, or the set the auth agent put on a
-	 * session channel at mint.  A miss is EACCES internally (the wire masks
-	 * it to ENOENT, and no on-demand) and is audited with the missing names.
-	 * An open endpoint (no requires) is unaffected.
+	 * Software attributes (docs/book/src/plane/attributes.md): the endpoint's
+	 * requirements must be covered by the actual sender's approved software
+	 * context, resolved from kernel-stamped request metadata. The inherited
+	 * route supplies no grants. A miss is EACCES internally (masked to ENOENT
+	 * on the wire, without on-demand activation) and is audited with the
+	 * missing attributes. An open endpoint has no attribute requirements.
 	 */
 	/*
 	 * The bundle registry is the on-disk policy and is refreshed by reload,

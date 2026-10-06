@@ -59,9 +59,9 @@ struct capbundle_service {
 	char	provides[CAPBUNDLE_MAX_PROVIDES][CAPBUNDLE_NAME_MAX + 1];
 	unsigned nprovides;
 	/*
-	 * IPC anointments (docs/book/src/plane/anointments.md).  requires[i] is the
+	 * IPC attributes (docs/book/src/plane/attributes.md).  requires[i] is the
 	 * set of names a connecting program must hold (all of them) to resolve
-	 * provides[i]; nrequires[i] == 0 leaves that endpoint open.  anointments
+	 * provides[i]; nrequires[i] == 0 leaves that endpoint open.  attributes
 	 * is the set this unit declares it holds.  Names are bounded at parse
 	 * to SWITCHBOARD_LABEL_MAX - 1 bytes.
 	 */

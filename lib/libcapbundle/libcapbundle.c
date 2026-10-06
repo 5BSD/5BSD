@@ -516,14 +516,14 @@ capbundle_svc_fill_manifest(const struct capbundle_service *s,
 		if (manifest_copy(s->provides[i], m->provides[i],
 		    sizeof(m->provides[i])) == -1)
 			return (-1);
-		/* IPC anointments: per-endpoint required names, in parallel. */
+		/* IPC attributes: per-endpoint required names, in parallel. */
 		m->nrequires[i] = s->nrequires[i];
 		for (j = 0; j < s->nrequires[i]; j++)
 			if (manifest_copy(s->requires[i][j], m->requires[i][j],
 			    sizeof(m->requires[i][j])) == -1)
 				return (-1);
 	}
-	/* IPC anointments: the names this unit holds. */
+	/* IPC attributes: the names this unit holds. */
 	m->nanointments = s->nanointments;
 	for (i = 0; i < s->nanointments; i++)
 		if (manifest_copy(s->anointments[i], m->anointments[i],

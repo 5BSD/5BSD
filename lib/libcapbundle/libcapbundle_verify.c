@@ -287,7 +287,7 @@ capbundle_verify(const struct capbundle *b, char *errbuf, size_t errlen)
 					    b->name, s->provides[j]);
 				return (-1);
 			}
-			/* IPC anointments: per-endpoint requires stay bounded. */
+			/* IPC attributes: per-endpoint requires stay bounded. */
 			if (s->nrequires[j] > CAPBUNDLE_MAX_REQUIRES) {
 				if (errbuf)
 					snprintf(errbuf, errlen,

@@ -329,7 +329,7 @@ on_demand_circuit_open(const struct svc_runtime *svc)
 /*
  * Launch constraint (manifest `launch { responsible = [...] }`): refuse an
  * activation whose responsible party the unit does not allow, before any
- * process state changes.  Audited and traced like an anointment refusal.
+ * process state changes.  Audited and traced like an attribute refusal.
  * Both callers answer a failed activation with ENOENT, so the wire cannot
  * tell a refusal from an unregistered name.
  */
@@ -593,7 +593,7 @@ od_launch(const char *name, struct svc_runtime *requester,
 		return (-1);  /* not found — caller should return ENOENT */
 
 	/*
-	 * IPC anointments (docs/book/src/plane/anointments.md): a requester that could
+	 * IPC attributes (docs/book/src/plane/attributes.md): a requester that could
 	 * not reach the endpoint once it is up must not be able to start its
 	 * provider either.  Check the registry's requires against the requester's
 	 * set -- a unit's own, or the set captured on the ambient session channel

@@ -15,7 +15,7 @@
  *   dtrace -n 'switchboard*:::sctl-*'     -- trace control commands
  *   dtrace -n 'switchboard*:::ipc-*'      -- trace service IPC
  *   dtrace -n 'switchboard*:::timeout-*'  -- trace timer behavior
- *   dtrace -n 'switchboard*:::anoint-*'   -- trace IPC anointment decisions
+ *   dtrace -n 'switchboard*:::anoint-*'   -- trace IPC attribute decisions
  */
 
 #ifndef SWITCHBOARD_PROBES_H
@@ -108,7 +108,7 @@
 	DTRACE_PROBE3(switchboard, domain__lookup__deny, name, kind, error)
 
 /*
- * IPC anointment refusal (anoint.c): the endpoint `name` requires names the
+ * IPC attribute refusal (anoint.c): the endpoint `name` requires names the
  * requester `label` does not hold; `missing` is the comma-separated list.
  * Fires next to the AUE_SWITCHBOARD_ANOINT audit record.
  */
@@ -139,7 +139,7 @@
 /*
  * Visibility rule (domain.c svc_domain_resolves): a USER-kind channel bound to
  * `uid` may see the gated name `name` although its provider did not opt into
- * user visibility -- the anointment match, not visible, decides reach.
+ * user visibility -- the attribute match, not visible, decides reach.
  */
 #define	SWITCHBOARD_PROBE_ANOINT_VISIBILITY(name, uid)	\
 	DTRACE_PROBE2(switchboard, anoint__visibility, name, uid)

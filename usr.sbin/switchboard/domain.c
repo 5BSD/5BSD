@@ -107,10 +107,10 @@ svc_domain_resolves(const struct svc_domain *domain, const char *name)
 	/*
 	 * SVC_DOMAIN_USER: names whose provider opts into user visibility, plus
 	 * every gated endpoint (non-empty requires): the provider gated it, so it
-	 * said who may reach it, and the anointment match in naming_lookup() /
+	 * said who may reach it, and the attribute match in naming_lookup() /
 	 * the on-demand pre-check decides -- regardless of visible.  This is
-	 * what lets an operator session reach a system-only name it was granted
-	 * (P1) while a non-holder still sees ENOENT (P2).
+	 * what lets approved software reach its required endpoint while a caller
+	 * without the required software attributes still sees ENOENT.
 	 */
 	if (svc_name_user_resolvable(name))
 		return (true);
@@ -636,10 +636,9 @@ lookup_channel_adopt(int switchboard_end, enum svc_domain_kind kind, uid_t uid,
 	lc->domain.kind = kind;
 	lc->domain.uid = uid;
 	/*
-	 * The anointment set rides the channel record beside the kind: the
-	 * adopt-received-fd path copies the arriving channel's set (never a wire
-	 * value), the mint path the set the minter decided.  A NULL set holds
-	 * nothing and carries no admin rights.
+	 * Retain legacy route metadata for structural compatibility. Request
+	 * authority is resolved independently from kernel-stamped sender state;
+	 * this stored set is not evidence of the caller's software attributes.
 	 */
 	if (set != NULL)
 		lc->domain.anoint = *set;
@@ -767,15 +766,15 @@ domain_mint_channel(enum svc_domain_kind kind, uid_t uid,
 }
 
 /*
- * Mint a USER-domain (per-uid) lookup channel — the narrowed channel a login
- * session is handed (§22.1).
+ * Create a USER-domain route for an owner. The UID is routing metadata and
+ * does not authenticate a user or confer software authority.
  */
 int
 domain_mint_user_channel(uid_t uid, int *out_fd, int kq)
 {
 	struct svc_anoint_set none;
 
-	/* A plain user mint holds no anointments and carries no admin rights. */
+	/* A plain user mint holds no attributes and carries no admin rights. */
 	memset(&none, 0, sizeof(none));
 	return (domain_mint_channel(SVC_DOMAIN_USER, uid, &none, out_fd,
 	    kq));

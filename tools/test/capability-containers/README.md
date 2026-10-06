@@ -22,7 +22,8 @@ statement in the spec and the commit log.
 
 - A guest root at `$VM/guestroot` (default `~/vm`) from
   `make -DNO_ROOT -DDB_FROM_SRC DESTDIR=... installworld distribution installkernel`,
-  with `Capabilities/Config/{bsdfilesystem,bsdextension,principal-policy}.ucl` in place.
+  with `Capabilities/Config/{bsdfilesystem,bsdextension}.ucl` in place.
+  The retired principal-policy file is not required and supplies no authority.
 - qemu (no root needed; see `rig/boot-qemu.sh`), `makefs`, `mkimg`, and for
   `pkgflow` a static `pkg-static` (`PKG_STATIC`, default `/usr/local/sbin/pkg-static`).
 - Probes: `make buildenv BUILDENV_SHELL="sh tools/test/capability-containers/probes/build.sh"`.

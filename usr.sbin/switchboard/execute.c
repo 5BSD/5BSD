@@ -706,7 +706,7 @@ child_exec(struct svc_manifest *m, int child_channel_fd,
 		 * mac_veriexec is loaded and enforcing, an unfingerprinted or
 		 * tampered image already fails the open (EAUTH); when veriexec
 		 * is absent or not enforcing it is a silent no-op
-		 * (docs/book/src/plane/anointments.md).
+		 * (docs/book/src/plane/attributes.md).
 		 */
 		tgtfd = open(m->program, O_EXEC | O_VERIFY);
 		if (tgtfd == -1)

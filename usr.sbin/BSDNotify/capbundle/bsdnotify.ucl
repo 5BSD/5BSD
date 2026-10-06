@@ -1,8 +1,8 @@
-# Two endpoints (docs/book/src/plane/anointments.md, "bsdnotify"):
-#   system.Notify        open tier, resolvable by every session
-#   system.Notify.System gated tier, only for callers anointed with
-#                        system.notify.system (switchboard enforces reach;
-#                        the daemon picks the tier from the endpoint name)
+# Two endpoints (docs/book/src/plane/attributes.md, "bsdnotify"):
+#   system.Notify        open tier, subject to discovery visibility
+#   system.Notify.System requires the client software attribute
+#                        system.notify.system (SwitchBoard enforces admission;
+#                        the daemon selects its tier from the endpoint name)
 activation {
 	boot = true;
 	ipc = [
@@ -13,9 +13,8 @@ activation {
 control = "system";
 protect = ["ptrace", "signal", "wait", "sigkill", "sigcont", "sched", "core", "ktrace"];
 program = "BSDNotify";
-# Notifications are user-facing: a login session must reach system.Notify, so
-# its name is resolvable through narrowed USER-domain lookup channels (formerly
-# switchboard's hardcoded user-allow-list).
+# Notifications are user-facing, so ordinary clients can discover the open
+# endpoint in the user domain. Visibility does not grant software attributes.
 visible = ["user"];
 restart = "on-failure";
 user = "capability";

@@ -137,8 +137,8 @@ ATF_TC_BODY(sysctl_isolate_changes, tc)
 }
 
 /*
- * IPC anointments (docs/book/src/plane/anointments.md): per-endpoint `requires`
- * and the unit's own `anointments` are reach policy, so any change -- a
+ * IPC attributes (docs/book/src/plane/attributes.md): per-endpoint `requires`
+ * and the unit's own `attributes` are reach policy, so any change -- a
  * name, a count, or (DOCUMENTED) merely the order of the same names -- must
  * compare unequal so reload restarts the unit with the new policy.  Unused
  * trailing slots past the counts are irrelevant, and the comparison covers
@@ -225,7 +225,7 @@ ATF_TC_BODY(anointment_policy_changes, tc)
 	b.requires[7][7][0] = 'x';
 	ATF_CHECK(!switchboard_manifest_equal(&a, &b));
 
-	/* The unit's own anointments: count, name, order. */
+	/* The unit's own attributes: count, name, order. */
 	CHECK_ANOINT_CHANGE(b.nanointments++);
 	CHECK_ANOINT_CHANGE(b.nanointments--);
 	CHECK_ANOINT_CHANGE(b.nanointments = 0);
@@ -254,7 +254,7 @@ ATF_TC_BODY(anointment_policy_changes, tc)
 	strlcpy(b.requires[7][0], "org.test.gone", sizeof(b.requires[7][0]));
 	ATF_CHECK(switchboard_manifest_equal(&a, &b));
 
-	/* No anointment policy at all on both sides: still equal. */
+	/* No attribute policy at all on both sides: still equal. */
 	a = sample_manifest();
 	b = a;
 	ATF_CHECK(switchboard_manifest_equal(&a, &b));
@@ -262,7 +262,7 @@ ATF_TC_BODY(anointment_policy_changes, tc)
 	b.nrequires[0] = 1;
 	strlcpy(b.requires[0][0], "org.test.req", sizeof(b.requires[0][0]));
 	ATF_CHECK(!switchboard_manifest_equal(&a, &b));
-	/* ...as is giving the unit an anointment. */
+	/* ...as is giving the unit an attribute. */
 	b = a;
 	b.nanointments = 1;
 	strlcpy(b.anointments[0], "org.test.held", sizeof(b.anointments[0]));

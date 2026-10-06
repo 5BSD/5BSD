@@ -130,7 +130,7 @@ service_epoch_live(service_epoch_t minted, service_epoch_t current)
  * SV_ABI_* from <sys/sysent.h>.  UNKNOWN is reported for kernel-originated
  * messages and by a kernel that predates the stamp.  Information for the
  * provider only: ABI never gates reach; endpoint attributes govern admission
- * (docs/book/src/plane/anointments.md).
+ * (docs/book/src/plane/attributes.md).
  */
 #define	SERVICE_GROUPS_MAX		4	/* group containers per bundle (Bundle.ucl groups) */
 #define	SERVICE_CLIENT_ABI_UNKNOWN	0

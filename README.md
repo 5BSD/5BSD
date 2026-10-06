@@ -309,7 +309,9 @@ the same operation to root while the claim stands. A manifest can also
 declare `directories` to be delivered as descriptors, a `Config/`
 directory delivered read-only, a `watchdog` interval, a `domain` that
 bounds which names the unit may resolve, `visible` to say who may reach
-it, and `holds` for the anointments it presents.
+it, and `attributes` for the software attributes it presents. The legacy
+`holds` spelling is accepted for upgrades; it cannot be combined with
+`attributes`.
 
 Read: [Bundles and Manifests](docs/book/src/plane/bundles-and-manifests.md)
 for the closed key set, every activation trigger, and two complete
@@ -418,17 +420,18 @@ Programs nest, and each level sees less than the one above it.
   confined by construction.
 - **Private helpers.** A unit marked `helper` publishes no name and is
   reachable only by a sibling unit in the same bundle.
-- **Sessions.** login, su and sshd authenticate, then ask BSDAuth for a
-  session channel scoped by the principal policy. A shell holds the
-  channel and reaches plane services by name; what it may reach is fixed
-  at mint. Nobody becomes root to run the machine; an administrator holds
-  an anointment for the one thing they need, and `anoint(1)` replaces
-  sudo.
+- **UNIX sessions and software authority.** login, su and sshd retain their
+  ordinary UNIX authentication paths. Processes inherit a kernel-held discovery
+  route; it locates services without granting authority. SwitchBoard authorizes
+  the actual sender using approved executable attributes. Anyone allowed to
+  execute an approved client can request the operations it exposes. BSDAuth,
+  per-user capability grants and `anoint(1)` are retired; V1 has no additional
+  user-consent layer.
 - **Management.** A unit's `control` class says who may stop, restart or
   unload it. `core` refuses everyone, root included.
 
 Read: [A Per-User Agent](docs/book/src/develop/per-user-agent.md);
-[Anointments and Principal Policy](docs/book/src/plane/anointments.md);
+[Software Attributes](docs/book/src/plane/attributes.md);
 [The Management Model](docs/book/src/plane/management-model.md);
 [Sessions: login, su, ssh and cron](docs/book/src/compat/sessions.md).
 

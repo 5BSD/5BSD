@@ -33,7 +33,7 @@
 #define	SVC_GROUPS_MAX			4	/* group containers per bundle */
 
 /*
- * Anointments (docs/book/src/plane/anointments.md).  A name is a reverse-domain
+ * Anointments (docs/book/src/plane/attributes.md).  A name is a reverse-domain
  * string, at most SVC_ANOINT_NAME_MAX - 1 characters plus NUL, the same bound
  * as a bundle label (svc_new_client_msg.client_label).  A single principal or
  * unit carries at most SVC_ANOINT_MAX names on the wire.
@@ -44,7 +44,7 @@
 /*
  * Client ABI as stamped by the kernel on the lookup request
  * (mac_capability_cred_trailer.abi; values mirror SV_ABI_*).  Information for
- * the provider only — it never gates reach; only anointments do.
+ * the provider only — it never gates reach; only attributes do.
  */
 #define	SVC_CLIENT_ABI_UNKNOWN	0
 #define	SVC_CLIENT_ABI_LINUX	3
@@ -372,7 +372,7 @@ struct svc_new_client_msg {
 	char		resource_owner[64];
 	uint8_t		generation[16];
 	/*
-	 * Identity (docs/book/src/plane/anointments.md "Switchboard").  The
+	 * Identity (docs/book/src/plane/attributes.md "Switchboard").  The
 	 * label above is the persistent identity; the nonce is the running
 	 * instance — the kernel's per-exec program nonce taken from the stamp
 	 * on the lookup request.  client_abi is SVC_CLIENT_ABI_* from the same

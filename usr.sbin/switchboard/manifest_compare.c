@@ -89,8 +89,8 @@ switchboard_manifest_equal(const struct svc_manifest *a,
 		    a->nrequires[i] != b->nrequires[i])
 			return (false);
 		/*
-		 * A changed per-endpoint anointment requirement must be detected
-		 * on reload: it is reach policy (docs/book/src/plane/anointments.md),
+		 * A changed per-endpoint attribute requirement must be detected
+		 * on reload: it is reach policy (docs/book/src/plane/attributes.md),
 		 * and a silently retained old value would keep gating (or not
 		 * gating) the endpoint the way the previous policy file said.
 		 */

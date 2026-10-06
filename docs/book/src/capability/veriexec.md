@@ -145,7 +145,7 @@ beyond the hook registration.
 | Item | State |
 |---|---|
 | policy compiled into GENERIC | done |
-| plane reads manifests, principal policy and programs with `O_VERIFY` | done, VM-proven with veriexec absent |
+| plane reads manifests and programs with `O_VERIFY` | implemented; opening with `O_VERIFY` alone does not prove active verifier enforcement |
 | exec-time check covers program and interpreter for capability-mode units | done (`fexecve(2)` direct launch, `kern.elf64.capmode_interp`) |
 | veriexec(8) rejects malformed fingerprints and reports load errors | done, tested |
 | keyless integrity baseline for a built image | `release/packages/base-integrity.sh create|check|veriexec` produces an mtree baseline and exports a veriexec manifest for an offline candidate root; opt-in, unsigned |

@@ -83,6 +83,7 @@ BOOK_ORIENTATIONDIR=	${BOOKDEST}/orientation
 
 FILESGROUPS+=	BOOK_PLANE
 BOOK_PLANE=	${BOOKSRC}/plane/anointments.md \
+		${BOOKSRC}/plane/attributes.md \
 		${BOOKSRC}/plane/bundles-and-manifests.md \
 		${BOOKSRC}/plane/capsule.md \
 		${BOOKSRC}/plane/containers-and-storage.md \

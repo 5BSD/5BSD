@@ -3,7 +3,7 @@
  *
  * Copyright (c) 2026 Kory Heard
  *
- * IPC anointments (docs/book/src/plane/anointments.md): the set
+ * IPC attributes (docs/book/src/plane/attributes.md): the set
  * representation, the endpoint match, the session-set plumbing on minted
  * channels, the on-demand pre-check, the refusal audit record, and the nonce
  * and ABI identity in the NEW_CLIENT grant.  Rows of the design's acceptance
@@ -731,7 +731,7 @@ ATF_TC_BODY(user_visibility_of_gated_names, tc)
 	ATF_CHECK(!svc_domain_resolves(&user, UNKNOWN_NAME));
 
 	/* A gated endpoint is visible in USER kind regardless of visible:
-	 * the anointment match, not the domain kind, decides (P1/P2). */
+	 * the attribute match, not the domain kind, decides (P1/P2). */
 	ATF_CHECK(svc_domain_resolves(&user, GATED_NAME));
 	ATF_CHECK(svc_domain_resolves(&user, STORAGE_NAME));
 	ATF_CHECK(svc_domain_resolves(&user, BOTH_NAME));
@@ -862,7 +862,7 @@ ATF_TC_BODY(unit_uncovered_refused_and_audited, tc)
 	ATF_CHECK_EQ(1U, audit_count);
 	ATF_CHECK_EQ(getuid(), last_audit_uid);
 
-	/* U9: a base unit with no anointments gets no free pass either, and
+	/* U9: a base unit with no attributes gets no free pass either, and
 	 * its domain kind (SYSTEM) does not help. */
 	audit_reset();
 	unit_init(&base, "system.Base/thing", NULL, 0);
@@ -2116,9 +2116,9 @@ ATF_TC_BODY(lookup_two_requires_partial_and_audit_count, tc)
 /*
  * A unit whose channel is USER kind (not the SYSTEM default) asking for a
  * gated endpoint that is NOT user_resolvable: the gate makes it visible, so
- * the holder connects and the non-holder is refused by the anointment match
+ * the holder connects and the non-holder is refused by the attribute match
  * (audited).  An OPEN system-only name stays out of scope for that same
- * unit -- refused by the domain rule, never audited as an anointment miss.
+ * unit -- refused by the domain rule, never audited as an attribute miss.
  */
 ATF_TC_WITHOUT_HEAD(lookup_user_kind_unit_gated_visibility);
 ATF_TC_BODY(lookup_user_kind_unit_gated_visibility, tc)
@@ -2374,10 +2374,10 @@ ATF_TC_BODY(lookup_session_admin_rights_without_reach, tc)
 }
 
 /*
- * The self-served control names, holder by holder: the exact anointment
+ * The self-served control names, holder by holder: the exact attribute
  * alone passes (both names), `all` passes, near-misses of the name do not,
- * and a unit is refused before the anointment is even consulted (so nothing
- * is audited for it -- it is not an anointment miss, it is "not a session").
+ * and a unit is refused before the attribute is even consulted (so nothing
+ * is audited for it -- it is not an attribute miss, it is "not a session").
  */
 ATF_TC_WITHOUT_HEAD(fabricated_control_authority_denied);
 ATF_TC_BODY(fabricated_control_authority_denied, tc)
@@ -2537,7 +2537,7 @@ ATF_TC_BODY(precheck_stopped_provider, tc)
  * name reaches the resolver.  naming_lookup() itself treats a helper name
  * like any other: an unregistered one is out of scope or on-demand-eligible
  * by the domain rule with nothing audited, and a registered one (a provider
- * that publishes it) goes through the ordinary anointment match.  The
+ * that publishes it) goes through the ordinary attribute match.  The
  * upstream rule is exercised over a real channel in
  * lookup_helper_names_over_minted_channel.
  */
