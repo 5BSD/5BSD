@@ -1529,7 +1529,7 @@ ATF_TC_BODY(verify_rejects_overflowed_in_memory_counts, tc)
 	s->nanointments = CAPBUNDLE_MAX_ANOINTMENTS + 1;
 	err[0] = '\0';
 	ATF_CHECK_EQ(-1, capbundle_verify(b, err, sizeof(err)));
-	ATF_CHECK_MSG(strstr(err, "too many anointments") != NULL, "err: %s",
+	ATF_CHECK_MSG(strstr(err, "too many attributes") != NULL, "err: %s",
 	    err);
 	s->nanointments = UINT_MAX;
 	ATF_CHECK_EQ(-1, capbundle_verify(b, err, sizeof(err)));
@@ -1580,7 +1580,7 @@ ATF_TC_BODY(verify_rejects_unterminated_in_memory_names, tc)
 	memset(s->anointments[1], 0, sizeof(s->anointments[1]));
 	err[0] = '\0';
 	ATF_CHECK_EQ(-1, capbundle_verify(b, err, sizeof(err)));
-	ATF_CHECK_MSG(strstr(err, "anointment name too long") != NULL,
+	ATF_CHECK_MSG(strstr(err, "attribute name too long") != NULL,
 	    "err: %s", err);
 	memset(s->anointments[0], 0, sizeof(s->anointments[0]));
 	strlcpy(s->anointments[0], "h.one", sizeof(s->anointments[0]));
