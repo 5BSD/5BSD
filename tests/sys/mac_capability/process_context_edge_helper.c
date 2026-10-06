@@ -16,6 +16,7 @@
 #include <err.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <inttypes.h>
 #include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -45,6 +46,21 @@ getok(void)
 	CHECK(fd >= 0);
 	close(fd);
 }
+static uint64_t
+badge(int fd)
+{
+	struct mac_capability_info_args info;
+	CHECK(ioctl(fd, MAC_CAPABILITY_GETINFO, &info) == 0);
+	return info.badge;
+}
+static void
+expect_route(uint64_t expected)
+{
+	int fd = op(MAC_CAP_PROCESS_GET, -1, 0, NULL);
+	CHECK(fd >= 0);
+	CHECK(badge(fd) == expected);
+	close(fd);
+}
 static void *
 churn(void *arg)
 {
@@ -58,9 +74,19 @@ churn(void *arg)
 int
 main(int argc, char **argv)
 {
-	int a[2], b[2], fd, pd, s;
-	pid_t p;
+	int a[2], b[2], fd, pd, s, ready[2];
+	pid_t p, sibling;
+	uint64_t parent_badge;
 	struct mac_cap_process_info before, after;
+	if (argc == 3 && !strcmp(argv[1], "expect-route")) {
+		char *end;
+		errno = 0;
+		uintmax_t expected = strtoumax(argv[2], &end, 10);
+		CHECK(errno == 0 && *end == '\0' && end != argv[2]);
+		CHECK(expected <= UINT64_MAX);
+		expect_route((uint64_t)expected);
+		return 0;
+	}
 	if (argc > 2 && !strcmp(argv[1], "cleanexec")) {
 		closefrom(3);
 		clearenv();
@@ -71,6 +97,19 @@ main(int argc, char **argv)
 	CHECK(mac_capability_channel_create(b) == 0);
 	CHECK(op(MAC_CAP_PROCESS_SET, a[0], getuid(), NULL) == 0);
 	CHECK(op(MAC_CAP_PROCESS_INFO, -1, 0, &before) == 0);
+	parent_badge = badge(a[0]);
+	CHECK(pipe(ready) == 0);
+	sibling = fork();
+	CHECK(sibling >= 0);
+	if (sibling == 0) {
+		char signal;
+		close(ready[1]);
+		CHECK(read(ready[0], &signal, 1) == 1);
+		closefrom(3);
+		expect_route(parent_badge);
+		_exit(0);
+	}
+	close(ready[0]);
 	p = fork();
 	CHECK(p >= 0);
 	if (!p) {
@@ -78,13 +117,15 @@ main(int argc, char **argv)
 		p = fork();
 		CHECK(p >= 0);
 		if (!p) {
-			struct mac_capability_info_args x, y;
-			fd = op(MAC_CAP_PROCESS_GET, -1, 0, NULL);
-			CHECK(fd >= 0);
-			CHECK(ioctl(fd, MAC_CAPABILITY_GETINFO, &x) == 0);
-			CHECK(ioctl(b[0], MAC_CAPABILITY_GETINFO, &y) == 0);
-			CHECK(x.badge == y.badge);
-			_exit(0);
+			char expected[32];
+			uint64_t child_badge = badge(b[0]);
+			expect_route(child_badge);
+			CHECK(snprintf(expected, sizeof(expected), "%" PRIu64,
+			    child_badge) > 0);
+			closefrom(3);
+			clearenv();
+			execl(argv[0], argv[0], "expect-route", expected, NULL);
+			_exit(99);
 		}
 		waitok(p);
 		_exit(0);
@@ -92,7 +133,12 @@ main(int argc, char **argv)
 	waitok(p);
 	CHECK(op(MAC_CAP_PROCESS_INFO, -1, 0, &after) == 0);
 	CHECK(before.generation == after.generation);
+	expect_route(parent_badge);
+	CHECK(write(ready[1], "x", 1) == 1);
+	close(ready[1]);
+	waitok(sibling);
 	puts("PASS child-subtree-bootstrap-isolation");
+	puts("PASS sibling-route-and-subtree-exec-identity");
 	p = rfork(RFPROC | RFFDG);
 	CHECK(p >= 0);
 	if (!p) {
