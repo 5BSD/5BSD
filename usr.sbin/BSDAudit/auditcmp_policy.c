@@ -24,13 +24,7 @@ static const struct auditcmp_identity_event events[] = {
 	{ "system.Network", NULL, AUE_NETWORKCMP_POLICY },
 	{ "system.Notify", NULL, AUE_BSDNOTIFY_POLICY },
 	{ "system.Crypto", NULL, AUE_CRYPTOCMP_POLICY },
-	/*
-	 * The auth agent (docs/book/src/plane/anointments.md "Elevation") submits
-	 * "elevate/<stage>/<name>" for anoint(1) and "mint/<kind>/..." for
-	 * session mints; each is its own event class.
-	 */
-	{ "system.Auth", "elevate", AUE_AUTHAGENT_ELEVATE },
-	{ "system.Auth", "mint", AUE_AUTHAGENT_MINT },
+
 };
 
 static bool

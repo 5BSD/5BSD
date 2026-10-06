@@ -20,7 +20,7 @@ semantics is the man page in `lib/libsys` and the implementation in
 
 | Call (number) | What it does | Who calls it in the tree | Man page |
 |---|---|---|---|
-| `cap_xfer_limit(fd, state)` (603) | sets transfer state `CAP_XFER_UNLIMITED`, `ONCE` or `NONE`; `ONCE` becomes `NONE` on the first successful send; tightening only | switchboard (channel ends, coalition, capprotect, bootstrap), capsule, BSDAuth (`ONCE` on a minted session channel), sshd monitor, libservice, libcapability `capability_confine_fd()`, every `lib*cmp` client | cap_xfer_limit(2) |
+| `cap_xfer_limit(fd, state)` (603) | sets transfer state `CAP_XFER_UNLIMITED`, `ONCE` or `NONE`; `ONCE` becomes `NONE` on the first successful send; tightening only | switchboard (channel ends, coalition, capprotect, bootstrap), capsule, libservice, libcapability `capability_confine_fd()`, every `lib*cmp` client | cap_xfer_limit(2) |
 | `cap_xfer_rights_limit(fd, rights)` (606) | ceiling on the rights a receiver gets after a permitted transfer; the sender is unchanged | no plane component yet; tests only | cap_xfer_rights_limit(2) |
 | `cap_xfer_ioctls_limit(fd, cmds, n)` (607) | the same ceiling for the ioctl allowlist (effective only if the rights ceiling keeps `CAP_IOCTL`) | tests only | cap_xfer_rights_limit(2) |
 | `cap_xfer_fcntls_limit(fd, mask)` (608) | the same ceiling for `CAP_FCNTL_*` | tests only | cap_xfer_rights_limit(2) |

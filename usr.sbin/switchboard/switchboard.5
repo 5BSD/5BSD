@@ -113,8 +113,8 @@ and an object whose
 .Va requires
 is empty all publish an open endpoint; an object whose
 .Va requires
-lists anointment names publishes a gated one (see
-.Sx IPC ANOINTMENTS ) .
+lists attribute names publishes a gated one (see
+.Sx SOFTWARE ATTRIBUTES ) .
 .Va requires
 is a string or an array of at most eight unique reverse-domain names.
 .Va timer
@@ -275,12 +275,13 @@ When the key is absent the bundle class decides: a base-system bundle under
 operates in the SYSTEM domain (resolves every registered name, as today) and an
 application bundle operates in the least-privilege USER domain (resolves only
 user-visible names).
-A USER-domain unit cannot mint session domains.
+Login-principal domain minting is retired for every caller.
+Discovery routes do not establish user authority.
 .Pp
-.Va holds
+.Va attributes
 is an optional top-level string or array of at most 32 unique reverse-domain
-names (anointments) the unit holds when it looks endpoints up (see
-.Sx IPC ANOINTMENTS ) .
+names (attributes) the unit holds when it looks endpoints up (see
+.Sx SOFTWARE ATTRIBUTES ) .
 Absent means the empty set.
 .Pp
 .Va launch
@@ -389,15 +390,15 @@ If it wants to be jailed it confines itself at runtime via
 .Xr service_enter_namespace 3
 .Pq the Dq system.Namespace broker, Xr BSDNamespace 8 ,
 scoped to its own unforgeable channel label.
-.Sh IPC ANOINTMENTS
-An anointment is a dotted name like a bundle id, lower-case by convention,
+.Sh SOFTWARE ATTRIBUTES
+An attribute is a dotted name like a bundle id, lower-case by convention,
 that names a privilege to reach an endpoint.
-A provider gates an endpoint by listing the anointments a connecting program
+A provider gates an endpoint by listing the attributes a connecting program
 must hold in that entry's
 .Va requires ;
 with several names, all of them are needed.
-A program declares the anointments it holds in its top-level
-.Va holds
+A program declares the attributes it holds in its top-level
+.Va attributes
 list.
 .Nm
 compares the two at lookup, after the existing domain rules: a requester whose
@@ -413,41 +414,22 @@ An endpoint without
 is open: anyone the domain rules let see the name may connect, exactly as
 before this key existed.
 A unit without
-.Va holds
+.Va attributes
 holds nothing and can still reach every open endpoint.
 The wildcard
 .Dq *
-is not a valid name in either list of a bundle policy file (manifest); it is
-legal only in the auth agent's principal policy, which decides what a login
-session holds.
+is not a valid software attribute.
+The old
+.Va holds
+key is accepted as an upgrade alias for
+.Va attributes ;
+a manifest containing both is rejected.
 .Pp
-A gated endpoint is visible to any unit or session whose set covers it,
-regardless of the provider's
-.Va visible :
-the provider gated it, so it said who may reach it.
-Open endpoints keep the
-.Va visible
-rule.
-.Pp
-A login session has no policy file.
-Its set is fixed when
-.Xr login 1 ,
-.Xr su 1
-or
-.Xr sshd 8
-asks the auth agent for the session channel, from the principal policy in
-.Pa /Capabilities/Config/principal-policy.ucl ,
-and every process under the session shares it; a bundle launched from a shell
-does not inherit it but starts with its own policy-file set.
-The same policy decides, separately from reach, whether connections from the
-session carry the administrative rights bit
-.Pq Dv SVC_RIGHTS_ADMIN
-that providers use as an in-endpoint bypass; a unit never carries it.
-The boot channel
-.Nm
-installs ahead of
-.Xr rc 8
-holds every anointment and the bypass.
+Attributes describe approved software, not the UNIX user running it.
+Logging in or changing UID does not grant capability authority.
+Discovery routes are inherited independently of authority.
+Managed applications receive executable-constrained authority; automatic
+attribution for ordinary executions is under development.
 .Nm Ns 's
 own control endpoints
 .Pq Ql system.switchboard , Ql system.lifecycle

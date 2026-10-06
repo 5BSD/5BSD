@@ -1,0 +1,6 @@
+# Temporary authority for /etc/rc and its descendants, revoked when rc exits.
+# This is separate from UNIX UID 0 and from the discovery route given to getty.
+# Keep the endpoint list explicit: boot scripts cannot obtain arbitrary services.
+endpoints = ["system.SystemExtension"];
+attributes = [];
+admin_rights = true;

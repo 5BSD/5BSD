@@ -27,6 +27,7 @@
 #include <sys/resource.h>
 #include <sys/stat.h>
 #include <sys/sysctl.h>
+#include <sys/syscall.h>
 #include <sys/wait.h>
 
 #include <dirent.h>
@@ -51,7 +52,8 @@
 
 
 #include "switchboard.h"
-#include "ambient_hygiene.h"
+#include "management.h"
+#include "authority.h"
 #include "launch_limits.h"
 #include "rc_adopt.h"
 #include "fd_budget.h"
@@ -404,15 +406,14 @@ manifest_has_env(const struct svc_manifest *m, const char *name)
  */
 static void __dead2
 child_exec(struct svc_manifest *m, int child_channel_fd,
-    int capprotect_fd, int bootstrap_fd, int discovery_fd,
+    int capprotect_fd, int bootstrap_fd, int discovery_fd, int authority_fd,
     int *token_fds, unsigned ntokens,
     int *service_fds, unsigned nservices,
     uid_t uid, gid_t gid, bool have_creds, const char *homedir,
-    gid_t *groups, int ngroups)
+    gid_t *groups, int ngroups, bool user_owned)
 {
 	char user_env[128], home_env[PATH_MAX + 8];
 	char unit_dir[PATH_MAX], unit_dir_env[PATH_MAX + 32];
-	char libdir_path[PATH_MAX], libdir_fds_env[64];
 	char config_dir_path[PATH_MAX], config_fd_env[48];
 	char dir_fds_env[1024];
 	char bootstrap_env[32];
@@ -422,10 +423,14 @@ child_exec(struct svc_manifest *m, int child_channel_fd,
 	bool have_capprotect;
 	unsigned i, envc;
 
-	/* Descendants inherit the unit's discovery scope, never boot authority. */
+	/* A managed context contains only this launch's manifest grants. */
+	if (syscall(SYS_cap_process, CAP_AUTH_INSTALL, authority_fd, 0, NULL) == -1)
+		_exit(126);
+	close(authority_fd);
+
+	/* Descendants inherit this route independently of manifest authority. */
 	if (service_clear_ambient_lookup() == -1 ||
-	    service_install_ambient_lookup_uid(discovery_fd,
-	    have_creds ? uid : getuid()) == -1)
+	    service_install_ambient_lookup(discovery_fd) == -1)
 		_exit(126);
 	close(discovery_fd);
 	tgtfd = -1;
@@ -563,6 +568,35 @@ child_exec(struct svc_manifest *m, int child_channel_fd,
 			_exit(126);
 	}
 
+	/*
+	 * Enter the per-instance runtime container as the working directory: the
+	 * unit's writable home (macOS-style app container).  Done while still
+	 * privileged so the 0700 container is enterable; relative paths and the
+	 * shell's notion of "." then resolve inside the container.  Capsicum, not
+	 * a chroot, is the confinement, so this is a chdir rather than a jail root.
+	 */
+	{
+		char container_path[PATH_MAX];
+
+		svc_run_container_path(m->label, container_path,
+		    sizeof(container_path));
+		if (chdir(container_path) == -1) {
+			dprintf(STDERR_FILENO, "switchboard: runtime container: %s\n",
+			    strerror(errno));
+			_exit(126);
+		}
+	}
+
+
+	/* User-writable bundle paths must be opened with the owner's credentials,
+	 * including Config/, resources, executable and runtime linker inputs. */
+	if (user_owned) {
+		if (!have_creds || setgroups(ngroups, groups) == -1 ||
+		    setgid(gid) == -1 || setuid(uid) == -1)
+			_exit(126);
+		have_creds = false; /* Already dropped; do not repeat below. */
+	}
+
 	/* Build minimal environment. */
 	envc = 0;
 	for (i = 0; i < m->nenvironment; i++)
@@ -594,61 +628,6 @@ child_exec(struct svc_manifest *m, int child_channel_fd,
 	    SERVICE_UNIT_DIR_ENV, unit_dir) >= (int)sizeof(unit_dir_env))
 		_exit(126);
 	env[envc++] = unit_dir_env;
-
-	/*
-	 * If the bundle ships its own shared libraries in <unit>/lib, deliver
-	 * that directory as a descriptor via LD_LIBRARY_PATH_FDS.  rtld(1)
-	 * consults it (openat, capability-mode-safe) ahead of the hint file and
-	 * the /lib defaults, so a bundle program resolves its NEEDED libraries
-	 * -- and any dlopen(3) after cap_enter(2) -- from its own bundle rather
-	 * than the global namespace.  Opt-in by the mere presence of the
-	 * directory; a unit without a lib/ is launched exactly as before.  The
-	 * descriptor is opened here, after closefrom(2), without O_CLOEXEC so it
-	 * survives execve(2); it is a read-only directory capability.  (rtld
-	 * honors LD_LIBRARY_PATH_FDS only for trusted, non-issetugid launches.)
-	 */
-	if (!manifest_has_env(m, "LD_LIBRARY_PATH_FDS")) {
-		int libfd, usrlibfd, bundlefd;
-		int off;
-
-		/*
-		 * switchboard provides the COMMON system library directories (/lib,
-		 * /usr/lib) as descriptors, once per launch, so rtld resolves the
-		 * program's NEEDED libraries by openat(2) in capability mode (the
-		 * born-in-capmode launch), never by global path.  LD_LIBRARY_PATH_FDS
-		 * is a colon-separated fd list, so a bundle does NOT duplicate
-		 * libc/libservice/...; it ships only its own private dylibs in lib/,
-		 * which is appended last when present.  Opened without O_CLOEXEC so the
-		 * descriptors survive fexecve(2).
-		 */
-		libfd = open("/lib", O_DIRECTORY | O_RDONLY);
-		usrlibfd = open("/usr/lib", O_DIRECTORY | O_RDONLY);
-		if (libfd >= 0 && usrlibfd >= 0) {
-			off = snprintf(libdir_fds_env, sizeof(libdir_fds_env),
-			    "LD_LIBRARY_PATH_FDS=%d:%d", libfd, usrlibfd);
-			if (off > 0 && off < (int)sizeof(libdir_fds_env) &&
-			    snprintf(libdir_path, sizeof(libdir_path), "%s/lib",
-			    unit_dir) < (int)sizeof(libdir_path) &&
-			    (bundlefd = open(libdir_path,
-			    O_DIRECTORY | O_RDONLY)) >= 0)
-				(void)snprintf(libdir_fds_env + off,
-				    sizeof(libdir_fds_env) - off, ":%d", bundlefd);
-			env[envc++] = libdir_fds_env;
-		} else {
-			/*
-			 * Asymmetric open (e.g. transient EMFILE on the second):
-			 * these dirfds have no O_CLOEXEC and would otherwise
-			 * survive fexecve(2) as stray, unadvertised, read-capable
-			 * system-library directory capabilities.  Close whichever
-			 * opened so the child reaches the filesystem only through
-			 * descriptors switchboard chose.
-			 */
-			if (libfd >= 0)
-				(void)close(libfd);
-			if (usrlibfd >= 0)
-				(void)close(usrlibfd);
-		}
-	}
 
 	/*
 	 * Deliver the unit's bundle Config/ directory as a descriptor so the
@@ -747,21 +726,6 @@ child_exec(struct svc_manifest *m, int child_channel_fd,
 
 	env[envc] = NULL;
 
-	/*
-	 * Enter the per-instance runtime container as the working directory: the
-	 * unit's writable home (macOS-style app container).  Done while still
-	 * privileged so the 0700 container is enterable; relative paths and the
-	 * shell's notion of "." then resolve inside the container.  Capsicum, not
-	 * a chroot, is the confinement, so this is a chdir rather than a jail root.
-	 */
-	{
-		char container_path[PATH_MAX];
-
-		svc_run_container_path(m->label, container_path,
-		    sizeof(container_path));
-		if (chdir(container_path) == -1)
-			_exit(126);
-	}
 
 	/*
 	 * Pre-exec resource + scheduling policy (launchd Hard/SoftResourceLimits,
@@ -865,6 +829,9 @@ child_exec(struct svc_manifest *m, int child_channel_fd,
 		argv[0]++;
 	else
 		argv[0] = m->program;
+	/* Ordinary daemons may require an absolute argv[0] for re-exec. */
+	if (m->unix_protocol)
+		argv[0] = m->program;
 	for (i = 0; i < m->narguments; i++)
 		argv[i + 1] = m->arguments[i];
 	argv[m->narguments + 1] = NULL;
@@ -883,12 +850,31 @@ child_exec(struct svc_manifest *m, int child_channel_fd,
 	 * when PT_INTERP names the brand's own fixed rtld (kern.elf64.capmode_interp,
 	 * sys/kern/imgact_elf.c), so no path the unit chose is ever resolved on its
 	 * behalf; rtld then resolves the program's NEEDED libraries from the
-	 * delivered lib-dir descriptors (LD_LIBRARY_PATH_FDS) by openat(2), never a
-	 * path.  The daemon therefore has no un-sandboxed instant: from its first
+	 * issuer-bound library directories retrieved from the kernel by openat(2),
+	 * never a global path.  The daemon therefore has no un-sandboxed instant: from its first
 	 * instruction it can only use the descriptors switchboard delivered.  Because
 	 * the kernel execs the program itself, the process carries the program's
 	 * own command name and AT_EXECPATH rather than rtld's.
 	 */
+	if (m->unix_protocol) {
+		unsigned source, dest = 0;
+		const char *const fd_vars[] = { SERVICE_BOOTSTRAP_ENV,
+		    SERVICE_CONFIG_FD_ENV, SERVICE_DIR_FDS_ENV,
+		    SERVICE_LOOKUP_ENV, "LD_LIBRARY_PATH_FDS" };
+
+		/* Keep ordinary environment, route, and context; discard bootstrap FDs. */
+		for (source = 0; env[source] != NULL; source++) {
+			bool discard = false;
+			for (i = 0; i < nitems(fd_vars); i++)
+				if (strncmp(env[source], fd_vars[i], strlen(fd_vars[i])) == 0 &&
+				    env[source][strlen(fd_vars[i])] == '=')
+					discard = true;
+			if (!discard)
+				env[dest++] = env[source];
+		}
+		env[dest] = NULL;
+		closefrom(STDERR_FILENO + 1);
+	}
 	if (m->ambient) {
 		execve(m->program, argv, env);
 		_exit(127);
@@ -915,6 +901,9 @@ int
 svc_exec(struct svc_runtime *svc, int kq)
 {
 
+	if (svc->manifest.exec_application)
+		return (errno = EOPNOTSUPP, -1);
+
 	/* An async native launch is already coming up; do not start a second. */
 	if (svc->launch != NULL) {
 		errno = EALREADY;
@@ -924,8 +913,7 @@ svc_exec(struct svc_runtime *svc, int kq)
 	 * The `ambient` flag skips the born-in-capability-mode sandbox entirely:
 	 * child_exec() execve()s the program by path with no cap_enter(2), and
 	 * handle_ready() promotes the unit to RUNNING without it ever crossing the
-	 * NOTE_CAPMODE boundary.  That is a TCB decision of the same class as
-	 * mint_authority and MUST be honored only for a veriexec-backed base-system
+	 * NOTE_CAPMODE boundary.  That is a TCB decision and MUST be honored only for a veriexec-backed base-system
 	 * bundle (System/, bundle_registry_is_system) -- an application bundle under
 	 * Apps/ that self-declares `ambient` must NOT be able to launch unconfined.
 	 * Clear it here, once, at the single launch chokepoint before any exec or
@@ -937,6 +925,19 @@ svc_exec(struct svc_runtime *svc, int kq)
 		    "base-system bundle may skip the capability-mode sandbox",
 		    svc->manifest.label);
 		svc->manifest.ambient = false;
+	}
+	/* UNIX services receive no descriptor-based bootstrap protocol. */
+	if (svc->manifest.unix_protocol &&
+	    (!svc->manifest.ambient || !bundle_registry_is_system(svc->bundle_idx) ||
+	    svc->manifest.nprovides != 0 || svc->manifest.cap_system != 0 ||
+	    svc->manifest.n_sysctl_isolate != 0 ||
+	    svc->manifest.nactivation_sockets != 0 ||
+	    svc->manifest.nresource_dirs != 0 ||
+	    svc->manifest.watchdog_interval != 0)) {
+		syslog(LOG_ERR, "svc_exec %s: unix protocol requires a system ambient "
+		    "unit without IPC publication, bootstrap capabilities, or watchdog",
+		    svc->manifest.label);
+		return (errno = EINVAL, -1);
 	}
 	switch (svc->kind) {
 	case SVC_KIND_NATIVE:
@@ -1045,7 +1046,7 @@ svc_exec_command(struct svc_runtime *svc, int kq, char *argv[], bool for_stop)
 	int ngroups = 0;
 	bool have_creds = false;
 	pid_t pid;
-	int pd_fd;
+	int pd_fd, authority_fd = -1;
 
 	/*
 	 * A start launch requires the unit be stopped/done.  A stop launch
@@ -1059,6 +1060,8 @@ svc_exec_command(struct svc_runtime *svc, int kq, char *argv[], bool for_stop)
 		    m->label, svc->state);
 		return (-1);
 	}
+	if (svc_user_manifest_credentials(svc) == -1)
+		return (-1);
 	if (command_resolve_creds(m, &uid, &gid, groups, &ngroups,
 	    &have_creds) == -1) {
 		SWITCHBOARD_PROBE_SVC_EXEC_FAIL(m->label, errno);
@@ -1074,16 +1077,30 @@ svc_exec_command(struct svc_runtime *svc, int kq, char *argv[], bool for_stop)
 	svc->coalition_fd = -1;
 	svc->control_channel = NULL;
 
+	svc->launch_id = ++svc_launch_sequence;
+	if (svc->launch_id == 0)
+		svc->launch_id = ++svc_launch_sequence;
+	if (svc->want_console && svc_authority_issue_boot(svc, &authority_fd) == -1)
+		syslog(LOG_WARNING, "rc bootstrap authority unavailable: %m");
 	pid = pdfork(&pd_fd, PD_CLOEXEC);
 	if (pid == -1) {
 		syslog(LOG_ERR, "unit %s: pdfork: %m", m->label);
 		SWITCHBOARD_PROBE_SVC_EXEC_FAIL(m->label, errno);
+		if (authority_fd >= 0) close(authority_fd);
+		svc_authority_revoke_unit(svc);
 		return (-1);
 	}
 	if (pid == 0) {
 		sigset_t mask;
 		int nullfd, lookup_fd;
-		bool drop_ambient;
+
+		if (service_authority_clear() == -1)
+			_exit(126);
+		if (authority_fd >= 0) {
+			if (service_authority_install(authority_fd) == -1)
+				_exit(126);
+			close(authority_fd);
+		}
 
 		/*
 		 * stdio.  Ordinary commands get /dev/null.  The rc bootstrap
@@ -1122,17 +1139,14 @@ svc_exec_command(struct svc_runtime *svc, int kq, char *argv[], bool for_stop)
 				(void)close(nullfd);
 		}
 		/*
-		 * Preserve the existing launch-policy decision, but carry discovery
-		 * in process state so ordinary rc programs may close all their fds.
-		 * Managed units use their separately provisioned bootstrap.
+		 * Every command receives discovery independently of its UNIX uid.
+		 * The route grants no authority: admission uses the kernel-stamped
+		 * context installed above (or anonymous admission when absent).
 		 */
-		lookup_fd = svc_exec_ambient_spare_fd(have_creds, uid,
-		    switchboard_ambient_lookup_fd, &drop_ambient);
+		lookup_fd = switchboard_ambient_lookup_fd;
 		if (service_clear_ambient_lookup() == -1 && errno != ENOSYS)
 			_exit(126);
-		if (!drop_ambient && lookup_fd >= 0 &&
-		    service_install_ambient_lookup_uid(lookup_fd,
-		    have_creds ? uid : getuid()) == -1)
+		if (lookup_fd >= 0 && service_install_ambient_lookup(lookup_fd) == -1)
 			_exit(126);
 		closefrom(STDERR_FILENO + 1);
 		(void)unsetenv(SERVICE_LOOKUP_ENV);
@@ -1166,9 +1180,9 @@ svc_exec_command(struct svc_runtime *svc, int kq, char *argv[], bool for_stop)
 		_exit(127);
 	}
 
+	if (authority_fd >= 0) close(authority_fd);
 	svc->pid = pid;
 	svc->pd_fd = pd_fd;
-	svc->launch_id++;
 	/*
 	 * A stop command runs while the unit stays SVC_STATE_STOPPING; only a
 	 * start moves it to STARTING.  The command's exit is disambiguated by
@@ -1386,20 +1400,14 @@ svc_exec_native(struct svc_runtime *svc, int kq)
 	unsigned expected_tokens, i;
 
 	m = &svc->manifest;
-	/*
-	 * Resolve the operating domain (§22) before the provider can issue any
-	 * lookup or mint over its bootstrap channel.  Set authoritatively here (not
-	 * lazily per request) so the mint escalation guard, which reads svc->domain,
-	 * sees the true scope: a USER-domain unit cannot mint (svc_domain_may_mint).
-	 */
+	/* Resolve software discovery scope before the provider starts. */
 	svc->domain.kind = svc_native_domain(svc);
 	svc->domain.uid = 0;
-	/*
-	 * The unit's anointment set is its policy file's `anointments`
-	 * (docs/book/src/plane/anointments.md), recomputed on every exec so a reload
-	 * or restart picks up the current policy.  Never "*", never ADMIN.
-	 */
-	svc_anoint_set_from_manifest(&svc->domain.anoint, m);
+	/* Recompute current software attributes at every launch. A user-owned
+	 * agent is supervised, but its writable manifest is not grant authority.
+	 * Enforce that again here so reload cannot retain a stale grant set. */
+	svc_anoint_set_from_manifest(&svc->domain.anoint,
+	    svc->owner_uid == (uid_t)-1 ? m : NULL);
 	SWITCHBOARD_PROBE_ANOINT_SET(m->label, svc->domain.anoint.n,
 	    (int)svc->domain.anoint.all, (int)svc->domain.anoint.admin_rights);
 	memset(&minted_manifest, 0, sizeof(minted_manifest));
@@ -1470,7 +1478,7 @@ svc_exec_native(struct svc_runtime *svc, int kq)
 
 	if (switchboard_fd_budget_check((size_t)expected_tokens +
 	    nlisteners +
-	    12, "service launch") == -1) {
+	    14, "service launch") == -1) {
 		saved_errno = errno;
 		syslog(LOG_ERR,
 		    "svc_exec %s: descriptor admission denied: %s",
@@ -1480,7 +1488,9 @@ svc_exec_native(struct svc_runtime *svc, int kq)
 		return (-1);
 	}
 
-	/* Resolve credentials before fork. */
+	/* Resolve credentials before fork; user bundles run as their owner. */
+	if (svc_user_manifest_credentials(svc) == -1)
+		return (-1);
 	uid = 0;
 	gid = 0;
 	ngroups = 0;
@@ -1870,6 +1880,8 @@ svc_launch_finish(struct svc_runtime *svc, int kq)
 	struct kevent kev[3];
 	int bootstrap_fd = -1;
 	int discovery_fd = -1;
+	int authority_fd = -1;
+	int launch_gate[2] = { -1, -1 };
 	int pd_fd = -1;
 	pid_t pid;
 	int saved_errno = 0;
@@ -1920,6 +1932,13 @@ svc_launch_finish(struct svc_runtime *svc, int kq)
 	if (domain_mint_unit_channel(svc, L->have_creds ? L->uid : getuid(),
 	    &discovery_fd, kq) == -1)
 		goto fail_prefork;
+	if (svc_authority_issue(L->have_creds ? L->uid : getuid(), &svc->domain, svc,
+	    &authority_fd) == -1)
+		goto fail_prefork;
+	if (svc_authority_constrain_application(svc, authority_fd) == -1) {
+		syslog(LOG_ERR, "svc_exec %s: executable authority: %m", m->label);
+		goto fail_prefork;
+	}
 	bootstrap_fd = create_service_bootstrap(m, L->ntokens, L->nservices,
 	    L->service_names, L->service_types, L->capprotect_fd >= 0);
 	if (bootstrap_fd == -1) {
@@ -1928,21 +1947,38 @@ svc_launch_finish(struct svc_runtime *svc, int kq)
 		goto fail_prefork;
 	}
 
+	/* Do not let the child run before protection and event registration. */
+	if (pipe2(launch_gate, O_CLOEXEC) == -1)
+		goto fail_prefork;
 	pid = pdfork(&pd_fd, PD_CLOEXEC);
 	if (pid == -1) {
 		syslog(LOG_ERR, "svc_exec %s: pdfork: %m", m->label);
 		goto fail_prefork;
 	}
 	if (pid == 0) {
-		child_exec(m, L->child_end, L->capprotect_fd, bootstrap_fd, discovery_fd,
+		char ready;
+		ssize_t nread;
+
+		close(launch_gate[1]);
+		do {
+			nread = read(launch_gate[0], &ready, sizeof(ready));
+		} while (nread == -1 && errno == EINTR);
+		close(launch_gate[0]);
+		if (nread != 1 || ready != 'R')
+			_exit(126);
+		child_exec(m, L->child_end, L->capprotect_fd, bootstrap_fd, discovery_fd, authority_fd,
 		    L->token_fds, L->ntokens, L->service_fds, L->nservices,
 		    L->uid, L->gid, L->have_creds,
 		    L->homedir[0] != '\0' ? L->homedir : NULL, L->groups,
-		    L->ngroups);
+		    L->ngroups, svc->owner_uid != (uid_t)-1);
 		/* NOTREACHED */
 	}
 
+	close(launch_gate[0]);
+	launch_gate[0] = -1;
 	/* Parent: the child owns its copies now. */
+	close(authority_fd);
+	authority_fd = -1;
 	close(discovery_fd);
 	discovery_fd = -1;
 	close(L->child_end);
@@ -1984,7 +2020,7 @@ svc_launch_finish(struct svc_runtime *svc, int kq)
 		    "pid %d (flags 0x%x)", m->label, (int)pid,
 		    m->protect_flags);
 	}
-	if (L->capprotect_fd >= 0) {
+	if (L->capprotect_fd >= 0 && !m->unix_protocol) {
 		close(L->capprotect_fd);
 		L->capprotect_fd = -1;
 	}
@@ -2037,13 +2073,31 @@ svc_launch_finish(struct svc_runtime *svc, int kq)
 		}
 	}
 
+	if (m->unix_protocol && L->capprotect_fd >= 0) {
+		cap_rights_t rights;
+
+		if (cap_rights_limit(L->capprotect_fd,
+		    cap_rights_init(&rights, CAP_FSTAT)) == -1 ||
+		    cap_xfer_limit(L->capprotect_fd, CAP_XFER_NONE) == -1 ||
+		    cap_clofork_limit(L->capprotect_fd, CAP_CLOFORK_LOCKED) == -1 ||
+		    cap_cloexec_limit(L->capprotect_fd, CAP_CLOEXEC_LOCKED) == -1) {
+			saved_errno = errno;
+			goto fail_postfork;
+		}
+	}
+
 	svc->pid = pid;
 	svc->pd_fd = pd_fd;
-	if (svc_channel_attach(svc, L->capsule_end) == -1) {
+	if (!m->unix_protocol && svc_channel_attach(svc, L->capsule_end) == -1) {
 		saved_errno = errno;
 		L->capsule_end = -1;
 		syslog(LOG_ERR, "svc_exec %s: control channel: %m", m->label);
 		goto fail_postfork;
+	}
+	if (m->unix_protocol) {
+		close(L->capsule_end);
+		svc->channel_fd = -1;
+		svc->control_channel = NULL;
 	}
 	L->capsule_end = -1;
 	svc->coalition_fd = L->coalition_fd;
@@ -2056,10 +2110,14 @@ svc_launch_finish(struct svc_runtime *svc, int kq)
 
 	EV_SET(&kev[0], pd_fd, EVFILT_PROCDESC, EV_ADD,
 	    NOTE_EXIT | NOTE_EXEC | NOTE_CAPMODE, 0, svc);
-	EV_SET(&kev[1], svc->channel_fd, EVFILT_READ, EV_ADD, 0, 0, svc);
-	EV_SET(&kev[2], svc->coalition_fd, EVFILT_READ, EV_ADD, 0, 0, svc);
-	if (kevent(kq, kev, 3, NULL, 0, NULL) == -1) {
-		syslog(LOG_ERR, "svc_exec %s: kevent register: %m", m->label);
+	EV_SET(&kev[1], svc->coalition_fd, EVFILT_READ, EV_ADD, 0, 0, svc);
+	EV_SET(&kev[2], svc->channel_fd, EVFILT_READ, EV_ADD, 0, 0, svc);
+	if (kevent(kq, kev, m->unix_protocol ? 2 : 3, NULL, 0, NULL) == -1 ||
+	    write(launch_gate[1], "R", 1) != 1) {
+		syslog(LOG_ERR, "svc_exec %s: launch gate or event registration: %m", m->label);
+		close(launch_gate[1]);
+		svc_authority_revoke_unit(svc);
+		domain_unit_channels_close(svc);
 		pdkill(pd_fd, SIGKILL);
 		waitpid(pid, NULL, WNOHANG);
 		capsule_release_manifest(sd.capsule_channel_fd, &L->minted);
@@ -2070,10 +2128,14 @@ svc_launch_finish(struct svc_runtime *svc, int kq)
 		svc->coalition_fd = -1;
 		svc->pid = 0;
 		svc->state = SVC_STATE_STOPPED;
+		if (L->capprotect_fd >= 0)
+			close(L->capprotect_fd);
 		free(L);
 		svc->launch = NULL;
 		return;
 	}
+	close(launch_gate[1]);
+	launch_gate[1] = -1;
 	svc_channel_sync_events(svc, kq);
 
 	syslog(LOG_INFO, "service %s: started pid %jd uid %ju gid %ju",
@@ -2110,6 +2172,12 @@ svc_launch_finish(struct svc_runtime *svc, int kq)
 		SWITCHBOARD_PROBE_SVC_EXEC_DONE(m->label, dur, L->ntokens);
 	}
 
+	if (m->unix_protocol && L->capprotect_fd >= 0) {
+		svc->protection_lease = L->capprotect_fd;
+		svc->have_protection_lease = true;
+		L->capprotect_fd = -1;
+	}
+
 	/* Launch context is spent; the descriptors it carried now live on the
 	 * child, svc->control_channel, and svc->coalition_fd. */
 	free(L);
@@ -2134,6 +2202,13 @@ svc_launch_finish(struct svc_runtime *svc, int kq)
 
 fail_prefork:
 	saved_errno = errno;
+	if (launch_gate[0] >= 0)
+		close(launch_gate[0]);
+	if (launch_gate[1] >= 0)
+		close(launch_gate[1]);
+	if (authority_fd >= 0)
+		close(authority_fd);
+	svc_authority_revoke_unit(svc);
 	if (discovery_fd >= 0)
 		close(discovery_fd);
 	syslog(LOG_ERR, "svc_exec %s: child descriptor confinement: %m",
@@ -2144,6 +2219,9 @@ fail_prefork:
 	return;
 
 fail_postfork:
+	if (launch_gate[1] >= 0)
+		close(launch_gate[1]);
+	svc_authority_revoke_unit(svc);
 	SWITCHBOARD_PROBE_SVC_EXEC_FAIL(m->label, saved_errno);
 	pdkill(pd_fd, SIGKILL);
 	waitpid(pid, NULL, WNOHANG);

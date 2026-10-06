@@ -231,33 +231,48 @@ release_auto_claim_vsock(const struct ort_vsock_claim *vc)
 	    new_refcount, 0);
 }
 
+/* Commit reference changes only after the kernel accepts the gate release. */
+static int
+release_system_references(uint32_t gates, bool sweep, uint32_t *released)
+{
+	uint32_t bits = 0;
+	unsigned bit;
+
+	*released = 0;
+	gates &= od.cfg.claim_system_service & ~od.cfg.claim_system_policy;
+	for (bit = 0; bit < CAPSULE_SYSTEM_GATE_NBITS; bit++) {
+		if ((gates & (1U << bit)) == 0 ||
+		    od.cfg.claim_system_refcount[bit] == 0)
+			continue;
+		if (sweep || od.cfg.claim_system_refcount[bit] == 1)
+			bits |= 1U << bit;
+	}
+	if (bits != 0 && mac_capability_release_system_gates(bits) == -1)
+		return (-1);
+	for (bit = 0; bit < CAPSULE_SYSTEM_GATE_NBITS; bit++) {
+		if ((gates & (1U << bit)) == 0 ||
+		    od.cfg.claim_system_refcount[bit] == 0)
+			continue;
+		if (sweep)
+			od.cfg.claim_system_refcount[bit] = 0;
+		else
+			od.cfg.claim_system_refcount[bit]--;
+	}
+	od.cfg.claim_system &= ~bits;
+	od.cfg.claim_system_service &= ~bits;
+	*released = bits;
+	return (0);
+}
+
 void
 release_auto_claim_system(uint32_t gates)
 {
-	uint32_t release_bits;
-	unsigned bit;
+	uint32_t released;
+	int error;
 
-	release_bits = 0;
-	for (bit = 0; bit < CAPSULE_SYSTEM_GATE_NBITS; bit++) {
-		if (!(gates & (1U << bit)))
-			continue;
-		if (od.cfg.claim_system_policy & (1U << bit))
-			continue;
-		if (!(od.cfg.claim_system_service & (1U << bit)))
-			continue;
-		if (od.cfg.claim_system_refcount[bit] == 0)
-			continue;
-		od.cfg.claim_system_refcount[bit]--;
-		if (od.cfg.claim_system_refcount[bit] == 0)
-			release_bits |= (1U << bit);
-	}
-
-	if (release_bits != 0) {
-		mac_capability_release_system_gates(release_bits);
-		od.cfg.claim_system &= ~release_bits;
-		od.cfg.claim_system_service &= ~release_bits;
-	}
-	CAPSULE_PROBE_DYN_RELEASE_SYSTEM(gates, release_bits, 0);
+	error = release_system_references(gates, false, &released) == -1 ?
+	    errno : 0;
+	CAPSULE_PROBE_DYN_RELEASE_SYSTEM(gates, released, error);
 }
 
 /* --- Explicit claim handlers --- */
@@ -376,7 +391,7 @@ handle_release_system(const void *payload, uint32_t len, uint64_t reply_token)
 {
 	const struct capsule_system_req *req;
 	uint32_t gates, release_bits;
-	unsigned bit;
+	int error;
 
 	if (len != sizeof(*req)) {
 		proto_reply(EINVAL, reply_token, NULL, 0);
@@ -425,25 +440,16 @@ handle_release_system(const void *payload, uint32_t len, uint64_t reply_token)
 		return;
 	}
 
-	release_bits = 0;
-	for (bit = 0; bit < CAPSULE_SYSTEM_GATE_NBITS; bit++) {
-		if (!(gates & (1U << bit)))
-			continue;
-		if (od.cfg.claim_system_refcount[bit] == 0)
-			continue;
-		od.cfg.claim_system_refcount[bit]--;
-		if (od.cfg.claim_system_refcount[bit] == 0)
-			release_bits |= (1U << bit);
+	if (release_system_references(gates, false, &release_bits) == -1) {
+		error = errno;
+		CAPSULE_PROBE_DYN_RELEASE_SYSTEM(req->gates, 0, error);
+		proto_reply(error, reply_token, NULL, 0);
+		return;
 	}
-
-	if (release_bits != 0) {
-		mac_capability_release_system_gates(release_bits);
-		od.cfg.claim_system &= ~release_bits;
-		od.cfg.claim_system_service &= ~release_bits;
+	if (release_bits != 0)
 		syslog(LOG_INFO,
 		    "capsule_proto: released dynamic system gates 0x%x",
 		    release_bits);
-	}
 
 	CAPSULE_PROBE_DYN_RELEASE_SYSTEM(req->gates, release_bits, 0);
 	proto_reply(0, reply_token, NULL, 0);
@@ -499,22 +505,11 @@ sweep_dynamic_claims(void)
 		}
 	}
 
-	release_gates = 0;
-	for (i = 0; i < CAPSULE_SYSTEM_GATE_NBITS; i++) {
-		if (od.cfg.claim_system_refcount[i] > 0 &&
-		    !(od.cfg.claim_system_policy & (1U << i))) {
-			release_gates |= (1U << i);
-			od.cfg.claim_system_refcount[i] = 0;
-		}
-	}
-	if (release_gates != 0) {
-		mac_capability_release_system_gates(release_gates);
-		od.cfg.claim_system &= ~release_gates;
-		od.cfg.claim_system_service &= ~release_gates;
+	if (release_system_references(UINT32_MAX, true, &release_gates) == 0 &&
+	    release_gates != 0)
 		syslog(LOG_INFO,
 		    "capsule_proto: sweep released system gates 0x%x",
 		    release_gates);
-	}
 
 	/* Drop the standing scoped SYSCTL claim (Phase 2), if any. */
 	mac_capability_sweep_system_sysctl();

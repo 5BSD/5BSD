@@ -3,7 +3,6 @@
 SUBDIR=	adduser \
 	arp \
 	BSDAudit \
-	BSDAuth \
 	binmiscctl \
 	boottrace \
 	bsdconfig \

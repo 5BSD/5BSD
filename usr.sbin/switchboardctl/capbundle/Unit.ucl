@@ -1,0 +1,3 @@
+program = "switchboardctl";
+activation { exec = true; }
+attributes = ["system.switchboard.admin"];

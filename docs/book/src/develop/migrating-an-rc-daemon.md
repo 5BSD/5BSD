@@ -52,7 +52,7 @@ $ switchboardctl services
 What breaks: nothing. The daemon still binds its socket, still checks uids,
 still logs to syslog. What it gains is restart on crash and an operator
 surface (`switchboardctl stop exampled`, which needs the
-`system.switchboard.admin` anointment). A name absent from `/etc/rc.d` is not
+`system.switchboard.admin` software attribute). A name absent from `/etc/rc.d` is not
 an error; the list is fail-soft. Details in
 [rc and service(8)](../compat/rc-and-service.md).
 
@@ -231,7 +231,7 @@ What breaks, and the fix for each:
 |---|---|---|
 | `syslog(3)` | `/var/run/log` is a path; the send fails silently | `logcmp_log(3)`; stderr goes to `/var/log/capability.log` |
 | `open("/etc/...")`, `fopen()` | no path lookups after the seal | the four sources above |
-| `getpwnam(3)`, `getgrnam(3)` | NSS reads `/etc/passwd` by path | resolve before the seal, or as BSDAuth does, read the files through an isolated open and parse them |
+| `getpwnam(3)`, `getgrnam(3)` | NSS reads `/etc/passwd` by path | resolve before the seal, or use an explicitly authorized isolated open and parse the required records |
 | `localtime(3)` first use | opens `/etc/localtime` | `tzset()` before the seal (the worker helper does it) |
 | `res_query(3)`, `getaddrinfo(3)` | `/etc/resolv.conf` and sockets with addresses | `libnetworkcmp`: the broker resolves and connects |
 | `socket()` + `bind()` on a UNIX path | a path | a channel; or a `socket` activation entry and `service_activation_socket(3)` for a listener switchboard binds |

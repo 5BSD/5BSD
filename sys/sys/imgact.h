@@ -87,6 +87,7 @@ struct image_params {
 #define IMGACT_BINMISC	0x2
 	unsigned char interpreted;	/* mask of interpreters that have run */
 	bool credential_setid;		/* true if becoming setid */
+	bool authority_setid;		/* secure software-authority exec */
 	bool vmspace_destroyed;		/* we've blown away original vm space */
 	bool opened;			/* we have opened executable vnode */
 	bool textset;

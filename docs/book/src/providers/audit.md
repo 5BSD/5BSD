@@ -78,8 +78,7 @@ with a 16-byte `auditcmp_msg` (magic, opcode, flags, status).
 
 The event number is not on the wire in either direction. The daemon's
 compiled table (`usr.sbin/BSDAudit/auditcmp_policy.c`) maps the bundle-id
-part of the caller's label to one event, refined for BSDAuth by the first
-path component of `operation`:
+part of the caller's label to its admitted event:
 
 | Caller | Operation prefix | Event |
 |---|---|---|
@@ -87,8 +86,6 @@ path component of `operation`:
 | `system.Network` | any | `AUE_NETWORKCMP_POLICY` (43329) |
 | `system.Notify` | any | `AUE_BSDNOTIFY_POLICY` (43333) |
 | `system.Crypto` | any | `AUE_CRYPTOCMP_POLICY` (43334) |
-| `system.Auth` | `elevate/` | `AUE_AUTHAGENT_ELEVATE` (43335) |
-| `system.Auth` | `mint/` | `AUE_AUTHAGENT_MINT` (43336) |
 
 A per-operation provider whose operation matches no prefix keeps its
 admission event, so a record is never dropped for its operation text.
@@ -130,9 +127,8 @@ audit_decision(const char *client_label, const char *op, int error)
 }
 ```
 
-The pattern is the one BSDAuth uses: it opens its audit session on the
-first record, commits each record after the reply it describes has been
-sent, and drops records with a warning while `system.Audit` is unreachable.
+A client can open its audit session on the first record, record completed
+operations, and report failures while `system.Audit` is unreachable.
 An audit failure never widens a grant and never fails the caller's own
 request.
 
@@ -140,7 +136,7 @@ request.
 
 There is no ctl tool. The reader side is the stock OpenBSM tooling: `praudit
 /var/audit/current` shows the committed records, and `auditreduce -m
-43335` selects one event class. A submitter's own counters are available
+43331` selects the log-policy event class. A submitter's own counters are available
 through `auditcmp_stats(3)`; nothing on the command line submits a record
 by hand, which is the point.
 
@@ -183,7 +179,7 @@ timezone and NLS data before `cap_enter(2)`, and libbsm tolerating
 runs as root, which the inventory lists among the providers that have not
 yet moved to a gate-based launch as user `capability`. The BSDAudit(8)
 manual page names four accepted identities (CryptoCmp, NetworkCmp, LogCmp,
-Notify); the compiled table also carries the two `system.Auth` entries.
+Notify). The retired Auth identity has no admission entry.
 Whether BSM audit is enabled by default in a shipped installation, as
 opposed to the test rig, is recorded as a product decision still to be
 taken. There is no ctl tool and no plan for one.

@@ -2397,7 +2397,7 @@ lomac_vnode_check_link(struct ucred *cred, struct vnode *dvp,
 
 static int
 lomac_vnode_check_mmap(struct ucred *cred, struct vnode *vp,
-    struct label *vplabel, int prot, int flags)
+    struct label *vplabel, int prot, int flags, int maxprot __unused)
 {
 	struct mac_lomac *subj, *obj;
 

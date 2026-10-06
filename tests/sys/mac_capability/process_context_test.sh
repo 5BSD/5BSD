@@ -7,7 +7,7 @@ require_context()
 atf_test_case lifecycle
 lifecycle_head()
 {
- atf_set descr "Kernel discovery reference lifetime, exec, UID isolation and attenuation"
+ atf_set descr "Kernel discovery reference lifetime, exec, UID transitions and attenuation"
  atf_set require.user root
  atf_set timeout 120
 }

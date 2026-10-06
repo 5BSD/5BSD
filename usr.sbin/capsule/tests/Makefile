@@ -62,4 +62,10 @@ CFLAGS.capsule_lifecycle_test+=	-I${SRCTOP}/lib/libcapsulert
 ATF_TESTS_C+=	capsule_plane_test
 CFLAGS.capsule_plane_test+=	-I${SRCTOP}/usr.sbin/capsule
 
+ATF_TESTS_C+= system_release_test
+CFLAGS.system_release_test+= -I${SRCTOP}/sys -I${SRCTOP}/usr.sbin/capsule
+CFLAGS.system_release_test+= -I${SRCTOP}/lib/libcapsulert -I${SRCTOP}/lib/libcapbundle
+CFLAGS.system_release_test+= -ffunction-sections -fdata-sections
+LDFLAGS.system_release_test+= -Wl,--gc-sections
+
 .include <bsd.test.mk>

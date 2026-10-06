@@ -998,42 +998,20 @@ descriptors remain library-owned and are closed.
 .Fn service_session_close
 cancels active waiters, closes queued event descriptors, and consumes the
 session.
-.Sh LOGIN SESSIONS
-A session leader
-.Po
-.Xr login 1 ,
-.Xr su 1 ,
-the
-.Xr sshd 8
-session child
-.Pc
-obtains its narrowed lookup channel from the auth agent and installs it with
-.Fn service_install_ambient_lookup ,
-which stores a held reference in kernel process state across fork and exec.
-Descriptor cleanup and environment changes do not remove that reference.
-The library obtains an owned descriptor when it needs to perform discovery.
-A USER-domain session channel is paired switchboard-side with a session
-coalition, an attribution-only
-.Xr mac_capability_coalition 4
-that stands for the login session.
-.Fn service_session_join_coalition
-asks for it over the channel and joins the calling process, so the shell and
-everything it starts carry the session's coalition id
-.Po
-.Xr ps 1
-.Fl o Cm coal ,
-.Xr procstat 1
-.Cm coalition
-.Pc
-and units activated on the session's behalf are recorded as responsible to it.
-Call it before forking anything, and treat failure as informational:
-.Er ENOENT
-means the channel carries no session coalition (a SYSTEM channel),
-.Er EBUSY
-that the caller is already a coalition member (a
-.Xr su 1
-from a login shell stays attributed to the login session).
-.Ss Process discovery and UNIX login providers
+.Sh PROCESS CONTEXT AND ATTRIBUTION
+UNIX login providers establish UNIX credentials without issuing software
+attributes or replacing the discovery channel for each account.
+Software authority comes from the approved executable and is independent
+of session coalition membership.
+.Fn service_session_join_fd
+joins through the supplied coalition descriptor; the caller retains ownership
+of that descriptor.
+The kernel atomically moves inherited or self-joined membership.
+Explicit procdesc enlistment remains pinned.
+A failed move leaves previous membership intact.
+Forked processes inherit the session coalition.
+Coalition membership does not grant software authority.
+.Ss Process discovery and software authority
 The kernel holds the process discovery reference independently of its
 file descriptor table and environment.
 Fork inherits the reference; exec retains it.
@@ -1048,24 +1026,27 @@ consume one another's replies.
 .Fn service_install_ambient_lookup
 retains a reference to an existing channel and leaves ownership of the
 supplied descriptor with the caller.
-.Fn service_install_ambient_lookup_uid
-binds the reference to an explicit target real UID for a trusted login
-provider that has not yet dropped credentials.
-Neither operation creates grants: BSDAuth selects them when minting a session.
-UID 0 alone does not authorize minting.
+Discovery installation does not grant permissions.
+SwitchBoard resolves the actual sender's software authority from kernel-stamped
+metadata and checks its attributes against the requested endpoint.
+Possessing a discovery route or running as UID 0 does not supply attributes.
+Approved ordinary executables acquire their own authority through the kernel
+executable catalogue; managed applications receive constrained authority at
+launch.
 .Pp
-An unprovisioned real-UID or prison transition denies access to the old
-context; a temporary effective-UID change retains the session principal.
-Trusted login providers clear inherited provider authority before installing
-the authenticated user's scoped channel.
+UNIX UID changes do not change the software's attributes.
+An incompatible prison transition invalidates authority, and exec into an
+unrelated image does not preserve the previous image's privileges.
+Fork preserves the permitted context.
+The discovery route remains independent of these authority checks.
 .Fn service_clear_ambient_lookup
-clears the caller's context and affects future inheritance.
-It does not revoke previously issued descriptors or contexts already held
-by other processes.
-Stale environment variables cannot restore a cleared context.
+clears the caller's discovery reference and affects future inheritance.
+It does not revoke previously issued descriptors or authority.
+Stale environment variables cannot restore a cleared reference.
 .Pp
-An application may fork, install a channel it already possesses in the child,
-and exec the child program. The child's descendants inherit that selection.
+An application may fork, install a channel it possesses in the child,
+and exec the child program.
+The child's descendants inherit that selection.
 Enforced descriptor fork/exec restrictions cannot be bypassed by installation.
 Returned context handles retain Capsicum rights and cannot be transferred.
 .Pp

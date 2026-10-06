@@ -27,9 +27,8 @@ FreeBSD habits still hold.
 3. [rc and service(8)](../compat/rc-and-service.md), because switchboard now
    runs `/etc/rc` and adopts cron, and `service(8)` behaves accordingly.
 4. [Sessions: login, su, ssh and cron](../compat/sessions.md) and
-   [Anointments and Principal Policy](../plane/anointments.md), because
-   `/Capabilities/Config/principal-policy.ucl` decides what a login holds and
-   anoint(1) replaces sudo.
+   [Software Attributes](../plane/attributes.md), for the separation of
+   ordinary UNIX authentication, inherited discovery and software authority.
 5. [The Management Model](../plane/management-model.md), for what root can
    and cannot stop, and why a CORE unit resists it.
 6. [Observability](../operations/observability.md) and
@@ -162,7 +161,7 @@ document can map it. A chapter never uses a superseded name in prose.
 **Paths.** A path in backticks, such as `usr.sbin/switchboard/startup.c`, is
 relative to the top of the source tree unless it begins with `/`, in which
 case it is a path on an installed system, such as
-`/Capabilities/Config/principal-policy.ucl`. When a chapter cites a source
+`/Capabilities/Config/bsdfilesystem.ucl`. When a chapter cites a source
 file it is inviting you to read it; the book does not paraphrase what a
 header states.
 

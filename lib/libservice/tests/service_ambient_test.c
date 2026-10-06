@@ -60,8 +60,7 @@ create_channel_pair(int *client_end, int *switchboard_end)
  */
 enum responder_mode {
 	RESP_LOOKUP = 0,
-	RESP_ENOTSUP = 1,
-	RESP_MINT_CAPTURE = 2
+	RESP_ENOTSUP = 1
 };
 
 struct responder {
@@ -69,10 +68,7 @@ struct responder {
 	enum responder_mode	 mode;
 	pthread_t		 thread;
 	volatile int		 stop;
-	/* RESP_MINT_CAPTURE: the fields of the last SVC_OP_MINT_DOMAIN seen. */
-	volatile int		 mint_seen;
-	uint32_t		 mint_uid;
-	uint32_t		 mint_domain;
+
 };
 
 static void
@@ -84,30 +80,6 @@ responder_request(struct channel *ch, struct channel_message *req, void *ctx)
 	(void)ch;
 	if (channel_message_length(req) >= sizeof(op))
 		memcpy(&op, channel_message_data(req), sizeof(op));
-	if (op == SVC_OP_MINT_DOMAIN && r->mode == RESP_MINT_CAPTURE) {
-		struct svc_mint_domain_req mreq;
-		struct svc_reply rep = { .status = 0 };
-
-		/*
-		 * Capture the wire request so the test can assert which domain
-		 * field service_mint_session_domain() transmitted, then reply
-		 * with no attached fd — the client fails EBADMSG after the round
-		 * trip, which is irrelevant to what we are checking here.
-		 */
-		if (channel_message_length(req) >= sizeof(mreq)) {
-			memcpy(&mreq, channel_message_data(req), sizeof(mreq));
-			r->mint_uid = mreq.uid;
-			r->mint_domain = mreq.domain;
-			r->mint_seen = 1;
-		}
-		(void)channel_send_reply(req, &(struct channel_outgoing){
-			.size = sizeof(struct channel_outgoing),
-			.data = &rep,
-			.length = sizeof(rep),
-		});
-		channel_message_free(req);
-		return;
-	}
 	if (op == SVC_OP_AMBIENT_HELLO && r->mode == RESP_LOOKUP) {
 		struct svc_ambient_hello_reply rep = {
 			.status = 0,
@@ -268,87 +240,6 @@ ATF_TC_BODY(wrong_protocol_fails_closed, tc)
 	close(client);
 }
 
-ATF_TC_WITHOUT_HEAD(mint_session_domain_rejects_bad_kind);
-ATF_TC_BODY(mint_session_domain_rejects_bad_kind, tc)
-{
-	int out = -1;
-
-	/*
-	 * An out-of-range kind is rejected with EINVAL before any channel work,
-	 * so it never coerces to a scope the caller did not ask for.  The kind is
-	 * validated ahead of touching syschan, so a harmless fd (0) suffices and
-	 * this case needs no device.
-	 */
-	errno = 0;
-	ATF_CHECK_EQ(-1, service_mint_session_domain(0, (enum service_mint_kind)7,
-	    1001, &out));
-	ATF_CHECK_EQ(EINVAL, errno);
-	ATF_CHECK_EQ(-1, out);
-}
-
-/*
- * Drive service_mint_session_domain() against the
- * capture responder and assert the wire `domain` field carried the expected
- * value.  Gated on the channel device.
- */
-static void
-check_mint_transmits_domain(const atf_tc_t *tc, enum service_mint_kind kind,
-    uid_t uid, uint32_t expect_domain)
-{
-	struct responder r;
-	int client_end, switchboard_end, out;
-
-	(void)tc;
-	if (create_channel_pair(&client_end, &switchboard_end) == -1)
-		atf_tc_skip("mac_capability channel device unavailable");
-	ATF_REQUIRE_EQ(0, responder_start(&r, switchboard_end, RESP_MINT_CAPTURE));
-
-	/*
-	 * The mint reply carries no fd, so the client returns -1 (EBADMSG); the
-	 * value under test is the captured request, read after responder_stop()
-	 * joins the pump thread (happens-before).
-	 */
-	out = -1;
-	(void)service_mint_session_domain(client_end, kind, uid, &out);
-
-	responder_stop(&r);
-
-	ATF_CHECK_EQ(1, r.mint_seen);
-	ATF_CHECK_EQ(expect_domain, r.mint_domain);
-	ATF_CHECK_EQ((uint32_t)uid, r.mint_uid);
-	if (out >= 0)
-		close(out);
-	close(client_end);
-}
-
-ATF_TC(mint_session_domain_user_sets_wire_user);
-ATF_TC_HEAD(mint_session_domain_user_sets_wire_user, tc)
-{
-
-	atf_tc_set_md_var(tc, "descr",
-	    "SERVICE_MINT_USER transmits domain == SVC_MINT_DOMAIN_USER");
-}
-ATF_TC_BODY(mint_session_domain_user_sets_wire_user, tc)
-{
-
-	check_mint_transmits_domain(tc, SERVICE_MINT_USER, 1001,
-	    SVC_MINT_DOMAIN_USER);
-}
-
-ATF_TC(mint_session_domain_system_sets_wire_system);
-ATF_TC_HEAD(mint_session_domain_system_sets_wire_system, tc)
-{
-
-	atf_tc_set_md_var(tc, "descr",
-	    "SERVICE_MINT_SYSTEM transmits domain == SVC_MINT_DOMAIN_SYSTEM");
-}
-ATF_TC_BODY(mint_session_domain_system_sets_wire_system, tc)
-{
-
-	check_mint_transmits_domain(tc, SERVICE_MINT_SYSTEM, 0,
-	    SVC_MINT_DOMAIN_SYSTEM);
-}
-
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -356,8 +247,5 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, non_channel_install_rejected);
 	ATF_TP_ADD_TC(tp, context_holds_reference);
 	ATF_TP_ADD_TC(tp, wrong_protocol_fails_closed);
-	ATF_TP_ADD_TC(tp, mint_session_domain_rejects_bad_kind);
-	ATF_TP_ADD_TC(tp, mint_session_domain_user_sets_wire_user);
-	ATF_TP_ADD_TC(tp, mint_session_domain_system_sets_wire_system);
 	return (atf_no_error());
 }

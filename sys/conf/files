@@ -5347,6 +5347,7 @@ dev/mac_capability/mac_capability_dev.c		standard
 dev/mac_capability/mac_capability_kern.c	standard
 dev/mac_capability/mac_capability_label.c	standard
 dev/mac_capability/mac_capability_process.c	standard
+dev/mac_capability/mac_capability_authority.c	standard
 dev/mac_capability/mac_capability_system.c	standard
 dev/mac_capability/mac_capability_identity.c	standard
 dev/mac_capability/mac_capability_channel.c	standard

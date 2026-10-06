@@ -216,27 +216,21 @@ HTTP/1.0 200 OK
 ...
 ```
 
-Nothing was sealed: the process holds the ambient authority of the login,
-as any BSD program does. What changed is discovery. A login session inherits
-a lookup channel that `login(1)`, `su(1)` or `sshd(8)` had `system.Auth` mint
-for the principal and installs it in kernel process state; `service_open()`
-finds no managed-unit bootstrap, so it resolves through
+This ordinary process retains its UNIX environment. The kernel-held discovery
+route is inherited without login, SSH or `su` minting a user-specific channel.
+Without a managed-unit bootstrap, `service_open()` uses
 `service_connect_ambient(3)`. Each lookup handle registers a private reply
 channel so concurrent clients and sibling processes cannot consume one
-another's replies. The two paths differ in
-one respect the program must accept: `service_acquire()` fails with `EBADF`
-from a shell, so `spool_open()` logs "no switchboard context" and the spool is
-skipped; storage is a per-unit container, and a shell process is not a unit.
+another's replies. Per-unit storage still requires a managed-unit context;
+being an ordinary client does not allocate a managed storage container.
 
-Whether the lookup succeeds depends on the session's domain. An admin login
-(a principal with `admin_rights` in `principal-policy.ucl`) holds a SYSTEM
-channel and resolves `system.Network`; an ordinary user's session holds a
-USER channel and gets `ENOENT`, indistinguishable from an unregistered name,
-so `netlog` logs "system.Network unavailable" and retries until it gives up.
-That is not a bug in the program; it is the policy in
-[Discovery and the Lookup Channel](../plane/discovery-and-lookup.md) doing its
-job. A program that wants to know which path it is on can call
-`service_connect_ambient()` directly and treat the answer as a probe.
+Protected endpoint admission depends on the executable's registered software
+attributes. An unregistered copy of this client does not acquire attributes
+from the user's shell, UID or wheel membership. Package an approved exec entry
+with the required attributes when distributing a client for a protected
+endpoint; see [Software Attributes](../plane/attributes.md). A service may
+apply further operation checks after admission. Clients must handle denial as
+well as temporary service unavailability.
 
 ## Checklist
 

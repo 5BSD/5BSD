@@ -1,48 +1,46 @@
 .\" SPDX-License-Identifier: BSD-2-Clause
-.Dd October 3, 2026
+.Dd October 5, 2026
 .Dt POLICYCTL 8
 .Os
 .Sh NAME
 .Nm policyctl
-.Nd validate and inspect capability principal policy
+.Nd create and inspect software attribute policy
 .Sh SYNOPSIS
 .Nm
 .Cm init
+.Ar program
+.Op Ar attribute ...
 .Nm
-.Cm validate | format
-.Ar file
-.Nm
-.Cm explain
-.Ar file user
+.Cm validate | explain
+.Ar bundle.cap
 .Sh DESCRIPTION
 .Nm
-uses the same principal-policy parser as BSDAuth.
+uses the bundle parser and verifier used by SwitchBoard.
 .Cm init
-prints an empty, least-privilege policy suitable for editing.
+prints an exec-only Unit.ucl for a program basename and zero or more attributes.
+It validates all arguments before emitting output.
+Place this policy beside the unit's
+.Pa bin/program
+and declare the unit in the bundle's Bundle.ucl.
 .Cm validate
-checks the complete document, including entries that do not match a user.
-.Cm format
-prints the validated document as JSON, preserving policy entry order.
+parses and verifies the complete bundle.
 .Cm explain
-prints the grants for a named account using the current system's user and
-group databases; it does not inspect a running session or change authority.
-For an offline boot environment, run it within that environment so account
-resolution uses the matching databases.
+performs the same checks and prints JSON containing each unit's label,
+exec activation flag, attributes, and published endpoints with their
+requirements.
 .Pp
-Input must be a bounded regular file; symbolic links are refused.
-Validation checks syntax and schema, not ownership, executable integrity,
-boot selection, or whether requested endpoints exist.
-.Pp
-Persistent principal policy is loaded into an immutable snapshot by BSDAuth
-at startup.
-Editing or replacing its file does not revoke existing grants or
-change the loaded snapshot.
-Stage policy with its matching system in an
-inactive boot environment and reboot to activate it.
+These commands operate on files, without contacting SwitchBoard or resolving
+UNIX users or groups.
+They do not install policy or grant authority.
+Validation does not prove that executable contents are signed, that runtime
+admission will succeed, or that a bundle has been activated.
+Use
+.Xr switchboardctl 8
+for static cross-bundle coverage and authorized runtime reloads.
 .Sh EXIT STATUS
 .Ex -std
-Invalid policy or an unavailable account returns 2.
+Invalid policy or invalid policy arguments return 2.
 Invalid command usage returns 64.
 .Sh SEE ALSO
-.Xr bectl 8 ,
-.Xr BSDAuth 8
+.Xr libcapbundle 3 ,
+.Xr switchboardctl 8

@@ -668,7 +668,7 @@ typedef int	(*mpo_vnode_check_lookup_t)(struct ucred *cred,
 		    struct componentname *cnp);
 typedef int	(*mpo_vnode_check_mmap_t)(struct ucred *cred,
 		    struct vnode *vp, struct label *label, int prot,
-		    int flags);
+		    int flags, int maxprot);
 typedef void	(*mpo_vnode_check_mmap_downgrade_t)(struct ucred *cred,
 		    struct vnode *vp, struct label *vplabel, int *prot);
 typedef int	(*mpo_vnode_check_mprotect_t)(struct ucred *cred,
@@ -1325,7 +1325,7 @@ struct mac_policy_conf {
  *   8                       16.x (vsock provider ownership hooks)
  *   9                       16.x (vnode_execve_relabel hooks)
  */
-#define	MAC_VERSION	9
+#define	MAC_VERSION	10
 
 #define	MAC_POLICY_SET(mpops, mpname, mpfullname, mpflags, privdata_wanted) \
 	static struct mac_policy_conf mpname##_mac_policy_conf = {	\

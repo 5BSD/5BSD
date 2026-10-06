@@ -41,6 +41,14 @@
 struct switchboard_state sd;
 int switchboard_kq = -1;
 
+/* These lifecycle fixtures issue no grants; real revocation is VM-tested. */
+void
+svc_authority_revoke_unit(const struct svc_runtime *svc)
+{
+	ATF_REQUIRE_EQ(svc->domain.authority_identity, 0);
+}
+
+
 /*
  * Leaf switchboard symbols owned by other translation units.  The idle
  * lifecycle paths under test reach these only on branches that are inert in
@@ -182,7 +190,7 @@ svc_slot_apply_bundle_policy(struct svc_runtime *svc, unsigned bundle_idx)
  * so tests can assert the requester was threaded through.
  */
 static const struct svc_runtime *resp_last_requester;
-static const struct svc_lookup_channel *resp_last_session;
+static const struct svc_domain *resp_last_session;
 static unsigned resp_decide_calls;
 
 /*
@@ -196,7 +204,7 @@ static uid_t resp_stub_uid;
 void
 svc_responsibility_decide(struct svc_runtime *unit,
     const struct svc_runtime *requester,
-    const struct svc_lookup_channel *session)
+    const struct svc_domain *session)
 {
 
 	resp_last_requester = requester;

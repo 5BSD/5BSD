@@ -31,7 +31,7 @@ What lives in `runtime` versus its own package is a deliberate split:
 | `bsdaudit`, `bsdauth`, `bsdcrypto`, `bsddevice`, `bsdlog`, `bsdnetwork`, `bsdnotify`, `bsdtrace-provider`, `bluetooth` | providers with their `.cap` bundles (`bsdtrace-provider` is the BSDTrace daemon, distinct from the `bsdtrace` Intel PT tool) |
 | `libservice`, `libcapbundle`, `libcapsulert`, `libcapreclaim`, `libcapability`, `libchannel`, `libshmring`, `libcryptodesc`, `lib*cmp`, `libnotify` | the plane's libraries |
 | `oes`, `mac-abac`, `hwtlm`, `bsdinstruments`, `bsdtrace` | security and observability tools |
-| `runtime` | BSDFilesystem, BSDPower, BSDTime, BSDExtension, BSDNamespace and BSDVM, plus anoint(1) and reclaimstat(8): the providers a system cannot boot or reclaim without |
+| `runtime` | BSDFilesystem, BSDPower, BSDTime, BSDExtension, BSDNamespace and BSDVM, plus reclaimstat(8): the providers a system cannot boot or reclaim without |
 
 `packages/runtime/runtime.ucl` declares the `capability` user and group and carries pre- and post-install scripts that create uid and gid 976 on an upgraded root and bootstrap `pwd.db` on a fresh one. `packages/switchboard/switchboard.ucl`'s post-install removes retired bundle trees that would otherwise be boot-fatal, since switchboard fails closed on an invalid system bundle. The `rc` package removes a stale `rc.d/oracled`.
 
@@ -91,7 +91,7 @@ After reboot, `uname -i` shows `GENERIC`, and `kldstat -v | grep mac_capability`
 
 ## The installer and media
 
-Release media (`make -C release memstick` or `cdrom`) stage a fresh system, add the installer environment, build an offline pkgbase repository under `/usr/5bsd-packages/offline`, embed `pkg` on the media, and boot with `capability_plane="NO"` so bsdinstall runs on stock init. bsdinstall's `pkgbase` script installs from that repository with `pkg install -U -y -r 5BSD-base <packages>`; a plain pkg install is the whole step. The installer offers offline or network sources, requires ZFS for the guided install, writes the tmpfs `/Capabilities/Run` line into fstab, and runs two 5BSD-specific steps: `tzfspool` (which pool the storage plane binds to, written to `/Capabilities/Config/bsdfilesystem.ucl`) and `capabilitypolicy` (who gets admin sessions, written to `/Capabilities/Config/principal-policy.ucl`, root and wheel by default). There are no distribution sets: `NODISTSETS` is the release default.
+Release media (`make -C release memstick` or `cdrom`) stage a fresh system, add the installer environment, build an offline pkgbase repository under `/usr/5bsd-packages/offline`, embed `pkg` on the media, and boot with `capability_plane="NO"` so bsdinstall runs on stock init. bsdinstall's `pkgbase` script installs from that repository with `pkg install -U -y -r 5BSD-base <packages>`; a plain pkg install is the whole step. The installer offers offline or network sources, requires ZFS for the guided install, writes the tmpfs `/Capabilities/Run` line into fstab, and runs `tzfspool` to record which pool the storage plane binds to in `/Capabilities/Config/bsdfilesystem.ucl`. The retired `capabilitypolicy` account-grant step is removed; capability access comes from approved software manifests. There are no distribution sets: `NODISTSETS` is the release default.
 
 ## Bundles as packages
 

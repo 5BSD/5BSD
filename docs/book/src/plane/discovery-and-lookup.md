@@ -1,111 +1,84 @@
 # Discovery and the Lookup Channel
 
-Every program on a 5BSD system that wants a service finds it the same way: it
-sends a reverse-domain name over a channel it inherited, and
-[switchboard](switchboard.md) answers with a fresh channel to the provider or
-with `ENOENT`. There is no socket path to guess, no `/var/run` to search and
-no uid check on the far end; the channel a request arrives on already says who
-sent it. 5BSD has this because it makes discovery a scoped grant instead of a
-global namespace, and because every session channel is unforgeable, so
-"who may reach what" is decided once at mint time and never re-derived from
-a pathname.
+Programs request service names through an inherited, kernel-held discovery
+channel. SwitchBoard returns a provider channel when admission succeeds.
+The discovery route does not identify an authenticated user and does not grant
+its holder the parent's software attributes.
 
-The model is recorded in `docs/service-discovery-model.md` and
-`docs/book/src/plane/discovery-and-lookup.md`; the code is
-`usr.sbin/switchboard/naming.c`, `domain.c`, `on_demand.c` and
-`lib/libservice/service_client.c`, `service_ambient.c`.
+## Route, software identity, and endpoint admission
 
-## Two orthogonal axes
+These are separate responsibilities:
 
-Discovery and management are separate questions, and the plane keeps them
-separate on purpose. Discovery is which names a principal may resolve and
-connect to. Management is which units a principal may start, stop, load or
-unload. Both ride the same inherited channel, but the first is a property of
-the channel's domain and anointment set, and the second is a property of the
-unit's `control` class matched against the caller's rights. A monitoring tool
-can hold full discovery with no management; an operator session can manage
-`system` units it cannot see. This chapter is about the first axis; the
-second is in [The Management Model](management-model.md).
+| Piece | Responsibility |
+|---|---|
+| Process-held discovery reference | Locate SwitchBoard without environment variables or a preserved FD number |
+| Kernel software-authority context | Identify registered executable software and its authority generation |
+| Kernel-stamped request metadata | Identify the actual sender without trusting a client-supplied bundle name |
+| SwitchBoard | Resolve the sender's authority and enforce visibility and endpoint attributes |
+| Provider | Implement the operations exposed by the returned capability |
 
-## Principals and domains
+Client bundles declare `attributes`; provider endpoints declare `requires`.
+SwitchBoard checks the actual sender's attributes against those requirements.
+The remaining SYSTEM, USER, and CONTROL domain scopes describe namespace
+visibility; they are not login-account grants. See [Software attributes](attributes.md)
+and [Management policy](management-policy.md).
 
-A lookup channel carries a domain: a scope over the naming registry that only
-ever narrows (`enum svc_domain_kind` in `switchboard.h`).
+UNIX login, SSH, and `su` authenticate and change UNIX credentials normally.
+They do not mint capability privileges or replace discovery channels to match
+an account. Anyone who may execute an approved program may use the operations
+that program exposes. Changing UID neither grants another program's attributes
+nor revokes the current program's attributes merely because its UID changed.
+Prison boundaries and executable transitions have separate validity checks.
 
-| Principal | Channel | Resolves |
-|---|---|---|
-| a unit launched from `/Capabilities/System` | its bootstrap channel, `domain = system` | every registered name |
-| a unit from `/Capabilities/Apps` or a per-user agent | its bootstrap channel, `domain = user` | only names whose provider declares `visible = ["user"]` |
-| an admin login session (wheel by default, per principal policy) | a SYSTEM session channel minted by BSDAuth | every name, and carries every anointment plus the admin rights bit |
-| an ordinary login session | a USER session channel bound to the uid | user-visible names plus any gated endpoint its anointments cover |
-| rc and its descendants | the SYSTEM ambient channel switchboard installs before `/etc/rc` | every name |
+Fork inherits the discovery route and the permitted software context. Exec
+preserves the route but re-evaluates executable authority: an unrelated image
+cannot keep the previous program's privileges. Registered approved images can
+acquire their own context on ordinary exec. Responsible-process attribution
+and coalitions do not grant authority.
 
-`visible` is the provider's decision, read from the bundle registry whether or
-not the provider is running, so it answers identically on the resolve path and
-the on-demand path. A name a domain may not see is reported as `ENOENT`,
-indistinguishable from an unregistered name; the true reason (`EACCES`) is
-visible only in the `domain-lookup-deny` DTrace probe. A gated endpoint (one
-with `requires`) is reachable by any channel whose anointment set covers it
-regardless of `visible`, because the provider said who may reach it. A unit
-whose own domain is USER cannot mint session domains, so an application can
-never widen itself (`svc_domain_may_mint()`).
+## Managed services and ordinary clients
 
-Sessions get their channel from the mint boundary. `login(1)`, `su(1)` and
-`sshd(8)` capture the SYSTEM lookup channel they inherited and call
-`service_mint_session_via_agent()` (or `service_mint_session_authenticated()`
-for a non-admin `su`, which proves the target's password instead); BSDAuth,
-the one unit with `mint_authority = true`, decides from
-`/Capabilities/Config/principal-policy.ucl` what the session holds and asks
-switchboard to mint a channel bound to `(uid, domain, anointments, rights)`.
-Capsule installs a held discovery reference in each getty child's kernel
-process context. The rc launch path does the same for its existing authorized
-launches. Ordinary programs inherit that reference across fork and exec;
-`closefrom()` and environment replacement do not remove it. Authentication
-boundaries replace the provider reference with the target principal's scope.
-An unprovisioned change of real UID or prison denies access to the old context.
-Temporary effective-UID changes do not select a different principal's grants.
+A managed service has a typed bootstrap channel for checking in and publishing
+endpoints, and a kernel-held discovery route available to its descendants.
+An ordinary client uses that route through libservice without implementing
+special login or FD-preservation logic. Both are authorized as software.
 
-A parent may fork, install an already possessed channel in the child, then
-exec its program. Only that child and its future descendants inherit the new
-selection. There is no operation to become the global bootstrap provider or
-replace unrelated processes' references.
+Discovery and management remain separate. An endpoint attribute permits
+connection to that endpoint; management additionally follows the operation's
+rights and the target's management class. Attributed clients can inspect
+SwitchBoard status without the management attribute. Mutating control
+operations require `system.switchboard.admin` and a held management right;
+CORE services remain protected against runtime stop/restart.
 
-## Managed-service children
+The catalogue is controlled by an issuer capability and uses pinned executable
+identity. A copied binary is not the registered executable. This mechanism is
+not a substitute for the complete code-integrity boundary: manifests, loader,
+libraries, configuration, and future signature enforcement also matter.
 
-A managed unit has two separate channels: its typed provider bootstrap for
-checking in and publishing endpoints, and a kernel-held lookup-only channel for
-ordinary descendants. The latter carries a snapshot of the unit's domain and
-`holds` grants, plus its bundle/unit label and launch generation. It does not
-inherit a login principal's wildcard grants or permit session minting merely
-because the service runs as root. Private lookup registrations retain that same
-scope and service identity.
+## Private lookup handles and lifetime
 
-Restarting or removing a unit closes its generation's discovery channels.
-Changing its manifest affects the next launch, not the grants on an existing
-channel. Runtime registry reallocation does not change identity: the broker
-resolves the stored label and generation instead of retaining a pointer into the
-registry array. Responsibility attribution remains separate from these grants.
+Libservice registers private reply channels so unrelated processes and library
+sessions do not consume each other's replies. Requests are authorized using
+kernel sender metadata, not a privilege snapshot inherited with the route.
+Registration is bounded and may fail; it does not fall back to consuming replies
+from an inherited shared queue.
 
-## Private lookup handles
+Callers close returned handles. Closing ordinary descriptors or replacing the
+environment does not clear the kernel-held discovery reference. A child may
+select an already possessed route for itself and its future descendants;
+this does not replace unrelated processes' routes. Process exit releases its
+held reference. Explicitly clearing a route does not by itself revoke other
+processes' references or already returned capabilities.
 
-The inherited channel is used only to send `SVC_OP_REGISTER_LOOKUP`. Each
-owned working handle gets a newly registered reply endpoint whose scope is
-copied from the arriving channel's server-side domain record, never supplied
-by the client. Separate processes and independent library sessions therefore
-cannot consume each other's replies. Registration waits on kqueue readiness,
-with a bounded deadline. Failure returns an error and may be retried; it never
-falls back to receiving from the inherited shared queue.
+Authority-bound handles are a separate mechanism. Revoking an executable
+registration invalidates its contexts and bound handles. Registry reload must
+therefore retire changed authority, rather than let cached connections retain
+removed privileges. Deliberately transferable provider capabilities need their
+own documented lifetime semantics.
 
-Callers close returned handles. The kernel-held reference needs no advertised
-FD number, descriptor cache, or atfork repair. Explicit clearing affects the
-caller and future descendants; it does not revoke existing bearer descriptors
-or other processes' inherited references.
-
-A SwitchBoard restart currently destroys its server-side channel/domain state.
-Keeping a client reference alive does not reconnect it. Recovery must preserve
-or reauthenticate each session's scope; substituting a global privileged
-bootstrap channel is not an acceptable recovery path. This restart work is
-still pending validation.
+Keeping a route alive does not reconstruct SwitchBoard's server-side state
+after its death. Recovery must re-establish valid routes and authority; route
+inheritance alone is not a service-recovery guarantee.
 
 ## How a name resolves end to end
 
@@ -123,7 +96,7 @@ service_open("system.Log")
                                    self-served control name?  no
                                    registered and RUNNING?    yes
                                    svc_domain_permits()?      yes
-                                   requires covered by holds? open endpoint
+                                   requires covered by attributes? open endpoint
                                    mac_cap_create_channel()
                                    cap_xfer_limit(client_end, ONCE)
                                    SVC_OP_NEW_CLIENT + provider_end -->  listener for
@@ -182,7 +155,7 @@ A consumer sees one of a small set of errors and must treat all of them as
 
 | Condition | errno |
 |---|---|
-| name unregistered, out of the channel's domain, or an anointment miss | `ENOENT` |
+| name unregistered, out of the channel's domain, or a missing required attribute | `ENOENT` |
 | no ambient channel in this process at all | `ENOENT` |
 | reserved name whose provider never published within 10 s | `ETIMEDOUT` |
 | provider died between claim and publish | its exit fails the waiters immediately |
@@ -262,25 +235,19 @@ A provider's side is the mirror image (`service_provider_create()`,
 after `cap_enter`, `service_heartbeat()` if it declares a watchdog), covered in
 [A Capability Provider](../develop/provider.md).
 
-## Status and limits
+## Verification and limits
 
-The private lookup channel, uid-derived domains, the anointment match and
-session minting for console, `su` and `ssh` are shipped and VM-verified
-(`lib/libservice/tests`, `usr.sbin/switchboard/tests/ambient_lookup_test`,
-`register_lookup_gate_test`, `domain_test`). Two limits remain. Per-uid
-discovery policy finer than `visible` plus anointments is not built; a
-provider cannot yet say "user 1001 only" except by gating an endpoint on an
-anointment that principal policy grants to that user. And switchboard-side
-absorption of a simultaneous registration burst is future work, so a
-synthetic herd of first lookups falls back to the shared channel rather than
-failing, as described above. The `SVC_DOMAIN_CONTROL` kind and a
-`SVC_MINT_DOMAIN_CONTROL` request survive in `domain.c` as a residual of an
-earlier design; the shipped control path does not depend on them.
-`switchboardctl` and `capsulectl` resolve `system.switchboard` and
-`system.lifecycle` from an ordinary session, and `naming_lookup()` gates those
-two names on the `system.switchboard.admin` anointment before any domain
-check.
+The development VM exercises stock login, `su`, SSH authentication with and
+without PAM, registered-image access, copied-image denial, and service control.
+Additional tests cover cached-handle revocation and executable registration
+changes. These are development checks, not a claim that the fresh installer
+and every release artifact have passed acceptance.
 
-Reference: switchboard(8) NAMING REGISTRY, switchboard(5) IPC ANOINTMENTS,
-libservice(3), `docs/service-discovery-model.md`,
-`docs/book/src/plane/discovery-and-lookup.md`.
+There is no per-user capability grant policy or consent layer in this model.
+A future operation-specific authorization layer would be additional policy,
+not a reinterpretation of the inherited discovery route. See
+[Software attributes](attributes.md) for the intended boundary and
+[Authority model](../capability/authority-model.md) for kernel enforcement.
+
+Reference: `usr.sbin/switchboard/naming.c`, `authority.c`, `domain.c`,
+`on_demand.c`, and `lib/libservice/service_client.c`, `service_ambient.c`.

@@ -161,12 +161,12 @@ capsulectl reboot
   -> multi_user() kqueue loop returns; death -> death_single -> reboot(2)
 ```
 
-`system.lifecycle` is a name switchboard self-serves in its registry. A
-session can resolve it only if it holds the `system.switchboard.admin`
-anointment (or every anointment, as a shipped-default wheel session does); any
-other session, and every unit, gets `ENOENT`. There is no `getpeereid`, no
-`euid == 0` check and no path. `status` and `reload` are answered by
-switchboard from what it already tracks:
+`system.lifecycle` is a name SwitchBoard serves itself. Control admission
+requires attributed software. Mutating operations additionally require the
+`system.switchboard.admin` attribute and the corresponding held right. Neither
+UNIX root nor membership in wheel supplies that authority. Managed services
+and ordinary exec clients use the same software-authorization boundary.
+`status` and `reload` are answered by SwitchBoard from what it already tracks:
 
 ```text
 # capsulectl status

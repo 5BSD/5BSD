@@ -4,7 +4,7 @@ PACKAGE=switchboard
 PROG=	switchboard
 BINDIR=	/usr/libexec
 MAN=	switchboard.5 switchboard.8
-SRCS=	switchboard.c activation.c anoint.c activation_calendar.c bundle_registry.c bundle_selection.c domain.c mac_capability_direct.c execute.c \
+SRCS=	switchboard.c activation.c anoint.c activation_calendar.c bundle_registry.c bundle_selection.c authority.c authority_policy.c boot_authority.c domain.c mac_capability_direct.c execute.c \
 	lifecycle.c reclaim_publish.c registry_watch.c fd_budget.c management.c manifest_compare.c \
 	naming.c on_demand.c capsule_client.c rc_adopt.c responsibility.c \
 	rc_ingest.c \
@@ -25,7 +25,7 @@ SWITCHBOARD_CONFIG= /Capabilities/Config/switchboard
 # The rc.d adoption allow-list is policy, read at boot from this file rather
 # than hardcoded in switchboard (rc_adopt.c).
 FILESGROUPS+=	ADOPT_CONF
-ADOPT_CONF=	rc_adopt.conf
+ADOPT_CONF=	rc_adopt.conf boot-authority.ucl
 ADOPT_CONFDIR=	/Capabilities/Config/switchboard
 ADOPT_CONFPACKAGE=	switchboard
 

@@ -5,7 +5,7 @@
  *
  * Lookup-domain scoping (§22) and minted user-domain channel (§21) tests.
  *
- * The pure-logic cases (allow-list scoping, mint authorization, the ambient
+ * The pure-logic cases (allow-list scoping, the ambient
  * descriptor marking, and the ENOENT indistinguishability that hides an
  * out-of-scope name) run anywhere.  The end-to-end case that mints a real
  * user-domain channel and performs a USER-scoped lookup over it needs the
@@ -25,6 +25,8 @@
 #include <dev/mac_capability/mac_capability_ioctl.h>
 
 #include <atf-c.h>
+
+#include "retired_protocol.h"
 #include <errno.h>
 #include <fcntl.h>
 #include <pthread.h>
@@ -41,6 +43,8 @@
 
 #include "../anoint.c"
 #include "../domain.c"
+/* Real registry: an unknown stamped identity must fail closed. */
+#include "../authority.c"
 #include "../naming.c"
 
 /* These tests exercise name visibility; lifecycle identity has its own suite. */
@@ -54,6 +58,35 @@ svc_lifecycle_client(struct svc_runtime *svc __unused,
 
 struct switchboard_state sd;
 int switchboard_kq = -1;
+
+static void
+require_process_context(void)
+{
+	struct mac_cap_process_info info;
+	if (service_process_info(&info) == -1) {
+		if (errno == ENOSYS)
+			atf_tc_skip("kernel has no process-held discovery API; run in the VM");
+		atf_tc_fail("process context: %s", strerror(errno));
+	}
+}
+
+
+/* The test registry contains one system bundle at index zero. */
+bool
+bundle_registry_is_system(unsigned idx)
+{
+	return (idx == 0);
+}
+
+struct svc_runtime *
+svc_by_label(const char *label)
+{
+	for (unsigned i = 0; i < sd.nservices; i++)
+		if (strcmp(sd.services[i].manifest.label, label) == 0)
+			return (&sd.services[i]);
+	return (NULL);
+}
+
 
 /*
  * A system-only provider name (no USER visibility) and the two names the base
@@ -97,13 +130,6 @@ sctl_adopt_channel(int provider_fd, uint64_t rights, uid_t uid,
 	return (0);
 }
 
-int
-bundle_registry_ensure_user_dir(uid_t uid)
-{
-
-	(void)uid;
-	return (0);
-}
 
 /*
  * On-demand activation lives in on_demand.c (not linked here).  The unit tests
@@ -353,73 +379,7 @@ ATF_TC_BODY(scope_user_allow_list, tc)
 	ATF_CHECK(!svc_domain_resolves(&user, "org.5bsd.user.Thing"));
 }
 
-ATF_TC_WITHOUT_HEAD(mint_authorization);
-ATF_TC_BODY(mint_authorization, tc)
-{
-	struct svc_domain system = { .kind = SVC_DOMAIN_SYSTEM, .uid = 0 };
-	struct svc_domain user = { .kind = SVC_DOMAIN_USER, .uid = 1001 };
 
-	/* Only a SYSTEM caller may mint; domains only narrow, never broaden. */
-	ATF_CHECK(svc_domain_may_mint(&system));
-	ATF_CHECK(svc_domain_may_mint(NULL));
-	ATF_CHECK(!svc_domain_may_mint(&user));
-}
-
-ATF_TC_WITHOUT_HEAD(mint_domain_kind_escalation_guard);
-ATF_TC_BODY(mint_domain_kind_escalation_guard, tc)
-{
-	struct svc_domain system = { .kind = SVC_DOMAIN_SYSTEM, .uid = 0 };
-	struct svc_domain user = { .kind = SVC_DOMAIN_USER, .uid = 1001 };
-	enum svc_domain_kind kind;
-
-	/*
-	 * The SYSTEM-mint escalation guard (§6), unit-tested deterministically.
-	 * svc_mint_domain_kind() resolves the wire `domain` field to the kind to
-	 * mint AND refuses a SYSTEM request from any channel that is not itself
-	 * SYSTEM — a user session must never widen its own scope.
-	 */
-
-	/* A SYSTEM channel may request either kind. */
-	kind = (enum svc_domain_kind)0xdead;
-	ATF_CHECK_EQ(0, svc_mint_domain_kind(&system, SVC_MINT_DOMAIN_USER,
-	    &kind));
-	ATF_CHECK_EQ(SVC_DOMAIN_USER, kind);
-	kind = (enum svc_domain_kind)0xdead;
-	ATF_CHECK_EQ(0, svc_mint_domain_kind(&system, SVC_MINT_DOMAIN_SYSTEM,
-	    &kind));
-	ATF_CHECK_EQ(SVC_DOMAIN_SYSTEM, kind);
-
-	/* A NULL requester is the default authority (SYSTEM): may ask SYSTEM. */
-	kind = (enum svc_domain_kind)0xdead;
-	ATF_CHECK_EQ(0, svc_mint_domain_kind(NULL, SVC_MINT_DOMAIN_SYSTEM,
-	    &kind));
-	ATF_CHECK_EQ(SVC_DOMAIN_SYSTEM, kind);
-
-	/*
-	 * The adversarial case: a USER channel asking for SYSTEM is REFUSED with
-	 * EPERM.  This is the privilege boundary the guard exists to hold.
-	 */
-	errno = 0;
-	ATF_CHECK_EQ(-1, svc_mint_domain_kind(&user, SVC_MINT_DOMAIN_SYSTEM,
-	    &kind));
-	ATF_CHECK_EQ(EPERM, errno);
-
-	/*
-	 * A USER channel asking for USER passes this resolver (the kind itself is
-	 * in-policy); minting is still blocked one layer up by svc_domain_may_mint
-	 * — a USER channel may not mint AT ALL — verified in mint_authorization
-	 * and end-to-end in user_channel_mints_neither.
-	 */
-	kind = (enum svc_domain_kind)0xdead;
-	ATF_CHECK_EQ(0, svc_mint_domain_kind(&user, SVC_MINT_DOMAIN_USER,
-	    &kind));
-	ATF_CHECK_EQ(SVC_DOMAIN_USER, kind);
-
-	/* An unknown wire domain value is EINVAL, never silently coerced. */
-	errno = 0;
-	ATF_CHECK_EQ(-1, svc_mint_domain_kind(&system, 0x5eU, &kind));
-	ATF_CHECK_EQ(EINVAL, errno);
-}
 
 ATF_TC_WITHOUT_HEAD(control_domain_separation);
 ATF_TC_BODY(control_domain_separation, tc)
@@ -427,7 +387,6 @@ ATF_TC_BODY(control_domain_separation, tc)
 	struct svc_domain system = { .kind = SVC_DOMAIN_SYSTEM, .uid = 0 };
 	struct svc_domain user = { .kind = SVC_DOMAIN_USER, .uid = 1001 };
 	struct svc_domain control = { .kind = SVC_DOMAIN_CONTROL, .uid = 0 };
-	enum svc_domain_kind kind;
 
 	/* Names are classified control by the reserved ".Control" namespace. */
 	ATF_CHECK(name_is_control("service.Control"));
@@ -464,15 +423,7 @@ ATF_TC_BODY(control_domain_separation, tc)
 	ATF_CHECK(!svc_domain_permits(&user, SVC_DOMAIN_SYSTEM,
 	    SYSTEM_ONLY_NAME));
 
-	/* Minting: only a SYSTEM (admin) channel may mint CONTROL; USER cannot. */
-	kind = (enum svc_domain_kind)0xdead;
-	ATF_CHECK_EQ(0, svc_mint_domain_kind(&system, SVC_MINT_DOMAIN_CONTROL,
-	    &kind));
-	ATF_CHECK_EQ(SVC_DOMAIN_CONTROL, kind);
-	errno = 0;
-	ATF_CHECK_EQ(-1, svc_mint_domain_kind(&user, SVC_MINT_DOMAIN_CONTROL,
-	    &kind));
-	ATF_CHECK_EQ(EPERM, errno);
+
 }
 
 ATF_TC_WITHOUT_HEAD(control_ondemand_gating);
@@ -782,8 +733,8 @@ ATF_TC_BODY(minted_system_channel_scoped, tc)
 	ATF_CHECK_EQ(0, service_session_call(session, &message, &reply,
 	    &options));
 	ATF_CHECK_EQ(sizeof(reply_data), reply.length);
-	ATF_CHECK_EQ(0, reply_data.status);
-	ATF_CHECK_EQ(1, reply.nfds);
+	ATF_CHECK_EQ(ENOENT, reply_data.status);
+	ATF_CHECK_EQ(0, reply.nfds);
 	if (reply_fd >= 0)
 		close(reply_fd);
 
@@ -980,13 +931,49 @@ count_domain_entries(enum svc_domain_kind kind, uid_t uid, bool match_uid)
 	return (n);
 }
 
+/* Exercise a retired wire request without keeping a public minting API. */
+static int
+retired_mint_request(int route, uint32_t domain, uid_t uid, int *out)
+{
+	struct svc_mint_domain_req request = {
+	    .op = SVC_OP_MINT_DOMAIN, .domain = domain, .uid = uid };
+	struct svc_reply response;
+	struct service_session *session;
+	struct service_message message = {
+	    .size = sizeof(message), .data = &request, .length = sizeof(request) };
+	struct service_reply reply = { .size = sizeof(reply), .data = &response,
+	    .capacity = sizeof(response), .fds = out, .nfds = 1 };
+	struct service_call_options options = SERVICE_CALL_OPTIONS_INITIALIZER;
+	int fd, result, saved;
+
+	*out = -1;
+	fd = fcntl(route, F_DUPFD_CLOEXEC, 0);
+	if (fd == -1)
+		return (-1);
+	if (service_session_create(fd, &session) == -1) {
+		saved = errno;
+		close(fd);
+		errno = saved;
+		return (-1);
+	}
+	options.timeout_ms = 2000;
+	result = service_session_call(session, &message, &reply, &options);
+	saved = errno;
+	service_session_close(session);
+	if (result == -1)
+		return (errno = saved, -1);
+	if (reply.length != sizeof(response))
+		return (errno = EBADMSG, -1);
+	return (response.status == 0 ? 0 : (errno = response.status, -1));
+}
+
 ATF_TC(direct_mint_over_ambient_retired);
 ATF_TC_HEAD(direct_mint_over_ambient_retired, tc)
 {
 
 	atf_tc_set_md_var(tc, "descr",
 	    "direct SVC_OP_MINT_DOMAIN over the ambient lookup channel is RETIRED "
-	    "(P1c): login/su mint session channels via the auth-agent, not here, "
+	    "software attributes replace login grants; "
 	    "so switchboard refuses the direct mint with EPERM");
 	atf_tc_set_md_var(tc, "require.user", "root");
 }
@@ -1012,23 +999,15 @@ ATF_TC_BODY(direct_mint_over_ambient_retired, tc)
 	ctx.stop = 0;
 	ATF_REQUIRE_EQ(0, pthread_create(&pump, NULL, domain_pump_thread, &ctx));
 
-	/*
-	 * Direct minting over the ambient lookup channel is RETIRED (P1c,
-	 * domain.c lookup_channel_request): the auth-agent (system.Auth) is
-	 * the single mint boundary, and login/su reach it via
-	 * service_mint_session_via_agent — they can no longer mint their own
-	 * session channel directly over the ambient carry.  switchboard therefore
-	 * refuses SVC_OP_MINT_DOMAIN on a lookup channel with EPERM.  Assert the
-	 * refusal (both the SYSTEM and USER kinds) so a regression that re-opens
-	 * the direct-mint path is caught, and confirm no channel was minted.
-	 */
+	/* No discovery route can mint user authority, regardless of its scope. */
+
 	sysfd = -1;
-	ATF_CHECK(service_mint_session_domain(minted_fd, SERVICE_MINT_SYSTEM, 0,
+	ATF_CHECK(retired_mint_request(minted_fd, SVC_MINT_DOMAIN_SYSTEM, 0,
 	    &sysfd) != 0);
 	ATF_CHECK(sysfd < 0);
 
 	userfd = -1;
-	ATF_CHECK(service_mint_session_domain(minted_fd, SERVICE_MINT_USER, 7777,
+	ATF_CHECK(retired_mint_request(minted_fd, SVC_MINT_DOMAIN_USER, 7777,
 	    &userfd) != 0);
 	ATF_CHECK(userfd < 0);
 
@@ -1080,19 +1059,19 @@ ATF_TC_BODY(user_channel_mints_neither, tc)
 
 	/*
 	 * Domains only ever narrow: a USER channel cannot mint at all.  A request
-	 * for a USER channel is refused (svc_domain_may_mint), and — the privilege
+	 * for a USER channel is refused, and — the privilege
 	 * boundary — a request for a SYSTEM channel is refused too (a user session
 	 * can never widen its scope).  Both return EPERM.
 	 */
 	out = -1;
-	ATF_CHECK_EQ(-1, service_mint_session_domain(minted_fd,
-	    SERVICE_MINT_USER, 1001, &out));
+	ATF_CHECK_EQ(-1, retired_mint_request(minted_fd,
+	    SVC_MINT_DOMAIN_USER, 1001, &out));
 	ATF_CHECK_EQ(EPERM, errno);
 	ATF_CHECK_EQ(-1, out);
 
 	out = -1;
-	ATF_CHECK_EQ(-1, service_mint_session_domain(minted_fd,
-	    SERVICE_MINT_SYSTEM, 0, &out));
+	ATF_CHECK_EQ(-1, retired_mint_request(minted_fd,
+	    SVC_MINT_DOMAIN_SYSTEM, 0, &out));
 	ATF_CHECK_EQ(EPERM, errno);
 	ATF_CHECK_EQ(-1, out);
 
@@ -1201,18 +1180,18 @@ require_channel_create_syscall(const atf_tc_t *tc)
  * the real client (service_ambient_lookup_channel / service_connect_ambient)
  * against the real switchboard adopt handler.
  */
-ATF_TC(register_private_system_channel_resolves);
-ATF_TC_HEAD(register_private_system_channel_resolves, tc)
+ATF_TC(register_private_route_no_authority);
+ATF_TC_HEAD(register_private_route_no_authority, tc)
 {
 
 	atf_tc_set_md_var(tc, "descr",
 	    "a process registers a private SYSTEM lookup channel, receives a "
-	    "DISTINCT endpoint, and resolves a system-only name over it");
+	    "DISTINCT endpoint; public lookups work without granting system authority");
 	atf_tc_set_md_var(tc, "require.user", "root");
 }
-ATF_TC_BODY(register_private_system_channel_resolves, tc)
+ATF_TC_BODY(register_private_route_no_authority, tc)
 {
-	struct svc_runtime provider;
+	struct svc_runtime provider, public_provider;
 	struct pump_ctx ctx;
 	pthread_t pump;
 	int minted_fd, kq, before, priv, sfd;
@@ -1230,6 +1209,7 @@ ATF_TC_BODY(register_private_system_channel_resolves, tc)
 		atf_tc_fail("domain_mint_system_channel: %s", strerror(errno));
 	}
 	provider_register(&provider, SYSTEM_ONLY_NAME);
+	provider_register(&public_provider, ALLOW_LOG_NAME);
 	before = count_domain_entries(SVC_DOMAIN_SYSTEM, 0, false);
 
 	ctx.kq = kq;
@@ -1237,6 +1217,7 @@ ATF_TC_BODY(register_private_system_channel_resolves, tc)
 	ATF_REQUIRE_EQ(0, pthread_create(&pump, NULL, domain_pump_thread, &ctx));
 
 	/* Install the inherited channel in the kernel process context. */
+	require_process_context();
 	ATF_REQUIRE_EQ(0, service_install_ambient_lookup(minted_fd));
 
 	/* Each owned lookup handle registers a private reply channel. */
@@ -1246,9 +1227,13 @@ ATF_TC_BODY(register_private_system_channel_resolves, tc)
 	    "the effective lookup fd must be the DISTINCT private endpoint, "
 	    "not the inherited shared fd");
 
-	/* A lookup over the private channel resolves the system-only name. */
+	/* A private route cannot turn anonymous UID 0 into system authority. */
 	sfd = -1;
-	ATF_CHECK_EQ(0, service_connect_ambient(SYSTEM_ONLY_NAME, &sfd));
+	ATF_CHECK_EQ(-1, service_connect_ambient(SYSTEM_ONLY_NAME, &sfd));
+	ATF_CHECK_EQ(ENOENT, errno);
+	ATF_CHECK_EQ(-1, sfd);
+	/* Public endpoints still work through the same inherited route. */
+	ATF_CHECK_EQ(0, service_connect_ambient(ALLOW_LOG_NAME, &sfd));
 	ATF_CHECK(sfd >= 0);
 	if (sfd >= 0)
 		(void)close(sfd);
@@ -1265,6 +1250,7 @@ ATF_TC_BODY(register_private_system_channel_resolves, tc)
 	ATF_REQUIRE_EQ(0, service_clear_ambient_lookup());
 
 	naming_remove_owner(&provider);
+	naming_remove_owner(&public_provider);
 	domain_channel_teardown();
 	(void)close(minted_fd);
 	(void)close(kq);
@@ -1310,6 +1296,7 @@ ATF_TC_BODY(register_private_user_channel_hides, tc)
 	ctx.stop = 0;
 	ATF_REQUIRE_EQ(0, pthread_create(&pump, NULL, domain_pump_thread, &ctx));
 
+	require_process_context();
 	ATF_REQUIRE_EQ(0, service_install_ambient_lookup(minted_fd));
 
 	priv = service_ambient_lookup_channel();
@@ -1480,6 +1467,7 @@ ATF_TC_BODY(unit_context_generation, tc)
 	switchboard_kq = kq;
 	ATF_REQUIRE_EQ(0, domain_mint_unit_channel(&original, 976, &unit_fd, kq));
 	ATF_REQUIRE_EQ(0, domain_mint_user_channel(1002, &other_fd, kq));
+	require_process_context();
 	ATF_REQUIRE_EQ(0, service_install_ambient_lookup(unit_fd));
 	ctx.kq = kq;
 	ctx.stop = 0;
@@ -1494,26 +1482,24 @@ ATF_TC_BODY(unit_context_generation, tc)
 	moved.domain.anoint.all = true;
 	count = 0;
 	for (lc = lookup_channels; lc != NULL; lc = lc->next) {
-		if (lc->owner_label[0] == '\0')
-			continue;
 		count++;
-		ATF_CHECK(lookup_channel_requester(lc) == &moved);
 		ATF_CHECK(lookup_channel_is_live(lc));
-		ATF_CHECK(!lc->domain.anoint.all);
-		ATF_CHECK_EQ(1U, lc->domain.anoint.n);
-		ATF_CHECK_STREQ("test.grant", lc->domain.anoint.names[0]);
 		ATF_CHECK_EQ(-1, naming_lookup_self_control(SWITCHBOARD_CONTROL_NAME,
 		    &moved, &lc->domain, NULL, false, &error));
 		ATF_CHECK_EQ(EACCES, error);
 		moved.launch_id++;
-		ATF_CHECK(!lookup_channel_is_live(lc));
+		ATF_CHECK(lookup_channel_is_live(lc));
 		moved.launch_id--;
 	}
-	ATF_CHECK_EQ(2, count);
+	ATF_CHECK_EQ(3, count);
+	/* Stopping/replacing a unit revokes authority, not inherited routes. */
 	domain_unit_channels_close(&moved);
-	ATF_REQUIRE(lookup_channels != NULL);
-	ATF_CHECK(lookup_channels->next == NULL);
-	ATF_CHECK_EQ(1002, lookup_channels->domain.uid);
+	count = 0;
+	for (lc = lookup_channels; lc != NULL; lc = lc->next) {
+		ATF_CHECK(lookup_channel_is_live(lc));
+		count++;
+	}
+	ATF_CHECK_EQ(3, count);
 	close(private_fd);
 	close(unit_fd);
 	close(other_fd);
@@ -1530,8 +1516,6 @@ ATF_TP_ADD_TCS(tp)
 
 	ATF_TP_ADD_TC(tp, scope_system_resolves_all);
 	ATF_TP_ADD_TC(tp, scope_user_allow_list);
-	ATF_TP_ADD_TC(tp, mint_authorization);
-	ATF_TP_ADD_TC(tp, mint_domain_kind_escalation_guard);
 	ATF_TP_ADD_TC(tp, control_domain_separation);
 	ATF_TP_ADD_TC(tp, control_ondemand_gating);
 	ATF_TP_ADD_TC(tp, ambient_descriptor_marking);
@@ -1544,7 +1528,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, hello_ack_over_user_channel);
 	ATF_TP_ADD_TC(tp, hello_ack_over_system_channel);
 	ATF_TP_ADD_TC(tp, unknown_op_over_lookup_channel_enotsup);
-	ATF_TP_ADD_TC(tp, register_private_system_channel_resolves);
+	ATF_TP_ADD_TC(tp, register_private_route_no_authority);
 	ATF_TP_ADD_TC(tp, register_private_user_channel_hides);
 	ATF_TP_ADD_TC(tp, register_non_channel_fd_rejected);
 	ATF_TP_ADD_TC(tp, register_multi_fd_rejected);

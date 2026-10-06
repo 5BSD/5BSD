@@ -624,19 +624,18 @@ under the name
 it binds no filesystem control socket.
 A lookup of
 .Ql system.switchboard
-from a login session holding the
+requires an attributed software caller, identified from the kernel-stamped
+sender metadata.
+Possession of a discovery route, login as root, or wheel membership does
+not grant control authority.
+Read-only inventory is available to an attributed caller; management
+operations additionally require the
 .Ql system.switchboard.admin
-anointment (or every anointment, as the boot channel and a shipped-default
-wheel session do; see
-.Xr switchboard 5 )
-mints an in-process control connection carrying administrative rights, which
+software attribute and the corresponding right on the returned capability.
 .Nm
-adopts into its own
-.Xr kqueue 2 ;
-a session without that anointment, and any unit, cannot resolve the name and
-is denied with
-.Er ENOENT ,
-the refusal audited.
+rechecks the actual sender on control requests so an inherited or cached
+connection cannot substitute for the current software identity.
+CORE service restrictions remain separate from these management grants.
 .Pp
 The
 .Xr switchboardctl 8
@@ -759,85 +758,58 @@ Name operation denied.
 .It Li naming-count(n)
 Total registered name count changed.
 .El
-.Ss Sessions and Domains
+.Ss Discovery and Software Attributes
+Discovery channels are routes.
+The kernel supplies the actual sender identity; the channel's legacy domain
+metadata is not an authenticated login principal or a grant of authority.
+The probe names below retain their historical spelling for tracing
+compatibility.
 .Bl -tag -width "domain-lookup-deny(name, kind, errno)" -compact
-.It Li mint-domain(label, kind, uid, status)
-A
-.Dv SVC_OP_MINT_DOMAIN
-from the mint boundary
-.Ar label
-minted (or failed to mint,
-.Ar status )
-a session lookup channel of
-.Ar kind
-bound to
-.Ar uid .
-.It Li mint-deny(label, domain, errno)
-A mint request was refused before any channel was created.
 .It Li domain-lookup(name, kind, uid)
-A lookup over a minted session channel resolved
+A discovery request resolved
 .Ar name .
+The recorded UID is attribution data, not a capability grant.
 .It Li domain-lookup-deny(name, kind, errno)
-A lookup over a minted session channel was refused;
+A discovery request was refused;
 .Ar errno
-is the true internal error
-.Pq Er EACCES for out-of-scope or an anointment miss ,
-which the wire masks to
+records the internal error, while unavailable names may be reported to the
+client as
 .Er ENOENT .
-.El
-.Ss IPC Anointments
-The match described in
-.Xr switchboard 5
-and
-.Pa docs/book/src/plane/anointments.md .
-Arguments never include capability material; a refusal also produces an
-.Dv AUE_SWITCHBOARD_ANOINT
-audit record, exactly one per refused request.
-.Bl -tag -width "mint-anoint(uid, count, all, admin, status)" -compact
 .It Li anoint-allow(name, requester, nrequires)
-A gated endpoint
-.Ar name
-.Pq one with a non-empty Cm requires
-was resolved by
-.Ar requester
-.Pq a unit label, or Li org.5bsd.user-session for a login session
-whose set covered all
+Software attribute admission succeeded for the endpoint.
 .Ar nrequires
-names.
-Open endpoints do not fire; the self-served control names
-.Pq Li system.switchboard , Li system.switchboard.lifecycle
-fire with 1.
+is the number of required names checked.
+The self-served control endpoint also reports admission of an attributed
+caller, with management authority checked separately.
 .It Li anoint-deny(name, requester, missing)
-The match failed;
+Software attribute admission failed.
 .Ar missing
-is the comma-separated list of required names the requester does not hold.
-Fires for the resolve path, the on-demand pre-check, and the control-plane
-gate alike.
+lists the missing required names.
+A refusal also produces an
+.Dv AUE_SWITCHBOARD_ANOINT
+audit record.
 .It Li anoint-set(label, count, all, admin)
-A holder's set was decided: a unit's from its policy file at every exec
-.Pq Ar label is the unit, Ar all and Ar admin are always 0 ,
-or a session channel's at mint
-.Pq Ar label is Li org.5bsd.user-session .
-.It Li mint-anoint(uid, count, all, admin, status)
-The set detail of a
-.Dv SVC_OP_MINT_DOMAIN
-that
-.Li mint-domain
-reports: the principal uid the channel binds, the number of names, whether
-it holds
-.Dq Li * ,
-whether it carries admin rights, and the reply status.
+A managed launch attribute set or internal discovery-route metadata was
+initialized.
+This event does not establish an authenticated user grant; request admission
+uses the actual sender's software identity.
 .It Li anoint-visibility(name, uid)
-A USER-kind session channel bound to
-.Ar uid
-was allowed to see the gated name
-.Ar name
-although its provider did not list
-.Cm visible = Qq user :
-the anointment match, not
-.Cm visible ,
-decides reach to a gated endpoint.
+A gated endpoint passed the legacy domain visibility check.
+Its required software attributes must still pass admission.
 .El
+.Pp
+The historical
+.Li mint-domain ,
+.Li mint-deny ,
+and
+.Li mint-anoint
+probe declarations remain for compatibility.
+The login-principal
+.Dv SVC_OP_MINT_DOMAIN
+operation is retired and does not issue user authority.
+See
+.Xr switchboard 5
+for the manifest attribute rules.
 .Ss Endpoint Lifecycle
 .Bl -tag -width "endpoint-withdraw(label, name, errno)" -compact
 .It Li endpoint-claim(label, name, errno)

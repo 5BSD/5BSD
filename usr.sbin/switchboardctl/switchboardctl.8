@@ -44,13 +44,12 @@ for boot-launched and operator-started units,
 .Ql self
 for a shared provider activated on demand,
 the requesting unit's label for a private helper or a per-user unit
-started by another unit of the same owner, or
-.Ql session:uid=N
-for a per-user unit activated from that user's login session.
+started by another unit of the same owner.
+Software attributes do not establish a login-session coalition.
 .It Cm tree
 Show the responsibility tree: every running unit indented under the
 coalition it answers to, starting from the switchboard's own root
-coalition, then each login session, then the self-rooted providers.
+coalition and the self-rooted providers.
 The header carries the kernel's boot id
 .Pq Va kern.boot_id :
 coalition ids are unique within one boot only, and the switchboard start
@@ -64,29 +63,29 @@ and
 .Xr procstat 1
 prints with
 .Cm coalition ,
-so a process can be walked back to the session or system that caused it.
+so process attribution can be correlated independently of authorization.
 .It Cm reload
 Transactionally rescan bundles, validate the dependency graph, and apply
 additions, changes, and removals.
 Requires the
 .Dq Li system.switchboard.admin
-anointment on the caller's session
-.Pq Xr switchboard 5 , Xr anoint 1 ,
-not root.
+attribute on the calling executable's software policy
+.Pq Xr switchboard 5 .
+A UNIX UID alone does not supply this attribute.
 .It Cm start Ar label
 Start a loaded stopped unit immediately and reset its restart backoff.
 Requires the
 .Dq Li system.switchboard.admin
-anointment on the caller's session
-.Pq Xr switchboard 5 , Xr anoint 1 ,
-not root.
+attribute on the calling executable's software policy
+.Pq Xr switchboard 5 .
+A UNIX UID alone does not supply this attribute.
 .It Cm stop Ar label
 Gracefully stop a runtime, escalating after its configured timeout.
 Requires the
 .Dq Li system.switchboard.admin
-anointment on the caller's session
-.Pq Xr switchboard 5 , Xr anoint 1 ,
-not root.
+attribute on the calling executable's software policy
+.Pq Xr switchboard 5 .
+A UNIX UID alone does not supply this attribute.
 .It Cm restart Ar label
 Stop the unit and then start it again, driving the same control operations as
 .Cm stop
@@ -95,9 +94,9 @@ and
 A unit that is already stopped is simply started.
 Requires the
 .Dq Li system.switchboard.admin
-anointment on the caller's session
-.Pq Xr switchboard 5 , Xr anoint 1 ,
-not root.
+attribute on the calling executable's software policy
+.Pq Xr switchboard 5 .
+A UNIX UID alone does not supply this attribute.
 .It Cm enable Ar bundle
 Remove
 .Ar bundle
@@ -105,9 +104,9 @@ from the persistent operator disable list and apply the change immediately by
 reloading, so the bundle's units are launched.
 Requires the
 .Dq Li system.switchboard.admin
-anointment on the caller's session
-.Pq Xr switchboard 5 , Xr anoint 1 ,
-not root.
+attribute on the calling executable's software policy
+.Pq Xr switchboard 5 .
+A UNIX UID alone does not supply this attribute.
 .It Cm disable Ar bundle
 Record
 .Ar bundle
@@ -116,9 +115,9 @@ reloading, so its units are stopped and not relaunched across reboots until
 re-enabled.
 Requires the
 .Dq Li system.switchboard.admin
-anointment on the caller's session
-.Pq Xr switchboard 5 , Xr anoint 1 ,
-not root.
+attribute on the calling executable's software policy
+.Pq Xr switchboard 5 .
+A UNIX UID alone does not supply this attribute.
 .It Cm install Ar path.cap
 Verify and copy a bundle into
 .Pa /Capabilities/System
@@ -143,44 +142,26 @@ List bundles installed in
 and
 .Pa /Capabilities .
 .It Cm graph Oo Fl -text | Fl -dot | Fl -json Oc Oo Fl -lint Oc Oo Fl -root Ar dir Oc
-Draw the IPC anointment reach graph from the bundle registry on disk.
+Draw static software attribute coverage from the bundle registry on disk.
 No running
 .Xr switchboard 8
 is consulted.
-The nodes are every unit in
+The nodes are declared software units, including exec-only applications, in
 .Pa /Capabilities/System
 and
 .Pa /Capabilities
 .Po or the single directory named by
 .Fl -root
-.Pc ,
-each endpoint those units publish, and two session classes:
-.Li session.default ,
-the set
-.Pa /Capabilities/Config/principal-policy.ucl
-grants uid 65534 with no groups, and
-.Li session.admin ,
-the set it grants uid 0.
-An absent or malformed policy applies the historical rule
-.Po root holds every name, everyone else none
 .Pc
-and is noted on standard error.
+and the endpoints those units publish.
+User accounts and login sessions do not contribute attributes.
 .Pp
 An edge runs from a consumer to an endpoint when the endpoint is open
-.Po no
-.Va requires
-.Pc
-or the consumer's anointments cover every name the endpoint requires.
+or the consumer declares every attribute the endpoint requires.
+Attributes held by separate software units are never combined.
 A unit never reaches its own endpoints.
-For open endpoints
-.Li session.default
-additionally follows the provider's
-.Va visible :
-it sees only providers that opted into user resolution, while
-.Li session.admin
-sees every name.
-A gated endpoint is reachable by whoever covers it regardless of
-.Va visible .
+This is a static coverage graph; runtime admission also depends on executable
+identity, active policy, provider state, and discovery visibility.
 Units are shown as
 .Ar bundle-id Ns / Ns Ar unit .
 .Pp
@@ -191,28 +172,24 @@ or
 .Dq Li CONSUMER -> ENDPOINT [via a.b,c.d] ,
 followed by a summary line.
 .Fl -dot
-prints a Graphviz digraph: units as boxes, sessions as ellipses, endpoints
+prints a Graphviz digraph: units as boxes, endpoints
 as nodes labelled with their name and requires, providers joined to their
-endpoints by dotted lines, and anointed edges labelled with the names.
+endpoints by dotted lines, and attributed edges labelled with the names.
 .Fl -json
 prints an object with the keys
-.Li units , sessions , endpoints , edges
+.Li units , endpoints , edges
 and
 .Li warnings ,
 in that order, sorted so that identical registries print identical output.
 .Pp
 .Fl -lint
-reports two kinds of mistake, which the JSON form always includes under
+reports warnings, which the JSON form always includes under
 .Li warnings :
-an endpoint requiring a name that no unit declares and no principal is
-granted
-.Pq unreachable ,
-and a unit declaring, or a principal being granted, a name that no endpoint
-requires
-.Pq dead declaration .
-A session's
-.Ql *
-grant is not a declaration.
+a required attribute that no unit declares, a combination of required attributes
+that no single client holds, a declaration no published endpoint requires,
+or duplicate endpoint names.
+These are static policy diagnostics; the graph does not infer grants from UNIX
+root, groups, or an old principal-policy file.
 With
 .Fl -lint
 the exit status is 2 when any warning was reported; text mode prints the
@@ -236,7 +213,7 @@ override the registry directories and the policy file.
 # switchboardctl install /path/to/MyApp.cap
 # switchboardctl reload
 # switchboardctl graph --lint
-# switchboardctl graph --dot | dot -Tsvg > anointments.svg
+# switchboardctl graph --dot | dot -Tsvg > attributes.svg
 .Ed
 .Sh SEE ALSO
 .Xr mac_capability 4 ,

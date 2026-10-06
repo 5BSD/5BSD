@@ -390,10 +390,6 @@ fi
     "Would you like to add users to the installed system now?" 0 0 && \
     bsdinstall adduser
 
-# Configure capability administrators only after account creation, so names
-# entered here resolve against the installed user and group databases.
-[ -z "$BSDINSTALL_SKIP_CAPABILITY_POLICY" ] && bsdinstall capabilitypolicy
-
 # Allow user to change his mind
 [ -z "$BSDINSTALL_SKIP_FINALCONFIG" ] && bsdinstall finalconfig
 

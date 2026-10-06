@@ -14,6 +14,7 @@
 #include "mac_capability.h"
 
 #include <sys/queue.h>
+#include <sys/cap_authority.h>
 #include <sys/event.h>
 #include <sys/counter.h>
 #include <sys/taskqueue.h>
@@ -56,6 +57,8 @@ struct mac_capability_msg {
 
 	/* Message metadata — kernel-stamped, unforgeable. */
 	struct mac_capability_process_stamp cm_process;
+	struct cap_authority_stamp cm_auth_stamp;
+	struct cap_authority *cm_authority; /* Pins queued sender authority. */
 	uint64_t	cm_badge;
 	uint64_t	cm_reply_token;
 	struct ucred	*cm_cred;
@@ -104,6 +107,7 @@ STAILQ_HEAD(mac_capability_msgq, mac_capability_msg);
 struct mac_capability_instance {
 	struct mac_capability_service *ci_service;	/* (I) owning service */
 	void		*ci_priv;		/* (I) service-private data */
+	struct cap_authority *ci_authority; /* (M) Bind once; pins authority. */
 	uint64_t	ci_badge;		/* (I) connection badge */
 
 	struct mac_capability_msgq ci_txq;	/* (M) outbound queue */

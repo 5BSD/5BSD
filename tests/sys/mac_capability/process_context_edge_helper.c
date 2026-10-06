@@ -138,7 +138,7 @@ main(int argc, char **argv)
 		_exit(0);
 	}
 	waitok(p);
-	puts("PASS temporary-euid-retains-principal");
+	puts("PASS temporary-euid-preserves-discovery-route");
 	p = fork();
 	CHECK(p >= 0);
 	if (!p) {

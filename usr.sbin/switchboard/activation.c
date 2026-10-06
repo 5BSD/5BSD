@@ -925,6 +925,7 @@ activation_register_all(int kq)
 					svc_runtime_init_fds(svc);
 					continue;
 				}
+				svc_slot_apply_bundle_policy(svc, bi);
 				strlcpy(svc->launched_by, "activation",
 				    sizeof(svc->launched_by));
 				clock_gettime(CLOCK_MONOTONIC,

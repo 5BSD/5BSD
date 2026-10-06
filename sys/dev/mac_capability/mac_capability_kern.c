@@ -819,6 +819,9 @@ mac_capability_forward(struct mac_capability_instance *s, const struct mac_capab
 	if (msg == NULL)
 		return (src->cm_nfds > 0 ? EBADF : ENOMEM);
 	msg->cm_process = src->cm_process;
+	msg->cm_auth_stamp = src->cm_auth_stamp;
+	msg->cm_authority = src->cm_authority;
+	cap_authority_retain(msg->cm_authority);
 	if (src->cm_nfds > 0) {
 		memcpy(msg->cm_cloexec_state, src->cm_cloexec_state,
 		    src->cm_nfds * sizeof(uint8_t));

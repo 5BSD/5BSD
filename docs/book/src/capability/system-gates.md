@@ -170,11 +170,19 @@ created.
 A scoped claim isolates exactly the listed OIDs. Reads and name resolution
 are never gated, `CTLFLAG_ANYBODY` nodes stay exempt, and every other
 privileged write keeps its ordinary `PRIV_SYSCTL_WRITE` check. Repeated
-claims union new OIDs into the set (and convert a coarse claim into a
-scoped one); a release with a payload subtracts exactly those OIDs without
+claims union new OIDs into the owner's set (and convert only that
+connection's coarse claim into a scoped one); a release with a payload subtracts exactly those OIDs without
 dropping the claim. The identity compared is the MIB, reconstructed by
 walking `SYSCTL_PARENT` from the leaf, never an OID pointer, so dynamic
 nodes carry no lifetime hazard.
+
+Independent coarse claims continue isolating every privileged write, even
+when the same owner also holds scoped claims. Releasing or closing one
+connection removes only its contribution. The last coarse claim's removal
+leaves any scoped OIDs protected; the last scoped claim's removal discards
+its OID set without weakening a remaining coarse claim. A new scoped claim
+then starts with its own OIDs. Repeating a claim without a payload on an
+already scoped connection does not expand it back to a coarse claim.
 
 switchboard delegates the sysctl gate only in this scoped form. A manifest
 with `system = ["sysctl"]` and no `isolate` list, or `sysctl` mixed with

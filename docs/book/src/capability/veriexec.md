@@ -12,23 +12,22 @@ enforcement state does, and the honest status: compiled in, wired up, and
 not yet enforcing on any shipped image.
 
 Reference: veriexec(8), veriexec(4), mac_veriexec(4). Design:
-`docs/book/src/plane/anointments.md` ("Later, separately" and step 1).
+[Software Attributes](../plane/attributes.md).
 
 ## Declaration is the grant
 
-A `Unit.ucl` declares what its unit may hold and do: the anointments in
-`holds`, the endpoints it gates with `requires`, the system gates in
+A `Unit.ucl` declares what its unit may hold and do: the attributes in
+`attributes`, the endpoints it gates with `requires`, the system gates in
 `capabilities.system`, the process protections in `protect`. Nothing else
 checks those declarations against an allow-list; switchboard reads the file
 and acts on it. Installing the bundle is the trust decision (see [Bundles
-and Manifests](../plane/bundles-and-manifests.md) and [Anointments and
-Principal Policy](../plane/anointments.md)).
+and Manifests](../plane/bundles-and-manifests.md) and [Software Attributes](../plane/attributes.md)).
 
 That is only sound if the file switchboard reads is the file the publisher
 wrote. The intended guarantee is `mac_veriexec` with signed fingerprint
 manifests covering each bundle's policy files and programs, verified
 against enrolled keys through libsecureboot. Trusting an enrolled key then
-means trusting every anointment it declares. The alternative, a hardcoded
+means trusting every attribute it declares. The alternative, a hardcoded
 list inside switchboard of which programs may hold which gates or names,
 was rejected on purpose: it would move policy into code, and it would be a
 second, weaker copy of what the signed manifest already says. `usr.sbin/switchboard/execute.c`
@@ -43,14 +42,15 @@ switchboard will honour the edit at the next load.
 
 ## O_VERIFY on every trust-bearing file
 
-Step 1 of the plan is done: the plane opens every file it trusts with
-`O_VERIFY`, so that the day enforcement is entered nothing in the plane
-needs to change.
+The bundle parser and executable registration paths use `O_VERIFY`. These
+checks are integration points for verifier enforcement, not proof that every
+configuration file, loader or dependency is already covered. A release must
+verify the complete code-integrity chain separately.
 
 | Reader | File | Where |
 |---|---|---|
 | libcapbundle | `Bundle.ucl`, `Unit.ucl` | `lib/libcapbundle/libcapbundle_parse.c`: opens `O_RDONLY | O_CLOEXEC | O_VERIFY` and feeds libucl the descriptor, since libucl's own open cannot carry the flag |
-| libcapbundle | `/Capabilities/Config/principal-policy.ucl` | `lib/libcapbundle/principal_policy.c` |
+| switchboard | registered ordinary executable | `usr.sbin/switchboard/authority.c`: opens with `O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_VERIFY` before kernel registration |
 | switchboard | each unit's program | `usr.sbin/switchboard/execute.c`: `open(m->program, O_EXEC | O_VERIFY)` in the child before the credential drop |
 
 `O_VERIFY` sets the `VVERIFY` access mode, which `vn_open_cred()` passes

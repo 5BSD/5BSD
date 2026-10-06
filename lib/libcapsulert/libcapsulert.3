@@ -393,8 +393,11 @@ its capprotect shield is active.
 .It Dv CAPSULE_OP_PING
 liveness check.
 .It Dv CAPSULE_OP_SET_AMBIENT_LOOKUP
-hand Capsule a duplicate of the SYSTEM ambient lookup channel so
-getty/login sessions inherit it at the fixed descriptor; best effort.
+hand Capsule the discovery route for installation in its kernel-held
+process context and inheritance by descendants.
+No fixed descriptor or environment variable is required, and route
+possession grants no user or application authority.
+Installation errors are returned in the reply status.
 .It Dv CAPSULE_OP_LIFECYCLE
 apply the
 .Dv CTL_OP_*
@@ -491,21 +494,9 @@ request idle-timeout shutdown after
 .Va seconds
 of no demand (0 cancels).
 .It Dv SVC_OP_MINT_DOMAIN
-mint a narrowed lookup channel for a session
-.Pq Vt struct svc_mint_domain_req :
-.Dv SVC_MINT_DOMAIN_USER
-(per-uid),
-.Dv SVC_MINT_DOMAIN_SYSTEM
-or
-.Dv SVC_MINT_DOMAIN_CONTROL ,
-with the
-.Dv SVC_MINT_FLAG_RESEND ,
-.Dv SVC_MINT_FLAG_ANOINT_ALL
-and
-.Dv SVC_MINT_FLAG_ADMIN_RIGHTS
-flags and an anointment set of up to
-.Dv SVC_ANOINT_MAX
-names; only a SYSTEM caller may mint.
+Retired login-principal operation.
+Requests are refused; authenticated user grants are not minted.
+Software identity and attributes determine capability service admission.
 .It Dv SVC_OP_AMBIENT_HELLO
 behavioral probe answered with
 .Dv SVC_AMBIENT_HELLO_MAGIC

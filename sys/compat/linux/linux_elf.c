@@ -496,7 +496,7 @@ __linuxN(copyout_auxargs)(struct image_params *imgp, uintptr_t base)
 	int error, issetugid;
 
 	p = imgp->proc;
-	issetugid = p->p_flag & P_SUGID ? 1 : 0;
+	issetugid = (p->p_flag & P_SUGID) != 0 || imgp->authority_setid;
 	args = imgp->auxargs;
 	aarray = pos = malloc(LINUX_AT_COUNT * sizeof(*pos), M_TEMP,
 	    M_WAITOK | M_ZERO);

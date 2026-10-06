@@ -114,15 +114,12 @@ fails at once with `ENOENT`, on `service_open("system.X")` or a tool such as
 `sysctlcmpctl get kern.ostype`; a provider logs `timed out waiting for
 system.Log` and, after enough retries, `failed N times, disabling`.
 
-**Cause.** Lookups go over the caller's ambient lookup channel to
-switchboard, which answers only for names that are visible to the caller's
-domain and whose unit has activated. `ENOENT` means one of: the process has
-no lookup channel (it was started outside a session or a unit, for example
-from an rc script that scrubbed its descriptors), the name is not published
-by any loaded bundle, the name is `visible` only to the `system` domain and
-the caller has a `user` session, or the name requires an anointment the
-caller's session does not hold (`system.Trace` requires
-`system.trace.client`, and the reply is deliberately `ENOENT`). A timeout
+**Cause.** Lookups use the process-held discovery route to SwitchBoard.
+Missing discovery, an unpublished name, visibility restrictions, and missing
+software attributes are distinct conditions to investigate. A protected name
+can return `ENOENT` when the requesting executable lacks its required
+attributes; changing UID or preserving an environment variable does not grant
+them. For example, `system.Trace` requires `system.trace.client`. A timeout
 means switchboard accepted the name but the provider did not come up within
 `SERVICE_LOOKUP_TIMEOUT_MS` (2 seconds per attempt; clients built on
 libservice retry): the unit is still starting (BSDFilesystem's cold start can
@@ -136,7 +133,6 @@ or, for a provider that runs with ambient authority, its manifest forgot
 switchboardctl services                          # is the provider listed, and in what state?
 switchboardctl graph --lint                      # unreachable endpoints, dead declarations
 grep -e 'on_demand' -e "'system.X'" /var/log/messages
-env | grep SERVICE_LOOKUP_FD                     # does this process even hold a channel?
 switchboardctl verify /Capabilities/System/<Name>.cap
 ```
 
@@ -144,12 +140,13 @@ switchboardctl verify /Capabilities/System/<Name>.cap
 `verify` catches a manifest whose `activation.ipc` block does not declare
 the name you are asking for.
 
-**Fix.** Publish the name (`activation { ipc = [ { name = "system.X"; } ] }`
-in the provider's unit manifest), make it visible to the right domain
-(`visible = ["system", "user"]`), give the caller the anointment
-(`anoint <name> <command>` for one run, or a `holds` entry for a unit), and
-for slow providers let the client's retry run rather than treating the first
-timeout as fatal. Components must fail soft when a provider is down; see
+**Fix.** Publish the name in the provider's `activation.ipc` declaration,
+check its visibility and `requires` attributes, and check the approved client
+executable's `attributes` declaration. A copied or unregistered executable
+does not inherit the original's approval. An empty `SERVICE_LOOKUP_FD` does
+not show that discovery is missing: the route lives in kernel process state.
+For slow providers, let the client's retry run rather than treating the first
+timeout as fatal. See [Software Attributes](../plane/attributes.md) and
 [Discovery and the Lookup Channel](../plane/discovery-and-lookup.md).
 
 ## EPERM or ECAPMODE inside a daemon

@@ -231,8 +231,55 @@ ATF_TC_BODY(reaches_svc_manifest, tc)
 	ATF_CHECK_STREQ("session:uid=1001", m.launch_responsible[1]);
 }
 
+ATF_TC_WITHOUT_HEAD(retired_authenticator_rejected);
+ATF_TC_BODY(retired_authenticator_rejected, tc)
+{
+	PARSE_FAILS(IPC "authenticator_exec = [\"/usr/sbin/sshd\", "
+	    "\"/usr/libexec/sshd-session\"];", "authenticator_exec");
+}
+
+ATF_TC_WITHOUT_HEAD(authenticator_bad_executables);
+ATF_TC_BODY(authenticator_bad_executables, tc)
+{
+	const char *bad[] = { "[]", "true", "[\"/a\"]; authenticator_exec=[\"/b\"]", "\"/bin/a\"", "[1]",
+	    "[\"a\"]", "[\"/\"]", "[\"/a/../b\"]", "[\"/a/./b\"]",
+	    "[\"/a//b\"]", "[\"/a/\"]", "[\"/a/.\"]", "[\"/a/..\"]",
+	    "[\"/a\",\"/a\"]",
+	    "[\"/a\",\"/b\",\"/c\",\"/d\",\"/e\",\"/f\",\"/g\",\"/h\",\"/i\"]" };
+	char body[1024];
+	unsigned i;
+
+	for (i = 0; i < sizeof(bad) / sizeof(bad[0]); i++) {
+		snprintf(body, sizeof(body), IPC "authenticator_exec = %s;", bad[i]);
+		PARSE_FAILS(body, "authenticator_exec");
+	}
+}
+
+ATF_TC_WITHOUT_HEAD(unix_protocol);
+ATF_TC_BODY(unix_protocol, tc)
+{
+	struct capbundle_service svc;
+	struct svc_manifest m;
+
+	PARSE_OK(IPC, &svc);
+	ATF_CHECK(!svc.unix_protocol);
+	PARSE_OK("activation { boot = true; } ambient = true; protocol = unix;", &svc);
+	memset(&m, 0, sizeof(m));
+	ATF_REQUIRE_EQ(0, capbundle_svc_fill_manifest(&svc, &m));
+	ATF_CHECK(m.unix_protocol && m.ambient);
+	PARSE_FAILS(IPC "protocol = unix;", "requires ambient");
+	PARSE_FAILS(IPC "protocol = unix; ambient = false;", "requires ambient");
+	PARSE_FAILS(IPC "protocol = unix; ambient = 1;", "requires ambient");
+	PARSE_FAILS(IPC "protocol = other;", "protocol");
+	PARSE_FAILS(IPC "protocol = true;", "protocol");
+	PARSE_FAILS(IPC "protocol = bsdchannel; protocol = unix;", "protocol");
+}
+
 ATF_TP_ADD_TCS(tp)
 {
+	ATF_TP_ADD_TC(tp, unix_protocol);
+	ATF_TP_ADD_TC(tp, retired_authenticator_rejected);
+	ATF_TP_ADD_TC(tp, authenticator_bad_executables);
 
 	ATF_TP_ADD_TC(tp, absent_is_unconstrained);
 	ATF_TP_ADD_TC(tp, vocabulary_accepted);

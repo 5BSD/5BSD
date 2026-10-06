@@ -1,186 +1,64 @@
-# Principal grants and service management
+# Software policy and service management
 
-5BSD uses anointments to authorize endpoint connections. The system builder
-configures user grants in `/Capabilities/Config/principal-policy.ucl`; managed
-units receive their declared bundle grants. Anointments are permission names,
-not user roles and not service-specific operation descriptions.
+The system image assigns attributes to approved software. There is no
+`principal-policy.ucl` mapping login accounts to capability grants. UNIX account
+management and authentication retain their UNIX meaning.
 
-SwitchBoard checks endpoint `requires` against the holder's grants. Providers
-need no attribute-policy engine when every holder of an endpoint receives the
-same access. Providers remain responsible for request validation and any finer
-restrictions their own protocols expose.
-
-## User policy
-
-An example with independent endpoint and management permissions:
+For example, the shipped SwitchBoard control client declares:
 
 ```ucl
-principals {
-    alice {
-        uids = [1001];
-        anointments = ["network.admin"];
-        may_elevate = ["storage.admin"];
-        admin_rights = false;
-    }
-    operator {
-        uids = [0];
-        anointments = ["system.switchboard.admin"];
-        admin_rights = false;
-    }
-    default { anointments = []; admin_rights = false; }
-}
+program = "switchboardctl";
+activation { exec = true; }
+attributes = ["system.switchboard.admin"];
 ```
 
-The networking/storage names above are illustrative: use the actual `requires`
-names published by installed providers. Entries match in file order; the first
-matching UID or group entry wins. The fallback grants nothing in this example.
-The shipped root/wheel `*` profile remains an explicit compatibility choice,
-not an implicit UID-0 privilege. Missing or invalid policy grants nothing.
+This is an executable policy entry, not a daemon to start. SwitchBoard registers
+the approved executable with the kernel. Executing it establishes its software
+context, and the kernel stamps requests with that context. Copying the executable
+to an unregistered inode does not copy its registration. A hard link names the
+same executable object; moving or linking that object does not create a separate
+software identity.
 
-`system.switchboard.admin` permits SYSTEM lifecycle management and global
-SwitchBoard control operations. Owners retain control of their USER agents.
-CORE lifecycle control remains unavailable to every runtime operator. The
-current management grant is coarse: it does not select individual SYSTEM
-units. There is no separate attribute-based management-policy file or boot knob.
+The attribute admits the approved client to management operations. Running an
+unapproved shell as root does not confer this attribute. Conversely, an ordinary
+UNIX user who can execute the approved client can use its exposed operations.
+This version deliberately has no additional login-user consent policy.
 
-`admin_rights` is a separate provider-side ADMIN flag, not the management grant.
-It defaults to true for `*`; set it explicitly to false when endpoint reach
-must not imply provider bypass. Broad grants should always be reviewed together
-with this field.
+## Management classes still apply
 
-`system.auth.mint` permits asking BSDAuth to establish a session for a named UID
-without having BSDAuth authenticate that user's password. This is powerful
-impersonation authority intended for trusted authenticators. It is distinct
-from ADMIN. The boot carry and deliberately configured `*` holders receive it;
-a mere service-management grant or provider ADMIN bit does not. Ordinary
-managed units never receive this bit through endpoint lookup.
+Endpoint admission does not remove a service's management class:
 
-## Loading and tools
+- `core` services cannot be stopped or restarted by runtime management clients.
+  SwitchBoard's own boot, shutdown and recovery lifecycle manages them.
+- `system` services require management authority.
+- `user` services retain the existing owning-UID or management-authority class
+  check. That check does not itself grant access to the control endpoint.
 
-BSDAuth loads and validates the policy once at startup, precomputing grants.
-Session decisions do not reopen or reparse the policy. Replacing the file or
-changing its contents does not alter that running instance's policy snapshot.
-The snapshot is bounded to 128 principal entries and the existing file/name
-limits. Invalid input produces no protected grants, including for root/wheel.
+Providers retain responsibility for validating requests and any finer operation
+restrictions. SwitchBoard does not need rules describing network interfaces or
+other service-specific resources.
 
-`policyctl init` prints an empty policy for editing. `policyctl validate FILE`
-checks a candidate with the same parser; `policyctl format FILE` prints JSON
-without changing rule order. `policyctl explain FILE USER` previews the grants
-using the local account databases. For offline BEs, run the tool inside the
-candidate environment. A preview does not change or inspect existing sessions.
+## Reload and revocation
 
-Normal UNIX programs inherit their session authority. Changing UID does not
-mint new capability grants or erase held descriptors. Trusted login, SSH, and
-user-switching paths must install the intended session and close stale ones.
-Full-discovery sessions retain their actual authenticated UID.
+Application catalogue reload preserves unchanged registrations. A change to the
+executable identity, software scope or attributes replaces its registration;
+removing the policy removes its registration. The old authority is revoked
+before replacement. Revocation invalidates its running contexts and
+context-bound capabilities, not merely future discovery requests.
 
-## Installer choices
+Catalogue validation failure preserves the previous catalogue. A failure while
+applying replacements is reported and can leave a partially updated catalogue;
+removed authority is not restored merely to make the reload appear atomic.
+Callers must check the reload result. End-to-end acceptance must cover live
+processes, cached connections and concurrent requests, not just fresh exec.
 
-The interactive installer runs policy setup after account creation and lists
-accounts by name and numeric UID. It offers full capability access (`*` and
-provider ADMIN) separately from SYSTEM management (`system.switchboard.admin`
-without provider ADMIN). Root/wheel full access is an explicit compatibility
-choice. Selecting explicit grants allows root to receive no capability grants,
-or to receive only management authority, like any other account.
+The temporary authority for `/etc/rc` is configured separately in
+`/Capabilities/Config/switchboard/boot-authority.ucl`. Its endpoint allowlist and
+attributes constrain the boot application, and its authority is revoked when
+that boot phase ends. It is not a general grant for UID zero or login shells.
 
-Scripted installations retain compatibility unless configured otherwise. For
-example, after creating Alice and Bob in the post-install hook:
-
-```sh
-BSDINSTALL_CAPABILITY_COMPAT=no
-BSDINSTALL_CAPABILITY_ADMIN_USERS=alice
-BSDINSTALL_CAPABILITY_MANAGE_USERS=bob
-export BSDINSTALL_CAPABILITY_COMPAT BSDINSTALL_CAPABILITY_ADMIN_USERS
-export BSDINSTALL_CAPABILITY_MANAGE_USERS
-```
-
-Alice gets full access; Bob gets SYSTEM management only; root gets neither.
-Full access wins if an account matches both selections. For individual endpoint
-names or elevation grants, edit the generated principal policy and validate it
-with `policyctl`. Choosing no accounts with compatibility disabled produces an
-empty policy. None of these installer choices enrolls an owner signing key or
-establishes a trusted boot chain.
-
-## Boot environments and activation
-
-The intended persistent update boundary is an authorized, inactive boot
-environment containing policy, trusted manifests, and matching system code:
-
-1. Clone the current BE and mount the candidate.
-2. Update the candidate's grants and matching account configuration.
-3. Validate the policy and review effective grants, including recovery access.
-4. Publish through the owner's authorized integrity/update mechanism.
-5. Activate for one boot, test login and endpoint permissions, then make permanent.
-
-On the standard layout, `/Capabilities/Config`, `/Capabilities/System`, `/etc`,
-and `/var/db/pkg` belong to the root BE. Do not move policy into a shared dataset
-or make `/var` shared for this workflow. Shared application data is not rolled
-back with policy and must remain compatible with any permitted rollback.
-
-A reboot destroys the previous processes and channels. Merely editing a file,
-logging out, or removing an anointment does not promise revocation of every
-already-issued descriptor. There is no general live policy-update API.
-
-## Verified authentication inputs
-
-BSDFilesystem's `open_paths` entries can require `verify = true`. This is a
-broker option for exact, read/execute-only regular files, not a new kind of
-anointment. The shipped entries enable it for principal policy, passwd, group,
-and master.passwd. The broker also uses `O_VERIFY` for its own configuration,
-so an enforcing system will not silently accept an unregistered replacement
-that disables the option. A failed configuration read leaves default-deny open
-rules in place.
-
-With veriexec **enforcing** and the corresponding fingerprints enrolled, the
-kernel checks these broker reads and refuses writes to enrolled files. A
-replacement inode without an enrolled fingerprint cannot supply new policy to
-a restarted consumer. With veriexec inactive, ordinary installations retain
-their existing behavior; `verify = true` alone does not turn enforcement on.
-
-Enrollment must cover the broker configuration as well as all four authentication
-inputs. Updating account files in such a protected profile belongs in the same
-candidate BE transaction as policy. Protecting login/PAM/SSH configuration and
-executables is also necessary: those trusted authenticators can establish
-sessions without BSDAuth rechecking their password authentication.
-
-Fingerprint verification does not bind a pathname to a particular approved
-object: substituting another enrolled object or mounting a different tree must
-also be prevented by the protected namespace and boot/update boundary. Do not
-use this check as a substitute for that boundary. Global veriexec enforcement
-also restricts unregistered executables and libraries, so simply enabling it on
-a general-purpose installation is not a qualified UNIX-compatible profile.
-
-## Security qualification still required
-
-A policy snapshot is not a filesystem seal. An authorized boot/update boundary
-must protect the policy, account identity inputs, manifests, executables, and
-boot selection. Without those protections a daemon restart can load modified
-files, and runtime root may still undermine the intended restriction. Veriexec
-must actually be configured and enforcing; O_VERIFY alone is not a seal.
-
-Existing mac_capability process shields, resource claims, and system gates
-provide substantial enforcement. Their coverage and lifetime must be tested
-against root, including workers, service failure/restart, inherited descriptors,
-mounts, raw-device access, identity changes, and boot rollback.
-
-The current selectors bind to numeric UIDs and group names, not immutable
-account generations. Before deleting or reusing a UID or privileged group,
-remove its grants in the candidate policy and review the candidate account
-databases together. Reusing an old UID while retaining its rule transfers that
-rule to the new account. Group changes can affect new sessions even while the
-policy document itself is snapshotted; existing sessions keep their grants.
-Account identity protection is therefore part of the security boundary.
-
-The boot carry currently holds `*`. Trusted authenticators and any processes
-that inherit that authority are part of the trusted computing base. A protected
-profile must narrow its distribution and protect authenticators against process
-injection and executable/configuration replacement; shielding BSDAuth alone does
-not protect every process able to ask it to mint a session. Ordinary UNIX powers remain ordinary
-UNIX powers unless they cross a protected boundary.
-
-BE activation by itself is not authorization. The final protected profile needs
-an owner-controlled publishing/recovery path; booting an older, more permissive
-policy must be deliberate owner recovery, not a runtime root bypass. Automatic
-health checks and watchdog rollback are separate from bectl's one-boot selection.
-The current snapshot/tool changes do not claim those remaining protections are
-implemented or qualified.
+For a system image, policy and matching executable changes should be prepared
+and tested together in a boot environment. A boot environment does not itself
+make an untrusted executable safe: verifier enforcement, libraries, loaders,
+configuration and resource isolation remain part of the integrity boundary.
+See [Software Attributes](attributes.md).

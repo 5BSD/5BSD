@@ -74,6 +74,14 @@ svc_by_label(const char *label)
 	return (NULL);
 }
 
+/* Model trusted bundle ownership; assertions below detect skipped policy. */
+void
+svc_slot_apply_bundle_policy(struct svc_runtime *svc, unsigned bundle_idx)
+{
+	ATF_REQUIRE_EQ(0, bundle_idx);
+	svc->owner_uid = (uid_t)-1;
+}
+
 /* Fake single-service bundle registry, populated per register_all test. */
 static struct capbundle reg_bundle;
 static bool reg_present;
@@ -397,6 +405,7 @@ ATF_TC_BODY(register_all_creates_slot, tc)
 	reg_present = true;
 
 	ATF_CHECK_EQ(0, activation_register_all(kq));
+	ATF_CHECK_EQ((uid_t)-1, sd.services[0].owner_uid);
 	ATF_CHECK_EQ(1, sd.nservices);
 	ATF_CHECK_STREQ("org.test.reg/timerunit",
 	    sd.services[0].manifest.label);
@@ -405,6 +414,7 @@ ATF_TC_BODY(register_all_creates_slot, tc)
 
 	/* Idempotent: a re-run neither duplicates the slot nor re-arms. */
 	ATF_CHECK_EQ(0, activation_register_all(kq));
+	ATF_CHECK_EQ((uid_t)-1, sd.services[0].owner_uid);
 	ATF_CHECK_EQ(1, sd.nservices);
 
 	free(sd.services);
@@ -744,6 +754,7 @@ ATF_TC_BODY(register_all_creates_socket_slot, tc)
 	reg_present = true;
 
 	ATF_CHECK_EQ(0, activation_register_all(kq));
+	ATF_CHECK_EQ((uid_t)-1, sd.services[0].owner_uid);
 	ATF_CHECK_EQ(1, sd.nservices);
 	ATF_CHECK_STREQ("org.test.sock/listener",
 	    sd.services[0].manifest.label);

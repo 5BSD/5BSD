@@ -46,7 +46,7 @@ plane's own daemons use it.
 
 ### The record and the store
 
-`system.Log` is open (no anointment) and `visible = ["user"]`, because every
+`system.Log` is open (no required attribute) and `visible = ["user"]`, because every
 login session emits records. A record carries an OpenTelemetry severity
 number (1 through 24; `LOGCMP_SEVERITY_TRACE` is 1 and `LOGCMP_SEVERITY_FATAL`
 21), a subsystem and category, an optional event name, a kind (log, event or
@@ -145,9 +145,9 @@ BSDAudit, the submit-only broker at `system.Audit`: `auditcmp_client_open`,
 then `auditcmp_submit(client, subject, operation, error)` from
 libauditcmp(3). The broker accepts submissions only from a compiled-in
 identity table (`usr.sbin/BSDAudit/auditcmp_policy.c`): `system.Log`,
-`system.Network`, `system.Notify`, `system.Crypto` and `system.Auth`, each
-mapped to a fixed event class, with `system.Auth` split by operation into
-`AUE_AUTHAGENT_ELEVATE` (43335) and `AUE_AUTHAGENT_MINT` (43336). The wire
+`system.Network`, `system.Notify` and `system.Crypto`, each
+mapped to a fixed event class. Historical Auth event numbers remain reserved
+for reading old trails, but the retired identity is not admitted. The wire
 message carries only the record's variable content; its event class and
 origin are facts the broker derives from the unforgeable channel label. A
 submitter cannot pick an event number, an audit uid or another provider's
@@ -193,10 +193,10 @@ they are worth knowing because they recur in any new provider.
 |---|---|---|
 | `AUE_SWITCHBOARD_CTL` | 43321 | every control operation, allowed or refused |
 | `AUE_SWITCHBOARD_COMPONENT` | 43327 | every session mint |
-| `AUE_SWITCHBOARD_ANOINT` | 43328 | every anointment refusal |
+| `AUE_SWITCHBOARD_ANOINT` | 43328 | every attribute refusal |
 | `AUE_TRACECMP_POLICY` | 43332 | BSDTrace delegation, denial and session bootstrap |
 | `AUE_BSDNOTIFY_POLICY` | 43333 | BSDNotify refusals and tier mismatches |
-| `AUE_AUTHAGENT_ELEVATE`, `AUE_AUTHAGENT_MINT` | 43335, 43336 | every anoint(1) and mint outcome |
+| `AUE_AUTHAGENT_ELEVATE`, `AUE_AUTHAGENT_MINT` | 43335, 43336 | reserved historical IDs for retired elevation and session minting |
 
 The complete list is in `sys/bsm/audit_kevents.h`. BSDLog submits a record
 for a refused request (`AUE_LOGCMP_POLICY`), never for each ordinary log
@@ -215,7 +215,7 @@ and changes only how a consumer is obtained.
 
 BSDTrace is the only program that opens `/dev/dtrace`, through the `/dev`
 directory descriptor switchboard delivers. It publishes `system.Trace`
-gated on the `system.trace.client` anointment, so a session that does not
+gated on the `system.trace.client` software attribute, so a session that does not
 hold it gets `ENOENT` at lookup and never reaches the daemon. A session that
 does is then checked against the daemon's own allow-list, `bsdtrace.allow`
 in the unit's delivered `Config` directory
@@ -227,11 +227,11 @@ fatal configuration error. `/etc/bsdtrace.allow` is not read by the daemon;
 it is only the default input of `tracectl configtest`, which validates a
 file with the daemon's parser.
 
-Two gates, then, with different owners: the operator's principal policy
-decides which people may trace (grant `system.trace.client`, or let them
-`may_elevate` to it, without making them administrators), and the daemon's
-allow-list decides which programs may. The shipped policy grants the
-anointment to the admin principal through `*`.
+Both gates authorize software: its manifest attributes determine whether it
+can discover the endpoint, and the provider's allow-list determines whether
+its label may receive a raw tracing descriptor. Neither gate grants tracing
+based on the UNIX login account. Any user allowed to execute an approved
+tracing client can use the operations it exposes.
 
 An admitted client receives one independently opened DTrace consumer
 descriptor: close-on-fork, close-on-exec, transferable once, and limited to

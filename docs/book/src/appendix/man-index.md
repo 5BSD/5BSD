@@ -16,7 +16,6 @@ Read the page with `man name` on an installed system, or from the tree with
 
 | Page | Description | Package | Source |
 |---|---|---|---|
-| anoint(1) | run a command holding one additional anointment | runtime | `usr.bin/anoint/anoint.1` |
 
 ## Section 2: system calls
 
@@ -171,7 +170,6 @@ The daemons that live in `runtime` have no package of their own.
 | Page | Description | Package | Renamed from |
 |---|---|---|---|
 | BSDAudit(8) | authenticated BSM audit broker | bsdaudit | auditbrokerd.8 |
-| BSDAuth(8) | session-mint boundary broker and elevation authenticator | bsdauth | authagentd.8 |
 | BSDBluetooth(8) | general-purpose Bluetooth Low Energy daemon | bluetooth | blued.8 (kept as an MLINK) |
 | BSDCrypto(8) | capability-descriptor cryptography broker | bsdcrypto | localcrypto.8 |
 | BSDDevice(8) | capability-plane device-node broker | bsddevice | localdevice.8 |
@@ -254,7 +252,7 @@ says what changed where the divergence inventory records it.
 | ng_btsocket(4) | the 256-bit HCI event mask |
 | virtio_balloon(4), virtio_blk(4), virtio_scsi(4), vmm(4) | modern transport, multiqueue and snapshot notes |
 | bhyve(8), bhyve_config(5), bhyvectl(8) | new device models, `transport`, `queues`, `packed`, checkpoint manifests, `migrate fd=`, `-R fd` |
-| bsdinstall(8) | ZFS-only guided install, `tzfspool`, `capabilitypolicy`, pkgbase-only media |
+| bsdinstall(8) | ZFS-only guided install, `tzfspool`, pkgbase-only media |
 | reboot(8) | delegation to capsulectl(8) with the signal fallback |
 | veriexec(8) | manifest error reporting and fingerprint validation |
 | jail(8) | `recallocarray` config strings and the jail USDT provider |

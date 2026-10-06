@@ -107,12 +107,11 @@ Absent keys take the default shown; `capbundle_parse_unit_ucl()` fills the
 | `umask` | octal string or int | `0077` | 0000 to 0777 | file-creation mask |
 | `level` | string | `standard` | `background`, `standard`, `interactive` | `nice` +10, 0, or -5; `interactive` is honoured only for a `/Capabilities/System` bundle and clamped otherwise |
 | `ambient` | bool | false | honoured only for system bundles | skip `cap_enter(2)`; readiness is `SVC_OP_READY` |
-| `mint_authority` | bool | false | honoured only for system bundles | the one unit allowed to mint session lookup channels (BSDAuth) |
 | `watchdog` | object | none | `{ interval = N }`, 1 to 86400 seconds | liveness deadline; a missed `service_heartbeat(3)` kills the unit |
-| `visible` | string or array | none (system only) | entries `user` or `system` | whether USER-domain sessions may resolve the unit's names |
+| `visible` | string or array | none (system only) | entries `user` or `system` | whether USER-domain software may resolve the unit's names |
 | `domain` | string | by bundle class | `system` or `user` | which names the unit's own lookups may resolve; system bundles default to `system`, applications to `user` |
 | `directories` | array | none | at most 8 absolute paths without `/../`, each under `PATH_MAX` | opened read-only pre-capmode and delivered as `CAPABILITY_DIR_FDS` |
-| `holds` | string or array | none | at most 32 unique reverse-domain names; `*` refused | anointments the unit presents at lookup |
+| `attributes` | string or array | none | at most 32 unique dotted names; `*` refused | software attributes used for endpoint admission; `holds` is a legacy alias, and declaring both is rejected |
 | `launch` | object | none | `{ responsible = [...] }`, see below | who may cause this unit to exist |
 
 ### launch
@@ -154,7 +153,7 @@ or `helper` must be present; publishing a name does not imply boot.
 | Key | Type | Constraint | Effect |
 |---|---|---|---|
 | `boot` | bool | | launch during startup |
-| `ipc` | string or array | 1 to 8 entries; each a bare name or `{ name; requires }`; names reverse-domain, unique, under 64 bytes, not `*`, not prefixed `helper.`; `requires` a string or array of at most 8 unique anointment names | reserve names in the registry; a lookup launches the unit; `requires` gates that endpoint |
+| `ipc` | string or array | 1 to 8 entries; each a bare name or `{ name; requires }`; names reverse-domain, unique, under 64 bytes, not `*`, not prefixed `helper.`; `requires` a string or array of at most 8 unique attribute names | reserve names in the registry; a lookup launches the unit; `requires` gates that endpoint |
 | `timer` | object | `{ interval = N }`, 1 to 31622400 monotonic seconds | relaunch every N seconds while stopped; exclusive with `schedule` |
 | `schedule` | string | five-field cron (`min hour mday month wday`, numbers or `*`) or `hourly`, `daily`, `midnight`, `weekly`, `monthly`, `yearly`, `annually` | wall-clock activation, all fields must match |
 | `persistent` | bool | requires `schedule` | one catch-up run at startup for a match missed while down |
@@ -182,18 +181,41 @@ in the kernel is in [System Gates](../capability/system-gates.md).
 
 ## Three policy axes
 
-`control`, `visible` and `domain` answer three different questions and never
-collapse into one another. `control` is who may manage the unit
-(`core` refuses everyone including root; `system` needs the `admin_rights`
-grant from principal policy; `user` is the owning uid or an operator).
-`visible` is who may reach the unit's names (absent means SYSTEM sessions
-only). `domain` is what the unit itself may reach. A per-user agent is forced
-to `control = user`, `domain = user`, no `visible = user`, no `ambient`, no
-`mint_authority`, no `capabilities`, whatever it declares
-(`usr.sbin/switchboard/startup.c`). Per-endpoint `requires` and the unit's
-`holds` layer anointments on top; see
-[Anointments and Principal Policy](anointments.md) and
-[The Management Model](management-model.md).
+`control`, `visible` and `domain` describe management class and discovery scope.
+`core` refuses runtime management clients; `system` requires management authority;
+`user` retains its owner-UID or management-authority check. None of these classes
+creates a login-user grant. An approved client declares the software attribute
+needed for admission to management operations.
+
+`visible` controls whether USER-domain software may discover a published name.
+`domain` controls the unit's own discovery scope. These are software scopes,
+not assertions that the caller logged in as a particular UNIX account.
+A per-user agent is forced to `control = user`, `domain = user`, no
+`visible = user`, no `ambient`, and no system capabilities, regardless of its
+manifest (`usr.sbin/switchboard/startup.c`).
+
+Endpoint `requires` lists are checked against the requesting software's
+`attributes`. See [Software Attributes](attributes.md) and
+[Software Policy and Service Management](management-policy.md).
+
+### Ordinary executable policies
+
+A program that users execute directly can declare:
+
+```ucl
+program = "control-client";
+activation { exec = true; }
+attributes = ["example.control"];
+```
+
+SwitchBoard registers the approved executable for kernel attribution; it does
+not start or supervise an exec-only unit. Such an entry cannot combine exec
+activation with daemon activation, user changes, arguments or resource grants.
+Any UNIX user permitted to execute the program can use its exposed capability
+operations. Login and `su` do not select its attributes.
+
+The retired `mint_authority` and `authenticator_exec` keys are rejected, rather
+than silently ignored. They do not provide a way to grant user authority.
 
 ## A minimal provider: BSDLog
 
@@ -235,7 +257,7 @@ Nothing here grants storage, sockets or files. BSDLog opens
 through the delivered `CAPABILITY_CONFIG_FD`, and reads the install roots
 through `CAPABILITY_DIR_FDS` because a born-in-capmode process cannot open
 `/Capabilities/System` by path. `visible = ["user"]` is the whole reason a
-shell can `logctl` without an anointment.
+shell can `logctl` without a required attribute.
 
 ## A gate-holding daemon: BSDTime
 

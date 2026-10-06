@@ -7,9 +7,7 @@ CONFS=	fbtab login.conf motd.template login.access
 PROG=	login
 SRCS=	login.c login_fbtab.c
 CFLAGS+=-DLOGALL
-CFLAGS+=-I${SRCTOP}/lib/libservice
-LIBADD=	util pam service channel capability capbundle
-CFLAGS+=	-I${SRCTOP}/lib/libcapbundle
+LIBADD=	util pam
 
 .if ${MK_DTRACE} != "no"
 SRCS+=		login_provider.d

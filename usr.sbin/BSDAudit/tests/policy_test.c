@@ -60,67 +60,19 @@ ATF_TC_BODY(event_class_derives_from_authenticated_label, tc)
 	ATF_CHECK_EQ(0, auditcmp_policy_event("system.Cryptography"));
 }
 
-/*
- * The auth agent's records carry their event class in the operation's first
- * path component: "elevate/<stage>[/<name>]" is AUE_AUTHAGENT_ELEVATE and
- * "mint/..." is AUE_AUTHAGENT_MINT.  backend_submit() refines the session's
- * admission event through auditcmp_policy_operation_event() per record.
- */
-ATF_TC_WITHOUT_HEAD(operation_event_for_auth_agent);
-ATF_TC_BODY(operation_event_for_auth_agent, tc)
+/* Retired identities must not regain audit admission through old labels. */
+ATF_TC_WITHOUT_HEAD(retired_auth_identity_denied);
+ATF_TC_BODY(retired_auth_identity_denied, tc)
 {
-	static const char *const elevate_ops[] = {
-		"elevate", "elevate/", "elevate/policy",
-		"elevate/policy/system.storage.admin",
-		"elevate/password/system.notify.system",
-		"elevate/ratelimit/system.notify.system",
-		"elevate/caller", "elevate/shape", "elevate/mint/a.b",
-		"elevate/ok/a.b", "elevate//",
-	};
-	static const char *const mint_ops[] = {
-		"mint", "mint/", "mint/caller", "mint/shape", "mint/identity",
-		"mint/user/n1", "mint/system/n0/all/admin/default",
-		"mint/system/n32/admin",
-	};
-	unsigned i;
-
 	(void)tc;
-	/* The numbers are the registered ones. */
 	ATF_CHECK_EQ(43335, AUE_AUTHAGENT_ELEVATE);
 	ATF_CHECK_EQ(43336, AUE_AUTHAGENT_MINT);
-
-	for (i = 0; i < nitems(elevate_ops); i++)
-		ATF_CHECK_EQ_MSG(AUE_AUTHAGENT_ELEVATE,
-		    auditcmp_policy_operation_event("system.Auth",
-		    elevate_ops[i], 0), "operation %s", elevate_ops[i]);
-	for (i = 0; i < nitems(mint_ops); i++)
-		ATF_CHECK_EQ_MSG(AUE_AUTHAGENT_MINT,
-		    auditcmp_policy_operation_event("system.Auth",
-		    mint_ops[i], 0), "operation %s", mint_ops[i]);
-
-	/* The fallback is ignored when the operation matches... */
-	ATF_CHECK_EQ(AUE_AUTHAGENT_ELEVATE,
-	    auditcmp_policy_operation_event("system.Auth", "elevate/x",
-	    AUE_LOGCMP_POLICY));
-	ATF_CHECK_EQ(AUE_AUTHAGENT_MINT,
-	    auditcmp_policy_operation_event("system.Auth", "mint/x",
-	    AUE_AUTHAGENT_ELEVATE));
-
-	/* ...and the unit suffix on the label is stripped as for admission. */
-	ATF_CHECK_EQ(AUE_AUTHAGENT_ELEVATE,
-	    auditcmp_policy_operation_event("system.Auth/bsdauth",
+	ATF_CHECK_EQ(0, auditcmp_policy_event("system.Auth"));
+	ATF_CHECK_EQ(0, auditcmp_policy_event("system.Auth/bsdauth"));
+	ATF_CHECK_EQ(0, auditcmp_policy_operation_event("system.Auth",
 	    "elevate/policy/a.b", 0));
-	ATF_CHECK_EQ(AUE_AUTHAGENT_MINT,
-	    auditcmp_policy_operation_event("system.Auth/bsdauth",
+	ATF_CHECK_EQ(0, auditcmp_policy_operation_event("system.Auth/bsdauth",
 	    "mint/user/n1", 0));
-
-	/* The session's admission event is the provider's first entry. */
-	ATF_CHECK_EQ(AUE_AUTHAGENT_ELEVATE,
-	    auditcmp_policy_event("system.Auth"));
-	ATF_CHECK_EQ(AUE_AUTHAGENT_ELEVATE,
-	    auditcmp_policy_event("system.Auth/bsdauth"));
-	ATF_CHECK_EQ(0, auditcmp_policy_event("system.AuthX"));
-	ATF_CHECK_EQ(0, auditcmp_policy_event("system.AuthAgen"));
 }
 
 /*
@@ -229,7 +181,7 @@ ATF_TP_ADD_TCS(tp)
 
 	ATF_TP_ADD_TC(tp, identity_map);
 	ATF_TP_ADD_TC(tp, event_class_derives_from_authenticated_label);
-	ATF_TP_ADD_TC(tp, operation_event_for_auth_agent);
+	ATF_TP_ADD_TC(tp, retired_auth_identity_denied);
 	ATF_TP_ADD_TC(tp, operation_event_unknown_keeps_fallback);
 	ATF_TP_ADD_TC(tp, operation_event_other_labels_unaffected);
 	return (atf_no_error());

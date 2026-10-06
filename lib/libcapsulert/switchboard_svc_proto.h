@@ -66,12 +66,13 @@
 #define	SVC_OP_QUIESCE_RESULT	6	/* managed shutdown completion */
 #define	SVC_OP_WORKER_CHANNEL	7	/* private provider/worker channel */
 #define	SVC_OP_IDLE		8	/* provider requests idle-timeout shutdown */
-#define	SVC_OP_MINT_DOMAIN	9	/* mint a narrowed (USER, uid) lookup channel */
+#define	SVC_OP_MINT_DOMAIN	9	/* retired: always rejected; do not reuse */
 #define	SVC_OP_AMBIENT_HELLO	10	/* behavioral probe: is this THE lookup channel? */
 #define	SVC_OP_HELPER_OPEN	11	/* launch + connect a bundle-local private helper */
 #define	SVC_OP_HEARTBEAT	12	/* provider liveness ping (watchdog reset) */
 #define	SVC_OP_REGISTER_LOOKUP	13	/* adopt a caller-created private lookup channel */
-#define	SVC_OP_SESSION_COALITION 14	/* hand the session its coalition fd (join) */
+#define SVC_OP_ISSUE_AUTHORITY 15 /* retired: always rejected; do not reuse */
+/* Opcode 14 was SESSION_COALITION; reserved, no longer supported. */
 
 /*
  * SwitchBoard → service (notifications):
@@ -134,82 +135,6 @@ struct svc_heartbeat_req {
 	uint32_t	op;		/* SVC_OP_HEARTBEAT */
 	uint32_t	_reserved;	/* MBZ */
 };
-
-/*
- * SVC_OP_MINT_DOMAIN
- *   req:  svc_mint_domain_req
- *   reply: svc_reply { .status }
- *   reply_fds[0] = minted lookup channel endpoint (on success)
- *
- * Mint a fresh lookup channel for a session and return the caller's endpoint.
- * The `domain` field selects the minted channel's scope:
- *
- *   SVC_MINT_DOMAIN_USER (0, the zero-init default)
- *       a per-uid USER channel — resolves only the user-domain allow-list;
- *       every out-of-scope name returns ENOENT (§6 regular user).
- *   SVC_MINT_DOMAIN_SYSTEM (1)
- *       a SYSTEM (admin) channel — full discovery, resolves every registered
- *       name (§6 root/wheel session).  Minting SYSTEM is a privilege: it is
- *       refused with EPERM unless the REQUESTING channel is itself SYSTEM, so a
- *       user session can never widen its own scope.
- *
- * Only a SYSTEM-domain caller may mint AT ALL: a request arriving on an
- * already-narrowed (user-domain) channel is refused with EPERM, because domains
- * only ever narrow and never broaden.  The returned descriptor is an ambient
- * descriptor (survives every fork, survives exec, and is usable in capability
- * mode) so the login/session path can install it as a session leader's
- * inherited lookup channel (§21).
- */
-#define	SVC_MINT_DOMAIN_USER	0U	/* per-uid scoped channel (default) */
-#define	SVC_MINT_DOMAIN_SYSTEM	1U	/* full-discovery admin channel */
-#define	SVC_MINT_DOMAIN_CONTROL	2U	/* admin control-name channel */
-
-/*
- * SVC_MINT_FLAG_RESEND: deliver the minted endpoint at its default
- * CAP_XFER_UNLIMITED instead of attenuating it to CAP_XFER_ONCE (the normal
- * install-only delivery, which the reply's own SCM_RIGHTS send consumes to
- * CAP_XFER_NONE).  A caller that must forward the descriptor over ONE more
- * SCM_RIGHTS hop before installing it needs this: sshd's privileged monitor
- * mints the session channel, then mm_send_fd()s it to the unprivileged session
- * child.  The monitor re-attenuates to CAP_XFER_ONCE before that send so the
- * child still lands at CAP_XFER_NONE — identical to a login(1)/su(1) session.
- * login/su, which install the fd by fork/exec inheritance, never set it.
- */
-#define	SVC_MINT_FLAG_RESEND	0x1U
-
-/*
- * Anointment set carried on a mint (docs/book/src/plane/anointments.md,
- * "Domains and sessions").  The minted session channel records the set;
- * naming_lookup() matches it against each endpoint's per-endpoint `requires`
- * after the existing domain check, and refuses (masked to ENOENT) when the
- * session's set does not cover it.  The set is decided by the auth agent's
- * principal policy at mint time and is empty unless the policy says
- * otherwise.  `domain` (kind SYSTEM/USER/CONTROL) keeps its resolvable_by
- * meaning unchanged; anointments are an additional check, never a
- * replacement.
- *
- * SVC_MINT_FLAG_ANOINT_ALL:   the session holds every anointment (the
- *                             principal policy's `*`); `anointments[]` and
- *                             `nanointments` are ignored.
- * SVC_MINT_FLAG_ADMIN_RIGHTS: connections resolved from this session carry
- *                             SVC_RIGHTS_ADMIN in svc_new_client_msg.rights.
- */
-#define	SVC_MINT_FLAG_ANOINT_ALL	0x2U
-#define	SVC_MINT_FLAG_ADMIN_RIGHTS	0x4U
-
-struct svc_mint_domain_req {
-	uint32_t	op;		/* SVC_OP_MINT_DOMAIN */
-	uint32_t	flags;		/* SVC_MINT_FLAG_* (0 for install-only) */
-	uint32_t	uid;		/* target uid for a USER domain */
-	uint32_t	domain;		/* SVC_MINT_DOMAIN_USER|_SYSTEM|_CONTROL */
-	uint32_t	nanointments;	/* valid entries in anointments[] */
-	uint32_t	reserved;	/* must be 0 */
-	char		anointments[SVC_ANOINT_MAX][SVC_ANOINT_NAME_MAX];
-					/* NUL-terminated names, unused = 0 */
-};
-_Static_assert(sizeof(struct svc_mint_domain_req) ==
-    24 + SVC_ANOINT_MAX * SVC_ANOINT_NAME_MAX,
-    "svc_mint_domain_req wire layout");
 
 /*
  * SVC_OP_AMBIENT_HELLO

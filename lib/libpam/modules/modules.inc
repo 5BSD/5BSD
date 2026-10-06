@@ -2,6 +2,7 @@
 .include <src.opts.mk>
 
 MODULES		 =
+# Compatibility only; no shipped PAM stack uses this inert module.
 MODULES		+= pam_capability
 MODULES		+= pam_chroot
 MODULES		+= pam_deny

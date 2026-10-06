@@ -33,6 +33,7 @@
 #include <channel.h>
 
 #include "switchboard.h"
+#include "authority.h"
 #include "switchboard_audit.h"
 #include "switchboard_probes.h"
 #include "switchboard_svc_proto.h"
@@ -429,6 +430,7 @@ on_demand_broker(struct pending_lookup *pl, int kq)
 	struct channel_message *request = pl->request;
 	struct svc_runtime *req_svc = NULL;
 	const struct svc_domain *domain;
+	struct svc_domain actual;
 	bool ambient, sendable;
 	int client_fd, error;
 	int32_t status;
@@ -450,8 +452,14 @@ on_demand_broker(struct pending_lookup *pl, int kq)
 		domain = &req_svc->domain;
 	}
 
-	client_fd = naming_lookup(pl->name, req_svc, domain,
-	    channel_message_sender(request), &error, &sendable);
+	if (svc_authority_resolve(request, &actual, &req_svc) == -1) {
+		error = EACCES;
+		client_fd = -1;
+	} else {
+		domain = &actual;
+		client_fd = naming_lookup(pl->name, req_svc, domain,
+		    channel_message_sender(request), &error, &sendable);
+	}
 	if (client_fd >= 0) {
 		status = 0;
 		/*
@@ -692,7 +700,7 @@ od_launch(const char *name, struct svc_runtime *requester,
 					goto fail_timer;
 				}
 				svc_responsibility_decide(target, requester,
-				    ambient_lc);
+				    ambient_domain);
 				if (!od_launch_constraint_ok(target, name)) {
 					errno = EACCES;
 					goto fail_timer;
@@ -763,7 +771,7 @@ od_launch(const char *name, struct svc_runtime *requester,
 			strlcpy(target->launched_by, "unknown",
 			    sizeof(target->launched_by));
 		clock_gettime(CLOCK_MONOTONIC, &target->launch_time);
-		svc_responsibility_decide(target, requester, ambient_lc);
+		svc_responsibility_decide(target, requester, ambient_domain);
 		if (!od_launch_constraint_ok(target, name)) {
 			/*
 			 * Roll the unused slot back.  The constraint check
@@ -848,7 +856,13 @@ on_demand_launch_ambient(const char *name, struct svc_lookup_channel *lc,
     const struct svc_domain *domain, struct channel_message *request, int kq)
 {
 
-	return (od_launch(name, lookup_channel_requester(lc), lc, domain, request, kq));
+	struct svc_runtime *sender;
+	struct svc_domain actual;
+
+	if (svc_authority_resolve(request, &actual, &sender) == -1)
+		return (-1);
+	(void)domain;
+	return (od_launch(name, sender, lc, &actual, request, kq));
 }
 
 /*

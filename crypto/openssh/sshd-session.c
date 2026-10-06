@@ -84,7 +84,6 @@
 #include "dispatch.h"
 #include "channels.h"
 #include "session.h"
-#include "service_bootstrap.h"
 #include "monitor.h"
 #ifdef GSSAPI
 #include "ssh-gss.h"
@@ -103,7 +102,7 @@
 #define REEXEC_CONFIG_PASS_FD		(STDERR_FILENO + 2)
 #define REEXEC_MIN_FREE_FD		(STDERR_FILENO + 3)
 
-/* Privilege-separation descriptors. */
+/* Privsep fds */
 #define PRIVSEP_MONITOR_FD		(STDERR_FILENO + 1)
 #define PRIVSEP_LOG_FD			(STDERR_FILENO + 2)
 #define PRIVSEP_MIN_FREE_FD		(STDERR_FILENO + 3)
@@ -112,15 +111,6 @@ extern char *__progname;
 
 /* Server configuration options. */
 ServerOptions options;
-
-/*
- * 5BSD: this connection's private provider lookup channel, acquired from the
- * kernel process context early in main() as a high CLOEXEC descriptor.  The
- * monitor (monitor.c, mm_answer_provision) mints the session's uid-scoped
- * lookup channel over it, replacing the getpeereid(2) provisioning socket.
- * -1 when this session inherited no channel.
- */
-int ambient_session_lookup_fd = -1;
 
 /* Name of the server configuration file. */
 char *config_file_name = _PATH_SERVER_CONFIG_FILE;
@@ -957,20 +947,6 @@ main(int ac, char **av)
 		fatal("sshd-session should not be executed directly");
 
 	closefrom(REEXEC_MIN_FREE_FD);
-
-	/*
-	 * Obtain a private working channel from the inherited process context.
-	 * Keep the monitor's handle above its internal protocol descriptors.
-	 */
-	{
-		int lookup_fd = service_ambient_lookup_fd();
-
-		if (lookup_fd >= 0) {
-			ambient_session_lookup_fd = fcntl(lookup_fd,
-			    F_DUPFD_CLOEXEC, PRIVSEP_MIN_FREE_FD);
-			(void)close(lookup_fd);
-		}
-	}
 
 	platform_pre_session_start();
 

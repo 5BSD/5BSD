@@ -16,7 +16,6 @@ account		required	pam_unix.so
 
 # session
 #session	optional	pam_ssh.so		want_agent
-session		required	pam_permit.so
 
 # password
 #password	sufficient	pam_krb5.so		no_warn try_first_pass

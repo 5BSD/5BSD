@@ -724,7 +724,7 @@ mac_vnode_check_lookup(struct ucred *cred, struct vnode *dvp,
 }
 
 int	mac_vnode_check_mmap_impl(struct ucred *cred, struct vnode *vp, int prot,
-	    int flags);
+	    int flags, int maxprot);
 #ifdef MAC
 extern bool mac_vnode_check_mmap_fp_flag;
 #else
@@ -733,12 +733,12 @@ extern bool mac_vnode_check_mmap_fp_flag;
 #define mac_vnode_check_mmap_enabled() __predict_false(mac_vnode_check_mmap_fp_flag)
 static inline int
 mac_vnode_check_mmap(struct ucred *cred, struct vnode *vp, int prot,
-    int flags)
+    int flags, int maxprot)
 {
 
 	mac_vnode_assert_locked(vp, "mac_vnode_check_mmap");
 	if (mac_vnode_check_mmap_enabled())
-		return (mac_vnode_check_mmap_impl(cred, vp, prot, flags));
+		return (mac_vnode_check_mmap_impl(cred, vp, prot, flags, maxprot));
 	return (0);
 }
 

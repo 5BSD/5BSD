@@ -27,6 +27,7 @@
 #include <service_bootstrap.h>
 
 #include "switchboard.h"
+#include "authority.h"
 #include "management.h"
 #include "launch_limits.h"
 #include "rc_adopt.h"
@@ -71,6 +72,7 @@ run_rc_bootstrap(int kqunused)
 
 	memset(&rc, 0, sizeof(rc));
 	rc.kind = SVC_KIND_ONESHOT;
+	rc.bundle_idx = (unsigned)-1;
 	strlcpy(rc.manifest.label, "etc-rc", sizeof(rc.manifest.label));
 	/*
 	 * /etc/rc is a non-executable (0644) /bin/sh script, exactly as init
@@ -98,8 +100,8 @@ run_rc_bootstrap(int kqunused)
 	 * process context before exec. Ordinary descriptor and environment
 	 * cleanup cannot remove that reference.
 	 *
-	 * This boot scope carries authentication authority. Login providers must
-	 * replace it with a principal-scoped context before launching user code.
+	 * This route carries no authority. The rc command receives a separate,
+	 * temporary grant; getty and login children receive only discovery.
 	 * If provisioning fails, rc still runs without discovery so a broken
 	 * channel does not prevent ordinary UNIX boot.
 	 */
@@ -184,6 +186,8 @@ run_rc_bootstrap(int kqunused)
 			switchboard_dispatch_event(&event);
 	}
 
+	/* Every inherited boot context and bound handle expires at rc completion. */
+	svc_authority_revoke_unit(&rc);
 	if (rc.state == SVC_STATE_DONE) {
 		syslog(LOG_INFO, "startup: /etc/rc completed");
 		return (0);
@@ -248,18 +252,11 @@ svc_slot_apply_bundle_policy(struct svc_runtime *svc, unsigned bundle_idx)
 	 * reach).  A user's own, unverified code can therefore never claim
 	 * core/system management or a SYSTEM discovery domain.
 	 */
-	if (svc->owner_uid != (uid_t)-1) {
-		svc->manifest.management = SVC_MGMT_USER;
-		svc->manifest.domain = SVC_MANIFEST_DOMAIN_USER;
-		svc->manifest.user_resolvable = false;
-		svc->manifest.mint_authority = false;
-		svc->manifest.ambient = false;
-		svc->manifest.cap_system = 0;
-	}
+	svc_user_manifest_confine(svc);
 	/*
 	 * Service level: a CPU/IO priority BOOST is a privilege, honoured
 	 * only for a trusted system bundle -- whose verified manifest IS the
-	 * declaration, exactly as ambient and mint_authority are.  A
+	 * declaration, as ambient is.  A
 	 * non-system unit (an app or a per-user agent) that asks for a boost
 	 * is clamped to STANDARD; throttling DOWN needs no privilege.
 	 */

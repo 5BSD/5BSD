@@ -1,6 +1,12 @@
 # Capability-authority model
 
-Status: architecture spec / course-correction. Written before code. Supersedes
+Status: historical architecture proposal, retained for design provenance.
+Its login/session grant and principal-policy sections are superseded by
+[Software Attributes](book/src/plane/attributes.md) and
+[Software policy and service management](book/src/plane/management-policy.md).
+They do not describe the current software-authority model.
+
+The original proposal superseded
 the authorization framing in [`service-discovery-model.md`](service-discovery-model.md),
 [`lifecycle-capability-port-design.md`](lifecycle-capability-port-design.md), and
 [`capsule-control-abi-design.md`](capsule-control-abi-design.md) wherever they

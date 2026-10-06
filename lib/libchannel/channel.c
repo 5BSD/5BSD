@@ -77,6 +77,7 @@ struct channel {
 
 struct channel_message {
 	struct channel_process_identity process;
+	struct cap_authority_stamp authority;
 	struct channel		*channel;
 	pid_t			 owner;
 	enum channel_message_kind kind;
@@ -769,6 +770,7 @@ static struct channel_message *
 channel_message_receive(struct channel *channel)
 {
 	struct mac_capability_recvmsg_args receive;
+	struct mac_capability_recvmsg_v3_args current;
 	struct mac_capability_recvmsg_v2_args extended;
 	struct channel_message *message;
 	void *data;
@@ -795,7 +797,24 @@ channel_message_receive(struct channel *channel)
 	receive.payload_len = MAC_CAPABILITY_MAX_MSG;
 	receive.fds = fds;
 	receive.nfds = MAC_CAPABILITY_MAX_FDS;
-	if (channel->receive_version >= 0) {
+	if (channel->receive_version == 0 || channel->receive_version == 3) {
+		memset(&current, 0, sizeof(current));
+		current.message = receive;
+		if (ioctl(channel->fd, MAC_CAPABILITY_RECVMSG_V3, &current) == 0) {
+			channel->receive_version = 3;
+			receive = current.message;
+			message->process.identity = current.process.identity;
+			message->process.responsible_identity = current.process.responsible_identity;
+			message->process.pid = current.process.pid;
+			message->process.responsible_pid = current.process.responsible_pid;
+			message->authority = current.authority;
+		} else if (errno == ENOTTY || errno == ENOTCAPABLE) {
+			channel->receive_version = 2;
+		} else {
+			goto fail;
+		}
+	}
+	if (channel->receive_version == 2) {
 		memset(&extended, 0, sizeof(extended));
 		extended.message = receive;
 		if (ioctl(channel->fd, MAC_CAPABILITY_RECVMSG_V2, &extended) == 0) {
@@ -1013,6 +1032,15 @@ channel_message_process(const struct channel_message *message)
 	if (message == NULL || message->process.identity == 0)
 		return (NULL);
 	return (&message->process);
+}
+
+const struct cap_authority_stamp *
+channel_message_authority(const struct channel_message *message)
+{
+	if (message == NULL || !message->authority.valid ||
+	    message->authority.issuer == 0 || message->authority.identity == 0)
+		return (NULL);
+	return (&message->authority);
 }
 
 size_t

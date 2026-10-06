@@ -1158,6 +1158,78 @@ coalition_join(struct coalition *co, struct thread *td)
 	return (0);
 }
 
+/*
+ * A session handoff holds a capability to its new coalition. Move an inherited
+ * membership atomically; failure must not leave the process outside its old
+ * resource group. Explicit procdesc enlistment remains pinned.
+ */
+static int
+coalition_join_rehome(struct coalition *co, struct thread *td)
+{
+	struct coalition_member *cm;
+	struct coalition *old, *first, *second;
+	struct proc *p = td->td_proc;
+	int error = 0;
+	bool moved = false;
+
+	rw_rlock(&coalition_proc_hash_lock);
+	cm = coalition_proc_hash_lookup(p);
+	if (cm == NULL) {
+		rw_runlock(&coalition_proc_hash_lock);
+		return (coalition_join(co, td));
+	}
+	old = cm->cm_coalition;
+	if (old == co) {
+		rw_runlock(&coalition_proc_hash_lock);
+		return (0);
+	}
+	if (cm->cm_fp != NULL) {
+		rw_runlock(&coalition_proc_hash_lock);
+		return (EBUSY);
+	}
+	coalition_ref(old);
+	rw_runlock(&coalition_proc_hash_lock);
+
+	/* Coalition locks permit duplicates; order distinct objects by address. */
+	first = (uintptr_t)old < (uintptr_t)co ? old : co;
+	second = first == old ? co : old;
+	sx_xlock(&first->co_sx);
+	sx_xlock(&second->co_sx);
+	rw_wlock(&coalition_proc_hash_lock);
+	cm = coalition_proc_hash_lookup(p);
+	if (cm == NULL || cm->cm_coalition != old)
+		error = EAGAIN;
+	else if (cm->cm_fp != NULL)
+		error = EBUSY;
+	else if ((old->co_flags | co->co_flags) &
+	    (COF_TERMINATING | COF_GRACE_ACTIVE))
+		error = ESHUTDOWN;
+	else {
+		TAILQ_REMOVE(&old->co_members, cm, cm_link);
+		if ((old->co_flags & COF_HAS_LEADER) != 0 && old->co_leader == cm) {
+			old->co_leader = NULL;
+			old->co_flags &= ~COF_HAS_LEADER;
+		}
+		coalition_ref(co);
+		cm->cm_coalition = co;
+		TAILQ_INSERT_TAIL(&co->co_members, cm, cm_link);
+		atomic_subtract_int(&old->co_member_count, 1);
+		atomic_add_int(&co->co_member_count, 1);
+		moved = true;
+	}
+	rw_wunlock(&coalition_proc_hash_lock);
+	if (moved) {
+		coalition_notify_event(old, COALITION_NOTE_MEMBER_REMOVED);
+		coalition_notify_event(co, COALITION_NOTE_MEMBER_ADDED);
+	}
+	sx_xunlock(&second->co_sx);
+	sx_xunlock(&first->co_sx);
+	if (moved)
+		coalition_rel(old); /* Transferred the membership reference. */
+	coalition_rel(old); /* Lookup reference. */
+	return (error);
+}
+
 /* ----------------------------------------------------------------
  * Termination
  * ---------------------------------------------------------------- */
@@ -2528,6 +2600,11 @@ coalition_call(struct mac_capability_instance *s,
 		break;
 	}
 
+	case COALITION_OP_JOIN_REHOME:
+		rpl->status = reqlen == sizeof(*hdr) && nfds == 0 ?
+		    coalition_join_rehome(co, curthread) : EINVAL;
+		break;
+
 	case COALITION_OP_JOIN:
 		rpl->status = coalition_join(co, curthread);
 		break;
@@ -3073,7 +3150,7 @@ coalition_handler(struct mac_capability_instance *s, const struct mac_capability
 	}
 
 	hdr = req;
-	if (hdr->op == COALITION_OP_JOIN) {
+	if (hdr->op == COALITION_OP_JOIN || hdr->op == COALITION_OP_JOIN_REHOME) {
 		reply.cr.status = EOPNOTSUPP;
 		replylen = sizeof(reply.cr);
 		goto out;

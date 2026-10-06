@@ -79,17 +79,12 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <strings.h>
 #include <syslog.h>
 #include <unistd.h>
 #include <stdarg.h>
 
 #include <security/pam_appl.h>
 #include <security/openpam.h>
-
-#include <libservice.h>
-#include <libcapbundle.h>
-#include <service_bootstrap.h>
 
 #include "su_probes.h"
 
@@ -139,52 +134,12 @@ static int	ok_to_export(const char *);
 
 extern char	**environ;
 
-/*
- * The principal->bundle admin decision is a single seam,
- * capbundle_principal_is_admin() (capability-authority-model.md, P1): it reads
- * an explicit UCL policy, defaulting to the historical root/wheel rule.  su no
- * longer tests the uid inline.
- */
-
-/*
- * A conversation wrapper that captures the password su prompts for, so a su
- * from a non-admin session can authenticate the target to the auth-agent for
- * the session mint (the auth-agent will not trust a non-admin caller's bare
- * assertion).  It delegates entirely to openpam_ttyconv for the actual I/O
- * and, on the way back, copies the first echo-off response (the password).
- * The copy is zeroed after the mint.  PAM_AUTHTOK is unreliable to read back
- * from the application after authentication, hence this direct capture.
- */
-static char	captured_password[512];
-static int	have_captured_password;
-
-static int
-capturing_conv(int n, const struct pam_message **msg,
-    struct pam_response **resp, void *data)
-{
-	int i, ret;
-
-	ret = openpam_ttyconv(n, msg, resp, data);
-	if (ret != PAM_SUCCESS || *resp == NULL)
-		return (ret);
-	for (i = 0; i < n; i++) {
-		if (msg[i]->msg_style == PAM_PROMPT_ECHO_OFF &&
-		    (*resp)[i].resp != NULL && !have_captured_password) {
-			if (strlcpy(captured_password, (*resp)[i].resp,
-			    sizeof(captured_password)) <
-			    sizeof(captured_password))
-				have_captured_password = 1;
-		}
-	}
-	return (ret);
-}
-
 int
 main(int argc, char *argv[])
 {
 	static char	*cleanenv;
 	struct passwd	*pwd = NULL;
-	struct pam_conv	conv = { capturing_conv, NULL };
+	struct pam_conv	conv = { openpam_ttyconv, NULL };
 	enum tristate	iscsh;
 	login_cap_t	*lc;
 	union {
@@ -201,9 +156,6 @@ main(int argc, char *argv[])
 	const void	*v;
 	struct sigaction sa, sa_int, sa_quit, sa_pipe;
 	int temp, fds[2];
-	int syschan;			/* inherited SYSTEM ambient lookup channel */
-	char authtok[512];		/* copied PAM token, for a non-admin su mint */
-	int have_authtok = 0;
 #ifdef USE_BSM_AUDIT
 	const char	*aerr;
 	au_id_t		 auid;
@@ -352,27 +304,6 @@ main(int argc, char *argv[])
 	if (audit_submit(AUE_su, auid, 0, 0, "successful authentication"))
 		errx(1, "Permission denied");
 #endif
-	/*
-	 * Retain the authentication token NOW, by copy: a su from a non-admin
-	 * session cannot mint the target's lookup channel by asserting admin
-	 * rights it does not hold, so it authenticates the target to the
-	 * auth-agent directly (the mint block below).  PAM's PAM_AUTHTOK buffer
-	 * is only guaranteed valid immediately after authentication -- a later
-	 * pam_setcred()/pam_open_session() may clear or reuse it -- so copy it
-	 * here rather than hold the pointer, and zero the copy after the mint.
-	 */
-	if (have_captured_password) {
-		if (strlcpy(authtok, captured_password, sizeof(authtok)) <
-		    sizeof(authtok))
-			have_authtok = 1;
-	} else {
-		const void *tok = NULL;
-
-		if (pam_get_item(pamh, PAM_AUTHTOK, &tok) == PAM_SUCCESS &&
-		    tok != NULL &&
-		    strlcpy(authtok, tok, sizeof(authtok)) < sizeof(authtok))
-			have_authtok = 1;
-	}
 	retcode = pam_get_item(pamh, PAM_USER, &v);
 	if (retcode == PAM_SUCCESS)
 		user = v;
@@ -470,13 +401,6 @@ main(int argc, char *argv[])
 	if (setusercontext(lc, pwd, pwd->pw_uid, LOGIN_SETGROUP) < 0)
 		err(1, "setusercontext");
 
-	/*
-	 * Capture before PAM credentials/session modules can replace or clear
-	 * discovery for the target principal. Authentication has already passed;
-	 * the child still mints its own target-scoped channel after changing UID.
-	 */
-	syschan = service_ambient_lookup_fd();
-
 	retcode = pam_setcred(pamh, PAM_ESTABLISH_CRED);
 	if (retcode != PAM_SUCCESS) {
 		syslog(LOG_ERR, "pam_setcred: %s",
@@ -512,8 +436,6 @@ main(int argc, char *argv[])
 	child_pid = fork();
 	switch (child_pid) {
 	default:
-		if (syschan >= 0)
-			close(syschan);
 		sa.sa_handler = SIG_IGN;
 		sigaction(SIGTTOU, &sa, NULL);
 		close(fds[0]);
@@ -608,81 +530,6 @@ main(int argc, char *argv[])
 			}
 		}
 		login_close(lc);
-
-		/*
-		 * Keep only the private authentication handle until provisioning
-		 * completes.  Neither it nor the caller's process context may be
-		 * inherited by the target shell if provisioning fails.
-		 */
-		if (service_clear_ambient_lookup() == -1 && errno != ENOSYS)
-			err(1, "clear discovery context");
-		if (syschan >= 3) {
-			if (syschan > 3 && close_range(3, syschan - 1, 0) == -1)
-				err(1, "close_range");
-			closefrom(syschan + 1);
-		} else {
-			closefrom(3);
-		}
-		(void)unsetenv(SERVICE_LOOKUP_ENV);
-
-		/* BSDAuth selects the target principal's grants after authentication. */
-		if (syschan >= 0) {
-			int user_fd = -1;
-
-			/*
-			 * The auth-agent (system.Auth) holds the
-			 * principal->bundle policy and the sole mint authority:
-			 * it resolves the target uid itself and returns the
-			 * scoped channel.  su neither classifies the principal
-			 * nor mints — direct minting over the ambient channel is
-			 * retired (switchboard refuses it).  Best-effort: if the
-			 * agent is unreachable the session simply carries no
-			 * lookup channel.
-			 */
-			if (service_mint_session_via_agent(syschan,
-			    pwd->pw_uid, 0, SERVICE_MINT_SESSION_TIMEOUT_MS,
-			    &user_fd) == -1 && errno == EPERM &&
-			    have_authtok && authtok[0] != '\0') {
-				/*
-				 * A non-admin session's channel carries no
-				 * admin bit, so the agent refused the assertion
-				 * mint.  Authenticate the target to the agent
-				 * with the password PAM just verified: it mints
-				 * the target's session on a correct password,
-				 * rate-limited.  su root from a non-admin login
-				 * gets its admin channel this way.
-				 */
-				(void)service_mint_session_authenticated(syschan,
-				    pwd->pw_uid, authtok, 0,
-				    SERVICE_MINT_SESSION_TIMEOUT_MS, &user_fd);
-			}
-			if (user_fd >= 0 &&
-			    service_install_ambient_lookup(user_fd) == 0) {
-				syslog(LOG_DEBUG, "su: lookup channel for "
-				    "uid %u", (unsigned)pwd->pw_uid);
-				/*
-				 * Join the new session's coalition.  From a
-				 * login shell this is EBUSY (already a member
-				 * of the login session's coalition, which
-				 * stays the attribution); from a non-session
-				 * context it takes.  Never fatal.
-				 */
-				if (service_session_join_coalition(user_fd) ==
-				    -1)
-					syslog(errno == EBUSY ? LOG_DEBUG :
-					    LOG_NOTICE, "su: session "
-					    "coalition for uid %u: %m",
-					    (unsigned)pwd->pw_uid);
-			} else {
-				syslog(LOG_NOTICE, "su: no lookup channel for "
-				    "uid %u: %m", (unsigned)pwd->pw_uid);
-			}
-			if (user_fd >= 0)
-				(void)close(user_fd);
-			(void)close(syschan);
-		}
-		explicit_bzero(authtok, sizeof(authtok));
-		explicit_bzero(captured_password, sizeof(captured_password));
 
 		if (iscsh == YES) {
 			if (fastlogin)

@@ -128,7 +128,7 @@ service_epoch_live(service_epoch_t minted, service_epoch_t current)
  * carried the request (mac_capability_cred_trailer.abi).  Values mirror
  * SV_ABI_* from <sys/sysent.h>.  UNKNOWN is reported for kernel-originated
  * messages and by a kernel that predates the stamp.  Information for the
- * provider only: ABI never gates reach, only anointments do
+ * provider only: ABI never gates reach; endpoint attributes govern admission
  * (docs/book/src/plane/anointments.md).
  */
 #define	SERVICE_GROUPS_MAX		4	/* group containers per bundle (Bundle.ucl groups) */
@@ -850,143 +850,8 @@ int	service_helper_open(struct service_context *, const char *name,
 int	service_connect_ambient(const char *name, int *session_fd);
 int	service_open(const char *name, int *session_fd);
 
-/*
- * Which session channel a mint request asks switchboard to create (§6).  The
- * numeric values are the wire domain values SVC_OP_MINT_DOMAIN carries, with
- * USER == 0 so a zero-initialized request defaults to the scoped channel.
- */
-enum service_mint_kind {
-	SERVICE_MINT_USER = 0,		/* per-uid scoped channel */
-	SERVICE_MINT_SYSTEM = 1,	/* full-discovery admin channel */
-};
-
-/*
- * The principal->bundle admin decision lives in libcapbundle
- * (capbundle_principal_is_admin, docs/capability-authority-model.md P1), which
- * can read the UCL policy; login/su call it there.
- */
-
-/*
- * Mint a session lookup channel (§6/§21/§22) over a borrowed SYSTEM-domain
- * lookup channel (syschan).  `kind` selects the minted channel's scope:
- * SERVICE_MINT_USER binds a per-uid scoped channel; SERVICE_MINT_SYSTEM binds a
- * full-discovery admin channel (for a root/wheel session) and uid is ignored.
- * On success *out_fd is a new, caller-owned ambient descriptor: it survives fork
- * and exec and is usable in capability mode, ready to be installed as a session
- * leader's inherited lookup channel.  Fails with EPERM if syschan is not a
- * SYSTEM-domain channel (domains only ever narrow), or — for a SERVICE_MINT_SYSTEM
- * request — if switchboard refuses the privilege for the requesting channel.
- */
-int	service_mint_session_domain(int syschan, enum service_mint_kind kind,
-	    uid_t uid, int *out_fd);
-
-/*
- * Like service_mint_session_domain() but delivers a transferable descriptor for
- * a caller that must forward it over one more SCM_RIGHTS hop before installing
- * it (sshd's monitor -> session child).  See the implementation for the
- * CAP_XFER contract.  Ordinary login/su sessions must NOT use this.
- */
-int	service_mint_session_domain_resend(int syschan, enum service_mint_kind kind,
-	    uid_t uid, int *out_fd);
-
-/*
- * Mint this session's lookup channel through the auth-agent (system.Auth),
- * reached over the caller's ambient SYSTEM lookup channel.  Unlike
- * service_mint_session_domain(), the caller does NOT decide SYSTEM vs USER and
- * holds no mint authority: the agent resolves the principal and applies policy.
- * A login program (login/su/sshd) uses this as the primary path and falls back
- * to service_mint_session_domain() when the agent is unreachable.  Returns 0
- * with *out_fd set on success; -1 (with errno) otherwise.
- *
- * `flags` is 0 for a session leaf that installs the channel directly (login,
- * su): the delivered descriptor arrives non-transferable.  Pass
- * SERVICE_MINT_AGENT_FORWARDABLE when the caller must forward the descriptor
- * over one more SCM_RIGHTS hop before it is installed (sshd's monitor -> session
- * child): the descriptor then arrives transferable and the caller must
- * re-attenuate it (cap_xfer_limit CAP_XFER_ONCE) before the single forward.
- */
-#define	SERVICE_MINT_AGENT_FORWARDABLE	0x1u
-/* Request public USER discovery with no principal anointments or admin rights. */
-#define	SERVICE_MINT_AGENT_UNPRIVILEGED	0x2u
-/*
- * Bound of one lookup RPC to switchboard (a parked lookup -- the provider is
- * launched but has not checked in yet -- times out and may be retried), and
- * the whole-exchange budget the login programs give
- * service_mint_session_via_agent(): long enough for a console autologin or
- * an early ssh session to outlast the agent's own start-up (its identity
- * databases arrive through system.Filesystem) on a slow boot, short enough
- * that a broken agent costs one bounded wait per login, never a hang.
- */
+/* Bound discovery requests even while providers are starting. */
 #define	SERVICE_LOOKUP_TIMEOUT_MS	2000U
-#define	SERVICE_MINT_SESSION_TIMEOUT_MS	10000U
-int	service_mint_session_via_agent(int lookup_chan, uid_t uid,
-	    uint32_t flags, unsigned timeout_ms, int *out_fd);
-/*
- * Authenticated session mint for a non-admin caller: like
- * service_mint_session_via_agent(), but the caller proves the TARGET uid's
- * `password` (as su collected it through PAM) instead of holding
- * SERVICE_RIGHTS_AUTHENTICATE. Used by su from a session without explicit
- * session-mint authority.  `flags` accepts SERVICE_MINT_AGENT_FORWARDABLE.  The
- * password buffer is zeroed before return.
- */
-int	service_mint_session_authenticated(int lookup_chan, uid_t uid,
-	    const char *password, uint32_t flags, unsigned timeout_ms,
-	    int *out_fd);
-
-/*
- * Mint a session lookup channel over the provider's OWN bootstrap channel to
- * switchboard (not a borrowed syschan).  Delivered transferable (RESEND) so the
- * caller can forward it over one more hop.  The auth-agent path; see
- * docs/book/src/providers/auth.md.
- */
-int	service_context_mint_domain(struct service_context *context,
-	    enum service_mint_kind kind, uid_t uid, int *out_fd);
-
-/*
- * Anointments (docs/book/src/plane/anointments.md).  A mint may carry the set of
- * anointment names the minted session holds; switchboard matches that set
- * against each endpoint's per-endpoint `requires` at lookup time, after the
- * existing domain check.  Names are NUL-terminated reverse-domain strings of
- * at most SERVICE_ANOINT_NAME_MAX - 1 characters; at most SERVICE_ANOINT_MAX
- * per mint (both equal the switchboard wire bounds SVC_ANOINT_*).
- *
- * `all` marks a session that holds every anointment (the principal policy's
- * `*`); `names`/`n` are then ignored.  `admin_rights` makes connections
- * resolved from the session carry SVC_RIGHTS_ADMIN.  The non-anointed
- * functions above are equivalent to n = 0, all = admin_rights =
- * (kind == SERVICE_MINT_SYSTEM), which preserves their historical meaning.
- */
-#define	SERVICE_ANOINT_NAME_MAX	64
-#define	SERVICE_ANOINT_MAX	32
-
-int	service_context_mint_domain_anointed(struct service_context *context,
-	    enum service_mint_kind kind, uid_t uid,
-	    const char (*names)[SERVICE_ANOINT_NAME_MAX], unsigned n,
-	    bool all, bool admin_rights, int *out_fd);
-
-/* Raw-fd equivalent over a borrowed SYSTEM-domain lookup channel. */
-int	service_mint_session_domain_anointed(int syschan,
-	    enum service_mint_kind kind, uid_t uid,
-	    const char (*names)[SERVICE_ANOINT_NAME_MAX], unsigned n,
-	    bool all, bool admin_rights, int *out_fd);
-
-/*
- * Elevate: obtain a session lookup channel that holds the caller's current
- * anointment set plus `name` (docs/book/src/plane/anointments.md "Elevation").
- * system.Auth is resolved over the caller's ambient lookup channel
- * (service_ambient_lookup_fd()); the agent takes the caller's uid and session
- * from the kernel-stamped sender, never from the payload, checks the
- * principal's `may_elevate` policy, authenticates `password` against the
- * caller's own account, and mints session-set-plus-one.  On success *out_fd is
- * the minted channel (install it with service_install_ambient_lookup() before
- * exec).  The password buffer passed in is NOT modified; the request copy is
- * zeroed before return.  Returns 0 on success, -1 with errno: EINVAL (bad or
- * over-long argument), ENOENT (no ambient channel or no agent), EPERM (name
- * not in the caller's may_elevate), EACCES (authentication failed), EBADMSG
- * (malformed reply), ETIMEDOUT.
- */
-int	service_elevate(const char *name, const char *password,
-	    unsigned timeout_ms, int *out_fd);
 
 #define	SERVICE_CLIENT_TIMEOUT_INFINITE	UINT32_MAX
 

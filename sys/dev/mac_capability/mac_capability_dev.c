@@ -271,10 +271,23 @@ mac_capability_instance_do_sendmsg(struct mac_capability_instance *s,
 	/* Snapshot before taking fd-table or channel locks. */
 	{
 		struct mac_cap_process_info info;
+		struct cap_authority *bound;
 
+		mtx_lock(&s->ci_mtx);
+		bound = s->ci_authority;
+		mtx_unlock(&s->ci_mtx);
 		PROC_LOCK(td->td_proc);
-		mac_capability_process_info(td->td_proc, &info);
+		error = cap_authority_check_locked(td->td_proc, bound);
+		if (error == 0) {
+			mac_capability_process_info(td->td_proc, &info);
+			cap_authority_stamp_locked(td->td_proc, &msg->cm_auth_stamp);
+			msg->cm_authority = cap_authority_hold_locked(td->td_proc);
+		}
 		PROC_UNLOCK(td->td_proc);
+		if (error != 0) {
+			mac_capability_msg_free(msg);
+			goto out;
+		}
 		msg->cm_process.identity = info.identity;
 		msg->cm_process.responsible_identity = info.responsible_identity;
 		msg->cm_process.pid = info.pid;
@@ -286,7 +299,7 @@ mac_capability_instance_do_sendmsg(struct mac_capability_instance *s,
 		error = copyin(args->payload, msg->cm_data,
 		    args->payload_len);
 		if (error != 0) {
-			uma_zfree(mac_capability_msg_zone, msg);
+			mac_capability_msg_free(msg);
 			goto out;
 		}
 	}
@@ -295,7 +308,7 @@ mac_capability_instance_do_sendmsg(struct mac_capability_instance *s,
 	if (args->nfds > 0) {
 		error = copyin(args->fds, fdbuf, args->nfds * sizeof(int));
 		if (error != 0) {
-			uma_zfree(mac_capability_msg_zone, msg);
+			mac_capability_msg_free(msg);
 			goto out;
 		}
 		for (i = 0; i < (int)args->nfds; i++) {
@@ -427,7 +440,8 @@ out:
 static int
 mac_capability_instance_do_recvmsg(struct mac_capability_instance *s, struct file *fp,
     struct mac_capability_recvmsg_args *args, struct thread *td,
-    struct mac_capability_process_stamp *process)
+    struct mac_capability_process_stamp *process,
+    struct cap_authority_stamp *authority)
 {
 	struct mac_capability_msg *msg;
 	sbintime_t start __unused;
@@ -526,6 +540,8 @@ mac_capability_instance_do_recvmsg(struct mac_capability_instance *s, struct fil
 	/* Fill metadata. */
 	if (process != NULL)
 		*process = msg->cm_process;
+	if (authority != NULL)
+		*authority = msg->cm_auth_stamp;
 	args->badge = msg->cm_badge;
 	args->reply_token = msg->cm_reply_token;
 	if (msg->cm_cred != NULL) {
@@ -620,8 +636,17 @@ mac_capability_instance_ioctl(struct file *fp, u_long cmd, void *data,
     struct ucred *active_cred __unused, struct thread *td)
 {
 	struct mac_capability_instance *s;
+	struct cap_authority *bound;
+	int error;
 
 	s = fp->f_data;
+	mtx_lock(&s->ci_mtx);
+	bound = s->ci_authority;
+	mtx_unlock(&s->ci_mtx);
+	/* Bindings are immutable and live at least as long as this instance. */
+	error = cap_authority_check(td, bound);
+	if (error != 0)
+		return (error);
 
 	switch (cmd) {
 	case FIONBIO:
@@ -645,7 +670,17 @@ mac_capability_instance_ioctl(struct file *fp, u_long cmd, void *data,
 			return (EACCES);
 		}
 		return (mac_capability_instance_do_recvmsg(s, fp,
-		    (struct mac_capability_recvmsg_args *)data, td, NULL));
+		    (struct mac_capability_recvmsg_args *)data, td, NULL, NULL));
+	case MAC_CAPABILITY_RECVMSG_V3: {
+		struct mac_capability_recvmsg_v3_args *args = data;
+
+		bzero(&args->process, sizeof(args->process));
+		bzero(&args->authority, sizeof(args->authority));
+		if (s->ci_restricted & MAC_CAPABILITY_RF_NO_RECV)
+			return (EACCES);
+		return (mac_capability_instance_do_recvmsg(s, fp,
+		    &args->message, td, &args->process, &args->authority));
+	}
 	case MAC_CAPABILITY_RECVMSG_V2: {
 		struct mac_capability_recvmsg_v2_args *args =
 		    (struct mac_capability_recvmsg_v2_args *)data;
@@ -654,7 +689,7 @@ mac_capability_instance_ioctl(struct file *fp, u_long cmd, void *data,
 		if (s->ci_restricted & MAC_CAPABILITY_RF_NO_RECV)
 			return (EACCES);
 		return (mac_capability_instance_do_recvmsg(s, fp,
-		    &args->message, td, &args->process));
+		    &args->message, td, &args->process, NULL));
 	}
 	case MAC_CAPABILITY_CALL: {
 		struct mac_capability_call_args *ca = (struct mac_capability_call_args *)data;

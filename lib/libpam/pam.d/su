@@ -13,4 +13,3 @@ auth		include		system
 account		include		system
 
 # session
-session		required	pam_permit.so

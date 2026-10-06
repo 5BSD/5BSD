@@ -77,7 +77,6 @@ SRCS.bundle_registry_test=	bundle_registry_test.c bundle_registry.c bundle_selec
 LIBADD.bundle_registry_test=	capbundle ucl
 ATF_TESTS_C+=	rc_adopt_test
 ATF_TESTS_C+=	activation_calendar_test
-ATF_TESTS_C+=	ambient_hygiene_test
 ATF_TESTS_C+=	sctl_gate_test
 ATF_TESTS_C+=	register_lookup_gate_test
 BINDIR=		${TESTSDIR}
@@ -287,5 +286,12 @@ CFLAGS.bundle_selection_test+=	-I${SRCTOP}/usr.sbin/switchboard
 
 LIBADD.capd_service_fixture+= capsulert
 
+
+ATF_TESTS_C+= boot_authority_test
+SRCS.boot_authority_test= boot_authority_test.c boot_authority.c
+CFLAGS.boot_authority_test+= -I${SRCTOP}/usr.sbin/switchboard \
+    -I${SRCTOP}/lib/libcapbundle -I${SRCTOP}/lib/libcapsulert \
+    -I${SRCTOP}/contrib/libucl/include -I${SRCTOP}/sys
+LIBADD.boot_authority_test+= capbundle ucl
 
 .include <bsd.test.mk>

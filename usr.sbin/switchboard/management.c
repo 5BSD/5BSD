@@ -10,10 +10,51 @@
 
 #include <errno.h>
 #include <stddef.h>
+#include <pwd.h>
+#include <string.h>
 #include <syslog.h>
 
 #include "switchboard.h"
 #include "management.h"
+
+/* User-writable bundle declarations cannot grant protected service access. */
+void
+svc_user_manifest_confine(struct svc_runtime *svc)
+{
+	struct svc_manifest *m = &svc->manifest;
+
+	if (svc->owner_uid == (uid_t)-1)
+		return;
+	m->management = SVC_MGMT_USER;
+	m->domain = SVC_MANIFEST_DOMAIN_USER;
+	m->user_resolvable = false;
+	m->ambient = false;
+	m->cap_system = 0;
+	m->n_sysctl_isolate = 0;
+	/* Root-created listeners are reserved for trusted installation policy. */
+	m->nactivation_sockets = 0;
+	memset(m->activation_sockets, 0, sizeof(m->activation_sockets));
+	m->nanointments = 0;
+	memset(m->anointments, 0, sizeof(m->anointments));
+}
+
+/* Resolve the account from registry ownership, never from writable policy. */
+int
+svc_user_manifest_credentials(struct svc_runtime *svc)
+{
+	struct passwd *pw;
+
+	if (svc->owner_uid == (uid_t)-1)
+		return (0);
+	pw = getpwuid(svc->owner_uid);
+	if (pw == NULL)
+		return (errno = ENOENT, -1);
+	if (strlcpy(svc->manifest.user, pw->pw_name,
+	    sizeof(svc->manifest.user)) >= sizeof(svc->manifest.user))
+		return (errno = ENAMETOOLONG, -1);
+	svc->manifest.group[0] = '\0';
+	return (0);
+}
 
 const char *
 svc_management_name(int management)
@@ -59,7 +100,7 @@ svc_management_check_class(int management, const char *label, const char *op,
 		/*
 		 * Absolute, escalation-proof: a core unit (the base TCB plane)
 		 * cannot be managed at runtime by anyone -- not an operator, not
-		 * uid 0, not any held right or anointment.  Only switchboard's own
+		 * uid 0, not any held right or attribute.  Only switchboard's own
 		 * boot/shutdown/restart lifecycle touches it.
 		 */
 		syslog(LOG_WARNING,
@@ -85,8 +126,7 @@ svc_management_check_class(int management, const char *label, const char *op,
 	default:
 		/*
 		 * System-wide services (base non-core daemons and operator-added
-		 * software): manageable only by an operator (a session holding the
-		 * management authority), never by a uid alone.
+		 * software): require software management authority, never a UID alone.
 		 */
 		if (is_operator)
 			return (0);

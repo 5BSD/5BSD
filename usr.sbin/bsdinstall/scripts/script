@@ -149,17 +149,6 @@ if [ -f $TMPDIR/bsdinstall-installscript-setup ]; then
 	rm $BSDINSTALL_CHROOT/tmp/installscript
 fi
 
-# Resolve policy principals after the post-install script has created accounts.
-# The packaged root/wheel policy remains the default unless explicitly requested.
-if [ "${BSDINSTALL_CAPABILITY_POLICY_NONINTERACTIVE:-}" = yes ] ||
-    [ "${BSDINSTALL_CAPABILITY_ADMIN_USERS+x}" = x ] ||
-    [ "${BSDINSTALL_CAPABILITY_ADMIN_GROUPS+x}" = x ] ||
-    [ "${BSDINSTALL_CAPABILITY_MANAGE_USERS+x}" = x ] ||
-    [ "${BSDINSTALL_CAPABILITY_COMPAT+x}" = x ]; then
-	BSDINSTALL_CAPABILITY_POLICY_NONINTERACTIVE=yes \
-	    bsdinstall capabilitypolicy
-fi
-
 bsdinstall entropy
 bsdinstall umount
 if [ "$ZFSBOOT_DISKS" ]; then

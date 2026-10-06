@@ -179,11 +179,13 @@ main(int argc, char **argv)
 	CHECK(pid >= 0);
 	if (pid == 0) {
 		CHECK(setuid(2001) == 0);
-		CHECK(get() < 0 && errno == EPERM);
+		fd = get();
+		CHECK(fd >= 0);
+		close(fd);
 		_exit(0);
 	}
 	waitok(pid);
-	pass("unprovisioned-uid-transition-denied");
+	pass("uid-transition-preserves-discovery-route");
 	pid = fork();
 	CHECK(pid >= 0);
 	if (pid == 0) {
@@ -195,7 +197,7 @@ main(int argc, char **argv)
 		_exit(0);
 	}
 	waitok(pid);
-	pass("explicit-target-principal");
+	pass("legacy-uid-metadata-does-not-gate-discovery");
 	pid = fork();
 	CHECK(pid >= 0);
 	if (pid == 0) {

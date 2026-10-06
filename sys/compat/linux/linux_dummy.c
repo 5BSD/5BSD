@@ -93,6 +93,8 @@ DUMMY(userfaultfd);
 /* Linux 4.8: */
 /* Linux 4.18: */
 #ifndef __amd64__
+/* The implementation currently lives in amd64/linux/linux_machdep.c. */
+DUMMY(remap_file_pages);
 DUMMY(io_pgetevents);
 #endif
 /* Linux 5.1: */

@@ -39,6 +39,12 @@
  *     already claimed by a different nonce.  Re-claiming the same
  *     vnode from the same nonce transfers ownership to the calling
  *     instance (the claim's lifetime tracks the most recent claimer).
+ *     A regular file with a potentially writable shared mapping cannot be
+ *     claimed (EBUSY). While claimed, shared mappings with WRITE in their
+ *     maximum protection are refused, even for the owner: mapped stores
+ *     cannot recheck a revoked token. Private copy-on-write and read-only
+ *     shared mappings remain available. Unsupported backing objects are
+ *     rejected rather than treated as protected.
  *
  *   FI_OP_RELEASE
  *     Release a previously isolated vnode.  Only the owning nonce

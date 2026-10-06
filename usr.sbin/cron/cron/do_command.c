@@ -26,7 +26,6 @@ static const char rcsid[] =
 
 #include "cron.h"
 #include "cron_probes.h"
-#include <libservice_session.h>
 #if defined(LOGIN_CAP)
 # include <login_cap.h>
 #endif
@@ -125,7 +124,6 @@ child_process(entry *e, user *u)
 	int bytes = 1;
 	int status = 0;
 	const char *homedir = NULL;
-	struct mac_cap_process_info inherited = {0}, scoped;
 #ifdef PAM
 	pam_handle_t *pamh = NULL;
 	int pam_err = PAM_SUCCESS;
@@ -138,8 +136,6 @@ child_process(entry *e, user *u)
 	struct passwd *pwd;
 	login_cap_t *lc;
 # endif
-
-	(void)service_process_info(&inherited);
 
 	Debug(DPROC, ("[%d] child_process('%s')\n", getpid(), e->cmd))
 
@@ -157,10 +153,12 @@ child_process(entry *e, user *u)
 	mailfrom = env_get("MAILFROM", e->envp);
 
 #ifdef PAM
-	/* Every job gets its owner's session scope, including system crontabs.
-	 * Preserve the historical account-availability exemption for system jobs.
+	/* use PAM to see if the user's account is available,
+	 * i.e., not locked or expired or whatever.  skip this
+	 * for system tasks from /etc/crontab -- they can run
+	 * as any user.
 	 */
-	{
+	if (strcmp(u->name, SYS_NAME)) {	/* not equal */
 		struct pam_conv pamc = {
 			.conv = openpam_nullconv,
 			.appdata_ptr = NULL
@@ -172,7 +170,7 @@ child_process(entry *e, user *u)
 		 * of user to run command on behalf of.  they should be the
 		 * same for a task from a per-user crontab.
 		 */
-		if (strcmp(u->name, SYS_NAME) && strcmp(u->name, usernm)) {
+		if (strcmp(u->name, usernm)) {
 			log_it(usernm, getpid(), "username ambiguity", u->name);
 			exit(ERROR_EXIT);
 		}
@@ -192,8 +190,7 @@ child_process(entry *e, user *u)
 			exit(ERROR_EXIT);
 		}
 
-		pam_err = strcmp(u->name, SYS_NAME) ?
-		    pam_acct_mgmt(pamh, PAM_SILENT) : PAM_SUCCESS;
+		pam_err = pam_acct_mgmt(pamh, PAM_SILENT);
 		/* Expired password shouldn't prevent the job from running. */
 		if (pam_err != PAM_SUCCESS && pam_err != PAM_NEW_AUTHTOK_REQD) {
 			log_it(usernm, getpid(), "USER", "account unavailable");
@@ -230,14 +227,6 @@ child_process(entry *e, user *u)
 		pam_envp = pam_getenvlist(pamh);
 	}
 #endif
-	/* A customized PAM stack that omits provisioning must not leak boot scope. */
-	if (inherited.present && service_process_info(&scoped) == 0 &&
-	    scoped.present && scoped.generation == inherited.generation &&
-	    service_clear_ambient_lookup() == -1) {
-		log_it(usernm, getpid(), "SESSION", "cannot clear scheduler discovery");
-		exit(ERROR_EXIT);
-	}
-
 
 	/* our parent is watching for our death by catching SIGCHLD.  we
 	 * do not care to watch for our children's deaths this way -- we
@@ -429,9 +418,6 @@ child_process(entry *e, user *u)
 		if (lc != NULL)
 			login_close(lc);
 #endif
-
-		/* PAM provisioned the job's kernel context; no working fd survives. */
-		closefrom(3);
 
 		/* For compatibility, we chdir to the value of HOME if it was
 		 * specified explicitly in the crontab file, but not if it was

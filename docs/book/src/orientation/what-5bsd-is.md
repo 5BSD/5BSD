@@ -95,22 +95,18 @@ and the rule in [The Authority Model](../capability/authority-model.md).
 
 ## The driving principles
 
-**Authority is a held capability, not a uid, a path or a PID.** Every
-authorization decision on the plane is made by inspecting the endpoint a
-request arrived on. Where uid still decides something (a provider running as
-root to reach a pool handle, an rc daemon on the BSD side) the book calls it
-transitional and says so. The one legitimate identity-to-capability
-translation is BSDAuth, the mint boundary: login, su and sshd authenticate a
-credential and then ask `system.Auth` what the session may hold, decided by
-`/Capabilities/Config/principal-policy.ucl`. Denial and non-existence look the
-same to a caller, which is the intended information posture.
+**Discovery is a route; approved software supplies authority.** The kernel
+stamps requests with the actual sender's software context. SwitchBoard compares
+its attributes with endpoint requirements before returning a capability. The
+provider then enforces its operation semantics. UNIX login and UID changes do
+not mint software attributes. Anyone allowed to execute an approved client can
+use the operations that client exposes; V1 adds no per-user consent layer.
 
 **Born in capability mode.** A daemon must not have a window in which it runs
 unsandboxed. Switchboard calls cap_enter(2) in the child and then fexecve(2)s
 the verified bundle program, so from its first instruction the daemon can use
 only the descriptors switchboard delivered: its bootstrap object at fd 5, its
-service channel at fd 3, the directories its manifest named. Fifteen of the
-sixteen providers launch this way; BSDVM is the one documented `ambient =
+service channel at fd 3, the directories its manifest named. Most providers launch this way; BSDVM is the one documented `ambient =
 true` exception. Privileged kernel work that a sandboxed daemon cannot do by
 itself (setting the clock, loading a module, creating a jail, writing a
 sysctl) runs through a system gate token minted by capsule. See
@@ -138,12 +134,12 @@ See [Containers and Storage](../plane/containers-and-storage.md).
 the kernel gains roughly 65 SDT providers, and 87 ready-made scripts ship in
 `/usr/share/dtrace`. Tracing is itself a capability: BSDTrace delivers a
 rights-limited `/dev/dtrace` descriptor to callers that hold the
-`system.trace.client` anointment. Structured logs go through `system.Log`,
+`system.trace.client` attribute. Structured logs go through `system.Log`,
 security events through `system.Audit`, which commits BSM records from inside
 capability mode. See [Logging, Audit and Trace](../plane/logging-audit-trace.md).
 
 **Declaration is the grant, and verified execution is assumed.** A unit's
-manifest is its policy. `ambient`, `mint_authority`, `capabilities { system }`
+manifest is its policy. `ambient`, `capabilities { system }`
 and `level` are honoured only for a bundle under `/Capabilities/System`, and
 switchboard rejects a bundle that is not root-owned or that contains symlinks
 or undeclared units. The design assumes mac_veriexec will enforce that only
@@ -152,19 +148,19 @@ code as a fallback. Today MAC_VERIEXEC is compiled into GENERIC, veriexec(8)
 is hardened, but no signed base manifest is generated and enforcement is not
 entered. See [Verified Execution](../capability/veriexec.md).
 
-## The sixteen system capabilities
+## The system capabilities
 
 Each provider is a daemon under `usr.sbin/BSD*` with a BSD\*.8 man page, a
 typed client library, a per-label policy file where the facility is
-dangerous, and ATF tests. Thirteen launch at boot; BSDNamespace, BSDVM and
-BSDBluetooth start on the first lookup. Ten run as the unprivileged
-`capability` user (uid 976); BSDAudit, BSDAuth, BSDCrypto, BSDFilesystem,
+dangerous, and ATF tests. Boot activation is declared in each manifest;
+BSDNamespace, BSDVM and BSDBluetooth start on the first lookup. Several run
+as the unprivileged
+`capability` user (uid 976); BSDAudit, BSDCrypto, BSDFilesystem,
 BSDTrace and BSDVM run as root. Part IV has a chapter on each.
 
 | Wire name | Provider | Purpose |
 |---|---|---|
 | `system.Audit` | BSDAudit | Submits BSM audit records on behalf of capability-mode units, with per-identity event policy and rate limiting |
-| `system.Auth` | BSDAuth | The mint boundary: mints session lookup channels for login, su and sshd from the principal policy; serves anoint(1) elevation |
 | `system.Crypto` | BSDCrypto | Factory for crypto descriptors: sessions, keys, digests, randomness, named keys with lease and rotation |
 | `system.Device` | BSDDevice | Opens `/dev` leaves under a delivered directory and returns rights-narrowed, ioctl-whitelisted descriptors, default-deny per label |
 | `system.SystemExtension` | BSDExtension | Loads and unloads kernel modules through the kldload gate from an allow-list; reclaims modules of removed bundles |
@@ -172,11 +168,11 @@ BSDTrace and BSDVM run as root. Part IV has a chapter on each.
 | `system.Log` | BSDLog | Structured log ingestion, segment storage, retention and query; seals the logs of removed bundles |
 | `system.Namespace` | BSDNamespace | Creates and destroys label-scoped jails on request through the jail gate |
 | `system.Network` | BSDNetwork | Delivers connected, listening and UDP sockets and name resolution as descriptors, per-label policy |
-| `system.Notify` | BSDNotify | Publish/subscribe with state cells and timers; a second name, `system.Notify.System`, is gated by an anointment |
+| `system.Notify` | BSDNotify | Publish/subscribe with state cells and timers; a second name, `system.Notify.System`, is gated by an attribute |
 | `system.Power` | BSDPower | ACPI sleep states (reboot and halt stay with capsule) |
 | `system.Sysctl` | BSDSysctl | Reads and writes sysctl OIDs through the sysctl gate; sole writer of isolated OIDs such as `kern.maxfiles` |
 | `system.Time` | BSDTime | Reads, steps and slews the clock through the settime gate |
-| `system.Trace` | BSDTrace | Delivers a rights-limited DTrace descriptor to anointed callers |
+| `system.Trace` | BSDTrace | Delivers a rights-limited DTrace descriptor to approved clients |
 | `system.VM` | BSDVM | The virtual-machine authority; today a vsock endpoint broker with label-scoped port windows, running ambient |
 | `system.Bluetooth` | BSDBluetooth | The BLE host (GAP, GATT, ATT, SMP, ISO, HOGP) as a provider, with domain-multiplexed operations |
 

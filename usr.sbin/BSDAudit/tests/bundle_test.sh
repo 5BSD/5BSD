@@ -84,11 +84,7 @@ observability_contract_body()
 	done
 }
 
-# The auth agent's per-operation event classes: backend_submit() refines the
-# session's admission event by the record's operation prefix, so an
-# "elevate/..." record commits as AUE_AUTHAGENT_ELEVATE (43335) and a
-# "mint/..." record as AUE_AUTHAGENT_MINT (43336).  The C policy_test drives
-# the mapping; this pins the wiring and the registered numbers.
+# Retired audit event numbers remain readable; Auth is no longer admitted.
 atf_test_case auth_agent_event_contract
 auth_agent_event_contract_body()
 {
@@ -111,10 +107,7 @@ auth_agent_event_contract_body()
 	     awk '/auditcmp_policy_operation_event/ { p = NR }
 	          /audit_submit\(/ { s = NR }
 	          END { exit !(p && s && p < s) }'"
-	atf_check -s exit:0 -o ignore grep -F \
-	    '{ "system.Auth", "elevate", AUE_AUTHAGENT_ELEVATE }' "${policy}"
-	atf_check -s exit:0 -o ignore grep -F \
-	    '{ "system.Auth", "mint", AUE_AUTHAGENT_MINT }' "${policy}"
+	atf_check -s exit:1 -o empty grep -F '"system.Auth"' "${policy}"
 	# The historical providers keep a NULL operation (every operation).
 	for provider in system.Log system.Network system.Notify system.Crypto; do
 		atf_check -s exit:0 -o ignore grep -F \

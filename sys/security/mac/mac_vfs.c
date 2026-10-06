@@ -682,13 +682,14 @@ MAC_CHECK_PROBE_DEFINE4(vnode_check_mmap, "struct ucred *", "struct vnode *",
 
 int
 mac_vnode_check_mmap_impl(struct ucred *cred, struct vnode *vp, int prot,
-    int flags)
+    int flags, int maxprot)
 {
 	int error;
 
 	ASSERT_VOP_LOCKED(vp, "mac_vnode_check_mmap");
 
-	MAC_POLICY_CHECK(vnode_check_mmap, cred, vp, vp->v_label, prot, flags);
+	MAC_POLICY_CHECK(vnode_check_mmap, cred, vp, vp->v_label, prot, flags,
+	    maxprot);
 	MAC_CHECK_PROBE4(vnode_check_mmap, error, cred, vp, prot, flags);
 
 	return (error);

@@ -18,6 +18,7 @@
 #include <unistd.h>
 
 #include "switchboard.h"
+#include "authority.h"
 #include "fd_budget.h"
 #include "switchboard_audit.h"
 #include "switchboard_probes.h"
@@ -547,131 +548,12 @@ handle_helper_open(struct svc_runtime *svc, struct channel_message *request)
 	return (false);
 }
 
-/*
- * SVC_OP_MINT_DOMAIN — mint a session lookup channel and return the caller's
- * endpoint.  The request's `domain` field selects USER (per-uid, scoped) or
- * SYSTEM (full-discovery admin).  Only a SYSTEM-domain caller may mint at all:
- * a request on an already-narrowed channel is refused, because domains only
- * narrow and never broaden.  Additionally, minting a SYSTEM channel is a
- * privilege escalation, so it is refused unless the requesting channel is
- * itself SYSTEM (§6).  The returned descriptor is ambient (survives fork and
- * exec, usable in capability mode); switchboard retains the other end, scoped to
- * the minted domain, and dispatches lookups on it in domain.c.
- */
-static void
-handle_mint_domain(struct svc_runtime *svc, struct channel_message *request)
-{
-	/* One per event-loop thread; keep the 2 KiB set off the stack. */
-	static struct svc_anoint_set anoint;
-	const struct svc_mint_domain_req *req;
-	enum svc_domain_kind kind;
-	const char *kindstr;
-	int minted_fd, error;
-	bool resend;
-
-	minted_fd = -1;
-	if (channel_message_length(request) != sizeof(*req)) {
-		(void)svc_channel_reply(svc, request, SVC_OP_MINT_DOMAIN,
-		    EINVAL, NULL, 0);
-		return;
-	}
-	req = channel_message_data(request);
-	/*
-	 * Validate flags and the carried anointment set together
-	 * (docs/book/src/plane/anointments.md, "Domains and sessions"): only
-	 * RESEND / ANOINT_ALL / ADMIN_RIGHTS are known, the count is bounded,
-	 * every name is NUL-terminated and non-empty, and "*" is refused as a
-	 * name (it travels as the ANOINT_ALL flag).  The set is what the auth
-	 * agent decided from the principal policy; the minted channel carries it.
-	 */
-	if (svc_anoint_set_from_mint(req, &anoint) != 0) {
-		(void)svc_channel_reply(svc, request, SVC_OP_MINT_DOMAIN,
-		    EINVAL, NULL, 0);
-		return;
-	}
-	/*
-	 * SVC_MINT_FLAG_RESEND: deliver the endpoint transferable (default
-	 * CAP_XFER_UNLIMITED, skipping the CAP_XFER_ONCE attenuation) so a broker
-	 * that forwards it over one more SCM_RIGHTS hop before it is installed —
-	 * the auth-agent minting a session for a login program — is not left
-	 * holding an exhausted descriptor.  See docs/book/src/providers/auth.md.
-	 */
-	resend = (req->flags & SVC_MINT_FLAG_RESEND) != 0;
-	/*
-	 * The mint boundary is a single unit (the auth-agent: domain.c, docs/
-	 * auth-agent-design.md) — the one component that translates an
-	 * authenticated identity into a session lookup channel.  Recognize it by
-	 * its manifest-declared mint_authority role, NOT its domain: every
-	 * switchboard-launched unit's domain is SVC_DOMAIN_SYSTEM (zero-initialized),
-	 * so svc_domain_may_mint()/svc_mint_domain_kind() below cannot tell the
-	 * auth-agent from any other unit.  Without this gate any unit could mint a
-	 * SYSTEM channel and, because a minted channel's lookups carry
-	 * requester == NULL (domain.c), obtain the ADMIN bypass — the
-	 * Capsule-relay control connection to capsule (reboot/halt/lifecycle)
-	 * and third-party *.Control planes — that it can never get on its own
-	 * control channel.  The role is TCB-critical, so honor it only for a
-	 * base-system bundle (bundle_registry_is_system), exactly as `ambient` is
-	 * gated: an application bundle that self-declares mint_authority is ignored.
-	 * Only the auth-agent legitimately sets it; login/su/sshd receive the
-	 * minted channel from it.
-	 */
-	if (!svc->manifest.mint_authority ||
-	    !bundle_registry_is_system(svc->bundle_idx)) {
-		switchboard_audit(AUE_SWITCHBOARD_COMPONENT, getuid(), EPERM,
-		    "mint domain refused: %s is not the mint boundary",
-		    svc->manifest.label);
-		SWITCHBOARD_PROBE_MINT_DENY(svc->manifest.label, req->domain, EPERM);
-		(void)svc_channel_reply(svc, request, SVC_OP_MINT_DOMAIN,
-		    EPERM, NULL, 0);
-		return;
-	}
-	/* Domains only narrow: a non-system caller may not mint at all. */
-	if (!svc_domain_may_mint(&svc->domain)) {
-		SWITCHBOARD_PROBE_MINT_DENY(svc->manifest.label, req->domain, EPERM);
-		(void)svc_channel_reply(svc, request, SVC_OP_MINT_DOMAIN,
-		    EPERM, NULL, 0);
-		return;
-	}
-	/*
-	 * Escalation guard (§6): resolve the requested kind and refuse a SYSTEM
-	 * mint unless this channel is itself SYSTEM.  The may_mint gate above
-	 * already limits minting to SYSTEM channels; this explicit re-check is
-	 * the privilege boundary that must hold even if that policy widens.
-	 */
-	if (svc_mint_domain_kind(&svc->domain, req->domain, &kind) == -1) {
-		error = errno != 0 ? errno : EPERM;
-		SWITCHBOARD_PROBE_MINT_DENY(svc->manifest.label, req->domain, error);
-		(void)svc_channel_reply(svc, request, SVC_OP_MINT_DOMAIN,
-		    error, NULL, 0);
-		return;
-	}
-	if (domain_mint_session_channel(kind, (uid_t)req->uid, &anoint,
-	    &minted_fd, switchboard_kq) == -1)
-		error = errno != 0 ? errno : EIO;
-	else
-		error = 0;
-	kindstr = kind == SVC_DOMAIN_SYSTEM ? "system" :
-	    kind == SVC_DOMAIN_CONTROL ? "control" : "user";
-	switchboard_audit(AUE_SWITCHBOARD_COMPONENT, getuid(), error,
-	    "mint %s-domain channel svc=%s uid=%u anointments=%u%s%s",
-	    kindstr, svc->manifest.label, (unsigned)req->uid, anoint.n,
-	    anoint.all ? " all" : "", anoint.admin_rights ? " admin" : "");
-	SWITCHBOARD_PROBE_MINT_DOMAIN(svc->manifest.label, kindstr,
-	    (uid_t)req->uid, error);
-	SWITCHBOARD_PROBE_MINT_ANOINT((uid_t)req->uid, anoint.n,
-	    (int)anoint.all, (int)anoint.admin_rights, error);
-	(void)svc_channel_reply_ex(svc, request, SVC_OP_MINT_DOMAIN, error,
-	    error == 0 ? &minted_fd : NULL, error == 0 ? 1 : 0,
-	    /*cap_xfer=*/!resend);
-	if (minted_fd >= 0)
-		close(minted_fd);
-}
-
 static void
 svc_request(struct channel *channel, struct channel_message *request,
     void *context)
 {
-	struct svc_runtime *svc;
+	struct svc_runtime *svc, *sender;
+	struct svc_domain domain;
 	const uint32_t *opp;
 	uint32_t op;
 	bool retained;
@@ -686,6 +568,12 @@ svc_request(struct channel *channel, struct channel_message *request,
 	}
 	opp = channel_message_data(request);
 	memcpy(&op, opp, sizeof(op));
+	/* Owning a bootstrap endpoint does not identify its current sender. */
+	if (svc_authority_resolve(request, &domain, &sender) == -1 ||
+	    sender != svc) {
+		(void)svc_channel_reply(svc, request, op, EACCES, NULL, 0);
+		goto out;
+	}
 	SWITCHBOARD_PROBE_IPC_RECV(svc->manifest.label, op);
 	switch (op) {
 	case SVC_OP_READY:
@@ -726,8 +614,12 @@ svc_request(struct channel *channel, struct channel_message *request,
 		else
 			handle_worker_channel(svc, request);
 		break;
+	case SVC_OP_ISSUE_AUTHORITY:
+		/* Retired login-principal issuance; authority belongs to applications. */
+		(void)svc_channel_reply(svc, request, op, ENOTSUP, NULL, 0);
+		break;
 	case SVC_OP_MINT_DOMAIN:
-		handle_mint_domain(svc, request);
+		(void)svc_channel_reply(svc, request, op, ENOTSUP, NULL, 0);
 		break;
 	default:
 		syslog(LOG_WARNING, "service %s: unknown channel op %u",
@@ -791,6 +683,7 @@ svc_channel_close(struct svc_runtime *svc)
 
 	if (svc == NULL)
 		return;
+	svc_authority_revoke_unit(svc);
 	domain_unit_channels_close(svc);
 	if (svc->control_channel != NULL)
 		channel_destroy(svc->control_channel);

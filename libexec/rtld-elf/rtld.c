@@ -39,6 +39,8 @@
  */
 
 #include <sys/param.h>
+#include <sys/cap_authority.h>
+#include <sys/syscall.h>
 #include <sys/ktrace.h>
 #include <sys/mman.h>
 #include <sys/mount.h>
@@ -71,6 +73,39 @@
 /* Types. */
 typedef void (*func_ptr_type)(void);
 typedef void *(*path_enum_proc)(const char *path, size_t len, void *arg);
+
+/* Loader directories obtained from kernel authority, never from LD_*. */
+static char authority_directory_buffer[CAP_AUTH_LIBDIR_MAX * 12];
+static const char *authority_library_dirs;
+
+static void
+load_authority_directories(void)
+{
+	size_t used = 0;
+	int fd, n;
+
+	for (unsigned i = 0; i < CAP_AUTH_LIBDIR_MAX; i++) {
+		fd = syscall(SYS_cap_process, CAP_AUTH_GET_LIBDIR, i, 0, NULL);
+		if (fd == -1) {
+			if (errno == ENOENT || errno == ENOSYS)
+				break;
+			_rtld_error("cannot acquire authorized library directory: %s",
+			    strerror(errno));
+			rtld_die();
+		}
+		n = rtld_snprintf(authority_directory_buffer + used,
+		    sizeof(authority_directory_buffer) - used, "%s%d",
+		    used == 0 ? "" : ":", fd);
+		if (n < 0 || (size_t)n >= sizeof(authority_directory_buffer) - used) {
+			_rtld_error("authorized library directory list overflow");
+			rtld_die();
+		}
+		/* rtld_snprintf reports status, not the formatted byte count. */
+		used = strlen(authority_directory_buffer);
+	}
+	if (used != 0)
+		authority_library_dirs = authority_directory_buffer;
+}
 
 /* Variables that cannot be static: */
 extern struct r_debug r_debug; /* For GDB */
@@ -751,7 +786,10 @@ _rtld(Elf_Addr *sp, func_ptr_type *exit_proc, Obj_Entry **objp)
 	libmap_disable = ld_get_env_var(LD_LIBMAP_DISABLE) != NULL;
 	libmap_override = ld_get_env_var(LD_LIBMAP);
 	ld_library_path = ld_get_env_var(LD_LIBRARY_PATH);
-	ld_library_dirs = ld_get_env_var(LD_LIBRARY_PATH_FDS);
+	if (!trust)
+		load_authority_directories();
+	ld_library_dirs = authority_library_dirs != NULL ? authority_library_dirs :
+	    ld_get_env_var(LD_LIBRARY_PATH_FDS);
 	ld_preload = ld_get_env_var(LD_PRELOAD);
 	ld_preload_fds = ld_get_env_var(LD_PRELOAD_FDS);
 	ld_elf_hints_path = ld_get_env_var(LD_ELF_HINTS_PATH);
@@ -3610,7 +3648,8 @@ try_fds_open(const char *name, const char *path)
 	size_t len;
 	int fd, dirfd, dirfd_path;
 
-	if (!trust || name[0] != '#' || path == NULL)
+	if ((!trust && path != authority_library_dirs) || name[0] != '#' ||
+	    path == NULL)
 		return (-1);
 
 	name++;
@@ -3758,8 +3797,8 @@ search_library_pathfds(const char *name, const char *path, int *fdp)
 
 	dbg("%s('%s', '%s', fdp)", __func__, name, path);
 
-	/* Don't load from user-specified libdirs into setuid binaries. */
-	if (!trust)
+	/* Secure images accept only directories retrieved from kernel authority. */
+	if (!trust && path != authority_library_dirs)
 		return (NULL);
 
 	/* We can't do anything if LD_LIBRARY_PATH_FDS isn't set. */
@@ -6715,7 +6754,8 @@ rtld_set_var_library_path(struct ld_env_var_desc *lvd)
 static void
 rtld_set_var_library_path_fds(struct ld_env_var_desc *lvd)
 {
-	ld_library_dirs = lvd->val;
+	ld_library_dirs = authority_library_dirs != NULL ? authority_library_dirs :
+	    lvd->val;
 }
 
 static void

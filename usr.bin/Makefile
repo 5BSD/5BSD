@@ -1,7 +1,6 @@
 .include <src.opts.mk>
 
-SUBDIR=	anoint \
-	apply \
+SUBDIR=	apply \
 	asa \
 	awk \
 	backlight \

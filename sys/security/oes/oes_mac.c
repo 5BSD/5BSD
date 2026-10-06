@@ -3530,7 +3530,7 @@ oes_mac_vnode_check_chroot(struct ucred *cred, struct vnode *dvp,
  */
 static int
 oes_mac_vnode_check_mmap(struct ucred *cred, struct vnode *vp,
-    struct label *vplabel, int prot, int flags)
+    struct label *vplabel, int prot, int flags, int maxprot __unused)
 {
 	struct oes_vnode_event_info info = OES_VNODE_INFO_INIT(cred);
 

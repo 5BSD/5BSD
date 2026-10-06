@@ -3,12 +3,12 @@
  *
  * Copyright (c) 2026 Kory Heard
  *
- * IPC anointments (docs/book/src/plane/anointments.md).
+ * Software attributes (docs/book/src/plane/attributes.md).
  *
- * An endpoint may declare, in its bundle's policy file, the anointment names a
+ * An endpoint may declare, in its bundle's policy file, the attribute names a
  * connecting program must hold (all of them).  A unit declares what it holds
- * in its own policy file; a login session holds what the auth agent's
- * principal policy gave it at mint.  This file owns the set representation,
+ * in its trusted software policy. Login identity supplies no grants.
+ * This file owns the set representation,
  * the match, and the refusal record.  Matching is by exact, case-sensitive
  * string comparison; the names are opaque here — the parser already validated
  * their form.
@@ -34,11 +34,9 @@
 #include "switchboard_probes.h"
 #include "switchboard_svc_proto.h"
 
-/*
- * A unit's set is exactly its policy-file `anointments` list.  Units never
- * hold "*" (libcapbundle refuses it) and never carry the ADMIN rights bit —
- * a unit is not an admin principal, whatever its uid or bundle class.
- */
+/* Build the manifest's attributes. Wildcards are rejected by the parser;
+ * administrative operation authority is checked separately at dispatch. */
+
 void
 svc_anoint_set_from_manifest(struct svc_anoint_set *set,
     const struct svc_manifest *m)
@@ -62,46 +60,6 @@ svc_anoint_set_from_manifest(struct svc_anoint_set *set,
 	set->admin_rights = false;
 }
 
-/*
- * Validate a SVC_OP_MINT_DOMAIN request's anointment fields and build the set
- * the minted session channel will carry.  Returns 0 with *set filled, or
- * EINVAL: an unknown flag, a count over the bound, a nonzero reserved word, or
- * a name that is empty, unterminated, or the wildcard ("*" travels as
- * SVC_MINT_FLAG_ANOINT_ALL, never as a name, so a payload cannot smuggle it
- * past a caller that meant a literal list).  Entries past nanointments are
- * ignored.  Pure: no channel or registry state, so it is unit-testable.
- */
-int
-svc_anoint_set_from_mint(const struct svc_mint_domain_req *req,
-    struct svc_anoint_set *set)
-{
-	unsigned i;
-	size_t len;
-
-	memset(set, 0, sizeof(*set));
-	if (req == NULL)
-		return (EINVAL);
-	if ((req->flags & ~(SVC_MINT_FLAG_RESEND | SVC_MINT_FLAG_ANOINT_ALL |
-	    SVC_MINT_FLAG_ADMIN_RIGHTS)) != 0)
-		return (EINVAL);
-	if (req->reserved != 0)
-		return (EINVAL);
-	if (req->nanointments > SVC_ANOINT_MAX)
-		return (EINVAL);
-	for (i = 0; i < req->nanointments; i++) {
-		len = strnlen(req->anointments[i], SVC_ANOINT_NAME_MAX);
-		if (len == 0 || len >= SVC_ANOINT_NAME_MAX)
-			return (EINVAL);
-		if (strcmp(req->anointments[i], "*") == 0)
-			return (EINVAL);
-		memcpy(set->names[i], req->anointments[i], len + 1);
-	}
-	set->n = req->nanointments;
-	set->all = (req->flags & SVC_MINT_FLAG_ANOINT_ALL) != 0;
-	set->admin_rights = (req->flags & SVC_MINT_FLAG_ADMIN_RIGHTS) != 0;
-	return (0);
-}
-
 /* Whether the set holds one name.  A NULL set holds nothing. */
 bool
 svc_anoint_holds(const struct svc_anoint_set *set, const char *name)
@@ -110,7 +68,7 @@ svc_anoint_holds(const struct svc_anoint_set *set, const char *name)
 
 	/*
 	 * An empty name is never held: every producer already refuses or
-	 * skips it (parser, mint validator, set_from_manifest), so this only
+	 * skips it (parser, set_from_manifest), so this only
 	 * guards a hand-built or corrupted set from matching an empty
 	 * requirement by a bare string compare.
 	 */
@@ -315,9 +273,9 @@ svc_anoint_deny(const char *name, const char *label, uid_t uid,
 		missing = "";
 	(void)uid;	/* consumed only by the audit record when built in */
 	switchboard_audit(AUE_SWITCHBOARD_ANOINT, uid, EACCES,
-	    "anointment refused: %s -> %s missing %s", label, name, missing);
+	    "attribute access refused: %s -> %s missing %s", label, name, missing);
 	SWITCHBOARD_PROBE_ANOINT_DENY(name, label, missing);
-	syslog(LOG_NOTICE, "anoint: '%s' refused '%s': missing %s",
+	syslog(LOG_NOTICE, "attributes: '%s' refused '%s': missing %s",
 	    label, name, missing);
 }
 

@@ -38,7 +38,6 @@ while true; do
 	    "Setup of your $OSNAME system is nearly complete. You can now modify your configuration choices. After this screen, you will have an opportunity to make more complex changes using a shell." 0 0 0 \
 		"Finish" "Apply configuration and exit installer" \
 		"Add User" "Add a user to the system" \
-		"System Control Policy" "Choose administrators for SYSTEM daemons and services" \
 		"Root Password" "Change root password" \
 		"Hostname" "Set system hostname" \
 		"Network" "Networking configuration" \
@@ -59,10 +58,7 @@ while true; do
 		break
 		;;
 	"Add User")
-		bsdinstall adduser && bsdinstall capabilitypolicy
-		;;
-	"System Control Policy")
-		bsdinstall capabilitypolicy
+		bsdinstall adduser
 		;;
 	"Root Password")
 		bsdinstall rootpass

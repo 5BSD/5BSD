@@ -10,7 +10,7 @@
  *
  * Supported resource types:
  *
- *   Files/vnodes:  open, exec, unlink, link, rename, chmod, chown,
+ *   Files/vnodes:  open, write, exec, unlink, link, rename, chmod, chown,
  *                  chflags, utimes, truncate, stat, access, readlink,
  *                  connect (AF_UNIX)
  *
@@ -41,6 +41,7 @@
 #include <sys/file.h>
 #include <sys/jail.h>
 #include <sys/mount.h>
+#include <sys/mman.h>
 #include <sys/proc.h>
 #include <sys/ucred.h>
 #include <sys/imgact.h>
@@ -50,6 +51,8 @@
 #include <netinet/in.h>
 #include <sys/vsock.h>
 #include <sys/bitstring.h>
+#include <vm/vm.h>
+#include <vm/vm_object.h>
 #include <netgraph/bluetooth/include/ng_hci.h>
 #include <netgraph/bluetooth/include/ng_l2cap.h>
 #include <netgraph/bluetooth/include/ng_btsocket.h>
@@ -739,6 +742,33 @@ fi_actions_from_accmode(accmode_t accmode)
 }
 
 /* --- Content access --- */
+
+static int
+fi_check_mmap(struct ucred *cred __unused, struct vnode *vp,
+    struct label *vplabel __unused, int prot __unused, int flags, int maxprot)
+{
+	bool claimed;
+
+	/* Shared stores cannot recheck authority after a token is revoked.
+	 * Check maximum protection too: read-only mappings may later gain WRITE.
+	 * Private COW stores do not modify the protected vnode. */
+	if ((flags & MAP_SHARED) == 0 || (maxprot & PROT_WRITE) == 0 ||
+	    atomic_load_acq_int(&fi_claim_count) == 0)
+		return (0);
+	rw_rlock(&fi_lock);
+	claimed = fi_claim_lookup(vp) != NULL;
+	rw_runlock(&fi_lock);
+	return (claimed ? fi_deny(EACCES) : 0);
+}
+
+static int
+fi_check_write(struct ucred *active_cred, struct ucred *file_cred __unused,
+    struct vnode *vp, struct label *vplabel __unused)
+{
+
+	/* An inherited or previously opened descriptor is not current authority. */
+	return (fi_check_vp_action(active_cred, vp, FI_FS_WRITE));
+}
 
 static int
 fi_check_open(struct ucred *cred, struct vnode *vp,
@@ -2087,6 +2117,10 @@ fi_do_claim(struct mac_capability_instance *s, struct fi_priv *priv,
 {
 	struct vnode *vp;
 	struct fi_claim *c, *existing;
+	vm_object_t object;
+	uint64_t owner_nonce, claim_id;
+	bool mapped;
+	int error;
 
 	vp = fp->f_vnode;
 	if (vp == NULL)
@@ -2095,6 +2129,31 @@ fi_do_claim(struct mac_capability_instance *s, struct fi_priv *priv,
 	/* Pre-allocate outside the lock. */
 	c = malloc(sizeof(*c), M_FILE_ISOLATION, M_WAITOK | M_ZERO);
 	vref(vp);
+	/* Serialize with mmap's shared vnode lock through claim publication. */
+	error = vn_lock(vp, LK_EXCLUSIVE | LK_RETRY);
+	if (error != 0) {
+		vrele(vp);
+		free(c, M_FILE_ISOLATION);
+		return (error);
+	}
+	object = vp->v_object;
+	mapped = false;
+	if (vp->v_type == VREG && object != NULL) {
+		VM_OBJECT_RLOCK(object);
+		if (object->type == OBJT_VNODE)
+			mapped = object->handle != vp ||
+			    object->un_pager.vnp.writemappings != 0;
+		else if ((object->flags & OBJ_SWAP) != 0)
+			mapped = object->un_pager.swp.writemappings != 0;
+		else
+			mapped = true; /* Unknown backing cannot prove absence of writers. */
+		VM_OBJECT_RUNLOCK(object);
+	}
+	if (mapped) {
+		vput(vp);
+		free(c, M_FILE_ISOLATION);
+		return (EBUSY);
+	}
 
 	c->fi_vp = vp;
 	c->fi_nonce = nonce;
@@ -2104,11 +2163,12 @@ fi_do_claim(struct mac_capability_instance *s, struct fi_priv *priv,
 	existing = fi_claim_lookup(vp);
 	if (existing != NULL) {
 		if (existing->fi_nonce != nonce) {
+			owner_nonce = existing->fi_nonce;
 			rw_wunlock(&fi_lock);
-			vrele(vp);
+			vput(vp);
 			free(c, M_FILE_ISOLATION);
 			SDT_PROBE3(mac_capability_isolation, , , deny,
-			    "claim-conflict", nonce, existing->fi_nonce);
+			    "claim-conflict", nonce, owner_nonce);
 			return (EBUSY);
 		}
 		/*
@@ -2119,11 +2179,12 @@ fi_do_claim(struct mac_capability_instance *s, struct fi_priv *priv,
 		LIST_REMOVE(existing, fi_instlink);
 		LIST_INSERT_HEAD(&priv->fip_claims, existing, fi_instlink);
 		existing->fi_inst = s;
+		claim_id = existing->fi_id;
 		rw_wunlock(&fi_lock);
-		vrele(vp);
+		vput(vp);
 		free(c, M_FILE_ISOLATION);
 		SDT_PROBE6(mac_capability_isolation, , , state, (uintptr_t)"claim-move",
-		    nonce, nonce, existing->fi_id, FI_OP_CLAIM, 0);
+		    nonce, nonce, claim_id, FI_OP_CLAIM, 0);
 		return (0);
 	}
 
@@ -2133,9 +2194,11 @@ fi_do_claim(struct mac_capability_instance *s, struct fi_priv *priv,
 	atomic_add_int(&fi_claim_count, 1);
 	if (vp->v_type == VDIR)
 		atomic_add_int(&fi_dir_claim_count, 1);
+	claim_id = c->fi_id;
 	rw_wunlock(&fi_lock);
+	VOP_UNLOCK(vp);
 	SDT_PROBE6(mac_capability_isolation, , , state, (uintptr_t)"claim",
-	    nonce, nonce, c->fi_id, FI_OP_CLAIM, 0);
+	    nonce, nonce, claim_id, FI_OP_CLAIM, 0);
 	return (0);
 }
 
@@ -3665,6 +3728,8 @@ fi_check_prison_attach(struct ucred *cred, struct prison *pr,
 static struct mac_policy_ops fi_mac_ops = {
 	/* Content access */
 	.mpo_vnode_check_open		= fi_check_open,
+	.mpo_vnode_check_write		= fi_check_write,
+	.mpo_vnode_check_mmap		= fi_check_mmap,
 	.mpo_vnode_check_exec		= fi_check_exec,
 	/* Namespace mutation */
 	.mpo_vnode_check_unlink		= fi_check_unlink,

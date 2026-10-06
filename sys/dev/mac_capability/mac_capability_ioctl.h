@@ -122,6 +122,8 @@ struct mac_capability_recvmsg_args {
 	uint32_t	_reserved[4];
 };
 
+#include <sys/cap_authority.h>
+
 /* Versioned receive metadata; the original receive/trailer ABI is unchanged. */
 struct mac_capability_process_stamp {
 	uint64_t identity;
@@ -135,6 +137,14 @@ struct mac_capability_recvmsg_v2_args {
 };
 #define MAC_CAPABILITY_RECVMSG_V2 \
 	_IOWR('Y', 13, struct mac_capability_recvmsg_v2_args)
+
+struct mac_capability_recvmsg_v3_args {
+	struct mac_capability_recvmsg_args message;
+	struct mac_capability_process_stamp process;
+	struct cap_authority_stamp authority;
+};
+#define MAC_CAPABILITY_RECVMSG_V3 \
+	_IOWR('Y', 14, struct mac_capability_recvmsg_v3_args)
 
 /*
  * Synchronous call — request and reply in one ioctl.

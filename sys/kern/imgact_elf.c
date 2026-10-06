@@ -1386,7 +1386,7 @@ __CONCAT(exec_, __elfN(imgact))(struct image_params *imgp)
 	 * ABI, by user preferences, and make special treatment for
 	 * PIE binaries.
 	 */
-	if (imgp->credential_setid) {
+	if (imgp->credential_setid || imgp->authority_setid) {
 		PROC_LOCK(imgp->proc);
 		imgp->proc->p_flag2 &= ~(P2_ASLR_ENABLE | P2_ASLR_DISABLE |
 		    P2_WXORX_DISABLE | P2_WXORX_ENABLE_EXEC);

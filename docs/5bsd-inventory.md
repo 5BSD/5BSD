@@ -5,6 +5,14 @@ What 5BSD adds to, and changes in, the FreeBSD it forked from. Produced
 after the defects it found were fixed (018de3344651 through edf6967eeff2); every section is written
 from the source tree and its design documents, not from memory.
 
+This is a historical inventory, not the current capability-policy specification.
+The principal-policy, BSDAuth elevation and environment-descriptor inheritance
+entries below describe the retired design. See
+[Software Policy and Service Management](book/src/plane/management-policy.md)
+for the software-attribute model and `tools/test/software-authority` for its
+current guest acceptance fixtures. Retired principal-policy test drivers have
+been removed; their earlier versions remain in Git history.
+
 ## Baseline and method
 
 | | |

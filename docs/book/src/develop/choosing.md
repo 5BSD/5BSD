@@ -75,11 +75,10 @@ pkgbase sets is in [Packaging and Shipping](packaging.md).
 
 Two manifest keys decide reach, and they are easy to confuse. `visible` says
 which session kinds may resolve the names a unit publishes; a name with no
-`visible` is resolvable only by SYSTEM-domain sessions (an admin login, a base
-unit). `domain` says which names the unit itself may resolve; when absent, a
+`visible` is resolvable only by SYSTEM-domain sessions (for example, a base unit). `domain` says which names the unit itself may resolve; when absent, a
 `/Capabilities/System` bundle resolves everything and an `/Capabilities/Apps`
 bundle resolves only user-visible names. Of the base providers, only
-`system.Auth`, `system.Log`, `system.Filesystem` and `system.Notify` are
+`system.Log`, `system.Filesystem` and `system.Notify` are
 `visible = ["user"]`; `system.Network`, for instance, is SYSTEM-only. An
 application that needs it declares `domain = "system"`, which an Apps bundle
 may do; a per-user agent may not, because switchboard forces `domain = "user"`
@@ -119,18 +118,16 @@ launch the program, nothing more. See
 
 ### No uid checks
 
-A plane program never asks `getpeereid(3)` and never compares a uid to zero.
-On the provider side, `service_listener_accept(3)` fills a `struct
-service_identity` whose `client_label` is the caller's bundle label
-(`bundle_id/unit`, for instance `system.Auth/bsdauth`) and whose `rights` is
-the rights mask switchboard granted that session. Policy keys on the label.
-The one cross-service right is `SERVICE_RIGHTS_ADMIN`, granted only to an
-admin login session's connections, and it bypasses a provider's per-object
-policy the way "root may do anything" used to. On the consumer side, a program
-does not become powerful by running as root; it becomes powerful by holding a
-session to the right name, which a root login may or may not be able to
-resolve. The reasoning is in
-[The Authority Model](../capability/authority-model.md).
+Capability-plane authorization does not grant access merely because the
+caller has UID 0. `service_listener_accept(3)` returns the verified client
+label and endpoint rights. Admission depends on the actual sender's software
+context and approved attributes. Providers may enforce their own operation
+policy using that identity and those rights; an administrative right is not
+a blanket requirement to bypass every service policy.
+
+A program gains its approved software authority on execution, independently
+of login-principal grants. Anyone allowed to execute it can use the operations
+it exposes in V1. See [The Authority Model](../capability/authority-model.md).
 
 ## Status
 

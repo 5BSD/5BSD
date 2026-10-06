@@ -1,7 +1,0 @@
-schema = "org.5bsd.capability-bundle";
-bundle_id = "system.Auth";
-version = "1.0.0";
-sequence = 1;
-author = "5BSD";
-publisher = "org.5bsd.base";
-units = ["bsdauth"];

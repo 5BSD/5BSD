@@ -212,9 +212,9 @@ The configuration file `/Capabilities/Config/bsdfilesystem.ucl`
 `path`, a `rights` array from `read`, `write`, `exec`, `lookup`, `ioctl`,
 and an optional `prefix` that matches one trailing device-unit component
 (`/dev/vhid` covers `/dev/vhid3`, never a subdirectory). The shipped policy
-in `usr.sbin/BSDFilesystem/bsdfilesystem.ucl` grants BSDAuth read access to
-`/etc/passwd`, `/etc/group`, `/etc/master.passwd` and the principal policy;
-BSDNetwork `/etc/resolv.conf`, `/etc/hosts` and `/etc/services`; and
+in `usr.sbin/BSDFilesystem/bsdfilesystem.ucl` grants BSDNetwork read access to
+`/etc/resolv.conf`, the installer resolver target, `/etc/hosts` and
+`/etc/services`; and
 BSDBluetooth the `/dev/vhid` family. There is no admin bypass: an admin
 session's `SERVICE_RIGHTS_ADMIN` bit does not widen storage or open_paths.
 Compiled bounds cap the damage a client can do: 32 claims per connection,

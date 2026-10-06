@@ -144,7 +144,7 @@ elsewhere on 5BSD, by design:
 | Question | Answer |
 |---|---|
 | Which units start at boot? | Each unit's manifest (`activation { boot = true; }`); `switchboardctl enable/disable` per bundle. See [Bundles and Manifests](../plane/bundles-and-manifests.md). |
-| Who is an administrator of the plane? | `/Capabilities/Config/principal-policy.ucl`, written by the installer. |
+| Which software can manage the plane? | Approved executable attributes in bundle manifests, checked against endpoint requirements and management policy. See [Software Attributes](../plane/attributes.md). |
 | Which pool holds capability storage? | `pool =` in `/Capabilities/Config/bsdfilesystem.ucl`. |
 | Who may trace without root? | `Config/bsdtrace.allow` in the Trace bundle; see [Observability](observability.md). |
 | What does a capmode unit get to open? | Its manifest's `directories` and `capabilities` keys; nothing from rc.conf. |

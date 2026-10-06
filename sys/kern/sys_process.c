@@ -32,6 +32,7 @@
  */
 
 #include <sys/param.h>
+#include <sys/cap_authority.h>
 #include <sys/eventhandler.h>
 #include <sys/systm.h>
 #include <sys/ktr.h>
@@ -1059,6 +1060,8 @@ kern_ptrace(struct thread *td, int req, pid_t pid, void *addr, int data)
 			error = EPERM;
 			goto fail;
 		}
+		if ((error = cap_authority_debug_check(p->p_pptr, p)) != 0)
+			goto fail;
 		break;
 
 	case PT_ATTACH:

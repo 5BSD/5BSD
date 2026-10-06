@@ -325,8 +325,8 @@ Check the bundle offline, then put it where switchboard looks. Site bundles go
 under `/Capabilities/Apps`, root-owned and not group- or other-writable;
 switchboard verifies the tree and watches the directory, so a bundle copied
 into place is picked up, and `switchboardctl reload` forces a transactional
-rescan (it needs the `system.switchboard.admin` anointment on the caller's
-session, not root):
+rescan (the approved control program must hold the
+`system.switchboard.admin` attribute and the endpoint rights):
 
 ```sh
 $ switchboardctl verify Echo.cap
@@ -344,7 +344,7 @@ Bundle: Echo.cap
       provides: org.example.Echo
       protect: 0x1fb
 # cp -R Echo.cap /Capabilities/Apps/
-$ anoint system.switchboard.admin switchboardctl reload
+$ switchboardctl reload
 ```
 
 (`switchboardctl install Echo.cap` copies a bundle into

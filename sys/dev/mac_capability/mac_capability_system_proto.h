@@ -23,7 +23,8 @@
  *     (the fork family) can perform the operation freely.
  *
  *   SYS_OP_RELEASE
- *     Release previously claimed operations.
+ *     Release the gates selected by the request mask on this connection.
+ *     A zero mask releases all of its gates. Unowned bits are rejected.
  *
  *   SYS_OP_MINT
  *     Create an access token fd.  The token, when authorized,
@@ -146,6 +147,12 @@ struct sys_adjtime_reply {
  *   - A payload is present => SCOPED mode: only the OIDs listed in the set are
  *     isolated; every other sysctl stays directly writable (subject to the
  *     kernel's own PRIV_SYSCTL_WRITE check).
+ *
+ * Claim mode is tracked per connection. A scoped re-claim narrows only
+ * that connection; independent coarse claims still isolate every OID.
+ * Explicit release and connection closure drop that connection's mode ref.
+ * The owner's shared scoped OID set is discarded with its last scoped ref.
+ * A no-payload re-claim on an active scoped connection remains a no-op.
  *
  * An isolated OID is named by its MIB (the int[] array, e.g. the mib for
  * kern.maxfiles), bounded by CTL_MAXNAME.  The kernel compares the accessed

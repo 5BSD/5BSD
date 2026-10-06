@@ -53,9 +53,9 @@ Connect to the gated system tier
 instead of the open tier
 .Dq system.Notify .
 The gated tier may publish under any topic, set state, and use timers, but
-switchboard resolves it only for callers anointed with
+switchboard resolves it only for software callers holding the attribute
 .Dq system.notify.system ;
-without that anointment the open fails with
+without that attribute the open fails with
 .Er ENOENT .
 On the open tier a default policy allows subscribing to any topic and
 publishing under

@@ -12,8 +12,6 @@
  *
  *   - a private helper, or a per-user unit requested by a unit of the same
  *     owner, is responsible to the REQUESTING UNIT's coalition;
- *   - a per-user unit activated from a login session of its owner is
- *     responsible to that SESSION's coalition;
  *   - a shared SYSTEM/CORE provider activated on demand by an arbitrary
  *     client answers for ITSELF (a client that happened to touch
  *     system.Crypto first does not own it; per-request attribution is the
@@ -40,6 +38,7 @@
 #include <dev/mac_capability/mac_capability_coalition_proto.h>
 
 #include "switchboard.h"
+#include "authority.h"
 
 /*
  * Does `requester` manage `unit`, in the sense that a launch it caused is
@@ -83,7 +82,7 @@ svc_responsibility_clear(struct svc_runtime *svc)
 void
 svc_responsibility_decide(struct svc_runtime *unit,
     const struct svc_runtime *requester,
-    const struct svc_lookup_channel *session)
+    const struct svc_domain *session)
 {
 	struct svc_responsible *r = &unit->responsible;
 
@@ -107,23 +106,7 @@ svc_responsibility_decide(struct svc_runtime *unit,
 		return;
 	}
 	if (session != NULL) {
-		if (unit->manifest.management == SVC_MGMT_USER &&
-		    unit->owner_uid != (uid_t)-1 &&
-		    unit->owner_uid == lookup_channel_uid(session) &&
-		    lookup_channel_coalition_fd(session) >= 0) {
-			r->parent_fd =
-			    dup_parent(lookup_channel_coalition_fd(session));
-			if (r->parent_fd >= 0) {
-				r->kind = SVC_RESP_SESSION;
-				r->uid = lookup_channel_uid(session);
-				r->parent_id =
-				    lookup_channel_coalition_id(session);
-				return;
-			}
-			syslog(LOG_NOTICE, "responsibility: %s: cannot hold "
-			    "the session coalition (%m); rooting the unit itself",
-			    unit->manifest.label);
-		}
+		/* A software grant is not evidence of a login-session coalition. */
 		r->kind = SVC_RESP_SELF;
 		return;
 	}

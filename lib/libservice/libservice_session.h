@@ -6,6 +6,7 @@
 #include <sys/cdefs.h>
 #include <sys/types.h>
 #include <sys/cap_process.h>
+#include <sys/cap_authority.h>
 
 #define SERVICE_LOOKUP_ENV "SERVICE_LOOKUP_FD"
 
@@ -14,13 +15,16 @@ __BEGIN_DECLS
 int service_ambient_lookup_fd(void);
 /* Install a held reference; the caller still owns fd. */
 int service_install_ambient_lookup(int fd);
-int service_install_ambient_lookup_uid(int fd, uid_t uid);
 int service_clear_ambient_lookup(void);
+/* Install a genuine, one-use issued grant, independently of discovery. */
+int service_authority_install(int token_fd);
+int service_authority_clear(void);
+int service_authority_info(struct cap_authority_info *);
 int service_process_info(struct mac_cap_process_info *info);
 int service_origin_export(void);
 int service_origin_set(int token_fd);
-/* Join the session coalition; call in its leader before forking children. */
-int service_session_join_coalition(int lookup_fd);
+/* The caller retains the descriptor; rehomes only inherited membership. */
+int service_session_join_fd(int coalition_fd);
 __END_DECLS
 
 #endif

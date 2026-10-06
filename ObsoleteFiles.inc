@@ -51,6 +51,37 @@
 #   xargs -n1 | sort | uniq -d;
 # done
 
+# 20261005: software attributes replace login-principal grants and BSDAuth.
+# principal-policy.ucl is no longer consumed; preserve local configuration for
+# operator review rather than silently deleting administrator-written policy.
+OLD_FILES+=Capabilities/System/Auth.cap/Units/bsdauth.unit/bin/BSDAuth
+OLD_FILES+=Capabilities/System/Auth.cap/Units/bsdauth.unit/Unit.ucl
+OLD_FILES+=Capabilities/System/Auth.cap/Bundle.ucl
+OLD_FILES+=usr/bin/anoint
+OLD_FILES+=usr/include/authagent_proto.h
+OLD_FILES+=usr/libexec/bsdinstall/capabilitypolicy
+OLD_FILES+=usr/share/man/man1/anoint.1.gz
+OLD_FILES+=usr/share/man/man8/BSDAuth.8.gz
+OLD_FILES+=usr/tests/usr.bin/anoint/Kyuafile
+OLD_FILES+=usr/tests/usr.bin/anoint/anoint_cli_test
+OLD_FILES+=usr/tests/usr.sbin/BSDAuth/Kyuafile
+OLD_FILES+=usr/tests/usr.sbin/BSDAuth/observability_test
+OLD_FILES+=usr/tests/usr.sbin/BSDAuth/elevate_integration_test
+OLD_FILES+=usr/tests/usr.sbin/BSDAuth/elevate_test
+OLD_FILES+=usr/tests/usr.sbin/BSDAuth/gate_test
+OLD_FILES+=usr/tests/usr.sbin/BSDAuth/identity_test
+OLD_FILES+=usr/tests/usr.sbin/BSDAuth/mint_decision_test
+OLD_FILES+=usr/tests/usr.sbin/BSDAuth/provider_test
+OLD_FILES+=usr/tests/usr.sbin/BSDAuth/pty_askpass
+OLD_FILES+=usr/tests/usr.sbin/bsdinstall/capabilitypolicy_test
+OLD_FILES+=usr/tests/lib/libcapbundle/principal_policy_test
+OLD_FILES+=usr/tests/lib/libservice/anoint_wire_test
+OLD_DIRS+=Capabilities/System/Auth.cap/Units/bsdauth.unit/bin
+OLD_DIRS+=Capabilities/System/Auth.cap/Units/bsdauth.unit
+OLD_DIRS+=Capabilities/System/Auth.cap/Units
+OLD_DIRS+=Capabilities/System/Auth.cap
+OLD_DIRS+=usr/tests/usr.bin/anoint
+OLD_DIRS+=usr/tests/usr.sbin/BSDAuth
 # 20260913: installation identity and reclaim callback ABI (SHLIB_MAJOR 3)
 OLD_LIBS+=usr/lib/libservice.so.2
 # 20260910: the pre-SwitchBoard component names were retired.

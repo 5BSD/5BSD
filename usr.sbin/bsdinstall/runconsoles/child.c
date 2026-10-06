@@ -35,8 +35,6 @@
 
 #include <err.h>
 #include <errno.h>
-#include <fcntl.h>
-#include <limits.h>
 #include <signal.h>
 #include <stdarg.h>
 #include <stdbool.h>
@@ -162,39 +160,6 @@ kill_wait_all_descendants_err_exit(int eval __unused)
 	kill_wait_all_descendants(SIGTERM);
 }
 
-/*
- * Keep the capability-plane lookup channel across the runconsoles hop.
- * The installer is a privileged rc descendant and must be able to ask PID 1
- * for an ordered reboot or shutdown.  Preserve only the open descriptor named
- * by SERVICE_LOOKUP_FD; every other non-stdio descriptor remains scrubbed.
- */
-static void
-closefrom_except_ambient(void)
-{
-	const char *value;
-	char *end;
-	long fd;
-	int scan;
-
-	value = getenv("SERVICE_LOOKUP_FD");
-	if (value == NULL || value[0] == '\0')
-		goto scrub_all;
-	errno = 0;
-	fd = strtol(value, &end, 10);
-	if (errno != 0 || end == value || *end != '\0' ||
-	    fd < STDERR_FILENO + 1 || fd >= INT_MAX ||
-	    fcntl((int)fd, F_GETFD) == -1)
-		goto scrub_all;
-
-	closefrom((int)fd + 1);
-	for (scan = STDERR_FILENO + 1; scan < (int)fd; scan++)
-		(void)close(scan);
-	return;
-
-scrub_all:
-	closefrom(STDERR_FILENO + 1);
-}
-
 static void __dead2
 grandchild_run(const char **argv, const sigset_t *oset)
 {
@@ -226,8 +191,8 @@ grandchild_run(const char **argv, const sigset_t *oset)
 	/* Now safe to unmask signals */
 	sigprocmask(SIG_SETMASK, oset, NULL);
 
-	/* Keep only stdio and the capability lookup channel, when present. */
-	closefrom_except_ambient();
+	/* Close all non-stdio descriptors before executing the program. */
+	closefrom(STDERR_FILENO + 1);
 
 	/* Ready to execute the requested program */
 	execvp(argv[0], __DECONST(char * const *, argv));

@@ -34,6 +34,7 @@
 #include "opt_vm.h"
 
 #include <sys/param.h>
+#include <sys/cap_authority.h>
 #include <sys/systm.h>
 #include <sys/acct.h>
 #include <sys/asan.h>
@@ -412,6 +413,7 @@ do_execve(struct thread *td, struct image_args *args, struct mac *mac_p,
 	struct vnode *oldtextdvp, *newtextdvp;
 	char *oldbinname, *newbinname;
 	bool credential_changing;
+	struct cap_authority *exec_authority = NULL;
 #ifdef MAC
 	struct label *interpvplabel = NULL;
 	struct ucred *relabelcred = NULL;
@@ -683,6 +685,16 @@ interpret:
 	}
 #endif
 
+	/* Software authority requires loader hardening, without changing a UID.
+	 * Recompute for every interpreter rather than trusting the script path.
+	 * Capability-mode services may use it; tracing and no_new_privs may not.
+	 */
+	cap_authority_drop(exec_authority);
+	exec_authority = NULL;
+	if ((imgp->vp->v_mount->mnt_flag & MNT_NOSUID) == 0)
+		exec_authority = cap_authority_exec_prepare(p, imgp->vp);
+	imgp->authority_setid = exec_authority != NULL;
+
 	/* The new credentials are installed into the process later. */
 
 	/*
@@ -861,13 +873,15 @@ interpret:
 
 	if ((imgp->sysent->sv_setid_allowed != NULL &&
 	    !(*imgp->sysent->sv_setid_allowed)(td, imgp)) ||
-	    (p->p_flag2 & P2_NO_NEW_PRIVS) != 0)
+	    (p->p_flag2 & P2_NO_NEW_PRIVS) != 0) {
 		execve_nosetid(imgp);
+		imgp->authority_setid = false;
+	}
 
 	/*
 	 * Implement image setuid/setgid installation.
 	 */
-	if (imgp->credential_setid) {
+	if (imgp->credential_setid || imgp->authority_setid) {
 		/*
 		 * Turn off syscall tracing for set-id programs, except for
 		 * root.  Record any set-id flags first to make sure that
@@ -935,6 +949,8 @@ interpret:
 	 * Store the vp for use in kern.proc.pathname.  This vnode was
 	 * referenced by namei() or by fexecve variant of fname handling.
 	 */
+	cap_authority_exec(p, newtextvp,
+	    imgp->authority_setid ? exec_authority : NULL);
 	oldtextvp = p->p_textvp;
 	p->p_textvp = newtextvp;
 	oldtextdvp = p->p_textdvp;
@@ -1092,6 +1108,7 @@ exec_fail:
 #ifdef KTRACE
 	ktr_io_params_free(kiop);
 #endif
+	cap_authority_drop(exec_authority);
 	pargs_drop(oldargs);
 	pargs_drop(newargs);
 	if (oldsigacts != NULL)

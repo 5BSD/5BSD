@@ -639,6 +639,21 @@ cp_check_shield(struct ucred *cred __unused, struct proc *p, uint32_t flag,
 	return (denied ? EACCES : 0);
 }
 
+bool
+mac_capability_debug_authorized(pid_t caller, pid_t target)
+{
+	bool allowed;
+
+	if (cp_no_shields())
+		return (false);
+	mtx_lock(&cp_lock);
+	allowed = (cp_shield_flags(target) & CP_SF_PTRACE) != 0 &&
+	    (caller == cp_shield_protector(target) ||
+	    cp_is_authorized(caller, target, CP_SF_PTRACE));
+	mtx_unlock(&cp_lock);
+	return (allowed);
+}
+
 static int
 cp_mac_check_ptrace(struct ucred *cred, struct proc *p)
 {

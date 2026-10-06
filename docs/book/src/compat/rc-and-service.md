@@ -55,10 +55,14 @@ The pidfile detail is the honest limit of adoption. An rc.d daemon daemonizes an
 For an adopted service the script still works, and it is still the only correct way to signal the daemon, but switchboard's record is not updated by it. `service cron stop` stops cron and leaves switchboard believing the unit is `running`; `service cron start` afterwards starts it and switchboard is none the wiser. Use switchboardctl(8) for adopted units so the manager's state and the process agree:
 
 ```
-$ anoint system.switchboard.admin switchboardctl restart cron
+$ switchboardctl restart cron
 ```
 
-`switchboardctl start`, `stop` and `restart` require the `system.switchboard.admin` anointment on the caller's session, not root (see [Anointments and Principal Policy](../plane/anointments.md)); the shipped default policy gives wheel every anointment, so a wheel session runs the command without `anoint`.
+`switchboardctl start`, `stop` and `restart` require the control endpoint's
+rights and the actual requesting program's `system.switchboard.admin`
+attribute. The shipped control executable has its own approved manifest;
+neither root nor wheel membership gives an arbitrary program that attribute.
+See [Software Attributes](../plane/attributes.md).
 
 ## How an rc unit appears in switchboardctl
 

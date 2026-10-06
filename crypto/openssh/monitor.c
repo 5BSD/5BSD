@@ -90,11 +90,6 @@
 #include "sk-api.h"
 #include "srclimit.h"
 
-/* 5BSD §21: privileged ambient lookup-channel provisioning */
-#include <sys/capsicum.h>	/* cap_xfer_limit, CAP_XFER_ONCE */
-#include <libservice.h>
-#include <libcapbundle.h>	/* capbundle_principal_is_admin */
-
 #ifdef GSSAPI
 static Gssctxt *gsscontext = NULL;
 #endif
@@ -103,8 +98,6 @@ static Gssctxt *gsscontext = NULL;
 extern ServerOptions options;
 extern u_int utmp_len;
 extern struct sshbuf *cfg;
-/* 5BSD: this connection's private SYSTEM lookup channel (sshd-session.c). */
-extern int ambient_session_lookup_fd;
 extern struct sshbuf *loginmsg;
 extern struct include_list includes;
 extern struct sshauthopt *auth_opts; /* XXX move to permanent ssh->authctxt? */
@@ -127,7 +120,6 @@ int mm_answer_keyallowed(struct ssh *, int, struct sshbuf *);
 int mm_answer_keyverify(struct ssh *, int, struct sshbuf *);
 int mm_answer_pty(struct ssh *, int, struct sshbuf *);
 int mm_answer_pty_cleanup(struct ssh *, int, struct sshbuf *);
-int mm_answer_provision(struct ssh *, int, struct sshbuf *);	/* 5BSD §21 */
 int mm_answer_term(struct ssh *, int, struct sshbuf *);
 int mm_answer_state(struct ssh *, int, struct sshbuf *);
 
@@ -234,8 +226,6 @@ struct mon_table mon_dispatch_postauth20[] = {
     {MONITOR_REQ_SIGN, 0, mm_answer_sign},
     {MONITOR_REQ_PTY, 0, mm_answer_pty},
     {MONITOR_REQ_PTYCLEANUP, 0, mm_answer_pty_cleanup},
-    /* 5BSD §21: session-time, post-authentication only */
-    {MONITOR_REQ_PROVISION, 0, mm_answer_provision},
     {MONITOR_REQ_TERM, 0, mm_answer_term},
 #ifdef SSH_AUDIT_EVENTS
     {MONITOR_REQ_AUDIT_EVENT, MON_PERMIT, mm_answer_audit_event},
@@ -448,8 +438,6 @@ monitor_child_postauth(struct ssh *ssh, struct monitor *pmonitor)
 	monitor_permit(mon_dispatch, MONITOR_REQ_MODULI, 1);
 	monitor_permit(mon_dispatch, MONITOR_REQ_SIGN, 1);
 	monitor_permit(mon_dispatch, MONITOR_REQ_TERM, 1);
-	/* 5BSD §21: session-time ambient lookup-channel provisioning. */
-	monitor_permit(mon_dispatch, MONITOR_REQ_PROVISION, 1);
 
 	if (auth_opts->permit_pty_flag) {
 		monitor_permit(mon_dispatch, MONITOR_REQ_PTY, 1);
@@ -1796,76 +1784,6 @@ mm_answer_pty_cleanup(struct ssh *ssh, int sock, struct sshbuf *m)
 		mm_session_close(s);
 	sshbuf_reset(m);
 	free(tty);
-	return (0);
-}
-
-/*
- * 5BSD §21/§22: mint this session's ambient lookup channel in the privileged
- * monitor and pass the resulting descriptor back to the (unprivileged) user
- * child.  The monitor holds this connection's PRIVATE SYSTEM lookup channel
- * (ambient_session_lookup_fd, registered by sshd-session.c before privsep); it mints the session's uid-scoped channel over it exactly
- * as login(1)/su(1) do over their inherited SYSTEM channel — replacing the old
- * getpeereid(2) control socket entirely (docs/capability-authority-model.md).
- * Holding a SYSTEM channel IS the authority (the monitor is the pre-privdrop
- * root process), so no uid attestation is needed; the scope is keyed to the
- * AUTHENTICATED principal, never a uid the untrusted child chose.  Strictly
- * best-effort: any failure yields a non-zero status and no descriptor — never
- * fatal, never break the session.
- */
-int
-mm_answer_provision(struct ssh *ssh, int sock, struct sshbuf *m)
-{
-	u_int wire_uid = 0;	/* ignored — see below */
-	int fd = -1, status, r;
-
-	debug3_f("entering");
-
-	/*
-	 * The request carries a uid for wire symmetry, but the monitor MUST NOT
-	 * trust it: the post-auth child is untrusted under privsep.  Provision
-	 * only for the AUTHENTICATED principal (authctxt->pw), never a uid the
-	 * child chose — otherwise a compromised child could request uid 0 and
-	 * obtain a SYSTEM admin channel.
-	 */
-	if ((r = sshbuf_get_u32(m, &wire_uid)) != 0)
-		fatal_fr(r, "parse uid");
-	(void)wire_uid;
-
-	if (authctxt == NULL || authctxt->pw == NULL) {
-		status = EPERM;			/* not authenticated */
-		fd = -1;
-	} else if (ambient_session_lookup_fd < 0) {
-		status = ENOENT;		/* no channel inherited this session */
-		fd = -1;
-	} else {
-		/* The privileged monitor owns a private reply endpoint. No shared
-		 * receive queue or cross-connection lock is involved. Mint only for
-		 * authctxt->pw, then attenuate the one transfer to the session child.
-		 */
-		(void)service_mint_session_via_agent(
-		    ambient_session_lookup_fd, authctxt->pw->pw_uid,
-		    SERVICE_MINT_AGENT_FORWARDABLE,
-		    SERVICE_MINT_SESSION_TIMEOUT_MS, &fd);
-		if (fd >= 0 && cap_xfer_limit(fd, CAP_XFER_ONCE) == 0)
-			status = 0;
-		else {
-			status = errno != 0 ? errno : EIO;
-			if (fd >= 0)
-				close(fd);
-			fd = -1;
-		}
-	}
-
-	sshbuf_reset(m);
-	if ((r = sshbuf_put_u32(m, (u_int)status)) != 0)
-		fatal_fr(r, "assemble status");
-	mm_request_send(sock, MONITOR_ANS_PROVISION, m);
-
-	if (status == 0) {
-		if (mm_send_fd(sock, fd) == -1)
-			error_f("mm_send_fd of provision channel failed");
-		close(fd);
-	}
 	return (0);
 }
 

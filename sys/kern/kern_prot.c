@@ -46,6 +46,7 @@
 #include "opt_inet6.h"
 
 #include <sys/param.h>
+#include <sys/cap_authority.h>
 #include <sys/systm.h>
 #include <sys/abi_compat.h>
 #include <sys/acct.h>
@@ -2454,6 +2455,8 @@ p_candebug(struct thread *td, struct proc *p)
 	PROC_LOCK_ASSERT(p, MA_OWNED);
 	if (td->td_proc == p)
 		return (0);
+	if ((error = cap_authority_debug_check(td->td_proc, p)) != 0)
+		return (error);
 	if ((error = priv_check(td, PRIV_DEBUG_UNPRIV)))
 		return (error);
 	if ((error = prison_check(td->td_ucred, p->p_ucred)))
@@ -2952,6 +2955,7 @@ _proc_set_cred(struct proc *p, struct ucred *newcred, bool enforce_proc_lim)
 	mtx_lock(&newcred->cr_mtx);
 	newcred->cr_users++;
 	mtx_unlock(&newcred->cr_mtx);
+	cap_authority_cred_changed(p, oldcred, newcred);
 	p->p_ucred = newcred;
 	PROC_UPDATE_COW(p);
 	if (newcred->cr_ruidinfo != oldcred->cr_ruidinfo)

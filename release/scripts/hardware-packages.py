@@ -277,6 +277,7 @@ def build(args):
                    '\nOSVERSION=' + version + '\nMAKE_ENV+= KERNBUILDDIR=' +
                    args.kernel_build + '\n')
     seeds = []
+    builds = []
     for line in args.port_list.read_text().splitlines():
         line = line.split('#', 1)[0].strip()
         if not line:
@@ -293,10 +294,15 @@ def build(args):
         name = run(*command, *options, '-V', 'PKGBASE', capture_output=True).stdout.strip()
         if not name:
             raise ValueError('port has no PKGBASE: ' + origin)
-        # clean-depends removes any old build products in a reused ports tree.
-        run(*command, *options, 'clean', 'clean-depends')
-        run(*command, *options, 'package-recursive')
+        builds.append((command, options))
         seeds.append(name)
+    # Clear every selected port and its dependencies before compiling any of
+    # them. Cleaning between builds discards freshly built shared dependencies
+    # and needlessly recompiles them for each subsequent profile entry.
+    for command, options in builds:
+        run(*command, *options, 'clean', 'clean-depends')
+    for command, options in builds:
+        run(*command, *options, 'package-recursive')
     args.packages = packages / 'All'
     args.seeds = seeds
     # Fail if a fwget-selected package is missing from the release closure.

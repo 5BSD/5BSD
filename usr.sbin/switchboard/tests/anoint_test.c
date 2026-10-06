@@ -31,6 +31,8 @@
 #include <dev/mac_capability/mac_capability_ioctl.h>
 
 #include <atf-c.h>
+
+#include "retired_protocol.h"
 #include <errno.h>
 #include <fcntl.h>
 #include <pthread.h>
@@ -50,10 +52,41 @@
 
 #include "../anoint.c"
 #include "../domain.c"
+/* Real registry: an unknown stamped identity must fail closed. */
+#include "../authority.c"
 #include "../naming.c"
 
 struct switchboard_state sd;
 int switchboard_kq = -1;
+
+static void
+require_process_context(void)
+{
+	struct mac_cap_process_info info;
+	if (service_process_info(&info) == -1) {
+		if (errno == ENOSYS)
+			atf_tc_skip("kernel has no process-held discovery API; run in the VM");
+		atf_tc_fail("process context: %s", strerror(errno));
+	}
+}
+
+
+/* The test registry contains one system bundle at index zero. */
+bool
+bundle_registry_is_system(unsigned idx)
+{
+	return (idx == 0);
+}
+
+struct svc_runtime *
+svc_by_label(const char *label)
+{
+	for (unsigned i = 0; i < sd.nservices; i++)
+		if (strcmp(sd.services[i].manifest.label, label) == 0)
+			return (&sd.services[i]);
+	return (NULL);
+}
+
 
 /* ------------------------------------------------------------------ */
 /* Stubs for collaborators owned by other translation units.           */
@@ -101,13 +134,6 @@ sctl_adopt_channel(int provider_fd, uint64_t rights, uid_t uid,
 	return (0);
 }
 
-int
-bundle_registry_ensure_user_dir(uid_t uid)
-{
-
-	(void)uid;
-	return (0);
-}
 
 int
 on_demand_launch_ambient(const char *name, struct svc_lookup_channel *lc,
@@ -575,148 +601,6 @@ ATF_TC_BODY(set_from_manifest, tc)
 	ATF_CHECK(svc_anoint_holds(&set, "name.0"));
 	ATF_CHECK(!svc_anoint_holds(&set, "name.3"));
 	ATF_CHECK(svc_anoint_holds(&set, "name.31"));
-}
-
-/* ------------------------------------------------------------------ */
-/* svc_anoint_set_from_mint: the SVC_OP_MINT_DOMAIN payload contract.   */
-/* ------------------------------------------------------------------ */
-
-static void
-mint_req_init(struct svc_mint_domain_req *req, uint32_t flags,
-    const char *const *names, unsigned n)
-{
-	unsigned i;
-
-	memset(req, 0, sizeof(*req));
-	req->op = SVC_OP_MINT_DOMAIN;
-	req->flags = flags;
-	req->uid = 1001;
-	req->domain = SVC_MINT_DOMAIN_USER;
-	for (i = 0; i < n && i < SVC_ANOINT_MAX; i++)
-		strlcpy(req->anointments[i], names[i],
-		    sizeof(req->anointments[i]));
-	req->nanointments = n;
-}
-
-ATF_TC_WITHOUT_HEAD(set_from_mint_valid);
-ATF_TC_BODY(set_from_mint_valid, tc)
-{
-	struct svc_mint_domain_req req;
-	struct svc_anoint_set set;
-
-	/* An empty set: the shipped default for an ordinary user (S3/S4). */
-	mint_req_init(&req, 0, NULL, 0);
-	ATF_CHECK_EQ(0, svc_anoint_set_from_mint(&req, &set));
-	ATF_CHECK_EQ(0U, set.n);
-	ATF_CHECK(!set.all);
-	ATF_CHECK(!set.admin_rights);
-
-	/* A literal list (P1 operators). */
-	mint_req_init(&req, 0, (const char *const[]){ TRACE_ANOINT,
-	    GATED_ANOINT }, 2);
-	ATF_CHECK_EQ(0, svc_anoint_set_from_mint(&req, &set));
-	ATF_CHECK_EQ(2U, set.n);
-	ATF_CHECK_STREQ(TRACE_ANOINT, set.names[0]);
-	ATF_CHECK_STREQ(GATED_ANOINT, set.names[1]);
-	ATF_CHECK(!set.all);
-	ATF_CHECK(!set.admin_rights);
-
-	/* "*" travels as the ANOINT_ALL flag; ADMIN_RIGHTS is its own knob. */
-	mint_req_init(&req, SVC_MINT_FLAG_ANOINT_ALL | SVC_MINT_FLAG_ADMIN_RIGHTS,
-	    NULL, 0);
-	ATF_CHECK_EQ(0, svc_anoint_set_from_mint(&req, &set));
-	ATF_CHECK(set.all);
-	ATF_CHECK(set.admin_rights);
-
-	/* The two knobs are independent (P6: some names, no bypass). */
-	mint_req_init(&req, 0, ADMIN_ONE, 1);
-	ATF_CHECK_EQ(0, svc_anoint_set_from_mint(&req, &set));
-	ATF_CHECK(!set.all);
-	ATF_CHECK(!set.admin_rights);
-	ATF_CHECK(svc_anoint_holds(&set, SVC_ANOINT_SWITCHBOARD_ADMIN));
-	mint_req_init(&req, SVC_MINT_FLAG_ADMIN_RIGHTS, NULL, 0);
-	ATF_CHECK_EQ(0, svc_anoint_set_from_mint(&req, &set));
-	ATF_CHECK(!set.all);
-	ATF_CHECK(set.admin_rights);
-
-	/* RESEND is still accepted, alone and combined. */
-	mint_req_init(&req, SVC_MINT_FLAG_RESEND, NULL, 0);
-	ATF_CHECK_EQ(0, svc_anoint_set_from_mint(&req, &set));
-	mint_req_init(&req, SVC_MINT_FLAG_RESEND | SVC_MINT_FLAG_ANOINT_ALL |
-	    SVC_MINT_FLAG_ADMIN_RIGHTS, NULL, 0);
-	ATF_CHECK_EQ(0, svc_anoint_set_from_mint(&req, &set));
-	ATF_CHECK(set.all && set.admin_rights);
-
-	/* Exactly the bound is fine. */
-	{
-		const char *names[SVC_ANOINT_MAX];
-		char store[SVC_ANOINT_MAX][16];
-		unsigned i;
-
-		for (i = 0; i < SVC_ANOINT_MAX; i++) {
-			snprintf(store[i], sizeof(store[i]), "n.%u", i);
-			names[i] = store[i];
-		}
-		mint_req_init(&req, 0, names, SVC_ANOINT_MAX);
-		ATF_CHECK_EQ(0, svc_anoint_set_from_mint(&req, &set));
-		ATF_CHECK_EQ((unsigned)SVC_ANOINT_MAX, set.n);
-		ATF_CHECK(svc_anoint_holds(&set, "n.31"));
-	}
-
-	/* Entries past nanointments are ignored, garbage or not. */
-	mint_req_init(&req, 0, A_ONE, 1);
-	memset(req.anointments[1], 'x', sizeof(req.anointments[1]));
-	ATF_CHECK_EQ(0, svc_anoint_set_from_mint(&req, &set));
-	ATF_CHECK_EQ(1U, set.n);
-	ATF_CHECK(!svc_anoint_holds(&set, "x"));
-}
-
-ATF_TC_WITHOUT_HEAD(set_from_mint_rejects);
-ATF_TC_BODY(set_from_mint_rejects, tc)
-{
-	struct svc_mint_domain_req req;
-	struct svc_anoint_set set;
-
-	/* Oversize count. */
-	mint_req_init(&req, 0, NULL, 0);
-	req.nanointments = SVC_ANOINT_MAX + 1;
-	ATF_CHECK_EQ(EINVAL, svc_anoint_set_from_mint(&req, &set));
-	req.nanointments = 0xffffffffU;
-	ATF_CHECK_EQ(EINVAL, svc_anoint_set_from_mint(&req, &set));
-
-	/* An unterminated name (all 64 bytes non-NUL). */
-	mint_req_init(&req, 0, A_ONE, 1);
-	memset(req.anointments[0], 'a', sizeof(req.anointments[0]));
-	ATF_CHECK_EQ(EINVAL, svc_anoint_set_from_mint(&req, &set));
-
-	/* An empty name inside the counted range. */
-	mint_req_init(&req, 0, A_BOTH, 2);
-	req.anointments[0][0] = '\0';
-	ATF_CHECK_EQ(EINVAL, svc_anoint_set_from_mint(&req, &set));
-
-	/* "*" as a name: the wildcard is the ANOINT_ALL flag, never a name. */
-	mint_req_init(&req, 0, (const char *const[]){ "*" }, 1);
-	ATF_CHECK_EQ(EINVAL, svc_anoint_set_from_mint(&req, &set));
-	mint_req_init(&req, 0, (const char *const[]){ "a.one", "*" }, 2);
-	ATF_CHECK_EQ(EINVAL, svc_anoint_set_from_mint(&req, &set));
-
-	/* Unknown flag bits. */
-	mint_req_init(&req, 0x8U, NULL, 0);
-	ATF_CHECK_EQ(EINVAL, svc_anoint_set_from_mint(&req, &set));
-	mint_req_init(&req, SVC_MINT_FLAG_ANOINT_ALL | 0x80000000U, NULL, 0);
-	ATF_CHECK_EQ(EINVAL, svc_anoint_set_from_mint(&req, &set));
-
-	/* The reserved word must be zero. */
-	mint_req_init(&req, 0, NULL, 0);
-	req.reserved = 1;
-	ATF_CHECK_EQ(EINVAL, svc_anoint_set_from_mint(&req, &set));
-
-	/* A refused request leaves an empty, harmless set behind. */
-	ATF_CHECK_EQ(0U, set.n);
-	ATF_CHECK(!set.all);
-	ATF_CHECK(!set.admin_rights);
-
-	ATF_CHECK_EQ(EINVAL, svc_anoint_set_from_mint(NULL, &set));
 }
 
 /* ------------------------------------------------------------------ */
@@ -1239,107 +1123,20 @@ ATF_TC_BODY(rights_follow_admin_rights_knob, tc)
 /* The self-served control names require system.switchboard.admin.     */
 /* ------------------------------------------------------------------ */
 
-ATF_TC_WITHOUT_HEAD(self_control_requires_switchboard_admin);
-ATF_TC_BODY(self_control_requires_switchboard_admin, tc)
+ATF_TC_WITHOUT_HEAD(control_requires_issued_authority);
+ATF_TC_BODY(control_requires_issued_authority, tc)
 {
-	struct svc_domain session;
-	struct svc_runtime unit;
-	struct channel_sender sender;
-	int fd, error;
+	struct svc_domain anonymous = { .kind = SVC_DOMAIN_USER, .uid = 0 };
+	int error;
 
-	memset(&sender, 0, sizeof(sender));
-	sender.uid = 0;
-
-	/*
-	 * A session WITHOUT the anointment reaches the control plane: admission
-	 * is not the decision.  What it must not receive is the administrative
-	 * bypass, and `admin_rights` on the channel must not stand in for the
-	 * anointment.  A session that can only look is not worth auditing, so
-	 * nothing is recorded.
-	 */
-	audit_reset();
-	memset(&session, 0, sizeof(session));
-	session.kind = SVC_DOMAIN_SYSTEM;
-	session.anoint.admin_rights = true;
-	error = 0;
-	fd = naming_lookup(SWITCHBOARD_CONTROL_NAME, NULL, &session, &sender,
-	    &error, NULL);
-	ATF_CHECK_MSG(fd >= 0, "control plane refused a plain session: %d",
-	    error);
-	if (fd >= 0)
-		close(fd);
-	ATF_CHECK_EQ(1U, adopt_count);
-	ATF_CHECK_EQ_MSG(0, (int)(last_adopt_rights & SVC_RIGHTS_ADMIN),
-	    "a session without the anointment was granted the admin bypass");
-	ATF_CHECK_EQ(0U, audit_count);
-
-	/* The lifecycle plane is treated identically. */
-	audit_reset();
-	fd = naming_lookup(SWITCHBOARD_LIFECYCLE_NAME, NULL, &session, &sender,
-	    &error, NULL);
-	ATF_CHECK_MSG(fd >= 0, "lifecycle plane refused a plain session: %d",
-	    error);
-	if (fd >= 0)
-		close(fd);
-	ATF_CHECK_EQ_MSG(0, (int)(last_adopt_rights & SVC_RIGHTS_ADMIN),
-	    "a session without the anointment was granted the admin bypass "
-	    "on the lifecycle plane");
-	ATF_CHECK_EQ(0U, audit_count);
-
-	/* A NULL domain is refused too. */
-	fd = naming_lookup(SWITCHBOARD_CONTROL_NAME, NULL, NULL, &sender, &error,
-	    NULL);
-	ATF_CHECK_EQ(-1, fd);
+	adopt_count = 0;
+	ATF_CHECK_EQ(-1, naming_lookup_self_control(SWITCHBOARD_CONTROL_NAME,
+	    NULL, &anonymous, NULL, false, &error));
 	ATF_CHECK_EQ(EACCES, error);
-
-	/*
-	 * Holding the anointment passes the gate — in USER kind too (P6/P7: a
-	 * root shell with admin_rights = false but the admin anointment).  The
-	 * stubbed adopt path then runs against a fake channel, so the outcome
-	 * past the gate is either a connection or a transport error; what
-	 * matters is that it is not the anointment refusal and nothing is
-	 * audited.
-	 */
-	audit_reset();
-	memset(&session, 0, sizeof(session));
-	session.kind = SVC_DOMAIN_USER;
-	session.uid = 0;
-	set_one(&session.anoint, SVC_ANOINT_SWITCHBOARD_ADMIN);
-	fd = naming_lookup(SWITCHBOARD_CONTROL_NAME, NULL, &session, &sender,
-	    &error, NULL);
-	if (fd >= 0)
-		close(fd);
-	else
-		ATF_CHECK_MSG(error != EACCES && error != ENOENT,
-		    "gate passed but error is %d", error);
-	ATF_CHECK_EQ_MSG(SVC_RIGHTS_ADMIN,
-	    last_adopt_rights & SVC_RIGHTS_ADMIN,
-	    "the anointment did not grant the admin bypass");
-	ATF_CHECK_EQ(0U, audit_count);
-
-	/* "*" (the boot carry, the shipped-default wheel session) passes. */
-	memset(&session, 0, sizeof(session));
-	session.kind = SVC_DOMAIN_SYSTEM;
-	session.anoint.all = true;
-	fd = naming_lookup(SWITCHBOARD_CONTROL_NAME, NULL, &session, &sender,
-	    &error, NULL);
-	if (fd >= 0)
-		close(fd);
-	else
-		ATF_CHECK_MSG(error != EACCES && error != ENOENT,
-		    "gate passed but error is %d", error);
-	ATF_CHECK_EQ_MSG(SVC_RIGHTS_ADMIN,
-	    last_adopt_rights & SVC_RIGHTS_ADMIN,
-	    "the boot carry did not grant the admin bypass");
-	ATF_CHECK_EQ(0U, audit_count);
-
-	/* A unit never opens control, whatever it declares (U8-style). */
-	unit_init(&unit, "com.example.admin/u", ADMIN_ONE, 1);
-	unit.domain.anoint.all = true;
-	fd = naming_lookup(SWITCHBOARD_CONTROL_NAME, &unit, &unit.domain,
-	    &sender, &error, NULL);
-	ATF_CHECK_EQ(-1, fd);
+	ATF_CHECK_EQ(-1, naming_lookup_self_control(SWITCHBOARD_LIFECYCLE_NAME,
+	    NULL, &anonymous, NULL, true, &error));
 	ATF_CHECK_EQ(EACCES, error);
+	ATF_CHECK_EQ(0U, adopt_count);
 }
 
 /* ------------------------------------------------------------------ */
@@ -1517,13 +1314,13 @@ ATF_TC_BODY(minted_channel_carries_set, tc)
 	ATF_CHECK_EQ(0U, lc->domain.anoint.n);
 	close(fd);
 
-	/* The boot carry holds all + admin (today's behaviour preserved). */
+	/* Boot discovery carries no administrative permissions. */
 	require_real_channel(domain_mint_system_channel(&fd, kq));
 	lc = lookup_channels;
 	ATF_CHECK_EQ(SVC_DOMAIN_SYSTEM, lc->domain.kind);
-	ATF_CHECK(lc->domain.anoint.all);
-	ATF_CHECK(lc->domain.anoint.admin_rights);
-	ATF_CHECK(svc_anoint_holds(&lc->domain.anoint,
+	ATF_CHECK(!lc->domain.anoint.all);
+	ATF_CHECK(!lc->domain.anoint.admin_rights);
+	ATF_CHECK(!svc_anoint_holds(&lc->domain.anoint,
 	    SVC_ANOINT_SWITCHBOARD_ADMIN));
 	close(fd);
 
@@ -1639,10 +1436,8 @@ ATF_TC_HEAD(session_reach_over_minted_channel, tc)
 {
 
 	atf_tc_set_md_var(tc, "descr",
-	    "over real minted session channels: a holder reaches the gated "
-	    "endpoint, a non-holder gets ENOENT on the wire (audited) and still "
-	    "reaches the open one, and the grant carries the session's real "
-	    "nonce and native ABI");
+	    "route metadata grants no authority: anonymous callers cannot reach "
+	    "gated endpoints but can reach public endpoints");
 	atf_tc_set_md_var(tc, "require.user", "root");
 }
 ATF_TC_BODY(session_reach_over_minted_channel, tc)
@@ -1670,16 +1465,10 @@ ATF_TC_BODY(session_reach_over_minted_channel, tc)
 	provider_register(&open_provider, "system.Notify/bsdnotify2",
 	    OPEN_USER_NAME, NULL, 0);
 
-	/* P1 / S9-shape: the holder connects to the gated endpoint. */
+	/* A grant written into route metadata cannot authorize the sender. */
 	audit_reset();
-	ATF_CHECK_EQ(0, lookup_over_channel(holder_fd, kq, GATED_NAME));
-	ATF_CHECK_EQ(0U, audit_count);
-	ATF_CHECK_STREQ("org.5bsd.user-session", last_grant.client_label);
-	ATF_CHECK_STREQ(GATED_NAME, last_grant.service_name);
-	/* The kernel stamped this process's nonce and native ABI. */
-	ATF_CHECK(last_grant.client_nonce != 0);
-	ATF_CHECK_EQ(SVC_CLIENT_ABI_NATIVE, last_grant.client_abi);
-	ATF_CHECK_EQ(0, last_grant.rights & SVC_RIGHTS_ADMIN);
+	ATF_CHECK_EQ(ENOENT, lookup_over_channel(holder_fd, kq, GATED_NAME));
+	ATF_CHECK_EQ(1U, audit_count);
 
 	/* S4: the non-holder sees ENOENT on the wire; the refusal is audited
 	 * under this process's uid. */
@@ -1738,6 +1527,7 @@ ATF_TC_BODY(registered_private_channel_keeps_set, tc)
 	ctx.stop = 0;
 	ATF_REQUIRE_EQ(0, pthread_create(&pump, NULL, domain_pump_thread, &ctx));
 
+	require_process_context();
 	ATF_REQUIRE_EQ(0, service_install_ambient_lookup(minted_fd));
 	priv = service_ambient_lookup_channel();
 	if (priv < 0 || priv == minted_fd) {
@@ -1914,9 +1704,7 @@ ATF_TC_BODY(covers_at_set_bound, tc)
 }
 
 /*
- * The empty name.  Neither production constructor can put "" into a set
- * (set_from_manifest skips an empty slot; set_from_mint refuses it with
- * EINVAL) and the bundle parser refuses "" in a requires list, so an empty
+ * The empty name.  The manifest constructor skips empty attribute slots and the bundle parser refuses "" in a requires list, so an empty
  * requires entry never matches a set built the normal way.  The raw match
  * itself is a plain strcmp: DOCUMENTED here, a hand-built set whose counted
  * slot is "" does hold "" -- the guarantee lives in the constructors, not in
@@ -1927,7 +1715,6 @@ ATF_TC_BODY(covers_empty_name_semantics, tc)
 {
 	struct svc_anoint_set set, raw, all;
 	struct svc_manifest m;
-	struct svc_mint_domain_req req;
 	char reqs[SWITCHBOARD_MAX_REQUIRES][SWITCHBOARD_LABEL_MAX];
 
 	requires_fill(reqs, (const char *const[]){ "" }, 1);
@@ -1949,10 +1736,6 @@ ATF_TC_BODY(covers_empty_name_semantics, tc)
 	memset(&set, 0, sizeof(set));
 	ATF_CHECK(!svc_anoint_holds(&set, ""));
 	ATF_CHECK(!svc_anoint_covers(&set, CREQ(reqs), 1));
-
-	/* From a mint: "" is refused outright. */
-	mint_req_init(&req, 0, (const char *const[]){ "" }, 1);
-	ATF_CHECK_EQ(EINVAL, svc_anoint_set_from_mint(&req, &set));
 
 	/* A hand-built set with a counted empty slot still never holds "":
 	 * the match refuses an empty name before comparing (defence in depth
@@ -2251,233 +2034,7 @@ ATF_TC_BODY(missing_rendering_max_names, tc)
 	ATF_CHECK(canary_intact(full.canary));
 }
 
-/* ------------------------------------------------------------------ */
-/* svc_anoint_set_from_mint: the wire validator at its edges.          */
-/* ------------------------------------------------------------------ */
-
-ATF_TC_WITHOUT_HEAD(set_from_mint_name_lengths);
-ATF_TC_BODY(set_from_mint_name_lengths, tc)
-{
-	struct svc_mint_domain_req req;
-	struct set_with_canary sc;
-	char name[SVC_ANOINT_NAME_MAX];
-	unsigned i;
-
-	/* Exactly 63 characters (+ NUL in byte 63): accepted verbatim. */
-	max_name(name, sizeof(name), 5);
-	mint_req_init(&req, 0, (const char *const[]){ name }, 1);
-	ATF_REQUIRE_EQ('\0', req.anointments[0][SVC_ANOINT_NAME_MAX - 1]);
-	canary_arm(sc.canary);
-	ATF_CHECK_EQ(0, svc_anoint_set_from_mint(&req, &sc.set));
-	ATF_CHECK_EQ(1U, sc.set.n);
-	ATF_CHECK_STREQ(name, sc.set.names[0]);
-	ATF_CHECK(svc_anoint_holds(&sc.set, name));
-	ATF_CHECK(canary_intact(sc.canary));
-
-	/* 64 characters without a NUL: refused. */
-	mint_req_init(&req, 0, NULL, 0);
-	memset(req.anointments[0], 'b', SVC_ANOINT_NAME_MAX);
-	req.nanointments = 1;
-	canary_arm(sc.canary);
-	ATF_CHECK_EQ(EINVAL, svc_anoint_set_from_mint(&req, &sc.set));
-	ATF_CHECK_EQ(0U, sc.set.n);
-	ATF_CHECK(canary_intact(sc.canary));
-
-	/* The unterminated name in the LAST slot: refused, no read past. */
-	mint_req_init(&req, 0, NULL, 0);
-	for (i = 0; i < SVC_ANOINT_MAX; i++)
-		snprintf(req.anointments[i], sizeof(req.anointments[i]),
-		    "n.%u", i);
-	memset(req.anointments[SVC_ANOINT_MAX - 1], 'c', SVC_ANOINT_NAME_MAX);
-	req.nanointments = SVC_ANOINT_MAX;
-	ATF_CHECK_EQ(EINVAL, svc_anoint_set_from_mint(&req, &sc.set));
-	/* ...but the same request with that slot beyond the count is fine. */
-	req.nanointments = SVC_ANOINT_MAX - 1;
-	ATF_CHECK_EQ(0, svc_anoint_set_from_mint(&req, &sc.set));
-	ATF_CHECK_EQ((unsigned)SVC_ANOINT_MAX - 1, sc.set.n);
-	ATF_CHECK(!svc_anoint_holds(&sc.set, "n.31"));
-	ATF_CHECK_EQ('\0', sc.set.names[SVC_ANOINT_MAX - 1][0]);
-
-	/* A single-character name is the shortest accepted. */
-	mint_req_init(&req, 0, (const char *const[]){ "a" }, 1);
-	ATF_CHECK_EQ(0, svc_anoint_set_from_mint(&req, &sc.set));
-	ATF_CHECK(svc_anoint_holds(&sc.set, "a"));
-
-	/* Exactly the bound of names, each at max length. */
-	mint_req_init(&req, 0, NULL, 0);
-	for (i = 0; i < SVC_ANOINT_MAX; i++)
-		max_name(req.anointments[i], sizeof(req.anointments[i]), i);
-	req.nanointments = SVC_ANOINT_MAX;
-	canary_arm(sc.canary);
-	ATF_CHECK_EQ(0, svc_anoint_set_from_mint(&req, &sc.set));
-	ATF_CHECK_EQ((unsigned)SVC_ANOINT_MAX, sc.set.n);
-	max_name(name, sizeof(name), SVC_ANOINT_MAX - 1);
-	ATF_CHECK_STREQ(name, sc.set.names[SVC_ANOINT_MAX - 1]);
-	ATF_CHECK(canary_intact(sc.canary));
-	/* One more than the bound with the same payload: refused. */
-	req.nanointments = SVC_ANOINT_MAX + 1;
-	canary_arm(sc.canary);
-	ATF_CHECK_EQ(EINVAL, svc_anoint_set_from_mint(&req, &sc.set));
-	ATF_CHECK(canary_intact(sc.canary));
-}
-
-/*
- * An embedded NUL: "a.b\0junk" in a slot.  DOCUMENTED: the validator
- * measures with strnlen, so the name is accepted as "a.b" and the bytes past
- * the NUL are never copied (the set slot is zeroed first).  A wire caller
- * cannot smuggle anything past the first NUL.
- */
-ATF_TC_WITHOUT_HEAD(set_from_mint_embedded_nul);
-ATF_TC_BODY(set_from_mint_embedded_nul, tc)
-{
-	struct svc_mint_domain_req req;
-	struct svc_anoint_set set;
-	size_t i;
-
-	mint_req_init(&req, 0, NULL, 0);
-	memcpy(req.anointments[0], "a.b\0junk", 8);
-	req.nanointments = 1;
-	ATF_CHECK_EQ(0, svc_anoint_set_from_mint(&req, &set));
-	ATF_CHECK_EQ(1U, set.n);
-	ATF_CHECK_STREQ("a.b", set.names[0]);
-	for (i = 4; i < SVC_ANOINT_NAME_MAX; i++)
-		ATF_CHECK_EQ('\0', set.names[0][i]);
-	ATF_CHECK(svc_anoint_holds(&set, "a.b"));
-	ATF_CHECK(!svc_anoint_holds(&set, "junk"));
-	/* A C literal with an embedded NUL is just "a.b" to the matcher too. */
-	ATF_CHECK(svc_anoint_holds(&set, "a.b\0junk"));
-
-	/* A "*" hidden after the NUL is not seen; a "*" before it is. */
-	mint_req_init(&req, 0, NULL, 0);
-	memcpy(req.anointments[0], "a.b\0*", 5);
-	req.nanointments = 1;
-	ATF_CHECK_EQ(0, svc_anoint_set_from_mint(&req, &set));
-	ATF_CHECK(!set.all);
-	memcpy(req.anointments[0], "*\0a.b", 5);
-	ATF_CHECK_EQ(EINVAL, svc_anoint_set_from_mint(&req, &set));
-
-	/* Only a leading NUL is "empty": refused. */
-	mint_req_init(&req, 0, NULL, 0);
-	memcpy(req.anointments[0], "\0a.b", 4);
-	req.nanointments = 1;
-	ATF_CHECK_EQ(EINVAL, svc_anoint_set_from_mint(&req, &set));
-}
-
-ATF_TC_WITHOUT_HEAD(set_from_mint_flags_matrix);
-ATF_TC_BODY(set_from_mint_flags_matrix, tc)
-{
-	struct svc_mint_domain_req req;
-	struct svc_anoint_set set;
-	static const uint32_t good[] = {
-		0,
-		SVC_MINT_FLAG_RESEND,
-		SVC_MINT_FLAG_ANOINT_ALL,
-		SVC_MINT_FLAG_ADMIN_RIGHTS,
-		SVC_MINT_FLAG_RESEND | SVC_MINT_FLAG_ANOINT_ALL,
-		SVC_MINT_FLAG_RESEND | SVC_MINT_FLAG_ADMIN_RIGHTS,
-		SVC_MINT_FLAG_ANOINT_ALL | SVC_MINT_FLAG_ADMIN_RIGHTS,
-		SVC_MINT_FLAG_RESEND | SVC_MINT_FLAG_ANOINT_ALL |
-		    SVC_MINT_FLAG_ADMIN_RIGHTS,
-	};
-	static const uint32_t reserved[] = { 1, 0x80000000U, 0xffffffffU };
-	static const uint32_t bad[] = {
-		0x8U,
-		0x10U,
-		0x100U,
-		0x8000U,
-		0x80000000U,
-		0xfffffff8U,
-		0xffffffffU,
-		SVC_MINT_FLAG_RESEND | 0x8U,
-		SVC_MINT_FLAG_ANOINT_ALL | SVC_MINT_FLAG_ADMIN_RIGHTS | 0x8U,
-	};
-	unsigned i;
-
-	for (i = 0; i < nitems(good); i++) {
-		mint_req_init(&req, good[i], A_ONE, 1);
-		ATF_CHECK_EQ_MSG(0, svc_anoint_set_from_mint(&req, &set),
-		    "flags %#x must be accepted", good[i]);
-		ATF_CHECK_EQ((good[i] & SVC_MINT_FLAG_ANOINT_ALL) != 0, set.all);
-		ATF_CHECK_EQ((good[i] & SVC_MINT_FLAG_ADMIN_RIGHTS) != 0,
-		    set.admin_rights);
-		/* RESEND is transport-only: it never shows in the set. */
-		ATF_CHECK(svc_anoint_holds(&set, "a.one"));
-	}
-	for (i = 0; i < nitems(bad); i++) {
-		mint_req_init(&req, bad[i], A_ONE, 1);
-		ATF_CHECK_EQ_MSG(EINVAL, svc_anoint_set_from_mint(&req, &set),
-		    "flags %#x must be refused", bad[i]);
-		ATF_CHECK(!set.all);
-		ATF_CHECK(!set.admin_rights);
-		ATF_CHECK_EQ(0U, set.n);
-	}
-
-	/* reserved: every nonzero value is refused, whatever the flags. */
-	for (i = 0; i < nitems(reserved); i++) {
-		mint_req_init(&req, SVC_MINT_FLAG_ANOINT_ALL |
-		    SVC_MINT_FLAG_ADMIN_RIGHTS, NULL, 0);
-		req.reserved = reserved[i];
-		ATF_CHECK_EQ(EINVAL, svc_anoint_set_from_mint(&req, &set));
-		ATF_CHECK(!set.all && !set.admin_rights);
-	}
-
-	/* uid and domain are not the validator's business. */
-	mint_req_init(&req, 0, A_ONE, 1);
-	req.uid = 0xffffffffU;
-	req.domain = 0xffffffffU;
-	ATF_CHECK_EQ(0, svc_anoint_set_from_mint(&req, &set));
-	/* Nor is op: a wrong op word is the dispatcher's problem. */
-	req.op = 0;
-	ATF_CHECK_EQ(0, svc_anoint_set_from_mint(&req, &set));
-}
-
-/*
- * ANOINT_ALL with a literal list attached.  DOCUMENTED: the request is
- * accepted -- the set is `all`, and the names ride along in the set (they are
- * redundant, never consulted while `all` is set).  The list is still
- * validated: a bad name or an oversize count is refused even under
- * ANOINT_ALL, so the flag is no way around the validator.
- */
-ATF_TC_WITHOUT_HEAD(set_from_mint_all_with_names);
-ATF_TC_BODY(set_from_mint_all_with_names, tc)
-{
-	struct svc_mint_domain_req req;
-	struct svc_anoint_set set;
-
-	mint_req_init(&req, SVC_MINT_FLAG_ANOINT_ALL, A_BOTH, 2);
-	ATF_CHECK_EQ(0, svc_anoint_set_from_mint(&req, &set));
-	ATF_CHECK(set.all);
-	ATF_CHECK_EQ(2U, set.n);
-	ATF_CHECK_STREQ("a.one", set.names[0]);
-	ATF_CHECK(svc_anoint_holds(&set, "a.one"));
-	ATF_CHECK(svc_anoint_holds(&set, "nothing.listed"));
-	ATF_CHECK(!set.admin_rights);
-
-	/* ANOINT_ALL does not excuse a bad list. */
-	mint_req_init(&req, SVC_MINT_FLAG_ANOINT_ALL,
-	    (const char *const[]){ "a.one", "*" }, 2);
-	ATF_CHECK_EQ(EINVAL, svc_anoint_set_from_mint(&req, &set));
-	ATF_CHECK(!set.all);
-	mint_req_init(&req, SVC_MINT_FLAG_ANOINT_ALL,
-	    (const char *const[]){ "" }, 1);
-	ATF_CHECK_EQ(EINVAL, svc_anoint_set_from_mint(&req, &set));
-	mint_req_init(&req, SVC_MINT_FLAG_ANOINT_ALL, NULL, 0);
-	req.nanointments = SVC_ANOINT_MAX + 1;
-	ATF_CHECK_EQ(EINVAL, svc_anoint_set_from_mint(&req, &set));
-	ATF_CHECK(!set.all);
-	mint_req_init(&req, SVC_MINT_FLAG_ANOINT_ALL, A_ONE, 1);
-	memset(req.anointments[0], 'd', SVC_ANOINT_NAME_MAX);
-	ATF_CHECK_EQ(EINVAL, svc_anoint_set_from_mint(&req, &set));
-	ATF_CHECK(!set.all);
-}
-
-/*
- * The wire shape handle_mint_domain() length-checks against.  The handler
- * itself is not linked here (svc_proto.c owns the channel dispatch), but its
- * one guard is `length != sizeof(struct svc_mint_domain_req)` -> EINVAL, so
- * pin the size the guard compares with: a short or
- * truncated request can never alias a valid one.
- */
+/* Preserve the retired request layout used by protocol-rejection fixtures. */
 ATF_TC_WITHOUT_HEAD(mint_req_wire_shape);
 ATF_TC_BODY(mint_req_wire_shape, tc)
 {
@@ -2822,115 +2379,34 @@ ATF_TC_BODY(lookup_session_admin_rights_without_reach, tc)
  * and a unit is refused before the anointment is even consulted (so nothing
  * is audited for it -- it is not an anointment miss, it is "not a session").
  */
-ATF_TC_WITHOUT_HEAD(lookup_self_control_holder_variants);
-ATF_TC_BODY(lookup_self_control_holder_variants, tc)
+ATF_TC_WITHOUT_HEAD(fabricated_control_authority_denied);
+ATF_TC_BODY(fabricated_control_authority_denied, tc)
 {
-	struct svc_domain session;
-	struct svc_runtime unit;
-	struct channel_sender sender;
-	static const char *const control_names[] = {
-		SWITCHBOARD_CONTROL_NAME, SWITCHBOARD_LIFECYCLE_NAME,
-	};
-	static const char *const near_misses[] = {
-		"System.Switchboard.Admin",
-		"system.switchboard.admin.x",
-		"system.switchboard",
-		"system.switchboard.admi",
-		"*",
-	};
-	unsigned i, j;
-	int fd, error;
+	const char *names[] = { SWITCHBOARD_CONTROL_NAME, SWITCHBOARD_LIFECYCLE_NAME };
+	struct svc_domain fabricated;
+	struct channel_sender sender = { .uid = 0 };
+	int error;
 
-	memset(&sender, 0, sizeof(sender));
-	sender.uid = 0;
-
-	for (i = 0; i < nitems(control_names); i++) {
-		/* Exactly the admin anointment, nothing else, USER kind. */
-		audit_reset();
-		memset(&session, 0, sizeof(session));
-		session.kind = SVC_DOMAIN_USER;
-		session.uid = 0;
-		set_one(&session.anoint, SVC_ANOINT_SWITCHBOARD_ADMIN);
-		error = 0;
-		fd = naming_lookup(control_names[i], NULL, &session, &sender,
-		    &error, NULL);
-		if (fd >= 0)
-			close(fd);
-		else
-			ATF_CHECK_MSG(error != EACCES && error != ENOENT,
-			    "%s: gate passed but error is %d",
-			    control_names[i], error);
-		ATF_CHECK_EQ_MSG(SVC_RIGHTS_ADMIN,
-		    last_adopt_rights & SVC_RIGHTS_ADMIN,
-		    "%s: the anointment did not grant the admin bypass",
-		    control_names[i]);
-		ATF_CHECK_EQ(0U, audit_count);
-
-		/* `all` without admin_rights. */
-		memset(&session, 0, sizeof(session));
-		session.kind = SVC_DOMAIN_USER;
-		session.anoint.all = true;
-		fd = naming_lookup(control_names[i], NULL, &session, &sender,
-		    &error, NULL);
-		if (fd >= 0)
-			close(fd);
-		else
-			ATF_CHECK_MSG(error != EACCES && error != ENOENT,
-			    "%s: all: gate passed but error is %d",
-			    control_names[i], error);
-		ATF_CHECK_EQ_MSG(SVC_RIGHTS_ADMIN,
-		    last_adopt_rights & SVC_RIGHTS_ADMIN,
-		    "%s: the boot carry did not grant the admin bypass",
-		    control_names[i]);
-		ATF_CHECK_EQ(0U, audit_count);
-
-		/*
-		 * Near-misses of the name must not be mistaken for it.  The
-		 * name is matched exactly, so a different case, a longer or
-		 * shorter string, or a prefix grants nothing: the session
-		 * still reaches the control plane, as every session does, but
-		 * without the administrative bypass.  This is the check that
-		 * would catch a sloppy prefix or case-insensitive comparison
-		 * handing out operator authority.
-		 *
-		 * The literal "*" belongs in this list rather than among the
-		 * grants: the boot carry is the `all` flag on the set, not a
-		 * name, so a set holding the STRING "*" holds one oddly spelt
-		 * anointment and nothing more.  Honouring it as the wildcard
-		 * would make an operator of any session that can name an
-		 * anointment, so it is refused like every other miss.  The
-		 * real boot carry is covered above, where `all` is set.
-		 */
-		for (j = 0; j < nitems(near_misses); j++) {
-			audit_reset();
-			memset(&session, 0, sizeof(session));
-			session.kind = SVC_DOMAIN_SYSTEM;
-			session.anoint.admin_rights = true;
-			set_one(&session.anoint, near_misses[j]);
-			fd = naming_lookup(control_names[i], NULL, &session,
-			    &sender, &error, NULL);
-			ATF_CHECK_MSG(fd >= 0, "%s refused for '%s': %d",
-			    control_names[i], near_misses[j], error);
-			if (fd >= 0)
-				close(fd);
-			ATF_CHECK_EQ_MSG(0, (int)(last_adopt_rights &
-			    SVC_RIGHTS_ADMIN),
-			    "%s: '%s' was accepted as the anointment",
-			    control_names[i], near_misses[j]);
-			ATF_CHECK_EQ(0U, audit_count);
+	/* Neither UID 0, route metadata, wildcard nor a made-up registry ID
+	 * substitutes for an issued context. Positive admission is VM-tested. */
+	for (unsigned i = 0; i < nitems(names); i++) {
+		for (unsigned variant = 0; variant < 4; variant++) {
+			memset(&fabricated, 0, sizeof(fabricated));
+			fabricated.kind = SVC_DOMAIN_USER;
+			fabricated.uid = variant & 1 ? 2001 : 0;
+			set_one(&fabricated.anoint, SVC_ANOINT_SWITCHBOARD_ADMIN);
+			fabricated.anoint.all = (variant & 1) != 0;
+			fabricated.anoint.admin_rights = true;
+			if (variant & 2) {
+				fabricated.authority_issuer = UINT64_MAX;
+				fabricated.authority_identity = 1;
+			}
+			adopt_count = 0;
+			ATF_CHECK_EQ(-1, naming_lookup(names[i], NULL, &fabricated,
+			    &sender, &error, NULL));
+			ATF_CHECK_EQ(EACCES, error);
+			ATF_CHECK_EQ(0U, adopt_count);
 		}
-
-		/* A unit, even with `all` and the admin name: EACCES, no
-		 * audit (refused as a service, not as a miss). */
-		audit_reset();
-		unit_init(&unit, "com.example.admin/u", ADMIN_ONE, 1);
-		unit.domain.anoint.all = true;
-		fd = naming_lookup(control_names[i], &unit, &unit.domain,
-		    &sender, &error, NULL);
-		ATF_CHECK_EQ(-1, fd);
-		ATF_CHECK_EQ(EACCES, error);
-		ATF_CHECK_EQ(0U, audit_count);
-		ATF_CHECK_EQ(0U, grant_count);
 	}
 }
 
@@ -3397,8 +2873,6 @@ ATF_TP_ADD_TCS(tp)
 
 	ATF_TP_ADD_TC(tp, covers_table);
 	ATF_TP_ADD_TC(tp, set_from_manifest);
-	ATF_TP_ADD_TC(tp, set_from_mint_valid);
-	ATF_TP_ADD_TC(tp, set_from_mint_rejects);
 	ATF_TP_ADD_TC(tp, endpoint_requires_from_registry);
 	ATF_TP_ADD_TC(tp, unit_requires_from_manifest);
 	ATF_TP_ADD_TC(tp, missing_rendering);
@@ -3409,7 +2883,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, registry_wins_over_stale_unit_manifest);
 	ATF_TP_ADD_TC(tp, session_sets);
 	ATF_TP_ADD_TC(tp, rights_follow_admin_rights_knob);
-	ATF_TP_ADD_TC(tp, self_control_requires_switchboard_admin);
+	ATF_TP_ADD_TC(tp, control_requires_issued_authority);
 	ATF_TP_ADD_TC(tp, on_demand_precheck);
 	ATF_TP_ADD_TC(tp, unregistered_gated_name_is_ondemand_eligible);
 	ATF_TP_ADD_TC(tp, minted_channel_carries_set);
@@ -3422,17 +2896,13 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, covers_all_flag_with_names);
 	ATF_TP_ADD_TC(tp, set_from_manifest_bounds);
 	ATF_TP_ADD_TC(tp, missing_rendering_max_names);
-	ATF_TP_ADD_TC(tp, set_from_mint_name_lengths);
-	ATF_TP_ADD_TC(tp, set_from_mint_embedded_nul);
-	ATF_TP_ADD_TC(tp, set_from_mint_flags_matrix);
-	ATF_TP_ADD_TC(tp, set_from_mint_all_with_names);
 	ATF_TP_ADD_TC(tp, mint_req_wire_shape);
 	ATF_TP_ADD_TC(tp, lookup_two_requires_partial_and_audit_count);
 	ATF_TP_ADD_TC(tp, lookup_user_kind_unit_gated_visibility);
 	ATF_TP_ADD_TC(tp, lookup_identity_without_stamp_and_linux_abi);
 	ATF_TP_ADD_TC(tp, lookup_unit_never_admin_even_with_all);
 	ATF_TP_ADD_TC(tp, lookup_session_admin_rights_without_reach);
-	ATF_TP_ADD_TC(tp, lookup_self_control_holder_variants);
+	ATF_TP_ADD_TC(tp, fabricated_control_authority_denied);
 	ATF_TP_ADD_TC(tp, lookup_open_endpoint_no_set);
 	ATF_TP_ADD_TC(tp, precheck_stopped_provider);
 	ATF_TP_ADD_TC(tp, lookup_helper_names_pure);

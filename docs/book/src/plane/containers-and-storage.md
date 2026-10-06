@@ -24,7 +24,7 @@ that makes it possible (TrustedZFS) and the broker's operation set belong to
     <bundle>/<unit>/cache/<name>          regenerable, reaped with the unit
     <bundle>/shared/persistent/<name>     shared by the bundle's units
     Shared/<group>/persistent/<name>      a cross-bundle group container
-  Config/   static operator configuration (bsdfilesystem.ucl, principal-policy.ucl)
+  Config/   static operator configuration (bsdfilesystem.ucl, switchboard/boot-authority.ucl)
   Run/      tmpfs, prepared each boot
     live/<bundle>                         a marker per running bundle
     groups/<group>                        a marker per installed-claimed group

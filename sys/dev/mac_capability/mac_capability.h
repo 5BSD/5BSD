@@ -243,5 +243,8 @@ struct ucred	*mac_capability_msg_cred(const struct mac_capability_msg *msg);
 #define	MAC_CAPABILITY_CONNECT_BADGE(counter, badge_out)		\
 	(*(badge_out) = atomic_fetchadd_64(&(counter), 1), 0)
 
+/* Explicit process-protection delegation, not ordinary UNIX privilege. */
+bool mac_capability_debug_authorized(pid_t, pid_t);
+
 #endif /* _KERNEL */
 #endif /* _DEV_MAC_CAPABILITY_MAC_CAPABILITY_H_ */

@@ -3,21 +3,16 @@
  *
  * Copyright (c) 2026 Kory Heard
  *
- * switchboardctl graph: draw the IPC anointment reach graph from the bundle
- * registry on disk (docs/book/src/plane/anointments.md, "Graph tool").  No
- * running plane is consulted.  Nodes are every unit plus the two session
- * classes the principal policy defines; an edge exists where the consumer's
- * anointment set covers the endpoint's `requires`, or the endpoint is open.
+ * switchboardctl graph: static software attribute coverage from bundle policy.
+ * Nodes are declared software units. Edges show attribute coverage of published
+ * endpoints, not a promise that every runtime admission condition is satisfied.
  */
 
 #include <sys/param.h>
-#include <sys/stat.h>
 
 #include <err.h>
 #include <errno.h>
-#include <fcntl.h>
 #include <getopt.h>
-#include <grp.h>
 #include <stdarg.h>
 #include <stdbool.h>
 #include <stdio.h>
@@ -29,31 +24,19 @@
 #include "libcapbundle.h"
 #include "switchboardctl.h"
 
-#define	GRAPH_POLICY_PATH	"/Capabilities/Config/principal-policy.ucl"
-#define	GRAPH_SESSION_DEFAULT	"session.default"
-#define	GRAPH_SESSION_ADMIN	"session.admin"
-#define	GRAPH_UID_DEFAULT	((uid_t)65534)	/* nobody */
-#define	GRAPH_UID_ADMIN		((uid_t)0)
-
 enum graph_format { GRAPH_TEXT, GRAPH_DOT, GRAPH_JSON };
 
 typedef char graph_name_t[CAPBUNDLE_LABEL_MAX];
 typedef const char *(*graph_name_get_fn)(const struct capbundle_service *,
     unsigned, unsigned);
 
-/* A consumer: a unit from a bundle, or one of the two session classes. */
+/* A software unit from a bundle. */
 struct gnode {
 	char	 label[CAPBUNDLE_LABEL_MAX];
-	char	 bundle[CAPBUNDLE_LABEL_MAX];	/* bundle id; "" for sessions */
-	graph_name_t *anoint;
-	unsigned nanoint;
-	bool	 anoint_all;			/* sessions only: policy "*" */
+	char	 bundle[CAPBUNDLE_LABEL_MAX];	/* bundle id */
+	graph_name_t *attributes;
+	unsigned nattributes;
 	bool	 user_resolvable;		/* units: visible user */
-	bool	 is_session;
-	bool	 admin_domain;			/* sessions: sees system names */
-	bool	 admin_rights;
-	bool	 from_default_rule;
-	uid_t	 uid;
 };
 
 /* An endpoint published by a unit, with the names a consumer must hold. */
@@ -72,7 +55,7 @@ struct gedge {
 struct gwarning {
 	char	 kind[16];			/* "unreachable" | "dead" */
 	char	 subject[CAPBUNDLE_LABEL_MAX];	/* endpoint or unit */
-	char	 name[CAPBUNDLE_LABEL_MAX];	/* the anointment */
+	char	 name[CAPBUNDLE_LABEL_MAX];	/* the attribute */
 	char	 text[256];
 };
 
@@ -85,9 +68,7 @@ struct graph {
 	unsigned	 nedges, cedges;
 	struct gwarning	*warnings;
 	unsigned	 nwarnings, cwarnings;
-	/* Specific names any principal-policy entry grants or may elevate to. */
-	graph_name_t	*policy_names;
-	unsigned	 npolicy_names;
+
 };
 
 static void *
@@ -126,10 +107,10 @@ copy_names(unsigned n, graph_name_get_fn get,
 }
 
 static const char *
-get_anointment(const struct capbundle_service *svc, unsigned idx __unused,
+get_attribute(const struct capbundle_service *svc, unsigned idx __unused,
     unsigned i)
 {
-	return (capbundle_svc_anointment(svc, i));
+	return (capbundle_svc_attribute(svc, i));
 }
 
 static const char *
@@ -161,8 +142,8 @@ graph_scan_cb(struct capbundle *b, void *arg)
 		memset(n, 0, sizeof(*n));
 		strlcpy(n->label, capbundle_svc_label(svc), sizeof(n->label));
 		strlcpy(n->bundle, capbundle_id(b), sizeof(n->bundle));
-		n->nanoint = capbundle_svc_nanointments(svc);
-		n->anoint = copy_names(n->nanoint, get_anointment, svc, 0);
+		n->nattributes = capbundle_svc_nattributes(svc);
+		n->attributes = copy_names(n->nattributes, get_attribute, svc, 0);
 		n->user_resolvable = capbundle_svc_user_resolvable(svc);
 
 		for (p = 0; p < capbundle_svc_nprovides(svc); p++) {
@@ -224,50 +205,6 @@ graph_scan(struct graph *g, const char *dir, bool explicit)
 	return (0);
 }
 
-/* ---- sessions -------------------------------------------------------- */
-
-static gid_t
-graph_name2gid(void *ctx __unused, const char *group_name)
-{
-	struct group *gr;
-
-	gr = getgrnam(group_name);
-	return (gr != NULL ? gr->gr_gid : (gid_t)-1);
-}
-
-static void
-graph_add_session(struct graph *g, int policy_fd, const char *label, uid_t uid,
-    bool admin_domain)
-{
-	struct capbundle_principal_grant grant;
-	struct gnode *n;
-	unsigned i;
-
-	if (capbundle_principal_resolve(policy_fd, uid, NULL, 0,
-	    graph_name2gid, NULL, &grant) != 0)
-		err(EX_SOFTWARE, "capbundle_principal_resolve");
-
-	g->nodes = grow(g->nodes, &g->cnodes, g->nnodes + 1, sizeof(*g->nodes));
-	n = &g->nodes[g->nnodes++];
-	memset(n, 0, sizeof(*n));
-	strlcpy(n->label, label, sizeof(n->label));
-	n->is_session = true;
-	n->uid = uid;
-	n->admin_domain = admin_domain;
-	n->anoint_all = grant.anoint_all;
-	n->admin_rights = grant.admin_rights;
-	n->from_default_rule = grant.from_default_rule;
-	n->nanoint = grant.nanointments;
-	if (n->nanoint != 0) {
-		n->anoint = reallocarray(NULL, n->nanoint, sizeof(*n->anoint));
-		if (n->anoint == NULL)
-			err(EX_OSERR, "reallocarray");
-		for (i = 0; i < n->nanoint; i++)
-			strlcpy(n->anoint[i], grant.anointments[i],
-			    sizeof(n->anoint[i]));
-	}
-}
-
 /* ---- reach ----------------------------------------------------------- */
 
 static bool
@@ -275,10 +212,8 @@ node_holds(const struct gnode *n, const char *name)
 {
 	unsigned i;
 
-	if (n->anoint_all)
-		return (true);
-	for (i = 0; i < n->nanoint; i++)
-		if (strcmp(n->anoint[i], name) == 0)
+	for (i = 0; i < n->nattributes; i++)
+		if (strcmp(n->attributes[i], name) == 0)
 			return (true);
 	return (false);
 }
@@ -294,26 +229,17 @@ node_covers(const struct gnode *n, const struct gendpoint *e)
 	return (true);
 }
 
-/*
- * The design's edge rule.  Open endpoints keep today's visible rule for
- * sessions: a default (user-domain) session only sees providers that opted
- * into user resolution, an admin (system-domain) session sees every name.  A
- * gated endpoint is visible to whoever covers it, regardless of visible.
- * Units see every open endpoint; a unit never reaches itself.
- */
+/* Static attribute coverage excludes a unit reaching its own endpoint. */
 static bool
 graph_reaches(const struct graph *g, unsigned from, unsigned to)
 {
 	const struct gnode *n = &g->nodes[from];
 	const struct gendpoint *e = &g->eps[to];
 
-	if (!n->is_session && e->owner == from)
+	if (e->owner == from)
 		return (false);
-	if (e->nrequires == 0) {
-		if (n->is_session && !n->admin_domain)
-			return (g->nodes[e->owner].user_resolvable);
+	if (e->nrequires == 0)
 		return (true);
-	}
 	return (node_covers(n, e));
 }
 
@@ -340,23 +266,16 @@ graph_add_warning(struct graph *g, const char *kind, const char *subject,
 	va_end(ap);
 }
 
-/*
- * Whether any node lists `name` explicitly.  A session's "*" is deliberately
- * not a declaration: the lint asks whether anything on the system was
- * written to hold this name, and the admin wildcard says nothing about that.
- */
+/* Whether any software unit explicitly declares this attribute. */
 static bool
 graph_name_declared(const struct graph *g, const char *name)
 {
 	unsigned i, j;
 
 	for (i = 0; i < g->nnodes; i++)
-		for (j = 0; j < g->nodes[i].nanoint; j++)
-			if (strcmp(g->nodes[i].anoint[j], name) == 0)
+		for (j = 0; j < g->nodes[i].nattributes; j++)
+			if (strcmp(g->nodes[i].attributes[j], name) == 0)
 				return (true);
-	for (i = 0; i < g->npolicy_names; i++)
-		if (strcmp(g->policy_names[i], name) == 0)
-			return (true);
 	return (false);
 }
 
@@ -369,18 +288,6 @@ graph_name_required(const struct graph *g, const char *name)
 		for (j = 0; j < g->eps[i].nrequires; j++)
 			if (strcmp(g->eps[i].requires[j], name) == 0)
 				return (true);
-	return (false);
-}
-
-/* True if some principal-policy entry grants or may elevate to `name`. */
-static bool
-graph_name_in_policy(const struct graph *g, const char *name)
-{
-	unsigned i;
-
-	for (i = 0; i < g->npolicy_names; i++)
-		if (strcmp(g->policy_names[i], name) == 0)
-			return (true);
 	return (false);
 }
 
@@ -401,39 +308,19 @@ graph_lint(struct graph *g)
 			graph_add_warning(g, "unreachable", e->name,
 			    e->requires[j],
 			    "unreachable: %s requires \"%s\", which no unit "
-			    "or principal declares", e->name, e->requires[j]);
+			    "declares", e->name, e->requires[j]);
 		}
 		if (e->nrequires == 0 || undeclared)
 			continue;
 		/* Every name is declared somewhere; does one holder hold all? */
 		for (j = 0; j < g->nnodes && !reached; j++)
-			if (!g->nodes[j].is_session && g->eps[i].owner != j &&
+			if (g->eps[i].owner != j &&
 			    node_covers(&g->nodes[j], e))
 				reached = true;
-		for (j = 0; j < g->nnodes && !reached; j++)
-			if (g->nodes[j].is_session && !g->nodes[j].anoint_all &&
-			    node_covers(&g->nodes[j], e))
-				reached = true;
-		/*
-		 * A principal-policy entry (an operator granted the names, or
-		 * one that may elevate to them) is a holder too, even though the
-		 * tool synthesises only the admin and default session nodes.
-		 * Approximated by the union of all entries' specific names: a
-		 * gate whose every required name some entry grants is reachable.
-		 */
-		if (!reached) {
-			bool all = e->nrequires > 0;
-
-			for (j = 0; j < e->nrequires && all; j++)
-				if (!graph_name_in_policy(g, e->requires[j]))
-					all = false;
-			if (all)
-				reached = true;
-		}
 		if (!reached)
 			graph_add_warning(g, "unreachable", e->name, "",
 			    "unreachable: %s requires %u names that no single "
-			    "unit or principal holds together", e->name,
+			    "unit holds together", e->name,
 			    e->nrequires);
 	}
 
@@ -441,14 +328,14 @@ graph_lint(struct graph *g)
 	for (i = 0; i < g->nnodes; i++) {
 		const struct gnode *n = &g->nodes[i];
 
-		for (j = 0; j < n->nanoint; j++) {
-			if (graph_name_required(g, n->anoint[j]))
+		for (j = 0; j < n->nattributes; j++) {
+			if (graph_name_required(g, n->attributes[j]))
 				continue;
-			graph_add_warning(g, "dead", n->label, n->anoint[j],
+			graph_add_warning(g, "dead", n->label, n->attributes[j],
 			    "dead declaration: %s %s \"%s\", which no endpoint "
 			    "requires", n->label,
-			    n->is_session ? "is granted" : "declares",
-			    n->anoint[j]);
+			    "declares",
+			    n->attributes[j]);
 		}
 	}
 }
@@ -460,9 +347,7 @@ node_cmp(const void *a, const void *b)
 {
 	const struct gnode *x = a, *y = b;
 
-	/* Sessions first, then units by label, then by bundle. */
-	if (x->is_session != y->is_session)
-		return (x->is_session ? -1 : 1);
+	/* Units by label, then by bundle. */
 	if (strcmp(x->label, y->label) != 0)
 		return (strcmp(x->label, y->label));
 	return (strcmp(x->bundle, y->bundle));
@@ -483,6 +368,8 @@ graph_sort(struct graph *g)
 {
 	unsigned *remap, i;
 
+	if (g->nnodes == 0)
+		return;
 	/* Sort nodes and rewrite endpoint owners through the permutation. */
 	remap = calloc(g->nnodes, sizeof(*remap));
 	if (remap == NULL)
@@ -585,11 +472,9 @@ graph_print_text(const struct graph *g, bool lint)
 	for (i = 0; i < g->neps; i++)
 		if (g->eps[i].nrequires != 0)
 			gated++;
-	printf("summary: %u units, 2 sessions, %u endpoints (%u gated), "
-	    "%u edges, %u warnings%s\n", g->nnodes - 2, g->neps, gated,
-	    g->nedges, g->nwarnings,
-	    g->nodes[0].from_default_rule ?
-	    " (principal policy absent or malformed: historical rule)" : "");
+	printf("summary: %u units, %u endpoints (%u gated), "
+	    "%u edges, %u warnings\n", g->nnodes, g->neps, gated,
+	    g->nedges, g->nwarnings);
 }
 
 static void
@@ -597,7 +482,7 @@ graph_print_dot(const struct graph *g)
 {
 	unsigned i;
 
-	printf("digraph anointments {\n"
+	printf("digraph attributes {\n"
 	    "\trankdir=LR;\n"
 	    "\tnode [fontname=\"Helvetica\"];\n");
 	for (i = 0; i < g->nnodes; i++) {
@@ -605,18 +490,16 @@ graph_print_dot(const struct graph *g)
 		unsigned j;
 
 		printf("\t\"n%u\" [shape=%s, label=\"", i,
-		    n->is_session ? "ellipse" : "box");
+		    "box");
 		print_escaped(n->label);
-		if (!n->is_session) {
+		{
 			printf("\\n(");
 			print_escaped(n->bundle);
 			printf(")");
 		}
-		if (n->anoint_all)
-			printf("\\nholds *");
-		for (j = 0; j < n->nanoint; j++) {
+		for (j = 0; j < n->nattributes; j++) {
 			printf(j == 0 ? "\\nholds " : ", ");
-			print_escaped(n->anoint[j]);
+			print_escaped(n->attributes[j]);
 		}
 		printf("\"];\n");
 	}
@@ -693,35 +576,15 @@ graph_print_json(const struct graph *g)
 	for (i = 0; i < g->nnodes; i++) {
 		const struct gnode *n = &g->nodes[i];
 
-		if (n->is_session)
-			continue;
 		printf("%s    {\"label\": ", first ? "" : ",\n");
 		first = 0;
 		json_string(n->label);
 		printf(", \"bundle\": ");
 		json_string(n->bundle);
-		printf(", \"anointments\": ");
-		json_names(n->anoint, n->nanoint);
+		printf(", \"attributes\": ");
+		json_names(n->attributes, n->nattributes);
 		printf(", \"user_resolvable\": %s}",
 		    n->user_resolvable ? "true" : "false");
-	}
-	printf("\n  ],\n  \"sessions\": [\n");
-	first = 1;
-	for (i = 0; i < g->nnodes; i++) {
-		const struct gnode *n = &g->nodes[i];
-
-		if (!n->is_session)
-			continue;
-		printf("%s    {\"label\": ", first ? "" : ",\n");
-		first = 0;
-		json_string(n->label);
-		printf(", \"uid\": %u, \"anointments\": ", (unsigned)n->uid);
-		json_names(n->anoint, n->nanoint);
-		printf(", \"anoint_all\": %s, \"admin_rights\": %s, "
-		    "\"from_default_rule\": %s}",
-		    n->anoint_all ? "true" : "false",
-		    n->admin_rights ? "true" : "false",
-		    n->from_default_rule ? "true" : "false");
 	}
 	printf("\n  ],\n  \"endpoints\": [\n");
 	for (i = 0; i < g->neps; i++) {
@@ -773,7 +636,7 @@ graph_free(struct graph *g)
 	unsigned i;
 
 	for (i = 0; i < g->nnodes; i++)
-		free(g->nodes[i].anoint);
+		free(g->nodes[i].attributes);
 	for (i = 0; i < g->neps; i++)
 		free(g->eps[i].requires);
 	free(g->nodes);
@@ -802,10 +665,10 @@ cmd_graph(int argc, char *argv[])
 		{ NULL, 0, NULL, 0 }
 	};
 	struct graph g;
-	const char *root = NULL, *policy_path, *system_dir, *user_dir;
+	const char *root = NULL, *system_dir, *user_dir;
 	enum graph_format fmt = GRAPH_TEXT;
 	bool lint = false;
-	int ch, policy_fd, rc;
+	int ch, rc;
 
 	optind = 1;
 	optreset = 1;
@@ -834,61 +697,6 @@ cmd_graph(int argc, char *argv[])
 		graph_usage();
 
 	memset(&g, 0, sizeof(g));
-
-	/* Sessions first so they sort ahead and node 0 carries policy state. */
-	policy_path = getenv("SWITCHBOARD_PRINCIPAL_POLICY");
-	if (policy_path == NULL || policy_path[0] == '\0')
-		policy_path = GRAPH_POLICY_PATH;
-	policy_fd = open(policy_path, O_RDONLY | O_CLOEXEC);
-	graph_add_session(&g, policy_fd, GRAPH_SESSION_ADMIN, GRAPH_UID_ADMIN,
-	    true);
-	graph_add_session(&g, policy_fd, GRAPH_SESSION_DEFAULT,
-	    GRAPH_UID_DEFAULT, false);
-	if (policy_fd >= 0) {
-		graph_name_t buf[CAPBUNDLE_PRINCIPAL_MAX_NAMES * 4];
-		unsigned nnames = 0;
-
-		/*
-		 * A gated endpoint is reachable if some principal is granted
-		 * its name (an operator, say) or may elevate to it, not only
-		 * if a wildcard admin holds it.  Collect every specific name
-		 * any entry grants so the reachability lint sees those holders
-		 * even though the tool synthesises only the admin and default
-		 * session nodes.
-		 */
-		if (capbundle_principal_declared_names(policy_fd, buf,
-		    nitems(buf), &nnames) == 0 && nnames > 0) {
-			g.policy_names = calloc(nnames, sizeof(*g.policy_names));
-			if (g.policy_names != NULL) {
-				unsigned pn;
-
-				for (pn = 0; pn < nnames; pn++)
-					strlcpy(g.policy_names[pn], buf[pn],
-					    sizeof(g.policy_names[pn]));
-				g.npolicy_names = nnames;
-			}
-		}
-	}
-	if (policy_fd >= 0) {
-		struct stat psb;
-		bool quiet;
-
-		/*
-		 * Only a regular, non-empty file that failed to parse is
-		 * "malformed"; an empty file or a directory is "no policy" and
-		 * falls back silently like an absent file's summary note.
-		 */
-		quiet = fstat(policy_fd, &psb) != 0 || !S_ISREG(psb.st_mode) ||
-		    psb.st_size == 0;
-		close(policy_fd);
-		if (g.nodes[0].from_default_rule && !quiet && fmt != GRAPH_JSON)
-			fprintf(stderr, "switchboardctl: graph: %s: malformed "
-			    "principal policy; using the historical principal "
-			    "rule\n", policy_path);
-	} else if (fmt != GRAPH_JSON)
-		fprintf(stderr, "switchboardctl: graph: %s: %s; using the "
-		    "historical principal rule\n", policy_path,
-		    strerror(errno));
 
 	if (root != NULL)
 		rc = graph_scan(&g, root, true);

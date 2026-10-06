@@ -82,8 +82,8 @@ recovery shell rather than leaving a multi-user system with no rc world.
 Before multi-user, Capsule receives a duplicate of SwitchBoard's boot lookup
 channel. In each getty child it installs a kernel-held reference before either
 the configured window-system fork or getty exec. Descriptor cleanup and the
-hand-built getty environment do not affect that reference. Login's PAM session
-module replaces it with the authenticated principal's scope. If discovery is
+hand-built getty environment do not affect that reference. Login establishes
+ordinary UNIX credentials without replacing discovery. If discovery is
 unavailable, UNIX login can proceed without capability-service access.
 
 ## Switchboard
@@ -148,22 +148,17 @@ switchboard: startup: service: system.Log/bsdlog
 switchboard: startup: launched 13 native services
 ```
 
-Only now does switchboard turn to rc. It mints the system ambient lookup
-channel, installs it in its own environment as `SERVICE_LOOKUP_FD`, hands a
-duplicate to capsule for the getty carry, and execs `/etc/rc` exactly as init
-would have, as `sh /etc/rc autoboot`:
-
-```text
-switchboard: startup: system ambient lookup channel on fd 9
-switchboard: startup: ambient lookup channel handed to capsule for logins
-switchboard: startup: running /etc/rc
-```
+SwitchBoard starts `/etc/rc` as `sh /etc/rc autoboot` with a kernel-held
+discovery route. It supplies Capsule with a discovery route for getty children
+as well. Routes are separate from authority: temporary rc authority is bounded
+by `/Capabilities/Config/switchboard/boot-authority.ucl` and revoked when rc
+exits. Login shells do not receive that temporary authority.
 
 The native units are already coming up while rc runs. That is safe because a
 born-in-capability-mode unit takes nothing from rc: its resources are the
 descriptors switchboard delivered and the pool the loader imported, and
 anything transiently unavailable is retried on demand. It is necessary
-because rc.d scripts and their children inherit `SERVICE_LOOKUP_FD` and may
+because rc.d scripts and their children inherit the discovery route and may
 make synchronous lookups, which switchboard itself answers, so switchboard
 drives its full event loop while it waits for rc rather than blocking on rc's
 exit alone. When rc finishes, a curated set of rc.d services listed in
@@ -238,16 +233,6 @@ there; it is the reason a capability-mode unit can log at all, through
 `logcmp_log(3)` rather than syslog(3). Until it is up, units write to the
 diagnostic sink and retry.
 
-**BSDAuth** (`system.Auth`) runs as root and is the only unit with
-`mint_authority = true`. At startup it asks
-BSDFilesystem to open `/etc/passwd`, `/etc/group` and
-`/Capabilities/Config/principal-policy.ucl` on its behalf with
-`service_open_isolated(3)`; nothing is declared in its manifest, and
-BSDFilesystem's own per-label policy decides whether this label may read
-them. An absent policy file is logged at INFO and the mint falls back to the
-historical rule, root or `wheel` holds everything. Every login on the machine
-will pass through this daemon.
-
 The other boot providers (BSDAudit, BSDCrypto, BSDDevice, BSDExtension,
 BSDNetwork, BSDNotify, BSDPower, BSDSysctl, BSDTime, BSDTrace) come up the
 same way and wait for lookups. BSDNamespace, BSDVM and BSDBluetooth have no
@@ -261,7 +246,7 @@ read-write, `/var`, networking, syslogd, devd, sshd and whatever
 `/etc/rc.conf` enables. Three things differ. `auditd_enable` defaults to
 `YES` so that `system.Audit` has something to commit to. The daemons that
 5BSD moved onto the plane have no rc.d scripts, so nothing in rc starts a
-provider twice. And every rc.d child inherits `SERVICE_LOOKUP_FD`, so a
+provider twice. And every rc.d child inherits the kernel-held discovery route, so a
 classic daemon that links a 5BSD client library can reach a provider by name
 without being a bundle. rc's own progress is written to the console as
 always. See [rc and service(8)](../compat/rc-and-service.md).
@@ -271,46 +256,19 @@ always. See [rc and service(8)](../compat/rc-and-service.md).
 When capsule sees READY it records `switchboard converged` in boottrace,
 re-asserts its signal shield, and moves to `read_ttys`. From here it is init:
 it reads `/etc/ttys` and spawns a getty per line. One detail is 5BSD's: the
-getty child receives the ambient lookup channel at fd 3, as described above.
+getty child receives the kernel-held discovery route described above.
 
-login(1) (`usr.bin/login/login.c`) captures that channel before doing
-anything else. `service_ambient_lookup_fd()` validates that fd 3 is an open
-mac_capability channel (a stale or unrelated descriptor there is rejected),
-login moves it to the fixed number if the environment named another, and then
-`closefrom(4)` so nothing else inherited survives. Authentication is
-unchanged: PAM, the password, the `login.conf` class. What follows it is new.
-With the target uid known, login calls
+Login, SSH and `su` authenticate and establish UNIX credentials through their
+normal paths. They neither mint capability grants nor replace discovery when
+changing users. Shell descriptor cleanup and environment replacement do not
+remove the kernel-held route.
 
-```c
-service_mint_session_via_agent(syschan, pwd->pw_uid, 0,
-    SERVICE_MINT_SESSION_TIMEOUT_MS, &user_fd);
-```
-
-which sends a mint request over the system channel to BSDAuth. BSDAuth
-resolves the principal against `/Capabilities/Config/principal-policy.ucl`:
-uid 0 and members of `wheel` fall under `principals.admin` with
-`anointments = ["*"]` and `admin_rights = true`, and receive a SYSTEM channel
-that can resolve every name; every other user receives a per-uid USER
-channel that resolves only names whose unit says `visible = ["user"]`
-(BSDAuth, BSDFilesystem, BSDLog and BSDNotify among the providers). login
-neither classifies the principal nor mints; direct minting over the ambient
-channel is refused by switchboard. The returned descriptor is installed as
-the session's ambient lookup channel, so the shell and everything it runs
-inherit it, and the unnarrowed SYSTEM channel is closed. The whole sequence
-is documented in `docs/service-discovery-model.md` section 7, and su, sshd
-and cron follow the same shape: see
+An ordinary shell has no administrative software attributes. Executing an
+approved application establishes its registered software context; executing
+unrelated software removes use of that context. SwitchBoard checks the actual
+sender's kernel-stamped authority before admitting a protected service request.
+UID 0 and wheel membership do not create attributes. See
 [Sessions: login, su, ssh and cron](../compat/sessions.md).
-
-On success login records at debug level, and on any failure at notice:
-
-```text
-login: lookup channel for uid 1001 on fd 3
-login: no lookup channel for uid 1001: Connection refused
-```
-
-The second line is not an error a user sees. The shell starts either way; a
-session without a channel is a FreeBSD session, and plane client libraries in
-it fail soft.
 
 ## What a booted system looks like
 
@@ -326,7 +284,6 @@ $ ps -axo pid,uid,comm
    41     0 BSDFilesystem
    42   976 BSDLog
    43     0 BSDAudit
-   44     0 BSDAuth
    45     0 BSDCrypto
    46   976 BSDDevice
    47   976 BSDExtension
@@ -345,7 +302,7 @@ $ ps -axo pid,uid,comm
 
 Uid 976 is the `capability` user from `etc/master.passwd`, home
 `/nonexistent`, shell nologin(8); switchboard logs a critical error and
-exits if it is missing or altered. The six root providers run as root
+exits if it is missing or altered. The root providers run as root
 because their manifests say `user = "root"`, which each provider chapter
 justifies by the facility it brokers; root is not consulted for any decision
 they make. cron was started by rc and then adopted by switchboard as a

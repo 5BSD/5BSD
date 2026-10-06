@@ -78,7 +78,7 @@ If package contents change, regenerate the catalogue with `pkg repo`.
 ```sh
 cd /usr/src
 make -j$(sysctl -n hw.ncpu) buildworld buildkernel
-make packages PKG_CMD=/usr/local/sbin/pkg-static
+make -j$(sysctl -n hw.ncpu) packages PKG_CMD=/usr/local/sbin/pkg-static
 ```
 
 `make packages` writes `repo/${ABI}/<version>/` and moves the `latest`
@@ -182,10 +182,10 @@ package's scripts create the `capability` user and group (uid and gid 976)
 in your existing `master.passwd` during the install, regenerate `pwd.db`,
 and refuse to complete if the name does not resolve. `/Capabilities` is
 created by the mtree in the same package, but nothing adds the
-`/Capabilities/Run` tmpfs line to an existing fstab, nor writes
-`/Capabilities/Config/principal-policy.ucl` or the `pool =` line in
-`/Capabilities/Config/bsdfilesystem.ucl`; do those three by hand before the
-reboot, following [Installing](installing.md). The old `init_path` in
+`/Capabilities/Run` tmpfs line to an existing fstab, nor configures the `pool =` line in
+`/Capabilities/Config/bsdfilesystem.ucl`; configure both before the reboot,
+following [Installing](installing.md). Software attributes are supplied by
+installed bundle manifests; no principal-policy file is required. The old `init_path` in
 `/boot/loader.conf`, if you had set one, must go: the new default starts
 `/sbin/capsule` first.
 
@@ -211,7 +211,7 @@ merging; local overrides continue to take precedence.
 | Step | Command | Why |
 |---|---|---|
 | Build kernel and world together | `make buildworld buildkernel` | Modules are packaged from the kernel tree; a world-only build ships stale modules |
-| Package with the static pkg | `make packages PKG_CMD=/usr/local/sbin/pkg-static` | The dynamic ports pkg can fail on libc symbol versions |
+| Package with the static pkg | `make -j$(sysctl -n hw.ncpu) packages PKG_CMD=/usr/local/sbin/pkg-static` | The dynamic ports pkg can fail on libc symbol versions |
 | Confirm repository set | `pkg -vv` | `5BSD-base` has the expected local URL; upstream base and kmods disabled |
 | Checkpoint | `bectl create pre-upgrade` | Rollback for the whole base generation |
 | Upgrade base only from 5BSD | `pkg update -f -r 5BSD-base; pkg upgrade -r 5BSD-base` | Never from a FreeBSD repository |

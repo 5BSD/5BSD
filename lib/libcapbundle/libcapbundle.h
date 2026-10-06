@@ -20,19 +20,24 @@
 
 #include <sys/types.h>
 #include <stdbool.h>
+#include <stddef.h>
+
+/* Shared syntax for endpoint and attribute names, excluding wildcards. */
+bool capbundle_valid_service_name(const char *, size_t);
 
 /* Limits */
 #define	CAPBUNDLE_SCHEMA		"org.5bsd.capability-bundle"
 #define	CAPBUNDLE_MAX_SERVICES		32
 #define	CAPBUNDLE_MAX_PROVIDES		8
 /*
- * IPC anointments (docs/book/src/plane/anointments.md).  Per published endpoint,
+ * Software attributes (docs/book/src/plane/attributes.md).  Per published endpoint,
  * the names a connecting program must hold (all of them); per unit, the names
  * it declares it holds.  CAPBUNDLE_LABEL_MAX bounds one such name and equals
  * SWITCHBOARD_LABEL_MAX (asserted in libcapbundle_internal.h).
  */
 #define	CAPBUNDLE_MAX_REQUIRES		8
-#define	CAPBUNDLE_MAX_ANOINTMENTS	32
+#define	CAPBUNDLE_MAX_ATTRIBUTES	32
+#define	CAPBUNDLE_MAX_ANOINTMENTS	CAPBUNDLE_MAX_ATTRIBUTES
 /*
  * Launch constraint (manifest `launch { responsible = [...] }`): the parties
  * that may cause this unit to exist.  One entry bounds at CAPBUNDLE_LABEL_MAX.
@@ -86,6 +91,7 @@ struct capbundle_service *capbundle_service(const struct capbundle *b,
 /* Service accessors return zero/NULL for a NULL service or bad index. */
 const char	*capbundle_svc_program(const struct capbundle_service *s);
 const char	*capbundle_svc_label(const struct capbundle_service *s);
+bool		 capbundle_svc_activates_on_exec(const struct capbundle_service *s);
 bool		 capbundle_svc_activates_at_boot(
 		    const struct capbundle_service *s);
 unsigned	 capbundle_svc_nprovides(const struct capbundle_service *s);
@@ -118,10 +124,10 @@ const struct svc_activation_socket *capbundle_svc_activation_socket(
 const char	*capbundle_svc_provides(const struct capbundle_service *s,
 		    unsigned idx);
 /*
- * IPC anointments.  requires are indexed in parallel with provides: entry
+ * Software attributes.  requires are indexed in parallel with provides: entry
  * provides_idx of the unit's ipc list demands nrequires(provides_idx) names,
  * all of which a connecting program must hold; zero means the endpoint is
- * open.  anointments are the names this unit itself holds.  All return 0/NULL
+ * open.  Attributes are the names this unit itself holds.  All return 0/NULL
  * for a NULL service or an out-of-range index.  provides_index returns the
  * provides slot publishing `name`, or -1 when the unit does not publish it.
  */
@@ -129,6 +135,9 @@ unsigned	 capbundle_svc_nrequires(const struct capbundle_service *s,
 		    unsigned provides_idx);
 const char	*capbundle_svc_requires(const struct capbundle_service *s,
 		    unsigned provides_idx, unsigned j);
+unsigned	 capbundle_svc_nattributes(const struct capbundle_service *s);
+const char	*capbundle_svc_attribute(const struct capbundle_service *s, unsigned i);
+/* Compatibility symbols for existing capability clients. */
 unsigned	 capbundle_svc_nanointments(const struct capbundle_service *s);
 unsigned	 capbundle_svc_nlaunch_responsible(const struct capbundle_service *s);
 const char	*capbundle_svc_launch_responsible(const struct capbundle_service *s,
@@ -184,109 +193,5 @@ int	capbundle_scan_dir(const char *dirpath, capbundle_scan_cb cb, void *ctx);
 #define	CAPBUNDLE_MGMT_SYSTEM		0
 #define	CAPBUNDLE_MGMT_CORE		1
 #define	CAPBUNDLE_MGMT_USER		2
-
-/*
- * The principal->bundle admin policy (docs/capability-authority-model.md, P1).
- * Whether a principal is entitled to an admin (full-discovery) session, per the
- * UCL policy at /Capabilities/Config/principal-policy.ucl, granting nothing
- * when no valid policy is configured.
- */
-struct passwd;
-bool	capbundle_principal_is_admin(const struct passwd *pwd);
-
-/*
- * As above, but read the policy from an already-open read-only descriptor
- * rather than by path — the capsicum-clean form for a sandboxed auth-agent that
- * obtains principal-policy.ucl from the filesystem daemon (bsdfilesystem) via
- * service_open_isolated(3).  A bad or absent fd grants nothing.
- */
-bool	capbundle_principal_is_admin_fd(const struct passwd *pwd, int policy_fd);
-
-/*
- * A group-name -> gid resolver, returning (gid_t)-1 for an unknown name.  It
- * lets the decision core run without any group-database access of its own: a
- * capsicum-sandboxed auth-agent backs it with Casper cap_grp; an ordinary
- * caller backs it with getgrnam(3).
- */
-typedef gid_t (*capbundle_group_gid_fn)(void *ctx, const char *group_name);
-
-/*
- * The data-only decision core.  Decide admin-ness for a principal already
- * resolved to a uid and its set of member group ids, against the policy on
- * `policy_fd` (or an empty grant when the fd is absent/unreadable),
- * using `name2gid` to resolve any group names the policy references.  This is
- * the entry point a sandboxed auth-agent uses after resolving the principal
- * itself (never trusting caller-supplied attributes).
- */
-bool	capbundle_principal_is_admin_resolved(int policy_fd, uid_t uid,
-	    const gid_t *member_gids, unsigned nmember,
-	    capbundle_group_gid_fn name2gid, void *ctx);
-
-/*
- * Principal grants (docs/book/src/plane/anointments.md, "Domains and sessions").
- * What a login session holds, per /Capabilities/Config/principal-policy.ucl:
- *
- *   principals {
- *       admin     { groups = ["wheel"]; uids = [0]; anointments = ["*"]; }
- *       default   { anointments = []; }
- *       operators { groups = ["operators"];
- *                   anointments = ["system.trace.client"];
- *                   may_elevate = ["system.notify.system"]; }
- *   }
- *
- * Entries are evaluated in file order; the first whose uids/groups match the
- * principal wins; an entry with neither (conventionally "default") is the
- * fallback.  "*" (only legal in this file) grants every name and sets the
- * matching *_all flag; admin_rights defaults to true for an entry granting
- * anointments = ["*"] and false otherwise.  An absent or malformed policy
- * grants nothing to any principal and sets
- * from_default_rule so the caller can log the fallback.
- */
-#define	CAPBUNDLE_PRINCIPAL_MAX_NAMES	32
-struct capbundle_principal_grant {
-	char	 anointments[CAPBUNDLE_PRINCIPAL_MAX_NAMES][CAPBUNDLE_LABEL_MAX];
-	unsigned nanointments;
-	bool	 anoint_all;		/* anointments contained "*" */
-	char	 may_elevate[CAPBUNDLE_PRINCIPAL_MAX_NAMES][CAPBUNDLE_LABEL_MAX];
-	unsigned nmay_elevate;
-	bool	 elevate_all;		/* may_elevate contained "*" */
-	bool	 admin_rights;
-	bool	 from_default_rule;	/* policy absent/malformed: empty grant */
-};
-
-/*
- * Resolve the grant for a principal already reduced to (uid, member gid set)
- * against the policy on policy_fd (or an empty grant when the fd is
- * absent/unreadable/malformed).  Always fills *out and returns 0; -1 with
- * errno EINVAL only for NULL out/name2gid or a NULL member_gids with nmember
- * > 0.
- */
-int	capbundle_principal_declared_names(int policy_fd,
-	    char (*names)[CAPBUNDLE_LABEL_MAX], unsigned max, unsigned *count);
-int	capbundle_principal_resolve(int policy_fd, uid_t uid,
-	    const gid_t *member_gids, unsigned nmember,
-	    capbundle_group_gid_fn name2gid, void *ctx,
-	    struct capbundle_principal_grant *out);
-/* Immutable policy snapshot. Load once at boot; close the input descriptor.
- * Load returns -1 with errno for invalid/unreadable policy and sets *out=NULL.
- * Resolve performs no policy I/O or allocation. NULL snapshot grants nothing.
- * Concurrent readers may share a snapshot; free only after all readers finish.
- * Format returns malloc-owned JSON. No ownership/integrity checks: callers
- * must obtain the input from their trusted boot/update boundary. */
-struct capbundle_principal_policy;
-int capbundle_principal_policy_load(int fd, struct capbundle_principal_policy **out);
-void capbundle_principal_policy_free(struct capbundle_principal_policy *policy);
-char *capbundle_principal_policy_format(const struct capbundle_principal_policy *policy);
-int capbundle_principal_policy_resolve(const struct capbundle_principal_policy *policy,
-    uid_t uid, const gid_t *members, unsigned nmember,
-    capbundle_group_gid_fn name2gid, void *ctx,
-    struct capbundle_principal_grant *out);
-
-/* Whether the grant holds `name` from login (anoint_all or listed). */
-bool	capbundle_principal_holds(const struct capbundle_principal_grant *g,
-	    const char *name);
-/* Whether the grant permits elevating to `name` (elevate_all or listed). */
-bool	capbundle_principal_may_elevate(
-	    const struct capbundle_principal_grant *g, const char *name);
 
 #endif /* LIBCAPBUNDLE_H */

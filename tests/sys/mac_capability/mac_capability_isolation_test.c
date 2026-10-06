@@ -42,6 +42,7 @@
  * ---------------------------------------------------------------- */
 
 static int	run_net_try_bind(const atf_tc_t *, uint16_t);
+static const char *fi_helper_path(const atf_tc_t *);
 
 static int
 fi_connect(void)
@@ -277,6 +278,50 @@ ATF_TC_BODY(claim_allows_same_nonce, tc)
 	close(svc);
 }
 ATF_TC_CLEANUP(claim_allows_same_nonce, tc)
+{
+	cleanup_tmpfile();
+}
+
+ATF_TC_WITH_CLEANUP(claim_blocks_inherited_write);
+ATF_TC_HEAD(claim_blocks_inherited_write, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "An inherited writable FD must obey the active writer's isolation authority");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(claim_blocks_inherited_write, tc)
+{
+	struct fi_reply rpl;
+	char descriptor[32];
+	int svc, target, status, expected;
+	pid_t pid;
+
+	make_tmpfile();
+	svc = fi_connect();
+	target = open(tmppath, O_RDWR);
+	ATF_REQUIRE(target >= 0);
+	ATF_REQUIRE_EQ(0, fi_call(svc, FI_OP_CLAIM, target, 0, &rpl));
+	ATF_REQUIRE_EQ(1, pwrite(target, "o", 1, 0));
+	snprintf(descriptor, sizeof(descriptor), "%d", target);
+	/* Exec changes the nonce, while the ordinary UNIX descriptor survives. */
+	for (expected = 1; expected >= 0; expected--) {
+		if (expected == 0)
+			ATF_REQUIRE_EQ(0, fi_call(svc, FI_OP_RELEASE, target, 0, &rpl));
+		pid = fork();
+		ATF_REQUIRE(pid >= 0);
+		if (pid == 0) {
+			execl(fi_helper_path(tc), "isolation-helper", "inherited-write",
+			    descriptor, NULL);
+			_exit(127);
+		}
+		ATF_REQUIRE_EQ(pid, waitpid(pid, &status, 0));
+		ATF_REQUIRE(WIFEXITED(status));
+		ATF_CHECK_EQ(expected, WEXITSTATUS(status));
+	}
+	close(target);
+	close(svc);
+}
+ATF_TC_CLEANUP(claim_blocks_inherited_write, tc)
 {
 	cleanup_tmpfile();
 }
@@ -5069,6 +5114,7 @@ ATF_TC_CLEANUP(jail_stress_claim_release, tc)
 
 ATF_TP_ADD_TCS(tp)
 {
+	ATF_TP_ADD_TC(tp, claim_blocks_inherited_write);
 
 	ATF_TP_ADD_TC(tp, claim_and_query);
 	ATF_TP_ADD_TC(tp, claim_allows_same_nonce);

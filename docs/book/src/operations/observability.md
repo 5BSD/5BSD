@@ -175,10 +175,10 @@ exported over OTLP; only DTrace and telemetry data are.
 the `system.Trace` provider, which is born in capability mode with `/dev`
 delivered as a directory descriptor and opens the device with `openat(2)`.
 A client asks switchboard for `system.Trace`; the name is gated on the
-`system.trace.client` anointment, which the shipped principal policy grants
-to administrators and which an operator can hold without being one. A
-session that holds neither gets `ENOENT`, the same answer as an unknown name.
-The daemon then checks the client's switchboard label against
+`system.trace.client` software attribute. A client without the required
+attribute receives a discovery denial; UNIX root or wheel membership does
+not supply it. After admission, the provider accepts its administrative
+endpoint right or checks the client's software label against
 `Config/bsdtrace.allow` in its own bundle
 (`/Capabilities/System/Trace.cap/Units/bsdtrace.unit/Config/bsdtrace.allow`):
 one label per line, no wildcards, default deny, the file owned by the

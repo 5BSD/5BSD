@@ -11,7 +11,6 @@
  *   dtrace -n 'service_ambient*:::'             -- trace all probes
  *   dtrace -n 'service_ambient*:::reg-result'   -- private vs fallback + cause
  *   dtrace -n 'service_ambient*:::reg-create'   -- channel-create syscall result
- *   dtrace -n 'service_ambient*:::elevate-*'    -- service_elevate(3) outcomes
  *
  * The probes carry no capability material: only small integers (an errno and
  * three booleans), so tracing them leaks no authority.  When DTrace is disabled
@@ -48,16 +47,5 @@
 	    ack_ok)	\
 	DTRACE_PROBE4(service_ambient, reg__result, use_private, create_errno, \
 	    send_ok, ack_ok)
-
-/*
- * service_elevate(3) (docs/book/src/plane/anointments.md "Elevation"): the
- * requested anointment name at entry, and the name with the outcome (0, or
- * the errno the auth agent or the transport answered) at every exit.  Never
- * the password.
- */
-#define	SERVICE_AMBIENT_PROBE_ELEVATE_START(name)	\
-	DTRACE_PROBE1(service_ambient, elevate__start, name)
-#define	SERVICE_AMBIENT_PROBE_ELEVATE_DONE(name, error)	\
-	DTRACE_PROBE2(service_ambient, elevate__done, name, error)
 
 #endif /* SERVICE_AMBIENT_PROBES_H */

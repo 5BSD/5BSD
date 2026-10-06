@@ -3,21 +3,12 @@
  *
  * Copyright (c) 2026 Kory Heard
  *
- * Lookup domains (§22) and minted user-domain channels (§21).
+ * Discovery routes and naming policy.
  *
- * A domain is a scope over the reverse-DNS naming layer: it selects which
- * registered names a lookup channel may resolve.  Domains only ever NARROW.
- * The system domain (the default every switchboard-launched unit holds) resolves
- * every registered name; a user domain resolves only names whose provider
- * opted into user visibility (manifest visible = ["user"]) plus (in
- * future) user-scoped services, and reports every other name as ENOENT —
- * indistinguishable from an unregistered name.
- *
- * This file also owns the switchboard-held end of minted user-domain lookup
- * channels.  SVC_OP_MINT_DOMAIN hands the caller a narrowed channel; switchboard
- * keeps the other end here, dispatches SVC_OP_LOOKUP arriving on it, and scopes
- * each lookup to the channel's domain.  The channel carries no backing process,
- * so it serves lookups only — never name registration or readiness.
+ * Requests are authorized using the kernel-stamped sender's issued authority.
+ * Route possession and legacy route metadata confer no user or administrative
+ * grants. Session coalitions belong to issued authority records; routes do not
+ * own session lifetime. The old channel-minting wire operation is denied.
  */
 
 #include <sys/types.h>
@@ -41,6 +32,7 @@
 #include <libcapbundle.h>
 
 #include "switchboard.h"
+#include "authority.h"
 #include "fd_budget.h"
 #include "switchboard_probes.h"
 #include "switchboard_svc_proto.h"
@@ -79,12 +71,7 @@ svc_name_user_resolvable(const char *name)
 	return (capbundle_svc_user_resolvable(s));
 }
 
-/*
- * The switchboard-held ends of minted user-domain lookup channels.  Each entry is
- * a channel whose peer was handed to a session; requests on it are scoped to
- * its domain.  Kept in a simple list — the population is one channel per login
- * session, not per process.
- */
+/* SwitchBoard-held discovery endpoints, including private registered routes. */
 struct svc_lookup_channel {
 	struct svc_lookup_channel	*next;
 	/* A launch identity, never a pointer into the reloadable runtime array. */
@@ -92,18 +79,7 @@ struct svc_lookup_channel {
 	uint64_t owner_launch_id;
 	struct channel			*channel;
 	int				 fd;	/* channel_fd(), registered on kq */
-	struct svc_domain		 domain;
-	/*
-	 * The session's coalition (USER-domain sessions only): a self-rooted,
-	 * signal-less coalition standing for the login session.  Units
-	 * activated on the session's behalf are responsible to it, and the
-	 * session leader joins it over SVC_OP_SESSION_COALITION so its
-	 * processes carry the session id.  Private per-process lookup channels
-	 * registered from this session share it (dup).  Closed with the
-	 * channel; signal 0 means members are released, never killed.
-	 */
-	int				 coalition_fd;
-	uint64_t			 coalition_id;
+	struct svc_domain		 domain; /* Legacy metadata, not sender authority. */
 };
 
 static struct svc_lookup_channel *lookup_channels;
@@ -193,66 +169,6 @@ svc_domain_permits(const struct svc_domain *chan,
 }
 
 /*
- * Whether a domain may mint a narrower one.  Only a SYSTEM domain (the default)
- * may: domains only ever narrow, so a request arriving on an already-narrowed
- * channel is refused.  A NULL domain is treated as SYSTEM.
- */
-bool
-svc_domain_may_mint(const struct svc_domain *domain)
-{
-
-	return (domain == NULL || domain->kind == SVC_DOMAIN_SYSTEM);
-}
-
-/*
- * Resolve a SVC_OP_MINT_DOMAIN request's wire `domain` field to the domain kind
- * to mint, enforcing the SYSTEM-mint escalation guard (§6): minting a SYSTEM
- * (full-discovery admin) channel is a privilege, so it is permitted only when
- * the REQUESTING channel is itself SYSTEM.  A USER channel that asks for SYSTEM
- * is refused with EPERM — it can never widen its own scope.  A USER mint is
- * always in-policy for a caller that may mint at all (svc_domain_may_mint()
- * already gates that a USER channel cannot mint anything).
- *
- * Returns 0 with *kind set on success; -1 with errno set on failure: EPERM for
- * a non-SYSTEM channel requesting SYSTEM, EINVAL for an unknown domain value.
- * A NULL requester is treated as SYSTEM (the default authority).
- */
-int
-svc_mint_domain_kind(const struct svc_domain *requester, uint32_t wire_domain,
-    enum svc_domain_kind *kind)
-{
-
-	switch (wire_domain) {
-	case SVC_MINT_DOMAIN_USER:
-		*kind = SVC_DOMAIN_USER;
-		return (0);
-	case SVC_MINT_DOMAIN_SYSTEM:
-		if (requester != NULL && requester->kind != SVC_DOMAIN_SYSTEM) {
-			errno = EPERM;
-			return (-1);
-		}
-		*kind = SVC_DOMAIN_SYSTEM;
-		return (0);
-	case SVC_MINT_DOMAIN_CONTROL:
-		/*
-		 * A CONTROL channel is a sibling of SYSTEM, not a widening of it:
-		 * only an admin session (which holds a SYSTEM channel) may mint
-		 * one, and login/su gate that request on the principal being
-		 * root/wheel.  A USER channel may mint neither.
-		 */
-		if (requester != NULL && requester->kind != SVC_DOMAIN_SYSTEM) {
-			errno = EPERM;
-			return (-1);
-		}
-		*kind = SVC_DOMAIN_CONTROL;
-		return (0);
-	default:
-		errno = EINVAL;
-		return (-1);
-	}
-}
-
-/*
  * Mark a descriptor ambient (§21.1): it survives every fork
  * (CAP_CLOFORK_UNLOCKED), survives exec (close-on-exec cleared), and — being a
  * mac_capability channel endpoint — remains usable in capability mode.  A
@@ -303,93 +219,7 @@ lookup_channel_close(struct svc_lookup_channel *lc)
 		channel_destroy(lc->channel);
 	else if (lc->fd >= 0)
 		close(lc->fd);
-	if (lc->coalition_fd >= 0)
-		(void)close(lc->coalition_fd);
 	free(lc);
-}
-
-int
-lookup_channel_coalition_fd(const struct svc_lookup_channel *lc)
-{
-
-	return (lc != NULL ? lc->coalition_fd : -1);
-}
-
-uint64_t
-lookup_channel_coalition_id(const struct svc_lookup_channel *lc)
-{
-
-	return (lc != NULL ? lc->coalition_id : 0);
-}
-
-uid_t
-lookup_channel_uid(const struct svc_lookup_channel *lc)
-{
-
-	return (lc != NULL ? lc->domain.uid : (uid_t)-1);
-}
-
-/*
- * Mint the session coalition for a freshly minted USER-domain lookup
- * channel.  Best-effort: a session without one is simply unattributed.
- */
-static void
-session_coalition_create(struct svc_lookup_channel *lc)
-{
-	struct coalition_stat_reply sr;
-	int fd, error;
-
-	if (switchboard_fd_budget_check(1, "session coalition") == -1)
-		return;
-	fd = mac_cap_create_coalition();
-	if (fd == -1) {
-		syslog(LOG_NOTICE, "domain: no session coalition for uid %u: %m",
-		    (unsigned)lc->domain.uid);
-		return;
-	}
-	if (cap_clofork_limit(fd, CAP_CLOFORK_LOCKED) == -1 ||
-	    cap_cloexec_limit(fd, CAP_CLOEXEC_LOCKED) == -1 ||
-	    mac_cap_coalition_set_signal(fd, 0) != 0 ||
-	    mac_cap_coalition_set_responsible(fd, -1, COALITION_RESP_SELF) != 0 ||
-	    mac_cap_coalition_stat(fd, &sr) != 0) {
-		error = errno;
-		(void)close(fd);
-		syslog(LOG_NOTICE, "domain: session coalition for uid %u: %s",
-		    (unsigned)lc->domain.uid, strerror(error));
-		return;
-	}
-	lc->coalition_fd = fd;
-	lc->coalition_id = sr.id;
-	syslog(LOG_INFO, "domain: session coalition %ju for uid %u",
-	    (uintmax_t)sr.id, (unsigned)lc->domain.uid);
-}
-
-/*
- * Sessions with a coalition, for the responsibility tree.
- */
-size_t
-domain_sessions_format(char *buf, size_t len, size_t off)
-{
-	struct svc_lookup_channel *lc, *prev;
-	int n;
-
-	for (lc = lookup_channels; lc != NULL; lc = lc->next) {
-		if (lc->coalition_fd < 0 || off >= len)
-			continue;
-		/* Private per-process channels share their session's coalition. */
-		for (prev = lookup_channels; prev != lc; prev = prev->next)
-			if (prev->coalition_id == lc->coalition_id)
-				break;
-		if (prev != lc)
-			continue;
-		n = snprintf(buf + off, len - off,
-		    "  session uid=%u [%ju]\n", (unsigned)lc->domain.uid,
-		    (uintmax_t)lc->coalition_id);
-		if (n < 0)
-			break;
-		off += (size_t)n < len - off ? (size_t)n : len - off - 1;
-	}
-	return (off);
 }
 
 /* Resolve the exact service generation; stopped/replaced units never rebind. */
@@ -410,15 +240,10 @@ lookup_channel_requester(const struct svc_lookup_channel *lc)
 }
 
 void
-domain_unit_channels_close(const struct svc_runtime *svc)
+domain_unit_channels_close(const struct svc_runtime *svc __unused)
 {
-	struct svc_lookup_channel *lc, *next;
-
-	for (lc = lookup_channels; lc != NULL; lc = next) {
-		next = lc->next;
-		if (strcmp(lc->owner_label, svc->manifest.label) == 0)
-			lookup_channel_close(lc);
-	}
+	/* Discovery is inherited independently of the launching unit's lifetime.
+	 * Revocation removes its managed authority, not descendants' routes. */
 }
 
 /*
@@ -585,12 +410,6 @@ lookup_channel_register(struct svc_lookup_channel *lc,
 	ack.op = SVC_OP_REGISTER_LOOKUP;
 	ack.status = 0;
 	ack.magic = SVC_REGISTER_LOOKUP_MAGIC;
-	/* A private channel of a session shares the session's coalition. */
-	if (lc->coalition_fd >= 0) {
-		adopted->coalition_fd = fcntl(lc->coalition_fd,
-		    F_DUPFD_CLOEXEC, 0);
-		adopted->coalition_id = lc->coalition_id;
-	}
 	if (channel_send_event(adopted->channel,
 	    &(struct channel_outgoing){
 		.size = sizeof(struct channel_outgoing),
@@ -623,6 +442,8 @@ lookup_channel_request(struct channel *channel,
     struct channel_message *request, void *context)
 {
 	struct svc_lookup_channel *lc;
+	struct svc_runtime *sender;
+	struct svc_domain authority;
 	const struct svc_lookup_req *req;
 	const uint32_t *opp;
 	const char *kindstr;
@@ -662,40 +483,12 @@ lookup_channel_request(struct channel *channel,
 		goto out;
 	}
 	if (op == SVC_OP_MINT_DOMAIN) {
-		/*
-		 * Direct minting over an ambient lookup channel is RETIRED (P1c).
-		 * The auth-agent (system.Auth) is the single mint boundary:
-		 * it mints session channels over its own unit bootstrap channel
-		 * (handle_mint_domain() in svc_proto.c), and a session leader
-		 * reaches it by LOOKUP over this channel.  login/su/sshd therefore
-		 * can no longer mint their own session channel here — even the
-		 * SYSTEM ambient carry switchboard hands getty is now lookup-only for
-		 * this op.  Refused unconditionally; the primitives
-		 * (svc_domain_may_mint / svc_mint_domain_kind) remain for the
-		 * bootstrap-channel path that still uses them.
-		 */
+		/* Retired login-authority operation; software identity controls access. */
 		lookup_channel_reply(request, EPERM, NULL, 0);
 		goto out;
 	}
-	if (op == SVC_OP_SESSION_COALITION) {
-		/*
-		 * Hand the session leader its session coalition so it can
-		 * join (service_session_join_coalition).  Only a USER session
-		 * channel carries one; SYSTEM carries answer ENOENT.
-		 */
-		int cfd;
-
-		if (lc->coalition_fd < 0) {
-			lookup_channel_reply(request, ENOENT, NULL, 0);
-			goto out;
-		}
-		cfd = fcntl(lc->coalition_fd, F_DUPFD_CLOEXEC, 0);
-		if (cfd == -1) {
-			lookup_channel_reply(request, errno, NULL, 0);
-			goto out;
-		}
-		lookup_channel_reply(request, 0, &cfd, 1);
-		(void)close(cfd);
+	if (svc_authority_resolve(request, &authority, &sender) == -1) {
+		lookup_channel_reply(request, EACCES, NULL, 0);
 		goto out;
 	}
 	if (op == SVC_OP_AMBIENT_HELLO) {
@@ -757,7 +550,7 @@ lookup_channel_request(struct channel *channel,
 		lookup_channel_reply(request, EACCES, NULL, 0);
 		goto out;
 	}
-	client_fd = naming_lookup(req->name, lookup_channel_requester(lc), &lc->domain,
+	client_fd = naming_lookup(req->name, sender, &authority,
 	    channel_message_sender(request), &error, &sendable);
 	if (client_fd < 0) {
 		/*
@@ -770,7 +563,7 @@ lookup_channel_request(struct channel *channel,
 		 * channel's authority.
 		 */
 		if (error == ENOENT &&
-		    on_demand_launch_ambient(req->name, lc, &lc->domain,
+		    on_demand_launch_ambient(req->name, lc, &authority,
 		    request, switchboard_kq) == 0)
 			return;
 		/*
@@ -785,7 +578,7 @@ lookup_channel_request(struct channel *channel,
 		    NULL, 0);
 		goto out;
 	}
-	SWITCHBOARD_PROBE_DOMAIN_LOOKUP(req->name, kindstr, lc->domain.uid);
+	SWITCHBOARD_PROBE_DOMAIN_LOOKUP(req->name, kindstr, authority.uid);
 	lookup_channel_reply_ex(request, 0, &client_fd, 1, !sendable);
 	close(client_fd);
 out:
@@ -840,8 +633,6 @@ lookup_channel_adopt(int switchboard_end, enum svc_domain_kind kind, uid_t uid,
 		return (NULL);
 	}
 	lc->fd = -1;
-	lc->coalition_fd = -1;
-	lc->coalition_id = 0;
 	lc->domain.kind = kind;
 	lc->domain.uid = uid;
 	/*
@@ -909,8 +700,7 @@ domain_mint_unit_channel(struct svc_runtime *svc, uid_t uid, int *out_fd,
 		close(client);
 		return (errno = error, -1);
 	}
-	strlcpy(lc->owner_label, svc->manifest.label, sizeof(lc->owner_label));
-	lc->owner_launch_id = svc->launch_id;
+	/* Routing has no unit identity; each sender is resolved independently. */
 	if (svc_fd_make_ambient(client) == -1) {
 		error = errno;
 		lookup_channel_close(lc);
@@ -923,7 +713,7 @@ domain_mint_unit_channel(struct svc_runtime *svc, uid_t uid, int *out_fd,
 
 static int
 domain_mint_channel(enum svc_domain_kind kind, uid_t uid,
-    const struct svc_anoint_set *set, bool session, int *out_fd, int kq)
+    const struct svc_anoint_set *set, int *out_fd, int kq)
 {
 	struct svc_lookup_channel *lc;
 	int switchboard_end, client_end, error;
@@ -947,13 +737,6 @@ domain_mint_channel(enum svc_domain_kind kind, uid_t uid,
 		errno = error;
 		return (-1);
 	}
-	/*
-	 * A login session gets a session coalition whatever its kind: an admin
-	 * principal's session is SYSTEM-kind and must be attributable too.  The
-	 * boot ambient carry is not a session and gets none.
-	 */
-	if (session)
-		session_coalition_create(lc);
 	/* The set this session channel will carry, as decided by the minter. */
 	SWITCHBOARD_PROBE_ANOINT_SET(SVC_SESSION_LABEL,
 	    (set != NULL ? set->n : 0U), (int)(set != NULL && set->all),
@@ -994,50 +777,30 @@ domain_mint_user_channel(uid_t uid, int *out_fd, int kq)
 
 	/* A plain user mint holds no anointments and carries no admin rights. */
 	memset(&none, 0, sizeof(none));
-	return (domain_mint_channel(SVC_DOMAIN_USER, uid, &none, true, out_fd,
+	return (domain_mint_channel(SVC_DOMAIN_USER, uid, &none, out_fd,
 	    kq));
 }
 
-/*
- * Mint a SYSTEM-domain lookup channel — the ambient channel switchboard installs
- * before exec'ing /etc/rc so rc, getty, login, and every other boot descendant
- * inherits system-wide service discovery (§21.1).  It resolves every registered
- * name; the login path narrows it per uid.
- */
+/* Create the inherited boot discovery route, without user authority. */
 int
 domain_mint_system_channel(int *out_fd, int kq)
 {
 	struct svc_anoint_set all;
 
-	/*
-	 * The boot carry holds every anointment and the admin bypass: login,
-	 * sshd and getty run on it before there is a session, and it must reach
-	 * the auth agent and mint.  It is "*" (the design narrows it to an
-	 * explicit small set later, in switchboard's own config).
-	 */
 	memset(&all, 0, sizeof(all));
-	all.all = true;
-	all.admin_rights = true;
-	return (domain_mint_channel(SVC_DOMAIN_SYSTEM, 0, &all, false, out_fd,
+	/* The boot route grants no authority, including to UID zero. */
+	return (domain_mint_channel(SVC_DOMAIN_SYSTEM, 0, &all, out_fd,
 	    kq));
 }
 
-/*
- * Mint the session channel a mint request selected (§6): SVC_DOMAIN_USER binds
- * the recorded uid. SYSTEM sessions preserve that same authenticated uid;
- * broader discovery never changes principal identity.  `set` is the
- * anointment set the auth agent decided from the principal policy; the minted
- * channel carries it beside the kind (docs/book/src/plane/anointments.md).  The
- * caller has already run svc_mint_domain_kind() to authorize the requested
- * kind and svc_anoint_set_from_mint() to validate the set.
- */
+/* Internal scoped route constructor; service requests cannot mint sessions. */
 int
 domain_mint_session_channel(enum svc_domain_kind kind, uid_t uid,
     const struct svc_anoint_set *set, int *out_fd, int kq)
 {
 
 	return (domain_mint_channel(kind,
-	    uid, set, true, out_fd, kq));
+	    uid, set, out_fd, kq));
 }
 
 bool

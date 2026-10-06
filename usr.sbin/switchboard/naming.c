@@ -29,6 +29,7 @@
 #include <libservice.h>
 
 #include "switchboard.h"
+#include "authority.h"
 #include "switchboard_ctl.h"
 #include "fd_budget.h"
 #include "switchboard_probes.h"
@@ -321,19 +322,9 @@ naming_rebind_owner(struct svc_runtime *old_owner,
  * provider is unchanged: domain scoping narrows discovery, it never grants
  * access.
  */
-/*
- * Resolve SWITCHBOARD_CONTROL_NAME (docs/capability-authority-model.md, P3):
- * switchboard self-serves its own control plane, so this name has no provider
- * process and forks off the general registry path.  It is reachable only for an
- * ambient login session (requester == NULL), never a service, and only for a
- * session holding the SVC_ANOINT_SWITCHBOARD_ADMIN anointment (see the P6 note
- * below).  Per P6 the DOMAIN KIND no longer gates this: a USER-domain channel
- * does reach the anointment check, so authorization rests on the anointment
- * alone -- a root admin shell (USER kind) carrying the anointment resolves it,
- * a wheel session without it does not.  The grant always carries
- * SVC_RIGHTS_ADMIN; switchboard adopts the provider end in-process as an
- * ADMIN-gated control connection.  Returns the client fd, or -1 with *errp.
- */
+/* Control admission uses software authority, independently of launch style.
+ * Read-only inventory needs an attributed caller; mutations also need the
+ * management attribute and the corresponding held right. */
 static int
 naming_lookup_self_control(const char *name, struct svc_runtime *requester,
     const struct svc_domain *domain, const struct channel_sender *sender,
@@ -344,41 +335,18 @@ naming_lookup_self_control(const char *name, struct svc_runtime *requester,
 	bool operator_session;
 
 	(void)sender;
-	if (requester != NULL) {
-		/* A service is not an operator; it may not open control. */
+	(void)requester;
+	if (domain == NULL || domain->authority_identity == 0) {
+		/* Route possession alone is not software authority. */
 		*errp = EACCES;
 		return (-1);
 	}
-	if (domain == NULL) {
-		/* No authenticated session -- nothing to key management on. */
-		*errp = EACCES;
-		return (-1);
-	}
-	/*
-	 * The control plane is reachable by ANY authenticated login session, but
-	 * WHAT it may do is decided per-op, not at the door.  Whether the session
-	 * is an OPERATOR is the SVC_ANOINT_SWITCHBOARD_ADMIN anointment (or "*",
-	 * held by the boot carry so getty/login/rc keep full control): an operator
-	 * channel carries the administrative bypass (SVC_RIGHTS_ADMIN) and may
-	 * manage SYSTEM-class daemons and run global ops like reload; a plain user
-	 * channel does not, and the management gate (svc_management_check_op, keyed
-	 * on the channel's recorded uid) confines it to starting/stopping its OWN
-	 * user agents while core stays unmanageable to all.  A non-operator can
-	 * still query status; that inventory is not secret.
-	 */
 	operator_session = svc_anoint_holds(&domain->anoint,
 	    SVC_ANOINT_SWITCHBOARD_ADMIN);
 	rights = operator_session ? SVC_RIGHTS_ALL :
 	    (SVC_RIGHTS_ALL & ~SVC_RIGHTS_ADMIN);
 	SWITCHBOARD_PROBE_ANOINT_ALLOW(name, NAMING_SESSION_LABEL,
 	    operator_session ? 1U : 0U);
-	/*
-	 * Create the caller's agent directory on demand so a user has somewhere
-	 * to install agents the first time it reaches the control plane.  Best
-	 * effort: a failure just means no user-agent dir yet, never a refusal.
-	 */
-	if (domain->uid != (uid_t)-1)
-		(void)bundle_registry_ensure_user_dir(domain->uid);
 	if (switchboard_fd_budget_check(2, "capability control connection") == -1) {
 		*errp = errno;
 		return (-1);
@@ -392,6 +360,12 @@ naming_lookup_self_control(const char *name, struct svc_runtime *requester,
 		close(provider_end);
 		close(client_end);
 		*errp = ENOTCAPABLE;
+		return (-1);
+	}
+	if (svc_authority_bind(domain, client_end) == -1) {
+		*errp = errno;
+		close(provider_end);
+		close(client_end);
 		return (-1);
 	}
 	if (sctl_adopt_channel(provider_end, rights, domain->uid,
@@ -419,6 +393,11 @@ naming_lookup(const char *name, struct svc_runtime *requester,
 
 	if (sendablep != NULL)
 		*sendablep = false;
+
+	if (!svc_authority_permits(domain, name)) {
+		*errp = EACCES;
+		return (-1);
+	}
 
 	/*
 	 * switchboard self-serves two spine control names with no provider process:
@@ -514,14 +493,14 @@ naming_lookup(const char *name, struct svc_runtime *requester,
 		(void)svc_anoint_missing(domain != NULL ? &domain->anoint : NULL,
 		    requires, nrequires, missing, sizeof(missing));
 		svc_anoint_deny(name, requester != NULL ?
-		    requester->manifest.label : NAMING_SESSION_LABEL,
+		    requester->manifest.label : svc_authority_label(domain),
 		    sender != NULL ? (uid_t)sender->uid : getuid(), missing);
 		*errp = EACCES;
 		return (-1);
 	}
 	if (nrequires > 0)
 		SWITCHBOARD_PROBE_ANOINT_ALLOW(name, (requester != NULL ?
-		    requester->manifest.label : NAMING_SESSION_LABEL), nrequires);
+		    requester->manifest.label : svc_authority_label(domain)), nrequires);
 
 	provider = e->owner;
 
@@ -569,6 +548,18 @@ naming_lookup(const char *name, struct svc_runtime *requester,
 		return (-1);
 	}
 
+	/* Non-forwardable sessions are also bound to the issued authority.
+	 * Public anonymous sessions have no elevated rights. Providers that
+	 * explicitly publish sendable endpoints retain bearer delegation. */
+	if (domain != NULL && domain->authority_identity != 0 &&
+	    (!e->sendable || domain->anoint.admin_rights) &&
+	    svc_authority_bind(domain, client_end) == -1) {
+		*errp = errno;
+		close(provider_end);
+		close(client_end);
+		return (-1);
+	}
+
 	/* Check provider is still alive before sending. */
 	if (provider->channel_fd < 0) {
 		syslog(LOG_WARNING,
@@ -586,7 +577,7 @@ naming_lookup(const char *name, struct svc_runtime *requester,
 	strlcpy(notify.service_name, name, sizeof(notify.service_name));
 	strlcpy(notify.client_label,
 	    requester != NULL ? requester->manifest.label :
-	    NAMING_SESSION_LABEL, sizeof(notify.client_label));
+	    svc_authority_label(domain), sizeof(notify.client_label));
 	/*
 	 * Identity of the running instance: the kernel's per-exec program
 	 * nonce and the sender ABI, both from the stamp on the lookup request.
@@ -603,19 +594,11 @@ naming_lookup(const char *name, struct svc_runtime *requester,
 		return (-1);
 	}
 
-	/* Provider ADMIN and session authentication are separate authorities.
-	 * Only session channels holding the explicit mint anointment (or "*")
-	 * can ask Auth to establish another principal's session. Managed units
-	 * never gain this right through ordinary endpoint lookup.
-	 */
+	/* Retired authentication rights are never issued to service clients. */
 	notify.rights = SVC_RIGHTS_ALL &
 	    ~(SERVICE_RIGHTS_ADMIN | SERVICE_RIGHTS_AUTHENTICATE);
 	if (domain != NULL && domain->anoint.admin_rights)
 		notify.rights |= SERVICE_RIGHTS_ADMIN;
-	if (requester == NULL && domain != NULL &&
-	    strcmp(name, "system.Auth") == 0 &&
-	    svc_anoint_holds(&domain->anoint, "system.auth.mint"))
-		notify.rights |= SERVICE_RIGHTS_AUTHENTICATE;
 
 	if (svc_channel_send_event(provider, &notify, sizeof(notify),
 	    &provider_end, 1, switchboard_kq) == -1) {

@@ -224,6 +224,7 @@ mac_capability_msg_free(struct mac_capability_msg *msg)
 	}
 	if (msg->cm_cred != NULL)
 		crfree(msg->cm_cred);
+	cap_authority_drop(msg->cm_authority);
 	uma_zfree(mac_capability_msg_zone, msg);
 }
 
@@ -259,6 +260,7 @@ void
 mac_capability_instance_free(struct mac_capability_instance *s)
 {
 
+	cap_authority_drop(s->ci_authority);
 	knlist_destroy(&s->ci_rknotes);
 	knlist_destroy(&s->ci_wknotes);
 	mtx_destroy(&s->ci_mtx);

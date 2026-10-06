@@ -66,8 +66,6 @@
 
 /* Local headers */
 
-#include <libservice_session.h>
-
 #include "gloadavg.h"
 #define MAIN
 #include "privs.h"
@@ -134,7 +132,6 @@ run_file(const char *filename, uid_t uid, gid_t gid)
     struct stat buf, lbuf;
     off_t size;
     struct passwd *pentry;
-    struct mac_cap_process_info inherited = {0}, scoped;
     int fflags;
     long nuid;
     long ngid;
@@ -168,7 +165,6 @@ run_file(const char *filename, uid_t uid, gid_t gid)
      * to root.
      */
 
-    (void)service_process_info(&inherited);
     pentry = getpwuid(uid);
     if (pentry == NULL)
 	perrx("Userid %lu not found - aborting job %s",
@@ -188,18 +184,10 @@ run_file(const char *filename, uid_t uid, gid_t gid)
 	    pentry->pw_name, (unsigned long)uid,
 	    filename, pam_strerror(pamh, pam_err));
 
-    pam_err = pam_open_session(pamh, PAM_SILENT);
-    if (pam_err != PAM_SUCCESS)
-	perrx("cannot open job session: %s", pam_strerror(pamh, pam_err));
+    pam_end(pamh, pam_err);
 
     PRIV_END
 #endif /* PAM */
-    /* Missing provisioning in a custom PAM stack fails closed for discovery. */
-    if (inherited.present && service_process_info(&scoped) == 0 &&
-	scoped.present && scoped.generation == inherited.generation &&
-	service_clear_ambient_lookup() == -1)
-	perr("cannot clear scheduler discovery");
-
 
     PRIV_START
 
@@ -340,10 +328,6 @@ run_file(const char *filename, uid_t uid, gid_t gid)
 	    perr("cannot set user id");
 #endif /* LOGIN_CAP */
 
-	/* PAM provisioned the owner's kernel context; drop working descriptors. */
-	(void)unsetenv(SERVICE_LOOKUP_ENV);
-	closefrom(3);
-
 	if (chdir(pentry->pw_dir))
 		chdir("/");
 
@@ -357,13 +341,6 @@ run_file(const char *filename, uid_t uid, gid_t gid)
     close(fd_in);
     close(fd_out);
     waitpid(pid, (int *) NULL, 0);
-#ifdef PAM
-    PRIV_START
-    pam_err = pam_close_session(pamh, PAM_SILENT);
-    (void)pam_end(pamh, pam_err);
-    PRIV_END
-#endif
-
 
     /* Send mail.  Unlink the output file first, so it is deleted after
      * the run.
@@ -396,14 +373,6 @@ run_file(const char *filename, uid_t uid, gid_t gid)
 	if (setuid(uid) < 0 || seteuid(uid) < 0)
 	    perr("cannot set user id");
 #endif /* LOGIN_CAP */
-
-	/*
-	 * Same fd hygiene before the mailer runs as the job owner (§11a D3):
-	 * sendmail must not inherit the SYSTEM ambient lookup channel or any
-	 * other descriptor above stdin (the job output feeding the mail).
-	 */
-	(void)unsetenv(SERVICE_LOOKUP_ENV);
-	closefrom(3);
 
 	if (chdir(pentry->pw_dir))
 		chdir("/");

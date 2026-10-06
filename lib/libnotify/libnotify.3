@@ -76,10 +76,10 @@ publish under
 connects to the gated tier
 .Dq system.Notify.System
 .Pq Dv NOTIFY_SYSTEM_INTERFACE ,
-which switchboard only resolves for callers anointed with
+which switchboard only resolves for software callers holding the attribute
 .Dq system.notify.system ;
 by default it may publish under any topic, set state, and use timers.
-A lookup of the gated tier without that anointment fails with
+A lookup of the gated tier without that attribute fails with
 .Er ENOENT
 before the provider is reached.
 Operations a tier's policy does not permit fail with

@@ -21,6 +21,8 @@
 
 #include <atf-c.h>
 #include <errno.h>
+#include <pwd.h>
+#include <unistd.h>
 #include <stdbool.h>
 #include <string.h>
 
@@ -248,8 +250,78 @@ ATF_TC_BODY(band_boost_needs_system, tc)
 	    svc_effective_band(SVC_BAND_INTERACTIVE, false));
 }
 
+ATF_TC_WITHOUT_HEAD(user_manifest_cannot_grant_attributes);
+ATF_TC_BODY(user_manifest_cannot_grant_attributes, tc)
+{
+	struct svc_runtime svc;
+	struct svc_manifest trusted;
+
+	(void)tc;
+	unit_of(&svc, SVC_MGMT_CORE, OWNER_UID);
+	svc.manifest.domain = SVC_MANIFEST_DOMAIN_SYSTEM;
+	svc.manifest.ambient = true;
+	svc.manifest.user_resolvable = true;
+	svc.manifest.cap_system = UINT32_MAX;
+	svc.manifest.nactivation_sockets = 1;
+	svc.manifest.n_sysctl_isolate = 1;
+	svc.manifest.nanointments = 2;
+	strlcpy(svc.manifest.anointments[0], "system.switchboard.admin",
+	    sizeof(svc.manifest.anointments[0]));
+	strlcpy(svc.manifest.anointments[1], "system.trace.client",
+	    sizeof(svc.manifest.anointments[1]));
+	trusted = svc.manifest;
+	svc_user_manifest_confine(&svc);
+	ATF_CHECK_EQ(SVC_MGMT_USER, svc.manifest.management);
+	ATF_CHECK_EQ(SVC_MANIFEST_DOMAIN_USER, svc.manifest.domain);
+	ATF_CHECK(!svc.manifest.ambient);
+	ATF_CHECK(!svc.manifest.user_resolvable);
+	ATF_CHECK_EQ(0, svc.manifest.cap_system);
+	ATF_CHECK_EQ(0, svc.manifest.nactivation_sockets);
+	ATF_CHECK_EQ(0, svc.manifest.n_sysctl_isolate);
+	ATF_CHECK_EQ(0, svc.manifest.nanointments);
+	ATF_CHECK_STREQ("", svc.manifest.anointments[0]);
+	ATF_CHECK_STREQ("", svc.manifest.anointments[1]);
+	/* Reloading an attacker-controlled declaration must clear it again. */
+	svc.manifest = trusted;
+	svc_user_manifest_confine(&svc);
+	ATF_CHECK_EQ(0, svc.manifest.nanointments);
+	/* Trusted installation policy remains effective. */
+	svc.owner_uid = (uid_t)-1;
+	svc.manifest = trusted;
+	svc_user_manifest_confine(&svc);
+	ATF_CHECK_EQ(0, memcmp(&trusted, &svc.manifest, sizeof(trusted)));
+}
+
+ATF_TC_WITHOUT_HEAD(user_manifest_credentials_follow_owner);
+ATF_TC_BODY(user_manifest_credentials_follow_owner, tc)
+{
+	struct svc_runtime svc;
+	struct passwd *pw;
+	char expected[64];
+
+	(void)tc;
+	pw = getpwuid(getuid());
+	ATF_REQUIRE(pw != NULL);
+	strlcpy(expected, pw->pw_name, sizeof(expected));
+	unit_of(&svc, SVC_MGMT_USER, getuid());
+	strlcpy(svc.manifest.user, "root", sizeof(svc.manifest.user));
+	strlcpy(svc.manifest.group, "wheel", sizeof(svc.manifest.group));
+	ATF_REQUIRE_EQ(0, svc_user_manifest_credentials(&svc));
+	ATF_CHECK_STREQ(expected, svc.manifest.user);
+	ATF_CHECK_STREQ("", svc.manifest.group);
+	/* Trusted policy can intentionally select a different account. */
+	svc.owner_uid = (uid_t)-1;
+	strlcpy(svc.manifest.user, "root", sizeof(svc.manifest.user));
+	strlcpy(svc.manifest.group, "wheel", sizeof(svc.manifest.group));
+	ATF_REQUIRE_EQ(0, svc_user_manifest_credentials(&svc));
+	ATF_CHECK_STREQ("root", svc.manifest.user);
+	ATF_CHECK_STREQ("wheel", svc.manifest.group);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
+	ATF_TP_ADD_TC(tp, user_manifest_cannot_grant_attributes);
+	ATF_TP_ADD_TC(tp, user_manifest_credentials_follow_owner);
 
 	ATF_TP_ADD_TC(tp, band_boost_needs_system);
 	ATF_TP_ADD_TC(tp, core_refuses_everyone);

@@ -105,8 +105,7 @@ ATF_TC_BODY(capsule_changes, tc)
 
 	CHECK_CHANGE(b.cap_system++);
 	CHECK_CHANGE(b.protect_flags++);
-	/* Toggling the mint-authority role must force a reload (§6). */
-	CHECK_CHANGE(b.mint_authority = !b.mint_authority);
+	CHECK_CHANGE(b.unix_protocol = !b.unix_protocol);
 }
 
 /*

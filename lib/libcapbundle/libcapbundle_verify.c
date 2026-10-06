@@ -140,7 +140,8 @@ capbundle_verify(const struct capbundle *b, char *errbuf, size_t errlen)
 		 * only on request by a bundle sibling, so it needs no other
 		 * source).
 		 */
-		if (!s->activation_boot && !s->is_helper && s->nprovides == 0 &&
+		if (!s->activation_exec && !s->activation_boot && !s->is_helper &&
+		    s->nprovides == 0 &&
 		    s->timer_interval_sec == 0 && s->activation_path[0] == '\0' &&
 		    s->nactivation_sockets == 0 && !s->has_calendar &&
 		    s->queue_directory[0] == '\0' && !s->activation_on_mount) {
@@ -148,6 +149,19 @@ capbundle_verify(const struct capbundle *b, char *errbuf, size_t errlen)
 				snprintf(errbuf, errlen,
 				    "%s: unit '%s' has no activation trigger",
 				    b->name, s->label);
+			return (-1);
+		}
+
+		if (s->activation_exec && (s->activation_boot || s->is_helper ||
+		    s->nprovides != 0 || s->timer_interval_sec != 0 ||
+		    s->activation_path[0] != '\0' || s->nactivation_sockets != 0 ||
+		    s->has_calendar || s->queue_directory[0] != '\0' ||
+		    s->activation_on_mount || s->narguments != 0 ||
+		    s->nenvironment != 0 || s->ambient || s->unix_protocol)) {
+			if (errbuf != NULL)
+				snprintf(errbuf, errlen,
+				    "%s: exec application cannot declare daemon launch settings",
+				    s->label);
 			return (-1);
 		}
 
@@ -252,7 +266,7 @@ capbundle_verify(const struct capbundle *b, char *errbuf, size_t errlen)
 		if (s->nanointments > CAPBUNDLE_MAX_ANOINTMENTS) {
 			if (errbuf)
 				snprintf(errbuf, errlen,
-				    "%s: unit '%s' has too many anointments",
+				    "%s: unit '%s' has too many attributes",
 				    b->name, s->label);
 			return (-1);
 		}
@@ -260,7 +274,7 @@ capbundle_verify(const struct capbundle *b, char *errbuf, size_t errlen)
 			if (strlen(s->anointments[j]) >= SWITCHBOARD_LABEL_MAX) {
 				if (errbuf)
 					snprintf(errbuf, errlen,
-					    "%s: anointment name too long: %s",
+					    "%s: attribute name too long: %s",
 					    b->name, s->anointments[j]);
 				return (-1);
 			}

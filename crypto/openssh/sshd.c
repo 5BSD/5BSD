@@ -94,10 +94,6 @@
 #endif
 #include "monitor_wrap.h"
 
-/* 5BSD: inherited SYSTEM ambient lookup channel + per-connection minting. */
-#include <libservice.h>
-#include <service_bootstrap.h>
-
 #ifdef LIBWRAP
 #include <tcpd.h>
 #include <syslog.h>
@@ -123,8 +119,6 @@ int debug_flag = 0;
 
 /* Saved arguments to main(). */
 static char **saved_argv;
-
-
 static int saved_argc;
 
 /*
@@ -1222,9 +1216,6 @@ server_accept_loop(int *sock_in, int *sock_out, int *newsock, int *config_s,
 			/*
 			 * Got connection.  Fork a child to handle it, unless
 			 * we are in debugging mode.
-			 *
-			 * The kernel discovery context survives fork and re-exec.
-			 * sshd-session obtains its own private reply endpoint.
 			 */
 			if (debug_flag) {
 				/*
@@ -1266,7 +1257,6 @@ server_accept_loop(int *sock_in, int *sock_out, int *newsock, int *config_s,
 				close_listen_socks();
 				*sock_in = *newsock;
 				*sock_out = *newsock;
-
 				log_init(__progname,
 				    options.log_level,
 				    options.log_facility,
@@ -1527,10 +1517,9 @@ main(int ac, char **av)
 	if (!test_flag && !inetd_flag && !do_dump_cfg && !path_absolute(av[0]))
 		fatal("sshd requires execution with an absolute path");
 
-	/* The kernel carries discovery across cleanup and listener re-exec. */
 	closefrom(STDERR_FILENO + 1);
 
-	/* Reserve the descriptors used by the re-exec protocol. */
+	/* Reserve fds we'll need later for reexec things */
 	if ((devnull = open(_PATH_DEVNULL, O_RDWR)) == -1)
 		fatal("open %s: %s", _PATH_DEVNULL, strerror(errno));
 	while (devnull < REEXEC_MIN_FREE_FD) {

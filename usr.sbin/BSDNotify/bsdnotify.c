@@ -856,8 +856,8 @@ relay_authorized(const struct notify_policy *policy,
  * Authorization is by the rights held on this session's channel and by the
  * tier policy chosen at admission, never by the caller's uid
  * (docs/capability-authority-model.md).  A session holding
- * SERVICE_RIGHTS_ADMIN (only minted onto an ambient login-session lookup on a
- * SYSTEM-domain channel) may perform any operation on any topic on EITHER
+ * SERVICE_RIGHTS_ADMIN (explicitly admitted by trusted software policy)
+ * may perform any operation on any topic on EITHER
  * tier; every other session is bound by its policy.  The connection itself is
  * always accepted; only privileged operations are restricted.  The rights
  * ride the channel endpoint and cannot be widened by the client.

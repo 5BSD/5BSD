@@ -20,7 +20,7 @@ is not a pass.
 | Tier | What it can prove | How you get there |
 |---|---|---|
 | In-session | protocol encoding, parsers, client libraries, device models with mocked rings; root cases skip | `kyua test` in the object tree or `/usr/tests` |
-| VM, plane on | providers over a real channel, capsule and switchboard lifecycle, anointments, container reclaim | a guest booted with capsule as PID 1 |
+| VM, plane on | providers over a real channel, capsule and switchboard lifecycle, software attributes, container reclaim | a guest booted with capsule as PID 1 |
 | VM, plane off | kernel `mac_capability` services, TrustedZFS handles, raw provider transports that must own `/dev/mac_capability` | `capability_plane="NO"` in loader.conf, stock init runs |
 | QEMU or bhyve gate | Linux ABI, squeue, OES, mac_abac, WASPNest devices; the host builds, the guest is the only evidence | `tools/test/*-qemu`, `tools/test/linuxulator`, `tests/waspnest` |
 
@@ -351,7 +351,6 @@ differs (the Bluetooth fuzz count is the Makefile's).
 | WASPNest models | `tests/sys/kern/vsock_device_harness`, `vsock_rx_harness`, `tests/sys/vmm` | device models, guest vsock, VMM | in-session rootless (`run.sh`, ASan) / `run-vmm-root.sh` | 166 programs / ~2,290 cases |
 | WASPNest live | `tests/sys/kern/vsock_e2e`, `tests/waspnest` | guest activation, checkpoint, nested VMX, soak | bhyve host root (`waspnest-test run`) | 11 release gates |
 | Container proofs | `tools/test/capability-containers` | reclaim/reconcile model | QEMU rig, plane-on (`run-all.sh`) | 14 proofs |
-| Anointments | `tools/tools/anointments` | elevation scenarios | live VM plane-on, manual | 1 driver |
 | DTrace catalog | `tests/sys/kern/dtrace_catalog_test.sh` | shipped D scripts compile | in-session root | 14 scripts |
 | ktest sglist | `tests/sys/kern/sglist_boundary_test.py` | kernel sglist boundaries | in-session root (kmod) | 1 |
 | Release integrity | `tests/release` | base-integrity tool | in-session | 2 cases |

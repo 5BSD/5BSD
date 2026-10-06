@@ -225,7 +225,7 @@ denial from a `mac_capability` one.
 ## Beside the capability plane, not inside it
 
 `mac_abac` is a MAC policy next to the plane, and three consequences follow.
-It knows nothing about channel labels, anointments or bundles; its subject
+It knows nothing about channel labels, software grants or bundles; its subject
 is the process credential label, which the plane never sets. Its labels do
 not flow through the plane's delivered descriptors; a rights-limited file
 descriptor from BSDFilesystem is still subject to `read` and `write` rules

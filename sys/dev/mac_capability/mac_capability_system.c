@@ -70,6 +70,7 @@ struct sys_priv {
 	uint64_t	sp_owner;	/* claimer nonce */
 	bool		sp_is_token;
 	bool		sp_active;
+	bool		sp_sysctl_scoped; /* mode of this connection's claim */
 };
 
 /*
@@ -81,6 +82,8 @@ struct sys_claim {
 	uint64_t		sc_nonce;
 	uint32_t		sc_gates;
 	u_int			sc_gate_refs[32];
+	u_int			sc_sysctl_coarse_refs;
+	u_int			sc_sysctl_scoped_refs;
 	/*
 	 * SYSCTL per-OID isolation (Phase 1).  NULL/0 => COARSE mode: the
 	 * SYSCTL gate isolates every privileged sysctl write (current
@@ -89,13 +92,8 @@ struct sys_claim {
 	 */
 	struct sys_sysctl_oid	*sc_sysctl_oids;
 	u_int			sc_nsysctl_oids;
-	/*
-	 * SCOPED once any OID set has been established for this owner.  When
-	 * false the SYSCTL gate (if held) is COARSE and isolates every OID.
-	 * When true, only the OIDs in sc_sysctl_oids are isolated — even if
-	 * that set has been subtracted down to empty (isolates nothing), which
-	 * is deliberately distinct from coarse.
-	 */
+	/* Scoped OID storage remains meaningful even when empty. Independent
+	 * coarse claims always isolate every OID until their own release. */
 	bool			sc_sysctl_scoped;
 };
 
@@ -154,6 +152,59 @@ sys_claim_unref_gates(struct sys_claim *sc, uint32_t gates)
 			continue;
 		if (--sc->sc_gate_refs[i] == 0)
 			sc->sc_gates &= ~bit;
+	}
+	/* A later SYSCTL claim must start with its own scope. Other gates may
+	 * keep this owner's claim alive after its last SYSCTL reference ends. */
+	if ((sc->sc_gates & SYS_GATE_SYSCTL) == 0) {
+		free(sc->sc_sysctl_oids, M_MAC_CAPABILITY_SYS);
+		sc->sc_sysctl_oids = NULL;
+		sc->sc_nsysctl_oids = 0;
+		sc->sc_sysctl_scoped = false;
+	}
+}
+
+/* Track SYSCTL mode per connection, independently of the shared OID set.
+ * A payload can narrow this connection's coarse claim, never another one's. */
+static void
+sys_claim_ref_sysctl(struct sys_claim *sc, struct sys_priv *priv, bool scoped)
+{
+
+	mtx_assert(&sys_lock, MA_OWNED);
+	if ((priv->sp_gates & SYS_GATE_SYSCTL) != 0) {
+		if (!scoped || priv->sp_sysctl_scoped)
+			return;
+		KASSERT(sc->sc_sysctl_coarse_refs > 0, ("missing coarse SYSCTL ref"));
+		sc->sc_sysctl_coarse_refs--;
+	} else if (!scoped) {
+		sc->sc_sysctl_coarse_refs++;
+		priv->sp_sysctl_scoped = false;
+		return;
+	}
+	sc->sc_sysctl_scoped_refs++;
+	priv->sp_sysctl_scoped = true;
+}
+
+static void
+sys_claim_unref_sysctl(struct sys_claim *sc, struct sys_priv *priv,
+    uint32_t gates)
+{
+
+	mtx_assert(&sys_lock, MA_OWNED);
+	if ((gates & SYS_GATE_SYSCTL) == 0)
+		return;
+	if (priv->sp_sysctl_scoped) {
+		KASSERT(sc->sc_sysctl_scoped_refs > 0, ("missing scoped SYSCTL ref"));
+		sc->sc_sysctl_scoped_refs--;
+	} else {
+		KASSERT(sc->sc_sysctl_coarse_refs > 0, ("missing coarse SYSCTL ref"));
+		sc->sc_sysctl_coarse_refs--;
+	}
+	priv->sp_sysctl_scoped = false;
+	if (sc->sc_sysctl_scoped_refs == 0) {
+		free(sc->sc_sysctl_oids, M_MAC_CAPABILITY_SYS);
+		sc->sc_sysctl_oids = NULL;
+		sc->sc_nsysctl_oids = 0;
+		sc->sc_sysctl_scoped = false;
 	}
 }
 
@@ -471,7 +522,7 @@ sys_claim_isolates_oid(const struct sys_claim *sc, const int *mib, u_int depth)
 	mtx_assert(&sys_lock, MA_OWNED);
 	if ((sc->sc_gates & SYS_GATE_SYSCTL) == 0)
 		return (false);
-	if (!sc->sc_sysctl_scoped)
+	if (sc->sc_sysctl_coarse_refs != 0 || !sc->sc_sysctl_scoped)
 		return (true);		/* coarse: isolates all OIDs */
 	for (i = 0; i < sc->sc_nsysctl_oids; i++) {
 		if (sc->sc_sysctl_oids[i].depth == depth &&
@@ -1060,15 +1111,7 @@ sys_call(struct mac_capability_instance *s,
 				}
 			}
 		if (target != NULL) {
-			/*
-			 * A re-CLAIM edits only the scoped OID set; it must not
-			 * change an active instance's gate set (gates are ref'd
-			 * once at first claim and released as a unit).  A differing
-			 * gate set would be silently dropped below -- the ref is
-			 * guarded by !sp_active -- yet the call would return 0.
-			 * Reject it before any mutation instead of pretending the
-			 * new gates took effect.
-			 */
+			/* Merge the owner's OID set before committing connection refs. */
 			if (nincoming > 0) {
 				if (!target->sc_sysctl_scoped) {
 					target->sc_sysctl_oids = storage;
@@ -1100,6 +1143,8 @@ sys_call(struct mac_capability_instance *s,
 			 * instances did not ref new gates (silently dropping
 			 * them), which accumulating now fixes directly.
 			 */
+			if ((sr->gates & SYS_GATE_SYSCTL) != 0)
+				sys_claim_ref_sysctl(target, priv, nincoming > 0);
 			if (!priv->sp_active) {
 				sys_claim_ref_gates(target, sr->gates);
 				priv->sp_gates = sr->gates;
@@ -1137,6 +1182,8 @@ sys_call(struct mac_capability_instance *s,
 				return (error);
 			}
 		}
+		if ((sr->gates & SYS_GATE_SYSCTL) != 0)
+			sys_claim_ref_sysctl(sc, priv, nincoming > 0);
 		sys_claim_ref_gates(sc, sr->gates);
 		LIST_INSERT_HEAD(&sys_claims, sc, sc_link);
 		atomic_add_int(&sys_active_claims, 1);
@@ -1155,6 +1202,7 @@ sys_call(struct mac_capability_instance *s,
 		struct sys_claim *sc;
 		struct sys_sysctl_oid *rm;
 		u_int nrm;
+		uint32_t released;
 		int error;
 
 		/* Parse the optional SYSCTL OID-set payload (fail-closed). */
@@ -1198,10 +1246,17 @@ sys_call(struct mac_capability_instance *s,
 			return (0);
 		}
 
-		/* Empty payload: release the whole claim (historical). */
+		/* Zero retains the historical release-all operation. A nonzero
+		 * mask releases only those gates on this connection. */
+		released = sr->gates != 0 ? sr->gates : priv->sp_gates;
+		if ((released & ~priv->sp_gates) != 0) {
+			mtx_unlock(&sys_lock);
+			return (EINVAL);
+		}
 			LIST_FOREACH(sc, &sys_claims, sc_link) {
 				if (sc->sc_nonce == priv->sp_owner) {
-					sys_claim_unref_gates(sc, priv->sp_gates);
+					sys_claim_unref_sysctl(sc, priv, released);
+					sys_claim_unref_gates(sc, released);
 					if (sc->sc_gates == 0) {
 						LIST_REMOVE(sc, sc_link);
 						atomic_subtract_int(
@@ -1213,10 +1268,11 @@ sys_call(struct mac_capability_instance *s,
 				break;
 			}
 		}
-		priv->sp_active = false;
+		priv->sp_gates &= ~released;
+		priv->sp_active = priv->sp_gates != 0;
 		mtx_unlock(&sys_lock);
 		SDT_PROBE6(mac_capability_system, , , state, (uintptr_t)"release",
-		    priv->sp_owner, caller_nonce, priv->sp_gates,
+		    priv->sp_owner, caller_nonce, released,
 		    curthread->td_proc->p_pid, 0);
 		return (0);
 	}
@@ -1646,6 +1702,7 @@ sys_revoke(struct mac_capability_instance *s, uint64_t badge __unused,
 		/* Release claim. */
 			LIST_FOREACH(sc, &sys_claims, sc_link) {
 				if (sc->sc_nonce == priv->sp_owner) {
+					sys_claim_unref_sysctl(sc, priv, priv->sp_gates);
 					sys_claim_unref_gates(sc, priv->sp_gates);
 					if (sc->sc_gates == 0) {
 						LIST_REMOVE(sc, sc_link);

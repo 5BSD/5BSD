@@ -22,6 +22,7 @@
 #include <libcapbundle.h>
 
 #include "switchboard.h"
+#include "authority.h"
 #include "management.h"
 #include "manifest_compare.h"
 #include "switchboard_audit.h"
@@ -77,6 +78,28 @@ svc_remove(unsigned idx)
 	svc_runtime_init_fds(&sd.services[sd.nservices]);
 }
 
+/* Compare and queue the policy that launch actually enforces. */
+static bool
+bundle_effective_manifest(struct capbundle_service *unit, unsigned bi,
+    struct svc_manifest *manifest)
+{
+	struct svc_runtime *candidate;
+	bool valid;
+
+	candidate = calloc(1, sizeof(*candidate));
+	if (candidate == NULL)
+		return (false);
+	valid = capbundle_svc_fill_manifest(unit, &candidate->manifest) == 0;
+	if (valid) {
+		svc_slot_apply_bundle_policy(candidate, bi);
+		valid = svc_user_manifest_credentials(candidate) == 0;
+		if (valid)
+			*manifest = candidate->manifest;
+	}
+	free(candidate);
+	return (valid);
+}
+
 static bool
 bundle_service_manifest(const char *label, struct svc_manifest *m)
 {
@@ -96,8 +119,7 @@ bundle_service_manifest(const char *label, struct svc_manifest *m)
 			asvc = capbundle_service(ab, si);
 			if (asvc != NULL &&
 			    strcmp(capbundle_svc_label(asvc), label) == 0)
-				return (capbundle_svc_fill_manifest(asvc,
-				    m) == 0);
+				return (bundle_effective_manifest(asvc, bi, m));
 		}
 	}
 
@@ -111,8 +133,7 @@ bundle_service_manifest(const char *label, struct svc_manifest *m)
 			if (asvc == NULL)
 				continue;
 			if (strcmp(capbundle_svc_label(asvc), label) == 0)
-				return (capbundle_svc_fill_manifest(asvc,
-				    m) == 0);
+				return (bundle_effective_manifest(asvc, bi, m));
 		}
 	}
 	return (false);
@@ -394,6 +415,7 @@ supervisor_reload(int kq, char *summary, size_t sumlen)
 				    "reload: updating stopped service '%s'",
 				    svc->manifest.label);
 				svc->manifest = desired;
+				svc_slot_apply_bundle_policy(svc, svc->bundle_idx);
 				svc->restart_count = 0;
 				/*
 				 * Re-arm activation with the new manifest.  A
@@ -473,6 +495,7 @@ supervisor_reload(int kq, char *summary, size_t sumlen)
 					    capbundle_svc_label(asvc));
 					continue;
 				}
+				svc_slot_apply_bundle_policy(svc, bi);
 				sd.nservices++;
 				nnew_collected++;
 			}
@@ -541,5 +564,11 @@ supervisor_reload(int kq, char *summary, size_t sumlen)
 	switchboard_audit(AUE_SWITCHBOARD_RELOAD, getuid(), 0,
 	    "reload: %u new, %u changed, %u removed",
 	    reload_nnew, reload_nchanged, reload_nremoved);
+	if (svc_authority_applications_sync() == -1) {
+		if (summary != NULL && sumlen > 0)
+			snprintf(summary, sumlen,
+			    "error: service reload applied; application catalogue update failed\n");
+		return (-1);
+	}
 	return (0);
 }

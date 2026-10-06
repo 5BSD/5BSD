@@ -285,6 +285,12 @@ capbundle_svc_label(const struct capbundle_service *s)
 }
 
 bool
+capbundle_svc_activates_on_exec(const struct capbundle_service *s)
+{
+	return (s != NULL && s->activation_exec);
+}
+
+bool
 capbundle_svc_activates_at_boot(const struct capbundle_service *s)
 {
 
@@ -389,19 +395,32 @@ capbundle_svc_launch_responsible(const struct capbundle_service *s, unsigned i)
 }
 
 unsigned
-capbundle_svc_nanointments(const struct capbundle_service *s)
+capbundle_svc_nattributes(const struct capbundle_service *s)
 {
 
 	return (s != NULL ? MIN(s->nanointments, CAPBUNDLE_MAX_ANOINTMENTS) : 0);
 }
 
 const char *
-capbundle_svc_anointment(const struct capbundle_service *s, unsigned i)
+capbundle_svc_attribute(const struct capbundle_service *s, unsigned i)
 {
 
-	if (i >= capbundle_svc_nanointments(s))
+	if (i >= capbundle_svc_nattributes(s))
 		return (NULL);
 	return (s->anointments[i]);
+}
+
+/* Preserve the existing library ABI during the terminology migration. */
+unsigned
+capbundle_svc_nanointments(const struct capbundle_service *s)
+{
+	return (capbundle_svc_nattributes(s));
+}
+
+const char *
+capbundle_svc_anointment(const struct capbundle_service *s, unsigned i)
+{
+	return (capbundle_svc_attribute(s, i));
 }
 
 int
@@ -531,6 +550,7 @@ capbundle_svc_fill_manifest(const struct capbundle_service *s,
 	m->restart = s->restart;
 	m->management = s->management;
 	m->is_helper = s->is_helper;
+	m->exec_application = s->activation_exec;
 	m->user_resolvable = s->user_resolvable;
 	m->domain = s->domain;
 	m->nresource_dirs = MIN(s->nresource_dirs, SWITCHBOARD_MAX_RESOURCE_DIRS);
@@ -556,8 +576,7 @@ capbundle_svc_fill_manifest(const struct capbundle_service *s,
 	m->max_failures = s->max_failures > 0 ? s->max_failures : 10;
 	m->watchdog_interval = s->watchdog_interval;
 	m->ambient = s->ambient;
-	m->mint_authority = s->mint_authority;
-
+	m->unix_protocol = s->unix_protocol;
 	/* Pre-exec process policy: limits / band / umask. */
 	m->limits = s->limits;
 	m->soft = s->soft;

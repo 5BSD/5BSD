@@ -110,11 +110,10 @@ model, the policy points, the system gates, and the three security modules
 
 **Part III, The Plane**, covers the userland runtime that turns those kernel
 primitives into a running system: capsule, switchboard, bundles and manifests,
-discovery over the lookup channel, containers and storage, anointments and
-principal policy, the management model, and logging, audit and trace.
+discovery over the lookup channel, containers and storage, software attributes, the management model, and logging, audit and trace.
 
 **Part IV, System Capabilities Reference**, is one chapter per provider, all
-sixteen on a fixed template: the wire name, the operations, the client
+following a fixed template: the wire name, the operations, the client
 library, the policy file, the control tool and the tests that prove it.
 
 **Part V, Backward Compatibility**, is for the BSD side: what rc and

@@ -2,13 +2,13 @@
 
 ## What it brokers
 
-BSDNotify is the host-wide notification service: bounded exact-topic publish and subscribe, retained 64-bit state cells, and monotonic timers, delivered to capability-mode units that cannot open sockets or files of their own. It is exposed as two endpoints, or tiers, served by one broker. `system.Notify` is the open tier, resolvable by every session including a login shell; `system.Notify.System` is the gated tier, which switchboard resolves only for callers anointed with `system.notify.system` (everyone else gets `ENOENT` before the provider is reached). Which tier a session is on is decided by the endpoint it was accepted on, cross-checked against the name switchboard resolved, never by anything the client sends.
+BSDNotify is the host-wide notification service: bounded exact-topic publish and subscribe, retained 64-bit state cells, and monotonic timers, delivered to capability-mode units that cannot open sockets or files of their own. It is exposed as two endpoints, or tiers, served by one broker. `system.Notify` is the open tier, resolvable by every session including a login shell; `system.Notify.System` is the gated tier, which switchboard resolves only for software carrying `system.notify.system` (everyone else gets `ENOENT` before the provider is reached). Which tier a session is on is decided by the endpoint it was accepted on, cross-checked against the name switchboard resolved, never by anything the client sends.
 
 Every session is identified by its unforgeable channel label and gets its own policy, subscriptions, bounded queue and timer namespace. Events carry the authenticated publisher label, stamped by the router and impossible to supply in a request. Retained state is owner-scoped: only the label that set a value may clear it. Delivery is honest rather than pretend-reliable: fanout never blocks a publisher, a subscriber that falls behind loses its newest events and reads an explicit `NOTIFY_EVENT_GAP` with the loss count, and a broker restart surfaces as `NOTIFY_EVENT_RESET` under a new random router epoch. Payloads (at most `NOTIFY_MAX_PAYLOAD`, 2048 bytes) are hints, never secrets or the only copy of application state.
 
 The provider admits each connection to one event-driven router worker (a `pdfork(2)` child) over an unnamed capability channel; nothing is allocated per client beyond its queue. The router cannot create sockets, fork, exec, receive ambient `SCM_RIGHTS` descriptors or use ambient filesystem authority. Client death closes the router endpoint at once, even during an infinite `NEXT` wait, and the session's subscriptions and timers go with it.
 
-The two-name split is the worked example of gating dangerous operations behind an anointed endpoint instead of growing a policy file; see [Anointments and Principal Policy](../plane/anointments.md).
+The two-name split is the worked example of gating dangerous operations behind an attribute-gated endpoint instead of growing a policy file; see [Software attributes](../plane/attributes.md).
 
 ## Unit
 
@@ -95,7 +95,10 @@ watch_user_topic(void)
 
 ## Command-line tool
 
-notifyctl(8) uses libnotify for every live operation and receives no implicit administrative bypass; it is subject to the invoking session's policy. `-s` selects the gated tier and fails with `ENOENT` without the anointment (`anoint(1)` can elevate a command when `principal-policy.ucl` lists `system.notify.system` under `may_elevate`).
+notifyctl(8) uses libnotify for every live operation. It receives no implicit
+administrative bypass from the invoking UNIX user. `-s` selects the gated tier
+and fails with `ENOENT` unless the software has `system.notify.system` in its
+attributes. No per-command elevation or login-principal policy is involved.
 
 | Verb | Example | Output shape |
 |---|---|---|

@@ -20,6 +20,9 @@
 
 struct svc_runtime;
 
+void	svc_user_manifest_confine(struct svc_runtime *svc);
+int	svc_user_manifest_credentials(struct svc_runtime *svc);
+
 /*
  * Management-class gate for a runtime management op (stop, start, restart,
  * unload, disable).  "op" is a verb used only for the diagnostic.  Returns 0 if
@@ -29,8 +32,8 @@ struct svc_runtime;
  *   SYSTEM -- permitted only for an operator (is_operator true).
  *   USER   -- permitted for an operator, or for the owning uid itself
  *             (caller_uid == owner_uid): per-user-agent self-service.
- * caller_uid is the control channel's minted-channel principal ((uid_t)-1 if
- * none); is_operator is whether the caller holds management authority.
+ * caller_uid is the validated connection UID ((uid_t)-1 if none);
+ * is_operator combines held endpoint rights and current software attributes.
  */
 int	svc_management_check_class(int management, const char *label,
 	    const char *op, uid_t caller_uid, bool is_operator, uid_t owner_uid);

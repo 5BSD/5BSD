@@ -6,7 +6,7 @@ BSDTrace is the DTrace descriptor broker. It is the only process that opens
 `/dev/dtrace`; everyone else who traces receives a rights-limited consumer
 descriptor from it and builds a libdtrace handle with dtrace_fdopen(3).
 5BSD has it so that tracing, which reads arbitrary kernel and process
-state, is no longer tied to being root: the right to trace is an anointment
+state, is no longer tied to being root: the right to trace is a software attribute
 plus an allow-list entry, held by a label, not a uid. It ships in the
 `bsdtrace-provider` package together with tracectl(8) and is described by
 BSDTrace(8).
@@ -26,14 +26,11 @@ set libdtrace needs, marks it close-on-fork, close-on-exec and transferable
 exactly once, and sends it as the reply's single attachment. Unlisted
 callers get `EACCES` before the consumer device is touched.
 
-Reaching the name at all requires the `system.trace.client` anointment: the
-unit's activation entry is
-`ipc = [{ name = "system.Trace"; requires = ["system.trace.client"] }]`,
-so a session that does not hold it sees `ENOENT`, the same as for an
-unknown name. The shipped `/Capabilities/Config/principal-policy.ucl` gives
-the admin principal `anointments = ["*"]`; an operator can be granted only
-`system.trace.client` to trace without being an administrator. See
-[Anointments and Principal Policy](../plane/anointments.md).
+Reaching the name requires the `system.trace.client` attribute. The provider
+publishes `ipc = [{ name = "system.Trace"; requires = ["system.trace.client"] }]`.
+Approved client software declares that attribute in its own manifest; a caller
+without it sees `ENOENT`. This is independent of the UNIX user executing the
+client. See [Software attributes](../plane/attributes.md).
 
 What the descriptor can and cannot do is the honest core of this chapter.
 Capsicum rights and the ioctl allow-list bound which operations a client
@@ -155,7 +152,7 @@ Two layers gate a trace client.
 
 | Layer | Where | Effect |
 |---|---|---|
-| Anointment | `/Capabilities/Config/principal-policy.ucl` | `system.trace.client` must be held for `system.Trace` to resolve at all |
+| Software attribute | Client bundle `Unit.ucl` | `system.trace.client` must be held for `system.Trace` to resolve at all |
 | Allow-list | `Config/bsdtrace.allow` in the unit's delivered Config directory, opened with `service_config_open(3)` | one label per line; only a listed label receives a consumer descriptor |
 
 The allow-list file: `#` comments and surrounding whitespace are ignored; a

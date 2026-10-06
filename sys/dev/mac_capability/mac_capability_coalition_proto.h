@@ -33,6 +33,8 @@
 #define	COALITION_OP_RUSAGE		11
 #define	COALITION_OP_ENLIST_SET		12
 #define	COALITION_OP_SET_RESPONSIBLE	13
+/* Self-join, atomically replacing inherited (never procdesc-pinned) membership. */
+#define	COALITION_OP_JOIN_REHOME		14
 
 /*
  * Common request header.
@@ -73,6 +75,13 @@ struct coalition_enlist_set_reply {
  *   Enlists the calling process (no fd needed).
  *   CALL-only: SENDMSG runs from the service taskqueue and has no caller
  *   process context to join.
+ *
+ * COALITION_OP_JOIN_REHOME
+ *   Same request/reply shape, without descriptors; CALL-only.
+ *   Atomically moves the caller from inherited or self-joined membership.
+ *   Explicit procdesc enlistment remains pinned (EBUSY). A terminating source
+ *   or destination rejects the move (ESHUTDOWN), preserving old membership.
+ *   Joining the current coalition is idempotent.
  */
 
 /*

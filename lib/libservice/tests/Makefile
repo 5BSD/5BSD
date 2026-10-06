@@ -4,7 +4,7 @@ NO_SHARED=	no
 NO_SHARED.capd_test_guardian=	yes
 NO_SHARED.libservice_api_test=	yes
 NO_SHARED.service_ambient_test=	yes
-NO_SHARED.anoint_wire_test=	yes
+NO_SHARED.software_identity_test=	yes
 
 .PATH: ${SRCTOP}/usr.sbin/capsule/tests
 
@@ -16,7 +16,7 @@ CFLAGS.libservice_api_test+= -I${SRCTOP}/usr.sbin/switchboard
 ATF_TESTS_C+=	libservice_api_test
 ATF_TESTS_C+=	service_ambient_test
 .PATH: ${SRCTOP}/lib/libservice
-ATF_TESTS_C+=	anoint_wire_test
+ATF_TESTS_C+=	software_identity_test
 
 PROGS+=		capd_service_fixture
 PROGS+=		capd_test_guardian
@@ -47,26 +47,19 @@ CFLAGS.libservice_api_test+=	-I${SRCTOP}/lib/libcapsulert
 CFLAGS.libservice_api_test+=	-I${SRCTOP}/sys
 
 
-# anoint_wire_test: IPC anointments wire/identity contract (identity + metadata layouts, authagent ELEVATE, service_elevate argument
-# validation).  Needs no live plane; the sender-ABI case uses a channel pair
-# when /dev/mac_capability is present and skips otherwise.
-LIBADD.anoint_wire_test+=	service
-LIBADD.anoint_wire_test+=	channel
-CFLAGS.anoint_wire_test+=	-I${SRCTOP}/lib/libservice
-CFLAGS.anoint_wire_test+=	-I${SRCTOP}/lib/libchannel
-CFLAGS.anoint_wire_test+=	-I${SRCTOP}/lib/libcapsulert
-CFLAGS.anoint_wire_test+=	-I${SRCTOP}/sys
+# Kernel sender identity and ABI layout, plus a live channel round trip.
+LIBADD.software_identity_test+=	service
+LIBADD.software_identity_test+=	channel
+CFLAGS.software_identity_test+=	-I${SRCTOP}/lib/libservice
+CFLAGS.software_identity_test+=	-I${SRCTOP}/lib/libchannel
+CFLAGS.software_identity_test+=	-I${SRCTOP}/lib/libcapsulert
+CFLAGS.software_identity_test+=	-I${SRCTOP}/sys
 
 
 ${PACKAGE}FILES+=	capd_test_harness.sh
 
 ATF_TESTS_SH_SED_worker_contract_test+=	-e 's,@SRCTOP@,${SRCTOP},g'
 
-# service_ambient_observability_test: the service_ambient DTrace provider's
-# elevate-start/-done contract around service_elevate(3) (source-tree greps).
-ATF_TESTS_SH+=	service_ambient_observability_test
-ATF_TESTS_SH_SED_service_ambient_observability_test+= \
-	-e 's,@SRCTOP@,${SRCTOP},g'
 
 all:
 	${INSTALL} -m 0444 \

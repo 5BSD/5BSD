@@ -97,7 +97,7 @@ SCM_RIGHTS on the channel, never as integers in the payload, and the
 descriptor arrives already narrowed to the rights the request asked for.
 The **errors** column lists the errno values the daemon returns in the
 reply's `status` field, in the order the daemon checks them where that
-order matters (BSDAuth's elevation path is the clearest example). An
+order matters. An
 error the table does not list is a transport failure, which the client
 library maps to its own errno: `ECONNRESET` for a worker that died,
 `ETIMEDOUT` for a wedged one.
@@ -108,14 +108,13 @@ query) resolves the owner from the channel label. And a request never
 carries a path to a resource the provider holds; it names a claim, a key,
 or a topic inside the caller's own scope.
 
-## The sixteen providers
+## The providers
 
 | Wire name | Daemon | Client library | Ctl tool | Launch mode |
 |---|---|---|---|---|
 | system.Filesystem | BSDFilesystem | libbsdfilesystem, libtrustedzfs, libservice storage API | tzfsctl(8) | born in capability mode, root |
 | system.Log | BSDLog | liblogcmp | logctl(8) | born in capability mode, `capability` |
 | system.Audit | BSDAudit | libauditcmp | none | born in capability mode, root |
-| system.Auth | BSDAuth | libservice (`service_mint_session_via_agent`, `service_elevate`) | anoint(1) | born in capability mode, root |
 | system.Crypto | BSDCrypto | libcryptocmp (and libcryptodesc for the descriptor ioctls) | none | born in capability mode, root |
 | system.Network | BSDNetwork | libnetworkcmp | networkcmpctl(8) | born in capability mode, `capability` |
 | system.Device | BSDDevice | libdevicecmp | none | born in capability mode, `capability` |
@@ -125,11 +124,11 @@ or a topic inside the caller's own scope.
 | system.Power | BSDPower | libpowercmp | BSDPowerctl(8) | born in capability mode, `capability` |
 | system.SystemExtension | BSDExtension | libservice (`service_ensure_extension`) | sysextctl(8) | born in capability mode, `capability`, gates `kldload`, `kldunload` |
 | system.Namespace | BSDNamespace | libservice (`service_enter_namespace`) | none | born in capability mode, `capability`, gate `jail`, on demand |
-| system.Trace | BSDTrace | libtracecmp | tracectl(8) | born in capability mode, root, requires anointment `system.trace.client` |
+| system.Trace | BSDTrace | libtracecmp | tracectl(8) | born in capability mode, root, requires attribute `system.trace.client` |
 | system.VM | BSDVM | libservice (`service_vsock_listen`, `service_vsock_connect`) | none | ambient, root, on demand |
 | system.Bluetooth | BSDBluetooth | libble | bluedctl(8) | born in capability mode, `capability`, on demand |
 
-Fifteen of the sixteen are born in capability mode: switchboard delivers the
+Fourteen of the fifteen are born in capability mode: switchboard delivers the
 directories the manifest names (`directories = [...]`) as descriptors,
 delivers any Capsule-minted system gates the manifest declares
 (`capabilities { system = [...] }`), and the daemon is in `cap_enter(2)`
@@ -147,7 +146,7 @@ The launch sequence that puts a daemon into capability mode before it runs
 is in [Capability Mode and the Born-Sandboxed
 Launch](../capability/capability-mode-and-launch.md). The gate tokens the
 gate daemons hold are in [System Gates](../capability/system-gates.md). The
-anointment names that `requires` refers to are in [Anointments and Principal
-Policy](../plane/anointments.md). How to write a new provider on the same
+attribute names that `requires` refers to are in [Software
+attributes](../plane/attributes.md). How to write a new provider on the same
 pattern is [A Capability Provider](../develop/provider.md), and how to run
 the ATF suites on a real plane is [Testing](../develop/testing.md).

@@ -37,6 +37,9 @@
 #ifndef _SYS_PROC_H_
 #define	_SYS_PROC_H_
 
+#ifndef _KERNEL
+#include <stdbool.h>
+#endif
 #include <sys/callout.h>		/* For struct callout. */
 #include <sys/event.h>			/* For struct klist. */
 #ifdef _KERNEL
@@ -779,6 +782,10 @@ struct proc {
 	TAILQ_HEAD(, kq_timer_cb_data)	p_kqtim_stop;	/* (c) */
 	LIST_ENTRY(proc) p_jaillist;	/* (d) Jail process linkage. */
 
+	struct cap_authority *p_cap_authority; /* (c) Issued authority. */
+	uint64_t p_cap_authority_generation; /* (c) Install/invalidation epoch. */
+	bool p_cap_authority_invalid; /* (c) Sticky credential invalidation. */
+	bool p_cap_authority_pending_exec; /* (c) Await approved provider image. */
 	struct mac_cap_process_context *p_cap_context; /* (c) Held discovery. */
 	uint64_t	p_cap_identity; /* (c) Process lifetime identity. */
 	uint64_t	p_cap_responsible; /* (c) Responsible process identity. */

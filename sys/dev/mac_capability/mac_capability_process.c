@@ -9,6 +9,7 @@
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/cap_process.h>
+#include <sys/cap_authority.h>
 #include <sys/capsicum.h>
 #include <sys/eventhandler.h>
 #include <sys/fcntl.h>
@@ -40,7 +41,7 @@ struct mac_cap_process_context {
 	struct file *fp;
 	struct filecaps caps;
 	struct ucred *cred; /* Pins the originating prison. */
-	uid_t uid; /* Session principal, not temporary effective UID. */
+	uid_t uid; /* Legacy route-installation metadata, never an authority. */
 };
 struct origin_token {
 	struct mac_cap_process_info info;
@@ -90,6 +91,7 @@ context_fork(void *arg __unused, struct proc *parent, struct proc *child,
     int flags __unused)
 {
 	PROC_LOCK(parent);
+	cap_authority_fork(parent, child);
 	child->p_cap_context = parent->p_cap_context;
 	if (child->p_cap_context != NULL)
 		refcount_acquire(&child->p_cap_context->refs);
@@ -110,10 +112,15 @@ context_exit(void *arg __unused, struct proc *p)
 	p->p_cap_context = NULL;
 	PROC_UNLOCK(p);
 	context_drop(c);
+	cap_authority_exit(p);
 }
 static void
 context_ctor(void *arg __unused, struct proc *p)
 {
+	p->p_cap_authority = NULL;
+	p->p_cap_authority_generation = 0;
+	p->p_cap_authority_invalid = false;
+	p->p_cap_authority_pending_exec = false;
 	p->p_cap_context = NULL;
 	p->p_cap_identity = 0;
 	p->p_cap_responsible = 0;
@@ -198,8 +205,7 @@ context_get(struct thread *td)
 	PROC_UNLOCK(td->td_proc);
 	if (c == NULL)
 		return (ENOENT);
-	if (c->cred->cr_prison != td->td_ucred->cr_prison ||
-	    c->uid != td->td_ucred->cr_ruid) {
+	if (c->cred->cr_prison != td->td_ucred->cr_prison) {
 		context_drop(c);
 		return (EPERM);
 	}
@@ -262,6 +268,11 @@ sys_cap_process(struct thread *td, struct cap_process_args *a)
 	struct origin_token *t;
 	struct file *fp;
 	int error, fd;
+	if (a->op >= CAP_AUTH_ISSUER_CREATE && a->op <= CAP_AUTH_GET_LIBDIR) {
+		if (a->uid != 0)
+			return (EINVAL);
+		return (cap_authority_call(td, a->op, a->fd, a->data));
+	}
 	if (a->data != NULL && a->op != MAC_CAP_PROCESS_INFO)
 		return (EINVAL);
 	switch (a->op) {
@@ -281,9 +292,7 @@ sys_cap_process(struct thread *td, struct cap_process_args *a)
 		PROC_LOCK(td->td_proc);
 		if (td->td_proc->p_cap_context != NULL &&
 		    (td->td_proc->p_cap_context->cred->cr_prison !=
-			    td->td_ucred->cr_prison ||
-			td->td_proc->p_cap_context->uid !=
-			    td->td_ucred->cr_ruid)) {
+			    td->td_ucred->cr_prison)) {
 			PROC_UNLOCK(td->td_proc);
 			return (EPERM);
 		}

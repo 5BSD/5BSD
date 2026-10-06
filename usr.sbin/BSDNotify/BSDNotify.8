@@ -23,7 +23,7 @@ The unit manifest declares it with
 .Ql requires = [\(dqsystem.notify.system\(dq] ,
 so
 .Xr switchboard 8
-resolves it only for callers whose anointment set covers that name; everyone
+resolves it only for callers whose attribute set covers that name; everyone
 else receives
 .Er ENOENT
 before the provider is reached.
@@ -93,8 +93,8 @@ Applications cannot grant themselves publish, subscribe, state, or timer
 authority; the router enforces the tier policy before dispatching a request.
 A session holding
 .Dv SERVICE_RIGHTS_ADMIN ,
-which switchboard mints only onto an ambient root login session, bypasses the
-policy on either tier.
+as explicitly admitted by trusted software policy, bypasses the tier policy.
+Root login or a UID change does not itself grant this right.
 Subscribers should also validate the authenticated publisher identity carried
 in each event when that identity is relevant to application policy.
 .Sh CONFIGURATION

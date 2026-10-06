@@ -5,20 +5,19 @@ what it is for, where its manual page is, which pkgbase package installs it,
 and one example. The manual page is the reference; this chapter only tells
 you which tool to reach for. Two conventions run through the plane tools.
 None of them opens a socket or a device to reach its daemon: each resolves a
-name over the ambient lookup channel the caller's session holds, so the
-caller's authority is its session and its anointments, not its uid (see
-[The Authority Model](../capability/authority-model.md)). And each speaks to
-one provider through a separately authorised, label-scoped session, which
-is why a tool that "hangs" is almost always a lookup that is not being
-answered ([Troubleshooting](troubleshooting.md)).
+name over the kernel-held discovery channel. SwitchBoard checks the requesting
+executable's approved attributes, not privileges implied by possession of
+that channel or by UID 0 (see
+[The Authority Model](../capability/authority-model.md)). Each provider
+connection is authorized separately; a discovery route alone does not grant
+access to protected services.
 
 ## The plane
 
 | Tool | Purpose | Man page | Package | Example |
 |---|---|---|---|---|
 | `capsulectl` | Lifecycle requests to Capsule (PID 1) over `system.lifecycle`: reboot, halt, poweroff, powercycle, single, reroot, rescan (re-read ttys(5)), catatonia, status, reload. Sits beside reboot(8) and shutdown(8), which keep their signal path. | capsulectl(8) | `capsulectl` | `capsulectl reboot` |
-| `switchboardctl` | Control switchboard(8): status, services, bundles, reload, start/stop/restart a unit by label, enable/disable a bundle, install and verify `.cap` bundles, deps of a program, and `graph` (the anointment reach graph, `--lint` for unreachable endpoints). | switchboardctl(8) | `switchboardctl` | `switchboardctl graph --lint` |
-| `anoint` | Run one command holding one additional anointment after re-entering your password; the replacement for sudo and doas. Never changes uid. `-n` sends an empty password instead of prompting (scripts only). | anoint(1) | `runtime` | `anoint system.trace.client dtrace -l` |
+| `switchboardctl` | Control switchboard(8): status, services, bundles, reload, start/stop/restart a unit by label, enable/disable a bundle, install and verify `.cap` bundles, deps of a program, and `graph` (the attribute reach graph, `--lint` for unreachable endpoints). | switchboardctl(8) | `switchboardctl` | `switchboardctl graph --lint` |
 | `reclaimstat` | Per-provider view of the container-model reconcile: which bundles each provider holds resources for and the result of its last pass; `-a` lists orphans still in the grace window. Reads `/var/run/reclaim/<provider>`. | reclaimstat(8) | `runtime` | `reclaimstat -a` |
 | `sysextctl` | Inspect SystemExtension policy and loaded state; load modules, manage persistent permissions and boot activation, reload defaults, restore activations. No force unload. | sysextctl(8) | `sysextctl` | `sysextctl config` |
 | `tzfsctl` | Health and demonstration client of `system.Filesystem`: ping the broker, request a claim (`-l` lifetime, `-r` rights, `-m` mount), release it. Not a way to hold storage open. | tzfsctl(8) | `runtime` | `tzfsctl ping` |

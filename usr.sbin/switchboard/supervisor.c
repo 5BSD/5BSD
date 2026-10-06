@@ -66,12 +66,18 @@ static uintptr_t watchdog_timer_next_ident = WATCHDOG_TIMER_BIT;
 static void
 svc_close_fds(struct svc_runtime *svc)
 {
+	/* Revoke authority before dropping the process-protection lease. */
+	svc_channel_close(svc);
+	if (svc->have_protection_lease) {
+		close(svc->protection_lease);
+		svc->protection_lease = -1;
+		svc->have_protection_lease = false;
+	}
 
 	if (svc->pd_fd >= 0) {
 		close(svc->pd_fd);
 		svc->pd_fd = -1;
 	}
-	svc_channel_close(svc);
 	if (svc->coalition_fd >= 0) {
 		close(svc->coalition_fd);
 		svc->coalition_fd = -1;
@@ -311,6 +317,7 @@ supervisor_rc_post_stop(struct svc_runtime *svc)
 	}
 	if (svc->reload_pending) {
 		svc->manifest = svc->pending_manifest;
+		svc_slot_apply_bundle_policy(svc, svc->bundle_idx);
 		memset(&svc->pending_manifest, 0, sizeof(svc->pending_manifest));
 		svc->reload_pending = false;
 		svc->restart_count = 0;
@@ -430,6 +437,11 @@ supervisor_handle_procdesc(struct kevent *kev)
 		syslog(LOG_INFO, "service %s: exec confirmed (pid %jd)",
 		    svc->manifest.label, (intmax_t)svc->pid);
 		SWITCHBOARD_PROBE_SVC_EXEC(svc->manifest.label, svc->pid);
+		if (svc->manifest.unix_protocol && (kev->fflags & NOTE_EXIT) == 0) {
+			svc->state = SVC_STATE_RUNNING;
+			syslog(LOG_INFO, "service %s: UNIX process started",
+			    svc->manifest.label);
+		}
 	}
 
 	if ((kev->fflags & NOTE_CAPMODE) != 0 &&
@@ -542,6 +554,7 @@ supervisor_handle_procdesc(struct kevent *kev)
 
 		if (was_stopping && reload_pending) {
 			svc->manifest = svc->pending_manifest;
+			svc_slot_apply_bundle_policy(svc, svc->bundle_idx);
 			memset(&svc->pending_manifest, 0,
 			    sizeof(svc->pending_manifest));
 			svc->reload_pending = false;

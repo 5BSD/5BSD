@@ -1967,7 +1967,7 @@ stub_vnode_check_lookup(struct ucred *cred, struct vnode *dvp,
 
 static int
 stub_vnode_check_mmap(struct ucred *cred, struct vnode *vp,
-    struct label *vplabel, int prot, int flags)
+    struct label *vplabel, int prot, int flags, int maxprot __unused)
 {
 
 	return (0);

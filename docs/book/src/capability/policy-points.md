@@ -4,7 +4,7 @@ A 5BSD system answers "may this happen?" in seven places, and each place
 decides a different kind of question. This chapter is the single map of
 those places: the kernel hooks that see an operation, the gates that stand
 in for root privilege, the shields that protect a process, the manifest
-fields a bundle author sets, the principal policy that provisions a login
+fields a bundle author sets, the software authority used for discovery
 session, the per-provider policy files that scope one broker's clients, and
 the sysctls that turn whole mechanisms on or off. FreeBSD spreads the same
 decisions across `uid == 0`, file modes and ad hoc checks; 5BSD names them
@@ -120,11 +120,10 @@ that are policy rather than description.
 | `control` | management class `core`, `system` or `user`: who may stop, restart, unload or disable the unit; `core` is unmanageable by anyone, root included | `system` |
 | `visible` | which domain kinds (`user`, `system`) may resolve the unit's open IPC names; absent means SYSTEM-only | absent |
 | `domain` | the domain the unit's own lookups run in | by bundle class |
-| `holds` | the anointments the unit presents when it looks up a gated endpoint | empty |
-| `activation.ipc[].requires` | the anointments a caller must hold to reach this endpoint | open |
+| `attributes` | the software attributes the unit presents when it looks up a gated endpoint | empty |
+| `activation.ipc[].requires` | the attributes requesting software must hold to reach this endpoint | open |
 | `capabilities { system, isolate }` | the system gates a base broker holds, and the sysctl OIDs it becomes sole writer of | none; stripped from per-user agents |
 | `ambient` | launch outside capability mode | `false`; only BSDVM sets it |
-| `mint_authority` | the unit is the session mint boundary (BSDAuth); honoured only for a base-system bundle | `false` |
 | `user`, `group` | the credential the unit runs as | `capability` |
 | `watchdog { interval }` | liveness deadline enforced with `service_heartbeat(3)` | disabled |
 
@@ -134,25 +133,19 @@ and decided by the provider's own policy file (layer 6). Under
 [mac_veriexec](veriexec.md) the manifest is opened `O_VERIFY`, so the
 declaration and the grant are the same signed fact.
 
-## Layer 5: the principal policy
+## Layer 5: software authority and discovery
 
-`/Capabilities/Config/principal-policy.ucl` is consulted only by BSDAuth,
-when login(1), su(1) or sshd(8) mint a session channel and on every
-anoint(1) request. It is the one place a uid or group is turned into
-capabilities. See [Anointments and Principal
-Policy](../plane/anointments.md) and [The Authority
-Model](authority-model.md).
+The kernel holds discovery separately from authority. SwitchBoard registers
+approved executable identities from trusted bundles; an ordinary exec can
+acquire that image's software context. Requests carry kernel-stamped sender
+metadata, and endpoint admission checks the context's current attributes.
+Fork preserves the context, unrelated exec removes its use, and revocation
+invalidates contexts and authority-bound handles.
 
-| Key | What it decides | Default (shipped file) |
-|---|---|---|
-| `principals.<name>.uids`, `.groups` | which authenticated principal the entry matches; first match in file order wins | `admin`: uid 0 and group `wheel` |
-| `anointments` | the gated endpoints every process in the session can reach without asking; `*` is legal only here | `admin`: `["*"]`; `default`: `[]` |
-| `may_elevate` | the anointments the principal may obtain for one command through anoint(1) after re-authenticating | absent (no elevation) |
-| `admin_rights` | whether the session's connections carry `SVC_RIGHTS_ADMIN`, the in-endpoint bypass providers honour | true only when `anointments` is `["*"]` |
-
-An absent or malformed file falls back to the same rule as the shipped
-default, so a damaged policy cannot lock out root. The `capability` uid
-that units run as is never a principal here.
+Login, SSH and `su` retain UNIX authentication and credential behavior. They do
+not mint per-user grants. Anyone permitted to execute an approved application
+can use its exposed operations; its implementation must constrain those
+operations. See [Software Attributes](../plane/attributes.md).
 
 ## Layer 6: per-provider policy files
 
@@ -164,8 +157,8 @@ unit never carries that bit.
 | Provider and file | What it decides | Default |
 |---|---|---|
 | BSDNetwork, `Config/bsdnetwork.conf` | per label: `resolve`, `connect`, `udp`, `inet4`, `inet6`, `internal` (loopback, link-local and private ranges) | all true except `internal = false`; a malformed file keeps the compiled-in default |
-| BSDTrace, `Config/bsdtrace.allow` | which labels may receive a DTrace consumer descriptor; wildcards rejected; the endpoint additionally requires the `system.trace.client` anointment | default-deny; absent file is an empty policy |
-| BSDFilesystem, `open_paths` in `/Capabilities/Config/bsdfilesystem.ucl` (tzfs.conf(5)) | per label: one absolute path, `rights` from `read write exec lookup ioctl`, optional `prefix` matching one trailing component | default-deny; shipped entries cover BSDAuth's identity databases and BSDNetwork's resolver files |
+| BSDTrace, `Config/bsdtrace.allow` | which labels may receive a DTrace consumer descriptor; wildcards rejected; the endpoint additionally requires the `system.trace.client` attribute | default-deny; absent file is an empty policy |
+| BSDFilesystem, `open_paths` in `/Capabilities/Config/bsdfilesystem.ucl` (tzfs.conf(5)) | per label: one absolute path, `rights` from `read write exec lookup ioctl`, optional `prefix` matching one trailing component | default-deny; shipped entries include BSDNetwork's resolver files |
 | BSDDevice, `Config/device.conf` | per label and `/dev` leaf: `rights` from `read write ioctl mmap seek event` and an optional `ioctls` allow-list applied with `cap_ioctls_limit(2)` | default-deny |
 | BSDSysctl, `Config/sysctl.conf` | per label: `read` and `write` OID name lists | `default`: a short read list (`kern.ostype`, `hw.ncpu`, ...), empty write list |
 | BSDTime, `Config/time.conf` | per label: `set` | `default { set = false; }` |
@@ -198,9 +191,9 @@ must be set in loader.conf(5); the rest can be changed at runtime.
 | Question | Policy point |
 |---|---|
 | Can this sandboxed unit open `/dev/x`? | BSDDevice `device.conf` (leaf devices) or BSDFilesystem `open_paths` (paths and device families); the unit itself has no path authority |
-| Can this unit see that service name? | provider's `visible` for open endpoints; the caller's `holds` (unit) or `anointments` (session) against the endpoint's `requires` for gated ones; management class does not affect lookup |
-| Can this session stop that service? | `control` class of the unit: `core` never; `system` needs `admin_rights`; `user` needs the owning uid or `admin_rights` |
-| Why did a root shell get `ENOENT` for `system.Notify.System`? | the session's principal-policy entry does not hold `system.notify.system`; use anoint(1) if `may_elevate` allows it |
+| Can this unit see that service name? | provider's `visible` for open endpoints; the requesting software's `attributes` against the endpoint's `requires` for gated ones; management class does not affect lookup |
+| Can this client stop that service? | `control` class of the unit: `core` never; `system` needs endpoint rights and the current administrative software attribute; `user` additionally permits its owning uid after endpoint admission |
+| Why did a root shell get `ENOENT` for `system.Notify.System`? | the shell has no approved `system.notify.system` software attribute; use an approved client with the required attribute and intended operation interface |
 | Can this program load a module? | `SYS_GATE_KLDLOAD` is held by BSDExtension; other programs get `EPERM` from `mpo_kld_check_load`; ask through `service_ensure_extension(3)` and BSDExtension's allow-list |
 | Can anyone write `kern.maxfiles` directly? | no; the scoped `SYSCTL` claim makes BSDSysctl the sole writer, and its `sysctl.conf` decides which labels may ask |
 | Can a debugger attach to a provider? | `protect = ["ptrace", ...]` in its manifest; the launcher (switchboard) and token holders are exempt |

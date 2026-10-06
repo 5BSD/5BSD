@@ -99,8 +99,7 @@ enum svc_domain_kind {
  * holder — reach and the in-endpoint bypass are decided independently.  The
  * boot carry (the SYSTEM channel switchboard installs ahead of rc) holds both.
  *
- * The bounds are shared with the wire (svc_mint_domain_req) and the manifest
- * (svc_manifest.anointments); the static asserts keep the three in step.
+ * Attribute bounds are shared with the manifest representation.
  */
 #define	SVC_ANOINT_SWITCHBOARD_ADMIN	"system.switchboard.admin"
 /* The requester identity a login session carries (no policy file). */
@@ -121,6 +120,9 @@ struct svc_domain {
 	enum svc_domain_kind	kind;
 	uid_t			uid;	/* meaningful only for SVC_DOMAIN_USER */
 	struct svc_anoint_set	anoint;	/* what this holder may reach */
+	/* Registry identity; never accepted from a request payload. */
+	uint64_t authority_issuer;
+	uint64_t authority_identity;
 };
 
 /*
@@ -156,6 +158,9 @@ struct svc_responsible {
 };
 
 struct svc_runtime {
+	/* UNIX services close bootstrap FDs; the manager retains their shield. */
+	int protection_lease;
+	bool have_protection_lease;
 	struct svc_manifest	manifest;
 	enum svc_kind	kind;		/* launch method + readiness contract */
 
@@ -296,6 +301,7 @@ struct switchboard_state {
 	int		channel_svc_fd;		/* channel service instance (fd 4) */
 	int		coalition_svc_fd;	/* coalition service instance (fd 5) */
 	int		capprotect_fd;		/* capprotect service instance (fd 6) */
+	int		authority_issuer_fd; /* Kernel issuer; never delegated to units. */
 	int		identity_fd;		/* mac_capability_identity service instance */
 	/*
 	 * The system's own attribution root: a member-less coalition that
@@ -361,7 +367,7 @@ int	mac_cap_coalition_stat(int coalition_fd, struct coalition_stat_reply *sr);
 struct svc_lookup_channel;
 void	svc_responsibility_decide(struct svc_runtime *unit,
 	    const struct svc_runtime *requester,
-	    const struct svc_lookup_channel *session);
+	    const struct svc_domain *session);
 void	svc_responsibility_clear(struct svc_runtime *svc);
 void	svc_responsibility_apply(struct svc_runtime *svc, int coalition_fd);
 int	svc_responsibility_root_init(void);
@@ -370,11 +376,7 @@ const char *svc_responsibility_name(const struct svc_responsible *r,
 bool	svc_responsible_allowed(const struct svc_manifest *m,
 	    const struct svc_responsible *r);
 const char *svc_boot_id(char *buf, size_t len);
-/* domain.c — per-session coalition carried on a lookup channel */
-int	lookup_channel_coalition_fd(const struct svc_lookup_channel *lc);
-uint64_t lookup_channel_coalition_id(const struct svc_lookup_channel *lc);
-uid_t	lookup_channel_uid(const struct svc_lookup_channel *lc);
-size_t	domain_sessions_format(char *buf, size_t len, size_t off);
+/* Session attribution is owned by issued authority, not discovery routes. */
 
 /* capsule_client.c — channel protocol client to capsule */
 int	capsule_mint_system(int channel_fd, uint32_t gates);
@@ -480,7 +482,6 @@ bool	bundle_registry_is_system(unsigned idx);
 uid_t	bundle_registry_owner_uid(unsigned idx);
 /* startup.c — bundle-derived slot policy (owner uid, agent confinement, band) */
 void	svc_slot_apply_bundle_policy(struct svc_runtime *svc, unsigned bundle_idx);
-int	bundle_registry_ensure_user_dir(uid_t uid);
 unsigned bundle_registry_count(void);
 unsigned bundle_registry_quarantined(void);
 void	bundle_registry_teardown(void);
@@ -544,8 +545,6 @@ int	naming_lookup(const char *name, struct svc_runtime *requester,
 /* anoint.c — IPC anointment sets and the endpoint match */
 void	svc_anoint_set_from_manifest(struct svc_anoint_set *set,
 	    const struct svc_manifest *m);
-int	svc_anoint_set_from_mint(const struct svc_mint_domain_req *req,
-	    struct svc_anoint_set *set);
 bool	svc_anoint_holds(const struct svc_anoint_set *set, const char *name);
 bool	svc_anoint_covers(const struct svc_anoint_set *set,
 	    const char (*requires)[SWITCHBOARD_LABEL_MAX], unsigned nrequires);
@@ -572,14 +571,11 @@ bool	svc_domain_resolves(const struct svc_domain *domain, const char *name);
 bool	name_is_control(const char *name);
 bool	svc_domain_permits(const struct svc_domain *chan,
 	    enum svc_domain_kind name_domain, const char *name);
-bool	svc_domain_may_mint(const struct svc_domain *domain);
 int	svc_fd_make_ambient(int fd);
 int	domain_mint_user_channel(uid_t uid, int *out_fd, int kq);
 int	domain_mint_system_channel(int *out_fd, int kq);
 int	domain_mint_session_channel(enum svc_domain_kind kind, uid_t uid,
 	    const struct svc_anoint_set *set, int *out_fd, int kq);
-int	svc_mint_domain_kind(const struct svc_domain *requester,
-	    uint32_t wire_domain, enum svc_domain_kind *kind);
 bool	domain_channel_owns_event(uintptr_t ident);
 void	domain_channel_event(struct kevent *kev, int kq);
 void	domain_channel_teardown(void);

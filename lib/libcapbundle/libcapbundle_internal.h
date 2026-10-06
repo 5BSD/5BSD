@@ -78,6 +78,7 @@ struct capbundle_service {
 	char	resource_dirs[SWITCHBOARD_MAX_RESOURCE_DIRS][PATH_MAX];
 	unsigned nresource_dirs;
 	bool	activation_boot;
+	bool	activation_exec; /* ordinary exec catalogue entry, not a daemon */
 	bool	is_helper;		/* private helper: launched on request only */
 	/*
 	 * USER-domain visibility (§22).  When set, this unit's provides names are
@@ -138,9 +139,7 @@ struct capbundle_service {
 
 	/* Ambient-authority (non-sandboxed) provider — see svc_manifest.ambient. */
 	bool	ambient;
-
-	/* Mint-authority role — see svc_manifest.mint_authority. */
-	bool	mint_authority;
+	bool unix_protocol; /* Ordinary foreground process; readiness is exec. */
 
 	/* Pre-exec process policy (setrlimit / scheduling band / umask). */
 	struct svc_limits limits;
@@ -191,7 +190,7 @@ struct capbundle {
 int	capbundle_parse_bundle_ucl(const char *path, struct capbundle *bundle,
 	    char *errbuf, size_t errlen);
 
-/* Reverse-domain name check shared by the parser and the principal policy. */
+/* Reverse-domain name check used by the bundle parser. */
 bool	capbundle_valid_service_name(const char *name, size_t maxlen);
 
 /* Parse one Units/<name>.unit/Unit.ucl declared by Bundle.ucl. */
@@ -199,13 +198,5 @@ int	capbundle_parse_unit_ucl(const char *path, const char *unit_path,
 	    const struct capbundle *bundle, const char *unit_name,
 	    struct capbundle_service *svc,
 	    char *errbuf, size_t errlen);
-
-/*
- * Path-parameterized principal-policy core; public to the tests, not installed
- * ABI.  capbundle_principal_is_admin() pins the real policy path.
- */
-struct passwd;
-bool	capbundle_principal_is_admin_at(const struct passwd *pwd,
-	    const char *policy_path);
 
 #endif /* LIBCAPBUNDLE_INTERNAL_H */

@@ -61,7 +61,6 @@
 #include <pwd.h>
 #include <setjmp.h>
 #include <signal.h>
-#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -71,10 +70,6 @@
 
 #include <security/pam_appl.h>
 #include <security/openpam.h>
-
-#include <libservice.h>
-#include <libcapbundle.h>
-#include <service_bootstrap.h>
 
 #include "login.h"
 #include "login_probes.h"
@@ -156,13 +151,6 @@ static int		 pam_err;
 static int		 pam_silent = PAM_SILENT;
 static int		 pam_cred_established;
 static int		 pam_session_established;
-
-/*
- * The principal->bundle admin decision is a single seam,
- * capbundle_principal_is_admin() (capability-authority-model.md, P1): it reads
- * an explicit UCL policy, defaulting to the historical root/wheel rule.  login
- * no longer tests the uid inline.
- */
 
 int
 main(int argc, char *argv[])
@@ -249,7 +237,6 @@ main(int argc, char *argv[])
 
 	setproctitle("-%s", getprogname());
 
-	/* Discovery lives in the process context, outside the descriptor table. */
 	closefrom(3);
 
 	/*
@@ -621,8 +608,6 @@ main(int argc, char *argv[])
 	(void)setenv("LOGNAME", username, 1);
 	(void)setenv("USER", username, 1);
 	(void)setenv("PATH", rootlogin ? _PATH_STDPATH : _PATH_DEFPATH, 0);
-
-	/* pam_capability established the authenticated principal's context. */
 
 	if (!quietlog) {
 		const char *cw;

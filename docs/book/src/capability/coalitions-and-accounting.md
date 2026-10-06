@@ -154,14 +154,12 @@ switchboard decides the parent from the launch context, following the
 The root coalition is a member-less, self-rooted coalition switchboard
 mints at startup, so every chain that does not end in a session or a
 self-rooted provider ends at the system. A login session is a coalition
-too: every session mint (USER or SYSTEM kind; the boot ambient carry is
-not a session) creates one with the release signal (0), and the session
-leader joins it over
-`SVC_OP_SESSION_COALITION` (`service_session_join_coalition(3)`, called by
-login, su, and the sshd session child before they exec the shell), so the
-shell and everything it starts carry the session id. Because the
-signal is 0, closing the session record when the channel goes away never
-kills a detached process that outlived the login.
+too: an authenticated user grant has a separate session coalition using release
+signal zero. Shared PAM receives that descriptor alongside the protected grant
+and atomically joins before the normal UID transition. Ordinary login, su, and
+sshd need no channel-preservation or coalition code. Forked shells and programs
+inherit membership. Releasing a session record never kills a detached process
+that outlived the login. Coalition membership is attribution, not authority.
 
 What consumes it: `switchboardctl services` prints `coal=` and `resp=` per
 unit and `switchboardctl tree` draws the chains; `ps -o coal,rcoal,rpid`

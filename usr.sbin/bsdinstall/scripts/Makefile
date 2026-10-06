@@ -3,7 +3,6 @@
 SCRIPTS=auto \
 	adduser \
 	bootconfig \
-	capabilitypolicy \
 	checksum \
 	config \
 	docsinstall \

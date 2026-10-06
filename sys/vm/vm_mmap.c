@@ -1451,7 +1451,8 @@ vm_mmap_vnode(struct thread *td, vm_size_t objsize,
 		goto done;
 #ifdef MAC
 	/* This relies on VM_PROT_* matching PROT_*. */
-	error = mac_vnode_check_mmap(cred, vp, (int)prot, flags);
+	error = mac_vnode_check_mmap(cred, vp, (int)prot, flags,
+	    (int)*maxprotp);
 	if (error != 0)
 		goto done;
 #endif

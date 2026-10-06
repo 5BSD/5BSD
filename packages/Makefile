@@ -18,7 +18,6 @@
 
 SUBDIR=	blocklist \
 	bsdaudit \
-	bsdauth \
 	bsdconfig \
 	bzip2 \
 	clibs \
@@ -193,7 +192,6 @@ SUBDIR.${MK_TESTS}+=		bluetooth-tests
 .if ${MK_BHYVE} != "no"
 SUBDIR.${MK_TESTS}+=		waspnest-tests
 .endif
-SUBDIR.${MK_TESTS}+=		bsdauth-tests
 SUBDIR.${MK_TESTS}+=		capsule-tests capsulectl-tests
 .if ${MK_DTRACE} != "no"
 SUBDIR.${MK_TESTS}+=		bsdinstruments-tests

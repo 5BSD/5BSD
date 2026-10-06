@@ -291,6 +291,17 @@ main(int argc, char **argv)
 	int svc, op, domain, protocol;
 	unsigned long port, direction, prefix;
 
+	if (argc == 3 && strcmp(argv[1], "inherited-write") == 0) {
+		int fd;
+
+		fd = (int)strtol(argv[2], &end, 10);
+		if (*end != '\0' || fd < 0)
+			return (2);
+		if (pwrite(fd, "x", 1, 0) == 1)
+			return (0);
+		return (errno == EACCES || errno == EPERM ? 1 : 2);
+	}
+
 	/* Exercise the MAC hook with only the sockaddr header present. */
 	if (argc == 2 && strcmp(argv[1], "vsock-short-bind") == 0) {
 		struct sockaddr sa;

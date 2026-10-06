@@ -148,7 +148,7 @@ to `${REPODIR}/${PKG_ABI}/${PKG_VERSION}`.
 
 The base providers split two ways. BSDFilesystem, BSDPower, BSDTime,
 BSDExtension, BSDNamespace and BSDVM set `PACKAGE= runtime` and ship inside
-`5BSD-runtime` with the rest of the core system; BSDAudit, BSDAuth,
+`5BSD-runtime` with the rest of the core system; BSDAudit,
 BSDCrypto, BSDDevice, BSDLog, BSDNetwork, BSDNotify, BSDTrace (as
 `bsdtrace-provider`) and BSDBluetooth have packages of their own, as do
 capsule, switchboard and every client library. The tree does not record a

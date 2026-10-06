@@ -843,7 +843,7 @@ int abac_vnode_check_listextattr(struct ucred *cred, struct vnode *vp,
 int abac_vnode_check_lookup(struct ucred *cred, struct vnode *dvp,
     struct label *dvplabel, struct componentname *cnp);
 int abac_vnode_check_mmap(struct ucred *cred, struct vnode *vp,
-    struct label *vplabel, int prot, int flags);
+    struct label *vplabel, int prot, int flags, int maxprot __unused);
 int abac_proc_check_mprotect(struct ucred *cred, vm_offset_t addr,
     vm_size_t size, int prot);
 int abac_vnode_check_open(struct ucred *cred, struct vnode *vp,

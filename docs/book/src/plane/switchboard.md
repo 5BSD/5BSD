@@ -170,7 +170,7 @@ domain its manifest or bundle class gives it (`domain`), and a name is
 resolvable from a USER-domain channel only if its provider lists `visible =
 ["user"]`. Anointments are checked next: an endpoint with `requires` resolves
 only for a requester whose `holds` cover it. A refusal for either reason is
-`ENOENT`, indistinguishable from an unregistered name, and each anointment
+`ENOENT`, indistinguishable from an unregistered name, and each attribute
 refusal is audited (`AUE_SWITCHBOARD_ANOINT`). The full mechanism is in
 [Discovery and the Lookup Channel](discovery-and-lookup.md).
 
@@ -228,10 +228,11 @@ what `service(8)` and `switchboardctl` each cover.
 ## switchboardctl
 
 switchboardctl(8) talks to switchboard over `system.switchboard`. Read-only
-verbs work from any session that can resolve the name; mutating verbs need the
-`system.switchboard.admin` anointment on the session, not root. Managing a
-given unit is then decided by its `control` class: a `core` unit refuses
-everyone before authority is even checked.
+verbs work for attributed software that can resolve the name. Mutating verbs
+require its `system.switchboard.admin` attribute and the held management right.
+The invoking UNIX account supplies no implicit management authority. The
+unit's `control` class adds a separate restriction: a `core` unit cannot be
+stopped or restarted at runtime.
 
 | Verb | Effect |
 |---|---|
@@ -242,7 +243,7 @@ everyone before authority is even checked.
 | `install <path>.cap` | verify and copy into `/Capabilities/System` (root) |
 | `verify <path>.cap ...` | the same strict parser switchboard uses, no side effects |
 | `bundles` | list installed bundles |
-| `graph [--text|--dot|--json] [--lint]` | draw the anointment reach graph from disk |
+| `graph [--text|--dot|--json] [--lint]` | draw the attribute reach graph from disk |
 
 `status` prints what `sctl_cmd_status()` in `sctl.c` formats:
 
@@ -275,26 +276,22 @@ its rc.d name. Stopping a core unit:
 switchboardctl: stop: Operation not permitted
 ```
 
-`graph --lint` reports an endpoint requiring an anointment nobody declares
-and a declared anointment no endpoint requires, exiting 2 when it found
+`graph --lint` reports an endpoint requiring an attribute nobody declares
+and a declared attribute no endpoint requires, exiting 2 when it found
 either:
 
-```text
-# switchboardctl graph --lint
-system.Notify/notifyd -> system.Log [open]
-session.admin -> system.Notify.System [via system.notify.system]
-session.default -> system.Log [open]
-warning: unreachable: org.example.mail.admin requires "org.example.mail.operator", which no unit or principal declares
-summary: 3 units, 2 sessions, 5 endpoints (2 gated), 9 edges, 1 warnings
-```
+The graph contains managed units and ordinary executable entries from bundle
+manifests. It does not synthesize admin or default login sessions. Use
+`switchboardctl graph --json` for machine-readable policy relationships;
+account membership does not contribute graph edges.
 
 ## Observability
 
 The `switchboard` USDT provider covers lifecycle, naming, on-demand,
-anointment, control and fd-budget events; switchboard(8) lists every probe,
+attribute, control and fd-budget events; switchboard(8) lists every probe,
 and `/usr/share/dtrace/switchboard-*` ship ready scripts (`switchboard-
 lifecycle`, `switchboard-naming`, `switchboard-anoint`). Audit records are
-emitted for start, control commands, exec phases and anointment refusals.
+emitted for start, control commands, exec phases and attribute refusals.
 
 ## Status and limits
 

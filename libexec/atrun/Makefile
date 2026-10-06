@@ -10,13 +10,13 @@ MAN=	atrun.8
 BINDIR=	${ATLIB_DIR}
 CLEANFILES= ${MAN}
 
-CFLAGS+=-I${MAINSRC} -I${.CURDIR} -I${SRCTOP}/lib/libservice
+CFLAGS+=-I${MAINSRC} -I${.CURDIR}
 CFLAGS+=-DLOGIN_CAP -DPAM
 
 WARNS?=	2
 WFORMAT=0
 
-LIBADD=	pam util service
+LIBADD=	pam util
 
 atrun.8: atrun.man
 	@${ECHO} Making ${.TARGET:T} from ${.ALLSRC:T}; \

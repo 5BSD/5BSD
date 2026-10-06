@@ -12,6 +12,8 @@
  */
 
 #include <sys/capsicum.h>
+#include <sys/cap_authority.h>
+#include <sys/syscall.h>
 #include <sys/event.h>
 #include <sys/procdesc.h>
 #include <sys/wait.h>
@@ -42,7 +44,8 @@
 #define	SWITCHBOARD_COALITION_SVC_FD 5	/* coalition service instance (mintable) */
 #define	SWITCHBOARD_CAPPROTECT_FD	6	/* capprotect service instance */
 #define	SWITCHBOARD_IDENTITY_FD	7	/* identity service instance */
-#define	SWITCHBOARD_LAST_FD	7	/* highest well-known fd */
+#define	SWITCHBOARD_AUTHORITY_FD	8
+#define	SWITCHBOARD_LAST_FD	8	/* highest well-known fd */
 
 static struct {
 	pid_t		pid;
@@ -69,6 +72,7 @@ struct bootstrap_delegate_fds {
 	int	coalition_svc_fd;
 	int	capprotect_fd;
 	int	identity_fd;
+	int	authority_fd;
 	/*
 	 * Bundle-directory overrides forwarded to switchboard.  Captured from
 	 * capsule's environment in the parent (getenv is not async-signal-safe,
@@ -97,14 +101,14 @@ bootstrap_child_exec(int child_channel_fd, const struct bootstrap_delegate_fds *
 {
 	char channel_env[64];
 	char channel_svc_env[64], coalition_svc_env[64], capprotect_env[64];
-	char identity_env[64];
+	char identity_env[64], authority_env[64];
 	char bundle_sys_env[PATH_MAX + 32], bundle_usr_env[PATH_MAX + 32];
 	char skip_rc_env[32], no_sigkill_env[40];
 	char run_dir_env[PATH_MAX + 32], settle_env[64];
-	char *env[15];
+	char *env[16];
 	char *argv[2];
 	int nullfd, fd, safe_base;
-	int src_fds[5], dst_fds[5];
+	int src_fds[6], dst_fds[6];
 	unsigned envc, i, nfds;
 
 	/*
@@ -152,6 +156,11 @@ bootstrap_child_exec(int child_channel_fd, const struct bootstrap_delegate_fds *
 		src_fds[nfds] = d->identity_fd;
 		dst_fds[nfds] = SWITCHBOARD_IDENTITY_FD;
 		nfds++;
+	}
+
+	if (d->authority_fd >= 0) {
+		src_fds[nfds] = d->authority_fd;
+		dst_fds[nfds++] = SWITCHBOARD_AUTHORITY_FD;
 	}
 
 	safe_base = SWITCHBOARD_LAST_FD + 1;
@@ -229,6 +238,12 @@ bootstrap_child_exec(int child_channel_fd, const struct bootstrap_delegate_fds *
 		(void)snprintf(identity_env, sizeof(identity_env),
 		    "SWITCHBOARD_IDENTITY_FD=%d", SWITCHBOARD_IDENTITY_FD);
 		env[envc++] = identity_env;
+	}
+
+	if (d->authority_fd >= 0) {
+		(void)snprintf(authority_env, sizeof(authority_env),
+		    "SWITCHBOARD_AUTHORITY_FD=%d", SWITCHBOARD_AUTHORITY_FD);
+		env[envc++] = authority_env;
 	}
 
 	/* Forward bundle-directory overrides when present (see struct comment). */
@@ -357,6 +372,13 @@ bootstrap_start(int kq)
 		    "on-demand attribution disabled");
 	}
 
+	/* Only PID 1 can create this boot trust anchor. The environment merely
+	 * names a descriptor; the kernel validates its unforgeable object type. */
+	dfds.authority_fd = syscall(SYS_cap_process, CAP_AUTH_ISSUER_CREATE,
+	    -1, 0, NULL);
+	if (dfds.authority_fd < 0)
+		syslog(LOG_ERR, "bootstrap: protected authority issuer unavailable: %m");
+
 	/* Capture bundle-dir overrides here — getenv is not safe post-fork. */
 	dfds.bundle_dir_system = getenv("SWITCHBOARD_BUNDLE_DIR_SYSTEM");
 	dfds.bundle_dir_user = getenv("SWITCHBOARD_BUNDLE_DIR_USER");
@@ -377,7 +399,9 @@ bootstrap_start(int kq)
 	    cap_xfer_limit(dfds.coalition_svc_fd, CAP_XFER_NONE) == -1 ||
 	    cap_xfer_limit(dfds.capprotect_fd, CAP_XFER_NONE) == -1 ||
 	    (dfds.identity_fd >= 0 &&
-	    cap_xfer_limit(dfds.identity_fd, CAP_XFER_NONE) == -1)) {
+	    cap_xfer_limit(dfds.identity_fd, CAP_XFER_NONE) == -1) ||
+	    (dfds.authority_fd >= 0 &&
+	    cap_xfer_limit(dfds.authority_fd, CAP_XFER_NONE) == -1)) {
 		syslog(LOG_ERR, "bootstrap: confine delegated fd: %m");
 		close(capsule_end);
 		close(child_end);
@@ -386,6 +410,8 @@ bootstrap_start(int kq)
 		close(dfds.capprotect_fd);
 		if (dfds.identity_fd >= 0)
 			close(dfds.identity_fd);
+		if (dfds.authority_fd >= 0)
+			close(dfds.authority_fd);
 		return (-1);
 	}
 
@@ -399,6 +425,7 @@ bootstrap_start(int kq)
 		if (dfds.coalition_svc_fd >= 0) close(dfds.coalition_svc_fd);
 		if (dfds.capprotect_fd >= 0) close(dfds.capprotect_fd);
 		if (dfds.identity_fd >= 0) close(dfds.identity_fd);
+		if (dfds.authority_fd >= 0) close(dfds.authority_fd);
 		return (-1);
 	}
 
@@ -418,6 +445,8 @@ bootstrap_start(int kq)
 		close(dfds.capprotect_fd);
 	if (dfds.identity_fd >= 0)
 		close(dfds.identity_fd);
+	if (dfds.authority_fd >= 0)
+		close(dfds.authority_fd);
 
 	/*
 	 * The process descriptor is capsule's explicit and exclusive authority

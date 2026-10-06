@@ -21,35 +21,11 @@
 #include <dev/mac_capability/mac_capability_coalition_proto.h>
 
 #include "switchboard.h"
+#include "authority.h"
 
 struct switchboard_state sd;
 
 /* --- stubs: the pieces responsibility.c reaches --- */
-
-static int stub_session_fd = -1;
-static uint64_t stub_session_id;
-static uid_t stub_session_uid = (uid_t)-1;
-
-int
-lookup_channel_coalition_fd(const struct svc_lookup_channel *lc)
-{
-
-	return (lc != NULL ? stub_session_fd : -1);
-}
-
-uint64_t
-lookup_channel_coalition_id(const struct svc_lookup_channel *lc)
-{
-
-	return (lc != NULL ? stub_session_id : 0);
-}
-
-uid_t
-lookup_channel_uid(const struct svc_lookup_channel *lc)
-{
-
-	return (lc != NULL ? stub_session_uid : (uid_t)-1);
-}
 
 static int set_resp_calls, set_resp_parent, set_resp_status;
 static uint32_t set_resp_flags;
@@ -223,46 +199,18 @@ ATF_TC_BODY(requester_without_coalition_degrades_to_self, tc)
 	ATF_CHECK_EQ(unit.responsible.parent_fd, -1);
 }
 
-ATF_TC_WITHOUT_HEAD(session_owns_its_user_units);
-ATF_TC_BODY(session_owns_its_user_units, tc)
+ATF_TC_WITHOUT_HEAD(authority_does_not_imply_session_coalition);
+ATF_TC_BODY(authority_does_not_imply_session_coalition, tc)
 {
 	struct svc_runtime unit;
-	int lc_token = 0;	/* any non-NULL pointer stands for the session */
-
-	stub_session_fd = some_fd();
-	stub_session_id = 77;
-	stub_session_uid = 1001;
+	struct svc_domain caller = { .kind = SVC_DOMAIN_USER, .uid = 1001,
+	    .authority_issuer = 1, .authority_identity = 1 };
 
 	unit_init(&unit, "user/worker", SVC_MGMT_USER, 1001);
-	svc_responsibility_decide(&unit, NULL,
-	    (const struct svc_lookup_channel *)&lc_token);
-	ATF_CHECK_EQ(unit.responsible.kind, SVC_RESP_SESSION);
-	ATF_CHECK_EQ(unit.responsible.uid, 1001);
-	ATF_CHECK_EQ(unit.responsible.parent_id, 77);
-	ATF_CHECK(same_file(unit.responsible.parent_fd, stub_session_fd));
-	svc_responsibility_clear(&unit);
-
-	/* Another user's session does not own it. */
-	stub_session_uid = 1002;
-	unit_init(&unit, "user/worker", SVC_MGMT_USER, 1001);
-	svc_responsibility_decide(&unit, NULL,
-	    (const struct svc_lookup_channel *)&lc_token);
+	svc_responsibility_decide(&unit, NULL, &caller);
 	ATF_CHECK_EQ(unit.responsible.kind, SVC_RESP_SELF);
-
-	/* A shared provider activated from a session roots itself. */
-	stub_session_uid = 1001;
-	unit_init(&unit, "system.Crypto", SVC_MGMT_SYSTEM, (uid_t)-1);
-	svc_responsibility_decide(&unit, NULL,
-	    (const struct svc_lookup_channel *)&lc_token);
-	ATF_CHECK_EQ(unit.responsible.kind, SVC_RESP_SELF);
-
-	/* A session without a coalition (mint degraded) cannot be a parent. */
-	close(stub_session_fd);
-	stub_session_fd = -1;
-	unit_init(&unit, "user/worker", SVC_MGMT_USER, 1001);
-	svc_responsibility_decide(&unit, NULL,
-	    (const struct svc_lookup_channel *)&lc_token);
-	ATF_CHECK_EQ(unit.responsible.kind, SVC_RESP_SELF);
+	ATF_CHECK_EQ(unit.responsible.parent_fd, -1);
+	ATF_CHECK_EQ(unit.responsible.parent_id, 0);
 }
 
 ATF_TC_WITHOUT_HEAD(boot_and_operator_belong_to_switchboard);
@@ -578,7 +526,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, shared_provider_roots_itself);
 	ATF_TP_ADD_TC(tp, user_unit_follows_owner);
 	ATF_TP_ADD_TC(tp, requester_without_coalition_degrades_to_self);
-	ATF_TP_ADD_TC(tp, session_owns_its_user_units);
+	ATF_TP_ADD_TC(tp, authority_does_not_imply_session_coalition);
 	ATF_TP_ADD_TC(tp, boot_and_operator_belong_to_switchboard);
 	ATF_TP_ADD_TC(tp, name_strings);
 	ATF_TP_ADD_TC(tp, apply_records_parent_and_learns_ids);

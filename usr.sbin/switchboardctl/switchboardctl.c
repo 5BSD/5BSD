@@ -71,13 +71,10 @@ ensure_parent_dir(const char *path)
 #include "switchboardctl.h"
 
 /*
- * Capability control path (docs/capability-authority-model.md, P3): resolve
- * SWITCHBOARD_CONTROL_NAME over the ambient discovery plane a login session
- * inherits and issue the request/reply as a single libservice call.  Capsule
- * is the SVC_RIGHTS_ADMIN on the grant (an admin login session), not a socket
- * peer credential.  Returns 0 and sets *status_out on a completed RPC; returns
- * -1 (capability plane unavailable / transport error) so the caller can fall
- * back to the getpeereid socket during the dual-path rollout.
+ * Resolve the control endpoint through the process-held discovery route.
+ * SwitchBoard admits this executable using its software attributes and the
+ * kernel-stamped sender identity. UNIX login identity grants no control rights.
+ * Return the broker status separately from transport errors.
  */
 static int
 sctl_rpc_capability(uint32_t op, uint32_t flags, const char *payload,
@@ -479,7 +476,7 @@ usage(void)
 	    "  deps <program>      suggest component manifest dependencies\n"
 	    "  bundles             list all registered bundles\n"
 	    "  graph [--text|--dot|--json] [--lint] [--root dir]\n"
-	    "                      draw the IPC anointment reach graph\n");
+	    "                      draw the IPC attribute reach graph\n");
 	exit(EX_USAGE);
 }
 

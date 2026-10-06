@@ -43,6 +43,9 @@
 #include <capability.h>
 
 #include "switchboard.h"
+#include "authority.h"
+
+#define AUTHORITY_TIMER_IDENT ((uintptr_t)1 << (sizeof(uintptr_t) * 8 - 6))
 #include "switchboard_audit.h"
 #include "fd_budget.h"
 #include "switchboard_probes.h"
@@ -175,7 +178,9 @@ switchboard_dispatch_event(struct kevent *kev)
 	 * Restart, stop-kill, on-demand, launch, and periodic activation timers.
 	 */
 	if (kev->filter == EVFILT_TIMER) {
-		if (registry_watch_is_timer(kev->ident))
+		if (kev->ident == AUTHORITY_TIMER_IDENT)
+			svc_authority_collect();
+		else if (registry_watch_is_timer(kev->ident))
 			registry_watch_timer_fire(switchboard_kq);
 		else if (on_demand_is_timer(kev->ident))
 			on_demand_timeout(kev->ident,
@@ -298,6 +303,7 @@ main(int argc, char *argv[])
 	sd.coalition_svc_fd = -1;
 	sd.capprotect_fd = -1;
 	sd.identity_fd = -1;
+	sd.authority_issuer_fd = -1;
 
 	/*
 	 * LOG_CONS: during early boot switchboard runs before syslogd exists, so
@@ -384,6 +390,16 @@ main(int argc, char *argv[])
 			else
 				sd.identity_fd = (int)val;
 		}
+		s = getenv("SWITCHBOARD_AUTHORITY_FD");
+		if (s != NULL) {
+			errno = 0;
+			val = strtol(s, &endp, 10);
+			if (errno != 0 || *endp != '\0' ||
+			    val < 0 || val > INT_MAX)
+				sd.authority_issuer_fd = -1;
+			else
+				sd.authority_issuer_fd = (int)val;
+		}
 	}
 	if (sd.channel_svc_fd >= 0) {
 		(void)fcntl(sd.channel_svc_fd, F_SETFL, O_NONBLOCK);
@@ -428,6 +444,7 @@ main(int argc, char *argv[])
 			sd.coalition_svc_fd,
 			sd.capprotect_fd,
 			sd.identity_fd,
+			sd.authority_issuer_fd,
 		};
 		for (int i = 0; i < (int)(sizeof(lockfds)/sizeof(lockfds[0])); i++) {
 			if (lockfds[i] < 0)
@@ -445,6 +462,7 @@ main(int argc, char *argv[])
 		}
 	}
 
+	svc_authority_policy_init();
 	if (validate_default_identity() == -1)
 		return (1);
 	if (switchboard_fd_budget_raise_limit() == -1) {
@@ -471,6 +489,14 @@ main(int argc, char *argv[])
 		return (1);
 	}
 
+	/* Expire abandoned grants even when no new authentication occurs. */
+	EV_SET(&kev, AUTHORITY_TIMER_IDENT, EVFILT_TIMER, EV_ADD,
+	    NOTE_SECONDS, 1, NULL);
+	if (kevent(switchboard_kq, &kev, 1, NULL, 0, NULL) == -1) {
+		syslog(LOG_ERR, "authority maintenance timer: %m");
+		return (1);
+	}
+
 	/* Register Capsule channel for read (detect EOF = Capsule exited). */
 	EV_SET(&kev, sd.capsule_channel_fd, EVFILT_READ, EV_ADD, 0, 0, NULL);
 	if (kevent(switchboard_kq, &kev, 1, NULL, 0, NULL) == -1) {
@@ -489,6 +515,11 @@ main(int argc, char *argv[])
 	/* Initialize bundle registry (scan /Capabilities/System + /Capabilities). */
 	if (bundle_registry_init() == -1) {
 		syslog(LOG_CRIT, "bundle registry init failed — aborting");
+		return (1);
+	}
+
+	if (svc_authority_applications_sync() == -1) {
+		syslog(LOG_CRIT, "application catalogue init failed — aborting");
 		return (1);
 	}
 

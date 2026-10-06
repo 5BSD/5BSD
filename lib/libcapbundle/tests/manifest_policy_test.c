@@ -484,35 +484,21 @@ ATF_TC_BODY(on_mount_parses, tc)
 	ATF_CHECK(svc.activation_on_mount);
 }
 
-/* ---- mint_authority ---------------------------------------------------- */
-
-ATF_TC_WITHOUT_HEAD(mint_authority_parses);
-ATF_TC_BODY(mint_authority_parses, tc)
+/* Retired user-authority declarations must not be silently accepted. */
+ATF_TC_WITHOUT_HEAD(retired_authority_rejected);
+ATF_TC_BODY(retired_authority_rejected, tc)
 {
 	struct capbundle_service svc;
-	char err[256];
+	const char *values[] = { "true", "false" };
+	char body[256], err[256];
+	unsigned i;
 
-	ATF_REQUIRE_EQ_MSG(0, parse_unit(
-	    "activation { boot = true; }\nmint_authority = true;\n",
-	    &svc, err, sizeof(err)), "unexpected error: %s", err);
-	ATF_CHECK(svc.mint_authority);
-}
-
-ATF_TC_WITHOUT_HEAD(mint_authority_defaults_false);
-ATF_TC_BODY(mint_authority_defaults_false, tc)
-{
-	struct capbundle_service svc;
-	char err[256];
-
-	ATF_REQUIRE_EQ_MSG(0, parse_unit(
-	    "activation { boot = true; }\n", &svc, err, sizeof(err)),
-	    "unexpected error: %s", err);
-	ATF_CHECK(!svc.mint_authority);
-	/* An explicit false is also honored. */
-	ATF_REQUIRE_EQ_MSG(0, parse_unit(
-	    "activation { boot = true; }\nmint_authority = false;\n",
-	    &svc, err, sizeof(err)), "unexpected error: %s", err);
-	ATF_CHECK(!svc.mint_authority);
+	for (i = 0; i < sizeof(values) / sizeof(values[0]); i++) {
+		snprintf(body, sizeof(body), "activation { boot = true; } "
+		    "mint_authority = %s;", values[i]);
+		ATF_REQUIRE_EQ(-1, parse_unit(body, &svc, err, sizeof(err)));
+		ATF_CHECK(strstr(err, "mint_authority") != NULL);
+	}
 }
 
 /* ---- private helper units --------------------------------------------- */
@@ -699,8 +685,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, queue_directory_absolute_parses);
 	ATF_TP_ADD_TC(tp, queue_directory_relative_rejected);
 	ATF_TP_ADD_TC(tp, on_mount_parses);
-	ATF_TP_ADD_TC(tp, mint_authority_parses);
-	ATF_TP_ADD_TC(tp, mint_authority_defaults_false);
+	ATF_TP_ADD_TC(tp, retired_authority_rejected);
 	ATF_TP_ADD_TC(tp, watchdog_interval_parses);
 	ATF_TP_ADD_TC(tp, watchdog_defaults_zero);
 	ATF_TP_ADD_TC(tp, watchdog_zero_interval_rejected);

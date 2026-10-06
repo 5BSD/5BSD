@@ -5,14 +5,10 @@
  *
  * switchboard capability control plane.
  *
- * switchboard self-serves the "system.switchboard" (control) and "system.lifecycle"
- * discovery names over the ambient plane; an admin login session's lookup
- * mints a channel whose grant carries SVC_RIGHTS_ADMIN, and switchboard adopts the
- * provider end here (sctl_adopt_channel).  Administrative commands (status,
- * reload, services, start, stop) arrive as single libchannel request/reply
- * messages and are authorized by the held ADMIN right — never a peer uid.  The
- * getpeereid(2) unix-domain control socket this file used to bind was retired
- * (docs/capability-authority-model.md).
+ * SwitchBoard self-serves control and lifecycle discovery endpoints. Requests
+ * carry kernel-stamped software authority. Mutating operations require both
+ * the held ADMIN right and the current software management attribute; status
+ * queries require an attributed control client but not management authority.
  */
 
 #include <sys/types.h>
@@ -36,6 +32,7 @@
 #include <unistd.h>
 
 #include "switchboard.h"
+#include "authority.h"
 #include "switchboard_audit.h"
 #include "switchboard_ctl.h"
 #include "switchboard_svc_proto.h"
@@ -61,15 +58,9 @@ struct sctl_conn {
 	int			fd;		/* the channel fd (kqueue key) */
 	struct channel		*cap_channel;
 	uint64_t		cap_rights;
-	/*
-	 * The caller's principal, taken from the minted session channel this
-	 * control connection was opened over (svc_domain.uid).  This is the
-	 * capability-model identity -- recorded by bsdauth when it minted the
-	 * USER session, never a wire-supplied or peer-socket uid.  Used as the
-	 * audit principal and, for USER-class units, to authorize the owning
-	 * user to manage its own agents.  (uid_t)-1 for a SYSTEM-domain control
-	 * channel, whose authority is the held ADMIN right, not a uid.
-	 */
+	/* Issuer-recorded context UID, not a login-derived grant. Exec catalogue
+	 * applications use (uid_t)-1. Bound-channel and sender checks enforce
+	 * software authority independently of this compatibility field. */
 	uid_t			uid;
 };
 
@@ -272,7 +263,6 @@ sctl_cmd_tree(struct sctl_reply *reply, char *summary, size_t sumlen)
 		sctl_tree_children(summary, sumlen, &off, sd.root_coalition_id,
 		    1);
 	}
-	off = domain_sessions_format(summary, sumlen, off);
 	/* Units activated by a session, under it. */
 	for (i = 0; i < sd.nservices; i++) {
 		struct svc_runtime *svc = &sd.services[i];
@@ -316,8 +306,9 @@ sctl_cmd_tree(struct sctl_reply *reply, char *summary, size_t sumlen)
 
 /*
  * Execute a capability control operation. is_admin is the operator right
- * derived from the session's system.switchboard.admin anointment; audit_uid
- * is the authenticated principal recorded on the channel. UID 0 is not a
+ * derived from held endpoint rights and the actual sender's current
+ * system.switchboard.admin attribute; audit_uid is the connection UID,
+ * checked against the sender before dispatch. UID 0 is not a
  * bypass. Owners may manage their USER units, and CORE remains protected.
  * Fills reply status, summary length and summary text.
  */
@@ -496,13 +487,10 @@ sctl_execute_op(uint32_t op, const char *payload, uint32_t datalen,
 /* ----------------------------------------------------------------
  * Capability control path (P3)
  *
- * switchboard self-serves SWITCHBOARD_CONTROL_NAME over the discovery plane.  A lookup
- * from an admin login session (see naming_lookup) mints a channel pair whose
- * grant carries SVC_RIGHTS_ADMIN; switchboard adopts the provider end here and runs
- * the shared sctl_execute_op() gated on that right — the capability successor to
- * the socket's getpeereid euid.  The request/reply are single libchannel messages
- * (no SCM_RIGHTS): a request is [sctl_request][payload], a reply is
- * [sctl_reply][summary].
+ * Each request is [sctl_request][payload]; replies are [sctl_reply][summary].
+ * Revalidate sender authority on every request so a cached connection cannot
+ * preserve permission after revocation. Management-class checks remain in
+ * force after administrative admission.
  * ---------------------------------------------------------------- */
 
 /*
@@ -532,6 +520,8 @@ sctl_cap_request(struct channel *ch __unused, struct channel_message *request,
     void *arg)
 {
 	struct sctl_conn *c = arg;
+	struct svc_domain actual;
+	struct svc_runtime *sender;
 	const struct sctl_request *req;
 	const void *data;
 	size_t len;
@@ -545,7 +535,10 @@ sctl_cap_request(struct channel *ch __unused, struct channel_message *request,
 	data = channel_message_data(request);
 	len = channel_message_length(request);
 
-	if (data == NULL || len < sizeof(*req)) {
+	if (svc_authority_resolve(request, &actual, &sender) == -1 ||
+	    actual.authority_identity == 0 || actual.uid != c->uid) {
+		reply.status = EPERM;
+	} else if (data == NULL || len < sizeof(*req)) {
 		reply.status = EINVAL;
 	} else {
 		req = data;
@@ -559,7 +552,8 @@ sctl_cap_request(struct channel *ch __unused, struct channel_message *request,
 			snprintf(summary, sizeof(summary),
 			    "invalid control request encoding");
 		} else {
-			bool is_admin = sctl_rights_is_admin(c->cap_rights);
+			bool is_admin = sctl_rights_is_admin(c->cap_rights) &&
+			    svc_anoint_holds(&actual.anoint, SVC_ANOINT_SWITCHBOARD_ADMIN);
 
 			memcpy(payload, (const char *)data + sizeof(*req),
 			    req->datalen);
@@ -572,14 +566,7 @@ sctl_cap_request(struct channel *ch __unused, struct channel_message *request,
 			case SCTL_OP_RELOAD:
 			case SCTL_OP_START_SVC:
 			case SCTL_OP_STOP_SVC:
-				/*
-				 * The held ADMIN right is the authority for
-				 * SYSTEM-class ops; the audit principal is the
-				 * caller's minted-channel uid (recorded by bsdauth
-				 * when it minted the session), or (uid_t)-1 for a
-				 * SYSTEM-domain channel whose authority is the
-				 * right alone.
-				 */
+				/* is_admin combines held rights with current attributes. */
 				sctl_execute_op(req->op, payload, req->datalen,
 				    is_admin, c->uid, &reply, summary,
 				    sizeof(summary));
@@ -620,6 +607,8 @@ sctl_capsule_request(struct channel *ch __unused,
     struct channel_message *request, void *arg)
 {
 	struct sctl_conn *c = arg;
+	struct svc_domain actual;
+	struct svc_runtime *sender;
 	const struct ctl_request *req;
 	struct ctl_reply reply;
 	char summary[SWITCHBOARD_CTL_SUMMARY_MAX];
@@ -633,7 +622,11 @@ sctl_capsule_request(struct channel *ch __unused,
 	data = channel_message_data(request);
 	len = channel_message_length(request);
 
-	if (data == NULL || len != sizeof(*req)) {
+	if (svc_authority_resolve(request, &actual, &sender) == -1 ||
+	    actual.authority_identity == 0 || actual.uid != c->uid ||
+	    !svc_anoint_holds(&actual.anoint, SVC_ANOINT_SWITCHBOARD_ADMIN)) {
+		reply.status = EPERM;
+	} else if (data == NULL || len != sizeof(*req)) {
 		reply.status = EINVAL;
 	} else {
 		req = data;

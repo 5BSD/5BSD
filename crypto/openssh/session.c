@@ -91,22 +91,6 @@
 #include "sftp.h"
 #include "atomicio.h"
 
-/* 5BSD: ambient service lookup-channel session provisioning (§21/§22). */
-#include <sys/capsicum.h>
-#include <libservice.h>
-#include <libcapbundle.h>
-#include <service_bootstrap.h>
-
-/*
- * The ambient lookup channel provisioned for this session: the monitor mints
- * the session's uid-scoped channel over this connection's private SYSTEM
- * channel and passes it back (mm_provision_session).  A file static because
- * do_child provisions it while still root and do_setup_env (a separate
- * function) advertises it in the child's environment; the sshd session child is
- * single-threaded and execs once, so a static is safe.  -1 = none.
- */
-static int ambient_prov_fd = -1;
-
 #if defined(KRB5) && defined(USE_AFS)
 #include <kafs.h>
 #endif
@@ -124,31 +108,6 @@ static int ambient_prov_fd = -1;
  */
 #ifdef DISABLE_FD_PASSING
 #define mm_pty_allocate pty_allocate
-/*
- * 5BSD §21/§22: without FD passing the post-auth privsep child retains root
- * (privsep_postauth skip_privdrop) in the same process image, so it mints the
- * session's uid-scoped lookup channel directly over this connection's private
- * SYSTEM channel (adopted in sshd-session.c) rather than routing the request
- * through the monitor.  Best-effort — a missing channel yields no provisioning.
- */
-extern int ambient_session_lookup_fd;
-static int
-mm_provision_session(uid_t uid, int *out_fd)
-{
-
-	if (ambient_session_lookup_fd < 0) {
-		errno = ENOENT;
-		return (-1);
-	}
-	/*
-	 * The auth-agent resolves the principal and applies the admin policy;
-	 * this retains-root post-auth child installs the channel directly (no
-	 * forward), so it asks for a non-transferable descriptor.  Direct
-	 * minting is retired, so there is no fallback.
-	 */
-	return (service_mint_session_via_agent(ambient_session_lookup_fd, uid,
-	    0, SERVICE_MINT_SESSION_TIMEOUT_MS, out_fd));
-}
 #endif
 
 #define IS_INTERNAL_SFTP(c) \
@@ -1206,7 +1165,6 @@ do_setup_env(struct ssh *ssh, Session *s, const char *shell)
 		for (i = 0; env[i]; i++)
 			fprintf(stderr, "  %.200s\n", env[i]);
 	}
-
 	return env;
 }
 
@@ -1514,20 +1472,11 @@ child_close_fds(struct ssh *ssh)
 	log_redirect_stderr_to(NULL);
 
 	/*
-	 * Only the authenticated monitor may provision this session. Replace
-	 * the inherited provider context even if provisioning failed, before
-	 * any user command runs. The installed reference needs no spare fd.
+	 * Close any extra open file descriptors so that we don't have them
+	 * hanging around in clients.  Note that we want to do this after
+	 * initgroups, because at least on Solaris 2.3 it leaves file
+	 * descriptors open.
 	 */
-	if (service_clear_ambient_lookup() == -1 && errno != ENOSYS)
-		fatal("clear discovery context: %s", strerror(errno));
-	if (ambient_prov_fd >= 0) {
-		if (service_install_ambient_lookup(ambient_prov_fd) == -1)
-			debug("session discovery install: %s", strerror(errno));
-		else if (service_session_join_coalition(ambient_prov_fd) == -1)
-			debug("session coalition join: %s", strerror(errno));
-		(void)close(ambient_prov_fd);
-		ambient_prov_fd = -1;
-	}
 	closefrom(STDERR_FILENO + 1);
 }
 
@@ -1571,15 +1520,6 @@ do_child(struct ssh *ssh, Session *s, const char *command)
 	/* When PAM is enabled we rely on it to do the nologin check */
 	if (!options.use_pam)
 		do_nologin(pw);
-	/*
-	 * 5BSD §21: ask the privileged monitor to obtain a principal-scoped
-	 * channel from BSDAuth.  Install it in kernel process state after the
-	 * credential transition.  Provisioning failure leaves this UNIX session
-	 * without discovery authority; descriptor cleanup cannot erase an
-	 * installed process context.
-	 */
-	ambient_prov_fd = -1;
-	(void)mm_provision_session(pw->pw_uid, &ambient_prov_fd);
 	do_setusercontext(pw);
 	/*
 	 * PAM session modules in do_setusercontext may have

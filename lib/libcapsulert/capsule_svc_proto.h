@@ -281,18 +281,13 @@ struct capsule_system_req {
  *   req_fds[0] = ambient lookup channel client end (SCM_RIGHTS)
  *   reply: capsule_reply { .status }
  *
- * switchboard sends a dup of its retained SYSTEM ambient lookup channel client end
- * so Capsule (PID 1) can carry it into interactive logins.  Capsule is
- * the parent of the getty/login sessions spawned from /etc/ttys; those are
- * siblings of /etc/rc and never inherit switchboard's SERVICE_LOOKUP_FD
- * environment.  capsule stores the fd, makes it fork/exec-durable, and
- * installs it in the kernel context just before exec'ing each getty so
- * login inherits the discovery channel at the fixed number.
+ * SwitchBoard passes its retained discovery route to Capsule (PID 1), which
+ * installs it in the kernel-held process context for descendant inheritance.
+ * The route carries no user or application grants.  Ordinary fork/exec and
+ * descriptor scrubbing need no environment variable or reserved descriptor.
  *
- * Strictly best-effort: the rc path already carries the channel by environment
- * inheritance, so any failure here (send, receive, or install) is logged and
- * ignored on both ends and never disrupts boot, Capsule event loop, or a
- * login.  The reply is status-only with no attached fds.
+ * Installation failures are reported in the status-only reply without
+ * disrupting the Capsule event loop.  No descriptors are returned.
  */
 
 /*

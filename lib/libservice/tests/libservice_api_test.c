@@ -680,9 +680,6 @@ ATF_TC_BODY(api_rejects_invalid_descriptors_and_arguments, tc)
 	errno = 0;
 	ATF_CHECK_ERRNO(EINVAL, service_session_fail(NULL, EPROTO) == -1);
 	errno = 0;
-	ATF_CHECK_ERRNO(EINVAL, service_mint_session_via_agent(-1, 0,
-	    ~SERVICE_MINT_AGENT_FORWARDABLE, 100, &sdir) == -1);
-	errno = 0;
 	ATF_CHECK_ERRNO(EINVAL, service_storage_open_cache(NULL, "scratch", NULL) == -1);
 	errno = 0;
 	ATF_CHECK_ERRNO(EINVAL, service_storage_open_cache(NULL, NULL, &sdir) == -1);

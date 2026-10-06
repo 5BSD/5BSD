@@ -5,13 +5,14 @@
  *
  * Process-held discovery helpers. The kernel holds the inherited channel;
  * working descriptors and private per-handle reply queues are temporary.
- * Authentication providers replace the context with the target principal's
- * scoped channel. Registration failure never falls back to a shared receive
- * queue, and stale environment variables never restore a cleared context.
+ * Authentication installs separate protected authority, not another route.
+ * Registration failure never falls back to a shared receive queue, and stale
+ * environment variables never restore a cleared context.
  */
 
 #include <sys/types.h>
 #include <sys/cap_process.h>
+#include <sys/cap_authority.h>
 #include <sys/capsicum.h>
 #include <sys/event.h>
 #include <sys/ioctl.h>
@@ -36,6 +37,7 @@
 #include <unistd.h>
 
 #include "libservice.h"
+#include "libservice_session.h"
 #include "service_ambient_probes.h"
 #include "service_bootstrap.h"
 #include "switchboard_svc_proto.h"
@@ -57,6 +59,22 @@ process_context(int op, int fd, uid_t uid, void *data)
 		atomic_store(&available, 1);
 	}
 	return (syscall(SYS_cap_process, op, fd, uid, data));
+}
+
+int
+service_authority_install(int fd)
+{
+	return (process_context(CAP_AUTH_INSTALL, fd, 0, NULL));
+}
+int
+service_authority_clear(void)
+{
+	return (process_context(CAP_AUTH_CLEAR, -1, 0, NULL));
+}
+int
+service_authority_info(struct cap_authority_info *info)
+{
+	return (process_context(CAP_AUTH_INFO, -1, 0, info));
 }
 
 int
@@ -91,7 +109,7 @@ service_clear_ambient_lookup(void)
 }
 
 int
-service_install_ambient_lookup_uid(int fd, uid_t uid)
+service_install_ambient_lookup(int fd)
 {
 	if (fd < 0) {
 		errno = EBADF;
@@ -101,114 +119,24 @@ service_install_ambient_lookup_uid(int fd, uid_t uid)
 	 */
 	if (fcntl(fd, F_SETFD, FD_CLOEXEC) < 0)
 		return (-1);
-	return (process_context(MAC_CAP_PROCESS_SET, fd, uid, NULL));
+	/* Discovery is a route; the separate authority context identifies users. */
+	return (process_context(MAC_CAP_PROCESS_SET, fd, 0, NULL));
 }
 
 int
-service_install_ambient_lookup(int fd)
+service_session_join_fd(int fd)
 {
-	return (service_install_ambient_lookup_uid(fd, getuid()));
-}
+	struct coalition_req_hdr request = { .op = COALITION_OP_JOIN_REHOME };
+	struct coalition_reply response;
+	size_t length = sizeof(response), nfds = 0;
 
-/*
- * Join the calling process to its login session's coalition.
- *
- * A USER-domain session lookup channel (the one login(1), su(1), and sshd
- * install) is paired switchboard-side with a session coalition that stands
- * for the login session.  Asking for it over the channel and joining makes
- * this process, and by fork inheritance everything the session launches,
- * carry the session's coalition id (ps -o coal, procstat coalition, OES),
- * which is what lets any of them be walked back to the session.
- *
- * Call it from the session leader BEFORE it forks anything, so it is the
- * only holder of the channel while it waits for the reply.  Best-effort and
- * never fatal: ENOENT when the channel carries no coalition (a SYSTEM
- * channel), EBUSY when the process is already in a coalition (su from a
- * session shell stays in the login session's coalition), and any failure
- * leaves the session usable, just unattributed.
- */
-int
-service_session_join_coalition(int lookup_fd)
-{
-	uint32_t op = SVC_OP_SESSION_COALITION;
-	struct svc_reply reply_data;
-	struct service_message message = {
-		.size = sizeof(message),
-		.data = &op,
-		.length = sizeof(op),
-		.fds = NULL,
-		.nfds = 0,
-	};
-	int reply_fd = -1;
-	struct service_reply reply = {
-		.size = sizeof(reply),
-		.data = &reply_data,
-		.capacity = sizeof(reply_data),
-		.fds = &reply_fd,
-		.fd_capacity = 1,
-	};
-	struct service_call_options options = SERVICE_CALL_OPTIONS_INITIALIZER;
-	struct service_session *session;
-	struct coalition_req_hdr hdr;
-	struct coalition_reply crpl;
-	size_t rlen, rnfds;
-	int dupfd, error;
-
-	if (lookup_fd < 0) {
-		errno = EBADF;
+	if (capability_kernel_call(fd, &request, sizeof(request), NULL, 0,
+	    &response, &length, NULL, &nfds) == -1)
 		return (-1);
-	}
-	options.timeout_ms = 2000U;
-	dupfd = fcntl(lookup_fd, F_DUPFD_CLOEXEC, 0);
-	if (dupfd == -1)
-		return (-1);
-	if (service_session_create(dupfd, &session) == -1) {
-		error = errno;
-		(void)close(dupfd);
-		errno = error;
-		return (-1);
-	}
-	if (service_session_call(session, &message, &reply, &options) == -1) {
-		error = errno;
-		service_session_close(session);
-		errno = error;
-		return (-1);
-	}
-	service_session_close(session);
-	if (reply.length != sizeof(reply_data) || reply_data.status < 0 ||
-	    reply_data.status > ELAST ||
-	    (reply_data.status == 0 ? reply.nfds != 1 || reply_fd < 0 :
-				      reply.nfds != 0)) {
-		if (reply_fd >= 0)
-			(void)close(reply_fd);
-		errno = EBADMSG;
-		return (-1);
-	}
-	if (reply_data.status != 0) {
-		errno = reply_data.status;
-		return (-1);
-	}
-	memset(&hdr, 0, sizeof(hdr));
-	hdr.op = COALITION_OP_JOIN;
-	rlen = sizeof(crpl);
-	rnfds = 0;
-	if (capability_kernel_call(reply_fd, &hdr, sizeof(hdr), NULL, 0, &crpl,
-		&rlen, NULL, &rnfds) == -1) {
-		error = errno;
-		(void)close(reply_fd);
-		errno = error;
-		return (-1);
-	}
-	(void)close(reply_fd);
-	if (rlen != sizeof(crpl)) {
-		errno = EBADMSG;
-		return (-1);
-	}
-	if (crpl.status != 0) {
-		errno = crpl.status;
-		return (-1);
-	}
-	return (0);
+	if (length != sizeof(response) || nfds != 0 ||
+	    response.status < 0 || response.status > ELAST)
+		return (errno = EBADMSG, -1);
+	return (response.status == 0 ? 0 : (errno = response.status, -1));
 }
 
 /*

@@ -93,7 +93,7 @@ key_in(const char *key, const char *const *allowed, size_t nallowed)
 /*
  * Match the reverse-domain syntax enforced by switchboard's name registry:
  * [A-Za-z0-9._-], at least one dot, no leading/trailing/doubled dot, shorter
- * than maxlen.  Shared with the principal policy (principal_policy.c).
+ * than maxlen.  Shared by endpoint and software attribute validation.
  */
 bool
 capbundle_valid_service_name(const char *name, size_t maxlen)
@@ -1108,12 +1108,12 @@ validate_unit_schema(const ucl_object_t *root, char *errbuf, size_t errlen)
 	    "program", "activation",
 	    "restart", "control", "capabilities", "user", "group",
 	    "stop_timeout", "max_failures", "arguments", "environment",
-	    "protect", "limits", "umask", "level", "ambient", "mint_authority",
-	    "watchdog", "visible", "domain", "directories", "holds", "launch",
-	    "throttle", "nice" };
+	    "protect", "limits", "umask", "level", "ambient",
+	    "watchdog", "visible", "domain", "directories", "attributes", "holds", "launch",
+	    "throttle", "nice", "protocol" };
 	static const char *const watchdogkeys[] = { "interval" };
 	static const char *const launchkeys[] = { "responsible" };
-	static const char *const activationkeys[] = { "boot", "ipc", "timer",
+	static const char *const activationkeys[] = { "exec", "boot", "ipc", "timer",
 	    "path", "socket", "schedule", "persistent", "queue_directory",
 	    "on_mount", "helper" };
 	static const char *const timerkeys[] = { "interval" };
@@ -1122,6 +1122,7 @@ validate_unit_schema(const ucl_object_t *root, char *errbuf, size_t errlen)
 	    "nofile", "stack", "fsize", "core", "data", "memlock", "rss" };
 	static const char *const capkeys[] = { "system", "isolate" };
 	const ucl_object_t *caps, *arr, *v, *x;
+	bool exec_application = false;
 	ucl_object_iter_t it;
 	unsigned n;
 
@@ -1141,6 +1142,27 @@ validate_unit_schema(const ucl_object_t *root, char *errbuf, size_t errlen)
 			snprintf(errbuf, errlen, "%s must be a non-empty string shorter "
 			    "than %zu bytes", strings[n], limits[n]);
 			return (-1);
+		}
+	}
+	v = ucl_object_lookup(root, "protocol");
+	if (v != NULL) {
+		const ucl_object_t *ambient;
+
+		if (v->next != NULL || ucl_object_type(v) != UCL_STRING ||
+		    v->len != strlen(ucl_object_tostring(v)) ||
+		    (strcmp(ucl_object_tostring(v), "bsdchannel") != 0 &&
+		    strcmp(ucl_object_tostring(v), "unix") != 0)) {
+			snprintf(errbuf, errlen, "protocol must be bsdchannel or unix");
+			return (-1);
+		}
+		if (strcmp(ucl_object_tostring(v), "unix") == 0) {
+			ambient = ucl_object_lookup(root, "ambient");
+			if (ambient == NULL || ambient->next != NULL ||
+			    ucl_object_type(ambient) != UCL_BOOLEAN ||
+			    !ucl_object_toboolean(ambient)) {
+				snprintf(errbuf, errlen, "unix protocol requires ambient = true");
+				return (-1);
+			}
 		}
 	}
 	v = ucl_object_lookup(root, "program");
@@ -1213,12 +1235,19 @@ validate_unit_schema(const ucl_object_t *root, char *errbuf, size_t errlen)
 		return (-1);
 	}
 	/*
-	 * holds — the anointments this unit holds when it looks endpoints up
+	 * attributes — software attributes used when looking up endpoints
 	 * (docs/book/src/plane/anointments.md).  A string or array of reverse-domain
 	 * names; "*" is never legal here.  Absent = the empty set.
 	 */
-	v = ucl_object_lookup(root, "holds");
-	if (v != NULL && validate_anointment_names(v, "holds",
+	v = ucl_object_lookup(root, "attributes");
+	if (v != NULL && ucl_object_lookup(root, "holds") != NULL) {
+		snprintf(errbuf, errlen, "attributes and legacy holds cannot be combined");
+		return (-1);
+	}
+	/* Upgrade compatibility only: never merge two authority declarations. */
+	if (v == NULL)
+		v = ucl_object_lookup(root, "holds");
+	if (v != NULL && validate_anointment_names(v, "attributes",
 	    CAPBUNDLE_MAX_ANOINTMENTS, errbuf, errlen) != 0)
 		return (-1);
 	/*
@@ -1420,6 +1449,24 @@ validate_unit_schema(const ucl_object_t *root, char *errbuf, size_t errlen)
 	if (arr == NULL || validate_keys(arr, "activation", activationkeys,
 	    nitems(activationkeys), errbuf, errlen) != 0)
 		return (-1);
+	{
+		const ucl_object_t *exec = ucl_object_lookup(arr, "exec");
+		static const char *const exec_activation[] = { "exec" };
+		static const char *const exec_keys[] = {
+		    "program", "activation", "attributes", "holds", "domain" };
+
+		if (exec != NULL && ucl_object_type(exec) != UCL_BOOLEAN) {
+			snprintf(errbuf, errlen, "activation.exec must be a boolean");
+			return (-1);
+		}
+		exec_application = exec != NULL && ucl_object_toboolean(exec);
+		if (exec_application &&
+		    (validate_keys(arr, "exec activation", exec_activation,
+		    nitems(exec_activation), errbuf, errlen) != 0 ||
+		    validate_keys(root, "exec application", exec_keys,
+		    nitems(exec_keys), errbuf, errlen) != 0))
+			return (-1);
+	}
 	v = ucl_object_lookup(arr, "boot");
 	if (v != NULL && ucl_object_type(v) != UCL_BOOLEAN) {
 		snprintf(errbuf, errlen, "activation.boot must be a boolean");
@@ -1623,7 +1670,8 @@ validate_unit_schema(const ucl_object_t *root, char *errbuf, size_t errlen)
 			    "a helper unit must not publish an ipc name");
 			return (-1);
 		}
-		if ((v == NULL || !ucl_object_toboolean(v)) && x == NULL &&
+		if (!exec_application &&
+		    (v == NULL || !ucl_object_toboolean(v)) && x == NULL &&
 		    (helper == NULL || !ucl_object_toboolean(helper)) &&
 		    ucl_object_lookup(arr, "timer") == NULL &&
 		    ucl_object_lookup(arr, "path") == NULL &&
@@ -1634,7 +1682,7 @@ validate_unit_schema(const ucl_object_t *root, char *errbuf, size_t errlen)
 			snprintf(errbuf, errlen,
 			    "activation requires boot=true, at least one ipc "
 			    "name, a timer, a path, a socket, a schedule, a "
-			    "queue_directory, on_mount, or helper=true");
+			    "queue_directory, on_mount, helper=true, or exec=true");
 			return (-1);
 		}
 	}
@@ -2417,6 +2465,8 @@ capbundle_parse_unit_ucl(const char *path, const char *unit_path,
 	activation = ucl_object_lookup(root, "activation");
 	v = ucl_object_lookup(activation, "boot");
 	svc->activation_boot = v != NULL && ucl_object_toboolean(v);
+	v = ucl_object_lookup(activation, "exec");
+	svc->activation_exec = v != NULL && ucl_object_toboolean(v);
 	v = ucl_object_lookup(activation, "helper");
 	svc->is_helper = v != NULL && ucl_object_toboolean(v);
 	parse_ipc_list(activation, svc);
@@ -2443,7 +2493,8 @@ capbundle_parse_unit_ucl(const char *path, const char *unit_path,
 		svc->nrequires[0] = 0;	/* helpers are private, never gated */
 	}
 	/* Anointments this unit holds; validated in validate_unit_schema(). */
-	parse_string_array_n(root, "holds", svc->anointments,
+	parse_string_array_n(root, ucl_object_lookup(root, "attributes") != NULL ?
+	    "attributes" : "holds", svc->anointments,
 	    sizeof(svc->anointments[0]), CAPBUNDLE_MAX_ANOINTMENTS,
 	    &svc->nanointments);
 
@@ -2577,18 +2628,16 @@ capbundle_parse_unit_ucl(const char *path, const char *unit_path,
 	/* Restart policy */
 	svc->restart = parse_restart_policy(root, path);
 
+	{
+		const ucl_object_t *pv = ucl_object_lookup(root, "protocol");
+		svc->unix_protocol = pv != NULL &&
+		    strcmp(ucl_object_tostring(pv), "unix") == 0;
+	}
 	/* Ambient-authority (non-sandboxed) provider flag. */
 	{
 		const ucl_object_t *pv = ucl_object_lookup(root, "ambient");
 
 		svc->ambient = pv != NULL && ucl_object_toboolean(pv);
-	}
-
-	/* Mint-authority role (honored only for SYSTEM bundles; see manifest). */
-	{
-		const ucl_object_t *pv = ucl_object_lookup(root, "mint_authority");
-
-		svc->mint_authority = pv != NULL && ucl_object_toboolean(pv);
 	}
 
 	/*
