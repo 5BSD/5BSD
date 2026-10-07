@@ -11,8 +11,22 @@
  */
 #include <atf-c.h>
 #include <stdatomic.h>
+#include <time.h>
 #include <unistd.h>
+
+/* Advance cache age deterministically; real kqueue deadlines stay unchanged. */
+static time_t cache_clock_advance;
+static int
+cache_clock_gettime(clockid_t clock, struct timespec *value)
+{
+	int error = clock_gettime(clock, value);
+	if (error == 0 && clock == CLOCK_MONOTONIC)
+		value->tv_sec += cache_clock_advance;
+	return (error);
+}
+#define clock_gettime cache_clock_gettime
 #include "discovery.c"
+#undef clock_gettime
 
 struct blued_ctx blued_g;
 atomic_int blued_verbose;
@@ -249,7 +263,7 @@ ATF_TC_BODY(cached_results_expire, tc)
 	ATF_REQUIRE_EQ(0, blued_discovery_start(&c1, &params));
 	report(&a, 'a');
 	ATF_REQUIRE_EQ(1, adapters[0].count);
-	adapters[0].seen_at[0].tv_sec -= 3;
+	cache_clock_advance += 3;
 	ATF_REQUIRE_EQ(0, blued_discovery_start(&c2, &params));
 	ATF_CHECK_EQ(0, reports[11]);
 	/* An expired name must not be merged into a fresh nameless report. */
@@ -429,6 +443,194 @@ ext_report(struct blued_adapter *adp, uint8_t status,
 	blued_discovery_report(adp, event, 29 + n);
 }
 
+static void
+extended_set_report(uint8_t sid, bool response, const uint8_t *data, uint8_t n)
+{
+	uint8_t event[260] = {4, 0x3e, 0, 13, 1};
+	uint8_t *p = event + 5;
+	event[2] = 26 + n;
+	p[0] = response ? 0x0a : 0x02; /* scannable, optionally scan response */
+	p[3] = 0xab;
+	p[9] = 1;
+	p[10] = 1;
+	p[11] = sid;
+	p[13] = (uint8_t)-30;
+	p[23] = n;
+	if (n != 0)
+		memcpy(p + 24, data, n);
+	blued_discovery_report(&a, event, 29 + n);
+}
+
+static void
+legacy_payload(uint8_t address, uint8_t type, const uint8_t *data, uint8_t n)
+{
+	uint8_t event[46] = {4, 0x3e, 0, 2, 1};
+	ATF_REQUIRE(n <= 31);
+	event[2] = 12 + n;
+	event[5] = type;
+	event[7] = address;
+	event[13] = n;
+	if (n != 0)
+		memcpy(event + 14, data, n);
+	event[14 + n] = (uint8_t)-30;
+	blued_discovery_report(&a, event, 15 + n);
+}
+
+ATF_TC_WITHOUT_HEAD(legacy_and_extended_sets_do_not_mix);
+ATF_TC_BODY(legacy_and_extended_sets_do_not_mix, tc)
+{
+	const uint8_t uuid[] = {3, 3, 0x0d, 0x18};
+	const uint8_t name[] = {2, 9, 'x'};
+	setup();
+	params.uuid16 = 0x180d;
+	strlcpy(params.name_sub, "x", sizeof(params.name_sub));
+	ATF_REQUIRE_EQ(0, blued_discovery_start(&c1, &params));
+	legacy_payload(0xab, 0, uuid, sizeof(uuid));
+	extended_set_report(0xff, true, name, sizeof(name));
+	ATF_CHECK_EQ(0, reports[10]);
+	legacy_payload(0xab, 4, name, sizeof(name));
+	ATF_CHECK_EQ(1, reports[10]);
+}
+
+ATF_TC_WITHOUT_HEAD(non_scannable_advertising_discards_response);
+ATF_TC_BODY(non_scannable_advertising_discards_response, tc)
+{
+	const uint8_t name[] = {2, 9, 'x'};
+	uint8_t event[] = {4, 0x3e, 26, 13, 1,
+	    0, 0, 0, 0xab, 0, 0, 0, 0, 0, 1, 1, 1,
+	    0, (uint8_t)-30, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+	setup();
+	params.no_dedup = true;
+	ATF_REQUIRE_EQ(0, blued_discovery_start(&c1, &params));
+	legacy_payload(0xab, 4, name, sizeof(name));
+	legacy_payload(0xab, 3, NULL, 0); /* ADV_NONCONN_IND */
+	ATF_CHECK(!last[10].has_name);
+	extended_set_report(1, true, name, sizeof(name));
+	ATF_REQUIRE(last[10].has_name);
+	blued_discovery_report(&a, event, sizeof(event));
+	ATF_CHECK_EQ(4, reports[10]);
+	ATF_CHECK(!last[10].has_name);
+}
+
+ATF_TC_WITHOUT_HEAD(cache_eviction_clears_both_payloads);
+ATF_TC_BODY(cache_eviction_clears_both_payloads, tc)
+{
+	const uint8_t name[] = {2, 9, 'x'};
+	setup();
+	params.no_dedup = true;
+	ATF_REQUIRE_EQ(0, blued_discovery_start(&c1, &params));
+	legacy_payload(0, 4, name, sizeof(name));
+	for (unsigned i = 1; i <= BLE_MAX_SCAN_RESULTS; i++)
+		legacy_payload(i, 0, NULL, 0);
+	legacy_payload(0, 0, NULL, 0);
+	ATF_CHECK_EQ(BLE_MAX_SCAN_RESULTS, adapters[0].count);
+	ATF_CHECK(!last[10].has_name);
+	ATF_CHECK_EQ(BLE_MAX_SCAN_RESULTS + 2, reports[10]);
+}
+
+ATF_TC_WITHOUT_HEAD(incomplete_report_does_not_replace_complete_payload);
+ATF_TC_BODY(incomplete_report_does_not_replace_complete_payload, tc)
+{
+	setup();
+	params.no_dedup = true;
+	ATF_REQUIRE_EQ(0, blued_discovery_start(&c1, &params));
+	ext_report(&a, 0, (uint8_t[]){2, 9, 'a'}, 3);
+	ext_report(&a, 1, (uint8_t[]){3, 9, 'b'}, 3);
+	ATF_CHECK_EQ(1, reports[10]);
+	ATF_CHECK_STREQ("a", last[10].name);
+	ext_report(&a, 0, (uint8_t[]){'c'}, 1);
+	ATF_CHECK_EQ(2, reports[10]);
+	ATF_CHECK_STREQ("bc", last[10].name);
+}
+
+ATF_TC_WITHOUT_HEAD(advertising_sets_do_not_mix);
+ATF_TC_BODY(advertising_sets_do_not_mix, tc)
+{
+	const uint8_t uuid[] = {3, 3, 0x0d, 0x18};
+	const uint8_t name[] = {2, 9, 'x'};
+	setup();
+	params.uuid16 = 0x180d;
+	strlcpy(params.name_sub, "x", sizeof(params.name_sub));
+	ATF_REQUIRE_EQ(0, blued_discovery_start(&c1, &params));
+	extended_set_report(1, false, uuid, sizeof(uuid));
+	extended_set_report(2, true, name, sizeof(name));
+	ATF_CHECK_EQ(0, reports[10]); /* No set has both fields. */
+	extended_set_report(1, true, name, sizeof(name));
+	ATF_CHECK_EQ(1, reports[10]);
+}
+
+ATF_TC_WITHOUT_HEAD(advertising_replacement_removes_old_fields);
+ATF_TC_BODY(advertising_replacement_removes_old_fields, tc)
+{
+	const uint8_t old[] = {3, 3, 0x0d, 0x18, 2, 9, 'x',
+	    2, 1, 1, 3, 0xff, 0x34, 0x12};
+	const uint8_t response[] = {3, 3, 0x0f, 0x18};
+	setup();
+	params.no_dedup = true;
+	ATF_REQUIRE_EQ(0, blued_discovery_start(&c1, &params));
+	extended_set_report(1, false, old, sizeof(old));
+	extended_set_report(1, true, response, sizeof(response));
+	extended_set_report(1, false, NULL, 0);
+	ATF_CHECK(!last[10].has_name);
+	ATF_CHECK(!last[10].has_flags);
+	ATF_CHECK_EQ(0xffff, last[10].mfr_id);
+	ATF_REQUIRE_EQ(1, last[10].num_svc_uuids);
+	ATF_CHECK_EQ(0x180f, last[10].svc_uuids[0]);
+}
+
+ATF_TC_WITHOUT_HEAD(scan_response_replacement_removes_old_fields);
+ATF_TC_BODY(scan_response_replacement_removes_old_fields, tc)
+{
+	const uint8_t uuid[] = {3, 3, 0x0d, 0x18};
+	const uint8_t name[] = {2, 9, 'x'};
+	setup();
+	params.no_dedup = true;
+	ATF_REQUIRE_EQ(0, blued_discovery_start(&c1, &params));
+	extended_set_report(1, false, uuid, sizeof(uuid));
+	extended_set_report(1, true, name, sizeof(name));
+	extended_set_report(1, true, NULL, 0);
+	ATF_CHECK(!last[10].has_name);
+	ATF_REQUIRE_EQ(1, last[10].num_svc_uuids);
+	ATF_CHECK_EQ(0x180d, last[10].svc_uuids[0]);
+}
+
+ATF_TC_WITHOUT_HEAD(repeated_advertising_does_not_refresh_response);
+ATF_TC_BODY(repeated_advertising_does_not_refresh_response, tc)
+{
+	const uint8_t uuid[] = {3, 3, 0x0d, 0x18};
+	const uint8_t name[] = {2, 9, 'x'};
+	setup();
+	ATF_REQUIRE_EQ(0, blued_discovery_start(&c1, &params));
+	extended_set_report(1, true, name, sizeof(name));
+	cache_clock_advance += 2;
+	extended_set_report(1, false, uuid, sizeof(uuid));
+	ATF_CHECK(last[10].has_name);
+	cache_clock_advance += 2;
+	/* Replay must recheck each component's age even without a new report. */
+	ATF_REQUIRE_EQ(0, blued_discovery_start(&c2, &params));
+	ATF_REQUIRE_EQ(1, reports[11]);
+	ATF_CHECK(!last[11].has_name);
+	extended_set_report(1, false, uuid, sizeof(uuid));
+	ATF_CHECK(!last[10].has_name);
+}
+
+ATF_TC_WITHOUT_HEAD(repeated_response_does_not_refresh_advertising);
+ATF_TC_BODY(repeated_response_does_not_refresh_advertising, tc)
+{
+	const uint8_t uuid[] = {3, 3, 0x0d, 0x18};
+	const uint8_t name[] = {2, 9, 'x'};
+	setup();
+	params.no_dedup = true;
+	ATF_REQUIRE_EQ(0, blued_discovery_start(&c1, &params));
+	extended_set_report(1, false, uuid, sizeof(uuid));
+	cache_clock_advance += 2;
+	extended_set_report(1, true, name, sizeof(name));
+	cache_clock_advance += 2;
+	extended_set_report(1, true, name, sizeof(name));
+	ATF_CHECK_EQ(0, last[10].num_svc_uuids);
+	ATF_CHECK_STREQ("x", last[10].name);
+}
+
 ATF_TC_WITHOUT_HEAD(controller_fragment_isolation);
 ATF_TC_BODY(controller_fragment_isolation, tc)
 {
@@ -539,13 +741,15 @@ ATF_TC_BODY(scan_response_completes_filter, tc)
 {
 	uint8_t event[] = {4, 0x3e, 16, 2, 1, 0, 0,
 	    1, 2, 3, 4, 5, 6, 4, 3, 3, 0x0f, 0x18, (uint8_t)-30};
+	uint8_t response[] = {4, 0x3e, 15, 2, 1, 4, 0,
+	    1, 2, 3, 4, 5, 6, 3, 2, 9, 'a', (uint8_t)-30};
 	setup();
 	params.uuid16 = 0x180f;
 	strlcpy(params.name_sub, "a", sizeof(params.name_sub));
 	ATF_REQUIRE_EQ(0, blued_discovery_start(&c1, &params));
 	blued_discovery_report(&a, event, sizeof(event));
 	ATF_CHECK_EQ(0, reports[10]);
-	report(&a, 'a');
+	blued_discovery_report(&a, response, sizeof(response));
 	ATF_CHECK_EQ(1, reports[10]);
 	ATF_CHECK_EQ(0x180f, last[10].svc_uuids[0]);
 	ATF_CHECK_STREQ("a", last[10].name);
@@ -592,6 +796,15 @@ ATF_TC_BODY(stop_retry_after_adapter_reset, tc)
 
 ATF_TP_ADD_TCS(tp)
 {
+	ATF_TP_ADD_TC(tp, legacy_and_extended_sets_do_not_mix);
+	ATF_TP_ADD_TC(tp, non_scannable_advertising_discards_response);
+	ATF_TP_ADD_TC(tp, cache_eviction_clears_both_payloads);
+	ATF_TP_ADD_TC(tp, incomplete_report_does_not_replace_complete_payload);
+	ATF_TP_ADD_TC(tp, advertising_sets_do_not_mix);
+	ATF_TP_ADD_TC(tp, advertising_replacement_removes_old_fields);
+	ATF_TP_ADD_TC(tp, scan_response_replacement_removes_old_fields);
+	ATF_TP_ADD_TC(tp, repeated_advertising_does_not_refresh_response);
+	ATF_TP_ADD_TC(tp, repeated_response_does_not_refresh_advertising);
 	ATF_TP_ADD_TC(tp, fuchsia_rssi_unavailable);
 	ATF_TP_ADD_TC(tp, fuchsia_late_joiner_cached_results);
 	ATF_TP_ADD_TC(tp, cached_results_obey_new_client_filter);

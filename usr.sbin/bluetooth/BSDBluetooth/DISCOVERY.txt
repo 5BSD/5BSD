@@ -11,10 +11,19 @@ scan interval/window and accept-list policy must match. UUID, RSSI, name and
 limited-discovery filters belong to each client. Duplicate filtering is in
 the host so a late-joining client sees reports already delivered to another.
 Advertising and scan-response fields are merged within a bounded per-adapter
-cache. Extended advertisement fragment histories are independent per adapter.
+cache keyed by address, address type, legacy/extended kind and advertising
+SID. Each entry holds the current advertisement and current scan response
+separately. A new payload replaces that side's old fields rather than adding
+them indefinitely. Extended advertisement fragment histories are independent
+per adapter; incomplete fragments are reassembled before publication.
 New clients immediately receive matching cached observations without replaying
 them to existing clients. Observations older than three seconds are neither
 replayed nor merged, even when overlapping leases keep discovery running.
+Advertisement and response age independently: repeating one does not refresh
+the other. Replay rebuilds results from the unexpired payloads. Cache eviction
+and adapter loss clear both payloads. A non-scannable advertisement discards
+its set's old scan response. The existing IPC remains a device-level
+scan result; SID is an internal isolation key, not a new public API field.
 An unavailable RSSI (127) never satisfies an enabled minimum-RSSI filter.
 
 GAP SCAN_STOP (opcode 10) has the zero-filled 12-byte GAP request body apart

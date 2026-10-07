@@ -36,11 +36,20 @@ struct discovery_lease {
 	} seen[BLE_MAX_SCAN_RESULTS];
 	unsigned next_seen;
 };
+struct discovery_cache_entry {
+	uint8_t addr[6], addr_type, sid;
+	bool extended;
+	struct {
+		bool present;
+		struct ble_scan_result result;
+		struct timespec seen_at;
+	} part[2]; /* advertisement, scan response */
+	unsigned latest;
+};
 struct discovery_adapter {
 	struct blued_adapter *adapter;
 	struct hci_adv_parser *parser;
-	struct ble_scan_result cache[BLE_MAX_SCAN_RESULTS];
-	struct timespec seen_at[BLE_MAX_SCAN_RESULTS];
+	struct discovery_cache_entry cache[BLE_MAX_SCAN_RESULTS];
 	unsigned count, next;
 };
 static struct discovery_lease leases[BLUED_MAX_CTL];
@@ -54,14 +63,73 @@ static void lease_deliver(struct discovery_lease *, struct blued_adapter *,
 
 /* Results are observations from the current three-second scan window. */
 static bool
-cache_fresh(const struct discovery_adapter *state, unsigned slot,
+cache_fresh(const struct timespec *seen_at,
     const struct timespec *now)
 {
-	struct timespec expires = state->seen_at[slot];
+	struct timespec expires = *seen_at;
 
 	expires.tv_sec += 3;
 	return (now->tv_sec < expires.tv_sec ||
 	    (now->tv_sec == expires.tv_sec && now->tv_nsec < expires.tv_nsec));
+}
+
+static bool
+cache_result(const struct discovery_cache_entry *entry,
+    const struct timespec *now, struct ble_scan_result *result)
+{
+	bool fresh[2];
+	unsigned latest = entry->latest;
+
+	for (unsigned i = 0; i < 2; i++)
+		fresh[i] = entry->part[i].present &&
+		    cache_fresh(&entry->part[i].seen_at, now);
+	if (!fresh[0] && !fresh[1])
+		return (false);
+	if (!fresh[latest])
+		latest ^= 1;
+	*result = entry->part[latest].result;
+	if (fresh[latest ^ 1])
+		hci_scan_result_merge(result, &entry->part[latest ^ 1].result);
+	return (true);
+}
+
+static void
+cache_store(struct discovery_adapter *state, struct ble_scan_result *result,
+    bool extended, uint8_t sid, bool response, bool scannable,
+    const struct timespec *now)
+{
+	struct discovery_cache_entry *entry;
+	unsigned slot, part = response ? 1 : 0;
+
+	for (slot = 0; slot < state->count; slot++) {
+		entry = &state->cache[slot];
+		if (entry->addr_type == result->addr_type &&
+		    memcmp(entry->addr, result->addr, sizeof(entry->addr)) == 0 &&
+		    entry->extended == extended && entry->sid == sid)
+			break;
+	}
+	if (slot == state->count) {
+		if (state->count < nitems(state->cache))
+			state->count++;
+		else
+			slot = state->next++ % nitems(state->cache);
+		entry = &state->cache[slot];
+		memset(entry, 0, sizeof(*entry));
+		memcpy(entry->addr, result->addr, sizeof(entry->addr));
+		entry->addr_type = result->addr_type;
+		entry->extended = extended;
+		entry->sid = sid;
+	}
+	entry = &state->cache[slot];
+	/* A set that is no longer scannable cannot retain its old response. */
+	if (!response && !scannable)
+		entry->part[1].present = false;
+	/* Replace this payload; never accumulate fields from its older versions. */
+	entry->part[part].result = *result;
+	entry->part[part].seen_at = *now;
+	entry->part[part].present = true;
+	entry->latest = part;
+	(void)cache_result(entry, now, result);
 }
 
 bool
@@ -302,6 +370,7 @@ blued_discovery_start(struct blued_ctl_client *client,
     const struct ctl_scan_params *params)
 {
 	struct timespec now;
+	struct ble_scan_result result;
 	int error;
 
 	pthread_mutex_lock(&blued_g.reslist_lock);
@@ -317,9 +386,10 @@ blued_discovery_start(struct blued_ctl_client *client,
 			for (size_t j = 0; j < nitems(adapters); j++)
 				if (adapters[j].adapter != NULL)
 					for (unsigned k = 0; k < adapters[j].count; k++)
-						if (cache_fresh(&adapters[j], k, &now))
+						if (cache_result(&adapters[j].cache[k], &now,
+						    &result))
 							lease_deliver(lease, adapters[j].adapter,
-							    &adapters[j].cache[k]);
+							    &result);
 			break;
 		}
 	return (error);
@@ -415,6 +485,9 @@ blued_discovery_report(struct blued_adapter *adp, const uint8_t *buf, size_t len
 	if (clock_gettime(CLOCK_MONOTONIC, &now) != 0)
 		return;
 	for (unsigned i = 0; i < buf[4]; i++, off += consumed) {
+		bool extended = false, response, scannable;
+		uint8_t sid = 0xff;
+
 		memset(&result, 0, sizeof(result));
 		result.mfr_id = 0xffff;
 		if (ext) {
@@ -424,6 +497,14 @@ blued_discovery_report(struct blued_adapter *adp, const uint8_t *buf, size_t len
 			if (hci_parse_ext_adv_report_ctx(parser, buf + off,
 			    len - off, &result) == 0 || buf[off + 2] == 0xff)
 				continue;
+			/* Feed fragments to the parser, but publish only complete data. */
+			if ((buf[off] & 0x60) != 0)
+				continue;
+			extended = (buf[off] & 0x10) == 0;
+			response = (buf[off] & 0x08) != 0;
+			scannable = (buf[off] & 0x02) != 0;
+			if (extended)
+				sid = buf[off + 11];
 		} else {
 			if (len - off < 10 || buf[off + 8] > 31 ||
 			    len - off < (size_t)10 + buf[off + 8])
@@ -436,23 +517,10 @@ blued_discovery_report(struct blued_adapter *adp, const uint8_t *buf, size_t len
 			result.addr_type = (buf[off + 1] & 1) ? BDADDR_LE_RANDOM : BDADDR_LE_PUBLIC;
 			memcpy(result.addr, buf + off + 2, 6);
 			hci_parse_ad_fields(buf + off + 9, buf[off + 8], &result);
+			response = buf[off] == 4;
+			scannable = buf[off] == 0 || buf[off] == 2;
 		}
-		/* Advertising and scan-response fields can arrive separately. */
-		unsigned slot;
-		for (slot = 0; slot < state->count; slot++)
-			if (state->cache[slot].addr_type == result.addr_type &&
-			    memcmp(state->cache[slot].addr, result.addr, 6) == 0)
-				break;
-		if (slot < state->count) {
-			if (cache_fresh(state, slot, &now))
-				hci_scan_result_merge(&result, &state->cache[slot]);
-		}
-		else if (state->count < nitems(state->cache))
-			state->count++;
-		else
-			slot = state->next++ % nitems(state->cache);
-		state->cache[slot] = result;
-		state->seen_at[slot] = now;
+		cache_store(state, &result, extended, sid, response, scannable, &now);
 		scan_deliver(adp, &result);
 	}
 }
