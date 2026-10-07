@@ -1,0 +1,140 @@
+5BSD adapters for Fuchsia Bluetooth tests
+
+Classic audio addition (2026-10-07)
+audio_avdtp_test:fuchsia_timeout_late_response adapts command_timeout from:
+https://fuchsia.googlesource.com/fuchsia/+/9b7f2acde09d777a85d6c2172fb8343f77bdfd7a/src/connectivity/bluetooth/lib/bt-avdtp/src/tests.rs
+Copyright 2018 The Fuchsia Authors. All rights reserved.
+The BSD-2-Clause license reproduced below applies to this adaptation too.
+An actual SOCK_SEQPACKET peer replaces Fuchsia's socket/FIDL test transport;
+a bounded native monotonic deadline replaces its fake executor timer. The
+stale response's wire contents and transaction-label separation are retained.
+A second, distinguishable response proves completion belongs to the new call.
+This is an adapted test, not execution of the upstream Rust suite.
+
+audio_avdtp_test:fuchsia_acceptor_start_suspend_abort uses the state-transition
+oracle from stream_endpoint.rs::start_and_suspend at the same pinned revision:
+https://fuchsia.googlesource.com/fuchsia/+/9b7f2acde09d777a85d6c2172fb8343f77bdfd7a/src/connectivity/bluetooth/lib/bt-avdtp/src/stream_endpoint.rs
+Copyright 2018 The Fuchsia Authors. All rights reserved.
+The native test adds Abort/reconfigure coverage. Native discovery, restart,
+media backpressure and fuzz tests are new 5BSD tests inspired by the test
+families; they are not copied Fuchsia test implementations.
+
+fuchsia_gatt_test contains 44 adapted ClientTest cases from Fuchsia's GATT
+suite and two native extensions, using the real 5BSD att.c and gatt.c
+implementations. It is a packet-level
+subset, not the original Fuchsia test runner or the whole Sapphire suite.
+
+Upstream source:
+https://fuchsia.googlesource.com/fuchsia/+/3b941a4bfbdd0a96cde4c3632d1d60e586e8114e/src/connectivity/bluetooth/core/bt-host/gatt/client_unittest.cc
+Source SHA256:
+d78bdb5bdf0bd2568c40fc134f4c0e232f5dcb96466607ec9c19b821e05251bd
+
+Adaptation boundary
+The adapted upstream test names, request/response octets and successful
+discovery results are retained. A socketpair peer validates each outgoing request
+before delivering the corresponding response. The native synchronous GATT
+call replaces Fuchsia's Client callbacks and mock L2CAP channel. Tests use
+production ATT/GATT logic; controller/logging hooks come from test_common.h.
+This is software protocol testing, not radio or kernel L2CAP interoperability.
+
+Fuchsia HostError::kPacketMalformed maps to a negative native result; ATT
+error codes retain their wire values. Native read-error tests require outlen=0
+as the equivalent of Fuchsia's empty callback value. Malformed fixed-size
+responses check the failed bearer and prohibit another write on that bearer.
+Fuchsia-specific callback delivery, Inspect state and object lifetime are
+outside this adapter. It does not assert physical link teardown.
+
+ExecutePrepareWritesErrorFailure uses the native long-write convenience API:
+the upstream first prepare/error/cancel wire sequence is retained, but the
+never-transmitted second queued fragment is not represented by our API.
+ExecuteWriteMalformedResponse extends WriteRequestMalformedResponse to the
+Execute opcode. PrepareWriteValueEchoCorruptionSweep extends the reliable
+write corruption cases across three value octets and short/long echoes.
+These two names are native extensions, not original upstream test names.
+
+Additional native comparisons inspired by Fuchsia
+smp_keys_edge_test checks stable local identity versus private on-air addresses,
+using Phase3::SendIdentityInfo and InitiatorSendsLocalIdKey as references.
+l2cap_data_deep_test checks maximum-frame overflow and recovery, inspired by
+RecombinationDroppedForFrameWithMaxSize. It runs the kernel receive routine
+with userspace mbuf fixtures, not a running kernel or radio.
+Exact per-case references are in spec_test_references.tsv.
+
+One deliberate comparison difference
+DiscoverPrimaryEmptyDataList retains Fuchsia's expected success as a scoped
+ATF expected failure. Fuchsia explicitly tolerates this malformed reply.
+5BSD rejects it with EPROTO. Core 6.2 Vol 3 Part F Table 3.25 specifies a
+minimum four-octet Attribute Data List, so no production parser was relaxed.
+The test independently requires the exact native rejection. Packet exchange,
+completion count and output count checks are outside the expected failure.
+Kyua may count expected failures as successful outcomes in its summary; do
+not describe this case as matching Fuchsia.
+
+Build/run (standard object tree, no installation required)
+make -C /usr/src/tests/usr.sbin/bluetooth/BSDBluetooth -j$(sysctl -n hw.ncpu) fuchsia_gatt_test Kyuafile
+env LD_LIBRARY_PATH=/usr/obj/usr/src/amd64.amd64/lib/libbluetooth:/usr/obj/usr/src/amd64.amd64/lib/libble:/usr/obj/usr/src/amd64.amd64/lib/libmesh kyua test -k /usr/obj/usr/src/amd64.amd64/tests/usr.sbin/bluetooth/BSDBluetooth/Kyuafile fuchsia_gatt_test
+
+Additional discovery and audio review (2026-10-07)
+discovery_test adapts the BSD-licensed Fuchsia f15 cases at revision
+3b941a4bfbdd0a96cde4c3632d1d60e586e8114e:
+ src/connectivity/bluetooth/core/bt-host/gap/discovery_filter_unittest.cc
+   DiscoveryFilterTest.RSSI
+ src/connectivity/bluetooth/core/bt-host/gap/low_energy_discovery_manager_unittest.cc
+   StartDiscoveryWithFiltersCachedPeerNotifications
+   SetResultCallbackIgnoresRemovedPeers
+Copyright 2017 The Fuchsia Authors. All rights reserved.
+The native removed-cache case removes an adapter rather than a Fuchsia peer.
+Three-second cache expiry and suppression of replay to existing clients are
+5BSD policy checks, not assertions that Fuchsia uses the same cache lifetime.
+
+audio_avdtp_test:fuchsia_acceptor_get_configuration adapts get_configuration
+in bt-avdtp/src/stream_endpoint.rs at the existing audio reference revision
+9b7f2acde09d777a85d6c2172fb8343f77bdfd7a. It verifies configuration is absent
+before setup and after abort, and exact negotiated SBC fields in between.
+
+Current Sapphire/Pigweed discovery and peer-cache tests were also reviewed at
+83c98d69b2d8f251c46c59e6b1c6231355a30474. Those files are Apache-2.0, not BSD.
+No code from those Apache-licensed files is imported by this review; the
+adapted expectations above use the identified BSD-licensed Fuchsia sources.
+
+Expanding coverage
+Add independently attributed upstream cases at the corresponding 5BSD API
+boundary: characteristic/descriptor discovery and ATT read/write first,
+then SMP pairing transcripts, L2CAP segmentation/signaling and HCI command
+queues. Each needs explicit result/error mapping and documented differences.
+Keep upstream expectations separate from 5BSD-specific assertions. Preserve
+the revision and license when copying further fixtures.
+
+Running upstream itself
+Current Sapphire lives in Pigweed and documents:
+bazelisk test --config googletest //pw_bluetooth_sapphire/host/...
+https://pigweed.dev/pw_bluetooth_sapphire/#running-tests
+That target exercises Sapphire. It does not substitute 5BSD's implementation.
+The original upstream runner has not been built or executed by this adapter.
+
+Upstream license (BSD-2-Clause)
+Copyright 2019 The Fuchsia Authors.
+Adapted test source: Copyright 2018 The Fuchsia Authors. All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are
+met:
+
+   * Redistributions of source code must retain the above copyright
+notice, this list of conditions and the following disclaimer.
+   * Redistributions in binary form must reproduce the above
+copyright notice, this list of conditions and the following disclaimer
+in the documentation and/or other materials provided with the
+distribution.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+"AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.

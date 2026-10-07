@@ -319,11 +319,9 @@ struct att_conn {
 	uintptr_t	ind_timer;	/* kqueue EVFILT_TIMER ident, 0 if none */
 	/*
 	 * Self-armed confirmation deadline (CLOCK_MONOTONIC).  att_send_indication
-	 * stamps this 30 s ahead whenever it sets ind_pending, and clears a
-	 * pending indication that blew past it before sending the next one, so a
-	 * caller that forgets to arm the kqueue timer can no longer wedge every
-	 * future indication at EBUSY.  Independent of ind_timer (the optional
-	 * main-loop kqueue timer that still provides timely teardown).
+	 * stamps this 30 s ahead whenever it sets ind_pending. Expiry fails the
+	 * originating bearer; it cannot be reused for a new transaction.
+	 * Independent of ind_timer (the main-loop timer for timely teardown).
 	 */
 	struct timespec	ind_deadline;
 
@@ -395,6 +393,8 @@ int	att_open(struct att_conn *ac, const uint8_t *local_addr,
 int	att_open_fd(struct att_conn *ac, int fd, const uint8_t *local_addr,
 	    uint8_t own_addr_type, const uint8_t *addr, uint8_t addr_type);
 void	att_close(struct att_conn *ac);
+/* Permanently fail one bearer after a protocol transaction timeout. */
+void	att_bearer_fail(struct att_conn *ac, int fd);
 /*
  * Cap every subsequent att_request() on this connection at `ms` milliseconds
  * (0 restores the 30 s ATT default).  The bound is a ceiling: the effective

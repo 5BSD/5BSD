@@ -877,6 +877,31 @@ ATF_TC_BODY(gattsrv_round_trip, tc)
 	close(d);
 }
 
+ATF_TC(nonregular_file_rejected);
+ATF_TC_HEAD(nonregular_file_rejected, tc)
+{
+	atf_tc_set_md_var(tc, "timeout", "5");
+}
+ATF_TC_BODY(nonregular_file_rejected, tc)
+{
+	int d = open_cwd_dir();
+	uint8_t value = 0x5a;
+	uint32_t count = 99;
+	uint16_t version = 99;
+
+	ATF_REQUIRE_EQ(0, mkfifoat(d, "fifo", 0600));
+	ATF_CHECK_EQ(-1, blued_persist_load_records(d, "fifo", "5BSDTEST",
+	    1, 1, 1, &value, &count, &version));
+	ATF_CHECK_EQ(0, count);
+	ATF_CHECK_EQ(0, version);
+	ATF_CHECK_EQ(0x5a, value);
+	ATF_REQUIRE_EQ(0, mkdirat(d, "directory", 0700));
+	ATF_CHECK_EQ(-1, blued_persist_load_records(d, "directory", "5BSDTEST",
+	    1, 1, 1, &value, &count, &version));
+	ATF_CHECK_EQ(0x5a, value);
+	close(d);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -897,6 +922,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, wrong_magic_and_version_rejected);
 	ATF_TP_ADD_TC(tp, count_clamped_to_array);
 	ATF_TP_ADD_TC(tp, atomic_partial_temp_ignored);
+	ATF_TP_ADD_TC(tp, nonregular_file_rejected);
 
 	return (atf_no_error());
 }

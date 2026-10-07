@@ -49,6 +49,7 @@
 .Nm bt_devsend ,
 .Nm bt_devrecv ,
 .Nm bt_devreq ,
+.Nm bt_devreq_events ,
 .Nm bt_devfilter ,
 .Nm bt_devfilter_pkt_set ,
 .Nm bt_devfilter_pkt_clr ,
@@ -111,6 +112,8 @@
 .Fn bt_devrecv "int s" "void *buf" "size_t size" "time_t to"
 .Ft int
 .Fn bt_devreq "int s" "struct bt_devreq *r" "time_t to"
+.Ft int
+.Fn bt_devreq_events "int s" "struct bt_devreq *r" "time_t to" "void (*event_cb)(int, const void *, size_t)"
 .Ft int
 .Fn bt_devfilter "int s" "struct bt_devfilter const *new" "struct bt_devfilter *old"
 .Ft void
@@ -419,6 +422,8 @@ of size
 The
 .Fa to
 parameter specifies receive timeout in seconds.
+The timeout uses a monotonic clock and is not restarted by interrupted waits
+or receive retries.
 Infinite timeout can be specified by passing negative value in the
 .Fa to
 parameter.
@@ -444,6 +449,9 @@ event,
 or timeout
 .Fa to
 seconds to occur.
+The response timeout starts after the command has been sent and uses one
+monotonic deadline for all received events.
+The caller must serialize socket access.
 The
 .Vt bt_devreq
 structure is defined as follows
@@ -489,6 +497,23 @@ function temporarily modifies filter on the provided
 socket
 .Fa s .
 The function returns 0 on success, or -1 if an error occurred.
+.Pp
+The
+.Fn bt_devreq_events
+variant additionally passes unrelated non-command events received while
+waiting to
+.Fa event_cb .
+The callback receives the socket, the complete packet (including packet type),
+and its length.
+Packet storage is valid only during the callback;
+the callback must copy any data it needs later and must not read from or
+issue commands on the same socket.
+The caller must serialize socket access.
+A NULL callback retains the
+.Fn bt_devreq
+behavior of discarding these events.
+Both functions preserve the subscribed
+event mask and restore the original filter before returning.
 .Pp
 The
 .Fn bt_devfilter

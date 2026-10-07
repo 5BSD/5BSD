@@ -131,11 +131,41 @@ att_opcode_name(uint8_t op)
  *  Logged send helper -- logs outgoing ATT PDU to BTSnoop
  * ---------------------------------------------------------------- */
 
+int
+att_server_check_bearer(struct att_conn *ac)
+{
+	struct timespec now;
+	int fd;
+
+	if (ac->ind_pending) {
+		if (clock_gettime(CLOCK_MONOTONIC, &now) < 0)
+			return (-1);
+		if (now.tv_sec > ac->ind_deadline.tv_sec ||
+		    (now.tv_sec == ac->ind_deadline.tv_sec &&
+		     now.tv_nsec >= ac->ind_deadline.tv_nsec)) {
+			fd = ac->ind_bearer_fd < 0 ? ac->fd : ac->ind_bearer_fd;
+			ac->ind_pending = false;
+			ac->ind_handle = 0;
+			ac->ind_bearer_fd = -1;
+			att_bearer_fail(ac, fd);
+			errno = ETIMEDOUT;
+			return (-1);
+		}
+	}
+	if (ac->failed && (ac->bearer_fd < 0 || ac->bearer_fd == ac->fd)) {
+		errno = ENOTCONN;
+		return (-1);
+	}
+	return (0);
+}
+
 ssize_t
 att_server_send(struct att_conn *ac, const void *buf, size_t len)
 {
 	int fd;
 
+	if (att_server_check_bearer(ac) < 0)
+		return (-1);
 	fd = (ac->bearer_fd >= 0) ? ac->bearer_fd : ac->fd;
 	BLUED_PROBE_ATT_SEND(((const uint8_t *)buf)[0], (int)len);
 	if (hci_log_enabled())
@@ -399,7 +429,7 @@ attdb_add_characteristic(struct att_db *db, uint16_t uuid16,
 	uint8_t *dv, *vv;
 	size_t saved_val_used;
 
-	if (value == NULL && len > 0)
+	if ((value == NULL && len > 0) || len > ATT_MAX_ATTR_VALUE_LEN)
 		return (0);
 	saved_val_used = db->val_used;
 
@@ -458,7 +488,8 @@ attdb_add_characteristic128(struct att_db *db, const uint8_t uuid128[16],
 	size_t saved_val_used;
 	uint16_t alias;
 
-	if (value == NULL && len > 0)
+	if (uuid128 == NULL || (value == NULL && len > 0) ||
+	    len > ATT_MAX_ATTR_VALUE_LEN)
 		return (0);
 
 	/*
@@ -589,7 +620,7 @@ attdb_add_descriptor(struct att_db *db, uint16_t uuid16,
 	struct att_attr *a;
 	uint8_t *v;
 
-	if (value == NULL && len > 0)
+	if ((value == NULL && len > 0) || len > ATT_MAX_ATTR_VALUE_LEN)
 		return (0);
 
 	a = attdb_alloc(db);
@@ -624,7 +655,8 @@ attdb_add_descriptor128(struct att_db *db, const uint8_t uuid128[16],
 	uint8_t *v;
 	uint16_t alias;
 
-	if (uuid128 == NULL || (value == NULL && len > 0))
+	if (uuid128 == NULL || (value == NULL && len > 0) ||
+	    len > ATT_MAX_ATTR_VALUE_LEN)
 		return (0);
 
 	/* Normalize a Bluetooth-Base-UUID registration to its 16-bit alias
@@ -759,6 +791,8 @@ attdb_set_char_value(struct att_db *db, uint16_t uuid16, const void *val,
 {
 	int i;
 
+	if ((val == NULL && len > 0) || len > ATT_MAX_ATTR_VALUE_LEN)
+		return (-1);
 	for (i = 0; i < db->count; i++) {
 		struct att_attr *a = &db->attrs[i];
 

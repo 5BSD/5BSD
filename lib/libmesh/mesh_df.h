@@ -255,6 +255,9 @@ struct mesh_df_fwd_entry {
 	uint64_t	install_ms;	/* clock when (re)installed */
 	uint64_t	last_used_ms;	/* clock at last forward along this path */
 	uint64_t	lifetime_ms;	/* 0 for a fixed path */
+	/* Origin-side liveness timers; cleared with the entry on replacement. */
+	uint64_t	echo_last_ms;
+	uint64_t	echo_deadline_ms;
 };
 
 /*

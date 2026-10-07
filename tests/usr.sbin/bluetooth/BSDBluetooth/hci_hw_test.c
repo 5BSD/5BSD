@@ -89,11 +89,14 @@
  */
 
 #include <sys/types.h>
+#include <sys/capsicum.h>
+#include <sys/wait.h>
 
 #define L2CAP_SOCKET_CHECKED
 #include <bluetooth.h>
 
 #include <atf-c.h>
+#include <errno.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -109,6 +112,57 @@
 /* ble_util.h globals */
 atomic_int blued_verbose = 1;	/* enable logging for diagnostics */
 int blued_daemonized;
+
+/* Kernel transport only: no controller or radio traffic is required. */
+ATF_TC(hci_capmode_transport);
+ATF_TC_HEAD(hci_capmode_transport, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "5BSD sandbox HCI/L2CAP creation retains raw-command privilege checks");
+}
+ATF_TC_BODY(hci_capmode_transport, tc)
+{
+	struct sockaddr_hci address = { .hci_len = sizeof(address),
+	    .hci_family = AF_BLUETOOTH, .hci_node = "review-no-radio" };
+	const unsigned char reset[] = { 0x01, 0x03, 0x0c, 0x00 };
+	pid_t child;
+	int fd, status;
+
+	fd = socket(PF_BLUETOOTH, SOCK_RAW, BLUETOOTH_PROTO_HCI);
+	if (fd < 0 && (errno == EAFNOSUPPORT || errno == EPROTONOSUPPORT))
+		atf_tc_skip("Bluetooth kernel socket module is not loaded");
+	ATF_REQUIRE(fd >= 0);
+	close(fd);
+	child = fork();
+	ATF_REQUIRE(child >= 0);
+	if (child == 0) {
+		if (geteuid() == 0 && setuid(65534) != 0)
+			_exit(1);
+		if (cap_enter() != 0)
+			_exit(2);
+		fd = socket(PF_BLUETOOTH, SOCK_RAW, BLUETOOTH_PROTO_HCI);
+		if (fd < 0)
+			_exit(3);
+		if (bind(fd, (struct sockaddr *)&address, sizeof(address)) != -1 ||
+		    errno != ECAPMODE)
+			_exit(4);
+		if (bindat(fd, fd, (struct sockaddr *)&address, sizeof(address)) != 0 ||
+		    connectat(fd, fd, (struct sockaddr *)&address, sizeof(address)) != 0)
+			_exit(5);
+		if (write(fd, reset, sizeof(reset)) != -1 || errno != EPERM)
+			_exit(6);
+		close(fd);
+		fd = socket(PF_BLUETOOTH, SOCK_SEQPACKET, BLUETOOTH_PROTO_L2CAP);
+		if (fd < 0)
+			_exit(7);
+		close(fd);
+		_exit(0);
+	}
+	ATF_REQUIRE_EQ(child, waitpid(child, &status, 0));
+	ATF_REQUIRE(WIFEXITED(status));
+	ATF_CHECK_MSG(WEXITSTATUS(status) == 0, "transport check %d failed",
+	    WEXITSTATUS(status));
+}
 
 static int
 open_adapter(void)
@@ -785,6 +839,7 @@ ATF_TC_BODY(test_adv_data_name_truncation, tc)
 
 ATF_TP_ADD_TCS(tp)
 {
+	ATF_TP_ADD_TC(tp, hci_capmode_transport);
 
 	/* Adapter lifecycle */
 	ATF_TP_ADD_TC(tp, hci_open_close);

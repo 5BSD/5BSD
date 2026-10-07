@@ -24,6 +24,7 @@
 #include <pthread.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
@@ -326,6 +327,12 @@ scan_result_merge(struct ble_scan_result *dst, const struct ble_scan_result *src
 	}
 }
 
+void
+hci_scan_result_merge(struct ble_scan_result *dst, const struct ble_scan_result *src)
+{
+	scan_result_merge(dst, src);
+}
+
 /* HCI scan interval/window valid range (Core Spec Vol 4 Part E §7.8.10). */
 #define HCI_SCAN_ITVL_MIN	0x0004
 #define HCI_SCAN_ITVL_MAX	0x4000
@@ -479,7 +486,7 @@ hci_le_set_scan_enable(int hci_fd, uint8_t enable, uint8_t filter_dup)
  * period=0 => scan continuously until explicitly disabled.  filter_dup=0 for
  * the mesh bearer (see hci_le_mesh_scan_set).
  */
-static int
+int
 hci_le_set_ext_scan_enable(int hci_fd, uint8_t enable, uint8_t filter_dup)
 {
 	ng_hci_le_set_ext_scan_enable_cp enable_cp;
@@ -572,7 +579,8 @@ ble_scan_result_match(const struct ble_scan_result *sr,
 
 	if (f == NULL)
 		return (true);
-	if (f->has_rssi && sr->rssi < f->rssi_min)
+	/* Core HCI uses 127 for unavailable RSSI, not a measured signal. */
+	if (f->has_rssi && (sr->rssi == 127 || sr->rssi < f->rssi_min))
 		return (false);
 	if (f->has_name) {
 		if (!sr->has_name || strstr(sr->name, f->name_sub) == NULL)
@@ -1002,7 +1010,7 @@ hci_le_scan_ex(int hci_fd, int duration_sec,
  * carry (§7.8.54), so it bounds what any advertiser can make us hold.
  */
 #define EXT_FRAG_MAX_DATA	1650
-static struct ext_frag_ent {
+struct ext_frag_ent {
 	bool		used;
 	bool		overflow;	/* data exceeded the buffer */
 	bool		scan_rsp;	/* Event_Type bit 3 */
@@ -1011,7 +1019,42 @@ static struct ext_frag_ent {
 	uint8_t		sid;
 	uint16_t	len;
 	uint8_t		data[EXT_FRAG_MAX_DATA];
-} ext_frag_tbl[EXT_FRAG_SLOTS];
+};
+struct hci_adv_parser {
+	struct ext_frag_ent fragments[EXT_FRAG_SLOTS];
+	bool saturated;
+};
+static _Thread_local struct hci_adv_parser default_parser;
+static _Thread_local struct hci_adv_parser *current_parser;
+#define ext_frag_tbl ((current_parser != NULL ? current_parser : \
+    &default_parser)->fragments)
+#define ext_frag_saturated ((current_parser != NULL ? current_parser : \
+    &default_parser)->saturated)
+
+struct hci_adv_parser *
+hci_adv_parser_new(void)
+{
+	return (calloc(1, sizeof(struct hci_adv_parser)));
+}
+
+void
+hci_adv_parser_free(struct hci_adv_parser *parser)
+{
+	free(parser);
+}
+
+size_t
+hci_parse_ext_adv_report_ctx(struct hci_adv_parser *parser, const uint8_t *p,
+    size_t remain, struct ble_scan_result *sr)
+{
+	struct hci_adv_parser *saved = current_parser;
+	size_t consumed;
+
+	current_parser = parser;
+	consumed = hci_parse_ext_adv_report(p, remain, sr);
+	current_parser = saved;
+	return (consumed);
+}
 
 static bool
 ext_frag_match(const struct ext_frag_ent *e, uint8_t at, const uint8_t *addr,
@@ -1061,13 +1104,24 @@ ext_frag_mark(uint8_t at, const uint8_t *addr, uint8_t sid, bool scan_rsp,
 
 	e = ext_frag_find(at, addr, sid, scan_rsp);
 	if (e == NULL) {
+		/* After losing a chain boundary, a new fragment may itself be a
+		 * continuation. Admit no new chains until the scan is reset. */
+		if (ext_frag_saturated)
+			return;
 		for (i = 0; i < EXT_FRAG_SLOTS; i++)
 			if (!ext_frag_tbl[i].used) {
 				free_i = i;
 				break;
 			}
-		if (free_i < 0)
-			free_i = 0;	/* evict slot 0 when full */
+		if (free_i < 0) {
+			/* Eviction would make the old chain's tail look like a new
+			 * advertisement. Preserve tracked chains and suppress AD
+			 * decoding for unknown chains until the next scan. */
+			ext_frag_saturated = true;
+			LOG_HCI(1, "extended advertising fragment table full; "
+			    "untracked AD fields suppressed until next scan");
+			return;
+		}
 		e = &ext_frag_tbl[free_i];
 		e->used = true;
 		e->overflow = false;
@@ -1116,6 +1170,7 @@ ext_frag_reset(void)
 {
 
 	memset(ext_frag_tbl, 0, sizeof(ext_frag_tbl));
+	ext_frag_saturated = false;
 }
 
 /*
@@ -1275,17 +1330,17 @@ hci_parse_ext_adv_report(const uint8_t *p, size_t remain,
 	 * that does not begin at an AD-structure boundary parses into garbage
 	 * names/UUIDs, so only decode AD fields for a complete report; the
 	 * fragment header (address/rssi) is still consumed and returned so the
-	 * remaining reports in the batch are not lost.  Reassembly of >229-byte
-	 * payloads is not attempted.  (finding 46)
+	 * remaining reports in the batch are not lost. The bounded table below
+	 * joins fragments before parsing their AD structures.
 	 *
 	 * Per Core 6.3 Vol 4 Part E §7.7.65.13 a fragmented advertisement sends
 	 * every report but the last as "incomplete, more to come" (0b01) and the
 	 * LAST as "complete" (0b00) carrying only the tail -- NOT an AD-structure
 	 * boundary.  So a 0b00 report that follows an incomplete fragment from
 	 * the SAME advertiser (address+type+SID) is a continuation tail and must
-	 * NOT be AD-parsed either, or its arbitrary tail bytes fabricate a
-	 * name/UUIDs/mfr.  Track advertisers with an outstanding incomplete
-	 * fragment and suppress the parse of their terminal report.
+	 * NOT be AD-parsed in isolation, or its arbitrary tail bytes fabricate a
+	 * name/UUIDs/mfr. Track advertisers with an outstanding incomplete
+	 * fragment and parse their terminal report only with its retained prefix.
 	 */
 	{
 		unsigned status = (event_type >> 5) & 0x03u;
@@ -1340,8 +1395,9 @@ hci_parse_ext_adv_report(const uint8_t *p, size_t remain,
 				 * A complete report with NO preceding fragment
 				 * starts at an AD boundary; parse it directly.
 				 */
-				hci_parse_ad_fields(p + EXT_ADV_REPORT_HDR_LEN,
-				    data_len, sr);
+				if (!ext_frag_saturated)
+					hci_parse_ad_fields(p + EXT_ADV_REPORT_HDR_LEN,
+					    data_len, sr);
 			} else if (e->overflow ||
 			    (size_t)e->len + data_len > sizeof(e->data)) {
 				LOG_HCI(2, "ext_adv: reassembly overflow "
@@ -1672,7 +1728,7 @@ ext_scan_params_ok:
 	 * that advertiser's first complete report this session would be
 	 * suppressed as a stale continuation tail.
 	 */
-	memset(ext_frag_tbl, 0, sizeof(ext_frag_tbl));
+	ext_frag_reset();
 
 	/* Receive advertising reports (both legacy and extended) */
 	end_time = hci_monotonic_sec() + duration_sec + 1;

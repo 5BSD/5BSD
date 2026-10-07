@@ -584,6 +584,8 @@ mesh_df_table_add(struct mesh_df_fwd_table *t, uint16_t origin, uint16_t target,
 	e->fixed_path = (lifetime_ms == 0);
 	e->install_ms = now;
 	e->last_used_ms = now;
+	e->echo_last_ms = 0;
+	e->echo_deadline_ms = 0;
 	return (e);
 }
 
@@ -1202,7 +1204,11 @@ recv_path_echo_request(struct mesh_df_node *node,
 
 	/* Endpoint role: answer with our address. */
 	if (node_covers(node, ctx->dst)) {
-		if (mesh_df_path_echo_reply_build(node->addr, rbuf, &rlen) != 0)
+		/* Section 3.6.8.5.6: both endpoints must match a live non-fixed path. */
+		e = entry_find(&node->table, ctx->src, ctx->dst);
+		if (e == NULL || e->fixed_path || entry_expired(e, ctx->now))
+			return (MESH_DF_RECV_DROP);
+		if (mesh_df_path_echo_reply_build(ctx->dst, rbuf, &rlen) != 0)
 			return (MESH_DF_RECV_DROP);
 		/* Originate the reply with a fresh TTL for the full return trip. */
 		if (out_set(out, MESH_DF_OP_PATH_ECHO_REPLY, ctx->bearer,
@@ -1220,12 +1226,10 @@ recv_path_echo_request(struct mesh_df_node *node,
 	    e->bearer_toward_target : e->bearer_toward_origin;
 	if (bearer == MESH_DF_BEARER_NONE)
 		return (MESH_DF_RECV_CONSUMED);
-	/*
-	 * P-C1c (§3.6.5.14): the PATH_ECHO_REQUEST is re-originated toward the
-	 * Forwarding Table Destination (ctx->dst) at TTL 0x7F, not decremented as
-	 * a managed-flood relay would.
-	 */
-	if (out_set(out, MESH_DF_OP_PATH_ECHO_REQUEST, bearer, MESH_DF_DEFAULT_TTL,
+	/* Only the origin sets TTL 0x7f. Transit traffic obeys network relaying. */
+	if (ctx->ttl < 2)
+		return (MESH_DF_RECV_CONSUMED);
+	if (out_set(out, MESH_DF_OP_PATH_ECHO_REQUEST, bearer, ctx->ttl - 1,
 	    ctx->src, ctx->dst, NULL, 0) != 0)
 		return (MESH_DF_RECV_DROP);
 	return (MESH_DF_RECV_FORWARD);
@@ -1233,7 +1237,7 @@ recv_path_echo_request(struct mesh_df_node *node,
 
 /*
  * Path Echo Reply (0x0F), Section 3.6.6.5.4.  Clears the echo-pending flag and
- * refreshes the path lifetime at the node that started the echo; otherwise the
+ * restarts validation at the node that started the echo; otherwise the
  * reply is forwarded back toward that node.
  */
 static int
@@ -1261,7 +1265,7 @@ recv_path_echo_reply(struct mesh_df_node *node,
 		struct mesh_df_fwd_entry *c = &node->table.entries[i];
 		int dest_tgt, dest_org, dst_tgt, dst_org;
 
-		if (!c->valid)
+		if (!c->valid || c->fixed_path || entry_expired(c, ctx->now))
 			continue;
 		dest_tgt = (dest == c->path_target ||
 		    entry_has_dep(c->dep_target, c->dep_target_n, dest));
@@ -1279,25 +1283,27 @@ recv_path_echo_reply(struct mesh_df_node *node,
 	if (e == NULL)
 		return (MESH_DF_RECV_DROP);
 
-	/* Keep the path alive. */
-	node->echo_pending[entry_index(node, e)] = 0;
-	e->install_ms = ctx->now;
-	e->last_used_ms = ctx->now;
-
 	/* Consumed at the echo initiator; forwarded onward otherwise. */
-	if (node_covers(node, ctx->dst))
+	if (node_covers(node, ctx->dst)) {
+		i = entry_index(node, e);
+		if (e->path_origin != ctx->dst || e->path_target != dest ||
+		    !node->echo_pending[i] || ctx->now >= node->echo_deadline_ms[i])
+			return (MESH_DF_RECV_DROP);
+		node->echo_pending[i] = 0;
+		node->echo_deadline_ms[i] = 0;
+		/* Section 3.6.8.2.6 does not restart the path lifetime. */
+		e->echo_last_ms = ctx->now;
 		return (MESH_DF_RECV_CONSUMED);
+	}
 	bearer = (ctx->dst == e->path_origin ||
 	    entry_has_dep(e->dep_origin, e->dep_origin_n, ctx->dst)) ?
 	    e->bearer_toward_origin : e->bearer_toward_target;
 	if (bearer == MESH_DF_BEARER_NONE)
 		return (MESH_DF_RECV_CONSUMED);
-	/*
-	 * P-C1c (§3.6.5.15): the PATH_ECHO_REPLY is re-originated toward the echo
-	 * initiator (ctx->dst) at TTL 0x7F, not decremented as a relay.
-	 */
-	if (out_set(out, MESH_DF_OP_PATH_ECHO_REPLY, bearer, MESH_DF_DEFAULT_TTL,
-	    dest, ctx->dst, pdu, pdulen) != 0)
+	if (ctx->ttl < 2)
+		return (MESH_DF_RECV_CONSUMED);
+	if (out_set(out, MESH_DF_OP_PATH_ECHO_REPLY, bearer, ctx->ttl - 1,
+	    ctx->src, ctx->dst, pdu, pdulen) != 0)
 		return (MESH_DF_RECV_DROP);
 	return (MESH_DF_RECV_FORWARD);
 }
@@ -1413,8 +1419,8 @@ mesh_df_echo_start(struct mesh_df_node *node, uint16_t target, uint8_t ttl,
 
 	if (node == NULL || out == NULL)
 		return (-1);
-	e = mesh_df_table_lookup(&node->table, node->addr, target, now);
-	if (e == NULL)
+	e = entry_find(&node->table, node->addr, target);
+	if (e == NULL || e->fixed_path || entry_expired(e, now))
 		return (-1);
 	bearer = (target == e->path_target ||
 	    entry_has_dep(e->dep_target, e->dep_target_n, target)) ?

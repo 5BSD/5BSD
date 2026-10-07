@@ -841,17 +841,24 @@ ble_poll_until(int fd, short events, int64_t deadline_ms)
 			return (-1);
 		now_ms = (int64_t)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
 		remain = deadline_ms - now_ms;
-		if (remain <= 0)
+		if (remain <= 0) {
+			errno = ETIMEDOUT;
 			return (0);
+		}
 		if (remain > INT_MAX)
 			remain = INT_MAX;
 		pfd.revents = 0;
 		rc = poll(&pfd, 1, (int)remain);
 		if (rc < 0 && errno == EINTR)
 			continue;
+		if (rc == 0)
+			errno = ETIMEDOUT;
 		if (rc <= 0)
 			return (rc);
-		return ((pfd.revents & events) != 0 ? 1 : -1);
+		if ((pfd.revents & events) != 0)
+			return (1);
+		errno = (pfd.revents & POLLNVAL) != 0 ? EBADF : ECONNRESET;
+		return (-1);
 	}
 }
 
@@ -888,6 +895,8 @@ ble_read_exact_buffered(ble_ctx_t *ctx, uint8_t *dst, size_t need,
 		n = recv(ctx->fd, dst + got, need - got, 0);
 		if (n < 0 && errno == EINTR)
 			continue;
+		if (n == 0)
+			errno = ECONNRESET;
 		if (n <= 0)
 			return (-1);
 		got += (size_t)n;
@@ -1233,7 +1242,11 @@ ble_recv_fd(ble_ctx_t *ctx, int timeout_ms, int *out_fd)
 	struct timespec ts;
 	int64_t deadline_ms;
 	ssize_t n;
+	int received = -1, fd;
+	size_t count = 0, bytes;
+	bool malformed;
 
+	*out_fd = -1;
 	if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0)
 		return (-1);
 	deadline_ms = (int64_t)ts.tv_sec * 1000 + ts.tv_nsec / 1000000 +
@@ -1251,28 +1264,44 @@ ble_recv_fd(ble_ctx_t *ctx, int timeout_ms, int *out_fd)
 		if (ble_poll_until(ctx->fd, POLLIN, deadline_ms) != 1)
 			return (-1);
 		msg.msg_controllen = sizeof(cbuf);
-		n = recvmsg(ctx->fd, &msg, 0);
+		n = recvmsg(ctx->fd, &msg, MSG_CMSG_CLOEXEC | MSG_CMSG_CLOFORK);
 		if (n < 0 && errno == EINTR)
 			continue;
 		break;
 	}
-	if (n < 1)
+	if (n < 1) {
+		if (n == 0)
+			errno = ECONNRESET;
 		return (-1);
-
-	cmsg = CMSG_FIRSTHDR(&msg);
-	if (cmsg == NULL || cmsg->cmsg_level != SOL_SOCKET ||
-	    cmsg->cmsg_type != SCM_RIGHTS)
+	}
+	/* CMSG_SPACE(int) can hold two descriptors because of alignment padding.
+	 * Close every received descriptor on malformed or truncated handoffs. */
+	malformed = (msg.msg_flags & (MSG_CTRUNC | MSG_TRUNC)) != 0;
+	for (cmsg = CMSG_FIRSTHDR(&msg); cmsg != NULL;
+	    cmsg = CMSG_NXTHDR(&msg, cmsg)) {
+		if (cmsg->cmsg_level != SOL_SOCKET ||
+		    cmsg->cmsg_type != SCM_RIGHTS || cmsg->cmsg_len < CMSG_LEN(0)) {
+			malformed = true;
+			continue;
+		}
+		bytes = cmsg->cmsg_len - CMSG_LEN(0);
+		if (bytes % sizeof(int) != 0)
+			malformed = true;
+		for (size_t off = 0; off + sizeof(int) <= bytes; off += sizeof(int)) {
+			memcpy(&fd, (char *)CMSG_DATA(cmsg) + off, sizeof(fd));
+			if (count++ == 0)
+				received = fd;
+			else
+				close(fd);
+		}
+	}
+	if (malformed || count != 1) {
+		if (received >= 0)
+			close(received);
+		errno = EPROTO;
 		return (-1);
-	/*
-	 * Finding 105: validate that the control message actually carries a
-	 * descriptor before extracting one.  A buggy/hostile daemon can send an
-	 * SCM_RIGHTS message with zero descriptors (cmsg_len == CMSG_LEN(0)); the
-	 * memcpy below would then read past the payload and hand back a garbage
-	 * integer that may alias an unrelated open fd.
-	 */
-	if (cmsg->cmsg_len < CMSG_LEN(sizeof(int)))
-		return (-1);
-	memcpy(out_fd, CMSG_DATA(cmsg), sizeof(int));
+	}
+	*out_fd = received;
 	return (0);
 }
 
@@ -2118,6 +2147,17 @@ ble_scan_reply(ble_ctx_t *ctx, uint16_t opcode, uint16_t status,
 }
 
 int
+ble_scan_stop(ble_ctx_t *ctx)
+{
+	uint8_t request[IPC_GAP_REQ_SIZE] = {0};
+
+	ble_clear_error(ctx);
+	ipc_put_le16(request, IPC_GAP_SCAN_STOP);
+	return (ble_send_operation(ctx, IPC_OP_DOMAIN_GAP, IPC_GAP_SCAN_STOP,
+	    request, sizeof(request), NULL, NULL, NULL));
+}
+
+int
 ble_scan_filtered(ble_ctx_t *ctx, const ble_scan_params_t *params,
     ble_scan_cb cb, void *arg)
 {
@@ -2129,6 +2169,10 @@ ble_scan_filtered(ble_ctx_t *ctx, const ble_scan_params_t *params,
 	ble_clear_error(ctx);
 	if (params == NULL)
 		return (ble_scan(ctx, cb, arg));
+	if (memchr(params->name_sub, '\0', sizeof(params->name_sub)) == NULL) {
+		ble_set_error(ctx, BLE_ERR_INVAL, "unterminated name filter");
+		return (-1);
+	}
 	/* Interval/window bounds mirror the daemon (Core Spec §7.8.10). */
 	if ((params->interval != 0 &&
 	    (params->interval < 0x0004 || params->interval > 0x4000)) ||

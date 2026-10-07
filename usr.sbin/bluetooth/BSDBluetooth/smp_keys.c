@@ -96,7 +96,7 @@ smp_bond_db_uncommitted(int rc)
  * All callers reference db->local_irk directly -- there is no file-scope
  * static copy, so the IRK cannot diverge from the bond database.
  */
-int __attribute__((no_thread_safety_analysis))
+static int __attribute__((no_thread_safety_analysis))
 smp_ensure_local_irk(struct smp_bond_db *db)
 {
 
@@ -174,6 +174,45 @@ smp_ensure_local_csrk(struct smp_bond_db *db)
 	}
 	if (db->lock != NULL)
 		pthread_mutex_unlock(db->lock);
+	return (0);
+}
+
+/*
+ * IdKey identifies the device after its private address rotates.  Never send
+ * the on-air RPA/NRPA as an identity (Vol 3 Part H 3.6.5).  Both roles use
+ * this path so validation happens before either half of IdKey is emitted.
+ */
+int
+smp_send_identity(struct smp_conn *sc)
+{
+	const uint8_t *addr = sc->local_identity_addr;
+	uint8_t type = sc->local_identity_addr_type;
+	uint8_t pdu[17];
+
+	if (type == 0) {
+		addr = sc->local_addr;
+		type = sc->local_addr_type;
+	}
+	if (type != BDADDR_LE_PUBLIC &&
+	    (type != BDADDR_LE_RANDOM || (addr[5] & 0xc0) != 0xc0)) {
+		errno = EINVAL;
+		return (-1);
+	}
+	if (smp_local_irk_get(sc->bond_db, pdu + 1) != 0)
+		return (-1);
+	pdu[0] = SMP_IDENTITY_INFORMATION;
+	if (smp_log_send(sc, pdu, 17) != 17)
+		return (-1);
+	BLUED_PROBE_SMP_KEY_DIST(
+	    bt_ntoa((bdaddr_t *)sc->remote_addr, NULL), SMP_IDENTITY_INFORMATION);
+	pdu[0] = SMP_IDENTITY_ADDRESS_INFO;
+	pdu[1] = type == BDADDR_LE_RANDOM ?
+	    SMP_ID_ADDR_STATIC_RANDOM : SMP_ID_ADDR_PUBLIC;
+	memcpy(pdu + 2, addr, 6);
+	if (smp_log_send(sc, pdu, 8) != 8)
+		return (-1);
+	BLUED_PROBE_SMP_KEY_DIST(
+	    bt_ntoa((bdaddr_t *)sc->remote_addr, NULL), SMP_IDENTITY_ADDRESS_INFO);
 	return (0);
 }
 
@@ -268,43 +307,8 @@ smp_distribute_init_keys(struct smp_conn *sc, const uint8_t *preq,
 		explicit_bzero(our_ltk, sizeof(our_ltk));
 	}
 
-	if ((init_dist & SMP_KEY_DIST_ID_KEY) && sc->bond_db != NULL) {
-		/*
-		 * Guard on bond_db != NULL like the sibling SignKey branch:
-		 * with no bond DB there is no local IRK to distribute, and the
-		 * local_irk deref below would fault (K-low ID-key NULL deref).
-		 */
-		if (smp_ensure_local_irk(sc->bond_db) != 0) {
-			LOG_SMP(1, "cannot persist local IRK; not distributing it");
-			goto fail;
-		}
-
-		kpdu[0] = SMP_IDENTITY_INFORMATION;
-		memcpy(kpdu + 1, sc->bond_db->local_irk, 16);
-		if (smp_log_send(sc, kpdu, 17) != 17)
-			goto fail;
-		BLUED_PROBE_SMP_KEY_DIST(
-		    bt_ntoa((bdaddr_t *)sc->remote_addr, NULL),
-		    SMP_IDENTITY_INFORMATION);
-
-		kpdu[0] = SMP_IDENTITY_ADDRESS_INFO;
-		/*
-		 * Map the internal BDADDR_LE_* type to the SMP wire AddrType
-		 * octet: Core Spec Vol 3 Part H §3.6.5 defines 0x00 = public,
-		 * 0x01 = static random.  The internal enum (BDADDR_LE_PUBLIC=1,
-		 * BDADDR_LE_RANDOM=2) is NOT the wire encoding, so sending it
-		 * raw mislabels the distributed identity address (matching the
-		 * responder path in smp_legacy.c).
-		 */
-		kpdu[1] = (sc->local_addr_type == BDADDR_LE_RANDOM) ?
-		    SMP_ID_ADDR_STATIC_RANDOM : SMP_ID_ADDR_PUBLIC;
-		memcpy(kpdu + 2, sc->local_addr, 6);
-		if (smp_log_send(sc, kpdu, 8) != 8)
-			goto fail;
-		BLUED_PROBE_SMP_KEY_DIST(
-		    bt_ntoa((bdaddr_t *)sc->remote_addr, NULL),
-		    SMP_IDENTITY_ADDRESS_INFO);
-	}
+	if ((init_dist & SMP_KEY_DIST_ID_KEY) && smp_send_identity(sc) != 0)
+		goto fail;
 
 	if (init_dist & SMP_KEY_DIST_LEGACY_SIGN_KEY) {
 		if (smp_ensure_local_csrk(sc->bond_db) != 0) {
@@ -389,6 +393,13 @@ smp_receive_peer_keys(struct smp_conn *sc, struct smp_bond *bond,
 		if (n < 1 || pdu[0] != expected[i])
 			goto fail;
 		if (pdu[0] == SMP_ENCRYPTION_INFORMATION && n == 17) {
+			/* Core Vol 3 Part H 2.3.4: octets above the negotiated
+			 * encryption key size must be zero, not silently retained. */
+			if (sc->neg_key_size < 7 || sc->neg_key_size > 16)
+				goto fail;
+			for (int j = sc->neg_key_size; j < 16; j++)
+				if (pdu[1 + j] != 0)
+					goto fail;
 			memcpy(pending.ltk, pdu + 1, 16);
 			pending.has_ltk = true;
 		} else if (pdu[0] == SMP_CENTRAL_IDENTIFICATION && n == 11) {
@@ -406,6 +417,11 @@ smp_receive_peer_keys(struct smp_conn *sc, struct smp_bond *bond,
 			received_irk = true;
 		} else if (pdu[0] == SMP_IDENTITY_ADDRESS_INFO && n == 8 &&
 		    pdu[1] <= SMP_ID_ADDR_STATIC_RANDOM) {
+			/* Identity addresses are public or static random, never
+			 * resolvable/non-resolvable private random addresses. */
+			if (pdu[1] == SMP_ID_ADDR_STATIC_RANDOM &&
+			    (pdu[7] & SMP_RANDOM_ADDRESS_TYPE_MASK) != 0xc0)
+				goto fail;
 			pending.addr_type = (pdu[1] == SMP_ID_ADDR_STATIC_RANDOM) ?
 			    BDADDR_LE_RANDOM : BDADDR_LE_PUBLIC;
 			memcpy(pending.addr, pdu + 2, 6);

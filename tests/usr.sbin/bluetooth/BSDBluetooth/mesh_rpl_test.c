@@ -245,10 +245,31 @@ ATF_TC_BODY(mesh_rpl_net_receive_null_out, tc)
 	    "a NULL out pointer must be rejected before decryption");
 }
 
+ATF_TC_WITHOUT_HEAD(mesh_rpl_max_iv_preserves_replay_history);
+ATF_TC_BODY(mesh_rpl_max_iv_preserves_replay_history, tc)
+{
+	struct mesh_rpl_entry storage[1];
+	struct mesh_rpl rpl;
+
+	mesh_rpl_init(&rpl, storage, 1);
+	ATF_REQUIRE_EQ(1, mesh_rpl_check(&rpl, 1, UINT32_MAX, 42));
+	/* The previous IV epoch may still authenticate, but cannot evict the
+	 * current epoch's replay history, even at the integer boundary. */
+	ATF_CHECK_EQ(-1, mesh_rpl_check(&rpl, 2, UINT32_MAX - 1, 1));
+	ATF_CHECK_EQ(-1, mesh_rpl_check(&rpl, 2, UINT32_MAX, 1));
+	ATF_CHECK_EQ(0, mesh_rpl_check(&rpl, 1, UINT32_MAX, 42));
+	ATF_CHECK_EQ(1, mesh_rpl_check(&rpl, 1, UINT32_MAX, 43));
+	/* Expired history is still reclaimable without arithmetic wrap. */
+	mesh_rpl_init(&rpl, storage, 1);
+	ATF_REQUIRE_EQ(1, mesh_rpl_check(&rpl, 1, UINT32_MAX - 2, 42));
+	ATF_CHECK_EQ(1, mesh_rpl_check(&rpl, 2, UINT32_MAX, 1));
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
 	ATF_TP_ADD_TC(tp, mesh_rpl_semantics);
+	ATF_TP_ADD_TC(tp, mesh_rpl_max_iv_preserves_replay_history);
 	ATF_TP_ADD_TC(tp, mesh_rpl_field_bounds);
 	ATF_TP_ADD_TC(tp, mesh_rpl_full);
 	ATF_TP_ADD_TC(tp, mesh_rpl_net_receive_replay);

@@ -518,7 +518,7 @@ ATF_TC_BODY(test_ensure_local_irk, tc)
 	uint8_t controller_irk[16];
 
 	/* NULL db must not crash. */
-	ATF_CHECK_EQ(smp_ensure_local_irk(NULL), -1);
+	ATF_CHECK_EQ(smp_local_irk_get(NULL, controller_irk), -1);
 
 	fd = mkstemp(path);
 	ATF_REQUIRE(fd >= 0);
@@ -527,12 +527,12 @@ ATF_TC_BODY(test_ensure_local_irk, tc)
 	db.lock = &lock;
 	db.has_local_irk = false;
 
-	ATF_REQUIRE_EQ(smp_ensure_local_irk(&db), 0);
+	ATF_REQUIRE_EQ(smp_local_irk_get(&db, controller_irk), 0);
 	ATF_CHECK_MSG(db.has_local_irk, "IRK must be generated on first use");
 	memcpy(saved, db.local_irk, 16);
 
 	/* Second call is a no-op: the IRK must not change. */
-	ATF_REQUIRE_EQ(smp_ensure_local_irk(&db), 0);
+	ATF_REQUIRE_EQ(smp_local_irk_get(&db, controller_irk), 0);
 	ATF_CHECK(db.has_local_irk);
 	ATF_CHECK_MSG(memcmp(saved, db.local_irk, 16) == 0,
 	    "existing local IRK must be preserved");
@@ -1319,7 +1319,7 @@ ATF_TC_BODY(test_receive_peer_keys_id_and_sign, tc)
 	pthread_t sender_thread;
 	int fds[2];
 	uint8_t id_info[17], id_addr[8], sign[17], csrk[16];
-	const uint8_t rpa_id[6] = { 0x01, 0x02, 0x03, 0x04, 0x05, 0x76 };
+	const uint8_t rpa_id[6] = { 0x01, 0x02, 0x03, 0x04, 0x05, 0xf6 };
 
 	kv_setup(&sc, &db, fds);
 	memset(&bond, 0, sizeof(bond));
@@ -1582,6 +1582,8 @@ capture_id_addr_type(uint8_t local_type)
 
 	kv_setup(&sc, &db, fds);
 	sc.local_addr_type = local_type;
+	if (local_type == BDADDR_LE_RANDOM)
+		sc.local_addr[5] |= 0xc0; /* IdKey requires a static random address. */
 	bfd = mkstemp(path);
 	ATF_REQUIRE(bfd >= 0);
 	db.fd = bfd;
@@ -1615,6 +1617,73 @@ ATF_TC_BODY(test_distribute_id_addr_type_wire_encoding, tc)
 	ATF_CHECK_EQ_MSG(capture_id_addr_type(BDADDR_LE_RANDOM),
 	    BT_CORE63_SMP_ID_ADDR_STATIC_RANDOM,
 	    "random identity address must be distributed as AddrType 0x01");
+}
+
+/* Fuchsia Phase3::SendIdentityInfo / InitiatorSendsLocalIdKey separates
+ * listener-supplied identity from the link address. Exercise that invariant
+ * against our shared central/peripheral sender with independent wire bytes. */
+ATF_TC_WITHOUT_HEAD(test_local_identity_separate_from_private_address);
+ATF_TC_BODY(test_local_identity_separate_from_private_address, tc)
+{
+	for (int identity_random = 0; identity_random <= 1; identity_random++) {
+		for (int kind = 0; kind < 4; kind++) {
+			struct smp_conn sc;
+			struct smp_bond_db db;
+			uint8_t pdu[32], on_air[6] = { 1, 2, 3, 4, 5, 6 };
+			const uint8_t identity[6] = { 9, 8, 7, 6, 5, 0xc4 };
+			int fds[2];
+
+			kv_setup(&sc, &db, fds);
+			db.has_local_irk = true;
+			memset(db.local_irk, 0xab, 16);
+			on_air[5] |= kind << 6;
+			memcpy(sc.local_addr, on_air, 6);
+			sc.local_addr_type = BDADDR_LE_RANDOM;
+			memcpy(sc.local_identity_addr, identity, 6);
+			sc.local_identity_addr_type = identity_random ?
+			    BDADDR_LE_RANDOM : BDADDR_LE_PUBLIC;
+			ATF_REQUIRE_EQ(0, smp_send_identity(&sc));
+			ATF_REQUIRE_EQ(17, recv(fds[1], pdu, sizeof(pdu), MSG_DONTWAIT));
+			ATF_CHECK_EQ(8, pdu[0]);
+			ATF_CHECK_EQ(0, memcmp(pdu + 1, db.local_irk, 16));
+			ATF_REQUIRE_EQ(8, recv(fds[1], pdu, sizeof(pdu), MSG_DONTWAIT));
+			ATF_CHECK_EQ(9, pdu[0]);
+			ATF_CHECK_EQ(identity_random, pdu[1]);
+			ATF_CHECK_EQ(0, memcmp(pdu + 2, identity, 6));
+			ATF_CHECK_EQ(0, memcmp(sc.local_addr, on_air, 6));
+			ATF_CHECK_EQ(BDADDR_LE_RANDOM, sc.local_addr_type);
+			close(fds[0]);
+			close(fds[1]);
+		}
+	}
+}
+
+ATF_TC_WITHOUT_HEAD(test_local_identity_rejects_private_address);
+ATF_TC_BODY(test_local_identity_rejects_private_address, tc)
+{
+	for (int explicit_identity = 0; explicit_identity <= 1; explicit_identity++) {
+		for (int kind = 0; kind < 3; kind++) {
+			struct smp_conn sc;
+			struct smp_bond_db db;
+			uint8_t pdu[32];
+			int fds[2];
+
+			kv_setup(&sc, &db, fds);
+			db.has_local_irk = true;
+			sc.local_addr_type = BDADDR_LE_RANDOM;
+			sc.local_addr[5] = (kind << 6) | 1;
+			if (explicit_identity) {
+				memcpy(sc.local_identity_addr, sc.local_addr, 6);
+				sc.local_identity_addr_type = BDADDR_LE_RANDOM;
+			}
+			ATF_REQUIRE_EQ(-1, smp_send_identity(&sc));
+			ATF_CHECK_EQ(EINVAL, errno);
+			ATF_CHECK_EQ(-1, recv(fds[1], pdu, sizeof(pdu), MSG_DONTWAIT));
+			ATF_CHECK_EQ(EAGAIN, errno); /* Not even the IRK may escape. */
+			close(fds[0]);
+			close(fds[1]);
+		}
+	}
 }
 
 /* ================================================================
@@ -1882,7 +1951,7 @@ ATF_TC_BODY(test_bond_mutation_flush_rollbacks, tc)
 	struct smp_bond incoming, before, counter_before;
 	struct smp_bond full_before[TEST_IMPL_BOND_CAPACITY];
 	pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
-	uint8_t csrk[16];
+	uint8_t csrk[16], irk[16];
 	int deadfd, i;
 
 	deadfd = open("/tmp", O_RDONLY | O_DIRECTORY | O_CLOEXEC);
@@ -1894,7 +1963,7 @@ ATF_TC_BODY(test_bond_mutation_flush_rollbacks, tc)
 	smp_bond_db_set_atomic(&db, deadfd, "bonds");
 	close(deadfd); /* all flushes now fail at openat(2) */
 
-	ATF_CHECK_EQ(-1, smp_ensure_local_irk(&db));
+	ATF_CHECK_EQ(-1, smp_local_irk_get(&db, irk));
 	ATF_CHECK(!db.has_local_irk);
 	ATF_CHECK(memcmp(db.local_irk, (uint8_t[16]){0}, 16) == 0);
 
@@ -2261,8 +2330,171 @@ ATF_TC_BODY(test_bond_db_atomic_write_preserves_prior, tc)
 	rmdir(dir);
 }
 
+/* Full phase-three exchanges use datagrams to preserve SMP PDU boundaries.
+ * Literal opcodes/lengths: Core Vol 3 Part H 3.6.2-3.6.6. */
+static void
+phase3_session(struct smp_conn *sc, int fds[2], uint8_t pdus[5][17],
+    size_t lengths[5], unsigned int key_size, unsigned int peer)
+{
+	ATF_REQUIRE_EQ(0, socketpair(AF_UNIX, SOCK_DGRAM, 0, fds));
+	memset(sc, 0, sizeof(*sc));
+	sc->fd = fds[0];
+	sc->hci_fd = -1;
+	sc->neg_key_size = key_size;
+	sc->remote_addr_type = BDADDR_LE_PUBLIC;
+	memset(pdus, 0, 5 * 17);
+	pdus[0][0] = 6; lengths[0] = 17;
+	memset(pdus[0] + 1, 0x53, key_size);
+	pdus[1][0] = 7; lengths[1] = 11;
+	pdus[1][1] = peer + 1; pdus[1][3] = 0x42;
+	pdus[2][0] = 8; lengths[2] = 17;
+	memset(pdus[2] + 1, 0x71, 16);
+	pdus[3][0] = 9; lengths[3] = 8;
+	pdus[3][2] = peer + 1;
+	pdus[4][0] = 10; lengths[4] = 17;
+	memset(pdus[4] + 1, 0x39, 16);
+}
+
+static void
+phase3_send(int fd, uint8_t pdus[5][17], const size_t lengths[5])
+{
+	for (int i = 0; i < 5; i++)
+		ATF_REQUIRE_EQ((ssize_t)lengths[i],
+		    send(fd, pdus[i], lengths[i], 0));
+}
+
+ATF_TC_WITHOUT_HEAD(phase3_key_size_matrix);
+ATF_TC_WITHOUT_HEAD(phase3_identity_address_kind);
+ATF_TC_BODY(phase3_identity_address_kind, tc)
+{
+	for (unsigned kind = 0; kind < 4; kind++) {
+		struct smp_conn sc;
+		struct smp_bond bond = { 0 }, before;
+		uint8_t pdus[5][17];
+		size_t lengths[5];
+		int fds[2];
+
+		phase3_session(&sc, fds, pdus, lengths, 16, 0);
+		pdus[3][1] = 1;
+		pdus[3][7] = (kind << 6) | 0x12;
+		before = bond;
+		ATF_REQUIRE_EQ(17, send(fds[1], pdus[2], 17, 0));
+		ATF_REQUIRE_EQ(8, send(fds[1], pdus[3], 8, 0));
+		ATF_CHECK_EQ(kind == 3 ? 0 : -1,
+		    smp_receive_peer_keys(&sc, &bond, 2, true));
+		if (kind != 3)
+			ATF_CHECK_EQ(0, memcmp(&bond, &before, sizeof(bond)));
+		else {
+			ATF_CHECK_EQ(BDADDR_LE_RANDOM, bond.addr_type);
+			ATF_CHECK_EQ(0, memcmp(bond.addr, pdus[3] + 2, 6));
+		}
+		close(fds[0]); close(fds[1]);
+	}
+}
+
+ATF_TC_BODY(phase3_key_size_matrix, tc)
+{
+	/* Every negotiated key size: valid masked LTK then every forbidden
+	 * high octet individually set. Rejection must leave the bond untouched. */
+	for (unsigned int size = 7; size <= 16; size++) {
+		for (unsigned int bad = size; bad <= 16; bad++) {
+			struct smp_conn sc;
+			struct smp_bond bond = {0}, before;
+			uint8_t pdus[5][17]; size_t lengths[5]; int fds[2];
+			phase3_session(&sc, fds, pdus, lengths, size, 0);
+			if (bad < 16)
+				pdus[0][1 + bad] = 1;
+			before = bond;
+			phase3_send(fds[1], pdus, lengths);
+			if (bad < 16) {
+				ATF_CHECK_EQ(-1, smp_receive_peer_keys(&sc, &bond, 7, false));
+				ATF_CHECK_EQ(0, memcmp(&before, &bond, sizeof(bond)));
+			} else {
+				ATF_REQUIRE_EQ(0, smp_receive_peer_keys(&sc, &bond, 7, false));
+				ATF_CHECK(bond.has_ltk && bond.has_irk && bond.has_csrk);
+				ATF_CHECK_EQ(0, memcmp(bond.ltk, pdus[0] + 1, 16));
+			}
+			close(fds[0]); close(fds[1]);
+		}
+	}
+}
+
+ATF_TC_WITHOUT_HEAD(phase3_partial_exchange_rollback);
+ATF_TC_BODY(phase3_partial_exchange_rollback, tc)
+{
+	/* Fail at each stage, both by truncation and wrong ordering; repeat
+	 * against an existing bond to catch partial LTK/IRK/CSRK replacement. */
+	for (unsigned int stage = 0; stage < 5; stage++) {
+		for (unsigned int mode = 0; mode < 2; mode++) {
+			struct smp_conn sc;
+			struct smp_bond bond = { .has_ltk = true }, before;
+			uint8_t pdus[5][17]; size_t lengths[5]; int fds[2];
+			memset(bond.ltk, 0xc5, 16);
+			bond.key_size = 16;
+			before = bond;
+			phase3_session(&sc, fds, pdus, lengths, 16, 0);
+			if (mode == 0)
+				lengths[stage]--;
+			else
+				pdus[stage][0] = stage ? pdus[stage - 1][0] : 7;
+			phase3_send(fds[1], pdus, lengths);
+			ATF_CHECK_EQ(-1, smp_receive_peer_keys(&sc, &bond, 7, false));
+			ATF_CHECK_EQ(0, memcmp(&before, &bond, sizeof(bond)));
+			close(fds[0]); close(fds[1]);
+		}
+	}
+}
+
+ATF_TC_WITHOUT_HEAD(phase3_many_bonds_persist_reload);
+ATF_TC_BODY(phase3_many_bonds_persist_reload, tc)
+{
+	struct smp_bond_db db = { .fd = -1 }, loaded = {0};
+	int fd, dirfd;
+	for (unsigned int peer = 0; peer < 32; peer++) {
+		struct smp_conn sc;
+		struct smp_bond bond = { .key_size = 16 };
+		uint8_t pdus[5][17]; size_t lengths[5]; int fds[2];
+		phase3_session(&sc, fds, pdus, lengths, 16, peer);
+		pdus[0][1] = peer;
+		phase3_send(fds[1], pdus, lengths);
+		ATF_REQUIRE_EQ(0, smp_receive_peer_keys(&sc, &bond, 7, false));
+		ATF_REQUIRE_EQ(0, smp_bond_db_store(&db, &bond));
+		close(fds[0]); close(fds[1]);
+	}
+	ATF_REQUIRE_EQ(32, db.count);
+	fd = open("phase3-bonds", O_CREAT | O_RDWR | O_EXCL, 0600);
+	ATF_REQUIRE(fd >= 0);
+	db.fd = fd;
+	dirfd = open(".", O_RDONLY | O_DIRECTORY);
+	ATF_REQUIRE(dirfd >= 0);
+	smp_bond_db_set_atomic(&db, dirfd, "phase3-bonds");
+	ATF_REQUIRE_EQ(0, smp_bond_db_save(&db));
+	/* Atomic save replaces both the inode and db.fd. */
+	fd = open("phase3-bonds", O_RDONLY);
+	ATF_REQUIRE(fd >= 0);
+	smp_bond_db_set_atomic(&loaded, dirfd, "phase3-bonds");
+	ATF_REQUIRE_EQ(0, smp_bond_db_load(&loaded, fd));
+	ATF_REQUIRE_EQ(32, loaded.count);
+	for (unsigned int peer = 0; peer < 32; peer++) {
+		ATF_CHECK_EQ(peer + 1, loaded.bonds[peer].addr[0]);
+		ATF_CHECK_EQ(peer, loaded.bonds[peer].ltk[0]);
+		ATF_CHECK_EQ(16, loaded.bonds[peer].key_size);
+		ATF_CHECK(loaded.bonds[peer].has_ltk && loaded.bonds[peer].has_irk &&
+		    loaded.bonds[peer].has_csrk);
+		ATF_CHECK_EQ(0, memcmp(&db.bonds[peer], &loaded.bonds[peer],
+		    sizeof(struct smp_bond)));
+	}
+	close(fd);
+	close(db.fd);
+	close(dirfd);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
+	ATF_TP_ADD_TC(tp, phase3_key_size_matrix);
+	ATF_TP_ADD_TC(tp, phase3_identity_address_kind);
+	ATF_TP_ADD_TC(tp, phase3_partial_exchange_rollback);
+	ATF_TP_ADD_TC(tp, phase3_many_bonds_persist_reload);
 
 	ATF_TP_ADD_TC(tp, test_bond_identity_root_fail_closed);
 	ATF_TP_ADD_TC(tp, test_bond_db_atomic_write_preserves_prior);
@@ -2304,6 +2536,8 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, test_distribute_init_keys_legacy_all);
 	ATF_TP_ADD_TC(tp, test_distribute_init_keys_sc_skips_enc);
 	ATF_TP_ADD_TC(tp, test_distribute_id_addr_type_wire_encoding);
+	ATF_TP_ADD_TC(tp, test_local_identity_separate_from_private_address);
+	ATF_TP_ADD_TC(tp, test_local_identity_rejects_private_address);
 	ATF_TP_ADD_TC(tp, test_bond_cccds_save_restore);
 	ATF_TP_ADD_TC(tp, test_bond_cccds_save_overflow);
 	ATF_TP_ADD_TC(tp, test_bond_restore_cccds_overread_clamped);

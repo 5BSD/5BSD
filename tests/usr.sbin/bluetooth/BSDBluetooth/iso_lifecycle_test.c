@@ -2394,8 +2394,51 @@ ATF_TC_BODY(typed_iso_cig_rtn_range, tc)
 	    IPC_ISO_BIG_REQ_SIZE));
 }
 
+/* Keep the registry alive across reuse; do not reset away leaked streams. */
+ATF_TC_WITHOUT_HEAD(cis_repeated_failure_disconnect_reuse);
+ATF_TC_BODY(cis_repeated_failure_disconnect_reuse, tc)
+{
+	env_init();
+	for (unsigned int cycle = 0; cycle < 128; cycle++) {
+		uint16_t h;
+		int fd;
+		ncall = 0;
+		h = make_cig();
+		ATF_REQUIRE_EQ(1, blued_iso_stream_count());
+		ATF_REQUIRE_EQ(0, blued_iso_cis_create(&test_adp, &test_conn.dst,
+		    BDADDR_LE_PUBLIC, 0, 1, -1, 0, false));
+		if (cycle % 3 == 0) {
+			iso_on_cis_established(&test_adp, h, 0x3e);
+		} else {
+			iso_on_cis_established(&test_adp, h, 0);
+			ATF_REQUIRE_EQ(ISO_ST_PATHS_UP, blued_iso_stream_state(&test_adp, h));
+			fd = blued_iso_acquire_fd(&test_adp, h);
+			ATF_REQUIRE(fd >= 0);
+			/* Reacquisition is allowed by the API; a failed socket open
+			 * must leave the already handed-off stream intact. */
+			iso_connect_fail = true;
+			ATF_CHECK_EQ(-1, blued_iso_acquire_fd(&test_adp, h));
+			iso_connect_fail = false;
+			ATF_CHECK_EQ(ISO_ST_HANDED_OFF, blued_iso_stream_state(&test_adp, h));
+			close(fd);
+			if (cycle % 3 == 1) {
+				ATF_REQUIRE_EQ(0, blued_iso_cis_teardown(&test_adp, h, 0x13));
+				iso_on_cis_disconnected(&test_adp, h, 0x13);
+			} else
+				blued_iso_sweep_adapter(&test_adp);
+		}
+		ATF_REQUIRE_EQ(0, blued_iso_stream_count());
+		/* Late/duplicate notifications after removal cannot resurrect it. */
+		iso_on_cis_disconnected(&test_adp, h, 0x13);
+		iso_on_cis_established(&test_adp, h, 0);
+		ATF_CHECK_EQ(0, blued_iso_stream_count());
+		ATF_CHECK_EQ(-1, blued_iso_stream_state(&test_adp, h));
+	}
+}
+
 ATF_TP_ADD_TCS(tp)
 {
+	ATF_TP_ADD_TC(tp, cis_repeated_failure_disconnect_reuse);
 
 	ATF_TP_ADD_TC(tp, typed_iso_cig_rtn_range);
 	ATF_TP_ADD_TC(tp, cis_central_full_lifecycle);

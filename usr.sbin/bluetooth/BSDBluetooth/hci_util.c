@@ -35,6 +35,8 @@
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
+#include <stdlib.h>
+#include <libservice.h>
 
 #include <netgraph/bluetooth/include/ng_btsocket.h>
 
@@ -43,6 +45,7 @@
 #include "hci_log.h"
 #include "hci_util.h"
 #include "hci_internal.h"
+#include "controller/controller_protocol.h"
 
 /*
  * Mutex protecting the shared HCI socket fd against concurrent
@@ -154,7 +157,11 @@ hci_devreq_logged_locked(int fd, struct bt_devreq *r, int timeout)
 	{
 		size_t want = (r->rparam != NULL) ? r->rlen : 0;
 
-		ret = bt_devreq(fd, r, timeout);
+		if (hci_event_defer_hook != NULL)
+			ret = bt_devreq_events(fd, r, timeout,
+			    hci_event_defer_hook);
+		else
+			ret = bt_devreq(fd, r, timeout);
 
 		/*
 		 * Finding F1.1: bt_devreq() pre-zeroes the caller's return
@@ -289,12 +296,17 @@ int
 hci_devreq_logged(int fd, struct bt_devreq *r, int timeout)
 {
 	pthread_mutex_t *mutex;
-	int ret;
+	int ret, error;
 
 	mutex = hci_devreq_mutex(fd);
 	pthread_mutex_lock(mutex);
 	ret = hci_devreq_logged_locked(fd, r, timeout);
+	error = errno;
 	pthread_mutex_unlock(mutex);
+	if (hci_event_defer_kick_hook != NULL)
+		hci_event_defer_kick_hook();
+	if (ret < 0)
+		errno = error;
 	return (ret);
 }
 
@@ -302,12 +314,59 @@ hci_devreq_logged(int fd, struct bt_devreq *r, int timeout)
  * Open and bind a raw HCI socket to the named adapter.
  * adapter is e.g. "ubt0".  Returns fd or -1.
  */
+static int
+hci_controller_open(const char *adapter)
+{
+	struct blued_controller_request req = { .magic = BLUED_CONTROLLER_MAGIC };
+	struct blued_controller_reply rep;
+	struct service_session *session;
+	struct service_message out = { .size = sizeof(out), .data = &req,
+	    .length = sizeof(req) };
+	int fd = -1, channel, error;
+	struct service_reply in = { .size = sizeof(in), .data = &rep,
+	    .capacity = sizeof(rep), .fds = &fd, .fd_capacity = 1 };
+	struct service_call_options options = SERVICE_CALL_OPTIONS_INITIALIZER;
+
+	if (adapter == NULL || strlcpy(req.adapter, adapter,
+	    sizeof(req.adapter)) >= sizeof(req.adapter)) {
+		errno = EINVAL;
+		return (-1);
+	}
+	if (service_open(BLUED_CONTROLLER_SERVICE, &channel) == -1)
+		return (-1);
+	if (service_session_create(channel, &session) == -1) {
+		error = errno;
+		close(channel);
+		errno = error;
+		return (-1);
+	}
+	options.timeout_ms = 5000;
+	error = service_session_call(session, &out, &in, &options) == -1 ? errno : 0;
+	service_session_close(session);
+	if (error == 0 && (in.length != sizeof(rep) ||
+	    rep.magic != BLUED_CONTROLLER_MAGIC || rep.error < 0 ||
+	    in.nfds != (rep.error == 0 ? 1U : 0U)))
+		error = EPROTO;
+	if (error == 0)
+		error = rep.error;
+	if (error == 0 && service_harden_fd(fd, 0) == -1)
+		error = errno;
+	if (error != 0) {
+		if (fd >= 0)
+			close(fd);
+		errno = error;
+		return (-1);
+	}
+	return (fd);
+}
+
 int
 hci_open(const char *adapter)
 {
 	int fd;
 
-	fd = bt_devopen(adapter);
+	fd = getenv(SERVICE_UNIT_DIR_ENV) != NULL ?
+	    hci_controller_open(adapter) : bt_devopen(adapter);
 	if (fd >= 0) {
 		int flags;
 

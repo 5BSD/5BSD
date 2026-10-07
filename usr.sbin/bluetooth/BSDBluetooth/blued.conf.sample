@@ -40,7 +40,7 @@ general {
     # BTSnoop packet log (Wireshark-compatible)
     # logfile = "/var/log/blued.pcap";
 
-    # BLE peripheral advertised name (default: FreeBSD-BLE)
+    # BLE peripheral advertised name (default: 5BSD-BLE)
     # peripheral_name = "MyDevice";
 }
 

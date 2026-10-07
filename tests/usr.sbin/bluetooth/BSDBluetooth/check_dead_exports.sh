@@ -129,8 +129,11 @@ for o in $objs; do
 	unit=$(echo "$unit" | sed -e 's/\.pieo$/.c/' -e 's/\.pico$/.c/' \
 	    -e 's/\.o$/.c/')
 	# Exported definitions: text and data, global only.
+	# dtrace -G adds per-link aliases for probe sites. These are generated
+	# instrumentation labels, not C entry points that a consumer can call.
 	nm -g --defined-only "$o" 2>/dev/null |
-	    awk -v u="$unit" '$2=="T"||$2=="D"||$2=="B"||$2=="R" \
+	    awk -v u="$unit" '$3 ~ /^\$dtrace[0-9]+\./ {next}
+		$2=="T"||$2=="D"||$2=="B"||$2=="R" \
 		{print "DEF\t"$3"\t"u"\t"$2}'
 	# Cross-unit references.
 	nm -u "$o" 2>/dev/null | awk -v u="$unit" '{print "REF\t"$2"\t"u}'

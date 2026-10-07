@@ -1810,7 +1810,9 @@ meshd_persist_load(struct meshd_persist *ps, struct meshd_node *nd)
 
 	if (ps == NULL || nd == NULL || ps->path[0] == '\0')
 		return (-1);
-	fd = open(ps->path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+	/* Reach the regular-file check even if the path names a FIFO. */
+	fd = open(ps->path, O_RDONLY | O_CLOEXEC | O_CLOFORK |
+	    O_NOFOLLOW | O_NONBLOCK);
 	if (fd < 0)
 		return (errno == ENOENT ? 1 : -1); /* only absence means fresh */
 	if (fstat(fd, &sb) != 0 || !S_ISREG(sb.st_mode) ||
@@ -1985,7 +1987,12 @@ meshd_persist_mgr_save(const char *path, const struct mesh_mgr *mgr)
 
 		if (fd < 0)
 			return (-1);
-		if (fchmod(fd, 0600) != 0 || close(fd) != 0) {
+		if (fchmod(fd, 0600) != 0) {
+			(void)close(fd);
+			(void)unlink(tmp);
+			return (-1);
+		}
+		if (close(fd) != 0) {
 			(void)unlink(tmp);
 			return (-1);
 		}

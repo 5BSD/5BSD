@@ -640,6 +640,8 @@ periph_smp_run(struct blued_conn *conn, struct blued_adapter *adp, int smp_fd)
 	 * Registered pairing agent's IO cap overrides the static config (the
 	 * common pairing-agent model; Core Spec Vol 3 Part H §2.3.5.1).
 	 */
+	memcpy(sc.local_identity_addr, &adp->addr, 6);
+	sc.local_identity_addr_type = BDADDR_LE_PUBLIC;
 	sc.io_capability = blued_ctl_effective_io_cap(blued_cfg.io_capability);
 	sc.min_key_size = blued_cfg.min_key_size;
 	sc.sc_only = blued_cfg.sc_mode == BLUED_SC_ONLY;
@@ -1002,7 +1004,7 @@ blued_conn_setup_peripheral_impl(void *arg)
 				memcpy(&sa.l2cap_bdaddr, &adp->addr,
 				    sizeof(sa.l2cap_bdaddr));
 
-				if (bind(smp_fd, (struct sockaddr *)&sa,
+				if (bindat(smp_fd, smp_fd, (struct sockaddr *)&sa,
 				    sizeof(sa)) < 0) {
 					warn("SMP bind");
 					close(smp_fd);
@@ -1018,7 +1020,7 @@ blued_conn_setup_peripheral_impl(void *arg)
 				memcpy(&sa.l2cap_bdaddr, &conn->dst,
 				    sizeof(sa.l2cap_bdaddr));
 
-				if (connect(smp_fd, (struct sockaddr *)&sa,
+				if (connectat(smp_fd, smp_fd, (struct sockaddr *)&sa,
 				    sizeof(sa)) < 0) {
 					warn("SMP connect");
 					close(smp_fd);
@@ -1796,7 +1798,7 @@ peripheral_att_listen(struct blued_adapter *adp)
 	sa.l2cap_bdaddr_type = BDADDR_LE_PUBLIC;
 	memcpy(sa.l2cap_bdaddr.b, &adp->addr, sizeof(adp->addr));
 
-	if (bind(fd, (struct sockaddr *)&sa, sizeof(sa)) < 0) {
+	if (bindat(fd, fd, (struct sockaddr *)&sa, sizeof(sa)) < 0) {
 		warn("ATT listen bind (is another blued still running?)");
 		close(fd);
 		return (-1);
@@ -1870,7 +1872,7 @@ blued_eatt_listen(struct blued_adapter *adp)
 	sa.l2cap_bdaddr_type = BDADDR_LE_PUBLIC;
 	memcpy(sa.l2cap_bdaddr.b, &adp->addr, sizeof(adp->addr));
 
-	if (bind(fd, (struct sockaddr *)&sa, sizeof(sa)) < 0) {
+	if (bindat(fd, fd, (struct sockaddr *)&sa, sizeof(sa)) < 0) {
 		warn("EATT listen bind (PSM 0x%04x)", ATT_EATT_PSM);
 		close(fd);
 		return (-1);

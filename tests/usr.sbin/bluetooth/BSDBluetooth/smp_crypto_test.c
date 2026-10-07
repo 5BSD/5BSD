@@ -2469,6 +2469,8 @@ ATF_TC_BODY(test_knob_legacy_allows_7, tc)
 
 		/* Send EncKey distribution */
 		arc4random_buf(our_ltk, sizeof(our_ltk));
+		/* The negotiated seven-octet LTK is zero-padded on the wire. */
+		memset(our_ltk + 7, 0, 9);
 		pdu[0] = BTCR_SMP_ENCRYPTION_INFORMATION;
 		memcpy(pdu + 1, our_ltk, 16);
 		if (send(peer_fd, pdu, 17, MSG_EOR) < 0)

@@ -2,6 +2,7 @@
 
 SUBDIR+= null \
 	 oss
+SUBDIR.${MK_BLUETOOTH}+= bt
 
 SUBDIR_PARALLEL=
 

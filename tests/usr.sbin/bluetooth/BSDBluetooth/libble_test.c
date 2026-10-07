@@ -1927,8 +1927,55 @@ ATF_TC_BODY(sync_op_drains_partial_frame, tc)
 	ble_close(ctx);
 }
 
+ATF_TC_WITHOUT_HEAD(scan_stop_correlated_completion);
+ATF_TC_BODY(scan_stop_correlated_completion, tc)
+{
+	ble_ctx_t *ctx;
+	uint8_t payload[256], reply[IPC_OP_PREFIX_SIZE];
+	uint32_t scan_id, stop_id;
+	uint16_t type, domain;
+	size_t len;
+	int fd;
+
+	ctx = make_mock_ctx(&fd);
+	ATF_REQUIRE_EQ(0, ble_scan(ctx, NULL, NULL));
+	read_frame(fd, &type, &domain, payload, sizeof(payload), &len);
+	scan_id = ipc_get_le32(payload);
+	ATF_REQUIRE_EQ(0, ble_scan_stop(ctx));
+	read_frame(fd, &type, &domain, payload, sizeof(payload), &len);
+	stop_id = ipc_get_le32(payload);
+	ATF_CHECK_EQ(IPC_GAP_SCAN_STOP, ipc_get_le16(payload + IPC_OP_PREFIX_SIZE));
+	ATF_CHECK_EQ(2, ble_pending_count(ctx));
+	ATF_CHECK(scan_id != stop_id);
+	ipc_op_prefix_encode(reply, scan_id, 0, 0);
+	send_frame(fd, IPC_T_OP_REPLY, IPC_OP_DOMAIN_GAP, reply, sizeof(reply));
+	ipc_op_prefix_encode(reply, stop_id, 0, 0);
+	send_frame(fd, IPC_T_OP_REPLY, IPC_OP_DOMAIN_GAP, reply, sizeof(reply));
+	ATF_REQUIRE_EQ(0, ble_process(ctx));
+	ATF_CHECK_EQ(0, ble_pending_count(ctx));
+	close(fd);
+	ble_close(ctx);
+}
+
+ATF_TC_WITHOUT_HEAD(scan_unterminated_name);
+ATF_TC_BODY(scan_unterminated_name, tc)
+{
+	ble_ctx_t *ctx;
+	ble_scan_params_t params = {0};
+	int fd;
+	ctx = make_mock_ctx(&fd);
+	memset(params.name_sub, 'x', sizeof(params.name_sub));
+	ATF_CHECK_EQ(-1, ble_scan_filtered(ctx, &params, NULL, NULL));
+	ATF_CHECK_EQ(BLE_ERR_INVAL, ble_errno(ctx));
+	ATF_CHECK_EQ(0, ble_pending_count(ctx));
+	close(fd);
+	ble_close(ctx);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
+	ATF_TP_ADD_TC(tp, scan_stop_correlated_completion);
+	ATF_TP_ADD_TC(tp, scan_unterminated_name);
 	ATF_TP_ADD_TC(tp, security_reply_encoding);
 	ATF_TP_ADD_TC(tp, acceptlist_command_family);
 	ATF_TP_ADD_TC(tp, pending_count_drains_reply);

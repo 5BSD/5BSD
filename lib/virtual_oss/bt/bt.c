@@ -34,6 +34,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <fcntl.h>
+#include <poll.h>
+#include <time.h>
 #include <unistd.h>
 #include <err.h>
 #define	L2CAP_SOCKET_CHECKED
@@ -53,8 +55,57 @@ struct l2cap_info {
 	bdaddr_t raddr;
 };
 
-static struct bt_config bt_play_cfg;
-static struct bt_config bt_rec_cfg;
+static struct bt_config bt_play_cfg = { .fd = -1, .hc = -1 };
+static struct bt_config bt_rec_cfg = { .fd = -1, .hc = -1 };
+
+#ifndef BT_MEDIA_TIMEOUT_MS
+#define BT_MEDIA_TIMEOUT_MS 2000
+#endif
+
+/* A stalled headset must not trap the mixer in a busy loop or SIGPIPE. */
+static int
+bt_send_media(struct bt_config *cfg)
+{
+	struct pollfd pfd = { .fd = cfg->fd, .events = POLLOUT };
+	struct timespec now;
+	int64_t deadline, remaining;
+	ssize_t sent;
+	int result;
+
+	if (clock_gettime(CLOCK_MONOTONIC, &now) < 0)
+		return (-1);
+	deadline = (int64_t)now.tv_sec * 1000 + now.tv_nsec / 1000000 +
+	    BT_MEDIA_TIMEOUT_MS;
+	for (;;) {
+		if (clock_gettime(CLOCK_MONOTONIC, &now) < 0)
+			return (-1);
+		remaining = deadline - ((int64_t)now.tv_sec * 1000 +
+		    now.tv_nsec / 1000000);
+		if (remaining <= 0) {
+			errno = ETIMEDOUT;
+			return (-1);
+		}
+		result = poll(&pfd, 1, (int)remaining);
+		if (result < 0 && errno == EINTR)
+			continue;
+		if (result < 0)
+			return (-1);
+		if (result == 0)
+			continue;
+		sent = send(cfg->fd, cfg->mtu_data, cfg->mtu_offset,
+		    MSG_DONTWAIT | MSG_NOSIGNAL | MSG_EOR);
+		if (sent < 0 && (errno == EAGAIN || errno == EINTR))
+			continue;
+		if (sent < 0)
+			return (-1);
+		if ((size_t)sent != cfg->mtu_offset) {
+			errno = EIO;
+			return (-1);
+		}
+		cfg->mtu_offset = 0;
+		return (0);
+	}
+}
 
 int
 bt_receive(struct bt_config *cfg, void *ptr, int len, int use_delay)
@@ -65,6 +116,15 @@ bt_receive(struct bt_config *cfg, void *ptr, int len, int use_delay)
 	int old_len = len;
 	int delta;
 	int err;
+	struct iovec iov;
+	struct msghdr msg;
+
+	if (sbc == NULL || cfg->fd < 0 || len < 0 || (len & 1) != 0 ||
+	    (len != 0 && ptr == NULL) ||
+	    cfg->mtu <= sizeof(*phdr)) {
+		errno = EINVAL;
+		return (-1);
+	}
 
 	/* wait for service interval, if any */
 	if (use_delay)
@@ -106,7 +166,7 @@ bt_receive(struct bt_config *cfg, void *ptr, int len, int use_delay)
 			delta = (2 * sbc->rem_len);
 
 		/* copy out samples, if any */
-		memcpy(tmp, (char *)sbc->music_data + sbc->rem_off, delta);
+		memcpy(tmp, sbc->music_data + sbc->rem_off, delta);
 		tmp += delta;
 		len -= delta;
 		sbc->rem_off += delta / 2;
@@ -117,13 +177,23 @@ bt_receive(struct bt_config *cfg, void *ptr, int len, int use_delay)
 		if (sbc->rem_len == 0 &&
 		    sbc->rem_data_frames != 0) {
 			err = sbc_decode_frame(cfg, sbc->rem_data_len * 8);
+			if (err <= 0 || err > sbc->rem_data_len) {
+				sbc->rem_data_frames = sbc->rem_data_len = 0;
+				errno = EPROTO;
+				return (-1);
+			}
 			sbc->rem_data_frames--;
 			sbc->rem_data_ptr += err;
 			sbc->rem_data_len -= err;
 			continue;
 		}
 		/* TODO: Support fragmented SBC frames */
-		err = read(cfg->fd, cfg->mtu_data, cfg->mtu);
+		memset(&msg, 0, sizeof(msg));
+		iov.iov_base = cfg->mtu_data;
+		iov.iov_len = cfg->mtu;
+		msg.msg_iov = &iov;
+		msg.msg_iovlen = 1;
+		err = recvmsg(cfg->fd, &msg, 0);
 
 		if (err == 0) {
 			break;
@@ -135,8 +205,13 @@ bt_receive(struct bt_config *cfg, void *ptr, int len, int use_delay)
 		}
 
 		/* verify RTP header */
-		if (err < (int)sizeof(*phdr) || phdr->id != 0x80)
-			continue;
+		if ((msg.msg_flags & MSG_TRUNC) != 0 ||
+		    err <= (int)sizeof(*phdr) || phdr->id != 0x80 ||
+		    (phdr->id2 & 0x7f) < 96 || phdr->numFrames == 0 ||
+		    (phdr->numFrames & 0xf0) != 0) {
+			errno = EPROTO;
+			return (-1);
+		}
 
 		sbc->rem_data_frames = phdr->numFrames;
 		sbc->rem_data_ptr = (uint8_t *)(phdr + 1);
@@ -163,13 +238,13 @@ bt_close(struct voss_backend *pbe)
 {
 	struct bt_config *cfg = pbe->arg;
 
-	if (cfg->hc > 0) {
-		avdtpAbort(cfg->hc, cfg->sep);
-		avdtpClose(cfg->hc, cfg->sep);
+	if (cfg->hc >= 0) {
+		if (cfg->sep != 0)
+			avdtpClose(cfg->hc, cfg->sep);
 		close(cfg->hc);
 		cfg->hc = -1;
 	}
-	if (cfg->fd > 0) {
+	if (cfg->fd >= 0) {
 		close(cfg->fd);
 		cfg->fd = -1;
 	}
@@ -504,13 +579,13 @@ bt_open(struct voss_backend *pbe __unused, const char *devname, int samplerate,
 	addr.l2cap_family = AF_BLUETOOTH;
 	bdaddr_copy(&addr.l2cap_bdaddr, &info.laddr);
 
-	if (bind(cfg->hc, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
+	if (bindat(cfg->hc, cfg->hc, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
 		DPRINTF("Could not bind to HC\n");
 		goto error;
 	}
 	bdaddr_copy(&addr.l2cap_bdaddr, &info.raddr);
 	addr.l2cap_psm = l2cap_psm;
-	if (connect(cfg->hc, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
+	if (connectat(cfg->hc, cfg->hc, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
 		DPRINTF("Could not connect to HC: %d\n", errno);
 		goto error;
 	}
@@ -533,13 +608,13 @@ bt_open(struct voss_backend *pbe __unused, const char *devname, int samplerate,
 	addr.l2cap_family = AF_BLUETOOTH;
 	bdaddr_copy(&addr.l2cap_bdaddr, &info.laddr);
 
-	if (bind(cfg->fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
+	if (bindat(cfg->fd, cfg->fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
 		DPRINTF("Could not bind\n");
 		goto error;
 	}
 	bdaddr_copy(&addr.l2cap_bdaddr, &info.raddr);
 	addr.l2cap_psm = l2cap_psm;
-	if (connect(cfg->fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
+	if (connectat(cfg->fd, cfg->fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
 		DPRINTF("Could not connect: %d\n", errno);
 		goto error;
 	}
@@ -595,11 +670,11 @@ bt_open(struct voss_backend *pbe __unused, const char *devname, int samplerate,
 	return (0);
 
 error:
-	if (cfg->hc > 0) {
+	if (cfg->hc >= 0) {
 		close(cfg->hc);
 		cfg->hc = -1;
 	}
-	if (cfg->fd > 0) {
+	if (cfg->fd >= 0) {
 		close(cfg->fd);
 		cfg->fd = -1;
 	}
@@ -610,6 +685,7 @@ static void
 bt_init_cfg(struct bt_config *cfg)
 {
 	memset(cfg, 0, sizeof(*cfg));
+	cfg->fd = cfg->hc = -1;
 }
 
 static int
@@ -625,6 +701,15 @@ bt_rec_open(struct voss_backend *pbe, const char *devname, int samplerate,
 	    cfg, SDP_SERVICE_CLASS_AUDIO_SOURCE, 0);
 	if (retval != 0)
 		return (retval);
+	if (cfg->codec != CODEC_SBC) {
+		bt_close(pbe);
+		return (-1);
+	}
+	cfg->handle.sbc_enc = calloc(1, sizeof(*cfg->handle.sbc_enc));
+	if (cfg->handle.sbc_enc == NULL) {
+		bt_close(pbe);
+		return (-1);
+	}
 	return (0);
 }
 
@@ -647,8 +732,10 @@ bt_play_open(struct voss_backend *pbe, const char *devname, int samplerate,
 	case CODEC_SBC:
 		cfg->handle.sbc_enc =
 		    malloc(sizeof(*cfg->handle.sbc_enc));
-		if (cfg->handle.sbc_enc == NULL)
+		if (cfg->handle.sbc_enc == NULL) {
+			bt_close(pbe);
 			return (-1);
+		}
 		memset(cfg->handle.sbc_enc, 0, sizeof(*cfg->handle.sbc_enc));
 		break;
 #ifdef HAVE_LIBAV
@@ -774,7 +861,15 @@ bt_play_sbc_transfer(struct voss_backend *pbe, void *ptr, int len)
 	struct sbc_encode *sbc = cfg->handle.sbc_enc;
 	int rem_size = 1;
 	int old_len = len;
-	int err = 0;
+
+	if (len < 0 || sbc == NULL || cfg->fd < 0) {
+		errno = EINVAL;
+		return (-1);
+	}
+	if (cfg->mtu <= sizeof(struct sbc_header) || cfg->mtu_offset > cfg->mtu) {
+		errno = EMSGSIZE;
+		return (-1);
+	}
 
 	switch (cfg->blocks) {
 	case BLOCKS_4:
@@ -863,19 +958,11 @@ bt_play_sbc_transfer(struct voss_backend *pbe, void *ptr, int len)
 			/* compute bytes left */
 			rem = cfg->mtu - cfg->mtu_offset;
 
-			if (phdr->numFrames == 255 || rem < pkt_len) {
-				int xlen;
-
+			if (phdr->numFrames == 15 || rem < pkt_len) {
 				if (phdr->numFrames == 0)
 					return (-1);
-				do {
-					xlen = write(cfg->fd, cfg->mtu_data, cfg->mtu_offset);
-				} while (xlen < 0 && errno == EAGAIN);
-
-				if (xlen < 0)
+				if (bt_send_media(cfg) < 0)
 					return (-1);
-
-				cfg->mtu_offset = 0;
 				goto retry;
 			}
 			memcpy(cfg->mtu_data + cfg->mtu_offset, sbc->data, pkt_len);
@@ -887,9 +974,10 @@ bt_play_sbc_transfer(struct voss_backend *pbe, void *ptr, int len)
 			sbc->rem_len = 0;
 		}
 	}
-	if (err == 0)
-		return (old_len);
-	return (err);
+	/* Do not hold the last complete frames until a later mixer write. */
+	if (cfg->mtu_offset > sizeof(struct sbc_header) && bt_send_media(cfg) < 0)
+		return (-1);
+	return (old_len);
 }
 
 #ifdef HAVE_LIBAV

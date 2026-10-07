@@ -35,7 +35,7 @@ adv_ad_append(struct adv_ad *b, uint8_t type, const uint8_t *val, uint8_t vlen)
 	 * One AD structure's length octet counts the type octet plus the
 	 * value, so the value may be at most 254 octets (CSS Part A §1.1).
 	 */
-	if (vlen > 254) {
+	if (b == NULL || (val == NULL && vlen != 0) || vlen > 254) {
 		errno = EINVAL;
 		return (-1);
 	}
@@ -66,7 +66,7 @@ adv_ad_add_uuid16(struct adv_ad *b, bool complete, const uint16_t *uuids,
 	uint8_t val[254];
 	size_t i;
 
-	if (n == 0 || n > sizeof(val) / 2) {
+	if (uuids == NULL || n == 0 || n > sizeof(val) / 2) {
 		errno = EINVAL;
 		return (-1);
 	}
@@ -99,6 +99,10 @@ adv_ad_add_name(struct adv_ad *b, bool complete, const char *name)
 {
 	size_t len;
 
+	if (name == NULL) {
+		errno = EINVAL;
+		return (-1);
+	}
 	len = strlen(name);
 	if (len == 0 || len > 254) {
 		errno = EINVAL;
@@ -135,7 +139,7 @@ adv_ad_add_manuf(struct adv_ad *b, uint16_t company, const uint8_t *data,
 	 * Company Identifier Code (2 octets LE) then payload (CSS Part A §1.4).
 	 * A-F6: bound n by subtraction so n + 2 cannot overflow a size_t.
 	 */
-	if (n > sizeof(val) - 2) {
+	if ((data == NULL && n != 0) || n > sizeof(val) - 2) {
 		errno = EINVAL;
 		return (-1);
 	}
@@ -155,7 +159,7 @@ adv_ad_add_service_data16(struct adv_ad *b, uint16_t uuid, const uint8_t *data,
 	 * 16-bit Service UUID (2 octets LE) then service data (CSS Part A §1.11).
 	 * A-F6: bound n by subtraction so n + 2 cannot overflow a size_t.
 	 */
-	if (n > sizeof(val) - 2) {
+	if ((data == NULL && n != 0) || n > sizeof(val) - 2) {
 		errno = EINVAL;
 		return (-1);
 	}

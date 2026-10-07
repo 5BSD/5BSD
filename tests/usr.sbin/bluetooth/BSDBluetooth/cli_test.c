@@ -1378,8 +1378,21 @@ ATF_TC_BODY(cli_interactive_cmd_code_dispatch, tc)
 	close(sp[1]);
 }
 
+ATF_TC(cli_scan_returns_on_completion);
+ATF_TC_HEAD(cli_scan_returns_on_completion, tc)
+{
+	atf_tc_set_md_var(tc, "timeout", "5");
+}
+ATF_TC_BODY(cli_scan_returns_on_completion, tc)
+{
+	const char *args[] = {"scan"};
+	got_sigint = 0;
+	ATF_CHECK_EQ(1, run_staged_typed(args, 1, IPC_OP_DOMAIN_GAP, NULL, 0));
+}
+
 ATF_TP_ADD_TCS(tp)
 {
+	ATF_TP_ADD_TC(tp, cli_scan_returns_on_completion);
 
 	ATF_TP_ADD_TC(tp, k1_join_args_canary);
 	ATF_TP_ADD_TC(tp, k1_join_args_fits);

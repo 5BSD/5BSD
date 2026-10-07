@@ -157,6 +157,7 @@
 #define	IPC_GAP_CONNECT_NAME	7
 #define	IPC_GAP_PATH_LOSS	8
 #define	IPC_GAP_GET_CONNECTIONS	9
+#define	IPC_GAP_SCAN_STOP	10 /* zero-filled GAP request; this client only */
 #define	IPC_GAP_F_CONN_PARAMS	0x0001u
 #define	IPC_GAP_F_PHY		0x0002u
 #define	IPC_GAP_PHY_REQ_SIZE	14

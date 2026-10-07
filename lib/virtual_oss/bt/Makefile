@@ -4,7 +4,7 @@ SRCS=		bt.c \
 		avdtp.c \
 		sbc_encode.c
 
-LIBADD=		bluetooth sdp
+LIBADD=		bluetooth sdp m
 
 .if defined(HAVE_LIBAV)
 CFLAGS+=	-I${LOCALBASE:U/usr/local}/include -DHAVE_LIBAV

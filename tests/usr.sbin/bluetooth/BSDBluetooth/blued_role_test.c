@@ -1246,6 +1246,38 @@ hg_reply_map_and_info(void)
  * GATES the fix.
  * ================================================================ */
 ATF_TC_WITHOUT_HEAD(failed_report_reference_read_drops_the_report);
+ATF_TC_WITHOUT_HEAD(report_last_handle_cannot_reuse_descriptors);
+ATF_TC_BODY(report_last_handle_cannot_reuse_descriptors, tc)
+{
+	struct hogp_device dev;
+	struct gatt_discovery disc;
+	const uint8_t ref[2] = { 1, 1 };
+	uint8_t pdu[64];
+	int reads = 0;
+	ssize_t n;
+
+	role_reset();
+	hg_open(&dev);
+	hg_build_service(&disc);
+	disc.service.end_handle = 0xffff;
+	disc.nchars = 2;
+	disc.chars[1] = disc.chars[0];
+	disc.chars[1].decl_handle = 0xfffe;
+	disc.chars[1].value_handle = 0xffff;
+	hg_reply_read(ref, sizeof(ref));
+	/* A second queued reply exposes an erroneous read without blocking. */
+	hg_reply_read(ref, sizeof(ref));
+	ATF_REQUIRE_EQ(0, hogp_process_service(&dev, &disc, 0));
+	ATF_CHECK_EQ(1, dev.nreports);
+	ATF_CHECK_EQ(HG_REPORT_VALUE, dev.reports[0].value_handle);
+	while ((n = recv(hg_peer, pdu, sizeof(pdu), MSG_DONTWAIT)) > 0)
+		if (pdu[0] == 0x0a)
+			reads++;
+	ATF_CHECK_EQ(1, reads);
+	hg_close(&dev);
+	role_teardown();
+}
+
 ATF_TC_BODY(failed_report_reference_read_drops_the_report, tc)
 {
 	struct hogp_device dev;
@@ -2275,6 +2307,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, central_teardown_releases_hogp_once);
 	ATF_TP_ADD_TC(tp, hogp_alloc_starts_with_invalid_descriptors);
 	ATF_TP_ADD_TC(tp, failed_report_reference_read_drops_the_report);
+	ATF_TP_ADD_TC(tp, report_last_handle_cannot_reuse_descriptors);
 	ATF_TP_ADD_TC(tp, prohibited_report_type_drops_the_report);
 	ATF_TP_ADD_TC(tp, input_report_is_admitted_and_subscribed);
 	ATF_TP_ADD_TC(tp, protocol_mode_is_never_written_in_report_role);

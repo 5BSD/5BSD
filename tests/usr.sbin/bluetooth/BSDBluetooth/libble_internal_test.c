@@ -6,6 +6,7 @@
 /* White-box malformed-wire tests for the libble protocol engine. */
 #include "ble.c"
 #include <atf-c.h>
+#include <fcntl.h>
 
 static unsigned callbacks;
 static uint16_t callback_status;
@@ -828,6 +829,57 @@ ATF_TC_BODY(fd_receive_matrix, tc)
 }
 
 ATF_TC_WITHOUT_HEAD(gatt_acquire_protocol_matrix);
+ATF_TC_WITHOUT_HEAD(fd_receive_ownership);
+ATF_TC_BODY(fd_receive_ownership, tc)
+{
+	const unsigned counts[] = { 1, 2, 3, 8 };
+	ble_ctx_t ctx;
+	int sp[2], pp[2], sent[8], received, baseline, after;
+	char byte = 'x', control[CMSG_SPACE(sizeof(sent))];
+	struct iovec iov = { .iov_base = &byte, .iov_len = 1 };
+	struct msghdr msg;
+	struct cmsghdr *cmsg;
+
+	ATF_REQUIRE_EQ(0, socketpair(AF_UNIX, SOCK_SEQPACKET, 0, sp));
+	ATF_REQUIRE_EQ(0, pipe(pp));
+	init_ctx(&ctx, sp[0]);
+	for (unsigned i = 0; i < 8; i++)
+		sent[i] = pp[0];
+	baseline = dup(pp[0]);
+	ATF_REQUIRE(baseline >= 0);
+	close(baseline);
+	for (unsigned i = 0; i < sizeof(counts) / sizeof(counts[0]); i++) {
+		memset(&msg, 0, sizeof(msg));
+		memset(control, 0, sizeof(control));
+		msg.msg_iov = &iov;
+		msg.msg_iovlen = 1;
+		msg.msg_control = control;
+		msg.msg_controllen = CMSG_SPACE(counts[i] * sizeof(int));
+		cmsg = CMSG_FIRSTHDR(&msg);
+		cmsg->cmsg_level = SOL_SOCKET;
+		cmsg->cmsg_type = SCM_RIGHTS;
+		cmsg->cmsg_len = CMSG_LEN(counts[i] * sizeof(int));
+		memcpy(CMSG_DATA(cmsg), sent, counts[i] * sizeof(int));
+		ATF_REQUIRE_EQ(1, sendmsg(sp[1], &msg, 0));
+		received = -1;
+		if (counts[i] == 1) {
+			ATF_REQUIRE_EQ(0, ble_recv_fd(&ctx, 100, &received));
+			ATF_REQUIRE(received >= 0);
+			ATF_CHECK_EQ(FD_CLOEXEC | FD_CLOFORK,
+			    fcntl(received, F_GETFD) & (FD_CLOEXEC | FD_CLOFORK));
+			close(received);
+		} else {
+			ATF_CHECK_EQ(-1, ble_recv_fd(&ctx, 100, &received));
+			ATF_CHECK_EQ(EPROTO, errno);
+			ATF_CHECK_EQ(-1, received);
+		}
+		after = dup(pp[0]);
+		ATF_CHECK_EQ(baseline, after);
+		close(after);
+	}
+	close(pp[0]); close(pp[1]); close(sp[0]); close(sp[1]);
+}
+
 ATF_TC_BODY(gatt_acquire_protocol_matrix, tc)
 {
 	ble_ctx_t ctx;
@@ -1216,6 +1268,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, callback_and_encoder_matrix);
 	ATF_TP_ADD_TC(tp, subscription_state_send_failure_matrix);
 	ATF_TP_ADD_TC(tp, fd_receive_matrix);
+	ATF_TP_ADD_TC(tp, fd_receive_ownership);
 	ATF_TP_ADD_TC(tp, gatt_acquire_protocol_matrix);
 	ATF_TP_ADD_TC(tp, public_guard_and_snapshot_matrix);
 	ATF_TP_ADD_TC(tp, periodic_properties_spec_mask);

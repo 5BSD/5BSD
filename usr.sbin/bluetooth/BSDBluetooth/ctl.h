@@ -30,7 +30,10 @@ void	blued_ctl_clients_lock_init(pthread_mutex_t *m);
 int	blued_ctl_init(const char *path);
 void	blued_ctl_accept(void);
 /* A plane client attaching over system.Bluetooth (blued_plane.h). */
-void	blued_ctl_plane_accept(void);
+int	blued_ctl_plane_accept(void);
+struct kevent;
+void	blued_ctl_plane_batch_begin(void);
+bool	blued_ctl_plane_event(const struct kevent *);
 int	blued_ctl_dispatch(struct blued_ctl_client *client);
 int	blued_ctl_flush(struct blued_ctl_client *client);
 void	blued_ctl_client_fini(struct blued_ctl_client *client);

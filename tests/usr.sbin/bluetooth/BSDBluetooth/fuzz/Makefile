@@ -56,8 +56,8 @@ STDSAN=		-fsanitize=address,undefined
 INCS=		-I${H}/.. -I${BLUED} -I${SRCTOP}/sys -I${HCCONTROL} -I${LIBBLE} \
 		-I${LIBMESH} -I${SRCTOP}/contrib/libucl/include \
 		-I${SRCTOP}/lib/liblogcmp
-FUZZFLAGS=	-g -O1 ${SAN} ${INCS}
-STDFLAGS=	-g -O1 ${STDSAN} ${INCS}
+FUZZFLAGS=	-g -O1 ${SAN} ${INCS} -DBLUED_TEST_SCAN_EXPORT
+STDFLAGS=	-g -O1 ${STDSAN} ${INCS} -DBLUED_TEST_SCAN_EXPORT
 LIBS=		-lbluetooth -lcrypto
 
 # Number of seconds each `run-*' target fuzzes for in CI smoke mode.
@@ -176,7 +176,7 @@ HARNESSES=	fuzz_att_server fuzz_adv_data fuzz_ble_ipc fuzz_adv_report \
 		fuzz_config fuzz_scan_parse fuzz_hci_event fuzz_smp_sc \
 		fuzz_hogp_report_map fuzz_mesh_sim fuzz_att_client \
 		fuzz_mesh_beacon fuzz_mesh_friend fuzz_mesh_provision \
-		fuzz_mesh_proxy fuzz_mesh_transport
+		fuzz_mesh_proxy fuzz_mesh_transport fuzz_sbc_decode
 STANDALONE=	std_att_server std_adv_data std_ble_ipc std_adv_report \
 		std_gatt_client std_smp_responder std_ctl_ipc \
 		std_l2cap_sig std_mesh_net std_mesh_access std_l2cap_data \
@@ -184,6 +184,11 @@ STANDALONE=	std_att_server std_adv_data std_ble_ipc std_adv_report \
 		std_hogp_report_map std_mesh_sim
 
 all: ${HARNESSES} ${STANDALONE}
+
+# Native production SBC decoder; use MAKEOBJDIR under /usr/obj for output.
+fuzz_sbc_decode: ${H}/fuzz_sbc_decode.c ${SRCTOP}/lib/virtual_oss/bt/sbc_encode.c
+	${CC} ${FUZZFLAGS} -I${SRCTOP}/lib/virtual_oss/bt \
+	    -o ${.OBJDIR}/${.TARGET:T} ${.ALLSRC} -lm
 
 fuzz_att_server: ${H}/fuzz_att_server.c ${ATT_SRCS}
 	${CC} ${FUZZFLAGS} -o ${H}/${.TARGET:T} ${H}/fuzz_att_server.c ${ATT_SRCS} ${LIBS}

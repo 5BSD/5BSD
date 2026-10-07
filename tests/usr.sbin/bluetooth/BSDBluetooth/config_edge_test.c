@@ -141,7 +141,7 @@ ATF_TC_BODY(edge_general_type_mismatch, tc)
 	ATF_CHECK_EQ(cfg.logfile[0], '\0');
 	ATF_CHECK_EQ(cfg.loglevel, 0);
 	ATF_CHECK(!cfg.daemonize);
-	ATF_CHECK_STREQ(cfg.peripheral_name, "FreeBSD-BLE");
+	ATF_CHECK_STREQ(cfg.peripheral_name, "5BSD-BLE");
 }
 
 /* ================================================================

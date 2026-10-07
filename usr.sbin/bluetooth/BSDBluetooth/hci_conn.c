@@ -1326,7 +1326,7 @@ ble_coc_connect(const uint8_t *local_addr, const uint8_t *addr,
 		    sizeof(optval));
 	}
 
-	if (bind(fd, (struct sockaddr *)&bind_sa, sizeof(bind_sa)) < 0) {
+	if (bindat(fd, fd, (struct sockaddr *)&bind_sa, sizeof(bind_sa)) < 0) {
 		LOG_L2C(1, "LE CoC: bind() failed: %s", strerror(errno));
 		close(fd);
 		return (-1);
@@ -1341,7 +1341,7 @@ ble_coc_connect(const uint8_t *local_addr, const uint8_t *addr,
 	con_sa.l2cap_cid = 0;		/* dynamic allocation */
 	con_sa.l2cap_bdaddr_type = addr_type;
 
-	if (connect(fd, (struct sockaddr *)&con_sa, sizeof(con_sa)) < 0) {
+	if (connectat(fd, fd, (struct sockaddr *)&con_sa, sizeof(con_sa)) < 0) {
 		LOG_L2C(1, "LE CoC: connect() failed: psm=%d %s",
 		    psm, strerror(errno));
 		close(fd);
@@ -1440,7 +1440,7 @@ ble_ecbfc_connect(const uint8_t *local_addr, const uint8_t *addr,
 			    sizeof(bind_sa.l2cap_bdaddr));
 		bind_sa.l2cap_bdaddr_type = BDADDR_LE_PUBLIC;
 
-		if (bind(fd, (struct sockaddr *)&bind_sa,
+		if (bindat(fd, fd, (struct sockaddr *)&bind_sa,
 		    sizeof(bind_sa)) < 0) {
 			LOG_L2C(1, "ECBFC: bind() failed: %s",
 			    strerror(errno));
@@ -1458,7 +1458,7 @@ ble_ecbfc_connect(const uint8_t *local_addr, const uint8_t *addr,
 		con_sa.l2cap_cid = 0;		/* dynamic allocation */
 		con_sa.l2cap_bdaddr_type = addr_type;
 
-		if (connect(fd, (struct sockaddr *)&con_sa,
+		if (connectat(fd, fd, (struct sockaddr *)&con_sa,
 		    sizeof(con_sa)) < 0) {
 			LOG_L2C(1, "ECBFC: connect() failed: psm=%d %s",
 			    psm, strerror(errno));
@@ -1546,7 +1546,7 @@ ble_iso_connect(const uint8_t *src, const uint8_t *addr, uint8_t addr_type,
 	if (src != NULL)
 		memcpy(&bind_sa.iso_bdaddr, src, sizeof(bind_sa.iso_bdaddr));
 
-	if (bind(fd, (struct sockaddr *)&bind_sa, sizeof(bind_sa)) < 0) {
+	if (bindat(fd, fd, (struct sockaddr *)&bind_sa, sizeof(bind_sa)) < 0) {
 		LOG_HCI(1, "ISO: bind() failed: %s", strerror(errno));
 		close(fd);
 		return (-1);
@@ -1565,7 +1565,7 @@ ble_iso_connect(const uint8_t *src, const uint8_t *addr, uint8_t addr_type,
 		memcpy(&con_sa.iso_bdaddr, addr, sizeof(con_sa.iso_bdaddr));
 	con_sa.iso_bdaddr_type = addr_type;
 
-	if (connect(fd, (struct sockaddr *)&con_sa, sizeof(con_sa)) < 0) {
+	if (connectat(fd, fd, (struct sockaddr *)&con_sa, sizeof(con_sa)) < 0) {
 		LOG_HCI(1, "ISO: connect() failed: handle=0x%04x %s",
 		    cis_handle, strerror(errno));
 		close(fd);

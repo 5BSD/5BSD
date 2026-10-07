@@ -304,6 +304,9 @@ blued_central_start_pairing(struct hogp_device *dev, struct blued_conn *conn)
 		warnx("SMP open failed");
 		return (-1);
 	}
+	/* Crypto uses the on-air address; IdKey carries the stable identity. */
+	memcpy(dev->smp.local_identity_addr, &conn->adapter->addr, 6);
+	dev->smp.local_identity_addr_type = BDADDR_LE_PUBLIC;
 	dev->smp.passkey_cb = passkey_display;
 	dev->smp.passkey_cb_arg = conn;
 	dev->smp.numcmp_cb = numcmp_confirm;
@@ -1260,6 +1263,9 @@ hogp_classify_reports(struct hogp_device *dev, struct gatt_discovery *disc,
 		rpt.value_handle = disc->chars[i].value_handle;
 		rpt.properties = disc->chars[i].properties;
 
+		/* No descriptor can follow the last legal attribute handle. */
+		if (rpt.value_handle == UINT16_MAX)
+			continue;
 		desc_start = rpt.value_handle + 1;
 		if (i + 1 < disc->nchars)
 			desc_end = disc->chars[i + 1].decl_handle - 1;

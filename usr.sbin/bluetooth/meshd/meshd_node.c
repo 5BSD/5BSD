@@ -57,6 +57,7 @@ static struct meshd_appkey_entry *meshd_find_appkey(struct meshd_node *,
 static void meshd_df_rpr_init(struct meshd_node *nd);
 static void meshd_df_subnet_init(struct meshd_netkey_entry *nk);
 static void meshd_df_sync(struct meshd_node *nd);
+static void meshd_df_echo_tick(struct meshd_node *nd, uint64_t now);
 static int meshd_friendship_control_rx(struct meshd_node *, const uint8_t *,
     size_t);
 static void meshd_friendship_access_queue_rx(struct meshd_node *,
@@ -6599,6 +6600,7 @@ meshd_node_tick(struct meshd_node *nd, uint64_t now_ms, int *iv_changed)
 	 */
 	if (nd->self->df_enabled) {
 		mesh_sim_df_expire(&nd->sim);
+		meshd_df_echo_tick(nd, now_ms);
 		if (nd->self->df_disc.state == MESH_DF_DISC_REQUEST_SENT)
 			(void)mesh_df_discovery_timed_out(&nd->self->df_disc,
 			    now_ms);
@@ -6841,6 +6843,52 @@ meshd_df_send_control(struct meshd_node *nd, uint8_t opcode, uint16_t dst,
 		return (-1);
 	}
 	return (0);
+}
+
+/* Section 3.6.8.2.6: periodic validation and the 30-second reply deadline. */
+static void
+meshd_df_echo_tick(struct meshd_node *nd, uint64_t now)
+{
+	const struct meshd_netkey_entry *nk;
+	struct mesh_df_fwd_entry *e;
+	uint64_t last, interval;
+	uint8_t percent;
+	size_t i;
+
+	nk = meshd_find_netkey(nd, nd->netkey_index);
+	if (nk == NULL)
+		return;
+	for (i = 0; i < MESH_DF_MAX_ENTRIES; i++) {
+		e = &nd->self->df_table.entries[i];
+		if (!e->valid || e->fixed_path || e->path_origin != nd->addr)
+			continue;
+		percent = e->path_target < 0x8000 ?
+		    nk->df.echo.unicast_echo_interval :
+		    nk->df.echo.multicast_echo_interval;
+		if (percent == 0 || percent > 99) {
+			e->echo_deadline_ms = 0;
+			continue;
+		}
+		if (e->echo_deadline_ms != 0) {
+			if (now >= e->echo_deadline_ms) {
+				memset(e, 0, sizeof(*e));
+				if (nd->self->df_table.count != 0)
+					nd->self->df_table.count--;
+			}
+			continue;
+		}
+		interval = e->lifetime_ms * percent / 100;
+		last = e->echo_last_ms > e->install_ms ?
+		    e->echo_last_ms : e->install_ms;
+		if (now < last || now - last < interval)
+			continue;
+		if (meshd_df_send_control(nd, MESH_DF_OP_PATH_ECHO_REQUEST,
+		    e->path_target, MESH_DF_DEFAULT_TTL, NULL, 0,
+		    MESHD_CRED_DIRECTED) == 0) {
+			e->echo_last_ms = now;
+			e->echo_deadline_ms = now + 30000;
+		}
+	}
 }
 
 int

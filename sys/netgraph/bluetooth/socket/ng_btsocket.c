@@ -67,11 +67,17 @@ static int			ng_btsocket_modevent (module_t, int, void *);
  * Definitions of protocols supported in the BLUETOOTH domain 
  */
 
+/*
+ * HCI and connection-oriented L2CAP may be created by sandboxed services.
+ * HCI attach still stamps raw-command privilege from the creator's credential;
+ * PR_CAPATTACH does not grant it. bindat/connectat retain descriptor and MAC
+ * checks when a service selects a Bluetooth address.
+ */
 /* Bluetooth raw HCI sockets */
 static struct protosw ng_btsocket_hci_raw_protosw = {
 	.pr_type =		SOCK_RAW,
 	.pr_protocol =		BLUETOOTH_PROTO_HCI,
-	.pr_flags =		PR_ATOMIC|PR_ADDR,
+	.pr_flags =		PR_ATOMIC|PR_ADDR|PR_CAPATTACH,
 	.pr_ctloutput =		ng_btsocket_hci_raw_ctloutput,
 	.pr_abort =		ng_btsocket_hci_raw_abort,
 	.pr_attach =		ng_btsocket_hci_raw_attach,
@@ -108,7 +114,7 @@ static struct protosw ng_btsocket_l2cap_raw_protosw = {
 static struct protosw ng_btsocket_l2cap_protosw = {
 	.pr_type =		SOCK_SEQPACKET,
 	.pr_protocol =		BLUETOOTH_PROTO_L2CAP,
-	.pr_flags =		PR_ATOMIC|PR_CONNREQUIRED,
+	.pr_flags =		PR_ATOMIC|PR_CONNREQUIRED|PR_CAPATTACH,
 	.pr_ctloutput =		ng_btsocket_l2cap_ctloutput,
 	.pr_abort =		ng_btsocket_l2cap_abort,
 	.pr_accept =		ng_btsocket_l2cap_peeraddr,

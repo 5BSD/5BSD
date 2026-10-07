@@ -462,13 +462,16 @@ mesh_prov_record_fetch_input(struct mesh_prov_record_fetch *f,
 	/* The Total Length is a property of the record, so it cannot move. */
 	if (f->have_total && rsp->total_len != f->total_len)
 		return (-1);
+	/* A Success response with no Data would never terminate the loop. */
+	if (rsp->data_len == 0 || rsp->data == NULL ||
+	    rsp->data_len > f->frag_max)
+		return (-1);
+	if (f->len > rsp->total_len ||
+	    rsp->data_len > (size_t)rsp->total_len - f->len)
+		return (-1);
+	/* Invalid fragments must not poison the total used by a retry. */
 	f->total_len = rsp->total_len;
 	f->have_total = 1;
-	/* A Success response with no Data would never terminate the loop. */
-	if (rsp->data_len == 0)
-		return (-1);
-	if (rsp->data_len > (size_t)f->total_len - f->len)
-		return (-1);
 	memcpy(f->buf + f->len, rsp->data, rsp->data_len);
 	f->len += rsp->data_len;
 	if (f->len == f->total_len) {

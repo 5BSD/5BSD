@@ -38,6 +38,7 @@
 
 /* Logged send helper — logs outgoing ATT PDU to BTSnoop */
 ssize_t	att_server_send(struct att_conn *ac, const void *buf, size_t len);
+int	att_server_check_bearer(struct att_conn *ac);
 
 /* ATT opcode name for logging */
 const char *att_opcode_name(uint8_t op);

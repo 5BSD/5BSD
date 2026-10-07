@@ -48,6 +48,7 @@ sdp_open(bdaddr_t const *l, bdaddr_t const *r)
 
 	if ((ss = calloc(1, sizeof(*ss))) == NULL)
 		goto fail;
+	ss->s = -1;
 
 	if (l == NULL || r == NULL) {
 		ss->error = EINVAL;
@@ -60,6 +61,7 @@ sdp_open(bdaddr_t const *l, bdaddr_t const *r)
 		goto fail;
 	}
 
+	memset(&sa, 0, sizeof(sa));
 	sa.l2cap_len = sizeof(sa);
 	sa.l2cap_family = AF_BLUETOOTH;
 	sa.l2cap_psm = 0;
@@ -67,14 +69,14 @@ sdp_open(bdaddr_t const *l, bdaddr_t const *r)
 	sa.l2cap_bdaddr_type = BDADDR_BREDR;
 	
 	memcpy(&sa.l2cap_bdaddr, l, sizeof(sa.l2cap_bdaddr));
-	if (bind(ss->s, (struct sockaddr *) &sa, sizeof(sa)) < 0) {
+	if (bindat(ss->s, ss->s, (struct sockaddr *) &sa, sizeof(sa)) < 0) {
 		ss->error = errno;
 		goto fail;
 	}
 
 	sa.l2cap_psm = htole16(NG_L2CAP_PSM_SDP);
 	memcpy(&sa.l2cap_bdaddr, r, sizeof(sa.l2cap_bdaddr));
-	if (connect(ss->s, (struct sockaddr *) &sa, sizeof(sa)) < 0) {
+	if (connectat(ss->s, ss->s, (struct sockaddr *) &sa, sizeof(sa)) < 0) {
 		ss->error = errno;
 		goto fail;
 	}

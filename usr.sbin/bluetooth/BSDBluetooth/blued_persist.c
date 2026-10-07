@@ -191,7 +191,9 @@ blued_persist_load_records(int dirfd, const char *name, const char *magic,
 	if (dirfd < 0 || current_record_size == 0 || records_out == NULL)
 		return (-1);
 
-	fd = openat(dirfd, name, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+	/* A substituted FIFO must reach fstat without blocking daemon startup. */
+	fd = openat(dirfd, name,
+	    O_RDONLY | O_NONBLOCK | O_CLOEXEC | O_CLOFORK | O_NOFOLLOW);
 	if (fd < 0)
 		return (-1);	/* absent -> caller uses defaults */
 	if (fstat(fd, &st) != 0 || !S_ISREG(st.st_mode) ||

@@ -33,11 +33,13 @@
 #include <sys/param.h>
 #include <sys/types.h>
 #include <sys/sysctl.h>
+#include <sys/time.h>
 
 #include <assert.h>
 #define L2CAP_SOCKET_CHECKED
 #include <bluetooth.h>
 #include <inttypes.h>
+#include <poll.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -47,6 +49,67 @@
 static int    bt_devany_cb(int s, struct bt_devinfo const *di, void *xdevname);
 static char * bt_dev2node (char const *devname, char *nodename, int nnlen);
 static time_t bt_get_default_hci_command_timeout(void);
+static ssize_t bt_devrecv_until(int, void *, size_t,
+    const struct timespec *, int);
+
+/* A single monotonic budget survives signals and unrelated HCI events. */
+static int
+bt_deadline(time_t seconds, struct timespec *end)
+{
+
+	if (clock_gettime(CLOCK_MONOTONIC, end) < 0)
+		return (-1);
+	if (__builtin_add_overflow(end->tv_sec, seconds, &end->tv_sec)) {
+		errno = EOVERFLOW;
+		return (-1);
+	}
+	return (0);
+}
+
+static int
+bt_devwait(int s, short events, const struct timespec *end, int poll_once)
+{
+	struct pollfd pfd = { .fd = s, .events = events };
+	struct timespec now, remaining, *timeout;
+	int n;
+
+	if (s < 0) {
+		errno = EBADF;
+		return (-1);
+	}
+	for (;;) {
+		timeout = NULL;
+		if (end != NULL) {
+			if (clock_gettime(CLOCK_MONOTONIC, &now) < 0)
+				return (-1);
+			timespecsub(end, &now, &remaining);
+			if (remaining.tv_sec < 0) {
+				if (!poll_once) {
+					errno = ETIMEDOUT;
+					return (-1);
+				}
+				timespecclear(&remaining);
+			}
+			timeout = &remaining;
+		}
+		poll_once = 0;
+		n = ppoll(&pfd, 1, timeout, NULL);
+		if (n < 0) {
+			if (errno == EINTR || errno == EAGAIN)
+				continue;
+			return (-1);
+		}
+		if (n == 0) {
+			errno = ETIMEDOUT;
+			return (-1);
+		}
+		if (pfd.revents & POLLNVAL) {
+			errno = EBADF;
+			return (-1);
+		}
+		return (0);
+	}
+}
 
 int
 bt_devopen(char const *devname)
@@ -77,8 +140,9 @@ bt_devopen(char const *devname)
 	if (s < 0)
 		return (-1);
 
-	if (bind(s, (struct sockaddr *) &ha, sizeof(ha)) < 0 ||
-	    connect(s, (struct sockaddr *) &ha, sizeof(ha)) < 0) {
+	/* HCI names are not paths; 5BSD's *at socket calls work in capmode. */
+	if (bindat(s, s, (struct sockaddr *) &ha, sizeof(ha)) < 0 ||
+	    connectat(s, s, (struct sockaddr *) &ha, sizeof(ha)) < 0) {
 		close(s);
 		return (-1);
 	}
@@ -98,6 +162,7 @@ bt_devsend(int s, uint16_t opcode, void *param, size_t plen)
 	ng_hci_cmd_pkt_t	h;
 	struct iovec		iv[2];
 	int			ivn;
+	ssize_t			n;
 
 	if ((plen == 0 && param != NULL) ||
 	    (plen > 0 && param == NULL) ||
@@ -121,10 +186,17 @@ bt_devsend(int s, uint16_t opcode, void *param, size_t plen)
 	} else
 		h.length = 0;
 
-	while (writev(s, iv, ivn) < 0) {
-		if (errno == EAGAIN || errno == EINTR)
+	while ((n = writev(s, iv, ivn)) < 0) {
+		if (errno == EINTR)
+			continue;
+		if (errno == EAGAIN && bt_devwait(s, POLLOUT, NULL, 0) == 0)
 			continue;
 
+		return (-1);
+	}
+	/* Commands are records: never accept or retry a partially sent record. */
+	if ((size_t)n != sizeof(h) + plen) {
+		errno = EIO;
 		return (-1);
 	}
 
@@ -134,47 +206,38 @@ bt_devsend(int s, uint16_t opcode, void *param, size_t plen)
 ssize_t
 bt_devrecv(int s, void *buf, size_t size, time_t to)
 {
-	ssize_t	n;
+	struct timespec end;
+
+	if (to >= 0 && bt_deadline(to, &end) < 0)
+		return (-1);
+	return (bt_devrecv_until(s, buf, size, to >= 0 ? &end : NULL, 1));
+}
+
+static ssize_t
+bt_devrecv_until(int s, void *buf, size_t size, const struct timespec *end,
+    int poll_once)
+{
+	ssize_t n;
 
 	if (buf == NULL || size == 0) {
 		errno = EINVAL;
 		return (-1);
 	}
 
-	if (to >= 0) {
-		fd_set		rfd;
-		struct timeval	tv;
-
-		if (s < 0 || s >= (int)FD_SETSIZE) {
-			errno = EBADF;
+	for (;;) {
+		if (bt_devwait(s, POLLIN, end, poll_once) < 0)
 			return (-1);
-		}
-
-		FD_ZERO(&rfd);
-		FD_SET(s, &rfd);
-
-		tv.tv_sec = to;
-		tv.tv_usec = 0;
-
-		while ((n = select(s + 1, &rfd, NULL, NULL, &tv)) < 0) {
-			if (errno == EAGAIN || errno == EINTR)
-				continue;
-
-			return (-1);
-		}
-
-		if (n == 0) {
-			errno = ETIMEDOUT;
-			return (-1);
-		}
-
-		assert(FD_ISSET(s, &rfd));
-	}
-
-	while ((n = read(s, buf, size)) < 0) {
+		poll_once = 0;
+		n = read(s, buf, size);
+		if (n >= 0)
+			break;
 		if (errno == EAGAIN || errno == EINTR)
 			continue;
 
+		return (-1);
+	}
+	if (n == 0) {
+		errno = ECONNRESET;
 		return (-1);
 	}
 
@@ -215,15 +278,24 @@ bt_devrecv(int s, void *buf, size_t size, time_t to)
 int
 bt_devreq(int s, struct bt_devreq *r, time_t to)
 {
+
+	return (bt_devreq_events(s, r, to, NULL));
+}
+
+/* The event callback must copy the packet and must not reenter this socket. */
+int
+bt_devreq_events(int s, struct bt_devreq *r, time_t to,
+    void (*event_cb)(int, const void *, size_t))
+{
 	uint8_t				buf[320]; /* more than enough */
 	ng_hci_event_pkt_t		*e = (ng_hci_event_pkt_t *) buf;
 	ng_hci_command_compl_ep		*cc = (ng_hci_command_compl_ep *)(e+1);
 	ng_hci_command_status_ep	*cs = (ng_hci_command_status_ep*)(e+1);
 	struct bt_devfilter		old, new;
-	time_t				t_end;
+	struct timespec			end;
 	uint16_t			opcode;
 	ssize_t				n;
-	int				error;
+	int				error, poll_once;
 
 	if (s < 0 || r == NULL || to < 0) {
 		errno = EINVAL;
@@ -248,14 +320,18 @@ bt_devreq(int s, struct bt_devreq *r, time_t to)
 	if (r->rparam != NULL && r->rlen > 0)
 		memset(r->rparam, 0, r->rlen);
 
+	/* Keep subscribed events queued if they arrive just after completion. */
+	if (bt_devfilter(s, NULL, &old) < 0)
+		return (-1);
 	memset(&new, 0, sizeof(new));
+	memcpy(new.event_mask, old.event_mask, sizeof(new.event_mask));
 	bt_devfilter_pkt_set(&new, NG_HCI_EVENT_PKT);
 	bt_devfilter_evt_set(&new, NG_HCI_EVENT_COMMAND_COMPL);
 	bt_devfilter_evt_set(&new, NG_HCI_EVENT_COMMAND_STATUS);
 	if (r->event != 0)
 		bt_devfilter_evt_set(&new, r->event);
 
-	if (bt_devfilter(s, &new, &old) < 0)
+	if (bt_devfilter(s, &new, NULL) < 0)
 		return (-1);
 
 	error = 0;
@@ -267,14 +343,15 @@ bt_devreq(int s, struct bt_devreq *r, time_t to)
 	}
 
 	opcode = htole16(r->opcode);
-	t_end = time(NULL) + to;
+	if (bt_deadline(to, &end) < 0) {
+		error = errno;
+		goto out;
+	}
+	poll_once = 1;
 
 	do {
-		to = t_end - time(NULL);
-		if (to < 0)
-			to = 0;
-
-		n = bt_devrecv(s, buf, sizeof(buf), to);
+		n = bt_devrecv_until(s, buf, sizeof(buf), &end, poll_once);
+		poll_once = 0;
 		if (n < 0) {
 			error = errno;
 			goto out;
@@ -289,6 +366,10 @@ bt_devreq(int s, struct bt_devreq *r, time_t to)
 
 		switch (e->event) {
 		case NG_HCI_EVENT_COMMAND_COMPL:
+			if (n < (ssize_t)sizeof(*cc)) {
+				error = EIO;
+				goto out;
+			}
 			if (cc->opcode == opcode) {
 				n -= sizeof(*cc);
 
@@ -316,6 +397,10 @@ bt_devreq(int s, struct bt_devreq *r, time_t to)
 			break;
 
 		case NG_HCI_EVENT_COMMAND_STATUS:
+			if (n < (ssize_t)sizeof(*cs)) {
+				error = EIO;
+				goto out;
+			}
 			if (cs->opcode == opcode) {
 				if (r->event != NG_HCI_EVENT_COMMAND_STATUS) {
 					if (cs->status != 0) {
@@ -348,13 +433,16 @@ bt_devreq(int s, struct bt_devreq *r, time_t to)
 
 				goto out;
 			}
+			if (event_cb != NULL)
+				event_cb(s, buf, (size_t)n + sizeof(*e));
 			break;
 		}
 	} while (to > 0);
 
 	error = ETIMEDOUT;
 out:
-	bt_devfilter(s, &old, NULL);
+	if (bt_devfilter(s, &old, NULL) < 0 && error == 0)
+		error = errno;
 
 	if (error != 0) {
 		errno = error;
@@ -785,8 +873,8 @@ bt_devenum(bt_devenum_cb_t cb, void *arg)
 		return (-1);
 	}
 
-	if (bind(s, (struct sockaddr *) &ha, sizeof(ha)) < 0 ||
-	    connect(s, (struct sockaddr *) &ha, sizeof(ha)) < 0 ||
+	if (bindat(s, s, (struct sockaddr *) &ha, sizeof(ha)) < 0 ||
+	    connectat(s, s, (struct sockaddr *) &ha, sizeof(ha)) < 0 ||
 	    ioctl(s, SIOC_HCI_RAW_NODE_LIST_NAMES, &rp, sizeof(rp)) < 0) {
 		close(s);
 		free(rp.names);
@@ -805,8 +893,8 @@ bt_devenum(bt_devenum_cb_t cb, void *arg)
 			continue;
 
 		strlcpy(ha.hci_node, rp.names[i].name, sizeof(ha.hci_node));
-		if (bind(s, (struct sockaddr *) &ha, sizeof(ha)) < 0 ||
-		    connect(s, (struct sockaddr *) &ha, sizeof(ha)) < 0)
+		if (bindat(s, s, (struct sockaddr *) &ha, sizeof(ha)) < 0 ||
+		    connectat(s, s, (struct sockaddr *) &ha, sizeof(ha)) < 0)
 			continue;
 
 		if ((*cb)(s, &di, arg) > 0)

@@ -191,6 +191,9 @@ SUBDIR_DEPEND_libpcap= ofed
 .endif
 SUBDIR_DEPEND_nss_tacplus= libtacplus
 SUBDIR_DEPEND_virtual_oss= libsamplerate
+.if ${MK_BLUETOOTH} != "no"
+SUBDIR_DEPEND_virtual_oss+= libbluetooth libsdp
+.endif
 
 # NB: keep these sorted by MK_* knobs
 

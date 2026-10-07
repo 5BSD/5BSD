@@ -635,9 +635,18 @@ sbc_decode_frame(struct bt_config *cfg, int bits)
 	uint8_t sb;
 	uint8_t j;
 	uint8_t i;
+	uint8_t bitpool, expected_crc;
+	unsigned frame_bits;
 
 	sbc->rem_off = 0;
 	sbc->rem_len = 0;
+	if (cfg->freq > FREQ_48K || cfg->blocks > BLOCKS_16 ||
+	    cfg->chmode > MODE_JOINT || cfg->bands > BANDS_8 ||
+	    cfg->allocm > ALLOC_SNR || bits < 32)
+		return (0);
+	sbc->blocks = 4 * (cfg->blocks + 1);
+	sbc->bands = cfg->bands == BANDS_8 ? 8 : 4;
+	sbc->channels = cfg->chmode == MODE_MONO ? 1 : 2;
 
 	config = (cfg->freq << 6) | (cfg->blocks << 4) |
 	    (cfg->chmode << 2) | (cfg->allocm << 1) | cfg->bands;
@@ -656,9 +665,17 @@ sbc_decode_frame(struct bt_config *cfg, int bits)
 		return (0);
 	if (sbc_load_bits_crc(sbc, 8) != config)
 		return (0);
-	cfg->bitpool = sbc_load_bits_crc(sbc, 8);
-
-	(void)sbc_load_bits_crc(sbc, 8);/* CRC */
+	bitpool = sbc_load_bits_crc(sbc, 8);
+	if (bitpool < 2 || bitpool > 250 ||
+	    bitpool > (cfg->chmode <= MODE_DUAL ? 16 : 32) * sbc->bands)
+		return (0);
+	frame_bits = 32 + 4 * sbc->bands * sbc->channels +
+	    sbc->blocks * bitpool * (cfg->chmode == MODE_DUAL ? 2 : 1) +
+	    (cfg->chmode == MODE_JOINT ? sbc->bands : 0);
+	if ((frame_bits + 7) / 8 > (unsigned)bits / 8)
+		return (0);
+	expected_crc = sbc->rem_data_ptr[3];
+	sbc->bitoffset += 8; /* The CRC octet is not part of its own checksum. */
 
 	if (cfg->chmode == MODE_JOINT) {
 		if (sbc->bands == 8)
@@ -676,6 +693,9 @@ sbc_decode_frame(struct bt_config *cfg, int bits)
 			sbc->scalefactor[i][j] = sbc_load_bits_crc(sbc, 4);
 	}
 
+	if ((sbc->crc & 0xff) != expected_crc)
+		return (0);
+	cfg->bitpool = bitpool;
 	calc_bitneed(cfg);
 
 	i = 0;

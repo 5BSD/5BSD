@@ -12,12 +12,41 @@ LDFLAGS+=	-fprofile-instr-generate
 TESTSDIR=	${TESTSBASE}/usr.sbin/bluetooth/BSDBluetooth
 BINDIR=		${TESTSDIR}
 
+ATF_TESTS_C+=	audio_avdtp_test
+CFLAGS.audio_avdtp_test.c+= -I${SRCTOP}/lib/virtual_oss/bt
+audio_avdtp_test.o: ${SRCTOP}/lib/virtual_oss/bt/avdtp.c \
+	${SRCTOP}/lib/virtual_oss/bt/avdtp_signal.h ${SRCTOP}/lib/virtual_oss/bt/bt.h
+
+ATF_TESTS_C+=	audio_media_test
+SRCS.audio_media_test= audio_media_test.c avdtp.c sbc_encode.c
+.PATH: ${SRCTOP}/lib/virtual_oss/bt
+CFLAGS.audio_media_test.c+= -I${SRCTOP}/lib/virtual_oss/bt \
+	-I${SRCTOP}/usr.sbin/virtual_oss/virtual_oss \
+	-I${SYSROOT:U${DESTDIR}}/usr/include/private/samplerate
+LIBADD.audio_media_test= bluetooth sdp m
+audio_media_test.o: ${SRCTOP}/lib/virtual_oss/bt/bt.c \
+	${SRCTOP}/lib/virtual_oss/bt/bt.h ${SRCTOP}/lib/virtual_oss/bt/sbc_encode.h
+
+ATF_TESTS_C+=	audio_sdp_test
+SRCS.audio_sdp_test= audio_sdp_test.c session.c
+.PATH: ${SRCTOP}/lib/libsdp
+CFLAGS.session.c+= -I${SRCTOP}/lib/libsdp
+LDFLAGS.audio_sdp_test+= -Wl,--wrap=socket -Wl,--wrap=bindat \
+	-Wl,--wrap=connectat -Wl,--wrap=getsockopt
+
 ATF_TESTS_C+=	smp_crypto_test
 ATF_TESTS_C+=	att_test
 ATF_TESTS_C+=	conn_test
 ATF_TESTS_C+=	ctl_test
+ATF_TESTS_C+=	discovery_test
+SRCS.discovery_test=	discovery_test.c hci_scan.c
+LIBADD.discovery_test+=	pthread bluetooth
 ATF_TESTS_C+=	peripheral_test
 ATF_TESTS_C+=	config_test
+ATF_TESTS_C+=	controller_test
+LIBADD.controller_test+=	channel
+LDFLAGS.controller_test+= -Wl,--wrap=bt_devopen
+CFLAGS.controller_test.c+= -Wno-unused-function -Wno-missing-prototypes
 ATF_TESTS_C+=	persist_test
 ATF_TESTS_C+=	devmgr_test
 ATF_TESTS_C+=	hci_hw_test
@@ -39,6 +68,7 @@ ATF_TESTS_C+=	libble_test
 ATF_TESTS_C+=	smp_negative_test
 ATF_TESTS_C+=	att_negative_test
 ATF_TESTS_C+=	gatt_client_test
+ATF_TESTS_C+=	fuchsia_gatt_test
 ATF_TESTS_C+=	hci_event_test
 ATF_TESTS_C+=	privacy_test
 ATF_TESTS_C+=	libble_negative_test
@@ -160,7 +190,9 @@ SRCS.hci_log_test=	hci_log_test.c
 SRCS.adv_data_test=	adv_data_test.c
 
 CFLAGS+=	-I${SRCTOP}/usr.sbin/bluetooth/BSDBluetooth
+CFLAGS+=	-DBLUED_TEST_SCAN_EXPORT
 CFLAGS+=	-I${SRCTOP}/lib/libble
+CFLAGS+=	-I${SRCTOP}/lib/libbluetooth
 # libble now reaches system.Bluetooth over the plane (ble_open_plane).
 LIBADD+=	service logcmp
 CFLAGS+=	-I${SRCTOP}/lib/libservice
@@ -310,6 +342,7 @@ CFLAGS.emu_peer_equiv_test.c+=	-Wno-missing-prototypes
 SRCS.hci_error_arms_test=	hci_error_arms_test.c hci_util.c hci_adv.c \
 			hci_scan.c hci_conn.c hci_privacy.c hci_misc.c hci_log.c
 LDFLAGS.hci_error_arms_test+=	-Wl,--wrap=bt_devreq -Wl,--wrap=bt_devrecv \
+			-Wl,--wrap=bindat -Wl,--wrap=connectat \
 			-Wl,--wrap=bt_devfilter -Wl,--wrap=bt_devopen \
 			-Wl,--wrap=ioctl -Wl,--wrap=socket -Wl,--wrap=bind \
 			-Wl,--wrap=connect -Wl,--wrap=setsockopt -Wl,--wrap=close \
@@ -383,6 +416,7 @@ SRCS.att_fault_test=	att_fault_test.c att.c att_server.c \
 			att_server_dispatch.c att_server_notify.c att_server_hash.c
 CFLAGS.att_fault_test.c+=	-Wno-missing-prototypes -Wno-missing-variable-declarations
 LDFLAGS.att_fault_test+=	-Wl,--wrap=socket -Wl,--wrap=bind \
+			-Wl,--wrap=bindat -Wl,--wrap=connectat \
 			-Wl,--wrap=connect -Wl,--wrap=accept4 \
 			-Wl,--wrap=setsockopt -Wl,--wrap=getsockopt \
 			-Wl,--wrap=malloc -Wl,--wrap=free \
@@ -524,7 +558,7 @@ SRCS.meshd_persist_fault_test=	meshd_persist_fault_test.c ${MESHD_ENGINE}
 CFLAGS.meshd_persist_fault_test+=	-I${SRCTOP}/lib/libmesh \
 	-I${SRCTOP}/usr.sbin/bluetooth/meshd
 LDFLAGS.meshd_persist_fault_test+=	-Wl,--wrap=write -Wl,--wrap=fsync \
-	-Wl,--wrap=rename
+	-Wl,--wrap=rename -Wl,--wrap=fchmod
 SRCS.meshd_fault_test=	meshd_fault_test.c ${MESHD_ENGINE}
 CFLAGS.meshd_fault_test+=	-I${SRCTOP}/lib/libmesh -I${SRCTOP}/usr.sbin/bluetooth/meshd
 # Regression tests for the meshd/meshctl correctness + completeness findings
@@ -658,6 +692,9 @@ SRCS.att_negative_test=	att_negative_test.c att.c att_server.c \
 # and the attribute-database helpers it calls.
 SRCS.gatt_client_test=	gatt_client_test.c att.c gatt.c att_server.c \
 			att_server_dispatch.c att_server_notify.c att_server_hash.c
+SRCS.fuchsia_gatt_test=	fuchsia_gatt_test.c att.c gatt.c att_server.c \
+			att_server_dispatch.c att_server_notify.c att_server_hash.c
+LIBADD.fuchsia_gatt_test+=	pthread
 SRCS.hci_event_test=	hci_event_test.c hci_util.c hci_adv.c hci_scan.c \
 			hci_conn.c hci_privacy.c hci_misc.c hci_log.c
 SRCS.privacy_test=	privacy_test.c hci_util.c hci_adv.c hci_scan.c \
@@ -904,6 +941,7 @@ FUZZ+=		fuzz/fuzz_mesh_access.c
 FUZZ+=		fuzz/fuzz_l2cap_data.c
 FUZZ+=		fuzz/fuzz_config.c
 FUZZ+=		fuzz/fuzz_scan_parse.c
+FUZZ+=		fuzz/fuzz_sbc_decode.c
 FUZZ+=		fuzz/fuzz_hci_event.c
 FUZZ+=		fuzz/fuzz_smp_sc.c
 FUZZ+=		fuzz/fuzz_hogp_report_map.c
@@ -1108,6 +1146,14 @@ meshd_node.pieo meshd_pbgatt.pieo meshd_cfgclient.pieo: ${SRCTOP}/usr.sbin/bluet
 conn.pieo ctl.pieo ctl_conn.pieo ctl_gatt.pieo blued_event.pieo: ${SRCTOP}/usr.sbin/bluetooth/BSDBluetooth/blued.h ${SRCTOP}/usr.sbin/bluetooth/BSDBluetooth/blued_internal.h
 ble.pieo ctl.pieo ctl_conn.pieo ctl_gatt.pieo: ${SRCTOP}/lib/libble/ipc_proto.h
 
+# Shared production objects do not always get a per-program .depend file.
+# Keep all embedded consumers consistent when the SMP connection layout changes.
+BLUED_EMBED_HEADERS!= find ${SRCTOP}/usr.sbin/bluetooth/BSDBluetooth -maxdepth 1 -name '*.h'
+BLUED_EMBED_SOURCES!= find ${SRCTOP}/usr.sbin/bluetooth/BSDBluetooth -maxdepth 1 -name '*.c'
+.for _blued_src in ${BLUED_EMBED_SOURCES}
+${_blued_src:T:R}.o ${_blued_src:T:R}.pieo: ${_blued_src} ${BLUED_EMBED_HEADERS}
+.endfor
+
 # The conformance gates themselves.
 #
 # spec_conf_traceability_test.c registers the traceability, generated-oracle,
@@ -1182,6 +1228,7 @@ ${PACKAGE}FILES+=	spec_conf_profile_gaps_ranked.tsv
 
 # External-oracle generators (spec_extref_*.h are compiled in, their
 # generators are shipped so the headers can be re-derived and diffed).
+${PACKAGE}FILES+=	FUCHSIA-TESTS.txt
 ${PACKAGE}FILES+=	spec_extref_smp_gen.awk
 ${PACKAGE}FILES+=	spec_extref_db_hash_gen.awk
 
@@ -1199,5 +1246,26 @@ spec-traceability-strict: Kyuafile
 	${.CURDIR}/spec_traceability_audit.sh -q ${.OBJDIR}/Kyuafile
 	${.CURDIR}/spec_case_manifest_audit.sh -q --strict ${.OBJDIR}/Kyuafile
 	${.CURDIR}/check_dead_exports.sh
+
+# Keep encoder/daemon fixtures at their existing mocked command boundary.
+# hci_transport_test separately exercises the real libbluetooth transport.
+.for t in ${ATF_TESTS_C}
+.if !empty(LDFLAGS.${t}:M*--wrap=bt_devreq)
+SRCS.${t}+=	hci_req_events_mock.c
+LDFLAGS.${t}+=	-Wl,--wrap=bt_devreq_events
+.endif
+.endfor
+
+ATF_TESTS_C+=	hci_transport_test
+SRCS.hci_transport_test=	hci_transport_test.c hci.c
+.PATH:	${SRCTOP}/lib/libbluetooth
+LDFLAGS.hci_transport_test+= -Wl,--wrap=getsockopt -Wl,--wrap=setsockopt
+LDFLAGS.hci_transport_test+= -Wl,--wrap=read -Wl,--wrap=writev -Wl,--wrap=time
+CFLAGS.hci.c+=	-Wno-sign-compare -Wno-unused-parameter
+
+SRCS.blued_event_test+=	discovery.c
+SRCS.blued_main_test+=	discovery.c
+SRCS.blued_role_test+=	discovery.c
+SRCS.gatt_hash_order_test+= discovery.c
 
 .include <bsd.test.mk>

@@ -107,6 +107,7 @@ static int
 wire_stack(int unit, bool add_l2cap)
 {
 	struct ngm_mkpeer mkp;
+	struct ngm_connect con;
 	char path[NG_PATHSIZ];
 	char hciname[NG_NODESIZ];
 	int cs, ds, error = 0;
@@ -140,6 +141,19 @@ wire_stack(int unit, bool add_l2cap)
 		goto out;
 	}
 
+	/* Match the socket hooks installed by the physical-controller rc path. */
+	memset(&con, 0, sizeof(con));
+	strlcpy(con.path, "btsock_hci_raw:", sizeof(con.path));
+	strlcpy(con.ourhook, "raw", sizeof(con.ourhook));
+	snprintf(con.peerhook, sizeof(con.peerhook), "vhci%draw", unit);
+	snprintf(path, sizeof(path), "%s:", hciname);
+	if (NgSendMsg(cs, path, NGM_GENERIC_COOKIE, NGM_CONNECT, &con,
+	    sizeof(con)) < 0) {
+		warn("vhci%d: connect HCI sockets", unit);
+		error = -1;
+		goto out;
+	}
+
 	if (add_l2cap) {
 		char l2name[NG_NODESIZ];
 
@@ -160,6 +174,25 @@ wire_stack(int unit, bool add_l2cap)
 		snprintf(path, sizeof(path), "%s:acl", hciname);
 		if (NgNameNode(cs, path, "%s", l2name) < 0) {
 			warn("vhci%d: name l2cap node", unit);
+			error = -1;
+			goto out;
+		}
+		snprintf(path, sizeof(path), "%s:", l2name);
+		strlcpy(con.path, "btsock_l2c_raw:", sizeof(con.path));
+		strlcpy(con.ourhook, "ctl", sizeof(con.ourhook));
+		snprintf(con.peerhook, sizeof(con.peerhook), "vhci%dctl", unit);
+		if (NgSendMsg(cs, path, NGM_GENERIC_COOKIE, NGM_CONNECT, &con,
+		    sizeof(con)) < 0) {
+			warn("vhci%d: connect raw L2CAP sockets", unit);
+			error = -1;
+			goto out;
+		}
+		strlcpy(con.path, "btsock_l2c:", sizeof(con.path));
+		strlcpy(con.ourhook, "l2c", sizeof(con.ourhook));
+		snprintf(con.peerhook, sizeof(con.peerhook), "vhci%dl2c", unit);
+		if (NgSendMsg(cs, path, NGM_GENERIC_COOKIE, NGM_CONNECT, &con,
+		    sizeof(con)) < 0) {
+			warn("vhci%d: connect L2CAP sockets", unit);
 			error = -1;
 			goto out;
 		}

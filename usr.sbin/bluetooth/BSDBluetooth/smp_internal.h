@@ -124,11 +124,11 @@ int	smp_validate_public_key(const uint8_t *, const uint8_t *,
 	    const uint8_t *);
 
 /* --- Key distribution and bond helpers (smp_keys.c) --- */
+int	smp_send_identity(struct smp_conn *);
 int	smp_distribute_init_keys(struct smp_conn *, const uint8_t *,
 	    const uint8_t *, bool, struct smp_bond *);
 int	smp_receive_peer_keys(struct smp_conn *, struct smp_bond *, uint8_t,
 	    bool);
-int	smp_ensure_local_irk(struct smp_bond_db *);
 int	smp_ensure_local_csrk(struct smp_bond_db *);
 int	smp_local_irk_get(struct smp_bond_db *, uint8_t [16]);
 

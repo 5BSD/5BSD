@@ -191,7 +191,7 @@ ATF_TC_BODY(test_cfgn_wrong_section_types, tc)
 	ATF_CHECK_STREQ(cfg.pidfile, BLUED_PIDFILE_DEFAULT);
 	ATF_CHECK_STREQ(cfg.bonddb, BLUED_BONDDB_DEFAULT);
 	ATF_CHECK_STREQ(cfg.ctlsock, BLUED_CTLSOCK_DEFAULT);
-	ATF_CHECK_STREQ(cfg.peripheral_name, "FreeBSD-BLE");
+	ATF_CHECK_STREQ(cfg.peripheral_name, "5BSD-BLE");
 	ATF_CHECK_EQ(cfg.rpa_timeout, BLUED_RPA_TIMEOUT_DEFAULT);
 	ATF_CHECK_EQ(cfg.min_key_size, BLUED_MIN_KEY_SIZE_DEFAULT);
 	ATF_CHECK_EQ(cfg.reconnect_max_delay, BLUED_RECONNECT_MAX_DEFAULT);

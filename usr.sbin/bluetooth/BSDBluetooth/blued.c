@@ -19,6 +19,7 @@
 
 #include "blued_internal.h"
 #include "iso.h"
+#include "discovery.h"
 #include "hci_internal.h"	/* hci_set_event_mask_page2 (adapter init) */
 #include "hci_util.h"		/* hci_fd_closed (adapter teardown) */
 #include "blued_persist.h"	/* operational-state persistence across restart */
@@ -71,6 +72,7 @@ _Atomic uintptr_t blued_next_timer_id = 1;
 volatile sig_atomic_t running = 1;
 static struct pidfh *blued_pfh;
 const char *blued_config_path;	/* saved for SIGHUP reload */
+static const char *blued_managed_config;
 /*
  * CLI overrides recorded at startup (main's argv outlives the daemon) so a
  * SIGHUP reload can re-apply them on top of the re-parsed file: overrides
@@ -502,7 +504,7 @@ blued_capsicum_limit_fds(void)
 	/* 3. Bond database fd */
 	if (blued_g.bond_fd >= 0) {
 		cap_rights_init(&rights, CAP_READ, CAP_WRITE, CAP_SEEK,
-		    CAP_FLOCK, CAP_FSTAT, CAP_FTRUNCATE);
+		    CAP_FLOCK, CAP_FSTAT, CAP_FTRUNCATE, CAP_FCHMOD);
 		cap_limit_fd_locked(blued_g.bond_fd, &rights, "bond_db");
 	}
 	if (blued_g.bond_lockfd >= 0) {
@@ -530,19 +532,22 @@ blued_capsicum_limit_fds(void)
 	/*
 	 * 3b. Persist state directory fd.  The atomic saves use openat +
 	 * fsync + renameat + unlinkat relative to this fd, so grant lookup,
-	 * create/write/read, fsync, and rename/unlink-at rights.
+	 * create/write/read, fsync, and rename/unlink-at rights. Bond replacements
+	 * also need fchmod for private permissions and flock for subsequent saves.
 	 */
 	if (blued_g.persist_dirfd >= 0) {
 		cap_rights_init(&rights, CAP_LOOKUP, CAP_CREATE, CAP_READ,
 		    CAP_WRITE, CAP_SEEK, CAP_FSTAT, CAP_FSYNC, CAP_FTRUNCATE,
-		    CAP_UNLINKAT, CAP_RENAMEAT_SOURCE, CAP_RENAMEAT_TARGET);
+		    CAP_FCHMOD, CAP_FLOCK, CAP_UNLINKAT, CAP_RENAMEAT_SOURCE,
+		    CAP_RENAMEAT_TARGET);
 		cap_limit_fd_locked(blued_g.persist_dirfd, &rights, "persist");
 	}
 	if (blued_g.bond_dirfd >= 0 &&
 	    blued_g.bond_dirfd != blued_g.persist_dirfd) {
 		cap_rights_init(&rights, CAP_LOOKUP, CAP_CREATE, CAP_READ,
 		    CAP_WRITE, CAP_SEEK, CAP_FSTAT, CAP_FSYNC, CAP_FTRUNCATE,
-		    CAP_UNLINKAT, CAP_RENAMEAT_SOURCE, CAP_RENAMEAT_TARGET);
+		    CAP_FCHMOD, CAP_FLOCK, CAP_UNLINKAT, CAP_RENAMEAT_SOURCE,
+		    CAP_RENAMEAT_TARGET);
 		cap_limit_fd_locked(blued_g.bond_dirfd, &rights, "bond_dir");
 	}
 
@@ -662,9 +667,7 @@ atexit_cleanup(void)
 {
 	if (blued_switchboard) {
 		/*
-		 * The provider exists only in central mode (peripheral mode
-		 * acquires the context but returns before registering); the
-		 * context is released either way.
+		 * Both roles own a provider; tolerate partial initialization.
 		 */
 		if (blued_g.svc_provider != NULL) {
 			service_provider_destroy(blued_g.svc_provider);
@@ -1985,6 +1988,7 @@ blued_adapter_set_privacy(struct blued_adapter *adp, bool on)
 		return (-1);
 	if (on && blued_local_irk_ensure() != 0)
 		return (-1);
+	blued_discovery_abort();
 	configured = adp->adv_configured && adp->adv_config != NULL;
 	enabled = adp->adv_enabled;
 	if (configured) {
@@ -2131,6 +2135,7 @@ blued_adapter_rotate_rpa(struct blued_adapter *adp, const uint8_t rpa[6])
 	    !adp->privacy)
 		return (-1);
 	primary_ext = adp->adv_configured && adp->adv_use_extended;
+	blued_discovery_abort();
 	if (!adp->rpa_pending) {
 		memcpy(adp->rpa_pending_addr, rpa, 6);
 		adp->rpa_pending = true;
@@ -2345,6 +2350,7 @@ blued_reslist_quiesce_begin(struct blued_adapter *adp,
 	memset(q, 0, sizeof(*q));
 	if (adp == NULL)
 		return;
+	q->discovery_scan = blued_discovery_quiesce(adp, false);
 	if (adp->adv_configured && adp->adv_enabled) {
 		if (adp->adv_use_extended) {
 			if (hci_le_set_ext_adv_enable(adp->hci_fd, 0, 0) == 0)
@@ -2368,6 +2374,8 @@ void
 blued_reslist_quiesce_end(struct blued_adapter *adp,
     struct blued_reslist_quiesce *q)
 {
+	if (q->discovery_scan)
+		(void)blued_discovery_quiesce(adp, true);
 
 	if (adp == NULL)
 		return;
@@ -3532,6 +3540,7 @@ blued_adapter_set_power(struct blued_adapter *adp, bool on)
 
 	if (adp == NULL || adp->hci_fd < 0)
 		return (-1);
+	blued_discovery_abort();
 
 	if (on) {
 		if (adp->powered)
@@ -3708,7 +3717,8 @@ blued_config_preopen(void)
 	const char *base, *dirpath;
 	char *slash;
 
-	if (blued_config_path == NULL || blued_g.config_fd >= 0)
+	if (blued_switchboard || blued_config_path == NULL ||
+	    blued_g.config_fd >= 0)
 		return;
 	blued_g.config_fd = open(blued_config_path, O_RDONLY | O_CLOEXEC);
 	if (blued_g.config_fd < 0)
@@ -3747,11 +3757,17 @@ blued_config_preopen(void)
 static int
 blued_config_reopen(void)
 {
+	int fd;
 
+	if (blued_switchboard) {
+		if (service_config_open(blued_managed_config, &fd) == -1)
+			return (-1);
+		return (fd);
+	}
 	if (blued_g.config_dirfd < 0 || blued_g.config_base[0] == '\0')
 		return (-1);
 	return (openat(blued_g.config_dirfd, blued_g.config_base,
-	    O_RDONLY | O_CLOEXEC));
+	    O_RDONLY | O_CLOEXEC | O_CLOFORK | O_NONBLOCK));
 }
 
 void
@@ -3780,6 +3796,9 @@ blued_reload_config(void)
 			    "from fd, keeping current settings");
 			return;
 		}
+	} else if (blued_switchboard) {
+		warn("reopen managed config; keeping current settings");
+		return;
 	} else if (blued_g.config_fd >= 0) {
 		if (blued_config_load_fd(&newcfg, blued_g.config_fd) < 0) {
 			LOG_HOGP(1, "SIGHUP: failed to reload config "
@@ -4505,6 +4524,68 @@ blued_persist_flush(const struct blued_config *cfg)
 	return (rc);
 }
 
+/* Role-independent control service setup, after kqueue initialization. */
+static void
+blued_control_start(const char *path)
+{
+	struct kevent kev;
+	int fd;
+
+	if (blued_ctl_init(blued_switchboard ? NULL : path) < 0)
+		err(1, "initialize Bluetooth control service");
+	if (!blued_switchboard)
+		return;
+	if (service_provider_create(&blued_g.svc_provider) == -1 ||
+	    service_provider_protect(blued_g.svc_provider,
+	    SERVICE_PROTECT_EXTERNAL) == -1 ||
+	    service_provider_expose(blued_g.svc_provider,
+	    "system.Bluetooth", &blued_g.svc_listener) == -1)
+		err(1, "expose Bluetooth service");
+	fd = service_listener_fd(blued_g.svc_listener);
+	if (fd < 0)
+		err(1, "Bluetooth listener descriptor");
+	EV_SET(&kev, fd, EVFILT_READ, EV_ADD | EV_ENABLE, 0, 0,
+	    BLUED_KQ_PLANE_LISTEN);
+	if (kevent(blued_g.kq, &kev, 1, NULL, 0, NULL) < 0)
+		err(1, "register Bluetooth listener");
+	ctl_gatt_reclaim_init();
+	fd = service_supervisor_fd(blued_g.svc_ctx);
+	if (fd >= 0) {
+		EV_SET(&kev, fd, EVFILT_READ, EV_ADD | EV_ENABLE, 0, 0,
+		    BLUED_KQ_SUPERVISOR);
+		if (kevent(blued_g.kq, &kev, 1, NULL, 0, NULL) < 0)
+			err(1, "register Bluetooth supervisor");
+	}
+}
+
+static void
+blued_control_ready(void)
+{
+	if (!blued_switchboard)
+		return;
+	if (service_provider_enter_capability_mode(blued_g.svc_provider) == -1 ||
+	    service_provider_ready(blued_g.svc_provider) == -1)
+		err(1, "report Bluetooth readiness");
+}
+
+/* Both initial load and reload use the delivered Config directory. */
+static int
+blued_config_startup(struct blued_config *cfg, const char *path)
+{
+	int fd, rc, saved;
+
+	if (!blued_switchboard)
+		return (blued_config_load(cfg, path));
+	blued_managed_config = path != NULL ? path : "blued.conf";
+	if (service_config_open(blued_managed_config, &fd) == -1)
+		return (-1);
+	rc = blued_config_load_fd(cfg, fd);
+	saved = errno;
+	close(fd);
+	errno = saved;
+	return (rc);
+}
+
 int
 main(int argc, char *argv[])
 {
@@ -4512,7 +4593,6 @@ main(int argc, char *argv[])
 	struct blued_adapter *adp;
 	struct hogp_device dev;
 	const char *config_path;
-	char managed_config_path[PATH_MAX];
 	int ch, i, nfound, exit_status = 0;
 
 	/* Alias for minimal diff with existing code */
@@ -4526,19 +4606,10 @@ main(int argc, char *argv[])
 			err(1, "initialize switchboard channel");
 		if (service_authorize_capabilities(blued_g.svc_ctx) == -1)
 			err(1, "activate switchboard capabilities");
-		/*
-		 * Persistent state is optional: the unit declares no storage
-		 * block, so this normally answers ENOENT.  Run without a bond
-		 * store rather than refusing to start (every user of
-		 * persist_dirfd already handles -1); a missing provider must
-		 * never be a hard dependency.
-		 */
-		if (service_capability_open(blued_g.svc_ctx, "storage:state",
-		    "directory", &blued_g.persist_dirfd) == -1) {
-			warn("persistent storage unavailable; running without a "
-			    "bond store");
-			blued_g.persist_dirfd = -1;
-		}
+		/* Bond keys and identity must survive a service restart. */
+		if (service_storage_open(blued_g.svc_ctx, "state",
+		    &blued_g.persist_dirfd) == -1)
+			err(1, "acquire Bluetooth persistent state");
 		blued_switchboard = 1;
 	}
 
@@ -4555,17 +4626,9 @@ main(int argc, char *argv[])
 		else if (ch == 'h')
 			usage();
 	}
-	if (config_path == NULL && getenv(SERVICE_UNIT_DIR_ENV) != NULL) {
-		if (snprintf(managed_config_path, sizeof(managed_config_path),
-		    "%s/Config/blued.conf", getenv(SERVICE_UNIT_DIR_ENV)) >=
-		    (int)sizeof(managed_config_path))
-			errx(1, "managed configuration path is too long");
-		config_path = managed_config_path;
-	}
-
-	/* 3. Load config file (optional, ENOENT is OK) */
-	if (blued_config_load(&cfg, config_path) < 0)
-		warnx("failed to load config");
+	/* Never silently substitute defaults for a broken managed config. */
+	if (blued_config_startup(&cfg, config_path) < 0)
+		errx(1, "failed to load Bluetooth configuration");
 
 	/*
 	 * Save config path for SIGHUP reload.  C3-H3: without -c, config_path
@@ -5228,8 +5291,7 @@ main(int argc, char *argv[])
 		hci_event_defer_kick_hook = blued_hci_defer_kick;
 
 		/* Init control socket */
-		if (blued_ctl_init(cfg.ctlsock) < 0)
-			warn("control socket init failed (non-fatal)");
+		blued_control_start(cfg.ctlsock);
 
 		/*
 		 * C3-H2: periodic write-out of ATT Signed-Write replay floors.
@@ -5266,6 +5328,7 @@ main(int argc, char *argv[])
 		if (cap_enter() < 0)
 			err(1, "cap_enter (peripheral)");
 		LOG_HOGP(1, "entered Capsicum sandbox (peripheral)");
+		blued_control_ready();
 
 		LOG_HOGP(1, "peripheral mode, entering event loop");
 		running = 1;
@@ -5531,8 +5594,7 @@ main(int argc, char *argv[])
 			}
 		}
 
-		if (ndevs == 0)
-			usage();
+		/* First boot has no targets yet; keep serving discovery/pairing. */
 
 	/* 12. Open bond database */
 	blued_g.bond_fd = blued_bond_open(cfg.bonddb);
@@ -5614,69 +5676,7 @@ main(int argc, char *argv[])
 		err(1, "start L2CAP socket broker");
 
 	/* 14. Init control socket */
-	if (blued_ctl_init(cfg.ctlsock) < 0)
-		warn("control socket init failed (non-fatal)");
-
-	/*
-	 * 15. switchboard: create the provider, expose the name, and watch the
-	 * supervisor fd for lifecycle.  Readiness is reported below, after
-	 * cap_enter(): the provider API requires the explicit
-	 * capability-mode transition before service_provider_ready().
-	 */
-	if (blued_switchboard) {
-		int sup_fd;
-
-		/* The daemon chooses its external shield after initialization.
-		 * switchboard retains stop authority through its procdesc; pdkill
-		 * deliberately bypasses ambient signal checks. */
-		if (service_provider_create(&blued_g.svc_provider) == -1)
-			err(1, "create switchboard provider");
-		if (service_provider_protect(blued_g.svc_provider,
-		    SERVICE_PROTECT_EXTERNAL) == -1)
-			err(1, "protect switchboard process");
-		if (service_provider_expose(blued_g.svc_provider,
-		    "system.Bluetooth", &blued_g.svc_listener) == -1)
-			err(1, "expose switchboard name");
-		/*
-		 * The exposed name is how a plane client reaches the daemon
-		 * with its stamped identity (ble_open_plane): the listener fd
-		 * is served from the event loop, each attach handing the client
-		 * a control socket (ctl.c blued_ctl_plane_accept).
-		 */
-		{
-			struct kevent kev;
-			int lfd = service_listener_fd(blued_g.svc_listener);
-
-			if (lfd >= 0) {
-				EV_SET(&kev, lfd, EVFILT_READ, EV_ADD | EV_ENABLE,
-				    0, 0, BLUED_KQ_PLANE_LISTEN);
-				if (kevent(blued_g.kq, &kev, 1, NULL, 0, NULL) < 0)
-					warn("kevent plane listener");
-			}
-		}
-		/*
-		 * Container model: the live-set roots are delivered by the
-		 * manifest (never opened by path) and must be taken before
-		 * cap_enter(); the reconcile itself runs on a timer in the
-		 * event loop (ctl_gatt.c).  Soft: without the roots there is no
-		 * reclaim, and registrations proceed as before.
-		 */
-		ctl_gatt_reclaim_init();
-		/*
-		 * The supervisor fd (successor to the old service_channel_fd)
-		 * becomes readable only when the switchboard connection is lost;
-		 * the real stop path is SIGTERM/pdkill.
-		 */
-		sup_fd = service_supervisor_fd(blued_g.svc_ctx);
-		if (sup_fd >= 0) {
-			struct kevent kev;
-
-			EV_SET(&kev, sup_fd, EVFILT_READ,
-			    EV_ADD | EV_ENABLE, 0, 0, BLUED_KQ_SUPERVISOR);
-			if (kevent(blued_g.kq, &kev, 1, NULL, 0, NULL) < 0)
-				warn("kevent service_supervisor_fd");
-		}
-	}
+	blued_control_start(cfg.ctlsock);
 
 	/*
 	 * 16c. Central mode: multi-connection kqueue-based path.
@@ -5792,13 +5792,7 @@ main(int argc, char *argv[])
 	 * is idempotent with the cap_enter() above — it observes we are
 	 * already sandboxed and only records the transition.
 	 */
-	if (blued_switchboard) {
-		if (service_provider_enter_capability_mode(
-		    blued_g.svc_provider) == -1)
-			err(1, "enter switchboard capability mode");
-		if (service_provider_ready(blued_g.svc_provider) == -1)
-			err(1, "report switchboard readiness");
-	}
+	blued_control_ready();
 
 	/* Now spawn setup threads inside the sandbox */
 	{

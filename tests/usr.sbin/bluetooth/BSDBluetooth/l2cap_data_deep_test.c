@@ -213,7 +213,7 @@ struct callout {
 /* ---------------------------------------------------------------------- */
 /* Userspace mbuf.                                                         */
 /* ---------------------------------------------------------------------- */
-#define NG_MBUF_STORE	4096
+#define NG_MBUF_STORE	(65535 + 64 + 8) /* Full L2CAP frame plus headroom. */
 #define NG_MBUF_HEAD	64	/* leading headroom for prepends */
 
 #define M_PROTO2	0x00000004
@@ -367,8 +367,7 @@ m_cat(struct mbuf *m, struct mbuf *n)
 	}
 	room = NG_MBUF_STORE - (int)(m->m_data - m->m_store) - m->m_len;
 	cp = n->m_len;
-	if (cp > room)
-		cp = room;
+	ATF_REQUIRE_MSG(cp <= room, "mbuf fixture must not truncate a fragment");
 	if (cp > 0)
 		memcpy(m->m_data + m->m_len, n->m_data, (size_t)cp);
 	m->m_len += cp;
@@ -7403,8 +7402,106 @@ ATF_TC_BODY(classic_response_error_completion, tc)
 
 /* ====================================================================== */
 
+/* Fuchsia f15 Recombiner::ConsumeFragment / ProcessFirstFragment and Core
+ * Vol 3 Part A 3.1: reassembly is per connection and an overrun discards
+ * only that connection's incomplete frame. Exercise every split position. */
+ATF_TC_WITHOUT_HEAD(acl_interleaved_reassembly_recovery);
+ATF_TC_BODY(acl_interleaved_reassembly_recovery, tc)
+{
+	for (unsigned int split = 4; split < 52; split++) {
+		ng_l2cap_con_p a, b;
+		uint8_t pa[52], pb[52], excess[53] = {0};
+		struct mbuf *m;
+		reset_all();
+		a = mk_con(NG_HCI_LINK_ACL, 1);
+		b = mk_con(NG_HCI_LINK_ACL, 1);
+		a->con_handle = 1;
+		b->con_handle = 2;
+		/* Exactly the supported 48-byte signaling MTU plus basic header. */
+		w16(pa, 0, 48); w16(pa, 2, 1);
+		pa[4] = 8; pa[5] = 0x21; w16(pa, 6, 44);
+		for (unsigned int i = 8; i < sizeof(pa); i++)
+			pa[i] = (uint8_t)(i ^ split);
+		memcpy(pb, pa, sizeof(pb)); pb[5] = 0x22;
+		m = mk_acl_fragment(a, NG_HCI_PACKET_START, split, pa, split);
+		ATF_REQUIRE_EQ(0, ng_l2cap_lp_receive(&g_l2cap, m));
+		m = mk_acl_fragment(b, NG_HCI_PACKET_START, split, pb, split);
+		ATF_REQUIRE_EQ(0, ng_l2cap_lp_receive(&g_l2cap, m));
+		ATF_REQUIRE(a->rx_pkt != NULL && b->rx_pkt != NULL);
+		/* One byte over A's remaining length: B must remain intact. */
+		m = mk_acl_fragment(a, NG_HCI_PACKET_FRAGMENT, 53 - split,
+		    excess, 53 - split);
+		ATF_CHECK_EQ(EMSGSIZE, ng_l2cap_lp_receive(&g_l2cap, m));
+		ATF_CHECK(a->rx_pkt == NULL);
+		ATF_REQUIRE(b->rx_pkt != NULL);
+		m = mk_acl_fragment(b, NG_HCI_PACKET_FRAGMENT, 52 - split,
+		    pb + split, 52 - split);
+		ATF_REQUIRE_EQ(0, ng_l2cap_lp_receive(&g_l2cap, m));
+		ATF_REQUIRE_EQ(1, g_nframes);
+		ATF_CHECK_EQ(9, g_frames[0].data[0]);
+		ATF_CHECK_EQ(0x22, g_frames[0].data[1]);
+		ATF_CHECK_EQ(0, memcmp(g_frames[0].data + 4, pb + 8, 44));
+		/* A can recover without resetting B or the whole controller. */
+		m = mk_acl_fragment(a, NG_HCI_PACKET_START, sizeof(pa), pa, sizeof(pa));
+		ATF_REQUIRE_EQ(0, ng_l2cap_lp_receive(&g_l2cap, m));
+		ATF_REQUIRE_EQ(2, g_nframes);
+		ATF_CHECK_EQ(9, g_frames[1].data[0]);
+		ATF_CHECK_EQ(0x21, g_frames[1].data[1]);
+		ATF_CHECK_EQ(0, memcmp(g_frames[1].data + 4, pa + 8, 44));
+		ATF_CHECK(a->rx_pkt == NULL && b->rx_pkt == NULL);
+		drain_tx(a); drain_tx(b);
+	}
+	reset_all();
+}
+
+/* Fuchsia RecombinationDroppedForFrameWithMaxSize: a 65535-byte frame
+ * followed by one excess byte must not wrap the remaining-length counter.
+ * This runs the native kernel receive routine with userspace mbuf fixtures. */
+ATF_TC_WITHOUT_HEAD(acl_maximum_frame_overrun_recovery);
+ATF_TC_BODY(acl_maximum_frame_overrun_recovery, tc)
+{
+	const uint8_t header[] = { 0xff, 0xff, 1, 0 };
+	const uint8_t recovery[] = { 4, 0, 1, 0, 8, 0x41, 0, 0 };
+	uint8_t fragment[1024];
+	ng_l2cap_con_p con;
+	struct mbuf *m;
+
+	reset_all();
+	con = mk_con(NG_HCI_LINK_ACL, 1);
+	memset(fragment, 'd', sizeof(fragment));
+	m = mk_acl_fragment(con, NG_HCI_PACKET_START, sizeof(header),
+	    header, sizeof(header));
+	ATF_REQUIRE_EQ(0, ng_l2cap_lp_receive(&g_l2cap, m));
+	ATF_REQUIRE_EQ(65535, con->rx_pkt_len);
+	for (unsigned int total = 0; total < 65536; total += sizeof(fragment)) {
+		m = mk_acl_fragment(con, NG_HCI_PACKET_FRAGMENT, sizeof(fragment),
+		    fragment, sizeof(fragment));
+		if (total + sizeof(fragment) == 65536) {
+			ATF_CHECK_EQ(EMSGSIZE, ng_l2cap_lp_receive(&g_l2cap, m));
+			ATF_CHECK(con->rx_pkt == NULL);
+			ATF_CHECK_EQ(0, con->rx_pkt_len);
+		} else {
+			ATF_REQUIRE_EQ(0, ng_l2cap_lp_receive(&g_l2cap, m));
+			ATF_REQUIRE(con->rx_pkt != NULL);
+			ATF_CHECK_EQ(65535 - total - sizeof(fragment), con->rx_pkt_len);
+			ATF_CHECK_EQ(4 + total + sizeof(fragment), con->rx_pkt->m_len);
+		}
+	}
+	ATF_CHECK_EQ(0, g_nframes);
+	m = mk_acl_fragment(con, NG_HCI_PACKET_START, sizeof(recovery),
+	    recovery, sizeof(recovery));
+	ATF_REQUIRE_EQ(0, ng_l2cap_lp_receive(&g_l2cap, m));
+	ATF_REQUIRE_EQ(1, g_nframes);
+	ATF_CHECK_EQ(9, g_frames[0].data[0]); /* Echo response after recovery. */
+	ATF_CHECK_EQ(0x41, g_frames[0].data[1]);
+	drain_tx(con);
+	reset_all();
+}
+
 ATF_TP_ADD_TCS(tp)
 {
+	ATF_TP_ADD_TC(tp, acl_maximum_frame_overrun_recovery);
+	ATF_TP_ADD_TC(tp, acl_interleaved_reassembly_recovery);
 
 	/* m_pullup() failure arms */
 	ATF_TP_ADD_TC(tp, pullup_fail_framing);

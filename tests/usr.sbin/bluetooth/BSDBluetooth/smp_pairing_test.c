@@ -1131,19 +1131,14 @@ ATF_TC_BODY(test_smp_pair_no_bonding_distributes_no_keys, tc)
 		if (preq[6] != 0x00)
 			_exit(4);
 
-		/*
-		 * Answer as a peer that greedily sets key-distribution bits the
-		 * initiator cleared: the intersection must still be empty, so
-		 * neither side distributes and neither side waits.
-		 */
+		/* Complete valid non-bonding pairing; contradictory key requests
+		 * are rejected separately by test_init_rejects_unagreed_keys. */
 		pres[0] = BTPR_SMP_PAIRING_RESPONSE;
 		pres[1] = BTPR_SMP_IO_NO_INPUT_NO_OUTPUT;
 		pres[2] = 0x00;
 		pres[3] = 0x00;		/* no bonding, no MITM, no SC */
 		pres[4] = 16;
-		pres[5] = BTPR_SMP_KEY_DIST_ID_KEY |
-		    BTPR_SMP_KEY_DIST_LEGACY_SIGN_KEY;
-		pres[6] = BTPR_SMP_KEY_DIST_ENC_KEY | BTPR_SMP_KEY_DIST_ID_KEY;
+		pres[5] = pres[6] = 0;
 		if (send(peer_fd, pres, sizeof(pres), MSG_EOR) < 0)
 			_exit(5);
 

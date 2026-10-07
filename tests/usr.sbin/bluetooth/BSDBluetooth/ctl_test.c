@@ -52,6 +52,9 @@
 
 int ptap_ctl_internal_completion(void);
 int ptap_ctl_cleanup_bound(void);
+int ptap_ctl_client_queue_isolation(void);
+int ptap_plane_stalled(void);
+int ptap_plane_attach(void);
 
 /* ================================================================
  * Stubs for external symbols referenced by ctl.c and conn.c
@@ -1848,6 +1851,28 @@ ATF_TC_BODY(test_ctl_send_fd, tc)
  * Test: blued_ctl_init creates a socket and blued_ctl_cleanup
  * removes it.
  * ================================================================ */
+ATF_TC_WITHOUT_HEAD(test_ctl_repeated_worker_restart);
+ATF_TC_BODY(test_ctl_repeated_worker_restart, tc)
+{
+	char path[96];
+	struct stat sb;
+
+	test_init();
+	blued_g.kq = kqueue();
+	ATF_REQUIRE(blued_g.kq >= 0);
+	snprintf(path, sizeof(path), "/tmp/5bsd-bluetooth-restart-%d.sock", (int)getpid());
+	for (unsigned i = 0; i < 20; i++) {
+		ATF_REQUIRE_EQ(0, blued_ctl_init(path));
+		ATF_REQUIRE(blued_g.ctl_fd >= 0);
+		blued_ctl_cleanup();
+		ATF_CHECK_EQ(-1, blued_g.ctl_fd);
+		ATF_CHECK(LIST_EMPTY(&blued_g.ctl_clients));
+		ATF_CHECK_EQ(-1, stat(path, &sb));
+		ATF_CHECK_EQ(ENOENT, errno);
+	}
+	close(blued_g.kq);
+}
+
 ATF_TC_WITHOUT_HEAD(test_ctl_init_cleanup);
 ATF_TC_BODY(test_ctl_init_cleanup, tc)
 {
@@ -1913,6 +1938,14 @@ ATF_TC_BODY(test_ctl_init_preserves_live_socket, tc)
 }
 
 /* The asynchronous GATT pool executes ATT I/O and emits correlated replies. */
+ATF_TC_WITHOUT_HEAD(test_ctl_client_queue_isolation);
+ATF_TC_BODY(test_ctl_client_queue_isolation, tc)
+{
+	(void)tc;
+	test_init();
+	ATF_REQUIRE_EQ(0, ptap_ctl_client_queue_isolation());
+}
+
 ATF_TC_WITHOUT_HEAD(test_ctl_gatt_worker_io);
 ATF_TC_BODY(test_ctl_gatt_worker_io, tc)
 {
@@ -3660,6 +3693,97 @@ dispatch_domain_request(struct blued_ctl_client *client, int peer_fd,
 	ATF_REQUIRE_EQ(request_id, got_id);
 	ATF_REQUIRE_EQ(0, flags);
 	return (status);
+}
+
+ATF_TC_WITHOUT_HEAD(test_ctl_two_clients_two_peers);
+ATF_TC_BODY(test_ctl_two_clients_two_peers, tc)
+{
+	struct blued_adapter adp = { .index = 0, .active = true, .powered = true };
+	struct blued_ctl_client *clients[2];
+	struct blued_conn *conns[2];
+	struct att_conn att[2] = {{0}};
+	bdaddr_t addresses[2] = {{{1, 2, 3, 4, 5, 6}}, {{2, 2, 3, 4, 5, 6}}};
+	struct timeval timeout = { .tv_sec = 2 };
+	int sp[2][2], peer[2][2];
+	char path[96];
+	uint8_t body[IPC_GATT_REQ_SIZE] = {0};
+	uint8_t request[IPC_OP_PREFIX_SIZE + IPC_GATT_REQ_SIZE], response[128];
+	const uint8_t value_a[] = {ATT_OP_READ_RSP, 0xaa};
+	const uint8_t value_b[] = {ATT_OP_READ_RSP, 0xbb};
+	uint32_t request_a, got_id;
+	uint16_t type, domain, status, flags;
+	size_t length;
+
+	(void)tc;
+	test_init();
+	blued_g.kq = kqueue();
+	ATF_REQUIRE(blued_g.kq >= 0);
+	snprintf(path, sizeof(path), "/tmp/blued-two-peers-%d.sock", (int)getpid());
+	ATF_REQUIRE_EQ(0, blued_ctl_init(path));
+	LIST_INSERT_HEAD(&blued_g.adapters, &adp, entries);
+	for (int i = 0; i != 2; i++) {
+		ATF_REQUIRE_EQ(0, socketpair(AF_UNIX, SOCK_SEQPACKET, 0, peer[i]));
+		ATF_REQUIRE_EQ(0, setsockopt(peer[i][1], SOL_SOCKET, SO_RCVTIMEO,
+		    &timeout, sizeof(timeout)));
+		att[i].fd = peer[i][0];
+		att[i].mtu = 23;
+		att[i].buf = malloc(ATT_MAX_MTU);
+		ATF_REQUIRE(att[i].buf != NULL);
+		conns[i] = blued_conn_alloc();
+		ATF_REQUIRE(conns[i] != NULL);
+		conns[i]->adapter = &adp;
+		conns[i]->dst = addresses[i];
+		conns[i]->addr_type = BDADDR_LE_PUBLIC;
+		conns[i]->att = &att[i];
+		conns[i]->att_fd = att[i].fd;
+		blued_conn_set_state(conns[i], BLUED_CONN_ACTIVE);
+		clients[i] = make_client(sp[i]);
+		clients[i]->handshaked = true;
+		LIST_INSERT_HEAD(&blued_g.ctl_clients, clients[i], entries);
+		ATF_REQUIRE_EQ(0, setsockopt(sp[i][1], SOL_SOCKET, SO_RCVTIMEO,
+		    &timeout, sizeof(timeout)));
+	}
+	/* A's peer receives the request but deliberately withholds its reply. */
+	ipc_put_le16(body, IPC_GATT_READ);
+	memcpy(body + 5, &addresses[0], sizeof(bdaddr_t));
+	ipc_put_le16(body + 12, 0x25);
+	request_a = ++ipc_test_request_id;
+	ipc_op_prefix_encode(request, request_a, 0, 0);
+	memcpy(request + IPC_OP_PREFIX_SIZE, body, sizeof(body));
+	ipc_send_raw(sp[0][1], IPC_T_OP_REQ, IPC_OP_DOMAIN_GATT,
+	    request, sizeof(request));
+	ATF_REQUIRE_EQ(0, blued_ctl_dispatch(clients[0]));
+	ATF_REQUIRE_EQ(3, recv(peer[0][1], response, sizeof(response), 0));
+	ATF_REQUIRE_EQ(ATT_OP_READ_REQ, response[0]);
+
+	/* B must complete while A is still waiting, through the real worker pool. */
+	ATF_REQUIRE_EQ(sizeof(value_b), send(peer[1][1], value_b,
+	    sizeof(value_b), MSG_EOR));
+	memcpy(body + 5, &addresses[1], sizeof(bdaddr_t));
+	ATF_REQUIRE_EQ(IPC_ERR_NONE, dispatch_domain_request(clients[1], sp[1][1],
+	    IPC_OP_DOMAIN_GATT, body, sizeof(body)));
+	ATF_REQUIRE_EQ(3, recv(peer[1][1], response, sizeof(response), 0));
+	ATF_REQUIRE_EQ(-1, recv(sp[0][1], response, sizeof(response), MSG_DONTWAIT));
+	ATF_REQUIRE_EQ(EAGAIN, errno);
+	ATF_REQUIRE_EQ(sizeof(value_a), send(peer[0][1], value_a,
+	    sizeof(value_a), MSG_EOR));
+	length = ipc_recv(sp[0][1], &type, &domain, response, sizeof(response));
+	ATF_REQUIRE_EQ(IPC_T_OP_REPLY, type);
+	ATF_REQUIRE_EQ(IPC_OP_DOMAIN_GATT, domain);
+	ATF_REQUIRE_EQ(IPC_OP_PREFIX_SIZE + IPC_GATT_READ_REPLY_SIZE + 1, length);
+	ipc_op_prefix_decode(response, &got_id, &status, &flags);
+	ATF_REQUIRE_EQ(request_a, got_id);
+	ATF_REQUIRE_EQ(IPC_ERR_NONE, status);
+	ATF_REQUIRE_EQ(0xaa, response[length - 1]);
+	blued_ctl_cleanup();
+	for (int i = 0; i != 2; i++) {
+		conns[i]->att = NULL;
+		blued_conn_free(conns[i]);
+		close(peer[i][0]); close(peer[i][1]); close(sp[i][1]);
+		free(att[i].buf);
+	}
+	LIST_REMOVE(&adp, entries);
+	close(blued_g.kq);
 }
 
 static uint16_t
@@ -7177,6 +7301,18 @@ ATF_TC_BODY(test_ctl_gatt_client_exit_cccd_ownership, tc)
 }
 
 ATF_TC_WITHOUT_HEAD(test_ctl_gatt_client_exit_cleanup_bound);
+ATF_TC_WITHOUT_HEAD(test_plane_stalled_clients);
+ATF_TC_WITHOUT_HEAD(test_plane_attach_descriptor);
+ATF_TC_BODY(test_plane_attach_descriptor, tc)
+{
+	test_init();
+	ATF_CHECK_EQ(0, ptap_plane_attach());
+}
+ATF_TC_BODY(test_plane_stalled_clients, tc)
+{
+	test_init();
+	ATF_CHECK_EQ(0, ptap_plane_stalled());
+}
 ATF_TC_BODY(test_ctl_gatt_client_exit_cleanup_bound, tc)
 {
 	test_init();
@@ -10566,6 +10702,7 @@ ATF_TC_BODY(test_gatt_owner_records_survive_a_restart, tc)
 
 ATF_TP_ADD_TCS(tp)
 {
+	ATF_TP_ADD_TC(tp, test_ctl_repeated_worker_restart);
 
 	ATF_TP_ADD_TC(tp, dispatch_lock_recursive_holds_across_reacquire);
 	ATF_TP_ADD_TC(tp, dispatch_broadcast_under_held_lock);
@@ -10601,6 +10738,8 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, test_ctl_init_cleanup);
 	ATF_TP_ADD_TC(tp, test_ctl_init_preserves_live_socket);
 	ATF_TP_ADD_TC(tp, test_ctl_gatt_worker_io);
+	ATF_TP_ADD_TC(tp, test_ctl_client_queue_isolation);
+	ATF_TP_ADD_TC(tp, test_ctl_two_clients_two_peers);
 	ATF_TP_ADD_TC(tp, test_ctl_gatt_write_long_uses_prepare_execute);
 	ATF_TP_ADD_TC(tp, test_ctl_gatt_write_short_stays_write_request);
 	ATF_TP_ADD_TC(tp, test_ctl_gatt_security_retry);
@@ -10622,6 +10761,8 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, test_ctl_gatt_subscribe_routes_before_cccd_response);
 	ATF_TP_ADD_TC(tp, test_ctl_gatt_client_exit_cccd_ownership);
 	ATF_TP_ADD_TC(tp, test_ctl_gatt_client_exit_cleanup_bound);
+	ATF_TP_ADD_TC(tp, test_plane_stalled_clients);
+	ATF_TP_ADD_TC(tp, test_plane_attach_descriptor);
 	ATF_TP_ADD_TC(tp, test_typed_domain_opcode_sweep);
 	ATF_TP_ADD_TC(tp, test_typed_gatt_server_matrix);
 	ATF_TP_ADD_TC(tp, test_typed_security_valid_matrix);

@@ -3,7 +3,183 @@
 
 int ptap_ctl_internal_completion(void);
 int ptap_ctl_cleanup_bound(void);
+int ptap_ctl_client_queue_isolation(void);
 extern int ctl_test_disconnect_calls;
+int ptap_plane_stalled(void);
+int ptap_plane_attach(void);
+
+static void
+ptap_plane_reply(struct channel_request *request __unused,
+    struct channel_message *message, int error, void *argument)
+{
+	int *fd = argument;
+	const struct blued_plane_msg *reply;
+
+	if (error == 0 && message != NULL &&
+	    channel_message_length(message) == sizeof(*reply)) {
+		reply = channel_message_data(message);
+		if (reply->status == 0 && channel_message_fd_count(message) == 1)
+			*fd = channel_message_take_fd(message, 0);
+	}
+	if (message != NULL)
+		channel_message_free(message);
+}
+
+int
+ptap_plane_attach(void)
+{
+	struct service_identity id = { .size = sizeof(id), .rights = 0 };
+	struct channel_options options = CHANNEL_OPTIONS_INITIALIZER(CHANNEL_ROLE_CLIENT);
+	struct blued_plane_msg input = { .magic = BLUED_PLANE_MAGIC,
+	    .opcode = BLUED_PLANE_OP_ATTACH };
+	struct channel_outgoing out = CHANNEL_OUTGOING_INITIALIZER(&input, sizeof(input));
+	struct channel_request *request;
+	struct channel *client;
+	struct kevent events[8];
+	struct timespec timeout = { .tv_nsec = 100000000 };
+	struct blued_ctl_client *adopted;
+	int sv[2], i, n, turn, received = -1, result = 0;
+
+	blued_g.kq = kqueue();
+	blued_ctl_plane_batch_begin();
+	strlcpy(id.container, "org.5bsd.Test/gui", sizeof(id.container));
+	if (blued_g.kq < 0 || mac_capability_channel_create(sv) != 0)
+		return (1);
+	if (channel_create(sv[0], &options, &client) != 0 || plane_start(sv[1], &id) != 0)
+		return (2);
+	if (channel_send_request(client, &out, ptap_plane_reply, &received, &request) != 0)
+		return (3);
+	for (turn = 0; turn < 10 && received < 0; turn++) {
+		if (channel_flush(client) != 0)
+			return (4);
+		n = kevent(blued_g.kq, NULL, 0, events, 8, &timeout);
+		blued_ctl_plane_batch_begin();
+		for (i = 0; i < n; i++)
+			(void)blued_ctl_plane_event(&events[i]);
+		(void)channel_dispatch(client);
+	}
+	adopted = LIST_FIRST(&blued_g.ctl_clients);
+	if (received < 0 || adopted == NULL)
+		result = 5;
+	else if (adopted->peer_uid != (uid_t)-1)
+		result = 6;
+	if (received >= 0)
+		close(received);
+	channel_destroy(client);
+	blued_ctl_cleanup();
+	close(blued_g.kq);
+	blued_g.kq = -1;
+	return (result);
+}
+
+/* Real channels: admission must not wait for a silent client. */
+int
+ptap_plane_stalled(void)
+{
+	struct service_identity id = { .size = sizeof(id) };
+	struct kevent ev;
+	struct timespec start, end;
+	int peers[BLUED_MAX_CTL], sv[2], i, rc = 0;
+
+	blued_g.kq = kqueue();
+	if (blued_g.kq < 0)
+		return (1);
+	blued_ctl_plane_batch_begin();
+	clock_gettime(CLOCK_MONOTONIC, &start);
+	for (i = 0; i < BLUED_MAX_CTL; i++) {
+		if (mac_capability_channel_create(sv) != 0)
+			return (2);
+		peers[i] = sv[0];
+		if (plane_start(sv[1], &id) != 0)
+			return (3);
+	}
+	clock_gettime(CLOCK_MONOTONIC, &end);
+	if ((end.tv_sec - start.tv_sec) * 1000000000LL +
+	    end.tv_nsec - start.tv_nsec > 1000000000LL)
+		rc = 4;
+	if (mac_capability_channel_create(sv) != 0)
+		return (5);
+	if (plane_start(sv[1], &id) != -1 || errno != EBUSY)
+		rc = 6;
+	close(sv[0]);
+	for (i = 0; i < BLUED_MAX_CTL; i++) {
+		EV_SET(&ev, plane_pending[i].timer, EVFILT_TIMER, 0,
+		    0, 0, &plane_pending[i]);
+		if (!blued_ctl_plane_event(&ev) || plane_pending[i].channel != NULL ||
+		    !plane_pending[i].retired || !blued_ctl_plane_event(&ev))
+			rc = 7;
+		close(peers[i]);
+	}
+	blued_ctl_plane_batch_begin();
+	if (mac_capability_channel_create(sv) != 0)
+		return (8);
+	if (plane_start(sv[1], &id) != 0)
+		rc = 9;
+	close(sv[0]);
+	blued_ctl_cleanup();
+	close(blued_g.kq);
+	blued_g.kq = -1;
+	return (rc);
+}
+
+int
+ptap_ctl_client_queue_isolation(void)
+{
+	struct blued_adapter adp = { .index = 2, .active = true, .powered = true };
+	struct blued_ctl_client clients[2] = {
+	    { .fd = 80, .generation = 10 }, { .fd = 81, .generation = 11 }
+	};
+	struct att_conn att = { .fd = -1, .mtu = 23 };
+	struct blued_conn *conn;
+	bdaddr_t peer;
+	int result = -1;
+
+	if (!bt_aton("11:22:33:44:55:66", &peer))
+		return (-1);
+	LIST_INSERT_HEAD(&blued_g.adapters, &adp, entries);
+	conn = blued_conn_alloc();
+	if (conn == NULL) {
+		LIST_REMOVE(&adp, entries);
+		return (-1);
+	}
+	conn->adapter = &adp;
+	conn->dst = peer;
+	conn->addr_type = BDADDR_LE_PUBLIC;
+	conn->att = &att;
+	conn->att_fd = -1;
+	blued_conn_set_state(conn, BLUED_CONN_ACTIVE);
+
+	/* Deliberately leave workers stopped to make queue admission deterministic. */
+	for (int owner = 0; owner != 2; owner++) {
+		for (int i = 0; i != CTL_GATT_CLIENT_QUEUE_MAX; i++) {
+			if (ctl_gatt_job_start(&clients[owner], IPC_GATT_READ, 2,
+			    &peer, BDADDR_LE_PUBLIC, 0x25, 0, NULL, 0) != IPC_ERR_NONE)
+				goto out;
+		}
+		if (ctl_gatt_job_start(&clients[owner], IPC_GATT_READ, 2,
+		    &peer, BDADDR_LE_PUBLIC, 0x25, 0, NULL, 0) != IPC_ERR_BUSY)
+			goto out;
+	}
+	if (ctl_gatt_jobs_count != 2 * CTL_GATT_CLIENT_QUEUE_MAX)
+		goto out;
+	ctl_gatt_jobs_cancel_client(clients[0].fd);
+	if (ctl_gatt_jobs_count != CTL_GATT_CLIENT_QUEUE_MAX ||
+	    atomic_load(&conn->att_ops_active) != CTL_GATT_CLIENT_QUEUE_MAX)
+		goto out;
+	/* Admission recovers after cancellation; the second owner's work survives. */
+	if (ctl_gatt_job_start(&clients[0], IPC_GATT_READ, 2, &peer,
+	    BDADDR_LE_PUBLIC, 0x25, 0, NULL, 0) != IPC_ERR_NONE)
+		goto out;
+	result = 0;
+out:
+	ctl_gatt_workers_stop();
+	if (ctl_gatt_jobs_count != 0 || atomic_load(&conn->att_ops_active) != 0)
+		result = -1;
+	conn->att = NULL;
+	blued_conn_free(conn);
+	LIST_REMOVE(&adp, entries);
+	return (result);
+}
 
 int
 ptap_ctl_cleanup_bound(void)

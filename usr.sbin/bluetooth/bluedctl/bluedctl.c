@@ -744,7 +744,7 @@ handle_typed_command(ble_ctx_t *ctx, int argc, char **argv)
 
 		if (ble_scan(ctx, typed_scan_cb, NULL) < 0)
 			goto result_error;
-		while (!got_sigint) {
+		while (!got_sigint && ble_pending_count(ctx) != 0) {
 			int rv = poll(&pfd, 1, -1);
 
 			if (rv < 0 && errno == EINTR)
@@ -753,6 +753,11 @@ handle_typed_command(ble_ctx_t *ctx, int argc, char **argv)
 			    ((pfd.revents & POLLIN) != 0 && ble_process(ctx) < 0))
 				goto result_error;
 		}
+		if (got_sigint) {
+			if (ble_scan_stop(ctx) < 0)
+				goto result_error;
+		} else if (ble_errno(ctx) != BLE_ERR_NONE)
+			goto result_error;
 		return (1);
 	}
 	if (strcmp(argv[0], "connect") == 0 && (argc == 2 || argc == 3)) {

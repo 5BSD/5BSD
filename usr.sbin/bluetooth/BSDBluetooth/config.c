@@ -150,7 +150,7 @@ blued_config_defaults(struct blued_config *cfg)
 
 	cfg->peripheral_mode = false;
 	cfg->scan_mode = false;
-	strlcpy(cfg->peripheral_name, "FreeBSD-BLE",
+	strlcpy(cfg->peripheral_name, "5BSD-BLE",
 	    sizeof(cfg->peripheral_name));
 	cfg->ndevices = 0;
 }

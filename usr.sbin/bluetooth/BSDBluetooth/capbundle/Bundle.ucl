@@ -4,4 +4,4 @@ version = "1.0.0";
 sequence = 1;
 author = "5BSD";
 publisher = "org.5bsd.base";
-units = ["blued"];
+units = ["blued", "controller"];

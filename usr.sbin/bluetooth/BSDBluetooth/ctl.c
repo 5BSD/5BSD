@@ -31,6 +31,7 @@
 #include <fcntl.h>
 #include <limits.h>
 #include <pthread.h>
+#include "discovery.h"
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -1065,6 +1066,11 @@ mesh_scan_apply(bool on)
 			continue;
 		if (adp->mesh_scan_active == on)
 			continue;
+		/* Discovery owns the scanner until its last lease ends. */
+		if (blued_discovery_busy()) {
+			error = -1;
+			continue;
+		}
 		if (hci_le_mesh_scan_set(adp->hci_fd, adp->le_features, on) == 0)
 			adp->mesh_scan_active = on;
 		else
@@ -2404,6 +2410,7 @@ blued_ctl_adapter_reset(struct blued_adapter *adp)
 
 	if (adp == NULL)
 		return;
+	blued_discovery_adapter_gone(adp);
 	for (size_t i = 0; i < nitems(ctl_adv_sets); i++)
 		if (ctl_adv_sets[i].used && ctl_adv_sets[i].adapter == adp)
 			memset(&ctl_adv_sets[i], 0, sizeof(ctl_adv_sets[i]));
@@ -3049,6 +3056,45 @@ ctl_send_typed_scan_result(const struct blued_adapter *adp,
 	    sizeof(payload));
 }
 
+void
+blued_ctl_scan_event(int fd, uint64_t generation, uint32_t request,
+    const struct blued_adapter *adp, const struct ble_scan_result *result)
+{
+	struct blued_ctl_client *client;
+	uint32_t saved;
+
+	pthread_mutex_lock(&blued_g.ctl_clients_lock);
+	LIST_FOREACH(client, &blued_g.ctl_clients, entries) {
+		if (client->fd != fd || client->generation != generation)
+			continue;
+		saved = client->active_request_id;
+		client->active_request_id = request;
+		ctl_send_typed_scan_result(adp, result, client);
+		client->active_request_id = saved;
+		break;
+	}
+	pthread_mutex_unlock(&blued_g.ctl_clients_lock);
+}
+
+void
+blued_ctl_scan_done(int fd, uint64_t generation, uint32_t request,
+    uint16_t status)
+{
+	struct blued_ctl_client *client;
+	uint8_t reply[IPC_OP_PREFIX_SIZE];
+
+	ipc_op_prefix_encode(reply, request, status, 0);
+	pthread_mutex_lock(&blued_g.ctl_clients_lock);
+	LIST_FOREACH(client, &blued_g.ctl_clients, entries) {
+		if (client->fd == fd && client->generation == generation) {
+			ctl_send_frame(client, IPC_T_OP_REPLY, IPC_OP_DOMAIN_GAP,
+			    reply, sizeof(reply));
+			break;
+		}
+	}
+	pthread_mutex_unlock(&blued_g.ctl_clients_lock);
+}
+
 static void
 ctl_process_typed_gap(struct blued_ctl_client *client, const uint8_t *payload,
     size_t plen)
@@ -3064,10 +3110,23 @@ ctl_process_typed_gap(struct blued_ctl_client *client, const uint8_t *payload,
 		return;
 	}
 	opcode = ipc_get_le16(payload);
-	if (opcode != IPC_GAP_SCAN && opcode != IPC_GAP_GET_CONNECTIONS &&
+	if (opcode != IPC_GAP_SCAN && opcode != IPC_GAP_SCAN_STOP &&
+	    opcode != IPC_GAP_GET_CONNECTIONS &&
 	    !ctl_client_privileged(client)) {
 		ctl_send_op_error(client, IPC_OP_DOMAIN_GAP, IPC_ERR_PERM,
 		    "permission denied");
+		return;
+	}
+	if (opcode == IPC_GAP_SCAN_STOP) {
+		if (plen != IPC_GAP_REQ_SIZE ||
+		    memcmp(payload + 2, (uint8_t[IPC_GAP_REQ_SIZE - 2]){0},
+		    IPC_GAP_REQ_SIZE - 2) != 0) {
+			ctl_send_op_error(client, IPC_OP_DOMAIN_GAP, IPC_ERR_PROTO,
+			    "invalid scan stop request");
+			return;
+		}
+		blued_discovery_cancel(client->fd, true);
+		ctl_send_op_ack(client, IPC_OP_DOMAIN_GAP);
 		return;
 	}
 	if (opcode == IPC_GAP_SCAN) {
@@ -3084,9 +3143,8 @@ ctl_process_typed_gap(struct blued_ctl_client *client, const uint8_t *payload,
 			return;
 		}
 		/*
-		 * Finding C-M1: bound the frequency of this event-loop-blocking
-		 * SCAN (the previously-dead per-client rate limiter), and cap the
-		 * per-request synchronous duration below.
+		 * Bound controller reconfiguration churn; the scan itself now
+		 * receives live reports through the main event loop.
 		 */
 		if (!ctl_blocking_rate_ok(client)) {
 			ctl_send_op_error(client, IPC_OP_DOMAIN_GAP,
@@ -3103,15 +3161,16 @@ ctl_process_typed_gap(struct blued_ctl_client *client, const uint8_t *payload,
 		params.uuid16 = ipc_get_le16(payload + 8);
 		params.rssi_min = (int8_t)payload[10];
 		memcpy(params.name_sub, payload + 12, sizeof(params.name_sub));
-		error = ctl_scan_result(&params, NULL, ctl_send_typed_scan_result,
-		    client, 3);
+		error = blued_discovery_start(client, &params);
 		if (error != IPC_ERR_NONE) {
 			ctl_send_op_error(client, IPC_OP_DOMAIN_GAP,
 			    (uint16_t)error, error == IPC_ERR_NOT_FOUND ?
-			    "no active adapter" : "invalid scan parameters");
+			    "no active adapter" : error == IPC_ERR_BUSY ?
+			    "scanner is busy with an incompatible request" :
+			    "could not start discovery");
 			return;
 		}
-		ctl_send_op_ack(client, IPC_OP_DOMAIN_GAP);
+		/* Terminal reply follows the lease timeout or explicit stop. */
 		return;
 	}
 	if (opcode == IPC_GAP_CONNECT_NAME) {
@@ -3120,6 +3179,12 @@ ctl_process_typed_gap(struct blued_ctl_client *client, const uint8_t *payload,
 		struct blued_adapter *adapter;
 		uint8_t resolved_type;
 		bdaddr_t resolved;
+
+		if (blued_discovery_busy()) {
+			ctl_send_op_error(client, IPC_OP_DOMAIN_GAP, IPC_ERR_BUSY,
+			    "resolve the name from discovery before connecting");
+			return;
+		}
 
 		flags = ipc_get_le16(payload + 2);
 		adapter_index = (uint8_t)((flags & IPC_OP_ADAPTER_MASK) >>
@@ -3364,6 +3429,8 @@ struct ctl_gatt_job {
 
 #define CTL_GATT_WORKERS	4
 #define CTL_GATT_QUEUE_MAX	64
+/* Leave queue space for other admitted applications when one floods requests. */
+#define CTL_GATT_CLIENT_QUEUE_MAX (CTL_GATT_QUEUE_MAX / BLUED_MAX_CTL)
 /* At most every subscription owned by every admitted control client. */
 #define CTL_GATT_CLEANUP_MAX	(BLUED_MAX_CTL * CTL_MAX_SUBSCRIPTIONS)
 
@@ -3881,11 +3948,11 @@ ctl_gatt_job_start(struct blued_ctl_client *client, uint16_t opcode,
     uint16_t handle, uint16_t route_handle, const uint8_t *value,
     uint16_t value_len)
 {
-	struct ctl_gatt_job *job;
+	struct ctl_gatt_job *job, *pending;
 	struct blued_conn *conn;
 	uint8_t actual_adapter;
 	bool duplicate;
-	size_t i;
+	size_t i, client_queued = 0;
 	int error;
 
 	error = ctl_gatt_resolve_conn(adapter_index, addr, addr_type, &conn,
@@ -3911,6 +3978,12 @@ ctl_gatt_job_start(struct blued_ctl_client *client, uint16_t opcode,
 	blued_conn_ref(conn);
 	ctl_att_ops_enter(conn);
 	pthread_mutex_lock(&ctl_gatt_jobs_lock);
+	STAILQ_FOREACH(pending, &ctl_gatt_jobs, entries) {
+		if (pending->opcode != CTL_GATT_CCCD_CLEANUP &&
+		    pending->client_fd == client->fd &&
+		    pending->client_generation == client->generation)
+			client_queued++;
+	}
 	duplicate = false;
 	if (opcode == CTL_GATT_CCCD_CLEANUP) {
 		for (i = 0; i < ctl_gatt_cleanup_count; i++) {
@@ -3921,6 +3994,8 @@ ctl_gatt_job_start(struct blued_ctl_client *client, uint16_t opcode,
 		}
 	}
 	if (ctl_gatt_jobs_stopping ||
+	    (opcode != CTL_GATT_CCCD_CLEANUP &&
+	    client_queued >= CTL_GATT_CLIENT_QUEUE_MAX) ||
 	    (ctl_gatt_jobs_count >= CTL_GATT_QUEUE_MAX &&
 	    opcode != CTL_GATT_CCCD_CLEANUP) ||
 	    (opcode == CTL_GATT_CCCD_CLEANUP && !duplicate &&
@@ -6700,6 +6775,10 @@ blued_ctl_init(const char *path)
 	struct kevent kev;
 	int fd;
 
+	/* Managed launches expose a plane listener, with the same GATT workers. */
+	if (path == NULL)
+		return (ctl_gatt_workers_start());
+
 	fd = socket(AF_UNIX,
 	    SOCK_STREAM | SOCK_CLOEXEC | SOCK_CLOFORK | SOCK_NONBLOCK, 0);
 	if (fd < 0)
@@ -6793,6 +6872,7 @@ blued_ctl_reset_owner(int client_fd)
 	int i;
 
 	ctl_gatt_jobs_cancel_client(client_fd);
+	blued_discovery_cancel(client_fd, false);
 
 	/* C3-M9: drop any pending ISO CIS fd handout aimed at this client. */
 	blued_iso_client_gone(client_fd);
@@ -7023,14 +7103,49 @@ blued_ctl_adopt(int fd, uid_t peer_uid, gid_t peer_gid, bool peer_known,
  * replied one end of a stream socketpair, which then carries the ordinary
  * framed control protocol.  The other end becomes a control client that
  * knows its bundle, so what it registers is attributed and reclaimable.
- * The exchange is served inline with a short deadline (the client sends
- * ATTACH immediately); a client that never does is dropped.
+ * Handshakes run on the main kqueue with a bounded pending-client table and
+ * individual deadlines. Retired slots stay reserved until the next batch.
  */
 struct plane_handoff {
+	struct channel *channel;
 	int	client_end;
+	int	server_end;
+	uintptr_t timer;
+	uid_t	uid;
+	char	bundle[64];
+	bool	retired;
 	bool	replied;	/* a reply went out (error or not) */
 	bool	attached;	/* the socket end went with it */
 };
+
+static struct plane_handoff plane_pending[BLUED_MAX_CTL];
+
+static void
+plane_close(struct plane_handoff *ph)
+{
+	struct kevent ev;
+
+	if (ph->channel == NULL)
+		return;
+	EV_SET(&ev, ph->timer, EVFILT_TIMER, EV_DELETE, 0, 0, ph);
+	(void)kevent(blued_g.kq, &ev, 1, NULL, 0, NULL);
+	channel_destroy(ph->channel);
+	ph->channel = NULL;
+	if (ph->client_end >= 0)
+		close(ph->client_end);
+	if (ph->server_end >= 0)
+		close(ph->server_end);
+	ph->retired = true;
+}
+
+void
+blued_ctl_plane_batch_begin(void)
+{
+	size_t i;
+
+	for (i = 0; i < nitems(plane_pending); i++)
+		plane_pending[i].retired = false;
+}
 
 static void
 plane_request(struct channel *ch __unused, struct channel_message *m, void *arg)
@@ -7040,6 +7155,10 @@ plane_request(struct channel *ch __unused, struct channel_message *m, void *arg)
 	struct blued_plane_msg rp;
 	struct channel_outgoing out;
 
+	if (ph->replied) {
+		channel_message_free(m);
+		return;
+	}
 	memset(&rp, 0, sizeof(rp));
 	rp.magic = BLUED_PLANE_MAGIC;
 	memset(&out, 0, sizeof(out));
@@ -7067,100 +7186,139 @@ plane_request(struct channel *ch __unused, struct channel_message *m, void *arg)
 	ph->replied = true;
 }
 
-void
-blued_ctl_plane_accept(void)
+/* Consumes fd on every path; no waits or dispatch occur during admission. */
+static int
+plane_start(int fd, const struct service_identity *id)
 {
 	struct channel_options options =
 	    CHANNEL_OPTIONS_INITIALIZER(CHANNEL_ROLE_PROVIDER);
-	struct service_identity id;
-	struct plane_handoff ph = { .client_end = -1, .replied = false,
-	    .attached = false };
-	struct channel *ch = NULL;
-	struct timespec start, now;
-	char bundle[64] = "";
+	struct plane_handoff *ph = NULL;
+	struct kevent ev[2];
 	const char *slash;
-	int fd, sv[2], remaining;
+	int sv[2];
+	size_t i;
+
+	for (i = 0; i < nitems(plane_pending); i++) {
+		if (plane_pending[i].channel == NULL && !plane_pending[i].retired) {
+			ph = &plane_pending[i];
+			break;
+		}
+	}
+	if (ph == NULL) {
+		close(fd);
+		errno = EBUSY;
+		return (-1);
+	}
+	memset(ph, 0, sizeof(*ph));
+	ph->server_end = ph->client_end = -1;
+	ph->uid = (id->rights & SERVICE_RIGHTS_ADMIN) != 0 ? 0 : (uid_t)-1;
+	slash = strchr(id->container, '/');
+	if (slash != NULL && slash != id->container &&
+	    (size_t)(slash - id->container) < sizeof(ph->bundle))
+		memcpy(ph->bundle, id->container, (size_t)(slash - id->container));
+	if (socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC | SOCK_CLOFORK,
+	    0, sv) != 0) {
+		close(fd);
+		return (-1);
+	}
+	options.max_queued_messages = 2;
+	options.max_queued_bytes = 1024;
+	options.max_queued_fds = 1;
+	if (channel_create(fd, &options, &ph->channel) == -1) {
+		close(fd);
+		close(sv[0]);
+		close(sv[1]);
+		return (-1);
+	}
+	ph->server_end = sv[0];
+	ph->client_end = sv[1];
+	ph->timer = blued_next_timer_id++;
+	if (channel_set_request_handler(ph->channel, plane_request, ph) == -1)
+		goto fail;
+	EV_SET(&ev[0], channel_fd(ph->channel), EVFILT_READ,
+	    EV_ADD | EV_ENABLE, 0, 0, ph);
+	EV_SET(&ev[1], ph->timer, EVFILT_TIMER, EV_ADD | EV_ONESHOT,
+	    0, 2000, ph);
+	if (kevent(blued_g.kq, ev, nitems(ev), NULL, 0, NULL) == -1)
+		goto fail;
+	return (0);
+fail:
+	plane_close(ph);
+	return (-1);
+}
+
+int
+blued_ctl_plane_accept(void)
+{
+	struct service_identity id;
+	int fd;
 
 	memset(&id, 0, sizeof(id));
 	id.size = sizeof(id);
 	if (service_listener_accept(blued_g.svc_listener, &id, &fd) == -1) {
+		if (errno == ECANCELED || errno == ECONNRESET || errno == EPIPE)
+			return (-1);
 		if (errno != EAGAIN && errno != EINTR)
 			LOG_HCI(1, "plane listener: accept: %s", strerror(errno));
-		return;
+		return (0);
 	}
-	/* The stamped container "<bundle>/<unit>" names the bundle. */
-	slash = strchr(id.container, '/');
-	if (slash != NULL && slash != id.container &&
-	    (size_t)(slash - id.container) < sizeof(bundle)) {
-		memcpy(bundle, id.container, (size_t)(slash - id.container));
-		bundle[slash - id.container] = '\0';
-	}
-	if (socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, sv) != 0) {
-		LOG_HCI(1, "plane listener: socketpair: %s", strerror(errno));
-		(void)close(fd);
-		return;
-	}
-	ph.client_end = sv[1];
-	if (channel_create(fd, &options, &ch) == -1 ||
-	    channel_set_request_handler(ch, plane_request, &ph) == -1) {
-		if (ch != NULL)
-			channel_destroy(ch);
-		else
-			(void)close(fd);
-		(void)close(sv[0]);
-		(void)close(sv[1]);
-		return;
-	}
-	(void)clock_gettime(CLOCK_MONOTONIC, &start);
-	for (;;) {
-		int wants_write, ready;
+	(void)plane_start(fd, &id);
+	return (0);
+}
 
-		wants_write = channel_wants_write(ch);
-		if (ph.replied && wants_write == 0)
-			break;
-		(void)clock_gettime(CLOCK_MONOTONIC, &now);
-		remaining = 2000 - (int)((now.tv_sec - start.tv_sec) * 1000 +
-		    (now.tv_nsec - start.tv_nsec) / 1000000);
-		if (wants_write == -1 || remaining <= 0 ||
-		    (ready = channel_wait(ch, wants_write, remaining)) == -1 ||
-		    ((ready & CHANNEL_WAIT_WRITE) != 0 &&
-		    channel_flush(ch) == -1) ||
-		    ((ready & CHANNEL_WAIT_READ) != 0 &&
-		    channel_dispatch(ch) == -1))
-			break;
-	}
-	channel_destroy(ch);
-	(void)close(sv[1]);
-	if (!ph.attached) {
-		LOG_HCI(1, "plane listener: client %s did not attach (%s)",
-		    id.client_label, ph.replied ? "refused" : "no request");
-		(void)close(sv[0]);
-		return;
-	}
-	/*
-	 * Our end is a client like any other: nonblocking, and limited to what
-	 * the control path needs (see blued_ctl_accept).
-	 */
-	(void)fcntl(sv[0], F_SETFL, fcntl(sv[0], F_GETFL) | O_NONBLOCK);
-	{
-		cap_rights_t rights;
+bool
+blued_ctl_plane_event(const struct kevent *ev)
+{
+	struct plane_handoff *ph;
+	struct kevent change;
+	cap_rights_t rights;
+	size_t i;
+	int fd, wants_write;
 
-		cap_rights_init(&rights, CAP_RECV, CAP_SEND, CAP_EVENT,
-		    CAP_SHUTDOWN);
-		(void)cap_rights_limit(sv[0], &rights);
-		(void)cap_cloexec_limit(sv[0], CAP_CLOEXEC_LOCKED);
-		(void)cap_clofork_limit(sv[0], CAP_CLOFORK_LOCKED);
-		(void)cap_xfer_limit(sv[0], CAP_XFER_ONCE);
+	for (i = 0; i < nitems(plane_pending); i++)
+		if (ev->udata == &plane_pending[i])
+			break;
+	if (i == nitems(plane_pending))
+		return (false);
+	ph = &plane_pending[i];
+	if (ph->channel == NULL)
+		return (true);
+	if ((ev->flags & (EV_EOF | EV_ERROR)) != 0 ||
+	    ev->filter == EVFILT_TIMER)
+		goto done;
+	if (ev->filter == EVFILT_READ && channel_dispatch(ph->channel) == -1)
+		goto done;
+	if (channel_flush(ph->channel) == -1)
+		goto done;
+	wants_write = channel_wants_write(ph->channel);
+	if (wants_write < 0)
+		goto done;
+	if (ph->attached && ph->server_end >= 0 && wants_write == 0) {
+		fd = ph->server_end;
+		cap_rights_init(&rights, CAP_RECV, CAP_SEND, CAP_EVENT, CAP_SHUTDOWN);
+		if (fcntl(fd, F_SETFL, O_NONBLOCK) == -1 ||
+		    cap_rights_limit(fd, &rights) == -1 ||
+		    cap_cloexec_limit(fd, CAP_CLOEXEC_LOCKED) == -1 ||
+		    cap_clofork_limit(fd, CAP_CLOFORK_LOCKED) == -1 ||
+		    cap_xfer_limit(fd, CAP_XFER_ONCE) == -1)
+			goto done;
+		ph->server_end = -1;
+		blued_ctl_adopt(fd, ph->uid, 0, true, true, ph->bundle);
+		close(ph->client_end);
+		ph->client_end = -1;
 	}
-	/*
-	 * Privilege: a plane client holding the ADMIN right on the name gets
-	 * the uid-0 tier; any other plane client is unprivileged except for
-	 * its own bundle's GATT services (ctl_gatt_handle_owned_by).
-	 */
-	blued_ctl_adopt(sv[0], (id.rights & SERVICE_RIGHTS_ADMIN) != 0 ? 0 :
-	    (uid_t)-1, 0, true, true, bundle);
-	LOG_HCI(1, "plane client %s (bundle %s) attached", id.client_label,
-	    bundle[0] != '\0' ? bundle : "-");
+	/* Let the client consume its reply before closing the bootstrap channel.
+	 * A reply and EOF in one dispatch can fail service_session_call(). The
+	 * peer closes after ATTACH; the existing deadline bounds silent peers. */
+	EV_SET(&change, channel_fd(ph->channel), EVFILT_WRITE,
+	    wants_write ? EV_ADD | EV_ENABLE : EV_DELETE, 0, 0, ph);
+	if (kevent(blued_g.kq, &change, 1, NULL, 0, NULL) == -1 &&
+	    (wants_write || errno != ENOENT))
+		goto done;
+	return (true);
+done:
+	plane_close(ph);
+	return (true);
 }
 
 /*
@@ -7217,6 +7375,10 @@ blued_ctl_cleanup(void)
 {
 	struct blued_ctl_client *client;
 	struct ctl_acquire *acq;
+	size_t i;
+
+	for (i = 0; i < nitems(plane_pending); i++)
+		plane_close(&plane_pending[i]);
 
 	/* Workers can reference clients while sending terminal replies. */
 	ctl_gatt_workers_stop();

@@ -15,6 +15,7 @@
 #include "blued_le_meta.h"
 #include "hci_internal.h"
 #include "iso.h"
+#include "discovery.h"
 
 static void	blued_periph_save_cccds(struct blued_conn *conn);
 
@@ -645,6 +646,8 @@ blued_hci_event_process(struct blued_adapter *adp, uint8_t *buf, ssize_t n)
 	/* LE Meta Event (0x3E) */
 	if (event_code == 0x3E && n >= 5) {
 		uint8_t subevent = buf[3];
+
+		blued_discovery_report(adp, buf, (size_t)n);
 
 		/* Creating a connection is no longer active after either complete
 		 * event, including a failed/canceled attempt.  Wake a blocked global
@@ -1543,6 +1546,7 @@ blued_adapter_lost(struct blued_adapter *a)
 	memset(a->periodic_syncs, 0, sizeof(a->periodic_syncs));
 
 	a->active = false;
+	blued_discovery_adapter_gone(a);
 	/*
 	 * Release the fd-keyed side tables (devreq lock slot, scan own-address
 	 * type, mesh legacy-adv record).  They are only ever released on a
@@ -1830,7 +1834,12 @@ blued_handle_readable(struct kevent *ev)
 		return;
 	}
 	if (ev->udata == BLUED_KQ_PLANE_LISTEN) {
-		blued_ctl_plane_accept();
+		if ((ev->flags & (EV_EOF | EV_ERROR)) != 0) {
+			running = 0;
+			return;
+		}
+		if (blued_ctl_plane_accept() == -1)
+			running = 0;
 		return;
 	}
 	if (ev->udata == BLUED_KQ_RECLAIM_TIMER) {
@@ -1840,17 +1849,16 @@ blued_handle_readable(struct kevent *ev)
 
 	/*
 	 * switchboard supervisor fd: readable/EV_EOF means the switchboard
-	 * connection is gone.  Log the loss once and drop the registration;
-	 * the level-triggered event would otherwise busy-spin the loop.
-	 * The real stop path remains SIGTERM/pdkill.
+	 * connection is gone. Drop the registration and stop the managed daemon;
+	 * its revoked listener must not spin or leave it serving unsupervised.
 	 */
 	if (ev->udata == BLUED_KQ_SUPERVISOR) {
 		struct kevent kev;
 
-		warnx("switchboard supervisor connection lost; continuing "
-		    "unsupervised");
+		warnx("switchboard supervisor connection lost; stopping");
 		EV_SET(&kev, ev->ident, EVFILT_READ, EV_DELETE, 0, 0, NULL);
 		(void)kevent(blued_g.kq, &kev, 1, NULL, 0, NULL);
+		running = 0;
 		return;
 	}
 
@@ -2152,6 +2160,7 @@ blued_event_batch_begin(void)
 
 	blued_ctl_reaped_free();
 	ctl_acquire_batch_begin();
+	blued_ctl_plane_batch_begin();
 }
 
 /*
@@ -2171,6 +2180,8 @@ blued_event_dispatch_batch(struct kevent *events, int n)
 	int i;
 
 	for (i = 0; i < n; i++) {
+		if (blued_ctl_plane_event(&events[i]))
+			continue;
 		if (events[i].filter == EVFILT_SIGNAL) {
 			if (events[i].ident == SIGHUP) {
 				LOG_HOGP(1, "SIGHUP received, "
@@ -2341,6 +2352,9 @@ blued_event_dispatch_batch(struct kevent *events, int n)
 			blued_mesh_adv_legacy_timeout();
 			continue;
 		}
+		if (events[i].filter == EVFILT_TIMER &&
+		    blued_discovery_timer(events[i].ident))
+			continue;
 		if (events[i].filter == EVFILT_TIMER &&
 		    blued_discoverable_timer_fired(events[i].ident)) {
 			/* Discoverable auto-off timeout expired. */

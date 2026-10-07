@@ -2075,12 +2075,54 @@ ATF_TC_BODY(test_resp_keydist_legacy_drops_linkkey, tc)
 }
 
 /* ================================================================ */
+/*
+ * Independent transcripts based on Fuchsia f15 Phase1Test:
+ * FeatureExchangeLocalRejectsUnsupportedInitiatorKeys/ResponderKeys and
+ * the non-bonding key-distribution rule in phase_1.cc. Revision and license:
+ * 3b941a4bfbdd0a96cde4c3632d1d60e586e8114e (BSD-2-Clause).
+ * Locally authored adapter; literal wire/error values are the oracle.
+ */
+ATF_TC_WITHOUT_HEAD(test_init_rejects_unagreed_keys);
+ATF_TC_BODY(test_init_rejects_unagreed_keys, tc)
+{
+	struct smp_conn sc;
+	struct smp_bond_db db;
+	uint8_t response[7], first;
+	int sf[2], hf[2], variant;
+
+	for (variant = 0; variant < 4; variant++) {
+		ATF_REQUIRE_EQ(0, socketpair(AF_UNIX, SOCK_SEQPACKET, 0, sf));
+		ATF_REQUIRE_EQ(0, socketpair(AF_UNIX, SOCK_SEQPACKET, 0, hf));
+		setup_sc(&sc, &db, sf, hf, central_addr, BDADDR_LE_PUBLIC,
+		    periph_addr, BDADDR_LE_PUBLIC);
+		sc.remote_addr[0] += variant; /* Independent peers: do not trip rate limits. */
+		sc.our_key_dist = 0x01;
+		sc.their_key_dist = 0x03;
+		if (variant == 3)
+			sc.bondable = false;
+		ATF_REQUIRE_EQ(0, fcntl(sf[0], F_SETFL, O_NONBLOCK));
+		memcpy(response, (uint8_t[]){ 0x02, 0x03, 0, 1, 16, 1, 3 }, 7);
+		if (variant == 0)
+			response[5] = 0x02; /* IRK was not offered by the initiator. */
+		else if (variant == 1)
+			response[6] = 0x04; /* CSRK was not requested. */
+		else
+			response[3] = 0; /* No bonding, but keys still requested. */
+		preload(sf[1], response, sizeof(response));
+		ATF_CHECK_EQ(-1, smp_pair(&sc));
+		ATF_CHECK_MSG(saw_pairing_failed(sf[1], 0x0a, &first),
+		    "variant %d did not reject unagreed key distribution", variant);
+		close(sf[0]); close(sf[1]); close(hf[0]); close(hf[1]);
+	}
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
 	ATF_TP_ADD_TC(tp, test_resp_keydist_legacy_carries_signkey);
 	ATF_TP_ADD_TC(tp, test_resp_keydist_sc_carries_signkey);
 	ATF_TP_ADD_TC(tp, test_resp_keydist_legacy_drops_linkkey);
+	ATF_TP_ADD_TC(tp, test_init_rejects_unagreed_keys);
 
 	ATF_TP_ADD_TC(tp, test_smp_open_no_stack_fails);
 	ATF_TP_ADD_TC(tp, test_resp_security_request);

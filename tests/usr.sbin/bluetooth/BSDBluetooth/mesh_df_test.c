@@ -1020,7 +1020,9 @@ ATF_TC_BODY(nonorigin_path_echo, tc)
 	    MESH_DF_OP_PATH_ECHO_REPLY, rbuf, rlen, &out));
 	ATF_REQUIRE_EQ(0, mesh_df_echo_is_pending(&node, 0x0005));
 	e = mesh_df_table_lookup(&node.table, 0x0002, 0x0005, now + 500);
-	ATF_REQUIRE_EQ(now + 500, e->install_ms);	/* lifetime refreshed */
+	ATF_REQUIRE_EQ(now, e->install_ms); /* Echo never extends the lifetime. */
+	ATF_CHECK_EQ(MESH_DF_RECV_DROP, mesh_df_recv_control(&node, &ctx,
+	    MESH_DF_OP_PATH_ECHO_REPLY, rbuf, rlen, &out)); /* unsolicited */
 
 	/* No expiry while nothing is pending. */
 	ATF_REQUIRE_EQ(0, mesh_df_echo_expire(&node, now + 100000));
@@ -1036,6 +1038,8 @@ ATF_TC_BODY(nonorigin_path_echo, tc)
 
 	/* The addressed endpoint answers an Echo Request with its own address. */
 	mesh_df_node_init(&target, 0x0005, 0x0005, MESH_DF_LIFETIME_2_HOUR, 0);
+	ATF_REQUIRE(mesh_df_table_add(&target.table, 0x0001, 0x0005, 1,
+	    9, MESH_DF_BEARER_NONE, life, now) != NULL);
 	memset(&ctx, 0, sizeof(ctx));
 	ctx.src = 0x0001; ctx.dst = 0x0005; ctx.ttl = 4; ctx.bearer = 9;
 	ctx.now = now;
@@ -1132,8 +1136,8 @@ ATF_TC_BODY(remaining_forwarding_paths, tc)
 	    &ctx, MESH_DF_OP_PATH_ECHO_REQUEST, NULL, 0, &out));
 	ATF_CHECK_EQ(MESH_DF_OP_PATH_ECHO_REQUEST, out.opcode);
 	ATF_CHECK_EQ(7, out.bearer);
-	/* P-C1c (Section 3.6.5.14): re-originated at TTL 0x7F, not relayed. */
-	ATF_CHECK_EQ(MESH_DF_DEFAULT_TTL, out.ttl);
+	/* Network relay keeps the source and decrements the incoming TTL. */
+	ATF_CHECK_EQ(3, out.ttl);
 
 	/* A Reply follows the origin-facing half and preserves its two bytes. */
 	ATF_REQUIRE_EQ(0, mesh_df_path_echo_reply_build(0x0005, buf, &len));
@@ -1157,14 +1161,10 @@ ATF_TC_BODY(remaining_forwarding_paths, tc)
 	ATF_CHECK_EQ(MESH_DF_RECV_CONSUMED, mesh_df_recv_control(&relay,
 	    &ctx, MESH_DF_OP_PATH_ECHO_REQUEST, NULL, 0, &out));
 	e->bearer_toward_target = 7;
-	/*
-	 * P-C1c: a low residual TTL does not gate re-origination; the echo
-	 * request goes out again with a fresh TTL 0x7F.
-	 */
+	/* TTL 1 must not be forwarded. */
 	ctx.ttl = 1;
-	ATF_CHECK_EQ(MESH_DF_RECV_FORWARD, mesh_df_recv_control(&relay,
+	ATF_CHECK_EQ(MESH_DF_RECV_CONSUMED, mesh_df_recv_control(&relay,
 	    &ctx, MESH_DF_OP_PATH_ECHO_REQUEST, NULL, 0, &out));
-	ATF_CHECK_EQ(MESH_DF_DEFAULT_TTL, out.ttl);
 
 	/* Origin-side dependent updates take the opposite lookup/forward arm. */
 	memset(&du, 0, sizeof(du));
@@ -1772,6 +1772,20 @@ ATF_TC_BODY(reply_uses_fresh_ttl, tc)
 	    &ctx, MESH_DF_OP_PATH_ECHO_REQUEST, NULL, 0, &out));
 	ATF_REQUIRE_EQ(MESH_DF_OP_PATH_ECHO_REPLY, out.opcode);
 	ATF_REQUIRE_EQ(MESH_DF_DEFAULT_TTL, out.ttl);
+
+	/* An endpoint must not answer for a missing, fixed, or expired path. */
+	ctx.src = 0x0099;
+	ATF_CHECK_EQ(MESH_DF_RECV_DROP, mesh_df_recv_control(&target,
+	    &ctx, MESH_DF_OP_PATH_ECHO_REQUEST, NULL, 0, &out));
+	ctx.src = 0x0001;
+	target.table.entries[0].fixed_path = 1;
+	ATF_CHECK_EQ(MESH_DF_RECV_DROP, mesh_df_recv_control(&target,
+	    &ctx, MESH_DF_OP_PATH_ECHO_REQUEST, NULL, 0, &out));
+	target.table.entries[0].fixed_path = 0;
+	ctx.now = target.table.entries[0].install_ms +
+	    target.table.entries[0].lifetime_ms;
+	ATF_CHECK_EQ(MESH_DF_RECV_DROP, mesh_df_recv_control(&target,
+	    &ctx, MESH_DF_OP_PATH_ECHO_REQUEST, NULL, 0, &out));
 }
 
 /*
@@ -1813,9 +1827,10 @@ ATF_TC_BODY(echo_reply_disambiguates_shared_target, tc)
 	/* Forwarded toward O2 (0x0001) on entry B's origin-facing bearer. */
 	ATF_REQUIRE_EQ(1, out.bearer);
 	ATF_REQUIRE_EQ(0x0001, out.dst);
-	/* Only entry B (the traversed path) is refreshed; entry A is untouched. */
-	ATF_REQUIRE_EQ(now + 400, b->install_ms);
+	/* Relay traffic must not extend either path's lifetime. */
+	ATF_REQUIRE_EQ(now, b->install_ms);
 	ATF_REQUIRE_EQ(now, a->install_ms);
+	ATF_REQUIRE_EQ(4, out.ttl);
 }
 
 /*

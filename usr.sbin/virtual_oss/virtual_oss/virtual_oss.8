@@ -286,12 +286,20 @@ virtual_oss \\
 	-R /dev/null -P /dev/bluetooth/xx:xx:xx:xx:xx:xx -d dsp
 .Ed
 .Pp
-Connect to a bluetooth audio headset, playback and recording:
+Connect both directions to a Bluetooth device that advertises separate
+A2DP Audio Sink and Audio Source services:
 .Bd -literal -offset indent
 virtual_oss \\
 	-C 2 -c 2 -r 48000 -b 16 -s 4ms \\
 	-f /dev/bluetooth/xx:xx:xx:xx:xx:xx -d dsp
 .Ed
+.Pp
+The Bluetooth backend uses A2DP with SBC by default.
+A2DP Audio Source capture is not headset microphone support;
+headset microphones require the separate Hands-Free Profile (HFP).
+The base Bluetooth backend is installed as
+.Pa /usr/lib/virtual_oss/voss_bt.so
+when Bluetooth and sound support are enabled at build time.
 .Pp
 Create recording device which outputs a WAV-formatted file:
 .Bd -literal -offset indent

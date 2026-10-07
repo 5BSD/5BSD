@@ -158,6 +158,8 @@ ctl_elevate_security(struct blued_conn *conn)
 	if (ret < 0)
 		return (false);
 
+	memcpy(sc.local_identity_addr, &conn->adapter->addr, 6);
+	sc.local_identity_addr_type = BDADDR_LE_PUBLIC;
 	ret = smp_pair(&sc);
 	if (ret < 0) {
 		smp_close(&sc);

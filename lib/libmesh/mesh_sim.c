@@ -2738,6 +2738,53 @@ df_dep_has(const uint16_t *deps, size_t n, uint16_t addr)
 	return (0);
 }
 
+/* Endpoint Echo processing (3.6.8.2.6). Transit PDUs use normal forwarding. */
+static int
+df_handle_echo(struct mesh_sim *sim, struct mesh_node *node,
+    const struct mesh_net_pdu *pdu, int prev_hop, int seen,
+    uint16_t net_idx, int directed_cred)
+{
+	struct mesh_df_fwd_entry *e;
+	uint8_t op, reply[2];
+	uint16_t target;
+	size_t len;
+	uint64_t now = sim_now_ms(sim);
+
+	if (pdu->transport_len == 0 || !local_unicast(node, pdu->dst))
+		return (0);
+	op = pdu->transport[0];
+	if (op != MESH_DF_OP_PATH_ECHO_REQUEST && op != MESH_DF_OP_PATH_ECHO_REPLY)
+		return (0);
+	/* This engine's forwarding table currently belongs to the primary subnet. */
+	if (seen || net_idx != node->primary_net_idx)
+		return (1);
+	if (op == MESH_DF_OP_PATH_ECHO_REQUEST) {
+		if (!directed_cred || pdu->transport_len != 1)
+			return (1);
+		e = df_find(&node->df_table, pdu->src, pdu->dst);
+	} else {
+		if (mesh_df_path_echo_reply_parse(pdu->transport + 1,
+		    pdu->transport_len - 1, &target) != 0)
+			return (1);
+		e = df_find(&node->df_table, pdu->dst, target);
+	}
+	if (e == NULL || e->fixed_path || (now >= e->install_ms &&
+	    now - e->install_ms >= e->lifetime_ms))
+		return (1);
+	if (op == MESH_DF_OP_PATH_ECHO_REQUEST) {
+		if (mesh_df_path_echo_reply_build(pdu->dst, reply, &len) == 0)
+			(void)node_tx_ctl(sim, node,
+			    e->backward_validated ? prev_hop : -1, e->path_origin,
+			    MESH_DF_OP_PATH_ECHO_REPLY, reply, len,
+			    MESH_DF_DEFAULT_TTL, e->backward_validated != 0);
+	} else if (e->echo_deadline_ms != 0 && now < e->echo_deadline_ms) {
+		/* Success restarts Echo cadence, not the path's fixed lifetime. */
+		e->echo_deadline_ms = 0;
+		e->echo_last_ms = now;
+	}
+	return (1);
+}
+
 /*
  * Handle a Directed Forwarding path-discovery control PDU (Path Request /
  * Reply / Confirmation, MshPRT_v1.1 Section 3.6.6.5).  Returns 1 if the PDU was
@@ -3083,6 +3130,10 @@ node_recv_net(struct mesh_sim *sim, struct mesh_node *node,
 	if (node->df_enabled && pdu.ctl == 1) {
 		uint8_t dnid = nid;
 		const uint8_t *denc = enc, *dpriv = priv;
+
+		if (df_handle_echo(sim, node, &pdu, prev_hop, seen, net_idx,
+		    directed_cred))
+			return;
 
 		/*
 		 * The path-discovery control messages are sent "using the

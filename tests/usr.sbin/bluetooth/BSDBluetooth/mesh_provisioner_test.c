@@ -36,6 +36,7 @@
 
 #include "mesh_provision.h"
 #include "mesh_provisioner.h"
+#include "mesh_prov_records.h"
 #include "spec_mesh_provision_oracles.h"
 
 static void
@@ -1590,10 +1591,89 @@ ATF_TC_BODY(oob_input_complete_direction, tc)
 	mesh_prov_session_free(&dev);
 }
 
+ATF_TC_WITHOUT_HEAD(record_fetch_invalid_fragment_retry);
+ATF_TC_BODY(record_fetch_invalid_fragment_retry, tc)
+{
+	struct mesh_prov_record_fetch f, before;
+	struct mesh_prov_record_rsp rsp;
+	uint8_t data[] = { 1, 2, 3, 4, 5, 6 };
+
+	mesh_prov_record_fetch_init(&f, 1, 3);
+	before = f;
+	memset(&rsp, 0, sizeof(rsp));
+	rsp.record_id = 1;
+	rsp.total_len = 6;
+	rsp.data = data;
+	rsp.data_len = 4;
+	/* A response must respect the outstanding request's maximum size. */
+	ATF_CHECK_EQ(-1, mesh_prov_record_fetch_input(&f, &rsp));
+	ATF_CHECK_EQ(0, memcmp(&f, &before, sizeof(f)));
+	/* A rejected total must not pin the total for a valid retry. */
+	rsp.total_len = 2;
+	rsp.data_len = 3;
+	ATF_CHECK_EQ(-1, mesh_prov_record_fetch_input(&f, &rsp));
+	ATF_CHECK_EQ(0, memcmp(&f, &before, sizeof(f)));
+	rsp.total_len = 6;
+	ATF_REQUIRE_EQ(0, mesh_prov_record_fetch_input(&f, &rsp));
+	before = f;
+	rsp.frag_offset = 3;
+	rsp.total_len = 5;
+	ATF_CHECK_EQ(-1, mesh_prov_record_fetch_input(&f, &rsp));
+	ATF_CHECK_EQ(0, memcmp(&f, &before, sizeof(f)));
+	rsp.total_len = 6;
+	rsp.data = data + 3;
+	ATF_REQUIRE_EQ(1, mesh_prov_record_fetch_input(&f, &rsp));
+	ATF_CHECK_EQ(6, f.len);
+	ATF_CHECK_EQ(0, memcmp(f.buf, data, sizeof(data)));
+	ATF_CHECK_EQ(0, f.active);
+}
+
+ATF_TC_WITHOUT_HEAD(record_fetch_fragment_size_sweep);
+ATF_TC_BODY(record_fetch_fragment_size_sweep, tc)
+{
+	struct mesh_prov_record_store store;
+	struct mesh_prov_record_fetch f;
+	struct mesh_prov_record_req req;
+	struct mesh_prov_record_rsp rsp;
+	uint8_t data[MESH_PROV_RECORD_DATA_MAX];
+	uint8_t wire[MESH_PROV_BEARER_PDU_MAX];
+	size_t len, previous;
+	int rc;
+
+	for (size_t i = 0; i < sizeof(data); i++)
+		data[i] = (uint8_t)(i * 37 + i / 251);
+	mesh_prov_record_store_clear(&store);
+	ATF_REQUIRE_EQ(0, mesh_prov_record_store_set(&store, 1,
+	    data, sizeof(data)));
+	/* Exercise every supported fragment size, including one-byte tails. */
+	for (uint16_t size = 1; size <= MESH_PROV_RECORD_FRAG_MAX; size++) {
+		mesh_prov_record_fetch_init(&f, 1, size);
+		while (f.active) {
+			previous = f.len;
+			ATF_REQUIRE_EQ(0, mesh_prov_record_fetch_request(&f,
+			    wire, &len));
+			ATF_REQUIRE_EQ(0, mesh_prov_record_request_parse(wire,
+			    len, &req));
+			ATF_REQUIRE_EQ(0, mesh_prov_record_answer(&store,
+			    &req, wire, sizeof(wire), &len));
+			ATF_REQUIRE_EQ(0, mesh_prov_record_response_parse(wire,
+			    len, &rsp));
+			ATF_REQUIRE(rsp.data_len > 0 && rsp.data_len <= size);
+			rc = mesh_prov_record_fetch_input(&f, &rsp);
+			ATF_REQUIRE(rc == 0 || rc == 1);
+			ATF_REQUIRE(f.len > previous && f.len <= sizeof(data));
+		}
+		ATF_CHECK_EQ(sizeof(data), f.len);
+		ATF_CHECK_EQ(0, memcmp(data, f.buf, sizeof(data)));
+	}
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
 	ATF_TP_ADD_TC(tp, provisioning_run);
+	ATF_TP_ADD_TC(tp, record_fetch_invalid_fragment_retry);
+	ATF_TP_ADD_TC(tp, record_fetch_fragment_size_sweep);
 	ATF_TP_ADD_TC(tp, provisioning_confirmation_mismatch);
 	ATF_TP_ADD_TC(tp, link_open_and_retransmit);
 	ATF_TP_ADD_TC(tp, link_retransmit_budget);

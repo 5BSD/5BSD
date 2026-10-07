@@ -100,6 +100,7 @@ struct bt_config {
 
 	/* acceptor state */
 	int8_t	acceptor_state;
+	uint8_t acceptor_sbc[4];	/* negotiated SBC capabilities, not frame state */
 #define	acpInitial 1
 #define	acpConfigurationSet 2
 #define	acpStreamOpened 3

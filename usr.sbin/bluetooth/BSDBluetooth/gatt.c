@@ -437,7 +437,8 @@ gatt_discover_primary_services_range(struct att_conn *ac,
 		const uint8_t *p = buf + 1;
 		len -= 1;
 
-		if (entry_len != 6 && entry_len != 8 && entry_len != 20)
+		/* GATT 2.5.4 requires 32-bit UUIDs in their 128-bit wire form. */
+		if (entry_len != 6 && entry_len != 20)
 			return (gatt_bad_response());
 		if (len % entry_len != 0)
 			return (gatt_bad_response());
@@ -448,7 +449,7 @@ gatt_discover_primary_services_range(struct att_conn *ac,
 
 			service_start = get_le16(p);
 			service_end = get_le16(p + 2);
-			if (service_start < start || service_start == 0 ||
+			if (service_start < start || service_start > end_handle ||
 			    service_end < service_start ||
 			    (count > 0 &&
 			    service_start <= svcs[count - 1].end_handle))
@@ -460,21 +461,6 @@ gatt_discover_primary_services_range(struct att_conn *ac,
 				/* 16-bit UUID */
 				s->uuid16 = get_le16(p + 4);
 				memset(s->uuid128, 0, 16);
-			} else if (entry_len == 8) {
-				/* 32-bit UUID — collapse to 16-bit if possible */
-				uint32_t u32 = (uint32_t)p[4] |
-				    ((uint32_t)p[5] << 8) |
-				    ((uint32_t)p[6] << 16) |
-				    ((uint32_t)p[7] << 24);
-				if ((u32 & 0xFFFF0000) == 0) {
-					s->uuid16 = (uint16_t)u32;
-					memset(s->uuid128, 0, 16);
-				} else {
-					s->uuid16 = 0;
-					memcpy(s->uuid128,
-					    bt_base_uuid_le, 12);
-					memcpy(s->uuid128 + 12, p + 4, 4);
-				}
 			} else if (entry_len == 20) {
 				/* 128-bit UUID */
 				s->uuid16 = 0;
@@ -711,7 +697,7 @@ gatt_discover_secondary_services(struct att_conn *ac,
 		const uint8_t *p = buf + 1;
 		len -= 1;
 
-		if (entry_len != 6 && entry_len != 8 && entry_len != 20)
+		if (entry_len != 6 && entry_len != 20)
 			return (gatt_bad_response());
 		if (len % entry_len != 0)
 			return (gatt_bad_response());
@@ -732,20 +718,6 @@ gatt_discover_secondary_services(struct att_conn *ac,
 			if (entry_len == 6) {
 				s->uuid16 = get_le16(p + 4);
 				memset(s->uuid128, 0, 16);
-			} else if (entry_len == 8) {
-				uint32_t u32 = (uint32_t)p[4] |
-				    ((uint32_t)p[5] << 8) |
-				    ((uint32_t)p[6] << 16) |
-				    ((uint32_t)p[7] << 24);
-				if ((u32 & 0xFFFF0000) == 0) {
-					s->uuid16 = (uint16_t)u32;
-					memset(s->uuid128, 0, 16);
-				} else {
-					s->uuid16 = 0;
-					memcpy(s->uuid128,
-					    bt_base_uuid_le, 12);
-					memcpy(s->uuid128 + 12, p + 4, 4);
-				}
 			} else if (entry_len == 20) {
 				s->uuid16 = 0;
 				memcpy(s->uuid128, p + 4, 16);
@@ -935,7 +907,7 @@ gatt_discover_characteristics(struct att_conn *ac,
 		const uint8_t *p = buf + 1;
 		len -= 1;
 
-		if (entry_len != 7 && entry_len != 9 && entry_len != 21)
+		if (entry_len != 7 && entry_len != 21)
 			return (gatt_bad_response());
 		if (len % entry_len != 0)
 			return (gatt_bad_response());
@@ -959,21 +931,6 @@ gatt_discover_characteristics(struct att_conn *ac,
 				/* 16-bit UUID */
 				c->uuid16 = get_le16(p + 5);
 				memset(c->uuid128, 0, 16);
-			} else if (entry_len == 9) {
-				/* 32-bit UUID — collapse to 16-bit if possible */
-				uint32_t u32 = (uint32_t)p[5] |
-				    ((uint32_t)p[6] << 8) |
-				    ((uint32_t)p[7] << 16) |
-				    ((uint32_t)p[8] << 24);
-				if ((u32 & 0xFFFF0000) == 0) {
-					c->uuid16 = (uint16_t)u32;
-					memset(c->uuid128, 0, 16);
-				} else {
-					c->uuid16 = 0;
-					memcpy(c->uuid128,
-					    bt_base_uuid_le, 12);
-					memcpy(c->uuid128 + 12, p + 5, 4);
-				}
 			} else if (entry_len == 21) {
 				/* 128-bit UUID */
 				c->uuid16 = 0;

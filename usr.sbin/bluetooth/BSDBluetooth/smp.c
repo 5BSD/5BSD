@@ -854,7 +854,7 @@ smp_open(struct smp_conn *sc, const uint8_t *addr, uint8_t addr_type,
 	sa.l2cap_len = sizeof(sa);
 	sa.l2cap_family = AF_BLUETOOTH;
 
-	if (bind(sc->fd, (struct sockaddr *)&sa, sizeof(sa)) < 0) {
+	if (bindat(sc->fd, sc->fd, (struct sockaddr *)&sa, sizeof(sa)) < 0) {
 		close(sc->fd);
 		sc->fd = -1;
 		return (-1);
@@ -867,7 +867,7 @@ smp_open(struct smp_conn *sc, const uint8_t *addr, uint8_t addr_type,
 	sa.l2cap_cid = htole16(NG_L2CAP_SMP_CID);
 	sa.l2cap_bdaddr_type = addr_type;
 
-	if (connect(sc->fd, (struct sockaddr *)&sa, sizeof(sa)) < 0) {
+	if (connectat(sc->fd, sc->fd, (struct sockaddr *)&sa, sizeof(sa)) < 0) {
 		close(sc->fd);
 		sc->fd = -1;
 		return (-1);
@@ -1079,6 +1079,22 @@ smp_pair(struct smp_conn *sc)
 	}
 	/* A Pairing Response must carry the full 7-octet PDU. */
 	if (n < 7) {
+		pdu[0] = SMP_PAIRING_FAILED;
+		pdu[1] = SMP_ERR_INVALID_PARAMETERS;
+		smp_log_send(sc, pdu, 2);
+		errno = EPROTO;
+		return (-1);
+	}
+	/*
+	 * The responder may only reduce the offered key-distribution masks
+	 * (Vol 3 Part H 3.6.1). Without mutual bonding, no keys may be
+	 * distributed. Reject contradictory fields before any authentication
+	 * or key exchange, as Fuchsia's BSD-licensed Phase1 also does.
+	 * Ignore RFU key-distribution bits on receipt.
+	 */
+	if (((pres[5] & ~preq[5]) | (pres[6] & ~preq[6])) & 0x0f ||
+	    (!(preq[3] & pres[3] & SMP_AUTH_BONDING) &&
+	    ((pres[5] | pres[6]) & 0x0f) != 0)) {
 		pdu[0] = SMP_PAIRING_FAILED;
 		pdu[1] = SMP_ERR_INVALID_PARAMETERS;
 		smp_log_send(sc, pdu, 2);

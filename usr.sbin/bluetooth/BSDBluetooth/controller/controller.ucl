@@ -1,0 +1,9 @@
+# Only the small HCI descriptor broker needs the raw-socket privilege.
+activation { ipc = [{ name = "system.Bluetooth.Controller";
+    requires = ["system.bluetooth.controller"]; }]; }
+program = "BSDBluetoothController";
+user = "root";
+control = "system";
+restart = "on-failure";
+limits { nofile = 128; nproc = 8; core = 0; }
+protect = ["ptrace", "signal", "wait", "sigkill", "sigcont", "sched", "core", "ktrace"];

@@ -603,7 +603,9 @@ ATF_TC_BODY(edge_open_handshake_timeout, tc)
 	/* No responder: the connection is accepted by the kernel backlog but
 	 * the HELLO reply never comes, so ble_open() times out and returns
 	 * NULL rather than hanging. */
+	errno = 0;
 	ctx = ble_open(path);
+	ATF_CHECK_EQ(ETIMEDOUT, errno);
 	ATF_CHECK_MSG(ctx == NULL,
 	    "ble_open must return NULL when the handshake is unanswered");
 

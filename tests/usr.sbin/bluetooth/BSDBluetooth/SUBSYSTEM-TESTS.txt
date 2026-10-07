@@ -1,0 +1,93 @@
+5BSD Bluetooth subsystem scenarios
+=================================
+
+The normal bluetooth-tests package includes these tests. No physical radio or
+root privileges are needed for this selection. Run the installed package with:
+
+  kyua -v parallelism=4 test \
+    -k /usr/tests/usr.sbin/bluetooth/BSDBluetooth/Kyuafile \
+    hci_transport_test dataflow_test smp_keys_edge_test \
+    l2cap_data_deep_test iso_lifecycle_test mesh_network_test
+
+From a source checkout, build libbluetooth first, then the tests, using all
+logical CPUs. The standard object root is /usr/obj. When testing a newly built
+libbluetooth without installing it, set LD_LIBRARY_PATH to its object directory
+and point Kyua at the test object directory's Kyuafile. This is necessary when
+the host library predates bt_devreq_events; do not mistake a dynamic-loader
+failure for a protocol test failure. Do not install a host upgrade just to run
+these scenarios.
+
+New scenarios added 2026-10-07
+----------------------------
+
+HCI, hci_transport_test (11 cases):
+  Real libbluetooth hci.c and real socket records, with HCI filter socket options
+  substituted. Selected fault cases also inject a receive retry, short write or
+  wall-clock jump. 256 command cycles preserve ordered asynchronous control events
+  both before and after completion. 64 error/recovery cycles. All 256 event
+  parameter lengths, every truncated command-status/completion header, EOF,
+  timeout, filter restoration and restoration failure. Repeating real signals
+  and receive retries cannot restart the timeout; wall-clock changes cannot
+  cancel a pending command. Short writes fail instead of claiming success.
+  These tests do NOT
+  replace bt_devreq with a successful mock response.
+
+HCI error propagation, hci_error_arms_test (1 additional case):
+  Four distinct command transport failures retain their errno even when the
+  deferred-event wakeup performs a failing write. This uses the existing
+  command fault-injection fixture, not a physical controller.
+
+SMP, smp_keys_edge_test (3 cases):
+  Five-PDU key-distribution exchanges over datagram sockets. All ten legal
+  negotiated legacy key sizes and all 45 forbidden higher-octet positions.
+  Truncation and reordering at each stage must leave the original bond intact.
+  Receive keys for 32 peers, store encrypted bonds, reopen the replaced file,
+  reload and compare key records. This does not repeat full over-air pairing
+  or establish encryption: it tests phase three and persistence together.
+
+GATT, dataflow_test (2 new cases, 2 corrected cases):
+  Two emulated clients share one production attribute database for 64 sessions.
+  Interleaved prepared writes, commit/cancel and reads must not cross queues or
+  expose uncommitted values. Four attribute builders accept 512 bytes and reject
+  513 without mutating the database. Read Blob throughput now moves 32 KiB as
+  repeated legal 512-byte values. Reliable writes fill 16 queue entries with
+  32-byte fragments. Larger throughput must not require illegal attributes.
+
+L2CAP, l2cap_data_deep_test (1 case):
+  Production kernel receive/reassembly/signaling code runs with the existing
+  userspace mbuf/netgraph fixture. Two connection handles interleave fragments
+  at all 48 split points of a maximum supported signaling frame. Overrun on one
+  connection leaves the other intact; both recover with byte-exact Echo data.
+  This does not validate actual kernel locking, callouts, drivers or mbuf chains.
+
+ISO, iso_lifecycle_test (1 case):
+  Keep the real daemon registry alive for 128 cycles, mixing establishment
+  failure, successful handoff, failed reacquisition, disconnect, adapter loss,
+  handle reuse and late events. HCI commands and ISO socket creation use the
+  existing fixture; this does not prove controller or audio timing behavior.
+
+Mesh, mesh_network_test (1 case):
+  Four-node diamond, two relay paths, 128 authenticated OnOff operations with
+  exact-once delivery and correct TTL. Inject both replays and altered MICs,
+  and verify fresh traffic continues. Real library encryption/transport/model
+  code runs on an in-process medium, not physical advertising bearers.
+
+Independent reference and limits
+-------------------------------
+Each case has a separate row in spec_test_references.tsv. Protocol constants,
+error contracts and expected payloads are specified independently of output.
+Fuchsia comparisons use BSD-2-Clause f15 source pinned at:
+  3b941a4bfbdd0a96cde4c3632d1d60e586e8114e
+  https://fuchsia.googlesource.com/fuchsia/+/3b941a4bfbdd0a96cde4c3632d1d60e586e8114e/src/connectivity/bluetooth/core/bt-host/
+
+Particularly useful references are transport/command_channel.cc,
+sm/phase_3.cc, gatt/server.cc, att/attribute.cc and l2cap/recombiner.cc,
+together with their unit tests. These are independently authored 5BSD tests
+informed by those implementations, not execution of the entire Fuchsia suite.
+Fuchsia's pinned host tree supplies no equivalent Mesh implementation; Mesh
+expectations come from its specification and the existing independent oracles.
+
+The local peer and emulator share some production cryptographic routines.
+Passing their conversation is not independent cryptographic validation; retain
+the separate known-answer crypto tests. Keep source-document freshness gates
+enabled, and distinguish their missing-input skips from successful validation.

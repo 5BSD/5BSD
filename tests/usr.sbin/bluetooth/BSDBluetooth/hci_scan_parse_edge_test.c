@@ -819,6 +819,51 @@ ATF_TC_BODY(parse_ext_report_truncated_clears_mark, tc)
 /* ================================================================
  * ATF test program entry point
  * ================================================================ */
+ATF_TC_WITHOUT_HEAD(parse_ext_report_overload_keeps_boundaries);
+ATF_TC_BODY(parse_ext_report_overload_keeps_boundaries, tc)
+{
+	uint8_t frag[BT_SP_SPEC_EXT_REPORT_FIXED_LEN + 2] = { 0 };
+	uint8_t tail[BT_SP_SPEC_EXT_REPORT_FIXED_LEN + 3] = { 0 };
+	struct ble_scan_result sr;
+
+	frag[0] = BT_SP_SPEC_DATA_STATUS_INCOMPLETE;
+	frag[BT_SP_SPEC_PRIMARY_PHY_OFFSET] = BT_SP_SPEC_PRIMARY_PHY_1M;
+	frag[BT_SP_SPEC_DATA_LEN_OFFSET] = 2;
+	/* A manufacturer AD structure whose tail resembles a complete name. */
+	frag[BT_SP_SPEC_EXT_REPORT_FIXED_LEN] = 4;
+	frag[BT_SP_SPEC_EXT_REPORT_FIXED_LEN + 1] = 0xff;
+	tail[BT_SP_SPEC_PRIMARY_PHY_OFFSET] = BT_SP_SPEC_PRIMARY_PHY_1M;
+	tail[BT_SP_SPEC_DATA_LEN_OFFSET] = 3;
+	tail[BT_SP_SPEC_EXT_REPORT_FIXED_LEN] = 2;
+	tail[BT_SP_SPEC_EXT_REPORT_FIXED_LEN + 1] = 9;
+	tail[BT_SP_SPEC_EXT_REPORT_FIXED_LEN + 2] = 'X';
+	/* Deliberately exceed the bounded table, then finish every chain. */
+	for (unsigned i = 1; i <= 64; i++) {
+		frag[BT_SP_SPEC_ADDR_OFFSET] = i;
+		ATF_REQUIRE_EQ(sizeof(frag),
+		    hci_parse_ext_adv_report(frag, sizeof(frag), &sr));
+		ATF_CHECK(!sr.has_name);
+	}
+	for (unsigned i = 1; i <= 64; i++) {
+		tail[BT_SP_SPEC_ADDR_OFFSET] = i;
+		ATF_REQUIRE_EQ(sizeof(tail),
+		    hci_parse_ext_adv_report(tail, sizeof(tail), &sr));
+		ATF_CHECK_MSG(!sr.has_name,
+		    "fragment tail for advertiser %u fabricated a name", i);
+		if (i == 1)
+			ATF_CHECK_EQ(0x0902, sr.mfr_id);
+	}
+	/* Freed slots cannot admit a mid-chain fragment after saturation. */
+	frag[BT_SP_SPEC_ADDR_OFFSET] = 65;
+	tail[BT_SP_SPEC_ADDR_OFFSET] = 65;
+	ATF_REQUIRE_EQ(sizeof(frag),
+	    hci_parse_ext_adv_report(frag, sizeof(frag), &sr));
+	ATF_REQUIRE_EQ(sizeof(tail),
+	    hci_parse_ext_adv_report(tail, sizeof(tail), &sr));
+	ATF_CHECK_EQ(0xffff, sr.mfr_id);
+	ATF_CHECK(!sr.has_name);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, parse_ext_report_fragment_not_parsed);
@@ -844,6 +889,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, parse_ext_report_fields_extracted);
 	ATF_TP_ADD_TC(tp, parse_ext_report_datalen_exact_and_short);
 	ATF_TP_ADD_TC(tp, parse_ext_report_resets_fields);
+	ATF_TP_ADD_TC(tp, parse_ext_report_overload_keeps_boundaries);
 	ATF_TP_ADD_TC(tp, parse_ext_report_reserved_fields);
 	ATF_TP_ADD_TC(tp, parse_ext_report_anonymous_data_max);
 

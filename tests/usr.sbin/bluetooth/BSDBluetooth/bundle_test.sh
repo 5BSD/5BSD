@@ -23,6 +23,14 @@ manifest_body()
 	cp "${srcdir}/blued.ucl" "${unit}/Unit.ucl"
 	cp "${srcdir}/blued.conf.sample" "${unit}/Config/blued.conf"
 	cp "${objdir}/BSDBluetooth" "${unit}/bin/BSDBluetooth"
+	controller="${bundle}/Units/controller.unit"
+	mkdir -p "${controller}/bin"
+	cp "${srcdir}/controller/controller.ucl" "${controller}/Unit.ucl"
+	cp "${objdir}/controller/BSDBluetoothController" \
+	    "${controller}/bin/BSDBluetoothController"
+	chmod 0555 "${controller}" "${controller}/bin" \
+	    "${controller}/bin/BSDBluetoothController"
+	chmod 0444 "${controller}/Unit.ucl"
 	chmod 0555 "${bundle}" "${bundle}/Units" "${unit}" "${unit}/bin" \
 	    "${unit}/Config" "${unit}/bin/BSDBluetooth"
 	chmod 0444 "${bundle}/Bundle.ucl" "${unit}/Unit.ucl" \

@@ -33,11 +33,15 @@
  */
 
 #include <sys/uio.h>
+#include <sys/socket.h>
 
 #include <stdio.h>
 #include <errno.h>
+#include <poll.h>
+#include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <unistd.h>
 
 #include "avdtp_signal.h"
@@ -54,68 +58,138 @@ struct avdtpGetPacketInfo {
 
 static int avdtpAutoConfig(struct bt_config *);
 
+#ifndef AVDTP_TIMEOUT_MS
+#define AVDTP_TIMEOUT_MS 8000
+#endif
+
+static int64_t
+avdtpNow(void)
+{
+	struct timespec now;
+
+	if (clock_gettime(CLOCK_MONOTONIC, &now) != 0)
+		return (-1);
+	return ((int64_t)now.tv_sec * 1000 + now.tv_nsec / 1000000);
+}
+
+/* One deadline covers the entire transaction, including all fragments. */
+static int
+avdtpWait(int fd, short events, int64_t deadline)
+{
+	struct pollfd pfd = { .fd = fd, .events = events };
+	int64_t now;
+	int result;
+
+	if (fd < 0)
+		return (-EBADF);
+	for (;;) {
+		now = avdtpNow();
+		if (now < 0)
+			return (-errno);
+		if (now >= deadline)
+			return (-ETIMEDOUT);
+		result = poll(&pfd, 1, (int)(deadline - now));
+		if (result < 0 && errno == EINTR)
+			continue;
+		if (result < 0)
+			return (-errno);
+		if (result == 0)
+			continue;
+		if (pfd.revents & POLLNVAL)
+			return (-EBADF);
+		/* Let recvmsg drain a final packet before reporting hangup. */
+		return (0);
+	}
+}
+
 /* Return received message type if success, < 0 if failure. */
 static int
-avdtpGetPacket(int fd, struct avdtpGetPacketInfo *info)
+avdtpGetPacketUntil(int fd, struct avdtpGetPacketInfo *info, int64_t deadline)
 {
-	uint8_t *pos = info->buffer_data;
-	uint8_t *end = info->buffer_data + sizeof(info->buffer_data);
-	uint8_t message_type;
-	int len;
+	uint8_t packet[sizeof(info->buffer_data) + 3];
+	uint8_t message_type = 0;
+	unsigned remaining = 1;
+	bool first = true;
+	ssize_t len;
+	int result;
 
 	memset(info, 0, sizeof(*info));
 
 	/* Handle fragmented packets */
-	for (int remaining = 1; remaining > 0; --remaining) {
-		len = read(fd, pos, end - pos);
+	while (remaining != 0) {
+		struct iovec iov = { .iov_base = packet, .iov_len = sizeof(packet) };
+		struct msghdr msg = { .msg_iov = &iov, .msg_iovlen = 1 };
 
-		if (len < AVDTP_LEN_SUCCESS)
-			return (-1);
-		if (len == (int)(end - pos))
-			return (-1);	/* buffer too small */
+		result = avdtpWait(fd, POLLIN, deadline);
+		if (result != 0)
+			return (result);
+		len = recvmsg(fd, &msg, MSG_DONTWAIT);
+		if (len < 0 && (errno == EINTR || errno == EAGAIN))
+			continue;
+		if (len < 0)
+			return (-errno);
+		if (len == 0)
+			return (-ECONNRESET);
+		if (msg.msg_flags & MSG_TRUNC)
+			return (-EMSGSIZE);
 
-		uint8_t trans = (pos[0] & TRANSACTIONLABEL) >> TRANSACTIONLABEL_S;
-		uint8_t packet_type = (pos[0] & PACKETTYPE) >> PACKETTYPE_S;
-		uint8_t current_message_type = (info->buffer_data[0] & MESSAGETYPE);
-		uint8_t shift;
-		if (pos == info->buffer_data) {
+		uint8_t trans = (packet[0] & TRANSACTIONLABEL) >> TRANSACTIONLABEL_S;
+		uint8_t packet_type = (packet[0] & PACKETTYPE) >> PACKETTYPE_S;
+		uint8_t current_message_type = packet[0] & MESSAGETYPE;
+		size_t shift;
+		if (first) {
 			info->trans = trans;
 			message_type = current_message_type;
 			if (packet_type == singlePacket) {
-				info->signalID = (pos[1] & SIGNALID_MASK);
 				shift = 2;
 			} else {
-				if (packet_type != startPacket)
-					return (-1);
-				remaining = pos[1];
-				info->signalID = (pos[2] & SIGNALID_MASK);
+				if (packet_type != startPacket || len < 3 || packet[1] < 2)
+					return (-EPROTO);
+				remaining = packet[1];
 				shift = 3;
 			}
+			if ((size_t)len < shift)
+				return (-EPROTO);
+			info->signalID = packet[shift - 1] & SIGNALID_MASK;
+			first = false;
 		} else {
 			if (info->trans != trans ||
 			    message_type != current_message_type ||
 			    (remaining == 1 && packet_type != endPacket) ||
 			    (remaining > 1 && packet_type != continuePacket)) {
-				return (-1);
+				return (-EPROTO);
 			}
 			shift = 1;
 		}
-		memmove(pos, pos + shift, len);
-		pos += len;
+		if ((size_t)len - shift > sizeof(info->buffer_data) - info->buffer_len)
+			return (-EMSGSIZE);
+		memcpy(info->buffer_data + info->buffer_len, packet + shift, len - shift);
+		info->buffer_len += len - shift;
+		remaining--;
 	}
-	info->buffer_len = pos - info->buffer_data;
 	return (message_type);
+}
+
+static int
+avdtpGetPacket(int fd, struct avdtpGetPacketInfo *info)
+{
+	return (avdtpGetPacketUntil(fd, info, avdtpNow() + AVDTP_TIMEOUT_MS));
 }
 
 /* Returns 0 on success, < 0 on failure. */
 static int
-avdtpSendPacket(int fd, uint8_t command, uint8_t trans, uint8_t type,
+avdtpSendPacketUntil(int fd, uint8_t command, uint8_t trans, uint8_t type,
     uint8_t * data0, int datasize0, uint8_t * data1,
-    int datasize1)
+    int datasize1, int64_t deadline)
 {
 	struct iovec iov[3];
 	uint8_t header[2];
+	ssize_t sent;
 	int retval;
+
+	if (datasize0 < 0 || datasize1 < 0 || datasize0 > 512 || datasize1 > 512 ||
+	    (datasize0 != 0 && data0 == NULL) || (datasize1 != 0 && data1 == NULL))
+		return (-EINVAL);
 
 	/* fill out command header */
 	header[0] = (trans << 4) | (type & 3);
@@ -131,11 +205,26 @@ avdtpSendPacket(int fd, uint8_t command, uint8_t trans, uint8_t type,
 	iov[2].iov_base = data1;
 	iov[2].iov_len = datasize1;
 
-	retval = writev(fd, iov, 3);
-	if (retval != (2 + datasize0 + datasize1))
-		return (-EINVAL);
-	else
-		return (0);
+	struct msghdr msg = { .msg_iov = iov, .msg_iovlen = 3 };
+	for (;;) {
+		retval = avdtpWait(fd, POLLOUT, deadline);
+		if (retval != 0)
+			return (retval);
+		sent = sendmsg(fd, &msg, MSG_DONTWAIT | MSG_NOSIGNAL | MSG_EOR);
+		if (sent < 0 && (errno == EINTR || errno == EAGAIN))
+			continue;
+		if (sent < 0)
+			return (-errno);
+		return (sent == 2 + datasize0 + datasize1 ? 0 : -EIO);
+	}
+}
+
+static int
+avdtpSendPacket(int fd, uint8_t command, uint8_t trans, uint8_t type,
+    uint8_t *data0, int datasize0, uint8_t *data1, int datasize1)
+{
+	return (avdtpSendPacketUntil(fd, command, trans, type, data0, datasize0,
+	    data1, datasize1, avdtpNow() + AVDTP_TIMEOUT_MS));
 }
 
 /* Returns 0 on success, < 0 on failure. */
@@ -144,42 +233,65 @@ avdtpSendSyncCommand(int fd, struct avdtpGetPacketInfo *info,
     uint8_t command, uint8_t type, uint8_t * data0,
     int datasize0, uint8_t * data1, int datasize1)
 {
-	static uint8_t transLabel;
+	static atomic_uint transLabel;
+	int64_t deadline = avdtpNow() + AVDTP_TIMEOUT_MS;
 	uint8_t trans;
 	int retval;
 
-	alarm(8);			/* set timeout */
+	trans = atomic_fetch_add_explicit(&transLabel, 1, memory_order_relaxed) & 0xF;
 
-	trans = (transLabel++) & 0xF;
-
-	retval = avdtpSendPacket(fd, command, trans, type,
-	    data0, datasize0, data1, datasize1);
+	retval = avdtpSendPacketUntil(fd, command, trans, type,
+	    data0, datasize0, data1, datasize1, deadline);
 	if (retval)
 		goto done;
 retry:
-	switch (avdtpGetPacket(fd, info)) {
+	retval = avdtpGetPacketUntil(fd, info, deadline);
+	switch (retval) {
 	case RESPONSEACCEPT:
-		if (info->trans != trans)
+		if (info->trans != trans || info->signalID != command)
 			goto retry;
+		switch (command) {
+		case AVDTP_SET_CONFIGURATION:
+		case AVDTP_OPEN:
+		case AVDTP_START:
+		case AVDTP_CLOSE:
+		case AVDTP_SUSPEND:
+		case AVDTP_ABORT:
+			if (info->buffer_len != 0)
+				return (-EPROTO);
+			break;
+		default:
+			break;
+		}
 		retval = 0;
 		break;
 	case RESPONSEREJECT:
-		if (info->trans != trans)
+		if (info->trans != trans || info->signalID != command)
 			goto retry;
 		retval = -EINVAL;
 		break;
-	case COMMAND:
-		retval = avdtpSendReject(fd, info->trans, info->signalID);
+	case COMMAND: {
+		uint8_t error[2] = {0, BAD_STATE};
+		int len = 1;
+
+		if (info->signalID == AVDTP_START || info->signalID == AVDTP_SUSPEND) {
+			error[0] = info->buffer_len != 0 ? info->buffer_data[0] : 0;
+			len = 2;
+		} else if (info->signalID == AVDTP_SET_CONFIGURATION ||
+		    info->signalID == AVDTP_RECONFIGURE)
+			len = 2;
+		retval = avdtpSendPacketUntil(fd, info->signalID, info->trans,
+		    RESPONSEREJECT, error + 2 - len, len, NULL, 0, deadline);
 		if (retval == 0)
 			goto retry;
 		break;
+	}
 	default:
-		retval = -ENXIO;
+		if (retval >= 0)
+			retval = -ENXIO;
 		break;
 	}
 done:
-	alarm(0);			/* clear timeout */
-
 	return (retval);
 }
 
@@ -233,10 +345,18 @@ avdtpSendAccept(int fd, uint8_t trans, uint8_t myCommand)
 int
 avdtpSendReject(int fd, uint8_t trans, uint8_t myCommand)
 {
-	uint8_t value = 0;
+	uint8_t value[2] = {0, BAD_STATE};
+	int length = 1;
+
+	if (myCommand == AVDTP_START || myCommand == AVDTP_SUSPEND) {
+		value[0] = ACPSEP << 2;
+		length = 2;
+	} else if (myCommand == AVDTP_SET_CONFIGURATION ||
+	    myCommand == AVDTP_RECONFIGURE)
+		length = 2;
 
 	return (avdtpSendPacket(fd, myCommand, trans, RESPONSEREJECT,
-	    &value, 1, NULL, 0));
+	    value + 2 - length, length, NULL, 0));
 }
 
 /* Returns 0 on success, < 0 on failure. */
@@ -260,6 +380,7 @@ avdtpDiscoverAndConfig(struct bt_config *cfg, bool isSink)
 	struct avdtpGetPacketInfo info;
 	uint16_t offset;
 	uint8_t chmode = cfg->chmode;
+	uint8_t bitpool = cfg->bitpool;
 	uint8_t aacMode1 = cfg->aacMode1;
 	uint8_t aacMode2 = cfg->aacMode2;
 	int retval;
@@ -268,14 +389,19 @@ avdtpDiscoverAndConfig(struct bt_config *cfg, bool isSink)
 	    NULL, 0, NULL, 0);
 	if (retval)
 		return (retval);
+	if ((info.buffer_len & 1) != 0)
+		return (-EPROTO);
 
 	retval = -EBUSY;
 	for (offset = 0; offset + 2 <= info.buffer_len; offset += 2) {
 		cfg->sep = info.buffer_data[offset] >> 2;
 		cfg->media_Type = info.buffer_data[offset + 1] >> 4;
 		cfg->chmode = chmode;
+		cfg->bitpool = bitpool;
 		cfg->aacMode1 = aacMode1;
 		cfg->aacMode2 = aacMode2;
+		if (cfg->sep == 0 || cfg->sep > 62 || cfg->media_Type != mediaTypeAudio)
+			continue;
 		if (info.buffer_data[offset] & DISCOVER_SEP_IN_USE)
 			continue;
 		if (info.buffer_data[offset + 1] & DISCOVER_IS_SINK) {
@@ -392,6 +518,7 @@ avdtpAutoConfig(struct bt_config *cfg)
 #endif
 	int retval;
 	int i;
+	bool transport = false, sbc = false;
 
 	retval = avdtpGetCapabilities(cfg->hc, cfg->sep, &info);
 	if (retval) {
@@ -409,18 +536,24 @@ retry:
 		    info.buffer_data[i + 4], info.buffer_data[i + 5]);
 #endif
 		if (i + 2 + info.buffer_data[i + 1] > info.buffer_len)
-			break;
+			return (-EPROTO);
 		switch (info.buffer_data[i]) {
 		case mediaTransport:
+			if (transport || info.buffer_data[i + 1] != 0)
+				return (-EPROTO);
+			transport = true;
 			break;
 		case mediaCodec:
 			if (info.buffer_data[i + 1] < 2)
+				return (-EPROTO);
+			if ((info.buffer_data[i + 2] >> 4) != mediaTypeAudio)
 				break;
 			/* check codec */
 			switch (info.buffer_data[i + 3]) {
 			case 0:			/* SBC */
-				if (info.buffer_data[i + 1] < 6)
-					break;
+				if (sbc || info.buffer_data[i + 1] != 6)
+					return (-EPROTO);
+				sbc = true;
 				availFreqMode = info.buffer_data[i + 4];
 				availConfig = info.buffer_data[i + 5];
 				supBitpoolMin = info.buffer_data[i + 6];
@@ -444,6 +577,8 @@ retry:
 		/* jump to next information element */
 		i += 2 + info.buffer_data[i + 1];
 	}
+	if (i != info.buffer_len || !transport)
+		return (-EPROTO);
 	aacMode1 &= cfg->aacMode1;
 	aacMode2 &= cfg->aacMode2;
 
@@ -463,7 +598,10 @@ retry:
 #endif
 	}
 	/* Try SBC second */
-	if (cfg->freq == FREQ_UNDEFINED)
+	if (!sbc || cfg->freq > FREQ_48K || cfg->chmode > MODE_JOINT ||
+	    cfg->bands > BANDS_8 || cfg->allocm > ALLOC_SNR ||
+	    supBitpoolMin < MIN_BITPOOL || supBitpoolMax > DEFAULT_MAXBPOOL ||
+	    supBitpoolMin > supBitpoolMax)
 		goto auto_config_failed;
 
 	freqmode = (1 << (3 - cfg->freq + 4)) | (1 << (3 - cfg->chmode));
@@ -485,19 +623,17 @@ retry:
 	}
 	cfg->blocks = (3 - i);
 
-	if (cfg->allocm == ALLOC_SNR)
-		supBitpoolMax &= ~1;
-
-	if (cfg->chmode == MODE_DUAL || cfg->chmode == MODE_MONO)
-		supBitpoolMax /= 2;
-
-	if (cfg->bands == BANDS_4)
-		supBitpoolMax /= 2;
-
-	if (supBitpoolMax > cfg->bitpool)
-		supBitpoolMax = cfg->bitpool;
-	else
+	/* The peer advertises an absolute bitpool range, not a stereo ratio. */
+	unsigned limit = (cfg->bands == BANDS_8 ? 8 : 4) *
+	    (cfg->chmode == MODE_MONO || cfg->chmode == MODE_DUAL ? 16 : 32);
+	if (supBitpoolMax > limit)
+		supBitpoolMax = limit;
+	if (supBitpoolMin > supBitpoolMax)
+		goto auto_config_failed;
+	if (cfg->bitpool > supBitpoolMax)
 		cfg->bitpool = supBitpoolMax;
+	if (cfg->bitpool < supBitpoolMin)
+		cfg->bitpool = supBitpoolMin;
 
 	do {
 		uint8_t config[10] = { mediaTransport, 0x0, mediaCodec, 0x6,
@@ -514,11 +650,15 @@ retry:
 
 auto_config_failed:
 	if (cfg->chmode == MODE_STEREO) {
+		cfg->chmode = MODE_JOINT;
+	} else if (cfg->chmode == MODE_JOINT) {
 		cfg->chmode = MODE_MONO;
 		cfg->aacMode2 ^= 0x0C;
-		goto retry;
+	} else {
+		return (-EINVAL);
 	}
-	return (-EINVAL);
+	transport = sbc = false;
+	goto retry;
 }
 
 void
@@ -534,6 +674,18 @@ avdtpACPFree(struct bt_config *cfg)
 static int
 avdtpParseSBCConfig(uint8_t * data, struct bt_config *cfg)
 {
+	unsigned fields[] = {data[0] >> 4, data[0] & 15,
+	    data[1] >> 4, (data[1] >> 2) & 3, data[1] & 3};
+	unsigned maxpool;
+
+	/* A configuration selects exactly one value from every capability set. */
+	for (unsigned i = 0; i < sizeof(fields) / sizeof(fields[0]); i++)
+		if (fields[i] == 0 || (fields[i] & (fields[i] - 1)) != 0)
+			return (-EINVAL);
+	maxpool = (data[0] & 0x0c ? 16 : 32) * (data[1] & 4 ? 8 : 4);
+	if (data[2] < 2 || data[3] > 250 || data[2] > data[3] ||
+	    data[3] > maxpool)
+		return (-EINVAL);
 	if (data[0] & (1 << (7 - FREQ_48K))) {
 		cfg->freq = FREQ_48K;
 	} else if (data[0] & (1 << (7 - FREQ_44_1K))) {
@@ -593,77 +745,115 @@ int
 avdtpACPHandlePacket(struct bt_config *cfg)
 {
 	struct avdtpGetPacketInfo info;
+	struct bt_config pending;
+	uint8_t error = BAD_STATE;
 	int retval;
 
 	if (avdtpGetPacket(cfg->hc, &info) != COMMAND)
 		return (-ENXIO);
+	if (info.signalID < AVDTP_DISCOVER || info.signalID > AVDTP_SECUURITY_CONTROL) {
+		(void)avdtpSendPacket(cfg->hc, info.signalID, info.trans,
+		    1 /* General Reject */, NULL, 0, NULL, 0);
+		return (-ENXIO);
+	}
+	/* Validate the complete command before reading fields or changing state. */
+	error = BAD_LENGTH;
+	if (info.signalID == AVDTP_DISCOVER) {
+		if (info.buffer_len != 0)
+			goto err;
+	} else if (info.signalID == AVDTP_SET_CONFIGURATION) {
+		if (info.buffer_len < 2)
+			goto err;
+		error = BAD_ACP_SEID;
+		if (info.buffer_data[0] != (ACPSEP << 2) ||
+		    (info.buffer_data[1] & 3) != 0 ||
+		    (info.buffer_data[1] >> 2) == 0 ||
+		    (info.buffer_data[1] >> 2) > 62)
+			goto err;
+	} else {
+		if (info.buffer_len != 1)
+			goto err;
+		error = BAD_ACP_SEID;
+		if (info.buffer_data[0] != (ACPSEP << 2))
+			goto err;
+	}
+	error = BAD_STATE;
 
 	switch (info.signalID) {
-	case AVDTP_DISCOVER:
-		retval =
-		    avdtpSendDiscResponseAudio(cfg->hc, info.trans, ACPSEP, 1);
+	case AVDTP_DISCOVER: {
+		uint8_t endpoint[2] = {ACPSEP << 2, 1 << 3};
+		if (cfg->acceptor_state != acpInitial)
+			endpoint[0] |= DISCOVER_SEP_IN_USE;
+		retval = avdtpSendPacket(cfg->hc, AVDTP_DISCOVER, info.trans,
+		    RESPONSEACCEPT, endpoint, sizeof(endpoint), NULL, 0);
 		if (!retval)
 			retval = AVDTP_DISCOVER;
 		break;
+	}
 	case AVDTP_GET_CAPABILITIES:
 		retval =
 		    avdtpSendCapabilitiesResponseSBCForACP(cfg->hc, info.trans);
 		if (!retval)
 			retval = AVDTP_GET_CAPABILITIES;
 		break;
-	case AVDTP_SET_CONFIGURATION:
+	case AVDTP_SET_CONFIGURATION: {
+		bool transport = false, codec = false, allocated = false;
+		int i;
+
 		if (cfg->acceptor_state != acpInitial)
 			goto err;
-		cfg->sep = info.buffer_data[1] >> 2;
-		int is_configured = 0;
-		for (int i = 2; (i + 1) < info.buffer_len;) {
+		error = UNSUPPORTED_CONFIGURATION;
+		pending = *cfg;
+		pending.sep = info.buffer_data[1] >> 2;
+		for (i = 2; (i + 1) < info.buffer_len;) {
 			if (i + 2 + info.buffer_data[i + 1] > info.buffer_len)
-				break;
+				goto err;
 			switch (info.buffer_data[i]) {
 			case mediaTransport:
+				if (transport || info.buffer_data[i + 1] != 0)
+					goto err;
+				transport = true;
 				break;
 			case mediaCodec:
-				if (info.buffer_data[i + 1] < 2)
-					break;
-				/* check codec */
-				switch (info.buffer_data[i + 3]) {
-				case 0:		/* SBC */
-					if (info.buffer_data[i + 1] < 6)
-						break;
-					retval =
-					    avdtpParseSBCConfig(info.buffer_data + i + 4, cfg);
-					if (retval)
-						return retval;
-					is_configured = 1;
-					break;
-				case 2:		/* MPEG2/4 AAC */
-					/* TODO: Add support */
-				default:
-					break;
-				}
+				if (codec || info.buffer_data[i + 1] != 6 ||
+				    info.buffer_data[i + 2] != 0 ||
+				    info.buffer_data[i + 3] != 0 ||
+				    avdtpParseSBCConfig(info.buffer_data + i + 4,
+				    &pending) != 0)
+					goto err;
+				memcpy(pending.acceptor_sbc, info.buffer_data + i + 4,
+				    sizeof(pending.acceptor_sbc));
+				codec = true;
+				break;
+			default:
+				goto err;
 			}
 			/* jump to next information element */
 			i += 2 + info.buffer_data[i + 1];
 		}
-		if (!is_configured)
+		if (i != info.buffer_len || !transport || !codec)
 			goto err;
+		if (pending.handle.sbc_enc == NULL) {
+			pending.handle.sbc_enc = calloc(1, sizeof(*pending.handle.sbc_enc));
+			if (pending.handle.sbc_enc == NULL)
+				goto err;
+			allocated = true;
+		}
 
 		retval =
 		    avdtpSendAccept(cfg->hc, info.trans, AVDTP_SET_CONFIGURATION);
-		if (retval)
+		if (retval) {
+			if (allocated)
+				free(pending.handle.sbc_enc);
 			return (retval);
-
-		/* TODO: Handle other codecs */
-		if (cfg->handle.sbc_enc == NULL) {
-			cfg->handle.sbc_enc = malloc(sizeof(*cfg->handle.sbc_enc));
-			if (cfg->handle.sbc_enc == NULL)
-				return (-ENOMEM);
 		}
+		*cfg = pending;
 		memset(cfg->handle.sbc_enc, 0, sizeof(*cfg->handle.sbc_enc));
 
 		retval = AVDTP_SET_CONFIGURATION;
 		cfg->acceptor_state = acpConfigurationSet;
 		break;
+	}
 	case AVDTP_OPEN:
 		if (cfg->acceptor_state != acpConfigurationSet)
 			goto err;
@@ -697,8 +887,7 @@ avdtpACPHandlePacket(struct bt_config *cfg)
 		cfg->acceptor_state = acpStreamClosed;
 		break;
 	case AVDTP_SUSPEND:
-		if (cfg->acceptor_state != acpStreamOpened &&
-		    cfg->acceptor_state != acpStreamStarted) {
+		if (cfg->acceptor_state != acpStreamStarted) {
 			goto err;
 		}
 		retval = avdtpSendAccept(cfg->hc, info.trans, info.signalID);
@@ -707,14 +896,51 @@ avdtpACPHandlePacket(struct bt_config *cfg)
 		retval = info.signalID;
 		cfg->acceptor_state = acpStreamSuspended;
 		break;
-	case AVDTP_GET_CONFIGURATION:
-	case AVDTP_RECONFIGURE:
 	case AVDTP_ABORT:
+		retval = avdtpSendAccept(cfg->hc, info.trans, info.signalID);
+		if (retval)
+			return (retval);
+		cfg->acceptor_state = acpInitial;
+		cfg->sep = 0;
+		memset(cfg->acceptor_sbc, 0, sizeof(cfg->acceptor_sbc));
+		if (cfg->handle.sbc_enc != NULL)
+			memset(cfg->handle.sbc_enc, 0, sizeof(*cfg->handle.sbc_enc));
+		return (AVDTP_ABORT);
+	case AVDTP_GET_CONFIGURATION: {
+		uint8_t configuration[] = {mediaTransport, 0, mediaCodec, 6,
+		    0, CODEC_SBC, 0, 0, 0, 0};
+
+		if (cfg->acceptor_state != acpConfigurationSet &&
+		    cfg->acceptor_state != acpStreamOpened &&
+		    cfg->acceptor_state != acpStreamStarted &&
+		    cfg->acceptor_state != acpStreamSuspended)
+			goto err;
+		memcpy(configuration + 6, cfg->acceptor_sbc,
+		    sizeof(cfg->acceptor_sbc));
+		retval = avdtpSendPacket(cfg->hc, info.signalID, info.trans,
+		    RESPONSEACCEPT, configuration, sizeof(configuration), NULL, 0);
+		return (retval != 0 ? retval : AVDTP_GET_CONFIGURATION);
+	}
+	case AVDTP_RECONFIGURE:
 		/* TODO: Implement this. */
+		error = NOT_SUPPORTED_COMMAND;
 	default:
-err:
-		avdtpSendReject(cfg->hc, info.trans, info.signalID);
-		return (-ENXIO);
+		goto err;
 	}
 	return (retval);
+err: {
+		uint8_t body[2] = {0, error};
+		int len = 1;
+		if (info.signalID == AVDTP_START || info.signalID == AVDTP_SUSPEND) {
+			body[0] = info.buffer_len != 0 ? info.buffer_data[0] : 0;
+			len = 2;
+		} else if (info.signalID == AVDTP_SET_CONFIGURATION ||
+		    info.signalID == AVDTP_RECONFIGURE) {
+			body[0] = error == UNSUPPORTED_CONFIGURATION ? mediaCodec : 0;
+			len = 2;
+		}
+		(void)avdtpSendPacket(cfg->hc, info.signalID, info.trans,
+		    RESPONSEREJECT, body + 2 - len, len, NULL, 0);
+		return (-ENXIO);
+	}
 }

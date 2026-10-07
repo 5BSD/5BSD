@@ -63,6 +63,7 @@
 #include "gatt.h"
 #include "hci_util.h"
 #include "smp.h"
+#include "discovery.h"
 
 /* ================================================================
  * bt_devreq wrap: record the HCI commands the event loop emits.
@@ -1268,12 +1269,18 @@ ATF_TC_BODY(supervisor_loss_deregisters, tc)
 
 	EV_SET(&batch[0], sp[0], EVFILT_READ, EV_EOF, 0, 0, BLUED_KQ_SUPERVISOR);
 	blued_event_batch_begin();
-	ATF_CHECK(blued_event_dispatch_batch(batch, 1));
+	ATF_CHECK(!blued_event_dispatch_batch(batch, 1));
+	ATF_CHECK_EQ(0, running);
 
 	/* The registration is gone: deleting it again fails with ENOENT. */
 	EV_SET(&probe, sp[0], EVFILT_READ, EV_DELETE, 0, 0, NULL);
 	ATF_CHECK_EQ(-1, kevent(blued_g.kq, &probe, 1, NULL, 0, NULL));
 	ATF_CHECK_EQ(ENOENT, errno);
+
+	running = 1;
+	EV_SET(&batch[0], sp[0], EVFILT_READ, EV_EOF, 0, 0, BLUED_KQ_PLANE_LISTEN);
+	ATF_CHECK(!blued_event_dispatch_batch(batch, 1));
+	ATF_CHECK_EQ(0, running);
 
 	close(sp[0]);
 	close(sp[1]);
@@ -1540,6 +1547,100 @@ ATF_TC_BODY(rpa_rotation_is_per_adapter, tc)
 	evt_teardown();
 }
 
+static void
+discovery_request(struct blued_ctl_client *client, int fd, uint32_t id,
+    uint16_t opcode)
+{
+	uint8_t frame[IPC_HDR_SIZE + IPC_OP_PREFIX_SIZE + IPC_GAP_SCAN_REQ_SIZE] = {0};
+	size_t len = opcode == IPC_GAP_SCAN ? IPC_GAP_SCAN_REQ_SIZE : IPC_GAP_REQ_SIZE;
+	uint8_t *payload = frame + IPC_HDR_SIZE;
+
+	ipc_hdr_encode(frame, IPC_OP_PREFIX_SIZE + len, IPC_T_OP_REQ, IPC_OP_DOMAIN_GAP);
+	ipc_op_prefix_encode(payload, id, 0, 0);
+	ipc_put_le16(payload + IPC_OP_PREFIX_SIZE, opcode);
+	if (opcode == IPC_GAP_SCAN)
+		payload[IPC_OP_PREFIX_SIZE + 10] = (uint8_t)INT8_MIN;
+	len += IPC_HDR_SIZE + IPC_OP_PREFIX_SIZE;
+	ATF_REQUIRE_EQ((ssize_t)len, send(fd, frame, len, 0));
+	ATF_REQUIRE_EQ(0, blued_ctl_dispatch(client));
+}
+
+static void
+discovery_response(int fd, uint16_t expected_type, uint32_t expected_id)
+{
+	uint8_t header[IPC_HDR_SIZE], payload[IPC_MAX_PAYLOAD];
+	uint32_t len, id;
+	uint16_t type, domain, status, flags;
+	struct timeval timeout = {2, 0};
+
+	ATF_REQUIRE_EQ(0, setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)));
+	ATF_REQUIRE_EQ(sizeof(header), recv(fd, header, sizeof(header), MSG_WAITALL));
+	ipc_hdr_decode(header, &len, &type, &domain);
+	ATF_REQUIRE(len >= IPC_OP_PREFIX_SIZE && len <= sizeof(payload));
+	ATF_REQUIRE_EQ(len, recv(fd, payload, len, MSG_WAITALL));
+	ipc_op_prefix_decode(payload, &id, &status, &flags);
+	ATF_CHECK_EQ(expected_type, type);
+	ATF_CHECK_EQ(IPC_OP_DOMAIN_GAP, domain);
+	ATF_CHECK_EQ(expected_id, id);
+	ATF_CHECK_EQ(0, status);
+}
+
+ATF_TC_WITHOUT_HEAD(discovery_two_clients_wire_lifecycle);
+ATF_TC_BODY(discovery_two_clients_wire_lifecycle, tc)
+{
+	struct blued_ctl_client *first, *second;
+	int one[2], two[2];
+	uint8_t event[] = {4, 0x3e, 15, 2, 1, 0, 0,
+	    1, 2, 3, 4, 5, 6, 3, 2, 9, 'a', (uint8_t)-30};
+
+	evt_reset();
+	first = evt_make_client(one);
+	second = evt_make_client(two);
+	first->handshaked = second->handshaked = true;
+	first->wants_events = second->wants_events = true;
+	discovery_request(first, one[1], 101, IPC_GAP_SCAN);
+	discovery_request(second, two[1], 201, IPC_GAP_SCAN);
+	ATF_REQUIRE(blued_discovery_busy());
+	ATF_REQUIRE_EQ(sizeof(event), send(evt_hci_sp[1], event, sizeof(event), MSG_EOR));
+	blued_handle_hci_event(&evt_adp);
+	discovery_response(one[1], IPC_T_OP_EVENT, 101);
+	discovery_response(two[1], IPC_T_OP_EVENT, 201);
+	discovery_request(first, one[1], 102, IPC_GAP_SCAN_STOP);
+	discovery_response(one[1], IPC_T_OP_REPLY, 101);
+	discovery_response(one[1], IPC_T_OP_REPLY, 102);
+	ATF_REQUIRE(blued_discovery_busy());
+	event[16] = 'b';
+	ATF_REQUIRE_EQ(sizeof(event), send(evt_hci_sp[1], event, sizeof(event), MSG_EOR));
+	blued_handle_hci_event(&evt_adp);
+	discovery_response(two[1], IPC_T_OP_EVENT, 201);
+	ATF_CHECK_EQ(-1, recv(one[1], event, sizeof(event), MSG_DONTWAIT));
+	blued_ctl_cleanup();
+	ATF_CHECK(!blued_discovery_busy());
+	close(one[1]);
+	close(two[1]);
+	evt_teardown();
+}
+
+ATF_TC_WITHOUT_HEAD(discovery_stale_client_generation);
+ATF_TC_BODY(discovery_stale_client_generation, tc)
+{
+	struct blued_ctl_client *client;
+	struct ble_scan_result result = {.addr_type = BDADDR_LE_PUBLIC};
+	uint8_t byte;
+	int sp[2];
+
+	evt_reset();
+	client = evt_make_client(sp);
+	client->handshaked = client->wants_events = true;
+	blued_ctl_scan_event(client->fd, client->generation + 1, 7, &evt_adp, &result);
+	blued_ctl_scan_done(client->fd, client->generation + 1, 7, 0);
+	ATF_CHECK_EQ(-1, recv(sp[1], &byte, 1, MSG_DONTWAIT));
+	ATF_CHECK_EQ(EAGAIN, errno);
+	blued_ctl_cleanup();
+	close(sp[1]);
+	evt_teardown();
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -1576,6 +1677,8 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, conn_param_request_is_answered);
 	ATF_TP_ADD_TC(tp, mesh_adv_batch_skips_only_bad_report);
 	ATF_TP_ADD_TC(tp, rpa_rotation_is_per_adapter);
+	ATF_TP_ADD_TC(tp, discovery_two_clients_wire_lifecycle);
+	ATF_TP_ADD_TC(tp, discovery_stale_client_generation);
 
 	return (atf_no_error());
 }

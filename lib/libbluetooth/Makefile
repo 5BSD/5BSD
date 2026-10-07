@@ -42,6 +42,7 @@ MLINKS+=	bluetooth.3 bt_devopen.3
 MLINKS+=	bluetooth.3 bt_devclose.3
 MLINKS+=	bluetooth.3 bt_devsend.3
 MLINKS+=	bluetooth.3 bt_devreq.3
+MLINKS+=	bluetooth.3 bt_devreq_events.3
 MLINKS+=	bluetooth.3 bt_devfilter.3
 MLINKS+=	bluetooth.3 bt_devfilter_pkt_set.3
 MLINKS+=	bluetooth.3 bt_devfilter_pkt_clr.3

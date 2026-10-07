@@ -225,13 +225,13 @@ ATF_TC_BODY(scan_setup_paths, tc)
 
 	/*
 	 * timeout 1 lets the receive loop run one iteration: bt_devrecv on
-	 * the /dev/null fd fails with EIO (not EAGAIN/EINTR/ETIMEDOUT), so
+	 * the /dev/null fd reaches EOF (ECONNRESET), so
 	 * the loop breaks and C3-L propagates that real recv errno.  Covers
 	 * the recv-error branch and the non-retry break without a controller.
 	 */
 	errno = 0;
 	ATF_CHECK_EQ(hci_wait_encryption(test_fd(), 0x0040, 1), -1);
-	ATF_CHECK_EQ(errno, EIO);
+	ATF_CHECK_EQ(errno, ECONNRESET);
 }
 
 /* ================================================================

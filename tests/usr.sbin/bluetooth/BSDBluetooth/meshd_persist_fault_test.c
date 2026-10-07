@@ -20,11 +20,14 @@
 #include "mesh_test_heap.h"
 #include "meshd.h"
 #include "meshd_persist.h"
+#include "mesh_manager.h"
 
 static int fail_write;
 static int fail_rename;
 static int fail_fsync_call;
 static int fsync_calls;
+static int fail_fchmod;
+static int failed_chmod_fd;
 
 ssize_t __real_write(int, const void *, size_t);
 int __real_fsync(int);
@@ -32,6 +35,20 @@ int __real_rename(const char *, const char *);
 ssize_t __wrap_write(int, const void *, size_t);
 int __wrap_fsync(int);
 int __wrap_rename(const char *, const char *);
+int __real_fchmod(int, mode_t);
+int __wrap_fchmod(int, mode_t);
+
+int
+__wrap_fchmod(int fd, mode_t mode)
+{
+
+	if (fail_fchmod) {
+		failed_chmod_fd = fd;
+		errno = EPERM;
+		return (-1);
+	}
+	return (__real_fchmod(fd, mode));
+}
 
 ssize_t
 __wrap_write(int fd, const void *buf, size_t len)
@@ -341,10 +358,29 @@ ATF_TC_BODY(crc_valid_body_mutation_matrix, tc)
 	(void)unlink(path);
 }
 
+ATF_TC_WITHOUT_HEAD(manager_chmod_failure_closes_temporary_file);
+ATF_TC_BODY(manager_chmod_failure_closes_temporary_file, tc)
+{
+	struct mesh_mgr *mgr;
+
+	mgr = calloc(1, sizeof(*mgr));
+	ATF_REQUIRE(mgr != NULL);
+	failed_chmod_fd = -1;
+	fail_fchmod = 1;
+	ATF_CHECK_EQ(-1, meshd_persist_mgr_save("manager.state", mgr));
+	fail_fchmod = 0;
+	ATF_REQUIRE(failed_chmod_fd >= 0);
+	ATF_CHECK_EQ(-1, fcntl(failed_chmod_fd, F_GETFD));
+	ATF_CHECK_EQ(EBADF, errno);
+	ATF_CHECK_EQ(-1, access("manager.state", F_OK));
+	free(mgr);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
 	ATF_TP_ADD_TC(tp, write_failure_preserves_old_commit);
+	ATF_TP_ADD_TC(tp, manager_chmod_failure_closes_temporary_file);
 	ATF_TP_ADD_TC(tp, file_fsync_failure_preserves_old_commit);
 	ATF_TP_ADD_TC(tp, rename_failure_preserves_old_commit);
 	ATF_TP_ADD_TC(tp, directory_fsync_failure_is_valid_but_dirty);

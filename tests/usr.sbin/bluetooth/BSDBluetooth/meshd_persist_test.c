@@ -1378,10 +1378,30 @@ ATF_TC_BODY(v11_states_roundtrip, tc)
 	(void)unlink(path);
 }
 
+ATF_TC(reject_fifo_without_waiting);
+ATF_TC_HEAD(reject_fifo_without_waiting, tc)
+{
+	atf_tc_set_md_var(tc, "timeout", "5");
+}
+ATF_TC_BODY(reject_fifo_without_waiting, tc)
+{
+	MESH_HEAP(struct meshd_node, nd);
+	struct meshd_persist ps;
+
+	fresh_node(nd);
+	nd->self->seq = 123;
+	ATF_REQUIRE_EQ(0, mkfifo("state.fifo", 0600));
+	meshd_persist_init(&ps, "state.fifo", 100);
+	ATF_CHECK_EQ(-1, meshd_persist_load(&ps, nd));
+	ATF_CHECK_EQ(123, nd->self->seq);
+	ATF_CHECK_EQ(0, unlink("state.fifo"));
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
 	ATF_TP_ADD_TC(tp, seq_block_no_regress);
+	ATF_TP_ADD_TC(tp, reject_fifo_without_waiting);
 	ATF_TP_ADD_TC(tp, seq_reserve_ahead_invariant);
 	ATF_TP_ADD_TC(tp, seq_reserve_iv_epoch);
 	ATF_TP_ADD_TC(tp, seq_reserve_iv_completion);

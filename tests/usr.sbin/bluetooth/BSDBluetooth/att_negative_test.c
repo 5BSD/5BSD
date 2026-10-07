@@ -1035,13 +1035,11 @@ ATF_TC_BODY(test_neg_empty_writable_char_is_writable, tc)
 }
 
 /* ================================================================
- * Finding 114: att_send_indication self-arms its 30 s confirmation deadline
- * so a caller that never arms an external timer cannot wedge every future
- * indication at EBUSY.  A pending indication past its deadline is auto-cleared
- * before the next indication is sent.
+ * Core Vol 3 Part F 3.3.3: a 30 s transaction timeout fails the bearer.
+ * It cannot be cleared to permit another indication on that bearer.
  * ================================================================ */
-ATF_TC_WITHOUT_HEAD(test_neg_indication_self_heals_timeout);
-ATF_TC_BODY(test_neg_indication_self_heals_timeout, tc)
+ATF_TC_WITHOUT_HEAD(test_neg_indication_timeout_fails_bearer);
+ATF_TC_BODY(test_neg_indication_timeout_fails_bearer, tc)
 {
 	struct att_conn ac;
 	int peer;
@@ -1065,16 +1063,55 @@ ATF_TC_BODY(test_neg_indication_self_heals_timeout, tc)
 
 	/* Simulate the confirmation window elapsing with no confirmation. */
 	ac.ind_deadline.tv_sec -= 60;
-	ATF_REQUIRE_EQ_MSG(0, att_send_indication(&ac, 0x0006, &v, 1),
-	    "stale pending indication must self-heal, not wedge (errno=%d)",
-	    errno);
-	ATF_CHECK(ac.ind_pending);
-	ATF_CHECK_EQ(0x0006, ac.ind_handle);
-	n = recv(peer, rsp, sizeof(rsp), MSG_DONTWAIT);
-	ATF_CHECK_EQ(4, n);
-	ATF_CHECK_EQ(ATT_OP_HANDLE_IND, rsp[0]);
+	ATF_REQUIRE_EQ(-1, att_send_indication(&ac, 0x0006, &v, 1));
+	ATF_CHECK_EQ(ETIMEDOUT, errno);
+	ATF_CHECK(!ac.ind_pending);
+	ATF_CHECK(ac.failed);
+	ATF_CHECK_EQ(-1, recv(peer, rsp, sizeof(rsp), MSG_DONTWAIT));
+	ATF_CHECK_EQ(-1, att_send_indication(&ac, 0x0006, &v, 1));
+	ATF_CHECK_EQ(ENOTCONN, errno);
+	ATF_CHECK_EQ(-1, att_send_notification(&ac, 0x0006, &v, 1));
+	ATF_CHECK_EQ(ENOTCONN, errno);
+	ATF_CHECK_EQ(-1, recv(peer, rsp, sizeof(rsp), MSG_DONTWAIT));
 
 	att_mock_cleanup(&ac, peer);
+}
+
+ATF_TC_WITHOUT_HEAD(test_neg_indication_timeout_isolates_bearer);
+ATF_TC_BODY(test_neg_indication_timeout_isolates_bearer, tc)
+{
+	for (unsigned on_eatt = 0; on_eatt < 2; on_eatt++) {
+		struct att_conn ac;
+		int peer, extra[2], expired_peer, surviving_peer;
+		uint8_t value = 1, rsp[16];
+
+		att_mock_pair(&ac, &peer);
+		ATF_REQUIRE_EQ(0, socketpair(AF_UNIX, SOCK_SEQPACKET, 0, extra));
+		ac.eatt_count = 1;
+		ac.eatt[0] = (struct att_bearer){ .fd = extra[0],
+		    .mtu = 64, .active = true };
+		ac.bearer_fd = on_eatt ? extra[0] : -1;
+		ac.mtu = on_eatt ? 64 : 23;
+		expired_peer = on_eatt ? extra[1] : peer;
+		surviving_peer = on_eatt ? peer : extra[1];
+		ATF_REQUIRE_EQ(0, att_send_indication(&ac, 5, &value, 1));
+		ATF_CHECK_EQ(ac.bearer_fd, ac.ind_bearer_fd);
+		ATF_REQUIRE_EQ(4, recv(expired_peer, rsp, sizeof(rsp), MSG_DONTWAIT));
+		ac.ind_deadline.tv_sec -= 60;
+		ATF_CHECK_EQ(-1, att_send_notification(&ac, 5, &value, 1));
+		ATF_CHECK_EQ(ETIMEDOUT, errno);
+		ATF_CHECK_EQ(!on_eatt, ac.failed);
+		ATF_CHECK_EQ(on_eatt ? 0 : 1, ac.eatt_count);
+		ac.bearer_fd = on_eatt ? -1 : extra[0];
+		ac.mtu = on_eatt ? 23 : 64;
+		ATF_REQUIRE_EQ(0, att_send_notification(&ac, 6, &value, 1));
+		ATF_REQUIRE_EQ(4, recv(surviving_peer, rsp, sizeof(rsp), MSG_DONTWAIT));
+		ATF_CHECK_EQ(0x1b, rsp[0]);
+		ac.bearer_fd = -1;
+		att_close_eatt(&ac);
+		close(extra[1]);
+		att_mock_cleanup(&ac, peer);
+	}
 }
 
 /* ================================================================
@@ -1085,7 +1122,8 @@ ATF_TP_ADD_TCS(tp)
 
 	ATF_TP_ADD_TC(tp, test_neg_read_by_type_zero_uuid16);
 	ATF_TP_ADD_TC(tp, test_neg_empty_writable_char_is_writable);
-	ATF_TP_ADD_TC(tp, test_neg_indication_self_heals_timeout);
+	ATF_TP_ADD_TC(tp, test_neg_indication_timeout_fails_bearer);
+	ATF_TP_ADD_TC(tp, test_neg_indication_timeout_isolates_bearer);
 	ATF_TP_ADD_TC(tp, test_neg_zero_length);
 	ATF_TP_ADD_TC(tp, test_neg_mtu);
 	ATF_TP_ADD_TC(tp, test_neg_find_info);

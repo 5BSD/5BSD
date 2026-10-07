@@ -296,30 +296,7 @@ smp_respond_legacy(struct smp_conn *sc, const uint8_t preq[7],
 
 		/* Distribute IdKey (IRK + Identity Address) if negotiated */
 		if (pres[6] & SMP_KEY_DIST_ID_KEY) {
-			/*
-			 * Guard on bond_db != NULL (K-low ID-key NULL deref):
-			 * without a bond DB there is no local IRK and the
-			 * local_irk deref below would fault.
-			 */
-			/* Send Identity Information (IRK). */
-			if (sc->bond_db == NULL ||
-			    smp_ensure_local_irk(sc->bond_db) != 0) {
-				ret = -1;
-				goto resp_legacy_cleanup;
-			}
-			pdu[0] = SMP_IDENTITY_INFORMATION;
-			memcpy(pdu + 1, sc->bond_db->local_irk, 16);
-			if (smp_log_send(sc, pdu, 17) != 17) {
-				ret = -1;
-				goto resp_legacy_cleanup;
-			}
-
-			/* Send Identity Address Information */
-			pdu[0] = SMP_IDENTITY_ADDRESS_INFO;
-			pdu[1] = (sc->local_addr_type == BDADDR_LE_RANDOM) ?
-			    SMP_ID_ADDR_STATIC_RANDOM : SMP_ID_ADDR_PUBLIC;
-			memcpy(pdu + 2, sc->local_addr, 6);
-			if (smp_log_send(sc, pdu, 8) != 8) {
+			if (smp_send_identity(sc) != 0) {
 				ret = -1;
 				goto resp_legacy_cleanup;
 			}

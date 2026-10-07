@@ -479,15 +479,17 @@ uint16_t	 ble_get_peer_mtu(ble_ctx_t *ctx, const ble_addr_t *addr);
 
 /*
  * Start a scan.  Results arrive via the callback.
- * Returns -1 if a scan is already in progress.
+ * Conflicting requests produce an asynchronous BLE_ERR_BUSY reply.
  */
 int	ble_scan(ble_ctx_t *ctx, ble_scan_cb cb, void *arg);
+/* End this client's discovery lease; other clients keep scanning. */
+int	ble_scan_stop(ble_ctx_t *ctx);
 
 /*
  * Start a scan with explicit scan/discovery parameters and result filters
  * (the common discovery-filter model + NimBLE ble_gap_disc_params).  Pass params==NULL
- * for the ble_scan() defaults.  Returns -1 if a scan is already in progress or
- * the parameters are invalid.
+ * for the ble_scan() defaults. Returns -1 for invalid parameters or a local
+ * send failure; daemon admission errors arrive through ble_process().
  */
 int	ble_scan_filtered(ble_ctx_t *ctx, const ble_scan_params_t *params,
 	    ble_scan_cb cb, void *arg);

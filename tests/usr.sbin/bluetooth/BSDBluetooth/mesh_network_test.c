@@ -1123,8 +1123,53 @@ ATF_TC_BODY(group_pubsub_across_relay, tc)
 	ATF_CHECK(r->relay_count > 0);
 }
 
+/* A diamond delivers duplicates naturally. Keep the same network, replay
+ * cache and application state alive through authenticated traffic and faults. */
+ATF_TC_WITHOUT_HEAD(diamond_traffic_replay_and_corruption);
+ATF_TC_BODY(diamond_traffic_replay_and_corruption, tc)
+{
+	MESH_HEAP(struct mesh_sim, sim);
+	struct mesh_node *src, *a, *b, *dst;
+	struct mesh_gen_onoff_srv srv;
+	uint8_t wire[MESH_NET_MAX_PDU], corrupt[MESH_NET_MAX_PDU];
+	size_t len;
+	ATF_REQUIRE_EQ(0, mesh_sim_init(sim, NETKEY, APPKEY, 0));
+	src = mesh_sim_add_node(sim, 1, 1);
+	a = mesh_sim_add_node(sim, 2, 1);
+	b = mesh_sim_add_node(sim, 3, 1);
+	dst = mesh_sim_add_node(sim, 4, 1);
+	ATF_REQUIRE(src && a && b && dst);
+	mesh_gen_onoff_srv_init(&srv, 0);
+	ATF_REQUIRE_EQ(0, mesh_sim_add_model(dst, 0, mesh_gen_onoff_srv_model(&srv)));
+	mesh_sim_set_relay(a, 1); mesh_sim_set_relay(b, 1);
+	ATF_REQUIRE_EQ(0, mesh_sim_link(sim, src, a));
+	ATF_REQUIRE_EQ(0, mesh_sim_link(sim, src, b));
+	ATF_REQUIRE_EQ(0, mesh_sim_link(sim, a, dst));
+	ATF_REQUIRE_EQ(0, mesh_sim_link(sim, b, dst));
+	for (unsigned int cycle = 0; cycle < 128; cycle++) {
+		onoff_send(sim, src, 4, cycle & 1, cycle, 5);
+		ATF_REQUIRE_EQ(1, mesh_sim_pending(sim));
+		len = sim->tx[0].len;
+		ATF_REQUIRE(len > 0 && len <= sizeof(wire));
+		memcpy(wire, sim->tx[0].bytes, len);
+		mesh_sim_run(sim, 20);
+		ATF_REQUIRE_EQ(cycle + 1, dst->rx.count);
+		ATF_CHECK_EQ(cycle & 1, srv.present);
+		ATF_CHECK_EQ(4, dst->rx.ttl);
+		ATF_REQUIRE_EQ(0, mesh_sim_reinject(sim, src->index, wire, len));
+		/* Alter the authentication tag and inject at all receivers. */
+		memcpy(corrupt, wire, len); corrupt[len - 1] ^= 0x80;
+		ATF_REQUIRE_EQ(0, mesh_sim_reinject(sim, -1, corrupt, len));
+		mesh_sim_run(sim, 20);
+		ATF_CHECK_EQ(cycle + 1, dst->rx.count);
+		ATF_CHECK_EQ(cycle & 1, srv.present);
+		ATF_CHECK_EQ(0, mesh_sim_pending(sim));
+	}
+}
+
 ATF_TP_ADD_TCS(tp)
 {
+	ATF_TP_ADD_TC(tp, diamond_traffic_replay_and_corruption);
 
 	ATF_TP_ADD_TC(tp, relay_five_node_ttl_decrement);
 	ATF_TP_ADD_TC(tp, relay_ttl_exhausted);

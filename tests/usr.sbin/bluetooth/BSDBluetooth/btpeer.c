@@ -1272,6 +1272,11 @@ bsmp_send_keys(struct btpeer *bp, uint8_t dist, bool is_sc)
 			memcpy(p + 1, bp->smp_cfg.local_ltk, 16);
 		else
 			memset(p + 1, 0x40, 16);
+		/* Core Vol 3 Part H 2.3.4: negotiated key size applies to
+		 * distributed legacy LTKs as well as the encryption STK. */
+		for (unsigned int i = bp->preq[4] < bp->pres[4] ?
+		    bp->preq[4] : bp->pres[4]; i < 16; i++)
+			p[1 + i] = 0;
 		memcpy(bp->smp_ltk, p + 1, 16);
 		bsmp_kd_tx(bp, p, 17);
 		/* Central Identification: EDIV=0, Rand=0 (STK-style). */

@@ -99,29 +99,16 @@ att_send_indication(struct att_conn *ac, uint16_t handle,
 	if (rsp == NULL)
 		return (-1);
 
-	/*
-	 * One indication at a time (Core Spec Vol 3 Part F §3.3.2).  Before
-	 * refusing, self-heal a pending indication whose 30 s confirmation
-	 * window (§3.3.3) has already elapsed: if no caller armed the kqueue
-	 * timer, ind_pending would otherwise stay set forever and wedge every
-	 * future indication.  The self-armed ind_deadline below makes this
-	 * function self-sufficient regardless of caller behaviour.
-	 */
+	/* A timed-out transaction fails its bearer; it cannot be replaced. */
+	if (att_server_check_bearer(ac) < 0) {
+		ATT_RSP_BUF_FREE();
+		return (-1);
+	}
+	/* One indication at a time (Core Vol 3 Part F §3.3.2). */
 	if (ac->ind_pending) {
-		struct timespec now;
-
-		clock_gettime(CLOCK_MONOTONIC, &now);
-		if (now.tv_sec > ac->ind_deadline.tv_sec ||
-		    (now.tv_sec == ac->ind_deadline.tv_sec &&
-		     now.tv_nsec >= ac->ind_deadline.tv_nsec)) {
-			ac->ind_pending = false;
-			ac->ind_handle = 0;
-			ac->ind_bearer_fd = -1;
-		} else {
-			ATT_RSP_BUF_FREE();
-			errno = EBUSY;
-			return (-1);
-		}
+		ATT_RSP_BUF_FREE();
+		errno = EBUSY;
+		return (-1);
 	}
 
 	maxlen = ac->mtu > ATT_PDU_BUF_SIZE ? ac->mtu : ATT_PDU_BUF_SIZE;
@@ -143,17 +130,15 @@ att_send_indication(struct att_conn *ac, uint16_t handle,
 		ac->ind_pending = true;
 		ac->ind_handle = handle;	/* for robust-caching Fig 2.6 */
 		/*
-		 * att_server_send() puts an indication on the primary bearer,
-		 * so that is where the confirmation must come back (Vol 3
-		 * Part F Section 3.3.3).
+		 * The confirmation must come back on the sending bearer
+		 * (Core Vol 3 Part F §3.3.3).
 		 */
-		ac->ind_bearer_fd = -1;
+		ac->ind_bearer_fd = ac->bearer_fd;
 		/*
 		 * Self-arm the 30 s confirmation deadline (Core Spec Vol 3
 		 * Part F §3.3.3 / §3.4.7.3).  A subsequent att_send_indication()
-		 * clears ind_pending if this instant has passed with no
-		 * confirmation, so indications can never be wedged permanently
-		 * even if a caller forgets to arm an external timer.  The
+		 * fails the bearer if this instant has passed with no
+		 * confirmation, even without an external timer. The
 		 * main-loop peripheral path additionally arms a kqueue timer via
 		 * blued_ind_arm_timeout() (blued_event.c) for timely teardown;
 		 * that remains the mechanism for failing the bearer on expiry,

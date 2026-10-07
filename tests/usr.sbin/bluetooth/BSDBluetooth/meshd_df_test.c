@@ -1334,6 +1334,106 @@ ATF_TC_BODY(im41b_df_prohibited_values_ignored, tc)
 	free(client->mgr);
 }
 
+/* Decode captured wire bytes with the expected credential, not a helper reply. */
+static void
+df_expect_echo(struct meshd_node *node, uint8_t opcode, int directed)
+{
+	struct mesh_net_pdu pdu;
+	size_t i;
+
+	for (i = 0; i < g_ncap; i++) {
+		if (g_cap[i].cls != MESHD_PDU_NET)
+			continue;
+		if (mesh_net_decrypt(directed ? node->self->directed_enckey :
+		    node->self->enckey, directed ? node->self->directed_privkey :
+		    node->self->privkey, directed ? node->self->directed_nid :
+		    node->self->nid, 0, g_cap[i].buf, g_cap[i].len, &pdu) == 0 &&
+		    pdu.ctl == 1 && pdu.transport[0] == opcode) {
+			ATF_CHECK_EQ(0x7f, pdu.ttl);
+			ATF_CHECK_EQ(opcode == 0x0e ? 1 : 3, pdu.transport_len);
+			if (opcode == 0x0f) {
+				ATF_CHECK_EQ(0, pdu.transport[1]);
+				ATF_CHECK_EQ(5, pdu.transport[2]);
+				ATF_CHECK_EQ(1, pdu.dst);
+			}
+			return;
+		}
+	}
+	atf_tc_fail("expected Echo opcode 0x%02x with %s credentials", opcode,
+	    directed ? "directed" : "flooding");
+}
+
+ATF_TC_WITHOUT_HEAD(df_echo_wire_lifecycle);
+ATF_TC_BODY(df_echo_wire_lifecycle, tc)
+{
+	MESH_HEAP(struct meshd_node, a);
+	MESH_HEAP(struct meshd_node, b);
+	struct meshd_config acfg, bcfg;
+	struct meshd_bearer bearer = { .tx = df_cap_tx };
+	struct mesh_df_fwd_entry *ae, *be;
+	uint64_t installed;
+	int changed;
+
+	df_provision(a, &acfg, 1);
+	df_provision(b, &bcfg, 5);
+	meshd_set_bearer(a, &bearer);
+	meshd_set_bearer(b, &bearer);
+	dev_df(a)->metric.lifetime = MESH_DF_LIFETIME_12_MIN;
+	dev_df(a)->echo.unicast_echo_interval = 1; /* 7200 ms, not seconds. */
+	g_ncap = 0;
+	ATF_REQUIRE_EQ(0, meshd_df_discover_begin(a, 5, 0));
+	df_pump(b);
+	df_pump(a);
+	df_pump(b);
+	ae = mesh_df_table_lookup(&a->self->df_table, 1, 5, 0);
+	be = mesh_df_table_lookup(&b->self->df_table, 1, 5, 0);
+	ATF_REQUIRE(ae != NULL && be != NULL);
+	installed = ae->install_ms;
+	be->backward_validated = 0;
+
+	g_ncap = 0;
+	ATF_REQUIRE(meshd_node_tick(a, installed + 7199, &changed) >= 0);
+	ATF_CHECK_EQ(0, ae->echo_deadline_ms);
+	g_ncap = 0;
+	ATF_REQUIRE(meshd_node_tick(a, installed + 7200, &changed) >= 0);
+	df_expect_echo(b, 0x0e, 1);
+	ATF_CHECK_EQ(installed + 37200, ae->echo_deadline_ms);
+	df_pump(b);
+	df_expect_echo(a, 0x0f, 0); /* No validated reverse path: flooding. */
+	df_pump(a);
+	ATF_CHECK_EQ(0, ae->echo_deadline_ms);
+	ATF_CHECK_EQ(installed, ae->install_ms); /* Echo must not extend lifetime. */
+
+	/* A validated backward path uses directed credentials for the reply. */
+	be->backward_validated = 1;
+	g_ncap = 0;
+	ATF_REQUIRE(meshd_node_tick(a, installed + 14400, &changed) >= 0);
+	df_expect_echo(b, 0x0e, 1);
+	df_pump(b);
+	df_expect_echo(a, 0x0f, 1);
+	df_pump(a);
+	ATF_CHECK_EQ(0, ae->echo_deadline_ms);
+
+	/* Disabled cadence produces no pending request, including after a tick. */
+	dev_df(a)->echo.unicast_echo_interval = 0;
+	g_ncap = 0;
+	ATF_REQUIRE(meshd_node_tick(a, installed + 21600, &changed) >= 0);
+	ATF_CHECK_EQ(0, ae->echo_deadline_ms);
+	dev_df(a)->echo.unicast_echo_interval = 1;
+	ATF_REQUIRE(meshd_node_tick(a, installed + 21601, &changed) >= 0);
+	ATF_CHECK(ae->echo_deadline_ms != 0);
+
+	/* A target without the matching path must not answer. */
+	mesh_df_table_init(&b->self->df_table);
+	df_pump(b);
+	ATF_CHECK_EQ(0, g_ncap);
+	ATF_REQUIRE(meshd_node_tick(a, installed + 51600, &changed) >= 0);
+	ATF_CHECK(ae->valid);
+	ATF_REQUIRE(meshd_node_tick(a, installed + 51601, &changed) >= 0);
+	ATF_CHECK_EQ(0, ae->valid);
+	ATF_CHECK_EQ(0, a->self->df_table.count);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -1353,6 +1453,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, df_discover_tick_timeout);
 	ATF_TP_ADD_TC(tp, df_directed_material_matches_sample_data);
 	ATF_TP_ADD_TC(tp, df_path_discovery_uses_directed_credentials);
+	ATF_TP_ADD_TC(tp, df_echo_wire_lifecycle);
 
 	return (atf_no_error());
 }

@@ -51,6 +51,9 @@
  * sandbox's capability rights.
  */
 
+#ifndef BLUED_TEST_SCAN_EXPORT
+static
+#endif
 int
 ctl_scan_result(const struct ctl_scan_params *params,
     struct blued_adapter *target, ctl_scan_result_cb cb, void *arg,

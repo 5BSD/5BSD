@@ -266,6 +266,34 @@ ATF_TC_BODY(field_size_rejections, tc)
 	ATF_CHECK_EQ(EINVAL, errno);
 }
 
+ATF_TC_WITHOUT_HEAD(null_input_keeps_builder);
+ATF_TC_BODY(null_input_keeps_builder, tc)
+{
+	struct adv_ad b, before;
+
+	adv_ad_init(&b, ADV_LEGACY_BUDGET);
+	ATF_REQUIRE_EQ(0, adv_ad_add_name(&b, true, "5BSD"));
+	before = b;
+	ATF_CHECK_EQ(-1, adv_ad_append(&b, 1, NULL, 1));
+	ATF_CHECK_EQ(EINVAL, errno);
+	ATF_CHECK_EQ(-1, adv_ad_add_uuid16(&b, true, NULL, 1));
+	ATF_CHECK_EQ(EINVAL, errno);
+	ATF_CHECK_EQ(-1, adv_ad_add_uuid128(&b, true, NULL, 1));
+	ATF_CHECK_EQ(EINVAL, errno);
+	ATF_CHECK_EQ(-1, adv_ad_add_name(&b, true, NULL));
+	ATF_CHECK_EQ(EINVAL, errno);
+	ATF_CHECK_EQ(-1, adv_ad_add_manuf(&b, 1, NULL, 1));
+	ATF_CHECK_EQ(EINVAL, errno);
+	ATF_CHECK_EQ(-1, adv_ad_add_service_data16(&b, 1, NULL, 1));
+	ATF_CHECK_EQ(EINVAL, errno);
+	ATF_CHECK_EQ(0, memcmp(&b, &before, sizeof(b)));
+	/* Empty manufacturer/service payloads still carry their two-byte ID. */
+	ATF_REQUIRE_EQ(0, adv_ad_add_manuf(&b, 0x1234, NULL, 0));
+	ATF_CHECK_EQ(0, memcmp(b.data + before.len, "\x03\xff\x34\x12", 4));
+	ATF_REQUIRE_EQ(0, adv_ad_add_service_data16(&b, 0x180f, NULL, 0));
+	ATF_CHECK_EQ(0, memcmp(b.data + before.len + 4, "\x03\x16\x0f\x18", 4));
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -282,6 +310,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, extended_budget);
 	ATF_TP_ADD_TC(tp, init_clamp);
 	ATF_TP_ADD_TC(tp, field_size_rejections);
+	ATF_TP_ADD_TC(tp, null_input_keeps_builder);
 
 	return (atf_no_error());
 }

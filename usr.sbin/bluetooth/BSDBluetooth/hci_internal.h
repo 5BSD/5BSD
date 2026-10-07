@@ -53,6 +53,7 @@ const uint8_t *hci_parse_ad(const uint8_t *data, size_t len, uint8_t *type,
     const uint8_t **value, uint8_t *vlen);
 void	hci_parse_ad_fields(const uint8_t *ad, size_t ad_len,
 	    struct ble_scan_result *sr);
+void hci_scan_result_merge(struct ble_scan_result *, const struct ble_scan_result *);
 /*
  * hci_ext_adv_report_len: framing length of one extended advertising report,
  * or 0 when the framing itself is broken.  Lets a caller skip a report whose
@@ -60,7 +61,14 @@ void	hci_parse_ad_fields(const uint8_t *ad, size_t ad_len,
  */
 size_t	hci_ext_adv_report_len(const uint8_t *p, size_t remain);
 size_t	hci_parse_ext_adv_report(const uint8_t *p, size_t remain,
-	    struct ble_scan_result *sr);
+    struct ble_scan_result *sr);
+
+/* Independent fragment histories for interleaved controller event streams. */
+struct hci_adv_parser;
+struct hci_adv_parser *hci_adv_parser_new(void);
+void hci_adv_parser_free(struct hci_adv_parser *);
+size_t hci_parse_ext_adv_report_ctx(struct hci_adv_parser *, const uint8_t *,
+    size_t, struct ble_scan_result *);
 
 /*
  * Select the own_address_type used by the Observer/Central scan roles

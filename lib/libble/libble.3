@@ -21,6 +21,7 @@
 .Nm ble_get_mtu ,
 .Nm ble_scan ,
 .Nm ble_scan_filtered ,
+.Nm ble_scan_stop ,
 .Nm ble_connect ,
 .Nm ble_connect_params ,
 .Nm ble_connect_name ,
@@ -193,6 +194,8 @@ Bluetooth Low Energy Library
 .Fn ble_scan "ble_ctx_t *ctx" "ble_scan_cb cb" "void *arg"
 .Ft int
 .Fn ble_scan_filtered "ble_ctx_t *ctx" "const ble_scan_params_t *params" "ble_scan_cb cb" "void *arg"
+.Ft int
+.Fn ble_scan_stop "ble_ctx_t *ctx"
 .Ft int
 .Fn ble_connect "ble_ctx_t *ctx" "const ble_addr_t *addr" "ble_connect_cb cb" "void *arg"
 .Ft int
@@ -660,10 +663,25 @@ unknown or not connected.
 initiates a BLE scan.
 Discovered devices are reported via the
 .Fa cb
-callback, one invocation per device.
-Returns \-1 with
+callback as advertising reports arrive.
+The daemon keeps a three-second discovery lease per client and shares the
+scanner among requests with compatible controller parameters.
+Filters and duplicate suppression are per client.
+Conflicting controller parameters, a second scan on the same client, or an
+active mesh scanner produce a correlated
 .Dv BLE_ERR_BUSY
-if a scan is already in progress.
+reply when processed by
+.Fn ble_process .
+.Pp
+.Fn ble_scan_stop
+ends only this client's discovery lease.
+The original scan and the stop request each receive a terminal reply;
+continue calling
+.Fn ble_process
+until
+.Fn ble_pending_count
+reaches zero.
+Closing the client also releases its lease.
 .Pp
 .Fn ble_scan_filtered
 uses explicit scan parameters and result filters.

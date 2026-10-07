@@ -308,7 +308,7 @@ att_open(struct att_conn *ac, const uint8_t *local_addr,
 		memcpy(&sa.l2cap_bdaddr, local_addr, sizeof(sa.l2cap_bdaddr));
 	sa.l2cap_bdaddr_type = BDADDR_LE_PUBLIC;
 
-	if (bind(fd, (struct sockaddr *)&sa, sizeof(sa)) < 0) {
+	if (bindat(fd, fd, (struct sockaddr *)&sa, sizeof(sa)) < 0) {
 		close(fd);
 		return (-1);
 	}
@@ -321,7 +321,7 @@ att_open(struct att_conn *ac, const uint8_t *local_addr,
 	sa.l2cap_cid = htole16(NG_L2CAP_ATT_CID);
 	sa.l2cap_bdaddr_type = addr_type;
 
-	if (connect(fd, (struct sockaddr *)&sa, sizeof(sa)) < 0) {
+	if (connectat(fd, fd, (struct sockaddr *)&sa, sizeof(sa)) < 0) {
 		close(fd);
 		return (-1);
 	}
@@ -389,7 +389,7 @@ att_open_fd(struct att_conn *ac, int fd, const uint8_t *local_addr,
 	if (local_addr != NULL)
 		memcpy(&sa.l2cap_bdaddr, local_addr, sizeof(sa.l2cap_bdaddr));
 	sa.l2cap_bdaddr_type = BDADDR_LE_PUBLIC;
-	if (bind(fd, (struct sockaddr *)&sa, sizeof(sa)) < 0)
+	if (bindat(fd, fd, (struct sockaddr *)&sa, sizeof(sa)) < 0)
 		return (-1);
 
 	memset(&sa, 0, sizeof(sa));
@@ -399,7 +399,7 @@ att_open_fd(struct att_conn *ac, int fd, const uint8_t *local_addr,
 	sa.l2cap_cid = htole16(NG_L2CAP_ATT_CID);
 	sa.l2cap_bdaddr_type = addr_type;
 
-	if (connect(fd, (struct sockaddr *)&sa, sizeof(sa)) < 0)
+	if (connectat(fd, fd, (struct sockaddr *)&sa, sizeof(sa)) < 0)
 		return (-1);
 
 	{
@@ -600,9 +600,6 @@ att_request_drain(struct att_conn *ac, int fd, void *rsp, size_t recvlen)
 	return (false);
 }
 
-/* Forward: the bearer-failure helper used by the deadline handler below. */
-static void att_bearer_fail(struct att_conn *ac, int fd);
-
 /*
  * A request whose deadline elapsed.  The two deadlines mean different things.
  * The 30 s ATT transaction ceiling (op_capped == false) is a protocol failure:
@@ -631,7 +628,7 @@ att_request_expired(struct att_conn *ac, int fd, bool op_capped, void *rsp,
 }
 
 /* A transaction failure invalidates only the ATT bearer which carried it. */
-static void
+void
 att_bearer_fail(struct att_conn *ac, int fd)
 {
 	int saved_errno;
@@ -959,6 +956,21 @@ att_request(struct att_conn *ac, const void *req, size_t reqlen,
 		return (-1);
 	}
 
+	/*
+	 * Validate fixed-size responses before releasing the selected bearer.
+	 * A wrapper cannot safely invalidate it afterwards: another transaction
+	 * may have acquired it, and an EATT response need not use ac->fd.
+	 * As with a mismatched opcode, a malformed transaction fails its bearer.
+	 * EBADMSG keeps local framing errors distinct from ATT Error Responses.
+	 */
+	if ((((uint8_t *)rsp)[0] == ATT_OP_MTU_RSP && n != 3) ||
+	    (((uint8_t *)rsp)[0] == ATT_OP_WRITE_RSP && n != 1) ||
+	    (((uint8_t *)rsp)[0] == ATT_OP_EXECUTE_WRITE_RSP && n != 1)) {
+		att_bearer_fail(ac, fd);
+		errno = EBADMSG;
+		return (-1);
+	}
+
 	/* Response consumed successfully: this bearer can accept another request. */
 	att_eatt_bearer_release(ac, fd);
 	/* Let Read/Write Long loops size their chunks from the real bearer. */
@@ -1054,6 +1066,8 @@ att_read(struct att_conn *ac, uint16_t handle,
 	struct att_error ae;
 	ssize_t n;
 
+	if (outlen != NULL)
+		*outlen = 0;
 	req[0] = ATT_OP_READ_REQ;
 	put_le16(req + 1, handle);
 
@@ -1089,6 +1103,8 @@ att_read_blob(struct att_conn *ac, uint16_t handle, uint16_t offset,
 	struct att_error ae;
 	ssize_t n;
 
+	if (outlen != NULL)
+		*outlen = 0;
 	req[0] = ATT_OP_READ_BLOB_REQ;
 	put_le16(req + 1, handle);
 	put_le16(req + 3, offset);

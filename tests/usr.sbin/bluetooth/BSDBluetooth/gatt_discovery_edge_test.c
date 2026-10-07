@@ -11,9 +11,8 @@
  * gatt_client_test.c covers the happy paths and a handful of malformed
  * responses.  This file targets the branches those tests leave uncovered:
  *
- *   - 32-bit UUID entries (entry_len 8 / 9) that either collapse to a
- *     16-bit UUID (high half zero) or expand against the Bluetooth Base
- *     UUID (high half non-zero) -- Core Spec Vol 3 Part B Sec 2.5.1.
+ *   - Reject raw 32-bit UUID entries (entry_len 8 / 9), whether the high
+ *     half is zero or non-zero -- Core Spec Vol 3 Part G Sec 2.5.4.
  *   - 128-bit UUID entries (entry_len 20 / 21, Find Info format 2).
  *   - ATT Error Responses (non ATTR_NOT_FOUND) surfaced by every
  *     discover_* variant -- Core Spec Vol 3 Part F Sec 3.4.1.1.
@@ -65,9 +64,6 @@ enum {
 	BT_CORE63_GATT_PROPERTY_ORACLES(GCEDGE_ENUM)
 };
 #undef GCEDGE_ENUM
-
-static const uint8_t gcedge_base_uuid_le[12] =
-    BT_CORE63_BLUETOOTH_BASE_UUID_LE12;
 
 enum {
 	GCEDGE_HANDLE_MIN = 0x0001,
@@ -133,16 +129,6 @@ gc_error_rsp(uint8_t *rsp, uint8_t req_op, uint16_t handle, uint8_t err)
 	put_le16(rsp + 2, handle);
 	rsp[4] = err;
 	return (5);
-}
-
-/* The Bluetooth Base UUID low 96 bits, LE, as gatt.c expands 32-bit UUIDs. */
-static void
-check_base_expanded(const uint8_t uuid128[16], const uint8_t tail4[4])
-{
-
-	ATF_CHECK_EQ(memcmp(uuid128, gcedge_base_uuid_le,
-	    sizeof(gcedge_base_uuid_le)), 0);
-	ATF_CHECK_EQ(memcmp(uuid128 + 12, tail4, 4), 0);
 }
 
 /* ================================================================
@@ -215,7 +201,7 @@ ATF_TC_BODY(edge_dbhash_invalid_list, tc)
 }
 
 /* ================================================================
- * primary services: 32-bit UUID that collapses to 16-bit (high half 0)
+ * primary services: reject raw 32-bit UUID even when high half is zero
  * ================================================================ */
 ATF_TC_WITHOUT_HEAD(edge_primary_uuid32_collapse);
 ATF_TC_BODY(edge_primary_uuid32_collapse, tc)
@@ -235,14 +221,14 @@ ATF_TC_BODY(edge_primary_uuid32_collapse, tc)
 	rsp[6] = 0x0F; rsp[7] = 0x18; rsp[8] = 0x00; rsp[9] = 0x00;
 	gc_preload(peer, rsp, sizeof(rsp));
 
-	ATF_CHECK_EQ(gatt_discover_primary_services(&ac, svcs, 1, &n), 0);
-	ATF_CHECK_EQ(n, 1);
-	ATF_CHECK_EQ(svcs[0].uuid16, BT_ASSIGNED_UUID_BATTERY_SERVICE);
+	ATF_CHECK_EQ(gatt_discover_primary_services(&ac, svcs, 1, &n), -1);
+	ATF_CHECK_EQ(errno, EPROTO);
+	ATF_CHECK_EQ(n, 0);
 	gc_cleanup(&ac, peer);
 }
 
 /* ================================================================
- * primary services: 32-bit UUID with non-zero high half -> Base UUID expand
+ * primary services: reject raw 32-bit UUID with non-zero high half
  * ================================================================ */
 ATF_TC_WITHOUT_HEAD(edge_primary_uuid32_expand);
 ATF_TC_BODY(edge_primary_uuid32_expand, tc)
@@ -262,10 +248,9 @@ ATF_TC_BODY(edge_primary_uuid32_expand, tc)
 	memcpy(rsp + 6, tail4, 4);	/* 0x12345678: high half non-zero */
 	gc_preload(peer, rsp, sizeof(rsp));
 
-	ATF_CHECK_EQ(gatt_discover_primary_services(&ac, svcs, 1, &n), 0);
-	ATF_CHECK_EQ(n, 1);
-	ATF_CHECK_EQ(svcs[0].uuid16, 0);
-	check_base_expanded(svcs[0].uuid128, tail4);
+	ATF_CHECK_EQ(gatt_discover_primary_services(&ac, svcs, 1, &n), -1);
+	ATF_CHECK_EQ(errno, EPROTO);
+	ATF_CHECK_EQ(n, 0);
 	gc_cleanup(&ac, peer);
 }
 
@@ -685,9 +670,9 @@ ATF_TC_BODY(edge_secondary_uuid32_collapse, tc)
 	rsp[6] = 0x01; rsp[7] = 0x18; rsp[8] = 0x00; rsp[9] = 0x00;
 	gc_preload(peer, rsp, sizeof(rsp));
 
-	ATF_CHECK_EQ(gatt_discover_secondary_services(&ac, svcs, 1, &n), 0);
-	ATF_CHECK_EQ(n, 1);
-	ATF_CHECK_EQ(svcs[0].uuid16, BT_ASSIGNED_UUID_GENERIC_ATTRIBUTE_SERVICE);
+	ATF_CHECK_EQ(gatt_discover_secondary_services(&ac, svcs, 1, &n), -1);
+	ATF_CHECK_EQ(errno, EPROTO);
+	ATF_CHECK_EQ(n, 0);
 	gc_cleanup(&ac, peer);
 }
 
@@ -709,10 +694,9 @@ ATF_TC_BODY(edge_secondary_uuid32_expand, tc)
 	memcpy(rsp + 6, tail4, 4);	/* 0xDEADBEEF */
 	gc_preload(peer, rsp, sizeof(rsp));
 
-	ATF_CHECK_EQ(gatt_discover_secondary_services(&ac, svcs, 1, &n), 0);
-	ATF_CHECK_EQ(n, 1);
-	ATF_CHECK_EQ(svcs[0].uuid16, 0);
-	check_base_expanded(svcs[0].uuid128, tail4);
+	ATF_CHECK_EQ(gatt_discover_secondary_services(&ac, svcs, 1, &n), -1);
+	ATF_CHECK_EQ(errno, EPROTO);
+	ATF_CHECK_EQ(n, 0);
 	gc_cleanup(&ac, peer);
 }
 
@@ -1040,7 +1024,7 @@ ATF_TC_BODY(edge_includes_error, tc)
 }
 
 /* ================================================================
- * characteristics: 32-bit UUID collapse / expand, 128-bit, small entry_len
+ * characteristics: reject raw 32-bit UUIDs; 128-bit and small entry_len
  * ================================================================ */
 ATF_TC_WITHOUT_HEAD(edge_chars_uuid32_collapse);
 ATF_TC_BODY(edge_chars_uuid32_collapse, tc)
@@ -1062,9 +1046,9 @@ ATF_TC_BODY(edge_chars_uuid32_collapse, tc)
 	gc_preload(peer, rsp, sizeof(rsp));
 
 	ATF_CHECK_EQ(gatt_discover_characteristics(&ac, 0x0001, 0xFFFF,
-	    chars, 1, &n), 0);
-	ATF_CHECK_EQ(n, 1);
-	ATF_CHECK_EQ(chars[0].uuid16, BT_ASSIGNED_UUID_DEVICE_NAME);
+	    chars, 1, &n), -1);
+	ATF_CHECK_EQ(errno, EPROTO);
+	ATF_CHECK_EQ(n, 0);
 	gc_cleanup(&ac, peer);
 }
 
@@ -1088,10 +1072,9 @@ ATF_TC_BODY(edge_chars_uuid32_expand, tc)
 	gc_preload(peer, rsp, sizeof(rsp));
 
 	ATF_CHECK_EQ(gatt_discover_characteristics(&ac, 0x0001, 0xFFFF,
-	    chars, 1, &n), 0);
-	ATF_CHECK_EQ(n, 1);
-	ATF_CHECK_EQ(chars[0].uuid16, 0);
-	check_base_expanded(chars[0].uuid128, tail4);
+	    chars, 1, &n), -1);
+	ATF_CHECK_EQ(errno, EPROTO);
+	ATF_CHECK_EQ(n, 0);
 	gc_cleanup(&ac, peer);
 }
 
@@ -1336,10 +1319,40 @@ ATF_TC_BODY(edge_descs_error, tc)
 /* ================================================================
  * ATF TEST PLAN
  * ================================================================ */
+ATF_TC_WITHOUT_HEAD(edge_primary_requested_range);
+ATF_TC_BODY(edge_primary_requested_range, tc)
+{
+	struct att_conn ac;
+	struct gatt_service svc;
+	uint8_t rsp[] = { 0x11, 6, 0, 0, 0, 0, 0x0f, 0x18 };
+	int peer, n;
+
+	/* The service declaration must be in range; its group end may exceed it. */
+	gc_pair(&ac, &peer);
+	put_le16(rsp + 2, 0x20);
+	put_le16(rsp + 4, 0x30);
+	gc_preload(peer, rsp, sizeof(rsp));
+	ATF_CHECK_EQ(-1, gatt_discover_primary_services_range(&ac,
+	    0x10, 0x1f, &svc, 1, &n));
+	ATF_CHECK_EQ(EPROTO, errno);
+	ATF_CHECK_EQ(0, n);
+	gc_cleanup(&ac, peer);
+
+	gc_pair(&ac, &peer);
+	put_le16(rsp + 2, 0x1f);
+	gc_preload(peer, rsp, sizeof(rsp));
+	ATF_REQUIRE_EQ(0, gatt_discover_primary_services_range(&ac,
+	    0x10, 0x1f, &svc, 1, &n));
+	ATF_CHECK_EQ(1, n);
+	ATF_CHECK_EQ(0x30, svc.end_handle);
+	gc_cleanup(&ac, peer);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
 	ATF_TP_ADD_TC(tp, edge_dbhash_error);
+	ATF_TP_ADD_TC(tp, edge_primary_requested_range);
 	ATF_TP_ADD_TC(tp, edge_dbhash_short);
 	ATF_TP_ADD_TC(tp, edge_dbhash_invalid_list);
 

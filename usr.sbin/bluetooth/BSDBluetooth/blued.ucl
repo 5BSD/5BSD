@@ -1,4 +1,8 @@
 activation { ipc = ["system.Bluetooth"]; }
+# Login-session tools may discover the public API; ADMIN remains stamped by
+# SwitchBoard. The separate raw-controller endpoint is anointment-gated.
+visible = ["user"];
+holds = ["system.bluetooth.controller"];
 # Container model: blued reconciles the GATT services plane clients registered
 # against the installed-or-running bundles (docs/book/src/plane/containers-and-storage.md);
 # the live set is read from these delivered directories, never opened by path.
@@ -16,5 +20,5 @@ max_failures = 10;
 # control node and its per-device /dev/vhidN units are obtained from the
 # filesystem daemon (bsdfilesystem) via service_open_isolated(3) — bsdfilesystem's own per-label
 # policy grants blued /dev/vhid* (read/write/ioctl), so nothing is declared here.
-# blued's radio uses AF_BLUETOOTH sockets, which are not IP-isolation endpoints,
-# so it needs no network capability either.
+# The controller unit delegates bound, privileged HCI descriptors. The main
+# daemon stays unprivileged; ATT/SMP/L2CAP sockets need no raw-HCI privilege.

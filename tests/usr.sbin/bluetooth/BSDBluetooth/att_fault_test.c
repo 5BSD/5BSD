@@ -277,6 +277,20 @@ __wrap_connect(int s, const struct sockaddr *a, socklen_t l)
 
 extern int __real_setsockopt(int, int, int, const void *, socklen_t);
 int
+__wrap_bindat(int dirfd, int s, const struct sockaddr *a, socklen_t l)
+{
+	ATF_REQUIRE_EQ(s, dirfd);
+	return (__wrap_bind(s, a, l));
+}
+
+int
+__wrap_connectat(int dirfd, int s, const struct sockaddr *a, socklen_t l)
+{
+	ATF_REQUIRE_EQ(s, dirfd);
+	return (__wrap_connect(s, a, l));
+}
+
+int
 __wrap_setsockopt(int s, int level, int name, const void *val, socklen_t l)
 {
 	if (level == SOL_L2CAP && name == SO_L2CAP_OWN_ADDR_TYPE)

@@ -935,7 +935,8 @@ ATF_TC_BODY(test_client_sender_guards, tc)
 	rsp[1] = 0x64;
 	cl_preload(peer, rsp, 2);	/* only 2 bytes */
 	ATF_CHECK_EQ(att_exchange_mtu(&ac, 200), -1);
-	ATF_CHECK_EQ(errno, EPROTO);
+	ATF_CHECK_EQ(errno, EBADMSG);
+	ATF_CHECK(ac.failed);
 	cl_cleanup(&ac, peer);
 
 	/* Read Multiple count < 2 and count too large (att.c 627 / 679). */
@@ -1109,7 +1110,8 @@ ATF_TC_BODY(test_response_trailing_octets_rejected, tc)
 	rsp[3] = 0xff;
 	cl_preload(peer, rsp, 4);
 	ATF_CHECK_EQ(-1, att_exchange_mtu(&ac, 100));
-	ATF_CHECK_EQ(EPROTO, errno);
+	ATF_CHECK_EQ(EBADMSG, errno);
+	ATF_CHECK(ac.failed);
 	cl_cleanup(&ac, peer);
 
 	cl_pair(&ac, &peer);
@@ -1117,7 +1119,8 @@ ATF_TC_BODY(test_response_trailing_octets_rejected, tc)
 	rsp[1] = 0xff;
 	cl_preload(peer, rsp, 2);
 	ATF_CHECK_EQ(-1, att_write_req(&ac, 3, "\xaa", 1));
-	ATF_CHECK_EQ(EPROTO, errno);
+	ATF_CHECK_EQ(EBADMSG, errno);
+	ATF_CHECK(ac.failed);
 	cl_cleanup(&ac, peer);
 
 	cl_pair(&ac, &peer);
@@ -1125,7 +1128,8 @@ ATF_TC_BODY(test_response_trailing_octets_rejected, tc)
 	rsp[1] = 0xff;
 	cl_preload(peer, rsp, 2);
 	ATF_CHECK_EQ(-1, att_execute_write(&ac, 0));
-	ATF_CHECK_EQ(EPROTO, errno);
+	ATF_CHECK_EQ(EBADMSG, errno);
+	ATF_CHECK(ac.failed);
 	cl_cleanup(&ac, peer);
 
 	cl_pair(&ac, &peer);
@@ -1559,6 +1563,36 @@ ATF_TC_BODY(test_eatt_failure_isolated, tc)
 	cl_cleanup(&ac, peer);
 }
 
+/* Extend Fuchsia's malformed Write Response test to multiplexed bearers.
+ * Only the bearer carrying the bad Write/Execute response may be removed. */
+ATF_TC_WITHOUT_HEAD(test_eatt_malformed_write_response_isolated);
+ATF_TC_BODY(test_eatt_malformed_write_response_isolated, tc)
+{
+	for (int execute = 0; execute <= 1; execute++) {
+		struct att_conn ac;
+		int peer, ep[2];
+		uint8_t malformed[] = { execute ? 0x19 : 0x13, 0 };
+		const uint8_t good[] = { 0x13 };
+
+		cl_pair(&ac, &peer);
+		ATF_REQUIRE_EQ(0, socketpair(AF_UNIX, SOCK_SEQPACKET, 0, ep));
+		ac.eatt[0].fd = ep[0];
+		ac.eatt[0].mtu = ATT_DEFAULT_MTU;
+		ac.eatt[0].active = true;
+		ac.eatt_count = 1;
+		cl_preload(ep[1], malformed, sizeof(malformed));
+		ATF_CHECK_EQ(-1, execute ? att_execute_write(&ac, 1) :
+		    att_write_req(&ac, 1, "foo", 3));
+		ATF_CHECK_EQ(EBADMSG, errno);
+		ATF_CHECK(!ac.failed);
+		ATF_CHECK_EQ(0, ac.eatt_count);
+		cl_preload(peer, good, sizeof(good));
+		ATF_CHECK_EQ(0, att_write_req(&ac, 1, "foo", 3));
+		close(ep[1]);
+		cl_cleanup(&ac, peer);
+	}
+}
+
 /* Unsolicited EATT traffic and indication confirmation stay on that bearer. */
 ATF_TC_WITHOUT_HEAD(test_eatt_recv_confirm_bearer);
 ATF_TC_BODY(test_eatt_recv_confirm_bearer, tc)
@@ -1775,6 +1809,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, test_bearer_release_no_match);
 	ATF_TP_ADD_TC(tp, test_error_response_opcode_correlation);
 	ATF_TP_ADD_TC(tp, test_eatt_failure_isolated);
+	ATF_TP_ADD_TC(tp, test_eatt_malformed_write_response_isolated);
 	ATF_TP_ADD_TC(tp, test_eatt_recv_confirm_bearer);
 	ATF_TP_ADD_TC(tp, test_eatt_request_delivers_notification);
 	ATF_TP_ADD_TC(tp, test_eatt_notification_flood_charges_budget);

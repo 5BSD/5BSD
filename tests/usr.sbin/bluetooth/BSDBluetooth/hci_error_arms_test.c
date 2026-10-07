@@ -360,6 +360,8 @@ static int G_next_fakefd = FAKEFD_BASE;
 int __wrap_socket(int domain, int type, int protocol);
 int __wrap_bind(int fd, const struct sockaddr *sa, socklen_t len);
 int __wrap_connect(int fd, const struct sockaddr *sa, socklen_t len);
+int __wrap_bindat(int dirfd, int fd, const struct sockaddr *sa, socklen_t len);
+int __wrap_connectat(int dirfd, int fd, const struct sockaddr *sa, socklen_t len);
 int __wrap_setsockopt(int fd, int level, int name, const void *val,
     socklen_t len);
 int __wrap_close(int fd);
@@ -406,6 +408,20 @@ __wrap_connect(int fd, const struct sockaddr *sa, socklen_t len)
 		return (0);
 	}
 	return (__real_connect(fd, sa, len));
+}
+
+int
+__wrap_bindat(int dirfd, int fd, const struct sockaddr *sa, socklen_t len)
+{
+	ATF_REQUIRE_EQ(fd, dirfd);
+	return (__wrap_bind(fd, sa, len));
+}
+
+int
+__wrap_connectat(int dirfd, int fd, const struct sockaddr *sa, socklen_t len)
+{
+	ATF_REQUIRE_EQ(fd, dirfd);
+	return (__wrap_connect(fd, sa, len));
 }
 
 int
@@ -3334,6 +3350,34 @@ ATF_TC_BODY(le_scan_params_reject_noncmddisallowed, tc)
 	ATF_CHECK_EQ(EIO, errno);
 }
 
+static int failed_kicks;
+
+static void
+failed_wakeup(void)
+{
+	failed_kicks++;
+	/* The real hook writes a nonblocking pipe, which can fail. */
+	(void)write(-1, "x", 1);
+}
+
+ATF_TC_WITHOUT_HEAD(devreq_wakeup_preserves_transport_error);
+ATF_TC_BODY(devreq_wakeup_preserves_transport_error, tc)
+{
+	const int errors[] = { ETIMEDOUT, ECONNRESET, EIO, EACCES };
+	uint8_t status;
+	struct bt_devreq r = { .opcode = 0x0c03, .rparam = &status,
+	    .rlen = sizeof(status) };
+
+	hci_event_defer_kick_hook = failed_wakeup;
+	for (size_t i = 0; i < sizeof(errors) / sizeof(errors[0]); i++) {
+		mock_xport_fail(errors[i]);
+		ATF_CHECK_EQ(-1, hci_devreq_logged(FD, &r, 1));
+		ATF_CHECK_EQ(errors[i], errno);
+	}
+	ATF_CHECK_EQ(4, failed_kicks);
+	hci_event_defer_kick_hook = NULL;
+}
+
 /* ================================================================
  * ATF program entry point.
  * ================================================================ */
@@ -3341,6 +3385,7 @@ ATF_TP_ADD_TCS(tp)
 {
 
 	ATF_TP_ADD_TC(tp, verbose_log_sweep);
+	ATF_TP_ADD_TC(tp, devreq_wakeup_preserves_transport_error);
 	ATF_TP_ADD_TC(tp, reject_arm_maps_to_eio);
 	ATF_TP_ADD_TC(tp, validation_adv);
 	ATF_TP_ADD_TC(tp, validation_conn);

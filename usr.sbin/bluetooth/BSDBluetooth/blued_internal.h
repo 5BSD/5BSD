@@ -385,6 +385,7 @@ struct blued_reslist_quiesce {
 	bool	ext_primary_adv;
 	bool	ext_sets[BLUED_EXT_ADV_SET_MAX];
 	bool	mesh_scan;
+	bool	discovery_scan;
 };
 void	blued_reslist_quiesce_begin(struct blued_adapter *adp,
 	    struct blued_reslist_quiesce *q);

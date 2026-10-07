@@ -698,15 +698,15 @@ ATF_TC_BODY(static_read_unchanged, tc)
  * Finding 51: an authorize-gated Write Request longer than the deferred-write
  * holding buffer (ATT_PEND_WVAL_MAX == 512, the maximum ATT attribute value
  * length) must be REJECTED with Invalid Attribute Value Length, not silently
- * truncated to 512 and acked.  A characteristic can register value_maxlen above
- * 512 (up to 517), so a >512 write can pass the maxlen check yet not fit the
- * pending buffer.  The reject happens before any authorize event is emitted.
+ * truncated to 512 and acked. Registration also enforces the 512-byte limit;
+ * a larger Write Request still fits the MTU and must be rejected before any
+ * authorize event is emitted.
  */
 ATF_TC_WITHOUT_HEAD(authorize_write_over_pend_max_rejected);
 ATF_TC_BODY(authorize_write_over_pend_max_rejected, tc)
 {
 	struct fixture fx;
-	uint8_t big_init[513];
+	uint8_t big_init[512];
 	uint8_t wval[513];
 	uint8_t pdu[3 + 513];
 	uint16_t h;
@@ -716,10 +716,9 @@ ATF_TC_BODY(authorize_write_over_pend_max_rejected, tc)
 	fx_setup(&fx);
 
 	/*
-	 * Register a writable, authorize-gated characteristic whose reserved
-	 * capacity exceeds ATT_PEND_WVAL_MAX (value_maxlen == 513 via a 513-byte
-	 * initial value).  The fixture MTU is ATT_PDU_BUF_SIZE (517) so a 513-B
-	 * value fits in one Write Request.
+	 * Register a maximum-size writable, authorize-gated characteristic.
+	 * The fixture MTU is 517, so a 513-byte value fits one Write Request
+	 * but exceeds the maximum legal attribute value.
 	 */
 	memset(big_init, 0x5A, sizeof(big_init));
 	h = attdb_add_characteristic(&fx.db, 0x2B01,
@@ -728,7 +727,7 @@ ATF_TC_BODY(authorize_write_over_pend_max_rejected, tc)
 	ATF_REQUIRE(h != 0);
 	set_flags_owner(&fx.db, h, ATT_ATTR_F_AUTHORIZE);
 
-	/* Write 513 octets: passes value_maxlen (513) but exceeds 512. */
+	/* Write 513 octets: exceeds the legal 512-byte attribute limit. */
 	memset(wval, 0xC3, sizeof(wval));
 	pdu[0] = ATT_OP_WRITE_REQ;
 	put_le16(pdu + 1, h);

@@ -145,6 +145,11 @@ the default is
 .Pa Config/blued.conf
 below the selected
 .Ev CAPABILITY_UNIT_DIR .
+For a managed unit, this option names a file within its delivered
+.Pa Config
+directory; absolute paths and directory traversal are rejected.
+Initial loading and reload both use that directory descriptor.
+An unavailable or invalid managed configuration prevents startup.
 See
 .Sx CONFIGURATION FILE
 below.
@@ -285,7 +290,7 @@ the bond database path
 an optional BTSnoop packet log
 .Pq Cm logfile ,
 and the BLE peripheral advertised name
-.Pq Cm peripheral_name , default Dq FreeBSD-BLE .
+.Pq Cm peripheral_name , default Dq 5BSD-BLE .
 .It Cm adapters
 A list of adapter names to use, or the string
 .Dq auto
@@ -763,19 +768,30 @@ daemon employs multiple layers of security:
 .Bl -bullet
 .It
 .Xr capsicum 4
-capability mode is entered after initialization,
-preventing the daemon from opening new file descriptors or
-accessing the global namespace.
+capability mode restricts access to the global namespace.
+Managed units start in capability mode; standalone execution enters it
+after initialization.
+Managed configuration and persistent state are accessed through delivered
+directory descriptors.
 File descriptors passed to control socket clients are restricted with
 .Xr cap_rights_limit 2
 to
 .Dv CAP_SEND , CAP_RECV , CAP_EVENT .
 .It
-A narrowly scoped descriptor broker is forked before capability mode.
+A narrowly scoped descriptor broker is forked during initialization.
 It holds no daemon file descriptors and can only create L2CAP sequenced-packet
 sockets, which it passes to the sandbox over a capability-limited local socket.
 This permits bounded concurrent connects and reconnects without a finite
 startup socket inventory.
+.It
+The managed controller unit creates privileged raw HCI sockets and delegates
+already-bound descriptors through
+.Li system.Bluetooth.Controller .
+SwitchBoard requires the
+.Li system.bluetooth.controller
+anointment; the broker also checks the stamped session rights.
+The main daemon remains unprivileged.
+Delivered descriptors have a restricted ioctl allowlist and cannot be rebound.
 .It
 SMP pairing supports both LE Legacy Pairing and LE Secure Connections
 (ECDH P-256).

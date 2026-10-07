@@ -273,6 +273,48 @@ bmt_make_bond_file(const char *dir, const char *base, char *path, size_t plen,
 	return (fd);
 }
 
+ATF_TC_WITHOUT_HEAD(bond_save_after_daemon_rights_limit);
+ATF_TC_BODY(bond_save_after_daemon_rights_limit, tc)
+{
+	struct smp_bond_db db;
+	struct smp_bond bond;
+	char path[PATH_MAX];
+	int status;
+	pid_t child;
+
+	bmt_reset();
+	ATF_REQUIRE_EQ(0, mkdir("state", 0700));
+	blued_g.bond_fd = bmt_make_bond_file("state", "bonds", path,
+	    sizeof(path), false);
+	blued_g.persist_dirfd = open("state", O_RDONLY | O_DIRECTORY);
+	ATF_REQUIRE(blued_g.persist_dirfd >= 0);
+	blued_g.bond_dirfd = blued_g.persist_dirfd;
+	bmt_bond_db_init(&db, blued_g.bond_dirfd, path);
+	ATF_REQUIRE_EQ(0, smp_bond_db_load(&db, blued_g.bond_fd));
+	child = fork();
+	ATF_REQUIRE(child >= 0);
+	if (child == 0) {
+		blued_capsicum_limit_fds();
+		if (cap_enter() != 0)
+			_exit(1);
+		bmt_fill_bond(&bond, 0x22);
+		if (smp_bond_db_store(&db, &bond) != 0)
+			_exit(2);
+		/* The second save uses the descriptor replaced by atomic rename. */
+		if (smp_bond_db_save(&db) != 0)
+			_exit(3);
+		if (smp_bond_db_load(&db, blued_g.bond_fd) != 0 || db.count != 2)
+			_exit(4);
+		_exit(0);
+	}
+	ATF_REQUIRE_EQ(child, waitpid(child, &status, 0));
+	ATF_REQUIRE(WIFEXITED(status));
+	ATF_CHECK_MSG(WEXITSTATUS(status) == 0, "bond persistence step %d failed",
+	    WEXITSTATUS(status));
+	close(blued_g.bond_fd);
+	close(blued_g.persist_dirfd);
+}
+
 /* ================================================================
  * blued_bond_load_or_quarantine() -- C3-L19.
  *
@@ -782,6 +824,30 @@ ATF_TC_BODY(reload_follows_a_replaced_config_inode, tc)
  * The cached startup fd stays as the fallback when the directory fd is
  * unavailable (a pre-cap_enter open that failed): the reload must still work.
  */
+ATF_TC(reload_rejects_fifo_replacement);
+ATF_TC_HEAD(reload_rejects_fifo_replacement, tc)
+{
+	atf_tc_set_md_var(tc, "timeout", "5");
+}
+ATF_TC_BODY(reload_rejects_fifo_replacement, tc)
+{
+	bmt_reset();
+	bmt_write_file("reload.conf", "features { reconnect_max_delay = 33; }\n");
+	blued_config_path = "reload.conf";
+	blued_config_preopen();
+	ATF_REQUIRE(blued_g.config_dirfd >= 0);
+	blued_reload_config();
+	ATF_REQUIRE_EQ(33, blued_cfg.reconnect_max_delay);
+	ATF_REQUIRE_EQ(0, unlink("reload.conf"));
+	ATF_REQUIRE_EQ(0, mkfifo("reload.conf", 0600));
+	blued_reload_config();
+	ATF_CHECK_EQ(33, blued_cfg.reconnect_max_delay);
+	ATF_CHECK_EQ(33, blued_reconnect_max_delay);
+	close(blued_g.config_fd);
+	close(blued_g.config_dirfd);
+	ATF_CHECK_EQ(0, unlink("reload.conf"));
+}
+
 ATF_TC_WITHOUT_HEAD(reload_falls_back_to_the_cached_descriptor);
 ATF_TC_BODY(reload_falls_back_to_the_cached_descriptor, tc)
 {
@@ -1213,10 +1279,52 @@ ATF_TC_BODY(privacy_off_keeps_resolution_for_peer_identities, tc)
 	bmt_privacy_teardown();
 }
 
+ATF_TC_WITHOUT_HEAD(managed_config_in_capmode);
+ATF_TC_BODY(managed_config_in_capmode, tc)
+{
+	char value[32];
+	int dirfd, status;
+	pid_t child;
+
+	bmt_reset();
+	bmt_write_file("blued.conf", "features { reconnect_max_delay = 30; }\n");
+	bmt_write_file("replacement", "features { reconnect_max_delay = 45; }\n");
+	dirfd = open(".", O_RDONLY | O_DIRECTORY);
+	ATF_REQUIRE(dirfd >= 0);
+	snprintf(value, sizeof(value), "%d", dirfd);
+	ATF_REQUIRE_EQ(0, setenv(SERVICE_CONFIG_FD_ENV, value, 1));
+	child = fork();
+	ATF_REQUIRE(child >= 0);
+	if (child == 0) {
+		blued_switchboard = 1;
+		if (cap_enter() != 0)
+			_exit(10);
+		if (blued_config_startup(&blued_cfg, NULL) != 0 ||
+		    blued_cfg.reconnect_max_delay != 30)
+			_exit(11);
+		if (renameat(dirfd, "replacement", dirfd, "blued.conf") != 0)
+			_exit(12);
+		blued_reload_config();
+		if (blued_cfg.reconnect_max_delay != 45)
+			_exit(13);
+		if (blued_config_startup(&blued_cfg, "missing.conf") != -1)
+			_exit(14);
+		_exit(0);
+	}
+	ATF_REQUIRE_EQ(child, waitpid(child, &status, 0));
+	ATF_REQUIRE(WIFEXITED(status));
+	ATF_CHECK_EQ_MSG(0, WEXITSTATUS(status), "managed configuration stage %d",
+	    WEXITSTATUS(status));
+	close(dirfd);
+	unsetenv(SERVICE_CONFIG_FD_ENV);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
+	ATF_TP_ADD_TC(tp, bond_save_after_daemon_rights_limit);
 
 	ATF_TP_ADD_TC(tp, quarantine_renames_unusable_db_aside);
+	ATF_TP_ADD_TC(tp, managed_config_in_capmode);
 	ATF_TP_ADD_TC(tp, quarantine_keeps_the_rejected_database);
 	ATF_TP_ADD_TC(tp, quarantine_continues_with_an_empty_database);
 	ATF_TP_ADD_TC(tp, quarantine_logs_at_security_level);
@@ -1232,6 +1340,7 @@ ATF_TP_ADD_TCS(tp)
 
 	ATF_TP_ADD_TC(tp, reload_reapplies_saved_cli_overrides);
 	ATF_TP_ADD_TC(tp, reload_follows_a_replaced_config_inode);
+	ATF_TP_ADD_TC(tp, reload_rejects_fifo_replacement);
 	ATF_TP_ADD_TC(tp, reload_falls_back_to_the_cached_descriptor);
 	ATF_TP_ADD_TC(tp, reload_keeps_settings_when_the_file_will_not_parse);
 	ATF_TP_ADD_TC(tp, reload_overlay_adopts_persist_owned_live_values);

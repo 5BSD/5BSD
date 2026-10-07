@@ -188,6 +188,7 @@ int	hci_le_scan_ex(int hci_fd, int duration_sec,
 	    const struct hci_scan_params *params,
 	    struct ble_scan_result *results, int maxresults, int *nresults);
 int	hci_le_set_scan_params(int hci_fd, const struct hci_scan_params *params);
+int	hci_le_set_ext_scan_enable(int hci_fd, uint8_t enable, uint8_t filter_dup);
 int	hci_le_set_ext_scan_params(int hci_fd,
 	    const struct hci_scan_params *params, uint8_t scanning_phys);
 int	hci_le_set_scan_enable(int hci_fd, uint8_t enable, uint8_t filter_dup);

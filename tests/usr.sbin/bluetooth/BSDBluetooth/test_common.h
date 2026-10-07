@@ -41,6 +41,41 @@
 #include "ble_util.h"
 #include "blued_devmgr.h"
 #include "hci_log.h"
+#include "discovery.h"
+
+/* Control-dispatch tests use a synchronous discovery seam. The discovery
+ * subsystem tests link discovery.c and real HCI parsers instead. */
+#ifndef TEST_LINKS_DISCOVERY
+bool blued_discovery_busy(void) { return (false); }
+bool blued_discovery_quiesce(struct blued_adapter *a __unused,
+    bool resume __unused) { return (false); }
+void blued_discovery_abort(void) { }
+void blued_discovery_cancel(int fd __unused, bool reply __unused) { }
+bool blued_discovery_timer(uintptr_t id __unused) { return (false); }
+void blued_discovery_adapter_gone(struct blued_adapter *a __unused) { }
+void blued_discovery_report(struct blued_adapter *a __unused,
+    const uint8_t *p __unused, size_t n __unused) { }
+#ifdef TEST_LINKS_CTL
+#include "ctl_internal.h"
+static void
+test_discovery_result(const struct blued_adapter *adp,
+    const struct ble_scan_result *result, void *arg)
+{
+	struct blued_ctl_client *c = arg;
+	blued_ctl_scan_event(c->fd, c->generation, c->active_request_id,
+	    adp, result);
+}
+int
+blued_discovery_start(struct blued_ctl_client *c,
+    const struct ctl_scan_params *params)
+{
+	int error = ctl_scan_result(params, NULL, test_discovery_result, c, 3);
+	if (error == IPC_ERR_NONE)
+		blued_ctl_scan_done(c->fd, c->generation, c->active_request_id, 0);
+	return (error);
+}
+#endif
+#endif
 
 /* ================================================================
  * ble_util.h globals

@@ -327,6 +327,10 @@ struct smp_conn {
 	uint16_t	con_handle;	/* HCI connection handle */
 	uint8_t		local_addr[6];
 	uint8_t		local_addr_type;
+	/* Stable identity for IdKey distribution; local_addr remains on-air.
+	 * A zero identity type means use local_addr only if public/static. */
+	uint8_t		local_identity_addr[6];
+	uint8_t		local_identity_addr_type;
 	uint8_t		remote_addr[6];
 	uint8_t		remote_addr_type;
 	struct smp_bond_db *bond_db;

@@ -499,7 +499,7 @@ ATF_TC_BODY(iso_big_over_capacity, tc)
  * GATT client behind emu B.  Used for GATT throughput + soak + the encrypted
  * data exchange of the pairing-lifecycle scenario.
  * ================================================================ */
-#define DF_LONG_LEN	2000		/* several-KB characteristic body */
+#define DF_LONG_LEN	512		/* Core Vol 3 Part F 3.2.9 maximum */
 
 struct srv_harness {
 	struct hci_emu	*emu_our;
@@ -607,8 +607,8 @@ srv_teardown(struct srv_harness *h)
 }
 
 /*
- * SCENARIO: GATT throughput -- move a several-KB characteristic body via
- * Read Blob paging across an exchanged MTU and assert the reassembled value
+ * SCENARIO: GATT throughput -- move repeated maximum-sized values via
+ * Read Blob paging across an exchanged MTU and assert each reassembled value
  * matches the source byte for byte (Vol 3 Part F 3.4.4.5, Vol 3 Part G 4.8.3).
  */
 ATF_TC_WITHOUT_HEAD(gatt_read_blob_multi_kb);
@@ -638,21 +638,25 @@ ATF_TC_BODY(gatt_read_blob_multi_kb, tc)
 	ATF_CHECK_EQ(ATT_PDU_BUF_SIZE, smtu);
 	btpeer_set_mtu(bp, 100);
 
-	/* Page the value in (100-1)-octet blobs until short read (Vol 3 G 4.8.3). */
-	for (;;) {
-		uint8_t blob[128];
-		size_t outlen = 0;
+	/* 64 reads move 32 KiB without exceeding the 512-byte attribute limit. */
+	for (unsigned int round = 0; round < 64; round++) {
+		total = 0;
+		/* Page in MTU-1 octet blobs until a short read (Vol 3 G 4.8.3). */
+		for (;;) {
+			uint8_t blob[128];
+			size_t outlen = 0;
 
-		ATF_REQUIRE_EQ(0, btpeer_gatt_read_blob(bp, vhandle,
-		    (uint16_t)total, blob, sizeof(blob), &outlen));
-		ATF_REQUIRE(total + outlen <= sizeof(got));
-		memcpy(got + total, blob, outlen);
-		total += outlen;
-		if (outlen < 100 - BT_DF_SPEC_ATT_READ_RSP_OVERHEAD)
-			break;
+			ATF_REQUIRE_EQ(0, btpeer_gatt_read_blob(bp, vhandle,
+			    (uint16_t)total, blob, sizeof(blob), &outlen));
+			ATF_REQUIRE(total + outlen <= sizeof(got));
+			memcpy(got + total, blob, outlen);
+			total += outlen;
+			if (outlen < 100 - BT_DF_SPEC_ATT_READ_RSP_OVERHEAD)
+				break;
+		}
+		ATF_CHECK_EQ((size_t)DF_LONG_LEN, total);
+		ATF_CHECK_EQ(0, memcmp(src, got, DF_LONG_LEN));
 	}
-	ATF_CHECK_EQ((size_t)DF_LONG_LEN, total);
-	ATF_CHECK_EQ(0, memcmp(src, got, DF_LONG_LEN));
 
 	srv_teardown(&h);
 }
@@ -662,13 +666,12 @@ ATF_TC_BODY(gatt_read_blob_multi_kb, tc)
  * Execute Write (reliable long write, Vol 3 Part F 3.4.6, Vol 3 Part G 4.9.4),
  * then read it back and assert byte-for-byte round-trip integrity.
  *
- * Sizing: btpeer verifies each reliable-write part echo in a 64-octet buffer,
- * and OUR server's prepare queue holds ATT_PREPARE_QUEUE_MAX (16) entries, so
- * one Execute commits up to 16*64 = 1024 octets across 16 queued Prepares --
+ * Sizing: the prepare queue holds 16 entries. One Execute commits
+ * 16*32 = 512 octets across 16 queued Prepares --
  * a full multi-part reliable write proving queue reassembly + commit.
  */
-#define DF_PREP_LEN	1024
-#define DF_PREP_MTU	(64 + BT_DF_SPEC_ATT_PREP_WRITE_OVERHEAD)
+#define DF_PREP_LEN	512
+#define DF_PREP_MTU	(32 + BT_DF_SPEC_ATT_PREP_WRITE_OVERHEAD)
 
 ATF_TC_WITHOUT_HEAD(gatt_prepared_write_reliable);
 ATF_TC_BODY(gatt_prepared_write_reliable, tc)
@@ -1753,8 +1756,94 @@ ATF_TC_BODY(smp_bridge_preserves_frame_boundaries, tc)
 	smp_teardown(&h, att_fd, smp_fd);
 }
 
+/* Two clients of the SAME database, with independent prepare queues. */
+ATF_TC_WITHOUT_HEAD(gatt_two_client_transaction_isolation);
+ATF_TC_BODY(gatt_two_client_transaction_isolation, tc)
+{
+	struct srv_harness a, b;
+	struct btpeer *pa, *pb;
+	uint8_t initial[512] = {0}, va[512], vb[512], got[512];
+	uint16_t handle, mtu;
+	struct att_attr *attr;
+	srv_setup(&a, &pa); srv_setup(&b, &pb);
+	attdb_init(&a.db, a.store, 48, a.valbuf, sizeof(a.valbuf));
+	ATF_REQUIRE(attdb_add_service(&a.db, 0x1523) != 0);
+	handle = attdb_add_characteristic(&a.db, 0x1525, 0x0a,
+	    ATT_PERM_READ | ATT_PERM_WRITE, initial, sizeof(initial));
+	ATF_REQUIRE(handle != 0);
+	b.db = a.db; /* Both databases reference A's shared attribute storage. */
+	attr = attdb_find_by_handle(&a.db, handle);
+	ATF_REQUIRE(attr != NULL);
+	ATF_REQUIRE_EQ(0, btpeer_gatt_exchange_mtu(pa, 69, &mtu));
+	ATF_REQUIRE_EQ(0, btpeer_gatt_exchange_mtu(pb, 69, &mtu));
+	btpeer_set_mtu(pa, 69); btpeer_set_mtu(pb, 69);
+	for (unsigned int cycle = 0; cycle < 64; cycle++) {
+		for (unsigned int i = 0; i < sizeof(va); i++) {
+			va[i] = (uint8_t)(cycle + i);
+			vb[i] = (uint8_t)(cycle ^ i ^ 0xa5);
+		}
+		for (unsigned int off = 0; off < 512; off += 64) {
+			ATF_REQUIRE_EQ(0, btpeer_gatt_prepare_write(pa, handle, off, va + off, 64));
+			ATF_REQUIRE_EQ(0, btpeer_gatt_prepare_write(pb, handle, off, vb + off, 64));
+		}
+		/* B commits, then A cancels: B's value must remain. */
+		ATF_REQUIRE_EQ(0, btpeer_gatt_execute_write(pb, 1));
+		ATF_REQUIRE_EQ(0, btpeer_gatt_execute_write(pa, 0));
+		ATF_CHECK_EQ(0, memcmp(attr->value, vb, 512));
+		/* Fresh A transaction, with B issuing reads between fragments. */
+		for (unsigned int off = 0; off < 512; off += 64) {
+			size_t n = 0;
+			ATF_REQUIRE_EQ(0, btpeer_gatt_prepare_write(pa, handle, off, va + off, 64));
+			ATF_REQUIRE_EQ(0, btpeer_gatt_read_blob(pb, handle, off, got, sizeof(got), &n));
+			ATF_REQUIRE(n <= 512 - off);
+			ATF_CHECK_EQ(0, memcmp(got, vb + off, n));
+		}
+		ATF_REQUIRE_EQ(0, btpeer_gatt_execute_write(pa, 1));
+		ATF_CHECK_EQ(0, memcmp(attr->value, va, 512));
+		ATF_CHECK_EQ(0, a.ac.prep_queue.count);
+		ATF_CHECK_EQ(0, b.ac.prep_queue.count);
+	}
+	srv_teardown(&b); srv_teardown(&a);
+}
+
+ATF_TC_WITHOUT_HEAD(gatt_attribute_size_contract);
+ATF_TC_BODY(gatt_attribute_size_contract, tc)
+{
+	struct att_db db;
+	struct att_attr attrs[32];
+	uint8_t arena[8192], value[513] = {0}, uuid[16] = {1};
+	uint16_t handle;
+	attdb_init(&db, attrs, 32, arena, sizeof(arena));
+	ATF_REQUIRE(attdb_add_service(&db, 0x1523) != 0);
+	for (unsigned int kind = 0; kind < 4; kind++) {
+		int before = db.count;
+		size_t used = db.val_used;
+		for (unsigned int len = 513; len >= 512; len--) {
+			if (kind == 0)
+				handle = attdb_add_characteristic(&db, 0x1525, 0x0a, 3, value, len);
+			else if (kind == 1)
+				handle = attdb_add_characteristic128(&db, uuid, 0x0a, 3, value, len);
+			else if (kind == 2)
+				handle = attdb_add_descriptor(&db, 0x1526, 3, value, len);
+			else
+				handle = attdb_add_descriptor128(&db, uuid, 3, value, len);
+			if (len == 513) {
+				ATF_CHECK_EQ(0, handle);
+				ATF_CHECK_EQ(before, db.count);
+				ATF_CHECK_EQ(used, db.val_used);
+			} else
+				ATF_REQUIRE(handle != 0);
+		}
+	}
+	ATF_CHECK_EQ(-1, attdb_set_char_value(&db, 0x1525, value, 513));
+	ATF_CHECK_EQ(-1, attdb_set_char_value(&db, 0x1525, NULL, 1));
+	ATF_CHECK_EQ(0, attdb_set_char_value(&db, 0x1525, value, 512));
+}
+
 ATF_TP_ADD_TCS(tp)
 {
+	ATF_TP_ADD_TC(tp, gatt_two_client_transaction_isolation);
+	ATF_TP_ADD_TC(tp, gatt_attribute_size_contract);
 
 	ATF_TP_ADD_TC(tp, iso_cis_bidirectional_sdu);
 	ATF_TP_ADD_TC(tp, iso_big_broadcast_sdu);

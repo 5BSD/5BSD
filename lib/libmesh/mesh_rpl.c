@@ -113,7 +113,8 @@ mesh_rpl_scan(struct mesh_rpl *rpl, uint16_t src, uint32_t iv_index,
 		 */
 		for (i = 0; i < rpl->size; i++)
 			if (rpl->entries[i].valid &&
-			    rpl->entries[i].iv_index + 1 < iv_index) {
+			    rpl->entries[i].iv_index < iv_index &&
+			    iv_index - rpl->entries[i].iv_index > 1) {
 				free_slot = i;
 				break;
 			}

@@ -1,0 +1,53 @@
+5BSD Bluetooth discovery ownership
+
+The typed GAP SCAN request creates a three-second lease. HCI advertising
+reports arrive through the daemon's existing event loop, and matching results
+are sent immediately with the original request ID. The terminal reply ends
+the lease. Command submission still uses the bounded synchronous HCI command
+helper; the multi-second scan receive loop no longer runs for IPC SCAN.
+
+Up to eight clients can share discovery. The controller's active/passive mode,
+scan interval/window and accept-list policy must match. UUID, RSSI, name and
+limited-discovery filters belong to each client. Duplicate filtering is in
+the host so a late-joining client sees reports already delivered to another.
+Advertising and scan-response fields are merged within a bounded per-adapter
+cache. Extended advertisement fragment histories are independent per adapter.
+New clients immediately receive matching cached observations without replaying
+them to existing clients. Observations older than three seconds are neither
+replayed nor merged, even when overlapping leases keep discovery running.
+An unavailable RSSI (127) never satisfies an enabled minimum-RSSI filter.
+
+GAP SCAN_STOP (opcode 10) has the zero-filled 12-byte GAP request body apart
+from the opcode. It ends this client's lease only. The original SCAN receives
+its terminal reply, followed by the stop acknowledgement. libble exposes this
+as ble_scan_stop(). Client teardown also cancels the lease, without replying
+to the departed client. Asynchronous replies check both fd and generation.
+
+Every lease has its own fresh timer ID. Cancelled/stale timers cannot finish
+a later lease on a reused descriptor. Losing an adapter removes that adapter's
+parser/cache; losing the last adapter completes outstanding scans with an
+error. Controller configuration and resolving-list changes use reslist_lock;
+bond updates pause and restore discovery without changing lease ownership.
+Power/privacy changes and host-RPA rotation terminate discovery before
+reprogramming the scanner. Failed scan disable retains controller ownership
+and receives up to three timed retries; a later start also retries cleanup.
+
+Limits
+- Mesh currently owns its scanner exclusively. A conflicting discovery or
+  mesh-subscription request fails rather than changing another owner's policy.
+- Requests with incompatible controller parameters return BUSY; a controller
+  policy union/scheduler is not implemented.
+- CONNECT_NAME still uses the bounded legacy synchronous scan. It refuses to
+  disturb a live discovery lease. Clients can instead discover asynchronously
+  and then connect to the returned address.
+- This is host-side software validation, not radio interoperability testing.
+
+Tests
+discovery_test uses the production manager, HCI encoders, report parsers and
+real kqueue. Controller completions and IPC sinks are controlled fixtures.
+blued_event_test:discovery_two_clients_wire_lifecycle connects two real Unix
+clients to the production dispatcher and feeds reports through the real HCI
+event path. It checks reply correlation, live delivery and independent stop.
+The stress case cycles all eight lease slots 100 times with mixed close and
+timer completion. Other cases cover rollback, adapter loss, stop retry,
+stale generations/timers, independent filters and fragment isolation.
