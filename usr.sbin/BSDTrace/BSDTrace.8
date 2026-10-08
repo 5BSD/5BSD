@@ -1,5 +1,5 @@
 .\" SPDX-License-Identifier: BSD-2-Clause
-.Dd September 25, 2026
+.Dd October 8, 2026
 .Dt BSDTRACE 8
 .Os
 .Sh NAME
@@ -77,6 +77,22 @@ configuration error.
 The descriptor is close-on-fork, close-on-exec, transferable once, and limited
 to the ioctl set required by the libdtrace consumer library
 .Pq see Xr dtrace_fdopen 3 .
+.Sh CONCURRENT CONSUMERS
+The service does not reserve exclusive access to
+.Pa /dev/dtrace/dtrace .
+Each authorized session receives a separately opened consumer with its own
+enabled probes, options, buffers, and tracing state.
+Traditional privileged DTrace tools may open the device concurrently.
+Duplicating or passing a descriptor shares its consumer; opening the device
+again creates a new consumer.
+.Pp
+A tool that opens the device by pathname still needs a conventional execution
+environment and device permissions.
+An application born in capability mode must use descriptor delegation and
+.Xr dtrace_fdopen 3
+or
+.Fn tracecmp_dtrace_open ;
+delegation does not automatically adapt an unchanged pathname-based tool.
 .Sh SECURITY
 Raw DTrace authority is an administrator-only capability.
 An ioctl allowlist cannot constrain D programs, probes, actions, targets, or

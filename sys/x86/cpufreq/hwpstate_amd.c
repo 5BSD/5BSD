@@ -331,6 +331,25 @@ get_cppc_regs_cb(void *args)
 		data->res |= HWP_ERROR_CPPC_REQUEST;
 }
 
+/* Read-only typed capabilities; values are CPPC units, not MHz. */
+static int
+sysctl_cppc_caps_field_handler(SYSCTL_HANDLER_ARGS)
+{
+	const struct hwpstate_softc *sc = arg1;
+	struct get_cppc_regs_data data;
+	u_int value;
+
+	if (req->newptr != NULL)
+		return (EPERM);
+	check_cppc_in_use(sc, __func__);
+	smp_rendezvous_cpu(sc->cpuid, smp_no_rendezvous_barrier,
+	    get_cppc_regs_cb, smp_no_rendezvous_barrier, &data);
+	if (hwp_has_error(data.res, HWP_ERROR_CPPC_CAPS))
+		return (EIO);
+	value = BITS_VALUE((uint32_t)arg2, data.caps);
+	return (sysctl_handle_int(oidp, &value, 0, req));
+}
+
 /*
  * Debug: Read all MSRs (bypassing the softc) and dump them.
  */
@@ -1049,13 +1068,34 @@ hwpstate_probe(device_t dev)
 static int
 hwpstate_attach(device_t dev)
 {
+	static const struct {
+		const char *name;
+		uint32_t mask;
+		const char *description;
+	} caps[] = {
+		{ "caps_highest_performance", AMD_CPPC_CAPS_1_HIGHEST_PERF_BITS,
+		    "Highest performance capability (CPPC units, not MHz)" },
+		{ "caps_nominal_performance", AMD_CPPC_CAPS_1_NOMINAL_PERF_BITS,
+		    "Nominal performance capability (CPPC units, not MHz)" },
+		{ "caps_efficient_performance", AMD_CPPC_CAPS_1_EFFICIENT_PERF_BITS,
+		    "Lowest nonlinear performance capability (CPPC units, not MHz)" },
+		{ "caps_lowest_performance", AMD_CPPC_CAPS_1_LOWEST_PERF_BITS,
+		    "Lowest performance capability (CPPC units, not MHz)" },
+	};
 	struct hwpstate_softc *sc;
+	size_t i;
 	int res;
 
 	sc = device_get_softc(dev);
 	if ((sc->flags & HWPFL_USE_CPPC) != 0) {
 		if ((res = enable_cppc(sc)) != 0)
 			return (res);
+		for (i = 0; i < nitems(caps); i++)
+			SYSCTL_ADD_PROC(device_get_sysctl_ctx(dev),
+			    SYSCTL_CHILDREN(device_get_sysctl_tree(dev)), OID_AUTO,
+			    caps[i].name, CTLTYPE_UINT | CTLFLAG_RD | CTLFLAG_MPSAFE,
+			    sc, caps[i].mask, sysctl_cppc_caps_field_handler, "IU",
+			    caps[i].description);
 		SYSCTL_ADD_PROC(device_get_sysctl_ctx(dev),
 		    SYSCTL_STATIC_CHILDREN(_debug), OID_AUTO,
 		    device_get_nameunit(dev),

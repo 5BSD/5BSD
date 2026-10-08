@@ -1,0 +1,10 @@
+comment = "Hardware telemetry with OpenTelemetry output"
+
+desc = <<EOD
+hwstat collects CPU power consumption (Intel RAPL or AMD Zen package energy), CPU
+temperatures, frequencies, C-state usage, ACPI thermal zones,
+and GPU state, and ships the results as text, JSONL, or OTLP/HTTP
+metrics to an OpenTelemetry collector.  The sysctl-based sensors are
+architecture-independent; energy data requires a supported Intel or AMD CPU and
+read access to cpuctl(4).
+EOD

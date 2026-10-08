@@ -108,6 +108,12 @@ device		apic			# I/O APIC
 # CPU frequency control
 device		cpufreq
 
+# CPU telemetry (drivers probe for the matching Intel or AMD hardware)
+device		cpuctl			# Read CPU identification and energy MSRs
+device		coretemp		# Intel on-die temperature
+device		amdsmn			# AMD System Management Network
+device		amdtemp			# AMD on-die temperature
+
 # Bus support.
 device		acpi
 device		smbios

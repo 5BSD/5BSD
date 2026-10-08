@@ -3,7 +3,7 @@
  *
  * Copyright (c) 2026 Kory Heard
  *
- * hwtlm — hardware telemetry with OpenTelemetry output.
+ * hwstat — hardware telemetry with OpenTelemetry output.
  * Subcommands: list (capabilities), watch (interval sampling),
  * exec (energy cost of running a command).
  */
@@ -12,6 +12,7 @@
 
 #include <ctype.h>
 #include <err.h>
+#include <errno.h>
 #include <getopt.h>
 #include <math.h>
 #include <signal.h>
@@ -22,7 +23,7 @@
 #include <unistd.h>
 
 #include "otelexport.h"
-#include "hwtlm.h"
+#include "hwstat.h"
 
 static volatile sig_atomic_t got_signal;
 
@@ -46,12 +47,39 @@ install_signal_handlers(void)
 	sigaction(SIGTERM, &sa, NULL);
 }
 
+static double
+monotime(void)
+{
+	struct timespec ts;
+
+	if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0)
+		err(1, "clock_gettime");
+	return ((double)ts.tv_sec + (double)ts.tv_nsec / 1e9);
+}
+
+static void
+sleep_until(double deadline)
+{
+	struct timespec ts;
+	int error;
+
+	ts.tv_sec = (time_t)deadline;
+	ts.tv_nsec = (long)((deadline - (double)ts.tv_sec) * 1e9);
+	do {
+		error = clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &ts, NULL);
+	} while (error == EINTR && !got_signal);
+	if (error != 0 && error != EINTR) {
+		errno = error;
+		err(1, "clock_nanosleep");
+	}
+}
+
 static void __dead2
 usage(void)
 {
 
 	fprintf(stderr,
-	    "usage: hwtlm <subcommand> [args]\n"
+	    "usage: hwstat <subcommand> [args]\n"
 	    "\n"
 	    "Subcommands:\n"
 	    "  list    Show system hardware telemetry capabilities.\n"
@@ -59,7 +87,7 @@ usage(void)
 	    "  exec    Run a command and report its energy and thermal "
 	    "impact.\n"
 	    "\n"
-	    "See hwtlm(8) or `hwtlm <subcommand> -h` for details.\n");
+	    "See hwstat(8) or `hwstat <subcommand> -h` for details.\n");
 	exit(2);
 }
 
@@ -98,12 +126,12 @@ otel_open(struct otel_ctx *ctx, const char *cli_endpoint, double interval)
 	oe_os_version(ctx->osrel, sizeof(ctx->osrel));
 	memset(&resource, 0, sizeof(resource));
 	resource.service_name = ctx->env.service_name != NULL ?
-	    ctx->env.service_name : "hwtlm";
+	    ctx->env.service_name : "hwstat";
 	resource.host_name = ctx->hostname;
 	resource.host_arch = ctx->arch;
 	resource.os_name = "freebsd";
 	resource.os_version = ctx->osrel;
-	resource.service_version = HWTLM_VERSION;
+	resource.service_version = HWSTAT_VERSION;
 	resource.custom = ctx->env.resource_attrs;
 	resource.ncustom = ctx->env.nresource_attrs;
 
@@ -180,7 +208,16 @@ emit_otlp_sample(struct oe_exporter *exporter,
 	char name[64], cpu_id[16];
 	double tmin, tavg, tmax;
 	int fmin, favg, fmax, i, j;
+	size_t k;
 
+	for (k = 0; k < snap->nmetrics; k++)
+		emit_gauge(exporter, &snap->ts, "hardware", snap->metrics[k].name,
+		    OE_AGG_AVG, "source", snap->metrics[k].source,
+		    snap->metrics[k].value);
+	for (k = 0; k < snap->nsources; k++)
+		emit_gauge(exporter, &snap->ts, "hardware", "source_available",
+		    OE_AGG_AVG, "source", snap->sources[k].name,
+		    strcmp(snap->sources[k].status, "available") == 0);
 	for (i = 0; i < nsamples; i++) {
 		snprintf(name, sizeof(name), "%s_milliwatts",
 		    rapl_domain_name(samples[i].domain));
@@ -193,6 +230,10 @@ emit_otlp_sample(struct oe_exporter *exporter,
 		for (i = 0; i < snap->ncores; i++) {
 			core = &snap->cores[i];
 			snprintf(cpu_id, sizeof(cpu_id), "%d", core->cpu);
+			if (core->have_usage)
+				emit_gauge(exporter, &snap->ts, "cpu",
+				    "busy_basis_points", OE_AGG_AVG, "cpu_id", cpu_id,
+				    (int64_t)((100.0 - core->usage[4]) * 100));
 			if (core->have_temp)
 				emit_gauge(exporter, &snap->ts, "cpu",
 				    "temp", OE_AGG_AVG, "cpu_id", cpu_id,
@@ -226,6 +267,18 @@ emit_otlp_sample(struct oe_exporter *exporter,
 			}
 		}
 	} else {
+		double busy = 0;
+		int n = 0;
+
+		for (i = 0; i < snap->ncores; i++) {
+			if (snap->cores[i].have_usage) {
+				busy += 100.0 - snap->cores[i].usage[4];
+				n++;
+			}
+		}
+		if (n > 0)
+			emit_gauge(exporter, &snap->ts, "system", "cpu_busy_basis_points",
+			    OE_AGG_AVG, "scope", "host", (int64_t)(busy * 100 / n));
 		if (snap_temp_stats(snap, &tmin, &tavg, &tmax) > 0)
 			emit_gauge(exporter, &snap->ts, "system",
 			    "cpu_temp_max", OE_AGG_MAX, "source", "cpu",
@@ -239,18 +292,22 @@ emit_otlp_sample(struct oe_exporter *exporter,
 			    "gpu_freq_mhz", OE_AGG_AVG, "source", "gpu",
 			    snap->gpu_freq);
 	}
+	for (i = 0; i < snap->nthermal; i++)
+		emit_gauge(exporter, &snap->ts, "thermal", "temperature_millicelsius",
+		    OE_AGG_AVG, "source", snap->thermal[i].name,
+		    (int64_t)(snap->thermal[i].celsius * 1000));
 	oe_flush(exporter);
 }
 
 /* ---------------------------------------------------------------- */
-/* hwtlm list							 	*/
+/* hwstat list							 	*/
 
 static void __dead2
 list_usage(void)
 {
 
 	fprintf(stderr,
-	    "usage: hwtlm list [--format text|json] [--per-core]\n");
+	    "usage: hwstat list [--format text|json] [--per-core]\n");
 	exit(2);
 }
 
@@ -264,8 +321,9 @@ list_text(struct rapl *r, const struct sys_snapshot *snap, int cpucount,
 	size_t namewidth, k;
 	int fmin, favg, fmax, i, j, n;
 
+	printf("CPU:           %s\n", snap->model);
 	if (r != NULL)
-		printf("CPU:           %s\n", rapl_microarch(r));
+		printf("Energy backend: %s (CPU 0 package)\n", rapl_microarch(r));
 	printf("Logical CPUs:  %d\n\n", cpucount);
 
 	if (r != NULL) {
@@ -295,8 +353,8 @@ list_text(struct rapl *r, const struct sys_snapshot *snap, int cpucount,
 			    rapl_domain_label(domains[i]));
 		printf("\n");
 	} else
-		printf("RAPL:          not available (Intel only, needs "
-		    "cpuctl)\n\n");
+		printf("RAPL:          not available (needs supported Intel/AMD "
+		    "CPU and read access to /dev/cpuctl0)\n\n");
 
 	if (percore) {
 		printf("Per-core temperatures:\n");
@@ -318,10 +376,9 @@ list_text(struct rapl *r, const struct sys_snapshot *snap, int cpucount,
 		if (snap->any_throttled)
 			printf("Throttled:     YES\n");
 	} else
-		printf("Core temps:    not available (try: kldload "
-		    "coretemp)\n");
-	if (snap->have_acpi)
-		printf("ACPI thermal:  %.1f C\n", snap->acpi_temp);
+		printf("Core temps:    not available (needs coretemp on Intel, "
+		    "amdtemp on AMD, or a platform driver)\n");
+	fmt_thermal_text(snap);
 	printf("\n");
 
 	if (percore) {
@@ -348,7 +405,7 @@ list_text(struct rapl *r, const struct sys_snapshot *snap, int cpucount,
 		if (first->cstate.have_lowest)
 			printf("Lowest:        %s\n", first->cstate.lowest);
 		if (percore) {
-			printf("\nPer-core C-state residency:\n");
+			printf("\nPer-core C-state usage (entry counts):\n");
 			printf("  %-4s", "CPU");
 			for (j = 0; j < first->cstate.nlevels; j++)
 				printf("  %5s%% ",
@@ -391,9 +448,12 @@ list_json(struct rapl *r, const struct sys_snapshot *snap, int cpucount,
 	int fmin, favg, fmax, i, j, n;
 
 	oe_buf_init(&b);
-	oe_buf_appendf(&b, "{\"logical_cpus\":%d", cpucount);
+	oe_buf_appendf(&b, "{\"logical_cpus\":%d,\"cpu_model\":\"", cpucount);
+	oe_buf_appendjson(&b, snap->model);
+	oe_buf_appendstr(&b, "\"");
 	if (r != NULL) {
-		oe_buf_appendstr(&b, ",\"cpu\":\"");
+		oe_buf_appendstr(&b, ",\"rapl_available\":true,\"rapl_cpu\":0,"
+		    "\"cpu\":\"");
 		oe_buf_appendjson(&b, rapl_microarch(r));
 		oe_buf_appendf(&b, "\",\"energy_unit\":%g",
 		    rapl_energy_unit(r));
@@ -419,8 +479,7 @@ list_json(struct rapl *r, const struct sys_snapshot *snap, int cpucount,
 		oe_buf_appendf(&b, ",\"throttled\":%s",
 		    snap->any_throttled ? "true" : "false");
 	}
-	if (snap->have_acpi)
-		oe_buf_appendf(&b, ",\"acpi_temp\":%.1f", snap->acpi_temp);
+
 	if (snap_freq_stats(snap, &fmin, &favg, &fmax) > 0)
 		oe_buf_appendf(&b, ",\"freq_min_mhz\":%d,"
 		    "\"freq_avg_mhz\":%d,\"freq_max_mhz\":%d", fmin, favg,
@@ -473,8 +532,9 @@ list_json(struct rapl *r, const struct sys_snapshot *snap, int cpucount,
 		}
 		oe_buf_appendstr(&b, "]");
 	}
-	oe_buf_appendstr(&b, "}");
-	printf("%s\n", b.data != NULL ? b.data : "{}");
+	printf("%s", b.data != NULL ? b.data : "{");
+	fmt_thermal_json(snap);
+	printf("}\n");
 	oe_buf_free(&b);
 }
 
@@ -508,30 +568,32 @@ cmd_hw_list(int argc, char **argv)
 	if (optind != argc)
 		list_usage();
 	if (format == HW_FORMAT_OTEL)
-		errx(2, "--format otel is only supported by `hwtlm watch`");
+		errx(2, "--format otel is only supported by `hwstat watch`");
 
 	cpucount = sys_cpu_count();
 	r = rapl_open();
 	if (sys_snapshot(&snap, cpucount) != 0)
 		err(1, "snapshot");
+	if (hw_capabilities_read(&snap) != 0)
+		err(1, "CPU capabilities");
 	if (format == HW_FORMAT_JSON)
-		list_json(r, &snap, cpucount, percore);
+		list_json(r, &snap, snap.ncores, percore);
 	else
-		list_text(r, &snap, cpucount, percore);
+		list_text(r, &snap, snap.ncores, percore);
 	sys_snapshot_free(&snap);
 	rapl_close(r);
 	return (0);
 }
 
 /* ---------------------------------------------------------------- */
-/* hwtlm watch							 	*/
+/* hwstat watch							 	*/
 
 static void __dead2
 watch_usage(void)
 {
 
 	fprintf(stderr,
-	    "usage: hwtlm watch [--interval seconds] [--duration seconds]\n"
+	    "usage: hwstat watch [--interval seconds] [--duration seconds]\n"
 	    "           [--per-core] [--format text|json|otel] "
 	    "[--endpoint url]\n");
 	exit(2);
@@ -550,13 +612,12 @@ cmd_hw_watch(int argc, char **argv)
 	};
 	struct otel_ctx octx;
 	struct rapl_sample samples[RAPL_NDOMAINS];
-	struct sys_snapshot snap;
-	struct timespec start, now;
+	struct sys_snapshot snap, previous;
 	struct rapl *r;
 	struct oe_exporter *exporter;
 	enum hw_format format;
 	const char *endpoint;
-	double interval, duration, elapsed_total, elapsed;
+	double interval, duration, elapsed, next_output, deadline, now;
 	char *end;
 	int ch, cpucount, nsamples, percore, rapl_failed;
 
@@ -571,10 +632,10 @@ cmd_hw_watch(int argc, char **argv)
 		case 'i':
 			interval = strtod(optarg, &end);
 			if (end == optarg || *end != '\0' ||
-			    !isfinite(interval) || interval <= 0 ||
+			    !isfinite(interval) || interval < 0.001 ||
 			    interval > 3600)
 				errx(2, "--interval must be a number of "
-				    "seconds between 0 and 3600");
+				    "seconds between 0.001 and 3600");
 			break;
 		case 'd':
 			duration = strtod(optarg, &end);
@@ -612,6 +673,10 @@ cmd_hw_watch(int argc, char **argv)
 		}
 	}
 
+	if (sys_snapshot(&previous, cpucount) != 0)
+		err(1, "initial snapshot");
+	cpucount = previous.ncores;
+
 	if (format == HW_FORMAT_TEXT) {
 		if (r != NULL)
 			fprintf(stderr, "CPU: %s (%d logical CPUs)\n",
@@ -625,29 +690,48 @@ cmd_hw_watch(int argc, char **argv)
 	}
 
 	install_signal_handlers();
-	clock_gettime(CLOCK_MONOTONIC, &start);
+	now = monotime();
+	next_output = now + interval;
+	deadline = duration > 0 ? now + duration : INFINITY;
 
 	/* Prime the RAPL counters so the first row has a real delta. */
 	nsamples = 0;
-	if (r != NULL)
-		(void)rapl_sample(r, samples, &elapsed);
+	if (r != NULL && rapl_poll(r) != 0) {
+		warn("initial energy reading");
+		rapl_failed = 1;
+	}
 
-	while (!got_signal) {
-		usleep((useconds_t)(interval * 1e6));
+	while (!got_signal && !rapl_failed) {
+		double wake = fmin(next_output, deadline);
+
+		if (r != NULL)
+			wake = fmin(wake, monotime() + rapl_poll_interval(r));
+		sleep_until(wake);
 		if (got_signal)
 			break;
+		now = monotime();
+		if (now < next_output && now < deadline) {
+			if (r != NULL && rapl_poll(r) != 0) {
+				warn("energy polling failed");
+				rapl_failed = 1;
+			}
+			continue;
+		}
 		nsamples = 0;
 		if (r != NULL) {
 			nsamples = rapl_sample(r, samples, &elapsed);
 			if (nsamples < 0) {
-				fprintf(stderr, "hwtlm watch: RAPL read "
+				fprintf(stderr, "hwstat watch: RAPL read "
 				    "failed\n");
 				rapl_failed = 1;
 				break;
 			}
 		}
-		if (sys_snapshot(&snap, cpucount) != 0)
+		if (sys_snapshot(&snap, cpucount) != 0) {
+			rapl_failed = 1;
 			break;
+		}
+		sys_snapshot_delta(&snap, &previous);
 		switch (format) {
 		case HW_FORMAT_OTEL:
 			emit_otlp_sample(exporter, samples, nsamples, &snap,
@@ -669,16 +753,17 @@ cmd_hw_watch(int argc, char **argv)
 			break;
 		}
 		fflush(stdout);
-		sys_snapshot_free(&snap);
-		if (duration > 0) {
-			clock_gettime(CLOCK_MONOTONIC, &now);
-			elapsed_total = (double)(now.tv_sec - start.tv_sec) +
-			    (double)(now.tv_nsec - start.tv_nsec) / 1e9;
-			if (elapsed_total >= duration)
-				break;
-		}
+		sys_snapshot_free(&previous);
+		previous = snap;
+		if (now >= deadline)
+			break;
+		/* Skip expired output deadlines after slow sensor/export calls. */
+		next_output += interval;
+		if (next_output <= monotime())
+			next_output = monotime() + interval;
 	}
 
+	sys_snapshot_free(&previous);
 	if (exporter != NULL)
 		otel_close(&octx);
 	rapl_close(r);
@@ -687,97 +772,134 @@ cmd_hw_watch(int argc, char **argv)
 }
 
 /* ---------------------------------------------------------------- */
-/* hwtlm exec							 	*/
+/* hwstat exec							 	*/
 
 static void __dead2
 exec_usage(void)
 {
 
 	fprintf(stderr,
-	    "usage: hwtlm exec [--format text|json] [--per-core] -- "
+	    "usage: hwstat exec [--format text|json] [--per-core] -- "
 	    "command [args]\n");
 	exit(2);
 }
 
-/*
- * Run the child, accumulating RAPL energy deltas while it runs.
- * The energy-status counters are only 32 bits wide (~11 minutes to
- * wrap at 100 W with the 2^-16 J server unit), so a single
- * before/after delta silently loses 2^32 counts per wrap on long
- * runs — resample every ~30 s instead.  A 30 s interval cannot
- * itself wrap twice (that would need a >2 kW package).
- *
- * On success *have_counters reflects whether accum[] holds valid
- * raw energy deltas per domain.
- */
-static int
-run_child(char **args, struct rapl *r, int *have_counters,
-    uint64_t accum[RAPL_NDOMAINS])
+/* A caught disposition keeps blocked SIGCHLD pending on this kernel. */
+static void
+child_exit_signal(int sig __unused)
 {
-	enum rapl_domain domains[RAPL_NDOMAINS];
-	uint64_t prev[RAPL_NDOMAINS], cur[RAPL_NDOMAINS];
+}
+
+/* Poll package energy independently of child duration and output cadence. */
+static int
+run_child(char **args, struct rapl *r, int *energy_failed,
+    struct rapl_sample results[RAPL_NDOMAINS], int *nresults)
+{
 	pid_t pid, n;
-	int i, ndomains, status, ticks;
+	struct timespec timeout;
+	struct sigaction action, saved_action;
+	sigset_t children, saved;
+	double elapsed, interval, next_poll, remaining;
+	int status, event, result;
 
-	memset(accum, 0, RAPL_NDOMAINS * sizeof(accum[0]));
-	memset(prev, 0, sizeof(prev));
-	memset(cur, 0, sizeof(cur));
-	ndomains = 0;
-	if (*have_counters && r != NULL) {
-		ndomains = rapl_domains(r, domains);
-		if (rapl_read_counters(r, prev) != 0)
-			*have_counters = 0;
-	} else
-		*have_counters = 0;
-
-	pid = fork();
-	if (pid == -1) {
-		warn("fork");
+	*nresults = 0;
+	*energy_failed = 0;
+	/* Block before fork: exit between waitpid and sigtimedwait stays pending. */
+	sigemptyset(&children);
+	sigaddset(&children, SIGCHLD);
+	if (sigprocmask(SIG_BLOCK, &children, &saved) != 0) {
+		warn("block SIGCHLD");
+		*energy_failed = r != NULL;
 		return (127);
 	}
+	memset(&action, 0, sizeof(action));
+	action.sa_handler = child_exit_signal;
+	action.sa_flags = SA_NOCLDSTOP;
+	sigemptyset(&action.sa_mask);
+	if (sigaction(SIGCHLD, &action, &saved_action) != 0) {
+		warn("catch SIGCHLD");
+		(void)sigprocmask(SIG_SETMASK, &saved, NULL);
+		*energy_failed = r != NULL;
+		return (127);
+	}
+	if (r != NULL && rapl_poll(r) != 0)
+		*energy_failed = 1;
+	pid = fork();
+	if (pid == -1) {
+		*energy_failed = r != NULL;
+		warn("fork");
+		result = 127;
+		goto out;
+	}
 	if (pid == 0) {
+		if (sigaction(SIGCHLD, &saved_action, NULL) != 0)
+			_exit(127);
+		if (sigprocmask(SIG_SETMASK, &saved, NULL) != 0)
+			_exit(127);
 		execvp(args[0], args);
 		warn("%s", args[0]);
 		_exit(127);
 	}
-
-	if (!*have_counters) {
-		if (waitpid(pid, &status, 0) < 0)
-			return (127);
-	} else {
-		ticks = 0;
-		for (;;) {
-			n = waitpid(pid, &status, WNOHANG);
-			if (n == pid)
-				break;
-			if (n < 0)
-				return (127);
-			usleep(250000);
-			if (++ticks < 120)	/* ~30 s */
+	interval = r != NULL ? rapl_poll_interval(r) : 1.0;
+	next_poll = monotime() + interval;
+	for (;;) {
+		n = waitpid(pid, &status,
+		    r != NULL && !*energy_failed ? WNOHANG : 0);
+		if (n == pid)
+			break;
+		if (n < 0) {
+			if (errno == EINTR)
 				continue;
-			ticks = 0;
-			if (rapl_read_counters(r, cur) == 0) {
-				for (i = 0; i < ndomains; i++)
-					accum[domains[i]] +=
-					    rapl_counter_delta(
-					    cur[domains[i]],
-					    prev[domains[i]]);
-				memcpy(prev, cur, sizeof(prev));
+			*energy_failed = 1;
+			result = 127;
+			goto out;
+		}
+		remaining = next_poll - monotime();
+		if (remaining > 0) {
+			timeout.tv_sec = (time_t)remaining;
+			timeout.tv_nsec = (long)((remaining -
+			    (double)timeout.tv_sec) * 1e9);
+			event = sigtimedwait(&children, NULL, &timeout);
+			if (event == SIGCHLD || (event == -1 && errno == EINTR))
+				continue; /* Reap promptly; keep the polling deadline. */
+			if (event == -1 && errno != EAGAIN) {
+				warn("wait for child exit");
+				*energy_failed = 1;
+				continue; /* Reap using blocking waitpid next time. */
 			}
 		}
-		/* Fold in the final partial interval. */
-		if (rapl_read_counters(r, cur) == 0) {
-			for (i = 0; i < ndomains; i++)
-				accum[domains[i]] += rapl_counter_delta(
-				    cur[domains[i]], prev[domains[i]]);
+		if (rapl_poll(r) != 0)
+			*energy_failed = 1;
+		next_poll = monotime() + interval;
+	}
+	if (r != NULL && !*energy_failed) {
+		*nresults = rapl_sample(r, results, &elapsed);
+		if (*nresults < 0) {
+			*energy_failed = 1;
+			*nresults = 0;
 		}
 	}
-
 	if (WIFEXITED(status))
-		return (WEXITSTATUS(status));
-	if (WIFSIGNALED(status))
-		return (128 + WTERMSIG(status));
-	return (127);
+		result = WEXITSTATUS(status);
+	else if (WIFSIGNALED(status))
+		result = 128 + WTERMSIG(status);
+	else
+		result = 127;
+out:
+	(void)sigaction(SIGCHLD, &saved_action, NULL);
+	(void)sigprocmask(SIG_SETMASK, &saved, NULL);
+	return (result);
+}
+
+static const struct core_snap *
+snap_core(const struct sys_snapshot *snap, int cpu)
+{
+	int i;
+
+	for (i = 0; i < snap->ncores; i++)
+		if (snap->cores[i].cpu == cpu)
+			return (&snap->cores[i]);
+	return (NULL);
 }
 
 int
@@ -790,15 +912,13 @@ cmd_hw_exec(int argc, char **argv)
 	};
 	struct sys_snapshot before, after;
 	struct rapl_sample results[RAPL_NDOMAINS];
-	enum rapl_domain domains[RAPL_NDOMAINS];
 	struct timespec t0, t1;
 	struct rapl *r;
 	struct oe_buf b;
-	uint64_t accum[RAPL_NDOMAINS];
 	double elapsed, total_joules;
 	enum hw_format format;
 	size_t namewidth;
-	int ch, cpucount, exitcode, have_counters, i, j, ndomains, nresults;
+	int ch, cpucount, exitcode, energy_failed, i, j, nresults;
 	int percore;
 
 	format = HW_FORMAT_TEXT;
@@ -820,37 +940,26 @@ cmd_hw_exec(int argc, char **argv)
 	if (argc < 1)
 		exec_usage();
 	if (format == HW_FORMAT_OTEL)
-		errx(2, "--format otel is only supported by `hwtlm watch`");
+		errx(2, "--format otel is only supported by `hwstat watch`");
 
 	cpucount = sys_cpu_count();
 	r = rapl_open();
 
-	memset(accum, 0, sizeof(accum));
-	have_counters = r != NULL;
 	if (sys_snapshot(&before, cpucount) != 0)
 		err(1, "snapshot");
 	clock_gettime(CLOCK_MONOTONIC, &t0);
 
-	exitcode = run_child(argv, r, &have_counters, accum);
+	exitcode = run_child(argv, r, &energy_failed, results, &nresults);
 
 	clock_gettime(CLOCK_MONOTONIC, &t1);
 	if (sys_snapshot(&after, cpucount) != 0)
 		err(1, "snapshot");
+	sys_snapshot_delta(&after, &before);
 	elapsed = (double)(t1.tv_sec - t0.tv_sec) +
 	    (double)(t1.tv_nsec - t0.tv_nsec) / 1e9;
 
-	nresults = 0;
-	if (have_counters) {
-		ndomains = rapl_domains(r, domains);
-		for (i = 0; i < ndomains; i++) {
-			results[nresults].domain = domains[i];
-			results[nresults].joules = rapl_joules(r,
-			    domains[i], accum[domains[i]]);
-			results[nresults].watts = elapsed > 0 ?
-			    results[nresults].joules / elapsed : 0;
-			nresults++;
-		}
-	}
+	if (energy_failed)
+		warnx("energy measurement incomplete; discarding energy results");
 
 	if (format == HW_FORMAT_JSON) {
 		oe_buf_init(&b);
@@ -861,14 +970,14 @@ cmd_hw_exec(int argc, char **argv)
 			oe_buf_appendjson(&b, argv[i]);
 		}
 		oe_buf_appendf(&b, "\",\"elapsed_seconds\":%.6f,"
-		    "\"exit_code\":%d", elapsed, exitcode);
+		    "\"exit_code\":%d,\"energy_status\":\"%s\"", elapsed, exitcode,
+		    energy_failed ? "read_error" : r == NULL ? "unavailable" : "available");
 		if (percore) {
 			oe_buf_appendstr(&b, ",\"cores\":[");
 			for (i = 0; i < after.ncores; i++) {
 				const struct core_snap *ca = &after.cores[i];
 				const struct core_snap *cb =
-				    i < before.ncores ? &before.cores[i] :
-				    NULL;
+				    snap_core(&before, ca->cpu);
 
 				oe_buf_appendf(&b, "%s{\"cpu\":%d",
 				    i > 0 ? "," : "", ca->cpu);
@@ -876,6 +985,9 @@ cmd_hw_exec(int argc, char **argv)
 					oe_buf_appendf(&b,
 					    ",\"temp_before\":%.1f",
 					    cb->temp);
+				if (ca->have_usage)
+					oe_buf_appendf(&b, ",\"cpu_busy_pct\":%.2f",
+					    100.0 - ca->usage[4]);
 				if (ca->have_temp)
 					oe_buf_appendf(&b,
 					    ",\"temp_after\":%.1f",
@@ -910,13 +1022,33 @@ cmd_hw_exec(int argc, char **argv)
 				    results[i].joules, results[i].watts);
 			oe_buf_appendstr(&b, "]");
 		}
-		oe_buf_appendstr(&b, "}");
-		printf("%s\n", b.data != NULL ? b.data : "{}");
+		oe_buf_appendstr(&b, ",\"after\":{");
+		printf("%s\"logical_cpus\":%d",
+		    b.data != NULL ? b.data : "{", after.ncores);
+		fmt_thermal_json(&after);
+		printf("}}\n");
 		oe_buf_free(&b);
 	} else {
 		if (r != NULL)
 			fprintf(stderr, "\nCPU: %s\n", rapl_microarch(r));
 		fprintf(stderr, "Elapsed: %.3fs\n", elapsed);
+		printf("Energy status: %s\n", energy_failed ? "read_error" :
+		    r == NULL ? "unavailable" : "available");
+		printf("Final hardware snapshot:\n");
+		fmt_thermal_text(&after);
+		{
+			double busy = 0;
+			int n = 0;
+
+			for (i = 0; i < after.ncores; i++) {
+				if (after.cores[i].have_usage) {
+					busy += 100.0 - after.cores[i].usage[4];
+					n++;
+				}
+			}
+			if (n > 0)
+				printf("  CPU busy: %.2f%%\n", busy / n);
+		}
 		if (exitcode != 0)
 			fprintf(stderr, "Exit code: %d\n", exitcode);
 
@@ -925,10 +1057,15 @@ cmd_hw_exec(int argc, char **argv)
 			for (i = 0; i < after.ncores; i++) {
 				const struct core_snap *ca = &after.cores[i];
 				const struct core_snap *cb =
-				    i < before.ncores ? &before.cores[i] :
-				    NULL;
+				    snap_core(&before, ca->cpu);
 				double bt, at, d;
 
+				if (ca->have_usage)
+					fprintf(stderr, "CPU %2d: busy %.2f%%\n", ca->cpu,
+					    100.0 - ca->usage[4]);
+				if (ca->have_freq)
+					fprintf(stderr, "CPU %2d: frequency %d MHz\n",
+					    ca->cpu, ca->freq);
 				if (!ca->have_temp)
 					continue;
 				at = ca->temp;
@@ -980,13 +1117,13 @@ cmd_hw_exec(int argc, char **argv)
 				printf("Total package energy: %.3f J\n",
 				    total_joules);
 		} else
-			printf("(RAPL not available — no energy data)\n");
+			printf("(No complete energy measurement)\n");
 	}
 
 	sys_snapshot_free(&before);
 	sys_snapshot_free(&after);
 	rapl_close(r);
-	return (exitcode);
+	return (exitcode != 0 ? exitcode : energy_failed ? 1 : 0);
 }
 
 /* ---------------------------------------------------------------- */
@@ -998,7 +1135,7 @@ main(int argc, char **argv)
 	if (argc < 2)
 		usage();
 	if (strcmp(argv[1], "--version") == 0) {
-		printf("%s\n", HWTLM_VERSION);
+		printf("%s\n", HWSTAT_VERSION);
 		return (0);
 	}
 	argc--;

@@ -4,7 +4,7 @@
  * Copyright (c) 2026 Kory Heard
  *
  * libotelexport — shared exporter layer for the ObservableBSD tools
- * (bsdinstruments, hwtlm).  An exporter consumes probe events and
+ * (bsdinstruments, hwstat).  An exporter consumes probe events and
  * aggregation snapshots from a tool's run loop and ships them to a
  * destination: stdout (text, JSONL, collapsed stacks) or an
  * OTLP/HTTP+JSON collector.

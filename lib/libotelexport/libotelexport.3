@@ -93,7 +93,7 @@ It is not installed as a shared library.
 is the exporter layer shared by the ObservableBSD tools
 .Xr bsdinstruments 8
 and
-.Xr hwtlm 8 .
+.Xr hwstat 8 .
 A tool's run loop normalizes probe firings into
 .Vt struct oe_event
 records and aggregation results into
@@ -444,7 +444,7 @@ business.
 Both
 .Xr bsdinstruments 8
 and
-.Xr hwtlm 8
+.Xr hwstat 8
 use
 .Va service_name
 as the resource service name, pass
@@ -662,7 +662,7 @@ sender thread and never surface through the delivery calls.
 of the collapsed exporter fails if the sort buffer cannot be allocated.
 .Sh SEE ALSO
 .Xr bsdinstruments 8 ,
-.Xr hwtlm 8
+.Xr hwstat 8
 .Rs
 .%T OpenTelemetry Protocol Specification, OTLP/HTTP
 .%U https://opentelemetry.io/docs/specs/otlp/

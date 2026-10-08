@@ -28,6 +28,24 @@ NOTE TO PEOPLE WHO THINK THAT FreeBSD 16.x IS SLOW:
 	at runtime, run "ln -s 'abort:false,junk:false' /etc/malloc.conf".)
 
 20261008:
+	5BSD hardware telemetry is renamed from hwtlm to hwstat, including
+	its main, man, dbg, and tests packages.  There is no command or man
+	page alias.  pkg upgrade does not infer the package rename.
+	After publishing the combined repository and creating a boot
+	environment snapshot, run in the target root:
+
+	    pkg update -r 5BSD-base
+	    sh /usr/src/tools/build/migrate-hwstat-packages.sh
+	    pkg upgrade -n -r 5BSD-base
+	    pkg upgrade -r 5BSD-base
+
+	The helper checks that every installed old package has a replacement
+	in the repository with a strictly newer version and is unlocked,
+	then renames package identities and dependency references.  The upgrade replaces owned files and
+	origins; no old executable is kept.  Run the helper before the first
+	upgrade to this revision.  Fresh installations need no migration.
+
+20261008:
 	5BSD-local Capsicum rights (CAP_JAIL_*, CAP_TIMERFD_*,
 	CAP_FCNTL_READAHEAD, CAP_POSIX_FADVISE) moved to the top bits of rights
 	index 1 so FreeBSD additions cannot collide with them.  Install the new

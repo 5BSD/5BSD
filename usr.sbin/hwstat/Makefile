@@ -1,12 +1,13 @@
 .include <src.opts.mk>
 
-PACKAGE=	hwtlm
-PROG=		hwtlm
+PACKAGE=	hwstat
+PROG=		hwstat
 SRCS=		main.c \
 		rapl.c \
 		sensors.c \
+		metrics.c \
 		format.c
-MAN=		hwtlm.8
+MAN=		hwstat.8
 
 WARNS?=		6
 

@@ -51,7 +51,7 @@ fall into the areas below; each has a part of this book.
 | Linux emulation | `sys/compat/linux` | V |
 | Virtualization (bhyve(8) engine, VirtIO guest stack, vsock, BSDVM) | `usr.sbin/bhyve`, `sys/dev/virtio`, `usr.sbin/BSDVM` | IV, V |
 | Bluetooth host, BLE mesh and virtual HCI | `usr.sbin/bluetooth/BSDBluetooth` | IV |
-| Observability (bsdinstruments, hwtlm, bsdtrace, libotelexport, 83 new DTrace scripts) | `usr.sbin`, `share/dtrace` | VII |
+| Observability (bsdinstruments, hwstat, bsdtrace, libotelexport, 83 new DTrace scripts) | `usr.sbin`, `share/dtrace` | VII |
 | Build, pkgbase packaging, installer and boot | `packages/`, `release/`, `stand/` | VII |
 | Tests (the largest single addition, 6350 files under `tests/`) | `tests/`, `usr.sbin/*/tests` | VI |
 

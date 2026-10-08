@@ -88,7 +88,7 @@ grant and denial. "dtrace -l | grep mac_capability" lists them; the
 canned scripts live in /usr/share/dtrace.
 %
 Measure CPU package power, temperature, and frequency over time with
-hwtlm(8) — hardware telemetry from RAPL and sensors, exportable as
+hwstat(8) — hardware telemetry from RAPL and sensors, exportable as
 OpenTelemetry.
 %
 No Bluetooth hardware? The ng_hci_virt netgraph node emulates a

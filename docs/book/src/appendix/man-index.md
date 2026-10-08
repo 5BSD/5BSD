@@ -221,7 +221,7 @@ The daemons that live in `runtime` have no package of their own.
 |---|---|---|
 | bsdinstruments(8) | DTrace-backed profiling templates with OpenTelemetry output | bsdinstruments |
 | bsdtrace(8) | hardware-assisted execution tracing using Intel Processor Trace | bsdtrace |
-| hwtlm(8) | hardware telemetry with OpenTelemetry output | hwtlm |
+| hwstat(8) | hardware telemetry with OpenTelemetry output | hwstat |
 
 ### Virtualization
 

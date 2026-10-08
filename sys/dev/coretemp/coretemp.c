@@ -79,6 +79,7 @@ static uint64_t	coretemp_get_thermal_msr(int cpu);
 static void	coretemp_clear_thermal_msr(int cpu);
 static int	coretemp_get_val_sysctl(SYSCTL_HANDLER_ARGS);
 static int	coretemp_throttle_log_sysctl(SYSCTL_HANDLER_ARGS);
+static int	coretemp_thermal_status_sysctl(SYSCTL_HANDLER_ARGS);
 
 static device_method_t coretemp_methods[] = {
 	/* Device interface */
@@ -297,6 +298,10 @@ coretemp_attach(device_t dev)
 	    "throttle_log", CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_MPSAFE, dev, 0,
 	    coretemp_throttle_log_sysctl, "I",
 	    "Set to 1 if the thermal sensor has tripped");
+	SYSCTL_ADD_PROC(ctx, SYSCTL_CHILDREN(oid), OID_AUTO,
+	    "thermal_status", CTLTYPE_UINT | CTLFLAG_RD | CTLFLAG_MPSAFE,
+	    dev, 0, coretemp_thermal_status_sysctl, "IU",
+	    "IA32_THERM_STATUS low 32 bits (read does not clear log bits)");
 
 	return (0);
 }
@@ -332,6 +337,20 @@ coretemp_get_thermal_msr(int cpu)
 	return (res);
 }
 
+static int
+coretemp_thermal_status_sysctl(SYSCTL_HANDLER_ARGS)
+{
+	device_t dev = arg1;
+	u_int status;
+	int cpu;
+
+	if (req->newptr != NULL)
+		return (EPERM);
+	cpu = device_get_unit(dev);
+	status = (u_int)coretemp_get_thermal_msr(cpu);
+	return (sysctl_handle_int(oidp, &status, 0, req));
+}
+
 static void
 coretemp_clear_thermal_msr(int cpu)
 {
@@ -350,9 +369,14 @@ coretemp_get_val_sysctl(SYSCTL_HANDLER_ARGS)
 	char stemp[16];
 
 	dev = (device_t) arg1;
-	msr = coretemp_get_thermal_msr(device_get_unit(dev));
 	sc = device_get_softc(dev);
 	type = arg2;
+	/* Tjmax is attach-time metadata; reading it must not clear logs. */
+	if (type == CORETEMP_TJMAX) {
+		val = sc->sc_tjmax * 10 + TZ_ZEROC;
+		return (sysctl_handle_int(oidp, &val, 0, req));
+	}
+	msr = coretemp_get_thermal_msr(device_get_unit(dev));
 
 	if (((msr >> THERM_STATUS_VALID_SHIFT) & THERM_STATUS_VALID_MASK) != 1) {
 		val = -1;

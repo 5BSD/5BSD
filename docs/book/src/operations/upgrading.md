@@ -10,6 +10,27 @@ one-time migration from a FreeBSD pkgbase system, and what to verify after
 the reboot. Building the repository is in [Building](building.md); pkg(8)
 itself, boot environments and `bectl` are FreeBSD Handbook material.
 
+## Hardware telemetry package rename (2026-10-08)
+
+Existing `5BSD-hwtlm`, `-man`, `-dbg`, and `-tests` packages require an
+explicit transition to `5BSD-hwstat`. After publishing the combined
+repository and creating the usual boot environment snapshot, run
+`pkg update -r 5BSD-base`, then
+`sh /usr/src/tools/build/migrate-hwstat-packages.sh` before the normal
+`pkg upgrade -n -r 5BSD-base` preview and `pkg upgrade -r 5BSD-base`.
+These commands require root in the installation being upgraded.
+
+The helper checks all installed old packages before renaming their database
+identities and dependency references. It refuses missing replacements,
+equal or older replacement versions, locked packages, or an installation
+containing both names. Publish a strictly newer `PKG_VERSION` before this
+transition; a database rename alone does not force file replacement.
+An interrupted migration is checked again, including already renamed
+entries whose installed origin still identifies the old package. The following
+upgrade replaces the old files and package origins; no command or manual
+alias remains. Repeating the helper is safe. Fresh installations do not
+need this step. This migration does not install an upgrade or reboot by itself.
+
 ## Why the rule exists
 
 `pkg upgrade` resolves by package name and version across every enabled

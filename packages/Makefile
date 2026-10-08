@@ -45,7 +45,7 @@ SUBDIR=	blocklist \
 	fwget \
 	geom \
 	ggate \
-	hwtlm \
+	hwstat \
 	lib9p \
 	libauditcmp \
 	libarchive \
@@ -196,7 +196,7 @@ SUBDIR.${MK_TESTS}+=		capsule-tests capsulectl-tests
 .if ${MK_DTRACE} != "no"
 SUBDIR.${MK_TESTS}+=		bsdinstruments-tests
 .endif
-SUBDIR.${MK_TESTS}+=		hwtlm-tests
+SUBDIR.${MK_TESTS}+=		hwstat-tests
 SUBDIR.${MK_TESTS}+=		switchboard-tests switchboardctl-tests
 SUBDIR.${MK_TESTS}+=		libcapability-tests libcapbundle-tests
 SUBDIR.${MK_TESTS}+=		libauditcmp-tests bsdaudit-tests

@@ -23,7 +23,7 @@
 .\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
 .\" SUCH DAMAGE.
 .\"
-.Dd August 23, 2007
+.Dd October 8, 2026
 .Dt CORETEMP 4
 .Os
 .Sh NAME
@@ -54,6 +54,23 @@ The
 driver reports each core's temperature through a sysctl node in the
 corresponding CPU device's sysctl tree, named
 .Va dev.cpu.%d.temperature .
+.Pp
+The read-only
+.Va dev.cpu.%d.coretemp.thermal_status
+sysctl returns the low 32 bits of IA32_THERM_STATUS without clearing its
+log bits.
+Bit 0 indicates current thermal throttling; bit 4 indicates a current
+critical-temperature condition.
+Other bits depend on CPU support and must be interpreted using the
+processor documentation.
+Unlike
+.Va throttle_log ,
+this reading is not a software-maintained historical flag.
+.Pp
+The Tjmax sysctl returns cached device metadata without reading or clearing
+thermal status registers.
+The legacy temperature and throttle-log handlers may clear hardware log
+bits after preserving a trip in the driver's software log.
 .Sh SEE ALSO
 .Xr amdtemp 4 ,
 .Xr sysctl 8

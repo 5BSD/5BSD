@@ -3,7 +3,7 @@
 Observability on 5BSD is DTrace with three additions: far more of the system
 is instrumented (63 new kernel SDT providers and 64 userland USDT
 providers, including every plane component), a suite of tools collects and
-exports what the probes say (bsdinstruments, hwtlm, bsdtrace and the shared
+exports what the probes say (bsdinstruments, hwstat, bsdtrace and the shared
 libotelexport), and a broker decides who may trace so that opening
 `/dev/dtrace` as root is no longer the only way in (BSDTrace, the
 `system.Trace` provider). Beside it, not inside it, sit the unified log
@@ -111,19 +111,90 @@ also accepts probes nothing defines, the test separately checks that
 `capability-services.d` names no probe retired with BSDAuth and session
 minting. There is no `bsdinstruments run`; the verb is `watch`.
 
-## hwtlm
+## hwstat
 
-hwtlm(8) reads hardware telemetry: RAPL package power through cpuctl(4)
-(Intel only), per-core temperature from coretemp(4), frequencies, C-state
-residency, acpi(4) thermal zones, and GPU state where a driver exposes it.
-Sensors it cannot read are reported absent, so it runs on AMD and arm64 with
-fewer columns.
+hwstat(8) is a native C base-system tool. It reads Intel RAPL or AMD Zen
+package energy through cpuctl(4), CPU temperatures from coretemp(4) or
+amdtemp(4), logical-CPU frequencies, C-state usage, acpi(4) thermal zones,
+and GPU state where a driver exposes it. `--per-core` reports each logical
+CPU separately; frequency is the driver's instantaneous reading, not an
+interval average. C-state percentages currently describe accumulated idle-state
+entry counts from `dev.cpu.N.cx_usage`, not interval time residency.
+AMD package temperatures can be shared by logical CPUs. C1/C2/C3 are ACPI
+idle states; watch labels their columns `entry%` to distinguish them from
+interval `BUSY%`. `list` reports wake latencies and the configured deepest
+allowed idle state.
+
+`list` also reports the boot clock, exported cpufreq table bounds, and AMD
+CPPC capability/request values. A one-entry frequency table is not a complete
+hardware clock range, and CPPC values are abstract performance units, not
+MHz. The new read-only `dev.hwpstate_amd.N.caps_*` sysctls expose highest,
+nominal, efficient, and lowest performance capabilities. The tool never
+changes these policies. Intel HWP offers analogous read-only highest,
+guaranteed, efficient, and lowest performance fields; these are HWP units,
+not MHz, and dynamic values are refreshed. Intel EPP uses 0-100 percent;
+AMD EPP uses 0-255 units. Supported Intel CPUs also report CPUID leaf 16H
+base, maximum, and bus specification clocks in MHz. These are informational,
+not measured or guaranteed sustained clocks. Pi firmware ARM/core/SDRAM minimum and maximum
+clock limits are reported in Hz. They describe firmware configuration,
+not immutable product ratings.
+
+The interfaces follow the [Intel SDM](https://www.intel.com/content/www/us/en/developer/articles/technical/intel-sdm.html)
+(HWP capabilities and thermal status), AMD's published CPPC/energy register
+interfaces, and Raspberry Pi's [mailbox interface](https://github.com/raspberrypi/firmware/wiki/Mailbox-property-interface)
+and [throttle status documentation](https://www.raspberrypi.com/documentation/computers/os.html#get_throttled).
+Intel and Pi paths are compile-tested here; hardware readings still need
+validation on those platforms.
+Named AMD sensors (including available CCD readings) and ACPI zones appear
+in the `temperatures` JSON array and in text and OTLP watch output.
+
+The amd64 and i386 GENERIC kernels include cpuctl, coretemp, amdsmn, and
+amdtemp. Older/custom kernels can load these through sysextctl; the shipped
+SystemExtension policy permits them. Intel and AMD temperature drivers
+probe for matching hardware. The Pi 3/4 Broadcom driver path is included in
+arm64 GENERIC and exposes shared SoC temperature and CPU frequency through
+the existing hwstat sysctl reader. This is source-level integration, not a
+hardware validation result or a claim of Pi 5 support. hwstat now also reads
+Pi firmware clocks and current/historical throttle flags through a new
+read-only `hw.cpufreq.throttled` sysctl. It does not clear sticky flags.
+Pi voltage and energy collection remain unavailable. Pi does not use x86
+MSRs or these x86 temperature drivers.
+
+Energy requires read access to `/dev/cpuctl0` (normally root), and covers the
+package containing CPU 0, including concurrent workloads. AMD family 17h,
+19h, and 1ah package counters are probed; unsupported domains are omitted.
+Intel-only TDP is not reported for AMD. Sensors it cannot read remain absent.
+No energy readings are inferred from temperature or frequency.
+
+Interval CPU utilization comes from `kern.cp_times`, including per-CPU user,
+nice, system, interrupt, and idle percentages in JSON. These are scheduler
+accounting, not hardware residency counters. Intel coretemp exposes current
+thermal status separately from its historical throttle log.
+
+AMD APU metrics versions 2.1 and 2.2 add component temperatures, activity,
+power, and clock readings where populated by firmware. The driver exports
+binary data through `sys.device.drmnN.gpu_metrics`; the LinuxKPI correction
+requires rebuilding the DRM module against the updated headers. Rebuilding
+only the kernel is insufficient. Truncated tables from an older module are
+reported as `invalid_length`, never decoded as readings. JSON `metrics`
+entries carry a source and unit-bearing name; `metric_sources` reports AMD
+collector availability. Physical-core firmware slots do not identify logical
+CPUs. Socket power overlaps RAPL package power; do not sum them. Firmware
+averages use their own windows. The ASIC-dependent throttle bitmap remains
+raw. Unknown table versions and sentinel values are not guessed.
+
+Apple's [powermetrics documentation](https://images.apple.com/media/us/osx/2013/docs/OSX_Power_Efficiency_Technology_Overview.pdf)
+is a useful comparison for power diagnostics: it combines CPU usage,
+wakeups, package idle states, and execution frequency. hwstat uses native
+5BSD sysctl and cpuctl interfaces; it does not provide Darwin's task/QoS
+attribution or claim its instantaneous frequency readings are execution
+frequency averages.
 
 ```sh
-hwtlm list --format json            # what this machine can report
-hwtlm watch --interval 1 --duration 60 --per-core
-hwtlm watch --format otel --endpoint http://collector:4318
-hwtlm exec -- make -j8 buildworld   # energy and thermal cost of one command
+hwstat list --format json            # what this machine can report
+hwstat watch --interval 1 --duration 60 --per-core
+hwstat watch --format otel --endpoint http://collector:4318
+hwstat exec -- make -j8 buildworld   # energy and thermal cost of one command
 ```
 
 ## bsdtrace
@@ -154,7 +225,7 @@ BSDTrace daemon.
 
 ## Export: libotelexport and OTLP
 
-bsdinstruments and hwtlm share `libotelexport(3)`, which renders a stream of
+bsdinstruments and hwstat share `libotelexport(3)`, which renders a stream of
 events or snapshots as text, JSONL, collapsed stacks, or OTLP/HTTP JSON (logs
 and metrics, gzip-compressed) and accounts for dropped records. The OTLP
 exporter is configured by the standard environment:
@@ -258,7 +329,7 @@ as on FreeBSD. See [system.Audit](../providers/audit.md).
 | Suite | Where | Needs |
 |---|---|---|
 | `dtrace_catalog_test` | `/usr/tests/sys/kern` | root, kernel providers loaded |
-| `bsdinstruments_test`, `hwtlm_test`, `bsdtrace_test`, `otelexport_test` | `/usr/tests/usr.sbin/*`, `/usr/tests/lib/libotelexport` | unprivileged for the compile checks; capture cases need Intel PT and root |
+| `bsdinstruments_test`, `hwstat_test`, `bsdtrace_test`, `otelexport_test` | `/usr/tests/usr.sbin/*`, `/usr/tests/lib/libotelexport` | unprivileged for the compile checks; capture cases need Intel PT and root |
 | BSDTrace `policy_test`, `session_test`, `bundle_test` | `/usr/tests/usr.sbin/BSDTrace` | in-session for the parser; a plane-off VM for the session tests |
 
 The tiers and the plane-off image are explained in

@@ -3,7 +3,7 @@
 #
 # Copyright (c) 2026 Kory Heard
 #
-# CLI tests for hwtlm.  Everything here must work without root,
+# CLI tests for hwstat.  Everything here must work without root,
 # without RAPL, and without coretemp — the tool's graceful
 # degradation is part of what's under test.
 #
@@ -15,7 +15,7 @@ list_text_head()
 }
 list_text_body()
 {
-	atf_check -o save:out.txt hwtlm list
+	atf_check -o save:out.txt hwstat list
 	atf_check -o match:'Logical CPUs:  [1-9]' cat out.txt
 }
 
@@ -26,8 +26,9 @@ list_json_valid_head()
 }
 list_json_valid_body()
 {
-	atf_check -o save:out.json hwtlm list --format json
+	atf_check -o save:out.json hwstat list --format json
 	atf_check -o match:'"logical_cpus":[1-9]' cat out.json
+	atf_check -o match:'"cpu_model":"' cat out.json
 	# Balanced braces on a single line ending in }.
 	atf_check -o match:'^\{.*\}$' cat out.json
 }
@@ -39,7 +40,7 @@ list_percore_head()
 }
 list_percore_body()
 {
-	atf_check -o ignore hwtlm list --per-core
+	atf_check -o ignore hwstat list --per-core
 }
 
 atf_test_case list_rejects_otel
@@ -50,7 +51,7 @@ list_rejects_otel_head()
 list_rejects_otel_body()
 {
 	atf_check -s exit:2 -e match:"only supported by" \
-	    hwtlm list --format otel
+	    hwstat list --format otel
 }
 
 atf_test_case watch_duration_terminates
@@ -62,7 +63,7 @@ watch_duration_terminates_head()
 watch_duration_terminates_body()
 {
 	atf_check -s exit:0 -o ignore -e ignore \
-	    hwtlm watch --interval 0.2 --duration 1
+	    hwstat watch --interval 0.2 --duration 1
 }
 
 atf_test_case watch_json_lines
@@ -74,7 +75,7 @@ watch_json_lines_head()
 watch_json_lines_body()
 {
 	atf_check -s exit:0 -o save:out.json -e ignore \
-	    hwtlm watch --interval 0.2 --duration 1 --format json
+	    hwstat watch --interval 0.2 --duration 1 --format json
 	atf_check -o match:'"time":"' head -1 out.json
 	# Every line is a self-contained {...} object.
 	while read -r line; do
@@ -93,13 +94,13 @@ watch_validates_args_head()
 watch_validates_args_body()
 {
 	atf_check -s exit:2 -e match:"interval must be" \
-	    hwtlm watch --interval 0
+	    hwstat watch --interval 0
 	atf_check -s exit:2 -e match:"duration must be" \
-	    hwtlm watch --duration -1
+	    hwstat watch --duration -1
 	atf_check -s exit:2 -e match:"interval must be" \
-	    hwtlm watch --interval nan
+	    hwstat watch --interval nan
 	atf_check -s exit:2 -e match:"interval must be" \
-	    hwtlm watch --interval 2.5x
+	    hwstat watch --interval 2.5x
 }
 
 atf_test_case exec_propagates_exit
@@ -110,10 +111,10 @@ exec_propagates_exit_head()
 }
 exec_propagates_exit_body()
 {
-	atf_check -s exit:0 -o ignore -e ignore hwtlm exec -- true
-	atf_check -s exit:1 -o ignore -e ignore hwtlm exec -- false
+	atf_check -s exit:0 -o ignore -e ignore hwstat exec -- true
+	atf_check -s exit:1 -o ignore -e ignore hwstat exec -- false
 	atf_check -s exit:127 -o ignore -e ignore \
-	    hwtlm exec -- /nonexistent/tool
+	    hwstat exec -- /nonexistent/tool
 }
 
 atf_test_case exec_json_fields
@@ -125,7 +126,7 @@ exec_json_fields_head()
 exec_json_fields_body()
 {
 	atf_check -s exit:0 -o save:out.json -e ignore \
-	    hwtlm exec --format json -- sleep 0.1
+	    hwstat exec --format json -- sleep 0.1
 	atf_check -o match:'"command":"sleep 0.1"' cat out.json
 	atf_check -o match:'"elapsed_seconds":0\.[0-9]*' cat out.json
 	atf_check -o match:'"exit_code":0' cat out.json
@@ -138,11 +139,41 @@ exec_requires_command_head()
 }
 exec_requires_command_body()
 {
-	atf_check -s exit:2 -e match:"usage" hwtlm exec
+	atf_check -s exit:2 -e match:"usage" hwstat exec
+}
+
+atf_test_case short_duration
+short_duration_head()
+{
+	atf_set descr "duration shorter than interval produces a final partial sample"
+	atf_set timeout 5
+}
+short_duration_body()
+{
+	atf_check -o match:'"time":' -e ignore \
+	    hwstat watch --interval 3600 --duration 0.1 --format json
+}
+
+atf_test_case tiny_interval
+tiny_interval_body()
+{
+	atf_check -s exit:2 -e match:'interval must be' \
+	    hwstat watch --interval 0.000000001
+}
+
+atf_test_case exec_text_snapshot
+exec_text_snapshot_body()
+{
+	atf_check -o save:out -e ignore hwstat exec --per-core -- sleep 0.1
+	atf_check -o match:'Final hardware snapshot:' cat out
+	atf_check -o match:'Energy status:' cat out
 }
 
 atf_init_test_cases()
 {
+	atf_add_test_case short_duration
+	atf_add_test_case tiny_interval
+	atf_add_test_case exec_text_snapshot
 	atf_add_test_case list_text
 	atf_add_test_case list_json_valid
 	atf_add_test_case list_percore

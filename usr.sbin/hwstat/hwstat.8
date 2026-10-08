@@ -1,0 +1,286 @@
+.\"-
+.\" SPDX-License-Identifier: BSD-2-Clause
+.\"
+.\" Copyright (c) 2026 Kory Heard
+.\"
+.Dd October 8, 2026
+.Dt HWSTAT 8
+.Os
+.Sh NAME
+.Nm hwstat
+.Nd hardware telemetry with OpenTelemetry output
+.Sh SYNOPSIS
+.Nm
+.Cm list
+.Op Fl -format Ar text | json
+.Op Fl -per-core
+.Nm
+.Cm watch
+.Op Fl -interval Ar seconds
+.Op Fl -duration Ar seconds
+.Op Fl -per-core
+.Op Fl -format Ar text | json | otel
+.Op Fl -endpoint Ar url
+.Nm
+.Cm exec
+.Op Fl -format Ar text | json
+.Op Fl -per-core
+.Fl -
+.Ar command Op Ar args
+.Sh DESCRIPTION
+.Nm
+collects CPU power consumption (Intel RAPL or AMD Zen package energy),
+CPU temperatures,
+frequencies, C-state usage, ACPI thermal zones, and GPU state,
+and ships the results as text, JSONL, or OTLP/HTTP metrics to an
+OpenTelemetry collector.
+.Ss Subcommands
+.Bl -tag -width "watch"
+.It Cm list
+Report CPU identity, RAPL power domains, temperatures, frequencies,
+C-state support, ACPI thermal zones, and GPU state.
+.It Cm watch
+Sample telemetry at the given interval (default 1 second) until
+interrupted or
+.Fl -duration
+elapses.
+With
+.Fl -per-core ,
+CPU IDs are enumerated from the root CPU affinity set and may have gaps.
+Interval accounting matches CPU IDs across snapshots, including changes
+in the visible set.
+Each logical CPU has a separate CPU ID, driver-reported frequency in MHz,
+temperature, and C-state data when available.
+Frequency readings are snapshots, not interval-average execution frequencies.
+C-state percentages come from
+.Va dev.cpu.N.cx_usage
+and describe the distribution of accumulated idle-state entries, not
+interval time residency.
+C1, C2, and C3 are ACPI idle-state labels, generally offering greater power
+savings and longer wake latency at deeper states.
+The text headings use
+.Dq entry%
+to distinguish idle-entry distribution from elapsed-time percentages.
+CPU utilization is computed from differences in
+.Va kern.cp_times
+between samples, with separate user, nice, system, interrupt, and idle
+percentages in per-core JSON.
+A reset, missing sample, or zero tick delta produces no utilization reading.
+Scheduler idle accounting does not measure hardware C-state residency.
+AMD may expose a shared package temperature through multiple logical CPUs;
+these are not independent physical-core sensors.
+With
+.Fl -format Cm otel ,
+each sample interval becomes a set of OTLP gauge metrics POSTed to
+the collector's
+.Pa /v1/metrics
+endpoint.
+.It Cm exec
+Read RAPL energy counters and temperatures before and after running
+the given command, then report total energy, average power, and
+temperature delta.
+The child's exit status is propagated.
+.El
+.Sh HARDWARE SUPPORT
+Energy data requires a supported Intel CPU or AMD Zen family 17h, 19h,
+or 1ah CPU with readable energy counters and read access to
+.Pa /dev/cpuctl0 .
+Device permissions normally require running as root for energy readings.
+The device is opened read-only; no MSRs are written.
+Energy domains are probed and unreadable domains are omitted.
+AMD reports package energy only; Intel-only TDP and power-info registers
+are not used on AMD.
+Supported Silvermont Atom models use their microjoule and milliwatt unit
+multipliers instead of the Core encoding.
+Core-style TDP, minimum-power, and maximum-power fields are unavailable
+on these Atom models.
+Both watch and command measurement poll energy counters internally at most
+one second apart, independently of the output interval.
+Polling is shortened for finer counter units, using a conservative 10 kW
+per-domain bound to avoid missing 32-bit counter wraps.
+The wrap deadline is computed separately from the one-second polling cap,
+using the shortest counter range among available domains.
+A failed read or polling delay reaching that deadline invalidates the
+measurement; no partial energy total is reported.
+Suspend or long scheduling/export stalls can therefore terminate a watch.
+Command measurement waits for child-exit notification between counter polls,
+so short commands do not acquire an extra polling interval of energy.
+Ordinary scheduling and counter-read latency still apply.
+Command reports include
+.Dq energy_status
+.Pq available, unavailable, or read_error .
+A measurement failure gives exit status 1 when the command itself succeeded;
+a nonzero command exit status is preserved.
+.Pp
+Energy readings cover the package containing logical CPU 0, including
+other workloads on that package, not the whole multi-socket machine or
+only the child of
+.Cm exec .
+.Pp
+The amd64 and i386 GENERIC kernels include
+.Xr cpuctl 4 ,
+.Xr coretemp 4 ,
+.Xr amdsmn 4 ,
+and
+.Xr amdtemp 4 .
+Intel and AMD temperature drivers attach only to matching hardware.
+On older or custom kernels, authorized sessions can use
+.Xr sysextctl 8
+to load the relevant drivers.
+Raspberry Pi uses the Broadcom platform driver rather than the x86 drivers.
+The arm64 GENERIC configuration includes the BCM2837/BCM2838 driver path
+used for Pi 3/4.
+The driver exposes SoC temperature through
+.Va dev.cpu.0.temperature
+and CPU frequency through the cpufreq interface, which
+.Nm
+reads without a Pi-specific backend.
+These are shared SoC readings, not independent sensors for every core.
+The Broadcom firmware backend also reads ARM, core, and SDRAM clocks,
+SoC temperature, and
+.Va hw.cpufreq.throttled .
+Current undervoltage, frequency-cap, throttle, and soft-temperature-limit
+flags are separate from historical flags.
+Reading the new throttle sysctl does not clear firmware history.
+There is no Pi energy-counter or voltage backend;
+this driver path does not establish Pi 5 support.
+.Pp
+The JSON
+.Dq temperatures
+array preserves the sysctl source name and Celsius reading for each
+available AMD sensor and ACPI thermal zone.
+It is included by
+.Cm list
+and
+.Cm watch ,
+including per-core output.
+ACPI thresholds and unreadable sensors are omitted.
+OTLP exports these as thermal temperature_millicelsius gauges with a
+source attribute.
+.Nm
+degrades gracefully when energy access or a sensor is unavailable:
+the sysctl-based
+sensors (temperatures, frequencies, C-states via
+.Xr acpi 4 ,
+thermal zones) are architecture-independent and work on arm64 and
+riscv given the appropriate platform drivers, while all power
+columns are simply omitted.
+.Ss CPU capabilities and clock limits
+.Cm list
+also reports the boot-time
+.Va hw.clockrate ,
+the minimum and maximum entries in each exported cpufreq frequency table,
+and AMD CPPC capability and request values, Intel HWP capabilities and
+energy preference, and Pi firmware clock limits when available.
+A one-entry cpufreq table does not establish the hardware's minimum or
+maximum clock, especially with autonomous frequency selection.
+The boot clock is not an advertised boost limit.
+AMD CPPC highest, nominal, efficient, and lowest capabilities and requested
+performance limits use abstract performance units, not MHz.
+The read-only
+.Va dev.hwpstate_amd.N.caps_*
+capability sysctls require the updated driver.
+Intel
+.Va dev.hwpstate_intel.N.caps_*
+sysctls expose highest, guaranteed, efficient, and lowest HWP capabilities.
+These also use abstract performance units; guaranteed and efficient values
+can change at runtime and are read afresh.
+Intel EPP is reported as a 0-100 percentage, while AMD EPP uses 0-255 units.
+Where CPUID leaf 16H supplies nonzero values, the Intel driver also exposes
+base, maximum, and bus/reference specification frequencies in MHz.
+These are informational specifications, not measured clocks or guaranteed
+sustained/per-core turbo limits; unsupported fields remain absent.
+Pi firmware ARM, core, and SDRAM minimum/maximum clocks are exported under
+.Va hw.cpufreq
+as read-only
+.Va *_min_freq
+and
+.Va *_max_freq
+sysctls in Hz.
+They describe firmware configuration, not immutable product specifications.
+.Nm
+never changes performance requests or idle-state policy.
+.Ss Additional driver metrics
+AMD GPU metrics tables are read from
+.Va sys.device.drmnN.gpu_metrics
+for device units 0 through 63.
+The binary transport requires a rebuilt DRM module using the updated
+LinuxKPI headers as well as a compatible kernel.
+A kernel rebuild alone does not update an already built or loaded DRM module.
+Only complete version 2.1 and 2.2 tables are decoded.
+Supported fields include graphics and SoC temperatures, graphics and media
+activity, socket and component power, clocks, and physical-core sensor slots.
+Unpopulated firmware fields are omitted.
+These firmware core indices are not logical CPU IDs and are not mapped to
+SMT siblings.
+Socket power overlaps CPU package energy and must not be added to it.
+The raw throttle bitmap is ASIC-dependent; it is not decoded into universal
+AMD limit reasons.
+.Pp
+Intel
+.Xr coretemp 4
+also exposes a non-clearing thermal status reading.
+With the updated driver, CPU temperature is derived from that same status
+snapshot and the cached Tjmax value, without reading the legacy temperature
+or throttle-log handlers that clear hardware log bits.
+On older kernels those legacy handlers remain the fallback.
+Other consumers can still clear hardware logs.
+Current thermal throttling is separate from the historical throttle log.
+This is not a model-specific power-limit-reason decoder.
+.Pp
+JSON includes
+.Dq metrics
+entries with source, name, and integer value.
+Names include units: milliwatts, millicelsius, MHz or Hz, and basis points
+.Pq 100 basis points equal one percent .
+.Dq metric_sources
+reports whether each discovered AMD table is available, has an invalid
+length, uses an unsupported revision, or could not be read.
+An absent source or field is not a zero measurement.
+These metrics are included in text watch and command output, OTLP watch
+output, and under
+.Dq after
+in JSON command reports.
+Firmware averages use firmware-defined windows, not the watch interval.
+Watch intervals range from 0.001 through 3600 seconds.
+A duration shorter than the interval produces a final partial sample
+at the duration deadline.
+.Sh ENVIRONMENT
+The OTLP exporter honors
+.Ev OTEL_SERVICE_NAME ,
+.Ev OTEL_RESOURCE_ATTRIBUTES ,
+.Ev OTEL_EXPORTER_OTLP_ENDPOINT ,
+.Ev OTEL_EXPORTER_OTLP_HEADERS ,
+.Ev OTEL_EXPORTER_OTLP_COMPRESSION ,
+and
+.Ev OTEL_EXPORTER_OTLP_TIMEOUT .
+.Sh EXAMPLES
+Sample every 2 seconds with per-core detail:
+.Bd -literal -offset indent
+hwstat watch --per-core --interval 2
+.Ed
+.Pp
+Ship metrics to an OpenTelemetry collector for 5 minutes:
+.Bd -literal -offset indent
+hwstat watch --format otel --endpoint http://collector:4318 \e
+    --duration 300
+.Ed
+.Pp
+Measure the energy cost of a build:
+.Bd -literal -offset indent
+hwstat exec -- make -j20
+.Ed
+.Sh SEE ALSO
+.Xr acpi 4 ,
+.Xr amdsmn 4 ,
+.Xr amdtemp 4 ,
+.Xr coretemp 4 ,
+.Xr cpuctl 4 ,
+.Xr bsdinstruments 8 ,
+.Xr sysextctl 8
+.Sh HISTORY
+.Nm
+first appeared in the ObservableBSD project and was ported from
+Swift to C for inclusion in the base system.
+.Sh AUTHORS
+.An Kory Heard
