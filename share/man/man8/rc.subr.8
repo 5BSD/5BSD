@@ -351,7 +351,7 @@ turned on or off by the
 .Xr rc.conf 5
 variable
 .Va rc_info .
-.It Ic load_kld Op Fl b Oo Fl e Ar regex Oc Oo Fl m Ar module Oc Ar file
+.It Ic load_kld Oo Fl b Oc Oo Fl e Ar regex | Fl m Ar module Oc Ar file
 Load
 .Ar file
 as a kernel module unless it is already loaded.
@@ -374,6 +374,11 @@ or an
 .Xr egrep 1
 regular expression matching the module name can be supplied via
 .Fl e .
+The
+.Fl e
+and
+.Fl m
+options are mutually exclusive.
 By default, the module is assumed to have the same name as
 .Ar file ,
 which is not always the case.
