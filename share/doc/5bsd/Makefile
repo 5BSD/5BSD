@@ -147,4 +147,10 @@ check-book-list: .PHONY
 	    's|^|  installed path has no source, wrong group?: |' >&2; \
 	exit 1
 
+# Check the book's claims (system calls, constants, sysctls, manual pages
+# and links) against this source tree.  Not part of "all": the installed
+# bsdinstall tests run the same check (native_book_matches_code).
+checkbook: .PHONY
+	sh ${SRCTOP}/docs/book/tools/check-book.sh ${SRCTOP}
+
 .include <bsd.prog.mk>

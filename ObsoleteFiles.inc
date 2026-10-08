@@ -54,6 +54,8 @@
 # 20261008: retired chapters of the native book
 OLD_FILES+=usr/share/doc/5bsd/compat/linux/io-uring.md
 OLD_FILES+=usr/share/doc/5bsd/plane/anointments.md
+# 20261008: the bsdinstall tests stage the book instead of a chapter list
+OLD_FILES+=usr/tests/usr.sbin/bsdinstall/book-chapters
 
 # 20261005: software attributes replace login-principal grants and BSDAuth.
 # principal-policy.ucl is no longer consumed; preserve local configuration for

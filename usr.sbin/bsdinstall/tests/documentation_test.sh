@@ -33,6 +33,25 @@ native_book_is_installed_with_base_body()
 	fi
 }
 
+atf_test_case native_book_matches_code
+native_book_matches_code_head()
+{
+	atf_set "descr" "Claims the book makes about system calls, constants," \
+	    "sysctls, manual pages and its own links hold for the source" \
+	    "it was built from"
+}
+native_book_matches_code_body()
+{
+	srcdir=$(atf_get_srcdir)
+	root=$srcdir/srctree
+
+	# check-book.sh prints each problem as FAIL: and exits 1; claims about
+	# run-time sysctls are printed as UNVERIFIED: and do not fail.
+	atf_check -s exit:0 -o match:'^check-book: 0 failure' -e empty \
+	    sh "$root/docs/book/tools/check-book.sh" \
+	    -m "$srcdir/book-man-pages" -s "$srcdir/book-sysctls" "$root"
+}
+
 atf_test_case freebsd_docs_are_optional_upstream_reference
 freebsd_docs_are_optional_upstream_reference_body()
 {
@@ -75,6 +94,7 @@ installer_defaults_to_5bsd_branding_body()
 atf_init_test_cases()
 {
 	atf_add_test_case native_book_is_installed_with_base
+	atf_add_test_case native_book_matches_code
 	atf_add_test_case freebsd_docs_are_optional_upstream_reference
 	atf_add_test_case installer_explains_type2_capability_design
 	atf_add_test_case installer_defaults_to_5bsd_branding

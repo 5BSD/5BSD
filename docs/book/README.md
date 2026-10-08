@@ -39,3 +39,17 @@ chapter must follow.
   [FreeBSD Handbook](https://docs.freebsd.org/en/books/handbook/), not
   repeated here. Where 5BSD diverges from FreeBSD, this book is the source
   of truth.
+
+## Checking
+
+`tools/check-book.sh` verifies the book against the source tree: relative
+links and anchors, the system call table, header constants and sysctls in
+the System Calls and Sysctls appendix, and the manual pages the Manual Page
+Index cites. Run it with `make -C share/doc/5bsd checkbook` (or
+`sh docs/book/tools/check-book.sh .` from the top of the tree). The
+bsdinstall test package installs a copy of the book and of the code it is
+checked against, so `kyua test -k /usr/tests/usr.sbin/bsdinstall/Kyuafile
+documentation_test` runs the same check on an installed system and also
+compares `/usr/share/doc/5bsd` with the book byte for byte. Adding or
+removing a chapter means updating `share/doc/5bsd/Makefile`; the build fails
+until the list matches `src/`.
