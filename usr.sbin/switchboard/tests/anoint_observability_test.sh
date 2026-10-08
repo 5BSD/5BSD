@@ -1,10 +1,13 @@
 #!/usr/libexec/atf-sh
 #
 # Observability contract for software attributes (docs/book/src/plane/attributes.md):
-# the switchboard anoint-* / mint-anoint probes, the shipped
-# share/dtrace/switchboard-anoint script, and the bsdinstruments profile
-# clauses that consume them.  Source greps against copies the test package
-# installs beneath srctree/, so no build machine source tree is needed.
+# the switchboard anoint-* probes, the shipped share/dtrace/switchboard-anoint
+# script, and the bsdinstruments profile clauses that consume them.  The
+# mint-domain / mint-deny / mint-anoint probes belonged to the retired
+# SVC_OP_MINT_DOMAIN login-principal operation (2026-10-05); they stay
+# declared for compatibility but must never fire.  Source greps against
+# copies the test package installs beneath srctree/, so no build machine
+# source tree is needed.
 
 require_srctree()
 {
@@ -41,7 +44,7 @@ atf_test_case probe_contract
 probe_contract_head()
 {
 	atf_set "descr" \
-	    "anoint-allow/-set/-visibility and mint-anoint are declared, stubbed, fired at their documented sites, and profiled"
+	    "anoint-allow/-deny/-set/-visibility are declared, stubbed, fired at their documented sites, and profiled; the retired mint probes are declared but never fired"
 }
 probe_contract_body()
 {
@@ -125,12 +128,23 @@ probe_contract_body()
 	    "${src}/execute.c"
 	atf_check -s exit:0 -o ignore grep -F \
 	    'SWITCHBOARD_PROBE_ANOINT_SET(SVC_SESSION_LABEL,' "${src}/domain.c"
-	#  mint-anoint: next to mint-domain in the SVC_OP_MINT_DOMAIN handler.
+	#  mint-domain/-deny/-anoint: SVC_OP_MINT_DOMAIN is retired.  Both
+	#  dispatchers refuse it (unit control channel: ENOTSUP; lookup
+	#  channel: EPERM), the handler that fired these probes is gone, and
+	#  no staged source fires them any more.
+	atf_check -s exit:1 -o empty grep -F 'handle_mint_domain' \
+	    "${src}/svc_proto.c"
 	atf_check -s exit:0 -o ignore sh -c \
-	    "awk '/^handle_mint_domain\(/,/^}/' '${src}/svc_proto.c' |
-	     awk '/SWITCHBOARD_PROBE_MINT_DOMAIN\(/ { d = NR }
-	          /SWITCHBOARD_PROBE_MINT_ANOINT\(/ { a = NR }
-	          END { exit !(d && a && d < a) }'"
+	    "awk '/case SVC_OP_MINT_DOMAIN:/ { getline; print; exit }' \
+	    '${src}/svc_proto.c' | grep -F 'ENOTSUP'"
+	atf_check -s exit:0 -o ignore sh -c \
+	    "awk '/if \\(op == SVC_OP_MINT_DOMAIN\\)/,/goto out;/' \
+	    '${src}/domain.c' | grep -F 'lookup_channel_reply(request, EPERM'"
+	for f in anoint.c domain.c execute.c naming.c on_demand.c \
+	    svc_proto.c; do
+		atf_check -s exit:1 -o empty grep -E \
+		    'SWITCHBOARD_PROBE_MINT_(DOMAIN|DENY|ANOINT)\(' "${src}/${f}"
+	done
 	#  visibility: the USER-kind gated-name rule in svc_domain_resolves.
 	atf_check -s exit:0 -o ignore sh -c \
 	    "awk '/^svc_domain_resolves\(/,/^}/' '${src}/domain.c' |
@@ -147,14 +161,11 @@ probe_contract_body()
 	    'requester->manifest.label : SVC_SESSION_LABEL,' \
 	    "${src}/on_demand.c"
 
-	# The bsdinstruments profile consumes allow, deny and mint-anoint.
+	# The bsdinstruments profile consumes allow and deny.
 	for clause in 'switchboard*:::anoint-allow' \
-	    'switchboard*:::anoint-deny' 'switchboard*:::mint-anoint' \
-	    anoint_allow anoint_deny anoint_mint; do
+	    'switchboard*:::anoint-deny' anoint_allow anoint_deny; do
 		atf_check -s exit:0 -o ignore grep -F "${clause}" "${profile}"
 	done
-	atf_check -s exit:0 -o ignore grep -F \
-	    '@anoint_mint[arg0, arg1, arg2, arg3, arg4]' "${profile}"
 	atf_check -s exit:0 -o ignore grep -F \
 	    '@anoint_deny[copyinstr(arg0), copyinstr(arg1), copyinstr(arg2)]' \
 	    "${profile}"
@@ -187,17 +198,17 @@ anoint_script_shipped_body()
 	    '^[[:space:]]+switchboard-anoint[[:space:]]+\\$' "${makefile}"
 	atf_check -s exit:0 -o inline:'#!/usr/sbin/dtrace -s\n' head -n 1 \
 	    "${script}"
-	for probe in anoint-allow anoint-deny anoint-set mint-anoint \
-	    anoint-visibility; do
+	for probe in anoint-allow anoint-deny anoint-set anoint-visibility; do
 		atf_check -s exit:0 -o ignore grep -F \
 		    "switchboard*:::${probe}" "${script}"
 	done
+	# mint-anoint never fires since SVC_OP_MINT_DOMAIN was retired.
+	atf_check -s exit:1 -o empty grep -F 'switchboard*:::mint-' "${script}"
 	atf_check -s exit:0 -o ignore grep -F 'dtrace:::BEGIN' "${script}"
 	atf_check -s exit:0 -o ignore grep -F 'dtrace:::END' "${script}"
-	# The deny clause prints the missing names and the mint clause the
-	# status (arg4), matching the provider's argument order.
+	# The deny clause prints the missing names, matching the provider's
+	# argument order.
 	atf_check -s exit:0 -o ignore grep -F 'missing=%s' "${script}"
-	atf_check -s exit:0 -o ignore grep -F '@mints[arg0, arg4]' "${script}"
 	# Every other shipped switchboard script is still listed too (the
 	# SCRIPTS list is alphabetical; a drop would be a packaging change).
 	for other in switchboard-capabilities switchboard-connections \

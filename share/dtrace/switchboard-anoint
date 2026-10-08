@@ -4,14 +4,15 @@
  *
  * SPDX-License-Identifier: BSD-2-Clause
  *
- * switchboard-anoint -- trace IPC anointment decisions live.
+ * switchboard-anoint -- trace software attribute admission decisions live.
  *
  * Shows every gated-endpoint match switchboard makes (ALLOW / DENY with the
- * missing names), every anointment set it decides (a unit's at exec, a login
- * session's at mint), the set detail of each SVC_OP_MINT_DOMAIN, and every
- * gated name a USER-kind session was allowed to see through the visibility
- * rule.  A DENY here has a matching AUE_SWITCHBOARD_ANOINT audit record.
- * See docs/ipc-anointments-design.md and switchboard(8).
+ * missing names), every attribute set it initializes (a unit's at exec, an
+ * internal discovery route's when it is created), and every gated name a
+ * USER-kind route was allowed to see through the visibility rule.  A DENY
+ * here has a matching AUE_SWITCHBOARD_ANOINT audit record.  The retired
+ * SVC_OP_MINT_DOMAIN operation no longer fires mint-anoint, so it is not
+ * traced.  See docs/book/src/plane/attributes.md and switchboard(8).
  *
  * Usage: switchboard-anoint
  */
@@ -49,15 +50,6 @@ switchboard*:::anoint-set
 	@ops["set"] = count();
 }
 
-switchboard*:::mint-anoint
-{
-	printf("%-20Y %-10s %-32s count=%d all=%d admin=%d status=%d\n",
-	    walltimestamp, "MINT", strjoin("uid ", lltostr(arg0)), arg1, arg2,
-	    arg3, arg4);
-	@ops["mint"] = count();
-	@mints[arg0, arg4] = count();
-}
-
 switchboard*:::anoint-visibility
 {
 	printf("%-20Y %-10s %-32s uid=%d\n", walltimestamp, "VISIBLE",
@@ -76,8 +68,6 @@ dtrace:::END
 	printa("  %-32s %-28s %@d\n", @denied);
 	printf("\n--- Missing anointments ---\n");
 	printa("  %-32s %@d\n", @missing);
-	printf("\n--- Mints (uid, status) ---\n");
-	printa("  uid=%-8d status=%-4d %@d\n", @mints);
 	printf("\n--- Gated names seen through USER visibility ---\n");
 	printa("  %-32s %@d\n", @visible);
 }
