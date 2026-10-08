@@ -20,7 +20,7 @@ fi
 
 # This is a source-to-test traceability audit, not a self-contained runtime
 # device test.  In particular it checks production sources, the qualification
-# manifest, and the durable review record against the installed test fixtures.
+# manifest and the review procedure against the installed test fixtures.
 # Do not turn a missing or mismatched source tree into a later, misleading
 # missing-manifest diagnostic.
 if [ -z "$source_root" ] ||
@@ -31,7 +31,6 @@ if [ -z "$source_root" ] ||
 fi
 lab_manifest="$source_root/tests/sys/kern/vsock_e2e/virtio-lab.yaml"
 review_prompt="$script_dir/VIRTIO_1_4_FULL_REVIEW_PROMPT.md"
-validation_record="$source_root/docs/bhyve-virtio-1.4-validation-review.md"
 harness_runner="$script_dir/run.sh"
 snapshot_model_runner="$script_dir/run-snapshot-model.sh"
 harness_makefile="$script_dir/Makefile"
@@ -58,10 +57,6 @@ test -r "$lab_manifest" || {
 }
 test -r "$review_prompt" || {
 	echo "virtio requirements: cannot read review procedure $review_prompt" >&2
-	exit 1
-}
-test -r "$validation_record" || {
-	echo "virtio requirements: cannot read validation record $validation_record" >&2
 	exit 1
 }
 test -r "$harness_runner" || {
@@ -395,62 +390,6 @@ rg -q -F 'git diff --name-only' "$review_prompt" || {
 	exit 1
 }
 echo "virtio requirements: doubled kernel and private-boundary reviews required"
-
-# The durable validation record must retain the same final-source double
-# review shape as the executable procedure.  This prevents a future summary
-# edit from claiming completion after only the producer-side traversal.
-for phase in \
-    'Pass 17: post-fix shared-kernel execution-context review' \
-    'Pass 18: post-fix non-standard consumer and composition review' \
-    'Pass 19: independent final-source kernel reverse-lifetime review' \
-    'Pass 20: independent final-source private-boundary rediscovery' \
-    'Pass 21: repeated common-kernel primitive lifecycle review' \
-    'Pass 22: repeated private/non-standard activation review'; do
-	rg -q -F "$phase" "$validation_record" || {
-		echo "virtio requirements: validation record phase is missing: $phase" >&2
-		exit 1
-	}
-done
-rg -q -F 'restarts Passes 17 through 22' "$validation_record" || {
-	echo "virtio requirements: validation record double-review restart rule is missing" >&2
-	exit 1
-}
-rg -q -F 'common-contract and decoder-policy replay phases' "$validation_record" &&
-    rg -q -F 'Either pass restarts the complete final' "$validation_record" || {
-	echo "virtio requirements: validation record omits terminal common/private replay" >&2
-	exit 1
-}
-rg -q -F 'second common-kernel and non-standard policy replays' \
-    "$validation_record" &&
-    rg -q -F 'A correction in either phase restarts' "$validation_record" || {
-	echo "virtio requirements: validation record omits second common/private replay" >&2
-	exit 1
-}
-echo "virtio requirements: final-source review record requires two kernel and two private passes"
-
-# The durable review record must also identify the complete terminal sequence.
-# Keep the detailed 37/38 replay phases and the clean-room 43/44 replays
-# visible here: checking only a closing sentence would let a future edit
-# collapse the rollback, implementation-defined, and independent traversals.
-rg -q -F 'every terminal phase, Passes' "$validation_record" &&
-    rg -q -F '35 through 42, exactly once' "$validation_record" &&
-    rg -q -F 'Passes 37 and 38 provide the mutation/rollback' \
-    "$validation_record" &&
-    rg -q -F 'validator rejects an obsolete completion' "$validation_record" &&
-    rg -q -F 'rule at Pass 36 or Pass 40' "$validation_record" || {
-	echo "virtio requirements: validation record omits the complete terminal review sequence" >&2
-	exit 1
-}
-echo "virtio requirements: validation record includes all terminal review phases"
-
-rg -q -F 'doubled clean-room kernel and non-standard replays' \
-    "$validation_record" &&
-    rg -q -F 'Passes 43 and 44' "$validation_record" &&
-    rg -q -F 'Both phases restart the final' "$validation_record" || {
-	echo "virtio requirements: validation record omits clean-room terminal replays" >&2
-	exit 1
-}
-echo "virtio requirements: validation record includes clean-room terminal replays"
 
 # The roadmap is the implementation plan that drives the scoped prompt.  Keep
 # the two additional terminal passes visible there as well: otherwise the

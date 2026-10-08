@@ -31,9 +31,7 @@ virtio-snapshot-model pid=N`, `PASS virtio-snapshot-model cases=N`, or `FAIL
 virtio-snapshot-model exit=N`.  It initializes the record before validating
 options or the source-tree path, so a missing source tree or rejected option
 cannot look like a still-running successful case.
-Set `SANITIZERS=thread` to run the identical test set under ThreadSanitizer;
-the validation record in `docs/bhyve-virtio-1.4-validation-review.md` records
-both modes.
+Set `SANITIZERS=thread` to run the identical test set under ThreadSanitizer.
 
 These harnesses are also wired into ATF/kyua (see this directory's Makefile,
 which supplies the mock-header shadowing and `--wrap` linker flags the stock
