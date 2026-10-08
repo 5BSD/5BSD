@@ -636,13 +636,16 @@ test_prctl(void)
 	/* 125: PR_GET_TID_ADDRESS with a bad pointer is EFAULT. */
 	if (call(SYS_prctl, 40, 0, 0, 0, 0, 0) != -EFAULT) return (125);
 	/*
-	 * 126-129: THP cannot be disabled per process (deliberately EINVAL);
-	 * the enabled state is settable and readable; extra args are EINVAL.
+	 * 126-129: there is no THP, so any SET value is accepted (Linux
+	 * treats every nonzero arg2 as "disable") and GET reports THP as
+	 * disabled (1); the unused arguments must be zero, as on Linux.
 	 */
 	if (call(SYS_prctl, 41, 0, 0, 0, 0, 0) != 0) return (126);
-	if (call(SYS_prctl, 41, 1, 0, 0, 0, 0) != -EINVAL) return (127);
+	if (call(SYS_prctl, 41, 1, 0, 0, 0, 0) != 0) return (127);
+	if (call(SYS_prctl, 41, 2, 0, 0, 0, 0) != 0) return (127);
 	if (call(SYS_prctl, 41, 0, 1, 0, 0, 0) != -EINVAL) return (127);
-	if (call(SYS_prctl, 42, 0, 0, 0, 0, 0) != 0) return (128);
+	if (call(SYS_prctl, 41, 1, 0, 0, 1, 0) != -EINVAL) return (127);
+	if (call(SYS_prctl, 42, 0, 0, 0, 0, 0) != 1) return (128);
 	if (call(SYS_prctl, 42, 1, 0, 0, 0, 0) != -EINVAL) return (129);
 	/* 130-131: speculation control is ENODEV, as on an arch without it. */
 	if (call(SYS_prctl, 52, 0, 0, 0, 0, 0) != -ENODEV) return (130);

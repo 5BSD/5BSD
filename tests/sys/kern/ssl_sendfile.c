@@ -25,6 +25,7 @@
  * SUCH DAMAGE.
  */
 
+#include <sys/param.h>
 #include <sys/ioctl.h>
 #include <sys/socket.h>
 #include <sys/sysctl.h>
@@ -461,6 +462,8 @@ ATF_TC_BODY(eagain_vs_eof, tc)
 {
 	struct ctx c;
 	char buf[16 * 1024];
+	ossl_ssize_t sent[1024];
+	size_t nsent, i;
 	ssize_t nread;
 	int n;
 
@@ -477,22 +480,49 @@ ATF_TC_BODY(eagain_vs_eof, tc)
 #if 0	/* see https://github.com/openssl/openssl/issues/29742 */
 	ATF_REQUIRE(BIO_should_retry(SSL_get_wbio(c.srv)));
 #endif
+	nsent = 0;
+	sent[nsent++] = c.sbytes;
 
 	/*
-	 * Exercise second attempt on already full buffer.
+	 * Exercise another attempt on an already full buffer.
+	 *
+	 * A short write does not guarantee that the very next call finds the
+	 * buffer still full: with software kTLS the tail of the previous call
+	 * may still await encryption and drain into the peer once encrypted,
+	 * and the send low watermark that sendfile(2) waits for is capped at
+	 * half of the default send space while the buffers themselves may have
+	 * been grown (autosizing, TCP hostcache).  Keep sending until the call
+	 * fails; the client never reads, so the buffers do fill up.
 	 */
-	sendme_locked_wait(&c, 0, FSIZE, true);
+	for (;;) {
+		sendme_locked_wait(&c, 0, FSIZE, true);
+		if (c.sbytes <= 0)
+			break;
+		ATF_REQUIRE(SSL_get_error(c.srv, c.sbytes) == 0);
+		ATF_REQUIRE(nsent < sizeof(sent) / sizeof(sent[0]));
+		sent[nsent++] = c.sbytes;
+	}
 	ATF_REQUIRE(c.sbytes == -1);
 	ATF_REQUIRE(SSL_get_error(c.srv, c.sbytes) == SSL_ERROR_WANT_WRITE);
 	ATF_REQUIRE(BIO_should_retry(SSL_get_wbio(c.srv)));
 
-	/* Clear the buffer. */
-	nread = 0;
-	while (nread < c.sbytes &&
-	    (n = SSL_read_b(c.cln, buf, sizeof(buf))) > 0) {
-		ATF_REQUIRE(memcmp((char *)c.mfd + nread, buf, n) == 0);
-		nread += n;
+	/*
+	 * Clear the buffer: read back everything the successful calls sent,
+	 * each of which started at offset 0 of the file.
+	 */
+	for (i = 0; i < nsent; i++) {
+		nread = 0;
+		while (nread < sent[i]) {
+			n = SSL_read_b(c.cln, buf,
+			    MIN((ssize_t)sizeof(buf), sent[i] - nread));
+			ATF_REQUIRE(n > 0);
+			ATF_REQUIRE(memcmp((char *)c.mfd + nread, buf, n) == 0);
+			nread += n;
+		}
 	}
+	/* Wait until the server side has room again (peer ACKs processed). */
+	ATF_REQUIRE(poll(&(struct pollfd){ .fd = c.ss, .events = POLLOUT },
+	    1, 30 * 1000) == 1);
 
 	/*
 	 * Exercise zero length write: offset == file size.
