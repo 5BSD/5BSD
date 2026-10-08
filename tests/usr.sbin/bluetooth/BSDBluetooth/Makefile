@@ -28,8 +28,7 @@ audio_media_test.o: ${SRCTOP}/lib/virtual_oss/bt/bt.c \
 	${SRCTOP}/lib/virtual_oss/bt/bt.h ${SRCTOP}/lib/virtual_oss/bt/sbc_encode.h
 
 ATF_TESTS_C+=	audio_sdp_test
-# Name session.c by path: a lib/libsdp .PATH would shadow hccontrol util.c.
-SRCS.audio_sdp_test= audio_sdp_test.c ${SRCTOP}/lib/libsdp/session.c
+SRCS.audio_sdp_test= audio_sdp_test.c session.c
 CFLAGS.session.c+= -I${SRCTOP}/lib/libsdp
 LDFLAGS.audio_sdp_test+= -Wl,--wrap=socket -Wl,--wrap=bindat \
 	-Wl,--wrap=connectat -Wl,--wrap=getsockopt
@@ -1259,6 +1258,8 @@ LDFLAGS.${t}+=	-Wl,--wrap=bt_devreq_events
 ATF_TESTS_C+=	hci_transport_test
 SRCS.hci_transport_test=	hci_transport_test.c hci.c
 .PATH:	${SRCTOP}/lib/libbluetooth
+# Searched last: lib/libsdp has a util.c that must not shadow hccontrol's.
+.PATH:	${SRCTOP}/lib/libsdp
 LDFLAGS.hci_transport_test+= -Wl,--wrap=getsockopt -Wl,--wrap=setsockopt
 LDFLAGS.hci_transport_test+= -Wl,--wrap=read -Wl,--wrap=writev -Wl,--wrap=time
 CFLAGS.hci.c+=	-Wno-sign-compare -Wno-unused-parameter
