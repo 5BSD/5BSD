@@ -53,8 +53,14 @@ capability_connect(const char *name)
 	int control, error;
 
 	control = open("/dev/mac_capability", O_RDWR | O_CLOEXEC);
-	ATF_REQUIRE_MSG(control >= 0, "open mac_capability: %s",
-	    strerror(errno));
+	/*
+	 * Plane-on tier only: absent off the plane, and claimed by Capsule on a
+	 * live plane unless the image boots with
+	 * kern.mac_capability_isolation.enforce=0.  Skip naming the cause.
+	 */
+	if (control < 0)
+		atf_tc_skip("capability plane unavailable: /dev/mac_capability: "
+		    "%s", strerror(errno));
 	memset(&connect, 0, sizeof(connect));
 	strlcpy(connect.name, name, sizeof(connect.name));
 	if (ioctl(control, MAC_CAPABILITY_CONNECT, &connect) == -1) {

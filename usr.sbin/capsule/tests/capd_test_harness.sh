@@ -43,14 +43,18 @@ capd_require_stack_kmods()
 
 capd_require_device()
 {
-	if [ ! -c /dev/mac_capability ]; then
-		atf_skip "mac_capability device not available"
-	fi
 	# A test-local stack needs its own claim on the control device.  Under a
 	# live plane PID 1 already holds it, so the private Capsule would exit
-	# on EPERM: that is the environment, not a regression.
+	# on EPERM: that is the environment, not a regression.  Test this first:
+	# the claim also hides the node from stat(2) unless the image boots with
+	# kern.mac_capability_isolation.enforce=0, and the skip should name the
+	# real cause.
 	if [ "$(ps -o comm= -p 1 2>/dev/null)" = "capsule" ]; then
-		atf_skip "mac_capability device is claimed by the live plane"
+		atf_skip "mac_capability device is claimed by the live plane" \
+		    "(test-local stack; run plane-off)"
+	fi
+	if [ ! -c /dev/mac_capability ]; then
+		atf_skip "mac_capability device not available"
 	fi
 }
 
@@ -216,6 +220,9 @@ capd_launch_capsule()
 {
 	local i
 
+	# Every test-local Capsule needs its own claim on the control device,
+	# including the suites that launch one without capd_start_stack.
+	capd_require_device
 	rm -f "$CAPD_GUARDIAN_SOCKET" "$CAPD_LEASE"
 	mkfifo -m 0600 "$CAPD_LEASE" || atf_fail "cannot create guardian lease"
 	# Open read/write before launch so neither side blocks.  Close this inherited
