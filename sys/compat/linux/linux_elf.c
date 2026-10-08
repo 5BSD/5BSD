@@ -64,6 +64,7 @@
 #include <machine/../linux/linux.h>
 #endif
 #include <compat/linux/linux_elf.h>
+#include <compat/linux/linux_emul.h>
 #include <compat/linux/linux_mib.h>
 #include <compat/linux/linux_misc.h>
 
@@ -494,7 +495,7 @@ __linuxN(copyout_auxargs)(struct image_params *imgp, uintptr_t base)
 	Elf_Auxinfo *aarray, *pos;
 	int error, issetugid;
 
-	issetugid = (imgp->credential_setid || imgp->authority_setid) ? 1 : 0;
+	issetugid = linux_exec_secure(imgp) ? 1 : 0;
 	args = imgp->auxargs;
 	aarray = pos = malloc(LINUX_AT_COUNT * sizeof(*pos), M_TEMP,
 	    M_WAITOK | M_ZERO);

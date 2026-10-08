@@ -3,8 +3,19 @@
 /*
  * personality(2): query/set semantics, persistence across execve(2), and
  * ADDR_NO_RANDOMIZE actually disabling address-space randomisation for
- * the next image (setarch -R).  Exit status = failed check number.
+ * the next image (setarch -R).  Also the secure-exec rules: AT_SECURE and
+ * the PER_CLEAR_ON_SETID drop for a set-id image and for a process whose
+ * real and effective ids already differ.  Exit status = failed check
+ * number.
+ *
+ * argv[1], when given, is a setgid (group operator) copy of this binary.
  */
+#define	SYS_setreuid		113
+#define	AT_NULL			0
+#define	AT_SECURE		23
+#define	OPERATOR_GID		5
+#define	NOBODY_UID		65534
+
 #define	PER_LINUX		0
 #define	UNAME26			0x0020000
 #define	ADDR_NO_RANDOMIZE	0x0040000
@@ -13,13 +24,28 @@
 #define	ADDR_LIMIT_3GB		0x8000000
 #define	PER_QUERY		0xffffffff
 
-struct report { long map; long sp; long persona; };
+struct report {
+	long map;
+	long sp;
+	long persona;
+	long secure;
+	long egid;
+};
 
-/* Re-executed child: report a fresh mmap address, the stack and persona. */
+/* How run() prepares the child before execve(2). */
+#define	PREP_NONE	0
+#define	PREP_SETREUID	1	/* ruid nobody, euid root: ids differ */
+
+/*
+ * Re-executed child: report a fresh mmap address, the stack, persona,
+ * AT_SECURE and the effective gid.
+ */
 static int
-child(void)
+child(char **envp)
 {
 	struct report rep;
+	unsigned long *auxv;
+	char **ep;
 	long sp;
 
 	__asm__ volatile("mov %%rsp, %0" : "=r"(sp));
@@ -27,16 +53,27 @@ child(void)
 	    MAP_ANONYMOUS, -1, 0);
 	rep.sp = sp;
 	rep.persona = sys1(SYS_personality, PER_QUERY);
+	rep.secure = -1;
+	for (ep = envp; *ep != 0; ep++)
+		;
+	for (auxv = (unsigned long *)(ep + 1); auxv[0] != AT_NULL; auxv += 2)
+		if (auxv[0] == AT_SECURE)
+			rep.secure = (long)auxv[1];
+	rep.egid = sys0(SYS_getegid);
 	if (sys3(SYS_write, 3, &rep, sizeof(rep)) != (long)sizeof(rep))
 		return (99);
 	return (0);
 }
 
-/* Exec ourselves with the given persona set; collect the child's report. */
+/*
+ * Exec image (ourselves or a set-id copy) with the given persona set;
+ * collect the child's report.
+ */
 static int
-run(char *self, char **envp, unsigned long persona, struct report *rep)
+run_image(char *image, char **envp, unsigned long persona, int prep,
+    struct report *rep)
 {
-	char *args[3] = { self, "child", 0 };
+	char *args[3] = { image, "child", 0 };
 	long pid;
 	int pfd[2];
 	int status;
@@ -51,8 +88,11 @@ run(char *self, char **envp, unsigned long persona, struct report *rep)
 		if (sys2(SYS_dup2, pfd[1], 3) != 3)
 			(void)sys1(SYS_exit_group, 98);
 		(void)sys1(SYS_close, pfd[1]);
+		if (prep == PREP_SETREUID &&
+		    sys2(SYS_setreuid, NOBODY_UID, 0) != 0)
+			(void)sys1(SYS_exit_group, 96);
 		(void)sys1(SYS_personality, persona);
-		(void)sys3(SYS_execve, self, args, envp);
+		(void)sys3(SYS_execve, image, args, envp);
 		(void)sys1(SYS_exit_group, 97);
 	}
 	(void)sys1(SYS_close, pfd[1]);
@@ -65,6 +105,13 @@ run(char *self, char **envp, unsigned long persona, struct report *rep)
 }
 
 static int
+run(char *self, char **envp, unsigned long persona, struct report *rep)
+{
+
+	return (run_image(self, envp, persona, PREP_NONE, rep));
+}
+
+static int
 test(int argc, char **argv, char **envp)
 {
 	struct report a, b;
@@ -72,7 +119,7 @@ test(int argc, char **argv, char **envp)
 	int r;
 
 	if (argc >= 2 && argv[1][0] == 'c')
-		return (child());
+		return (child(envp));
 
 	/* 1: the query idiom returns the current persona (PER_LINUX). */
 	cur = sys1(SYS_personality, PER_QUERY);
@@ -121,6 +168,34 @@ test(int argc, char **argv, char **envp)
 	/* 11: clearing the bit again is reflected in the query. */
 	(void)sys1(SYS_personality, cur);
 	if (sys1(SYS_personality, PER_QUERY) != cur) return (11);
+
+	/* 12: an ordinary exec with matching ids is not secure. */
+	if (run(argv[0], envp, cur | READ_IMPLIES_EXEC, &a) != 0) return (12);
+	if (a.secure != 0) return (12);
+	/*
+	 * 13-15: real and effective uids that already differ make the exec
+	 * secure even though the image is not set-id (native issetugid()
+	 * stays 1 too), and the persona bug-emulation bits are dropped.
+	 */
+	if (run_image(argv[0], envp, cur | READ_IMPLIES_EXEC, PREP_SETREUID,
+	    &a) != 0) return (13);
+	if (a.secure != 1) return (14);
+	if ((a.persona & READ_IMPLIES_EXEC) != 0) return (15);
+	/*
+	 * 16-18: a setgid image is secure and drops READ_IMPLIES_EXEC
+	 * (PER_CLEAR_ON_SETID) although the caller was not set-id before.
+	 */
+	if (argc >= 2) {
+		if (run_image(argv[1], envp, cur | READ_IMPLIES_EXEC,
+		    PREP_NONE, &a) != 0) return (16);
+		if (a.egid != OPERATOR_GID) {
+			msg("note: setgid bit not honoured (nosuid mount?); "
+			    "set-id image checks skipped\n");
+		} else {
+			if (a.secure != 1) return (17);
+			if ((a.persona & READ_IMPLIES_EXEC) != 0) return (18);
+		}
+	}
 	return (0);
 }
 

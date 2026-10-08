@@ -78,6 +78,7 @@ bool	linux_perf_inuse(void);
 typedef void (*linux_perf_detach_fn)(void *, struct thread *);
 EVENTHANDLER_DECLARE(linux_perf_detach_event, linux_perf_detach_fn);
 int	linux_on_exec(struct proc *, struct image_params *);
+bool	linux_exec_secure(struct image_params *);
 void	linux_thread_dtor(struct thread *);
 #if defined(__amd64__) && !defined(COMPAT_LINUX32)
 int	linux_ptrace_fork_flags(struct thread *, bool, int, bool);

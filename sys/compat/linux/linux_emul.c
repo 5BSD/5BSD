@@ -276,11 +276,10 @@ linux_proc_init(struct thread *td, struct thread *newtd, bool init_thread)
 		pem = pem_find(p);
 		KASSERT(pem != NULL, ("proc_init: proc emuldata not found.\n"));
 		/*
-		 * The persona survives execve(2); only a set-id image drops
-		 * the bug-emulation bits (Linux PER_CLEAR_ON_SETID).
+		 * The persona survives execve(2).  linux_on_exec() drops the
+		 * bug-emulation bits for a secure exec; P_SUGID is not yet
+		 * updated for the new image here.
 		 */
-		if ((p->p_flag & P_SUGID) != 0)
-			pem->persona &= ~LINUX_PER_CLEAR_ON_SETID;
 		pem->oom_score_adj = 0;
 		linux_pemuldata_exec_md(pem);
 #ifdef __amd64__
@@ -369,14 +368,44 @@ linux_common_execve(struct thread *td, struct image_args *eargs)
 	return (EJUSTRETURN);
 }
 
+/*
+ * Report whether an exec is secure in the Linux sense (AT_SECURE,
+ * PER_CLEAR_ON_SETID), agreeing with what native issetugid(2) reports
+ * once the exec completes.
+ *
+ * Callers run from the image activator (sv_onexec, sv_copyout_auxargs),
+ * before do_execve() calls setsugid() and installs the new credential,
+ * so P_SUGID by itself does not describe the new image (SA-26:30).  A
+ * set-id or software-authority image is secure.  Otherwise do_execve()
+ * keeps P_SUGID only while the effective and real ids still differ;
+ * p_ucred still holds those ids here, and an ordinary exec changes only
+ * the saved ids.  Linux likewise sets AT_SECURE when euid != uid or
+ * egid != gid across exec.
+ *
+ * The answer can err only toward secure: a set-id credential that
+ * do_execve() later strips (no_new_privs, sv_setid_allowed) still
+ * counts.
+ */
+bool
+linux_exec_secure(struct image_params *imgp)
+{
+	struct proc *p;
+	struct ucred *cr;
+
+	if (imgp->credential_setid || imgp->authority_setid)
+		return (true);
+	p = imgp->proc;
+	cr = p->p_ucred;
+	return ((p->p_flag & P_SUGID) != 0 &&
+	    (cr->cr_uid != cr->cr_ruid || cr->cr_gid != cr->cr_rgid));
+}
+
 int
 linux_on_exec(struct proc *p, struct image_params *imgp)
 {
+	struct linux_pemuldata *pem;
 	struct thread *td;
 	struct thread *othertd;
-#if defined(__amd64__)
-	struct linux_pemuldata *pem;
-#endif
 	int error;
 
 	td = curthread;
@@ -415,16 +444,22 @@ linux_on_exec(struct proc *p, struct image_params *imgp)
 		if ((error = linux_pwd_onexec(td)) != 0)
 			return (error);
 	}
+	pem = pem_find(p);
+	KASSERT(pem != NULL, ("%s: proc emuldata not found", __func__));
+	/*
+	 * A secure exec drops the bug-emulation bits (Linux
+	 * PER_CLEAR_ON_SETID) before the image's own defaults apply.
+	 */
+	if (linux_exec_secure(imgp))
+		pem->persona &= ~LINUX_PER_CLEAR_ON_SETID;
 #if defined(__amd64__)
 	/*
 	 * An IA32 executable which has executable stack will have the
 	 * READ_IMPLIES_EXEC personality flag set automatically.
 	 */
 	if (SV_PROC_FLAG(td->td_proc, SV_ILP32) &&
-	    imgp->stack_prot & VM_PROT_EXECUTE) {
-		pem = pem_find(p);
+	    imgp->stack_prot & VM_PROT_EXECUTE)
 		pem->persona |= LINUX_READ_IMPLIES_EXEC;
-	}
 #endif
 	return (0);
 }
