@@ -269,7 +269,7 @@ reports as `KF_TYPE_PROCDESC`, and a Linux signalfd or perf descriptor as
 | | `LOCAL_CAPMODE_SERVER` (6) | Require the server to be in capability mode |
 | | `LOCAL_CAP_REQ` (7) | Require capability mode to use this end |
 | | `SUN_ABSTRACT_MAXLEN` (110) | Linux abstract-namespace name length |
-| `sys/sys/socket.h` | `AF_VSOCK`, `PF_VSOCK` (64) | The vsock domain, above FreeBSD's families; `AF_MAX` is 64 |
+| `sys/sys/socket.h` | `AF_VSOCK`, `PF_VSOCK` (64) | The vsock domain, above FreeBSD's families; `AF_MAX` is 65, one past it |
 | | `SOCKCRED2_VERSION` (1) | `sockcred2` now carries `sc_capmode` |
 
 ### Files, processes and tracing

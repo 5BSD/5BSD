@@ -277,7 +277,7 @@ struct accept_filter_arg {
 /* 5BSD-local families start at 64 so new FreeBSD ones cannot collide. */
 #define	AF_VSOCK	64		/* virtio/vm sockets */
 
-#define	AF_MAX		64
+#define	AF_MAX		65		/* one more than the largest family */
 
 /*
  * When allocating a new AF_ constant, please only allocate

@@ -39,9 +39,10 @@ NOTE TO PEOPLE WHO THINK THAT FreeBSD 16.x IS SLOW:
 	kernel-and-world-together rule applies; old binaries that call them
 	get ENOSYS, or a different FreeBSD system call once 603+ are assigned.
 
-	AF_VSOCK moved from 46 to 64 (AF_MAX is now 64) and FreeBSD's
-	AF_IPFWLOG is back at 46, where FreeBSD binaries expect it.  Rebuild
-	anything that uses AF_VSOCK or sizes arrays by AF_MAX.
+	AF_VSOCK moved from 46 to 64 and FreeBSD's AF_IPFWLOG is back at 46,
+	where FreeBSD binaries expect it.  AF_MAX is now 65: as in FreeBSD,
+	it is one more than the largest family.  Rebuild anything that uses
+	AF_VSOCK or sizes arrays by AF_MAX.
 
 20260919:
 	less(1) has been updated to version 710, which removes the obsolete
