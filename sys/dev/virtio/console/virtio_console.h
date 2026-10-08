@@ -60,6 +60,11 @@ struct virtio_console_control {
 	uint16_t value;		/* Extra information for the key */
 };
 
+struct virtio_console_resize {
+	uint16_t cols;
+	uint16_t rows;
+} __packed;
+
 static inline int
 virtio_console_control_used_len_valid(uint32_t used_len,
     uint32_t buffer_len)

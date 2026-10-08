@@ -73,3 +73,4 @@ __pycache__/
 /tests/sys/kern/helper
 /tests/usr.sbin/bluetooth/blued/fuzz/corpus/
 /tests/usr.sbin/bluetooth/blued/fuzz/smoke/
+.tgrep

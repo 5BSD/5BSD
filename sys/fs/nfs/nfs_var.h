@@ -383,6 +383,8 @@ int nfscl_wcc_data(struct nfsrv_descript *, vnode_t,
 int nfsm_loadattr(struct nfsrv_descript *, struct nfsvattr *);
 int nfscl_request(struct nfsrv_descript *, vnode_t,
          NFSPROC_T *, struct ucred *);
+void nfsv4_freeunsentslot(struct nfsmount *, struct nfsclsession *,
+    struct nfsrv_descript *);
 
 /* nfs_nfsdsubs.c */
 void nfsd_fhtovp(struct nfsrv_descript *, struct nfsrvfh *, int,
@@ -478,9 +480,9 @@ int nfsrpc_lookup(vnode_t, char *, int, struct ucred *, NFSPROC_T *,
     uint32_t);
 int nfsrpc_readlink(vnode_t, struct uio *, struct ucred *,
     NFSPROC_T *, struct nfsvattr *, int *);
-int nfsrpc_read(vnode_t, struct uio *, struct ucred *, NFSPROC_T *,
+int nfsrpc_read(vnode_t, struct uio *, vm_page_t *, struct ucred *, NFSPROC_T *,
     struct nfsvattr *, int *);
-int nfsrpc_write(vnode_t, struct uio *, int *, int *,
+int nfsrpc_write(vnode_t, struct uio *, vm_page_t *, int *, int *,
     struct ucred *, NFSPROC_T *, struct nfsvattr *, int *, int, int);
 int nfsrpc_mknod(vnode_t, char *, int, struct vattr *, u_int32_t,
     __enum_uint8(vtype), struct ucred *, NFSPROC_T *, struct nfsvattr *,

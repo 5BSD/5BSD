@@ -47,6 +47,7 @@
 #include <sys/vnode.h>
 
 #include <machine/fpu.h>
+#include <machine/ifunc.h>
 #include <machine/md_var.h>
 #include <machine/pcb.h>
 #include <machine/segments.h>
@@ -58,7 +59,6 @@
 #include <vm/vm_extern.h>
 #include <vm/vm_param.h>
 
-#include <x86/ifunc.h>
 #include <x86/reg.h>
 #include <x86/sysarch.h>
 

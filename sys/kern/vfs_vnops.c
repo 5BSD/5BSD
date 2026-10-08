@@ -501,6 +501,42 @@ vfs_check_namedattr(struct vnode *vp)
 }
 
 /*
+ * This check is performed when a vnode is opened for dumping the core
+ * from userspace process. The /dev/ufssuspend device allows userspace
+ * to suspend the UFS volume, and we must check that the dump does not
+ * go into the volume the coredumping process suspended.
+ *
+ * Taking MNT_ILOCK around checks is not required, because the process
+ * is single-threaded around dumping core, and we in particular check
+ * if the current process is the suspension owner.
+ */
+static int
+vn_open_nosuspend(struct vnode *vp, u_int vn_open_flags)
+{
+	struct mount *mp;
+	struct thread *susp_owner;
+	int error;
+
+	if ((vn_open_flags & VN_OPEN_COREDUMP) == 0)
+		return (0);
+	MPASS((curproc->p_flag & P_HADTHREADS) == 0 ||
+	    (curproc->p_flag & (P_SINGLE_BOUNDARY | P_SINGLE_EXIT |
+	    P_STOPPED)) != 0);
+
+	mp = NULL;
+	error = VOP_GETWRITEMOUNT(vp, &mp);
+	if (error != 0 || mp == NULL)
+		return (0);
+	susp_owner = atomic_load_ptr(&mp->mnt_susp_owner);
+	if ((atomic_load_int(&mp->mnt_kern_flag) & (MNTK_SUSPEND |
+	    MNTK_SUSPENDED)) != 0 && susp_owner != NULL &&
+	    susp_owner->td_proc == curproc)
+		error = EBUSY;
+	vfs_rel(mp);
+	return (error);
+}
+
+/*
  * Common code for vnode open operations via a name lookup.
  * Lookup the vnode and invoke VOP_CREATE if needed.
  * Check permissions, and call the VOP_OPEN or VOP_CREATE routine.
@@ -556,7 +592,13 @@ restart:
 				error = EINVAL;
 				vp = ndp->ni_dvp;
 				ndp->ni_dvp = NULL;
-				goto bad;
+				goto bad_dvp;
+			}
+			error = vn_open_nosuspend(ndp->ni_dvp, vn_open_flags);
+			if (error != 0) {
+				vp = ndp->ni_dvp;
+				ndp->ni_dvp = NULL;
+				goto bad_dvp;
 			}
 			VATTR_NULL(vap);
 			vap->va_type = VREG;
@@ -572,7 +614,7 @@ restart:
 				NDREINIT(ndp);
 				goto restart;
 			}
-			if ((vn_open_flags & VN_OPEN_NAMECACHE) != 0 ||
+			if ((vn_open_flags & VN_OPEN_COREDUMP) != 0 ||
 			    (vn_irflag_read(ndp->ni_dvp) & VIRF_INOTIFY) != 0)
 				ndp->ni_cnd.cn_flags |= MAKEENTRY;
 #ifdef MAC
@@ -668,7 +710,9 @@ restart:
 	    (vn_irflag_read(vp) & VIRF_MAGICLINK) != 0 &&
 	    (fmode & (O_PATH | O_NOFOLLOW)) != (O_PATH | O_NOFOLLOW))
 		error = EXDEV;
-	else {
+	else
+		error = vn_open_nosuspend(vp, vn_open_flags);
+	if (error == 0) {
 		vn_file_context_enter(&pathctx, fp, NULL, fmode);
 		error = vn_open_vnode(vp, fmode, cred, curthread, fp);
 		vn_file_context_leave(&pathctx);
@@ -690,6 +734,8 @@ bad:
 			vn_lock(vp, LK_UPGRADE | LK_RETRY);
 		(void)VOP_FILECLOSE(vp, fp, true, curthread);
 	}
+bad_dvp:
+	/* Failures before VOP_CREATE enter here: no handle to close. */
 	NDFREE_PNBUF(ndp);
 	vput(vp);
 	*flagp = fmode;

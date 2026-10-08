@@ -33,6 +33,7 @@
 #include <sys/bio.h>
 #include <sys/bus.h>
 #include <sys/counter.h>
+#include <sys/eventhandler.h>
 #include <sys/kernel.h>
 #include <sys/lock.h>
 #include <sys/malloc.h>
@@ -135,6 +136,10 @@ struct nvme_async_event_request {
 	uint8_t				log_page_buffer[NVME_MAX_AER_LOG_SIZE];
 };
 
+/*
+ * Abort progress is tracked per request (nvme_request.abort_sent); the abort
+ * completion never dereferences the tracker, which may have been reused.
+ */
 struct nvme_tracker {
 	TAILQ_ENTRY(nvme_tracker)	tailq;
 	struct nvme_request		*req;
@@ -327,6 +332,8 @@ struct nvme_controller {
 	bool				isr_warned;
 	bool				is_initialized;
 
+	eventhandler_tag		timestamp_tag;
+
 	/* Host Memory Buffer */
 	int				hmb_nchunks;
 	size_t				hmb_chunk;
@@ -441,6 +448,7 @@ void	nvme_completion_poll_cb(void *arg, const struct nvme_completion *cpl);
 int	nvme_ctrlr_construct(struct nvme_controller *ctrlr, device_t dev);
 void	nvme_ctrlr_destruct(struct nvme_controller *ctrlr, device_t dev);
 void	nvme_ctrlr_shutdown(struct nvme_controller *ctrlr);
+int	nvme_ctrlr_delete_qpairs(struct nvme_controller *ctrlr);
 bool	nvme_ctrlr_reset(struct nvme_controller *ctrlr);
 /* ctrlr defined as void * to allow use with config_intrhook. */
 void	nvme_ctrlr_start_config_hook(void *ctrlr_arg);

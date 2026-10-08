@@ -177,7 +177,10 @@ typedef int dumper_hdr_t(struct dumperinfo *di, struct kerneldumpheader *kdh);
 #define	D_GIANTOK	0x00200000	/* suppress warning about using Giant */
 #define	D_NEEDGIANT	0x00400000	/* driver want Giant */
 #define	D_NEEDMINOR	0x00800000	/* driver uses clone_create() */
-#define	D_NVME		0x01000000	/* NVMe command device */
+#define	D_NONPASSABLE	0x01000000	/* file is not passable with
+					   SCM_RIGHTS or fork(2) */
+/* 5BSD-local flags are allocated downward from 0x40000000. */
+#define	D_NVME		0x40000000	/* NVMe command device */
 
 /*
  * Version numbers.

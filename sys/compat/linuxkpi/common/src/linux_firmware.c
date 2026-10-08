@@ -161,7 +161,7 @@ _linuxkpi_request_firmware(const char *fw_name, const struct linuxkpi_firmware *
 		}
 	}
 	if (fbdfw == NULL) {
-		free(lfw, M_LKPI_FW);
+		linuxkpi_release_firmware(lfw);
 		*fw = NULL;
 		if (warn)
 			device_printf(dev->bsddev,
@@ -198,8 +198,8 @@ lkpi_fw_task(void *ctx, int pending)
 	if (lfwt->cont == NULL)
 		goto out;
 
-	_linuxkpi_request_firmware(lfwt->fw_name, &fw, lfwt->dev,
-	    lfwt->gfp, true);
+	_linuxkpi_request_firmware(lfwt->fw_name, &fw, lfwt->dev, lfwt->gfp,
+	    true);
 
 	/*
 	 * Linux seems to run the callback if it cannot find the firmware.
@@ -268,8 +268,7 @@ linuxkpi_request_firmware(const struct linuxkpi_firmware **fw,
     const char *fw_name, struct device *dev)
 {
 
-	return (_linuxkpi_request_firmware(fw_name, fw, dev, GFP_KERNEL,
-	    true));
+	return (_linuxkpi_request_firmware(fw_name, fw, dev, GFP_KERNEL, true));
 }
 
 int
