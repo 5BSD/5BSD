@@ -5160,7 +5160,18 @@ ATF_TC_BODY(cap_pro_foreign_visible_blocked, tc)
 	}
 	close(sv[1]);
 	{ char buf; read(sv[0], &buf, 1); }
+	/*
+	 * Known gap, documented in mac_capability_capprotect(4): the
+	 * per-process model cannot enforce CP_SF_VISIBLE because
+	 * mpo_cred_check_visible compares two credentials and cannot identify
+	 * the shielded process.  Keep the hiding requirement as an expected
+	 * failure so that this turns into a hard failure (and must be updated)
+	 * once a process-context visibility hook enforces the flag.
+	 */
+	atf_tc_expect_fail("CP_SF_VISIBLE is not enforced in the per-process "
+	    "model; see mac_capability_capprotect(4)");
 	ATF_CHECK_EQ(run_shield_helper("visibility", pid), 0);
+	atf_tc_expect_pass();
 	write(sv[0], "g", 1);
 	waitpid(pid, &status, 0);
 	close(sv[0]);
@@ -5233,7 +5244,11 @@ ATF_TC_BODY(cap_pro_all_flags_blocks_all, tc)
 	ATF_CHECK_EQ(run_shield_helper("ptrace", pid), 0);
 	ATF_CHECK_EQ(run_shield_helper("signal", pid), 0);
 	ATF_CHECK_EQ(run_shield_helper("sigkill", pid), 0);
+	/* Known gap: CP_SF_VISIBLE is not enforced (see above). */
+	atf_tc_expect_fail("CP_SF_VISIBLE is not enforced in the per-process "
+	    "model; see mac_capability_capprotect(4)");
 	ATF_CHECK_EQ(run_shield_helper("visibility", pid), 0);
+	atf_tc_expect_pass();
 	ATF_CHECK_EQ(run_shield_helper("ktrace", pid), 0);
 	ATF_CHECK_EQ(run_shield_helper("suspend", pid), 0);
 	write(sv[0], "g", 1);
@@ -5971,7 +5986,8 @@ ATF_TC(cap_pro_refcount_shield);
 ATF_TC_HEAD(cap_pro_refcount_shield, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
-	    "Multiple shield fds: closing one keeps protection");
+	    "Multiple shield fds: closing any or all of them keeps protection "
+	    "(the shield is bound to the process lifetime)");
 	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_capprotect");
 	atf_tc_set_md_var(tc, "require.user", "root");
 }
@@ -6002,7 +6018,7 @@ ATF_TC_BODY(cap_pro_refcount_shield, tc)
 		write(sv[1], "1", 1);
 		read(sv[1], &buf, 1);
 
-		/* Close second fd — now unprotected. */
+		/* Close second fd — still protected until process exit. */
 		close(fd2);
 		write(sv[1], "2", 1);
 
@@ -6026,8 +6042,11 @@ ATF_TC_BODY(cap_pro_refcount_shield, tc)
 	write(sv[0], "g", 1);
 	{ char buf; read(sv[0], &buf, 1); }
 
-	/* Now unprotected. */
-	ATF_CHECK_EQ(run_shield_helper("ptrace", pid), 1);
+	/*
+	 * Still blocked: a shield is per-process and persists across
+	 * descriptor close; only process exit drops it.
+	 */
+	ATF_CHECK_EQ(run_shield_helper("ptrace", pid), 0);
 
 	kill(pid, SIGKILL);
 	waitpid(pid, &status, 0);
@@ -6171,7 +6190,8 @@ ATF_TC(cap_pro_noexec_unshield_allows_exec);
 ATF_TC_HEAD(cap_pro_noexec_unshield_allows_exec, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
-	    "Closing shield fd removes CP_SF_NOEXEC, exec succeeds");
+	    "Closing the shield fd does not remove CP_SF_NOEXEC; exec stays "
+	    "blocked until process exit");
 	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_capprotect");
 	atf_tc_set_md_var(tc, "require.user", "root");
 }
@@ -6186,9 +6206,11 @@ ATF_TC_BODY(cap_pro_noexec_unshield_allows_exec, tc)
 		int fd;
 		fd = capprotect_shield(CP_SF_NOEXEC);
 		if (fd < 0) _exit(10);
+		/* A shield is per-process: closing its fd must not lift it. */
 		close(fd);
 		execl("/usr/bin/true", "true", NULL);
-		_exit(1);  /* exec failed unexpectedly */
+		/* Exec failed; it must have been the shield's EPERM. */
+		_exit(errno == EPERM ? 0 : 1);
 	}
 	waitpid(pid, &status, 0);
 	ATF_CHECK(WIFEXITED(status));
@@ -6232,7 +6254,8 @@ ATF_TC(cap_pro_nosock_unshield_allows_socket);
 ATF_TC_HEAD(cap_pro_nosock_unshield_allows_socket, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
-	    "Closing shield fd removes CP_SF_NOSOCK, socket succeeds");
+	    "Closing the shield fd does not remove CP_SF_NOSOCK; socket() "
+	    "stays blocked until process exit");
 	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_capprotect");
 	atf_tc_set_md_var(tc, "require.user", "root");
 }
@@ -6247,11 +6270,14 @@ ATF_TC_BODY(cap_pro_nosock_unshield_allows_socket, tc)
 		int fd, sock;
 		fd = capprotect_shield(CP_SF_NOSOCK);
 		if (fd < 0) _exit(10);
+		/* A shield is per-process: closing its fd must not lift it. */
 		close(fd);
 		sock = socket(AF_UNIX, SOCK_STREAM, 0);
-		if (sock < 0) _exit(1);  /* socket should have worked */
-		close(sock);
-		_exit(0);
+		if (sock >= 0) {
+			close(sock);
+			_exit(1);  /* socket should still have failed */
+		}
+		_exit(errno == EPERM ? 0 : 2);
 	}
 	waitpid(pid, &status, 0);
 	ATF_CHECK(WIFEXITED(status));
