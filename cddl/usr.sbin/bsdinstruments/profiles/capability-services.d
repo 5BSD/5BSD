@@ -48,58 +48,6 @@ bsdnotify*:::tier-policy
 	@notify_tier[arg1, copyinstr(arg2)] = count();
 }
 
-authagent*:::request-start
-{
-	self->authagent_start = timestamp;
-}
-
-authagent*:::request-done
-{
-	@authagent_requests[arg2, arg4, arg5] = count();
-}
-
-authagent*:::request-done
-/self->authagent_start/
-{
-	@authagent_latency_ns[arg2, arg4] =
-	    quantize(timestamp - self->authagent_start);
-	self->authagent_start = 0;
-}
-
-authagent*:::elevate-start
-{
-	self->elevate_start = timestamp;
-}
-
-authagent*:::elevate-done
-{
-	@elevate_outcomes[copyinstr(arg5), arg3] = count();
-	@elevate_names[copyinstr(arg2), arg3] = count();
-}
-
-authagent*:::elevate-done
-/self->elevate_start/
-{
-	@elevate_latency_ns[copyinstr(arg5)] =
-	    quantize(timestamp - self->elevate_start);
-	self->elevate_start = 0;
-}
-
-authagent*:::ratelimit-block
-{
-	@elevate_ratelimited[arg0] = count();
-}
-
-authagent*:::policy-resolve
-{
-	@policy_grants[arg0, arg1, arg2, arg3, arg4] = count();
-}
-
-service_ambient*:::elevate-done
-{
-	@elevate_client[execname, arg1] = count();
-}
-
 switchboard*:::anoint-allow
 {
 	@anoint_allow[copyinstr(arg0), copyinstr(arg1)] = count();
@@ -110,12 +58,6 @@ switchboard*:::anoint-deny
 	@anoint_deny[copyinstr(arg0), copyinstr(arg1), copyinstr(arg2)] =
 	    count();
 }
-
-switchboard*:::mint-anoint
-{
-	@anoint_mint[arg0, arg1, arg2, arg3, arg4] = count();
-}
-
 bsdsysctl*:::request-start
 {
 	self->bsdsysctl_start = timestamp;
@@ -134,6 +76,7 @@ bsdsysctl*:::request-done
 	    quantize(timestamp - self->bsdsysctl_start);
 	self->bsdsysctl_start = 0;
 }
+
 bsdnetwork*:::request-done
 {
 	@network_requests[arg1, arg2] = count();
@@ -166,12 +109,6 @@ crypto*:::named-list
 	@crypto_list[arg2] = count();
 	@crypto_names = sum(arg1);
 }
-
-crypto*:::reclaim
-{
-	@crypto_reclaim = sum(arg1);
-}
-
 bsdextension*:::list
 {
 	@sysext_list[arg2] = count();
@@ -192,12 +129,6 @@ bsdfilesystem*:::request-reply
 {
 	@tzfs_reply[arg0, arg1] = count();
 }
-
-bsdnamespace*:::reclaim
-{
-	@bsdnamespace_reclaim[arg1] = count();
-}
-
 dtrace:::END
 {
 	printf("\nambient discovery (private/create/send/ack):\n");
@@ -211,24 +142,9 @@ dtrace:::END
 	printa("route-bytes=%@d\n", @notify_route_bytes);
 	printa("admit %-28s tier=%d abi=%d %@d\n", @notify_admit);
 	printa("tier=%d policy-source=%-14s %@d\n", @notify_tier);
-	printf("\nauthentication agent results:\n");
-	printa("kind=%d status=%d transport=%d requests=%@d\n",
-	    @authagent_requests);
-	printa("kind=%d status=%d latency-ns=%@d\n",
-	    @authagent_latency_ns);
-	printa("policy uid=%d count=%d all=%d admin=%d default=%d %@d\n",
-	    @policy_grants);
-	printf("\nelevation (anoint) results:\n");
-	printa("stage=%-10s status=%d %@d\n", @elevate_outcomes);
-	printa("name=%-32s status=%d %@d\n", @elevate_names);
-	printa("stage=%-10s latency-ns=%@d\n", @elevate_latency_ns);
-	printa("rate-limited uid=%d %@d\n", @elevate_ratelimited);
-	printa("client %-16s errno=%d %@d\n", @elevate_client);
 	printf("\nIPC anointment matches:\n");
 	printa("allow %-32s requester=%-28s %@d\n", @anoint_allow);
 	printa("deny  %-32s requester=%-28s missing=%s %@d\n", @anoint_deny);
-	printa("mint uid=%d count=%d all=%d admin=%d status=%d %@d\n",
-	    @anoint_mint);
 	printf("\nsysctl provider results:\n");
 	printa("op=%d status=%d transport=%d requests=%@d\n",
 	    @bsdsysctl_requests);
@@ -247,12 +163,10 @@ dtrace:::END
 	printf("\ncrypto and extension results:\n");
 	printa("crypto-list-result=%d requests=%@d\n", @crypto_list);
 	printa("crypto-names=%@d\n", @crypto_names);
-	printa("crypto-reclaimed=%@d\n", @crypto_reclaim);
 	printa("sysext-list-result=%d requests=%@d\n", @sysext_list);
 	printa("sysext-names=%@d\n", @sysext_names);
-	printf("\nstorage and namespace results:\n");
+	printf("\nstorage results:\n");
 	printa("tzfs-op=%d valid=%d requests=%@d\n", @tzfs_validate);
 	printa("tzfs-op=%d error=%d grants=%@d\n", @tzfs_grant);
 	printa("tzfs-op=%d status=%d replies=%@d\n", @tzfs_reply);
-	printa("bsdnamespace-reclaimed=%d events=%@d\n", @bsdnamespace_reclaim);
 }

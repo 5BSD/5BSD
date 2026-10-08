@@ -197,6 +197,31 @@ watch_conflicting_args_body()
 	    bsdinstruments watch foo --param broken
 }
 
+atf_test_case capability_services_live_probes
+capability_services_live_probes_head()
+{
+	atf_set descr "capability-services traces no retired probes"
+}
+capability_services_live_probes_body()
+{
+	# profiles_compile uses -Z, which accepts descriptions no provider
+	# defines, so a clause for a retired probe would compile silently.
+	# The auth agent (BSDAuth) and session-mint anointments were retired
+	# on 2026-10-05; switchboard keeps mint-anoint only as a declaration,
+	# and the crypto/bsdnamespace providers fire reclaim-pass/reclaim_pass,
+	# never a bare "reclaim".
+	path="/usr/share/bsdinstruments/profiles/capability-services.d"
+	[ -f "$path" ] || atf_fail "missing installed profile: $path"
+	atf_check -s exit:1 -o empty grep -E \
+	    '^(authagent\*|service_ambient\*:::elevate-|switchboard\*:::mint-|(crypto|bsdnamespace)\*:::reclaim$)' \
+	    "$path"
+	for probe in 'service_ambient*:::reg-result' \
+	    'switchboard*:::anoint-allow' 'switchboard*:::anoint-deny' \
+	    'bsdsysctl*:::request-done' 'bsdnotify*:::session-admit'; do
+		atf_check -s exit:0 -o ignore grep -Fx "$probe" "$path"
+	done
+}
+
 atf_init_test_cases()
 {
 	atf_add_test_case list_basic
@@ -209,4 +234,5 @@ atf_init_test_cases()
 	atf_add_test_case shadowing_warning
 	atf_add_test_case watch_conflicting_args
 	atf_add_test_case profiles_compile
+	atf_add_test_case capability_services_live_probes
 }

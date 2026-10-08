@@ -169,6 +169,9 @@ probe_contract_body()
 	atf_check -s exit:0 -o ignore grep -F \
 	    '@anoint_deny[copyinstr(arg0), copyinstr(arg1), copyinstr(arg2)]' \
 	    "${profile}"
+	# ...and no longer consumes the never-firing mint probes.
+	atf_check -s exit:1 -o empty grep -F 'switchboard*:::mint-' \
+	    "${profile}"
 
 	# One refusal, one AUE_SWITCHBOARD_ANOINT record: the invariant is
 	# stated at the refusal function, and the C anoint_test drives it.
