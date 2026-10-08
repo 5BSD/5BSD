@@ -168,14 +168,13 @@ pci_get_cfgdata32(struct pci_devinst *pi, int off)
 	return (le32dec(&pi->pi_cfgdata[off]));
 }
 
-int
+void
 pci_emul_alloc_bar(struct pci_devinst *pi, int idx, enum pcibar_type type,
     uint64_t size)
 {
 	pi->pi_bar[idx].type = type;
 	pi->pi_bar[idx].size = size;
 	pi->pi_bar[idx].addr = 0;
-	return (0);
 }
 
 void

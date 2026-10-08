@@ -31,6 +31,7 @@
 #define	_LINUX_EMUL_H_
 
 #include <sys/eventhandler.h>
+#include <machine/../linux/linux_emul_md.h>
 
 struct image_params;
 struct image_args;
@@ -100,13 +101,7 @@ struct linux_pemuldata {
 	uint32_t	oom_score_adj;	/* /proc/self/oom_score_adj */
 	uint32_t	so_timestamp;	/* requested timeval */
 	uint32_t	so_timestampns;	/* requested timespec */
-	/*
-	 * pkey_alloc(2) allocation map (amd64 only), stored as the Linux
-	 * pkey_allocation_map XOR 1 so that a zero-initialised structure
-	 * means "only key 0 allocated" (PKEY_INITIAL_ALLOCATION_MAP).
-	 * Linux copies the map on fork and resets it on exec.
-	 */
-	uint32_t	pkeys_map;
+	struct linux_pemuldata_md pem_md; /* machine-dependent state */
 	uint32_t	mdwe;		/* PR_SET_MDWE flags (inherited) */
 	uint32_t	mce_kill;	/* PR_MCE_KILL policy (inherited) */
 	uint32_t	io_flusher;	/* PR_SET_IO_FLUSHER (inherited) */
@@ -137,5 +132,14 @@ void	linux_aio_proc_release(struct linux_pemuldata *, struct thread *);
 void linux_ptrace_init(void);
 void linux_ptrace_fini(void);
 #endif
+
+/*
+ * Machine-dependent hooks for struct linux_pemuldata lifecycle
+ * events, implemented per-arch: initialization of pem_md when the
+ * emuldata is created (fork, or a process switching to the Linux
+ * ABI) and reset at exec.
+ */
+void	linux_pemuldata_init_md(struct thread *, struct linux_pemuldata *);
+void	linux_pemuldata_exec_md(struct linux_pemuldata *);
 
 #endif	/* !_LINUX_EMUL_H_ */

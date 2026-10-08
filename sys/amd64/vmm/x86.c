@@ -539,12 +539,14 @@ x86_emulate_cpuid_impl(struct vcpu *vcpu, uint64_t *rax, uint64_t *rbx,
 			break;
 
 		case CPUID_0000_000B:
-		case 0x1f:
+		case CPUID_0000_001F:
 			/*
-			 * Intel processor topology enumeration.  Newer
-			 * guests prefer V2 leaf 0x1f when the basic CPUID
-			 * range contains it, so both leaves must describe
-			 * the virtual topology rather than the host.
+			 * Intel processor topology enumeration.  Leaf 1Fh
+			 * is the V2 form of leaf 0Bh and uses the same
+			 * encoding for the SMT and core levels.  Newer
+			 * guests prefer leaf 1Fh when the basic CPUID range
+			 * contains it, so both leaves must describe the
+			 * virtual topology rather than the host.
 			 */
 			if (vmm_is_intel()) {
 				vm_get_topology(vm, &sockets, &cores, &threads,

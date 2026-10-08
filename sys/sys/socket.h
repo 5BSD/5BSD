@@ -273,9 +273,12 @@ struct accept_filter_arg {
 #define	AF_INET6_SDP	42		/* OFED Socket Direct Protocol ipv6 */
 #define	AF_HYPERV	43		/* HyperV sockets */
 #define	AF_DIVERT	44		/* divert(4) */
-#define	AF_VSOCK	46		/* virtio/vm sockets */
-#define	AF_IPFWLOG	48
-#define	AF_MAX		48
+#define	AF_IPFWLOG	46
+/* 5BSD-local families start at 64 so new FreeBSD ones cannot collide. */
+#define	AF_VSOCK	64		/* virtio/vm sockets */
+
+#define	AF_MAX		64
+
 /*
  * When allocating a new AF_ constant, please only allocate
  * even numbered constants for FreeBSD until 134 as odd numbered AF_

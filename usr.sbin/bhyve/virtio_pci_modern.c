@@ -834,10 +834,9 @@ vi_pci_modern_init(struct virtio_softc *vs, int barnum)
 		vq->vq_qsize_max = vq->vq_qsize;
 	}
 
-	error = pci_emul_alloc_bar(vs->vs_pi, barnum, PCIBAR_MEM64,
+	/* barnum was range-checked above, so the 64-bit BAR pair fits. */
+	pci_emul_alloc_bar(vs->vs_pi, barnum, PCIBAR_MEM64,
 	    VIRTIO_MODERN_BAR_SIZE);
-	if (error != 0)
-		goto fail;
 	error = vi_modern_add_cap(vs, VIRTIO_PCI_CAP_COMMON_CFG,
 	    VIRTIO_MODERN_COMMON_OFF, vi_modern_common_cfg_size(vs));
 	if (error != 0)

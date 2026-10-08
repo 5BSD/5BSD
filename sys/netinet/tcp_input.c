@@ -596,7 +596,7 @@ tcp6_input(struct mbuf **mp, int *offp, int proto)
 int
 tcp_input_with_port(struct mbuf **mp, int *offp, int proto, uint16_t port)
 {
-	struct mbuf *m = *mp;
+	struct mbuf *m;
 	struct tcphdr *th = NULL;
 	struct ip *ip = NULL;
 	struct inpcb *inp = NULL;
@@ -617,7 +617,7 @@ tcp_input_with_port(struct mbuf **mp, int *offp, int proto, uint16_t port)
 	struct m_tag *fwd_tag = NULL;
 #ifdef INET6
 	struct ip6_hdr *ip6 = NULL;
-	int isipv6;
+	bool isipv6;
 #else
 	const void *ip6 = NULL;
 #endif /* INET6 */
@@ -627,10 +627,6 @@ tcp_input_with_port(struct mbuf **mp, int *offp, int proto, uint16_t port)
 
 	NET_EPOCH_ASSERT();
 
-#ifdef INET6
-	isipv6 = (mtod(m, struct ip *)->ip_v == 6) ? 1 : 0;
-#endif
-
 	off0 = *offp;
 	m = *mp;
 	*mp = NULL;
@@ -639,6 +635,7 @@ tcp_input_with_port(struct mbuf **mp, int *offp, int proto, uint16_t port)
 
 	m->m_pkthdr.tcp_tun_port = port;
 #ifdef INET6
+	isipv6 = mtod(m, struct ip *)->ip_v == 6;
 	if (isipv6) {
 		ip6 = mtod(m, struct ip6_hdr *);
 		th = (struct tcphdr *)((caddr_t)ip6 + off0);
@@ -777,9 +774,9 @@ tcp_input_with_port(struct mbuf **mp, int *offp, int proto, uint16_t port)
 					TCPSTAT_INC(tcps_rcvshort);
 					return (IPPROTO_DONE);
 				}
+				ip6 = mtod(m, struct ip6_hdr *);
+				th = (struct tcphdr *)((caddr_t)ip6 + off0);
 			}
-			ip6 = mtod(m, struct ip6_hdr *);
-			th = (struct tcphdr *)((caddr_t)ip6 + off0);
 		}
 #endif
 #if defined(INET) && defined(INET6)
@@ -1582,11 +1579,9 @@ tcp_do_segment(struct tcpcb *tp, struct mbuf *m, struct tcphdr *th,
 		to.to_flags &= ~TOF_SACK;
 	}
 #if defined(IPSEC_SUPPORT) || defined(TCP_SIGNATURE)
-	if ((tp->t_flags & TF_SIGNATURE) != 0 &&
-	    (to.to_flags & TOF_SIGNATURE) == 0) {
+	if ((tp->t_flags & TF_SIGNATURE) == 0 &&
+	    (to.to_flags & TOF_SIGNATURE) != 0)
 		TCPSTAT_INC(tcps_sig_err_sigopt);
-		/* XXX: should drop? */
-	}
 #endif
 	/*
 	 * If echoed timestamp is later than the current time,
@@ -2125,20 +2120,26 @@ tcp_do_segment(struct tcpcb *tp, struct mbuf *m, struct tcphdr *th,
 		 * - RST drops connection only if SEG.SEQ == RCV.NXT.
 		 * - If RST is in window, we send challenge ACK.
 		 *
-		 * Note: to take into account delayed ACKs, we should
-		 *   test against last_ack_sent instead of rcv_nxt.
+		 * Note 1: to take into account delayed ACKs, we should
+		 *   test against last_ack_sent in addition to rcv_nxt.
 		 * Note 2: we handle special case of closed window, not
 		 *   covered by the RFC.
+		 * Note 3 (XXXMT): check against rcv_adv instead of
+		 *   tp->rcv_nxt + tp->rcv_wnd.
 		 */
-		if ((SEQ_GEQ(th->th_seq, tp->last_ack_sent) &&
-		    SEQ_LT(th->th_seq, tp->last_ack_sent + tp->rcv_wnd)) ||
-		    (tp->rcv_wnd == 0 && tp->last_ack_sent == th->th_seq)) {
+		if ((tp->rcv_wnd > 0 &&
+		     SEQ_GEQ(th->th_seq, tp->last_ack_sent) &&
+		     SEQ_LT(th->th_seq, tp->rcv_nxt + tp->rcv_wnd)) ||
+		    (tp->rcv_wnd == 0 &&
+		     (tp->last_ack_sent == th->th_seq ||
+		      tp->rcv_nxt == th->th_seq))) {
 			KASSERT(tp->t_state != TCPS_SYN_SENT,
 			    ("%s: TH_RST for TCPS_SYN_SENT th %p tp %p",
 			    __func__, th, tp));
 
 			if (V_tcp_insecure_rst ||
-			    tp->last_ack_sent == th->th_seq) {
+			    tp->last_ack_sent == th->th_seq ||
+			    tp->rcv_nxt == th->th_seq) {
 				TCPSTAT_INC(tcps_drops);
 				/* Drop the connection. */
 				switch (tp->t_state) {

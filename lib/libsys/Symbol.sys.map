@@ -404,6 +404,7 @@ FBSD_1.9 {
 	pddupfd;
 	pdincapmode;
 	pdopenpid;
+	pdptrace;
 	pdself;
 	pdrfork;
 	pdrfork_thread;

@@ -477,6 +477,7 @@ typedef int (__sys_pdwait_t)(int, int *, int, struct __wrusage *, struct __sigin
 typedef int (__sys_renameat2_t)(int, const char *, int, const char *, int);
 typedef int (__sys_pdopenpid_t)(pid_t, int);
 typedef int (__sys_pddupfd_t)(int, int, int);
+typedef int (__sys_pdptrace_t)(int, int, int, void *, int);
 typedef int (__sys_cap_xfer_limit_t)(int, int);
 typedef int (__sys_cap_cloexec_limit_t)(int, int);
 typedef int (__sys_cap_clofork_limit_t)(int, int);
@@ -901,6 +902,7 @@ int __sys_pdwait(int fd, int * status, int options, struct __wrusage * wrusage, 
 int __sys_renameat2(int oldfd, const char * old, int newfd, const char * new, int flags);
 int __sys_pdopenpid(pid_t pid, int flags);
 int __sys_pddupfd(int pd, int fd, int flags);
+int __sys_pdptrace(int req, int pfd, int lwpid, void * addr, int data);
 int __sys_cap_xfer_limit(int fd, int state);
 int __sys_cap_cloexec_limit(int fd, int state);
 int __sys_cap_clofork_limit(int fd, int state);

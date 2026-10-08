@@ -154,7 +154,6 @@ struct pci_devemu {
 /* MSI-X capture. */
 static int g_msix_vectors[64];
 static unsigned g_msix_count;
-static bool g_alloc_bar_fail;
 static bool g_msixcap_fail;
 static bool g_pciecap_fail;
 static bool g_bootdev_fail;
@@ -189,17 +188,14 @@ pci_get_cfgdata16(struct pci_devinst *pi, int offset)
 	return (le16dec(&pi->pi_cfgdata[offset]));
 }
 
-int
+void
 pci_emul_alloc_bar(struct pci_devinst *pi, int idx, enum pcibar_type type,
     uint64_t size)
 {
 
-	if (g_alloc_bar_fail)
-		return (-1);
 	pi->pi_bar[idx].type = type;
 	pi->pi_bar[idx].size = size;
 	g_alloc_bar_size = size;
-	return (0);
 }
 
 int
@@ -736,7 +732,6 @@ env_reset(void)
 	g_dma_dirty_bytes = 0;
 	g_msix_count = 0;
 	memset(g_msix_vectors, 0, sizeof(g_msix_vectors));
-	g_alloc_bar_fail = false;
 	g_msixcap_fail = false;
 	g_pciecap_fail = false;
 	g_bootdev_fail = false;

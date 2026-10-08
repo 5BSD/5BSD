@@ -533,7 +533,7 @@ pci_get_cfgdata32(struct pci_devinst *pi, int offset)
 	return (value);
 }
 
-int
+void
 pci_emul_alloc_bar(struct pci_devinst *pi, int bar,
     enum pcibar_type type, uint64_t size)
 {
@@ -543,7 +543,6 @@ pci_emul_alloc_bar(struct pci_devinst *pi, int bar,
 	g_bar_size = size;
 	pi->pi_bar[bar].type = type;
 	pi->pi_bar[bar].size = size;
-	return (0);
 }
 
 int
@@ -1028,8 +1027,8 @@ ATF_TC_BODY(shared_memory_capability, tc)
 	setup_transport(&vs, &pi, queues);
 	memset(backing, 0, sizeof(backing));
 	memset(readonly, 0xa5, sizeof(readonly));
-	ATF_REQUIRE_EQ(pci_emul_alloc_bar(&pi, 4, PCIBAR_MEM64,
-	    UINT64_C(0x400000000)), 0);
+	pci_emul_alloc_bar(&pi, 4, PCIBAR_MEM64,
+	    UINT64_C(0x400000000));
 	offset = UINT64_C(0x100001000);
 	length = UINT64_C(0x100002000);
 	ATF_REQUIRE_EQ(vi_pci_modern_add_shared_memory(&vs, 7, 4, offset,
@@ -1336,7 +1335,7 @@ ATF_TC_BODY(shared_memory_status_seal, tc)
 	struct vqueue_info queues[2];
 
 	setup_transport(&vs, &pi, queues);
-	ATF_REQUIRE_EQ(pci_emul_alloc_bar(&pi, 4, PCIBAR_MEM64, 16384), 0);
+	pci_emul_alloc_bar(&pi, 4, PCIBAR_MEM64, 16384);
 	ATF_REQUIRE_EQ(vi_pci_modern_add_shared_memory(&vs, 1, 4, 0,
 	    4096), 0);
 
@@ -1365,8 +1364,8 @@ ATF_TC_BODY(shared_memory_alias_lookup_is_id_independent, tc)
 	uint8_t backing[4096];
 
 	setup_transport(&vs, &pi, queues);
-	ATF_REQUIRE_EQ(pci_emul_alloc_bar(&pi, 4, PCIBAR_MEM64,
-	    sizeof(backing)), 0);
+	pci_emul_alloc_bar(&pi, 4, PCIBAR_MEM64,
+	    sizeof(backing));
 	/*
 	 * Leave the lower ID unbound.  BAR access must still find the
 	 * higher-ID alias which owns the identical bytes.

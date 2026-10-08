@@ -447,6 +447,7 @@ MIASM =  \
 	renameat2.o \
 	pdopenpid.o \
 	pddupfd.o \
+	pdptrace.o \
 	cap_xfer_limit.o \
 	cap_cloexec_limit.o \
 	cap_clofork_limit.o \

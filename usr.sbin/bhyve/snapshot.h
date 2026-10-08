@@ -53,7 +53,6 @@
 #define	VM_SNAPSHOT_VALIDATE	((enum vm_snapshot_op)2)
 #endif
 
-#define BHYVE_RUN_DIR "/var/run/bhyve/"
 #define MAX_SNAPSHOT_FILENAME PATH_MAX
 
 struct vmctx;
@@ -69,11 +68,6 @@ struct restore_state {
 
 	struct ucl_parser *meta_parser;
 	ucl_object_t *meta_root_obj;
-};
-
-struct checkpoint_thread_info {
-	struct vmctx *ctx;
-	int socket_fd;
 };
 
 typedef int (*vm_snapshot_dev_cb)(struct vm_snapshot_meta *);
@@ -132,10 +126,6 @@ int vm_restore_devices(struct restore_state *rstate);
 int vm_restore_transaction(struct vmctx *ctx, struct restore_state *rstate);
 int vm_pause_devices(void);
 int vm_resume_devices(void);
-
-int get_checkpoint_msg(int conn_fd, struct vmctx *ctx);
-void *checkpoint_thread(void *param);
-int init_checkpoint_thread(struct vmctx *ctx, const char *bhyve_run_dir);
 
 int load_restore_file(const char *filename, struct restore_state *rstate);
 

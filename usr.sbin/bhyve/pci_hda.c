@@ -715,26 +715,36 @@ hda_stream_start(struct hda_softc *sc, uint8_t stream_ind)
 	if (stream_ind >= HDA_IOSS_NO)
 		return (-1);
 	st = &sc->streams[stream_ind];
-	if (st->run)
+	if (st->run) {
+		DPRINTF("Stream 0x%x is already running", stream_ind);
 		return (-1);
+	}
 	off = hda_get_offset_stream(stream_ind);
 
 	sdctl = hda_get_reg_by_offset(sc, off + HDAC_SDCTL0);
 	strm = (sdctl >> 20) & 0x0f;
 	dir = stream_ind >= HDA_ISS_NO;
 	if (strm == 0 || (sc->stream_map[dir][strm] != UINT8_MAX &&
-	    sc->stream_map[dir][strm] != stream_ind))
+	    sc->stream_map[dir][strm] != stream_ind)) {
+		DPRINTF("Invalid stream tag 0x%x for stream 0x%x", strm,
+		    stream_ind);
 		return (-1);
+	}
 
 	lvi = hda_get_reg_by_offset(sc, off + HDAC_SDLVI);
 	cbl = hda_get_reg_by_offset(sc, off + HDAC_SDCBL);
 	bdpl = hda_get_reg_by_offset(sc, off + HDAC_SDBDPL);
 	bdpu = hda_get_reg_by_offset(sc, off + HDAC_SDBDPU);
 
-	bdl_cnt = lvi + 1;
-	if (bdl_cnt == 0 || bdl_cnt > HDA_BDL_MAX_LEN || cbl == 0 ||
-	    cbl % HDA_DMA_ACCESS_LEN != 0)
+	if (lvi >= HDA_BDL_MAX_LEN) {
+		DPRINTF("Invalid LVI: 0x%x", lvi);
 		return (-1);
+	}
+	bdl_cnt = lvi + 1;
+	if (cbl == 0 || cbl % HDA_DMA_ACCESS_LEN != 0) {
+		DPRINTF("Invalid CBL: 0x%x", cbl);
+		return (-1);
+	}
 
 	bdl_paddr = (bdpl & ~UINT64_C(0x7f)) | (bdpu << 32);
 	bdl_vaddr = hda_dma_get_vaddr(sc, bdl_paddr,
@@ -750,8 +760,10 @@ hda_stream_start(struct hda_softc *sc, uint8_t stream_ind)
 	bdle = (struct hda_bdle *)bdl_vaddr;
 	for (size_t i = 0; i < bdl_cnt; i++, bdle++) {
 		bdle_sz = le32toh(bdle->len);
-		if (bdle_sz == 0 || bdle_sz % HDA_DMA_ACCESS_LEN != 0)
+		if (bdle_sz == 0 || bdle_sz % HDA_DMA_ACCESS_LEN != 0) {
+			DPRINTF("Invalid BDLE length: 0x%x", bdle_sz);
 			return (-1);
+		}
 
 		bdle_addrl = le32toh(bdle->addrl);
 		bdle_addrh = le32toh(bdle->addrh);
@@ -937,6 +949,7 @@ hda_corb_run(struct hda_softc *sc)
 
 		err = hda_send_command(sc, verb);
 		if (err != 0) {
+			DPRINTF("Fail to send verb: 0x%x", verb);
 			hda_set_field_by_offset(sc, HDAC_CORBSTS,
 			    HDAC_CORBSTS_CMEI, HDAC_CORBSTS_CMEI);
 			corb->run = 0;
@@ -1100,6 +1113,7 @@ hda_set_corbctl(struct hda_softc *sc, uint32_t offset, uint32_t old)
 		if (!(old & HDAC_CORBCTL_CORBRUN)) {
 			err = hda_corb_start(sc);
 			if (err != 0) {
+				DPRINTF("Fail to start CORB");
 				hda_set_field_by_offset(sc, offset,
 				    HDAC_CORBCTL_CORBRUN, 0);
 				hda_set_field_by_offset(sc, HDAC_CORBSTS,
@@ -1126,6 +1140,7 @@ hda_set_rirbctl(struct hda_softc *sc, uint32_t offset, uint32_t old __unused)
 	if (value & HDAC_RIRBCTL_RIRBDMAEN) {
 		err = hda_rirb_start(sc);
 		if (err != 0) {
+			DPRINTF("Fail to start RIRB");
 			hda_set_field_by_offset(sc, offset,
 			    HDAC_RIRBCTL_RIRBDMAEN, 0);
 			hda_set_field_by_offset(sc, HDAC_RIRBSTS,
@@ -1218,6 +1233,8 @@ hda_set_sdctl(struct hda_softc *sc, uint32_t offset, uint32_t old)
 		if (value & HDAC_SDCTL_RUN) {
 			err = hda_stream_start(sc, stream_ind);
 			if (err != 0) {
+				DPRINTF("Fail to start stream 0x%x",
+				    stream_ind);
 				hda_set_field_by_offset(sc, offset,
 				    HDAC_SDCTL_RUN, 0);
 				hda_set_field_by_offset(sc,
@@ -1226,7 +1243,9 @@ hda_set_sdctl(struct hda_softc *sc, uint32_t offset, uint32_t old)
 				hda_update_intr(sc);
 			}
 		} else {
-			(void)hda_stream_stop(sc, stream_ind);
+			if (hda_stream_stop(sc, stream_ind) != 0)
+				DPRINTF("Fail to stop stream 0x%x",
+				    stream_ind);
 		}
 	}
 }

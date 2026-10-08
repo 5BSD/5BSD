@@ -625,13 +625,7 @@ i6300esb_init(struct pci_devinst *pi, nvlist_t *nvl)
 	pci_set_cfgdata8(pi, PCIR_HDRTYPE, PCIM_HDRTYPE_NORMAL);
 	pci_set_cfgdata8(pi, PCIR_INTPIN, 0x1);
 
-	if (pci_emul_alloc_bar(pi, I6300ESB_BAR, PCIBAR_MEM32,
-	    I6300ESB_BAR_SIZE) != 0) {
-		EPRINTLN("%s: failed to allocate BAR", I6300ESB_NAME);
-		pi->pi_arg = NULL;
-		free(sc);
-		return (-1);
-	}
+	pci_emul_alloc_bar(pi, I6300ESB_BAR, PCIBAR_MEM32, I6300ESB_BAR_SIZE);
 	pci_lintr_request(pi);
 
 	i6300esb_sc = sc;

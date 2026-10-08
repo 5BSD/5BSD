@@ -124,7 +124,7 @@ struct pci_devemu {
 
 void pci_set_cfgdata8(struct pci_devinst *, int, uint8_t);
 void pci_set_cfgdata16(struct pci_devinst *, int, uint16_t);
-int pci_emul_alloc_bar(struct pci_devinst *, int, enum pcibar_type, uint64_t);
+void pci_emul_alloc_bar(struct pci_devinst *, int, enum pcibar_type, uint64_t);
 int pci_emul_add_msicap(struct pci_devinst *, int);
 
 /* ---- mock control state ---------------------------------------------------- */
@@ -134,7 +134,6 @@ static int g_munmap_ret;
 static unsigned g_mmap_calls;
 static unsigned g_munmap_calls;
 static uint64_t g_last_mmap_addr;
-static bool g_alloc_bar_fail;
 
 static struct bhyvegc_image g_console_image;
 static int g_fb_register_ret;
@@ -199,16 +198,13 @@ pci_set_cfgdata16(struct pci_devinst *pi, int offset, uint16_t value)
 	le16enc(&pi->pi_cfgdata[offset], value);
 }
 
-int
+void
 pci_emul_alloc_bar(struct pci_devinst *pi, int idx, enum pcibar_type type,
     uint64_t size)
 {
 
-	if (g_alloc_bar_fail)
-		return (-1);
 	pi->pi_bar[idx].type = type;
 	pi->pi_bar[idx].size = size;
-	return (0);
 }
 
 int
@@ -393,7 +389,6 @@ controls_reset(void)
 	g_mmap_calls = 0;
 	g_munmap_calls = 0;
 	g_last_mmap_addr = 0;
-	g_alloc_bar_fail = false;
 	g_fb_register_ret = 0;
 	g_fb_register_calls = 0;
 	g_fb_unregister_calls = 0;

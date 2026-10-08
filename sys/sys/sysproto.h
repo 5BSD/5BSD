@@ -1941,6 +1941,13 @@ struct pddupfd_args {
 	char fd_l_[PADL_(int)]; int fd; char fd_r_[PADR_(int)];
 	char flags_l_[PADL_(int)]; int flags; char flags_r_[PADR_(int)];
 };
+struct pdptrace_args {
+	char req_l_[PADL_(int)]; int req; char req_r_[PADR_(int)];
+	char pfd_l_[PADL_(int)]; int pfd; char pfd_r_[PADR_(int)];
+	char lwpid_l_[PADL_(int)]; int lwpid; char lwpid_r_[PADR_(int)];
+	char addr_l_[PADL_(void *)]; void * addr; char addr_r_[PADR_(void *)];
+	char data_l_[PADL_(int)]; int data; char data_r_[PADR_(int)];
+};
 struct cap_xfer_limit_args {
 	char fd_l_[PADL_(int)]; int fd; char fd_r_[PADR_(int)];
 	char state_l_[PADL_(int)]; int state; char state_r_[PADR_(int)];
@@ -2402,6 +2409,7 @@ int	sys_pdwait(struct thread *, struct pdwait_args *);
 int	sys_renameat2(struct thread *, struct renameat2_args *);
 int	sys_pdopenpid(struct thread *, struct pdopenpid_args *);
 int	sys_pddupfd(struct thread *, struct pddupfd_args *);
+int	sys_pdptrace(struct thread *, struct pdptrace_args *);
 int	sys_cap_xfer_limit(struct thread *, struct cap_xfer_limit_args *);
 int	sys_cap_cloexec_limit(struct thread *, struct cap_cloexec_limit_args *);
 int	sys_cap_clofork_limit(struct thread *, struct cap_clofork_limit_args *);
@@ -3418,6 +3426,7 @@ int	freebsd14_setgroups(struct thread *, struct freebsd14_setgroups_args *);
 #define	SYS_AUE_renameat2	AUE_RENAMEAT
 #define	SYS_AUE_pdopenpid	AUE_PDOPENPID
 #define	SYS_AUE_pddupfd	AUE_NULL
+#define	SYS_AUE_pdptrace	AUE_PDPTRACE
 #define	SYS_AUE_cap_xfer_limit	AUE_CAP_XFER_LIMIT
 #define	SYS_AUE_cap_cloexec_limit	AUE_CAP_CLOEXEC_LIMIT
 #define	SYS_AUE_cap_clofork_limit	AUE_CAP_CLOFORK_LIMIT

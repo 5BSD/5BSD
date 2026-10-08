@@ -666,6 +666,7 @@
 #define	AUE_INOTIFY		43272	/* FreeBSD/Linux. */
 #define	AUE_PDRFORK		43273	/* FreeBSD-specific. */
 #define	AUE_PDOPENPID		43274	/* FreeBSD-specific. */
+#define	AUE_PDPTRACE		43275	/* FreeBSD-specific. */
 /* 5BSD-local events start at 43900 so new FreeBSD events cannot collide. */
 #define	AUE_CAP_XFER_LIMIT	43900	/* 5BSD */
 #define	AUE_CAP_CLOEXEC_LIMIT	43901	/* 5BSD */

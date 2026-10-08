@@ -269,14 +269,13 @@ pci_set_cfgdata16(struct pci_devinst *pi, int off, uint16_t v)
 {
 	le16enc(&pi->pi_cfgdata[off], v);
 }
-int
+void
 pci_emul_alloc_bar(struct pci_devinst *pi, int idx, enum pcibar_type type,
     uint64_t size)
 {
 	pi->pi_bar[idx].type = type;
 	pi->pi_bar[idx].size = size;
 	g_barcount++;
-	return (0);
 }
 void
 pci_emul_add_msicap(struct pci_devinst *pi __unused, int msgnum)

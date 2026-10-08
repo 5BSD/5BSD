@@ -973,8 +973,8 @@ _rtld(Elf_Addr *sp, func_ptr_type *exit_proc, Obj_Entry **objp)
 	dbg("tcb_list_entry_offset %zu", tcb_list_entry_offset);
 
 	if (relocate_objects(obj_main,
-		ld_bind_now != NULL && *ld_bind_now != '\0', &obj_rtld,
-		SYMLOOK_EARLY, NULL) == -1)
+	    ld_bind_now != NULL && *ld_bind_now != '\0', &obj_rtld,
+	    SYMLOOK_EARLY, NULL) == -1)
 		rtld_die();
 
 	dbg("doing copy relocations");
@@ -2546,9 +2546,7 @@ init_rtld(caddr_t mapbase, Elf_Auxinfo **aux_info)
 	objtmp.path = NULL;
 	objtmp.rtld = true;
 	objtmp.mapbase = mapbase;
-#ifdef PIC
 	objtmp.relocbase = mapbase;
-#endif
 
 	objtmp.dynamic = rtld_dynamic(&objtmp);
 	digest_dynamic1(&objtmp, 1, &dyn_rpath, &dyn_soname, &dyn_runpath);

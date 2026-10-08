@@ -185,7 +185,7 @@ pci_set_cfgdata16(struct pci_devinst *pi, int offset, uint16_t value)
 	le16enc(&pi->pi_cfgdata[offset], value);
 }
 
-int
+void
 pci_emul_alloc_bar(struct pci_devinst *pi, int idx, enum pcibar_type type,
     uint64_t size)
 {
@@ -193,7 +193,6 @@ pci_emul_alloc_bar(struct pci_devinst *pi, int idx, enum pcibar_type type,
 	g_alloc_bar_calls++;
 	pi->pi_bar[idx].type = type;
 	pi->pi_bar[idx].size = size;
-	return (0);
 }
 
 int

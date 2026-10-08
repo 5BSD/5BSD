@@ -334,6 +334,9 @@ ptsdev_ioctl(struct file *fp, u_long cmd, void *data,
 
 	SDT_PROBE2(pts, , , ioctl, psc->pts_unit, cmd);
 
+	if (cmd == TIOCNOTTY || cmd == TIOCSCTTY || cmd == TIOCSPGRP)
+		return (ttydev_ioctl_proctree(tp, cmd, data, td));
+
 	switch (cmd) {
 	case FIODTYPE:
 		*(int *)data = D_TTY;

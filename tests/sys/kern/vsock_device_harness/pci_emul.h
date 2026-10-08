@@ -152,7 +152,7 @@ void pci_set_cfgdata16(struct pci_devinst *, int, uint16_t);
 void pci_set_cfgdata32(struct pci_devinst *, int, uint32_t);
 uint8_t pci_get_cfgdata8(struct pci_devinst *, int);
 uint32_t pci_get_cfgdata32(struct pci_devinst *, int);
-int pci_emul_alloc_bar(struct pci_devinst *, int, enum pcibar_type, uint64_t);
+void pci_emul_alloc_bar(struct pci_devinst *, int, enum pcibar_type, uint64_t);
 int pci_emul_alloc_devmem_gpa(uint64_t, uint64_t, uint64_t *);
 int pci_emul_add_capability(struct pci_devinst *, const u_char *, int);
 int pci_emul_add_msixcap(struct pci_devinst *, int, int);

@@ -135,9 +135,6 @@ static sig_t old_winch_handler;
 
 #define	SNAPSHOT_BUFFER_SIZE (40 * MB)
 
-/* One stalled controller must not monopolize the checkpoint command thread. */
-#define	CHECKPOINT_CLIENT_TIMEOUT_SEC	30
-
 #define	JSON_KERNEL_ARR_KEY		"kern_structs"
 #define	JSON_DEV_ARR_KEY		"devices"
 #define	JSON_BASIC_METADATA_KEY 	"basic metadata"
@@ -3301,7 +3298,7 @@ done:
  * Create an anonymous, regular, mmap-able temp file seeded with buf.
  *
  * This must not touch the global filesystem namespace: the source-side
- * "migrate" IPC command runs on the checkpoint thread after cap_enter(), where
+ * "migrate" IPC command runs on the IPC thread after cap_enter(), where
  * any absolute-path open (e.g. mkstemp(3) in /tmp) fails with ECAPMODE.
  * memfd_create(2) is anonymous (capability-mode safe), grows on write, and
  * yields an fd that fstat(2) reports as a regular file and that supports
@@ -3587,67 +3584,13 @@ vm_migrate_resume(struct vmctx *ctx)
 	return (error);
 }
 
-static int
-handle_message(struct vmctx *ctx, nvlist_t *nvl)
-{
-	const char *cmd;
-	struct ipc_command **ipc_cmd;
-
-	if (!nvlist_exists_string(nvl, "cmd"))
-		return (EINVAL);
-
-	cmd = nvlist_get_string(nvl, "cmd");
-	IPC_COMMAND_FOREACH(ipc_cmd, ipc_cmd_set) {
-		if (strcmp(cmd, (*ipc_cmd)->name) == 0)
-			return ((*ipc_cmd)->handler(ctx, nvl));
-	}
-
-	return (EOPNOTSUPP);
-}
-
-/*
- * Listen for commands from bhyvectl
- */
-void *
-checkpoint_thread(void *param)
-{
-	int error, fd;
-	struct checkpoint_thread_info *thread_info;
-	nvlist_t *nvl;
-
-	pthread_set_name_np(pthread_self(), "checkpoint thread");
-	thread_info = (struct checkpoint_thread_info *)param;
-
-	for (;;) {
-		fd = accept4(thread_info->socket_fd, NULL, NULL, SOCK_CLOEXEC);
-		if (fd < 0) {
-			if (errno == EINTR)
-				continue;
-			EPRINTLN("checkpoint accept failed: %s",
-			    strerror(errno));
-			break;
-		}
-		nvl = nvlist_recv(fd, 0);
-		if (nvl != NULL) {
-			error = handle_message(thread_info->ctx, nvl);
-			if (error != 0)
-				EPRINTLN("checkpoint command failed: %s",
-				    strerror(error));
-		} else
-			EPRINTLN("nvlist_recv() failed: %s", strerror(errno));
-
-		close(fd);
-		nvlist_destroy(nvl);
-	}
-
-	return (NULL);
-}
-
-static int
+static nvlist_t *
 vm_do_checkpoint(struct vmctx *ctx, const nvlist_t *nvl)
 {
 	int error;
+	nvlist_t *reply;
 
+	reply = nvlist_create(0);
 	if (!nvlist_exists_string(nvl, "filename") ||
 	    !nvlist_exists_bool(nvl, "suspend") ||
 	    !nvlist_exists_descriptor(nvl, "fddir"))
@@ -3657,117 +3600,12 @@ vm_do_checkpoint(struct vmctx *ctx, const nvlist_t *nvl)
 		    nvlist_get_descriptor(nvl, "fddir"),
 		    nvlist_get_string(nvl, "filename"),
 		    nvlist_get_bool(nvl, "suspend"));
+	if (error != 0)
+		nvlist_add_string(reply, "error", strerror(error));
 
-	return (error);
+	return (reply);
 }
-IPC_COMMAND(ipc_cmd_set, checkpoint, vm_do_checkpoint);
-
-/*
- * Create the listening socket for IPC with bhyvectl
- */
-int
-init_checkpoint_thread(struct vmctx *ctx, const char *bhyve_run_dir)
-{
-	struct checkpoint_thread_info *checkpoint_info = NULL;
-	struct sockaddr_un addr;
-	struct timeval receive_timeout;
-	int socket_fd = -1;
-	pthread_t checkpoint_pthread;
-	int err, pathlen;
-#ifndef WITHOUT_CAPSICUM
-	cap_rights_t rights;
-#endif
-
-	memset(&addr, 0, sizeof(addr));
-
-	socket_fd = socket(PF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
-	if (socket_fd < 0) {
-		EPRINTLN("Socket creation failed: %s", strerror(errno));
-		err = -1;
-		goto fail;
-	}
-
-	addr.sun_family = AF_UNIX;
-
-	if (bhyve_run_dir == NULL)
-		bhyve_run_dir = BHYVE_RUN_DIR;
-	pathlen = snprintf(addr.sun_path, sizeof(addr.sun_path), "%s/%s",
-	    bhyve_run_dir, vm_get_name(ctx));
-	if (pathlen < 0 || (size_t)pathlen >= sizeof(addr.sun_path)) {
-		EPRINTLN("Checkpoint socket path is too long");
-		err = ENAMETOOLONG;
-		goto fail;
-	}
-	addr.sun_len = SUN_LEN(&addr);
-	unlink(addr.sun_path);
-
-	if (bind(socket_fd, (struct sockaddr *)&addr, addr.sun_len) != 0) {
-		EPRINTLN("Failed to bind socket \"%s\": %s\n",
-		    addr.sun_path, strerror(errno));
-		err = -1;
-		goto fail;
-	}
-	/*
-	 * Control operations can replace guest state; keep the endpoint
-	 * private.  Use lchmod() so that if the run directory is writable by
-	 * an unprivileged user who races a symlink into our path between
-	 * bind() and here, we retarget the symlink itself rather than handing
-	 * that user an arbitrary-file chmod primitive.
-	 */
-	if (lchmod(addr.sun_path, S_IRUSR | S_IWUSR) != 0) {
-		EPRINTLN("Failed to restrict checkpoint socket \"%s\": %s\n",
-		    addr.sun_path, strerror(errno));
-		err = errno;
-		goto fail;
-	}
-	/* Accepted Unix sockets inherit this deadline for nvlist_recv(). */
-	receive_timeout = (struct timeval) {
-		.tv_sec = CHECKPOINT_CLIENT_TIMEOUT_SEC,
-		.tv_usec = 0,
-	};
-	if (setsockopt(socket_fd, SOL_SOCKET, SO_RCVTIMEO, &receive_timeout,
-	    sizeof(receive_timeout)) != 0) {
-		EPRINTLN("Failed to set checkpoint client timeout: %s\n",
-		    strerror(errno));
-		err = errno;
-		goto fail;
-	}
-
-	if (listen(socket_fd, 10) < 0) {
-		EPRINTLN("ipc socket listen: %s\n", strerror(errno));
-		err = errno;
-		goto fail;
-	}
-
-#ifndef WITHOUT_CAPSICUM
-	cap_rights_init(&rights, CAP_ACCEPT, CAP_READ, CAP_RECV, CAP_WRITE,
-	    CAP_SEND, CAP_GETSOCKOPT);
-
-	if (caph_rights_limit(socket_fd, &rights) == -1)
-		errx(EX_OSERR, "Unable to apply rights for sandbox");
-#endif
-	checkpoint_info = calloc(1, sizeof(*checkpoint_info));
-	if (checkpoint_info == NULL) {
-		err = ENOMEM;
-		goto fail;
-	}
-	checkpoint_info->ctx = ctx;
-	checkpoint_info->socket_fd = socket_fd;
-
-	err = pthread_create(&checkpoint_pthread, NULL, checkpoint_thread,
-		checkpoint_info);
-	if (err != 0)
-		goto fail;
-
-	return (0);
-fail:
-	free(checkpoint_info);
-	if (socket_fd >= 0)
-		close(socket_fd);
-	unlink(addr.sun_path);
-
-	return (err);
-}
+IPC_COMMAND(checkpoint, vm_do_checkpoint);
 
 void
 vm_snapshot_buf_err(const char *bufname, const enum vm_snapshot_op op)

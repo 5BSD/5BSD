@@ -2911,6 +2911,7 @@ knlist_cleardel(struct knlist *knl, struct thread *td, int islocked, int killkn)
 {
 	struct knote *kn, *kn2;
 	struct kqueue *kq;
+	bool dropped;
 
 	KASSERT(!knl->kl_autodestroy, ("cleardel for autodestroy %p", knl));
 	if (islocked)
@@ -2927,6 +2928,7 @@ knlist_cleardel(struct knlist *knl, struct thread *td, int islocked, int killkn)
 		 * freed or converted to one-shot, as the attached subject is
 		 * essentially disappearing.
 		 */
+		dropped = false;
 		SLIST_FOREACH_SAFE(kn, &knl->kl_list, kn_selnext, kn2) {
 			kq = kn->kn_kq;
 			KQ_LOCK(kq);
@@ -2938,7 +2940,11 @@ knlist_cleardel(struct knlist *knl, struct thread *td, int islocked, int killkn)
 			if (killkn) {
 				kn_enter_flux(kn);
 				KQ_UNLOCK(kq);
+				knl->kl_unlock(knl->kl_lockarg);
 				knote_drop_detached(kn, td);
+				knl->kl_lock(knl->kl_lockarg);
+				dropped = true;
+				break;
 			} else {
 				/* Make sure cleared knotes disappear soon */
 				kn->kn_flags |= EV_EOF | EV_ONESHOT;
@@ -2946,6 +2952,8 @@ knlist_cleardel(struct knlist *knl, struct thread *td, int islocked, int killkn)
 			}
 			kq = NULL;
 		}
+		if (dropped)
+			continue;
 
 		if (SLIST_EMPTY(&knl->kl_list))
 			break;
@@ -3549,27 +3557,53 @@ kern_proc_kqueues_out1(struct thread *td, struct proc *p, struct sbuf *s,
 	return (fget_remote_foreach(td, p, kern_proc_kqueues_out1_cb, &a));
 }
 
+struct kern_proc_kqueues_drain_ctx {
+	struct sbuf	*sb;
+	size_t		 remaining;
+	bool		 full;
+};
+
+static int
+kern_proc_kqueues_drain(void *arg, const char *data, int len)
+{
+	struct kern_proc_kqueues_drain_ctx *c;
+	size_t n;
+
+	c = arg;
+	n = MIN((size_t)len, c->remaining);
+	if (n != 0) {
+		if (sbuf_bcat(c->sb, data, n) != 0)
+			return (-ENOMEM);
+		c->remaining -= n;
+	}
+	if (c->remaining == 0) {
+		c->full = true;
+		return (-ENOSPC);
+	}
+	return (len);
+}
+
 int
 kern_proc_kqueues_out(struct proc *p, struct sbuf *sb, size_t maxlen,
     bool compat32)
 {
+	struct kern_proc_kqueues_drain_ctx c;
 	struct sbuf *s, sm;
-	size_t sb_len;
 	int error;
 
 	if (maxlen == -1)
 		return (kern_proc_kqueues_out1(curthread, p, sb, compat32));
 
-	if (maxlen == 0)
-		sb_len = 128;
-	else
-		sb_len = maxlen;
-	s = sbuf_new(&sm, NULL, sb_len, SBUF_FIXEDLEN);
+	c.sb = sb;
+	c.remaining = maxlen;
+	c.full = false;
+	s = sbuf_new(&sm, NULL, PAGE_SIZE, SBUF_FIXEDLEN);
+	sbuf_set_drain(s, kern_proc_kqueues_drain, &c);
 	error = kern_proc_kqueues_out1(curthread, p, s, compat32);
 	sbuf_finish(s);
-	if (error == 0)
-		sbuf_bcat(sb, sbuf_data(s), MIN(sbuf_len(s), maxlen));
 	sbuf_delete(s);
+	if (c.full)
+		error = 0;
 	return (error);
 }
 

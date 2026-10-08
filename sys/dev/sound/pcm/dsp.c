@@ -536,7 +536,7 @@ dsp_write(struct cdev *i_dev, struct uio *buf, int flag)
 
 static int
 dsp_ioctl_channel(struct dsp_cdevpriv *priv, struct pcm_channel *ch,
-    u_long cmd, caddr_t arg)
+    unsigned long cmd, caddr_t arg)
 {
 	struct snddev_info *d;
 	struct pcm_channel *rdch, *wrch;
@@ -690,13 +690,13 @@ typedef struct audio_errinfo32
 #endif
 
 static int
-dsp_ioctl(struct cdev *i_dev, u_long cmd, caddr_t arg, int mode,
+dsp_ioctl(struct cdev *i_dev, unsigned long cmd, caddr_t arg, int mode,
     struct thread *td)
 {
 	struct dsp_cdevpriv *priv;
     	struct pcm_channel *chn, *rdch, *wrch;
 	struct snddev_info *d;
-	u_long xcmd;
+	unsigned long xcmd;
 	int *arg_i, ret, tmp, err;
 
 	if ((err = devfs_get_cdevpriv((void **)&priv)) != 0)
@@ -2684,14 +2684,11 @@ dsp_oss_syncstart(int sg_id)
 	struct pcmchan_syncmember *sm, *sm_tmp;
 	struct pcmchan_syncgroup *sg;
 	struct pcm_channel *c;
-	int ret, needlocks;
+	int ret;
 
-	/* Get the synclists lock */
 	PCM_SG_LOCK();
-
 	do {
 		ret = 0;
-		needlocks = 0;
 
 		/* Search for syncgroup by ID */
 		SLIST_FOREACH(sg, &snd_pcm_syncgroups, link) {
@@ -2728,16 +2725,14 @@ dsp_oss_syncstart(int sg_id)
 				}
 
 				/** @todo Is PRIBIO correct/ */
-				ret = msleep(sm, &snd_pcm_syncgroups_mtx,
+				ret = msleep(sm, PCM_SG_LOCKPTR(),
 				    PRIBIO | PCATCH, "pcmsg", timo);
-				if (ret == EINTR || ret == ERESTART)
-					break;
-
-				needlocks = 1;
-				ret = 0; /* Assumes ret == EAGAIN... */
+				if (ret == EAGAIN)
+					ret = 0;
+				break;
 			}
 		}
-	} while (needlocks && ret == 0);
+	} while (ret == 0 && sm != NULL);
 
 	/* Proceed only if no errors encountered. */
 	if (ret == 0) {

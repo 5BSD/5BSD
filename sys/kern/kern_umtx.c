@@ -113,7 +113,7 @@
 			  (td)->td_user_pri <= PRI_MAX_TIMESHARE) ?\
 			 PRI_MAX_TIMESHARE : (td)->td_user_pri)
 
-#define	GOLDEN_RATIO_PRIME	2654404609U
+#define	GOLDEN_RATIO_32		1640531527U
 #ifndef	UMTX_CHAINS
 #define	UMTX_CHAINS		512
 #endif
@@ -180,7 +180,7 @@ static void umtxq_hash(struct umtx_key *key);
 static int do_unlock_pp(struct thread *td, struct umutex *m, uint32_t flags,
     bool rb);
 static void umtx_thread_cleanup(struct thread *td);
-SYSINIT(umtx, SI_SUB_EVENTHANDLER+1, SI_ORDER_MIDDLE, umtxq_sysinit, NULL);
+SYSINIT(umtx, SI_SUB_EVENTHANDLER, SI_ORDER_LAST, umtxq_sysinit, NULL);
 
 #define umtxq_signal(key, nwake)	umtxq_signal_queue((key), (nwake), UMTX_SHARED_QUEUE)
 
@@ -380,7 +380,7 @@ umtxq_hash(struct umtx_key *key)
 	unsigned n;
 
 	n = (uintptr_t)key->info.both.a + key->info.both.b;
-	key->hash = ((n * GOLDEN_RATIO_PRIME) >> UMTX_SHIFTS) % UMTX_CHAINS;
+	key->hash = ((n * GOLDEN_RATIO_32) >> UMTX_SHIFTS) % UMTX_CHAINS;
 }
 
 struct umtxq_chain *

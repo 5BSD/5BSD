@@ -234,14 +234,6 @@ union l_semun {
 #define	LINUX_XFEATURE_MASK_XTILE	\
 	((1ULL << LINUX_XFEATURE_XTILECFG) | (1ULL << LINUX_XFEATURE_XTILEDATA))
 
-/* pkey_alloc(2) access rights and PKRU layout. */
-#define LINUX_PKEY_DISABLE_ACCESS	0x1
-#define LINUX_PKEY_DISABLE_WRITE	0x2
-#define LINUX_PKEY_ACCESS_MASK		\
-    (LINUX_PKEY_DISABLE_ACCESS | LINUX_PKEY_DISABLE_WRITE)
-#define LINUX_PKEY_MAX			16	/* keys 0..15 */
-#define LINUX_PKRU_BITS_PER_PKEY	2
-
 #define	linux_copyout_rusage(r, u)	copyout(r, u, sizeof(*r))
 
 /* This corresponds to 'struct user_regs_struct' in Linux. */

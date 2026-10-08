@@ -1988,14 +1988,14 @@ pf_state_key_setup(struct pf_pdesc *pd, u_int16_t sport, u_int16_t dport,
 	(*sk)->proto = pd->proto;
 	(*sk)->af = pd->af;
 
-	*nk = pf_state_key_clone(*sk);
-	if (*nk == NULL) {
-		uma_zfree(V_pf_state_key_z, *sk);
-		*sk = NULL;
-		return (ENOMEM);
-	}
-
 	if (pd->af != pd->naf) {
+		*nk = pf_state_key_clone(*sk);
+		if (*nk == NULL) {
+			uma_zfree(V_pf_state_key_z, *sk);
+			*sk = NULL;
+			return (ENOMEM);
+		}
+
 		(*sk)->port[pd->sidx] = pd->osport;
 		(*sk)->port[pd->didx] = pd->odport;
 
@@ -2033,6 +2033,8 @@ pf_state_key_setup(struct pf_pdesc *pd, u_int16_t sport, u_int16_t dport,
 		default:
 			(*nk)->proto = pd->proto;
 		}
+	} else {
+		*nk = *sk;
 	}
 
 	return (0);
@@ -2229,14 +2231,9 @@ out:
 			return (PF_DROP);
 		}
 	}
-	if (PACKET_LOOPED(pd)) {
-		PF_STATE_UNLOCK(s);
-		return (PF_PASS);
-	}
 
 	*state = s;
-
-	return (PF_MATCH);
+	return (PACKET_LOOPED(pd) ? PF_PASS : PF_MATCH);
 }
 
 /*
@@ -2693,6 +2690,43 @@ pf_icmp_mapping(struct pf_pdesc *pd, u_int8_t type,
 	return (0);  /* These types match to their own state */
 }
 
+#ifdef INET
+void
+pf_send_ip_direct(struct mbuf *m)
+{
+	if (pf_isforlocal(m, AF_INET)) {
+		KASSERT(m->m_pkthdr.rcvif == V_loif,
+		    ("%s: rcvif != loif", __func__));
+
+		m->m_flags |= M_SKIP_FIREWALL;
+		m->m_pkthdr.csum_flags |= CSUM_IP_VALID | CSUM_IP_CHECKED |
+		    CSUM_DATA_VALID | CSUM_PSEUDO_HDR;
+		m->m_pkthdr.csum_data = 0xffff;
+		ip_input(m);
+	} else {
+		ip_output(m, NULL, NULL, 0, NULL, NULL);
+	}
+}
+#endif
+
+#ifdef INET6
+void
+pf_send_ip6_direct(struct mbuf *m)
+{
+	if (pf_isforlocal(m, AF_INET6)) {
+		KASSERT(m->m_pkthdr.rcvif == V_loif,
+		    ("%s: rcvif != loif", __func__));
+
+		m->m_flags |= M_SKIP_FIREWALL | M_LOOP;
+		m->m_pkthdr.csum_flags |= CSUM_DATA_VALID | CSUM_PSEUDO_HDR;
+		m->m_pkthdr.csum_data = 0xffff;
+		ip6_input(m);
+	} else {
+		ip6_output(m, NULL, NULL, 0, NULL, NULL, NULL);
+	}
+}
+#endif
+
 void
 pf_intr(void *v)
 {
@@ -2713,20 +2747,7 @@ pf_intr(void *v)
 		switch (pfse->pfse_type) {
 #ifdef INET
 		case PFSE_IP: {
-			if (pf_isforlocal(pfse->pfse_m, AF_INET)) {
-				KASSERT(pfse->pfse_m->m_pkthdr.rcvif == V_loif,
-				    ("%s: rcvif != loif", __func__));
-
-				pfse->pfse_m->m_flags |= M_SKIP_FIREWALL;
-				pfse->pfse_m->m_pkthdr.csum_flags |=
-				    CSUM_IP_VALID | CSUM_IP_CHECKED |
-				    CSUM_DATA_VALID | CSUM_PSEUDO_HDR;
-				pfse->pfse_m->m_pkthdr.csum_data = 0xffff;
-				ip_input(pfse->pfse_m);
-			} else {
-				ip_output(pfse->pfse_m, NULL, NULL, 0, NULL,
-				    NULL);
-			}
+			pf_send_ip_direct(pfse->pfse_m);
 			break;
 		}
 		case PFSE_ICMP:
@@ -2736,20 +2757,7 @@ pf_intr(void *v)
 #endif /* INET */
 #ifdef INET6
 		case PFSE_IP6:
-			if (pf_isforlocal(pfse->pfse_m, AF_INET6)) {
-				KASSERT(pfse->pfse_m->m_pkthdr.rcvif == V_loif,
-				    ("%s: rcvif != loif", __func__));
-
-				pfse->pfse_m->m_flags |= M_SKIP_FIREWALL |
-				    M_LOOP;
-				pfse->pfse_m->m_pkthdr.csum_flags |=
-				    CSUM_DATA_VALID | CSUM_PSEUDO_HDR;
-				pfse->pfse_m->m_pkthdr.csum_data = 0xffff;
-				ip6_input(pfse->pfse_m);
-			} else {
-				ip6_output(pfse->pfse_m, NULL, NULL, 0, NULL,
-				    NULL, NULL);
-			}
+			pf_send_ip6_direct(pfse->pfse_m);
 			break;
 		case PFSE_ICMP6:
 			icmp6_error(pfse->pfse_m, pfse->icmpopts.type,
@@ -6595,7 +6603,8 @@ pf_test_rule(struct pf_krule **rm, struct pf_kstate **sm,
 		}
 	} else {
 		uma_zfree(V_pf_state_key_z, ctx.sk);
-		uma_zfree(V_pf_state_key_z, ctx.nk);
+		if (ctx.sk != ctx.nk)
+			uma_zfree(V_pf_state_key_z, ctx.nk);
 		ctx.sk = ctx.nk = NULL;
 		pf_udp_mapping_release(ctx.udp_mapping);
 	}
@@ -6622,7 +6631,8 @@ pf_test_rule(struct pf_krule **rm, struct pf_kstate **sm,
 
 cleanup:
 	uma_zfree(V_pf_state_key_z, ctx.sk);
-	uma_zfree(V_pf_state_key_z, ctx.nk);
+	if (ctx.sk != ctx.nk)
+		uma_zfree(V_pf_state_key_z, ctx.nk);
 	pf_udp_mapping_release(ctx.udp_mapping);
 	*reason = ctx.reason;
 
@@ -6958,7 +6968,8 @@ pf_create_state(struct pf_krule *r, struct pf_test_ctx *ctx,
 
 csfailed:
 	uma_zfree(V_pf_state_key_z, ctx->sk);
-	uma_zfree(V_pf_state_key_z, ctx->nk);
+	if (ctx->sk != ctx->nk)
+		uma_zfree(V_pf_state_key_z, ctx->nk);
 
 	for (pf_sn_types_t sn_type=0; sn_type<PF_SN_MAX; sn_type++) {
 		if (pf_src_node_exists(&sns[sn_type], snhs[sn_type])) {
@@ -8555,7 +8566,7 @@ pf_icmp_state_lookup(struct pf_state_key_cmp *key, struct pf_pdesc *pd,
 		return (PF_DROP);
 
 	action = pf_find_state(pd, key, state);
-	if (action != PF_MATCH)
+	if (action != PF_MATCH && action != PF_PASS)
 		return (action);
 
 	if ((*state)->state_flags & PFSTATE_SLOPPY)
@@ -8880,7 +8891,7 @@ pf_test_state_icmp(struct pf_kstate **state, struct pf_pdesc *pd,
 			key.port[pd2.didx] = th->th_dport;
 
 			action = pf_find_state(&pd2, &key, state);
-			if (action != PF_MATCH)
+			if (action != PF_MATCH && action != PF_PASS)
 				return (action);
 
 			if (pd->dir == (*state)->direction) {
@@ -9075,7 +9086,7 @@ pf_test_state_icmp(struct pf_kstate **state, struct pf_pdesc *pd,
 			key.port[pd2.didx] = uh->uh_dport;
 
 			action = pf_find_state(&pd2, &key, state);
-			if (action != PF_MATCH)
+			if (action != PF_MATCH && action != PF_PASS)
 				return (action);
 
 			/* translate source/destination address, if necessary */
@@ -9207,7 +9218,7 @@ pf_test_state_icmp(struct pf_kstate **state, struct pf_pdesc *pd,
 			key.port[pd2.didx] = sh->dest_port;
 
 			action = pf_find_state(&pd2, &key, state);
-			if (action != PF_MATCH)
+			if (action != PF_MATCH && action != PF_PASS)
 				return (action);
 
 			if (pd->dir == (*state)->direction) {
@@ -9593,7 +9604,7 @@ pf_test_state_icmp(struct pf_kstate **state, struct pf_pdesc *pd,
 			key.port[0] = key.port[1] = 0;
 
 			action = pf_find_state(&pd2, &key, state);
-			if (action != PF_MATCH)
+			if (action != PF_MATCH && action != PF_PASS)
 				return (action);
 
 			/* translate source/destination address, if necessary */

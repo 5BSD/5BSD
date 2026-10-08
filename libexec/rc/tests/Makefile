@@ -1,4 +1,4 @@
-ATF_TESTS_SH+=  rc_subr_test safe_eval_test
+ATF_TESTS_SH+=  rc_subr_test safe_eval_test svcj_test
 ATF_TESTS_SH+=  sysext_startup_test
 ATF_TESTS_SH_SED_sysext_startup_test+= -e 's,@SRCTOP@,${SRCTOP},g'
 

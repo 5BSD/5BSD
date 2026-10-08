@@ -3013,8 +3013,8 @@ pci_generate_msix(struct pci_devinst *pi __unused, int vector __unused)
 }
 
 void vi_pci_modern_reset(struct virtio_softc *vs __unused) {}
-int pci_emul_alloc_bar(struct pci_devinst *pi __unused, int bar __unused,
-    enum pcibar_type type __unused, uint64_t size __unused) { return (0); }
+void pci_emul_alloc_bar(struct pci_devinst *pi __unused, int bar __unused,
+    enum pcibar_type type __unused, uint64_t size __unused) {}
 int pci_emul_add_msixcap(struct pci_devinst *pi __unused, int count,
     int bar __unused)
 {

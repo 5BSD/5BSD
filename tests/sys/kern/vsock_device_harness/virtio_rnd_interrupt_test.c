@@ -211,12 +211,10 @@ pci_lintr_deassert(struct pci_devinst *pi __unused)
 	g_lintr_asserted = false;
 }
 
-int
+void
 pci_emul_alloc_bar(struct pci_devinst *pi __unused, int bar __unused,
     enum pcibar_type type __unused, uint64_t size __unused)
 {
-
-	return (0);
 }
 
 int

@@ -2395,7 +2395,7 @@ static const struct migration_source_ops migration_prod_source_ops = {
  * prod_dev_state) through COMMIT/RELEASE; a pre-commit failure rolls back
  * and resumes the source, while a committed handoff makes it defunct.
  */
-static int
+static nvlist_t *
 vm_do_migrate(struct vmctx *ctx, const nvlist_t *nvl)
 {
 	struct migration_prod_source src;
@@ -2403,10 +2403,14 @@ vm_do_migrate(struct vmctx *ctx, const nvlist_t *nvl)
 	struct migration_transport_fd fdx;
 	struct migration_session_config config;
 	struct migration_source_result result;
+	nvlist_t *reply;
 	int fd, error;
 
-	if (!nvlist_exists_descriptor(nvl, "fd"))
-		return (EINVAL);
+	reply = nvlist_create(0);
+	if (!nvlist_exists_descriptor(nvl, "fd")) {
+		nvlist_add_string(reply, "error", strerror(EINVAL));
+		return (reply);
+	}
 	fd = nvlist_get_descriptor(nvl, "fd");
 
 	memset(&src, 0, sizeof(src));
@@ -2430,12 +2434,19 @@ vm_do_migrate(struct vmctx *ctx, const nvlist_t *nvl)
 		warnx("migration failed at phase %u (reason %u); source %s",
 		    result.phase, result.reason,
 		    result.source_runnable ? "still running" : "DEFUNCT");
+		nvlist_add_stringf(reply, "error",
+		    "migration failed at phase %u (reason %u): %s; source %s",
+		    result.phase, result.reason, strerror(error),
+		    result.source_runnable ? "still running" : "DEFUNCT");
 	} else {
 		warnx("migration committed; source relinquished");
 	}
-	return (error);
+	nvlist_add_number(reply, "phase", result.phase);
+	nvlist_add_number(reply, "reason", result.reason);
+	nvlist_add_bool(reply, "source_runnable", result.source_runnable);
+	return (reply);
 }
-IPC_COMMAND(ipc_cmd_set, migrate, vm_do_migrate);
+IPC_COMMAND(migrate, vm_do_migrate);
 
 /* ------------------------------------------------------------------------- */
 /* Production destination adapter + listener				     */

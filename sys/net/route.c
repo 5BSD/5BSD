@@ -283,7 +283,7 @@ ifa_ifwithroute(int flags, const struct sockaddr *dst,
 		if (flags & RTF_HOST)
 			ifa = ifa_ifwithdstaddr(dst, fibnum);
 		if (ifa == NULL)
-			ifa = ifa_ifwithaddr(gateway);
+			ifa = ifa_ifwithaddr_fib(gateway, fibnum);
 	} else {
 		/*
 		 * If we are adding a route to a remote net
@@ -516,7 +516,9 @@ rt_updatemtu(struct ifnet *ifp)
 #ifdef INET6
 	uint32_t in6mtu;
 
-	in6mtu = in6_ifmtu(ifp);
+	/* For IFT_PFSYNC */
+	if (ifp->if_inet6 != NULL)
+		in6mtu = in6_ifmtu(ifp);
 #endif
 
 	for (u_int j = 0; j < rt_numfibs; j++) {

@@ -261,6 +261,7 @@ bool	filecaps_copy(const struct filecaps *src, struct filecaps *dst,
 	    bool locked);
 void	filecaps_intersect(struct filecaps *dst, const struct filecaps *limit);
 void	filecaps_move(struct filecaps *src, struct filecaps *dst);
+void	filecaps_fill(struct filecaps *fcaps);
 void	filecaps_free(struct filecaps *fcaps);
 
 /* fdhold requires PROC_LOCK; it holds the table allocation, not its files. */

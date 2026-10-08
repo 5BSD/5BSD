@@ -3475,6 +3475,17 @@ systrace_args(int sysnum, void *params, uint64_t *uarg, int *n_args)
 		*n_args = 3;
 		break;
 	}
+	/* freebsd32_pdptrace */
+	case 605: {
+		struct freebsd32_pdptrace_args *p = params;
+		iarg[a++] = p->req; /* int */
+		iarg[a++] = p->pfd; /* int */
+		iarg[a++] = p->lwpid; /* int */
+		uarg[a++] = (intptr_t)p->addr; /* void * */
+		iarg[a++] = p->data; /* int */
+		*n_args = 5;
+		break;
+	}
 	/* cap_xfer_limit */
 	case 1000: {
 		struct cap_xfer_limit_args *p = params;
@@ -9490,6 +9501,28 @@ systrace_entry_setargdesc(int sysnum, int ndx, char *desc, size_t descsz)
 			break;
 		};
 		break;
+	/* freebsd32_pdptrace */
+	case 605:
+		switch (ndx) {
+		case 0:
+			p = "int";
+			break;
+		case 1:
+			p = "int";
+			break;
+		case 2:
+			p = "int";
+			break;
+		case 3:
+			p = "userland void *";
+			break;
+		case 4:
+			p = "int";
+			break;
+		default:
+			break;
+		};
+		break;
 	/* cap_xfer_limit */
 	case 1000:
 		switch (ndx) {
@@ -11589,6 +11622,11 @@ systrace_return_setargdesc(int sysnum, int ndx, char *desc, size_t descsz)
 		break;
 	/* pddupfd */
 	case 604:
+		if (ndx == 0 || ndx == 1)
+			p = "int";
+		break;
+	/* freebsd32_pdptrace */
+	case 605:
 		if (ndx == 0 || ndx == 1)
 			p = "int";
 		break;

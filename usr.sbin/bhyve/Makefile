@@ -35,6 +35,7 @@ SRCS=	\
 	ctl_util.c		\
 	hda_codec.c		\
 	iov.c			\
+	ipc.c			\
 	mem.c			\
 	migration_dirty.c	\
 	migration_precopy.c	\

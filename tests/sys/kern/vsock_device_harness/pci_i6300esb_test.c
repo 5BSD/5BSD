@@ -116,7 +116,7 @@ struct pci_devemu {
 
 void pci_set_cfgdata8(struct pci_devinst *, int, uint8_t);
 void pci_set_cfgdata16(struct pci_devinst *, int, uint16_t);
-int pci_emul_alloc_bar(struct pci_devinst *, int, enum pcibar_type, uint64_t);
+void pci_emul_alloc_bar(struct pci_devinst *, int, enum pcibar_type, uint64_t);
 void pci_lintr_request(struct pci_devinst *);
 void pci_lintr_assert(struct pci_devinst *);
 void pci_lintr_deassert(struct pci_devinst *);
@@ -134,7 +134,6 @@ static int g_nmi_ret;
 static struct vcpu g_bsp_vcpu = { .vcpuid = 0 };
 static unsigned g_vcpu_open_calls;
 
-static bool g_alloc_bar_fail;
 static unsigned g_lintr_request_calls;
 static unsigned g_lintr_assert_calls;
 static unsigned g_lintr_deassert_calls;
@@ -190,16 +189,13 @@ pci_set_cfgdata16(struct pci_devinst *pi, int offset, uint16_t value)
 	le16enc(&pi->pi_cfgdata[offset], value);
 }
 
-int
+void
 pci_emul_alloc_bar(struct pci_devinst *pi, int idx, enum pcibar_type type,
     uint64_t size)
 {
 
-	if (g_alloc_bar_fail)
-		return (-1);
 	pi->pi_bar[idx].type = type;
 	pi->pi_bar[idx].size = size;
-	return (0);
 }
 
 void
@@ -339,7 +335,6 @@ mocks_reset(void)
 	g_last_nmi_vcpu = NULL;
 	g_nmi_ret = 0;
 	g_vcpu_open_calls = 0;
-	g_alloc_bar_fail = false;
 	g_lintr_request_calls = 0;
 	g_lintr_assert_calls = 0;
 	g_lintr_deassert_calls = 0;
@@ -528,12 +523,6 @@ ATF_TC_BODY(init_option_parsing, tc)
 	mocks_reset();
 	cfg_set("timeout", "999999");
 	ATF_CHECK_EQ(-1, i6300esb_init(make_pi(), NULL));
-
-	/* BAR allocation failure unwinds cleanly. */
-	mocks_reset();
-	g_alloc_bar_fail = true;
-	ATF_CHECK_EQ(-1, i6300esb_init(make_pi(), NULL));
-	ATF_CHECK(i6300esb_sc == NULL);
 }
 
 ATF_TC_WITHOUT_HEAD(preload_time_model);

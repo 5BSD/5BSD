@@ -313,7 +313,6 @@ static struct {
 	int fail_select_transport;
 	int fail_intr_init;
 	int fail_modern_init;
-	int fail_alloc_bar;
 	int fail_add_shmem;
 	int fail_set_backing;
 } g_init;
@@ -416,12 +415,10 @@ vi_pci_modern_seal_shared_memory(struct virtio_softc *vs __unused)
 {
 }
 
-int
+void
 pci_emul_alloc_bar(struct pci_devinst *pdi __unused, int idx __unused,
     enum pcibar_type type __unused, uint64_t size __unused)
 {
-
-	return (g_init.fail_alloc_bar);
 }
 
 static void
@@ -1105,9 +1102,6 @@ ATF_TC_BODY(init_composition_and_failures, tc)
 	ATF_CHECK_EQ(pci_vtpmem_init(&pi, NULL), 1);
 	init_defaults(path);
 	g_init.fail_modern_init = 1;
-	ATF_CHECK_EQ(pci_vtpmem_init(&pi, NULL), 1);
-	init_defaults(path);
-	g_init.fail_alloc_bar = 1;
 	ATF_CHECK_EQ(pci_vtpmem_init(&pi, NULL), 1);
 	init_defaults(path);
 	g_init.fail_add_shmem = 1;

@@ -92,6 +92,7 @@ int bhyve_numa_checkpoint_export(uint64_t *, size_t, uint16_t *, size_t,
 int bhyve_numa_restore_apply(const uint64_t *, size_t, const uint16_t *,
     size_t, uint64_t);
 #endif
+void bhyve_cfg_warn(const char *old, const char *new);
 
 void bhyve_init_vcpu(struct vcpu *vcpu);
 void bhyve_start_vcpu(struct vcpu *vcpu, bool bsp);

@@ -189,6 +189,7 @@ ATF_TESTS_C+=	timerfd_cap_test
 ATF_TESTS_C+=	fcntl_readahead_cap_test
 ATF_TESTS_C+=	posix_fadvise_cap_test
 ATF_TESTS_C+=	tty_pts
+ATF_TESTS_C+=	unix_connectat
 ATF_TESTS_C+=	unix_dgram
 ATF_TESTS_C+=	unix_passfd_dgram
 TEST_METADATA.unix_passfd_dgram+=	is_exclusive="true"
@@ -243,6 +244,7 @@ LIBADD.sys_getrandom+=			zstd
 LIBADD.sys_getrandom+=			c
 LIBADD.sys_getrandom+=			pthread
 LIBADD.ptrace_test+=			pthread
+LIBADD.unix_connectat+=			util
 LIBADD.unix_seqpacket_test+=		pthread
 LIBADD.inotify_test+=			util
 LIBADD.jaildesc_cap_test+=		jail
@@ -293,6 +295,9 @@ CFLAGS.subr_unit.c+=	-Wno-missing-prototypes
 SRCS.subr_unit_test+=	subr_unit.c
 
 CFLAGS.exterr_test+=	-I${SRCTOP}/tests
+CFLAGS.pdwait+=		-I${SRCTOP}/tests
+CFLAGS.procdesc+=	-I${SRCTOP}/tests
+CFLAGS.ptrace_test+=	-I${SRCTOP}/tests
 
 WARNS?=	3
 

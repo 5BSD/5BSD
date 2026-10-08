@@ -3923,7 +3923,8 @@ pci_nvme_parse_config(struct pci_nvme_softc *sc, nvlist_t *nvl)
 			EPRINTLN("nvme: Invalid eui64 option: %s", value);
 			return (-1);
 		}
-		sc->nvstore.eui64 = htobe64(parsed64);
+		/* Host order; pci_nvme_init_nsdata() encodes it big-endian. */
+		sc->nvstore.eui64 = parsed64;
 	}
 	value = get_config_value_node(nvl, "dsm");
 	if (value != NULL) {
@@ -4076,11 +4077,7 @@ pci_nvme_init(struct pci_devinst *pi, nvlist_t *nvl)
 
 	DPRINTF("nvme membar size: %u", pci_membar_sz);
 
-	error = pci_emul_alloc_bar(pi, 0, PCIBAR_MEM64, pci_membar_sz);
-	if (error) {
-		WPRINTF("%s pci alloc mem bar failed", __func__);
-		goto done;
-	}
+	pci_emul_alloc_bar(pi, 0, PCIBAR_MEM64, pci_membar_sz);
 
 	error = pci_emul_add_msixcap(pi, sc->max_queues + 1, NVME_MSIX_BAR);
 	if (error) {

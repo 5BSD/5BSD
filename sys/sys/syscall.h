@@ -543,6 +543,7 @@
 #define	SYS_renameat2	602
 #define	SYS_pdopenpid	603
 #define	SYS_pddupfd	604
+#define	SYS_pdptrace	605
 #define	SYS_cap_xfer_limit	1000
 #define	SYS_cap_cloexec_limit	1001
 #define	SYS_cap_clofork_limit	1002

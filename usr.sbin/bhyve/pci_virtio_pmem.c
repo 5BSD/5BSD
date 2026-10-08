@@ -590,9 +590,8 @@ pci_vtpmem_init(struct pci_devinst *pi, nvlist_t *nvl)
 	intr_initialized = true;
 	if (vi_pci_modern_init(&sc->vsc_vs, 2) != 0)
 		goto fail;
-	if (pci_emul_alloc_bar(pi, VTPMEM_SHMEM_BAR, PCIBAR_MEM64,
-	    bar_size) != 0)
-		goto fail;
+	/* bar_size is a bounded power of two from pci_vtpmem_bar_size(). */
+	pci_emul_alloc_bar(pi, VTPMEM_SHMEM_BAR, PCIBAR_MEM64, bar_size);
 	if (vi_pci_modern_add_shared_memory(&sc->vsc_vs,
 	    VTPMEM_SHMEM_REGION_ID, VTPMEM_SHMEM_BAR, 0,
 	    sc->vsc_backing.size) != 0)

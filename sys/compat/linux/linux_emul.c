@@ -195,12 +195,13 @@ linux_proc_init(struct thread *td, struct thread *newtd, bool init_thread)
 
 			pem = malloc(sizeof(*pem), M_LINUX, M_WAITOK | M_ZERO);
 			sx_init(&pem->pem_sx, "lpemlk");
+			linux_pemuldata_init_md(td, pem);
 			pem->mce_kill = LINUX_PR_MCE_KILL_DEFAULT;
 			/*
-			 * fork(2) inherits the protection-key allocation
-			 * map (Linux copies it with the mm).  When a native
-			 * process is being switched to the emulator there
-			 * is no parent emuldata to inherit from.
+			 * fork(2) inherits the parent's mm-wide state (the
+			 * protection-key map is copied by the MD hook above).
+			 * When a native process is being switched to the
+			 * emulator there is no parent emuldata to inherit from.
 			 */
 			if (newtd != td && td->td_proc->p_emuldata != NULL) {
 				struct linux_pemuldata *ppem;
@@ -210,7 +211,6 @@ linux_proc_init(struct thread *td, struct thread *newtd, bool init_thread)
 				if (p->p_vmspace == td->td_proc->p_vmspace)
 					linux_aio_proc_share(ppem, pem);
 #endif
-				pem->pkeys_map = ppem->pkeys_map;
 #if defined(__amd64__) && !defined(COMPAT_LINUX32)
 				/* Auto-attached children inherit their tracee's options. */
 				sx_xlock(&proctree_lock);
@@ -282,10 +282,10 @@ linux_proc_init(struct thread *td, struct thread *newtd, bool init_thread)
 		if ((p->p_flag & P_SUGID) != 0)
 			pem->persona &= ~LINUX_PER_CLEAR_ON_SETID;
 		pem->oom_score_adj = 0;
+		linux_pemuldata_exec_md(pem);
 #ifdef __amd64__
 		linux_aio_proc_release(pem, td);
 #endif
-		pem->pkeys_map = 0;
 		/* A new image has no sealed mappings. */
 		LINUX_PEM_XLOCK(pem);
 		free(pem->seals, M_LINUX);

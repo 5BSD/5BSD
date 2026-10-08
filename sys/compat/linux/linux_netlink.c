@@ -359,8 +359,11 @@ rtnl_if_flags_to_linux(unsigned int if_flags)
 		case IFF_DYING:
 			/* No Linux analogue */
 			break;
+		case IFF_LOWER_UP:	/* IFF_NETLINK_1 */
+			result |= LINUX_IFF_LOWER_UP;
+			break;
 		case IFF_MULTICAST:
-			result |= 1 << 12;
+			result |= LINUX_IFF_MULTICAST;
 		}
 	}
 	return (result);
@@ -385,7 +388,15 @@ rtnl_newlink_to_linux(struct nlmsghdr *hdr, struct nlpcb *nlp,
 		ifinfo->ifi_type = LINUX_ARPHRD_LOOPBACK;
 		break;
 	case IFT_ETHER:
+	case IFT_BRIDGE:
+	case IFT_L2VLAN:
 		ifinfo->ifi_type = LINUX_ARPHRD_ETHER;
+		break;
+	case IFT_LOOP:
+		ifinfo->ifi_type = LINUX_ARPHRD_LOOPBACK;
+		break;
+	case IFT_STF:
+		ifinfo->ifi_type = LINUX_ARPHRD_SIT;
 		break;
 	}
 	/* Native IFF_CANTCONFIG overlaps Linux IFF_LOWER_UP. */

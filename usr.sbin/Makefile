@@ -31,7 +31,6 @@ SUBDIR=	adduser \
 	BSDCrypto \
 	BSDDevice \
 	fstyp \
-	fwcamctl \
 	fwcontrol \
 	fwget \
 	getfmac \

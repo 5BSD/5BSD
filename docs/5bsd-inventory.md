@@ -1058,7 +1058,7 @@ This area covers everything 5BSD changed in FreeBSD files that already existed a
 - Syscalls (`<sys/capsicum.h>`, `<sys/procdesc.h>`): `cap_xfer_limit`, `cap_cloexec_limit`, `cap_clofork_limit`, `cap_xfer_rights/ioctls/fcntls_limit`, `cap_mmap_capmode`, `cap_lookup_capmode`, `pdself`, `pdcmp`, `pdincapmode`, `cap_process` (`<sys/cap_process.h>`); `envfd_create(3)`.
 - `fcntl(2)`: `F_OFD_GETLK/SETLK/SETLKW`, `F_SEAL_FUTURE_WRITE`; `ptrace(2)`: `PTRACE_EXIT`; `wait6`: `WLINUXALL`.
 - `kqueue(2)`: `EVFILT_ENVFD`, `EVFILT_CRYPTODESC`, procdesc notes `NOTE_CAPMODE/JAILED/SETUID/CHROOT/FORK/EXEC`.
-- Sockets: `LOCAL_CAP_*`, `sockcred2.sc_capmode`, `AF_VSOCK` (46; `AF_IPFWLOG`/`AF_MAX` renumbered 48).
+- Sockets: `LOCAL_CAP_*`, `sockcred2.sc_capmode`, `AF_VSOCK` (64; `AF_MAX` 64, FreeBSD's `AF_IPFWLOG` unchanged at 46).
 - Rights: `CAP_JAIL_SET/ATTACH/REMOVE`, `CAP_TIMERFD_GETTIME/SETTIME`, `CAP_FCNTL_READAHEAD`, `CAP_POSIX_FADVISE`.
 - libc/libs: `free_sized`, `free_aligned_sized`; `caph_mmap_capmode`, `caph_lookup_capmode` (`<capsicum_helpers.h>`); `nmport_register_fd`; `dtrace_fdopen`; libprocstat `PS_FST_TYPE_{CRYPTO,MAC_CAPABILITY,ENVFD,ZFSHANDLE}`.
 - Kernel KPIs: `vop_fileclose`, `vfs_quota_t`, `sglist_append_*_boundary`, `kern_*_fp`, `kern_poll_fps`, `kern_kevent_file`, `kern_setcred_proc`, `pmap_ept_set_permissions`, `SDHCI_PLATFORM_SET_POWER`.

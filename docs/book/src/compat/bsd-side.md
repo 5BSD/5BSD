@@ -85,7 +85,7 @@ Most of the kernel work that landed for Linux emulation was done in the native s
 | Peer credentials | unix(4) `struct sockcred2` | gains `sc_capmode` (sender in capability mode); `SOCKCRED2_VERSION` is 1 |
 | Capability-mode attestation on UNIX sockets | unix(4) `LOCAL_CAP_CONNECT`, `LOCAL_CAPMODE_SERVER`, `LOCAL_CAP_REQ`, `SO_PEERCAPMODE` | a peer can require that the other side is sandboxed |
 | Abstract UNIX names | `sys/kern/uipc_usrreq.c` | exist only for sockets created by a Linux-ABI process (`UNP_LINUX_ABSTRACT`); native sockets keep path semantics |
-| `AF_VSOCK` | vsock(4), `<sys/socket.h>` | `AF_VSOCK` is 46; `AF_IPFWLOG` and `AF_MAX` moved to 48; recompile anything that sized arrays by `AF_MAX` |
+| `AF_VSOCK` | vsock(4), `<sys/socket.h>` | `AF_VSOCK` is 64, above FreeBSD's families (`AF_IPFWLOG` stays 46); `AF_MAX` is 64, so recompile anything that sized arrays by `AF_MAX` |
 | Capability-required syscalls | `<sys/sysent.h>` `SYF_CAPREQUIRED` | a syscall so flagged (pdself(2)) returns `ENOTCAPABLE` when the caller is not in capability mode |
 | New Capsicum rights | rights(4) | `CAP_JAIL_ATTACH`, `CAP_JAIL_REMOVE`, `CAP_JAIL_SET`, `CAP_TIMERFD_GETTIME`, `CAP_TIMERFD_SETTIME`, `CAP_FCNTL_READAHEAD`, `CAP_POSIX_FADVISE`, `CAP_ACL_*`; an existing sandbox that used these operations must add the rights |
 | Process descriptors | pdfork(2) | pdkill(2) and pdwait do not perform credential, jail or MAC checks; new `EVFILT_PROCDESC` notes (`NOTE_CAPMODE`, `NOTE_JAILED`, `NOTE_SETUID`, `NOTE_CHROOT`, `NOTE_FORK`, `NOTE_EXEC`); pdself(2), pdcmp(2) |

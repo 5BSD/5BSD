@@ -339,6 +339,9 @@
 /* Allows pddupfd(2). */
 #define	CAP_PDDUPFD		CAPRIGHT(1, 0x0000000000800000ULL)
 
+/* Allows ptrace(PT_PROCDESC) */
+#define	CAP_PTRACE		CAPRIGHT(1, 0x0000000001000000ULL)
+
 /*
  * 5BSD-local rights are allocated downward from the top usable bit of
  * index 1, so new FreeBSD rights (allocated upward) cannot collide.
@@ -366,10 +369,9 @@
 #define	CAP_POSIX_FADVISE	CAPRIGHT(1, 0x0004000000000000ULL)
 
 /* All used bits for index 1. */
-#define	CAP_ALL1		CAPRIGHT(1, 0x01FC000000FFFFFFULL)
+#define	CAP_ALL1		CAPRIGHT(1, 0x01FC000001FFFFFFULL)
 
 /* Available bits for index 1. */
-#define	CAP_UNUSED1_25		CAPRIGHT(1, 0x0000000001000000ULL)
 #define	CAP_UNUSED1_26		CAPRIGHT(1, 0x0000000002000000ULL)
 #define	CAP_UNUSED1_27		CAPRIGHT(1, 0x0000000004000000ULL)
 #define	CAP_UNUSED1_28		CAPRIGHT(1, 0x0000000008000000ULL)

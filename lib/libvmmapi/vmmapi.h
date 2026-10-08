@@ -248,6 +248,7 @@ int	vm_get_cpu_compat(struct vcpu *vcpu, struct vm_cpu_compat *);
 #endif
 int	vm_assign_pptdev(struct vmctx *ctx, int bus, int slot, int func);
 int	vm_unassign_pptdev(struct vmctx *ctx, int bus, int slot, int func);
+int	vm_reset_pptdev(struct vmctx *ctx, int bus, int slot, int func);
 int	vm_map_pptdev_mmio(struct vmctx *ctx, int bus, int slot, int func,
 			   vm_paddr_t gpa, size_t len, vm_paddr_t hpa);
 int	vm_unmap_pptdev_mmio(struct vmctx *ctx, int bus, int slot, int func,
