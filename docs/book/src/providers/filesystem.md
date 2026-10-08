@@ -12,7 +12,7 @@ switchboard that belongs in a daemon with exactly one job.
 ## What it brokers
 
 The kernel side is TrustedZFS: a new descriptor type, `DTYPE_ZFSHANDLE`
-(19 in `sys/sys/file.h`), minted on `/dev/zfs` with `ZFS_IOC_DATASET_OPEN`
+(130 in `sys/sys/file.h`), minted on `/dev/zfs` with `ZFS_IOC_DATASET_OPEN`
 or `ZFS_IOC_POOL_OPEN`. A handle pins a dataset or pool by guid, so it
 follows a rename and fails visibly after a destroy; it carries a rights mask
 fixed at mint (nineteen `ZH_*` bits in `sys/sys/zfshandle.h`, with
