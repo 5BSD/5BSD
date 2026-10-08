@@ -225,6 +225,10 @@
             usermgmt
             ..
         ..
+        bsdinstruments
+            profiles
+            ..
+        ..
         calendar
         ..
         certs
