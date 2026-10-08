@@ -61,7 +61,8 @@ CTFFLAGS+= -g
 _debuginstall:
 .if ${MK_DEBUG_FILES} != "no" && defined(DEBUGFILE)
 .if defined(DEBUGMKDIR)
-	${INSTALL} ${TAG_ARGS:D${TAG_ARGS},dbg} -d ${DESTDIR}${DEBUGFILEDIR}
+	${INSTALL} ${TAG_ARGS:D${TAG_ARGS},dbg} -o ${DEBUGOWN} -g ${DEBUGGRP} -d \
+	    ${DESTDIR}${DEBUGFILEDIR}
 .endif
 	${INSTALL} ${TAG_ARGS:D${TAG_ARGS},dbg} -o ${DEBUGOWN} -g ${DEBUGGRP} -m ${DEBUGMODE} \
 	    ${DEBUGFILE} ${DESTDIR}${DEBUGFILEDIR}/${DEBUGFILE}
