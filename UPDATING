@@ -27,6 +27,13 @@ NOTE TO PEOPLE WHO THINK THAT FreeBSD 16.x IS SLOW:
 	world, or to merely disable the most expensive debugging functionality
 	at runtime, run "ln -s 'abort:false,junk:false' /etc/malloc.conf".)
 
+20261008:
+	5BSD-local Capsicum rights (CAP_JAIL_*, CAP_TIMERFD_*,
+	CAP_FCNTL_READAHEAD, CAP_POSIX_FADVISE) moved to the top bits of rights
+	index 1 so FreeBSD additions cannot collide with them.  Install the new
+	kernel and world together; binaries built against the old values pass
+	rights the new kernel rejects.
+
 20260620:
 	On powerpc64le, long double is now IEEE 754 binary128 (quad
 	precision, 113-bit mantissa) instead of 64-bit double.  This is an
