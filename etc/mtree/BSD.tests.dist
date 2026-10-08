@@ -1005,6 +1005,12 @@
         ..
         posixshm
         ..
+        security
+            mac_abac
+            ..
+            oes
+            ..
+        ..
         ses
         ..
         sound
