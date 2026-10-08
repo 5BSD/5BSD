@@ -488,7 +488,7 @@ The userland plane is the process spine that turns the kernel's mac_capability p
 - Capsicum: abstract AF_UNIX names unbindable in capmode -> kernel.
 - MAC hooks fire on translated native ops (no Linux-specific hooks) -> `mac_capability`/OES policy -> see security sections.
 - `linux_enable`, `linux_mounts_enable` -> rc.conf; `linux_common_load`, `linux64_load` -> loader.conf.
-- Privilege: `init_module`/`finit_module` EPERM, `vhangup` PRIV_TTY_STI, `ioperm/iopl` PRIV_IO only when raising, quota/swapon native priv checks.
+- Privilege: `init_module`/`finit_module` are `DUMMY()` (ENOSYS), `vhangup` PRIV_TTY_STI, `ioperm/iopl` PRIV_IO only when raising, quota/swapon native priv checks.
 
 ### Public interfaces a developer would use
 
@@ -932,7 +932,7 @@ This area is everything between `git clone` and a booted 5BSD machine: the build
 | Kernel dev VM kit | isolated bhyve VM + host crashdump setup | `tools/tools/bhyve/kernel-devvm/` | README | — | none | shipped |
 | ktest sglist boundary | in-kernel scatter/gather boundary test module + pytest wrapper | `sys/tests/ktest_sglist_boundary.c`, `sys/modules/ktest/ktest_sglist_boundary/`, `tests/sys/kern/sglist_boundary_test.py` | — | 1 | none | shipped |
 | Release integrity test | ATF test for `release/packages/base-integrity.sh` (baseline create/check, veriexec manifest) | `tests/release/` | — | 2 cases | none | shipped |
-| `*-tests` packages | 47 pkgbase packages (`bsd*-tests`, `lib*-tests`, `switchboard-tests`, `capsule-tests`, `waspnest-tests`, `oes-tests`, `mac-capability-tests`, `tzfs-tests`, `bluetooth-tests`…) depending on `atf`+`kyua`+their daemon | `packages/*-tests/`, `release/packages/ucl/*-tests-all.ucl` | — | — | `operations/building.md` mentions `5BSD-set-tests` | shipped |
+| `*-tests` packages | 45 pkgbase packages (`bsd*-tests`, `lib*-tests`, `switchboard-tests`, `capsule-tests`, `waspnest-tests`, `oes-tests`, `mac-capability-tests`, `tzfs-tests`, `bluetooth-tests`…) depending on `atf`+`kyua`+their daemon | `packages/*-tests/`, `release/packages/ucl/*-tests-all.ucl` | — | — | `operations/building.md` mentions `5BSD-set-tests` | shipped |
 
 ### Test suite -> how to run
 | Suite | Path | Covers | How to run | Approx count |

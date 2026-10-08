@@ -13,7 +13,7 @@ Linux's confinement mechanisms (seccomp-bpf, Landlock, SELinux, AppArmor, namesp
 | Capsicum rights on descriptors | enforced on the native `fget` underneath every Linux operation, including `SCM_RIGHTS`-passed descriptors |
 | Coalitions and accounting | process properties set at launch and inherited across fork and exec; a Linux child of a coalition member is a coalition member, see [Coalitions and Accounting](../../capability/coalitions-and-accounting.md) |
 | Jails and VNET | abstract `AF_UNIX` namespaces, `/proc/net` tables, uevent delivery and sysfs interface lists are all per-prison and per-VNET |
-| Privilege | `init_module` and `finit_module` `EPERM`; `vhangup` needs `PRIV_TTY_STI`; `ioperm` and `iopl` need `PRIV_IO` only when raising; `swapon` and quota use the native checks |
+| Privilege | `init_module` and `finit_module` are unimplemented stubs returning `ENOSYS`; `vhangup` needs `PRIV_TTY_STI`; `ioperm` and `iopl` need `PRIV_IO` only when raising; `swapon` and quota use the native checks |
 
 The capability-mode row is proven by a family of paired tests: `linux_unshare_capmode`, `linux_quota_capmode`, `linux_ptrace_capmode`, `linux_socket_cookie_caps`, `linux_socket_peername_caps` and `linux_abstract_caps` each build a static native parent that traces itself, enters capability mode and `fexecve`s a freestanding Linux probe, then read the probe's syscall result from a breakpoint register so the probe never needs a second Linux syscall in capability mode. Abstract `AF_UNIX` names are unbindable in capability mode by design, since an abstract name is ambient authority.
 

@@ -16,6 +16,8 @@ files beside it are the ones that are not prose.
 | `bhyve-virtio-state-nested-architecture.md` | Device state, snapshot and nested virtualization |
 | `linuxulator-syscall-coverage.md` | The Linux syscall table, call by call |
 | `waspnest-completion-matrix.md` | Virtualization status, requirement by requirement |
+| `protected-authority-context.md` | Discovery and software authority |
+| `trusted-embedded-compute.md` | What 5BSD must modernize for trusted embedded compute |
 | `capability-plane-work-list.md`, `linuxulator-missing-syscalls-handoff.md`, `rpi5-bringup-plan.md` | Live work lists |
 | `pkg/` | Sample pkg repository configurations |
 

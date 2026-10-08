@@ -14,8 +14,7 @@ Read the page with `man name` on an installed system, or from the tree with
 
 ## Section 1: commands
 
-| Page | Description | Package | Source |
-|---|---|---|---|
+5BSD adds no section 1 pages; its commands are documented in section 8.
 
 ## Section 2: system calls
 
