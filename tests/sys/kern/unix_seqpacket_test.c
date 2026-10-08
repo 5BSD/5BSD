@@ -1395,35 +1395,44 @@ ATF_TC_BODY(zero_length_record, tc)
 	msg.msg_iov = &iov;
 	msg.msg_iovlen = 1;
 
+	/*
+	 * PF_LOCAL SOCK_SEQPACKET uses the unix/stream buffer implementation
+	 * (uipc_sosend_stream_or_seqpacket()), not the PR_ATOMIC
+	 * soreceive_generic() path: record boundaries are carried only by
+	 * MSG_EOR on data mbufs, and a send with no data queues nothing
+	 * (mc_uiotomc() returns an empty chain).  Zero-length sends, with or
+	 * without MSG_EOR, therefore succeed but are not delivered: they must
+	 * not make the peer readable and must not disturb the boundaries of
+	 * subsequent records.
+	 */
 	ATF_REQUIRE_EQ(0, send(sv[0], "", 0, 0));
 	pfd.fd = sv[1];
 	pfd.events = POLLIN;
 	pfd.revents = 0;
-	ATF_REQUIRE_EQ(1, poll(&pfd, 1, 0));
-	ATF_CHECK((pfd.revents & POLLIN) != 0);
+	ATF_REQUIRE_EQ(0, poll(&pfd, 1, 0));
 	iov.iov_len = 0;
-	ATF_REQUIRE_EQ(0, recvmsg(sv[1], &msg, MSG_PEEK));
-	ATF_CHECK((msg.msg_flags & (MSG_EOR | MSG_TRUNC)) == 0);
-	pfd.revents = 0;
-	ATF_REQUIRE_EQ(1, poll(&pfd, 1, 0));
-	ATF_CHECK((pfd.revents & POLLIN) != 0);
-	msg.msg_flags = 0;
-	ATF_REQUIRE_EQ(0, recvmsg(sv[1], &msg, 0));
-	ATF_CHECK((msg.msg_flags & (MSG_EOR | MSG_TRUNC)) == 0);
-	iov.iov_len = sizeof(buf);
+	ATF_REQUIRE_EQ(-1, recvmsg(sv[1], &msg, MSG_PEEK));
+	ATF_CHECK_EQ(EAGAIN, errno);
+
+	ATF_REQUIRE_EQ(0, sendmsg(sv[0], &msg, MSG_EOR));
 	pfd.revents = 0;
 	ATF_REQUIRE_EQ(0, poll(&pfd, 1, 0));
-
-	iov.iov_len = 0;
-	ATF_REQUIRE_EQ(0, sendmsg(sv[0], &msg, MSG_EOR));
-	msg.msg_flags = 0;
-	ATF_REQUIRE_EQ(0, recvmsg(sv[1], &msg, 0));
-	ATF_CHECK((msg.msg_flags & MSG_EOR) != 0);
-
 	iov.iov_len = sizeof(buf);
-	ATF_REQUIRE_EQ(1, send(sv[0], "x", 1, 0));
-	ATF_REQUIRE_EQ(1, recv(sv[1], buf, sizeof(buf), 0));
+	ATF_REQUIRE_EQ(-1, recvmsg(sv[1], &msg, 0));
+	ATF_CHECK_EQ(EAGAIN, errno);
+
+	/* A following record arrives intact, with its own boundary. */
+	ATF_REQUIRE_EQ(1, send(sv[0], "x", 1, MSG_EOR));
+	pfd.revents = 0;
+	ATF_REQUIRE_EQ(1, poll(&pfd, 1, 0));
+	ATF_CHECK((pfd.revents & POLLIN) != 0);
+	msg.msg_flags = 0;
+	ATF_REQUIRE_EQ(1, recvmsg(sv[1], &msg, 0));
 	ATF_CHECK_EQ('x', buf[0]);
+	ATF_CHECK((msg.msg_flags & MSG_EOR) != 0);
+	ATF_CHECK((msg.msg_flags & MSG_TRUNC) == 0);
+	pfd.revents = 0;
+	ATF_REQUIRE_EQ(0, poll(&pfd, 1, 0));
 	close(sv[0]);
 	close(sv[1]);
 }
