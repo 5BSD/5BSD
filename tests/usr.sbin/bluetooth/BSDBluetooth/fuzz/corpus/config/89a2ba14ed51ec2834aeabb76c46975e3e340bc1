@@ -1,1 +1,0 @@
-security { io_capability = dable = true; sc_only = false; min_key_size = 16; rpa_timeout = 900; }

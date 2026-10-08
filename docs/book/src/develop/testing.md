@@ -273,13 +273,16 @@ suite on a read-only CD, and run `kyua test -k Kyuafile` inside.
 
 ## Fuzz corpora
 
-There is one libFuzzer corpus in the tree,
-`tests/usr.sbin/bluetooth/BSDBluetooth/fuzz`. Its Makefile builds 23
+There is one set of libFuzzer harnesses in the tree,
+`tests/usr.sbin/bluetooth/BSDBluetooth/fuzz`. Its Makefile builds 24
 `fuzz_*` harnesses over the parsers that consume untrusted bytes (ATT server
 and client, advertising data, SMP, L2CAP signalling and data, HCI events,
-config, mesh network, transport, provisioning, proxy, friend) with
+config, mesh network, transport, provisioning, proxy, friend, SBC audio) with
 `-fsanitize=fuzzer,address,undefined`, plus 17 `std_*` replay drivers without
-the libFuzzer runtime. It is deliberately not wired into `bsd.test.mk`:
+the libFuzzer runtime. It is deliberately not wired into `bsd.test.mk`.
+The corpus is not committed: `make corpus`, which `make check` and every
+`run-*` target run first, writes the seed inputs of `gen_corpus.sh` into
+`corpus/`, and the inputs libFuzzer evolves there stay out of the tree:
 
 ```sh
 make            # build all harnesses and replay drivers

@@ -1,1 +1,0 @@
-general { pidfile = "/tmp/x.pid"; loglevel = 6; daemoniz =key }

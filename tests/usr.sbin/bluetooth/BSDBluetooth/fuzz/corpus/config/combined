@@ -1,1 +1,0 @@
-general { loglevel = 2; } security { bondable = true; } peripheral_name = "fuzz";

@@ -32,6 +32,15 @@ PACKAGE=	bluetooth-tests
 #     make smoke           # brief coverage-guided run of every harness
 #     make clean
 #
+# corpus/ is not committed.  "make corpus" (run by "make check" and every
+# run-* target) writes the seed inputs of gen_corpus.sh into corpus/<harness>;
+# "sh gen_corpus.sh corpus" does the same by hand.  libFuzzer adds the inputs
+# it evolves to the same directories; keep them locally or in CI storage, not
+# in the tree (fuzz/.gitignore excludes corpus/ and the binaries built here).
+# smoke/ holds a few hand-written seeds for the mesh_beacon, mesh_friend,
+# mesh_provision and mesh_proxy harnesses, which gen_corpus.sh does not
+# cover; copy them into corpus/<harness> to start from them.
+#
 # Requires clang with -fsanitize=fuzzer (base-system cc on 5BSD).
 #
 # SANDBOX CAVEAT: in some restricted sandboxes an ASan binary built here hangs
