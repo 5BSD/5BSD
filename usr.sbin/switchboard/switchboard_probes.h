@@ -95,7 +95,10 @@
 #define	SWITCHBOARD_PROBE_SCTL_DENY(op, uid)	\
 	DTRACE_PROBE2(switchboard, sctl__deny, op, uid)
 
-/* Session-mint boundary (SVC_OP_MINT_DOMAIN, svc_proto.c) */
+/*
+ * Retired session-mint boundary: SVC_OP_MINT_DOMAIN is refused, so nothing
+ * fires these.  The provider keeps the declarations for compatibility.
+ */
 #define	SWITCHBOARD_PROBE_MINT_DOMAIN(label, kind, uid, result)	\
 	DTRACE_PROBE4(switchboard, mint__domain, label, kind, uid, result)
 #define	SWITCHBOARD_PROBE_MINT_DENY(label, domain, error)	\
@@ -122,16 +125,17 @@
 #define	SWITCHBOARD_PROBE_ANOINT_ALLOW(name, requester, nrequires)	\
 	DTRACE_PROBE3(switchboard, anoint__allow, name, requester, nrequires)
 /*
- * A holder's set was decided: a unit's from its policy file at every exec
- * (execute.c, label = unit label, never all/admin) or a session channel's at
- * mint (domain.c, label = org.5bsd.user-session, the set the auth agent chose).
+ * A holder's set was initialized: a unit's from its policy file at every exec
+ * (execute.c, label = unit label, never all/admin) or an internal discovery
+ * route's when created (domain.c, label = org.5bsd.user-session; it carries
+ * no user authority).
  */
 #define	SWITCHBOARD_PROBE_ANOINT_SET(label, count, all, admin_rights)	\
 	DTRACE_PROBE4(switchboard, anoint__set, label, count, all, admin_rights)
 /*
- * SVC_OP_MINT_DOMAIN decision detail (svc_proto.c): the principal uid the
- * channel binds, the shape of the set it carries, and the reply status.
- * Fires next to mint-domain, which names the minter and the kind.
+ * Retired SVC_OP_MINT_DOMAIN decision detail (uid, set shape, reply status).
+ * The operation is refused, so nothing fires this; the declaration and the
+ * five-argument stub remain for compatibility.
  */
 #define	SWITCHBOARD_PROBE_MINT_ANOINT(uid, count, all, admin_rights, status)	\
 	DTRACE_PROBE5(switchboard, mint__anoint, uid, count, all, admin_rights, \

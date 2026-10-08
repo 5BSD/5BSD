@@ -36,7 +36,10 @@ provider switchboard {
 	probe sctl__cmd__done(uint32_t op, uid_t uid, int status, uint64_t duration_ns);
 	probe sctl__deny(uint32_t op, uid_t uid);
 
-	/* Session-mint boundary (SVC_OP_MINT_DOMAIN, svc_proto.c) */
+	/*
+	 * Retired session-mint boundary (SVC_OP_MINT_DOMAIN is refused).
+	 * Declared for compatibility with existing scripts; never fired.
+	 */
 	probe mint__domain(const char *label, const char *kind, uid_t uid,
 	    int result);
 	probe mint__deny(const char *label, uint32_t domain, int error);
@@ -53,12 +56,12 @@ provider switchboard {
 	probe anoint__allow(const char *name, const char *requester,
 	    unsigned int nrequires);
 	/*
-	 * A holder's set was decided: a unit at exec (execute.c) or a session
-	 * channel at mint (domain.c, label org.5bsd.user-session).
+	 * A holder's set was initialized: a unit at exec (execute.c) or an
+	 * internal discovery route (domain.c, label org.5bsd.user-session).
 	 */
 	probe anoint__set(const char *label, unsigned int count, int all,
 	    int admin_rights);
-	/* SVC_OP_MINT_DOMAIN set detail: bound uid, set shape, reply status */
+	/* Retired SVC_OP_MINT_DOMAIN set detail; compatibility only, never fired */
 	probe mint__anoint(uid_t uid, unsigned int count, int all,
 	    int admin_rights, int status);
 	/* USER-kind channel saw a gated, non-user-visible name (domain.c) */
