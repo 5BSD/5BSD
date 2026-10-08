@@ -4,19 +4,25 @@ atf_test_case native_book_is_installed_with_base
 native_book_is_installed_with_base_body()
 {
 	book=/usr/share/doc/5bsd
-	chapters="$(atf_get_srcdir)/book-chapters"
+	src="$(atf_get_srcdir)/srctree/docs/book/src"
 
-	atf_check -s exit:0 test -f "$book/SUMMARY.md"
-	atf_check -s exit:0 test -f \
-	    "$book/capability/capability-mode-and-launch.md"
-	atf_check -s exit:0 test -f "$book/develop/provider.md"
-	atf_check -s exit:0 test -f "$book/operations/building.md"
-	# Check the entire book, including new and nested chapters.  The test
-	# package installs the chapter list collected from docs/book/src.
-	test -s "$chapters" || atf_fail "missing chapter list $chapters"
+	# The test package installs a copy of docs/book/src; the installed book
+	# must be exactly that tree, file for file and byte for byte.
+	test -f "$src/SUMMARY.md" || atf_fail "missing staged book sources $src"
+	test -d "$book" || atf_fail "$book is not installed"
+	(cd "$src" && find . -type f | LC_ALL=C sort) >source.list
+	(cd "$book" && find . -type f | LC_ALL=C sort) >installed.list
+	test -s source.list || atf_fail "no chapters staged in $src"
+	# Chapters of the source that are not installed, then installed files
+	# that are not in the source.
+	atf_check -s exit:0 -o empty -e empty \
+	    comm -23 source.list installed.list
+	atf_check -s exit:0 -o empty -e empty \
+	    comm -13 source.list installed.list
 	while read -r relative; do
-		atf_check -s exit:0 test -f "$book/$relative"
-	done <"$chapters"
+		atf_check -s exit:0 -o empty -e empty \
+		    cmp "$src/$relative" "$book/$relative"
+	done <source.list
 	# On a pkgbase system the book belongs to the runtime package.
 	if pkg -N >/dev/null 2>&1 &&
 	    owner=$(pkg which -qo "$book/SUMMARY.md" 2>/dev/null); then
