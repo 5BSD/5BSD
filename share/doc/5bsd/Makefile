@@ -43,8 +43,7 @@ BOOK_COMPAT=	${BOOKSRC}/compat/bsd-side.md \
 BOOK_COMPATDIR=	${BOOKDEST}/compat
 
 FILESGROUPS+=	BOOK_COMPAT_LINUX
-BOOK_COMPAT_LINUX=	${BOOKSRC}/compat/linux/io-uring.md \
-		${BOOKSRC}/compat/linux/overview.md \
+BOOK_COMPAT_LINUX=		${BOOKSRC}/compat/linux/overview.md \
 		${BOOKSRC}/compat/linux/procfs-sysfs.md \
 		${BOOKSRC}/compat/linux/running-apps.md \
 		${BOOKSRC}/compat/linux/sandboxing.md \
