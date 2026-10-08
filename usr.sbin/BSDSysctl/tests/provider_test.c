@@ -3,6 +3,7 @@
 #include <sys/types.h>
 #include <sys/ioctl.h>
 #include <sys/param.h>
+#include <sys/sysctl.h>
 #include <sys/wait.h>
 
 #include <dev/mac_capability/mac_capability_channel_proto.h>
@@ -431,6 +432,22 @@ ATF_TC_BODY(set_encodes_typed_value, tc)
 	size_t len;
 
 	require_plane();
+	/*
+	 * Without a held SYS_GATE_SYSCTL token the worker writes with a direct
+	 * sysctlbyname(2).  On a live plane the plane's SYSCTL claim refuses that
+	 * ambient write with EPERM for every non-owner, root included (and the
+	 * test cannot claim the gate itself), so the round trip is only
+	 * observable on a plane-free boot.  Probe with the same no-op write.
+	 */
+	len = sizeof(cur);
+	ATF_REQUIRE_EQ(0, sysctlbyname("kern.maxfiles", &cur, &len, NULL, 0));
+	if (sysctlbyname("kern.maxfiles", NULL, NULL, &cur, sizeof(cur)) == -1) {
+		if (errno == EPERM)
+			atf_tc_skip("kern.maxfiles write is gated by the live "
+			    "plane's SYS_GATE_SYSCTL claim; run plane-off");
+		atf_tc_fail("probe write of kern.maxfiles: %s",
+		    strerror(errno));
+	}
 	memset(&config, 0, sizeof(config));
 	strlcpy(config.default_acl.read[0], "kern.maxfiles",
 	    sizeof(config.default_acl.read[0]));
