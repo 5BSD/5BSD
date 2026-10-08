@@ -105,8 +105,11 @@ text|json|otel|collapsed`, `--endpoint <url>`, `--bufsize` and
 (11), `mac` (11), `oes` (7), then `vm`, `io`, `zfs`, `syscall`, `socket`,
 `malloc`, `file`, `capsicum`, `jail`, `casper`, `audit`, `bhyve`, VFS
 operations, and USDT profiles for `python`, `node` and `postgresql`. The
-profiles are compile-checked by `bsdinstruments_test`. There is no
-`bsdinstruments run`; the verb is `watch`.
+profiles are compile-checked by `bsdinstruments_test` with `dtrace -Z`,
+because a USDT provider exists only while its daemon runs; since `-Z`
+also accepts probes nothing defines, the test separately checks that
+`capability-services.d` names no probe retired with BSDAuth and session
+minting. There is no `bsdinstruments run`; the verb is `watch`.
 
 ## hwtlm
 
