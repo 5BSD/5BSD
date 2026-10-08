@@ -780,13 +780,17 @@ unp_linux_autobind(struct socket *so)
 
 /*
  * Look up the abstract peer named by 'path' (of length 'len', starting with
- * NUL) for 'so' and return it referenced in '*so2p'.  The reference keeps the
- * peer stable once the abstract table lock is dropped, as for a peer named by
- * descriptor.  The caller must release the socket with sorele().
+ * NUL) for 'so' and return it referenced in '*so2p'.  On success the abstract
+ * table lock is returned held in '*mtxp': as with the vnode pool lock for a
+ * pathname peer (44b83210c8a), it must be held until the connection is
+ * established, because uipc_close() takes it (unp_abstract_remove()) before
+ * soclose() drains the listen queue; a socket reference alone does not keep
+ * a clone off a listener that is being closed.  The caller must drop the
+ * lock and then release the socket with sorele().
  */
 static int
 unp_abstract_peer(struct socket *so, const char *path, int len,
-    struct socket **so2p)
+    struct socket **so2p, struct mtx **mtxp)
 {
 	char namebuf[SUN_ABSTRACT_MAXLEN];
 	struct sockaddr_un *name;
@@ -807,7 +811,7 @@ unp_abstract_peer(struct socket *so, const char *path, int len,
 		return (ECONNREFUSED);
 	}
 	soref(*so2p = unp2->unp_socket);
-	mtx_unlock(&unp_abstract_lock);
+	*mtxp = &unp_abstract_lock;
 	return (0);
 }
 
@@ -3416,15 +3420,16 @@ unp_connectat(int fd, struct socket *so, const char *path, int len,
 	 *
 	 * If the peer is bound to a name in the filesystem, then we hold
 	 * the vnode pool lock until the connection is established, so as to
-	 * avoid racing with a close of the peer listening socket.  If the peer
-	 * is referenced by a file descriptor, or is a Linux abstract socket,
-	 * then our reference prevents the race, so no extra synchronization
-	 * is needed.
+	 * avoid racing with a close of the peer listening socket.  A Linux
+	 * abstract peer is handled the same way with the abstract table lock,
+	 * which uipc_close() also takes.  If the peer is referenced by a file
+	 * descriptor, then that reference prevents the race, so no extra
+	 * synchronization is needed.
 	 */
 	if (abstract) {
 		mtxp = NULL;
 		vp = NULL;
-		error = unp_abstract_peer(so, path, len, &so2);
+		error = unp_abstract_peer(so, path, len, &so2, &mtxp);
 	} else
 		error = unp_connectat_peer(td, fd, buf, &so2, &mtxp, &vp);
 	if (error == 0) {
@@ -3441,7 +3446,9 @@ unp_connectat(int fd, struct socket *so, const char *path, int len,
 		 */
 		if (mtxp != NULL) {
 			mtx_unlock(mtxp);
-			vput(vp);
+			/* An abstract peer has no vnode. */
+			if (vp != NULL)
+				vput(vp);
 		}
 		if (so2 != NULL)
 			sorele(so2);
