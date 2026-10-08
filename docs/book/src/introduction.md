@@ -52,7 +52,7 @@ starts already inside a sandbox, and receives each resource as a
 rights-limited descriptor from a service that decided by the program's
 identity rather than its uid. System policy becomes per-application policy,
 set by the application author instead of root. The repository
-[README](../../../README.md) walks the technologies in order; this book is
+[README](https://github.com/5BSD/5BSD/blob/main/README.md) walks the technologies in order; this book is
 the full account.
 
 ## Two systems, one machine

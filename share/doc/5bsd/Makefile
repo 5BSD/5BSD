@@ -48,7 +48,7 @@ BOOK_COMPAT=	${BOOKSRC}/compat/bsd-side.md \
 BOOK_COMPATDIR=	${BOOKDEST}/compat
 
 FILESGROUPS+=	BOOK_COMPAT_LINUX
-BOOK_COMPAT_LINUX=		${BOOKSRC}/compat/linux/overview.md \
+BOOK_COMPAT_LINUX=	${BOOKSRC}/compat/linux/overview.md \
 		${BOOKSRC}/compat/linux/procfs-sysfs.md \
 		${BOOKSRC}/compat/linux/running-apps.md \
 		${BOOKSRC}/compat/linux/sandboxing.md \
@@ -86,8 +86,7 @@ BOOK_ORIENTATION=	${BOOKSRC}/orientation/boot-to-login.md \
 BOOK_ORIENTATIONDIR=	${BOOKDEST}/orientation
 
 FILESGROUPS+=	BOOK_PLANE
-BOOK_PLANE=	${BOOKSRC}/plane/anointments.md \
-		${BOOKSRC}/plane/attributes.md \
+BOOK_PLANE=	${BOOKSRC}/plane/attributes.md \
 		${BOOKSRC}/plane/bundles-and-manifests.md \
 		${BOOKSRC}/plane/capsule.md \
 		${BOOKSRC}/plane/containers-and-storage.md \
