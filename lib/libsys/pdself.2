@@ -23,7 +23,7 @@
 .\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
 .\" SUCH DAMAGE.
 .\"
-.Dd June 18, 2026
+.Dd October 8, 2026
 .Dt PDSELF 2
 .Os
 .Sh NAME
@@ -64,46 +64,71 @@ The
 argument may contain the following values:
 .Bl -tag -width PD_CLOEXEC
 .It Dv PD_CLOEXEC
-Set close-on-exec on the process descriptor.
+Set close-on-exec on the returned descriptor.
 .It Dv PD_DAEMON
-Do not terminate the process when an external holder closes the last
-reference to the descriptor.
+Closing the returned descriptor from another process does not send
+.Dv SIGKILL
+to the calling process.
+Like the other process descriptor flags, this applies only to the
+descriptor returned by this call, not to other descriptors for the
+same process.
 .El
 .Pp
-At most one process descriptor may exist per process.
-If the calling process already has a process descriptor
-(either from
+At most one process descriptor object exists per process.
+If the calling process has none yet,
 .Fn pdself
-or from being created via
-.Xr pdfork 2 ) ,
+creates one and marks it
+.Dv PDF_SELF .
+If the calling process already has one, for example because it was
+created by
+.Xr pdfork 2
+or a previous call to
+.Fn pdself ,
+or because another process obtained one with
+.Xr pdopenpid 2 ,
 .Fn pdself
-fails with
-.Er EBUSY .
+returns a new file descriptor referring to the same process descriptor
+object, as
+.Xr pdopenpid 2
+does.
+Repeated calls therefore succeed and each returns a distinct file
+descriptor.
 .Ss Close semantics
-Process descriptors created by
-.Fn pdself
-have the
-.Dv PDF_SELF
-flag set, which modifies the behavior of
+The effect of
 .Xr close 2
-on the last reference:
+on a process descriptor depends on which process closes it and on the
+flags of that particular file:
 .Bl -bullet
 .It
-If the described process itself closes the last reference, the
-descriptor is silently detached.
-The process is not killed and not reparented.
+If the described process itself closes a descriptor for itself, it is
+never killed and never reparented.
+If that was the last file referencing the process descriptor, the
+descriptor is detached from the process, which from then on behaves
+like an ordinary process without a process descriptor.
 .It
-If any other process closes the last reference, normal process
-descriptor semantics apply: the described process receives
-.Dv SIGKILL
-and is reparented to its reaper (unless
-.Dv PD_DAEMON
-was also set).
+If any other process closes a descriptor, and that file was not created
+with
+.Dv PD_DAEMON ,
+the described process receives
+.Dv SIGKILL ,
+whether or not other descriptors for it remain open.
+This also applies when an unreceived descriptor in transit in an
+.Dv SCM_RIGHTS
+message is discarded.
 .It
-If the close is not the last reference (other file descriptors or
-in-flight SCM_RIGHTS copies exist), nothing happens regardless of
-who closes it.
+When the last file referencing the process descriptor is closed by a
+process other than the described one, the process is detached from the
+descriptor and reparented to its reaper so that its exit status is
+collected normally.
+.It
+If the described process has already exited and is a zombie, closing the
+descriptor reaps it.
 .El
+.Pp
+A supervisor that should not terminate the caller merely by closing its
+copy of the descriptor needs the caller to have passed a descriptor
+created with
+.Dv PD_DAEMON .
 .Sh RETURN VALUES
 .Rv -std
 .Sh ERRORS
@@ -111,20 +136,23 @@ The
 .Fn pdself
 system call fails if:
 .Bl -tag -width Er
-.It Bq Er EBUSY
-The calling process already has a process descriptor.
+.It Bq Er EFAULT
+The
+.Fa fdp
+argument points to an invalid address.
+The descriptor has nevertheless been allocated and remains open.
 .It Bq Er EINVAL
 The
 .Fa flags
 argument contains invalid flags.
-.It Bq Er ENOTCAPABLE
-The caller is not in capability mode.
 .It Bq Er EMFILE
 The per-process file descriptor limit has been reached.
 .It Bq Er ENFILE
 The system file descriptor limit has been reached.
-.It Bq Er ENOMEM
-Insufficient memory to allocate the process descriptor.
+.It Bq Er ENOTCAPABLE
+The caller is not in capability mode.
+.It Bq Er ESRCH
+The calling process is exiting.
 .El
 .Sh SEE ALSO
 .Xr cap_enter 2 ,

@@ -30,7 +30,7 @@
 .\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
 .\" SUCH DAMAGE.
 .\"
-.Dd April 19, 2026
+.Dd October 8, 2026
 .Dt PDFORK 2
 .Os
 .Sh NAME
@@ -257,7 +257,14 @@ filter
 the supported events are
 .Dv NOTE_EXIT ,
 .Dv NOTE_FORK ,
+.Dv NOTE_PDSIGCHLD
+(fired on process state changes that can be reported by
+.Fn pdwait ,
+such as exit or stop),
+.Dv NOTE_REAP
+(fired when the process is reaped),
 .Dv NOTE_EXEC ,
+and the 5BSD extensions
 .Dv NOTE_CAPMODE
 (fired when the process enters capability mode via
 .Xr cap_enter 2 ) ,
@@ -286,6 +293,12 @@ is set; if the process is still alive and this is
 the last reference to the process descriptor, the process will be terminated
 with the signal
 .Dv SIGKILL .
+A process that closes a process descriptor for itself, for example one
+obtained with
+.Xr pdself 2 ,
+is never terminated by that close; see
+.Xr pdself 2
+for details.
 The PID of the referenced process is not reused until the process
 descriptor is closed,
 whether or not the zombie process is reaped by
