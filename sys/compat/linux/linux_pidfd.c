@@ -523,10 +523,8 @@ int
 linux_pidfd_getfd(struct thread *td, struct linux_pidfd_getfd_args *args)
 {
 	struct linux_pidfd *lpf;
-	struct file *fp, *tfp;
-	struct filecaps fcaps;
+	struct file *fp;
 	struct proc *p;
-	uint8_t fd_flags;
 	int error, fd;
 
 	if (args->flags != 0)
@@ -552,9 +550,10 @@ linux_pidfd_getfd(struct thread *td, struct linux_pidfd_getfd_args *args)
 	}
 	/*
 	 * As pddupfd(2): keep the target from exec'ing a setugid image
-	 * between the debug check and the fetch, and carry the source
-	 * descriptor's capability rights and FD_RESOLVE_BENEATH into the
-	 * copy so pidfd_getfd() cannot widen what the descriptor allows.
+	 * between the debug check and the fetch.  fdup_remote() applies
+	 * the 5BSD transfer policy (CAP_XFER_* state, transfer ceiling,
+	 * capability-mode flags), so pidfd_getfd() cannot widen what the
+	 * descriptor allows or copy a non-transferable descriptor.
 	 */
 	_PHOLD(p);
 	execve_block_wait(td, p);
@@ -563,24 +562,20 @@ linux_pidfd_getfd(struct thread *td, struct linux_pidfd_getfd_args *args)
 		error = EPERM;
 	} else {
 		PROC_UNLOCK(p);
-		error = fget_remote(td, p, args->fd, &fcaps, &fd_flags, &tfp);
-		if (error == 0) {
-			if ((tfp->f_ops->fo_flags & DFLAG_PASSABLE) == 0)
-				error = EBADF;
-			else
-				error = finstall_refed(td, tfp, &fd, O_CLOEXEC |
-				    ((fd_flags & FD_RESOLVE_BENEATH) != 0 ?
-				    O_RESOLVE_BENEATH : 0), &fcaps);
-			if (error != 0) {
-				fdrop(tfp, td);
-				filecaps_free(&fcaps);
-			} else
-				td->td_retval[0] = fd;
-		} else if (error == ENOENT) {
-			/* ENOENT means the table is torn down: report EBADF. */
-			error = EBADF;
-		}
+		error = fdup_remote(td, p, args->fd, O_CLOEXEC, &fd);
 		PROC_LOCK(p);
+		if (error == 0) {
+			td->td_retval[0] = fd;
+		} else if (error == EOPNOTSUPP) {
+			/* A kqueue/epoll descriptor cannot be passed. */
+			error = EBADF;
+		} else if (error == ENOENT) {
+			/*
+			 * The table was torn down while we waited out an
+			 * exec: ESRCH if the target is exiting.
+			 */
+			error = (p->p_flag & P_WEXIT) != 0 ? ESRCH : EBADF;
+		}
 	}
 	execve_unblock(td, p);
 	_PRELE(p);

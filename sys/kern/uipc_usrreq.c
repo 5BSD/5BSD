@@ -4494,21 +4494,26 @@ unp_externalize(const struct socket *so, struct mbuf *control,
 			SDT_PROBE3(unpcb, , , externalize,
 			    td->td_proc->p_pid, newfds, *fdp);
 			for (int i = 0; i < newfds; i++, fdp++) {
+				struct fdinstall_prop prop;
 				struct file *fp;
 
 				fp = fdep[i]->fde_file;
-				_finstall(fdesc, fp, *fdp,
-				    fdflags | externalize_fdflags(fdep[i], td),
-				    &fdep[i]->fde_caps);
-				fdesc->fd_ofiles[*fdp].fde_xfer_state =
-				    fdep[i]->fde_xfer_state;
-				fdesc->fd_ofiles[*fdp].fde_cloexec_state =
+				/*
+				 * Install the sender's transfer, exec/fork
+				 * and capability-mode state with the file,
+				 * so no lockless lookup sees the entry
+				 * without them.
+				 */
+				prop.fip_xfer_state = fdep[i]->fde_xfer_state;
+				prop.fip_cloexec_state =
 				    fdep[i]->fde_cloexec_state;
-				fdesc->fd_ofiles[*fdp].fde_clofork_state =
+				prop.fip_clofork_state =
 				    fdep[i]->fde_clofork_state;
-				fdesc->fd_ofiles[*fdp].fde_flags |=
-				    fdep[i]->fde_flags &
+				prop.fip_fde_flags = fdep[i]->fde_flags &
 				    (UF_MMAP_CAPMODE | UF_LOOKUP_CAPMODE);
+				_finstall_prop(fdesc, fp, *fdp,
+				    fdflags | externalize_fdflags(fdep[i], td),
+				    &fdep[i]->fde_caps, &prop);
 				unp_externalize_fp(fp);
 				SDT_PROBE6(fd, , , scm__rights__recv, fp,
 				    *fdp, td->td_proc->p_pid, td->td_ucred,

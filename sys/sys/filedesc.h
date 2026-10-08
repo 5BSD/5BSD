@@ -73,6 +73,7 @@ struct fdinstall_prop {
 	uint8_t	fip_xfer_state;
 	uint8_t	fip_cloexec_state;
 	uint8_t	fip_clofork_state;
+	uint8_t	fip_fde_flags;	/* only UF_MMAP_CAPMODE, UF_LOOKUP_CAPMODE */
 };
 
 static inline void

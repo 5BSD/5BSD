@@ -271,6 +271,25 @@ argument is reserved and must be zero.
 Certain file descriptor types cannot be copied this way, namely
 kqueues.
 .Pp
+The copy is a descriptor transfer and follows the same rules as passing
+.Fa remotefd
+with
+.Dv SCM_RIGHTS :
+a descriptor limited with
+.Xr cap_xfer_limit 2
+to no transfers cannot be copied, and a one-time transfer is used up by
+the copy.
+The new descriptor has the rights of
+.Fa remotefd
+limited by its transfer ceiling, and keeps its transfer,
+close-on-exec and close-on-fork limits, its
+.Dv O_RESOLVE_BENEATH
+property and any
+.Xr cap_mmap_capmode 2
+or
+.Xr cap_lookup_capmode 2
+restriction.
+.Pp
 The
 .Fn pdptrace
 function enables execution of
@@ -546,6 +565,10 @@ The specified process does not have a file descriptor table.
 .Fa remotefd
 refers to a file that cannot be duplicated across a process boundary,
 such as a kqueue.
+.It Bq Er ENOTCAPABLE
+.Fa remotefd
+may not be transferred: its transfer limit is exhausted or forbids
+transfers.
 .El
 .Pp
 The

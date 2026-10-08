@@ -889,9 +889,7 @@ static int
 kern_pddupfd(struct thread *td, int pdfd, int fd, int flags)
 {
 	struct proc *p;
-	struct file *fp, *pfp;
-	struct filecaps fcaps;
-	uint8_t fd_flags;
+	struct file *pfp;
 	int error, fdr;
 
 	sx_slock(&proctree_lock);
@@ -914,7 +912,7 @@ kern_pddupfd(struct thread *td, int pdfd, int fd, int flags)
 	/*
 	 * Block the target process from entering execve().
 	 * We need to ensure that the p_candebug() predicate
-	 * is stable until the fget_remote() call ends even
+	 * is stable until the fdup_remote() call ends even
 	 * after the process lock is dropped.  For that, the
 	 * process must not change uid/suid.
 	 */
@@ -923,22 +921,13 @@ kern_pddupfd(struct thread *td, int pdfd, int fd, int flags)
 
 	if (error == 0) {
 		PROC_UNLOCK(p);
-		error = fget_remote(td, p, fd, &fcaps, &fd_flags, &fp);
-		if (error == 0) {
-			if ((fp->f_ops->fo_flags & DFLAG_PASSABLE) == 0) {
-				error = EOPNOTSUPP;
-			} else {
-				error = finstall_refed(td, fp, &fdr, O_CLOEXEC |
-				    ((fd_flags & FD_RESOLVE_BENEATH) != 0 ?
-				    O_RESOLVE_BENEATH : 0), &fcaps);
-			}
-			if (error != 0) {
-				fdrop(fp, td);
-				filecaps_free(&fcaps);
-			} else {
-				td->td_retval[0] = fdr;
-			}
-		}
+		/*
+		 * 5BSD: the copy is a descriptor transfer and obeys the
+		 * source's transfer state and ceiling, as SCM_RIGHTS does.
+		 */
+		error = fdup_remote(td, p, fd, O_CLOEXEC, &fdr);
+		if (error == 0)
+			td->td_retval[0] = fdr;
 		PROC_LOCK(p);
 	}
 	execve_unblock(td, p);

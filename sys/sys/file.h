@@ -302,6 +302,8 @@ int fget_fcntl(struct thread *td, int fd, const cap_rights_t *rightsp,
 int _fdrop(struct file *fp, struct thread *td);
 int fget_remote(struct thread *td, struct proc *p, int fd,
     struct filecaps *fcaps, uint8_t *fd_flags, struct file **fpp);
+int fdup_remote(struct thread *td, struct proc *p, int fd, int flags,
+    int *newfdp);
 int fget_remote_foreach(struct thread *td, struct proc *p,
     int (*fn)(struct proc *, int, struct file *, void *), void *arg);
 

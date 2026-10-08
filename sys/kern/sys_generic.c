@@ -1154,6 +1154,7 @@ kern_specialfd(struct thread *td, int type, void *arg)
 		prop.fip_xfer_state = se->options.eco_xfer_state;
 		prop.fip_cloexec_state = se->options.eco_cloexec_state;
 		prop.fip_clofork_state = se->options.eco_clofork_state;
+		prop.fip_fde_flags = 0;
 		propp = &prop;
 		error = envfd_create_file(td, fp, se->name, &se->options);
 		break;

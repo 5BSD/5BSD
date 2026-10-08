@@ -93,6 +93,8 @@
 
 SDT_PROVIDER_DECLARE(capsicum);
 SDT_PROBE_DECLARE(capsicum, , , lookup__capmode__deny);
+SDT_PROBE_DECLARE(fd, , , xfer__deny);
+SDT_PROBE_DECLARE(fd, , , xfer__consume);
 
 static MALLOC_DEFINE(M_FILEDESC, "filedesc", "Open file descriptor table");
 static MALLOC_DEFINE(M_PWD, "pwd", "Descriptor table vnodes");
@@ -2575,6 +2577,8 @@ _finstall_prop(struct filedesc *fdp, struct file *fp, int fd, int flags,
 	    prop->fip_cloexec_state <= CAP_CLOEXEC_ONCE);
 	MPASS(prop == NULL ||
 	    prop->fip_clofork_state <= CAP_CLOFORK_ONCE);
+	MPASS(prop == NULL || (prop->fip_fde_flags &
+	    ~(UF_MMAP_CAPMODE | UF_LOOKUP_CAPMODE)) == 0);
 	FILEDESC_XLOCK_ASSERT(fdp);
 
 	fde = &fdp->fd_ofiles[fd];
@@ -2591,6 +2595,14 @@ _finstall_prop(struct filedesc *fdp, struct file *fp, int fd, int flags,
 		fde->fde_xfer_state = prop->fip_xfer_state;
 		fde->fde_cloexec_state = prop->fip_cloexec_state;
 		fde->fde_clofork_state = prop->fip_clofork_state;
+		/*
+		 * Capability-mode restrictions carried by a transferred
+		 * descriptor are set inside the same seqc section as the
+		 * file pointer, so no lockless lookup can see the new
+		 * entry without them.
+		 */
+		fde->fde_flags |= prop->fip_fde_flags &
+		    (UF_MMAP_CAPMODE | UF_LOOKUP_CAPMODE);
 	}
 	if (fcaps != NULL)
 		filecaps_move(fcaps, &fde->fde_caps);
@@ -3588,6 +3600,139 @@ fget_remote(struct thread *td, struct proc *p, int fd, struct filecaps *fcaps,
 	}
 	FILEDESC_SUNLOCK(fdp);
 	fddrop(fdp);
+	return (error);
+}
+
+/*
+ * Duplicate descriptor 'fd' of process 'p' into the current process, for
+ * pddupfd(2) and Linux pidfd_getfd(2).  The caller holds 'p', keeps it from
+ * exec'ing and has checked p_candebug(); 'flags' are extra open flags
+ * (O_CLOEXEC) for the new descriptor, whose number is returned in '*newfdp'.
+ *
+ * Copying a descriptor out of another process is a descriptor transfer, so
+ * it obeys the same 5BSD policy as SCM_RIGHTS (unp_internalize() and
+ * unp_externalize()):
+ *  - a CAP_XFER_NONE source is refused with ENOTCAPABLE;
+ *  - a CAP_XFER_ONCE source is consumed while the source table is
+ *    exclusively locked, so only one transfer can win;
+ *  - the copied rights, fcntls and ioctls are limited by the source's
+ *    transfer ceiling (fde_xfer_caps);
+ *  - the transfer, close-on-exec and close-on-fork states,
+ *    UF_RESOLVE_BENEATH and UF_MMAP_CAPMODE/UF_LOOKUP_CAPMODE carry over
+ *    to the new entry, which is installed with them in place.
+ * Non-passable files (kqueues) are refused with EOPNOTSUPP.  ENOENT means
+ * the target's descriptor table is gone.
+ *
+ * A CAP_XFER_ONCE source stays consumed if installing the copy then fails
+ * for lack of a free descriptor in the caller's table, as when an
+ * SCM_RIGHTS receiver cannot allocate descriptors.
+ */
+int
+fdup_remote(struct thread *td, struct proc *p, int fd, int flags,
+    int *newfdp)
+{
+	struct filedesc *fdp;
+	struct filedescent *fde;
+	struct file *fp;
+	struct filecaps fcaps;
+	struct fdinstall_prop prop;
+	struct prison *pr1, *pr2;
+	int error;
+
+	PROC_LOCK(p);
+	fdp = fdhold(p);
+	PROC_UNLOCK(p);
+	if (fdp == NULL)
+		return (ENOENT);
+
+	fp = NULL;
+#ifdef MAC
+	/*
+	 * Ask the receive check first, without the source table locked;
+	 * the entry is re-validated below before anything is consumed.
+	 */
+	FILEDESC_SLOCK(fdp);
+	if (refcount_load(&fdp->fd_refcnt) == 0)
+		error = ENOENT;
+	else if ((fp = fget_noref(fdp, fd)) == NULL || !fhold(fp)) {
+		fp = NULL;
+		error = EBADF;
+	} else
+		error = 0;
+	FILEDESC_SUNLOCK(fdp);
+	if (error == 0)
+		error = mac_file_check_receive(td->td_ucred, fp);
+	if (error != 0)
+		goto out;
+#endif
+
+	FILEDESC_XLOCK(fdp);
+	if (refcount_load(&fdp->fd_refcnt) == 0) {
+		error = ENOENT;
+		goto unlock;
+	}
+	fde = fdeget_noref(fdp, fd);
+	if (fde == NULL || (fp != NULL && fde->fde_file != fp)) {
+		error = EBADF;
+		goto unlock;
+	}
+	if ((fde->fde_file->f_ops->fo_flags & DFLAG_PASSABLE) == 0) {
+		error = EOPNOTSUPP;
+		goto unlock;
+	}
+	if (fde->fde_xfer_state == CAP_XFER_NONE) {
+		SDT_PROBE6(fd, , , xfer__deny, fde->fde_file, fd, p->p_pid,
+		    td->td_ucred, fde->fde_file->f_type, ENOTCAPABLE);
+		error = ENOTCAPABLE;
+		goto unlock;
+	}
+	if (fp == NULL) {
+		if (!fhold(fde->fde_file)) {
+			error = EBADF;
+			goto unlock;
+		}
+		fp = fde->fde_file;
+	}
+
+	filecaps_copy(&fde->fde_caps, &fcaps, true);
+	filecaps_restrict(&fcaps, &fde->fde_xfer_caps);
+	if (fde->fde_xfer_state == CAP_XFER_ONCE) {
+		fde->fde_xfer_state = CAP_XFER_NONE;
+		prop.fip_xfer_state = CAP_XFER_NONE;
+		SDT_PROBE6(fd, , , xfer__consume, fp, fd, p->p_pid,
+		    td->td_ucred, fp->f_type, 1);
+	} else
+		prop.fip_xfer_state = fde->fde_xfer_state;
+	prop.fip_cloexec_state = fde->fde_cloexec_state;
+	prop.fip_clofork_state = fde->fde_clofork_state;
+	prop.fip_fde_flags = fde->fde_flags &
+	    (UF_MMAP_CAPMODE | UF_LOOKUP_CAPMODE);
+	if ((fde->fde_flags & UF_RESOLVE_BENEATH) != 0)
+		flags |= O_RESOLVE_BENEATH;
+	FILEDESC_XUNLOCK(fdp);
+	fddrop(fdp);
+
+	/* As externalize_fdflags(): a dirfd must not escape a jail root. */
+	pr1 = fp->f_cred->cr_prison;
+	pr2 = td->td_ucred->cr_prison;
+	if (pr1 != pr2 && pr1->pr_root != pr2->pr_root && pr2 != &prison0)
+		flags |= O_RESOLVE_BENEATH;
+
+	error = finstall_refed_prop(td, fp, newfdp, flags, &fcaps, &prop);
+	if (error != 0) {
+		filecaps_free(&fcaps);
+		fdrop(fp, td);
+	}
+	return (error);
+
+unlock:
+	FILEDESC_XUNLOCK(fdp);
+#ifdef MAC
+out:
+#endif
+	fddrop(fdp);
+	if (fp != NULL)
+		fdrop(fp, td);
 	return (error);
 }
 
