@@ -2432,7 +2432,7 @@ vm_page_alloc_contig_domain(vm_object_t object, vm_pindex_t pindex, int domain,
 			for (m = m_ret; m < &m_ret[npages]; m++) {
 				if (m <= mpred &&
 				    (req & VM_ALLOC_WIRED) != 0)
-					m->ref_count = 0;
+					m->ref_count = VPRC_OBJREF;
 				m->oflags = VPO_UNMANAGED;
 				m->busy_lock = VPB_UNBUSIED;
 				/* Don't change PG_ZERO. */
@@ -4120,7 +4120,7 @@ vm_page_free_prep(vm_page_t m)
 	if ((m->oflags & VPO_UNMANAGED) == 0) {
 		KASSERT(!pmap_page_is_mapped(m),
 		    ("vm_page_free_prep: freeing mapped page %p", m));
-		KASSERT((m->a.flags & (PGA_EXECUTABLE | PGA_WRITEABLE)) == 0,
+		KASSERT((m->a.flags & (PGA_PMAP_PRIV1 | PGA_WRITEABLE)) == 0,
 		    ("vm_page_free_prep: mapping flags set in page %p", m));
 	} else {
 		KASSERT(m->a.queue == PQ_NONE,

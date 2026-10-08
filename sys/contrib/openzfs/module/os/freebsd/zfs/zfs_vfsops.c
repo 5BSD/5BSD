@@ -1338,7 +1338,7 @@ zfs_domount(vfs_t *vfsp, char *osname)
 	vfsp->mnt_kern_flag |= MNTK_NOMSYNC;
 	vfsp->mnt_kern_flag |= MNTK_VMSETSIZE_BUG;
 
-#if defined(_KERNEL) && !defined(KMEM_DEBUG)
+#if !defined(KMEM_DEBUG)
 	vfsp->mnt_kern_flag |= MNTK_FPLOOKUP;
 #endif
 	/*
@@ -2476,7 +2476,6 @@ zfs_get_vfs_flag_unmounted(objset_t *os)
 	return (unmounted);
 }
 
-#ifdef _KERNEL
 void
 zfsvfs_update_fromname(const char *oldname, const char *newname)
 {
@@ -2506,7 +2505,6 @@ zfsvfs_update_fromname(const char *oldname, const char *newname)
 	}
 	mtx_unlock(&mountlist_mtx);
 }
-#endif
 
 /*
  * Find a prison with ZFS info.

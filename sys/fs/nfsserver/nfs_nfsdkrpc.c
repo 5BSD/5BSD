@@ -39,6 +39,7 @@
 #include "opt_kern_tls.h"
 
 #include <fs/nfs/nfsport.h>
+#include <fs/nfs/nfs_extern.h>
 
 #include <rpc/rpc.h>
 #include <rpc/rpcsec_gss.h>
@@ -105,7 +106,6 @@ static int nfs_proc(struct nfsrv_descript *, u_int32_t, SVCXPRT *xprt,
     struct nfsrvcache **);
 
 extern u_long sb_max_adj;
-extern int newnfs_numnfsd;
 extern time_t nfsdev_time;
 extern int nfsrv_writerpc[NFS_NPROCS];
 extern volatile int nfsrv_devidcnt;
@@ -506,8 +506,7 @@ nfs_proc(struct nfsrv_descript *nd, u_int32_t xid, SVCXPRT *xprt,
 	 * RC_DROPIT - just throw the request away
 	 */
 	if (cacherep == RC_DOIT) {
-		if ((nd->nd_flag & ND_NFSV41) != 0)
-			nd->nd_xprt = xprt;
+		nd->nd_xprt = xprt;
 		nfsrvd_dorpc(nd, isdgram, tagstr, taglen, minorvers);
 		if ((nd->nd_flag & ND_NFSV41) != 0) {
 			if (nd->nd_repstat != NFSERR_REPLYFROMCACHE &&
@@ -555,6 +554,21 @@ nfssvc_loss(SVCXPRT *xprt)
 }
 
 /*
+ * Register xprt with the correct versions of NFS.
+ */
+void
+nfsrv_svc_reg(SVCXPRT *xprt)
+{
+
+	if (VNET(nfs_minvers) == NFS_VER2)
+		svc_reg(xprt, NFS_PROG, NFS_VER2, nfssvc_program, NULL);
+	if (VNET(nfs_minvers) <= NFS_VER3 && VNET(nfs_maxvers) >= NFS_VER3)
+		svc_reg(xprt, NFS_PROG, NFS_VER3, nfssvc_program, NULL);
+	if (VNET(nfs_maxvers) >= NFS_VER4)
+		svc_reg(xprt, NFS_PROG, NFS_VER4, nfssvc_program, NULL);
+}
+
+/*
  * Adds a socket to the list for servicing by nfsds.
  */
 int
@@ -585,16 +599,7 @@ nfsrvd_addsock(struct file *fp)
 		fp->f_ops = &badfileops;
 		fp->f_data = NULL;
 		xprt->xp_sockref = ++sockref;
-		if (VNET(nfs_minvers) == NFS_VER2)
-			svc_reg(xprt, NFS_PROG, NFS_VER2, nfssvc_program,
-			    NULL);
-		if (VNET(nfs_minvers) <= NFS_VER3 &&
-		    VNET(nfs_maxvers) >= NFS_VER3)
-			svc_reg(xprt, NFS_PROG, NFS_VER3, nfssvc_program,
-			    NULL);
-		if (VNET(nfs_maxvers) >= NFS_VER4)
-			svc_reg(xprt, NFS_PROG, NFS_VER4, nfssvc_program,
-			    NULL);
+		nfsrv_svc_reg(xprt);
 		if (so->so_type == SOCK_STREAM)
 			svc_loss_reg(xprt, nfssvc_loss);
 		SVC_RELEASE(xprt);

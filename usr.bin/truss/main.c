@@ -31,13 +31,14 @@
  * SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
 /*
  * The main module for truss.  Surprisingly simple, but, then, the other
  * files handle the bulk of the work.  And, of course, the kernel has to
  * do a lot of the work :).
  */
 
+#include <sys/capsicum.h>
+#include <sys/event.h>
 #include <sys/ptrace.h>
 
 #include <err.h>
@@ -56,9 +57,11 @@
 static __dead2 void
 usage(void)
 {
-	fprintf(stderr, "%s\n%s\n",
-	    "usage: truss [-cfaedDHS] [-o file] [-s strsize] -p pid",
-	    "       truss [-cfaedDHS] [-o file] [-s strsize] command [args]");
+	fprintf(stderr, "%s\n%s\n%s\n",
+	    "usage: truss [-cfaedyDHS] [-o file] [-s strsize] [-t expr] -p pid",
+	    "       truss [-cfaedyDHS] [-o file] [-s strsize] [-t expr] "
+	    "command [args]",
+	    "       truss -t");
 	exit(1);
 }
 
@@ -67,6 +70,7 @@ main(int ac, char **av)
 {
 	struct sigaction sa;
 	struct trussinfo *trussinfo;
+	struct procinfo *np;
 	char *fname;
 	char **command;
 	const char *errstr;
@@ -85,7 +89,15 @@ main(int ac, char **av)
 	trussinfo->strsize = 32;
 	trussinfo->curthread = NULL;
 	LIST_INIT(&trussinfo->proclist);
-	while ((c = getopt(ac, av, "p:o:facedDs:SH")) != -1) {
+	trussinfo->cap_mode = true;
+
+	/*
+	 * The leading ':' asks getopt() to report a missing option
+	 * argument as ':' rather than '?' so that a bare -t, which lists
+	 * the system call groups, can be told from a malformed option.
+	 * Diagnosing the other two cases then falls to us.
+	 */
+	while ((c = getopt(ac, av, ":p:o:facedyDs:t:SH")) != -1) {
 		switch (c) {
 		case 'p':	/* specified pid */
 			pid = atoi(optarg);
@@ -121,13 +133,28 @@ main(int ac, char **av)
 			if (errstr)
 				errx(1, "maximum string size is %s: %s", errstr, optarg);
 			break;
+		case 't':	/* Select the system calls to trace */
+			add_syscall_filter(optarg);
+			break;
+		case 'y':
+			trussinfo->cap_mode = false;
+			break;
 		case 'S':	/* Don't trace signals */
 			trussinfo->flags |= NOSIGS;
 			break;
 		case 'H':
 			trussinfo->flags |= DISPLAYTIDS;
 			break;
+		case ':':
+			if (optopt == 't') {
+				/* A bare -t lists the system call groups. */
+				list_syscall_groups();
+				return (2);
+			}
+			warnx("option requires an argument -- %c", optopt);
+			usage();
 		default:
+			warnx("illegal option -- %c", optopt);
 			usage();
 		}
 	}
@@ -144,6 +171,12 @@ main(int ac, char **av)
 		 */
 		if ((trussinfo->outfile = fopen(fname, "we")) == NULL)
 			err(1, "cannot open %s", fname);
+	}
+
+	if (trussinfo->cap_mode) {
+		trussinfo->pdkq = kqueue();
+		if (trussinfo->pdkq == -1)
+			err(1, "kqueue");
 	}
 
 	/*
@@ -173,7 +206,8 @@ main(int ac, char **av)
 	 * At this point, if we started the process, it is stopped waiting to
 	 * be woken up, either in exit() or in execve().
 	 */
-	if (LIST_FIRST(&trussinfo->proclist)->abi == NULL) {
+	np = LIST_FIRST(&trussinfo->proclist);
+	if (np->abi == NULL) {
 		/*
 		 * If we are not able to handle this ABI, detach from the
 		 * process and exit.  If we just created a new process to
@@ -181,13 +215,11 @@ main(int ac, char **av)
 		 * it run untraced.
 		 */
 		if (pid == 0)
-			kill(LIST_FIRST(&trussinfo->proclist)->pid, SIGKILL);
-		ptrace(PT_DETACH, LIST_FIRST(&trussinfo->proclist)->pid, NULL,
-		    0);
+			truss_kill(trussinfo, np, SIGKILL);
+		truss_ptrace(trussinfo, PT_DETACH, np, NULL, 0);
 		return (1);
 	}
-	ptrace(PT_SYSCALL, LIST_FIRST(&trussinfo->proclist)->pid, (caddr_t)1,
-	    0);
+	truss_ptrace(trussinfo, PT_SYSCALL, np, (caddr_t)1, 0);
 
 	/*
 	 * At this point, it's a simple loop, waiting for the process to

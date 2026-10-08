@@ -81,7 +81,7 @@ void	freeuio(struct uio *uio);
 struct uio *cloneuio(struct uio *uiop);
 int	copyiniov(const struct iovec *iovp, u_int iovcnt, struct iovec **iov,
 	    int error);
-int	copyinuio(const struct iovec *iovp, u_int iovcnt, struct uio **uiop);
+int	copyinuio(const void *iovp, u_int iovcnt, struct uio **uiop);
 int	copyout_map(struct thread *td, vm_offset_t *addr, size_t sz);
 int	copyout_unmap(struct thread *td, vm_offset_t addr, size_t sz);
 void	exterr_copyout(struct thread *td);
@@ -99,6 +99,7 @@ int	uiomove_fromphys(struct vm_page *ma[], vm_offset_t offset, int n,
 int	uiomove_nofault(void *cp, int n, struct uio *uio);
 int	uiomove_object(struct vm_object *obj, off_t obj_size, struct uio *uio);
 int	uiomove_step(void *cp, void *base, size_t cnt, struct uio *uio);
+int	updateiov(const struct uio *uiop, void *iovp);
 
 #else /* !_KERNEL */
 

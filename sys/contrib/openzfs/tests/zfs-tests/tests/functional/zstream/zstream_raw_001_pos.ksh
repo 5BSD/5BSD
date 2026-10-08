@@ -92,6 +92,7 @@ typeset volume=$POOL/zvol
 typeset volsize=256m
 typeset image=$BACKDIR/zvol.img
 typeset image1=$BACKDIR/zvol1.img
+typeset incr=$BACKDIR/incr.zsend
 typeset -i maxsz=$((1 << 20)) # 1MiB
 
 function exercise_volume
@@ -106,8 +107,13 @@ function exercise_volume
 		log_must randwritecomp $f 100
 	done
 	log_must rm $(find $TESTDIR -type f | sort -R | head)
-	(( len = RANDOM % maxsz ))
-	(( start = RANDOM % len ))
+	#
+	# Keep len in [2, maxsz-1] and start in [0, len-2] so the ranges
+	# below never divide by zero and the punched range [start,
+	# start+num) always lies inside the file.
+	#
+	(( len = 2 + RANDOM % (maxsz - 2) ))
+	(( start = RANDOM % (len - 1) ))
 	(( num = 1 + RANDOM % (len - start - 1) ))
 	log_must randfree_file -l $len -s $start -n $num $TESTDIR/free-$RANDOM
 	log_must umount $TESTDIR
@@ -157,9 +163,12 @@ log_note "Single incremental send"
 # 4. Add changes to the zvol and verify an incremental stream
 exercise_volume
 log_must zfs snapshot $volume@snapshot1
-# Use a single buffer to exercise disabling write coalescing.
-log_must eval "guid=\$(zfs send -ceL -i @snapshot $volume@snapshot1 |
-    zstream raw -b 1 -g $guid $image)"
+# Use a single buffer to exercise disabling write coalescing.  Name the
+# stream on the command line instead of piping it in, to verify that
+# zstream raw accepts a trailing filename.
+log_must eval "zfs send -ceL -i @snapshot $volume@snapshot1 > $incr"
+log_must eval "guid=\$(zstream raw -b 1 -g $guid $image $incr)"
+log_must rm $incr
 compare_files $ZVOL_DEVDIR/$volume@snapshot1 $image
 
 # 5. Repeat for a stream package with multiple intermediary snapshots

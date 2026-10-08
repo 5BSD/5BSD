@@ -1142,7 +1142,7 @@ getmaxfd(struct thread *td)
  * Common code for dup, dup2, fcntl(F_DUPFD) and fcntl(F_DUP2FD).
  */
 int
-kern_dup(struct thread *td, u_int mode, int flags, int old, int new)
+kern_dup(struct thread *td, u_int mode, int flags, int oldd, int newd)
 {
 	struct filedesc *fdp;
 	struct filedescent *oldfde, *newfde;
@@ -1159,37 +1159,37 @@ kern_dup(struct thread *td, u_int mode, int flags, int old, int new)
 	MPASS((flags & ~(FDDUP_FLAG_CLOEXEC | FDDUP_FLAG_CLOFORK)) == 0);
 	MPASS(mode < FDDUP_LASTMODE);
 
-	AUDIT_ARG_FD(old);
-	/* XXXRW: if (flags & FDDUP_FIXED) AUDIT_ARG_FD2(new); */
+	AUDIT_ARG_FD(oldd);
+	/* XXXRW: if (flags & FDDUP_FIXED) AUDIT_ARG_FD2(newd); */
 
 	/*
 	 * Verify we have a valid descriptor to dup from and possibly to
 	 * dup to. Unlike dup() and dup2(), fcntl()'s F_DUPFD should
 	 * return EINVAL when the new descriptor is out of bounds.
 	 */
-	if (old < 0)
+	if (oldd < 0)
 		return (EBADF);
-	if (new < 0)
+	if (newd < 0)
 		return (mode == FDDUP_FCNTL ? EINVAL : EBADF);
 	maxfd = getmaxfd(td);
-	if (new >= maxfd)
+	if (newd >= maxfd)
 		return (mode == FDDUP_FCNTL ? EINVAL : EBADF);
 
 	error = EBADF;
 	FILEDESC_XLOCK(fdp);
-	if (fget_noref(fdp, old) == NULL)
+	if (fget_noref(fdp, oldd) == NULL)
 		goto unlock;
-	if (mode == FDDUP_FIXED && old == new) {
-		td->td_retval[0] = new;
-		fdp->fd_ofiles[new].fde_flags |= fddup_to_fde_flags(flags);
+	if (mode == FDDUP_FIXED && oldd == newd) {
+		td->td_retval[0] = newd;
+		fdp->fd_ofiles[newd].fde_flags |= fddup_to_fde_flags(flags);
 		error = 0;
 		goto unlock;
 	}
 
-	oldfde = &fdp->fd_ofiles[old];
+	oldfde = &fdp->fd_ofiles[oldd];
 	oldfp = oldfde->fde_file;
 #ifdef MAC
-	error = mac_file_check_dup(td->td_ucred, oldfp, old);
+	error = mac_file_check_dup(td->td_ucred, oldfp, oldd);
 	if (error != 0)
 		goto unlock;
 #endif
@@ -1204,13 +1204,13 @@ kern_dup(struct thread *td, u_int mode, int flags, int old, int new)
 	switch (mode) {
 	case FDDUP_NORMAL:
 	case FDDUP_FCNTL:
-		if ((error = fdalloc(td, new, &new)) != 0) {
+		if ((error = fdalloc(td, newd, &newd)) != 0) {
 			fdrop(oldfp, td);
 			goto unlock;
 		}
 		break;
 	case FDDUP_FIXED:
-		if (new >= fdp->fd_nfiles) {
+		if (newd >= fdp->fd_nfiles) {
 			/*
 			 * The resource limits are here instead of e.g.
 			 * fdalloc(), because the file descriptor table may be
@@ -1221,7 +1221,7 @@ kern_dup(struct thread *td, u_int mode, int flags, int old, int new)
 			 */
 #ifdef RACCT
 			if (RACCT_ENABLED()) {
-				error = racct_set_unlocked(p, RACCT_NOFILE, new + 1);
+				error = racct_set_unlocked(p, RACCT_NOFILE, newd + 1);
 				if (error != 0) {
 					error = EMFILE;
 					fdrop(oldfp, td);
@@ -1229,24 +1229,24 @@ kern_dup(struct thread *td, u_int mode, int flags, int old, int new)
 				}
 			}
 #endif
-			fdgrowtable_exp(fdp, new + 1);
+			fdgrowtable_exp(fdp, newd + 1);
 		}
-		if (!fdisused(fdp, new))
-			fdused(fdp, new);
+		if (!fdisused(fdp, newd))
+			fdused(fdp, newd);
 		break;
 	default:
 		KASSERT(0, ("%s unsupported mode %d", __func__, mode));
 	}
 
-	KASSERT(old != new, ("new fd is same as old"));
+	KASSERT(oldd != newd, ("new fd is same as old"));
 
 	/* Refetch oldfde because the table may have grown and old one freed. */
-	oldfde = &fdp->fd_ofiles[old];
+	oldfde = &fdp->fd_ofiles[oldd];
 	KASSERT(oldfp == oldfde->fde_file,
 	    ("fdt_ofiles shift from growth observed at fd %d",
-	    old));
+	    oldd));
 
-	newfde = &fdp->fd_ofiles[new];
+	newfde = &fdp->fd_ofiles[newd];
 	delfp = newfde->fde_file;
 
 	nioctls = filecaps_copy_prep(&oldfde->fde_caps);
@@ -1270,14 +1270,14 @@ kern_dup(struct thread *td, u_int mode, int flags, int old, int new)
 #ifdef CAPABILITIES
 	seqc_write_end(&newfde->fde_seqc);
 #endif
-	td->td_retval[0] = new;
-	SDT_PROBE6(fd, , , dup, oldfp, old, new, p->p_pid,
+	td->td_retval[0] = newd;
+	SDT_PROBE6(fd, , , dup, oldfp, oldd, newd, p->p_pid,
 	    td->td_ucred, oldfp->f_type);
 
 	error = 0;
 
 	if (delfp != NULL) {
-		(void) closefp(fdp, new, delfp, td, true, false);
+		(void) closefp(fdp, newd, delfp, td, true, false);
 		FILEDESC_UNLOCK_ASSERT(fdp);
 	} else {
 unlock:
@@ -2042,7 +2042,7 @@ filecaps_fill(struct filecaps *fcaps)
  * of cap_rights_remove().
  */
 void
-filecaps_intersect(struct filecaps *dst, const struct filecaps *limit)
+filecaps_restrict(struct filecaps *dst, const struct filecaps *limit)
 {
 	cap_rights_t remove;
 	u_long *cmds;
@@ -2101,6 +2101,55 @@ filecaps_intersect(struct filecaps *dst, const struct filecaps *limit)
 }
 
 /*
+ * Find the intersection of two filecaps structures and store the result in the
+ * first structure.  This is a destructive operation on the src structure.
+ */
+void
+filecaps_intersect(struct filecaps *src, struct filecaps *dst)
+{
+
+	cap_rights_intersect(&dst->fc_rights, &src->fc_rights);
+	dst->fc_fcntls &= src->fc_fcntls;
+	if (dst->fc_nioctls == -1) {
+		dst->fc_ioctls = src->fc_ioctls;
+		dst->fc_nioctls = src->fc_nioctls;
+		src->fc_ioctls = NULL;
+	} else if (src->fc_nioctls != -1) {
+		int count;
+
+		/*
+		 * ioctl lists are usually short, so this dumb merge is fine.
+		 * We could alternately sort both lists and walk them in
+		 * parallel.
+		 */
+		count = 0;
+		for (int i = 0; i < dst->fc_nioctls; i++) {
+			bool found;
+
+			found = false;
+			for (int j = 0; j < src->fc_nioctls; j++) {
+				if (dst->fc_ioctls[i] == src->fc_ioctls[j]) {
+					count++;
+					found = true;
+					break;
+				}
+			}
+			if (!found) {
+				if (i != dst->fc_nioctls - 1)
+					dst->fc_ioctls[i] =
+					    dst->fc_ioctls[dst->fc_nioctls - 1];
+				dst->fc_nioctls--;
+				i--;
+			}
+		}
+		dst->fc_nioctls = count;
+	}
+	if (dst->fc_nioctls == 0)
+		filecaps_free_ioctl(dst);
+	filecaps_free(src);
+}
+
+/*
  * Free memory allocated within filecaps structure.
  */
 static void
@@ -2117,6 +2166,16 @@ filecaps_free(struct filecaps *fcaps)
 
 	filecaps_free_ioctl(fcaps);
 	bzero(fcaps, sizeof(*fcaps));
+}
+
+bool
+filecaps_full(const struct filecaps *fcaps)
+{
+	cap_rights_t allrights;
+
+	CAP_ALL(&allrights);
+	return (cap_rights_contains(&fcaps->fc_rights, &allrights) &&
+	    fcaps->fc_fcntls == CAP_FCNTL_ALL && fcaps->fc_nioctls == -1);
 }
 
 static u_long *
@@ -3615,10 +3674,7 @@ fgetvp_lookup_smr(struct nameidata *ndp, struct vnode **vpp, int *flagsp)
 	 *
 	 * Not yet supported by fast path.
 	 */
-	CAP_ALL(&rights);
-	if (!cap_rights_contains(&ndp->ni_filecaps.fc_rights, &rights) ||
-	    ndp->ni_filecaps.fc_fcntls != CAP_FCNTL_ALL ||
-	    ndp->ni_filecaps.fc_nioctls != -1) {
+	if (!filecaps_full(&ndp->ni_filecaps)) {
 #ifdef notyet
 		ndp->ni_lcf |= NI_LCF_STRICTREL;
 #else
@@ -3735,10 +3791,7 @@ fgetvp_lookup(struct nameidata *ndp, struct vnode **vpp)
 	 * all lookups relative to it must also be
 	 * strictly relative.
 	 */
-	CAP_ALL(&rights);
-	if (!cap_rights_contains(&ndp->ni_filecaps.fc_rights, &rights) ||
-	    ndp->ni_filecaps.fc_fcntls != CAP_FCNTL_ALL ||
-	    ndp->ni_filecaps.fc_nioctls != -1) {
+	if (!filecaps_full(&ndp->ni_filecaps)) {
 		ndp->ni_lcf |= NI_LCF_STRICTREL;
 		ndp->ni_resflags |= NIRES_STRICTREL;
 	}

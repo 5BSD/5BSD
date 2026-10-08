@@ -434,7 +434,7 @@ copyiniov(const struct iovec *iovp, u_int iovcnt, struct iovec **iov, int error)
 }
 
 int
-copyinuio(const struct iovec *iovp, u_int iovcnt, struct uio **uiop)
+copyinuio(const void *iovp, u_int iovcnt, struct uio **uiop)
 {
 	struct iovec *iov;
 	struct uio *uio;
@@ -465,6 +465,24 @@ copyinuio(const struct iovec *iovp, u_int iovcnt, struct uio **uiop)
 		iov++;
 	}
 	*uiop = uio;
+	return (0);
+}
+
+/*
+ * Update the lengths of a userspace iovec to match those in a struct uio's
+ * iovec (previously created by copyinuio).
+ */
+int
+updateiov(const struct uio *uiop, void *uiovp)
+{
+	int i, error;
+	struct iovec *iovp = uiovp;
+
+	for (i = 0; i < uiop->uio_iovcnt; i++) {
+		error = suword(&iovp[i].iov_len, uiop->uio_iov[i].iov_len);
+		if (error != 0)
+			return (EFAULT);
+	}
 	return (0);
 }
 

@@ -63,6 +63,17 @@ static struct ipc_thread_ctx {
 } thr_ctx;
 
 static nvlist_t *
+ipc_get_vm_pid(struct vmctx *ctx __unused, const nvlist_t *nvl __unused)
+{
+	nvlist_t *reply;
+
+	reply = nvlist_create(0);
+	nvlist_add_number(reply, "pid", getpid());
+	return (reply);
+}
+IPC_COMMAND(get_vm_pid, ipc_get_vm_pid);
+
+static nvlist_t *
 handle_message(struct vmctx *ctx, const char *cmd, nvlist_t *nvl)
 {
 	struct ipc_command **ipc_cmd;

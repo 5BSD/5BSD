@@ -186,17 +186,27 @@ dsp_chn_alloc(struct snddev_info *d, struct pcm_channel **ch, int direction,
 	    (direction == PCMDIR_REC && d->flags & SD_F_RVCHANS);
 
 	*ch = NULL;
+
+	/*
+	 * Prefer an idle primary channel, so that devices which provide more
+	 * than one of them use them all, instead of stacking every client on
+	 * the first one.
+	 */
 	CHN_FOREACH(c, d, channels.pcm.primary) {
 		CHN_LOCK(c);
-		if (c->direction != direction) {
-			CHN_UNLOCK(c);
-			continue;
-		}
-		/* Find an available primary channel to use. */
-		if ((c->flags & CHN_F_BUSY) == 0 ||
-		    (vdir_enabled && (c->flags & CHN_F_HAS_VCHAN)))
+		if (c->direction == direction && (c->flags & CHN_F_BUSY) == 0)
 			break;
 		CHN_UNLOCK(c);
+	}
+	/* Fall back to sharing a primary channel that already has vchans. */
+	if (c == NULL && vdir_enabled) {
+		CHN_FOREACH(c, d, channels.pcm.primary) {
+			CHN_LOCK(c);
+			if (c->direction == direction &&
+			    (c->flags & CHN_F_HAS_VCHAN))
+				break;
+			CHN_UNLOCK(c);
+		}
 	}
 	if (c == NULL)
 		return (EBUSY);
@@ -725,9 +735,9 @@ dsp_ioctl(struct cdev *i_dev, unsigned long cmd, caddr_t arg, int mode,
 			return (ret);
 		}
 
-		if (d->mixer_dev != NULL) {
+		if (MIXER_REGISTERED(d->mixer)) {
 			PCM_ACQUIRE_QUICK(d);
-			ret = mixer_ioctl_cmd(d->mixer_dev, cmd, arg, -1, td);
+			ret = mixer_ioctl_cmd(d->mixer->cdev, cmd, arg, -1, td);
 			PCM_RELEASE_QUICK(d);
 		} else
 			ret = EBADF;
@@ -915,7 +925,6 @@ dsp_ioctl(struct cdev *i_dev, unsigned long cmd, caddr_t arg, int mode,
 		{
 	    		snd_capabilities *p = (snd_capabilities *)arg;
 			struct pcmchan_caps *pcaps = NULL, *rcaps = NULL;
-			struct cdev *pdev;
 #ifdef COMPAT_FREEBSD32
 			snd_capabilities32 *p32 = (snd_capabilities32 *)arg;
 			snd_capabilities capabilities;
@@ -955,9 +964,8 @@ dsp_ioctl(struct cdev *i_dev, unsigned long cmd, caddr_t arg, int mode,
 				    (pcm_getflags(d->dev) & SD_F_SIMPLEX) ? 0 :
 				    AFMT_FULLDUPLEX;
 			}
-			pdev = d->mixer_dev;
 	    		p->mixers = 1; /* default: one mixer */
-	    		p->inputs = pdev->si_drv1? mix_getdevs(pdev->si_drv1) : 0;
+			p->inputs = d->mixer ? mix_getdevs(d->mixer) : 0;
 	    		p->left = p->right = 100;
 			if (wrch)
 				CHN_UNLOCK(wrch);
@@ -1512,9 +1520,9 @@ dsp_ioctl(struct cdev *i_dev, unsigned long cmd, caddr_t arg, int mode,
 			return (ret);
 		}
 
-		if (d->mixer_dev != NULL) {
+		if (MIXER_REGISTERED(d->mixer)) {
 			PCM_ACQUIRE_QUICK(d);
-			ret = mixer_ioctl_cmd(d->mixer_dev, xcmd, arg, -1, td);
+			ret = mixer_ioctl_cmd(d->mixer->cdev, xcmd, arg, -1, td);
 			PCM_RELEASE_QUICK(d);
 		} else
 			ret = ENOTSUP;
@@ -1524,9 +1532,9 @@ dsp_ioctl(struct cdev *i_dev, unsigned long cmd, caddr_t arg, int mode,
 	case SNDCTL_DSP_GET_RECSRC_NAMES:
 	case SNDCTL_DSP_GET_RECSRC:
 	case SNDCTL_DSP_SET_RECSRC:
-		if (d->mixer_dev != NULL) {
+		if (MIXER_REGISTERED(d->mixer)) {
 			PCM_ACQUIRE_QUICK(d);
-			ret = mixer_ioctl_cmd(d->mixer_dev, cmd, arg, -1, td);
+			ret = mixer_ioctl_cmd(d->mixer->cdev, cmd, arg, -1, td);
 			PCM_RELEASE_QUICK(d);
 		} else
 			ret = ENOTSUP;
@@ -2197,7 +2205,7 @@ dsp_oss_audioinfo(struct cdev *i_dev, oss_audioinfo *ai, bool ex)
 	strlcpy(ai->cmd, CHN_COMM_UNKNOWN, sizeof(ai->cmd));
 	ai->card_number = unit;
 	ai->port_number = unit;
-	ai->mixer_dev = (d->mixer_dev != NULL) ? unit : -1;
+	ai->mixer_dev = MIXER_REGISTERED(d->mixer) ? unit : -1;
 	ai->legacy_device = unit;
 	snprintf(ai->devnode, sizeof(ai->devnode), "/dev/dsp%d", unit);
 	ai->enabled = device_is_attached(d->dev) ? 1 : 0;
@@ -2443,7 +2451,7 @@ dsp_oss_engineinfo(struct cdev *i_dev, oss_audioinfo *ai)
 		 * @todo @c port_number - routing information?
 		 */
 		ai->port_number = unit;
-		ai->mixer_dev = (d->mixer_dev != NULL) ? unit : -1;
+		ai->mixer_dev = MIXER_REGISTERED(d->mixer) ? unit : -1;
 		/**
 		 * @note
 		 * @c legacy_device - OSSv4 docs:  "Obsolete."

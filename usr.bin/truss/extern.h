@@ -31,9 +31,21 @@
  * SUCH DAMAGE.
  */
 
-extern int print_line_prefix(struct trussinfo *);
-extern void setup_and_wait(struct trussinfo *, char **);
-extern void start_tracing(struct trussinfo *, pid_t);
-extern void restore_proc(int);
-extern void decode_siginfo(FILE *, siginfo_t *);
-extern void eventloop(struct trussinfo *);
+#ifndef __TRUSS_EXTERN_H__
+#define	__TRUSS_EXTERN_H__
+
+void add_syscall_filter(const char *);
+void list_syscall_groups(void);
+bool syscall_filter_match(const char *, u_int);
+int print_line_prefix(struct trussinfo *);
+void setup_and_wait(struct trussinfo *, char **);
+void start_tracing(struct trussinfo *, pid_t);
+void restore_proc(int);
+void decode_siginfo(FILE *, siginfo_t *);
+void eventloop(struct trussinfo *);
+
+int truss_kill(struct trussinfo *info, struct procinfo *p, int sig);
+int truss_ptrace(struct trussinfo *info, int req, struct procinfo *p,
+    void *addr, int data);
+
+#endif

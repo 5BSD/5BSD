@@ -350,8 +350,6 @@ typedef struct __rpc_svcpool {
  */
 typedef int	svc_rdma_listen_ftype(SVCPOOL *pool, int port);
 extern svc_rdma_listen_ftype *svc_rdma_listen;
-extern int	nfsrvd_rdma_port;
-extern int	newnfs_numnfsd;
 
 /*
  * Operations defined on an SVCXPRT handle
@@ -619,6 +617,7 @@ extern SVCXPRT *svc_vc_create(SVCPOOL *, struct socket *,
          */
 
 extern SVCXPRT *svc_vc_create_backchannel(SVCPOOL *);
+extern SVCXPRT *svc_rdma_create_backchannel(SVCPOOL *);
 
 extern void *clnt_bck_create(struct socket *, const rpcprog_t, const rpcvers_t);
 	/*

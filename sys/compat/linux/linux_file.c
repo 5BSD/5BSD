@@ -3806,13 +3806,13 @@ linux_inotify_add_watch(struct thread *td,
 	if ((mask & ~(LINUX_IN_ALL_EVENTS | LINUX_IN_ALL_FLAGS)) != 0)
 		return (EINVAL);
 	mask &= ~(LINUX_IN_Q_OVERFLOW | LINUX_IN_IGNORED | LINUX_IN_ISDIR);
-	return (kern_inotify_add_watch(args->fd, AT_FDCWD, args->pathname,
-	    mask, td));
+	return (kern_inotify_add_watch(td, args->fd, AT_FDCWD, args->pathname,
+	    mask));
 }
 
 int
 linux_inotify_rm_watch(struct thread *td,
     struct linux_inotify_rm_watch_args *args)
 {
-	return (kern_inotify_rm_watch(args->fd, args->wd, td));
+	return (kern_inotify_rm_watch(td, args->fd, args->wd));
 }

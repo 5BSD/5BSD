@@ -1327,12 +1327,14 @@ MLINKS+=iflibdd.9 ifdi_attach_pre.9 \
 	iflibdd.9 ifdi_media_change.9 \
 	iflibdd.9 ifdi_mtu_set.9 \
 	iflibdd.9 ifdi_multi_set.9 \
+	iflibdd.9 ifdi_power_prepare.9 \
 	iflibdd.9 ifdi_promisc_set.9 \
 	iflibdd.9 ifdi_queues_alloc.9 \
 	iflibdd.9 ifdi_queues_free.9 \
 	iflibdd.9 ifdi_queue_intr_enable.9 \
 	iflibdd.9 ifdi_resume.9 \
 	iflibdd.9 ifdi_rxq_setup.9 \
+	iflibdd.9 ifdi_shutdown.9 \
 	iflibdd.9 ifdi_stop.9 \
 	iflibdd.9 ifdi_suspend.9 \
 	iflibdd.9 ifdi_sysctl_int_delay.9 \
@@ -2492,8 +2494,7 @@ MLINKS+=vm_page_aflag.9 vm_page_aflag_clear.9 \
 	vm_page_aflag.9 vm_page_aflag_set.9 \
 	vm_page_aflag.9 vm_page_reference.9
 MLINKS+=vm_page_free.9 vm_page_free_toq.9 \
-	vm_page_free.9 vm_page_free_zero.9 \
-	vm_page_free.9 vm_page_try_to_free.9
+	vm_page_free.9 vm_page_free_zero.9
 MLINKS+=vm_page_insert.9 vm_page_remove.9
 MLINKS+=vm_page_wire.9 vm_page_unwire.9 \
 	vm_page_wire.9 vm_page_unwire_noq.9 \

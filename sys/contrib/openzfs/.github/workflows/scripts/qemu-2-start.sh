@@ -114,8 +114,8 @@ case "$OS" in
     URLxz="$FREEBSD_REL/$FreeBSD/amd64/Latest/FreeBSD-$FreeBSD-amd64-BASIC-CI-ufs.raw.xz"
     KSRC="$FREEBSD_REL/../amd64/$FreeBSD/src.txz"
     ;;
-  freebsd14-4s)
-    FreeBSD="14.4-STABLE"
+  freebsd14-5s)
+    FreeBSD="14.5-STABLE"
     OSNAME="FreeBSD $FreeBSD"
     OSv="freebsd14.0"
     URLxz="$FREEBSD_SNAP/$FreeBSD/amd64/Latest/FreeBSD-$FreeBSD-amd64-BASIC-CI-ufs.raw.xz"
@@ -304,10 +304,12 @@ fi
 sudo virsh net-update default add ip-dhcp-host \
   "<host mac='52:54:00:83:79:00' ip='192.168.122.10'/>" --live --config
 
+# 2026-09-20: -amx-tile works around objtool vs musl SIGSTKSZ on AMX
+# hosts.  Removable once a fixed objtool reaches the distro images.
 sudo virt-install \
   --os-variant $OSv \
   --name "openzfs" \
-  --cpu host-passthrough \
+  --cpu host-passthrough,-amx-tile \
   --virt-type=kvm --hvm \
   --vcpus=4,sockets=1 \
   --memory $((1024*12)) \

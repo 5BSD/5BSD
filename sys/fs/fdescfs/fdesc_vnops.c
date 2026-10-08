@@ -263,7 +263,7 @@ fdesc_get_ino_alloc(struct mount *mp, void *arg, int lkflags,
 
 	a = arg;
 	fdm = VFSTOFDESC(mp);
-	if (((fdm->flags & FMNT_NODUP) != 0 || a->traverse) &&
+	if ((a->traverse || (fdm->flags & FMNT_NODUP) != 0) &&
 	    a->fp->f_type == DTYPE_VNODE) {
 		vp = a->fp->f_vnode;
 		vget(vp, lkflags | LK_RETRY);
@@ -290,13 +290,14 @@ fdesc_lookup(struct vop_lookup_args *ap)
 	char *pname = cnp->cn_nameptr;
 	struct thread *td = curthread;
 	struct file *fp;
+	struct filecaps fcaps;
 	struct fdesc_get_ino_args arg;
+	struct vnode *fvp;
 	int nlen = cnp->cn_namelen;
 	u_int fd, fd1;
 	int error;
-	struct vnode *fvp;
 	cap_rights_t rights;
-	uint8_t fdflags;
+	uint8_t fflags;
 	bool traverse;
 
 	if ((cnp->cn_flags & ISLASTCN) &&
@@ -354,26 +355,37 @@ fdesc_lookup(struct vop_lookup_args *ap)
 	if (traverse) {
 		/*
 		 * Linux /proc/self/fd/N/child walks the held directory, not
-		 * its printable pathname.  A vnode handoff cannot propagate
-		 * descriptor rights or lookup constraints through namei.
-		 * Fail closed for restricted descriptors; use openat instead.
+		 * its printable pathname.  5BSD fails closed for descriptors
+		 * carrying lookup constraints or reduced rights rather than
+		 * relying solely on the nameidata metadata propagation below;
+		 * use openat instead.
 		 */
 		CAP_ALL(&rights);
-		error = fget_cap(td, fd, &rights, &fdflags, &fp, NULL);
+		error = fget_cap(td, fd, &rights, &fflags, &fp, &fcaps);
 		if (error != 0)
 			goto bad;
-		if ((fdflags & (UF_RESOLVE_BENEATH | UF_LOOKUP_CAPMODE)) != 0) {
+		if ((fflags & (UF_RESOLVE_BENEATH | UF_LOOKUP_CAPMODE)) != 0) {
 			fdrop(fp, td);
+			filecaps_free(&fcaps);
 			error = ENOTCAPABLE;
 			goto bad;
 		}
 		if (fp->f_type != DTYPE_VNODE || fp->f_vnode->v_type != VDIR) {
 			fdrop(fp, td);
+			filecaps_free(&fcaps);
 			error = ENOTDIR;
 			goto bad;
 		}
-	} else if ((error = fget(td, fd, &cap_no_rights, &fp)) != 0)
-		goto bad;
+	} else {
+		/*
+		 * No rights to check since 'fp' isn't actually used.  The
+		 * descriptor's flags and capabilities are fetched so that a
+		 * nodup vnode handoff can pass them up to namei below.
+		 */
+		error = fget_cap(td, fd, &cap_no_rights, &fflags, &fp, &fcaps);
+		if (error != 0)
+			goto bad;
+	}
 
 	/* Descriptor duplication and vnode handoffs can jump between mounts. */
 	if ((cnp->cn_flags & NOXDEV) != 0 &&
@@ -386,6 +398,7 @@ fdesc_lookup(struct vop_lookup_args *ap)
 		VOP_UNLOCK(dvp);
 		fdrop(fp, td);
 		vn_lock(dvp, LK_EXCLUSIVE | LK_RETRY);
+		filecaps_free(&fcaps);
 		goto bad;
 	}
 
@@ -421,6 +434,47 @@ fdesc_lookup(struct vop_lookup_args *ap)
 		if (error == 0 && VN_IS_DOOMED(dvp))
 			error = ENOENT;
 	}
+
+	/*
+	 * 5BSD: UF_MMAP_CAPMODE and UF_LOOKUP_CAPMODE are also monotonic, but
+	 * namei has no way to carry them to the newly opened descriptor.
+	 * Refuse a vnode handoff from a descriptor that has either set.
+	 */
+	if (error == 0 && fvp->v_mount != dvp->v_mount &&
+	    (fflags & (UF_MMAP_CAPMODE | UF_LOOKUP_CAPMODE)) != 0) {
+		vput(fvp);
+		error = ENOTCAPABLE;
+	}
+
+	/*
+	 * Make sure that a nodup mount can't be used to launder away monotonic
+	 * file descriptor metadata, namely UF_RESOLVE_BENEATH and capability
+	 * rights.
+	 */
+	if (error == 0 && fvp->v_mount != dvp->v_mount &&
+	    ((fflags & UF_RESOLVE_BENEATH) != 0 || !filecaps_full(&fcaps))) {
+		struct nameidata *ndp;
+
+		ndp = vfs_lookup_nameidata(cnp);
+		if (ndp == NULL) {
+			vput(fvp);
+			error = ENOTCAPABLE;
+		} else {
+			if ((fflags & UF_RESOLVE_BENEATH) != 0)
+				ndp->ni_resflags |= NIRES_BENEATH;
+			if (!filecaps_full(&fcaps)) {
+				if (cap_rights_is_valid(
+				    &ndp->ni_filecaps.fc_rights))
+					filecaps_restrict(
+					    &ndp->ni_filecaps, &fcaps);
+				else
+					filecaps_move(&fcaps,
+					    &ndp->ni_filecaps);
+				ndp->ni_resflags |= NIRES_STRICTREL;
+			}
+		}
+	}
+	filecaps_free(&fcaps);
 
 	if (error)
 		goto bad;

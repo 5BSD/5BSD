@@ -760,6 +760,7 @@ usage(void)
 	    "            d     ZFS directories\n"
 	    "            f     ZFS files \n"
 	    "            m     SPA space maps\n"
+	    "            v     ZVols\n"
 	    "            z     ZAPs\n"
 	    "            -     Negate effect of next flag\n\n");
 	(void) fprintf(stderr, "    Options to control amount of output:\n");
@@ -1450,7 +1451,7 @@ dump_zpldir(objset_t *os, uint64_t object, void *data, size_t size)
 }
 
 static uint64_t
-get_dtl_refcount(vdev_t *vd)
+get_dtl_refcount(vdev_t *vd, zfs_range_tree_t *spacemap_objs)
 {
 	uint64_t refcount = 0;
 
@@ -1458,18 +1459,25 @@ get_dtl_refcount(vdev_t *vd)
 		space_map_t *sm = vd->vdev_dtl_sm;
 
 		if (sm != NULL &&
-		    sm->sm_dbuf->db_size == sizeof (space_map_phys_t))
+		    sm->sm_dbuf->db_size == sizeof (space_map_phys_t)) {
+			if (spacemap_objs != NULL &&
+			    !zfs_range_tree_contains(spacemap_objs,
+			    space_map_object(sm), 1)) {
+				zfs_range_tree_add(spacemap_objs,
+				    space_map_object(sm), 1);
+			}
 			return (1);
+		}
 		return (0);
 	}
 
 	for (unsigned c = 0; c < vd->vdev_children; c++)
-		refcount += get_dtl_refcount(vd->vdev_child[c]);
+		refcount += get_dtl_refcount(vd->vdev_child[c], spacemap_objs);
 	return (refcount);
 }
 
 static uint64_t
-get_metaslab_refcount(vdev_t *vd)
+get_metaslab_refcount(vdev_t *vd, zfs_range_tree_t *spacemap_objs)
 {
 	uint64_t refcount = 0;
 
@@ -1478,18 +1486,26 @@ get_metaslab_refcount(vdev_t *vd)
 			space_map_t *sm = vd->vdev_ms[m]->ms_sm;
 
 			if (sm != NULL &&
-			    sm->sm_dbuf->db_size == sizeof (space_map_phys_t))
+			    sm->sm_dbuf->db_size == sizeof (space_map_phys_t)) {
+				if (spacemap_objs != NULL &&
+				    !zfs_range_tree_contains(spacemap_objs,
+				    space_map_object(sm), 1)) {
+					zfs_range_tree_add(spacemap_objs,
+					    space_map_object(sm), 1);
+				}
 				refcount++;
+			}
 		}
 	}
 	for (unsigned c = 0; c < vd->vdev_children; c++)
-		refcount += get_metaslab_refcount(vd->vdev_child[c]);
+		refcount += get_metaslab_refcount(vd->vdev_child[c],
+		    spacemap_objs);
 
 	return (refcount);
 }
 
 static uint64_t
-get_obsolete_refcount(vdev_t *vd)
+get_obsolete_refcount(vdev_t *vd, zfs_range_tree_t *spacemap_objs)
 {
 	uint64_t obsolete_sm_object;
 	uint64_t refcount = 0;
@@ -1500,6 +1516,12 @@ get_obsolete_refcount(vdev_t *vd)
 		VERIFY0(dmu_object_info(vd->vdev_spa->spa_meta_objset,
 		    obsolete_sm_object, &doi));
 		if (doi.doi_bonus_size == sizeof (space_map_phys_t)) {
+			if (spacemap_objs != NULL &&
+			    !zfs_range_tree_contains(spacemap_objs,
+			    obsolete_sm_object, 1)) {
+				zfs_range_tree_add(spacemap_objs,
+				    obsolete_sm_object, 1);
+			}
 			refcount++;
 		}
 	} else {
@@ -1507,14 +1529,16 @@ get_obsolete_refcount(vdev_t *vd)
 		ASSERT0(obsolete_sm_object);
 	}
 	for (unsigned c = 0; c < vd->vdev_children; c++) {
-		refcount += get_obsolete_refcount(vd->vdev_child[c]);
+		refcount += get_obsolete_refcount(vd->vdev_child[c],
+		    spacemap_objs);
 	}
 
 	return (refcount);
 }
 
 static uint64_t
-get_prev_obsolete_spacemap_refcount(spa_t *spa)
+get_prev_obsolete_spacemap_refcount(spa_t *spa,
+    zfs_range_tree_t *spacemap_objs)
 {
 	uint64_t prev_obj =
 	    spa->spa_condensing_indirect_phys.scip_prev_obsolete_sm_object;
@@ -1522,6 +1546,12 @@ get_prev_obsolete_spacemap_refcount(spa_t *spa)
 		dmu_object_info_t doi;
 		VERIFY0(dmu_object_info(spa->spa_meta_objset, prev_obj, &doi));
 		if (doi.doi_bonus_size == sizeof (space_map_phys_t)) {
+			if (spacemap_objs != NULL &&
+			    !zfs_range_tree_contains(spacemap_objs,
+			    prev_obj, 1)) {
+				zfs_range_tree_add(spacemap_objs,
+				    prev_obj, 1);
+			}
 			return (1);
 		}
 	}
@@ -1529,25 +1559,117 @@ get_prev_obsolete_spacemap_refcount(spa_t *spa)
 }
 
 static uint64_t
-get_checkpoint_refcount(vdev_t *vd)
+get_checkpoint_refcount(vdev_t *vd, zfs_range_tree_t *spacemap_objs)
 {
 	uint64_t refcount = 0;
 
-	if (vd->vdev_top == vd && vd->vdev_top_zap != 0 &&
-	    zap_contains(spa_meta_objset(vd->vdev_spa),
-	    vd->vdev_top_zap, VDEV_TOP_ZAP_POOL_CHECKPOINT_SM) == 0)
-		refcount++;
+	if (vd->vdev_top == vd && vd->vdev_top_zap != 0) {
+		uint64_t checkpoint_sm_obj;
+		int error = zap_lookup(spa_meta_objset(vd->vdev_spa),
+		    vd->vdev_top_zap, VDEV_TOP_ZAP_POOL_CHECKPOINT_SM,
+		    sizeof (checkpoint_sm_obj), 1, &checkpoint_sm_obj);
+		if (error == 0) {
+			if (spacemap_objs != NULL &&
+			    !zfs_range_tree_contains(spacemap_objs,
+			    checkpoint_sm_obj, 1)) {
+				zfs_range_tree_add(spacemap_objs,
+				    checkpoint_sm_obj, 1);
+			}
+			refcount++;
+		}
+	}
 
 	for (uint64_t c = 0; c < vd->vdev_children; c++)
-		refcount += get_checkpoint_refcount(vd->vdev_child[c]);
+		refcount += get_checkpoint_refcount(vd->vdev_child[c],
+		    spacemap_objs);
 
 	return (refcount);
 }
 
 static uint64_t
-get_log_spacemap_refcount(spa_t *spa)
+get_log_spacemap_refcount(spa_t *spa, zfs_range_tree_t *spacemap_objs)
 {
-	return (avl_numnodes(&spa->spa_sm_logs_by_txg));
+	uint64_t refcount = 0;
+
+	for (spa_log_sm_t *sls = avl_first(&spa->spa_sm_logs_by_txg);
+	    sls != NULL;
+	    sls = AVL_NEXT(&spa->spa_sm_logs_by_txg, sls)) {
+		if (spacemap_objs != NULL &&
+		    !zfs_range_tree_contains(spacemap_objs, sls->sls_sm_obj,
+		    1)) {
+			zfs_range_tree_add(spacemap_objs, sls->sls_sm_obj, 1);
+		}
+		refcount++;
+	}
+
+	return (refcount);
+}
+
+static void
+dump_spacemap_refcount_mismatch_details(spa_t *spa,
+    uint64_t expected_refcount, uint64_t actual_refcount,
+    zfs_range_tree_t *spacemap_objs)
+{
+	objset_t *mos = spa->spa_meta_objset;
+	uint64_t total_histogram_sm = 0;
+	uint64_t unreferenced_histogram_sm = 0;
+	uint64_t object = 0;
+	boolean_t printed_unreferenced_header = B_FALSE;
+
+	(void) printf("\tdelta(expected-actual)=%lld\n",
+	    (longlong_t)expected_refcount - (longlong_t)actual_refcount);
+
+	while (dmu_object_next(mos, &object, B_FALSE, 0) == 0) {
+		dmu_object_info_t doi;
+		VERIFY0(dmu_object_info(mos, object, &doi));
+		if (doi.doi_type != DMU_OT_SPACE_MAP ||
+		    doi.doi_bonus_size != sizeof (space_map_phys_t))
+			continue;
+
+		total_histogram_sm++;
+		if (zfs_range_tree_contains(spacemap_objs, object, 1))
+			continue;
+
+		unreferenced_histogram_sm++;
+		if (!printed_unreferenced_header) {
+			(void) printf(
+			    "\t  unreferenced histogram space maps:\n");
+			printed_unreferenced_header = B_TRUE;
+		}
+
+		dmu_buf_t *db = NULL;
+		int error = dmu_bonus_hold(mos, object, FTAG, &db);
+		if (error != 0) {
+			(void) printf("\t    object %llu "
+			    "(bonus hold error: %s)\n",
+			    (u_longlong_t)object, strerror(error));
+			continue;
+		}
+
+		space_map_phys_t *smp = db->db_data;
+		(void) printf("\t    object %llu smp_alloc=0x%llx "
+		    "smp_length=0x%llx\n", (u_longlong_t)object,
+		    (u_longlong_t)smp->smp_alloc,
+		    (u_longlong_t)smp->smp_length);
+		dmu_buf_rele(db, FTAG);
+	}
+
+	(void) printf("\t  allocated histogram space maps in MOS=%llu\n",
+	    (u_longlong_t)total_histogram_sm);
+	if (expected_refcount != total_histogram_sm) {
+		(void) printf("\t  WARNING: feature refcount disagrees "
+		    "with MOS scan by %lld\n",
+		    (longlong_t)expected_refcount -
+		    (longlong_t)total_histogram_sm);
+	}
+	if (unreferenced_histogram_sm == 0) {
+		(void) printf(
+		    "\t  no unreferenced histogram space maps found\n");
+	} else {
+		(void) printf("\t  total unreferenced histogram space "
+		    "maps=%llu\n",
+		    (u_longlong_t)unreferenced_histogram_sm);
+	}
 }
 
 static int
@@ -1557,16 +1679,23 @@ verify_spacemap_refcounts(spa_t *spa)
 	uint64_t actual_refcount = 0;
 	uint64_t dtl_refcount, metaslab_refcount, obsolete_refcount,
 	    prev_obsolete_refcount, checkpoint_refcount, log_spacemap_refcount;
+	zfs_range_tree_t *spacemap_objs = zfs_range_tree_create_flags(
+	    NULL, ZFS_RANGE_SEG64, NULL, 0, 0, 0,
+	    "verify_spacemap_refcounts:spacemap_objs");
 
 	(void) feature_get_refcount(spa,
 	    &spa_feature_table[SPA_FEATURE_SPACEMAP_HISTOGRAM],
 	    &expected_refcount);
-	dtl_refcount = get_dtl_refcount(spa->spa_root_vdev);
-	metaslab_refcount = get_metaslab_refcount(spa->spa_root_vdev);
-	obsolete_refcount = get_obsolete_refcount(spa->spa_root_vdev);
-	prev_obsolete_refcount = get_prev_obsolete_spacemap_refcount(spa);
-	checkpoint_refcount = get_checkpoint_refcount(spa->spa_root_vdev);
-	log_spacemap_refcount = get_log_spacemap_refcount(spa);
+	dtl_refcount = get_dtl_refcount(spa->spa_root_vdev, spacemap_objs);
+	metaslab_refcount = get_metaslab_refcount(spa->spa_root_vdev,
+	    spacemap_objs);
+	obsolete_refcount = get_obsolete_refcount(spa->spa_root_vdev,
+	    spacemap_objs);
+	prev_obsolete_refcount = get_prev_obsolete_spacemap_refcount(spa,
+	    spacemap_objs);
+	checkpoint_refcount = get_checkpoint_refcount(spa->spa_root_vdev,
+	    spacemap_objs);
+	log_spacemap_refcount = get_log_spacemap_refcount(spa, spacemap_objs);
 	actual_refcount = dtl_refcount + metaslab_refcount +
 	    obsolete_refcount + prev_obsolete_refcount +
 	    checkpoint_refcount + log_spacemap_refcount;
@@ -1585,8 +1714,15 @@ verify_spacemap_refcounts(spa_t *spa)
 		    (u_longlong_t)prev_obsolete_refcount,
 		    (u_longlong_t)checkpoint_refcount,
 		    (u_longlong_t)log_spacemap_refcount);
+		dump_spacemap_refcount_mismatch_details(spa, expected_refcount,
+		    actual_refcount, spacemap_objs);
+		zfs_range_tree_vacate(spacemap_objs, NULL, NULL);
+		zfs_range_tree_destroy(spacemap_objs);
 		return (2);
 	}
+
+	zfs_range_tree_vacate(spacemap_objs, NULL, NULL);
+	zfs_range_tree_destroy(spacemap_objs);
 	return (0);
 }
 
@@ -4242,6 +4378,10 @@ match_object_type(dmu_object_type_t obj_type, uint64_t flags)
 		if (!(flags & ZOR_FLAG_SPACE_MAP))
 			match = B_FALSE;
 		break;
+	case DMU_OT_ZVOL:
+		if (!(flags & ZOR_FLAG_ZVOL))
+			match = B_FALSE;
+		break;
 	default:
 		if (strcmp(zdb_ot_name(obj_type), "zap") == 0) {
 			if (!(flags & ZOR_FLAG_ZAP))
@@ -6108,16 +6248,19 @@ typedef struct zdb_blkstats {
 } zdb_blkstats_t;
 
 /*
- * Extended object types to report deferred frees and dedup auto-ditto blocks.
+ * Extended object types to report deferred frees, dedup auto-ditto blocks
+ * and pending DDT-log frees.
  */
 #define	ZDB_OT_DEFERRED	(DMU_OT_NUMTYPES + 0)
 #define	ZDB_OT_DITTO	(DMU_OT_NUMTYPES + 1)
-#define	ZDB_OT_OTHER	(DMU_OT_NUMTYPES + 2)
-#define	ZDB_OT_TOTAL	(DMU_OT_NUMTYPES + 3)
+#define	ZDB_OT_DDT_PENDING	(DMU_OT_NUMTYPES + 2)
+#define	ZDB_OT_OTHER	(DMU_OT_NUMTYPES + 3)
+#define	ZDB_OT_TOTAL	(DMU_OT_NUMTYPES + 4)
 
 static const char *zdb_ot_extname[] = {
 	"deferred free",
 	"dedup ditto",
+	"DDT pending free",
 	"other",
 	"Total",
 };
@@ -6624,24 +6767,54 @@ ddt_done:
 		uint64_t offset = DVA_GET_OFFSET(&bp->blk_dva[0]);
 		vdev_t *vd = vdev_lookup_top(zcb->zcb_spa, vdev);
 		ASSERT(vd != NULL);
-		metaslab_t *ms = vd->vdev_ms[offset >> vd->vdev_ms_shift];
-		ASSERT(ms != NULL);
-		metaslab_group_t *mg = ms->ms_group;
-		ASSERT(mg != NULL);
-		metaslab_class_t *mc = mg->mg_class;
-		ASSERT(mc != NULL);
-
-		spa_config_exit(zcb->zcb_spa, SCL_CONFIG, FTAG);
 
 		int class;
-		if (mc == spa_normal_class(zcb->zcb_spa)) {
-			class = CLASS_NORMAL;
-		} else if (mc == spa_special_class(zcb->zcb_spa)) {
-			class = CLASS_SPECIAL;
-		} else if (mc == spa_dedup_class(zcb->zcb_spa)) {
-			class = CLASS_DEDUP;
+		if (vd->vdev_ops == &vdev_indirect_ops) {
+			/*
+			 * A removed vdev has no metaslabs of its own. Without
+			 * -L we synthesize them (see
+			 * zdb_leak_init_prepare_indirect_vdevs()), but under
+			 * -L there is no metaslab array to index. Classify
+			 * from the allocation bias, which determines the
+			 * vdev's primary metaslab group, and does not depend
+			 * on whether those synthetic metaslabs happen to
+			 * exist.
+			 */
+			switch (vd->vdev_alloc_bias) {
+			case VDEV_BIAS_SPECIAL:
+				class = CLASS_SPECIAL;
+				break;
+			case VDEV_BIAS_DEDUP:
+				class = CLASS_DEDUP;
+				break;
+			case VDEV_BIAS_LOG:
+				class = CLASS_OTHER;
+				break;
+			default:
+				class = CLASS_NORMAL;
+				break;
+			}
+			spa_config_exit(zcb->zcb_spa, SCL_CONFIG, FTAG);
 		} else {
-			class = CLASS_OTHER;
+			metaslab_t *ms =
+			    vd->vdev_ms[offset >> vd->vdev_ms_shift];
+			ASSERT(ms != NULL);
+			metaslab_group_t *mg = ms->ms_group;
+			ASSERT(mg != NULL);
+			metaslab_class_t *mc = mg->mg_class;
+			ASSERT(mc != NULL);
+
+			spa_config_exit(zcb->zcb_spa, SCL_CONFIG, FTAG);
+
+			if (mc == spa_normal_class(zcb->zcb_spa)) {
+				class = CLASS_NORMAL;
+			} else if (mc == spa_special_class(zcb->zcb_spa)) {
+				class = CLASS_SPECIAL;
+			} else if (mc == spa_dedup_class(zcb->zcb_spa)) {
+				class = CLASS_DEDUP;
+			} else {
+				class = CLASS_OTHER;
+			}
 		}
 
 		if (!(block_classes & class)) {
@@ -7649,6 +7822,65 @@ bpobj_count_block_cb(void *arg, const blkptr_t *bp, boolean_t bp_freed,
 	return (count_block_cb(arg, bp, tx));
 }
 
+/*
+ * With fast dedup, the last decref of a block lands in the DDT log, and
+ * the physical free happens only when the log entry is flushed back into
+ * the DDT (see ddt_sync_flush_entry()). Until then the block is not
+ * referenced by any block pointer but is still allocated, so the
+ * traversal would misreport it as leaked. Count the phys that the flush
+ * will free here, the same way as the deferred-free bplist: they are
+ * frees in flight. Entries behind the log checkpoint are already flushed
+ * and are not loaded into the in-memory log trees, so everything found
+ * here is genuinely pending. ddt_log_load() merge-normalizes duplicate
+ * keys across the active and flushing logs, and ddt_lookup() searches the
+ * logs before stored DDT objects, so these trees need no DDT ZAP replay.
+ */
+static void
+zdb_count_ddt_log_frees(spa_t *spa, zdb_cb_t *zcb)
+{
+	for (enum zio_checksum c = 0; c < ZIO_CHECKSUM_FUNCTIONS; c++) {
+		ddt_t *ddt = spa->spa_ddt[c];
+		if (ddt == NULL || !(ddt->ddt_flags & DDT_FLAG_LOG))
+			continue;
+		for (int n = 0; n < 2; n++) {
+			ddt_log_t *ddl = &ddt->ddt_log[n];
+			for (ddt_log_entry_t *ddle = avl_first(&ddl->ddl_tree);
+			    ddle; ddle = AVL_NEXT(&ddl->ddl_tree, ddle)) {
+				ddt_lightweight_entry_t ddlwe;
+				DDT_LOG_ENTRY_TO_LIGHTWEIGHT(ddt, ddle,
+				    &ddlwe);
+				for (int p = 0; p < DDT_NPHYS(ddt); p++) {
+					ddt_phys_variant_t v =
+					    DDT_PHYS_VARIANT(ddt, p);
+					/*
+					 * Mirror ddt_sync_flush_entry(): an
+					 * unborn phys owns nothing, an
+					 * obsolete ditto slot is freed
+					 * whatever its refcount, and any
+					 * other slot is freed once its last
+					 * reference is gone.
+					 */
+					if (ddt_phys_birth(&ddlwe.ddlwe_phys,
+					    v) == 0)
+						continue;
+					if (!DDT_PHYS_IS_DITTO(ddt, p) &&
+					    ddt_phys_refcnt(&ddlwe.ddlwe_phys,
+					    v) != 0)
+						continue;
+					blkptr_t blk;
+					ddt_bp_create(ddt->ddt_checksum,
+					    &ddlwe.ddlwe_key, &ddlwe.ddlwe_phys,
+					    v, &blk);
+					/* As ddt_phys_free() does at flush. */
+					BP_SET_DEDUP(&blk, 0);
+					zdb_count_block(zcb, NULL, &blk,
+					    ZDB_OT_DDT_PENDING);
+				}
+			}
+		}
+	}
+}
+
 static int
 livelist_entry_count_blocks_cb(void *args, dsl_deadlist_entry_t *dle)
 {
@@ -7773,6 +8005,8 @@ dump_block_stats(spa_t *spa)
 		(void) bpobj_iterate_nofree(&spa->spa_dsl_pool->dp_free_bpobj,
 		    bpobj_count_block_cb, zcb, NULL);
 	}
+
+	zdb_count_ddt_log_frees(spa, zcb);
 
 	zdb_claim_removing(spa, zcb);
 
@@ -8801,6 +9035,44 @@ mos_obj_refd_multiple(uint64_t obj)
 }
 
 static void
+dump_mos_leaked_object_details(objset_t *mos, uint64_t object,
+    const dmu_object_info_t *doi)
+{
+	if (dump_opt['d'] < 2)
+		return;
+
+	if (doi->doi_type == DMU_OT_DSL_CLONES) {
+		uint64_t entries = 0;
+		int error = zap_count(mos, object, &entries);
+		if (error == 0) {
+			(void) printf("\tleak detail: clone entries=%llu\n",
+			    (u_longlong_t)entries);
+		} else {
+			(void) printf("\tleak detail: clone entry count "
+			    "failed: %s\n", strerror(error));
+		}
+		return;
+	}
+
+	if (doi->doi_type == DMU_OT_SPACE_MAP &&
+	    doi->doi_bonus_size == sizeof (space_map_phys_t)) {
+		dmu_buf_t *db = NULL;
+		int error = dmu_bonus_hold(mos, object, FTAG, &db);
+		if (error != 0) {
+			(void) printf("\tleak detail: space map bonus hold "
+			    "failed: %s\n", strerror(error));
+			return;
+		}
+
+		space_map_phys_t *smp = db->db_data;
+		(void) printf("\tleak detail: smp_alloc=0x%llx "
+		    "smp_length=0x%llx\n", (u_longlong_t)smp->smp_alloc,
+		    (u_longlong_t)smp->smp_length);
+		dmu_buf_rele(db, FTAG);
+	}
+}
+
+static void
 mos_leak_vdev_top_zap(vdev_t *vd)
 {
 	uint64_t ms_flush_data_obj;
@@ -9010,6 +9282,8 @@ dump_mos_leaks(spa_t *spa)
 
 			(void) printf("MOS object %llu (%s) leaked\n",
 			    (u_longlong_t)object, name);
+			dump_mos_leaked_object_details(mos, object,
+			    &doi);
 			rv = 2;
 		}
 	}
@@ -10499,12 +10773,18 @@ main(int argc, char **argv)
 				/*
 				 * If we're missing the log device then
 				 * try opening the pool after clearing the
-				 * log state.
+				 * log state.  Keep the global spa NULL
+				 * meanwhile: the failed open left it that
+				 * way, we hold no reference on what the
+				 * lookup returns, and zdb_exit() would
+				 * spa_close() it on the way out.
 				 */
+				spa_t *found;
+
 				spa_namespace_enter(FTAG);
-				if ((spa = spa_lookup(target)) != NULL &&
-				    spa->spa_log_state == SPA_LOG_MISSING) {
-					spa->spa_log_state = SPA_LOG_CLEAR;
+				if ((found = spa_lookup(target)) != NULL &&
+				    found->spa_log_state == SPA_LOG_MISSING) {
+					found->spa_log_state = SPA_LOG_CLEAR;
 					error = 0;
 				}
 				spa_namespace_exit(FTAG);
@@ -10598,6 +10878,7 @@ retry_lookup:
 		flagbits['d'] = ZOR_FLAG_DIRECTORY;
 		flagbits['f'] = ZOR_FLAG_PLAIN_FILE;
 		flagbits['m'] = ZOR_FLAG_SPACE_MAP;
+		flagbits['v'] = ZOR_FLAG_ZVOL;
 		flagbits['z'] = ZOR_FLAG_ZAP;
 		flagbits['A'] = ZOR_FLAG_ALL_TYPES;
 

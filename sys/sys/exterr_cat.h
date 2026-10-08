@@ -57,6 +57,7 @@
 #define	EXTERR_CAT_HWPMC_AMD	20
 #define	EXTERR_CAT_HWPMC_MOD	21
 #define	EXTERR_CAT_TTY		22
+#define	EXTERR_CAT_GEOMZONED	23
 /* 5BSD-local categories start at 128 so new FreeBSD ones cannot collide. */
 #define	EXTERR_CAT_CAPSICUM	128
 

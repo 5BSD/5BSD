@@ -152,7 +152,8 @@ void FuseTest::SetUp() {
 			m_pm, m_init_flags, m_kernel_minor_version,
 			m_maxwrite, m_async, m_noclusterr, m_time_gran,
 			m_nointr, m_noatime, m_fsname, m_subtype,
-			m_no_auto_init, m_auto_unmount, m_linux_errnos);
+			m_no_auto_init, m_auto_unmount, m_daemon_timeout,
+			m_linux_errnos);
 		/* 
 		 * FUSE_ACCESS is called almost universally.  Expecting it in
 		 * each test case would be super-annoying.  Instead, set a
@@ -182,7 +183,7 @@ void FuseTest::SetUp() {
 			_)
 		).Times(AnyNumber())
 		.WillRepeatedly(Invoke(ReturnErrno(m_linux_errnos ? 38 : ENOSYS)));
-	} catch (std::system_error err) {
+	} catch (std::system_error const& err) {
 		FAIL() << err.what();
 	}
 }

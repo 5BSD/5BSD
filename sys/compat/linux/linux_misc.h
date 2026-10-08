@@ -72,8 +72,8 @@
 #define	LINUX_PR_SET_NO_NEW_PRIVS	38 /* Set no_new_privs attribute */
 #define	LINUX_PR_GET_NO_NEW_PRIVS	39 /* Get no_new_privs attribute */
 #define	LINUX_PR_GET_TID_ADDRESS	40 /* Get clear_child_tid address */
-#define	LINUX_PR_SET_THP_DISABLE	41
-#define	LINUX_PR_GET_THP_DISABLE	42
+#define	LINUX_PR_SET_THP_DISABLE	41 /* Disable / enable THP */
+#define	LINUX_PR_GET_THP_DISABLE	42 /* Get THP state */
 #define	LINUX_PR_GET_SPECULATION_CTRL	52
 #define	LINUX_PR_SET_SPECULATION_CTRL	53
 #define	LINUX_PR_SET_PTRACER	1499557217

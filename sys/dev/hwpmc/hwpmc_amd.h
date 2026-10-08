@@ -35,6 +35,8 @@
 #define	CPUID_EXTPERFMON	0x80000022
 #define	EXTPERFMON_CORE_PMCS(x)	((x) & 0x0F)
 #define	EXTPERFMON_DF_PMCS(x)	(((x) >> 10) & 0x3F)
+#define	EXTPERFMON_UMC_PMCS(x)	(((x) >> 16) & 0xFF)
+#define	EXTPERFMON_PERFMONV2(x)	((x) & 0x1)
 
 /* AMD K8 PMCs */
 #define	AMD_PMC_EVSEL_0		0xC0010000
@@ -61,6 +63,16 @@
 #define	AMD_PMC_CORE_BASE	0xC0010200
 #define	AMD_PMC_CORE_DEFAULT	6
 #define	AMD_PMC_CORE_MAX	16
+
+/*
+ * These are the PerfMonV2 global-control MSRs (Fam 19h Zen3+ / 1Ah).
+ * They control core counters only.  L3 and DF counters keep the
+ * classic per-counter path.
+ */
+#define	AMD_PMC_GLOBAL_STATUS		0xC0000300	/* RO  */
+#define	AMD_PMC_GLOBAL_CTL		0xC0000301	/* RW  */
+#define	AMD_PMC_GLOBAL_STATUS_CLR	0xC0000302	/* WO  */
+/* A future LBR v2 change adds GLOBAL_STATUS.LBRS_FROZEN (bit 58) here. */
 
 #define	AMD_PMC_COUNTERMASK	0xFF000000
 #define AMD_PMC_PRECISERETIRE	(1ULL << 43) /* Only valid for PERF_CTL2 */
@@ -170,9 +182,35 @@
 	 AMD_PMC_DF2_TO_EVENTMASK(0x7fff) |				\
 	 AMD_PMC_DF2_TO_UNITMASK(0xfff))
 
+/*
+ * UMC counters
+ *
+ * Refer to the following documents:
+ * PPR for AMD Family 1Ah Model 02h C1 57238 Rev. 0.49 March 6, 2026
+ */
+
+#define	AMD_PMC_UMC_BASE	0xC0010800
+#define	AMD_PMC_UMC_MAX		256
+
+#define	AMD_PMC_UMC_CAPS	(PMC_CAP_READ | PMC_CAP_WRITE | \
+	PMC_CAP_QUALIFIER | PMC_CAP_DOMWIDE)
+
+#define	AMD_PMC_UMC_ENABLE	0x80000000
+#define	AMD_PMC_UMC_RDWRMASK	0x00000300
+#define	AMD_PMC_UMC_EVENTMASK	0x000000FF
+
+#define	AMD_PMC_UMC_MASK	(AMD_PMC_UMC_ENABLE | AMD_PMC_UMC_RDWRMASK | \
+				 AMD_PMC_UMC_EVENTMASK)
+
+#define	AMD_PMC_UMC_IS_STOPPED(evsel) ((rdmsr((evsel)) & AMD_PMC_UMC_ENABLE) == 0)
+
+#define	AMD_PMC_UMC_TO_EVENTMASK(x)	((x) & AMD_PMC_UMC_EVENTMASK)
+#define	AMD_PMC_UMC_TO_RDWRMASK(x)	(((x) << 8) & AMD_PMC_UMC_RDWRMASK)
+
 #define	AMD_NPMCS_K8		4
-#define AMD_NPMCS_MAX		(AMD_PMC_CORE_MAX + AMD_PMC_L3_MAX + \
-				 AMD_PMC_DF_MAX)
+/* Compile-time upper bound; npmcs_total must not exceed this. */
+#define	AMD_NPMCS_MAX		(AMD_PMC_CORE_MAX + AMD_PMC_L3_MAX + \
+				 AMD_PMC_DF_MAX + AMD_PMC_UMC_MAX)
 
 #define AMD_PMC_IS_STOPPED(evsel) ((rdmsr((evsel)) & AMD_PMC_ENABLE) == 0)
 #define AMD_PMC_HAS_OVERFLOWED(pmc) ((rdpmc(pmc) & (1ULL << 47)) == 0)
@@ -183,7 +221,8 @@
 enum sub_class {
 	PMC_AMD_SUB_CLASS_CORE,
 	PMC_AMD_SUB_CLASS_L3_CACHE,
-	PMC_AMD_SUB_CLASS_DATA_FABRIC
+	PMC_AMD_SUB_CLASS_DATA_FABRIC,
+	PMC_AMD_SUB_CLASS_UMC
 };
 
 struct pmc_md_amd_op_pmcallocate {

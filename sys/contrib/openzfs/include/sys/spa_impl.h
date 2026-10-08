@@ -142,11 +142,15 @@ struct spa_aux_vdev {
 	uint_t		sav_npending;		/* # pending devices */
 };
 
+/*
+ * scl_count holds the reference count plus SCL_COUNT_WRITER, so that a reader
+ * can take a reference and check for a writer in one atomic operation.
+ */
 typedef struct spa_config_lock {
 	kmutex_t	scl_lock;
 	kthread_t	*scl_writer;
 	int		scl_write_wanted;
-	int		scl_count;
+	uint32_t	scl_count;
 	kcondvar_t	scl_cv;
 } ____cacheline_aligned spa_config_lock_t;
 
@@ -341,7 +345,7 @@ struct spa {
 	kthread_t	*spa_async_thread;	/* thread doing async task */
 	int		spa_async_suspended;	/* async tasks suspended */
 	kcondvar_t	spa_async_cv;		/* wait for thread_exit() */
-	uint16_t	spa_async_tasks;	/* async task mask */
+	uint32_t	spa_async_tasks;	/* async task mask */
 	uint64_t	spa_missing_tvds;	/* unopenable tvds on load */
 	uint64_t	spa_missing_tvds_allowed; /* allow loading spa? */
 

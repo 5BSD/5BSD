@@ -13,8 +13,158 @@
 !! will be funded by the City of Munich as part of their                     !!
 !! Open Source Sabbatical (https://opensource.muenchen.de/sabbatical.html)   !!
 !! — thank you!                                                              !!
-!!                                   Sebastian Pipping -- Berlin, 2026-08-03 !!
+!!                                                                           !!
+!! If your business relies on Expat beyond January 2027, please consider     !!
+!! funding the maintenance of Expat to ensure its health and security for    !!
+!! you and others. Thank you!                                                !!
+!!                                                                           !!
+!!                                   Sebastian Pipping -- Berlin, 2026-09-22 !!
 !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+Release 2.8.5 Tue September 22 2026
+        Security fixes:
+           #1282  CVE-2026-93990 -- Reject high surrogates not followed by a
+                    low surrogate during UTF-16 decoding; previously, malformed
+                    UTF-16 could be smuggled into the application using Expat
+                    and could cause arbitrary damage there, depending on how
+                    malformed UTF-16 was handled inside the application;
+                    validation was not their job but Expat's. This is similar
+                    to past vulnerability CVE-2022-25235.
+                    Upstream CVSS 3.1 vector:
+                    AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H (CVSS score: 9.8)
+
+///////////////////////////////////////////////////////////////////////////////
+// The next release will drop two (disabled-by-default) features:            //
+//                                                                           //
+// - ATTR_INFO (-DXML_ATTR_INFO, -DEXPAT_ATTR_INFO, --enable-xml-attr-info,  //
+//              function XML_GetAttributeInfo, struct XML_AttrInfo)          //
+// - MIN_SIZE (-DXML_MIN_SIZE, -DEXPAT_MIN_SIZE)                             //
+//                                                                           //
+// If you need them in 2026 and beyond, please share your scenario at        //
+// GitHub issues #1370 (for ATTR_INFO) and/or #1379 (for MIN_SIZE). Thanks!  //
+///////////////////////////////////////////////////////////////////////////////
+
+        Bug fixes:
+           #1346  lib: Fix OOM-related memory leak on a failed overflow check
+           #1371  lib: Fix memory alignment for architectures with 128bit
+                    pointers like CHERI-RISC-V
+           #1367  xmlwf: Handle errors when closing output files
+
+        Other changes:
+           #1354  lib: Reject an XML declaration version other than `1.[0-9]+`
+                    (which is less strict than XML 1.0r4 (fourth edition)
+                    and matches XML 1.0r5 (fifth edition))
+           #1362  lib: Make Clang, GCC and MSVC warn about use of function
+                    XML_SetHashSalt that is deprecated since Expat 2.8.0
+           #1357  lib: Drop internal macros FASTCALL, PTRCALL, PTRFASTCALL
+           #1367  xmlwf: Document that with `-k` the last error determines the
+                    xmlwf exit code in `--help` output
+           #1367  xmlwf: Make exit code 3 documentation match exit code 2 more
+                    closely in `--help` output
+     #1352 #1353  CMake|Windows: Refrain from adding `/source-charset:utf-8`
+                    for MSVC
+     #1366 #1374  Autotools: Be explicit about the minimum required version of
+                    GNU Automake, currently version 1.13 of 2012-12-28
+           #1351  Autotools|macOS: Sync CMake templates with CMake 4.4.3
+           #1349  Replace some internal use of XML_Bool with standard bool
+           #1364  tests: Propagate xmltest.sh failures via exit status
+           #1360  tests|xmlwf: Add `#include "expat_config.h"` where missing
+           #1355  tests: Start covering hash table operation
+     #1350 #1369  tests: Drop __cplusplus leftovers
+           #1378  tests: Fix tail pointer when unlinking the last tracked
+                    allocation
+           #1376  docs: Emphasize that XML_StopParser is not immediate
+           #1381  docs: Sync XML_FeatureEnum value list in doc/reference.html
+     #1356 #1361  Version info bumped from 13:4:12 (libexpat*.so.1.12.4)
+                    to 13:5:12 (libexpat*.so.1.12.5); see https://verbump.de/
+                    for what these numbers do
+
+        Infrastructure:
+           #1347  Add missing .gitignore entries
+           #1360  CI: Detect missing `#include "expat_config.h"`
+           #1368  CI: Bump MinGW Clang from 23.0.1 to 23.1.1
+           #1377  CI: Bump Fil-C from 0.684 to 0.685
+           #1380  CI: Bump Cppcheck from 2.21.0 to 2.22.0
+           #1372  CI: Extract helper script `apply-htmltidy.sh`
+     #1366 #1374  Autotools: Start to also produce .tar.bz3 release tarballs
+
+        Special thanks to:
+            Afonso Januário
+            Braian Plaku
+            Florian Schmaus
+            Huang Wenbin
+            Kamila Szewczyk
+            Kartik Kenchi
+            Leo Camus
+            Matthew Fernandez
+            Stan Ulbrych
+                 and
+            City of Munich Open Source Sabbatical
+
+Release 2.8.4 Mon August 31 2026
+        Security fixes:
+     #1321 #1331  CVE-2026-66046, CVE-2026-76641 -- Fix quadratic runtime from
+                    "attribute isCdata lookups" that allowed denial of service
+                    attacks through moderately sized crafted XML input
+                    (CWE-407).
+                    The vulnerability is closely related to past CVE-2026-45186
+                    that was fixed with Expat 2.8.1.
+                    Please note that a layer of compression around XML can
+                    significantly reduce the minimum attack payload size.
+                    Upstream CVSS 3.1 vector:
+                    AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H (CVSS score: 7.5)
+                    (Note the "AV:N" for network/remote.)
+           #1322  CVE-2026-76957 -- Protect custom encoding callbacks from
+                    parser re-entry. The vulnerability is closely related to
+                    past issues CVE-2026-50219, CVE-2026-56131 and
+                    CVE-2026-56412 that were all fixed with Expat 2.8.2.
+           #1326  CVE-2026-76956 -- Fix inverted getentropy() return handling
+                    Allows for hash flooding denial of services in
+                    configurations where getentropy is configured or detected
+                    as the only high quality entropy extractor.
+                    Upstream CVSS 3.1 vector:
+                    AV:N/AC:H/PR:N/UI:N/S:U/C:N/I:N/A:H (CVSS score: 5.9)
+                    (Note the "AV:N" for network/remote.)
+
+        Other changes:
+     #1332 #1333  CMake: Only add `/source-charset:utf-8` when `/utf-8` is not
+                    present
+           #1315  lib: Resolve (currently unreachable) undefined behavior from
+                    overshifting a signed int to the left
+     #1325 #1334  lib: Support read-only hash table lookup with keys that are
+                    not zero-terminated
+           #1340  lib: Use a C99 bool for `ENTITY.open`
+           #1319  Fix typo in comment
+           #1320  Sync file headers
+     #1328 #1329  Version info bumped from 13:3:12 (libexpat*.so.1.12.3)
+                    to 13:4:12 (libexpat*.so.1.12.4); see https://verbump.de/
+                    for what these numbers do
+
+        Infrastructure:
+     #1317 #1335  CI: Cover compilation and execution with Fil-C
+           #1337  CI: Cover compilation and execution on riscv64
+           #1338  CI: Cover compilation and execution with Clang-based MinGW
+           #1339  CI: Cover compilation and execution on (big-endian) s390x
+           #1316  CI: Run test suite with musl, also
+           #1336  CI: Bump WASI SDK from 33 to 34
+           #1345  CI: Bump Clang from 22 to 23
+
+        Special thanks to:
+            Alberto Maschietto
+            Alexander Bluhm
+            Berkay Eren Ürün
+            Darren Carreras
+            Fabian Wahle (Hap Security)
+            Matteo Forzan
+            Matthew Fernandez
+            Sorrashut Kaewtaworn
+            Wade Sparks III
+            Zeyou Liu
+                 and
+            City of Munich Open Source Sabbatical
+            Moonshot AI
+            VulnCheck
+            Z.ai
 
 Release 2.8.3 Mon August 10 2026
         Security fixes:

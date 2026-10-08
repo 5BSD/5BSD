@@ -4768,7 +4768,7 @@ unp_internalize(struct mbuf *control, struct mchain *mc, struct thread *td,
 				fdep[i]->fde_file = fde->fde_file;
 				filecaps_copy(&fde->fde_caps,
 				    &fdep[i]->fde_caps, true);
-				filecaps_intersect(&fdep[i]->fde_caps,
+				filecaps_restrict(&fdep[i]->fde_caps,
 				    &fde->fde_xfer_caps);
 				if (fde->fde_xfer_state == CAP_XFER_ONCE) {
 					fde->fde_xfer_state = CAP_XFER_NONE;

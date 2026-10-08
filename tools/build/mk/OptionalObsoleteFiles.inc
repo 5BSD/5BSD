@@ -60,14 +60,8 @@ OLD_FILES+=etc/devd/power_profile.conf
 .endif
 
 .if ${MK_APM} == no
-OLD_FILES+=etc/rc.d/apm
-OLD_FILES+=etc/rc.d/apmd
-OLD_FILES+=etc/apmd.conf
 OLD_FILES+=usr/sbin/apm
-OLD_FILES+=usr/share/examples/etc/apmd.conf
-.elif ${TARGET_ARCH} != "i386"
-OLD_FILES+=etc/rc.d/apm
-OLD_FILES+=etc/rc.d/apmd
+OLD_FILES+=usr/share/man/man8/apm.8.gz
 .endif
 
 .if ${MK_AT} == no
@@ -1436,6 +1430,18 @@ OLD_FILES+=usr/share/man/man1/llvm-pdbutil.1.gz
 OLD_FILES+=usr/share/man/man1/opt.1.gz
 .endif
 
+.if ${MK_CDDL} == no
+CDDL_TEST_DIRS=	cddl
+. for d in ${CDDL_TEST_DIRS}
+.  if exists(${DESTDIR}${TESTSBASE}/${d}/)
+TESTS_DIRS!=find ${DESTDIR}${TESTSBASE}/${d}/ -type d | sed -e 's,^${DESTDIR}/,,'; echo
+OLD_DIRS+=${TESTS_DIRS}
+TESTS_FILES!=find ${DESTDIR}${TESTSBASE}/${d}/ -type f | sed -e 's,^${DESTDIR}/,,'; echo
+OLD_FILES+=${TESTS_FILES}
+.  endif
+. endfor
+.endif
+
 .if ${MK_CLANG_EXTRAS} == no && ${MK_CLANG_FORMAT} == no
 OLD_FILES+=usr/bin/clang-format
 .endif
@@ -1670,6 +1676,28 @@ OLD_DIRS+=usr/lib${libcompat}/dtrace
 OLD_DIRS+=usr/libexec/dwatch
 OLD_DIRS+=usr/share/dtrace/toolkit
 OLD_DIRS+=usr/share/dtrace
+
+CTFCONVERT_TEST_DIRS=	cddl/usr.bin/ctfconvert
+. for d in ${CTFCONVERT_TEST_DIRS}
+.  if exists(${DESTDIR}${TESTSBASE}/${d}/)
+TESTS_DIRS!=find ${DESTDIR}${TESTSBASE}/${d}/ -type d | sed -e 's,^${DESTDIR}/,,'; echo
+OLD_DIRS+=${TESTS_DIRS}
+TESTS_FILES!=find ${DESTDIR}${TESTSBASE}/${d}/ -type f | sed -e 's,^${DESTDIR}/,,'; echo
+OLD_FILES+=${TESTS_FILES}
+.  endif
+. endfor
+.endif
+
+.if ${MK_DTRACE_TESTS} == no
+DTRACE_TEST_DIRS=	cddl/usr.sbin/dtrace
+. for d in ${DTRACE_TEST_DIRS}
+.  if exists(${DESTDIR}${TESTSBASE}/${d}/)
+TESTS_DIRS!=find ${DESTDIR}${TESTSBASE}/${d}/ -type d | sed -e 's,^${DESTDIR}/,,'; echo
+OLD_DIRS+=${TESTS_DIRS}
+TESTS_FILES!=find ${DESTDIR}${TESTSBASE}/${d}/ -type f | sed -e 's,^${DESTDIR}/,,'; echo
+OLD_FILES+=${TESTS_FILES}
+.  endif
+. endfor
 .endif
 
 .if ${MK_EE} == no
@@ -9436,6 +9464,19 @@ OLD_FILES+=usr/share/zfs/compatibility.d/zol-0.7
 OLD_FILES+=usr/share/zfs/compatibility.d/zol-0.8
 OLD_DIRS+=usr/share/zfs/compatibility.d
 OLD_DIRS+=usr/share/zfs
+.endif
+
+.if ${MK_ZFS_TESTS} == no
+ZFS_TEST_DIRS=	cddl/usr.bin/ztest
+ZFS_TEST_DIRS+=	cddl/usr.sbin/zfsd
+. for d in ${ZFS_TEST_DIRS}
+.  if exists(${DESTDIR}${TESTSBASE}/${d}/)
+TESTS_DIRS!=find ${DESTDIR}${TESTSBASE}/${d}/ -type d | sed -e 's,^${DESTDIR}/,,'; echo
+OLD_DIRS+=${TESTS_DIRS}
+TESTS_FILES!=find ${DESTDIR}${TESTSBASE}/${d}/ -type f | sed -e 's,^${DESTDIR}/,,'; echo
+OLD_FILES+=${TESTS_FILES}
+.  endif
+. endfor
 .endif
 
 .if ${MK_ZONEINFO} == no

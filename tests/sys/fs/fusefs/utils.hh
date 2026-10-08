@@ -73,6 +73,7 @@ class FuseTest : public ::testing::Test {
 	bool m_auto_unmount;
 	bool m_linux_errnos;
 	unsigned m_time_gran;
+	unsigned m_daemon_timeout;
 	MockFS *m_mock = NULL;
 	const static uint64_t FH = 0xdeadbeef1a7ebabe;
 	const char *reclaim_mib = "debug.try_reclaim_vnode";
@@ -102,6 +103,7 @@ class FuseTest : public ::testing::Test {
 		m_auto_unmount(false),
 		m_linux_errnos(false),
 		m_time_gran(1),
+		m_daemon_timeout(0),
 		m_fsname(""),
 		m_subtype(""),
 		m_maxbcachebuf(0),

@@ -1074,6 +1074,13 @@ vi_pci_notify_queue(struct virtio_softc *vs, uint64_t qidx)
 	if (vs->vs_transport == VIRTIO_PCI_TRANSPORT_MODERN &&
 	    (!vq->vq_enabled || vq_is_resetting(vq)))
 		return;
+	/*
+	 * Ignore kicks for a queue that has no ring yet (e.g. a legacy
+	 * QueuePFN write that was rejected as unmappable); there is nothing
+	 * for the device to consume.
+	 */
+	if (!vq_is_allocated(vq))
+		return;
 	/* A malformed ring is fatal until the driver performs a real reset. */
 	if ((vs->vs_status & VIRTIO_CONFIG_S_NEEDS_RESET) != 0)
 		return;

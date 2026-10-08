@@ -65,6 +65,7 @@
 #include <linux/idr.h>
 #include <linux/io.h>
 #include <linux/io-mapping.h>
+#include <linux/device.h>
 
 #ifdef __i386__
 DEFINE_IDR(mtrr_idr);
@@ -420,6 +421,35 @@ iounmap(void *addr)
 	kfree(vmmap);
 }
 
+static void
+lkpi_devm_memremap_unmap(struct device *dev, void *p)
+{
+	void **dr = p;
+
+	memunmap(*dr);
+}
+
+void *
+linuxkpi_devm_memremap(struct device *dev, resource_size_t offset, size_t size,
+    unsigned long flags)
+{
+	void **dr, *addr;
+
+	dr = devres_alloc(lkpi_devm_memremap_unmap, sizeof(*dr), GFP_KERNEL);
+	if (dr == NULL)
+		return (ERR_PTR(-ENOMEM));
+	addr = memremap(offset, size, flags);
+	if (addr != NULL) {
+		*dr = addr;
+		devres_add(dev, dr);
+	} else {
+		addr = ERR_PTR(-ENXIO);
+		devres_free(dr);
+	}
+
+	return (addr);
+}
+
 void *
 vmap(struct page **pages, unsigned int count, unsigned long flags, int prot)
 {
@@ -515,12 +545,15 @@ lkpi_vmf_insert_pfn_prot_locked(struct vm_area_struct *vma, unsigned long addr,
 	vm_page_t page;
 	vm_pindex_t pindex;
 
+	if (addr < vma->vm_start || addr >= vma->vm_end)
+		return (VM_FAULT_SIGBUS);
+
 	VM_OBJECT_ASSERT_WLOCKED(vm_obj);
 	vm_page_iter_init(&pages, vm_obj);
 	pindex = OFF_TO_IDX(addr - vma->vm_start);
 	if (vma->vm_pfn_count == 0)
 		vma->vm_pfn_first = pindex;
-	MPASS(pindex <= OFF_TO_IDX(vma->vm_end));
+	MPASS(pindex < OFF_TO_IDX(vma->vm_end));
 
 retry:
 	page = vm_page_grab_iter(vm_obj, pindex, VM_ALLOC_NOCREAT, &pages);

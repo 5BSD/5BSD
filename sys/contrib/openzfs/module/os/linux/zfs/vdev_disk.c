@@ -414,7 +414,7 @@ vdev_disk_open(vdev_t *v, uint64_t *psize, uint64_t *max_psize,
 	 */
 
 	hrtime_t start = gethrtime();
-	int err = ENXIO;
+	int err = -ENXIO;
 	while (err != 0 && ((gethrtime() - start) < timeout)) {
 
 		/*
@@ -425,7 +425,7 @@ vdev_disk_open(vdev_t *v, uint64_t *psize, uint64_t *max_psize,
 		 */
 		struct path devpath;
 		err = kern_path(v->vdev_path, LOOKUP_FOLLOW, &devpath);
-		if (err == 0) {
+		if (likely(err == 0)) {
 			int mask =
 			    (smode & SPA_MODE_READ ? MAY_READ : 0) |
 			    (smode & SPA_MODE_WRITE ? MAY_WRITE : 0);
@@ -433,29 +433,46 @@ vdev_disk_open(vdev_t *v, uint64_t *psize, uint64_t *max_psize,
 			path_put(&devpath);
 		}
 
-		if (err == 0) {
+		if (likely(err == 0)) {
+			/*
+			 * Device node exists and we have access to it, so try
+			 * to open it.
+			 */
 			bdh = vdev_blkdev_get_by_path(v->vdev_path, smode,
 			    zfs_vdev_holder);
-			err = BDH_IS_ERR(bdh) ? BDH_PTR_ERR(bdh) : 0;
-		}
 
-		if (err == 0)
-			break;
-
-		if (unlikely(err == -ENOENT)) {
-			/*
-			 * There is no point of waiting since device is removed
-			 * explicitly
-			 */
-			if (v->vdev_removed)
+			if (likely(!BDH_IS_ERR(bdh)))
+				/* Device open, nothing more to consider. */
 				break;
 
+			err = BDH_PTR_ERR(bdh);
+		}
+
+		ASSERT3U(err, !=, 0);
+
+		if (err == -ENOENT) {
+			/* Device node disappeared, see above comment. */
+
+			if (v->vdev_removed) {
+				/*
+				 * There is no point of waiting since device is
+				 * removed explicitly
+				 */
+				break;
+			}
+
+			/* Wait a moment, then retry. */
 			schedule_timeout_interruptible(MSEC_TO_TICK(10));
-		} else if (unlikely(err == -ERESTARTSYS)) {
+			continue;
+		}
+
+		if (err == -ERESTARTSYS) {
+			/* zvol deadlock avoided, extend timeout and retry. */
 			timeout = MSEC2NSEC(zfs_vdev_open_timeout_ms * 10);
 			continue;
 		}
 
+		/* Consider all other errors permanent, no retry. */
 		break;
 	}
 
@@ -965,8 +982,7 @@ vdev_disk_check_alignment_cb(struct page *page, size_t off, size_t len,
 }
 
 /*
- * Check if we can submit the pages in this ABD to the kernel as-is. Returns
- * the number of pages, or 0 if it can't be submitted like this.
+ * Check if we can submit the pages in this ABD to the kernel as-is.
  */
 static boolean_t
 vdev_disk_check_alignment(abd_t *abd, uint64_t size, struct block_device *bdev)
@@ -974,6 +990,17 @@ vdev_disk_check_alignment(abd_t *abd, uint64_t size, struct block_device *bdev)
 	vdev_disk_check_alignment_t s = {
 	    .blocksize = bdev_logical_block_size(bdev),
 	};
+
+	/*
+	 * A linear ABD is a single contiguous range, so only its first page
+	 * can carry an offset and only its last one can be short. That leaves
+	 * the alignment of the buffer as the only thing to check, and no
+	 * reason to look up the pages.
+	 */
+	if (abd_is_linear(abd)) {
+		ASSERT(IS_P2ALIGNED(size, s.blocksize));
+		return (IS_P2ALIGNED(abd_to_buf(abd), s.blocksize));
+	}
 
 	if (abd_iterate_page_func(abd, 0, size,
 	    vdev_disk_check_alignment_cb, &s))

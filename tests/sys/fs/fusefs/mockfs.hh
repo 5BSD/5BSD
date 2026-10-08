@@ -375,7 +375,8 @@ class MockFS {
 		uint32_t kernel_minor_version, uint32_t max_write, bool async,
 		bool no_clusterr, unsigned time_gran, bool nointr,
 		bool noatime, const char *fsname, const char *subtype,
-		bool no_auto_init, bool auto_unmount, bool linux_errnos = false);
+		bool no_auto_init, bool auto_unmount, unsigned daemon_timeout,
+		bool linux_errnos = false);
 
 	virtual ~MockFS();
 

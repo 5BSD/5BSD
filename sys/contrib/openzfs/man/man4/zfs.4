@@ -16,7 +16,7 @@
 .\" Copyright (c) 2026, Mateusz Piotrowski <0mp@FreeBSD.org>
 .\" Copyright (c) 2026, TrueNAS.
 .\"
-.Dd July 12, 2026
+.Dd September 9, 2026
 .Dt ZFS 4
 .Os
 .
@@ -346,6 +346,12 @@ This applies primarily to
 .It Sy zfs_keep_log_spacemaps_at_export Ns = Ns Sy 0 Ns | Ns 1 Pq int
 Prevent log spacemaps from being destroyed during pool exports and destroys.
 .
+.It Sy zfs_log_sm_blksz Ns = Ns Sy 131072 Ns B Po 128 KiB Pc Pq int
+This is used as the block size for the space maps used for the
+log space map feature.
+These space maps benefit from a bigger block size
+as we expect to be writing a lot of data to them at once.
+.
 .It Sy zfs_metaslab_segment_weight_enabled Ns = Ns Sy 1 Ns | Ns 0 Pq int
 Enable/disable segment-based metaslab selection.
 .
@@ -621,8 +627,10 @@ Whether to traverse data blocks during an "extreme rewind"
 .Pq Fl X
 import.
 .Pp
-An extreme rewind import normally performs a full traversal of all
-blocks in the pool for verification.
+Data blocks are traversed only if the number of errors found in them is going
+to be reported, like during a dry run
+.Pq Fl nX ,
+since an actual rewind tolerates any number of them.
 If this parameter is unset, the traversal skips non-metadata blocks.
 It can be toggled once the
 import has started to stop or start the traversal of non-metadata blocks.
@@ -1802,6 +1810,31 @@ directory by setting the
 .Em nosuid
 mount option.
 .
+.It Sy zfs_sb_uuid Ns = Ns Sy 1 Ns | Ns 0 Pq int
+Set the filesystem UUID of a filesystem, snapshot, or clone at mount time,
+from the pool GUID and the dataset GUID, as the
+.Sy guid
+property in
+.Xr zfsprops 7
+describes.
+Set to
+.Sy 0
+to leave the UUID null, as releases without this parameter did, for example
+when stale overlayfs file handles block a mount after an upgrade; see the
+.Sx Filesystem UUIDs and Overlayfs
+section of
+.Xr zpool-reguid 8 .
+A change applies to the filesystems that are mounted after the change.
+For the filesystems that mount at boot, set the parameter before the first
+mount, on the kernel command line as
+.Sy zfs.zfs_sb_uuid=0
+or in a
+.Pa modprobe.d
+file as
+.Sy options zfs zfs_sb_uuid=0 .
+When the root filesystem is on ZFS, the initramfs must include that file.
+This parameter only applies on Linux.
+.
 .It Sy zfs_flags Ns = Ns Sy 0 Pq int
 Set additional debugging flags.
 The following flags may be bitwise-ored together:
@@ -2740,6 +2773,12 @@ using LZ4 and zstd-1 passes is enabled.
 .It Sy zstd_abort_size Ns = Ns Sy 131072 Pq uint
 Minimal uncompressed size (inclusive) of a record before the early abort
 heuristic will be attempted.
+.
+.It Sy zio_batch_enabled Ns = Ns Sy 1 Ns | Ns 0 Pq int
+Collect the vdev children of a RAIDZ, dRAID or mirror I/O operation as they
+complete, and process all of their completions on a single thread once the
+last of them is in, rather than one thread each.
+Applies only to children that bypass the vdev I/O queue.
 .
 .It Sy zio_deadman_log_all Ns = Ns Sy 0 Ns | Ns 1 Pq int
 If non-zero, the zio deadman will produce debugging messages

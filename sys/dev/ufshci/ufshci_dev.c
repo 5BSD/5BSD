@@ -242,9 +242,26 @@ ufshci_dev_init_reference_clock(struct ufshci_controller *ctrlr)
 {
 	int error;
 	uint8_t index, selector;
+	uint64_t value;
 
 	index = 0;    /* bRefClkFreq is device type attribute */
 	selector = 0; /* bRefClkFreq is device type attribute */
+
+	/*
+	 * bRefClkFreq is a persistent attribute. Skip the write when
+	 * the device already holds the wanted value.
+	 */
+	error = ufshci_dev_read_attribute(ctrlr, UFSHCI_ATTR_B_REF_CLK_FREQ,
+	    index, selector, &value);
+	if (error != 0) {
+		ufshci_printf(ctrlr, "bRefClkFreq read failed, writing %u\n",
+		    ctrlr->ref_clk);
+	} else if ((uint32_t)value == ctrlr->ref_clk) {
+		return (0);
+	} else {
+		ufshci_printf(ctrlr, "changing bRefClkFreq from %u to %u\n",
+		    (uint32_t)value, ctrlr->ref_clk);
+	}
 
 	error = ufshci_dev_write_attribute(ctrlr, UFSHCI_ATTR_B_REF_CLK_FREQ,
 	    index, selector, ctrlr->ref_clk);
@@ -303,8 +320,6 @@ ufshci_dev_init_unipro(struct ufshci_controller *ctrlr)
 int
 ufshci_dev_init_uic_power_mode(struct ufshci_controller *ctrlr)
 {
-	/* HSSerise: A = 1, B = 2 */
-	const uint32_t hs_series = 2;
 	/*
 	 * TX/RX PWRMode:
 	 * - TX[3:0], RX[7:4]
@@ -369,8 +384,13 @@ ufshci_dev_init_uic_power_mode(struct ufshci_controller *ctrlr)
 	if (ufshci_uic_send_dme_set(ctrlr, PA_RxTermination, true))
 		return (ENXIO);
 
-	/* Set HSSerise (A = 1, B = 2) */
-	if (ufshci_uic_send_dme_set(ctrlr, PA_HSSeries, hs_series))
+	/* Set HSSeries */
+	if (ufshci_uic_send_dme_set(ctrlr, PA_HSSeries, ctrlr->hs_series))
+		return (ENXIO);
+
+	/* HS-G4 and above need initial adaptation. */
+	if (ctrlr->hs_gear >= 4 &&
+	    ufshci_uic_send_dme_set(ctrlr, PA_TxHsAdaptType, PA_INITIAL_ADAPT))
 		return (ENXIO);
 
 	/* Set Timeout values */

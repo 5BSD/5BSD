@@ -366,7 +366,7 @@ mac_capability_instance_do_sendmsg(struct mac_capability_instance *s,
 				filecaps_free(&msg->cm_fcaps[i]);
 				filecaps_copy(&fde->fde_caps,
 				    &msg->cm_fcaps[i], true);
-				filecaps_intersect(&msg->cm_fcaps[i],
+				filecaps_restrict(&msg->cm_fcaps[i],
 				    &fde->fde_xfer_caps);
 			}
 
@@ -826,7 +826,7 @@ mac_capability_instance_ioctl(struct file *fp, u_long cmd, void *data,
 						filecaps_copy(
 						    &fde->fde_caps,
 						    &call_fcaps[i], true);
-						filecaps_intersect(
+						filecaps_restrict(
 						    &call_fcaps[i],
 						    &fde->fde_xfer_caps);
 						if (fde->fde_xfer_state ==

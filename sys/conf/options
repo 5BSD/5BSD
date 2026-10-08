@@ -52,6 +52,7 @@ DDB_CAPTURE_DEFAULTBUFSIZE	opt_ddb.h
 DDB_CAPTURE_MAXBUFSIZE	opt_ddb.h
 DDB_CTF		opt_ddb.h
 DDB_NUMSYM	opt_ddb.h
+DRIVER_FAILPOINTS
 EARLY_PRINTF	opt_global.h
 EXTERR_STRINGS	opt_global.h
 FULL_BUF_TRACKING	opt_global.h
@@ -69,6 +70,14 @@ TEXTDUMP_VERBOSE	opt_ddb.h
 TSLOG	opt_global.h
 TSLOG_PAGEZERO	opt_global.h
 TSLOGSIZE	opt_global.h
+
+# Scheduler options
+SCHED_4BSD	opt_sched.h
+SCHED_ULE	opt_sched.h
+SCHED_STATS	opt_sched.h
+PREEMPTION	opt_sched.h
+IPI_PREEMPTION	opt_sched.h
+FULL_PREEMPTION	opt_sched.h
 
 # Miscellaneous options
 ALQ
@@ -107,10 +116,8 @@ CY_PCI_FASTINTR
 DEADLKRES	opt_watchdog.h
 DIRECTIO
 FFCLOCK
-FULL_PREEMPTION	opt_sched.h
 GZIO		opt_gzio.h
 IMGACT_BINMISC		opt_dontuse.h
-IPI_PREEMPTION	opt_sched.h
 GEOM_CACHE	opt_geom.h
 GEOM_CONCAT	opt_geom.h
 GEOM_ELI	opt_geom.h
@@ -201,11 +208,7 @@ PCI_IOV		opt_global.h
 PPC_DEBUG	opt_ppc.h
 PPC_PROBE_CHIPSET	opt_ppc.h
 PPS_SYNC	opt_ntp.h
-PREEMPTION	opt_sched.h
 QUOTA
-SCHED_4BSD	opt_sched.h
-SCHED_STATS	opt_sched.h
-SCHED_ULE	opt_sched.h
 SLEEPQUEUE_PROFILING
 SLHCI_DEBUG	opt_slhci.h
 SOCKET_HHOOK	opt_global.h
@@ -704,6 +707,7 @@ WITNESS_KDB		opt_witness.h
 WITNESS_NO_VNODE	opt_witness.h
 WITNESS_SKIPSPIN	opt_witness.h
 WITNESS_COUNT		opt_witness.h
+WITNESS_LOCK_CHILDCOUNT		opt_witness.h
 OPENSOLARIS_WITNESS	opt_global.h
 
 EPOCH_TRACE		opt_global.h

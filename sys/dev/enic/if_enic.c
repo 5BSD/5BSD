@@ -449,6 +449,8 @@ enic_attach_pre(if_ctx_t ctx)
 		dev_err(enic, "Device initialization failed, aborting\n");
 		goto err_out_dev_close;
 	}
+	/* Queue DMA has not been enabled; the first iflib stop may be skipped. */
+	softc->stopped = 1;
 	ENIC_UNLOCK(softc);
 
 	enic->port_mtu = vnic_dev_mtu(enic->vdev);
@@ -875,11 +877,9 @@ static int
 enic_rxq_intr(void *rxq)
 {
 	struct vnic_rq *rq;
-	if_t ifp;
 
 	rq = (struct vnic_rq *)rxq;
-	ifp = iflib_get_ifp(rq->vdev->softc->ctx);
-	if ((if_getdrvflags(ifp) & IFF_DRV_RUNNING) == 0)
+	if (!iflib_is_running(rq->vdev->softc->ctx))
 		return (FILTER_HANDLED);
 
 	return (FILTER_SCHEDULE_THREAD);
@@ -912,8 +912,8 @@ enic_err_intr(void *vsc)
 
 	softc = vsc;
 
-	enic_stop(softc->ctx);
-	enic_init(softc->ctx);
+	iflib_request_reset_if_up(softc->ctx);
+	iflib_admin_intr_deferred(softc->ctx);
 
 	return (FILTER_HANDLED);
 }
@@ -945,7 +945,7 @@ enic_stop(if_ctx_t ctx)
 	for (index = 0; index < scctx->isc_ntxqsets; index++) {
 		enic_stop_wq(enic, index);
 		vnic_wq_clean(&enic->wq[index]);
-		vnic_cq_clean(&enic->cq[enic_cq_rq(enic, index)]);
+		vnic_cq_clean(&enic->cq[enic_cq_wq(enic, index)]);
 
 		wq = &softc->enic.wq[index];
 		wq->ring.desc_avail = wq->ring.desc_count - 1;
@@ -961,7 +961,7 @@ enic_stop(if_ctx_t ctx)
 	for (index = 0; index < scctx->isc_nrxqsets; index++) {
 		enic_stop_rq(enic, index);
 		vnic_rq_clean(&enic->rq[index]);
-		vnic_cq_clean(&enic->cq[enic_cq_wq(enic, index)]);
+		vnic_cq_clean(&enic->cq[enic_cq_rq(enic, index)]);
 
 		rq = &softc->enic.rq[index];
 		cq_rq = enic_cq_rq(&softc->enic, index);
@@ -984,6 +984,7 @@ enic_init(if_ctx_t ctx)
 	struct enic *enic;
 	if_softc_ctx_t scctx;
 	unsigned int index;
+	int error;
 
 	softc = iflib_get_softc(ctx);
 	scctx = softc->scctx;
@@ -1005,11 +1006,17 @@ enic_init(if_ctx_t ctx)
 	bcopy(if_getlladdr(softc->ifp), softc->lladdr, ETHER_ADDR_LEN);
 	enic_set_lladdr(softc);
 
-	ENIC_LOCK(softc);
-	vnic_dev_enable_wait(enic->vdev);
-	ENIC_UNLOCK(softc);
-
+	/* Queue setup above needs normal stop cleanup even if enable fails. */
 	softc->stopped = 0;
+	ENIC_LOCK(softc);
+	error = vnic_dev_enable_wait(enic->vdev);
+	ENIC_UNLOCK(softc);
+	if (error != 0) {
+		device_printf(softc->dev, "Device enable failed: %d\n", error);
+		enic_stop(ctx);
+		iflib_init_failed(ctx);
+		return;
+	}
 
 	enic_link_status(softc);
 }
@@ -1091,14 +1098,12 @@ enic_mtu_set(if_ctx_t ctx, uint32_t mtu)
 	softc = iflib_get_softc(ctx);
 	enic = &softc->enic;
 
-	enic_stop(softc->ctx);
 	if (mtu > enic->port_mtu){
 		return (EINVAL);
 	}
 
 	enic->config.mtu = mtu;
 	scctx->isc_max_frame_size = mtu + ETHER_HDR_LEN + ETHER_CRC_LEN;
-	enic_init(softc->ctx);
 
 	return (0);
 }

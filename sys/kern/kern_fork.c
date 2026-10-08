@@ -101,6 +101,11 @@ SDT_PROBE_DEFINE3(proc, , , create, "struct proc *", "struct proc *", "int");
  */
 SDT_PROVIDER_DEFINE(proclife);
 
+static bool pdfork_implicit_nowaitpid;
+SYSCTL_BOOL(_kern, OID_AUTO, pdfork_implicit_nowaitpid, CTLFLAG_RWTUN,
+    &pdfork_implicit_nowaitpid, 0,
+    "PD_NOWAITPID is assumed to be always set");
+
 #ifndef _SYS_SYSPROTO_H_
 struct fork_args {
 	int     dummy;
@@ -582,7 +587,8 @@ do_fork(struct thread *td, struct fork_req *fr, struct proc *p2, struct thread *
 	    P2_LOGSIGEXIT_ENABLE);
 	if ((fr->fr_flags & RFPROCDESC) != 0) {
 		p2->p_zombieref = PZOMBIEREF_PROCDESC;
-		if ((fr->fr_pd_flags & PD_NOWAITPID) == 0 &&
+		if (((fr->fr_pd_flags & PD_NOWAITPID) == 0 &&
+		    !pdfork_implicit_nowaitpid) &&
 		    (fr->fr_flags & RFNOWAIT) == 0)
 			p2->p_zombieref |= (PZOMBIEREF_PARENT |
 			    PZOMBIEREF_NEEDPARENT);
@@ -995,7 +1001,7 @@ fork1(struct thread *td, struct fork_req *fr)
 
 		if ((fr->fr_pd_flags & ~PD_ALLOWED_AT_FORK) != 0)
 			return (EXTERROR(EINVAL,
-			    "Invallid pdflags at fork %#jx", fr->fr_pd_flags));
+			    "Invalid pdflags at fork %#jx", fr->fr_pd_flags));
 	}
 
 	p1 = td->td_proc;

@@ -1044,7 +1044,7 @@ vfs_busyfs(fsid_t *fsid)
 	if (fsidcmp(&mp->mnt_stat.f_fsid, fsid) == 0)
 		return (mp);
 	else
-	    vfs_unbusy(mp);
+		vfs_unbusy(mp);
 
 slow:
 	mtx_lock(&mountlist_mtx);
@@ -5128,8 +5128,16 @@ void
 vfs_unmountall(void)
 {
 	struct mount *mp, *tmp;
+	int nmountpoints = 0;
+	int n = 0;
 
 	CTR1(KTR_VFS, "%s: unmounting all filesystems", __func__);
+
+	if (bootverbose) {
+		TAILQ_FOREACH(mp, &mountlist, mnt_list) {
+			nmountpoints++;
+		}
+	}
 
 	/*
 	 * Since this only runs when rebooting, it is not interlocked.
@@ -5144,11 +5152,20 @@ vfs_unmountall(void)
 		if (mp == rootdevmp)
 			continue;
 
+		if (bootverbose) {
+			printf("\tUnmounting %d/%d %s\n", ++n, nmountpoints,
+				mp->mnt_stat.f_mntonname);
+		}
 		unmount_or_warn(mp);
 	}
 
-	if (rootdevmp != NULL)
+	if (rootdevmp != NULL) {
+		if (bootverbose) {
+			printf("\tUnmounting %d/%d %s\n", ++n, nmountpoints,
+				rootdevmp->mnt_stat.f_mntonname);
+		}
 		unmount_or_warn(rootdevmp);
+	}
 }
 
 static void
@@ -5946,8 +5963,6 @@ vop_fsync_debugprepost(struct vnode *vp, const char *name)
 {
 	struct mount *mp;
 
-	if (vp->v_type == VCHR)
-		;
 	/*
 	 * The shared vs. exclusive locking policy for fsync()
 	 * is actually determined by vp's write mount as indicated
@@ -5963,16 +5978,14 @@ vop_fsync_debugprepost(struct vnode *vp, const char *name)
 	 * should still be caught when the stacked filesystem
 	 * invokes VOP_FSYNC() on the underlying filesystem.
 	 */
-	else {
-		mp = NULL;
-		VOP_GETWRITEMOUNT(vp, &mp);
-		if (vn_lktype_write(mp, vp) == LK_SHARED)
-			ASSERT_VOP_LOCKED(vp, name);
-		else
-			ASSERT_VOP_ELOCKED(vp, name);
-		if (mp != NULL)
-			vfs_rel(mp);
-	}
+	mp = NULL;
+	VOP_GETWRITEMOUNT(vp, &mp);
+	if (vn_lktype_write(mp, vp) == LK_SHARED)
+		ASSERT_VOP_LOCKED(vp, name);
+	else
+		ASSERT_VOP_ELOCKED(vp, name);
+	if (mp != NULL)
+		vfs_rel(mp);
 }
 
 void

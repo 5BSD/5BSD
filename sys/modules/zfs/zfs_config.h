@@ -183,6 +183,9 @@
 /* Define if revalidate_disk() in block_device_operations */
 /* #undef HAVE_BLOCK_DEVICE_OPERATIONS_REVALIDATE_DISK */
 
+/* bvec_iter has bi_offset */
+/* #undef HAVE_BVEC_ITER_OFFSET */
+
 /* Define to 1 if you have the Mac OS X function
    CFLocaleCopyPreferredLanguages in the CoreFoundation framework. */
 /* #undef HAVE_CFLOCALECOPYPREFERREDLANGUAGES */
@@ -353,6 +356,9 @@
 
 /* Define to 1 if you have the <inttypes.h> header file. */
 #define HAVE_INTTYPES_H 1
+
+/* iops->create() does not take a flag arg */
+/* #undef HAVE_IOPS_CREATE_NO_FLAG_ARG */
 
 /* iov_iter_get_pages2() is available */
 /* #undef HAVE_IOV_ITER_GET_PAGES2 */
@@ -531,6 +537,9 @@
 /* posix_acl_to_xattr() allocates its result */
 /* #undef HAVE_POSIX_ACL_TO_XATTR_ALLOC */
 
+/* Define to 1 if you have the 'preadv2' function. */
+/* #undef HAVE_PREADV2 */
+
 /* proc_handler ctl_table arg is const */
 /* #undef HAVE_PROC_HANDLER_CTL_TABLE_CONST */
 
@@ -542,6 +551,9 @@
 
 /* Have PTHREAD_PRIO_INHERIT. */
 #define HAVE_PTHREAD_PRIO_INHERIT 1
+
+/* Define to 1 if you have the 'pwritev2' function. */
+/* #undef HAVE_PWRITEV2 */
 
 /* If available, contains the Python version number currently in use. */
 /* #undef HAVE_PYTHON */
@@ -566,6 +578,9 @@
 
 /* revalidate_disk_size() is available */
 /* #undef HAVE_REVALIDATE_DISK_SIZE */
+
+/* rq_for_each_bvec() is available */
+/* #undef HAVE_RQ_FOR_EACH_BVEC */
 
 /* Define to 1 if you have the <security/pam_modules.h> header file. */
 #define HAVE_SECURITY_PAM_MODULES_H 1
@@ -632,6 +647,9 @@
 
 /* have super_block s_wb_err */
 /* #undef HAVE_SUPER_BLOCK_S_WB_ERR */
+
+/* Define if super_set_uuid() is available */
+/* #undef HAVE_SUPER_SET_UUID */
 
 /* sync_blockdev() is declared in include/blkdev.h */
 /* #undef HAVE_SYNC_BLOCKDEV */
@@ -733,6 +751,9 @@
 
 /* filemap_dirty_folio exists */
 /* #undef HAVE_VFS_FILEMAP_DIRTY_FOLIO */
+
+/* file_operations has fop_flags */
+/* #undef HAVE_VFS_FOP_FLAGS */
 
 /* generic_copy_file_range() is available */
 /* #undef HAVE_VFS_GENERIC_COPY_FILE_RANGE */
@@ -852,7 +873,7 @@
 /* #undef ZFS_DEVICE_MINOR */
 
 /* Define the project alias string. */
-#define ZFS_META_ALIAS "zfs-2.4.99-974-FreeBSD.g84aa7e7e09"
+#define ZFS_META_ALIAS "zfs-2.4.99-1149-FreeBSD.g1f380a4f3"
 
 /* Define the project author. */
 #define ZFS_META_AUTHOR "OpenZFS"
@@ -882,7 +903,7 @@
 #define ZFS_META_NAME "zfs"
 
 /* Define the project release. */
-#define ZFS_META_RELEASE "974-FreeBSD.g84aa7e7e09"
+#define ZFS_META_RELEASE "1149-FreeBSD.g1f380a4f3"
 
 /* Define the project version. */
 #define ZFS_META_VERSION "2.4.99"

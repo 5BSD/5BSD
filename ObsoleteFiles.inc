@@ -285,6 +285,29 @@ OLD_DIRS+=Capabilities/System/Reboot.cap/bin/.debug
 OLD_DIRS+=Capabilities/System/Reboot.cap/bin
 OLD_DIRS+=Capabilities/System/Reboot.cap/etc
 OLD_DIRS+=Capabilities/System/Reboot.cap
+# 20260930: apm(8) only displays ACPI status
+OLD_FILES+=etc/rc.d/apm
+
+# 20260930: apm(4) not i386-specific
+OLD_FILES+=usr/share/man/man4/i386/apm.4.gz
+
+# 20260930: apmd(8) removed
+OLD_FILES+=etc/apmd.conf
+OLD_FILES+=etc/rc.d/apmd
+OLD_FILES+=usr/share/examples/etc/apmd.conf
+OLD_FILES+=usr/share/man/man8/apmd.8.gz
+OLD_FILES+=usr/sbin/apmd
+
+# 20260918: lesskey(1) removed, lesskey(5) man page added
+OLD_FILES+=usr/bin/lesskey
+OLD_FILES+=usr/share/man/man1/lesskey.1.gz
+
+# 20260921: atf-0.26 release
+OLD_FILES+=usr/share/doc/atf/README
+
+# 20260813: lib9p.so becomes a private library
+OLD_LIBS+=usr/lib/lib9p.so.1
+
 # 20260811: libusb symbol versioning, shared library bumped to version 4
 OLD_LIBS+=usr/lib/libusb.so.3
 
@@ -880,6 +903,7 @@ OLD_FILES+=usr/include/c++/v1/locale.h
 
 # 20260420: remove perfmon
 OLD_FILES+=boot/kernel/perfmon.ko
+OLD_FILES+=usr/share/man/man4/i386/perfmon.4.gz
 OLD_FILES+=usr/share/man/man4/perfmon.4.gz
 OLD_FILES+=usr/share/examples/perfmon/Makefile
 OLD_FILES+=usr/share/examples/perfmon/README

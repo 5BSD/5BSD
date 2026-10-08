@@ -261,6 +261,8 @@
         ..
         tcp_log
         ..
+        ufshci
+        ..
         usb
         ..
         veriexec
@@ -332,6 +334,8 @@
         union
         ..
         virstor
+        ..
+        zoned
         ..
     ..
     gssapi              tags=package=kerberos-dev

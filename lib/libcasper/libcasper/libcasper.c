@@ -96,7 +96,7 @@ cap_init(void)
 		return (NULL);
 	}
 
-	pid = pdfork(&pfd, 0);
+	pid = pdfork(&pfd, PD_NOWAITPID);
 	if (pid == 0) {
 		/* Child. */
 		close(sock[0]);

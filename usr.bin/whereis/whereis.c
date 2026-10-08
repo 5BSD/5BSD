@@ -59,8 +59,6 @@ static int opt_a, opt_b, opt_m, opt_q, opt_s, opt_u, opt_x;
 static ccharp *bindirs, *mandirs, *sourcedirs;
 static char **query;
 
-static const char *sourcepath = PATH_SOURCES;
-
 static char	*colonify(ccharp *);
 static int	 contains(ccharp *, const char *);
 static void	 decolonify(char *, ccharp **, int *);
@@ -253,6 +251,7 @@ defaults(void)
 {
 	size_t s;
 	char *b, buf[BUFSIZ], *cp;
+	const char *path_ports;
 	int nele;
 	FILE *p;
 	DIR *dir;
@@ -305,40 +304,42 @@ defaults(void)
 		decolonify(b, &mandirs, &nele);
 	}
 
-	/* -s defaults to precompiled list, plus subdirs of /usr/ports */
+	/* -s defaults to precompiled list, plus subdirs of
+	 * $PORTSDIR. If not set, it defaults to /usr/ports */
 	if (!sourcedirs) {
-		b = strdup(sourcepath);
-		if (b == NULL)
-			abort();
-		nele = 0;
-		decolonify(b, &sourcedirs, &nele);
+		size_t sp_len = strlen(*sourcepaths);
+		sourcedirs = malloc(sp_len * sizeof (char *));
+		for (size_t i = 0; i < sp_len; i++)
+			sourcedirs[i] = sourcepaths[i];
 
-		if (stat(PATH_PORTS, &sb) == -1) {
+		path_ports = getenv("PORTSDIR");
+		if (path_ports == NULL)
+			path_ports = PATH_PORTS;
+
+		if (stat(path_ports, &sb) == -1) {
 			if (errno == ENOENT)
-				/* no /usr/ports, we are done */
+				/* no ports directory, we are done */
 				return;
-			err(EX_OSERR, "stat(" PATH_PORTS ")");
+			err(EX_OSERR, "stat(%s)", path_ports);
 		}
 		if ((sb.st_mode & S_IFMT) != S_IFDIR)
-			/* /usr/ports is not a directory, ignore */
+			/* path_ports is not a directory, ignore */
 			return;
-		if (access(PATH_PORTS, R_OK | X_OK) != 0)
+		if (access(path_ports, R_OK | X_OK) != 0)
 			return;
-		if ((dir = opendir(PATH_PORTS)) == NULL)
-			err(EX_OSERR, "opendir" PATH_PORTS ")");
+		if ((dir = opendir(path_ports)) == NULL)
+			err(EX_OSERR, "opendir(%s)", path_ports);
 		while ((dirp = readdir(dir)) != NULL) {
 			/*
-			 * Not everything below PATH_PORTS is of
+			 * Not everything below path_ports is of
 			 * interest.  First, all dot files and
 			 * directories (e. g. .snap) can be ignored.
 			 * Also, all subdirectories starting with a
-			 * capital letter are not going to be
+			 * capital letter are not going to
 			 * examined, as they are used for internal
-			 * purposes (Mk, Tools, ...).  This also
-			 * matches a possible CVS subdirectory.
-			 * Finally, the distfiles subdirectory is also
-			 * special, and should not be considered to
-			 * avoid false matches.
+			 * purposes (Mk, Tools, ...).  Finally, the distfiles
+			 * subdirectory is also special, and should not be
+			 * considered to avoid false matches.
 			 */
 			if (dirp->d_name[0] == '.' ||
 			    /*
@@ -350,12 +351,8 @@ defaults(void)
 			    (dirp->d_name[0] >= 'A' && dirp->d_name[0] <= 'Z') ||
 			    strcmp(dirp->d_name, "distfiles") == 0)
 				continue;
-			if ((b = malloc(sizeof PATH_PORTS + 1 + dirp->d_namlen))
-			    == NULL)
+			if (asprintf(&b, "%s/%s", path_ports, dirp->d_name) < 0)
 				abort();
-			strcpy(b, PATH_PORTS);
-			strcat(b, "/");
-			strcat(b, dirp->d_name);
 			if (stat(b, &sb) == -1 ||
 			    (sb.st_mode & S_IFMT) != S_IFDIR ||
 			    access(b, R_OK | X_OK) != 0) {
@@ -401,7 +398,9 @@ main(int argc, char **argv)
 		errx(EX_DATAERR, "no directories to search");
 
 	if (opt_m) {
-		setenv("MANPATH", colonify(mandirs), 1);
+		char *mp = colonify(mandirs);
+		setenv("MANPATH", mp, 1);
+		free(mp);
 		if ((i = regcomp(&re, MANWHEREISMATCH, REG_EXTENDED)) != 0) {
 			regerror(i, &re, buf, BUFSIZ - 1);
 			errx(EX_UNAVAILABLE, "regcomp(%s) failed: %s",
@@ -442,12 +441,8 @@ main(int argc, char **argv)
 			 */
 			unusual = unusual | NO_BIN_FOUND;
 			for (dp = bindirs; *dp != NULL; dp++) {
-				cp = malloc(strlen(*dp) + 1 + s + 1);
-				if (cp == NULL)
+				if (asprintf(&cp, "%s/%s", *dp, name) < 0)
 					abort();
-				strcpy(cp, *dp);
-				strcat(cp, "/");
-				strcat(cp, name);
 				if (stat(cp, &sb) == 0 &&
 				    (sb.st_mode & S_IFMT) == S_IFREG &&
 				    (sb.st_mode & (S_IXUSR | S_IXGRP | S_IXOTH))
@@ -555,12 +550,8 @@ main(int argc, char **argv)
 			 */
 			unusual = unusual | NO_SRC_FOUND;
 			for (dp = sourcedirs; *dp != NULL; dp++) {
-				cp = malloc(strlen(*dp) + 1 + s + 1);
-				if (cp == NULL)
+				if (asprintf(&cp, "%s/%s", *dp, name) < 0)
 					abort();
-				strcpy(cp, *dp);
-				strcat(cp, "/");
-				strcat(cp, name);
 				if (stat(cp, &sb) == 0 &&
 				    (sb.st_mode & S_IFMT) == S_IFDIR) {
 					unusual = unusual & ~NO_SRC_FOUND;
@@ -611,12 +602,8 @@ main(int argc, char **argv)
 				for (dp = sourcedirs;
 				     (src == NULL || opt_a) && *dp != NULL;
 				     dp++) {
-					cp2 = malloc(strlen(*dp) + 9);
-					if (cp2 == NULL)
+					if (asprintf(&cp2, "^%s/[^/]+/", *dp) < 0)
 						abort();
-					strcpy(cp2, "^");
-					strcat(cp2, *dp);
-					strcat(cp2, "/[^/]+/");
 					if ((i = regcomp(&re2, cp2,
 							 REG_EXTENDED|REG_NOSUB))
 					    != 0) {

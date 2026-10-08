@@ -89,8 +89,8 @@ syminfo::to_string(bool show_line)
 	return ss.str();
 }
 
-pmcview::pmcview() : tscfreq(0), pmcid(), pmcinfo(), procs(), tidtopid(),
-    images(), sysroot(""), filter()
+pmcview::pmcview() : tscfreq(0), pageshift(0), pmcid(), pmcinfo(), procs(),
+    tidtopid(), images(), sysroot(""), filter()
 {
 	char *root;
 
@@ -177,12 +177,12 @@ int
 pmcview::process_cpuidinfo(int logfd, const pmchdr_infohdr &infohdr)
 {
 	int status;
-	pmchdr_cpuidinfo *cpuidinfo;
+	uint32_t *cpuidinfo;
 	int offset, len;
 	uint32_t root, maxleaf, count;
 
 	len = infohdr.length / 4;
-	cpuidinfo = (pmchdr_cpuidinfo *)new uint32_t[len];
+	cpuidinfo = new uint32_t[len];
 
 	status = readlog(logfd, cpuidinfo, infohdr.length);
 	if (status < 0 || status != infohdr.length)
@@ -191,7 +191,7 @@ pmcview::process_cpuidinfo(int logfd, const pmchdr_infohdr &infohdr)
 	offset = 0;
 
 	while (offset < len) {
-		maxleaf = cpuidinfo->cpuid[offset];
+		maxleaf = cpuidinfo[offset];
 
 		/*
 		 * In x86 the roots contains the maximum leaf number present.
@@ -200,10 +200,10 @@ pmcview::process_cpuidinfo(int logfd, const pmchdr_infohdr &infohdr)
 		count = maxleaf & 0x0000FFFF;
 
 		for (uint32_t i = 0; i <= count; i++) {
-			cpuid[root + i] = { cpuidinfo->cpuid[4 * i + offset],
-			    cpuidinfo->cpuid[4 * i + 1 + offset],
-			    cpuidinfo->cpuid[4 * i + 2 + offset],
-			    cpuidinfo->cpuid[4 * i + 3 + offset] };
+			cpuid[root + i] = { cpuidinfo[4 * i + offset],
+			    cpuidinfo[4 * i + 1 + offset],
+			    cpuidinfo[4 * i + 2 + offset],
+			    cpuidinfo[4 * i + 3 + offset] };
 		}
 
 		offset += 4 * (count + 1);
@@ -436,7 +436,7 @@ pmcview::process(struct pmclog_ev_threadexit &p)
  * if the dwarf symbols are available.
  */
 image
-pmcview::loadimage(const std::string &path)
+pmcview::loadimage(const std::string &path, bool iskernel)
 {
 	std::string fullpath;
 	image im;
@@ -519,7 +519,12 @@ pmcview::loadimage(const std::string &path)
 
 			if (ph.p_type == PT_LOAD) {
 				if ((ph.p_flags & PF_X) != 0 && !foundexec) {
-					im.vaddr = ph.p_vaddr & ~(ph.p_align - 1);
+					uint64_t alignment;
+
+					alignment = iskernel ? ph.p_align :
+					    (pageshift != 0 ? 1ULL << pageshift :
+					    (uint64_t)getpagesize());
+					im.vaddr = rounddown2(ph.p_vaddr, alignment);
 					foundexec = true;
 				}
 			}
@@ -727,8 +732,9 @@ pmcview::process(struct pmclog_ev_map_in &p)
 {
 	// Kernel map-in events should be mapped to pid 0
 	pid_t pid = (p.pl_pid == -1) ? 0 : p.pl_pid;
+	pageshift = p.pl_pageshift;
 
-	image im = loadimage(p.pl_pathname);
+	image im = loadimage(p.pl_pathname, pid == 0);
 
 	mapimage(pid, im, p.pl_start);
 }
@@ -958,4 +964,3 @@ pmcview::printvm(pid_t pid)
 		    i.second.highpc, i.second.image.c_str());
 	}
 }
-

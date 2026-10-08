@@ -9,6 +9,9 @@
 #define __UFSHCI_H__
 
 #include <sys/param.h>
+#ifndef _KERNEL
+#include <stdbool.h>
+#endif
 #include <sys/endian.h>
 
 /*
@@ -41,6 +44,8 @@
 #define PA_TxTermination		 0x1569
 #define PA_RxTermination		 0x1584
 #define PA_HSSeries			 0x156A
+#define   UFSHCI_HS_SERIES_A		 1
+#define   UFSHCI_HS_SERIES_B		 2
 #define PA_PWRModeUserData0		 0x15B0
 #define PA_PWRModeUserData1		 0x15B1
 #define PA_PWRModeUserData2		 0x15B2
@@ -49,6 +54,8 @@
 #define PA_PWRModeUserData5		 0x15B5
 
 #define PA_TxHsAdaptType		 0x15D4
+#define   PA_INITIAL_ADAPT		 1
+#define   PA_NO_ADAPT			 3
 #define PA_PWRMode			 0x1571
 
 #define DME_LocalFC0ProtectionTimeOutVal 0xD041
@@ -359,6 +366,9 @@ _Static_assert(sizeof(struct ufshci_upiu_header) == 12,
 #define UFSHCI_MAX_UPIU_SIZE  512
 #define UFSHCI_UPIU_ALIGNMENT 8 /* UPIU requires 64-bit alignment. */
 
+/* UFS Spec 4.1, section 10.6.1: Total EHS Length counts 32 byte units. */
+#define UFSHCI_EHS_UNIT_SIZE 32
+
 struct ufshci_upiu {
 	/* dword 0-2 */
 	struct ufshci_upiu_header header;
@@ -510,6 +520,9 @@ struct ufshci_query_param {
 	size_t desc_size;
 };
 
+/* The data segment of a query UPIU, where a descriptor is carried. */
+#define UFSHCI_QUERY_DATA_SEGMENT_SIZE 256
+
 struct ufshci_query_request_upiu {
 	/* dword 0-2 */
 	struct ufshci_upiu_header header;
@@ -536,7 +549,7 @@ struct ufshci_query_request_upiu {
 	/* dword 7 */
 	uint32_t reserved3;
 
-	uint8_t command_data[256];
+	uint8_t command_data[UFSHCI_QUERY_DATA_SEGMENT_SIZE];
 } __packed __aligned(4);
 
 _Static_assert(sizeof(struct ufshci_query_request_upiu) == 288,
@@ -596,7 +609,7 @@ struct ufshci_query_response_upiu {
 	/* dword 7 */
 	uint8_t reserved4[4];
 
-	uint8_t command_data[256];
+	uint8_t command_data[UFSHCI_QUERY_DATA_SEGMENT_SIZE];
 } __packed __aligned(4);
 
 _Static_assert(sizeof(struct ufshci_query_response_upiu) == 288,

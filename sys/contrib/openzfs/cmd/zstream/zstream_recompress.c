@@ -33,10 +33,10 @@
 #include <sys/stdtypes.h>
 
 #include "zstream.h"
-#include "zstream_chain.h"
 #include "zstream_modules.h"
 #include "zstream_queue.h"
 #include "zstream_recompress.h"
+#include "zstream_util.h"
 
 #define	MAX_COMPRESSION_STEPS 4
 
@@ -141,9 +141,7 @@ chain_decompress_writes(queue_item_t *item_in, void *context)
 		    (u_longlong_t)drrw->drr_object,
 		    (u_longlong_t)drrw->drr_offset);
 	}
-	free(item->dp_payload);
-	item->dp_payload = debuff;
-	item->dp_payload_size = drrw->drr_logical_size;
+	set_payload(item, debuff, drrw->drr_logical_size);
 	drrw->drr_compressed_size = 0;
 	drrw->drr_compressiontype = 0;
 }
@@ -174,20 +172,22 @@ chain_compress_writes(queue_item_t *item_in, void *context_in)
 		drrw->drr_compressiontype = 0;
 		drrw->drr_compressed_size = 0;
 	} else {
-		free(item->dp_payload);
-		item->dp_payload = cbuff;
-		item->dp_payload_size = csize;
+		set_payload(item, cbuff, csize);
 		drrw->drr_compressed_size = csize;
 		drrw->drr_compressiontype = context->cs_type;
 	}
 }
 
 /*
- * A cost of zero waives processing for the current item. If we want to
- * process it, the cost will always be item->dp_payload_size. So in these
- * two cost functions, we're mostly determining which packets need
- * attention. A packet that's already compressed with the target compression
- * profile can be ignored.
+ * A cost of zero waives processing for the current item, so the following
+ * two functions are mostly determining which packets need attention. A
+ * packet that's already compressed with the target compression profile can
+ * be ignored.
+ *
+ * When a packet does need work, the cost is the number of bytes the
+ * compressor or decompressor will have to process: the logical size for
+ * compression, since that's what goes in, and the stored payload size for
+ * decompression, since that's what comes out.
  */
 static size_t
 chain_compress_cost(queue_item_t *item_in, void *context_in)
@@ -249,8 +249,6 @@ parallel_decompress_writes(compression_spec_t *target)
 	    .cs_out_size = sizeof (drr_packet_t),
 	    .cs_context = context,
 	    .cs_parallel = {
-		.queue_length = 256,
-		.batch_budget = 256 * 1024,
 		.process = chain_decompress_writes,
 		.cost = chain_decompress_cost
 	    }
@@ -273,8 +271,6 @@ parallel_compress_writes(compression_spec_t *target)
 	    .cs_out_size = sizeof (drr_packet_t),
 	    .cs_context = context,
 	    .cs_parallel = {
-		.queue_length = 1024,
-		.batch_budget = 32 * 1024,
 		.process = chain_compress_writes,
 		.cost = chain_compress_cost
 	    }
@@ -355,6 +351,7 @@ zstream_do_recompress(int argc, char *argv[])
 	int c;
 	int level = ZIO_COMPLEVEL_DEFAULT;
 	int num_threads = 0;
+	compression_spec_t spec;
 
 	chain_attrs_t attrs = { .ca_command_opts = CA_FORBID_DEDUP };
 
@@ -368,7 +365,7 @@ zstream_do_recompress(int argc, char *argv[])
 			break;
 		case 't':
 			if (sscanf(optarg, "%d", &num_threads) != 1) {
-				warnx("failed to parse num_threads '%s'",
+				warnx("failed to parse number of threads '%s'",
 				    optarg);
 				zstream_usage();
 			}
@@ -383,27 +380,34 @@ zstream_do_recompress(int argc, char *argv[])
 	argc -= optind;
 	argv += optind;
 
-	if (argc != 1)
+	if (argc < 1 || argc > 2)
 		zstream_usage();
 
-	compression_spec_t spec = { .cs_level = level };
-	if (strcmp(argv[0], "off") == 0) {
-		spec.cs_type = ZIO_COMPRESS_OFF;
-	} else {
-		enum zio_compress ct;
-		for (ct = 0; ct < ZIO_COMPRESS_FUNCTIONS; ct++) {
-			const char *ci_name = zio_compress_table[ct].ci_name;
-			if (strcmp(argv[0], ci_name) == 0)
-				break;
+	if (parse_compression_specifier(argv[0], &spec) != 0)
+		errx(1, "invalid compression type '%s'", argv[0]);
+	release_libzfs();
+
+	boolean_t is_off = spec.cs_type == ZIO_COMPRESS_OFF;
+	boolean_t is_uncompressed = ctype_is_uncompressed(spec.cs_type);
+	if (is_uncompressed && !is_off)
+		errx(1, "invalid compression type '%s'; use 'off'", argv[0]);
+
+	if (level != ZIO_COMPLEVEL_DEFAULT) {
+		if (spec.cs_type != ZIO_COMPRESS_ZSTD) {
+			errx(1, "use -l only with compression type 'zstd'");
+		} else if (spec.cs_level != ZIO_COMPLEVEL_DEFAULT &&
+		    spec.cs_level != level) {
+			errx(1, "conflicting compression levels -l %d "
+			    "vs. zstd-%d", level, spec.cs_level);
+		} else {
+			warnx("-l is deprecated; use a composite specifier "
+			    "such as zstd-%d", level);
 		}
-		if (ct == ZIO_COMPRESS_FUNCTIONS || ctype_is_uncompressed(ct)) {
-			errx(2, "invalid compression type %s", argv[0]);
-		}
-		spec.cs_type = ct;
+		spec.cs_level = level;
 	}
 
 	zstream_chain_t recompress_chain = {
-		STANDARD_INPUT_STACK(NULL),
+		STANDARD_INPUT_STACK((argc == 2) ? argv[1] : NULL),
 		parallel_decompress_writes(&spec),
 		parallel_compress_writes(&spec),
 		serial_update_compress_features(&spec),

@@ -191,6 +191,13 @@ nvme_ctrlr_construct_io_qpairs(struct nvme_controller *ctrlr)
 	 */
 	num_trackers = min(num_trackers, (num_entries-1));
 
+	if (ctrlr->cdata.maxcmd != 0 && num_trackers > ctrlr->cdata.maxcmd) {
+		nvme_printf(ctrlr,
+		    "limiting trackers per I/O queue to MAXCMD (%u -> %u)\n",
+		    num_trackers, ctrlr->cdata.maxcmd);
+		num_trackers = ctrlr->cdata.maxcmd;
+	}
+
 	if (ctrlr->quirks & QUIRK_APPLE_SHARED_CID_SPACE)
 		num_trackers = min(num_trackers,
 		    NVME_ADMIN_ENTRIES - ctrlr->adminq.num_trackers);
@@ -356,7 +363,7 @@ nvme_ctrlr_enable(struct nvme_controller *ctrlr)
 	uint32_t	csts;
 	uint32_t	aqa;
 	uint32_t	qsize;
-	uint8_t		en, rdy;
+	uint8_t		css, en, rdy;
 	int		err;
 
 	cc = nvme_mmio_read_4(ctrlr, cc);
@@ -393,7 +400,16 @@ nvme_ctrlr_enable(struct nvme_controller *ctrlr)
 	/* Initialization values for CC */
 	cc = 0;
 	cc |= NVMEF(NVME_CC_REG_EN, 1);
-	cc |= NVMEF(NVME_CC_REG_CSS, 0);
+	/* No CSI support; prefer the NVM command set when present. */
+	css = NVME_CAP_HI_CSS(ctrlr->cap_hi);
+	if ((css & NVME_CAP_CSS_NVM) != 0)
+		cc |= NVMEF(NVME_CC_REG_CSS, NVME_CC_CSS_NVM);
+	else if ((css & NVME_CAP_CSS_NOIOCSS) != 0)
+		cc |= NVMEF(NVME_CC_REG_CSS, NVME_CC_CSS_ADMIN);
+	else if ((css & NVME_CAP_CSS_IOCSS) != 0)
+		cc |= NVMEF(NVME_CC_REG_CSS, NVME_CC_CSS_IOCSS);
+	else
+		cc |= NVMEF(NVME_CC_REG_CSS, NVME_CC_CSS_NVM);
 	cc |= NVMEF(NVME_CC_REG_AMS, 0);
 	cc |= NVMEF(NVME_CC_REG_SHN, 0);
 	cc |= NVMEF(NVME_CC_REG_IOSQES, ctrlr->io_sqes);
@@ -1282,7 +1298,7 @@ nvme_ctrlr_aer_task(void *arg, int pending)
 	case NVME_LOG_ERROR: {
 		struct nvme_error_information_entry *err =
 		    (struct nvme_error_information_entry *)aer->log_page_buffer;
-		for (int i = 0; i < (aer->ctrlr->cdata.elpe + 1); i++)
+		for (uint32_t i = 0; i < aer->log_page_size / sizeof(*err); i++)
 			nvme_error_information_entry_swapbytes(err++);
 		break;
 	}
@@ -1396,9 +1412,12 @@ nvme_ctrlr_shared_handler(void *arg)
 {
 	struct nvme_controller *ctrlr = arg;
 
-	nvme_mmio_write_4(ctrlr, intms, 1);
+	/* INTMS/INTMC are undefined when configured for MSI-X. */
+	if (!ctrlr->is_msix)
+		nvme_mmio_write_4(ctrlr, intms, 1);
 	nvme_ctrlr_poll(ctrlr);
-	nvme_mmio_write_4(ctrlr, intmc, 1);
+	if (!ctrlr->is_msix)
+		nvme_mmio_write_4(ctrlr, intmc, 1);
 }
 
 #define NVME_MAX_PAGES  (int)(1024 / sizeof(vm_page_t))

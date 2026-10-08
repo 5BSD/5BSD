@@ -253,21 +253,26 @@ static bool
 nlmsg_translate_ifname_nla(struct nlmsghdr *hdr, struct nlattr *nla,
     struct nl_writer *nw)
 {
-	struct epoch_tracker et;
-	const struct ifnet *ifp;
-	const struct ifinfomsg *ifi = (const void *)(hdr + 1);
+	struct ifinfomsg *ifinfo;
 	char ifname[LINUX_IFNAMSIZ];
-	int ret = 0;
+	int ret;
 
 	/* A multipart dump can contain several interfaces in one buffer. */
-	NET_EPOCH_ENTER(et);
-	ifp = nw->ifp;
-	if (ifp == NULL || if_getindex(__DECONST(struct ifnet *, ifp)) != ifi->ifi_index)
-		ifp = ifnet_byindex(ifi->ifi_index);
-	if (ifp != NULL)
-		ret = ifname_bsd_to_linux_ifp(ifp, ifname, sizeof(ifname));
-	NET_EPOCH_EXIT(et);
-	if (ret <= 0 || ret >= sizeof(ifname))
+	ifinfo = (struct ifinfomsg *)(hdr + 1);
+	/*
+	 * 5BSD: prefer the writer's ifp when it is the interface this
+	 * message describes, so ifnet events for an interface that has
+	 * already left the index (departure) still get the Linux name.
+	 */
+	if (nw->ifp != NULL &&
+	    if_getindex(__DECONST(struct ifnet *, nw->ifp)) ==
+	    ifinfo->ifi_index)
+		ret = ifname_bsd_to_linux_ifp(nw->ifp, ifname, sizeof(ifname));
+	else
+		ret = ifname_bsd_to_linux_idx(ifinfo->ifi_index, ifname,
+		    sizeof(ifname));
+	/* 5BSD: also fall back to the native name if it was truncated. */
+	if (ret <= 0 || ret >= (int)sizeof(ifname))
 		return (nlmsg_copy_nla(nla, nw));
 	return (nlattr_add_string(nw, IFLA_IFNAME, ifname));
 }

@@ -195,7 +195,7 @@ nvme_ns_get_sector_size(struct nvme_namespace *ns)
 {
 	uint8_t flbas_fmt, lbads;
 
-	flbas_fmt = NVMEV(NVME_NS_DATA_FLBAS_FORMAT, ns->data.flbas);
+	flbas_fmt = nvme_ns_data_format_index(&ns->data);
 	lbads = NVMEV(NVME_NS_DATA_LBAF_LBADS, ns->data.lbaf[flbas_fmt]);
 
 	return (1 << lbads);
@@ -526,6 +526,7 @@ nvme_ns_construct(struct nvme_namespace *ns, uint32_t id,
 	struct nvme_completion_poll_status	status;
 	int                                     res;
 	int					unit;
+	uint32_t				ms;
 	uint8_t					flbas_fmt;
 	uint8_t					vwc_present;
 
@@ -570,10 +571,18 @@ nvme_ns_construct(struct nvme_namespace *ns, uint32_t id,
 	 * Check the validity of the format specified. Note: format is a 0-based
 	 * value, so > is appropriate here, not >=.
 	 */
-	flbas_fmt = NVMEV(NVME_NS_DATA_FLBAS_FORMAT, ns->data.flbas);
+	flbas_fmt = nvme_ns_data_format_index(&ns->data);
 	if (flbas_fmt > ns->data.nlbaf) {
 		nvme_printf(ctrlr, "nsid %d lba format %d invalid (> %d)\n",
 		    id, flbas_fmt, ns->data.nlbaf + 1);
+		return (ENXIO);
+	}
+
+	ms = NVMEV(NVME_NS_DATA_LBAF_MS, ns->data.lbaf[flbas_fmt]);
+	if (ms != 0) {
+		nvme_printf(ctrlr,
+		    "nsid %d lba format %d has %u-byte metadata, unsupported\n",
+		    id, flbas_fmt, ms);
 		return (ENXIO);
 	}
 
@@ -605,8 +614,10 @@ nvme_ns_construct(struct nvme_namespace *ns, uint32_t id,
 	 * cdev may have already been created, if we are reconstructing the
 	 *  namespace after a controller-level reset.
 	 */
-	if (ns->cdev != NULL)
+	if (ns->cdev != NULL) {
+		ns->cdev->si_iosize_max = ctrlr->max_xfer_size;
 		return (0);
+	}
 
 	/*
 	 * Namespace IDs start at 1, so we need to subtract 1 to create a
@@ -626,6 +637,11 @@ nvme_ns_construct(struct nvme_namespace *ns, uint32_t id,
 	ns->cdev->si_drv2 = make_dev_alias(ns->cdev, "%sns%d",
 	    device_get_nameunit(ctrlr->dev), ns->id);
 	ns->cdev->si_flags |= SI_UNMAPPED;
+	/*
+	 * Limit physio requests to the controller's maximum transfer size.
+	 * The qpair payload DMA tag is constructed with the same limit.
+	 */
+	ns->cdev->si_iosize_max = ctrlr->max_xfer_size;
 	ns->flags |= NVME_NS_ALIVE;
 
 	return (0);

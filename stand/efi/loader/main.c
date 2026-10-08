@@ -324,12 +324,10 @@ probe_zfs_currdev(uint64_t guid)
 }
 #endif
 
-#ifdef MD_IMAGE_SIZE
-extern struct devsw md_dev;
-
 static bool
 probe_md_currdev(void)
 {
+#ifdef LOADER_MD_SUPPORT
 	bool rv;
 
 	set_currdev_devsw(&md_dev, 0);
@@ -337,8 +335,10 @@ probe_md_currdev(void)
 	if (!rv)
 		printf("MD not present\n");
 	return (rv);
-}
+#else
+	return (false);
 #endif
+}
 
 /*
  * Try the passed in partition or entire disk to see if we can find a bootable
@@ -399,9 +399,10 @@ try_disk_and_partitions(pdinfo_t *disk, EFI_HANDLE skip_handle)
 }
 
 /*
- * Search the boot device first (i.e. the ESP and any sibling partitions).
- * Per the UEFI specification, filesystems on other devices must not be
- * preferred until the boot device has been fully exhausted.
+ * Search the boot device first (i.e. the device we were loaded from and any
+ * sibling partitions).  Per the UEFI specification, filesystems on other
+ * devices must not be preferred until the boot device has been fully
+ * exhausted.
  */
 static int
 try_boot_device_partitions(void)
@@ -418,6 +419,16 @@ try_boot_device_partitions(void)
 		printf("Trying ESP device: %S\n", text);
 		efi_free_devpath_name(text);
 	}
+
+	/*
+	 * Usually this is the ESP, which holds no root filesystem, and the
+	 * sibling walk below is what finds the root.  But when we have been
+	 * chainloaded (gptboot.efi hands us the partition it selected with
+	 * the GPT bootme attribute), this is the partition we are meant to
+	 * boot from, so it must be tried before its siblings.
+	 */
+	if (try_as_currdev(dp, false))
+		return (0);
 
 	return (try_disk_and_partitions(dp->pd_parent, dp->pd_handle));
 }
@@ -646,7 +657,13 @@ find_currdev(bool do_bootmgr, char *boot_info, size_t boot_info_sz)
 	} while (0);
 
 	/*
-	 * Third choice: If we can find out image boot_info, and there's
+	 * Third choice: If there is an MD device, try to use that.
+	 */
+	if (probe_md_currdev())
+		return (0);
+
+	/*
+	 * Forth choice: If we can find out image boot_info, and there's
 	 * a follow-on boot image in that boot_info, use that. In this
 	 * case root will be the partition specified in that image and
 	 * we'll load the kernel specified by the file path. Should there
@@ -663,15 +680,6 @@ find_currdev(bool do_bootmgr, char *boot_info, size_t boot_info_sz)
 			return (ENOENT);
 		} /* Nothing specified, try normal match */
 	}
-
-#ifdef MD_IMAGE_SIZE
-	/*
-	 * Forth choice: If there is an embedded MD, try to use that.
-	 */
-	printf("Trying configured MD\n");
-	if (probe_md_currdev())
-		return (0);
-#endif /* MD_IMAGE_SIZE */
 
 	/*
 	 * Fifth choice: try all the partitions on the boot device.
@@ -782,8 +790,10 @@ interactive_interrupt(const char *msg)
 		}
 
 		/* XXX no pause or timeout wait for char */
-		if (ischar())
+		if (ischar()) {
+			(void)getchar();
 			return (true);
+		}
 		now = getsecs();
 	} while (now - then < fail_timeout);
 	return (false);
@@ -1274,11 +1284,21 @@ set_boot_policy(void)
 	    policy, policy_map[boot_policy]);
 }
 
+static bool
+is_efi_netboot(void)
+{
+	EFI_DEVICE_PATH *devpath;
+	uint8_t mac[6];
+
+	devpath = efi_lookup_devpath(boot_img->DeviceHandle);
+	return (efi_devpath_get_mac(devpath, mac));
+}
+
 EFI_STATUS
 main(int argc, CHAR16 *argv[])
 {
 	int howto, i, uhowto;
-	bool has_kbd;
+	bool has_ipxe, has_kbd;
 	char *s;
 	EFI_DEVICE_PATH *imgpath;
 	CHAR16 *text;
@@ -1343,7 +1363,7 @@ main(int argc, CHAR16 *argv[])
 	 * handles because it installs a handle and creates the right ACPI
 	 * tables for the kernel to find it.
 	 */
-	maybe_download_ramdisk(argc, argv);
+	has_ipxe = maybe_download_ramdisk(argc, argv);
 
 	/*
 	 * Scan the BLOCK IO MEDIA handles then
@@ -1363,11 +1383,23 @@ main(int argc, CHAR16 *argv[])
 	devinit();
 
 	/*
+	 * Parse command line arguments before any operation that may configure
+	 * the network so DHCP overrides are available on the first attempt.
+	 */
+	howto = parse_args(argc, argv);
+
+	/*
+	 * If we didn't find a ipxe image, and we're netbooting, try to
+	 * download an initmd that the dhcp server tells us about.
+	 */
+	if (!has_ipxe && is_efi_netboot())
+		maybe_download_initmd();
+
+	/*
 	 * Detect console settings two different ways: one via the command
 	 * args (eg -h) or via the UEFI ConOut variable.
 	 */
 	has_kbd = has_keyboard();
-	howto = parse_args(argc, argv);
 	if (!has_kbd && (howto & RB_PROBE))
 		howto |= RB_SERIAL | RB_MULTIPLE;
 	howto &= ~RB_PROBE;

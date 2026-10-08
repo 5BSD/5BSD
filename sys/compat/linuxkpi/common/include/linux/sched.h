@@ -81,6 +81,7 @@ struct task_struct {
 	u_int kthread_sigpending[_SIG_WORDS];
 	uintptr_t interruptible_wchan;
 	pid_t	pid;	/* BSD thread ID */
+	pid_t	tgid;
 	const char    *comm;
 	void   *bsd_ioctl_data;
 	unsigned bsd_ioctl_len;

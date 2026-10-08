@@ -14,7 +14,7 @@ zstream_SOURCES = \
 	%D%/zstream_chain.c \
 	%D%/zstream_chain.h \
 	%D%/zstream_decompress.c \
-	%D%/zstream_drop_record.c \
+	%D%/zstream_drop_records.c \
 	%D%/zstream_dump.c \
 	%D%/zstream_dump.h \
 	%D%/zstream_fletcher4.c \
@@ -37,11 +37,13 @@ zstream_SOURCES = \
 	%D%/zstream_validate.c \
 	%D%/zstream_validate.h
 
+# -lm supplies sqrt() for MONITOR_QUEUES
 zstream_LDADD = \
 	libzfs.la \
 	libzfs_core.la \
 	libzpool.la \
-	libnvpair.la
+	libnvpair.la \
+	-lm
 
 cmd-zstream-install-exec-hook:
 	cd $(DESTDIR)$(sbindir) && $(LN_S) -f zstream zstreamdump

@@ -117,6 +117,17 @@ Set close-on-exec on process descriptor.
 .It Dv PD_NOWAITPID
 The parent cannot obtain the child's status with
 .Xr waitpid 2 .
+.Pp
+A consequence of not setting the flag is that the child' zombie is
+not reaped until the
+.Xr waitpid 2
+call is performed on the child' PID.
+Setting the
+.Dv
+kern.pdfork_implicit_nowaitpid
+sysctl MIB to
+.Dv true
+makes the system behave as if the flag is always passed.
 .It Dv PD_PTRACE_CAP
 Enable
 .Xr pdptrace 2
@@ -285,7 +296,7 @@ implementation,
 does not clear the
 .Dv errno
 variable before executing the system call.
-.Sh INTERACTION OF PROCESS DESCRIPTORS AND Xr WAITPID 2
+.Ss Interaction of Process Descriptors and Xr WAITPID 2
 .Pp
 The
 .Fn pdwait
@@ -337,7 +348,7 @@ can execute the
 .Fn waitpid
 calls against the alive target regardless of the way
 the target process was forked.
-.Sh INTERACTION OF PROCESS DESCRIPTORS WITH OTHER SYSTEM CALLS
+.Ss Interaction of Process Descriptors with other System Calls
 .Pp
 The following system calls also have effects specific to process descriptors:
 .Pp

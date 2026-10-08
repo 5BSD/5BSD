@@ -47,9 +47,6 @@
 #include <sys/abd.h>
 #include <sys/range_tree.h>
 #include <sys/dbuf.h>
-#ifdef _KERNEL
-#include <sys/zfs_vfsops.h>
-#endif
 
 /*
  * Grand theory statement on scan queue sorting
@@ -1312,6 +1309,12 @@ dsl_scan_done(dsl_scan_t *scn, boolean_t complete, dmu_tx_t *tx)
 		scn->scn_phys.scn_state = complete ? DSS_FINISHED :
 		    DSS_CANCELED;
 		scn->scn_phys.scn_end_time = gethrestime_sec();
+		/*
+		 * The new state, and the config and labels updated above,
+		 * reach disk when this txg syncs.  Note it so that
+		 * "zpool wait" does not return before then.
+		 */
+		scn->scn_finished_txg = tx->tx_txg;
 		spa->spa_scrub_started = B_FALSE;
 
 		/*
@@ -1345,6 +1348,7 @@ dsl_scan_done(dsl_scan_t *scn, boolean_t complete, dmu_tx_t *tx)
 		scn->scn_phys.scn_state = complete ? DSS_FINISHED :
 		    DSS_CANCELED;
 		scn->scn_phys.scn_end_time = gethrestime_sec();
+		scn->scn_finished_txg = tx->tx_txg;
 	}
 
 	spa_notify_waiters(spa);
@@ -4589,7 +4593,8 @@ dsl_scan_sync(dsl_pool_t *dp, dmu_tx_t *tx)
 	scn->scn_zios_this_txg = 0;
 	scn->scn_suspending = B_FALSE;
 	scn->scn_sync_start_time = getlrtime();
-	spa->spa_scrub_active = B_TRUE;
+	if (dsl_scan_is_running(scn))
+		spa->spa_scrub_active = B_TRUE;
 
 	/*
 	 * First process the async destroys.  If we suspend, don't do

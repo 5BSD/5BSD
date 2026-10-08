@@ -495,18 +495,26 @@ linux_epoll_wait_ts(struct thread *td, int epfd, struct epoll_event *events,
 	if (error == 0)
 		td->td_retval[0] = coargs.count;
 
-	/* epoll waits are interrupted by signals, never restarted. */
+	/*
+	 * As on Linux, epoll waits interrupted by a signal are never
+	 * restarted, regardless of SA_RESTART.  This must happen before the
+	 * mask-restore decision below so the signal is delivered under the
+	 * temporary mask.
+	 */
 	if (error == ERESTART)
 		error = EINTR;
 	if (uset != NULL) {
 		/*
-		 * Match pselect: deliver an interrupting signal under the
-		 * temporary mask, otherwise restore the original mask before
-		 * signal delivery.  The AST and signal frame both consume
-		 * td_oldsigmask; a local copy leaves stale sigsuspend state.
-		 * Do not overwrite the wait/copyout error while restoring it.
+		 * Make sure that ast() is called on return to usermode and
+		 * TDP_OLDMASK is cleared, restoring the old sigmask from
+		 * td_oldsigmask.  As on Linux, if we were interrupted, deliver
+		 * the signal with the temporary mask in place; otherwise
+		 * restore the old mask before any signal can be delivered.
 		 */
-		ast_sched(td, error == EINTR ? TDA_SIGSUSPEND : TDA_PSELECT);
+		if (error == EINTR)
+			ast_sched(td, TDA_SIGSUSPEND);
+		else
+			ast_sched(td, TDA_PSELECT);
 	}
 leave:
 	fdrop(epfp, td);
