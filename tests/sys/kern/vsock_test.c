@@ -6451,7 +6451,26 @@ ATF_TC_BODY(kernel_transport_checkpoint_fence, tc)
 	ATF_CHECK(checkpoint.generation != frozen_generation);
 	ATF_REQUIRE(ioctl(provider, VSOCK_IOC_TRANSPORT_THAW) == 0);
 
-	s = provider_start_connect(attach.guest_cid, 9010, SOCK_STREAM);
+	/* The reconstructed epoch no longer offers stream transport. */
+	{
+		struct sockaddr_vm peer;
+		int ss;
+
+		ss = socket(AF_VSOCK, SOCK_STREAM | SOCK_NONBLOCK, 0);
+		ATF_REQUIRE(ss >= 0);
+		memset(&peer, 0, sizeof(peer));
+		peer.svm_len = sizeof(peer);
+		peer.svm_family = AF_VSOCK;
+		peer.svm_cid = attach.guest_cid;
+		peer.svm_port = 9010;
+		errno = 0;
+		ATF_CHECK(connect(ss, (struct sockaddr *)&peer,
+		    sizeof(peer)) == -1);
+		ATF_CHECK_EQ(errno, EPROTONOSUPPORT);
+		close(ss);
+	}
+
+	s = provider_start_connect(attach.guest_cid, 9010, SOCK_SEQPACKET);
 	memset(&checkpoint, 0, sizeof(checkpoint));
 	checkpoint.version = VSOCK_TRANSPORT_CHECKPOINT_VERSION;
 	errno = 0;
