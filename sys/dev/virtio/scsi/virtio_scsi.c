@@ -1904,13 +1904,21 @@ vtscsi_transport_reset_event(struct vtscsi_softc *sc,
 
 static void
 vtscsi_param_change_event(struct vtscsi_softc *sc,
-    struct virtio_scsi_event *event)
+    struct virtio_scsi_event *event, uint32_t reason)
 {
 	target_id_t target_id;
 	lun_id_t lun_id;
 
 	vtscsi_get_request_lun(event->lun, &target_id, &lun_id);
-	vtscsi_execute_rescan(sc, target_id, lun_id);
+
+	if (VIRTIO_SCSI_ASC(reason) == VIRTIO_SCSI_CAPACITY_CHNG_ASC &&
+	    VIRTIO_SCSI_ASCQ(reason) == VIRTIO_SCSI_CAPACITY_CHNG_ASCQ) {
+		/* Disk capacity has changed. */
+		vtscsi_announce(sc, AC_INQ_CHANGED, target_id, lun_id);
+	} else {
+		/* Other parameter changes: rescan the affected LUN. */
+		vtscsi_execute_rescan(sc, target_id, lun_id);
+	}
 }
 
 static int
@@ -1931,7 +1939,7 @@ vtscsi_handle_event(struct vtscsi_softc *sc, struct virtio_scsi_event *event)
 		vtscsi_transport_reset_event(sc, event, reason);
 		break;
 	case VIRTIO_SCSI_T_PARAM_CHANGE:
-		vtscsi_param_change_event(sc, event);
+		vtscsi_param_change_event(sc, event, reason);
 		break;
 	default:
 		device_printf(sc->vtscsi_dev,

@@ -86,6 +86,7 @@ struct image_params {
 	struct ucred *newcred;		/* new credentials if changing */
 #define IMGACT_SHELL	0x1
 #define IMGACT_BINMISC	0x2
+#define IMGACT_INTERP_IGNORE 0x3
 	unsigned char interpreted;	/* mask of interpreters that have run */
 	bool credential_setid;		/* true if becoming setid */
 	bool authority_setid;		/* secure software-authority exec */
@@ -124,6 +125,10 @@ int	exec_shell_imgact(struct image_params *);
 int	exec_copyin_args(struct image_args *, const char *, char **, char **);
 int	pre_execve(struct thread *td, struct vmspace **oldvmspace);
 void	post_execve(struct thread *td, int error, struct vmspace *oldvmspace);
+bool	execve_block(struct thread *td, struct proc *p);
+void	execve_block_wait(struct thread *td, struct proc *p);
+void	execve_unblock(struct thread *td, struct proc *p);
+void	execve_block_pass(struct thread *td);
 #endif
 
 #endif /* !_SYS_IMGACT_H_ */

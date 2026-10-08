@@ -1769,20 +1769,62 @@ static cpu_feat_en
 pmap_multiple_tlbi_check(const struct cpu_feat *feat __unused, u_int midr)
 {
 	/*
+	 * ARM C1-Premium erratum 4193780
+	 * ARM C1-Ultra erratum 4193780
+	 * ARM Cortex-A76 erratum 4193800
+	 * ARM Cortex-A76AE erratum 4193801
+	 * ARM Cortex-A77 erratum 4193798
+	 * ARM Cortex-A78 erratum 4193791
+	 * ARM Cortex-A78AE erratum 4193793
+	 * ARM Cortex-A78C erratum 4193794
+	 * ARM Cortex-A710 erratum 4193788
+	 * ARM Cortex-X1 erratum 4193791
+	 * ARM Cortex-X1C erratum 4193792
+	 * ARM Cortex-X2 erratum 4193788
+	 * ARM Cortex-X3 erratum 4193786
+	 * ARM Cortex-X4 erratum 4118414
+	 * ARM Cortex-X925 erratum 4193781
+	 * ARM Neoverse-N1 erratum 4193800
+	 * ARM Neoverse-N2 erratum 4193789
+	 * ARM Neoverse-V1 erratum 4193790
+	 * ARM Neoverse-V2 erratum 4193787
+	 * ARM Neoverse-V3 erratum 4193784
+	 * ARM Neoverse-V3AE erratum 4193784
+	 * Present in all revisions
+	 */
+	if (CPU_IMPL(midr) == CPU_IMPL_ARM) {
+		switch(CPU_PART(midr)) {
+		case CPU_PART_C1_PREMIUM:
+		case CPU_PART_C1_ULTRA:
+		case CPU_PART_CORTEX_A76:
+		case CPU_PART_CORTEX_A76AE:
+		case CPU_PART_CORTEX_A77:
+		case CPU_PART_CORTEX_A78:
+		case CPU_PART_CORTEX_A78AE:
+		case CPU_PART_CORTEX_A78C:
+		case CPU_PART_CORTEX_A710:
+		case CPU_PART_CORTEX_X1:
+		case CPU_PART_CORTEX_X1C:
+		case CPU_PART_CORTEX_X2:
+		case CPU_PART_CORTEX_X3:
+		case CPU_PART_CORTEX_X4:
+		case CPU_PART_CORTEX_X925:
+		case CPU_PART_NEOVERSE_N1:
+		case CPU_PART_NEOVERSE_N2:
+		case CPU_PART_NEOVERSE_V1:
+		case CPU_PART_NEOVERSE_V2:
+		case CPU_PART_NEOVERSE_V3:
+		case CPU_PART_NEOVERSE_V3AE:
+			return (FEAT_DEFAULT_ENABLE);
+		}
+	}
+
+	/*
 	 * Cortex-A55 erratum 2441007 (Cat B rare)
 	 * Present in all revisions
 	 */
 	if (CPU_IMPL(midr) == CPU_IMPL_ARM &&
 	    CPU_PART(midr) == CPU_PART_CORTEX_A55)
-		return (FEAT_DEFAULT_DISABLE);
-
-	/*
-	 * Cortex-A76 erratum 1286807 (Cat B rare)
-	 * Present in r0p0 - r3p0
-	 * Fixed in r3p1
-	 */
-	if (midr_check_var_part_range(midr, CPU_IMPL_ARM, CPU_PART_CORTEX_A76,
-	    0, 0, 3, 0))
 		return (FEAT_DEFAULT_DISABLE);
 
 	/*
@@ -6946,7 +6988,7 @@ pmap_zero_page_area(vm_page_t m, int off, int size)
 /*
  *	pmap_copy_page copies the specified (machine independent)
  *	page by mapping the page into virtual memory and using
- *	bcopy to copy the page, one machine dependent page at a
+ *	memcpy to copy the page, one machine dependent page at a
  *	time.
  */
 void
@@ -7001,7 +7043,7 @@ pmap_copy_pages(vm_page_t ma[], vm_offset_t a_offset, vm_page_t mb[],
 		} else {
 			b_cp = (char *)PHYS_TO_DMAP(p_b) + b_pg_offset;
 		}
-		bcopy(a_cp, b_cp, cnt);
+		memcpy(b_cp, a_cp, cnt);
 		a_offset += cnt;
 		b_offset += cnt;
 		xfersize -= cnt;

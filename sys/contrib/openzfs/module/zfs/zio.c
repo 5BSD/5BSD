@@ -3830,7 +3830,6 @@ zio_ddt_write(zio_t *zio)
 
 	int p = DDT_PHYS_FOR_COPIES(ddt, zp->zp_copies);
 	ddt_phys_variant_t v = DDT_PHYS_VARIANT(ddt, p);
-	ddt_univ_phys_t *ddp = dde->dde_phys;
 
 	/*
 	 * In the common cases, at this point we have a regular BP with no
@@ -3861,14 +3860,6 @@ zio_ddt_write(zio_t *zio)
 	 * end of the chain and letting the sequence play out.
 	 */
 
-	/*
-	 * Number of DVAs in the DDT entry. If the BP is encrypted we ignore
-	 * the third one as normal.
-	 */
-	int have_dvas = ddt_phys_dva_count(ddp, v, BP_IS_ENCRYPTED(bp));
-	IMPLY(have_dvas == 0, ddt_phys_birth(ddp, v) == 0);
-	boolean_t is_ganged = ddt_phys_is_gang(ddp, v);
-
 	/* Number of DVAs requested by the IO. */
 	uint8_t need_dvas = zp->zp_copies;
 	/* Number of DVAs in outstanding writes for this dde. */
@@ -3882,6 +3873,21 @@ zio_ddt_write(zio_t *zio)
 	ddt_entry_io_t *dde_io = dde->dde_io;
 	if (dde_io != NULL)
 		mutex_enter(&dde_io->dde_io_lock);
+
+	/*
+	 * Number of DVAs in the DDT entry. If the BP is encrypted we ignore
+	 * the third one as normal.
+	 *
+	 * Must be computed after taking dde_io_lock (if held) to avoid
+	 * racing with ddt_phys_unextend() in zio_ddt_child_write_done()
+	 * error path, which can zero DVAs under dde_io_lock. Without the
+	 * lock, a stale have_dvas causes ddt_bp_fill() to copy a zeroed
+	 * DVA into the BP, producing a hole that reads back as zeros.
+	 */
+	ddt_univ_phys_t *ddp = dde->dde_phys;
+	int have_dvas = ddt_phys_dva_count(ddp, v, BP_IS_ENCRYPTED(bp));
+	IMPLY(have_dvas == 0, ddt_phys_birth(ddp, v) == 0);
+	boolean_t is_ganged = ddt_phys_is_gang(ddp, v);
 
 	if (dde_io == NULL || dde_io->dde_lead_zio[p] == NULL) {
 		/*
@@ -4168,14 +4174,21 @@ zio_ddt_free(zio_t *zio)
 	}
 	ddt_exit(ddt);
 
-	/*
-	 * When no entry was found, it must have been pruned,
-	 * so we can free it now instead of decrementing the
-	 * refcount in the DDT.
-	 */
-	if (!dde) {
+	if (dde) {
+		/*
+		 * DDT entry found and the refcount has been decremented.
+		 * Stop the pipeline — there is nothing more to do right now.
+		 */
+		zio->io_pipeline = ZIO_INTERLOCK_PIPELINE;
+	} else {
+		/*
+		 * No DDT entry; the block must have been pruned from the
+		 * table.  Clear the DEDUP bit so it is treated as a normal
+		 * block from here on.  BRT_FREE and DVA_FREE follow in the
+		 * pipeline and will handle any cloned references and the
+		 * actual block free respectively.
+		 */
 		BP_SET_DEDUP(bp, 0);
-		zio->io_pipeline |= ZIO_STAGE_DVA_FREE;
 	}
 
 	return (zio);
@@ -5925,11 +5938,11 @@ static zio_pipe_stage_t *zio_pipeline[] = {
 	zio_encrypt,
 	zio_checksum_generate,
 	zio_nop_write,
-	zio_brt_free,
 	zio_ddt_read_start,
 	zio_ddt_read_done,
 	zio_ddt_write,
 	zio_ddt_free,
+	zio_brt_free,
 	zio_gang_assemble,
 	zio_gang_issue,
 	zio_dva_throttle,
@@ -5988,6 +6001,67 @@ zbookmark_compare(uint16_t dbss1, uint8_t ibs1, uint16_t dbss2, uint8_t ibs2,
 	    zb1->zb_level == zb2->zb_level &&
 	    zb1->zb_blkid == zb2->zb_blkid)
 		return (0);
+
+	if (zb1->zb_level < 0 || zb2->zb_level < 0) {
+		/*
+		 * "Negative" levels are ZB_ROOT_LEVEL, ZB_ZIL_LEVEL or
+		 * ZB_DNODE_LEVEL, and represent some sort of auxiliary dataset
+		 * block or object. In this case, we're usually being called
+		 * from dsl_scan or dmu_traverse.
+		 *
+		 * These "levels" are more like a "type" signal, not directly
+		 * comparable, but we have to do something. So we order them in
+		 * the order we would see them during a typical scan or
+		 * traverse:
+		 *
+		 * - ZB_ROOT_LEVEL: the "top" block carrying the dataset head
+		 * - ZB_ZIL_LEVEL: the head ZIL block attached to the dataset
+		 * - ZB_DNODE_LEVEL: "virtual" position representing an
+		 *                   entire object. Sorts ahead of the true
+		 *                   data blocks for the object.
+		 * - level >= 0: data blocks
+		 *
+		 * We work through these cases from top to bottom, with
+		 * appropriate tiebreaks for each kind.
+		 */
+
+		/*
+		 * Root level wins. It shouldn't be possible for both to be the
+		 * root level in this per-dataset tree, and there's no obvious
+		 * tiebreaker, but we handle it as a defensive measure.
+		 */
+		if (zb1->zb_level == ZB_ROOT_LEVEL &&
+		    zb2->zb_level == ZB_ROOT_LEVEL)
+			return (TREE_PCMP(zb1, zb2));
+		if (zb1->zb_level == ZB_ROOT_LEVEL)
+			return (-1);
+		if (zb2->zb_level == ZB_ROOT_LEVEL)
+			return (1);
+
+		/* ZIL bookmarks have valid blkid, so the earlier one wins. */
+		if (zb1->zb_level == ZB_ZIL_LEVEL &&
+		    zb2->zb_level == ZB_ZIL_LEVEL)
+			return (TREE_CMP(zb1->zb_blkid, zb2->zb_blkid));
+		if (zb1->zb_level == ZB_ZIL_LEVEL)
+			return (-1);
+		if (zb2->zb_level == ZB_ZIL_LEVEL)
+			return (1);
+
+		/*
+		 * If we get this far, then at least one is ZB_DNODE_LEVEL, and
+		 * the other is either ZB_DNODE_LEVEL or a data block.
+		 * Regardless, the one with the lower-numbered object wins -
+		 * earler ZB_DNODE_LEVEL beats later, but data block on earlier
+		 * objects beats the virtual marker on later objects.
+		 */
+		int cmp = TREE_CMP(zb1->zb_object, zb2->zb_object);
+		if (cmp != 0)
+			return (cmp);
+
+		if (zb1->zb_level == ZB_DNODE_LEVEL)
+			return (-1);
+		return (1);
+	}
 
 	IMPLY(zb1->zb_level > 0, ibs1 >= SPA_MINBLOCKSHIFT);
 	IMPLY(zb2->zb_level > 0, ibs2 >= SPA_MINBLOCKSHIFT);

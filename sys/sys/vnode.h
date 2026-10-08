@@ -133,8 +133,7 @@ struct vnode {
 	 * Fields which define the identity of the vnode.  These fields are
 	 * owned by the filesystem (XXX: and vgone() ?)
 	 */
-	__enum_uint8(vtype) v_type;		/* u vnode type */
-	__enum_uint8(vstate) v_state;		/* u vnode state */
+	short	v_v2flag;			/* v frequently read flag */
 	short	v_irflag;			/* i frequently read flags */
 	seqc_t	v_seqc;				/* i modification count */
 	uint32_t v_nchash;			/* u namecache hash */
@@ -203,6 +202,12 @@ struct vnode {
 						   (negative) text users */
 	int	v_seqc_users;			/* i modifications pending */
 };
+/*
+	__enum_uint8(vtype) v_type;
+	__enum_uint8(vstate) v_state;
+*/
+#define	v_type	v_rl.resv1			/* u vnode type */
+#define	v_state	v_rl.resv2			/* u vnode state */
 
 #define VN_ISDEV(vp)		VTYPE_ISDEV((vp)->v_type)
 
@@ -224,7 +229,7 @@ _Static_assert(sizeof(struct vnode) <= 448, "vnode size crosses 448 bytes");
 #define v_object	v_bufobj.bo_object
 
 #define VN_KNOTE(vp, b, a) do {                    			\
-	if ((vn_irflag_read(vp) & VIRF_KNOTE) != 0) {			\
+	if ((vp->v_v2flag & V2_KNOTE) != 0) {			\
 		KNOTE(&vp->v_pollinfo->vpi_selinfo.si_note, (b),	\
 		    (a) | KNF_NOKQLOCK);				\
 	}								\
@@ -237,6 +242,7 @@ _Static_assert(sizeof(struct vnode) <= 448, "vnode size crosses 448 bytes");
  *	VI flags are protected by interlock and live in v_iflag
  *	VIRF flags are protected by interlock and live in v_irflag
  *	VV flags are protected by the vnode lock and live in v_vflag
+ *	V2 flags are protected by the vnode lock and live in v_v2flag
  *
  *	VIRF_DOOMED is doubly protected by the interlock and vnode lock.  Both
  *	are required for writing but the status may be checked with either.
@@ -255,9 +261,10 @@ _Static_assert(sizeof(struct vnode) <= 448, "vnode size crosses 448 bytes");
 #define	VIRF_INOTIFY	0x0080	/* This vnode is being watched */
 #define	VIRF_INOTIFY_PARENT 0x0100 /* A parent of this vnode may be being
 				      watched */
-#define	VIRF_KNOTE	0x0200	/* Has knlist */
 #define	VIRF_MAGICLINK	0x0400	/* Kernel-generated object link */
 #define	VIRF_INOTIFY_PATH 0x0800	/* Retained open-path identities */
+
+#define	V2_KNOTE	0x0001	/* Has knlist */
 
 #define	VI_UNUSED0	0x0001	/* unused */
 #define	VI_MOUNT	0x0002	/* Mount in progress */
@@ -477,6 +484,7 @@ extern	struct mount *rootdevmp;	/* "/dev" mount */
 extern	u_long desiredvnodes;		/* number of vnodes desired */
 extern	struct uma_zone *namei_zone;
 extern	struct vattr va_null;		/* predefined null vattr structure */
+extern	struct vnode *vp_crossmp;
 
 extern	u_int vn_lock_pair_pause_max;
 
@@ -940,6 +948,7 @@ int	vop_stdpathconf(struct vop_pathconf_args *);
 int	vop_stdpoll(struct vop_poll_args *);
 int	vop_stdvptocnp(struct vop_vptocnp_args *ap);
 int	vop_stdvptofh(struct vop_vptofh_args *ap);
+int	vop_stdvput_pair(struct vop_vput_pair_args *ap);
 int	vop_stdunp_bind(struct vop_unp_bind_args *ap);
 int	vop_stdunp_connect(struct vop_unp_connect_args *ap);
 int	vop_stdunp_detach(struct vop_unp_detach_args *ap);
@@ -1089,7 +1098,7 @@ void	vop_rename_fail(struct vop_rename_args *ap);
 	off_t osize, ooffset, noffset;					\
 									\
 	osize = ooffset = noffset = 0;					\
-	if ((vn_irflag_read((ap)->a_vp) & VIRF_KNOTE) != 0) {		\
+	if (((ap)->a_vp->v_v2flag & V2_KNOTE) != 0) {			\
 		error = VOP_GETATTR((ap)->a_vp, &va, (ap)->a_cred);	\
 		if (error)						\
 			return (error);					\

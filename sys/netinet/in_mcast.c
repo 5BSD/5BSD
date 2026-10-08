@@ -2637,9 +2637,6 @@ inp_set_source_filters(struct inpcb *inp, struct sockopt *sopt)
 	if (error)
 		return (error);
 
-	if (msfr.msfr_nsrcs > in_mcast_maxsocksrc)
-		return (ENOBUFS);
-
 	if ((msfr.msfr_fmode != MCAST_EXCLUDE &&
 	     msfr.msfr_fmode != MCAST_INCLUDE))
 		return (EINVAL);
@@ -2651,6 +2648,9 @@ inp_set_source_filters(struct inpcb *inp, struct sockopt *sopt)
 	gsa = (sockunion_t *)&msfr.msfr_group;
 	if (!IN_MULTICAST(ntohl(gsa->sin.sin_addr.s_addr)))
 		return (EINVAL);
+
+	if (msfr.msfr_nsrcs > in_mcast_maxsocksrc)
+		return (ENOBUFS);
 
 	gsa->sin.sin_port = 0;	/* ignore port */
 
@@ -2677,8 +2677,8 @@ inp_set_source_filters(struct inpcb *inp, struct sockopt *sopt)
 	ifp = ifnet_byindex_ref(msfr.msfr_ifindex);
 	NET_EPOCH_EXIT(et);
 	if (ifp == NULL) {
-		free(kss, M_TEMP);
-		return (EADDRNOTAVAIL);
+		error = EADDRNOTAVAIL;
+		goto out_inp_unlocked;
 	}
 
 	IN_MULTI_LOCK();
@@ -2712,7 +2712,6 @@ inp_set_source_filters(struct inpcb *inp, struct sockopt *sopt)
 		struct sockaddr_storage	*pkss;
 		struct in_addr	 address;
 		int			 i;
-
 
 		/*
 		 * Mark all source filters as UNDEFINED at t1.
@@ -2797,6 +2796,7 @@ out_inp_locked:
 	INP_WUNLOCK(inp);
 	IN_MULTI_UNLOCK();
 	if_rele(ifp);
+out_inp_unlocked:
 	free(kss, M_TEMP);
 	return (error);
 }

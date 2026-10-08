@@ -66,8 +66,8 @@ struct sockaddr_un {
 
 /* Socket options. */
 #define	LOCAL_PEERCRED		1	/* retrieve peer credentials */
-#define	LOCAL_CREDS		2	/* pass credentials to receiver */
-#define	LOCAL_CREDS_PERSISTENT	3	/* pass credentials to receiver */
+#define	LOCAL_CREDS		2	/* int; pass credentials to receiver */
+#define	LOCAL_CREDS_PERSISTENT	3	/* int; pass credentials to receiver */
 #define	LOCAL_CAP_CONNECT	4	/* require cap mode for connect and fd send */
 #define	LOCAL_CAPMODE_CONNECT	LOCAL_CAP_CONNECT	/* compat alias */
 #define	LOCAL_CAPMODE_SERVER	6	/* require server in cap mode */

@@ -72,7 +72,7 @@ devmatch_broker_body()
 	    -o inline:'devctl freeze\nbroker load if_test\ndevctl thaw\n' \
 	    env BROKER_STATUS=1 sh -c '. ./seams.sh; . ./devmatch.sh; devmatch_start'
 	atf_check -s exit:0 -e empty \
-	    -o inline:'devctl freeze\ndirect -n if_test\ndevctl thaw\n' \
+	    -o inline:'devctl freeze\ndirect if_test\ndevctl thaw\n' \
 	    env PLANE=NO sh -c '. ./seams.sh; . ./devmatch.sh; devmatch_start'
 }
 

@@ -1891,7 +1891,7 @@ so_unsplice(struct socket *so, bool timeout)
 {
 	struct socket *so2;
 	struct so_splice *sp;
-	bool drain, so2rele;
+	bool drain;
 
 	/*
 	 * First unset SB_SPLICED and hide the splice structure so that
@@ -1936,7 +1936,6 @@ so_unsplice(struct socket *so, bool timeout)
 		KASSERT(so2->so_splice_back == sp,
 		    ("%s: so_splice_back != sp", __func__));
 		so2->so_snd.sb_flags &= ~SB_SPLICED;
-		so2rele = so2->so_splice_back != NULL;
 		so2->so_splice_back = NULL;
 		SOCK_SENDBUF_UNLOCK(so2);
 		SOCK_UNLOCK(so2);
@@ -1982,8 +1981,7 @@ so_unsplice(struct socket *so, bool timeout)
 	sorele(so);
 	if (so2 != NULL) {
 		sowwakeup(so2);
-		if (so2rele)
-			sorele(so2);
+		sorele(so2);
 	}
 	CURVNET_RESTORE();
 	so_splice_free(sp);
@@ -3973,7 +3971,7 @@ sooptcopyin(struct sockopt *sopt, void *buf, size_t len, size_t minlen)
 	if (sopt->sopt_td != NULL)
 		return (copyin(sopt->sopt_val, buf, valsize));
 
-	bcopy(sopt->sopt_val, buf, valsize);
+	memcpy(buf, sopt->sopt_val, valsize);
 	return (0);
 }
 
@@ -4055,6 +4053,7 @@ sosetopt(struct socket *so, struct sockopt *sopt)
 		case SO_NO_DDP:
 		case SO_NO_OFFLOAD:
 		case SO_RERROR:
+stdopt:
 			error = sooptcopyin(sopt, &optval, sizeof optval,
 			    sizeof optval);
 			if (error)
@@ -4066,6 +4065,14 @@ sosetopt(struct socket *so, struct sockopt *sopt)
 				so->so_options &= ~sopt->sopt_name;
 			SOCK_UNLOCK(so);
 			break;
+
+		case SO_PASSRIGHTS:
+			if (so->so_proto->pr_domain->dom_family != AF_LOCAL) {
+				error = EOPNOTSUPP;
+				goto bad;
+			}
+
+			goto stdopt;
 
 		case SO_SETFIB:
 			error = so->so_proto->pr_ctloutput(so, sopt);
@@ -4257,7 +4264,7 @@ sooptcopyout(struct sockopt *sopt, const void *buf, size_t len)
 		if (sopt->sopt_td != NULL)
 			error = copyout(buf, sopt->sopt_val, valsize);
 		else
-			bcopy(buf, sopt->sopt_val, valsize);
+			memcpy(sopt->sopt_val, buf, valsize);
 	}
 	return (error);
 }
@@ -4310,10 +4317,19 @@ sogetopt(struct socket *so, struct sockopt *sopt)
 		case SO_NO_DDP:
 		case SO_NO_OFFLOAD:
 		case SO_RERROR:
+stdopt:
 			optval = so->so_options & sopt->sopt_name;
 integer:
 			error = sooptcopyout(sopt, &optval, sizeof optval);
 			break;
+
+		case SO_PASSRIGHTS:
+			if (so->so_proto->pr_domain->dom_family != AF_LOCAL) {
+				error = EOPNOTSUPP;
+				goto bad;
+			}
+
+			goto stdopt;
 
 		case SO_FIB:
 			SOCK_LOCK(so);
@@ -4563,7 +4579,7 @@ soopt_mcopyin(struct sockopt *sopt, struct mbuf *m)
 				return(error);
 			}
 		} else
-			bcopy(sopt->sopt_val, mtod(m, char *), m->m_len);
+			memcpy(mtod(m, char *), sopt->sopt_val, m->m_len);
 		sopt->sopt_valsize -= m->m_len;
 		sopt->sopt_val = (char *)sopt->sopt_val + m->m_len;
 		m = m->m_next;
@@ -4592,7 +4608,7 @@ soopt_mcopyout(struct sockopt *sopt, struct mbuf *m)
 				return(error);
 			}
 		} else
-			bcopy(mtod(m, char *), sopt->sopt_val, m->m_len);
+			memcpy(sopt->sopt_val, mtod(m, char *), m->m_len);
 		sopt->sopt_valsize -= m->m_len;
 		sopt->sopt_val = (char *)sopt->sopt_val + m->m_len;
 		valsize += m->m_len;
@@ -5087,7 +5103,7 @@ sodupsockaddr(const struct sockaddr *sa, int mflags)
 
 	sa2 = malloc(sa->sa_len, M_SONAME, mflags);
 	if (sa2)
-		bcopy(sa, sa2, sa->sa_len);
+		memcpy(sa2, sa, sa->sa_len);
 	return sa2;
 }
 

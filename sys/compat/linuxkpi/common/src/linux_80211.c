@@ -504,13 +504,154 @@ lkpi_rx_bw_to_cw(enum ieee80211_sta_rx_bandwidth rx_bw)
 	}
 }
 
+static enum ieee80211_bss_changed
+lkpi_sta_supp_rates(struct ieee80211_hw *hw, struct ieee80211_vif *vif,
+    struct ieee80211_node *ni,
+    enum ieee80211_rate_control_changed_flags *rc_changed)
+{
+	struct lkpi_vif *lvif;
+	struct lkpi_sta *lsta;
+	struct ieee80211_sta *sta;
+	enum ieee80211_bss_changed bss_changed;
+	struct ieee80211_supported_band *supband;
+	uint32_t supp_rates, basic_rates;
+	int band, i, n;
+
+	bss_changed = 0;
+
+	band = vif->bss_conf.chanreq.oper.chan->band;
+	supband = hw->wiphy->bands[band];
+	if (supband == NULL)
+		return (bss_changed);
+
+	lvif = VIF_TO_LVIF(vif);
+	lsta = ni->ni_drv_data;
+	sta = LSTA_TO_STA(lsta);
+
+	supp_rates = 0;
+	basic_rates = 0;
+
+	for (n = 0; n < ni->ni_rates.rs_nrates; n++) {
+		uint8_t supp_rate;
+		uint16_t bitr;
+		bool basic;
+
+		/* Note: net80211 rates are in 0.5Mbit/s, e.g., 108 is 54Mbit/s. */
+		supp_rate = ni->ni_rates.rs_rates[n] & (~IEEE80211_RATE_BASIC);
+		basic = (ni->ni_rates.rs_rates[n] & IEEE80211_RATE_BASIC) != 0;
+
+		for (i = 0; i < supband->n_bitrates; i++) {
+			/* Band bitrates are * 10 so, e.g., 55 is 5.5Mbit/s. */
+			/* To match net80211 rates we need to do a DIV5. */
+			bitr = howmany(supband->bitrates[i].bitrate, 5);
+			if (supp_rate == bitr) {
+				supp_rates |= BIT(i);
+				if (basic)
+					basic_rates |= BIT(i);
+			}
+			/*
+			 * We are not checking if we are doing 11b or 11g and
+			 * if the rate is fine for each.
+			 */
+		}
+		TRACE_RATES("supp_rate %u basic %d supp_rates %#010x basic_rates %#010x",
+		    supp_rate, basic, supp_rates, basic_rates);
+	}
+	if (basic_rates != 0 &&
+	    vif->bss_conf.basic_rates != basic_rates) {
+		TRACE_RATES("vif bss_conf basic_rates %#010x update to %#010x",
+		    vif->bss_conf.basic_rates, basic_rates);
+		vif->bss_conf.basic_rates = basic_rates;
+		bss_changed |= BSS_CHANGED_BASIC_RATES;
+	}
+	/* Guard against net80211 not having any rates set when we get here. */
+	if (supp_rates == 0)
+		supp_rates = vif->bss_conf.basic_rates;
+	if (sta->deflink.supp_rates[band] != supp_rates) {
+		TRACE_RATES("band %d supp_rates %#010x update to %#010x",
+		    band, sta->deflink.supp_rates[band], supp_rates);
+		sta->deflink.supp_rates[band] = supp_rates;
+		if (rc_changed != NULL)
+			*rc_changed |= IEEE80211_RC_SUPP_RATES_CHANGED;
+	}
+
+	/*
+	 * br_mask got initialized in lkpi_ic_vap_create().
+	 * Do a basic rates check against it for the current band if we are
+	 * in a state to have all the above information.
+	 */
+	TRACE_RATES("band %d br_mask legacy %#010x & basic_rates %#010x != 0?",
+	    band, lvif->br_mask.control[band].legacy, vif->bss_conf.basic_rates);
+	if (band == vif->bss_conf.chanreq.oper.chan->band &&
+	    (lvif->br_mask.control[band].legacy & vif->bss_conf.basic_rates) == 0) {
+		/* In our setup this should never happen. */
+		printf("%s: WARNING: no acceptable basic rate %#010x & %#010x\n",
+		     __func__, lvif->br_mask.control[band].legacy, vif->bss_conf.basic_rates);
+	}
+
+	/*
+	 * XXX-BZ we should track changes here as well and call or let the
+	 * caller call lkpi_80211_mo_set_bitrate_mask() if needed.
+	 * Note: the call in lkpi_sta_scan_to_auth() still have to
+	 * happen unconditionally for the initial setting.
+	 */
+#if defined(LKPI_80211_HT)
+	if (supband->ht_cap.ht_supported) {
+		memcpy(lvif->br_mask.control[band].ht_mcs,
+		    supband->ht_cap.mcs.rx_mask,
+		    sizeof(lvif->br_mask.control[band].ht_mcs));
+#if defined(LINUXKPI_DEBUG_80211)
+		for (int i = 0; i < IEEE80211_HT_MCS_MASK_LEN; i++) {
+			TRACE_RATES("band %d ht_mcs[%d] %#010x",
+			    band, i, lvif->br_mask.control[band].ht_mcs[i]);
+		}
+#endif
+	}
+#endif /* LKPI_80211_HT */
+#if defined(LKPI_80211_VHT)
+	if (supband->vht_cap.vht_supported) {
+		uint16_t mcs_map, val;
+		uint8_t nss;
+
+		mcs_map = supband->vht_cap.vht_mcs.tx_mcs_map;
+		for (nss = 0; nss < NL80211_VHT_NSS_MAX; nss++) {
+			TRACE_RATES("band %d nss %d vht_mcs.tx_mcs_map %#06x mcs_map %#06x & 0x3 = %#06x",
+			    band, nss, supband->vht_cap.vht_mcs.tx_mcs_map, mcs_map, mcs_map & 0x3);
+			switch (mcs_map & 0x3) {
+			case IEEE80211_VHT_MCS_SUPPORT_0_7:
+				val = 0x00ff;
+				break;
+			case IEEE80211_VHT_MCS_SUPPORT_0_8:
+				val = 0x01ff;
+				break;
+			case IEEE80211_VHT_MCS_SUPPORT_0_9:
+				val = 0x03ff;
+				break;
+			case IEEE80211_VHT_MCS_NOT_SUPPORTED:
+				val = 0;
+				break;
+			}
+			lvif->br_mask.control[band].vht_mcs[nss] = val;
+			TRACE_RATES("band %d nss %d vht_mcs %#06x",
+			    band, nss, lvif->br_mask.control[band].vht_mcs[nss]);
+			mcs_map >>= 2;
+		}
+	}
+#endif /* LKPI_80211_VHT */
+
+	return (bss_changed);
+}
+
 static void
 lkpi_sync_chanctx_cw_from_rx_bw(struct ieee80211_hw *hw,
     struct ieee80211_vif *vif, struct ieee80211_sta *sta)
 {
+	struct lkpi_hw *lhw;
 	struct ieee80211_chanctx_conf *chanctx_conf;
 	enum ieee80211_sta_rx_bandwidth old_bw;
 	uint32_t changed;
+
+	lockdep_assert_wiphy(hw->wiphy);
 
 	chanctx_conf = rcu_dereference_protected(vif->bss_conf.chanctx_conf,
 	    lockdep_is_held(&hw->wiphy->mtx));
@@ -518,7 +659,12 @@ lkpi_sync_chanctx_cw_from_rx_bw(struct ieee80211_hw *hw,
 		return;
 
 	old_bw = lkpi_cw_to_rx_bw(chanctx_conf->def.width);
-	if (old_bw == sta->deflink.bandwidth)
+	TRACE_RATES("old_bw %d sta->deflink.bandwidth %d hw->conf.chandef.width %d",
+	    old_bw, sta->deflink.bandwidth, lkpi_cw_to_rx_bw(hw->conf.chandef.width));
+
+	lhw = HW_TO_LHW(hw);
+	if (old_bw == sta->deflink.bandwidth &&
+	    (!lhw->emulate_chanctx || old_bw == lkpi_cw_to_rx_bw(hw->conf.chandef.width)))
 		return;
 
 	chanctx_conf->def.width = lkpi_rx_bw_to_cw(sta->deflink.bandwidth);
@@ -529,6 +675,11 @@ lkpi_sync_chanctx_cw_from_rx_bw(struct ieee80211_hw *hw,
 	chanctx_conf->min_def = chanctx_conf->def;
 
 	vif->bss_conf.chanreq.oper.width = chanctx_conf->def.width;
+
+	TRACE_RATES("chanctx_conf %p def.width %d sta->deflink.bandwidth %d "
+	    "ht_supported %d vht_supported %d",
+	    chanctx_conf, chanctx_conf->def.width, sta->deflink.bandwidth,
+	    sta->deflink.ht_cap.ht_supported, sta->deflink.vht_cap.vht_supported);
 
 	changed = IEEE80211_CHANCTX_CHANGE_MIN_WIDTH;
 	changed |= IEEE80211_CHANCTX_CHANGE_WIDTH;
@@ -549,6 +700,7 @@ lkpi_sta_sync_ht_from_ni(struct ieee80211_hw *hw, struct ieee80211_vif *vif,
 
 	if ((ni->ni_flags & IEEE80211_NODE_HT) == 0) {
 		sta->deflink.ht_cap.ht_supported = false;
+		TRACE_RATES("HT ht_supported %d", sta->deflink.ht_cap.ht_supported);
 		return;
 	}
 
@@ -583,7 +735,7 @@ lkpi_sta_sync_ht_from_ni(struct ieee80211_hw *hw, struct ieee80211_vif *vif,
 	sta_ht_cap = &sta->deflink.ht_cap;
 	rx_nss = 0;
 	for (i = 0; i < 4; i++) {
-		TRACEOK("HT rx_mask[%d] sta %#04x & hw %#04x", i,
+		TRACE_RATES("HT rx_mask[%d] sta %#04x & hw %#04x", i,
 		    sta_ht_cap->mcs.rx_mask[i], ht_cap->mcs.rx_mask[i]);
 		sta_ht_cap->mcs.rx_mask[i] =
 			sta_ht_cap->mcs.rx_mask[i] & ht_cap->mcs.rx_mask[i];
@@ -593,10 +745,11 @@ lkpi_sta_sync_ht_from_ni(struct ieee80211_hw *hw, struct ieee80211_vif *vif,
 			rx_nss++;
 	}
 	if (rx_nss > 0) {
-		TRACEOK("HT rx_nss = max(%d, %d)", rx_nss, sta->deflink.rx_nss);
+		TRACE_RATES("HT rx_nss = max(%d, %d)", rx_nss, sta->deflink.rx_nss);
 		sta->deflink.rx_nss = MAX(rx_nss, sta->deflink.rx_nss);
 	} else {
 		sta->deflink.ht_cap.ht_supported = false;
+		TRACE_RATES("HT ht_supported %d", sta->deflink.ht_cap.ht_supported);
 		return;
 	}
 
@@ -618,6 +771,7 @@ lkpi_sta_sync_ht_from_ni(struct ieee80211_hw *hw, struct ieee80211_vif *vif,
 		sta->deflink.agg.max_tid_amsdu_len[j] = ;
 	}
 #endif
+	TRACE_RATES("HT ht_supported %d", sta->deflink.ht_cap.ht_supported);
 }
 #endif
 
@@ -636,6 +790,7 @@ lkpi_sta_sync_vht_from_ni(struct ieee80211_hw *hw, struct ieee80211_vif *vif,
 	if ((ni->ni_flags & IEEE80211_NODE_VHT) == 0 ||
 	    !IEEE80211_IS_CHAN_VHT_5GHZ(ni->ni_chan)) {
 		sta->deflink.vht_cap.vht_supported = false;
+		TRACE_RATES("VHT vht_supported %d", sta->deflink.vht_cap.vht_supported);
 		return;
 	}
 
@@ -717,16 +872,17 @@ skip_bw:
 		}
 		tx_map |= (sta << (2 * i));
 	}
-	TRACEOK("VHT rx_mcs_map %#010x->%#010x, tx_mcs_map %#010x->%#010x, rx_nss = %d",
+	TRACE_RATES("VHT rx_mcs_map %#010x->%#010x, tx_mcs_map %#010x->%#010x, rx_nss = %d",
 	    sta_vht_cap->vht_mcs.rx_mcs_map, rx_map,
 	    sta_vht_cap->vht_mcs.tx_mcs_map, tx_map, rx_nss);
 	sta_vht_cap->vht_mcs.rx_mcs_map = rx_map;
 	sta_vht_cap->vht_mcs.tx_mcs_map = tx_map;
 	if (rx_nss > 0) {
-		TRACEOK("VHT rx_nss = max(%d, %d)", rx_nss, sta->deflink.rx_nss);
+		TRACE_RATES("VHT rx_nss = max(%d, %d)", rx_nss, sta->deflink.rx_nss);
 		sta->deflink.rx_nss = MAX(rx_nss, sta->deflink.rx_nss);
 	} else {
 		sta->deflink.vht_cap.vht_supported = false;
+		TRACE_RATES("VHT vht_supported %d", sta->deflink.vht_cap.vht_supported);
 		return;
 	}
 
@@ -742,13 +898,31 @@ skip_bw:
 		sta->deflink.agg.max_amsdu_len = IEEE80211_MAX_MPDU_LEN_VHT_3895;
 		break;
 	}
+
+	TRACE_RATES("VHT vht_supported %d", sta->deflink.vht_cap.vht_supported);
 }
 #endif
 
-static void
+static enum ieee80211_bss_changed
 lkpi_sta_sync_from_ni(struct ieee80211_hw *hw, struct ieee80211_vif *vif,
     struct ieee80211_sta *sta, struct ieee80211_node *ni, bool updchnctx)
 {
+	enum ieee80211_bss_changed bss_changed;
+	enum ieee80211_rate_control_changed_flags rc_changed;
+	enum ieee80211_sta_rx_bandwidth bandwidth;
+	uint8_t rx_nss;
+
+	if (updchnctx)
+		lockdep_assert_wiphy(hw->wiphy);
+
+	bss_changed = 0;
+	rc_changed = 0;
+
+	bandwidth = sta->deflink.bandwidth;
+	rx_nss = sta->deflink.rx_nss;
+
+	TRACE_RATES("updchnctx %d bandwidth %d rx_nss %u",
+	    updchnctx, bandwidth, rx_nss);
 
 	/*
 	 * Ensure rx_nss is at least 1 as otherwise drivers run into
@@ -772,6 +946,23 @@ lkpi_sta_sync_from_ni(struct ieee80211_hw *hw, struct ieee80211_vif *vif,
 	 */
 	if (updchnctx)
 		lkpi_sync_chanctx_cw_from_rx_bw(hw, vif, sta);
+
+	bss_changed |= lkpi_sta_supp_rates(hw, vif, ni, &rc_changed);
+
+	if (sta->deflink.bandwidth != bandwidth)
+		rc_changed |= IEEE80211_RC_BW_CHANGED;
+	if (sta->deflink.rx_nss != rx_nss)
+		rc_changed |= IEEE80211_RC_NSS_CHANGED;
+
+	TRACE_RATES("updchnctx %d rc_change %#010x bss_changed %#010jx "
+	    "bandwidth %d rx_nss %u",
+	    updchnctx, rc_changed, (uintmax_t)bss_changed,
+	    sta->deflink.bandwidth, sta->deflink.rx_nss);
+
+	if (rc_changed != 0)
+		lkpi_80211_mo_link_sta_rc_update(hw, vif, &sta->deflink, rc_changed);
+
+	return (bss_changed);
 }
 
 #if 0
@@ -892,8 +1083,7 @@ lkpi_lsta_alloc(struct ieee80211vap *vap, const uint8_t mac[IEEE80211_ADDR_LEN],
 		} else {
 			ltxq->txq.ac = ieee80211e_up_to_ac[tid & 7];
 		}
-		ltxq->seen_dequeue = false;
-		ltxq->stopped = false;
+		ltxq->flags = 0;
 		ltxq->txq.vif = vif;
 		ltxq->txq.tid = tid;
 		ltxq->txq.sta = sta;
@@ -937,7 +1127,7 @@ lkpi_lsta_alloc(struct ieee80211vap *vap, const uint8_t mac[IEEE80211_ADDR_LEN],
 	sta->deflink.rx_nss = 1;
 	sta->deflink.sta = sta;
 
-	lkpi_sta_sync_from_ni(hw, vif, sta, ni, false);
+	(void)lkpi_sta_sync_from_ni(hw, vif, sta, ni, false);
 
 	IMPROVE("he, eht, bw_320, ... smps_mode, ..");
 
@@ -1572,6 +1762,7 @@ lkpi_iv_key_set(struct ieee80211vap *vap, const struct ieee80211_key *k)
 	struct ieee80211_sta *sta;
 	struct ieee80211_node *ni;
 	struct ieee80211_key_conf *kc;
+	struct ieee80211_key *wk;
 	uint32_t lcipher;
 	uint16_t exp_flags;
 	uint8_t keylen;
@@ -1707,6 +1898,16 @@ lkpi_iv_key_set(struct ieee80211vap *vap, const struct ieee80211_key *k)
 		    kc, kc->keyidx, kc->hw_key_idx, kc->flags, IEEE80211_KEY_FLAG_BITS);
 #endif
 
+	/*
+	 * Getting here means we support HW crypto offload.
+	 * Some drivers do not set the wiphy [n_]cipher_suites and thus we
+	 * never populate ic_cryptocaps. which means SWCRYPT will be set and we
+	 * should disable this now (before possibly setting other SW flags
+	 * again for when we need partial SW support).
+	 */
+	wk = __DECONST(struct ieee80211_key *, k);
+	wk->wk_flags &= ~IEEE80211_KEY_SWCRYPT;
+
 	exp_flags = 0;
 	switch (kc->cipher) {
 	case WLAN_CIPHER_SUITE_TKIP:
@@ -1726,8 +1927,8 @@ lkpi_iv_key_set(struct ieee80211vap *vap, const struct ieee80211_key *k)
 #ifdef __notyet__
 		/* Do flags surgery; special see linuxkpi_ieee80211_ifattach(). */
 		if ((kc->flags & IEEE80211_KEY_FLAG_GENERATE_MMIC) != 0) {
-			k->wk_flags &= ~(IEEE80211_KEY_NOMICMGT|IEEE80211_KEY_NOMIC);
-			k->wk_flags |= IEEE80211_KEY_SWMIC;
+			wk->wk_flags &= ~(IEEE80211_KEY_NOMICMGT|IEEE80211_KEY_NOMIC);
+			wk->wk_flags |= IEEE80211_KEY_SWMIC;
 			ic->ic_cryptocaps &= ~IEEE80211_CRYPTO_TKIPMIC
 		}
 #endif
@@ -1750,9 +1951,9 @@ lkpi_iv_key_set(struct ieee80211vap *vap, const struct ieee80211_key *k)
 #ifdef __notyet__
 	/* Do flags surgery. */
 	if ((kc->flags & IEEE80211_KEY_FLAG_GENERATE_IV_MGMT) == 0)
-		k->wk_flags |= IEEE80211_KEY_NOIVMGT;
+		wk->wk_flags |= IEEE80211_KEY_NOIVMGT;
 	if ((kc->flags & IEEE80211_KEY_FLAG_GENERATE_IV) == 0)
-		k->wk_flags |= IEEE80211_KEY_NOIV;
+		wk->wk_flags |= IEEE80211_KEY_NOIV;
 #endif
 
 	ieee80211_free_node(ni);
@@ -1941,7 +2142,7 @@ lkpi_ic_update_mcast_copy(void *arg, struct sockaddr_dl *sdl, u_int cnt)
 }
 
 static void
-lkpi_update_mcast_filter(struct ieee80211com *ic)
+lkpi_update_mcast_filter_locked(struct ieee80211com *ic)
 {
 	struct lkpi_hw *lhw;
 	struct ieee80211_hw *hw;
@@ -1950,6 +2151,9 @@ lkpi_update_mcast_filter(struct ieee80211com *ic)
 	bool scanning;
 
 	lhw = ic->ic_softc;
+	hw = LHW_TO_HW(lhw);
+
+	lockdep_assert_wiphy(hw->wiphy);
 
 	LKPI_80211_LHW_SCAN_LOCK(lhw);
 	scanning = (lhw->scan_flags & LKPI_LHW_SCAN_RUNNING) != 0;
@@ -1964,7 +2168,6 @@ lkpi_update_mcast_filter(struct ieee80211com *ic)
 	if (lhw->mc_all_multi || lhw->ops->prepare_multicast == NULL)
 		flags |= FIF_ALLMULTI;
 
-	hw = LHW_TO_HW(lhw);
 	mc = lkpi_80211_mo_prepare_multicast(hw, &lhw->mc_list);
 
 	changed_flags = (lhw->mc_flags ^ flags) & FIF_FLAGS_MASK;
@@ -1978,6 +2181,20 @@ lkpi_update_mcast_filter(struct ieee80211com *ic)
 #endif
 
 	LKPI_80211_LHW_MC_UNLOCK(lhw);
+}
+
+static void
+lkpi_update_mcast_filter(struct ieee80211com *ic)
+{
+	struct lkpi_hw *lhw;
+	struct ieee80211_hw *hw;
+
+	lhw = ic->ic_softc;
+	hw = LHW_TO_HW(lhw);
+
+	wiphy_lock(hw->wiphy);
+	lkpi_update_mcast_filter_locked(ic);
+	wiphy_unlock(hw->wiphy);
 }
 
 static enum ieee80211_bss_changed
@@ -2109,6 +2326,8 @@ lkpi_hw_conf_idle(struct ieee80211_hw *hw, bool new)
 	int error;
 	bool old;
 
+	lockdep_assert_wiphy(hw->wiphy);
+
 	old = hw->conf.flags & IEEE80211_CONF_IDLE;
 	if (old == new)
 		return;
@@ -2126,8 +2345,12 @@ static enum ieee80211_bss_changed
 lkpi_disassoc(struct ieee80211_sta *sta, struct ieee80211_vif *vif,
     struct lkpi_hw *lhw)
 {
-	enum ieee80211_bss_changed changed;
+	struct ieee80211_hw *hw;
 	struct lkpi_vif *lvif;
+	enum ieee80211_bss_changed changed;
+
+	hw = LHW_TO_HW(lhw);
+	lockdep_assert_wiphy(hw->wiphy);
 
 	changed = 0;
 	sta->aid = 0;
@@ -2138,7 +2361,7 @@ lkpi_disassoc(struct ieee80211_sta *sta, struct ieee80211_vif *vif,
 		changed |= BSS_CHANGED_ASSOC;
 		IMPROVE();
 
-		lkpi_update_mcast_filter(lhw->ic);
+		lkpi_update_mcast_filter_locked(lhw->ic);
 
 		/*
 		 * Executing the bss_info_changed(BSS_CHANGED_ASSOC) with
@@ -2180,7 +2403,7 @@ lkpi_wake_tx_queues(struct ieee80211_hw *hw, struct ieee80211_sta *sta,
 			continue;
 
 		ltxq = TXQ_TO_LTXQ(sta->txq[tid]);
-		if (dequeue_seen && !ltxq->seen_dequeue)
+		if (dequeue_seen && (ltxq->flags & LKPI_TXQ_SEEN_DEQUEUE) == 0)
 			continue;
 
 		LKPI_80211_LTXQ_LOCK(ltxq);
@@ -2387,6 +2610,8 @@ lkpi_set_chanctx_conf(struct ieee80211_hw *hw, struct ieee80211_vif *vif,
 	struct lkpi_hw *lhw;
 	struct lkpi_chanctx *lchanctx;
 	int error;
+
+	lockdep_assert_wiphy(hw->wiphy);
 
 	if (vif->bss_conf.chanctx_conf == chanctx_conf) {
 		if (!changed_set) {
@@ -2652,8 +2877,6 @@ lkpi_sta_scan_to_auth(struct ieee80211vap *vap, enum ieee80211_state nstate, int
 	vif->cfg.idle = false;
 	bss_changed |= BSS_CHANGED_IDLE;
 
-	/* vif->bss_conf.basic_rates ? Where exactly? */
-
 	lvif->beacons = 0;
 	/* Should almost assert it is this. */
 	vif->cfg.assoc = false;
@@ -2669,6 +2892,11 @@ lkpi_sta_scan_to_auth(struct ieee80211vap *vap, enum ieee80211_state nstate, int
 
 	/* RATES */
 	IMPROVE("bss info: not all needs to come now and rates are missing");
+	bss_changed |= lkpi_sta_supp_rates(hw, vif, ni, NULL);
+	if (ieee80211_hw_check(hw, HAS_RATE_CONTROL))
+		lkpi_80211_mo_set_bitrate_mask(hw, vif, &lvif->br_mask);
+	TODO("cfg80211_tid_config WHERE?");
+
 	lkpi_bss_info_change(hw, vif, bss_changed);
 
 	/*
@@ -2953,7 +3181,7 @@ lkpi_sta_assoc_to_run(struct ieee80211vap *vap, enum ieee80211_state nstate, int
 	IMPROVE("ponder some of this moved to ic_newassoc, scan_assoc_success, "
 	    "and to lesser extend ieee80211_notify_node_join");
 
-	/* Finish assoc. (even if this is auth_to_run!) */
+	/* Finish assoc. */
 	/* Update sta_state (AUTH to ASSOC) and set aid. */
 	KASSERT(lsta->state == IEEE80211_STA_AUTH, ("%s: lsta %p state not "
 	    "AUTH: %#x\n", __func__, lsta, lsta->state));
@@ -2963,6 +3191,16 @@ lkpi_sta_assoc_to_run(struct ieee80211vap *vap, enum ieee80211_state nstate, int
 	if (vap->iv_flags & IEEE80211_F_WME)
 		sta->wme = true;
 #endif
+	bss_changed = 0;
+	/*
+	 * This sync needs to happen before the sta_state change to ASSOC.
+	 * At least mt7921 (likely all drivers) rely on, e.g., ht_cap, vht_cap,
+	 * .. to be set at the point we go to assoc.
+	 */
+	bss_changed |= lkpi_sta_sync_from_ni(hw, vif, sta, ni, true);
+	if (ieee80211_hw_check(hw, HAS_RATE_CONTROL))
+		lkpi_80211_mo_set_bitrate_mask(hw, vif, &lvif->br_mask);
+
 	error = lkpi_80211_mo_sta_state(hw, vif, lsta, IEEE80211_STA_ASSOC);
 	if (error != 0) {
 		ic_printf(vap->iv_ic, "%s:%d: mo_sta_state(ASSOC) "
@@ -2973,7 +3211,6 @@ lkpi_sta_assoc_to_run(struct ieee80211vap *vap, enum ieee80211_state nstate, int
 	IMPROVE("wme / conf_tx [all]");
 
 	/* Update bss info (bss_info_changed) (assoc, aid, ..). */
-	bss_changed = 0;
 #ifdef LKPI_80211_WME
 	bss_changed |= lkpi_wme_update(lhw, vap, true);
 #endif
@@ -3032,8 +3269,8 @@ lkpi_sta_assoc_to_run(struct ieee80211vap *vap, enum ieee80211_state nstate, int
 		IMPROVE("net80211 does not consider node authorized");
 	}
 
+	bss_changed = 0;
 	IMPROVE("Is this the right spot, has net80211 done all updates already?");
-	lkpi_sta_sync_from_ni(hw, vif, sta, ni, true);
 
 	/* Update thresholds. */
 	hw->wiphy->frag_threshold = vap->iv_fragthreshold;
@@ -3061,12 +3298,11 @@ lkpi_sta_assoc_to_run(struct ieee80211vap *vap, enum ieee80211_state nstate, int
 	 */
 	IMPROVE("Need that bssid setting, and the keys");
 
-	bss_changed = 0;
 	bss_changed |= lkpi_update_dtim_tsf(vif, ni, vap, __func__, __LINE__);
 	lkpi_bss_info_change(hw, vif, bss_changed);
 
 	/* Prepare_multicast && configure_filter. */
-	lkpi_update_mcast_filter(vap->iv_ic);
+	lkpi_update_mcast_filter_locked(vap->iv_ic);
 
 out:
 	wiphy_unlock(hw->wiphy);
@@ -4049,6 +4285,7 @@ lkpi_ic_vap_create(struct ieee80211com *ic, const char name[IFNAMSIZ],
 	struct ieee80211_vif *vif;
 	struct ieee80211_tx_queue_params txqp;
 	enum ieee80211_bss_changed bss_changed;
+	enum nl80211_band band;
 	struct sysctl_oid *node;
 	size_t len;
 	int error, i;
@@ -4071,8 +4308,50 @@ lkpi_ic_vap_create(struct ieee80211com *ic, const char name[IFNAMSIZ],
 	refcount_init(&lvif->nt_unlocked, 0);
 	lvif->lvif_bss_synched = false;
 	vap = LVIF_TO_VAP(lvif);
-
 	vif = LVIF_TO_VIF(lvif);
+
+	/*
+	 * Setup legacy br_mask here.  We will call (*set_bitrate_mask)
+	 * elsewhere to announce it to the driver but it is a static
+	 * setup.
+	 * Also setup basic_rates with just the mandatory rates for the
+	 * current band (if avail).
+	 */
+	for (band = 0; band < NUM_NL80211_BANDS; band++) {
+		struct ieee80211_supported_band *supband;
+		uint32_t rate_mandatory;;
+
+		supband = hw->wiphy->bands[band];
+		if (supband == NULL || supband->n_bitrates == 0)
+			continue;
+
+		/* Per-band legacy br_mask. */
+		lvif->br_mask.control[band].legacy = (1 << supband->n_bitrates) - 1;
+
+		/* basic_rates for the current band. */
+		if (hw->conf.chandef.chan == NULL ||
+		    hw->conf.chandef.chan->band != band)
+			continue;
+
+		switch (band) {
+		case NL80211_BAND_2GHZ:
+			/* We have to assume 11g support here. */
+			rate_mandatory = IEEE80211_RATE_MANDATORY_G |
+			    IEEE80211_RATE_MANDATORY_B;
+			break;
+		case NL80211_BAND_5GHZ:
+			rate_mandatory = IEEE80211_RATE_MANDATORY_A;
+			break;
+		default:
+			continue;
+		}
+
+		for (i = 0; i < supband->n_bitrates; i++) {
+			if ((supband->bitrates[i].flags & rate_mandatory) != 0)
+				vif->bss_conf.basic_rates |= BIT(i);
+		}
+	}
+
 	memcpy(vif->addr, mac, IEEE80211_ADDR_LEN);
 	vif->p2p = false;
 	vif->probe_req_reg = false;
@@ -4189,12 +4468,13 @@ lkpi_ic_vap_create(struct ieee80211com *ic, const char name[IFNAMSIZ],
 			ic_printf(ic, "%s: conf_tx ac %u failed %d\n",
 			    __func__, ac, error);
 	}
-	wiphy_unlock(hw->wiphy);
 	bss_changed = BSS_CHANGED_QOS;
 	lkpi_bss_info_change(hw, vif, bss_changed);
 
 	/* Force MC init. */
-	lkpi_update_mcast_filter(ic);
+	lkpi_update_mcast_filter_locked(ic);
+
+	wiphy_unlock(hw->wiphy);
 
 	ieee80211_vap_setup(ic, vap, name, unit, opmode, flags, bssid);
 
@@ -4704,8 +4984,11 @@ lkpi_ic_scan_start(struct ieee80211com *ic)
 		lvif = VAP_TO_LVIF(vap);
 		vif = LVIF_TO_VIF(lvif);
 
-		if (vap->iv_state == IEEE80211_S_SCAN)
+		if (vap->iv_state == IEEE80211_S_SCAN) {
+			wiphy_lock(hw->wiphy);
 			lkpi_hw_conf_idle(hw, false);
+			wiphy_unlock(hw->wiphy);
+		}
 
 		LKPI_80211_LHW_SCAN_LOCK(lhw);
 		lhw->scan_flags |= LKPI_LHW_SCAN_RUNNING;
@@ -4958,7 +5241,8 @@ lkpi_ic_scan_start(struct ieee80211com *ic)
 			return;
 		}
 
-		lkpi_update_mcast_filter(ic);
+		wiphy_lock(hw->wiphy);
+		lkpi_update_mcast_filter_locked(ic);
 		TRACE_SCAN(ic, "Starting HW_SCAN: scan_flags %b, "
 		    "ie_len %d, n_ssids %d, n_chan %d, common_ie_len %d [%d, %d]",
 		    lhw->scan_flags, LKPI_LHW_SCAN_BITS, hw_req->req.ie_len,
@@ -4968,6 +5252,7 @@ lkpi_ic_scan_start(struct ieee80211com *ic)
 		    hw_req->ies.len[NL80211_BAND_5GHZ]);
 
 		error = lkpi_80211_mo_hw_scan(hw, vif, hw_req);
+		wiphy_unlock(hw->wiphy);
 		if (error != 0) {
 			bool scan_done;
 			int e;
@@ -5113,8 +5398,11 @@ lkpi_ic_scan_end(struct ieee80211com *ic)
 
 		/* Send PS to stop buffering if n80211 does not for us? */
 
-		if (vap->iv_state == IEEE80211_S_SCAN)
+		if (vap->iv_state == IEEE80211_S_SCAN) {
+			wiphy_lock(hw->wiphy);
 			lkpi_hw_conf_idle(hw, true);
+			wiphy_unlock(hw->wiphy);
+		}
 	}
 
 	/*
@@ -5475,7 +5763,7 @@ lkpi_xmit(struct ieee80211_node *ni, struct mbuf *m,
 #endif
 		LKPI_80211_LSTA_TXQ_UNLOCK(lsta);
 		if (freem)
-			m_free(m);
+			m_freem(m);
 		return (ENETDOWN);
 	}
 
@@ -5484,7 +5772,7 @@ lkpi_xmit(struct ieee80211_node *ni, struct mbuf *m,
 	if (error != 0) {
 		LKPI_80211_LSTA_TXQ_UNLOCK(lsta);
 		if (freem)
-			m_free(m);
+			m_freem(m);
 #ifdef LINUXKPI_DEBUG_80211
 		if (linuxkpi_debug_80211 & D80211_TRACE_TX)
 			ic_printf(ni->ni_ic, "%s: mbufq_enqueue failed: %d\n",
@@ -5794,8 +6082,8 @@ lkpi_80211_txq_tx_one(struct lkpi_sta *lsta, struct mbuf *m)
 				if (sta->txq[tid] == NULL)
 					continue;
 				ltxq = TXQ_TO_LTXQ(sta->txq[tid]);
-				ic_printf(ic, "  tid %d ltxq %p seen_dequeue %d stopped %d skb_queue_len %u\n",
-				    tid, ltxq, ltxq->seen_dequeue, ltxq->stopped, skb_queue_len(&ltxq->skbq));
+				ic_printf(ic, "  tid %d ltxq %p flags %b skb_queue_len %u\n",
+				    tid, ltxq, ltxq->flags, LKPI_TXQ_FLAGS_BITS, skb_queue_len(&ltxq->skbq));
 			}
 		}
 		ieee80211_free_node(ni);
@@ -5849,9 +6137,26 @@ lkpi_80211_txq_tx_one(struct lkpi_sta *lsta, struct mbuf *m)
 	if ((m->m_flags & M_EAPOL) != 0) {
 		info->control.flags |= IEEE80211_TX_CTRL_PORT_CTRL_PROTO;
 		info->flags |= IEEE80211_TX_CTL_USE_MINRATE;	/* mt76 */
+		TRACE_RATES("M_EAPOL -> TX_CTL_USE_MINRATE");
 	}
 	info->control.vif = vif;
-	/* XXX-BZ info->control.rates */
+
+	/* IMPROVE("MLO"); */
+	info->control.flags |=
+	    u32_encode_bits(IEEE80211_LINK_UNSPECIFIED, IEEE80211_TX_CTRL_MLO_LINK);
+
+	if (tid != IEEE80211_NONQOS_TID) {
+		struct ieee80211_tx_ampdu *tap;
+
+		tap = &ni->ni_tx_ampdu[tid];
+		if (ieee80211_is_data_qos(hdr->frame_control) &&
+		    !ieee80211_is_qos_nullfunc(hdr->frame_control) &&
+		    !is_multicast_ether_addr(hdr->addr1) &&
+		    IEEE80211_AMPDU_RUNNING(tap))
+			info->flags |= IEEE80211_TX_CTL_AMPDU;
+	}
+
+	/* XXX-BZ info->control.rates for non-HW rate control and injected packets. */
 #ifdef __notyet__
 #ifdef LKPI_80211_HT
 	info->control.rts_cts_rate_idx=
@@ -6011,7 +6316,7 @@ lkpi_ic_recv_action(struct ieee80211_node *ni, const struct ieee80211_frame *wh,
 	ic = ni->ni_ic;
 	lhw = ic->ic_softc;
 
-	IMPROVE_HT("recv_action called; nothing to do in lkpi; make debugging");
+	TRACEOK("recv_action called");
 
 	return (lhw->ic_recv_action(ni, wh, frm, efrm));
 }
@@ -6025,7 +6330,7 @@ lkpi_ic_send_action(struct ieee80211_node *ni, int category, int action, void *s
 	ic = ni->ni_ic;
 	lhw = ic->ic_softc;
 
-	IMPROVE_HT("send_action called; nothing to do in lkpi; make debugging");
+	TRACEOK("send_action with action %d called", action);
 
 	return (lhw->ic_send_action(ni, category, action, sa));
 }
@@ -6040,7 +6345,7 @@ lkpi_ic_ampdu_enable(struct ieee80211_node *ni, struct ieee80211_tx_ampdu *tap)
 	ic = ni->ni_ic;
 	lhw = ic->ic_softc;
 
-	IMPROVE_HT("ieee80211_ampdu_enable called; nothing to do in lkpi for now; make debugging");
+	TRACEOK("ieee80211_ampdu_enable called");
 
 	return (lhw->ic_ampdu_enable(ni, tap));
 }
@@ -6075,6 +6380,8 @@ lkpi_ic_addba_request(struct ieee80211_node *ni, struct ieee80211_tx_ampdu *tap,
 	lsta = ni->ni_drv_data;
 	sta = LSTA_TO_STA(lsta);
 
+	TRACEOK("ADDBA REQ tid %u", tap->txa_tid);
+
 	if (!lsta->added_to_drv) {
 		ic_printf(ic, "%s: lsta %p ni %p, sta %p not added to firmware\n",
 		    __func__, lsta, ni, sta);
@@ -6090,15 +6397,27 @@ lkpi_ic_addba_request(struct ieee80211_node *ni, struct ieee80211_tx_ampdu *tap,
 	params.tid = tap->txa_tid;
 	params.amsdu = false;
 
-	IEEE80211_UNLOCK(ic);
+	/* We get called from if_transmit all the way up unlocked in net80211. */
+	IEEE80211_UNLOCK_ASSERT(ic);
 	wiphy_lock(hw->wiphy);
 	error = lkpi_80211_mo_ampdu_action(hw, vif, &params);
 	wiphy_unlock(hw->wiphy);
-	IEEE80211_LOCK(ic);
-	if (error != 0) {
+	if (error == IEEE80211_AMPDU_TX_START_IMMEDIATE) {
+		ic_printf(ic, "%s: mo_ampdu_action returned AMPDU_TX_START_IMMEDIATE. "
+		    "ni %p tap %p\n", __func__, ni, tap);
+	} else if (error != 0) {
 		ic_printf(ic, "%s: mo_ampdu_action returned %d. ni %p tap %p\n",
 		    __func__, error, ni, tap);
 		return (0);
+	}
+
+	if (sta->txq[tap->txa_tid] != NULL) {
+		struct lkpi_txq *ltxq;
+
+		ltxq = TXQ_TO_LTXQ(sta->txq[tap->txa_tid]);
+		TRACEOK("ADDBA REQ ltxq tid %u flags %b qlen %d", tap->txa_tid,
+		    ltxq->flags, LKPI_TXQ_FLAGS_BITS, skb_queue_len(&ltxq->skbq));
+		ltxq->flags |= LKPI_TXQ_STOPPED_BA;
 	}
 
 	return (lhw->ic_addba_request(ni, tap, dialogtoken, baparamset, batimeout));
@@ -6135,6 +6454,8 @@ lkpi_ic_addba_response(struct ieee80211_node *ni, struct ieee80211_tx_ampdu *tap
 	lsta = ni->ni_drv_data;
 	sta = LSTA_TO_STA(lsta);
 
+	TRACEOK("ADDBA RESP status %d (0 == SUCCESS) tid %u", status, tap->txa_tid);
+
 	if (!lsta->added_to_drv) {
 		ic_printf(ic, "%s: lsta %p ni %p, sta %p not added to firmware\n",
 		    __func__, lsta, ni, sta);
@@ -6168,15 +6489,25 @@ lkpi_ic_addba_response(struct ieee80211_node *ni, struct ieee80211_tx_ampdu *tap
 		params.amsdu = false;
 	}
 
-	IEEE80211_UNLOCK(ic);
+	/* We are called all they way up from ieee80211_input* without lock. */
 	wiphy_lock(hw->wiphy);
 	error = lkpi_80211_mo_ampdu_action(hw, vif, &params);
 	wiphy_unlock(hw->wiphy);
-	IEEE80211_LOCK(ic);
 	if (error != 0) {
 		ic_printf(ic, "%s: mo_ampdu_action returned %d. ni %p tap %p\n",
 		    __func__, error, ni, tap);
 		return (0);
+	}
+
+	if (sta->txq[tap->txa_tid] != NULL) {
+		struct lkpi_txq *ltxq;
+
+		ltxq = TXQ_TO_LTXQ(sta->txq[tap->txa_tid]);
+		TRACEOK("ADDBA RESP ltxq tid %u flags %b qlen %d", tap->txa_tid,
+		    ltxq->flags, LKPI_TXQ_FLAGS_BITS, skb_queue_len(&ltxq->skbq));
+		ltxq->flags &= ~LKPI_TXQ_STOPPED_BA;
+
+		lkpi_80211_mo_wake_tx_queue(hw, sta->txq[tap->txa_tid], true);
 	}
 
 	IMPROVE_HT("who unleashes the TXQ? and when?, do we need to ni->ni_txseqs[tid] = tap->txa_start & 0xfff;");
@@ -6249,12 +6580,40 @@ lkpi_ic_addba_response_timeout(struct ieee80211_node *ni, struct ieee80211_tx_am
 {
 	struct ieee80211com *ic;
 	struct lkpi_hw *lhw;
+	struct lkpi_sta *lsta;
+	struct ieee80211_sta *sta;
 
 	ic = ni->ni_ic;
 	lhw = ic->ic_softc;
+	lsta = ni->ni_drv_data;
+	sta = LSTA_TO_STA(lsta);
+
+	TRACEOK("ADDBA RESP TIMEO tid %u", tap->txa_tid);
 
 	IMPROVE_HT();
 
+	if (!lsta->added_to_drv) {
+		ic_printf(ic, "%s: lsta %p ni %p, sta %p not added to firmware\n",
+		    __func__, lsta, ni, sta);
+		goto n80211;
+	}
+
+	/* We need to re-enable the txq and get packets out. */
+	if (sta->txq[tap->txa_tid] != NULL) {
+		struct lkpi_txq *ltxq;
+		struct ieee80211_hw *hw;
+
+		ltxq = TXQ_TO_LTXQ(sta->txq[tap->txa_tid]);
+		TRACEOK("ADDBA RESP TIMEO ltxq tid %u flags %b qlen %d",
+		    tap->txa_tid, ltxq->flags, LKPI_TXQ_FLAGS_BITS,
+		    skb_queue_len(&ltxq->skbq));
+		ltxq->flags &= ~LKPI_TXQ_STOPPED_BA;
+
+		hw = LHW_TO_HW(lhw);
+		lkpi_80211_mo_wake_tx_queue(hw, sta->txq[tap->txa_tid], true);
+	}
+
+n80211:
 	lhw->ic_addba_response_timeout(ni, tap);
 }
 
@@ -6442,6 +6801,108 @@ net80211_only:
 }
 #endif
 
+int
+linuxkpi_ieee80211_start_tx_ba_session(struct ieee80211_sta *sta, uint8_t tid,
+    int timeout)
+{
+	struct lkpi_sta *lsta;
+	struct ieee80211_hw *hw;
+	struct lkpi_hw *lhw;
+	struct ieee80211_tx_ampdu *tap;
+	int worked;
+
+	lsta = STA_TO_LSTA(sta);
+
+	/* If tid is out of range, fail gracefully. */
+	/* XXX-BZ are we limited to 8? */
+	if (tid >= IEEE80211_NUM_TIDS) {
+		net80211_vap_printf(lsta->ni->ni_vap, "%s: tid %u out of range "
+		    ">= %u\n", __func__, tid, IEEE80211_NUM_TIDS);
+		return (-EINVAL);
+	}
+
+	hw = lsta->hw;
+	lhw = HW_TO_LHW(hw);
+
+	/* No ampdu_action support, just error. */
+	if (lhw->ops->ampdu_action == NULL) {
+		net80211_vap_printf(lsta->ni->ni_vap, "%s: (*ampdu_action) "
+		    "not supported\n", __func__);
+		return (-ENOTSUPP);
+	}
+
+	/* Does HW allow us to set this up? */
+	if (!ieee80211_hw_check(hw, AMPDU_AGGREGATION)) {
+		net80211_vap_printf(lsta->ni->ni_vap, "%s: !AMPDU_AGGREGATION\n",
+		    __func__);
+		return (-ENOTSUPP);
+	}
+	if (ieee80211_hw_check(hw, TX_AMPDU_SETUP_IN_HW)) {
+		net80211_vap_printf(lsta->ni->ni_vap, "%s: TX_AMPDU_SETUP_IN_HW\n",
+		    __func__);
+		return (-EPERM);
+	}
+
+	/* We need at least HT or higher support enabled. */
+	if (!sta->deflink.ht_cap.ht_supported &&
+	    !sta->deflink.vht_cap.vht_supported &&
+	    !sta->deflink.he_cap.has_he &&
+	    !sta->deflink.eht_cap.has_eht) {
+		net80211_vap_printf(lsta->ni->ni_vap, "%s: HT or later not "
+		    "supported\n", __func__);
+		return (-ENOTSUPP);
+	}
+
+#ifdef __notyet__
+	/*
+	 * We need some rate limiting/disabling in case we try too hard and
+	 * get NACKed over and over.
+	 * XXX-BZ This check should likely go to addba_req along with a counter.
+	 */
+	if (lsta->block_ba)
+		return (-EACCESS);
+#endif
+
+	/* XXX-BZ locking? */
+
+	/* Do we have a running session already? */
+	tap = &lsta->ni->ni_tx_ampdu[tid];
+	if (IEEE80211_AMPDU_REQUESTED(tap)) {
+		net80211_vap_printf(lsta->ni->ni_vap, "%s: "
+		    "AMPDU requested/running\n", __func__);
+		return (-EINPROGRESS);
+	}
+
+	/* Tell net80211 to setup an aggr sessions. */
+	/* XXX-BZ we have no way to carry the timeout forward easily. */
+	worked = ieee80211_ampdu_tx_request_ext(lsta->ni, tid);
+	TRACEOK("ieee80211_ampdu_tx_request_ext %d", worked);
+
+	if (worked != 1) {
+		net80211_vap_printf(lsta->ni->ni_vap, "%s: "
+		    "ieee80211_ampdu_tx_request_ext returned %d != 1\n",
+		    __func__, worked);
+		return (-EINVAL);
+	}
+
+	/*
+	 * How do we make sure the EAPOL handshake has completed?
+	 * Let ieee80211_output do it.
+	 */
+	if (1) {
+		/* Immediately trigger the setup and output of the action frame. */
+		worked = ieee80211_ampdu_request(lsta->ni, tap);
+		if (worked != 1) {
+			net80211_vap_printf(lsta->ni->ni_vap, "%s: "
+			    "ieee80211_ampdu_request returned %d != 1\n",
+			    __func__, worked);
+			return (-EAGAIN);
+		}
+	}
+
+	return (0);
+}
+
 static void
 lkpi_ic_getradiocaps_ht(struct ieee80211com *ic, struct ieee80211_hw *hw,
     uint8_t *bands, int *chan_flags, enum nl80211_band band)
@@ -6513,18 +6974,28 @@ lkpi_ic_getradiocaps(struct ieee80211com *ic, int maxchan,
 	if (hw->wiphy->bands[NL80211_BAND_2GHZ] != NULL)
 		nchans = hw->wiphy->bands[NL80211_BAND_2GHZ]->n_channels;
 	if (nchans > 0) {
+		struct ieee80211_supported_band *supband;
+
 		memset(bands, 0, sizeof(bands));
 		chan_flags = 0;
 		setbit(bands, IEEE80211_MODE_11B);
-		/* XXX-BZ unclear how to check for 11g. */
+
+		/* Check for 11g (simplified). */
+		supband = hw->wiphy->bands[NL80211_BAND_2GHZ];
+		for (i = 0; i < supband->n_bitrates; i++) {
+			if ((supband->bitrates[i].flags &
+			    IEEE80211_RATE_MANDATORY_G) != 0) {
+				setbit(bands, IEEE80211_MODE_11G);
+				break;
+			}
+		}
 
 		IMPROVE("the bitrates may have flags?");
-		setbit(bands, IEEE80211_MODE_11G);
 
 		lkpi_ic_getradiocaps_ht(ic, hw, bands, &chan_flags,
 		    NL80211_BAND_2GHZ);
 
-		channels = hw->wiphy->bands[NL80211_BAND_2GHZ]->channels;
+		channels = supband->channels;
 		for (i = 0; i < nchans && *n < maxchan; i++) {
 			uint32_t nflags = 0;
 			int cflags = chan_flags;
@@ -6972,6 +7443,12 @@ linuxkpi_ieee80211_ifattach(struct ieee80211_hw *hw)
 #endif
 
 	lkpi_enable_hw_scan(lhw);
+
+	/* Does the driver/firmware handle rate countrol? */
+	/* Currently only older iwlwifi mvm devices are in this category. */
+	if (bootverbose && !ieee80211_hw_check(hw, HAS_RATE_CONTROL))
+		ic_printf(ic, "NOTE: rate control not supported by LinuxKPI; "
+		    "expect low rates only\n");
 
 	/* Does HW support Fragmentation offload? */
 	if (ieee80211_hw_check(hw, SUPPORTS_TX_FRAG))
@@ -8291,6 +8768,7 @@ lkpi_wiphy_band_annotate(struct wiphy *wiphy)
 			continue;
 		}
 
+		/* Band bitrates are times 10; e.g., 55 is 5.5Mbit/s. */
 		for (i = 0; i < supband->n_bitrates; i++) {
 			switch (band) {
 			case NL80211_BAND_2GHZ:
@@ -8322,6 +8800,10 @@ lkpi_wiphy_band_annotate(struct wiphy *wiphy)
 				}
 				break;
 			}
+			TRACE_RATES("band %d bitrate[%d/%u] %u flags %#010x",
+			    band, i, supband->n_bitrates,
+			    supband->bitrates[i].bitrate,
+			    supband->bitrates[i].flags);
 		}
 	}
 }
@@ -8481,14 +8963,14 @@ linuxkpi_ieee80211_tx_dequeue(struct ieee80211_hw *hw,
 	IMPROVE("wiphy_lock? or assert?");
 	skb = NULL;
 	ltxq = TXQ_TO_LTXQ(txq);
-	ltxq->seen_dequeue = true;
+	ltxq->flags |= LKPI_TXQ_SEEN_DEQUEUE;
 
-	if (ltxq->stopped)
+	if ((ltxq->flags & (LKPI_TXQ_STOPPED|LKPI_TXQ_STOPPED_BA)) != 0)
 		goto stopped;
 
 	lvif = VIF_TO_LVIF(ltxq->txq.vif);
 	if (lvif->hw_queue_stopped[ltxq->txq.ac]) {
-		ltxq->stopped = true;
+		ltxq->flags |= LKPI_TXQ_STOPPED;
 		goto stopped;
 	}
 
@@ -8634,13 +9116,13 @@ linuxkpi_ieee80211_tx_status_ext(struct ieee80211_hw *hw,
 
 #ifdef LINUXKPI_DEBUG_80211
 	if (linuxkpi_debug_80211 & D80211_TRACE_TX)
-		printf("TX-STATUS: %s: hw %p skb %p status %d : flags %#x "
+		printf("TX-STATUS: %s: hw %p skb %p status %d : flags %b "
 		    "band %u hw_queue %u tx_time_est %d : "
 		    "rates [ %u %u %#x, %u %u %#x, %u %u %#x, %u %u %#x ] "
 		    "ack_signal %u ampdu_ack_len %u ampdu_len %u antenna %u "
-		    "tx_time %u flags %#x "
+		    "tx_time %u flags %b "
 		    "status_driver_data [ %p %p ]\n",
-		    __func__, hw, skb, status, info->flags,
+		    __func__, hw, skb, status, info->flags, IEEE80211_TX_INFO_FLAGS,
 		    info->band, info->hw_queue, info->tx_time_est,
 		    info->status.rates[0].idx, info->status.rates[0].count,
 		    info->status.rates[0].flags,
@@ -8652,7 +9134,7 @@ linuxkpi_ieee80211_tx_status_ext(struct ieee80211_hw *hw,
 		    info->status.rates[3].flags,
 		    info->status.ack_signal, info->status.ampdu_ack_len,
 		    info->status.ampdu_len, info->status.antenna,
-		    info->status.tx_time, info->status.flags,
+		    info->status.tx_time, info->status.flags, IEEE80211_TX_STATUS_FLAGS,
 		    info->status.status_driver_data[0],
 		    info->status.status_driver_data[1]);
 #endif
@@ -8991,10 +9473,10 @@ lkpi_ieee80211_wake_queues(struct ieee80211_hw *hw, int hwq)
 							continue;
 
 						ltxq = TXQ_TO_LTXQ(sta->txq[tid]);
-						if (!ltxq->stopped)
+						if ((ltxq->flags & LKPI_TXQ_STOPPED) == 0)
 							continue;
 
-						ltxq->stopped = false;
+						ltxq->flags &= ~LKPI_TXQ_STOPPED;
 
 						if (!skb_queue_empty(&ltxq->skbq))
 							lkpi_80211_mo_wake_tx_queue(hw, sta->txq[tid], false);
@@ -9133,6 +9615,8 @@ linuxkpi_ieee80211_next_txq(struct ieee80211_hw *hw, uint8_t ac)
 	if (ltxq == NULL)
 		goto out;
 	if (ltxq->txq_generation == lhw->txq_generation[ac])
+		goto out;
+	if ((ltxq->flags & (LKPI_TXQ_STOPPED|LKPI_TXQ_STOPPED_BA)) != 0)
 		goto out;
 
 	IMPROVE("check AIRTIME_FAIRNESS");

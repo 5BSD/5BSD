@@ -747,7 +747,7 @@ struct ieee80211_sta {
 	int		max_amsdu_subframes;
 	int		mfp, smps_mode, tdls, tdls_initiator;
 	struct ieee80211_txq			*txq[IEEE80211_NUM_TIDS + 1];	/* iwlwifi: 8 and adds +1 to tid_data, net80211::IEEE80211_TID_SIZE */
-	struct ieee80211_sta_rates		*rates;	/* some rcu thing? */
+	struct ieee80211_sta_rates		*rates;	/* some rcu thing? */			/* mt7615, and? */
 	uint8_t					addr[ETH_ALEN];
 	uint16_t				aid;
 	bool					wme;
@@ -1197,6 +1197,7 @@ void linuxkpi_ieee80211_schedule_txq(struct ieee80211_hw *,
     struct ieee80211_txq *, bool);
 void linuxkpi_ieee80211_handle_wake_tx_queue(struct ieee80211_hw *,
 	struct ieee80211_txq *);
+int linuxkpi_ieee80211_start_tx_ba_session(struct ieee80211_sta *, uint8_t, int);
 
 /* -------------------------------------------------------------------------- */
 
@@ -2118,10 +2119,9 @@ ieee80211_sta_eosp(struct ieee80211_sta *sta)
 }
 
 static __inline int
-ieee80211_start_tx_ba_session(struct ieee80211_sta *sta, uint8_t tid, int x)
+ieee80211_start_tx_ba_session(struct ieee80211_sta *sta, uint8_t tid, int timeout)
 {
-	TODO("rtw8x");
-	return (-EINVAL);
+	return (linuxkpi_ieee80211_start_tx_ba_session(sta, tid, timeout));
 }
 
 static __inline int

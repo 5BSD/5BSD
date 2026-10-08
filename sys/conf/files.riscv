@@ -5,7 +5,6 @@ cddl/dev/dtrace/riscv/instr_size.c			optional dtrace compile-with "${DTRACE_C}"
 cddl/dev/fbt/riscv/fbt_isa.c				optional dtrace_fbt | dtraceall compile-with "${FBT_C}"
 crypto/des/des_enc.c		optional	netsmb
 dev/cpufreq/cpufreq_dt.c	optional	cpufreq fdt
-dev/ofw/ofw_cpu.c		optional	fdt
 dev/ofw/ofw_pci.c		optional 	pci fdt
 dev/ofw/ofw_pcib.c		optional 	pci fdt
 dev/pci/pci_dw.c		optional	pci fdt
@@ -114,6 +113,7 @@ riscv/riscv/trap.c		standard
 riscv/riscv/timer.c		standard
 riscv/riscv/uio_machdep.c	standard
 riscv/riscv/unwind.c		optional	ddb | kdtrace_hooks | stack
+riscv/riscv/vector.c		standard
 riscv/riscv/vm_machdep.c	standard
 riscv/vmm/vmm.c					optional	vmm
 riscv/vmm/vmm_aplic.c				optional	vmm

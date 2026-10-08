@@ -9,6 +9,7 @@ TESTSDIR=	${TESTSBASE}/sys/kern
 
 CFLAGS+=	-I${SRCTOP}/tests
 
+ATF_TESTS_C+=	aslr
 ATF_TESTS_C+=	basic_signal
 .if ${MACHINE_ARCH} == "amd64"
 # Audit registration and the seccomp action mask are global guest state.
@@ -159,6 +160,7 @@ ATF_TESTS_C+=	procdesc
 ATF_TESTS_C+=	ptrace_test
 TEST_METADATA.ptrace_test+=		timeout="15"
 ATF_TESTS_C+=	reaper
+ATF_TESTS_C+=	resolve_beneath_test
 ATF_TESTS_C+=	sched_affinity
 ATF_TESTS_C+=	shutdown_dgram
 ATF_TESTS_C+=	sigaltstack
@@ -229,9 +231,11 @@ PROGS+=		coredump_phnum_helper
 PROGS+=		pdeathsig_helper
 PROGS+=		sendfile_helper
 
+CFLAGS.aslr+=				-I${SRCTOP}/tests
+LIBADD.aslr+=				util
 LIBADD.copy_file_range+=		md
 LIBADD.jail_lookup_root+=		jail util
-LIBADD.jaildesc+=			pthread
+LIBADD.jaildesc+=			kvm pthread
 LIBADD.ssl_sendfile+=			pthread crypto ssl
 CFLAGS.sys_getrandom+=			-I${SRCTOP}/sys/contrib/zstd/lib
 LIBADD.sys_getrandom+=			zstd

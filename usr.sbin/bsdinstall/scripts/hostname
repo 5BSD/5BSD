@@ -99,7 +99,7 @@ f_dialog_title "$msg_set_hostname"
 f_dialog_backtitle "$msg_installer"
 
 #
-# Get user input
+# Get user input; reject invalid hostnames, including an empty one
 #
 while :; do
 	HOSTNAME=$( dialog_hostname "$HOSTNAME" )

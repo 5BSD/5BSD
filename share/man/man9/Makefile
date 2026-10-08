@@ -12,6 +12,7 @@ MAN=	accept_filter.9 \
 	altq.9 \
 	atomic.9 \
 	backlight.9 \
+	bcopy.9 \
 	bhnd.9 \
 	bhnd_erom.9 \
 	bios.9 \
@@ -228,7 +229,9 @@ MAN=	accept_filter.9 \
 	mbuf_tags.9 \
 	mdchain.9 \
 	memcchr.9 \
+	memcpy.9 \
 	memguard.9 \
+	memmove.9 \
 	microseq.9 \
 	microtime.9 \
 	microuptime.9 \
@@ -1157,6 +1160,7 @@ MLINKS+=fetch.9 fubyte.9 \
 	fetch.9 fuword16.9 \
 	fetch.9 fuword32.9 \
 	fetch.9 fuword64.9 \
+	fetch.9 fueptr.9 \
 	fetch.9 fueword.9 \
 	fetch.9 fueword32.9 \
 	fetch.9 fueword64.9
@@ -2187,6 +2191,7 @@ MLINKS+=stack.9 stack_copy.9 \
 	stack.9 stack_sbuf_print_ddb.9 \
 	stack.9 stack_zero.9
 MLINKS+=store.9 subyte.9 \
+	store.9 suptr.9 \
 	store.9 suword.9 \
 	store.9 suword16.9 \
 	store.9 suword32.9 \

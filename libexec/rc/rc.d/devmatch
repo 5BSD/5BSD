@@ -73,6 +73,7 @@ devmatch_start()
 	esac
 
 	devctl freeze
+	startmsg -n "Autoloading modules:"
 	x=$(echo "#${devmatch_blocklist:-${devmatch_blacklist}}#$(kenv -q devmatch_blocklist)#" | \
 		sed -e "s/ /#/g;s/\.ko#/#/g")
 	for m in ${list}; do
@@ -83,11 +84,12 @@ devmatch_start()
 		if [ "${_broker}" = YES ]; then
 			# ENSURE also records ownership when another consumer loaded it.
 			sysextctl load "${m}" || warn "Cannot autoload ${m}"
-		elif ! kldstat -q -n "${m}"; then
-			startmsg "Autoloading module: ${m}"
-			kldload -n "${m}"
+		else
+			load_kld "${m}"
 		fi
+		startmsg -n " ${m}"
 	done
+	startmsg "."
 	devctl thaw
 }
 

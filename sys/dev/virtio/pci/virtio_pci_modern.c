@@ -936,19 +936,21 @@ vtpci_modern_read_dev_config(device_t dev, bus_size_t offset, void *dst,
 	case 1:
 		*(uint8_t *) dst = vtpci_modern_read_device_1(sc, offset);
 		break;
+	/*
+	 * The bus_space accessors already convert from PCI (little-endian)
+	 * to host byte order; do not convert again here.
+	 */
 	case 2: {
 		uint16_t val;
 
-		val = virtio_htog16(true,
-		    vtpci_modern_read_device_2(sc, offset));
+		val = vtpci_modern_read_device_2(sc, offset);
 		memcpy(dst, &val, sizeof(val));
 		break;
 	}
 	case 4: {
 		uint32_t val;
 
-		val = virtio_htog32(true,
-		    vtpci_modern_read_device_4(sc, offset));
+		val = vtpci_modern_read_device_4(sc, offset);
 		memcpy(dst, &val, sizeof(val));
 		break;
 	}
@@ -992,7 +994,6 @@ vtpci_modern_write_dev_config(device_t dev, bus_size_t offset, const void *src,
 		uint16_t val;
 
 		memcpy(&val, src, sizeof(val));
-		val = virtio_gtoh16(true, val);
 		vtpci_modern_write_device_2(sc, offset, val);
 		break;
 	}
@@ -1000,7 +1001,6 @@ vtpci_modern_write_dev_config(device_t dev, bus_size_t offset, const void *src,
 		uint32_t val;
 
 		memcpy(&val, src, sizeof(val));
-		val = virtio_gtoh32(true, val);
 		vtpci_modern_write_device_4(sc, offset, val);
 		break;
 	}
@@ -1897,15 +1897,13 @@ vtpci_modern_read_common_1(struct vtpci_modern_softc *sc, bus_size_t off)
 static uint16_t
 vtpci_modern_read_common_2(struct vtpci_modern_softc *sc, bus_size_t off)
 {
-	return virtio_htog16(true,
-			bus_read_2(&sc->vtpci_common_res_map.vtrm_map, off));
+	return bus_read_2(&sc->vtpci_common_res_map.vtrm_map, off);
 }
 
 static uint32_t
 vtpci_modern_read_common_4(struct vtpci_modern_softc *sc, bus_size_t off)
 {
-	return virtio_htog32(true,
-			bus_read_4(&sc->vtpci_common_res_map.vtrm_map, off));
+	return bus_read_4(&sc->vtpci_common_res_map.vtrm_map, off);
 }
 
 static void
@@ -1919,16 +1917,14 @@ static void
 vtpci_modern_write_common_2(struct vtpci_modern_softc *sc, bus_size_t off,
     uint16_t val)
 {
-	bus_write_2(&sc->vtpci_common_res_map.vtrm_map,
-			off, virtio_gtoh16(true, val));
+	bus_write_2(&sc->vtpci_common_res_map.vtrm_map, off, val);
 }
 
 static void
 vtpci_modern_write_common_4(struct vtpci_modern_softc *sc, bus_size_t off,
     uint32_t val)
 {
-	bus_write_4(&sc->vtpci_common_res_map.vtrm_map,
-			off, virtio_gtoh32(true, val));
+	bus_write_4(&sc->vtpci_common_res_map.vtrm_map, off, val);
 }
 
 static void
@@ -1948,16 +1944,15 @@ static void
 vtpci_modern_write_notify_2(struct vtpci_modern_softc *sc, bus_size_t off,
     uint16_t val)
 {
-	bus_write_2(&sc->vtpci_notify_res_map.vtrm_map, off,
-	    virtio_gtoh16(true, val));
+	/* bus_write_*() already converts to PCI (little-endian) order. */
+	bus_write_2(&sc->vtpci_notify_res_map.vtrm_map, off, val);
 }
 
 static void
 vtpci_modern_write_notify_4(struct vtpci_modern_softc *sc, bus_size_t off,
     uint32_t val)
 {
-	bus_write_4(&sc->vtpci_notify_res_map.vtrm_map, off,
-	    virtio_gtoh32(true, val));
+	bus_write_4(&sc->vtpci_notify_res_map.vtrm_map, off, val);
 }
 
 static uint8_t
@@ -2003,7 +1998,8 @@ vtpci_modern_read_device_8(struct vtpci_modern_softc *sc, bus_size_t off)
 		val1 = vtpci_modern_read_device_4(sc, off + 4);
 	} while (gen != vtpci_modern_config_generation(dev));
 
-	return (virtio_config_read64_parts(true, val0, val1));
+	/* bus_read_4() already returned host byte order. */
+	return (((uint64_t)val1 << 32) | val0);
 }
 
 static void
@@ -2033,7 +2029,9 @@ vtpci_modern_write_device_8(struct vtpci_modern_softc *sc, bus_size_t off,
 {
 	uint32_t val0, val1;
 
-	virtio_config_write64_parts(true, val, &val0, &val1);
+	/* bus_write_4() converts to PCI (little-endian) byte order. */
+	val0 = (uint32_t)val;
+	val1 = val >> 32;
 	vtpci_modern_write_device_4(sc, off, val0);
 	vtpci_modern_write_device_4(sc, off + 4, val1);
 }

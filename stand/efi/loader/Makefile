@@ -22,9 +22,11 @@ SRCS=	autoload.c \
 	bootinfo.c \
 	conf.c \
 	copy.c \
+	decompress.c \
 	efi_main.c \
 	framebuffer.c \
 	main.c \
+	memdisk.c \
 	self_reloc.c \
 	vers.c \
 	gfx_fb.c \
@@ -45,14 +47,16 @@ HAVE_ZFS=	yes
 
 CFLAGS.bootinfo.c += -I$(SRCTOP)/sys/teken
 CFLAGS.bootinfo.c += -I${SRCTOP}/contrib/pnglite
+CFLAGS.decompress.c += ${ZLIB_CFLAGS} ${BZIP2_CFLAGS} ${ZSTD_CFLAGS}
 CFLAGS.framebuffer.c += -I$(SRCTOP)/sys/teken
 CFLAGS.framebuffer.c += -I${SRCTOP}/contrib/pnglite
 CFLAGS.main.c += -I$(SRCTOP)/sys/teken
 CFLAGS.main.c += -I${SRCTOP}/contrib/pnglite
+CFLAGS.memdisk.c += -I${.OBJDIR}
 CFLAGS.gfx_fb.c += -I$(SRCTOP)/sys/teken
 CFLAGS.gfx_fb.c += -I${SRCTOP}/sys/cddl/contrib/opensolaris/common/lz4
 CFLAGS.gfx_fb.c += -I${SRCTOP}/contrib/pnglite
-CFLAGS.gfx_fb.c += -DHAVE_MEMCPY -I${SRCTOP}/sys/contrib/zlib
+CFLAGS.gfx_fb.c += ${ZLIB_CFLAGS}
 
 # We implement a slightly non-standard %S in that it always takes a
 # CHAR16 that's common in UEFI-land instead of a wchar_t. This only
@@ -60,6 +64,7 @@ CFLAGS.gfx_fb.c += -DHAVE_MEMCPY -I${SRCTOP}/sys/contrib/zlib
 # of a short. There's no good cast to use here so just ignore the
 # warnings for now.
 CWARNFLAGS.main.c+=	-Wno-format
+CWARNFLAGS.memdisk.c+=	-Wno-format
 
 .PATH: ${.CURDIR}/../loader
 .PATH: ${.CURDIR}/../loader/arch/${__arch}

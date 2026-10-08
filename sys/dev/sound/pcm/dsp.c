@@ -77,7 +77,6 @@ static d_read_t dsp_read;
 static d_write_t dsp_write;
 static d_ioctl_t dsp_ioctl;
 static d_poll_t dsp_poll;
-static d_mmap_t dsp_mmap;
 static d_mmap_single_t dsp_mmap_single;
 static d_kqfilter_t dsp_kqfilter;
 
@@ -89,7 +88,6 @@ struct cdevsw dsp_cdevsw = {
 	.d_ioctl	= dsp_ioctl,
 	.d_poll		= dsp_poll,
 	.d_kqfilter	= dsp_kqfilter,
-	.d_mmap		= dsp_mmap,
 	.d_mmap_single	= dsp_mmap_single,
 	.d_name		= "dsp",
 };
@@ -124,8 +122,8 @@ dsp_make_dev(device_t dev)
 	make_dev_args_init(&devargs);
 	devargs.mda_devsw = &dsp_cdevsw;
 	devargs.mda_uid = UID_ROOT;
-	devargs.mda_gid = GID_WHEEL;
-	devargs.mda_mode = 0666;
+	devargs.mda_gid = GID_AUDIO;
+	devargs.mda_mode = 0660;
 	devargs.mda_si_drv1 = sc;
 	err = make_dev_s(&devargs, &sc->dsp_dev, "dsp%d", unit);
 	if (err != 0) {
@@ -144,24 +142,6 @@ dsp_destroy_dev(device_t dev)
 
 	d = device_get_softc(dev);
 	destroy_dev(d->dsp_dev);
-}
-
-static void
-dsp_lock_chans(struct dsp_cdevpriv *priv, uint32_t prio)
-{
-	if (priv->rdch != NULL && DSP_F_READ(prio))
-		CHN_LOCK(priv->rdch);
-	if (priv->wrch != NULL && DSP_F_WRITE(prio))
-		CHN_LOCK(priv->wrch);
-}
-
-static void
-dsp_unlock_chans(struct dsp_cdevpriv *priv, uint32_t prio)
-{
-	if (priv->rdch != NULL && DSP_F_READ(prio))
-		CHN_UNLOCK(priv->rdch);
-	if (priv->wrch != NULL && DSP_F_WRITE(prio))
-		CHN_UNLOCK(priv->wrch);
 }
 
 static int
@@ -544,7 +524,7 @@ dsp_ioctl_channel(struct dsp_cdevpriv *priv, struct pcm_channel *ch,
 	int j, left, right, center, mute;
 
 	d = priv->sc;
-	if (!PCM_REGISTERED(d) || !(pcm_getflags(d->dev) & SD_F_VPC))
+	if (!PCM_REGISTERED(d))
 		return (-1);
 
 	PCM_UNLOCKASSERT(d);
@@ -1898,27 +1878,89 @@ dsp_poll(struct cdev *i_dev, int events, struct thread *td)
 	return (ret);
 }
 
-static int
-dsp_mmap(struct cdev *i_dev, vm_ooffset_t offset, vm_paddr_t *paddr,
-    int nprot, vm_memattr_t *memattr)
-{
+struct dsp_mmap_handle {
+	struct cdev *cdev;
+	struct snd_dbuf *buf;
+};
 
-	/*
-	 * offset is in range due to checks in dsp_mmap_single().
-	 * XXX memattr is not honored.
-	 */
-	*paddr = vtophys(offset);
+static int
+dsp_dev_pager_ctor(void *handle, vm_ooffset_t size, vm_prot_t prot,
+    vm_ooffset_t foff, struct ucred *cred, u_short *color)
+{
+	struct dsp_mmap_handle *h = handle;
+
+	dev_ref(h->cdev);
+	sndbuf_ref(h->buf);
 	return (0);
 }
 
+static void
+dsp_dev_pager_dtor(void *handle)
+{
+	struct dsp_mmap_handle *h = handle;
+
+	sndbuf_rele(h->buf);
+	dev_rel(h->cdev);
+	free(h, M_DEVBUF);
+}
+
 static int
-dsp_mmap_single(struct cdev *i_dev, vm_ooffset_t *offset,
+dsp_dev_pager_fault(vm_object_t object, vm_ooffset_t offset, int prot,
+    vm_page_t *mres)
+{
+	struct dsp_mmap_handle *h = object->handle;
+	vm_page_t m;
+	uintptr_t addr;
+	vm_paddr_t paddr;
+
+	addr = (uintptr_t)offset;
+	if (addr < (uintptr_t)h->buf->buf ||
+	    addr >= (uintptr_t)h->buf->buf + h->buf->allocsize)
+		return (VM_PAGER_ERROR);
+	paddr = vtophys((void *)addr);
+
+	if (((*mres)->flags & PG_FICTITIOUS) != 0) {
+		m = *mres;
+		vm_page_updatefake(m, paddr, object->memattr);
+	} else {
+		VM_OBJECT_WUNLOCK(object);
+		m = vm_page_getfake(paddr, object->memattr);
+		VM_OBJECT_WLOCK(object);
+		vm_page_replace(m, object, (*mres)->pindex, *mres);
+		*mres = m;
+	}
+	m->valid = VM_PAGE_BITS_ALL;
+	return (VM_PAGER_OK);
+}
+
+static void
+dsp_dev_pager_path(void *handle, char *path, size_t len)
+{
+	struct dsp_mmap_handle *h = handle;
+
+	dev_copyname(h->cdev, path, len);
+}
+
+static const struct cdev_pager_ops dsp_dev_pager_ops = {
+	.cdev_pg_ctor = dsp_dev_pager_ctor,
+	.cdev_pg_dtor = dsp_dev_pager_dtor,
+	.cdev_pg_fault = dsp_dev_pager_fault,
+	.cdev_pg_path = dsp_dev_pager_path,
+};
+
+static int
+dsp_mmap_single(struct cdev *cdev, vm_ooffset_t *offset,
     vm_size_t size, struct vm_object **object, int nprot)
 {
+	struct dsp_mmap_handle *handle;
 	struct dsp_cdevpriv *priv;
 	struct snddev_info *d;
-	struct pcm_channel *wrch, *rdch, *c;
+	struct pcm_channel *c;
 	int err;
+	bool dealloc;
+
+	if (*offset >= *offset + size)
+		return (EINVAL);
 
 	/*
 	 * https://lists.freebsd.org/pipermail/freebsd-emulation/2007-June/003698.html
@@ -1928,11 +1970,6 @@ dsp_mmap_single(struct cdev *i_dev, vm_ooffset_t *offset,
 	    SV_CURPROC_ABI() != SV_ABI_LINUX)))
 		return (EINVAL);
 
-	/*
-	 * PROT_READ (alone) selects the input buffer.
-	 * PROT_WRITE (alone) selects the output buffer.
-	 * PROT_WRITE|PROT_READ together select the output buffer.
-	 */
 	if ((nprot & (PROT_READ | PROT_WRITE)) == 0)
 		return (EINVAL);
 
@@ -1944,35 +1981,53 @@ dsp_mmap_single(struct cdev *i_dev, vm_ooffset_t *offset,
 
 	PCM_GIANT_ENTER(d);
 
-	dsp_lock_chans(priv, FREAD | FWRITE);
-	wrch = priv->wrch;
-	rdch = priv->rdch;
-
-	c = ((nprot & PROT_WRITE) != 0) ? wrch : rdch;
-	if (c == NULL || (c->flags & CHN_F_MMAP_INVALID) ||
-	    (*offset  + size) > c->bufsoft->allocsize ||
-	    (wrch != NULL && (wrch->flags & CHN_F_MMAP_INVALID)) ||
-	    (rdch != NULL && (rdch->flags & CHN_F_MMAP_INVALID))) {
-		dsp_unlock_chans(priv, FREAD | FWRITE);
+	/*
+	 * PROT_READ (alone) selects the input buffer.
+	 * PROT_WRITE (alone) selects the output buffer.
+	 * PROT_WRITE|PROT_READ together select the output buffer.
+	 */
+	c = ((nprot & PROT_WRITE) != 0) ? priv->wrch : priv->rdch;
+	if (c == NULL) {
 		PCM_GIANT_EXIT(d);
 		return (EINVAL);
 	}
 
-	if (wrch != NULL)
-		wrch->flags |= CHN_F_MMAP;
-	if (rdch != NULL)
-		rdch->flags |= CHN_F_MMAP;
-
+	CHN_LOCK(c);
+	if ((c->flags & CHN_F_MMAP_INVALID) ||
+	    c->bufsoft->allocsize < *offset + size) {
+		CHN_UNLOCK(c);
+		PCM_GIANT_EXIT(d);
+		return (EINVAL);
+	}
+	c->flags |= CHN_F_MMAP;
 	*offset = (uintptr_t)sndbuf_getbufofs(c->bufsoft, *offset);
-	dsp_unlock_chans(priv, FREAD | FWRITE);
-	*object = vm_pager_allocate(OBJT_DEVICE, i_dev,
+	CHN_UNLOCK(c);
+
+	handle = malloc(sizeof(*handle), M_DEVBUF, M_WAITOK);
+	handle->cdev = cdev;
+	handle->buf = c->bufsoft;
+	*object = cdev_pager_allocate(handle, OBJT_DEVICE, &dsp_dev_pager_ops,
 	    size, nprot, *offset, curthread->td_ucred);
-
 	PCM_GIANT_LEAVE(d);
+	if (*object != NULL) {
+		err = 0;
+		dealloc = false;
+		CHN_LOCK(c);
+		if (c->flags & CHN_F_MMAP_INVALID) {
+			c->flags &= ~CHN_F_MMAP;
+			err = EINVAL;
+			dealloc = true;
+		}
+		CHN_UNLOCK(c);
+		/* We use a helper bool to keep the channel locking simpler. */
+		if (dealloc)
+			vm_object_deallocate(*object);
+	} else {
+		free(handle, M_DEVBUF);
+		err = ENOMEM;
+	}
 
-	if (*object == NULL)
-		 return (EINVAL);
-	return (0);
+	return (err);
 }
 
 static const char *dsp_aliases[] = {
@@ -2678,16 +2733,29 @@ dsp_oss_syncstart(int sg_id)
 
 	/* Proceed only if no errors encountered. */
 	if (ret == 0) {
-		/* Launch channels */
+		/*
+		 * Unlock all members before starting any of them.
+		 * Holding multiple channel locks while calling chn_start()
+		 * on a virtual channel can trigger the parent, which
+		 * acquires PCM_LOCK() while other virtual channels are
+		 * still locked -- a lock order reversal.
+		 */
+		SLIST_FOREACH(sm, &sg->members, link) {
+			sm->ch->sm = NULL;
+			sm->ch->flags &= ~CHN_F_NOTRIGGER;
+			CHN_UNLOCK(sm->ch);
+		}
+
+		/*
+		 * Start each channel individually, then remove it from
+		 * the sync group and free its member structure.
+		 */
 		while ((sm = SLIST_FIRST(&sg->members)) != NULL) {
-			SLIST_REMOVE_HEAD(&sg->members, link);
-
 			c = sm->ch;
-			c->sm = NULL;
+			CHN_LOCK(c);
 			chn_start(c, 1);
-			c->flags &= ~CHN_F_NOTRIGGER;
 			CHN_UNLOCK(c);
-
+			SLIST_REMOVE_HEAD(&sg->members, link);
 			free(sm, M_DEVBUF);
 		}
 
@@ -2943,10 +3011,20 @@ dsp_kqevent(struct knote *kn, long hint)
 	}
 	kn->kn_data = 0;
 	if (chn_polltrigger(ch)) {
-		if (kn->kn_filter == EVFILT_READ)
+		if (kn->kn_filter == EVFILT_READ) {
 			kn->kn_data = sndbuf_getready(ch->bufsoft);
-		else
+			if (ch->flags & CHN_F_MMAP)
+				kn->kn_kevent.ext[0] = sndbuf_getfreeptr(ch->bufsoft);
+			else
+				kn->kn_kevent.ext[0] = sndbuf_getready(ch->bufsoft) / ch->bufsoft->align;
+		} else {
 			kn->kn_data = sndbuf_getfree(ch->bufsoft);
+			if (ch->flags & CHN_F_MMAP)
+				kn->kn_kevent.ext[0] = sndbuf_getreadyptr(ch->bufsoft);
+			else
+				kn->kn_kevent.ext[0] = sndbuf_getready(ch->bufsoft) / ch->bufsoft->align;
+		}
+		kn->kn_kevent.ext[1] = ch->xruns;
 	}
 
 	return (kn->kn_data > 0);

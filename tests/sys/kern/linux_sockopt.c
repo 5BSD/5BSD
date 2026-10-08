@@ -50,6 +50,7 @@ struct ifreq { char name[16]; union { int ifindex; char pad[24]; } u; };
 #define	EINVAL		22
 #define	EDOM		33
 #define	ENOPROTOOPT	92
+#define	EOPNOTSUPP	95
 #define	EADDRNOTAVAIL	99
 
 #define	SYS_read	0
@@ -344,10 +345,18 @@ test_udp(void)
 	/* SO_BSDCOMPAT(14): obsolete no-op on Linux too. */
 	if (setint(u, SOL_SOCKET, 14, 1) != 0) return (50);
 	if (getint(u, SOL_SOCKET, 14) != 0) return (51);
-	/* SO_PASSRIGHTS(83): SCM_RIGHTS cannot be turned off. */
-	if (setint(u, SOL_SOCKET, 83, 1) != 0) return (52);
-	if (setint(u, SOL_SOCKET, 83, 0) != -EINVAL) return (53);
-	if (getint(u, SOL_SOCKET, 83) != 1) return (54);
+	/* SO_PASSRIGHTS(83) applies only to AF_UNIX sockets, as on Linux. */
+	if (setint(u, SOL_SOCKET, 83, 1) != -EOPNOTSUPP) return (52);
+	if (getint(u, SOL_SOCKET, 83) != -EOPNOTSUPP) return (53);
+	{
+		int x = (int)call(SYS_socket, AF_UNIX, SOCK_DGRAM, 0, 0, 0, 0);
+
+		if (x < 0) return (54);
+		if (getint(x, SOL_SOCKET, 83) != 1) return (207);
+		if (setint(x, SOL_SOCKET, 83, 0) != 0) return (208);
+		if (getint(x, SOL_SOCKET, 83) != 0) return (209);
+		(void)call(SYS_close, x, 0, 0, 0, 0, 0);
+	}
 	/* SO_PRIORITY(12), SO_BINDTODEVICE(25): ENOPROTOOPT. */
 	if (setint(u, SOL_SOCKET, 12, 3) != -ENOPROTOOPT) return (55);
 	if (setopt(u, SOL_SOCKET, 25, "lo0", 4) != -ENOPROTOOPT) return (56);

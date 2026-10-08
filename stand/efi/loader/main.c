@@ -146,7 +146,7 @@ EFI_LOADED_IMAGE *boot_img;
 enum boot_policies {
 	STRICT,
 	RELAXED,
-} boot_policy = RELAXED;
+} boot_policy = STRICT;
 
 const char *policy_map[] = {
 	[STRICT] = "strict",
@@ -340,9 +340,20 @@ probe_md_currdev(void)
 }
 #endif
 
+/*
+ * Try the passed in partition or entire disk to see if we can find a bootable
+ * partition or zpool.
+ */
 static bool
-try_as_currdev(pdinfo_t *hd, pdinfo_t *pp)
+try_as_currdev(pdinfo_t *pp, bool verbose)
 {
+	if (verbose) {
+		CHAR16 *text = efi_devpath_name(pp->pd_devpath);
+		if (text != NULL) {
+			printf("Trying: %S\n", text);
+			efi_free_devpath_name(text);
+		}
+	}
 #ifdef EFI_ZFS_BOOT
 	uint64_t guid;
 
@@ -362,6 +373,53 @@ try_as_currdev(pdinfo_t *hd, pdinfo_t *pp)
 	 */
 	set_currdev_pdinfo(pp);
 	return (sanity_check_currdev());
+}
+
+/*
+ * Given a disk, try each of its partitions as the boot device.
+ */
+static int
+try_disk_and_partitions(pdinfo_t *disk, EFI_HANDLE skip_handle)
+{
+	pdinfo_t *pp;
+
+	if (disk == NULL)
+		return (ENOENT);
+
+	if (try_as_currdev(disk, true))
+		return (0);
+
+	STAILQ_FOREACH(pp, &disk->pd_part, pd_link) {
+		if (pp->pd_handle == skip_handle)
+			continue;
+		if (try_as_currdev(pp, true))
+			return (0);
+	}
+	return (ENOENT);
+}
+
+/*
+ * Search the boot device first (i.e. the ESP and any sibling partitions).
+ * Per the UEFI specification, filesystems on other devices must not be
+ * preferred until the boot device has been fully exhausted.
+ */
+static int
+try_boot_device_partitions(void)
+{
+	pdinfo_t *dp;
+	CHAR16 *text;
+
+	dp = efiblk_get_pdinfo_by_handle(boot_img->DeviceHandle);
+	if (dp == NULL)
+		return (ENOENT);
+
+	text = efi_devpath_name(dp->pd_devpath);
+	if (text != NULL) {
+		printf("Trying ESP device: %S\n", text);
+		efi_free_devpath_name(text);
+	}
+
+	return (try_disk_and_partitions(dp->pd_parent, dp->pd_handle));
 }
 
 /*
@@ -535,10 +593,9 @@ match_boot_info(char *boot_info, size_t bisz)
 static int
 find_currdev(bool do_bootmgr, char *boot_info, size_t boot_info_sz)
 {
-	pdinfo_t *dp, *pp;
+	pdinfo_t *dp;
 	EFI_DEVICE_PATH *devpath, *copy;
 	EFI_HANDLE h;
-	CHAR16 *text;
 	struct devsw *dev;
 	int unit;
 	uint64_t extra;
@@ -572,10 +629,20 @@ find_currdev(bool do_bootmgr, char *boot_info, size_t boot_info_sz)
 		efi_devpath_free(devpath);
 		if (dp == NULL)
 			break;
-		printf("    Setting currdev to UEFI path %s\n",
-		    rootdev);
-		set_currdev_pdinfo(dp);
-		return (0);
+		printf("    Trying uefi_rootdev %s\n", rootdev);
+		/* if just a partition, just try that */
+		h = NULL;
+		if (dp->pd_parent != NULL) {
+			if (try_as_currdev(dp, false))
+				return (0);
+			/* That failed? Try the whole disk, but skip this part */
+			h = dp->pd_handle;
+			dp = dp->pd_parent;
+		}
+		/* otherwise, it's a full disk, so try all its partitions */
+		if (try_disk_and_partitions(dp, h) == 0)
+			return (0);
+		break;
 	} while (0);
 
 	/*
@@ -599,76 +666,42 @@ find_currdev(bool do_bootmgr, char *boot_info, size_t boot_info_sz)
 
 #ifdef MD_IMAGE_SIZE
 	/*
-	 * If there is an embedded MD, try to use that.
+	 * Forth choice: If there is an embedded MD, try to use that.
 	 */
-	printf("Trying MD\n");
+	printf("Trying configured MD\n");
 	if (probe_md_currdev())
 		return (0);
 #endif /* MD_IMAGE_SIZE */
 
-#ifdef EFI_ZFS_BOOT
-	zfsinfo_list_t *zfsinfo = efizfs_get_zfsinfo_list();
-	zfsinfo_t *zi;
-
 	/*
-	 * First try the zfs pool(s) that were on the boot device, then
-	 * try any other pool if we have a relaxed policy. zfsinfo has
-	 * the pools that had elements on the boot device first.
+	 * Fifth choice: try all the partitions on the boot device.
 	 */
-	STAILQ_FOREACH(zi, zfsinfo, zi_link) {
-		if (boot_policy == STRICT &&
-		    zi->zi_handle != boot_img->DeviceHandle)
-			continue;
-		printf("Trying ZFS pool 0x%jx\n", zi->zi_pool_guid);
-		if (probe_zfs_currdev(zi->zi_pool_guid))
-			return (0);
+	if (try_boot_device_partitions() == 0)
+		return (0);
+
+#ifdef EFI_ZFS_BOOT
+	/*
+	 * Sixth Choice: With a relaxed policy, try ZFS pools on non-boot
+	 * devices after the boot device has been fully exhausted.
+	 */
+	if (boot_policy == RELAXED) {
+		zfsinfo_list_t *zfsinfo = efizfs_get_zfsinfo_list();
+		zfsinfo_t *zi;
+
+		STAILQ_FOREACH(zi, zfsinfo, zi_link) {
+			if (zi->zi_handle == boot_img->DeviceHandle)
+				continue;
+			printf("Trying ZFS pool 0x%jx\n",
+			    zi->zi_pool_guid);
+			if (probe_zfs_currdev(zi->zi_pool_guid))
+				return (0);
+		}
 	}
 #endif /* EFI_ZFS_BOOT */
 
 	/*
-	 * Try to find the block device by its handle based on the
-	 * image we're booting. If we can't find a sane partition,
-	 * search all the other partitions of the disk. We do not
-	 * search other disks because it's a violation of the UEFI
-	 * boot protocol to do so. We fail and let UEFI go on to
-	 * the next candidate.
-	 */
-	dp = efiblk_get_pdinfo_by_handle(boot_img->DeviceHandle);
-	if (dp != NULL) {
-		text = efi_devpath_name(dp->pd_devpath);
-		if (text != NULL) {
-			printf("Trying ESP: %S\n", text);
-			efi_free_devpath_name(text);
-		}
-		set_currdev_pdinfo(dp);
-		if (sanity_check_currdev())
-			return (0);
-		if (dp->pd_parent != NULL) {
-			pdinfo_t *espdp = dp;
-			dp = dp->pd_parent;
-			STAILQ_FOREACH(pp, &dp->pd_part, pd_link) {
-				/* Already tried the ESP */
-				if (espdp == pp)
-					continue;
-				/*
-				 * Roll up the ZFS special case
-				 * for those partitions that have
-				 * zpools on them.
-				 */
-				text = efi_devpath_name(pp->pd_devpath);
-				if (text != NULL) {
-					printf("Trying: %S\n", text);
-					efi_free_devpath_name(text);
-				}
-				if (try_as_currdev(dp, pp))
-					return (0);
-			}
-		}
-	}
-
-	/*
-	 * Try the device handle from our loaded image first.  If that
-	 * fails, use the device path from the loaded image and see if
+	 * Seventh choice: Try the device handle from our loaded image first.
+	 * If that fails, use the device path from the loaded image and see if
 	 * any of the nodes in that path match one of the enumerated
 	 * handles. Currently, this handle list is only for netboot.
 	 */
@@ -678,6 +711,12 @@ find_currdev(bool do_bootmgr, char *boot_info, size_t boot_info_sz)
 			return (0);
 	}
 
+	/*
+	 * Eighth choice: look up the device handle... This loops through the
+	 * entries to find the device handle. The network protocols have long
+	 * strings of device nodes in the device path, and this may make
+	 * something work.
+	 */
 	copy = NULL;
 	devpath = efi_lookup_image_devpath(IH);
 	while (devpath != NULL) {
@@ -1237,7 +1276,7 @@ main(int argc, CHAR16 *argv[])
 #endif
 
         /* Get our loaded image protocol interface structure. */
-	(void) OpenProtocolByHandle(IH, &imgid, (void **)&boot_img);
+	(void)OpenProtocolByHandle(IH, &imgid, (void **)&boot_img);
 
 	/* Report the RSDP early. */
 	acpi_detect();
@@ -1281,6 +1320,14 @@ main(int argc, CHAR16 *argv[])
 	bcache_init(32768, 512);
 
 	/*
+	 * Scan the command line args for memdisk=<url> and download that image
+	 * to install as a ramdisk. This needs to be done before we scan the
+	 * handles because it installs a handle and creates the right ACPI
+	 * tables for the kernel to find it.
+	 */
+	maybe_download_ramdisk(argc, argv);
+
+	/*
 	 * Scan the BLOCK IO MEDIA handles then
 	 * march through the device switch probing for things.
 	 */
@@ -1289,6 +1336,11 @@ main(int argc, CHAR16 *argv[])
 		printf("efipart_inithandles failed with ERRNO %d, expect "
 		    "failures\n", i);
 	}
+
+	/*
+	 * Scan all the VirtualDisks, passing them along to the FreeBSD kernel.
+	 */
+	efiblk_memdisk_preload();
 
 	devinit();
 

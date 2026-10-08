@@ -70,6 +70,8 @@
 #include <netgraph/bluetooth/include/ng_hci.h>
 #include <netgraph/bluetooth/include/ng_l2cap.h>
 #include <netgraph/bluetooth/include/ng_btsocket.h>
+#include <netpfil/pf/pf_nl.h>
+#include <netlink/netlink.h>
 
 #include "support.h"
 
@@ -1220,4 +1222,18 @@ sysdecode_itimer(int which)
 {
 
 	return (lookup_value(itimerwhich, which));
+}
+
+const char *
+sysdecode_pfnl_cmd(int cmd)
+{
+
+	return (lookup_value(pfnl_cmd, cmd));
+}
+
+const char *
+sysdecode_nlm_flag(int flag)
+{
+
+	return (lookup_value(nlm_flag, flag));
 }

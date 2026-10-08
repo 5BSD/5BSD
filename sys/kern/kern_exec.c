@@ -26,7 +26,6 @@
  * SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
 #include "opt_capsicum.h"
 #include "opt_hwpmc_hooks.h"
 #include "opt_hwt_hooks.h"
@@ -47,6 +46,7 @@
 #include <sys/imgact.h>
 #include <sys/imgact_elf.h>
 #include <sys/kernel.h>
+#include <sys/limits.h>
 #include <sys/lock.h>
 #include <sys/malloc.h>
 #include <sys/mman.h>
@@ -345,11 +345,11 @@ post_execve(struct thread *td, int error, struct vmspace *oldvmspace)
 }
 
 /*
- * kern_execve() has the astonishing property of not always returning to
- * the caller.  If sufficiently bad things happen during the call to
- * do_execve(), it can end up calling exit1(); as a result, callers must
- * avoid doing anything which they might need to undo (e.g., allocating
- * memory).
+ * kern_execve() has the astonishing property of not always returning
+ * to the caller.  If sufficiently bad things happen during the call
+ * to do_execve(), it can end up calling exit2(). Callers must avoid
+ * doing anything which they might need to undo (e.g., allocating
+ * memory), unless called from the ptrace(PT_SC_REMOTERQ) handler.
  */
 int
 kern_execve(struct thread *td, struct image_args *args, struct mac *mac_p,
@@ -386,6 +386,77 @@ execve_nosetid(struct image_params *imgp)
 	if (imgp->newcred != NULL) {
 		crfree(imgp->newcred);
 		imgp->newcred = NULL;
+	}
+}
+
+/*
+ * Returns true if the execblock was obtained, in this case the
+ * process lock is kept.  Returns false if the execblock was not
+ * obtained, but the function slept and the lock was dropped.
+ */
+bool
+execve_block(struct thread *td, struct proc *p)
+{
+	PROC_LOCK_ASSERT(p, MA_OWNED);
+	MPASS(td == curthread);
+	MPASS(p != td->td_proc || (p->p_flag & P_INEXEC) == 0);
+
+	if (p != td->td_proc && (p->p_flag & P_INEXEC) != 0) {
+		p->p_flag |= P_INEXEC_WAIT;
+		msleep(&p->p_execblock, &p->p_mtx, PDROP, "inexec", 0);
+		return (false);
+	}
+	MPASS(p->p_execblock < UINT_MAX);
+	p->p_execblock++;
+	return (true);
+}
+
+/*
+ * Might drop the process lock internally, callers must re-check the
+ * invariants afterward.
+ */
+void
+execve_block_wait(struct thread *td, struct proc *p)
+{
+	bool first;
+
+	PROC_ASSERT_HELD(p);
+	PROC_LOCK_ASSERT(p, MA_OWNED);
+
+	for (first = true;; first = false) {
+		if (!first)
+			PROC_LOCK(p);
+		if (execve_block(td, p))
+			return;
+	}
+}
+
+void
+execve_unblock(struct thread *td, struct proc *p)
+{
+	PROC_LOCK_ASSERT(p, MA_OWNED);
+	MPASS(td == curthread);
+
+	MPASS(p->p_execblock > 0);
+	p->p_execblock--;
+	if (p->p_execblock == 0 && (p->p_flag & P_INEXEC_WAIT) != 0) {
+		p->p_flag &= ~P_INEXEC_WAIT;
+		wakeup(&p->p_execblock);
+	}
+}
+
+void
+execve_block_pass(struct thread *td)
+{
+	struct proc *p;
+
+	MPASS(td == curthread);
+	p = td->td_proc;
+	PROC_LOCK_ASSERT(p, MA_OWNED);
+	
+	while (p->p_execblock != 0) {
+		p->p_flag |= P_INEXEC_WAIT;
+		msleep(&p->p_execblock, &p->p_mtx, 0, "exeblk", 0);
 	}
 }
 
@@ -447,6 +518,7 @@ do_execve(struct thread *td, struct image_args *args, struct mac *mac_p,
 	PROC_LOCK(p);
 	KASSERT((p->p_flag & P_INEXEC) == 0,
 	    ("%s(): process already has P_INEXEC flag", __func__));
+	execve_block_pass(td);
 	p->p_flag |= P_INEXEC;
 	PROC_UNLOCK(p);
 
@@ -720,7 +792,8 @@ interpret:
 	 * Special interpreter operation, cleanup and loop up to try to
 	 * activate the interpreter.
 	 */
-	if (imgp->interpreted) {
+	if (imgp->interpreted != 0 &&
+	    imgp->interpreted != IMGACT_INTERP_IGNORE) {
 		exec_unmap_first_page(imgp);
 		/*
 		 * The text reference needs to be removed for scripts.
@@ -976,7 +1049,10 @@ interpret:
 	 */
 	KNOTE_LOCKED(p->p_klist, NOTE_EXEC);
 	procdesc_knote(p, NOTE_EXEC);
-	p->p_flag &= ~P_INEXEC;
+	MPASS(p->p_execblock == 0);
+	if ((p->p_flag & P_INEXEC_WAIT) != 0)
+		wakeup(&p->p_execblock);
+	p->p_flag &= ~(P_INEXEC | P_INEXEC_WAIT);
 
 	/* clear "fork but no exec" flag, as we _are_ execing */
 	p->p_acflag &= ~AFORK;
@@ -1032,7 +1108,7 @@ interpret:
 	mac_proc_notify_exec_complete(p);
 #endif
 
-	VOP_MMAPPED(imgp->vp);
+	VOP_UPDATE_ATIME(imgp->vp, NULL);
 
 	SDT_PROBE1(proc, , , exec__success, args->fname);
 
@@ -1078,7 +1154,9 @@ exec_fail_dealloc:
 exec_fail:
 		/* we're done here, clear P_INEXEC */
 		PROC_LOCK(p);
-		p->p_flag &= ~P_INEXEC;
+		if ((p->p_flag & P_INEXEC_WAIT) != 0)
+			wakeup(&p->p_execblock);
+		p->p_flag &= ~(P_INEXEC | P_INEXEC_WAIT);
 		PROC_UNLOCK(p);
 
 		SDT_PROBE1(proc, , , exec__failure, error);
@@ -1120,8 +1198,7 @@ exec_fail:
 	if (error && imgp->vmspace_destroyed) {
 		/* sorry, no more process anymore. exit gracefully */
 		exec_cleanup(td, oldvmspace);
-		exit1(td, 0, SIGABRT);
-		/* NOT REACHED */
+		kern_exit(td, 0, SIGABRT);
 	}
 
 #ifdef KTRACE

@@ -2797,14 +2797,14 @@ assemble_segments(iflib_rxq_t rxq, if_rxd_info_t ri, if_rxsd_t sd, int *pf_rv)
 		if (ri->iri_frags[i].irf_len == 0 || consumed ||
 		    *pf_rv == PFIL_CONSUMED || *pf_rv == PFIL_DROPPED) {
 			if (mh == NULL) {
-				/* everything saved here */
 				consumed = true;
 				pf_rv_ptr = NULL;
-				continue;
 			}
 			/* XXX we can save the cluster here, but not the mbuf */
-			m_init(m, M_NOWAIT, MT_DATA, 0);
-			m_free(m);
+			if (m != NULL) {
+				m_init(m, M_NOWAIT, MT_DATA, 0);
+				m_free(m);
+			}
 			continue;
 		}
 		if (mh == NULL) {
@@ -3687,8 +3687,9 @@ defrag:
 				remap = 1;
 				goto defrag;
 			}
+			goto defrag_failed;
 		}
-		goto defrag_failed;
+		goto out_with_error;
 	}
 	/*
 	 * err can't possibly be non-zero here, so we don't neet to test it
@@ -3697,13 +3698,15 @@ defrag:
 	return (err);
 
 defrag_failed:
+	err = ENOMEM;
 	txq->ift_mbuf_defrag_failed++;
+out_with_error:
 	txq->ift_map_failed++;
 	m_freem(*m_headp);
 	DBG_COUNTER_INC(tx_frees);
 	*m_headp = NULL;
 	DBG_COUNTER_INC(encap_txd_encap_fail);
-	return (ENOMEM);
+	return (err);
 }
 
 static void

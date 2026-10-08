@@ -50,6 +50,8 @@ FBSD_1.4 {
 FBSD_1.9 {
 	free_sized;
 	free_aligned_sized;
+	__free_sized;
+	__free_aligned_sized;
 };
 
 FBSDprivate_1.0 {

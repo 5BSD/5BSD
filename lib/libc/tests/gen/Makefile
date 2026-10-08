@@ -1,11 +1,14 @@
 .include <bsd.own.mk>
 
+SUBDIR+=		libdummy
+
 ATF_TESTS_C+=		arc4random_test
 ATF_TESTS_C+=		dir2_test
 ATF_TESTS_C+=		dlopen_empty_test
 ATF_TESTS_C+=		fmtcheck2_test
 ATF_TESTS_C+=		fmtmsg_test
 ATF_TESTS_C+=		fnmatch2_test
+ATF_TESTS_C+=		fpclassify_test
 ATF_TESTS_C+=		fpclassify2_test
 .if ${COMPILER_FEATURES:Mblocks}
 ATF_TESTS_C+=		fts_blocks_test
@@ -14,6 +17,10 @@ ATF_TESTS_C+=		fts_children_test
 ATF_TESTS_C+=		fts_misc_test
 ATF_TESTS_C+=		fts_open_test
 ATF_TESTS_C+=		fts_options_test
+ATF_TESTS_C+=		fts_regress_test
+ATF_TESTS_C+=		fts_set_test
+ATF_TESTS_C+=		fpsetmask_test
+ATF_TESTS_C+=		fpsetround_test
 ATF_TESTS_C+=		ftw_test
 ATF_TESTS_C+=		getentropy_test
 ATF_TESTS_C+=		getmntinfo_test
@@ -55,6 +62,7 @@ CFLAGS+=	-DTEST_LONG_DOUBLE
 .if ${MACHINE_CPUARCH} == "aarch64" || \
     ${MACHINE_CPUARCH} == "amd64" || \
     ${MACHINE_CPUARCH} == "i386" || \
+    ${MACHINE_ARCH} == "powerpc64le" || \
     ${MACHINE_CPUARCH} == "riscv"
 CFLAGS+=	-D__HAVE_LONG_DOUBLE
 .endif
@@ -66,9 +74,6 @@ NETBSD_ATF_TESTS_C+=	cpuset_test
 NETBSD_ATF_TESTS_C+=	dir_test
 NETBSD_ATF_TESTS_C+=	floatunditf_test
 NETBSD_ATF_TESTS_C+=	fnmatch_test
-NETBSD_ATF_TESTS_C+=	fpclassify_test
-NETBSD_ATF_TESTS_C+=	fpsetmask_test
-NETBSD_ATF_TESTS_C+=	fpsetround_test
 NETBSD_ATF_TESTS_C+=	ftok_test
 NETBSD_ATF_TESTS_C+=	getcwd_test
 NETBSD_ATF_TESTS_C+=	getgrent_test
@@ -98,6 +103,7 @@ LIBADD.fpsetround_test+=m
 LIBADD.siginfo_test+=	m
 
 LIBADD.nice_test+=	pthread
+LIBADD.fts_regress_test+=	pthread
 LIBADD.syslog_test+=	pthread
 
 CFLAGS+=		-I${.CURDIR}

@@ -16,7 +16,7 @@
 
 .include <src.opts.mk>
 
-SUBDIR=	blocklist \
+SUBDIR=	\
 	bsdaudit \
 	bsdconfig \
 	bzip2 \
@@ -133,6 +133,7 @@ SUBDIR+=		caroot
 SUBDIR.${MK_AT}+=		at
 SUBDIR.${MK_AUDIT}+=		audit
 SUBDIR.${MK_AUTOFS}+=		autofs
+SUBDIR.${MK_BLOCKLIST}+=	blocklist
 SUBDIR.${MK_BLUETOOTH}+=	bluetooth
 SUBDIR.${MK_BOOT}+=		bootloader
 SUBDIR.${MK_BSDINSTALL}+=	bsdinstall

@@ -95,8 +95,8 @@
 static int __elfN(check_header)(const Elf_Ehdr *hdr);
 static const Elf_Brandinfo *__elfN(get_brandinfo)(struct image_params *imgp,
     const Elf_Phdr *phdr, const char *interp, int32_t *osrel, uint32_t *fctl0);
-static int __elfN(load_file)(struct thread *td, const char *file, u_long *addr,
-    u_long *entry, bool brand_interp);
+static int __elfN(load_interp_file)(struct thread *td, const char *file,
+    u_long *addr, u_long *entry, bool brand_interp);
 static int __elfN(load_section)(const struct image_params *imgp,
     vm_ooffset_t offset, caddr_t vmaddr, size_t memsz, size_t filsz,
     vm_prot_t prot);
@@ -834,7 +834,7 @@ __elfN(load_sections)(const struct image_params *imgp, const Elf_Ehdr *hdr,
  * image.  Only such a load may proceed in capability mode.
  */
 static int
-__elfN(load_file)(struct thread *td, const char *file, u_long *addr,
+__elfN(load_interp_file)(struct thread *td, const char *file, u_long *addr,
     u_long *entry, bool brand_interp)
 {
 	struct {
@@ -878,6 +878,7 @@ __elfN(load_file)(struct thread *td, const char *file, u_long *addr,
 	imgp->td = td;
 	imgp->proc = td->td_proc;
 	imgp->attr = attr;
+	imgp->interpreted = IMGACT_INTERP_IGNORE; /* ignored by do_execve */
 
 	NDINIT(nd, LOOKUP, ndflags, UIO_SYSSPACE, file);
 	if ((error = namei(nd)) != 0) {
@@ -912,12 +913,12 @@ __elfN(load_file)(struct thread *td, const char *file, u_long *addr,
 		goto fail;
 	}
 
-	if (!aligned(imgp->image_header + hdr->e_phoff, Elf_Addr) ||
-	    hdr->e_phnum > __elfN(phnums)) {
+	if (hdr->e_phnum > __elfN(phnums)) {
 		error = ENOEXEC;
 		goto fail;
 	}
-	if (__elfN(phdr_in_zero_page)(hdr)) {
+	if (__elfN(phdr_in_zero_page)(hdr) &&
+	    aligned(imgp->image_header + hdr->e_phoff, Elf_Addr)) {
 		phdr = (const Elf_Phdr *)(imgp->image_header + hdr->e_phoff);
 	} else {
 		VOP_UNLOCK(imgp->vp);
@@ -1164,7 +1165,7 @@ __elfN(load_interp)(struct image_params *imgp, const Elf_Brandinfo *brand_info,
 
 	if (brand_info->interp_newpath != NULL &&
 	    (brand_info->interp_path == NULL || brand_interp)) {
-		error = __elfN(load_file)(imgp->td,
+		error = __elfN(load_interp_file)(imgp->td,
 		    brand_info->interp_newpath, addr, entry, true);
 		if (error == 0)
 			return (0);
@@ -1174,7 +1175,7 @@ __elfN(load_interp)(struct image_params *imgp, const Elf_Brandinfo *brand_info,
 	 * In capability mode only the brand's exact path may be looked up;
 	 * with interp_path NULL the substitute above was the only option.
 	 */
-	error = __elfN(load_file)(imgp->td, interp, addr, entry,
+	error = __elfN(load_interp_file)(imgp->td, interp, addr, entry,
 	    brand_info->interp_path != NULL && brand_interp);
 	if (error == 0)
 		return (0);
@@ -1234,10 +1235,6 @@ __CONCAT(exec_, __elfN(imgact))(struct image_params *imgp)
 	free_interp = false;
 	m_phdrs = NULL;
 
-	if (!aligned(imgp->image_header + hdr->e_phoff, Elf_Addr)) {
-		uprintf("Unaligned program headers\n");
-		return (ENOEXEC);
-	}
 	if (hdr->e_phoff + hdr->e_phnum * hdr->e_phentsize < hdr->e_phoff) {
 		uprintf("PHDRS wrap\n");
 		return (ENOEXEC);
@@ -1247,7 +1244,8 @@ __CONCAT(exec_, __elfN(imgact))(struct image_params *imgp)
 		    hdr->e_phnum, __elfN(phnums));
 		return (ENOEXEC);
 	}
-	if (__elfN(phdr_in_zero_page)(hdr)) {
+	if (__elfN(phdr_in_zero_page)(hdr) &&
+	    aligned(imgp->image_header + hdr->e_phoff, Elf_Addr)) {
 		phdr = (const Elf_Phdr *)(imgp->image_header + hdr->e_phoff);
 	} else {
 		VOP_UNLOCK(imgp->vp);
@@ -1349,6 +1347,7 @@ __CONCAT(exec_, __elfN(imgact))(struct image_params *imgp)
 		error = ENOEXEC;
 		goto ret;
 	}
+
 	sv = brand_info->sysvec;
 
 #ifdef CAPABILITY_MODE
@@ -1356,8 +1355,8 @@ __CONCAT(exec_, __elfN(imgact))(struct image_params *imgp)
 	 * Refuse an interpreter other than the brand's own for a
 	 * capability-mode process here, while the old address space still
 	 * exists, so the exec fails cleanly with ECAPMODE rather than ending
-	 * the process when the load is rejected later.  load_file() enforces
-	 * the same rule as the backstop.
+	 * the process when the load is rejected later.  load_interp_file()
+	 * enforces the same rule as the backstop.
 	 */
 	if (interp != NULL && IN_CAPABILITY_MODE(curthread) &&
 	    (!__elfN(capmode_interp) ||
@@ -1373,10 +1372,38 @@ __CONCAT(exec_, __elfN(imgact))(struct image_params *imgp)
 	 */
 	SDT_PROBE2(imgact, , , brand, sv->sv_name, brand_info->brand);
 
+	/*
+	 * Avoid a possible deadlock if the current address space is destroyed
+	 * and that address space maps the locked vnode.  In the common case,
+	 * the locked vnode's v_usecount is decremented but remains greater
+	 * than zero.  Consequently, the vnode lock is not needed by vrele().
+	 * However, in cases where the vnode lock is external, such as nullfs,
+	 * v_usecount may become zero.
+	 *
+	 * The VV_TEXT flag prevents modifications to the executable while
+	 * the vnode is unlocked.
+	 */
+	VOP_UNLOCK(imgp->vp);
+
+	/*
+	 * Decide whether to enable randomization of user mappings.  First,
+	 * reset user preferences for the setid binaries (credential or
+	 * software-authority transitions).  Then, account for the support of
+	 * randomization by the ABI, by user preferences, and make special
+	 * treatment for PIE binaries.
+	 */
+	if (imgp->credential_setid || imgp->authority_setid) {
+		PROC_LOCK(imgp->proc);
+		imgp->proc->p_flag2 &= ~(P2_ASLR_ENABLE | P2_ASLR_DISABLE |
+		    P2_WXORX_DISABLE | P2_WXORX_ENABLE_EXEC);
+		PROC_UNLOCK(imgp->proc);
+	}
+
 	if (hdr->e_type == ET_DYN) {
 		if ((brand_info->flags & BI_CAN_EXEC_DYN) == 0) {
 			uprintf("Cannot execute shared object\n");
 			error = ENOEXEC;
+			(void)vn_lock(imgp->vp, LK_SHARED | LK_RETRY);
 			goto ret;
 		}
 		/*
@@ -1394,33 +1421,6 @@ __CONCAT(exec_, __elfN(imgact))(struct image_params *imgp)
 			else
 				imgp->et_dyn_addr = __elfN(pie_base);
 		}
-	}
-
-	/*
-	 * Avoid a possible deadlock if the current address space is destroyed
-	 * and that address space maps the locked vnode.  In the common case,
-	 * the locked vnode's v_usecount is decremented but remains greater
-	 * than zero.  Consequently, the vnode lock is not needed by vrele().
-	 * However, in cases where the vnode lock is external, such as nullfs,
-	 * v_usecount may become zero.
-	 *
-	 * The VV_TEXT flag prevents modifications to the executable while
-	 * the vnode is unlocked.
-	 */
-	VOP_UNLOCK(imgp->vp);
-
-	/*
-	 * Decide whether to enable randomization of user mappings.
-	 * First, reset user preferences for the setid binaries.
-	 * Then, account for the support of the randomization by the
-	 * ABI, by user preferences, and make special treatment for
-	 * PIE binaries.
-	 */
-	if (imgp->credential_setid || imgp->authority_setid) {
-		PROC_LOCK(imgp->proc);
-		imgp->proc->p_flag2 &= ~(P2_ASLR_ENABLE | P2_ASLR_DISABLE |
-		    P2_WXORX_DISABLE | P2_WXORX_ENABLE_EXEC);
-		PROC_UNLOCK(imgp->proc);
 	}
 	if ((sv->sv_flags & SV_ASLR) == 0 ||
 	    (imgp->proc->p_flag2 & P2_ASLR_DISABLE) != 0 ||

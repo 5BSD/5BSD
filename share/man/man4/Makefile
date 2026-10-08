@@ -50,6 +50,7 @@ MAN=	aac.4 \
 	${_amdsbwd.4} \
 	${_amdsmb.4} \
 	${_amdsmn.4} \
+	${_amdsmu.4} \
 	${_amdtemp.4} \
 	${_bxe.4} \
 	${_aout.4} \
@@ -186,6 +187,7 @@ MAN=	aac.4 \
 	ffs.4 \
 	filemon.4 \
 	firewire.4 \
+	fwcam.4 \
 	${_ftgpio.4} \
 	${_ftwd.4} \
 	full.4 \
@@ -448,6 +450,7 @@ MAN=	aac.4 \
 	${_ntb_hw_intel.4} \
 	${_ntb_hw_plx.4} \
 	${_ntb_transport.4} \
+	ntsync.4 \
 	${_nda.4} \
 	${_if_ntb.4} \
 	null.4 \
@@ -878,6 +881,7 @@ _aibs.4=	aibs.4
 _amdsbwd.4=	amdsbwd.4
 _amdsmb.4=	amdsmb.4
 _amdsmn.4=	amdsmn.4
+_amdsmu.4=	amdsmu.4
 _amdtemp.4=	amdtemp.4
 _asmc.4=	asmc.4
 _atopcase.4=	atopcase.4
@@ -1154,6 +1158,7 @@ MAN+=	\
 	usbhid.4 \
 	usfs.4 \
 	uslcom.4 \
+	uvideo.4 \
 	uvisor.4 \
 	uvscom.4 \
 	veriexec.4 \

@@ -901,9 +901,9 @@ void mlx5_ib_free_srq_wqe(struct mlx5_ib_srq *srq, int wqe_index);
 int mlx5_MAD_IFC(struct mlx5_ib_dev *dev, int ignore_mkey, int ignore_bkey,
 		 u8 port, const struct ib_wc *in_wc, const struct ib_grh *in_grh,
 		 const void *in_mad, void *response_mad);
-int mlx5_ib_create_ah(struct ib_ah *ah, struct ib_ah_attr *ah_attr, u32 flags,
+int mlx5_ib_create_ah(struct ib_ah *ah, struct rdma_ah_attr *ah_attr, u32 flags,
 				struct ib_udata *udata);
-int mlx5_ib_query_ah(struct ib_ah *ibah, struct ib_ah_attr *ah_attr);
+int mlx5_ib_query_ah(struct ib_ah *ibah, struct rdma_ah_attr *ah_attr);
 void mlx5_ib_destroy_ah(struct ib_ah *ah, u32 flags);
 int mlx5_ib_create_srq(struct ib_srq *srq, struct ib_srq_init_attr *init_attr,
 		       struct ib_udata *udata);
@@ -1050,10 +1050,8 @@ int mlx5_ib_get_vf_stats(struct ib_device *device, int vf,
 int mlx5_ib_set_vf_guid(struct ib_device *device, int vf, u8 port,
 			u64 guid, int type);
 
-__be16 mlx5_get_roce_udp_sport(struct mlx5_ib_dev *dev, u8 port_num,
-			       int index);
-int mlx5_get_roce_gid_type(struct mlx5_ib_dev *dev, u8 port_num,
-			   int index, enum ib_gid_type *gid_type);
+__be16 mlx5_get_roce_udp_sport(struct mlx5_ib_dev *dev,
+			       const struct ib_gid_attr *attr);
 
 /* GSI QP helper functions */
 struct ib_qp *mlx5_ib_gsi_create_qp(struct ib_pd *pd,

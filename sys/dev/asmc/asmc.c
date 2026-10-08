@@ -45,6 +45,7 @@
 #include <sys/malloc.h>
 #include <sys/module.h>
 #include <sys/mutex.h>
+#include <sys/sbuf.h>
 #include <sys/sysctl.h>
 #include <sys/systm.h>
 #include <sys/taskqueue.h>
@@ -57,6 +58,7 @@
 
 #include <dev/acpica/acpivar.h>
 #include <dev/asmc/asmcvar.h>
+#include <dev/asmc/asmcmmio.h>
 
 #include <dev/backlight/backlight.h>
 #include "backlight_if.h"
@@ -426,17 +428,40 @@ asmc_attach(device_t dev)
 	struct sysctl_ctx_list *sysctlctx;
 	struct sysctl_oid *sysctlnode;
 
-	sc->sc_ioport = bus_alloc_resource_any(dev, SYS_RES_IOPORT,
-	    &sc->sc_rid_port, RF_ACTIVE);
-	if (sc->sc_ioport == NULL) {
-		device_printf(dev, "unable to allocate IO port\n");
-		return (ENOMEM);
+	/*
+	 * Try MMIO first (T2 Macs expose SMC via memory-mapped I/O).
+	 * Fall back to standard I/O port if MMIO is not available.
+	 */
+	sc->sc_rid_mem = 0;
+	sc->sc_iomem = bus_alloc_resource_any(dev, SYS_RES_MEMORY,
+	    &sc->sc_rid_mem, RF_ACTIVE);
+	if (sc->sc_iomem != NULL) {
+		if (asmc_mmio_probe(dev) == 0) {
+			sc->sc_is_mmio = 1;
+			device_printf(dev, "using MMIO backend (T2)\n");
+		} else {
+			bus_release_resource(dev, SYS_RES_MEMORY,
+			    sc->sc_rid_mem, sc->sc_iomem);
+			sc->sc_iomem = NULL;
+		}
+	}
+
+	if (!sc->sc_is_mmio) {
+		sc->sc_ioport = bus_alloc_resource_any(dev, SYS_RES_IOPORT,
+		    &sc->sc_rid_port, RF_ACTIVE);
+		if (sc->sc_ioport == NULL) {
+			device_printf(dev, "unable to allocate IO port\n");
+			ret = ENOMEM;
+			goto err;
+		}
 	}
 
 	sysctlctx = device_get_sysctl_ctx(dev);
 	sysctlnode = device_get_sysctl_tree(dev);
 
-	mtx_init(&sc->sc_mtx, "asmc", NULL, MTX_SPIN);
+	/* Mutex may already be initialized by asmc_mmio_probe() */
+	if (!mtx_initialized(&sc->sc_mtx))
+		mtx_init(&sc->sc_mtx, "asmc", NULL, MTX_SPIN);
 
 	/* Read SMC revision, key count, fan count */
 	ret = asmc_init(dev);
@@ -615,6 +640,18 @@ asmc_attach(device_t dev)
 	    "SMC key type (4 chars)");
 #endif
 
+	/*
+	 * Battery charge limit (T2 Macs).
+	 */
+	if (sc->sc_is_t2 &&
+	    asmc_key_getinfo(dev, ASMC_KEY_BCLM, NULL, NULL) == 0) {
+		SYSCTL_ADD_PROC(sysctlctx,
+		    SYSCTL_CHILDREN(sysctlnode), OID_AUTO, "battery_charge_limit",
+		    CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_MPSAFE,
+		    dev, 0, asmc_bclm_sysctl, "I",
+		    "Battery charge limit (0-100)");
+	}
+
 	if (!sc->sc_has_sms)
 		goto nosms;
 
@@ -736,6 +773,7 @@ asmc_detach(device_t dev)
 		    sc->sc_ioport);
 		sc->sc_ioport = NULL;
 	}
+	asmc_mmio_detach(dev, sc);
 	if (mtx_initialized(&sc->sc_mtx)) {
 		mtx_destroy(&sc->sc_mtx);
 	}
@@ -788,10 +826,25 @@ asmc_init(device_t dev)
 	sysctlctx = device_get_sysctl_ctx(dev);
 
 	error = asmc_key_read(dev, ASMC_KEY_REV, buf, 6);
-	if (error != 0)
-		goto out;
-	device_printf(dev, "SMC revision: %x.%x%x%x\n", buf[0], buf[1], buf[2],
-	    ntohs(*(uint16_t *)buf + 4));
+	if (error != 0) {
+		/*
+		 * Could not read REV key; T2 Macs may not have it.
+		 * Use #KEY as a liveness check instead.
+		 */
+		if (sc->sc_is_t2) {
+			error = asmc_key_read(dev, ASMC_NKEYS, buf, 4);
+			if (error != 0)
+				goto out;
+			device_printf(dev, "T2 SMC: %d keys\n",
+			    be32dec(buf));
+		} else {
+			goto out;
+		}
+	} else {
+		device_printf(dev, "SMC revision: %x.%x%x%x\n",
+		    buf[0], buf[1], buf[2],
+		    ntohs(*(uint16_t *)buf + 4));
+	}
 
 	/* Auto power-on after AC power loss (AUPO). */
 	if (asmc_key_read(dev, ASMC_KEY_AUPO, buf, 1) == 0) {
@@ -1041,8 +1094,11 @@ asmc_command(device_t dev, uint8_t command)
 static int
 asmc_key_read(device_t dev, const char *key, uint8_t *buf, uint8_t len)
 {
-	int i, error = 1, try = 0;
 	struct asmc_softc *sc = device_get_softc(dev);
+	int i, error = 1, try = 0;
+
+	if (sc->sc_is_mmio)
+		return (asmc_mmio_key_read(dev, key, buf, len));
 
 	mtx_lock_spin(&sc->sc_mtx);
 
@@ -1089,6 +1145,27 @@ asmc_key_dump(device_t dev, int number)
 	uint8_t v[ASMC_MAXVAL];
 	uint8_t maxlen;
 	int i, error = 1, try = 0;
+
+	if (sc->sc_is_mmio) {
+		uint8_t len = 0;
+		char mmio_type[ASMC_TYPELEN + 1] = { 0 };
+		if (asmc_key_dump_by_index(dev, number, key, mmio_type, &len))
+			return (1);
+		memset(v, 0, sizeof(v));
+		len = MIN(len, sizeof(v));
+		asmc_key_read(dev, key, v, len);
+		struct sbuf sb;
+		char buf[128];
+		sbuf_new(&sb, buf, sizeof(buf), SBUF_FIXEDLEN);
+		sbuf_printf(&sb, "key %d: %s, type %s (len %d), data",
+		    number, key, mmio_type, len);
+		for (i = 0; i < len; i++)
+			sbuf_printf(&sb, " %02x", v[i]);
+		sbuf_finish(&sb);
+		device_printf(dev, "%s\n", sbuf_data(&sb));
+		sbuf_delete(&sb);
+		return (0);
+	}
 
 	mtx_lock_spin(&sc->sc_mtx);
 
@@ -1150,19 +1227,23 @@ out:
 	maxlen = type[0];
 	type[0] = ' ';
 	type[5] = '\0';
-	if (maxlen > sizeof(v))
-		maxlen = sizeof(v);
+	maxlen = MIN(maxlen, sizeof(v));
 
 	memset(v, 0, sizeof(v));
 	error = asmc_key_read(dev, key, v, maxlen);
 	if (error)
 		return (error);
 
-	device_printf(dev, "key %d: %s, type%s (len %d), data",
+	struct sbuf sb;
+	char buf[128];
+	sbuf_new(&sb, buf, sizeof(buf), SBUF_FIXEDLEN);
+	sbuf_printf(&sb, "key %d: %s, type%s (len %d), data",
 	    number, key, type, maxlen);
 	for (i = 0; i < maxlen; i++)
-		printf(" %02x", v[i]);
-	printf("\n");
+		sbuf_printf(&sb, " %02x", v[i]);
+	sbuf_finish(&sb);
+	device_printf(dev, "%s\n", sbuf_data(&sb));
+	sbuf_delete(&sb);
 
 	return (0);
 }
@@ -1179,6 +1260,9 @@ asmc_key_getinfo(device_t dev, const char *key, uint8_t *len, char *type)
 	struct asmc_softc *sc = device_get_softc(dev);
 	uint8_t info[ASMC_KEYINFO_RESPLEN];
 	int i, error = -1, try = 0;
+
+	if (sc->sc_is_mmio)
+		return (asmc_mmio_key_getinfo(dev, key, len, type));
 
 	mtx_lock_spin(&sc->sc_mtx);
 
@@ -1575,32 +1659,36 @@ asmc_detect_sensors(device_t dev)
 		}
 	}
 
-	/* Voltage sensors: V..W range */
-	error = asmc_key_search(dev, "V\0\0\0", &start);
-	if (error == 0)
-		error = asmc_key_search(dev, "W\0\0\0", &end);
-	if (error == 0)
-		asmc_scan_sensor_range(dev, start, end, 'V',
-		    &sc->sc_voltage_count, sc->sc_voltage_sensors,
-		    ASMC_MAX_SENSORS);
+	/* Voltage/Current/Power sensors */
+	static const struct {
+		const char	*range_start;
+		const char	*range_end;
+		char		prefix;
+	} sensor_ranges[] = {
+		{ "V\0\0\0", "W\0\0\0", 'V' },	/* Voltage */
+		{ "I\0\0\0", "J\0\0\0", 'I' },	/* Current */
+		{ "P\0\0\0", "Q\0\0\0", 'P' },	/* Power */
+	};
+	static const size_t nsensor_ranges = nitems(sensor_ranges);
 
-	/* Current sensors: I..J range */
-	error = asmc_key_search(dev, "I\0\0\0", &start);
-	if (error == 0)
-		error = asmc_key_search(dev, "J\0\0\0", &end);
-	if (error == 0)
-		asmc_scan_sensor_range(dev, start, end, 'I',
-		    &sc->sc_current_count, sc->sc_current_sensors,
-		    ASMC_MAX_SENSORS);
+	int *sensor_counts[] = {
+	    &sc->sc_voltage_count, &sc->sc_current_count,
+	    &sc->sc_power_count };
+	char **sensor_arrays[] = {
+	    sc->sc_voltage_sensors, sc->sc_current_sensors,
+	    sc->sc_power_sensors };
 
-	/* Power sensors: P..Q range */
-	error = asmc_key_search(dev, "P\0\0\0", &start);
-	if (error == 0)
-		error = asmc_key_search(dev, "Q\0\0\0", &end);
-	if (error == 0)
-		asmc_scan_sensor_range(dev, start, end, 'P',
-		    &sc->sc_power_count, sc->sc_power_sensors,
-		    ASMC_MAX_SENSORS);
+	for (unsigned int r = 0; r < nsensor_ranges; r++) {
+		error = asmc_key_search(dev, sensor_ranges[r].range_start,
+		    &start);
+		if (error == 0)
+			error = asmc_key_search(dev,
+			    sensor_ranges[r].range_end, &end);
+		if (error == 0)
+			asmc_scan_sensor_range(dev, start, end,
+			    sensor_ranges[r].prefix, sensor_counts[r],
+			    sensor_arrays[r], ASMC_MAX_SENSORS);
+	}
 
 	/* Ambient light sensors: AL* in A..B range */
 	error = asmc_key_search(dev, "A\0\0\0", &start);
@@ -1638,63 +1726,46 @@ asmc_detect_sensors(device_t dev)
 	/* Register sysctls for detected sensors */
 	sysctlctx = device_get_sysctl_ctx(dev);
 
-	/* Voltage sensors */
-	if (sc->sc_voltage_count > 0) {
+	static const struct {
+		const char	*node_name;
+		const char	*node_desc;
+		char		tag;
+		const char	*leaf_desc;
+	} sensor_sysctl[] = {
+		{ "voltage", "Voltage sensors (millivolts)",  'V',
+		    "Voltage sensor (millivolts)" },
+		{ "current", "Current sensors (milliamps)",   'I',
+		    "Current sensor (milliamps)" },
+		{ "power",   "Power sensors (milliwatts)",    'P',
+		    "Power sensor (milliwatts)" },
+		{ "ambient", "Ambient light sensors",         'L',
+		    "Light sensor value" },
+	};
+
+	int *sysctl_counts[] = {
+	    &sc->sc_voltage_count, &sc->sc_current_count,
+	    &sc->sc_power_count, &sc->sc_light_count };
+	char **sysctl_arrays[] = {
+	    sc->sc_voltage_sensors, sc->sc_current_sensors,
+	    sc->sc_power_sensors, sc->sc_light_sensors };
+
+	for (unsigned int s = 0; s < nitems(sensor_sysctl); s++) {
+		int count = *sysctl_counts[s];
+		if (count <= 0)
+			continue;
 		tree_node = SYSCTL_ADD_NODE(sysctlctx,
 		    SYSCTL_CHILDREN(device_get_sysctl_tree(dev)), OID_AUTO,
-		    "voltage", CTLFLAG_RD | CTLFLAG_MPSAFE, 0, "Voltage sensors (millivolts)");
-
-		for (i = 0; i < sc->sc_voltage_count; i++) {
-			SYSCTL_ADD_PROC(sysctlctx, SYSCTL_CHILDREN(tree_node),
-			    OID_AUTO, sc->sc_voltage_sensors[i],
+		    sensor_sysctl[s].node_name,
+		    CTLFLAG_RD | CTLFLAG_MPSAFE, 0,
+		    sensor_sysctl[s].node_desc);
+		for (i = 0; i < count; i++) {
+			SYSCTL_ADD_PROC(sysctlctx,
+			    SYSCTL_CHILDREN(tree_node),
+			    OID_AUTO, sysctl_arrays[s][i],
 			    CTLTYPE_INT | CTLFLAG_RD | CTLFLAG_MPSAFE,
-			    dev, ('V' << 8) | i, asmc_sensor_sysctl, "I",
-			    "Voltage sensor (millivolts)");
-		}
-	}
-
-	/* Current sensors */
-	if (sc->sc_current_count > 0) {
-		tree_node = SYSCTL_ADD_NODE(sysctlctx,
-		    SYSCTL_CHILDREN(device_get_sysctl_tree(dev)), OID_AUTO,
-		    "current", CTLFLAG_RD | CTLFLAG_MPSAFE, 0, "Current sensors (milliamps)");
-
-		for (i = 0; i < sc->sc_current_count; i++) {
-			SYSCTL_ADD_PROC(sysctlctx, SYSCTL_CHILDREN(tree_node),
-			    OID_AUTO, sc->sc_current_sensors[i],
-			    CTLTYPE_INT | CTLFLAG_RD | CTLFLAG_MPSAFE,
-			    dev, ('I' << 8) | i, asmc_sensor_sysctl, "I",
-			    "Current sensor (milliamps)");
-		}
-	}
-
-	/* Power sensors */
-	if (sc->sc_power_count > 0) {
-		tree_node = SYSCTL_ADD_NODE(sysctlctx,
-		    SYSCTL_CHILDREN(device_get_sysctl_tree(dev)), OID_AUTO,
-		    "power", CTLFLAG_RD | CTLFLAG_MPSAFE, 0, "Power sensors (milliwatts)");
-
-		for (i = 0; i < sc->sc_power_count; i++) {
-			SYSCTL_ADD_PROC(sysctlctx, SYSCTL_CHILDREN(tree_node),
-			    OID_AUTO, sc->sc_power_sensors[i],
-			    CTLTYPE_INT | CTLFLAG_RD | CTLFLAG_MPSAFE,
-			    dev, ('P' << 8) | i, asmc_sensor_sysctl, "I",
-			    "Power sensor (milliwatts)");
-		}
-	}
-
-	/* Ambient light sensors */
-	if (sc->sc_light_count > 0) {
-		tree_node = SYSCTL_ADD_NODE(sysctlctx,
-		    SYSCTL_CHILDREN(device_get_sysctl_tree(dev)), OID_AUTO,
-		    "ambient", CTLFLAG_RD | CTLFLAG_MPSAFE, 0, "Ambient light sensors");
-
-		for (i = 0; i < sc->sc_light_count; i++) {
-			SYSCTL_ADD_PROC(sysctlctx, SYSCTL_CHILDREN(tree_node),
-			    OID_AUTO, sc->sc_light_sensors[i],
-			    CTLTYPE_INT | CTLFLAG_RD | CTLFLAG_MPSAFE,
-			    dev, ('L' << 8) | i, asmc_sensor_sysctl, "I",
-			    "Light sensor value");
+			    dev, (sensor_sysctl[s].tag << 8) | i,
+			    asmc_sensor_sysctl, "I",
+			    sensor_sysctl[s].leaf_desc);
 		}
 	}
 
@@ -1714,6 +1785,14 @@ asmc_key_dump_by_index(device_t dev, int index, char *key_out,
 	uint8_t info_buf[ASMC_KEYINFO_RESPLEN];
 	int error = ENXIO, try = 0;
 	int i;
+
+	if (sc->sc_is_mmio) {
+		error = asmc_mmio_key_getbyindex(dev, index, key_out);
+		if (error != 0)
+			return (error);
+		return (asmc_mmio_key_getinfo(dev, key_out, len_out,
+		    type_out));
+	}
 
 	mtx_lock_spin(&sc->sc_mtx);
 
@@ -1808,8 +1887,11 @@ asmc_key_search(device_t dev, const char *prefix, unsigned int *idx)
 static int
 asmc_key_write(device_t dev, const char *key, uint8_t *buf, uint8_t len)
 {
-	int i, error = -1, try = 0;
 	struct asmc_softc *sc = device_get_softc(dev);
+	int i, error = -1, try = 0;
+
+	if (sc->sc_is_mmio)
+		return (asmc_mmio_key_write(dev, key, buf, len));
 
 	mtx_lock_spin(&sc->sc_mtx);
 
@@ -1865,14 +1947,30 @@ asmc_fan_count(device_t dev)
 static int
 asmc_fan_getvalue(device_t dev, const char *key, int fan)
 {
+	struct asmc_softc *sc = device_get_softc(dev);
 	int speed;
-	uint8_t buf[2];
+	uint8_t buf[4];
 	char fankey[5];
+	char type[ASMC_TYPELEN + 1];
 
 	snprintf(fankey, sizeof(fankey), key, fan);
-	if (asmc_key_read(dev, fankey, buf, sizeof(buf)) != 0)
-		return (-1);
-	speed = (buf[0] << 6) | (buf[1] >> 2);
+
+	/*
+	 * T2 Macs use IEEE 754 float ("flt ") for fan speeds,
+	 * stored little-endian in the MMIO data register.
+	 * Standard Macs use s14.2 fixed-point ("fpe2", 2 bytes).
+	 */
+	if (sc->sc_is_t2 &&
+	    asmc_key_getinfo(dev, fankey, NULL, type) == 0 &&
+	    strncmp(type, "flt ", 4) == 0) {
+		if (asmc_key_read(dev, fankey, buf, 4) != 0)
+			return (-1);
+		speed = (int)asmc_float_to_u32(le32dec(buf));
+	} else {
+		if (asmc_key_read(dev, fankey, buf, 2) != 0)
+			return (-1);
+		speed = (buf[0] << 6) | (buf[1] >> 2);
+	}
 
 	return (speed);
 }
@@ -1895,17 +1993,30 @@ asmc_fan_getstring(device_t dev, const char *key, int fan, uint8_t *buf,
 static int
 asmc_fan_setvalue(device_t dev, const char *key, int fan, int speed)
 {
-	uint8_t buf[2];
+	struct asmc_softc *sc = device_get_softc(dev);
+	uint8_t buf[4];
 	char fankey[5];
-
-	speed *= 4;
-
-	buf[0] = speed >> 8;
-	buf[1] = speed;
+	char type[ASMC_TYPELEN + 1];
 
 	snprintf(fankey, sizeof(fankey), key, fan);
-	if (asmc_key_write(dev, fankey, buf, sizeof(buf)) < 0)
-		return (-1);
+
+	if (sc->sc_is_t2 &&
+	    asmc_key_getinfo(dev, fankey, NULL, type) == 0 &&
+	    strncmp(type, "flt ", 4) == 0) {
+		uint32_t fval;
+		speed = MAX(speed, 0);
+		speed = MIN(speed, 65535);
+		fval = asmc_u32_to_float((uint32_t)speed);
+		le32enc(buf, fval);
+		if (asmc_key_write(dev, fankey, buf, 4) != 0)
+			return (-1);
+	} else {
+		speed *= 4;
+		buf[0] = speed >> 8;
+		buf[1] = speed;
+		if (asmc_key_write(dev, fankey, buf, 2) != 0)
+			return (-1);
+	}
 
 	return (0);
 }
@@ -2016,11 +2127,35 @@ static int
 asmc_mb_sysctl_fanmanual(SYSCTL_HANDLER_ARGS)
 {
 	device_t dev = (device_t)arg1;
+	struct asmc_softc *sc = device_get_softc(dev);
 	int fan = arg2;
 	int error;
 	int32_t v;
 	uint8_t buf[2];
 	uint16_t val;
+	char fmkey[5];
+
+	/*
+	 * T2 Macs use per-fan F%dMd keys (1 byte each).
+	 * Standard Macs use FS! bitmask (2 bytes).
+	 */
+	snprintf(fmkey, sizeof(fmkey), ASMC_KEY_FANMANUAL_T2, fan);
+	if (sc->sc_is_t2 &&
+	    asmc_key_getinfo(dev, fmkey, NULL, NULL) == 0) {
+		error = asmc_key_read(dev, fmkey, buf, 1);
+		if (error != 0)
+			return (error);
+		v = buf[0] ? 1 : 0;
+
+		error = sysctl_handle_int(oidp, &v, 0, req);
+		if (error == 0 && req->newptr != NULL) {
+			if (v != 0 && v != 1)
+				return (EINVAL);
+			buf[0] = (uint8_t)v;
+			error = asmc_key_write(dev, fmkey, buf, 1);
+		}
+		return (error);
+	}
 
 	/* Read current FS! bitmask (asmc_key_read locks internally) */
 	error = asmc_key_read(dev, ASMC_KEY_FANMANUAL, buf, sizeof(buf));

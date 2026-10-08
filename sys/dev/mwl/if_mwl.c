@@ -1661,10 +1661,10 @@ _mwl_key_set(struct ieee80211vap *vap, const struct ieee80211_key *k,
 		/* Copy in TKIP MIC after the 16 byte main key */
 		memcpy(hk.key.aes, ieee80211_crypto_get_key_data(k),
 		    ieee80211_crypto_get_key_len(k));
-		memcpy(hk.key.aes + IEEE80211_KEYBUF_SIZE,
+		memcpy(hk.key.aes + IEEE80211_KEYBUF_128_SIZE,
 		    ieee80211_crypto_get_key_txmic_data(k),
 		    8);
-		memcpy(hk.key.aes + IEEE80211_KEYBUF_SIZE + 8,
+		memcpy(hk.key.aes + IEEE80211_KEYBUF_128_SIZE + 8,
 		    ieee80211_crypto_get_key_rxmic_data(k),
 		    8);
 		break;
@@ -2165,7 +2165,7 @@ mwl_rxdma_setup(struct mwl_softc *sc)
 	bf = malloc(bsize, M_MWLDEV, M_NOWAIT | M_ZERO);
 	if (bf == NULL) {
 		device_printf(sc->sc_dev, "malloc of %u rx buffers failed\n", bsize);
-		return error;
+		return ENOMEM;
 	}
 	sc->sc_rxdma.dd_bufptr = bf;
 

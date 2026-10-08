@@ -377,9 +377,10 @@ static void	unp_scan(struct mbuf *, void (*)(struct filedescent **, int));
 static void	unp_discard(struct file *);
 static void	unp_freerights(struct filedescent **, int);
 static int	unp_internalize(struct mbuf *, struct mchain *,
-		    struct thread *, struct socket *);
+		    struct thread *, struct socket *, int *);
 static void	unp_internalize_fp(struct file *);
-static int	unp_externalize(struct mbuf *, struct mbuf **, int);
+static int	unp_externalize(const struct socket *, struct mbuf *,
+		    struct mbuf **, int);
 static int	unp_externalize_fp(struct file *);
 static void	unp_addsockcred(struct thread *, struct mchain *, int);
 static void	unp_process_defers(void * __unused, int);
@@ -601,6 +602,7 @@ common:
 	UNP_PCB_LOCK_INIT(unp);
 	unp->unp_socket = so;
 	so->so_pcb = unp;
+	so->so_options |= SO_PASSRIGHTS;
 	refcount_init(&unp->unp_refcount, 1);
 	unp->unp_mode = ACCESSPERMS;
 #if defined(__amd64__)
@@ -1344,7 +1346,7 @@ uipc_sosend_stream_or_seqpacket(struct socket *so, struct sockaddr *addr,
 	struct mchain mc, cmc;
 	size_t resid, sent;
 	bool nonblock, eor, aio;
-	int error;
+	int error, needsopts;
 
 	MPASS((uio0 != NULL && m == NULL) || (m != NULL && uio0 == NULL));
 	MPASS(m == NULL || c == NULL);
@@ -1370,9 +1372,11 @@ uipc_sosend_stream_or_seqpacket(struct socket *so, struct sockaddr *addr,
 	cmc = MCHAIN_INITIALIZER(&cmc);
 	sent = 0;
 	aio = false;
+	needsopts = 0;
 
 	if (m == NULL) {
-		if (c != NULL && (error = unp_internalize(c, &cmc, td, so)))
+		if (c != NULL &&
+		    (error = unp_internalize(c, &cmc, td, so, &needsopts)))
 			goto out;
 		/*
 		 * This function may read more data from the uio than it would
@@ -1418,6 +1422,14 @@ uipc_sosend_stream_or_seqpacket(struct socket *so, struct sockaddr *addr,
 	if (__predict_false((error = uipc_lock_peer(so, &unp2)) != 0))
 		goto out3;
 
+	/* Check for SO_PASS* flags */
+	so2 = unp2->unp_socket;
+	if ((atomic_load_int(&so2->so_options) & needsopts) != needsopts) {
+		error = EPERM;
+		UNP_PCB_UNLOCK(unp2);
+		goto out3;
+	}
+
 	if (unp2->unp_flags & UNP_WANTCRED_MASK) {
 		/*
 		 * Credentials are passed only once on SOCK_STREAM and
@@ -1435,7 +1447,6 @@ uipc_sosend_stream_or_seqpacket(struct socket *so, struct sockaddr *addr,
 	 * observe the SBS_CANTRCVMORE and our sorele() will finalize peer's
 	 * socket destruction.
 	 */
-	so2 = unp2->unp_socket;
 	soref(so2);
 	UNP_PCB_UNLOCK(unp2);
 	sb = &so2->so_rcv;
@@ -1809,7 +1820,7 @@ restart:
 			 * is fine that we need to perform pretty complex
 			 * operation here to reconstruct the buffer.
 			 */
-			error = unp_externalize(control, controlp, flags);
+			error = unp_externalize(so, control, controlp, flags);
 			control = m_free(control);
 			if (__predict_false(error && control != NULL)) {
 				struct mchain cmc;
@@ -2208,11 +2219,11 @@ uipc_sosend_dgram(struct socket *so, struct sockaddr *addr, struct uio *uio,
 	struct mbuf *f;
 	u_int cc, ctl, mbcnt;
 	u_int dcc __diagused, dctl __diagused, dmbcnt __diagused;
-	int error;
+	int error, needsopts;
 
 	MPASS((uio != NULL && m == NULL) || (m != NULL && uio == NULL));
 
-	error = 0;
+	error = needsopts = 0;
 	f = NULL;
 
 	if (__predict_false(flags & MSG_OOB)) {
@@ -2244,7 +2255,8 @@ uipc_sosend_dgram(struct socket *so, struct sockaddr *addr, struct uio *uio,
 		f = m_gethdr(M_WAITOK, MT_SONAME);
 		cc = m->m_pkthdr.len;
 		mbcnt = MSIZE + m->m_pkthdr.memlen;
-		if (c != NULL && (error = unp_internalize(c, &cmc, td, so)))
+		if (c != NULL &&
+		    (error = unp_internalize(c, &cmc, td, so, &needsopts)))
 			goto out;
 	} else {
 		struct mchain mc;
@@ -2308,6 +2320,13 @@ uipc_sosend_dgram(struct socket *so, struct sockaddr *addr, struct uio *uio,
 			error = ENOTCONN;
 			goto out3;
 		}
+	}
+
+	/* Check for SO_PASS* flags */
+	so2 = unp2->unp_socket;
+	if ((atomic_load_int(&so2->so_options) & needsopts) != needsopts) {
+		error = EPERM;
+		goto out4;
 	}
 
 	if (unp2->unp_flags & UNP_WANTCRED_MASK)
@@ -2378,7 +2397,6 @@ uipc_sosend_dgram(struct socket *so, struct sockaddr *addr, struct uio *uio,
 	 * would accumulate counters from all connected buffers potentially
 	 * having sb_ccc > sb_hiwat or sb_mbcnt > sb_mbmax.
 	 */
-	so2 = unp2->unp_socket;
 	sb = (addr == NULL) ? &so->so_snd : &so2->so_rcv;
 	SOCK_RECVBUF_LOCK(so2);
 	if (uipc_dgram_sbspace(sb, cc + ctl, mbcnt)) {
@@ -2404,6 +2422,7 @@ uipc_sosend_dgram(struct socket *so, struct sockaddr *addr, struct uio *uio,
 		}
 	}
 
+out4:
 	if (addr != NULL)
 		unp_disconnect(unp, unp2);
 	else
@@ -2613,7 +2632,7 @@ uipc_soreceive_dgram(struct socket *so, struct sockaddr **psa, struct uio *uio,
 	 * without MT_DATA mbufs.
 	 */
 	while (m != NULL && m->m_type == MT_CONTROL) {
-		error = unp_externalize(m, controlp, flags);
+		error = unp_externalize(so, m, controlp, flags);
 		m = m_free(m);
 		if (error != 0) {
 			SOCK_IO_RECV_UNLOCK(so);
@@ -3269,8 +3288,9 @@ unp_connectat(int fd, struct socket *so, struct sockaddr *nam,
 		}
 		goto found;
 	}
-	NDINIT_ATRIGHTS(&nd, LOOKUP, FOLLOW | LOCKSHARED | LOCKLEAF,
-	    UIO_SYSSPACE, buf, fd, cap_rights_init_one(&rights, CAP_CONNECTAT));
+	NDINIT_ATRIGHTS(&nd, LOOKUP, FOLLOW | LOCKSHARED | LOCKLEAF |
+	    (fd == AT_FDCWD ? 0 : EMPTYPATH), UIO_SYSSPACE, buf, fd,
+	    cap_rights_init_one(&rights, CAP_CONNECTAT));
 	error = namei(&nd);
 	if (error)
 		vp = NULL;
@@ -4071,7 +4091,8 @@ restrict_rights(struct file *fp, struct thread *td)
 }
 
 static int
-unp_externalize(struct mbuf *control, struct mbuf **controlp, int flags)
+unp_externalize(const struct socket *so, struct mbuf *control,
+    struct mbuf **controlp, int flags)
 {
 	struct thread *td = curthread;		/* XXX */
 	struct cmsghdr *cm = mtod(control, struct cmsghdr *);
@@ -4103,8 +4124,18 @@ unp_externalize(struct mbuf *control, struct mbuf **controlp, int flags)
 				goto next;
 			fdep = data;
 
-			/* If we're not outputting the descriptors free them. */
-			if (error || controlp == NULL) {
+			/*
+			 * If we're not outputting the descriptors, free them.
+			 *
+			 * In the case of having revoked SCM_PASSRIGHTS, the
+			 * receiver must have toggled it before trying to
+			 * receive control messages- we'll take that as a signal
+			 * that they didn't want these, but they raced against
+			 * the sender trying to pass files anyways.
+			 */
+			if (error || controlp == NULL ||
+			    (atomic_load_int(&so->so_options) &
+			    SO_PASSRIGHTS) == 0) {
 				unp_freerights(fdep, newfds);
 				goto next;
 			}
@@ -4275,7 +4306,7 @@ unp_internalize_cleanup_rights(struct mbuf *control)
 
 static int
 unp_internalize(struct mbuf *control, struct mchain *mc, struct thread *td,
-    struct socket *so)
+    struct socket *so, int *needsopts)
 {
 	struct proc *p;
 	struct filedesc *fdesc;
@@ -4333,6 +4364,7 @@ unp_internalize(struct mbuf *control, struct mchain *mc, struct thread *td,
 			break;
 
 		case SCM_RIGHTS:
+			*needsopts |= SO_PASSRIGHTS;
 			oldfds = datalen / sizeof (int);
 			if (oldfds == 0)
 				continue;

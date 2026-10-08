@@ -386,13 +386,15 @@ class MockFS {
 	void kill_daemon();
 
 	/* Start after installing expectations when no_auto_init is set. */
-	void start_daemon();
 
 	/* Wait until the daemon thread terminates */
 	void join_daemon();
 
 	/* Process FUSE requests endlessly */
 	void loop();
+
+	/* Begin processing requests from the kernel */
+	void start_service();
 
 	/*
 	 * Send an asynchronous notification to invalidate a directory entry.

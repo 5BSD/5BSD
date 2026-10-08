@@ -82,6 +82,7 @@ static libusb20_get_power_usage_t ugen20_get_power_usage;
 static libusb20_get_stats_t ugen20_get_stats;
 static libusb20_kernel_driver_active_t ugen20_kernel_driver_active;
 static libusb20_detach_kernel_driver_t ugen20_detach_kernel_driver;
+static libusb20_attach_kernel_driver_t ugen20_attach_kernel_driver;
 static libusb20_do_request_sync_t ugen20_do_request_sync;
 static libusb20_process_t ugen20_process;
 
@@ -717,6 +718,17 @@ ugen20_detach_kernel_driver(struct libusb20_device *pdev,
 }
 
 static int
+ugen20_attach_kernel_driver(struct libusb20_device *pdev, uint8_t iface_index)
+{
+	int temp = iface_index;
+
+	if (ioctl(pdev->file_ctrl, IOUSB(USB_IFACE_DRIVER_ATTACH), &temp)) {
+		return (LIBUSB20_ERROR_OTHER);
+	}
+	return (0);			/* kernel driver is attached */
+}
+
+static int
 ugen20_do_request_sync(struct libusb20_device *pdev,
     struct LIBUSB20_CONTROL_SETUP_DECODED *setup,
     void *data, uint16_t *pactlen, uint32_t timeout, uint8_t flags)
@@ -753,7 +765,16 @@ ugen20_process(struct libusb20_device *pdev)
 	while (1) {
 
 	  if (ioctl(pdev->file, IOUSB(USB_FS_COMPLETE), &temp)) {
-			if (errno == EBUSY) {
+			if (errno == EBUSY || errno == EINVAL) {
+				/*
+				 * EBUSY: no completion is pending.
+				 * EINVAL: a dequeued completion referenced an
+				 * endpoint that no longer exists, e.g. a stale
+				 * completion left over after a SET_INTERFACE /
+				 * SET_CONFIG tore the endpoints down. This is not
+				 * a device detach, so stop draining rather than
+				 * declaring the device gone.
+				 */
 				break;
 			} else {
 				/* device detached */

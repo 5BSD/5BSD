@@ -554,13 +554,7 @@ MockFS::MockFS(int max_read, int max_readahead, bool allow_other,
 		throw(std::system_error(errno, std::system_category(),
 			"Couldn't handle SIGUSR1"));
 	if (!no_auto_init)
-		start_daemon();
-}
-
-void MockFS::start_daemon() {
-	if (pthread_create(&m_daemon_id, NULL, service, (void*)this))
-		throw(std::system_error(errno, std::system_category(),
-			"Couldn't Couldn't start fuse thread"));
+		start_service();
 }
 
 MockFS::~MockFS() {
@@ -1025,6 +1019,12 @@ void MockFS::read_request(mockfs_buf_in &in, ssize_t &res) {
 	ASSERT_TRUE(res == static_cast<ssize_t>(in.header.len) || m_quit);
 }
 
+void MockFS::start_service() {
+	if (pthread_create(&m_daemon_id, NULL, service, (void*)this))
+		throw(std::system_error(errno, std::system_category(),
+			"Couldn't start fuse thread"));
+}
+
 void MockFS::write_response(const mockfs_buf_out &out) {
 	fd_set writefds;
 	pollfd fds[1];
@@ -1073,6 +1073,8 @@ void MockFS::write_response(const mockfs_buf_out &out) {
 	if (out.expected_errno) {
 		ASSERT_EQ(-1, r);
 		ASSERT_EQ(out.expected_errno, errno) << strerror(errno);
+	} else if (m_quit && errno == EBADF) {
+		/* Daemon is in the process of shutting down */
 	} else {
 		if (r <= 0 && errno == EINVAL) {
 			printf("Failed to write response.  unique=%" PRIu64

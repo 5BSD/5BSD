@@ -324,6 +324,8 @@ SRCS+=	abd.c \
 	vdev_root.c \
 	vdev_trim.c \
 	zap.c \
+	zap_fat.c \
+	zap_impl.c \
 	zap_leaf.c \
 	zap_micro.c \
 	zcp.c \
@@ -440,6 +442,7 @@ CFLAGS.vdev_raidz_math_scalar.c= -Wno-cast-qual
 CFLAGS.vdev_raidz_math_sse2.c= -Wno-cast-qual -Wno-duplicate-decl-specifier
 CFLAGS.zap_leaf.c= -Wno-cast-qual
 CFLAGS.zap_micro.c= -Wno-cast-qual
+CFLAGS.zap_impl.c= -Wno-cast-qual
 CFLAGS.zcp.c= -Wno-cast-qual
 CFLAGS.zfs_fletcher.c= -Wno-cast-qual -Wno-pointer-arith
 CFLAGS.zfs_fletcher_avx512.c= -Wno-cast-qual -Wno-pointer-arith

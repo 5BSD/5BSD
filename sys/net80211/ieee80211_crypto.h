@@ -31,16 +31,24 @@
 /*
  * 802.11 protocol crypto-related definitions.
  */
-#define	IEEE80211_KEYBUF_SIZE	16
-#define	IEEE80211_MICBUF_SIZE	(8+8)	/* space for both tx+rx keys */
 
 /*
- * Old WEP-style key.  Deprecated.
+ * Legacy 128 bit key size storage for WEP, TKIP, CCMP key sizes.
+ * This has been used to store keys in net80211 for various things
+ * (eg the rc4key in WEP) as well as driver definitions for their
+ * own hardware programming.
+ *
+ * This should eventually be used by the ioctl and drivers instead of
+ * IEEE80211_KEYBUF_SIZE as the key size will eventually grow.
  */
-struct ieee80211_wepkey {
-	u_int		wk_len;		/* key length in bytes */
-	uint8_t		wk_key[IEEE80211_KEYBUF_SIZE];
-};
+#define	IEEE80211_KEYBUF_128_SIZE	16
+#define	IEEE80211_MICBUF_128_SIZE	(8+8)	/* space for both tx+rx keys */
+
+/*
+ * Temporary definition whilst I clean up where this is still being used.
+ */
+#define	IEEE80211_KEYBUF_SIZE		IEEE80211_KEYBUF_128_SIZE
+#define	IEEE80211_MICBUF_SIZE		IEEE80211_MICBUF_128_SIZE
 
 struct ieee80211_rsnparms {
 	uint8_t		rsn_mcastcipher;	/* mcast/group cipher */

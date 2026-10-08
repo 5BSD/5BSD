@@ -112,7 +112,7 @@ CTASSERT(sizeof(struct l_in_pktinfo) == 12);
 CTASSERT(sizeof(struct l_sockaddr_in6) == 28);
 CTASSERT(sizeof(struct l_ip6_mtuinfo) == 32);
 CTASSERT(sizeof(struct l_sock_timeval) == 16);
-CTASSERT(sizeof(struct l_tcp_info) == 248);
+CTASSERT(sizeof(struct l_tcp_info) == 280);
 
 static int linux_sendmsg_common(struct thread *, l_int, struct l_msghdr *,
 					l_uint, bool, struct uio *);
@@ -536,15 +536,16 @@ linux_to_bsd_so_sockopt(int opt)
 	case LINUX_SO_MAX_PACING_RATE:
 		/* Both 32-bit bytes per second. */
 		return (SO_MAX_PACING_RATE);
+	case LINUX_SO_PASSRIGHTS:
+		/* unix(4) only; EOPNOTSUPP elsewhere, as on Linux. */
+		return (SO_PASSRIGHTS);
 
 	/*
 	 * Handled by Linux name in linux_setsockopt()/linux_getsockopt():
-	 * SO_NO_CHECK, SO_BSDCOMPAT, SO_PASSRIGHTS, SO_PEERGROUPS,
-	 * SO_PEERSEC.
+	 * SO_NO_CHECK, SO_BSDCOMPAT, SO_PEERGROUPS, SO_PEERSEC.
 	 */
 	case LINUX_SO_NO_CHECK:
 	case LINUX_SO_BSDCOMPAT:
-	case LINUX_SO_PASSRIGHTS:
 	case LINUX_SO_PEERPIDFD:
 		return (-2);
 
@@ -3588,9 +3589,6 @@ linux_setsockopt(struct thread *td, struct linux_setsockopt_args *args)
 		case LINUX_SO_NO_CHECK:
 			/* UDP checksums are always sent here. */
 			return (linux_setsockopt_fixed_bool(td, args, 0));
-		case LINUX_SO_PASSRIGHTS:
-			/* SCM_RIGHTS can not be turned off here. */
-			return (linux_setsockopt_fixed_bool(td, args, 1));
 		case LINUX_SO_BSDCOMPAT:
 			/* Obsolete; a no-op on Linux as well (any value). */
 			if (args->optlen < sizeof(val))
@@ -3832,10 +3830,21 @@ linux_sockopt_copyout(struct thread *td, void *val, socklen_t len,
     struct linux_getsockopt_args *args)
 {
 	int error;
+	l_int loptlen;
+	socklen_t optlen;
 
-	error = copyout(val, PTRIN(args->optval), len);
-	if (error == 0)
-		error = copyout(&len, PTRIN(args->optlen), sizeof(len));
+	error = copyin(PTRIN(args->optlen), &loptlen, sizeof(loptlen));
+	if (error != 0)
+		return (error);
+	if (loptlen < 0)
+		return (EINVAL);
+
+	optlen = (socklen_t)loptlen;
+	error = copyout(val, PTRIN(args->optval), min(len, optlen));
+	if (error == 0) {
+		loptlen = (l_int)len;
+		error = copyout(&loptlen, PTRIN(args->optlen), sizeof(loptlen));
+	}
 	return (error);
 }
 
@@ -4120,6 +4129,7 @@ linux_getsockopt_uring(struct thread *td, int fd, int llevel, int loptname,
     case LINUX_SO_TIMESTAMPN:
     case LINUX_SO_TIMESTAMPNSO:
     case LINUX_SO_TIMESTAMPNSN:
+    case LINUX_SO_PASSRIGHTS:
     case LINUX_SO_TYPE:
     case LINUX_SO_ERROR:
     case LINUX_SO_DOMAIN:
@@ -4153,6 +4163,7 @@ linux_getsockopt_uring(struct thread *td, int fd, int llevel, int loptname,
     case LINUX_SO_TIMESTAMPN:
     case LINUX_SO_TIMESTAMPNSO:
     case LINUX_SO_TIMESTAMPNSN:
+    case LINUX_SO_PASSRIGHTS:
         value = (value != 0);
         break;
     case LINUX_SO_ERROR:
@@ -4223,7 +4234,6 @@ linux_getsockopt(struct thread *td, struct linux_getsockopt_args *args)
 		case LINUX_SO_BSDCOMPAT:
 			return (linux_getsockopt_fixed_int(td, args, 0));
 		case LINUX_SO_PASSRIGHTS:
-			return (linux_getsockopt_fixed_int(td, args, 1));
 		case LINUX_SO_DEBUG:
 		case LINUX_SO_REUSEADDR:
 		case LINUX_SO_KEEPALIVE:

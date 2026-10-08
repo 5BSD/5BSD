@@ -42,7 +42,7 @@ linux_start()
 	# 64-bit ABI (linux64) exclusively.
 	case `sysctl -n hw.machine_arch` in
 	aarch64|amd64)
-		load_kld ${_broker} -e 'linux64elf' linux64 || return 1
+		load_kld ${_broker} -m linux64elf linux64 || return 1
 		;;
 	esac
 

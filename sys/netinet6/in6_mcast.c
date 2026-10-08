@@ -2623,9 +2623,6 @@ in6p_set_source_filters(struct inpcb *inp, struct sockopt *sopt)
 	if (error)
 		return (error);
 
-	if (msfr.msfr_nsrcs > in6_mcast_maxsocksrc)
-		return (ENOBUFS);
-
 	if (msfr.msfr_fmode != MCAST_EXCLUDE &&
 	    msfr.msfr_fmode != MCAST_INCLUDE)
 		return (EINVAL);
@@ -2637,6 +2634,9 @@ in6p_set_source_filters(struct inpcb *inp, struct sockopt *sopt)
 	gsa = (sockunion_t *)&msfr.msfr_group;
 	if (!IN6_IS_ADDR_MULTICAST(&gsa->sin6.sin6_addr))
 		return (EINVAL);
+
+	if (msfr.msfr_nsrcs > in6_mcast_maxsocksrc)
+		return (ENOBUFS);
 
 	gsa->sin6.sin6_port = 0;	/* ignore port */
 
@@ -2663,8 +2663,8 @@ in6p_set_source_filters(struct inpcb *inp, struct sockopt *sopt)
 	ifp = ifnet_byindex_ref(msfr.msfr_ifindex);
 	NET_EPOCH_EXIT(et);
 	if (ifp == NULL) {
-		free(kss, M_TEMP);
-		return (EADDRNOTAVAIL);
+		error = EADDRNOTAVAIL;
+		goto out_in6p_unlocked;
 	}
 	(void)in6_setscope(&gsa->sin6.sin6_addr, ifp, NULL);
 
@@ -2672,6 +2672,7 @@ in6p_set_source_filters(struct inpcb *inp, struct sockopt *sopt)
 	 * Take the INP write lock.
 	 * Check if this socket is a member of this group.
 	 */
+	IN6_MULTI_LOCK();
 	imo = in6p_findmoptions(inp);
 	imf = im6o_match_group(imo, ifp, &gsa->sa);
 	if (imf == NULL) {
@@ -2697,7 +2698,6 @@ in6p_set_source_filters(struct inpcb *inp, struct sockopt *sopt)
 		struct sockaddr_storage	*pkss;
 		struct in6_addr	 address;
 		int			 i;
-
 
 		/*
 		 * Mark all source filters as UNDEFINED at t1.
@@ -2789,7 +2789,9 @@ out_im6f_rollback:
 
 out_in6p_locked:
 	INP_WUNLOCK(inp);
+	IN6_MULTI_UNLOCK();
 	if_rele(ifp);
+out_in6p_unlocked:
 	free(kss, M_TEMP);
 	return (error);
 }

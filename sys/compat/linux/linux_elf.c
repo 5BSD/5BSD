@@ -492,11 +492,9 @@ __linuxN(copyout_auxargs)(struct image_params *imgp, uintptr_t base)
 	struct thread *td = curthread;
 	Elf_Auxargs *args;
 	Elf_Auxinfo *aarray, *pos;
-	struct proc *p;
 	int error, issetugid;
 
-	p = imgp->proc;
-	issetugid = (p->p_flag & P_SUGID) != 0 || imgp->authority_setid;
+	issetugid = (imgp->credential_setid || imgp->authority_setid) ? 1 : 0;
 	args = imgp->auxargs;
 	aarray = pos = malloc(LINUX_AT_COUNT * sizeof(*pos), M_TEMP,
 	    M_WAITOK | M_ZERO);

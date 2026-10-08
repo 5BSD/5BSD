@@ -33,6 +33,7 @@
  * Copyright 2019 Joyent, Inc.
  * Copyright (c) 2019, 2020 by Christian Schwarz. All rights reserved.
  * Copyright 2026 Oxide Computer Company
+ * Copyright (c) 2026, TrueNAS.
  */
 
 #include <assert.h>
@@ -5361,6 +5362,7 @@ zfs_do_receive(int argc, char **argv)
 #define	ZFS_DELEG_PERM_SHARE		"share"
 #define	ZFS_DELEG_PERM_SEND		"send"
 #define	ZFS_DELEG_PERM_SEND_RAW		"send:raw"
+#define	ZFS_DELEG_PERM_SEND_ENCRYPTED	"send:encrypted"
 #define	ZFS_DELEG_PERM_RECEIVE		"receive"
 #define	ZFS_DELEG_PERM_RECEIVE_APPEND	"receive:append"
 #define	ZFS_DELEG_PERM_ALLOW		"allow"
@@ -5404,6 +5406,7 @@ static zfs_deleg_perm_tab_t zfs_deleg_perm_tbl[] = {
 	{ ZFS_DELEG_PERM_ROLLBACK, ZFS_DELEG_NOTE_ROLLBACK },
 	{ ZFS_DELEG_PERM_SEND, ZFS_DELEG_NOTE_SEND },
 	{ ZFS_DELEG_PERM_SEND_RAW, ZFS_DELEG_NOTE_SEND_RAW },
+	{ ZFS_DELEG_PERM_SEND_ENCRYPTED, ZFS_DELEG_NOTE_SEND_ENCRYPTED },
 	{ ZFS_DELEG_PERM_SHARE, ZFS_DELEG_NOTE_SHARE },
 	{ ZFS_DELEG_PERM_SNAPSHOT, ZFS_DELEG_NOTE_SNAPSHOT },
 	{ ZFS_DELEG_PERM_BOOKMARK, ZFS_DELEG_NOTE_BOOKMARK },
@@ -5902,11 +5905,15 @@ deleg_perm_comment(zfs_deleg_note_t note)
 		str = gettext("");
 		break;
 	case ZFS_DELEG_NOTE_SEND:
-		str = gettext("");
+		str = gettext("Allow sending datasets");
 		break;
 	case ZFS_DELEG_NOTE_SEND_RAW:
-		str = gettext("Allow sending ONLY encrypted (raw) replication"
-		    "\n\t\t\t\tstreams");
+		str = gettext("Allow sending datasets, but only in 'raw'"
+		    "\n\t\t\t\treplication mode");
+		break;
+	case ZFS_DELEG_NOTE_SEND_ENCRYPTED:
+		str = gettext("Allow sending only encrypted datasets, and"
+		    "\n\t\t\t\tonly in 'raw' replication mode");
 		break;
 	case ZFS_DELEG_NOTE_SHARE:
 		str = gettext("Allows sharing file systems over NFS or SMB"
@@ -9397,6 +9404,18 @@ main(int argc, char **argv)
 	if ((g_zfs = libzfs_init()) == NULL) {
 		(void) fprintf(stderr, "%s\n", libzfs_error_init(errno));
 		return (1);
+	}
+
+	/*
+	 * Special case '<subcommand> --help|-?'
+	 */
+	if (argc >= 3 && (strcmp(argv[2], "--help") == 0 ||
+	    strcmp(argv[2], "-?") == 0)) {
+		int idx;
+		if (find_command_idx(cmdname, &idx) == 0) {
+			current_command = &command_table[idx];
+			usage(B_FALSE);
+		}
 	}
 
 	zfs_save_arguments(argc, argv, history_str, sizeof (history_str));

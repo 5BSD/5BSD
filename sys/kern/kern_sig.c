@@ -2737,7 +2737,7 @@ ptrace_syscallreq(struct thread *td, struct proc *p,
 	struct sysent *se;
 	register_t rv_saved[2];
 	unsigned int sc;
-	int error, nerror;
+	int nerror;
 	bool audited, sy_thr_static;
 
 	sc = tsr->ts_sa.code;
@@ -2790,12 +2790,8 @@ ptrace_syscallreq(struct thread *td, struct proc *p,
 	audited = AUDIT_SYSCALL_ENTER(sc, td) != 0;
 
 	if (!sy_thr_static) {
-		error = syscall_thread_enter(td, &se);
+		syscall_thread_enter(td, &se);
 		sy_thr_static = (se->sy_thrcnt & SY_THR_STATIC) != 0;
-		if (error != 0) {
-			tsr->ts_ret.sr_error = error;
-			return;
-		}
 	}
 
 	rv_saved[0] = td->td_retval[0];
@@ -2822,7 +2818,7 @@ ptrace_syscallreq(struct thread *td, struct proc *p,
 	td->td_errno = nerror;
 
 	if (audited)
-		AUDIT_SYSCALL_EXIT(error, td);
+		AUDIT_SYSCALL_EXIT(tsr->ts_ret.sr_error, td);
 	if (!sy_thr_static)
 		syscall_thread_exit(td, se);
 }

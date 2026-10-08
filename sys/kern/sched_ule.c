@@ -236,7 +236,7 @@ static int __read_mostly sched_slice = 10;	/* reset during boot. */
 static int __read_mostly sched_slice_min = 1;	/* reset during boot. */
 #ifdef PREEMPTION
 #ifdef FULL_PREEMPTION
-static int __read_mostly preempt_thresh = PRI_MAX_IDLE;
+static int __read_mostly preempt_thresh = PRI_MAX_IDLE + 1;
 #else
 static int __read_mostly preempt_thresh = PRI_MIN_KERN;
 #endif
@@ -473,7 +473,7 @@ sched_shouldpreempt(int pri, int cpri, int remote)
 	/*
 	 * Preempt if we exceed the threshold.
 	 */
-	if (pri <= preempt_thresh)
+	if (pri < preempt_thresh)
 		return (1);
 	/*
 	 * If we're interactive or better and there is non-interactive
@@ -1760,7 +1760,7 @@ sched_priority(struct thread *td)
 	} else {
 		const struct td_sched *const ts = td_get_sched(td);
 		const u_int run = SCHED_TICK_RUN_SHIFTED(ts);
-		const u_int run_unshifted __unused = (run +
+		const u_int run_unshifted __diagused = (run +
 		    (1 << SCHED_TICK_SHIFT) / 2) >> SCHED_TICK_SHIFT;
 		const u_int len = SCHED_TICK_LENGTH(ts);
 		const u_int nice_pri_off = SCHED_PRI_NICE(nice);
@@ -2721,7 +2721,7 @@ sched_ule_clock(struct thread *td, int cnt)
 	if (tdq->tdq_ts_off == tdq->tdq_ts_deq_off) {
 		tdq->tdq_ts_ticks += cnt;
 		tdq->tdq_ts_off = (tdq->tdq_ts_off + 2 * cnt -
-		    tdq-> tdq_ts_ticks / 4) % RQ_TS_POL_MODULO;
+		    tdq->tdq_ts_ticks / 4) % RQ_TS_POL_MODULO;
 		tdq->tdq_ts_ticks %= 4;
 		tdq_advance_ts_deq_off(tdq, false);
 	}

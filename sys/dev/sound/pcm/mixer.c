@@ -278,7 +278,7 @@ mixer_set(struct snd_mixer *m, u_int dev, u_int32_t muted, u_int lev)
 		if (dev == SOUND_MIXER_PCM && (d->flags & SD_F_SOFTPCMVOL))
 			(void)mixer_set_softpcmvol(m, d, l, r);
 		else if ((dev == SOUND_MIXER_TREBLE ||
-		    dev == SOUND_MIXER_BASS) && (d->flags & SD_F_EQ_ENABLED))
+		    dev == SOUND_MIXER_BASS) && (d->flags & SD_F_EQ))
 			(void)mixer_set_eq(m, d, dev, (l + r) >> 1);
 		else if (realdev != SOUND_MIXER_NONE &&
 		    MIXER_SET(m, realdev, l, r) < 0) {
@@ -646,7 +646,7 @@ mixer_init(device_t dev, kobj_class_t cls, void *devinfo)
 
 	mixer_setrecsrc(m, 0); /* Set default input. */
 
-	pdev = make_dev(&mixer_cdevsw, 0, UID_ROOT, GID_WHEEL, 0666, "mixer%d",
+	pdev = make_dev(&mixer_cdevsw, 0, UID_ROOT, GID_AUDIO, 0660, "mixer%d",
 	    unit);
 	pdev->si_drv1 = m;
 	snddev->mixer_dev = pdev;
