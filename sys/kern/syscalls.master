@@ -3430,94 +3430,75 @@
 		    int flags
 		);
 	}
-603	AUE_CAP_XFER_LIMIT	STD|CAPENABLED {
+603-999	AUE_NULL	UNIMPL
+; 5BSD-local system calls start at 1000 so new FreeBSD system calls
+; (allocated upward from 603) cannot collide with them.
+1000	AUE_CAP_XFER_LIMIT	STD|CAPENABLED {
 		int cap_xfer_limit(
 		    int fd,
 		    int state
 		);
 	}
-604	AUE_CAP_CLOEXEC_LIMIT	STD|CAPENABLED {
+1001	AUE_CAP_CLOEXEC_LIMIT	STD|CAPENABLED {
 		int cap_cloexec_limit(
 		    int fd,
 		    int state
 		);
 	}
-605	AUE_CAP_CLOFORK_LIMIT	STD|CAPENABLED {
+1002	AUE_CAP_CLOFORK_LIMIT	STD|CAPENABLED {
 		int cap_clofork_limit(
 		    int fd,
 		    int state
 		);
 	}
-606	AUE_NULL	STD|CAPENABLED {
+1003	AUE_NULL	STD|CAPENABLED {
 		int cap_xfer_rights_limit(
 		    int fd,
 		    _In_ const cap_rights_t *rightsp
 		);
 	}
-607	AUE_NULL	STD|CAPENABLED {
+1004	AUE_NULL	STD|CAPENABLED {
 		int cap_xfer_ioctls_limit(
 		    int fd,
 		    _In_reads_(ncmds) const u_long *cmds,
 		    size_t ncmds
 		);
 	}
-608	AUE_NULL	STD|CAPENABLED {
+1005	AUE_NULL	STD|CAPENABLED {
 		int cap_xfer_fcntls_limit(
 		    int fd,
 		    uint32_t fcntlrights
 		);
 	}
-609	AUE_NULL	UNIMPL
-610	AUE_NULL	UNIMPL
-611	AUE_NULL	UNIMPL
-612	AUE_NULL	UNIMPL
-613	AUE_NULL	UNIMPL
-614	AUE_NULL	UNIMPL
-615	AUE_NULL	UNIMPL
-616	AUE_NULL	UNIMPL
-617	AUE_NULL	UNIMPL
-618	AUE_NULL	UNIMPL
-619	AUE_NULL	UNIMPL
-620	AUE_NULL	UNIMPL
-621	AUE_NULL	UNIMPL
-622	AUE_NULL	UNIMPL
-623	AUE_NULL	UNIMPL
-624	AUE_NULL	UNIMPL
-625	AUE_NULL	UNIMPL
-626	AUE_NULL	UNIMPL
-627	AUE_NULL	UNIMPL
-628	AUE_NULL	UNIMPL
-629	AUE_NULL	UNIMPL
-630	AUE_PDSELF	STD|CAPREQUIRED {
+1006	AUE_PDSELF	STD|CAPREQUIRED {
 		int pdself(
 		    _Out_ int *fdp,
 		    int flags
 		);
 	}
-631	AUE_PDCMP	STD|CAPENABLED {
+1007	AUE_PDCMP	STD|CAPENABLED {
 		int pdcmp(
 		    int fd1,
 		    int fd2,
 		    _Out_ int *result
 		);
 	}
-632	AUE_NULL	UNIMPL
-633	AUE_PDINCAPMODE	STD|CAPENABLED {
+1008	AUE_PDINCAPMODE	STD|CAPENABLED {
 		int pdincapmode(
 		    int fd
 		);
 	}
-634	AUE_CAP_MMAP_CAPMODE	STD|CAPENABLED {
+1009	AUE_CAP_MMAP_CAPMODE	STD|CAPENABLED {
 		int cap_mmap_capmode(
 		    int fd
 		);
 	}
-635	AUE_CAP_LOOKUP_CAPMODE	STD|CAPENABLED {
+1010	AUE_CAP_LOOKUP_CAPMODE	STD|CAPENABLED {
 		int cap_lookup_capmode(
 		    int fd
 		);
 	}
-636	AUE_NULL	STD|CAPENABLED {
+1011	AUE_NULL	STD|CAPENABLED {
         int cap_process(
             int op,
             int fd,

@@ -28,7 +28,7 @@ been removed; their earlier versions remain in Git history.
 | Design documents under docs/ (all new) | 17, plus 75 book source files under docs/book/src |
 | New test files under tests/ | 6350 |
 | New package definitions | 80 package directories under packages/, 56 release/packages/ucl files |
-| New native system calls | 12 numbered (603-608, 630, 631, 633-636) plus the dynamically numbered `mac_capability_channel_create` |
+| New native system calls | 12 numbered (1000-1011) plus the dynamically numbered `mac_capability_channel_create` |
 | New MAC policy hooks | 62 (65 `mpo_*` members added to `mac_policy.h`, 3 removed) |
 | New kernel options | MAC_ABAC, OES |
 
@@ -123,7 +123,7 @@ The kernel capability core is the trusted computing base of the 5BSD capability 
 - `LOCAL_CAPMODE_SERVER` / `LOCAL_CAP_CONNECT` -> require the AF_UNIX peer to be in capmode -> setsockopt.
 
 ### Public interfaces a developer would use
-- Syscalls (sys/kern/syscalls.master): 603 `cap_xfer_limit`, 604 `cap_cloexec_limit`, 605 `cap_clofork_limit`, 606 `cap_xfer_rights_limit`, 607 `cap_xfer_ioctls_limit`, 608 `cap_xfer_fcntls_limit`, 631 `pdcmp`, 633 `pdincapmode`, 634 `cap_mmap_capmode`, 635 `cap_lookup_capmode`, 636 `cap_process` (all CAPENABLED); 630 `pdself` (CAPREQUIRED); dynamic `mac_capability_channel_create(int fds[2])` (CAPENABLED). Man pages in lib/libsys/*.2.
+- Syscalls (sys/kern/syscalls.master): 1000 `cap_xfer_limit`, 1001 `cap_cloexec_limit`, 1002 `cap_clofork_limit`, 1003 `cap_xfer_rights_limit`, 1004 `cap_xfer_ioctls_limit`, 1005 `cap_xfer_fcntls_limit`, 1007 `pdcmp`, 1008 `pdincapmode`, 1009 `cap_mmap_capmode`, 1010 `cap_lookup_capmode`, 1011 `cap_process` (all CAPENABLED); 1006 `pdself` (CAPREQUIRED); dynamic `mac_capability_channel_create(int fds[2])` (CAPENABLED). Man pages in lib/libsys/*.2.
 - Capability-fd ioctls (sys/dev/mac_capability/mac_capability_ioctl.h): CONNECT, SENDMSG, RECVMSG, CALL, GETINFO, REVOKE_{SEND,RECV,CALL,MINT}, TERMINATE, MINT_INSTANCE.
 - Wire ops (sys/dev/mac_capability/*_proto.h): FI_OP_*, SYS_OP_*/SYS_GATE_*, COALITION_OP_*, CP_OP_*, NODE_OP_*, MOUNT_OP_*, ACCT_OP_*, IDENTITY_OP_*, CHANNEL_OP_CREATE.
 - Kernel service API (sys/dev/mac_capability/mac_capability.h): `mac_capability_service_create/destroy`, `_reply`, `_notify`, `_forward`, `_instance_{revoke,hold,rele,kick,set_priv,get_priv,get_badge}`, `_mint_fp`, `_msg_{data,datalen,fds,fcaps,nfds,badge,token,cred}`, `_proc_nonce`.
@@ -134,7 +134,7 @@ The kernel capability core is the trusted computing base of the 5BSD capability 
 ### Upstream code changed
 - sys/kern/sys_capability.c (+670), kern_descrip.c (+449): per-descriptor transfer/exec/fork state, transfer ceilings, capmode mmap/lookup flags, removal of the ambient-descriptor MAC bypass, seqc barriers on fde_flags.
 - sys/kern/sys_procdesc.c (+282), kern_prot.c (+164), kern_exec.c (+63), kern_exit.c (+59), kern_sig.c (+76): pdself/pdcmp/pdincapmode, procdesc lifecycle knotes, ambient-check removal in pdkill/pdwait, SYF_CAPREQUIRED dispatch, `SETCREDF_MAC_LABEL`, MAC exec-relabel path, cred/proclife SDT probes (kern_sig/kern_exit also carry unrelated Linuxulator edits).
-- sys/kern/imgact_elf.c (+149): capability-mode interpreter load for the matched brand only; syscalls.master (+108/-12): numbers 603-608, 630, 631 and 633-636 and CAPENABLED on reboot/kld*/auditon/jail_*_jd.
+- sys/kern/imgact_elf.c (+149): capability-mode interpreter load for the matched brand only; syscalls.master: numbers 1000-1011 and CAPENABLED on reboot/kld*/auditon/jail_*_jd.
 - sys/sys/capsicum.h (+92), filedesc.h, file.h (DTYPE_MAC_CAPABILITY, DTYPE_ENVFD), event.h, sysent.h, procdesc.h: new rights, states, notes, flags.
 - sys/security/mac/* (+1235): 44 new MACF hooks plus `vnode_execve_will_relabel/relabel`, consumed by the plane's four MAC policies (label, capprotect, isolation, system).
 - sys/sys/proc.h: its only diffs (td_vnfile, P2_PTRACE_LISTEN/LCONT, FR2_NO_PTRACE) come from Linuxulator commit 392999caf154, not the capability plane.
@@ -1005,7 +1005,7 @@ This area covers everything 5BSD changed in FreeBSD files that already existed a
 
 | Item | What it is | Where (paths) | Docs / man pages | Tests | Book coverage today | Status / gaps |
 |---|---|---|---|---|---|---|
-| Descriptor transfer attenuation | Per-fd transfer/cloexec/clofork state, rights attenuated per SCM_RIGHTS hop; syscalls 603-608 | sys/kern/kern_descrip.c (+400), uipc_usrreq.c, sys/sys/capsicum.h, lib/libsys | cap_xfer_limit.2, cap_cloexec_limit.2, capsicum.4 | tests/sys/capsicum (unverified) | mentioned in architecture, authority-model | shipped; `CAP_XFER_TWICE`, `SOCK_CAPMODE`, `UF_CAP_SUFFICIENT` added then removed in-fork |
+| Descriptor transfer attenuation | Per-fd transfer/cloexec/clofork state, rights attenuated per SCM_RIGHTS hop; syscalls 1000-1005 | sys/kern/kern_descrip.c (+400), uipc_usrreq.c, sys/sys/capsicum.h, lib/libsys | cap_xfer_limit.2, cap_cloexec_limit.2, capsicum.4 | tests/sys/capsicum (unverified) | mentioned in architecture, authority-model | shipped; `CAP_XFER_TWICE`, `SOCK_CAPMODE`, `UF_CAP_SUFFICIENT` added then removed in-fork |
 | Process descriptors extended | `pdself` (only `CAPREQUIRED` syscall), `pdcmp`, `pdincapmode`; new `EVFILT_PROCDESC` notes; `pdkill`/`pdwait` drop credential checks | sys/kern/sys_procdesc.c (+273), kern_sig.c, kern_exit.c, kern_fork.c | pdfork.2 (+75), procdesc.4 | tests/sys/kern | mentioned in capsule, mac-capability | shipped; `NOTE_SIGNAL` reverted (crash); EINVAL→EBADF |
 | `SYF_CAPREQUIRED` + per-syscall MAC | Syscall class returning `ENOTCAPABLE` outside capmode; `mac_proc_check_syscall` on dispatch | sys/kern/subr_syscall.c, sys/sys/sysent.h, sys/tools/syscalls | syscall_helper_register.9 | none found | none | shipped |
 | Gated kernel entry points | `kern_jail_set_gated`, `kern_kldload/unload_gated`, `kern_settime/adjtime_gated`, `SCTL_GATED`, `kern_setcred_proc`, `cpuset_setproc_mask`; reboot/kld*/audit/jail_*_jd made CAPENABLED | sys/kern/kern_jail.c (+110), kern_linker.c, kern_time.c, kern_ntptime.c, kern_sysctl.c, kern_prot.c (+164), kern_cpuset.c, syscalls.master | none | provider tests | BSDTime/BSDPower/BSDSysctl (indirect) | shipped; KPI only |

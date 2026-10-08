@@ -17,24 +17,24 @@ it implies `CAPENABLED`). Today one call carries it.
 
 | Number | Name | Flags | Manual page | What it does |
 |---|---|---|---|---|
-| 603 | `cap_xfer_limit(fd, state)` | CAPENABLED | cap_xfer_limit(2) | Sets a descriptor's transfer state: unlimited, once, or never; monotone |
-| 604 | `cap_cloexec_limit(fd, state)` | CAPENABLED | cap_cloexec_limit(2) | Forces close-on-exec regardless of `FD_CLOEXEC`: unlocked, locked, or survive one exec |
-| 605 | `cap_clofork_limit(fd, state)` | CAPENABLED | cap_clofork_limit(2) | Forces close-on-fork the same way |
-| 606 | `cap_xfer_rights_limit(fd, rights)` | CAPENABLED | cap_xfer_rights_limit(2) | Sets the rights ceiling a descriptor carries when it is passed |
-| 607 | `cap_xfer_ioctls_limit(fd, cmds, ncmds)` | CAPENABLED | cap_xfer_rights_limit(2) | Sets the ioctl ceiling applied on transfer |
-| 608 | `cap_xfer_fcntls_limit(fd, fcntlrights)` | CAPENABLED | cap_xfer_rights_limit(2) | Sets the fcntl ceiling applied on transfer |
-| 609 to 629 | reserved | UNIMPL | | |
-| 630 | `pdself(fdp, flags)` | CAPREQUIRED | pdself(2) | Returns a process descriptor for the calling process (`PDF_SELF`); only from capability mode |
-| 631 | `pdcmp(fd1, fd2, result)` | CAPENABLED | pdcmp(2) | Tells whether two process descriptors name the same process |
-| 632 | reserved | UNIMPL | | |
-| 633 | `pdincapmode(fd)` | CAPENABLED | pdincapmode(2) | Reports whether the process behind a descriptor is in capability mode |
-| 634 | `cap_mmap_capmode(fd)` | CAPENABLED | cap_mmap_capmode(2) | Marks a descriptor so that mmap on it requires capability mode; one-way |
-| 635 | `cap_lookup_capmode(fd)` | CAPENABLED | cap_lookup_capmode(2) | Marks a directory descriptor so that `*at()` lookups through it require capability mode; one-way |
-| 636 | `cap_process(op, fd, uid, data)` | CAPENABLED | cap_process(2) | Manages the calling process's kernel-held discovery context (`MAC_CAP_PROCESS_SET`, `GET`, `CLEAR`, `INFO`) and its origin attribution (`MAC_CAP_PROCESS_ORIGIN_EXPORT`, `ORIGIN_SET`); declared in `<sys/cap_process.h>`, implemented in `sys/dev/mac_capability/mac_capability_process.c` |
+| 1000 | `cap_xfer_limit(fd, state)` | CAPENABLED | cap_xfer_limit(2) | Sets a descriptor's transfer state: unlimited, once, or never; monotone |
+| 1001 | `cap_cloexec_limit(fd, state)` | CAPENABLED | cap_cloexec_limit(2) | Forces close-on-exec regardless of `FD_CLOEXEC`: unlocked, locked, or survive one exec |
+| 1002 | `cap_clofork_limit(fd, state)` | CAPENABLED | cap_clofork_limit(2) | Forces close-on-fork the same way |
+| 1003 | `cap_xfer_rights_limit(fd, rights)` | CAPENABLED | cap_xfer_rights_limit(2) | Sets the rights ceiling a descriptor carries when it is passed |
+| 1004 | `cap_xfer_ioctls_limit(fd, cmds, ncmds)` | CAPENABLED | cap_xfer_rights_limit(2) | Sets the ioctl ceiling applied on transfer |
+| 1005 | `cap_xfer_fcntls_limit(fd, fcntlrights)` | CAPENABLED | cap_xfer_rights_limit(2) | Sets the fcntl ceiling applied on transfer |
+| 1006 | `pdself(fdp, flags)` | CAPREQUIRED | pdself(2) | Returns a process descriptor for the calling process (`PDF_SELF`); only from capability mode |
+| 1007 | `pdcmp(fd1, fd2, result)` | CAPENABLED | pdcmp(2) | Tells whether two process descriptors name the same process |
+| 1008 | `pdincapmode(fd)` | CAPENABLED | pdincapmode(2) | Reports whether the process behind a descriptor is in capability mode |
+| 1009 | `cap_mmap_capmode(fd)` | CAPENABLED | cap_mmap_capmode(2) | Marks a descriptor so that mmap on it requires capability mode; one-way |
+| 1010 | `cap_lookup_capmode(fd)` | CAPENABLED | cap_lookup_capmode(2) | Marks a directory descriptor so that `*at()` lookups through it require capability mode; one-way |
+| 1011 | `cap_process(op, fd, uid, data)` | CAPENABLED | cap_process(2) | Manages the calling process's kernel-held discovery context (`MAC_CAP_PROCESS_SET`, `GET`, `CLEAR`, `INFO`) and its origin attribution (`MAC_CAP_PROCESS_ORIGIN_EXPORT`, `ORIGIN_SET`); declared in `<sys/cap_process.h>`, implemented in `sys/dev/mac_capability/mac_capability_process.c` |
 | dynamic | `mac_capability_channel_create(int fds[2])` | CAPENABLED | none | A `SYSCALL_MODULE` in `sys/dev/mac_capability/mac_capability_channel.c`; returns a self-owned channel pair; `lib/libchannel/channel_syscall.c` finds the number with `modfind("sys/mac_capability_channel_create")` |
 
-Numbers 603 to 608, 630, 631 and 633 to 636 (twelve calls) belong to the
-capability core. Their libsys stubs are exported at `FBSD_1.9`
+Numbers 1000 to 1011 (twelve calls) belong to the capability core.
+5BSD-local calls start at 1000 so that FreeBSD, which allocates upward
+from 603, cannot collide with them; 603 to 999 are left to FreeBSD.
+Their libsys stubs are exported at `FBSD_1.9`
 (`lib/libsys/Symbol.sys.map`), alongside the upstream `pdrfork`,
 `pdrfork_thread` and `renameat2` that the baseline already exported there.
 

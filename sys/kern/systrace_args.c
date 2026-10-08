@@ -3556,7 +3556,7 @@ systrace_args(int sysnum, void *params, uint64_t *uarg, int *n_args)
 		break;
 	}
 	/* cap_xfer_limit */
-	case 603: {
+	case 1000: {
 		struct cap_xfer_limit_args *p = params;
 		iarg[a++] = p->fd; /* int */
 		iarg[a++] = p->state; /* int */
@@ -3564,7 +3564,7 @@ systrace_args(int sysnum, void *params, uint64_t *uarg, int *n_args)
 		break;
 	}
 	/* cap_cloexec_limit */
-	case 604: {
+	case 1001: {
 		struct cap_cloexec_limit_args *p = params;
 		iarg[a++] = p->fd; /* int */
 		iarg[a++] = p->state; /* int */
@@ -3572,7 +3572,7 @@ systrace_args(int sysnum, void *params, uint64_t *uarg, int *n_args)
 		break;
 	}
 	/* cap_clofork_limit */
-	case 605: {
+	case 1002: {
 		struct cap_clofork_limit_args *p = params;
 		iarg[a++] = p->fd; /* int */
 		iarg[a++] = p->state; /* int */
@@ -3580,7 +3580,7 @@ systrace_args(int sysnum, void *params, uint64_t *uarg, int *n_args)
 		break;
 	}
 	/* cap_xfer_rights_limit */
-	case 606: {
+	case 1003: {
 		struct cap_xfer_rights_limit_args *p = params;
 		iarg[a++] = p->fd; /* int */
 		uarg[a++] = (intptr_t)p->rightsp; /* const cap_rights_t * */
@@ -3588,7 +3588,7 @@ systrace_args(int sysnum, void *params, uint64_t *uarg, int *n_args)
 		break;
 	}
 	/* cap_xfer_ioctls_limit */
-	case 607: {
+	case 1004: {
 		struct cap_xfer_ioctls_limit_args *p = params;
 		iarg[a++] = p->fd; /* int */
 		uarg[a++] = (intptr_t)p->cmds; /* const u_long * */
@@ -3597,7 +3597,7 @@ systrace_args(int sysnum, void *params, uint64_t *uarg, int *n_args)
 		break;
 	}
 	/* cap_xfer_fcntls_limit */
-	case 608: {
+	case 1005: {
 		struct cap_xfer_fcntls_limit_args *p = params;
 		iarg[a++] = p->fd; /* int */
 		uarg[a++] = p->fcntlrights; /* uint32_t */
@@ -3605,7 +3605,7 @@ systrace_args(int sysnum, void *params, uint64_t *uarg, int *n_args)
 		break;
 	}
 	/* pdself */
-	case 630: {
+	case 1006: {
 		struct pdself_args *p = params;
 		uarg[a++] = (intptr_t)p->fdp; /* int * */
 		iarg[a++] = p->flags; /* int */
@@ -3613,7 +3613,7 @@ systrace_args(int sysnum, void *params, uint64_t *uarg, int *n_args)
 		break;
 	}
 	/* pdcmp */
-	case 631: {
+	case 1007: {
 		struct pdcmp_args *p = params;
 		iarg[a++] = p->fd1; /* int */
 		iarg[a++] = p->fd2; /* int */
@@ -3622,28 +3622,28 @@ systrace_args(int sysnum, void *params, uint64_t *uarg, int *n_args)
 		break;
 	}
 	/* pdincapmode */
-	case 633: {
+	case 1008: {
 		struct pdincapmode_args *p = params;
 		iarg[a++] = p->fd; /* int */
 		*n_args = 1;
 		break;
 	}
 	/* cap_mmap_capmode */
-	case 634: {
+	case 1009: {
 		struct cap_mmap_capmode_args *p = params;
 		iarg[a++] = p->fd; /* int */
 		*n_args = 1;
 		break;
 	}
 	/* cap_lookup_capmode */
-	case 635: {
+	case 1010: {
 		struct cap_lookup_capmode_args *p = params;
 		iarg[a++] = p->fd; /* int */
 		*n_args = 1;
 		break;
 	}
 	/* cap_process */
-	case 636: {
+	case 1011: {
 		struct cap_process_args *p = params;
 		iarg[a++] = p->op; /* int */
 		iarg[a++] = p->fd; /* int */
@@ -9619,7 +9619,7 @@ systrace_entry_setargdesc(int sysnum, int ndx, char *desc, size_t descsz)
 		};
 		break;
 	/* cap_xfer_limit */
-	case 603:
+	case 1000:
 		switch (ndx) {
 		case 0:
 			p = "int";
@@ -9632,7 +9632,7 @@ systrace_entry_setargdesc(int sysnum, int ndx, char *desc, size_t descsz)
 		};
 		break;
 	/* cap_cloexec_limit */
-	case 604:
+	case 1001:
 		switch (ndx) {
 		case 0:
 			p = "int";
@@ -9645,7 +9645,7 @@ systrace_entry_setargdesc(int sysnum, int ndx, char *desc, size_t descsz)
 		};
 		break;
 	/* cap_clofork_limit */
-	case 605:
+	case 1002:
 		switch (ndx) {
 		case 0:
 			p = "int";
@@ -9658,7 +9658,7 @@ systrace_entry_setargdesc(int sysnum, int ndx, char *desc, size_t descsz)
 		};
 		break;
 	/* cap_xfer_rights_limit */
-	case 606:
+	case 1003:
 		switch (ndx) {
 		case 0:
 			p = "int";
@@ -9671,7 +9671,7 @@ systrace_entry_setargdesc(int sysnum, int ndx, char *desc, size_t descsz)
 		};
 		break;
 	/* cap_xfer_ioctls_limit */
-	case 607:
+	case 1004:
 		switch (ndx) {
 		case 0:
 			p = "int";
@@ -9687,7 +9687,7 @@ systrace_entry_setargdesc(int sysnum, int ndx, char *desc, size_t descsz)
 		};
 		break;
 	/* cap_xfer_fcntls_limit */
-	case 608:
+	case 1005:
 		switch (ndx) {
 		case 0:
 			p = "int";
@@ -9700,7 +9700,7 @@ systrace_entry_setargdesc(int sysnum, int ndx, char *desc, size_t descsz)
 		};
 		break;
 	/* pdself */
-	case 630:
+	case 1006:
 		switch (ndx) {
 		case 0:
 			p = "userland int *";
@@ -9713,7 +9713,7 @@ systrace_entry_setargdesc(int sysnum, int ndx, char *desc, size_t descsz)
 		};
 		break;
 	/* pdcmp */
-	case 631:
+	case 1007:
 		switch (ndx) {
 		case 0:
 			p = "int";
@@ -9729,7 +9729,7 @@ systrace_entry_setargdesc(int sysnum, int ndx, char *desc, size_t descsz)
 		};
 		break;
 	/* pdincapmode */
-	case 633:
+	case 1008:
 		switch (ndx) {
 		case 0:
 			p = "int";
@@ -9739,7 +9739,7 @@ systrace_entry_setargdesc(int sysnum, int ndx, char *desc, size_t descsz)
 		};
 		break;
 	/* cap_mmap_capmode */
-	case 634:
+	case 1009:
 		switch (ndx) {
 		case 0:
 			p = "int";
@@ -9749,7 +9749,7 @@ systrace_entry_setargdesc(int sysnum, int ndx, char *desc, size_t descsz)
 		};
 		break;
 	/* cap_lookup_capmode */
-	case 635:
+	case 1010:
 		switch (ndx) {
 		case 0:
 			p = "int";
@@ -9759,7 +9759,7 @@ systrace_entry_setargdesc(int sysnum, int ndx, char *desc, size_t descsz)
 		};
 		break;
 	/* cap_process */
-	case 636:
+	case 1011:
 		switch (ndx) {
 		case 0:
 			p = "int";
@@ -11806,62 +11806,62 @@ systrace_return_setargdesc(int sysnum, int ndx, char *desc, size_t descsz)
 			p = "int";
 		break;
 	/* cap_xfer_limit */
-	case 603:
+	case 1000:
 		if (ndx == 0 || ndx == 1)
 			p = "int";
 		break;
 	/* cap_cloexec_limit */
-	case 604:
+	case 1001:
 		if (ndx == 0 || ndx == 1)
 			p = "int";
 		break;
 	/* cap_clofork_limit */
-	case 605:
+	case 1002:
 		if (ndx == 0 || ndx == 1)
 			p = "int";
 		break;
 	/* cap_xfer_rights_limit */
-	case 606:
+	case 1003:
 		if (ndx == 0 || ndx == 1)
 			p = "int";
 		break;
 	/* cap_xfer_ioctls_limit */
-	case 607:
+	case 1004:
 		if (ndx == 0 || ndx == 1)
 			p = "int";
 		break;
 	/* cap_xfer_fcntls_limit */
-	case 608:
+	case 1005:
 		if (ndx == 0 || ndx == 1)
 			p = "int";
 		break;
 	/* pdself */
-	case 630:
+	case 1006:
 		if (ndx == 0 || ndx == 1)
 			p = "int";
 		break;
 	/* pdcmp */
-	case 631:
+	case 1007:
 		if (ndx == 0 || ndx == 1)
 			p = "int";
 		break;
 	/* pdincapmode */
-	case 633:
+	case 1008:
 		if (ndx == 0 || ndx == 1)
 			p = "int";
 		break;
 	/* cap_mmap_capmode */
-	case 634:
+	case 1009:
 		if (ndx == 0 || ndx == 1)
 			p = "int";
 		break;
 	/* cap_lookup_capmode */
-	case 635:
+	case 1010:
 		if (ndx == 0 || ndx == 1)
 			p = "int";
 		break;
 	/* cap_process */
-	case 636:
+	case 1011:
 		if (ndx == 0 || ndx == 1)
 			p = "int";
 		break;
