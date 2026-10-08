@@ -94,7 +94,8 @@ the gate. Keep the full console logs for review of other warnings as well.
    or stage matching modules. Do not weaken kernel security checks to pass tests.
 6. Set `zfs_load="YES"` and `vfs.root.mountfrom="zfs:linuxgate"` in the final
    loader override. Remove UFS-root entries from the guest fstab. Build private
-   images with `build-zfs-images.sh AMD64_ROOT ARM64_ROOT NEW_OUTPUT_DIRECTORY`.
+   images with `build-zfs-images.sh AMD64_ROOT ARM64_ROOT|none NEW_OUTPUT_DIRECTORY`
+   (`none` builds only the amd64 image; `qemu-gate.py` treats arm64 as optional).
    It uses `makefs -t zfs` without importing any pool on the host, amd64
    `gptzfsboot`, and an arm64 FAT32 EFI partition with one sector per cluster.
    The script also creates two 64 MiB disks, `amd64-swap.img` and

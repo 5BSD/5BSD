@@ -3,16 +3,21 @@
 # Create private ZFS-root images without importing a pool into the host kernel.
 set -eu
 if [ "$#" -ne 3 ]; then
-    echo "usage: $0 amd64-staged-root arm64-staged-root new-output-directory" >&2
+    echo "usage: $0 amd64-staged-root arm64-staged-root|none new-output-directory" >&2
     exit 64
 fi
 amdroot=$(realpath "$1")
-armroot=$(realpath "$2")
+# arm64 is optional for qemu-gate.py; "none" builds the amd64 image only.
+arches=amd64
+if [ "$2" != none ]; then
+    armroot=$(realpath "$2")
+    arches="amd64 arm64"
+fi
 mkdir "$3"
 out=$(realpath "$3")
 truncate -s 64m "$out/amd64-swap.img"
 truncate -s 64m "$out/amd64-swap2.img"
-for arch in amd64 arm64; do
+for arch in $arches; do
     if [ "$arch" = amd64 ]; then root=$amdroot; else root=$armroot; fi
     test -f "$root/boot/kernel/zfs.ko"
     if [ -f "$root/boot/loader.conf.local" ]; then
@@ -39,7 +44,7 @@ for arch in amd64 arm64; do
         for payload in guest-peer-events.sh linux_socket_peername linux_ptrace_events peer_caps peer_caps_probe ptrace_exit_native guest-xstate-mcast.sh linux_ptrace_xstate linux_mcast_filter mcast_native guest-cookie.sh linux_socket_cookie cookie_caps cookie_caps_probe linux_ptrace_seize linux_ptrace_interrupt linux_ptrace_listen linux_ptrace_lifecycle linux_ptrace_user linux_ptrace_metadata linux_ptrace_sigmask linux_proc_task linux_ptrace_kill_native guest-ptrace.sh linux_ptrace_registers ptrace_native ptrace_capmode ptrace_capmode_probe guest-quota.sh linux_quota quota_native quota_capmode quota_capmode_probe quota_capmode_path_probe unshare_capmode unshare_capmode_probe linux_unshare linux_sysfs64 linux_rseq linux_rseq_signal linux_rseq_threads linux_rseq_lifecycle linux_rseq_auxv linux_rseq_preempt linux_rseq_hold linux_perf_event perf_native_hold linux_remap_file_pages linux_ioperm linux_iopl_options linux_modify_ldt linux_swapoff linux_swapon_flags linux_swapon_priority linux_swapon_priority_cleanup linux_swapon_discard linux_swapon_discard_pages ioperm_native; do
             test -f "$root/root/$payload" || exit 1
             awk -v path="./root/$payload" '$1 == path {found=1} END {exit !found}' "$root/METALOG.minimal" || exit 1
-            case "$payload" in guest-peer-events.sh|peer_caps|ptrace_exit_native|guest-xstate-mcast.sh|mcast_native|ioperm_native|unshare_capmode|quota_native|quota_capmode|guest-quota.sh|guest-ptrace.sh|ptrace_native|ptrace_capmode|linux_ptrace_kill_native|guest-cookie.sh|cookie_caps) continue;; esac
+            case "$payload" in guest-peer-events.sh|peer_caps|ptrace_exit_native|guest-xstate-mcast.sh|mcast_native|ioperm_native|unshare_capmode|quota_native|quota_capmode|guest-quota.sh|guest-ptrace.sh|ptrace_native|ptrace_capmode|linux_ptrace_kill_native|guest-cookie.sh|cookie_caps|perf_native_hold) continue;; esac
             case "$(brandelf -l "$root/root/$payload" 2>/dev/null)" in
                 *"of brand 'Linux'"*) ;;
                 *) echo "$arch: /root/$payload is not a Linux ELF" >&2; exit 1 ;;

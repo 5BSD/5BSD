@@ -83,6 +83,8 @@ test(void)
 	if (call(167, (long)high, 0x8000 | 100, 0) != -16)
 		return (5);
 #else
+	long error;
+
 	error = call(168, (long)high, 0, 0);
 	if (error != 0)
 		return (6);
