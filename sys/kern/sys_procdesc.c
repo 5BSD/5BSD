@@ -1132,8 +1132,17 @@ sys_pdincapmode(struct thread *td, struct pdincapmode_args *uap)
 	error = fget_procdesc(td, uap->fd, &cap_pdgetpid_rights, EINVAL, &fp,
 	    NULL, &p);
 	if (error == 0) {
-		td->td_retval[0] =
-		    (p->p_ucred->cr_flags & CRED_FLAG_CAPMODE) != 0;
+		/*
+		 * The descriptor keeps an exited process's zombie
+		 * (PZOMBIEREF_PROCDESC) until it is closed, so a non-NULL
+		 * pd_proc does not mean the process is alive.  As with
+		 * pddupfd(2), report an exiting or exited process as ESRCH.
+		 */
+		if ((p->p_flag & P_WEXIT) != 0)
+			error = ESRCH;
+		else
+			td->td_retval[0] =
+			    (p->p_ucred->cr_flags & CRED_FLAG_CAPMODE) != 0;
 		PROC_UNLOCK(p);
 	}
 	sx_sunlock(&proctree_lock);

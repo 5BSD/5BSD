@@ -1722,11 +1722,12 @@ ATF_TC_BODY(capmode_sysctl_syscall_confined, tc)
 		/*
 		 * kern.maxfiles is not CAPWR, so a raw write must be refused in
 		 * capmode regardless of the held claim.  Writing back `cur` keeps
-		 * the (impossible) success path side-effect-free.
+		 * the (impossible) success path side-effect-free.  The capmode
+		 * refusal is ECAPMODE (FreeBSD a76e986470f; EPERM before).
 		 */
 		if (sysctl(mib, 2, NULL, NULL, &cur, sizeof(cur)) == 0)
 			_exit(3);	/* wrongly allowed — sandbox loosened */
-		_exit((errno == EPERM || errno == ENOTCAPABLE) ? 0 : 4);
+		_exit(errno == ECAPMODE ? 0 : 4);
 	}
 	ATF_REQUIRE(waitpid(pid, &status, 0) == pid);
 	ATF_CHECK_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,

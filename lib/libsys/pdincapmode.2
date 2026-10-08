@@ -85,8 +85,8 @@ The
 .Fa fd
 argument is not a process descriptor.
 .It Bq Er ESRCH
-The process referenced by the process descriptor has already exited
-and been reaped.
+The process referenced by the process descriptor has exited,
+whether or not its zombie has been reaped.
 .It Bq Er ENOTCAPABLE
 The file descriptor has insufficient capability rights
 .Pq Dv CAP_PDGETPID .

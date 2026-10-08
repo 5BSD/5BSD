@@ -87,6 +87,17 @@ identity_call(struct mac_capability_instance *s __unused,
 		}
 		PROC_LOCK(p);
 		sx_sunlock(&proctree_lock);
+		/*
+		 * A process descriptor keeps an exited process's zombie
+		 * (PZOMBIEREF_PROCDESC) until the last descriptor closes,
+		 * so pd_proc stays non-NULL after exit and even after
+		 * waitpid(2).  Report any exiting or exited target as DEAD.
+		 */
+		if ((p->p_flag & P_WEXIT) != 0) {
+			PROC_UNLOCK(p);
+			rp->status = IDENTITY_STATUS_DEAD;
+			return (0);
+		}
 		rp->nonce = mac_capability_proc_nonce(p->p_ucred);
 		PROC_UNLOCK(p);
 
