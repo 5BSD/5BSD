@@ -540,8 +540,12 @@ linux_pidfd_getfd(struct thread *td, struct linux_pidfd_getfd_args *args)
 	error = linux_pidfd_find(lpf, &p);
 	if (error != 0)
 		goto out;
-	if (p->p_state == PRS_ZOMBIE) {
-		/* The descriptor table is gone. */
+	if (p->p_state == PRS_ZOMBIE || (p->p_flag & P_WEXIT) != 0) {
+		/*
+		 * The descriptor table is gone or going; an exiting
+		 * process also must not be held (_PHOLD asserts this).
+		 * Linux reports ESRCH for a dead task.
+		 */
 		PROC_UNLOCK(p);
 		error = ESRCH;
 		goto out;
