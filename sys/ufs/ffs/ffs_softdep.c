@@ -281,15 +281,6 @@ softdep_setup_remove(struct buf *bp,
 }
 
 void
-softdep_setup_directory_exchange(struct buf *fbp, struct inode *fdp,
-    struct inode *fip, off_t foff, struct buf *tbp, struct inode *tdp,
-    struct inode *tip, off_t toff)
-{
-
-	panic("softdep_setup_directory_exchange called");
-}
-
-void
 softdep_setup_directory_change(struct buf *bp,
 	struct inode *dp,
 	struct inode *ip,
@@ -9730,40 +9721,6 @@ softdep_setup_directory_change(struct buf *bp, struct inode *dp,
 	softdep_setup_directory_change_common(bp, dp, ip, newinum, newparent,
 	    dap);
 }
-
-/*
- * Both names must acquire their new mkdir dependencies before either old
- * name is canceled.  A directory exchange is not an rmdir: its dot and
- * dotdot journal references must survive at the other name.
- */
-void
-softdep_setup_directory_exchange(struct buf *fbp, struct inode *fdp,
-    struct inode *fip, off_t foff, struct buf *tbp, struct inode *tdp,
-    struct inode *tip, off_t toff)
-{
-	struct diradd *fdap, *tdap;
-	struct inodedep *inodedep;
-	struct ufsmount *ump;
-
-	ump = ITOUMP(fdp);
-	fdap = newdirchange(fdp, tip->i_number, foff);
-	tdap = newdirchange(tdp, fip->i_number, toff);
-	ACQUIRE_LOCK(ump);
-	if (inodedep_lookup(ITOVFS(fdp), tip->i_number, 0, &inodedep) != 0 &&
-	    inodedep->id_mkdiradd != NULL)
-		merge_diradd(inodedep, fdap);
-	if (inodedep_lookup(ITOVFS(fdp), fip->i_number, 0, &inodedep) != 0 &&
-	    inodedep->id_mkdiradd != NULL)
-		merge_diradd(inodedep, tdap);
-	FREE_LOCK(ump);
-	SET_I_OFFSET(fdp, foff);
-	softdep_setup_directory_change_common(fbp, fdp, fip, tip->i_number,
-	    0, fdap);
-	SET_I_OFFSET(tdp, toff);
-	softdep_setup_directory_change_common(tbp, tdp, tip, fip->i_number,
-	    0, tdap);
-}
-
 
 /*
  * Called whenever the link count on an inode is changed.
