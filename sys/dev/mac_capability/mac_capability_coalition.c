@@ -845,7 +845,26 @@ coalition_enlist(struct coalition *co, struct thread *td, struct file *fp,
 			    "enlist-dead", ESRCH, td->td_proc->p_pid);
 			return (ESRCH);
 		}
+		/*
+		 * A process descriptor keeps an exited process's zombie
+		 * (PZOMBIEREF_PROCDESC) until the last descriptor closes, so
+		 * pd_proc stays non-NULL after exit and even after pdwait(2).
+		 * An exiting process has run, or is about to run,
+		 * coalition_process_exit(): a member hashed now would never be
+		 * removed and would pin the zombie.  Reject it here, and again
+		 * under the hash lock below to close the race with an exit.
+		 */
+		PROC_LOCK(p);
 		sx_sunlock(&proctree_lock);
+		if ((p->p_flag & P_WEXIT) != 0) {
+			PROC_UNLOCK(p);
+			uma_zfree(coalition_member_zone, cm);
+			fdrop(fp, td);
+			SDT_PROBE3(mac_capability_coalition, , , deny,
+			    "enlist-dead", ESRCH, td->td_proc->p_pid);
+			return (ESRCH);
+		}
+		PROC_UNLOCK(p);
 
 		cm->cm_data = p;
 
@@ -872,9 +891,30 @@ coalition_enlist(struct coalition *co, struct thread *td, struct file *fp,
 			return (ESHUTDOWN);
 		}
 
+		/*
+		 * exit1() sets P_WEXIT under the process lock before it runs
+		 * the process_exit handlers, so holding the process lock
+		 * across this check and the hash insert guarantees that either
+		 * the exit is seen here or coalition_process_exit() runs later
+		 * and finds the member.  The proc lock -> hash lock order
+		 * matches coalition_proc_info(), which may run with the
+		 * process lock held.  p stays valid: the held fp keeps the
+		 * procdesc, and its zombie reference keeps the proc.
+		 */
+		PROC_LOCK(p);
+		if ((p->p_flag & P_WEXIT) != 0) {
+			PROC_UNLOCK(p);
+			sx_xunlock(&co->co_sx);
+			uma_zfree(coalition_member_zone, cm);
+			fdrop(fp, td);
+			SDT_PROBE3(mac_capability_coalition, , , deny,
+			    "enlist-dead", ESRCH, td->td_proc->p_pid);
+			return (ESRCH);
+		}
 		rw_wlock(&coalition_proc_hash_lock);
 		if (coalition_proc_hash_lookup(p) != NULL) {
 			rw_wunlock(&coalition_proc_hash_lock);
+			PROC_UNLOCK(p);
 			sx_xunlock(&co->co_sx);
 			uma_zfree(coalition_member_zone, cm);
 			fdrop(fp, td);
@@ -890,6 +930,7 @@ coalition_enlist(struct coalition *co, struct thread *td, struct file *fp,
 		cm->cm_coalition = co;
 		coalition_proc_hash_insert(cm, p);
 		rw_wunlock(&coalition_proc_hash_lock);
+		PROC_UNLOCK(p);
 
 	} else if (dtype == DTYPE_JAILDESC) {
 		struct jaildesc *jd = fp->f_data;
