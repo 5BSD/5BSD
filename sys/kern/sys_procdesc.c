@@ -428,16 +428,6 @@ procdesc_reap(struct proc *p)
 
 	pd = p->p_procdesc;
 	procdesc_fill_winfo(pd, false);
-
-	/*
-	 * 5BSD: deliver NOTE_REAP to EVFILT_PROCDESC listeners as well;
-	 * upstream only raises it on the EVFILT_PROC p_klist in proc_reap(),
-	 * so procdesc knotes that requested NOTE_REAP would never finish.
-	 */
-	PROCDESC_LOCK(pd);
-	KNOTE_LOCKED(&pd->pd_selinfo.si_note, NOTE_REAP);
-	PROCDESC_UNLOCK(pd);
-
 	pd->pd_proc = NULL;
 	p->p_procdesc = NULL;
 	procdesc_free(pd);
@@ -621,13 +611,10 @@ procdesc_kqops_event(struct knote *kn, long hint)
 		 * pending.
 		 */
 		p = pd->pd_proc;
-		if ((atomic_load_int(&pd->pd_flags) & PDF_EXITED) != 0) {
+		if ((atomic_load_int(&pd->pd_flags) & PDF_EXITED) != 0)
 			event = NOTE_EXIT | NOTE_PDSIGCHLD;
-			/* 5BSD: already reaped before registration. */
-			if (p == NULL)
-				event |= NOTE_REAP;
-		} else if (p != NULL && (atomic_load_int(&p->p_flag) &
-		    (P_STOPPED_SIG | P_STOPPED_TRACE)) != 0)
+		else if ((atomic_load_int(&p->p_flag) & (P_STOPPED_SIG |
+		    P_STOPPED_TRACE)) != 0)
 			event = NOTE_PDSIGCHLD;
 		else
 			event = 0;
