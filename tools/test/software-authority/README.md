@@ -30,3 +30,32 @@ neither replaces testing an actual BSDInstall-created system.
 The kernel-only PID-1 fixture (`authority_boot_helper`) separately exercises
 issuer restrictions, executable and loader identity, process transitions,
 jails, resource gates and teardown. It must never run as the host's init.
+
+## Kernel fixture harness
+
+`run-kernel.py` creates an unprivileged UFS image with `makefs`/`mkimg`, boots
+it with QEMU in snapshot mode, and records the command, kernel and test hashes,
+serial-log hash, exit status, and pass/fail result in a new work directory.
+It accepts explicit paths and does not use a home-directory checkout or change
+the host installation. For example, after staging the matching world, kernel,
+and distribution with `NO_ROOT=yes`:
+
+```sh
+python3.12 tools/test/software-authority/run-kernel.py \
+    --root /usr/obj/qualification/root \
+    --objtop /usr/obj/usr/src/amd64.amd64 \
+    --kernconf GENERIC-NODEBUG \
+    --workdir /usr/obj/qualification/kernel-vm
+```
+
+Use `--qemu` and `--qemu-data` to select a separately built emulator and its
+firmware directory. The emulator must start with its normal runtime library
+search path (or an explicitly supplied environment). The harness validates
+required inputs and matching staged/object kernel configurations before
+creating output. A timeout, panic, WITNESS reversal, missing completion marker,
+forced termination, or missing clean shutdown fails the run.
+
+This kernel-only result does not qualify login, SSH, services, boot environments,
+or installer media. Those require the integrated guest and BSDInstall tests
+above. Using existing build inputs validates the harness; only fresh inputs
+can provide clean-build evidence.
