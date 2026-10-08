@@ -528,6 +528,15 @@ vtpci_modern_negotiate_features(device_t dev, uint64_t child_features)
 		device_printf(dev, "ignoring NotificationConfigData feature "
 		    "with short COMMON_CFG layout\n");
 	}
+	/*
+	 * Accept per-virtqueue reset if the device offers it: negotiating
+	 * the feature carries no obligation for a driver that never uses
+	 * it, while declining capability-only transport features can make
+	 * strict devices refuse the entire feature set.  Do it before the
+	 * layout check below so a short COMMON_CFG still drops it.
+	 */
+	child_features |= host_features & VIRTIO_F_RING_RESET;
+
 	if ((host_features & VIRTIO_F_RING_RESET) != 0 &&
 	    sc->vtpci_common_res_map.vtrm_length <
 	    VIRTIO_PCI_COMMON_Q_RESET + sizeof(uint16_t)) {
@@ -535,14 +544,6 @@ vtpci_modern_negotiate_features(device_t dev, uint64_t child_features)
 		device_printf(dev, "ignoring RingReset feature with short "
 		    "COMMON_CFG layout\n");
 	}
-
-	/*
-	 * Accept per-virtqueue reset if the device offers it: negotiating
-	 * the feature carries no obligation for a driver that never uses
-	 * it, while declining capability-only transport features can make
-	 * strict devices refuse the entire feature set.
-	 */
-	child_features |= host_features & VIRTIO_F_RING_RESET;
 
 	features = vtpci_negotiate_features(&sc->vtpci_common,
 	    child_features, host_features);

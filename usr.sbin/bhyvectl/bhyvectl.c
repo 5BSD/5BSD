@@ -305,7 +305,6 @@ ipc_send_message(const char *vmname, nvlist_t *request, const char *rundir,
 		*replyp = reply;
 		reply = NULL;
 	}
-	nvlist_destroy(reply);
 done:
 	if (request != NULL)
 		nvlist_destroy(request);
