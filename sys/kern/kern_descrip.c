@@ -1193,8 +1193,11 @@ kern_dup(struct thread *td, u_int mode, int flags, int oldd, int newd)
 	if (error != 0)
 		goto unlock;
 #endif
-	if (!fhold(oldfp))
+	if (!fhold(oldfp)) {
+		/* The MAC check above may have cleared error. */
+		error = EBADF;
 		goto unlock;
+	}
 
 	/*
 	 * If the caller specified a file descriptor, make sure the file
