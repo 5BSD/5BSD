@@ -263,7 +263,7 @@ adds `SYF_CAPREQUIRED`; `sys/sys/procdesc.h` adds `PDF_SELF`.
 
 `sys/sys/file.h`: `DTYPE_MAC_CAPABILITY` (128), `DTYPE_ENVFD` (129),
 `DTYPE_ZFSHANDLE` (130), `DTYPE_LINUXPIDFD` (131), `DTYPE_LINUXSIGNALFD`
-(132), `DTYPE_SQUEUE_POLL` (133, internal), `DTYPE_LINUXPERF` (134),
+(132), `DTYPE_LINUXPERF` (133),
 `DTYPE_IORING` (26). libprocstat, fstat and sysdecode know all of them.
 
 ### Sockets

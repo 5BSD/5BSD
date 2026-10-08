@@ -80,8 +80,7 @@ struct nameidata;
 #define	DTYPE_ZFSHANDLE	130	/* TrustedZFS dataset handle */
 #define	DTYPE_LINUXPIDFD 131	/* Linux pidfd (compat/linux) */
 #define	DTYPE_LINUXSIGNALFD 132	/* Linux signalfd (compat/linux) */
-#define	DTYPE_SQUEUE_POLL 133	/* internal ring-readiness proxy */
-#define	DTYPE_LINUXPERF 134	/* Linux perf event (compat/linux) */
+#define	DTYPE_LINUXPERF 133	/* Linux perf event (compat/linux) */
 
 #ifdef _KERNEL
 
