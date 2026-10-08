@@ -101,10 +101,18 @@ flags of that particular file:
 .Bl -bullet
 .It
 If the described process itself closes a descriptor for itself, it is
-never killed and never reparented.
+never killed.
 If that was the last file referencing the process descriptor, the
 descriptor is detached from the process, which from then on behaves
 like an ordinary process without a process descriptor.
+If, in addition, its parent holds no
+.Xr waitpid 2
+reference to it (for example because it was created by
+.Xr pdfork 2
+with
+.Dv PD_NOWAITPID ) ,
+the process is reparented to its reaper so that its exit status can
+still be collected.
 .It
 If any other process closes a descriptor, and that file was not created
 with
@@ -118,11 +126,15 @@ message is discarded.
 .It
 When the last file referencing the process descriptor is closed by a
 process other than the described one, the process is detached from the
-descriptor and reparented to its reaper so that its exit status is
+descriptor and, unless its parent still holds a
+.Xr waitpid 2
+reference to it, reparented to its reaper so that its exit status is
 collected normally.
 .It
 If the described process has already exited and is a zombie, closing the
-descriptor reaps it.
+last descriptor reaps it, unless its parent still holds a
+.Xr waitpid 2
+reference; the zombie then remains until the parent collects it.
 .El
 .Pp
 A supervisor that should not terminate the caller merely by closing its
