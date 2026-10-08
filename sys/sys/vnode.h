@@ -693,15 +693,6 @@ void	cache_enter_time(struct vnode *dvp, struct vnode *vp,
 	    struct timespec *dtsp);
 int	cache_lookup(struct vnode *dvp, struct vnode **vpp,
 	    struct componentname *cnp, struct timespec *tsp, int *ticksp);
-int cache_path_access(struct vnode *, struct vnode *, uint64_t,
-    uint64_t (*)(struct vnode *, void *), void *, struct vnode **, uint64_t *);
-struct vnode_path_pair_access {
-	uint64_t source_parent, target_parent, source_object, target_object;
-};
-int cache_path_pair_access(struct vnode *, struct vnode *, struct vnode *,
-    struct vnode *, uint64_t, uint64_t (*)(struct vnode *, void *), void *,
-    struct vnode_path_pair_access *, struct vnode **);
-int cache_path_prepare(struct vnode *);
 int	cache_parent_name(struct vnode *, struct vnode **, char *, size_t *);
 void	cache_vnode_init(struct vnode *vp);
 void	cache_purge(struct vnode *vp);
@@ -713,12 +704,6 @@ void	cache_symlink_free(char *string, size_t size);
 int	cache_symlink_resolve(struct cache_fpl *fpl, const char *string,
 	    size_t len);
 void	cache_vop_inotify(struct vnode *vp, int event, uint32_t cookie);
-void	cache_vop_exchange(struct vnode *fdvp, struct vnode *fvp,
-	    struct vnode *tdvp, struct vnode *tvp, struct componentname *fcnp,
-	    struct componentname *tcnp);
-int	vn_rename_exchange_check(struct vnode *fdvp, struct vnode *fvp,
-	    struct vnode *tdvp, struct vnode *tvp, struct componentname *fcnp,
-	    struct componentname *tcnp);
 void	cache_vop_rename(struct vnode *fdvp, struct vnode *fvp, struct vnode *tdvp,
     struct vnode *tvp, struct componentname *fcnp, struct componentname *tcnp);
 void	cache_vop_rmdir(struct vnode *dvp, struct vnode *vp);
