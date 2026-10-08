@@ -109,6 +109,9 @@ vm_snapshot_buf_err(const char *bufname __unused,
 {
 }
 
+/* vmm_lapic.h names struct trapframe, which userland never defines. */
+struct trapframe;
+
 #include "../../../../sys/amd64/vmm/io/vioapic.c"
 
 /*
