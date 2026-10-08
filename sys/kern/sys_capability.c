@@ -153,8 +153,11 @@ SDT_PROBE_DEFINE4(capsicum, , , signal__capmode__deny,
  * Process-descriptor lifecycle: a process is a capability referenced by an
  * fd.  pdfork: a new described process (parent pid, child pid, flags).
  * pdkill: a signal delivered via a descriptor, bypassing p_cansignal
- * (fd, target pid, signal).  pdclose: last close on a descriptor
- * (target pid, pd_flags, killed).
+ * (fd, target pid, signal).  pdclose: a descriptor for a live process was
+ * closed by a process other than the one it describes; fires on every such
+ * close, not only the last one, since kill-on-close is per file
+ * (target pid, pd_flags, killed: 1 if SIGKILL was sent, 0 for a PD_DAEMON
+ * file).
  */
 SDT_PROBE_DEFINE3(capsicum, , , pdfork, "pid_t", "pid_t", "int");
 SDT_PROBE_DEFINE3(capsicum, , , pdkill, "int", "pid_t", "int");

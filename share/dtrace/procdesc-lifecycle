@@ -6,8 +6,11 @@
  *
  * procdesc-lifecycle -- trace process descriptor lifecycle events.
  *
- * Watches procdesc_knote calls to show when process descriptors fire
- * kevent notifications (exit, fork, exec, capmode transitions).
+ * Watches the kernel paths that raise EVFILT_PROCDESC notifications
+ * (exit, fork, exec, reap, and the 5BSD capmode/jail/setuid/chroot
+ * transitions) together with the 5BSD procdesc system calls.
+ *
+ * Hint values must match <sys/event.h>.
  *
  * Usage: procdesc-lifecycle
  */
@@ -20,18 +23,44 @@ dtrace:::BEGIN
 	    "PID", "COMMAND", "EVENT", "DETAIL");
 }
 
+/* NOTE_EXEC and the 5BSD-specific hints. */
 fbt::procdesc_knote:entry
+/((struct proc *)arg0)->p_procdesc != NULL/
 {
-	this->hint = arg1;
+	this->hint = (uint32_t)arg1;
 
 	printf("%-6d %-16s %-12s hint=0x%x\n",
 	    pid, execname,
-	    this->hint == 0x00000001 ? "EXIT" :
-	    this->hint == 0x00000002 ? "FORK" :
-	    this->hint == 0x00000004 ? "EXEC" :
-	    this->hint == 0x10000000 ? "CAPMODE" :
+	    this->hint == 0x20000000 ? "EXEC" :
+	    this->hint == 0x00100000 ? "CAPMODE" :
+	    this->hint == 0x00200000 ? "JAILED" :
+	    this->hint == 0x00400000 ? "SETUID" :
+	    this->hint == 0x00800000 ? "CHROOT" :
 	    "OTHER",
 	    this->hint);
+}
+
+/* NOTE_FORK (0x40000000): raised by procdesc_fork() in the parent. */
+fbt::procdesc_fork:entry
+/((struct proc *)arg0)->p_procdesc != NULL/
+{
+	printf("%-6d %-16s %-12s child=%d\n",
+	    pid, execname, "FORK", (int)arg1);
+}
+
+/* NOTE_EXIT | NOTE_PDSIGCHLD (0x80000000 | 0x10000000). */
+fbt::procdesc_exit:entry
+/((struct proc *)arg0)->p_procdesc != NULL/
+{
+	printf("%-6d %-16s %-12s\n",
+	    pid, execname, "EXIT");
+}
+
+/* NOTE_REAP (0x04000000): raised when the described process is reaped. */
+fbt::procdesc_reap:entry
+{
+	printf("%-6d %-16s %-12s pid=%d\n",
+	    pid, execname, "REAP", ((struct proc *)arg0)->p_pid);
 }
 
 syscall::pdself:entry
@@ -41,10 +70,10 @@ syscall::pdself:entry
 }
 
 syscall::pdself:return
-/arg1 == 0/
+/errno == 0/
 {
-	printf("%-6d %-16s %-12s fd=%d\n",
-	    pid, execname, "PDSELF-OK", arg0);
+	printf("%-6d %-16s %-12s\n",
+	    pid, execname, "PDSELF-OK");
 }
 
 syscall::pdcmp:entry
