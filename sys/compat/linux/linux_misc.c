@@ -3859,7 +3859,8 @@ linux_process_vm_rw(struct thread *td, l_pid_t pid,
 				}
 				riov.iov_len = local_moved;
 				ruio.uio_resid = local_moved;
-				error = proc_rwmem(p, &ruio);
+				error = proc_rwmem(p, &ruio,
+				    PRVM_CHECK_DEBUG | PRVM_BLOCK_EXEC);
 				remote_moved = local_moved - ruio.uio_resid;
 				done += remote_moved;
 				raddr += remote_moved;
@@ -3871,7 +3872,8 @@ linux_process_vm_rw(struct thread *td, l_pid_t pid,
 			} else {
 				/* readv: remote → buf → local */
 				ruio.uio_rw = UIO_READ;
-				error = proc_rwmem(p, &ruio);
+				error = proc_rwmem(p, &ruio,
+				    PRVM_CHECK_DEBUG | PRVM_BLOCK_EXEC);
 				remote_moved = chunk - ruio.uio_resid;
 				if (remote_moved == 0)
 					break;
