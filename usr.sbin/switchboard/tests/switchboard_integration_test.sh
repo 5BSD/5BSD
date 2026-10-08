@@ -327,7 +327,7 @@ audit_records_best_effort_body()
 	local attempts=0
 	while [ "$attempts" -lt 30 ]; do
 		# Filter the event type: execve audit arguments can quote our grep.
-		auditreduce -m 43322 "${audit_prefix}".* 2>/dev/null | praudit -l > audit-records.out
+		auditreduce -m 43948 "${audit_prefix}".* 2>/dev/null | praudit -l > audit-records.out
 		if grep -F "svc=org.test.audsvc/audsvc pid=$(cat audsvc.pid) " audit-records.out; then
 			return 0
 		fi

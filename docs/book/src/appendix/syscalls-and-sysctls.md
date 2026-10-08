@@ -33,7 +33,8 @@ it implies `CAPENABLED`). Today one call carries it.
 
 Numbers 1000 to 1011 (twelve calls) belong to the capability core.
 5BSD-local calls start at 1000 so that FreeBSD, which allocates upward
-from 603, cannot collide with them; 603 to 999 are left to FreeBSD.
+(its newest calls are 603 `pdopenpid` and 604 `pddupfd`), cannot collide
+with them; everything below 1000 is left to FreeBSD.
 Their libsys stubs are exported at `FBSD_1.9`
 (`lib/libsys/Symbol.sys.map`), alongside the upstream `pdrfork`,
 `pdrfork_thread` and `renameat2` that the baseline already exported there.

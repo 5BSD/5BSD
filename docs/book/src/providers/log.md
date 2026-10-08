@@ -204,7 +204,7 @@ budget advance the sequence but never reach the store, and they are counted
 as filtered and rate-limited respectively, distinct from malformed records
 and client-ring loss. Ring exhaustion never overwrites an unread record.
 Session creation and rejected records are audited through
-[system.Audit](audit.md) as `AUE_LOGCMP_POLICY` (43331). Admin sessions
+[system.Audit](audit.md) as `AUE_LOGCMP_POLICY` (43957). Admin sessions
 have no bypass: `SERVICE_RIGHTS_ADMIN` does not widen a query to another
 label.
 

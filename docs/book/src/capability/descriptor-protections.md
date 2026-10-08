@@ -20,17 +20,17 @@ semantics is the man page in `lib/libsys` and the implementation in
 
 | Call (number) | What it does | Who calls it in the tree | Man page |
 |---|---|---|---|
-| `cap_xfer_limit(fd, state)` (603) | sets transfer state `CAP_XFER_UNLIMITED`, `ONCE` or `NONE`; `ONCE` becomes `NONE` on the first successful send; tightening only | switchboard (channel ends, coalition, capprotect, bootstrap), capsule, libservice, libcapability `capability_confine_fd()`, every `lib*cmp` client | cap_xfer_limit(2) |
-| `cap_xfer_rights_limit(fd, rights)` (606) | ceiling on the rights a receiver gets after a permitted transfer; the sender is unchanged | no plane component yet; tests only | cap_xfer_rights_limit(2) |
-| `cap_xfer_ioctls_limit(fd, cmds, n)` (607) | the same ceiling for the ioctl allowlist (effective only if the rights ceiling keeps `CAP_IOCTL`) | tests only | cap_xfer_rights_limit(2) |
-| `cap_xfer_fcntls_limit(fd, mask)` (608) | the same ceiling for `CAP_FCNTL_*` | tests only | cap_xfer_rights_limit(2) |
-| `cap_cloexec_limit(fd, state)` (604) | `UNLOCKED`, `ONCE` (survive one exec, then locked) or `LOCKED` (closed on exec regardless of `FD_CLOEXEC`) | switchboard, capsule, libchannel (its private dup), libservice, client libraries, BSDBluetooth | cap_cloexec_limit(2) |
-| `cap_clofork_limit(fd, state)` (605) | `UNLOCKED`, `ONCE` (one child inherits, then both entries locked) or `LOCKED` (skipped at fork regardless of `FD_CLOFORK`) | switchboard, capsule, libchannel, libservice, sshd session, client libraries | cap_clofork_limit(2) |
-| `cap_mmap_capmode(fd)` (634) | monotone flag: the descriptor may be `mmap(2)`ed only from capability mode | `caph_mmap_capmode()` helper only | cap_mmap_capmode(2) |
-| `cap_lookup_capmode(fd)` (635) | monotone flag: a directory descriptor may be a `*at(2)` `dirfd` only from capability mode | `caph_lookup_capmode()` helper only | cap_lookup_capmode(2) |
-| `pdself(&fd, flags)` (630) | a process descriptor for the caller; `PDF_SELF` close semantics; `EBUSY` if one exists; capability mode only | tests only | pdself(2) |
-| `pdcmp(fd1, fd2, &r)` (631) | do two process descriptors name the same process; needs `CAP_PDGETPID` | tests only | pdcmp(2) |
-| `pdincapmode(fd)` (633) | is the described process in capability mode | switchboard (launch and supervision) | pdincapmode(2) |
+| `cap_xfer_limit(fd, state)` (1000) | sets transfer state `CAP_XFER_UNLIMITED`, `ONCE` or `NONE`; `ONCE` becomes `NONE` on the first successful send; tightening only | switchboard (channel ends, coalition, capprotect, bootstrap), capsule, libservice, libcapability `capability_confine_fd()`, every `lib*cmp` client | cap_xfer_limit(2) |
+| `cap_xfer_rights_limit(fd, rights)` (1003) | ceiling on the rights a receiver gets after a permitted transfer; the sender is unchanged | no plane component yet; tests only | cap_xfer_rights_limit(2) |
+| `cap_xfer_ioctls_limit(fd, cmds, n)` (1004) | the same ceiling for the ioctl allowlist (effective only if the rights ceiling keeps `CAP_IOCTL`) | tests only | cap_xfer_rights_limit(2) |
+| `cap_xfer_fcntls_limit(fd, mask)` (1005) | the same ceiling for `CAP_FCNTL_*` | tests only | cap_xfer_rights_limit(2) |
+| `cap_cloexec_limit(fd, state)` (1001) | `UNLOCKED`, `ONCE` (survive one exec, then locked) or `LOCKED` (closed on exec regardless of `FD_CLOEXEC`) | switchboard, capsule, libchannel (its private dup), libservice, client libraries, BSDBluetooth | cap_cloexec_limit(2) |
+| `cap_clofork_limit(fd, state)` (1002) | `UNLOCKED`, `ONCE` (one child inherits, then both entries locked) or `LOCKED` (skipped at fork regardless of `FD_CLOFORK`) | switchboard, capsule, libchannel, libservice, sshd session, client libraries | cap_clofork_limit(2) |
+| `cap_mmap_capmode(fd)` (1009) | monotone flag: the descriptor may be `mmap(2)`ed only from capability mode | `caph_mmap_capmode()` helper only | cap_mmap_capmode(2) |
+| `cap_lookup_capmode(fd)` (1010) | monotone flag: a directory descriptor may be a `*at(2)` `dirfd` only from capability mode | `caph_lookup_capmode()` helper only | cap_lookup_capmode(2) |
+| `pdself(&fd, flags)` (1006) | a process descriptor for the caller; if one already exists, another descriptor for it; closing a descriptor for oneself never kills; capability mode only | tests only | pdself(2) |
+| `pdcmp(fd1, fd2, &r)` (1007) | do two process descriptors name the same process; needs `CAP_PDGETPID` | tests only | pdcmp(2) |
+| `pdincapmode(fd)` (1008) | is the described process in capability mode | switchboard (launch and supervision) | pdincapmode(2) |
 | `envfd_create(name, opts)` | a descriptor holding one named value, with atomic replace, `ENVFD_WRITE_ONCE` sealing, `ENVFD_CAPMODE_ONLY`, and transfer and propagation states installed atomically | switchboard (the bootstrap descriptor); libservice reads it | envfd(2) |
 | `mac_capability_channel_create(fds)` (dynamic number) | a self-owned connected endpoint pair with no service and no authority | libchannel, libservice (private lookup channel) | mac_capability_channel(4), libchannel(3) |
 

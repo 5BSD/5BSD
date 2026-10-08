@@ -114,14 +114,14 @@ auth_agent_event_contract_body()
 		    "{ \"${provider}\", NULL, " "${policy}"
 	done
 	atf_check -s exit:0 -o ignore grep -E \
-	    '^#define[[:space:]]+AUE_AUTHAGENT_ELEVATE[[:space:]]+43335([[:space:]]|$)' \
+	    '^#define[[:space:]]+AUE_AUTHAGENT_ELEVATE[[:space:]]+43961([[:space:]]|$)' \
 	    "${kevents}"
 	atf_check -s exit:0 -o ignore grep -E \
-	    '^#define[[:space:]]+AUE_AUTHAGENT_MINT[[:space:]]+43336([[:space:]]|$)' \
+	    '^#define[[:space:]]+AUE_AUTHAGENT_MINT[[:space:]]+43962([[:space:]]|$)' \
 	    "${kevents}"
-	atf_check -s exit:0 -o ignore grep '^43335:AUE_AUTHAGENT_ELEVATE:' \
+	atf_check -s exit:0 -o ignore grep '^43961:AUE_AUTHAGENT_ELEVATE:' \
 	    "${events}"
-	atf_check -s exit:0 -o ignore grep '^43336:AUE_AUTHAGENT_MINT:' \
+	atf_check -s exit:0 -o ignore grep '^43962:AUE_AUTHAGENT_MINT:' \
 	    "${events}"
 }
 

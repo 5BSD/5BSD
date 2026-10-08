@@ -65,8 +65,8 @@ ATF_TC_WITHOUT_HEAD(retired_auth_identity_denied);
 ATF_TC_BODY(retired_auth_identity_denied, tc)
 {
 	(void)tc;
-	ATF_CHECK_EQ(43335, AUE_AUTHAGENT_ELEVATE);
-	ATF_CHECK_EQ(43336, AUE_AUTHAGENT_MINT);
+	ATF_CHECK_EQ(43961, AUE_AUTHAGENT_ELEVATE);
+	ATF_CHECK_EQ(43962, AUE_AUTHAGENT_MINT);
 	ATF_CHECK_EQ(0, auditcmp_policy_event("system.Auth"));
 	ATF_CHECK_EQ(0, auditcmp_policy_event("system.Auth/bsdauth"));
 	ATF_CHECK_EQ(0, auditcmp_policy_operation_event("system.Auth",

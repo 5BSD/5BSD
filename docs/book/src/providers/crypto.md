@@ -174,7 +174,7 @@ states the boundary exactly. Owner scoping is not a policy entry but an
 invariant: the owner is the channel label. There is no admin bypass and no
 per-label allow-list; any unit that can resolve `system.Crypto` may mint
 within the profile set, and every request is audited through
-[system.Audit](audit.md) as `AUE_CRYPTOCMP_POLICY` (43334), metadata only.
+[system.Audit](audit.md) as `AUE_CRYPTOCMP_POLICY` (43960), metadata only.
 
 ## Tests
 

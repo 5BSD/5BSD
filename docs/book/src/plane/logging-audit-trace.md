@@ -136,9 +136,9 @@ can write a userland record and how a sandboxed daemon does it.
 process in capability mode may submit a fully formed record, but it keeps
 its root privilege check (`PRIV_AUDIT_SUBMIT`) and jail prohibition. A
 provider that runs as root and is born in capability mode, such as BSDTrace,
-therefore calls `audit_submit(3)` directly (`AUE_TRACECMP_POLICY`, 43332).
+therefore calls `audit_submit(3)` directly (`AUE_TRACECMP_POLICY`, 43958).
 Switchboard, which is not sandboxed, does the same for its own events
-(43320 through 43328).
+(43946 through 43954).
 
 A provider that runs as the `capability` user cannot. For it there is
 BSDAudit, the submit-only broker at `system.Audit`: `auditcmp_client_open`,
@@ -191,12 +191,12 @@ they are worth knowing because they recur in any new provider.
 
 | Event | Number | Source |
 |---|---|---|
-| `AUE_SWITCHBOARD_CTL` | 43321 | every control operation, allowed or refused |
-| `AUE_SWITCHBOARD_COMPONENT` | 43327 | every session mint |
-| `AUE_SWITCHBOARD_ANOINT` | 43328 | every attribute refusal |
-| `AUE_TRACECMP_POLICY` | 43332 | BSDTrace delegation, denial and session bootstrap |
-| `AUE_BSDNOTIFY_POLICY` | 43333 | BSDNotify refusals and tier mismatches |
-| `AUE_AUTHAGENT_ELEVATE`, `AUE_AUTHAGENT_MINT` | 43335, 43336 | reserved historical IDs for retired elevation and session minting |
+| `AUE_SWITCHBOARD_CTL` | 43947 | every control operation, allowed or refused |
+| `AUE_SWITCHBOARD_COMPONENT` | 43953 | every session mint |
+| `AUE_SWITCHBOARD_ANOINT` | 43954 | every attribute refusal |
+| `AUE_TRACECMP_POLICY` | 43958 | BSDTrace delegation, denial and session bootstrap |
+| `AUE_BSDNOTIFY_POLICY` | 43959 | BSDNotify refusals and tier mismatches |
+| `AUE_AUTHAGENT_ELEVATE`, `AUE_AUTHAGENT_MINT` | 43961, 43962 | reserved historical IDs for retired elevation and session minting |
 
 The complete list is in `sys/bsm/audit_kevents.h`. BSDLog submits a record
 for a refused request (`AUE_LOGCMP_POLICY`), never for each ordinary log

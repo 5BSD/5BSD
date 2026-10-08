@@ -82,10 +82,10 @@ part of the caller's label to its admitted event:
 
 | Caller | Operation prefix | Event |
 |---|---|---|
-| `system.Log` | any | `AUE_LOGCMP_POLICY` (43331) |
-| `system.Network` | any | `AUE_NETWORKCMP_POLICY` (43329) |
-| `system.Notify` | any | `AUE_BSDNOTIFY_POLICY` (43333) |
-| `system.Crypto` | any | `AUE_CRYPTOCMP_POLICY` (43334) |
+| `system.Log` | any | `AUE_LOGCMP_POLICY` (43957) |
+| `system.Network` | any | `AUE_NETWORKCMP_POLICY` (43955) |
+| `system.Notify` | any | `AUE_BSDNOTIFY_POLICY` (43959) |
+| `system.Crypto` | any | `AUE_CRYPTOCMP_POLICY` (43960) |
 
 A per-operation provider whose operation matches no prefix keeps its
 admission event, so a record is never dropped for its operation text.
@@ -136,7 +136,7 @@ request.
 
 There is no ctl tool. The reader side is the stock OpenBSM tooling: `praudit
 /var/audit/current` shows the committed records, and `auditreduce -m
-43331` selects the log-policy event class. A submitter's own counters are available
+43957` selects the log-policy event class. A submitter's own counters are available
 through `auditcmp_stats(3)`; nothing on the command line submits a record
 by hand, which is the point.
 
