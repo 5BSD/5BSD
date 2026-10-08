@@ -1133,7 +1133,7 @@ grep -Eq '^#define[[:space:]]+VTBALLOON_PFNS_PER_REQUEST[[:space:]]+256$' \
 grep -Eq '^static unsigned int vt9p_ackmaxidle = 120;$' "$virtio_p9_guest" &&
     grep -q 'deadline = timeout > SBT_MAX - now ? SBT_MAX : now + timeout' \
     "$virtio_p9_guest" &&
-    grep -q 'if (req->tc->tag == req->rc->tag)' "$virtio_p9_guest" &&
+    grep -q 'if (req->tc.tag == req->rc.tag)' "$virtio_p9_guest" &&
     grep -q 'remaining = deadline - sbinuptime()' "$virtio_p9_guest" &&
     grep -q 'vt9p_fail_locked(chan)' "$virtio_p9_guest" || {
 	echo "virtio private interfaces: 9P request wait is not an absolute predicate loop" >&2
