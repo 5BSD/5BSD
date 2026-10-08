@@ -20,7 +20,7 @@ is not a pass.
 | Tier | What it can prove | How you get there |
 |---|---|---|
 | In-session | protocol encoding, parsers, client libraries, device models with mocked rings; root cases skip | `kyua test` in the object tree or `/usr/tests` |
-| VM, plane on | providers over a real channel, capsule and switchboard lifecycle, software attributes, container reclaim | a guest booted with capsule as PID 1 |
+| VM, plane on | providers over a real channel, capsule and switchboard lifecycle, software attributes, container reclaim | a guest booted with capsule as PID 1 and `kern.mac_capability_isolation.enforce=0` |
 | VM, plane off | kernel `mac_capability` services, TrustedZFS handles, raw provider transports that must own `/dev/mac_capability` | `capability_plane="NO"` in loader.conf, stock init runs |
 | QEMU or bhyve gate | Linux ABI, OES, mac_abac, WASPNest devices; the host builds, the guest is the only evidence | `tools/test/*-qemu`, `tools/test/linuxulator`, `tests/waspnest` |
 
@@ -167,6 +167,21 @@ proofs need capsule as PID 1. The in-tree guest rig is
 a bootable image with `init_path="/sbin/capsule:/sbin/init:/rescue/init"`, and
 `boot-qemu.sh IMG [rw]`, which boots it under QEMU TCG with the serial
 console on TCP 4321 and a disk snapshot unless `rw` is given.
+
+Capsule claims `/dev/mac_capability` through the isolation service as soon as
+the plane starts, and that claim refuses every other process, root included,
+both `open(2)` and `stat(2)` (`EACCES`). A provider test opens the device to
+make its own channel, so on a normally booted plane it skips with "capability
+plane unavailable: /dev/mac_capability: Permission denied". A plane-on test
+image therefore also sets `kern.mac_capability_isolation.enforce=0` in
+`/boot/loader.conf` (boot-only, see [Boot Knobs](../operations/boot-knobs.md)):
+the resource-access denial is traced and allowed, while ownership denials stay
+enforced, so a test can open the device but cannot take over or release
+Capsule's claim. For the same reason the suites that start a test-local
+Capsule and switchboard (`capd_start_stack`, `capd_launch_capsule`) skip with
+"claimed by the live plane" in this tier; they run in a guest with no Capsule
+running, which is what `run_capsule_switchboard_capability_tests.sh` below
+requires.
 
 The focused cross-daemon suite is run by
 `usr.sbin/switchboard/tests/run_capsule_switchboard_capability_tests.sh [-o objtop] [-r results-directory]`

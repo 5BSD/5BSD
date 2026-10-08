@@ -45,9 +45,18 @@ struct fixture {
 static void
 require_capability_device(void)
 {
+	int fd;
 
-	if (access("/dev/mac_capability", F_OK) != 0)
-		atf_tc_skip("mac_capability device not available");
+	/*
+	 * Probe with the open the fixture needs: on a live plane the node
+	 * exists but Capsule's claim refuses the open unless the image boots
+	 * with kern.mac_capability_isolation.enforce=0.
+	 */
+	fd = open("/dev/mac_capability", O_RDWR | O_CLOEXEC);
+	if (fd < 0)
+		atf_tc_skip("capability plane unavailable: /dev/mac_capability: "
+		    "%s", strerror(errno));
+	close(fd);
 }
 
 static int
