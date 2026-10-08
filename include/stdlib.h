@@ -172,8 +172,6 @@ _Noreturn void
  * C23 extensions
  */
 #if __ISO_C_VISIBLE >= 2023
-void	free_sized(void *, size_t);
-void	free_aligned_sized(void *, size_t, size_t);
 size_t	memalignment(const void *) __pure2;
 void	free_sized(void *, size_t) __noexcept;
 void	free_aligned_sized(void *, size_t, size_t) __noexcept;
