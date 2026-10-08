@@ -34,12 +34,7 @@ SRCTREE_FILES=	docs/book/tools/check-book.sh \
 		usr.sbin/bsdinstall/bsdinstall.8 \
 		${BOOK_FILES} \
 		${BOOK_HEADERS}
-.for _dir in ${SRCTREE_FILES:H:O:u}
-FILESGROUPS+=	SRCTREE_${_dir:S,/,_,g}
-SRCTREE_${_dir:S,/,_,g}=	${SRCTREE_FILES:M${_dir}/*:N${_dir}/*/*:S,^,${SRCTOP}/,}
-SRCTREE_${_dir:S,/,_,g}DIR=	${TESTSDIR}/srctree/${_dir}
-SRCTREE_${_dir:S,/,_,g}PACKAGE=	${PACKAGE}
-.endfor
+.include "${SRCTOP}/tests/srctree.mk"
 
 CHECK_BOOK=	sh ${SRCTOP}/docs/book/tools/check-book.sh
 ${PACKAGE}FILES+=	book-man-pages book-sysctls

@@ -50,11 +50,6 @@ SRCTREE_FILES=	contrib/openbsm/etc/audit_event \
 		usr.sbin/BSDAudit/auditcmp_policy.h \
 		usr.sbin/BSDAudit/bsdaudit_provider.d \
 		usr.sbin/BSDAudit/capbundle/bsdaudit.ucl
-.for _dir in ${SRCTREE_FILES:H:O:u}
-FILESGROUPS+=	SRCTREE_${_dir:S,/,_,g}
-SRCTREE_${_dir:S,/,_,g}=	${SRCTREE_FILES:M${_dir}/*:N${_dir}/*/*:S,^,${SRCTOP}/,}
-SRCTREE_${_dir:S,/,_,g}DIR=	${TESTSDIR}/srctree/${_dir}
-SRCTREE_${_dir:S,/,_,g}PACKAGE=	${PACKAGE}
-.endfor
+.include "${SRCTOP}/tests/srctree.mk"
 
 .include <bsd.test.mk>
