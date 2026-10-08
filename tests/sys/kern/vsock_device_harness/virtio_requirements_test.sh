@@ -1,5 +1,26 @@
 #!/usr/libexec/atf-sh
 
+# The requirements audit traces production sources, so it needs a source tree
+# matching the installed suite (the validator looks beside the tests, then
+# /usr/src) and ripgrep.  Skip, rather than fail, when either is absent.
+# Cases that copy the tests elsewhere pass audit_source_root explicitly so the
+# copy is audited against the same tree.
+require_audit_source()
+{
+	local srcdir candidate
+
+	atf_require_prog rg
+	srcdir="$(atf_get_srcdir)"
+	for candidate in "$srcdir/../../../.." /usr/src; do
+		if [ -r "$candidate/sys/dev/virtio/mmio/virtio_mmio.c" ] &&
+		    [ -r "$candidate/usr.sbin/bhyve/virtio.c" ]; then
+			audit_source_root=$candidate
+			return
+		fi
+	done
+	atf_skip "requires a source tree matching the installed test suite"
+}
+
 atf_test_case catalog
 catalog_head()
 {
@@ -22,6 +43,7 @@ source_tree_required_body()
 }
 catalog_body()
 {
+	require_audit_source
 	atf_check -s exit:0 -o match:"entries validated" \
 	    "$(atf_get_srcdir)/validate-virtio-requirements.sh" \
 	    "$(atf_get_srcdir)/virtio-1.4-requirements.tsv" \
@@ -35,6 +57,7 @@ bad_test_reference_head()
 }
 bad_test_reference_body()
 {
+	require_audit_source
 	catalog="$(atf_get_srcdir)/virtio-1.4-requirements.tsv"
 	broken="$(pwd)/broken-requirements.tsv"
 
@@ -206,6 +229,7 @@ bad_evidence_reference_head()
 }
 bad_evidence_reference_body()
 {
+	require_audit_source
 	catalog="$(atf_get_srcdir)/virtio-1.4-requirements.tsv"
 	broken="$(pwd)/broken-evidence.tsv"
 
@@ -224,6 +248,7 @@ activation_requires_host_evidence_head()
 }
 activation_requires_host_evidence_body()
 {
+	require_audit_source
 	srcdir="$(atf_get_srcdir)"
 	catalog="$srcdir/virtio-feature-activation.tsv"
 	broken="$(pwd)/broken-activation.tsv"
@@ -244,6 +269,7 @@ activation_guests_are_independent_head()
 }
 activation_guests_are_independent_body()
 {
+	require_audit_source
 	srcdir="$(atf_get_srcdir)"
 	catalog="$srcdir/virtio-feature-activation.tsv"
 	broken="$(pwd)/broken-activation.tsv"
@@ -264,6 +290,7 @@ activation_requires_scheduled_case_head()
 }
 activation_requires_scheduled_case_body()
 {
+	require_audit_source
 	srcdir="$(atf_get_srcdir)"
 	catalog="$srcdir/virtio-feature-activation.tsv"
 	broken="$(pwd)/broken-activation.tsv"
@@ -284,6 +311,7 @@ activation_rejects_unscheduled_case_head()
 }
 activation_rejects_unscheduled_case_body()
 {
+	require_audit_source
 	srcdir="$(atf_get_srcdir)"
 	catalog="$srcdir/virtio-feature-activation.tsv"
 	broken="$(pwd)/broken-activation.tsv"
@@ -304,6 +332,7 @@ activation_rejects_unknown_assertion_head()
 }
 activation_rejects_unknown_assertion_body()
 {
+	require_audit_source
 	srcdir="$(atf_get_srcdir)"
 	catalog="$srcdir/virtio-feature-activation.tsv"
 	broken="$(pwd)/broken-activation.tsv"
@@ -326,6 +355,7 @@ self_confirming_endian_expectation_head()
 }
 self_confirming_endian_expectation_body()
 {
+	require_audit_source
 	local_work=$(mktemp -d "${TMPDIR:-/tmp}/virtio-requirements.XXXXXX") || \
 		atf_fail "cannot create isolated requirements fixture"
 	trap 'rm -rf "$local_work"' EXIT HUP INT TERM
@@ -370,7 +400,7 @@ self_confirming_endian_expectation_body()
 	atf_check -s exit:1 -o ignore \
 	    -e match:"guest endian expectation reuses a production conversion helper" \
 	    "$srcdir/validate-virtio-requirements.sh" \
-	    "$srcdir/virtio-1.4-requirements.tsv" "$broken"
+	    "$srcdir/virtio-1.4-requirements.tsv" "$broken" "$audit_source_root"
 }
 
 atf_init_test_cases()
