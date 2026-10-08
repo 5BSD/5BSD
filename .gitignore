@@ -71,5 +71,5 @@ __pycache__/
 /tests/**/default.profraw
 /tests/sys/vmm/created_jails.lst
 /tests/sys/kern/helper
-/tests/usr.sbin/bluetooth/blued/fuzz/corpus/
-/tests/usr.sbin/bluetooth/blued/fuzz/smoke/
+/tests/usr.sbin/bluetooth/BSDBluetooth/fuzz/corpus/
+/tests/usr.sbin/bluetooth/BSDBluetooth/fuzz/smoke/
