@@ -123,8 +123,7 @@ not reaped until the
 .Xr waitpid 2
 call is performed on the child' PID.
 Setting the
-.Dv
-kern.pdfork_implicit_nowaitpid
+.Va kern.pdfork_implicit_nowaitpid
 sysctl MIB to
 .Dv true
 makes the system behave as if the flag is always passed.
@@ -589,6 +588,7 @@ The process called
 on the process descriptor that does not have the
 .Dv CAP_PTRACE
 capability enabled.
+.El
 .Sh SEE ALSO
 .Xr cap_cloexec_limit 2 ,
 .Xr cap_xfer_limit 2 ,
