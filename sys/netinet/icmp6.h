@@ -319,8 +319,10 @@ struct nd_opt_prefix_info {	/* prefix information */
 	struct in6_addr	nd_opt_pi_prefix;
 } __packed;
 
-#define ND_OPT_PI_FLAG_ONLINK		0x80
-#define ND_OPT_PI_FLAG_AUTO		0x40
+#define ND_OPT_PI_FLAG_ONLINK		0x80	/* RFC 4861 */
+#define ND_OPT_PI_FLAG_AUTO		0x40	/* RFC 4861 */
+#define ND_OPT_PI_FLAG_ROUTER		0x20	/* RFC 6275 */
+#define ND_OPT_PI_FLAG_DHCP6PD		0x10	/* RFC 9762 */
 
 struct nd_opt_rd_hdr {		/* redirected header */
 	u_int8_t	nd_opt_rh_type;

@@ -96,6 +96,11 @@ em_dump_rs(struct e1000_softc *sc)
 	int16_t rs_cidx;
 	uint8_t status;
 
+	if (sc->tx_queues == NULL) {
+		device_printf(sc->dev, "queue state is unavailable\n");
+		return;
+	}
+
 	printf("\n");
 	ntxd = scctx->isc_ntxd[0];
 	for (qid = 0; qid < sc->tx_num_queues; qid++) {
@@ -461,10 +466,27 @@ em_isc_txd_encap(void *arg, if_pkt_info_t pi)
 	    first, pidx_last, i);
 	pi->ipi_new_pidx = i;
 
-	/* Sent data accounting for AIM */
+	/*
+	 * Sent data accounting for AIM.  For TSO, ipi_len is the whole
+	 * unsegmented payload, which is not a size the moderation
+	 * calculation can use.  Count the segments the hardware will put on
+	 * the wire and the header each of them carries, so that the average
+	 * it sees is a wire packet.
+	 */
+	if (do_tso && pi->ipi_tso_segsz != 0) {
+		u32 hdrlen, segs;
+
+		hdrlen = pi->ipi_ehdrlen + pi->ipi_ip_hlen + pi->ipi_tcp_hlen;
+		if (pi->ipi_len > hdrlen) {
+			segs = howmany(pi->ipi_len - hdrlen, pi->ipi_tso_segsz);
+			txr->tx_bytes += pi->ipi_len + (segs - 1) * hdrlen;
+			txr->tx_packets += segs;
+			return (0);
+		}
+	}
+
 	txr->tx_bytes += pi->ipi_len;
 	++txr->tx_packets;
-
 	return (0);
 }
 
@@ -476,6 +498,8 @@ em_isc_txd_flush(void *arg, uint16_t txqid, qidx_t pidx)
 	struct tx_ring *txr = &que->txr;
 
 	E1000_WRITE_REG(&sc->hw, E1000_TDT(txr->me), pidx);
+	if (sc->hw.mac.type >= e1000_82540)
+		em_aim_publish(txr);
 }
 
 static int
@@ -601,6 +625,8 @@ em_isc_rxd_flush(void *arg, uint16_t rxqid, uint8_t flid __unused,
 	struct rx_ring *rxr = &que->rxr;
 
 	E1000_WRITE_REG(&sc->hw, E1000_RDT(rxr->me), pidx);
+	if (sc->hw.mac.type >= e1000_82540)
+		em_aim_publish_rx(rxr);
 }
 
 static int
@@ -679,7 +705,6 @@ lem_isc_rxd_pkt_get(void *arg, if_rxd_info_t ri)
 
 		len = le16toh(rxd->length);
 		ri->iri_len += len;
-		rxr->rx_bytes += ri->iri_len;
 
 		eop = (status & E1000_RXD_STAT_EOP) != 0;
 
@@ -701,6 +726,7 @@ lem_isc_rxd_pkt_get(void *arg, if_rxd_info_t ri)
 		i++;
 	} while (!eop);
 
+	rxr->rx_bytes += ri->iri_len;
 	rxr->rx_packets++;
 
 	if (scctx->isc_capenable & IFCAP_RXCSUM)
@@ -745,7 +771,6 @@ em_isc_rxd_pkt_get(void *arg, if_rxd_info_t ri)
 
 		len = le16toh(rxd->wb.upper.length);
 		ri->iri_len += len;
-		rxr->rx_bytes += ri->iri_len;
 
 		eop = (staterr & E1000_RXD_STAT_EOP) != 0;
 
@@ -766,6 +791,7 @@ em_isc_rxd_pkt_get(void *arg, if_rxd_info_t ri)
 		i++;
 	} while (!eop);
 
+	rxr->rx_bytes += ri->iri_len;
 	rxr->rx_packets++;
 
 	if (scctx->isc_capenable & IFCAP_RXCSUM)
@@ -835,6 +861,12 @@ em_determine_rsstype(uint32_t pkt_info)
 		return M_HASHTYPE_RSS_IPV6;
 	case E1000_RXDADV_RSSTYPE_IPV6_TCP_EX:
 		return M_HASHTYPE_RSS_TCP_IPV6_EX;
+	case E1000_RXDADV_RSSTYPE_IPV4_UDP:
+		return M_HASHTYPE_RSS_UDP_IPV4;
+	case E1000_RXDADV_RSSTYPE_IPV6_UDP:
+		return M_HASHTYPE_RSS_UDP_IPV6;
+	case E1000_RXDADV_RSSTYPE_IPV6_UDP_EX:
+		return M_HASHTYPE_RSS_UDP_IPV6_EX;
 	default:
 		return M_HASHTYPE_NONE;
 	}

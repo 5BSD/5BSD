@@ -2475,6 +2475,34 @@ acpi_probe_order(ACPI_HANDLE handle, int *order)
 }
 
 /*
+ * Some devices must remain enabled even when _STA (ACPI 6.5, section 6.3.7)
+ * reports them as not present:
+ *
+ * - PCI link devices (_HID PNP0C0F, section 6.1.5), which sometimes report
+ *   "present" but not "functional" (i.e. if disabled).
+ * - The RTC (_HID PNP0B00), which is needed for CMOS register space unless
+ *   the FADT indicates it is not present (checked in the RTC probe routine).
+ * - Docking stations, which have a _DCK method (section 6.5.2), since the
+ *   system may be undocked at boot.
+ */
+static bool
+acpi_always_present(ACPI_HANDLE handle)
+{
+    ACPI_HANDLE h;
+
+    if (acpi_MatchHid(handle, "PNP0C0F"))
+	return (true);
+
+    if (acpi_MatchHid(handle, "PNP0B00"))
+	return (true);
+
+    if (ACPI_SUCCESS(AcpiGetHandle(handle, "_DCK", &h)))
+	return (true);
+
+    return (false);
+}
+
+/*
  * Evaluate a child device and determine whether we might attach a device to
  * it.
  */
@@ -2485,7 +2513,6 @@ acpi_probe_child(ACPI_HANDLE handle, UINT32 level, void *context, void **status)
     struct acpi_device	*ad;
     struct acpi_prw_data prw;
     ACPI_OBJECT_TYPE type;
-    ACPI_HANDLE h;
     device_t bus, child;
     char *handle_str;
     int d, order;
@@ -2549,30 +2576,14 @@ acpi_probe_child(ACPI_HANDLE handle, UINT32 level, void *context, void **status)
 	     * leave it disabled (so that we have a device_t attached to
 	     * the handle, but we don't probe it).
 	     *
-	     * XXX PCI link devices sometimes report "present" but not
-	     * "functional" (i.e. if disabled).  Go ahead and probe them
-	     * anyway since we may enable them later.
+	     * Devices that are kept enabled still have their resources
+	     * parsed below so that resource-based hint matching
+	     * (BUS_HINT_DEVICE_UNIT) can wire their unit numbers;
+	     * otherwise a hinted ISA device can duplicate the ACPI
+	     * device.
 	     */
-	    if (type == ACPI_TYPE_DEVICE && !acpi_DeviceIsPresent(child)) {
-		/* Never disable PCI link devices. */
-		if (acpi_MatchHid(handle, "PNP0C0F"))
-		    break;
-
-		/*
-		 * RTC Device should be enabled for CMOS register space
-		 * unless FADT indicate it is not present.
-		 * (checked in RTC probe routine.)
-		 */
-		if (acpi_MatchHid(handle, "PNP0B00"))
-		    break;
-
-		/*
-		 * Docking stations should remain enabled since the system
-		 * may be undocked at boot.
-		 */
-		if (ACPI_SUCCESS(AcpiGetHandle(handle, "_DCK", &h)))
-		    break;
-
+	    if (type == ACPI_TYPE_DEVICE && !acpi_DeviceIsPresent(child) &&
+		!acpi_always_present(handle)) {
 		device_disable(child);
 		break;
 	    }
@@ -3747,6 +3758,13 @@ backout:
 	slp_state &= ~ACPI_SS_GPE_SET;
     }
     if ((slp_state & ACPI_SS_DEV_SUSPEND) != 0) {
+	/*
+	 * Record the resume time so a spurious power/sleep button press can be
+	 * ignored for a grace period afterward (see the comment before
+	 * ACPI_BUTTON_REPLAY_WINDOW).  This must be taken before
+	 * DEVICE_RESUME(), which re-initializes the EC that replays the press.
+	 */
+	sc->acpi_resume_sbt = getsbinuptime();
 	EVENTHANDLER_INVOKE(acpi_pre_dev_resume, stype);
 	DEVICE_RESUME(root_bus);
 	slp_state &= ~ACPI_SS_DEV_SUSPEND;
@@ -4138,6 +4156,37 @@ acpi_system_eventhandler_wakeup(struct acpi_softc *const sc,
 }
 
 /*
+ * Grace window after wakeup during which a power/sleep button press for suspend
+ * is ignored.  Some firmware wrongly reports the depress that caused the wakeup
+ * as an "S0 Power/Sleep Button Pressed" notify (value 0x80) instead of the
+ * spec-required "Device Wake" notify (0x02); honoring it re-enters sleep
+ * immediately after resume.  On the Framework Laptop 12 the replayed event
+ * arrives within ~620 ms of the recorded resume time, so a one-second window
+ * was chosen.  See https://bugs.freebsd.org/296243 for the traces, timing
+ * data, and analysis.
+ */
+#define	ACPI_BUTTON_REPLAY_WINDOW	SBT_1S
+
+static bool
+acpi_button_resume_replay(struct acpi_softc *sc, const char *which)
+{
+    sbintime_t elapsed;
+
+    if (sc->acpi_resume_sbt == 0)
+	return (false);
+    elapsed = getsbinuptime() - sc->acpi_resume_sbt;
+    if (elapsed < 0 || elapsed >= ACPI_BUTTON_REPLAY_WINDOW)
+	return (false);
+    if (bootverbose) {
+	device_printf(sc->acpi_dev,
+	    "ignoring %s button press %jd us after resume "
+	    "(firmware replayed the wake event)\n",
+	    which, (intmax_t)(elapsed / SBT_1US));
+    }
+    return (true);
+}
+
+/*
  * ACPICA Event Handlers (FixedEvent, also called from button notify handler)
  */
 void
@@ -4158,6 +4207,8 @@ acpi_event_power_button_sleep(struct acpi_softc *sc)
     ACPI_FUNCTION_TRACE((char *)(uintptr_t)__func__);
 
 #if defined(__amd64__) || defined(__i386__)
+    if (acpi_button_resume_replay(sc, "power"))
+	return_VALUE (ACPI_INTERRUPT_HANDLED);
     if (ACPI_FAILURE(AcpiOsExecute(OSL_NOTIFY_HANDLER,
 	(ACPI_OSD_EXEC_CALLBACK)acpi_invoke_sleep_eventhandler,
 	&sc->acpi_power_button_stype)))
@@ -4185,6 +4236,9 @@ UINT32
 acpi_event_sleep_button_sleep(struct acpi_softc *sc)
 {
     ACPI_FUNCTION_TRACE((char *)(uintptr_t)__func__);
+
+    if (acpi_button_resume_replay(sc, "sleep"))
+	return_VALUE (ACPI_INTERRUPT_HANDLED);
 
     if (ACPI_FAILURE(AcpiOsExecute(OSL_NOTIFY_HANDLER,
 	(ACPI_OSD_EXEC_CALLBACK)acpi_invoke_sleep_eventhandler,

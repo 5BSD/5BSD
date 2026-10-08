@@ -188,6 +188,7 @@ struct vtnet_softc {
 	uint64_t		 vtnet_negotiated_features;
 	struct vtnet_statistics	 vtnet_stats;
 	struct callout		 vtnet_tick_ch;
+	struct task		 vtnet_announce_task;
 	struct ifmedia		 vtnet_media;
 	eventhandler_tag	 vtnet_vlan_attach;
 	eventhandler_tag	 vtnet_vlan_detach;
@@ -352,8 +353,10 @@ CTASSERT(sizeof(struct vtnet_mac_filter) <= PAGE_SIZE);
      VIRTIO_NET_F_MTU			| \
      VIRTIO_NET_F_CTRL_VQ		| \
      VIRTIO_NET_F_CTRL_RX		| \
+     VIRTIO_NET_F_CTRL_RX_EXTRA		| \
      VIRTIO_NET_F_CTRL_MAC_ADDR		| \
      VIRTIO_NET_F_CTRL_VLAN		| \
+     VIRTIO_NET_F_GUEST_ANNOUNCE	| \
      VIRTIO_NET_F_CSUM			| \
      VIRTIO_NET_F_HOST_TSO4		| \
      VIRTIO_NET_F_HOST_TSO6		| \
@@ -394,6 +397,22 @@ CTASSERT(sizeof(struct vtnet_mac_filter) <= PAGE_SIZE);
  */
 #define VTNET_LRO_FEATURES (VIRTIO_NET_F_GUEST_TSO4 | \
     VIRTIO_NET_F_GUEST_TSO6 | VIRTIO_NET_F_GUEST_ECN)
+
+/*
+ * Union of the offload-related features offered by the driver.  As per spec,
+ * a device is permitted to reject an otherwise valid subset of its offered
+ * features by failing FEATURES_OK (v1.3 §2.2.2).  Offloads are where this
+ * happens in practice, so feature negotiation retries without this entire
+ * group when the device rejects the first feature set.
+ *
+ * Must cover every offload-related bit in VTNET_COMMON_FEATURES.
+ */
+#define VTNET_OFFLOAD_FEATURES \
+    (VIRTIO_NET_F_CSUM			| \
+     VIRTIO_NET_F_GUEST_CSUM		| \
+     VIRTIO_NET_F_CTRL_GUEST_OFFLOADS	| \
+     VTNET_TSO_FEATURES			| \
+     VTNET_LRO_FEATURES)
 
 #define VTNET_MIN_MTU		68
 #define VTNET_MAX_MTU		65536

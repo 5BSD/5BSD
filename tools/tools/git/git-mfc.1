@@ -3,7 +3,7 @@
 .\"
 .\" SPDX-License-Identifier: BSD-2-Clause
 .\"
-.Dd June 26, 2026
+.Dd July 28, 2026
 .Dt GIT-MFC 1
 .Os
 .Sh NAME
@@ -19,6 +19,7 @@
 .Nm
 .Fl -pending
 .Op Fl a Ar author
+.Op Fl c Ar committer
 .Op Fl -all
 .Op Fl -baking
 .Op Fl -origin Ar branch
@@ -26,9 +27,14 @@
 .Nm
 .Fl -dangling
 .Op Fl a Ar author
+.Op Fl c Ar committer
 .Op Fl -all
 .Op Fl -origin Ar branch
 .Op Fl r Ar remote
+.Nm
+.Fl -continue
+.Nm
+.Fl -abort
 .Sh DESCRIPTION
 The
 .Nm
@@ -66,13 +72,18 @@ Fixup commits that have been reverted are skipped with a warning.
 .Pp
 Commits that have already been cherry-picked to the current branch are
 automatically skipped.
-This allows the same
-.Nm
-command to be re-run after resolving a conflict without re-applying
-earlier commits.
 Use
 .Fl f
 to override this behavior.
+.Pp
+All commits are cherry-picked using a single
+.Xr git-cherry-pick 1
+invocation.
+If a conflict occurs, resolve it and run
+.Nm Fl -continue
+to proceed with the remaining commits, or
+.Nm Fl -abort
+to give up.
 .It
 In
 .Fl -pending
@@ -84,7 +95,7 @@ scans the origin branch for commits with
 tags whose waiting period has elapsed and which have not already been
 cherry-picked to the current branch.
 Commits that have been reverted upstream are excluded.
-By default, only commits authored by the current user
+By default, only commits committed by the current user
 .Pq as determined by Xr git-config 1
 are shown.
 .It
@@ -96,24 +107,35 @@ Instead,
 finds commits in the current branch that have been cherry-picked from the
 origin branch but are missing associated fixup commits.
 Fixup commits that have been reverted upstream are excluded.
-By default, only cherry-picks authored by the current user
+By default, only cherry-picks committed by the current user
 .Pq as determined by Xr git-config 1
 are considered.
 .El
 .Pp
 The following options are available:
 .Bl -tag -width "-a author"
+.It Fl -abort
+Abort a cherry-pick in progress.
 .It Fl a Ar author , Fl -author Ar author
 With
 .Fl -pending
 or
 .Fl -dangling ,
 filter results to commits whose author email contains the given string.
+By default, the author field of commits is ignored.
+.It Fl c Ar committer , Fl -committer Ar committer
+With
+.Fl -pending
+or
+.Fl -dangling ,
+filter results to commits whose committer email contains the given string.
 By default, the value of
 .Va user.email
 from
 .Xr git-config 1
 is used.
+.It Fl -continue
+Continue cherry-picking after resolving a conflict.
 .It Fl -all
 With
 .Fl -pending
@@ -124,7 +146,9 @@ show commits from all authors instead of only the current user.
 Find cherry-picked commits in the current branch that are missing fixup
 commits from the origin branch.
 Cannot be combined with
-.Fl -pending
+.Fl -pending ,
+.Fl -abort ,
+.Fl -continue ,
 or revision arguments.
 .It Fl e , Fl -edit
 Open the commit message in an editor before committing each cherry-pick.
@@ -166,7 +190,9 @@ Show upstream commits with
 .Dq MFC after:
 tags that are ready to be cherry-picked.
 Cannot be combined with
-.Fl -dangling
+.Fl -dangling ,
+.Fl -abort ,
+.Fl -continue ,
 or revision arguments.
 .It Fl r Ar remote , Fl -remote Ar remote
 Specify the git remote to fetch from.
@@ -275,6 +301,20 @@ Use a different remote and origin branch:
 .Bd -literal -offset indent
 $ git mfc -r freebsd --origin main abc123
 .Ed
+.Sh FILES
+.Bl -tag -width "$HOME/.git-mfc-ignore"
+.It Pa $HOME/.git-mfc-ignore
+A list of commits to exclude from
+.Fl -pending
+and
+.Fl -dangling
+output.
+Each line contains a commit hash, optionally abbreviated, followed by
+arbitrary text which is ignored.
+Blank lines and lines beginning with
+.Ql #
+are skipped.
+.El
 .Sh SEE ALSO
 .Xr git-cherry-pick 1 ,
 .Xr git-config 1 ,

@@ -98,6 +98,7 @@ struct ucred;
 #include <sys/param.h>		/* MAXCPU */
 #include <sys/pcpu.h>		/* curthread */
 #include <sys/kpilite.h>
+#include <sys/limits.h>
 
 extern bool scheduler_stopped;
 
@@ -256,6 +257,15 @@ void	*memset(void * _Nonnull buf, int c, size_t len);
 void	*memcpy(void * _Nonnull to, const void * _Nonnull from, size_t len);
 void	*memmove(void * _Nonnull dest, const void * _Nonnull src, size_t n);
 int	memcmp(const void *b1, const void *b2, size_t len);
+#ifdef __CHERI__
+void	*memcpy_data(void * _Nonnull to, const void * _Nonnull from,
+	    size_t len);
+void	*memmove_data(void * _Nonnull dest, const void * _Nonnull src,
+	    size_t n);
+#else
+#define	memcpy_data	memcpy
+#define	memmove_data	memmove
+#endif
 
 #ifdef SAN_NEEDS_INTERCEPTORS
 #define	SAN_INTERCEPTOR(func)	\

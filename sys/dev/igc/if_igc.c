@@ -114,6 +114,7 @@ static bool	igc_if_needs_restart(if_ctx_t, enum iflib_restart_event);
 static void	igc_identify_hardware(if_ctx_t);
 static int	igc_allocate_pci_resources(if_ctx_t);
 static void	igc_free_pci_resources(if_ctx_t);
+static void	igc_disable_broken_aspm_l1_2(if_ctx_t);
 static void	igc_reset(if_ctx_t);
 static int	igc_setup_interface(if_ctx_t);
 static int	igc_setup_msix(if_ctx_t);
@@ -143,7 +144,7 @@ static int	igc_get_rs(SYSCTL_HANDLER_ARGS);
 static void	igc_print_debug_info(struct igc_softc *);
 static int 	igc_is_valid_ether_addr(u8 *);
 static void	igc_neweitr(struct igc_softc *, struct igc_rx_queue *,
-    struct tx_ring *, struct rx_ring *);
+    struct rx_ring *);
 static int	igc_sysctl_tso_tcp_flags_mask(SYSCTL_HANDLER_ARGS);
 /* Management and WOL Support */
 static void	igc_get_hw_control(struct igc_softc *);
@@ -165,6 +166,7 @@ static int	igc_sysctl_eee(SYSCTL_HANDLER_ARGS);
 static int	igc_get_regs(SYSCTL_HANDLER_ARGS);
 
 static void	igc_configure_queues(struct igc_softc *);
+static void	igc_initialize_interrupt_rate(struct igc_softc *);
 
 
 /*********************************************************************
@@ -469,6 +471,13 @@ igc_if_attach_pre(if_ctx_t ctx)
 	dev = iflib_get_dev(ctx);
 	sc = iflib_get_softc(ctx);
 
+	if (igc_max_interrupt_rate <= 0) {
+		device_printf(dev,
+		    "Invalid max_interrupt_rate %d; using default %d\n",
+		    igc_max_interrupt_rate, IGC_INTS_DEFAULT);
+		igc_max_interrupt_rate = IGC_INTS_DEFAULT;
+	}
+
 	sc->ctx = sc->osdep.ctx = ctx;
 	sc->dev = sc->osdep.dev = dev;
 	scctx = sc->shared = iflib_get_softc_ctx(ctx);
@@ -545,6 +554,14 @@ igc_if_attach_pre(if_ctx_t ctx)
 
 	/* Determine hardware and mac info */
 	igc_identify_hardware(ctx);
+
+	/*
+	 * I226 parts have an erratum where the PCIe ASPM L1.2 exit
+	 * latency can exceed what the packet buffer can absorb under
+	 * load, stalling the inbound packet stream.  Disable ASPM L1.2
+	 * on the device to work around it.
+	 */
+	igc_disable_broken_aspm_l1_2(ctx);
 
 	scctx->isc_tx_nsegments = IGC_MAX_SCATTER;
 	scctx->isc_nrxqsets_max =
@@ -788,6 +805,12 @@ igc_if_suspend(if_ctx_t ctx)
 static int
 igc_if_resume(if_ctx_t ctx)
 {
+	/*
+	 * PCIe config space, and with it ASPM L1.2, may have been reset
+	 * across the suspend/resume cycle.
+	 */
+	igc_disable_broken_aspm_l1_2(ctx);
+
 	igc_if_init(ctx);
 
 	return(0);
@@ -880,6 +903,7 @@ igc_if_init(if_ctx_t ctx)
 
 	if (sc->intr_type == IFLIB_INTR_MSIX) /* Set up queue routing */
 		igc_configure_queues(sc);
+	igc_initialize_interrupt_rate(sc);
 
 	/* this clears any pending interrupts */
 	IGC_READ_REG(&sc->hw, IGC_ICR);
@@ -892,12 +916,101 @@ igc_if_init(if_ctx_t ctx)
 	igc_set_eee_i225(&sc->hw, true, true, true);
 }
 
-enum eitr_latency_target {
-	eitr_latency_disabled = 0,
-	eitr_latency_lowest = 1,
-	eitr_latency_low = 2,
-	eitr_latency_bulk = 3
-};
+/*
+ * RX publishes its byte and packet counters as one snapshot when iflib
+ * returns descriptors to hardware.  This also covers watchdog-driven RX
+ * processing, which can run while the interrupt vector is unmasked.
+ */
+static __inline void
+igc_aim_rx_delta(struct rx_ring *rxr, u32 *bytes, u32 *packets)
+{
+	uint64_t snapshot;
+	u32 now_bytes, now_packets;
+
+	snapshot = atomic_load_acq_64(&rxr->rx_aim_snapshot);
+	now_bytes = snapshot >> 32;
+	now_packets = (u32)snapshot;
+	*bytes = now_bytes - rxr->rx_bytes_last;
+	*packets = now_packets - rxr->rx_packets_last;
+	rxr->rx_bytes_last = now_bytes;
+	rxr->rx_packets_last = now_packets;
+}
+
+/*
+ * TX publishes its byte and packet counters as one snapshot at the doorbell,
+ * because encapsulation can overlap the interrupt filter.  The two halves
+ * remain independent free running u32 counters, so their deltas are correct
+ * across wrap.
+ */
+static __inline void
+igc_aim_tx_delta(struct tx_ring *txr, u32 *bytes, u32 *packets)
+{
+	uint64_t snapshot;
+	u32 now_bytes, now_packets;
+
+	snapshot = atomic_load_acq_64(&txr->tx_aim_snapshot);
+	now_bytes = snapshot >> 32;
+	now_packets = (u32)snapshot;
+	*bytes = now_bytes - txr->tx_bytes_last;
+	*packets = now_packets - txr->tx_packets_last;
+	txr->tx_bytes_last = now_bytes;
+	txr->tx_packets_last = now_packets;
+}
+
+/*********************************************************************
+ *
+ *  Do Adaptive Interrupt Moderation:
+ *    - Calculate based on average size over the last interval
+ *
+ *  Returns interrupts per second rather than a register value, so that the
+ *  caller's IGC_INTS_TO_EITR() conversion applies, or zero if the interval
+ *  carried no packet to measure.
+ *
+ *********************************************************************/
+static u32
+igc_ring_itr(struct igc_softc *sc, u32 rxbytes, u32 rxpackets, u32 txbytes,
+    u32 txpackets)
+{
+	u32 newitr = 0;
+
+	if (txbytes && txpackets)
+		newitr = txbytes / txpackets;
+	if (rxbytes && rxpackets)
+		newitr = max(newitr, rxbytes / rxpackets);
+
+	/*
+	 * No packet was observed, so there is no size to work from.  Report no
+	 * observation and let the caller keep the rate it already has.
+	 */
+	if (newitr == 0)
+		return (0);
+
+	newitr += 24; /* account for hardware frame, crc */
+	/* set an upper boundary */
+	newitr = min(newitr, 3000);
+	/* Be nice to the mid range */
+	if ((newitr > 300) && (newitr < 1200))
+		newitr = (newitr / 3);
+	else
+		newitr = (newitr / 2);
+
+	/* The value above was written straight to EITR; make it a rate */
+	newitr = IGC_AIM_DIVIDEND / newitr;
+
+	/*
+	 * Cap the rate: enable_aim=1 is the normal setting, enable_aim=2 opts
+	 * into the low latency end.  The original was unbounded and would ask
+	 * for ~95k ints/s on minimum sized frames.  There is deliberately no
+	 * floor, so jumbo traffic settles near 2.7k ints/s.
+	 */
+	if (sc->enable_aim == 1)
+		newitr = min(newitr, IGC_INTS_20K);
+	else
+		newitr = min(newitr, IGC_INTS_70K);
+
+	return (newitr);
+}
+
 /*********************************************************************
  *
  *  Helper to calculate next EITR value for AIM
@@ -905,127 +1018,51 @@ enum eitr_latency_target {
  *********************************************************************/
 static void
 igc_neweitr(struct igc_softc *sc, struct igc_rx_queue *que,
-    struct tx_ring *txr, struct rx_ring *rxr)
+    struct rx_ring *rxr)
 {
 	struct igc_hw *hw = &sc->hw;
-	unsigned long bytes, bytes_per_packet, packets;
-	unsigned long rxbytes, rxpackets, txbytes, txpackets;
+	struct igc_tx_queue *tx_que;
+	u32 ringbytes, ringpackets, rxbytes, rxpackets, txbytes, txpackets;
 	u32 neweitr;
-	u8 nextlatency;
+	int i;
 
-	rxbytes = atomic_load_long(&rxr->rx_bytes);
-	txbytes = atomic_load_long(&txr->tx_bytes);
+	igc_aim_rx_delta(rxr, &rxbytes, &rxpackets);
+
+	/*
+	 * A vector can service more than one TX ring when iflib is configured
+	 * with unequal RX and TX queue counts.  Sample every ring routed to
+	 * this vector rather than treating the vector as a TX queue index.
+	 */
+	txbytes = txpackets = 0;
+	for (i = 0; i < sc->tx_num_queues; i++) {
+		tx_que = &sc->tx_queues[i];
+		if (tx_que->msix != que->msix)
+			continue;
+		igc_aim_tx_delta(&tx_que->txr, &ringbytes, &ringpackets);
+		txbytes += ringbytes;
+		txpackets += ringpackets;
+	}
 
 	/* Idle, do nothing */
 	if (txbytes == 0 && rxbytes == 0)
 		return;
 
-	neweitr = 0;
-
-	if (sc->enable_aim) {
-		nextlatency = rxr->rx_nextlatency;
-
-		/* Use half default (4K) ITR if sub-gig */
-		if (sc->link_speed < 1000) {
-			neweitr = IGC_INTS_4K;
-			goto igc_set_next_eitr;
-		}
-		/* Want at least enough packet buffer for two frames to AIM */
-		if (sc->shared->isc_max_frame_size * 2 > (sc->pba << 10)) {
-			neweitr = igc_max_interrupt_rate;
-			sc->enable_aim = 0;
-			goto igc_set_next_eitr;
-		}
-
-		bytes = bytes_per_packet = 0;
-		/* Get largest values from the associated tx and rx ring */
-		txpackets = atomic_load_long(&txr->tx_packets);
-		if (txpackets != 0) {
-			bytes = txbytes;
-			bytes_per_packet = txbytes / txpackets;
-			packets = txpackets;
-		}
-		rxpackets = atomic_load_long(&rxr->rx_packets);
-		if (rxpackets != 0) {
-			bytes = lmax(bytes, rxbytes);
-			bytes_per_packet =
-			    lmax(bytes_per_packet, rxbytes / rxpackets);
-			packets = lmax(packets, rxpackets);
-		}
-
-		/* Latency state machine */
-		switch (nextlatency) {
-		case eitr_latency_disabled: /* Bootstrapping */
-			nextlatency = eitr_latency_low;
-			break;
-		case eitr_latency_lowest: /* 70k ints/s */
-			/* TSO and jumbo frames */
-			if (bytes_per_packet > 8000)
-				nextlatency = eitr_latency_bulk;
-			else if ((packets < 5) && (bytes > 512))
-				nextlatency = eitr_latency_low;
-			break;
-		case eitr_latency_low: /* 20k ints/s */
-			if (bytes > 10000) {
-				/* Handle TSO */
-				if (bytes_per_packet > 8000)
-					nextlatency = eitr_latency_bulk;
-				else if ((packets < 10) ||
-				    (bytes_per_packet > 1200))
-					nextlatency = eitr_latency_bulk;
-				else if (packets > 35)
-					nextlatency = eitr_latency_lowest;
-			} else if (bytes_per_packet > 2000) {
-				nextlatency = eitr_latency_bulk;
-			} else if (packets < 3 && bytes < 512) {
-				nextlatency = eitr_latency_lowest;
-			}
-			break;
-		case eitr_latency_bulk: /* 4k ints/s */
-			if (bytes > 25000) {
-				if (packets > 35)
-					nextlatency = eitr_latency_low;
-			} else if (bytes < 1500)
-				nextlatency = eitr_latency_low;
-			break;
-		default:
-			nextlatency = eitr_latency_low;
-			device_printf(sc->dev,
-			    "Unexpected neweitr transition %d\n",
-			    nextlatency);
-			break;
-		}
-
-		/* Trim itr_latency_lowest for default AIM setting */
-		if (sc->enable_aim == 1 && nextlatency == eitr_latency_lowest)
-			nextlatency = eitr_latency_low;
-
-		/* Request new latency */
-		rxr->rx_nextlatency = nextlatency;
-	} else {
-		/* We may have toggled to AIM disabled */
-		nextlatency = eitr_latency_disabled;
-		rxr->rx_nextlatency = nextlatency;
-	}
-
-	/* ITR state machine */
-	switch(nextlatency) {
-	case eitr_latency_lowest:
-		neweitr = IGC_INTS_70K;
-		break;
-	case eitr_latency_low:
-		neweitr = IGC_INTS_20K;
-		break;
-	case eitr_latency_bulk:
-		neweitr = IGC_INTS_4K;
-		break;
-	case eitr_latency_disabled:
-	default:
+	if (sc->enable_aim == 0) {
 		neweitr = igc_max_interrupt_rate;
-		break;
+	} else if (sc->link_speed < SPEED_1000) {
+		/* Use half default (4K) ITR if sub-gig */
+		neweitr = IGC_INTS_4K;
+	} else if (sc->shared->isc_max_frame_size * 2 > (sc->pba << 10)) {
+		/* Want at least enough packet buffer for two frames to AIM */
+		neweitr = igc_max_interrupt_rate;
+	} else {
+		neweitr = igc_ring_itr(sc, rxbytes, rxpackets, txbytes,
+		    txpackets);
+		/* No usable observation; leave the rate where it is */
+		if (neweitr == 0)
+			return;
 	}
 
-igc_set_next_eitr:
 	neweitr = IGC_INTS_TO_EITR(neweitr);
 
 	neweitr |= IGC_EITR_CNT_IGNR;
@@ -1047,7 +1084,6 @@ igc_intr(void *arg)
 	struct igc_softc *sc = arg;
 	struct igc_hw *hw = &sc->hw;
 	struct igc_rx_queue *que = &sc->rx_queues[0];
-	struct tx_ring *txr = &sc->tx_queues[0].txr;
 	struct rx_ring *rxr = &que->rxr;
 	if_ctx_t ctx = sc->ctx;
 	u32 reg_icr;
@@ -1080,13 +1116,7 @@ igc_intr(void *arg)
 	if (reg_icr & IGC_ICR_RXO)
 		sc->rx_overruns++;
 
-	igc_neweitr(sc, que, txr, rxr);
-
-	/* Reset state */
-	txr->tx_bytes = 0;
-	txr->tx_packets = 0;
-	rxr->rx_bytes = 0;
-	rxr->rx_packets = 0;
+	igc_neweitr(sc, que, rxr);
 
 	return (FILTER_SCHEDULE_THREAD);
 }
@@ -1121,18 +1151,11 @@ igc_msix_que(void *arg)
 {
 	struct igc_rx_queue *que = arg;
 	struct igc_softc *sc = que->sc;
-	struct tx_ring *txr = &sc->tx_queues[que->msix].txr;
 	struct rx_ring *rxr = &que->rxr;
 
 	++que->irqs;
 
-	igc_neweitr(sc, que, txr, rxr);
-
-	/* Reset state */
-	txr->tx_bytes = 0;
-	txr->tx_packets = 0;
-	rxr->rx_bytes = 0;
-	rxr->rx_packets = 0;
+	igc_neweitr(sc, que, rxr);
 
 	return (FILTER_SCHEDULE_THREAD);
 }
@@ -1489,6 +1512,35 @@ igc_identify_hardware(if_ctx_t ctx)
 	}
 }
 
+/*********************************************************************
+ *
+ *  I226 devices advertise support for the PCIe L1.2 link substate, but
+ *  due to a hardware erratum the exit latency from that low-power state
+ *  can exceed what the packet buffer can tolerate under load, which
+ *  stalls the inbound packet stream.  Disabling ASPM L1.2 on the device
+ *  itself (as opposed to disabling ASPM/power management in the BIOS or
+ *  at the OS level) works around the issue.
+ *
+ **********************************************************************/
+static void
+igc_disable_broken_aspm_l1_2(if_ctx_t ctx)
+{
+	device_t dev = iflib_get_dev(ctx);
+	struct igc_softc *sc = iflib_get_softc(ctx);
+	int cap;
+	uint32_t ctl1;
+
+	if (!igc_is_device_id_i226(&sc->hw))
+		return;
+
+	if (pci_find_extcap(dev, PCIZ_L1PM, &cap) != 0)
+		return;
+
+	ctl1 = pci_read_config(dev, cap + PCIR_L1PM_CTL1, 4);
+	ctl1 &= ~PCIM_L1PM_CTL1_ASPM_L1_2;
+	pci_write_config(dev, cap + PCIR_L1PM_CTL1, ctl1, 4);
+}
+
 static int
 igc_allocate_pci_resources(if_ctx_t ctx)
 {
@@ -1599,7 +1651,7 @@ igc_configure_queues(struct igc_softc *sc)
 	struct igc_hw *hw = &sc->hw;
 	struct igc_rx_queue *rx_que;
 	struct igc_tx_queue *tx_que;
-	u32 ivar = 0, newitr = 0;
+	u32 ivar = 0;
 
 	/* First turn on RSS capability */
 	IGC_WRITE_REG(hw, IGC_GPIE,
@@ -1642,18 +1694,25 @@ igc_configure_queues(struct igc_softc *sc)
 	sc->link_mask = 1 << sc->linkvec;
 	IGC_WRITE_REG(hw, IGC_IVAR_MISC, ivar);
 
-	/* Set the starting interrupt rate */
-	if (igc_max_interrupt_rate > 0)
-		newitr = IGC_INTS_TO_EITR(igc_max_interrupt_rate);
+	return;
+}
 
+static void
+igc_initialize_interrupt_rate(struct igc_softc *sc)
+{
+	struct igc_hw *hw = &sc->hw;
+	struct igc_rx_queue *rx_que;
+	u32 newitr;
+
+	newitr = IGC_INTS_TO_EITR(igc_max_interrupt_rate);
 	newitr |= IGC_EITR_CNT_IGNR;
 
 	for (int i = 0; i < sc->rx_num_queues; i++) {
 		rx_que = &sc->rx_queues[i];
-		IGC_WRITE_REG(hw, IGC_EITR(rx_que->msix), newitr);
+		rx_que->eitr_setting = newitr;
+		IGC_WRITE_REG(hw, IGC_EITR(rx_que->msix),
+		    rx_que->eitr_setting);
 	}
-
-	return;
 }
 
 static void
@@ -2022,6 +2081,9 @@ igc_if_tx_queues_alloc(if_ctx_t ctx, caddr_t *vaddrs, uint64_t *paddrs,
 		/* Set up some basics */
 
 		struct tx_ring *txr = &que->txr;
+		KASSERT(__is_aligned(&txr->tx_aim_snapshot, sizeof(uint64_t)),
+		    ("%s: misaligned TX AIM snapshot %p", __func__,
+		    &txr->tx_aim_snapshot));
 		txr->sc = que->sc = sc;
 		que->me = txr->me =  i;
 
@@ -2074,6 +2136,9 @@ igc_if_rx_queues_alloc(if_ctx_t ctx, caddr_t *vaddrs, uint64_t *paddrs,
 	for (i = 0, que = sc->rx_queues; i < nrxqsets; i++, que++) {
 		/* Set up some basics */
 		struct rx_ring *rxr = &que->rxr;
+		KASSERT(__is_aligned(&rxr->rx_aim_snapshot, sizeof(uint64_t)),
+		    ("%s: misaligned RX AIM snapshot %p", __func__,
+		    &rxr->rx_aim_snapshot));
 		rxr->sc = que->sc = sc;
 		rxr->que = que;
 		que->me = rxr->me =  i;
@@ -2646,7 +2711,7 @@ igc_sysctl_interrupt_rate_handler(SYSCTL_HANDLER_ARGS)
 	if (tx) {
 		tque = oidp->oid_arg1;
 		hw = &tque->sc->hw;
-		reg = IGC_READ_REG(hw, IGC_EITR(tque->me));
+		reg = IGC_READ_REG(hw, IGC_EITR(tque->msix));
 	} else {
 		rque = oidp->oid_arg1;
 		hw = &rque->sc->hw;
@@ -2655,7 +2720,7 @@ igc_sysctl_interrupt_rate_handler(SYSCTL_HANDLER_ARGS)
 
 	usec = (reg & IGC_QVECTOR_MASK);
 	if (usec > 0)
-		rate = IGC_INTS_TO_EITR(usec);
+		rate = IGC_EITR_TO_INTS(usec);
 	else
 		rate = 0;
 

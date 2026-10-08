@@ -604,6 +604,16 @@ ffs_mount(struct mount *mp)
 			if (error) {
 				return (error);
 			}
+			/*
+			 * Refuse upgrade of NetBSD WAPBL filesystem to
+			 * read-write; see validate_sblock() for details.
+			 */
+			if (fs->fs_magic == FS_UFS2_MAGIC &&
+			    fs->fs_metaspace > fs->fs_fpg / 2) {
+				vfs_mount_error(mp,
+				    "WAPBL filesystem must be mounted read-only");
+				return (EROFS);
+			}
 			fs->fs_flags &= ~FS_UNCLEAN;
 			if (fs->fs_clean == 0) {
 				fs->fs_flags |= FS_UNCLEAN;
@@ -926,6 +936,23 @@ ffs_mountfs(struct vnode *odevvp, struct mount *mp, struct thread *td)
 		    ffs_use_bread);
 	if (error != 0)
 		goto out;
+	/*
+	 * Per NetBSD's wapbl(4), systems without WAPBL support should mount it
+	 * read-only; see validate_sblock() for details.
+	 */
+	if (fs->fs_magic == FS_UFS2_MAGIC &&
+	    fs->fs_metaspace > fs->fs_fpg / 2) {
+		if ((mp->mnt_flag & MNT_RDONLY) == 0) {
+			vfs_mount_error(mp,
+			    "WAPBL filesystem must be mounted read-only");
+			error = EROFS;
+			goto out;
+		}
+		printf("WARNING: %s: WAPBL filesystem mounted read-only"
+		    "(fs_metaspace %jd, fs_fpg/2 %jd)\n",
+		    mp->mnt_stat.f_mntonname, (intmax_t)fs->fs_metaspace,
+		    (intmax_t)fs->fs_fpg / 2);
+	}
 	fs->fs_flags &= ~FS_UNCLEAN;
 	if (fs->fs_clean == 0) {
 		fs->fs_flags |= FS_UNCLEAN;
@@ -1962,7 +1989,7 @@ ffs_inotovp(struct mount *mp,
 		return (ESTALE);
 
 	ip = VTOI(nvp);
-	if (ip->i_mode == 0 || ip->i_gen != gen || ip->i_effnlink <= 0) {
+	if (ip->i_mode == 0 || ip->i_gen != gen) {
 		if (ip->i_mode == 0)
 			vgone(nvp);
 		vput(nvp);

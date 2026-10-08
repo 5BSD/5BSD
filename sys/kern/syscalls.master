@@ -3159,7 +3159,7 @@
 564	AUE_NULL	STD {
 		int getfhat(
 		    int fd,
-		    _In_z_ char *path,
+		    _In_z_ const char *path,
 		    _Out_ struct fhandle *fhp,
 		    int flags
 		);
@@ -3430,7 +3430,20 @@
 		    int flags
 		);
 	}
-603-999	AUE_NULL	UNIMPL
+603	AUE_PDOPENPID	STD {
+		int pdopenpid(
+		    pid_t pid,
+		    int flags
+		);
+	}
+604	AUE_NULL	STD {
+		int pddupfd(
+			int pd,
+			int fd,
+			int flags
+		);
+	}
+605-999	AUE_NULL	UNIMPL
 ; 5BSD-local system calls start at 1000 so new FreeBSD system calls
 ; (allocated upward from 603) cannot collide with them.
 1000	AUE_CAP_XFER_LIMIT	STD|CAPENABLED {

@@ -31,6 +31,7 @@ TESTS_SUBDIRS+=		netlink
 TESTS_SUBDIRS+=		netmap
 TESTS_SUBDIRS+=		netpfil
 TESTS_SUBDIRS+=		opencrypto
+TESTS_SUBDIRS+=		${_pmc}
 TESTS_SUBDIRS+=		posixshm
 TESTS_SUBDIRS+=		security
 TESTS_SUBDIRS+=		ses
@@ -52,6 +53,10 @@ _cddl=	cddl
 
 .if ${MK_NETGRAPH} != "no"
 _netgraph= netgraph
+.endif
+
+.if ${MK_PMC} != "no"
+_pmc=	pmc
 .endif
 
 # Items not integrated into kyua runs by default

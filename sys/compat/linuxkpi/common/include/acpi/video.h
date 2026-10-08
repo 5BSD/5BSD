@@ -32,6 +32,9 @@
 #include <sys/types.h>
 #include <sys/errno.h>
 
+/* Alias struct acpi_device to device_t; repeated from <acpi/acpi_bus.h> */
+#define	acpi_device	_device
+
 #define	ACPI_VIDEO_CLASS	"video"
 
 #define	ACPI_VIDEO_DISPLAY_CRT	1
@@ -75,6 +78,13 @@ static inline bool
 acpi_video_backlight_use_native(void)
 {
 	return (true);
+}
+
+static inline int
+acpi_video_get_edid(struct acpi_device *device, int type, int device_id,
+    void **edid)
+{
+	return (-ENODEV);
 }
 
 #endif	/* _LINUXKPI_ACPI_VIDEO_H_ */

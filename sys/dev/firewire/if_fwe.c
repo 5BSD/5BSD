@@ -78,7 +78,7 @@ static void fwe_as_input (struct fw_xferq *);
 
 static int fwedebug = 0;
 static int stream_ch = 1;
-static int tx_speed = 2;
+static int tx_speed = FWSPD_S400;
 static int rx_queue_len = FWMAXQUEUE;
 
 static MALLOC_DEFINE(M_FWE, "if_fwe", "Ethernet over FireWire interface");
@@ -123,10 +123,12 @@ fwe_probe(device_t dev)
 {
 	device_t pa;
 
-	pa = device_get_parent(dev);
-	if (device_get_unit(dev) != device_get_unit(pa)) {
+	if (fw_get_unit(dev) != NULL)
 		return (ENXIO);
-	}
+
+	pa = device_get_parent(dev);
+	if (device_get_unit(dev) != device_get_unit(pa))
+		return (ENXIO);
 
 	device_set_desc(dev, "Ethernet over FireWire");
 	return (0);
@@ -137,7 +139,7 @@ fwe_attach(device_t dev)
 {
 	struct fwe_softc *fwe;
 	if_t ifp;
-	int unit, s;
+	int unit;
 	u_char eaddr[6];
 	struct fw_eui64 *eui;
 
@@ -150,7 +152,7 @@ fwe_attach(device_t dev)
 	fwe->stream_ch = stream_ch;
 	fwe->dma_ch = -1;
 
-	fwe->fd.fc = device_get_ivars(dev);
+	fwe->fd.fc = fw_get_comm(dev);
 	if (tx_speed < 0)
 		tx_speed = fwe->fd.fc->speed;
 
@@ -188,9 +190,7 @@ fwe_attach(device_t dev)
 	if_setflags(ifp, (IFF_BROADCAST|IFF_SIMPLEX|IFF_MULTICAST));
 	if_setsendqlen(ifp, TX_MAX_QUEUE);
 
-	s = splimp();
 	ether_ifattach(ifp, eaddr);
-	splx(s);
 
         /* Tell the upper layer(s) we support long frames. */
 	if_setifheaderlen(ifp, sizeof(struct ether_vlan_header));
@@ -240,7 +240,6 @@ fwe_detach(device_t dev)
 {
 	struct fwe_softc *fwe;
 	if_t ifp;
-	int s;
 
 	fwe = device_get_softc(dev);
 	ifp = fwe->eth_softc.ifp;
@@ -249,13 +248,11 @@ fwe_detach(device_t dev)
 	if (if_getcapenable(ifp) & IFCAP_POLLING)
 		ether_poll_deregister(ifp);
 #endif
-	s = splimp();
 
 	fwe_stop(fwe);
 	ether_ifdetach(ifp);
 	if_free(ifp);
 
-	splx(s);
 	mtx_destroy(&fwe->mtx);
 	return 0;
 }
@@ -272,7 +269,7 @@ fwe_init(void *arg)
 
 	FWEDEBUG(ifp, "initializing\n");
 
-	/* XXX keep promiscoud mode */
+	/* keep promiscuous mode */
 	if_setflagbits(ifp, IFF_PROMISC, 0);
 
 	fc = fwe->fd.fc;
@@ -322,10 +319,6 @@ fwe_init(void *arg)
 	if_setdrvflagbits(ifp, IFF_DRV_RUNNING, 0);
 	if_setdrvflagbits(ifp, 0, IFF_DRV_OACTIVE);
 
-#if 0
-	/* attempt to start output */
-	fwe_start(ifp);
-#endif
 }
 
 
@@ -334,11 +327,10 @@ fwe_ioctl(if_t ifp, u_long cmd, caddr_t data)
 {
 	struct fwe_softc *fwe = ((struct fwe_eth_softc *)if_getsoftc(ifp))->fwe;
 	struct ifstat *ifs = NULL;
-	int s, error;
+	int error;
 
 	switch (cmd) {
 		case SIOCSIFFLAGS:
-			s = splimp();
 			if (if_getflags(ifp) & IFF_UP) {
 				if (!(if_getdrvflags(ifp) & IFF_DRV_RUNNING))
 					fwe_init(&fwe->eth_softc);
@@ -346,20 +338,17 @@ fwe_ioctl(if_t ifp, u_long cmd, caddr_t data)
 				if (if_getdrvflags(ifp) & IFF_DRV_RUNNING)
 					fwe_stop(fwe);
 			}
-			/* XXX keep promiscoud mode */
+			/* keep promiscuous mode */
 			if_setflagbits(ifp, IFF_PROMISC, 0);
-			splx(s);
 			break;
 		case SIOCADDMULTI:
 		case SIOCDELMULTI:
 			break;
 
 		case SIOCGIFSTATUS:
-			s = splimp();
 			ifs = (struct ifstat *)data;
 			snprintf(ifs->ascii, sizeof(ifs->ascii),
 			    "\tch %d dma %d\n",	fwe->stream_ch, fwe->dma_ch);
-			splx(s);
 			break;
 		case SIOCSIFCAP:
 #ifdef DEVICE_POLLING
@@ -374,9 +363,7 @@ fwe_ioctl(if_t ifp, u_long cmd, caddr_t data)
 #endif /* DEVICE_POLLING */
 			break;
 		default:
-			s = splimp();
 			error = ether_ioctl(ifp, cmd, data);
-			splx(s);
 			return (error);
 	}
 
@@ -388,7 +375,6 @@ fwe_output_callback(struct fw_xfer *xfer)
 {
 	struct fwe_softc *fwe;
 	if_t ifp;
-	int s;
 
 	fwe = (struct fwe_softc *)xfer->sc;
 	ifp = fwe->eth_softc.ifp;
@@ -399,11 +385,9 @@ fwe_output_callback(struct fw_xfer *xfer)
 	m_freem(xfer->mbuf);
 	fw_xfer_unload(xfer);
 
-	s = splimp();
 	FWE_LOCK(fwe);
 	STAILQ_INSERT_TAIL(&fwe->xferlist, xfer, link);
 	FWE_UNLOCK(fwe);
-	splx(s);
 
 	/* for queue full */
 	if (!if_sendq_empty(ifp))
@@ -414,28 +398,23 @@ static void
 fwe_start(if_t ifp)
 {
 	struct fwe_softc *fwe = ((struct fwe_eth_softc *)if_getsoftc(ifp))->fwe;
-	int s;
 
 	FWEDEBUG(ifp, "starting\n");
 
 	if (fwe->dma_ch < 0) {
 		FWEDEBUG(ifp, "not ready\n");
 
-		s = splimp();
 		fw_net_drain_sendq(ifp);
-		splx(s);
 
 		return;
 	}
 
-	s = splimp();
 	if_setdrvflagbits(ifp, IFF_DRV_OACTIVE, 0);
 
 	if (!if_sendq_empty(ifp))
 		fwe_as_output(fwe, ifp);
 
 	if_setdrvflagbits(ifp, 0, IFF_DRV_OACTIVE);
-	splx(s);
 }
 
 #define HDR_LEN 4
@@ -459,9 +438,6 @@ fwe_as_output(struct fwe_softc *fwe, if_t ifp)
 		FWE_LOCK(fwe);
 		xfer = STAILQ_FIRST(&fwe->xferlist);
 		if (xfer == NULL) {
-#if 0
-			printf("if_fwe: lack of xfer\n");
-#endif
 			FWE_UNLOCK(fwe);
 			break;
 		}
@@ -495,10 +471,6 @@ fwe_as_output(struct fwe_softc *fwe, if_t ifp)
 			i++;
 		}
 	}
-#if 0
-	if (i > 1)
-		printf("%d queued\n", i);
-#endif
 	if (i > 0)
 		xferq->start(fwe->fd.fc);
 }
@@ -513,9 +485,6 @@ fwe_as_input(struct fw_xferq *xferq)
 	struct fw_bulkxfer *sxfer;
 	struct fw_pkt *fp;
 	struct epoch_tracker et;
-#if 0
-	u_char *c;
-#endif
 
 	fwe = (struct fwe_softc *)xferq->sc;
 	ifp = fwe->eth_softc.ifp;
@@ -544,26 +513,8 @@ fwe_as_input(struct fw_xferq *xferq)
 		}
 
 		m->m_data += HDR_LEN + ETHER_ALIGN;
-#if 0
-		c = mtod(m, u_char *);
-#endif
 		m->m_len = m->m_pkthdr.len = fp->mode.stream.len - ETHER_ALIGN;
 		m->m_pkthdr.rcvif = ifp;
-#if 0
-		FWEDEBUG(ifp, "%02x %02x %02x %02x %02x %02x\n"
-			 "%02x %02x %02x %02x %02x %02x\n"
-			 "%02x %02x %02x %02x\n"
-			 "%02x %02x %02x %02x\n"
-			 "%02x %02x %02x %02x\n"
-			 "%02x %02x %02x %02x\n",
-			 c[0], c[1], c[2], c[3], c[4], c[5],
-			 c[6], c[7], c[8], c[9], c[10], c[11],
-			 c[12], c[13], c[14], c[15],
-			 c[16], c[17], c[18], c[19],
-			 c[20], c[21], c[22], c[23],
-			 c[20], c[21], c[22], c[23]
-		);
-#endif
 		NET_EPOCH_ENTER(et);
 		if_input(ifp, m);
 		NET_EPOCH_EXIT(et);

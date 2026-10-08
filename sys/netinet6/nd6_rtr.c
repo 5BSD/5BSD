@@ -171,7 +171,7 @@ nd6_rs_input(struct mbuf *m, int off, int icmp6len)
 	union nd_opts ndopts;
 	char ip6bufs[INET6_ADDRSTRLEN], ip6bufd[INET6_ADDRSTRLEN];
 	char *lladdr;
-	int lladdrlen;
+	u_int lladdr_pad, lladdrlen;
 
 	ifp = m->m_pkthdr.rcvif;
 
@@ -226,16 +226,17 @@ nd6_rs_input(struct mbuf *m, int off, int icmp6len)
 
 	lladdr = NULL;
 	lladdrlen = 0;
+	lladdr_pad = nd6_lladdr_opt_pad(ifp);
 	if (ndopts.nd_opts_src_lladdr) {
-		lladdr = (char *)(ndopts.nd_opts_src_lladdr + 1);
+		lladdr = (char *)(ndopts.nd_opts_src_lladdr + 1) + lladdr_pad;
 		lladdrlen = ndopts.nd_opts_src_lladdr->nd_opt_len << 3;
 	}
 
 	if (lladdr && ((ifp->if_addrlen + 2 + 7) & ~7) != lladdrlen) {
 		nd6log((LOG_INFO,
-		    "%s: lladdrlen mismatch for %s (if %d, RS packet %d)\n",
+		    "%s: lladdrlen mismatch for %s (if %d, RS packet %u)\n",
 		    __func__, ip6_sprintf(ip6bufs, &saddr6),
-		    ifp->if_addrlen, lladdrlen - 2));
+		    ifp->if_addrlen, lladdrlen - 2 - lladdr_pad));
 		goto bad;
 	}
 
@@ -467,18 +468,19 @@ nd6_ra_opt_src_lladdr(struct nd_opt_hdr *opthdr, struct ifnet *ifp,
 {
 	char ip6bufs[INET6_ADDRSTRLEN];
 	char *lladdr = NULL;
-	int lladdrlen = 0;
+	u_int lladdr_pad = nd6_lladdr_opt_pad(ifp);
+	u_int lladdrlen = 0;
 
 	if (opthdr != NULL) {
-		lladdr = (char *)(opthdr + 1);
+		lladdr = (char *)(opthdr + 1) + lladdr_pad;
 		lladdrlen = opthdr->nd_opt_len << 3;
 	}
 
 	if (lladdr && ((ifp->if_addrlen + 2 + 7) & ~7) != lladdrlen) {
 		nd6log((LOG_INFO,
-		    "%s: lladdrlen mismatch for %s (if %d, RA packet %d)\n",
+		    "%s: lladdrlen mismatch for %s (if %d, RA packet %u)\n",
 		    __func__, ip6_sprintf(ip6bufs, &saddr6),
-		    ifp->if_addrlen, lladdrlen - 2));
+		    ifp->if_addrlen, lladdrlen - 2 - lladdr_pad));
 		return (-1);
 	}
 
@@ -554,6 +556,7 @@ nd6_ra_input(struct mbuf *m, int off, int icmp6len)
 			IP6STAT_INC(ip6s_exthdrtoolong);
 			return;
 		}
+		ip6 = mtod(m, struct ip6_hdr *);
 	}
 	nd_ra = (struct nd_router_advert *)((caddr_t)ip6 + off);
 
@@ -1431,11 +1434,8 @@ nd6_prelist_add(struct nd_prefixctl *pr, struct nd_prefix **newp)
 	ND6_WUNLOCK();
 
 	/* ND_OPT_PI_FLAG_ONLINK processing */
-	if (new->ndpr_raf_onlink) {
-		struct epoch_tracker et;
-
+	if (new->ndpr_raf_onlink != 0) {
 		ND6_ONLINK_LOCK();
-		NET_EPOCH_ENTER(et);
 		if ((error = nd6_prefix_onlink(new)) != 0) {
 			nd6log((LOG_ERR, "%s: failed to make the prefix %s/%d "
 			    "on-link on %s (errno=%d)\n", __func__,
@@ -1443,7 +1443,6 @@ nd6_prelist_add(struct nd_prefixctl *pr, struct nd_prefix **newp)
 			    pr->ndpr_plen, if_name(pr->ndpr_ifp), error));
 			/* proceed anyway. XXX: is it correct? */
 		}
-		NET_EPOCH_EXIT(et);
 		ND6_ONLINK_UNLOCK();
 	}
 
@@ -1938,6 +1937,7 @@ restart:
 		flags = pr->ndpr_stateflags & (NDPRF_DETACHED | NDPRF_ONLINK);
 		if (flags == 0 || flags == (NDPRF_DETACHED | NDPRF_ONLINK)) {
 			genid = V_nd6_list_genid;
+			nd6_prefix_ref(pr);
 			ND6_RUNLOCK();
 			if ((flags & NDPRF_ONLINK) != 0 &&
 			    (e = nd6_prefix_offlink(pr)) != 0) {
@@ -1956,6 +1956,7 @@ restart:
 					    &pr->ndpr_prefix.sin6_addr),
 					    pr->ndpr_plen, e));
 			}
+			nd6_prefix_rele(pr);
 			ND6_RLOCK();
 			if (genid != V_nd6_list_genid)
 				goto restart;
@@ -2133,7 +2134,6 @@ nd6_prefix_onlink(struct nd_prefix *pr)
 	ifa = (struct ifaddr *)in6ifa_ifpforlinklocal(ifp,
 	    IN6_IFF_NOTREADY | IN6_IFF_ANYCAST);
 	if (ifa == NULL) {
-		/* XXX: freebsd does not have ifa_ifwithaf */
 		CK_STAILQ_FOREACH(ifa, &ifp->if_addrhead, ifa_link) {
 			if (ifa->ifa_addr->sa_family == AF_INET6) {
 				ifa_ref(ifa);
@@ -2142,6 +2142,7 @@ nd6_prefix_onlink(struct nd_prefix *pr)
 		}
 		/* should we care about ia6_flags? */
 	}
+	NET_EPOCH_EXIT(et);
 	if (ifa == NULL) {
 		/*
 		 * This can still happen, when, for example, we receive an RA
@@ -2159,7 +2160,6 @@ nd6_prefix_onlink(struct nd_prefix *pr)
 		error = nd6_prefix_onlink_rtrequest(pr, ifa);
 		ifa_free(ifa);
 	}
-	NET_EPOCH_EXIT(et);
 
 	return (error);
 }
@@ -2218,6 +2218,7 @@ restart:
 				int e;
 
 				genid = V_nd6_list_genid;
+				nd6_prefix_ref(opr);
 				ND6_RUNLOCK();
 				if ((e = nd6_prefix_onlink(opr)) != 0) {
 					nd6log((LOG_ERR,
@@ -2229,6 +2230,7 @@ restart:
 					    if_name(opr->ndpr_ifp), e));
 				} else
 					a_failure = 0;
+				nd6_prefix_rele(opr);
 				ND6_RLOCK();
 				if (genid != V_nd6_list_genid)
 					goto restart;

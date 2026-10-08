@@ -860,7 +860,7 @@ rip_bind(struct socket *so, struct sockaddr *nam, struct thread *td)
 {
 	struct sockaddr_in *addr = (struct sockaddr_in *)nam;
 	struct inpcb *inp;
-	int error;
+	int fib, error;
 
 	if (nam->sa_family != AF_INET)
 		return (EAFNOSUPPORT);
@@ -874,11 +874,14 @@ rip_bind(struct socket *so, struct sockaddr *nam, struct thread *td)
 	inp = sotoinpcb(so);
 	KASSERT(inp != NULL, ("rip_bind: inp == NULL"));
 
+	fib = V_rip_bind_all_fibs == 0 ? inp->inp_inc.inc_fibnum :
+	    RT_ALL_FIBS;
+
 	if (CK_STAILQ_EMPTY(&V_ifnet) ||
 	    (addr->sin_family != AF_INET && addr->sin_family != AF_IMPLINK) ||
 	    (addr->sin_addr.s_addr &&
 	     (inp->inp_flags & INP_BINDANY) == 0 &&
-	     ifa_ifwithaddr_check((struct sockaddr *)addr) == 0))
+	     ifa_ifwithaddr_fib_check((struct sockaddr *)addr, fib) == 0))
 		return (EADDRNOTAVAIL);
 
 	INP_WLOCK(inp);
@@ -904,8 +907,7 @@ rip_connect(struct socket *so, struct sockaddr *nam, struct thread *td)
 	KASSERT(inp != NULL, ("rip_connect: inp == NULL"));
 
 	INP_WLOCK(inp);
-	if (inp->inp_faddr.s_addr != INADDR_ANY &&
-	    addr->sin_addr.s_addr == INADDR_ANY)
+	if (__predict_false(inp->inp_faddr.s_addr != INADDR_ANY))
 		rip_dodisconnect(inp, false);
 	if (addr->sin_addr.s_addr != INADDR_ANY) {
 		inp->inp_faddr = addr->sin_addr;

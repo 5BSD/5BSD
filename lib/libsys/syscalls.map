@@ -825,6 +825,10 @@ FBSDprivate_1.0 {
 	__sys_pdwait;
 	_renameat2;
 	__sys_renameat2;
+	_pdopenpid;
+	__sys_pdopenpid;
+	_pddupfd;
+	__sys_pddupfd;
 	_cap_xfer_limit;
 	__sys_cap_xfer_limit;
 	_cap_cloexec_limit;

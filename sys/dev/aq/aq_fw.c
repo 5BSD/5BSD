@@ -95,13 +95,13 @@ int
 aq_fw_reset(struct aq_hw* hw)
 {
 	int ver = AQ_READ_REG(hw, 0x18);
-	uint32_t bootExitCode = 0;
+	uint32_t boot_exit_code = 0;
 	int k;
 
 	for (k = 0; k < 1000; ++k) {
-		uint32_t flbStatus = reg_glb_daisy_chain_status1_get(hw);
-		bootExitCode = AQ_READ_REG(hw, 0x388);
-		if (flbStatus != 0x06000000 || bootExitCode != 0)
+		uint32_t flb_status = reg_glb_daisy_chain_status1_get(hw);
+		boot_exit_code = AQ_READ_REG(hw, 0x388);
+		if (flb_status != 0x06000000 || boot_exit_code != 0)
 			break;
 	}
 
@@ -110,7 +110,7 @@ aq_fw_reset(struct aq_hw* hw)
 		return (EBUSY);
 	}
 
-	hw->rbl_enabled = bootExitCode != 0;
+	hw->rbl_enabled = boot_exit_code != 0;
 
 	trace(dbg_init, "RBL enabled = %d", hw->rbl_enabled);
 
@@ -305,6 +305,10 @@ mac_soft_reset_rbl(struct aq_hw* hw, enum aq_fw_bootloader_mode* mode)
 
 	reg_glb_cpu_no_reset_scratchpad_set(hw, 0xDEAD,
 	    NO_RESET_SCRATCHPAD_RBL_STATUS);
+
+	/* Clear a stale flash burst so the global reset frees the SPI bus. */
+	uint32_t spi = AQ_READ_REG(hw, 0x53c);
+	AQ_WRITE_REG(hw, 0x53c, spi | 0x10);
 
 	// Global software reset
 	rx_rx_reg_res_dis_set(hw, 0);

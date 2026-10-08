@@ -89,6 +89,7 @@ enum libusb_descriptor_type {
 	LIBUSB_DT_HUB = 0x29,
 	LIBUSB_DT_BOS = 0x0f,
 	LIBUSB_DT_DEVICE_CAPABILITY = 0x10,
+	LIBUSB_DT_SUPERSPEED_HUB = 0x2a,
 	LIBUSB_DT_SS_ENDPOINT_COMPANION = 0x30,
 };
 
@@ -323,16 +324,18 @@ struct libusb_version {
 	const char *describe;
 };
 
+typedef struct libusb_context libusb_context;
+typedef void (*libusb_log_cb)(libusb_context *ctx, enum libusb_log_level,
+    const char *str);
+
 struct libusb_init_option {
 	enum libusb_option option;
 	union {
 		int64_t ival;
+		libusb_log_cb log_cbval;
 	} value;
 };
 
-typedef struct libusb_context libusb_context;
-typedef void (*libusb_log_cb)(libusb_context *ctx, enum libusb_log_level,
-    const char *str);
 typedef struct libusb_device libusb_device;
 typedef struct libusb_device_handle libusb_device_handle;
 typedef struct libusb_pollfd libusb_pollfd;

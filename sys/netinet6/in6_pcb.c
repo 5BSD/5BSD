@@ -132,18 +132,19 @@ in6_pcbsetport_locked(struct in6_addr *laddr, struct inpcb *inp,
 	if ((so->so_options & (SO_REUSEADDR|SO_REUSEPORT|SO_REUSEPORT_LB)) == 0)
 		lookupflags = INPLOOKUP_WILDCARD;
 
-	inp->inp_flags |= INP_ANONPORT;
-
 	error = in_pcb_lport(inp, NULL, &lport, cred, lookupflags);
 	if (error != 0)
 		return (error);
 
 	inp->inp_lport = lport;
-	if (in_pcbinshash(inp) != 0) {
+	if (__predict_false((error = in_pcbinshash(inp)) != 0)) {
+		MPASS(inp->inp_socket->so_options & SO_REUSEPORT_LB);
 		inp->in6p_laddr = in6addr_any;
 		inp->inp_lport = 0;
-		return (EAGAIN);
+		return (error);
 	}
+
+	inp->inp_flags |= INP_ANONPORT;
 
 	return (0);
 }
@@ -207,7 +208,7 @@ in6_pcbbind_avail(struct inpcb *inp, const struct sockaddr_in6 *sin6, int fib,
 		sin6.sin6_addr = *laddr;
 
 		NET_EPOCH_ENTER(et);
-		if ((ifa = ifa_ifwithaddr((const struct sockaddr *)&sin6)) ==
+		if ((ifa = ifa_ifwithaddr_fib((const struct sockaddr *)&sin6, fib)) ==
 		    NULL && (inp->inp_flags & INP_BINDANY) == 0) {
 			NET_EPOCH_EXIT(et);
 			return (EADDRNOTAVAIL);
@@ -361,12 +362,13 @@ in6_pcbbind(struct inpcb *inp, struct sockaddr_in6 *sin6, int flags,
 		}
 	} else {
 		inp->inp_lport = lport;
-		if (in_pcbinshash(inp) != 0) {
+		if (__predict_false((error = in_pcbinshash(inp)) != 0)) {
+			MPASS(inp->inp_socket->so_options & SO_REUSEPORT_LB);
 			INP_HASH_WUNLOCK(inp->inp_pcbinfo);
 			inp->inp_flags &= ~INP_BOUNDFIB;
 			inp->in6p_laddr = in6addr_any;
 			inp->inp_lport = 0;
-			return (EAGAIN);
+			return (error);
 		}
 	}
 	INP_HASH_WUNLOCK(inp->inp_pcbinfo);
@@ -393,10 +395,6 @@ in6_pcbladdr(struct inpcb *inp, struct sockaddr_in6 *sin6,
 		scope_ambiguous = 1;
 	if ((error = sa6_embedscope(sin6, V_ip6_use_defzone)) != 0)
 		return(error);
-
-	/* RFC4291 section 2.5.2 */
-	if (IN6_IS_ADDR_UNSPECIFIED(&sin6->sin6_addr))
-		return (ENETUNREACH);
 
 	if ((error = prison_remote_ip6(inp->inp_cred, &sin6->sin6_addr)) != 0)
 		return (error);
@@ -450,8 +448,9 @@ in6_pcbconnect(struct inpcb *inp, struct sockaddr_in6 *sin6, struct ucred *cred,
     bool sas_required)
 {
 	struct inpcbinfo *pcbinfo = inp->inp_pcbinfo;
-	struct sockaddr_in6 laddr6;
+	struct sockaddr_in6 laddr6 = { .sin6_family = AF_INET6 };
 	int error;
+	bool anonport;
 
 	NET_EPOCH_ASSERT();
 	INP_WLOCK_ASSERT(inp);
@@ -462,8 +461,11 @@ in6_pcbconnect(struct inpcb *inp, struct sockaddr_in6 *sin6, struct ucred *cred,
 	KASSERT(IN6_IS_ADDR_UNSPECIFIED(&inp->in6p_faddr),
 	    ("%s: inp is already connected", __func__));
 
-	bzero(&laddr6, sizeof(laddr6));
-	laddr6.sin6_family = AF_INET6;
+	/* RFC4291 section 2.5.2 */
+	if (IN6_IS_ADDR_UNSPECIFIED(&sin6->sin6_addr))
+		return (ENETUNREACH);
+
+	anonport = (inp->inp_lport == 0);
 
 	INP_HASH_WLOCK(pcbinfo);
 	if (IN6_IS_ADDR_UNSPECIFIED(&inp->in6p_laddr)) {
@@ -477,26 +479,27 @@ in6_pcbconnect(struct inpcb *inp, struct sockaddr_in6 *sin6, struct ucred *cred,
 			INP_HASH_WUNLOCK(pcbinfo);
 			return (error);
 		}
-		if (inp->inp_lport == 0) {
-			error = in_pcb_lport_dest(inp,
-			    (struct sockaddr *) &laddr6, &inp->inp_lport,
-			    (struct sockaddr *) sin6, sin6->sin6_port, cred,
-			    INPLOOKUP_WILDCARD);
-			if (__predict_false(error)) {
-				INP_HASH_WUNLOCK(pcbinfo);
-				return (error);
-			}
-			inp->inp_flags |= INP_ANONPORT;
+	} else
+		laddr6.sin6_addr = inp->in6p_laddr;
+
+	if (anonport) {
+		error = in_pcb_lport_dest(inp, (struct sockaddr *) &laddr6,
+		    &inp->inp_lport, (struct sockaddr *) sin6, sin6->sin6_port,
+		    cred, INPLOOKUP_WILDCARD);
+		if (__predict_false(error)) {
+			INP_HASH_WUNLOCK(pcbinfo);
+			return (error);
 		}
-		inp->in6p_laddr = laddr6.sin6_addr;
 	} else if (in6_pcblookup_internal(pcbinfo, &sin6->sin6_addr,
-	    sin6->sin6_port, &inp->in6p_laddr, inp->inp_lport, 0,
+	    sin6->sin6_port, &laddr6.sin6_addr, inp->inp_lport, 0,
 	    M_NODOM, RT_ALL_FIBS) != NULL) {
 		INP_HASH_WUNLOCK(pcbinfo);
 		return (EADDRINUSE);
 	}
+
 	MPASS(inp->inp_lport != 0);
-	MPASS(!IN6_IS_ADDR_UNSPECIFIED(&inp->in6p_laddr));
+	MPASS(!IN6_IS_ADDR_UNSPECIFIED(&laddr6.sin6_addr));
+	inp->in6p_laddr = laddr6.sin6_addr;
 	inp->in6p_faddr = sin6->sin6_addr;
 	inp->inp_fport = sin6->sin6_port;
 	/* update flowinfo - draft-itojun-ipv6-flowlabel-api-00 */
@@ -521,6 +524,8 @@ in6_pcbconnect(struct inpcb *inp, struct sockaddr_in6 *sin6, struct ucred *cred,
 		inp->inp_flowid = hash_val;
 		inp->inp_flowtype = hash_type;
 	}
+	if (anonport)
+		inp->inp_flags |= INP_ANONPORT;
 
 	return (0);
 }
@@ -911,7 +916,7 @@ in6_pcblookup_lbgroup(const struct inpcbinfo *pcbinfo,
 	NET_EPOCH_ASSERT();
 
 	hdr = &pcbinfo->ipi_lbgrouphashbase[
-	    INP_PCBPORTHASH(lport, pcbinfo->ipi_porthashmask)];
+	    INP_PCBPORTHASH(lport, pcbinfo->ipi_lbgrouphashmask)];
 
 	/*
 	 * Search for an LB group match based on the following criteria:

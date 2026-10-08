@@ -665,35 +665,37 @@
 #define	AUE_SETCRED		43271	/* FreeBSD-specific. */
 #define	AUE_INOTIFY		43272	/* FreeBSD/Linux. */
 #define	AUE_PDRFORK		43273	/* FreeBSD-specific. */
-#define	AUE_CAP_XFER_LIMIT	43274	/* FreeBSD-specific. */
-#define	AUE_CAP_CLOEXEC_LIMIT	43275	/* FreeBSD-specific. */
-#define	AUE_CAP_CLOFORK_LIMIT	43276	/* FreeBSD-specific. */
-#define	AUE_PDSELF		43301	/* 5BSD */
-#define	AUE_PDCMP		43302	/* 5BSD */
-#define	AUE_PDINCAPMODE		43304	/* 5BSD */
-#define	AUE_CAP_MMAP_CAPMODE	43305	/* 5BSD */
-#define	AUE_CAP_LOOKUP_CAPMODE	43306	/* 5BSD */
-#define	AUE_BLUED_CONNECT	43310	/* 5BSD: BLE connection */
-#define	AUE_BLUED_PAIR		43311	/* 5BSD: BLE SMP pairing */
-#define	AUE_BLUED_BOND_ADD	43312	/* 5BSD: BLE bond stored */
-#define	AUE_BLUED_BOND_REMOVE	43313	/* 5BSD: BLE bond removed */
-#define	AUE_BLUED_START		43314	/* 5BSD: blued daemon start */
-#define	AUE_SWITCHBOARD_START	43320	/* 5BSD: switchboard daemon start */
-#define	AUE_SWITCHBOARD_CTL	43321	/* 5BSD: switchboard control command */
-#define	AUE_SWITCHBOARD_SVC_EXEC	43322	/* 5BSD: switchboard service exec */
-#define	AUE_SWITCHBOARD_CAP_MINT	43323	/* 5BSD: switchboard capability mint */
-#define	AUE_SWITCHBOARD_RELOAD	43324	/* 5BSD: switchboard config reload */
-#define	AUE_SWITCHBOARD_ONDEMAND	43325	/* 5BSD: switchboard on-demand activation */
-#define	AUE_SWITCHBOARD_CAPSULE	43326	/* 5BSD: switchboard Capsule disconnect */
-#define	AUE_SWITCHBOARD_COMPONENT	43327	/* 5BSD: component session delegation */
-#define	AUE_SWITCHBOARD_ANOINT	43328	/* 5BSD: switchboard anointment refusal */
-#define	AUE_NETWORKCMP_POLICY	43329	/* 5BSD: NetworkCmp policy */
-#define	AUE_LOGCMP_POLICY	43331	/* 5BSD: LogCmp policy */
-#define	AUE_TRACECMP_POLICY	43332	/* 5BSD: TraceCmp policy */
-#define	AUE_BSDNOTIFY_POLICY	43333	/* 5BSD: BsdNotify policy */
-#define	AUE_CRYPTOCMP_POLICY	43334	/* 5BSD: CryptoCmp policy */
-#define	AUE_AUTHAGENT_ELEVATE	43335	/* 5BSD: auth agent elevation (anoint) */
-#define	AUE_AUTHAGENT_MINT	43336	/* 5BSD: auth agent session mint */
+#define	AUE_PDOPENPID		43274	/* FreeBSD-specific. */
+/* 5BSD-local events start at 43900 so new FreeBSD events cannot collide. */
+#define	AUE_CAP_XFER_LIMIT	43900	/* 5BSD */
+#define	AUE_CAP_CLOEXEC_LIMIT	43901	/* 5BSD */
+#define	AUE_CAP_CLOFORK_LIMIT	43902	/* 5BSD */
+#define	AUE_PDSELF		43927	/* 5BSD */
+#define	AUE_PDCMP		43928	/* 5BSD */
+#define	AUE_PDINCAPMODE		43930	/* 5BSD */
+#define	AUE_CAP_MMAP_CAPMODE	43931	/* 5BSD */
+#define	AUE_CAP_LOOKUP_CAPMODE	43932	/* 5BSD */
+#define	AUE_BLUED_CONNECT	43936	/* 5BSD: BLE connection */
+#define	AUE_BLUED_PAIR		43937	/* 5BSD: BLE SMP pairing */
+#define	AUE_BLUED_BOND_ADD	43938	/* 5BSD: BLE bond stored */
+#define	AUE_BLUED_BOND_REMOVE	43939	/* 5BSD: BLE bond removed */
+#define	AUE_BLUED_START		43940	/* 5BSD: blued daemon start */
+#define	AUE_SWITCHBOARD_START	43946	/* 5BSD: switchboard daemon start */
+#define	AUE_SWITCHBOARD_CTL	43947	/* 5BSD: switchboard control command */
+#define	AUE_SWITCHBOARD_SVC_EXEC	43948	/* 5BSD: switchboard service exec */
+#define	AUE_SWITCHBOARD_CAP_MINT	43949	/* 5BSD: switchboard capability mint */
+#define	AUE_SWITCHBOARD_RELOAD	43950	/* 5BSD: switchboard config reload */
+#define	AUE_SWITCHBOARD_ONDEMAND	43951	/* 5BSD: switchboard on-demand activation */
+#define	AUE_SWITCHBOARD_CAPSULE	43952	/* 5BSD: switchboard Capsule disconnect */
+#define	AUE_SWITCHBOARD_COMPONENT	43953	/* 5BSD: component session delegation */
+#define	AUE_SWITCHBOARD_ANOINT	43954	/* 5BSD: switchboard anointment refusal */
+#define	AUE_NETWORKCMP_POLICY	43955	/* 5BSD: NetworkCmp policy */
+#define	AUE_LOGCMP_POLICY	43957	/* 5BSD: LogCmp policy */
+#define	AUE_TRACECMP_POLICY	43958	/* 5BSD: TraceCmp policy */
+#define	AUE_BSDNOTIFY_POLICY	43959	/* 5BSD: BsdNotify policy */
+#define	AUE_CRYPTOCMP_POLICY	43960	/* 5BSD: CryptoCmp policy */
+#define	AUE_AUTHAGENT_ELEVATE	43961	/* 5BSD: auth agent elevation (anoint) */
+#define	AUE_AUTHAGENT_MINT	43962	/* 5BSD: auth agent session mint */
 
 /*
  * Darwin BSM uses a number of AUE_O_* definitions, which are aliased to the

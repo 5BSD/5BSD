@@ -3,6 +3,9 @@ LOADER_MSDOS_SUPPORT?=	yes
 LOADER_UFS_SUPPORT?=	yes
 LOADER_CD9660_SUPPORT?=	no
 LOADER_EXT2FS_SUPPORT?=	no
+LOADER_GZ_SUPPORT?=     yes
+LOADER_BZIP2_SUPPORT?=  yes
+LOADER_XZ_SUPPORT?=     yes
 
 .include <bsd.init.mk>
 
@@ -47,7 +50,7 @@ HAVE_ZFS=	yes
 
 CFLAGS.bootinfo.c += -I$(SRCTOP)/sys/teken
 CFLAGS.bootinfo.c += -I${SRCTOP}/contrib/pnglite
-CFLAGS.decompress.c += ${ZLIB_CFLAGS} ${BZIP2_CFLAGS} ${ZSTD_CFLAGS}
+CFLAGS.decompress.c += ${ZLIB_CFLAGS} ${BZIP2_CFLAGS} ${ZSTD_CFLAGS} ${XZ_CFLAGS}
 CFLAGS.framebuffer.c += -I$(SRCTOP)/sys/teken
 CFLAGS.framebuffer.c += -I${SRCTOP}/contrib/pnglite
 CFLAGS.main.c += -I$(SRCTOP)/sys/teken

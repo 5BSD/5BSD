@@ -26,11 +26,17 @@
  */
 
 #include <sys/param.h>
+#include <sys/capsicum.h>
 #include <sys/extattr.h>
 #include <sys/fcntl.h>
+#include <sys/file.h>
+#include <sys/filedesc.h>
 #include <sys/namei.h>
 #include <sys/proc.h>
 #include <sys/syscallsubr.h>
+#include <sys/vnode.h>
+
+#include <security/mac/mac_framework.h>
 
 #ifdef COMPAT_LINUX32
 #include <machine/../linux32/linux.h>
@@ -80,6 +86,7 @@ struct listxattr_args {
 	char		*list;
 	l_size_t	size;
 	int		follow;
+	bool		opath;		/* fd may be an internal O_PATH fd */
 };
 
 struct setxattr_args {
@@ -90,6 +97,7 @@ struct setxattr_args {
 	l_size_t	size;
 	l_int		flags;
 	int		follow;
+	bool		opath;		/* fd may be an internal O_PATH fd */
 };
 
 struct getxattr_args {
@@ -99,6 +107,7 @@ struct getxattr_args {
 	void 		*value;
 	l_size_t	size;
 	int		follow;
+	bool		opath;		/* fd may be an internal O_PATH fd */
 };
 
 struct removexattr_args {
@@ -106,6 +115,7 @@ struct removexattr_args {
 	const char	*path;
 	const char	*name;
 	int		follow;
+	bool		opath;		/* fd may be an internal O_PATH fd */
 };
 
 static char *extattr_namespace_names[] = EXTATTR_NAMESPACE_NAMES;
@@ -119,6 +129,22 @@ error_to_xattrerror(int attrnamespace, int error)
 		return (ENOTSUP);
 	else
 		return (error);
+}
+
+/*
+ * Look up the vnode-backed file for the f*xattr() family.  Like Linux, a
+ * user-supplied O_PATH descriptor fails with EBADF.  The *xattrat() family
+ * resolves dfd-relative paths through a temporary internal O_PATH
+ * descriptor (see xattrat_resolve()), which must be accepted.
+ */
+static int
+xattr_getvnode(struct thread *td, int fd, bool opath, cap_rights_t *rightsp,
+    struct file **fpp)
+{
+
+	if (opath)
+		return (getvnode_path(td, fd, rightsp, NULL, fpp));
+	return (getvnode(td, fd, rightsp, fpp));
 }
 
 static int
@@ -154,11 +180,20 @@ listxattr(struct thread *td, struct listxattr_args *args)
 {
 	char attrname[LINUX_XATTR_NAME_MAX + 1];
 	char *data, *prefix, *key;
+	cap_rights_t rights;
+	struct file *fp = NULL;
 	struct uio auio;
 	struct iovec aiov;
 	unsigned char keylen;
 	size_t sz, cnt, rs, prefixlen, pairlen;
 	int attrnamespace, error;
+
+	if (args->path == NULL) {
+		error = xattr_getvnode(td, args->fd, args->opath,
+		    cap_rights_init_one(&rights, CAP_EXTATTR_LIST), &fp);
+		if (error != 0)
+			return (error);
+	}
 
 	/* Native lists may truncate in the middle of a length-prefixed name. */
 	sz = LINUX_XATTR_LIST_MAX;
@@ -182,7 +217,7 @@ listxattr(struct thread *td, struct listxattr_args *args)
 			error = kern_extattr_list_path(td, args->path,
 			    attrnamespace, &auio, args->follow, UIO_USERSPACE);
 		else
-			error = kern_extattr_list_fd(td, args->fd,
+			error = kern_extattr_list_fp(td, fp,
 			    attrnamespace, &auio);
 		rs = sz - auio.uio_resid;
 		/* Omit namespaces the caller may not enumerate. */
@@ -236,6 +271,8 @@ out:
 	if (error == 0)
 		td->td_retval[0] = cnt;
 	free(data, M_LINUX);
+	if (fp != NULL)
+		fdrop(fp, td);
 	return (error_to_xattrerror(attrnamespace, error));
 }
 
@@ -285,18 +322,33 @@ static int
 removexattr(struct thread *td, struct removexattr_args *args)
 {
 	char attrname[LINUX_XATTR_NAME_MAX + 1];
+	struct file *fp = NULL;
+	cap_rights_t rights;
 	int attrnamespace, error;
+
+	if (args->path == NULL) {
+		error = xattr_getvnode(td, args->fd, args->opath,
+		    cap_rights_init_one(&rights, CAP_EXTATTR_DELETE), &fp);
+		if (error != 0)
+			return (error);
+	}
 
 	error = xattr_to_extattr(args->name, &attrnamespace, attrname);
 	if (error != 0)
-		return (error);
+		goto out_err;
 	if (args->path != NULL)
 		error = kern_extattr_delete_path(td, args->path, attrnamespace,
 		    attrname, args->follow, UIO_USERSPACE);
 	else
-		error = kern_extattr_delete_fd(td, args->fd, attrnamespace,
+		error = kern_extattr_delete_fp(td, fp, attrnamespace,
 		    attrname);
+	if (fp != NULL)
+		fdrop(fp, td);
 	return (error_to_xattrerror(attrnamespace, error));
+out_err:
+	if (fp != NULL)
+		fdrop(fp, td);
+	return (error);
 }
 
 int
@@ -338,40 +390,118 @@ linux_fremovexattr(struct thread *td, struct linux_fremovexattr_args *args)
 	return (removexattr(td, &eargs));
 }
 
+/*-
+ * Linux-specific atomic extended attribute get on a vnode.
+ *
+ * Probes the attribute size and reads the data under a single vnode lock,
+ * preventing a TOCTOU race and returning ERANGE when the buffer is too
+ * small (matching Linux getxattr(2) semantics).
+ */
+static int
+linux_extattr_get_vp(struct vnode *vp, int attrnamespace, const char *attrname,
+    void *data, size_t nbytes, struct thread *td)
+{
+	struct uio auio;
+	struct iovec aiov;
+	size_t size;
+	int error;
+
+	if (nbytes > IOSIZE_MAX)
+		return (EINVAL);
+
+	vn_lock(vp, LK_SHARED | LK_RETRY);
+
+#ifdef MAC
+	error = mac_vnode_check_getextattr(td->td_ucred, vp, attrnamespace,
+	    attrname);
+	if (error != 0)
+		goto done;
+#endif
+
+	/*
+	 * Probe the attribute size first under the vnode lock;
+	 */
+	error = VOP_GETEXTATTR(vp, attrnamespace, attrname, NULL,
+	    &size, td->td_ucred, td);
+	if (error != 0)
+		goto done;
+
+	/*
+	 * The caller only wants the size, so we are done after this.
+	 */
+	if (data == NULL || nbytes == 0) {
+		td->td_retval[0] = size;
+		goto done;
+	}
+	/*
+	 * If the buffer is too small, return ERANGE
+	 * so the caller can retry (Linux getxattr semantics).
+	 */
+	if (size > nbytes) {
+		error = ERANGE;
+		goto done;
+	}
+	/* Buffer is large enough; read the value. */
+	aiov.iov_base = data;
+	aiov.iov_len = nbytes;
+	auio.uio_iov = &aiov;
+	auio.uio_iovcnt = 1;
+	auio.uio_offset = 0;
+	auio.uio_resid = nbytes;
+	auio.uio_rw = UIO_READ;
+	auio.uio_segflg = UIO_USERSPACE;
+	auio.uio_td = td;
+	error = VOP_GETEXTATTR(vp, attrnamespace, attrname, &auio, NULL,
+		td->td_ucred, td);
+	if (error == 0)
+		td->td_retval[0] = nbytes - auio.uio_resid;
+done:
+	VOP_UNLOCK(vp);
+	return (error);
+}
+
 static int
 getxattr(struct thread *td, struct getxattr_args *args)
 {
 	char attrname[LINUX_XATTR_NAME_MAX + 1];
-	size_t needed;
+	struct file *fp = NULL;
+	struct nameidata nd;
+	struct vnode *vp;
+	cap_rights_t rights;
 	int attrnamespace, error;
 
+	if (args->path == NULL) {
+		error = xattr_getvnode(td, args->fd, args->opath,
+		    cap_rights_init_one(&rights, CAP_EXTATTR_GET), &fp);
+		if (error != 0)
+			return (error);
+		vp = fp->f_vnode;
+	} else {
+		NDINIT_ATRIGHTS(&nd, LOOKUP, args->follow, UIO_USERSPACE,
+		    args->path, AT_FDCWD,
+		    cap_rights_init_one(&rights, CAP_EXTATTR_GET));
+		error = namei(&nd);
+		if (error != 0)
+			return (error);
+		NDFREE_PNBUF(&nd);
+		vp = nd.ni_vp;
+	}
+
 	error = xattr_to_extattr(args->name, &attrnamespace, attrname);
-	if (error != 0)
-		return (error);
+	if (error == 0) {
+		error = linux_extattr_get_vp(vp, attrnamespace, attrname,
+			args->value, args->size, td);
+		if (error == EPERM || error == EOPNOTSUPP)
+			error = ENOATTR;
+	}
+	/* An unknown namespace prefix stays EOPNOTSUPP, as on Linux. */
 
-	/* Native extattr reads truncate to the supplied buffer.  Linux instead
-	 * reports ERANGE without copying a prefix, so query the size first. */
-	if (args->path != NULL)
-		error = kern_extattr_get_path(td, args->path, attrnamespace,
-		    attrname, NULL, 0, args->follow, UIO_USERSPACE);
-	else
-		error = kern_extattr_get_fd(td, args->fd, attrnamespace,
-		    attrname, NULL, 0);
-	if (error != 0)
-		return (error == EPERM ? ENOATTR : error);
-	needed = td->td_retval[0];
-	if (args->size == 0)
-		return (0);
-	if (needed > args->size)
-		return (ERANGE);
-
-	if (args->path != NULL)
-		error = kern_extattr_get_path(td, args->path, attrnamespace,
-		    attrname, args->value, args->size, args->follow, UIO_USERSPACE);
-	else
-		error = kern_extattr_get_fd(td, args->fd, attrnamespace,
-		    attrname, args->value, args->size);
-	return (error == EPERM ? ENOATTR : error);
+	if (fp != NULL) {
+		fdrop(fp, td);
+	} else {
+		vrele(nd.ni_vp);
+	}
+	return (error);
 }
 
 int
@@ -423,21 +553,39 @@ static int
 setxattr(struct thread *td, struct setxattr_args *args)
 {
 	char attrname[LINUX_XATTR_NAME_MAX + 1];
+	struct file *fp = NULL;
+	cap_rights_t rights;
 	int attrnamespace, error;
 
-	if ((args->flags & ~(LINUX_XATTR_FLAGS)) != 0)
-		return (EINVAL);
+	if (args->path == NULL) {
+		if ((args->flags & LINUX_XATTR_FLAGS) != 0)
+			cap_rights_init(&rights, CAP_EXTATTR_GET, CAP_EXTATTR_SET);
+		else
+			cap_rights_init_one(&rights, CAP_EXTATTR_SET);
+		error = xattr_getvnode(td, args->fd, args->opath, &rights,
+		    &fp);
+		if (error != 0)
+			return (error);
+	}
+
+	/*
+	 * Linux accepts XATTR_CREATE and XATTR_REPLACE together; see below.
+	 */
+	if ((args->flags & ~LINUX_XATTR_FLAGS) != 0) {
+		error = EINVAL;
+		goto out_err;
+	}
 	error = xattr_to_extattr(args->name, &attrnamespace, attrname);
 	if (error != 0)
-		return (error);
+		goto out_err;
 
-	if ((args->flags & (LINUX_XATTR_FLAGS)) != 0 ) {
+	if ((args->flags & LINUX_XATTR_FLAGS) != 0) {
 		if (args->path != NULL)
 			error = kern_extattr_get_path(td, args->path,
 			    attrnamespace, attrname, NULL, 0,
 			    args->follow, UIO_USERSPACE);
 		else
-			error = kern_extattr_get_fd(td, args->fd,
+			error = kern_extattr_get_fp(td, fp,
 			    attrnamespace, attrname, NULL, 0);
 		if (args->flags == LINUX_XATTR_FLAGS) {
 			/* Both bits are legal.  CREATE wins when present and
@@ -458,11 +606,17 @@ setxattr(struct thread *td, struct setxattr_args *args)
 		    attrname, args->value, args->size, args->follow,
 		    UIO_USERSPACE);
 	else
-		error = kern_extattr_set_fd(td, args->fd, attrnamespace,
+		error = kern_extattr_set_fp(td, fp, attrnamespace,
 		    attrname, args->value, args->size);
 out:
+	if (fp != NULL)
+		fdrop(fp, td);
 	td->td_retval[0] = 0;
 	return (error_to_xattrerror(attrnamespace, error));
+out_err:
+	if (fp != NULL)
+		fdrop(fp, td);
+	return (error);
 }
 
 int
@@ -644,6 +798,7 @@ linux_setxattrat(struct thread *td, struct linux_setxattrat_args *args)
 		.size = xa.size,
 		.flags = xa.flags,
 		.follow = tgt.follow,
+		.opath = (tgt.tmpfd != -1),
 	};
 	error = setxattr(td, &eargs);
 	xattrat_release(td, &tgt);
@@ -675,6 +830,7 @@ linux_getxattrat(struct thread *td, struct linux_getxattrat_args *args)
 		.value = (void *)(uintptr_t)xa.value,
 		.size = xa.size,
 		.follow = tgt.follow,
+		.opath = (tgt.tmpfd != -1),
 	};
 	error = getxattr(td, &eargs);
 	xattrat_release(td, &tgt);
@@ -698,6 +854,7 @@ linux_listxattrat(struct thread *td, struct linux_listxattrat_args *args)
 		.list = args->list,
 		.size = args->size,
 		.follow = tgt.follow,
+		.opath = (tgt.tmpfd != -1),
 	};
 	error = listxattr(td, &eargs);
 	xattrat_release(td, &tgt);
@@ -720,6 +877,7 @@ linux_removexattrat(struct thread *td, struct linux_removexattrat_args *args)
 		.path = tgt.path,
 		.name = args->name,
 		.follow = tgt.follow,
+		.opath = (tgt.tmpfd != -1),
 	};
 	error = removexattr(td, &eargs);
 	xattrat_release(td, &tgt);

@@ -714,6 +714,8 @@ vendor DISPLAYLINK	0x17e9	DisplayLink
 vendor LENOVO		0x17ef	Lenovo
 vendor WAVESENSE	0x17f4	WaveSense
 vendor VAISALA		0x1843	Vaisala
+vendor K2L		0x184f	K2L GmbH
+vendor VERBATIM 	0x18a5	Verbatim
 vendor E3C		0x18b4	E3C Technologies
 vendor AMIT		0x18c5	AMIT
 vendor GOOGLE		0x18d1	Google
@@ -2765,6 +2767,9 @@ product JVC MP_PRX1		0x3008	MP-PRX1 Ethernet
 
 /* JRC products */
 product JRC AH_J3001V_J3002V	0x0001	AirH PHONE AH-J3001V/J3002V
+
+/* K2L products */
+product K2L EVB_LAN8670_USB	0x0051	Microchip EVB-LAN8670-USB 10BASE-T1S
 
 /* Kamstrrup products */
 product KAMSTRUP OPTICALEYE	0x0001	Optical Eye/3-wire
@@ -4952,6 +4957,9 @@ product VIALABS VL701		0x0701	VL701 USB 3.0 SATA Bridge
 /* Vaisala products */
 product VAISALA CABLE		0x0200	USB Interface cable
 
+/* Verbatim products */
+product VERBATIM STORENGO	0x0243	Verbatim Store N Go
+
 /* Vertex products */
 product VERTEX VW110L		0x0100	Vertex VW110L modem
 
@@ -4983,6 +4991,7 @@ product WACOM GRAPHIRE		0x0010	Graphire
 product WACOM GRAPHIRE3_4X5	0x0013	Graphire 3 4x5
 product WACOM INTUOSA5		0x0021	Intuos A5
 product WACOM GD0912U		0x0022	Intuos 9x12 Graphics Tablet
+product WACOM EXPRESSKEY_REMOTE	0x0331	ExpressKey Remote
 
 /* WAGO Kontakttechnik GmbH products */
 product WAGO SERVICECABLE	0x07a6	USB Service Cable 750-923

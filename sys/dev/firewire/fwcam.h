@@ -53,6 +53,13 @@
 #define IIDC_ONE_SHOT		0x61C
 #define IIDC_MEM_SAVE_CH	0x620
 #define IIDC_CUR_MEM_CH		0x624
+#define IIDC_VMODE_ERR_STATUS	0x628
+
+/* Cur_V_Format / Cur_V_Mode / Cur_V_Frm_Rate register fields */
+#define IIDC_CUR_V_SHIFT	29		/* bits [0..2] */
+
+/* Vmode_Error_Status register */
+#define IIDC_VMODE_ERROR	(1 << 31)	/* bit [0]: mode error */
 
 /* Section 1.7 - Status and control register for features */
 #define IIDC_BRIGHTNESS		0x800
@@ -196,9 +203,75 @@ struct fwcam_info {
 
 /* fwcam state values (visible to userland via fwcam_info.state) */
 #define FWCAM_STATE_IDLE	0
-#define FWCAM_STATE_PROBED	1
-#define FWCAM_STATE_STREAMING	2
-#define FWCAM_STATE_DETACHING	3
+#define FWCAM_STATE_PROBING	1
+#define FWCAM_STATE_PROBED	2
+#define FWCAM_STATE_STREAMING	3
+#define FWCAM_STATE_DETACHING	4
+
+/* IIDC format/mode/rate/feature/state name tables for userland and driver */
+#define FWCAM_FMT_NMAX		8
+#define FWCAM_RATE_NMAX		8
+
+static const char * const fwcam_fmt_names[FWCAM_FMT_NMAX] = {
+	"VGA (Format_0)",
+	"Super VGA 1 (Format_1)",
+	"Super VGA 2 (Format_2)",
+	"Reserved",
+	"Reserved",
+	"Reserved",
+	"Still Image (Format_6)",
+	"Partial Image (Format_7)",
+};
+
+static const char * const fwcam_rate_names[FWCAM_RATE_NMAX] = {
+	"1.875 fps", "3.75 fps", "7.5 fps", "15 fps",
+	"30 fps",    "60 fps",   "120 fps", "240 fps",
+};
+
+static const char * const fwcam_feat_names[FWCAM_FEAT_MAX] = {
+	[FWCAM_FEAT_BRIGHTNESS]    = "brightness",
+	[FWCAM_FEAT_AUTO_EXPOSURE] = "auto_exposure",
+	[FWCAM_FEAT_SHARPNESS]     = "sharpness",
+	[FWCAM_FEAT_WHITE_BALANCE] = "white_balance",
+	[FWCAM_FEAT_HUE]           = "hue",
+	[FWCAM_FEAT_SATURATION]    = "saturation",
+	[FWCAM_FEAT_GAMMA]         = "gamma",
+	[FWCAM_FEAT_SHUTTER]       = "shutter",
+	[FWCAM_FEAT_GAIN]          = "gain",
+	[FWCAM_FEAT_IRIS]          = "iris",
+	[FWCAM_FEAT_FOCUS]         = "focus",
+	[FWCAM_FEAT_TEMPERATURE]   = "temperature",
+	[FWCAM_FEAT_TRIGGER]       = "trigger",
+	[FWCAM_FEAT_ZOOM]          = "zoom",
+	[FWCAM_FEAT_PAN]           = "pan",
+	[FWCAM_FEAT_TILT]          = "tilt",
+};
+
+static const char * const fwcam_state_names[] = {
+	[FWCAM_STATE_IDLE]      = "idle",
+	[FWCAM_STATE_PROBING]   = "probing",
+	[FWCAM_STATE_PROBED]    = "probed",
+	[FWCAM_STATE_STREAMING] = "streaming",
+	[FWCAM_STATE_DETACHING] = "detaching",
+};
+
+/* Format_0 (VGA non-compressed) mode geometry */
+struct fwcam_fmt0_mode {
+	int		w, h;
+	const char	*pixfmt;
+};
+
+#define FWCAM_FMT0_NMODES	7
+
+static const struct fwcam_fmt0_mode fwcam_fmt0_modes[FWCAM_FMT0_NMODES] = {
+	{ 160, 120, "YUV444" },		/* mode 0 */
+	{ 320, 240, "YUV422" },		/* mode 1 */
+	{ 640, 480, "YUV411" },		/* mode 2 */
+	{ 640, 480, "YUV422" },		/* mode 3 */
+	{ 640, 480, "RGB8"   },		/* mode 4 */
+	{ 640, 480, "Mono8"  },		/* mode 5 */
+	{ 640, 480, "Mono16" },		/* mode 6 */
+};
 
 /*
  * Internal constants
@@ -225,6 +298,8 @@ struct fwcam_softc {
 	uint32_t		basic_func;	/* BASIC_FUNC_INQ */
 	uint32_t		features_hi;	/* FEATURE_HI_INQ */
 	uint32_t		features_lo;	/* FEATURE_LO_INQ */
+	uint32_t		modes[8];	/* V_MODE_INQ per format */
+	uint32_t		rates[8][8];	/* V_RATE_INQ per format/mode */
 
 	/* Current settings */
 	uint8_t			cur_format;

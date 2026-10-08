@@ -484,6 +484,17 @@ sched_shouldpreempt(int pri, int cpri, int remote)
 	return (0);
 }
 
+static inline int
+normalize_ts_off(int offset)
+{
+	/*
+	 * Adding RQ_TS_POL_MODULO before taking the modulo is to ensure the
+	 * dividend is positive (we want a positive result).
+	 */
+	MPASS(offset >= -RQ_TS_POL_MODULO);
+	return ((offset + RQ_TS_POL_MODULO) % RQ_TS_POL_MODULO);
+}
+
 /*
  * Add a thread to the actual run-queue.  Keeps transferable counts up to
  * date with what is actually on the run-queue.  Selects the correct
@@ -517,18 +528,34 @@ tdq_runq_add(struct tdq *tdq, struct thread *td, int flags)
 			/* Current queue from which processes are being run. */
 			idx = tdq->tdq_ts_deq_off;
 		else {
-			idx = (RQ_PRI_TO_QUEUE_IDX(pri) - RQ_TS_POL_MIN +
-			    tdq->tdq_ts_off) % RQ_TS_POL_MODULO;
+			idx = normalize_ts_off(
+			    /* Offset corresponding to priority. */
+			    RQ_PRI_TO_QUEUE_IDX(pri) - RQ_TS_POL_MIN +
+			    /* Insertion offset. */
+			    tdq->tdq_ts_off);
 			/*
-			 * We avoid enqueuing low priority threads in the queue
-			 * that we are still draining, effectively shortening
-			 * the runqueue by one queue.
+			 * We avoid enqueuing low priority threads in the queues
+			 * we still have to drain.  This effectively shortens
+			 * the runqueue by a few queues (see update of
+			 * 'tdq_ts_deq_off' in sched_clock()).
+			 *
+			 * The expressions that include differences below are
+			 * measuring the "distance" from the dequeue offset to
+			 * either 'idx' or the insertion offset modulo
+			 * RQ_TS_POL_MODULO.  Thanks to the arithmetic operators
+			 * always performing the usual arithmetic conversions,
+			 * all operands are promoted to integers, which is
+			 * necessary to accomodate corner cases (else
+			 * we would have to be conditional on whether the first
+			 * term is greater or lower than the second, in the
+			 * second case correcting the result with UCHAR_MAX %
+			 * RQ_TS_POL_MODULO).
 			 */
 			if (tdq->tdq_ts_deq_off != tdq->tdq_ts_off &&
-			    idx == tdq->tdq_ts_deq_off)
-				/* Ensure the dividend is positive. */
-				idx = (idx - 1 + RQ_TS_POL_MODULO) %
-				    RQ_TS_POL_MODULO;
+			    normalize_ts_off(idx - tdq->tdq_ts_deq_off) <
+			    normalize_ts_off(tdq->tdq_ts_off -
+			    tdq->tdq_ts_deq_off))
+				idx = normalize_ts_off(tdq->tdq_ts_deq_off - 1);
 		}
 		/* Absolute queue index. */
 		idx += RQ_TS_POL_MIN;
@@ -3321,12 +3348,6 @@ sched_ule_schedcpu(void)
 {
 }
 
-static bool
-sched_ule_do_timer_accounting(void)
-{
-	return (true);
-}
-
 #ifdef SMP
 static int
 sched_ule_find_child_with_core(int cpu, struct cpu_group *grp)
@@ -3436,7 +3457,6 @@ struct sched_instance sched_ule_instance = {
 	SLOT(sizeof_thread),
 	SLOT(tdname),
 	SLOT(clear_tdname),
-	SLOT(do_timer_accounting),
 	SLOT(find_l2_neighbor),
 	SLOT(init),
 	SLOT(init_ap),

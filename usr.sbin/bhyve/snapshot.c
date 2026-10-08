@@ -3666,7 +3666,7 @@ IPC_COMMAND(ipc_cmd_set, checkpoint, vm_do_checkpoint);
  * Create the listening socket for IPC with bhyvectl
  */
 int
-init_checkpoint_thread(struct vmctx *ctx)
+init_checkpoint_thread(struct vmctx *ctx, const char *bhyve_run_dir)
 {
 	struct checkpoint_thread_info *checkpoint_info = NULL;
 	struct sockaddr_un addr;
@@ -3689,8 +3689,10 @@ init_checkpoint_thread(struct vmctx *ctx)
 
 	addr.sun_family = AF_UNIX;
 
-	pathlen = snprintf(addr.sun_path, sizeof(addr.sun_path), "%s%s",
-	    BHYVE_RUN_DIR, vm_get_name(ctx));
+	if (bhyve_run_dir == NULL)
+		bhyve_run_dir = BHYVE_RUN_DIR;
+	pathlen = snprintf(addr.sun_path, sizeof(addr.sun_path), "%s/%s",
+	    bhyve_run_dir, vm_get_name(ctx));
 	if (pathlen < 0 || (size_t)pathlen >= sizeof(addr.sun_path)) {
 		EPRINTLN("Checkpoint socket path is too long");
 		err = ENAMETOOLONG;

@@ -144,13 +144,20 @@ and
 exists, the request fails with the error
 .Er EEXIST .
 .It Dv AT_RENAME_EXCHANGE
-Atomically exchange the two directory entries.
+Atomically exchange the files pointed to by the
+.Fa from
+and
+.Fa to
+names.
 Both paths must exist, but they may have different types and may refer to
 nonempty directories.
 Neither object is removed.
 This flag cannot be combined with
 .Dv AT_RENAME_NOREPLACE .
-ZFS and tmpfs support this operation.
+Currently only
+.Xr tmpfs 4
+supports this operation; other file systems fail with
+.Er EOPNOTSUPP .
 .El
 .Sh RETURN VALUES
 .Rv -std rename
@@ -359,12 +366,7 @@ flags were specified together.
 .It Bq Er ENOENT
 The
 .Dv AT_RENAME_EXCHANGE
-flag was specified and the destination does not exist.
-.It Bq Er ENOTCAPABLE
-An exchange was requested and either directory descriptor lacks
-.Dv CAP_RENAMEAT_SOURCE
-or
-.Dv CAP_RENAMEAT_TARGET .
+flag was specified and the source or the destination does not exist.
 .It Bq Er EOPNOTSUPP
 One of the
 .Fa flags

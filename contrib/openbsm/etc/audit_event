@@ -614,14 +614,14 @@
 43264:AUE_REALPATHAT:realpathat(2):fa
 43265:AUE_CLOSERANGE:close_range(2):cl
 43273:AUE_PDRFORK:pdrfork(2):pc
-43274:AUE_CAP_XFER_LIMIT:cap_xfer_limit(2):fm
-43275:AUE_CAP_CLOEXEC_LIMIT:cap_cloexec_limit(2):fm
-43276:AUE_CAP_CLOFORK_LIMIT:cap_clofork_limit(2):fm
-43301:AUE_PDSELF:pdself(2):pc
-43302:AUE_PDCMP:pdcmp(2):pc
-43304:AUE_PDINCAPMODE:pdincapmode(2):ot
-43305:AUE_CAP_MMAP_CAPMODE:cap_mmap_capmode(2):ot
-43306:AUE_CAP_LOOKUP_CAPMODE:cap_lookup_capmode(2):ot
+43900:AUE_CAP_XFER_LIMIT:cap_xfer_limit(2):fm
+43901:AUE_CAP_CLOEXEC_LIMIT:cap_cloexec_limit(2):fm
+43902:AUE_CAP_CLOFORK_LIMIT:cap_clofork_limit(2):fm
+43927:AUE_PDSELF:pdself(2):pc
+43928:AUE_PDCMP:pdcmp(2):pc
+43930:AUE_PDINCAPMODE:pdincapmode(2):ot
+43931:AUE_CAP_MMAP_CAPMODE:cap_mmap_capmode(2):ot
+43932:AUE_CAP_LOOKUP_CAPMODE:cap_lookup_capmode(2):ot
 #
 # Solaris userspace events.
 #
@@ -703,22 +703,22 @@
 # Historic/third-party application allocations of event identifiers.
 #
 32800:AUE_openssh:OpenSSH login:lo
-43320:AUE_SWITCHBOARD_START:switchboard start:ad
-43321:AUE_SWITCHBOARD_CTL:switchboard control command:ad
-43322:AUE_SWITCHBOARD_SVC_EXEC:switchboard service execution:pc
-43323:AUE_SWITCHBOARD_CAP_MINT:switchboard capability mint:ad
-43324:AUE_SWITCHBOARD_RELOAD:switchboard configuration reload:ad
-43325:AUE_SWITCHBOARD_ONDEMAND:switchboard on-demand activation:pc
-43326:AUE_SWITCHBOARD_CAPSULE:switchboard Capsule disconnect:ad
-43327:AUE_SWITCHBOARD_COMPONENT:switchboard component session:pc
-43328:AUE_SWITCHBOARD_ANOINT:switchboard anointment refusal:ad
-43329:AUE_NETWORKCMP_POLICY:NetworkCmp policy:nt
-43331:AUE_LOGCMP_POLICY:LogCmp policy:ad
-43332:AUE_TRACECMP_POLICY:TraceCmp policy:ad
-43333:AUE_BSDNOTIFY_POLICY:BsdNotify policy:ad
-43334:AUE_CRYPTOCMP_POLICY:CryptoCmp policy:ad
-43335:AUE_AUTHAGENT_ELEVATE:auth agent elevation:lo,ad
-43336:AUE_AUTHAGENT_MINT:auth agent session mint:lo
+43946:AUE_SWITCHBOARD_START:switchboard start:ad
+43947:AUE_SWITCHBOARD_CTL:switchboard control command:ad
+43948:AUE_SWITCHBOARD_SVC_EXEC:switchboard service execution:pc
+43949:AUE_SWITCHBOARD_CAP_MINT:switchboard capability mint:ad
+43950:AUE_SWITCHBOARD_RELOAD:switchboard configuration reload:ad
+43951:AUE_SWITCHBOARD_ONDEMAND:switchboard on-demand activation:pc
+43952:AUE_SWITCHBOARD_CAPSULE:switchboard Capsule disconnect:ad
+43953:AUE_SWITCHBOARD_COMPONENT:switchboard component session:pc
+43954:AUE_SWITCHBOARD_ANOINT:switchboard anointment refusal:ad
+43955:AUE_NETWORKCMP_POLICY:NetworkCmp policy:nt
+43957:AUE_LOGCMP_POLICY:LogCmp policy:ad
+43958:AUE_TRACECMP_POLICY:TraceCmp policy:ad
+43959:AUE_BSDNOTIFY_POLICY:BsdNotify policy:ad
+43960:AUE_CRYPTOCMP_POLICY:CryptoCmp policy:ad
+43961:AUE_AUTHAGENT_ELEVATE:auth agent elevation:lo,ad
+43962:AUE_AUTHAGENT_MINT:auth agent session mint:lo
 #
 # OpenBSM-managed application event space.
 #

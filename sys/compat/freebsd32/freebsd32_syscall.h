@@ -520,6 +520,8 @@
 #define	FREEBSD32_SYS_pdrfork	600
 #define	FREEBSD32_SYS_freebsd32_pdwait	601
 #define	FREEBSD32_SYS_renameat2	602
+#define	FREEBSD32_SYS_pdopenpid	603
+#define	FREEBSD32_SYS_pddupfd	604
 #define	FREEBSD32_SYS_cap_xfer_limit	1000
 #define	FREEBSD32_SYS_cap_cloexec_limit	1001
 #define	FREEBSD32_SYS_cap_clofork_limit	1002

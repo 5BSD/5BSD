@@ -56,12 +56,12 @@ extern uint32_t aq_hw_read_reg(struct aq_hw *hw, uint32_t reg);
 
 
 #define AQ_WRITE_REG_BIT(hw, reg, msk, shift, value) do { \
-	if (msk ^ ~0) { \
+	if ((msk) ^ ~0) { \
 		uint32_t reg_old, reg_new = 0U; \
 		reg_old = AQ_READ_REG(hw, reg); \
-		reg_new = (reg_old & (~msk)) | (value << shift); \
-	if (reg_old != reg_new) \
-		AQ_WRITE_REG(hw, reg, reg_new); \
+		reg_new = (reg_old & (~(msk))) | ((value) << (shift)); \
+		if (reg_old != reg_new) \
+			AQ_WRITE_REG(hw, reg, reg_new); \
 	} else { \
 		AQ_WRITE_REG(hw, reg, value); \
 	} \
@@ -71,14 +71,44 @@ extern uint32_t aq_hw_read_reg(struct aq_hw *hw, uint32_t reg);
 #define AQ_READ_REG_BIT(a, reg, msk, shift) ( \
 	((AQ_READ_REG(a, reg) & msk) >> shift))
 
-#define AQ_HW_FLUSH() { (void)AQ_READ_REG(hw, 0x10); }
+#define AQ_HW_FLUSH(hw) { (void)AQ_READ_REG((hw), 0x10); }
 
-#define aq_hw_write_reg_bit AQ_WRITE_REG_BIT
-
-#define aq_hw_write_reg AQ_WRITE_REG
-
-/* Statistics  */
+/* Driver-side per-backend statistics snapshot. */
 struct aq_hw_stats {
+	uint32_t uprc;
+	uint32_t mprc;
+	uint32_t bprc;
+	uint32_t erpt;
+	uint32_t uptc;
+	uint32_t mptc;
+	uint32_t bptc;
+	uint32_t erpr;
+	uint32_t mbtc;
+	uint32_t bbtc;
+	uint32_t mbrc;
+	uint32_t bbrc;
+	uint32_t ubrc;
+	uint32_t ubtc;
+	uint32_t ptc;
+	uint32_t prc;
+	uint32_t dpc;
+	uint32_t cprc;
+	uint32_t brc;	/* aggregate rx octets */
+	uint32_t btc;	/* aggregate tx octets */
+} __packed;
+
+union ip_addr {
+	struct {
+		uint8_t addr[16];
+	} v6;
+	struct {
+		uint8_t padding[12];
+		uint8_t addr[4];
+	} v4;
+} __packed;
+
+/* Raw fw1x MCP mailbox stats block, in hardware order. */
+struct aq_fw1x_mbox_stats {
 	uint32_t uprc;
 	uint32_t mprc;
 	uint32_t bprc;
@@ -99,21 +129,12 @@ struct aq_hw_stats {
 	uint32_t cprc;
 } __packed;
 
-union ip_addr {
-	struct {
-		uint8_t addr[16];
-	} v6;
-	struct {
-		uint8_t padding[12];
-		uint8_t addr[4];
-	} v4;
-} __packed;
-
+/* fw1x MCP mailbox: raw hardware layout, read verbatim. */
 struct aq_hw_fw_mbox {
 	uint32_t version;
 	uint32_t transaction_id;
 	int error;
-	struct aq_hw_stats stats;
+	struct aq_fw1x_mbox_stats stats;
 } __packed;
 
 struct aq_hw_fw_version {
@@ -152,6 +173,7 @@ struct aq_hw {
 
 	struct aq_hw_fc_info fc;
 	uint16_t link_rate;
+	uint16_t link_speed;	/* last negotiated rate (for ITR moderation) */
 
 	uint16_t device_id;
 	uint16_t subsystem_vendor_id;
@@ -179,6 +201,12 @@ struct aq_hw {
 	u_long flags;
 
 	uint32_t tx_rings_count;
+
+	/* Atlantic 2: base row added to every action-resolver-table index. */
+	uint32_t art_filter_base_index;
+
+	/* Atlantic 2: firmware statistics interface version (A0/B0). */
+	uint32_t aq2_iface;
 };
 
 #define AQ_HW_MAC      0U
@@ -232,6 +260,7 @@ struct aq_hw {
 #define AQ_HW_CHIP_REVISION_A0  0x01000000U
 #define AQ_HW_CHIP_REVISION_B0  0x02000000U
 #define AQ_HW_CHIP_REVISION_B1  0x04000000U
+#define AQ_HW_CHIP_ATLANTIC2    0x08000000U
 #define IS_CHIP_FEATURE(HW, _F_) (AQ_HW_CHIP_##_F_ & \
 	(HW)->chip_features)
 
@@ -335,11 +364,11 @@ int aq_hw_set_link_speed(struct aq_hw *hw, uint32_t speed);
 
 int aq_hw_fw_downld_dwords(struct aq_hw *hw, uint32_t a, uint32_t *p, uint32_t cnt);
 
-int aq_hw_reset(struct aq_hw *hw);
+int aq_hw_reset(struct aq_hw *hw, bool reboot);
 
 int aq_hw_mpi_create(struct aq_hw *hw);
 
-int aq_hw_mpi_read_stats(struct aq_hw *hw, struct aq_hw_fw_mbox *pmbox);
+int aq_hw_mpi_read_stats(struct aq_hw *hw, struct aq_hw_stats *stats);
 
 int aq_hw_init(struct aq_hw *hw, uint8_t *mac_addr, uint8_t adm_irq, bool msix);
 
@@ -354,7 +383,7 @@ int aq_hw_deinit(struct aq_hw *hw);
 int aq_hw_ver_match(const struct aq_hw_fw_version* ver_expected,
     const struct aq_hw_fw_version* ver_actual);
 
-void aq_hw_set_promisc(struct aq_hw *hw, bool l2_promisc, bool vlan_promisc,
+int aq_hw_set_promisc(struct aq_hw *hw, bool l2_promisc, bool vlan_promisc,
     bool mc_promisc);
 
 int aq_hw_set_power(struct aq_hw *hw, unsigned int power_state);
@@ -370,5 +399,6 @@ int aq_hw_rss_hash_set(struct aq_hw *hw, uint8_t rss_key[HW_ATL_RSS_HASHKEY_SIZE
 int aq_hw_rss_hash_get(struct aq_hw *hw, uint8_t rss_key[HW_ATL_RSS_HASHKEY_SIZE]);
 int aq_hw_rss_set(struct aq_hw *hw, uint8_t rss_table[HW_ATL_RSS_INDIRECTION_TABLE_MAX]);
 int aq_hw_udp_rss_enable(struct aq_hw *hw, bool enable);
+u_int aq_rss_hashconfig(void);
 
 #endif // _AQ_HW_H_

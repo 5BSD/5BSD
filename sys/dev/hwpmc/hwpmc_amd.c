@@ -43,6 +43,9 @@
 #include <sys/sysctl.h>
 #include <sys/systm.h>
 
+#define	EXTERR_CATEGORY	EXTERR_CAT_HWPMC_AMD
+#include <sys/exterrvar.h>
+
 #include <machine/cpu.h>
 #include <machine/cpufunc.h>
 #include <machine/md_var.h>
@@ -400,14 +403,7 @@ amd_allocate_pmc(int cpu __unused, int ri, struct pmc *pm,
 	if (pd->pd_class != a->pm_class)
 		return (EINVAL);
 
-	if ((a->pm_flags & PMC_F_EV_PMU) == 0)
-		return (EINVAL);
-
 	caps = pm->pm_caps;
-
-	if (((caps & PMC_CAP_PRECISE) != 0) &&
-	    ((pd->pd_caps & PMC_CAP_PRECISE) == 0))
-		return (EINVAL);
 
 	PMCDBG2(MDP, ALL, 1,"amd-allocate ri=%d caps=0x%x", ri, caps);
 
@@ -415,11 +411,19 @@ amd_allocate_pmc(int cpu __unused, int ri, struct pmc *pm,
 	if (amd_pmcdesc[ri].pm_subclass != a->pm_md.pm_amd.pm_amd_sub_class)
 		return (EINVAL);
 
-	if (strlen(pmc_cpuid) != 0) {
+	if (((caps & PMC_CAP_PRECISE) != 0) &&
+	    ((pd->pd_caps & PMC_CAP_PRECISE) == 0))
+		return (EINVAL);
+
+	/* PMC_F_EV_PMU: config comes from pmu-events tables. */
+	if ((a->pm_flags & PMC_F_EV_PMU) != 0) {
 		config = a->pm_md.pm_amd.pm_amd_config;
 		if ((config & ~amd_config_mask(amd_pmcdesc[ri].pm_subclass,
 		    caps)) != 0)
-			return (EINVAL);
+			return (EXTERROR(EINVAL,
+			    "AMD PMU config has unsupported bits %#jx",
+			    (uintmax_t)(config & ~amd_config_mask(
+			    amd_pmcdesc[ri].pm_subclass, caps))));
 		pm->pm_md.pm_amd.pm_amd_evsel = config;
 		PMCDBG2(MDP, ALL, 2, "amd-allocate ri=%d -> config=0x%jx",
 		    ri, (uintmax_t)config);
@@ -443,11 +447,15 @@ amd_allocate_pmc(int cpu __unused, int ri, struct pmc *pm,
 		}
 	}
 	if (i == amd_event_codes_size)
-		return (EINVAL);
+		return (EXTERROR(EINVAL,
+		    "AMD legacy event %ju is not supported",
+		    (uintmax_t)pe));
 
 	unitmask = a->pm_md.pm_amd.pm_amd_config & AMD_PMC_UNITMASK;
 	if ((unitmask & ~allowed_unitmask) != 0) /* disallow reserved bits */
-		return (EINVAL);
+		return (EXTERROR(EINVAL,
+		    "AMD unitmask %#jx exceeds allowed mask %#jx",
+		    (uintmax_t)unitmask, (uintmax_t)allowed_unitmask));
 
 	if (unitmask && (caps & PMC_CAP_QUALIFIER) != 0)
 		config |= unitmask;
@@ -1073,12 +1081,13 @@ pmc_amd_initialize(void)
 
 	/*
 	 * These processors have two or three classes of PMCs: the TSC,
-	 * programmable PMCs, and AMD IBS.
+	 * programmable PMCs, and AMD IBS.  One extra class slot is reserved
+	 * for the optional RAPL energy counters.
 	 */
 	if ((amd_feature2 & AMDID2_IBS) != 0) {
-		nclasses = 3;
+		nclasses = 4;
 	} else {
-		nclasses = 2;
+		nclasses = 3;
 	}
 
 	pmc_mdep = pmc_mdep_alloc(nclasses);
@@ -1124,11 +1133,16 @@ pmc_amd_initialize(void)
 
 	PMCDBG0(MDP, INI, 0, "amd-initialize");
 
-	if (nclasses >= 3) {
+	if ((amd_feature2 & AMDID2_IBS) != 0) {
 		error = pmc_ibs_initialize(pmc_mdep, ncpus);
 		if (error != 0)
 			goto error;
 	}
+
+	/* RAPL takes the reserved last slot; drop it if the probe fails. */
+	error = pmc_rapl_initialize(pmc_mdep, ncpus, pmc_mdep->pmd_nclass - 1);
+	if (error != 0)
+		pmc_mdep->pmd_nclass--;
 
 	return (pmc_mdep);
 
@@ -1144,6 +1158,9 @@ void
 pmc_amd_finalize(struct pmc_mdep *md)
 {
 	PMCDBG0(MDP, INI, 1, "amd-finalize");
+
+	/* Safe even if the RAPL class was skipped at initialize time. */
+	pmc_rapl_finalize(md);
 
 	pmc_tsc_finalize(md);
 

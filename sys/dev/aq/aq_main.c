@@ -69,6 +69,7 @@ __FBSDID("$FreeBSD$");
 #include "aq_device.h"
 #include "aq_fw.h"
 #include "aq_hw.h"
+#include "aq2_hw.h"
 #include "aq_hw_llh.h"
 #include "aq_ring.h"
 #include "aq_dbg.h"
@@ -135,6 +136,22 @@ static pci_vendor_info_t aq_vendor_info_array[] = {
 	    "Aquantia AQtion 5Gbit Network Adapter"),
 	PVID(AQUANTIA_VENDOR_ID, AQ_DEVICE_ID_AQC112S,
 	    "Aquantia AQtion 2.5Gbit Network Adapter"),
+
+	/* Atlantic 2 (Marvell AQtion) */
+	PVID(AQUANTIA_VENDOR_ID, AQ_DEVICE_ID_AQC113,
+	    "Marvell AQtion 10Gbit Network Adapter"),
+	PVID(AQUANTIA_VENDOR_ID, AQ_DEVICE_ID_AQC113C,
+	    "Marvell AQtion 10Gbit Network Adapter"),
+	PVID(AQUANTIA_VENDOR_ID, AQ_DEVICE_ID_AQC113CA,
+	    "Marvell AQtion 10Gbit Network Adapter"),
+	PVID(AQUANTIA_VENDOR_ID, AQ_DEVICE_ID_AQC113CS,
+	    "Marvell AQtion 10Gbit Network Adapter"),
+	PVID(AQUANTIA_VENDOR_ID, AQ_DEVICE_ID_AQC114CS,
+	    "Marvell AQtion 5Gbit Network Adapter"),
+	PVID(AQUANTIA_VENDOR_ID, AQ_DEVICE_ID_AQC115C,
+	    "Marvell AQtion 2.5Gbit Network Adapter"),
+	PVID(AQUANTIA_VENDOR_ID, AQ_DEVICE_ID_AQC116C,
+	    "Marvell AQtion 1Gbit Network Adapter"),
 
 	PVID_END
 };
@@ -286,15 +303,18 @@ static struct if_shared_ctx aq_sctx_init = {
 	.isc_ntxd_default = {PAGE_SIZE / sizeof(volatile union aq_txc_desc) * 4},
 };
 
-/*
- * TUNEABLE PARAMETERS:
- */
-
-static SYSCTL_NODE(_hw, OID_AUTO, aq, CTLFLAG_RD, 0, "Atlantic driver parameters");
-/* UDP Receive-Side Scaling */
-static int aq_enable_rss_udp = 1;
-SYSCTL_INT(_hw_aq, OID_AUTO, enable_rss_udp, CTLFLAG_RDTUN, &aq_enable_rss_udp,
-     0, "Enable Receive-Side Scaling (RSS) for UDP");
+/* RSS hash types; honor the kernel policy (UDP 4-tuple off by default). */
+u_int
+aq_rss_hashconfig(void)
+{
+#ifdef RSS
+	return (rss_gethashconfig());
+#else
+	return (RSS_HASHTYPE_RSS_IPV4 | RSS_HASHTYPE_RSS_TCP_IPV4 |
+	    RSS_HASHTYPE_RSS_IPV6 | RSS_HASHTYPE_RSS_TCP_IPV6 |
+	    RSS_HASHTYPE_RSS_IPV6_EX | RSS_HASHTYPE_RSS_TCP_IPV6_EX);
+#endif
+}
 
 
 /*
@@ -341,6 +361,9 @@ aq_if_attach_pre(if_ctx_t ctx)
 	softc->hw.hw_tag = softc->mmio_tag;
 	softc->hw.hw_handle = softc->mmio_handle;
 	softc->hw.dev = softc->dev;
+	softc->hw.device_id = pci_get_device(softc->dev);
+	if (aq_is_atlantic2(softc->hw.device_id))
+		softc->hw.chip_features |= AQ_HW_CHIP_ATLANTIC2;
 	hw = &softc->hw;
 	hw->link_rate = aq_fw_speed_auto;
 	hw->itr = -1;
@@ -357,9 +380,14 @@ aq_if_attach_pre(if_ctx_t ctx)
 	}
 
 	if (hw->fast_start_enabled)
-		hw->fw_ops->reset(hw);
+		rc = hw->fw_ops->reset(hw);
 	else
-		aq_hw_reset(&softc->hw);
+		rc = aq_hw_reset(&softc->hw, !IS_CHIP_FEATURE(hw, ATLANTIC2));
+	if (rc != 0) {
+		device_printf(softc->dev, "%s: reset failed, err=%d\n",
+		    __func__, rc);
+		goto fail;
+	}
 	aq_hw_capabilities(softc);
 
 	rc = aq_hw_get_mac_permanent(hw, hw->mac_addr);
@@ -371,10 +399,12 @@ aq_if_attach_pre(if_ctx_t ctx)
 	softc->admin_ticks = 0;
 
 	iflib_set_mac(ctx, hw->mac_addr);
-	scctx->isc_tx_csum_flags = CSUM_IP | CSUM_TCP | CSUM_UDP | CSUM_TSO;
+	scctx->isc_tx_csum_flags = CSUM_IP | CSUM_TCP | CSUM_UDP | CSUM_TSO |
+	    CSUM_IP6_TCP | CSUM_IP6_UDP | CSUM_IP6_TSO;
 	scctx->isc_capabilities = IFCAP_RXCSUM | IFCAP_TXCSUM | IFCAP_HWCSUM |
-	    IFCAP_TSO | IFCAP_LRO | IFCAP_JUMBO_MTU | IFCAP_VLAN_HWFILTER |
-	    IFCAP_VLAN_MTU | IFCAP_VLAN_HWTAGGING | IFCAP_VLAN_HWCSUM;
+	    IFCAP_HWCSUM_IPV6 | IFCAP_TSO | IFCAP_LRO | IFCAP_JUMBO_MTU |
+	    IFCAP_VLAN_HWFILTER | IFCAP_VLAN_MTU | IFCAP_VLAN_HWTAGGING |
+	    IFCAP_VLAN_HWCSUM | IFCAP_VLAN_HWTSO;
 	scctx->isc_capenable = scctx->isc_capabilities;
 	scctx->isc_tx_nsegments = 31;
 	scctx->isc_tx_tso_segments_max = 31;
@@ -448,11 +478,16 @@ aq_if_attach_post(if_ctx_t ctx)
 
 	aq_add_stats_sysctls(softc);
 	/* RSS */
-	arc4rand(softc->rss_key, HW_ATL_RSS_HASHKEY_SIZE, 0);
 	uint32_t rss_qs = MIN(softc->rx_rings_count, HW_ATL_RSS_INDIRECTION_QUEUES_MAX);
-	for (int i = nitems(softc->rss_table); i--;){
+#ifdef RSS
+	rss_getkey(softc->rss_key);
+	for (int i = nitems(softc->rss_table); i--;)
+		softc->rss_table[i] = rss_get_indirection_to_bucket(i) % rss_qs;
+#else
+	arc4rand(softc->rss_key, HW_ATL_RSS_HASHKEY_SIZE, 0);
+	for (int i = nitems(softc->rss_table); i--;)
 		softc->rss_table[i] = i % rss_qs;
-	}
+#endif
 exit:
 	AQ_DBG_EXIT(rc);
 	return (rc);
@@ -470,7 +505,7 @@ aq_if_detach(if_ctx_t ctx)
 
 	aq_hw_deinit(&softc->hw);
 
-	for (i = 0; i < softc->scctx->isc_nrxqsets; i++)
+	for (i = 0; i < softc->rx_rings_count; i++)
 		iflib_irq_free(ctx, &softc->rx_rings[i]->irq);
 	iflib_irq_free(ctx, &softc->irq);
 
@@ -696,7 +731,9 @@ aq_if_init(if_ctx_t ctx)
 	err = aq_hw_init(&softc->hw, softc->hw.mac_addr, softc->msix,
 	    softc->scctx->isc_intr == IFLIB_INTR_MSIX);
 	if (err != 0) {
-		device_printf(softc->dev, "atlantic: aq_hw_init: %d", err);
+		device_printf(softc->dev, "atlantic: aq_hw_init: %d\n", err);
+		AQ_DBG_EXIT(err);
+		return;
 	}
 
 	aq_if_media_status(ctx, &ifmr);
@@ -708,12 +745,12 @@ aq_if_init(if_ctx_t ctx)
 		err = aq_ring_tx_init(&softc->hw, ring);
 		if (err) {
 			device_printf(softc->dev,
-			    "atlantic: aq_ring_tx_init: %d", err);
+			    "atlantic: aq_ring_tx_init: %d\n", err);
 		}
 		err = aq_ring_tx_start(hw, ring);
 		if (err != 0) {
 			device_printf(softc->dev,
-			    "atlantic: aq_ring_tx_start: %d", err);
+			    "atlantic: aq_ring_tx_start: %d\n", err);
 		}
 	}
 	for (i = 0; i < softc->rx_rings_count; i++) {
@@ -722,12 +759,12 @@ aq_if_init(if_ctx_t ctx)
 		err = aq_ring_rx_init(&softc->hw, ring);
 		if (err) {
 			device_printf(softc->dev,
-			    "atlantic: aq_ring_rx_init: %d", err);
+			    "atlantic: aq_ring_rx_init: %d\n", err);
 		}
 		err = aq_ring_rx_start(hw, ring);
 		if (err != 0) {
 			device_printf(softc->dev,
-			    "atlantic: aq_ring_rx_start: %d", err);
+			    "atlantic: aq_ring_rx_start: %d\n", err);
 		}
 		aq_if_rx_queue_intr_enable(ctx, i);
 	}
@@ -736,8 +773,17 @@ aq_if_init(if_ctx_t ctx)
 	aq_if_enable_intr(ctx);
 	aq_hw_rss_hash_set(&softc->hw, softc->rss_key);
 	aq_hw_rss_set(&softc->hw, softc->rss_table);
-	aq_hw_udp_rss_enable(hw, aq_enable_rss_udp);
+	/* A2 selects UDP hashing per-protocol in REDIR2; A1 uses the filter. */
+	if (!IS_CHIP_FEATURE(hw, ATLANTIC2))
+		aq_hw_udp_rss_enable(hw, (aq_rss_hashconfig() &
+		    (RSS_HASHTYPE_RSS_UDP_IPV4 | RSS_HASHTYPE_RSS_UDP_IPV6 |
+		    RSS_HASHTYPE_RSS_UDP_IPV6_EX)) != 0);
 	aq_hw_set_link_speed(hw, hw->link_rate);
+
+	/* iflib does not replay filter state after init; aq_hw_init() clears it. */
+	aq_if_multi_set(ctx);
+	if (aq_if_promisc_set(ctx, if_getflags(iflib_get_ifp(ctx))) != 0)
+		device_printf(softc->dev, "could not restore promiscuous mode\n");
 
 	AQ_DBG_EXIT(0);
 }
@@ -767,7 +813,7 @@ aq_if_stop(if_ctx_t ctx)
 		aq_ring_rx_stop(hw, softc->rx_rings[i]);
 	}
 
-	aq_hw_reset(&softc->hw);
+	aq_hw_reset(&softc->hw, true);
 	memset(&softc->last_stats, 0, sizeof(softc->last_stats));
 	softc->linkup = false;
 	aq_if_update_admin_status(ctx);
@@ -822,14 +868,21 @@ aq_if_multi_set(if_ctx_t ctx)
 	if_t ifp = iflib_get_ifp(ctx);
 	struct aq_hw  *hw = &softc->hw;
 	AQ_DBG_ENTER();
-	softc->mcnt = if_llmaddr_count(iflib_get_ifp(ctx));
-	if (softc->mcnt >= AQ_HW_MAC_MAX) {
-		aq_hw_set_promisc(hw, !!(if_getflags(ifp) & IFF_PROMISC),
-		    aq_is_vlan_promisc_required(softc),
-		    !!(if_getflags(ifp) & IFF_ALLMULTI) || aq_is_mc_promisc_required(softc));
-	} else {
-		if_foreach_llmaddr(iflib_get_ifp(ctx), &aq_mc_filter_apply, softc);
+	softc->mcnt = if_llmaddr_count(ifp);
+
+	/* Reconcile HW to the current list: clear stale slots, reprogram. */
+	if (softc->mcnt < AQ_HW_MAC_MAX) {
+		for (int i = 1; i < AQ_HW_MAC_MAX; i++)
+			rpfl2_uc_flr_en_set(hw, 0U, i);
+		if_foreach_llmaddr(ifp, &aq_mc_filter_apply, softc);
 	}
+
+	if (aq_hw_set_promisc(hw, !!(if_getflags(ifp) & IFF_PROMISC),
+	    aq_is_vlan_promisc_required(softc),
+	    !!(if_getflags(ifp) & IFF_ALLMULTI) ||
+	    aq_is_mc_promisc_required(softc)) != 0)
+		device_printf(softc->dev,
+		    "multicast filter update failed\n");
 	AQ_DBG_EXIT(0);
 }
 
@@ -895,17 +948,18 @@ static int
 aq_if_promisc_set(if_ctx_t ctx, int flags)
 {
 	struct aq_dev *softc;
+	int err;
 
 	AQ_DBG_ENTER();
 
 	softc = iflib_get_softc(ctx);
 
-	aq_hw_set_promisc(&softc->hw, !!(flags & IFF_PROMISC),
+	err = aq_hw_set_promisc(&softc->hw, !!(flags & IFF_PROMISC),
 	    aq_is_vlan_promisc_required(softc),
 	    !!(flags & IFF_ALLMULTI) || aq_is_mc_promisc_required(softc));
 
-	AQ_DBG_EXIT(0);
-	return (0);
+	AQ_DBG_EXIT(err);
+	return (err);
 }
 
 static void
@@ -914,7 +968,6 @@ aq_if_timer(if_ctx_t ctx, uint16_t qid)
 	struct aq_dev *softc;
 	uint64_t ticks_now;
 
-//	AQ_DBG_ENTER();
 
 	softc = iflib_get_softc(ctx);
 	ticks_now = ticks;
@@ -925,7 +978,6 @@ aq_if_timer(if_ctx_t ctx, uint16_t qid)
 		iflib_admin_intr_deferred(ctx);
 	}
 
-//	AQ_DBG_EXIT(0);
 	return;
 
 }
@@ -1008,7 +1060,6 @@ aq_if_msix_intr_assign(if_ctx_t ctx, int msix)
 
 		if (rc) {
 			device_printf(softc->dev, "failed to set up RX handler\n");
-			i--;
 			goto fail;
 		}
 
@@ -1035,16 +1086,13 @@ aq_if_msix_intr_assign(if_ctx_t ctx, int msix)
 	    rx_vectors);
 	if (rc) {
 		device_printf(iflib_get_dev(ctx),
-		    "Failed to register admin handler");
-		i = softc->rx_rings_count - 1;
+		    "Failed to register admin handler\n");
 		goto fail;
 	}
 	AQ_DBG_EXIT(0);
 	return (0);
 
 fail:
-	for (; i >= 0; i--)
-		iflib_irq_free(ctx, &softc->rx_rings[i]->irq);
 	AQ_DBG_EXIT(rc);
 	return (rc);
 }
@@ -1056,11 +1104,9 @@ aq_is_vlan_promisc_required(struct aq_dev *softc)
 
 	bit_count(softc->vlan_tags, 0, 4096, &vlan_tag_count);
 
-	if (vlan_tag_count <= AQ_HW_VLAN_MAX_FILTERS)
-		return (false);
-	else
-		return (true);
-
+	/* Filter only with 1..16 VLANs; 0 or >16 pass all tags. */
+	return (vlan_tag_count == 0 ||
+	    vlan_tag_count > AQ_HW_VLAN_MAX_FILTERS);
 }
 
 static void
@@ -1087,7 +1133,10 @@ aq_update_vlan_filters(struct aq_dev *softc)
 	}
 
 	hw_atl_b0_hw_vlan_set(hw, aq_vlans);
-	hw_atl_b0_hw_vlan_promisc_set(hw, aq_is_vlan_promisc_required(softc));
+	if (hw_atl_b0_hw_vlan_promisc_set(hw,
+	    aq_is_vlan_promisc_required(softc) ||
+	    (if_getflags(iflib_get_ifp(softc->ctx)) & IFF_PROMISC) != 0) != 0)
+		device_printf(softc->dev, "VLAN filter update failed\n");
 }
 
 /* VLAN support */
@@ -1144,7 +1193,7 @@ aq_hw_capabilities(struct aq_dev *softc)
 	case AQ_DEVICE_ID_AQC100:
 	case AQ_DEVICE_ID_AQC100S:
 		softc->media_type = AQ_MEDIA_TYPE_FIBRE;
-		softc->link_speeds = AQ_LINK_ALL & ~AQ_LINK_10G;
+		softc->link_speeds = AQ_LINK_ALL_ATLANTIC1;
 		break;
 
 	case AQ_DEVICE_ID_0001:
@@ -1152,7 +1201,7 @@ aq_hw_capabilities(struct aq_dev *softc)
 	case AQ_DEVICE_ID_AQC107:
 	case AQ_DEVICE_ID_AQC107S:
 		softc->media_type = AQ_MEDIA_TYPE_TP;
-		softc->link_speeds = AQ_LINK_ALL;
+		softc->link_speeds = AQ_LINK_ALL_ATLANTIC1;
 		break;
 
 	case AQ_DEVICE_ID_D108:
@@ -1161,7 +1210,7 @@ aq_hw_capabilities(struct aq_dev *softc)
 	case AQ_DEVICE_ID_AQC111:
 	case AQ_DEVICE_ID_AQC111S:
 		softc->media_type = AQ_MEDIA_TYPE_TP;
-		softc->link_speeds = AQ_LINK_ALL & ~AQ_LINK_10G;
+		softc->link_speeds = AQ_LINK_ALL_ATLANTIC1 & ~AQ_LINK_10G;
 		break;
 
 	case AQ_DEVICE_ID_D109:
@@ -1170,7 +1219,32 @@ aq_hw_capabilities(struct aq_dev *softc)
 	case AQ_DEVICE_ID_AQC112:
 	case AQ_DEVICE_ID_AQC112S:
 		softc->media_type = AQ_MEDIA_TYPE_TP;
+		softc->link_speeds = AQ_LINK_ALL_ATLANTIC1 &
+		    ~(AQ_LINK_10G | AQ_LINK_5G);
+		break;
+
+	case AQ_DEVICE_ID_AQC113:
+	case AQ_DEVICE_ID_AQC113C:
+	case AQ_DEVICE_ID_AQC113CA:
+	case AQ_DEVICE_ID_AQC113CS:
+		softc->media_type = AQ_MEDIA_TYPE_TP;
+		softc->link_speeds = AQ_LINK_ALL;
+		break;
+
+	case AQ_DEVICE_ID_AQC114CS:
+		softc->media_type = AQ_MEDIA_TYPE_TP;
+		softc->link_speeds = AQ_LINK_ALL & ~AQ_LINK_10G;
+		break;
+
+	case AQ_DEVICE_ID_AQC115C:
+		softc->media_type = AQ_MEDIA_TYPE_TP;
 		softc->link_speeds = AQ_LINK_ALL & ~(AQ_LINK_10G | AQ_LINK_5G);
+		break;
+
+	case AQ_DEVICE_ID_AQC116C:
+		softc->media_type = AQ_MEDIA_TYPE_TP;
+		softc->link_speeds =
+		    AQ_LINK_ALL & ~(AQ_LINK_10G | AQ_LINK_5G | AQ_LINK_2G5);
 		break;
 
 	default:
@@ -1313,10 +1387,10 @@ aq_add_stats_sysctls(struct aq_dev *softc)
 
 	/* Runtime trace controls (global) */
 	SYSCTL_ADD_INT(ctx, child, OID_AUTO, "debug",
-	    CTLFLAG_RW, &dbg_level_, 0,
+	    CTLFLAG_RW, &aq_dbg_level, 0,
 	    "Trace verbosity: 0=off, 3=err, 4=+warn, 5=+trace, 6=+detail");
 	SYSCTL_ADD_U32(ctx, child, OID_AUTO, "debug_categories",
-	    CTLFLAG_RW, &dbg_categories_, 0,
+	    CTLFLAG_RW, &aq_dbg_categories, 0,
 	    "Trace category mask: init=1 config=2 tx=4 rx=8 intr=16 fw=32");
 
 	/* Driver Statistics */
@@ -1349,7 +1423,7 @@ aq_add_stats_sysctls(struct aq_dev *softc)
 		SYSCTL_ADD_COUNTER_U64(ctx, queue_list, OID_AUTO, "rx_pkts",
 		    CTLFLAG_RD, &(ring->stats.rx_pkts), "RX Packets");
 		SYSCTL_ADD_COUNTER_U64(ctx, queue_list, OID_AUTO, "rx_bytes",
-		    CTLFLAG_RD, &(ring->stats.rx_bytes), "TX Octets");
+		    CTLFLAG_RD, &(ring->stats.rx_bytes), "RX Octets");
 		SYSCTL_ADD_COUNTER_U64(ctx, queue_list, OID_AUTO, "rx_err",
 		    CTLFLAG_RD, &(ring->stats.rx_err), "RX Errors");
 		SYSCTL_ADD_COUNTER_U64(ctx, queue_list, OID_AUTO, "irq",

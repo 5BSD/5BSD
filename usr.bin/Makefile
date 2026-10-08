@@ -192,7 +192,6 @@ SUBDIR.${MK_CALENDAR}+=	calendar
     ${MK_LLD} != "no" || ${MK_LLDB} != "no"
 SUBDIR+=	clang
 .endif
-SUBDIR.${MK_DIALOG}+=	dpv
 SUBDIR.${MK_EE}+=	ee
 SUBDIR.${MK_FILE}+=	file
 SUBDIR.${MK_FINGER}+=	finger
@@ -236,6 +235,7 @@ SUBDIR.${MK_NIS}+=	ypwhich
 SUBDIR.${MK_OPENSSH}+=	ssh-copy-id
 SUBDIR.${MK_PKGCONF}+=	bomtool
 SUBDIR.${MK_PKGCONF}+=	pkgconf
+SUBDIR.${MK_PKGCONF}+=	spdxtool
 SUBDIR.${MK_QUOTAS}+=	quota
 SUBDIR.${MK_SENDMAIL}+=	vacation
 SUBDIR.${MK_SOUND}+=	beep

@@ -37,6 +37,9 @@
 #include "acpi.h"
 #include "atkbdc.h"
 #include "bhyverun.h"
+#ifdef BHYVE_SNAPSHOT
+#include "snapshot.h"
+#endif
 #include "bootrom.h"
 #include "config.h"
 #include "debug.h"
@@ -72,6 +75,9 @@ bhyve_init_config(void)
 	 */
 	set_config_bool("x86.kernel_startup", false);
 	set_config_value("lpc.fwcfg", "bhyve");
+#ifdef BHYVE_SNAPSHOT
+	set_config_value("rundir", BHYVE_RUN_DIR);
+#endif
 }
 
 void

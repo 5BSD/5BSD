@@ -401,7 +401,9 @@ FBSD_1.9 {
 	cap_xfer_limit;
 	cap_xfer_rights_limit;
 	pdcmp;
+	pddupfd;
 	pdincapmode;
+	pdopenpid;
 	pdself;
 	pdrfork;
 	pdrfork_thread;

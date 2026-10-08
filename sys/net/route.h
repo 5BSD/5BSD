@@ -205,6 +205,8 @@ EVENTHANDLER_DECLARE(rtnumfibs_change, rtnumfibs_change_t);
 #define	NHF_BROADCAST		0x0100	/* RTF_BROADCAST */
 #define	NHF_GATEWAY		0x0200	/* RTF_GATEWAY */
 #define	NHF_HOST		0x0400	/* RTF_HOST */
+#define	NHF_INVALID		0x0800	/* Nexthop is unreachable */
+#define	NHF_PREFSRC		0x1000	/* Nexthop IFA is static */
 
 /* Nexthop request flags */
 #define	NHR_NONE		0x00	/* empty flags field */
@@ -367,9 +369,6 @@ struct rt_addrinfo {
     (bcmp((a), (b), ((const struct sockaddr *)(b))->sa_len) == 0))
 
 #ifdef _KERNEL
-
-#define RT_LINK_IS_UP(ifp)	(!((ifp)->if_capabilities & IFCAP_LINKSTATE) \
-				 || (ifp)->if_link_state == LINK_STATE_UP)
 
 #define	RO_NHFREE(_ro) do {					\
 	if ((_ro)->ro_nh) {					\

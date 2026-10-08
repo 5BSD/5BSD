@@ -1738,7 +1738,8 @@ witness_checkorder(struct lock_object *lock, int flags, const char *file,
 		"lock order reversal: (Giant after non-sleepable)\n");
 			else {
 				witness_output("lock order reversal:\n");
-				print_lock_order = true;
+				if (lock_list == td->td_sleeplocks)
+					print_lock_order = true;
 			}
 
 			/*

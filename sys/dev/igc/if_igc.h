@@ -171,8 +171,18 @@
 #define IGC_EITR_DIVIDEND	1000000
 #define IGC_EITR_SHIFT		2
 #define IGC_QVECTOR_MASK	0x7FFC
-#define IGC_INTS_TO_EITR(i)	(((IGC_EITR_DIVIDEND/i) & IGC_QVECTOR_MASK) << \
-				    IGC_EITR_SHIFT)
+#define IGC_INTS_TO_EITR(i)	\
+	(((IGC_EITR_DIVIDEND / (i)) << IGC_EITR_SHIFT) & IGC_QVECTOR_MASK)
+#define IGC_EITR_TO_INTS(i)	((IGC_EITR_DIVIDEND << IGC_EITR_SHIFT) / \
+					    ((i) & IGC_QVECTOR_MASK))
+
+/*
+ * The average packet size calculation in igc_ring_itr() yields an EITR
+ * interval field value.  That field is quarter microsecond granular (see
+ * IGC_EITR_SHIFT), so an interval of V is 1000000 / (V / 4) interrupts per
+ * second.
+ */
+#define IGC_AIM_DIVIDEND	(IGC_EITR_DIVIDEND << IGC_EITR_SHIFT)
 
 /*
  * TDBA/RDBA should be aligned on 16 byte boundary. But TDLEN/RDLEN should be
@@ -232,9 +242,18 @@ struct tx_ring {
 
 	/* Soft stats */
 	unsigned long		tx_irq;
-	unsigned long		tx_packets;
-	unsigned long		tx_bytes;
 
+	/*
+	 * Free running AIM counters.  The producer updates these while
+	 * encapsulating packets, then publishes both together at the TX
+	 * doorbell.  The interrupt handler samples only the published value,
+	 * so it cannot observe one counter without the other.
+	 */
+	u32			tx_packets;
+	u32			tx_bytes;
+	uint64_t		tx_aim_snapshot __aligned(8);
+	u32			tx_packets_last;
+	u32			tx_bytes_last;
 
 	/* Saved csum offloading context information */
 	int			csum_flags;
@@ -248,6 +267,15 @@ struct tx_ring {
 	uint32_t		csum_txd_upper;
 	uint32_t		csum_txd_lower; /* last field */
 };
+
+static __inline void
+igc_aim_publish(struct tx_ring *txr)
+{
+	uint64_t snapshot;
+
+	snapshot = ((uint64_t)txr->tx_bytes << 32) | txr->tx_packets;
+	atomic_store_rel_64(&txr->tx_aim_snapshot, snapshot);
+}
 
 /*
  * The Receive ring, one per rx queue
@@ -267,12 +295,28 @@ struct rx_ring {
         /* Soft stats */
         unsigned long		rx_irq;
         unsigned long		rx_discarded;
-        unsigned long		rx_packets;
-        unsigned long		rx_bytes;
 
-        /* Next requested EITR latency */
-        u8			rx_nextlatency;
+	/*
+	 * Free running AIM counters.  RX publishes both together when iflib
+	 * returns descriptors to hardware.  The interrupt handler samples only
+	 * the published value, so watchdog-driven RX processing cannot expose
+	 * one counter without the other.
+	 */
+	u32			rx_packets;
+	u32			rx_bytes;
+	uint64_t		rx_aim_snapshot __aligned(8);
+	u32			rx_packets_last;
+	u32			rx_bytes_last;
 };
+
+static __inline void
+igc_aim_publish_rx(struct rx_ring *rxr)
+{
+	uint64_t snapshot;
+
+	snapshot = ((uint64_t)rxr->rx_bytes << 32) | rxr->rx_packets;
+	atomic_store_rel_64(&rxr->rx_aim_snapshot, snapshot);
+}
 
 struct igc_tx_queue {
 	struct igc_softc      *sc;

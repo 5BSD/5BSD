@@ -82,7 +82,6 @@
 #include <net/rss_config.h>
 #include <net/vnet.h>
 
-#if defined(INET) || defined(INET6)
 #include <netinet/in.h>
 #include <netinet/in_pcb.h>
 #include <netinet/in_pcb_var.h>
@@ -97,9 +96,8 @@
 #include <netinet6/in6_pcb.h>
 #include <netinet6/in6_var.h>
 #include <netinet6/ip6_var.h>
-#endif /* INET6 */
-#include <net/route/nhop.h>
 #endif
+#include <net/route/nhop.h>
 
 #include <netipsec/ipsec_support.h>
 
@@ -115,23 +113,23 @@
  * These configure the range of local port addresses assigned to
  * "unspecified" outgoing connections/packets/whatever.
  */
-VNET_DEFINE(int, ipport_lowfirstauto) = IPPORT_RESERVED - 1;	/* 1023 */
-VNET_DEFINE(int, ipport_lowlastauto) = IPPORT_RESERVEDSTART;	/* 600 */
-VNET_DEFINE(int, ipport_firstauto) = IPPORT_EPHEMERALFIRST;	/* 10000 */
-VNET_DEFINE(int, ipport_lastauto) = IPPORT_EPHEMERALLAST;	/* 65535 */
-VNET_DEFINE(int, ipport_hifirstauto) = IPPORT_HIFIRSTAUTO;	/* 49152 */
-VNET_DEFINE(int, ipport_hilastauto) = IPPORT_HILASTAUTO;	/* 65535 */
+VNET_DEFINE(u_int, ipport_lowfirstauto) = IPPORT_RESERVED - 1;	/* 1023 */
+VNET_DEFINE(u_int, ipport_lowlastauto) = IPPORT_RESERVEDSTART;	/* 600 */
+VNET_DEFINE(u_int, ipport_firstauto) = IPPORT_EPHEMERALFIRST;	/* 10000 */
+VNET_DEFINE(u_int, ipport_lastauto) = IPPORT_EPHEMERALLAST;	/* 65535 */
+VNET_DEFINE(u_int, ipport_hifirstauto) = IPPORT_HIFIRSTAUTO;	/* 49152 */
+VNET_DEFINE(u_int, ipport_hilastauto) = IPPORT_HILASTAUTO;	/* 65535 */
 
 /*
  * Reserved ports accessible only to root. There are significant
  * security considerations that must be accounted for when changing these,
  * but the security benefits can be great. Please be careful.
  */
-VNET_DEFINE(int, ipport_reservedhigh) = IPPORT_RESERVED - 1;	/* 1023 */
-VNET_DEFINE(int, ipport_reservedlow);
+VNET_DEFINE(u_int, ipport_reservedhigh) = IPPORT_RESERVED - 1;	/* 1023 */
+VNET_DEFINE(u_int, ipport_reservedlow);
 
 /* Enable random ephemeral port allocation by default. */
-VNET_DEFINE(int, ipport_randomized) = 1;
+VNET_DEFINE(bool, ipport_randomized) = true;
 
 #ifdef INET
 static struct inpcb	*in_pcblookup_internal(struct inpcbinfo *pcbinfo,
@@ -166,35 +164,35 @@ static SYSCTL_NODE(_net_inet_ip, IPPROTO_IP, portrange,
     "IP Ports");
 
 SYSCTL_PROC(_net_inet_ip_portrange, OID_AUTO, lowfirst,
-    CTLFLAG_VNET | CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_NEEDGIANT,
-    &VNET_NAME(ipport_lowfirstauto), 0, &sysctl_net_ipport_check, "I",
+    CTLFLAG_VNET | CTLTYPE_UINT | CTLFLAG_RW | CTLFLAG_NEEDGIANT,
+    &VNET_NAME(ipport_lowfirstauto), 0, &sysctl_net_ipport_check, "IU",
     "");
 SYSCTL_PROC(_net_inet_ip_portrange, OID_AUTO, lowlast,
-    CTLFLAG_VNET | CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_NEEDGIANT,
-    &VNET_NAME(ipport_lowlastauto), 0, &sysctl_net_ipport_check, "I",
+    CTLFLAG_VNET | CTLTYPE_UINT | CTLFLAG_RW | CTLFLAG_NEEDGIANT,
+    &VNET_NAME(ipport_lowlastauto), 0, &sysctl_net_ipport_check, "IU",
     "");
 SYSCTL_PROC(_net_inet_ip_portrange, OID_AUTO, first,
-    CTLFLAG_VNET | CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_NEEDGIANT,
-    &VNET_NAME(ipport_firstauto), 0, &sysctl_net_ipport_check, "I",
+    CTLFLAG_VNET | CTLTYPE_UINT | CTLFLAG_RW | CTLFLAG_NEEDGIANT,
+    &VNET_NAME(ipport_firstauto), 0, &sysctl_net_ipport_check, "IU",
     "");
 SYSCTL_PROC(_net_inet_ip_portrange, OID_AUTO, last,
-    CTLFLAG_VNET | CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_NEEDGIANT,
-    &VNET_NAME(ipport_lastauto), 0, &sysctl_net_ipport_check, "I",
+    CTLFLAG_VNET | CTLTYPE_UINT | CTLFLAG_RW | CTLFLAG_NEEDGIANT,
+    &VNET_NAME(ipport_lastauto), 0, &sysctl_net_ipport_check, "IU",
     "");
 SYSCTL_PROC(_net_inet_ip_portrange, OID_AUTO, hifirst,
-    CTLFLAG_VNET | CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_NEEDGIANT,
-    &VNET_NAME(ipport_hifirstauto), 0, &sysctl_net_ipport_check, "I",
+    CTLFLAG_VNET | CTLTYPE_UINT | CTLFLAG_RW | CTLFLAG_NEEDGIANT,
+    &VNET_NAME(ipport_hifirstauto), 0, &sysctl_net_ipport_check, "IU",
     "");
 SYSCTL_PROC(_net_inet_ip_portrange, OID_AUTO, hilast,
-    CTLFLAG_VNET | CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_NEEDGIANT,
-    &VNET_NAME(ipport_hilastauto), 0, &sysctl_net_ipport_check, "I",
+    CTLFLAG_VNET | CTLTYPE_UINT | CTLFLAG_RW | CTLFLAG_NEEDGIANT,
+    &VNET_NAME(ipport_hilastauto), 0, &sysctl_net_ipport_check, "IU",
     "");
-SYSCTL_INT(_net_inet_ip_portrange, OID_AUTO, reservedhigh,
+SYSCTL_UINT(_net_inet_ip_portrange, OID_AUTO, reservedhigh,
 	CTLFLAG_VNET | CTLFLAG_RW | CTLFLAG_SECURE,
 	&VNET_NAME(ipport_reservedhigh), 0, "");
-SYSCTL_INT(_net_inet_ip_portrange, OID_AUTO, reservedlow,
+SYSCTL_UINT(_net_inet_ip_portrange, OID_AUTO, reservedlow,
 	CTLFLAG_RW|CTLFLAG_SECURE, &VNET_NAME(ipport_reservedlow), 0, "");
-SYSCTL_INT(_net_inet_ip_portrange, OID_AUTO, randomized,
+SYSCTL_BOOL(_net_inet_ip_portrange, OID_AUTO, randomized,
 	CTLFLAG_VNET | CTLFLAG_RW,
 	&VNET_NAME(ipport_randomized), 0, "Enable random port allocation");
 
@@ -723,7 +721,6 @@ out:
 #endif
 }
 
-#if defined(INET) || defined(INET6)
 /*
  * Assign a local port like in_pcb_lport(), but also used with connect()
  * and a foreign address and port.  If fsa is non-NULL, choose a local port
@@ -880,7 +877,6 @@ in_pcb_lport(struct inpcb *inp, struct in_addr *laddrp, u_short *lportp,
 	return (in_pcb_lport_dest(inp, laddrp ? (struct sockaddr *) &laddr :
 	    NULL, lportp, NULL, 0, cred, lookupflags));
 }
-#endif /* INET || INET6 */
 
 #ifdef INET
 /*
@@ -929,7 +925,7 @@ in_pcbbind_avail(struct inpcb *inp, const struct in_addr laddr,
 		 * to any endpoint address, local or not.
 		 */
 		if ((inp->inp_flags & INP_BINDANY) == 0 &&
-		    ifa_ifwithaddr_check((const struct sockaddr *)&sin) == 0)
+		    ifa_ifwithaddr_fib_check((const struct sockaddr *)&sin, fib) == 0)
 			return (EADDRNOTAVAIL);
 	}
 

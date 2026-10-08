@@ -687,6 +687,7 @@ blockif_open(nvlist_t *nvl, const char *ident)
 
 	pthread_once(&blockif_once, blockif_init);
 
+	bc = NULL;
 	fd = -1;
 	extra = 0;
 	ssopt = 0;
@@ -1125,6 +1126,7 @@ blockif_delete(struct blockif_ctxt *bc, struct blockif_req *breq)
 int
 blockif_cancel(struct blockif_ctxt *bc, struct blockif_req *breq)
 {
+	struct blockif_sig_elem bse;
 	struct blockif_elem *be;
 
 	assert(bc->bc_magic == BLOCKIF_SIG);
@@ -1173,11 +1175,10 @@ blockif_cancel(struct blockif_ctxt *bc, struct blockif_req *breq)
 	 * Interrupt the processing thread to force it return
 	 * prematurely via it's normal callback path.
 	 */
+	pthread_mutex_init(&bse.bse_mtx, NULL);
+	pthread_cond_init(&bse.bse_cond, NULL);
 	while (be->be_status == BST_BUSY) {
-		struct blockif_sig_elem bse, *old_head;
-
-		pthread_mutex_init(&bse.bse_mtx, NULL);
-		pthread_cond_init(&bse.bse_cond, NULL);
+		struct blockif_sig_elem *old_head;
 
 		bse.bse_pending = 1;
 
@@ -1194,10 +1195,10 @@ blockif_cancel(struct blockif_ctxt *bc, struct blockif_req *breq)
 		while (bse.bse_pending)
 			pthread_cond_wait(&bse.bse_cond, &bse.bse_mtx);
 		pthread_mutex_unlock(&bse.bse_mtx);
-		pthread_cond_destroy(&bse.bse_cond);
-		pthread_mutex_destroy(&bse.bse_mtx);
 	}
 
+	pthread_mutex_destroy(&bse.bse_mtx);
+	pthread_cond_destroy(&bse.bse_cond);
 	pthread_mutex_unlock(&bc->bc_mtx);
 
 	/*

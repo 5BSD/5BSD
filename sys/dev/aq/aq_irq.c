@@ -56,12 +56,17 @@ int
 aq_update_hw_stats(struct aq_dev *aq_dev)
 {
 	struct aq_hw *hw = &aq_dev->hw;
-	struct aq_hw_fw_mbox mbox;
+	struct aq_hw_stats stats;
 
-	aq_hw_mpi_read_stats(hw, &mbox);
+	memset(&stats, 0, sizeof(stats));
+	if (aq_hw_mpi_read_stats(hw, &stats) != 0)
+		return (0);
 
-#define AQ_SDELTA(_N_) (aq_dev->curr_stats._N_ += \
-    mbox.stats._N_ - aq_dev->last_stats._N_)
+#define AQ_SDELTA(_N_) do { \
+	int32_t _d = (int32_t)(stats._N_ - aq_dev->last_stats._N_); \
+	if (_d > 0) \
+		aq_dev->curr_stats._N_ += _d; \
+} while (0)
 	if (aq_dev->linkup) {
 		AQ_SDELTA(uprc);
 		AQ_SDELTA(mprc);
@@ -86,15 +91,25 @@ aq_update_hw_stats(struct aq_dev *aq_dev)
 
 		AQ_SDELTA(dpc);
 
-		aq_dev->curr_stats.brc = aq_dev->curr_stats.ubrc +
-		    aq_dev->curr_stats.mbrc + aq_dev->curr_stats.bbrc;
-		aq_dev->curr_stats.btc = aq_dev->curr_stats.ubtc +
-		    aq_dev->curr_stats.mbtc + aq_dev->curr_stats.bbtc;
+		/*
+		 * Per-cast octets present: derive the aggregate from them.
+		 * Otherwise (B0) accumulate the firmware-reported aggregate.
+		 */
+		if (stats.ubrc | stats.mbrc | stats.bbrc)
+			aq_dev->curr_stats.brc = aq_dev->curr_stats.ubrc +
+			    aq_dev->curr_stats.mbrc + aq_dev->curr_stats.bbrc;
+		else
+			AQ_SDELTA(brc);
 
+		if (stats.ubtc | stats.mbtc | stats.bbtc)
+			aq_dev->curr_stats.btc = aq_dev->curr_stats.ubtc +
+			    aq_dev->curr_stats.mbtc + aq_dev->curr_stats.bbtc;
+		else
+			AQ_SDELTA(btc);
 	}
 #undef AQ_SDELTA
 
-	memcpy(&aq_dev->last_stats, &mbox.stats, sizeof(mbox.stats));
+	memcpy(&aq_dev->last_stats, &stats, sizeof(stats));
 
 	return (0);
 }
@@ -107,11 +122,9 @@ aq_if_update_admin_status(if_ctx_t ctx)
 	struct aq_hw *hw = &aq_dev->hw;
 	uint32_t link_speed;
 
-	//	AQ_DBG_ENTER();
 
 	struct aq_hw_fc_info fc_neg;
 	aq_hw_get_link_state(hw, &link_speed, &fc_neg);
-//	AQ_DBG_PRINT(" link_speed=%d aq_dev->linkup=%d", link_speed, aq_dev->linkup);
 	if (link_speed && !aq_dev->linkup) { /* link was DOWN */
 		device_printf(aq_dev->dev, "atlantic: link UP: speed=%d\n", link_speed);
 
@@ -139,7 +152,6 @@ aq_if_update_admin_status(if_ctx_t ctx)
 	}
 
 	aq_update_hw_stats(aq_dev);
-//	AQ_DBG_EXIT(0);
 }
 
 /**************************************************************************/
@@ -153,7 +165,7 @@ aq_isr_rx(void *arg)
 	struct aq_hw    *hw = &aq_dev->hw;
 
 	itr_irq_status_clearlsw_set(hw, BIT(ring->msix));
-	AQ_HW_FLUSH();
+	AQ_HW_FLUSH(hw);
 	counter_u64_add(ring->stats.irq, 1);
 	return (FILTER_SCHEDULE_THREAD);
 }
@@ -168,7 +180,7 @@ aq_linkstat_isr(void *arg)
 	struct aq_hw          *hw = &aq_dev->hw;
 
 	itr_irq_status_clearlsw_set(hw, BIT(aq_dev->msix));
-	AQ_HW_FLUSH();
+	AQ_HW_FLUSH(hw);
 
 	iflib_admin_intr_deferred(aq_dev->ctx);
 

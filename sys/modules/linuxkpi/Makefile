@@ -22,6 +22,7 @@ SRCS=	linux_of.c \
 	linux_lock.c \
 	linux_netdev.c \
 	linux_page.c \
+	linuxkpi_page_pool.c \
 	linux_pci.c \
 	linux_radix.c \
 	linux_rcu.c \

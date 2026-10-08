@@ -65,6 +65,7 @@ struct	sysentvec;
 struct trapframe;
 
 void	amd64_conf_fast_syscall(void);
+void	amd64_cpu_init_fred(void);
 void	amd64_db_resume_dbreg(void);
 vm_paddr_t amd64_loadaddr(void);
 void	amd64_lower_shared_page(struct sysentvec *);

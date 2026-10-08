@@ -760,6 +760,7 @@ dev/acpica/Osd/OsdTable.c	optional acpi
 dev/acpica/acpi.c		optional acpi
 dev/acpica/acpi_acad.c		optional acpi
 dev/acpica/acpi_apei.c		optional acpi
+dev/acpica/acpi_apei_bus.c	optional acpi
 dev/acpica/acpi_battery.c	optional acpi
 dev/acpica/acpi_button.c	optional acpi
 dev/acpica/acpi_cmbat.c		optional acpi
@@ -780,6 +781,7 @@ dev/acpica/acpi_throttle.c	optional acpi
 dev/acpica/acpi_video.c		optional acpi_video acpi
 dev/acpica/acpi_dock.c		optional acpi_dock acpi
 dev/acpica/acpi_spmc.c		optional acpi
+dev/acpica/apei_if.m		optional acpi
 dev/adlink/adlink.c		optional adlink
 dev/ae/if_ae.c			optional ae pci
 dev/age/if_age.c		optional age pci
@@ -857,6 +859,7 @@ dev/aq/aq_hw_llh.c		optional aq
 dev/aq/aq_fw.c			optional aq
 dev/aq/aq_fw1x.c		optional aq
 dev/aq/aq_fw2x.c		optional aq
+dev/aq/aq2_fw.c		optional aq
 dev/aq/aq_dbg.c			optional aq
 #
 dev/ata/ata_if.m		optional ata | atacore
@@ -1356,6 +1359,10 @@ dev/cfi/cfi_core.c		optional cfi
 dev/cfi/cfi_dev.c		optional cfi
 dev/cfi/cfi_disk.c		optional cfid
 dev/chromebook_platform/chromebook_platform.c	optional chromebook_platform
+dev/coreboot/coreboot.c			optional coreboot
+dev/coreboot/coreboot_cbmem.c		optional coreboot
+dev/coreboot/coreboot_console.c		optional coreboot
+dev/coreboot/coreboot_timestamps.c	optional coreboot
 dev/ciss/ciss.c			optional ciss
 dev/clk/clk.c			optional clk
 dev/clk/clkdev_if.m		optional clk
@@ -1632,6 +1639,10 @@ dev/efidev/efirt.c		optional efirt
 dev/efidev/efirtc.c		optional efirt efirtc
 dev/e1000/if_em.c		optional em \
 	compile-with "${NORMAL_C} -I$S/dev/e1000"
+dev/e1000/if_igbv.c		optional em \
+	compile-with "${NORMAL_C} -I$S/dev/e1000"
+dev/e1000/if_igb_iov.c		optional em \
+	compile-with "${NORMAL_C} -I$S/dev/e1000"
 dev/e1000/em_txrx.c		optional em \
 	compile-with "${NORMAL_C} -I$S/dev/e1000"
 dev/e1000/igb_txrx.c		optional em \
@@ -1732,6 +1743,9 @@ dev/firewire/fwcrom.c		optional firewire
 dev/firewire/fwdev.c		optional firewire
 dev/firewire/fwcam.c		optional fwcam
 dev/firewire/fwdma.c		optional firewire
+dev/firewire/fwdv.c		optional fwdv
+dev/firewire/fwisound.c		optional fwisound sound
+dev/firewire/fwisound_pcm.c	optional fwisound sound
 dev/firewire/fwmem.c		optional firewire
 dev/firewire/fwohci.c		optional firewire
 dev/firewire/fwohci_pci.c	optional firewire pci
@@ -1794,10 +1808,12 @@ dev/hid/hidbus.c		optional hidbus
 dev/hid/hidmap.c		optional hidmap | hms
 dev/hid/hidquirk.c		optional hid
 dev/hid/hidraw.c		optional hidraw
+dev/hid/hidwacom.c		optional hidwacom
 dev/hid/hkbd.c			optional hkbd
 dev/hid/hms.c			optional hms
 dev/hid/hmt.c			optional hmt hconf
 dev/hid/hpen.c			optional hpen
+dev/hid/hrfkill.c		optional hrfkill
 dev/hid/hsctrl.c		optional hsctrl
 dev/hid/ietp.c			optional ietp
 dev/hid/ps4dshock.c		optional ps4dshock
@@ -4737,6 +4753,8 @@ compat/linuxkpi/common/src/linux_mhi.c		optional compat_linuxkpi wlan \
 compat/linuxkpi/common/src/linux_netdev.c	optional compat_linuxkpi \
 	compile-with "${LINUXKPI_C}"
 compat/linuxkpi/common/src/linux_page.c		optional compat_linuxkpi \
+	compile-with "${LINUXKPI_C}"
+compat/linuxkpi/common/src/linuxkpi_page_pool.c	optional compat_linuxkpi \
 	compile-with "${LINUXKPI_C}"
 compat/linuxkpi/common/src/linux_pci.c		optional compat_linuxkpi pci \
 	compile-with "${LINUXKPI_C}"

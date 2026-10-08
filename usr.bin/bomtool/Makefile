@@ -1,5 +1,6 @@
 PACKAGE=	pkgconf
 
+# from contrib/pkgconf/meson.build:257
 PROG=		bomtool
 SRCS=		main.c
 SRCS+=		getopt_long.c

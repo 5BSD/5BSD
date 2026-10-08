@@ -1963,6 +1963,7 @@ int
 sys_pdkill(struct thread *td, struct pdkill_args *uap)
 {
 	struct proc *p;
+	struct file *fp;
 	int error;
 
 	AUDIT_ARG_SIGNUM(uap->signum);
@@ -1970,9 +1971,11 @@ sys_pdkill(struct thread *td, struct pdkill_args *uap)
 	if ((u_int)uap->signum > _SIG_MAXSIG)
 		return (EINVAL);
 
-	error = procdesc_find(td, uap->fd, &cap_pdkill_rights, &p);
-	if (error)
-		return (error);
+	sx_slock(&proctree_lock);
+	error = fget_procdesc(td, uap->fd, &cap_pdkill_rights, &fp, NULL, &p);
+	sx_sunlock(&proctree_lock);
+	if (error != 0)
+		goto out;
 	AUDIT_ARG_PROCESS(p);
 	/*
 	 * No p_cansignal check.  The process descriptor is a capability:
@@ -1987,7 +1990,10 @@ sys_pdkill(struct thread *td, struct pdkill_args *uap)
 		kern_psignal(p, uap->signum);
 	}
 	PROC_UNLOCK(p);
-	return (0);
+out:
+	if (fp != NULL)
+		fdrop(fp, td);
+	return (error);
 }
 
 #if defined(COMPAT_43)
@@ -2332,6 +2338,7 @@ tdsendsignal(struct proc *p, struct thread *td, int sig, ksiginfo_t *ksi)
 	ps = p->p_sigacts;
 	KNOTE_LOCKED(p->p_klist, NOTE_SIGNAL | sig);
 	EVENTHANDLER_INVOKE(process_signal, p, sig);
+	procdesc_jobstate(p);
 	prop = sigprop(sig);
 
 	if (td == NULL) {
@@ -3481,12 +3488,12 @@ thread_stopped(struct proc *p)
 	n = p->p_suspcount;
 	if (p == curproc)
 		n++;
-	if ((p->p_flag & P_STOPPED_SIG) && (n == p->p_numthreads)) {
+	if ((p->p_flag & P_STOPPED_SIG) != 0 && n == p->p_numthreads) {
 		PROC_SUNLOCK(p);
 		p->p_flag &= ~P_WAITED;
 		PROC_LOCK(p->p_pptr);
 		childproc_stopped(p, (p->p_flag & P_TRACED) ?
-			CLD_TRAPPED : CLD_STOPPED);
+		    CLD_TRAPPED : CLD_STOPPED);
 		PROC_UNLOCK(p->p_pptr);
 		PROC_SLOCK(p);
 	}
@@ -3748,6 +3755,7 @@ childproc_jobstate(struct proc *p, int reason, int sig)
 	 */
 	p->p_pptr->p_flag |= P_STATCHILD;
 	wakeup(p->p_pptr);
+	procdesc_jobstate(p);
 
 	ps = p->p_pptr->p_sigacts;
 	mtx_lock(&ps->ps_mtx);

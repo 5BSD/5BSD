@@ -339,22 +339,19 @@ Use
 .Xr ccache 1
 for the build.
 No configuration is required except to install the
-.Sy devel/ccache
+.Sy devel/ccache ,
+.Sy devel/ccache4 ,
 or
 .Sy devel/sccache
-package.
+port or package; in the latter case, set
+.Sy CCACHE_NAME=sccache .
 When using with
 .Xr distcc 1 ,
 set
-.Sy CCACHE_PREFIX=/usr/local/bin/distcc .
-When using with sccache
-set
-.Sy CCACHE_NAME=sccache
-in
-.Xr src.conf 5 .
-The default cache directory of
+.Sy CCACHE_PREFIX=${LOCALBASE}/bin/distcc .
+The default cache directory is
 .Pa $HOME/.ccache
-will be used, which can be overridden by setting
+and can be changed by setting
 .Sy CCACHE_DIR .
 The
 .Sy CCACHE_COMPILERCHECK
@@ -411,8 +408,6 @@ When set, it enforces these options:
 .Va WITHOUT_CLANG_FORMAT
 .It
 .Va WITHOUT_CLANG_FULL
-.It
-.Va WITHOUT_LLVM_COV
 .El
 .Pp
 When set, these options are also in effect:
@@ -563,13 +558,6 @@ build options, but may cause the build to inexplicably fail or produce
 non-functioning binaries.
 .It Va WITH_DETECT_TZ_CHANGES
 Make the time handling code detect changes to the timezone files.
-.It Va WITH_DIALOG
-Do build
-.Xr dialog 1 ,
-.Xr dialog 3 ,
-.Xr dpv 1 ,
-and
-.Xr dpv 3 .
 .It Va WITHOUT_DICT
 Do not build the Webster dictionary files.
 .It Va WITH_DIRDEPS_BUILD
@@ -1004,10 +992,6 @@ To be able to build the system alternate binary utilities must be provided via
 and
 .Ev XSTRIPBIN .
 
-.It Va WITHOUT_LLVM_COV
-Do not build the
-.Xr llvm-cov 1
-tool.
 .It Va WITH_LLVM_FULL_DEBUGINFO
 Generate full debug information for LLVM libraries and tools, which uses
 more disk space and build resources, but allows for easier debugging.
@@ -1076,6 +1060,9 @@ Do not build LLVM target support for X86.
 The
 .Va LLVM_TARGET_ALL
 option should be used rather than this in most cases.
+.It Va WITHOUT_LOADER_BIOS
+Do not build x86 BIOS loader support
+
 .It Va WITHOUT_LOADER_BIOS_TEXTONLY
 Include graphics, font and video mode support in the i386 and amd64 BIOS
 boot loader.
@@ -1156,6 +1143,9 @@ This is a default setting on
 powerpc/powerpc64.
 .It Va WITH_LOADER_USB
 Build the usb/kshim library
+
+.It Va WITHOUT_LOADER_USERBOOT
+Do not build x86 userboot loader support
 
 .It Va WITH_LOADER_VERBOSE
 Build with extra verbose debugging in the loader.
@@ -1811,8 +1801,6 @@ When set, it enforces these options:
 .Va WITHOUT_LLD
 .It
 .Va WITHOUT_LLDB
-.It
-.Va WITHOUT_LLVM_COV
 .El
 .Pp
 When set, these options are also in effect:

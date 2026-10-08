@@ -39,6 +39,24 @@ NOTE TO PEOPLE WHO THINK THAT FreeBSD 16.x IS SLOW:
 	kernel-and-world-together rule applies; old binaries that call them
 	get ENOSYS, or a different FreeBSD system call once 603+ are assigned.
 
+20260728:
+	The Intel 82576 and I350 Virtual Function devices have been split from
+	the igb(4) driver into the igbv driver.  Interfaces previously exposed
+	as igbN are now exposed as igbvN.  Network configuration files must be
+	updated accordingly.
+
+20260727:
+	The wait_for_pids() function in rc.subr, used by rc scripts
+	when stopping or restarting a service, has been modified to
+	use pwait(1)'s new -r option, which requires kernel support.
+	When upgrading across this change, you should install a new
+	kernel first, then reboot, then install a new world, run
+	etcupdate, and reboot again.  Otherwise, you may find that
+	rc.subr is unable to stop services because the running kernel
+	does not provide the support that the updated pwait(1) needs.
+	Alternatively, if you deem it safe, you may use fastboot(8) to
+	reboot without shutting down services first.
+
 20260620:
 	On powerpc64le, long double is now IEEE 754 binary128 (quad
 	precision, 113-bit mantissa) instead of 64-bit double.  This is an

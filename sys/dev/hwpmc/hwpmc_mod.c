@@ -62,6 +62,9 @@
 #include <sys/taskqueue.h>
 #include <sys/vnode.h>
 
+#define	EXTERR_CATEGORY	EXTERR_CAT_HWPMC_MOD
+#include <sys/exterrvar.h>
+
 #include <sys/linker.h>		/* needs to be after <sys/malloc.h> */
 
 #include <machine/atomic.h>
@@ -225,6 +228,8 @@ static int	pmc_detach_one_process(struct proc *p, struct pmc *pm,
 static void	pmc_destroy_owner_descriptor(struct pmc_owner *po);
 static void	pmc_destroy_pmc_descriptor(struct pmc *pm);
 static void	pmc_destroy_process_descriptor(struct pmc_process *pp);
+static void	pmc_reclaim_pmc_from_cpu(struct pmc *pm,
+    struct pmc_process *pp, int cpu);
 static struct pmc_owner *pmc_find_owner_descriptor(struct proc *p);
 static int	pmc_find_pmc(pmc_id_t pmcid, struct pmc **pm);
 static struct pmc *pmc_find_pmc_descriptor_in_process(struct pmc_owner *po,
@@ -1241,6 +1246,21 @@ pmc_detach_one_process(struct proc *p, struct pmc *pm, int flags)
 	if (pp->pp_pmcs[ri].pp_pmc != pm)
 		return (EINVAL);
 
+	/*
+	 * If this is a process-virtual PMC that is still loaded on the
+	 * hardware of the CPU we are running on (the common case when a
+	 * process detaches a PMC from itself), take it off and drop its
+	 * runcount reference now.  The reference is otherwise only
+	 * dropped by the switch-out reclaim, which the scheduler stops
+	 * calling once P_HWPMC is cleared below - leaking it and later
+	 * wedging pmc_wait_for_pmc_idle() at release time.
+	 */
+	if (PMC_IS_VIRTUAL_MODE(PMC_TO_MODE(pm))) {
+		critical_enter();
+		pmc_reclaim_pmc_from_cpu(pm, pp, curthread->td_oncpu);
+		critical_exit();
+	}
+
 	pmc_unlink_target_process(pm, pp);
 
 	/* Issue a detach entry if a log file is configured */
@@ -1258,6 +1278,22 @@ pmc_detach_one_process(struct proc *p, struct pmc *pm, int flags)
 
 	if (pp->pp_refcnt != 0)	/* still a target of some PMC */
 		return (0);
+
+	/*
+	 * This detach removed the process' last PMC and we are about to
+	 * clear P_HWPMC.  If the detached PMC was its last target and is
+	 * still loaded on other CPUs (e.g. sibling threads of a
+	 * multi-threaded target, or a target running on another CPU),
+	 * drain those references first: the target is already unlinked so
+	 * it cannot reload the PMC, and P_HWPMC is still set so those
+	 * CPUs' switch-out reclaim still runs.  Bounded by the target
+	 * threads being scheduled out.
+	 */
+	if (PMC_IS_VIRTUAL_MODE(PMC_TO_MODE(pm)) &&
+	    LIST_EMPTY(&pm->pm_targets)) {
+		while (counter_u64_fetch(pm->pm_runcount) > 0)
+			pmc_force_context_switch();
+	}
 
 	pmc_remove_process_descriptor(pp);
 
@@ -1595,6 +1631,79 @@ pmc_process_csw_in(struct thread *td)
 }
 
 /*
+ * Compute the change in a counter's value since it was last written.
+ * The hardware counter is only pcd_width bits wide and wraps around,
+ * while the value seeded into it may occupy the full 64-bit range, so
+ * take the difference modulo the counter width.
+ */
+static pmc_value_t
+pmc_delta(const struct pmc_classdep *pcd, pmc_value_t newvalue,
+    pmc_value_t oldvalue)
+{
+	pmc_value_t delta;
+
+	delta = newvalue - oldvalue;
+	if (pcd->pcd_width < 64)
+		delta &= ((pmc_value_t)1 << pcd->pcd_width) - 1;
+	return (delta);
+}
+
+/*
+ * Take a process-virtual PMC off the hardware of 'cpu' if it is
+ * currently loaded there for process 'pp', accumulating its final
+ * count and dropping its runcount reference.  This is the same reclaim
+ * that context switch out and process exit perform, factored out so it
+ * can also run when a target is detached while the PMC may still be
+ * live: the runcount reference is decremented by the switch-out reclaim
+ * only, which the scheduler gates on P_HWPMC, so a detach that clears
+ * P_HWPMC without draining would leak the reference and later wedge
+ * pmc_wait_for_pmc_idle().  Must be called in a critical section.
+ */
+static void
+pmc_reclaim_pmc_from_cpu(struct pmc *pm, struct pmc_process *pp, int cpu)
+{
+	struct pmc_classdep *pcd;
+	struct pmc *phw_pm;
+	pmc_value_t newvalue, tmp;
+	u_int adjri, ri;
+
+	ri = PMC_TO_ROWINDEX(pm);
+	pcd = pmc_ri_to_classdep(md, ri, &adjri);
+
+	/* Only reclaim if this PMC is actually loaded on this CPU. */
+	phw_pm = NULL;
+	(void)(*pcd->pcd_get_config)(cpu, adjri, &phw_pm);
+	if (phw_pm != pm)
+		return;
+
+	KASSERT(counter_u64_fetch(pm->pm_runcount) > 0,
+	    ("[pmc,%d] pm=%p runcount %ju", __LINE__, pm,
+	    (uintmax_t)counter_u64_fetch(pm->pm_runcount)));
+
+	if (pm->pm_pcpu_state[cpu].pps_cpustate) {
+		pm->pm_pcpu_state[cpu].pps_cpustate = 0;
+		if (pm->pm_pcpu_state[cpu].pps_stalled == 0) {
+			(void)pcd->pcd_stop_pmc(cpu, adjri, pm);
+
+			if (PMC_TO_MODE(pm) == PMC_MODE_TC) {
+				(void)pcd->pcd_read_pmc(cpu, adjri, pm,
+				    &newvalue);
+				tmp = pmc_delta(pcd, newvalue,
+				    PMC_PCPU_SAVED(cpu, ri));
+
+				mtx_pool_lock_spin(pmc_mtxpool, pm);
+				pm->pm_gv.pm_savedvalue += tmp;
+				pp->pp_pmcs[ri].pp_pmcval += tmp;
+				mtx_pool_unlock_spin(pmc_mtxpool, pm);
+			}
+		}
+	}
+
+	counter_u64_add(pm->pm_runcount, -1);
+	(void)pcd->pcd_config_pmc(cpu, adjri, NULL);
+}
+
+/*
  * Thread context switch OUT.
  */
 static void
@@ -1606,8 +1715,7 @@ pmc_process_csw_out(struct thread *td)
 	struct pmc_process *pp;
 	struct pmc_thread *pt = NULL;
 	struct proc *p;
-	pmc_value_t newvalue;
-	int64_t tmp;
+	pmc_value_t newvalue, tmp;
 	enum pmc_mode mode;
 	int cpu;
 	u_int adjri, ri;
@@ -1745,22 +1853,18 @@ pmc_process_csw_out(struct thread *td)
 				}
 				mtx_pool_unlock_spin(pmc_mtxpool, pm);
 			} else {
-				tmp = newvalue - PMC_PCPU_SAVED(cpu, ri);
+				/*
+				 * For counting process-virtual PMCs, the
+				 * hardware counter's value increases
+				 * monotonically modulo the counter width;
+				 * pmc_delta() recovers the increment even
+				 * when the counter wrapped during the run.
+				 */
+				tmp = pmc_delta(pcd, newvalue,
+				    PMC_PCPU_SAVED(cpu, ri));
 
 				PMCDBG3(CSW,SWO,1,"cpu=%d ri=%d tmp=%jd (count)",
 				    cpu, ri, tmp);
-
-				/*
-				 * For counting process-virtual PMCs,
-				 * we expect the count to be
-				 * increasing monotonically, modulo a 64
-				 * bit wraparound.
-				 */
-				KASSERT(tmp >= 0,
-				    ("[pmc,%d] negative increment cpu=%d "
-				     "ri=%d newvalue=%jx saved=%jx "
-				     "incr=%jx", __LINE__, cpu, ri,
-				     newvalue, PMC_PCPU_SAVED(cpu, ri), tmp));
 
 				mtx_pool_lock_spin(pmc_mtxpool, pm);
 				pm->pm_gv.pm_savedvalue += tmp;
@@ -3144,8 +3248,10 @@ pmc_start(struct pmc *pm)
 	 */
 	pmc_save_cpu_binding(&pb);
 	cpu = PMC_TO_CPU(pm);
-	if (!pmc_cpu_is_active(cpu))
-		return (ENXIO);
+	if (!pmc_cpu_is_active(cpu)) {
+		return (EXTERROR(ENXIO, "PMC CPU %ju is not active for start",
+		    (uintmax_t)cpu));
+	}
 	pmc_select_cpu(cpu);
 
 	/*
@@ -3211,9 +3317,10 @@ pmc_stop(struct pmc *pm)
 	cpu = PMC_TO_CPU(pm);
 	KASSERT(cpu >= 0 && cpu < pmc_cpu_max(),
 	    ("[pmc,%d] illegal cpu=%d", __LINE__, cpu));
-	if (!pmc_cpu_is_active(cpu))
-		return (ENXIO);
-
+	if (!pmc_cpu_is_active(cpu)) {
+		return (EXTERROR(ENXIO, "PMC CPU %ju is not active for stop",
+		    (uintmax_t)cpu));
+	}
 	pmc_select_cpu(cpu);
 
 	ri = PMC_TO_ROWINDEX(pm);
@@ -3307,29 +3414,39 @@ pmc_do_op_pmcallocate(struct thread *td, struct pmc_op_pmcallocate *pa)
 	cpu   = pa->pm_cpu;
 
 	p = td->td_proc;
-
 	/* Requested mode must exist. */
 	if ((mode != PMC_MODE_SS && mode != PMC_MODE_SC &&
 	     mode != PMC_MODE_TS && mode != PMC_MODE_TC))
-		return (EINVAL);
+		return (EXTERROR(EINVAL, "Invalid PMC mode %ju",
+		    (uintmax_t)mode));
 
 	/* Requested CPU must be valid. */
 	if (cpu != PMC_CPU_ANY && cpu >= pmc_cpu_max())
-		return (EINVAL);
+		return (EXTERROR(EINVAL, "Invalid PMC CPU %ju",
+		    (uintmax_t)cpu));
 
 	/*
 	 * Virtual PMCs should only ask for a default CPU.
 	 * System mode PMCs need to specify a non-default CPU.
 	 */
 	if ((PMC_IS_VIRTUAL_MODE(mode) && cpu != PMC_CPU_ANY) ||
-	    (PMC_IS_SYSTEM_MODE(mode) && cpu == PMC_CPU_ANY))
-		return (EINVAL);
+	    (PMC_IS_SYSTEM_MODE(mode) && cpu == PMC_CPU_ANY)) {
+		if (PMC_IS_VIRTUAL_MODE(mode)) {
+			return (EXTERROR(EINVAL,
+			    "PMC mode %ju requires the default CPU",
+			    (uintmax_t)mode));
+		}
+		return (EXTERROR(EINVAL,
+		    "PMC mode %ju requires an explicit CPU",
+		    (uintmax_t)mode));
+	}
 
 	/*
 	 * Check that an inactive CPU is not being asked for.
 	 */
 	if (PMC_IS_SYSTEM_MODE(mode) && !pmc_cpu_is_active(cpu))
-		return (ENXIO);
+		return (EXTERROR(ENXIO, "PMC CPU %ju is not active",
+		    (uintmax_t)cpu));
 
 	/*
 	 * Refuse an allocation for a system-wide PMC if this process has been
@@ -3352,22 +3469,26 @@ pmc_do_op_pmcallocate(struct thread *td, struct pmc_op_pmcallocate *pa)
 	if ((flags & ~(PMC_F_DESCENDANTS | PMC_F_LOG_PROCCSW |
 	    PMC_F_LOG_PROCEXIT | PMC_F_CALLCHAIN | PMC_F_USERCALLCHAIN |
 	    PMC_F_EV_PMU)) != 0)
-		return (EINVAL);
+		return (EXTERROR(EINVAL, "Invalid PMC flags %#jx",
+		    (uintmax_t)flags));
 
 	/* PMC_F_USERCALLCHAIN is only valid with PMC_F_CALLCHAIN. */
 	if ((flags & (PMC_F_CALLCHAIN | PMC_F_USERCALLCHAIN)) ==
 	    PMC_F_USERCALLCHAIN)
-		return (EINVAL);
+		return (EXTERROR(EINVAL,
+		    "PMC_F_USERCALLCHAIN requires PMC_F_CALLCHAIN"));
 
 	/* PMC_F_USERCALLCHAIN is only valid for sampling mode. */
 	if ((flags & PMC_F_USERCALLCHAIN) != 0 && mode != PMC_MODE_TS &&
 	    mode != PMC_MODE_SS)
-		return (EINVAL);
+		return (EXTERROR(EINVAL,
+		    "PMC_F_USERCALLCHAIN requires sampling mode"));
 
 	/* Process logging options are not allowed for system PMCs. */
 	if (PMC_IS_SYSTEM_MODE(mode) &&
 	    (flags & (PMC_F_LOG_PROCCSW | PMC_F_LOG_PROCEXIT)) != 0)
-		return (EINVAL);
+		return (EXTERROR(EINVAL,
+		    "Process logging flags are not valid for system PMCs"));
 
 	/*
 	 * All sampling mode PMCs need to be able to interrupt the CPU.
@@ -3378,11 +3499,14 @@ pmc_do_op_pmcallocate(struct thread *td, struct pmc_op_pmcallocate *pa)
 	/* A valid class specifier should have been passed in. */
 	pcd = pmc_class_to_classdep(class);
 	if (pcd == NULL)
-		return (EINVAL);
+		return (EXTERROR(EINVAL, "Invalid PMC class %ju",
+		    (uintmax_t)class));
 
 	/* The requested PMC capabilities should be feasible. */
 	if ((pcd->pcd_caps & caps) != caps)
-		return (EOPNOTSUPP);
+		return (EXTERROR(EOPNOTSUPP,
+		    "Requested PMC capabilities %#jx are not supported",
+		    (uintmax_t)caps));
 
 	PMCDBG4(PMC,ALL,2, "event=%d caps=0x%x mode=%d cpu=%d", pa->pm_ev,
 	    caps, mode, cpu);
@@ -3460,7 +3584,11 @@ pmc_do_op_pmcallocate(struct thread *td, struct pmc_op_pmcallocate *pa)
 
 	if (n == md->pmd_npmc) {
 		pmc_destroy_pmc_descriptor(pmc);
-		return (EINVAL);
+		/* Preserve a more specific error from the class allocator. */
+		if ((td->td_pflags2 & TDP2_EXTERR) != 0)
+			return (EINVAL);
+		return (EXTERROR(EINVAL,
+		    "No PMC row accepted the allocation request"));
 	}
 
 	/* Fill in the correct value in the ID field. */
@@ -3487,12 +3615,21 @@ pmc_do_op_pmcallocate(struct thread *td, struct pmc_op_pmcallocate *pa)
 		phw = pmc_pcpu[cpu]->pc_hwpmcs[n];
 		pcd = pmc_ri_to_classdep(md, n, &adjri);
 
-		if ((phw->phw_state & PMC_PHW_FLAG_IS_ENABLED) == 0 ||
-		    (error = pcd->pcd_config_pmc(cpu, adjri, pmc)) != 0) {
+		if ((phw->phw_state & PMC_PHW_FLAG_IS_ENABLED) == 0) {
 			(void)pcd->pcd_release_pmc(cpu, adjri, pmc);
 			pmc_destroy_pmc_descriptor(pmc);
 			pmc_restore_cpu_binding(&pb);
-			return (EPERM);
+			return (EXTERROR(EPERM,
+			    "PMC row %ju on CPU %ju is not enabled",
+			    (uintmax_t)n, (uintmax_t)cpu));
+		}
+		if ((error = pcd->pcd_config_pmc(cpu, adjri, pmc)) != 0) {
+			(void)pcd->pcd_release_pmc(cpu, adjri, pmc);
+			pmc_destroy_pmc_descriptor(pmc);
+			pmc_restore_cpu_binding(&pb);
+			return (EXTERROR(EPERM,
+			    "PMC configuration failed for row %ju on CPU %ju",
+			    (uintmax_t)n, (uintmax_t)cpu));
 		}
 
 		pmc_restore_cpu_binding(&pb);
@@ -3516,7 +3653,7 @@ pmc_do_op_pmcallocate(struct thread *td, struct pmc_op_pmcallocate *pa)
 	if (error != 0) {
 		pmc_release_pmc_descriptor(pmc);
 		pmc_destroy_pmc_descriptor(pmc);
-		return (error);
+		return (EXTERROR(error, "Failed to register PMC owner"));
 	}
 
 	/*
@@ -3539,7 +3676,8 @@ pmc_do_op_pmcattach(struct thread *td, struct pmc_op_pmcattach a)
 	sx_assert(&pmc_sx, SX_XLOCKED);
 
 	if (a.pm_pid < 0) {
-		return (EINVAL);
+		return (EXTERROR(EINVAL, "Invalid PMC attach pid %jd",
+		    (intmax_t)a.pm_pid));
 	} else if (a.pm_pid == 0) {
 		a.pm_pid = td->td_proc->p_pid;
 	}
@@ -3549,14 +3687,18 @@ pmc_do_op_pmcattach(struct thread *td, struct pmc_op_pmcattach a)
 		return (error);
 
 	if (PMC_IS_SYSTEM_MODE(PMC_TO_MODE(pm)))
-		return (EINVAL);
+		return (EXTERROR(EINVAL,
+		    "Cannot attach a system-mode PMC to a process"));
 
 	/* PMCs may be (re)attached only when allocated or stopped */
 	if (pm->pm_state == PMC_STATE_RUNNING) {
-		return (EBUSY);
+		return (EXTERROR(EBUSY,
+		    "PMC must be stopped before attach"));
 	} else if (pm->pm_state != PMC_STATE_ALLOCATED &&
 	    pm->pm_state != PMC_STATE_STOPPED) {
-		return (EINVAL);
+		return (EXTERROR(EINVAL,
+		    "PMC state %ju does not allow attach",
+		    (uintmax_t)pm->pm_state));
 	}
 
 	/* lookup pid */
@@ -3595,7 +3737,8 @@ pmc_do_op_pmcdetach(struct thread *td, struct pmc_op_pmcattach a)
 	int error;
 
 	if (a.pm_pid < 0) {
-		return (EINVAL);
+		return (EXTERROR(EINVAL, "Invalid PMC detach pid %jd",
+		    (intmax_t)a.pm_pid));
 	} else if (a.pm_pid == 0)
 		a.pm_pid = td->td_proc->p_pid;
 
@@ -3673,7 +3816,8 @@ pmc_do_op_pmcrw(const struct pmc_op_pmcrw *prw, pmc_value_t *valp)
 
 	/* Must have at least one flag set. */
 	if ((prw->pm_flags & (PMC_F_OLDVALUE | PMC_F_NEWVALUE)) == 0)
-		return (EINVAL);
+		return (EXTERROR(EINVAL,
+		    "PMCRW requires PMC_F_OLDVALUE and/or PMC_F_NEWVALUE"));
 
 	/* Locate PMC descriptor. */
 	error = pmc_find_pmc(prw->pm_pmcid, &pm);
@@ -3684,12 +3828,15 @@ pmc_do_op_pmcrw(const struct pmc_op_pmcrw *prw, pmc_value_t *valp)
 	if (pm->pm_state != PMC_STATE_ALLOCATED &&
 	    pm->pm_state != PMC_STATE_STOPPED &&
 	    pm->pm_state != PMC_STATE_RUNNING)
-		return (EINVAL);
+		return (EXTERROR(EINVAL,
+		    "PMC state %ju does not allow read/write",
+		    (uintmax_t)pm->pm_state));
 
 	/* Writing a new value is allowed only for 'STOPPED' PMCs. */
 	if (pm->pm_state == PMC_STATE_RUNNING &&
 	    (prw->pm_flags & PMC_F_NEWVALUE) != 0)
-		return (EBUSY);
+		return (EXTERROR(EBUSY,
+		    "Cannot write a PMC while it is running"));
 
 	if (PMC_IS_VIRTUAL_MODE(PMC_TO_MODE(pm))) {
 		/*
@@ -3729,7 +3876,9 @@ pmc_do_op_pmcrw(const struct pmc_op_pmcrw *prw, pmc_value_t *valp)
 		pcd = pmc_ri_to_classdep(md, ri, &adjri);
 
 		if (!pmc_cpu_is_active(cpu))
-			return (ENXIO);
+			return (EXTERROR(ENXIO,
+			    "PMC CPU %ju is not active for read/write",
+			    (uintmax_t)cpu));
 
 		/* Move this thread to CPU 'cpu'. */
 		pmc_save_cpu_binding(&pb);
@@ -5177,7 +5326,8 @@ pmc_process_exit(void *arg __unused, struct proc *p)
 				if (PMC_TO_MODE(pm) == PMC_MODE_TC) {
 					pcd->pcd_read_pmc(cpu, adjri, pm,
 					    &newvalue);
-					tmp = newvalue - PMC_PCPU_SAVED(cpu, ri);
+					tmp = pmc_delta(pcd, newvalue,
+					    PMC_PCPU_SAVED(cpu, ri));
 
 					mtx_pool_lock_spin(pmc_mtxpool, pm);
 					pm->pm_gv.pm_savedvalue += tmp;

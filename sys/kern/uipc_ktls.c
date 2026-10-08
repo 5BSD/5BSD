@@ -148,6 +148,11 @@ SYSCTL_BOOL(_kern_ipc_tls, OID_AUTO, enable, CTLFLAG_RWTUN,
     &ktls_offload_enable, 0,
     "Enable support for kernel TLS offload");
 
+static bool ktls_rx_offload_enable = true;
+SYSCTL_BOOL(_kern_ipc_tls, OID_AUTO, rx_enable, CTLFLAG_RWTUN,
+    &ktls_rx_offload_enable, 0,
+    "Enable support for kernel TLS receive offload");
+
 static bool ktls_cbc_enable = true;
 SYSCTL_BOOL(_kern_ipc_tls, OID_AUTO, cbc_enable, CTLFLAG_RWTUN,
     &ktls_cbc_enable, 1,
@@ -656,6 +661,9 @@ ktls_create_session(struct socket *so, struct tls_enable *en,
 		}
 		break;
 	case CRYPTO_AES_CBC:
+		if (!ktls_cbc_enable)
+			return (EOPNOTSUPP);
+
 		switch (en->auth_algorithm) {
 		case CRYPTO_SHA1_HMAC:
 			break;
@@ -1282,7 +1290,7 @@ ktls_enable_rx(struct socket *so, struct tls_enable *en)
 	struct ktls_session *tls;
 	int error;
 
-	if (!ktls_offload_enable)
+	if (!ktls_offload_enable || !ktls_rx_offload_enable)
 		return (ENOTSUP);
 
 	counter_u64_add(ktls_offload_enable_calls, 1);
@@ -1300,9 +1308,6 @@ ktls_enable_rx(struct socket *so, struct tls_enable *en)
 	 */
 	if (so->so_rcv.sb_tls_info != NULL)
 		return (EALREADY);
-
-	if (en->cipher_algorithm == CRYPTO_AES_CBC && !ktls_cbc_enable)
-		return (ENOTSUP);
 
 	error = ktls_create_session(so, en, &tls, KTLS_RX);
 	if (error)
@@ -1386,9 +1391,6 @@ ktls_enable_tx(struct socket *so, struct tls_enable *en)
 	 */
 	if (so->so_snd.sb_tls_info != NULL)
 		return (EALREADY);
-
-	if (en->cipher_algorithm == CRYPTO_AES_CBC && !ktls_cbc_enable)
-		return (ENOTSUP);
 
 	/* TLS requires ext pgs */
 	if (mb_use_ext_pgs == 0)
@@ -2421,7 +2423,8 @@ ktls_mbuf_crypto_state(struct mbuf *mb)
 		    (mb->m_epg_flags & EPG_FLAG_ANON) == 0)
 			return (KTLS_MBUF_CRYPTO_ST_SHAREDMBUF);
 		if ((mb->m_flags & M_EXT) != 0 &&
-		    mb->m_ext.ext_type == EXT_SFBUF)
+		    mb->m_ext.ext_type == EXT_SFBUF &&
+		    (mb->m_ext.ext_flags & EXT_FLAG_SFBUF_ANON) == 0)
 			return (KTLS_MBUF_CRYPTO_ST_SHAREDMBUF);
 
 		if (mb->m_flags & M_DECRYPTED)

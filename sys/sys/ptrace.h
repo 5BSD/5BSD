@@ -85,6 +85,8 @@
 #define	PT_GETREGSET	42	/* Get a target register set */
 #define	PT_SETREGSET	43	/* Set a target register set */
 #define	PT_SC_REMOTE	44	/* Execute a syscall */
+#define	PT_SET_SC_RET	45	/* Set (fake) syscall results */
+#define	PT_GET_CHILDREN	46	/* Report children */
 
 #define PT_FIRSTMACH    64	/* for machine-specific requests */
 #define	PT_LASTMACH     127
@@ -211,7 +213,7 @@ struct ptrace_lwpinfo32 {
 };
 #endif
 
-/* Argument structure for PT_GET_SC_RET. */
+/* Argument structure for PT_GET_SC_RET and PT_SET_SC_RET. */
 struct ptrace_sc_ret {
 	syscallarg_t	sr_retval[2];	/* Only valid if sr_error == 0. */
 	int		sr_error;
@@ -248,6 +250,17 @@ struct ptrace_sc_remote {
 	u_int	pscr_syscall;
 	u_int	pscr_nargs;
 	syscallarg_t	*pscr_args;
+};
+
+#define	PTCHLD_TRACED		0x00000001
+#define	PTCHLD_TRACED_BY_ME	0x00000002
+#define	PTCHLD_EXITED		0x00000004
+#define	PTCHLD_ORPHAN		0x00000008
+
+struct ptrace_child {
+	pid_t	pid;
+	int	flags;
+	uint64ptr_t rsrv[3];
 };
 
 #ifdef _KERNEL

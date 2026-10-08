@@ -536,6 +536,14 @@ vtpci_modern_negotiate_features(device_t dev, uint64_t child_features)
 		    "COMMON_CFG layout\n");
 	}
 
+	/*
+	 * Accept per-virtqueue reset if the device offers it: negotiating
+	 * the feature carries no obligation for a driver that never uses
+	 * it, while declining capability-only transport features can make
+	 * strict devices refuse the entire feature set.
+	 */
+	child_features |= host_features & VIRTIO_F_RING_RESET;
+
 	features = vtpci_negotiate_features(&sc->vtpci_common,
 	    child_features, host_features);
 	vtpci_modern_write_features(sc, features);
@@ -630,7 +638,10 @@ vtpci_modern_finalize_features(device_t dev)
 
 	status = vtpci_modern_get_status(sc);
 	if ((status & VIRTIO_CONFIG_S_FEATURES_OK) == 0) {
-		device_printf(dev, "desired features were not accepted\n");
+		device_printf(dev, "desired features were not accepted "
+		    "(host %#jx, written %#jx)\n",
+		    (uintmax_t)sc->vtpci_common.vtpci_host_features,
+		    (uintmax_t)sc->vtpci_common.vtpci_features);
 		return (ENOTSUP);
 	}
 

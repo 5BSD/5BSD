@@ -320,6 +320,7 @@ MAN=	accept_filter.9 \
 	rtentry.9 \
 	runqueue.9 \
 	rwlock.9 \
+	sbintime.9 \
 	sbuf.9 \
 	scheduler.9 \
 	SDT.9 \
@@ -1616,6 +1617,8 @@ MLINKS+=mdchain.9 md_append_record.9 \
 	mdchain.9 md_get_uio.9 \
 	mdchain.9 md_initm.9 \
 	mdchain.9 md_next_record.9
+MLINKS+=memcpy.9 memcpy_data.9
+MLINKS+=memmove.9 memmove_data.9
 MLINKS+=microtime.9 bintime.9 \
 	microtime.9 getbintime.9 \
 	microtime.9 getmicrotime.9 \
@@ -1986,6 +1989,19 @@ MLINKS+=rwlock.9 rw_assert.9 \
 	rwlock.9 rw_wlock.9 \
 	rwlock.9 rw_wowned.9 \
 	rwlock.9 rw_wunlock.9
+MLINKS+=sbintime.9 bttosbt.9 \
+	sbintime.9 mstosbt.9 \
+	sbintime.9 nstosbt.9 \
+	sbintime.9 sbintime_getsec.9 \
+	sbintime.9 sbttobt.9 \
+	sbintime.9 sbttoms.9 \
+	sbintime.9 sbttons.9 \
+	sbintime.9 sbttots.9 \
+	sbintime.9 sbttotv.9 \
+	sbintime.9 sbttous.9 \
+	sbintime.9 tstosbt.9 \
+	sbintime.9 tvtosbt.9 \
+	sbintime.9 ustosbt.9
 MLINKS+=sbuf.9 sbuf_bcat.9 \
 	sbuf.9 sbuf_bcopyin.9 \
 	sbuf.9 sbuf_bcpy.9 \

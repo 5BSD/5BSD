@@ -83,6 +83,10 @@ dev/bxe/bxe_elink.c             optional	bxe pci
 dev/bxe/57710_init_values.c     optional	bxe pci
 dev/bxe/57711_init_values.c     optional	bxe pci
 dev/bxe/57712_init_values.c     optional	bxe pci
+dev/coreboot/coreboot.c		optional	coreboot
+dev/coreboot/coreboot_console.c	optional	coreboot
+dev/coreboot/coreboot_cbmem.c	optional	coreboot
+dev/coreboot/coreboot_timestamps.c	optional	coreboot
 dev/coretemp/coretemp.c		optional	coretemp
 dev/cpuctl/cpuctl.c		optional	cpuctl
 dev/dpms/dpms.c			optional	dpms
@@ -118,6 +122,7 @@ dev/hwpmc/hwpmc_ibs.c		optional	hwpmc
 dev/hwpmc/hwpmc_intel.c		optional	hwpmc
 dev/hwpmc/hwpmc_core.c		optional	hwpmc
 dev/hwpmc/hwpmc_uncore.c	optional	hwpmc
+dev/hwpmc/hwpmc_rapl.c		optional	hwpmc
 dev/hwpmc/hwpmc_tsc.c		optional	hwpmc
 dev/hwpmc/hwpmc_x86.c		optional	hwpmc
 dev/hyperv/hvsock/hv_sock.c				optional	hyperv

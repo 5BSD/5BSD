@@ -104,6 +104,7 @@ static struct virtio_feature_desc virtio_common_feature_desc[] = {
 	{ VIRTIO_F_NOTIFICATION_DATA,	"NotificationData"	},
 	{ VIRTIO_F_NOTIF_CONFIG_DATA,	"NotifConfigData"	},
 	{ VIRTIO_F_RING_RESET,		"RingReset"		},
+	{ VIRTIO_F_ADMIN_VQ,		"AdminVq"		},
 	{ VIRTIO_F_SUSPEND,		"Suspend"		},
 
 	{ 0, NULL }

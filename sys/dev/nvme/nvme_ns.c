@@ -92,7 +92,7 @@ nvme_ns_ioctl(struct cdev *cdev, u_long cmd, caddr_t arg, int flag,
 		break;
 	}
 	case DIOCGIDENT: {
-		uint8_t *sn = arg;
+		uint8_t *sn = (uint8_t *)arg;
 		nvme_cdata_get_disk_ident(&ctrlr->cdata, sn);
 		break;
 	}

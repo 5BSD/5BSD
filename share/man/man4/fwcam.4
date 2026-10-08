@@ -3,7 +3,7 @@
 .\"
 .\" SPDX-License-Identifier: BSD-2-Clause
 .\"
-.Dd June 19, 2026
+.Dd July 12, 2026
 .Dt FWCAM 4
 .Os
 .Sh NAME
@@ -16,7 +16,20 @@
 The
 .Nm
 driver provides support for IIDC (Instrumentation and Industrial Digital
-Camera) v1.30 cameras attached via IEEE 1394 (FireWire).
+Camera) v1.04/v1.20/v1.30 cameras attached via IEEE 1394 (FireWire).
+.Pp
+The driver attaches to unit directories in the device CSR configuration ROM
+with
+.Va unit_spec_id
+0x00a02d (1394 Trade Association) and
+.Va unit_sw_version
+matching IIDC v1.04, v1.20, or v1.30.
+The IIDC command base address is located within the unit directory
+or a nested logical unit directory.
+.Pp
+Camera hardware probing is deferred until the device is first opened.
+This avoids bus resets on controllers where early register access
+destabilizes the link.
 .Pp
 Video frames are received over an isochronous DMA channel and exposed
 through a character device.

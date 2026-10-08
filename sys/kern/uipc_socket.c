@@ -3952,8 +3952,9 @@ hhook_run_socket(struct socket *so, void *hctx, int32_t h_id)
  * here, these functions are also called by the protocol-level pr_ctloutput()
  * routines.
  */
-int
-sooptcopyin(struct sockopt *sopt, void *buf, size_t len, size_t minlen)
+static int
+_sooptcopyin(struct sockopt *sopt, void *buf, size_t len, size_t minlen,
+    bool copycaps)
 {
 	size_t	valsize;
 
@@ -3968,12 +3969,33 @@ sooptcopyin(struct sockopt *sopt, void *buf, size_t len, size_t minlen)
 	if (valsize > len)
 		sopt->sopt_valsize = valsize = len;
 
-	if (sopt->sopt_td != NULL)
-		return (copyin(sopt->sopt_val, buf, valsize));
+	if (sopt->sopt_td != NULL) {
+		if (copycaps)
+			return (copyinptr(sopt->sopt_val, buf, valsize));
+		else
+			return (copyin(sopt->sopt_val, buf, valsize));
+	}
 
-	memcpy(buf, sopt->sopt_val, valsize);
+	if (copycaps)
+		memcpy(buf, sopt->sopt_val, valsize);
+	else
+		memcpy_data(buf, sopt->sopt_val, valsize);
 	return (0);
 }
+
+int
+sooptcopyin(struct sockopt *sopt, void *buf, size_t len, size_t minlen)
+{
+	return (_sooptcopyin(sopt, buf, len, minlen, false));
+}
+
+#ifdef __CHERI__
+int
+sooptcopyinptr(struct sockopt *sopt, void *buf, size_t len, size_t minlen)
+{
+	return (_sooptcopyin(sopt, buf, len, minlen, true));
+}
+#endif
 
 /*
  * Kernel version of setsockopt(2).
@@ -4264,7 +4286,7 @@ sooptcopyout(struct sockopt *sopt, const void *buf, size_t len)
 		if (sopt->sopt_td != NULL)
 			error = copyout(buf, sopt->sopt_val, valsize);
 		else
-			memcpy(sopt->sopt_val, buf, valsize);
+			memcpy_data(sopt->sopt_val, buf, valsize);
 	}
 	return (error);
 }

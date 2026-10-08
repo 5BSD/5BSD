@@ -164,14 +164,15 @@ _linuxkpi_request_firmware(const char *fw_name, const struct linuxkpi_firmware *
 		free(lfw, M_LKPI_FW);
 		*fw = NULL;
 		if (warn)
-			device_printf(dev->bsddev, "could not load firmware "
-			    "image '%s'\n", fw_name);
+			device_printf(dev->bsddev,
+			    "could not load firmware image '%s'\n",
+			    fw_name);
 		SDT_PROBE4(linuxkpi_fw, firmware, , request__done,
 		    dev, fw_name, -ENOENT, 0);
 		return (-ENOENT);
 	}
 
-	device_printf(dev->bsddev,"successfully loaded firmware image '%s'\n",
+	device_printf(dev->bsddev, "successfully loaded firmware image '%s'\n",
 	    fw_name);
 	lfw->fbdfw = fbdfw;
 	lfw->data = (const uint8_t *)fbdfw->data;

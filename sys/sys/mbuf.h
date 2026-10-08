@@ -621,6 +621,7 @@ m_epg_pagelen(const struct mbuf *m, int pidx, int pgoff)
  */
 #define	EXT_FLAG_EMBREF		0x000001	/* embedded ext_count */
 #define	EXT_FLAG_EXTREF		0x000002	/* external ext_cnt, notyet */
+#define	EXT_FLAG_SFBUF_ANON	0x000004	/* sendfile buffer is mutable */
 
 #define	EXT_FLAG_NOFREE		0x000010	/* don't free mbuf to pool, notyet */
 
@@ -1169,7 +1170,7 @@ m_extrefcnt(struct mbuf *m)
  * XXX: Broken at the moment.  Need some UMA magic to make it work again.
  */
 #define	M_ASSERTVALID(m)						\
-	KASSERT((((struct mbuf *)m)->m_flags & 0) == 0,			\
+	KASSERT((((struct mbuf *)(m))->m_flags & 0) == 0,			\
 	    ("%s: attempted use of a free mbuf %p!", __func__, (m)))
 
 /* Check whether any mbuf in the chain is unmapped. */

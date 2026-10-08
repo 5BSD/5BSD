@@ -67,7 +67,7 @@ void	sysdecode_kevent_fflags(FILE *_fp, short _filter, int _fflags,
 	    int _base);
 const char *sysdecode_itimer(int _which);
 const char *sysdecode_pfnl_cmd(int _cmd);
-const char *sysdecode_nlm_flag(int _flag);
+void	sysdecode_nlm_flag(FILE *_fp, int _flag);
 const char *sysdecode_kevent_filter(int _filter);
 bool	sysdecode_kevent_flags(FILE *_fp, int _flags, int *_rem);
 const char *sysdecode_kldsym_cmd(int _cmd);
@@ -136,7 +136,8 @@ bool	sysdecode_wait4_options(FILE *_fp, int _options, int *_rem);
 bool	sysdecode_wait6_options(FILE *_fp, int _options, int *_rem);
 const char *sysdecode_whence(int _whence);
 bool	sysdecode_shmflags(FILE *_fp, int _flags, int *_rem);
-bool	sysdecode_netlink(FILE *_fp, const void *_buf, size_t _len);
+bool	sysdecode_netlink(FILE *_fp, const void *_buf, size_t _len,
+    int _protocol);
 
 #if defined(__i386__) || defined(__amd64__) || defined(__aarch64__)
 

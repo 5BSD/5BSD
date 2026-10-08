@@ -534,6 +534,7 @@ enum {
 #define	TDB_BOUNDARY	0x00008000 /* ptracestop() at boundary */
 #define	TDB_COREDUMPREQ	0x00010000 /* Coredump request */
 #define	TDB_SCREMOTEREQ	0x00020000 /* Remote syscall request */
+#define	TDB_SET_SC_RET	0x00040000 /* PT_SET_SC_RET applied */
 
 /*
  * "Private" flags kept in td_pflags:
@@ -914,10 +915,8 @@ struct proc {
 						   sync core registered */
 #define	P2_MEMBAR_GLOBE		0x00400000	/* membar global expedited
 						   registered */
-
 #define	P2_LOGSIGEXIT_ENABLE	0x00800000	/* Disable logging on sigexit */
 #define	P2_LOGSIGEXIT_CTL	0x01000000	/* Override kern.logsigexit */
-
 #define	P2_HWT			0x02000000	/* Process is using HWT. */
 #define	P2_PTRACE_LISTEN	0x04000000	/* Stopped ptrace listener. */
 #define	P2_PTRACE_LCONT	0x08000000	/* LISTEN woke on SIGCONT. */

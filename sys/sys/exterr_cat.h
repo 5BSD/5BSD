@@ -42,8 +42,9 @@
 #define	EXTERR_CAT_VMM		17
 #define	EXTERR_CAT_HWPMC_IBS	18
 #define	EXTERR_CAT_LINKER	19
+#define	EXTERR_CAT_HWPMC_AMD	20
+#define	EXTERR_CAT_HWPMC_MOD	21
 /* 5BSD-local categories start at 128 so new FreeBSD ones cannot collide. */
 #define	EXTERR_CAT_CAPSICUM	128
 
 #endif
-

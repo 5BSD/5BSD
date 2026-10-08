@@ -83,11 +83,6 @@ aq_next(uint32_t i, uint32_t lim)
 
 int
 aq_ring_rx_init(struct aq_hw *hw, struct aq_ring *ring)
-/*                     uint64_t ring_addr,
-                     uint32_t ring_size,
-                     uint32_t ring_idx,
-                     uint32_t interrupt_cause,
-                     uint32_t cpu_idx) */
 {
 	int err;
 	uint32_t dma_desc_addr_lsw = (uint32_t)ring->rx_descs_phys & 0xffffffff;
@@ -110,7 +105,9 @@ aq_ring_rx_init(struct aq_hw *hw, struct aq_ring *ring)
 
 	rdm_rx_desc_head_buff_size_set(hw, 0U, ring->index);
 	rdm_rx_desc_head_splitting_set(hw, 0U, ring->index);
-	rpo_rx_desc_vlan_stripping_set(hw, 0U, ring->index);
+	rpo_rx_desc_vlan_stripping_set(hw,
+	    (if_getcapenable(iflib_get_ifp(ring->dev->ctx)) &
+	    IFCAP_VLAN_HWTAGGING) != 0 ? 1U : 0U, ring->index);
 
 	/* Rx ring set mode */
 
@@ -130,11 +127,6 @@ aq_ring_rx_init(struct aq_hw *hw, struct aq_ring *ring)
 
 int
 aq_ring_tx_init(struct aq_hw *hw, struct aq_ring *ring)
-/*                     uint64_t ring_addr,
-                     uint32_t ring_size,
-                     uint32_t ring_idx,
-                     uint32_t interrupt_cause,
-                     uint32_t cpu_idx) */
 {
 	int err;
 	uint32_t dma_desc_addr_lsw = (uint32_t)ring->tx_descs_phys & 0xffffffff;
@@ -331,11 +323,13 @@ aq_isc_rxd_pkt_get(void *arg, if_rxd_info_t ri)
 	if_t ifp;
 	int cidx, rc = 0, i;
 	size_t len, total_len;
+	bool is_error = false;
 
 	AQ_DBG_ENTERA("[%d] start=%d", ring->index, ri->iri_cidx);
 	cidx = ri->iri_cidx;
 	ifp = iflib_get_ifp(aq_dev->ctx);
 	i = 0;
+	total_len = 0;
 
 	do {
 		if (i >= aq_dev->sctx->isc_rx_nsegments)
@@ -346,11 +340,15 @@ aq_isc_rxd_pkt_get(void *arg, if_rxd_info_t ri)
 		trace_aq_rx_descr(ring->index, cidx,
 		    (volatile uint64_t *)rx_desc);
 
-		if ((rx_desc->wb.rx_stat & BIT(0)) != 0)
-			goto rx_err;
+		/* MAC error (rx_stat) or RX-DMA fault (rdm_err) -> drop. */
+		if ((rx_desc->wb.rx_stat & BIT(0)) != 0 || rx_desc->wb.rdm_err)
+			is_error = true;
 
 		if (!rx_desc->wb.eop) {
 			len = ring->rx_buf_size;
+		} else if (is_error) {
+			total_len = le32toh(rx_desc->wb.pkt_len);
+			len = 0;
 		} else {
 			total_len = le32toh(rx_desc->wb.pkt_len);
 			if (total_len < (size_t)i * ring->rx_buf_size)
@@ -363,7 +361,8 @@ aq_isc_rxd_pkt_get(void *arg, if_rxd_info_t ri)
 		ri->iri_frags[i].irf_idx = cidx;
 		ri->iri_frags[i].irf_len = len;
 
-		if ((rx_desc->wb.pkt_type & 0x60) != 0) {
+		if ((if_getcapenable(ifp) & IFCAP_VLAN_HWTAGGING) != 0 &&
+		    (rx_desc->wb.pkt_type & 0x60) != 0) {
 			ri->iri_flags |= M_VLANTAG;
 			ri->iri_vtag = le32toh(rx_desc->wb.vlan);
 		}
@@ -372,6 +371,19 @@ aq_isc_rxd_pkt_get(void *arg, if_rxd_info_t ri)
 		cidx = aq_next(cidx, ring->rx_size - 1);
 	} while (!rx_desc->wb.eop);
 
+	ri->iri_nfrags = i;
+	ri->iri_len = total_len;
+
+	/* Per-frame RX error: drop (zero-length frags), don't reset. */
+	if (is_error) {
+		counter_u64_add(ring->stats.rx_err, 1);
+		for (i = 0; i < ri->iri_nfrags; i++)
+			ri->iri_frags[i].irf_len = 0;
+		if (ri->iri_len == 0)
+			ri->iri_len = 1;	/* iflib asserts iri_len != 0 */
+		goto exit;
+	}
+
 	if ((if_getcapenable(ifp) & IFCAP_RXCSUM) != 0) {
 		aq_rx_set_cso_flags(rx_desc, ri);
 	}
@@ -379,9 +391,6 @@ aq_isc_rxd_pkt_get(void *arg, if_rxd_info_t ri)
 	if (ri->iri_rsstype != M_HASHTYPE_NONE) {
 		ri->iri_flowid = le32toh(rx_desc->wb.rss_hash);
 	}
-
-	ri->iri_len = total_len;
-	ri->iri_nfrags = i;
 
 	counter_u64_add(ring->stats.rx_bytes, total_len);
 	counter_u64_add(ring->stats.rx_pkts, 1);
@@ -405,7 +414,8 @@ aq_setup_offloads(struct aq_dev *aq_dev, if_pkt_info_t pi, volatile struct aq_tx
 {
 	AQ_DBG_ENTER();
 	txd->cmd |= tx_desc_cmd_fcs;
-	txd->cmd |= (pi->ipi_csum_flags & (CSUM_IP|CSUM_TSO)) ?
+	txd->cmd |= ((pi->ipi_flags & IPI_TX_IPV4) &&
+	    (pi->ipi_csum_flags & (CSUM_IP | CSUM_IP_TSO))) ?
 	    tx_desc_cmd_ipv4 : 0;
 	txd->cmd |= (pi->ipi_csum_flags & (CSUM_IP_TCP | CSUM_IP6_TCP |
 	    CSUM_IP_UDP | CSUM_IP6_UDP)) ?  tx_desc_cmd_l4cs : 0;
@@ -588,7 +598,7 @@ aq_isc_txd_credits_update(void *arg, uint16_t txqid, bool clear)
 	}
 
 	if (ring->tx_head == head) {
-		avail = 0; // ring->tx_size;
+		avail = 0;
 		goto done;
 	}
 

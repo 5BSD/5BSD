@@ -2714,8 +2714,10 @@ uipc_sendfile_wait(struct socket *so, off_t need, int *space)
 			SOCK_RECVBUF_UNLOCK(so2);
 			return (EAGAIN);
 		}
-		if (!sockref)
+		if (!sockref) {
 			soref(so2);
+			sockref = true;
+		}
 		error = uipc_stream_sbwait(so2, so->so_snd.sb_timeo);
 		if (error == 0 &&
 		    __predict_false(sb->sb_state & SBS_CANTRCVMORE))
@@ -4079,15 +4081,25 @@ unp_freerights(struct filedescent **fdep, int fdcount)
 	free(fdep[0], M_FILECAPS);
 }
 
-static bool
-restrict_rights(struct file *fp, struct thread *td)
+/*
+ * Flags to set on the receiving side when externalizing a file descriptor.
+ * When transferring fds between jails, ensure that the receiver cannot use
+ * a dirfd to escape the jail chroot.
+ */
+static int
+externalize_fdflags(struct filedescent *fde, struct thread *td)
 {
 	struct prison *prison1, *prison2;
 
-	prison1 = fp->f_cred->cr_prison;
+	if ((fde->fde_flags & UF_RESOLVE_BENEATH) != 0)
+		return (O_RESOLVE_BENEATH);
+	prison1 = fde->fde_file->f_cred->cr_prison;
 	prison2 = td->td_ucred->cr_prison;
-	return (prison1 != prison2 && prison1->pr_root != prison2->pr_root &&
-	    prison2 != &prison0);
+	if (prison1 != prison2 && prison1->pr_root != prison2->pr_root &&
+	    prison2 != &prison0)
+		return (O_RESOLVE_BENEATH);
+	else
+		return (0);
 }
 
 static int
@@ -4176,9 +4188,9 @@ unp_externalize(const struct socket *so, struct mbuf *control,
 				struct file *fp;
 
 				fp = fdep[i]->fde_file;
-				_finstall(fdesc, fp, *fdp, fdflags |
-				    (restrict_rights(fp, td) ?
-				    O_RESOLVE_BENEATH : 0), &fdep[i]->fde_caps);
+				_finstall(fdesc, fp, *fdp,
+				    fdflags | externalize_fdflags(fdep[i], td),
+				    &fdep[i]->fde_caps);
 				fdesc->fd_ofiles[*fdp].fde_xfer_state =
 				    fdep[i]->fde_xfer_state;
 				fdesc->fd_ofiles[*fdp].fde_cloexec_state =
@@ -4464,9 +4476,9 @@ unp_internalize(struct mbuf *control, struct mchain *mc, struct thread *td,
 				    fde->fde_cloexec_state;
 				fdep[i]->fde_clofork_state =
 				    fde->fde_clofork_state;
-				fdep[i]->fde_flags =
-				    fde->fde_flags &
-				    (UF_MMAP_CAPMODE | UF_LOOKUP_CAPMODE);
+				fdep[i]->fde_flags = fde->fde_flags &
+				    (UF_RESOLVE_BENEATH | UF_MMAP_CAPMODE |
+				    UF_LOOKUP_CAPMODE);
 				unp_internalize_fp(fdep[i]->fde_file);
 				SDT_PROBE6(fd, , , scm__rights__send,
 				    fdep[i]->fde_file, *fdp,

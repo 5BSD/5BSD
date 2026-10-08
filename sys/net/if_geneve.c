@@ -2841,6 +2841,7 @@ geneve_transmit(struct ifnet *ifp, struct mbuf *m)
 		break;
 #endif
 	default:
+		m_freem(m);
 		error = EAFNOSUPPORT;
 	}
 
@@ -3125,16 +3126,12 @@ geneve_input_inherit(struct geneve_softc *sc, struct mbuf **m0,
 			return (EINVAL);
 
 		if (m->m_len < offset &&
-		    (m = m_pullup(m, offset)) == NULL) {
-			*m0 = NULL;
+		    (*m0 = m = m_pullup(m, offset)) == NULL)
 			return (ENOBUFS);
-		}
 		iphdr = mtodo(m, offset - sizeof(struct ip));
 
-		if (ip_ecn_egress(ECN_COMPLETE, &info->ecn, &iphdr->ip_tos) == 0) {
-			*m0 = NULL;
+		if (ip_ecn_egress(ECN_COMPLETE, &info->ecn, &iphdr->ip_tos) == 0)
 			return (ENOBUFS);
-		}
 
 		if ((sc->gnv_flags & GENEVE_FLAG_TTL_INHERIT) != 0 && info->ttl > 0)
 			iphdr->ip_ttl = info->ttl;
@@ -3148,17 +3145,13 @@ geneve_input_inherit(struct geneve_softc *sc, struct mbuf **m0,
 			return (EINVAL);
 
 		if (m->m_len < offset &&
-		    (m = m_pullup(m, offset)) == NULL) {
-			*m0 = NULL;
+		    (*m0 = m = m_pullup(m, offset)) == NULL)
 			return (ENOBUFS);
-		}
 		ip6hdr = mtodo(m, offset - sizeof(struct ip6_hdr));
 
 		itos = (ntohl(ip6hdr->ip6_flow) >> IPV6_FLOWLABEL_LEN) & 0xff;
-		if (ip_ecn_egress(ECN_COMPLETE, &info->ecn, &itos) == 0) {
-			*m0 = NULL;
+		if (ip_ecn_egress(ECN_COMPLETE, &info->ecn, &itos) == 0)
 			return (ENOBUFS);
-		}
 		ip6hdr->ip6_flow |= htonl((uint32_t)itos << IPV6_FLOWLABEL_LEN);
 
 		if ((sc->gnv_flags & GENEVE_FLAG_TTL_INHERIT) && (info->ttl > 0))
@@ -3176,10 +3169,8 @@ geneve_input_inherit(struct geneve_softc *sc, struct mbuf **m0,
 			return (EINVAL);
 
 		if (m->m_len < offset &&
-		    (m = m_pullup(m, offset)) == NULL) {
-			*m0 = NULL;
+		    (*m0 = m = m_pullup(m, offset)) == NULL)
 			return (ENOBUFS);
-		}
 		info->isr = NETISR_ARP;
 		break;
 
@@ -3188,7 +3179,6 @@ geneve_input_inherit(struct geneve_softc *sc, struct mbuf **m0,
 		return (EINVAL);
 	}
 
-	*m0 = m;
 	return (0);
 }
 

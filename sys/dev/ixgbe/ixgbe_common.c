@@ -91,6 +91,7 @@ s32 ixgbe_init_ops_generic(struct ixgbe_hw *hw)
 				      ixgbe_validate_eeprom_checksum_generic;
 	eeprom->ops.update_checksum = ixgbe_update_eeprom_checksum_generic;
 	eeprom->ops.calc_checksum = ixgbe_calc_eeprom_checksum_generic;
+	eeprom->ops.read_pba_string = ixgbe_read_pba_string_generic;
 
 	/* MAC */
 	mac->ops.init_hw = ixgbe_init_hw_generic;
@@ -2932,7 +2933,7 @@ s32 ixgbe_fc_enable_generic(struct ixgbe_hw *hw)
 	}
 
 	/* Configure pause time (2 TCs per register) */
-	reg = hw->fc.pause_time * 0x00010001;
+	reg = hw->fc.pause_time * 0x00010001U;
 	for (i = 0; i < (IXGBE_DCB_MAX_TRAFFIC_CLASS / 2); i++)
 		IXGBE_WRITE_REG(hw, IXGBE_FCTTV(i), reg);
 
@@ -4153,7 +4154,7 @@ s32 ixgbe_clear_vfta_generic(struct ixgbe_hw *hw)
 /**
  * ixgbe_toggle_txdctl_generic - Toggle VF's queues
  * @hw: pointer to hardware structure
- * @vf_number: VF index
+ * @vf_number: VF number
  *
  * Enable and disable each queue in VF.
  */
@@ -4646,7 +4647,7 @@ s32 ixgbe_hic_unlocked(struct ixgbe_hw *hw, u32 *buffer, u32 length,
 		return IXGBE_SUCCESS;
 
 	/* Check command completion */
-	if ((timeout && i == timeout) ||
+	if ((timeout && i == timeout * 1000) ||
 	    !(IXGBE_READ_REG(hw, IXGBE_HICR) & IXGBE_HICR_SV)) {
 		ERROR_REPORT1(IXGBE_ERROR_CAUTION,
 			      "Command has failed with no status valid.\n");
@@ -5454,11 +5455,11 @@ void ixgbe_get_etk_id(struct ixgbe_hw *hw, struct ixgbe_nvm_version *nvm_ver)
 	 * word bit 15.
 	 */
 	if ((etk_id_h & NVM_ETK_VALID) == 0) {
-		nvm_ver->etk_id = etk_id_h;
-		nvm_ver->etk_id |= (etk_id_l << NVM_ETK_SHIFT);
+		nvm_ver->etk_id = (u32)etk_id_h;
+		nvm_ver->etk_id |= (u32)etk_id_l << NVM_ETK_SHIFT;
 	} else {
-		nvm_ver->etk_id = etk_id_l;
-		nvm_ver->etk_id |= (etk_id_h << NVM_ETK_SHIFT);
+		nvm_ver->etk_id = (u32)etk_id_l;
+		nvm_ver->etk_id |= (u32)etk_id_h << NVM_ETK_SHIFT;
 	}
 }
 

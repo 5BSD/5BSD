@@ -2436,6 +2436,7 @@ device		hkbd		# HID keyboard
 device		hms		# HID mouse
 device		hmt		# HID multitouch (MS-compatible)
 device		hpen		# Generic pen driver
+device		hrfkill		# RFKILL driver
 device		hsctrl		# System controls
 device		ps4dshock	# Sony PS4 DualShock 4 gamepad driver
 device		u2f		# FIDO/U2F authenticator
@@ -2615,6 +2616,8 @@ device		sbp_targ	# SBP-2 Target mode  (Requires scbus and targ)
 device		fwe		# Ethernet over FireWire (non-standard!)
 device		fwip		# IP over FireWire (RFC2734 and RFC3146)
 device		fwcam		# IIDC digital cameras over FireWire
+device		fwdv		# AV/C DV capture over FireWire
+device		fwisound	# Apple FireWire audio
 
 #####################################################################
 # dcons support (Dumb Console Device)

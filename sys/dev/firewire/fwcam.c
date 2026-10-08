@@ -52,13 +52,10 @@ SYSCTL_INT(_hw_firewire_fwcam, OID_AUTO, iso_channel, CTLFLAG_RWTUN,
 			printf("fwcam: " fmt, ## __VA_ARGS__);		\
 	} while (0)
 
-static void	fwcam_identify(driver_t *, device_t);
 static int	fwcam_probe(device_t);
 static int	fwcam_attach(device_t);
 static int	fwcam_detach(device_t);
-static void	fwcam_post_busreset(void *);
 static void	fwcam_probe_task(void *, int);
-static void	fwcam_post_explore(void *);
 static int	fwcam_iso_start(struct fwcam_softc *);
 static void	fwcam_iso_stop(struct fwcam_softc *);
 static void	fwcam_iso_input(struct fw_xferq *);
@@ -80,25 +77,61 @@ static struct cdevsw fwcam_cdevsw = {
 	.d_name =	"fwcam",
 };
 
+/*
+ * Search a CSR directory for the IIDC command base register (key 0x40).
+ * The iSight places cmd_base inside a logical_unit_directory nested
+ * within the IIDC unit directory, so we recurse into sub-directories
+ * up to max_depth levels.
+ */
 static uint32_t
-fwcam_find_iidc(struct fw_device *fwdev)
+fwcam_search_dir_cmd_base(uint32_t *csrrom, uint32_t dir_qoff,
+    uint32_t rom_quads, int max_depth)
 {
-	struct crom_context cc;
+	struct csrdirectory *dir;
 	struct csrreg *reg;
-	uint32_t cmd_base;
+	uint32_t dir_len, sub_qoff, val;
+	int i;
 
-	if (!crom_has_specver(fwdev->csrrom, CSRVAL_1394TA, CSR_PROTCAM130) &&
-	    !crom_has_specver(fwdev->csrrom, CSRVAL_1394TA, CSR_PROTCAM120) &&
-	    !crom_has_specver(fwdev->csrrom, CSRVAL_1394TA, CSR_PROTCAM104))
+	if (dir_qoff >= rom_quads || max_depth <= 0)
 		return (0);
+	dir = (struct csrdirectory *)&csrrom[dir_qoff];
+	dir_len = dir->crc_len;
+	if (dir_qoff + 1 + dir_len > rom_quads)
+		return (0);
+	if (!crom_crc_valid((uint32_t *)&dir->entry[0], dir_len, dir->crc)) {
+		if (firewire_debug)
+			printf("fwcam: bad CRC in directory at 0x%x\n",
+			    dir_qoff);
+	}
 
-	cmd_base = 0;
-	crom_init_context(&cc, fwdev->csrrom);
-	reg = crom_search_key(&cc, IIDC_CROM_CMD_BASE);
-	if (reg != NULL && reg->val != 0)
-		cmd_base = reg->val;
+	for (i = 0; i < (int)dir_len; i++) {
+		if (dir_qoff + 1 + i >= rom_quads)
+			break;
+		reg = &dir->entry[i];
+		if (reg->key == IIDC_CROM_CMD_BASE && reg->val != 0)
+			return (reg->val);
+		if ((reg->key & CSRTYPE_MASK) == CSRTYPE_D) {
+			sub_qoff = dir_qoff + 1 + i + reg->val;
+			val = fwcam_search_dir_cmd_base(csrrom, sub_qoff,
+			    rom_quads, max_depth - 1);
+			if (val != 0)
+				return (val);
+		}
+	}
+	return (0);
+}
 
-	return (cmd_base);
+/*
+ * Extract IIDC command base register from the unit directory.
+ * Searches the unit directory and any sub-directories (the iSight
+ * places cmd_base inside a logical_unit_directory).
+ */
+static uint32_t
+fwcam_find_iidc_cmd_base(struct fw_unit *unit)
+{
+
+	return (fwcam_search_dir_cmd_base(unit->fwdev->csrrom,
+	    unit->dir_offset / 4, CSRROMSIZE / 4, 2));
 }
 
 static int
@@ -149,31 +182,10 @@ fwcam_write_quadlet(struct fwcam_softc *sc, uint32_t offset, uint32_t val)
 	return (err);
 }
 
-#if 0
-static const char *
-fwcam_format_name(int format)
-{
-	static const char *names[] = {
-		"VGA (Format_0)",
-		"Super VGA 1 (Format_1)",
-		"Super VGA 2 (Format_2)",
-		"Reserved",
-		"Reserved",
-		"Reserved",
-		"Still Image (Format_6)",
-		"Partial Image (Format_7)",
-	};
-
-	if (format >= 0 && format <= 7)
-		return (names[format]);
-	return ("Unknown");
-}
-#endif
-
 static int
 fwcam_read_capabilities(struct fwcam_softc *sc)
 {
-	int err;
+	int err, f, m;
 
 	err = fwcam_read_quadlet(sc, IIDC_V_FORMAT_INQ, &sc->formats);
 	if (err) {
@@ -187,6 +199,30 @@ fwcam_read_capabilities(struct fwcam_softc *sc)
 		device_printf(sc->fd.dev,
 		    "failed to read BASIC_FUNC_INQ: %d\n", err);
 		return (err);
+	}
+
+	/* Read mode and rate inquiry registers for each supported format */
+	for (f = 0; f < 8; f++) {
+		if (!(sc->formats & (1 << (31 - f)))) {
+			sc->modes[f] = 0;
+			continue;
+		}
+		err = fwcam_read_quadlet(sc, IIDC_V_MODE_INQ(f),
+		    &sc->modes[f]);
+		if (err) {
+			sc->modes[f] = 0;
+			continue;
+		}
+		for (m = 0; m < 8; m++) {
+			if (!(sc->modes[f] & (1 << (31 - m)))) {
+				sc->rates[f][m] = 0;
+				continue;
+			}
+			err = fwcam_read_quadlet(sc, IIDC_V_RATE_INQ(f, m),
+			    &sc->rates[f][m]);
+			if (err)
+				sc->rates[f][m] = 0;
+		}
 	}
 
 	err = fwcam_read_quadlet(sc, IIDC_FEATURE_HI_INQ, &sc->features_hi);
@@ -283,11 +319,18 @@ fwcam_probe_task(void *arg, int pending __unused)
 			return;
 		}
 		sc->state = FWCAM_STATE_PROBED;
+		wakeup(sc);
 		FWCAM_UNLOCK(sc);
 
-		if (sc->open_count > 0 &&
+		if (sc->dma_ch >= 0 &&
 		    sc->state != FWCAM_STATE_DETACHING)
 			fwcam_iso_start(sc);
+	} else {
+		FWCAM_LOCK(sc);
+		if (sc->state == FWCAM_STATE_PROBING)
+			sc->state = FWCAM_STATE_IDLE;
+		wakeup(sc);
+		FWCAM_UNLOCK(sc);
 	}
 }
 
@@ -382,6 +425,40 @@ fwcam_iso_start(struct fwcam_softc *sc)
 	sc->frame_ready = 0;
 	sc->frame_dropped = 0;
 
+	/* IIDC spec s3.1: set video mode registers before ISO enable */
+	err = fwcam_write_quadlet(sc, IIDC_CUR_V_FORMAT,
+	    (uint32_t)sc->cur_format << IIDC_CUR_V_SHIFT);
+	if (err) {
+		device_printf(sc->fd.dev,
+		    "failed to set CUR_V_FORMAT: %d\n", err);
+		goto fail;
+	}
+	err = fwcam_write_quadlet(sc, IIDC_CUR_V_MODE,
+	    (uint32_t)sc->cur_mode << IIDC_CUR_V_SHIFT);
+	if (err) {
+		device_printf(sc->fd.dev,
+		    "failed to set CUR_V_MODE: %d\n", err);
+		goto fail;
+	}
+	err = fwcam_write_quadlet(sc, IIDC_CUR_V_FRM_RATE,
+	    (uint32_t)sc->cur_framerate << IIDC_CUR_V_SHIFT);
+	if (err) {
+		device_printf(sc->fd.dev,
+		    "failed to set CUR_V_FRM_RATE: %d\n", err);
+		goto fail;
+	}
+
+	/* Check Vmode_Error_Status - camera rejects ISO_EN on error */
+	err = fwcam_read_quadlet(sc, IIDC_VMODE_ERR_STATUS, &val);
+	if (err == 0 && (val & IIDC_VMODE_ERROR)) {
+		device_printf(sc->fd.dev,
+		    "Vmode_Error_Status set: format=%d mode=%d rate=%d "
+		    "speed=%d\n", sc->cur_format, sc->cur_mode,
+		    sc->cur_framerate, sc->iso_speed);
+		err = EINVAL;
+		goto fail;
+	}
+
 	val = ((uint32_t)sc->iso_channel << IIDC_ISO_CH_SHIFT) |
 	    ((uint32_t)sc->iso_speed << IIDC_ISO_SPEED_SHIFT);
 	err = fwcam_write_quadlet(sc, IIDC_ISO_CHANNEL, val);
@@ -392,7 +469,22 @@ fwcam_iso_start(struct fwcam_softc *sc)
 	}
 
 	err = fwcam_write_quadlet(sc, IIDC_ISO_EN, IIDC_ISO_EN_ON);
-	if (err) {
+	if (err == EIO) {
+		/*
+		 * Cameras with a lens cover might power down the sensor
+		 * when the cover is closed and reject streaming requests.
+		 * Try to re-power and retry once before giving up.
+		 */
+		err = fwcam_power_on(sc);
+		if (err == 0)
+			err = fwcam_write_quadlet(sc, IIDC_ISO_EN,
+			    IIDC_ISO_EN_ON);
+		if (err) {
+			device_printf(sc->fd.dev,
+			    "ISO enable refused (lens cover closed?)\n");
+			goto fail;
+		}
+	} else if (err) {
 		device_printf(sc->fd.dev,
 		    "failed to enable ISO: %d\n", err);
 		goto fail;
@@ -564,32 +656,38 @@ static int
 fwcam_cdev_open(struct cdev *dev, int oflags, int devtype, struct thread *td)
 {
 	struct fwcam_softc *sc = dev->si_drv1;
-	int err = 0;
+	int err;
 
 	FWCAM_LOCK(sc);
 	if (sc->state == FWCAM_STATE_DETACHING) {
 		FWCAM_UNLOCK(sc);
 		return (ENXIO);
 	}
+
+	if (sc->state == FWCAM_STATE_IDLE) {
+		sc->state = FWCAM_STATE_PROBING;
+		FWCAM_UNLOCK(sc);
+		taskqueue_enqueue(taskqueue_thread, &sc->probe_task);
+		FWCAM_LOCK(sc);
+	}
+
+	while (sc->state == FWCAM_STATE_PROBING) {
+		err = msleep(sc, &sc->mtx, PCATCH, "fwcampr", 10 * hz);
+		if (err) {
+			FWCAM_UNLOCK(sc);
+			return (err == EWOULDBLOCK ? ETIMEDOUT : err);
+		}
+	}
+
 	if (sc->state != FWCAM_STATE_PROBED &&
 	    sc->state != FWCAM_STATE_STREAMING) {
 		FWCAM_UNLOCK(sc);
-		return (EAGAIN);	/* not yet probed */
+		return (ENXIO);
 	}
 
 	sc->open_count++;
-	if (sc->open_count == 1 && sc->state == FWCAM_STATE_PROBED) {
-		FWCAM_UNLOCK(sc);
-		err = fwcam_iso_start(sc);
-		if (err) {
-			FWCAM_LOCK(sc);
-			sc->open_count--;
-			FWCAM_UNLOCK(sc);
-		}
-	} else {
-		FWCAM_UNLOCK(sc);
-	}
-	return (err);
+	FWCAM_UNLOCK(sc);
+	return (0);
 }
 
 static int
@@ -620,6 +718,13 @@ fwcam_cdev_read(struct cdev *dev, struct uio *uio, int ioflag)
 	int err;
 
 	FWCAM_LOCK(sc);
+	if (sc->state == FWCAM_STATE_PROBED) {
+		FWCAM_UNLOCK(sc);
+		err = fwcam_iso_start(sc);
+		if (err)
+			return (err);
+		FWCAM_LOCK(sc);
+	}
 	while (!sc->frame_ready) {
 		if (sc->state != FWCAM_STATE_STREAMING) {
 			FWCAM_UNLOCK(sc);
@@ -815,9 +920,12 @@ fwcam_cdev_ioctl(struct cdev *dev, u_long cmd, caddr_t data,
 		if (mode->format > 7 || mode->mode > 7 || mode->framerate > 7)
 			return (EINVAL);
 
-		if (mode->format != IIDC_FMT_VGA)
-			return (EINVAL);
 		if (!(sc->formats & (1 << (31 - mode->format))))
+			return (EINVAL);
+		if (!(sc->modes[mode->format] & (1 << (31 - mode->mode))))
+			return (EINVAL);
+		if (!(sc->rates[mode->format][mode->mode] &
+		    (1 << (31 - mode->framerate))))
 			return (EINVAL);
 
 		FWCAM_LOCK(sc);
@@ -836,13 +944,13 @@ fwcam_cdev_ioctl(struct cdev *dev, u_long cmd, caddr_t data,
 		FWCAM_UNLOCK(sc);
 
 		err = fwcam_write_quadlet(sc, IIDC_CUR_V_FORMAT,
-		    (uint32_t)mode->format << 29);
+		    (uint32_t)mode->format << IIDC_CUR_V_SHIFT);
 		if (err == 0)
 			err = fwcam_write_quadlet(sc, IIDC_CUR_V_MODE,
-			    (uint32_t)mode->mode << 29);
+			    (uint32_t)mode->mode << IIDC_CUR_V_SHIFT);
 		if (err == 0)
 			err = fwcam_write_quadlet(sc, IIDC_CUR_V_FRM_RATE,
-			    (uint32_t)mode->framerate << 29);
+			    (uint32_t)mode->framerate << IIDC_CUR_V_SHIFT);
 
 		if (err == 0) {
 			sc->cur_format = mode->format;
@@ -886,102 +994,53 @@ fwcam_cdev_ioctl(struct cdev *dev, u_long cmd, caddr_t data,
 	}
 }
 
-static void
-fwcam_post_explore(void *arg)
-{
-	struct fwcam_softc *sc = (struct fwcam_softc *)arg;
-	struct fw_device *fwdev;
-	uint32_t cmd_base;
-	int was_streaming, err;
-
-	FWCAM_LOCK(sc);
-
-	if (sc->state == FWCAM_STATE_DETACHING) {
-		FWCAM_UNLOCK(sc);
-		return;
-	}
-
-	if (sc->fwdev != NULL) {
-		STAILQ_FOREACH(fwdev, &sc->fd.fc->devices, link) {
-			if (fwdev == sc->fwdev &&
-			    fwdev->status == FWDEVATTACHED)
-				break;
-		}
-		if (fwdev == NULL) {
-			was_streaming = (sc->state == FWCAM_STATE_STREAMING);
-			device_printf(sc->fd.dev, "camera disconnected%s\n",
-			    was_streaming ? " (was streaming)" : "");
-			sc->fwdev = NULL;
-			sc->state = FWCAM_STATE_IDLE;
-			wakeup(sc);		/* unblock readers */
-			selwakeup(&sc->rsel);
-			FWCAM_UNLOCK(sc);
-
-			if (was_streaming)
-				fwcam_iso_stop(sc);
-			FWCAM_LOCK(sc);
-		}
-	}
-
-	if (sc->fwdev == NULL) {
-		STAILQ_FOREACH(fwdev, &sc->fd.fc->devices, link) {
-			if (fwdev->status != FWDEVATTACHED)
-				continue;
-
-			cmd_base = fwcam_find_iidc(fwdev);
-			if (cmd_base == 0)
-				continue;
-
-			sc->fwdev = fwdev;
-			sc->cmd_hi = 0xffff;
-			sc->cmd_lo = 0xf0000000 | (cmd_base << 2);
-
-			FWCAM_UNLOCK(sc);
-			err = taskqueue_enqueue(taskqueue_thread,
-			    &sc->probe_task);
-			if (err)
-				device_printf(sc->fd.dev,
-				    "taskqueue_enqueue failed: %d\n", err);
-			return;
-		}
-	}
-
-	FWCAM_UNLOCK(sc);
-}
-
-static void
-fwcam_post_busreset(void *arg __unused)
-{
-
-}
-
-static void
-fwcam_identify(driver_t *driver, device_t parent)
-{
-
-	if (device_find_child(parent, "fwcam", DEVICE_UNIT_ANY) == NULL)
-		BUS_ADD_CHILD(parent, 0, "fwcam", DEVICE_UNIT_ANY);
-}
 
 static int
 fwcam_probe(device_t dev)
 {
+	struct fw_unit *unit;
+
+	unit = fw_get_unit(dev);
+	if (unit == NULL)
+		return (ENXIO);
+
+	if (unit->spec_id != CSRVAL_1394TA)
+		return (ENXIO);
+	if (unit->sw_version != CSR_PROTCAM130 &&
+	    unit->sw_version != CSR_PROTCAM120 &&
+	    unit->sw_version != CSR_PROTCAM104)
+		return (ENXIO);
 
 	device_set_desc(dev, "IIDC Digital Camera over FireWire");
-	return (0);
+	return (BUS_PROBE_DEFAULT);
 }
 
 static int
 fwcam_attach(device_t dev)
 {
 	struct fwcam_softc *sc;
+	struct fw_unit *unit;
+	uint32_t cmd_base;
+
+	unit = fw_get_unit(dev);
+	if (unit == NULL || unit->fwdev == NULL)
+		return (ENXIO);
+
+	cmd_base = fwcam_find_iidc_cmd_base(unit);
+	if (cmd_base == 0) {
+		device_printf(dev, "no IIDC command base in unit directory\n");
+		return (ENXIO);
+	}
 
 	sc = device_get_softc(dev);
 	sc->fd.dev = dev;
-	sc->fd.fc = device_get_ivars(dev);
+	sc->fd.fc = fw_get_comm(dev);
 	mtx_init(&sc->mtx, "fwcam", NULL, MTX_DEF);
 
-	sc->fwdev = NULL;
+	sc->fwdev = unit->fwdev;
+	sc->cmd_hi = 0xffff;
+	sc->cmd_lo = 0xf0000000 | (cmd_base << 2);
+	sc->iso_speed = min(unit->fwdev->speed, FWSPD_S400);
 	sc->state = FWCAM_STATE_IDLE;
 	sc->dma_ch = -1;
 	sc->iso_active = 0;
@@ -992,11 +1051,6 @@ fwcam_attach(device_t dev)
 	sc->cdev = make_dev(&fwcam_cdevsw, device_get_unit(dev),
 	    UID_ROOT, GID_OPERATOR, 0660, "fwcam%d", device_get_unit(dev));
 	sc->cdev->si_drv1 = sc;
-
-	sc->fd.post_busreset = fwcam_post_busreset;
-	sc->fd.post_explore = fwcam_post_explore;
-
-	fwcam_post_explore(sc);
 
 	return (0);
 }
@@ -1032,7 +1086,6 @@ fwcam_detach(device_t dev)
 }
 
 static device_method_t fwcam_methods[] = {
-	DEVMETHOD(device_identify,	fwcam_identify),
 	DEVMETHOD(device_probe,		fwcam_probe),
 	DEVMETHOD(device_attach,	fwcam_attach),
 	DEVMETHOD(device_detach,	fwcam_detach),

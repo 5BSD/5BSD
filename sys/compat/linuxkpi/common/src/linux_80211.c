@@ -4523,11 +4523,13 @@ lkpi_ic_vap_create(struct ieee80211com *ic, const char name[IFNAMSIZ],
 		hw->max_listen_interval = 7 * (ic->ic_lintval / ic->ic_bintval);
 	hw->conf.listen_interval = hw->max_listen_interval;
 
+	wiphy_lock(hw->wiphy);
 	/* XXX-BZ do we need to be able to update these? */
 	hw->wiphy->frag_threshold = vap->iv_fragthreshold;
 	lkpi_80211_mo_set_frag_threshold(hw, vap->iv_fragthreshold);
 	hw->wiphy->rts_threshold = vap->iv_rtsthreshold;
 	lkpi_80211_mo_set_rts_threshold(hw, vap->iv_rtsthreshold);
+	wiphy_unlock(hw->wiphy);
 	/* any others? */
 
 	/* Add per-VIF/VAP sysctls. */
@@ -6225,13 +6227,14 @@ lkpi_80211_txq_tx_one(struct lkpi_sta *lsta, struct mbuf *m)
 ops_tx:
 #ifdef LINUXKPI_DEBUG_80211
 	if (linuxkpi_debug_80211 & D80211_TRACE_TX)
-		printf("%s:%d mo_tx :: lsta %p sta %p ni %p %6D skb %p "
-		    "TX ac %d prio %u qmap %u\n",
-		    __func__, __LINE__, lsta, sta, ni, ni->ni_macaddr, ":",
-		    skb, ac, skb->priority, skb->qmap);
+		printf("%s:%d mo_tx :: lsta %p { added_to_drv %d } sta %p "
+		    "ni %p %6D skb %p TX ac %d prio %u qmap %u\n",
+		    __func__, __LINE__, lsta, lsta->added_to_drv, sta,
+		    ni, ni->ni_macaddr, ":", skb, ac, skb->priority, skb->qmap);
 #endif
 	memset(&control, 0, sizeof(control));
-	control.sta = sta;
+	if (lsta->added_to_drv)
+		control.sta = sta;
 	wiphy_lock(hw->wiphy);
 	lkpi_80211_mo_tx(hw, &control, skb);
 	lsta->frms_tx++;
@@ -6850,7 +6853,7 @@ linuxkpi_ieee80211_start_tx_ba_session(struct ieee80211_sta *sta, uint8_t tid,
 	    !sta->deflink.eht_cap.has_eht) {
 		net80211_vap_printf(lsta->ni->ni_vap, "%s: HT or later not "
 		    "supported\n", __func__);
-		return (-ENOTSUPP);
+		return (-EINVAL);
 	}
 
 #ifdef __notyet__

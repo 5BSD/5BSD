@@ -109,6 +109,25 @@ static int dsp_oss_setsong(struct pcm_channel *wrch, struct pcm_channel *rdch, o
 static int dsp_oss_setname(struct pcm_channel *wrch, struct pcm_channel *rdch, oss_longname_t *name);
 #endif
 
+static uint32_t
+dsp_clamp_fragments(uint32_t maxfrags, uint32_t fragsz, uint32_t maxsize)
+{
+	if (maxfrags == 0)
+		maxfrags = maxsize / fragsz;
+	if (maxfrags < 2)
+		maxfrags = 2;
+	if ((uint64_t)maxfrags * fragsz > maxsize)
+		maxfrags = maxsize / fragsz;
+	return (maxfrags);
+}
+
+static unsigned int
+dsp_low_water(struct pcm_channel *ch, int lw)
+{
+	RANGE(lw, 1, ch->bufsoft->bufsize);
+	return ((unsigned int)lw);
+}
+
 int
 dsp_make_dev(device_t dev)
 {
@@ -127,9 +146,9 @@ dsp_make_dev(device_t dev)
 	devargs.mda_si_drv1 = sc;
 	err = make_dev_s(&devargs, &sc->dsp_dev, "dsp%d", unit);
 	if (err != 0) {
-		device_printf(dev, "failed to create dsp%d: error %d",
+		device_printf(dev, "failed to create dsp%d: error %d\n",
 		    unit, err);
-		return (ENXIO);
+		return (err);
 	}
 
 	return (0);
@@ -770,10 +789,6 @@ dsp_ioctl(struct cdev *i_dev, u_long cmd, caddr_t arg, int mode,
     	case AIONWRITE:	/* how many bytes can write ? */
 		if (wrch) {
 			CHN_LOCK(wrch);
-/*
-		if (wrch && wrch->bufhard.dl)
-			while (chn_wrfeed(wrch) == 0);
-*/
 			*arg_i = sndbuf_getfree(wrch->bufsoft);
 			CHN_UNLOCK(wrch);
 		} else {
@@ -986,9 +1001,6 @@ dsp_ioctl(struct cdev *i_dev, u_long cmd, caddr_t arg, int mode,
     	case FIONREAD: /* get # bytes to read */
 		if (rdch) {
 			CHN_LOCK(rdch);
-/*			if (rdch && rdch->bufhard.dl)
-				while (chn_rdfeed(rdch) == 0);
-*/
 			*arg_i = sndbuf_getready(rdch->bufsoft);
 			CHN_UNLOCK(rdch);
 		} else {
@@ -1251,18 +1263,13 @@ dsp_ioctl(struct cdev *i_dev, u_long cmd, caddr_t arg, int mode,
 			RANGE(fragln, 4, 16);
 			fragsz = 1 << fragln;
 
-			if (maxfrags == 0)
-				maxfrags = CHN_2NDBUFMAXSIZE / fragsz;
-			if (maxfrags < 2)
-				maxfrags = 2;
-			if (maxfrags * fragsz > CHN_2NDBUFMAXSIZE)
-				maxfrags = CHN_2NDBUFMAXSIZE / fragsz;
-
 			DEB(printf("SNDCTL_DSP_SETFRAGMENT %d frags, %d sz\n", maxfrags, fragsz));
 			PCM_ACQUIRE_QUICK(d);
 		    	if (rdch) {
 				CHN_LOCK(rdch);
-				ret = chn_setblocksize(rdch, maxfrags, fragsz);
+				ret = chn_setblocksize(rdch,
+				    dsp_clamp_fragments(maxfrags, fragsz,
+				    chn_2ndbufmaxsize(rdch)), fragsz);
 				r_maxfrags = rdch->bufsoft->blkcnt;
 				r_fragsz = rdch->bufsoft->blksz;
 				CHN_UNLOCK(rdch);
@@ -1272,7 +1279,9 @@ dsp_ioctl(struct cdev *i_dev, u_long cmd, caddr_t arg, int mode,
 			}
 		    	if (wrch && ret == 0) {
 				CHN_LOCK(wrch);
-				ret = chn_setblocksize(wrch, maxfrags, fragsz);
+				ret = chn_setblocksize(wrch,
+				    dsp_clamp_fragments(maxfrags, fragsz,
+				    chn_2ndbufmaxsize(wrch)), fragsz);
 				maxfrags = wrch->bufsoft->blkcnt;
 				fragsz = wrch->bufsoft->blksz;
 				CHN_UNLOCK(wrch);
@@ -1630,7 +1639,6 @@ dsp_ioctl(struct cdev *i_dev, u_long cmd, caddr_t arg, int mode,
 			ret = EINVAL;
 		else {
 			struct snd_dbuf *bs;
-			/* int tmp; */
 
 			oss_count_t *oc = (oss_count_t *)arg;
 
@@ -1661,12 +1669,12 @@ dsp_ioctl(struct cdev *i_dev, u_long cmd, caddr_t arg, int mode,
 	 */
 		if (wrch != NULL) {
 			CHN_LOCK(wrch);
-			wrch->lw = (*arg_i > 1) ? *arg_i : 1;
+			wrch->lw = dsp_low_water(wrch, *arg_i);
 			CHN_UNLOCK(wrch);
 		}
 		if (rdch != NULL) {
 			CHN_LOCK(rdch);
-			rdch->lw = (*arg_i > 1) ? *arg_i : 1;
+			rdch->lw = dsp_low_water(rdch, *arg_i);
 			CHN_UNLOCK(rdch);
 		}
 		break;
@@ -3010,7 +3018,13 @@ dsp_kqevent(struct knote *kn, long hint)
 		return (1);
 	}
 	kn->kn_data = 0;
-	if (chn_polltrigger(ch)) {
+	/*
+	 * For mmaped channels pass the knote's own reference point so the
+	 * low watermark is tracked per-knote.  Non-mmaped channels ignore
+	 * the reference and fire based on the current amount of ready/free
+	 * data in the buffer, so all knotes see the same live state.
+	 */
+	if (chn_polltrigger(ch, (uint64_t)kn->kn_sdata)) {
 		if (kn->kn_filter == EVFILT_READ) {
 			kn->kn_data = sndbuf_getready(ch->bufsoft);
 			if (ch->flags & CHN_F_MMAP)
@@ -3025,6 +3039,7 @@ dsp_kqevent(struct knote *kn, long hint)
 				kn->kn_kevent.ext[0] = sndbuf_getready(ch->bufsoft) / ch->bufsoft->align;
 		}
 		kn->kn_kevent.ext[1] = ch->xruns;
+		kn->kn_sdata = ch->bufsoft->total;
 	}
 
 	return (kn->kn_data > 0);
@@ -3070,6 +3085,11 @@ dsp_kqfilter(struct cdev *dev, struct knote *kn)
 		knlist_add(&ch->bufsoft->sel.si_note, kn, 1);
 		CHN_UNLOCK(ch);
 		kn->kn_hook = ch;
+		/*
+		 * Start tracking from the current position so the first event
+		 * fires after c->lw additional bytes have been transferred.
+		 */
+		kn->kn_sdata = ch->bufsoft->prev_total;
 	} else
 		err = EINVAL;
 	PCM_GIANT_LEAVE(d);

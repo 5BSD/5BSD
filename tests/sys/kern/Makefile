@@ -142,6 +142,7 @@ TEST_METADATA.envfd_test+=	is_exclusive="true"
 ATF_TESTS_C+=	fdgrowtable_test
 ATF_TESTS_C+=	getdirentries_test
 ATF_TESTS_C+=	jail_lookup_root
+ATF_TESTS_C+=	jail_thread
 ATF_TESTS_C+=	jaildesc
 ATF_TESTS_C+=	inotify_test
 ATF_TESTS_C+=	jaildesc_cap_test
@@ -229,12 +230,12 @@ CAPMODE_INTERP_PAD=	/${:U:range=255:@i@p@:ts}
 LDFLAGS.capmode_interp_foreign_helper+=	-Wl,--dynamic-linker=${CAPMODE_INTERP_PAD}
 PROGS+=		coredump_phnum_helper
 PROGS+=		pdeathsig_helper
-PROGS+=		sendfile_helper
 
 CFLAGS.aslr+=				-I${SRCTOP}/tests
 LIBADD.aslr+=				util
 LIBADD.copy_file_range+=		md
 LIBADD.jail_lookup_root+=		jail util
+LIBADD.jail_thread+=			jail pthread
 LIBADD.jaildesc+=			kvm pthread
 LIBADD.ssl_sendfile+=			pthread crypto ssl
 CFLAGS.sys_getrandom+=			-I${SRCTOP}/sys/contrib/zstd/lib
@@ -253,7 +254,6 @@ LIBADD.procdesc+=			kvm pthread
 LIBADD.shutdown_dgram+=			pthread
 LIBADD.socket_msg_waitall+=		pthread
 LIBADD.socket_splice+=			pthread
-LIBADD.sendfile_helper+=		pthread
 LIBADD.fdgrowtable_test+=		util pthread kvm procstat
 LIBADD.sigwait+=			rt
 LIBADD.ktrace_test+=			sysdecode
@@ -291,6 +291,8 @@ SRCS.subr_physmem_test+= subr_physmem_test.c subr_physmem.c
 # static.  So it's ok to disable -Wmissing-prototypes for this program.
 CFLAGS.subr_unit.c+=	-Wno-missing-prototypes
 SRCS.subr_unit_test+=	subr_unit.c
+
+CFLAGS.exterr_test+=	-I${SRCTOP}/tests
 
 WARNS?=	3
 

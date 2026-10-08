@@ -272,6 +272,7 @@ static bool __elfN(capmode_interp) = true;
 SYSCTL_BOOL(ELF_NODE_OID, OID_AUTO, capmode_interp,
     CTLFLAG_RWTUN, &__elfN(capmode_interp), 0,
     "Allow capability-mode exec to load the brand's own ELF interpreter");
+
 static u_int __elfN(phnums) = 128;
 SYSCTL_UINT(ELF_NODE_OID, OID_AUTO, phnums,
     CTLFLAG_RWTUN, &__elfN(phnums), 0,
@@ -878,7 +879,7 @@ __elfN(load_interp_file)(struct thread *td, const char *file, u_long *addr,
 	imgp->td = td;
 	imgp->proc = td->td_proc;
 	imgp->attr = attr;
-	imgp->interpreted = IMGACT_INTERP_IGNORE; /* ignored by do_execve */
+	imgp->interpreted = IMGACT_INTERP_ELF; /* ignored by do_execve */
 
 	NDINIT(nd, LOOKUP, ndflags, UIO_SYSSPACE, file);
 	if ((error = namei(nd)) != 0) {
@@ -1710,6 +1711,8 @@ typedef void (*segment_callback)(vm_map_entry_t, void *);
 struct phdr_closure {
 	Elf_Phdr *phdr;		/* Program header to fill in */
 	Elf_Off offset;		/* Offset of segment in core file */
+	int numsegs;		/* Maximum number of segments */
+	int nextseg;		/* Next segment to fill in */
 };
 
 struct note_info {
@@ -1826,10 +1829,15 @@ __elfN(coredump)(struct thread *td, struct coredump_writer *cdw, off_t limit, in
 	}
 
 	/*
-	 * Allocate memory for building the header, fill it up,
-	 * and write it out following the notes.
+	 * Allocate memory for building the header, fill it up, and write it out
+	 * following the notes.
+	 *
+	 * Note that a process sharing our vmspace might be concurrently
+	 * mutating the map, in which case we could populate fewer than
+	 * seginfo.count headers.  Zero the buffer to ensure that unpopulated
+	 * headers are still initialized.
 	 */
-	hdr = malloc(hdrsize, M_TEMP, M_WAITOK);
+	hdr = malloc(hdrsize, M_TEMP, M_WAITOK | M_ZERO);
 	error = __elfN(corehdr)(&params, seginfo.count, hdr, hdrsize, &notelst,
 	    notesz, flags);
 
@@ -1882,6 +1890,11 @@ cb_put_phdr(vm_map_entry_t entry, void *closure)
 	struct phdr_closure *phc = (struct phdr_closure *)closure;
 	Elf_Phdr *phdr = phc->phdr;
 
+	if (phc->nextseg >= phc->numsegs) {
+		/* Only write as many headers as we have space for. */
+		return;
+	}
+
 	phc->offset = round_page(phc->offset);
 
 	phdr->p_type = PT_LOAD;
@@ -1894,6 +1907,8 @@ cb_put_phdr(vm_map_entry_t entry, void *closure)
 
 	phc->offset += phdr->p_filesz;
 	phc->phdr++;
+
+	phc->nextseg++;
 }
 
 /*
@@ -2156,6 +2171,8 @@ __elfN(puthdr)(struct thread *td, void *hdr, size_t hdrsize, int numsegs,
 	/* All the writable segments from the program. */
 	phc.phdr = phdr;
 	phc.offset = round_page(hdrsize + notesz);
+	phc.numsegs = numsegs;
+	phc.nextseg = 0;
 	each_dumpable_segment(td, cb_put_phdr, &phc, flags);
 }
 
@@ -2497,14 +2514,14 @@ __elfN(set_fpregset)(struct regset *rs, struct thread *td, void *buf,
 {
 	elf_prfpregset_t *fpregset;
 
-	fpregset = buf;
 	KASSERT(size == sizeof(*fpregset), ("%s: invalid size", __func__));
+
+	fpregset = buf;
 #if defined(COMPAT_FREEBSD32) && __ELF_WORD_SIZE == 32
-	set_fpregs32(td, fpregset);
+	return (set_fpregs32(td, fpregset) == 0);
 #else
-	set_fpregs(td, fpregset);
+	return (set_fpregs(td, fpregset) == 0);
 #endif
-	return (true);
 }
 
 static struct regset __elfN(regset_fpregset) = {
