@@ -28,8 +28,8 @@ audio_media_test.o: ${SRCTOP}/lib/virtual_oss/bt/bt.c \
 	${SRCTOP}/lib/virtual_oss/bt/bt.h ${SRCTOP}/lib/virtual_oss/bt/sbc_encode.h
 
 ATF_TESTS_C+=	audio_sdp_test
-SRCS.audio_sdp_test= audio_sdp_test.c session.c
-.PATH: ${SRCTOP}/lib/libsdp
+# Name session.c by path: a lib/libsdp .PATH would shadow hccontrol util.c.
+SRCS.audio_sdp_test= audio_sdp_test.c ${SRCTOP}/lib/libsdp/session.c
 CFLAGS.session.c+= -I${SRCTOP}/lib/libsdp
 LDFLAGS.audio_sdp_test+= -Wl,--wrap=socket -Wl,--wrap=bindat \
 	-Wl,--wrap=connectat -Wl,--wrap=getsockopt
