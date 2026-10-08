@@ -79,21 +79,21 @@ The userland itself (`/compat/linux/bin`, `/lib`, `/usr`) is not part of the bas
 
 ## The correctness bar: the QEMU ZFS-root gate
 
-No Linuxulator change counts as done because it compiles, or because a happy-path test passes on the development host. `docs/book/src/compat/linux/overview.md` is the acceptance contract: every syscall, option and shared kernel primitive must have a per-contract record linking it to named positive and negative cases, and those cases must pass inside a disposable amd64 ZFS-root QEMU guest running the exact candidate kernel and modules, with INVARIANTS and WITNESS, on at least two vCPUs, with the same portable cases run against a real Linux reference guest. UFS-root runs are supplemental evidence only; a UFS-root guest fails the gate. The runner (`tools/test/linuxulator/qemu-gate.py`) fails closed: a missing result, a timeout, a recognized kernel diagnostic in the console, a leaked tracked resource or an unhealthy pool fails the run.
+No Linuxulator change counts as done because it compiles, or because a happy-path test passes on the development host. The acceptance contract is the Linuxulator QEMU gate, `tools/test/linuxulator/README.md`: every syscall, option and shared kernel primitive must have a per-contract record linking it to named positive and negative cases, and those cases must pass inside a disposable amd64 ZFS-root QEMU guest running the exact candidate kernel and modules, with INVARIANTS and WITNESS, on at least two vCPUs, with the same portable cases run against a real Linux reference guest. UFS-root runs are supplemental evidence only; a UFS-root guest fails the gate. The runner (`tools/test/linuxulator/qemu-gate.py`) fails closed: a missing result, a timeout, a recognized kernel diagnostic in the console, a leaked tracked resource or an unhealthy pool fails the run.
 
 That discipline is why this Part distinguishes three evidence classes. **Gate-passed** means a named contract passed the full VM matrix and a Linux oracle. **Claimed** means source review or a host-side run only. **Not qualified** means the documents say so explicitly. [Running Real Applications](running-apps.md) sorts the workloads by those classes.
 
 ## What is explicitly not qualified
 
-Electron and Chromium are the named gap. `docs/book/src/compat/linux/overview.md` records that no Electron VM execution has been completed, that the Chromium sandbox installs seccomp filters which the committed `linux_seccomp` handler rejects, and that a launch with `--no-sandbox` is a testing switch, not a qualification. Native FreeBSD Electron from Ports is a separate track that does not exercise the Linuxulator. Docker, Steam, systemd and Wine have never been claimed; the namespace, new-mount-API, keyring, BPF and syscall-user-dispatch projects they would need are on the missing-syscalls queue or listed as separate future projects in the implementation gate.
+Electron and Chromium are the named gap. No Electron VM execution has been completed, the Chromium sandbox installs seccomp filters which the committed `linux_seccomp` handler rejects, and a launch with `--no-sandbox` is a testing switch, not a qualification. Native FreeBSD Electron from Ports is a separate track that does not exercise the Linuxulator. Docker, Steam, systemd and Wine have never been claimed; the namespace, new-mount-API, keyring, BPF and syscall-user-dispatch projects they would need are on the missing-syscalls queue or are separate future projects.
 
 ## Where to look
 
 | Question | Document |
 |---|---|
 | Is syscall N dispatched, and how | `docs/linuxulator-syscall-coverage.md` section 5 |
-| Which flags of an implemented call work | `docs/book/src/compat/linux/syscalls.md`, `docs/book/src/compat/linux/overview.md` |
+| Which flags of an implemented call work | [System Calls](syscalls.md); the option tables in `docs/linuxulator-syscall-coverage.md` |
 | What is still missing, and who owns it | `docs/linuxulator-missing-syscalls-handoff.md` |
-| The acceptance contract and every batch's evidence | `docs/book/src/compat/linux/overview.md` |
-| Filesystem, procfs, FUSE and discovery batches | `docs/book/src/compat/linux/procfs-sysfs.md`, `-remaining-compat.md`, `-compat-next.md`, `-proc-extra.md` |
+| The acceptance contract and every batch's VM procedure | `tools/test/linuxulator/README.md` (the runner is `tools/test/linuxulator/qemu-gate.py`) |
+| Filesystem, procfs, FUSE and discovery batches | [procfs, sysfs and the Filesystem View](procfs-sysfs.md) |
 | Behaviour knobs | linux(4), linprocfs(4), linsysfs(4) |

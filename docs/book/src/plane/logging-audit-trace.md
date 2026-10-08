@@ -209,7 +209,7 @@ event class and the originating provider.
 
 DTrace on FreeBSD is all or nothing: opening `/dev/dtrace` requires root
 and grants kernel-wide introspection. 5BSD keeps DTrace as the
-instrumentation layer (about 65 new kernel SDT providers and 64 userland
+instrumentation layer (63 new kernel SDT providers and 64 userland
 USDT providers, catalogued in [Observability](../operations/observability.md))
 and changes only how a consumer is obtained.
 

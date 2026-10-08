@@ -30,10 +30,13 @@ it implies `CAPENABLED`). Today one call carries it.
 | 633 | `pdincapmode(fd)` | CAPENABLED | pdincapmode(2) | Reports whether the process behind a descriptor is in capability mode |
 | 634 | `cap_mmap_capmode(fd)` | CAPENABLED | cap_mmap_capmode(2) | Marks a descriptor so that mmap on it requires capability mode; one-way |
 | 635 | `cap_lookup_capmode(fd)` | CAPENABLED | cap_lookup_capmode(2) | Marks a directory descriptor so that `*at()` lookups through it require capability mode; one-way |
+| 636 | `cap_process(op, fd, uid, data)` | CAPENABLED | cap_process(2) | Manages the calling process's kernel-held discovery context (`MAC_CAP_PROCESS_SET`, `GET`, `CLEAR`, `INFO`) and its origin attribution (`MAC_CAP_PROCESS_ORIGIN_EXPORT`, `ORIGIN_SET`); declared in `<sys/cap_process.h>`, implemented in `sys/dev/mac_capability/mac_capability_process.c` |
 | dynamic | `mac_capability_channel_create(int fds[2])` | CAPENABLED | none | A `SYSCALL_MODULE` in `sys/dev/mac_capability/mac_capability_channel.c`; returns a self-owned channel pair; `lib/libchannel/channel_syscall.c` finds the number with `modfind("sys/mac_capability_channel_create")` |
 
-Numbers 603 to 608 and 630 to 635 belong to the capability core. The libc
-stubs are exported at `FBSD_1.9`.
+Numbers 603 to 608, 630, 631 and 633 to 636 (twelve calls) belong to the
+capability core. Their libsys stubs are exported at `FBSD_1.9`
+(`lib/libsys/Symbol.sys.map`), alongside the upstream `pdrfork`,
+`pdrfork_thread` and `renameat2` that the baseline already exported there.
 
 ### Upstream calls flipped to CAPENABLED
 

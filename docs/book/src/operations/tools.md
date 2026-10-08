@@ -49,7 +49,7 @@ access to protected services.
 | `hwtlm` | Hardware telemetry (RAPL power, temperatures, frequencies, C-states, thermal zones): `list`, `watch`, `exec -- command`. | hwtlm(8) | `hwtlm` | `hwtlm exec -- make buildworld` |
 | `bsdtrace` | Intel Processor Trace: `list`, `exec -- command`, `trace pid`, `decode file.pt` with `-f text|json|profile|tree|collapsed`. amd64, Intel, root to capture. | bsdtrace(8) | `bsdtrace` | `bsdtrace decode -f collapsed run.pt` |
 
-The 87 scripts in `/usr/share/dtrace` and the `oes` examples in
+The 95 scripts in `/usr/share/dtrace` and the `oes` examples in
 `/usr/share/examples/oes/dtrace` are tools too; see
 [Observability](observability.md).
 

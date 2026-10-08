@@ -31,6 +31,7 @@ is assigned at load) has no page of its own; the wrapper is
 | cap_clofork_limit(2) | lock close-on-fork for a file descriptor | |
 | cap_lookup_capmode(2) | require capability mode for directory fd lookups | |
 | cap_mmap_capmode(2) | require capability mode for mmap on a descriptor | |
+| cap_process(2) | manage the calling process's capability discovery context and attribution | |
 | cap_xfer_limit(2) | limit descriptor transfer state | |
 | cap_xfer_rights_limit(2) | attenuate descriptor rights during transfer | cap_xfer_ioctls_limit(2), cap_xfer_fcntls_limit(2) |
 | envfd(2) | create a named, descriptor-backed environment value | envfd_create(2) |

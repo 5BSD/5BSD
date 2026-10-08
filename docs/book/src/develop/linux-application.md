@@ -214,8 +214,8 @@ Linux processes too.
 ## The QEMU gate
 
 Anything you care about is qualified in a disposable guest, never on the
-host. The acceptance contract is `docs/book/src/compat/linux/overview.md`
-and its rule is unambiguous: QEMU is the correctness gate, the host only
+host. The acceptance contract is the gate document,
+`tools/test/linuxulator/README.md`, and its rule is unambiguous: QEMU is the correctness gate, the host only
 builds artifacts and runs QEMU, and every guest image must boot from ZFS. A
 UFS-root run fails the gate, because the base system is supported only on
 ZFS. The runner is `tools/test/linuxulator/qemu-gate.py`:
