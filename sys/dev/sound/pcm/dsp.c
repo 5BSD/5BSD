@@ -54,12 +54,10 @@ struct dsp_cdevpriv {
 	struct pcm_channel *wrch;
 };
 
-#ifdef SV_ABI_LINUX
 static int dsp_mmap_allow_prot_exec = -1;
 SYSCTL_INT(_hw_snd, OID_AUTO, compat_linux_mmap, CTLFLAG_RWTUN,
     &dsp_mmap_allow_prot_exec, 0,
     "linux mmap compatibility (-1=force-disable 0=auto)");
-#endif
 
 static int dsp_basename_clone = 1;
 SYSCTL_INT(_hw_snd, OID_AUTO, basename_clone, CTLFLAG_RWTUN,
@@ -730,8 +728,7 @@ dsp_ioctl(struct cdev *i_dev, u_long cmd, caddr_t arg, int mode,
 
 		if (d->mixer_dev != NULL) {
 			PCM_ACQUIRE_QUICK(d);
-			ret = mixer_ioctl_cmd(d->mixer_dev, cmd, arg, -1, td,
-			    MIXER_CMD_DIRECT);
+			ret = mixer_ioctl_cmd(d->mixer_dev, cmd, arg, -1, td);
 			PCM_RELEASE_QUICK(d);
 		} else
 			ret = EBADF;
@@ -1528,8 +1525,7 @@ dsp_ioctl(struct cdev *i_dev, u_long cmd, caddr_t arg, int mode,
 
 		if (d->mixer_dev != NULL) {
 			PCM_ACQUIRE_QUICK(d);
-			ret = mixer_ioctl_cmd(d->mixer_dev, xcmd, arg, -1, td,
-			    MIXER_CMD_DIRECT);
+			ret = mixer_ioctl_cmd(d->mixer_dev, xcmd, arg, -1, td);
 			PCM_RELEASE_QUICK(d);
 		} else
 			ret = ENOTSUP;
@@ -1541,8 +1537,7 @@ dsp_ioctl(struct cdev *i_dev, u_long cmd, caddr_t arg, int mode,
 	case SNDCTL_DSP_SET_RECSRC:
 		if (d->mixer_dev != NULL) {
 			PCM_ACQUIRE_QUICK(d);
-			ret = mixer_ioctl_cmd(d->mixer_dev, cmd, arg, -1, td,
-			    MIXER_CMD_DIRECT);
+			ret = mixer_ioctl_cmd(d->mixer_dev, cmd, arg, -1, td);
 			PCM_RELEASE_QUICK(d);
 		} else
 			ret = ENOTSUP;
@@ -1925,16 +1920,12 @@ dsp_mmap_single(struct cdev *i_dev, vm_ooffset_t *offset,
 	struct pcm_channel *wrch, *rdch, *c;
 	int err;
 
-#ifdef SV_ABI_LINUX
 	/*
 	 * https://lists.freebsd.org/pipermail/freebsd-emulation/2007-June/003698.html
 	 */
 	if ((nprot & PROT_EXEC) && (dsp_mmap_allow_prot_exec < 0 ||
 	    (dsp_mmap_allow_prot_exec == 0 &&
 	    SV_CURPROC_ABI() != SV_ABI_LINUX)))
-#else
-	if (nprot & PROT_EXEC)
-#endif
 		return (EINVAL);
 
 	/*

@@ -272,9 +272,11 @@ struct user {
 #define	KF_TYPE_TIMERFD	14
 #define	KF_TYPE_INOTIFY	15
 #define	KF_TYPE_JAILDESC	16
-#define	KF_TYPE_MAC_CAPABILITY	17
-#define	KF_TYPE_ENVFD		18
-#define	KF_TYPE_ZFSHANDLE	19
+#define	KF_TYPE_NTSYNC	17
+/* 5BSD-local types start at 128 so new FreeBSD types cannot collide. */
+#define	KF_TYPE_MAC_CAPABILITY	128
+#define	KF_TYPE_ENVFD		129
+#define	KF_TYPE_ZFSHANDLE	130
 #define	KF_TYPE_UNKNOWN	255
 
 #define	KF_VTYPE_VNON	0
@@ -294,6 +296,11 @@ struct user {
 #define	KF_FD_TYPE_TRACE	-4	/* Ktrace vnode */
 #define	KF_FD_TYPE_TEXT	-5	/* Text vnode */
 #define	KF_FD_TYPE_CTTY	-6	/* Controlling terminal */
+
+#define	KF_NTSYNC_TYPE_DEV	1	/* Not reported, reserved */
+#define	KF_NTSYNC_TYPE_SEM	2
+#define	KF_NTSYNC_TYPE_MUTEX	3
+#define	KF_NTSYNC_TYPE_EVENT	4
 
 #define	KF_FLAG_READ		0x00000001
 #define	KF_FLAG_WRITE		0x00000002
@@ -500,6 +507,23 @@ struct kinfo_file {
 				uint32_t	kf_zh_flags;
 				uint32_t	kf_zh_valid;
 			} kf_zfshandle;
+				uint32_t	kf_ntsync_type;
+				uint64_t	kf_ntsync_dev;
+				union {
+					struct {
+						uint32_t count;
+						uint32_t max;
+					} kf_ntsync_sem;
+					struct{
+						uint32_t owner;
+						uint32_t count;
+					} kf_ntsync_mutex;
+					struct {
+						uint32_t signaled;
+						uint32_t manual;
+					} kf_ntsync_event;
+				} kf_ntsync_un;
+			} kf_ntsync;
 		} kf_un;
 	};
 	uint16_t	kf_status;		/* Status flags. */

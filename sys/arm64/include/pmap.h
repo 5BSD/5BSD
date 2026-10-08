@@ -70,8 +70,12 @@ struct md_page {
 	TAILQ_HEAD(,pv_entry)	pv_list;
 	int			pv_gen;
 	vm_memattr_t		pv_memattr;
-	uint8_t			pv_reserve[3];
+	uint8_t			pv_flags;
+	uint8_t			pv_reserve[2];
 };
+
+/* machine page flags */
+#define PV_MTE_TAGGED	0x01	/* page is tagged with MTE */
 
 enum pmap_stage {
 	PM_INVALID,
@@ -148,6 +152,7 @@ void	pmap_activate_vm(pmap_t);
 void	pmap_bootstrap_dmap(vm_size_t);
 void	pmap_bootstrap(void);
 int	pmap_change_attr(void *va, vm_size_t size, int mode);
+int	pmap_change_dmap_attr(int);
 int	pmap_change_prot(void *va, vm_size_t size, vm_prot_t prot);
 void	pmap_kenter(vm_offset_t sva, vm_size_t size, vm_paddr_t pa, int mode);
 void	pmap_kenter_device(vm_offset_t, vm_size_t, vm_paddr_t);

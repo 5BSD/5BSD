@@ -859,8 +859,8 @@ tests/sys/mac_capability/         ATF kernel tests via kyua
 
 ## Base System Changes
 
-- `DTYPE_MAC_CAPABILITY` (17) in sys/sys/file.h
-- `KF_TYPE_MAC_CAPABILITY` (17) in sys/sys/user.h
+- `DTYPE_MAC_CAPABILITY` (128) in sys/sys/file.h
+- `KF_TYPE_MAC_CAPABILITY` (128) in sys/sys/user.h
 
 ## Exported Kernel API
 

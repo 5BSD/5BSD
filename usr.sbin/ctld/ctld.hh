@@ -487,7 +487,7 @@ struct conf {
 	bool add_port(struct target *target, struct portal_group *pg,
 	    uint32_t ctl_port);
 	bool add_port(struct target *target, struct pport *pp);
-	bool add_port(struct kports &kports, struct target *target, int pp,
+	bool add_port(struct target *target, const std::string &pname, int pp,
 	    int vp);
 	bool add_pports(struct kports &kports);
 
@@ -567,13 +567,9 @@ struct pport {
 	const char *name() const { return pp_name.c_str(); }
 	uint32_t ctl_port() const { return pp_ctl_port; }
 
-	bool linked() const { return pp_linked; }
-	void link() { pp_linked = true; }
-
 private:
 	std::string			pp_name;
 	uint32_t			pp_ctl_port;
-	bool				pp_linked = false;
 };
 
 struct kports {

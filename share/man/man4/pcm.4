@@ -197,9 +197,6 @@ The Parametric Software Equalizer (EQ) enables the use of
 controls (bass and treble).
 Commonly used for ear-candy or frequency compensation due to the vast
 difference in hardware quality.
-EQ is disabled by default, but can be enabled with the
-.Va hint.pcm.%d.eq
-tunable.
 .Ss VCHANs
 Each device can optionally support more playback and recording channels
 than physical hardware provides by using
@@ -230,12 +227,6 @@ driver.
 The following tunables can not be changed during runtime using
 .Xr sysctl 8 .
 .Bl -tag -width indent
-.It Va hint.pcm.%d.eq
-Set to 1 or 0 to explicitly enable (1) or disable (0) the equalizer.
-Requires a driver reload if changed.
-Enabling this will make bass and treble controls appear in mixer applications.
-This tunable is undefined by default.
-Equalizing is disabled by default.
 .It Va hint.pcm.%d.vpc
 Set to 1 or 0 to explicitly enable (1) or disable (0) the VPC feature.
 This tunable is undefined by default.
@@ -416,15 +407,6 @@ When a channel is closed the channel volume will be reset to 0db.
 This means that any changes to the volume will be lost.
 Enabling this will preserve the volume, at the cost of possible confusion
 when applications tries to re-open the same device.
-.It Va hw.snd.vpc_mixer_bypass
-The recommended way to use the VPC feature is to teach applications to use the
-correct
-.Fn ioctl :
-.Dv SNDCTL_DSP_GETPLAYVOL , SNDCTL_DSP_SETPLAYVOL ,
-.Dv SNDCTL_DSP_SETRECVOL , SNDCTL_DSP_SETRECVOL .
-This is however not always possible.
-Enable this to allow applications to use their own existing mixer logic
-to control their own channel volume.
 .It Va hw.snd.vpc_reset
 Enable to restore all channel volumes back to the default value of 0db.
 .It Va dev.pcm.%d.bitperfect
@@ -439,6 +421,17 @@ the definitive format/rate target.
 The recommended way to use bitperfect mode is to disable VCHANs and enable this
 sysctl.
 Default is disabled.
+.It Va dev.pcm.%d.eq
+Set to 1 or 0 to enable (1) or disable (0) the equalizer.
+Default is disabled.
+When enabled, the mixer bass and treble controls can be used, as well as the
+.Va dev.pcm.%d.eq_preamp
+tunable.
+.It Va dev.pcm.%d.eq_preamp
+Equalizer preamp (in dB).
+.Va dev.pcm.%d.eq
+has to be enabled, in order for this tunable to take effect.
+Read the tunable's description to see the available range of values.
 .It Va dev.pcm.%d.[play|rec].vchans
 Enable (1) or disable (0) VCHANs.
 Default is enabled.

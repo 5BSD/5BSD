@@ -1264,6 +1264,7 @@ void	cpu_thread_alloc(struct thread *);
 void	cpu_thread_clean(struct thread *);
 void	cpu_thread_exit(struct thread *);
 void	cpu_thread_free(struct thread *);
+void	cpu_thread_new_kstack(struct thread *);
 struct	thread *thread_alloc(int pages);
 int	thread_check_susp(struct thread *td, bool sleep);
 void	thread_cow_get_proc(struct thread *newtd, struct proc *p);
@@ -1342,6 +1343,12 @@ td_get_sched(struct thread *td)
 {
 
 	return ((struct td_sched *)&td[1]);
+}
+
+static __inline char *
+td_kstack_top(struct thread *td)
+{
+	return (td->td_kstack + ptoa(td->td_kstack_pages));
 }
 
 static __inline void

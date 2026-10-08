@@ -172,7 +172,7 @@ vt9p_req_wait(struct vt9p_softc *chan, struct p9_req_t *req)
 	unsigned int seconds;
 	int error;
 
-	KASSERT(req->tc->tag != req->rc->tag,
+	KASSERT(req->tc.tag != req->rc.tag,
 	    ("%s: request %p already completed", __func__, req));
 
 	seconds = MAX(vt9p_ackmaxidle, 1);
@@ -180,7 +180,7 @@ vt9p_req_wait(struct vt9p_softc *chan, struct p9_req_t *req)
 	now = sbinuptime();
 	deadline = timeout > SBT_MAX - now ? SBT_MAX : now + timeout;
 	for (;;) {
-		if (req->tc->tag == req->rc->tag)
+		if (req->tc.tag == req->rc.tag)
 			return (0);
 		if (chan->failed || chan->stopping)
 			return (EIO);
@@ -239,7 +239,7 @@ vt9p_request(void *handle, struct p9_req_t *req)
 req_retry:
 	sglist_reset(sg);
 	/* Handle out VirtIO ring buffers */
-	error = sglist_append(sg, req->tc->sdata, req->tc->size);
+	error = sglist_append(sg, req->tc.sdata, req->tc.size);
 	if (error != 0) {
 		P9_DEBUG(ERROR, "%s: sglist append failed\n", __func__);
 		VT9P_UNLOCK(chan);
@@ -247,8 +247,8 @@ req_retry:
 	}
 	readable = sg->sg_nseg;
 
-	error = sglist_append_boundary(sg, req->rc->sdata,
-	    req->rc->capacity);
+	error = sglist_append_boundary(sg, req->rc.sdata,
+	    req->rc.capacity);
 	if (error != 0) {
 		P9_DEBUG(ERROR, "%s: sglist append failed\n", __func__);
 		VT9P_UNLOCK(chan);
@@ -335,8 +335,8 @@ again:
 		 * parser.  The wire header is not allowed to extend beyond the
 		 * bytes the device actually placed in the writable descriptor.
 		 */
-		curreq->rc->size = len;
-		curreq->rc->tag = curreq->tc->tag;
+		curreq->rc.size = len;
+		curreq->rc.tag = curreq->tc.tag;
 		wakeup_one(curreq);
 	}
 	if (virtqueue_enable_intr(vq) != 0) {

@@ -2,6 +2,7 @@
 .\" SPDX-License-Identifier: BSD-2-Clause
 .\"
 .\" Copyright (c) 2013 Peter Grehan
+.\" Copyright (c) 2026 Hans Rosenfeld
 .\" All rights reserved.
 .\"
 .\" Redistribution and use in source and binary forms, with or without
@@ -1438,23 +1439,86 @@ In that case, this feature doesn't work as expected.
 .Bl -bullet
 .Sm off
 .It
-.Pa /dev/cam/ctl Oo Ar pp Cm \&. Ar vp Oc Oo Cm \&, Ar scsi-device-options Oc
+.Oo Cm target Ns = Ns Oo ID : Oc Ar path Ns Oc
+.Oo Cm \&, Ar scsi-device-options Oc
+.Oo Cm \&, Ar backend-specific-options Oc
 .Sm on
+.El
+.Pp
+Multiple
+.Pa target
+parameters may be specified, each configuring a different
+.Ar path
+as a distinct SCSI target.
+If the
+.Pa target
+.Ar ID
+is not explicitly configured for a
+.Pa target ,
+the
+.Pa target
+will be assigned the next sequential
+.Ar ID
+following the highest
+.Pa target
+.Ar ID
+used at that point, or 0 if it is the first target configured.
+All
+.Pa target
+.Ar ID Ns s
+must be unique per instance.
+The meaning of the
+.Ar path
+argument is specific to each backend:
+.Bl -column "Backend" "/dev/cam/ctl[pp.vp]"
+.It Sy Backend Ta Sy Path Ta Sy Description
+.It ctl Ta Pa /dev/cam/ctl Ns Oo Ar pp . Ns Ar vp Oc Ta
+The path of a CAM target layer (CTL) device node.
+If no target is configured, a single target backed by
+.Qq /dev/cam/ctl
+will be configured by default.
 .El
 .Pp
 The
 .Ar scsi-device-options
 are:
 .Bl -tag -width 10n
-.It Cm iid= Ns Ar IID
-Initiator ID to use when sending requests to specified CTL port.
-The default value is 0.
+.It Cm backend= Ns Ar backend
+The virtio-scsi backend to use.
+The backend name is case-insensitive.
+There is currently only one backend
+.Qq ctl ,
+which is also the default backend.
 .It Li bootindex= Ns Ar index
 Add the device to the boot order at
 .Ar index .
 A fw_cfg file is used to specify the boot order.
 The guest firmware may ignore or not support this fw_cfg file.
 In that case, this feature doesn't work as expected.
+.It Li ctl_ringsz= Ns Ar ringsz
+The ring size to use for the control queue.
+.It Li evt_ringsz= Ns Ar ringsz
+The ring size to use for the event queue.
+.It Li req_ringsz= Ns Ar ringsz
+The ring size to use for each I/O request queue.
+.It Li num_queues= Ns Ar num
+The number of I/O request queues to use.
+.It Li seg_max= Ns Ar num
+The maximum number of segments allowed in a single command.
+.It Li thr_per_q= Ns Ar num
+The number of parallel request processing threads per I/O request queue.
+.El
+.Pp
+The
+.Ar backend-specific-options
+for the
+.Sy CTL
+backend are:
+.Bl -tag -width 10n
+.It Cm iid= Ns Ar IID
+Initiator ID to use when sending requests to
+.Sy CTL .
+The default value is 0.
 .El
 .Ss 9P device backends
 .Bl -bullet

@@ -1273,6 +1273,13 @@ amd64_bsp_ist_init(struct pcpu *pc)
  * - there is a usable memory block right after the end of the
  *   mapped kernel and all modules/metadata, pointed to by
  *   physfree, for early allocations
+ *
+ * The memory block after the end of the kernel is important, loader
+ * must ensure that no critical data structures are put there.  Among
+ * them is the trampoline page table, which must not be overwritten by
+ * the allocations until pmap_bootstrap() switches %cr3 to the initial
+ * version of the kernel page table.  Size of the block is controlled
+ * by the 'staging_slop' command for loader.efi.
  */
 vm_paddr_t __nosanitizeaddress __nosanitizememory
 amd64_loadaddr(void)
@@ -1367,8 +1374,9 @@ hammer_time(u_int64_t modulep, u_int64_t physfree)
 
 	thread0.td_kstack = (char *)physfree - kernphys + KERNSTART;
 	thread0.td_kstack_pages = kstack_pages;
-	kstack0_sz = thread0.td_kstack_pages * PAGE_SIZE;
+	kstack0_sz = ptoa(kstack_pages);
 	bzero(thread0.td_kstack, kstack0_sz);
+	cpu_thread_new_kstack(&thread0);
 	physfree += kstack0_sz;
 
 	/*
@@ -1521,8 +1529,6 @@ hammer_time(u_int64_t modulep, u_int64_t physfree)
 	 * We initialize the PCB pointer early so that exception
 	 * handlers will work.
 	 */
-	cpu_max_ext_state_size = sizeof(struct savefpu);
-	set_top_of_stack_td(&thread0);
 	thread0.td_pcb = get_pcb_td(&thread0);
 
 	/*
@@ -1828,29 +1834,53 @@ wrmsr_early_safe_start(void)
 {
 	struct region_descriptor efi_idt;
 	struct gate_descriptor *gpf_descr;
+	int i;
 
 	sidt(&wrmsr_early_safe_orig_efi_idt);
 	efi_idt.rd_limit = 32 * sizeof(idt0[0]);
 	efi_idt.rd_base = (uintptr_t)idt0;
 	lidt(&efi_idt);
 
-	gpf_descr = &idt0[IDT_GP];
-	gpf_descr->gd_looffset = (uintptr_t)wrmsr_early_safe_gp_handler;
-	gpf_descr->gd_hioffset = (uintptr_t)wrmsr_early_safe_gp_handler >> 16;
-	gpf_descr->gd_selector = rcs();
-	gpf_descr->gd_type = SDT_SYSTGT;
-	gpf_descr->gd_p = 1;
+	/* Setup handler for all possible exceptions. */
+	for (i = 0; i < 32; i++) {
+		gpf_descr = &idt0[i];
+		gpf_descr->gd_looffset =
+		    (uintptr_t)wrmsr_early_safe_gp_handler;
+		gpf_descr->gd_hioffset =
+		    (uintptr_t)wrmsr_early_safe_gp_handler >> 16;
+		gpf_descr->gd_selector = rcs();
+		gpf_descr->gd_type = SDT_SYSTGT;
+		gpf_descr->gd_p = 1;
+	}
 }
 
 void
 wrmsr_early_safe_end(void)
 {
-	struct gate_descriptor *gpf_descr;
+	int i;
 
 	lidt(&wrmsr_early_safe_orig_efi_idt);
 
-	gpf_descr = &idt0[IDT_GP];
-	memset_early(gpf_descr, 0, sizeof(*gpf_descr));
+	for (i = 0; i < 32; i++)
+		memset_early(&idt0[i], 0, sizeof(idt0[0]));
+}
+
+int
+safe_read(vm_offset_t addr, char *valp)
+{
+	struct uio uio;
+	struct iovec iov;
+
+	iov.iov_base = valp;
+	iov.iov_len = 1;
+	uio.uio_offset = addr;
+	uio.uio_iov = &iov;
+	uio.uio_iovcnt = 1;
+	uio.uio_resid = 1;
+	uio.uio_segflg = UIO_SYSSPACE;
+	uio.uio_rw = UIO_READ;
+	uio.uio_td = NULL;
+	return (uiomove_mem(UIO_MEM_KMEM, &uio));
 }
 
 #ifdef KDB

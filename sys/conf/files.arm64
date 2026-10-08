@@ -76,6 +76,7 @@ arm64/arm64/ofw_machdep.c			optional fdt
 arm64/arm64/pl031_rtc.c				optional fdt pl031
 arm64/arm64/ptrauth.c				standard \
 	compile-with	"${NORMAL_C:N-mbranch-protection*} -mbranch-protection=bti"
+arm64/arm64/mte.c				standard
 arm64/arm64/pmap.c				standard
 arm64/arm64/ptrace_machdep.c			standard
 arm64/arm64/rsi.c				standard
@@ -141,7 +142,7 @@ arm64/vmm/vmm_nvhe_exception.S			optional vmm		\
 	no-obj
 arm64/vmm/vmm_nvhe.c				optional vmm		\
 	dependency	"$S/arm64/vmm/vmm_hyp.c"			\
-	compile-with "${NOSAN_C} -fpie"					\
+	compile-with "${NOSAN_C:N-fstack-protector*} -fpie"		\
 	no-obj
 vmm_hyp_blob.elf.full				optional vmm		\
 	dependency	"vmm_nvhe.o vmm_nvhe_exception.o"			\

@@ -106,6 +106,11 @@ SYSCTL_DECL(_compat_linuxkpi);
 SYSCTL_NODE(_compat_linuxkpi, OID_AUTO, 80211, CTLFLAG_RW | CTLFLAG_MPSAFE, 0,
     "LinuxKPI 802.11 compatibility layer");
 
+static int lkpi_suspend_type = 1;
+SYSCTL_INT(_compat_linuxkpi_80211, OID_AUTO, suspend_type, CTLFLAG_RW,
+    &lkpi_suspend_type, 0,
+    "LinuxKPI 802.11 suspend type bitmask (0=off, 1=net80211, 2=wowlan");
+
 static bool lkpi_order_scanlist = false;
 SYSCTL_BOOL(_compat_linuxkpi_80211, OID_AUTO, order_scanlist, CTLFLAG_RW,
     &lkpi_order_scanlist, 0, "Enable LinuxKPI 802.11 scan list shuffeling");
@@ -1603,12 +1608,13 @@ lkpi_iv_key_set(struct ieee80211vap *vap, const struct ieee80211_key *k)
 	}
 	sta = LSTA_TO_STA(lsta);
 
-	keylen = k->wk_keylen;
+	keylen = ieee80211_crypto_get_key_len(k);
 	lcipher = lkpi_net80211_to_l80211_cipher_suite(
-	    k->wk_cipher->ic_cipher, k->wk_keylen);
+	    k->wk_cipher->ic_cipher, ieee80211_crypto_get_key_len(k));
 	switch (lcipher) {
 	case WLAN_CIPHER_SUITE_TKIP:
-		keylen += 2 * k->wk_cipher->ic_miclen;
+		keylen += ieee80211_crypto_get_key_txmic_len(k);
+		keylen += ieee80211_crypto_get_key_rxmic_len(k);
 		break;
 	case WLAN_CIPHER_SUITE_CCMP:
 	case WLAN_CIPHER_SUITE_GCMP:
@@ -1639,8 +1645,9 @@ lkpi_iv_key_set(struct ieee80211vap *vap, const struct ieee80211_key *k)
 	kc->hw_key_idx = /* set by hw and needs to be passed for TX */;
 #endif
 	atomic64_set(&kc->tx_pn, k->wk_keytsc);
-	kc->keylen = k->wk_keylen;
-	memcpy(kc->key, k->wk_key, k->wk_keylen);
+	kc->keylen = ieee80211_crypto_get_key_len(k);
+	memcpy(kc->key, ieee80211_crypto_get_key_data(k),
+	    ieee80211_crypto_get_key_len(k));
 
 	if (k->wk_flags & (IEEE80211_KEY_XMIT | IEEE80211_KEY_RECV))
 		kc->flags |= IEEE80211_KEY_FLAG_PAIRWISE;
@@ -1652,8 +1659,12 @@ lkpi_iv_key_set(struct ieee80211vap *vap, const struct ieee80211_key *k)
 
 	switch (kc->cipher) {
 	case WLAN_CIPHER_SUITE_TKIP:
-		memcpy(kc->key + NL80211_TKIP_DATA_OFFSET_TX_MIC_KEY, k->wk_txmic, k->wk_cipher->ic_miclen);
-		memcpy(kc->key + NL80211_TKIP_DATA_OFFSET_RX_MIC_KEY, k->wk_rxmic, k->wk_cipher->ic_miclen);
+		memcpy(kc->key + NL80211_TKIP_DATA_OFFSET_TX_MIC_KEY,
+		    ieee80211_crypto_get_key_txmic_data(k),
+		    ieee80211_crypto_get_key_txmic_len(k));
+		memcpy(kc->key + NL80211_TKIP_DATA_OFFSET_RX_MIC_KEY,
+		    ieee80211_crypto_get_key_rxmic_data(k),
+		    ieee80211_crypto_get_key_rxmic_len(k));
 		break;
 	case WLAN_CIPHER_SUITE_CCMP:
 	case WLAN_CIPHER_SUITE_GCMP:
@@ -2427,6 +2438,8 @@ lkpi_set_chanctx_conf(struct ieee80211_hw *hw, struct ieee80211_vif *vif,
 		rcu_assign_pointer(vif->bss_conf.chanctx_conf, NULL);
 		lchanctx = CHANCTX_CONF_TO_LCHANCTX(chanctx_conf);
 		list_del(&lchanctx->entry);
+		memset(lchanctx, 0, sizeof(*lchanctx));
+		lchanctx->lvif = VIF_TO_LVIF(vif);
 		list_add_rcu(&lchanctx->entry, &lhw->lchanctx_list_reserved);
 	}
 
@@ -2461,6 +2474,8 @@ lkpi_remove_chanctx(struct ieee80211_hw *hw, struct ieee80211_vif *vif)
 	lchanctx = CHANCTX_CONF_TO_LCHANCTX(chanctx_conf);
 	list_del(&lchanctx->entry);
 	lhw = HW_TO_LHW(hw);
+	memset(lchanctx, 0, sizeof(*lchanctx));
+	lchanctx->lvif = VIF_TO_LVIF(vif);
 	list_add_rcu(&lchanctx->entry, &lhw->lchanctx_list_reserved);
 }
 
@@ -5523,10 +5538,10 @@ lkpi_hw_crypto_prepare_tkip(struct ieee80211_key *k,
 	 * "enmic" (though we do not do that).
 	 */
 	/* any conditions to not apply this? */
-	if (skb_tailroom(skb) < k->wk_cipher->ic_miclen)
+	if (skb_tailroom(skb) < ieee80211_crypto_get_key_txmic_len(k))
 		return (ENOBUFS);
 
-	p = skb_put(skb, k->wk_cipher->ic_miclen);
+	p = skb_put(skb, ieee80211_crypto_get_key_txmic_len(k));
 	if ((kc->flags & IEEE80211_KEY_FLAG_PUT_MIC_SPACE) != 0)
 		goto encrypt;
 
@@ -6807,6 +6822,7 @@ linuxkpi_ieee80211_iffree(struct ieee80211_hw *hw)
 				lkpi_80211_mo_remove_chanctx(hw, chanctx_conf);
 			}
 			list_del(&lchanctx->entry);
+			/* No need to reset the lchanctx here as we will free it below. */
 			list_add_rcu(&lchanctx->entry, &lhw->lchanctx_list_reserved);
 		}
 	}
@@ -6855,10 +6871,19 @@ linuxkpi_set_ieee80211_dev(struct ieee80211_hw *hw)
 	/*
 	 * Set a proper name before ieee80211_ifattach() if dev is set.
 	 * ath1xk also unset the dev so we need to check.
+	 * Also we will (ab)use this opportunity to register the
+	 * power management sub-children if thay exist (for suspend/resume).
 	 */
 	dev = wiphy_dev(hw->wiphy);
 	if (dev != NULL) {
 		ic->ic_name = dev_name(dev);
+		if (dev->bsddev != NULL) {
+			bus_identify_children(dev->bsddev);
+			bus_enumerate_hinted_children(dev->bsddev);
+			bus_topo_lock();
+			bus_attach_children(dev->bsddev);
+			bus_topo_unlock();
+		}
 	} else {
 		TODO("adjust arguments to still have the old dev or go through "
 		    "the hoops of getting the bsddev from hw and detach; "
@@ -9556,7 +9581,130 @@ ieee80211_emulate_switch_vif_chanctx(struct ieee80211_hw *hw,
 }
 
 /* -------------------------------------------------------------------------- */
+/* LinuxKPI 802.11 PM. */
+int
+lkpi_80211_suspend(struct ieee80211com *ic, pm_message_t state)
+{
+	struct lkpi_hw *lhw;
+	struct ieee80211_hw *hw;
+	int error;
 
+	lhw = ic->ic_softc;
+	hw = LHW_TO_HW(lhw);
+	error = 0;
+
+	/* Check:
+	 * - device_set_wakeup_capable() / device_can_wakeup()
+	 * - hw->wiphy->wowlan to be non-NULL, if so contents.
+	 * - hw->wiphy->max_sched_scan_ssids (rtw88)
+	 */
+	if ((lkpi_suspend_type & 0x2) != 0) {
+		struct cfg80211_wowlan wowlan;
+
+		IMPROVE("various options for WoWLAN");
+		memset(&wowlan, 0, sizeof(wowlan));
+		wiphy_lock(hw->wiphy);
+		error = lkpi_80211_mo_suspend(hw, &wowlan);
+		wiphy_unlock(hw->wiphy);
+		if (error == EOPNOTSUPP)
+			error = 0;
+	}
+	if ((lkpi_suspend_type & 0x1) != 0) {
+		struct lkpi_vif *lvif;
+
+		ieee80211_suspend_all(ic);
+
+		wiphy_lock(hw->wiphy);
+		/*
+		 * At the end of this net80211 will run a task to call
+		 * (*ic_parent)() which is entirely unhelpful as we do not
+		 * know when it will happen.  So deal with it here.
+		 */
+		TAILQ_FOREACH(lvif, &lhw->lvif_head, lvif_entry) {
+			lkpi_80211_mo_remove_interface(hw, LVIF_TO_VIF(lvif));
+		}
+
+		if ((lhw->sc_flags & LKPI_MAC80211_DRV_STARTED) != 0)
+			lkpi_80211_mo_stop(hw, true);
+		wiphy_unlock(hw->wiphy);
+	}
+
+	if (error < 0)
+		error = -error;
+
+	if (error != 0)
+		ic_printf(ic, "%s: SUSPEND FAILED: %d\n", __func__, error);
+
+	return (error);
+}
+
+int
+lkpi_80211_resume(struct ieee80211com *ic)
+{
+	struct lkpi_hw *lhw;
+	struct ieee80211_hw *hw;
+	int error;
+	bool hw_scan_running;
+
+	lhw = ic->ic_softc;
+	hw = LHW_TO_HW(lhw);
+	error = 0;
+
+	/*
+	 * Ongoing HW scans during suspend are a problem on resume.
+	 * Be verbose about that.
+	 */
+	LKPI_80211_LHW_SCAN_LOCK(lhw);
+	hw_scan_running = (lhw->scan_flags & (LKPI_LHW_SCAN_RUNNING|LKPI_LHW_SCAN_HW)) != 0;
+	LKPI_80211_LHW_SCAN_UNLOCK(lhw);
+	if (hw_scan_running)
+		ic_printf(ic, "%s: WARNING: ongoing hw scan on resume!\n", __func__);
+
+	if ((lkpi_suspend_type & 0x1) != 0) {
+		struct lkpi_vif *lvif;
+
+		wiphy_lock(hw->wiphy);
+		error = lkpi_80211_mo_start(hw);
+		if (error != 0 && error != EEXIST) {
+			ic_printf(ic, "%s: mo_start failed: %d\n",
+			    __func__, error);
+			wiphy_unlock(hw->wiphy);
+			goto err;
+		}
+
+		TAILQ_FOREACH(lvif, &lhw->lvif_head, lvif_entry) {
+			error = lkpi_80211_mo_add_interface(hw, LVIF_TO_VIF(lvif));
+			if (error != 0) {
+				struct ieee80211vap *vap;
+
+				vap = LVIF_TO_VAP(lvif);
+				ic_printf(ic, "%s: mo_add_interface %s failed: %d\n",
+				    __func__, if_name(vap->iv_ifp), error);
+				wiphy_unlock(hw->wiphy);
+				goto err;
+			}
+		}
+		wiphy_unlock(hw->wiphy);
+
+		ieee80211_resume_all(ic);
+	}
+
+	if ((lkpi_suspend_type & 0x2) != 0) {
+		wiphy_lock(hw->wiphy);
+		error = lkpi_80211_mo_resume(hw);
+		wiphy_unlock(hw->wiphy);
+		if (error == EOPNOTSUPP)
+			error = 0;
+	}
+
+err:
+	if (error < 0)
+		error = -error;
+
+	return (error);
+}
+
+/* -------------------------------------------------------------------------- */
 MODULE_VERSION(linuxkpi_wlan, 1);
 MODULE_DEPEND(linuxkpi_wlan, linuxkpi, 1, 1, 1);
 MODULE_DEPEND(linuxkpi_wlan, wlan, 1, 1, 1);

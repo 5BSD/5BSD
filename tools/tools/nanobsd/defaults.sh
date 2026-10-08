@@ -718,8 +718,8 @@ nano_makefs() {
 	image=$4
 	dir=$5
 
-	makefs ${options} -F "${metalog}" -N "${NANO_WORLDDIR}/etc" \
-	    -s "${size}b" -T "${NANO_TIMESTAMP}" -t ffs "${image}" "${dir}"
+	makefs -t ffs ${options} -F "${metalog}" -N "${NANO_WORLDDIR}/etc" \
+	    -R "${size}b" -T "${NANO_TIMESTAMP}" "${image}" "${dir}"
 }
 
 # Convenient spot to work around any umount issues that your build environment
@@ -883,6 +883,7 @@ cust_comconsole() {
 
 	# Tell loader to use serial console early.
 	echo "${NANO_BOOT2CFG}" > ${NANO_WORLDDIR}/boot.config
+	tgt_touch boot.config
 }
 
 #######################################################################

@@ -805,6 +805,7 @@ thread_alloc(int pages)
 	kasan_thread_alloc(td);
 	kmsan_thread_alloc(td);
 	cpu_thread_alloc(td);
+	cpu_thread_new_kstack(td);
 	EVENTHANDLER_DIRECT_INVOKE(thread_ctor, td);
 	return (td);
 }
@@ -817,7 +818,7 @@ thread_recycle(struct thread *td, int pages)
 			vm_thread_dispose(td);
 		if (!vm_thread_new(td, pages))
 			return (ENOMEM);
-		cpu_thread_alloc(td);
+		cpu_thread_new_kstack(td);
 	}
 	kasan_thread_alloc(td);
 	kmsan_thread_alloc(td);

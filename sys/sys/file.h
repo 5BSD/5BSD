@@ -73,13 +73,15 @@ struct nameidata;
 #define	DTYPE_TIMERFD	14	/* timerfd */
 #define	DTYPE_INOTIFY	15	/* inotify descriptor */
 #define	DTYPE_JAILDESC	16	/* jail descriptor */
-#define	DTYPE_MAC_CAPABILITY	17	/* mac_capability capability descriptor */
-#define	DTYPE_ENVFD	18	/* environment value descriptor */
-#define	DTYPE_ZFSHANDLE	19	/* TrustedZFS dataset handle */
-#define	DTYPE_LINUXPIDFD 20	/* Linux pidfd (compat/linux) */
-#define	DTYPE_LINUXSIGNALFD 21	/* Linux signalfd (compat/linux) */
-#define	DTYPE_SQUEUE_POLL 22	/* internal ring-readiness proxy */
-#define	DTYPE_LINUXPERF 23	/* Linux perf event (compat/linux) */
+#define	DTYPE_NTSYNC	17	/* /dev/ntsync */
+/* 5BSD-local types start at 128 so new FreeBSD types cannot collide. */
+#define	DTYPE_MAC_CAPABILITY	128	/* mac_capability capability descriptor */
+#define	DTYPE_ENVFD	129	/* environment value descriptor */
+#define	DTYPE_ZFSHANDLE	130	/* TrustedZFS dataset handle */
+#define	DTYPE_LINUXPIDFD 131	/* Linux pidfd (compat/linux) */
+#define	DTYPE_LINUXSIGNALFD 132	/* Linux signalfd (compat/linux) */
+#define	DTYPE_SQUEUE_POLL 133	/* internal ring-readiness proxy */
+#define	DTYPE_LINUXPERF 134	/* Linux perf event (compat/linux) */
 
 #ifdef _KERNEL
 

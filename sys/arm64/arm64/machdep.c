@@ -131,6 +131,7 @@ uintptr_t boot_canary = 0x49a2d892bc05a0b1ul;
 #endif
 
 static struct trapframe proc0_tf;
+static struct pcb pcb0;
 
 int early_boot = 1;
 int cold = 1;
@@ -443,14 +444,14 @@ init_proc0(void *kstack)
 #if defined(PERTHREAD_SSP)
 	thread0.td_md.md_canary = boot_canary;
 #endif
-	thread0.td_pcb = (struct pcb *)(thread0.td_kstack +
-	    thread0.td_kstack_pages * PAGE_SIZE) - 1;
+	thread0.td_pcb = &pcb0;
 	thread0.td_pcb->pcb_flags = 0;
 	thread0.td_pcb->pcb_fpflags = 0;
 	thread0.td_pcb->pcb_fpusaved = &thread0.td_pcb->pcb_fpustate;
 	thread0.td_pcb->pcb_vfpcpu = UINT_MAX;
 	thread0.td_frame = &proc0_tf;
 	ptrauth_thread0(&thread0);
+	mte_thread0(&thread0);
 	pcpup->pc_curpcb = thread0.td_pcb;
 
 	/*
