@@ -5132,15 +5132,15 @@ ATF_TC_BODY(cap_pro_foreign_sigcont_blocked, tc)
 	close(pd);
 }
 
-ATF_TC(cap_pro_foreign_visible_blocked);
-ATF_TC_HEAD(cap_pro_foreign_visible_blocked, tc)
+ATF_TC(cap_pro_visible_flag_not_enforced);
+ATF_TC_HEAD(cap_pro_visible_flag_not_enforced, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "Shield with SF_VISIBLE hides from foreign process");
 	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_capprotect");
 	atf_tc_set_md_var(tc, "require.user", "root");
 }
-ATF_TC_BODY(cap_pro_foreign_visible_blocked, tc)
+ATF_TC_BODY(cap_pro_visible_flag_not_enforced, tc)
 {
 	int sv[2], status;
 	pid_t pid;
@@ -5982,8 +5982,8 @@ ATF_TC_BODY(cap_pro_delegated_access, tc)
 	close(sv[0]);
 }
 
-ATF_TC(cap_pro_refcount_shield);
-ATF_TC_HEAD(cap_pro_refcount_shield, tc)
+ATF_TC(cap_pro_multi_fd_close_keeps_shield);
+ATF_TC_HEAD(cap_pro_multi_fd_close_keeps_shield, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "Multiple shield fds: closing any or all of them keeps protection "
@@ -5991,7 +5991,7 @@ ATF_TC_HEAD(cap_pro_refcount_shield, tc)
 	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_capprotect");
 	atf_tc_set_md_var(tc, "require.user", "root");
 }
-ATF_TC_BODY(cap_pro_refcount_shield, tc)
+ATF_TC_BODY(cap_pro_multi_fd_close_keeps_shield, tc)
 {
 	int sv[2], status;
 	pid_t pid;
@@ -6186,8 +6186,8 @@ ATF_TC_BODY(cap_pro_noexec_blocks_exec, tc)
 	ATF_CHECK_EQ(WEXITSTATUS(status), 0);
 }
 
-ATF_TC(cap_pro_noexec_unshield_allows_exec);
-ATF_TC_HEAD(cap_pro_noexec_unshield_allows_exec, tc)
+ATF_TC(cap_pro_noexec_survives_close);
+ATF_TC_HEAD(cap_pro_noexec_survives_close, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "Closing the shield fd does not remove CP_SF_NOEXEC; exec stays "
@@ -6195,7 +6195,7 @@ ATF_TC_HEAD(cap_pro_noexec_unshield_allows_exec, tc)
 	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_capprotect");
 	atf_tc_set_md_var(tc, "require.user", "root");
 }
-ATF_TC_BODY(cap_pro_noexec_unshield_allows_exec, tc)
+ATF_TC_BODY(cap_pro_noexec_survives_close, tc)
 {
 	int status;
 	pid_t pid;
@@ -6250,8 +6250,8 @@ ATF_TC_BODY(cap_pro_nosock_blocks_socket, tc)
 	ATF_CHECK_EQ(WEXITSTATUS(status), 0);
 }
 
-ATF_TC(cap_pro_nosock_unshield_allows_socket);
-ATF_TC_HEAD(cap_pro_nosock_unshield_allows_socket, tc)
+ATF_TC(cap_pro_nosock_survives_close);
+ATF_TC_HEAD(cap_pro_nosock_survives_close, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
 	    "Closing the shield fd does not remove CP_SF_NOSOCK; socket() "
@@ -6259,7 +6259,7 @@ ATF_TC_HEAD(cap_pro_nosock_unshield_allows_socket, tc)
 	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_capprotect");
 	atf_tc_set_md_var(tc, "require.user", "root");
 }
-ATF_TC_BODY(cap_pro_nosock_unshield_allows_socket, tc)
+ATF_TC_BODY(cap_pro_nosock_survives_close, tc)
 {
 	int status;
 	pid_t pid;
@@ -7988,7 +7988,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, cap_pro_pdwait_bypasses_full_shield);
 	ATF_TP_ADD_TC(tp, cap_pro_unshielded_same_session_sigcont_allowed);
 	ATF_TP_ADD_TC(tp, cap_pro_foreign_sigcont_blocked);
-	ATF_TP_ADD_TC(tp, cap_pro_foreign_visible_blocked);
+	ATF_TP_ADD_TC(tp, cap_pro_visible_flag_not_enforced);
 	ATF_TP_ADD_TC(tp, cap_pro_selective_flags);
 	ATF_TP_ADD_TC(tp, cap_pro_all_flags_blocks_all);
 	ATF_TP_ADD_TC(tp, cap_pro_close_does_not_unshield);
@@ -8008,14 +8008,14 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, cap_pro_authorize_grants_access);
 	ATF_TP_ADD_TC(tp, cap_pro_token_close_revokes);
 	ATF_TP_ADD_TC(tp, cap_pro_delegated_access);
-	ATF_TP_ADD_TC(tp, cap_pro_refcount_shield);
+	ATF_TP_ADD_TC(tp, cap_pro_multi_fd_close_keeps_shield);
 	ATF_TP_ADD_TC(tp, cap_pro_mint_narrow_subset);
 	ATF_TP_ADD_TC(tp, cap_pro_mint_narrow_rejects_unshielded);
 	ATF_TP_ADD_TC(tp, cap_pro_mint_narrow_zero_gives_all);
 	ATF_TP_ADD_TC(tp, cap_pro_noexec_blocks_exec);
-	ATF_TP_ADD_TC(tp, cap_pro_noexec_unshield_allows_exec);
+	ATF_TP_ADD_TC(tp, cap_pro_noexec_survives_close);
 	ATF_TP_ADD_TC(tp, cap_pro_nosock_blocks_socket);
-	ATF_TP_ADD_TC(tp, cap_pro_nosock_unshield_allows_socket);
+	ATF_TP_ADD_TC(tp, cap_pro_nosock_survives_close);
 	ATF_TP_ADD_TC(tp, cap_pro_nosock_socketpair_blocked);
 	ATF_TP_ADD_TC(tp, cap_pro_nofdrecv_channel_attachment);
 
