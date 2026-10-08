@@ -229,8 +229,8 @@ device.
 ## The QEMU gates
 
 Some subsystems are never considered tested on the host. The Linuxulator
-gate, `docs/book/src/compat/linux/overview.md`, is explicit: "QEMU is the
-correctness gate", the host only builds artifacts and runs QEMU, and every
+gate, `tools/test/linuxulator/README.md`, is explicit: QEMU is the
+correctness gate, the host only builds artifacts and runs QEMU, and every
 supplied image must boot from ZFS; a UFS-root run fails. The runner is
 
 ```sh
@@ -359,10 +359,10 @@ shell tests, or in the Kyuafile.
 ## The mandates
 
 The design documents state what a suite must contain, and the wording is
-worth knowing because reviewers apply it. `docs/book/src/compat/linux/syscalls.md`
-sets the target as a conformance suite where every row has at least one
+worth knowing because reviewers apply it. The former Linuxulator option review (since folded
+into [System Calls](../compat/linux/syscalls.md)) set the target as a conformance suite where every row has at least one
 positive and one negative check, plus adversarial, stress and lifecycle
-coverage. `docs/book/src/compat/linux/overview.md` adds that tests assert
+coverage. The former Linuxulator implementation gate added that tests assert
 semantics rather than duplicate implementation branches (an OFD lock test
 proves an unrelated close does not release the lock; a seal test attempts the
 prohibited write), that a library's fallback must not be mistaken for use of

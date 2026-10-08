@@ -1,8 +1,11 @@
 # Linuxulator syscall coverage (x86_64)
 
 Current status of the x86_64 Linux syscall table (through number
-472), reviewed through 2026-09-24. Sections 1, 5 and 6 reflect current source; the
-batch descriptions and option tables retain historical implementation notes.
+472). The section 1 totals and the section 5 per-slot statuses were re-verified
+against `sys/amd64/linux/syscalls.master` and the `DUMMY()` files at HEAD on
+2026-10-08. Section 6 was last reviewed on 2026-09-18; the batch descriptions
+and option tables retain historical implementation notes (reviewed through
+2026-09-24).
 A syscall handler is not proof that every option or Linux behavior is supported.
 
 Sources: `sys/amd64/linux/syscalls.master` (the table), `sys/compat/linux/`
@@ -29,7 +32,7 @@ Status vocabulary used throughout:
 | UNIMPL | declared UNIMPL as in upstream FreeBSD (`io_uring_setup`, `io_uring_enter`, `io_uring_register`); returns ENOSYS |
 | ABSENT | not in our table at all; falls to the unknown-syscall path |
 
-## 1. Totals (current amd64 working tree, 2026-09-21)
+## 1. Totals (amd64 table at HEAD, re-verified 2026-10-08)
 
 | category | entries |
 |---|---:|
@@ -41,8 +44,11 @@ Status vocabulary used throughout:
 | UNIMPL (io_uring) | 3 |
 
 Method: match each numbered entry in `sys/amd64/linux/syscalls.master` to the
-DUMMY names in the common, amd64 and x86 dummy files, then inspect the remaining
-handlers for unconditional rejection. There are 332 entries outside DUMMY and
+DUMMY names in the common, amd64 and x86 dummy files (honouring their `#if`
+guards: `remap_file_pages` and `io_pgetevents` are `DUMMY()` only off amd64, and
+the shared `quotactl_fd` stub is not dispatched by the amd64 table, which uses
+`linux_quotactl_fd64`), then inspect the remaining handlers for unconditional
+rejection. There are 332 entries outside DUMMY and
 UNIMPL; one of those is the hand-written reject-only stub above. This is a local source
 inventory, not a fresh comparison with upstream's latest syscall table or a
 claim of 331 fully conformant implementations.
@@ -54,7 +60,7 @@ counters. Task clock, faults, context switches, minor/major faults and dummy
 events support count reads, enabled/running/ID read fields, enable/disable/reset/ID
 ioctls, CLOEXEC, dup/fork, and thread-exit freezing. Hardware/PMU, sampling,
 groups, mmap rings, CPU-wide and cross-target forms return an explicit error.
-See [the contract and test matrix](linuxulator-perf-event.md).
+See the perf_event_open row of [System Calls](book/src/compat/linux/syscalls.md).
 
 ## 2. Empirical hit list (this box, since boot, before the batch)
 
@@ -361,7 +367,7 @@ See section 3.1.
 ## 5. Checked-in x86_64 syscall coverage
 
 Refreshed from `syscalls.master`, the DUMMY lists and hand-written stubs on
-2026-09-18. STD-real includes partial implementations; see the option review.
+2026-09-18; every status below was re-verified against HEAD on 2026-10-08. STD-real includes partial implementations; see the option review.
 
 | nr | syscall | status |
 |---:|---|---|
@@ -794,8 +800,7 @@ with Linux-matched descriptor, key-publication, and eventfd ordering.  Poll
 IOCBs have a qualified readiness, cancellation, fd-lifetime and
 eventfd-publication subset; other read/write flags, positive file-I/O
 cancellation races and full
-lifetime tests remain in the qualification matrix in
-`docs/book/src/compat/linux/overview.md`.  The `io_getevents` and
+lifetime tests remain unqualified.  The `io_getevents` and
 `io_pgetevents` timeout conversion and signal interruption paths now have
 Linux-reference and amd64 ZFS-root VM coverage, including noncanonical and
 negative timespec values.  Both completion calls and `io_submit` also
@@ -900,9 +905,9 @@ three test bugs, all fixed:
   `linux_pkey` wrote its "pku not available" notice to stderr, which the
   wrapper required empty.
 
-**Later on 2026-09-12** the option-level review (`linuxulator-option-review.md`)
-added 21 option tests and an adversarial suite; see that document §7a and
-the `linux_*_test` list in `tests/sys/kern/Makefile`.  The historical runner was `~/vm/run-linux-tests.sh`; current qualification
+**Later on 2026-09-12** the option-level review (`linuxulator-option-review.md`, since folded into
+[System Calls](book/src/compat/linux/syscalls.md)) added 21 option tests and an
+adversarial suite; see the `linux_*_test` list in `tests/sys/kern/Makefile`.  The historical runner was `~/vm/run-linux-tests.sh`; current qualification
 uses the disposable ZFS-root QEMU gate.
 
 Not loaded in the VM: the 32-bit `linux.ko` fails to link against the VBSD
@@ -928,8 +933,8 @@ New syscall: `mseal` (462) STD-real. Tests added: `linux_mseal`, `linux_break_ms
 futex_waitv checks 22-24 (single-threading storm, wake-vs-deadline race,
 duplicate addresses).  Tracing tools: libsysdecode/truss/kdump must be rebuilt
 with the table (they include `linux_syscalls.c`); `systrace_linux.ko` embeds
-`linux_systrace_args.c`.  See linuxulator-option-review.md §10 for the bug
-list (B22-B28) fixed by the adversarial suite.
+`linux_systrace_args.c`.  The bug list (B22-B28) fixed by the adversarial suite was in
+the former `linuxulator-option-review.md` §10, now only in Git history.
 
 ### 7.y tee(2) + process_vm test (session 3 follow-on)
 
@@ -978,14 +983,16 @@ descriptor sharing. Other flags and multithreaded path detachment return
 EINVAL; other architectures retain ENOSYS. Linux-reference tests and the
 focused BSD ZFS-root matrix pass; the full amd64 ZFS-root regression gate
 also passes. Application and broader unshare qualification remain pending.
-See [the contract and expansion prerequisites](linuxulator-unshare.md).
+See [System Calls](book/src/compat/linux/syscalls.md) and the
+[unshare gate section](../tools/test/linuxulator/README.md#unshare-path-state-subset).
 
 ### Quota subset (2026-09-21)
 
 amd64 Linux64 now has global quota sync through `quotactl` and ZFS user/group
 queries, byte hard-limit updates and quota sync through `quotactl_fd`. Named
 Linux/BSD matrices and the full amd64 ZFS-root gate pass. The implementation is
-partial and adds no Linux32 support. See [the exact contract](linuxulator-quota.md).
+partial and adds no Linux32 support. See [System Calls](book/src/compat/linux/syscalls.md) and the
+[quota gate section](../tools/test/linuxulator/README.md#amd64-quota-subset).
 
 ### amd64 ptrace register options (2026-09-21)
 
@@ -994,36 +1001,40 @@ and GETREGSET NT_X86_XSTATE now have named amd64 implementations and passing
 focused Linux/BSD VM cases. The full amd64 ZFS-root gate passed. GPR paths use the
 target TLS bases and preserve rax separately from ordinary-stop orig_rax.
 No Linux32 support or complete debugger compatibility is claimed. See
-[the contract and limits](linuxulator-ptrace-registers.md).
+[Sandboxing and Debugging](book/src/compat/linux/sandboxing.md#debugging-linux-processes) and the
+[gate section](../tools/test/linuxulator/README.md#amd64-ptrace-register-options).
 
 
 ### amd64 debugger and socket options (2026-09-22)
 
-The [debugger follow-up](linuxulator-ptrace-debugger-options.md) adds USER
+The debugger follow-up ([Sandboxing and Debugging](book/src/compat/linux/sandboxing.md#debugging-linux-processes)) adds USER
 register/watchpoint access, ARCH_PRCTL, signal masks, rseq configuration,
 IOPERM regset reads and the lifecycle/procfs fixes needed for the GDB target
-smoke test. [SO_COOKIE](linuxulator-socket-cookie.md) adds stable socket
+smoke test. SO_COOKIE ([System Calls](book/src/compat/linux/syscalls.md), sockets row) adds stable socket
 identities with descriptor-right enforcement. Named Linux/FreeBSD matrices
 and GDB/Python clients pass, as do both full amd64 ZFS-root regression gates.
-The linked records contain frozen evidence and remaining limits. These extend existing handlers: the 333 STD-real entry
-count does not increase. Neither batch adds Linux32 support.
+The VM procedure is in the
+[gate section](../tools/test/linuxulator/README.md#linux64-debugger-and-socket-cookie-follow-ups). These extend
+existing handlers: the STD-real entry count does not increase. Neither batch adds Linux32 support.
 
 ### amd64 XSAVE writes and multicast filters (2026-09-22)
 
-[The XSAVE/multicast follow-up](linuxulator-xstate-mcast-options.md) adds
+The XSAVE/multicast follow-up
+([gate section](../tools/test/linuxulator/README.md#linux64-xsave-writes-and-multicast-filters)) adds
 SETREGSET(NT_X86_XSTATE), IP_MSFILTER and IPv4/IPv6 MCAST_MSFILTER GET/SET
 subsets. The 111 targeted full-gate executions, Linux references and GDB
 checks pass. The broader gate completed with one separately documented,
-preexisting io_uring test exception; see the linked record for exact limits. These are options on existing handlers,
+preexisting exception in the io_uring tests, which were later removed together
+with io_uring support. These are options on existing handlers,
 so syscall-dispatch coverage counts do not change. No Linux32 support is added.
 
 
 ### amd64 `PTRACE_SEIZE` (2026-09-23)
 
-The [SEIZE follow-up](linuxulator-ptrace-seize.md) adds no-stop attachment and
+The SEIZE follow-up ([Sandboxing and Debugging](book/src/compat/linux/sandboxing.md#debugging-linux-processes)) adds no-stop attachment and
 atomic initial option installation through a kernel-only native ptrace primitive.
 The Linux64 test covers argument and target errors, continued execution, wait
 visibility, signal interception/detach, and an immediate TRACEEXIT event.
 `PTRACE_INTERRUPT` and `PTRACE_LISTEN` are VM-qualified, and Linux32 is
-unchanged. See the [INTERRUPT contract](linuxulator-ptrace-interrupt.md) and
-[LISTEN contract](linuxulator-ptrace-listen.md).
+unchanged. The INTERRUPT and LISTEN contracts are summarized in
+[Sandboxing and Debugging](book/src/compat/linux/sandboxing.md#debugging-linux-processes).

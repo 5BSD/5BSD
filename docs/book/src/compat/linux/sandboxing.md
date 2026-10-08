@@ -21,15 +21,15 @@ The capability-mode row is proven by a family of paired tests: `linux_unshare_ca
 
 Debuggers were the first real Linux client the ptrace work was measured against, and the additions were built as native ptrace primitives with Linux formatting on top: a kernel-only `PT_KERN_SEIZE` operation and a held callback request in `sys/kern/sys_process.c` that native userland cannot invoke, with `sys/compat/linux/linux_ptrace.c` and `sys/amd64/linux/linux_ptrace_registers.c` owning Linux argument validation, errno choice and register layouts.
 
-| Request | Behaviour | Document |
+| Request | Behaviour | Tests (`tests/sys/kern/`) |
 |---|---|---|
-| `PTRACE_SEIZE` | attach without stopping and without an initial wait status; options installed atomically with the attach; `PTRACE_O_TRACEEXIT` reports an exit that happens immediately after the seize | `docs/book/src/compat/linux/sandboxing.md` |
-| `PTRACE_INTERRUPT` | a signal-free `PTRACE_EVENT_STOP` on a seized tracee; remembered if the tracee is already stopped; `EIO` on a plain `ATTACH` relationship | `docs/book/src/compat/linux/sandboxing.md` |
-| `PTRACE_LISTEN` | wait in a group stop for a state change or an interrupt without resuming; the full SIGSTOP, group-stop and SIGCONT sequence matches the Linux 6.18.35 and 7.1.5 oracles | `docs/book/src/compat/linux/sandboxing.md` |
-| `GETREGSET`/`SETREGSET` | `NT_PRSTATUS` (216-byte record, prefix writes commit in order), `NT_PRFPREG` (512-byte FXSAVE, complete writes only), `NT_X86_XSTATE` read and write, `NT_386_IOPERM` read of the 8 KiB bitmap; unknown notes `EINVAL`; no XSAVE reports `ENODEV` | `docs/book/src/compat/linux/sandboxing.md`, `-xstate-mcast-options.md` |
-| `PEEKUSER`/`POKEUSER` | the 27 general-register words with native 64-bit CS and SS translated to Linux selectors; DR0 to DR3, DR6, DR7 with validation before mutation; live hardware watchpoints; children start without inherited breakpoints | `docs/book/src/compat/linux/sandboxing.md` |
-| `ARCH_PRCTL`, `GET_RSEQ_CONFIGURATION`, `GETSIGMASK`/`SETSIGMASK`, `PEEKSIGINFO` | FS and GS bases, the rseq registration record, Linux-numbered masks with SIGKILL and SIGSTOP removed | same |
-| SIGKILL of a traced Linux64 process | terminates without the debugger resuming it (a sysent-vector flag selects this; native behaviour is unchanged) | same |
+| `PTRACE_SEIZE` | attach without stopping and without an initial wait status; options installed atomically with the attach; `PTRACE_O_TRACEEXIT` reports an exit that happens immediately after the seize | `linux_ptrace_seize` |
+| `PTRACE_INTERRUPT` | a signal-free `PTRACE_EVENT_STOP` on a seized tracee; remembered if the tracee is already stopped; `EIO` on a plain `ATTACH` relationship | `linux_ptrace_interrupt` |
+| `PTRACE_LISTEN` | wait in a group stop for a state change or an interrupt without resuming; the full SIGSTOP, group-stop and SIGCONT sequence matches the Linux 6.18.35 and 7.1.5 oracles | `linux_ptrace_listen` |
+| `GETREGSET`/`SETREGSET` | `NT_PRSTATUS` (216-byte record, prefix writes commit in order), `NT_PRFPREG` (512-byte FXSAVE, complete writes only), `NT_X86_XSTATE` read and write, `NT_386_IOPERM` read of the 8 KiB bitmap; unknown notes `EINVAL`; no XSAVE reports `ENODEV` | `linux_ptrace_registers`, `linux_ptrace_xstate`; gate: `tools/test/linuxulator/README.md`, XSAVE and multicast section |
+| `PEEKUSER`/`POKEUSER` | the 27 general-register words with native 64-bit CS and SS translated to Linux selectors; DR0 to DR3, DR6, DR7 with validation before mutation; live hardware watchpoints; children start without inherited breakpoints | `linux_ptrace_user`; gate: `tools/test/linuxulator/README.md`, debugger section |
+| `ARCH_PRCTL`, `GET_RSEQ_CONFIGURATION`, `GETSIGMASK`/`SETSIGMASK`, `PEEKSIGINFO` | FS and GS bases, the rseq registration record, Linux-numbered masks with SIGKILL and SIGSTOP removed | `linux_ptrace_user`, `linux_ptrace_sigmask` |
+| SIGKILL of a traced Linux64 process | terminates without the debugger resuming it (a sysent-vector flag selects this; native behaviour is unchanged) | `linux_ptrace_kill_native` |
 
 The user-visible result is that GDB 16.3 (the Alpine 3.24 binary) starts a freestanding Linux target, reads r12 and the x87 and SSE state, changes r12, continues to a normal exit, and passes the gate's smoke test, with `/proc/<pid>/task/<pid>/{mem,maps,status,stat}` supplying the memory paths it expects. Full multithreaded GDB compatibility is not claimed: the leader's task directory is not enumeration of every thread, GDB still prints a `SIGBUS` warning in its ret-to-NX probe, and native post-setuid pre-exec debugging restrictions remain in force for Linux tracers exactly as for native ones. strace-style whole-thread-group tracing is likewise not claimed.
 

@@ -35,9 +35,10 @@ seccomp and Landlock are not supported.
 
 ## What 5BSD adds
 
-The divergence inventory in `docs/5bsd-inventory.md` measures the fork at
-1304 commits since the baseline, 8997 added files, 992 modified upstream
-files, 26 new native system calls and 61 new MAC policy hooks. The additions
+The divergence inventory in `docs/5bsd-inventory.md` measures the fork (recounted 2026-10-08) at
+1478 non-merge commits since the baseline, 8944 added files, 1073 modified
+upstream files, 12 new numbered native system calls (plus the dynamically
+numbered `mac_capability_channel_create`) and 62 new MAC policy hooks. The additions
 fall into the areas below; each has a part of this book.
 
 | Area | Where it lives | Part of this book |
@@ -50,9 +51,9 @@ fall into the areas below; each has a part of this book.
 | Linux emulation | `sys/compat/linux` | V |
 | Virtualization (bhyve(8) engine, VirtIO guest stack, vsock, BSDVM) | `usr.sbin/bhyve`, `sys/dev/virtio`, `usr.sbin/BSDVM` | IV, V |
 | Bluetooth host, BLE mesh and virtual HCI | `usr.sbin/bluetooth/BSDBluetooth` | IV |
-| Observability (bsdinstruments, hwtlm, bsdtrace, libotelexport, 87 DTrace scripts) | `usr.sbin`, `share/dtrace` | VII |
+| Observability (bsdinstruments, hwtlm, bsdtrace, libotelexport, 83 new DTrace scripts) | `usr.sbin`, `share/dtrace` | VII |
 | Build, pkgbase packaging, installer and boot | `packages/`, `release/`, `stand/` | VII |
-| Tests (the largest single addition, 6353 files) | `tests/`, `usr.sbin/*/tests` | VI |
+| Tests (the largest single addition, 6350 files under `tests/`) | `tests/`, `usr.sbin/*/tests` | VI |
 
 ## The capability plane in one page
 
@@ -131,7 +132,7 @@ store them there. When a bundle is removed, every provider runs a reconcile
 See [Containers and Storage](../plane/containers-and-storage.md).
 
 **Everything traced.** Every plane program carries a USDT DTrace provider,
-the kernel gains roughly 65 SDT providers, and 87 ready-made scripts ship in
+the kernel gains 63 new SDT providers, and 95 ready-made scripts ship in
 `/usr/share/dtrace`. Tracing is itself a capability: BSDTrace delivers a
 rights-limited `/dev/dtrace` descriptor to callers that hold the
 `system.trace.client` attribute. Structured logs go through `system.Log`,

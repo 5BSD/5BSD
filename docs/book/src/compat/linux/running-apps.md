@@ -6,14 +6,14 @@ Everything before this chapter describes mechanism and named contracts. This cha
 
 | Workload | Class | Evidence |
 |---|---|---|
-| Alpine musl busybox (shell, coreutils, tar, awk, sed, find, nc, 500-fork exec churn, pipe transfer) | gate-passed | `tests/sys/kern/linux_busybox_test.sh`, run in the guest gate with the Alpine root staged; `docs/book/src/compat/linux/syscalls.md` section 9 |
+| Alpine musl busybox (shell, coreutils, tar, awk, sed, find, nc, 500-fork exec churn, pipe transfer) | gate-passed | `tests/sys/kern/linux_busybox_test.sh`, run in the guest gate with the Alpine root staged |
 | GDB 16.3 (Alpine 3.24 binary): start a target, read and modify registers, continue to exit | gate-passed | `docs/book/src/compat/linux/sandboxing.md`, `focus9.console.log` and `full1-run/results.json` |
 | Linux Python client (Python embedded in that GDB binary, run in batch mode) exercising procfs, sysfs, sockets, epoll, task links and a disposable tmpfs | gate-passed | `tools/test/linuxulator/filesystems-client.py`, `proc-views-client.py`; `docs/book/src/compat/linux/procfs-sysfs.md` (eight checks) |
-| libfuse 3.18.3 hello daemon as a Linux64 binary in direct, cached and writeback modes; Linux SQLite WAL, IPC and watch workloads | gate-passed | `docs/book/src/compat/linux/overview.md` batch 7, `docs/book/src/compat/linux/overview.md` |
-| jq (C, musl), ripgrep (Rust, musl, threaded), caddy (Go): static binaries trussed end to end, zero unimplemented syscalls | claimed (truss census in a development guest; the procfs files they needed are now gate-covered by `linux_procfs`) | `docs/book/src/compat/linux/syscalls.md` section 11 |
+| libfuse 3.18.3 hello daemon as a Linux64 binary in direct, cached and writeback modes; Linux SQLite WAL, IPC and watch workloads | gate-passed | `tools/test/linuxulator/build-fuse-client.sh` and `guest-fuse.sh` (the libfuse hello daemon), `compat-workloads.py` (SQLite WAL, IPC and watch); see also [procfs, sysfs and the Filesystem View](procfs-sysfs.md) |
+| jq (C, musl), ripgrep (Rust, musl, threaded), caddy (Go): static binaries trussed end to end, zero unimplemented syscalls | claimed (truss census in a development guest; the procfs files they needed are now gate-covered by `linux_procfs`) | no committed artifact |
 | Bun (musl build): the runtime whose syscall census on the development host drove the pidfd, madvise and `preadv2` batches | claimed | `docs/linuxulator-syscall-coverage.md` section 2; the planned VM run of its test subset is listed in the option review's plan and has no recorded gate artifact |
-| Electron, Chromium | not qualified | `docs/book/src/compat/linux/overview.md`: no Electron VM execution completed; the Chromium sandbox needs seccomp filter installation, which HEAD rejects; `--no-sandbox` is a testing switch, not a qualification |
-| Docker, Steam, systemd, Wine | never claimed | need namespaces and the new mount API, keyrings, BPF, syscall user dispatch, cgroup controllers; all are separate projects in the missing-syscalls handoff and the implementation gate |
+| Electron, Chromium | not qualified | [Linux Emulation](overview.md#what-is-explicitly-not-qualified): no Electron VM execution completed; the Chromium sandbox needs seccomp filter installation, which HEAD rejects; `--no-sandbox` is a testing switch, not a qualification |
+| Docker, Steam, systemd, Wine | never claimed | need namespaces and the new mount API, keyrings, BPF, syscall user dispatch, cgroup controllers; all are separate projects in the missing-syscalls handoff or beyond it |
 
 Two cautions travel with the table. The gate counts (1,146 option executions, 1,184 broad regressions, and so on) certify the named assertions of those tests, not every option of every advertised call. And the production-readiness document is explicit that a release still needs an application matrix, workload-specific soak and resource-growth measurement, and independent review of the shared pseudofs and VFS changes; passing counts alone are not a claim that every Linux workload is supported.
 
@@ -67,9 +67,9 @@ A gap report is useful when it says which of the three inventories it belongs in
 | `ENOSYS` and a console line `syscall N not implemented` | `docs/linuxulator-missing-syscalls-handoff.md` | the syscall, the binary, and which of the four design groups it falls in; the handoff's definition of done applies |
 | an implemented call returning `EINVAL`, `EOPNOTSUPP` or the wrong result for a specific flag | `docs/book/src/compat/linux/syscalls.md` | the flag, the current errno, the Linux reference errno, and the classification: mapped, no-op-hint, rejected-correctly, rejected-unimplementable, BUG (silently wrong) or GAP (mappable, not done) |
 | a missing or wrong `/proc` or `/sys` file | `docs/book/src/compat/linux/procfs-sysfs.md` | the path, the reader (which runtime or tool), and whether a native counter exists for it; fabricated values are not accepted |
-| a real application failing for an unlisted reason | `docs/book/src/compat/linux/overview.md` application matrix | the application and version, the invocation, the expected output, and the truss census below |
+| a real application failing for an unlisted reason | the qualified list at the top of this chapter | the application and version, the invocation, the expected output, and the truss census below |
 
-Do not weaken an assertion to match the emulator's behaviour, and do not report a library's fallback as success of the feature it fell back from; both rules come from the implementation gate and apply to reports as much as to fixes.
+Do not weaken an assertion to match the emulator's behaviour, and do not report a library's fallback as success of the feature it fell back from; both rules come from the former Linuxulator implementation gate document (now folded into this Part) and apply to reports as much as to fixes.
 
 ## Debugging workflow
 

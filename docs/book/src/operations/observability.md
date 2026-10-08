@@ -1,7 +1,7 @@
 # Observability
 
 Observability on 5BSD is DTrace with three additions: far more of the system
-is instrumented (about 65 new kernel SDT providers and 64 userland USDT
+is instrumented (63 new kernel SDT providers and 64 userland USDT
 providers, including every plane component), a suite of tools collects and
 exports what the probes say (bsdinstruments, hwtlm, bsdtrace and the shared
 libotelexport), and a broker decides who may trace so that opening
@@ -45,8 +45,9 @@ conventions are documented in the headers of the scripts under
 
 ## The script catalogue
 
-`share/dtrace/Makefile` installs 87 ready-to-run scripts into
-`/usr/share/dtrace`. Each starts with `#!/usr/sbin/dtrace -s` (or `-Zs` when
+`share/dtrace/Makefile` installs 95 ready-to-run scripts into
+`/usr/share/dtrace` (83 added by 5BSD and the 12 upstream ones in the last
+row below). Each starts with `#!/usr/sbin/dtrace -s` (or `-Zs` when
 it references providers that may be absent) and a header describing its
 probes, so they run directly or with `dtrace -s`:
 

@@ -2,7 +2,8 @@
 
 Companion to `mac_capability-architecture.md` (the fd-type and SDT house
 pattern this follows), `capsule-control-abi-design.md` (the capability-token
-grant model that consumes this), and `capability-components-roadmap.md`.
+grant model that consumes this; now [The control ABI](book/src/plane/capsule.md#the-control-abi)),
+and `capability-components-roadmap.md` (since removed).
 This records the design of dataset and pool *handles* — first-class file
 descriptors that make ZFS storage a thing a program is handed, not a place
 it goes — plus the code-grounded implementation, testing, and DTrace plan.

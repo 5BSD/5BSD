@@ -164,7 +164,9 @@ login/session/batch entry point (`capsule`, `login`, `su`, `sshd`/OpenSSH,
 `cron`, `atrun`; `getty` inherits only). This set is exactly what a downstream
 merge or FreeBSD rebase must carry forward, or the plane silently stops reaching
 sessions. The per-program table (files touched, what each injects, why it's core)
-lives in [`service-plane-review-brief.md` §2a](service-plane-review-brief.md).
+was in `service-plane-review-brief.md` §2a, which has since been removed (see
+Git history); [Sessions](book/src/compat/sessions.md) describes the current
+session entry points.
 
 ## 8. rc compatibility and covering service(8)
 
