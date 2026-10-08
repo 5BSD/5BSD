@@ -397,9 +397,6 @@ rtnl_newlink_to_linux(struct nlmsghdr *hdr, struct nlpcb *nlp,
 	case IFT_L2VLAN:
 		ifinfo->ifi_type = LINUX_ARPHRD_ETHER;
 		break;
-	case IFT_LOOP:
-		ifinfo->ifi_type = LINUX_ARPHRD_LOOPBACK;
-		break;
 	case IFT_STF:
 		ifinfo->ifi_type = LINUX_ARPHRD_SIT;
 		break;

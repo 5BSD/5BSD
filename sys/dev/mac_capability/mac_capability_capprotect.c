@@ -19,13 +19,13 @@
 #include <sys/eventhandler.h>
 #include <sys/file.h>
 #include <sys/kernel.h>
-#include <sys/procdesc.h>
 #include <sys/lock.h>
 #include <sys/malloc.h>
 #include <sys/module.h>
 #include <sys/mutex.h>
 #include <machine/atomic.h>
 #include <sys/proc.h>
+#include <sys/procdesc.h>
 #include <sys/queue.h>
 #include <sys/sdt.h>
 #include <sys/sx.h>

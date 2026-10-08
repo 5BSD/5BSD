@@ -1380,4 +1380,4 @@ static driver_t vtsnd_driver = {
 VIRTIO_DRIVER_MODULE(virtio_snd, vtsnd_driver, NULL, NULL);
 MODULE_VERSION(virtio_snd, 1);
 MODULE_DEPEND(virtio_snd, virtio, 1, 1, 1);
-MODULE_DEPEND(virtio_snd, sound, SOUND_MINVER, SOUND_PREFVER, SOUND_MAXVER);
+MODULE_DEPEND(virtio_snd, sound, 1, 1, 1);
