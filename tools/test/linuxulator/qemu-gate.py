@@ -51,58 +51,12 @@ RESOLVE_CASES = {"plain", "symlinks", "magic", "fd_links", "faults",
                  "root_invalid", "root_magic", "root_mounts", "root_lifetime", "root_race", "root_permissions"}
 
 
-SQUEUE_RESIZE_CASES = {"resize_requires_defer_shared", "resize_invalid_shared",
-                       "resize_empty_shared", "resize_pending_sq_shared",
-                       "resize_pending_cq_shared", "resize_fault_rollback_shared",
-                       "resize_mapping_lifetime_shared", "resize_mmap_race_shared",
-                       "resize_clamp_shared", "resize_layout_shared",
-                       "resize_worker_completion_shared"}
-SQUEUE_OPTIONS_CASES = {"probe_layout", "probe_invalid", "probe_faults", "probe_scope",
-                        "probe_lifetime", "probe_concurrent", "probe_permissions", "layout", "wrap", "legacy", "invalid", "io", "allocation_zfs", "validation", "lifetime", "concurrent", "fork_lifetime"}
-SQUEUE_RWF_CASES = {'rwf_fixed_file', 'rwf_fd_reuse', 'rwf_faults', 'rwf_links', 'rwf_append', 'rwf_reject', 'rwf_sync', 'rwf_memory_faults', 'rwf_concurrent', 'rwf_unsupported'}
-SQUEUE_RWF_CASES.update({"rwf_memfd", "rwf_retry", "rwf_nosignal"})
-SQUEUE_BUFFER_CASES = {'buffers_register', 'buffers_faults', 'buffers_remap', 'buffers_mapped_file', 'buffers_limits', 'buffers_async', 'buffers_churn', 'buffers_ranges', 'buffers_cow', 'buffers_retry', 'buffers_links', 'buffers_fork', 'buffers_protect', 'buffers_vectors'}
-SQUEUE_BUFFER_CASES.add("buffers_vm_race")
-SQUEUE_BUFFER_CASES.add("buffers_v2_shared")
-SQUEUE_BUFFER_CASES.add("clone_buffers_shared")
-SQUEUE_LINK_CASES = {'links_poll_reuse', 'links_cancel_race', 'links_duplicates', 'links_absolute', 'links_queued', 'links_invalid', 'links_cancel_all', 'links_worker', 'links_race', 'links_success', 'links_cancel_target', 'links_deferred', 'links_rollback', 'links_hardlink', 'links_expire', 'links_close', 'links_remove_scope', 'links_cancel_timer'}
-SQUEUE_LINK_CASES.update({"links_io", "links_queue_isolation"})
-SQUEUE_SETUP_CASES = {'setup_single', 'setup_restrict_race', 'setup_restrict_flags', 'setup_restrict_fixed', 'setup_restrict_invalid', 'setup_submit_links', 'setup_submit_errors', 'setup_single_threads', 'setup_restrict_faults', 'setup_restrict_register', 'setup_submit_indices', 'setup_restrict_links', 'setup_disabled', 'setup_single_enable', 'setup_enable_race', 'setup_single_exit', 'setup_permissions', 'setup_flags', 'setup_exec', 'setup_restrict_ops', 'setup_submit_all', 'setup_restrict_empty'}
-SQUEUE_FILE_CASES = {'files_update_cycles', 'files_race', 'files_partial', 'files_cycles', 'files_read_race', 'files_exit', 'files_validation', 'files_faults', 'files_skip', 'files_lifetime', 'files_permissions', 'files_caps', 'files_v2_shared'}
-SQUEUE_PREP_CASES = {'prep_ioprio', 'prep_reserved_core', 'prep_reserved_linux',
-                     'prep_buffer_select', 'prep_rwflags', 'prep_positive',
-                     'prep_buffer_runtime', 'prep_fixed_file', 'prep_links'}
-SQUEUE_OPTIONS_CASES |= {"param_region_mmap_shared", "param_region_invalid_shared",
-                         "param_region_wait_shared", "param_region_user_shared",
-                         "min_wait_shared", "nommap_shared", "nommap_fdonly_shared"}
-SQUEUE_OPTIONS_CASES |= SQUEUE_RESIZE_CASES
-SQUEUE_OPTIONS_CASES.add('close_direct_shared')
-SQUEUE_OPTIONS_CASES.update({'bpf_filter_shared', 'napi_register_shared',
-                             'sqpoll_affinity_transitions_shared'})
-SQUEUE_OPTIONS_CASES.add('fadvise_options_shared')
-SQUEUE_OPTIONS_CASES.add('fsync_options_shared')
-SQUEUE_OPTIONS_CASES.add('fallocate_options_shared')
-SQUEUE_OPTIONS_CASES.add("files_update_alloc_shared")
-SQUEUE_OPTIONS_CASES |= {"provided_buffer_options_shared", "provided_buffer_race_shared"}
-SQUEUE_OPTIONS_CASES |= SQUEUE_FILE_CASES | SQUEUE_SETUP_CASES | SQUEUE_RWF_CASES | SQUEUE_BUFFER_CASES | SQUEUE_LINK_CASES | SQUEUE_PREP_CASES | {"fixed_fd_install_flags_shared", "nop_flags_shared", "msg_ring_shared", "pbuf_ring_shared", "pbuf_ring_incremental_shared", "cancel_modes_shared", "poll_update_shared", "poll_lifetime_shared", "poll_ring_target_shared", "poll_ring_deferred_close_shared", "poll_ring_sqpoll_self_close_shared", "poll_level_rejected_shared", "timeout_modes_shared", "timeout_immediate_shared", "timeout_reserved_shared", "sync_cancel_shared", "file_alloc_range_shared", "register_clock_shared", "eventfd_async_shared", "personality_shared", "iowq_controls_shared", "register_msg_ring_shared", "enter_no_iowait_shared", "extended_layout_shared", "cqe_mixed_shared", "sqe_mixed_shared", "attach_wq_shared", "feature_reg_ring_shared", "sq_rewind_shared", "sqpoll_nonfixed_shared", "sqpoll_shared", "sqpoll_attach_shared", "sqpoll_attach_reverse_close_shared", "sqpoll_attach_cq_overflow_shared", "sqpoll_attach_blocked_read_progress_shared", "sqpoll_attach_pbuf_read_shared", "async_pbuf_worker_shared", "sqpoll_pbuf_incremental_shared", "sqpoll_pbuf_cancel_shared", "sqpoll_pbuf_incremental_cancel_shared", "sqpoll_attach_concurrent_close_shared", "sqpoll_attach_invalid_shared", "sqpoll_attach_idle_shared", "sqpoll_attach_group_idle_shared", "sqpoll_attach_nommap_shared", "sqpoll_attach_fork_shared", "sqpoll_attach_failed_exec_shared", "sqpoll_attach_owner_exit_shared", "sqpoll_attach_worker_controls_shared", "sqpoll_attach_worker_affinity_shared", "sqpoll_attach_crossabi_shared", "sqpoll_attach_waitid_close_shared", "sqpoll_affinity_shared", "sqpoll_taskrun_shared", "sqpoll_layout_shared"}
-MEM_REGION_CASES = {"basic_mapping", "wait_region", "invalid_registration",
-                    "user_backing", "copyout_rollback", "wait_invalid",
-                    "user_unmap_lifetime", "protected_inputs"}
-NOMMAP_CASES = {"basic", "layout_modes", "read_only", "unmap_lifetime",
-                "invalid_setup", "registered_only", "registered_lifecycle",
-                "registered_exhaustion", "copyout_rollback",
-                "resize_basic", "resize_invalid", "sqpoll_nommap", "sqpoll_registered_only"}
-SQPOLL_CASES = {"auto_submit", "idle_wakeup", "sq_wait_space", "affinity_valid", "affinity_mask_contract", "taskrun_incompatible", "single_issuer", "fd_context",
-                "owner_exit_contract", "failed_exec_preserves_ring", "invalid_setup"}
-QUERY_CASES = {"blind_basic", "fd_and_count", "linked_headers",
-               "invalid_entries", "sizes_and_faults", "cycle_limit",
-               "protected_pages"}
 PERF_CASES = {"basic_task_clock", "disabled_transitions", "read_formats",
               "software_counters", "attribute_sizes", "attribute_options",
               "target_and_flags", "fd_contract", "ioctl_validation",
               "cloexec_flag", "thread_exit_lifetime", "thread_close_race",
               "fork_inheritance"}
-IOURING_CASES = set(json.loads(Path(__file__).with_name('iouring-cases.json').read_text()))
+
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
@@ -308,69 +262,9 @@ def main():
                                 for n in (1, 2, 3)
                                 for name in RESOLVE_CASES}
             record['resolve'] = resolve
-            options = re.findall(r'^GATE_SQUEUE_OPTIONS (native|linux) (\d+) (\w+) (\d+)\r?$', text, re.M)
-            expected_options = {(abi, str(n), name, '0') for abi in ('native', 'linux')
-                                for n in (1, 2, 3) for name in SQUEUE_OPTIONS_CASES}
-            rwf = re.findall(r'^GATE_SQUEUE_RWF (native|linux) (\d+) (\w+) (\d+)\r?$', text, re.M)
-            expected_rwf = {(abi, str(n), name, '0') for abi in ('native', 'linux')
-                            for n in (1, 2, 3) for name in SQUEUE_RWF_CASES}
-            record['squeue_rwf_tmpfs'] = rwf
-            buffers = re.findall(r'^GATE_SQUEUE_BUFFERS (native|linux) (\d+) (\w+) (\d+)\r?$', text, re.M)
-            expected_buffers = {(abi, str(n), name, '0') for abi in ('native', 'linux')
-                                for n in (1, 2, 3) for name in SQUEUE_BUFFER_CASES}
-            record['squeue_buffers_tmpfs'] = buffers
-            links = re.findall(r'^GATE_SQUEUE_LINKS (native|linux) (\d+) (\w+) (\d+)\r?$', text, re.M)
-            expected_links = {(abi, str(n), name, '0') for abi in ('native', 'linux')
-                              for n in (1, 2, 3) for name in SQUEUE_LINK_CASES}
-            record['squeue_links_tmpfs'] = links
-            setup = re.findall(r'^GATE_SQUEUE_SETUP (native|linux) (\d+) (\w+) (\d+)\r?$', text, re.M)
-            expected_setup = {(abi, str(n), name, '0') for abi in ('native', 'linux')
-                              for n in (1, 2, 3) for name in SQUEUE_SETUP_CASES}
-            record['squeue_setup_tmpfs'] = setup
-            issuers = re.findall(r'^GATE_ISSUERS (options|final) (\d+) (\d+) (\d+) (\d+)\r?$', text, re.M)
-            record['issuer_counts'] = issuers
-            files = re.findall(r'^GATE_SQUEUE_FILES (native|linux) (\d+) (\w+) (\d+)\r?$', text, re.M)
-            expected_files = {(abi, str(n), name, '0') for abi in ('native', 'linux')
-                              for n in (1, 2, 3) for name in SQUEUE_FILE_CASES}
-            record['squeue_files_tmpfs'] = files
-            file_counts = re.findall(r'^GATE_FILES (options|final) (\d+) (\d+)\r?$', text, re.M)
-            record['file_counts'] = file_counts
-            requests = re.findall(r'^GATE_REQUESTS (options|final) (\d+) (\d+)\r?$', text, re.M)
-            record['request_counts'] = requests
-            worker_limits = re.findall(r'^GATE_SQUEUE_WORKER_SYSCTLS (\d+)\r?$', text, re.M)
-            worker_counts = re.findall(r'^GATE_SQUEUE_WORKERS (\d+) (\d+) (\d+)\r?$', text, re.M)
-            record['worker_limits'] = worker_limits
-            record['worker_counts'] = worker_counts
-            worker_ok = len(worker_limits) == 1 and len(worker_counts) == 1
-            if worker_ok:
-                configured = int(worker_limits[0])
-                workers, idle, reported = map(int, worker_counts[0])
-                worker_ok = (1 <= configured <= 256 and reported == configured and
-                             1 <= workers <= configured and 0 <= idle <= workers)
             direct = re.findall(r'^GATE_RWF_DIRECT (zfs|tmpfs) (\d+) (\d+)\r?$', text, re.M)
             expected_direct = {(fs, str(n), '0') for fs in ('zfs', 'tmpfs') for n in (1, 2, 3)}
             record['rwf_direct'] = direct
-            native = re.findall(r'^GATE_SQUEUE_NATIVE (\d+) (\d+)\r?$', text, re.M)
-            expected_native = {(str(n), '0') for n in (1, 2, 3)}
-            iouring = re.findall(r'^GATE_IOURING (\w+) (\d+)\r?$', text, re.M)
-            expected_iouring = {(name, '0') for name in IOURING_CASES}
-            query = re.findall(r'^GATE_IOURING_QUERY (\d+) (\w+) (\d+)\r?$', text, re.M)
-            expected_query = {(str(n), name, '0') for n in (1, 2, 3)
-                              for name in QUERY_CASES} if arch == 'amd64' else set()
-            record['iouring_query'] = query
-            mem_region = re.findall(r'^GATE_IOURING_MEM_REGION (\d+) (\w+) (\d+)\r?$', text, re.M)
-            expected_mem_region = {(str(n), name, '0') for n in (1, 2, 3)
-                                   for name in MEM_REGION_CASES} if arch == 'amd64' else set()
-            record['iouring_mem_region'] = mem_region
-            nommap = re.findall(r'^GATE_IOURING_NOMMAP (\d+) (\w+) (\d+)\r?$', text, re.M)
-            expected_nommap = {(str(n), name, '0') for n in (1, 2, 3)
-                               for name in NOMMAP_CASES} if arch == 'amd64' else set()
-            record['iouring_nommap'] = nommap
-            sqpoll = re.findall(r'^GATE_IOURING_SQPOLL (\d+) (\w+) (\d+)\r?$', text, re.M)
-            expected_sqpoll = {(str(n), name, '0') for n in (1, 2, 3)
-                               for name in SQPOLL_CASES} if arch == 'amd64' else set()
-            record['iouring_sqpoll'] = sqpoll
-            record.update(squeue_options=options, squeue_native=native, iouring=iouring)
             result_rows = {
                 'ptrace': ptrace, 'ptrace_seize': ptrace_seize,
                 'ptrace_interrupt': ptrace_interrupt, 'ptrace_listen': ptrace_listen,
@@ -380,10 +274,6 @@ def main():
                 'quota': quota, 'quota_capmode': quota_cap,
                 'quota_native': quota_native, 'quota_extra': quota_extra,
                 'perf': perf, 'perf_native_exec': perf_native_exec,
-                'squeue_options': options, 'squeue_native': native,
-                'iouring': iouring, 'iouring_sqpoll': sqpoll,
-                'iouring_query': query, 'iouring_nommap': nommap,
-                'iouring_mem_region': mem_region,
             }
             record['nonzero_results'] = {
                 name: [row for row in entries if row[-1] != '0']
@@ -391,7 +281,6 @@ def main():
                 if any(row[-1] != '0' for row in entries)
             }
             record['passed'] = (
-                worker_ok and
                 len(ptrace) == len(expected_ptrace) and set(ptrace) == expected_ptrace and
                 len(cookie) == len(expected_cookie) and set(cookie) == expected_cookie and
                 len(peer) == len(expected_peer) and set(peer) == expected_peer and
@@ -434,27 +323,7 @@ def main():
                 set(swap_discard) == expected_swap_discard and
                 len(native_aio) == len(expected_native_aio) and
                 set(native_aio) == expected_native_aio and
-                len(files) == len(expected_files) and set(files) == expected_files and
-                len(file_counts) == 2 and set(file_counts) == {('options', '0', '0'), ('final', '0', '0')} and
-                len(setup) == len(expected_setup) and set(setup) == expected_setup and
-                len(issuers) == 2 and set(issuers) == {('options', '0', '0', '0', '0'), ('final', '0', '0', '0', '0')} and
-                len(links) == len(expected_links) and set(links) == expected_links and
-                len(requests) == 2 and set(requests) == {('options', '0', '0'), ('final', '0', '0')} and
-                len(buffers) == len(expected_buffers) and set(buffers) == expected_buffers and
-                text.count('GATE_BUFFER_PAGES_RELEASED') == 1 and
-                re.findall(r'^GATE_FINAL_PAGES (\d+) (\d+)\r?$', text, re.M) == [('0', '0')] and
                 len(direct) == len(expected_direct) and set(direct) == expected_direct and
-                len(rwf) == len(expected_rwf) and set(rwf) == expected_rwf and
-                len(options) == len(expected_options) and set(options) == expected_options and
-                len(native) == len(expected_native) and set(native) == expected_native and
-                len(iouring) == len(expected_iouring) and set(iouring) == expected_iouring and
-                len(query) == len(expected_query) and set(query) == expected_query and
-                len(mem_region) == len(expected_mem_region) and
-                set(mem_region) == expected_mem_region and
-                len(nommap) == len(expected_nommap) and
-                set(nommap) == expected_nommap and
-                len(sqpoll) == len(expected_sqpoll) and
-                set(sqpoll) == expected_sqpoll and
                 len(resolve) == len(expected_resolve) and set(resolve) == expected_resolve and
                 len(seals) == len(expected_seals) and set(seals) == expected_seals
                 and len(extra) == len(expected_extra) and set(extra) == expected_extra

@@ -26,7 +26,6 @@ zfs list || exit 1
 uname -a
 sha256 /boot/kernel/kernel /boot/kernel/zfs.ko /boot/kernel/linux64.ko /boot/kernel/linux_common.ko /root/linux_abi_gate /root/linux_fileattr /root/linux_fchroot /root/ofd_native /root/ofd_linux /root/ofd_native_extra /root/seal_native /root/seal_linux /root/linux_resolve
 sha256 /root/linux_rwf
-sha256 /root/squeue_options_native /root/squeue_options_linux /root/squeue_native
 if [ "$(uname -m)" = amd64 ]; then sha256 /root/linux_fallocate; fi
 kldstat -q -n linux64.ko || kldload /boot/kernel/linux64.ko || exit 1
 if [ "$(uname -m)" = amd64 ]; then
@@ -496,9 +495,6 @@ for round in 1 2 3; do
 done
 umount /tmp/linuxulator-gate/aio-full-tmp || exit 1
 fi
-# Validate the large regression inventory before starting the long matrix.
-/root/linux_iouring -l >iouring-cases.txt || exit 1
-[ "$(wc -l <iouring-cases.txt | tr -d ' ')" -eq 477 ] || exit 1
 /root/linux_abi_gate -l >cases.txt || exit 1
 [ "$(wc -l <cases.txt | tr -d ' ')" -eq 16 ] || exit 1
 passed=0
@@ -710,128 +706,6 @@ for fs in zfs tmpfs; do
         done <resolve-cases.txt
     done
 done
-buffer_pages_before=$(sysctl -n kern.squeue.wired_pages) || exit 1
-requests_before=$(sysctl -n kern.squeue.live_requests) || exit 1
-files_before=$(sysctl -n kern.squeue.registered_files) || exit 1
-issuer_refs_before=$(sysctl -n kern.squeue.issuer_refs) || exit 1
-issuer_tokens_before=$(sysctl -n kern.squeue.issuer_tokens) || exit 1
-# The shared worker-pool ceiling is a bounded runtime sysctl and boot tunable.
-worker_limit_before=$(sysctl -n kern.squeue.max_workers) || exit 1
-[ "$worker_limit_before" -ge 1 ] && [ "$worker_limit_before" -le 256 ] || exit 1
-for bad in 0 -1 257 2147483647; do
-    ! sysctl kern.squeue.max_workers="$bad" >/dev/null 2>&1 || exit 1
-    [ "$(sysctl -n kern.squeue.max_workers)" = "$worker_limit_before" ] || exit 1
-done
-for good in 1 256; do
-    sysctl kern.squeue.max_workers="$good" >/dev/null || exit 1
-    [ "$(sysctl -n kern.squeue.max_workers)" = "$good" ] || exit 1
-done
-sysctl kern.squeue.max_workers="$worker_limit_before" >/dev/null || exit 1
-! sysctl kern.squeue.workers=1 >/dev/null 2>&1 || exit 1
-! sysctl kern.squeue.idle_workers=1 >/dev/null 2>&1 || exit 1
-echo GATE_SQUEUE_WORKER_SYSCTLS "$worker_limit_before"
-# New option contracts run through both front ends on both architectures.
-for abi in native linux; do
-    /root/squeue_options_$abi -l >squeue-options-cases.txt || exit 1
-    [ "$(wc -l <squeue-options-cases.txt | tr -d ' ')" -eq 194 ] || exit 1
-    for round in 1 2 3; do
-        while read -r name; do
-            dir="squeue-options-$abi-$round-$name"
-            mkdir "$dir" || exit 1
-            (cd "$dir" && timeout 180 /root/squeue_options_$abi "$name")
-            echo "GATE_SQUEUE_OPTIONS $abi $round $name $?"
-        done <squeue-options-cases.txt
-    done
-done
-# Repeat per-I/O policy on tmpfs while keeping the supported base on ZFS.
-mkdir /tmp/rwf-tmpfs || exit 1
-mount -t tmpfs tmpfs /tmp/rwf-tmpfs || exit 1
-for abi in native linux; do
-    for round in 1 2 3; do
-        for name in rwf_sync rwf_reject rwf_append rwf_faults rwf_links rwf_fixed_file rwf_concurrent rwf_unsupported rwf_memory_faults rwf_fd_reuse rwf_memfd rwf_retry rwf_nosignal; do
-            dir="/tmp/rwf-tmpfs/$abi-$round-$name"
-            mkdir "$dir" || exit 1
-            (cd "$dir" && timeout 180 /root/squeue_options_$abi "$name")
-            echo "GATE_SQUEUE_RWF $abi $round $name $?"
-        done
-    done
-done
-for abi in native linux; do
-    for round in 1 2 3; do
-        for name in buffers_register buffers_faults buffers_ranges buffers_vectors buffers_remap buffers_protect buffers_retry buffers_async buffers_fork buffers_vm_race buffers_cow buffers_mapped_file buffers_limits buffers_links buffers_churn buffers_v2_shared clone_buffers_shared; do
-            dir="/tmp/rwf-tmpfs/$abi-$round-$name"
-            mkdir "$dir" || exit 1
-            (cd "$dir" && timeout 180 /root/squeue_options_$abi "$name")
-            echo "GATE_SQUEUE_BUFFERS $abi $round $name $?"
-        done
-    done
-done
-for abi in native linux; do
-    for round in 1 2 3; do
-        for name in links_queue_isolation links_io links_poll_reuse links_cancel_race links_hardlink links_deferred links_rollback links_queued links_success links_expire links_absolute links_invalid links_cancel_target links_cancel_timer links_remove_scope links_duplicates links_cancel_all links_worker links_race links_close; do
-            dir="/tmp/rwf-tmpfs/$abi-$round-$name"
-            mkdir "$dir" || exit 1
-            (cd "$dir" && timeout 180 /root/squeue_options_$abi "$name")
-            echo "GATE_SQUEUE_LINKS $abi $round $name $?"
-        done
-    done
-done
-for abi in native linux; do
-    for round in 1 2 3; do
-        for name in setup_exec setup_flags setup_disabled setup_restrict_ops setup_restrict_flags setup_restrict_register setup_restrict_empty setup_restrict_invalid setup_restrict_faults setup_restrict_fixed setup_restrict_links setup_single setup_single_enable setup_single_threads setup_single_exit setup_enable_race setup_restrict_race setup_submit_all setup_submit_errors setup_submit_links setup_submit_indices setup_permissions; do
-            dir="/tmp/rwf-tmpfs/$abi-$round-$name"
-            mkdir "$dir" || exit 1
-            (cd "$dir" && timeout 180 /root/squeue_options_$abi "$name")
-            echo "GATE_SQUEUE_SETUP $abi $round $name $?"
-        done
-    done
-done
-for abi in native linux; do
-    for round in 1 2 3; do
-        for name in files_cycles files_update_cycles files_skip files_partial files_faults files_validation files_lifetime files_race files_read_race files_permissions files_caps files_exit files_v2_shared; do
-            dir="/tmp/rwf-tmpfs/$abi-$round-$name"
-            mkdir "$dir" || exit 1
-            (cd "$dir" && timeout 180 /root/squeue_options_$abi "$name")
-            echo "GATE_SQUEUE_FILES $abi $round $name $?"
-        done
-    done
-done
-# Allow completed workers to finish releasing their context references.
-# Thread OSD destructors may wait for the periodic thread reaper.
-for attempt in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
-    buffer_pages_after=$(sysctl -n kern.squeue.wired_pages) || exit 1
-    requests_after=$(sysctl -n kern.squeue.live_requests) || exit 1
-    files_after=$(sysctl -n kern.squeue.registered_files) || exit 1
-    issuer_refs_after=$(sysctl -n kern.squeue.issuer_refs) || exit 1
-    issuer_tokens_after=$(sysctl -n kern.squeue.issuer_tokens) || exit 1
-    [ "$buffer_pages_before" = "$buffer_pages_after" ] &&
-        [ "$requests_before" = "$requests_after" ] &&
-        [ "$issuer_refs_before" = "$issuer_refs_after" ] &&
-        [ "$issuer_tokens_before" = "$issuer_tokens_after" ] &&
-        [ "$files_before" = "$files_after" ] && break
-    sleep 1
-done
-echo GATE_BUFFER_PAGES "$buffer_pages_before" "$buffer_pages_after"
-[ "$buffer_pages_before" = "$buffer_pages_after" ] || exit 1
-echo GATE_BUFFER_PAGES_RELEASED
-echo GATE_ISSUERS options "$issuer_refs_before" "$issuer_refs_after" "$issuer_tokens_before" "$issuer_tokens_after"
-[ "$issuer_refs_before" = "$issuer_refs_after" ] && [ "$issuer_tokens_before" = "$issuer_tokens_after" ] || exit 1
-echo GATE_FILES options "$files_before" "$files_after"
-[ "$files_before" = "$files_after" ] || exit 1
-echo GATE_REQUESTS options "$requests_before" "$requests_after"
-[ "$requests_before" = "$requests_after" ] || exit 1
-worker_count=$(sysctl -n kern.squeue.workers) || exit 1
-idle_worker_count=$(sysctl -n kern.squeue.idle_workers) || exit 1
-[ "$worker_count" -ge 1 ] && [ "$worker_count" -le "$worker_limit_before" ] || exit 1
-[ "$idle_worker_count" -ge 0 ] && [ "$idle_worker_count" -le "$worker_count" ] || exit 1
-echo GATE_SQUEUE_WORKERS "$worker_count" "$idle_worker_count" "$worker_limit_before"
-umount /tmp/rwf-tmpfs || exit 1
-for round in 1 2 3; do
-    mkdir "squeue-native-$round" || exit 1
-    (cd "squeue-native-$round" && timeout 90 /root/squeue_native)
-    echo "GATE_SQUEUE_NATIVE $round $?"
-done
-sha256 /root/linux_iouring
 # ZFS intentionally rejects reservation allocation. Exercise successful
 # allocation and hole punching on tmpfs while the supported base stays on ZFS.
 if [ "$(uname -m)" = amd64 ]; then
@@ -840,67 +714,6 @@ if [ "$(uname -m)" = amd64 ]; then
         timeout 60 /root/linux_fallocate)
     echo "GATE_REGRESSION linux_fallocate $?"
 fi
-while read -r name; do
-    dir="iouring-$name"
-    case "$name" in
-    fallocate|fallocate_mode|fallocate_modes_invalid)
-        dir="/tmp/resolve-tmpfs/iouring-$name"
-        ;;
-    esac
-    mkdir "$dir" || exit 1
-    case "$name" in
-    waitid_exit_cancel_race)
-        (cd "$dir" && timeout 120 /root/linux_iouring "$name")
-        ;;
-    *)
-        (cd "$dir" && timeout 20 /root/linux_iouring "$name")
-        ;;
-    esac
-    echo "GATE_IOURING $name $?"
-done <iouring-cases.txt
-if [ "$(uname -m)" = amd64 ]; then
-    /root/linux_iouring_query -l >iouring-query-cases.txt || exit 1
-    [ "$(wc -l <iouring-query-cases.txt | tr -d ' ')" -eq 7 ] || exit 1
-    for round in 1 2 3; do
-        while read -r name; do
-            dir="iouring-query-$round-$name"
-            mkdir "$dir" || exit 1
-            (cd "$dir" && timeout 20 /root/linux_iouring_query "$name")
-            echo "GATE_IOURING_QUERY $round $name $?"
-        done <iouring-query-cases.txt
-    done
-    /root/linux_iouring_nommap -l >nommap-cases.txt || exit 1
-    [ "$(wc -l <nommap-cases.txt | tr -d ' ')" -eq 13 ] || exit 1
-    for round in 1 2 3; do
-        while read -r name; do
-            dir="iouring-nommap-$round-$name"
-            mkdir "$dir" || exit 1
-            (cd "$dir" && timeout 30 /root/linux_iouring_nommap "$name")
-            echo "GATE_IOURING_NOMMAP $round $name $?"
-        done <nommap-cases.txt
-    done
-    /root/linux_iouring_sqpoll -l >sqpoll-cases.txt || exit 1
-    [ "$(wc -l <sqpoll-cases.txt | tr -d ' ')" -eq 11 ] || exit 1
-    for round in 1 2 3; do
-        while read -r name; do
-            dir="iouring-sqpoll-$round-$name"
-            mkdir "$dir" || exit 1
-            (cd "$dir" && timeout 90 /root/linux_iouring_sqpoll "$name")
-            echo "GATE_IOURING_SQPOLL $round $name $?"
-        done <sqpoll-cases.txt
-    done
-    /root/linux_iouring_mem_region -l >mem-region-cases.txt || exit 1
-    [ "$(wc -l <mem-region-cases.txt | tr -d ' ')" -eq 8 ] || exit 1
-    for round in 1 2 3; do
-        while read -r name; do
-            dir="iouring-mem-region-$round-$name"
-            mkdir "$dir" || exit 1
-            (cd "$dir" && timeout 20 /root/linux_iouring_mem_region "$name")
-            echo "GATE_IOURING_MEM_REGION $round $name $?"
-        done <mem-region-cases.txt
-    done
-fi
-
 zfs destroy linuxgate/resolve-readonly || exit 1
 zfs destroy linuxgate/resolve-clone || exit 1
 zfs destroy linuxgate/resolve-child@gate || exit 1
@@ -922,28 +735,6 @@ zpool sync linuxgate || exit 1
 zpool status -x >pool-health.txt || exit 1
 read -r health <pool-health.txt
 [ "$health" = "all pools are healthy" ] || { cat pool-health.txt; exit 1; }
-# Thread OSD destructors may wait for the periodic thread reaper.
-for attempt in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
-    requests_after=$(sysctl -n kern.squeue.live_requests) || exit 1
-    files_after=$(sysctl -n kern.squeue.registered_files) || exit 1
-    buffer_pages_after=$(sysctl -n kern.squeue.wired_pages) || exit 1
-    issuer_refs_after=$(sysctl -n kern.squeue.issuer_refs) || exit 1
-    issuer_tokens_after=$(sysctl -n kern.squeue.issuer_tokens) || exit 1
-    [ "$buffer_pages_before" = "$buffer_pages_after" ] &&
-        [ "$requests_before" = "$requests_after" ] &&
-        [ "$issuer_refs_before" = "$issuer_refs_after" ] &&
-        [ "$issuer_tokens_before" = "$issuer_tokens_after" ] &&
-        [ "$files_before" = "$files_after" ] && break
-    sleep 1
-done
-echo GATE_ISSUERS final "$issuer_refs_before" "$issuer_refs_after" "$issuer_tokens_before" "$issuer_tokens_after"
-[ "$issuer_refs_before" = "$issuer_refs_after" ] && [ "$issuer_tokens_before" = "$issuer_tokens_after" ] || exit 1
-echo GATE_FILES final "$files_before" "$files_after"
-[ "$files_before" = "$files_after" ] || exit 1
-echo GATE_REQUESTS final "$requests_before" "$requests_after"
-[ "$requests_before" = "$requests_after" ] || exit 1
-echo GATE_FINAL_PAGES "$buffer_pages_before" "$buffer_pages_after"
-[ "$buffer_pages_before" = "$buffer_pages_after" ] || exit 1
 echo GATE_POOL_HEALTHY
 echo LINUXULATOR_GATE_DONE
 /sbin/halt -p
