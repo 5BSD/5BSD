@@ -507,6 +507,7 @@ struct kinfo_file {
 				uint32_t	kf_zh_flags;
 				uint32_t	kf_zh_valid;
 			} kf_zfshandle;
+			struct {
 				uint32_t	kf_ntsync_type;
 				uint64_t	kf_ntsync_dev;
 				union {
