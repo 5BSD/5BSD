@@ -24,7 +24,6 @@ write_expected_inventory()
 {
 	cat >expected <<'EOF'
 usr.sbin/BSDAudit/capbundle/bsdaudit.ucl
-usr.sbin/BSDAuth/capbundle/bsdauth.ucl
 usr.sbin/BSDCrypto/capbundle/crypto.ucl
 usr.sbin/BSDDevice/capbundle/device.ucl
 usr.sbin/BSDExtension/capbundle/bsdextension.ucl
@@ -39,6 +38,8 @@ usr.sbin/BSDTime/capbundle/BSDTime.ucl
 usr.sbin/BSDTrace/capbundle/bsdtrace.ucl
 usr.sbin/BSDVM/capbundle/bsdvm.ucl
 usr.sbin/bluetooth/BSDBluetooth/blued.ucl
+usr.sbin/capsulectl/capbundle/Unit.ucl
+usr.sbin/switchboardctl/capbundle/Unit.ucl
 EOF
 }
 
