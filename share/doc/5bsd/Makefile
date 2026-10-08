@@ -1,6 +1,11 @@
 # Install the complete native Markdown book with no rendering dependency.
-# Keep the chapter list aligned with docs/book/src; the installer test checks
-# that every source chapter is installed at the same relative path.
+#
+# The chapters are listed explicitly, one FILESGROUP per book directory, so
+# that what the runtime package installs is a reviewed decision.  The list
+# cannot drift silently: a listed chapter that no longer exists stops the
+# build when this Makefile is read, and "all" runs check-book-list, which
+# fails unless the installed paths are exactly the files under docs/book/src.
+# The installed book is compared with the source by the bsdinstall tests.
 
 PACKAGE=	runtime
 BOOKSRC=	${SRCTOP}/docs/book/src
@@ -118,5 +123,29 @@ ${group}PACKAGE=	runtime
 ${group}DIR_OWN=	${SHAREOWN}
 ${group}DIR_GRP=	${SHAREGRP}
 .endfor
+
+# Each listed chapter as the path it is installed at below BOOKDEST.
+BOOK_INSTALLED=
+.for group in ${FILESGROUPS}
+.for f in ${${group}}
+.if !exists(${f})
+.error ${f:S,^${SRCTOP}/,,} is listed in ${group} of ${.CURDIR:S,^${SRCTOP}/,,}/Makefile but does not exist
+.endif
+BOOK_INSTALLED+=	${${group}DIR:S,^${BOOKDEST},,:S,^/,,:S,$,/,:S,^/$,,}${f:T}
+.endfor
+.endfor
+
+all: check-book-list
+check-book-list: .PHONY
+	@listed=$$(printf '%s\n' ${BOOK_INSTALLED} | LC_ALL=C sort); \
+	found=$$(cd ${BOOKSRC} && find . -type f | sed 's,^\./,,' | \
+	    LC_ALL=C sort); \
+	[ "$$listed" = "$$found" ] && exit 0; \
+	echo "${.CURDIR}/Makefile does not match ${BOOKSRC}:" >&2; \
+	printf '%s\n' "$$found" | grep -vxF "$$listed" | sed \
+	    's|^|  not installed, add it to the group for its directory: |' >&2; \
+	printf '%s\n' "$$listed" | grep -vxF "$$found" | sed \
+	    's|^|  installed path has no source, wrong group?: |' >&2; \
+	exit 1
 
 .include <bsd.prog.mk>
