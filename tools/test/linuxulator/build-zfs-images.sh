@@ -23,9 +23,8 @@ for arch in amd64 arm64; do
         }
     fi
     # makefs consumes the manifest, not every staged file.  Fail early if a
-    # mandatory gate payload (or the staged crash script) would be omitted.
-    for payload in linuxulator-gate.sh squeue_options_native squeue_options_linux linux_rwf guest-rwf-durability.sh; do
-        if [ "$payload" = guest-rwf-durability.sh ] && [ ! -f "$root/root/$payload" ]; then continue; fi
+    # mandatory gate payload would be omitted.
+    for payload in linuxulator-gate.sh linux_rwf; do
         test -f "$root/root/$payload"
         awk -v path="./root/$payload" '$1 == path {found=1} END {exit !found}' "$root/METALOG.minimal" || {
             echo "$arch: missing manifest entry for /root/$payload" >&2
@@ -37,7 +36,7 @@ for arch in amd64 arm64; do
             test -f "$root/${payload#./}" || exit 1
             awk -v path="$payload" '$1 == path {found=1} END {exit !found}' "$root/METALOG.minimal" || exit 1
         done
-        for payload in guest-peer-events.sh linux_socket_peername linux_ptrace_events peer_caps peer_caps_probe ptrace_exit_native guest-xstate-mcast.sh linux_ptrace_xstate linux_mcast_filter mcast_native guest-cookie.sh linux_socket_cookie cookie_caps cookie_caps_probe linux_ptrace_seize linux_ptrace_interrupt linux_ptrace_listen linux_ptrace_lifecycle linux_ptrace_user linux_ptrace_metadata linux_ptrace_sigmask linux_proc_task linux_ptrace_kill_native guest-ptrace.sh linux_ptrace_registers ptrace_native ptrace_capmode ptrace_capmode_probe guest-quota.sh linux_quota quota_native quota_capmode quota_capmode_probe quota_capmode_path_probe unshare_capmode unshare_capmode_probe linux_unshare linux_iouring_sqpoll linux_sysfs64 linux_rseq linux_rseq_signal linux_rseq_threads linux_rseq_lifecycle linux_rseq_auxv linux_rseq_preempt linux_rseq_hold linux_perf_event perf_native_hold linux_remap_file_pages linux_ioperm linux_iopl_options linux_modify_ldt linux_swapoff linux_swapon_flags linux_swapon_priority linux_swapon_priority_cleanup linux_swapon_discard linux_swapon_discard_pages ioperm_native; do
+        for payload in guest-peer-events.sh linux_socket_peername linux_ptrace_events peer_caps peer_caps_probe ptrace_exit_native guest-xstate-mcast.sh linux_ptrace_xstate linux_mcast_filter mcast_native guest-cookie.sh linux_socket_cookie cookie_caps cookie_caps_probe linux_ptrace_seize linux_ptrace_interrupt linux_ptrace_listen linux_ptrace_lifecycle linux_ptrace_user linux_ptrace_metadata linux_ptrace_sigmask linux_proc_task linux_ptrace_kill_native guest-ptrace.sh linux_ptrace_registers ptrace_native ptrace_capmode ptrace_capmode_probe guest-quota.sh linux_quota quota_native quota_capmode quota_capmode_probe quota_capmode_path_probe unshare_capmode unshare_capmode_probe linux_unshare linux_sysfs64 linux_rseq linux_rseq_signal linux_rseq_threads linux_rseq_lifecycle linux_rseq_auxv linux_rseq_preempt linux_rseq_hold linux_perf_event perf_native_hold linux_remap_file_pages linux_ioperm linux_iopl_options linux_modify_ldt linux_swapoff linux_swapon_flags linux_swapon_priority linux_swapon_priority_cleanup linux_swapon_discard linux_swapon_discard_pages ioperm_native; do
             test -f "$root/root/$payload" || exit 1
             awk -v path="./root/$payload" '$1 == path {found=1} END {exit !found}' "$root/METALOG.minimal" || exit 1
             case "$payload" in guest-peer-events.sh|peer_caps|ptrace_exit_native|guest-xstate-mcast.sh|mcast_native|ioperm_native|unshare_capmode|quota_native|quota_capmode|guest-quota.sh|guest-ptrace.sh|ptrace_native|ptrace_capmode|linux_ptrace_kill_native|guest-cookie.sh|cookie_caps) continue;; esac

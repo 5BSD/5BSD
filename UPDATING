@@ -34,6 +34,11 @@ NOTE TO PEOPLE WHO THINK THAT FreeBSD 16.x IS SLOW:
 	kernel and world together; binaries built against the old values pass
 	rights the new kernel rejects.
 
+	5BSD-local system calls (cap_xfer_limit through cap_process) moved
+	from 603-636 to 1000-1011, leaving 603 and up to FreeBSD.  The same
+	kernel-and-world-together rule applies; old binaries that call them
+	get ENOSYS, or a different FreeBSD system call once 603+ are assigned.
+
 20260620:
 	On powerpc64le, long double is now IEEE 754 binary128 (quad
 	precision, 113-bit mantissa) instead of 64-bit double.  This is an

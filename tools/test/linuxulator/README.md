@@ -1,24 +1,25 @@
 # Linuxulator QEMU gate
 
 The acceptance contract is
-[linuxulator-implementation-gate.md](../../../docs/book/src/compat/linux/overview.md).
+[Linux compatibility overview](../../../docs/book/src/compat/linux/overview.md).
 The current executable gate covers memfd validation, 64-bit syscall parity,
-shared OFD locks on ZFS and tmpfs, future-write seals, and openat2 link,
-mount-crossing and scoped-root restrictions, native squeue, Linux io_uring,
-and the first shared ring-option batch. It does not certify the remaining
-implementation backlog. Run all runtime tests inside disposable VMs; the host
-is used only for building artifacts and running QEMU.
+shared OFD locks on ZFS and tmpfs, future-write seals, openat2 link,
+mount-crossing and scoped-root restrictions, direct `preadv2`/`pwritev2` RWF
+flags, and (on amd64) Linux AIO, rseq, perf_event, ptrace, quota, unshare,
+socket and swap probes. It does not certify the remaining implementation
+backlog. Run all runtime tests inside disposable VMs; the host is used only
+for building artifacts and running QEMU.
 
-`qemu-gate.py` requires an amd64 FreeBSD guest image and a separate disposable
-swap disk, and accepts an optional
+`qemu-gate.py` requires an amd64 FreeBSD guest image and two separate disposable
+swap disks, and accepts an optional
 arm64 image for architecture-specific changes. Every supplied image must boot
 from ZFS. The guest verifies that `/` and the primary test directory are on
 ZFS, records pool/dataset status, and requires a successful final pool sync and
 healthy pool status. A UFS-root run fails the gate. QEMU TCG uses two vCPUs and
-a private disk snapshot. The current amd64 inventory includes 1146 repeated
-native/Linux option executions, 78 dedicated shared-RWF executions, three native
-squeue runs, 477 Linux io_uring cases, 48 direct ABI executions, the syscall/filesystem matrices, and four
-direct regression binaries. Missing/duplicate results, timeouts, unsuccessful QEMU
+a private disk snapshot. Every guest runs 48 direct ABI executions and the
+OFD, seal, link-resolution and RWF matrices; the amd64 inventory adds the
+syscall/filesystem matrices described below and six direct regression
+binaries. Missing/duplicate results, timeouts, unsuccessful QEMU
 exit, incomplete console markers and recognized kernel fault diagnostics fail
 the gate. Keep the full console logs for review of other warnings as well.
 
@@ -232,251 +233,25 @@ This group is FreeBSD/ZFS-specific; the 22 portable resolution groups continue
 to use the Linux reference oracle.
 
 
-## Shared squeue and Linux io_uring gate
+## Direct RWF gate
 
-Build `squeue_options.c` as native FreeBSD and freestanding Linux with
-`-DLINUX_ABI` for each architecture; stage `/root/squeue_options_native` and
-`/root/squeue_options_linux`. The current 191 groups run three times through each
-API. `eventfd_async_shared` distinguishes inline from worker-origin completion
-notification, exercises `IORING_CQ_EVENTFD_DISABLED`, and validates malformed
-registration/unregistration plus retained-descriptor lifetime.
-`files_v2_shared` validates sparse and tagged registered-file generations,
-negative FILES2/UPDATE2 inputs, partial updates, tag CQEs, and delayed generation
-release behind fixed-file worker I/O.
-`buffers_v2_shared` validates sparse and tagged registered-buffer generations,
-negative BUFFERS2/BUFFERS_UPDATE inputs, atomic and partial-update behavior, tag
-CQEs, and pinned old-generation release behind fixed-buffer worker I/O.
-`clone_buffers_shared` validates task-local registered ring fds and their
-enter/register forms, clone metadata and range failures, shared backing with
-independent tags, slice/self/replace behavior, closed-fd and task lifetime, and
-concurrent cross-ring clone transactions.
-`personality_shared` validates credential snapshot identifiers, malformed and
-stale identifiers, unregister while worker I/O is pending, process-exit cleanup,
-and privileged path access after the submitter drops privilege.
-`iowq_controls_shared` validates per-ring bounded/unbounded worker limits,
-Linux query/update and copyout ordering, strict queued-pipe serialization, CPU
-affinity masks and restoration, invalid/faulting inputs, and idempotent reset.
-The separate `kern.squeue.max_workers` boot/runtime tunable provides the hard
-system-wide worker-pool ceiling. `register_msg_ring_shared` validates the blind
-source-ring-free MSG_DATA registration path, its exact SQE contract, target
-errors, CQE flags, faulting/read-only inputs and cleanup.
-`enter_no_iowait_shared` verifies the NO_IOWAIT hint alone, with submission and
-GETEVENTS, with ignored non-wait arguments, and beside an unknown rejected bit.
-`sq_rewind_shared` validates prefix replay without SQ head/tail mutation, count
-clamping and preparation-error policy. `extended_layout_shared` wraps SQE128/CQE32 independently, together and with
-NO_SQARRAY while checking SQE-extension preservation and zero CQE extensions.
-`cqe_mixed_shared` validates ordinary and two-slot completions, exact NOP_CQE32
-extension payloads, F_32 selection, SKIP wrap padding, overflow recovery,
-fixed-CQE32 behavior, invalid setup combinations and cleanup.
-`sqe_mixed_shared` exercises ordinary/128/ordinary submission accounting,
-plain-ring NOP128 rejection, fixed SQE128, incomplete pairs, last-slot wrap,
-conflicting setup flags and one-entry overflow through both native and Linux
-frontends. `sqe_mixed_cmd128` uses a socket command over a mixed ring.
-`attach_wq_shared` checks valid non-SQPOLL attachment, source-ring closure,
-worker-backed I/O, invalid and wrong-type descriptors through both frontends.
-The ten `sqpoll_attach_*_shared` groups cover multi-ring submissions,
-source-first and attached-first closure, nested attachment, idle wake and
-SQ_WAIT, invalid/stale/wrong-type sources, fork and failed exec, owner exit,
-shared worker controls, pending WAITID close/cancellation, and mixed
-native/Linux frontend rejection. Each runs
-on ZFS and tmpfs in both frontends for three rounds; Linux-relevant contracts
-also have a Linux 7.1.5 oracle.
-`sqpoll_nonfixed_shared` checks the advertised feature on ordinary and
-SQPOLL rings, an ordinary pipe descriptor read, and closed-descriptor failure.
-`feature_reg_ring_shared` checks registration through a registered ring fd,
-invalid slots, removal and stale-slot errors in both frontends.
-The setup matrix also validates COOP_TASKRUN, TASKRUN_FLAG and DEFER_TASKRUN
-dependencies plus the observable SQ_TASKRUN transition around worker completion.
-Nine portable groups exercise NO_SQARRAY layout and CQSIZE/CLAMP combinations,
-wrap, legacy index indirection, invalid setup/mappings, real file I/O, invalid
-SQE flags/personality before side effects, linked failure, descriptor churn
-fork lifetime, and a separate producer racing slot reuse over 4096 submissions
-in both layouts. Run those nine against Linux too. The tenth group requires
-ZFS to reject reservation allocation without changing file size or contents.
-Native raw mmap calls must use pointer-width returns (`__syscall`, not the
-int-returning `syscall` wrapper).
-
-Build and stage `squeue_native.c` as `/root/squeue_native` on both architectures,
-using current `sys/io_uring.h` and syscall headers. Each guest runs it three
-times. Build `linux_iouring.c` with the freestanding Linux flags and stage it
-as `/root/linux_iouring` on each architecture. Its shared `linux_test.h` supplies
-architecture-specific syscall entry, numbering, layouts, flags and startup;
-the suite uses arm64-compatible *at/pipe2/clone calls and signal return.
-The host-side `iouring-cases.json` is the authoritative 475-case inventory:
-changing the executable's list requires explicit reconciliation.
-
-The current architecture-neutral gate runs the complete matrix in the amd64
-ZFS-root VM. The VM runner allows 180 seconds per squeue case so slow TCG hosts
-do not truncate the 4096-submission concurrency stress.  The earlier platform phase qualified amd64 and arm64; rerun arm64
-when a change affects its ABI, syscall table, or machine-dependent code.  The
-QEMU tooling continues to support both architectures for that purpose.
-
-The network-option portion includes `POLL_FIRST`, ACCEPT and RECV multishot,
-RECVMSG multishot output layout, SEND/SEND_ZC vector and fixed-buffer modes,
-SEND_ZC usage notifications, SEND/RECV provided-buffer bundles, and registered
-provided-buffer rings (kernel-mapped and user-pinned), including incremental
-consumption, `min_left`, and `IORING_CQE_F_BUF_MORE`. Bundle
-coverage must include ordered buffer IDs, `IORING_CQE_F_MORE` termination,
-byte limits, datagram truncation, EAGAIN/cancel/reuse, missing buffer groups,
-and invalid opcode/flag combinations. The Linux front end alone advertises
-`IORING_FEAT_RECVSEND_BUNDLE`; native squeue shares the buffer-pool machinery
-but does not advertise that Linux policy bit. Every `squeue_options` setup
-asserts the bit is present under the Linux ABI and absent under the native ABI;
-`setup_features` independently checks the Linux io_uring response.
-The [feature-flag audit](../../../docs/book/src/compat/linux/io-uring.md)
-records the shared SQPOLL_NONFIXED, CQE_SKIP, LINKED_FILE and
-REG_REG_RING contracts and their positive/negative VM tests.
-
-The successful reservation-allocation case runs on tmpfs because ZFS explicitly
-implements VOP_ALLOCATE as unsupported. This is paired with the required ZFS
-negative case through both APIs; the gate does not claim ZFS preallocation.
-Every other Linux io_uring case runs in the ZFS test directory. Preserve failed
-runs, including test-harness failures, alongside final passing evidence.
-These cases certify their assertions, not every option of each advertised
-opcode. The next-phase option audit tracks remaining semantic gaps.
-
-
-Seven additional PROBE groups check front-end-specific advertisement, output
-bounds/canaries, every nonzero input byte, count limits and validation order,
-invalid descriptors and descriptor types, guard pages, read-only output,
-unmapped input, dup/fork/close lifetime, concurrent queries/submissions and
-queries after dropping privilege (inside Capsicum for native rings). The
-inventory group checks all 65 local opcodes, rejects every unavailable native
-operation, and checks that native OPENAT cannot create a file while Linux
-OPENAT can. That inventory is BSD-specific; the other six groups run on the
-Linux reference, bringing the portable option total to 15. An advertised
-opcode is evidence of dispatch availability, not complete option semantics.
-
-## RWF synchronous-write crash gate
-
-The 12 RWF groups run on ZFS and tmpfs for both APIs and architectures. The
-portable Linux reference excludes `rwf_unsupported` (BSD's current unsupported
-policies) and `rwf_fd_reuse` (the BSD worker's earlier file-reference capture).
-These remain mandatory BSD tests.
-
-After the normal gate passes, build separate ZFS images with the same kernel,
-modules and option-test binaries, and `init_rc=/root/guest-rwf-durability.sh`
-in both `loader.conf` and any overriding `loader.conf.local`.
-Stage `guest-rwf-durability.sh` at that path. Run `qemu-rwf-durability.py` with
-`--gate-results` naming the normal gate JSON, `--images` naming the separate
-image directory, `--qemu-img` naming QEMU's image tool, and a new `--output`
-directory. It verifies DSYNC/SYNC data after abruptly killing and rebooting each
-private guest overlay. Both architectures must pass. Preserve the console logs,
-JSON, overlays and backing-image/source/build hashes with the normal evidence.
-
-## Registered-buffer gate
-
-Fifteen named `buffers_*` groups in `squeue_options.c` are mandatory through
-both native and Linux APIs, on ZFS and tmpfs, three times per architecture.
-The complete inventory is 98 option groups and 1758 total case runs on each
-ZFS-root guest (plus three amd64 regression binaries). `GATE_BUFFER_PAGES`
-records the before/after `kern.squeue.wired_pages` values; they must match and
-produce `GATE_BUFFER_PAGES_RELEASED`. Successful tmpfs unmount and final ZFS
-pool sync/health checks remain mandatory.
-
-The buffer groups cover sparse slots, invalid pointers/counts/lengths, overflow,
-read-only and guard pages, partial-registration rollback, flat and vectored
-range validation, page boundaries, inline/worker execution, remap and mprotect,
-readiness retry across unregister/re-register, closing a descriptor alias during blocked I/O,
-child registration and owner exit, private COW across fork (including PROT_NONE
-and read-only mappings), overlapping registrations, shared file mappings and
-msync, per-uid aggregate limits, linked failure without side effects and
-concurrent registration churn and registration racing with mprotect/fork. Every fixed vector uses the selected registered
-buffer; another registered slot does not authorize an out-of-range vector.
-
-Use the same freestanding binary on Linux for portable contracts. The
-`buffers_async` group asserts BSD's capture-before-submit-return invariant;
-Linux can resolve a forced-async request's buffer later. Keep that BSD test
-mandatory in both BSD guest APIs, and separate it from the Linux oracle.
-
-Changes to `vm_map_entry` require rebuilding the kernels and all staged
-modules, including ZFS; replacing just `linux64.ko` is insufficient. Any panic,
-lock-order diagnostic, timeout, missing case, residual page charge or failed
-unmount blocks qualification. Diagnostic runs do not replace the complete gate.
-
-## Linked-deadline and cancellation gate
-
-Twenty `links_*` groups run through both APIs on ZFS and tmpfs, three times
-per architecture. They cover ordinary and expired absolute deadlines, each
-clock selector, successful predecessors, hard links, deferred-chain preparation,
-malformed fields and inaccessible timestamps, rollback without writes, target
-cancellation, timeout-removal scope, duplicate keys, cancel-all counts, queued
-and active workers, raw/fixed-file/fixed-buffer I/O, descriptor reuse and poll
-fanout, completion/cancellation/expiry races, last-close cleanup, killed waiters
-and exit with unread completions. Timestamp tests include guard-page crossings,
-unmapped and protected memory, read-only input, and every unsupported flag bit.
-
-`kern.squeue.live_requests` counts allocated requests, including unissued linked
-successors. The gate requires `GATE_REQUESTS options 0 0` and
-`GATE_REQUESTS final 0 0`, in addition to the registered-page check and
-`GATE_FINAL_PAGES 0 0` after the older regression suites. This catches
-chain and deadline leaks that a successful CQE or zero page count would miss.
-All existing io_uring groups remain mandatory; cancel-all counts matches,
-LINK_TIMEOUT receives a valid timestamp, and parked data I/O uses ASYNC_CANCEL.
-
-Race assertions permit documented competing outcomes, while requiring exactly
-one terminal completion for each request, no unauthorized I/O and continued
-ring progress. Linux can accept two cancellation requests before delivering one
-terminal target completion; success of a cancellation request is not permission
-to free a still-owned worker request. Keep failed baselines and diagnostic logs,
-and re-run both full gates and the matching crash/reboot gate before qualification.
-
-The `links_queue_isolation` group specifically fills the eight-worker BSD pool
-and requires cancellation of a queued ninth operation without waiting for
-unrelated I/O. It is mandatory through both BSD APIs; Linux may start that
-request in a larger pool, so it is excluded from the portable Linux comparison.
-
-
-## Setup, issuer and restriction gate
-
-The 22 `setup_*` groups run through both APIs, three rounds on ZFS and tmpfs.
-They cover disabled rings, transactional restrictions, required/allowed SQE
-flags, operation/register denial, fixed-file use, soft/hard linked rollback,
-single-issuer fork/thread/exec/exit behavior, competing enable/install calls,
-and submission stop/continue boundaries with and without SUBMIT_ALL.
-
-Build native `squeue_options.c` with `-pthread` (and `-static` for the staged
-standalone guest payload); the native ownership cases create real pthreads.
-Linux payloads remain freestanding and use raw clone/exit with shared process
-resources. The Linux parent waits for the thread tid to disappear before
-releasing its stack. No runtime tests belong on the host.
-
-`GATE_ISSUERS options 0 0 0 0` and `GATE_ISSUERS final 0 0 0 0` are mandatory.
-They report before/after ring identity references followed by before/after
-live identity tokens. The bounded 15-second cleanup allowance includes the
-periodic thread reaper. Existing request/page checks remain mandatory.
-Missing, duplicate or nonzero issuer markers fail the gate.
-
-See the implementation gate for exact contract names and remaining boundaries:
-passing SUBMIT_ALL cases does not certify every opcode-specific preparation,
-reserved field or error-precedence combination.
-
-
-## Registered-file gate
-
-The twelve `files_*` groups cover ring-reference rejection, sparse/SKIP slots,
-partial updates and rollback, copy faults, invalid fields and submission counts,
-raw-fd lifetime, fixed lookup/update/unregister races, access rights and process
-exit. They run both APIs on ZFS and tmpfs for three rounds. The native Capsicum
-case includes an ioctl whitelist so capability copying exercises its allocating
-path; the Linux variant checks descriptor access mode instead.
-
-`GATE_FILES options 0 0` and `GATE_FILES final 0 0` require the registered-file
-reference count to return to zero. Existing resource checks remain mandatory.
-Non-sleepable-lock allocation diagnostics fail the controller even when every
-case marker reports success. See the implementation gate for retained old-kernel
-panic reproductions and exact partial-update semantics.
+Build `tests/sys/kern/linux_rwf.c` with the freestanding Linux flags above for
+each architecture, brand it Linux, and stage it as `/root/linux_rwf` with a
+`METALOG.minimal` entry; `build-zfs-images.sh` refuses an image without it.
+The guest runs it three times on ZFS and three times on tmpfs
+(`GATE_RWF_DIRECT`). It checks `preadv2`/`pwritev2` HIPRI, DSYNC, SYNC,
+APPEND/NOAPPEND and NOSIGNAL handling, EOPNOTSUPP for NOWAIT, ATOMIC,
+DONTCACHE and unknown flags, argument validation order, and the written data. The gate does not include a crash/reboot
+durability check for synchronous writes.
 
 ## Fallocate mode parity
 
-Linux `IORING_OP_FALLOCATE` uses the same Linuxulator kernel helper as direct
-`fallocate(2)`, after each ABI wrapper decodes its own arguments. Mode zero
-and PUNCH_HOLE|KEEP_SIZE are supported; the remaining known modes return
-EOPNOTSUPP. Run `fallocate`, `fallocate_mode`, and
-`fallocate_modes_invalid` on tmpfs inside the ZFS-root guest because ZFS
-intentionally rejects reservation allocation. On amd64, also stage and run the
-freestanding `linux_fallocate` regression. The final qualified evidence is
-`/tmp/linuxulator-gate-20260917/fallocate-full-run2/results.json`.
+Linux `fallocate(2)` supports mode zero and PUNCH_HOLE|KEEP_SIZE; the remaining
+known modes return EOPNOTSUPP. On amd64, build `tests/sys/kern/linux_fallocate.c`
+with the freestanding Linux flags, brand it Linux, and stage it as
+`/root/linux_fallocate`. The gate runs it on tmpfs inside the ZFS-root guest
+because ZFS intentionally rejects reservation allocation; it reports a
+`GATE_REGRESSION linux_fallocate` row.
 
 ## Linux64 rseq gate
 
@@ -555,7 +330,7 @@ manifest. Attach a separate 64 MiB raw virtio disk using
 runs begin with an unchanged backing disk. The guest gate checks positive
 activation/deactivation and negative errno/privilege behavior on each of six
 runs. The pinned Linux oracle and supported subset are documented in
-[linuxulator-swapoff-implementation.md](../../../docs/book/src/compat/linux/syscalls.md).
+[Linux syscall chapter](../../../docs/book/src/compat/linux/syscalls.md).
 
 ## Linux swapon flag gate
 
@@ -717,7 +492,7 @@ vtnet0. Require `zpool status -x` to report `all pools are healthy`, emit
 --output RESULTS` runs that private image with two amd64 vCPUs, 1 GiB RAM,
 TCG `-cpu max` and a snapshot disk. It requires exactly 405 named successful
 records, suite completion markers, pool health, clean power-off and no
-recognized kernel diagnostics. It does not run io_uring/squeue suites or need
+recognized kernel diagnostics. It does not need
 swap test disks. See [the contract and evidence](../../../docs/book/src/compat/linux/sandboxing.md).
 
 ### Linux compatibility filesystem probes
@@ -757,8 +532,7 @@ Supply the QEMU runtime-library environment required by the local setup.
 
 The Linux-reference run executes the same 16 root and four unprivileged cases
 using the unbranded binary. Linux dummy interfaces provide the corresponding
-up/down/rename/removal/churn fixture. VNET jail tests are BSD-specific.
-No io_uring or squeue suites are invoked. See
+up/down/rename/removal/churn fixture. VNET jail tests are BSD-specific. See
 `docs/book/src/compat/linux/procfs-sysfs.md` for evidence and remaining gaps.
 
 `filesystems-client.py` supplies a real Linux Python smoke test through the

@@ -8,8 +8,9 @@ They do not describe the current software-authority model.
 
 The original proposal superseded
 the authorization framing in [`service-discovery-model.md`](service-discovery-model.md),
-[`lifecycle-capability-port-design.md`](lifecycle-capability-port-design.md), and
-[`capsule-control-abi-design.md`](capsule-control-abi-design.md) wherever they
+`lifecycle-capability-port-design.md` (since removed), and
+`capsule-control-abi-design.md` (folded into
+[The control ABI](book/src/plane/capsule.md#the-control-abi)) wherever they
 authorize by uid, socket path, PID, or signal.
 
 ## 0. What this is (and is not)

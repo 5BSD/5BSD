@@ -250,7 +250,8 @@ implemented`.
 that return `ENOSYS` for calls it does not implement
 (`sys/compat/linux/linux_dummy.c`); `compat.linux.debug` (default 3) makes
 each first use log the line above. Either the call is one of those stubs
-(`io_uring` is not: it is implemented over squeue), or the binary is 32-bit
+(the `io_uring_*` calls also return `ENOSYS`, but as UNIMPL slots they log
+nothing), or the binary is 32-bit
 (5BSD has no 32-bit `linux` module) or was not branded.
 
 **Check.**
@@ -265,10 +266,10 @@ truss -f ./program 2>&1 | grep -e ENOSYS -e 'not implemented'
 **Fix.** For a stubbed call there is no fix short of implementing it;
 [System Calls](../compat/linux/syscalls.md) has the coverage table.
 For a 32-bit binary, obtain the 64-bit build. For an unbranded one,
-`brandelf -t Linux ./program`. Note that Linux seccomp and Landlock support
-is in progress and not shipped; a program that requires them at startup
-fails at those calls rather than with the message above, and the state of
-that work is in [Sandboxing and Debugging](../compat/linux/sandboxing.md).
+`brandelf -t Linux ./program`. Note that Linux seccomp and Landlock are not
+supported: `seccomp` fails with `EINVAL` without logging, and the
+`landlock_*` stubs log the message above; see
+[Sandboxing and Debugging](../compat/linux/sandboxing.md).
 
 ## `top` shows every daemon as `ld-elf.so.1`
 

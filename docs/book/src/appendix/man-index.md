@@ -14,8 +14,7 @@ Read the page with `man name` on an installed system, or from the tree with
 
 ## Section 1: commands
 
-| Page | Description | Package | Source |
-|---|---|---|---|
+5BSD adds no section 1 pages; its commands are documented in section 8.
 
 ## Section 2: system calls
 
@@ -31,13 +30,13 @@ is assigned at load) has no page of its own; the wrapper is
 | cap_clofork_limit(2) | lock close-on-fork for a file descriptor | |
 | cap_lookup_capmode(2) | require capability mode for directory fd lookups | |
 | cap_mmap_capmode(2) | require capability mode for mmap on a descriptor | |
+| cap_process(2) | manage the calling process's capability discovery context and attribution | |
 | cap_xfer_limit(2) | limit descriptor transfer state | |
 | cap_xfer_rights_limit(2) | attenuate descriptor rights during transfer | cap_xfer_ioctls_limit(2), cap_xfer_fcntls_limit(2) |
 | envfd(2) | create a named, descriptor-backed environment value | envfd_create(2) |
 | pdcmp(2) | compare two process descriptors | |
 | pdincapmode(2) | query whether a process descriptor's process is in capability mode | |
 | pdself(2) | create a process descriptor for the calling process | |
-| squeue(2) | shared-queue asynchronous I/O | squeue_setup(2), squeue_enter(2), squeue_register(2) |
 
 ## Section 3: libraries
 
@@ -93,7 +92,6 @@ is assigned at load) has no page of its own; the wrapper is
 | liboes(3) | userspace library for Endpoint Security Capabilities | oes |
 | libotelexport(3) | shared telemetry exporter layer for the ObservableBSD tools | untagged (default package) |
 | dtrace_fdopen(3) | create a DTrace handle from a delegated consumer descriptor | dtrace |
-| squeue(3) | ergonomic interface to the squeue completion-ring engine | clibs |
 
 ## Section 4: kernel interfaces
 

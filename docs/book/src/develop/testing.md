@@ -22,7 +22,7 @@ is not a pass.
 | In-session | protocol encoding, parsers, client libraries, device models with mocked rings; root cases skip | `kyua test` in the object tree or `/usr/tests` |
 | VM, plane on | providers over a real channel, capsule and switchboard lifecycle, software attributes, container reclaim | a guest booted with capsule as PID 1 |
 | VM, plane off | kernel `mac_capability` services, TrustedZFS handles, raw provider transports that must own `/dev/mac_capability` | `capability_plane="NO"` in loader.conf, stock init runs |
-| QEMU or bhyve gate | Linux ABI, squeue, OES, mac_abac, WASPNest devices; the host builds, the guest is the only evidence | `tools/test/*-qemu`, `tools/test/linuxulator`, `tests/waspnest` |
+| QEMU or bhyve gate | Linux ABI, OES, mac_abac, WASPNest devices; the host builds, the guest is the only evidence | `tools/test/*-qemu`, `tools/test/linuxulator`, `tests/waspnest` |
 
 A test is written for one tier and skips cleanly in the others, naming the
 missing thing, which is how the plane-on runners can treat a skip as a
@@ -229,8 +229,8 @@ device.
 ## The QEMU gates
 
 Some subsystems are never considered tested on the host. The Linuxulator
-gate, `docs/book/src/compat/linux/overview.md`, is explicit: "QEMU is the
-correctness gate", the host only builds artifacts and runs QEMU, and every
+gate, `tools/test/linuxulator/README.md`, is explicit: QEMU is the
+correctness gate, the host only builds artifacts and runs QEMU, and every
 supplied image must boot from ZFS; a UFS-root run fails. The runner is
 
 ```sh
@@ -290,12 +290,7 @@ make smoke      # brief coverage-guided run of every harness
 ```
 
 Two harnesses `#include` the kernel L2CAP translation units directly to reach
-static handlers, with the kernel-only header guards predefined. The
-adversarial tests for squeue are ordinary ATF: `tests/sys/kern/squeue_fuzz.c`
-submits random opcodes, descriptors, pointers and lengths and scribbles the
-shared ring indices for 6000 iterations; the kernel must survive and the ring
-must still work at the end, and a KASAN kernel catches what a panic would
-not.
+static handlers, with the kernel-only header guards predefined.
 
 ## The -tests packages
 
@@ -345,8 +340,7 @@ differs (the Bluetooth fuzz count is the Makefile's).
 | mac_capability | `tests/sys/mac_capability` | kernel capability services | VM plane-off (`capability_plane="NO"`, `run_tests.sh`) | 10 programs / ~506 cases |
 | zfshandle / tzfs | `tests/sys/{zfshandle,tzfs}` | TrustedZFS handles, config | VM plane-off / trustedzfs-qemu | 11 programs / ~66 cases |
 | Capsicum/descriptor rights | `tests/sys/kern`, `tests/sys/capsicum` | new rights + envfd + capmode exec | in-session (root); envfd exclusive | ~10 programs / ~340 cases |
-| Linuxulator | `tests/sys/kern/linux_*` + `tools/test/linuxulator` | Linux ABI, io_uring, ptrace, rseq | QEMU gate (ZFS-root guest) | 65 sh programs; 477 io_uring + 1,146 option runs |
-| squeue | `tests/sys/kern/squeue_*`, `tools/tools/squeue` | native ring engine | in-session root / QEMU gate | 10 programs + 2 TAP checkers |
+| Linuxulator | `tests/sys/kern/linux_*` + `tools/test/linuxulator` | Linux ABI, ptrace, rseq | QEMU gate (ZFS-root guest) | 58 sh programs; 1,146 option runs |
 | OES / mac_abac | `tests/sys/security` | endpoint security, ABAC | QEMU gate (`tools/test/*-qemu`) or VM root | 48 + 3 programs |
 | WASPNest models | `tests/sys/kern/vsock_device_harness`, `vsock_rx_harness`, `tests/sys/vmm` | device models, guest vsock, VMM | in-session rootless (`run.sh`, ASan) / `run-vmm-root.sh` | 166 programs / ~2,290 cases |
 | WASPNest live | `tests/sys/kern/vsock_e2e`, `tests/waspnest` | guest activation, checkpoint, nested VMX, soak | bhyve host root (`waspnest-test run`) | 11 release gates |
@@ -365,10 +359,10 @@ shell tests, or in the Kyuafile.
 ## The mandates
 
 The design documents state what a suite must contain, and the wording is
-worth knowing because reviewers apply it. `docs/book/src/compat/linux/syscalls.md`
-sets the target as a conformance suite where every row has at least one
+worth knowing because reviewers apply it. The former Linuxulator option review (since folded
+into [System Calls](../compat/linux/syscalls.md)) set the target as a conformance suite where every row has at least one
 positive and one negative check, plus adversarial, stress and lifecycle
-coverage. `docs/book/src/compat/linux/overview.md` adds that tests assert
+coverage. The former Linuxulator implementation gate added that tests assert
 semantics rather than duplicate implementation branches (an OFD lock test
 proves an unrelated close does not release the lock; a seal test attempts the
 prohibited write), that a library's fallback must not be mistaken for use of
@@ -397,6 +391,6 @@ Two BSDFilesystem tests are disabled pending a fake-service harness for that
 library (`tests/sys/tzfs/Makefile`). The lane metadata
 (`quick`, `kernel`, `stack`, `installed`, `stress`, `hardware`) described in
 `docs/book/src/develop/testing.md` is a design; CI selection by lane is
-not fully implemented. The Linuxulator and squeue wrappers compile their
+not fully implemented. The Linuxulator wrappers compile their
 payloads at run time in the guest, which the capability daemon rules forbid
 for daemon tests; the two disciplines are scoped to different subsystems.

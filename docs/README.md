@@ -13,10 +13,11 @@ files beside it are the ones that are not prose.
 | `trustedzfs-design.md`, `bsdfilesystem-design.md` | The storage substrate and its broker |
 | `macf-new-hooks.md` | Reference for the MAC hooks 5BSD added |
 | `descriptor-addressing-ledger.md` | How every kernel control surface names its target, and which ambient forms still lack a descriptor form |
-| `linuxulator-io_uring-design.md` | The squeue engine and the io_uring front end |
 | `bhyve-virtio-state-nested-architecture.md` | Device state, snapshot and nested virtualization |
 | `linuxulator-syscall-coverage.md` | The Linux syscall table, call by call |
 | `waspnest-completion-matrix.md` | Virtualization status, requirement by requirement |
+| `protected-authority-context.md` | Discovery and software authority |
+| `trusted-embedded-compute.md` | What 5BSD must modernize for trusted embedded compute |
 | `capability-plane-work-list.md`, `linuxulator-missing-syscalls-handoff.md`, `rpi5-bringup-plan.md` | Live work lists |
 | `pkg/` | Sample pkg repository configurations |
 

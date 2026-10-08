@@ -184,7 +184,6 @@ must be set in loader.conf(5); the rest can be changed at runtime.
 | `security.oes.max_clients`, `.default_queue_size`, `.cache_max_entries` | resource limits per system and per client | 64; 1024; 1024 |
 | `security.oes.default_self_mute`, `.default_muted_paths`, `.default_muted_paths_literal` | initial noise suppression for new clients | 1; empty; empty |
 | `security.mac.veriexec.state`, `.block_unlink` (RDTUN) | verified-execution state (`loaded`, `active`, `enforce`, `locked`); refuse unlink of verified files | inactive; 0 |
-| `kern.squeue.max_wired_pages` | memory the Linux io_uring engine may wire (see [io_uring and squeue](../compat/linux/io-uring.md)); the other `kern.squeue.*` nodes are counters | 1/8 of RAM |
 
 ## Which point answers which question
 

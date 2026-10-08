@@ -63,7 +63,6 @@
 - [Virtual Machines](compat/virtual-machines.md)
 - [Linux Emulation](compat/linux/overview.md)
     - [System Calls](compat/linux/syscalls.md)
-    - [io_uring and squeue](compat/linux/io-uring.md)
     - [procfs, sysfs and the Filesystem View](compat/linux/procfs-sysfs.md)
     - [Sandboxing and Debugging](compat/linux/sandboxing.md)
     - [Running Real Applications](compat/linux/running-apps.md)

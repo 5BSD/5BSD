@@ -17,27 +17,26 @@ it implies `CAPENABLED`). Today one call carries it.
 
 | Number | Name | Flags | Manual page | What it does |
 |---|---|---|---|---|
-| 603 | `cap_xfer_limit(fd, state)` | CAPENABLED | cap_xfer_limit(2) | Sets a descriptor's transfer state: unlimited, once, or never; monotone |
-| 604 | `cap_cloexec_limit(fd, state)` | CAPENABLED | cap_cloexec_limit(2) | Forces close-on-exec regardless of `FD_CLOEXEC`: unlocked, locked, or survive one exec |
-| 605 | `cap_clofork_limit(fd, state)` | CAPENABLED | cap_clofork_limit(2) | Forces close-on-fork the same way |
-| 606 | `cap_xfer_rights_limit(fd, rights)` | CAPENABLED | cap_xfer_rights_limit(2) | Sets the rights ceiling a descriptor carries when it is passed |
-| 607 | `cap_xfer_ioctls_limit(fd, cmds, ncmds)` | CAPENABLED | cap_xfer_rights_limit(2) | Sets the ioctl ceiling applied on transfer |
-| 608 | `cap_xfer_fcntls_limit(fd, fcntlrights)` | CAPENABLED | cap_xfer_rights_limit(2) | Sets the fcntl ceiling applied on transfer |
-| 609 to 629 | reserved | UNIMPL | | |
-| 630 | `pdself(fdp, flags)` | CAPREQUIRED | pdself(2) | Returns a process descriptor for the calling process (`PDF_SELF`); only from capability mode |
-| 631 | `pdcmp(fd1, fd2, result)` | CAPENABLED | pdcmp(2) | Tells whether two process descriptors name the same process |
-| 632 | reserved | UNIMPL | | |
-| 633 | `pdincapmode(fd)` | CAPENABLED | pdincapmode(2) | Reports whether the process behind a descriptor is in capability mode |
-| 634 | `cap_mmap_capmode(fd)` | CAPENABLED | cap_mmap_capmode(2) | Marks a descriptor so that mmap on it requires capability mode; one-way |
-| 635 | `cap_lookup_capmode(fd)` | CAPENABLED | cap_lookup_capmode(2) | Marks a directory descriptor so that `*at()` lookups through it require capability mode; one-way |
-| 636 | `squeue_setup(entries, params)` | CAPENABLED | squeue(2) | Creates a completion ring |
-| 637 | `squeue_enter(fd, to_submit, min_complete, flags, arg, argsz)` | CAPENABLED | squeue(2) | Submits entries and waits for completions |
-| 638 | `squeue_register(fd, op, arg, nr_args)` | CAPENABLED | squeue(2) | Registers files, buffers, an eventfd or restrictions with a ring |
+| 1000 | `cap_xfer_limit(fd, state)` | CAPENABLED | cap_xfer_limit(2) | Sets a descriptor's transfer state: unlimited, once, or never; monotone |
+| 1001 | `cap_cloexec_limit(fd, state)` | CAPENABLED | cap_cloexec_limit(2) | Forces close-on-exec regardless of `FD_CLOEXEC`: unlocked, locked, or survive one exec |
+| 1002 | `cap_clofork_limit(fd, state)` | CAPENABLED | cap_clofork_limit(2) | Forces close-on-fork the same way |
+| 1003 | `cap_xfer_rights_limit(fd, rights)` | CAPENABLED | cap_xfer_rights_limit(2) | Sets the rights ceiling a descriptor carries when it is passed |
+| 1004 | `cap_xfer_ioctls_limit(fd, cmds, ncmds)` | CAPENABLED | cap_xfer_rights_limit(2) | Sets the ioctl ceiling applied on transfer |
+| 1005 | `cap_xfer_fcntls_limit(fd, fcntlrights)` | CAPENABLED | cap_xfer_rights_limit(2) | Sets the fcntl ceiling applied on transfer |
+| 1006 | `pdself(fdp, flags)` | CAPREQUIRED | pdself(2) | Returns a process descriptor for the calling process (`PDF_SELF`); only from capability mode |
+| 1007 | `pdcmp(fd1, fd2, result)` | CAPENABLED | pdcmp(2) | Tells whether two process descriptors name the same process |
+| 1008 | `pdincapmode(fd)` | CAPENABLED | pdincapmode(2) | Reports whether the process behind a descriptor is in capability mode |
+| 1009 | `cap_mmap_capmode(fd)` | CAPENABLED | cap_mmap_capmode(2) | Marks a descriptor so that mmap on it requires capability mode; one-way |
+| 1010 | `cap_lookup_capmode(fd)` | CAPENABLED | cap_lookup_capmode(2) | Marks a directory descriptor so that `*at()` lookups through it require capability mode; one-way |
+| 1011 | `cap_process(op, fd, uid, data)` | CAPENABLED | cap_process(2) | Manages the calling process's kernel-held discovery context (`MAC_CAP_PROCESS_SET`, `GET`, `CLEAR`, `INFO`) and its origin attribution (`MAC_CAP_PROCESS_ORIGIN_EXPORT`, `ORIGIN_SET`); declared in `<sys/cap_process.h>`, implemented in `sys/dev/mac_capability/mac_capability_process.c` |
 | dynamic | `mac_capability_channel_create(int fds[2])` | CAPENABLED | none | A `SYSCALL_MODULE` in `sys/dev/mac_capability/mac_capability_channel.c`; returns a self-owned channel pair; `lib/libchannel/channel_syscall.c` finds the number with `modfind("sys/mac_capability_channel_create")` |
 
-Numbers 603 to 608 and 630 to 635 belong to the capability core; 636 to 638
-belong to the squeue engine in `sys/kern/sys_squeue.c`. The libc stubs are
-exported at `FBSD_1.9`.
+Numbers 1000 to 1011 (twelve calls) belong to the capability core.
+5BSD-local calls start at 1000 so that FreeBSD, which allocates upward
+from 603, cannot collide with them; 603 to 999 are left to FreeBSD.
+Their libsys stubs are exported at `FBSD_1.9`
+(`lib/libsys/Symbol.sys.map`), alongside the upstream `pdrfork`,
+`pdrfork_thread` and `renameat2` that the baseline already exported there.
 
 ### Upstream calls flipped to CAPENABLED
 
@@ -98,14 +97,6 @@ the end rather than listed one by one.
 | `kern.envfd.max_user_bytes` | ulong RWTUN | 16 MiB | Bytes per real uid | same |
 | `kern.envfd.max_value_size` | ulong RWTUN | 1 MiB | Largest single value | same |
 | `kern.envfd.objects`, `kern.envfd.bytes` | ulong RD | | Current object count and bytes | same |
-| `kern.squeue.max_workers` | int RWTUN | 8 | System-wide worker threads, 1 to 256 | `sys/kern/sys_squeue.c` |
-| `kern.squeue.workers`, `kern.squeue.idle_workers` | int RD | | Live and idle workers | same |
-| `kern.squeue.max_wired_pages` | ulong RW | one eighth of physical pages, set at init | Pages rings may wire | same |
-| `kern.squeue.wired_pages` | ulong RD | | Pages wired by rings right now | same |
-| `kern.squeue.live_requests` | ulong RD | | Allocated requests including linked successors | same |
-| `kern.squeue.issuer_tokens`, `kern.squeue.issuer_refs` | ulong RD | | Live task identities and references held by rings | same |
-| `kern.squeue.registered_files` | ulong RD | | File references held by registrations | same |
-| `kern.squeue.rings`, `.submitted`, `.completed`, `.overflowed` | counter | | Rings created, entries consumed, completions posted, completions backlogged or dropped on a full CQ | same |
 | `kern.vsock.guest_cid` | u64 RD | | This machine's guest CID | `sys/kern/uipc_vsock.c` |
 | `kern.vsock.cur_connections` | uint RD | | Connected vsock PCBs | same |
 | `kern.vsock.max_connections` | uint RW | 16384 | Connected PCBs allowed | same |
@@ -263,8 +254,7 @@ adds `SYF_CAPREQUIRED`; `sys/sys/procdesc.h` adds `PDF_SELF`.
 
 `sys/sys/file.h`: `DTYPE_MAC_CAPABILITY` (128), `DTYPE_ENVFD` (129),
 `DTYPE_ZFSHANDLE` (130), `DTYPE_LINUXPIDFD` (131), `DTYPE_LINUXSIGNALFD`
-(132), `DTYPE_LINUXPERF` (133),
-`DTYPE_IORING` (26). libprocstat, fstat and sysdecode know all of them.
+(132), `DTYPE_LINUXPERF` (133). libprocstat, fstat and sysdecode know all of them.
 
 ### Sockets
 

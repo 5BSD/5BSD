@@ -1,8 +1,8 @@
 # Linux Emulation
 
-The Linuxulator is the kernel's Linux ABI: a system-call translation layer that lets unmodified x86-64 Linux ELF binaries run as ordinary 5BSD processes. 5BSD ships it on by default, 64-bit only, and has extended it from the FreeBSD baseline of roughly 270 working x86-64 syscalls to 334 functional handlers over the full table through slot 472, plus a native completion-ring engine that Linux `io_uring` rides on. The reason 5BSD invests here is architectural rather than convenience: every Linux syscall is translated into native kernel operations before it executes, so the MAC framework, capability mode, coalitions and endpoint security police Linux code from beneath a boundary the Linux program cannot see. There are no Linux-specific security hooks to maintain and nothing for a Linux exploit to attack through.
+The Linuxulator is the kernel's Linux ABI: a system-call translation layer that lets unmodified x86-64 Linux ELF binaries run as ordinary 5BSD processes. 5BSD ships it on by default, 64-bit only, and has extended it from the FreeBSD baseline of roughly 270 working x86-64 syscalls to 331 functional handlers over the full table through slot 472. The reason 5BSD invests here is architectural rather than convenience: every Linux syscall is translated into native kernel operations before it executes, so the MAC framework, capability mode, coalitions and endpoint security police Linux code from beneath a boundary the Linux program cannot see. There are no Linux-specific security hooks to maintain and nothing for a Linux exploit to attack through.
 
-This chapter says what is in scope, how the table is counted, which feature groups were added, how the ABI is switched on, what a Linux process sees on disk, and what the correctness bar is. The following chapters cover [the syscall surface](syscalls.md), [io_uring and squeue](io-uring.md), [the procfs and sysfs view](procfs-sysfs.md), [sandboxing and debugging](sandboxing.md) and [which applications actually run](running-apps.md).
+This chapter says what is in scope, how the table is counted, which feature groups were added, how the ABI is switched on, what a Linux process sees on disk, and what the correctness bar is. The following chapters cover [the syscall surface](syscalls.md), [the procfs and sysfs view](procfs-sysfs.md), [sandboxing and debugging](sandboxing.md) and [which applications actually run](running-apps.md).
 
 ## Scope: amd64 Linux64 only
 
@@ -14,10 +14,11 @@ This chapter says what is in scope, how the table is counted, which feature grou
 
 | Status | Meaning | Count |
 |---|---|---:|
-| STD-real | a handler or native alias exists; it may implement only part of the Linux contract | 334 |
+| STD-real | a handler or native alias exists; it may implement only part of the Linux contract | 331 |
 | DUMMY | declared STD but backed by a `DUMMY()` stub that logs once per process and returns `ENOSYS` | 36 |
 | STUB-reject | a hand-written handler that only rejects requests (`seccomp`) | 1 |
 | UNIMPL-ancient | deliberately absent: removed from Linux long ago or x86-64 relics (`uselib`, `create_module`, `epoll_ctl_old`, ...) | 15 |
+| UNIMPL | declared UNIMPL as in upstream FreeBSD (`io_uring_setup`, `io_uring_enter`, `io_uring_register`); returns `ENOSYS` | 3 |
 
 Slot 472 is `fchroot`, the last named entry. The option-level audit in `docs/book/src/compat/linux/syscalls.md` is done against the Linux 7.3 uapi headers, and the reference guests used to check behaviour are Linux 6.18.35 and 7.1.5. Two cautions apply to every number in this Part. A handler being present is not evidence that every flag of that call works; the option review tracks flags individually with its own vocabulary (mapped, no-op-hint, rejected-correctly, rejected-unimplementable, BUG, GAP). And the counts describe dispatch, not conformance.
 
@@ -45,7 +46,6 @@ Each of the following groups has its own row in the divergence inventory (`docs/
 | Netlink | `NETLINK_SOCK_DIAG` INET and UNIX dumps, `NETLINK_KOBJECT_UEVENT` with real interface add/remove events |
 | linprocfs and linsysfs | cgroup, cpuset, fd, fdinfo, comm, mem, mountinfo, auxv, `task/<tid>`, `/proc/net/*`, CPU topology, net class and statistics, transparent-hugepage size |
 | FUSE and inotify | per-open FUSE handles, remote flock, notify-store coherence; Linux inotify over native `vfs_inotify` with open-path identity |
-| squeue and io_uring | the native completion-ring engine and its Linux front end: 65 opcodes and 38 register commands dispatched |
 
 ## How it is enabled
 
@@ -60,7 +60,6 @@ The defaults already turn everything on; the table shows the knobs so an operato
 | sysctl, per jail | `compat.linux.osrelease`, `osname`, `oss_version` | `5.15.0`, `Linux` | the kernel identity reported to Linux programs; writable per prison for Linux jails |
 | sysctl | `compat.linux.setid_allowed`, `preserve_vstatus`, `map_sched_prio`, `dummy_rlimits`, `ignore_ip_recverr`, `default_stacksize`, `default_openfiles`, `debug` | see linux(4) | behaviour knobs, all documented in linux(4) |
 | sysctl | `compat.linux.aio.max_wired_pages` | see linux_aio.c | ceiling on wired legacy-AIO ring pages |
-| sysctl | `kern.squeue.*` | see squeue(2) | worker-pool and wired-memory ceilings for io_uring and squeue rings |
 
 `rc.d/linux` is a system unit like any other rc script under 5BSD; see [rc and service(8)](../rc-and-service.md) for how switchboard runs `/etc/rc`.
 
@@ -80,23 +79,21 @@ The userland itself (`/compat/linux/bin`, `/lib`, `/usr`) is not part of the bas
 
 ## The correctness bar: the QEMU ZFS-root gate
 
-No Linuxulator change counts as done because it compiles, or because a happy-path test passes on the development host. `docs/book/src/compat/linux/overview.md` is the acceptance contract: every syscall, option and shared kernel primitive must have a per-contract record linking it to named positive and negative cases, and those cases must pass inside a disposable amd64 ZFS-root QEMU guest running the exact candidate kernel and modules, with INVARIANTS and WITNESS, on at least two vCPUs, with the same portable cases run against a real Linux reference guest. UFS-root runs are supplemental evidence only; a UFS-root guest fails the gate. The runner (`tools/test/linuxulator/qemu-gate.py`) fails closed: a missing result, a timeout, a recognized kernel diagnostic in the console, a leaked tracked resource (`kern.squeue.live_requests`, wired pages, registered files, issuer tokens must all return to zero) or an unhealthy pool fails the run.
+No Linuxulator change counts as done because it compiles, or because a happy-path test passes on the development host. The acceptance contract is the Linuxulator QEMU gate, `tools/test/linuxulator/README.md`: every syscall, option and shared kernel primitive must have a per-contract record linking it to named positive and negative cases, and those cases must pass inside a disposable amd64 ZFS-root QEMU guest running the exact candidate kernel and modules, with INVARIANTS and WITNESS, on at least two vCPUs, with the same portable cases run against a real Linux reference guest. UFS-root runs are supplemental evidence only; a UFS-root guest fails the gate. The runner (`tools/test/linuxulator/qemu-gate.py`) fails closed: a missing result, a timeout, a recognized kernel diagnostic in the console, a leaked tracked resource or an unhealthy pool fails the run.
 
 That discipline is why this Part distinguishes three evidence classes. **Gate-passed** means a named contract passed the full VM matrix and a Linux oracle. **Claimed** means source review or a host-side run only. **Not qualified** means the documents say so explicitly. [Running Real Applications](running-apps.md) sorts the workloads by those classes.
 
 ## What is explicitly not qualified
 
-Electron and Chromium are the named gap. `docs/book/src/compat/linux/overview.md` records that no Electron VM execution has been completed, that the Chromium sandbox installs seccomp filters which the committed `linux_seccomp` handler rejects, and that a launch with `--no-sandbox` is a testing switch, not a qualification. Native FreeBSD Electron from Ports is a separate track that does not exercise the Linuxulator. Docker, Steam, systemd and Wine have never been claimed; the namespace, new-mount-API, keyring, BPF and syscall-user-dispatch projects they would need are on the missing-syscalls queue or listed as separate future projects in the implementation gate.
-
-Status: seccomp and Landlock exist as in-progress working-tree files and are not inventoried or described in this book as shipped; see [Sandboxing and Debugging](sandboxing.md).
+Electron and Chromium are the named gap. No Electron VM execution has been completed, the Chromium sandbox installs seccomp filters which the committed `linux_seccomp` handler rejects, and a launch with `--no-sandbox` is a testing switch, not a qualification. Native FreeBSD Electron from Ports is a separate track that does not exercise the Linuxulator. Docker, Steam, systemd and Wine have never been claimed; the namespace, new-mount-API, keyring, BPF and syscall-user-dispatch projects they would need are on the missing-syscalls queue or are separate future projects.
 
 ## Where to look
 
 | Question | Document |
 |---|---|
 | Is syscall N dispatched, and how | `docs/linuxulator-syscall-coverage.md` section 5 |
-| Which flags of an implemented call work | `docs/book/src/compat/linux/syscalls.md`, `docs/book/src/compat/linux/overview.md` |
+| Which flags of an implemented call work | [System Calls](syscalls.md); the option tables in `docs/linuxulator-syscall-coverage.md` |
 | What is still missing, and who owns it | `docs/linuxulator-missing-syscalls-handoff.md` |
-| The acceptance contract and every batch's evidence | `docs/book/src/compat/linux/overview.md` |
-| Filesystem, procfs, FUSE and discovery batches | `docs/book/src/compat/linux/procfs-sysfs.md`, `-remaining-compat.md`, `-compat-next.md`, `-proc-extra.md` |
-| Behaviour knobs | linux(4), linprocfs(4), linsysfs(4), squeue(2) |
+| The acceptance contract and every batch's VM procedure | `tools/test/linuxulator/README.md` (the runner is `tools/test/linuxulator/qemu-gate.py`) |
+| Filesystem, procfs, FUSE and discovery batches | [procfs, sysfs and the Filesystem View](procfs-sysfs.md) |
+| Behaviour knobs | linux(4), linprocfs(4), linsysfs(4) |

@@ -1,41 +1,45 @@
 # Missing Linux syscalls: handoff for the next implementation stream
 
-Follow-up: [peer names, mixed multicast deltas and process ptrace events](linuxulator-peer-events-options.md)
-records the implemented amd64 subset and VM evidence. Earlier missing-option
+Follow-up: the peer names, mixed multicast deltas and process ptrace events
+batch is summarized in the sockets and ptrace rows of
+[System Calls](book/src/compat/linux/syscalls.md); its VM procedure is in
+[the Linuxulator QEMU gate](../tools/test/linuxulator/README.md#linux64-peer-names-and-process-ptrace-events). Earlier missing-option
 entries below are superseded for that subset; full Linux thread tracing remains
 unfinished. SO_COOKIE was already implemented before that follow-up.
 
-The latest existing-handler work is [XSAVE writes and multicast filters](linuxulator-xstate-mcast-options.md).
+The latest existing-handler work is XSAVE writes and multicast filters
+([System Calls](book/src/compat/linux/syscalls.md), ptrace and sockets rows).
 It does not remove entries from the missing-syscall queue below.
 
-This is the **non-io_uring syscall** work queue. The active io_uring/squeue
-work has its own owner and gate in [linuxulator-implementation-gate.md](linuxulator-implementation-gate.md).
+The `io_uring_*` slots are UNIMPL, as in upstream FreeBSD, and are not on this
+queue.
 This inventory is based on the current `sys/amd64/linux/syscalls.master`,
 `sys/compat/linux/linux_dummy.c`, `sys/amd64/linux/linux_dummy_machdep.c`,
-and `sys/x86/linux/linux_dummy_x86.c` on 2026-09-21. It covers the Linux64
+and `sys/x86/linux/linux_dummy_x86.c` on 2026-09-21; the dispatch counts and
+the cross-ABI `DUMMY()` table were rechecked against the tree on 2026-10-08. It covers the Linux64
 x86_64 ABI through local syscall 472. Linux v7.1's
 [x86_64 syscall table](https://github.com/torvalds/linux/blob/v7.1/arch/x86/entry/syscalls/syscall_64.tbl)
 ends its common sequence at 471; local 472 (`fchroot`) is already implemented.
 Recheck upstream numbering when starting work against a newer Linux release.
 
 `unshare` has a VM-qualified amd64 Linux64 `CLONE_FS` subset, documented in
-[linuxulator-unshare.md](linuxulator-unshare.md). Its row remains because the
+[System Calls](book/src/compat/linux/syscalls.md). Its row remains because the
 other namespace flags and non-amd64-Linux64 ABIs still need functional work.
 A follow-up adds VM-tested concurrent path-state mutation and Linux reference
 cases for descriptor-table lock ownership; it does not extend supported flags.
 The queue now contains 36 `DUMMY()` calls, reject-only `seccomp`, and
 partially implemented `unshare`, `quotactl`, `quotactl_fd`, and
 `perf_event_open`. The initial software-counter subset is documented in
-[linuxulator-perf-event.md](linuxulator-perf-event.md). The quota
+[System Calls](book/src/compat/linux/syscalls.md). The quota
 subset has passed its named reference/focused cases and full amd64 VM gate. See
-[the quota contract](linuxulator-quota.md).
+the swap and quota row of [System Calls](book/src/compat/linux/syscalls.md).
 
-The local table has 386 named slots: 334 functional handlers or native aliases
+The local table has 386 named slots: 331 functional handlers or native aliases
 (which may support only part of their Linux options), **36 `DUMMY()` handlers**
-that return `ENOSYS`, **one reject-only `seccomp` handler**, and 15 deliberately
-unimplemented historical slots. The 37 calls without functional handlers and four partial calls
+that return `ENOSYS`, **one reject-only `seccomp` handler**, 15 deliberately
+unimplemented historical slots, and three UNIMPL `io_uring_*` slots. The 37 calls without functional handlers and four partial calls
 are all listed below (41 calls still needing work). These counts describe dispatch, not conformance of the
-333 handlers. The separate [coverage inventory](linuxulator-syscall-coverage.md)
+331 handlers. The separate [coverage inventory](linuxulator-syscall-coverage.md)
 tracks partially implemented calls and options, including the six legacy AIO
 calls; those are additional correctness work, not missing dispatch entries.
 
@@ -45,7 +49,7 @@ calls; those are additional correctness work, not missing dispatch entries.
 |---:|---|---|---|
 | 155 | `pivot_root` | `DUMMY` | Mount-tree/root transition; cannot be represented by `chroot` alone. |
 | 179 | `quotactl` | Partial: global quota sync | Legacy device-selected operations remain pending; use the fd variant for ZFS datasets. |
-| 272 | `unshare` | Partial: amd64 single-threaded `CLONE_FS`; named ABI cases VM-tested | [Contract and reference tests](linuxulator-unshare.md); descriptor, thread-local and namespace ownership remain pending. |
+| 272 | `unshare` | Partial: amd64 single-threaded `CLONE_FS`; named ABI cases VM-tested | [Contract summary](book/src/compat/linux/syscalls.md) and [gate](../tools/test/linuxulator/README.md#unshare-path-state-subset); descriptor, thread-local and namespace ownership remain pending. |
 | 308 | `setns` | `DUMMY` | Namespace-fd identity, permissions and lifetime. |
 | 428 | `open_tree` | `DUMMY` | Detached mount-tree objects and mount-fd lifecycle. |
 | 429 | `move_mount` | `DUMMY` | Atomic mount-tree movement and path/fd resolution. |
@@ -54,7 +58,7 @@ calls; those are additional correctness work, not missing dispatch entries.
 | 432 | `fsmount` | `DUMMY` | Mount-fd creation and attach semantics. |
 | 433 | `fspick` | `DUMMY` | Existing-mount context selection. |
 | 442 | `mount_setattr` | `DUMMY` | Recursive mount attributes and propagation. |
-| 443 | `quotactl_fd` | Partial: amd64 ZFS user/group query, byte hard-limit update and sync | [Contract and tests](linuxulator-quota.md); other quota controls remain pending. |
+| 443 | `quotactl_fd` | Partial: amd64 ZFS user/group query, byte hard-limit update and sync | [Contract summary](book/src/compat/linux/syscalls.md) and [gate](../tools/test/linuxulator/README.md#amd64-quota-subset); other quota controls remain pending. |
 | 467 | `open_tree_attr` | `DUMMY` | New mount-tree attribute ABI; depends on mount-fd model. |
 | 470 | `listns` | `DUMMY` | Enumeratable namespace identity and visibility rules. |
 
@@ -74,7 +78,7 @@ permissions, mount propagation, traversal races, rollback and close/exec/exit.
 | 248 | `add_key` | `DUMMY` | Keyring object store, quotas and permissions. |
 | 249 | `request_key` | `DUMMY` | Key lookup/upcall and negative-key semantics. |
 | 250 | `keyctl` | `DUMMY` | Keyring commands, inheritance and revocation. |
-| 298 | `perf_event_open` | Partial: current-thread software counters and event-fd lifecycle | [Implemented subset and tests](linuxulator-perf-event.md); PMU, sampling, mmap ring, groups and other targets remain. |
+| 298 | `perf_event_open` | Partial: current-thread software counters and event-fd lifecycle | [Implemented subset and tests](book/src/compat/linux/syscalls.md); PMU, sampling, mmap ring, groups and other targets remain. |
 | 300 | `fanotify_init` | `DUMMY` | Filesystem notification group and queue. |
 | 301 | `fanotify_mark` | `DUMMY` | Mark scope, permission events and teardown. |
 | 317 | `seccomp` | reject-only handler | Filter verification and enforcement on *every* Linux syscall entry. |
@@ -95,8 +99,7 @@ kernel code; Linux command formats and option translation stay in Linuxulator.
 Tests must include denied privilege, invalid program/structure, cross-process
 access, fork/exec inheritance, fd passing, object revocation and teardown.
 For `seccomp`, include every syscall entry path and prove filtered operations
-have no side effects. Avoid concurrent edits to io_uring/squeue while that
-workstream is being qualified.
+have no side effects.
 
 ## 3. Module, boot, and administration (5)
 
@@ -144,19 +147,21 @@ Numeric holes 337–423 are not named syscalls.
 
 ## Architecture and partial-handler follow-up
 
-The list covers 38 unresolved **Linux64 x86_64 dispatch** names plus
-partially implemented `unshare`, `quotactl` and `quotactl_fd`.
-Across the four local ABI tables there are 55 unique `DUMMY()` names, the
+The list covers 37 unresolved **Linux64 x86_64 dispatch** names (36
+`DUMMY()` stubs and reject-only `seccomp`) plus partially implemented
+`unshare`, `quotactl`, `quotactl_fd` and `perf_event_open`.
+Across the four local ABI tables there are 56 unique `DUMMY()` names, the
 reject-only `seccomp` handler, and partial `unshare` and `perf_event_open`, or
-58 names still requiring work. The
+59 names still requiring work (recounted 2026-10-08 from each
+`syscalls.master` and the `DUMMY()` lines compiled for that ABI). The
 additional stubs and exceptions below make that cross-ABI inventory explicit;
 ABI-specific syscall numbers must come from the corresponding master table.
 
 | ABI | `DUMMY()` count | Additional stubs relative to the x86_64 list above | x86_64 stubs absent from this ABI's `DUMMY()` set |
 |---|---:|---|---|
-| arm64 Linux64 | 38 | `io_pgetevents` (292), `pkey_mprotect` (288), `pkey_alloc` (289), `pkey_free` (290) | `map_shadow_stack`, `quotactl`, `uprobe`, `uretprobe` |
+| arm64 Linux64 | 39 | `io_pgetevents` (292), `pkey_mprotect` (288), `pkey_alloc` (289), `pkey_free` (290), `remap_file_pages` (234) | `map_shadow_stack`, `quotactl`, `uprobe`, `uretprobe` |
 | amd64 Linux32 | 48 | `stime` (25), `ptrace` (26), `olduname` (59), `uname` (109), `bdflush` (134), `sysfs` (135), `pkey_mprotect` (380), `pkey_alloc` (381), `pkey_free` (382), `arch_prctl` (384), `clock_adjtime64` (405), `io_pgetevents_time64` (416), `mq_timedsend_time64` (418), `mq_timedreceive_time64` (419) | `kexec_file_load`, `map_shadow_stack`, `uprobe`, `uretprobe` |
-| i386 Linux32 | 50 | `stime` (25), `olduname` (59), `uname` (109), `vm86old` (113), `bdflush` (134), `sysfs` (135), `vm86` (166), `pkey_mprotect` (380), `pkey_alloc` (381), `pkey_free` (382), `arch_prctl` (384), `io_pgetevents` (385), `clock_adjtime64` (405), `io_pgetevents_time64` (416), `mq_timedsend_time64` (418), `mq_timedreceive_time64` (419) | `kexec_file_load`, `map_shadow_stack`, `uprobe`, `uretprobe` |
+| i386 Linux32 | 50 | `stime` (25), `olduname` (59), `uname` (109), `vm86old` (113), `bdflush` (134), `vm86` (166), `remap_file_pages` (257), `pkey_mprotect` (380), `pkey_alloc` (381), `pkey_free` (382), `arch_prctl` (384), `io_pgetevents` (385), `clock_adjtime64` (405), `io_pgetevents_time64` (416), `mq_timedsend_time64` (418), `mq_timedreceive_time64` (419) | `kexec_file_load`, `map_shadow_stack`, `uprobe`, `uretprobe` |
 
 `unshare` is no longer a `DUMMY()` macro on any ABI. Its hand-written
 non-amd64-Linux64 branch still returns ENOSYS; that is not functional support.
@@ -164,6 +169,16 @@ non-amd64-Linux64 branch still returns ENOSYS; that is not functional support.
 The quota rows above remain unresolved on the other ABIs; the shared
 `quotactl_fd` stub is retained and amd64 uses a distinct handler. The cross-ABI
 unique-stub count is therefore unchanged.
+
+`remap_file_pages` is a `DUMMY()` only off amd64 (`#ifndef __amd64__` in
+`linux_dummy.c`; the amd64 Linux64 handler is in `linux_machdep.c`). Two
+table entries have no compiled handler at all: i386 Linux32 `sysfs` (135),
+because `DUMMY(sysfs)` in `linux_dummy_x86.c` is compiled only with
+`COMPAT_LINUX32` and `linux_sysfs.c` is built only into `linux64`; and amd64
+Linux32 `remap_file_pages` (257), because `linux_common` compiles
+`linux_dummy.c` with `__amd64__` defined. 5BSD builds neither 32-bit module
+(`sys/modules/Makefile`: the amd64 `linux` module cannot link, and i386 is
+omitted).
 
 An entry in the last column may be absent, a native alias or a different
 handler; do not infer support from this table. The Linux32 `ptrace` stub, for
@@ -178,8 +193,8 @@ queue**. At minimum, the six legacy AIO entries (`io_setup`, `io_destroy`,
 is qualified only for named amd64 contracts and still needs consumer/lifecycle
 work; `openat2`, `fallocate`, futex, ptrace, sockets and many other handlers
 have option gaps. Use [linuxulator-syscall-coverage.md](linuxulator-syscall-coverage.md)
-and [linuxulator-next-phase-options.md](linuxulator-next-phase-options.md) for
-those inventories. Do not count a handler as finished merely because it is
+and [System Calls](book/src/compat/linux/syscalls.md) for those
+inventories. Do not count a handler as finished merely because it is
 absent from the 41-call table.
 
 ## Definition of done for each handoff item
@@ -198,8 +213,10 @@ absent from the 41-call table.
    Require zero failures, zero recognized diagnostics and zero leaked tracked resources,
    healthy ZFS and clean shutdown. Record exact kernel, module, binary, source
    and result hashes; never install or load candidate artifacts on the host.
-4. Update the syscall coverage row and the per-syscall matrix in
-   [linuxulator-implementation-gate.md](linuxulator-implementation-gate.md).
+4. Update the syscall coverage row in
+   [linuxulator-syscall-coverage.md](linuxulator-syscall-coverage.md) and add
+   or update the matching section of the gate,
+   [tools/test/linuxulator/README.md](../tools/test/linuxulator/README.md).
    Only then mark the named contract QEMU validated. A fresh arm64 VM gate is
    required for an arm64 ABI or machine-dependent change, not for a
    purely architecture-neutral Linux64 change.

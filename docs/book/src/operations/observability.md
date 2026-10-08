@@ -1,7 +1,7 @@
 # Observability
 
 Observability on 5BSD is DTrace with three additions: far more of the system
-is instrumented (about 65 new kernel SDT providers and 64 userland USDT
+is instrumented (63 new kernel SDT providers and 64 userland USDT
 providers, including every plane component), a suite of tools collects and
 exports what the probes say (bsdinstruments, hwtlm, bsdtrace and the shared
 libotelexport), and a broker decides who may trace so that opening
@@ -25,7 +25,7 @@ Kernel providers are defined with `SDT_PROVIDER_DEFINE` and appear in
 | Credentials and privilege | `cred`, `priv`, `jail`, `jaildesc`, `imgact`, `ptrace`, `ktrace`, `kld`, `kenv` | Credential changes, privilege checks, exec, module load |
 | Security policies | `oes`, `abac`, `mac`, `mac_framework`, `auditpipe` | OES events and verdicts, ABAC rule matches, MAC framework entry points |
 | Storage | `trustedzfs`, `vfs`, `mount`, `geom`, `fusefs`, `ext2fs` | Capability handles over ZFS, mounts, filesystem operations |
-| IPC and I/O | `aio`, `mqueue`, `squeue`, `unpcb`, `socket`, `kqueue`, `sysvmsg`, `sysvsem`, `sysvshm`, `pts`, `tty` | Queue engines, sockets, terminals |
+| IPC and I/O | `aio`, `mqueue`, `unpcb`, `socket`, `kqueue`, `sysvmsg`, `sysvsem`, `sysvshm`, `pts`, `tty` | Queue engines, sockets, terminals |
 | Virtualisation | `vmm`, `virtio`, `virtqueue`, `vtblk`, `vsock`, `xbb` | Hypervisor, VirtIO device models, AF_VSOCK |
 | Linux | `linuxulator`, `linuxkpi_fw`, `linuxkpi_sdio`, `linuxkpi_fullmac` | Emulation and LinuxKPI drivers |
 | Bluetooth | `bluetooth` | Netgraph HCI and L2CAP |
@@ -45,8 +45,9 @@ conventions are documented in the headers of the scripts under
 
 ## The script catalogue
 
-`share/dtrace/Makefile` installs 87 ready-to-run scripts into
-`/usr/share/dtrace`. Each starts with `#!/usr/sbin/dtrace -s` (or `-Zs` when
+`share/dtrace/Makefile` installs 95 ready-to-run scripts into
+`/usr/share/dtrace` (83 added by 5BSD and the 12 upstream ones in the last
+row below). Each starts with `#!/usr/sbin/dtrace -s` (or `-Zs` when
 it references providers that may be absent) and a header describing its
 probes, so they run directly or with `dtrace -s`:
 
@@ -63,7 +64,7 @@ By purpose:
 | Plane: kernel | `mac_capability-audit`, `-calls`, `-delegation`, `-denials`, `-errors`, `-fds`, `-holders`, `-messages`, `-nonces`, `-services`, `-shield`, `-summary`, `-who`; `capsicum-changes`, `-denials`, `-xfer`; `envfd-events`; `procdesc-lifecycle`; `trustedzfs-handles`, `-denials` |
 | Plane: capsule | `capsule-bootstrap`, `-claims`, `-control`, `-errors`, `-ipc`, `-latency`, `-lifecycle`, `-minting` |
 | Plane: switchboard | `switchboard-anoint`, `-capabilities`, `-connections`, `-exec-latency`, `-ipc`, `-latency`, `-lifecycle`, `-naming`, `-resources`, `-shutdown`, `-timeouts` |
-| Subsystem flows | `aio-flow`, `squeue-flow`, `-summary`, `-stall`, `mqueue-flow`, `zfs-admin`, `vmm-passthru`, `rctl-limits`, `vsock-connections`, `-overview`, `-perf`, `-provider`, `-security`, `blued-att`, `-connections`, `-overview`, `-pairing`, `-scan`, `rpi-wifi` |
+| Subsystem flows | `aio-flow`, `mqueue-flow`, `zfs-admin`, `vmm-passthru`, `rctl-limits`, `vsock-connections`, `-overview`, `-perf`, `-provider`, `-security`, `blued-att`, `-connections`, `-overview`, `-pairing`, `-scan`, `rpi-wifi` |
 | Upstream network and disk | `tcpconn`, `tcpdebug`, `tcpstate`, `tcptrack`, `udptrack`, `siftr`, `disklatency`, `disklatencycmd`, `hotopen`, `blocking`, `nfsattrstats`, `nfsclienttime` |
 
 `tests/sys/kern/dtrace_catalog_test.sh` is the regression check for the
@@ -254,7 +255,6 @@ as on FreeBSD. See [system.Audit](../providers/audit.md).
 | Suite | Where | Needs |
 |---|---|---|
 | `dtrace_catalog_test` | `/usr/tests/sys/kern` | root, kernel providers loaded |
-| `squeue_dtrace_test` | `/usr/tests/sys/kern` | root; proves the `squeue` provider fires |
 | `bsdinstruments_test`, `hwtlm_test`, `bsdtrace_test`, `otelexport_test` | `/usr/tests/usr.sbin/*`, `/usr/tests/lib/libotelexport` | unprivileged for the compile checks; capture cases need Intel PT and root |
 | BSDTrace `policy_test`, `session_test`, `bundle_test` | `/usr/tests/usr.sbin/BSDTrace` | in-session for the parser; a plane-off VM for the session tests |
 
