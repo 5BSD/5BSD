@@ -1,13 +1,14 @@
 #!/usr/libexec/atf-sh
 
-# These cases assert source- and object-tree contracts (grep the daemon
-# sources, syscall tables and DTrace providers; inspect the built binary).
-# Those trees are absent on an installed system, so skip cleanly there rather
-# than failing on missing files.
+# The contract cases grep the daemon sources and DTrace providers.  The test
+# package installs those files beneath srctree/ next to this program, so an
+# installed test needs no build machine source tree.  The manifest case
+# assembles a bundle from the installed artifacts.
 require_srctree()
 {
-	test -d "@SRCTOP@" ||
-	    atf_skip "source tree (@SRCTOP@) required for contract checks"
+	SRCTREE="$(atf_get_srcdir)/srctree"
+	test -d "${SRCTREE}" ||
+	    atf_skip "staged source files (${SRCTREE}) required for contract checks"
 }
 
 atf_test_case manifest cleanup
@@ -17,18 +18,20 @@ manifest_head()
 }
 manifest_body()
 {
-	srcdir="@SRCTOP@/usr.sbin/BSDCrypto"
-	objdir="@OBJTOP@/usr.sbin/BSDCrypto"
-	switchboardctl="${SWITCHBOARDCTL:-@OBJTOP@/usr.sbin/switchboardctl/tests/switchboardctl_test_bin}"
-	manifest="${srcdir}/capbundle/crypto.ucl"
+	installed="/Capabilities/System/Crypto.cap"
+	installed_unit="${installed}/Units/bsdcrypto.unit"
+	switchboardctl="${SWITCHBOARDCTL:-$(atf_get_srcdir)/../switchboardctl/switchboardctl_test_bin}"
+	manifest="${installed_unit}/Unit.ucl"
 	bundle="${PWD}/Crypto.cap"
 	unit="${bundle}/Units/bsdcrypto.unit"
 
 	test -x "${switchboardctl}" || atf_skip "source-built switchboardctl is required"
+	test -x "${installed_unit}/bin/BSDCrypto" ||
+	    atf_skip "installed Crypto.cap bundle is required"
 	test ! -e "${bundle}" || atf_fail "stale test bundle: ${bundle}"
 	atf_check -s exit:0 mkdir -p "${unit}/bin"
-	atf_check -s exit:0 cp "${srcdir}/capbundle/Bundle.ucl" "${bundle}/Bundle.ucl"
-	atf_check -s exit:0 cp "${objdir}/BSDCrypto" "${unit}/bin/BSDCrypto"
+	atf_check -s exit:0 cp "${installed}/Bundle.ucl" "${bundle}/Bundle.ucl"
+	atf_check -s exit:0 cp "${installed_unit}/bin/BSDCrypto" "${unit}/bin/BSDCrypto"
 	atf_check -s exit:0 cp "${manifest}" "${unit}/Unit.ucl"
 	atf_check -s exit:0 chmod 0555 "${bundle}" "${bundle}/Units" "${unit}" \
 	    "${unit}/bin" "${unit}/bin/BSDCrypto"
@@ -56,8 +59,8 @@ provider_security_contract_head()
 provider_security_contract_body()
 {
 	require_srctree
-	source="@SRCTOP@/usr.sbin/BSDCrypto/bsdcrypto.c"
-	srcdir="@SRCTOP@/usr.sbin/BSDCrypto"
+	source="${SRCTREE}/usr.sbin/BSDCrypto/bsdcrypto.c"
+	srcdir="${SRCTREE}/usr.sbin/BSDCrypto"
 
 	for token in SERVICE_PROTECT_NOFORK SERVICE_PROTECT_NOIPC \
 	    SERVICE_PROTECT_NOFDRECV SERVICE_PROTECT_NOEXEC SERVICE_PROTECT_NOSOCK \

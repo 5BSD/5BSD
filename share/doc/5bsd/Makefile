@@ -1,6 +1,11 @@
 # Install the complete native Markdown book with no rendering dependency.
-# Keep the chapter list aligned with docs/book/src; the installer test checks
-# that every source chapter is installed at the same relative path.
+#
+# The chapters are listed explicitly, one FILESGROUP per book directory, so
+# that what the runtime package installs is a reviewed decision.  The list
+# cannot drift silently: a listed chapter that no longer exists stops the
+# build when this Makefile is read, and "all" runs check-book-list, which
+# fails unless the installed paths are exactly the files under docs/book/src.
+# The installed book is compared with the source by the bsdinstall tests.
 
 PACKAGE=	runtime
 BOOKSRC=	${SRCTOP}/docs/book/src
@@ -43,7 +48,7 @@ BOOK_COMPAT=	${BOOKSRC}/compat/bsd-side.md \
 BOOK_COMPATDIR=	${BOOKDEST}/compat
 
 FILESGROUPS+=	BOOK_COMPAT_LINUX
-BOOK_COMPAT_LINUX=		${BOOKSRC}/compat/linux/overview.md \
+BOOK_COMPAT_LINUX=	${BOOKSRC}/compat/linux/overview.md \
 		${BOOKSRC}/compat/linux/procfs-sysfs.md \
 		${BOOKSRC}/compat/linux/running-apps.md \
 		${BOOKSRC}/compat/linux/sandboxing.md \
@@ -81,8 +86,7 @@ BOOK_ORIENTATION=	${BOOKSRC}/orientation/boot-to-login.md \
 BOOK_ORIENTATIONDIR=	${BOOKDEST}/orientation
 
 FILESGROUPS+=	BOOK_PLANE
-BOOK_PLANE=	${BOOKSRC}/plane/anointments.md \
-		${BOOKSRC}/plane/attributes.md \
+BOOK_PLANE=	${BOOKSRC}/plane/attributes.md \
 		${BOOKSRC}/plane/bundles-and-manifests.md \
 		${BOOKSRC}/plane/capsule.md \
 		${BOOKSRC}/plane/containers-and-storage.md \
@@ -118,5 +122,35 @@ ${group}PACKAGE=	runtime
 ${group}DIR_OWN=	${SHAREOWN}
 ${group}DIR_GRP=	${SHAREGRP}
 .endfor
+
+# Each listed chapter as the path it is installed at below BOOKDEST.
+BOOK_INSTALLED=
+.for group in ${FILESGROUPS}
+.for f in ${${group}}
+.if !exists(${f})
+.error ${f:S,^${SRCTOP}/,,} is listed in ${group} of ${.CURDIR:S,^${SRCTOP}/,,}/Makefile but does not exist
+.endif
+BOOK_INSTALLED+=	${${group}DIR:S,^${BOOKDEST},,:S,^/,,:S,$,/,:S,^/$,,}${f:T}
+.endfor
+.endfor
+
+all: check-book-list
+check-book-list: .PHONY
+	@listed=$$(printf '%s\n' ${BOOK_INSTALLED} | LC_ALL=C sort); \
+	found=$$(cd ${BOOKSRC} && find . -type f | sed 's,^\./,,' | \
+	    LC_ALL=C sort); \
+	[ "$$listed" = "$$found" ] && exit 0; \
+	echo "${.CURDIR}/Makefile does not match ${BOOKSRC}:" >&2; \
+	printf '%s\n' "$$found" | grep -vxF "$$listed" | sed \
+	    's|^|  not installed, add it to the group for its directory: |' >&2; \
+	printf '%s\n' "$$listed" | grep -vxF "$$found" | sed \
+	    's|^|  installed path has no source, wrong group?: |' >&2; \
+	exit 1
+
+# Check the book's claims (system calls, constants, sysctls, manual pages
+# and links) against this source tree.  Not part of "all": the installed
+# bsdinstall tests run the same check (native_book_matches_code).
+checkbook: .PHONY
+	sh ${SRCTOP}/docs/book/tools/check-book.sh ${SRCTOP}
 
 .include <bsd.prog.mk>

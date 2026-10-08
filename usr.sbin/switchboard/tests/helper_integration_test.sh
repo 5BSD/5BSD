@@ -9,11 +9,9 @@
 # hands the parent a confined channel to it.  The reserved "helper." namespace
 # must be reachable ONLY through this path — never a global lookup.
 
-helpers="$(dirname "$0")/test_helpers.sh"
-if [ ! -r "${helpers}" ]; then
-	helpers="@SRCTOP@/usr.sbin/switchboard/tests/test_helpers.sh"
-fi
-. "${helpers}"
+# test_helpers.sh is installed beside this program (and copied beside it in
+# the object directory for pre-install runs).
+. "$(dirname "$0")/test_helpers.sh"
 
 # Install a two-unit bundle sharing one bundle_id: a boot-start parent and an
 # on-demand private helper.  The helper name resolution keys off a shared

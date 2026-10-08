@@ -1,3 +1,5 @@
+PACKAGE=	tests
+
 .PATH: ${SRCTOP}/sys/security/mac_test_hooks
 
 KMOD=	mac_test_hooks

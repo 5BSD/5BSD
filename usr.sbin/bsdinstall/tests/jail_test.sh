@@ -23,7 +23,7 @@ run_jail()
 	    nonInteractive=YES SCRIPT= TMPDIR="$(pwd)/scratch" \
 	    BSDINSTALL_TMPETC="$(pwd)/state" \
 	    BSDINSTALL_TMPBOOT="$(pwd)/boot-state" \
-	    sh @SRCTOP@/usr.sbin/bsdinstall/scripts/jail "$(pwd)/root"
+	    sh /usr/libexec/bsdinstall/jail "$(pwd)/root"
 }
 
 atf_test_case unattended_pkgbase

@@ -37,8 +37,30 @@ CFLAGS.policy_test+=	-I${SRCTOP}/contrib/libucl/include
 LIBADD.policy_test+=	notify ucl
 
 ATF_TESTS_SH+=	bundle_test
-ATF_TESTS_SH_SED_bundle_test+=	-e 's,@SRCTOP@,${SRCTOP},g'
-ATF_TESTS_SH_SED_bundle_test+=	-e 's,@OBJTOP@,${OBJTOP},g'
 ATF_TESTS_SH_SED_bundle_test+=	-e 's,@MK_DTRACE@,${MK_DTRACE},g'
+
+# The shell contract cases read these source files.  Install them beneath
+# ${TESTSDIR}/srctree so the installed tests do not depend on the build
+# machine's source tree.
+SRCTREE_FILES=	cddl/usr.sbin/bsdinstruments/profiles/capability-services.d \
+		lib/libnotify/notify.c \
+		lib/libnotify/notify_protocol.h \
+		lib/libnotify/notify_provider.d \
+		usr.sbin/BSDAudit/auditcmp_policy.c \
+		usr.sbin/BSDNotify/Makefile \
+		usr.sbin/BSDNotify/bsdnotify.c \
+		usr.sbin/BSDNotify/bsdnotify_probes.h \
+		usr.sbin/BSDNotify/bsdnotify_provider.d \
+		usr.sbin/BSDNotify/capbundle/bsdnotify.conf \
+		usr.sbin/BSDNotify/capbundle/bsdnotify.ucl \
+		usr.sbin/BSDNotify/policy.c \
+		usr.sbin/BSDNotify/policy.h \
+		usr.sbin/switchboard/svc_proto.c
+.for _dir in ${SRCTREE_FILES:H:O:u}
+FILESGROUPS+=	SRCTREE_${_dir:S,/,_,g}
+SRCTREE_${_dir:S,/,_,g}=	${SRCTREE_FILES:M${_dir}/*:N${_dir}/*/*:S,^,${SRCTOP}/,}
+SRCTREE_${_dir:S,/,_,g}DIR=	${TESTSDIR}/srctree/${_dir}
+SRCTREE_${_dir:S,/,_,g}PACKAGE=	${PACKAGE}
+.endfor
 
 .include <bsd.test.mk>

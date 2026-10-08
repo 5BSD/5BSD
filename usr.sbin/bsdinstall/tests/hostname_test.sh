@@ -5,7 +5,7 @@ hostname_helper()
 	if [ -n "${BSDINSTALL_HOSTNAME_HELPER:-}" ]; then
 		printf '%s' "$BSDINSTALL_HOSTNAME_HELPER"
 	else
-		printf '%s' @SRCTOP@/usr.sbin/bsdinstall/scripts/hostname.subr
+		printf '%s' /usr/libexec/bsdinstall/hostname.subr
 	fi
 }
 

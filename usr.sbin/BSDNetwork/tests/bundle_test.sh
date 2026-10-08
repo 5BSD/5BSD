@@ -1,13 +1,14 @@
 #!/usr/libexec/atf-sh
 
-# These cases assert source- and object-tree contracts (grep the daemon
-# sources, syscall tables and DTrace providers; inspect the built binary).
-# Those trees are absent on an installed system, so skip cleanly there rather
-# than failing on missing files.
+# The contract cases grep the daemon sources and DTrace providers.  The test
+# package installs those files beneath srctree/ next to this program, so an
+# installed test needs no build machine source tree.  The manifest case
+# assembles a bundle from the installed artifacts.
 require_srctree()
 {
-	test -d "@SRCTOP@" ||
-	    atf_skip "source tree (@SRCTOP@) required for contract checks"
+	SRCTREE="$(atf_get_srcdir)/srctree"
+	test -d "${SRCTREE}" ||
+	    atf_skip "staged source files (${SRCTREE}) required for contract checks"
 }
 
 
@@ -18,30 +19,31 @@ manifest_head()
 }
 manifest_body()
 {
-	require_srctree
-	srcdir="@SRCTOP@/usr.sbin/BSDNetwork"
-	objdir="@OBJTOP@/usr.sbin/BSDNetwork"
-	switchboardctl="${SWITCHBOARDCTL:-@OBJTOP@/usr.sbin/switchboardctl/tests/switchboardctl_test_bin}"
-	manifest="${srcdir}/capbundle/bsdnetwork.ucl"
+	installed="/Capabilities/System/Network.cap"
+	installed_unit="${installed}/Units/bsdnetwork.unit"
+	switchboardctl="${SWITCHBOARDCTL:-$(atf_get_srcdir)/../switchboardctl/switchboardctl_test_bin}"
+	manifest="${installed_unit}/Unit.ucl"
 	bundle="${PWD}/Network.cap"
 	unit="${bundle}/Units/bsdnetwork.unit"
 
 	test -x "${switchboardctl}" ||
 	    atf_skip "source-built switchboardctl is required"
+	test -x "${installed_unit}/bin/BSDNetwork" ||
+	    atf_skip "installed Network.cap bundle is required"
 	mkdir -p "${unit}/bin"
-	cp "${srcdir}/capbundle/Bundle.ucl" "${bundle}/Bundle.ucl"
-	cp "${objdir}/BSDNetwork" "${unit}/bin/BSDNetwork"
+	cp "${installed}/Bundle.ucl" "${bundle}/Bundle.ucl"
+	cp "${installed_unit}/bin/BSDNetwork" "${unit}/bin/BSDNetwork"
 	if [ "@MK_DTRACE@" = "yes" ]; then
 		atf_check -s exit:0 -o match:'.SUNW_dof' readelf -S \
-		    "${objdir}/BSDNetwork"
+		    "${installed_unit}/bin/BSDNetwork"
 	else
 		atf_check -s exit:0 -o not-match:'.SUNW_dof' readelf -S \
-		    "${objdir}/BSDNetwork"
+		    "${installed_unit}/bin/BSDNetwork"
 	fi
 	pfunit="${bundle}/Units/pf.unit"
 	mkdir -p "${pfunit}/bin"
-	cp "${srcdir}/pf/pf.ucl" "${pfunit}/Unit.ucl"
-	cp "${objdir}/pf/BSDPF" "${pfunit}/bin/BSDPF"
+	cp "${installed}/Units/pf.unit/Unit.ucl" "${pfunit}/Unit.ucl"
+	cp "${installed}/Units/pf.unit/bin/BSDPF" "${pfunit}/bin/BSDPF"
 	chmod 0555 "${pfunit}" "${pfunit}/bin" "${pfunit}/bin/BSDPF"
 	chmod 0444 "${pfunit}/Unit.ucl"
 	cp "${manifest}" "${unit}/Unit.ucl"
@@ -56,7 +58,7 @@ manifest_body()
 	atf_check -s exit:1 -o empty -e empty \
 	    grep 'interface' "${manifest}"
 	atf_check -s exit:0 -o match:'version = "1.0.0"' \
-	    grep 'version = "1.0.0"' "${srcdir}/capbundle/Bundle.ucl"
+	    grep 'version = "1.0.0"' "${installed}/Bundle.ucl"
 }
 manifest_cleanup()
 {
@@ -80,8 +82,8 @@ observability_contract_head()
 observability_contract_body()
 {
 	require_srctree
-	source="@SRCTOP@/usr.sbin/BSDNetwork/networkcmp.c"
-	provider="@SRCTOP@/usr.sbin/BSDNetwork/bsdnetwork_provider.d"
+	source="${SRCTREE}/usr.sbin/BSDNetwork/networkcmp.c"
+	provider="${SRCTREE}/usr.sbin/BSDNetwork/bsdnetwork_provider.d"
 
 	for probe in SESSION_START SESSION_END REQUEST_DONE RESOLVE_START \
 	    RESOLVE_DONE REJECT
@@ -101,9 +103,9 @@ observability_contract_body()
 kernel_security_contract_body()
 {
 	require_srctree
-	source="@SRCTOP@/usr.sbin/BSDNetwork/networkcmp.c"
-	resolver="@SRCTOP@/usr.sbin/BSDNetwork/resolver.c"
-	tzfs_policy="@SRCTOP@/usr.sbin/BSDFilesystem/bsdfilesystem.ucl"
+	source="${SRCTREE}/usr.sbin/BSDNetwork/networkcmp.c"
+	resolver="${SRCTREE}/usr.sbin/BSDNetwork/resolver.c"
+	tzfs_policy="${SRCTREE}/usr.sbin/BSDFilesystem/bsdfilesystem.ucl"
 
 	for token in NETWORKCMP_FEATURE_DNS endpoint_is_internal broker_connect \
 	    broker_perform_connect harden_delivered_socket CAP_XFER_ONCE \

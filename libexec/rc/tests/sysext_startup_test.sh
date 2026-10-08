@@ -5,11 +5,11 @@ setup()
 	# Use the current startup functions with harmless command seams. Never
 	# invoke the host's rc configuration, module loader, or device controls.
 	sed '/^\. \/etc\/rc.subr$/d; /^load_rc_config /d; /^run_rc_command /d' \
-	    @SRCTOP@/libexec/rc/rc.d/kld > kld.sh
+	    /etc/rc.d/kld > kld.sh
 	sed '/^\. \/etc\/rc.subr$/d; /^load_rc_config /d; /^run_rc_command /d' \
-	    @SRCTOP@/libexec/rc/rc.d/devmatch > devmatch.sh
+	    /etc/rc.d/devmatch > devmatch.sh
 	cat > seams.sh <<-'EOF'
-	. @SRCTOP@/libexec/rc/rc.subr
+	. /etc/rc.subr
 	kenv() {
 		case "$2" in
 		capability_plane) echo "${PLANE-YES}" ;;
@@ -81,7 +81,7 @@ linux_broker_body()
 {
 	setup
 	sed '/^\. \/etc\/rc.subr$/d; /^load_rc_config /d; /^run_rc_command /d' \
-	    @SRCTOP@/libexec/rc/rc.d/linux > linux.sh
+	    /etc/rc.d/linux > linux.sh
 	cat > linux-seams.sh <<-'EOF'
 	. ./seams.sh
 	. ./linux.sh

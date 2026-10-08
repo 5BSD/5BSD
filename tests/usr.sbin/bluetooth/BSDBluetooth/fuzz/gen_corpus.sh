@@ -11,12 +11,22 @@ set -eu
 
 DIR="${1:-corpus}"
 
-# Write raw bytes given as a hex string ("02 1700" etc.) to a file.
+# Write raw bytes given as a hex string ("02 1700" etc.) to a file.  awk turns
+# the hex into \ooo escapes, which printf(1) writes as raw bytes; no tools
+# outside the base system are needed.
 emit() {
 	_dir="$1"; _name="$2"; _hex=$(printf '%s' "$3" | tr -d ' ')
 	mkdir -p "$DIR/$_dir"
-	python3 -c 'import sys,binascii;sys.stdout.buffer.write(binascii.unhexlify(sys.argv[1]))' \
-	    "$_hex" > "$DIR/$_dir/$_name"
+	printf "$(printf '%s' "$_hex" | LC_ALL=C awk '{
+		h = "0123456789abcdef"; s = tolower($0)
+		if (length(s) % 2 || s ~ /[^0-9a-f]/) {
+			print "gen_corpus.sh: bad hex: " $0 > "/dev/stderr"
+			exit 1
+		}
+		for (i = 1; i < length(s); i += 2)
+			printf "\\%03o", (index(h, substr(s, i, 1)) - 1) * 16 + \
+			    index(h, substr(s, i + 1, 1)) - 1
+	}')" > "$DIR/$_dir/$_name"
 }
 
 # Write a literal text file (for configuration parser seeds).

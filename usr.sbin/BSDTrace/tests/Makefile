@@ -16,8 +16,21 @@ CFLAGS.session_test+=	-I${SRCTOP}/sys
 SRCS.session_test=	session_test.c tracecmp.c
 LIBADD.session_test=	bsm channel service tracecmp
 NO_SHARED.session_test=	yes
-ATF_TESTS_SH_SED_bundle_test+=	-e 's,@SRCTOP@,${SRCTOP},g'
-ATF_TESTS_SH_SED_bundle_test+=	-e 's,@OBJTOP@,${OBJTOP},g'
 ATF_TESTS_SH_SED_bundle_test+=	-e 's,@MK_DTRACE@,${MK_DTRACE},g'
+
+# The shell contract cases read these source files.  Install them beneath
+# ${TESTSDIR}/srctree so the installed tests do not depend on the build
+# machine's source tree.
+SRCTREE_FILES=	lib/libtracecmp/tracecmp.c \
+		lib/libtracecmp/tracecmp_provider.d \
+		usr.sbin/BSDTrace/bsdtrace_provider.d \
+		usr.sbin/BSDTrace/tracecmp.c \
+		usr.sbin/BSDTrace/tracecmp_policy.h
+.for _dir in ${SRCTREE_FILES:H:O:u}
+FILESGROUPS+=	SRCTREE_${_dir:S,/,_,g}
+SRCTREE_${_dir:S,/,_,g}=	${SRCTREE_FILES:M${_dir}/*:N${_dir}/*/*:S,^,${SRCTOP}/,}
+SRCTREE_${_dir:S,/,_,g}DIR=	${TESTSDIR}/srctree/${_dir}
+SRCTREE_${_dir:S,/,_,g}PACKAGE=	${PACKAGE}
+.endfor
 
 .include <bsd.test.mk>

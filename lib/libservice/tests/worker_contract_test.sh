@@ -10,9 +10,11 @@ pdfork_workers_drop_authority_body()
 {
 	local providers source srcroot
 
-	srcroot="@SRCTOP@"
+	# The test package stages every pdfork-ing provider source beneath
+	# srctree/, so the installed test needs no build machine source tree.
+	srcroot="$(atf_get_srcdir)/srctree"
 	test -d "${srcroot}/usr.sbin" ||
-	    atf_skip "source tree (${srcroot}) required for contract checks"
+	    atf_skip "staged source files (${srcroot}) required for contract checks"
 
 	# A provider that pdfork(2)s session workers must drop the authority the
 	# child inherited, either explicitly or through

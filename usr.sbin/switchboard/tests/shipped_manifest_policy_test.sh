@@ -1,18 +1,22 @@
 #!/usr/bin/env atf-sh
+
+# The test package installs the shipped manifests (and reload.c) beneath
+# srctree/, so the installed test needs no build machine source tree.
 require_srctree()
 {
-	test -r "@SRCTOP@/usr.sbin/BSDNotify/capbundle/bsdnotify.ucl" ||
-	    atf_skip "source tree (@SRCTOP@) required for this contract check"
+	SRCTREE="$(atf_get_srcdir)/srctree"
+	test -r "${SRCTREE}/usr.sbin/BSDNotify/capbundle/bsdnotify.ucl" ||
+	    atf_skip "staged source files (${SRCTREE}) required for this contract check"
 }
 
 
 manifest_inventory()
 {
-	find @SRCTOP@/usr.sbin -type f \
+	find "${SRCTREE}/usr.sbin" -type f \
 	    \( -path '*/capbundle/*.ucl' -o \
 	    -path '*/bluetooth/BSDBluetooth/blued.ucl' \) \
 	    ! -name Bundle.ucl |
-	    sed 's,^@SRCTOP@/,,' |
+	    sed "s,^${SRCTREE}/,," |
 	    LC_ALL=C sort
 }
 
@@ -20,7 +24,6 @@ write_expected_inventory()
 {
 	cat >expected <<'EOF'
 usr.sbin/BSDAudit/capbundle/bsdaudit.ucl
-usr.sbin/BSDAuth/capbundle/bsdauth.ucl
 usr.sbin/BSDCrypto/capbundle/crypto.ucl
 usr.sbin/BSDDevice/capbundle/device.ucl
 usr.sbin/BSDExtension/capbundle/bsdextension.ucl
@@ -35,6 +38,8 @@ usr.sbin/BSDTime/capbundle/BSDTime.ucl
 usr.sbin/BSDTrace/capbundle/bsdtrace.ucl
 usr.sbin/BSDVM/capbundle/bsdvm.ucl
 usr.sbin/bluetooth/BSDBluetooth/blued.ucl
+usr.sbin/capsulectl/capbundle/Unit.ucl
+usr.sbin/switchboardctl/capbundle/Unit.ucl
 EOF
 }
 
@@ -49,7 +54,7 @@ every_shipped_unit_is_explicit_body()
 	while read -r manifest; do
 		count=$(grep -Ec \
 		    '^[[:space:]]*control = "(core|system|user)";' \
-		    "@SRCTOP@/$manifest")
+		    "${SRCTREE}/$manifest")
 		if [ "$count" -ne 1 ]; then
 			atf_fail "$manifest must declare exactly one control class"
 		fi
@@ -70,7 +75,7 @@ trust_spine_is_core_and_shielded_body()
 	    usr.sbin/BSDPower/capbundle/BSDPower.ucl \
 	    usr.sbin/BSDTime/capbundle/BSDTime.ucl
 	do
-		path="@SRCTOP@/$manifest"
+		path="${SRCTREE}/$manifest"
 		atf_check -s exit:0 -o ignore grep -Fx \
 		    'control = "core";' "$path"
 		for flag in ptrace signal wait sigkill sigcont sched core ktrace; do
@@ -94,7 +99,7 @@ non_tcb_units_are_system_managed_body()
 	    usr.sbin/BSDVM/capbundle/bsdvm.ucl
 	do
 		atf_check -s exit:0 -o ignore grep -Fx \
-		    'control = "system";' "@SRCTOP@/$manifest"
+		    'control = "system";' "${SRCTREE}/$manifest"
 	done
 }
 
@@ -102,7 +107,7 @@ atf_test_case live_core_change_reaches_management_gate
 live_core_change_reaches_management_gate_body()
 {
 	require_srctree
-	reload=@SRCTOP@/usr.sbin/switchboard/reload.c
+	reload="${SRCTREE}/usr.sbin/switchboard/reload.c"
 	atf_check -s exit:0 -o ignore grep -F \
 	    'A core image and its launch policy belong to the' "$reload"
 	atf_check -s exit:0 -o ignore grep -F \

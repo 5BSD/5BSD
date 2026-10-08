@@ -3,13 +3,14 @@
 # Observability contract for software attributes (docs/book/src/plane/attributes.md):
 # the switchboard anoint-* / mint-anoint probes, the shipped
 # share/dtrace/switchboard-anoint script, and the bsdinstruments profile
-# clauses that consume them.  Source-tree greps, so these skip on an
-# installed system without the tree.
+# clauses that consume them.  Source greps against copies the test package
+# installs beneath srctree/, so no build machine source tree is needed.
 
 require_srctree()
 {
-	test -r "@SRCTOP@/usr.sbin/switchboard/anoint.c" ||
-	    atf_skip "source tree (@SRCTOP@) required for contract checks"
+	SRCTREE="$(atf_get_srcdir)/srctree"
+	test -d "${SRCTREE}" ||
+	    atf_skip "staged source files (${SRCTREE}) required for contract checks"
 }
 
 # The declaration of one probe in a provider .d joined onto one line
@@ -47,10 +48,10 @@ probe_contract_body()
 	local header profile provider src
 
 	require_srctree
-	src="@SRCTOP@/usr.sbin/switchboard"
+	src="${SRCTREE}/usr.sbin/switchboard"
 	provider="${src}/switchboard_provider.d"
 	header="${src}/switchboard_probes.h"
-	profile="@SRCTOP@/cddl/usr.sbin/bsdinstruments/profiles/capability-services.d"
+	profile="${SRCTREE}/cddl/usr.sbin/bsdinstruments/profiles/capability-services.d"
 
 	# Declared, with the documented arity.
 	check_arity "${provider}" anoint__deny 3
@@ -178,8 +179,8 @@ anoint_script_shipped_body()
 	local makefile script
 
 	require_srctree
-	script="@SRCTOP@/share/dtrace/switchboard-anoint"
-	makefile="@SRCTOP@/share/dtrace/Makefile"
+	script="${SRCTREE}/share/dtrace/switchboard-anoint"
+	makefile="${SRCTREE}/share/dtrace/Makefile"
 
 	test -r "${script}" || atf_fail "missing ${script}"
 	atf_check -s exit:0 -o ignore grep -E \
@@ -218,7 +219,7 @@ anoint_script_parses_body()
 	local script zflag
 
 	require_srctree
-	script="@SRCTOP@/share/dtrace/switchboard-anoint"
+	script="${SRCTREE}/share/dtrace/switchboard-anoint"
 	test -r "${script}" || atf_fail "missing ${script}"
 	[ "@MK_DTRACE@" = "yes" ] || atf_skip "built without DTrace"
 	command -v dtrace >/dev/null 2>&1 || atf_skip "dtrace(1) not available"

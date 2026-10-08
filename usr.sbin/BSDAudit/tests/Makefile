@@ -35,8 +35,26 @@ CFLAGS.session_test+=	-I${SRCTOP}/sys
 SRCS.session_test=	session_test.c auditcmp.c auditcmp_rate.c auditcmp_submit.c
 LIBADD.session_test=	auditcmp bsm channel service
 NO_SHARED.session_test=	yes
-ATF_TESTS_SH_SED_bundle_test+=	-e 's,@SRCTOP@,${SRCTOP},g'
-ATF_TESTS_SH_SED_bundle_test+=	-e 's,@OBJTOP@,${OBJTOP},g'
 ATF_TESTS_SH_SED_bundle_test+=	-e 's,@MK_DTRACE@,${MK_DTRACE},g'
+
+# The shell contract cases read these source files.  Install them beneath
+# ${TESTSDIR}/srctree so the installed tests do not depend on the build
+# machine's source tree.
+SRCTREE_FILES=	contrib/openbsm/etc/audit_event \
+		contrib/openbsm/libbsm/bsm_wrappers.c \
+		sys/bsm/audit_kevents.h \
+		sys/kern/syscalls.master \
+		sys/security/audit/audit_syscalls.c \
+		usr.sbin/BSDAudit/auditcmp.c \
+		usr.sbin/BSDAudit/auditcmp_policy.c \
+		usr.sbin/BSDAudit/auditcmp_policy.h \
+		usr.sbin/BSDAudit/bsdaudit_provider.d \
+		usr.sbin/BSDAudit/capbundle/bsdaudit.ucl
+.for _dir in ${SRCTREE_FILES:H:O:u}
+FILESGROUPS+=	SRCTREE_${_dir:S,/,_,g}
+SRCTREE_${_dir:S,/,_,g}=	${SRCTREE_FILES:M${_dir}/*:N${_dir}/*/*:S,^,${SRCTOP}/,}
+SRCTREE_${_dir:S,/,_,g}DIR=	${TESTSDIR}/srctree/${_dir}
+SRCTREE_${_dir:S,/,_,g}PACKAGE=	${PACKAGE}
+.endfor
 
 .include <bsd.test.mk>

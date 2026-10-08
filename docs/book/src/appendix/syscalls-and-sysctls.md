@@ -255,7 +255,11 @@ adds `SYF_CAPREQUIRED`; `sys/sys/procdesc.h` adds `PDF_SELF`.
 
 `sys/sys/file.h`: `DTYPE_MAC_CAPABILITY` (128), `DTYPE_ENVFD` (129),
 `DTYPE_ZFSHANDLE` (130), `DTYPE_LINUXPIDFD` (131), `DTYPE_LINUXSIGNALFD`
-(132), `DTYPE_LINUXPERF` (133). libprocstat, fstat and sysdecode know all of them.
+(132), `DTYPE_LINUXPERF` (133). `sys/sys/user.h` adds the matching `kinfo_file`
+types `KF_TYPE_MAC_CAPABILITY` (128), `KF_TYPE_ENVFD` (129) and
+`KF_TYPE_ZFSHANDLE` (130), which libprocstat and fstat know; a Linux pidfd
+reports as `KF_TYPE_PROCDESC`, and a Linux signalfd or perf descriptor as
+`KF_TYPE_UNKNOWN`.
 
 ### Sockets
 

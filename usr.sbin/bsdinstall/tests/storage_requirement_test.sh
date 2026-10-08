@@ -1,11 +1,19 @@
 #!/usr/bin/env atf-sh
 
+# Source-only fixtures (the manual page source and the release tooling) are
+# installed beneath srctree/ next to this program; the installer scripts are
+# checked where bsdinstall installs them.
+srctree()
+{
+	printf '%s' "$(atf_get_srcdir)/srctree"
+}
+
 atf_test_case installer_places_zfs_requirement_at_partitioning
 installer_places_zfs_requirement_at_partitioning_body()
 {
-	start="@SRCTOP@/usr.sbin/bsdinstall/startbsdinstall"
-	auto="@SRCTOP@/usr.sbin/bsdinstall/scripts/auto"
-	manual="@SRCTOP@/usr.sbin/bsdinstall/bsdinstall.8"
+	start="/usr/libexec/bsdinstall/startbsdinstall"
+	auto="/usr/libexec/bsdinstall/auto"
+	manual="$(srctree)/usr.sbin/bsdinstall/bsdinstall.8"
 
 	atf_check -s exit:1 -o empty -e empty grep \
 	    -E 'OpenZFS|bsdfilesystem' "$start"
@@ -20,9 +28,9 @@ installer_places_zfs_requirement_at_partitioning_body()
 atf_test_case third_party_software_has_separate_dataset
 third_party_software_has_separate_dataset_body()
 {
-	zfsboot="@SRCTOP@/usr.sbin/bsdinstall/scripts/zfsboot"
-	manual="@SRCTOP@/usr.sbin/bsdinstall/bsdinstall.8"
-	vmimage="@SRCTOP@/release/tools/vmimage.subr"
+	zfsboot="/usr/libexec/bsdinstall/zfsboot"
+	manual="$(srctree)/usr.sbin/bsdinstall/bsdinstall.8"
+	vmimage="$(srctree)/release/tools/vmimage.subr"
 
 	atf_check -s exit:0 -o ignore grep -Eq \
 	    '^[[:space:]]*/usr/local[[:space:]]+mountpoint=/usr/local$' \
@@ -41,7 +49,7 @@ third_party_software_has_separate_dataset_body()
 atf_test_case capability_runtime_is_ephemeral
 capability_runtime_is_ephemeral_body()
 {
-	zfsboot="@SRCTOP@/usr.sbin/bsdinstall/scripts/zfsboot"
+	zfsboot="/usr/libexec/bsdinstall/zfsboot"
 
 	atf_check -s exit:0 -o ignore grep -F \
 	    'tmpfs /Capabilities/Run tmpfs rw,mode=0700 0 0' "$zfsboot"

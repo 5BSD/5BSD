@@ -1,1 +1,0 @@
-general { pidfile = "/tmp/x.pid"; el = 3; daemonize = true; adapters = ["ubt0"]; }

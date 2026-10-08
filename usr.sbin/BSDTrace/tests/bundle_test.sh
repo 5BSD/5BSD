@@ -1,13 +1,14 @@
 #!/usr/libexec/atf-sh
 
-# These cases assert source- and object-tree contracts (grep the daemon
-# sources, syscall tables and DTrace providers; inspect the built binary).
-# Those trees are absent on an installed system, so skip cleanly there rather
-# than failing on missing files.
+# The contract cases grep the daemon sources and DTrace providers.  The test
+# package installs those files beneath srctree/ next to this program, so an
+# installed test needs no build machine source tree.  The manifest case
+# assembles a bundle from the installed artifacts.
 require_srctree()
 {
-	test -d "@SRCTOP@" ||
-	    atf_skip "source tree (@SRCTOP@) required for contract checks"
+	SRCTREE="$(atf_get_srcdir)/srctree"
+	test -d "${SRCTREE}" ||
+	    atf_skip "staged source files (${SRCTREE}) required for contract checks"
 }
 
 atf_test_case manifest cleanup
@@ -17,22 +18,26 @@ manifest_head()
 }
 manifest_body()
 {
-	srcdir="@SRCTOP@/usr.sbin/BSDTrace"
-	objdir="@OBJTOP@/usr.sbin/BSDTrace"
-	switchboardctl="${SWITCHBOARDCTL:-@OBJTOP@/usr.sbin/switchboardctl/tests/switchboardctl_test_bin}"
+	installed="/Capabilities/System/Trace.cap"
+	installed_unit="${installed}/Units/bsdtrace.unit"
+	switchboardctl="${SWITCHBOARDCTL:-$(atf_get_srcdir)/../switchboardctl/switchboardctl_test_bin}"
 	bundle="${PWD}/Trace.cap"
 	unit="${bundle}/Units/bsdtrace.unit"
 
 	test -x "${switchboardctl}" || atf_skip "test switchboardctl is required"
+	test -x "${installed_unit}/bin/BSDTrace" ||
+	    atf_skip "installed Trace.cap bundle is required"
 	mkdir -p "${unit}/bin"
-	cp "${srcdir}/capbundle/Bundle.ucl" "${bundle}/Bundle.ucl"
-	cp "${objdir}/BSDTrace" "${unit}/bin/BSDTrace"
+	cp "${installed}/Bundle.ucl" "${bundle}/Bundle.ucl"
+	cp "${installed_unit}/bin/BSDTrace" "${unit}/bin/BSDTrace"
 	if [ "@MK_DTRACE@" = "yes" ]; then
-		atf_check -s exit:0 -o match:'.SUNW_dof' readelf -S "${objdir}/BSDTrace"
+		atf_check -s exit:0 -o match:'.SUNW_dof' \
+		    readelf -S "${installed_unit}/bin/BSDTrace"
 	else
-		atf_check -s exit:0 -o not-match:'.SUNW_dof' readelf -S "${objdir}/BSDTrace"
+		atf_check -s exit:0 -o not-match:'.SUNW_dof' \
+		    readelf -S "${installed_unit}/bin/BSDTrace"
 	fi
-	cp "${srcdir}/capbundle/bsdtrace.ucl" "${unit}/Unit.ucl"
+	cp "${installed_unit}/Unit.ucl" "${unit}/Unit.ucl"
 	chmod 0555 "${bundle}" "${bundle}/Units" "${unit}" "${unit}/bin" \
 	    "${unit}/bin/BSDTrace"
 	chmod 0444 "${bundle}/Bundle.ucl" "${unit}/Unit.ucl"
@@ -61,7 +66,7 @@ atf_test_case bounded_worker_lifecycle
 bounded_worker_lifecycle_body()
 {
 	require_srctree
-	source="@SRCTOP@/usr.sbin/BSDTrace/tracecmp.c"
+	source="${SRCTREE}/usr.sbin/BSDTrace/tracecmp.c"
 	for token in TRACECMP_MAX_WORKERS EVFILT_PROCDESC NOTE_EXIT \
 	    service_provider_quiescing service_provider_quiesce_complete \
 	    pdkill pdwait; do
@@ -71,15 +76,15 @@ bounded_worker_lifecycle_body()
 observability_contract_body()
 {
 	require_srctree
-	provider="@SRCTOP@/usr.sbin/BSDTrace/bsdtrace_provider.d"
-	client="@SRCTOP@/lib/libtracecmp/tracecmp_provider.d"
+	provider="${SRCTREE}/usr.sbin/BSDTrace/bsdtrace_provider.d"
+	client="${SRCTREE}/lib/libtracecmp/tracecmp_provider.d"
 	for probe in session__start session__end delegate reject; do
 		atf_check -s exit:0 -o ignore grep "probe ${probe}" "$provider"
 	done
 	for macro in BSDTRACE_PROBE_SESSION_START BSDTRACE_PROBE_SESSION_END \
 	    BSDTRACE_PROBE_DELEGATE BSDTRACE_PROBE_REJECT; do
 		atf_check -s exit:0 -o ignore grep "$macro" \
-		    "@SRCTOP@/usr.sbin/BSDTrace/tracecmp.c"
+		    "${SRCTREE}/usr.sbin/BSDTrace/tracecmp.c"
 	done
 	for probe in open send receive reject; do
 		atf_check -s exit:0 -o ignore grep "probe ${probe}" "$client"
@@ -87,13 +92,13 @@ observability_contract_body()
 	for macro in TRACECMP_PROBE_OPEN TRACECMP_PROBE_SEND \
 	    TRACECMP_PROBE_RECEIVE TRACECMP_PROBE_REJECT; do
 		atf_check -s exit:0 -o ignore grep "$macro" \
-		    "@SRCTOP@/lib/libtracecmp/tracecmp.c"
+		    "${SRCTREE}/lib/libtracecmp/tracecmp.c"
 	done
 }
 security_contract_body()
 {
 	require_srctree
-	source="@SRCTOP@/usr.sbin/BSDTrace/tracecmp.c"
+	source="${SRCTREE}/usr.sbin/BSDTrace/tracecmp.c"
 	for token in CAP_XFER_ONCE CAP_CLOFORK_LOCKED \
 	    service_worker_enter_capability_mode \
 	    service_provider_enter_capability_mode \
@@ -110,7 +115,7 @@ security_contract_body()
 	done
 	atf_check -s exit:0 -o match:'TRACECMP_POLICY_PATH' \
 	    grep TRACECMP_POLICY_PATH \
-	    "@SRCTOP@/usr.sbin/BSDTrace/tracecmp_policy.h"
+	    "${SRCTREE}/usr.sbin/BSDTrace/tracecmp_policy.h"
 }
 
 atf_init_test_cases()
