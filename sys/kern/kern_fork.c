@@ -810,7 +810,6 @@ do_fork(struct thread *td, struct fork_req *fr, struct proc *p2, struct thread *
 	 * Tell any interested parties about the new process.
 	 */
 	knote_fork(p1->p_klist, p2->p_pid);
-	procdesc_knote(p1, NOTE_FORK);
 
 	PROC_UNLOCK(p1);
 	SDT_PROBE3(proc, , , create, p2, p1, fr->fr_flags);

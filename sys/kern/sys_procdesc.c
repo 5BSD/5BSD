@@ -347,9 +347,9 @@ procdesc_fork(struct proc *p, pid_t child_pid)
 
 /*
  * procdesc_knote() - deliver a kqueue event to procdesc listeners.
- * Used by fork, exec, cap_enter, jail_attach, credential change, and
- * chroot paths to notify NOTE_FORK, NOTE_EXEC, NOTE_CAPMODE,
- * NOTE_JAILED, NOTE_SETUID, and NOTE_CHROOT.
+ * Used by exec, cap_enter, jail_attach, credential change, and chroot
+ * paths to notify NOTE_EXEC, NOTE_CAPMODE, NOTE_JAILED, NOTE_SETUID,
+ * and NOTE_CHROOT.  NOTE_FORK is delivered by procdesc_fork().
  *
  * Caller must hold PROC_LOCK(p).  p_procdesc is an (e) field
  * (protected by proctree_lock).  To respect the lock annotation
