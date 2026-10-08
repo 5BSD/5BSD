@@ -599,6 +599,7 @@ mac_capability_instance_do_recvmsg(struct mac_capability_instance *s, struct fil
 		FILEDESC_XLOCK(fdesc);
 		for (installed = 0; installed < nfds_out; installed++) {
 			struct filecaps *fc = &msg->cm_fcaps[installed];
+			struct fdinstall_prop prop;
 
 			error = fdalloc(td, 0, &fdbuf[installed]);
 			if (error != 0)
@@ -606,17 +607,20 @@ mac_capability_instance_do_recvmsg(struct mac_capability_instance *s, struct fil
 			if (fc->fc_rights.cr_rights[0] == 0 &&
 			    fc->fc_rights.cr_rights[1] == 0)
 				fc = NULL;
-			_finstall(fdesc, msg->cm_fds[installed],
-			    fdbuf[installed], 0, fc);
-			fdesc->fd_ofiles[fdbuf[installed]].fde_xfer_state =
-			    msg->cm_xfer_state[installed];
-			fdesc->fd_ofiles[fdbuf[installed]].fde_cloexec_state =
+			/*
+			 * Publish the sender's transfer, exec/fork and
+			 * capability-mode state with the file, so no
+			 * lockless lookup sees the entry without them.
+			 */
+			prop.fip_xfer_state = msg->cm_xfer_state[installed];
+			prop.fip_cloexec_state =
 			    msg->cm_cloexec_state[installed];
-			fdesc->fd_ofiles[fdbuf[installed]].fde_clofork_state =
+			prop.fip_clofork_state =
 			    msg->cm_clofork_state[installed];
-			fdesc->fd_ofiles[fdbuf[installed]].fde_flags |=
-			    msg->cm_fde_flags[installed] &
+			prop.fip_fde_flags = msg->cm_fde_flags[installed] &
 			    (UF_MMAP_CAPMODE | UF_LOOKUP_CAPMODE);
+			_finstall_prop(fdesc, msg->cm_fds[installed],
+			    fdbuf[installed], 0, fc, &prop);
 		}
 		FILEDESC_XUNLOCK(fdesc);
 		if (installed < nfds_out) {
@@ -728,6 +732,7 @@ mac_capability_instance_ioctl(struct file *fp, u_long cmd, void *data,
 		uint8_t call_xfer_state[MAC_CAPABILITY_MAX_FDS];
 		uint8_t call_cloexec_state[MAC_CAPABILITY_MAX_FDS];
 		uint8_t call_clofork_state[MAC_CAPABILITY_MAX_FDS];
+		uint8_t call_fde_flags[MAC_CAPABILITY_MAX_FDS];
 		struct file *out_fds[MAC_CAPABILITY_MAX_FDS];
 		void *req_buf, *reply_buf;
 		int fdbuf[MAC_CAPABILITY_MAX_FDS];
@@ -881,6 +886,10 @@ mac_capability_instance_ioctl(struct file *fp, u_long cmd, void *data,
 						    fde->fde_cloexec_state;
 						call_clofork_state[i] =
 						    fde->fde_clofork_state;
+						call_fde_flags[i] =
+						    fde->fde_flags &
+						    (UF_MMAP_CAPMODE |
+						    UF_LOOKUP_CAPMODE);
 					}
 				}
 				FILEDESC_XUNLOCK(fdesc);
@@ -988,22 +997,29 @@ mac_capability_instance_ioctl(struct file *fp, u_long cmd, void *data,
 					FILEDESC_XLOCK(fdesc);
 					error = fdalloc(td, 0, &fdbuf[i]);
 					if (error == 0) {
-						_finstall(fdesc, out_fds[i],
-						    fdbuf[i], 0, install_fcaps);
+						struct fdinstall_prop prop;
+
+						/*
+						 * A request fd echoed back
+						 * keeps its transfer, exec,
+						 * fork and capability-mode
+						 * state, published with the
+						 * file.
+						 */
 						if (j >= 0) {
-							fdesc->fd_ofiles[
-							    fdbuf[i]].
-							    fde_xfer_state =
+							prop.fip_xfer_state =
 							    call_xfer_state[j];
-							fdesc->fd_ofiles[
-							    fdbuf[i]].
-							    fde_cloexec_state =
+							prop.fip_cloexec_state =
 							    call_cloexec_state[j];
-							fdesc->fd_ofiles[
-							    fdbuf[i]].
-							    fde_clofork_state =
+							prop.fip_clofork_state =
 							    call_clofork_state[j];
+							prop.fip_fde_flags =
+							    call_fde_flags[j];
 						}
+						_finstall_prop(fdesc,
+						    out_fds[i], fdbuf[i], 0,
+						    install_fcaps,
+						    j >= 0 ? &prop : NULL);
 					}
 					FILEDESC_XUNLOCK(fdesc);
 					if (error != 0)
