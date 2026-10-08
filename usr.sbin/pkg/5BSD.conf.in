@@ -1,5 +1,6 @@
-# Local 5BSD base packages; there is no public 5BSD package service.
-# A standard build from /usr/src publishes make packages output at this URL.
+# Combined 5BSD base and matching hardware packages.
+# make packages stages base output; hardware-packages.py publish activates
+# a complete verified generation at this URL. No public service exists.
 # No override is needed: select this repository explicitly with
 #   pkg update -f -r 5BSD-base
 #   pkg upgrade -r 5BSD-base

@@ -55,7 +55,7 @@ target_kernel_and_dependencies_body()
 	setup
 	atf_check -s exit:0 -o empty -e empty sh "${HELPER}" test-firmware
 	atf_check -s exit:0 -o ignore grep -F '5BSD-hw-dependent' state/calls
-	atf_check -s exit:0 -o ignore grep -F 'install -U -qy -r 5BSD-hardware 5BSD-hw-test-firmware' state/calls
+	atf_check -s exit:0 -o ignore grep -F 'install -U -qy -r 5BSD-base 5BSD-hw-test-firmware' state/calls
 }
 
 atf_test_case mismatch_rejected
@@ -79,7 +79,7 @@ stale_catalog_revalidated_body()
 {
 	setup
 	atf_check -s exit:0 -o empty -e empty env TEST_MODE=retry sh "${HELPER}" test-firmware
-	atf_check -s exit:0 -o inline:'2\n' grep -c 'update -fq -r 5BSD-hardware' state/calls
+	atf_check -s exit:0 -o inline:'2\n' grep -c 'update -fq -r 5BSD-base' state/calls
 	atf_check -s exit:0 -o inline:'2\n' grep -c '%At=%Av 5BSD-hw-dependent' state/calls
 }
 
@@ -95,8 +95,8 @@ offline_repository_persists_body()
 	    BSDINSTALL_HARDWARE_MEDIA="$(pwd)/media" \
 	    BSDINSTALL_HARDWARE_INSTALL="${HELPER}" \
 	    sh @SRCTOP@/usr.sbin/bsdinstall/scripts/firmware-fetch test-firmware
-	atf_check -s exit:0 cmp media/test.pkg root/usr/5bsd-packages/hardware/test.pkg
-	atf_check -s exit:0 -o ignore grep 'enabled: yes' root/etc/pkg/5BSD-hardware.conf
+	atf_check -s exit:0 cmp media/test.pkg root/usr/obj/usr/src/repo/test.pkg
+	atf_check -s exit:0 -o ignore grep 'enabled: no' root/etc/pkg/5BSD-base.conf
 }
 
 atf_test_case fwget_graphics_and_usb
@@ -200,7 +200,7 @@ offline_repository_without_devices_body()
 	    BSDINSTALL_HARDWARE_MEDIA="$(pwd)/media" \
 	    BSDINSTALL_HARDWARE_INSTALL=/does-not-exist \
 	    sh @SRCTOP@/usr.sbin/bsdinstall/scripts/firmware-fetch
-	atf_check -s exit:0 cmp media/test.pkg root/usr/5bsd-packages/hardware/test.pkg
+	atf_check -s exit:0 cmp media/test.pkg root/usr/obj/usr/src/repo/test.pkg
 	atf_check -s exit:1 test -f state/calls
 }
 
@@ -221,7 +221,7 @@ automatic_selection_body()
 	export BSDINSTALL_HARDWARE_INSTALL="${HELPER}"
 	export BSDINSTALL_TMPETC=$(pwd)/fragments
 	atf_check -s exit:0 -o empty -e ignore sh @SRCTOP@/usr.sbin/bsdinstall/scripts/firmware-fetch --auto
-	atf_check -s exit:0 -o ignore grep -F 'install -U -qy -r 5BSD-hardware 5BSD-hw-test-firmware 5BSD-hw-gpu-firmware-intel-kmod-alderlake' state/calls
+	atf_check -s exit:0 -o ignore grep -F 'install -U -qy -r 5BSD-base 5BSD-hw-test-firmware 5BSD-hw-gpu-firmware-intel-kmod-alderlake' state/calls
 	atf_check -s exit:0 -o ignore grep -F i915kms fragments/rc.conf.hardware
 	rm state/calls
 	atf_check -s exit:42 -o empty -e empty env TEST_DETECT_FAIL=yes sh @SRCTOP@/usr.sbin/bsdinstall/scripts/firmware-fetch --auto

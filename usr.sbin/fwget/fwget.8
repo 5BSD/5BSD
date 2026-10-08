@@ -54,18 +54,18 @@ and
 .Cm usb
 .El
 .Sh FILES
-.Bl -tag -width /etc/pkg/5BSD-hardware.conf
-.It Pa /etc/pkg/5BSD-hardware.conf
-Configuration for the release-specific hardware repository.
+.Bl -tag -width /etc/pkg/5BSD.conf
+.It Pa /etc/pkg/5BSD.conf
+Configuration for the combined base and hardware repository.
 .It Pa /etc/rc.conf.d/kld
 GPU boot activation saved after successful installation.
 Existing module selections are preserved.
-.It Pa /usr/5bsd-packages/hardware
+.It Pa /usr/obj/usr/src/repo
 Offline hardware repository retained by the installer.
 .El
 .Sh NOTES
 Packages are installed from the
-.Cm 5BSD-hardware
+.Cm 5BSD-base
 repository after checking their kernel identity and dependency closure against
 .Pa /boot/kernel/kernel .
 A mismatch fails without falling back to

@@ -22,7 +22,7 @@ plane compiled in, no `capability` identity in a foreign `master.passwd`,
 and no `/Capabilities` in a foreign runtime package. Disabling
 `FreeBSD-base` is therefore the first step everywhere below;
 `FreeBSD-ports` stays enabled. Keep `FreeBSD-ports-kmods` disabled;
-kernel-bound drivers come from the matching `5BSD-hardware` repository.
+kernel-bound drivers come from the combined `5BSD-base` repository.
 
 ## The standard repository needs no configuration
 
@@ -81,17 +81,11 @@ make -j$(sysctl -n hw.ncpu) buildworld buildkernel
 make -j$(sysctl -n hw.ncpu) packages PKG_CMD=/usr/local/sbin/pkg-static
 ```
 
-`make packages` writes `repo/${ABI}/<version>/` and moves the `latest`
-symlink; if you hand-built with `create-packages` instead, run `pkg repo` on
-the directory and move the symlink yourself. Then, on the target:
-
-```sh
-bectl create pre-upgrade
-pkg update -f -r 5BSD-base
-pkg upgrade -n -r 5BSD-base
-pkg upgrade -r 5BSD-base
-reboot
-```
+`make packages` writes `repo/${ABI}/<version>/` and updates `latest-built`.
+It does **not** change the published `latest` pointer. Build matching hardware
+separately, then publish the complete generation as described below before
+running an upgrade. A failed build or publication leaves the previous update
+repository selected.
 
 With the default ZFS layout, the root boot environment contains the base
 system, `/Capabilities/System`, and `/var/db/pkg`. The parent `zroot/var`
@@ -103,29 +97,45 @@ package database with base; do not restore it separately after BE rollback.
 Check `df /var/db/pkg` and `zfs list -o name,mountpoint,canmount,mounted` for
 custom layouts. A BE does not roll back ports files in shared `/usr/local`.
 
-### Include matching hardware when replacing the kernel
+### Publish base and matching hardware together
 
-The base build packages in-tree kernel modules. External drivers such as
-DRM require a matching hardware collection built against the new kernel.
-Publish that collection at the shipped hardware URL,
-`/usr/5bsd-packages/hardware`, or configure its actual location. Use the
-release hardware tooling to stage the kernel identity dependency into the
-base repository; see [Packaging](../develop/packaging.md).
-Upgrade base and hardware in one transaction, after creating the BE:
+Use the maintained build targets with the custom ports checkout selected by
+`PORTSDIR`. When base packages already exist:
 
 ```sh
-pkg update -f -r 5BSD-base -r 5BSD-hardware
-pkg upgrade -n -r 5BSD-base -r 5BSD-hardware
-pkg upgrade -r 5BSD-base -r 5BSD-hardware
+cd /usr/src
+make hardware-packages KERNCONF=GENERIC-NODEBUG \
+    PORTSDIR=/usr/ports
+make publish-packages
+```
+
+Use the kernel configuration that was built. The hardware step uses unprivileged ports staging and does not install
+anything on the host. External build prerequisites must be prepared separately. See
+[Building](building.md) for the read-only preflight and path overrides.
+`make system-packages` combines base packaging, hardware packaging and
+publication after world and kernel have been built.
+
+Publication checks the kernel identity, merges hardware archives with base,
+rebuilds the catalogue, and atomically changes `latest` only after verification
+succeeds. Inputs remain untouched. Set `HARDWARE_SIGNING_KEY` to sign the final
+repository. Installer images can consume the resulting matching hardware
+repository through their existing `HARDWARE_REPO` setting.
+
+On a system previously using a separate `5BSD-hardware` repository, disable
+that entry (including any local override). Keep the base repository's standard
+URL. Both kernel and driver updates now use one transaction:
+
+```sh
+bectl create pre-upgrade
+pkg update -f -r 5BSD-base
+pkg upgrade -n -r 5BSD-base
+pkg upgrade -r 5BSD-base
 reboot
 ```
 
-A hash-named old hardware identity may be replaced by the new identity.
-Review the final plan for matching kernel/driver versions and unexpected
-application removals. Do not use upstream FreeBSD kernel modules as a
-substitute. An automated upgrade wrapper can perform these same steps,
-but `make packages` publishes artifacts; it does not upgrade or reboot the
-running host.
+The exact-kernel identity dependency remains mandatory. Review the transaction
+for matching kernel/driver versions and unexpected removals. Do not substitute
+upstream FreeBSD kernel modules. Publishing does not install or reboot.
 
 The reboot is not optional after a kernel or switchboard upgrade. The
 kernel package replaces `/boot/kernel`, and switchboard, capsule and the

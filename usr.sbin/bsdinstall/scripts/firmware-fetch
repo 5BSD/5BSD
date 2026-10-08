@@ -2,8 +2,8 @@
 # SPDX-License-Identifier: BSD-2-Clause
 set -eu
 : ${BSDINSTALL_CHROOT:=/mnt}
-: ${BSDINSTALL_FIRMWARE_REPO:=5BSD-hardware}
-: ${BSDINSTALL_HARDWARE_MEDIA:=/usr/5bsd-packages/hardware}
+: ${BSDINSTALL_FIRMWARE_REPO:=5BSD-base}
+: ${BSDINSTALL_HARDWARE_MEDIA:=/usr/obj/usr/src/repo}
 : ${BSDINSTALL_HARDWARE_INSTALL:=/usr/libexec/fwget/hardware-install}
 
 # Scripted installs select the same packages as the interactive checklist.
@@ -16,14 +16,14 @@ fi
 
 # Keep an offline repository on the target so fwget also works after reboot.
 # Do not fall back to FreeBSD's module repository on a missing package.
-if [ -f "${BSDINSTALL_HARDWARE_MEDIA}/hardware.json" ]; then
-	dest="${BSDINSTALL_CHROOT%/}/usr/5bsd-packages/hardware"
+if [ -d "${BSDINSTALL_HARDWARE_MEDIA}" ]; then
+	dest="${BSDINSTALL_CHROOT%/}/usr/obj/usr/src/repo"
 	mkdir -p "${dest}" "${BSDINSTALL_CHROOT%/}/etc/pkg"
 	cp -R "${BSDINSTALL_HARDWARE_MEDIA}/." "${dest}/"
-	cat >"${BSDINSTALL_CHROOT%/}/etc/pkg/5BSD-hardware.conf" <<-'EOF'
-	5BSD-hardware: {
-	  url: "file:///usr/5bsd-packages/hardware",
-	  enabled: yes
+	cat >"${BSDINSTALL_CHROOT%/}/etc/pkg/5BSD-base.conf" <<-'EOF'
+	5BSD-base: {
+	  url: "file:///usr/obj/usr/src/repo/${ABI}/latest",
+	  enabled: no
 	}
 	EOF
 fi
@@ -60,7 +60,7 @@ if [ -z "${FWGET_PKG:-}" ] && ! ASSUME_ALWAYS_YES=no pkg -v </dev/null >/dev/nul
 	export FWGET_PKG
 fi
 
-if [ ! -f "${BSDINSTALL_HARDWARE_MEDIA}/hardware.json" ]; then
+if [ ! -d "${BSDINSTALL_HARDWARE_MEDIA}" ]; then
 	echo "No offline 5BSD hardware repository on this media; attempting configured repository ${BSDINSTALL_FIRMWARE_REPO}." >&2
 fi
 

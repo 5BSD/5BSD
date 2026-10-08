@@ -8,6 +8,7 @@ or module loading is performed. See docs/book/src/develop/packaging.md.
 """
 import argparse
 import fnmatch
+import fcntl
 import hashlib
 import json
 import os
@@ -15,11 +16,20 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 
 
 def run(*args, **kwargs):
-    return subprocess.run([str(a) for a in args], check=True, text=True, **kwargs)
+    try:
+        return subprocess.run([str(a) for a in args], check=True, text=True, **kwargs)
+    except subprocess.CalledProcessError as error:
+        # Queries capture their output for parsing, but failures must remain
+        # visible in the build log (loader and database diagnostics included).
+        for output in (error.stdout, error.stderr):
+            if output:
+                print(output, file=sys.stderr, end='' if output.endswith('\n') else '\n')
+        raise
 
 
 def manifest(path):
@@ -77,6 +87,8 @@ def create(pkg, output, meta, payload=None):
 def inventory(directory):
     result = {}
     for p in sorted(directory.glob('*.pkg')):
+        if p.name in ('data.pkg', 'packagesite.pkg', 'meta.pkg'):
+            continue  # pkg repository catalogues are not package archives.
         m = manifest(p)
         if m['name'] in result:
             raise ValueError('duplicate package: ' + m['name'])
@@ -185,7 +197,7 @@ def seal_with_firmware(args, firmware_output):
         raise ValueError('output must be empty: ' + str(out))
     out.mkdir(parents=True, exist_ok=True)
     km = manifest(args.kernel_package)
-    if not re.fullmatch(r'5BSD-kernel-[a-z0-9]+', km['name']):
+    if not re.fullmatch(r'5BSD-kernel-[a-z0-9]+(?:-[a-z0-9]+)*', km['name']):
         raise ValueError('expected a 5BSD kernel package')
     digest = kernel_hash(args.kernel_package)
     token = '5BSD-hardware-abi-' + digest
@@ -339,29 +351,112 @@ def verify(directory, kernel=None):
     return info
 
 
+def merge_hardware(repository, base, pkg):
+    """Assemble an unpublished repository, preserving exact kernel identity."""
+    info = verify(repository)
+    verify(repository, base / info['kernel_package'])
+    names = [r['file'] for r in info['packages'].values()] + [
+        info['kernel_package'], '5BSD-hardware-abi-' + info['kernel_sha256'] + '-1.pkg']
+    for name in names:
+        target = base / name
+        if (target.exists() and name != info['kernel_package'] and
+                sha256(target) != sha256(repository / name)):
+            raise ValueError('conflicting base/hardware archive: ' + name)
+        shutil.copy2(repository / name, target)
+    shutil.copy2(repository / 'hardware.json', base / 'hardware.json')
+    verify(base)
+    run(pkg, 'repo', base)
+    return info
+
+
+def publish(args):
+    """Publish a complete immutable generation, then atomically advance latest."""
+    base = args.base_repository.resolve(strict=True)
+    output = args.output.absolute()
+    parent = output.parent.resolve(strict=True)
+    output = parent / output.name
+    if output.name in ('latest', 'latest-built') or output.exists() or output.is_symlink():
+        raise ValueError('publication requires a new generation directory')
+    # Serialize publishers, including their final latest exchange. Building a
+    # base generation never writes this pointer.
+    with (parent / '.publish.lock').open('a') as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        if output.exists() or output.is_symlink():
+            raise ValueError('publication generation already exists')
+        info = verify(args.repository)
+        verify(args.repository, base / info['kernel_package'])
+        with tempfile.TemporaryDirectory(prefix='.publish-', dir=parent) as temp:
+            candidate = Path(temp) / 'repository'
+            candidate.mkdir()
+            packages = inventory(base)
+            for name, (archive, meta) in packages.items():
+                if not fnmatch.fnmatchcase(info['abi'], meta['abi']):
+                    raise ValueError('base package architecture mismatch: ' + name)
+                if ('/boot/kernel/kernel' in meta.get('files', {}) and
+                        archive.name != info['kernel_package']):
+                    raise ValueError('multiple kernel configurations in publication')
+                if name.startswith(('5BSD-hw-', '5BSD-hardware-abi-')):
+                    raise ValueError('base input already contains hardware packages')
+                shutil.copy2(archive, candidate / archive.name)
+            merge_hardware(args.repository, candidate, args.pkg)
+            # Check dependencies using the actual combined package manifests.
+            combined = inventory(candidate)
+            closure(combined, list(combined))
+            if args.signing_key:
+                run(args.pkg, 'repo', candidate, args.signing_key)
+            verify(candidate)
+            (candidate / 'publication.json').write_text(json.dumps({
+                'format': 1, 'kernel_sha256': info['kernel_sha256'],
+                'hardware_manifest_sha256': sha256(candidate / 'hardware.json'),
+                'package_count': len(combined),
+                'scope': 'complete base and matching hardware generation'}, indent=2) + '\n')
+            candidate.rename(output)
+            pointer = Path(temp) / 'latest'
+            pointer.symlink_to(output.name)
+            pointer.replace(parent / 'latest')
+    return output
+
+
 def stage(args):
     info = verify(args.repository, args.kernel_package)
     if args.base_repository:
-        verify(args.repository, args.base_repository / info['kernel_package'])
         base = args.base_repository.resolve()
-        # Replace the same-version kernel with one depending on the ABI token.
-        for name in (info['kernel_package'],
-                     '5BSD-hardware-abi-' + info['kernel_sha256'] + '-1.pkg'):
-            shutil.copy2(args.repository / name, base / name)
-        run(args.pkg, 'repo', base)
+        latest = base.parent / 'latest'
+        if latest.is_symlink() and latest.resolve() == base:
+            raise ValueError('cannot stage into a published generation; use publish')
+        merge_hardware(args.repository, base, args.pkg)
     if args.media:
         if sha256(args.media / 'boot/kernel/kernel') != info['kernel_sha256']:
             raise ValueError('live media kernel does not match the hardware repository')
-        dest = args.media / 'usr/5bsd-packages/hardware'
+        dest = args.media / 'usr/obj/usr/src/repo' / info['abi'] / 'media'
+        dest.mkdir(parents=True, exist_ok=True)
+        offline = args.media / 'usr/5bsd-packages/offline'
+        if offline.is_dir():
+            for archive in offline.glob('*.pkg'):
+                shutil.copy2(archive, dest / archive.name)
         shutil.copytree(args.repository, dest, dirs_exist_ok=True)
+        run(args.pkg, 'repo', dest)
+        latest = dest.parent / 'latest'
+        if latest.is_symlink():
+            latest.unlink()
+        latest.symlink_to('media')
         # Install firmware on the live media too: Wi-Fi is needed before the
         # target exists. Do not install the kernel package into this root.
         repos = args.media / 'etc/pkg'
         repos.mkdir(parents=True, exist_ok=True)
-        (repos / '5BSD-hardware.conf').write_text(
-            '5BSD-hardware: { url: "file:///usr/5bsd-packages/hardware", enabled: yes }\n')
+        (repos / '5BSD-base.conf').write_text(
+            '5BSD-base: { url: "file:///usr/obj/usr/src/repo/${ABI}/latest", enabled: no }\n')
         with (args.media / 'METALOG').open('a') as metalog:
-            metalog.write('./etc/pkg/5BSD-hardware.conf type=file uname=root gname=wheel mode=0644\n')
+            metalog.write('./etc/pkg/5BSD-base.conf type=file uname=root gname=wheel mode=0644\n')
+            for directory in [args.media / 'usr/obj', args.media / 'usr/obj/usr',
+                    args.media / 'usr/obj/usr/src', args.media / 'usr/obj/usr/src/repo']:
+                metalog.write('./' + str(directory.relative_to(args.media)) +
+                              ' type=dir uname=root gname=wheel mode=0755\n')
+            for path in sorted((args.media / 'usr/obj/usr/src/repo').rglob('*')):
+                name = './' + str(path.relative_to(args.media))
+                kind = ('type=link link=' + str(path.readlink()) if path.is_symlink()
+                        else 'type=dir mode=0755' if path.is_dir() else 'type=file mode=0644')
+                metalog.write(name + ' uname=root gname=wheel ' + kind + '\n')
         live = [r['package'] for n, r in info['packages'].items()
                 if n.startswith(('wifi-firmware-', 'gpu-firmware-')) or
                 n in ('iwmbt-firmware', 'rtlbt-firmware')]
@@ -370,7 +465,7 @@ def stage(args):
             # database, cache and repository configuration from the build host.
             with tempfile.TemporaryDirectory() as config:
                 Path(config, 'hardware.conf').write_text(
-                    '5BSD-hardware: { url: "file://' + str(args.repository.resolve()) +
+                    '5BSD-base: { url: "file://' + str(args.repository.resolve()) +
                     '", enabled: yes }\n')
                 target_options = ['-o', 'ABI=' + info['abi']]
                 if info.get('osversion'):
@@ -380,7 +475,7 @@ def stage(args):
                     '-o', 'PKG_DBDIR=' + str(args.media / 'var/db/pkg'),
                     '-o', 'PKG_CACHEDIR=' + str(args.media / 'var/cache/pkg'),
                     '-o', 'REPOS_DIR=' + config,
-                    'install', '-y', '-r', '5BSD-hardware', *live)
+                    'install', '-y', '-r', '5BSD-base', *live)
 
         # INSTALL_AS_USER suppresses pkg scripts, including kldxref. Build the
         # module index explicitly so the live kernel can locate firmware names.
@@ -411,12 +506,19 @@ def main():
     s.add_argument('--kernel-package', type=Path)
     s.add_argument('--base-repository', type=Path)
     s.add_argument('--media', type=Path)
-    for parser in (b, s):
+    pub = sub.add_parser('publish')
+    pub.add_argument('--repository', type=Path, required=True)
+    pub.add_argument('--base-repository', type=Path, required=True)
+    pub.add_argument('--output', type=Path, required=True)
+    pub.add_argument('--signing-key', type=Path)
+    for parser in (b, s, pub):
         parser.add_argument('--pkg', default='/usr/local/sbin/pkg-static')
     args = p.parse_args()
     try:
         if args.action == 'build':
             build(args)
+        elif args.action == 'publish':
+            publish(args)
         else:
             stage(args)
     except (ValueError, OSError, subprocess.CalledProcessError) as e:

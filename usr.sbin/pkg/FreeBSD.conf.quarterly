@@ -8,7 +8,7 @@
 #   echo "FreeBSD-ports-kmods: { enabled: no }" >> /usr/local/etc/pkg/repos/FreeBSD.conf
 #
 # FreeBSD-base and FreeBSD-ports-kmods are disabled by default.
-# Kernel modules must come from the matching 5BSD-hardware repository.
+# Kernel modules must come from the combined 5BSD-base repository.
 #
 
 FreeBSD-ports: {

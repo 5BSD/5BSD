@@ -105,12 +105,12 @@ make packages PKG_CMD=/usr/local/sbin/pkg-static
 `packages` stages world and kernel into `${OBJTOP}/worldstage` and
 `${OBJTOP}/kernelstage`, creates one package per plist, and signs the
 repository if `PKG_REPO_SIGNING_KEY` is set. The result lands in
-`${REPODIR}/${PKG_ABI}/${PKG_VERSION}` with a `latest` symlink, which with the
+`${REPODIR}/${PKG_ABI}/${PKG_VERSION}` with a `latest-built` symlink, which with the
 defaults is:
 
 ```
 /usr/obj/usr/src/repo/FreeBSD:16:amd64/<version>/
-/usr/obj/usr/src/repo/FreeBSD:16:amd64/latest -> <version>
+/usr/obj/usr/src/repo/FreeBSD:16:amd64/latest-built -> <version>
 ```
 
 The ABI string stays `FreeBSD:16:amd64` on purpose: ports packages from the
@@ -164,8 +164,50 @@ For objects built elsewhere, retain the same `MAKEOBJDIRPREFIX` and pass
 `REPODIR=/usr/obj/usr/src/repo` to `make packages` to publish at the standard
 location. This requires write access there but no world/kernel rebuild.
 Alternatively, use `docs/pkg/5BSD.conf.sample` to override the URL.
-`make packages` already creates the catalogue and updates `latest`; do not
-repeat those steps unless publishing modified archives by hand.
+`make packages` creates the base catalogue and updates `latest-built`, not
+`latest`. After building world and the selected kernel, `make system-packages`
+packages base, builds matching hardware from the custom ports tree, and
+publishes one complete generation. The native hardware stage uses unprivileged ports staging. It never installs
+packages on the build host. Declared external build dependencies must be
+prepared separately; unsupported prerequisites cause an explicit failure.
+
+```sh
+make -j$(sysctl -n hw.ncpu) buildworld
+make -j$(sysctl -n hw.ncpu) buildkernel KERNCONF=GENERIC-NODEBUG
+# Package as the normal build user.
+make -j$(sysctl -n hw.ncpu) system-packages KERNCONF=GENERIC-NODEBUG \
+    PORTSDIR=/usr/ports
+```
+
+`PORTSDIR` must contain the custom `https://github.com/5BSD/5BSD-ports.git`
+checkout, not a second hardware ports collection. `HARDWARE_PORT_LIST` selects a list of ports within that tree;
+it defaults to `release/tools/hardware-ports.${MACHINE_ARCH}`. `DISTDIR` can
+select an existing distfiles cache. Ports verifies fetched/cached distfiles.
+All hardware compilation uses the available logical CPUs.
+
+If base packages already exist, avoid repackaging them:
+
+```sh
+make hardware-packages-check KERNCONF=GENERIC-NODEBUG \
+    PORTSDIR=/usr/ports
+make hardware-packages KERNCONF=GENERIC-NODEBUG \
+    PORTSDIR=/usr/ports
+make publish-packages
+```
+
+The check target is read-only and does not require root. Hardware builds use
+world and source extracted from the completed base packages, plus matching
+kernel objects from `KERNBUILDDIR`; later edits to the source checkout do not
+silently change the packaged kernel source. Build work directories and per-port logs remain under the object/repository
+tree for diagnosis; HARDWARE_WORKDIR selects a fresh work directory. `BASE_REPOSITORY` defaults to
+`latest-built`; pin it to an explicit generation when running concurrent builds.
+`HARDWARE_REPO` and `COMPLETE_REPOSITORY` default to that generation with
+`.hardware` and `.complete` suffixes. Publication refuses existing outputs and
+advances `latest` atomically only after verification. `HARDWARE_SIGNING_KEY`
+optionally supplies the final repository signing key.
+
+[Upgrading](upgrading.md). It publishes one complete base/hardware generation
+and advances `latest` atomically; a failed build leaves the old update intact.
 
 [Upgrading](upgrading.md) documents the BE checkpoint, package preview,
 matching hardware collection, reboot and rollback. This chapter and that

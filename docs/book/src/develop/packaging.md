@@ -247,6 +247,7 @@ build's repository under `/usr/obj/usr/src/repo/${ABI}/latest`. Explicit
 cd /usr/src
 make -j$(sysctl -n hw.ncpu) buildworld buildkernel
 make packages PKG_CMD=/usr/local/sbin/pkg-static
+# Build matching hardware and publish the complete generation (see below).
 bectl create pre-upgrade
 pkg update -f -r 5BSD-base
 pkg upgrade -n -r 5BSD-base
@@ -254,7 +255,10 @@ pkg upgrade -r 5BSD-base
 reboot
 ```
 
-`make packages` creates the catalogue and updates `latest`. The repository
+`make packages` creates the base catalogue and updates `latest-built`.
+Before upgrading, build matching hardware and publish a complete generation
+with `release/scripts/hardware-packages.py publish`; see
+[Upgrading](../operations/upgrading.md). Only publication advances `latest`. The repository
 is `${REPODIR}/${PKG_ABI}/${PKG_VERSION}`, with `REPODIR` defaulting to
 `${OBJROOT}repo`. Set `REPODIR=/usr/obj/usr/src/repo` when publishing a build
 whose objects live elsewhere, or use the optional repository override
@@ -397,11 +401,12 @@ copy the collection to the standard location using bsdinstall's helper, then
 install packages selected for the machine:
 
 ```sh
-BSDINSTALL_CHROOT=/ BSDINSTALL_HARDWARE_MEDIA=/build/hardware-repo \
+BSDINSTALL_CHROOT=/ BSDINSTALL_HARDWARE_MEDIA=/build/complete-repo-root \
     /usr/libexec/bsdinstall/firmware-fetch --auto
 ```
 
-The source collection must be outside `/usr/5bsd-packages/hardware` for this
+The source is a complete ABI/generation repository tree with `latest`, as on
+release media. It must be outside `/usr/obj/usr/src/repo` for this
 copying step. Subsequent runs can use `fwget` directly. Successful GPU package
 installation records the selected driver in `/etc/rc.conf.d/kld`, preserving
 other module selections. During bsdinstall it instead writes the temporary
@@ -418,9 +423,9 @@ media staging installs the full live firmware selection and writes a METALOG.
 
 Publish the **repackaged** base kernel, identity package and complete hardware
 repository together. Do not publish the original unsealed kernel package over
-this repository. Sign the final pkg repositories with the release signing key
-and configure `5BSD-hardware` with that URL and signature verification on
-installed systems. The installer defaults to a retained offline repository,
+this repository. Use `hardware-packages.py publish` to assemble one immutable generation and
+atomically activate it. Sign the combined repository with `--signing-key` and
+configure only `5BSD-base` with its URL and signature verification. The installer defaults to a retained offline repository,
 which supports later fwget use but does not receive new releases automatically.
 Use a boot environment for upgrades. Existing systems with upstream module
 packages need a reviewed replacement transaction; the new installer does not

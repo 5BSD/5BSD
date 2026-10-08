@@ -1,0 +1,36 @@
+# SPDX-License-Identifier: BSD-2-Clause
+# Native hardware packaging: unprivileged ports staging, no host installation.
+PORTSDIR?= /usr/ports
+HARDWARE_PYTHON?= python3.12
+PKG_CMD?= /usr/local/sbin/pkg-static
+KERNCONF?= GENERIC
+REPODIR?= ${MAKEOBJDIRPREFIX:U/usr/obj}${.CURDIR}/repo
+HARDWARE_ABI!= ${PKG_CMD} config ABI
+BASE_REPOSITORY?= ${REPODIR}/${HARDWARE_ABI}/latest-built
+HARDWARE_REPO?= ${BASE_REPOSITORY:tA}.hardware
+COMPLETE_REPOSITORY?= ${BASE_REPOSITORY:tA}.complete
+KERNBUILDDIR?= ${MAKEOBJDIRPREFIX:U/usr/obj}${.CURDIR}/${MACHINE}.${MACHINE_ARCH}/sys/${KERNCONF}
+HARDWARE_PORT_LIST?= ${.CURDIR}/release/tools/hardware-ports.${MACHINE_ARCH}
+HARDWARE_WORKDIR?= ${HARDWARE_REPO}.work
+DISTDIR?= ${PORTSDIR}/distfiles
+
+hardware-packages hardware-packages-check: .PHONY
+	${HARDWARE_PYTHON} ${.CURDIR}/release/scripts/native-hardware.py \
+	    --base ${BASE_REPOSITORY:Q} --kernel-build ${KERNBUILDDIR:Q} \
+	    --ports ${PORTSDIR:Q} --profile ${HARDWARE_PORT_LIST:Q} \
+	    --work ${HARDWARE_WORKDIR:Q} --output ${HARDWARE_REPO:Q} \
+	    --distfiles ${DISTDIR:Q} --pkg ${PKG_CMD:Q} \
+	    ${.TARGET:Mhardware-packages-check:S/hardware-packages-check/--check/}
+
+publish-packages: .PHONY
+	${HARDWARE_PYTHON} ${.CURDIR}/release/scripts/hardware-packages.py publish \
+	    --repository ${HARDWARE_REPO:Q} --base-repository ${BASE_REPOSITORY:Q} \
+	    --output ${COMPLETE_REPOSITORY:Q} --pkg ${PKG_CMD:Q} \
+	    ${HARDWARE_SIGNING_KEY:D--signing-key ${HARDWARE_SIGNING_KEY:Q}}
+
+.ORDER: hardware-packages publish-packages
+
+system-packages: .PHONY
+	${MAKE} -C ${.CURDIR} packages
+	${MAKE} -C ${.CURDIR} hardware-packages
+	${MAKE} -C ${.CURDIR} publish-packages

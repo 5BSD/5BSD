@@ -301,7 +301,7 @@ pkgbase-repo:
 	        (echo "PKGBASE_PKG_PACKAGE requires OSVERSION $${pkgos}, newer than target $${targetos}; build pkg for the release world" >&2; false)
 	( ${IMAKE} -C ${WORLDDIR} packages PKG_CMD=${PKG_CMD:Q} \
 	    REPODIR=${.OBJDIR}/pkgbase-repo )
-	@pkgdir=$$(readlink pkgbase-repo/${PKG_ABI}/latest); \
+	@pkgdir=$$(readlink pkgbase-repo/${PKG_ABI}/latest-built); \
 	    cp ${PKGBASE_PKG_PACKAGE:Q} pkgbase-repo/${PKG_ABI}/$${pkgdir}/; \
 	    printf "version = 2;\n" > pkgbase-repo.meta; \
 	    ${PKG_CMD} repo -m pkgbase-repo.meta \
@@ -315,7 +315,7 @@ pkgbase-repo:
 
 .if !defined(WITHOUT_HARDWARE_PACKAGES) || empty(WITHOUT_HARDWARE_PACKAGES)
 	${HARDWARE_STAGE} --base-repository \
-	    ${.OBJDIR}/pkgbase-repo/${PKG_ABI}/latest
+	    ${.OBJDIR}/pkgbase-repo/${PKG_ABI}/latest-built
 .endif
 
 pkgbase-repo.tar: pkgbase-repo
@@ -324,7 +324,7 @@ pkgbase-repo.tar: pkgbase-repo
 pkgbase-repo-dir: pkgbase-repo
 	mkdir -p pkgbase-repo-dir
 	printf '5BSD-base: { url: "file://%s", enabled: yes }\n' \
-	    ${.OBJDIR}/pkgbase-repo/${PKG_ABI}/latest \
+	    ${.OBJDIR}/pkgbase-repo/${PKG_ABI}/latest-built \
 	    > pkgbase-repo-dir/5BSD-base.conf
 
 disc1:

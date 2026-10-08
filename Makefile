@@ -521,6 +521,10 @@ kernels: .PHONY
 worlds: .PHONY
 	@cd ${.CURDIR}; ${SUB_MAKE} UNIVERSE_TARGET=buildworld universe
 
+.if make(hardware-packages) || make(hardware-packages-check) || make(publish-packages) || make(system-packages)
+.include "${.CURDIR}/release/Makefile.hardware"
+.endif
+
 packages update-packages: .PHONY
 	${_+_}@cd ${.CURDIR}; ${_MAKE} DISTDIR=/ ${.TARGET}
 

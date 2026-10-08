@@ -3,7 +3,7 @@
 # Shared by fwget and bsdinstall. Check the target kernel, not the host kernel.
 set -eu
 : ${FWGET_ROOT:=/}
-: ${FWGET_REPOSITORY:=5BSD-hardware}
+: ${FWGET_REPOSITORY:=5BSD-base}
 : ${FWGET_PKG:=pkg}
 [ "$#" -gt 0 ] || exit 0
 
@@ -107,5 +107,5 @@ for attempt in 1 2; do
 	fi
 done
 echo "Unable to install matching 5BSD hardware packages from ${FWGET_REPOSITORY}: $*" >&2
-echo "Use release media containing /usr/5bsd-packages/hardware, or configure a 5BSD hardware repository for this release. FreeBSD binary modules are not a fallback." >&2
+echo "Use release media or a complete 5BSD-base repository for this release. FreeBSD binary modules are not a fallback." >&2
 exit 1
