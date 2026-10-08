@@ -824,11 +824,16 @@ kern_setcred(struct thread *const td, const u_int flags,
 	cred_set = proc_set_cred_enforce_proc_lim(p, new_cred);
 	if (cred_set) {
 		setsugid(p);
-		procdesc_knote(p, NOTE_SETUID);
 #ifdef RACCT
 		/* Adjust RACCT counters. */
 		racct_proc_ucred_changed(p, old_cred, new_cred);
 #endif
+		/*
+		 * 5BSD: notify procdesc listeners only after the credential
+		 * switch, including the RACCT transfer, is complete under
+		 * this one hold of the process lock.
+		 */
+		procdesc_knote(p, NOTE_SETUID);
 		to_free_cred = old_cred;
 		MPASS(error == 0);
 	} else {
@@ -956,10 +961,11 @@ kern_setcred_proc(struct thread *td, struct proc *p, u_int flags,
 	cred_set = proc_set_cred_enforce_proc_lim(p, new_cred);
 	if (cred_set) {
 		setsugid(p);
-		procdesc_knote(p, NOTE_SETUID);
 #ifdef RACCT
 		racct_proc_ucred_changed(p, old_cred, new_cred);
 #endif
+		/* See kern_setcred(). */
+		procdesc_knote(p, NOTE_SETUID);
 		to_free_cred = old_cred;
 	} else {
 #ifdef RACCT
