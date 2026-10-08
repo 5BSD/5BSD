@@ -292,7 +292,8 @@ See section 3.1.
 | fchmodat2 | flags 0 / AT_SYMLINK_NOFOLLOW / AT_EMPTY_PATH | mapped | NOFOLLOW on a symlink EOPNOTSUPP (Linux symlinks have no mode); other flags EINVAL |
 | execveat | AT_EMPTY_PATH + dfd, absolute path, dfd-relative name, AT_SYMLINK_NOFOLLOW | mapped | fexecve / execve / O_EXEC open relative to dfd; NOFOLLOW on a symlink ELOOP; directory with AT_EMPTY_PATH EACCES; bad dfd EBADF only when it matters; script-via-fd limitation reproduced |
 | renameat2 | RENAME_NOREPLACE | mapped | EEXIST on an existing target, names untouched; ENOENT for a missing source |
-| renameat2 | RENAME_EXCHANGE, RENAME_WHITEOUT | rejected-unimplementable | EINVAL: VOP_RENAME has no atomic swap / whiteout; the exclusive-flag combinations and unknown bits are EINVAL as Linux |
+| renameat2 | RENAME_EXCHANGE | mapped | AT_RENAME_EXCHANGE: atomic swap on filesystems that implement it (tmpfs); EOPNOTSUPP from others (UFS, ZFS) is reported as EINVAL as Linux does; ENOENT if either name is missing |
+| renameat2 | RENAME_WHITEOUT | rejected-unimplementable | EINVAL: VOP_RENAME has no overlay whiteout; the exclusive-flag combinations (EXCHANGE with NOREPLACE or WHITEOUT) and unknown bits are EINVAL as Linux |
 | fcntl | F_OFD_GETLK/SETLK/SETLKW (36-38) | rejected-unimplementable | EINVAL + log once; POSIX locks unaffected (backlog #20) |
 | fcntl | F_ADD_SEALS/F_GET_SEALS: SEAL_SEAL/SHRINK/GROW/WRITE | mapped | native memfd seals; EPERM on non-sealable memfd (reports SEAL_SEAL), EINVAL on a plain file |
 | fcntl | F_SEAL_FUTURE_WRITE, F_SEAL_EXEC | rejected-unimplementable | EINVAL (no native bit; backlog #21); unknown seal bits EINVAL and nothing added |

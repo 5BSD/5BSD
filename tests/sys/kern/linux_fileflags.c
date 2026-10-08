@@ -196,15 +196,18 @@ test(void)
 	if (renameat2(c, b, 0) != 0) return (7);
 	if (exists(c) != -ENOENT || exists(b) != 0) return (7);
 	/*
-	 * 8-9: RENAME_EXCHANGE needs an atomic swap the native VOP_RENAME
-	 * cannot do; it is deliberately rejected with the EINVAL Linux
-	 * returns on a filesystem without it.
+	 * 8-9: RENAME_EXCHANGE maps to AT_RENAME_EXCHANGE.  It swaps the
+	 * names on filesystems that implement it (e.g. tmpfs); elsewhere
+	 * the filesystem's EOPNOTSUPP is reported as the EINVAL Linux
+	 * returns on a filesystem without it.  Either way both names
+	 * still exist afterwards (checked in 14).
 	 */
 	fd = create(a);
 	if (fd < 0) return (8);
 	(void)call(SYS_close, fd, 0, 0, 0, 0, 0);
-	if (renameat2(a, b, RENAME_EXCHANGE) != -EINVAL) return (9);
-	/* 10: RENAME_WHITEOUT (overlayfs) is EINVAL for the same reason. */
+	r = renameat2(a, b, RENAME_EXCHANGE);
+	if (r != 0 && r != -EINVAL) return (9);
+	/* 10: RENAME_WHITEOUT (overlayfs) needs a whiteout; EINVAL. */
 	if (renameat2(a, b, RENAME_WHITEOUT) != -EINVAL) return (10);
 	/* 11: RENAME_NOREPLACE|RENAME_EXCHANGE is EINVAL (exclusive). */
 	if (renameat2(a, b, RENAME_NOREPLACE | RENAME_EXCHANGE) != -EINVAL)

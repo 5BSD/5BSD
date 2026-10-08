@@ -1301,41 +1301,49 @@ linux_renameat(struct thread *td, struct linux_renameat_args *args)
 int
 linux_renameat2(struct thread *td, struct linux_renameat2_args *args)
 {
-	int olddfd, newdfd;
-	u_int atflags;
+	int error, olddfd, newdfd;
+	u_int atflags, flags;
 
-	atflags = 0;
-	if ((args->flags & ~(LINUX_RENAME_EXCHANGE |
-	    LINUX_RENAME_NOREPLACE | LINUX_RENAME_WHITEOUT)) != 0)
-		return (EINVAL);
-	if ((args->flags & LINUX_RENAME_EXCHANGE) != 0 &&
-	    (args->flags & (LINUX_RENAME_NOREPLACE |
+	flags = args->flags;
+	if ((flags & ~(LINUX_RENAME_EXCHANGE | LINUX_RENAME_NOREPLACE |
 	    LINUX_RENAME_WHITEOUT)) != 0)
 		return (EINVAL);
-	if ((args->flags & LINUX_RENAME_NOREPLACE) != 0) {
-		if ((args->flags & (LINUX_RENAME_EXCHANGE |
-		    LINUX_RENAME_WHITEOUT)) != 0)
-			return (EINVAL);
-		/* kern_renameat() implements the check atomically. */
-		args->flags &= ~LINUX_RENAME_NOREPLACE;
-		atflags |= AT_RENAME_NOREPLACE;
-	}
+	/* RENAME_EXCHANGE cannot be combined with either other flag. */
+	if ((flags & LINUX_RENAME_EXCHANGE) != 0 &&
+	    (flags & (LINUX_RENAME_NOREPLACE | LINUX_RENAME_WHITEOUT)) != 0)
+		return (EINVAL);
 
 	/*
-	 * RENAME_EXCHANGE needs an atomic swap and RENAME_WHITEOUT an
-	 * overlay whiteout, neither of which VOP_RENAME can express.
-	 * EINVAL is what Linux itself returns on filesystems lacking
-	 * them, so callers (e.g. Ubuntu Focal's package tools, which
-	 * probe for it on every run) get the documented fallback path
-	 * without a console message.
+	 * RENAME_WHITEOUT needs an overlay whiteout, which VOP_RENAME
+	 * cannot express.  EINVAL is what Linux itself returns on
+	 * filesystems lacking it, so callers get the documented fallback
+	 * path without a console message.
 	 */
-	if (args->flags != 0)
+	if ((flags & LINUX_RENAME_WHITEOUT) != 0)
 		return (EINVAL);
+
+	/* kern_renameat() implements both remaining flags atomically. */
+	atflags = 0;
+	if ((flags & LINUX_RENAME_NOREPLACE) != 0)
+		atflags |= AT_RENAME_NOREPLACE;
+	if ((flags & LINUX_RENAME_EXCHANGE) != 0)
+		atflags |= AT_RENAME_EXCHANGE;
 
 	olddfd = (args->olddfd == LINUX_AT_FDCWD) ? AT_FDCWD : args->olddfd;
 	newdfd = (args->newdfd == LINUX_AT_FDCWD) ? AT_FDCWD : args->newdfd;
-	return (kern_renameat(td, olddfd, args->oldname, newdfd,
-	    args->newname, UIO_USERSPACE, atflags));
+	error = kern_renameat(td, olddfd, args->oldname, newdfd,
+	    args->newname, UIO_USERSPACE, atflags);
+
+	/*
+	 * Filesystems whose VOP_RENAME does not implement a requested
+	 * flag return EOPNOTSUPP; Linux reports EINVAL in that case, and
+	 * callers (e.g. Ubuntu Focal's package tools, which probe for
+	 * RENAME_EXCHANGE on every run) rely on it to select their
+	 * fallback path.
+	 */
+	if (error == EOPNOTSUPP && atflags != 0)
+		error = EINVAL;
+	return (error);
 }
 
 #ifdef LINUX_LEGACY_SYSCALLS
