@@ -1,7 +1,7 @@
 # Linuxulator QEMU gate
 
 The acceptance contract is
-[linuxulator-implementation-gate.md](../../../docs/book/src/compat/linux/overview.md).
+[Linux compatibility overview](../../../docs/book/src/compat/linux/overview.md).
 The current executable gate covers memfd validation, 64-bit syscall parity,
 shared OFD locks on ZFS and tmpfs, future-write seals, openat2 link,
 mount-crossing and scoped-root restrictions, direct `preadv2`/`pwritev2` RWF
@@ -10,8 +10,8 @@ socket and swap probes. It does not certify the remaining implementation
 backlog. Run all runtime tests inside disposable VMs; the host is used only
 for building artifacts and running QEMU.
 
-`qemu-gate.py` requires an amd64 FreeBSD guest image and a separate disposable
-swap disk, and accepts an optional
+`qemu-gate.py` requires an amd64 FreeBSD guest image and two separate disposable
+swap disks, and accepts an optional
 arm64 image for architecture-specific changes. Every supplied image must boot
 from ZFS. The guest verifies that `/` and the primary test directory are on
 ZFS, records pool/dataset status, and requires a successful final pool sync and
@@ -330,7 +330,7 @@ manifest. Attach a separate 64 MiB raw virtio disk using
 runs begin with an unchanged backing disk. The guest gate checks positive
 activation/deactivation and negative errno/privilege behavior on each of six
 runs. The pinned Linux oracle and supported subset are documented in
-[linuxulator-swapoff-implementation.md](../../../docs/book/src/compat/linux/syscalls.md).
+[Linux syscall chapter](../../../docs/book/src/compat/linux/syscalls.md).
 
 ## Linux swapon flag gate
 

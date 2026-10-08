@@ -11,7 +11,7 @@ CFLAGS+=	-I${SRCTOP}/tests
 
 ATF_TESTS_C+=	basic_signal
 .if ${MACHINE_ARCH} == "amd64"
-# Audit registration and the seccomp action mask are global guest state.
+# Audit registration is global guest state.
 ATF_TESTS_SH+=	linux_vectored2_test
 ${PACKAGE}FILES+=	linux_vectored2.c
 ATF_TESTS_SH+=	linux_pidfd_test
