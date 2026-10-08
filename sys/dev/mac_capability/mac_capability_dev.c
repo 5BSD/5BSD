@@ -226,6 +226,23 @@ mac_capability_instance_enqueue_rx(struct mac_capability_instance *s,
 	return (0);
 }
 
+/*
+ * Whether fds[n] already appears earlier in fds[].  A CAP_XFER_ONCE
+ * descriptor named twice in one message would pass validation for each copy
+ * and be transferred twice, so the transfer paths refuse it.
+ */
+static bool
+mac_capability_fd_repeated(const int *fds, int n)
+{
+	int i;
+
+	for (i = 0; i < n; i++) {
+		if (fds[i] == fds[n])
+			return (true);
+	}
+	return (false);
+}
+
 static int
 mac_capability_instance_do_sendmsg(struct mac_capability_instance *s,
     struct mac_capability_sendmsg_args *args, struct thread *td)
@@ -344,6 +361,15 @@ mac_capability_instance_do_sendmsg(struct mac_capability_instance *s,
 				if (fde->fde_xfer_state == CAP_XFER_NONE &&
 				    (svc->csvc_svc_flags &
 				    MAC_CAPABILITY_SVC_REFATTACH) == 0) {
+					FILEDESC_XUNLOCK(fdesc);
+					error = ENOTCAPABLE;
+					goto sendmsg_fd_err;
+				}
+				if (fde->fde_xfer_state == CAP_XFER_ONCE &&
+				    (svc->csvc_svc_flags &
+				    MAC_CAPABILITY_SVC_REFATTACH) == 0 &&
+				    mac_capability_fd_repeated(fdbuf, i)) {
+					/* A one-shot fd can be sent once. */
 					FILEDESC_XUNLOCK(fdesc);
 					error = ENOTCAPABLE;
 					goto sendmsg_fd_err;
@@ -812,6 +838,16 @@ mac_capability_instance_ioctl(struct file *fp, u_long cmd, void *data,
 					    CAP_XFER_NONE &&
 					    (svc->csvc_svc_flags &
 					    MAC_CAPABILITY_SVC_REFATTACH) == 0) {
+						error = ENOTCAPABLE;
+						break;
+					}
+					if (fde->fde_xfer_state ==
+					    CAP_XFER_ONCE &&
+					    (svc->csvc_svc_flags &
+					    MAC_CAPABILITY_SVC_REFATTACH) == 0 &&
+					    mac_capability_fd_repeated(fdbuf,
+					    i)) {
+						/* One-shot: send it once. */
 						error = ENOTCAPABLE;
 						break;
 					}

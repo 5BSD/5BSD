@@ -4665,6 +4665,144 @@ unp_peer_refuses_rights(struct socket *so)
 	return (refuse);
 }
 
+/*
+ * 5BSD: check a whole control message before unp_internalize() consumes any
+ * CAP_XFER_ONCE transfer, so that a send which is going to be refused
+ * consumes nothing.  The message is walked exactly as unp_internalize()
+ * walks it and refused for the same reasons (a malformed or unknown control
+ * message, too many descriptors in one SCM_RIGHTS, a bad, non-passable or
+ * non-transferable descriptor, a peer with SO_PASSRIGHTS off), plus one
+ * more: a CAP_XFER_ONCE descriptor named more than once in the message.
+ * Otherwise every copy passes validation and all but the first are sent
+ * with the already-consumed state, so a one-shot descriptor goes out twice.
+ *
+ * unp_internalize() repeats its per-descriptor checks while it consumes, so
+ * the sender's own threads changing the table between the two passes still
+ * get a refusal, though possibly after part of the message was consumed.
+ */
+static int
+unp_internalize_check(struct mbuf *control, struct thread *td,
+    struct socket *so)
+{
+	struct filedesc *fdesc;
+	struct filedescent *fde;
+	struct cmsghdr *cm;
+	struct file *fp;
+	void *data;
+	socklen_t clen, datalen;
+	int *fds, error, i, j, nfds, oldfds;
+
+	/* Pass 1: structure, parsed as unp_internalize() parses it. */
+	nfds = 0;
+	for (clen = control->m_len, cm = mtod(control, struct cmsghdr *),
+	    data = CMSG_DATA(cm);
+
+	    clen >= sizeof(*cm) && cm->cmsg_level == SOL_SOCKET &&
+	    clen >= cm->cmsg_len && cm->cmsg_len >= sizeof(*cm) &&
+	    (char *)cm + cm->cmsg_len >= (char *)data;
+
+	    clen -= min(CMSG_SPACE(datalen), clen),
+	    cm = (struct cmsghdr *) ((char *)cm + CMSG_SPACE(datalen)),
+	    data = CMSG_DATA(cm)) {
+		datalen = (char *)cm + cm->cmsg_len - (char *)data;
+		switch (cm->cmsg_type) {
+		case SCM_CREDS:
+		case SCM_TIMESTAMP:
+		case SCM_BINTIME:
+		case SCM_REALTIME:
+		case SCM_MONOTONIC:
+			break;
+		case SCM_RIGHTS:
+			oldfds = datalen / sizeof(int);
+			if (CMSG_SPACE(oldfds * sizeof(struct filedescent *)) >
+			    MCLBYTES)
+				return (EMSGSIZE);
+			nfds += oldfds;
+			break;
+		default:
+			return (EINVAL);
+		}
+	}
+	if (clen > 0)
+		return (EINVAL);
+	if (nfds == 0)
+		return (0);
+
+	/*
+	 * A receiver that turned off SO_PASSRIGHTS must not burn the
+	 * sender's one-shot transfers.  The send path repeats the check
+	 * under the peer lock.
+	 */
+	if (unp_peer_refuses_rights(so))
+		return (EPERM);
+
+	/* Gather the descriptor numbers; nfds is bounded by the mbuf. */
+	fds = malloc(nfds * sizeof(int), M_TEMP, M_WAITOK);
+	i = 0;
+	for (clen = control->m_len, cm = mtod(control, struct cmsghdr *),
+	    data = CMSG_DATA(cm);
+
+	    clen >= sizeof(*cm) && cm->cmsg_level == SOL_SOCKET &&
+	    clen >= cm->cmsg_len && cm->cmsg_len >= sizeof(*cm) &&
+	    (char *)cm + cm->cmsg_len >= (char *)data;
+
+	    clen -= min(CMSG_SPACE(datalen), clen),
+	    cm = (struct cmsghdr *) ((char *)cm + CMSG_SPACE(datalen)),
+	    data = CMSG_DATA(cm)) {
+		datalen = (char *)cm + cm->cmsg_len - (char *)data;
+		if (cm->cmsg_type != SCM_RIGHTS)
+			continue;
+		oldfds = datalen / sizeof(int);
+		memcpy(&fds[i], data, oldfds * sizeof(int));
+		i += oldfds;
+	}
+	MPASS(i == nfds);
+
+	/* Pass 2: the descriptors, checked as unp_internalize() checks them. */
+	error = 0;
+	fdesc = td->td_proc->p_fd;
+	FILEDESC_SLOCK(fdesc);
+	for (i = 0; i < nfds; i++) {
+		fp = fget_noref(fdesc, fds[i]);
+		if (fp == NULL) {
+			error = EBADF;
+			break;
+		}
+		if ((fp->f_ops->fo_flags & DFLAG_PASSABLE) == 0) {
+			SDT_PROBE6(fd, , , pass__deny, fp, fds[i],
+			    td->td_proc->p_pid, td->td_ucred, fp->f_type,
+			    EOPNOTSUPP);
+			error = EOPNOTSUPP;
+			break;
+		}
+		fde = &fdesc->fd_ofiles[fds[i]];
+		if (fde->fde_xfer_state == CAP_XFER_NONE) {
+			SDT_PROBE6(fd, , , xfer__deny, fp, fds[i],
+			    td->td_proc->p_pid, td->td_ucred, fp->f_type,
+			    ENOTCAPABLE);
+			error = ENOTCAPABLE;
+			break;
+		}
+		if (fde->fde_xfer_state != CAP_XFER_ONCE)
+			continue;
+		for (j = 0; j < i; j++) {
+			if (fds[j] == fds[i])
+				break;
+		}
+		if (j < i) {
+			/* A one-shot descriptor can be sent only once. */
+			SDT_PROBE6(fd, , , xfer__deny, fp, fds[i],
+			    td->td_proc->p_pid, td->td_ucred, fp->f_type,
+			    ENOTCAPABLE);
+			error = ENOTCAPABLE;
+			break;
+		}
+	}
+	FILEDESC_SUNLOCK(fdesc);
+	free(fds, M_TEMP);
+	return (error);
+}
+
 static int
 unp_internalize(struct mbuf *control, struct mchain *mc, struct thread *td,
     struct socket *so, int *needsopts)
@@ -4689,8 +4827,14 @@ unp_internalize(struct mbuf *control, struct mchain *mc, struct thread *td,
 
 	p = td->td_proc;
 	fdesc = p->p_fd;
-	error = 0;
 	*mc = MCHAIN_INITIALIZER(mc);
+	/*
+	 * 5BSD: validate the whole message before any CAP_XFER_ONCE transfer
+	 * is consumed below, so a refused send consumes nothing.
+	 */
+	error = unp_internalize_check(control, td, so);
+	if (error != 0)
+		goto out;
 	for (clen = control->m_len, cm = mtod(control, struct cmsghdr *),
 	    data = CMSG_DATA(cm);
 
@@ -4729,17 +4873,6 @@ unp_internalize(struct mbuf *control, struct mchain *mc, struct thread *td,
 			oldfds = datalen / sizeof (int);
 			if (oldfds == 0)
 				continue;
-			/*
-			 * 5BSD: refuse before any CAP_XFER_ONCE transfer is
-			 * consumed below, so a receiver that turned off
-			 * SO_PASSRIGHTS cannot burn the sender's one-shot
-			 * transfer.  The send path repeats the check under
-			 * the peer lock.
-			 */
-			if (unp_peer_refuses_rights(so)) {
-				error = EPERM;
-				goto out;
-			}
 			SDT_PROBE3(unpcb, , , internalize, p->p_pid, so, oldfds);
 			/* On some machines sizeof pointer is bigger than
 			 * sizeof int, so we need to check if data fits into
@@ -4785,6 +4918,24 @@ unp_internalize(struct mbuf *control, struct mchain *mc, struct thread *td,
 					FILEDESC_XUNLOCK(fdesc);
 					error = ENOTCAPABLE;
 					goto out;
+				}
+				/*
+				 * unp_internalize_check() refused duplicate
+				 * one-shot descriptors, but the sender may
+				 * have limited one since; the table stays
+				 * locked from here through the consumption.
+				 */
+				if (fdesc->fd_ofiles[*fdp].fde_xfer_state ==
+				    CAP_XFER_ONCE) {
+					for (j = 0; j < i; j++) {
+						if (((int *)data)[j] == *fdp)
+							break;
+					}
+					if (j < i) {
+						FILEDESC_XUNLOCK(fdesc);
+						error = ENOTCAPABLE;
+						goto out;
+					}
 				}
 			}
 
