@@ -2049,7 +2049,7 @@ filecaps_restrict(struct filecaps *dst, const struct filecaps *limit)
 {
 	cap_rights_t remove;
 	u_long *cmds;
-	int i, j, ncmds;
+	int i, j, lnioctls, ncmds;
 
 	remove = dst->fc_rights;
 	cap_rights_remove(&remove, &limit->fc_rights);
@@ -2064,29 +2064,41 @@ filecaps_restrict(struct filecaps *dst, const struct filecaps *limit)
 		dst->fc_nioctls = 0;
 		return;
 	}
-	if (limit->fc_nioctls == -1)
+
+	/*
+	 * A positive count with no list is a list that was dropped (see
+	 * fgetvp_lookup()); it cannot be intersected, so fail closed and
+	 * treat it as permitting no ioctls rather than dereferencing it.
+	 */
+	if (dst->fc_nioctls > 0 && dst->fc_ioctls == NULL)
+		dst->fc_nioctls = 0;
+	lnioctls = limit->fc_nioctls;
+	if (lnioctls > 0 && limit->fc_ioctls == NULL)
+		lnioctls = 0;
+
+	if (lnioctls == -1)
 		return;
 	if (dst->fc_nioctls == -1) {
 		filecaps_free_ioctl(dst);
-		if (limit->fc_nioctls == 0) {
+		if (lnioctls == 0) {
 			dst->fc_nioctls = 0;
 			return;
 		}
-		dst->fc_ioctls = mallocarray(limit->fc_nioctls,
+		dst->fc_ioctls = mallocarray(lnioctls,
 		    sizeof(dst->fc_ioctls[0]), M_FILECAPS, M_WAITOK);
 		memcpy(dst->fc_ioctls, limit->fc_ioctls,
-		    limit->fc_nioctls * sizeof(dst->fc_ioctls[0]));
-		dst->fc_nioctls = limit->fc_nioctls;
+		    lnioctls * sizeof(dst->fc_ioctls[0]));
+		dst->fc_nioctls = lnioctls;
 		return;
 	}
 
 	ncmds = 0;
 	cmds = NULL;
-	if (dst->fc_nioctls != 0 && limit->fc_nioctls != 0) {
-		cmds = mallocarray(MIN(dst->fc_nioctls, limit->fc_nioctls),
+	if (dst->fc_nioctls != 0 && lnioctls != 0) {
+		cmds = mallocarray(MIN(dst->fc_nioctls, lnioctls),
 		    sizeof(cmds[0]), M_FILECAPS, M_WAITOK);
 		for (i = 0; i < dst->fc_nioctls; i++) {
-			for (j = 0; j < limit->fc_nioctls; j++) {
+			for (j = 0; j < lnioctls; j++) {
 				if (dst->fc_ioctls[i] == limit->fc_ioctls[j]) {
 					cmds[ncmds++] = dst->fc_ioctls[i];
 					break;
@@ -2111,6 +2123,11 @@ void
 filecaps_intersect(struct filecaps *src, struct filecaps *dst)
 {
 
+	/* A dropped ioctl list permits nothing; see filecaps_restrict(). */
+	if (src->fc_nioctls > 0 && src->fc_ioctls == NULL)
+		src->fc_nioctls = 0;
+	if (dst->fc_nioctls > 0 && dst->fc_ioctls == NULL)
+		dst->fc_nioctls = 0;
 	cap_rights_intersect(&dst->fc_rights, &src->fc_rights);
 	dst->fc_fcntls &= src->fc_fcntls;
 	if (dst->fc_nioctls == -1) {
@@ -3803,8 +3820,17 @@ fgetvp_lookup(struct nameidata *ndp, struct vnode **vpp)
 	/*
 	 * TODO: avoid copying ioctl caps if it can be helped to begin with
 	 */
-	if ((cnp->cn_flags & WANTIOCTLCAPS) == 0)
+	if ((cnp->cn_flags & WANTIOCTLCAPS) == 0) {
 		filecaps_free_ioctl(&ndp->ni_filecaps);
+		/*
+		 * Keep the filecaps consistent: a list-limited set whose list
+		 * is dropped permits no ioctls.  Leaving fc_nioctls positive
+		 * with a NULL list makes filecaps_restrict() (fdescfs nodup
+		 * handoff) dereference NULL.  Fullness (-1) is unchanged.
+		 */
+		if (ndp->ni_filecaps.fc_nioctls > 0)
+			ndp->ni_filecaps.fc_nioctls = 0;
+	}
 
 	*vpp = vp;
 	return (0);
