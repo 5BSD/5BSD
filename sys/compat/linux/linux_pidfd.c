@@ -68,6 +68,7 @@
 #include <sys/malloc.h>
 #include <sys/mutex.h>
 #include <sys/poll.h>
+#include <sys/imgact.h>
 #include <sys/proc.h>
 #include <sys/queue.h>
 #include <sys/resourcevar.h>
@@ -523,7 +524,9 @@ linux_pidfd_getfd(struct thread *td, struct linux_pidfd_getfd_args *args)
 {
 	struct linux_pidfd *lpf;
 	struct file *fp, *tfp;
+	struct filecaps fcaps;
 	struct proc *p;
+	uint8_t fd_flags;
 	int error, fd;
 
 	if (args->flags != 0)
@@ -543,26 +546,41 @@ linux_pidfd_getfd(struct thread *td, struct linux_pidfd_getfd_args *args)
 		error = ESRCH;
 		goto out;
 	}
+	/*
+	 * As pddupfd(2): keep the target from exec'ing a setugid image
+	 * between the debug check and the fetch, and carry the source
+	 * descriptor's capability rights and FD_RESOLVE_BENEATH into the
+	 * copy so pidfd_getfd() cannot widen what the descriptor allows.
+	 */
+	_PHOLD(p);
+	execve_block_wait(td, p);
 	error = p_candebug(td, p);
 	if (error != 0) {
-		PROC_UNLOCK(p);
 		error = EPERM;
-		goto out;
-	}
-	_PHOLD(p);
-	PROC_UNLOCK(p);
-	error = fget_remote(td, p, args->fd, &tfp);
-	PRELE(p);
-	if (error != 0) {
-		/* ENOENT means the table is torn down: report EBADF. */
-		if (error == ENOENT)
+	} else {
+		PROC_UNLOCK(p);
+		error = fget_remote(td, p, args->fd, &fcaps, &fd_flags, &tfp);
+		if (error == 0) {
+			if ((tfp->f_ops->fo_flags & DFLAG_PASSABLE) == 0)
+				error = EBADF;
+			else
+				error = finstall_refed(td, tfp, &fd, O_CLOEXEC |
+				    ((fd_flags & FD_RESOLVE_BENEATH) != 0 ?
+				    O_RESOLVE_BENEATH : 0), &fcaps);
+			if (error != 0) {
+				fdrop(tfp, td);
+				filecaps_free(&fcaps);
+			} else
+				td->td_retval[0] = fd;
+		} else if (error == ENOENT) {
+			/* ENOENT means the table is torn down: report EBADF. */
 			error = EBADF;
-		goto out;
+		}
+		PROC_LOCK(p);
 	}
-	error = finstall(td, tfp, &fd, O_CLOEXEC, NULL);
-	fdrop(tfp, td);
-	if (error == 0)
-		td->td_retval[0] = fd;
+	execve_unblock(td, p);
+	_PRELE(p);
+	PROC_UNLOCK(p);
 out:
 	fdrop(fp, td);
 	return (error);
