@@ -4637,6 +4637,34 @@ unp_internalize_cleanup_rights(struct mbuf *control)
 	}
 }
 
+/*
+ * 5BSD: report whether the connected peer of 'so' has turned off
+ * SO_PASSRIGHTS.  unp_internalize() asks before consuming CAP_XFER_ONCE
+ * transfer state, so a send that the receiver refuses consumes nothing.
+ * The peer of an unconnected datagram send is not known until the address
+ * is resolved; that case is refused afterwards, by the send path's own
+ * SO_PASSRIGHTS check, as is a receiver that turns the option off while a
+ * send is in progress (equivalent to receiving and discarding the rights).
+ *
+ * unp_conn cannot change, and the peer cannot be freed, while unp is locked.
+ */
+static bool
+unp_peer_refuses_rights(struct socket *so)
+{
+	struct unpcb *unp, *unp2;
+	bool refuse;
+
+	unp = sotounpcb(so);
+	refuse = false;
+	UNP_PCB_LOCK(unp);
+	unp2 = unp->unp_conn;
+	if (unp2 != NULL && (atomic_load_int(&unp2->unp_socket->so_options) &
+	    SO_PASSRIGHTS) == 0)
+		refuse = true;
+	UNP_PCB_UNLOCK(unp);
+	return (refuse);
+}
+
 static int
 unp_internalize(struct mbuf *control, struct mchain *mc, struct thread *td,
     struct socket *so, int *needsopts)
@@ -4701,6 +4729,17 @@ unp_internalize(struct mbuf *control, struct mchain *mc, struct thread *td,
 			oldfds = datalen / sizeof (int);
 			if (oldfds == 0)
 				continue;
+			/*
+			 * 5BSD: refuse before any CAP_XFER_ONCE transfer is
+			 * consumed below, so a receiver that turned off
+			 * SO_PASSRIGHTS cannot burn the sender's one-shot
+			 * transfer.  The send path repeats the check under
+			 * the peer lock.
+			 */
+			if (unp_peer_refuses_rights(so)) {
+				error = EPERM;
+				goto out;
+			}
 			SDT_PROBE3(unpcb, , , internalize, p->p_pid, so, oldfds);
 			/* On some machines sizeof pointer is bigger than
 			 * sizeof int, so we need to check if data fits into
