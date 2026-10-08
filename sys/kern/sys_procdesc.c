@@ -376,10 +376,28 @@ procdesc_fill_winfo(struct procdesc *pd, bool proc_locked)
  * paths to notify NOTE_EXEC, NOTE_CAPMODE, NOTE_JAILED, NOTE_SETUID,
  * and NOTE_CHROOT.  NOTE_FORK is delivered by procdesc_fork().
  *
- * Caller must hold PROC_LOCK(p).  p_procdesc is an (e) field
- * (protected by proctree_lock).  To respect the lock annotation
- * without violating lock ordering (proctree > PROC_LOCK), we
- * drop PROC_LOCK, take proctree_lock shared, and re-check.
+ * Caller must hold PROC_LOCK(p); it is not dropped.  Like upstream's
+ * procdesc_fork() and procdesc_jobstate(), p_procdesc is read under the
+ * process lock alone, without proctree_lock.  That is sufficient because:
+ *
+ * - Every store to p_procdesc of a process that can be the target here is
+ *   made with PROC_LOCK(p) held: procdesc_close() (last close, which clears
+ *   it), pdopenpid1() (via pget()) and sys_pdself().  procdesc_new() runs
+ *   while the child is still PRS_NEW and cannot be found by pfind()/pget()
+ *   or run code of its own, and procdesc_reap() runs only for a zombie that
+ *   proc_reap() has already unhashed, which never reaches this function.
+ * - The process's reference on pd is released (procdesc_free()) by
+ *   procdesc_close() inside the same PROC_LOCK section that clears
+ *   p_procdesc, so a pd observed under PROC_LOCK stays allocated at least
+ *   until the process lock is dropped.
+ *
+ * Not taking proctree_lock matters: callers hold other locks.  do_execve()
+ * calls this with the image vnode locked, and sleeping on proctree_lock
+ * there recorded a vnode -> proctree lock order that, together with
+ * proctree -> allproc -> filedesc (sysctl_kern_file) and filedesc -> vnode
+ * (knote_fdclose -> filt_vfsdetach), formed a WITNESS cycle.  Keeping the
+ * process lock held also lets credential-changing callers deliver
+ * NOTE_SETUID without exposing a half-finished update.
  */
 void
 procdesc_knote(struct proc *p, int event)
@@ -387,10 +405,6 @@ procdesc_knote(struct proc *p, int event)
 	struct procdesc *pd;
 
 	PROC_LOCK_ASSERT(p, MA_OWNED);
-	PROC_UNLOCK(p);
-
-	sx_slock(&proctree_lock);
-	PROC_LOCK(p);
 
 	pd = p->p_procdesc;
 	if (pd != NULL) {
@@ -398,8 +412,6 @@ procdesc_knote(struct proc *p, int event)
 		KNOTE_LOCKED(&pd->pd_selinfo.si_note, event);
 		PROCDESC_UNLOCK(pd);
 	}
-
-	sx_sunlock(&proctree_lock);
 }
 
 /*

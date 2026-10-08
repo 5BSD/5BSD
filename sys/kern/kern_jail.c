@@ -3320,7 +3320,7 @@ do_jail_attach(struct thread *td, struct prison *pr, int *drflagsp)
 	prison_knote(pr, NOTE_JAIL_ATTACH | td->td_proc->p_pid);
 	/* Notify procdesc listeners that this process entered a jail. */
 	PROC_LOCK(p);
-	procdesc_knote(p, NOTE_JAILED);	/* drops+reacquires PROC_LOCK */
+	procdesc_knote(p, NOTE_JAILED);
 	PROC_UNLOCK(p);
 #ifdef MAC
 	/*

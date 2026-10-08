@@ -189,7 +189,7 @@ sys_cap_enter(struct thread *td, struct cap_enter_args *uap)
 	proc_set_cred(p, newcred);
 
 	/* Notify procdesc listeners that we entered capability mode. */
-	procdesc_knote(p, NOTE_CAPMODE);	/* drops+reacquires */
+	procdesc_knote(p, NOTE_CAPMODE);
 	PROC_UNLOCK(p);
 
 	crfree(oldcred);
