@@ -18,15 +18,10 @@ ATF_TESTS_SH+=	service_reachability_test
 ATF_TESTS_SH+=	shipped_manifest_policy_test
 ATF_TESTS_SH_SED_bundle_integration_test+= \
 	-e 's,@OBJTOP@,${OBJTOP},g'
-ATF_TESTS_SH_SED_helper_integration_test+=	-e 's,@SRCTOP@,${SRCTOP},g'
-ATF_TESTS_SH_SED_shipped_manifest_policy_test+= \
-	-e 's,@SRCTOP@,${SRCTOP},g'
 # IPC anointment observability contract: probes, the shipped DTrace script
-# and the bsdinstruments profile clauses (source-tree greps; dtrace -e parse).
+# and the bsdinstruments profile clauses (staged source greps; dtrace -e parse).
 ATF_TESTS_SH+=	anoint_observability_test
 ATF_TESTS_SH_SED_anoint_observability_test+= \
-	-e 's,@SRCTOP@,${SRCTOP},g' \
-	-e 's,@OBJTOP@,${OBJTOP},g' \
 	-e 's,@MK_DTRACE@,${MK_DTRACE},g'
 
 ${PACKAGE}FILES+=	test_helpers.sh
@@ -293,5 +288,34 @@ CFLAGS.boot_authority_test+= -I${SRCTOP}/usr.sbin/switchboard \
     -I${SRCTOP}/lib/libcapbundle -I${SRCTOP}/lib/libcapsulert \
     -I${SRCTOP}/contrib/libucl/include -I${SRCTOP}/sys
 LIBADD.boot_authority_test+= capbundle ucl
+
+# anoint_observability_test and shipped_manifest_policy_test read these source
+# files.  Install them beneath ${TESTSDIR}/srctree so the installed tests do
+# not depend on the build machine's source tree.  The shipped manifest
+# inventory is collected with the same find(1) expression the test applies.
+SRCTREE_FILES=	cddl/usr.sbin/bsdinstruments/profiles/capability-services.d \
+		share/dtrace/Makefile \
+		share/dtrace/switchboard-anoint \
+		usr.sbin/switchboard/anoint.c \
+		usr.sbin/switchboard/domain.c \
+		usr.sbin/switchboard/execute.c \
+		usr.sbin/switchboard/naming.c \
+		usr.sbin/switchboard/on_demand.c \
+		usr.sbin/switchboard/reload.c \
+		usr.sbin/switchboard/svc_proto.c \
+		usr.sbin/switchboard/switchboard.h \
+		usr.sbin/switchboard/switchboard_probes.h \
+		usr.sbin/switchboard/switchboard_provider.d
+SRCTREE_MANIFESTS!=	cd ${SRCTOP} && find usr.sbin -type f \
+		    \( -path '*/capbundle/*.ucl' -o \
+		    -path '*/bluetooth/BSDBluetooth/blued.ucl' \) \
+		    ! -name Bundle.ucl | sort
+SRCTREE_FILES+=	${SRCTREE_MANIFESTS}
+.for _dir in ${SRCTREE_FILES:H:O:u}
+FILESGROUPS+=	SRCTREE_${_dir:S,/,_,g}
+SRCTREE_${_dir:S,/,_,g}=	${SRCTREE_FILES:M${_dir}/*:N${_dir}/*/*:S,^,${SRCTOP}/,}
+SRCTREE_${_dir:S,/,_,g}DIR=	${TESTSDIR}/srctree/${_dir}
+SRCTREE_${_dir:S,/,_,g}PACKAGE=	${PACKAGE}
+.endfor
 
 .include <bsd.test.mk>

@@ -11,26 +11,24 @@ ATF_TESTS_SH=	config_test \
 		storage_requirement_test \
 		tzfspool_test
 
-ATF_TESTS_SH_SED_config_test+= \
-	-e 's,@SRCTOP@,${SRCTOP},g'
+# The tests exercise the installed installer and fwget scripts.  The chapter
+# list of the native book and the source-only fixtures below are installed
+# with the tests so they do not depend on the build machine's source tree.
+BOOKSRC=	${SRCTOP}/docs/book/src
+BOOK_CHAPTERS!=	cd ${BOOKSRC} && find . -type f -name '*.md' | \
+		    sed 's,^\./,,' | LC_ALL=C sort
+${PACKAGE}FILES+=	book-chapters
+CLEANFILES+=	book-chapters
+book-chapters: ${BOOK_CHAPTERS:S,^,${BOOKSRC}/,}
+	printf '%s\n' ${BOOK_CHAPTERS} > ${.TARGET}
 
-ATF_TESTS_SH_SED_documentation_test+= \
-	-e 's,@SRCTOP@,${SRCTOP},g'
-
-ATF_TESTS_SH_SED_firmware_fetch_test+= \
-	-e 's,@SRCTOP@,${SRCTOP},g'
-
-ATF_TESTS_SH_SED_hostname_test+= \
-	-e 's,@SRCTOP@,${SRCTOP},g'
-
-ATF_TESTS_SH_SED_storage_requirement_test+= \
-	-e 's,@SRCTOP@,${SRCTOP},g'
-
-ATF_TESTS_SH_SED_tzfspool_test+= \
-	-e 's,@SRCTOP@,${SRCTOP},g'
-
-
-ATF_TESTS_SH_SED_jail_test+= \
-	-e 's,@SRCTOP@,${SRCTOP},g'
+SRCTREE_FILES=	release/tools/vmimage.subr \
+		usr.sbin/bsdinstall/bsdinstall.8
+.for _dir in ${SRCTREE_FILES:H:O:u}
+FILESGROUPS+=	SRCTREE_${_dir:S,/,_,g}
+SRCTREE_${_dir:S,/,_,g}=	${SRCTREE_FILES:M${_dir}/*:N${_dir}/*/*:S,^,${SRCTOP}/,}
+SRCTREE_${_dir:S,/,_,g}DIR=	${TESTSDIR}/srctree/${_dir}
+SRCTREE_${_dir:S,/,_,g}PACKAGE=	${PACKAGE}
+.endfor
 
 .include <bsd.test.mk>

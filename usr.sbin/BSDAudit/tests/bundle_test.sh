@@ -1,35 +1,39 @@
 #!/usr/libexec/atf-sh
 
-# These cases assert source- and object-tree contracts (grep the daemon
-# sources, syscall tables and DTrace providers; inspect the built binary).
-# Those trees are absent on an installed system, so skip cleanly there rather
-# than failing on missing files.
+# The contract cases grep the daemon sources, syscall tables and DTrace
+# providers.  The test package installs those files beneath srctree/ next to
+# this program, so an installed test needs no build machine source tree.  The
+# manifest case assembles a bundle from the installed Audit.cap.
 require_srctree()
 {
-	test -d "@SRCTOP@" ||
-	    atf_skip "source tree (@SRCTOP@) required for contract checks"
+	SRCTREE="$(atf_get_srcdir)/srctree"
+	test -d "${SRCTREE}" ||
+	    atf_skip "staged source files (${SRCTREE}) required for contract checks"
 }
 
 atf_test_case manifest
 manifest_body()
 {
-	src="@SRCTOP@/usr.sbin/BSDAudit"
-	obj="@OBJTOP@/usr.sbin/switchboardctl/tests/switchboardctl_test_bin"
+	installed="/Capabilities/System/Audit.cap"
+	installed_unit="${installed}/Units/bsdaudit.unit"
+	obj="$(atf_get_srcdir)/../switchboardctl/switchboardctl_test_bin"
 	bundle="${PWD}/Audit.cap"
 	unit="${bundle}/Units/bsdaudit.unit"
 
 	test -x "${obj}" || atf_skip "switchboardctl test binary is required"
+	test -x "${installed_unit}/bin/BSDAudit" ||
+	    atf_skip "installed Audit.cap bundle is required"
 	mkdir -p "${unit}/bin"
-	cp "${src}/capbundle/Bundle.ucl" "${bundle}/Bundle.ucl"
-	cp "@OBJTOP@/usr.sbin/BSDAudit/BSDAudit" "${unit}/bin/BSDAudit"
+	cp "${installed}/Bundle.ucl" "${bundle}/Bundle.ucl"
+	cp "${installed_unit}/bin/BSDAudit" "${unit}/bin/BSDAudit"
 	if [ "@MK_DTRACE@" = "yes" ]; then
 		atf_check -s exit:0 -o match:'.SUNW_dof' readelf -S \
-		    "@OBJTOP@/usr.sbin/BSDAudit/BSDAudit"
+		    "${installed_unit}/bin/BSDAudit"
 	else
 		atf_check -s exit:0 -o not-match:'.SUNW_dof' readelf -S \
-		    "@OBJTOP@/usr.sbin/BSDAudit/BSDAudit"
+		    "${installed_unit}/bin/BSDAudit"
 	fi
-	cp "${src}/capbundle/bsdaudit.ucl" "${unit}/Unit.ucl"
+	cp "${installed_unit}/Unit.ucl" "${unit}/Unit.ucl"
 	atf_check -s exit:0 -o ignore "${obj}" verify "${bundle}"
 }
 
@@ -37,10 +41,10 @@ atf_test_case security_contract
 security_contract_body()
 {
 	require_srctree
-	source="@SRCTOP@/usr.sbin/BSDAudit/auditcmp.c"
-	manifest="@SRCTOP@/usr.sbin/BSDAudit/capbundle/bsdaudit.ucl"
-	syscalls="@SRCTOP@/sys/kern/syscalls.master"
-	wrappers="@SRCTOP@/contrib/openbsm/libbsm/bsm_wrappers.c"
+	source="${SRCTREE}/usr.sbin/BSDAudit/auditcmp.c"
+	manifest="${SRCTREE}/usr.sbin/BSDAudit/capbundle/bsdaudit.ucl"
+	syscalls="${SRCTREE}/sys/kern/syscalls.master"
+	wrappers="${SRCTREE}/contrib/openbsm/libbsm/bsm_wrappers.c"
 	for token in auditcmp_policy_event SERVICE_PROTECT_NOFORK \
 	    SERVICE_PROTECT_NOFDRECV SERVICE_PROTECT_NOSOCK \
 	    service_worker_enter_capability_mode \
@@ -63,18 +67,18 @@ security_contract_body()
 	    grep 'error == ENOTSUP' "${wrappers}"
 	atf_check -s exit:0 -o match:'PRIV_AUDIT_SUBMIT' \
 	    grep PRIV_AUDIT_SUBMIT \
-	    "@SRCTOP@/sys/security/audit/audit_syscalls.c"
+	    "${SRCTREE}/sys/security/audit/audit_syscalls.c"
 	atf_check -s exit:0 -o match:'jailed' \
 	    grep 'jailed(td->td_ucred)' \
-	    "@SRCTOP@/sys/security/audit/audit_syscalls.c"
+	    "${SRCTREE}/sys/security/audit/audit_syscalls.c"
 }
 
 atf_test_case observability_contract
 observability_contract_body()
 {
 	require_srctree
-	provider="@SRCTOP@/usr.sbin/BSDAudit/bsdaudit_provider.d"
-	source="@SRCTOP@/usr.sbin/BSDAudit/auditcmp.c"
+	provider="${SRCTREE}/usr.sbin/BSDAudit/bsdaudit_provider.d"
+	source="${SRCTREE}/usr.sbin/BSDAudit/auditcmp.c"
 	for probe in session submit reject; do
 		atf_check -s exit:0 -o ignore grep "probe ${probe}" "$provider"
 	done
@@ -89,11 +93,11 @@ atf_test_case auth_agent_event_contract
 auth_agent_event_contract_body()
 {
 	require_srctree
-	source="@SRCTOP@/usr.sbin/BSDAudit/auditcmp.c"
-	policy="@SRCTOP@/usr.sbin/BSDAudit/auditcmp_policy.c"
-	header="@SRCTOP@/usr.sbin/BSDAudit/auditcmp_policy.h"
-	kevents="@SRCTOP@/sys/bsm/audit_kevents.h"
-	events="@SRCTOP@/contrib/openbsm/etc/audit_event"
+	source="${SRCTREE}/usr.sbin/BSDAudit/auditcmp.c"
+	policy="${SRCTREE}/usr.sbin/BSDAudit/auditcmp_policy.c"
+	header="${SRCTREE}/usr.sbin/BSDAudit/auditcmp_policy.h"
+	kevents="${SRCTREE}/sys/bsm/audit_kevents.h"
+	events="${SRCTREE}/contrib/openbsm/etc/audit_event"
 
 	atf_check -s exit:0 -o ignore grep -F \
 	    'int	auditcmp_policy_operation_event(const char *, const char *, int);' \
@@ -129,7 +133,7 @@ atf_test_case bounded_worker_lifecycle
 bounded_worker_lifecycle_body()
 {
 	require_srctree
-	source="@SRCTOP@/usr.sbin/BSDAudit/auditcmp.c"
+	source="${SRCTREE}/usr.sbin/BSDAudit/auditcmp.c"
 	for token in AUDITCMP_MAX_WORKERS EVFILT_PROCDESC NOTE_EXIT \
 	    service_provider_quiescing service_provider_quiesce_complete \
 	    pdkill pdwait; do

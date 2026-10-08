@@ -5,7 +5,7 @@ pool_script()
 	if [ -n "${TZFSPOOL:-}" ]; then
 		printf '%s' "$TZFSPOOL"
 	else
-		printf '%s' @SRCTOP@/usr.sbin/bsdinstall/scripts/tzfspool
+		printf '%s' /usr/libexec/bsdinstall/tzfspool
 	fi
 }
 

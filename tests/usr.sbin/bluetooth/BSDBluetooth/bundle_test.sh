@@ -8,25 +8,26 @@ manifest_head()
 }
 manifest_body()
 {
-	srcdir="@SRCTOP@/usr.sbin/bluetooth/BSDBluetooth"
-	objdir="@OBJTOP@/usr.sbin/bluetooth/BSDBluetooth"
-	switchboardctl="${SWITCHBOARDCTL:-@OBJTOP@/usr.sbin/switchboardctl/tests/switchboardctl_test_bin}"
+	installed="/Capabilities/System/Bluetooth.cap"
+	installed_unit="${installed}/Units/blued.unit"
+	installed_controller="${installed}/Units/controller.unit"
+	switchboardctl="${SWITCHBOARDCTL:-$(atf_get_srcdir)/../../switchboardctl/switchboardctl_test_bin}"
 	bundle="${PWD}/Bluetooth.cap"
 	unit="${bundle}/Units/blued.unit"
 
 	test -x "${switchboardctl}" ||
 	    atf_skip "source-built switchboardctl is required"
-	test -x "${objdir}/BSDBluetooth" ||
-	    atf_skip "source-built BSDBluetooth is required"
+	test -x "${installed_unit}/bin/BSDBluetooth" ||
+	    atf_skip "installed Bluetooth.cap bundle is required"
 	mkdir -p "${unit}/bin" "${unit}/Config"
-	cp "${srcdir}/capbundle/Bundle.ucl" "${bundle}/Bundle.ucl"
-	cp "${srcdir}/blued.ucl" "${unit}/Unit.ucl"
-	cp "${srcdir}/blued.conf.sample" "${unit}/Config/blued.conf"
-	cp "${objdir}/BSDBluetooth" "${unit}/bin/BSDBluetooth"
+	cp "${installed}/Bundle.ucl" "${bundle}/Bundle.ucl"
+	cp "${installed_unit}/Unit.ucl" "${unit}/Unit.ucl"
+	cp "${installed_unit}/Config/blued.conf" "${unit}/Config/blued.conf"
+	cp "${installed_unit}/bin/BSDBluetooth" "${unit}/bin/BSDBluetooth"
 	controller="${bundle}/Units/controller.unit"
 	mkdir -p "${controller}/bin"
-	cp "${srcdir}/controller/controller.ucl" "${controller}/Unit.ucl"
-	cp "${objdir}/controller/BSDBluetoothController" \
+	cp "${installed_controller}/Unit.ucl" "${controller}/Unit.ucl"
+	cp "${installed_controller}/bin/BSDBluetoothController" \
 	    "${controller}/bin/BSDBluetoothController"
 	chmod 0555 "${controller}" "${controller}/bin" \
 	    "${controller}/bin/BSDBluetoothController"
@@ -65,7 +66,11 @@ package_layout_head()
 }
 package_layout_body()
 {
-	makefile="@SRCTOP@/usr.sbin/bluetooth/BSDBluetooth/Makefile"
+	# The test package stages the daemon Makefile beneath srctree/.
+	srctree="$(atf_get_srcdir)/srctree"
+	makefile="${srctree}/usr.sbin/bluetooth/BSDBluetooth/Makefile"
+	test -r "${makefile}" ||
+	    atf_skip "staged source file (${makefile}) required"
 
 	for token in '/Capabilities/System/Bluetooth.cap' \
 	    'BLUED_CAP_UNIT=.*blued.unit' 'CAP_BUNDLE' 'CAP_UNIT' 'CAP_CONFIG'; do

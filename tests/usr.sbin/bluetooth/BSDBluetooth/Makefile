@@ -959,8 +959,6 @@ ATF_TESTS_SH+=	fuzz_manifest_test
 # The daemon is also a native capability bundle; keep its package layout and
 # storage/activation contract in the ordinary Bluetooth regression suite.
 ATF_TESTS_SH+=	bundle_test
-ATF_TESTS_SH_SED_bundle_test+=	-e 's,@SRCTOP@,${SRCTOP},g'
-ATF_TESTS_SH_SED_bundle_test+=	-e 's,@OBJTOP@,${OBJTOP},g'
 
 ATF_TESTS_C+=	l2cap_data_test
 SRCS.l2cap_data_test=	l2cap_data_test.c
@@ -1268,5 +1266,16 @@ SRCS.blued_event_test+=	discovery.c
 SRCS.blued_main_test+=	discovery.c
 SRCS.blued_role_test+=	discovery.c
 SRCS.gatt_hash_order_test+= discovery.c
+
+# The shell contract cases read these source files.  Install them beneath
+# ${TESTSDIR}/srctree so the installed tests do not depend on the build
+# machine's source tree.
+SRCTREE_FILES=	usr.sbin/bluetooth/BSDBluetooth/Makefile
+.for _dir in ${SRCTREE_FILES:H:O:u}
+FILESGROUPS+=	SRCTREE_${_dir:S,/,_,g}
+SRCTREE_${_dir:S,/,_,g}=	${SRCTREE_FILES:M${_dir}/*:N${_dir}/*/*:S,^,${SRCTOP}/,}
+SRCTREE_${_dir:S,/,_,g}DIR=	${TESTSDIR}/srctree/${_dir}
+SRCTREE_${_dir:S,/,_,g}PACKAGE=	${PACKAGE}
+.endfor
 
 .include <bsd.test.mk>

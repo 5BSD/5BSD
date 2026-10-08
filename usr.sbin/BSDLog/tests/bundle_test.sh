@@ -1,13 +1,14 @@
 #!/usr/libexec/atf-sh
 
-# These cases assert source- and object-tree contracts (grep the daemon
-# sources, syscall tables and DTrace providers; inspect the built binary).
-# Those trees are absent on an installed system, so skip cleanly there rather
-# than failing on missing files.
+# The contract cases grep the daemon sources and DTrace providers.  The test
+# package installs those files beneath srctree/ next to this program, so an
+# installed test needs no build machine source tree.  The manifest case
+# assembles a bundle from the installed artifacts.
 require_srctree()
 {
-	test -d "@SRCTOP@" ||
-	    atf_skip "source tree (@SRCTOP@) required for contract checks"
+	SRCTREE="$(atf_get_srcdir)/srctree"
+	test -d "${SRCTREE}" ||
+	    atf_skip "staged source files (${SRCTREE}) required for contract checks"
 }
 
 atf_test_case manifest cleanup
@@ -17,24 +18,28 @@ manifest_head()
 }
 manifest_body()
 {
-	srcdir="@SRCTOP@/usr.sbin/BSDLog"
-	objdir="@OBJTOP@/usr.sbin/BSDLog"
-	switchboardctl="${SWITCHBOARDCTL:-@OBJTOP@/usr.sbin/switchboardctl/tests/switchboardctl_test_bin}"
+	installed="/Capabilities/System/Log.cap"
+	installed_unit="${installed}/Units/bsdlog.unit"
+	switchboardctl="${SWITCHBOARDCTL:-$(atf_get_srcdir)/../switchboardctl/switchboardctl_test_bin}"
 	bundle="${PWD}/Log.cap"
 	unit="${bundle}/Units/bsdlog.unit"
 
 	test -x "${switchboardctl}" ||
 	    atf_skip "source-built switchboardctl is required"
+	test -x "${installed_unit}/bin/BSDLog" ||
+	    atf_skip "installed Log.cap bundle is required"
 	mkdir -p "${unit}/bin" "${unit}/Config"
-	cp "${srcdir}/capbundle/Bundle.ucl" "${bundle}/Bundle.ucl"
-	cp "${objdir}/BSDLog" "${unit}/bin/BSDLog"
+	cp "${installed}/Bundle.ucl" "${bundle}/Bundle.ucl"
+	cp "${installed_unit}/bin/BSDLog" "${unit}/bin/BSDLog"
 	if [ "@MK_DTRACE@" = "yes" ]; then
-		atf_check -s exit:0 -o match:'.SUNW_dof' readelf -S "${objdir}/BSDLog"
+		atf_check -s exit:0 -o match:'.SUNW_dof' \
+		    readelf -S "${installed_unit}/bin/BSDLog"
 	else
-		atf_check -s exit:0 -o not-match:'.SUNW_dof' readelf -S "${objdir}/BSDLog"
+		atf_check -s exit:0 -o not-match:'.SUNW_dof' \
+		    readelf -S "${installed_unit}/bin/BSDLog"
 	fi
-	cp "${srcdir}/capbundle/bsdlog.ucl" "${unit}/Unit.ucl"
-	cp "${srcdir}/capbundle/bsdlog.conf" "${unit}/Config/bsdlog.conf"
+	cp "${installed_unit}/Unit.ucl" "${unit}/Unit.ucl"
+	cp "${installed_unit}/Config/bsdlog.conf" "${unit}/Config/bsdlog.conf"
 	chmod 0555 "${bundle}" "${bundle}/Units" "${unit}" "${unit}/bin" \
 	    "${unit}/bin/BSDLog" "${unit}/Config"
 	chmod 0444 "${bundle}/Bundle.ucl" "${unit}/Unit.ucl" \
@@ -75,8 +80,8 @@ live_media_storage_fallback_contract_head()
 live_media_storage_fallback_contract_body()
 {
 	require_srctree
-	source="@SRCTOP@/usr.sbin/BSDLog/logcmp.c"
-	manual="@SRCTOP@/usr.sbin/BSDLog/BSDLog.8"
+	source="${SRCTREE}/usr.sbin/BSDLog/logcmp.c"
+	manual="${SRCTREE}/usr.sbin/BSDLog/BSDLog.8"
 
 	atf_check -s exit:0 -o ignore grep \
 	    'service_storage_open(context, "state"' "$source"
@@ -88,8 +93,8 @@ live_media_storage_fallback_contract_body()
 bounded_pool_contract_body()
 {
 	require_srctree
-	source="@SRCTOP@/usr.sbin/BSDLog/logcmp.c"
-	config="@SRCTOP@/usr.sbin/BSDLog/capbundle/bsdlog.conf"
+	source="${SRCTREE}/usr.sbin/BSDLog/logcmp.c"
+	config="${SRCTREE}/usr.sbin/BSDLog/capbundle/bsdlog.conf"
 	for token in pool_worker dispatch_to_pool logcmp_storage_attach_pool \
 	    logcmp_session_drain_budget SERVICE_HARDEN_XFER_ONCE; do
 		atf_check -s exit:0 -o ignore grep "${token}" "${source}"
@@ -102,8 +107,8 @@ bounded_pool_contract_body()
 observability_contract_body()
 {
 	require_srctree
-	provider="@SRCTOP@/usr.sbin/BSDLog/bsdlog_provider.d"
-	client="@SRCTOP@/lib/liblogcmp/logcmp_provider.d"
+	provider="${SRCTREE}/usr.sbin/BSDLog/bsdlog_provider.d"
+	client="${SRCTREE}/lib/liblogcmp/logcmp_provider.d"
 	for probe in pool__start pool__admit pool__shutdown session__start session__end record__write record__drop wakeup__receive \
 	    batch__drain flush__complete storage__persist storage__rotate \
 	    storage__corruption query__complete; do
@@ -115,18 +120,18 @@ observability_contract_body()
 		atf_check -s exit:0 -o ignore grep "probe ${probe}" "$client"
 	done
 	atf_check -s exit:0 -o ignore grep BSDLOG_PROBE_BATCH \
-	    "@SRCTOP@/usr.sbin/BSDLog/logcmp.c"
+	    "${SRCTREE}/usr.sbin/BSDLog/logcmp.c"
 	atf_check -s exit:0 -o ignore grep BSDLOG_PROBE_SESSION_END \
-	    "@SRCTOP@/usr.sbin/BSDLog/logcmp.c"
+	    "${SRCTREE}/usr.sbin/BSDLog/logcmp.c"
 	atf_check -s exit:0 -o ignore grep BSDLOG_PROBE_QUERY \
-	    "@SRCTOP@/usr.sbin/BSDLog/logcmp.c"
+	    "${SRCTREE}/usr.sbin/BSDLog/logcmp.c"
 	atf_check -s exit:0 -o ignore grep LOGCMP_PROBE_ENQUEUE \
-	    "@SRCTOP@/lib/liblogcmp/logcmp.c"
+	    "${SRCTREE}/lib/liblogcmp/logcmp.c"
 }
 security_contract_body()
 {
 	require_srctree
-	source="@SRCTOP@/usr.sbin/BSDLog/logcmp.c"
+	source="${SRCTREE}/usr.sbin/BSDLog/logcmp.c"
 
 	for token in SERVICE_PROTECT_NOFORK SERVICE_PROTECT_NOSOCK \
 	    CAP_XFER_NONE CAP_CLOFORK_ONCE CAP_CLOEXEC_LOCKED \
@@ -140,7 +145,7 @@ security_contract_body()
 	atf_check -s exit:1 -o empty -e empty grep 'audit_submit(' "${source}"
 	atf_check -s exit:0 -o match:'probe record__drop' \
 	    grep 'probe record__drop' \
-	    "@SRCTOP@/usr.sbin/BSDLog/bsdlog_provider.d"
+	    "${SRCTREE}/usr.sbin/BSDLog/bsdlog_provider.d"
 }
 
 atf_init_test_cases()

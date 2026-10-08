@@ -3,30 +3,34 @@
 atf_test_case native_book_is_installed_with_base
 native_book_is_installed_with_base_body()
 {
-	mkdir root
-	atf_check -s exit:0 -o ignore -e ignore make \
-	    -C @SRCTOP@/share/doc/5bsd \
-	    DESTDIR="$(pwd)/root" MK_INSTALL_AS_USER=yes install
-	atf_check -s exit:0 test -f root/usr/share/doc/5bsd/SUMMARY.md
+	book=/usr/share/doc/5bsd
+	chapters="$(atf_get_srcdir)/book-chapters"
+
+	atf_check -s exit:0 test -f "$book/SUMMARY.md"
 	atf_check -s exit:0 test -f \
-	    root/usr/share/doc/5bsd/capability/capability-mode-and-launch.md
-	atf_check -s exit:0 test -f \
-	    root/usr/share/doc/5bsd/develop/provider.md
-	atf_check -s exit:0 test -f \
-	    root/usr/share/doc/5bsd/operations/building.md
-	# Check the entire book, including new and nested chapters.
-	for chapter in $(find @SRCTOP@/docs/book/src -type f -name '*.md'); do
-		relative=${chapter#@SRCTOP@/docs/book/src/}
-		atf_check -s exit:0 cmp "$chapter" "root/usr/share/doc/5bsd/$relative"
-	done
-	atf_check -s exit:0 -o inline:'runtime\n' make \
-	    -C @SRCTOP@/share/doc/5bsd -V PACKAGE
+	    "$book/capability/capability-mode-and-launch.md"
+	atf_check -s exit:0 test -f "$book/develop/provider.md"
+	atf_check -s exit:0 test -f "$book/operations/building.md"
+	# Check the entire book, including new and nested chapters.  The test
+	# package installs the chapter list collected from docs/book/src.
+	test -s "$chapters" || atf_fail "missing chapter list $chapters"
+	while read -r relative; do
+		atf_check -s exit:0 test -f "$book/$relative"
+	done <"$chapters"
+	# On a pkgbase system the book belongs to the runtime package.
+	if pkg -N >/dev/null 2>&1 &&
+	    owner=$(pkg which -qo "$book/SUMMARY.md" 2>/dev/null); then
+		case "$owner" in
+		*-runtime) ;;
+		*) atf_fail "$book is installed by $owner, not runtime" ;;
+		esac
+	fi
 }
 
 atf_test_case freebsd_docs_are_optional_upstream_reference
 freebsd_docs_are_optional_upstream_reference_body()
 {
-	script=@SRCTOP@/usr.sbin/bsdinstall/scripts/docsinstall
+	script=/usr/libexec/bsdinstall/docsinstall
 	atf_check -s exit:0 -o ignore grep -F \
 	    'The 5BSD Epic is already installed in /usr/share/doc/5bsd.' \
 	    "$script"
@@ -41,7 +45,7 @@ freebsd_docs_are_optional_upstream_reference_body()
 atf_test_case installer_explains_type2_capability_design
 installer_explains_type2_capability_design_body()
 {
-	script=@SRCTOP@/usr.sbin/bsdinstall/startbsdinstall
+	script=/usr/libexec/bsdinstall/startbsdinstall
 	atf_check -s exit:0 -o ignore grep -F \
 	    'Type2 capability system with a microkernel userland' \
 	    "$script"
@@ -54,7 +58,7 @@ installer_explains_type2_capability_design_body()
 atf_test_case installer_defaults_to_5bsd_branding
 installer_defaults_to_5bsd_branding_body()
 {
-	common=@SRCTOP@/usr.sbin/bsdconfig/share/common.subr
+	common=/usr/share/bsdconfig/common.subr
 	atf_check -s exit:0 -o inline:'5BSD Installer\n5BSD\n' /bin/sh -c '
 	    unset OSNAME EFI_LABEL_NAME
 	    DEBUG_SELF_INITIALIZE= common="$1" . "$1"

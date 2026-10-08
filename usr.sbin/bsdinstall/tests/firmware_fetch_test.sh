@@ -8,7 +8,7 @@ setup()
 	export TEST_STATE=$(pwd)/state
 	export FWGET_ROOT=$(pwd)/root
 	export PATH=$(pwd)/bin:/bin:/usr/bin:/sbin:/usr/sbin
-	export HELPER=@SRCTOP@/usr.sbin/fwget/hardware-install.sh
+	export HELPER=/usr/libexec/fwget/hardware-install
 	cat >bin/pkg <<-'EOF'
 	#!/bin/sh
 	if [ "$1" = -v ]; then
@@ -94,7 +94,7 @@ offline_repository_persists_body()
 	    BSDINSTALL_CHROOT="${FWGET_ROOT}" \
 	    BSDINSTALL_HARDWARE_MEDIA="$(pwd)/media" \
 	    BSDINSTALL_HARDWARE_INSTALL="${HELPER}" \
-	    sh @SRCTOP@/usr.sbin/bsdinstall/scripts/firmware-fetch test-firmware
+	    sh /usr/libexec/bsdinstall/firmware-fetch test-firmware
 	atf_check -s exit:0 cmp media/test.pkg root/usr/obj/usr/src/repo/test.pkg
 	atf_check -s exit:0 -o ignore grep 'enabled: no' root/etc/pkg/5BSD-base.conf
 }
@@ -115,7 +115,7 @@ fwget_graphics_and_usb_body()
 	usb_search_packages() { addpkg "wifi-firmware-mt7601u-kmod"; }
 	EOF
 	atf_check -s exit:0 -e empty -o inline:'gpu-firmware-intel-kmod-alderlake\ndrm-kmod\ngpu-firmware-intel-kmod-tigerlake\nwifi-firmware-mt7601u-kmod\n' \
-	    env LIBEXEC_PATH="$(pwd)/detect" sh @SRCTOP@/usr.sbin/fwget/fwget.sh -qn
+	    env LIBEXEC_PATH="$(pwd)/detect" sh /usr/sbin/fwget -qn
 }
 
 atf_test_case graphics_startup_preserves_modules
@@ -129,7 +129,7 @@ graphics_startup_preserves_modules_body()
 		    BSDINSTALL_HARDWARE_MEDIA="$(pwd)/no-media" \
 		    BSDINSTALL_HARDWARE_INSTALL="${HELPER}" \
 		    BSDINSTALL_TMPETC="$(pwd)/config" \
-		    sh @SRCTOP@/usr.sbin/bsdinstall/scripts/firmware-fetch \
+		    sh /usr/libexec/bsdinstall/firmware-fetch \
 		    gpu-firmware-intel-kmod-alderlake
 	done
 	atf_check -s exit:0 -o inline:'if_iwlwifi i915kms\n' \
@@ -141,7 +141,7 @@ usb_descriptor_records_body()
 {
 	setup
 	mkdir detect
-	cp @SRCTOP@/usr.sbin/fwget/usb/usb* detect/
+	cp /usr/libexec/fwget/usb* detect/
 	cat >bin/usbconfig <<-'EOF'
 	#!/bin/sh
 	[ "$1" = dump_device_desc ] || exit 1
@@ -173,7 +173,7 @@ usb_descriptor_records_body()
 	EOF
 	chmod +x bin/usbconfig
 	atf_check -s exit:0 -e empty -o inline:'iwmbt-firmware\nwifi-firmware-mt7601u-kmod\nrtlbt-firmware\n' \
-	    env LIBEXEC_PATH="$(pwd)/detect" sh @SRCTOP@/usr.sbin/fwget/fwget.sh -qn usb
+	    env LIBEXEC_PATH="$(pwd)/detect" sh /usr/sbin/fwget -qn usb
 }
 
 atf_test_case raw_firmware_not_kernel_bound
@@ -199,7 +199,7 @@ offline_repository_without_devices_body()
 	    BSDINSTALL_CHROOT="${FWGET_ROOT}" \
 	    BSDINSTALL_HARDWARE_MEDIA="$(pwd)/media" \
 	    BSDINSTALL_HARDWARE_INSTALL=/does-not-exist \
-	    sh @SRCTOP@/usr.sbin/bsdinstall/scripts/firmware-fetch
+	    sh /usr/libexec/bsdinstall/firmware-fetch
 	atf_check -s exit:0 cmp media/test.pkg root/usr/obj/usr/src/repo/test.pkg
 	atf_check -s exit:1 test -f state/calls
 }
@@ -220,18 +220,18 @@ automatic_selection_body()
 	export BSDINSTALL_HARDWARE_MEDIA=$(pwd)/absent
 	export BSDINSTALL_HARDWARE_INSTALL="${HELPER}"
 	export BSDINSTALL_TMPETC=$(pwd)/fragments
-	atf_check -s exit:0 -o empty -e ignore sh @SRCTOP@/usr.sbin/bsdinstall/scripts/firmware-fetch --auto
+	atf_check -s exit:0 -o empty -e ignore sh /usr/libexec/bsdinstall/firmware-fetch --auto
 	atf_check -s exit:0 -o ignore grep -F 'install -U -qy -r 5BSD-base 5BSD-hw-test-firmware 5BSD-hw-gpu-firmware-intel-kmod-alderlake' state/calls
 	atf_check -s exit:0 -o ignore grep -F i915kms fragments/rc.conf.hardware
 	rm state/calls
-	atf_check -s exit:42 -o empty -e empty env TEST_DETECT_FAIL=yes sh @SRCTOP@/usr.sbin/bsdinstall/scripts/firmware-fetch --auto
+	atf_check -s exit:42 -o empty -e empty env TEST_DETECT_FAIL=yes sh /usr/libexec/bsdinstall/firmware-fetch --auto
 	[ ! -f state/calls ] || atf_fail 'Detection failure must stop installation'
 }
 
 atf_test_case mediatek_split_firmware
 mediatek_split_firmware_body()
 {
-	. @SRCTOP@/usr.sbin/fwget/pci/pci_network_mediatek
+	. /usr/libexec/fwget/pci_network_mediatek
 	addpkg() { printf '%s\n' "$1"; }
 	for id in 0x0608 0x0616 0x7920 0x7922 0x7961; do
 		selected=$(pci_network_mediatek_mt76 "$id")
@@ -263,7 +263,7 @@ missing_media_bootstrap_is_reported_body()
 	    BSDINSTALL_PKG_MEDIA="$(pwd)/absent" \
 	    BSDINSTALL_HARDWARE_MEDIA="$(pwd)/absent" \
 	    BSDINSTALL_HARDWARE_INSTALL="${HELPER}" \
-	    sh @SRCTOP@/usr.sbin/bsdinstall/scripts/firmware-fetch test-firmware
+	    sh /usr/libexec/bsdinstall/firmware-fetch test-firmware
 	[ ! -f state/calls ] || atf_fail 'pkg bootstrap or repository operation was attempted'
 }
 
@@ -282,7 +282,7 @@ embedded_pkg_static_is_used_body()
 	    BSDINSTALL_PKG_MEDIA="$(pwd)/media" \
 	    BSDINSTALL_HARDWARE_MEDIA="$(pwd)/media" \
 	    BSDINSTALL_HARDWARE_INSTALL="${HELPER}" TMPDIR="$(pwd)/private-tmp" \
-	    sh @SRCTOP@/usr.sbin/bsdinstall/scripts/firmware-fetch test-firmware
+	    sh /usr/libexec/bsdinstall/firmware-fetch test-firmware
 	atf_check -s exit:0 -o ignore grep -F 'install -U -qy' state/calls
 	atf_check -s exit:0 -o empty ls private-tmp
 }
@@ -293,7 +293,7 @@ firmware_failure_retains_stderr_body()
 	setup
 	# Exercise the dialog's installation path without running detection or
 	# opening a real terminal. Keep the actual execution/logging code.
-	sed -n '/^# Initialize/,$p' @SRCTOP@/usr.sbin/bsdinstall/scripts/firmware >dialog-body
+	sed -n '/^# Initialize/,$p' /usr/libexec/bsdinstall/firmware >dialog-body
 	cat >dialog <<-'EOF'
 	#!/bin/sh
 	printf '%s\n' "$*" >>"${TEST_STATE}/dialog"
@@ -357,8 +357,8 @@ hawkpoint_graphics_selection_body()
 {
 	setup
 	mkdir detect
-	cp @SRCTOP@/usr.sbin/fwget/pci/pci* detect/
-	cp @SRCTOP@/usr.sbin/fwget/usb/usb* detect/
+	cp /usr/libexec/fwget/pci* detect/
+	cp /usr/libexec/fwget/usb* detect/
 	cat >bin/pciconf <<-'EOF'
 	#!/bin/sh
 	echo 'vgapci0@pci0:196:0:0: class=0x030000 rev=0xba hdr=0x00 vendor=0x1002 device=0x1900 subvendor=0x1f4c subdevice=0xb022'
@@ -377,7 +377,7 @@ hawkpoint_graphics_selection_body()
 	gpu-firmware-amd-kmod-vcn-4-0-2
 	EOF
 	atf_check -s exit:0 -e empty -o file:expected \
-	    env LIBEXEC_PATH="$(pwd)/detect" sh @SRCTOP@/usr.sbin/fwget/fwget.sh -qn
+	    env LIBEXEC_PATH="$(pwd)/detect" sh /usr/sbin/fwget -qn
 }
 
 atf_test_case activation_write_failure

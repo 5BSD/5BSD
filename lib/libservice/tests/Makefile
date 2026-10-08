@@ -58,7 +58,19 @@ CFLAGS.software_identity_test+=	-I${SRCTOP}/sys
 
 ${PACKAGE}FILES+=	capd_test_harness.sh
 
-ATF_TESTS_SH_SED_worker_contract_test+=	-e 's,@SRCTOP@,${SRCTOP},g'
+# worker_contract_test checks every usr.sbin/BSD* provider that pdforks
+# workers.  Select those sources here and install them beneath
+# ${TESTSDIR}/srctree so the installed test does not depend on the build
+# machine's source tree.
+SRCTREE_FILES!=	cd ${SRCTOP} && find usr.sbin -path '*/tests' -prune -o \
+		    -path 'usr.sbin/BSD*' -name '*.c' -type f -exec \
+		    grep -lE '=[[:space:]]*pdfork\(' {} + | sort
+.for _dir in ${SRCTREE_FILES:H:O:u}
+FILESGROUPS+=	SRCTREE_${_dir:S,/,_,g}
+SRCTREE_${_dir:S,/,_,g}=	${SRCTREE_FILES:M${_dir}/*:N${_dir}/*/*:S,^,${SRCTOP}/,}
+SRCTREE_${_dir:S,/,_,g}DIR=	${TESTSDIR}/srctree/${_dir}
+SRCTREE_${_dir:S,/,_,g}PACKAGE=	${PACKAGE}
+.endfor
 
 
 all:

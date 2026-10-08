@@ -8,13 +8,15 @@ dtrace_contract_head()
 }
 dtrace_contract_body()
 {
-	local binary profile provider source
+	local binary profile provider source srctree
 
-	test -d "@SRCTOP@" ||
-	    atf_skip "source tree (@SRCTOP@) required for contract checks"
-	provider="@SRCTOP@/usr.sbin/BSDSysctl/bsdsysctl_provider.d"
-	source="@SRCTOP@/usr.sbin/BSDSysctl/bsdsysctl.c"
-	profile="@SRCTOP@/cddl/usr.sbin/bsdinstruments/profiles/capability-services.d"
+	# The test package stages the contract sources beneath srctree/.
+	srctree="$(atf_get_srcdir)/srctree"
+	test -d "${srctree}" ||
+	    atf_skip "staged source files (${srctree}) required for contract checks"
+	provider="${srctree}/usr.sbin/BSDSysctl/bsdsysctl_provider.d"
+	source="${srctree}/usr.sbin/BSDSysctl/bsdsysctl.c"
+	profile="${srctree}/cddl/usr.sbin/bsdinstruments/profiles/capability-services.d"
 	for probe in request__start request__done; do
 		atf_check -s exit:0 -o ignore grep -F "probe ${probe}" "${provider}"
 	done
@@ -27,7 +29,7 @@ dtrace_contract_body()
 		atf_check -s exit:0 -o ignore grep -F "${clause}" "${profile}"
 	done
 	if [ "@MK_DTRACE@" = "yes" ]; then
-		binary="@OBJTOP@/usr.sbin/BSDSysctl/BSDSysctl"
+		binary="/Capabilities/System/Sysctl.cap/Units/bsdsysctl.unit/bin/BSDSysctl"
 		test -x "${binary}" ||
 		    atf_fail "missing LocalSysctl binary: ${binary}"
 		atf_check -s exit:0 -o match:'.SUNW_dof' readelf -S "${binary}"
