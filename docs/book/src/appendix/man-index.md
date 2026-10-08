@@ -37,7 +37,6 @@ is assigned at load) has no page of its own; the wrapper is
 | pdcmp(2) | compare two process descriptors | |
 | pdincapmode(2) | query whether a process descriptor's process is in capability mode | |
 | pdself(2) | create a process descriptor for the calling process | |
-| squeue(2) | shared-queue asynchronous I/O | squeue_setup(2), squeue_enter(2), squeue_register(2) |
 
 ## Section 3: libraries
 
@@ -93,7 +92,6 @@ is assigned at load) has no page of its own; the wrapper is
 | liboes(3) | userspace library for Endpoint Security Capabilities | oes |
 | libotelexport(3) | shared telemetry exporter layer for the ObservableBSD tools | untagged (default package) |
 | dtrace_fdopen(3) | create a DTrace handle from a delegated consumer descriptor | dtrace |
-| squeue(3) | ergonomic interface to the squeue completion-ring engine | clibs |
 
 ## Section 4: kernel interfaces
 

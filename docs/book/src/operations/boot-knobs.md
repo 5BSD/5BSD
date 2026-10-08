@@ -34,7 +34,6 @@ at the loader prompt with `set name="value"`.
 | `hw.vmm.vmx.nested` | `0` | Permit explicitly configured guests to use nested VMX. `hw.vmm.vmx.nested_vpid` additionally exposes nested VPID/INVVPID for live qualification. Boot-only. | Hosting a hypervisor inside a bhyve guest. |
 | `hw.virtio_mem.allow_plug` | `0` | virtio-mem driver: issue PLUG requests toward `requested_size`. Plugged memory is not onlined (FreeBSD has no runtime memory add), so plugging only consumes host backing. Boot-only. | Exercising the full PLUG/UNPLUG contract in device tests. |
 | `hw.virtio_iommu.enable` | `0` | Attach the virtio-iommu driver. Boot-only. | Guests that need the device model. |
-| `kern.squeue.max_workers` | see sysctl | System-wide worker cap (1 to 256) for the squeue completion-ring engine. `RWTUN`. | io_uring-heavy Linux workloads. |
 
 Two notes on what is missing. First, there are no `mac_capability*_load`
 lines: every plane component is `standard` in `sys/conf/files`, the only
@@ -116,18 +115,6 @@ mac_abac_ctl(8) is the supported way to change these (`mac_abac_ctl mode
 enforcing`, `mac_abac_ctl default deny`); it also loads and validates rule
 sets. See [mac_abac](../capability/mac-abac.md).
 
-### squeue (`kern.squeue.*`)
-
-The native completion-ring engine behind Linux io_uring
-([io_uring and squeue](../compat/linux/io-uring.md)).
-
-| Sysctl | Default | Meaning |
-|---|---|---|
-| `max_wired_pages` | one eighth of physical pages | Maximum physical pages all rings together may wire; `wired_pages` is the live count. Raise for large-ring workloads. |
-| `max_workers` | see sysctl | 1 to 256 system-wide workers; `workers` and `idle_workers` are live counts. |
-| `live_requests`, `registered_files`, `issuer_tokens`, `issuer_refs` | live | Object counts, for leak hunting. |
-| `rings`, `submitted`, `completed`, `overflowed` | live | Per-boot counters; a rising `overflowed` means a consumer is not draining its completion ring. |
-
 ### Linux emulation (`compat.linux.*`)
 
 Upstream knobs, unchanged, but two matter for 5BSD troubleshooting:
@@ -155,6 +142,4 @@ elsewhere on 5BSD, by design:
 All knobs above exist at HEAD and were checked against the source that
 defines them. The `pt_load` line is not in the shipped defaults; bsdtrace(8)
 requires both `hwt` and `pt` loaded (`kldload pt` before tracing, or add
-`pt_load="YES"`). `kern.squeue.max_workers` and
-`max_wired_pages` defaults are computed at boot; read them with sysctl(8)
-rather than trusting a number written here.
+`pt_load="YES"`).

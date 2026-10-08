@@ -26,6 +26,7 @@ Status vocabulary used throughout:
 | STUB-reject | hand-written handler only rejects requests (`seccomp`) |
 | DUMMY | declared STD, but the implementation is a `DUMMY()` stub: logs "syscall X not implemented" once per process and returns ENOSYS |
 | UNIMPL-ancient | declared UNIMPL on purpose: removed from Linux long ago (`uselib`, `create_module`, ...) or x86-64-only relics (`epoll_ctl_old`) |
+| UNIMPL | declared UNIMPL as in upstream FreeBSD (`io_uring_setup`, `io_uring_enter`, `io_uring_register`); returns ENOSYS |
 | ABSENT | not in our table at all; falls to the unknown-syscall path |
 
 ## 1. Totals (current amd64 working tree, 2026-09-21)
@@ -33,17 +34,18 @@ Status vocabulary used throughout:
 | category | entries |
 |---|---:|
 | named syscall slots in the local table, excluding numeric holes | 386 |
-| STD-real (including native aliases; partial implementations included) | 334 |
+| STD-real (including native aliases; partial implementations included) | 331 |
 | DUMMY macro stubs | 36 |
 | hand-written reject-only stubs: seccomp | 1 |
 | UNIMPL-ancient | 15 |
+| UNIMPL (io_uring) | 3 |
 
 Method: match each numbered entry in `sys/amd64/linux/syscalls.master` to the
 DUMMY names in the common, amd64 and x86 dummy files, then inspect the remaining
-handlers for unconditional rejection. There are 335 entries outside DUMMY and
+handlers for unconditional rejection. There are 332 entries outside DUMMY and
 UNIMPL; one of those is the hand-written reject-only stub above. This is a local source
 inventory, not a fresh comparison with upstream's latest syscall table or a
-claim of 334 fully conformant implementations.
+claim of 331 fully conformant implementations.
 
 ## `perf_event_open` partial implementation (2026-09-24)
 
@@ -701,9 +703,9 @@ Refreshed from `syscalls.master`, the DUMMY lists and hand-written stubs on
 | 335 | uretprobe | DUMMY |
 | 336 | uprobe | DUMMY |
 | 424 | pidfd_send_signal | STD-real |
-| 425 | io_uring_setup | STD-real |
-| 426 | io_uring_enter | STD-real |
-| 427 | io_uring_register | STD-real |
+| 425 | io_uring_setup | UNIMPL |
+| 426 | io_uring_enter | UNIMPL |
+| 427 | io_uring_register | UNIMPL |
 | 428 | open_tree | DUMMY |
 | 429 | move_mount | DUMMY |
 | 430 | fsopen | DUMMY |
@@ -752,14 +754,14 @@ Refreshed from `syscalls.master`, the DUMMY lists and hand-written stubs on
 
 ## 6. Ranked remaining work (reviewed 2026-09-18)
 
-This replaces the previous ranking, which still called io_uring, statmount,
+This replaces the previous ranking, which still called statmount,
 listmount, cachestat, tee, mseal and NUMA-policy entry points DUMMY. Those now
-have handlers; their option-level limitations still matter. The native
-`lib/libsqueue` library also exists. The ranking below is an engineering
-judgment based on current implementation gaps, not new workload hit counts.
+have handlers; their option-level limitations still matter. The ranking
+below is an engineering judgment based on current implementation gaps, not new workload hit counts.
 
-Of the 52 named entries without functional handlers, 15 are ancient interfaces
-that should remain absent. The practical backlog contains those 37 calls plus
+Of the 55 named entries without functional handlers, 15 are ancient interfaces
+that should remain absent and three are the `io_uring_*` calls, which are UNIMPL
+as in upstream FreeBSD. The practical backlog contains those 37 calls plus
 partially implemented `unshare`, `quotactl`, `quotactl_fd`, and
 `perf_event_open`, with these coarse ownership groups. Six legacy AIO entries now have partial handlers and remain
 on the option and correctness backlog:
@@ -844,17 +846,6 @@ Keep namespaces/new mount contexts, userfaultfd, fanotify, keyrings, perf/BPF,
 Landlock and hardware-specific interfaces as separate projects with named target
 applications. Jails and Capsicum are useful native facilities, but are not direct
 substitutes for their Linux contracts.
-
-Next io_uring work: pending WAITID cancellation, real liburing/application
-validation, and selected register/setup modes. WAITID exit/reap, pidfd and
-stop/continue behavior passed Linux oracles and the full 348-case amd64
-ZFS-root gate; see [the WAITID audit](linuxulator-waitid-lifecycle.md). Fixed-descriptor installation for open/accept/socket,
-explicit splice offsets and `SPLICE_F_FD_IN_FIXED` have named amd64 VM
-coverage. The subsequent phases added
-`min_wait_usec`, registered wait arguments and registered-ring enter. SQPOLL core behavior and `SQ_AFF` now have named VM-qualified contracts;
-see [the SQPOLL gate](linuxulator-sqpoll.md). Extended lifecycle and option
-combinations remain on the backlog. Design matrices must not be read as
-proof that every option is implemented.
 
 ## 7. Tests
 

@@ -23,11 +23,13 @@ the ledger in `docs/linuxulator-syscall-coverage.md`. Its section 5 is a
 | DUMMY | declared but stubbed: logs "syscall X not implemented" once per process and returns `ENOSYS` |
 | STUB-reject | a hand-written handler that only rejects (`seccomp`) |
 | UNIMPL-ancient | deliberately absent, removed from Linux long ago (`uselib`, `create_module`, `epoll_ctl_old`) |
+| UNIMPL | declared UNIMPL as in upstream FreeBSD (`io_uring_setup`, `io_uring_enter`, `io_uring_register`); returns `ENOSYS` |
 
-At the last count in that document the numbers are 334 STD-real, 36 DUMMY,
-1 reject-only and 15 UNIMPL-ancient, with the caveat the document itself
-carries: a handler is not proof that every option of that syscall works.
-The 36 DUMMY stubs are the ones to look for in your application:
+At the last count in that document the numbers are 331 STD-real, 36 DUMMY,
+1 reject-only, 15 UNIMPL-ancient and 3 UNIMPL (`io_uring_*`), with the
+caveat the document itself carries: a handler is not proof that every option
+of that syscall works. The 36 DUMMY stubs are the ones to look for in your
+application:
 `pivot_root`, `init_module`, `delete_module`, `finit_module`, `kexec_load`,
 `kexec_file_load`, `add_key`, `request_key`, `keyctl`, `fanotify_init`,
 `fanotify_mark`, `setns`, `listns`, `bpf`, `userfaultfd`, `memfd_secret`,
@@ -232,12 +234,12 @@ Images come from `build-zfs-images.sh`; `guest-gate.sh` is staged as the
 guest's `init_rc`, checks `/` and the test directory are ZFS, hashes the
 kernel and modules, and emits `GATE_*` markers the host parses. The gate
 requires complete named case sets (memfd, unshare, xstate, ptrace, socket
-cookie, quota, OFD locks, seals, RESOLVE flags, squeue, io_uring, perf) and
-fails on a missing or duplicate result, a timeout, an unclean QEMU exit, or a
-recognised kernel fault string. The same portable cases are run against a
-pinned Linux reference guest (Alpine 6.18.35, and 7.1.5 for newer io_uring
-contracts) and an assertion is never weakened to match the emulator. The
-full amd64 run takes over fifteen minutes under TCG.
+cookie, quota, OFD locks, seals, RESOLVE flags, perf) and fails on a
+missing or duplicate result, a timeout, an unclean QEMU exit, or a recognised
+kernel fault string. The same portable cases are run against a pinned Linux
+reference guest (Alpine 6.18.35 and 7.1.5) and an assertion is never weakened
+to match the emulator. The full amd64 run takes over fifteen minutes under
+TCG.
 
 For a shipped application the discipline is the same: build a guest image,
 add your workload as a named case in the guest script, and treat only a
@@ -255,10 +257,10 @@ State these before someone discovers them in production.
 |---|---|
 | Namespaces | none, and never planned: jails are not namespaces. `clone` and `clone3` with any `CLONE_NEW*` flag return `EINVAL`, like a Linux kernel built without them; `unshare` accepts only `CLONE_FS` for a single-threaded process; `setns`, `listns` and the new mount API are DUMMY |
 | cgroups | `/proc/<pid>/cgroup` reads `0::/` and `cpuset` reads `/` so runtimes stop warning; no controller exists |
-| seccomp | reject-only: `SECCOMP_GET_ACTION_AVAIL` gives `EOPNOTSUPP`, everything else `EINVAL`. A real implementation with Landlock is in progress and uncommitted |
+| seccomp | reject-only: `SECCOMP_GET_ACTION_AVAIL` gives `EOPNOTSUPP`, everything else `EINVAL`. The `landlock_*` calls are DUMMY (`ENOSYS`) |
 | Keys, kexec, fanotify, bpf, uprobes, userfaultfd, `memfd_secret`, LSM attributes | DUMMY (`ENOSYS`) |
 | Kernel modules from Linux | `init_module`, `finit_module`, `delete_module` are DUMMY; modules load through BSDExtension only |
-| io_uring | `IORING_SETUP_IOPOLL` and `HYBRID_IOPOLL` rejected with `EINVAL` at setup; `SEND_ZC` copies and reports `ZC_COPIED`; hardware zero-copy receive and NVMe `URING_CMD` absent. Everything else is negotiated through `PROBE`, feature bits and `-EOPNOTSUPP`, never silently wrong |
+| io_uring | `io_uring_setup`, `io_uring_enter` and `io_uring_register` are UNIMPL and return `ENOSYS`, as in upstream FreeBSD |
 | `perf_event_open` | software counters for the current thread only (task clock, faults, context switches); hardware, sampling, groups and mmap rings return an error |
 | NUMA | single-domain bookkeeping: policies are validated and accepted, `move_pages` reports node 0, `FUTEX2_NUMA` is `EINVAL` |
 | Quota | `quotactl` global `Q_SYNC` only; `quotactl_fd` ZFS query, byte hard limit and sync on amd64 |

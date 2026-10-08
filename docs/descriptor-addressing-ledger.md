@@ -16,7 +16,6 @@ for finishing that. Counts are from `sys/kern/syscalls.master` (593 slots,
 | MAC_CAPABILITY | a service instance: CALL, SENDMSG, RECVMSG, MINT_INSTANCE, REVOKE; services `system`, `node`, `accounting`, `identity`, `coalition`, `capprotect`, `isolation`, `mount`, `channel` | 5BSD |
 | ENVFD | a named, sealable environment value; EVFILT_ENVFD | 5BSD |
 | ZFSHANDLE | a dataset or pool pinned by guid with a fixed rights mask; minted by name once, then `ZFD_*` by fd only | 5BSD |
-| SQUEUE | a completion ring | 5BSD |
 | EVENTFD, TIMERFD, INOTIFY, CRYPTO (+EVFILT_CRYPTODESC), KQUEUE, MQUEUE, SHM, SEM, PTS, DEV, SOCKET | stock objects | stock |
 
 ## A. Already descriptor-addressed
@@ -26,7 +25,7 @@ fchroot, execve via fexecve, `__acl_*_fd`, `extattr_*_fd`, `__mac_*_fd`,
 getfhat, renameat2, inotify_add_watch_at); pdkill, pdgetpid, pdwait, pdcmp,
 pdincapmode; jail_attach_jd, jail_remove_jd; the Capsicum limit family
 including `cap_xfer_limit`, `cap_mmap_capmode`, `cap_lookup_capmode`;
-squeue_enter and squeue_register; bindat and connectat; close_range.
+bindat and connectat; close_range.
 
 Pid-addressed syscalls that already have a descriptor form through the
 `node` service (target is an attached procdesc, self if none):

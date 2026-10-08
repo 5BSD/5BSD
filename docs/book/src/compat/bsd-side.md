@@ -123,7 +123,7 @@ Three things were taken from HardenedBSD, deliberately few. `BIND_NOW` is on by 
 
 ## Tools that learned new descriptor types
 
-fstat(1), procstat(1) and sockstat(1) know the new descriptor types. procstat(1) marks a mac_capability channel with type letter `M`, a crypto descriptor with `C`, an envfd with `N`, and sockstat(1) `-V` lists `AF_VSOCK` sockets. truss(1) and kdump(1) decode the new system calls. libprocstat exposes `PS_FST_TYPE_MAC_CAPABILITY`, `PS_FST_TYPE_CRYPTO`, `PS_FST_TYPE_ENVFD`, `PS_FST_TYPE_ZFSHANDLE` and `PS_FST_TYPE_SQUEUE` for programs that walk descriptor tables.
+fstat(1), procstat(1) and sockstat(1) know the new descriptor types. procstat(1) marks a mac_capability channel with type letter `M`, a crypto descriptor with `C`, an envfd with `N`, and sockstat(1) `-V` lists `AF_VSOCK` sockets. truss(1) and kdump(1) decode the new system calls. libprocstat exposes `PS_FST_TYPE_MAC_CAPABILITY`, `PS_FST_TYPE_CRYPTO`, `PS_FST_TYPE_ENVFD` and `PS_FST_TYPE_ZFSHANDLE` for programs that walk descriptor tables.
 
 ## What does not change
 
@@ -131,4 +131,4 @@ UFS, ZFS, jails, bhyve, pf, ipfw, the toolchain, ports, the FreeBSD Handbook's i
 
 ## Status
 
-Everything above is committed on `dev`. src.conf(5) still lists i386 and armv7 defaults that the build no longer honours. The Linux seccomp and Landlock work is in progress and uncommitted; nothing here depends on it.
+Everything above is committed on `dev`. src.conf(5) still lists i386 and armv7 defaults that the build no longer honours. Linux seccomp and Landlock are not supported; nothing here depends on them.

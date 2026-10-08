@@ -31,7 +31,7 @@ The Linux ABI is a first-class execution target rather than an afterthought.
 `libexec/rc/rc.conf` sets `linux_enable="YES"`, and the emulator covers the
 64-bit Linux system call table so that unmodified Linux binaries run with the
 5BSD security stack enforcing beneath the translation boundary. Linux
-seccomp and Landlock emulation is in progress and not yet committed.
+seccomp and Landlock are not supported.
 
 ## What 5BSD adds
 
@@ -47,7 +47,7 @@ fall into the areas below; each has a part of this book.
 | Plane runtime (capsule, switchboard, libservice, libcapbundle) | `usr.sbin/capsule`, `usr.sbin/switchboard`, `lib/libservice` | III |
 | Sixteen system capability providers and their client libraries | `usr.sbin/BSD*`, `lib/lib*cmp` | IV |
 | Storage: TrustedZFS and BSDFilesystem | `sys/contrib/openzfs`, `usr.sbin/BSDFilesystem` | III, IV |
-| Linux emulation and the squeue completion-ring engine | `sys/compat/linux`, `sys/kern/sys_squeue.c` | V |
+| Linux emulation | `sys/compat/linux` | V |
 | Virtualization (bhyve(8) engine, VirtIO guest stack, vsock, BSDVM) | `usr.sbin/bhyve`, `sys/dev/virtio`, `usr.sbin/BSDVM` | IV, V |
 | Bluetooth host, BLE mesh and virtual HCI | `usr.sbin/bluetooth/BSDBluetooth` | IV |
 | Observability (bsdinstruments, hwtlm, bsdtrace, libotelexport, 87 DTrace scripts) | `usr.sbin`, `share/dtrace` | VII |
@@ -202,6 +202,5 @@ in this book repeats that verdict for its subject.
 
 **Status.** Checked against the `dev` branch on 2026-09-25. The counts above
 are from `docs/5bsd-inventory.md` of the same date. Verified execution is
-present but not enforcing; Linux seccomp and Landlock are uncommitted work in
-progress; BSDVM is the only ambient provider and does not yet run virtual
-machines.
+present but not enforcing; Linux seccomp and Landlock are not supported;
+BSDVM is the only ambient provider and does not yet run virtual machines.

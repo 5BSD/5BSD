@@ -25,7 +25,7 @@ Kernel providers are defined with `SDT_PROVIDER_DEFINE` and appear in
 | Credentials and privilege | `cred`, `priv`, `jail`, `jaildesc`, `imgact`, `ptrace`, `ktrace`, `kld`, `kenv` | Credential changes, privilege checks, exec, module load |
 | Security policies | `oes`, `abac`, `mac`, `mac_framework`, `auditpipe` | OES events and verdicts, ABAC rule matches, MAC framework entry points |
 | Storage | `trustedzfs`, `vfs`, `mount`, `geom`, `fusefs`, `ext2fs` | Capability handles over ZFS, mounts, filesystem operations |
-| IPC and I/O | `aio`, `mqueue`, `squeue`, `unpcb`, `socket`, `kqueue`, `sysvmsg`, `sysvsem`, `sysvshm`, `pts`, `tty` | Queue engines, sockets, terminals |
+| IPC and I/O | `aio`, `mqueue`, `unpcb`, `socket`, `kqueue`, `sysvmsg`, `sysvsem`, `sysvshm`, `pts`, `tty` | Queue engines, sockets, terminals |
 | Virtualisation | `vmm`, `virtio`, `virtqueue`, `vtblk`, `vsock`, `xbb` | Hypervisor, VirtIO device models, AF_VSOCK |
 | Linux | `linuxulator`, `linuxkpi_fw`, `linuxkpi_sdio`, `linuxkpi_fullmac` | Emulation and LinuxKPI drivers |
 | Bluetooth | `bluetooth` | Netgraph HCI and L2CAP |
@@ -63,7 +63,7 @@ By purpose:
 | Plane: kernel | `mac_capability-audit`, `-calls`, `-delegation`, `-denials`, `-errors`, `-fds`, `-holders`, `-messages`, `-nonces`, `-services`, `-shield`, `-summary`, `-who`; `capsicum-changes`, `-denials`, `-xfer`; `envfd-events`; `procdesc-lifecycle`; `trustedzfs-handles`, `-denials` |
 | Plane: capsule | `capsule-bootstrap`, `-claims`, `-control`, `-errors`, `-ipc`, `-latency`, `-lifecycle`, `-minting` |
 | Plane: switchboard | `switchboard-anoint`, `-capabilities`, `-connections`, `-exec-latency`, `-ipc`, `-latency`, `-lifecycle`, `-naming`, `-resources`, `-shutdown`, `-timeouts` |
-| Subsystem flows | `aio-flow`, `squeue-flow`, `-summary`, `-stall`, `mqueue-flow`, `zfs-admin`, `vmm-passthru`, `rctl-limits`, `vsock-connections`, `-overview`, `-perf`, `-provider`, `-security`, `blued-att`, `-connections`, `-overview`, `-pairing`, `-scan`, `rpi-wifi` |
+| Subsystem flows | `aio-flow`, `mqueue-flow`, `zfs-admin`, `vmm-passthru`, `rctl-limits`, `vsock-connections`, `-overview`, `-perf`, `-provider`, `-security`, `blued-att`, `-connections`, `-overview`, `-pairing`, `-scan`, `rpi-wifi` |
 | Upstream network and disk | `tcpconn`, `tcpdebug`, `tcpstate`, `tcptrack`, `udptrack`, `siftr`, `disklatency`, `disklatencycmd`, `hotopen`, `blocking`, `nfsattrstats`, `nfsclienttime` |
 
 `tests/sys/kern/dtrace_catalog_test.sh` is the regression check for the
@@ -254,7 +254,6 @@ as on FreeBSD. See [system.Audit](../providers/audit.md).
 | Suite | Where | Needs |
 |---|---|---|
 | `dtrace_catalog_test` | `/usr/tests/sys/kern` | root, kernel providers loaded |
-| `squeue_dtrace_test` | `/usr/tests/sys/kern` | root; proves the `squeue` provider fires |
 | `bsdinstruments_test`, `hwtlm_test`, `bsdtrace_test`, `otelexport_test` | `/usr/tests/usr.sbin/*`, `/usr/tests/lib/libotelexport` | unprivileged for the compile checks; capture cases need Intel PT and root |
 | BSDTrace `policy_test`, `session_test`, `bundle_test` | `/usr/tests/usr.sbin/BSDTrace` | in-session for the parser; a plane-off VM for the session tests |
 

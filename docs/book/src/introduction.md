@@ -119,7 +119,7 @@ library, the policy file, the control tool and the tests that prove it.
 **Part V, Backward Compatibility**, is for the BSD side: what rc and
 service(8) do under switchboard, how login, su, ssh and cron carry a session's
 capabilities, jails, packages and ports, virtual machines, and the Linux
-emulation layer with its system calls, io_uring, procfs and sandboxing.
+emulation layer with its system calls, procfs and sandboxing.
 
 **Part VI, Writing Software for 5BSD**, walks through each kind of program you
 might write, a provider, a consumer application, a per-user agent, a migrated

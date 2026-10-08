@@ -8,8 +8,8 @@ unfinished. SO_COOKIE was already implemented before that follow-up.
 The latest existing-handler work is [XSAVE writes and multicast filters](linuxulator-xstate-mcast-options.md).
 It does not remove entries from the missing-syscall queue below.
 
-This is the **non-io_uring syscall** work queue. The active io_uring/squeue
-work has its own owner and gate in [linuxulator-implementation-gate.md](linuxulator-implementation-gate.md).
+The `io_uring_*` slots are UNIMPL, as in upstream FreeBSD, and are not on this
+queue.
 This inventory is based on the current `sys/amd64/linux/syscalls.master`,
 `sys/compat/linux/linux_dummy.c`, `sys/amd64/linux/linux_dummy_machdep.c`,
 and `sys/x86/linux/linux_dummy_x86.c` on 2026-09-21. It covers the Linux64
@@ -30,12 +30,12 @@ partially implemented `unshare`, `quotactl`, `quotactl_fd`, and
 subset has passed its named reference/focused cases and full amd64 VM gate. See
 [the quota contract](linuxulator-quota.md).
 
-The local table has 386 named slots: 334 functional handlers or native aliases
+The local table has 386 named slots: 331 functional handlers or native aliases
 (which may support only part of their Linux options), **36 `DUMMY()` handlers**
-that return `ENOSYS`, **one reject-only `seccomp` handler**, and 15 deliberately
-unimplemented historical slots. The 37 calls without functional handlers and four partial calls
+that return `ENOSYS`, **one reject-only `seccomp` handler**, 15 deliberately
+unimplemented historical slots, and three UNIMPL `io_uring_*` slots. The 37 calls without functional handlers and four partial calls
 are all listed below (41 calls still needing work). These counts describe dispatch, not conformance of the
-333 handlers. The separate [coverage inventory](linuxulator-syscall-coverage.md)
+331 handlers. The separate [coverage inventory](linuxulator-syscall-coverage.md)
 tracks partially implemented calls and options, including the six legacy AIO
 calls; those are additional correctness work, not missing dispatch entries.
 
@@ -95,8 +95,7 @@ kernel code; Linux command formats and option translation stay in Linuxulator.
 Tests must include denied privilege, invalid program/structure, cross-process
 access, fork/exec inheritance, fd passing, object revocation and teardown.
 For `seccomp`, include every syscall entry path and prove filtered operations
-have no side effects. Avoid concurrent edits to io_uring/squeue while that
-workstream is being qualified.
+have no side effects.
 
 ## 3. Module, boot, and administration (5)
 
