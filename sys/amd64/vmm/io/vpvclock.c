@@ -27,6 +27,7 @@
 #include <sys/systm.h>
 #include <sys/clock.h>
 #include <sys/kernel.h>
+#include <sys/lock.h>
 #include <sys/malloc.h>
 #include <sys/mutex.h>
 #include <sys/sysctl.h>
