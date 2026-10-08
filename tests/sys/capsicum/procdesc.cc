@@ -576,14 +576,15 @@ FORK_TEST(Pdfork, OtherUserIfRoot) {
   EXPECT_PID_ALIVE(pid);
 
   // Ideally, we should be able to send signals via a process descriptor even
-  // if it's owned by another user, but this is not implementated on FreeBSD.
-  // Sending a signal with pdkill() should be permitted though.
-  EXPECT_EQ(-1, pdkill(pd, SIGKILL));
-  EXPECT_EQ(EPERM, errno);
+  // if it's owned by another user.  5BSD implements this: holding the process
+  // descriptor is the authority, so pdkill() and pdwait() do not repeat the
+  // p_cansignal()/p_canwait() credential checks (FreeBSD returns EPERM here).
+  EXPECT_OK(pdkill(pd, SIGKILL));
 
-  int rc = pdwait4_(pd, &status, WNOHANG, NULL);
-  EXPECT_EQ(-1, rc);
-  EXPECT_EQ(EWOULDBLOCK, errno);
+  int rc = pdwait4_(pd, &status, 0, NULL);
+  EXPECT_EQ(pid, rc);
+  EXPECT_TRUE(WIFSIGNALED(status));
+  EXPECT_EQ(SIGKILL, WTERMSIG(status));
 }
 
 TEST_F(PipePdfork, WaitPidThenPd) {
