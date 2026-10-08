@@ -229,27 +229,8 @@ ATF_TC_BODY(connect_bound_socket_from_2address_jail, tc)
 	    .ip4 = addrs,
 	};
 	struct sockaddr_in sin = { .sin_family = AF_INET };
-	struct sockaddr_in dst = {
-	    .sin_family = AF_INET,
-	    .sin_len = sizeof(dst),
-	    .sin_addr = { htonl(0xc0000204) },
-	    .sin_port = htons(6666),
-	};
 	socklen_t slen = sizeof(sin);
 	int s;
-
-	/*
-	 * connect(2) has to select a source address, which needs a route
-	 * towards the (TEST-NET-1) destination, e.g. a default route.  A test
-	 * host without any network (only lo0) cannot run this test.
-	 */
-	ATF_REQUIRE((s = socket(PF_INET, SOCK_DGRAM, 0)) > 0);
-	if (connect(s, (struct sockaddr *)&dst, sizeof(dst)) != 0) {
-		if (errno == ENETUNREACH || errno == EHOSTUNREACH)
-			atf_tc_skip("no route to %s", inet_ntoa(dst.sin_addr));
-		atf_tc_fail("unjailed connect: %s", strerror(errno));
-	}
-	close(s);
 
 	ATF_REQUIRE(jail(&jconf) > 0);
 	ATF_REQUIRE((s = socket(PF_INET, SOCK_DGRAM, 0)) > 0);
@@ -258,8 +239,9 @@ ATF_TC_BODY(connect_bound_socket_from_2address_jail, tc)
 	ATF_REQUIRE_MSG(sin.sin_addr.s_addr == INADDR_ANY && sin.sin_port != 0,
 	    "jailed unconnected socket name %s:%u", inet_ntoa(sin.sin_addr),
 	    ntohs(sin.sin_port));
-	ATF_REQUIRE_MSG(connect(s, (struct sockaddr *)&dst, sizeof(dst)) == 0,
-	    "jailed connect: %s", strerror(errno));
+	sin.sin_addr.s_addr = htonl(0xc0000204);
+	sin.sin_port = htons(6666);
+	ATF_REQUIRE(connect(s, (struct sockaddr *)&sin, sizeof(sin)) == 0);
 	close(s);
 }
 
