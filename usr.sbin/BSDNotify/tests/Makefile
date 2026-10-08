@@ -56,11 +56,6 @@ SRCTREE_FILES=	cddl/usr.sbin/bsdinstruments/profiles/capability-services.d \
 		usr.sbin/BSDNotify/policy.c \
 		usr.sbin/BSDNotify/policy.h \
 		usr.sbin/switchboard/svc_proto.c
-.for _dir in ${SRCTREE_FILES:H:O:u}
-FILESGROUPS+=	SRCTREE_${_dir:S,/,_,g}
-SRCTREE_${_dir:S,/,_,g}=	${SRCTREE_FILES:M${_dir}/*:N${_dir}/*/*:S,^,${SRCTOP}/,}
-SRCTREE_${_dir:S,/,_,g}DIR=	${TESTSDIR}/srctree/${_dir}
-SRCTREE_${_dir:S,/,_,g}PACKAGE=	${PACKAGE}
-.endfor
+.include "${SRCTOP}/tests/srctree.mk"
 
 .include <bsd.test.mk>

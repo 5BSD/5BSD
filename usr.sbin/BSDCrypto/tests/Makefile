@@ -27,11 +27,6 @@ ATF_TESTS_SH+=	bundle_test
 # machine's source tree.
 SRCTREE_FILES=	usr.sbin/BSDCrypto/Makefile \
 		usr.sbin/BSDCrypto/bsdcrypto.c
-.for _dir in ${SRCTREE_FILES:H:O:u}
-FILESGROUPS+=	SRCTREE_${_dir:S,/,_,g}
-SRCTREE_${_dir:S,/,_,g}=	${SRCTREE_FILES:M${_dir}/*:N${_dir}/*/*:S,^,${SRCTOP}/,}
-SRCTREE_${_dir:S,/,_,g}DIR=	${TESTSDIR}/srctree/${_dir}
-SRCTREE_${_dir:S,/,_,g}PACKAGE=	${PACKAGE}
-.endfor
+.include "${SRCTOP}/tests/srctree.mk"
 
 .include <bsd.test.mk>
