@@ -32,35 +32,6 @@
 #include <sys/mman.h>
 #include <sys/un.h>
 
-#ifndef SYS_pdself
-#define	SYS_pdself		630
-#endif
-#ifndef SYS_pdcmp
-#define	SYS_pdcmp		631
-#endif
-
-/*
- * Shims for syscalls not yet in the installed libsys (pkgbase lag).
- * The header declares them but the library may lack the symbols.
- */
-#define	pdself(fdp, flags)	syscall(SYS_pdself, (fdp), (flags))
-#define	pdcmp(a, b, res)	syscall(SYS_pdcmp, (a), (b), (res))
-#ifndef SYS_pdincapmode
-#define	SYS_pdincapmode		633
-#endif
-#ifndef NOTE_CAPMODE
-#define	NOTE_CAPMODE		0x10000000
-#endif
-#ifndef NOTE_JAILED
-#define	NOTE_JAILED		0x08000000
-#endif
-#ifndef NOTE_SETUID
-#define	NOTE_SETUID		0x04000000
-#endif
-#ifndef NOTE_CHROOT
-#define	NOTE_CHROOT		0x02000000
-#endif
-
 /*
  * Helper: run test body in a forked child so cap_enter() doesn't
  * affect the test runner.
@@ -140,7 +111,7 @@ ATF_TC_BODY(pdself_inside_capmode, tc)
 	    "pdself inside cap mode: expected success (result=%d)", r);
 }
 
-/* ---- pdself second call returns shared fd ---- */
+/* ---- pdself second call returns another fd for the same procdesc ---- */
 
 static void
 pdself_second_body(int *result)
@@ -168,7 +139,7 @@ ATF_TC_BODY(pdself_second_call, tc)
 
 	r = in_child(pdself_second_body, NULL);
 	ATF_REQUIRE_MSG(r == 0,
-	    "pdself second call: expected shared fd (result=%d)", r);
+	    "pdself second call: expected a second fd (result=%d)", r);
 }
 
 /* ---- pdself invalid flags ---- */
@@ -300,7 +271,7 @@ ATF_TC_BODY(pdcmp_different, tc)
 	    "pdcmp two different pdfork children (result=%d)", r);
 }
 
-/* ---- pdself on pdfork child returns shared fd ---- */
+/* ---- pdself in pdfork child returns another fd for the same procdesc ---- */
 
 static void
 pdself_pdfork_shared_body(int *result)
@@ -321,7 +292,7 @@ pdself_pdfork_shared_body(int *result)
 		if (pdself(&myfd, 0) != 0) _exit(2);
 		if (myfd < 0) _exit(3);
 
-		/* Closing our reference should not kill us (not last) */
+		/* Closing a descriptor for ourselves never kills us */
 		close(myfd);
 		_exit(0);
 	}
@@ -339,7 +310,7 @@ ATF_TC_BODY(pdself_pdfork_shared, tc)
 
 	r = in_child(pdself_pdfork_shared_body, NULL);
 	ATF_REQUIRE_MSG(r == 0,
-	    "pdself in pdfork child: expected shared fd (result=%d)", r);
+	    "pdself in pdfork child: expected a second fd (result=%d)", r);
 }
 
 /* ---- pdself external close kills process ---- */
@@ -353,9 +324,9 @@ pdself_external_kill_body(int *result)
 	/*
 	 * Fork a child that enters cap mode, creates a pdself descriptor,
 	 * sends it to us over a socketpair, then closes its local copy
-	 * and sleeps.  We close the received descriptor — as the last
-	 * reference held by an external process, this should SIGKILL
-	 * the child.
+	 * and sleeps.  We close the received descriptor — a close by a
+	 * process other than the described one, without PD_DAEMON, so
+	 * it should SIGKILL the child.
 	 *
 	 * Once the child has a procdesc it is managed via the descriptor
 	 * (normal procdesc semantics: reparented to init on close, not
@@ -450,8 +421,8 @@ pdself_external_kill_body(int *result)
 	close(sv[0]);
 
 	/*
-	 * Close the received procdesc — this is the last reference
-	 * from an external process, so it should SIGKILL the child.
+	 * Close the received procdesc — a kill-capable close by another
+	 * process, so it should SIGKILL the child.
 	 */
 	close(fd);
 
@@ -534,7 +505,7 @@ pdcmp_bad_fd_body(int *result)
 	if (pdcmp(fd, STDIN_FILENO, &cmp) == 0) {
 		*result = 3; return;
 	}
-	if (errno != EBADF) { *result = 4; return; }
+	if (errno != EINVAL) { *result = 4; return; }
 
 	close(fd);
 	*result = 0;
@@ -854,7 +825,8 @@ ATF_TC_BODY(pdincapmode_after_capenter, tc)
 
 /*
  * pdincapmode_bad_fd:
- * Verify EBADF for invalid descriptors and non-procdesc descriptors.
+ * Verify EBADF for invalid descriptors and EINVAL for non-procdesc
+ * descriptors.
  */
 ATF_TC_WITHOUT_HEAD(pdincapmode_bad_fd);
 ATF_TC_BODY(pdincapmode_bad_fd, tc)
@@ -868,7 +840,7 @@ ATF_TC_BODY(pdincapmode_bad_fd, tc)
 	/* Non-procdesc fd (pipe) */
 	ATF_REQUIRE(pipe(pv) == 0);
 	ATF_REQUIRE(syscall(SYS_pdincapmode, pv[0]) == -1);
-	ATF_REQUIRE(errno == EBADF);
+	ATF_REQUIRE(errno == EINVAL);
 	close(pv[0]);
 	close(pv[1]);
 }
@@ -1227,13 +1199,6 @@ ATF_TC_BODY(pdincapmode_exited, tc)
 }
 
 /* ---- cap_mmap_capmode tests ---- */
-
-#ifndef SYS_cap_mmap_capmode
-#define	SYS_cap_mmap_capmode	634
-#endif
-#ifndef SYS_cap_lookup_capmode
-#define	SYS_cap_lookup_capmode	635
-#endif
 
 /*
  * mmap_capmode_denied:
