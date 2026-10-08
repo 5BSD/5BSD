@@ -1074,13 +1074,6 @@ vi_pci_notify_queue(struct virtio_softc *vs, uint64_t qidx)
 	if (vs->vs_transport == VIRTIO_PCI_TRANSPORT_MODERN &&
 	    (!vq->vq_enabled || vq_is_resetting(vq)))
 		return;
-	/*
-	 * Ignore kicks for a queue that has no ring yet (e.g. a legacy
-	 * QueuePFN write that was rejected as unmappable); there is nothing
-	 * for the device to consume.
-	 */
-	if (!vq_is_allocated(vq))
-		return;
 	/* A malformed ring is fatal until the driver performs a real reset. */
 	if ((vs->vs_status & VIRTIO_CONFIG_S_NEEDS_RESET) != 0)
 		return;
@@ -1100,6 +1093,16 @@ vi_pci_notify_queue(struct virtio_softc *vs, uint64_t qidx)
 		return;
 	}
 	vq->vq_notify_pending = false;
+	/*
+	 * Ignore kicks for a queue that has no ring yet (e.g. a legacy
+	 * QueuePFN write that was rejected as unmappable); there is nothing
+	 * for the device to consume, and device callbacks may dereference
+	 * ring pointers.  Check this only at delivery time: a kick raced
+	 * with a lifecycle fence or early initialization is latched above
+	 * and revalidated here when it is replayed.
+	 */
+	if (!vq_is_allocated(vq))
+		return;
 	VIRTIO_PROBE_QUEUE_NOTIFY(vc->vc_name, (uint16_t)qidx);
 	if (vq->vq_notify != NULL)
 		(*vq->vq_notify)(DEV_SOFTC(vs), vq);

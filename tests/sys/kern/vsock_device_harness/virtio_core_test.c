@@ -3575,6 +3575,7 @@ ATF_TC_BODY(lifecycle_fence_replays_queue_notify, tc)
 	memset(&pi, 0, sizeof(pi));
 	memset(&vq, 0, sizeof(vq));
 	vi_softc_linkup(&vs, &vc, &vs, &pi, &vq);
+	vq.vq_flags = VQ_ALLOC;
 	vs.vs_status = VIRTIO_CONFIG_STATUS_DRIVER_OK;
 	g_notifications = 0;
 
@@ -3638,6 +3639,7 @@ ATF_TC_BODY(failed_checkpoint_pause_replays_queue_notify, tc)
 	memset(&pi, 0, sizeof(pi));
 	memset(&vq, 0, sizeof(vq));
 	vi_softc_linkup(&vs, &vc, &vs, &pi, &vq);
+	vq.vq_flags = VQ_ALLOC;
 	vs.vs_status = VIRTIO_CONFIG_STATUS_DRIVER_OK;
 	g_notifications = 0;
 	g_config_changes = 0;
@@ -3721,6 +3723,7 @@ ATF_TC_BODY(failed_checkpoint_resume_stays_fenced_until_retry, tc)
 	memset(&pi, 0, sizeof(pi));
 	memset(&vq, 0, sizeof(vq));
 	vi_softc_linkup(&vs, &vc, &vs, &pi, &vq);
+	vq.vq_flags = VQ_ALLOC;
 	vs.vs_status = VIRTIO_CONFIG_STATUS_DRIVER_OK;
 	vs.vs_negotiated_caps = VIRTIO14_F_ADMIN_VQ;
 	vs.vs_admin_binding = (void *)(uintptr_t)1;
@@ -4614,6 +4617,7 @@ ATF_TC_BODY(fatal_ring_error_blocks_later_kicks, tc)
 	memset(&pi, 0, sizeof(pi));
 	memset(&vq, 0, sizeof(vq));
 	vi_softc_linkup(&vs, &vc, &vs, &pi, &vq);
+	vq.vq_flags = VQ_ALLOC;
 	vs.vs_status = VIRTIO_CONFIG_STATUS_DRIVER_OK |
 	    VIRTIO_CONFIG_S_NEEDS_RESET;
 	g_notifications = 0;
@@ -6180,8 +6184,8 @@ ATF_TC_BODY(modern_transport_dispatch, tc)
 
 /*
  * vi_pci_notify_queue rejects an out-of-range queue, respects the
- * modern enable/reset gate and the DRIVER_OK gate, and warns when no notify
- * callback is registered.
+ * modern enable/reset gate and the DRIVER_OK gate, drops kicks for a queue
+ * without a ring, and warns when no notify callback is registered.
  */
 ATF_TC_WITHOUT_HEAD(notify_queue_edge_cases);
 ATF_TC_BODY(notify_queue_edge_cases, tc)
@@ -6216,8 +6220,22 @@ ATF_TC_BODY(notify_queue_edge_cases, tc)
 	vi_pci_notify_queue(&vs, 0);
 	ATF_CHECK(vq.vq_notify_pending);
 
-	/* DRIVER_OK but neither vq nor vc notify callback registered. */
+	/*
+	 * A latched kick for a queue that never got a ring is consumed
+	 * without delivery once DRIVER_OK replays it.
+	 */
 	vs.vs_status = VIRTIO_CONFIG_STATUS_DRIVER_OK;
+	vc.vc_qnotify = notify_and_interrupt;
+	g_notifications = 0;
+	vi_pci_notify_ready_queues(&vs);
+	ATF_CHECK_EQ(g_notifications, 0);
+	ATF_CHECK(!vq.vq_notify_pending);
+	vi_pci_notify_queue(&vs, 0);
+	ATF_CHECK_EQ(g_notifications, 0);
+	ATF_CHECK(!vq.vq_notify_pending);
+
+	/* DRIVER_OK but neither vq nor vc notify callback registered. */
+	vq.vq_flags = VQ_ALLOC;
 	vq.vq_notify = NULL;
 	vc.vc_qnotify = NULL;
 	vi_pci_notify_queue(&vs, 0);
