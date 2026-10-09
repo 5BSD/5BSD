@@ -53,8 +53,11 @@ manifest_body()
 
 	atf_check -s exit:0 -o match:'Verification: PASSED' \
 	    "${switchboardctl}" verify "${bundle}"
-	atf_check -s exit:0 -o match:'system.Network' \
-	    grep 'activation' "${manifest}"
+	# The activation block publishes the broker and its gated admin name.
+	atf_check -s exit:0 -o ignore grep -F '"system.Network",' "${manifest}"
+	atf_check -s exit:0 -o ignore \
+	    grep -F '{ name = "system.Network.Admin"; requires = ["system.network.admin"]; }' \
+	    "${manifest}"
 	atf_check -s exit:1 -o empty -e empty \
 	    grep 'interface' "${manifest}"
 	atf_check -s exit:0 -o match:'version = "1.0.0"' \
