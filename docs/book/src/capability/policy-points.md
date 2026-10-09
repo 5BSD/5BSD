@@ -193,6 +193,7 @@ must be set in loader.conf(5); the rest can be changed at runtime.
 | Can this unit see that service name? | provider's `visible` for open endpoints; the requesting software's `attributes` against the endpoint's `requires` for gated ones; management class does not affect lookup |
 | Can this client stop that service? | `control` class of the unit: `core` never; `system` needs endpoint rights and the current administrative software attribute; `user` additionally permits its owning uid after endpoint admission |
 | Why did a root shell get `ENOENT` for `system.Notify.System`? | the shell has no approved `system.notify.system` software attribute; use an approved client with the required attribute and intended operation interface |
+| Why can `networkcmpctl` reach the network broker from a shell when my program cannot? | `system.Network` is SYSTEM-only; `networkcmpctl` is approved software holding `system.network.admin`, which `system.Network.Admin` requires. Access follows the caller's software identity, not the login session |
 | Can this program load a module? | `SYS_GATE_KLDLOAD` is held by BSDExtension; other programs get `EPERM` from `mpo_kld_check_load`; ask through `service_ensure_extension(3)` and BSDExtension's allow-list |
 | Can anyone write `kern.maxfiles` directly? | no; the scoped `SYSCTL` claim makes BSDSysctl the sole writer, and its `sysctl.conf` decides which labels may ask |
 | Can a debugger attach to a provider? | `protect = ["ptrace", ...]` in its manifest; the launcher (switchboard) and token holders are exempt |

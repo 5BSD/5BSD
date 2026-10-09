@@ -1,4 +1,15 @@
-activation { boot = true; ipc = ["system.Network"]; }
+# Two endpoints serving one protocol:
+#   system.Network        SYSTEM-only broker for services and applications
+#   system.Network.Admin  requires the software attribute system.network.admin,
+#                         held by networkcmpctl, so the approved shell tool
+#                         reaches the broker by its own identity
+activation {
+	boot = true;
+	ipc = [
+		"system.Network",
+		{ name = "system.Network.Admin"; requires = ["system.network.admin"]; },
+	];
+}
 control = "system";
 protect = ["ptrace", "signal", "wait", "sigkill", "sigcont", "sched", "core", "ktrace"];
 program = "BSDNetwork";

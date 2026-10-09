@@ -59,6 +59,7 @@ static pthread_mutex_t networkcmp_registry_lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t networkcmp_registry_ready = PTHREAD_COND_INITIALIZER;
 static pthread_once_t networkcmp_atfork_once = PTHREAD_ONCE_INIT;
 static struct networkcmp_client *networkcmp_process_client;
+static const char *networkcmp_process_iface;	/* interface it was opened on */
 static int networkcmp_atfork_error;
 static bool networkcmp_initializing;
 
@@ -85,6 +86,7 @@ networkcmp_atfork_child(void)
 {
 
 	networkcmp_process_client = NULL;
+	networkcmp_process_iface = NULL;
 	networkcmp_initializing = false;
 	(void)pthread_mutex_unlock(&networkcmp_registry_lock);
 }
@@ -493,8 +495,13 @@ networkcmp_hello(struct networkcmp_client *client,
 	return (0);
 }
 
-int
-networkcmp_client_open(struct networkcmp_client **clientp) __no_lock_analysis
+/*
+ * Open the process client on `iface`.  The process shares one client; a
+ * process that opened one interface cannot also open the other.
+ */
+static int
+networkcmp_client_open_iface(const char *iface,
+    struct networkcmp_client **clientp) __no_lock_analysis
 {
 	struct networkcmp_client *client;
 	int error, fd;
@@ -523,6 +530,11 @@ networkcmp_client_open(struct networkcmp_client **clientp) __no_lock_analysis
 		}
 	}
 	if (networkcmp_process_client != NULL) {
+		if (strcmp(networkcmp_process_iface, iface) != 0) {
+			(void)pthread_mutex_unlock(&networkcmp_registry_lock);
+			errno = EBUSY;
+			return (-1);
+		}
 		networkcmp_process_client->references++;
 		*clientp = networkcmp_process_client;
 		(void)pthread_mutex_unlock(&networkcmp_registry_lock);
@@ -533,7 +545,7 @@ networkcmp_client_open(struct networkcmp_client **clientp) __no_lock_analysis
 	client = calloc(1, sizeof(*client));
 	if (client == NULL)
 		goto fail;
-	if (service_open(NETWORKCMP_INTERFACE, &fd) == -1)
+	if (service_open(iface, &fd) == -1)
 		goto fail;
 	if (service_session_create(fd, &client->channel) == -1) {
 		error = errno;
@@ -551,11 +563,12 @@ networkcmp_client_open(struct networkcmp_client **clientp) __no_lock_analysis
 		goto fail;
 	}
 	networkcmp_process_client = client;
+	networkcmp_process_iface = iface;
 	networkcmp_initializing = false;
 	*clientp = client;
 	(void)pthread_cond_broadcast(&networkcmp_registry_ready);
 	(void)pthread_mutex_unlock(&networkcmp_registry_lock);
-	NETWORKCMP_PROBE_OPEN(__DECONST(char *, NETWORKCMP_INTERFACE), 0);
+	NETWORKCMP_PROBE_OPEN(__DECONST(char *, iface), 0);
 	return (0);
 
 fail:
@@ -568,9 +581,29 @@ fail:
 		(void)pthread_cond_broadcast(&networkcmp_registry_ready);
 		(void)pthread_mutex_unlock(&networkcmp_registry_lock);
 	}
-	NETWORKCMP_PROBE_OPEN(__DECONST(char *, NETWORKCMP_INTERFACE), error);
+	NETWORKCMP_PROBE_OPEN(__DECONST(char *, iface), error);
 	errno = error;
 	return (-1);
+}
+
+int
+networkcmp_client_open(struct networkcmp_client **clientp)
+{
+
+	return (networkcmp_client_open_iface(NETWORKCMP_INTERFACE, clientp));
+}
+
+/*
+ * The administrative interface: the same protocol, published under a name
+ * that requires the system.network.admin software attribute, so only
+ * approved programs (networkcmpctl) resolve it -- from a login session too.
+ */
+int
+networkcmp_client_open_admin(struct networkcmp_client **clientp)
+{
+
+	return (networkcmp_client_open_iface(NETWORKCMP_ADMIN_INTERFACE,
+	    clientp));
 }
 
 const struct networkcmp_hello_reply *

@@ -51,6 +51,12 @@
 #endif
 
 #define	BSDNETWORK_NAME	"system.Network"
+/*
+ * The administrative endpoint serves the same protocol; SwitchBoard admits
+ * only software holding system.network.admin (networkcmpctl), which lets an
+ * approved shell tool reach the broker from a login session.
+ */
+#define	BSDNETWORK_ADMIN_NAME	"system.Network.Admin"
 #define	NETWORKCMP_RESOLVER_TIMEOUT_MS	30000U
 
 union provider_buffer {
@@ -1536,7 +1542,9 @@ main(void)
 	struct net_worker_ent *workers = NULL, *w;
 	struct networkcmp_config config;
 	struct service_identity identity;
-	struct service_listener *listener;
+	struct service_listener *listener, *listeners[2];
+	static const char *const listener_names[2] = {
+		BSDNETWORK_NAME, BSDNETWORK_ADMIN_NAME };
 	struct service_provider *provider;
 	struct service_context *ctx;
 	struct kevent event, change;
@@ -1588,8 +1596,10 @@ main(void)
 	    service_provider_authorize_capabilities(provider) == -1 ||
 	    service_provider_protect(provider, SERVICE_PROTECT_EXTERNAL |
 	    SERVICE_PROTECT_NOPRIVS | SERVICE_PROTECT_NOEXEC) == -1 ||
-	    service_provider_expose(provider, BSDNETWORK_NAME,
-	    &listener) == -1 ||
+	    service_provider_expose(provider, listener_names[0],
+	    &listeners[0]) == -1 ||
+	    service_provider_expose(provider, listener_names[1],
+	    &listeners[1]) == -1 ||
 	    service_provider_enter_capability_mode(provider) == -1 ||
 	    service_provider_ready(provider) == -1)
 		goto fail;
@@ -1601,10 +1611,12 @@ main(void)
 	kq = kqueuex(KQUEUE_CLOEXEC);
 	if (kq == -1)
 		goto fail;
-	EV_SET(&change, service_listener_fd(listener), EVFILT_READ,
-	    EV_ADD | EV_ENABLE, 0, 0, listener);
-	if (kevent(kq, &change, 1, NULL, 0, NULL) == -1)
-		goto fail;
+	for (int i = 0; i < 2; i++) {
+		EV_SET(&change, service_listener_fd(listeners[i]), EVFILT_READ,
+		    EV_ADD | EV_ENABLE, 0, 0, listeners[i]);
+		if (kevent(kq, &change, 1, NULL, 0, NULL) == -1)
+			goto fail;
+	}
 	for (;;) {
 		if (kevent(kq, NULL, 0, &event, 1, NULL) == -1) {
 			if (errno == EINTR)
@@ -1615,6 +1627,7 @@ main(void)
 			net_worker_remove(&workers, event.udata, &nworkers);
 			continue;
 		}
+		listener = event.udata;
 		memset(&identity, 0, sizeof(identity));
 		identity.size = sizeof(identity);
 		if (service_listener_accept(listener, &identity, &fd) == -1) {
@@ -1632,6 +1645,18 @@ main(void)
 			if (errno == EINTR)
 				continue;
 			goto fail;
+		}
+		/*
+		 * The listener that fired must be the endpoint SwitchBoard
+		 * resolved; a disagreement is a routing bug and is refused.
+		 */
+		if (strcmp(identity.service_name, listener == listeners[1] ?
+		    listener_names[1] : listener_names[0]) != 0) {
+			net_log(main_logger(), LOG_ERR,
+			    "refusing %s: resolved %s on another listener",
+			    identity.client_label, identity.service_name);
+			close(fd);
+			continue;
 		}
 		if (nworkers >= NETWORKCMP_MAX_WORKERS) {
 			net_log(main_logger(), LOG_WARNING,

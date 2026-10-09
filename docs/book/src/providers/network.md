@@ -16,7 +16,7 @@ Source: `usr.sbin/BSDNetwork/capbundle/bsdnetwork.ucl` and `Bundle.ucl`.
 
 | Field | Value |
 |---|---|
-| Wire name | `system.Network` |
+| Wire names | `system.Network` (SYSTEM-only); `system.Network.Admin` with `requires = ["system.network.admin"]` (same protocol, for approved shell tools) |
 | Bundle | `/Capabilities/System/Network.cap` (`bundle_id = "system.Network"`) |
 | Program | `/Capabilities/System/Network.cap/Units/bsdnetwork.unit/bin/BSDNetwork` |
 | Unit | `bsdnetwork` |
@@ -82,7 +82,7 @@ dial(const char *host, const char *port)
 
 ## Command-line tool
 
-networkcmpctl(8) is a bounded diagnostic client that reaches the broker only through libnetworkcmp and gains no extra network authority. Its session policy is whatever the invoking label's policy is.
+networkcmpctl(8) is a bounded diagnostic client that reaches the broker only through libnetworkcmp and gains no extra network authority. It is approved software: its exec manifest (`/Capabilities/System/NetworkControl.cap`) declares `attributes = ["system.network.admin"]`, so the kernel-attributed `networkcmpctl` image resolves `system.Network.Admin` from a login session, while any other program in that session gets `ENOENT` for both names. Its session policy is whatever its label's policy is.
 
 | Verb | Example | Output shape |
 |---|---|---|
