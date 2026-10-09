@@ -242,7 +242,7 @@ control = "core";                  # nobody stops the logger at runtime
 protect = ["ptrace", "signal", "wait", "sigkill", "sigcont", "sched",
     "core", "ktrace"];             # shield applied before the image runs
 program = "BSDLog";                # bin/BSDLog, not bin/bsdlog
-visible = ["user"];                # agents and apps may reach system.Log
+visible = ["user"];                # a login session may reach system.Log
 directories = ["/Capabilities/System", "/Capabilities/Apps",
     "/Capabilities/Run/live"];     # delivered as dirfds for the reconcile
 restart = "on-failure";
@@ -256,9 +256,8 @@ Nothing here grants storage, sockets or files. BSDLog opens
 `system.Filesystem` at runtime for its segment store, reads its config
 through the delivered `CAPABILITY_CONFIG_FD`, and reads the install roots
 through `CAPABILITY_DIR_FDS` because a born-in-capmode process cannot open
-`/Capabilities/System` by path. The endpoint requires no attribute, so a
-shell can `logctl` it, and `visible = ["user"]` lets per-user agents and
-applications resolve it without declaring the system domain.
+`/Capabilities/System` by path. `visible = ["user"]` is the whole reason a
+shell can `logctl` without a required attribute.
 
 ## A gate-holding daemon: BSDTime
 

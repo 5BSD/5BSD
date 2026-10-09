@@ -168,14 +168,7 @@ independent listeners, and a lookup for any of them activates that runtime.
 Domain scope is applied before anything else: a unit's own lookups run in the
 domain its manifest or bundle class gives it (`domain`), and a name is
 resolvable from a USER-domain channel only if its provider lists `visible =
-["user"]`. A login session is the exception: a sender that has never held
-software authority and is not jailed resolves every non-control name, the way
-a Darwin per-user bootstrap falls through to the system namespace, and the
-provider's own checks decide what it may do. The kernel marks every process
-that has held authority as confined (`CAP_AUTH_STAMP_CONFINED`); the mark
-survives exec outside the catalogue, invalidation and `CAP_AUTH_CLEAR`, so an
-agent or application cannot shed its scope to pass for a login session.
-Anointments are checked next: an endpoint with `requires` resolves
+["user"]`. Anointments are checked next: an endpoint with `requires` resolves
 only for a requester whose `holds` cover it. A refusal for either reason is
 `ENOENT`, indistinguishable from an unregistered name, and each attribute
 refusal is audited (`AUE_SWITCHBOARD_ANOINT`). The full mechanism is in

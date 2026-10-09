@@ -36,16 +36,6 @@ cannot keep the previous program's privileges. Registered approved images can
 acquire their own context on ordinary exec. Responsible-process attribution
 and coalitions do not grant authority.
 
-A login session that has never held software authority resolves every
-non-control service name, as a Darwin per-user bootstrap falls through to the
-system namespace; endpoint `requires` and each provider's own checks still
-decide what it may do. Holding authority once marks the process and its
-descendants confined (`CAP_AUTH_STAMP_CONFINED` in the request stamp). The
-mark survives exec outside the catalogue, invalidation and `CAP_AUTH_CLEAR`,
-and jailed senders are always confined, so software cannot shed its scope to
-pass for a login session; a confined sender without a valid context gets the
-anonymous USER scope.
-
 ## Managed services and ordinary clients
 
 A managed service has a typed bootstrap channel for checking in and publishing

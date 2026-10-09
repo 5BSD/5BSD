@@ -47,7 +47,7 @@ plane's own daemons use it.
 ### The record and the store
 
 `system.Log` is open (no required attribute) and `visible = ["user"]`, because every
-login session, agent and application emits records. A record carries an OpenTelemetry severity
+login session emits records. A record carries an OpenTelemetry severity
 number (1 through 24; `LOGCMP_SEVERITY_TRACE` is 1 and `LOGCMP_SEVERITY_FATAL`
 21), a subsystem and category, an optional event name, a kind (log, event or
 signpost), optional activity, trace and span ids, a UTF-8 message and

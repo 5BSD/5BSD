@@ -104,9 +104,6 @@ svc_domain_resolves(const struct svc_domain *domain, const char *name)
 
 	if (domain == NULL || domain->kind == SVC_DOMAIN_SYSTEM)
 		return (true);
-	/* A login session resolves service names as SYSTEM does. */
-	if (domain->kind == SVC_DOMAIN_USER && domain->session)
-		return (true);
 	/*
 	 * SVC_DOMAIN_USER: names whose provider opts into user visibility, plus
 	 * every gated endpoint (non-empty requires): the provider gated it, so it

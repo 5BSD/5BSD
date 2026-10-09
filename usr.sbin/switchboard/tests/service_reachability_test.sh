@@ -13,11 +13,6 @@
 # two coupled fixes: the libservice client-connect path, and switchboard treating
 # the ambient lookup channel as a first-class on-demand requester.
 #
-# A login session is an unattributed sender, so it resolves system names even
-# when the provider is not visible = ["user"] (the login-session fall-through,
-# docs/book/src/plane/switchboard.md).  Endpoint attribute gates still apply:
-# system.Trace requires system.trace.client, which a plain shell does not hold.
-#
 # These pass only on a live plane (a login session that inherited an ambient
 # channel).  Off the plane -- on the build host, or any session without the
 # channel -- service_probe reports "no ambient channel" and the case skips.
@@ -44,24 +39,6 @@ probe_bin()
 
 # Probe one service name.  atf_skip when there is no ambient channel here (not
 # a plane session); atf_pass on OK; atf_fail with the probe line otherwise.
-# Probe a gated name: a login session is not approved software, so it holds
-# no attributes and must see ENOENT exactly as for an unregistered name.
-check_gated()
-{
-	local name="$1" bin out rc
-	bin=$(probe_bin) || atf_skip "service_probe helper not found"
-	out=$("$bin" "$name" 2>&1)
-	rc=$?
-	case "$rc" in
-	2)	atf_skip "no ambient lookup channel here: $out" ;;
-	1)	case "$out" in
-		*"errno=2 "*) ;;			# ENOENT: attribute gate held
-		*)	atf_fail "'$name' refused with the wrong error: $out" ;;
-		esac ;;
-	*)	atf_fail "gated '$name' reached without its attribute: $out" ;;
-	esac
-}
-
 check_reachable()
 {
 	local name="$1" bin out rc
@@ -110,10 +87,10 @@ crypto_reachable_body() { check_reachable "system.Crypto"; }
 atf_test_case trace_reachable
 trace_reachable_head()
 {
-	atf_set "descr" "system.Trace stays behind its attribute gate for a login session"
+	atf_set "descr" "system.Trace is reachable + activatable via the ambient channel"
 	atf_set "require.user" "root"
 }
-trace_reachable_body() { check_gated "system.Trace"; }
+trace_reachable_body() { check_reachable "system.Trace"; }
 
 atf_test_case log_reachable
 log_reachable_head()
