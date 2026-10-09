@@ -1391,7 +1391,7 @@ zfshandle_ioc_flags(uint64_t ioc, const char *name, const char *value,
 {
 	const size_t dstlen = 128 * 1024;
 	zfs_cmd_t *zc;
-	char *packed = NULL, *dst = NULL;
+	char *packed = NULL, *dst;
 	size_t plen = 0;
 	cred_t *saved;
 	int error;
@@ -1407,11 +1407,17 @@ zfshandle_ioc_flags(uint64_t ioc, const char *name, const char *value,
 		zc->zc_nvlist_src = (uintptr_t)packed;
 		zc->zc_nvlist_src_size = plen;
 	}
-	if (outnvlp != NULL) {
-		dst = vmem_alloc(dstlen, KM_SLEEP);
-		zc->zc_nvlist_dst = (uintptr_t)dst;
-		zc->zc_nvlist_dst_size = dstlen;
-	}
+	/*
+	 * Always supply an output buffer, even when the caller discards the
+	 * result.  zfsdev_ioctl_common() reports an nvlist_smush() or
+	 * put_nvlist() failure as the ioctl's errno when the operation itself
+	 * succeeded, so a zero-sized destination turns a successful vector
+	 * that returns output (ZFS_IOC_RECV_NEW: read_bytes, error_flags,
+	 * errors) into ENOMEM after it has already committed.
+	 */
+	dst = vmem_alloc(dstlen, KM_SLEEP);
+	zc->zc_nvlist_dst = (uintptr_t)dst;
+	zc->zc_nvlist_dst_size = dstlen;
 
 	saved = zfshandle_cred_enter();
 	error = zfsdev_ioctl_common(ioc - ZFS_IOC_FIRST, zc, FKIOCTL);
@@ -1422,8 +1428,7 @@ zfshandle_ioc_flags(uint64_t ioc, const char *name, const char *value,
 
 	if (packed != NULL)
 		fnvlist_pack_free(packed, plen);
-	if (dst != NULL)
-		vmem_free(dst, dstlen);
+	vmem_free(dst, dstlen);
 	vmem_free(zc, sizeof (*zc));
 	return (error);
 }
