@@ -786,7 +786,6 @@ struct proc {
 	uint64_t p_cap_authority_generation; /* (c) Install/invalidation epoch. */
 	bool p_cap_authority_invalid; /* (c) Sticky credential invalidation. */
 	bool p_cap_authority_pending_exec; /* (c) Await approved provider image. */
-	bool p_cap_authority_confined; /* (c) Ever held authority; never cleared. */
 	struct mac_cap_process_context *p_cap_context; /* (c) Held discovery. */
 	uint64_t	p_cap_identity; /* (c) Process lifetime identity. */
 	uint64_t	p_cap_responsible; /* (c) Responsible process identity. */
