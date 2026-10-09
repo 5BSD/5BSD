@@ -9,6 +9,7 @@
 
 #include <sys/types.h>
 
+#include <stdbool.h>
 #include <stddef.h>
 #include <sys/cap_authority.h>
 #include <stdint.h>
@@ -145,6 +146,11 @@ const struct channel_process_identity *
 /* NULL unless the kernel stamped a currently valid issued authority. */
 const struct cap_authority_stamp *
 	channel_message_authority(const struct channel_message *);
+/*
+ * True when the sender has held attributed software authority (or is jailed),
+ * whether or not its current stamp is valid; false for an unattributed sender.
+ */
+bool	channel_message_confined(const struct channel_message *);
 size_t	channel_message_fd_count(const struct channel_message *);
 int	channel_message_borrow_fd(const struct channel_message *, size_t);
 int	channel_message_take_fd(struct channel_message *, size_t);

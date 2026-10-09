@@ -206,6 +206,13 @@ cap_authority_stamp_locked(struct proc *p, struct cap_authority_stamp *stamp)
 
 	cap_authority_info_locked(p, &info);
 	bzero(stamp, sizeof(*stamp));
+	/*
+	 * Confinement is reported even for an invalid context: a process that
+	 * shed or invalidated its authority must not pass for an unattributed
+	 * login session.  Jailed senders never count as login sessions.
+	 */
+	if (p->p_cap_authority_confined || jailed(p->p_ucred))
+		stamp->flags |= CAP_AUTH_STAMP_CONFINED;
 	/* Pending or invalid contexts never identify an authenticated sender. */
 	if (!info.valid)
 		return;
@@ -233,6 +240,7 @@ cap_authority_fork(struct proc *parent, struct proc *child)
 	child->p_cap_authority_generation = parent->p_cap_authority_generation;
 	child->p_cap_authority_invalid = parent->p_cap_authority_invalid;
 	child->p_cap_authority_pending_exec = parent->p_cap_authority_pending_exec;
+	child->p_cap_authority_confined = parent->p_cap_authority_confined;
 }
 void
 cap_authority_exit(struct proc *p)
@@ -327,6 +335,7 @@ cap_authority_exec(struct proc *p, struct vnode *image,
 				cap_authority_drop(a);
 			}
 			p->p_cap_authority_invalid = false;
+			p->p_cap_authority_confined = true;
 			p->p_cap_authority_pending_exec = false;
 			return;
 		}
@@ -840,6 +849,7 @@ cap_authority_call(struct thread *td, int op, int fd, void *data)
 			td->td_proc->p_cap_authority = a;
 			td->td_proc->p_cap_authority_invalid = false;
 			td->td_proc->p_cap_authority_pending_exec = a->nexec != 0;
+			td->td_proc->p_cap_authority_confined = true;
 			td->td_proc->p_cap_authority_generation++;
 		} else
 			old = NULL;

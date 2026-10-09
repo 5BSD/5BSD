@@ -261,6 +261,17 @@ A null pointer means the kernel or descriptor rights supplied only legacy
 metadata; callers must not invent attribution from an untrusted payload.
 Responsible-process association is delegated attribution, not authorization
 or proof that the origin approved every subsequent request.
+.It Fn channel_message_authority
+Returns the borrowed kernel stamp of the sender's issued software authority,
+or a null pointer unless that authority was valid when the message was sent.
+.It Fn channel_message_confined
+Returns true when the sender has held attributed software authority at any
+point, even if it has since been invalidated or cleared, or when the sender is
+jailed.
+Returns false only for a sender that has never been attributed, such as a
+login session.
+Receivers use it to keep confined software from passing for a login session
+after shedding its authority.
 .It Fn channel_message_fd_count
 Returns the exact attachment count.
 .It Fn channel_message_borrow_fd
