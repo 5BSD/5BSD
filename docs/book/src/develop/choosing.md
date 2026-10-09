@@ -75,7 +75,7 @@ pkgbase sets is in [Packaging and Shipping](packaging.md).
 
 Two manifest keys decide reach, and they are easy to confuse. `visible` says
 which session kinds may resolve the names a unit publishes; a name with no
-`visible` is resolvable only by SYSTEM-domain sessions (for example, a base unit). `domain` says which names the unit itself may resolve; when absent, a
+`visible` is resolvable only by SYSTEM-domain sessions (for example, a base unit) and by login sessions. `domain` says which names the unit itself may resolve; when absent, a
 `/Capabilities/System` bundle resolves everything and an `/Capabilities/Apps`
 bundle resolves only user-visible names. Of the base providers, only
 `system.Log`, `system.Filesystem` and `system.Notify` are

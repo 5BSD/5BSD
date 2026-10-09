@@ -381,6 +381,27 @@ ATF_TC_BODY(scope_user_allow_list, tc)
 
 
 
+ATF_TC_WITHOUT_HEAD(scope_login_session_falls_through);
+ATF_TC_BODY(scope_login_session_falls_through, tc)
+{
+	struct svc_domain session = { .kind = SVC_DOMAIN_USER,
+	    .uid = (uid_t)-1, .session = true };
+	struct svc_domain anonymous = { .kind = SVC_DOMAIN_USER,
+	    .uid = (uid_t)-1 };
+
+	/* An unattributed login session resolves system names, as SYSTEM. */
+	ATF_CHECK(svc_domain_resolves(&session, SYSTEM_ONLY_NAME));
+	ATF_CHECK(svc_domain_resolves(&session, ALLOW_LOG_NAME));
+	ATF_CHECK(svc_domain_permits(&session, SVC_DOMAIN_SYSTEM,
+	    SYSTEM_ONLY_NAME));
+	/* The control plane stays reachable only through CONTROL channels. */
+	ATF_CHECK(!svc_domain_permits(&session, SVC_DOMAIN_CONTROL,
+	    "service.Control"));
+	/* A confined sender (session unset) keeps the narrowed USER scope. */
+	ATF_CHECK(!svc_domain_resolves(&anonymous, SYSTEM_ONLY_NAME));
+	ATF_CHECK(svc_domain_resolves(&anonymous, ALLOW_LOG_NAME));
+}
+
 ATF_TC_WITHOUT_HEAD(control_domain_separation);
 ATF_TC_BODY(control_domain_separation, tc)
 {
@@ -1516,6 +1537,7 @@ ATF_TP_ADD_TCS(tp)
 
 	ATF_TP_ADD_TC(tp, scope_system_resolves_all);
 	ATF_TP_ADD_TC(tp, scope_user_allow_list);
+	ATF_TP_ADD_TC(tp, scope_login_session_falls_through);
 	ATF_TP_ADD_TC(tp, control_domain_separation);
 	ATF_TP_ADD_TC(tp, control_ondemand_gating);
 	ATF_TP_ADD_TC(tp, ambient_descriptor_marking);

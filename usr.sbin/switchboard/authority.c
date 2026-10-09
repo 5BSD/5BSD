@@ -475,8 +475,16 @@ svc_authority_resolve(const struct channel_message *request,
 	domain->uid = (uid_t)-1;
 	*svc = NULL;
 	stamp = channel_message_authority(request);
-	if (stamp == NULL)
+	if (stamp == NULL) {
+		/*
+		 * Unattributed: a login session reaches system names (see
+		 * struct svc_domain), unless the kernel reports the sender as
+		 * confined -- software that shed or invalidated its authority,
+		 * or a jailed process -- which stays in the anonymous USER scope.
+		 */
+		domain->session = !channel_message_confined(request);
 		return (0);
+	}
 	r = find(stamp->issuer, stamp->identity);
 	if (r == NULL || stamp->kind != r->kind || stamp->uid != r->uid ||
 	    stamp->generation == 0)
