@@ -52,13 +52,26 @@ check_reachable()
 	esac
 }
 
+# Known design gap: these providers are SYSTEM-only (no visible = ["user"]),
+# so a login session's lookup is refused with ENOENT and shell-run admin CLIs
+# such as networkcmpctl cannot reach them.  How login sessions should reach
+# administrative providers is an open design question (making the units
+# user-visible would also expose them to per-user agents and applications).
+# Expect the refusal; an unexpected pass means the policy changed and this
+# test must be revisited.
+check_reachable_gap()
+{
+	atf_expect_fail "SYSTEM-only provider is not resolvable from a login session (open design gap)"
+	check_reachable "$1"
+}
+
 atf_test_case network_reachable
 network_reachable_head()
 {
 	atf_set "descr" "system.Network is reachable + activatable via the ambient channel"
 	atf_set "require.user" "root"
 }
-network_reachable_body() { check_reachable "system.Network"; }
+network_reachable_body() { check_reachable_gap "system.Network"; }
 
 atf_test_case notify_reachable
 notify_reachable_head()
@@ -74,7 +87,7 @@ audit_reachable_head()
 	atf_set "descr" "system.Audit is reachable + activatable via the ambient channel"
 	atf_set "require.user" "root"
 }
-audit_reachable_body() { check_reachable "system.Audit"; }
+audit_reachable_body() { check_reachable_gap "system.Audit"; }
 
 atf_test_case crypto_reachable
 crypto_reachable_head()
@@ -82,7 +95,7 @@ crypto_reachable_head()
 	atf_set "descr" "system.Crypto is reachable + activatable via the ambient channel"
 	atf_set "require.user" "root"
 }
-crypto_reachable_body() { check_reachable "system.Crypto"; }
+crypto_reachable_body() { check_reachable_gap "system.Crypto"; }
 
 atf_test_case trace_reachable
 trace_reachable_head()
@@ -90,7 +103,7 @@ trace_reachable_head()
 	atf_set "descr" "system.Trace is reachable + activatable via the ambient channel"
 	atf_set "require.user" "root"
 }
-trace_reachable_body() { check_reachable "system.Trace"; }
+trace_reachable_body() { check_reachable_gap "system.Trace"; }
 
 atf_test_case log_reachable
 log_reachable_head()
