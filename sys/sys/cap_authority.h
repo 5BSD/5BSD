@@ -49,17 +49,8 @@ struct cap_authority_stamp {
 	uint32_t kind;
 	uint32_t uid;
 	uint32_t valid;
-	uint32_t flags;	/* CAP_AUTH_STAMP_* */
+	uint32_t reserved;
 };
-
-/*
- * The sender has held attributed software authority at some point (the bit
- * survives fork, exec outside the catalogue, invalidation and
- * CAP_AUTH_CLEAR) or runs in a jail.  Reported even when the stamp is not
- * valid, so a receiver can tell an unattributed login session from a
- * confined process that has shed or invalidated its authority.
- */
-#define	CAP_AUTH_STAMP_CONFINED	0x00000001u
 
 /* Issuer-only, before installation; executable identities are immutable. */
 #define CAP_AUTH_EXEC_MAX 8
