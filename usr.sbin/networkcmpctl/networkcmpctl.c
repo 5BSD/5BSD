@@ -40,8 +40,9 @@ open_client(void)
 {
 	struct networkcmp_client *client;
 
-	if (networkcmp_client_open(&client) == -1)
-		err(EX_UNAVAILABLE, "open %s", NETWORKCMP_INTERFACE);
+	/* Approved by its own identity: system.network.admin. */
+	if (networkcmp_client_open_admin(&client) == -1)
+		err(EX_UNAVAILABLE, "open %s", NETWORKCMP_ADMIN_INTERFACE);
 	return (client);
 }
 

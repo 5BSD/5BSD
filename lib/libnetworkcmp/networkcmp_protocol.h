@@ -13,6 +13,8 @@
 
 #define	NETWORKCMP_MAGIC		0x4e434d50U	/* "NCMP" */
 #define	NETWORKCMP_INTERFACE		"system.Network"
+/* Same protocol; resolvable only with the system.network.admin attribute. */
+#define	NETWORKCMP_ADMIN_INTERFACE	"system.Network.Admin"
 #define	NETWORKCMP_MAX_MESSAGE		2048
 #define	NETWORKCMP_NAME_MAX		253
 #define	NETWORKCMP_SERVICE_MAX		32

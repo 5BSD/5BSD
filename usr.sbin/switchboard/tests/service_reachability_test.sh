@@ -5,13 +5,15 @@
 #
 # Per-component reachability integration tests.
 #
-# For each system capability service, confirm that a program run in a login
-# session can reach it over the ambient lookup channel (SERVICE_LOOKUP_FD) --
-# i.e. the service is registered and can be looked up + connected, INCLUDING
-# the on-demand activation a lookup must trigger.  This is the exact path a
-# shell-run CLI (networkcmpctl, notifyctl, ...) takes.  It regression-guards
-# two coupled fixes: the libservice client-connect path, and switchboard treating
-# the ambient lookup channel as a first-class on-demand requester.
+# Confirm what a program run in a login session can reach over the ambient
+# lookup channel (SERVICE_LOOKUP_FD), including the on-demand activation a
+# lookup must trigger.  Reach is decided by the caller's software identity:
+# user-visible services (Notify, Log) are open to any session; SYSTEM-only and
+# attribute-gated names are refused to unapproved programs; approved software
+# reaches its gated endpoint from the same session (networkcmpctl holds
+# system.network.admin and opens system.Network.Admin).  It also
+# regression-guards the libservice client-connect path and switchboard
+# treating the ambient lookup channel as a first-class on-demand requester.
 #
 # These pass only on a live plane (a login session that inherited an ambient
 # channel).  Off the plane -- on the build host, or any session without the
@@ -52,26 +54,57 @@ check_reachable()
 	esac
 }
 
-# Known design gap: these providers are SYSTEM-only (no visible = ["user"]),
-# so a login session's lookup is refused with ENOENT and shell-run admin CLIs
-# such as networkcmpctl cannot reach them.  How login sessions should reach
-# administrative providers is an open design question (making the units
-# user-visible would also expose them to per-user agents and applications).
-# Expect the refusal; an unexpected pass means the policy changed and this
-# test must be revisited.
-check_reachable_gap()
+# Access is decided by the caller's software identity, not by the login
+# session: the probe helper is not approved software, so SYSTEM-only and
+# attribute-gated names must be refused to it exactly like unregistered ones.
+check_refused()
 {
-	atf_expect_fail "SYSTEM-only provider is not resolvable from a login session (open design gap)"
-	check_reachable "$1"
+	local name="$1" bin out rc
+	bin=$(probe_bin) || atf_skip "service_probe helper not found"
+	out=$("$bin" "$name" 2>&1)
+	rc=$?
+	case "$rc" in
+	2)	atf_skip "no ambient lookup channel here: $out" ;;
+	1)	case "$out" in
+		*"errno=2 "*) ;;			# ENOENT: refused as unregistered
+		*)	atf_fail "'$name' refused with the wrong error: $out" ;;
+		esac ;;
+	*)	atf_fail "unapproved program reached '$name': $out" ;;
+	esac
 }
 
-atf_test_case network_reachable
-network_reachable_head()
+atf_test_case unapproved_refused
+unapproved_refused_head()
 {
-	atf_set "descr" "system.Network is reachable + activatable via the ambient channel"
+	atf_set "descr" "An unapproved program cannot reach SYSTEM-only or gated names"
 	atf_set "require.user" "root"
 }
-network_reachable_body() { check_reachable_gap "system.Network"; }
+unapproved_refused_body()
+{
+	local name
+	for name in system.Network system.Network.Admin system.Audit \
+	    system.Crypto system.Trace; do
+		check_refused "$name"
+	done
+}
+
+atf_test_case networkcmpctl_approved
+networkcmpctl_approved_head()
+{
+	atf_set "descr" "networkcmpctl reaches the broker by its own software identity"
+	atf_set "require.user" "root"
+	atf_set "require.progs" "networkcmpctl"
+}
+networkcmpctl_approved_body()
+{
+	local bin out
+
+	# Same session that check_refused uses: skip off the plane.
+	bin=$(probe_bin) || atf_skip "service_probe helper not found"
+	out=$("$bin" system.Notify 2>&1)
+	[ $? -eq 2 ] && atf_skip "no ambient lookup channel here: $out"
+	atf_check -s exit:0 -o match:"^features=0x" networkcmpctl info
+}
 
 atf_test_case notify_reachable
 notify_reachable_head()
@@ -80,30 +113,6 @@ notify_reachable_head()
 	atf_set "require.user" "root"
 }
 notify_reachable_body() { check_reachable "system.Notify"; }
-
-atf_test_case audit_reachable
-audit_reachable_head()
-{
-	atf_set "descr" "system.Audit is reachable + activatable via the ambient channel"
-	atf_set "require.user" "root"
-}
-audit_reachable_body() { check_reachable_gap "system.Audit"; }
-
-atf_test_case crypto_reachable
-crypto_reachable_head()
-{
-	atf_set "descr" "system.Crypto is reachable + activatable via the ambient channel"
-	atf_set "require.user" "root"
-}
-crypto_reachable_body() { check_reachable_gap "system.Crypto"; }
-
-atf_test_case trace_reachable
-trace_reachable_head()
-{
-	atf_set "descr" "system.Trace is reachable + activatable via the ambient channel"
-	atf_set "require.user" "root"
-}
-trace_reachable_body() { check_reachable_gap "system.Trace"; }
 
 atf_test_case log_reachable
 log_reachable_head()
@@ -123,10 +132,8 @@ log_reachable_body()
 
 atf_init_test_cases()
 {
-	atf_add_test_case network_reachable
+	atf_add_test_case unapproved_refused
+	atf_add_test_case networkcmpctl_approved
 	atf_add_test_case notify_reachable
-	atf_add_test_case audit_reachable
-	atf_add_test_case crypto_reachable
-	atf_add_test_case trace_reachable
 	atf_add_test_case log_reachable
 }

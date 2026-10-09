@@ -33,6 +33,17 @@ and receive no additional network authority; the
 self-test additionally opens one ordinary loopback socket to drive the
 listener it was handed.
 .Pp
+.Nm
+is approved software.
+Its exec manifest declares the
+.Dq system.network.admin
+software attribute, so the kernel-attributed image opens the broker through
+.Dq system.Network.Admin ,
+which requires that attribute, including from a login session that cannot
+resolve
+.Dq system.Network .
+Copying or replacing the binary does not carry the attribute.
+.Pp
 The commands are:
 .Bl -tag -width resolve
 .It Cm config
@@ -70,6 +81,14 @@ Subject to the label's connect policy and the internal-destination filter.
 .It Cm resolve Ar host Op Ar service
 Resolve a name through the component's bounded resolver and print each typed
 endpoint.
+.El
+.Sh FILES
+.Bl -tag -width indent
+.It Pa /Capabilities/System/NetworkControl.cap/Units/networkcmpctl.unit/Unit.ucl
+exec manifest approving
+.Nm
+with
+.Dq system.network.admin .
 .El
 .Sh EXIT STATUS
 .Ex -std

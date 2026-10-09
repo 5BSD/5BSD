@@ -30,6 +30,7 @@ struct networkcmp_client;
 __BEGIN_DECLS
 
 int	networkcmp_client_open(struct networkcmp_client **client);
+int	networkcmp_client_open_admin(struct networkcmp_client **client);
 const struct networkcmp_hello_reply *
 	networkcmp_client_limits(const struct networkcmp_client *client);
 void	networkcmp_client_close(struct networkcmp_client *client);

@@ -43,6 +43,12 @@ networkcmp_client_open(struct networkcmp_client **result)
 	return (0);
 }
 
+int
+networkcmp_client_open_admin(struct networkcmp_client **result)
+{
+	return (networkcmp_client_open(result));
+}
+
 const struct networkcmp_hello_reply *
 networkcmp_client_limits(const struct networkcmp_client *value)
 {

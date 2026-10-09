@@ -13,6 +13,7 @@
 .Nm networkcmp_getaddrinfo ,
 .Nm networkcmp_freeaddrinfo ,
 .Nm networkcmp_client_open ,
+.Nm networkcmp_client_open_admin ,
 .Nm networkcmp_client_limits ,
 .Nm networkcmp_client_close
 .Nd public client for the system network broker
@@ -23,6 +24,8 @@
 .In networkcmp.h
 .Ft int
 .Fn networkcmp_client_open "struct networkcmp_client **client"
+.Ft int
+.Fn networkcmp_client_open_admin "struct networkcmp_client **client"
 .Ft "const struct networkcmp_hello_reply *"
 .Fn networkcmp_client_limits "const struct networkcmp_client *client"
 .Ft void
@@ -65,6 +68,21 @@ initial negotiation with
 .Fn networkcmp_hello ,
 and records the negotiated values; repeated opens return references to that
 same authority.
+.Pp
+.Fn networkcmp_client_open_admin
+opens the same protocol through
+.Dq system.Network.Admin ,
+a name that requires the
+.Dq system.network.admin
+software attribute.
+Only approved programs declaring that attribute, such as
+.Xr networkcmpctl 8 ,
+resolve it, including from a login session that cannot resolve
+.Dq system.Network .
+A process uses one interface for its lifetime; opening the other one fails
+with
+.Er EBUSY .
+.Pp
 The reply returned by
 .Fn networkcmp_client_limits
 is the binding contract for the features, and the resolve

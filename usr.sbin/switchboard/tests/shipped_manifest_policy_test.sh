@@ -39,6 +39,7 @@ usr.sbin/BSDTrace/capbundle/bsdtrace.ucl
 usr.sbin/BSDVM/capbundle/bsdvm.ucl
 usr.sbin/bluetooth/BSDBluetooth/blued.ucl
 usr.sbin/capsulectl/capbundle/Unit.ucl
+usr.sbin/networkcmpctl/capbundle/Unit.ucl
 usr.sbin/switchboardctl/capbundle/Unit.ucl
 EOF
 }
