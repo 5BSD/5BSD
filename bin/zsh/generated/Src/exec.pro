@@ -1,0 +1,43 @@
+/* Generated automatically */
+#ifdef HAVE_GETRLIMIT
+#endif /* HAVE_GETRLIMIT */
+static pid_t zfork(struct timeval*tv);
+static int execcursh(Estate state,int do_exec);
+static int zexecve(char*pth,char**argv,char**newenvp);
+static int isgooderr(int e,char*dir);
+static int commandnotfound(char*arg0,LinkList args);
+static void execute(LinkList args,int flags,int defpath);
+static void entersubsh(int flags,struct entersubsh_ret*retp);
+static int execsimple(Estate state);
+static int execpline(Estate state,wordcode slcode,int how,int last1);
+static void execpline2(Estate state,wordcode pcode,int how,int input,int output,int last1);
+static char**makecline(LinkList list);
+static int clobber_open(struct redir*f);
+static void closemn(struct multio**mfds,int fd,int type);
+static void closemnodes(struct multio**mfds);
+static void closeallelse(struct multio*mn);
+static void addfd(int forked,int*save,struct multio**mfds,int fd1,int fd2,int rflag,char*varid);
+static void addvars(Estate state,Wordcode pc,int addflags);
+static HashNode resolvebuiltin(const char*cmdarg,HashNode hn);
+static void execcmd_analyse(Estate state,Execcmd_params eparams);
+static int execcmd_fork(Estate state,int how,int type,Wordcode varspc,LinkList*filelistp,char*text,int oautocont,int close_if_forked);
+static void execcmd_exec(Estate state,Execcmd_params eparams,int input,int output,int how,int last1,int close_if_forked);
+static void save_params(Estate state,Wordcode pc,LinkList*restore_p,LinkList*remove_p);
+static void restore_params(LinkList restorelist,LinkList removelist);
+static void fixfds(int*save);
+static int getherestr(struct redir*fn);
+static LinkList readoutput(int in,int qt,int*readerror);
+static Eprog parsecmd(char*cmd,char**eptr);
+static int getpipe(char*cmd,int nullexec);
+static int mpipe(int*pp);
+static void spawnpipes(LinkList l,int nullexec);
+static int execcond(Estate state,UNUSED(int do_exec));
+static int execarith(Estate state,UNUSED(int do_exec));
+static int exectime(Estate state,UNUSED(int do_exec));
+static int execfuncdef(Estate state,Eprog redir_prog);
+static void execshfunc(Shfunc shf,LinkList args);
+static int execautofn_basic(Estate state,UNUSED(int do_exec));
+static int execautofn(Estate state,UNUSED(int do_exec));
+static void loadautofnsetfile(Shfunc shf,char*fdir);
+static char*cancd(char*s);
+static int cancd2(char*s);

@@ -1,0 +1,13 @@
+#define LINKED_XMOD_zshQsmain 1
+#define LINKED_XMOD_zshQsrlimits 1
+#define LINKED_XMOD_zshQssched 1
+#define LINKED_XMOD_zshQsparameter 1
+#define LINKED_XMOD_zshQstermcap 1
+#define LINKED_XMOD_zshQsterminfo 1
+#define LINKED_XMOD_zshQszutil 1
+#define LINKED_XMOD_zshQscompctl 1
+#define LINKED_XMOD_zshQscomplete 1
+#define LINKED_XMOD_zshQscomplist 1
+#define LINKED_XMOD_zshQscomputil 1
+#define LINKED_XMOD_zshQszle 1
+#define LINKED_XMOD_zshQszleparameter 1

@@ -1,0 +1,35 @@
+#ifndef have_zshQscurses_module
+#define have_zshQscurses_module
+
+# ifndef IMPORTING_MODULE_zshQscurses
+#   define boot_ boot_zshQscurses
+#   define cleanup_ cleanup_zshQscurses
+#   define features_ features_zshQscurses
+#   define enables_ enables_zshQscurses
+#   define setup_ setup_zshQscurses
+#   define finish_ finish_zshQscurses
+# endif /* !IMPORTING_MODULE_zshQscurses */
+
+/* Module dependencies */
+# define IMPORTING_MODULE_zshQsmain 1
+# include "../../Src/zsh.mdh"
+
+# undef mod_import_variable
+# undef mod_import_function
+# if defined(IMPORTING_MODULE_zshQscurses) &&  defined(MODULE)
+#  define mod_import_variable 
+#  define mod_import_function 
+# else
+#  define mod_import_function
+#  define mod_import_variable
+# endif /* IMPORTING_MODULE_zshQscurses && MODULE */
+# include "curses.epro"
+# undef mod_import_variable
+# define mod_import_variable
+# undef mod_import_variable
+# define mod_import_variable
+# ifndef mod_export
+#  define mod_export 
+# endif /* mod_export */
+
+#endif /* !have_zshQscurses_module */

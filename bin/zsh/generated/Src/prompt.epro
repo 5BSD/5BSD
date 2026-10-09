@@ -1,0 +1,23 @@
+/* Generated automatically */
+#ifndef have_Src_prompt_globals
+#define have_Src_prompt_globals
+
+extern mod_import_variable zattr txtattrmask;
+extern unsigned char*cmdstack;
+extern int cmdsp;
+extern mod_import_function char*promptexpand(char*s,int ns,char*rs,char*Rs,zattr*txtchangep);
+extern void stradd(char*d);
+extern mod_import_function void tsetcap(int cap,int flags);
+extern int putstr(int d);
+extern mod_import_function void countprompt(char*str,int*wp,int*hp,int overf);
+extern void cmdpush(int cmdtok);
+extern void cmdpop(void);
+extern mod_import_function zattr match_colour(const char**teststrp,int is_fg,int colour);
+extern mod_import_function const char*match_highlight(const char*teststr,zattr*on_var);
+extern mod_import_function int output_highlight(zattr atr,char*buf);
+extern void set_default_colour_sequences(void);
+extern mod_import_function void allocate_colour_buffer(void);
+extern mod_import_function void free_colour_buffer(void);
+extern mod_import_function void set_colour_attribute(zattr atr,int fg_bg,int flags);
+
+#endif /* !have_Src_prompt_globals */

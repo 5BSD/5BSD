@@ -1,0 +1,56 @@
+/* Generated automatically */
+#ifndef have_Src_Zle_zle_misc_globals
+#define have_Src_Zle_zle_misc_globals
+
+extern void doinsert(ZLE_STRING_T zstr,int len);
+extern mod_import_function int selfinsert(UNUSED(char**args));
+extern mod_import_function void fixunmeta(void);
+extern mod_import_function int selfinsertunmeta(char**args);
+extern int deletechar(char**args);
+extern int backwarddeletechar(char**args);
+extern int killwholeline(UNUSED(char**args));
+extern int killbuffer(UNUSED(char**args));
+extern int backwardkillline(char**args);
+extern int gosmacstransposechars(UNUSED(char**args));
+extern int transposechars(UNUSED(char**args));
+extern int poundinsert(UNUSED(char**args));
+extern int acceptline(UNUSED(char**args));
+extern int acceptandhold(UNUSED(char**args));
+extern int killline(char**args);
+extern void regionlines(int*start,int*end);
+extern int killregion(UNUSED(char**args));
+extern int copyregionaskill(char**args);
+extern int yankb;
+extern int yanke;
+extern int yank(UNUSED(char**args));
+extern int viputbefore(UNUSED(char**args));
+extern int viputafter(UNUSED(char**args));
+extern int putreplaceselection(UNUSED(char**args));
+extern int yankpop(UNUSED(char**args));
+extern mod_import_function char*bracketedstring(void);
+extern int bracketedpaste(char**args);
+extern int overwritemode(UNUSED(char**args));
+extern int whatcursorposition(UNUSED(char**args));
+extern int undefinedkey(UNUSED(char**args));
+extern int quotedinsert(char**args);
+extern int digitargument(UNUSED(char**args));
+extern int negargument(UNUSED(char**args));
+extern int universalargument(char**args);
+extern int argumentbase(char**args);
+extern int copyprevword(UNUSED(char**args));
+extern int copyprevshellword(UNUSED(char**args));
+extern int sendbreak(UNUSED(char**args));
+extern int quoteregion(UNUSED(char**args));
+extern int quoteline(UNUSED(char**args));
+extern Keymap command_keymap;
+extern Thingy executenamedcommand(char*prmt);
+extern int suffixnoinsrem;
+extern mod_import_variable int suffixlen;
+extern mod_import_function void addsuffix(int tp,int flags,ZLE_STRING_T chars,int lenstr,int lensuf);
+extern mod_import_function void makesuffix(int n);
+extern mod_import_function void makeparamsuffix(int br,int n);
+extern mod_import_function void makesuffixstr(char*f,char*s,int n);
+extern mod_import_function void iremovesuffix(ZLE_INT_T c,int keep);
+extern mod_import_function void fixsuffix(void);
+
+#endif /* !have_Src_Zle_zle_misc_globals */

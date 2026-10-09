@@ -1,0 +1,47 @@
+/* Generated automatically */
+#ifndef have_Src_lex_globals
+#define have_Src_lex_globals
+
+extern mod_import_variable char ztokens[];
+extern char*zshlextext;
+extern mod_import_variable char*tokstr;
+extern mod_import_variable enum lextok tok;
+extern mod_import_variable int tokfd;
+extern zlong toklineno;
+extern mod_import_variable int lexstop;
+extern mod_import_variable int isfirstln;
+extern int isfirstch;
+extern int inalmore;
+extern int nocorrect;
+extern mod_import_variable int zlemetacs;
+extern mod_import_variable int zlemetall;
+extern mod_import_variable int inwhat;
+extern mod_import_variable int addedx;
+extern mod_import_variable int wb;
+extern mod_import_variable int we;
+extern mod_import_variable int wordbeg;
+extern mod_import_variable int parbegin;
+extern mod_import_variable int parend;
+extern mod_import_variable int noaliases;
+extern mod_import_variable int lexflags;
+extern mod_import_variable int nocomments;
+extern int lex_add_raw;
+extern mod_import_variable char*tokstrings[WHILE+1];
+extern void lex_context_save(struct lex_stack*ls,int toplevel);
+extern mod_import_function void lex_context_restore(const struct lex_stack*ls,int toplevel);
+extern void zshlex(void);
+extern mod_import_function void ctxtlex(void);
+extern void initlextabs(void);
+extern void lexinit(void);
+extern void add(int c);
+extern mod_import_function int parsestr(char**s);
+extern mod_import_function int parsestrnoerr(char**s);
+extern mod_import_function char*parse_subscript(char*s,int sub,int endchar);
+extern mod_import_function int parse_subst_string(char*s);
+extern int exalias(void);
+extern void zshlex_raw_add(int c);
+extern void zshlex_raw_back(void);
+extern int zshlex_raw_mark(int offset);
+extern void zshlex_raw_back_to_mark(int mark);
+
+#endif /* !have_Src_lex_globals */

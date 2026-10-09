@@ -38,7 +38,8 @@ SUBDIR= cat \
 	sync \
 	test \
 	timeout \
-	uuidgen
+	uuidgen \
+	zsh
 
 SUBDIR.${MK_SENDMAIL}+=	rmail
 SUBDIR.${MK_TCSH}+=	csh

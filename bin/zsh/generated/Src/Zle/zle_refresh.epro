@@ -1,0 +1,40 @@
+/* Generated automatically */
+#ifndef have_Src_Zle_zle_refresh_globals
+#define have_Src_Zle_zle_refresh_globals
+
+extern char*lpromptbuf;
+extern char*rpromptbuf;
+extern zattr pmpt_attr;
+extern zattr rpmpt_attr;
+extern mod_import_variable int nlnct;
+extern mod_import_variable int showinglist;
+extern mod_import_variable int listshown;
+extern mod_import_variable int lastlistlen;
+extern mod_import_variable int clearflag;
+extern mod_import_variable int clearlist;
+extern int trashedzle;
+extern ZLE_STRING_T predisplay;
+extern ZLE_STRING_T postdisplay;
+extern int predisplaylen;
+extern int postdisplaylen;
+extern struct region_highlight*region_highlights;
+extern int n_region_highlights;
+extern int region_active;
+extern char*tcout_func_name;
+extern int cost;
+extern char**get_region_highlight(UNUSED(Param pm));
+extern void set_region_highlight(UNUSED(Param pm),char**aval);
+extern void unset_region_highlight(Param pm,int exp);
+extern void zwcputc(const REFRESH_ELEMENT*c,zattr*curatrp);
+extern void resetvideo(void);
+extern mod_import_function void zrefresh(void);
+extern void moveto(int ln,int cl);
+extern mod_import_function int tcmultout(int cap,int multcap,int ct);
+extern mod_import_function int tc_downcurs(int ct);
+extern mod_import_function void tcout(int cap);
+extern mod_import_function int clearscreen(UNUSED(char**args));
+extern mod_import_function int redisplay(UNUSED(char**args));
+extern void zle_refresh_boot(void);
+extern void zle_refresh_finish(void);
+
+#endif /* !have_Src_Zle_zle_refresh_globals */

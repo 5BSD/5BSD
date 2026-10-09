@@ -1,0 +1,53 @@
+/* Generated automatically */
+#ifndef have_Src_parse_globals
+#define have_Src_parse_globals
+
+extern mod_import_variable int incmdpos;
+extern int aliasspaceflag;
+extern mod_import_variable int incond;
+extern mod_import_variable int inredir;
+extern int incasepat;
+extern int isnewlin;
+extern int infor;
+extern int inrepeat_;
+extern mod_import_variable int intypeset;
+extern struct heredocs*hdocs;
+extern void parse_context_save(struct parse_stack*ps,int toplevel);
+extern void parse_context_restore(const struct parse_stack*ps,int toplevel);
+extern mod_import_function void init_parse_status(void);
+extern void init_parse(void);
+extern mod_import_function int empty_eprog(Eprog p);
+extern Eprog parse_event(int endtok);
+extern int par_event(int endtok);
+extern mod_import_function Eprog parse_list(void);
+extern mod_import_function Eprog parse_cond(void);
+extern void setheredoc(int pc,int type,char*str,char*termstr,char*munged_termstr);
+extern void(*condlex)(void);
+extern mod_import_function Eprog dupeprog(Eprog p,int heap);
+extern mod_import_function void useeprog(Eprog p);
+extern mod_import_function void freeeprog(Eprog p);
+extern char*ecgetstr(Estate s,int dup,int*tokflag);
+extern char*ecrawstr(Eprog p,Wordcode pc,int*tokflag);
+extern char**ecgetarr(Estate s,int num,int dup,int*tokflag);
+extern LinkList ecgetlist(Estate s,int num,int dup,int*tokflag);
+extern LinkList ecgetredirs(Estate s);
+extern Eprog eccopyredirs(Estate s);
+extern mod_import_variable struct eprog dummy_eprog;
+extern void init_eprog(void);
+extern int bin_zcompile(char*nam,char**args,Options ops,UNUSED(int func));
+#if defined(HAVE_SYS_MMAN_H) && defined(HAVE_MMAP) && defined(HAVE_MUNMAP)
+#if defined(MAP_SHARED) && defined(PROT_READ)
+#define USE_MMAP 1
+#endif
+#endif
+#ifdef USE_MMAP
+#endif
+extern Eprog try_dump_file(char*path,char*name,char*file,int*ksh,int test_only);
+extern Eprog try_source_file(char*file);
+extern void incrdumpcount(FuncDump f);
+extern void decrdumpcount(FuncDump f);
+extern mod_import_function void closedumps(void);
+extern mod_import_function void closedumps(void);
+extern int dump_autoload(char*nam,char*file,int on,Options ops,int func);
+
+#endif /* !have_Src_parse_globals */

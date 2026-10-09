@@ -1,0 +1,17 @@
+/* Generated automatically */
+#ifndef have_Src_Zle_zle_thingy_globals
+#define have_Src_Zle_zle_thingy_globals
+
+extern mod_import_variable HashTable thingytab;
+extern mod_import_function Thingy refthingy(Thingy th);
+extern void unrefthingy(Thingy th);
+extern Thingy rthingy(char*nam);
+extern Thingy rthingy_nocreate(char*nam);
+extern void freewidget(Widget w);
+extern mod_import_function Widget addzlefunction(char*name,ZleIntFunc ifunc,int flags);
+extern mod_import_function void deletezlefunction(Widget w);
+extern int bin_zle(char*name,char**args,Options ops,UNUSED(int func));
+extern int fetchttyinfo;
+extern void init_thingies(void);
+
+#endif /* !have_Src_Zle_zle_thingy_globals */

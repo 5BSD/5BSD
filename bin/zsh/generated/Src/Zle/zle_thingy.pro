@@ -1,0 +1,24 @@
+/* Generated automatically */
+static void createthingytab(void);
+static void emptythingytab(UNUSED(HashTable ht));
+static void scanemptythingies(HashNode hn,UNUSED(int flags));
+static Thingy makethingynode(void);
+static void freethingynode(HashNode hn);
+static int bindwidget(Widget w,Thingy t);
+static int unbindwidget(Thingy t,int override);
+static int bin_zle_list(UNUSED(char*name),char**args,Options ops,UNUSED(char func));
+static int bin_zle_refresh(UNUSED(char*name),char**args,Options ops,UNUSED(char func));
+static int bin_zle_mesg(char*name,char**args,UNUSED(Options ops),UNUSED(char func));
+static int bin_zle_unget(char*name,char**args,UNUSED(Options ops),UNUSED(char func));
+static int bin_zle_keymap(char*name,char**args,UNUSED(Options ops),UNUSED(char func));
+static void scanlistwidgets(HashNode hn,int list);
+static int bin_zle_del(char*name,char**args,UNUSED(Options ops),UNUSED(char func));
+static int bin_zle_link(char*name,char**args,UNUSED(Options ops),UNUSED(char func));
+static int bin_zle_new(char*name,char**args,UNUSED(Options ops),UNUSED(char func));
+static int bin_zle_complete(char*name,char**args,UNUSED(Options ops),UNUSED(char func));
+static int zle_usable(void);
+static int bin_zle_flags(char*name,char**args,UNUSED(Options ops),UNUSED(char func));
+static int bin_zle_call(char*name,char**args,UNUSED(Options ops),UNUSED(char func));
+static int bin_zle_invalidate(UNUSED(char*name),UNUSED(char**args),UNUSED(Options ops),UNUSED(char func));
+static int bin_zle_fd(char*name,char**args,Options ops,UNUSED(char func));
+static int bin_zle_transform(char*name,char**args,Options ops,UNUSED(char func));

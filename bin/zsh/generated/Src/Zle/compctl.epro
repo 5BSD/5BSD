@@ -1,0 +1,18 @@
+/* Generated automatically */
+#ifndef have_Src_Zle_compctl_globals
+#define have_Src_Zle_compctl_globals
+
+extern struct compctl cc_compos;
+extern struct compctl cc_default;
+extern struct compctl cc_first;
+extern struct compctl cc_dummy;
+extern HashTable compctltab;
+extern Patcomp patcomps;
+extern int setup_(UNUSED(Module m));
+extern int features_(Module m,char***features);
+extern int enables_(Module m,int**enables);
+extern int boot_(UNUSED(Module m));
+extern int cleanup_(Module m);
+extern int finish_(UNUSED(Module m));
+
+#endif /* !have_Src_Zle_compctl_globals */

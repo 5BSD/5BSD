@@ -217,17 +217,17 @@ user_add_expiration_body() {
 
 	atf_check -s exit:0 \
 		${PW} useradd foo -e 20-03-2037
-	atf_check -o inline:"foo:*:1001:1001::0:2121120000:User &:/home/foo:/bin/sh\n" \
+	atf_check -o inline:"foo:*:1001:1001::0:2121120000:User &:/home/foo:/bin/zsh\n" \
 		-s exit:0 grep "^foo" ${HOME}/master.passwd
 	atf_check -s exit:0 ${PW} userdel foo
 	atf_check -s exit:0 \
 		${PW} useradd foo -e 20-03-37
-	atf_check -o inline:"foo:*:1001:1001::0:2121120000:User &:/home/foo:/bin/sh\n" \
+	atf_check -o inline:"foo:*:1001:1001::0:2121120000:User &:/home/foo:/bin/zsh\n" \
 		-s exit:0 grep "^foo" ${HOME}/master.passwd
 	atf_check -s exit:0 ${PW} userdel foo
 	atf_check -s exit:0 \
 		${PW} useradd foo -e 20-Mar-2037
-	atf_check -o inline:"foo:*:1001:1001::0:2121120000:User &:/home/foo:/bin/sh\n" \
+	atf_check -o inline:"foo:*:1001:1001::0:2121120000:User &:/home/foo:/bin/zsh\n" \
 		-s exit:0 grep "^foo" ${HOME}/master.passwd
 	atf_check -s exit:0 ${PW} userdel foo
 	atf_check -e inline:"pw: Invalid date\n" -s exit:1 \
@@ -482,7 +482,7 @@ user_add_defaultgroup_body()
 	atf_check -s exit:0 \
 		${PW} useradd foo -C ${HOME}/pw.conf
 	atf_check -s exit:0 \
-		-o inline:"foo:*:1001:442::0:0:User &:/home/foo:/bin/sh\n" \
+		-o inline:"foo:*:1001:442::0:0:User &:/home/foo:/bin/zsh\n" \
 		${PW} usershow foo
 }
 

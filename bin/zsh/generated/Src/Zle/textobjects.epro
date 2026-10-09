@@ -1,0 +1,8 @@
+/* Generated automatically */
+#ifndef have_Src_Zle_textobjects_globals
+#define have_Src_Zle_textobjects_globals
+
+extern int selectword(UNUSED(char**args));
+extern int selectargument(UNUSED(char**args));
+
+#endif /* !have_Src_Zle_textobjects_globals */

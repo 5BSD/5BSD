@@ -1,0 +1,25 @@
+/* Generated automatically */
+static Cpattern cp_cpattern_element(Cpattern o);
+static Cpattern cpcpattern(Cpattern o);
+static Cpattern parse_pattern(char*name,char**sp,int*lp,char e,int*err);
+static char*parse_class(Cpattern p,char*iptr);
+static int parse_ordering(const char*arg,int*flags);
+static int bin_compadd(char*name,char**argv,UNUSED(Options ops),UNUSED(int func));
+static int do_comp_vars(int test,int na,char*sa,int nb,char*sb,int mod);
+static int bin_compset(char*name,char**argv,UNUSED(Options ops),UNUSED(int func));
+static HashTable get_compstate(Param pm);
+static void set_compstate(Param pm,HashTable ht);
+static zlong get_nmatches(UNUSED(Param pm));
+static zlong get_listlines(UNUSED(Param pm));
+static void set_complist(UNUSED(Param pm),char*v);
+static char*get_complist(UNUSED(Param pm));
+static char*get_unambig(UNUSED(Param pm));
+static zlong get_unambig_curs(UNUSED(Param pm));
+static char*get_unambig_pos(UNUSED(Param pm));
+static char*get_insert_pos(UNUSED(Param pm));
+static char*get_compqstack(UNUSED(Param pm));
+static void compunsetfn(Param pm,int exp);
+static int comp_wrapper(Eprog prog,FuncWrap w,char*name);
+static int comp_check(void);
+static int cond_psfix(char**a,int id);
+static int cond_range(char**a,int id);

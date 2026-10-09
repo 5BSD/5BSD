@@ -1,0 +1,43 @@
+/* Generated automatically */
+#ifndef have_Src_signals_globals
+#define have_Src_signals_globals
+
+extern mod_import_variable int*sigtrapped;
+extern mod_import_variable Eprog*siglists;
+extern mod_import_variable volatile int nsigtrapped;
+extern int in_exit_trap;
+extern mod_import_variable volatile int queueing_enabled;
+extern mod_import_variable volatile int queue_front;
+extern mod_import_variable volatile int queue_rear;
+extern mod_import_variable int signal_queue[MAX_QUEUE_SIZE];
+extern mod_import_variable sigset_t signal_mask_queue[MAX_QUEUE_SIZE];
+extern mod_import_variable volatile int queue_in;
+extern mod_import_function void install_handler(int sig);
+extern mod_import_function void intr(void);
+extern mod_import_function void holdintr(void);
+extern mod_import_function void noholdintr(void);
+extern mod_import_function sigset_t signal_mask(int sig);
+extern mod_import_function sigset_t signal_block(sigset_t set);
+extern mod_import_function sigset_t signal_unblock(sigset_t set);
+extern mod_import_function sigset_t signal_setmask(sigset_t set);
+extern int signal_suspend(UNUSED(int sig),int wait_cmd);
+extern int last_signal;
+extern void wait_for_processes(void);
+extern mod_import_function void zhandler(int sig);
+extern void killrunjobs(int from_signal);
+extern int killjb(Job jn,int sig);
+extern mod_import_function int settrap(int sig,Eprog l,int flags);
+extern void unsettrap(int sig);
+extern HashNode removetrap(int sig);
+extern void starttrapscope(void);
+extern void endtrapscope(void);
+extern void queue_traps(int wait_cmd);
+extern void unqueue_traps(void);
+extern volatile int intrap;
+extern volatile int trapisfunc;
+extern volatile int traplocallevel;
+extern void dotrap(int sig);
+extern int rtsigno(const char*signame);
+extern char*rtsigname(int signo,int alt);
+
+#endif /* !have_Src_signals_globals */

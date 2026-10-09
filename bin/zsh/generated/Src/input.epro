@@ -1,0 +1,24 @@
+/* Generated automatically */
+#ifndef have_Src_input_globals
+#define have_Src_input_globals
+
+extern int SHIN;
+extern int strin;
+extern mod_import_variable int inbufct;
+extern int inbufflags;
+extern void shinbufreset(void);
+extern void shinbufalloc(void);
+extern void shinbufsave(void);
+extern void shinbufrestore(void);
+extern mod_import_function char*shingetline(void);
+extern int ingetc(void);
+extern void inungetc(int c);
+extern int stuff(char*fn);
+extern void inerrflush(void);
+extern mod_import_function void inpush(char*str,int flags,Alias inalias);
+extern mod_import_function void inpop(void);
+extern void inpopalias(void);
+extern char*ingetptr(void);
+extern char*input_hasalias(void);
+
+#endif /* !have_Src_input_globals */

@@ -33,7 +33,7 @@ local function default_user(obj, metadata)
 		homedir = "/home/fivebsd",
 		groups = "wheel",
 		gecos = "5BSD User",
-		shell = "/bin/sh",
+		shell = "/bin/zsh",
 		plain_text_passwd = "fivebsd",
 		ssh_authorized_keys = ssh_authorized_keys
 	}

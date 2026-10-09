@@ -1,0 +1,44 @@
+/* Generated automatically */
+#ifndef have_Src_init_globals
+#define have_Src_init_globals
+
+extern int noexitct;
+extern char*zunderscore;
+extern size_t underscorelen;
+extern int underscoreused;
+extern int sourcelevel;
+extern mod_import_variable int SHTTY;
+extern mod_import_variable FILE*shout;
+extern mod_import_variable char*tcstr[TC_COUNT];
+extern mod_import_variable int tclen[TC_COUNT];
+extern int tclines;
+extern int tccolumns;
+extern mod_import_variable int hasam;
+extern int hasxn;
+extern mod_import_variable int tccolours;
+extern mod_import_variable sigset_t sigchld_mask;
+extern struct hookdef zshhooks[];
+extern enum loop_return loop(int toplevel,int justonce);
+extern mod_import_function int parseopts(char*nam,char***argvp,char*new_opts,char**cmdp,LinkList optlist,int flags,int*needkeymap);
+extern mod_import_function void init_io(char*cmd);
+extern mod_import_function void init_shout(void);
+extern mod_import_function char*tccap_get_name(int cap);
+extern mod_import_function int init_term(void);
+extern void setupvals(char*cmd,char*runscript,char*zsh_name);
+extern void init_signals(void);
+extern void run_init_scripts(void);
+extern void init_misc(char*cmd,char*zsh_name);
+extern mod_import_function enum source_return source(char*s);
+extern void sourcehome(char*s);
+extern void init_bltinmods(void);
+extern mod_import_function void noop_function(void);
+extern mod_import_function void noop_function_int(UNUSED(int nothing));
+extern mod_import_variable ZleEntryPoint zle_entry_ptr;
+extern mod_import_variable int zle_load_state;
+extern mod_import_function char * zleentry(VA_ALIST_PROTO1(int cmd));
+extern mod_import_variable CompctlReadFn compctlreadptr;
+extern mod_import_function int fallback_compctlread(char*name,UNUSED(char**args),UNUSED(Options ops),UNUSED(char*reply));
+extern mod_import_variable int use_exit_printed;
+extern mod_import_function int zsh_main(UNUSED(int argc),char**argv);
+
+#endif /* !have_Src_init_globals */
