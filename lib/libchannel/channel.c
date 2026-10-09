@@ -1043,6 +1043,15 @@ channel_message_authority(const struct channel_message *message)
 	return (&message->authority);
 }
 
+bool
+channel_message_confined(const struct channel_message *message)
+{
+	/* With no message there is nothing to trust: treat it as confined. */
+	if (message == NULL)
+		return (true);
+	return ((message->authority.flags & CAP_AUTH_STAMP_CONFINED) != 0);
+}
+
 size_t
 channel_message_fd_count(const struct channel_message *message)
 {
