@@ -48,7 +48,17 @@
  * LLVM libunwind from stable/13 cannot parse register numbers higher
  * than 32.  Disable %rflags, %fs.base, and %gs.base annotations.
  */
-#if !defined(__clang__) || (__clang_major__ >= 17)
+/*
+ * 5BSD: every annotation guarded by WORKING_CFI names a DWARF register
+ * above 32 (%rflags 49, segment registers 50-55, %fs.base/%gs.base
+ * 58/59).  The in-tree LLVM libunwind (libgcc_s) still rejects any CFA
+ * rule for a register above _LIBUNWIND_HIGHEST_DWARF_REGISTER (32 on
+ * x86_64) as malformed, so with these rules enabled unwinding stops at
+ * the signal frame (lib/libexecinfo sigtramp_test).  Keep them opt-in
+ * until the unwinder skips registers it does not track.
+ */
+#if (!defined(__clang__) || (__clang_major__ >= 17)) && \
+    defined(SIGTRAMP_SPECIAL_REGS_CFI)
 #define	WORKING_CFI
 #endif
 

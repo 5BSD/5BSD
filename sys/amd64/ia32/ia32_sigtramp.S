@@ -34,7 +34,17 @@
 
 #include "ia32_assym.h"
 
-#if !defined(__clang__) || (__clang_major__ >= 17)
+/*
+ * 5BSD: every annotation guarded by WORKING_CFI names a DWARF register
+ * the in-tree LLVM libunwind (libgcc_s) does not track (%eflags 9,
+ * segment registers 40-45, %fs.base/%gs.base 93/94 are all above
+ * _LIBUNWIND_HIGHEST_DWARF_REGISTER, 8 on i386).  libunwind rejects such
+ * CFA rules as malformed and stops unwinding at the signal frame.  Keep
+ * them opt-in until the unwinder skips registers it does not track.
+ * See sys/amd64/amd64/sigtramp.S.
+ */
+#if (!defined(__clang__) || (__clang_major__ >= 17)) && \
+    defined(SIGTRAMP_SPECIAL_REGS_CFI)
 #define	WORKING_CFI
 #endif
 
