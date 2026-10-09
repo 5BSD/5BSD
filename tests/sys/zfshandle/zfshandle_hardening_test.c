@@ -9,6 +9,7 @@
 #include <sys/types.h>
 #include <sys/ioctl.h>
 #include <sys/linker.h>
+#include <sys/mount.h>
 #include <sys/resource.h>
 #include <sys/socket.h>
 #include <sys/sysctl.h>
@@ -384,6 +385,90 @@ ATF_TC_BODY(orphaned_scm_rights_close, tc)
 }
 ATF_TC_CLEANUP(orphaned_scm_rights_close, tc) { zht_pool_cleanup(tc); }
 
+/*
+ * Mount once more after the last anchor's unmount may have lost a race with
+ * an external forced unmount.  EBUSY is transient (a teardown in flight), so
+ * retry briefly; the mount handed back must be a live mount of ds.
+ */
+static void
+remount_after_race(int fd, const char *ds)
+{
+	struct statfs sfs;
+	int mfd, tries;
+
+	mfd = -1;
+	for (tries = 0; tries < 200; tries++) {
+		mfd = tzfs_mount(fd, true);
+		if (mfd >= 0 || errno != EBUSY)
+			break;
+		usleep(10000);
+	}
+	ATF_REQUIRE_MSG(mfd >= 0, "re-mount after a raced unmount: %s",
+	    strerror(errno));
+	ATF_REQUIRE_EQ(0, fstatfs(mfd, &sfs));
+	ATF_CHECK_STREQ(ds, sfs.f_mntfromname);
+	ATF_CHECK_STREQ("zfs", sfs.f_fstypename);
+	ATF_REQUIRE_EQ(0, close(mfd));
+	ATF_REQUIRE_EQ(0, tzfs_unmount(fd));
+}
+
+ATF_TC_WITH_CLEANUP(failed_unmount_then_remount);
+ATF_TC_HEAD(failed_unmount_then_remount, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "a last-anchor unmount that fails against a concurrent forced "
+	    "unmount leaves no stale registry entry: the dataset re-mounts");
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "timeout", "600");
+}
+ATF_TC_BODY(failed_unmount_then_remount, tc)
+{
+	struct statfs sfs;
+	char ds[256], fsidstr[64], go = 'u';
+	pid_t pid;
+	int fd, mfd, start[2], i, status;
+
+	hard_setup(tc, ds, sizeof(ds));
+	fd = tzfs_open(ds, ZH_MOUNT, 0);
+	ATF_REQUIRE(fd >= 0);
+	for (i = 0; i < 300; i++) {
+		mfd = tzfs_mount(fd, true);
+		ATF_REQUIRE_MSG(mfd >= 0, "iteration %d: %s", i,
+		    strerror(errno));
+		ATF_REQUIRE_EQ(0, fstatfs(mfd, &sfs));
+		snprintf(fsidstr, sizeof(fsidstr), "FSID:%d:%d",
+		    sfs.f_fsid.val[0], sfs.f_fsid.val[1]);
+		/* Leave the handle as the only (and so the last) anchor. */
+		ATF_REQUIRE_EQ(0, close(mfd));
+		ATF_REQUIRE_EQ(0, pipe(start));
+		pid = fork();
+		ATF_REQUIRE(pid >= 0);
+		if (pid == 0) {
+			if (read(start[0], &go, 1) != 1)
+				_exit(80);
+			/* Either side may win; the loser fails. */
+			(void)unmount(fsidstr, MNT_BYFSID | MNT_FORCE);
+			_exit(0);
+		}
+		close(start[0]);
+		ATF_REQUIRE_EQ(1, write(start[1], &go, 1));
+		/*
+		 * Racing the forced unmount, this drops the last anchor: its
+		 * dounmount() wins, fails EBUSY (and the external unmount then
+		 * destroys the mount), or finds the mount already off the
+		 * mountlist.  Before the fix, the EBUSY case left the registry
+		 * pointing at the destroyed mount.
+		 */
+		(void)tzfs_unmount(fd);
+		close(start[1]);
+		ATF_REQUIRE_EQ(pid, waitpid(pid, &status, 0));
+		ATF_REQUIRE(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+		remount_after_race(fd, ds);
+	}
+	ATF_REQUIRE_EQ(0, close(fd));
+}
+ATF_TC_CLEANUP(failed_unmount_then_remount, tc) { zht_pool_cleanup(tc); }
+
 #define	BAD_IOCTL(fd, cmd, arg) \
 	ATF_CHECK_ERRNO(EINVAL, ioctl((fd), (cmd), &(arg)) == -1)
 
@@ -694,6 +779,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, send_once_lineage_and_race);
 	ATF_TP_ADD_TC(tp, concurrent_mount_singleton);
 	ATF_TP_ADD_TC(tp, orphaned_scm_rights_close);
+	ATF_TP_ADD_TC(tp, failed_unmount_then_remount);
 	ATF_TP_ADD_TC(tp, strict_ioctl_abi);
 	ATF_TP_ADD_TC(tp, library_output_contracts);
 	ATF_TP_ADD_TC(tp, names_and_self_rename);
