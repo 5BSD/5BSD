@@ -2415,8 +2415,15 @@ zfshandle_anon_find(uint64_t pool_guid, uint64_t ds_guid)
  * Drop one anchoring handle's reference on a shared anonymous mount.  Every
  * anchor holds a vfs_ref; a non-last anchor simply releases its reference.
  * The last anchor unmounts: dounmount() consumes one reference (the
- * kern_unmount contract).  Shutdown's unmount-all can beat us to it, so
- * re-verify list membership by identity under mountlist_mtx first.
+ * kern_unmount contract) -- on success AND on every error path.  Shutdown's
+ * unmount-all can beat us to it, so re-verify list membership by identity
+ * under mountlist_mtx first.
+ *
+ * Invariant: an entry's za_mp is only ever dereferenced while za_refs > 0,
+ * and every one of those za_refs is backed by a vfs_ref some anchor holds.
+ * That reference is what keeps vfs_mount_destroy() from completing under
+ * the registry.  The registry itself never holds a reference (it would hang
+ * shutdown's unmount-all in vfs_mount_destroy).
  */
 static void
 zfshandle_anon_release(struct mount *mp, struct thread *td)
@@ -2480,18 +2487,19 @@ zfshandle_anon_release(struct mount *mp, struct thread *td)
 		zfshandle_cred_exit(saved);
 		if (error != 0) {
 			/*
-			 * Still mounted (the reference was not consumed).  Keep
-			 * the entry, re-anchored by nobody: later claims join
-			 * it rather than failing EBUSY against a mount the
-			 * registry forgot.
+			 * dounmount() released our reference even though it
+			 * failed (every error return does vfs_rel/MNT_REL), so
+			 * nothing anchors the mount any more: if the failure
+			 * was EBUSY from a concurrent unmount, that unmount
+			 * destroys mp as soon as it drains.  The entry cannot
+			 * keep pointing at it.  Forget it; a mount that did
+			 * survive (VFS_UNMOUNT refused) stays on mountlist as
+			 * an orphan that the next claim of the dataset re-finds
+			 * by fsid and adopts (zfshandle_anon_adopt), taking a
+			 * fresh reference under mountlist_mtx.
 			 */
 			SDT_PROBE2(trustedzfs, , , anon__unmount__failed, guid,
 			    error);
-			mtx_lock(&zfshandle_anon_mtx);
-			za->za_refs = 1;
-			za->za_mounting = B_FALSE;
-			mtx_unlock(&zfshandle_anon_mtx);
-			return;
 		}
 	} else
 		vfs_rel(mp);
@@ -2499,6 +2507,52 @@ zfshandle_anon_release(struct mount *mp, struct thread *td)
 	LIST_REMOVE(za, za_link);
 	mtx_unlock(&zfshandle_anon_mtx);
 	kmem_free(za, sizeof (*za));
+}
+
+/*
+ * Find a live anonymous ZFS mount of the dataset whose fsid is derived from
+ * fsid_guid that no registry entry tracks -- one left behind by a failed
+ * last-anchor unmount -- and take a reference on it.  The lookup is by fsid,
+ * never by a remembered pointer, under mountlist_mtx: a mount still on
+ * mountlist has not reached vfs_mount_destroy, so the vfs_ref is safe (the
+ * vfs_getvfs pattern), and a mount being unmounted is not adopted.  The
+ * caller holds the dataset's registry entry in the mounting state, so no
+ * other claim can adopt or mount it concurrently.
+ */
+static int
+zfshandle_anon_adopt(uint64_t fsid_guid, boolean_t rdonly, struct mount **mpp)
+{
+	struct mount *mp;
+	fsid_t fsid;
+	int error;
+
+	error = SET_ERROR(ENOENT);
+	mtx_lock(&mountlist_mtx);
+	TAILQ_FOREACH(mp, &mountlist, mnt_list) {
+		fsid = mp->mnt_stat.f_fsid;
+		if ((uint32_t)fsid.val[0] != (uint32_t)fsid_guid ||
+		    ((uint32_t)fsid.val[1] >> 8) != (uint32_t)(fsid_guid >> 32))
+			continue;
+		if (strcmp(mp->mnt_stat.f_fstypename, "zfs") != 0 ||
+		    mp->mnt_vnodecovered != NULL ||
+		    strcmp(mp->mnt_stat.f_mntonname, VFS_ANON_FSPATH) != 0)
+			continue;
+		MNT_ILOCK(mp);
+		if ((mp->mnt_kern_flag &
+		    (MNTK_UNMOUNT | MNTK_REFEXPIRE)) != 0) {
+			error = SET_ERROR(EBUSY);
+		} else if (((mp->mnt_flag & MNT_RDONLY) != 0) != rdonly) {
+			error = SET_ERROR(rdonly ? EEXIST : EROFS);
+		} else {
+			MNT_REF(mp);
+			*mpp = mp;
+			error = 0;
+		}
+		MNT_IUNLOCK(mp);
+		break;
+	}
+	mtx_unlock(&mountlist_mtx);
+	return (error);
 }
 
 /* Detach the handle from its anonymous mount, if any, and release it. */
@@ -2531,6 +2585,7 @@ zfshandle_op_mount(zfshandle_t *zh, struct zfd_mount_args *args,
 	boolean_t rdonly;
 	boolean_t joined __unused;
 	u_int refs __unused;
+	uint64_t fsid_guid;
 	int error, fd, flags;
 
 	if (args->zm_rdonly > 1)
@@ -2549,9 +2604,12 @@ zfshandle_op_mount(zfshandle_t *zh, struct zfd_mount_args *args,
 	error = zfshandle_hold(zh, FTAG, &dp, &ds);
 	if (error != 0)
 		goto failed;
+	fsid_guid = 0;
 	error = dmu_objset_from_ds(ds, &os);
 	if (error == 0 && dmu_objset_type(os) != DMU_OST_ZFS)
 		error = SET_ERROR(EINVAL);
+	if (error == 0)
+		fsid_guid = dmu_objset_fsid_guid(os);
 	dsl_dataset_name(ds, name);
 	zfshandle_rele(dp, ds, FTAG);
 	if (error != 0)
@@ -2611,6 +2669,18 @@ zfshandle_op_mount(zfshandle_t *zh, struct zfd_mount_args *args,
 		mtx_unlock(&zfshandle_anon_mtx);
 		error = zfshandle_anon_mount(td, name, rdonly, &mp);
 		if (error != 0) {
+			/*
+			 * The objset may still be mounted by an orphan the
+			 * registry dropped after its unmount failed: adopt it
+			 * rather than refuse the store until reboot.
+			 */
+			int aerror;
+
+			aerror = zfshandle_anon_adopt(fsid_guid, rdonly, &mp);
+			if (aerror != ENOENT)
+				error = aerror;
+		}
+		if (error != 0) {
 			mtx_lock(&zfshandle_anon_mtx);
 			LIST_REMOVE(za, za_link);
 			mtx_unlock(&zfshandle_anon_mtx);
@@ -2619,7 +2689,8 @@ zfshandle_op_mount(zfshandle_t *zh, struct zfd_mount_args *args,
 		}
 		/*
 		 * This handle anchors the mount with the reference
-		 * zfshandle_anon_mount handed back (the kern_unmount-style ref).
+		 * zfshandle_anon_mount (or zfshandle_anon_adopt) handed back
+		 * (the kern_unmount-style ref).
 		 */
 		mtx_lock(&zfshandle_anon_mtx);
 		za->za_mp = mp;
