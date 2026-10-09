@@ -118,7 +118,7 @@ that are policy rather than description.
 | `umask` | file-creation mask | `0077` |
 | `level` | `background`, `standard` or `interactive` nice priority; `interactive` is honoured only for a base-system bundle | `standard` |
 | `control` | management class `core`, `system` or `user`: who may stop, restart, unload or disable the unit; `core` is unmanageable by anyone, root included | `system` |
-| `visible` | which domain kinds (`user`, `system`) may resolve the unit's open IPC names; absent means SYSTEM-only (login sessions resolve every non-control name regardless) | absent |
+| `visible` | which domain kinds (`user`, `system`) may resolve the unit's open IPC names; absent means SYSTEM-only | absent |
 | `domain` | the domain the unit's own lookups run in | by bundle class |
 | `attributes` | the software attributes the unit presents when it looks up a gated endpoint | empty |
 | `activation.ipc[].requires` | the attributes requesting software must hold to reach this endpoint | open |

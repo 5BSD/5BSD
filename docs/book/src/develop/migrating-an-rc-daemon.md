@@ -158,8 +158,7 @@ handle_request(struct channel *channel, struct channel_message *message, void *a
 ```
 
 The manifest gains `activation { boot = true; ipc = ["org.example.exampled"]; }`
-and, if per-user agents and applications should reach it,
-`visible = ["user"]` (login sessions resolve it either way). Clients replace
+and, if user sessions should reach it, `visible = ["user"]`. Clients replace
 `connect()` on the socket path with `service_open("org.example.exampled", &fd)`
 and `service_session_create()`; a client that resolves the name is launched
 against if the unit is stopped, so `boot = true` becomes optional. Per-client

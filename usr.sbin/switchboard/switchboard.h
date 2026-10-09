@@ -119,14 +119,6 @@ struct svc_domain {
 	enum svc_domain_kind	kind;
 	uid_t			uid;	/* meaningful only for SVC_DOMAIN_USER */
 	struct svc_anoint_set	anoint;	/* what this holder may reach */
-	/*
-	 * Login session: an unattributed sender (never held software authority,
-	 * not jailed).  Like a Darwin per-user bootstrap falling through to the
-	 * system namespace, it resolves every non-control service name; each
-	 * endpoint's attribute requirements and the provider's own checks still
-	 * apply.  Never set from a stamped or confined sender.
-	 */
-	bool			session;
 	/* Registry identity; never accepted from a request payload. */
 	uint64_t authority_issuer;
 	uint64_t authority_identity;

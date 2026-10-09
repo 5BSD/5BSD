@@ -314,9 +314,8 @@ umask = "0077";
 Unit names are lowercase, digits and hyphens; the default program is
 `bin/<unit>`. `activation { ipc = [...] }` reserves the name and launches the
 unit on first lookup; add `boot = true` to start it at boot instead or as
-well. `visible = ["user"]` lets USER-domain software (per-user agents, and
-applications that keep the default domain) resolve the name; without it, only
-SYSTEM-domain callers and login sessions can. `user` and `group` default to `capability`.
+well. `visible = ["user"]` lets a login session resolve the name; without it,
+only SYSTEM-domain callers can. `user` and `group` default to `capability`.
 The unit runs born in capability mode; an application bundle cannot opt out.
 The complete key set is in [Bundles and Manifests](../plane/bundles-and-manifests.md).
 

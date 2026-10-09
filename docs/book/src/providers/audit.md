@@ -144,10 +144,8 @@ by hand, which is the point.
 
 Policy is compiled in, not configured. The identity-to-event table above is
 the whole allow-list: a unit whose bundle id is not in it is refused at
-admission, before a worker exists. A login session resolves the name but
-is refused the same way, because its session label is not in the table, and
-per-user agents and applications cannot resolve it at all because the unit
-does not opt into `visible = ["user"]`. There
+admission, before a worker exists, and a login session cannot reach the
+name at all because the unit does not opt into `visible = ["user"]`. There
 is no admin bypass: `SERVICE_RIGHTS_ADMIN` does not add an identity to the
 table. Field bounds (`AUDITCMP_MAX_SUBJECT` and `AUDITCMP_MAX_OPERATION`,
 64 each) and the character-set check are applied in
