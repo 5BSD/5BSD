@@ -1,7 +1,7 @@
 .\"-
 .\" SPDX-License-Identifier: BSD-2-Clause
 .\"
-.Dd September 10, 2026
+.Dd October 10, 2026
 .Dt CAPSULE 8
 .Os
 .Sh NAME
@@ -137,6 +137,37 @@ Enter the event loop, monitoring the switchboard process descriptor
 and control socket connections via
 .Xr kqueue 2 .
 .El
+.Sh SURVIVABILITY
+When running as PID 1,
+.Nm
+is explicitly excluded from kernel OOM victim selection by the PID 1 rule.
+This exclusion does not require the
+.Dv P_PROTECTED
+flag to be set.
+When running as a normal supervisor process, production startup applies
+.Dv PROC_SPROTECT
+with
+.Dv PPROT_SET
+and refuses startup if hardening fails.
+.Fl T
+test mode skips this process-hardening step.
+.Pp
+The signal, sigkill and sigcont integrity shields are mandatory.
+Once installed, they deny unauthorized external PID signals, including
+.Dv SIGKILL ;
+ordinary UNIX superuser credentials alone do not bypass these shields.
+Authorized lifecycle control and kernel-internal events remain available.
+.Pp
+Capsule also installs OOM exclusion for Switchboard before exec.
+Switchboard installs it for the shipped BSDMemory, BSDNotify and BSDSysctl
+units before releasing their launch gates.
+Together these five processes are excluded from the normal kernel OOM victim
+selector after their applicable protection is established.
+The exemptions are not inherited by ordinary forked children.
+.Pp
+These guarantees concern OOM victim selection and unauthorized external
+interference; they do not reserve memory or prevent allocation failures,
+fatal faults, deliberate authorized shutdown, or kernel panic.
 .Sh OPTIONS
 .Bl -tag -width "-b bootstrap"
 .It Fl b Ar bootstrap
