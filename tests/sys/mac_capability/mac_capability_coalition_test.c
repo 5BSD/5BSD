@@ -1755,6 +1755,74 @@ ATF_TC_BODY(close_retains_signalled_process, tc)
 	ATF_CHECK_EQ(base, coalition_count());
 }
 
+ATF_TC(closed_coalition_rejects_fork);
+ATF_TC_HEAD(closed_coalition_rejects_fork, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "A member surviving the close signal cannot fork outside containment");
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_coalition");
+	atf_tc_set_md_var(tc, "timeout", "30");
+}
+ATF_TC_BODY(closed_coalition_rejects_fork, tc)
+{
+	struct coalition_set_signal_req req = {
+	    .op = COALITION_OP_SET_SIGNAL, .signal = SIGTERM };
+	struct coalition_reply reply;
+	unsigned base = coalition_count();
+	int ready[2], gate[2], pd, cfd, wstatus;
+	int32_t status;
+	pid_t child;
+	char byte;
+
+	ATF_REQUIRE_EQ(0, pipe(ready));
+	ATF_REQUIRE_EQ(0, pipe(gate));
+	child = pdfork(&pd, 0);
+	ATF_REQUIRE(child >= 0);
+	if (child == 0) {
+		pid_t descendant;
+		int result;
+
+		close(ready[0]);
+		close(gate[1]);
+		if (signal(SIGTERM, SIG_IGN) == SIG_ERR ||
+		    write(ready[1], "r", 1) != 1 || read(gate[0], &byte, 1) != 1)
+			_exit(1);
+		descendant = fork();
+		if (descendant == 0)
+			_exit(77); /* Rejected fork must never reach user code. */
+		if (descendant < 0 || waitpid(descendant, &result, 0) != descendant)
+			_exit(2);
+		_exit(WIFSIGNALED(result) && WTERMSIG(result) == SIGKILL ? 0 : 3);
+	}
+	close(ready[1]);
+	close(gate[0]);
+	ATF_REQUIRE_EQ(1, read(ready[0], &byte, 1));
+	close(ready[0]);
+	cfd = mac_capability_connect("coalition");
+	ATF_REQUIRE(cfd >= 0);
+	ATF_REQUIRE_EQ(0, coalition_call(cfd, &req, sizeof(req), NULL, 0,
+	    &reply, sizeof(reply)));
+	ATF_REQUIRE_EQ(0, reply.status);
+	ATF_REQUIRE_EQ(0, coalition_enlist(cfd, pd, &status));
+	ATF_REQUIRE_EQ(0, status);
+	ATF_REQUIRE_EQ(0, close(cfd));
+	ATF_REQUIRE_EQ(1, write(gate[1], "g", 1));
+	close(gate[1]);
+	if (!wait_exit_bounded(child, &wstatus)) {
+		(void)pdkill(pd, SIGKILL);
+		(void)waitpid(child, &wstatus, 0);
+		atf_tc_fail("closed-coalition fork did not finish");
+	}
+	ATF_CHECK(WIFEXITED(wstatus));
+	if (WIFEXITED(wstatus))
+		ATF_CHECK_EQ(0, WEXITSTATUS(wstatus));
+	close(pd);
+	for (unsigned i = 0; i < 500 && coalition_count() != base; i++)
+		usleep(10000);
+	ATF_CHECK_EQ(base, coalition_count());
+}
+
 ATF_TC(set_signal_zero_releases);
 ATF_TC_HEAD(set_signal_zero_releases, tc)
 {
@@ -4756,6 +4824,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, responsible_chain_depth_limit);
 	ATF_TP_ADD_TC(tp, set_signal_zero_releases);
 	ATF_TP_ADD_TC(tp, close_retains_signalled_process);
+	ATF_TP_ADD_TC(tp, closed_coalition_rejects_fork);
 	ATF_TP_ADD_TC(tp, pdfork_inherits_and_rehomes);
 	ATF_TP_ADD_TC(tp, close_terminates_live_member);
 	ATF_TP_ADD_TC(tp, close_terminates_orphan_descendant);
