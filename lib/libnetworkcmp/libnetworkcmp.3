@@ -178,14 +178,21 @@ The
 .Va ai_flags
 may combine
 .Dv AI_PASSIVE , AI_CANONNAME , AI_NUMERICHOST , AI_NUMERICSERV ,
-.Dv AI_ADDRCONFIG , AI_V4MAPPED ,
+.Dv AI_V4MAPPED ,
 and
 .Dv AI_ALL ;
 any other flag fails with
 .Dv EAI_BADFLAGS .
 .Dv AI_ADDRCONFIG
-is accepted but is a documented no-op in the in-process
-resolver.
+returns
+.Dv EAI_BADFLAGS
+because configured source-address filtering is unavailable.
+The raw
+.Fn networkcmp_resolve
+API rejects
+.Dv NETWORKCMP_RESOLVE_F_ADDRCONFIG
+with
+.Er EOPNOTSUPP .
 .Dv AI_V4MAPPED
 and
 .Dv AI_ALL
@@ -278,7 +285,6 @@ Native IPv6 hosts entries take precedence unless
 .Dv AI_ALL
 requests both native and mapped entries.
 A matching hosts entry satisfies the lookup before DNS is attempted.
-
 .Sh SEE ALSO
 .Xr cap_net 3 ,
 .Xr getaddrinfo 3 ,

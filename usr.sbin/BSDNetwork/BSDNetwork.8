@@ -110,9 +110,13 @@ is also set,
 .Sy A
 records are fetched and appended as IPv4-mapped IPv6 addresses.
 .Dv AI_ADDRCONFIG
-is accepted but is a deliberate no-op: the in-process resolver does not
-enumerate the host's own configured source families, so it never suppresses a
-family on that basis.
+is unsupported because no configured source-address family snapshot is
+available.
+The compatibility API returns
+.Dv EAI_BADFLAGS ;
+the provider rejects the corresponding wire flag with
+.Er EOPNOTSUPP
+without terminating the session.
 It never reads resolver configuration from the consumer filesystem.
 DNS queries use UDP first and retry truncated replies over TCP to the same
 configured nameserver, with a bounded TCP exchange.

@@ -485,12 +485,23 @@ ATF_TC_BODY(typed_api_arguments, tc)
 	 */
 	memset(&hints, 0, sizeof(hints));
 	hints.ai_family = AF_INET6;
-	hints.ai_flags = AI_V4MAPPED | AI_ALL | AI_ADDRCONFIG;
+	hints.ai_flags = AI_V4MAPPED | AI_ALL;
 	addresses = (void *)(uintptr_t)1;
 	error = networkcmp_getaddrinfo(NULL, "example.test", "443", &hints,
 	    &addresses);
 	ATF_CHECK(error != EAI_BADFLAGS);
 	ATF_CHECK_EQ(NULL, addresses);
+	hints.ai_flags = AI_ADDRCONFIG;
+	addresses = (void *)(uintptr_t)1;
+	ATF_CHECK_EQ(EAI_BADFLAGS, networkcmp_getaddrinfo(NULL,
+	    "192.0.2.1", "443", &hints, &addresses));
+	ATF_CHECK_EQ(NULL, addresses);
+	nresults = 1;
+	ATF_CHECK_ERRNO(EOPNOTSUPP, networkcmp_resolve(NULL, "192.0.2.1",
+	    "443", NETWORKCMP_AF_INET4, NETWORKCMP_SOCK_STREAM,
+	    NETWORKCMP_RESOLVE_F_ADDRCONFIG, &result, &nresults,
+	    NULL, 0, NULL) == -1);
+	ATF_CHECK_EQ(1, nresults);
 }
 
 ATF_TP_ADD_TCS(tp)

@@ -931,6 +931,9 @@ start_resolve(struct session_state *state,
 
 	request = (const void *)(message + 1);
 	wire = (const void *)(request + 1);
+	/* No authoritative configured-address snapshot is available yet. */
+	if ((request->flags & NETWORKCMP_RESOLVE_F_ADDRCONFIG) != 0)
+		return (errno = EOPNOTSUPP, -1);
 	if (state->resolver != NULL) {
 		job = state->resolver;
 		if (job->nrequests == NETWORKCMP_RESOLVE_WAITERS ||

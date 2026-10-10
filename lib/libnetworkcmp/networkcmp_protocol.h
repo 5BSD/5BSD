@@ -36,8 +36,8 @@
 #define	NETWORKCMP_RESOLVE_F_NUMERIC_HOST	0x00000004U
 #define	NETWORKCMP_RESOLVE_F_NUMERIC_SERVICE	0x00000008U
 /*
- * Address-selection flags (RFC 3493).  ADDRCONFIG is accepted for source
- * callers but is a no-op in the in-process resolver (see resolver.c);
+ * Address-selection flags (RFC 3493).  ADDRCONFIG retains its wire value
+ * but requests using it are rejected with EOPNOTSUPP;
  * V4MAPPED and ALL are honored: an AF_INET6 resolve may return IPv4-mapped
  * IPv6 results, and with ALL both native AAAA and mapped A are returned.
  */

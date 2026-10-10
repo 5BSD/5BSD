@@ -1268,6 +1268,9 @@ netresolve_ex(const char *host, const char *serv, const struct addrinfo *hints,
 
 	family = hints ? hints->ai_family : AF_UNSPEC;
 	flags = hints ? hints->ai_flags : 0;
+	if ((flags & ~(AI_PASSIVE | AI_CANONNAME | AI_NUMERICHOST |
+	    AI_NUMERICSERV | AI_V4MAPPED | AI_ALL)) != 0)
+		return (EAI_BADFLAGS);
 
 	if (family != AF_UNSPEC && family != AF_INET && family != AF_INET6)
 		return (EAI_FAMILY);
@@ -1359,11 +1362,7 @@ netresolve_ex(const char *host, const char *serv, const struct addrinfo *hints,
 				 * only for an AF_INET6 query: when no native
 				 * AAAA was found — or AI_ALL was also set —
 				 * fetch A records and append them as
-				 * IPv4-mapped IPv6.  AI_ADDRCONFIG is accepted
-				 * but is a documented no-op here: this in-process
-				 * resolver does not enumerate the host's own
-				 * configured source families, so it never
-				 * suppresses a family on that basis.
+				 * IPv4-mapped IPv6.
 				 */
 				if (family == AF_INET6 &&
 				    (flags & AI_V4MAPPED) != 0 &&

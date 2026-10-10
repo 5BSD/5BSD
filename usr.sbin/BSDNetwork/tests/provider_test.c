@@ -1079,7 +1079,7 @@ ATF_TC_BODY(provider_connect_timeout_expires, tc)
 }
 
 /*
- * A RESOLVE carrying the new address-selection flags (V4MAPPED/ALL/ADDRCONFIG)
+ * A RESOLVE carrying the new address-selection flags (V4MAPPED/ALL)
  * is accepted by the wire validator and reaches the resolver: under
  * NETWORKCMP_TESTING the resolver stub answers EOPNOTSUPP, so that status —
  * rather than EPROTO/EINVAL — proves the flags were parsed and passed through.
@@ -1089,7 +1089,7 @@ ATF_TC_HEAD(provider_resolve_accepts_selection_flags, tc)
 {
 	atf_tc_set_md_var(tc, "require.user", "root");
 	atf_tc_set_md_var(tc, "descr",
-	    "RESOLVE accepts AI_V4MAPPED/AI_ALL/AI_ADDRCONFIG and reaches the "
+	    "RESOLVE rejects ADDRCONFIG without closing; V4MAPPED/ALL reaches the "
 	    "resolver");
 }
 ATF_TC_BODY(provider_resolve_accepts_selection_flags, tc)
@@ -1103,7 +1103,7 @@ ATF_TC_BODY(provider_resolve_accepts_selection_flags, tc)
 	union wire_buffer reply;
 	size_t length;
 
-	fixture_create(&fixture);
+	fixture_create_blocked_resolver_timeout(&fixture, 100);
 	memset(&resolve, 0, sizeof(resolve));
 	ATF_REQUIRE_EQ(0, networkcmp_message_init(&resolve.message,
 	    NETWORKCMP_OP_RESOLVE, 0));
@@ -1114,6 +1114,14 @@ ATF_TC_BODY(provider_resolve_accepts_selection_flags, tc)
 	    NETWORKCMP_RESOLVE_F_ALL | NETWORKCMP_RESOLVE_F_ADDRCONFIG;
 	resolve.request.max_results = 1;
 	memcpy(resolve.host, "localhost", sizeof(resolve.host));
+	ATF_REQUIRE_EQ(0, call(&fixture, &resolve, sizeof(resolve.message) +
+	    sizeof(resolve.request) + sizeof(resolve.host), &reply, &length,
+	    NULL));
+	ATF_CHECK_EQ(EOPNOTSUPP, reply_status(&reply, length,
+	    NETWORKCMP_OP_RESOLVE));
+	/* Unsupported flags must be rejected before starting a blocked worker. */
+	ATF_REQUIRE_EQ(1, write(fixture.resolver_release, "x", 1));
+	resolve.request.flags &= ~NETWORKCMP_RESOLVE_F_ADDRCONFIG;
 	ATF_REQUIRE_EQ(0, call(&fixture, &resolve, sizeof(resolve.message) +
 	    sizeof(resolve.request) + sizeof(resolve.host), &reply, &length,
 	    NULL));

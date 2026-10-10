@@ -909,8 +909,29 @@ ATF_TC_BODY(negative_cname_packet, tc)
 	res_nclose(&g_res);
 }
 
+ATF_TC_WITHOUT_HEAD(unsupported_flags);
+ATF_TC_BODY(unsupported_flags, tc)
+{
+	struct addrinfo hints, *result;
+	uint32_t ttl;
+	int flags[] = { AI_ADDRCONFIG, 0x40000000 };
+
+	memset(&hints, 0, sizeof(hints));
+	hints.ai_family = AF_INET;
+	for (size_t i = 0; i < nitems(flags); i++) {
+		hints.ai_flags = flags[i];
+		result = (void *)(uintptr_t)1;
+		ttl = 123;
+		ATF_CHECK_EQ(EAI_BADFLAGS, netresolve_ex("192.0.2.1", "80",
+		    &hints, &result, &ttl));
+		ATF_CHECK_EQ(NULL, result);
+		ATF_CHECK_EQ(0, ttl);
+	}
+}
+
 ATF_TP_ADD_TCS(tp)
 {
+	ATF_TP_ADD_TC(tp, unsupported_flags);
 	ATF_TP_ADD_TC(tp, negative_cname_packet);
 	ATF_TP_ADD_TC(tp, negative_soa_lifetime);
 	ATF_TP_ADD_TC(tp, negative_cache_lifetime_and_configuration);
