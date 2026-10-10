@@ -133,7 +133,7 @@ fake_free(struct channel_message *m)
 #include "../bsdsysctl.c"
 
 static int
-request(int fd)
+request_op(int fd, uint32_t opcode, const char *name)
 {
 	union {
 		max_align_t align;
@@ -142,14 +142,14 @@ request(int fd)
 	struct sysctlcmp_msg *msg = (void *)buffer.bytes;
 	struct sysctlcmp_body *body = (void *)(msg + 1);
 	struct pollfd ready = { .fd = fd, .events = POLLIN };
-	const char name[] = "kern.ostype";
-	size_t length = sizeof(*msg) + sizeof(*body) + sizeof(name);
+
+	size_t length = sizeof(*msg) + sizeof(*body) + strlen(name) + 1;
 
 	memset(&buffer, 0, sizeof(buffer));
 	msg->magic = SYSCTLCMP_MAGIC;
-	msg->opcode = SYSCTLCMP_OP_GET;
-	body->name_length = sizeof(name);
-	memcpy(body + 1, name, sizeof(name));
+	msg->opcode = opcode;
+	body->name_length = strlen(name) + 1;
+	memcpy(body + 1, name, strlen(name) + 1);
 	ATF_REQUIRE_EQ((ssize_t)length, send(fd, buffer.bytes, length, 0));
 	/* An old sequential serve loop would stall for the 10-second idle
 	 * limit. */
@@ -170,7 +170,9 @@ ATF_TC_BODY(idle_and_policy_isolation, tc)
 	config.nclients = 1;
 	strlcpy(config.clients[0].label, "allowed",
 	    sizeof(config.clients[0].label));
-	config.clients[0].acl.nread = 1;
+	config.clients[0].acl.nread = 2;
+	strlcpy(config.clients[0].acl.read[1], SYSCTLCMP_INTERFACES_POLICY,
+	    SYSCTLCMP_MAX_PREFIX);
 	strlcpy(config.clients[0].acl.read[0], "kern.ostype",
 	    SYSCTLCMP_MAX_PREFIX);
 	for (unsigned i = 0; i < 3; i++) {
@@ -189,14 +191,18 @@ ATF_TC_BODY(idle_and_policy_isolation, tc)
 	for (unsigned i = 0; i < 3; i++)
 		close(pairs[i][1]);
 	for (unsigned i = 0; i < 4; i++) {
-		ATF_CHECK_EQ(0, request(pairs[1][0]));
-		ATF_CHECK_EQ(EPERM, request(pairs[2][0]));
+		ATF_CHECK_EQ(0, request_op(pairs[1][0], SYSCTLCMP_OP_GET, "kern.ostype"));
+		ATF_CHECK_EQ(EPERM, request_op(pairs[2][0], SYSCTLCMP_OP_GET, "kern.ostype"));
 	}
+	ATF_CHECK_EQ(0, request_op(pairs[1][0], SYSCTLCMP_OP_INTERFACES,
+	    SYSCTLCMP_INTERFACES_POLICY));
+	ATF_CHECK_EQ(EPERM, request_op(pairs[2][0], SYSCTLCMP_OP_INTERFACES,
+	    SYSCTLCMP_INTERFACES_POLICY));
 	/* Malforming the idle client's request must not stop the other streams.
 	 */
 	ATF_REQUIRE_EQ(1, send(pairs[0][0], "x", 1, 0));
-	ATF_CHECK_EQ(0, request(pairs[1][0]));
-	ATF_CHECK_EQ(EPERM, request(pairs[2][0]));
+	ATF_CHECK_EQ(0, request_op(pairs[1][0], SYSCTLCMP_OP_GET, "kern.ostype"));
+	ATF_CHECK_EQ(EPERM, request_op(pairs[2][0], SYSCTLCMP_OP_GET, "kern.ostype"));
 	for (unsigned i = 0; i < 3; i++)
 		close(pairs[i][0]);
 	ATF_REQUIRE_EQ(child, waitpid(child, &status, 0));

@@ -74,6 +74,21 @@ A read of an unlisted name, or any unlisted write, is refused with
 .Er EPERM .
 A missing or malformed file falls back to the compiled-in default (a small
 safe read set, no writes) with a warning.
+.Sh INTERFACE INVENTORY
+The fixed interface-inventory operation reads
+.Dv NET_RT_IFLISTL
+through the held sysctl token and returns at most 256 interface summaries.
+The caller must have read permission for
+.Dq net.routetable .
+No permission is added to the shipped default policy.
+No caller-supplied MIB or write data is accepted.
+Native records are validated and reduced to names, indexes, flags, MTUs,
+and link states; addresses and counters are not returned.
+The temporary native dump is capped at four megabytes, with three attempts
+when the interface list grows during collection.
+See
+.Xr sysctlcmp_interfaces 3
+for the snapshot and error contracts.
 .Sh SEE ALSO
 .Xr libsysctlcmp 3 ,
 .Xr sysctl 3 ,

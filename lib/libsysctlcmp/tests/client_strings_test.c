@@ -81,6 +81,14 @@ service_session_call(struct service_session *session,
 	value = (uint8_t *)(body + 1);
 	if (empty_value) {
 		value_length = 0;
+	} else if (request->opcode == SYSCTLCMP_OP_INTERFACES) {
+		struct sysctlcmp_interface entries[2] = {
+		    {.index = 1, .mtu = 1500, .name = "em0"},
+		    {.index = 2, .mtu = 16384, .name = "lo0"} };
+		if (omit_nul)
+			entries[1].reserved[0] = 1;
+		memcpy(value, entries, sizeof(entries));
+		value_length = sizeof(entries);
 	} else if (request->opcode == SYSCTLCMP_OP_OIDFMT) {
 		oidfmt = (void *)value;
 		oidfmt->kind = 0x1234;
@@ -214,8 +222,35 @@ ATF_TC_BODY(wrong_opcode_is_terminal, tc)
 	ATF_CHECK_EQ(1, fail_calls);
 }
 
+ATF_TC_WITHOUT_HEAD(interface_output_contract);
+ATF_TC_BODY(interface_output_contract, tc)
+{
+	struct sysctlcmp_client client;
+	struct sysctlcmp_interface out[2], saved[2];
+	size_t count;
+
+	init_client(&client);
+	count = 0;
+	ATF_REQUIRE_EQ(0, sysctlcmp_interfaces(&client, NULL, &count));
+	ATF_CHECK_EQ(2, count);
+	memset(out, 0xa5, sizeof(out)); memcpy(saved, out, sizeof(out));
+	count = 1;
+	ATF_CHECK_ERRNO(ENOMEM, sysctlcmp_interfaces(&client, out, &count) == -1);
+	ATF_CHECK_EQ(2, count);
+	ATF_CHECK_EQ(0, memcmp(saved, out, sizeof(out)));
+	ATF_REQUIRE_EQ(0, sysctlcmp_interfaces(&client, out, &count));
+	ATF_CHECK_STREQ("em0", out[0].name);
+	ATF_CHECK_STREQ("lo0", out[1].name);
+	memcpy(saved, out, sizeof(out));
+	omit_nul = true;
+	ATF_CHECK_ERRNO(EPROTO, sysctlcmp_interfaces(&client, out, &count) == -1);
+	ATF_CHECK_EQ(0, memcmp(saved, out, sizeof(out)));
+	ATF_CHECK_EQ(1, fail_calls);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
+	ATF_TP_ADD_TC(tp, interface_output_contract);
 	ATF_TP_ADD_TC(tp, strings_valid);
 	ATF_TP_ADD_TC(tp, strings_reject_unterminated);
 	ATF_TP_ADD_TC(tp, strings_reject_empty);

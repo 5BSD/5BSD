@@ -44,7 +44,7 @@ header_validate(const struct sysctlcmp_msg *msg, size_t length,
 	    role != SYSCTLCMP_MESSAGE_REPLY) ||
 	    msg->magic != SYSCTLCMP_MAGIC ||
 	    msg->opcode < SYSCTLCMP_OP_GET ||
-	    msg->opcode > SYSCTLCMP_OP_NEXT ||
+	    msg->opcode > SYSCTLCMP_OP_INTERFACES ||
 	    msg->flags != 0 ||
 	    (role != SYSCTLCMP_MESSAGE_REPLY && msg->status != 0) ||
 	    (role == SYSCTLCMP_MESSAGE_REPLY &&
@@ -61,7 +61,7 @@ sysctlcmp_message_init(struct sysctlcmp_msg *msg, uint16_t opcode,
 {
 
 	if (msg == NULL || opcode < SYSCTLCMP_OP_GET ||
-	    opcode > SYSCTLCMP_OP_NEXT || flags != 0) {
+	    opcode > SYSCTLCMP_OP_INTERFACES || flags != 0) {
 		errno = EINVAL;
 		return (-1);
 	}
@@ -137,6 +137,41 @@ sysctlcmp_validate_message(const struct sysctlcmp_msg *msg, size_t length,
 		/* Reply bodies never echo names; SET has no value payload. */
 		errno = EPROTO;
 		return (-1);
+	}
+	if (msg->opcode == SYSCTLCMP_OP_INTERFACES) {
+		if (role == SYSCTLCMP_MESSAGE_REQUEST) {
+			if (body->name_length != sizeof(SYSCTLCMP_INTERFACES_POLICY) ||
+			    memcmp(body + 1, SYSCTLCMP_INTERFACES_POLICY,
+			    sizeof(SYSCTLCMP_INTERFACES_POLICY)) != 0)
+				return (errno = EPROTO, -1);
+		} else {
+			struct sysctlcmp_interface entry;
+			uint32_t last = 0;
+			size_t n, i;
+
+			if (body->value_length % sizeof(entry) != 0)
+				return (errno = EPROTO, -1);
+			n = body->value_length / sizeof(entry);
+			for (i = 0; i < n; i++) {
+				memcpy(&entry, (const uint8_t *)(body + 1) +
+				    i * sizeof(entry), sizeof(entry));
+				size_t name_length = strnlen(entry.name, sizeof(entry.name));
+				if (entry.index <= last || entry.link_state > SYSCTLCMP_LINK_UP ||
+				    memcmp(entry.reserved, (uint8_t[3]){0}, 3) != 0 ||
+				    name_length == 0 || name_length == sizeof(entry.name) ||
+				    memcmp(entry.name + name_length, (char[SYSCTLCMP_IFNAME_SIZE]){0},
+				    sizeof(entry.name) - name_length) != 0)
+					return (errno = EPROTO, -1);
+				for (size_t j = 0; j < i; j++) {
+					struct sysctlcmp_interface previous;
+					memcpy(&previous, (const uint8_t *)(body + 1) +
+					    j * sizeof(previous), sizeof(previous));
+					if (memcmp(entry.name, previous.name, sizeof(entry.name)) == 0)
+						return (errno = EPROTO, -1);
+				}
+				last = entry.index;
+			}
+		}
 	}
 	return (0);
 }
@@ -257,6 +292,29 @@ sysctlcmp_get(struct sysctlcmp_client *client, const char *name, void *buf,
 {
 
 	return (read_value_op(client, SYSCTLCMP_OP_GET, name, buf, lenp));
+}
+
+int
+sysctlcmp_interfaces(struct sysctlcmp_client *client,
+    struct sysctlcmp_interface *out, size_t *count)
+{
+	struct sysctlcmp_interface entries[SYSCTLCMP_MAX_INTERFACES];
+	size_t length = sizeof(entries), total;
+
+	if (count == NULL || (out == NULL && *count != 0))
+		return (errno = EINVAL, -1);
+	if (read_value_op(client, SYSCTLCMP_OP_INTERFACES,
+	    SYSCTLCMP_INTERFACES_POLICY, entries, &length) == -1)
+		return (-1);
+	total = length / sizeof(*entries);
+	if (out != NULL && *count < total) {
+		*count = total;
+		return (errno = ENOMEM, -1);
+	}
+	if (out != NULL)
+		memcpy(out, entries, length);
+	*count = total;
+	return (0);
 }
 
 int

@@ -21,8 +21,28 @@ enum sysctlcmp_opcode {
 	SYSCTLCMP_OP_SET,	/* write raw value by name */
 	SYSCTLCMP_OP_OIDFMT,	/* type/flags: reply = u32 kind + format string */
 	SYSCTLCMP_OP_DESCR,	/* description string (sysctl -d) */
-	SYSCTLCMP_OP_NEXT	/* enumeration: reply = next permitted name */
+	SYSCTLCMP_OP_NEXT,	/* enumeration: reply = next permitted name */
+	SYSCTLCMP_OP_INTERFACES	/* fixed read-only interface inventory */
 };
+
+/* INTERFACES uses exactly this read-policy key; it accepts no MIB or writes. */
+#define SYSCTLCMP_INTERFACES_POLICY "net.routetable"
+#define SYSCTLCMP_MAX_INTERFACES 256
+#define SYSCTLCMP_IFNAME_SIZE 16
+#define SYSCTLCMP_LINK_UNKNOWN 0
+#define SYSCTLCMP_LINK_DOWN 1
+#define SYSCTLCMP_LINK_UP 2
+struct sysctlcmp_interface {
+	uint32_t index;
+	uint32_t flags; /* Native IFF_* interface and driver flags. */
+	uint32_t mtu;
+	uint8_t link_state;
+	uint8_t reserved[3];
+	char name[SYSCTLCMP_IFNAME_SIZE];
+};
+_Static_assert(sizeof(struct sysctlcmp_interface) == 32, "interface snapshot ABI");
+_Static_assert(SYSCTLCMP_MAX_INTERFACES * sizeof(struct sysctlcmp_interface) <=
+    SYSCTLCMP_MAX_VALUE, "interface snapshot fits existing transport");
 
 /*
  * OIDFMT reply value layout: a uint32_t "kind" (CTLTYPE in the low bits,

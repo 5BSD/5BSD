@@ -3,6 +3,7 @@ TESTSDIR=	${TESTSBASE}/usr.sbin/BSDSysctl
 
 .PATH: ${.CURDIR}/..
 
+CFLAGS+=	-I${SRCTOP}/lib/libsysctlcmp
 CFLAGS+=	-I${.CURDIR}/..
 CFLAGS+=	-I${SRCTOP}/contrib/libucl/include
 
@@ -12,7 +13,7 @@ SRCS.config_test=	config_test.c config.c
 LIBADD.config_test=	ucl
 
 ATF_TESTS_C+=	provider_test
-SRCS.provider_test=	provider_test.c bsdsysctl.c config.c
+SRCS.provider_test=	provider_test.c bsdsysctl.c config.c interfaces.c
 CFLAGS.provider_test+=	-DSYSCTLCMP_TESTING
 CFLAGS.provider_test+=	-I${.CURDIR}/..
 CFLAGS.provider_test+=	-I${SRCTOP}/lib/libchannel
@@ -34,10 +35,15 @@ SRCTREE_FILES=	cddl/usr.sbin/bsdinstruments/profiles/capability-services.d \
 .include "${SRCTOP}/tests/srctree.mk"
 
 ATF_TESTS_C+=	reactor_test
-SRCS.reactor_test=	reactor_test.c config.c
+SRCS.reactor_test=	reactor_test.c config.c interfaces.c
 CFLAGS.reactor_test+=	-I${SRCTOP}/lib/libchannel -I${SRCTOP}/lib/libsysctlcmp
 CFLAGS.reactor_test+=	-I${SRCTOP}/lib/libservice -I${SRCTOP}/sys
 LIBADD.reactor_test=	channel sysctlcmp service ucl
 NO_SHARED.reactor_test=	yes
+
+ATF_TESTS_C+= interfaces_test
+SRCS.interfaces_test= interfaces_test.c interfaces.c
+CFLAGS.interfaces_test+= -I${SRCTOP}/lib/libsysctlcmp
+NO_SHARED.interfaces_test= yes
 
 .include <bsd.test.mk>

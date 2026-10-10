@@ -3,7 +3,7 @@
 PACKAGE=	runtime
 PROG=	BSDSysctl
 MAN=		BSDSysctl.8
-SRCS=		bsdsysctl.c config.c
+SRCS=		bsdsysctl.c config.c interfaces.c
 
 CFLAGS+=	-I${SRCTOP}/lib/libsysctlcmp
 CFLAGS+=	-I${SRCTOP}/lib/libservice

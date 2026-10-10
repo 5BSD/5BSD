@@ -1,5 +1,5 @@
 .\" SPDX-License-Identifier: BSD-2-Clause
-.Dd September 7, 2026
+.Dd October 10, 2026
 .Dt LIBSYSCTLCMP 3
 .Os
 .Sh NAME
@@ -9,7 +9,8 @@
 .Nm sysctlcmp_set ,
 .Nm sysctlcmp_oidfmt ,
 .Nm sysctlcmp_describe ,
-.Nm sysctlcmp_next
+.Nm sysctlcmp_next ,
+.Nm sysctlcmp_interfaces
 .Nd client interface to the system.Sysctl capability
 .Sh LIBRARY
 .Lb libsysctlcmp
@@ -29,6 +30,8 @@
 .Fn sysctlcmp_describe "struct sysctlcmp_client *client" "const char *name" "char *buf" "size_t *lenp"
 .Ft int
 .Fn sysctlcmp_next "struct sysctlcmp_client *client" "const char *name" "char *buf" "size_t *lenp"
+.Ft int
+.Fn sysctlcmp_interfaces "struct sysctlcmp_client *client" "struct sysctlcmp_interface *out" "size_t *count"
 .Sh DESCRIPTION
 These functions read and write kernel
 .Xr sysctl 3
@@ -83,6 +86,48 @@ Malformed string replies fail with
 and invalidate the session.
 .Sh RETURN VALUES
 .Rv -std sysctlcmp_client_open sysctlcmp_get sysctlcmp_set sysctlcmp_oidfmt sysctlcmp_describe sysctlcmp_next
+.Sh INTERFACE INVENTORY
+.Fn sysctlcmp_interfaces
+reads a bounded interface inventory through the provider's fixed read-only
+kernel query.
+It requires read permission for
+.Dq net.routetable
+under the caller's authenticated label.
+It accepts no numeric MIB, interface selector, or write data.
+This operation does not change the provider's protected-OID isolation set.
+.Pp
+Each
+.Vt struct sysctlcmp_interface
+contains the index, native interface and driver flags, MTU, link state, and a
+zero-padded NUL-terminated name.
+Link state is
+.Dv SYSCTLCMP_LINK_UNKNOWN ,
+.Dv SYSCTLCMP_LINK_DOWN ,
+or
+.Dv SYSCTLCMP_LINK_UP ;
+it does not indicate Internet connectivity.
+Addresses, hardware addresses, and traffic counters are omitted.
+Records are sorted by index, with unique indexes and names.
+The kernel walk is not a transaction across all interfaces.
+.Pp
+On entry,
+.Fa count
+holds the output capacity in records; on success it holds the number returned.
+Passing NULL output with zero capacity queries the current count.
+A short non-NULL output fails with
+.Er ENOMEM
+and sets the required count without copying any records.
+Other failures leave the output and count unchanged.
+A later call takes a fresh snapshot, so its count may differ.
+.Pp
+The limit is 256 interfaces and a four-megabyte native kernel dump;
+exceeding either fails with
+.Er EOVERFLOW .
+Repeated growth across three collection attempts fails with
+.Er EAGAIN .
+Malformed responses fail with
+.Er EPROTO .
+Older providers may reject the new opcode; no fallback widens authority.
 .Sh SEE ALSO
 .Xr sysctl 3 ,
 .Xr bsdsysctl 8

@@ -18,6 +18,7 @@
 #include <sys/procdesc.h>
 #include <sys/socket.h>
 #include <sys/sysctl.h>
+#include <net/route.h>
 
 #include <errno.h>
 #include <signal.h>
@@ -38,6 +39,7 @@
 #include <sysctlcmp_server.h>
 
 #include "config.h"
+#include "interfaces.h"
 #include "bsdsysctl_probes.h"
 
 #ifndef SYSCTLCMP_TESTING
@@ -81,6 +83,17 @@ gate_sysctl(const char *name, void *oldp, size_t *oldlenp, const void *newp,
 		    (unsigned int)miblen, oldp, oldlenp, newp, newlen));
 	}
 	return (sysctlbyname(name, oldp, oldlenp, newp, newlen));
+}
+
+static int
+read_interfaces(void *context __unused, void *data, size_t *length)
+{
+	int mib[] = { CTL_NET, PF_ROUTE, 0, 0, NET_RT_IFLISTL, 0 };
+
+	if (g_sysctl_token >= 0)
+		return (service_system_sysctl(g_sysctl_token, mib, nitems(mib),
+		    data, length, NULL, 0));
+	return (sysctl(mib, nitems(mib), data, length, NULL, 0));
 }
 
 struct session {
@@ -366,6 +379,25 @@ handle_request(struct channel *channel __unused,
 	}
 	session->activity = true;
 	switch (request->opcode) {
+	case SYSCTLCMP_OP_INTERFACES: {
+		struct sysctlcmp_interface entries[SYSCTLCMP_MAX_INTERFACES];
+		size_t count;
+
+		if (!sysctlcmp_config_permits(session->config, session->label,
+		    SYSCTLCMP_INTERFACES_POLICY, false)) {
+			status = EPERM;
+			result = send_status(message, request, -status);
+			break;
+		}
+		if (sysctlcmp_interfaces_collect(read_interfaces, NULL, entries, &count) == -1) {
+			status = errno;
+			result = send_status(message, request, -status);
+		} else {
+			bytes = count * sizeof(*entries);
+			result = send_value(message, request, entries, bytes);
+		}
+		break;
+	}
 	case SYSCTLCMP_OP_GET:
 		body = (const void *)(request + 1);
 		name = (const char *)(body + 1);
