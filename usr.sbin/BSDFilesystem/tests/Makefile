@@ -64,4 +64,12 @@ NO_SHARED.manifest_test= yes
 FILES+= bsdfilesystem.ucl
 FILESDIR= ${TESTSDIR}
 
+ATF_TESTS_C+= cleanup_test
+SRCS.cleanup_test= cleanup_test.c layout.c nvwalk.c config.c
+LIBADD.cleanup_test= ${BSDFILESYSTEM_LIBADD}
+NO_SHARED.cleanup_test= yes
+.for symbol in tzfs_openat tzfs_info tzfs_list_children tzfs_list_snapshots tzfs_snap_destroy tzfs_destroy
+LDFLAGS.cleanup_test+= -Wl,--wrap=${symbol}
+.endfor
+
 .include <bsd.test.mk>
