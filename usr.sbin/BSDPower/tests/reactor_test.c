@@ -9,6 +9,7 @@
 #include <fcntl.h>
 #include <poll.h>
 #include <stdint.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
@@ -18,7 +19,10 @@
 #include "config.h"
 #include "BSDPower_test.h"
 
-static int listen_fd, ack_fd, providers[3], quiesce_mode;
+#define TEST_ENDPOINTS 66
+static int listen_fd, ack_fd, providers[TEST_ENDPOINTS], quiesce_mode;
+static int provider_count = 3;
+static bool shared_label;
 int __wrap_service_listener_fd(const struct service_listener *);
 int __wrap_service_listener_accept(struct service_listener *,
     struct service_identity *, int *);
@@ -43,10 +47,10 @@ __wrap_service_listener_accept(struct service_listener *listener,
 		quiesce_mode = index == -2 ? 1 : 2;
 		return (errno = EINTR, -1);
 	}
-	if (index >= 3 || providers[index] < 0)
+	if (index >= provider_count || providers[index] < 0)
 		return (errno = EINVAL, -1);
 	snprintf(identity->client_label, sizeof(identity->client_label),
-	    "test.power.%d", index);
+	    "test.power.%d", shared_label && index != 5 ? 0 : index);
 	*fd = providers[index];
 	providers[index] = -1;
 	return (0);
@@ -124,7 +128,7 @@ ATF_TC(shared_reactor_leases_and_stop);
 ATF_TC_HEAD(shared_reactor_leases_and_stop, tc)
 {
 	atf_tc_set_md_var(tc, "require.user", "root");
-	atf_tc_set_md_var(tc, "timeout", "20");
+	atf_tc_set_md_var(tc, "timeout", "38");
 }
 ATF_TC_BODY(shared_reactor_leases_and_stop, tc)
 {
@@ -189,6 +193,13 @@ ATF_TC_BODY(shared_reactor_leases_and_stop, tc)
 	ATF_CHECK_EQ(EBUSY, status);
 	ATF_REQUIRE_EQ(0, rpc(clients[2], POWERCMP_OP_INHIBITORS, &count));
 	ATF_CHECK_EQ(1, count);
+	/* The real 30-second idle limit exempts the session holding a lease. */
+	uint64_t idle_until = service_monotime_ms() + 31000;
+	while (service_monotime_ms() < idle_until)
+		usleep(100000);
+	ATF_CHECK_EQ(-1, rpc(clients[2], POWERCMP_OP_INHIBITORS, &count));
+	ATF_REQUIRE_EQ(0, rpc(clients[0], POWERCMP_OP_INHIBITORS, &count));
+	ATF_CHECK_EQ(1, count);
 	command = -1; /* Explicit stop wins even with a held inhibitor. */
 	ATF_REQUIRE_EQ(sizeof(command), write(control[1], &command, sizeof(command)));
 	ATF_REQUIRE_EQ(1, poll(&pfd, 1, 2000));
@@ -206,8 +217,120 @@ ATF_TC_BODY(shared_reactor_leases_and_stop, tc)
 	close(control[1]);
 	close(ack[0]);
 }
+
+static void
+admission_limit(bool per_label)
+{
+	struct powercmp_config config;
+	struct service_session *clients[TEST_ENDPOINTS] = { 0 };
+	int endpoints[TEST_ENDPOINTS], control[2], ack[2];
+	int initial = per_label ? 6 : 65, denied = per_label ? 4 : 64;
+	uint32_t count_expected = per_label ? 5 : 64;
+	int command, status;
+	uint32_t count;
+	pid_t child;
+
+	shared_label = per_label;
+	provider_count = initial + 1;
+	powercmp_config_defaults(&config);
+	config.default_inhibit = true;
+	ATF_REQUIRE_EQ(0, pipe(control));
+	ATF_REQUIRE_EQ(0, pipe(ack));
+	for (int i = 0; i < provider_count; i++)
+		channel_pair(&endpoints[i], &providers[i]);
+	child = fork();
+	ATF_REQUIRE(child >= 0);
+	if (child == 0) {
+		close(control[1]);
+		close(ack[0]);
+		listen_fd = control[0];
+		ack_fd = ack[1];
+		for (int i = 0; i < provider_count; i++)
+			close(endpoints[i]);
+		bsdpower_test_set_acpi_fd(-1);
+		status = bsdpower_test_serve_reactor(NULL, NULL, &config);
+		if (write(ack_fd, &status, sizeof(status)) != sizeof(status))
+			_exit(2);
+		if (read(listen_fd, &command, sizeof(command)) != sizeof(command))
+			_exit(3);
+		_exit(status == 0 ? 0 : 1);
+	}
+	close(control[0]);
+	close(ack[1]);
+	for (int i = 0; i < provider_count; i++) {
+		close(providers[i]);
+		ATF_REQUIRE_EQ(0, service_session_create(endpoints[i], &clients[i]));
+	}
+	for (int i = 0; i < initial; i++) {
+		ATF_REQUIRE_EQ(sizeof(i), write(control[1], &i, sizeof(i)));
+		if (i == denied) {
+			ATF_CHECK_EQ(-1, rpc(clients[i], POWERCMP_OP_INHIBIT, NULL));
+			service_session_close(clients[i]);
+			clients[i] = NULL;
+		} else
+			ATF_REQUIRE_EQ(0, rpc(clients[i], POWERCMP_OP_INHIBIT, NULL));
+	}
+	ATF_REQUIRE_EQ(0, rpc(clients[1], POWERCMP_OP_INHIBITORS, &count));
+	ATF_CHECK_EQ(count_expected, count);
+	service_session_close(clients[0]);
+	clients[0] = NULL;
+	for (unsigned i = 0; i < 100; i++) {
+		ATF_REQUIRE_EQ(0, rpc(clients[1], POWERCMP_OP_INHIBITORS, &count));
+		if (count == (uint32_t)count_expected - 1)
+			break;
+		usleep(10000);
+	}
+	ATF_REQUIRE_EQ(count_expected - 1, count);
+	/* Reuse the released slot, including its old provider-assigned owner ID. */
+	ATF_REQUIRE_EQ(sizeof(initial), write(control[1], &initial, sizeof(initial)));
+	ATF_REQUIRE_EQ(0, rpc(clients[initial], POWERCMP_OP_INHIBIT, NULL));
+	ATF_REQUIRE_EQ(0, rpc(clients[1], POWERCMP_OP_INHIBITORS, &count));
+	ATF_CHECK_EQ(count_expected, count);
+	command = -1;
+	ATF_REQUIRE_EQ(sizeof(command), write(control[1], &command, sizeof(command)));
+	struct pollfd pfd = { .fd = ack[0], .events = POLLIN };
+	ATF_REQUIRE_EQ(1, poll(&pfd, 1, 2000));
+	ATF_REQUIRE_EQ(sizeof(status), read(ack[0], &status, sizeof(status)));
+	ATF_REQUIRE_EQ(0, status);
+	for (int i = 0; i < provider_count; i++) {
+		if (clients[i] == NULL)
+			continue;
+		ATF_CHECK_EQ(-1, rpc(clients[i], POWERCMP_OP_INHIBITORS, &count));
+		service_session_close(clients[i]);
+	}
+	command = 1;
+	ATF_REQUIRE_EQ(sizeof(command), write(control[1], &command, sizeof(command)));
+	ATF_REQUIRE_EQ(child, waitpid(child, &status, 0));
+	ATF_REQUIRE(WIFEXITED(status));
+	ATF_CHECK_EQ(0, WEXITSTATUS(status));
+	close(control[1]);
+	close(ack[0]);
+}
+ATF_TC(per_label_admission_and_slot_reuse);
+ATF_TC_HEAD(per_label_admission_and_slot_reuse, tc)
+{
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "timeout", "30");
+}
+ATF_TC_BODY(per_label_admission_and_slot_reuse, tc)
+{
+	admission_limit(true);
+}
+ATF_TC(total_admission_and_slot_reuse);
+ATF_TC_HEAD(total_admission_and_slot_reuse, tc)
+{
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "timeout", "30");
+}
+ATF_TC_BODY(total_admission_and_slot_reuse, tc)
+{
+	admission_limit(false);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
+	ATF_TP_ADD_TC(tp, per_label_admission_and_slot_reuse);
+	ATF_TP_ADD_TC(tp, total_admission_and_slot_reuse);
 	ATF_TP_ADD_TC(tp, shared_reactor_leases_and_stop);
 	return (atf_no_error());
 }

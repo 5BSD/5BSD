@@ -79,3 +79,9 @@ It verifies two simultaneous inhibitors, per-owner disconnect cleanup, suspend
 blocking, idle quiesce refusal, and explicit stop cleanup while the server
 process remains alive. It never opens /dev/acpi. SwitchBoard admission and
 actual hardware transitions still need full-system acceptance.
+
+The reactor suite also fills four sessions for one injected label and 64 across
+distinct labels, rejects excess clients, and verifies slot/lease-owner reuse
+after disconnect. Its lifecycle case waits through the real 30-second idle
+limit: an unleased session expires while a lease holder remains usable. Allow
+at least 40 seconds per case and enough VM wall time for boot plus that interval.
