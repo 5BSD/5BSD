@@ -156,6 +156,9 @@ shutdown with the worker still tracked.
 Post-fork bootstrap failure also stops admission and retains the child for
 controlled shutdown.
 Bootstrap acknowledgement errors are checked without generating SIGPIPE.
+The parent uses one five-second monotonic deadline for the bootstrap status
+and acknowledgement, using nonblocking socket operations.
+Timeout follows the failed-bootstrap shutdown path.
 .Sh SEE ALSO
 .Xr dtrace 1 ,
 .Xr openat 2 ,

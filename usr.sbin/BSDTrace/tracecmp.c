@@ -28,6 +28,7 @@
 
 #include <channel.h>
 #include <libservice.h>
+#include <service_runtime.h>
 #include <logcmp.h>
 
 #include "tracecmp.h"
@@ -483,31 +484,49 @@ worker(int fd, int barrier, int dtrace_fd, bool authorized,
 	    client_label, rights, instance_id));
 }
 
+struct bootstrap_state {
+	int fd;
+	int child_error;
+	size_t offset;
+};
+
+/* One nonblocking step: the shared wait owns the entire handshake deadline. */
+static int
+bootstrap_step(void *arg)
+{
+	struct bootstrap_state *state = arg;
+	ssize_t n;
+	char byte = 1;
+
+	if (state->offset < sizeof(state->child_error)) {
+		n = recv(state->fd, (char *)&state->child_error + state->offset,
+		    sizeof(state->child_error) - state->offset, MSG_DONTWAIT);
+		if (n == -1)
+			return (errno == EINTR || errno == EAGAIN ? 0 : -1);
+		if (n == 0)
+			return (errno = EIO, -1);
+		state->offset += (size_t)n;
+		if (state->offset < sizeof(state->child_error))
+			return (0);
+	}
+	if (state->child_error != 0)
+		return (errno = state->child_error > 0 ?
+		    state->child_error : EPROTO, -1);
+	n = send(state->fd, &byte, sizeof(byte), MSG_NOSIGNAL | MSG_DONTWAIT);
+	if (n == -1)
+		return (errno == EINTR || errno == EAGAIN ? 0 : -1);
+	if (n != sizeof(byte))
+		return (errno = EIO, -1);
+	return (1);
+}
+
 /* The parent retains the procdesc until bootstrap and watch setup finish. */
 static int
 bootstrap_parent(int fd)
 {
-	int child_error;
-	size_t offset;
-	ssize_t n;
-	char byte = 1;
+	struct bootstrap_state state = { .fd = fd };
 
-	for (offset = 0; offset < sizeof(child_error); offset += (size_t)n) {
-		do {
-			n = recv(fd, (char *)&child_error + offset,
-			    sizeof(child_error) - offset, 0);
-		} while (n == -1 && errno == EINTR);
-		if (n <= 0)
-			return (n == 0 ? (errno = EIO, -1) : -1);
-	}
-	if (child_error != 0)
-		return (errno = child_error > 0 ? child_error : EPROTO, -1);
-	do {
-		n = send(fd, &byte, sizeof(byte), MSG_NOSIGNAL);
-	} while (n == -1 && errno == EINTR);
-	if (n != sizeof(byte))
-		return (n == -1 ? -1 : (errno = EIO, -1));
-	return (0);
+	return (service_drain_wait(bootstrap_step, &state, 5000));
 }
 
 static int
@@ -585,9 +604,6 @@ start_session(int fd, int dtrace_directory, bool authorized,
 	 * signal: closed only when this process (or the worker) exits.  It is
 	 * CLOFORK_LOCKED, so it does not leak into subsequently forked workers.
 	 */
-	*pdp = pd;
-	*pidp = pid;
-	*livenessp = syncfd[0];
 	audit_policy(peer_label, "session-bootstrap", 0);
 	BSDTRACE_PROBE_SESSION_START(__DECONST(char *, peer_label),
 	    instance_id, 0);

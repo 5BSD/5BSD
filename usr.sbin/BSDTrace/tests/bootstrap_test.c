@@ -10,6 +10,7 @@ static int fragment, reads, writes;
 static ssize_t
 injected_recv(int fd, void *buffer, size_t length, int flags)
 {
+	ATF_CHECK((flags & MSG_DONTWAIT) != 0);
 	if (fragment && ++reads == 1)
 		return (errno = EINTR, -1);
 	return (recv(fd, buffer, fragment ? 1 : length, flags));
@@ -18,6 +19,7 @@ static ssize_t
 injected_send(int fd, const void *buffer, size_t length, int flags)
 {
 	ATF_CHECK((flags & MSG_NOSIGNAL) != 0);
+	ATF_CHECK((flags & MSG_DONTWAIT) != 0);
 	if (fragment && ++writes == 1)
 		return (errno = EINTR, -1);
 	return (send(fd, buffer, length, flags));
@@ -106,8 +108,43 @@ ATF_TC_BODY(bootstrap_retains_child, tc)
 	close(kq);
 }
 
+ATF_TC_WITHOUT_HEAD(bootstrap_stall_deadline);
+ATF_TC_BODY(bootstrap_stall_deadline, tc)
+{
+	int pair[2];
+	uint64_t start, elapsed;
+	char byte = 0, fill[4096] = { 0 };
+	int child_error = 0;
+	ssize_t n;
+
+	for (int partial = 0; partial < 3; partial++) {
+		ATF_REQUIRE_EQ(0, socketpair(AF_UNIX, SOCK_STREAM, 0, pair));
+		if (partial == 1)
+			ATF_REQUIRE_EQ(1, write(pair[1], &byte, 1));
+		if (partial == 2) {
+			ATF_REQUIRE_EQ(sizeof(child_error),
+			    write(pair[1], &child_error, sizeof(child_error)));
+			do {
+				n = send(pair[0], fill, sizeof(fill),
+				    MSG_DONTWAIT | MSG_NOSIGNAL);
+			} while (n > 0);
+			ATF_REQUIRE_ERRNO(EAGAIN, n == -1);
+		}
+		start = service_monotime_ms();
+		ATF_CHECK_ERRNO(ETIMEDOUT, bootstrap_parent(pair[0]) == -1);
+		elapsed = service_monotime_ms() - start;
+		ATF_CHECK(elapsed >= 5000);
+		ATF_CHECK_MSG(elapsed < 8000, "bootstrap took %ju ms",
+		    (uintmax_t)elapsed);
+		ATF_CHECK_EQ(0, fcntl(pair[0], F_GETFL) & O_NONBLOCK);
+		close(pair[0]);
+		close(pair[1]);
+	}
+}
+
 ATF_TP_ADD_TCS(tp)
 {
+	ATF_TP_ADD_TC(tp, bootstrap_stall_deadline);
 	ATF_TP_ADD_TC(tp, bootstrap_socket_errors);
 	ATF_TP_ADD_TC(tp, bootstrap_retains_child);
 	return (atf_no_error());
