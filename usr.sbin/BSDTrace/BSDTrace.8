@@ -28,6 +28,10 @@ quiesce to
 Failure to read the monotonic clock skips the graceful wait and proceeds
 to forced termination.
 Interrupted reap calls are retried.
+Failure of forced termination or final reaping suppresses successful
+quiescence acknowledgement and returns failure.
+After a failure, remaining reap attempts are nonblocking; surviving workers
+may require supervisor recovery.
 The five-second grace period does not bound the final kernel reap wait.
 Clients named explicitly in the allow list
 .Pa bsdtrace.allow

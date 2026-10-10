@@ -14,3 +14,9 @@ SwitchBoard acknowledgement ordering remain separate integration gates.
 The five-second graceful phase and per-worker liveness sockets differ from
 Device/Crypto's immediate cleanup, so they must be preserved in any further
 shared-library extraction.
+
+shutdown_reports_cleanup_failure injects failed forced termination and final
+reaping. It verifies first-error preservation, nonblocking remaining waits,
+and closure of both process and liveness descriptors. Actual termination
+denial and supervisor recovery of surviving protected workers remain full
+integration checks.

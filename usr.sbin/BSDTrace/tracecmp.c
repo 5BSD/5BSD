@@ -608,13 +608,13 @@ worker_remove(struct trace_worker **workers, struct trace_worker *worker,
 		(*count)--;
 }
 
-static void
+static int
 workers_shutdown(int kq, struct trace_worker **workers, size_t *count)
 {
 	struct trace_worker *worker, *next;
 	struct kevent event;
 	struct timespec deadline, now, timeout;
-	int result, status;
+	int status, result, error = 0;
 
 	for (worker = *workers; worker != NULL; worker = worker->next)
 		(void)pdkill(worker->pd, SIGTERM);
@@ -633,10 +633,10 @@ workers_shutdown(int kq, struct trace_worker **workers, size_t *count)
 			timeout.tv_sec--;
 			timeout.tv_nsec += 1000000000L;
 		}
-		result = kevent(kq, NULL, 0, &event, 1, &timeout);
-		if (result == 0)
+		status = kevent(kq, NULL, 0, &event, 1, &timeout);
+		if (status == 0)
 			break;
-		if (result == -1) {
+		if (status == -1) {
 			if (errno == EINTR)
 				continue;
 			break;
@@ -645,13 +645,19 @@ workers_shutdown(int kq, struct trace_worker **workers, size_t *count)
 			worker_remove(workers, event.udata, count);
 	}
 force:
-	for (worker = *workers; worker != NULL; worker = worker->next)
-		(void)pdkill(worker->pd, SIGKILL);
+	for (worker = *workers; worker != NULL; worker = worker->next) {
+		if (pdkill(worker->pd, SIGKILL) == -1 && errno != ESRCH &&
+		    error == 0)
+			error = errno;
+	}
 	for (worker = *workers; worker != NULL; worker = next) {
 		next = worker->next;
 		do {
-			result = pdwait(worker->pd, &status, WEXITED, NULL, NULL);
+			result = pdwait(worker->pd, &status,
+			    WEXITED | (error != 0 ? WNOHANG : 0), NULL, NULL);
 		} while (result == -1 && errno == EINTR);
+		if (result == -1 && errno != ECHILD && error == 0)
+			error = errno;
 		close(worker->pd);
 		if (worker->liveness >= 0)
 			close(worker->liveness);
@@ -659,6 +665,7 @@ force:
 	}
 	*workers = NULL;
 	*count = 0;
+	return (error != 0 ? (errno = error, -1) : 0);
 }
 
 int
@@ -772,8 +779,11 @@ main(void)
 		workers = worker;
 		nworkers++;
 	}
-	workers_shutdown(kq, &workers, &nworkers);
-	status = service_provider_quiesce_complete(provider, 0);
+	status = workers_shutdown(kq, &workers, &nworkers);
+	if (status == 0)
+		status = service_provider_quiesce_complete(provider, 0);
+	else
+		logcmp_log(LOG_ERR, "worker shutdown: %m");
 	close(kq);
 	if (dtrace_directory >= 0)
 		close(dtrace_directory);
