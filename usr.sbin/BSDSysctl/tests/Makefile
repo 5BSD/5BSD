@@ -33,4 +33,11 @@ SRCTREE_FILES=	cddl/usr.sbin/bsdinstruments/profiles/capability-services.d \
 		usr.sbin/BSDSysctl/bsdsysctl_provider.d
 .include "${SRCTOP}/tests/srctree.mk"
 
+ATF_TESTS_C+=	reactor_test
+SRCS.reactor_test=	reactor_test.c config.c
+CFLAGS.reactor_test+=	-I${SRCTOP}/lib/libchannel -I${SRCTOP}/lib/libsysctlcmp
+CFLAGS.reactor_test+=	-I${SRCTOP}/lib/libservice -I${SRCTOP}/sys
+LIBADD.reactor_test=	channel sysctlcmp service ucl
+NO_SHARED.reactor_test=	yes
+
 .include <bsd.test.mk>

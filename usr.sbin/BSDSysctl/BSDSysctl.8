@@ -1,5 +1,5 @@
 .\" SPDX-License-Identifier: BSD-2-Clause
-.Dd September 5, 2026
+.Dd October 10, 2026
 .Dt BSDSYSCTL 8
 .Os
 .Sh NAME
@@ -22,16 +22,21 @@ helper.
 .Pp
 .Nm
 is a socket-free
-.Xr service_provider
+.Xr libservice 3
 launched on demand by
 .Xr switchboard 8 ;
 it ships as the
 .Pa /Capabilities/System/Sysctl.cap
 bundle and is not spawned from
 .Pa /usr/sbin .
-Each accepted client is served
-.Em inline
-in the single provider process:
+Up to 128 client channels are multiplexed in the single provider process.
+Each ready channel receives a bounded dispatch batch, so an idle client does
+not prevent other clients from making requests.
+A session without a complete request for 30 seconds is closed; write readiness
+alone does not renew that deadline.
+Each authenticated label may hold at most 16 sessions.
+Additional sessions are closed when either limit is reached.
+The gate remains in its original process:
 .Nm
 holds a
 .Dq system
@@ -70,6 +75,6 @@ A read of an unlisted name, or any unlisted write, is refused with
 A missing or malformed file falls back to the compiled-in default (a small
 safe read set, no writes) with a warning.
 .Sh SEE ALSO
-.Xr sysctl 3 ,
 .Xr libsysctlcmp 3 ,
+.Xr sysctl 3 ,
 .Xr switchboard 8

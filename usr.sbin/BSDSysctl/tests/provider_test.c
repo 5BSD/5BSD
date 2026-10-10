@@ -478,6 +478,89 @@ ATF_TC_BODY(set_encodes_typed_value, tc)
 	raw_fixture_destroy(&fixture, 0);
 }
 
+ATF_TC(multiplexed_clients);
+ATF_TC_HEAD(multiplexed_clients, tc)
+{
+	atf_tc_set_md_var(tc, "timeout", "15");
+	atf_tc_set_md_var(tc, "descr", "Idle clients cannot block others or share their label policy");
+}
+ATF_TC_BODY(multiplexed_clients, tc)
+{
+	struct sysctlcmp_config config;
+	struct service_session *sessions[2];
+	const char *labels[] = { "idle", "denied", TEST_LABEL };
+	int clients[3], providers[3], status;
+	pid_t child;
+	char value[128];
+	size_t length;
+	unsigned i;
+
+	require_plane();
+	make_config(&config);
+	config.nclients = 1;
+	strlcpy(config.clients[0].label, "denied", sizeof(config.clients[0].label));
+	/* The named ACL is empty: no reads despite the default's safe read. */
+	for (i = 0; i < 3; i++)
+		channel_pair(&clients[i], &providers[i]);
+	child = fork();
+	ATF_REQUIRE(child >= 0);
+	if (child == 0) {
+		for (i = 0; i < 3; i++)
+			close(clients[i]);
+		_exit(sysctlcmp_test_serve_many(providers, labels, 3, &config, 10000));
+	}
+	for (i = 0; i < 3; i++)
+		close(providers[i]);
+	for (i = 0; i < 2; i++)
+		ATF_REQUIRE_EQ(0, service_session_create(clients[i + 1], &sessions[i]));
+	/* Client zero stays open and silent throughout both request streams. */
+	for (i = 0; i < 4; i++) {
+		length = sizeof(value);
+		ATF_CHECK_EQ(EPERM, sysctl_op(sessions[0], SYSCTLCMP_OP_GET,
+		    "kern.ostype", NULL, 0, value, &length));
+		length = sizeof(value);
+		ATF_CHECK_EQ(0, sysctl_op(sessions[1], SYSCTLCMP_OP_GET,
+		    "kern.ostype", NULL, 0, value, &length));
+		ATF_CHECK(length > 0);
+	}
+	for (i = 0; i < 2; i++)
+		service_session_close(sessions[i]);
+	close(clients[0]);
+	ATF_REQUIRE_EQ(child, waitpid(child, &status, 0));
+	ATF_REQUIRE(WIFEXITED(status));
+	ATF_CHECK_EQ(0, WEXITSTATUS(status));
+}
+
+ATF_TC(idle_session_expires);
+ATF_TC_HEAD(idle_session_expires, tc)
+{
+	atf_tc_set_md_var(tc, "timeout", "5");
+	atf_tc_set_md_var(tc, "descr", "Silent channels expire without client closure");
+}
+ATF_TC_BODY(idle_session_expires, tc)
+{
+	struct sysctlcmp_config config;
+	const char *label = TEST_LABEL;
+	int client, provider, status;
+	pid_t child;
+
+	require_plane();
+	make_config(&config);
+	channel_pair(&client, &provider);
+	child = fork();
+	ATF_REQUIRE(child >= 0);
+	if (child == 0) {
+		close(client);
+		_exit(sysctlcmp_test_serve_many(&provider, &label, 1, &config, 100));
+	}
+	close(provider);
+	/* Holding the client open must not prevent the server's idle expiry. */
+	ATF_REQUIRE_EQ(child, waitpid(child, &status, 0));
+	ATF_REQUIRE(WIFEXITED(status));
+	ATF_CHECK_EQ(0, WEXITSTATUS(status));
+	close(client);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -487,5 +570,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, next_never_reveals_denied_names);
 	ATF_TP_ADD_TC(tp, malformed_request_fails_closed);
 	ATF_TP_ADD_TC(tp, arguments);
+	ATF_TP_ADD_TC(tp, multiplexed_clients);
+	ATF_TP_ADD_TC(tp, idle_session_expires);
 	return (atf_no_error());
 }
