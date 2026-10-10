@@ -1,9 +1,9 @@
 .\" SPDX-License-Identifier: BSD-2-Clause
 .Dd October 10, 2026
-.Dt BSDPRESSURE 8
+.Dt BSDMEMORY 8
 .Os
 .Sh NAME
-.Nm BSDPressure
+.Nm BSDMemory
 .Nd publish bounded memory-pressure state
 .Sh DESCRIPTION
 .Nm
@@ -31,7 +31,7 @@ Sampling occurs approximately once a second, subject to bounded source RPCs.
 Notification state is checked even when unchanged so router restart can be
 recovered.
 BSDNotify reserves this state topic for the authenticated label
-.Va system.Pressure/bsdpressure ,
+.Va system.Memory/bsdmemory ,
 including before the producer starts and after it disconnects.
 The producer's gated notification policy permits only this topic.
 No client payload can choose a publisher identity.

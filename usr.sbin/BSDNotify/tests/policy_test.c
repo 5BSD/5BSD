@@ -1481,7 +1481,7 @@ ATF_TC_BODY(shipped_pressure_policy, tc)
 	db = calloc(1, sizeof(*db));
 	ATF_REQUIRE(db != NULL);
 	ATF_REQUIRE_EQ(0, notify_policy_db_load(path, db));
-	policy = notify_policy_db_select(db, NOTIFY_TIER_SYSTEM, "system.Pressure/bsdpressure");
+	policy = notify_policy_db_select(db, NOTIFY_TIER_SYSTEM, "system.Memory/bsdmemory");
 	ATF_REQUIRE(policy != NULL);
 	ATF_CHECK_EQ(1, policy->npublish);
 	ATF_CHECK_EQ(1, policy->nsubscribe);

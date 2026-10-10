@@ -590,7 +590,7 @@ ATF_TC_BODY(pressure_publisher_identity, tc)
 	struct notify_state_reply state;
 	const char *topic = "system.memory.pressure";
 	ATF_REQUIRE(broker != NULL);
-	owner = notify_broker_add(broker, "system.Pressure/bsdpressure", 4);
+	owner = notify_broker_add(broker, "system.Memory/bsdmemory", 4);
 	other = notify_broker_add(broker, "org.other", 4);
 	ATF_REQUIRE(owner != NULL && other != NULL);
 	ATF_CHECK_ERRNO(EACCES, notify_broker_state_set(broker, other, topic,

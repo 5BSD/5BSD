@@ -11,6 +11,12 @@
 #define BSD_CACHE_VALUE_MAX   (16U * 1024 * 1024)
 #define BSD_CACHE_ENTRIES_MAX 65536U
 struct bsd_cache;
+/* Lookup is also the validity check; a hit returns a caller-owned copy. */
+enum bsd_cache_result {
+	BSD_CACHE_ERROR = -1,
+	BSD_CACHE_MISS = 0,
+	BSD_CACHE_HIT = 1
+};
 enum bsd_cache_reason {
 	BSD_CACHE_LIMIT,
 	BSD_CACHE_PRESSURE,
@@ -28,8 +34,16 @@ struct bsd_cache_stats {
 	int notification_error;
 };
 __BEGIN_DECLS
+/* Simple default: automatic notifications, no eviction callback. */
+int bsd_cache_open(size_t, size_t, struct bsd_cache **);
+enum bsd_cache_result bsd_cache_lookup(struct bsd_cache *, const char *, void *,
+    size_t *);
 int bsd_cache_create(size_t, size_t, unsigned, bsd_cache_evicted_fn, void *,
     struct bsd_cache **);
+/* Capture before rebuilding; token is scoped to this cache's lifetime. */
+int bsd_cache_generation(struct bsd_cache *, uint64_t *);
+int bsd_cache_put_if_current(struct bsd_cache *, const char *, const void *,
+    size_t, size_t, uint64_t);
 int bsd_cache_put(struct bsd_cache *, const char *, const void *, size_t,
     size_t);
 int bsd_cache_get(struct bsd_cache *, const char *, void *, size_t *);

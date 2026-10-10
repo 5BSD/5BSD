@@ -21,7 +21,8 @@ struct bsd_cache {
 	pthread_t watcher;
 	pid_t owner;
 	atomic_bool stopping;
-	bool automatic, destroying;
+	bool automatic, destroying, generation_exhausted;
+	uint64_t generation;
 	unsigned effective_pressure;
 	struct cache_entry *first, *last;
 	struct bsd_cache_stats stats;
@@ -121,9 +122,32 @@ dispose(struct bsd_cache *c, struct cache_entry *e,
 		e = next;
 	}
 }
+static void
+invalidate_generation(struct bsd_cache *c)
+{
+	if (c->generation == UINT64_MAX)
+		c->generation_exhausted = true;
+	else
+		c->generation++;
+}
 int
-bsd_cache_put(struct bsd_cache *c, const char *key, const void *value,
-    size_t length, size_t cost)
+bsd_cache_generation(struct bsd_cache *c, uint64_t *out)
+{
+	if (out == NULL)
+		return (errno = EINVAL, -1);
+	if (cache_lock(c) != 0)
+		return (-1);
+	if (c->generation_exhausted) {
+		pthread_mutex_unlock(&c->lock);
+		return (errno = EOVERFLOW, -1);
+	}
+	*out = c->generation;
+	pthread_mutex_unlock(&c->lock);
+	return (0);
+}
+static int
+cache_put(struct bsd_cache *c, const char *key, const void *value,
+    size_t length, size_t cost, const uint64_t *generation)
 {
 	struct cache_entry *e, *old, *trash;
 	size_t entries, budget;
@@ -141,6 +165,12 @@ bsd_cache_put(struct bsd_cache *c, const char *key, const void *value,
 	if (cache_lock(c) != 0) {
 		free(e);
 		return (-1);
+	}
+	if (generation != NULL &&
+	    (c->generation_exhausted || *generation != c->generation)) {
+		pthread_mutex_unlock(&c->lock);
+		free(e);
+		return (errno = ESTALE, -1);
 	}
 	limits(c, &entries, &budget);
 	if (c->destroying || entries == 0 || cost > budget) {
@@ -164,10 +194,23 @@ bsd_cache_put(struct bsd_cache *c, const char *key, const void *value,
 		c->stats.evictions++;
 	}
 	link_first(c, e);
+	invalidate_generation(c);
 	pthread_mutex_unlock(&c->lock);
 	dispose(c, old, BSD_CACHE_REPLACED);
 	dispose(c, trash, BSD_CACHE_LIMIT);
 	return (0);
+}
+int
+bsd_cache_put(struct bsd_cache *c, const char *key, const void *value,
+    size_t length, size_t cost)
+{
+	return (cache_put(c, key, value, length, cost, NULL));
+}
+int
+bsd_cache_put_if_current(struct bsd_cache *c, const char *key,
+    const void *value, size_t length, size_t cost, uint64_t generation)
+{
+	return (cache_put(c, key, value, length, cost, &generation));
 }
 int
 bsd_cache_get(struct bsd_cache *c, const char *key, void *value, size_t *length)
@@ -198,6 +241,27 @@ bsd_cache_get(struct bsd_cache *c, const char *key, void *value, size_t *length)
 	pthread_mutex_unlock(&c->lock);
 	return (0);
 }
+enum bsd_cache_result
+bsd_cache_lookup(struct bsd_cache *c, const char *key, void *value,
+    size_t *length)
+{
+	int saved_errno = errno;
+	if (bsd_cache_get(c, key, value, length) == 0) {
+		errno = saved_errno;
+		return (BSD_CACHE_HIT);
+	}
+	if (errno == ENOENT) {
+		errno = saved_errno;
+		return (BSD_CACHE_MISS);
+	}
+	return (BSD_CACHE_ERROR);
+}
+int
+bsd_cache_open(size_t entries, size_t cost, struct bsd_cache **out)
+{
+	return (bsd_cache_create(entries, cost, BSD_CACHE_AUTOMATIC, NULL, NULL,
+	    out));
+}
 int
 bsd_cache_remove(struct bsd_cache *c, const char *key)
 {
@@ -206,6 +270,7 @@ bsd_cache_remove(struct bsd_cache *c, const char *key)
 		return (errno = EINVAL, -1);
 	if (cache_lock(c) != 0)
 		return (-1);
+	invalidate_generation(c);
 	e = find_entry(c, key);
 	if (e != NULL) {
 		unlink_entry(c, e);
@@ -223,6 +288,7 @@ bsd_cache_purge(struct bsd_cache *c)
 	struct cache_entry *trash;
 	if (cache_lock(c) != 0)
 		return (-1);
+	invalidate_generation(c);
 	trash = c->first;
 	c->first = c->last = NULL;
 	c->stats.entries = c->stats.cost = 0;
@@ -238,6 +304,7 @@ bsd_cache_set_limits(struct bsd_cache *c, size_t entries, size_t cost)
 		return (errno = EINVAL, -1);
 	if (cache_lock(c) != 0)
 		return (-1);
+	invalidate_generation(c);
 	c->stats.entry_limit = entries;
 	c->stats.cost_limit = cost;
 	trash = trim(c);
@@ -254,8 +321,11 @@ bsd_cache_set_pressure(struct bsd_cache *c, unsigned level)
 	if (cache_lock(c) != 0)
 		return (-1);
 	c->stats.pressure = level;
-	if (level != NOTIFY_PRESSURE_UNKNOWN)
+	if (level != NOTIFY_PRESSURE_UNKNOWN) {
+		if (c->effective_pressure != level)
+			invalidate_generation(c);
 		c->effective_pressure = level;
+	}
 	trash = trim(c);
 	pthread_mutex_unlock(&c->lock);
 	dispose(c, trash, BSD_CACHE_PRESSURE);
@@ -272,12 +342,32 @@ bsd_cache_get_stats(struct bsd_cache *c, struct bsd_cache_stats *out)
 	pthread_mutex_unlock(&c->lock);
 	return (0);
 }
+static void
+observe_pressure(struct bsd_cache *c,
+    const struct notify_state_watch_reply *state, uint64_t *epoch,
+    uint64_t *generation)
+{
+	/* Latest-state watching can coalesce a critical/recovery transition.
+	 * Drop cached entries when history is missing, even if now normal. */
+	if (*epoch == 0 || *epoch != state->watch_epoch ||
+	    (*generation != state->generation &&
+		(*generation == UINT64_MAX ||
+		    state->generation != *generation + 1)))
+		(void)bsd_cache_purge(c);
+	*epoch = state->watch_epoch;
+	*generation = state->generation;
+	(void)bsd_cache_set_pressure(c,
+	    state->present && state->state <= NOTIFY_PRESSURE_UNKNOWN ?
+		state->state :
+		NOTIFY_PRESSURE_UNKNOWN);
+}
 static void *
 watch_pressure(void *argument)
 {
 	struct bsd_cache *c = argument;
 	struct notify_client *client = NULL;
 	struct notify_state_watch_reply state;
+	uint64_t epoch = 0, generation = 0;
 	int error;
 	while (!atomic_load(&c->stopping)) {
 		error = client == NULL && notify_client_open(&client) == -1 ?
@@ -288,11 +378,7 @@ watch_pressure(void *argument)
 			250) == -1)
 			error = errno;
 		if (error == 0)
-			(void)bsd_cache_set_pressure(c,
-			    state.present &&
-				    state.state <= NOTIFY_PRESSURE_UNKNOWN ?
-				state.state :
-				NOTIFY_PRESSURE_UNKNOWN);
+			observe_pressure(c, &state, &epoch, &generation);
 		else if (error != EAGAIN) {
 			(void)bsd_cache_set_pressure(c,
 			    NOTIFY_PRESSURE_UNKNOWN);

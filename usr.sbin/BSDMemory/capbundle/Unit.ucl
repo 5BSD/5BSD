@@ -1,6 +1,6 @@
 activation { boot = true; }
 control = "system";
-program = "BSDPressure";
+program = "BSDMemory";
 restart = "on-failure";
 user = "capability";
 attributes = ["system.notify.system"];

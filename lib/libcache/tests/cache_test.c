@@ -6,6 +6,7 @@
 #include "../bsd_cache.c"
 struct notify_client {
 	unsigned last;
+	uint64_t generation;
 };
 static struct notify_client fake_notify;
 static atomic_uint fake_level, fake_closed;
@@ -13,6 +14,7 @@ int
 notify_client_open(struct notify_client **out)
 {
 	fake_notify.last = UINT32_MAX;
+	fake_notify.generation = 0;
 	*out = &fake_notify;
 	return (0);
 }
@@ -37,6 +39,8 @@ notify_state_watch(struct notify_client *client, const char *topic,
 	}
 	client->last = level;
 	memset(out, 0, sizeof(*out));
+	out->watch_epoch = 1;
+	out->generation = ++client->generation;
 	out->present = level != UINT32_MAX;
 	out->state = level;
 	return (0);
@@ -179,8 +183,7 @@ ATF_TC_BODY(automatic_pressure, tc)
 	struct bsd_cache *cache;
 	struct bsd_cache_stats stats;
 	atomic_store(&fake_level, NOTIFY_PRESSURE_NORMAL);
-	ATF_REQUIRE_EQ(0,
-	    bsd_cache_create(4, 16, BSD_CACHE_AUTOMATIC, NULL, NULL, &cache));
+	ATF_REQUIRE_EQ(0, bsd_cache_open(4, 16, &cache));
 	wait_level(cache, NOTIFY_PRESSURE_NORMAL);
 	ATF_REQUIRE_EQ(0, bsd_cache_put(cache, "a", "abc", 4, 4));
 	atomic_store(&fake_level, NOTIFY_PRESSURE_CRITICAL);
@@ -220,8 +223,168 @@ ATF_TC_BODY(cost_overflow, tc)
 	ATF_CHECK_EQ(SIZE_MAX, stats.cost);
 	ATF_REQUIRE_EQ(0, bsd_cache_destroy(cache));
 }
+ATF_TC_WITHOUT_HEAD(lookup_contract);
+ATF_TC_BODY(lookup_contract, tc)
+{
+	struct bsd_cache *cache;
+	char out[8] = "keep";
+	size_t length = sizeof(out);
+	ATF_REQUIRE_EQ(0, bsd_cache_create(2, 16, 0, NULL, NULL, &cache));
+	errno = EDOM;
+	ATF_REQUIRE_EQ(BSD_CACHE_MISS,
+	    bsd_cache_lookup(cache, "key", out, &length));
+	ATF_CHECK_EQ(EDOM, errno);
+	ATF_CHECK_STREQ("keep", out);
+	ATF_CHECK_EQ(sizeof(out), length);
+	ATF_REQUIRE_EQ(0, bsd_cache_put(cache, "key", "value", 6, 6));
+	length = 1;
+	ATF_CHECK_ERRNO(ENOMEM,
+	    bsd_cache_lookup(cache, "key", out, &length) == BSD_CACHE_ERROR);
+	ATF_CHECK_EQ(6, length);
+	ATF_CHECK_STREQ("keep", out);
+	length = sizeof(out);
+	errno = EDOM;
+	ATF_REQUIRE_EQ(BSD_CACHE_HIT,
+	    bsd_cache_lookup(cache, "key", out, &length));
+	ATF_CHECK_EQ(EDOM, errno);
+	ATF_REQUIRE_EQ(0,
+	    bsd_cache_set_pressure(cache, NOTIFY_PRESSURE_CRITICAL));
+	/* A returned copy survives eviction of its source entry. */
+	ATF_CHECK_STREQ("value", out);
+	ATF_REQUIRE_EQ(BSD_CACHE_MISS,
+	    bsd_cache_lookup(cache, "key", out, &length));
+	ATF_CHECK_STREQ("value", out);
+	ATF_CHECK_ERRNO(EINVAL,
+	    bsd_cache_lookup(cache, "", out, &length) == BSD_CACHE_ERROR);
+	ATF_REQUIRE_EQ(0, bsd_cache_destroy(cache));
+}
+struct pending_build {
+	struct bsd_cache *cache;
+	pthread_barrier_t barrier;
+	int result, error;
+};
+static void *
+finish_build(void *argument)
+{
+	struct pending_build *work = argument;
+	uint64_t generation;
+	ATF_REQUIRE_EQ(0, bsd_cache_generation(work->cache, &generation));
+	pthread_barrier_wait(&work->barrier);
+	pthread_barrier_wait(&work->barrier);
+	work->result = bsd_cache_put_if_current(work->cache, "key", "old", 4, 4,
+	    generation);
+	work->error = errno;
+	return (NULL);
+}
+ATF_TC_WITHOUT_HEAD(invalidation_during_rebuild);
+ATF_TC_BODY(invalidation_during_rebuild, tc)
+{
+	struct pending_build work;
+	pthread_t thread;
+	char out[8];
+	size_t length = sizeof(out);
+	uint64_t generation;
+	ATF_REQUIRE_EQ(0, bsd_cache_create(4, 32, 0, NULL, NULL, &work.cache));
+	ATF_REQUIRE_EQ(0, pthread_barrier_init(&work.barrier, NULL, 2));
+	ATF_REQUIRE_EQ(0, pthread_create(&thread, NULL, finish_build, &work));
+	pthread_barrier_wait(&work.barrier);
+	/* Rebuild has captured a token. Invalidation happens before insertion.
+	 */
+	ATF_REQUIRE_EQ(0, bsd_cache_purge(work.cache));
+	ATF_REQUIRE_EQ(0, bsd_cache_put(work.cache, "key", "new", 4, 4));
+	pthread_barrier_wait(&work.barrier);
+	ATF_REQUIRE_EQ(0, pthread_join(thread, NULL));
+	ATF_CHECK_EQ(-1, work.result);
+	ATF_CHECK_EQ(ESTALE, work.error);
+	ATF_REQUIRE_EQ(BSD_CACHE_HIT,
+	    bsd_cache_lookup(work.cache, "key", out, &length));
+	ATF_CHECK_STREQ("new", out);
+	ATF_REQUIRE_EQ(0, bsd_cache_generation(work.cache, &generation));
+	ATF_REQUIRE_EQ(0,
+	    bsd_cache_put_if_current(work.cache, "key", "fresh", 6, 6,
+		generation));
+	ATF_CHECK_ERRNO(ESTALE,
+	    bsd_cache_put_if_current(work.cache, "key", "old", 4, 4,
+		generation) == -1);
+	ATF_REQUIRE_EQ(0, pthread_barrier_destroy(&work.barrier));
+	ATF_REQUIRE_EQ(0, bsd_cache_destroy(work.cache));
+}
+ATF_TC_WITHOUT_HEAD(generation_invalidation);
+ATF_TC_BODY(generation_invalidation, tc)
+{
+	struct bsd_cache *cache;
+	uint64_t generation;
+	ATF_REQUIRE_EQ(0, bsd_cache_create(4, 32, 0, NULL, NULL, &cache));
+	for (unsigned i = 0; i < 4; i++) {
+		ATF_REQUIRE_EQ(0, bsd_cache_generation(cache, &generation));
+		switch (i) {
+		case 0:
+			ATF_REQUIRE_EQ(0, bsd_cache_purge(cache));
+			break;
+		case 1:
+			ATF_CHECK_ERRNO(ENOENT,
+			    bsd_cache_remove(cache, "missing") == -1);
+			break;
+		case 2:
+			ATF_REQUIRE_EQ(0, bsd_cache_set_limits(cache, 2, 16));
+			break;
+		case 3:
+			ATF_REQUIRE_EQ(0,
+			    bsd_cache_set_pressure(cache,
+				NOTIFY_PRESSURE_WARNING));
+			break;
+		}
+		ATF_CHECK_ERRNO(ESTALE,
+		    bsd_cache_put_if_current(cache, "key", "x", 1, 1,
+			generation) == -1);
+	}
+	/* Tokens must never wrap back to an old value. */
+	cache->generation = UINT64_MAX;
+	ATF_REQUIRE_EQ(0, bsd_cache_generation(cache, &generation));
+	ATF_REQUIRE_EQ(0, bsd_cache_purge(cache));
+	ATF_CHECK_ERRNO(EOVERFLOW,
+	    bsd_cache_generation(cache, &generation) == -1);
+	ATF_CHECK_ERRNO(ESTALE,
+	    bsd_cache_put_if_current(cache, "key", "x", 1, 1, generation) ==
+		-1);
+	ATF_REQUIRE_EQ(0, bsd_cache_destroy(cache));
+}
+ATF_TC_WITHOUT_HEAD(coalesced_pressure);
+ATF_TC_BODY(coalesced_pressure, tc)
+{
+	struct bsd_cache *cache;
+	struct notify_state_watch_reply state = { .watch_epoch = 1,
+		.generation = 1,
+		.present = 1,
+		.state = NOTIFY_PRESSURE_NORMAL };
+	uint64_t epoch = 0, generation = 0, token;
+	char out;
+	size_t length = 1;
+	ATF_REQUIRE_EQ(0, bsd_cache_create(4, 32, 0, NULL, NULL, &cache));
+	observe_pressure(cache, &state, &epoch, &generation);
+	ATF_REQUIRE_EQ(0, bsd_cache_put(cache, "key", "x", 1, 1));
+	ATF_REQUIRE_EQ(0, bsd_cache_generation(cache, &token));
+	/* Critical followed by recovery before the watcher could run. */
+	state.generation = 3;
+	observe_pressure(cache, &state, &epoch, &generation);
+	ATF_REQUIRE_EQ(BSD_CACHE_MISS,
+	    bsd_cache_lookup(cache, "key", &out, &length));
+	ATF_CHECK_ERRNO(ESTALE,
+	    bsd_cache_put_if_current(cache, "key", "x", 1, 1, token) == -1);
+	ATF_REQUIRE_EQ(0, bsd_cache_put(cache, "key", "x", 1, 1));
+	state.watch_epoch = 2;
+	state.generation = 1;
+	observe_pressure(cache, &state, &epoch, &generation);
+	ATF_REQUIRE_EQ(BSD_CACHE_MISS,
+	    bsd_cache_lookup(cache, "key", &out, &length));
+	ATF_REQUIRE_EQ(0, bsd_cache_destroy(cache));
+}
 ATF_TP_ADD_TCS(tp)
 {
+	ATF_TP_ADD_TC(tp, invalidation_during_rebuild);
+	ATF_TP_ADD_TC(tp, generation_invalidation);
+	ATF_TP_ADD_TC(tp, coalesced_pressure);
+	ATF_TP_ADD_TC(tp, lookup_contract);
 	ATF_TP_ADD_TC(tp, cost_overflow);
 	ATF_TP_ADD_TC(tp, lru_and_copy);
 	ATF_TP_ADD_TC(tp, pressure_and_limits);

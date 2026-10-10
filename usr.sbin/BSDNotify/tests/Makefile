@@ -58,4 +58,7 @@ SRCTREE_FILES=	cddl/usr.sbin/bsdinstruments/profiles/capability-services.d \
 		usr.sbin/switchboard/svc_proto.c
 .include "${SRCTOP}/tests/srctree.mk"
 
+# broker.o is shared by multiple tests; track the reserved-owner header.
+broker.o: ${SRCTOP}/lib/libnotify/notify_pressure.h
+
 .include <bsd.test.mk>

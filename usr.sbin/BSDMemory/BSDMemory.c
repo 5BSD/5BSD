@@ -45,7 +45,7 @@ main(void)
 	int kq, count;
 
 	service_set_proctitle();
-	openlog("BSDPressure", LOG_PID, LOG_DAEMON);
+	openlog("BSDMemory", LOG_PID, LOG_DAEMON);
 	if (service_provider_create(&provider) == -1 ||
 	    service_provider_authorize_capabilities(provider) == -1 ||
 	    service_provider_protect(provider,

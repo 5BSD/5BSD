@@ -228,7 +228,7 @@ ATF_TC_BODY(shipped_pressure_policy, tc)
 {
 	struct sysctlcmp_config config;
 	char path[4096];
-	const char *label = "system.Pressure/bsdpressure";
+	const char *label = "system.Memory/bsdmemory";
 	const char *names[] = { "vm.stats.vm.v_free_count", "vm.stats.vm.v_free_min",
 	    "vm.stats.vm.v_free_target" };
 	snprintf(path, sizeof(path), "%s/srctree/usr.sbin/BSDSysctl/capbundle/sysctl.conf",
