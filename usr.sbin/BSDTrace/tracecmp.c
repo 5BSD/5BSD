@@ -483,15 +483,40 @@ worker(int fd, int barrier, int dtrace_fd, bool authorized,
 	    client_label, rights, instance_id));
 }
 
+/* The parent retains the procdesc until bootstrap and watch setup finish. */
+static int
+bootstrap_parent(int fd)
+{
+	int child_error;
+	size_t offset;
+	ssize_t n;
+	char byte = 1;
+
+	for (offset = 0; offset < sizeof(child_error); offset += (size_t)n) {
+		do {
+			n = recv(fd, (char *)&child_error + offset,
+			    sizeof(child_error) - offset, 0);
+		} while (n == -1 && errno == EINTR);
+		if (n <= 0)
+			return (n == 0 ? (errno = EIO, -1) : -1);
+	}
+	if (child_error != 0)
+		return (errno = child_error > 0 ? child_error : EPROTO, -1);
+	do {
+		n = send(fd, &byte, sizeof(byte), MSG_NOSIGNAL);
+	} while (n == -1 && errno == EINTR);
+	if (n != sizeof(byte))
+		return (n == -1 ? -1 : (errno = EIO, -1));
+	return (0);
+}
+
 static int
 start_session(int fd, int dtrace_directory, bool authorized,
     const char *peer_label, service_rights_t rights, int *pdp, pid_t *pidp,
     int *livenessp)
 {
 	static uint64_t next_instance;
-	char byte;
-	int syncfd[2], pd, child_error, dtrace_fd, device_error, error;
-	ssize_t n;
+	int syncfd[2], pd, dtrace_fd, device_error, error;
 	pid_t pid;
 	uint64_t instance_id;
 
@@ -547,16 +572,14 @@ start_session(int fd, int dtrace_directory, bool authorized,
 	if (dtrace_fd >= 0)
 		close(dtrace_fd);
 	close(syncfd[1]);
-	n = read(syncfd[0], &child_error, sizeof(child_error));
-	if (n != sizeof(child_error) || child_error != 0) {
-		error = n == sizeof(child_error) ? child_error : EIO;
-		(void)pdkill(pd, SIGKILL);
-		close(pd);
-		close(syncfd[0]);
+	*pdp = pd;
+	*pidp = pid;
+	*livenessp = syncfd[0];
+	if (bootstrap_parent(syncfd[0]) == -1) {
+		error = errno;
+		/* Caller owns this child even when bootstrap fails. */
 		goto reject;
 	}
-	byte = 1;
-	(void)write(syncfd[0], &byte, 1);
 	/*
 	 * Retain the parent's end of the socketpair as the worker's liveness
 	 * signal: closed only when this process (or the worker) exits.  It is
@@ -781,10 +804,18 @@ main(void)
 		    tracecmp_policy_allows(&policy, identity.client_label),
 		    identity.client_label, identity.rights, &worker->pd,
 		    &worker->pid, &worker->liveness) == -1) {
+			error = errno;
 			logcmp_log(LOG_WARNING, "session for %s rejected: %m",
 			    identity.client_label);
-			free(worker);
 			close(fd);
+			if (worker != NULL && worker->pd >= 0) {
+				worker->next = workers;
+				workers = worker;
+				nworkers++;
+				errno = error;
+				goto fail;
+			}
+			free(worker);
 			continue;
 		}
 		close(fd);
@@ -805,8 +836,9 @@ main(void)
 
 fail:
 	error = errno != 0 ? errno : EIO;
-	if (workers != NULL && kq >= 0)
-		workers_shutdown(kq, &workers, &nworkers);
+	if (workers != NULL && kq >= 0 &&
+	    workers_shutdown(kq, &workers, &nworkers) == -1)
+		logcmp_log(LOG_ERR, "worker shutdown after service failure: %m");
 	if (dtrace_directory >= 0)
 		close(dtrace_directory);
 	if (kq >= 0)

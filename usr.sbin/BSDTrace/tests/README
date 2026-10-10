@@ -36,3 +36,17 @@ failed_watch_retains_worker injects an exit-watch registration failure and
 verifies ownership remains in the shutdown list. It then checks successful,
 failed-signal and failed-reap cleanup, including descriptor closure and error
 reporting. These are injected operations, not a kernel allocation-fault test.
+
+bootstrap_socket_errors uses real local stream sockets for success, child
+protection errors, invalid status, truncated replies and peer closure before
+acknowledgement. It injects EINTR and single-byte reads to check retry and
+fragment assembly. It does not exercise real worker protection or a stalled
+bootstrap; bootstrap still has no deadline. Post-fork bootstrap failure now
+retains the child for controlled daemon shutdown. Supervisor recovery after
+termination denial remains a separate integration gate.
+
+bootstrap_retains_child invokes actual start_session/pdfork with injected
+worker protection denial. It verifies the parent retains the real procdesc
+and liveness socket, then reaps the child through production shutdown. It
+uses no exit watch, as in the failed-bootstrap path. Protection admission
+itself is injected; no real DTrace consumer or supervisor is present.

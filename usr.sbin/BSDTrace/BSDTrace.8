@@ -153,6 +153,9 @@ Successful shutdown acknowledgement follows worker cleanup and closure of
 the event queue and DTrace directory.
 Failure to install a worker exit watch stops admission and enters controlled
 shutdown with the worker still tracked.
+Post-fork bootstrap failure also stops admission and retains the child for
+controlled shutdown.
+Bootstrap acknowledgement errors are checked without generating SIGPIPE.
 .Sh SEE ALSO
 .Xr dtrace 1 ,
 .Xr openat 2 ,
