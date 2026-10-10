@@ -26,3 +26,8 @@ checks retry after EINTR, propagation of EIO, and acceptance of ECHILD and ESRCH
 verifies list/count cleanup and actual FD closure without sending SIGKILL to
 a child whose exit event was observed. Kernel event delivery and real reap
 failure remain separate integration checks.
+lifecycle_test invokes the actual daemon main with injected provider, listener
+and event operations. It verifies queue closure and provider destruction on
+startup and service-loop errors, and queue closure before acknowledgement.
+The policy and DTrace directory are absent in this fixture. It does not prove
+real tracing-device teardown, protected-worker cleanup or SwitchBoard transport.

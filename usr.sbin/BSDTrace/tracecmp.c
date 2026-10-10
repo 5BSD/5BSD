@@ -690,6 +690,7 @@ main(void)
 	/* ps(1) shows the unit name, not the ld-elf.so.1 launcher. */
 	service_set_proctitle();
 	workers = NULL;
+	provider = NULL;
 	nworkers = 0;
 	dtrace_directory = -1;
 	kq = -1;
@@ -788,13 +789,14 @@ main(void)
 		nworkers++;
 	}
 	status = workers_shutdown(kq, &workers, &nworkers);
-	if (status == 0)
-		status = service_provider_quiesce_complete(provider, 0);
-	else
+	if (status != 0)
 		logcmp_log(LOG_ERR, "worker shutdown: %m");
 	close(kq);
 	if (dtrace_directory >= 0)
 		close(dtrace_directory);
+	if (status == 0)
+		status = service_provider_quiesce_complete(provider, 0);
+	service_provider_destroy(provider);
 	closelog();
 	return (status == 0 ? 0 : 1);
 
@@ -806,6 +808,8 @@ fail:
 		close(dtrace_directory);
 	if (kq >= 0)
 		close(kq);
+	if (provider != NULL)
+		service_provider_destroy(provider);
 	errno = error;
 	logcmp_log(LOG_ERR, "initialization or service loop: %m");
 	closelog();

@@ -36,4 +36,12 @@ CFLAGS.shutdown_test+= -I${SRCTOP}/sys
 LIBADD.shutdown_test= bsm channel service tracecmp logcmp
 NO_SHARED.shutdown_test= yes
 
+ATF_TESTS_C+= lifecycle_test
+SRCS.lifecycle_test= lifecycle_test.c tracecmp_policy.c
+CFLAGS.lifecycle_test+= -I${SRCTOP}/lib/libchannel -I${SRCTOP}/lib/libservice
+CFLAGS.lifecycle_test+= -I${SRCTOP}/lib/libtracecmp -I${SRCTOP}/lib/liblogcmp
+CFLAGS.lifecycle_test+= -I${SRCTOP}/sys
+LIBADD.lifecycle_test= bsm channel service tracecmp logcmp
+NO_SHARED.lifecycle_test= yes
+
 .include <bsd.test.mk>

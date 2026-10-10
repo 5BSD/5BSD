@@ -148,6 +148,9 @@ Worker exit-event reaping retries interrupted calls and tolerates children
 already reaped.
 Other reap errors fail shutdown or the active service loop instead of being
 silently discarded.
+The provider object is released on normal and failed exits.
+Successful shutdown acknowledgement follows worker cleanup and closure of
+the event queue and DTrace directory.
 .Sh SEE ALSO
 .Xr dtrace 1 ,
 .Xr openat 2 ,
