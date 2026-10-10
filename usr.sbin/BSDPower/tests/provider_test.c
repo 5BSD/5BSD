@@ -500,6 +500,8 @@ check_rejected_raw(const void *data, size_t len, int fd)
 	if (rc == 0)
 		ATF_CHECK_EQ(EPROTO, -reply.status);
 	/* rc == -1: the session was torn down -- also a rejection. */
+	ATF_CHECK_EQ(-1, call(&fixture, POWERCMP_OP_STATES, NULL,
+	    sizeof(struct powercmp_msg), -1, &reply, NULL));
 	fixture_destroy(&fixture);
 }
 
@@ -586,22 +588,8 @@ ATF_TC_HEAD(suspend_missing_body_is_eproto, tc)
 { atf_tc_set_md_var(tc, "require.user", "root"); }
 ATF_TC_BODY(suspend_missing_body_is_eproto, tc)
 {
-	struct fixture fixture;
-	struct powercmp_config config;
-	struct powercmp_msg reply;
-
-	require_plane();
-	make_config(&config, true, NULL);	/* allow, so only framing can fail */
-	fixture_create(&fixture, &config);
-	/* SUSPEND with a bare header and no powercmp_body -> EPROTO. */
-	ATF_REQUIRE_EQ(0, call(&fixture, POWERCMP_OP_SUSPEND, NULL,
-	    sizeof(struct powercmp_msg), -1, &reply, NULL));
-	ATF_CHECK_EQ(EPROTO, -reply.status);
-	/* Opcode-level framing is not terminal: the session still answers. */
-	ATF_REQUIRE_EQ(0, call(&fixture, POWERCMP_OP_STATES, NULL,
-	    sizeof(struct powercmp_msg), -1, &reply, NULL));
-	ATF_CHECK_EQ(0, reply.status);
-	fixture_destroy(&fixture);
+	/* The fixed-size validator treats a missing body as terminal framing. */
+	check_rejected(POWERCMP_OP_SUSPEND, sizeof(struct powercmp_msg), -1);
 }
 
 ATF_TC(rejects_attached_fd);

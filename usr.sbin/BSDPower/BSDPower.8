@@ -88,6 +88,12 @@ These leases do not govern reboot, halt or other kernel suspend paths.
 .Pp
 Admission and session-failure counters use the shared libservice health
 accounting and are logged when the provider exits its session loop.
+.Sh PROTOCOL FAILURES
+Malformed request frames, including a suspend request missing its required
+body, terminate the client session and release its inhibitor lease.
+The client may observe a protocol error or a closed connection.
+A policy denial or an invalid sleep-state value in an otherwise valid frame
+returns an error while preserving the session.
 .Sh SEE ALSO
 .Xr libpowercmp 3 ,
 .Xr acpi 4 ,
