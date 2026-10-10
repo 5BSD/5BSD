@@ -62,7 +62,7 @@ publish_pressure(struct notify_client **client, unsigned level,
 int
 main(void)
 {
-	struct service_provider *provider;
+	struct service_provider *provider = NULL;
 	struct sysctlcmp_client *source = NULL;
 	struct notify_client *notify = NULL;
 	struct pressure_filter filter = { .level = NOTIFY_PRESSURE_UNKNOWN };
@@ -71,7 +71,8 @@ main(void)
 	struct service_health source_health = { 0 }, notify_health = { 0 };
 	uint32_t values[3];
 	unsigned level, published = NOTIFY_PRESSURE_UNKNOWN + 1;
-	int kq, count;
+	int kq = -1, count, result = 1;
+	bool ready = false;
 
 	(void)service_retry_init(&source_retry, 1000, 30000);
 	(void)service_retry_init(&notify_retry, 1000, 30000);
@@ -82,15 +83,16 @@ main(void)
 	    service_provider_protect(provider,
 		SERVICE_PROTECT_EXTERNAL | SERVICE_PROTECT_NOPRIVS |
 		    SERVICE_PROTECT_NOEXEC) == -1 ||
-	    service_provider_enter_capability_mode(provider) == -1 ||
-	    service_provider_ready(provider) == -1)
-		return (1);
+	    service_provider_enter_capability_mode(provider) == -1)
+		goto out;
 	kq = kqueue();
 	if (kq == -1)
-		return (1);
+		goto out;
 	EV_SET(&timer, 1, EVFILT_TIMER, EV_ADD, NOTE_SECONDS, 1, NULL);
-	if (kevent(kq, &timer, 1, NULL, 0, NULL) == -1)
-		return (1);
+	if (kevent(kq, &timer, 1, NULL, 0, NULL) == -1 ||
+	    service_provider_ready(provider) == -1)
+		goto out;
+	ready = true;
 	for (;;) {
 		if (service_provider_quiescing(provider) == 1)
 			break;
@@ -138,12 +140,17 @@ main(void)
 		if (count == -1)
 			break;
 	}
+out:
 	if (notify != NULL)
 		notify_client_close(notify);
 	if (source != NULL)
 		sysctlcmp_client_close(source);
-	close(kq);
-	return (service_provider_quiescing(provider) == 1 ?
-		service_provider_quiesce_complete(provider, 0) :
-		1);
+	if (kq >= 0)
+		close(kq);
+	if (ready && service_provider_quiescing(provider) == 1 &&
+	    service_provider_quiesce_complete(provider, 0) == 0)
+		result = 0;
+	if (provider != NULL)
+		service_provider_destroy(provider);
+	return (result);
 }

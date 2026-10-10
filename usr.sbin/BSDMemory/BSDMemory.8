@@ -43,6 +43,16 @@ Use
 to inspect changes.
 A missing state or an unknown value must not be interpreted as normal.
 A stopped producer loses ownership when its last session disconnects.
+.Sh READINESS
+The daemon reports ready only after capability authorization, process
+protection, capability-mode entry, event-queue creation and installation of
+the sampling timer have succeeded.
+A startup failure releases initialized resources and exits unsuccessfully.
+Readiness means the sampling loop is prepared; it does not certify that
+BSDSysctl or BSDNotify is currently available or that pressure is normal.
+Dependency failures continue through the recovery policy below.
+On an orderly stop, dependency clients and the event queue are closed before
+the daemon acknowledges quiescence.
 .Sh OOM PROTECTION
 The shipped manifest requests
 .Va oom_protect = true .
