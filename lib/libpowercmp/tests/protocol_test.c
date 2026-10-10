@@ -7,6 +7,7 @@
  * client and the BSDTime daemon both run on every received message.
  */
 #include <atf-c.h>
+#include <errno.h>
 #include <string.h>
 
 #include "powercmp_protocol.h"
@@ -36,6 +37,7 @@ ATF_TC_BODY(header_plus_one_time_is_valid, tc)
 	uint8_t buf[POWERCMP_MAX_MESSAGE];
 	struct powercmp_msg *m = (void *)buf;
 
+	memset(buf, 0, sizeof(buf));
 	init(m, POWERCMP_OP_SUSPEND);
 	ATF_CHECK_EQ(0, powercmp_validate_message(m,
 	    sizeof(*m) + sizeof(struct powercmp_body), POWERCMP_MESSAGE_REQUEST));
@@ -93,33 +95,106 @@ ATF_TC_BODY(reply_with_positive_status_is_rejected, tc)
 	m.status = 1;		/* replies carry 0 or -errno, never +ve */
 	ATF_CHECK_EQ(-1, powercmp_validate_message(&m, sizeof(m),
 	    POWERCMP_MESSAGE_REPLY));
-	/* the same status is fine on the request role (status is reply-only) */
-	ATF_CHECK_EQ(0, powercmp_validate_message(&m, sizeof(m),
+	/* Requests cannot smuggle reply status. */
+	ATF_CHECK_EQ(-1, powercmp_validate_message(&m, sizeof(m),
 	    POWERCMP_MESSAGE_REQUEST));
 }
 
 ATF_TC_WITHOUT_HEAD(lease_framing);
 ATF_TC_BODY(lease_framing, tc)
 {
- struct powercmp_msg m;
- init(&m, POWERCMP_OP_INHIBIT);
- ATF_CHECK_EQ(0, powercmp_validate_message(&m, sizeof(m), POWERCMP_MESSAGE_REQUEST));
- ATF_CHECK_EQ(-1, powercmp_validate_message(&m, POWERCMP_MAX_MESSAGE, POWERCMP_MESSAGE_REQUEST));
- m.flags = 1;
- ATF_CHECK_EQ(-1, powercmp_validate_message(&m, sizeof(m), POWERCMP_MESSAGE_REQUEST));
- m.flags = 0; m.status = 1;
- ATF_CHECK_EQ(-1, powercmp_validate_message(&m, sizeof(m), POWERCMP_MESSAGE_REQUEST));
- init(&m, POWERCMP_OP_INHIBITORS);
- ATF_CHECK_EQ(-1, powercmp_validate_message(&m, sizeof(m), POWERCMP_MESSAGE_REPLY));
- ATF_CHECK_EQ(0, powercmp_validate_message(&m, POWERCMP_MAX_MESSAGE, POWERCMP_MESSAGE_REPLY));
- m.status = -1;
- ATF_CHECK_EQ(0, powercmp_validate_message(&m, sizeof(m), POWERCMP_MESSAGE_REPLY));
+	struct {
+		struct powercmp_msg m;
+		struct powercmp_body body;
+	} frame = { 0 };
+	struct powercmp_msg *m = &frame.m;
+	init(m, POWERCMP_OP_INHIBIT);
+	ATF_CHECK_EQ(0,
+	    powercmp_validate_message(m, sizeof(*m), POWERCMP_MESSAGE_REQUEST));
+	ATF_CHECK_EQ(-1,
+	    powercmp_validate_message(m, sizeof(frame),
+		POWERCMP_MESSAGE_REQUEST));
+	m->flags = 1;
+	ATF_CHECK_EQ(-1,
+	    powercmp_validate_message(m, sizeof(*m), POWERCMP_MESSAGE_REQUEST));
+	m->flags = 0;
+	m->status = 1;
+	ATF_CHECK_EQ(-1,
+	    powercmp_validate_message(m, sizeof(*m), POWERCMP_MESSAGE_REQUEST));
+	init(m, POWERCMP_OP_INHIBITORS);
+	ATF_CHECK_EQ(-1,
+	    powercmp_validate_message(m, sizeof(*m), POWERCMP_MESSAGE_REPLY));
+	ATF_CHECK_EQ(0,
+	    powercmp_validate_message(m, sizeof(frame),
+		POWERCMP_MESSAGE_REPLY));
+	m->status = -1;
+	ATF_CHECK_EQ(0,
+	    powercmp_validate_message(m, sizeof(*m), POWERCMP_MESSAGE_REPLY));
+}
+ATF_TC_WITHOUT_HEAD(all_operations_have_exact_frames);
+ATF_TC_BODY(all_operations_have_exact_frames, tc)
+{
+	struct {
+		struct powercmp_msg m;
+		struct powercmp_body body;
+	} frame;
+	for (unsigned op = POWERCMP_OP_STATES; op <= POWERCMP_OP_INHIBITORS;
+	    op++) {
+		memset(&frame, 0, sizeof(frame));
+		init(&frame.m, op);
+		size_t request = sizeof(frame.m) +
+		    (op == POWERCMP_OP_SUSPEND ? sizeof(frame.body) : 0);
+		size_t response = sizeof(frame.m) +
+		    ((op == POWERCMP_OP_STATES ||
+			 op == POWERCMP_OP_INHIBITORS) ?
+			    sizeof(frame.body) :
+			    0);
+		ATF_CHECK_EQ(0,
+		    powercmp_validate_message(&frame.m, request,
+			POWERCMP_MESSAGE_REQUEST));
+		ATF_CHECK_EQ(0,
+		    powercmp_validate_message(&frame.m, response,
+			POWERCMP_MESSAGE_REPLY));
+		ATF_CHECK_EQ(-1,
+		    powercmp_validate_message(&frame.m, request, 99));
+		frame.m.flags = 1;
+		ATF_CHECK_EQ(-1,
+		    powercmp_validate_message(&frame.m, request,
+			POWERCMP_MESSAGE_REQUEST));
+		frame.m.flags = 0;
+		frame.m.status = -EPERM;
+		ATF_CHECK_EQ(-1,
+		    powercmp_validate_message(&frame.m, request,
+			POWERCMP_MESSAGE_REQUEST));
+		ATF_CHECK_EQ(0,
+		    powercmp_validate_message(&frame.m, sizeof(frame.m),
+			POWERCMP_MESSAGE_REPLY));
+		ATF_CHECK_EQ(-1,
+		    powercmp_validate_message(&frame.m, sizeof(frame),
+			POWERCMP_MESSAGE_REPLY));
+	}
+	memset(&frame, 0, sizeof(frame));
+	init(&frame.m, POWERCMP_OP_SUSPEND);
+	frame.body.reserved[0] = 1;
+	ATF_CHECK_EQ(-1,
+	    powercmp_validate_message(&frame.m, sizeof(frame),
+		POWERCMP_MESSAGE_REQUEST));
+	frame.body.reserved[0] = 0;
+	frame.body.supported = 1;
+	ATF_CHECK_EQ(-1,
+	    powercmp_validate_message(&frame.m, sizeof(frame),
+		POWERCMP_MESSAGE_REQUEST));
+	init(&frame.m, POWERCMP_OP_STATES);
+	frame.body.state = 1;
+	ATF_CHECK_EQ(-1,
+	    powercmp_validate_message(&frame.m, sizeof(frame),
+		POWERCMP_MESSAGE_REPLY));
 }
 
 ATF_TP_ADD_TCS(tp)
 {
-
 	ATF_TP_ADD_TC(tp, lease_framing);
+	ATF_TP_ADD_TC(tp, all_operations_have_exact_frames);
 	ATF_TP_ADD_TC(tp, bare_header_is_valid);
 	ATF_TP_ADD_TC(tp, header_plus_one_time_is_valid);
 	ATF_TP_ADD_TC(tp, bad_magic_is_rejected);

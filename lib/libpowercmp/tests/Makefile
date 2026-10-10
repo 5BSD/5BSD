@@ -11,4 +11,8 @@ LIBADD.protocol_test+=	service
 
 .PATH: ${SRCTOP}/lib/libpowercmp
 
+ATF_TESTS_C+= client_test
+NO_SHARED.client_test= yes
+LIBADD.client_test+= service
+
 .include <bsd.test.mk>

@@ -60,8 +60,13 @@ requests from its owner.
 Release it before requesting suspend.
 .Pp
 Closing the client, client death, or provider restart revokes its inhibitor.
-A failed call may have reached the provider: close the client to abandon any
-uncertain acquisition.
+A transport or protocol failure closes the underlying session and leaves the
+client handle unusable; free it with
+.Fn powercmp_client_close .
+The provider releases any lease when it observes the disconnect.
+A failed call may already have reached the provider; disconnecting cannot undo
+an operation already performed.
+Policy errors leave the session usable.
 There is no transparent reopen or reacquisition.
 Check errors on subsequent calls and treat a lost session as a lost lease.
 The lease does not prevent reboot, halt, panic, or suspend outside BSDPower.

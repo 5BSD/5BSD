@@ -26,48 +26,56 @@ union powercmp_buffer {
 struct powercmp_client {
 	struct service_session	*session;
 	pid_t			 owner;
+	int terminal_error;
 };
 
 int
 powercmp_validate_message(const struct powercmp_msg *msg, size_t length,
     enum powercmp_message_role role)
 {
-
-	if (msg == NULL || length < sizeof(*msg))
-		return (-1);
-	if (msg->magic != POWERCMP_MAGIC)
-		return (-1);
-	if (length != sizeof(*msg) &&
-	    length != sizeof(*msg) + sizeof(struct powercmp_body))
-		return (-1);
-	switch (msg->opcode) {
-	case POWERCMP_OP_STATES:
-	case POWERCMP_OP_SUSPEND:
-	case POWERCMP_OP_INHIBIT:
-	case POWERCMP_OP_UNINHIBIT:
-	case POWERCMP_OP_INHIBITORS:
-		break;
-	default:
-		return (-1);
-	}
-	if (role == POWERCMP_MESSAGE_REPLY &&
-	    (msg->status > 0 || msg->status < -ELAST))
-		return (-1);
-	if (msg->opcode >= POWERCMP_OP_INHIBIT) {
-		if (msg->flags != 0 ||
-		    (role != POWERCMP_MESSAGE_REQUEST &&
-			role != POWERCMP_MESSAGE_REPLY))
-			return (-1);
-		if (role == POWERCMP_MESSAGE_REQUEST && msg->status != 0)
-			return (-1);
-		size_t expected = sizeof(*msg);
-		if (role == POWERCMP_MESSAGE_REPLY && msg->status == 0 &&
-		    msg->opcode == POWERCMP_OP_INHIBITORS)
-			expected += sizeof(struct powercmp_body);
-		if (length != expected)
-			return (-1);
+	const struct powercmp_body *body;
+	size_t expected;
+	if (msg == NULL || length < sizeof(*msg) ||
+	    msg->magic != POWERCMP_MAGIC ||
+	    (role != POWERCMP_MESSAGE_REQUEST &&
+		role != POWERCMP_MESSAGE_REPLY) ||
+	    msg->flags != 0 || msg->opcode < POWERCMP_OP_STATES ||
+	    msg->opcode > POWERCMP_OP_INHIBITORS ||
+	    (role == POWERCMP_MESSAGE_REQUEST && msg->status != 0) ||
+	    msg->status > 0 || msg->status < -ELAST)
+		return (errno = EPROTO, -1);
+	expected = sizeof(*msg);
+	if ((role == POWERCMP_MESSAGE_REQUEST &&
+		msg->opcode == POWERCMP_OP_SUSPEND) ||
+	    (role == POWERCMP_MESSAGE_REPLY && msg->status == 0 &&
+		(msg->opcode == POWERCMP_OP_STATES ||
+		    msg->opcode == POWERCMP_OP_INHIBITORS)))
+		expected += sizeof(*body);
+	if (length != expected)
+		return (errno = EPROTO, -1);
+	if (expected > sizeof(*msg)) {
+		body = (const void *)(msg + 1);
+		if (body->reserved[0] != 0 || body->reserved[1] != 0 ||
+		    (role == POWERCMP_MESSAGE_REQUEST &&
+			body->supported != 0) ||
+		    (role == POWERCMP_MESSAGE_REPLY && body->state != 0))
+			return (errno = EPROTO, -1);
 	}
 	return (0);
+}
+
+/* A lost/ambiguous RPC drops the connection and hence every session lease.
+ * Keep the error on the handle: callers cannot accidentally reuse or reopen it.
+ */
+static int
+client_disconnect(struct powercmp_client *client, int error)
+{
+	if (client->session != NULL) {
+		service_session_close(client->session);
+		client->session = NULL;
+	}
+	client->terminal_error = error != 0 ? error : EIO;
+	return (errno = client->terminal_error, -1);
 }
 
 static int
@@ -83,6 +91,8 @@ call(struct powercmp_client *client, const void *request, size_t req_len,
 		return (errno = EINVAL, -1);
 	if (client->owner != getpid())
 		return (errno = ECHILD, -1);
+	if (client->terminal_error != 0)
+		return (errno = client->terminal_error, -1);
 	memset(&outgoing, 0, sizeof(outgoing));
 	outgoing.size = sizeof(outgoing);
 	outgoing.data = __DECONST(void *, request);
@@ -94,14 +104,13 @@ call(struct powercmp_client *client, const void *request, size_t req_len,
 	options.timeout_ms = 5000;
 	if (service_session_call(client->session, &outgoing, &incoming,
 	    &options) == -1)
-		return (-1);
+		return (client_disconnect(client, errno));
 	qmsg = request;
 	rmsg = (const void *)reply->bytes;
 	if (incoming.nfds != 0 ||
 	    powercmp_validate_message(rmsg, incoming.length,
 	    POWERCMP_MESSAGE_REPLY) == -1 || rmsg->opcode != qmsg->opcode) {
-		(void)service_session_fail(client->session, EPROTO);
-		return (errno = EPROTO, -1);
+		return (client_disconnect(client, EPROTO));
 	}
 	if (rmsg->status != 0)
 		return (errno = -rmsg->status, -1);
@@ -217,8 +226,7 @@ inhibitor_call(struct powercmp_client *client, uint32_t opcode, uint32_t *count)
 		return (-1);
 	if (length !=
 	    sizeof(struct powercmp_msg) + (count != NULL ? sizeof(*body) : 0)) {
-		(void)service_session_fail(client->session, EPROTO);
-		return (errno = EPROTO, -1);
+		return (client_disconnect(client, EPROTO));
 	}
 	if (count != NULL) {
 		body = (const void *)(reply.bytes +
