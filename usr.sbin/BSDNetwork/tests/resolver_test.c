@@ -848,8 +848,70 @@ ATF_TC_BODY(cname_ttl, tc)
 	res_nclose(&g_res);
 }
 
+ATF_TC_WITHOUT_HEAD(negative_cname_packet);
+ATF_TC_BODY(negative_cname_packet, tc)
+{
+	static const u_char alias[] = { 5, 'a','l','i','a','s', 4, 't','e','s','t', 0 };
+	u_char query[NS_PACKETSZ], answer[NS_PACKETSZ + 128];
+	struct rslv_addr addresses[2];
+	char canonical[NS_MAXDNAME];
+	uint32_t negative;
+	int qlen, count;
+	size_t target, soa, end;
+
+	ATF_REQUIRE_EQ(0, res_ninit(&g_res));
+	qlen = res_nmkquery(&g_res, ns_o_query, "example.test", ns_c_in,
+	    ns_t_a, NULL, 0, NULL, query, sizeof(query));
+	ATF_REQUIRE(qlen > NS_HFIXEDSZ);
+	for (unsigned variant = 0; variant < 6; variant++) {
+		memcpy(answer, query, qlen);
+		answer[2] |= 0x80;
+		answer[3] = (answer[3] & 0xf0) |
+		    (variant == 1 ? ns_r_noerror : ns_r_nxdomain);
+		answer[7] = answer[9] = 1;
+		memset(answer + qlen, 0, 12);
+		answer[qlen] = 0xc0;
+		answer[qlen + 1] = 0x0c;
+		answer[qlen + 3] = ns_t_cname;
+		answer[qlen + 5] = ns_c_in;
+		ns_put32(variant == 2 ? 0 : 2, answer + qlen + 6);
+		answer[qlen + 11] = sizeof(alias);
+		target = qlen + 12;
+		memcpy(answer + target, alias, sizeof(alias));
+		soa = target + sizeof(alias);
+		end = append_test_soa(answer, soa, 60, 30);
+		/* SOA must cover the terminal alias, not merely the query name. */
+		if (variant != 3) {
+			answer[soa] = 0xc0 | (target >> 8);
+			answer[soa + 1] = target & 0xff;
+		}
+		if (variant == 4) {
+			/* A compression loop in the SOA MNAME cannot be cached. */
+			answer[soa + 12] = 0xc0 | ((soa + 12) >> 8);
+			answer[soa + 13] = (soa + 12) & 0xff;
+		}
+		if (variant == 5) {
+			/* An NXDOMAIN reply cannot also publish an address. */
+			answer[7] = 2;
+			answer[9] = 0;
+			end = append_test_a(answer, soa, alias, sizeof(alias), 1);
+		}
+		count = 0;
+		canonical[0] = '\0';
+		negative = UINT32_MAX;
+		ATF_CHECK_EQ(variant == 5 ? -1 : 0,
+		    dns_parse(answer, end, "example.test", ns_t_a, addresses,
+		    2, &count, canonical, sizeof(canonical), &negative));
+		ATF_CHECK_EQ(0, count);
+		ATF_CHECK_EQ(variant < 2 ? 2 : 0, negative);
+		ATF_CHECK_STREQ("", canonical);
+	}
+	res_nclose(&g_res);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
+	ATF_TP_ADD_TC(tp, negative_cname_packet);
 	ATF_TP_ADD_TC(tp, negative_soa_lifetime);
 	ATF_TP_ADD_TC(tp, negative_cache_lifetime_and_configuration);
 	ATF_TP_ADD_TC(tp, negative_and_temporary_errors);
