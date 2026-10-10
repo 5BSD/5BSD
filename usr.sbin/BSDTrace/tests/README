@@ -31,3 +31,8 @@ and event operations. It verifies queue closure and provider destruction on
 startup and service-loop errors, and queue closure before acknowledgement.
 The policy and DTrace directory are absent in this fixture. It does not prove
 real tracing-device teardown, protected-worker cleanup or SwitchBoard transport.
+
+failed_watch_retains_worker injects an exit-watch registration failure and
+verifies ownership remains in the shutdown list. It then checks successful,
+failed-signal and failed-reap cleanup, including descriptor closure and error
+reporting. These are injected operations, not a kernel allocation-fault test.

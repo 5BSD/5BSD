@@ -587,6 +587,21 @@ struct trace_worker {
 	pid_t pid;
 };
 
+/* Own the worker before installing its watch, including on failure. */
+static int
+worker_track(int kq, struct trace_worker **workers, struct trace_worker *worker,
+    size_t *count)
+{
+	struct kevent change;
+
+	worker->next = *workers;
+	*workers = worker;
+	(*count)++;
+	EV_SET(&change, worker->pd, EVFILT_PROCDESC, EV_ADD | EV_ENABLE,
+	    NOTE_EXIT, 0, worker);
+	return (kevent(kq, &change, 1, NULL, 0, NULL));
+}
+
 static int
 worker_remove(struct trace_worker **workers, struct trace_worker *worker,
     size_t *count)
@@ -773,20 +788,8 @@ main(void)
 			continue;
 		}
 		close(fd);
-		EV_SET(&change, worker->pd, EVFILT_PROCDESC, EV_ADD | EV_ENABLE,
-		    NOTE_EXIT, 0, worker);
-		if (kevent(kq, &change, 1, NULL, 0, NULL) == -1) {
-			(void)pdkill(worker->pd, SIGKILL);
-			(void)pdwait(worker->pd, &status, WEXITED, NULL, NULL);
-			close(worker->pd);
-			if (worker->liveness >= 0)
-				close(worker->liveness);
-			free(worker);
-			continue;
-		}
-		worker->next = workers;
-		workers = worker;
-		nworkers++;
+		if (worker_track(kq, &workers, worker, &nworkers) == -1)
+			goto fail;
 	}
 	status = workers_shutdown(kq, &workers, &nworkers);
 	if (status != 0)

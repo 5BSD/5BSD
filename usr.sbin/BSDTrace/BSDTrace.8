@@ -151,6 +151,8 @@ silently discarded.
 The provider object is released on normal and failed exits.
 Successful shutdown acknowledgement follows worker cleanup and closure of
 the event queue and DTrace directory.
+Failure to install a worker exit watch stops admission and enters controlled
+shutdown with the worker still tracked.
 .Sh SEE ALSO
 .Xr dtrace 1 ,
 .Xr openat 2 ,
