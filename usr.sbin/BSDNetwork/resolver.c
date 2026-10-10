@@ -4,19 +4,22 @@
  *
  * The daemon's per-connection workers run under cap_enter(2); after that
  * point no path may be opened and libc getaddrinfo(3) is unusable (it opens
- * /etc/resolv.conf, /etc/hosts and /etc/services on demand).  netresolve_init()
- * is therefore called once BEFORE cap_enter: it parses resolv.conf via
- * res_ninit() and retains read-only descriptors for /etc/hosts and
- * /etc/services.  netresolve() then serves lookups in capability mode using
- * only those already-open descriptors, pure in-memory parsing, and freshly
- * created UDP or TCP sockets connected to a configured nameserver with
- * connectat(2).
+ * /etc/resolv.conf, /etc/hosts and /etc/services on demand).  Before
+ * workers fork, netresolve_init() reads resolv.conf through the filesystem
+ * provider and retains read-only descriptors for /etc/hosts and
+ * /etc/services.  The parent periodically refreshes nameservers through the
+ * filesystem provider; existing workers read a shared, read-only generation.
+ * netresolve() serves lookups in capability mode using retained descriptors,
+ * pure in-memory parsing, and fresh UDP or TCP sockets connected to a
+ * configured nameserver with connectat(2).
  *
  * This code parses untrusted DNS responses; every field is bounds-checked
  * before use and the number of collected results is capped.
  */
 #include <sys/types.h>
 #include <sys/socket.h>
+#include <sys/capsicum.h>
+#include <sys/mman.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <arpa/nameser.h>
@@ -24,6 +27,7 @@
 #include <netdb.h>
 #include <poll.h>
 #include <stdbool.h>
+#include <stdatomic.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
@@ -53,10 +57,9 @@ static int			g_servfd = -1;
 #define	RSLV_MAX_CNAME_HOPS	16	/* reject cyclic or excessive chains */
 
 /*
- * Nameservers parsed from the delivered /etc/resolv.conf.  Born in capability
- * mode, we cannot let res_ninit(3) read resolv.conf by path, so we parse it
- * ourselves and drive the query send loop from this list rather than
- * res_getservers(3) (which would read the res_state's own, unpopulated, list).
+ * Initial nameservers parsed from the delivered /etc/resolv.conf.  Workers
+ * retain this process-local snapshot as a fallback if the shared writer dies.
+ * DNS queries normally read the latest complete shared generation.
  */
 static union res_sockaddr_union	g_ns[RSLV_MAX_NS];
 static int			g_nns;
@@ -102,16 +105,198 @@ struct rslv_port {
 	uint16_t	port;		/* host byte order                     */
 };
 
+/*
+ * The parent refreshes nameservers while long-lived workers serve requests.
+ * Workers remap this anonymous object read-only, with CAP_MMAP_R rights, before
+ * entering capability mode.  Atomic bytes and a sequence number let each DNS
+ * query take one complete generation without a control fd per worker.
+ */
+struct rslv_nameservers {
+	_Atomic uint32_t generation;
+	_Atomic uint32_t count;
+	_Atomic unsigned char bytes[sizeof(g_ns)];
+};
+static struct rslv_nameservers *g_nameservers;
+static int g_nameservers_fd = -1;
+
+static void
+nameservers_publish(const union res_sockaddr_union *servers, int count)
+{
+	const unsigned char *bytes;
+	size_t i;
+
+	if (g_nameservers == NULL)
+		return;
+	bytes = (const unsigned char *)(const void *)servers;
+	(void)atomic_fetch_add_explicit(&g_nameservers->generation, 1,
+	    memory_order_seq_cst);
+	atomic_store_explicit(&g_nameservers->count, (uint32_t)count,
+	    memory_order_seq_cst);
+	for (i = 0; i < sizeof(g_ns); i++)
+		atomic_store_explicit(&g_nameservers->bytes[i], bytes[i],
+		    memory_order_seq_cst);
+	(void)atomic_fetch_add_explicit(&g_nameservers->generation, 1,
+	    memory_order_seq_cst);
+}
+
+static int
+nameservers_snapshot(union res_sockaddr_union *servers)
+{
+	unsigned char *bytes;
+	uint32_t before, after, count;
+	int attempt;
+	size_t i;
+
+	if (g_nameservers != NULL) {
+		bytes = (unsigned char *)(void *)servers;
+		for (attempt = 0; attempt < 64; attempt++) {
+			before = atomic_load_explicit(&g_nameservers->generation,
+			    memory_order_seq_cst);
+			if ((before & 1) != 0)
+				continue;
+			count = atomic_load_explicit(&g_nameservers->count,
+			    memory_order_seq_cst);
+			if (count > RSLV_MAX_NS)
+				break;
+			for (i = 0; i < sizeof(g_ns); i++)
+				bytes[i] = atomic_load_explicit(
+				    &g_nameservers->bytes[i], memory_order_seq_cst);
+			after = atomic_load_explicit(&g_nameservers->generation,
+			    memory_order_seq_cst);
+			if (before == after)
+				return ((int)count);
+		}
+	}
+	/* A dead writer cannot stall DNS forever; use the startup snapshot. */
+	memcpy(servers, g_ns, sizeof(g_ns));
+	return (g_nns);
+}
+
+static int
+nameservers_share_init(void)
+{
+	int fd;
+	void *mapping;
+
+	fd = shm_open(SHM_ANON, O_RDWR | O_CLOEXEC, 0600);
+	if (fd == -1)
+		return (-1);
+	if (ftruncate(fd, sizeof(*g_nameservers)) == -1) {
+		(void)close(fd);
+		return (-1);
+	}
+	mapping = mmap(NULL, sizeof(*g_nameservers), PROT_READ | PROT_WRITE,
+	    MAP_SHARED, fd, 0);
+	if (mapping == MAP_FAILED) {
+		(void)close(fd);
+		return (-1);
+	}
+	g_nameservers = mapping;
+	g_nameservers_fd = fd;
+	atomic_init(&g_nameservers->generation, 0);
+	atomic_init(&g_nameservers->count, 0);
+	nameservers_publish(g_ns, g_nns);
+	return (0);
+}
+
+int
+netresolve_worker_enter(void)
+{
+	cap_rights_t rights;
+	void *mapping;
+
+	if (g_nameservers == NULL)
+		return (0);
+	if (g_nameservers_fd == -1)
+		return (0);
+	cap_rights_init(&rights, CAP_MMAP_R);
+	if (cap_rights_limit(g_nameservers_fd, &rights) == -1)
+		return (-1);
+	mapping = mmap(NULL, sizeof(*g_nameservers), PROT_READ, MAP_SHARED,
+	    g_nameservers_fd, 0);
+	if (mapping == MAP_FAILED)
+		return (-1);
+	(void)munmap(g_nameservers, sizeof(*g_nameservers));
+	g_nameservers = mapping;
+	(void)close(g_nameservers_fd);
+	g_nameservers_fd = -1;
+	return (0);
+}
+
+static int
+nameservers_load(struct service_context *ctx,
+    union res_sockaddr_union *servers, int *countp)
+{
+	char buf[8192];
+	char *cursor, *line, *kw, *val, *save;
+	ssize_t r;
+	int fd, count;
+
+	memset(servers, 0, sizeof(g_ns));
+	*countp = 0;
+	if (open_resolver_config(ctx, &fd) == -1)
+		return (errno == ENOENT ? 0 : -1);
+	do {
+		r = pread(fd, buf, sizeof(buf) - 1, 0);
+	} while (r == -1 && errno == EINTR);
+	(void)close(fd);
+	if (r == -1)
+		return (-1);
+	buf[r] = '\0';
+	cursor = buf;
+	count = 0;
+	while ((line = strsep(&cursor, "\n")) != NULL &&
+	    count < RSLV_MAX_NS) {
+		kw = strtok_r(line, " \t", &save);
+		if (kw == NULL || strcmp(kw, "nameserver") != 0)
+			continue;
+		val = strtok_r(NULL, " \t\r", &save);
+		if (val == NULL)
+			continue;
+		memset(&servers[count], 0, sizeof(servers[count]));
+		if (inet_pton(AF_INET, val,
+		    &servers[count].sin.sin_addr) == 1) {
+			servers[count].sin.sin_family = AF_INET;
+			servers[count].sin.sin_len = sizeof(servers[count].sin);
+			servers[count].sin.sin_port = htons(53);
+			count++;
+		} else if (inet_pton(AF_INET6, val,
+		    &servers[count].sin6.sin6_addr) == 1) {
+			servers[count].sin6.sin6_family = AF_INET6;
+			servers[count].sin6.sin6_len = sizeof(servers[count].sin6);
+			servers[count].sin6.sin6_port = htons(53);
+			count++;
+		}
+	}
+	*countp = count;
+	return (0);
+}
+
+int
+netresolve_refresh(struct service_context *ctx)
+{
+	union res_sockaddr_union servers[RSLV_MAX_NS];
+	int count;
+
+	if (ctx == NULL)
+		return (errno = EINVAL, -1);
+	if (nameservers_load(ctx, servers, &count) == -1)
+		return (-1);
+	if (count == g_nns && memcmp(servers, g_ns, sizeof(g_ns)) == 0)
+		return (0);
+	memcpy(g_ns, servers, sizeof(g_ns));
+	g_nns = count;
+	nameservers_publish(g_ns, g_nns);
+	return (0);
+}
+
 /* =====================================================================
  * init
  * ===================================================================== */
 int
 netresolve_init(struct service_context *ctx)
 {
-	char buf[8192];
-	char *cursor, *line, *kw, *val, *save;
-	ssize_t r;
-	int fd;
+	int shared_error;
 
 	/*
 	 * res_ninit sets up the query machinery (id, options, retrans/retry).
@@ -121,45 +306,11 @@ netresolve_init(struct service_context *ctx)
 	 */
 	(void)res_ninit(&g_res);
 
-	/*
-	 * Nameservers: parse the plane-delivered /etc/resolv.conf ourselves.
-	 * Absent/unreadable -> no nameservers (DNS is skipped; /etc/hosts and
-	 * numeric literals still resolve).
-	 */
+	/* Nameserver updates reach workers through the shared generation. */
 	g_nns = 0;
-	if (open_resolver_config(ctx, &fd) == 0) {
-		r = pread(fd, buf, sizeof(buf) - 1, 0);
-		(void)close(fd);
-		if (r > 0) {
-			buf[r] = '\0';
-			cursor = buf;
-			while ((line = strsep(&cursor, "\n")) != NULL &&
-			    g_nns < RSLV_MAX_NS) {
-				kw = strtok_r(line, " \t", &save);
-				if (kw == NULL || strcmp(kw, "nameserver") != 0)
-					continue;
-				val = strtok_r(NULL, " \t\r", &save);
-				if (val == NULL)
-					continue;
-				memset(&g_ns[g_nns], 0, sizeof(g_ns[g_nns]));
-				if (inet_pton(AF_INET, val,
-				    &g_ns[g_nns].sin.sin_addr) == 1) {
-					g_ns[g_nns].sin.sin_family = AF_INET;
-					g_ns[g_nns].sin.sin_len =
-					    sizeof(g_ns[g_nns].sin);
-					g_ns[g_nns].sin.sin_port = htons(53);
-					g_nns++;
-				} else if (inet_pton(AF_INET6, val,
-				    &g_ns[g_nns].sin6.sin6_addr) == 1) {
-					g_ns[g_nns].sin6.sin6_family = AF_INET6;
-					g_ns[g_nns].sin6.sin6_len =
-					    sizeof(g_ns[g_nns].sin6);
-					g_ns[g_nns].sin6.sin6_port = htons(53);
-					g_nns++;
-				}
-			}
-		}
-	}
+	memset(g_ns, 0, sizeof(g_ns));
+	shared_error = nameservers_share_init() == -1 ? errno : 0;
+	(void)netresolve_refresh(ctx);
 
 	/*
 	 * hosts/services on demand through the filesystem provider (born in
@@ -172,6 +323,8 @@ netresolve_init(struct service_context *ctx)
 	if (service_open_isolated(ctx, "/etc/services", SERVICE_OPEN_READ, 0,
 	    &g_servfd) == -1)
 		g_servfd = -1;
+	if (shared_error != 0)
+		return (errno = shared_error, -1);
 	return (0);
 }
 
@@ -703,11 +856,10 @@ dns_query(const char *host, int rrtype, struct rslv_addr *addrs, int max,
 	int nsrv, qlen, attempt, s, retrans, retry, added_total = 0;
 	int answered = 0;
 
-	/* Nameservers come from the resolv.conf we parsed in netresolve_init. */
-	if (g_nns <= 0)
+	/* Snapshot one complete nameserver generation for this query. */
+	nsrv = nameservers_snapshot(srv);
+	if (nsrv <= 0)
 		return (-1);
-	nsrv = g_nns;
-	memcpy(srv, g_ns, (size_t)nsrv * sizeof(srv[0]));
 
 	qlen = res_nmkquery(&g_res, ns_o_query, host, ns_c_in, rrtype, NULL,
 	    0, NULL, qbuf, (int)sizeof(qbuf));

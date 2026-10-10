@@ -1366,6 +1366,8 @@ worker(int fd, int barrier,
 
 	audit = NULL;
 	memset(&wlog, 0, sizeof(wlog));
+	if (netresolve_worker_enter() == -1)
+		goto fail;
 	if (auditcmp_client_adopt(audit_fd, &audit) == -1)
 		goto fail;
 	/*
@@ -1514,6 +1516,8 @@ reject:
 }
 
 #define	NETWORKCMP_MAX_WORKERS	4096u
+#define	NETWORKCMP_RESOLVER_TIMER	1
+#define	NETWORKCMP_RESOLVER_REFRESH_SECONDS	5
 
 /* One live pdfork'd worker, tracked so its exit can account the slot. */
 struct net_worker_ent {
@@ -1567,6 +1571,7 @@ main(void)
 	 * compiled-in default policy (outbound allowed, internal denied) stays in
 	 * force and the problem is logged for the operator.
 	 */
+	ctx = NULL;
 	networkcmp_config_defaults(&config);
 	if (service_config_open(NETWORKCMP_CONFIG_NAME, &cfgfd) == -1) {
 		if (errno != ENOENT)
@@ -1583,14 +1588,14 @@ main(void)
 	 * over it: born in capability mode, the resolver obtains /etc/resolv.conf
 	 * (parsed for nameservers), /etc/hosts and /etc/services on demand through
 	 * the filesystem provider.  Workers pdfork'd later inherit the retained
-	 * descriptors and parsed nameservers.  Non-fatal: numeric literals (and,
-	 * given hosts, local names) still resolve; log and proceed.
+	 * descriptors and a read-only nameserver generation.  Non-fatal: numeric
+	 * literals (and, given hosts, local names) still resolve; log and proceed.
 	 */
 	if (service_acquire(&ctx) == -1)
 		net_log(main_logger(), LOG_WARNING, "service_acquire: %m");
 	else if (netresolve_init(ctx) == -1)
 		net_log(main_logger(), LOG_WARNING,
-		    "resolver init failed; only numeric addresses will resolve: %m");
+		    "resolver shared nameservers unavailable: %m");
 	/*
 	 * Operator logging goes through system.Log (main_logger()), acquired
 	 * lazily over the lookup channel after the provider is exposed — no
@@ -1621,11 +1626,24 @@ main(void)
 		if (kevent(kq, &change, 1, NULL, 0, NULL) == -1)
 			goto fail;
 	}
+	if (ctx != NULL) {
+		EV_SET(&change, NETWORKCMP_RESOLVER_TIMER, EVFILT_TIMER,
+		    EV_ADD | EV_ENABLE, NOTE_SECONDS,
+		    NETWORKCMP_RESOLVER_REFRESH_SECONDS, NULL);
+		if (kevent(kq, &change, 1, NULL, 0, NULL) == -1)
+			goto fail;
+	}
 	for (;;) {
 		if (kevent(kq, NULL, 0, &event, 1, NULL) == -1) {
 			if (errno == EINTR)
 				continue;
 			goto fail;
+		}
+		if (event.filter == EVFILT_TIMER) {
+			if (netresolve_refresh(ctx) == -1)
+				net_log(main_logger(), LOG_WARNING,
+				    "nameserver refresh failed: %m");
+			continue;
 		}
 		if (event.filter == EVFILT_PROCDESC) {
 			net_worker_remove(&workers, event.udata, &nworkers);

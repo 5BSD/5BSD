@@ -384,11 +384,77 @@ ATF_TC_BODY(truncated_udp_falls_back_to_tcp, tc)
 	close(tcp);
 }
 
+ATF_TC(nameserver_refresh_existing_worker);
+ATF_TC_HEAD(nameserver_refresh_existing_worker, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "An existing worker sees a new nameserver generation read-only");
+}
+ATF_TC_BODY(nameserver_refresh_existing_worker, tc)
+{
+	union res_sockaddr_union snapshot[RSLV_MAX_NS];
+	struct in_addr expected;
+	int syncfd[2], status;
+	pid_t child;
+	char byte;
+
+	(void)tc;
+	memset(g_ns, 0, sizeof(g_ns));
+	g_ns[0].sin.sin_len = sizeof(g_ns[0].sin);
+	g_ns[0].sin.sin_family = AF_INET;
+	g_ns[0].sin.sin_port = htons(53);
+	ATF_REQUIRE(inet_pton(AF_INET, "192.0.2.1",
+	    &g_ns[0].sin.sin_addr) == 1);
+	g_nns = 1;
+	ATF_REQUIRE(nameservers_share_init() == 0);
+	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, syncfd) == 0);
+	child = fork();
+	ATF_REQUIRE(child >= 0);
+	if (child == 0) {
+		close(syncfd[0]);
+		alarm(5);
+		if (netresolve_worker_enter() == -1)
+			_exit(2);
+		if (mprotect(g_nameservers, sizeof(*g_nameservers),
+		    PROT_READ | PROT_WRITE) != -1)
+			_exit(3);
+		byte = 1;
+		if (write(syncfd[1], &byte, 1) != 1 ||
+		    read(syncfd[1], &byte, 1) != 1)
+			_exit(4);
+		if (nameservers_snapshot(snapshot) != 1 ||
+		    inet_pton(AF_INET, "198.51.100.2", &expected) != 1 ||
+		    memcmp(&snapshot[0].sin.sin_addr, &expected,
+		    sizeof(expected)) != 0)
+			_exit(5);
+		_exit(0);
+	}
+	close(syncfd[1]);
+	ATF_REQUIRE(read(syncfd[0], &byte, 1) == 1);
+	ATF_REQUIRE(inet_pton(AF_INET, "198.51.100.2",
+	    &g_ns[0].sin.sin_addr) == 1);
+	nameservers_publish(g_ns, g_nns);
+	ATF_REQUIRE_EQ(1, write(syncfd[0], &byte, 1));
+	close(syncfd[0]);
+	ATF_REQUIRE(waitpid(child, &status, 0) == child);
+	ATF_REQUIRE_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
+	    "worker refresh failed: status %d", status);
+	ATF_CHECK_EQ(1, nameservers_snapshot(snapshot));
+	ATF_REQUIRE(inet_pton(AF_INET, "198.51.100.2", &expected) == 1);
+	ATF_CHECK(memcmp(&snapshot[0].sin.sin_addr, &expected,
+	    sizeof(expected)) == 0);
+	(void)munmap(g_nameservers, sizeof(*g_nameservers));
+	(void)close(g_nameservers_fd);
+	g_nameservers = NULL;
+	g_nameservers_fd = -1;
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, reply_validation);
 	ATF_TP_ADD_TC(tp, ignores_bad_udp_reply);
 	ATF_TP_ADD_TC(tp, answer_owner_chain);
 	ATF_TP_ADD_TC(tp, truncated_udp_falls_back_to_tcp);
+	ATF_TP_ADD_TC(tp, nameserver_refresh_existing_worker);
 	return (atf_no_error());
 }

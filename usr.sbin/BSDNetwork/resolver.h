@@ -12,6 +12,9 @@ struct service_context;
  * missing files just narrow what resolves), or -1+errno.
  */
 int  netresolve_init(struct service_context *ctx);
+/* Parent refreshes nameservers; workers remap the shared generation read-only. */
+int  netresolve_refresh(struct service_context *ctx);
+int  netresolve_worker_enter(void);
 /*
  * A capability-mode-safe subset of getaddrinfo(3).  Same return convention:
  * 0 on success (*res is a malloc'd addrinfo list, free with netfreeaddrinfo),
