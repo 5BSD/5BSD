@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
 /* Disposable VM PID 1 only. Never invoke as the host's init. */
 #include <sys/types.h>
+#include <sys/sysctl.h>
 #include <sys/mount.h>
 #include <sys/ioctl.h>
 #include <sys/socket.h>
@@ -149,6 +150,18 @@ main(void)
 	}
 	setvbuf(stdout, NULL, _IONBF, 0);
 	setvbuf(stderr, NULL, _IONBF, 0);
+	{
+		const char *names[] = { "kern.eventtimer.timer", "kern.timecounter.hardware" };
+		char value[128];
+		size_t length;
+		for (unsigned i = 0; i < sizeof(names) / sizeof(names[0]); i++) {
+			length = sizeof(value);
+			if (sysctlbyname(names[i], value, &length, NULL, 0) == 0)
+				printf("RUNTIME_CLOCK %s=%s\n", names[i], value);
+			else
+				perror(names[i]);
+		}
+	}
 	setenv("HOME", "/root", 1);
 	setenv("TMPDIR", "/tmp", 1);
 	puts("RUNTIME_VM_START");

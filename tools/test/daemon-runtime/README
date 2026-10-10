@@ -165,3 +165,19 @@ guest timer delivery or establish the original failure's sole cause. A quiet
 host/hardware-accelerated comparison and guest timer trace remain required.
 An icount experiment exited before tests with QEMU "Bad icount read"; no
 virtual-clock option is shipped and no failing allowance was relaxed.
+
+Diagnostic comparisons may select --eventtimer LAPIC/i8254/HPET and
+--tcg-thread multi/single. Defaults retain automatic guest timer selection
+and multi-thread TCG. The requested settings are recorded in provenance;
+RUNTIME_CLOCK prints actual guest eventtimer and timecounter selections.
+A timer override can fall back if unavailable, so inspect the actual value.
+Both modes retain two guest CPUs and all acceptance thresholds.
+
+Further 2026-10-10 host ktrace captured a QEMU CPU thread descheduled for
+174.972ms while its main thread waited175.002ms on the same mutex; the CPU
+thread resumed and woke the main thread. CPU deschedules reached936.947ms.
+This demonstrates host lock-holder scheduling delays in the failing VM.
+Both LAPIC/i8254 and single/multi TCG reproduced overruns. No production
+timeout change or relaxed allowance follows from this result; repeat latency
+acceptance on a quiet host and keep the timer control. Tracing can perturb
+timings and does not prove the sole cause of every earlier untraced failure.
