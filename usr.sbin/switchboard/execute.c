@@ -2183,7 +2183,7 @@ svc_launch_finish(struct svc_runtime *svc, int kq)
 	    m->label, (intmax_t)pid, (uintmax_t)L->uid, (uintmax_t)L->gid);
 	SWITCHBOARD_PROBE_SVC_START(m->label, pid);
 	{
-		char rbuf[64];
+		char rbuf[64] __unused;
 
 		/*
 		 * The responsibility token: this unit's coalition id, the id

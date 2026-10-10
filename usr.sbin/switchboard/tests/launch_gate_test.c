@@ -11,8 +11,11 @@ fault_kevent(int kq, const struct kevent *changes, int nc,
     struct kevent *events, int ne, const struct timespec *timeout)
 {
 	registrations++;
-	if (fault == 1)
+	if (fault == 1 || fault == 3) {
+		if (fault == 3)
+			ATF_REQUIRE_EQ(0, kevent(kq, changes, 1, NULL, 0, NULL));
 		return (errno = EIO, -1);
+	}
 	return (kevent(kq, changes, nc, events, ne, timeout));
 }
 static ssize_t
@@ -69,7 +72,7 @@ ATF_TC_BODY(launch_gate_failures, tc)
 	int gate[2], coalition[2], proof[2], kq, status, result, lease;
 	char byte;
 
-	for (fault = 0; fault <= 2; fault++) {
+	for (fault = 0; fault <= 3; fault++) {
 		memset(&svc, 0, sizeof(svc));
 		registrations = releases = revoked = channels_closed = cleanup = 0;
 		svc.manifest.unix_protocol = true;
@@ -106,7 +109,7 @@ ATF_TC_BODY(launch_gate_failures, tc)
 			free(svc.launch);
 			close(lease);
 		} else {
-			ATF_CHECK_EQ(fault == 1 ? EIO : EPIPE, errno);
+			ATF_CHECK_EQ(fault == 2 ? EPIPE : EIO, errno);
 			ATF_REQUIRE_EQ(-1, result);
 			ATF_CHECK_EQ(0, read(proof[0], &byte, 1));
 			ATF_CHECK_EQ(1, revoked);
@@ -115,7 +118,7 @@ ATF_TC_BODY(launch_gate_failures, tc)
 			ATF_CHECK_ERRNO(EBADF, fcntl(lease, F_GETFD) == -1);
 		}
 		ATF_CHECK_EQ(1, registrations);
-		ATF_CHECK_EQ(fault == 1 ? 0 : 1, releases);
+		ATF_CHECK_EQ(fault == 1 || fault == 3 ? 0 : 1, releases);
 		ATF_CHECK_ERRNO(EBADF, fcntl(gate[1], F_GETFD) == -1);
 		do {
 			result = pdwait(svc.pd_fd, &status, WEXITED, NULL, NULL);

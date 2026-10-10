@@ -78,4 +78,11 @@ CFLAGS.quota_test+= -I${SRCTOP}/lib/libcapsulert -I${SRCTOP}/lib/libtrustedzfs -
 LDFLAGS.quota_test+= -Wl,--gc-sections
 NO_SHARED.quota_test= yes
 
+ATF_TESTS_C+= lifecycle_test
+SRCS.lifecycle_test= lifecycle_test.c layout.c nvwalk.c config.c oes_factory.c oes_session.c
+CFLAGS.lifecycle_test+= -I${SRCTOP}/lib/liboes -ffunction-sections -fdata-sections
+LDFLAGS.lifecycle_test+= -Wl,--gc-sections
+LIBADD.lifecycle_test= ${BSDFILESYSTEM_LIBADD}
+NO_SHARED.lifecycle_test= yes
+
 .include <bsd.test.mk>
