@@ -37,4 +37,12 @@ SRCS.provider_test=	provider_test.c ${BSDFILESYSTEM_SRCS}
 LIBADD.provider_test=	${BSDFILESYSTEM_LIBADD}
 NO_SHARED.provider_test=	yes
 
+ATF_TESTS_C+= oes_factory_test
+SRCS.oes_factory_test= oes_factory_test.c oes_factory.c
+LIBADD.oes_factory_test= service
+NO_SHARED.oes_factory_test= yes
+
+ATF_TESTS_C+= oes_factory_failure_test
+NO_SHARED.oes_factory_failure_test= yes
+
 .include <bsd.test.mk>

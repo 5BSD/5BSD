@@ -29,3 +29,9 @@ each binary hash and derives the required cases from its ATF listing; each
 case gets its own directory and 40-second process timeout. No skip is a pass.
 These suites exercise real descriptor operations with service test doubles;
 they do not replace integrated daemon/provider tests.
+
+Use --oes-factory to stage the current object tree's oes.ko and boot it in the
+disposable guest. The runner hashes the module and static oes_factory_test.
+This exercises real OES NOTIFY descriptor attenuation after cap_enter, including
+denial of AUTH subscriptions and mode/scope changes. It does not validate
+SwitchBoard attribute admission or the future factory channel handoff.

@@ -10,6 +10,7 @@ p.add_argument('--qemu',required=True)
 p.add_argument('--qemu-data',type=Path,required=True)
 p.add_argument('--kernconf',default='GENERIC-NODEBUG')
 p.add_argument('--client-ownership',action='store_true')
+p.add_argument('--oes-factory',action='store_true')
 p.add_argument('--timeout',type=int,default=240)
 a=p.parse_args()
 if a.timeout<=0: p.error('timeout must be positive')
@@ -51,8 +52,20 @@ if a.client_ownership:
   if not cases: p.error('no ownership cases: '+str(source))
   extra_cases.extend(('/tests/'+alias,case) for case in cases)
  (stage/'tests/extra-cases').write_text(''.join(program+' '+case+'\n' for program,case in extra_cases))
+if a.oes_factory:
+ source=obj/'usr.sbin/BSDFilesystem/tests/oes_factory_test'
+ module=obj/'sys'/a.kernconf/'modules/usr/src/sys/modules/oes/oes.ko'
+ if 'statically linked' not in subprocess.check_output(['file',str(source)],text=True): p.error('OES test must be static')
+ for src,dst,key in [(source,stage/'tests/oes_factory_test','oes_factory_test'),(module,stage/'boot/kernel/oes.ko','oes_module')]:
+  before=digest(src); shutil.copyfile(src,dst)
+  if digest(src)!=before or digest(dst)!=before: p.error('OES input changed during staging')
+  extra_hashes[key]=before
+ extra_cases.extend([('/tests/oes_factory_test','invalid_root'),('/tests/oes_factory_test','notify_only_in_capmode')])
+ (stage/'tests/extra-cases').write_text(''.join(program+' '+case+'\n' for program,case in extra_cases))
 (stage/'etc/passwd').write_text('root:*:0:0:Charlie &:/root:/bin/sh\n')
 (stage/'boot/loader.conf').write_text('console="comconsole"\nautoboot_delay="1"\ncapability_plane="NO"\ninit_path="/sbin/runtime-init"\nvfs.root.mountfrom="ufs:/dev/vtbd0p2"\nvfs.root.mountfrom.options="rw"\n')
+if a.oes_factory:
+ with (stage/'boot/loader.conf').open('a') as f: f.write('oes_load="YES"\n')
 (stage/'boot.config').write_text('-h\n')
 entries=['#mtree 2.0','. type=dir uid=0 gid=0 mode=0755']
 for f in sorted(stage.rglob('*')):
