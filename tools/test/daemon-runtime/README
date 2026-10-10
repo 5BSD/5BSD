@@ -90,5 +90,6 @@ Use --atf-case relative/path:case (repeatable) to run a specific listed ATF
 case from a static object-tree binary. Unknown case names are rejected. The
 same path, static-link and hash checks apply as for --atf-suite. inputs.json
 and result.json record the exact selected cases; a selected-case pass does
-not certify the rest of that suite. The minimal guest does not configure
-loopback addresses, so network bind/connect suites need a fuller fixture.
+not certify the rest of that suite. The guest configures lo0 with 127.0.0.1/8 for local IPv4 TCP/UDP
+fixtures. QEMU still has no network adapter or external connectivity. IPv6
+loopback and deterministic unresponsive peers are not configured.

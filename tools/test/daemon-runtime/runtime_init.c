@@ -2,6 +2,11 @@
 /* Disposable VM PID 1 only. Never invoke as the host's init. */
 #include <sys/types.h>
 #include <sys/mount.h>
+#include <sys/ioctl.h>
+#include <sys/socket.h>
+#include <sys/sockio.h>
+#include <net/if.h>
+#include <netinet/in.h>
 #include <sys/reboot.h>
 #include <sys/stat.h>
 #include <sys/uio.h>
@@ -17,6 +22,50 @@
 #include <time.h>
 #include <termios.h>
 #include <unistd.h>
+
+/* Local TCP/UDP fixtures need lo0; QEMU still has no network adapter. */
+static int
+configure_loopback(void)
+{
+	struct ifaliasreq address;
+	struct ifreq flags;
+	struct sockaddr_in *sin;
+	int fd, error = 0;
+
+	fd = socket(AF_INET, SOCK_DGRAM, 0);
+	if (fd == -1)
+		return (-1);
+	memset(&address, 0, sizeof(address));
+	strlcpy(address.ifra_name, "lo0", sizeof(address.ifra_name));
+	sin = (struct sockaddr_in *)&address.ifra_addr;
+	sin->sin_len = sizeof(*sin);
+	sin->sin_family = AF_INET;
+	sin->sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+	sin = (struct sockaddr_in *)&address.ifra_mask;
+	sin->sin_len = sizeof(*sin);
+	sin->sin_family = AF_INET;
+	sin->sin_addr.s_addr = htonl(0xff000000U);
+	if (ioctl(fd, SIOCAIFADDR, &address) == -1) {
+		error = errno;
+		goto out;
+	}
+	memset(&flags, 0, sizeof(flags));
+	strlcpy(flags.ifr_name, "lo0", sizeof(flags.ifr_name));
+	if (ioctl(fd, SIOCGIFFLAGS, &flags) == -1) {
+		error = errno;
+		goto out;
+	}
+	flags.ifr_flags |= IFF_UP;
+	if (ioctl(fd, SIOCSIFFLAGS, &flags) == -1)
+		error = errno;
+out:
+	close(fd);
+	if (error != 0) {
+		errno = error;
+		return (-1);
+	}
+	return (0);
+}
 
 static int
 run_case(const char *program, const char *name)
@@ -103,6 +152,10 @@ main(void)
 	setenv("HOME", "/root", 1);
 	setenv("TMPDIR", "/tmp", 1);
 	puts("RUNTIME_VM_START");
+	if (configure_loopback() == -1) {
+		perror("configure lo0");
+		failed = 1;
+	}
 	char tmpfs[] = "tmpfs", tmp[] = "/tmp";
 	struct iovec tmpiov[] = { { .iov_base = fstype,
 				      .iov_len = sizeof(fstype) },
