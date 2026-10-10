@@ -92,12 +92,13 @@ Logical jail removal asynchronously retires that membership, even if the
 coalition and jail descriptors remain open.
 Jail membership removal does not certify that all jailed processes have
 completed resource cleanup.
-The coalition separately retains the removed prison's identity until its user
-references drain, including deferred last-user release.
+The coalition separately retains the removed prison's identity until user
+references throughout its descendants drain, including deferred last-user
+release.
+References used only to retain the jail hierarchy are excluded: an unreaped
+process's credential can keep a prison allocation alive after resource cleanup.
 This retains coalition state after control closure without keeping a jail
-user reference itself.
-Descendant prison references may prolong this internal retention; it is not
-an exposed descendant-completion wait operation.
+user reference itself; it is not an exposed completion-wait operation.
 Returns
 .Vt struct coalition_reply .
 .It Dv COALITION_OP_JOIN

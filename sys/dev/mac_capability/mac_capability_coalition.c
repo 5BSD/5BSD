@@ -510,6 +510,53 @@ coalition_jail_set_member(struct prison *pr, struct coalition_member *cm)
 	prison_unlock(pr);
 }
 
+/* allprison_lock stabilizes child links and their parent-reference pairing. */
+static bool
+coalition_prison_has_users_locked(struct prison *pr)
+{
+	struct prison *child;
+	u_int children = 0;
+	bool pending;
+
+	sx_assert(&allprison_lock, SA_LOCKED);
+	FOREACH_PRISON_CHILD(pr, child)
+		children++;
+	prison_lock(pr);
+	/*
+	 * Each extant child prison contributes one parent user reference until
+	 * its allocation is destroyed.  That reference is not a process: an
+	 * unreaped zombie's credential can retain the child allocation after
+	 * all its resources and user references have gone.  Examine each child
+	 * separately rather than waiting for those hierarchy references.
+	 * Any mismatch remains pending, including attach/fork reservations and
+	 * the deferred last-process release.  Alive prisons are never complete.
+	 */
+	pending = prison_isalive(pr) ||
+	    refcount_load(&pr->pr_uref) != children;
+	prison_unlock(pr);
+	return (pending);
+}
+
+static bool
+coalition_jail_has_users(struct prison *pr)
+{
+	struct prison *child;
+	bool descend, pending;
+
+	sx_slock(&allprison_lock);
+	pending = coalition_prison_has_users_locked(pr);
+	if (!pending) {
+		FOREACH_PRISON_DESCENDANT(pr, child, descend) {
+			if (coalition_prison_has_users_locked(child)) {
+				pending = true;
+				break;
+			}
+		}
+	}
+	sx_sunlock(&allprison_lock);
+	return (pending);
+}
+
 static void
 coalition_jail_cleanup_task_fn(void *context, int pending __unused)
 {
@@ -577,10 +624,10 @@ coalition_jail_cleanup_task_fn(void *context, int pending __unused)
 	 * Removal precedes process exit.  Preserve the prison identity and
 	 * coalition until user references drain, including deferred last-user
 	 * release.  Do not hold a user reference ourselves or block taskqueue
-	 * workers waiting for processes.  Descendant prison references may
-	 * conservatively prolong this retention; this is not a public wait API.
+	 * workers waiting for processes.  Check descendants while excluding
+	 * hierarchy-only references; this is not a public wait API.
 	 */
-	if (refcount_load(&cjo->cjo_prison->pr_uref) != 0) {
+	if (coalition_jail_has_users(cjo->cjo_prison)) {
 		taskqueue_enqueue_timeout(taskqueue_thread,
 		    &cjo->cjo_cleanup_task, MAX(1, hz / 10));
 		return;

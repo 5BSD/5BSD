@@ -3610,6 +3610,70 @@ ATF_TC_CLEANUP(terminate_removes_jaildesc_member, tc)
 	remove_jail_by_name(COALITION_TEST_JAIL_NAME);
 }
 
+ATF_TC_WITH_CLEANUP(removed_jail_ignores_zombie_descendant);
+ATF_TC_HEAD(removed_jail_ignores_zombie_descendant, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Removed jail cleanup does not wait for a descendant process to be reaped");
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_coalition");
+	atf_tc_set_md_var(tc, "timeout", "30");
+}
+ATF_TC_BODY(removed_jail_ignores_zombie_descendant, tc)
+{
+	const char *parent = COALITION_TEST_JAIL_NAME;
+	const char *nested = COALITION_TEST_JAIL_NAME ".child";
+	struct kevent event;
+	struct timespec timeout = { .tv_sec = 5 };
+	unsigned base;
+	int jfd, child_jfd, jid, cfd, pd, kq, status;
+	int32_t reply;
+	pid_t child;
+
+	remove_jail_by_name(parent);
+	base = coalition_count();
+	jfd = create_jail_with_desc(parent);
+	ATF_REQUIRE(jfd >= 0);
+	ATF_REQUIRE(jail_setv(JAIL_UPDATE, "name", parent,
+	    "children.max", "1", NULL) >= 0);
+	child_jfd = create_jail_with_desc(nested);
+	ATF_REQUIRE(child_jfd >= 0);
+	jid = jail_getid(nested);
+	ATF_REQUIRE(jid >= 0);
+	child = pdfork(&pd, 0);
+	ATF_REQUIRE(child >= 0);
+	if (child == 0) {
+		if (jail_attach(jid) == -1)
+			_exit(1);
+		_exit(0);
+	}
+	kq = kqueue();
+	ATF_REQUIRE(kq >= 0);
+	EV_SET(&event, pd, EVFILT_PROCDESC, EV_ADD | EV_ENABLE, NOTE_EXIT, 0, NULL);
+	ATF_REQUIRE_EQ(1, kevent(kq, &event, 1, &event, 1, &timeout));
+	close(kq);
+	/* Leave the zombie unreaped while its credential can hold the prison. */
+	cfd = mac_capability_connect("coalition");
+	ATF_REQUIRE(cfd >= 0);
+	ATF_REQUIRE_EQ(0, coalition_enlist(cfd, jfd, &reply));
+	ATF_REQUIRE_EQ(0, reply);
+	close(cfd);
+	wait_for_jail_removal(parent);
+	for (unsigned i = 0; i < 500 && coalition_count() != base; i++)
+		usleep(10000);
+	ATF_CHECK_EQ_MSG(base, coalition_count(),
+	    "zombie descendant pinned completed jail cleanup");
+	ATF_REQUIRE_EQ(child, waitpid(child, &status, 0));
+	ATF_CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	close(pd);
+	close(child_jfd);
+	close(jfd);
+}
+ATF_TC_CLEANUP(removed_jail_ignores_zombie_descendant, tc)
+{
+	remove_jail_by_name(COALITION_TEST_JAIL_NAME);
+}
+
 ATF_TC_WITH_CLEANUP(close_removes_jaildesc_member);
 ATF_TC_HEAD(close_removes_jaildesc_member, tc)
 {
@@ -4785,6 +4849,7 @@ ATF_TP_ADD_TCS(tp)
 		ATF_TP_ADD_TC(tp, process_exit_decrements_count);
 		ATF_TP_ADD_TC(tp, terminate_removes_jaildesc_member);
 		ATF_TP_ADD_TC(tp, close_removes_jaildesc_member);
+	ATF_TP_ADD_TC(tp, removed_jail_ignores_zombie_descendant);
 
 	/* Graceful termination */
 	ATF_TP_ADD_TC(tp, graceful_terminate);
