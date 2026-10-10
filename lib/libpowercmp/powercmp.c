@@ -164,6 +164,8 @@ powercmp_client_open(struct powercmp_client **clientp)
 		free(client);
 		return (errno = error, -1);
 	}
+	/* The session owns its duplicate, not this constructor descriptor. */
+	(void)close(owned);
 	*clientp = client;
 	return (0);
 }
