@@ -31,6 +31,7 @@
 #define	LOGCMP_FEATURE_TRACE_CONTEXT	0x00000020U
 #define	LOGCMP_FEATURE_EDGE_WAKEUP	0x00000040U
 #define	LOGCMP_FEATURE_SCOPED_QUERY	0x00000080U
+#define	LOGCMP_FEATURE_INTEREST		0x00000100U
 
 #define	LOGCMP_MSG_F_MASK		0U
 
@@ -132,6 +133,7 @@ struct logcmp_hello_reply {
 	uint32_t	max_record;
 	uint32_t	max_text;
 	uint32_t	max_fields;
+	uint32_t	minimum_severity;	/* advisory producer interest */
 };
 
 struct logcmp_attach_request {

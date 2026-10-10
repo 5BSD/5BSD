@@ -597,6 +597,10 @@ net_log(struct net_logger *nl, int pri, const char *fmt, ...)
 		struct logcmp_emit_options opt;
 		char expfmt[256], msg[512];
 
+		if (!logcmp_enabled(nl->logger, net_severity(pri))) {
+			errno = saved;
+			return;
+		}
 		net_expand_m(expfmt, sizeof(expfmt), fmt, saved);
 		va_start(ap, fmt);
 		(void)vsnprintf(msg, sizeof(msg), expfmt, ap);

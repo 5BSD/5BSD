@@ -8,6 +8,7 @@
 #include <sys/types.h>
 
 #include <stdarg.h>
+#include <stdbool.h>
 #include <stddef.h>
 
 #include "logcmp_protocol.h"
@@ -51,6 +52,7 @@ int	logcmp_logger_create(struct logcmp_client *, const char *,
 void	logcmp_logger_destroy(struct logcmp_logger *);
 int	logcmp_emit(struct logcmp_logger *,
 	    const struct logcmp_emit_options *);
+bool	logcmp_enabled(const struct logcmp_logger *, uint32_t);
 int	logcmp_flush(struct logcmp_client *);
 
 /*

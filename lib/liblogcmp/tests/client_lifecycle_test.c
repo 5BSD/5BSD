@@ -904,6 +904,47 @@ ATF_TC_BODY(emit_rejects_redaction_expansion, tc)
 	logcmp_client_close(client);
 }
 
+ATF_TC_WITHOUT_HEAD(producer_interest_avoids_formatting);
+ATF_TC_BODY(producer_interest_avoids_formatting, tc)
+{
+	struct logcmp_client *client;
+	struct logcmp_logger *logger;
+	int formatted = 0;
+
+	(void)tc;
+	fake_service_reset();
+	ATF_REQUIRE_EQ(0, logcmp_client_open(&client));
+	ATF_REQUIRE_EQ(0, logcmp_logger_create(client, "test.service",
+	    "interest", &logger));
+	if (logcmp_enabled(logger, LOGCMP_SEVERITY_DEBUG))
+		formatted++;
+	ATF_CHECK_EQ(0, formatted);
+	ATF_CHECK(logcmp_enabled(logger, LOGCMP_SEVERITY_INFO));
+	ATF_CHECK(logcmp_enabled(logger, LOGCMP_SEVERITY_ERROR));
+	ATF_CHECK(!logcmp_enabled(logger, 0));
+	ATF_CHECK(!logcmp_enabled(NULL, LOGCMP_SEVERITY_INFO));
+	logcmp_logger_destroy(logger);
+	logcmp_client_close(client);
+}
+
+ATF_TC_WITHOUT_HEAD(legacy_provider_keeps_all_levels_enabled);
+ATF_TC_BODY(legacy_provider_keeps_all_levels_enabled, tc)
+{
+	struct logcmp_client *client;
+	struct logcmp_logger *logger;
+
+	(void)tc;
+	fake_service_reset();
+	fake_service_use_legacy_hello();
+	ATF_REQUIRE_EQ(0, logcmp_client_open(&client));
+	ATF_REQUIRE_EQ(0, logcmp_logger_create(client, "test.service",
+	    "interest", &logger));
+	ATF_CHECK(logcmp_enabled(logger, LOGCMP_SEVERITY_TRACE));
+	ATF_CHECK_EQ(2, fake_service_created());
+	logcmp_logger_destroy(logger);
+	logcmp_client_close(client);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -930,5 +971,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, scoped_query_cursor_and_retry);
 	ATF_TP_ADD_TC(tp, query_ex_validates_and_passes_filters);
 	ATF_TP_ADD_TC(tp, emit_rejects_redaction_expansion);
+	ATF_TP_ADD_TC(tp, producer_interest_avoids_formatting);
+	ATF_TP_ADD_TC(tp, legacy_provider_keeps_all_levels_enabled);
 	return (atf_no_error());
 }

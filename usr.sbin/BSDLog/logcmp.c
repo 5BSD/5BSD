@@ -554,10 +554,11 @@ handle_request(struct channel *channel __unused,
 	struct shmring_fds ringfds;
 	struct worker_state *state;
 	const struct logcmp_msg *message;
+	const struct logcmp_hello *hello_request;
 	uint64_t filtered_before, rate_limited_before, rejected_before;
 	size_t length, query_length;
 	uint8_t query_record[LOGCMP_MAX_RECORD];
-	bool attached, wake_attached;
+	bool attached, wake_attached, wants_interest;
 	int query_result;
 	int error;
 
@@ -580,18 +581,25 @@ handle_request(struct channel *channel __unused,
 	rate_limited_before = state->session.stats.provider_rate_limited;
 	switch (message->opcode) {
 	case LOGCMP_OP_HELLO:
+		hello_request = (const void *)(message + 1);
+		wants_interest = (hello_request->features &
+		    LOGCMP_FEATURE_INTEREST) != 0;
 		memset(&hello, 0, sizeof(hello));
 		hello.features = LOGCMP_FEATURE_INLINE |
 		    LOGCMP_FEATURE_SHM_RING | LOGCMP_FEATURE_SYSLOG |
 		    LOGCMP_FEATURE_TYPED_RECORDS | LOGCMP_FEATURE_PRIVACY |
 		    LOGCMP_FEATURE_TRACE_CONTEXT | LOGCMP_FEATURE_EDGE_WAKEUP |
 		    LOGCMP_FEATURE_SCOPED_QUERY;
+		if (wants_interest)
+			hello.features |= LOGCMP_FEATURE_INTEREST;
 		hello.ring_size = state->ring_size;
 		hello.max_record = LOGCMP_MAX_RECORD;
 		hello.max_text = LOGCMP_MAX_TEXT;
 		hello.max_fields = LOGCMP_MAX_FIELDS;
+		hello.minimum_severity = state->session.minimum_severity;
 		if (send_reply(request_message, message, 0, &hello,
-		    sizeof(hello)) == -1)
+		    wants_interest ? sizeof(hello) :
+		    offsetof(struct logcmp_hello_reply, minimum_severity)) == -1)
 			state->terminal_error = errno;
 		channel_message_free(request_message);
 		return;

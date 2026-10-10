@@ -44,7 +44,7 @@ ATF_TC_BODY(abi, tc)
 {
 	ATF_CHECK_EQ(16, sizeof(struct logcmp_msg));
 	ATF_CHECK_EQ(8, sizeof(struct logcmp_hello));
-	ATF_CHECK_EQ(20, sizeof(struct logcmp_hello_reply));
+	ATF_CHECK_EQ(24, sizeof(struct logcmp_hello_reply));
 	ATF_CHECK_EQ(16, sizeof(struct logcmp_attach_request));
 	ATF_CHECK_EQ(104, sizeof(struct logcmp_record));
 	ATF_CHECK_EQ(8, sizeof(struct logcmp_attribute_wire));
@@ -80,13 +80,23 @@ ATF_TC_BODY(message_validation, tc)
 	msg = message(&buffer, LOGCMP_OP_HELLO);
 	length = sizeof(*msg) + sizeof(struct logcmp_hello_reply);
 	hello_reply = (void *)(msg + 1);
-	hello_reply->features = LOGCMP_FEATURE_SHM_RING;
+	hello_reply->features = LOGCMP_FEATURE_SHM_RING |
+	    LOGCMP_FEATURE_INTEREST;
 	hello_reply->ring_size = 4096;
 	hello_reply->max_record = 512;
 	hello_reply->max_text = 256;
 	hello_reply->max_fields = 256;
+	hello_reply->minimum_severity = LOGCMP_SEVERITY_INFO;
 	ATF_CHECK_EQ(0, logcmp_validate_message(msg, length,
 	    LOGCMP_MESSAGE_REPLY));
+	hello_reply->features &= ~LOGCMP_FEATURE_INTEREST;
+	ATF_CHECK_EQ(0, logcmp_validate_message(msg,
+	    sizeof(*msg) + offsetof(struct logcmp_hello_reply,
+	    minimum_severity), LOGCMP_MESSAGE_REPLY));
+	hello_reply->features |= LOGCMP_FEATURE_INTEREST;
+	ATF_CHECK_EQ(-1, logcmp_validate_message(msg,
+	    sizeof(*msg) + offsetof(struct logcmp_hello_reply,
+	    minimum_severity), LOGCMP_MESSAGE_REPLY));
 	msg = message(&buffer, LOGCMP_OP_ATTACH);
 	length = sizeof(*msg) + sizeof(struct logcmp_attach_request);
 	ATF_CHECK_EQ(0, logcmp_validate_message(msg, length,

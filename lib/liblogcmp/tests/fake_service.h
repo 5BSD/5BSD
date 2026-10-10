@@ -27,6 +27,7 @@ void	fake_service_corrupt_next_ring(void);
 void	fake_service_break_next_wakeup(void);
 void	fake_service_fault_next(enum fake_service_fault);
 void	fake_service_enable_ring(void);
+void	fake_service_use_legacy_hello(void);
 unsigned fake_service_created(void);
 unsigned fake_service_closed(void);
 unsigned fake_service_writes(void);
