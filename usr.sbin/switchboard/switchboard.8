@@ -387,11 +387,20 @@ and
 it is non-transferable and locked against later fork or exec propagation.
 .Pp
 Each service is enlisted in a coalition.
-The process descriptor is set as the coalition leader, providing
-resource grouping for the service and any children it creates.
+Forked children inherit the service's coalition membership.
+The supervisor also attempts to set the process descriptor as coalition
+leader; failure is logged and does not abort an otherwise valid launch.
 Assigned workers are enlisted before the leader is released.
 A provider returns either a worker procdesc or a nested worker coalition;
 the consuming process never receives coalition-management authority.
+On service exit, the supervisor closes its service coalition descriptor.
+Closing the final handle sends the coalition's configured signal, SIGKILL
+by default, to remaining members, including inherited children whose parent
+has already exited.
+This cleanup requires those processes to remain in that coalition and no
+other holder to retain its handle.
+Signal delivery is not a wait for every descendant to finish exiting, and
+restart does not establish that all descendant teardown has completed.
 .Ss Service States
 A service transitions through the following states:
 .Bl -tag -width "STOPPING (3)" -compact

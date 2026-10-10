@@ -4,6 +4,7 @@ SCRIPTSDIR=	${TESTSDIR}
 
 ATF_TESTS_C+=	mac_capability_test
 ATF_TESTS_C+=	mac_capability_coalition_test
+NO_SHARED.mac_capability_coalition_test= yes
 ATF_TESTS_C+=	mac_capability_isolation_test
 ATF_TESTS_C+=	mac_capability_identity_test
 ATF_TESTS_C+=	mac_capability_node_test

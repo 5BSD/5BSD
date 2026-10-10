@@ -20,6 +20,7 @@
 #include <sys/mman.h>
 #include <sys/capsicum.h>
 #include <sys/procdesc.h>
+#include <sys/procctl.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/sysctl.h>
@@ -1856,6 +1857,75 @@ ATF_TC_BODY(close_terminates_live_member, tc)
 	    "before=%u after=%u", before, after);
 }
 
+
+ATF_TC(close_terminates_orphan_descendant);
+ATF_TC_HEAD(close_terminates_orphan_descendant, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Final coalition close kills inherited descendants after parent exit");
+	atf_tc_set_md_var(tc, "require.kmods",
+	    "mac_capability mac_capability_coalition");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(close_terminates_orphan_descendant, tc)
+{
+	struct coalition_stat_reply st;
+	int cfd, pd, gate[2], report[2], wstatus;
+	int32_t status;
+	pid_t leader, descendant;
+	char byte;
+
+	ATF_REQUIRE_EQ(0, procctl(P_PID, getpid(), PROC_REAP_ACQUIRE, NULL));
+	cfd = mac_capability_connect("coalition");
+	ATF_REQUIRE(cfd >= 0);
+	ATF_REQUIRE_EQ(0, pipe(gate));
+	ATF_REQUIRE_EQ(0, pipe(report));
+	leader = pdfork(&pd, PD_DAEMON);
+	ATF_REQUIRE(leader >= 0);
+	if (leader == 0) {
+		close(cfd);
+		close(gate[1]);
+		close(report[0]);
+		if (read(gate[0], &byte, 1) != 1)
+			_exit(2);
+		close(gate[0]);
+		descendant = fork();
+		if (descendant == 0) {
+			close(report[1]);
+			for (;;)
+				pause();
+		}
+		if (descendant < 0 || write(report[1], &descendant,
+		    sizeof(descendant)) != sizeof(descendant))
+			_exit(3);
+		_exit(0);
+	}
+	close(gate[0]);
+	close(report[1]);
+	ATF_REQUIRE_EQ(0, coalition_enlist(cfd, pd, &status));
+	ATF_REQUIRE_EQ(0, status);
+	ATF_REQUIRE_EQ(1, write(gate[1], "x", 1));
+	close(gate[1]);
+	ATF_REQUIRE_EQ(sizeof(descendant),
+	    read(report[0], &descendant, sizeof(descendant)));
+	close(report[0]);
+	ATF_REQUIRE(wait_exit_bounded(leader, &wstatus));
+	ATF_REQUIRE(WIFEXITED(wstatus) && WEXITSTATUS(wstatus) == 0);
+	close(pd);
+	ATF_REQUIRE_EQ(0, waitpid(descendant, &wstatus, WNOHANG));
+	ATF_REQUIRE_EQ(0, coalition_stat(cfd, &st));
+	ATF_CHECK_EQ(1, st.process_count);
+	close(cfd);
+	if (!wait_exit_bounded(descendant, &wstatus)) {
+		atf_tc_fail_nonfatal("orphan descendant survived coalition close");
+		kill(descendant, SIGKILL);
+		(void)wait_exit_bounded(descendant, &wstatus);
+	} else {
+		ATF_CHECK(WIFSIGNALED(wstatus));
+		ATF_CHECK_EQ(SIGKILL, WTERMSIG(wstatus));
+	}
+	ATF_REQUIRE_EQ(0, procctl(P_PID, getpid(), PROC_REAP_RELEASE, NULL));
+}
 
 ATF_TC(refattach_confined_descriptors);
 ATF_TC_HEAD(refattach_confined_descriptors, tc)
@@ -4040,6 +4110,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, set_signal_zero_releases);
 	ATF_TP_ADD_TC(tp, pdfork_inherits_and_rehomes);
 	ATF_TP_ADD_TC(tp, close_terminates_live_member);
+	ATF_TP_ADD_TC(tp, close_terminates_orphan_descendant);
 	ATF_TP_ADD_TC(tp, refattach_confined_descriptors);
 	ATF_TP_ADD_TC(tp, set_signal_zero_releases_joined);
 
