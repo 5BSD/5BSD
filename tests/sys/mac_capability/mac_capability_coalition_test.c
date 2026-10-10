@@ -28,6 +28,7 @@
 #include <sys/user.h>
 #include <sys/wait.h>
 
+#include <netinet/in.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <jail.h>
@@ -2116,6 +2117,102 @@ ATF_TC_BODY(grace_fork_containment_and_cancel, tc)
 	}
 	close(cfd);
 	ATF_REQUIRE(signal(SIGUSR1, previous) != SIG_ERR);
+}
+
+ATF_TC(exit_membership_waits_for_socket_close);
+ATF_TC_HEAD(exit_membership_waits_for_socket_close, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "An exiting process remains a member while socket linger blocks close");
+	atf_tc_set_md_var(tc, "require.kmods",
+	    "mac_capability mac_capability_coalition");
+}
+ATF_TC_BODY(exit_membership_waits_for_socket_close, tc)
+{
+	struct sockaddr_in address = { .sin_len = sizeof(address),
+	    .sin_family = AF_INET, .sin_addr.s_addr = htonl(INADDR_LOOPBACK) };
+	struct linger linger = { .l_onoff = 1, .l_linger = 20 };
+	struct coalition_stat_reply st;
+	struct kinfo_proc kp = { 0 };
+	socklen_t length = sizeof(address);
+	int listener, client, server, cfd, pd, gate[2], wstatus, small = 1024;
+	int32_t status;
+	int stalled = 0;
+	pid_t child;
+	char byte, data[4096] = { 0 };
+	ssize_t n;
+	bool held = false;
+
+	listener = socket(AF_INET, SOCK_STREAM, 0);
+	ATF_REQUIRE(listener >= 0);
+	ATF_REQUIRE_EQ(0, setsockopt(listener, SOL_SOCKET, SO_RCVBUF,
+	    &small, sizeof(small)));
+	ATF_REQUIRE_EQ(0, bind(listener, (void *)&address, sizeof(address)));
+	ATF_REQUIRE_EQ(0, listen(listener, 1));
+	ATF_REQUIRE_EQ(0, getsockname(listener, (void *)&address, &length));
+	client = socket(AF_INET, SOCK_STREAM, 0);
+	ATF_REQUIRE(client >= 0);
+	ATF_REQUIRE_EQ(0, connect(client, (void *)&address, sizeof(address)));
+	server = accept(listener, NULL, NULL);
+	ATF_REQUIRE(server >= 0);
+	close(listener);
+	ATF_REQUIRE_EQ(0, setsockopt(client, SOL_SOCKET, SO_SNDBUF,
+	    &small, sizeof(small)));
+	ATF_REQUIRE_EQ(0, setsockopt(client, SOL_SOCKET, SO_LINGER,
+	    &linger, sizeof(linger)));
+	/* Let TCP consume its advertised window; one EAGAIN can be transient. */
+	for (int i = 0; i < 1000 && stalled < 10; i++) {
+		n = send(client, data, sizeof(data), MSG_DONTWAIT | MSG_NOSIGNAL);
+		if (n > 0) {
+			stalled = 0;
+			continue;
+		}
+		ATF_REQUIRE_ERRNO(EAGAIN, n == -1);
+		stalled++;
+		usleep(10000);
+	}
+	ATF_REQUIRE_EQ(10, stalled);
+	cfd = mac_capability_connect("coalition");
+	ATF_REQUIRE(cfd >= 0);
+	ATF_REQUIRE_EQ(0, pipe(gate));
+	child = pdfork(&pd, 0);
+	ATF_REQUIRE(child >= 0);
+	if (child == 0) {
+		close(cfd);
+		close(server);
+		close(gate[1]);
+		if (read(gate[0], &byte, 1) != 1)
+			_exit(2);
+		_exit(0); /* Last client close blocks in fdescfree. */
+	}
+	close(gate[0]);
+	close(client);
+	ATF_REQUIRE_EQ(0, coalition_enlist(cfd, pd, &status));
+	ATF_REQUIRE_EQ(0, status);
+	ATF_REQUIRE_EQ(1, write(gate[1], "x", 1));
+	close(gate[1]);
+	for (int i = 0; i < 500; i++) {
+		if (kinfo_of(child, &kp) == 0 && (kp.ki_flag & P_WEXIT) != 0 &&
+		    strcmp(kp.ki_wmesg, "soclos") == 0) {
+			held = true;
+			break;
+		}
+		usleep(10000);
+	}
+	ATF_CHECK_MSG(held, "fixture did not block: flags=%lx state=%d wait=%s errno=%d",
+	    (unsigned long)kp.ki_flag, kp.ki_stat, kp.ki_wmesg, errno);
+	if (held) {
+		ATF_REQUIRE_EQ(0, coalition_stat(cfd, &st));
+		ATF_CHECK_EQ(1, st.process_count);
+		ATF_CHECK_EQ(0, waitpid(child, &wstatus, WNOHANG));
+	}
+	close(server); /* Release linger, even when the assertion above fails. */
+	ATF_REQUIRE(wait_exit_bounded(child, &wstatus));
+	ATF_CHECK(WIFEXITED(wstatus) && WEXITSTATUS(wstatus) == 0);
+	ATF_REQUIRE_EQ(0, coalition_stat(cfd, &st));
+	ATF_CHECK_EQ(0, st.process_count);
+	close(pd);
+	close(cfd);
 }
 
 ATF_TC(refattach_confined_descriptors);
@@ -4306,6 +4403,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, terminated_coalition_cannot_fork_escape);
 	ATF_TP_ADD_TC(tp, member_limit_cannot_fork_escape);
 	ATF_TP_ADD_TC(tp, grace_fork_containment_and_cancel);
+	ATF_TP_ADD_TC(tp, exit_membership_waits_for_socket_close);
 	ATF_TP_ADD_TC(tp, refattach_confined_descriptors);
 	ATF_TP_ADD_TC(tp, set_signal_zero_releases_joined);
 

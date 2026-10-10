@@ -109,9 +109,14 @@ Returns
 .Vt struct coalition_reply .
 .It Dv COALITION_OP_STAT
 Query coalition membership and state.
-Process membership is removed during the early process-exit hook, before
-file-descriptor and address-space cleanup.
-A zero process count does not establish a completed teardown barrier.
+For processes that remain in this coalition, exit removes membership after
+the process releases its file table and detaches its address space.
+Leader-death termination still begins at the early exit hook.
+Closing or revoking the coalition discards membership tracking; supervisors
+that need to observe it must retain the handle while terminating members.
+A zero direct process count does not cover nested coalitions, jails,
+rehomed processes, or references deliberately shared with other processes.
+It is not by itself a complete service restart barrier.
 Returns:
 .Bd -literal -offset indent
 struct coalition_stat_reply {

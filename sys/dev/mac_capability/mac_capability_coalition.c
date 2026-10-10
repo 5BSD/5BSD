@@ -231,6 +231,7 @@ struct coalition_jail_osd {
 
 static eventhandler_tag coalition_fork_tag;
 static eventhandler_tag coalition_exit_tag;
+static eventhandler_tag coalition_resources_tag;
 
 /*
  * Sysctl tunables — soft limits, best-effort enforcement.
@@ -1929,8 +1930,45 @@ coalition_leader_monitor_stop_locked(struct coalition *co)
  * Process exit / fork eventhandlers
  * ---------------------------------------------------------------- */
 
+/* Preserve prompt leader-death termination while retaining exit membership. */
 static void
 coalition_process_exit(void *arg __unused, struct proc *p)
+{
+	struct coalition_member *cm;
+	struct coalition *co;
+	bool was_leader = false;
+
+	rw_rlock(&coalition_proc_hash_lock);
+	cm = coalition_proc_hash_lookup(p);
+	if (cm == NULL) {
+		rw_runlock(&coalition_proc_hash_lock);
+		return;
+	}
+	co = cm->cm_coalition;
+	coalition_ref(co);
+	rw_runlock(&coalition_proc_hash_lock);
+	/* Re-find under co_sx; close may have freed the hash entry. */
+	sx_xlock(&co->co_sx);
+	TAILQ_FOREACH(cm, &co->co_members, cm_link) {
+		if (cm->cm_data == p) {
+			if ((co->co_flags & COF_HAS_LEADER) && co->co_leader == cm) {
+				was_leader = true;
+				co->co_leader = NULL;
+				co->co_flags &= ~COF_HAS_LEADER;
+			}
+			break;
+		}
+	}
+	sx_xunlock(&co->co_sx);
+	if (was_leader) {
+		SDT_PROBE1(mac_capability_coalition, , , leader__exit, p->p_pid);
+		(void)coalition_terminate(co);
+	}
+	coalition_rel(co);
+}
+
+static void
+coalition_process_exit_resources(void *arg __unused, struct proc *p)
 {
 	struct coalition_member *cm;
 	struct coalition *co;
@@ -3262,6 +3300,13 @@ coalition_mod_init(void)
 		goto fail_exit;
 	}
 
+	coalition_resources_tag = EVENTHANDLER_REGISTER(process_exit_resources,
+	    coalition_process_exit_resources, NULL, EVENTHANDLER_PRI_ANY);
+	if (coalition_resources_tag == NULL) {
+		error = ENOMEM;
+		goto fail_resources;
+	}
+
 	memset(&p, 0, sizeof(p));
 	p.name = "coalition";
 	p.ops = &coalition_ops;
@@ -3277,6 +3322,8 @@ coalition_mod_init(void)
 	return (0);
 
 fail_svc:
+	EVENTHANDLER_DEREGISTER(process_exit_resources, coalition_resources_tag);
+fail_resources:
 	EVENTHANDLER_DEREGISTER(process_exit, coalition_exit_tag);
 fail_exit:
 	EVENTHANDLER_DEREGISTER(process_fork, coalition_fork_tag);
@@ -3309,6 +3356,7 @@ coalition_modevent(module_t mod __unused, int type, void *arg __unused)
 
 		mac_capability_proc_coalition_hook_set(NULL);
 		mac_capability_service_destroy(coalition_svc);
+		EVENTHANDLER_DEREGISTER(process_exit_resources, coalition_resources_tag);
 		EVENTHANDLER_DEREGISTER(process_exit, coalition_exit_tag);
 		EVENTHANDLER_DEREGISTER(process_fork, coalition_fork_tag);
 		osd_jail_deregister(coalition_jail_osd_slot);
