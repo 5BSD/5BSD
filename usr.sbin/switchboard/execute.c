@@ -45,6 +45,8 @@
 #include <time.h>
 #include <unistd.h>
 
+#include "oom_protect.h"
+
 #include <dev/mac_capability/mac_capability_ioctl.h>
 #include <dev/mac_capability/mac_capability_system_proto.h>	/* SYS_GATE_* */
 #include <service_bootstrap.h>
@@ -1984,6 +1986,26 @@ svc_launch_finish(struct svc_runtime *svc, int kq)
 	close(L->child_end);
 	L->child_end = -1;
 	close(bootstrap_fd);
+	/* The child cannot exec until the launch gate is released below.
+	 * Apply OOM exclusion before its signal shield, credentials or capmode.
+	 * Registry provenance, never the manifest's control/domain strings,
+	 * decides whether this privilege is available. */
+	if (svc_oom_protect(pid, m->oom_protect,
+	    bundle_registry_is_system(svc->bundle_idx)) == -1) {
+		saved_errno = errno;
+		syslog(LOG_ERR, "svc_exec %s: OOM protection: %m; refusing launch", m->label);
+		if (L->capprotect_fd >= 0) {
+			close(L->capprotect_fd);
+			L->capprotect_fd = -1;
+		}
+		for (i = 0; i < L->ntokens; i++)
+			close(L->token_fds[i]);
+		L->ntokens = 0;
+		for (i = 0; i < L->nservices; i++)
+			close(L->service_fds[i]);
+		L->nservices = 0;
+		goto fail_postfork;
+	}
 	/*
 	 * Launcher-applied protection: shield the child by its process descriptor
 	 * now, while pd_fd is still transferable and before the child's program

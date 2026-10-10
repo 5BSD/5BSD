@@ -169,6 +169,35 @@ After exec, all manager-owned descriptors are irreversibly restricted against
 transfer, fork inheritance, and exec inheritance.
 Descriptors intentionally delegated to a service cross only that service's
 fork/exec boundary and are non-transferable.
+.Sh OOM PROTECTION
+A unit may request
+.Va oom_protect = true
+in its manifest; the default is false.
+Only a bundle from the verified system registry may use this privilege.
+The manifest's control class, discovery domain, software label and user name
+do not confer it.
+Switchboard rejects an untrusted request and refuses launch if the kernel
+cannot apply the protection.
+.Pp
+While the child is held at the launch gate, the privileged supervisor uses
+.Xr procctl 2
+with
+.Dv PROC_SPROTECT
+and
+.Dv PPROT_SET .
+The target PID belongs to its freshly forked, unreaped child, held by a process
+descriptor; no caller-supplied PID is accepted.
+Protection is set before the child execs or drops credentials.
+No additional authority descriptor is delivered to the service.
+The kernel's existing OOM selector skips the resulting
+.Dv P_PROTECTED
+process.
+Neither descendant nor fork-inheritance flags are set.
+.Pp
+Capsule also applies this exclusion to Switchboard itself before exec.
+OOM exclusion does not wire memory, guarantee allocation success, or prevent
+operator lifecycle actions and unrelated termination mechanisms.
+Use it only for essential, bounded system services.
 .Sh ENVIRONMENT
 .Bl -tag -width "SWITCHBOARD_COALITION_SVC_FD"
 .It Ev CAPSULE_CHANNEL_FD

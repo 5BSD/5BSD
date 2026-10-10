@@ -88,6 +88,13 @@ per endpoint and
 .Dv CAPBUNDLE_MAX_ATTRIBUTES
 per unit, and never the wildcard
 .Dq * .
+.Sh OOM POLICY
+The optional unit key
+.Va oom_protect
+accepts exactly one boolean and defaults to false.
+It is copied to the launch manifest, where Switchboard enforces trusted
+system-registry provenance before applying kernel OOM exclusion.
+Parsing or offline verification alone does not grant this privilege.
 .Sh TRUST
 .Nm
 rejects symlinks and special objects but does not establish ownership policy.

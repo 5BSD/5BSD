@@ -96,6 +96,8 @@ print_bundle(const struct capbundle *b)
 		printf("      management: %s\n", management);
 		printf("      stop_timeout: %d\n", m.stop_timeout);
 		printf("      max_failures: %u\n", m.max_failures);
+		printf("      oom_protect: %s (requires trusted system installation)\n",
+		    m.oom_protect ? "requested" : "off");
 		printf("      user: %s\n", m.user[0] != '\0' ? m.user : "(default)");
 		printf("      group: %s\n",
 		    m.group[0] != '\0' ? m.group : "(default)");

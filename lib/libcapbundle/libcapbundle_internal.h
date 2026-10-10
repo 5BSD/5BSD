@@ -139,6 +139,7 @@ struct capbundle_service {
 
 	/* Ambient-authority (non-sandboxed) provider — see svc_manifest.ambient. */
 	bool	ambient;
+	bool		oom_protect;	/* trusted system launch: exclude from OOM */
 	bool unix_protocol; /* Ordinary foreground process; readiness is exec. */
 
 	/* Pre-exec process policy (setrlimit / scheduling band / umask). */

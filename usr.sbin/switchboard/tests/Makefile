@@ -55,6 +55,7 @@ ATF_TESTS_C+=	anoint_test
 ATF_TESTS_C+=	on_demand_test
 ATF_TESTS_C+=	fd_budget_test
 ATF_TESTS_C+=	launch_limits_test
+ATF_TESTS_C+=	oom_protect_test
 ATF_TESTS_C+=	restart_name_test
 ATF_TESTS_C+=	manifest_compare_test
 ATF_TESTS_C+=	management_enforce_test

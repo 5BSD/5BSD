@@ -2,6 +2,7 @@ activation { boot = true; }
 control = "system";
 program = "BSDMemory";
 restart = "on-failure";
+oom_protect = true;
 user = "capability";
 attributes = ["system.notify.system"];
 protect = ["ptrace", "signal", "wait", "sigkill", "sigcont", "sched", "core", "ktrace"];

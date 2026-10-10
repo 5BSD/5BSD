@@ -35,6 +35,23 @@ Unknown and duplicate keys, directives, includes, macros, variables, and
 implicit arrays fail closed.
 The verified tree is limited to 4096 entries, 512 MiB per file, and 2 GiB in
 total.
+.Sh OOM EXCLUSION
+A daemon unit may set
+.Va oom_protect = true
+(default false) to request exclusion from kernel OOM victim selection.
+The value must be a single boolean.
+Switchboard permits this only for units loaded from its trusted system
+registry; applications and per-user agents cannot obtain the privilege by
+claiming a system control class, domain or label.
+An unauthorized request or failure to set kernel protection prevents launch.
+The supervisor applies
+.Dv PROC_SPROTECT
+with
+.Dv PPROT_SET
+before releasing the child's launch gate.
+The exemption survives exec but is not inherited by forked children.
+It is separate from signal protection and does not reserve memory.
+Exec-only application manifests cannot declare this launch policy.
 .Sh BUNDLE.UCL
 Required keys are:
 .Bl -tag -width bundle_id

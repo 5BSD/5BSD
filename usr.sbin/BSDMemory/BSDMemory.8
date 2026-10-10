@@ -43,6 +43,23 @@ Use
 to inspect changes.
 A missing state or an unknown value must not be interpreted as normal.
 A stopped producer loses ownership when its last session disconnects.
+.Sh OOM PROTECTION
+The shipped manifest requests
+.Va oom_protect = true .
+Switchboard applies the kernel's
+.Dv P_PROTECTED
+OOM exclusion before allowing the program to execute.
+BSDNotify and BSDSysctl request the same exclusion because they are required
+by this notification path; Capsule protects the supervisor at bootstrap.
+Only bundles loaded from the trusted system registry may request this policy.
+Failure to apply it prevents launch.
+The daemon remains unprivileged and cannot grant this exemption to clients.
+The exemption survives exec and credential changes, is not inherited by
+forked children, and ends when the process exits.
+It excludes the process from the kernel OOM victim selector; it does not
+reserve RAM, prevent allocation failures, or override deliberate supervisor
+shutdown, fatal faults, resource-limit enforcement or kernel panic.
+Signal shields remain a separate protection.
 .Sh SEE ALSO
 .Xr BSDNotify 8 ,
 .Xr BSDSysctl 8 ,

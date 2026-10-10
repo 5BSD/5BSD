@@ -4,6 +4,8 @@ protect = ["ptrace", "signal", "wait", "sigkill", "sigcont", "sched",
     "core", "ktrace"];
 program = "BSDSysctl";
 restart = "on-failure";
+# Required by the memory-pressure notification path.
+oom_protect = true;
 user = "capability";
 
 # BSDSysctl is born in capability mode.  __sysctl(2) in capmode is confined to

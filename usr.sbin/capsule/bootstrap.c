@@ -16,6 +16,7 @@
 #include <sys/syscall.h>
 #include <sys/event.h>
 #include <sys/procdesc.h>
+#include <sys/procctl.h>
 #include <sys/wait.h>
 
 #include <errno.h>
@@ -297,6 +298,13 @@ bootstrap_child_exec(int child_channel_fd, const struct bootstrap_delegate_fds *
 		argv[0] = od.cfg.service_manager;
 	argv[1] = NULL;
 
+	/* The supervisor must remain available to restart essential services.
+	 * Do not inherit this exemption into every service it later launches. */
+	{
+		int flags = PPROT_SET;
+		if (procctl(P_PID, getpid(), PROC_SPROTECT, &flags) == -1)
+			_exit(126);
+	}
 	execve(od.cfg.service_manager, argv, env);
 	_exit(127);
 }

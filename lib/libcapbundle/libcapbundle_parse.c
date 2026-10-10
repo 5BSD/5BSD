@@ -1107,7 +1107,7 @@ validate_unit_schema(const ucl_object_t *root, char *errbuf, size_t errlen)
 	    "program", "activation",
 	    "restart", "control", "capabilities", "user", "group",
 	    "stop_timeout", "max_failures", "arguments", "environment",
-	    "protect", "limits", "umask", "level", "ambient",
+	    "protect", "limits", "umask", "level", "ambient", "oom_protect",
 	    "watchdog", "visible", "domain", "directories", "attributes", "holds", "launch",
 	    "throttle", "nice", "protocol" };
 	static const char *const watchdogkeys[] = { "interval" };
@@ -1142,6 +1142,11 @@ validate_unit_schema(const ucl_object_t *root, char *errbuf, size_t errlen)
 			    "than %zu bytes", strings[n], limits[n]);
 			return (-1);
 		}
+	}
+	v = ucl_object_lookup(root, "oom_protect");
+	if (v != NULL && (v->next != NULL || ucl_object_type(v) != UCL_BOOLEAN)) {
+		snprintf(errbuf, errlen, "oom_protect must be one boolean");
+		return (-1);
 	}
 	v = ucl_object_lookup(root, "protocol");
 	if (v != NULL) {
@@ -2626,6 +2631,10 @@ capbundle_parse_unit_ucl(const char *path, const char *unit_path,
 
 	/* Restart policy */
 	svc->restart = parse_restart_policy(root, path);
+	{
+		const ucl_object_t *op = ucl_object_lookup(root, "oom_protect");
+		svc->oom_protect = op != NULL && ucl_object_toboolean(op);
+	}
 
 	{
 		const ucl_object_t *pv = ucl_object_lookup(root, "protocol");
