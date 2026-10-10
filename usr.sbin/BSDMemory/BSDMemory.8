@@ -69,7 +69,8 @@ Success resets the delay.
 Health transitions and cumulative failure counts are logged once per transition.
 Dependency failures retain the original operation error across client cleanup.
 A successful sample with an incorrect counter size is a protocol error;
-a failed read retains its own error even if it reports a different required size.
+a failed read retains its own error even if it reports a different required
+size.
 An unchanged pressure level is republished if notification state is missing
 or no longer matches, and a newly opened notification client always publishes
 before treating the state as current.
