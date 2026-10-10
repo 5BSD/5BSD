@@ -379,8 +379,187 @@ show_aliases_cleanup()
 	pft_cleanup
 }
 
+# Exercise entry capacity, independently of the per-source state limit.
+# A later pass rule makes an accidental no-match distinguishable from block.
+source_capacity_test()
+{
+	family=$1
+	action=$2
+	pft_init
+	epair=$(vnet_mkepair)
+	vnet_mkjail alcatraz ${epair}b
+	if [ "$family" = inet ]; then
+		prefix=192.0.2.
+		mask=24
+		proto=icmp
+		type=icmp-type
+		ping_family=-4
+	else
+		prefix=2001:db8::
+		mask=64
+		proto=icmp6
+		type=icmp6-type
+		ping_family=-6
+	fi
+	for host in 2 3 4; do
+		ifconfig ${epair}a $family ${prefix}${host}/${mask} alias up
+	done
+	jexec alcatraz ifconfig ${epair}b $family ${prefix}1/${mask} up
+	if [ "$family" = inet6 ]; then
+		while ifconfig ${epair}a inet6 | grep -q tentative; do sleep 1; done
+		while jexec alcatraz ifconfig ${epair}b inet6 | grep -q tentative; do sleep 1; done
+	fi
+	for host in 2 3 4; do
+		atf_check -s exit:0 -o ignore ping $ping_family -c 1 -t 3 \
+		    -S ${prefix}${host} ${prefix}1
+	done
+	jexec alcatraz pfctl -e
+	option="($action)"
+	[ "$action" = default ] && option=""
+	pft_set_rules alcatraz \
+	    'set timeout icmp.first 600' \
+	    'set timeout icmp.error 600' \
+	    'set timeout src.track 600' \
+	    'source limiter "capacity" id 1 entries 2 limit 100' \
+	    "pass in quick $family proto $proto $type echoreq source limiter \"capacity\" $option" \
+	    'pass'
+	# One and two distinct sources fit; a third exceeds the entry capacity.
+	for host in 2 3; do
+		atf_check -s exit:0 -o ignore ping $ping_family -c 1 -t 3 \
+		    -S ${prefix}${host} ${prefix}1
+	done
+	atf_check -s exit:0 -o match:'^[[:space:]]*1[[:space:]]+2/2[[:space:]]' \
+	    jexec alcatraz pfctl -s Srclimiters
+	if [ "$action" = no-match ]; then
+		atf_check -s exit:0 -o ignore ping $ping_family -c 1 -t 3 \
+		    -S ${prefix}4 ${prefix}1
+	else
+		atf_check -s not-exit:0 -o ignore ping $ping_family -c 1 -t 3 \
+		    -S ${prefix}4 ${prefix}1
+	fi
+	atf_check -s exit:0 -o save:capacity.stats \
+	    jexec alcatraz pfctl -s Srclimiters
+	atf_check -s exit:0 awk '$1 == 1 && $6 > 0 { found = 1 } END { exit !found }' capacity.stats
+	# Capacity exhaustion must not exclude an already tracked source.
+	atf_check -s exit:0 -o ignore ping $ping_family -c 1 -t 3 \
+	    -S ${prefix}2 ${prefix}1
+	# Remove the fallback state admitted by no-match, so the final ping
+	# must evaluate the limiter again rather than reuse that state.
+	atf_check -s exit:0 -o ignore -e ignore \
+	    jexec alcatraz pfctl -k ${prefix}4
+	# Releasing a source entry restores capacity for the third source.
+	atf_check -s exit:0 -e ignore \
+	    jexec alcatraz pfctl -I 1 -k source -k ${prefix}3
+	atf_check -s exit:0 -o ignore ping $ping_family -c 1 -t 3 \
+	    -S ${prefix}4 ${prefix}1
+	atf_check -s exit:0 -o match:'^[[:space:]]*1[[:space:]]+2/2[[:space:]]' \
+	    jexec alcatraz pfctl -s Srclimiters
+}
+
+atf_test_case "source_capacity_inet_default" "cleanup"
+source_capacity_inet_default_head()
+{
+	atf_set descr 'inet source entry exhaustion with default action'
+	atf_set require.user root
+	atf_set timeout 300
+}
+source_capacity_inet_default_body()
+{
+	source_capacity_test inet default
+}
+source_capacity_inet_default_cleanup()
+{
+	pft_cleanup
+}
+
+atf_test_case "source_capacity_inet_block" "cleanup"
+source_capacity_inet_block_head()
+{
+	atf_set descr 'inet source entry exhaustion with block action'
+	atf_set require.user root
+	atf_set timeout 300
+}
+source_capacity_inet_block_body()
+{
+	source_capacity_test inet block
+}
+source_capacity_inet_block_cleanup()
+{
+	pft_cleanup
+}
+
+atf_test_case "source_capacity_inet_no_match" "cleanup"
+source_capacity_inet_no_match_head()
+{
+	atf_set descr 'inet source entry exhaustion with no-match action'
+	atf_set require.user root
+	atf_set timeout 300
+}
+source_capacity_inet_no_match_body()
+{
+	source_capacity_test inet no-match
+}
+source_capacity_inet_no_match_cleanup()
+{
+	pft_cleanup
+}
+
+atf_test_case "source_capacity_inet6_default" "cleanup"
+source_capacity_inet6_default_head()
+{
+	atf_set descr 'inet6 source entry exhaustion with default action'
+	atf_set require.user root
+	atf_set timeout 300
+}
+source_capacity_inet6_default_body()
+{
+	source_capacity_test inet6 default
+}
+source_capacity_inet6_default_cleanup()
+{
+	pft_cleanup
+}
+
+atf_test_case "source_capacity_inet6_block" "cleanup"
+source_capacity_inet6_block_head()
+{
+	atf_set descr 'inet6 source entry exhaustion with block action'
+	atf_set require.user root
+	atf_set timeout 300
+}
+source_capacity_inet6_block_body()
+{
+	source_capacity_test inet6 block
+}
+source_capacity_inet6_block_cleanup()
+{
+	pft_cleanup
+}
+
+atf_test_case "source_capacity_inet6_no_match" "cleanup"
+source_capacity_inet6_no_match_head()
+{
+	atf_set descr 'inet6 source entry exhaustion with no-match action'
+	atf_set require.user root
+	atf_set timeout 300
+}
+source_capacity_inet6_no_match_body()
+{
+	source_capacity_test inet6 no-match
+}
+source_capacity_inet6_no_match_cleanup()
+{
+	pft_cleanup
+}
+
 atf_init_test_cases()
 {
+	atf_add_test_case "source_capacity_inet_default"
+	atf_add_test_case "source_capacity_inet_block"
+	atf_add_test_case "source_capacity_inet_no_match"
+	atf_add_test_case "source_capacity_inet6_default"
+	atf_add_test_case "source_capacity_inet6_block"
+	atf_add_test_case "source_capacity_inet6_no_match"
 	atf_add_test_case "show_aliases"
 	atf_add_test_case "state_basic"
 	atf_add_test_case "state_rate"

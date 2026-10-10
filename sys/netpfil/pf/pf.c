@@ -6273,6 +6273,14 @@ pf_match_rule(struct pf_test_ctx *ctx, struct pf_kruleset *ruleset)
 					gen = pf_sourcelim_enter(srlim);
 					srlim->pfsrlim_counters.addrlimited++;
 					pf_sourcelim_leave(srlim, gen);
+					if (r->sourcelim.limiter_action ==
+					    PF_LIMITER_BLOCK) {
+						ctx->limiter_drop = 1;
+						REASON_SET(&ctx->reason,
+						    PFRES_SRCLIMIT);
+						/* stop rule processing */
+						break;
+					}
 					r = TAILQ_NEXT(r, entries);
 					continue;
 				}
