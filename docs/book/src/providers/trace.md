@@ -44,7 +44,8 @@ consumers is still to be built.
 Delegations and denials are audited through BSM and fire the `bsdtrace`
 USDT provider (`session-start`, `session-end`, `delegate`, `reject`). A
 session that has not asked for its descriptor within 30 seconds is closed.
-The supervisor admits at most 256 workers, holds their process descriptors,
+The supervisor admits at most 256 workers globally and 16 per authenticated
+client label, holds their process descriptors,
 and on quiesce stops admission, gives workers five seconds after SIGTERM,
 then kills stragglers before acknowledging switchboard.
 
