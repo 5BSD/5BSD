@@ -1,0 +1,26 @@
+#!/bin/sh
+# Qualification ISO only; bsdinstall-software.conf checks target disk identity.
+mkdir -p /tmp/bsdinstall_etc
+export OSNAME=5BSD TERM=vt100
+stty rows 24 cols 80 </dev/console 2>/dev/null || :
+if /usr/libexec/bsdinstall/runconsoles /bin/sh -c '
+ [ "$(kenv -q capability_plane)" = NO ] || exit 1
+ set -- $(ps -p 1 -o comm=)
+ [ "$1" = init ] || exit 1
+ printf "%s\n" SOFTWARE_MULTICONSOLE_UNIX_PASS > /tmp/software-multiconsole-pass
+' && [ "$(cat /tmp/software-multiconsole-pass)" = SOFTWARE_MULTICONSOLE_UNIX_PASS ]; then
+ cat /tmp/software-multiconsole-pass > /dev/console
+else
+ echo SOFTWARE_BSDINSTALL_FAIL > /dev/console
+ shutdown -p now
+ exit 1
+fi
+if bsdinstall script /etc/installerconfig > /tmp/software-installer.log 2>&1; then
+ cat /tmp/software-installer.log >/dev/console
+ echo SOFTWARE_BSDINSTALL_PASS >/dev/console
+else
+ cat /tmp/software-installer.log /tmp/bsdinstall_log >/dev/console 2>/dev/null
+ echo SOFTWARE_BSDINSTALL_FAIL >/dev/console
+fi
+sync
+shutdown -p now
