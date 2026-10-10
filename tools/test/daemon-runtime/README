@@ -1,0 +1,23 @@
+Native daemon-runtime maturity gate
+===================================
+Build the static VM-only PID 1 fixture with:
+  make -j$(sysctl -n hw.ncpu) -C /usr/src/tools/test/daemon-runtime all
+Build libservice and its tests from the same source state first.
+
+run-vm.py requires --root (a NO_ROOT staged world), --objtop (the standard
+/usr/obj/usr/src/amd64.amd64), a new --work beneath /usr/obj, --qemu and
+--qemu-data. It requires exact staged/object kernel hashes and matching kernel
+configurations, and static test/fixture binaries. It copies inputs into its
+own staging tree, with root ownership represented in a makefs METALOG.
+No host root login, install, mount or reboot is needed. It does not write the
+input staging root or attach another VM's writable disk. Compilation uses all
+logical CPUs; this small runtime guest uses two CPUs and 1 GiB RAM.
+
+The VM has no network and boots a PID 1 fixture instead of the capability plane.
+It runs native session/bootstrap deadline and session lifecycle tests as root.
+A skip, missing/duplicate pass marker, timeout, panic, WITNESS reversal or
+unclean shutdown fails the run. inputs.json and result.json retain input hashes
+and the exact QEMU command; serial.log retains output, including failed runs.
+This gate does not qualify booted daemons, actual OOM, ACPI suspend, hardware,
+installer behavior, or a complete system image. Never run runtime_init as the
+host's init. Source and object inputs must be coordinated before full acceptance.
