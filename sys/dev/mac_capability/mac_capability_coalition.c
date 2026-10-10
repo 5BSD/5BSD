@@ -145,6 +145,7 @@ struct coalition {
 	u_int			co_manual_grace_count;
 	int			co_signal;
 	int			co_termination_error; /* First cleanup error, co_sx. */
+	u_int			co_pending_jails; /* Retained jail cleanup, co_sx. */
 	u_int			co_nesting_depth;
 	volatile u_int		co_member_count;
 	u_int			co_refcount;
@@ -226,7 +227,8 @@ struct coalition_jail_osd {
 	struct coalition	*cjo_coalition;
 	struct coalition_member	*cjo_member;
 	struct file		*cjo_fp;
-	struct task		cjo_cleanup_task;
+	struct timeout_task	cjo_cleanup_task;
+	struct prison		*cjo_prison; /* Ordinary hold, never a user hold. */
 	bool			cjo_cleanup_queued;
 };
 
@@ -301,6 +303,8 @@ coalition_free(struct coalition *co)
 
 	KASSERT(TAILQ_EMPTY(&co->co_members),
 	    ("coalition_free: members not empty"));
+	KASSERT(co->co_pending_jails == 0,
+	    ("coalition_free: pending jail cleanup"));
 	KASSERT(co->co_refcount == 0,
 	    ("coalition_free: refcount %u", co->co_refcount));
 	sx_destroy(&co->co_sx);
@@ -462,7 +466,8 @@ coalition_jail_set_atomic(struct prison *pr, struct coalition *co,
 		return (EBADF);
 	}
 	cjo->cjo_fp = fp;
-	TASK_INIT(&cjo->cjo_cleanup_task, 0, coalition_jail_cleanup_task_fn, cjo);
+	TIMEOUT_TASK_INIT(taskqueue_thread, &cjo->cjo_cleanup_task, 0,
+	    coalition_jail_cleanup_task_fn, cjo);
 	rsv = osd_reserve(coalition_jail_osd_slot);
 
 	prison_lock(pr);
@@ -481,6 +486,11 @@ coalition_jail_set_atomic(struct prison *pr, struct coalition *co,
 		free(cjo, M_COALITION);
 		return (EBUSY);
 	}
+	/* Keep the cleanup dependency after logical OSD/member removal. */
+	prison_hold(pr);
+	cjo->cjo_prison = pr;
+	sx_assert(&co->co_sx, SA_XLOCKED);
+	co->co_pending_jails++;
 	osd_jail_set_reserved(pr, coalition_jail_osd_slot, rsv, cjo);
 	prison_unlock(pr);
 	return (0);
@@ -559,10 +569,29 @@ coalition_jail_cleanup_task_fn(void *context, int pending __unused)
 		coalition_rel(co);
 	}
 
-	if (cjo->cjo_fp != NULL)
+	if (cjo->cjo_fp != NULL) {
 		fdrop(cjo->cjo_fp, NULL);
-	if (co != NULL)
-		coalition_rel(co);
+		cjo->cjo_fp = NULL;
+	}
+	/*
+	 * Removal precedes process exit.  Preserve the prison identity and
+	 * coalition until user references drain, including deferred last-user
+	 * release.  Do not hold a user reference ourselves or block taskqueue
+	 * workers waiting for processes.  Descendant prison references may
+	 * conservatively prolong this retention; this is not a public wait API.
+	 */
+	if (refcount_load(&cjo->cjo_prison->pr_uref) != 0) {
+		taskqueue_enqueue_timeout(taskqueue_thread,
+		    &cjo->cjo_cleanup_task, MAX(1, hz / 10));
+		return;
+	}
+	callout_drain(&cjo->cjo_cleanup_task.c);
+	prison_free(cjo->cjo_prison);
+	sx_xlock(&co->co_sx);
+	KASSERT(co->co_pending_jails != 0, ("jail cleanup underflow"));
+	co->co_pending_jails--;
+	sx_xunlock(&co->co_sx);
+	coalition_rel(co);
 	free(cjo, M_COALITION);
 }
 
@@ -580,7 +609,8 @@ coalition_jail_osd_dtor(void *value)
 	 */
 	if (!cjo->cjo_cleanup_queued) {
 		cjo->cjo_cleanup_queued = true;
-		taskqueue_enqueue(taskqueue_thread, &cjo->cjo_cleanup_task);
+		taskqueue_enqueue_timeout(taskqueue_thread,
+		    &cjo->cjo_cleanup_task, 0);
 	}
 }
 

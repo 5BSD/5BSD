@@ -3623,8 +3623,10 @@ ATF_TC_BODY(close_removes_jaildesc_member, tc)
 {
 	int cfd, jail_fd;
 	int32_t status;
+	unsigned base;
 
 	remove_jail_by_name(COALITION_TEST_JAIL_NAME);
+	base = coalition_count();
 
 	jail_fd = create_jail_with_desc(COALITION_TEST_JAIL_NAME);
 	ATF_REQUIRE_MSG(jail_fd >= 0, "create_jail_with_desc: %s",
@@ -3639,6 +3641,10 @@ ATF_TC_BODY(close_removes_jaildesc_member, tc)
 	close(cfd);
 	wait_for_jail_removal(COALITION_TEST_JAIL_NAME);
 
+	/* An inert descriptor for this removed jail must not pin its coalition. */
+	for (unsigned i = 0; i < 500 && coalition_count() != base; i++)
+		usleep(10000);
+	ATF_CHECK_EQ(base, coalition_count());
 	close(jail_fd);
 }
 ATF_TC_CLEANUP(close_removes_jaildesc_member, tc)
@@ -4655,6 +4661,10 @@ ATF_TC_BODY(jail_teardown_race, tc)
 		close(jail_fd);
 	}
 
+	/* Last prison-user release and retained cleanup tasks are asynchronous. */
+	for (unsigned i = 0; i < 500 &&
+	    coalition_sysctl_get("kern.mac_capability_coalition.count") != base; i++)
+		usleep(10000);
 	/* No coalitions leaked across 40 create/teardown-race rounds. */
 	ATF_CHECK_EQ_MSG(coalition_sysctl_get("kern.mac_capability_coalition.count"),
 	    base, "coalition count did not return to baseline after race churn");
