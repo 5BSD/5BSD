@@ -61,6 +61,12 @@ if a.oes_factory:
   if digest(src)!=before or digest(dst)!=before: p.error('OES input changed during staging')
   extra_hashes[key]=before
  extra_cases.extend([('/tests/oes_factory_test','invalid_root'),('/tests/oes_factory_test','notify_only_in_capmode')])
+ handoff=obj/'usr.sbin/BSDFilesystem/tests/oes_handoff_test'
+ if 'statically linked' not in subprocess.check_output(['file',str(handoff)],text=True): p.error('handoff test must be static')
+ before=digest(handoff);shutil.copyfile(handoff,stage/'tests/oes_handoff_test')
+ if digest(handoff)!=before or digest(stage/'tests/oes_handoff_test')!=before: p.error('handoff input changed')
+ extra_hashes['oes_handoff_test']=before
+ extra_cases.extend(('/tests/oes_handoff_test',case) for case in ['real_handoff','malformed_request','idle_timeout'])
  (stage/'tests/extra-cases').write_text(''.join(program+' '+case+'\n' for program,case in extra_cases))
 (stage/'etc/passwd').write_text('root:*:0:0:Charlie &:/root:/bin/sh\n')
 (stage/'boot/loader.conf').write_text('console="comconsole"\nautoboot_delay="1"\ncapability_plane="NO"\ninit_path="/sbin/runtime-init"\nvfs.root.mountfrom="ufs:/dev/vtbd0p2"\nvfs.root.mountfrom.options="rw"\n')

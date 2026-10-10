@@ -106,8 +106,14 @@ Discovery and the request use a five-second scoped RPC budget unless the caller
 already has a budget, which remains intact.
 The RPC timeout is additionally capped at five seconds.
 Malformed replies and failed allocations close any received descriptor.
-This client API does not itself enable the provider endpoint; an unavailable
-endpoint returns the discovery error.
+The endpoint is provided by
+.Xr BSDFilesystem 8 .
+An unavailable endpoint returns the discovery error.
+Delivered clients have NOTIFY-only, global event scope and cannot be transferred
+again or changed to AUTH or descendant scope.
+Their original opener identity is the broker worker.
+Factory-session closure does not revoke the descriptor; ordinary last-close
+semantics apply.
 .Sh DESCRIPTOR OWNERSHIP
 .Fn oes_client_create_from_fd
 borrows a descriptor; destroying its wrapper leaves the descriptor open.

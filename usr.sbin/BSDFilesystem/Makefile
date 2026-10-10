@@ -4,7 +4,7 @@ PACKAGE=	runtime
 PROG=	BSDFilesystem
 MAN=		BSDFilesystem.8 tzfs.conf.5
 
-SRCS=		bsdfilesystem.c config.c layout.c nvwalk.c request.c
+SRCS=		bsdfilesystem.c config.c layout.c nvwalk.c request.c oes_factory.c oes_session.c
 
 # Default configuration under /Capabilities/Config.
 CONFS=		bsdfilesystem.ucl
@@ -54,7 +54,7 @@ CFLAGS+=	-I${SRCTOP}/lib/libcapreclaim
 CFLAGS+=	-I${SRCTOP}/lib/liblogcmp
 CFLAGS+=	-I${SRCTOP}/lib/libservice
 CFLAGS+=	-I${SRCTOP}/lib/libchannel
-CFLAGS+=	-I${SRCTOP}/sys
+CFLAGS+=	-I${SRCTOP}/sys -I${SRCTOP}/lib/liboes
 CFLAGS+=	-I${SRCTOP}/contrib/libucl/include
 
 LIBADD=		trustedzfs ucl nvpair service channel md capreclaim logcmp

@@ -5,4 +5,6 @@
  * Returns one owned, NOTIFY-only descriptor or -1 without leaking a descriptor.
  * No endpoint is enabled merely by linking this helper. */
 int bsdfilesystem_oes_open_notify(int rootfd);
+/* Consumes session_fd on success and failure; rootfd remains borrowed. */
+int bsdfilesystem_oes_serve(int rootfd, int session_fd);
 #endif

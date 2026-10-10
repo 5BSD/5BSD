@@ -1536,8 +1536,32 @@ ATF_TC_BODY(unmatched_ioctl_grant_is_empty, tc)
 	ATF_REQUIRE_EQ(0, unlink(path));
 }
 
+ATF_TC_WITHOUT_HEAD(oes_endpoint_isolation);
+ATF_TC_BODY(oes_endpoint_isolation, tc)
+{
+	struct bsdfilesystem_state st;
+	struct bsdfilesystem_open_request rq;
+	const char *paths[] = { "/dev/oes", "//dev//oes", "/dev/./oes",
+	    "/./dev/oes", "/dev/oes/", "/dev/oes/." };
+
+	/* Even an explicit ordinary-open policy must not bypass the endpoint. */
+	open_state_init(&st, -1);
+	for (unsigned i = 0; i < sizeof(paths) / sizeof(paths[0]); i++) {
+		open_policy_set(&st, "client", paths[i], BSDFILESYSTEM_OPEN_READ, false);
+		open_request_set(&rq, paths[i], BSDFILESYSTEM_OPEN_READ);
+		ATF_CHECK_EQ(-1, bsdfilesystem_test_grant_open(&st, "client", &rq));
+		ATF_CHECK_EQ(EACCES, errno);
+	}
+	ATF_CHECK(bsdfilesystem_test_oes_admit(0, 0, 0));
+	ATF_CHECK(bsdfilesystem_test_oes_admit(63, 3, 2));
+	ATF_CHECK(!bsdfilesystem_test_oes_admit(64, 0, 0));
+	ATF_CHECK(!bsdfilesystem_test_oes_admit(4, 4, 0));
+	ATF_CHECK(bsdfilesystem_test_oes_admit(3, 3, 62));
+}
+
 ATF_TP_ADD_TCS(tp)
 {
+	ATF_TP_ADD_TC(tp, oes_endpoint_isolation);
  ATF_TP_ADD_TC(tp, unmatched_ioctl_grant_is_empty);
  ATF_TP_ADD_TC(tp, delivery_hardening_failure);
 	ATF_TP_ADD_TC(tp, config_verified_paths);

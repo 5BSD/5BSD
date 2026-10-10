@@ -201,6 +201,7 @@ void	bsdfilesystem_start_reaper(struct bsdfilesystem_state *st);
 int	bsdfilesystem_serve(struct bsdfilesystem_state *st);
 
 #ifdef BSDFILESYSTEM_TESTING
+bool bsdfilesystem_test_oes_admit(unsigned, unsigned, unsigned);
 int bsdfilesystem_test_harden_delivery(int, bool);
 /* Test-only accessors from the implementation units. */
 bool	bsdfilesystem_test_derive_ns(const char *client, char *out, size_t outsz);

@@ -156,6 +156,35 @@ The virtual-HID whitelist applies only to the Blued client opening
 or a decimal-numbered unit; the PF whitelist applies only to the Network client
 opening
 .Pa /dev/pf .
+.Sh OPENENDPOINTSECURITY FACTORY
+The shipped unit also exposes
+.Va system.OES
+with the endpoint requirement
+.Va system.oes .
+Requesting programs declare
+.Li attributes = ["system.oes"]
+in their unit UCL; SwitchBoard applies the software-attribute admission policy.
+Clients use
+.Fn oes_client_create_brokered
+from
+.Xr liboes 3 .
+.Pp
+Each factory session accepts one request and expires after five seconds.
+At most 64 factory sessions may be active, including at most four per client
+label; ordinary filesystem workers do not count toward these factory limits.
+These limits count sessions, not delivered descriptors.
+The kernel OES client limit bounds outstanding clients globally.
+.Pp
+The descriptor permits NOTIFY subscriptions and read-only inspection only.
+AUTH subscriptions, writes, mode changes, scope changes, and further descriptor
+transfer are denied.
+The client has global event scope; its original opener identity belongs to the
+broker worker, not the recipient.
+Recipient-scoped descendant monitoring is not provided by this factory.
+The descriptor remains usable after the factory worker exits and closes on its
+last reference; factory-session closure does not revoke delivered descriptors.
+Ordinary filesystem opens refuse the OES device, including normalized path
+aliases and character-device aliases detected after opening.
 .Sh SEE ALSO
 .Xr cap_enter 2 ,
 .Xr libbsdfilesystem 3 ,

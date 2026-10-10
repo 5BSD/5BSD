@@ -11,7 +11,7 @@ ATF_TESTS_C+=	provider_test
 # symbols request.c references (bsdfilesystem_ensure_path, bsdfilesystem_destroy_tree,
 # bsdfilesystem_session_begin, bsdfilesystem_nvl_names, and the config defaults); no ZFS work is
 # performed by the cases we actually run.
-BSDFILESYSTEM_SRCS=	request.c layout.c nvwalk.c config.c
+BSDFILESYSTEM_SRCS=	request.c layout.c nvwalk.c config.c oes_factory.c oes_session.c
 BSDFILESYSTEM_LIBADD=	trustedzfs ucl nvpair service channel md capreclaim logcmp
 
 # Shared daemon sources are compiled once with the same flags for both tests, so
@@ -44,5 +44,16 @@ NO_SHARED.oes_factory_test= yes
 
 ATF_TESTS_C+= oes_factory_failure_test
 NO_SHARED.oes_factory_failure_test= yes
+
+ATF_TESTS_C+= oes_session_test
+CFLAGS.oes_session_test+= -I${SRCTOP}/lib/liboes
+LIBADD.oes_session_test= channel service
+NO_SHARED.oes_session_test= yes
+
+ATF_TESTS_C+= oes_handoff_test
+SRCS.oes_handoff_test= oes_handoff_test.c oes_session.c oes_factory.c
+CFLAGS+= -I${SRCTOP}/lib/liboes
+LIBADD.oes_handoff_test= channel service
+NO_SHARED.oes_handoff_test= yes
 
 .include <bsd.test.mk>

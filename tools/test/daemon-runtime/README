@@ -31,7 +31,9 @@ These suites exercise real descriptor operations with service test doubles;
 they do not replace integrated daemon/provider tests.
 
 Use --oes-factory to stage the current object tree's oes.ko and boot it in the
-disposable guest. The runner hashes the module and static oes_factory_test.
+disposable guest. The runner hashes the module and static factory and handoff tests.
 This exercises real OES NOTIFY descriptor attenuation after cap_enter, including
 denial of AUTH subscriptions and mode/scope changes. It does not validate
-SwitchBoard attribute admission or the future factory channel handoff.
+SwitchBoard attribute admission. The handoff cases exercise real channel
+descriptor delivery, denied onward transfer, malformed-request rejection, and
+the five-second idle deadline.
