@@ -75,6 +75,11 @@ oes_client_t *oes_client_create_from_fd(int fd);
  */
 oes_client_t *oes_client_adopt_fd(int fd);
 
+/* Obtain a global NOTIFY-only client via the system.oes attribute-gated
+ * system.OES endpoint. Owns the returned FD. No ambient fallback or reconnect.
+ * Uses a 5s RPC budget unless the caller already has a scoped budget. */
+oes_client_t *oes_client_create_brokered(void);
+
 /*
  * oes_client_destroy - Destroy a client
  *

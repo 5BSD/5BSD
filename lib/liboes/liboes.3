@@ -91,6 +91,23 @@ Path mute and unmute helpers reject null or empty paths with
 and paths exceeding the ABI buffer with
 .Er ENAMETOOLONG .
 They never silently truncate a path or issue an ioctl for these invalid inputs.
+.Sh BROKERED CLIENTS
+.Fn oes_client_create_brokered
+requests a global NOTIFY-only descriptor from
+.Va system.OES .
+The requesting program must declare
+.Li attributes = ["system.oes"]
+in its approved unit configuration; the provider endpoint requires that
+software attribute.
+The constructor owns the returned descriptor and closes its factory session.
+It never falls back to an ambient device open or transparently reconnects.
+.Pp
+Discovery and the request use a five-second scoped RPC budget unless the caller
+already has a budget, which remains intact.
+The RPC timeout is additionally capped at five seconds.
+Malformed replies and failed allocations close any received descriptor.
+This client API does not itself enable the provider endpoint; an unavailable
+endpoint returns the discovery error.
 .Sh DESCRIPTOR OWNERSHIP
 .Fn oes_client_create_from_fd
 borrows a descriptor; destroying its wrapper leaves the descriptor open.
