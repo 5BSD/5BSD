@@ -8,6 +8,7 @@
 #include <channel.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <grp.h>
 #include <libservice.h>
 #include <oes_broker_protocol.h>
 #include <security/oes/oes.h>
@@ -38,10 +39,10 @@ wait_factory(pid_t child, int expected)
 	int status;
 	ATF_REQUIRE_EQ(child, waitpid(child, &status, 0));
 	ATF_REQUIRE(WIFEXITED(status));
-	ATF_CHECK_EQ(expected, WEXITSTATUS(status));
+	ATF_REQUIRE_EQ(expected, WEXITSTATUS(status));
 }
 static void
-exchange(bool malformed)
+exchange(bool malformed, bool nonroot)
 {
 	int input, received = -1;
 	pid_t child = start_factory(&input);
@@ -60,29 +61,35 @@ exchange(bool malformed)
 		.fd_capacity = 1 };
 	struct service_call_options options = SERVICE_CALL_OPTIONS_INITIALIZER;
 	options.timeout_ms = 5000;
+	if (nonroot) {
+		ATF_REQUIRE_EQ(0, setgroups(0, NULL));
+		ATF_REQUIRE_EQ(0, setgid(65534));
+		ATF_REQUIRE_EQ(0, setuid(65534));
+		ATF_REQUIRE_EQ(65534, geteuid());
+	}
 	ATF_REQUIRE_EQ(0, service_session_create(input, &session));
-	ATF_CHECK_ERRNO(EBADF, fcntl(input, F_GETFD) == -1);
+	ATF_REQUIRE_ERRNO(EBADF, fcntl(input, F_GETFD) == -1);
 	if (malformed)
 		request.reserved = 1;
 	ATF_REQUIRE_EQ(0,
 	    service_session_call(session, &outgoing, &incoming, &options));
 	ATF_REQUIRE_EQ(0,
 	    oes_broker_validate(&reply, incoming.length, incoming.nfds, true));
-	ATF_CHECK_EQ(malformed ? EPROTO : 0, reply.status);
+	ATF_REQUIRE_EQ(malformed ? EPROTO : 0, reply.status);
 	service_session_close(session);
 	wait_factory(child, 0);
 	if (malformed) {
-		ATF_CHECK_EQ(-1, received);
+		ATF_REQUIRE_EQ(-1, received);
 		return;
 	}
 	ATF_REQUIRE(received >= 0);
 	struct oes_mode_args mode = { 0 };
-	ATF_CHECK_EQ(0, ioctl(received, OES_IOC_GET_MODE, &mode));
-	ATF_CHECK_EQ(OES_MODE_NOTIFY, mode.ema_mode);
-	ATF_CHECK_ERRNO(ENOTCAPABLE,
+	ATF_REQUIRE_EQ(0, ioctl(received, OES_IOC_GET_MODE, &mode));
+	ATF_REQUIRE_EQ(OES_MODE_NOTIFY, mode.ema_mode);
+	ATF_REQUIRE_ERRNO(ENOTCAPABLE,
 	    cap_xfer_limit(received, CAP_XFER_ONCE) == -1);
 	mode.ema_mode = OES_MODE_AUTH;
-	ATF_CHECK_ERRNO(ENOTCAPABLE,
+	ATF_REQUIRE_ERRNO(ENOTCAPABLE,
 	    ioctl(received, OES_IOC_SET_MODE, &mode) == -1);
 	ATF_REQUIRE_EQ(0, close(received));
 }
@@ -93,7 +100,28 @@ ATF_TC_HEAD(real_handoff, tc)
 }
 ATF_TC_BODY(real_handoff, tc)
 {
-	exchange(false);
+	exchange(false, false);
+}
+ATF_TC(nonroot_handoff);
+ATF_TC_HEAD(nonroot_handoff, tc)
+{
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "descr",
+	    "non-root recipient receives a restricted OES client from the privileged factory");
+}
+ATF_TC_BODY(nonroot_handoff, tc)
+{
+	int status;
+	pid_t child = fork();
+
+	ATF_REQUIRE(child >= 0);
+	if (child == 0) {
+		exchange(false, true);
+		_exit(0);
+	}
+	ATF_REQUIRE_EQ(child, waitpid(child, &status, 0));
+	ATF_REQUIRE(WIFEXITED(status));
+	ATF_REQUIRE_EQ(0, WEXITSTATUS(status));
 }
 ATF_TC(malformed_request);
 ATF_TC_HEAD(malformed_request, tc)
@@ -102,7 +130,7 @@ ATF_TC_HEAD(malformed_request, tc)
 }
 ATF_TC_BODY(malformed_request, tc)
 {
-	exchange(true);
+	exchange(true, false);
 }
 ATF_TC(idle_timeout);
 ATF_TC_HEAD(idle_timeout, tc)
@@ -116,11 +144,12 @@ ATF_TC_BODY(idle_timeout, tc)
 	pid_t child = start_factory(&fd);
 	wait_factory(child, 1);
 	close(fd);
-	ATF_CHECK(service_monotime_ms() - start >= 4900);
+	ATF_REQUIRE(service_monotime_ms() - start >= 4900);
 }
 ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, real_handoff);
+	ATF_TP_ADD_TC(tp, nonroot_handoff);
 	ATF_TP_ADD_TC(tp, malformed_request);
 	ATF_TP_ADD_TC(tp, idle_timeout);
 	return (atf_no_error());

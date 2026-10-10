@@ -34,7 +34,11 @@ they do not replace integrated daemon/provider tests.
 Use --oes-factory to stage the current object tree's oes.ko and boot it in the
 disposable guest. The runner hashes the module and static factory and handoff tests.
 This exercises real OES NOTIFY descriptor attenuation after cap_enter, including
-denial of AUTH subscriptions and mode/scope changes. It does not validate
+denial of AUTH subscriptions and mode/scope changes.
+The handoff suite also drops the recipient to UID/GID65534 with no
+supplementary groups before requesting and using a client; the factory stays
+privileged. Child assertions are fatal and propagated to the root ATF parent.
+This tests descriptor delivery to a non-root recipient, not .ucl admission. It does not validate
 SwitchBoard attribute admission. The handoff cases exercise real channel
 descriptor delivery, denied onward transfer, malformed-request rejection, and
 the five-second idle deadline.

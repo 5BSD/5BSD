@@ -82,7 +82,7 @@ if a.oes_factory:
  before=digest(handoff);shutil.copyfile(handoff,stage/'tests/oes_handoff_test')
  if digest(handoff)!=before or digest(stage/'tests/oes_handoff_test')!=before: p.error('handoff input changed')
  extra_hashes['oes_handoff_test']=before
- extra_cases.extend(('/tests/oes_handoff_test',case) for case in ['real_handoff','malformed_request','idle_timeout'])
+ extra_cases.extend(('/tests/oes_handoff_test',case) for case in ['real_handoff','nonroot_handoff','malformed_request','idle_timeout'])
  (stage/'tests/extra-cases').write_text(''.join(program+' '+case+'\n' for program,case in extra_cases))
 if a.log_store:
  source=obj/'usr.sbin/BSDLog/tests/store_test'
