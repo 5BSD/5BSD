@@ -16,3 +16,15 @@ Exit-event errors now retain the reference; failed procdesc-watch setup uses
 the controlled-stop helper. The tests cover invalid-handle exit-event failure
 and cleanup of a real child already reaped through its retained procdesc.
 Actual failed-watch injection remains a full-provider test gate.
+
+serve_test drives the actual vmd_serve loop with injected provider/listener and
+event operations. lifecycle_failures covers startup stages, fatal event/accept
+errors, successful quiescence and failed acknowledgement, checking queue closure
+and provider destruction. worker_loop_cleanup accepts a client and creates a
+real pdfork child standing in for a worker. It covers failed watch setup with
+successful cleanup, failed watch setup plus injected EPERM on termination,
+explicit stop, and idle refusal followed by explicit stop. Assertions check
+window references at acknowledgements, reaped children and closed handles.
+The denial fixture keeps a backup procdesc exclusively to recover its child;
+production supervisor recovery is not simulated or certified. No protected
+worker or real vsock transport runs in this service-loop fixture.
