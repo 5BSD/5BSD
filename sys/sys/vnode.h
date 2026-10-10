@@ -1253,8 +1253,16 @@ vn_get_state(struct vnode *vp)
 
 #include <sys/kernel.h>
 
+/*
+ * Register vop vectors before VFS_SET() (SI_SUB_VFS, SI_ORDER_MIDDLE)
+ * publishes the filesystem in the vfsconf list.  When a filesystem module
+ * is loaded on demand by vfs_byname_kld(), a concurrent mount of the same
+ * fstype finds the vfsconf as soon as vfs_register() runs, without waiting
+ * for the kldload to finish, and must not be able to reach getnewvnode()
+ * with a vector that is not yet registered.
+ */
 #define VFS_VOP_VECTOR_REGISTER(vnodeops) \
-	SYSINIT(vfs_vector_##vnodeops##_f, SI_SUB_VFS, SI_ORDER_ANY, \
+	SYSINIT(vfs_vector_##vnodeops##_f, SI_SUB_VFS, SI_ORDER_THIRD, \
 	    vfs_vector_op_register, &vnodeops)
 
 #define VFS_SMR_DECLARE				\
