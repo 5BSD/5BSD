@@ -106,10 +106,37 @@ ATF_TC_BODY(bootstrap_invalid_arguments, tc)
 	ATF_CHECK_ERRNO(EINVAL, service_bootstrap_parent(0, 0) == -1);
 	ATF_CHECK_ERRNO(EINVAL, service_bootstrap_parent(0, UINT32_MAX) == -1);
 }
+ATF_TC_WITHOUT_HEAD(bootstrap_seqpacket);
+ATF_TC_BODY(bootstrap_seqpacket, tc)
+{
+	int pair[2], child_error;
+	char release;
+
+	/* BSDLog's pool control is record-oriented, unlike audit/network. */
+	fragment = 0;
+	for (int failure = 0; failure < 2; failure++) {
+		ATF_REQUIRE_EQ(0, socketpair(AF_UNIX, SOCK_SEQPACKET, 0, pair));
+		child_error = failure ? EACCES : 0;
+		ATF_REQUIRE_EQ(sizeof(child_error),
+		    write(pair[1], &child_error, sizeof(child_error)));
+		if (failure)
+			ATF_CHECK_ERRNO(EACCES,
+			    service_bootstrap_parent(pair[0], 5000) == -1);
+		else {
+			ATF_REQUIRE_EQ(0, service_bootstrap_parent(pair[0], 5000));
+			ATF_REQUIRE_EQ(1, read(pair[1], &release, sizeof(release)));
+			ATF_CHECK_EQ(1, release);
+		}
+		close(pair[0]);
+		close(pair[1]);
+	}
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, bootstrap_socket_errors);
 	ATF_TP_ADD_TC(tp, bootstrap_stall_deadline);
 	ATF_TP_ADD_TC(tp, bootstrap_invalid_arguments);
+	ATF_TP_ADD_TC(tp, bootstrap_seqpacket);
 	return (atf_no_error());
 }

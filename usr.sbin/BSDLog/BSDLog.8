@@ -19,6 +19,8 @@ Workers display their pool number in
 .Xr ps 1 ,
 and the separate storage manager displays its storage role.
 These process titles describe shared roles, not per-client authority.
+Pool startup uses a five-second status-and-release handshake.
+A failed pool is terminated and reaped before startup reports the error.
 The client sends an edge-coalesced wakeup when a shared ring changes from
 empty to nonempty, and the worker drains the burst through
 .Xr kqueue 2 .
