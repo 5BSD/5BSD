@@ -924,6 +924,16 @@ ATF_TC_BODY(service_session_payload_and_attachment_lifecycle, tc)
 	    -1);
 	ATF_CHECK_EQ(sizeof("reply-larger-than-buffer"), incoming.length);
 	ATF_CHECK_EQ(1, incoming.nfds);
+	/*
+	 * Receiving L can race the provider's close of its original writer.
+	 * A subsequent reply proves that callback and its send cleanup finished;
+	 * EOF then tests the client's discarded attachment, not thread scheduling.
+	 */
+	ATF_REQUIRE_EQ(0,
+	    test_session_call(session, "K", 1, reply, sizeof(reply), 2000,
+	    &received));
+	ATF_CHECK_EQ(sizeof("ok"), received);
+	ATF_CHECK_STREQ("ok", reply);
 	ATF_CHECK_EQ(0, read(large_pipe[0], &byte, sizeof(byte)));
 
 	errno = 0;
@@ -945,7 +955,7 @@ ATF_TC_BODY(service_session_payload_and_attachment_lifecycle, tc)
 	service_session_close(session);
 	ATF_REQUIRE_EQ(0, pthread_join(thread, NULL));
 	ATF_CHECK_EQ(0, provider.error);
-	ATF_CHECK_EQ(3, provider.requests);
+	ATF_CHECK_EQ(4, provider.requests);
 	close(event_pipe[0]);
 	close(large_pipe[0]);
 	close(late_pipe[0]);
