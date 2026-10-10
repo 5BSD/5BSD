@@ -1,6 +1,6 @@
 #!/usr/local/bin/python3.12
 """Run native libservice maturity tests in a disposable, networkless VM."""
-import argparse, hashlib, json, os, shutil, subprocess, time
+import argparse, hashlib, json, os, re, shutil, subprocess, time
 from pathlib import Path
 p=argparse.ArgumentParser(description=__doc__)
 p.add_argument('--root',type=Path,required=True)
@@ -14,6 +14,7 @@ p.add_argument('--oes-factory',action='store_true')
 p.add_argument('--log-store',action='store_true')
 p.add_argument('--log-storage',action='store_true')
 p.add_argument('--log-provider',action='store_true')
+p.add_argument('--atf-suite',action='append',default=[],help='static ATF binary relative to objtop; repeatable')
 p.add_argument('--timeout',type=int,default=240)
 a=p.parse_args()
 if a.timeout<=0: p.error('timeout must be positive')
@@ -106,6 +107,24 @@ if a.log_provider:
  if not cases: p.error('no log provider cases')
  extra_cases.extend(('/tests/log_provider_test',case) for case in cases)
  (stage/'tests/extra-cases').write_text(''.join(program+' '+case+'\n' for program,case in extra_cases))
+selected_suites=[]
+for number, relative in enumerate(a.atf_suite):
+ path=Path(relative)
+ if path.is_absolute() or '..' in path.parts: p.error('ATF suite must be relative to objtop')
+ source=(obj/path).resolve()
+ if not source.is_relative_to(obj) or not source.is_file(): p.error('invalid ATF suite: '+relative)
+ if 'statically linked' not in subprocess.check_output(['file',str(source)],text=True): p.error('ATF suite must be static: '+relative)
+ alias='atf_suite_'+str(number); before=digest(source)
+ shutil.copyfile(source,stage/'tests'/alias)
+ listing=subprocess.check_output([str(source),'-l'],text=True,timeout=10)
+ if digest(source)!=before or digest(stage/'tests'/alias)!=before: p.error('ATF suite changed: '+relative)
+ cases=[line.split(': ',1)[1] for line in listing.splitlines() if line.startswith('ident: ')]
+ if not cases or len(cases)!=len(set(cases)) or any(re.fullmatch(r'[A-Za-z0-9_][A-Za-z0-9_.-]{0,126}',case) is None for case in cases): p.error('invalid ATF case listing: '+relative)
+ extra_hashes[alias]=before
+ selected_suites.append({'source':relative,'alias':alias,'cases':cases,'sha256':before})
+ extra_cases.extend(('/tests/'+alias,case) for case in cases)
+if a.atf_suite:
+ (stage/'tests/extra-cases').write_text(''.join(program+' '+case+'\n' for program,case in extra_cases))
 (stage/'etc/passwd').write_text('root:*:0:0:Charlie &:/root:/bin/sh\n')
 (stage/'boot/loader.conf').write_text('console="comconsole"\nautoboot_delay="1"\ncapability_plane="NO"\ninit_path="/sbin/runtime-init"\nvfs.root.mountfrom="ufs:/dev/vtbd0p2"\nvfs.root.mountfrom.options="rw"\n')
 if a.oes_factory:
@@ -122,7 +141,7 @@ subprocess.run(['makefs','-t','ffs','-s','256m','-F',str(work/'METALOG'),'-o','v
 subprocess.run(['mkimg','-s','gpt','-f','raw','-b',str(stage/'boot/pmbr'),'-p','freebsd-boot:='+str(stage/'boot/gptboot'),'-p','freebsd-ufs:='+str(work/'root.ufs'),'-o',str(work/'guest.img')],check=True)
 log=work/'serial.log'
 cmd=[a.qemu,'-L',str(a.qemu_data),'-accel','tcg,thread=multi','-machine','q35','-cpu','max','-m','1024','-smp','2','-drive',f'file={work}/guest.img,format=raw,if=virtio,snapshot=on','-nic','none','-display','none','-monitor','none','-serial','file:'+str(log)]
-provenance={'kernel_sha256':hashes[str(kernel)],'fixture_sha256':hashes[str(helper)],'test_sha256':hashes[str(test)],'filesystem_test_sha256':hashes[str(fs_test)],'ownership_test_hashes':extra_hashes,'objtop':str(obj),'staged_root':str(root),'command':cmd,'scope':'isolated native libservice tests, not integrated daemon/installer acceptance'}
+provenance={'kernel_sha256':hashes[str(kernel)],'fixture_sha256':hashes[str(helper)],'test_sha256':hashes[str(test)],'filesystem_test_sha256':hashes[str(fs_test)],'ownership_test_hashes':extra_hashes,'objtop':str(obj),'staged_root':str(root),'command':cmd,'selected_atf_suites':selected_suites,'scope':'isolated native daemon/library fixtures; not integrated bundle or installer acceptance'}
 (work/'inputs.json').write_text(json.dumps(provenance,indent=2)+'\n')
 proc=subprocess.Popen(cmd); deadline=time.monotonic()+a.timeout; forced=False
 try:
@@ -137,7 +156,8 @@ finally:
   except subprocess.TimeoutExpired: proc.kill(); proc.wait()
 text=log.read_text(errors='replace') if log.exists() else ''
 expected=['/tests/namespace_test:delivery_hardening_failure']+['/tests/libservice_api_test:'+case for case in ['service_budget_wire','service_session_payload_and_attachment_lifecycle','service_session_close_cancels_event']]+[program+':'+case for program,case in extra_cases]
-passed=all(text.count('RUNTIME_CASE_PASS '+case)==1 for case in expected)
+lines=text.splitlines()
+passed=all(lines.count('RUNTIME_CASE_PASS '+case)==1 for case in expected)
 passed=passed and 'RUNTIME_VM_PASS' in text and 'RUNTIME_VM_FAIL' not in text and 'RUNTIME_CASE_FAIL' not in text
 passed=passed and not forced and proc.returncode==0 and 'Powering system off' in text and not any(x in text for x in ['panic:','Fatal trap','lock order reversal'])
 provenance.update(result='PASS' if passed else 'FAIL',forced_termination=forced,qemu_exit=proc.returncode,serial_sha256=digest(log) if log.exists() else None)

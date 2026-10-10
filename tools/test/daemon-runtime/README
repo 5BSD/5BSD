@@ -61,3 +61,14 @@ Use --log-provider for provider dispatch and ring lifecycle tests over real
 capability channels. The sink is injected; cases cover backend errors, trusted
 receive timestamps, malformed descriptor rejection and terminal ring-drain
 failures during flush/detach. This does not activate a full logging bundle.
+
+Additional static ATF programs can be selected with repeated --atf-suite paths
+relative to --objtop, for example:
+    --atf-suite usr.sbin/BSDPower/tests/provider_test
+    --atf-suite lib/libnotify/tests/watch_test
+Only self-contained tests are suitable: this fixture supplies neither installed
+suite data nor a full service plane. Paths must remain inside objtop. The runner
+records the source, private alias, enumerated cases and stable input hash in its
+provenance. Every selected case must pass; skips and missing results fail the
+run. Each case has the fixture's 40-second deadline. This does not replace full
+bundle activation, authority admission, production sandbox or hardware tests.
