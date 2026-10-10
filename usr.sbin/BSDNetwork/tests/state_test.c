@@ -23,7 +23,8 @@ struct channel_message {
 	size_t length;
 	unsigned char data[16384];
 };
-static int force_writable;
+static int force_writable, reply_blocked_fd = -1;
+static unsigned live_channels, live_messages;
 static int
 fake_create(int fd, const struct channel_options *options, struct channel **out)
 {
@@ -31,6 +32,7 @@ fake_create(int fd, const struct channel_options *options, struct channel **out)
 	*out = calloc(1, sizeof(**out));
 	if (*out == NULL)
 		return (-1);
+	live_channels++;
 	(*out)->fd = fd;
 	return (0);
 }
@@ -38,6 +40,7 @@ static void
 fake_destroy(struct channel *c)
 {
 	close(c->fd);
+	live_channels--;
 	free(c);
 }
 static int
@@ -83,6 +86,7 @@ fake_dispatch(struct channel *c)
 				return (0);
 			return (-1);
 		}
+		live_messages++;
 		m->channel = c;
 		m->length = n;
 		c->handler(c, m, c->argument);
@@ -92,6 +96,8 @@ fake_dispatch(struct channel *c)
 static int
 fake_reply(struct channel_message *m, const struct channel_outgoing *o)
 {
+	if (m->channel->fd == reply_blocked_fd)
+		return (errno = EAGAIN, -1);
 	return (send(m->channel->fd, o->data, o->length, MSG_NOSIGNAL) ==
 		    (ssize_t)o->length ?
 		0 :
@@ -116,6 +122,7 @@ fake_fd_count(const struct channel_message *m)
 static void
 fake_free(struct channel_message *m)
 {
+	live_messages--;
 	free(m);
 }
 #define channel_create		    fake_create
@@ -285,8 +292,75 @@ ATF_TC_BODY(admission_and_disconnect, tc)
 	network_state_server_destroy(server);
 	close(kq);
 }
+ATF_TC_WITHOUT_HEAD(idle_and_slow_reader);
+ATF_TC_BODY(idle_and_slow_reader, tc)
+{
+	struct network_state_server *server;
+	int kq = kqueue(), slow, healthy;
+
+	ATF_REQUIRE(kq >= 0);
+	ATF_REQUIRE_EQ(0, network_state_server_create(kq, &server));
+	slow = add_client(server, "slow");
+	healthy = add_client(server, "healthy");
+	/* A full reply queue drops only that client. */
+	reply_blocked_fd = channel_fd(server->sessions[0].channel);
+	send_watch(slow, 0);
+	for (unsigned i = 0; i < 10 && server->sessions[0].channel != NULL; i++)
+		drive(server);
+	ATF_REQUIRE(server->sessions[0].channel == NULL);
+	reply_blocked_fd = -1;
+	send_watch(healthy, 0);
+	ATF_CHECK_EQ(0, receive_reply(server, healthy).header.status);
+	/* Shorten only the fixture's timer; write-ready events must not renew it. */
+	force_writable = 1;
+	ATF_REQUIRE_EQ(0, write_interest(&server->sessions[1]));
+	ATF_REQUIRE_EQ(0, arm_timer(&server->sessions[1], 1));
+	for (unsigned i = 0; i < 100 && server->sessions[1].channel != NULL; i++) {
+		drive(server);
+		usleep(1000);
+	}
+	ATF_CHECK(server->sessions[1].channel == NULL);
+	force_writable = 0;
+	close(slow);
+	close(healthy);
+	network_state_server_destroy(server);
+	close(kq);
+	ATF_CHECK_EQ(0, live_channels);
+	ATF_CHECK_EQ(0, live_messages);
+}
+ATF_TC_WITHOUT_HEAD(restart_and_pending_teardown);
+ATF_TC_BODY(restart_and_pending_teardown, tc)
+{
+	struct network_state_server *server;
+	uint64_t epoch = 0;
+	int kq = kqueue(), peer;
+	char byte;
+
+	ATF_REQUIRE(kq >= 0);
+	for (unsigned cycle = 0; cycle < 100; cycle++) {
+		ATF_REQUIRE_EQ(0, network_state_server_create(kq, &server));
+		peer = add_client(server, "repeat");
+		send_watch(peer, 0);
+		struct network_state_reply reply = receive_reply(server, peer);
+		ATF_CHECK(reply.state.epoch != epoch);
+		epoch = reply.state.epoch;
+		send_watch(peer, NETWORK_STATE_TIMEOUT_INFINITE);
+		for (unsigned i = 0; i < 10 && server->sessions[0].pending == NULL; i++)
+			drive(server);
+		ATF_REQUIRE(server->sessions[0].pending != NULL);
+		network_state_server_destroy(server);
+		ATF_CHECK_EQ(0, recv(peer, &byte, 1, MSG_DONTWAIT));
+		close(peer);
+		ATF_CHECK_EQ(0, live_channels);
+		ATF_CHECK_EQ(0, live_messages);
+	}
+	close(kq);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
+	ATF_TP_ADD_TC(tp, idle_and_slow_reader);
+	ATF_TP_ADD_TC(tp, restart_and_pending_teardown);
 	ATF_TP_ADD_TC(tp, watch_lifecycle);
 	ATF_TP_ADD_TC(tp, admission_and_disconnect);
 	return (atf_no_error());

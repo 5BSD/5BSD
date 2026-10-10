@@ -56,4 +56,10 @@ CFLAGS.state_plane_test+= -I${SRCTOP}/lib/libsysctlcmp -I${SRCTOP}/sys
 LIBADD.state_plane_test+= networkcmp notify channel service pthread
 NO_SHARED.state_plane_test= yes
 
+ATF_TESTS_C+= state_sampler_test
+CFLAGS.state_sampler_test+= -I${SRCTOP}/lib/libchannel -I${SRCTOP}/lib/libnotify
+CFLAGS.state_sampler_test+= -I${SRCTOP}/lib/libsysctlcmp -I${SRCTOP}/sys
+LIBADD.state_sampler_test+= networkcmp notify channel service pthread
+NO_SHARED.state_sampler_test= yes
+
 .include <bsd.test.mk>
