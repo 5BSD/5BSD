@@ -25,10 +25,17 @@ struct notify_client {
 	uint64_t generation;
 };
 static struct notify_client fake_notify;
-static atomic_uint fake_level, fake_closed;
+static atomic_uint fake_level, fake_closed, fake_open_calls;
+static atomic_int fake_open_error;
 int
 notify_client_open(struct notify_client **out)
 {
+	atomic_fetch_add(&fake_open_calls, 1);
+	int error = atomic_load(&fake_open_error);
+	if (error != 0) {
+		*out = NULL;
+		return (errno = error, -1);
+	}
 	fake_notify.last = UINT32_MAX;
 	fake_notify.generation = 0;
 	*out = &fake_notify;
@@ -497,8 +504,34 @@ ATF_TC_BODY(large_cache_lifecycle, tc)
 	ATF_REQUIRE_EQ(0, bsd_cache_destroy(cache));
 }
 
+ATF_TC_WITHOUT_HEAD(discovery_eagain_backs_off);
+ATF_TC_BODY(discovery_eagain_backs_off, tc)
+{
+	struct bsd_cache *cache;
+	struct bsd_cache_stats stats;
+
+	atomic_store(&fake_open_error, EAGAIN);
+	atomic_store(&fake_level, NOTIFY_PRESSURE_NORMAL);
+	ATF_REQUIRE_EQ(0, bsd_cache_open(4, 16, &cache));
+	for (unsigned i = 0; atomic_load(&fake_open_calls) == 0 && i < 3000; i++)
+		usleep(1000);
+	ATF_REQUIRE(atomic_load(&fake_open_calls) != 0);
+	usleep(100000);
+	/* A failed discovery must not spin or masquerade as a watch timeout. */
+	ATF_CHECK_EQ(1, atomic_load(&fake_open_calls));
+	ATF_REQUIRE_EQ(0, bsd_cache_get_stats(cache, &stats));
+	ATF_CHECK_EQ(EAGAIN, stats.notification_error);
+	ATF_CHECK_EQ(NOTIFY_PRESSURE_UNKNOWN, stats.pressure);
+	ATF_CHECK_EQ(0, atomic_load(&fake_closed));
+	atomic_store(&fake_open_error, 0);
+	wait_level(cache, NOTIFY_PRESSURE_NORMAL);
+	ATF_REQUIRE_EQ(0, bsd_cache_destroy(cache));
+	ATF_CHECK_EQ(1, atomic_load(&fake_closed));
+}
+
 ATF_TP_ADD_TCS(tp)
 {
+	ATF_TP_ADD_TC(tp, discovery_eagain_backs_off);
 	ATF_TP_ADD_TC(tp, large_cache_lifecycle);
 	ATF_TP_ADD_TC(tp, invalidation_during_rebuild);
 	ATF_TP_ADD_TC(tp, generation_invalidation);

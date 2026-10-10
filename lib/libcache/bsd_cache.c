@@ -397,17 +397,21 @@ watch_pressure(void *argument)
 	struct notify_state_watch_reply state;
 	uint64_t epoch = 0, generation = 0;
 	int error;
+	bool watch_idle;
 	while (!atomic_load(&c->stopping)) {
+		watch_idle = false;
 		error = client == NULL && notify_client_open(&client) == -1 ?
 		    errno :
 		    0;
 		if (error == 0 &&
 		    notify_state_watch(client, NOTIFY_PRESSURE_TOPIC, &state,
-			250) == -1)
+			250) == -1) {
 			error = errno;
+			watch_idle = error == EAGAIN;
+		}
 		if (error == 0)
 			observe_pressure(c, &state, &epoch, &generation);
-		else if (error != EAGAIN) {
+		else if (!watch_idle) {
 			(void)bsd_cache_set_pressure(c,
 			    NOTIFY_PRESSURE_UNKNOWN);
 			if (client != NULL)
@@ -415,13 +419,12 @@ watch_pressure(void *argument)
 			client = NULL;
 		}
 		if (cache_lock(c) == 0) {
-			c->stats.notification_error = error == EAGAIN ? 0 :
-									error;
+			c->stats.notification_error = watch_idle ? 0 : error;
 			pthread_mutex_unlock(&c->lock);
 		}
 		/* Retry failures at most once a second, without delaying
 		 * destruction. */
-		if (error != 0 && error != EAGAIN)
+		if (error != 0 && !watch_idle)
 			for (unsigned i = 0;
 			    i < 10 && !atomic_load(&c->stopping); i++)
 				usleep(100000);

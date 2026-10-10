@@ -146,6 +146,11 @@ Normal pressure restores configured limits.
 Missing or unavailable state is reported as unknown and preserves the last
 known restriction; initial unknown state uses configured limits.
 The cache remains bounded when the notification service is absent.
+Failed client opens, including
+.Er EAGAIN ,
+are reported in the notification error statistic and retried at most once per
+second.
+An ordinary unchanged-state watch timeout does not report a notification error.
 The first notification snapshot, a changed watcher epoch, or skipped state
 generations purge entries and invalidate rebuild tokens: a coalesced critical
 and recovery transition must not leave older cached entries behind.
