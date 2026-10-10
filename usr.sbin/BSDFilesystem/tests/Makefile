@@ -53,7 +53,7 @@ NO_SHARED.oes_session_test= yes
 ATF_TESTS_C+= oes_handoff_test
 SRCS.oes_handoff_test= oes_handoff_test.c oes_session.c oes_factory.c
 CFLAGS+= -I${SRCTOP}/lib/liboes
-LIBADD.oes_handoff_test= channel service
+LIBADD.oes_handoff_test= oes channel service
 NO_SHARED.oes_handoff_test= yes
 
 ATF_TESTS_C+= manifest_test

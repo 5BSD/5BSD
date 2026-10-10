@@ -10,6 +10,7 @@
 #include <fcntl.h>
 #include <grp.h>
 #include <libservice.h>
+#include <liboes.h>
 #include <oes_broker_protocol.h>
 #include <security/oes/oes.h>
 #include <service_runtime.h>
@@ -91,7 +92,30 @@ exchange(bool malformed, bool nonroot)
 	mode.ema_mode = OES_MODE_AUTH;
 	ATF_REQUIRE_ERRNO(ENOTCAPABLE,
 	    ioctl(received, OES_IOC_SET_MODE, &mode) == -1);
-	ATF_REQUIRE_EQ(0, close(received));
+	/* Exercise the public wrapper after the factory session has closed. */
+	oes_client_t *client = oes_client_adopt_fd(received);
+	oes_event_type_t event = OES_EVENT_NOTIFY_EXEC;
+	uint32_t client_mode, scope;
+	uint64_t auth[2], notify[2];
+	struct oes_stats stats;
+
+	ATF_REQUIRE(client != NULL);
+	ATF_REQUIRE_EQ(received, oes_client_fd(client));
+	ATF_REQUIRE_EQ(0, oes_get_mode(client, &client_mode, NULL, NULL));
+	ATF_REQUIRE_EQ(OES_MODE_NOTIFY, client_mode);
+	ATF_REQUIRE_EQ(0, oes_get_scope(client, &scope));
+	ATF_REQUIRE_EQ(OES_SCOPE_GLOBAL, scope);
+	ATF_REQUIRE_EQ(0, oes_subscribe(client, &event, 1, OES_SUB_REPLACE));
+	ATF_REQUIRE_EQ(0, oes_get_subscriptions(client, auth, notify));
+	ATF_REQUIRE_EQ(0, auth[0] | auth[1]);
+	ATF_REQUIRE(notify[0] != 0 || notify[1] != 0);
+	ATF_REQUIRE_EQ(0, oes_get_stats(client, &stats));
+	ATF_REQUIRE_EQ(0, oes_unsubscribe_all(client));
+	ATF_REQUIRE_EQ(0, oes_get_subscriptions(client, auth, notify));
+	ATF_REQUIRE_EQ(0, auth[0] | auth[1] | notify[0] | notify[1]);
+	ATF_REQUIRE_ERRNO(ENOTCAPABLE, oes_set_descendants_scope(client) == -1);
+	oes_client_destroy(client);
+	ATF_REQUIRE_ERRNO(EBADF, fcntl(received, F_GETFD) == -1);
 }
 ATF_TC(real_handoff);
 ATF_TC_HEAD(real_handoff, tc)

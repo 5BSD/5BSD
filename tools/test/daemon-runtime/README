@@ -38,6 +38,9 @@ denial of AUTH subscriptions and mode/scope changes.
 The handoff suite also drops the recipient to UID/GID65534 with no
 supplementary groups before requesting and using a client; the factory stays
 privileged. Child assertions are fatal and propagated to the root ATF parent.
+After the factory session closes, both recipients use liboes to adopt the fd,
+query mode/scope, subscribe and unsubscribe NOTIFY events, read subscription
+sets and statistics, reject a scope change, and destroy the owned descriptor.
 This tests descriptor delivery to a non-root recipient, not .ucl admission. It does not validate
 SwitchBoard attribute admission. The handoff cases exercise real channel
 descriptor delivery, denied onward transfer, malformed-request rejection, and
