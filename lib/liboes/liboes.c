@@ -119,6 +119,26 @@ oes_client_create_from_fd(int fd)
 }
 
 /*
+ * Take ownership only after all fallible work succeeds.  Do not issue device
+ * ioctls here: a broker may deliberately exclude configuration/query ioctls.
+ */
+oes_client_t *
+oes_client_adopt_fd(int fd)
+{
+	oes_client_t *client;
+
+	if (fd < 0 || fcntl(fd, F_GETFD) == -1) {
+		if (fd < 0)
+			errno = EBADF;
+		return (NULL);
+	}
+	client = oes_client_create_from_fd(fd);
+	if (client != NULL)
+		client->ec_owned = true;
+	return (client);
+}
+
+/*
  * oes_client_destroy - Destroy a client
  */
 void

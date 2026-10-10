@@ -85,6 +85,26 @@ and
 .Va ef_meta_flags
 because path, credential, filesystem, and attribute data can be unavailable
 independently.
+.Sh DESCRIPTOR OWNERSHIP
+.Fn oes_client_create_from_fd
+borrows a descriptor; destroying its wrapper leaves the descriptor open.
+.Fn oes_client_adopt_fd
+instead takes ownership on success and closes that descriptor on destruction.
+On failure, ownership remains with the caller.
+The caller must supply an OES descriptor and establish close-on-exec behavior
+before adoption.
+Adoption checks descriptor validity but does not verify its device type or issue
+ioctls, duplicate it, change rights, or change client scope.
+An attenuated descriptor need not permit configuration or query ioctls.
+.Pp
+Closing one duplicate does not destroy the kernel client while another remains.
+Destroying a borrowed wrapper does not resolve pending AUTH requests.
+Do not use or close an adopted descriptor independently of its wrapper;
+serialize operations and destruction on each wrapper.
+.Pp
+A transferred descriptor retains the kernel identity of its original opener.
+Adoption does not rebind descendant scope or self-AUTH handling to its
+recipient.
 .Sh SEE ALSO
 .Xr oes 4
 .Sh AUTHORS

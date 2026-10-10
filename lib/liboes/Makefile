@@ -2,6 +2,8 @@
 # OpenEndpointSecurity userland client library (liboes).
 #
 
+.include <src.opts.mk>
+
 PACKAGE=	oes
 LIB=		oes
 SHLIB_MAJOR=	1
@@ -21,5 +23,8 @@ OESINCSDIR=	${INCLUDEDIR}/security/oes
 CFLAGS+=	-I${SRCTOP}/sys
 
 WARNS?=		6
+
+HAS_TESTS=
+SUBDIR.${MK_TESTS}+= tests
 
 .include <bsd.lib.mk>

@@ -68,10 +68,19 @@ oes_client_t *oes_client_create_descendants(void);
 oes_client_t *oes_client_create_from_fd(int fd);
 
 /*
+ * Take ownership of an existing descriptor on success only.  On failure the
+ * caller still owns it.  No duplication, ioctl, rights or scope changes occur.
+ * The caller must supply an OES descriptor and arrange close-on-exec before
+ * adoption.  Destruction closes this descriptor, not other duplicates.
+ */
+oes_client_t *oes_client_adopt_fd(int fd);
+
+/*
  * oes_client_destroy - Destroy a client
  *
  * Closes the underlying fd (unless created with _from_fd).
- * Any pending AUTH events get default response.
+ * Pending AUTH resolution follows kernel last-close semantics; destroying a
+ * borrowed wrapper or closing one of several duplicates does not end a client.
  */
 void oes_client_destroy(oes_client_t *client);
 
