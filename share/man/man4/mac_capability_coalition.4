@@ -47,9 +47,15 @@ The default termination signal is
 .Pp
 Closing the control instance retains process membership for signalled members
 until their descriptor and address-space exit cleanup reaches the resource-exit
-hook. In-flight rejected children remain tracked through the same hook.
+hook.
+In-flight rejected children remain tracked through the same hook.
 Signal-zero release and the closing caller's exclusion still detach those
 members without signalling them.
+Parents also retain independent cleanup dependencies on nested coalitions.
+These survive removal of public membership and drain recursively after process
+resource exit, jail cleanup, and in-flight external termination calls.
+A revoked descriptor remaining open does not by itself keep cleanup pending.
+Nested cleanup errors are retained by the parent.
 Close does not wait for retained members, and this lifetime retention does not
 provide a public completion-wait operation.
 .Ss Operations
