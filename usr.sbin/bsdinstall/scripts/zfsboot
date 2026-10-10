@@ -168,6 +168,9 @@ f_isset ZFSBOOT_DATASETS || ZFSBOOT_DATASETS="
 	# Source tree
 	/usr/src
 
+	# Build objects and the local package repository stay outside base BEs
+	/usr/obj
+
 	# Create /var and friends
 	/var		mountpoint=/var,canmount=off
 	/var/audit	exec=off,setuid=off
