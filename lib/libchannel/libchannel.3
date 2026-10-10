@@ -122,6 +122,10 @@ Every delivered message must eventually be passed to
 Each message is one allocation sized from recent traffic on its channel,
 not the maximum message size, so a retained request costs about its own
 payload plus a fixed header.
+A channel keeps the most recently freed message block (up to 4 KiB, or
+larger while the traffic needs it) and the most recently released request
+for reuse, so a steady request/reply exchange does not allocate per call;
+both are freed with the channel.
 .Pp
 Handlers execute synchronously from
 .Fn channel_dispatch .

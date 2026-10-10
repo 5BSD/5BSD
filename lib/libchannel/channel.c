@@ -92,6 +92,7 @@ struct channel {
 	bool			 owner_released;
 	unsigned		 references;
 	struct channel_message	*rx_spare;	/* unused receive block */
+	struct channel_request	*req_spare;	/* released request, for reuse */
 	bool			 write_filter;	/* EVFILT_WRITE registered */
 	bool			 rx_drained;	/* kernel reported an empty queue */
 	bool			 rx_wait_unsupported; /* kernel lacks RECV_F_WAIT */
@@ -127,6 +128,7 @@ struct channel_message {
  * failure never loses a message.  The unused block is kept across EAGAIN.
  */
 #define	CHANNEL_RX_MIN		512
+#define	CHANNEL_RX_KEEP		4096	/* a recycled block up to this size is kept */
 #define	CHANNEL_RX_ALIGN	16
 #define	CHANNEL_RX_HEADER	\
 	((sizeof(struct channel_message) + CHANNEL_RX_ALIGN - 1) & \
@@ -193,8 +195,27 @@ channel_release(struct channel *channel)
 
 	if (--channel->references == 0) {
 		free(channel->rx_spare);
+		free(channel->req_spare);
 		free(channel);
 	}
+}
+
+/*
+ * Reclaim a request.  The channel keeps one for its next request, so a
+ * steady request/reply exchange does not allocate per call.
+ */
+static void
+channel_request_free(struct channel_request *request)
+{
+	struct channel *channel;
+
+	channel = request->channel;
+	if (channel != NULL && channel->req_spare == NULL &&
+	    !channel->destroy_pending && channel->fd >= 0) {
+		channel->req_spare = request;
+		return;
+	}
+	free(request);
 }
 
 static bool
@@ -287,7 +308,7 @@ channel_request_complete(struct channel_request *request,
 		handler(request, message, error, context);
 	request->callback_active = false;
 	if (request->free_pending)
-		free(request);
+		channel_request_free(request);
 }
 
 static void
@@ -732,6 +753,8 @@ channel_destroy_now(struct channel *channel)
 	channel->kqueue_fd = -1;
 	free(channel->rx_spare);
 	channel->rx_spare = NULL;
+	free(channel->req_spare);
+	channel->req_spare = NULL;
 	if (channel->rx_prefetched != NULL) {
 		struct channel_message *m = channel->rx_prefetched;
 
@@ -1057,8 +1080,10 @@ channel_send_request(struct channel *channel,
 		errno = ENOBUFS;
 		return (-1);
 	}
-	request = calloc(1, sizeof(*request));
-	if (request == NULL)
+	if ((request = channel->req_spare) != NULL) {
+		channel->req_spare = NULL;
+		memset(request, 0, sizeof(*request));
+	} else if ((request = calloc(1, sizeof(*request))) == NULL)
 		return (-1);
 	request->channel = channel;
 	request->handler = handler;
@@ -1083,7 +1108,7 @@ channel_send_request(struct channel *channel,
 		channel->npending--;
 		LIBCHANNEL_PROBE_REQUEST_DONE((uintptr_t)channel, request->token,
 		    error);
-		free(request);
+		channel_request_free(request);
 		if (channel_terminal_error(error))
 			channel_mark_dead(channel, error);
 		if (channel->destroy_pending && channel->dispatch_depth == 0)
@@ -1225,7 +1250,10 @@ channel_rx_reserve(struct channel *channel, size_t capacity)
 {
 	struct channel_message *block;
 
-	if (channel->rx_spare != NULL && channel->rx_spare->capacity >= capacity)
+	/* Reuse the spare unless it is too small, or oversized for the hint. */
+	if (channel->rx_spare != NULL && channel->rx_spare->capacity >= capacity &&
+	    (channel->rx_spare->capacity <= CHANNEL_RX_KEEP ||
+	    channel->rx_spare->capacity / 4 <= capacity))
 		return (0);
 	block = malloc(CHANNEL_RX_HEADER + capacity);
 	if (block == NULL)
@@ -1656,6 +1684,19 @@ channel_message_free(struct channel_message *message)
 		for (i = 0; i < message->nfds; i++)
 			if (message->fds[i] >= 0)
 				(void)close(message->fds[i]);
+		/*
+		 * Keep the block as the channel's next receive block, so a
+		 * request/reply exchange does not allocate per message.  The
+		 * block is right-sized for the traffic it came from;
+		 * channel_rx_reserve() replaces it when the next message
+		 * needs more, or far less, room.
+		 */
+		if (channel->rx_spare == NULL && !channel->destroy_pending &&
+		    channel->fd >= 0) {
+			channel->rx_spare = message;
+			channel_release(channel);
+			return;
+		}
 	}
 	free(message);		/* descriptors and payload are inline */
 	channel_release(channel);
@@ -1737,5 +1778,5 @@ channel_request_release(struct channel_request *request)
 		request->free_pending = true;
 		return;
 	}
-	free(request);
+	channel_request_free(request);
 }
