@@ -241,6 +241,8 @@ milliseconds
 .Pq Dv MAC_CAPABILITY_RECV_WAIT_FOREVER No for no limit , 0 No to poll ;
 a timeout fails with
 .Er ETIMEDOUT .
+The finite timeout uses one absolute monotonic deadline across queue wakeups;
+another receiver consuming a message does not restart the budget.
 This replaces a readiness wait followed by a receive.
 .It Dv MAC_CAPABILITY_SENDMSG_V2
 As

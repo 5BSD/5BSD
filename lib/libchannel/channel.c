@@ -20,6 +20,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <unistd.h>
 
 #include "channel.h"
@@ -828,17 +829,42 @@ channel_fd(const struct channel *channel)
  * filters (0 on timeout), or -1 with errno set on error.  A dead/EOF channel
  * reports CHANNEL_WAIT_READ ready so the caller's dispatch observes the error.
  */
+/* One monotonic deadline covers receive retries and the kqueue fallback. */
+static int
+channel_wait_remaining(const struct timespec *deadline, struct timespec *left)
+{
+	struct timespec now;
+
+	if (clock_gettime(CLOCK_MONOTONIC, &now) == -1)
+		return (-1);
+	if (timespeccmp(deadline, &now, <=)) {
+		left->tv_sec = left->tv_nsec = 0;
+		return (0);
+	}
+	timespecsub(deadline, &now, left);
+	return (0);
+}
+
 int
 channel_wait(struct channel *channel, int want_write, int timeout_ms)
 {
 	struct kevent chg, out[2];
-	struct timespec ts, *tsp;
+	struct timespec ts, deadline, *tsp;
+	bool attempted;
+	int remaining_ms;
 	int n, i, nchg, ready;
 
 	if (!channel_owned(channel) || channel->destroy_pending ||
 	    channel->fd < 0) {
 		errno = EBADF;
 		return (-1);
+	}
+	if (timeout_ms >= 0) {
+		if (clock_gettime(CLOCK_MONOTONIC, &deadline) == -1)
+			return (-1);
+		ts.tv_sec = timeout_ms / 1000;
+		ts.tv_nsec = (long)(timeout_ms % 1000) * 1000000L;
+		timespecadd(&deadline, &ts, &deadline);
 	}
 	/*
 	 * Read-only waits receive in the same system call: the kernel waits
@@ -848,11 +874,21 @@ channel_wait(struct channel *channel, int want_write, int timeout_ms)
 	if (!want_write && !channel->rx_wait_unsupported) {
 		if (channel->rx_prefetched != NULL)
 			return (CHANNEL_WAIT_READ);
+		attempted = false;
 		for (;;) {
 			struct channel_message *m;
 
-			m = channel_message_receive_wait(channel,
-			    timeout_ms < 0 ? -1 : timeout_ms);
+			remaining_ms = -1;
+			if (timeout_ms >= 0) {
+				if (channel_wait_remaining(&deadline, &ts) == -1)
+					return (-1);
+				remaining_ms = (int)(ts.tv_sec * 1000 +
+				    (ts.tv_nsec + 999999) / 1000000);
+				if (attempted && remaining_ms == 0)
+					return (0);
+			}
+			attempted = true;
+			m = channel_message_receive_wait(channel, remaining_ms);
 			if (m != NULL) {
 				channel->rx_prefetched = m;
 				return (CHANNEL_WAIT_READ);
@@ -896,14 +932,17 @@ channel_wait(struct channel *channel, int want_write, int timeout_ms)
 		nchg = 1;
 	}
 
-	if (timeout_ms < 0) {
-		tsp = NULL;
-	} else {
-		ts.tv_sec = timeout_ms / 1000;
-		ts.tv_nsec = (long)(timeout_ms % 1000) * 1000000L;
-		tsp = &ts;
-	}
+	attempted = false;
 	for (;;) {
+		tsp = NULL;
+		if (timeout_ms >= 0) {
+			if (channel_wait_remaining(&deadline, &ts) == -1)
+				return (-1);
+			if (attempted && !timespecisset(&ts))
+				return (0);
+			tsp = &ts;
+		}
+		attempted = true;
 		n = kevent(channel->kqueue_fd, nchg ? &chg : NULL, nchg, out, 2,
 		    tsp);
 		nchg = 0;

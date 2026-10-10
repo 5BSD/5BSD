@@ -10,6 +10,7 @@
 #include <sys/cap_process.h>
 #include <sys/sysctl.h>
 #include <sys/wait.h>
+#include <sys/time.h>
 
 #include <dev/mac_capability/mac_capability_channel_proto.h>
 #include <dev/mac_capability/mac_capability_ioctl.h>
@@ -17,6 +18,9 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <poll.h>
+#include <signal.h>
+#include <stdio.h>
+#include <time.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -779,6 +783,68 @@ ATF_TC_CLEANUP(poll_is_unsupported, tc)
  * channel_wait: times out when idle, reports CHANNEL_WAIT_READ once a peer
  * message is pending, and fails EBADF on a destroyed channel.
  */
+static volatile sig_atomic_t wait_signal_count;
+static struct sigaction wait_ignore_signal;
+
+static void
+wait_alarm(int signo __unused)
+{
+	int saved_errno = errno;
+
+	if (++wait_signal_count >= 100)
+		(void)sigaction(SIGALRM, &wait_ignore_signal, NULL);
+	errno = saved_errno;
+}
+
+ATF_TC(channel_wait_interrupted_deadline);
+ATF_TC_HEAD(channel_wait_interrupted_deadline, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "Signals cannot restart a bounded channel receive wait");
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "timeout", "15");
+}
+ATF_TC_BODY(channel_wait_interrupted_deadline, tc)
+{
+	struct channel_options options = CHANNEL_OPTIONS_INITIALIZER(CHANNEL_ROLE_CLIENT);
+	struct channel *client;
+	struct sigaction action;
+	struct itimerval timer;
+	struct timespec before, after;
+	int first, second, result;
+	sig_atomic_t observed;
+
+	capability_channel_pair(&first, &second);
+	ATF_REQUIRE_EQ(0, channel_create(first, &options, &client));
+	ATF_CHECK_EQ(0, channel_wait(client, 0, 0));
+	memset(&wait_ignore_signal, 0, sizeof(wait_ignore_signal));
+	wait_ignore_signal.sa_handler = SIG_IGN;
+	sigemptyset(&wait_ignore_signal.sa_mask);
+	memset(&action, 0, sizeof(action));
+	action.sa_handler = wait_alarm;
+	sigemptyset(&action.sa_mask);
+	ATF_REQUIRE_EQ(0, sigaction(SIGALRM, &action, NULL));
+	wait_signal_count = 0;
+	memset(&timer, 0, sizeof(timer));
+	timer.it_value.tv_usec = timer.it_interval.tv_usec = 2000;
+	ATF_REQUIRE_EQ(0, setitimer(ITIMER_REAL, &timer, NULL));
+	ATF_REQUIRE_EQ(0, clock_gettime(CLOCK_MONOTONIC, &before));
+	result = channel_wait(client, 0, 20);
+	ATF_REQUIRE_EQ(0, clock_gettime(CLOCK_MONOTONIC, &after));
+	observed = wait_signal_count;
+	/* This ATF case has its own process; discard any pending final alarm. */
+	ATF_REQUIRE_EQ(0, sigaction(SIGALRM, &wait_ignore_signal, NULL));
+	memset(&timer, 0, sizeof(timer));
+	ATF_REQUIRE_EQ(0, setitimer(ITIMER_REAL, &timer, NULL));
+	printf("CHANNEL_INTERRUPTED_WAIT signals=%d elapsed_ms=%.3f\n",
+	    (int)observed, (after.tv_sec - before.tv_sec) * 1000.0 +
+	    (after.tv_nsec - before.tv_nsec) / 1000000.0);
+	ATF_CHECK_EQ(0, result);
+	ATF_CHECK_MSG(observed > 0 && observed < 100,
+	    "wait must expire while interruptions continue, observed=%d", (int)observed);
+	channel_destroy(client);
+	close(second);
+}
+
 ATF_TC_WITH_CLEANUP(channel_wait_readiness);
 ATF_TC_HEAD(channel_wait_readiness, tc)
 {
@@ -1477,6 +1543,7 @@ ATF_TC_CLEANUP(ioctl_allowlist_falls_back, tc)
 
 ATF_TP_ADD_TCS(tp)
 {
+	ATF_TP_ADD_TC(tp, channel_wait_interrupted_deadline);
 	ATF_TP_ADD_TC(tp, invalid_arguments);
 	ATF_TP_ADD_TC(tp, sender_identity_stamp);
 	ATF_TP_ADD_TC(tp, message_null_accessors);

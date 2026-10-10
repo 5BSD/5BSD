@@ -704,12 +704,12 @@ mac_capability_instance_do_recvmsg(struct mac_capability_instance *s, struct fil
 {
 	struct mac_capability_fd_info info[MAC_CAPABILITY_MAX_FDS];
 	struct mac_capability_msg *msg;
-	sbintime_t start __unused;
+	sbintime_t start __unused, deadline;
 	const char *svc_name __unused;
 	int fdbuf[MAC_CAPABILITY_MAX_FDS];
 	bool drained, txdrain, wait;
 	uint32_t wait_ms;
-	int error, i, nfds_out, timo;
+	int error, i, nfds_out;
 
 	start = getsbinuptime();
 	svc_name = (s->ci_service != NULL) ? s->ci_service->csvc_name : "<none>";
@@ -722,14 +722,9 @@ mac_capability_instance_do_recvmsg(struct mac_capability_instance *s, struct fil
 		error = EINVAL;
 		goto out;
 	}
-	if (!wait)
-		timo = 0;
-	else if (wait_ms == MAC_CAPABILITY_RECV_WAIT_FOREVER)
-		timo = 0;
-	else if (wait_ms == 0)
-		timo = -1;	/* poll */
-	else
-		timo = MAX(1, (int)MIN((uint64_t)wait_ms * hz / 1000, INT_MAX));
+	deadline = wait && wait_ms != 0 &&
+	    wait_ms != MAC_CAPABILITY_RECV_WAIT_FOREVER ?
+	    sbinuptime() + (sbintime_t)wait_ms * SBT_1MS : 0;
 
 	mtx_lock(&s->ci_mtx);
 	while (STAILQ_EMPTY(&s->ci_txq)) {
@@ -748,13 +743,15 @@ mac_capability_instance_do_recvmsg(struct mac_capability_instance *s, struct fil
 			error = 0;
 			goto out;
 		}
-		if (((fp->f_flag & FNONBLOCK) && !wait) || timo < 0) {
+		if (((fp->f_flag & FNONBLOCK) && !wait) ||
+		    (wait && wait_ms == 0)) {
 			mtx_unlock(&s->ci_mtx);
 			error = EAGAIN;
 			goto out;
 		}
-		error = msleep(&s->ci_txq, &s->ci_mtx,
-		    PCATCH, "mac_capabilityrv", wait ? timo : 0);
+		/* Repeated wakeups cannot restart a finite receive budget. */
+		error = msleep_sbt(&s->ci_txq, &s->ci_mtx, PCATCH,
+		    "mac_capabilityrv", deadline, 0, C_ABSOLUTE);
 		if (error != 0) {
 			mtx_unlock(&s->ci_mtx);
 			if (error == EWOULDBLOCK)
