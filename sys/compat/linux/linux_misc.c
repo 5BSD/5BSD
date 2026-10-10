@@ -1153,17 +1153,17 @@ int
 linux_iou_waitid_probe(struct thread *td,
     const struct linux_iou_waitid_spec *spec, bool *pending)
 {
+	l_siginfo_t lsi;
 	int error;
 
 	*pending = false;
 	error = linux_common_wait(td, spec->idtype, spec->id, NULL,
 	    spec->options | WNOHANG, NULL, spec->info, true, pending);
 	if (error == 0 && *pending && (spec->options & WNOHANG) != 0) {
-		const l_int signo = 0;
-
-		if (spec->info != NULL)
-			error = copyout(&signo, &spec->info->lsi_signo,
-			    sizeof(signo));
+		if (spec->info != NULL) {
+			memset(&lsi, 0, sizeof(lsi));
+			error = copyout(&lsi, spec->info, sizeof(lsi));
+		}
 		*pending = false;
 	}
 	td->td_retval[0] = 0;
