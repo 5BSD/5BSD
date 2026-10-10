@@ -29,7 +29,8 @@ ATF_TESTS_SH_SED_observability_test+=	-e 's,@MK_DTRACE@,${MK_DTRACE},g'
 # The shell contract cases read these source files.  Install them beneath
 # ${TESTSDIR}/srctree so the installed tests do not depend on the build
 # machine's source tree.
-SRCTREE_FILES=	cddl/usr.sbin/bsdinstruments/profiles/capability-services.d \
+SRCTREE_FILES=	usr.sbin/BSDSysctl/capbundle/sysctl.conf \
+		cddl/usr.sbin/bsdinstruments/profiles/capability-services.d \
 		usr.sbin/BSDSysctl/bsdsysctl.c \
 		usr.sbin/BSDSysctl/bsdsysctl_provider.d
 .include "${SRCTOP}/tests/srctree.mk"

@@ -203,8 +203,29 @@ ATF_TC_BODY(grant_stops_at_dot_boundary, tc)
 	ATF_CHECK(!sysctlcmp_config_permits(&config, "x", "hw.ncpuset", false));
 }
 
+ATF_TC_WITHOUT_HEAD(shipped_network_policy);
+ATF_TC_BODY(shipped_network_policy, tc)
+{
+	struct sysctlcmp_config config;
+	char path[4096];
+	const char *label = "system.Network/bsdnetwork";
+
+	snprintf(path, sizeof(path), "%s/srctree/usr.sbin/BSDSysctl/capbundle/sysctl.conf",
+	    atf_tc_get_config_var(tc, "srcdir"));
+	if (access(path, R_OK) == -1)
+		atf_tc_skip("staged policy fixture required");
+	ATF_REQUIRE_EQ(0, sysctlcmp_config_load(&config, path));
+	ATF_CHECK(sysctlcmp_config_permits(&config, label, "net.routetable", false));
+	ATF_CHECK(!sysctlcmp_config_permits(&config, label, "net.routetable", true));
+	ATF_CHECK(!sysctlcmp_config_permits(&config, label, "net.inet", false));
+	ATF_CHECK(!sysctlcmp_config_permits(&config, label, "net.routetablex", false));
+	ATF_CHECK(!sysctlcmp_config_permits(&config, label, "kern.maxfiles", true));
+	ATF_CHECK(!sysctlcmp_config_permits(&config, "org.unlisted", "net.routetable", false));
+}
+
 ATF_TP_ADD_TCS(tp)
 {
+	ATF_TP_ADD_TC(tp, shipped_network_policy);
 
 	ATF_TP_ADD_TC(tp, defaults);
 	ATF_TP_ADD_TC(tp, prefix_boundary);

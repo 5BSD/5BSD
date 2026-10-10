@@ -220,6 +220,31 @@ dialed, the requested timeout in milliseconds
 .Pq zero for a blocking connect ,
 and the errno-style outcome
 .Pq zero connected, Er ETIMEDOUT No on expiry .
+.Sh NETWORK STATE
+The separately gated
+.Va system.Network.State
+endpoint requires
+.Va system.network.observe
+and read session right bit 1.
+It publishes sampled interface index, name, flags, MTU, and link state,
+with an epoch, generation, and explicit source error.
+It exposes neither addresses nor packet counters.
+A shared sampler reads BSDSysctl approximately one second after each read;
+identical samples are suppressed and slow watchers receive the latest state.
+A failed read publishes unavailable state with zero records, then recovery
+publishes a new snapshot.
+This does not indicate Internet reachability.
+.Pp
+The provider uses only the BSDSysctl read grant for
+.Va net.routetable ;
+it receives no sysctl token or write permission.
+Existing sysctl isolation remains unchanged.
+State sessions stay in the parent reactor, with at most 128 sessions,
+16 per authenticated label, and one outstanding watch per session.
+A 30-second idle limit applies between requests.
+See
+.Xr network_state 3
+for timeout and reconnect semantics.
 .Sh SEE ALSO
 .Xr libnetworkcmp 3 ,
 .Xr switchboard 8

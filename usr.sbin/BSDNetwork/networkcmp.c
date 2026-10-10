@@ -42,6 +42,8 @@
 #include "resolver.h"
 #include "pf_protocol.h"
 #include "pf_session.h"
+#include "state.h"
+#include <network_state.h>
 #include <networkcmp_server.h>
 #include <logcmp.h>
 
@@ -1594,9 +1596,11 @@ main(void)
 	struct net_worker_ent *workers = NULL, *w;
 	struct networkcmp_config config;
 	struct service_identity identity;
-	struct service_listener *listener, *listeners[3];
-	static const char *const listener_names[3] = {
-		BSDNETWORK_NAME, BSDNETWORK_ADMIN_NAME, PF_MONITOR_SERVICE };
+	struct service_listener *listener, *listeners[4];
+	struct network_state_server *state_server = NULL;
+	static const char *const listener_names[4] = {
+		BSDNETWORK_NAME, BSDNETWORK_ADMIN_NAME, PF_MONITOR_SERVICE,
+	    NETWORK_STATE_INTERFACE };
 	struct service_provider *provider;
 	struct service_context *ctx;
 	struct kevent event, change;
@@ -1656,6 +1660,8 @@ main(void)
 	    &listeners[1]) == -1 ||
 	    service_provider_expose(provider, listener_names[2],
 	    &listeners[2]) == -1 ||
+	    service_provider_expose(provider, listener_names[3],
+	    &listeners[3]) == -1 ||
 	    service_provider_enter_capability_mode(provider) == -1 ||
 	    service_provider_ready(provider) == -1)
 		goto fail;
@@ -1667,7 +1673,9 @@ main(void)
 	kq = kqueuex(KQUEUE_CLOEXEC);
 	if (kq == -1)
 		goto fail;
-	for (int i = 0; i < 3; i++) {
+	if (network_state_server_create(kq, &state_server) == -1)
+		goto fail;
+	for (int i = 0; i < 4; i++) {
 		EV_SET(&change, service_listener_fd(listeners[i]), EVFILT_READ,
 		    EV_ADD | EV_ENABLE, 0, 0, listeners[i]);
 		if (kevent(kq, &change, 1, NULL, 0, NULL) == -1)
@@ -1686,6 +1694,8 @@ main(void)
 				continue;
 			goto fail;
 		}
+		if (network_state_server_event(state_server, &event))
+			continue;
 		if (event.filter == EVFILT_TIMER) {
 			if (netresolve_refresh(ctx) == -1)
 				net_log(main_logger(), LOG_WARNING,
@@ -1704,6 +1714,7 @@ main(void)
 			if (service_provider_quiescing(provider) == 1) {
 				int status;
 
+				network_state_server_destroy(state_server);
 				status = service_provider_quiesce_complete(provider, 0);
 				if (g_log.client != NULL)
 					logcmp_client_close(g_log.client);
@@ -1719,7 +1730,8 @@ main(void)
 		 * The listener that fired must be the endpoint SwitchBoard
 		 * resolved; a disagreement is a routing bug and is refused.
 		 */
-		expected_name = listener == listeners[2] ? listener_names[2] :
+		expected_name = listener == listeners[3] ? listener_names[3] :
+		    listener == listeners[2] ? listener_names[2] :
 		    (listener == listeners[1] ? listener_names[1] :
 		    listener_names[0]);
 		if (strcmp(identity.service_name, expected_name) != 0) {
@@ -1727,6 +1739,16 @@ main(void)
 			    "refusing %s: resolved %s on another listener",
 			    identity.client_label, identity.service_name);
 			close(fd);
+			continue;
+		}
+		if (listener == listeners[3]) {
+			if (!service_rights_allow(identity.rights, NETWORK_STATE_RIGHT_READ)) {
+				close(fd);
+				continue;
+			}
+			if (network_state_server_add(state_server, fd, identity.client_label) == -1)
+				net_log(main_logger(), LOG_WARNING, "state session for %s rejected: %m",
+				    identity.client_label);
 			continue;
 		}
 		if (nworkers >= NETWORKCMP_MAX_WORKERS) {
@@ -1788,6 +1810,7 @@ main(void)
 
 fail:
 	net_log(main_logger(), LOG_ERR, "initialization or service loop: %m");
+	network_state_server_destroy(state_server);
 	return (1);
 }
 #endif

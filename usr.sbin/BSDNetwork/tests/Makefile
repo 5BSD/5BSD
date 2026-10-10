@@ -44,4 +44,16 @@ SRCTREE_FILES=	usr.sbin/BSDFilesystem/bsdfilesystem.ucl \
 		usr.sbin/BSDNetwork/resolver.c
 .include "${SRCTOP}/tests/srctree.mk"
 
+ATF_TESTS_C+= state_test
+CFLAGS.state_test+= -I${SRCTOP}/lib/libchannel -I${SRCTOP}/lib/libnotify
+CFLAGS.state_test+= -I${SRCTOP}/lib/libsysctlcmp -I${SRCTOP}/sys
+LIBADD.state_test+= networkcmp notify channel service pthread
+NO_SHARED.state_test= yes
+
+ATF_TESTS_C+= state_plane_test
+CFLAGS.state_plane_test+= -I${SRCTOP}/lib/libchannel -I${SRCTOP}/lib/libnotify
+CFLAGS.state_plane_test+= -I${SRCTOP}/lib/libsysctlcmp -I${SRCTOP}/sys
+LIBADD.state_plane_test+= networkcmp notify channel service pthread
+NO_SHARED.state_plane_test= yes
+
 .include <bsd.test.mk>

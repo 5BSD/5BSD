@@ -18,6 +18,7 @@
 #include <unistd.h>
 
 #include <networkcmp.h>
+#include <network_state.h>
 
 static void usage(void) __dead2;
 
@@ -28,6 +29,7 @@ usage(void)
 	fprintf(stderr,
 	    "usage: networkcmpctl config\n"
 	    "       networkcmpctl info\n"
+	    "       networkcmpctl state-watch [count [timeout-ms]]\n"
 	    "       networkcmpctl listen\n"
 	    "       networkcmpctl connect addr port\n"
 	    "       networkcmpctl udp addr port\n"
@@ -264,10 +266,76 @@ do_udp(const char *ip, const char *port)
 	return (0);
 }
 
+static uint32_t
+state_number(const char *text, uint32_t minimum)
+{
+	char *end;
+	uintmax_t value;
+
+	if (*text < '0' || *text > '9')
+		errx(EX_USAGE, "state-watch: invalid number %s", text);
+	errno = 0;
+	value = strtoumax(text, &end, 10);
+	if (errno != 0 || *end != '\0' || value < minimum ||
+	    value > UINT32_MAX)
+		errx(EX_USAGE, "state-watch: invalid number %s", text);
+	return ((uint32_t)value);
+}
+
+static int
+state_watch(int argc, char **argv)
+{
+	struct network_state_client *client;
+	struct network_state_snapshot state;
+	uint32_t count = argc >= 3 ? state_number(argv[2], 1) : 1;
+	uint32_t timeout = argc >= 4 ? state_number(argv[3], 0) :
+	    NETWORK_STATE_TIMEOUT_INFINITE;
+	int error;
+
+	if (network_state_open(&client) == -1)
+		err(EX_UNAVAILABLE, "open %s", NETWORK_STATE_INTERFACE);
+	for (uint32_t sample = 0; sample < count; sample++) {
+		if (network_state_watch(client, &state, timeout) == -1) {
+			error = errno;
+			network_state_close(client);
+			errno = error;
+			err(EX_UNAVAILABLE, "state-watch");
+		}
+		printf("epoch=%" PRIu64 " generation=%" PRIu64
+		    " source_error=%d count=%u\n", state.epoch,
+		    state.generation, state.source_error, state.count);
+		for (uint32_t i = 0; i < state.count; i++) {
+			const struct network_state_interface *entry = &state.interfaces[i];
+			printf("index=%u name=", entry->index);
+			for (size_t j = 0; entry->name[j] != '\0'; j++) {
+				unsigned char c = entry->name[j];
+				if (c <= ' ' || c >= 127 || c == '\\')
+					printf("\\x%02x", c);
+				else
+					putchar(c);
+			}
+			printf(" flags=0x%08x mtu=%u link=%s\n", entry->flags,
+			    entry->mtu, entry->link_state == NETWORK_STATE_LINK_UP ?
+			    "up" : entry->link_state == NETWORK_STATE_LINK_DOWN ?
+			    "down" : "unknown");
+		}
+		if (fflush(stdout) == EOF) {
+			error = errno;
+			network_state_close(client);
+			errno = error;
+			err(EX_IOERR, "stdout");
+		}
+	}
+	network_state_close(client);
+	return (0);
+}
+
 int
 main(int argc, char **argv)
 {
 
+	if (argc >= 2 && argc <= 4 && strcmp(argv[1], "state-watch") == 0)
+		return (state_watch(argc, argv));
 	if (argc == 2 && strcmp(argv[1], "config") == 0) {
 		puts("# No manifest declaration is required: link libnetworkcmp and");
 		puts("# call networkcmp_*().  The system.Network service is reached at");

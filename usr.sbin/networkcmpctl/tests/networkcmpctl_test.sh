@@ -52,8 +52,33 @@ failures_and_cleanup_body()
 	    CMP_TEST_TRACE_CLOSE=1 "$tool" resolve localhost
 }
 
+atf_test_case state_watch
+state_watch_body()
+{
+	tool="$(atf_get_srcdir)/networkcmpctl_success_bin"
+	atf_check -s exit:0 -o match:'generation=2 source_error=0 count=1' \
+	    -o match:'name=v\\x0a0' -o match:'mtu=1500 link=up' -e empty \
+	    env CMP_TEST_TIMEOUT=1 "$tool" state-watch 2 17
+	atf_check -s exit:0 -o match:'source_error=5 count=0' -e empty \
+	    env CMP_TEST_SOURCE_ERROR=1 "$tool" state-watch
+	atf_check -s exit:69 -e match:'state-client-closed' \
+	    -e match:'state-watch: Input/output error' \
+	    env CMP_TEST_FAIL=state-watch CMP_TEST_TRACE_CLOSE=1 \
+	    "$tool" state-watch
+	atf_check -s exit:69 -e match:'open system.Network.State' \
+	    env CMP_TEST_FAIL=state-open "$tool" state-watch
+	for value in 0 -1 +1 ' 1' 4294967296 1x; do
+		atf_check -s exit:64 -e match:'invalid number' \
+		    "$tool" state-watch "$value"
+	done
+	atf_check -s exit:64 -e match:'invalid number' \
+	    "$tool" state-watch 1 -1
+	atf_check -s exit:64 -e match:'usage:' "$tool" state-watch 1 2 3
+}
+
 atf_init_test_cases()
 {
+	atf_add_test_case state_watch
 	atf_add_test_case config
 	atf_add_test_case arguments
 	atf_add_test_case unavailable

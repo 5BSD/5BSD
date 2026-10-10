@@ -3,7 +3,7 @@
 PACKAGE=	bsdnetwork
 PROG=	BSDNetwork
 MAN=		BSDNetwork.8
-SRCS=		networkcmp.c config.c policy.c resolver.c pf_session.c
+SRCS=		networkcmp.c config.c policy.c resolver.c pf_session.c state.c
 
 # Full binding at load (no lazy PLT): everything the linker needs is resolved
 # during exec, before the daemon enters capability mode, so no library work
@@ -17,6 +17,9 @@ CFLAGS+=	-I${SRCTOP}/lib/libservice
 CFLAGS+=	-I${SRCTOP}/contrib/libucl/include
 CFLAGS+=	-I${SRCTOP}/sys
 LIBADD=		auditcmp channel logcmp networkcmp pthread service ucl
+CFLAGS+=	-I${SRCTOP}/lib/libnotify
+CFLAGS+=	-I${SRCTOP}/lib/libsysctlcmp
+LIBADD+=	notify sysctlcmp
 CFLAGS+=	-I${SRCTOP}/lib/liblogcmp
 
 DIRS+=		NETWORKCMP_CAP NETWORKCMP_CAP_UNITS NETWORKCMP_CAP_UNIT \

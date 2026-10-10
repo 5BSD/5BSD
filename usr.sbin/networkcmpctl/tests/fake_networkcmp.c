@@ -142,3 +142,45 @@ networkcmp_udp(struct networkcmp_client *value, const struct sockaddr *peer,
 	*out_fd = -1;
 	return (0);
 }
+
+#include <network_state.h>
+struct network_state_client { unsigned calls; };
+static struct network_state_client state_client;
+int
+network_state_open(struct network_state_client **out)
+{
+	if (fail("state-open") == -1)
+		return (-1);
+	state_client.calls = 0;
+	*out = &state_client;
+	return (0);
+}
+int
+network_state_watch(struct network_state_client *value,
+    struct network_state_snapshot *out, uint32_t timeout)
+{
+	if (fail("state-watch") == -1)
+		return (-1);
+	if (getenv("CMP_TEST_TIMEOUT") != NULL && timeout != 17)
+		return (errno = EINVAL, -1);
+	memset(out, 0, sizeof(*out));
+	out->epoch = 7;
+	out->generation = ++value->calls;
+	if (getenv("CMP_TEST_SOURCE_ERROR") != NULL) {
+		out->source_error = EIO;
+		return (0);
+	}
+	out->count = 1;
+	out->interfaces[0].index = 1;
+	out->interfaces[0].mtu = 1500;
+	out->interfaces[0].link_state = NETWORK_STATE_LINK_UP;
+	strlcpy(out->interfaces[0].name, "v\n0", sizeof(out->interfaces[0].name));
+	return (0);
+}
+void
+network_state_close(struct network_state_client *value)
+{
+	(void)value;
+	if (getenv("CMP_TEST_TRACE_CLOSE") != NULL)
+		fprintf(stderr, "state-client-closed\n");
+}

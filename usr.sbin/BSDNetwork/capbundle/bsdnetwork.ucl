@@ -1,4 +1,4 @@
-# Two endpoints serving one protocol:
+# Four endpoints in one provider (PF and State have separate protocols):
 #   system.Network        SYSTEM-only broker for services and applications
 #   system.Network.Admin  requires the software attribute system.network.admin,
 #                         held by networkcmpctl, so the approved shell tool
@@ -9,6 +9,7 @@ activation {
 		"system.Network",
 		{ name = "system.Network.Admin"; requires = ["system.network.admin"]; },
 		{ name = "system.Network.PF"; requires = ["system.network.pf.read"]; },
+		{ name = "system.Network.State"; requires = ["system.network.observe"]; },
 	];
 }
 control = "system";

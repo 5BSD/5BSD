@@ -1,7 +1,7 @@
 schema = "org.5bsd.capability-bundle";
 bundle_id = "system.Network";
-version = "1.0.1";
-sequence = 2;
+version = "1.0.2";
+sequence = 3;
 author = "5BSD";
 publisher = "org.5bsd.base";
 units = ["bsdnetwork"];

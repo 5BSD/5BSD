@@ -1,15 +1,18 @@
 .\" SPDX-License-Identifier: BSD-2-Clause
-.Dd July 31, 2026
+.Dd October 10, 2026
 .Dt NETWORKCMPCTL 8
 .Os
 .Sh NAME
 .Nm networkcmpctl
-.Nd inspect an injected NetworkCmp component
+.Nd inspect the network broker and sampled interface state
 .Sh SYNOPSIS
 .Nm
 .Cm config
 .Nm
 .Cm info
+.Nm
+.Cm state-watch
+.Op Ar count Op Ar timeout-ms
 .Nm
 .Cm listen
 .Nm
@@ -88,12 +91,36 @@ endpoint.
 exec manifest approving
 .Nm
 with
-.Dq system.network.admin .
+.Dq system.network.admin
+and
+.Dq system.network.observe .
 .El
 .Sh EXIT STATUS
 .Ex -std
+.Sh STATE OBSERVATION
+.Cm state-watch Op Ar count Op Ar timeout-ms
+prints interface state snapshots, defaulting to one snapshot and an infinite
+watch timeout.
+Count must be from 1 through 4294967295.
+Timeout is a nonnegative millisecond value; 4294967295 means infinite and
+zero polls for an immediately available change.
+Each snapshot includes epoch, generation, source_error, and count,
+followed by escaped interface names, flags, MTU, and link state.
+Output is flushed after every snapshot for use in pipes.
+A nonzero source_error means unavailable data, not an empty inventory.
+A watch timeout exits unsuccessfully.
+.Pp
+This command uses
+.Va system.Network.State
+through the tool's approved
+.Va system.network.observe
+attribute.
+It reports sampled state, not every interface transition or Internet
+connectivity.
+See
+.Xr network_state 3 .
 .Sh SEE ALSO
 .Xr libnetworkcmp 3 ,
 .Xr switchboard 5 ,
-.Xr bsdnetwork 8 ,
+.Xr BSDNetwork 8 ,
 .Xr switchboard 8
