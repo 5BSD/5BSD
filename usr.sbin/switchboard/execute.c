@@ -1942,12 +1942,14 @@ svc_launch_finish(struct svc_runtime *svc, int kq)
 	    &authority_fd) == -1)
 		goto fail_prefork;
 	if (svc_authority_constrain_application(svc, authority_fd) == -1) {
+		saved_errno = errno;
 		syslog(LOG_ERR, "svc_exec %s: executable authority: %m", m->label);
 		goto fail_prefork;
 	}
 	bootstrap_fd = create_service_bootstrap(m, L->ntokens, L->nservices,
 	    L->service_names, L->service_types, L->capprotect_fd >= 0);
 	if (bootstrap_fd == -1) {
+		saved_errno = errno;
 		syslog(LOG_ERR, "svc_exec %s: bootstrap descriptor: %m",
 		    m->label);
 		goto fail_prefork;
@@ -1958,6 +1960,7 @@ svc_launch_finish(struct svc_runtime *svc, int kq)
 		goto fail_prefork;
 	pid = pdfork(&pd_fd, PD_CLOEXEC);
 	if (pid == -1) {
+		saved_errno = errno;
 		syslog(LOG_ERR, "svc_exec %s: pdfork: %m", m->label);
 		goto fail_prefork;
 	}
@@ -2222,7 +2225,9 @@ svc_launch_finish(struct svc_runtime *svc, int kq)
 	return;
 
 fail_prefork:
-	saved_errno = errno;
+	/* Diagnostics and descriptor cleanup must not replace the original error. */
+	if (saved_errno == 0)
+		saved_errno = errno;
 	if (launch_gate[0] >= 0)
 		close(launch_gate[0]);
 	if (launch_gate[1] >= 0)
@@ -2232,8 +2237,8 @@ fail_prefork:
 	svc_authority_revoke_unit(svc);
 	if (discovery_fd >= 0)
 		close(discovery_fd);
-	syslog(LOG_ERR, "svc_exec %s: child descriptor confinement: %m",
-	    m->label);
+	syslog(LOG_ERR, "svc_exec %s: launch setup: %s",
+	    m->label, strerror(saved_errno));
 	if (bootstrap_fd >= 0)
 		close(bootstrap_fd);
 	svc_launch_abort(svc, saved_errno, kq);
