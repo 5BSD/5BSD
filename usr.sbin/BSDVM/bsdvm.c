@@ -663,6 +663,33 @@ vmd_worker_remove(struct vmd_worker_ent **head, struct vmd_worker_ent *w,
 		(*count)--;
 }
 
+/* Release a window only after its worker has been confirmed reaped. */
+static int
+vmd_workers_stop(struct vmd_worker_ent **head, size_t *count)
+{
+	struct vmd_worker_ent *w;
+	int error = 0, result, status, killed;
+
+	while ((w = *head) != NULL) {
+		*head = w->next;
+		killed = pdkill(w->pd, SIGKILL);
+		if (killed == 0 || errno == ESRCH) {
+			do {
+				result = pdwait(w->pd, &status, WEXITED, NULL, NULL);
+			} while (result == -1 && errno == EINTR);
+			if (result != -1 || errno == ECHILD)
+				window_release(w->widx);
+			else if (error == 0)
+				error = errno;
+		} else if (error == 0)
+			error = errno;
+		close(w->pd);
+		free(w);
+	}
+	*count = 0;
+	return (error != 0 ? (errno = error, -1) : 0);
+}
+
 /*
  * Expose system.VM and dispatch each accepted client on its own pdfork'd
  * worker.  vmd is an ambient provider: it does NOT enter capability mode (the
@@ -671,7 +698,8 @@ vmd_worker_remove(struct vmd_worker_ent **head, struct vmd_worker_ent *w,
  * each worker's process descriptor, so the live-worker count (capped at
  * VMD_MAX_WORKERS) and the per-label window references are both bounded — a
  * client cannot fork-bomb the broker by churning connections, and window slots
- * are reclaimed as their last worker exits.  Returns -1 only on setup failure.
+ * are reclaimed as their last worker exits.  Returns 0 on completed quiescence,
+ * or -1 on setup, loop, or cleanup failure.
  */
 static int
 vmd_serve(void)
@@ -679,10 +707,10 @@ vmd_serve(void)
 	struct vmd_worker_ent *workers = NULL, *w;
 	struct service_identity id;
 	struct service_listener *listener;
-	struct service_provider *provider;
+	struct service_provider *provider = NULL;
 	struct kevent event, change;
 	size_t nworkers = 0;
-	int fd, kq;
+	int fd, kq = -1, result = -1, error;
 
 	if (service_provider_create(&provider) == -1 ||
 	    service_provider_authorize_capabilities(provider) == -1 ||
@@ -690,16 +718,15 @@ vmd_serve(void)
 	    service_provider_expose(provider, VMD_SERVICE_NAME,
 	    &listener) == -1 ||
 	    service_provider_enter_ambient(provider) == -1)
-		return (-1);
+		goto out;
 	kq = kqueuex(KQUEUE_CLOEXEC);
 	if (kq == -1)
-		return (-1);
+		goto out;
 	EV_SET(&change, service_listener_fd(listener), EVFILT_READ,
 	    EV_ADD | EV_ENABLE, 0, 0, listener);
 	if (kevent(kq, &change, 1, NULL, 0, NULL) == -1 ||
 	    service_provider_ready(provider) == -1) {
-		(void)close(kq);
-		return (-1);
+		goto out;
 	}
 
 	for (;;) {
@@ -709,8 +736,7 @@ vmd_serve(void)
 		if (kevent(kq, NULL, 0, &event, 1, NULL) == -1) {
 			if (errno == EINTR)
 				continue;
-			(void)close(kq);
-			return (-1);
+			goto out;
 		}
 		if (event.filter == EVFILT_PROCDESC) {
 			vmd_worker_remove(&workers, event.udata, &nworkers);
@@ -729,11 +755,17 @@ vmd_serve(void)
 			if (errno == EINTR)
 				continue;
 			if (service_provider_quiescing(provider) == 1) {
-				(void)close(kq);
-				return (0);
+				if (nworkers != 0) {
+					if (service_provider_quiesce_complete(provider,
+					    EBUSY) == 0)
+						continue;
+					if (errno != EINVAL)
+						goto out;
+				}
+				result = 0;
+				goto out;
 			}
-			(void)close(kq);
-			return (-1);
+			goto out;
 		}
 		if (nworkers >= VMD_MAX_WORKERS) {
 			syslog(LOG_WARNING, "worker limit reached; dropping %s",
@@ -810,6 +842,22 @@ vmd_serve(void)
 		workers = w;
 		nworkers++;
 	}
+out:
+	error = errno;
+	if (vmd_workers_stop(&workers, &nworkers) == -1) {
+		error = errno;
+		result = -1;
+	}
+	if (kq != -1)
+		close(kq);
+	if (result == 0 && service_provider_quiesce_complete(provider, 0) == -1) {
+		error = errno;
+		result = -1;
+	}
+	if (provider != NULL)
+		service_provider_destroy(provider);
+	errno = error;
+	return (result);
 }
 
 int
