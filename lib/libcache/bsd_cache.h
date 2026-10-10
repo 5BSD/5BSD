@@ -34,7 +34,7 @@ struct bsd_cache_stats {
 	int notification_error;
 };
 __BEGIN_DECLS
-/* Simple default: automatic notifications, no eviction callback. */
+/* Simple default: shared automatic notifications, no eviction callback. */
 int bsd_cache_open(size_t, size_t, struct bsd_cache **);
 enum bsd_cache_result bsd_cache_lookup(struct bsd_cache *, const char *, void *,
     size_t *);

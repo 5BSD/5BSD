@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
 #include <sys/wait.h>
+#include <sys/param.h>
 
 #include <atf-c.h>
 
@@ -557,8 +558,219 @@ ATF_TC_BODY(stalled_discovery_destroy, tc)
 	ATF_CHECK_EQ(0, atomic_load(&fake_closed));
 }
 
+
+ATF_TC_WITHOUT_HEAD(shared_watcher_fanout);
+ATF_TC_BODY(shared_watcher_fanout, tc)
+{
+	struct bsd_cache *caches[64], *fresh;
+	struct bsd_cache_stats stats;
+	struct cache_watch *watch;
+
+	atomic_store(&fake_level, NOTIFY_PRESSURE_NORMAL);
+	for (size_t i = 0; i < nitems(caches); i++) {
+		ATF_REQUIRE_EQ(0, bsd_cache_open(4, 16, &caches[i]));
+		wait_level(caches[i], NOTIFY_PRESSURE_NORMAL);
+		ATF_REQUIRE_EQ(0, bsd_cache_put(caches[i], "entry", "x", 1, 1));
+	}
+	watch = caches[0]->watch;
+	for (size_t i = 0; i < nitems(caches); i++)
+		ATF_CHECK(caches[i]->watch == watch);
+	ATF_CHECK_EQ(1, atomic_load(&fake_open_calls));
+	atomic_store(&fake_level, NOTIFY_PRESSURE_CRITICAL);
+	for (size_t i = 0; i < nitems(caches); i++) {
+		wait_level(caches[i], NOTIFY_PRESSURE_CRITICAL);
+		ATF_REQUIRE_EQ(0, bsd_cache_get_stats(caches[i], &stats));
+		ATF_CHECK_EQ(0, stats.entries);
+		ATF_REQUIRE_EQ(0, bsd_cache_destroy(caches[i]));
+	}
+	ATF_CHECK_EQ(1, atomic_load(&fake_closed));
+	atomic_store(&fake_level, NOTIFY_PRESSURE_NORMAL);
+	ATF_REQUIRE_EQ(0, bsd_cache_open(4, 16, &fresh));
+	wait_level(fresh, NOTIFY_PRESSURE_NORMAL);
+	ATF_CHECK(fresh->watch == watch);
+	ATF_CHECK_EQ(2, atomic_load(&fake_open_calls));
+	ATF_REQUIRE_EQ(0, bsd_cache_destroy(fresh));
+	ATF_CHECK_EQ(2, atomic_load(&fake_closed));
+}
+
+struct delivery_test {
+	struct bsd_cache *self, *peer;
+	atomic_bool entered, release, destroyed;
+};
+static void
+blocked_delivery(const char *key, const void *value, size_t length,
+    enum bsd_cache_reason reason, void *argument)
+{
+	struct delivery_test *test = argument;
+	struct bsd_cache_stats stats;
+	(void)key; (void)value; (void)length;
+	if (reason != BSD_CACHE_PRESSURE)
+		return;
+	ATF_REQUIRE_EQ(0, bsd_cache_get_stats(test->self, &stats));
+	ATF_CHECK_ERRNO(EDEADLK, bsd_cache_destroy(test->self) == -1);
+	ATF_CHECK_ERRNO(EDEADLK, bsd_cache_destroy(test->peer) == -1);
+	atomic_store(&test->entered, true);
+	while (!atomic_load(&test->release))
+		usleep(1000);
+}
+static void *
+destroy_peer(void *argument)
+{
+	struct delivery_test *test = argument;
+	ATF_CHECK_EQ(0, bsd_cache_destroy(test->peer));
+	atomic_store(&test->destroyed, true);
+	return (NULL);
+}
+ATF_TC_WITHOUT_HEAD(shared_delivery_lifetime);
+ATF_TC_BODY(shared_delivery_lifetime, tc)
+{
+	struct delivery_test test = { 0 };
+	pthread_t thread;
+
+	atomic_store(&fake_level, NOTIFY_PRESSURE_NORMAL);
+	ATF_REQUIRE_EQ(0, bsd_cache_open(4, 16, &test.peer));
+	ATF_REQUIRE_EQ(0, bsd_cache_create(4, 16, BSD_CACHE_AUTOMATIC,
+	    blocked_delivery, &test, &test.self));
+	wait_level(test.self, NOTIFY_PRESSURE_NORMAL);
+	wait_level(test.peer, NOTIFY_PRESSURE_NORMAL);
+	ATF_REQUIRE_EQ(0, bsd_cache_put(test.self, "self", "x", 1, 1));
+	ATF_REQUIRE_EQ(0, bsd_cache_put(test.peer, "peer", "x", 1, 1));
+	atomic_store(&fake_level, NOTIFY_PRESSURE_CRITICAL);
+	for (unsigned i = 0; !atomic_load(&test.entered) && i < 3000; i++)
+		usleep(1000);
+	ATF_REQUIRE(atomic_load(&test.entered));
+	ATF_REQUIRE_EQ(0, pthread_create(&thread, NULL, destroy_peer, &test));
+	usleep(20000);
+	ATF_CHECK(!atomic_load(&test.destroyed));
+	atomic_store(&test.release, true);
+	ATF_REQUIRE_EQ(0, pthread_join(thread, NULL));
+	ATF_CHECK(atomic_load(&test.destroyed));
+	ATF_REQUIRE_EQ(0, bsd_cache_destroy(test.self));
+}
+
+ATF_TC_WITHOUT_HEAD(shared_watcher_fork);
+ATF_TC_BODY(shared_watcher_fork, tc)
+{
+	struct bsd_cache *parent, *fresh;
+	struct bsd_cache_stats stats;
+	pid_t child;
+	int status;
+
+	atomic_store(&fake_level, NOTIFY_PRESSURE_NORMAL);
+	ATF_REQUIRE_EQ(0, bsd_cache_open(4, 16, &parent));
+	wait_level(parent, NOTIFY_PRESSURE_NORMAL);
+	/* Fork with the old registry locked: child creation must not touch it. */
+	pthread_mutex_lock(&parent->watch->lock);
+	child = fork();
+	if (child == 0) {
+		ATF_CHECK_ERRNO(ECHILD, bsd_cache_get_stats(parent, &stats) == -1);
+		ATF_REQUIRE_EQ(0, bsd_cache_open(4, 16, &fresh));
+		wait_level(fresh, NOTIFY_PRESSURE_NORMAL);
+		ATF_CHECK(fresh->watch != parent->watch);
+		ATF_REQUIRE_EQ(0, bsd_cache_destroy(fresh));
+		_exit(0);
+	}
+	pthread_mutex_unlock(&parent->watch->lock);
+	ATF_REQUIRE(child > 0);
+	ATF_REQUIRE_EQ(child, waitpid(child, &status, 0));
+	ATF_CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	ATF_REQUIRE_EQ(0, bsd_cache_destroy(parent));
+}
+
+
+static void *
+registration_churn(void *argument)
+{
+	struct bsd_cache *cache;
+	(void)argument;
+	for (unsigned i = 0; i < 50; i++) {
+		ATF_REQUIRE_EQ(0, bsd_cache_open(4, 16, &cache));
+		wait_level(cache, NOTIFY_PRESSURE_NORMAL);
+		ATF_REQUIRE_EQ(0, bsd_cache_put(cache, "entry", "x", 1, 1));
+		ATF_REQUIRE_EQ(0, bsd_cache_destroy(cache));
+	}
+	return (NULL);
+}
+ATF_TC_WITHOUT_HEAD(shared_registration_churn);
+ATF_TC_BODY(shared_registration_churn, tc)
+{
+	pthread_t threads[4];
+	atomic_store(&fake_level, NOTIFY_PRESSURE_NORMAL);
+	for (size_t i = 0; i < nitems(threads); i++)
+		ATF_REQUIRE_EQ(0, pthread_create(&threads[i], NULL, registration_churn, NULL));
+	for (size_t i = 0; i < nitems(threads); i++)
+		ATF_REQUIRE_EQ(0, pthread_join(threads[i], NULL));
+	ATF_CHECK_EQ(atomic_load(&fake_open_calls), atomic_load(&fake_closed));
+	struct cache_watch *watch = atomic_load(&process_watch);
+	ATF_CHECK(watch != NULL && watch->head == NULL && !watch->started);
+}
+
+
+struct shutdown_test {
+	struct bsd_cache *cache;
+	atomic_bool entered, release;
+};
+static void
+create_during_shutdown(const char *key, const void *value, size_t length,
+    enum bsd_cache_reason reason, void *argument)
+{
+	struct shutdown_test *test = argument;
+	struct bsd_cache *fresh = NULL;
+	(void)key; (void)value; (void)length;
+	if (reason != BSD_CACHE_PRESSURE)
+		return;
+	atomic_store(&test->entered, true);
+	while (!atomic_load(&test->release))
+		usleep(1000);
+	ATF_CHECK_ERRNO(EAGAIN, bsd_cache_open(4, 16, &fresh) == -1);
+	ATF_CHECK(fresh == NULL);
+}
+static void *
+destroy_last(void *argument)
+{
+	struct shutdown_test *test = argument;
+	ATF_REQUIRE_EQ(0, bsd_cache_destroy(test->cache));
+	return (NULL);
+}
+ATF_TC_WITHOUT_HEAD(callback_create_during_shutdown);
+ATF_TC_BODY(callback_create_during_shutdown, tc)
+{
+	struct shutdown_test test = { 0 };
+	struct cache_watch *watch;
+	pthread_t thread;
+	bool stopping = false;
+
+	atomic_store(&fake_level, NOTIFY_PRESSURE_NORMAL);
+	ATF_REQUIRE_EQ(0, bsd_cache_create(4, 16, BSD_CACHE_AUTOMATIC,
+	    create_during_shutdown, &test, &test.cache));
+	wait_level(test.cache, NOTIFY_PRESSURE_NORMAL);
+	ATF_REQUIRE_EQ(0, bsd_cache_put(test.cache, "entry", "x", 1, 1));
+	watch = test.cache->watch;
+	atomic_store(&fake_level, NOTIFY_PRESSURE_CRITICAL);
+	for (unsigned i = 0; !atomic_load(&test.entered) && i < 3000; i++)
+		usleep(1000);
+	ATF_REQUIRE(atomic_load(&test.entered));
+	ATF_REQUIRE_EQ(0, pthread_create(&thread, NULL, destroy_last, &test));
+	for (unsigned i = 0; !stopping && i < 3000; i++) {
+		pthread_mutex_lock(&watch->lock);
+		stopping = watch->stopping;
+		pthread_mutex_unlock(&watch->lock);
+		if (!stopping)
+			usleep(1000);
+	}
+	ATF_REQUIRE(stopping);
+	atomic_store(&test.release, true);
+	ATF_REQUIRE_EQ(0, pthread_join(thread, NULL));
+	ATF_CHECK(!watch->started);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
+	ATF_TP_ADD_TC(tp, callback_create_during_shutdown);
+	ATF_TP_ADD_TC(tp, shared_registration_churn);
+	ATF_TP_ADD_TC(tp, shared_watcher_fanout);
+	ATF_TP_ADD_TC(tp, shared_delivery_lifetime);
+	ATF_TP_ADD_TC(tp, shared_watcher_fork);
 	ATF_TP_ADD_TC(tp, stalled_discovery_destroy);
 	ATF_TP_ADD_TC(tp, discovery_eagain_backs_off);
 	ATF_TP_ADD_TC(tp, large_cache_lifecycle);

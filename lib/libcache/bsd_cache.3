@@ -134,9 +134,17 @@ No pointer into an evictable entry escapes the cache.
 .Pp
 With
 .Dv BSD_CACHE_AUTOMATIC ,
-a private thread watches BSDNotify's reserved
+one process-wide thread and notification client watch BSDNotify's reserved
 .Va system.memory.pressure
 state, reconnecting after failures.
+All automatic caches share this subscription; manual caches do not join it.
+Each cache tracks its own observed epoch and generation.
+A newly registered cache receives the latest snapshot even when no new
+notification arrives.
+Delivery pins registered caches without allocating memory and invokes callbacks
+outside the registry lock.
+A slow callback delays notification delivery to other caches; keep callbacks
+short and avoid waiting for other watcher callbacks.
 No privileged publisher attribute is needed to observe it.
 Warning pressure halves both budgets; critical pressure purges the cache and
 rejects insertions with
@@ -168,18 +176,29 @@ They can run on the calling thread or the automatic watcher thread and must
 synchronize their own application state.
 .Pp
 Operations are synchronized across threads.
-Destroy requires exclusive ownership after all application calls and callbacks
-have finished, stops the watcher, joins it, then frees remaining entries.
+Destroy requires exclusive application ownership after all application calls
+and callbacks running on application threads have finished.
+It unregisters the cache and waits for any pinned delivery to finish before
+freeing remaining entries.
+Destroying the last automatic cache closes the notification client and joins
+the shared watcher thread; a later automatic cache starts a new thread.
+A small process-local registry remains available for reuse.
 Each watcher iteration uses one one-second libservice RPC budget across
 client discovery, HELLO negotiation, reconnect and the state watch.
 An outstanding notification RPC can delay destruction until that budget expires.
 The budget covers RPC waits, not scheduling delays, mutex acquisition, arbitrary
 kernel work or application callbacks.
 Destruction does not cancel application callbacks.
-A watcher callback attempting destruction is refused with
+A watcher callback attempting to destroy any automatic cache is refused with
 .Er EDEADLK .
 Inherited cache objects cannot be used or destroyed in a child after fork;
 create a fresh cache there.
+A fresh automatic cache in the child uses a separate registry without acquiring
+inherited registry locks.
+If a watcher callback attempts to create an automatic cache while another
+thread is destroying the last registered cache, creation returns
+.Er EAGAIN
+rather than waiting for its own callback to finish.
 .Sh RETURN VALUES
 Except for the three-result lookup described above, functions return zero
 on success or minus one with

@@ -30,9 +30,11 @@ RB_GENERATE_STATIC(cache_index, cache_entry, index, entry_compare);
 
 struct bsd_cache {
 	pthread_mutex_t lock;
-	pthread_t watcher;
+	struct cache_watch *watch;
+	struct bsd_cache *watch_next, *delivery_next;
+	bool observing;
+	uint64_t watch_epoch, watch_generation;
 	pid_t owner;
-	atomic_bool stopping;
 	bool automatic, destroying, generation_exhausted;
 	uint64_t generation;
 	unsigned effective_pressure;
@@ -42,6 +44,53 @@ struct bsd_cache {
 	bsd_cache_evicted_fn callback;
 	void *argument;
 };
+/* One process-local registry; the last cache joins its watcher. */
+struct cache_watch {
+	pid_t owner;
+	pthread_mutex_t lock;
+	pthread_cond_t changed;
+	pthread_t thread;
+	struct bsd_cache *head;
+	bool started, stopping;
+};
+static _Atomic(struct cache_watch *) process_watch;
+
+static struct cache_watch *
+get_watch(void)
+{
+	struct cache_watch *old, *watch;
+	int error;
+
+	old = atomic_load(&process_watch);
+	if (old != NULL && old->owner == getpid())
+		return (old);
+	watch = calloc(1, sizeof(*watch));
+	if (watch == NULL)
+		return (NULL);
+	watch->owner = getpid();
+	error = pthread_mutex_init(&watch->lock, NULL);
+	if (error != 0) {
+		free(watch);
+		return (errno = error, NULL);
+	}
+	error = pthread_cond_init(&watch->changed, NULL);
+	if (error != 0) {
+		pthread_mutex_destroy(&watch->lock);
+		free(watch);
+		return (errno = error, NULL);
+	}
+	/* A fork child never touches the parent's possibly locked registry. */
+	while (!atomic_compare_exchange_weak(&process_watch, &old, watch)) {
+		if (old != NULL && old->owner == getpid()) {
+			pthread_cond_destroy(&watch->changed);
+			pthread_mutex_destroy(&watch->lock);
+			free(watch);
+			return (old);
+		}
+	}
+	return (watch);
+}
+
 static int cache_lock(struct bsd_cache *c) __trylocks_exclusive(0, c->lock);
 static int
 cache_lock(struct bsd_cache *c) __no_lock_analysis
@@ -393,13 +442,20 @@ observe_pressure(struct bsd_cache *c,
 static void *
 watch_pressure(void *argument)
 {
-	struct bsd_cache *c = argument;
+	struct cache_watch *watch = argument;
+	struct bsd_cache *c, *delivery, *next;
 	struct notify_client *client = NULL;
 	struct notify_state_watch_reply state;
-	uint64_t epoch = 0, generation = 0;
 	int error;
-	bool watch_idle;
-	while (!atomic_load(&c->stopping)) {
+	bool watch_idle, have_state = false;
+
+	for (;;) {
+		pthread_mutex_lock(&watch->lock);
+		if (watch->stopping) {
+			pthread_mutex_unlock(&watch->lock);
+			break;
+		}
+		pthread_mutex_unlock(&watch->lock);
 		watch_idle = false;
 		/* One deadline covers discovery, HELLO, reconnect and watch. */
 		error = service_budget_begin(1000) == -1 ? errno : 0;
@@ -414,29 +470,122 @@ watch_pressure(void *argument)
 			service_budget_end();
 		}
 		if (error == 0)
-			observe_pressure(c, &state, &epoch, &generation);
+			have_state = true;
 		else if (!watch_idle) {
-			(void)bsd_cache_set_pressure(c,
-			    NOTIFY_PRESSURE_UNKNOWN);
+			have_state = false;
 			if (client != NULL)
 				notify_client_close(client);
 			client = NULL;
 		}
-		if (cache_lock(c) == 0) {
-			c->stats.notification_error = watch_idle ? 0 : error;
-			pthread_mutex_unlock(&c->lock);
+		/* Pin a bounded-by-registration snapshot, with no allocation.
+		 * Callbacks run without the registry lock and can create caches;
+		 * those registrations participate in the next delivery. */
+		pthread_mutex_lock(&watch->lock);
+		delivery = watch->head;
+		for (c = delivery; c != NULL; c = c->watch_next) {
+			c->observing = true;
+			c->delivery_next = c->watch_next;
 		}
-		/* Retry failures at most once a second, without delaying
-		 * destruction. */
-		if (error != 0 && !watch_idle)
-			for (unsigned i = 0;
-			    i < 10 && !atomic_load(&c->stopping); i++)
+		pthread_mutex_unlock(&watch->lock);
+		for (c = delivery; c != NULL; c = next) {
+			next = c->delivery_next;
+			if (have_state && (error == 0 || c->watch_epoch == 0))
+				observe_pressure(c, &state, &c->watch_epoch,
+				    &c->watch_generation);
+			else if (!watch_idle)
+				(void)bsd_cache_set_pressure(c, NOTIFY_PRESSURE_UNKNOWN);
+			if (cache_lock(c) == 0) {
+				c->stats.notification_error = watch_idle ? 0 : error;
+				pthread_mutex_unlock(&c->lock);
+			}
+			pthread_mutex_lock(&watch->lock);
+			c->observing = false;
+			pthread_cond_broadcast(&watch->changed);
+			pthread_mutex_unlock(&watch->lock);
+		}
+		if (error != 0 && !watch_idle) {
+			for (unsigned i = 0; i < 10; i++) {
+				pthread_mutex_lock(&watch->lock);
+				bool empty = watch->head == NULL;
+				pthread_mutex_unlock(&watch->lock);
+				if (empty)
+					break;
 				usleep(100000);
+			}
+		}
 	}
 	if (client != NULL)
 		notify_client_close(client);
 	return (NULL);
 }
+
+static int
+watch_register(struct bsd_cache *c)
+{
+	struct cache_watch *watch;
+	int error;
+
+	watch = get_watch();
+	if (watch == NULL)
+		return (errno);
+	pthread_mutex_lock(&watch->lock);
+	while (watch->stopping) {
+		/* A callback cannot wait for its own thread to finish. */
+		if (pthread_equal(pthread_self(), watch->thread)) {
+			pthread_mutex_unlock(&watch->lock);
+			return (EAGAIN);
+		}
+		pthread_cond_wait(&watch->changed, &watch->lock);
+	}
+	if (!watch->started) {
+		error = pthread_create(&watch->thread, NULL, watch_pressure, watch);
+		if (error != 0) {
+			pthread_mutex_unlock(&watch->lock);
+			return (error);
+		}
+		watch->started = true;
+	}
+	c->watch = watch;
+	c->watch_next = watch->head;
+	watch->head = c;
+	pthread_cond_broadcast(&watch->changed);
+	pthread_mutex_unlock(&watch->lock);
+	return (0);
+}
+
+static int
+watch_unregister(struct bsd_cache *c)
+{
+	struct cache_watch *watch = c->watch;
+	struct bsd_cache **link;
+	bool last;
+	int error;
+
+	/* Any pinned peer could otherwise deadlock its watcher's callback. */
+	if (pthread_equal(pthread_self(), watch->thread))
+		return (EDEADLK);
+	pthread_mutex_lock(&watch->lock);
+	for (link = &watch->head; *link != c; link = &(*link)->watch_next)
+		;
+	*link = c->watch_next;
+	last = watch->head == NULL;
+	if (last)
+		watch->stopping = true;
+	while (c->observing)
+		pthread_cond_wait(&watch->changed, &watch->lock);
+	pthread_mutex_unlock(&watch->lock);
+	if (last) {
+		error = pthread_join(watch->thread, NULL);
+		if (error != 0)
+			return (error);
+		pthread_mutex_lock(&watch->lock);
+		watch->started = watch->stopping = false;
+		pthread_cond_broadcast(&watch->changed);
+		pthread_mutex_unlock(&watch->lock);
+	}
+	return (0);
+}
+
 int
 bsd_cache_create(size_t entries, size_t cost, unsigned flags,
     bsd_cache_evicted_fn callback, void *argument, struct bsd_cache **out)
@@ -459,7 +608,6 @@ bsd_cache_create(size_t entries, size_t cost, unsigned flags,
 	c->stats.entry_limit = entries;
 	c->stats.cost_limit = cost;
 	c->stats.pressure = NOTIFY_PRESSURE_UNKNOWN;
-	atomic_init(&c->stopping, false);
 	error = pthread_mutex_init(&c->lock, NULL);
 	if (error != 0) {
 		free(c);
@@ -467,7 +615,7 @@ bsd_cache_create(size_t entries, size_t cost, unsigned flags,
 	}
 	if ((flags & BSD_CACHE_AUTOMATIC) != 0) {
 		c->automatic = true;
-		error = pthread_create(&c->watcher, NULL, watch_pressure, c);
+		error = watch_register(c);
 		if (error != 0) {
 			pthread_mutex_destroy(&c->lock);
 			free(c);
@@ -487,10 +635,7 @@ bsd_cache_destroy(struct bsd_cache *c)
 	if (c->owner != getpid())
 		return (errno = ECHILD, -1);
 	if (c->automatic) {
-		if (pthread_equal(pthread_self(), c->watcher))
-			return (errno = EDEADLK, -1);
-		atomic_store(&c->stopping, true);
-		error = pthread_join(c->watcher, NULL);
+		error = watch_unregister(c);
 		if (error != 0)
 			return (errno = error, -1);
 	}
