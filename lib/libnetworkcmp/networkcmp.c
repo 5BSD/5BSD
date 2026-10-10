@@ -553,8 +553,6 @@ networkcmp_client_open_iface(const char *iface,
 		errno = error;
 		goto fail;
 	}
-	/* The session owns a duplicate of this descriptor. */
-	(void)close(fd);
 	client->owner = getpid();
 	if (networkcmp_hello(client, &client->limits) == -1)
 		goto fail;

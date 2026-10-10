@@ -15,7 +15,7 @@
 
 #include "../devicecmp.c"
 
-struct service_session { int owned_fd;
+struct service_session {
 	int failed;
 };
 
@@ -82,12 +82,7 @@ service_session_create(int fd, struct service_session **sessionp)
 	ATF_REQUIRE(sessionp != NULL);
 	session = calloc(1, sizeof(*session));
 	ATF_REQUIRE(session != NULL);
-	session->owned_fd = dup(fd);
-	if (session->owned_fd == -1) {
-		int saved = errno;
-		free(session);
-		return (errno = saved, -1);
-	}
+	close(fd);
 	*sessionp = session;
 	return (0);
 }
@@ -98,7 +93,6 @@ service_session_close(struct service_session *session)
 
 	if (session != NULL) {
 		close_count++;
-		close(session->owned_fd);
 		free(session);
 	}
 }

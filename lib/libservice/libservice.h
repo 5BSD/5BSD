@@ -890,8 +890,7 @@ struct service_call_options {
 	.reserved = { 0, 0 }					\
 }
 
-/* Borrows fd during construction and owns a duplicate on success. The caller
- * retains fd on both success and failure and must close its own reference. */
+/* Consumes fd on success; failure leaves fd owned by the caller. */
 int	service_session_create(int fd, struct service_session **session);
 int	service_session_fail(struct service_session *session, int error);
 void	service_session_close(struct service_session *session);

@@ -94,8 +94,6 @@ connect_client(struct network_state_client *client)
 		close(fd);
 		return (errno = error, -1);
 	}
-	/* The session owns a duplicate of this descriptor. */
-	(void)close(fd);
 	return (0);
 }
 int

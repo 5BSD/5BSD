@@ -48,6 +48,7 @@ fake_create(int fd, struct service_session **s)
 		return (errno = ENOMEM, -1);
 	duplicate_fd = dup(fd);
 	ATF_REQUIRE(duplicate_fd >= 0);
+	close(fd);
 	*s = (void *)1;
 	return (0);
 }

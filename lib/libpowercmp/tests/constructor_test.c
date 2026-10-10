@@ -10,6 +10,7 @@
 #include <unistd.h>
 static int passed_fd, session_fd, close_count;
 static bool create_failure;
+static int reused_fd;
 static int
 fake_open(const char *name, int *fd)
 {
@@ -35,6 +36,10 @@ fake_create(int fd, struct service_session **session)
 		return (errno = ENOMEM, -1);
 	session_fd = dup(fd);
 	ATF_REQUIRE(session_fd >= 0);
+	close(fd);
+	/* Model another thread reusing the consumed descriptor number. */
+	reused_fd = open("/dev/null", O_RDONLY);
+	ATF_REQUIRE_EQ(fd, reused_fd);
 	*session = (void *)1;
 	return (0);
 }
@@ -56,10 +61,12 @@ ATF_TC_BODY(constructor_releases_input, tc)
 {
 	struct powercmp_client *client;
 	ATF_REQUIRE_EQ(0, powercmp_client_open(&client));
-	ATF_CHECK_ERRNO(EBADF, fcntl(passed_fd, F_GETFD) == -1);
+	ATF_CHECK(fcntl(reused_fd, F_GETFD) != -1);
 	ATF_CHECK(fcntl(session_fd, F_GETFD) != -1);
 	powercmp_client_close(client);
 	ATF_CHECK_EQ(1, close_count);
+	ATF_CHECK(fcntl(reused_fd, F_GETFD) != -1);
+	close(reused_fd);
 	ATF_CHECK_ERRNO(EBADF, fcntl(session_fd, F_GETFD) == -1);
 }
 ATF_TC_WITHOUT_HEAD(constructor_failure_closes_input);

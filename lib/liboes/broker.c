@@ -31,10 +31,9 @@ oes_client_create_brokered(void)
 		return (NULL);
 	if (service_open(OES_BROKER_ENDPOINT, &channel_fd) == -1)
 		goto done;
-	/* service_session_create duplicates its input; it never consumes it. */
+	/* The session consumes channel_fd only on success. */
 	if (service_session_create(channel_fd, &session) == -1)
 		goto done;
-	(void)close(channel_fd);
 	channel_fd = -1;
 	incoming.fds = &received_fd;
 	incoming.fd_capacity = 1;

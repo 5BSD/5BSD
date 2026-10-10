@@ -43,13 +43,7 @@ service_session_create(int fd, struct service_session **out)
 	*out = calloc(1, sizeof(**out));
 	if (*out == NULL)
 		return (-1);
-	(*out)->fd = dup(fd);
-	if ((*out)->fd == -1) {
-		int saved = errno;
-		free(*out);
-		*out = NULL;
-		return (errno = saved, -1);
-	}
+	(*out)->fd = fd;
 	(*out)->epoch = ++created;
 	return (0);
 }

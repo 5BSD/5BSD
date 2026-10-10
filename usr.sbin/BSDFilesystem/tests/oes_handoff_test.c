@@ -61,7 +61,7 @@ exchange(bool malformed)
 	struct service_call_options options = SERVICE_CALL_OPTIONS_INITIALIZER;
 	options.timeout_ms = 5000;
 	ATF_REQUIRE_EQ(0, service_session_create(input, &session));
-	close(input);
+	ATF_CHECK_ERRNO(EBADF, fcntl(input, F_GETFD) == -1);
 	if (malformed)
 		request.reserved = 1;
 	ATF_REQUIRE_EQ(0,

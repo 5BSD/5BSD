@@ -335,8 +335,6 @@ tracecmp_open(int *dtracefd)
 		errno = error;
 		return (-1);
 	}
-	/* The session owns a duplicate of this descriptor. */
-	(void)close(fd);
 	result = rpc(client, TRACECMP_OP_HELLO, &reply, NULL);
 	if (result == 0) {
 		hello = (void *)((struct tracecmp_msg *)reply.bytes + 1);
@@ -385,8 +383,6 @@ tracecmp_stats(struct tracecmp_stats *stats)
 		errno = error;
 		return (-1);
 	}
-	/* The session owns a duplicate of this descriptor. */
-	(void)close(fd);
 	result = rpc(client, TRACECMP_OP_STATS, &reply, NULL);
 	if (result == 0)
 		memcpy(stats, (struct tracecmp_msg *)reply.bytes + 1,

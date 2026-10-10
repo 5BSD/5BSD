@@ -24,7 +24,7 @@
 #include "logcmp_wakeup.h"
 
 struct service_context { int unused; };
-struct service_session { int owned_fd;
+struct service_session {
 	unsigned ident;
 	struct shmring *ring;
 	int wake_fd;
@@ -276,12 +276,7 @@ service_session_create(int fd, struct service_session **result)
 	if (session == NULL)
 		return (-1);
 	session->wake_fd = -1;
-	session->owned_fd = dup(fd);
-	if (session->owned_fd == -1) {
-		int saved = errno;
-		free(session);
-		return (errno = saved, -1);
-	}
+	close(fd);
 	pthread_mutex_lock(&lock);
 	session->ident = ++created;
 	pthread_mutex_unlock(&lock);
@@ -301,7 +296,6 @@ service_session_close(struct service_session *session)
 	pthread_mutex_lock(&lock);
 	closed++;
 	pthread_mutex_unlock(&lock);
-	close(session->owned_fd);
 	free(session);
 }
 
