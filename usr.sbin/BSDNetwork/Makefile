@@ -3,7 +3,7 @@
 PACKAGE=	bsdnetwork
 PROG=	BSDNetwork
 MAN=		BSDNetwork.8
-SRCS=		networkcmp.c config.c policy.c resolver.c
+SRCS=		networkcmp.c config.c policy.c resolver.c pf_session.c
 
 # Full binding at load (no lazy PLT): everything the linker needs is resolved
 # during exec, before the daemon enters capability mode, so no library work
@@ -48,8 +48,6 @@ CONFSDIR=	${NETWORKCMP_CAP_CONFIG}
 CONFSNAME_capbundle/bsdnetwork.conf=	bsdnetwork.conf
 CONFSDIRPACKAGE=	bsdnetwork
 CONFSPACKAGE=	bsdnetwork
-
-SUBDIR+=	pf
 
 HAS_TESTS=
 SUBDIR.${MK_TESTS}+=	tests

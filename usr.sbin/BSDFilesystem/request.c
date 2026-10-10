@@ -22,6 +22,7 @@
 #include <sys/wait.h>
 
 #include <dev/hid/vhid.h>
+#include <net/pfvar.h>
 
 #include <ctype.h>
 #include <errno.h>
@@ -990,18 +991,30 @@ grant_open(struct bsdfilesystem_state *st, const char *client,
 		return (-1);
 	}
 	/*
-	 * A delivered CAP_IOCTL descriptor must not be able to issue every ioctl
-	 * the node supports.  The only ioctl consumer of an OP_OPEN device grant
-	 * is blued <-> /dev/vhid{,N}: VHID_CREATE on the control node, VHID_ATTACH
-	 * on a created unit, VHID_DESTROY to tear one down.  Cap the delivered fd
-	 * to exactly that set (blued narrows further per-node on its own side).
+	 * Limit the device descriptor to the ioctl set authorized for its exact
+	 * policy entry.  Network may read PF states; blued manages virtual HID.
 	 */
 	if (rq->rights & BSDFILESYSTEM_OPEN_IOCTL) {
 		static const unsigned long vhid_ioctls[] = {
 			VHID_CREATE, VHID_ATTACH, VHID_DESTROY,
 		};
+		static const unsigned long pf_ioctls[] = {
+			/* The compat ABI is guarded in pfvar.h for userland. */
+			_IOWR('D', 93, struct pfioc_states_v2),
+		};
+		const unsigned long *ioctls;
+		size_t nioctls;
 
-		if (cap_ioctls_limit(fd, vhid_ioctls, nitems(vhid_ioctls)) == -1) {
+		if (strcmp(client, "system.Network/bsdnetwork") == 0 &&
+		    strcmp(rq->path, "/dev/pf") == 0) {
+			ioctls = pf_ioctls;
+			nioctls = nitems(pf_ioctls);
+		} else {
+			ioctls = vhid_ioctls;
+			nioctls = nitems(vhid_ioctls);
+		}
+
+		if (cap_ioctls_limit(fd, ioctls, nioctls) == -1) {
 			saved = errno;
 			(void)close(fd);
 			errno = saved;
@@ -2028,6 +2041,7 @@ tzfs_request(struct channel *ch __unused, struct channel_message *m, void *arg)
 	struct bsdfilesystem_reply rp;
 	struct channel_outgoing out;
 	int handle = -1;
+	bool pf_relay = false;
 
 	memset(&rp, 0, sizeof(rp));
 
@@ -2067,6 +2081,9 @@ tzfs_request(struct channel *ch __unused, struct channel_message *m, void *arg)
 				syslog(LOG_INFO, "OPEN rights=%#x -> %s",
 				    orq->rights, strerror(rp.status));
 			} else {
+				pf_relay = strcmp(conn->label,
+				    "system.Network/bsdnetwork") == 0 &&
+				    strcmp(orq->path, "/dev/pf") == 0;
 				syslog(LOG_INFO, "OPEN %s rights=%#x -> granted",
 				    orq->path, orq->rights);
 			}
@@ -2441,21 +2458,33 @@ reply:
 	out.data = &rp;
 	out.length = sizeof(rp);
 	if (handle != -1 && rp.status == 0) {
-		/*
-		 * Harden every delivered descriptor (dataset handle, mounted store
-		 * dirfd, or isolated-open fd) as a single-hop capability: this SCM
-		 * send is the one-and-only delegation (CAP_XFER_ONCE -> the client's
-		 * copy lands at CAP_XFER_NONE, non-re-delegable), close-on-fork, and
-		 * close-on-exec.  Without this a client could re-send its label-scoped
-		 * storage/device handle to an unrelated component, bypassing the
-		 * per-label/per-container policy the broker exists to enforce (and the
-		 * libservice client contract already assumes this limit was applied).
+		/* Most delivered descriptors have one transfer and cannot be
+		 * redelegated.  The exact PF descriptor granted to BSDNetwork is
+		 * an exception: Network narrows it to one transfer before replying
+		 * to a client admitted through the anointed PF endpoint.
 		 */
-		(void)service_harden_fd(handle, SERVICE_HARDEN_XFER_ONCE |
-		    SERVICE_HARDEN_CLOFORK_ONCE);
+		if (pf_relay) {
+			/* Keep this exact descriptor transferable until Network applies
+			 * CAP_XFER_ONCE for the client handoff. */
+			if (cap_xfer_limit(handle, CAP_XFER_UNLIMITED) == -1 ||
+			    cap_clofork_limit(handle, CAP_CLOFORK_ONCE) == -1 ||
+			    cap_cloexec_limit(handle, CAP_CLOEXEC_LOCKED) == -1) {
+				rp.status = errno;
+				out.fds = NULL;
+				out.nfds = 0;
+				goto send_reply;
+			}
+		} else {
+			(void)service_harden_fd(handle,
+			    SERVICE_HARDEN_XFER_ONCE |
+			    SERVICE_HARDEN_CLOFORK_ONCE);
+		}
 		out.fds = &handle;
 		out.nfds = 1;
 	}
+send_reply:
+	if (rp.status != 0)
+		out.nfds = 0;
 	(void)channel_send_reply(m, &out);
 	if (handle != -1)
 		(void)close(handle);

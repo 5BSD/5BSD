@@ -1,5 +1,5 @@
 .\" SPDX-License-Identifier: BSD-2-Clause
-.Dd September 4, 2026
+.Dd October 10, 2026
 .Dt BSDNETWORK 8
 .Os
 .Sh NAME
@@ -75,6 +75,24 @@ only; a
 .Em udp
 request ignores it.
 The protocol exposes only DNS, connect, and udp.
+.Pp
+The same daemon also serves
+.Dq system.Network.PF .
+SwitchBoard admits only clients anointed with
+.Dq system.network.pf.read ;
+the daemon additionally requires the PF read session right.
+For each admitted session it obtains an exact
+.Pa /dev/pf
+descriptor from
+.Xr BSDFilesystem 8
+and passes it to a private worker.
+The descriptor is limited to the read-only PF state export ioctl and one
+transfer to the client; the client cannot change PF rules or settings through
+it.
+The daemon itself runs as the unprivileged
+.Dq capability
+user and does not hold a directory descriptor for
+.Pa /dev .
 .Pp
 Resolver requests cap host and service lengths, flags, address families, and
 result counts.

@@ -40,6 +40,8 @@
 #include <networkcmp.h>
 
 #include "resolver.h"
+#include "pf_protocol.h"
+#include "pf_session.h"
 #include <networkcmp_server.h>
 #include <logcmp.h>
 
@@ -1515,6 +1517,48 @@ reject:
 	return (-1);
 }
 
+static int
+pf_worker(int fd, int pf_fd, int open_error)
+{
+	if (netresolve_worker_enter() == -1 ||
+	    service_worker_enter_capability_mode(SERVICE_PROTECT_EXTERNAL |
+	    SERVICE_PROTECT_NOPRIVS | SERVICE_PROTECT_NOFORK |
+	    SERVICE_PROTECT_NOIPC | SERVICE_PROTECT_NOEXEC) == -1) {
+		(void)close(fd);
+		if (pf_fd >= 0)
+			(void)close(pf_fd);
+		return (1);
+	}
+	return (network_pf_serve(fd, pf_fd, open_error));
+}
+
+static int
+start_pf_session(int fd, struct service_context *ctx, int *pdp)
+{
+	pid_t pid;
+	int pf_fd, open_error, pd, error;
+
+	if (harden_worker_fd(fd) == -1)
+		return (-1);
+	/* Only the PF endpoint reaches here, after the SwitchBoard anointment
+	 * and the per-session read right have both been checked. */
+	pf_fd = network_pf_open(ctx);
+	open_error = pf_fd == -1 ? errno : 0;
+	pid = pdfork(&pd, PD_CLOEXEC | PD_DAEMON);
+	if (pid == -1) {
+		error = errno;
+		if (pf_fd >= 0)
+			(void)close(pf_fd);
+		return (errno = error, -1);
+	}
+	if (pid == 0)
+		_exit(pf_worker(fd, pf_fd, open_error));
+	if (pf_fd >= 0)
+		(void)close(pf_fd);
+	*pdp = pd;
+	return (0);
+}
+
 #define	NETWORKCMP_MAX_WORKERS	4096u
 #define	NETWORKCMP_RESOLVER_TIMER	1
 #define	NETWORKCMP_RESOLVER_REFRESH_SECONDS	5
@@ -1550,14 +1594,15 @@ main(void)
 	struct net_worker_ent *workers = NULL, *w;
 	struct networkcmp_config config;
 	struct service_identity identity;
-	struct service_listener *listener, *listeners[2];
-	static const char *const listener_names[2] = {
-		BSDNETWORK_NAME, BSDNETWORK_ADMIN_NAME };
+	struct service_listener *listener, *listeners[3];
+	static const char *const listener_names[3] = {
+		BSDNETWORK_NAME, BSDNETWORK_ADMIN_NAME, PF_MONITOR_SERVICE };
 	struct service_provider *provider;
 	struct service_context *ctx;
 	struct kevent event, change;
 	size_t nworkers = 0;
 	int error, fd, cfgfd, kq;
+	const char *expected_name;
 
 	openlog("bsdnetwork", LOG_PID | LOG_NDELAY, LOG_DAEMON);
 	/* ps(1) shows the unit name, not the ld-elf.so.1 launcher. */
@@ -1609,6 +1654,8 @@ main(void)
 	    &listeners[0]) == -1 ||
 	    service_provider_expose(provider, listener_names[1],
 	    &listeners[1]) == -1 ||
+	    service_provider_expose(provider, listener_names[2],
+	    &listeners[2]) == -1 ||
 	    service_provider_enter_capability_mode(provider) == -1 ||
 	    service_provider_ready(provider) == -1)
 		goto fail;
@@ -1620,7 +1667,7 @@ main(void)
 	kq = kqueuex(KQUEUE_CLOEXEC);
 	if (kq == -1)
 		goto fail;
-	for (int i = 0; i < 2; i++) {
+	for (int i = 0; i < 3; i++) {
 		EV_SET(&change, service_listener_fd(listeners[i]), EVFILT_READ,
 		    EV_ADD | EV_ENABLE, 0, 0, listeners[i]);
 		if (kevent(kq, &change, 1, NULL, 0, NULL) == -1)
@@ -1672,8 +1719,10 @@ main(void)
 		 * The listener that fired must be the endpoint SwitchBoard
 		 * resolved; a disagreement is a routing bug and is refused.
 		 */
-		if (strcmp(identity.service_name, listener == listeners[1] ?
-		    listener_names[1] : listener_names[0]) != 0) {
+		expected_name = listener == listeners[2] ? listener_names[2] :
+		    (listener == listeners[1] ? listener_names[1] :
+		    listener_names[0]);
+		if (strcmp(identity.service_name, expected_name) != 0) {
 			net_log(main_logger(), LOG_ERR,
 			    "refusing %s: resolved %s on another listener",
 			    identity.client_label, identity.service_name);
@@ -1687,9 +1736,20 @@ main(void)
 			close(fd);
 			continue;
 		}
+		if (listener == listeners[2] &&
+		    !service_rights_allow(identity.rights,
+		    PF_MONITOR_RIGHT_READ)) {
+			net_log(main_logger(), LOG_WARNING,
+			    "PF session for %s lacks read right",
+			    identity.client_label);
+			close(fd);
+			continue;
+		}
 		w = calloc(1, sizeof(*w));
-		if (w == NULL || start_session(fd, identity.client_label,
-		    identity.rights, &config, &w->pd) == -1) {
+		if (w == NULL || (listener == listeners[2] ?
+		    start_pf_session(fd, ctx, &w->pd) :
+		    start_session(fd, identity.client_label, identity.rights,
+		    &config, &w->pd)) == -1) {
 			net_log(main_logger(), LOG_WARNING,
 			    "session for %s rejected: %m",
 			    identity.client_label);

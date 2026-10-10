@@ -8,6 +8,7 @@ activation {
 	ipc = [
 		"system.Network",
 		{ name = "system.Network.Admin"; requires = ["system.network.admin"]; },
+		{ name = "system.Network.PF"; requires = ["system.network.pf.read"]; },
 	];
 }
 control = "system";
