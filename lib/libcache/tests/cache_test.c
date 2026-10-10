@@ -27,10 +27,20 @@ struct notify_client {
 static struct notify_client fake_notify;
 static atomic_uint fake_level, fake_closed, fake_open_calls;
 static atomic_int fake_open_error;
+static atomic_bool fake_stall_open;
+static atomic_uint fake_budget_expired;
 int
 notify_client_open(struct notify_client **out)
 {
 	atomic_fetch_add(&fake_open_calls, 1);
+	if (atomic_load(&fake_stall_open)) {
+		uint32_t timeout = UINT32_MAX;
+		while (service_budget_timeout(&timeout) == 0)
+			usleep(10000);
+		atomic_fetch_add(&fake_budget_expired, 1);
+		*out = NULL;
+		return (-1);
+	}
 	int error = atomic_load(&fake_open_error);
 	if (error != 0) {
 		*out = NULL;
@@ -529,8 +539,27 @@ ATF_TC_BODY(discovery_eagain_backs_off, tc)
 	ATF_CHECK_EQ(1, atomic_load(&fake_closed));
 }
 
+ATF_TC_WITHOUT_HEAD(stalled_discovery_destroy);
+ATF_TC_BODY(stalled_discovery_destroy, tc)
+{
+	struct bsd_cache *cache;
+	uint64_t started;
+
+	atomic_store(&fake_stall_open, true);
+	ATF_REQUIRE_EQ(0, bsd_cache_open(4, 16, &cache));
+	for (unsigned i = 0; atomic_load(&fake_open_calls) == 0 && i < 3000; i++)
+		usleep(1000);
+	ATF_REQUIRE(atomic_load(&fake_open_calls) != 0);
+	started = service_monotime_ms();
+	ATF_REQUIRE_EQ(0, bsd_cache_destroy(cache));
+	ATF_CHECK(service_monotime_ms() - started < 2500);
+	ATF_CHECK_EQ(1, atomic_load(&fake_budget_expired));
+	ATF_CHECK_EQ(0, atomic_load(&fake_closed));
+}
+
 ATF_TP_ADD_TCS(tp)
 {
+	ATF_TP_ADD_TC(tp, stalled_discovery_destroy);
 	ATF_TP_ADD_TC(tp, discovery_eagain_backs_off);
 	ATF_TP_ADD_TC(tp, large_cache_lifecycle);
 	ATF_TP_ADD_TC(tp, invalidation_during_rebuild);

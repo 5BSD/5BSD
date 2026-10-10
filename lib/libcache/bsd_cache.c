@@ -4,6 +4,7 @@
 #include <errno.h>
 #include <notify.h>
 #include <pthread.h>
+#include <service_runtime.h>
 #include <stdatomic.h>
 #include <stdbool.h>
 #include <stdlib.h>
@@ -400,14 +401,17 @@ watch_pressure(void *argument)
 	bool watch_idle;
 	while (!atomic_load(&c->stopping)) {
 		watch_idle = false;
-		error = client == NULL && notify_client_open(&client) == -1 ?
-		    errno :
-		    0;
-		if (error == 0 &&
-		    notify_state_watch(client, NOTIFY_PRESSURE_TOPIC, &state,
-			250) == -1) {
-			error = errno;
-			watch_idle = error == EAGAIN;
+		/* One deadline covers discovery, HELLO, reconnect and watch. */
+		error = service_budget_begin(1000) == -1 ? errno : 0;
+		if (error == 0) {
+			if (client == NULL && notify_client_open(&client) == -1)
+				error = errno;
+			if (error == 0 && notify_state_watch(client,
+			    NOTIFY_PRESSURE_TOPIC, &state, 250) == -1) {
+				error = errno;
+				watch_idle = error == EAGAIN;
+			}
+			service_budget_end();
 		}
 		if (error == 0)
 			observe_pressure(c, &state, &epoch, &generation);

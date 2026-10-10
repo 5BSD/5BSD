@@ -170,8 +170,12 @@ synchronize their own application state.
 Operations are synchronized across threads.
 Destroy requires exclusive ownership after all application calls and callbacks
 have finished, stops the watcher, joins it, then frees remaining entries.
-An outstanding notification RPC can delay destruction until its bounded
-transport timeout; destruction does not cancel arbitrary application callbacks.
+Each watcher iteration uses one one-second libservice RPC budget across
+client discovery, HELLO negotiation, reconnect and the state watch.
+An outstanding notification RPC can delay destruction until that budget expires.
+The budget covers RPC waits, not scheduling delays, mutex acquisition, arbitrary
+kernel work or application callbacks.
+Destruction does not cancel application callbacks.
 A watcher callback attempting destruction is refused with
 .Er EDEADLK .
 Inherited cache objects cannot be used or destroyed in a child after fork;
