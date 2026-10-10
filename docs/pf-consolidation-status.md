@@ -140,6 +140,29 @@ The next clean-world VM should rerun the full normal-startup gate, check removal
 of installed obsolete files, and qualify package upgrades, existing policies
 and recovery. Symbolic SNMP client/MIB parsing remains a separate review item.
 
+### Package policy preservation regression (2026-10-10)
+
+An isolated real-pkg transaction reproduced loss of a locally modified
+`/etc/rc.firewall` when that file disappeared from the rc package manifest.
+The rc package now saves existing content before replacement as
+`/etc/rc.firewall.pkgsave.XXXXXX`, using a unique name and reporting its location.
+The obsolete executable path is removed; the saved policy is for manual review
+when migrating to PF. This does not translate or enable firewall rules.
+
+`tools/test/pf-consolidation/package-upgrade-test.py` exercises the production
+rc package scripts using fixture packages in a new isolated root. All eight
+checks pass: Dummynet installation; IPFW package and file removal; removal of
+the old rc.firewall path; saved policy content; preservation of a prior backup
+and an unmanaged ipfw.rules file; and no backup on a fresh installation.
+Run it with `python3.12 tools/test/pf-consolidation/package-upgrade-test.py
+/new/evidence/directory`. It uses pkg-static without installing on the host.
+
+Evidence: `/usr/obj/5BSD-pf-upgrade-20261010/package-policy-regression`.
+The before-fix failure is retained in `package-policy-before-fix` alongside it.
+The four-core baseline VM, clean world/kernel build, real combined-repository
+upgrade and complete post-reboot suite remain pending. The VM upgrade checks
+now require the saved policy to remain intact after reboot.
+
 ## Remaining work
 
 - Extend kernel coverage beyond the passing smoke gate; qualify clean world,

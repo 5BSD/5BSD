@@ -1186,3 +1186,13 @@ Final removal VM evidence (2026-10-10):
   Numeric OID coverage does not qualify symbolic SNMP client/MIB parsing.
   Smoke15 log SHA256:
   28808fd36486e77dfe1ddf6bcad5f5d6a1864b27b0f45fc5a5f3017c08875aa7.
+
+IPFW package policy preservation (2026-10-10):
+  Local change, no upstream code imported. A real pkg fixture transaction
+  showed that removing rc.firewall from the rc manifest also deletes local
+  modifications. The rc pre-install script saves that retired policy to a
+  unique rc.firewall.pkgsave file before replacement. The maintained
+  tools/test/pf-consolidation/package-upgrade-test.py exercises the production
+  scripts in isolated roots; all eight retirement/preservation/fresh-install
+  checks pass. Evidence: /usr/obj/5BSD-pf-upgrade-20261010/
+  package-policy-regression/results.json. Full VM upgrade remains pending.
