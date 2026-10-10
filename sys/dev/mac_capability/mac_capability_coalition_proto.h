@@ -251,6 +251,7 @@ struct coalition_event_msg {
 #define	COALITION_NOTE_MEMBER_ADDED	0x0001
 #define	COALITION_NOTE_MEMBER_REMOVED	0x0002
 #define	COALITION_NOTE_TERMINATING	0x0004
+/* Instance revocation begins; does not confirm member process exit. */
 #define	COALITION_NOTE_TERMINATED	0x0008
 #define	COALITION_NOTE_LEADER_DIED	0x0010
 #define	COALITION_NOTE_DEADLINE_FIRED	0x0020

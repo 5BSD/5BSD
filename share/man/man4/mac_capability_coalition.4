@@ -385,6 +385,13 @@ struct coalition_event_msg {
 .It Dv COALITION_NOTE_WATCHDOG_FIRED Ta 0x0040
 .It Dv COALITION_NOTE_GRACE_STARTED Ta 0x0080
 .El
+.Pp
+.Dv COALITION_NOTE_TERMINATED
+reports the start of instance revocation.
+It is emitted before member cleanup and does not confirm that every process
+member has exited or released its resources.
+Neither this event nor successful termination signalling is a descendant
+exit barrier for a supervisor preparing to restart a service.
 .Ss Coalition Flags
 The
 .Fa flags
