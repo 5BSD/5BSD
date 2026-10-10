@@ -59,17 +59,40 @@ spawn(struct shared *s, int code)
 	return (0);
 }
 
+static long
+now_ms(void)
+{
+	struct timespec ts;
+
+	/* CLOCK_MONOTONIC; on failure report "deadline passed". */
+	if (sys2(SYS_clock_gettime, 1, &ts) != 0)
+		return (0x7fffffffffffffffL);
+	return (ts.tv_sec * 1000 + ts.tv_nsec / 1000000);
+}
+
+/*
+ * Wait for the child to be scheduled and making progress.  A fixed number
+ * of sched_yield calls is not a time bound: on a loaded host (or under
+ * emulation) the child may not run at all within them.  Keep the original
+ * minimum and also allow up to WAIT_RUNNING_MS of wall-clock time.
+ */
+#define	WAIT_RUNNING_MS	10000
+
 static int
 wait_running(struct shared *s)
 {
+	long deadline;
 	u64 old;
 
-	for (int i = 0; i != 10000 && s->ticks < 32; i++)
+	deadline = now_ms() + WAIT_RUNNING_MS;
+	for (int i = 0; s->ticks < 32 && (i < 10000 || now_ms() < deadline);
+	    i++)
 		(void)sys0(SYS_sched_yield);
 	if (s->ticks < 32)
 		return (1);
 	old = s->ticks;
-	for (int i = 0; i != 10000 && s->ticks == old; i++)
+	for (int i = 0; s->ticks == old && (i < 10000 || now_ms() < deadline);
+	    i++)
 		(void)sys0(SYS_sched_yield);
 	return (s->ticks == old);
 }
