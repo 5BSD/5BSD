@@ -26,3 +26,8 @@ checks queue closure before acknowledgement. Failure paths must destroy any
 created provider and must not acknowledge successful quiescence. These cases
 use an empty worker list; live protected workers during fatal loop exit remain
 a full-system integration gate, alongside the worker-helper coverage above.
+
+shutdown_reports_cleanup_failure injects forced-kill and final-reap errors.
+It checks first-error preservation, nonblocking remaining reap attempts, and
+release of all tracking nodes and descriptors. Actual denied termination and
+supervisor recovery of a surviving protected worker remain integration gates.

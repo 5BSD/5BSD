@@ -453,13 +453,13 @@ worker_remove(struct audit_worker **workers, struct audit_worker *worker,
 		(*count)--;
 }
 
-static void
+static int
 workers_shutdown(int kq, struct audit_worker **workers, size_t *count)
 {
 	struct audit_worker *worker, *next;
 	struct kevent event;
 	struct timespec deadline, now, timeout;
-	int status, result;
+	int status, result, error = 0;
 
 	for (worker = *workers; worker != NULL; worker = worker->next)
 		(void)pdkill(worker->pd, SIGTERM);
@@ -490,18 +490,25 @@ workers_shutdown(int kq, struct audit_worker **workers, size_t *count)
 			worker_remove(workers, event.udata, count);
 	}
 force:
-	for (worker = *workers; worker != NULL; worker = worker->next)
-		(void)pdkill(worker->pd, SIGKILL);
+	for (worker = *workers; worker != NULL; worker = worker->next) {
+		if (pdkill(worker->pd, SIGKILL) == -1 && errno != ESRCH &&
+		    error == 0)
+			error = errno;
+	}
 	for (worker = *workers; worker != NULL; worker = next) {
 		next = worker->next;
 		do {
-			result = pdwait(worker->pd, &status, WEXITED, NULL, NULL);
+			result = pdwait(worker->pd, &status,
+			    WEXITED | (error != 0 ? WNOHANG : 0), NULL, NULL);
 		} while (result == -1 && errno == EINTR);
+		if (result == -1 && errno != ECHILD && error == 0)
+			error = errno;
 		close(worker->pd);
 		free(worker);
 	}
 	*workers = NULL;
 	*count = 0;
+	return (error != 0 ? (errno = error, -1) : 0);
 }
 
 int
@@ -628,7 +635,10 @@ main(void)
 initialize_failed:
 	warn("initialize");
 out:
-	workers_shutdown(kq, &workers, &nworkers);
+	if (workers_shutdown(kq, &workers, &nworkers) == -1) {
+		warn("worker shutdown");
+		result = 1;
+	}
 	if (kq != -1)
 		close(kq);
 	free(rate_table);

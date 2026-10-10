@@ -70,6 +70,10 @@ The supervisor allows a five-second graceful worker exit after SIGTERM.
 If the monotonic clock cannot establish or check the deadline, it proceeds
 to forced termination.
 Interrupted final reap calls are retried.
+A failed forced termination or final reap makes shutdown fail and suppresses
+a successful quiescence acknowledgement.
+Remaining reap attempts are nonblocking after a failure; the supervisor may
+need to recover any surviving worker.
 The grace period does not bound the final kernel reap wait.
 .Sh SEE ALSO
 .Xr audit 2 ,
