@@ -612,9 +612,51 @@ dns_now_ns(void)
 	return ((uint64_t)now.tv_sec * 1000000000 + now.tv_nsec);
 }
 
+/* RFC2308: SOA TTL and MINIMUM both bound a negative answer. */
+static uint32_t
+dns_negative_ttl(const u_char *answer, int length, ns_msg *message,
+    const char *owner, uint32_t chain_ttl)
+{
+	ns_rr record;
+	char name[NS_MAXDNAME];
+	const u_char *cursor, *end;
+	uint32_t ttl, minimum, result = 0;
+	int used;
+
+	for (int i = 0; i < ns_msg_count(*message, ns_s_ns); i++) {
+		if (ns_parserr(message, ns_s_ns, i, &record) < 0)
+			return (0);
+		if (ns_rr_type(record) != ns_t_soa || ns_rr_class(record) != ns_c_in ||
+		    !ns_samedomain(owner, ns_rr_name(record)))
+			continue;
+		cursor = ns_rr_rdata(record);
+		end = cursor + ns_rr_rdlen(record);
+		if (end > answer + length)
+			return (0);
+		for (int j = 0; j < 2; j++) {
+			used = ns_name_uncompress(answer, answer + length, cursor,
+			    name, sizeof(name));
+			if (used <= 0 || used > end - cursor)
+				return (0);
+			cursor += used;
+		}
+		if (end - cursor != 20)
+			return (0);
+		ttl = ns_rr_ttl(record);
+		minimum = ns_get32(cursor + 16);
+		if (ttl >= 0x80000000U || minimum >= 0x80000000U)
+			return (0);
+		if (minimum < ttl) ttl = minimum;
+		if (chain_ttl < ttl) ttl = chain_ttl;
+		if (ttl == 0) return (0);
+		if (result == 0 || ttl < result) result = ttl;
+	}
+	return (result);
+}
+
 static int
 dns_parse(const u_char *ans, int anslen, const char *host, int want,
-    struct rslv_addr *addrs, int max, int *n, char *canon, size_t canonsz)
+    struct rslv_addr *addrs, int max, int *n, char *canon, size_t canonsz, uint32_t *negative_ttl)
 {
 	ns_msg msg;
 	ns_rr rr;
@@ -626,6 +668,8 @@ dns_parse(const u_char *ans, int anslen, const char *host, int want,
 	uint32_t chain_ttl = UINT32_MAX, record_ttl;
 	uint64_t now = dns_now_ns();
 
+	if (negative_ttl != NULL)
+		*negative_ttl = 0;
 	if (anslen <= 0)
 		return (-1);
 	if (ns_initparse(ans, anslen, &msg) < 0)
@@ -682,6 +726,8 @@ dns_parse(const u_char *ans, int anslen, const char *host, int want,
 		    (int)ns_rr_type(rr) != want ||
 		    ns_samename(ns_rr_name(rr), owner) != 1)
 			continue;
+		if (ns_msg_getflag(msg, ns_f_rcode) == ns_r_nxdomain)
+			return (-1);
 		rdata = ns_rr_rdata(rr);
 		rdlen = ns_rr_rdlen(rr);
 		if (rdata < ans || rdata > ans + anslen ||
@@ -736,6 +782,8 @@ dns_parse(const u_char *ans, int anslen, const char *host, int want,
 		(*n)++;
 		added++;
 	}
+	if (added == 0 && negative_ttl != NULL)
+		*negative_ttl = dns_negative_ttl(ans, anslen, &msg, owner, chain_ttl);
 	return (added);
 }
 
@@ -878,7 +926,7 @@ done:
 static int
 dns_query_uncached(const char *host, int rrtype, struct rslv_addr *addrs, int max,
     int *n, char *canon, size_t canonsz,
-    const union res_sockaddr_union *srv, int nsrv)
+    const union res_sockaddr_union *srv, int nsrv, uint32_t *negative_ttl)
 {
 	u_char qbuf[NS_PACKETSZ];
 	u_char *ans;
@@ -973,14 +1021,9 @@ dns_query_uncached(const char *host, int rrtype, struct rslv_addr *addrs, int ma
 				    qbuf, host, rrtype) != 0)
 					continue;
 			}
-			if ((ans[3] & 0x0f) == ns_r_nxdomain) {
-				answered = 1;
-				continue;
-			}
-
 			added = dns_parse(ans, (int)rlen, host, rrtype, addrs, max,
-			    n, canon, canonsz);
-			if (added < 0)
+			    n, canon, canonsz, negative_ttl);
+			if (added < 0 || ((ans[3] & 0x0f) == ns_r_nxdomain && added != 0))
 				continue;	/* malformed: try next server */
 
 			/*
@@ -1020,7 +1063,7 @@ dns_query(const char *host, int rrtype, struct rslv_addr *addrs, int max,
 	struct rslv_addr answers[RSLV_MAX_RESULTS];
 	struct dns_cache_entry *entry = NULL;
 	char name[NS_MAXDNAME] = "";
-	uint32_t version;
+	uint32_t version, negative_ttl = 0;
 	uint64_t now, expires;
 	int count = 0, nsrv, result, added = 0;
 
@@ -1048,7 +1091,7 @@ dns_query(const char *host, int rrtype, struct rslv_addr *addrs, int max,
 		strlcpy(name, entry->canon, sizeof(name));
 	} else {
 		result = dns_query_uncached(host, rrtype, answers, RSLV_MAX_RESULTS,
-		    &count, name, sizeof(name), servers, nsrv);
+		    &count, name, sizeof(name), servers, nsrv, &negative_ttl);
 		if (result < 0)
 			return (-1);
 		now = dns_now_ns();
@@ -1056,8 +1099,10 @@ dns_query(const char *host, int rrtype, struct rslv_addr *addrs, int max,
 		for (int i = 0; i < count; i++)
 			if (answers[i].expires_ns < expires)
 				expires = answers[i].expires_ns;
-		/* Only validated positive answers with time remaining are cached. */
-		if (count != 0 && now != 0 && expires > now &&
+		if (count == 0 && negative_ttl < RSLV_CACHE_MAX_AGE)
+			expires = now + (uint64_t)negative_ttl * 1000000000;
+		/* Empty results require a valid SOA lifetime, never a retry failure. */
+		if ((count != 0 || negative_ttl != 0) && now != 0 && expires > now &&
 		    strlen(host) < sizeof(g_dns_cache[0].host)) {
 			entry = &g_dns_cache[g_cache_next++ % RSLV_CACHE_ENTRIES];
 			memset(entry, 0, sizeof(*entry));

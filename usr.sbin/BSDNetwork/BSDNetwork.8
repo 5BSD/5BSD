@@ -255,13 +255,19 @@ Joining an existing job does not extend its original deadline.
 Coalescing never crosses sessions or authenticated client labels.
 A failed reply terminates the session and releases all retained requests.
 .Sh DNS CACHE AND TTL
-Each connection worker retains at most 32 validated positive DNS answers,
+Each connection worker retains at most 32 validated positive or negative DNS answers,
 keyed by hostname and record type, for at most five minutes and never beyond
 the minimum TTL of the matching addresses and their CNAME chain.
 The cache is private to that worker and its immutable client policy;
 answers are not shared across sessions, labels, or network namespaces.
-Zero-TTL answers, negative answers, malformed replies, and failures are not
-cached.
+NXDOMAIN and NODATA responses are cached only with a usable IN-class SOA
+covering the terminal name in the CNAME chain.
+Their lifetime is the minimum of the SOA TTL, SOA MINIMUM, CNAME lifetimes,
+and five minutes.
+Negative entries remain keyed by both hostname and record type; they do not
+suppress queries for another type or descendant names.
+Missing, malformed, zero-lifetime, or high-bit SOA lifetimes are not cached.
+Temporary server and transport failures are not cached.
 Numeric and local hosts results are resolved before consulting DNS.
 .Pp
 Every query checks the nameserver snapshot and its generation.

@@ -124,7 +124,7 @@ ATF_TC_BODY(answer_owner_chain, tc)
 	n = 0;
 	canon[0] = '\0';
 	ATF_CHECK_EQ(dns_parse(reply, (int)at, "example.test", ns_t_a,
-	    addrs, 2, &n, canon, sizeof(canon)), 0);
+	    addrs, 2, &n, canon, sizeof(canon), NULL), 0);
 	ATF_CHECK_EQ(n, 0);
 
 	/* The CNAME target can be compressed as the following A owner. */
@@ -146,7 +146,7 @@ ATF_TC_BODY(answer_owner_chain, tc)
 	n = 0;
 	canon[0] = '\0';
 	ATF_CHECK_EQ(dns_parse(reply, (int)at, "example.test", ns_t_a,
-	    addrs, 2, &n, canon, sizeof(canon)), 1);
+	    addrs, 2, &n, canon, sizeof(canon), NULL), 1);
 	ATF_CHECK_EQ(n, 1);
 	ATF_CHECK_STREQ(canon, "alias.test");
 	if (n == 1)
@@ -163,7 +163,7 @@ ATF_TC_BODY(answer_owner_chain, tc)
 	n = 0;
 	canon[0] = '\0';
 	ATF_CHECK_EQ(dns_parse(reply, (int)at, "example.test", ns_t_a,
-	    addrs, 2, &n, canon, sizeof(canon)), -1);
+	    addrs, 2, &n, canon, sizeof(canon), NULL), -1);
 	ATF_CHECK_EQ(n, 0);
 	ATF_CHECK_STREQ(canon, "");
 
@@ -175,7 +175,7 @@ ATF_TC_BODY(answer_owner_chain, tc)
 	reply[at + 1] = (u_char)at;
 	n = 0;
 	ATF_CHECK_EQ(dns_parse(reply, (int)at + 2, "example.test",
-	    ns_t_a, addrs, 2, &n, canon, sizeof(canon)), -1);
+	    ns_t_a, addrs, 2, &n, canon, sizeof(canon), NULL), -1);
 	ATF_CHECK_EQ(n, 0);
 	res_nclose(&g_res);
 }
@@ -608,6 +608,128 @@ ATF_TC_BODY(local_v4mapped, tc)
 	g_hostsfd = -1;
 }
 
+static size_t
+append_test_soa(u_char *answer, size_t at, uint32_t ttl, uint32_t minimum)
+{
+	u_char record[34] = { 0xc0, 0x0c, 0, ns_t_soa, 0, ns_c_in };
+	ns_put32(ttl, record + 6);
+	record[11] = 22;
+	ns_put32(minimum, record + 30);
+	memcpy(answer + at, record, sizeof(record));
+	return (at + sizeof(record));
+}
+ATF_TC_WITHOUT_HEAD(negative_soa_lifetime);
+ATF_TC_BODY(negative_soa_lifetime, tc)
+{
+	u_char query[NS_PACKETSZ], answer[NS_PACKETSZ + 64];
+	ns_msg message;
+	int qlen;
+	size_t at;
+	const uint32_t ttl[] = { 60, 10, 0, 0x80000000U, 60 };
+	const uint32_t minimum[] = { 30, 30, 30, 30, 0x80000000U };
+	const uint32_t expected[] = { 30, 10, 0, 0, 0 };
+	ATF_REQUIRE_EQ(0, res_ninit(&g_res));
+	qlen = res_nmkquery(&g_res, ns_o_query, "example.test", ns_c_in,
+	    ns_t_a, NULL, 0, NULL, query, sizeof(query));
+	ATF_REQUIRE(qlen > 0);
+	for (unsigned i = 0; i < 5; i++) {
+		memcpy(answer, query, qlen);
+		answer[2] |= 0x80;
+		answer[9] = 1;
+		at = append_test_soa(answer, qlen, ttl[i], minimum[i]);
+		ATF_REQUIRE_EQ(0, ns_initparse(answer, at, &message));
+		ATF_CHECK_EQ(expected[i], dns_negative_ttl(answer, at, &message,
+		    "example.test", UINT32_MAX));
+		ATF_CHECK_EQ(0, dns_negative_ttl(answer, at, &message,
+		    "unrelated.test", UINT32_MAX));
+		ATF_CHECK_EQ(expected[i] ? 7 : 0, dns_negative_ttl(answer, at,
+		    &message, "example.test", 7));
+	}
+	memcpy(answer, query, qlen);
+	answer[2] |= 0x80;
+	ATF_REQUIRE_EQ(0, ns_initparse(answer, qlen, &message));
+	ATF_CHECK_EQ(0, dns_negative_ttl(answer, qlen, &message,
+	    "example.test", UINT32_MAX));
+	answer[9] = 1;
+	at = append_test_soa(answer, qlen, 60, 30);
+	/* Short SOA fixed fields must not acquire a cache lifetime. */
+	answer[qlen + 11] = 21;
+	ATF_REQUIRE_EQ(0, ns_initparse(answer, at - 1, &message));
+	ATF_CHECK_EQ(0, dns_negative_ttl(answer, at - 1, &message,
+	    "example.test", UINT32_MAX));
+	res_nclose(&g_res);
+}
+
+ATF_TC(negative_cache_lifetime_and_configuration);
+ATF_TC_HEAD(negative_cache_lifetime_and_configuration, tc)
+{
+	atf_tc_set_md_var(tc, "timeout", "10");
+}
+ATF_TC_BODY(negative_cache_lifetime_and_configuration, tc)
+{
+	struct sockaddr_in sa = { .sin_len = sizeof(sa), .sin_family = AF_INET,
+	    .sin_addr = { .s_addr = htonl(INADDR_LOOPBACK) } };
+	struct addrinfo hints = { .ai_family = AF_INET, .ai_socktype = SOCK_STREAM };
+	struct addrinfo *result;
+	socklen_t length = sizeof(sa);
+	uint32_t ttl;
+	int udp, status;
+	pid_t child;
+
+	udp = socket(AF_INET, SOCK_DGRAM, 0);
+	ATF_REQUIRE(udp >= 0);
+	ATF_REQUIRE_EQ(0, bind(udp, (struct sockaddr *)&sa, sizeof(sa)));
+	ATF_REQUIRE_EQ(0, getsockname(udp, (struct sockaddr *)&sa, &length));
+	ATF_REQUIRE_EQ(0, res_ninit(&g_res));
+	g_res.retry = g_res.retrans = 1;
+	g_ns[0].sin = sa;
+	g_nns = 1;
+	ATF_REQUIRE_EQ(0, nameservers_share_init());
+	child = fork();
+	ATF_REQUIRE(child >= 0);
+	if (child == 0) {
+		struct sockaddr_in peer;
+		u_char query[NS_PACKETSZ], answer[NS_PACKETSZ + 64];
+
+		ssize_t qlen;
+		size_t alen;
+		alarm(5);
+		for (unsigned i = 0; i < 3; i++) {
+			length = sizeof(peer);
+			qlen = recvfrom(udp, query, sizeof(query), 0,
+			    (struct sockaddr *)&peer, &length);
+			if (qlen <= NS_HFIXEDSZ) _exit(1);
+			memcpy(answer, query, qlen);
+			answer[2] |= 0x80;
+			answer[3] = (answer[3] & 0xf0) | (i == 1 ? ns_r_noerror : ns_r_nxdomain);
+			answer[9] = 1;
+			alen = append_test_soa(answer, qlen, 60, 30);
+			if (sendto(udp, answer, alen, 0, (struct sockaddr *)&peer,
+			    length) != (ssize_t)alen) _exit(2);
+		}
+		_exit(0);
+	}
+	for (unsigned i = 0; i < 5; i++) {
+		if (i == 2)
+			for (unsigned j = 0; j < RSLV_CACHE_ENTRIES; j++)
+				g_dns_cache[j].expires_ns = 0;
+		if (i == 4)
+			nameservers_publish(g_ns, g_nns);
+		ATF_REQUIRE_EQ(EAI_NONAME, netresolve_ex("cache.example.test", "80", &hints,
+		    &result, &ttl));
+	}
+	ATF_REQUIRE_EQ(child, waitpid(child, &status, 0));
+	ATF_REQUIRE(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	ATF_REQUIRE_EQ(0, netresolve_ex("192.0.2.1", "80", &hints, &result, &ttl));
+	ATF_CHECK_EQ(0, ttl);
+	netfreeaddrinfo(result);
+	munmap(g_nameservers, sizeof(*g_nameservers));
+	close(g_nameservers_fd);
+	g_nameservers = NULL;
+	g_nameservers_fd = -1;
+	res_nclose(&g_res);
+	close(udp);
+}
 ATF_TC(cache_lifetime_and_configuration);
 ATF_TC_HEAD(cache_lifetime_and_configuration, tc)
 {
@@ -716,7 +838,7 @@ ATF_TC_BODY(cname_ttl, tc)
 		count = 0;
 		now = dns_now_ns();
 		ATF_REQUIRE_EQ(1, dns_parse(answer, at, "example.test", ns_t_a,
-		    addresses, 2, &count, canonical, sizeof(canonical)));
+		    addresses, 2, &count, canonical, sizeof(canonical), NULL));
 		if (variant == 0)
 			ATF_CHECK(addresses[0].expires_ns > now &&
 			    addresses[0].expires_ns - now < 2100000000ULL);
@@ -728,6 +850,8 @@ ATF_TC_BODY(cname_ttl, tc)
 
 ATF_TP_ADD_TCS(tp)
 {
+	ATF_TP_ADD_TC(tp, negative_soa_lifetime);
+	ATF_TP_ADD_TC(tp, negative_cache_lifetime_and_configuration);
 	ATF_TP_ADD_TC(tp, negative_and_temporary_errors);
 	ATF_TP_ADD_TC(tp, no_nameservers);
 	ATF_TP_ADD_TC(tp, local_v4mapped);
