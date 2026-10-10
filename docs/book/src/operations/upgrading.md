@@ -111,7 +111,7 @@ repository selected.
 With the default ZFS layout, the root boot environment contains the base
 system, `/Capabilities/System`, and `/var/db/pkg`. The parent `zroot/var`
 has `canmount=off`; its existence does not mean all of `/var` is shared.
-Only `/var/audit`, `/var/crash`, `/var/log`, `/var/mail`, and `/var/tmp` are
+Only `/var/audit`, `/var/cache`, `/var/crash`, `/var/log`, `/var/mail`, and `/var/tmp` are
 separate shared datasets under `/var`. `/usr/local` and home are shared too.
 `/Capabilities/Run` is transient. `bectl create` therefore preserves the
 package database with base; do not restore it separately after BE rollback.
@@ -140,6 +140,11 @@ tree is not a substitute for identifying its owners. Caches, logs, runtime
 state, temporary files, and update staging need writable locations and space
 policies. Fresh installer defaults and release VM images keep `/usr/obj`,
 including the local package repository, outside the base boot environment.
+They also give `/var/cache` its own shared dataset. Cache contents must remain
+reconstructible and consumers must validate formats across upgrades and rollback.
+This layout does not authorize deleting caches currently used by an application
+or package transaction. Existing installations require a separate migration;
+changing installer defaults does not move their directories.
 
 Reclamation must preserve installed generations, rollback targets, active
 updates, and resources held by users of either generation. Age or a missing
