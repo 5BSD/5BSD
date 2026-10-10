@@ -111,6 +111,9 @@ enum mac_capability_revoke_reason {
  *     Called exactly once when an instance dies.  Fires after all
  *     handlers and deferred work complete.
  *     NULL → no cleanup.
+ *     The framework records callback return separately from the claim that
+ *     prevents duplicate invocation.  Callback return alone does not certify
+ *     completion of asynchronous resource teardown started by the service.
  *
  * co_fdclose(instance, fd, td, arg)
  *     Called when a specific fd pointing at this instance is closed,

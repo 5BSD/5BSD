@@ -1725,9 +1725,7 @@ mac_capability_instance_close(struct file *fp, struct thread *td __unused)
 			    td->td_proc->p_pid,
 			    mac_capability_proc_nonce(td->td_ucred));
 		}
-		if (svc != NULL && svc->csvc_ops->co_revoke != NULL)
-			svc->csvc_ops->co_revoke(s, s->ci_badge,
-			    reason, svc->csvc_arg);
+		mac_capability_revoke_callback(s, reason);
 	} else {
 		mtx_unlock(&s->ci_mtx);
 	}

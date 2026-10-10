@@ -285,6 +285,30 @@ mac_capability_auto_reply(struct mac_capability_instance *s, uint64_t reply_toke
 }
 
 /*
+ * FINALIZED is an exclusion claim, not evidence that service cleanup returned.
+ * Keep the completion latch separate.  This covers the callback itself only;
+ * asynchronous service-owned cleanup needs its own completion contract.
+ */
+void
+mac_capability_revoke_callback(struct mac_capability_instance *s,
+    enum mac_capability_revoke_reason reason)
+{
+	struct mac_capability_service *svc = s->ci_service;
+
+	mtx_lock(&s->ci_mtx);
+	KASSERT((s->ci_flags & MAC_CAPABILITY_SF_FINALIZED) != 0 &&
+	    (s->ci_flags & MAC_CAPABILITY_SF_REVOKE_DONE) == 0,
+	    ("invalid capability revoke callback claim"));
+	mtx_unlock(&s->ci_mtx);
+	if (svc != NULL && svc->csvc_ops->co_revoke != NULL)
+		svc->csvc_ops->co_revoke(s, s->ci_badge, reason, svc->csvc_arg);
+	mtx_lock(&s->ci_mtx);
+	s->ci_flags |= MAC_CAPABILITY_SF_REVOKE_DONE;
+	wakeup(&s->ci_flags);
+	mtx_unlock(&s->ci_mtx);
+}
+
+/*
  * Taskqueue dispatch — dequeue from RX, call handler.
  *
  * Each service has a taskqueue with up to min(ncpus, 4) threads.  Each
@@ -377,19 +401,20 @@ mac_capability_dispatch_task(void *context, int pending __unused)
 				 * Wait for deferred work first.  Our own
 				 * hold adds 1, so wait for refcnt <= 2.
 				 */
-				while (refcount_load(&s->ci_refcnt) > 2) {
+				while (refcount_load(&s->ci_refcnt) > 2 &&
+				    !(s->ci_flags & MAC_CAPABILITY_SF_FINALIZED)) {
 					mtx_unlock(&s->ci_mtx);
 					tsleep(s, 0, "mac_capabilitysr", MAC_CAPABILITY_POLL_TICKS);
 					mtx_lock(&s->ci_mtx);
 				}
-				s->ci_flags |= MAC_CAPABILITY_SF_FINALIZED;
-				mtx_unlock(&s->ci_mtx);
-				if (svc->csvc_ops->co_revoke != NULL)
-					svc->csvc_ops->co_revoke(s,
-					    s->ci_badge,
-					    MAC_CAPABILITY_REVOKE_BY_SERVICE,
-					    svc->csvc_arg);
-				mtx_lock(&s->ci_mtx);
+				/* Another finalizer may have won while we slept. */
+				if (!(s->ci_flags & MAC_CAPABILITY_SF_FINALIZED)) {
+					s->ci_flags |= MAC_CAPABILITY_SF_FINALIZED;
+					mtx_unlock(&s->ci_mtx);
+					mac_capability_revoke_callback(s,
+					    MAC_CAPABILITY_REVOKE_BY_SERVICE);
+					mtx_lock(&s->ci_mtx);
+				}
 			}
 		}
 		if (retry)
@@ -551,9 +576,7 @@ mac_capability_instance_revoke_reason(struct mac_capability_instance *s,
 		    s->ci_flags, s->ci_restricted, curthread->td_proc->p_pid,
 		    mac_capability_proc_nonce(curthread->td_ucred));
 	}
-	if (svc != NULL && svc->csvc_ops->co_revoke != NULL)
-		svc->csvc_ops->co_revoke(s, s->ci_badge, reason,
-		    svc->csvc_arg);
+	mac_capability_revoke_callback(s, reason);
 
 out:
 	if (svc != NULL) {
@@ -699,9 +722,7 @@ mac_capability_service_destroy(struct mac_capability_service *svc)
 		SDT_PROBE6(mac_capability, , , state, svc->csvc_name, s->ci_badge,
 		    s->ci_flags, s->ci_restricted, curthread->td_proc->p_pid,
 		    mac_capability_proc_nonce(curthread->td_ucred));
-		if (svc->csvc_ops->co_revoke != NULL)
-			svc->csvc_ops->co_revoke(s, s->ci_badge,
-			    MAC_CAPABILITY_REVOKE_UNLOAD, svc->csvc_arg);
+		mac_capability_revoke_callback(s, MAC_CAPABILITY_REVOKE_UNLOAD);
 		mac_capability_instance_rele(s);
 	}
 

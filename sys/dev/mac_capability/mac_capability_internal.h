@@ -98,7 +98,8 @@ STAILQ_HEAD(mac_capability_msgq, mac_capability_msg);
 /* Instance flags (protected by ci_mtx). */
 #define	MAC_CAPABILITY_SF_CLOSED		0x0001
 #define	MAC_CAPABILITY_SF_REVOKED		0x0002
-#define	MAC_CAPABILITY_SF_FINALIZED	0x0004
+#define	MAC_CAPABILITY_SF_FINALIZED	0x0004	/* callback claimed */
+#define	MAC_CAPABILITY_SF_REVOKE_DONE	0x0010	/* callback returned */
 #define	MAC_CAPABILITY_SF_LINKED		0x0008	/* on service's instance list */
 #define	MAC_CAPABILITY_SF_DEAD		(MAC_CAPABILITY_SF_CLOSED | MAC_CAPABILITY_SF_REVOKED)
 
@@ -184,6 +185,9 @@ extern counter_u64_t mac_capability_stat_services;
 extern counter_u64_t mac_capability_stat_instances;
 
 /* Internal functions. */
+/* Caller owns FINALIZED and keeps the instance/service alive through return. */
+void	mac_capability_revoke_callback(struct mac_capability_instance *s,
+	    enum mac_capability_revoke_reason reason);
 int	mac_capability_init(void);
 void	mac_capability_uninit(void);
 struct mac_capability_service *mac_capability_service_lookup(const char *name);
