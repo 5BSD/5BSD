@@ -192,8 +192,21 @@ ATF_TC_BODY(policy_list_scoped_and_paged, tc)
 	ATF_CHECK_EQ(0, next);
 }
 
+ATF_TC_WITHOUT_HEAD(oes_requires_attribute_endpoint);
+ATF_TC_BODY(oes_requires_attribute_endpoint, tc)
+{
+	struct devicecmp_config cfg;
+
+	ATF_CHECK(!devicecmp_valid_device_name("oes"));
+	ATF_CHECK_ERRNO(EINVAL, load_from_string(&cfg,
+	    "devices = [{ label=\"system.Client\"; device=\"oes\"; "
+	    "rights=[\"read\",\"ioctl\"]; }];"));
+	ATF_CHECK_EQ(0, cfg.nentries);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
+	ATF_TP_ADD_TC(tp, oes_requires_attribute_endpoint);
 
 	ATF_TP_ADD_TC(tp, name_validation);
 	ATF_TP_ADD_TC(tp, default_deny);

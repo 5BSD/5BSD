@@ -138,6 +138,22 @@ which fires when a LIST page is produced with the client label, the requested
 cursor, the number of entries filled, and the errno.
 The errno argument is zero on success.
 Device contents are never probe arguments.
+.Sh OPENENDPOINTSECURITY
+The
+.Pa oes
+leaf is reserved and cannot appear in the device policy.
+OES consumers use
+.Fn oes_client_create_brokered
+and declare
+.Li attributes = ["system.oes"]
+in their unit UCL.
+The
+.Va system.OES
+endpoint provided by
+.Xr BSDFilesystem 8
+performs software-attribute admission and delivers a restricted NOTIFY client.
+Ordinary BSDDevice workers also drop privileges before opening device nodes;
+they cannot satisfy the kernel OES privileged-open check through a device alias.
 .Sh SEE ALSO
 .Xr cap_enter 2 ,
 .Xr cap_ioctls_limit 2 ,

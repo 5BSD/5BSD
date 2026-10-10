@@ -31,6 +31,9 @@ devicecmp_valid_device_name(const char *name)
 	length = strnlen(name, DEVICECMP_MAX_NAME);
 	if (length == 0 || length >= DEVICECMP_MAX_NAME)
 		return (false);
+	/* OES clients require system.OES software-attribute admission. */
+	if (strcmp(name, "oes") == 0)
+		return (false);
 	/* A single /dev leaf: no separator, no leading dot, never "..". */
 	if (name[0] == '.' || strchr(name, '/') != NULL ||
 	    strcmp(name, "..") == 0)
