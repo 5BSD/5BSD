@@ -118,6 +118,40 @@ package database with base; do not restore it separately after BE rollback.
 Check `df /var/db/pkg` and `zfs list -o name,mountpoint,canmount,mounted` for
 custom layouts. A BE does not roll back ports files in shared `/usr/local`.
 
+### Storage requirements for a future immutable base
+
+The immutable-base mechanism is not implemented. The current boot environment
+layout is a starting point, not a complete read-only system layout.
+
+A base generation must keep its files and package metadata consistent. The
+current shared `/usr/local` is outside BE rollback, while `/var/db/pkg` is
+inside it. If ports are changed after a snapshot, rolling back that database
+can disagree with the surviving ports files. A future layout must either
+separate base and ports package state, including dependency handling, or
+coordinate their files and metadata within the same rollback operation.
+Moving the entire package database to a shared dataset would instead separate
+base files from their metadata and does not solve this problem.
+
+Configuration and durable application data need explicit compatibility and
+migration rules across generations. `/etc` cannot simply become read-only
+without providing for local configuration changes. Likewise, `/var/db` mixes
+package metadata with writable service state; sharing or freezing that entire
+tree is not a substitute for identifying its owners. Caches, logs, runtime
+state, temporary files, and update staging need writable locations and space
+policies. Fresh installer defaults and release VM images keep `/usr/obj`,
+including the local package repository, outside the base boot environment.
+
+Reclamation must preserve installed generations, rollback targets, active
+updates, and resources held by users of either generation. Age or a missing
+path alone cannot establish that storage is unused. The future shared reaper
+must coordinate with installation and storage ownership before deleting it.
+
+Acceptance requires a disposable installed VM: exercise package changes,
+upgrade and rollback, interrupted updates, low-space recovery, and a read-only
+base trial while checking configuration and application data remain usable.
+These requirements do not prescribe or authorize repartitioning existing
+systems; migration remains separate work.
+
 ### Publish base and matching hardware together
 
 Use the maintained build targets with the custom ports checkout selected by
