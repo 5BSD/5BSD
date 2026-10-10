@@ -3,6 +3,10 @@ control = "core";
 protect = ["ptrace", "signal", "wait", "sigkill", "sigcont", "sched",
     "core", "ktrace"];
 program = "BSDSysctl";
+# Operators use sysctlcmpctl from a login shell, so the name resolves through
+# USER-domain lookup channels.  Visibility is reach only: the per-label
+# sysctl.conf ACL still bounds every read and write.
+visible = ["user"];
 restart = "on-failure";
 # Required by the memory-pressure notification path.
 oom_protect = true;

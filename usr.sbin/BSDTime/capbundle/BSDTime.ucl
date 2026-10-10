@@ -3,6 +3,10 @@ control = "core";
 protect = ["ptrace", "signal", "wait", "sigkill", "sigcont", "sched",
     "core", "ktrace"];
 program = "BSDTime";
+# Operators query and set the clock from a login shell (BSDTimectl), so the
+# name resolves through USER-domain lookup channels.  Visibility is reach
+# only: time.conf still bounds every adjustment, default-deny.
+visible = ["user"];
 restart = "on-failure";
 user = "capability";
 

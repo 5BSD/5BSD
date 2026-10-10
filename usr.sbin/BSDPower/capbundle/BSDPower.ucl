@@ -3,6 +3,10 @@ control = "core";
 protect = ["ptrace", "signal", "wait", "sigkill", "sigcont", "sched",
     "core", "ktrace"];
 program = "BSDPower";
+# Operators use BSDPowerctl from a login shell, so the name resolves through
+# USER-domain lookup channels.  Visibility is reach only: power.conf still
+# bounds suspend, default-deny.
+visible = ["user"];
 restart = "on-failure";
 user = "capability";
 
