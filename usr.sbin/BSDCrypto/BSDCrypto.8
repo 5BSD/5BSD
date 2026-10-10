@@ -192,6 +192,12 @@ Already delivered key descriptors retain their kernel-defined lifetime and
 rights; stopping a worker does not revoke them.
 Abrupt parent crashes and uncatchable signals require separate supervisor
 recovery and are not covered by controlled-exit cleanup.
+
+.Ss Client admission limits
+At most 64 concurrent workers may serve one authenticated client label.
+An excess connection is closed before allocating session resources.
+Capacity returns when the provider removes the closed session or exited worker.
+Existing sessions are preserved; clients must handle connection failure.
 .Sh SEE ALSO
 .Xr cap_enter 2 ,
 .Xr pdfork 2 ,

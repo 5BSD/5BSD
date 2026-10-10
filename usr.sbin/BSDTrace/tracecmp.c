@@ -577,10 +577,26 @@ reject:
 
 struct trace_worker {
 	struct trace_worker *next;
+	char label[64];
 	int pd;
 	int liveness;
 	pid_t pid;
 };
+
+#define	TRACE_MAX_LABEL_WORKERS	16u
+
+/* The caller serializes admission and removal using authenticated labels. */
+static bool
+trace_worker_admit(const struct trace_worker *workers, const char *label)
+{
+	unsigned same = 0;
+
+	for (; workers != NULL; workers = workers->next)
+		if (strcmp(workers->label, label) == 0 &&
+		    ++same >= TRACE_MAX_LABEL_WORKERS)
+			return (false);
+	return (true);
+}
 
 /* Own the worker before installing its watch, including on failure. */
 static int
@@ -763,7 +779,8 @@ main(void)
 				continue;
 			goto fail;
 		}
-		if (nworkers >= TRACECMP_MAX_WORKERS) {
+		if (nworkers >= TRACECMP_MAX_WORKERS ||
+		    !trace_worker_admit(workers, identity.client_label)) {
 			logcmp_log(LOG_WARNING, "session limit for %s",
 			    identity.client_label);
 			close(fd);
@@ -771,6 +788,7 @@ main(void)
 		}
 		worker = calloc(1, sizeof(*worker));
 		if (worker != NULL) {
+			strlcpy(worker->label, identity.client_label, sizeof(worker->label));
 			worker->pd = -1;
 			worker->liveness = -1;
 		}

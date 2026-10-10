@@ -225,6 +225,15 @@ Default 30; values outside 10 to 86400 are ignored.
 Set through the unit manifest's
 .Va environment .
 .El
+
+.Ss Client admission limits
+Each ingress shard permits at most 64 concurrent sessions per authenticated
+client label, independent of the resource owner used for stored records.
+The total per-client ceiling is 64 times the configured ingress shard count.
+Admission can fail earlier when the selected shard or global capacity is full.
+An excess connection is closed before allocating session resources.
+Capacity returns when the provider removes the closed session or exited worker.
+Existing sessions are preserved; clients must handle connection failure.
 .Sh SEE ALSO
 .Xr liblogcmp 3 ,
 .Xr libshmring 3 ,

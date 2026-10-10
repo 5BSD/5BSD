@@ -2669,6 +2669,21 @@ struct fs_worker {
 	int			 pd;	/* process descriptor for the worker */
 };
 
+#define	FS_MAX_LABEL_WORKERS	64u
+
+/* The caller serializes admission and removal using authenticated labels. */
+static bool
+fs_worker_admit(const struct fs_worker *workers, const char *label)
+{
+	unsigned same = 0;
+
+	for (; workers != NULL; workers = workers->next)
+		if (strcmp(workers->label, label) == 0 &&
+		    ++same >= FS_MAX_LABEL_WORKERS)
+			return (false);
+	return (true);
+}
+
 /* Counts factory sessions, not delivered OES descriptor lifetimes. */
 static bool
 fs_oes_admit(const struct fs_worker *workers, const char *label)
@@ -2707,6 +2722,31 @@ fs_worker_remove(struct fs_worker **head, struct fs_worker *w, size_t *count)
 		(*count)--;
 }
 
+/* Stop every admission worker before releasing provider ownership. */
+static int
+fs_workers_stop(struct fs_worker **head)
+{
+	struct fs_worker *worker, *next;
+	int error = 0, result, status;
+
+	for (worker = *head; worker != NULL; worker = worker->next)
+		if (pdkill(worker->pd, SIGKILL) == -1 && errno != ESRCH &&
+		    error == 0)
+			error = errno;
+	for (worker = *head; worker != NULL; worker = next) {
+		next = worker->next;
+		do {
+			result = pdwait(worker->pd, &status, WEXITED, NULL, NULL);
+		} while (result == -1 && errno == EINTR);
+		if (result == -1 && errno != ECHILD && errno != ESRCH && error == 0)
+			error = errno;
+		close(worker->pd);
+		free(worker);
+	}
+	*head = NULL;
+	return (error != 0 ? (errno = error, -1) : 0);
+}
+
 /*
  * Expose system.Filesystem and dispatch each accepted client on its own pdfork'd
  * worker.  SELF-CONFINES before serving: the privileged bootstrap (kldload zfs,
@@ -2725,7 +2765,7 @@ bsdfilesystem_serve(struct bsdfilesystem_state *st)
 {
 	struct service_identity id;
 	struct service_listener *listener, *oes_listener, *ready_listener;
-	struct service_provider *provider;
+	struct service_provider *provider = NULL;
 	int fd;
 
 	/* Cleanup is the container-model reconcile: the forked reaper started at
@@ -2734,7 +2774,7 @@ bsdfilesystem_serve(struct bsdfilesystem_state *st)
 	struct fs_worker *workers = NULL, *w;
 	size_t nworkers = 0;
 	struct kevent event, change;
-	int kq;
+	int kq = -1, result = -1, saved_error;
 
 	if (service_provider_create(&provider) == -1 ||
 	    service_provider_authorize_capabilities(provider) == -1 ||
@@ -2743,7 +2783,7 @@ bsdfilesystem_serve(struct bsdfilesystem_state *st)
 	    service_provider_expose(provider, OES_BROKER_ENDPOINT, &oes_listener) == -1 ||
 	    service_provider_enter_capability_mode(provider) == -1 ||
 	    service_provider_ready(provider) == -1)
-		return (-1);
+		goto out;
 
 	/*
 	 * Boot-scoped cleanup, moved here from main() so it runs AFTER
@@ -2768,19 +2808,17 @@ bsdfilesystem_serve(struct bsdfilesystem_state *st)
 
 	kq = kqueuex(KQUEUE_CLOEXEC);
 	if (kq == -1)
-		return (-1);
+		goto out;
 	EV_SET(&change, service_listener_fd(listener), EVFILT_READ,
 	    EV_ADD | EV_ENABLE, 0, 0, listener);
 	if (kevent(kq, &change, 1, NULL, 0, NULL) == -1) {
-		(void)close(kq);
-		return (-1);
+		goto out;
 	}
 
 	EV_SET(&change, service_listener_fd(oes_listener), EVFILT_READ,
 	    EV_ADD | EV_ENABLE, 0, 0, oes_listener);
 	if (kevent(kq, &change, 1, NULL, 0, NULL) == -1) {
-		(void)close(kq);
-		return (-1);
+		goto out;
 	}
 
 	for (;;) {
@@ -2790,8 +2828,7 @@ bsdfilesystem_serve(struct bsdfilesystem_state *st)
 		if (kevent(kq, NULL, 0, &event, 1, NULL) == -1) {
 			if (errno == EINTR)
 				continue;
-			(void)close(kq);
-			return (-1);
+			goto out;
 		}
 		if (event.filter == EVFILT_PROCDESC) {
 			/* A worker exited: reap it and free its slot. */
@@ -2808,10 +2845,15 @@ bsdfilesystem_serve(struct bsdfilesystem_state *st)
 			error = errno;
 			/* A clean quiesce is the only reason to leave the loop. */
 			if (service_provider_quiescing(provider) == 1) {
-				int qst = service_provider_quiesce_complete(
-				    provider, 0);
-				(void)close(kq);
-				return (qst == 0 ? 0 : 1);
+				if (nworkers != 0) {
+					if (service_provider_quiesce_complete(provider,
+					    EBUSY) == 0)
+						continue;
+					if (errno != EINVAL)
+						goto out;
+				}
+				result = 0;
+				goto out;
 			}
 			/*
 			 * Otherwise NEVER take the storage TCB down on a transient
@@ -2828,6 +2870,7 @@ bsdfilesystem_serve(struct bsdfilesystem_state *st)
 			continue;
 		}
 		if (nworkers >= BSDFILESYSTEM_MAX_WORKERS ||
+		    !fs_worker_admit(workers, id.client_label) ||
 		    (ready_listener == oes_listener && !fs_oes_admit(workers, id.client_label))) {
 			syslog(LOG_WARNING, "worker limit reached; dropping %s",
 			    id.client_label);
@@ -2883,7 +2926,9 @@ bsdfilesystem_serve(struct bsdfilesystem_state *st)
 			syslog(LOG_WARNING, "procdesc watch %s: %m",
 			    id.client_label);
 			(void)pdkill(w->pd, SIGKILL);
-			(void)pdwait(w->pd, &status, WEXITED, NULL, NULL);
+			while (pdwait(w->pd, &status, WEXITED, NULL, NULL) == -1 &&
+			    errno == EINTR)
+				;
 			(void)close(w->pd);
 			free(w);
 			continue;
@@ -2892,6 +2937,22 @@ bsdfilesystem_serve(struct bsdfilesystem_state *st)
 		workers = w;
 		nworkers++;
 	}
+out:
+	saved_error = errno;
+	if (fs_workers_stop(&workers) == -1) {
+		saved_error = errno;
+		result = -1;
+	}
+	if (kq >= 0)
+		close(kq);
+	if (result == 0 && service_provider_quiesce_complete(provider, 0) == -1) {
+		saved_error = errno;
+		result = -1;
+	}
+	if (provider != NULL)
+		service_provider_destroy(provider);
+	errno = saved_error;
+	return (result);
 }
 
 #ifdef BSDFILESYSTEM_TESTING

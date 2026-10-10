@@ -199,6 +199,17 @@ A failed dataset destruction does not guarantee that earlier child or snapshot
 removals in the recursive sweep were rolled back.
 These sweeps require further lifetime coordination before restart safety can
 be guaranteed.
+
+.Ss Client admission limits
+Graceful quiesce is refused while admission workers remain.
+On provider exit, admission workers are killed and reaped before a successful
+shutdown acknowledgement; teardown failure prevents that acknowledgement.
+At most 64 concurrent workers may serve one authenticated client label.
+This count includes ordinary Filesystem and OES factory workers together.
+The stricter OES factory limits of four per client and 64 globally also apply.
+An excess connection is closed before allocating session resources.
+Capacity returns when the provider removes the closed session or exited worker.
+Existing sessions are preserved; clients must handle connection failure.
 .Sh SEE ALSO
 .Xr cap_enter 2 ,
 .Xr libbsdfilesystem 3 ,

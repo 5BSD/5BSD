@@ -28,4 +28,10 @@ CFLAGS.lifecycle_test+= -I${SRCTOP}/lib/libchannel -I${SRCTOP}/lib/libservice
 LIBADD.lifecycle_test= channel devicecmp service ucl
 NO_SHARED.lifecycle_test= yes
 
+
+ATF_TESTS_C+= quota_test
+CFLAGS.quota_test+= -I${SRCTOP}/lib/libchannel -I${SRCTOP}/lib/libdevicecmp -I${SRCTOP}/lib/libservice -I${SRCTOP}/sys -I${SRCTOP}/contrib/libucl/include -ffunction-sections -fdata-sections
+LDFLAGS.quota_test+= -Wl,--gc-sections
+NO_SHARED.quota_test= yes
+
 .include <bsd.test.mk>

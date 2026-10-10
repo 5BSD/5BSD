@@ -72,4 +72,10 @@ NO_SHARED.cleanup_test= yes
 LDFLAGS.cleanup_test+= -Wl,--wrap=${symbol}
 .endfor
 
+
+ATF_TESTS_C+= quota_test
+CFLAGS.quota_test+= -I${SRCTOP}/lib/libcapsulert -I${SRCTOP}/lib/libtrustedzfs -I${SRCTOP}/lib/libcapreclaim -I${SRCTOP}/lib/liblogcmp -I${SRCTOP}/lib/libservice -I${SRCTOP}/lib/libchannel -I${SRCTOP}/sys -I${SRCTOP}/lib/liboes -I${SRCTOP}/contrib/libucl/include -ffunction-sections -fdata-sections
+LDFLAGS.quota_test+= -Wl,--gc-sections
+NO_SHARED.quota_test= yes
+
 .include <bsd.test.mk>

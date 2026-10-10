@@ -814,7 +814,26 @@ start_session(int fd, const char *peer_label, const char *actor, int *pdp)
 
 #define	CRYPTOCMP_MAX_WORKERS	4096u
 
-/* One live pdfork'd worker, tracked so its exit can account the slot. */
+struct crypto_worker_ent {
+	struct service_process process; /* First: shared teardown owns this node. */
+	char label[64];
+};
+
+#define	CRYPTO_MAX_LABEL_WORKERS	64u
+
+/* The caller serializes admission and removal using authenticated labels. */
+static bool
+crypto_worker_admit(const struct service_process *workers, const char *label)
+{
+	unsigned same = 0;
+
+	for (; workers != NULL; workers = workers->next)
+		if (strcmp(((const struct crypto_worker_ent *)workers)->label, label) == 0 &&
+		    ++same >= CRYPTO_MAX_LABEL_WORKERS)
+			return (false);
+	return (true);
+}
+
 
 static void
 crypto_worker_remove(struct service_process **head,
@@ -970,14 +989,15 @@ main(void)
 			}
 			goto out;
 		}
-		if (nworkers >= CRYPTOCMP_MAX_WORKERS) {
+		if (nworkers >= CRYPTOCMP_MAX_WORKERS ||
+		    !crypto_worker_admit(workers, id.client_label)) {
 			logcmp_log(LOG_WARNING, "worker limit reached; dropping %s",
 			    id.client_label);
 			close(fd);
 			continue;
 		}
 		bundle_of(id.container, bundle, sizeof(bundle));
-		w = calloc(1, sizeof(*w));
+		w = calloc(1, sizeof(struct crypto_worker_ent));
 		if (w == NULL || start_session(fd, bundle, id.client_label,
 		    &w->pd) == -1) {
 			logcmp_log(LOG_WARNING, "session for %s rejected: %m",
@@ -1006,11 +1026,15 @@ main(void)
 			logcmp_log(LOG_WARNING, "procdesc watch for %s: %m",
 			    id.client_label);
 			(void)pdkill(w->pd, SIGKILL);
-			(void)pdwait(w->pd, &status, WEXITED, NULL, NULL);
+			while (pdwait(w->pd, &status, WEXITED, NULL, NULL) == -1 &&
+			    errno == EINTR)
+				;
 			(void)close(w->pd);
 			free(w);
 			continue;
 		}
+		strlcpy(((struct crypto_worker_ent *)w)->label,
+		    id.client_label, sizeof(((struct crypto_worker_ent *)w)->label));
 		w->next = workers;
 		workers = w;
 		nworkers++;

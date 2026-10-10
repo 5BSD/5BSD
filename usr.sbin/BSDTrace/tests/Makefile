@@ -52,4 +52,10 @@ CFLAGS.bootstrap_test+= -I${SRCTOP}/sys
 LIBADD.bootstrap_test= bsm channel service tracecmp logcmp
 NO_SHARED.bootstrap_test= yes
 
+
+ATF_TESTS_C+= quota_test
+CFLAGS.quota_test+= -I${SRCTOP}/lib/liblogcmp -I${SRCTOP}/lib/libchannel -I${SRCTOP}/lib/libtracecmp -I${SRCTOP}/lib/libservice -I${SRCTOP}/sys -ffunction-sections -fdata-sections
+LDFLAGS.quota_test+= -Wl,--gc-sections
+NO_SHARED.quota_test= yes
+
 .include <bsd.test.mk>

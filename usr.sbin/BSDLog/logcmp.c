@@ -1060,6 +1060,21 @@ pool_collect(struct pool_state *pool)
 	}
 }
 
+#define	LOGCMP_MAX_ACTOR_SESSIONS_PER_SHARD	64u
+
+/* The caller serializes admission and removal using authenticated labels. */
+static bool
+pool_actor_admit(const struct worker_state *workers, const char *label)
+{
+	unsigned same = 0;
+
+	for (; workers != NULL; workers = workers->next)
+		if (strcmp(workers->actor, label) == 0 &&
+		    ++same >= LOGCMP_MAX_ACTOR_SESSIONS_PER_SHARD)
+			return (false);
+	return (true);
+}
+
 static int
 pool_add_session(struct pool_state *pool)
 {
@@ -1097,6 +1112,12 @@ pool_add_session(struct pool_state *pool)
 		close(fd);
 		atomic_fetch_sub_explicit(pool->admitted, 1, memory_order_release);
 		return (errno = EPROTO, -1);
+	}
+	/* The actor is the authenticated client, not its resource-owner key. */
+	if (!pool_actor_admit(pool->sessions, control.actor)) {
+		close(fd);
+		atomic_fetch_sub_explicit(pool->admitted, 1, memory_order_release);
+		return (errno = EDQUOT, -1);
 	}
 	state = calloc(1, sizeof(*state));
 	if (state == NULL) {
