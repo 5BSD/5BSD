@@ -191,6 +191,14 @@ The descriptor remains usable after the factory worker exits and closes on its
 last reference; factory-session closure does not revoke delivered descriptors.
 Ordinary filesystem opens refuse the OES device, including normalized path
 aliases and character-device aliases detected after opening.
+.Sh LIMITATIONS
+Startup lease and transaction-staging sweeps do not yet distinguish a new boot
+from a provider restart during the same boot.
+Surviving workers and delivered directory descriptors can retain old storage.
+A failed dataset destruction does not guarantee that earlier child or snapshot
+removals in the recursive sweep were rolled back.
+These sweeps require further lifetime coordination before restart safety can
+be guaranteed.
 .Sh SEE ALSO
 .Xr cap_enter 2 ,
 .Xr libbsdfilesystem 3 ,

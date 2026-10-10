@@ -469,13 +469,11 @@ reconcile_boot_generations(struct bsdfilesystem_state *st)
 }
 
 /*
- * Reap orphaned ephemeral leases.  A lease (ephemeral/lease-<session>) is bound
- * to the lifetime of the connection that began it.  Called once at daemon
- * startup, before any connection is served: no lease has a live owner yet, so
- * every lease-* under ephemeral is an orphan left by a prior boot and is
- * destroyed.  This is the boot-scoped GC that bsdfilesystem_session_begin used to do by
- * reaping "every lease but mine" — which is unsafe once concurrent connections
- * each own their own lease, so it lives here instead.
+ * Sweep ephemeral leases before this daemon instance accepts connections.
+ * TODO: daemon startup is not proof of a new boot.  PD_DAEMON workers and
+ * delivered mount descriptors may survive a same-boot provider restart.
+ * A lease needs verified lifetime ownership before recursive reclamation;
+ * a final EBUSY does not undo child or snapshot destruction already performed.
  */
 int
 bsdfilesystem_reap_leases(struct bsdfilesystem_state *st)
@@ -711,9 +709,11 @@ reap_staging_walk(int dir_fd, int depth, time_t grace)
  * only unmounts it; it lives in the persistent tree, so the ephemeral lease and
  * boot-generation GC never see it; and the container reconcile only reaps whole
  * uninstalled bundles -- so nothing reclaims it while its bundle stays installed.
- * A transaction cannot span a reboot (its connection is gone), so at daemon
- * startup EVERY staging clone is such an orphan.  Runs once here, before any
- * connection is served, so it never races a live transaction.  Non-fatal.
+ * A transaction cannot span a reboot, but this entry point also runs after a
+ * same-boot provider restart.  That does not prove existing staging is orphaned:
+ * surviving workers may be creating or committing it.  TODO: gate aggressive
+ * startup reclamation on verified boot/owner lifetime before calling this sweep.
+ * Mount EBUSY alone is insufficient for a recursive destructive operation.
  */
 int
 bsdfilesystem_reap_staging(struct bsdfilesystem_state *st)
