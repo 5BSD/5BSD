@@ -14,13 +14,14 @@ input staging root or attach another VM's writable disk. Compilation uses all
 logical CPUs; this small runtime guest uses four CPUs and 1 GiB RAM by default.
 --cpus selects one through four guest CPUs; this task uses four.
 
-The VM has no network and boots a PID 1 fixture instead of the capability plane.
+The VM has no network. By default it boots a PID 1 fixture with the capability
+plane disabled; --oes-admission enables the additional integration described below.
 It runs native session/bootstrap deadline and session lifecycle tests as root,
 plus the BSDFilesystem descriptor-hardening failure regression.
 A skip, missing/duplicate pass marker, timeout, panic, WITNESS reversal or
 unclean shutdown fails the run. inputs.json and result.json retain input hashes
 and the exact QEMU command; serial.log retains output, including failed runs.
-This gate does not qualify booted daemons, actual OOM, ACPI suspend, hardware,
+The default gate does not qualify booted daemons, actual OOM, ACPI suspend, hardware,
 installer behavior, or a complete system image. Never run runtime_init as the
 host's init. Source and object inputs must be coordinated before full acceptance.
 
@@ -45,6 +46,11 @@ This tests descriptor delivery to a non-root recipient, not .ucl admission. It d
 SwitchBoard attribute admission. The handoff cases exercise real channel
 descriptor delivery, denied onward transfer, malformed-request rejection, and
 the five-second idle deadline.
+
+Use --oes-admission for the additional real Capsule/SwitchBoard .ucl allow/deny
+stack. Build its private static fixtures with tools/test/oes-admission/build.py;
+see that directory for the exact scope and invocation. This option implies
+--oes-factory and uses an OES-only provider with production factory code.
 
 The OES gate also checks factory quota boundaries and ordinary filesystem
 mediation of a real intermediate-directory alias to /dev/oes. It proves the
@@ -189,3 +195,10 @@ Both LAPIC/i8254 and single/multi TCG reproduced overruns. No production
 timeout change or relaxed allowance follows from this result; repeat latency
 acceptance on a quiet host and keep the timer control. Tracing can perturb
 timings and does not prove the sole cause of every earlier untraced failure.
+
+The --oes-admission option now also requires live coalition reload/removal
+acceptance using a private tmpfs bundle. See tools/test/oes-admission/README.
+--fixture-objtop selects a separately built static fixture tree beneath
+/usr/obj/usr/src, leaving --objtop as the authoritative kernel/module tree.
+This keeps fixture compilation from overwriting active world-build objects;
+all staged hashes, kernel checks and pass requirements still apply.
