@@ -459,6 +459,7 @@ worker(int fd, int barrier, int dtrace_fd, bool authorized,
 	char byte;
 	int error;
 
+	setproctitle("-BSDTrace: %s", client_label);
 	/*
 	 * The privileged /dev/dtrace consumer descriptor is opened by the parent
 	 * before the fork, so the worker never needs root: drop privileges with

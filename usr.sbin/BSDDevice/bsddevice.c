@@ -366,6 +366,7 @@ bsddevice_test_serve(int fd, const char *label)
 static int
 worker(int fd, const char *label)
 {
+	setproctitle("-BSDDevice: %s", label);
 
 	/*
 	 * The retained /dev directory descriptor is already open, so the worker

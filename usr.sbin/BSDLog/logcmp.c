@@ -1188,6 +1188,7 @@ pool_worker(int control_fd, int audit_fd,
 	struct worker_state *state, *next;
 	int count, error, i, wants_write;
 
+	setproctitle("-BSDLog: pool %u", (unsigned)shard);
 	memset(&pool, 0, sizeof(pool));
 	pool.control_fd = control_fd;
 	pool.storage = storage;

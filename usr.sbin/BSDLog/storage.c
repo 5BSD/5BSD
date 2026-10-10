@@ -1187,6 +1187,7 @@ logcmp_storage_start(int dirfd, uint64_t segment_limit, uint32_t max_segments,
 	}
 	if (pid == 0) {
 		close(sockets[0]);
+		setproctitle("-BSDLog: storage");
 		_exit(logcmp_storage_manager_run(dirfd, sockets[1], segment_limit,
 		    max_segments, retention_max_age, retention_max_bytes, true));
 	}

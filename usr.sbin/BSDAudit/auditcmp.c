@@ -256,6 +256,7 @@ worker(int fd, int barrier, const char *provider, int event)
 	char byte;
 	int error;
 
+	setproctitle("-BSDAudit: %s", provider);
 	error = service_worker_enter_capability_mode(SERVICE_PROTECT_EXTERNAL |
 	    SERVICE_PROTECT_NOFORK | SERVICE_PROTECT_NOIPC |
 	    SERVICE_PROTECT_NOFDRECV | SERVICE_PROTECT_NOEXEC |

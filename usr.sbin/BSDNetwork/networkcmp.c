@@ -1391,6 +1391,7 @@ worker(int fd, int barrier,
 	char byte;
 	int error, result;
 
+	setproctitle("-BSDNetwork: network %s", label);
 	audit = NULL;
 	memset(&wlog, 0, sizeof(wlog));
 	if (netresolve_worker_enter() == -1)
@@ -1543,8 +1544,9 @@ reject:
 }
 
 static int
-pf_worker(int fd, int pf_fd, int open_error)
+pf_worker(int fd, int pf_fd, int open_error, const char *label)
 {
+	setproctitle("-BSDNetwork: PF %s", label);
 	if (netresolve_worker_enter() == -1 ||
 	    service_worker_enter_capability_mode(SERVICE_PROTECT_EXTERNAL |
 	    SERVICE_PROTECT_NOPRIVS | SERVICE_PROTECT_NOFORK |
@@ -1558,7 +1560,7 @@ pf_worker(int fd, int pf_fd, int open_error)
 }
 
 static int
-start_pf_session(int fd, struct service_context *ctx, int *pdp)
+start_pf_session(int fd, struct service_context *ctx, const char *label, int *pdp)
 {
 	pid_t pid;
 	int pf_fd, open_error, pd, error;
@@ -1577,7 +1579,7 @@ start_pf_session(int fd, struct service_context *ctx, int *pdp)
 		return (errno = error, -1);
 	}
 	if (pid == 0)
-		_exit(pf_worker(fd, pf_fd, open_error));
+		_exit(pf_worker(fd, pf_fd, open_error, label));
 	if (pf_fd >= 0)
 		(void)close(pf_fd);
 	*pdp = pd;
@@ -1792,7 +1794,7 @@ main(void)
 		}
 		w = calloc(1, sizeof(*w));
 		if (w == NULL || (listener == listeners[2] ?
-		    start_pf_session(fd, ctx, &w->pd) :
+		    start_pf_session(fd, ctx, identity.client_label, &w->pd) :
 		    start_session(fd, identity.client_label, identity.rights,
 		    &config, &w->pd)) == -1) {
 			net_log(main_logger(), LOG_WARNING,

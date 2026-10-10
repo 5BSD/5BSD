@@ -23,6 +23,10 @@ its data.
 Each consumer receives a private capability-mode worker enlisted in its
 coalition.
 The worker cannot fork, execute, or receive unrelated descriptors.
+Network and PF session workers display their role and the authenticated client
+label in
+.Xr ps 1 .
+The displayed title is diagnostic and does not grant authority.
 Name resolution runs in-process: the worker resolves names itself, reading
 .Pa /etc/resolv.conf ,
 .Pa /etc/hosts ,

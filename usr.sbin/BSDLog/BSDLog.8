@@ -1,5 +1,5 @@
 .\" SPDX-License-Identifier: BSD-2-Clause
-.Dd September 8, 2026
+.Dd October 10, 2026
 .Dt BSDLOG 8
 .Os
 .Sh NAME
@@ -11,8 +11,14 @@ is the base provider for
 .Dq system.Log .
 It runs only from
 .Pa /Capabilities/System/Log.cap .
-Each global service connection creates an isolated worker and bounded
-single-producer record ring.
+Each global service connection creates a session and bounded single-producer
+record ring, assigned to one of a fixed number of shared ingress workers.
+A worker can serve several client labels; session checks retain each client's
+authenticated label.
+Workers display their pool number in
+.Xr ps 1 ,
+and the separate storage manager displays its storage role.
+These process titles describe shared roles, not per-client authority.
 The client sends an edge-coalesced wakeup when a shared ring changes from
 empty to nonempty, and the worker drains the burst through
 .Xr kqueue 2 .
