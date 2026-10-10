@@ -52,6 +52,10 @@ svc_remove(unsigned idx)
 
 	if (idx >= sd.nservices)
 		return;
+	if (sd.services[idx].cleanup.pending) {
+		sd.services[idx].remove_pending = true;
+		return;
+	}
 
 	/* Abandon any async launch on the slot before it is overwritten, so
 	 * its descriptors are released and its session event is unregistered. */
@@ -158,6 +162,9 @@ svc_reregister_kevents(int kq)
 	for (i = 0; i < sd.nservices; i++) {
 		struct svc_runtime *svc = &sd.services[i];
 
+		if (supervisor_cleanup_rebind(svc, kq) == -1)
+			syslog(LOG_ERR, "reload: cleanup rebind for %s: %m",
+			    svc->manifest.label);
 		if (svc->state == SVC_STATE_STOPPED &&
 		    !svc->restart_pending)
 			continue;

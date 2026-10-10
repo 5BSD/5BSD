@@ -241,6 +241,7 @@ CFLAGS.anoint_test+=		-DUSE_BSM_AUDIT
 CFLAGS.anoint_test+=		-ffunction-sections -fdata-sections
 LDFLAGS.anoint_test+=		-Wl,--gc-sections
 LIBADD.anoint_test+=		channel service pthread
+CFLAGS.on_demand_test+=		-I${SRCTOP}/lib/libcapability
 CFLAGS.on_demand_test+=		-I${SRCTOP}/lib/libcapbundle
 CFLAGS.on_demand_test+=		-I${SRCTOP}/lib/libchannel
 CFLAGS.on_demand_test+=		-I${SRCTOP}/lib/libcapsulert
@@ -250,7 +251,7 @@ CFLAGS.on_demand_test+=		-ffunction-sections -fdata-sections
 LDFLAGS.on_demand_test+=	-Wl,--gc-sections
 # The idle-shutdown cases pull supervisor.c + svc_proto.c into the unit, which
 # reach libchannel and (in the mac_capability-gated case) a provider thread.
-LIBADD.on_demand_test+=		channel pthread
+LIBADD.on_demand_test+=		channel pthread capability
 CFLAGS.fd_budget_test+=	-I${SRCTOP}/sys
 CFLAGS.launch_limits_test+=	-I${SRCTOP}/usr.sbin/switchboard
 CFLAGS.launch_limits_test+=	-I${SRCTOP}/lib/libcapbundle

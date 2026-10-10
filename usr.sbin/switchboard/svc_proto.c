@@ -705,6 +705,10 @@ supervisor_handle_channel(struct kevent *event)
 	char buffer[64];
 
 	svc = event->udata;
+	if (svc->cleanup.pending && (int)event->ident == svc->cleanup.fd) {
+		supervisor_cleanup_event(svc);
+		return;
+	}
 	if ((int)event->ident == svc->coalition_fd) {
 		memset(&receive, 0, sizeof(receive));
 		receive.payload = buffer;

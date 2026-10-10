@@ -460,6 +460,13 @@ sctl_execute_op(uint32_t op, const char *payload, uint32_t datalen,
 				reply->status = EALREADY;
 				snprintf(summary, summary_cap,
 				    "stop: \"%s\" already stopped", payload);
+			} else if (svc->cleanup.pending) {
+				svc_graceful_stop(svc, switchboard_kq);
+				reply->status = 0;
+				snprintf(summary, summary_cap,
+				    "stop: \"%s\" restart suppressed; cleanup pending", payload);
+				switchboard_audit(AUE_SWITCHBOARD_CTL, audit_uid, 0,
+				    "stop during cleanup svc=%s", payload);
 			} else if (svc->state == SVC_STATE_STOPPING) {
 				reply->status = EALREADY;
 				snprintf(summary, summary_cap,

@@ -189,6 +189,13 @@ struct svc_runtime {
 	int		channel_fd;	/* Capsule's end of channel */
 	struct channel	*control_channel; /* owns channel_fd */
 	int		coalition_fd;	/* coalition service instance */
+	struct {
+		int fd, exit_status, error;
+		bool pending, was_stopping;
+		time_t uptime_sec;
+		uintptr_t timer_ident;
+		struct timespec deadline;
+	} cleanup;
 	struct svc_launch *launch;	/* non-NULL while a launch is in progress */
 	bool		protocol_ready;	/* SVC_OP_READY advisory received */
 	bool		lookup_activated; /* launched to satisfy a named lookup */
@@ -415,6 +422,9 @@ void	cancel_idle_timer(struct svc_runtime *svc, int kq);
 void	arm_watchdog_timer(struct svc_runtime *svc, int kq);
 void	cancel_watchdog_timer(struct svc_runtime *svc, int kq);
 void	svc_quiesce_complete(struct svc_runtime *, int status, int kq);
+void	supervisor_cleanup_event(struct svc_runtime *svc);
+void	supervisor_cleanup_failed_launch(struct svc_runtime *svc);
+int	supervisor_cleanup_rebind(struct svc_runtime *svc, int kq);
 void	schedule_restart(struct svc_runtime *svc, int kq);
 
 /* svc_proto.c — service channel protocol dispatch */
@@ -606,6 +616,7 @@ svc_runtime_init_fds(struct svc_runtime *svc)
 	svc->channel_fd = -1;
 	svc->control_channel = NULL;
 	svc->coalition_fd = -1;
+	svc->cleanup.fd = -1;
 	svc->responsible.parent_fd = -1;
 	svc->activation_path_fd = -1;
 	svc->activation_queue_fd = -1;

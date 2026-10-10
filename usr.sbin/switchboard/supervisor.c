@@ -21,6 +21,7 @@
 
 #include <dev/mac_capability/mac_capability_ioctl.h>
 
+#include <capability.h>
 #include <errno.h>
 #include <signal.h>
 #include <stdlib.h>
@@ -59,6 +60,10 @@ static uintptr_t idle_timer_next_ident = IDLE_TIMER_BIT;
  */
 #define	WATCHDOG_TIMER_BIT	((uintptr_t)1 << (sizeof(uintptr_t) * 8 - 7))
 static uintptr_t watchdog_timer_next_ident = WATCHDOG_TIMER_BIT;
+#define CLEANUP_TIMER_BIT ((uintptr_t)1 << (sizeof(uintptr_t) * 8 - 8))
+#define CLEANUP_WAIT_SECONDS 30
+static uintptr_t cleanup_timer_next_ident = CLEANUP_TIMER_BIT;
+
 
 /*
  * Close all service fds and reset runtime state.
@@ -83,8 +88,6 @@ svc_close_fds(struct svc_runtime *svc)
 		svc->coalition_fd = -1;
 	}
 
-	/* Remove the per-instance runtime container (recreated on next launch). */
-	svc_run_container_remove(svc->manifest.label);
 }
 
 /*
@@ -428,15 +431,15 @@ supervisor_command_exited(struct svc_runtime *svc, int exit_status)
  * Complete native exit policy after resource teardown. Keep one continuation
  * for removal, reload, idle reactivation, and crash restart decisions so an
  * asynchronous cleanup wait can resume here without duplicating policy.
- * The caller supplies the exit-time policy snapshot.
+ * The caller supplies exit-time status and uptime with current stop/reload intent.
  */
 static void
 supervisor_finish_native_exit(struct svc_runtime *svc, int exit_status,
-    bool was_stopping, bool reload_pending, bool remove_pending)
+    bool was_stopping, bool reload_pending, bool remove_pending,
+    time_t uptime_sec)
 {
-	struct timespec now;
-	long uptime_sec;
 
+	svc_run_container_remove(svc->manifest.label);
 	svc->state = SVC_STATE_STOPPED;
 
 	if (was_stopping && remove_pending) {
@@ -542,8 +545,6 @@ supervisor_finish_native_exit(struct svc_runtime *svc, int exit_status,
 	svc->restart_count++;
 
 	/* Reset counter if the service ran for a while. */
-	clock_gettime(CLOCK_MONOTONIC, &now);
-	uptime_sec = now.tv_sec - svc->last_start.tv_sec;
 	if (uptime_sec >= RESTART_RESET_SEC)
 		svc->restart_count = 1;
 
@@ -570,12 +571,158 @@ supervisor_finish_native_exit(struct svc_runtime *svc, int exit_status,
 	}
 }
 
+/* Rebinding after slot compaction must preserve the original deadline. */
+int
+supervisor_cleanup_rebind(struct svc_runtime *svc, int kq)
+{
+	struct kevent event;
+	struct timespec now;
+	int64_t milliseconds;
+	int error = 0;
+
+	if (!svc->cleanup.pending)
+		return (0);
+	if (svc->cleanup.fd >= 0) {
+		EV_SET(&event, svc->cleanup.fd, EVFILT_READ, EV_ADD, 0, 0, svc);
+		if (kevent(kq, &event, 1, NULL, 0, NULL) == -1)
+			error = errno;
+	}
+	if (svc->cleanup.timer_ident == 0) {
+		if (error != 0)
+			errno = error;
+		return (error != 0 ? -1 : 0);
+	}
+	if (clock_gettime(CLOCK_MONOTONIC, &now) == -1)
+		return (-1);
+	milliseconds = (svc->cleanup.deadline.tv_sec - now.tv_sec) * 1000 +
+	    (svc->cleanup.deadline.tv_nsec - now.tv_nsec + 999999) / 1000000;
+	EV_SET(&event, svc->cleanup.timer_ident, EVFILT_TIMER,
+	    EV_ADD | EV_ONESHOT, NOTE_MSECONDS, MAX(milliseconds, 1), svc);
+	if (kevent(kq, &event, 1, NULL, 0, NULL) == -1 && error == 0)
+		error = errno;
+	if (error != 0)
+		errno = error;
+	return (error != 0 ? -1 : 0);
+}
+
+static void
+supervisor_cleanup_disarm(struct svc_runtime *svc)
+{
+	struct kevent event;
+
+	if (svc->cleanup.fd >= 0) {
+		close(svc->cleanup.fd);
+		svc->cleanup.fd = -1;
+	}
+	if (svc->cleanup.timer_ident != 0) {
+		EV_SET(&event, svc->cleanup.timer_ident, EVFILT_TIMER,
+		    EV_DELETE, 0, 0, NULL);
+		(void)kevent(switchboard_kq, &event, 1, NULL, 0, NULL);
+		svc->cleanup.timer_ident = 0;
+	}
+}
+
+/* Returns true if finalization ran (and may have removed/moved this slot). */
+static bool
+supervisor_cleanup_progress(struct svc_runtime *svc)
+{
+	struct capability_coalition_status state = { 0 };
+	int error;
+
+	if (svc->cleanup.fd < 0)
+		return (false);
+	if (capability_coalition_status(svc->cleanup.fd, &state) == -1)
+		error = errno;
+	else if (state.phase == CAPABILITY_COALITION_COMPLETE) {
+		supervisor_cleanup_disarm(svc);
+		svc->cleanup.pending = false;
+		svc->cleanup.error = 0;
+		supervisor_finish_native_exit(svc, svc->cleanup.exit_status,
+		    svc->cleanup.was_stopping || svc->reload_pending || svc->remove_pending,
+		    svc->reload_pending, svc->remove_pending, svc->cleanup.uptime_sec);
+		return (true);
+	} else if (state.phase == CAPABILITY_COALITION_DRAINING ||
+	    state.phase == CAPABILITY_COALITION_ACTIVE)
+		return (false);
+	else
+		error = state.cleanup_error != 0 ? state.cleanup_error : EBUSY;
+	svc->cleanup.error = error;
+	syslog(LOG_ERR, "service %s: cleanup unconfirmed: %s; retaining runtime",
+	    svc->manifest.label, strerror(error));
+	supervisor_cleanup_disarm(svc);
+	return (false);
+}
+
+void
+supervisor_cleanup_event(struct svc_runtime *svc)
+{
+	if (svc->cleanup.pending)
+		(void)supervisor_cleanup_progress(svc);
+}
+
+static void
+supervisor_begin_native_cleanup(struct svc_runtime *svc, int exit_status,
+    bool was_stopping)
+{
+	struct timespec now;
+	int error;
+
+	/* Zero uptime conservatively selects restart backoff on clock failure. */
+	error = clock_gettime(CLOCK_MONOTONIC, &now) == -1 ? errno : 0;
+	svc->cleanup.exit_status = exit_status;
+	svc->cleanup.was_stopping = was_stopping;
+	svc->cleanup.uptime_sec = error == 0 ?
+	    MAX(now.tv_sec - svc->last_start.tv_sec, 0) : 0;
+	if (svc->coalition_fd < 0) {
+		svc_close_fds(svc);
+		supervisor_finish_native_exit(svc, exit_status, was_stopping,
+		    svc->reload_pending, svc->remove_pending, svc->cleanup.uptime_sec);
+		return;
+	}
+	svc->cleanup.pending = true;
+	svc->cleanup.error = 0;
+	svc->state = SVC_STATE_STOPPING;
+	svc->cleanup.fd = capability_coalition_watch(svc->coalition_fd);
+	if (svc->cleanup.fd < 0 && error == 0)
+		error = errno;
+	if (error == 0) {
+		svc->cleanup.deadline = now;
+		svc->cleanup.deadline.tv_sec += CLEANUP_WAIT_SECONDS;
+		svc->cleanup.timer_ident = ++cleanup_timer_next_ident;
+	}
+	if (supervisor_cleanup_rebind(svc, switchboard_kq) == -1 && error == 0)
+		error = errno;
+	svc_close_fds(svc);
+	if (error != 0) {
+		svc->cleanup.error = error;
+		syslog(LOG_ERR, "service %s: cleanup observation setup: %s",
+		    svc->manifest.label, strerror(error));
+	}
+	(void)supervisor_cleanup_progress(svc);
+}
+
+/* The failed child must already be enlisted in svc->coalition_fd. */
+void
+supervisor_cleanup_failed_launch(struct svc_runtime *svc)
+{
+
+	on_demand_provider_failed(svc, ECONNRESET, switchboard_kq);
+	on_demand_requester_gone(svc, switchboard_kq);
+	naming_remove_owner(svc);
+	/* Launch failures retain their existing no-automatic-restart policy. */
+	supervisor_begin_native_cleanup(svc, 0, true);
+}
+
 void
 supervisor_handle_procdesc(struct kevent *kev)
 {
 	struct svc_runtime *svc;
 
 	svc = kev->udata;
+
+	/* A queued exit may outlive the descriptor closed by launch rollback. */
+	if (svc->cleanup.pending)
+		return;
 
 	if ((kev->fflags & NOTE_EXEC) &&
 	    svc->state == SVC_STATE_STARTING) {
@@ -641,7 +788,6 @@ supervisor_handle_procdesc(struct kevent *kev)
 	if (kev->fflags & NOTE_EXIT) {
 		int was_stopping;
 		int exit_status;
-		bool reload_pending, remove_pending;
 
 		exit_status = (int)kev->data;
 
@@ -670,8 +816,6 @@ supervisor_handle_procdesc(struct kevent *kev)
 		}
 
 		was_stopping = (svc->state == SVC_STATE_STOPPING);
-		reload_pending = svc->reload_pending;
-		remove_pending = svc->remove_pending;
 
 		waitpid(svc->pid, NULL, WNOHANG);
 		cancel_stop_timer(svc);
@@ -690,9 +834,7 @@ supervisor_handle_procdesc(struct kevent *kev)
 		/* Release dynamic claims for this service. */
 		svc_release_dynamic_claims(svc);
 
-		svc_close_fds(svc);
-		supervisor_finish_native_exit(svc, exit_status, was_stopping,
-		    reload_pending, remove_pending);
+		supervisor_begin_native_cleanup(svc, exit_status, was_stopping);
 	}
 }
 
@@ -702,6 +844,18 @@ supervisor_handle_timer(struct kevent *kev)
 	struct svc_runtime *svc;
 
 	svc = kev->udata;
+
+	if (svc->cleanup.pending && kev->ident == svc->cleanup.timer_ident) {
+		svc->cleanup.timer_ident = 0;
+		if (supervisor_cleanup_progress(svc))
+			return;
+		if (svc->cleanup.error == 0)
+			svc->cleanup.error = ETIMEDOUT;
+		syslog(LOG_ERR, "service %s: cleanup deadline reached: %s; "
+		    "replacement blocked, runtime retained", svc->manifest.label,
+		    strerror(svc->cleanup.error));
+		return;
+	}
 
 	if (svc->stop_kill_pending && kev->ident == svc->stop_timer_ident) {
 		svc->stop_kill_pending = false;
@@ -865,6 +1019,11 @@ svc_graceful_stop(struct svc_runtime *svc, int kq)
 {
 	struct svc_quiesce_msg message;
 
+	if (svc->cleanup.pending) {
+		/* A stop during crash cleanup must suppress automatic restart. */
+		svc->cleanup.was_stopping = true;
+		return;
+	}
 	if (svc->state != SVC_STATE_RUNNING &&
 	    svc->state != SVC_STATE_STARTING)
 		return;

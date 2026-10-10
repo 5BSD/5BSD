@@ -399,8 +399,23 @@ by default, to remaining members, including inherited children whose parent
 has already exited.
 This cleanup requires those processes to remain in that coalition and no
 other holder to retain its handle.
-Signal delivery is not a wait for every descendant to finish exiting, and
-restart does not establish that all descendant teardown has completed.
+Signal delivery alone does not confirm resource teardown.
+For native service process-exit events, the supervisor obtains a separate
+cleanup observation descriptor before closing its coalition control handle.
+It retains the runtime directory and keeps the service in STOPPING until
+coalition status reports COMPLETE.
+The same gate applies when launch event registration or release of the
+launch gate fails after the child has been enlisted.
+The observation descriptor does not retain coalition control authority.
+A failed or released cleanup, or inability to observe cleanup, keeps
+replacement blocked and retains the runtime for diagnosis.
+After 30 seconds the supervisor logs an overdue cleanup; this deadline
+does not authorize deletion or replacement.
+A still-observed cleanup can complete after the deadline and resume exit
+processing.
+An operator stop received during cleanup suppresses automatic crash restart.
+This gate covers tracked coalition cleanup obligations; it does not prove
+that independently owned storage or other persistent resources are unused.
 .Ss Service States
 A service transitions through the following states:
 .Bl -tag -width "STOPPING (3)" -compact

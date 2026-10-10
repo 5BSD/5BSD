@@ -902,6 +902,10 @@ static int svc_exec_oneshot(struct svc_runtime *svc, int kq);
 int
 svc_exec(struct svc_runtime *svc, int kq)
 {
+	if (svc->cleanup.pending) {
+		errno = EBUSY;
+		return (-1);
+	}
 
 	if (svc->manifest.exec_application)
 		return (errno = EOPNOTSUPP, -1);
@@ -2143,17 +2147,12 @@ svc_launch_finish(struct svc_runtime *svc, int kq)
 		pdkill(pd_fd, SIGKILL);
 		waitpid(pid, NULL, WNOHANG);
 		capsule_release_manifest(sd.capsule_channel_fd, &L->minted);
-		close(svc->pd_fd);
-		svc->pd_fd = -1;
-		svc_channel_close(svc);
-		close(svc->coalition_fd);
-		svc->coalition_fd = -1;
-		svc->pid = 0;
-		svc->state = SVC_STATE_STOPPED;
 		if (L->capprotect_fd >= 0)
 			close(L->capprotect_fd);
 		free(L);
 		svc->launch = NULL;
+		/* The enlisted child's resource teardown may outlast SIGKILL. */
+		supervisor_cleanup_failed_launch(svc);
 		return;
 	}
 	close(launch_gate[1]);
