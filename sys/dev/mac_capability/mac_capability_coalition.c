@@ -465,6 +465,13 @@ coalition_jail_set_atomic(struct prison *pr, struct coalition *co,
 	rsv = osd_reserve(coalition_jail_osd_slot);
 
 	prison_lock(pr);
+	if (!prison_isalive(pr)) {
+		prison_unlock(pr);
+		osd_free_reserved(rsv);
+		fdrop(cjo->cjo_fp, NULL);
+		free(cjo, M_COALITION);
+		return (ENOENT);
+	}
 	existing = osd_jail_get(pr, coalition_jail_osd_slot);
 	if (existing != NULL) {
 		prison_unlock(pr);
@@ -525,6 +532,8 @@ coalition_jail_cleanup_task_fn(void *context, int pending __unused)
 				co->co_leader = NULL;
 				co->co_flags &= ~COF_HAS_LEADER;
 			}
+			atomic_subtract_int(&co->co_member_count, 1);
+			atomic_subtract_int(&coalition_total_members, 1);
 			coalition_notify_event(co, COALITION_NOTE_MEMBER_REMOVED);
 			removed = true;
 		}
@@ -537,8 +546,6 @@ coalition_jail_cleanup_task_fn(void *context, int pending __unused)
 	}
 
 	if (removed) {
-		atomic_subtract_int(&co->co_member_count, 1);
-		atomic_subtract_int(&coalition_total_members, 1);
 		if (cm->cm_fp != NULL)
 			fdrop(cm->cm_fp, NULL);
 		if (cm->cm_data != NULL) {
@@ -562,28 +569,35 @@ static void
 coalition_jail_osd_dtor(void *value)
 {
 	struct coalition_jail_osd *cjo = value;
-	struct coalition *co;
 
 	if (cjo == NULL)
 		return;
-
-	co = cjo->cjo_coalition;
-
-	if (cjo->cjo_member != NULL || cjo->cjo_cleanup_queued) {
-		if (!cjo->cjo_cleanup_queued) {
-			cjo->cjo_cleanup_queued = true;
-			taskqueue_enqueue(taskqueue_thread,
-			    &cjo->cjo_cleanup_task);
-		}
-		return;
+	/*
+	 * The removal callback may run while enlist still holds co_sx and has
+	 * not published the member.  Always defer: the task waits for that
+	 * publication and never drops file/prison references under pr_mtx.
+	 */
+	if (!cjo->cjo_cleanup_queued) {
+		cjo->cjo_cleanup_queued = true;
+		taskqueue_enqueue(taskqueue_thread, &cjo->cjo_cleanup_task);
 	}
-
-	if (cjo->cjo_fp != NULL)
-		fdrop(cjo->cjo_fp, NULL);
-	if (co != NULL)
-		coalition_rel(co);
-	free(cjo, M_COALITION);
 }
+
+static int
+coalition_jail_remove(void *obj, void *data __unused)
+{
+	struct prison *pr = obj;
+
+	/* Break the membership/prison reference cycle at logical removal. */
+	prison_lock(pr);
+	osd_jail_del(pr, coalition_jail_osd_slot);
+	prison_unlock(pr);
+	return (0);
+}
+
+static const osd_method_t coalition_jail_methods[PR_MAXMETHOD] = {
+	[PR_METHOD_REMOVE] = coalition_jail_remove,
+};
 
 /* ----------------------------------------------------------------
  * Jail termination
@@ -3272,7 +3286,7 @@ coalition_mod_init(void)
 		LIST_INIT(&coalition_proc_hash[i]);
 
 	coalition_jail_osd_slot = osd_jail_register(
-	    coalition_jail_osd_dtor, NULL);
+	    coalition_jail_osd_dtor, coalition_jail_methods);
 	if (coalition_jail_osd_slot == 0) {
 		error = ENOMEM;
 		goto fail_osd;

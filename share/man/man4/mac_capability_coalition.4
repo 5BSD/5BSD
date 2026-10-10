@@ -79,6 +79,11 @@ A rejected move preserves the existing membership.
 The source and destination must both permit admission; a coalition that
 is closing, terminating, or in its grace period rejects a move.
 A process that has begun exiting cannot be enlisted.
+A jail must still be alive when its membership is attached.
+Logical jail removal asynchronously retires that membership, even if the
+coalition and jail descriptors remain open.
+Jail membership removal does not certify that all jailed processes have
+completed resource cleanup.
 Returns
 .Vt struct coalition_reply .
 .It Dv COALITION_OP_JOIN

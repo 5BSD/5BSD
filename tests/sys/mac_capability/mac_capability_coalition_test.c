@@ -4281,6 +4281,45 @@ ATF_TC_BODY(exhaust_member_max, tc)
  * round forks a child that jail_remove()s while the parent close()s the
  * coalition, alternating which starts first.
  */
+ATF_TC(removed_jail_retires_membership);
+ATF_TC_HEAD(removed_jail_retires_membership, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Jail removal retires membership while coalition and jail descriptors stay open");
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_coalition");
+}
+ATF_TC_BODY(removed_jail_retires_membership, tc)
+{
+	struct coalition_stat_reply st;
+	int cfd, jfd, jid;
+	int32_t status;
+	const char *name = COALITION_TEST_JAIL_NAME "_retire";
+
+	remove_jail_by_name(name);
+	jfd = create_jail_with_desc(name);
+	ATF_REQUIRE(jfd >= 0);
+	jid = jail_getid(name);
+	ATF_REQUIRE(jid > 0);
+	cfd = mac_capability_connect("coalition");
+	ATF_REQUIRE(cfd >= 0);
+	ATF_REQUIRE_EQ(0, coalition_enlist(cfd, jfd, &status));
+	ATF_REQUIRE_EQ(0, status);
+	ATF_REQUIRE_EQ(0, coalition_stat(cfd, &st));
+	ATF_REQUIRE_EQ(1, st.jail_count);
+	ATF_REQUIRE_EQ(0, jail_remove(jid));
+	for (int i = 0; i < 500; i++) {
+		ATF_REQUIRE_EQ(0, coalition_stat(cfd, &st));
+		if (st.jail_count == 0)
+			break;
+		usleep(10000);
+	}
+	ATF_CHECK_EQ(0, st.jail_count);
+	ATF_CHECK_EQ(0, st.member_count);
+	close(jfd);
+	close(cfd);
+}
+
 ATF_TC(jail_teardown_race);
 ATF_TC_HEAD(jail_teardown_race, tc)
 {
@@ -4520,6 +4559,7 @@ ATF_TP_ADD_TCS(tp)
 	/* Resource exhaustion + teardown-race stress */
 	ATF_TP_ADD_TC(tp, exhaust_coalition_max);
 	ATF_TP_ADD_TC(tp, exhaust_member_max);
+	ATF_TP_ADD_TC(tp, removed_jail_retires_membership);
 	ATF_TP_ADD_TC(tp, jail_teardown_race);
 	ATF_TP_ADD_TC(tp, coalition_churn_no_leak);
 
