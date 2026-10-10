@@ -16,6 +16,90 @@ the pinned upstream files, local destination files and whether code was
 copied/adapted or independently implemented from observed behavior. Update
 this register in the same change; source comments alone are not the register.
 
+Coverage
+--------
+This register starts with the zsh import on 2026-10-09. It is not yet a
+complete inventory or license audit of inherited FreeBSD third-party code.
+Existing imports also live under crypto/, sys/contrib/, cddl/contrib/,
+sys/cddl/contrib/, and other source directories. Presence in the source tree
+does not establish that a component is built or installed. Existing entries
+must be added from verified provenance, not inferred versions or licenses.
+Ports and separately packaged hardware need their own provenance records;
+this register describes imports into the base source tree.
+
+zsh
+---
+Upstream project: Z Shell, https://www.zsh.org/
+Version: 5.9.2
+Imported: 2026-10-09
+Import commit: ab50a49aab46e9d1a1edfdd7899bea983afc3adc
+Source: contrib/zsh/
+Archive: https://www.zsh.org/pub/zsh-5.9.2.tar.xz
+SHA256: 36fa734374b44783582cec09bcd67822e2f992c779ec1624ab5596df078d2f81
+License: contrib/zsh/LICENCE, subject to individual file notices. The main
+  license is permissive and MIT-style; do not label the entire source import
+  simply MIT. GPL-licensed completions _darcs, _osc, _qdbus and _zypper are
+  retained in source but excluded from installation.
+Integration: bin/zsh/Makefile and bin/zsh/generated/; userland /bin/zsh in
+  the runtime package, functions under /usr/share/zsh/functions, manuals,
+  and /usr/share/doc/zsh/LICENCE. This is not kernel code.
+Local changes: RLIMIT_VMM support and documentation, terminal restoration
+  on timeout, diff -u completion, BSD iconv conversion handling, retention
+  of release-generated inputs, and synchronized W02/W03 job-control tests.
+  PCRE and GDBM are disabled and their test groups are omitted. The _mdo
+  completion and ports fixes came from the 5BSD shells/zsh port.
+Update procedure and detailed build policy: bin/zsh/README and
+  bin/zsh/import-build.py. Recheck module choices and function licenses on
+  each update; regenerate the native build inputs and run validation.
+
+Fuchsia FIDL and lowpan/OpenThread integration
+--------------------------------------------
+Source: contrib/fuchsia/
+Upstream: https://fuchsia.googlesource.com/fuchsia
+Revision: 3c0275544589e9bc156739d210052e8174ae9c60 (selected main snapshot,
+  not an F31 release checkout).
+Imported: 2026-10-09
+Scope: tools/fidl including tests/goldens; C++ FIDL runtime and wire support;
+  fit/stdcompat/FXL/cmdline/headers; lowpan/OpenThread integration source;
+  selected protocol definitions and compiler documentation/test data.
+Provenance: contrib/fuchsia/UPSTREAM.json and tools/build/fuchsia/sources.json
+  list exact subtree URLs, original archive SHA256, and canonical archive
+  tree SHA256 (Gitiles changes timestamps between exports of the same commit).
+License: LICENSE (BSD-2-Clause, The Fuchsia Authors) and PATENTS (Google's
+  patent grant for the unmodified implementation) retained.  The FXL UTF
+  helper src/lib/fxl/third_party/icu/icu_utf.{h,cc} is under the ICU license
+  (src/lib/fxl/third_party/icu/LICENSE) and is compiled into fidlc,
+  fidl-format and fidl-lint (package libfidl-tools, which installs the
+  Fuchsia, ICU and Go runtime notices).  Nested third_party/go-cmp is
+  BSD-3-Clause at commit 9b12f366a942ebc7254abc7f32ca05068b455fb7 (v0.7.0),
+  used only by Go tests; its UPSTREAM.5BSD.json records its URL and archive
+  checksum.  The OpenThread platform copy under src/connectivity is
+  BSD-3-Clause and is source only.  No copyleft or proprietary terms
+  (license review 2026-10-10).  Preserve file-specific notices.
+Local changes (tools/build/fuchsia/patches): FreeBSD host definition and
+  initialized lexer SOF span; explicit BSD natural-type generator mode and
+  exported upstream names, including the 5BSD-authored
+  tools/fidl/lib/fidlgen_cpp/bsd_names.go (BSD-2-Clause, outside Fuchsia's
+  PATENTS grant); preserve the native __WEAK macro in public headers;
+  value-initialized vector<bool> decode temporaries
+  (fuchsia-natural-bool.patch); natural encoder buffer reuse
+  (fuchsia-natural-encoder-reuse.patch); allocation-failure handling in the
+  natural encoder (fuchsia-natural-oom.patch); std::slices use in GIDL
+  (fuchsia-gidl-std-slices.patch).
+Integration: standalone native host compiler/formatter/linter, C++/Rust
+  generators and tests; native C++ runtime and generated C bridge over
+  libchannel, plus the initial descriptor transport feasibility test.
+  Native runtime support uses sdk/lib/utf-utils and src/zircon/lib/zircon
+  wire/status headers at the same pinned revision; their archives are locked
+  in sources.json and UPSTREAM.json. No Zircon dispatcher/kernel is linked.
+  Native runtime/header/manual build targets and libfidl package registration
+  are present; staged C/C++ consumers pass. Full world/package validation,
+  installed host tools, service migration, and the Fuchsia lowpan service
+  port remain incomplete.
+Refresh/build/status: tools/build/fuchsia/README, import.py, sources.json,
+  patches/fuchsia-host.patch. Import into empty /usr/obj staging; review
+  diffs, preserve notices/local patches, and run the documented test suites.
+
 Fuchsia Starnix Linuxulator references
 --------------------------------------
 Recorded: 2026-10-10
@@ -30,7 +114,7 @@ Reviewed archive SHA256:
 Scope: behavioral reference and test ideas rewritten as freestanding Linux
   syscall probes and native 5BSD fixes. No Starnix Rust/Zircon implementation
   is imported or linked by this work. This revision is separate from the
-  FIDL/lowpan source import. The reviewed archive was extracted under
+  FIDL/lowpan source import above. The reviewed archive was extracted under
   /tmp/starnix-inventory-8a938a32; that temporary path is not a durable source.
 License/notices: reviewed Starnix files carry The Fuchsia Authors copyright
   notices referring to the upstream root LICENSE (BSD-style). Consult LICENSE
@@ -859,3 +943,128 @@ Update procedure: append each further reuse to this entry with exact revision,
   On revision changes, review source/license diffs and preserve older mappings
   for adaptations still present. Re-run the relevant Linux reference and
   disposable 5BSD VM tests; record unresolved differences explicitly.
+
+OpenThread
+----------
+Source: contrib/openthread/
+Upstream: https://github.com/openthread/openthread.git
+Revision: 0542780e3ac117196b77a60abc1052e4c3cdad12
+Imported: 2026-10-09
+Archive URL and SHA256: contrib/openthread/UPSTREAM.5BSD.json and
+  tools/build/fuchsia/sources.json.
+Dependencies: Mbed TLS e185d7fd85499c8ce5ca2a54f5cf8fe7dbe3f8df and its
+  framework 457996474728cb8e968ed21953b72f74d2f536b2, exactly matching the
+  upstream gitlinks; URLs/checksums in third_party/mbedtls/*UPSTREAM.5BSD.json.
+License: LICENSE (BSD-3-Clause), subject to individual third-party notices,
+  including BSD TCP code in tcplp. Mbed TLS and framework retain their dual
+  Apache-2.0 OR GPL-2.0-or-later LICENSE; use the Apache-2.0 option here.
+Local changes: BSD process-reset support, BSD libedit include spelling,
+  and explicit IPv6 header. Native build selects libedit, enables required
+  uptime support, and uses the unpruned crypto config. POSIX platform UDP
+  is disabled pending interface-scoping support; OpenThread UDP is used.
+Integration: native simulation, CLI/NCP/radio targets and unit tests;
+  POSIX daemon/ot-ctl build. No radio activation, installed service, world
+  target, or package yet. Physical radio testing remains pending.
+Refresh/build/status: tools/build/fuchsia/README, build-openthread.py,
+  import.py, sources.json, patches/openthread-bsd.patch.
+
+Matter / connectedhomeip
+-----------------------
+Source: contrib/connectedhomeip/
+Upstream: https://github.com/project-chip/connectedhomeip.git
+Revision: d2a28e75da517d7aa5558244fcd2487c7239d02e
+Imported: 2026-10-09
+Archive URL and SHA256: UPSTREAM.5BSD.json and tools/build/fuchsia/sources.json.
+Scope: upstream source, tests, examples and tooling. The 79 gitlinks are
+  recorded in SUBMODULES.5BSD.json; submodules are not populated.
+License: LICENSE (Apache-2.0) and NOTICE retained, subject to file-specific
+  exceptions. third_party/inipp/repo/inipp/LICENSE.txt is MIT. The silabs
+  FreeRTOSConfig.h and bouffalolab bl602/bl702/bl702l FreeRTOSConfig.h
+  examples contain additional FreeRTOS/GPL-exception and Silicon Labs
+  notices; retained as upstream source and not built or installed here.
+  Do not describe the entire import as BSD or uniformly Apache-2.0.
+Local changes: provenance records only; native test runner is outside contrib.
+Integration: standalone Matter IDL tools tested with dependencies in an
+  /usr/obj virtualenv, pinned in requirements-matter-tools.txt. The Matter
+  device/controller platform and capability-service integration are unported.
+  Nothing installed by world or packages.
+Refresh/build/status: tools/build/fuchsia/README, import.py, sources.json,
+  test-matter.py. Re-review licenses of selected files and submodules before
+  adding an installed target. Run upstream tooling tests after refresh.
+
+FIDL native SDK follow-up (2026-10-09):
+  The native generator patch includes typed client/server channel endpoints
+  and upstream-derived name metadata. fuchsia-native-headers.patch preserves
+  BSD's __WEAK definition; fuchsia-natural-oom.patch checks handle metadata
+  allocation and closes the currently moved descriptor on failure;
+  fuchsia-natural-bool.patch initializes vector<bool> decode temporaries so
+  an invalid wire boolean cannot load an indeterminate value;
+  fuchsia-gidl-std-slices.patch replaces golang.org/x/exp/slices with the
+  standard library so the pinned GIDL tool builds offline. The upstream
+  conformance suite (src/tests/fidl/conformance_suite) is imported at the
+  same pinned commit for tools/build/fuchsia/generate-conformance.py. Native
+  runtime headers/libraries and optional compiler/generator SDK have staged
+  installation targets. Installed support headers follow the native source
+  include closure, not the entire imported Zircon/Fuchsia API surface.
+  Full world/release packaging and provider migration remain open.
+
+PF consolidation / standalone Dummynet control (2026-10-10)
+----------------------------------------------------------
+Reference: existing FreeBSD-derived source in 5BSD at
+  b82c2373684cab0c72d4244f8786c4f7952476f2; no new upstream archive import.
+Source-to-local mappings:
+  sbin/ipfw/dummynet.c -> sbin/dnctl/dummynet.c (moved parser);
+  shared declarations from sbin/ipfw/ipfw2.h -> sbin/dnctl/dnctl.h;
+  buffer, allocation, token and mask helpers from sbin/ipfw/ipfw2.c ->
+  sbin/dnctl/common.c (shared by both tools, not duplicated implementations).
+Original upstream copyright and redistribution notices are retained.
+New local main.c/support.c provide standalone shaper dispatch and restrict
+control requests to IP_DUMMYNET3. A separate dummynet world package and
+MK_DUMMYNET option preserve control with WITHOUT_IPFW. Native Dummynet's
+existing shared flow ABI and kernel source dependencies are still retained;
+this first extraction is not yet complete IPFW retirement.
+Validation so far: both utility builds pass with six jobs, nine initial
+syntax/rejection checks pass, and build selection retains dnctl/dummynet
+with WITHOUT_IPFW. ATF regressions added. Network-enabled four-vCPU VM
+qualification, kernel source extraction and PF parity work remain pending.
+
+PF limiter command compatibility (2026-10-10):
+  OpenBSD src 896fef95f254ad4a5ff07e37e02f2fac2dabf509; sbin/pfctl/pfctl.c
+  SHA256 f12a46245ab3e9cbaa706983afc280a69c6e795d62259b3ad8b81784dc465df7
+  Existing reviewed reference: https://raw.githubusercontent.com/openbsd/src/896fef95f254ad4a5ff07e37e02f2fac2dabf509/sbin/pfctl/pfctl.c
+  Exact Stlimiters/Srclimiters show aliases mapped to existing native limiter
+  backends in sbin/pfctl/pfctl.c, with manual updates and a populated-ruleset
+  comparison test in tests/sys/netpfil/pf/limiters.sh. New local implementation
+  from documented command behavior; no new upstream source import. Existing
+  native short modifiers retain their meaning. VM validation pending.
+  This does not complete P08 CLI compatibility or alter conflicting flags.
+
+Dummynet kernel ownership follow-up (2026-10-10):
+  Twenty existing dn_*/ip_dn*/ip_dummynet source/header files moved from
+  sys/netpfil/ipfw to sys/netpfil/dummynet, with native config/module and PF
+  include paths updated. Shared packet arguments, wrapper macros and checksum
+  helpers extracted from ip_fw_private.h into dummynet/dn_packet.h. Names,
+  structure layouts and existing packet-tag ABI are retained; original notices
+  remain. Both Dummynet and PF standalone module builds pass. Full kernel build
+  with WITHOUT_IPFW is in progress; runtime qualification of the new kernel is
+  pending. Module/Netgraph selection now honors WITHOUT_IPFW, and the separate
+  MK_DUMMYNET option controls shaper and utility. Three build-selection tests
+  pass. Source movement alone is not a claim of complete IPFW elimination.
+
+PF consolidation source retirement (2026-10-10):
+  User explicitly confirmed source deletion rather than build disablement.
+  Removed IPFW firewall engine, firewall NAT/NAT64/NPTv6/pmod implementations,
+  ng_ipfw, ipfw/ipfwpcap/natd utilities and their package/startup/test
+  registrations. Removed orphaned raw-IP firewall control hooks. Dummynet
+  implementation/service and shared packet ABI remain; its full shaping manual
+  was retained from sbin/ipfw/ipfw.8 with original notices. libalias and its
+  protocol helpers remain for PPP/ng_nat under a separate libalias package.
+  Exact removal scope manifests are in the PF VM evidence directory under
+  /usr/obj/5BSD-pf-consolidation-20261010; reviewed patches and hash-verified
+  recovery archives are temporarily in /tmp/pf-removal-review.
+  Three independent build/removal checks pass, including explicit rejection
+  of WITH_IPFW. Fresh kernel build after retirement is running. Earlier smoke3
+  proved all six PF packet tests and three dnctl cases on the pre-removal kernel
+  with IPFW absent; the limiter alias test failed only its expected-name output
+  assertion (native output contains numeric IDs). Numeric assertion corrected;
+  full post-retirement VM qualification remains pending. No host changes.

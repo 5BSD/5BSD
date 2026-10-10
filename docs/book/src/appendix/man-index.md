@@ -14,7 +14,9 @@ Read the page with `man name` on an installed system, or from the tree with
 
 ## Section 1: commands
 
-5BSD adds no section 1 pages; its commands are documented in section 8.
+| Page | Description | Package | Former names |
+|---|---|---|---|
+| fidlgen-bsd(1) | generate native C and C++ FIDL bindings | libfidl-man | |
 
 ## Section 2: system calls
 
@@ -47,6 +49,7 @@ describes it.
 |---|---|---|---|
 | libcapability(3) | invoke synchronous kernel capability services | libcapability | |
 | libchannel(3) | asynchronous userspace capability-channel messaging | libchannel | |
+| libfidl_bsd(3) | experimental native FIDL bindings over capability channels | libfidl-man | |
 | libcapsulert(3) | shared claim types, UCL claim parsers, and capability-plane wire protocols | libcapsulert | |
 | libshmring(3) | capability-safe shared-memory transport rings | libshmring | |
 
@@ -149,6 +152,7 @@ that.
 | Page | Description | Package |
 |---|---|---|
 | component(7) | capability service model for programs managed by switchboard | untagged (default package) |
+| fidl(7) | experimental FIDL integration, capability semantics, and port status | runtime-man (build registration; not installed in the initial port) |
 
 ## Section 8: system programs
 

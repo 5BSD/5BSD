@@ -67,6 +67,7 @@ SUBDIR=	${SUBDIR_BOOTSTRAP} \
 	libexecinfo \
 	libexpat \
 	libfetch \
+	libfidl \
 	libgcc_eh \
 	libgcc_s \
 	libgeom \
@@ -159,6 +160,10 @@ SUBDIR_DEPEND_libcrypt= libmd
 SUBDIR_DEPEND_libdevstat= libkvm
 SUBDIR_DEPEND_libdpv= libfigpar ncurses libutil
 SUBDIR_DEPEND_libedit= ncurses
+SUBDIR_DEPEND_libfidl= libchannel
+.if ${MK_TESTS} != "no" && ${MK_GOOGLETEST} != "no"
+SUBDIR_DEPEND_libfidl+= googletest
+.endif
 SUBDIR_DEPEND_libgeom= libexpat libsbuf
 .if ${MK_MITKRB5} == "no"
 SUBDIR_DEPEND_librpcsec_gss= libgssapi
@@ -168,7 +173,7 @@ SUBDIR_DEPEND_liblogcmp= libservice libshmring
 SUBDIR_DEPEND_libmemstat= libkvm
 SUBDIR_DEPEND_libnetworkcmp= libservice libshmring
 SUBDIR_DEPEND_libsysctlcmp= libservice
-SUBDIR_DEPEND_libtimecmp= libservice
+SUBDIR_DEPEND_libtimecmp= libservice libfidl
 SUBDIR_DEPEND_libpowercmp= libservice
 SUBDIR_DEPEND_libnotify= libservice
 SUBDIR_DEPEND_libcache= libnotify

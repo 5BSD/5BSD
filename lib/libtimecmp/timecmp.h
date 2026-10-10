@@ -11,13 +11,20 @@
 #ifndef _TIMECMP_H_
 #define	_TIMECMP_H_
 
+#include <sys/time.h>
 #include <time.h>
 
 #include "timecmp_protocol.h"
 
+#define TIMECMP_WIRE_VERSION 1
+
 struct timecmp_client;
 
 __BEGIN_DECLS
+
+/* Adopt a held native channel; consumes fd only on success.
+ * Version negotiation occurs on the first operation within its deadline. */
+int timecmp_client_create(int fd, struct timecmp_client **);
 
 /* Open (and close) a session to system.Time. */
 int	timecmp_client_open(struct timecmp_client **);

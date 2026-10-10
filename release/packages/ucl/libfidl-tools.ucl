@@ -1,0 +1,12 @@
+comment = "Native FIDL compiler, formatter, linter and binding generators"
+desc = <<EOD
+Pinned FIDL host tools for generating native 5BSD C and C++ bindings. Includes
+fidlc, fidl-format, fidl-lint, fidlgen-bsd and its matching private generator.
+Python and RE2 are host-tool dependencies; generated applications use the
+native FIDL runtime and do not need the generator toolchain at execution time.
+EOD
+deps {
+    libfidl-dev { origin = "base/${PKG_NAME_PREFIX}-libfidl-dev"; version = "${VERSION}"; }
+    python312 { origin = "lang/python312"; version = "${FIDL_PYTHON_VERSION}"; }
+    re2 { origin = "devel/re2"; version = "${FIDL_RE2_VERSION}"; }
+}

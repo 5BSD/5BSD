@@ -53,6 +53,7 @@ SUBDIR=	blocklist \
 	libcapability \
 	libcapbundle \
 	libchannel \
+	libfidl \
 	libcryptocmp \
 	libcryptodesc \
 	libdevicecmp \
@@ -202,7 +203,7 @@ SUBDIR.${MK_TESTS}+=		hwstat-tests
 SUBDIR.${MK_TESTS}+=		switchboard-tests switchboardctl-tests
 SUBDIR.${MK_TESTS}+=		libcapability-tests libcapbundle-tests
 SUBDIR.${MK_TESTS}+=		libauditcmp-tests bsdaudit-tests
-SUBDIR.${MK_TESTS}+=		libchannel-tests libshmring-tests
+SUBDIR.${MK_TESTS}+=		libchannel-tests libshmring-tests libfidl-tests bsdtime-tests
 SUBDIR.${MK_TESTS}+=		libcryptocmp-tests libcryptodesc-tests
 SUBDIR.${MK_TESTS}+=		libnetworkcmp-tests libsysctlcmp-tests libtimecmp-tests libpowercmp-tests
 SUBDIR.${MK_TESTS}+=		libcapreclaim-tests

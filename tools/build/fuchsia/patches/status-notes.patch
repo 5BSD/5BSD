@@ -1,0 +1,39 @@
+--- /dev/null
++++ b/fuchsia/README.5BSD
+@@ -0,0 +1,10 @@
++5BSD import status
++==================
++
++See tools/build/fuchsia/README and contrib/README.5BSD for exact scope,
++licenses, local changes, native builds, tests, and remaining port work.
++Provenance is recorded in UPSTREAM*.json and tools/build/fuchsia/sources.json.
++
++This source import is not an installed capability service. In particular,
++the current service IPC has not been replaced and Matter commissioning
++and physical Thread radio operation are not validated.
+--- /dev/null
++++ b/openthread/README.5BSD
+@@ -0,0 +1,10 @@
++5BSD import status
++==================
++
++See tools/build/fuchsia/README and contrib/README.5BSD for exact scope,
++licenses, local changes, native builds, tests, and remaining port work.
++Provenance is recorded in UPSTREAM*.json and tools/build/fuchsia/sources.json.
++
++This source import is not an installed capability service. In particular,
++the current service IPC has not been replaced and Matter commissioning
++and physical Thread radio operation are not validated.
+--- /dev/null
++++ b/connectedhomeip/README.5BSD
+@@ -0,0 +1,10 @@
++5BSD import status
++==================
++
++See tools/build/fuchsia/README and contrib/README.5BSD for exact scope,
++licenses, local changes, native builds, tests, and remaining port work.
++Provenance is recorded in UPSTREAM*.json and tools/build/fuchsia/sources.json.
++
++This source import is not an installed capability service. In particular,
++the current service IPC has not been replaced and Matter commissioning
++and physical Thread radio operation are not validated.

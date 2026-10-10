@@ -1,0 +1,11 @@
+comment = "Native FIDL runtime and C application API tests"
+
+desc = <<EOD
+Native capability-channel tests for generated C/C++ FIDL bindings, descriptor
+ownership, rights, protocol evolution, malformed messages, allocation failure,
+backpressure, cancellation and connection lifecycle.
+EOD
+
+annotations = {
+    set = "tests"
+}

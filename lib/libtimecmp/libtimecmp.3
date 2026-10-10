@@ -1,21 +1,25 @@
 .\" SPDX-License-Identifier: BSD-2-Clause
 .\" Copyright (c) 2026 Kory Heard
-.Dd September 19, 2026
+.Dd October 9, 2026
 .Dt LIBTIMECMP 3
 .Os
 .Sh NAME
 .Nm timecmp_client_open ,
+.Nm timecmp_client_create ,
 .Nm timecmp_client_close ,
 .Nm timecmp_get ,
 .Nm timecmp_set ,
 .Nm timecmp_adjust
 .Nd client for the system.Time capability
 .Sh LIBRARY
-.Lb libtimecmp
+System time client library
+.Pq Fl l Ns Li timecmp
 .Sh SYNOPSIS
 .In timecmp.h
 .Ft int
 .Fn timecmp_client_open "struct timecmp_client **clientp"
+.Ft int
+.Fn timecmp_client_create "int fd" "struct timecmp_client **clientp"
 .Ft void
 .Fn timecmp_client_close "struct timecmp_client *client"
 .Ft int
@@ -56,6 +60,50 @@ and
 fail with
 .Er EPERM
 when the caller's label is not granted set authority.
+.Pp
+.Fn timecmp_client_create
+adopts an already held native channel, consuming
+.Fa fd
+only on success.
+The connection is non-transferable and locked against exec and fork inheritance.
+The object is owned by its creating process and a single dispatch thread;
+calls from an inherited object fail with
+.Er ECHILD .
+.Pp
+The implementation uses the generated C bindings for
+.Li bsd.time.v1 .
+The first operation negotiates wire version 1, within the same five-second
+monotonic deadline as the operation itself.
+A timeout closes the connection and is reported as
+.Er ETIMEDOUT .
+Clock writes are never retried automatically; a transport failure does not prove
+that a sent write was not applied.
+Malformed responses close the connection with
+.Er EPROTO .
+An incompatible advertised version reports
+.Er EPROTONOSUPPORT .
+The signed seconds and microseconds of a slew are preserved, including negative
+fractions in the range -999999 through 999999.
+.Ss Migration status
+The source implementation has migrated to FIDL; production activation and
+capability-plane VM validation remain incomplete.
+The public C ABI remains version 1.
+The old wire validator is retained for ABI compatibility, but the provider
+rejects the legacy wire format.
+Provider and client-library packages must be deployed or rolled back together,
+with their processes restarted; mixed wire versions fail before a clock write.
+Rollback must follow the bundle registry's increasing-sequence policy.
+.Sh PACKAGES
+The runtime library is in
+.Li 5BSD-libtimecmp .
+The
+.Li 5BSD-libtimecmp-dev
+package supplies public headers, the static library, the FIDL schema, and
+required development-package dependencies.
+Manuals and split debugging symbols are in
+.Li 5BSD-libtimecmp-man
+and
+.Li 5BSD-libtimecmp-dbg .
 .Sh SEE ALSO
 .Xr adjtime 2 ,
 .Xr clock_settime 2 ,

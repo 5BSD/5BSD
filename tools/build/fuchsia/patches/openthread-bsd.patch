@@ -1,0 +1,43 @@
+--- a/openthread/src/lib/platform/reset_util.h
++++ b/openthread/src/lib/platform/reset_util.h
+@@ -49,7 +49,7 @@
+ #define flush_gcov()
+ #endif // defined(OPENTHREAD_ENABLE_COVERAGE) && OPENTHREAD_ENABLE_COVERAGE && defined(__GNUC__)
+ 
+-#if defined(__linux__) || defined(__APPLE__)
++#if defined(__linux__) || defined(__APPLE__) || defined(__FreeBSD__)
+ #include <setjmp.h>
+ #include <unistd.h>
+ jmp_buf gResetJump;
+@@ -64,6 +64,6 @@
+ 
+ #else
+ #define OT_SETUP_RESET_JUMP(ARGV)
+-#endif // defined(__linux__) || defined(__APPLE__)
++#endif // defined(__linux__) || defined(__APPLE__) || defined(__FreeBSD__)
+ 
+ #endif // OT_LIB_PLATFORM_RESET_UTIL_H_
+--- a/openthread/src/posix/platform/udp.cpp
++++ b/openthread/src/posix/platform/udp.cpp
+@@ -39,6 +39,7 @@
+ #include "openthread-posix-config.h"
+ #include "platform-posix.h"
+ 
++#include <netinet/in.h>
+ #include <arpa/inet.h>
+ #include <assert.h>
+ #include <net/if.h>
+--- a/openthread/src/posix/client.cpp
++++ b/openthread/src/posix/client.cpp
+@@ -53,7 +53,11 @@
+ #include <unistd.h>
+ 
+ #if HAVE_LIBEDIT
++#if defined(__FreeBSD__)
++#include <edit/readline/readline.h>
++#else
+ #include <editline/readline.h>
++#endif
+ #elif HAVE_LIBREADLINE
+ #include <readline/history.h>
+ #include <readline/readline.h>

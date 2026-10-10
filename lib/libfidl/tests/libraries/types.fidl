@@ -1,0 +1,10 @@
+// SPDX-License-Identifier: BSD-2-Clause
+library cross.types;
+using zx;
+type Mode = strict enum : uint32 { OFF = 0; ON = 1; };
+type Payload = resource struct {
+    fd zx.Handle;
+    label string:32;
+    words vector<string:8>:4;
+    mode Mode;
+};

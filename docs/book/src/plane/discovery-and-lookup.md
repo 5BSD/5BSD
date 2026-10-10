@@ -5,6 +5,10 @@ channel. SwitchBoard returns a provider channel when admission succeeds.
 The discovery route does not identify an authenticated user and does not grant
 its holder the parent's software attributes.
 
+The experimental [FIDL integration](../develop/fidl.md) concerns protocol
+encoding and generated bindings. It has not replaced the current lookup
+protocol or the admission and descriptor-transfer rules described here.
+
 ## Route, software identity, and endpoint admission
 
 These are separate responsibilities:

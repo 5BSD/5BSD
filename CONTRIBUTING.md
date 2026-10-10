@@ -78,3 +78,12 @@ Every installed file carries a `PACKAGE=` tag, every package has a
 `release/packages/ucl/`, and tests ship as `<name>-tests`. A bundle's
 package owns its `/Capabilities` directories. See
 [Packaging and Shipping](docs/book/src/develop/packaging.md).
+
+## Imported software
+
+Record every new third-party import and upstream refresh in
+[the contributed software register](contrib/README.5BSD). Include the exact
+upstream version or revision, source URL and checksum, license files and
+exceptions, local patches, installed scope, and refresh procedure. Preserve
+upstream notices. Code inherited from FreeBSD must have its provenance
+verified before adding an entry; the register states its current coverage.

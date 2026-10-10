@@ -1,0 +1,281 @@
+{
+  "name": "test.nonzero",
+  "platform": "unversioned",
+  "available": {
+    "fuchsia": [
+      "HEAD"
+    ],
+    "test": [
+      "HEAD"
+    ]
+  },
+  "experiments": [
+    "output_index_json"
+  ],
+  "library_dependencies": [],
+  "bits_declarations": [],
+  "const_declarations": [],
+  "enum_declarations": [],
+  "experimental_resource_declarations": [],
+  "protocol_declarations": [],
+  "service_declarations": [],
+  "struct_declarations": [],
+  "external_struct_declarations": [],
+  "table_declarations": [],
+  "union_declarations": [],
+  "alias_declarations": [
+    {
+      "name": "test.nonzero/NonzeroInt16",
+      "location": {
+        "filename": "../../tools/fidl/fidlc/testdata/nonzero.test.fidl",
+        "line": 12,
+        "column": 7,
+        "length": 12
+      },
+      "deprecated": false,
+      "partial_type_ctor": {
+        "name": "int16",
+        "args": [],
+        "nullable": false
+      },
+      "type": {
+        "kind_v2": "primitive",
+        "subtype": "int16",
+        "zeroable": false,
+        "type_shape_v2": {
+          "inline_size": 2,
+          "alignment": 2,
+          "depth": 0,
+          "max_handles": 0,
+          "max_out_of_line": 0,
+          "has_padding": false,
+          "has_flexible_envelope": false
+        }
+      }
+    },
+    {
+      "name": "test.nonzero/NonzeroInt32",
+      "location": {
+        "filename": "../../tools/fidl/fidlc/testdata/nonzero.test.fidl",
+        "line": 13,
+        "column": 7,
+        "length": 12
+      },
+      "deprecated": false,
+      "partial_type_ctor": {
+        "name": "int32",
+        "args": [],
+        "nullable": false
+      },
+      "type": {
+        "kind_v2": "primitive",
+        "subtype": "int32",
+        "zeroable": false,
+        "type_shape_v2": {
+          "inline_size": 4,
+          "alignment": 4,
+          "depth": 0,
+          "max_handles": 0,
+          "max_out_of_line": 0,
+          "has_padding": false,
+          "has_flexible_envelope": false
+        }
+      }
+    },
+    {
+      "name": "test.nonzero/NonzeroInt64",
+      "location": {
+        "filename": "../../tools/fidl/fidlc/testdata/nonzero.test.fidl",
+        "line": 14,
+        "column": 7,
+        "length": 12
+      },
+      "deprecated": false,
+      "partial_type_ctor": {
+        "name": "int64",
+        "args": [],
+        "nullable": false
+      },
+      "type": {
+        "kind_v2": "primitive",
+        "subtype": "int64",
+        "zeroable": false,
+        "type_shape_v2": {
+          "inline_size": 8,
+          "alignment": 8,
+          "depth": 0,
+          "max_handles": 0,
+          "max_out_of_line": 0,
+          "has_padding": false,
+          "has_flexible_envelope": false
+        }
+      }
+    },
+    {
+      "name": "test.nonzero/NonzeroInt8",
+      "location": {
+        "filename": "../../tools/fidl/fidlc/testdata/nonzero.test.fidl",
+        "line": 11,
+        "column": 7,
+        "length": 11
+      },
+      "deprecated": false,
+      "partial_type_ctor": {
+        "name": "int8",
+        "args": [],
+        "nullable": false
+      },
+      "type": {
+        "kind_v2": "primitive",
+        "subtype": "int8",
+        "zeroable": false,
+        "type_shape_v2": {
+          "inline_size": 1,
+          "alignment": 1,
+          "depth": 0,
+          "max_handles": 0,
+          "max_out_of_line": 0,
+          "has_padding": false,
+          "has_flexible_envelope": false
+        }
+      }
+    },
+    {
+      "name": "test.nonzero/NonzeroUint16",
+      "location": {
+        "filename": "../../tools/fidl/fidlc/testdata/nonzero.test.fidl",
+        "line": 8,
+        "column": 7,
+        "length": 13
+      },
+      "deprecated": false,
+      "partial_type_ctor": {
+        "name": "uint16",
+        "args": [],
+        "nullable": false
+      },
+      "type": {
+        "kind_v2": "primitive",
+        "subtype": "uint16",
+        "zeroable": false,
+        "type_shape_v2": {
+          "inline_size": 2,
+          "alignment": 2,
+          "depth": 0,
+          "max_handles": 0,
+          "max_out_of_line": 0,
+          "has_padding": false,
+          "has_flexible_envelope": false
+        }
+      }
+    },
+    {
+      "name": "test.nonzero/NonzeroUint32",
+      "location": {
+        "filename": "../../tools/fidl/fidlc/testdata/nonzero.test.fidl",
+        "line": 9,
+        "column": 7,
+        "length": 13
+      },
+      "deprecated": false,
+      "partial_type_ctor": {
+        "name": "uint32",
+        "args": [],
+        "nullable": false
+      },
+      "type": {
+        "kind_v2": "primitive",
+        "subtype": "uint32",
+        "zeroable": false,
+        "type_shape_v2": {
+          "inline_size": 4,
+          "alignment": 4,
+          "depth": 0,
+          "max_handles": 0,
+          "max_out_of_line": 0,
+          "has_padding": false,
+          "has_flexible_envelope": false
+        }
+      }
+    },
+    {
+      "name": "test.nonzero/NonzeroUint64",
+      "location": {
+        "filename": "../../tools/fidl/fidlc/testdata/nonzero.test.fidl",
+        "line": 10,
+        "column": 7,
+        "length": 13
+      },
+      "deprecated": false,
+      "partial_type_ctor": {
+        "name": "uint64",
+        "args": [],
+        "nullable": false
+      },
+      "type": {
+        "kind_v2": "primitive",
+        "subtype": "uint64",
+        "zeroable": false,
+        "type_shape_v2": {
+          "inline_size": 8,
+          "alignment": 8,
+          "depth": 0,
+          "max_handles": 0,
+          "max_out_of_line": 0,
+          "has_padding": false,
+          "has_flexible_envelope": false
+        }
+      }
+    },
+    {
+      "name": "test.nonzero/NonzeroUint8",
+      "location": {
+        "filename": "../../tools/fidl/fidlc/testdata/nonzero.test.fidl",
+        "line": 7,
+        "column": 7,
+        "length": 12
+      },
+      "deprecated": false,
+      "partial_type_ctor": {
+        "name": "uint8",
+        "args": [],
+        "nullable": false
+      },
+      "type": {
+        "kind_v2": "primitive",
+        "subtype": "uint8",
+        "zeroable": false,
+        "type_shape_v2": {
+          "inline_size": 1,
+          "alignment": 1,
+          "depth": 0,
+          "max_handles": 0,
+          "max_out_of_line": 0,
+          "has_padding": false,
+          "has_flexible_envelope": false
+        }
+      }
+    }
+  ],
+  "new_type_declarations": [],
+  "declaration_order": [
+    "test.nonzero/NonzeroInt16",
+    "test.nonzero/NonzeroInt32",
+    "test.nonzero/NonzeroInt64",
+    "test.nonzero/NonzeroInt8",
+    "test.nonzero/NonzeroUint16",
+    "test.nonzero/NonzeroUint32",
+    "test.nonzero/NonzeroUint64",
+    "test.nonzero/NonzeroUint8"
+  ],
+  "declarations": {
+    "test.nonzero/NonzeroInt16": "alias",
+    "test.nonzero/NonzeroInt32": "alias",
+    "test.nonzero/NonzeroInt64": "alias",
+    "test.nonzero/NonzeroInt8": "alias",
+    "test.nonzero/NonzeroUint16": "alias",
+    "test.nonzero/NonzeroUint32": "alias",
+    "test.nonzero/NonzeroUint64": "alias",
+    "test.nonzero/NonzeroUint8": "alias"
+  }
+}

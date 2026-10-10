@@ -48,3 +48,9 @@ Policies for package dependencies:
   add a dependency on the other package even if not everything in the package
   requires that dependency.  Users expect that all of a package will work
   after installing it.
+
+Dependency names with a base/ origin (or no explicit origin) receive the
+pkgbase prefix. Dependencies with an explicit ports origin keep their actual
+ports package name. Supply versions from the selected target ports packages;
+do not infer them from the build host during cross or release builds. The
+optional FIDL SDK uses this for Python and RE2.

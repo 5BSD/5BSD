@@ -1,0 +1,7 @@
+comment = "Native FIDL C and C++ capability-channel bindings"
+desc = <<EOD
+Native 5BSD FIDL bindings using upstream natural types and codecs, native
+capability descriptors, and libchannel. Provides the runtime, public C/C++
+API, development headers, and API documentation. Service discovery and
+application authorization remain native provider responsibilities.
+EOD

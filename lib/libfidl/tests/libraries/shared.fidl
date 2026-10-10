@@ -1,0 +1,7 @@
+// SPDX-License-Identifier: BSD-2-Clause
+library cross.shared;
+using cross.types;
+type Envelope = resource struct { value cross.types.Payload; };
+closed protocol Base {
+    strict Exchange(Envelope) -> (Envelope) error uint32;
+};

@@ -1,0 +1,6 @@
+comment = "BSDTime C provider and policy tests"
+desc = <<EOD
+Native FIDL client/provider policy, malformed-message, descriptor and lifecycle
+tests. Host tests simulate clock writes. The separate real-gate test requires
+explicit configuration in a disposable VM and is skipped by default.
+EOD

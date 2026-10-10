@@ -1,0 +1,347 @@
+Native FIDL maturity gates (2026-10-09)
+======================================
+Status: IN PROGRESS. A passing prototype suite is not a production claim.
+
+Accepted feature scope
+----------------------
+C is the primary application API; C++ may implement the bridge and runtime.
+C examples, consumers, and provider migrations are required evidence.
+C++ and C bindings: ordinary named/anonymous/empty messages, application-error
+results, native typed channel endpoints, arrays/vectors/nested aggregates and
+optional values, schema evolution and strict/flexible interaction semantics.
+Names must follow upstream transformations, with deterministic C escaping.
+Native rights never derive authority from wire values. Single dispatch-thread
+ownership is a supported contract, not a missing multithreading feature.
+Rust runtime and Zircon object emulation are outside the initial C/C++ gate.
+Keep standalone OpenThread/Matter progress separate from FIDL maturity.
+
+Review/implementation loop
+--------------------------
+[x] Explicit upstream BSD natural-type generator; remove output substitutions.
+[x] Compile/link every accepted generator fixture, reproducible output tests.
+[x] Practical C/C++ schema support and compatibility tests.
+[x] Consolidate completion state and enforce request/connection ownership.
+[x] Audit callbacks, allocation failures, resource bounds and shutdown.
+[x] Link maintained libchannel separately; audit codec dependency closure.
+[x] Upstream conformance vectors, sustained fuzzing, resource soak tests.
+[x] Native build/install/package/test integration and CI entry points.
+[x] Installed binary API: C11/C++ headers, linkable library, generated peers,
+    staged-install consumer compile/link/run with no source-tree includes.
+[x] Migrate one provider and clients with versioning and rollback contracts.
+[x] Provider policy/adversarial/lifecycle tests, capability-plane VM validation.
+    Plane-on VMs run4 (41/41) and fd2 (61/61, 2026-10-10): BSDTime activates
+    as a core unit; EPERM policy refusal, core-restart denial, 200 sessions,
+    malformed-message and descriptor-type rejection; hour soak (perf2) and
+    descriptor-batching soak (fd1).  Limit: release upgrade/rollback across
+    boot environments is not yet run.
+[x] Comparative latency/memory/allocation evidence; documented limitations.
+[ ] Final review, source reproduction, manuals/book, complete validation record.
+    Source reproduction (5,028 entries) and manuals/book are current; open:
+    review of a committed tree, republished packages and the release
+    upgrade/rollback VM.
+
+Keep compiler/codecs, upstream tests/goldens, license notices, and necessary
+wire/status headers. Remove only proven unused runtime dependencies; remove
+superseded handwritten protocol code after both peers migrate and pass tests.
+The Fuchsia lowpan/component sources are not native runtime dependencies.
+
+Each completed gate must name its executable evidence and remaining limits.
+Installation on the host and reboot are not part of this work.
+
+Current review pass evidence
+--------------------------
+- 66 native runtime tests; C11 integration includes empty/anonymous calls,
+  explicit quotas, invalid option layouts, ABI version, and peer epitaphs.
+- 36 generator checks; 32 accepted projections compile/link and regenerate
+  identically. Rejection cannot publish partial outputs.
+- Native shared/static library build; installed C/C++ consumers run using
+  pkg-config flags, staged headers, shared libfidl_bsd and libchannel.
+- Upstream Go IR/C++/Rust/helper tests pass with the native-mode changes.
+- Runtime/libchannel archives are separate. Full dependency pruning remains.
+- Callback rebinding and replies through the wrong connection have regressions.
+Logs: /usr/obj/5bsd-fidl-runtime. The remaining unchecked gates are required.
+
+Additional API evidence:
+- Typed client/server endpoints in C/C++, including optional endpoints,
+  wrong descriptor types, exchange and subsequent native use.
+- Allocation failures before and after descriptor transfer, metadata allocation
+  rejection, and descriptor cleanup; exercised under ASan/UBSan.
+- Deterministic C keyword/helper-field escaping with a real C round trip.
+- Installed upstream header closure reduced from 183 to 79 headers.
+- Optional SDK install targets; staged schema generation and shared/static
+  C/C++ consumers are checked by test-installed.py.
+
+- Actual runtime/development/tools pkgbase archives: manifests, file ownership,
+  base/ports dependencies, extracted SDK generation and C/C++ consumers pass
+  (package-check-final.log). Full world and remaining package gates stay open.
+- Forbidden transfer (CAP_XFER_NONE), non-passable kqueue rejection, C caller
+  descriptor preservation, no callback on immediate rejection, and continued
+  connection use: transfer-test.log; 58 native tests plus C integration.
+
+C aggregate implementation pass:
+- Local nested structs, arrays/vectors (including bool and nested containers),
+  optional strings/vectors/boxed structs/unions, enums/bits, tables and unions.
+- Strict application-error results in C/C++; transport errno stays separate.
+- C dictionary and resource-collection round trips, borrowed/taken nested FDs,
+  absent/present-empty values, invalid bounds/enums/tags, cyclic input rejection.
+- Bounded conversion work/depth/FD count and stable descriptor-slot tracking.
+- Fault every response allocation in turn: one completion and no retained FD.
+- 59 runtime tests, C integration, 32 generator checks; 26 accepted projections
+  compile/link and regenerate identically. Logs: c-aggregate-test-2.log and
+  c-aggregate-generator.log. Open/flexible protocol support was added in the
+  later implementation pass recorded below.
+- Expanded C consumers pass against staged shared/static libraries and the
+  installed SDK; the native static C LIBADD probe also passes. Shared links
+  use the toolchain libc++ linker script rather than the non-PIC object archive.
+- Final runtime/dev/tools pkgbase archives include the new C type generator;
+  extracted SDK generation and C/C++ consumers pass (c-aggregate-packages-final.log).
+- ASan/UBSan: 59 runtime tests, C integration and 32 generator checks pass
+  (c-aggregate-sanitize.log). Manuals lint clean; book check has zero failures.
+
+Cross-library implementation pass:
+- --dependency-json supplies complete IR graphs; dependency-first generation,
+  imported declaration/layout validation, and rejection without partial output.
+- Types-only libraries export C definitions. Imports reference one owned C
+  layout and reuse private inline conversion headers rather than duplicating
+  layouts/converters in dependent protocol implementations.
+- Composed protocol client interoperates with its original base server; native
+  C round trips include imported resources, string vectors, enums, application
+  results, descriptor take and cleanup. C++ imported/composed APIs compile/link.
+- Eight graph checks and three public C11 headers pass in ordinary, ASan/UBSan,
+  installed-SDK and extracted-pkgbase runs. Existing 59 runtime tests, C suite,
+  32 generator checks and 26 accepted compile/link fixtures also pass.
+- Removed the per-response view heap allocation; view-construction failure
+  remains contained and completes once. Common natural implementation outputs
+  are compiled explicitly, including every dependent library.
+- Logs: cross-runtime-final.log, cross-sanitize.log, cross-installed.log,
+  cross-packages.log under /usr/obj/5bsd-fidl-runtime. Manual lint and book
+  validation pass. The remaining gates above still apply; open/flexible
+  interactions were implemented in the following pass.
+
+Flexible interaction implementation pass:
+- Native C/C++ closed/ajar/open protocol behavior; known methods tolerate
+  strictness changes, and unknown strict interactions close the connection.
+- Open unknown two-way methods receive the standard framework-error reply;
+  generated callbacks report EOPNOTSUPP without terminating the connection.
+- Optional unknown-method/event hooks, default decode-and-discard for known
+  unhandled events, and cleanup of every unknown attachment.
+- C round trips cover flexible empty/payload replies, application errors,
+  one-way calls, explicit/default events and repeated unknown calls.
+- Wrong-connection and repeated unknown replies fail; malformed framework
+  replies complete once and close, including unexpected attached descriptors.
+- 66 native tests, C integration, 36 generator checks (32 compile/link fixtures)
+  and eight dependency graph checks pass normally and under ASan/UBSan.
+- Staged shared/static C/C++ consumers, native static C LIBADD, and extracted
+  runtime/dev/tools pkgbase archives pass with the expanded C integration.
+- Logs: flexible-final.log, flexible-sanitize.log, flexible-installed.log,
+  flexible-packages.log. Header closure remains 79; manuals/book checks pass.
+- This closes the known interaction implementation gap. Full schema evolution
+  conformance, packaged tests/CI, provider migration, VM, soak/fuzz and
+  comparative performance gates remain incomplete.
+
+Native test/package integration pass:
+- bsd.test.mk builds C11 integration and the 66-case runtime suite; MK_TESTS
+  installs them and a Kyuafile, with MK_GOOGLETEST controlling the C++ suite.
+- libfidl-tests pkgbase registration, static executables, upstream notices,
+  and debug-subpackage registration (debug archive validation remains open).
+- Nine deterministic generated fixtures remove host Go/Python requirements
+  from world/test builds. Verification detects stale/missing/extra outputs;
+  a negative check confirms rejection leaves files unchanged.
+- Shared source-tree include configuration removes runtime/test duplication.
+- check-native orchestrates native/sanitizer suites and test-installed.py
+  --packages. Staged and extracted test packages each pass both Kyua programs.
+- The SDK check links fresh FIDL/libchannel with installed base libraries and
+  isolates its test objects under /usr/obj. An initial world-linked run hit
+  SIGSYS at syscall 1002 on the current kernel (native-tests.ktrace); full
+  world/kernel compatibility requires its own build and VM validation.
+- native-integrated.log records successful SDK/static-C, native tests, and
+  runtime/dev/tools/tests archive validation. Book/manual checks pass.
+- Provider migration, VM, conformance/fuzz/soak, performance and remaining
+  world/debug/manual package gates are still required.
+
+BSDTime C provider migration pass:
+- bsd.time.v1 generated C client/server bindings replace the active handwritten
+  wire parser. Public libtimecmp ABI 1 and its legacy validator symbol remain.
+- Negotiation precedes operations, within a shared five-second client deadline;
+  incompatible peers fail before writes, without fallback or automatic replay.
+- Held labels and settime tokens remain policy inputs; schemas grant no rights.
+  Signed slew fractions survive both directions; queues are explicitly bounded.
+- test-provider.py builds library/daemon and runs 19 provider/client cases,
+  eight configuration cases and six legacy ABI cases: all pass, none skipped.
+  Gate writes are simulated; capability channels and capmode are real.
+- test-bindings.py verifies 18 generated files: nine runtime, nine provider.
+- time-provider-final.log and provider-g3lhuxrq contain native test evidence.
+- Real gate_test, installed-plane activation, paired upgrade/rollback, provider
+  packaging, fairness/soak and comparative performance remain unverified.
+- test-provider.py --sanitize instruments the C client, generated bridge,
+  runtime/codecs, channel transport, provider, config parser and test drivers.
+  All 33 cases pass ASan/UBSan (time-provider-sanitize.log, provider-_t7mnz6y).
+  Installed libservice/support dependencies are not instrumented; LeakSanitizer
+  is unavailable. Clock gate calls remain simulated in the host-safe suite.
+- check-native now includes ordinary and sanitizer provider validation.
+- Expanded malformed-write coverage proves policy precedence: default-denied
+  and differently named clients receive EPERM; an authorized client receives
+  EINVAL for the same bad values. Native and ASan/UBSan runs pass all 33 cases
+  (time-provider-api.log and time-provider-sanitize-policy.log).
+- Staged C11/C++20 consumers compile/link/run with public installed headers,
+  shared/static timecmp/FIDL/channel libraries, constructor failure and real
+  native-channel creation/destruction. Fixed missing C linkage guards in the
+  channel and retained legacy-time headers. BSDTimectl builds against the new
+  library; installed-plane CLI operation remains a VM requirement.
+- Final artifacts: provider-bluijzav (native/staged API), provider-4jmoihmd
+  (sanitizers). Manuals lint clean; book has zero failures and two existing
+  dynamic sysctl patterns unverified. No host activation or clock writes.
+
+Component package/debug/manual validation pass:
+- Fixed missing provider-test ownership: bsdtime-tests and its debug subpackage
+  are registered; the previous runtime-tests tag had no package definition.
+- Registered libtimecmp-tests-dbg, added runtime/development dependencies, and
+  installed Fuchsia/UCL notices with the packages that embed that code.
+- Fresh debug-enabled component builds produce 18 pkgbase archives, 161 owned
+  files: FIDL runtime/dev/tools/man/debug/tests, timecmp runtime/dev/man/debug/
+  tests, provider tests and the BSDTime/BSDTimectl subset of runtime.
+- Complete METALOG-tagged file ownership, manual aliases, licenses, dependencies, DWARF
+  and matching GNU debuglink filenames/CRCs pass. Extracted tests pass both FIDL
+  programs (66 runtime cases plus C integration) and all 33 time/policy cases;
+  C11/C++20 consumers compile/link/run using extracted shared/static libraries.
+- Real-clock test default opt-in guard verified separately; this is not a pass
+  of the privileged real-gate test. No clock gates or host activation occurred.
+- test-provider.py --packages is now part of check-native. Existing archives can
+  be rechecked by test-provider-packages.py --verify-work without rebuilding.
+- Evidence: provider-packages.log, provider-packages-verify.log and the result
+  under provider-bluijzav/package-validation-gnhph5w4 in /usr/obj/5bsd-fidl-runtime.
+- This closes the component debug/manual/archive gap, not the full world/release
+  gate. Runtime archives are deliberately partial validation artifacts, never
+  published. VM activation/rollback, conformance/fuzz/soak and performance remain.
+- Final maintained entry point test-provider.py --packages passes end to end:
+  provider-packages-integrated.log; provider-tyeztfjz/package-validation-s756qmqh
+  contains the 18 archives, result.json and verification-45w2a17v results. The
+  current source manuals match their staged compressed payloads. Book/manual
+  checks pass (two existing dynamic sysctl patterns remain unverified).
+
+BSDTime multiplexing/resource review pass:
+- Replaced blocking whole-session service with kqueue multiplexing in the same
+  process holding the close-on-fork gate token. One ready peer cannot monopolize
+  the loop: dispatch batches are bounded at 64 messages and first-peer order
+  rotates. The listener remains monitored alongside accepted channels.
+- Fixed-size storage: 32 sessions total, eight per trusted label, 30-second idle
+  expiry, 16 queued replies/4096 bytes/no descriptors per peer. Label strings
+  are copied per session. Admission failures close only the new descriptor.
+- Quiescing destroys sessions before completing the provider handshake; no
+  clock write is replayed. This main-loop integration still requires VM proof.
+- Added five native adversarial/lifecycle cases: idle-peer and nonreading-peer
+  isolation, copied-label policy isolation, admission quotas/expiry, and 512
+  reuse cycles under a 256-descriptor ceiling with unchanged open-FD count.
+- All 24 provider + eight config + six legacy ABI cases pass normally and under
+  ASan/UBSan. Logs: provider-reactor-final.log (provider-klubh438),
+  provider-reactor-sanitize.log (provider-mm5hhmtl) in /usr/obj/5bsd-fidl-runtime.
+- This removes sequential-session starvation. Sustained soak/memory profiling,
+  performance comparisons, VM and the other unchecked gates remain required.
+- Backpressure review strengthened the nonreading-peer regression: a 256-call
+  burst could merely fill the kernel RX queue. The final test queues up to
+  2048 valid calls, flushes writes without consuming any replies, asserts the
+  saturated connection becomes terminal, and verifies continued healthy-peer
+  operations. All 38 cases still pass normally and under ASan/UBSan:
+  provider-reactor-backpressure.log (provider-lcja5zng),
+  provider-reactor-backpressure-sanitize.log (provider-bgxlsv43).
+- Package verification now derives counts from Kyua reports and rejects
+  unexpected skipped/expected-failure cases rather than hard-coding totals.
+- Final reactor packages pass all 18 archive checks, both FIDL programs and
+  38 time/provider cases, plus extracted C11/C++20 shared/static consumers.
+  Debug CRCs and the current provider manual payload match. Evidence:
+  provider-reactor-backpressure-packages.log and
+  provider-lcja5zng/package-validation-4s1lz2wn/verification-he3q2w5t.
+  No unexpected test skips; the explicit real-clock opt-in guard is verified
+  separately and does not count as real-gate VM validation.
+
+Provider resource-soak implementation pass:
+- Added an opt-in resource_soak auxiliary program to bsdtime-tests and a
+  maintained check-soak target (600 seconds native, 300 seconds ASan/UBSan).
+- Eight public-C clients, four idle peers, repeated reconnects in capability
+  mode, 256-FD limit, exact operation/policy accounting and per-epoch FD checks.
+  Gate writes and syslog are simulated; this does not exercise the live plane.
+- After ten seconds of warmup, live allocation growth is limited to 1 MiB;
+  native RSS high-water growth is limited to 64 MiB. ASan RSS is advisory.
+  A fresh child avoids launcher's pre-exec RSS; parent death kills the child.
+- Final helper smoke, six invalid-argument cases, and forced parent-death
+  cleanup pass: /usr/obj/5bsd-fidl-runtime/soak-helper-final.log,
+  soak-helper-corba7gt/result.json. This is not sustained-soak evidence.
+- An earlier 33-second smoke completed 8192 calls / 96 sessions without FD
+  growth: provider-soak-smoke.log.
+- Native 602.417 seconds: 159744 calls, 1872 sessions; live allocation baseline
+  181056 bytes, peak 182456; peak RSS 5184 -> 5292 KiB; FD count recovered.
+- Final ASan/UBSan helper 301.851 seconds: 77824 calls, 912 sessions; live
+  allocation fixed at 7756 bytes after warmup; FD count recovered. ASan RSS
+  rose with its quarantine and is recorded, not treated as a native RSS result.
+- The two runs and ordinary 38-case suites pass: provider-soak-native-final.log
+  and provider-soak-sanitize-final.log. These bounded measurements do not prove
+  multi-day operation, kernel memory stability or external gate/log behavior.
+- Final component packages pass: 18 archives, 163 owned files, split debug
+  CRCs/manuals, extracted FIDL programs and 38 time/provider cases, C11/C++20
+  shared/static consumers, and a one-second extracted auxiliary smoke.
+  Evidence: provider-oap3uigp/package-validation-pxyj7b5o/verification-84b_9kic.
+  Runtime archive is a provider-only validation subset, not deployable world.
+- Book and manuals describe the opt-in commands, thresholds and limitations.
+  BSDTimectl's malformed adjust synopsis is corrected without changing its
+  argument semantics. The conformance/fuzz, VM, full-world and comparative
+  performance gates remain required.
+
+Boolean vector decode fix and bounded fuzz (2026-10-10)
+-------------------------------------------------------
+- The natural vector<bool> decoder read an uninitialized local after an
+  invalid wire boolean (fuzz-6oemkrlv). fuchsia-natural-bool.patch
+  value-initializes both temporaries; a patched empty-staging import matches
+  all 4970 contrib/fuchsia entries in content and mode.
+- Codec.InvalidBooleanVectorClosesDescriptor rejects a malformed vector<bool>
+  carrying a descriptor and proves the descriptor closes. Sanitizer and fuzz
+  builds use -ftrivial-auto-var-init=pattern so this read fails
+  deterministically; the unpatched header fails the new test under UBSan.
+- Ordinary and ASan/UBSan suites: 67 C++ runtime cases plus C11, generator
+  and dependency checks pass. The original crash replays clean.
+- A 301-second coverage-guided run executed 8264571 inputs with no reports:
+  /usr/obj/5bsd-fidl-runtime/fuzz-9e_zdeb2/result.json. This is a bounded
+  run, not sustained fuzzing; upstream conformance vectors remain open.
+
+Conformance, evolution, world and VM pass (2026-10-10)
+------------------------------------------------------
+- Upstream GIDL conformance: the pinned conformance_suite is imported and
+  generated unchanged; 1,033 host encode/decode/failure cases pass through the
+  native transport's codec entry points, ordinary and ASan/UBSan. The 193
+  Zircon handle-object cases do not apply to native descriptors.
+- Schema evolution: one schema at evolve:1/evolve:2, separately built C peers
+  over native channels, all 8 pairings, ordinary and ASan/UBSan.
+- Defect fixed: fidl_bsd_connection_destroy() with a pending call ran the
+  completion while the C handle was already null (SEGV if the callback
+  queried its connection). Destroy now closes first; C regression added.
+- Dependency closure: nine unreachable upstream objects removed from
+  libfidl_bsd (29 -> 20 members); check-closure.py enforces reachability.
+  Shared/static SDK consumers, 32 generator fixtures and BSDTime pass.
+- World integration: libfidl moved into _prebuild_libs (libtimecmp linked
+  before libfidl_bsd was installed in WORLDTMP); develop/fidl.md added to the
+  installed book. Complete world + GENERIC-NODEBUG kernel built; base and
+  hardware packages built, checked and published as
+  16.snap20261010074756.complete (hardware work dir no longer inside the
+  colon-containing ABI path). Nothing was installed on the host.
+- Plane-on VM (tools/build/fuchsia/vm-provider.sh, run4): Capsule PID 1, all
+  12 core providers running including FIDL BSDTime; 41/41 Kyua cases with
+  vm_clock_test=true (real held settime gate), 0 skipped; live broker reads,
+  provider-side EPERM for unauthorized set/adjust, intended core-restart
+  denial, 200 sessions; clean guest poweroff, no panic or LOR.
+  Login sessions resolve names through a USER-domain channel; system.Time is
+  not visible = ["user"], so BSDTimectl gets ENOENT from a shell by design.
+  The VM run used a test-only visibility overlay to reach the live provider.
+- Performance (-O2, static, cross-process, 3x20000 calls, bench.json):
+  median p50 raw libchannel 9.0 us; C++/C FIDL 11.2-12.2 us (+2.3-3.0 us,
+  +25-33%); throughput -20 to -25%; +8-10 client and +5-8 server heap
+  allocations per call. libchannel itself allocates ~29 KiB per call.
+- Remaining: release-transaction upgrade/rollback across boot environments
+  needs the BSDInstall-based software-authority pipeline, which requires a
+  committed clean source tree; final review and licensing audit.
+- Sustained fuzz: 3,601 s, 97,597,755 inputs, no reports (fuzz-nkwpiqem).
+  The harness now waits (bounded) for delivery instead of one zero-timeout
+  poll, which could skip a decode on a loaded host.
+- libchannel: each receive used a 14 KiB buffer, and every dispatch paid one
+  more on its final EAGAIN (~29 KiB/call). Receives now use one block sized
+  from recent traffic, kept across EAGAIN and grown before dequeue: raw
+  864 B and 2/1 allocations per call; p50 8.1 us raw, 10.4-10.7 us FIDL.
+

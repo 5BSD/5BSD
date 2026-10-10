@@ -4,19 +4,26 @@
  * Copyright (c) 2026 Kory Heard
  */
 #ifndef _BSDTIME_TEST_H_
-#define	_BSDTIME_TEST_H_
+#define _BSDTIME_TEST_H_
 
 struct timecmp_config;
+struct bsdtime_server;
+int bsdtime_test_server_create(int, struct bsdtime_server **);
+int bsdtime_test_server_add(struct bsdtime_server *, int, const char *,
+    const struct timecmp_config *);
+int bsdtime_test_server_step(struct bsdtime_server *, int);
+unsigned bsdtime_test_server_count(struct bsdtime_server *);
+void bsdtime_test_server_destroy(struct bsdtime_server *);
 
 /*
  * Test-only entrypoints, compiled into BSDTime.c only under -DBSDTIME_TESTING
- * (main() is guarded out).  They let the ATF suite drive the real per-session
- * channel worker -- policy enforcement, protocol validation, GET/SET/ADJUST
+ * (main() is guarded out).  They let the ATF suite drive the real multiplexed
+ * session handlers -- policy enforcement, protocol validation, GET/SET/ADJUST
  * dispatch -- over an already-connected provider channel fd, and install a held
  * SYS_GATE_SETTIME token so the allow path can reach the gate.
  */
-int	bsdtime_test_serve_session(int fd, const char *label,
-	    const struct timecmp_config *config);
-void	bsdtime_test_set_token(int fd);
+int bsdtime_test_serve_session(int fd, const char *label,
+    const struct timecmp_config *config);
+void bsdtime_test_set_token(int fd);
 
 #endif /* _BSDTIME_TEST_H_ */

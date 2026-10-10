@@ -6,12 +6,25 @@ SHLIB_MAJOR=	1
 MAN=	libtimecmp.3
 MLINKS+=	libtimecmp.3 timecmp_client_open.3 \
 		libtimecmp.3 timecmp_client_close.3 \
+		libtimecmp.3 timecmp_client_create.3 \
 		libtimecmp.3 timecmp_get.3 \
 		libtimecmp.3 timecmp_set.3 \
 		libtimecmp.3 timecmp_adjust.3
-SRCS=	timecmp.c
+SRCS=	timecmp.c timecmp_legacy.c natural_types.cc common_types.cc bsd.cc
+CXXSTD= c++20
+WARNS?= 0
+.PATH: ${.CURDIR}/generated/fidl/bsd.time.v1/cpp ${.CURDIR}/generated/fidl/bsd.time.v1/c
+CFLAGS+= -I${.CURDIR}/generated
+.include "../libfidl/runtime-includes.mk"
+FILESGROUPS+= TIMECMP_SCHEMA
+TIMECMP_SCHEMA= timecmp.fidl
+TIMECMP_SCHEMADIR= /usr/share/fidl
+TIMECMP_SCHEMAPACKAGE= libtimecmp-dev
+FILESGROUPS+= TIMECMP_NOTICE
+TIMECMP_NOTICE= ${SRCTOP}/contrib/fuchsia/LICENSE ${SRCTOP}/contrib/fuchsia/PATENTS
+TIMECMP_NOTICEDIR= /usr/share/licenses/libtimecmp/fuchsia
 INCS=	timecmp.h timecmp_protocol.h
-LIBADD=	service
+LIBADD=	service fidl_bsd cplusplus
 CFLAGS+=	-I${SRCTOP}/lib/libservice
 STATIC_CFLAGS+=	${PICFLAG}
 

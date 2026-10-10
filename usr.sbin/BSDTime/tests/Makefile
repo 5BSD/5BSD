@@ -1,4 +1,4 @@
-PACKAGE=	runtime-tests
+PACKAGE=	bsdtime-tests
 TESTSDIR=	${TESTSBASE}/usr.sbin/BSDTime
 
 CFLAGS+=	-I${SRCTOP}/usr.sbin/BSDTime
@@ -8,21 +8,34 @@ ATF_TESTS_C+=	config_test
 SRCS.config_test=	config_test.c config.c
 LIBADD.config_test+=	ucl
 
-# Plane provider test: compiles BSDTime.c with -DBSDTIME_TESTING (main() guarded
-# out) and drives the real per-session channel worker over a mac_capability
-# channel.  Needs libtimecmp (protocol), libchannel (transport), libservice (the
-# gate + session), and libucl (config).
-ATF_TESTS_C+=	provider_test
-SRCS.provider_test=	provider_test.c BSDTime.c config.c
-CFLAGS.provider_test+=	-DBSDTIME_TESTING
-CFLAGS.provider_test+=	-I${SRCTOP}/lib/libtimecmp
-CFLAGS.provider_test+=	-I${SRCTOP}/lib/libchannel
-CFLAGS.provider_test+=	-I${SRCTOP}/lib/libservice
-CFLAGS.provider_test+=	-I${SRCTOP}/contrib/libucl/include
-CFLAGS.provider_test+=	-I${SRCTOP}/sys
-LIBADD.provider_test=	timecmp channel service ucl
-NO_SHARED.provider_test=	yes
+# Drive the real C provider and C client with simulated gate writes on the host.
+# The separate gate_test requires an explicitly selected disposable VM.
+ATF_TESTS_C+= provider_test gate_test
+CFLAGS+= -I${SRCTOP}/lib/libtimecmp -I${SRCTOP}/lib/libtimecmp/generated
+CFLAGS+= -I${SRCTOP}/lib/libfidl/include -I${SRCTOP}/lib/libchannel
+CFLAGS+= -I${SRCTOP}/lib/libservice -I${SRCTOP}/sys
+# Explicit-duration auxiliary program; ordinary Kyua runs remain bounded.
+PROGS+= resource_soak
+BINDIR_resource_soak= ${TESTSDIR}
+MAN.resource_soak=
+.for test in provider_test gate_test resource_soak
+SRCS.${test}= ${test}.c BSDTime.c config.c
+CFLAGS.${test}+= -DBSDTIME_TESTING
+LIBADD.${test}= timecmp fidl_bsd channel service ucl
+NO_SHARED.${test}= yes
+.endfor
+TEST_METADATA.provider_test+= timeout="120"
+TEST_METADATA.gate_test+= timeout="120"
+LDFLAGS.resource_soak+= -Wl,--wrap=service_system_settime,--wrap=service_system_adjtime,--wrap=syslog
+LIBADD.resource_soak+= pthread
+LDFLAGS.provider_test+= -Wl,--wrap=service_system_settime,--wrap=service_system_adjtime
 
-.PATH:	${SRCTOP}/usr.sbin/BSDTime
+# Static provider tests embed upstream codec and UCL code.
+FILESGROUPS+= FIDL_NOTICE UCL_NOTICE
+FIDL_NOTICE= ${SRCTOP}/contrib/fuchsia/LICENSE ${SRCTOP}/contrib/fuchsia/PATENTS
+FIDL_NOTICEDIR= /usr/share/licenses/bsdtime-tests/fuchsia
+UCL_NOTICE= ${SRCTOP}/contrib/libucl/COPYING
+UCL_NOTICEDIR= /usr/share/licenses/bsdtime-tests/libucl
 
+.PATH: ${SRCTOP}/usr.sbin/BSDTime
 .include <bsd.test.mk>

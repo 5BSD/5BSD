@@ -1,0 +1,33 @@
+--- a/fuchsia/tools/fidl/gidl/lib/ir/util.go
++++ b/fuchsia/tools/fidl/gidl/lib/ir/util.go
+@@ -8,7 +8,7 @@
+ 	"fmt"
+ 	"reflect"
+ 
+-	"golang.org/x/exp/slices"
++	"slices"
+ )
+ 
+ func Merge(input []All) All {
+--- a/fuchsia/tools/fidl/gidl/lib/parser/parser.go
++++ b/fuchsia/tools/fidl/gidl/lib/parser/parser.go
+@@ -14,7 +14,7 @@
+ 
+ 	"go.fuchsia.dev/fuchsia/tools/fidl/gidl/lib/ir"
+ 	"go.fuchsia.dev/fuchsia/tools/fidl/lib/fidlgen"
+-	"golang.org/x/exp/slices"
++	"slices"
+ )
+ 
+ type Parser struct {
+--- a/fuchsia/tools/fidl/gidl/cmd/gidl_audit/main.go
++++ b/fuchsia/tools/fidl/gidl/cmd/gidl_audit/main.go
+@@ -12,7 +12,7 @@
+ 
+ 	"go.fuchsia.dev/fuchsia/tools/fidl/gidl/lib/ir"
+ 	"go.fuchsia.dev/fuchsia/tools/fidl/gidl/lib/parser"
+-	"golang.org/x/exp/slices"
++	"slices"
+ )
+ 
+ var corpusPaths = map[ir.OutputType]string{

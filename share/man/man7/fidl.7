@@ -1,0 +1,140 @@
+.\" SPDX-License-Identifier: BSD-2-Clause
+.Dd October 9, 2026
+.Dt FIDL 7
+.Os
+.Sh NAME
+.Nm fidl
+.Nd experimental Fuchsia Interface Definition Language integration
+.Sh DESCRIPTION
+FIDL defines service protocols in schemas and generates language bindings
+for encoding, decoding, and dispatching messages.
+The native 5BSD backend combines upstream natural types and codecs with
+.Xr libchannel 3 .
+Generated C++ adapters and a generated C ABI use BSD capability descriptors
+as attachments while retaining kernel enforcement of their authority.
+.Ss Runtime
+The compiler and generators run at build time.
+Their output uses library support while a client or server runs;
+this is the FIDL runtime.
+Generated code supplies protocol-specific types and method handling.
+Shared code supports validation, request and reply tracking, transport,
+dispatch, and resource cleanup.
+On 5BSD these operations use native channels, descriptors, and kqueue.
+No Zircon kernel, syscall emulation, Fuchsia dispatcher, or central routing
+daemon is needed by this backend.
+.Ss Status
+As of October 9, 2026, the compiler, formatter, linter, C++ and Rust generators,
+native C++ runtime, and generated C bridge build on 5BSD.
+The native backend is experimental and supports a subset of FIDL schemas.
+BSDTime and libtimecmp now use FIDL in the source tree while preserving the
+public C library ABI.
+Installed-plane activation and provider VM validation remain incomplete.
+Native runtime and development-file build targets and packages are registered.
+Staged C/C++ consumers and optional SDK generation are tested.
+Full world/package and external tool dependency validation remain incomplete.
+Rust runtime bindings remain unported.
+.Pp
+Use existing typed client libraries and
+.Xr libservice 3
+for production applications.
+Native backend contracts and supported schemas are described in
+.Xr libfidl_bsd 3
+and
+.Pa /usr/src/lib/libfidl/README .
+.Ss Relationship to current IPC
+Current services define wire structures and validate their message fields
+and descriptor slots explicitly.
+FIDL can replace repeated protocol definitions and parsing with schemas
+and generated bindings.
+It does not provide application authorization or delivery guarantees.
+.Pp
+The existing asynchronous calls, bounded queues, cancellation, and native
+lifecycle machinery of
+.Xr libchannel 3
+support the new adapters.
+The discovery and admission responsibilities of
+.Xr libservice 3
+and
+.Xr switchboard 8
+remain in place.
+Importing FIDL does not supply Fuchsia's Component Manager or service namespace.
+.Pp
+There is no measured 5BSD performance advantage over the current stack.
+The expected benefit is protocol maintenance and shared validation.
+Costs include the binding runtime, build dependencies, upstream maintenance,
+and preserving the C API boundary.
+.Sh CAPABILITY SEMANTICS
+Native channel attachments carry descriptors; integers in payload bytes
+cannot designate authority in another process.
+The backend checks message shape, handle counts, native types and rights,
+and closes unclaimed attachments on rejection or shutdown.
+Descriptor zero is valid.
+READ and WRITE constraints have explicit Capsicum mappings.
+The kernel continues to enforce transfer ceilings, revocation, and locked
+exec and fork restrictions.
+.Pp
+FIDL transaction IDs remain separate from native 64-bit reply tokens.
+Kernel sender and software-authority metadata remains attached to the request.
+Providers must still authorize operations using held capabilities;
+a client-supplied identity or method name grants no authority.
+.Sh LIMITATIONS
+Rust runtime bindings remain an implementation gap.
+The native C/C++ bindings support closed, ajar, and open protocols, including
+flexible interactions; see
+.Xr libfidl_bsd 3
+for unknown-method and event behavior.
+Zircon-only object types require a real native capability contract before
+being supported.
+Unsupported schemas and mappings fail closed.
+.Sh VALIDATION
+The initial compiler run passed 2,203 enabled tests with four upstream tests
+remaining disabled; generator tests also passed.
+The native runtime suite passes 66 tests, a C11 client/server integration
+test, and 36 generator contract checks.
+Eight dependency-graph checks and a three-library C round trip also pass,
+including generation and compilation with extracted pkgbase SDK files.
+ASan and UBSan pass these suites.
+LeakSanitizer is unavailable on this host; descriptor leaks are checked
+explicitly through native pipe lifetime tests.
+.Pp
+With
+.Va MK_TESTS ,
+the native build installs tests and a Kyuafile under
+.Pa /usr/tests/lib/libfidl ,
+owned by the libfidl-tests package.
+The C++ runtime suite also requires
+.Va MK_GOOGLETEST .
+The installed static tests need no host compiler or source checkout.
+Run them with Kyua on a matching 5BSD kernel.
+The
+.Cm check-native
+target in
+.Pa tools/build/fuchsia
+runs native, sanitizer, SDK and extracted-package checks.
+.Pp
+Installed-plane activation, complete capability-plane VM validation, and
+full world/release-package integration remain required.
+Standalone backend tests do not establish a completed service migration.
+.Sh FILES
+.Bl -tag -width indent
+.It Pa /usr/src/contrib/fuchsia
+Selected upstream sources and notices.
+.It Pa /usr/src/lib/libfidl
+Native backend, C bridge, contracts, and tests.
+.It Pa /usr/src/tools/build/fuchsia
+Build and generation tools, pinned import manifest, local patches, and
+validation records.
+.It Pa /usr/src/docs/book/src/develop/fidl.md
+Comparison with current IPC, runtime explanation, and migration status.
+.El
+.Sh SEE ALSO
+.Xr fidlgen-bsd 1 ,
+.Xr cap_rights_limit 2 ,
+.Xr cap_xfer_limit 2 ,
+.Xr libchannel 3 ,
+.Xr libfidl_bsd 3 ,
+.Xr libservice 3 ,
+.Xr capsicum 4 ,
+.Xr mac_capability_channel 4 ,
+.Xr component 7 ,
+.Xr switchboard 8

@@ -1,0 +1,6 @@
+{
+  "path": "fuchsia/third_party/go-cmp",
+  "url": "https://codeload.github.com/google/go-cmp/tar.gz/9b12f366a942ebc7254abc7f32ca05068b455fb7",
+  "archive_sha256": "c81581c6613dce036c54e569260feea583ca7a09a8d8c411622e0c179fc79047",
+  "commit": "9b12f366a942ebc7254abc7f32ca05068b455fb7"
+}

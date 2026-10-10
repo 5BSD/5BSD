@@ -70,6 +70,7 @@
 # Part VI: Writing Software for 5BSD
 
 - [Choosing What to Write](develop/choosing.md)
+- [FIDL and Capability IPC](develop/fidl.md)
 - [A Capability Provider](develop/provider.md)
 - [A Consumer Application](develop/consumer-app.md)
 - [A Per-User Agent](develop/per-user-agent.md)

@@ -1,0 +1,8 @@
+// SPDX-License-Identifier: BSD-2-Clause
+library cross.app;
+using cross.types;
+using cross.shared;
+closed protocol App {
+    compose cross.shared.Base;
+    strict Echo(cross.types.Payload) -> (cross.types.Payload);
+};

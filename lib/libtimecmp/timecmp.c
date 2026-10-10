@@ -1,228 +1,318 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
- *
  * Copyright (c) 2026 Kory Heard
  *
- * libtimecmp implementation.  See timecmp.h and timecmp_protocol.h.
+ * C application API for system.Time, using generated bsd.time.v1 bindings.
  */
 #include <sys/capsicum.h>
+#include <sys/time.h>
 
 #include <errno.h>
 #include <fcntl.h>
+#include <fidl/bsd.time.v1/c/bsd.h>
+#include <libservice.h>
+#include <limits.h>
 #include <stdbool.h>
 #include <stdlib.h>
-#include <string.h>
 #include <unistd.h>
-
-#include <libservice.h>
 
 #include "timecmp.h"
 
-union timecmp_buffer {
-	max_align_t	align;
-	uint8_t		bytes[TIMECMP_MAX_MESSAGE];
-};
-
 struct timecmp_client {
-	struct service_session	*session;
-	pid_t			 owner;
+	struct fidl_bsd_connection *connection;
+	pid_t owner;
+	bool negotiated;
 };
-
-int
-timecmp_validate_message(const struct timecmp_msg *msg, size_t length,
-    enum timecmp_message_role role)
-{
-
-	if (msg == NULL || length < sizeof(*msg))
-		return (-1);
-	if (msg->magic != TIMECMP_MAGIC)
-		return (-1);
-	if (msg->flags != 0)		/* reserved header field, must be zero */
-		return (-1);
-	if (length != sizeof(*msg) &&
-	    length != sizeof(*msg) + sizeof(struct timecmp_time))
-		return (-1);
-	switch (msg->opcode) {
-	case TIMECMP_OP_GET:
-	case TIMECMP_OP_SET:
-	case TIMECMP_OP_ADJUST:
-		break;
-	default:
-		return (-1);
-	}
-	if (role == TIMECMP_MESSAGE_REPLY && msg->status > 0)
-		return (-1);
-	return (0);
-}
-
-/*
- * One request/reply exchange.  request/req_len is the caller's built message;
- * on success reply holds the reply and *reply_len its length.
- */
+struct completion {
+	bool done, malformed;
+	int error;
+	struct timespec time;
+	struct timeval delta;
+};
 static int
-call(struct timecmp_client *client, const void *request, size_t req_len,
-    union timecmp_buffer *reply, size_t *reply_len)
+failure(int error)
 {
-	struct service_call_options options = SERVICE_CALL_OPTIONS_INITIALIZER;
-	struct service_message outgoing;
-	struct service_reply incoming;
-	const struct timecmp_msg *qmsg, *rmsg;
-
-	if (client == NULL)
-		return (errno = EINVAL, -1);
-	if (client->owner != getpid())
-		return (errno = ECHILD, -1);
-	memset(&outgoing, 0, sizeof(outgoing));
-	outgoing.size = sizeof(outgoing);
-	outgoing.data = __DECONST(void *, request);
-	outgoing.length = req_len;
-	memset(&incoming, 0, sizeof(incoming));
-	incoming.size = sizeof(incoming);
-	incoming.data = reply;
-	incoming.capacity = sizeof(*reply);
-	options.timeout_ms = 5000;
-	if (service_session_call(client->session, &outgoing, &incoming,
-	    &options) == -1)
-		return (-1);
-	qmsg = request;
-	rmsg = (const void *)reply->bytes;
-	if (incoming.nfds != 0 ||
-	    timecmp_validate_message(rmsg, incoming.length,
-	    TIMECMP_MESSAGE_REPLY) == -1 || rmsg->opcode != qmsg->opcode) {
-		(void)service_session_fail(client->session, EPROTO);
-		return (errno = EPROTO, -1);
+	errno = error;
+	return (-1);
+}
+static void
+bad_reply(struct completion *result)
+{
+	result->malformed = true;
+	result->error = EPROTO;
+}
+static void
+domain_error(struct completion *result, uint32_t error)
+{
+	if (error == 0 || error > ELAST)
+		bad_reply(result);
+	else
+		result->error = (int)error;
+}
+static void
+info_reply(void *context, int error, struct bsd_time_v1_ProtocolInfo *value)
+{
+	struct completion *result = context;
+	result->done = true;
+	result->error = error;
+	if (!error &&
+	    (value == NULL || value->wire_version != TIMECMP_WIRE_VERSION)) {
+		result->malformed = true;
+		result->error = EPROTONOSUPPORT;
 	}
-	if (rmsg->status != 0)
-		return (errno = -rmsg->status, -1);
-	if (reply_len != NULL)
-		*reply_len = incoming.length;
+}
+static void
+get_reply(void *context, int error, struct bsd_time_v1_Time_Get_Result *value)
+{
+	struct completion *result = context;
+	result->done = true;
+	result->error = error;
+	if (error)
+		return;
+	if (value == NULL) {
+		bad_reply(result);
+		return;
+	}
+	if (value->tag == bsd_time_v1_Time_Get_Result_err_tag) {
+		domain_error(result, value->value.err);
+		return;
+	}
+	if (value->tag != bsd_time_v1_Time_Get_Result_response_tag ||
+	    value->value.response.nanoseconds < 0 ||
+	    value->value.response.nanoseconds > 999999999 ||
+	    (int64_t)(time_t)value->value.response.seconds !=
+		value->value.response.seconds) {
+		bad_reply(result);
+		return;
+	}
+	result->time.tv_sec = (time_t)value->value.response.seconds;
+	result->time.tv_nsec = value->value.response.nanoseconds;
+}
+static void
+set_reply(void *context, int error, struct bsd_time_v1_Time_Set_Result *value)
+{
+	struct completion *result = context;
+	result->done = true;
+	result->error = error;
+	if (error)
+		return;
+	if (value == NULL)
+		bad_reply(result);
+	else if (value->tag == bsd_time_v1_Time_Set_Result_err_tag)
+		domain_error(result, value->value.err);
+	else if (value->tag != bsd_time_v1_Time_Set_Result_response_tag)
+		bad_reply(result);
+}
+static void
+adjust_reply(void *context, int error,
+    struct bsd_time_v1_Time_Adjust_Result *value)
+{
+	struct completion *result = context;
+	result->done = true;
+	result->error = error;
+	if (error)
+		return;
+	if (value == NULL) {
+		bad_reply(result);
+		return;
+	}
+	if (value->tag == bsd_time_v1_Time_Adjust_Result_err_tag) {
+		domain_error(result, value->value.err);
+		return;
+	}
+	if (value->tag != bsd_time_v1_Time_Adjust_Result_response_tag ||
+	    value->value.response.microseconds < -999999 ||
+	    value->value.response.microseconds > 999999 ||
+	    (int64_t)(time_t)value->value.response.seconds !=
+		value->value.response.seconds) {
+		bad_reply(result);
+		return;
+	}
+	result->delta.tv_sec = (time_t)value->value.response.seconds;
+	result->delta.tv_usec = value->value.response.microseconds;
+}
+static int
+await(struct timecmp_client *client, struct completion *result,
+    const struct timespec *deadline)
+{
+	while (!result->done) {
+		struct timespec now;
+		int error;
+		if (clock_gettime(CLOCK_MONOTONIC, &now) == -1) {
+			error = errno;
+			fidl_bsd_connection_close(client->connection, error);
+			return (failure(error));
+		}
+		int64_t milliseconds = (deadline->tv_sec - now.tv_sec) *
+			INT64_C(1000) +
+		    (deadline->tv_nsec - now.tv_nsec) / 1000000;
+		if (milliseconds <= 0) {
+			// Closing completes pending callbacks before their
+			// stack context expires.
+			fidl_bsd_connection_close(client->connection,
+			    ETIMEDOUT);
+			return (failure(ETIMEDOUT));
+		}
+		error = fidl_bsd_connection_poll(client->connection,
+		    milliseconds > INT_MAX ? INT_MAX : (int)milliseconds);
+		if (error && !result->done) {
+			fidl_bsd_connection_close(client->connection, error);
+			return (failure(error));
+		}
+	}
+	if (result->malformed)
+		fidl_bsd_connection_close(client->connection, result->error);
+	return (result->error ? failure(result->error) : 0);
+}
+static int
+begin(struct timecmp_client *client, struct timespec *deadline)
+{
+	struct completion result = { 0 };
+	struct fidl_bsd_empty empty = { 0 };
+	uint32_t txid;
+	int error;
+	if (client == NULL)
+		return (failure(EINVAL));
+	if (client->owner != getpid())
+		return (failure(ECHILD));
+	if ((error = fidl_bsd_connection_error(client->connection)) != 0)
+		return (failure(error));
+	if (clock_gettime(CLOCK_MONOTONIC, deadline) == -1)
+		return (-1);
+	deadline->tv_sec += 5;
+	if (!client->negotiated) {
+		error = bsd_time_v1_Time_GetProtocolInfo(client->connection,
+		    &empty, info_reply, &result, &txid);
+		if (error)
+			return (failure(error));
+		if (await(client, &result, deadline) == -1)
+			return (-1);
+		client->negotiated = true;
+	}
 	return (0);
 }
-
-static void
-build_header(union timecmp_buffer *buf, uint16_t opcode)
-{
-	struct timecmp_msg *msg = (void *)buf->bytes;
-
-	memset(buf, 0, sizeof(*buf));
-	msg->magic = TIMECMP_MAGIC;
-	msg->opcode = opcode;
-}
-
 int
-timecmp_client_open(struct timecmp_client **clientp)
+timecmp_client_create(int fd, struct timecmp_client **clientp)
 {
 	struct timecmp_client *client;
-	int error, fd, owned;
-
+	int error, owned;
 	if (clientp == NULL)
-		return (errno = EINVAL, -1);
+		return (failure(EINVAL));
 	*clientp = NULL;
-	fd = -1;
-	if (service_open(TIMECMP_INTERFACE, &fd) == -1)
-		return (-1);
-	if (cap_xfer_limit(fd, CAP_XFER_NONE) == -1 ||
-	    cap_cloexec_limit(fd, CAP_CLOEXEC_LOCKED) == -1) {
-		error = errno;
-		(void)close(fd);
-		return (errno = error, -1);
-	}
-	owned = fcntl(fd, F_DUPFD_CLOEXEC, 0);
-	error = owned == -1 ? errno : 0;
-	(void)close(fd);
-	if (error != 0)
-		return (errno = error, -1);
 	client = calloc(1, sizeof(*client));
-	if (client == NULL) {
-		(void)close(owned);
+	if (client == NULL)
 		return (-1);
-	}
-	client->owner = getpid();
-	if (service_session_create(owned, &client->session) == -1) {
+	owned = fcntl(fd, F_DUPFD_CLOEXEC, 0);
+	if (owned < 0 || cap_xfer_limit(owned, CAP_XFER_NONE) == -1) {
 		error = errno;
-		(void)close(owned);
+		if (owned >= 0)
+			close(owned);
 		free(client);
-		return (errno = error, -1);
+		return (failure(error));
 	}
+	struct fidl_bsd_options options = FIDL_BSD_OPTIONS_INITIALIZER;
+	options.max_pending_requests = 1;
+	options.max_queued_messages = 2;
+	options.max_queued_bytes = 1024;
+	options.max_queued_fds = 0;
+	error = fidl_bsd_connection_create_with_options(owned, FIDL_BSD_CLIENT,
+	    &options, &client->connection);
+	if (error) {
+		close(owned);
+		free(client);
+		return (failure(error));
+	}
+	close(fd);
+	client->owner = getpid();
 	*clientp = client;
 	return (0);
 }
-
+int
+timecmp_client_open(struct timecmp_client **clientp)
+{
+	int fd, error;
+	if (clientp == NULL)
+		return (failure(EINVAL));
+	*clientp = NULL;
+	if (service_open(TIMECMP_INTERFACE, &fd) == -1)
+		return (-1);
+	if (timecmp_client_create(fd, clientp) == -1) {
+		error = errno;
+		close(fd);
+		return (failure(error));
+	}
+	return (0);
+}
 void
 timecmp_client_close(struct timecmp_client *client)
 {
-
 	if (client == NULL)
 		return;
-	if (client->owner == getpid() && client->session != NULL)
-		service_session_close(client->session);
+	// Locked close-on-fork descriptors may have been reused in the child.
+	if (client->owner == getpid())
+		fidl_bsd_connection_destroy(client->connection);
 	free(client);
 }
-
 int
 timecmp_get(struct timecmp_client *client, struct timespec *ts)
 {
-	union timecmp_buffer request, reply;
-	const struct timecmp_time *body;
-	size_t reply_len;
-
+	struct completion result = { 0 };
+	struct timespec deadline;
+	struct fidl_bsd_empty empty = { 0 };
+	uint32_t txid;
+	int error;
 	if (ts == NULL)
-		return (errno = EINVAL, -1);
-	build_header(&request, TIMECMP_OP_GET);
-	if (call(client, &request, sizeof(struct timecmp_msg), &reply,
-	    &reply_len) == -1)
+		return (failure(EINVAL));
+	if (begin(client, &deadline) == -1)
 		return (-1);
-	if (reply_len != sizeof(struct timecmp_msg) + sizeof(*body))
-		return (errno = EPROTO, -1);
-	body = (const void *)(reply.bytes + sizeof(struct timecmp_msg));
-	ts->tv_sec = (time_t)body->sec;
-	ts->tv_nsec = body->nsec;
+	error = bsd_time_v1_Time_Get(client->connection, &empty, get_reply,
+	    &result, &txid);
+	if (error)
+		return (failure(error));
+	if (await(client, &result, &deadline) == -1)
+		return (-1);
+	*ts = result.time;
 	return (0);
 }
-
 int
 timecmp_set(struct timecmp_client *client, const struct timespec *ts)
 {
-	union timecmp_buffer request, reply;
-	struct timecmp_time *body;
-
+	struct completion result = { 0 };
+	struct timespec deadline;
+	uint32_t txid;
+	int error;
 	if (ts == NULL || ts->tv_nsec < 0 || ts->tv_nsec > 999999999)
-		return (errno = EINVAL, -1);
-	build_header(&request, TIMECMP_OP_SET);
-	body = (void *)(request.bytes + sizeof(struct timecmp_msg));
-	body->sec = ts->tv_sec;
-	body->nsec = (int32_t)ts->tv_nsec;
-	body->present = 1;
-	return (call(client, &request,
-	    sizeof(struct timecmp_msg) + sizeof(*body), &reply, NULL));
+		return (failure(EINVAL));
+	if (begin(client, &deadline) == -1)
+		return (-1);
+	struct bsd_time_v1_Timestamp value = { ts->tv_sec,
+		(int32_t)ts->tv_nsec };
+	error = bsd_time_v1_Time_Set(client->connection, &value, set_reply,
+	    &result, &txid);
+	return (error ? failure(error) : await(client, &result, &deadline));
 }
-
 int
 timecmp_adjust(struct timecmp_client *client, const struct timeval *delta,
     struct timeval *old)
 {
-	union timecmp_buffer request, reply;
-	const struct timecmp_time *rbody;
-	struct timecmp_time *body;
-	size_t reply_len;
-
-	if (delta == NULL || delta->tv_usec < -999999 || delta->tv_usec > 999999)
-		return (errno = EINVAL, -1);
-	build_header(&request, TIMECMP_OP_ADJUST);
-	body = (void *)(request.bytes + sizeof(struct timecmp_msg));
-	body->sec = delta->tv_sec;
-	body->nsec = (int32_t)delta->tv_usec * 1000;
-	body->present = 1;
-	if (call(client, &request,
-	    sizeof(struct timecmp_msg) + sizeof(*body), &reply,
-	    &reply_len) == -1)
+	struct completion result = { 0 };
+	struct timespec deadline;
+	uint32_t txid;
+	int error;
+	if (delta == NULL || delta->tv_usec < -999999 ||
+	    delta->tv_usec > 999999)
+		return (failure(EINVAL));
+	if (begin(client, &deadline) == -1)
 		return (-1);
-	if (old != NULL) {
-		if (reply_len != sizeof(struct timecmp_msg) + sizeof(*rbody))
-			return (errno = EPROTO, -1);
-		rbody = (const void *)(reply.bytes + sizeof(struct timecmp_msg));
-		old->tv_sec = (time_t)rbody->sec;
-		old->tv_usec = rbody->present ? rbody->nsec / 1000 : 0;
-	}
+	struct bsd_time_v1_Delta value = { delta->tv_sec,
+		(int32_t)delta->tv_usec };
+	error = bsd_time_v1_Time_Adjust(client->connection, &value,
+	    adjust_reply, &result, &txid);
+	if (error)
+		return (failure(error));
+	if (await(client, &result, &deadline) == -1)
+		return (-1);
+	if (old != NULL)
+		*old = result.delta;
 	return (0);
 }

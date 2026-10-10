@@ -79,6 +79,7 @@ the end rather than listed one by one.
 | `kern.mac_capability.instances` | counter | | Active service instances | same |
 | `kern.mac_capability.service_names` | string RD | | Newline-separated registered service names | same |
 | `kern.mac_capability.service_details` | string RD | | Services with flags, limits and instance counts | same |
+| `kern.mac_capability.direct_delivery` | int RW, tunable | 1 | Forwarding services (the channel bearer) deliver straight to the peer queue when nothing earlier is queued; 0 forces the taskqueue path | `sys/dev/mac_capability/mac_capability_dev.c` |
 | `kern.mac_capability_capprotect.max_auth` | uint RDTUN | 4096 | Cap on outstanding capprotect authorizations (0 = unlimited) | `mac_capability_capprotect.c` |
 | `kern.mac_capability_capprotect.auth_count` | uint RD | | Current authorizations | same |
 | `kern.mac_capability_coalition.count` | uint RD | | Active coalitions | `mac_capability_coalition.c` |

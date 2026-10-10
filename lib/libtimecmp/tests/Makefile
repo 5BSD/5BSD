@@ -5,9 +5,9 @@ CFLAGS+=	-I${SRCTOP}/lib/libtimecmp
 CFLAGS+=	-I${SRCTOP}/lib/libservice
 
 ATF_TESTS_C+=	protocol_test
-SRCS.protocol_test=	protocol_test.c timecmp.c
+SRCS.protocol_test=	protocol_test.c
 NO_SHARED.protocol_test=	yes
-LIBADD.protocol_test+=	service
+LIBADD.protocol_test+=	timecmp
 
 .PATH: ${SRCTOP}/lib/libtimecmp
 

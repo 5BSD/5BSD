@@ -1,0 +1,646 @@
+{
+  "date": "2026-10-10",
+  "platform": "5BSD amd64, native",
+  "fidl_compiler": {
+    "passed": 2203,
+    "upstream_disabled": 4
+  },
+  "fidl_generators": [
+    "IR library",
+    "C++ generator",
+    "Rust generator",
+    "end-to-end helper"
+  ],
+  "fd_transport": "PASS: fork, cap_enter, kernel sender stamp, rights attenuation, transfer-once rejection",
+  "openthread_ctest": {
+    "passed": 84,
+    "failed": 0
+  },
+  "openthread_posix": "Build and CLI help smoke passed; internal UDP backend; no radio validation",
+  "matter_idl": {
+    "passed": 120,
+    "failed": 0
+  },
+  "source_reproduction": {
+    "fuchsia": 4970,
+    "openthread": 4482,
+    "connectedhomeip": 26253
+  },
+  "gitiles_timestamp_independence": "Verified against two distinct archive exports",
+  "not_delivered": [
+    "capability service IPC replacement",
+    "Fuchsia lowpan service integration",
+    "Matter native device/controller platform",
+    "radio/commissioning validation",
+    "production capability-plane VM validation of migrated FIDL services",
+    "full world/release-package integration, including target ports dependency closure",
+    "release-transaction upgrade/rollback VM validation"
+  ],
+  "logs": "/usr/obj/5bsd-fuchsia-import",
+  "fidl_native_runtime": {
+    "status": "experimental native libchannel backend; BSDTime/libtimecmp source migration tested, installed-plane activation and VM validation pending",
+    "runtime_tests": {
+      "passed": 67,
+      "failed": 0,
+      "skipped": 0
+    },
+    "c11_integration": "PASS: generated calls/replies/events, empty and anonymous payloads, typed endpoints, borrowed sends/take, deferred replies, cancellation, bounds, options/ABI/epitaph APIs, creation failure ownership, C name escaping, forbidden transfer preserves caller descriptor and suppresses callback, dictionaries/nested collections, optional presence, tables/unions, enums/bits, strict application errors, cyclic input rejection, imported types, composed/base protocol interoperability, flexible empty/payload/application-error replies, unknown-interaction hooks, nonterminal EOPNOTSUPP and event defaults",
+    "generator_contracts": {
+      "passed": 36,
+      "failed": 0,
+      "accepted_c_headers": "compiled with cc -std=c11 -pedantic-errors -fsyntax-only",
+      "accepted_compiled_linked": 32,
+      "deterministic_regeneration": "PASS for all accepted fixtures",
+      "rejected_partial_outputs": "none"
+    },
+    "sanitizers": {
+      "address": "PASS",
+      "undefined_behavior": "PASS",
+      "leak": "UNAVAILABLE on this host; explicitly disabled; descriptor lifetime checked with pipe EOF tests"
+    },
+    "commands": [
+      "python3.12 tools/build/fuchsia/build-runtime.py --test",
+      "python3.12 tools/build/fuchsia/build-runtime.py --test --sanitize",
+      "python3.12 tools/build/fuchsia/test-installed.py",
+      "python3.12 tools/build/fuchsia/update-runtime-headers.py --check",
+      "python3.12 tools/build/fuchsia/test-bindings.py",
+      "python3.12 tools/build/fuchsia/test-installed.py --packages",
+      "python3.12 tools/build/fuchsia/test-provider.py",
+      "python3.12 tools/build/fuchsia/test-provider.py --sanitize",
+      "python3.12 tools/build/fuchsia/test-provider.py --packages",
+      "make -C tools/build/fuchsia check-soak"
+    ],
+    "logs": "/usr/obj/5bsd-fidl-runtime",
+    "remaining_schema_gaps": [
+      "Rust runtime bindings"
+    ],
+    "native_constraints": [
+      "single-thread connection ownership and dispatch",
+      "14,336-byte messages and 32 attachments",
+      "supported native types: generic descriptor, socket, capability channel",
+      "explicit rights mappings: READ, WRITE, SAME_RIGHTS",
+      "C pre-encoding conversion work budget: twice the native message-byte limit; maximum conversion depth 64"
+    ],
+    "installed_binary_api": {
+      "status": "PASS",
+      "consumer_languages": [
+        "C11",
+        "C++20"
+      ],
+      "runtime_link_modes": [
+        "shared",
+        "static"
+      ],
+      "c_linker": "cc",
+      "native_static_c_libadd": "PASS",
+      "source_tree_header_dependencies": 0,
+      "upstream_support_headers": 79,
+      "generation": "staged fidlc plus matching installed fidlgen-bsd/private generator",
+      "incomplete_sdk": "fails at missing pinned private generator",
+      "logs": "/usr/obj/5bsd-fidl-runtime/native-integrated.log",
+      "coverage": "Includes the expanded C collection/dictionary, optional-value and application-result integration tests; three-library generation and C protocol composition; open/flexible C protocol round trips and unknown-method callbacks"
+    },
+    "allocation_failure_injection": "PASS: handle metadata, encode allocations, decode allocations before and after descriptor transfer; ASan/UBSan and pipe EOF cleanup checks; C collection response view failures complete once and close nested descriptors",
+    "pkgbase_archives": {
+      "status": "PASS",
+      "packages": [
+        "libfidl",
+        "libfidl-dev",
+        "libfidl-tools",
+        "libfidl-tests"
+      ],
+      "checks": [
+        "manifest dependencies and ownership",
+        "extracted SDK generation",
+        "extracted runtime C/C++ consumers",
+        "compile/link/run newly generated multi-library C application from extracted SDK",
+        "installed and extracted Kyuafile: C integration and 66-case C++ suite",
+        "static test executables and bundled upstream notices"
+      ],
+      "logs": "/usr/obj/5bsd-fidl-runtime/native-integrated.log",
+      "publication": "not published or installed"
+    },
+    "descriptor_transfer_regressions": {
+      "status": "PASS",
+      "coverage": [
+        "CAP_XFER_NONE returns ENOTCAPABLE",
+        "non-passable kqueue returns EINVAL",
+        "C private duplication preserves transfer denial",
+        "original C descriptor remains usable",
+        "immediate failed call clears txid and invokes no callback",
+        "failed send leaves connection usable"
+      ],
+      "log": "/usr/obj/5bsd-fidl-runtime/transfer-test.log",
+      "sanitizers": "PASS: AddressSanitizer and UndefinedBehaviorSanitizer; transfer-sanitize.log"
+    },
+    "c_aggregate_bindings": {
+      "status": "PASS: native C round trips and compiled generator fixtures",
+      "coverage": [
+        "dictionary entries",
+        "nested structs, arrays and vectors including bool",
+        "optional strings/vectors and boxed types",
+        "tables, strict/flexible unions, enum/bits layouts",
+        "strict application success/error result unions",
+        "invalid bounds, enum values, tags and cyclic C input",
+        "nested descriptor take and cleanup after view mutation",
+        "response allocation failures complete once and close attachments"
+      ],
+      "logs": [
+        "c-aggregate-test-2.log",
+        "c-aggregate-generator.log",
+        "c-aggregate-sanitize.log"
+      ],
+      "sanitizers": "PASS: ASan and UBSan; 59 runtime tests and C integration, 32 generator checks"
+    },
+    "library_dependencies": {
+      "status": "PASS",
+      "graph_checks": 8,
+      "schema_libraries": 3,
+      "c11_public_headers": 3,
+      "cpp_public_api": "compiled and linked",
+      "native_c_round_trips": [
+        "composed client with original base-protocol server",
+        "imported descriptor/string-vector/enum payload",
+        "application success and error result unions",
+        "descriptor take and pipe-EOF cleanup"
+      ],
+      "rejection": [
+        "missing dependency IR",
+        "duplicate library IR",
+        "inconsistent imported struct",
+        "cyclic graph",
+        "unsupported dependency protocol after earlier generation",
+        "missing imported declaration",
+        "incompatible imported layout"
+      ],
+      "reproducibility": "PASS with reversed dependency argument order",
+      "publication_on_rejection": "previous outputs preserved",
+      "sanitizers": "ASan/UBSan PASS",
+      "installed_sdk": "PASS; no source-tree header dependencies",
+      "extracted_pkgbase_sdk": "PASS",
+      "logs": [
+        "cross-runtime-final.log",
+        "cross-library-final.log",
+        "cross-sanitize.log",
+        "cross-installed.log",
+        "cross-packages.log"
+      ]
+    },
+    "flexible_interactions": {
+      "status": "PASS: native C/C++ and ASan/UBSan, staged SDK and extracted packages",
+      "coverage": [
+        "closed/ajar/open versus strict/flexible unknown one-way, two-way and event matrix",
+        "unknown attachments closed on acceptance and rejection",
+        "standard unknown-method framework reply, repeated EOPNOTSUPP without connection teardown",
+        "known interactions ignore strictness changes and reserved flags",
+        "known unhandled events decode and discard",
+        "malformed framework error and unexpected reply attachment close and complete once",
+        "wrong-connection and duplicate unknown replies rejected",
+        "C empty/payload replies, application-error union and optional unknown hooks"
+      ],
+      "logs": [
+        "flexible-final.log",
+        "flexible-sanitize.log",
+        "flexible-installed.log",
+        "flexible-packages.log"
+      ],
+      "limits": "Does not establish full upstream conformance or service migration readiness"
+    },
+    "native_test_integration": {
+      "status": "PASS: normal bsd.test.mk build, staging, Kyua and extracted test package",
+      "native_runtime_cases": 66,
+      "kyua_programs_passed": 2,
+      "failed": 0,
+      "skipped": 0,
+      "c_standard": "C11",
+      "package": "libfidl-tests",
+      "build_options": "MK_TESTS enables tests; MK_GOOGLETEST controls the C++ suite",
+      "linkage": "fully static, including runtime allocation-fault wrapping",
+      "generated_fixtures": {
+        "files": 9,
+        "verification": "exact regeneration; stale and extra output rejection leaves files unchanged"
+      },
+      "ci_entry_point": "make -C tools/build/fuchsia check-native",
+      "host_linking": "fresh FIDL/libchannel with installed kernel-matched base libraries; isolated objects under /usr/obj staging",
+      "initial_target_world_run": "SIGSYS from syscall 1002 in current world libsys; does not validate that world on the running kernel",
+      "logs": "/usr/obj/5bsd-fidl-runtime/native-integrated.log",
+      "remaining": "full world/VM, upstream conformance, installed-plane activation, fuzz/soak and comparative performance"
+    },
+    "provider_migration": {
+      "provider": "BSDTime / system.Time",
+      "client": "libtimecmp, public C ABI 1 retained",
+      "wire": "bsd.time.v1, GetProtocolInfo negotiation before operations; bundle 2.0.0 sequence 2",
+      "status": "source migration passed native host-safe tests; not activated on installed plane",
+      "provider_cases_passed": 24,
+      "policy_config_cases_passed": 8,
+      "legacy_abi_cases_passed": 6,
+      "failed": 0,
+      "skipped": 0,
+      "generated_files_verified": 9,
+      "coverage": [
+        "policy before clock gates and application ranges",
+        "exact signed slew values",
+        "old/future peer rejection before writes",
+        "malformed requests/replies and unsolicited descriptors",
+        "five-second deadline and client shutdown",
+        "fork ownership and constructor failure ownership",
+        "bounded client/provider queues"
+      ],
+      "clock_gates": "simulated in host tests; separate gate_test requires explicit disposable VM configuration",
+      "logs": "/usr/obj/5bsd-fidl-runtime/provider-reactor-backpressure.log",
+      "results": "/usr/obj/5bsd-fidl-runtime/provider-lcja5zng",
+      "remaining": [
+        "real-gate and complete capability-plane VM tests",
+        "provider activation, paired upgrade and rollback",
+        "resource/fairness soak and comparative performance",
+        "complete world/release package and target dependency closure"
+      ],
+      "sanitizers": {
+        "address": "PASS",
+        "undefined_behavior": "PASS",
+        "cases_passed": 38,
+        "failed": 0,
+        "skipped": 0,
+        "instrumented": [
+          "C client",
+          "generated C bridge and natural codecs",
+          "native FIDL runtime",
+          "libchannel transport",
+          "BSDTime provider and configuration parser",
+          "legacy validator",
+          "test drivers"
+        ],
+        "limits": "Installed libservice and support dependencies uninstrumented; LeakSanitizer unavailable; clock gates simulated",
+        "log": "/usr/obj/5bsd-fidl-runtime/provider-reactor-backpressure-sanitize.log",
+        "results": "/usr/obj/5bsd-fidl-runtime/provider-bgxlsv43/results.db"
+      },
+      "installed_binary_api": {
+        "status": "PASS",
+        "consumer_languages": [
+          "C11",
+          "C++20"
+        ],
+        "link_modes": [
+          "shared",
+          "static libtimecmp/FIDL/channel with installed support libraries"
+        ],
+        "source_tree_headers": 0,
+        "coverage": [
+          "public headers compile and link",
+          "legacy validator C linkage",
+          "constructor failure ownership",
+          "invalid arguments",
+          "native channel client construction and destruction"
+        ],
+        "fixes": [
+          "C linkage guards in channel.h and timecmp_protocol.h"
+        ],
+        "stage": "/usr/obj/5bsd-fidl-runtime/provider-bluijzav/root",
+        "CLI": "BSDTimectl native build PASS; CLI invocation through the installed plane remains untested"
+      },
+      "reactor": {
+        "status": "native and ASan/UBSan PASS",
+        "backend": "single token-holding process, bounded kqueue readiness dispatch",
+        "total_sessions": 32,
+        "per_trusted_label_sessions": 8,
+        "idle_seconds": 30,
+        "dispatch_batch": 64,
+        "reply_queue_messages": 16,
+        "reply_queue_bytes": 4096,
+        "attachments": 0,
+        "tests": [
+          "idle peer cannot block other clients",
+          "queue saturation past kernel capacity without consuming replies; overloaded channel closes and healthy client continues",
+          "copied per-session policy labels",
+          "total capacity rejection, idle expiry and slot reuse",
+          "per-label quota does not reject a different label",
+          "512 connect/disconnect cycles under a 256-FD limit without descriptor growth"
+        ],
+        "remaining": "comparative performance, multi-day soak/kernel memory profiling and full-plane quiesce/restart VM proof"
+      },
+      "resource_soak": {
+        "status": "PASS for measured durations; no multi-day or kernel-memory claim",
+        "native": {
+          "status": "PASS",
+          "measured_soak": true,
+          "elapsed_seconds": 602.417,
+          "baseline_seconds": 11.299,
+          "epochs": 156,
+          "calls": 159744,
+          "sessions": 1872,
+          "heap_baseline_bytes": 181056,
+          "heap_peak_bytes": 182456,
+          "rss_baseline_kb": 5184,
+          "rss_peak_kb": 5292,
+          "final_fds": 3,
+          "clock_writes_simulated": true
+        },
+        "asan_ubsan": {
+          "status": "PASS",
+          "measured_soak": true,
+          "elapsed_seconds": 301.851,
+          "baseline_seconds": 12.843,
+          "epochs": 76,
+          "calls": 77824,
+          "sessions": 912,
+          "heap_baseline_bytes": 7756,
+          "heap_peak_bytes": 7756,
+          "rss_baseline_kb": 190692,
+          "rss_peak_kb": 223924,
+          "final_fds": 3,
+          "clock_writes_simulated": true
+        },
+        "workload": "Eight concurrent public C clients, four idle peers, repeated reconnects in capability mode under 256-FD ceiling",
+        "limits": "10-second warmup, 1 MiB live-allocation growth, 64 MiB native RSS growth; ASan RSS advisory",
+        "scope": "Actual native transport/client/provider; clock gates and syslog simulated; installed support libraries not instrumented; LeakSanitizer unavailable",
+        "helper_lifecycle": {
+          "smoke": {
+            "status": "PASS",
+            "measured_soak": false,
+            "elapsed_seconds": 2.005,
+            "baseline_seconds": 0.0,
+            "epochs": 1,
+            "calls": 1024,
+            "sessions": 12,
+            "heap_baseline_bytes": 0,
+            "heap_peak_bytes": 0,
+            "rss_baseline_kb": 0,
+            "rss_peak_kb": 0,
+            "final_fds": 3,
+            "clock_writes_simulated": true
+          },
+          "invalid_arguments": "PASS",
+          "parent_death_cleanup": "PASS",
+          "work": "/usr/obj/5bsd-fidl-runtime/soak-helper-corba7gt"
+        },
+        "logs": [
+          "/usr/obj/5bsd-fidl-runtime/provider-soak-native-final.log",
+          "/usr/obj/5bsd-fidl-runtime/provider-soak-sanitize-final.log"
+        ]
+      }
+    },
+    "component_package_validation": {
+      "packages": [
+        "5BSD-bsdtime-tests",
+        "5BSD-bsdtime-tests-dbg",
+        "5BSD-libfidl",
+        "5BSD-libfidl-dbg",
+        "5BSD-libfidl-dev",
+        "5BSD-libfidl-man",
+        "5BSD-libfidl-tests",
+        "5BSD-libfidl-tests-dbg",
+        "5BSD-libfidl-tools",
+        "5BSD-libtimecmp",
+        "5BSD-libtimecmp-dbg",
+        "5BSD-libtimecmp-dev",
+        "5BSD-libtimecmp-man",
+        "5BSD-libtimecmp-tests",
+        "5BSD-libtimecmp-tests-dbg",
+        "5BSD-runtime",
+        "5BSD-runtime-dbg",
+        "5BSD-runtime-man"
+      ],
+      "owned_files": 163,
+      "debug_dwarf_and_links": true,
+      "manuals_and_aliases": true,
+      "extracted_tests": {
+        "fidl": 2,
+        "timecmp": 6,
+        "provider": 32
+      },
+      "extracted_api": "C11/C++20 shared/static",
+      "real_clock_gate": "not run",
+      "runtime_scope": "BSDTime/BSDTimectl subset only",
+      "published": false,
+      "evidence": "/usr/obj/5bsd-fidl-runtime/provider-oap3uigp/package-validation-pxyj7b5o/verification-84b_9kic",
+      "status": "PASS",
+      "scope": "Component payloads, native host support dependencies; runtime is BSDTime/BSDTimectl subset, not full world",
+      "logs": [
+        "/usr/obj/5bsd-fidl-runtime/provider-packages.log",
+        "/usr/obj/5bsd-fidl-runtime/provider-packages-verify.log",
+        "/usr/obj/5bsd-fidl-runtime/provider-packages-integrated.log",
+        "/usr/obj/5bsd-fidl-runtime/provider-reactor-backpressure-packages.log",
+        "/usr/obj/5bsd-fidl-runtime/provider-soak-native-final.log"
+      ],
+      "debug_crc": "PASS",
+      "ownership": "All METALOG-tagged files and aliases assigned exactly once",
+      "licensing": "BSD2/BSD3 declarations and bundled notices",
+      "dependencies": "Runtime and C development dependencies verified",
+      "gate_default": "Verified explicit opt-in guard; real-gate test remains unrun",
+      "integrated_entry_point": "PASS: test-provider.py --packages",
+      "current_provider": "bounded kqueue reactor; explicit-duration resource soak auxiliary with extracted smoke validation",
+      "soak_smoke": {
+        "status": "PASS",
+        "measured_soak": false,
+        "elapsed_seconds": 1.943,
+        "baseline_seconds": 0.0,
+        "epochs": 1,
+        "calls": 1024,
+        "sessions": 12,
+        "heap_baseline_bytes": 0,
+        "heap_peak_bytes": 0,
+        "rss_baseline_kb": 0,
+        "rss_peak_kb": 0,
+        "final_fds": 3,
+        "clock_writes_simulated": true
+      }
+    },
+    "native_codec_fuzz": {
+      "status": "PASS: bounded 301-second coverage-guided ASan/UBSan session; not sustained or conformance evidence",
+      "date": "2026-10-10",
+      "fixed_defect": "natural vector<bool> decode read an uninitialized local after an invalid wire boolean; patches/fuchsia-natural-bool.patch value-initializes both temporaries",
+      "regression": "runtime_test Codec.InvalidBooleanVectorClosesDescriptor: malformed vector<bool> with an attached descriptor is rejected and the descriptor closes (pipe EOF)",
+      "regression_negative_control": "unpatched header with -ftrivial-auto-var-init=pattern: UBSan 'load of value 170' at natural_coding_traits.h:258 in the new test",
+      "sanitizer_build_flags": "-fsanitize=address,undefined -ftrivial-auto-var-init=pattern; halt_on_error=1",
+      "previous_crash_replay": "fuzz-6oemkrlv/crashes/crash-9379b1755a950da65d115278fd08b7c88707ca2e: no report, shape 6 rejected",
+      "executed_inputs": 8264571,
+      "elapsed_seconds": 301.063,
+      "final_corpus_files": 520,
+      "crashes": 0,
+      "binary_sha256": "df5f4926eb7be0b120470a7a75d3e568b601df5cd0c5fc2712294bf439622550",
+      "evidence": "/usr/obj/5bsd-fidl-runtime/fuzz-9e_zdeb2/result.json",
+      "runtime_suites": "ordinary and ASan/UBSan build-runtime.py --test: 67 passed, C11 integration, 36 generator and 8 dependency checks PASS",
+      "not_rerun": "check-soak, test-installed/test-provider package checks, and Kyua package run (native_test_integration still records 66 cases)"
+    },
+    "upstream_conformance": {
+      "status": "PASS",
+      "suite": "contrib/fuchsia/src/tests/fidl/conformance_suite at pinned commit, generated unchanged by gidl",
+      "host_cases_passed": 1033,
+      "failed": 0,
+      "compiled_out_zircon_handle_cases": 193,
+      "builds": [
+        "ordinary",
+        "ASan/UBSan"
+      ],
+      "entry_point": "build-runtime.py --test (generate-conformance.py)"
+    },
+    "schema_evolution": {
+      "status": "PASS",
+      "pairings": 8,
+      "description": "evolve:1/evolve:2 C peers in separate processes over native channels; unknown table fields, flexible union/enum/bits, added flexible method and event",
+      "builds": [
+        "ordinary",
+        "ASan/UBSan"
+      ]
+    },
+    "destroy_with_pending_call": {
+      "status": "FIXED",
+      "defect": "completion ran during fidl_bsd_connection_destroy with a null C handle; SEGV under ASan when the callback queried its connection",
+      "fix": "runtime_c.cc closes before delete",
+      "regression": "c_binding_test test_destroy_with_pending_call"
+    },
+    "dependency_closure": {
+      "status": "PASS",
+      "archive_members": 20,
+      "removed": [
+        "arena",
+        "decoding_and_validating",
+        "display_error",
+        "formatting",
+        "message",
+        "message_storage",
+        "natural_types (sdk)",
+        "wire_messaging",
+        "wire_types"
+      ],
+      "check": "check-closure.py"
+    },
+    "world_and_packages": {
+      "status": "PASS",
+      "kernconf": "GENERIC-NODEBUG",
+      "fixes": [
+        "Makefile.inc1: lib/libfidl in _prebuild_libs",
+        "share/doc/5bsd: develop/fidl.md installed",
+        "release/Makefile.hardware: colon-free HARDWARE_WORKDIR"
+      ],
+      "published": "/usr/obj/usr/src/repo/FreeBSD:16:amd64/16.snap20261010074756.complete",
+      "latest": "16.snap20261010074756.complete",
+      "installed_on_host": false
+    },
+    "plane_on_vm": {
+      "status": "VM_CLEAN",
+      "run": "/usr/obj/5bsd-fidl-vm/run4",
+      "harness": "tools/build/fuchsia/vm-provider.sh with BSDTIME_USER_VISIBLE=1 (test-only overlay) and vm_clock_test=true",
+      "kyua": "41/41 passed, 0 skipped (usr.sbin/BSDTime incl. gate_test, lib/libtimecmp, lib/libfidl)",
+      "broker": "get via live provider, unauthorized set/adjust EPERM, core restart denied, 200 sessions",
+      "shutdown": "guest-originated, no panic or LOR",
+      "not_validated": "release-transaction upgrade/rollback across boot environments"
+    },
+    "comparative_performance": {
+      "evidence": "/usr/obj/5bsd-fidl-runtime/bench/bench.json",
+      "method": "-O2 static, cross-process synchronous request/reply, 3 x 20000 calls",
+      "p50_us": {
+        "raw_8B": 8.1,
+        "cpp_8B": 10.41,
+        "c_8B": 10.73,
+        "raw_256B": 8.04,
+        "cpp_256B": 10.87,
+        "c_256B": 11.1
+      },
+      "throughput_change": "-23% to -27% versus raw (raw itself +7-10% after the libchannel fix)",
+      "extra_allocations_per_call": {
+        "client": "8-10",
+        "server": "5-8"
+      },
+      "libchannel_bytes_per_call": 864,
+      "limits": "one ping-pong pattern on one loaded host; not pipelined, multi-day or kernel-memory evidence"
+    },
+    "libchannel_receive_allocation": {
+      "status": "FIXED",
+      "defect": "every receive allocated a 14336-byte payload buffer plus a 32-slot fd array before the ioctl, including the final EAGAIN attempt of each dispatch: ~29 KiB malloc traffic per round trip per side",
+      "fix": "one right-sized block per message (struct, inline fd slots, payload sized from the previous message, min 512 B); unused block kept across EAGAIN; grows to the maximum before dequeue on EMSGSIZE (the ioctl does not copy out the required size on failure), so allocation failure still leaves the message queued",
+      "regression": "lib/libchannel/tests channel_test:receive_blocks_resize",
+      "measured_8B": {
+        "raw_client_bytes_per_call": [
+          29296,
+          864
+        ],
+        "raw_allocs_client_server": [
+          [
+            7,
+            6
+          ],
+          [
+            2,
+            1
+          ]
+        ],
+        "raw_p50_us": [
+          8.99,
+          8.1
+        ],
+        "fidl_cpp_client_bytes_per_call": [
+          30576,
+          2144
+        ],
+        "fidl_cpp_p50_us": [
+          11.24,
+          10.41
+        ]
+      },
+      "evidence": [
+        "bench/bench-before-libchannel.json",
+        "bench/bench.json"
+      ]
+    },
+    "sustained_fuzz": {
+      "status": "PASS",
+      "elapsed_seconds": 3601.067,
+      "executed_inputs": 97597755,
+      "crashes": 0,
+      "final_corpus_files": 561,
+      "evidence": "/usr/obj/5bsd-fidl-runtime/fuzz-nkwpiqem/result.json",
+      "harness_fix": "bounded poll until the receive handler runs (a single zero-timeout poll could skip decoding under load)"
+    }
+  },
+  "documentation": {
+    "book_check": "PASS: zero failures, two existing dynamic sysctl patterns unverified",
+    "manual_lint": "PASS: mandoc -Tlint -Wstyle with source manuals staged for cross-reference checks"
+  },
+  "import_tool_tests": {
+    "passed": 3,
+    "failed": 0,
+    "coverage": [
+      "stable archive mtimes",
+      "corrupt cache rejection",
+      "unsafe archive path rejection"
+    ]
+  },
+  "source_reproduction_details": "Fresh patched import (2026-10-10, with fuchsia-natural-bool.patch, fuchsia-gidl-std-slices.patch and the conformance suite): 5028 fuchsia entries matched contents and modes.",
+  "ipc_performance": {
+    "descriptor_batching": {
+      "kernel": "MAC_CAPABILITY_SENDMSG_V2 (expectations, narrowing, move, inheritance lock in one call), MAC_CAPABILITY_RECVMSG_V4 (per-descriptor type/rights)",
+      "syscalls_per_one_descriptor_call": {
+        "cpp": {
+          "userland_checks": 13.15,
+          "kernel_checks": 6.15
+        },
+        "c": {
+          "userland_checks": 15.15,
+          "kernel_checks": 6.15
+        }
+      },
+      "evidence": "/usr/obj/5bsd-fidl-vm/fd2/serial.log (FDBENCH, SYSCALLS)",
+      "tests": "libchannel channel_test (4 new cases, fallback path on host and kernel path in VM), sys/mac_capability channel_test sendmsg_v2_atomic, sendmsg_v2_move_lock_paths, recvmsg_v4_info"
+    },
+    "soaks": {
+      "perf2_hour": "177 epochs, 21,434,307 replies, 5,513,016 descriptors, open fds constant, heap flat",
+      "fd1_20min": "7,160,627 replies, 1,844,117 descriptors, 1,229,536 moved",
+      "host_fallback_45s": "2,335,048 replies, 600,189 descriptors, 400,541 moved"
+    },
+    "vm_suites": {
+      "fd2_plane_on": "61/61 (lib/libchannel lib/libfidl lib/libtimecmp usr.sbin/BSDTime)",
+      "off3_plane_off": "sys/mac_capability 432 passed, 1 failed (coalition_test:exit_membership_waits_for_socket_close, outside this work), 125 skipped",
+      "off6_plane_off_kernelstore": "sys/mac_capability 462 passed, 97 skipped, 0 forwarding skips, no panic; coalition refattach_confined_descriptors (SIGSYS) and removed_jail_retires_membership attributed to concurrent coalition commits by another agent",
+      "fd3_plane_on_after_race_fixes": "318/319 (1 environment skip: BSDNetwork provider_connect_timeout_expires), BSDTime lifecycle pass, 600 s soak 4,905,944 replies and 1,262,549 descriptors, syscall counts unchanged"
+    },
+    "host_suites": "build-runtime --test and --test --sanitize: 68 runtime, 1033 conformance, C, evolution, cross-library all pass",
+    "kernel_race_fixes": "instance tryhold for channel peer lookups; co_txdrain/co_direct_peer bracketed by ci_inflight and refused after revocation; regression channel_test:peer_close_race"
+  },
+  "license_review": {
+    "date": "2026-10-10",
+    "fuchsia": "BSD-2-Clause (LICENSE) plus PATENTS; ICU helper compiled into fidlc; go-cmp BSD-3 test-only; no copyleft or proprietary; every shipped/installed file has a header. Fixed: records said BSD-3; libfidl-tools now installs Fuchsia, ICU and Go runtime notices; bsd_names.go relicensed BSD-2-Clause (5BSD); local-changes list completed; libtimecmp drops BSD3CLAUSE.",
+    "openthread": "BSD-3 plus Mbed TLS Apache-2.0 (elected) OR GPL-2.0-or-later; no blocker; not committed: import .gitignore drops DartConfiguration.tcl and .gitattributes text=auto would rewrite 66 CRLF/binary mbedtls files.",
+    "connectedhomeip": "not committable as imported: CSA-licensed data_model (no redistribution), LG/Nest/Cypress/Silicon Labs/Nordic/ST vendor terms, unlicensed ESP32 ROM images; trim to the py_matter_idl test subset before committing."
+  }
+}

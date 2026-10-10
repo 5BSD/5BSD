@@ -1,0 +1,310 @@
+Fuchsia FIDL, OpenThread, and Matter on 5BSD
+==========================================
+
+Status
+------
+This is a source import and initial native port. It DOES NOT replace the
+capability service protocols, install a Matter service, or enable a radio.
+Native libfidl library/header/manual build targets and package registration
+exist and the optional SDK passes staged generation/link/run tests.
+Full world/package and external tool dependency validation remain open.
+
+The imported FIDL compiler, formatter, linter, C++ generator, and Rust
+generator build on 5BSD. The native C++ runtime and generated C ABI now
+work over libchannel using upstream natural types and codecs. No Zircon
+kernel, syscall emulation, dispatcher, or Component Manager is linked.
+The 66 native runtime tests, C11 integration test, and 36 generator contract
+checks pass, including the ASan/UBSan variant. Eight dependency-graph checks
+and a three-library C round trip also pass with the installed/extracted SDK. LeakSanitizer is unavailable
+on this host; explicit descriptor-leak checks pass. See lib/libfidl/README
+and libfidl_bsd(3) for ownership rules and the supported schema subset.
+Rust runtime bindings remain unported. All 2,203 enabled compiler tests pass, including
+one local regression; four upstream disabled tests remain disabled.
+The Go IR, C++ generator, Rust generator, and end-to-end compiler helper
+tests pass. The fd transport experiment passes across fork/cap_enter,
+including kernel sender attribution, rights attenuation, and refusal to
+transfer a one-hop descriptor again. It uses the upstream transaction
+header and wire handle marker; it is not a generated binding or runtime.
+
+OpenThread simulation, CLI, NCP, and radio targets build. All 84 configured CTest tests pass (including the 83 registered
+upstream unit-test executables). Physical radio operation is not validated.
+The POSIX daemon and ot-ctl build on 5BSD, using base libedit and
+OpenThread's own UDP stack. The host-socket UDP backend remains disabled: BSD does not provide Linux's
+SO_BINDTODEVICE or Apple's IPV6_BOUND_IF. A correct port must preserve both
+receive and transmit interface scoping; renaming a socket option is not
+sufficient. Fuchsia lowpan/OpenThread integration source is retained but
+its Fuchsia services are not built or run.
+
+Matter's connectedhomeip source, tests, and tooling are retained. The
+native Matter device/controller platform, commissioning, BLE, DNS-SD,
+persistent storage, and capability-service integration remain unported.
+SUBMODULES.5BSD.json records the 79 upstream gitlinks; they are not populated.
+All 120 standalone Matter IDL tests pass. The test runner exercises parser,
+compatibility,
+XML conversion, and code generation, not a commissioned Matter device.
+
+Source selection and licenses
+-----------------------------
+contrib/fuchsia is a selected export at commit
+3c0275544589e9bc156739d210052e8174ae9c60, not an F31 release checkout.
+It includes tools/fidl, C++ bindings and wire support, host support,
+lowpan/OpenThread integration, selected protocol definitions, compiler
+documentation/test data, and notices. Fuchsia is BSD-2-Clause with a
+separate PATENTS grant; the FXL ICU UTF helper compiled into fidlc is under
+the ICU license; go-cmp v0.7.0 (Go tests only) is BSD-3-Clause.
+
+contrib/openthread is commit 0542780e3ac117196b77a60abc1052e4c3cdad12,
+including its tests and exact Mbed TLS and framework submodule pins.
+OpenThread is BSD-3-Clause, with file-specific third-party notices.
+Mbed TLS and its framework are dual Apache-2.0 OR GPL-2.0-or-later;
+this integration selects Apache-2.0. tcplp includes BSD TCP code.
+
+contrib/connectedhomeip is commit d2a28e75da517d7aa5558244fcd2487c7239d02e.
+The primary license is Apache-2.0, with LICENSE and NOTICE retained.
+Do not label the entire import BSD or uniformly Apache: inipp has its own
+MIT license, and embedded FreeRTOS configuration examples contain additional
+FreeRTOS/GPL-exception and Silicon Labs notices. In particular, review
+examples/platform/silabs/freertos_config/FreeRTOSConfig.h and the bl602,
+bl702, and bl702l FreeRTOSConfig.h examples. Those embedded examples are
+not built or installed by this integration. Preserve individual notices
+and re-review the selected files before adding an installed target.
+
+Native build and tests
+----------------------
+All object files belong under /usr/obj. These commands do not install,
+activate services, publish packages, or reboot. Native compilation uses
+all logical CPUs. The host tools require Python 3.12+, C++20, base OpenSSL,
+the installed RE2 development files, and the existing contrib/googletest.
+RE2 is currently a host-tool dependency; a base bootstrap build still
+needs a maintained in-tree dependency policy.
+
+  python3.12 tools/build/fuchsia/build-fidl.py --test
+  python3.12 tools/build/fuchsia/build-generators.py --go /path/to/go --test
+  python3.12 tools/build/fuchsia/test-fd.py
+  python3.12 tools/build/fuchsia/build-runtime.py --test
+  python3.12 tools/build/fuchsia/build-runtime.py --test --sanitize
+  python3.12 tools/build/fuchsia/test-installed.py
+  python3.12 tools/build/fuchsia/build-openthread.py --test
+  python3.12 tools/build/fuchsia/build-openthread.py --platform posix
+
+The Thread scripts accept --cmake and --ctest. CMake 4.x requires the
+compatibility policy argument already supplied by the script. The optional
+unifdefall reduction is disabled because it leaves unresolved feature
+conditions after removing the core configuration include on this host.
+The unmodified configuration is compiled instead; crypto is not disabled.
+
+Matter tooling dependencies stay in an object-directory virtualenv:
+
+  python3.12 -m venv /usr/obj/5bsd-matter-tools
+  /usr/obj/5bsd-matter-tools/bin/python -m pip install \
+      -r tools/build/fuchsia/requirements-matter-tools.txt
+  python3.12 tools/build/fuchsia/test-matter.py
+
+Validation logs for the initial port are in
+/usr/obj/5bsd-fuchsia-import/; compiler XML is in
+/usr/obj/5bsd-fidl/fidlc-test.xml. The initial OpenThread run directly
+executed every add_test entry from tests/unit/CTestTestfile.cmake with
+120-second timeouts and per-test logs. The maintained runner uses CTest.
+
+Refresh
+-------
+sources.json locks URLs, exact revisions, archive hashes, and metadata.
+Gitiles changes tar timestamps even for an immutable commit. For those
+archives the importer verifies a canonical SHA256 over sorted entry names,
+types, permissions, contents, and symlink targets instead of timestamps.
+The original archive SHA256 remains recorded as provenance. GitHub archives
+and individual notice files are verified by their byte SHA256.
+
+  python3.12 tools/build/fuchsia/import.py \
+      --dest /usr/obj/5bsd-contrib-refresh --patch
+
+The destination must be empty. Review the staged diff before updating
+/usr/src; never re-extract over local changes. patches/ records the BSD
+host definition, the lexer SOF-span fix, OpenThread reset support, libedit
+include spelling, and the explicit IPv6 header. Update sources.json,
+UPSTREAM*.json, patches, and contrib/README.5BSD together, then rerun tests.
+
+IPC backend and remaining migration
+-----------------------------------
+lib/libfidl combines upstream FIDL natural codecs with libchannel's native
+queues, kqueue readiness, cancellation, kernel attribution, and request
+lifecycle. tools/build/fuchsia/generate-bsd.py produces C++ adapters and,
+with --c, a C ABI implemented behind opaque C types. Only supported natural
+types and native adapters are published, not Fuchsia messaging stubs.
+The generated C application test compiles as C11.
+
+The backend has explicit descriptor ownership, rights/type checks, late-reply
+cleanup, txid/native-token separation, and epitaph handling. Native capability
+policy remains the authority. BSDTime/libtimecmp now use FIDL in the source
+tree, retaining the public C ABI; production activation and VM validation remain. The whole capability plane still needs VM
+validation after service migration, followed by base build/package integration.
+
+Native C/C++ bindings support open, ajar, and closed protocols, including
+flexible interactions. Rust runtime bindings remain an implementation gap. Zircon-only
+object types require an actual native contract; unsupported mappings fail
+closed. Read lib/libfidl/README for exact support and ownership semantics.
+
+The book chapter docs/book/src/develop/fidl.md and fidl(7)/libfidl_bsd(3)
+document the current backend. fidl(7) is registered for runtime-man and libfidl_bsd(3) for libfidl-man.
+The runtime and optional host SDK have native build/install targets; full
+world/release integration remains open. Traditional Unix
+IPC remains available.
+
+Native generator changes: patches/fuchsia-native.patch and
+patches/fuchsia-native-headers.patch. update-runtime-headers.py maintains the
+installed support-header inventory; --check detects stale manifests.
+
+Binary SDK staging
+------------------
+The runtime's native Makefile installs shared/static libraries, public C/C++
+headers and fidl.pc. The optional tools/build/fuchsia/Makefile installs the
+matching fidlc, fidl-format, fidl-lint, fidlgen-bsd and private C++ generator.
+Its bootstrap/check targets use the existing build scripts, PYTHON and GO;
+installation consumes already built files in FIDL_TOOLS_OBJ (default
+/usr/obj/5bsd-fidl). No install step fetches code. Use a DESTDIR under /usr/obj
+for staging. The libfidl-tools subpackage is opt-in with FIDL_SDK=yes after
+staging these files; normal world packaging does not require host tools.
+Host tools require Python 3.12 and RE2 from ports. External dependency/release
+packaging validation remains open; this is not a published toolchain package.
+
+The installed test compiles schemas with the staged tools and runs C11/C++
+consumers with shared and static runtimes. It checks compiler dependency files
+for source-tree leakage and ELF dependencies for the intended link mode.
+The C binary uses cc to link; fidl.pc supplies the C++ support library.
+Installed support headers are the source include closure of native headers
+and supported generator templates (79 upstream headers currently), excluding
+unrelated dispatcher APIs. update-runtime-headers.py --check verifies it.
+
+Native patches also preserve BSD's __WEAK header macro, check upstream handle
+metadata allocation before use, close transferred descriptors on failure, and
+initialize vector<bool> decode temporaries (fuchsia-natural-bool.patch).
+Sanitizer and fuzz builds pattern-fill locals so uninitialized reads reach
+UBSan deterministically.
+Fault-injection tests exercise encoding and decoding allocation failures.
+
+Archive entries use a stable extraction timestamp after content verification;
+Gitiles export timestamps can vary or be ahead of the build clock. This keeps
+unchanged imports from forcing perpetual recompilation. Run tests/import_test.py
+for timestamp, corrupted-cache, and unsafe-path regressions.
+
+Shared-library schema generation uses repeated --dependency-json inputs to
+fidlgen-bsd. Dependency order is automatic; types-only libraries export C
+headers, and composed methods retain the base protocol's ordinals. Compile
+each generated library's natural_types.cc, common_types.cc and c/bsd.cc once.
+The library_test.py checks graph rejection, public headers, imported resource
+round trips and composed/base interoperability in native, SDK and package runs.
+
+Native tests and CI
+-------------------
+The standard lib/libfidl/tests Makefile installs C and (with MK_GOOGLETEST)
+C++ tests plus a Kyuafile, owned by libfidl-tests. They run without host tools.
+Eighteen checked-in generated files (runtime tests and BSDTime) avoid making
+world depend on Go/Python.
+Use test-bindings.py --write to refresh them; its default mode checks exact
+regeneration and rejects stale/missing/extra files. The host check includes it.
+
+After bootstrapping the host tools, `make check-native` runs the native and
+ASan/UBSan suites, installed SDK consumers, the normal native test targets,
+and extracted runtime/dev/tools/tests pkgbase archives. All staging is under
+/usr/obj. The focused `test-installed.py --packages` command runs the SDK and
+package portion. Native-host checks use installed kernel-matched base libraries;
+this does not validate an unfinished world's libc/libsys against an old kernel.
+
+BSDTime source migration
+------------------------
+test-provider.py builds libtimecmp and BSDTime, then runs the real C provider
+and client with simulated clock gates on native channels. It also runs policy
+configuration and legacy validator ABI tests. A separate gate_test exercises
+real clock gates only when explicitly enabled inside a disposable VM.
+The public C ABI stays at major 1, with timecmp_client_create for held channels.
+The wire format is bsd.time.v1; mixed legacy/FIDL peers fail before clock writes.
+See docs/book/src/providers/time.md for versioning and coordinated rollback.
+This is source migration evidence, not an installed-plane validation claim.
+
+Use test-provider.py --sanitize for ASan/UBSan coverage of the C client,
+provider/configuration parser, generated bridge, codec runtime and libchannel.
+All 38 host-safe cases run with fatal sanitizer errors. The harness uses
+installed service/support libraries without instrumentation and disables the
+unavailable LeakSanitizer. Clock writes remain simulated. check-native includes
+this run; real-gate and activation/rollback VM requirements still apply.
+
+The ordinary provider check also builds BSDTimectl and stages libtimecmp,
+libfidl and libchannel. C11/C++20 consumers compile with only installed public
+headers, link shared/static libraries and exercise constructor ownership,
+native-channel client creation/destruction, argument validation and the retained
+legacy validator ABI. These probes do not replace a complete provider round
+trip: the provider ATF suite supplies that evidence; plane activation remains
+unverified.
+
+Debug/manual/provider archive validation
+----------------------------------------
+`test-provider.py --packages` builds a fresh isolated debug-enabled component
+stage, creates 18 pkgbase archives and checks their extracted payloads. This
+covers FIDL runtime/development/tools/tests, libtimecmp, BSDTime/BSDTimectl and
+provider tests, including manual aliases, complete metadata-to-archive ownership,
+licenses, development/runtime dependencies, DWARF and debug-link CRCs. It runs
+the two FIDL test programs, 38 time/provider cases and C11/C++20 API consumers.
+The real-clock test's default opt-in guard is verified separately, not counted
+as a passed real-gate test. check-native includes this package run.
+
+`test-provider-packages.py --stage <provider-root>` runs the package portion.
+Use `--verify-work <package-validation-directory>` to recheck existing archives
+without rebuilding. Artifacts stay under /usr/obj. The runtime package contains
+only the BSDTime/BSDTimectl subset; it is not a complete world package. Nothing
+is installed, published or activated. Full world/release and VM gates remain.
+
+BSDTime's provider tests now include the bounded kqueue session reactor:
+idle/nonreading-peer isolation, copied policy labels, 32-session total and
+eight-per-label admission limits, idle expiry and 512 connect/disconnect cycles
+under a 256-descriptor limit. All 38 provider/policy/legacy cases pass native
+and ASan/UBSan runs. This is a lifecycle regression, not a sustained soak or
+proof of capability-plane activation and quiescing.
+
+Opt-in provider resource soak
+-----------------------------
+`make check-soak` runs the ordinary provider tests followed by a 600-second
+native soak and a 300-second ASan/UBSan soak. FIDL_SOAK_SECONDS and
+FIDL_SANITIZER_SOAK_SECONDS override those durations. The focused command is
+`test-provider.py [--sanitize] --soak-seconds N` (0 disables, maximum 86400).
+Durations below 30 seconds are explicitly reported as smoke checks.
+
+The installed bsdtime-tests auxiliary executable is
+`/usr/tests/usr.sbin/BSDTime/resource_soak N`; it is not registered in Kyua.
+It runs the real public C client, generated bindings and provider reactor over
+native channels in capability mode. Eight concurrent clients (four allowed,
+four denied) and four idle peers repeatedly reconnect under a 256-FD ceiling.
+Every epoch checks all operation results, gate-call accounting and recovery
+to the baseline FD count. A ten-second stalled epoch fails the run.
+
+JSON lines report calls, sessions, live allocated bytes and peak RSS. After a
+ten-second warmup, live allocation growth above 1 MiB fails; native peak RSS
+growth above 64 MiB also fails. A fresh child excludes launcher pre-exec RSS.
+ASan's quarantine affects RSS, so its RSS is reported but not gated; live
+allocation is checked through the sanitizer allocator API. The child exits if
+its supervising process dies. The extracted-package check runs a one-second
+smoke probe and verifies the executable and split debug symbols are owned by
+bsdtime-tests and bsdtime-tests-dbg.
+
+Clock writes and syslog are simulated. This isolates resource behavior of the
+client/provider path; it does not validate real clock gates, the logging sink,
+capability-plane activation, kernel memory growth, comparative performance or
+multi-day operation. LeakSanitizer remains unavailable on this host.
+
+Conformance, evolution, closure, performance and VM tools (2026-10-10):
+build-generators.py also builds the pinned gidl tool. generate-conformance.py
+compiles contrib/fuchsia/src/tests/fidl/conformance_suite unchanged, removes
+resource/protocol declarations only from the IR used for native bindings, and
+emits the upstream GIDL C++ cases; lib/libfidl/tests/conformance supplies a
+googletest zxtest shim and a conformance_utils.h that uses the native
+transport's encode/decode entry points. build-runtime.py --test runs it
+(1,033 host cases; the 193 Zircon-handle cases are compiled out), the
+evolve:1/evolve:2 C peer test (lib/libfidl/tests/evolution_test.py) and
+check-closure.py, which fails if a libfidl_bsd member becomes unreachable.
+build-runtime.py --bench (make check-bench) records raw libchannel, C++ and C
+request/reply latency, throughput and heap allocations in bench/bench.json.
+vm-provider.sh boots a NO_ROOT stage with the capability plane on, checks
+BSDTime through the live broker and runs Kyua (see its header). It uses the
+first runnable emulator from QEMU=, the installed port, then an unpatched
+local rebuild; the installed package currently needs libusb.so.4, which the
+installed base (libusb.so.3) does not provide.
+

@@ -1,0 +1,299 @@
+Native FIDL bindings for 5BSD
+===========================
+
+Status: experimental, tested native C++ backend and generated C ABI. This is
+not the Fuchsia WireClient runtime and does not replace production service
+protocols. It combines upstream fidlc/fidlgen_cpp natural types and codecs
+with native libchannel. No Zircon kernel, syscall emulation, async dispatcher,
+or Component Manager is linked. The small imported Zircon headers provide
+wire constants and error definitions, not authority.
+
+Build from /usr/src:
+
+  python3.12 tools/build/fuchsia/build-runtime.py --test
+  python3.12 tools/build/fuchsia/build-runtime.py --test --sanitize
+
+First build the compiler and generators with the commands in
+ tools/build/fuchsia/README. Runtime compilation requires C++20, Python 3.12,
+and the imported host tools. Objects, generated sources, the static archive
+libfidl_bsd.a, and test executables are under /usr/obj/5bsd-fidl-runtime.
+The sanitizer variant uses a separate sanitized/ directory. The native
+kernel capability channel is required; the runner fails rather than skipping
+its absence. Native library/header/manual targets and the libfidl package are
+registered; full world/package and provider-migration gates remain open.
+
+To generate another library, compile its schemas with fidlc --json, then:
+
+  python3.12 tools/build/fuchsia/generate-bsd.py \
+      --json /usr/obj/my-library.json --root /usr/obj/my-bindings --c
+
+The --c option additionally emits the checked C bridge for supported payloads.
+Include <fidl/LIBRARY/cpp/bsd.h> or <fidl/LIBRARY/c/bsd.h>. Compile generated
+natural_types.cc, common_types.cc and the C bridge bsd.cc as C++20. The public C header contains
+no C++ declarations and the application can compile as C11; link the final
+program using the libraries reported by pkgconf. Native builds provide libfidl_bsd.so.1 and a
+static archive; libchannel is linked separately. The build runner demonstrates
+this with c_binding_test.c. Do not include Fuchsia's generated fidl.h: those
+messaging APIs require the unported Fuchsia dispatcher and are not the native
+backend's interface.
+
+Sharing schema libraries
+------------------------
+Pass --dependency-json PATH once per dependency-library compiler JSON file,
+including transitive dependencies. The adapter validates the graph and
+available imported-declaration/layout metadata, then generates each supplied
+library in dependency order. Use IR from the same coherent schema build;
+import metadata does not encode every semantic compatibility rule.
+The intrinsic zx.Handle mapping does not require a separate zx library IR.
+
+  fidlc --json common.json --files common.fidl
+  fidlc --json service.json --files common.fidl --files service.fidl
+  fidlgen-bsd --json service.json --dependency-json common.json \
+      --root generated --c
+
+A types-only library exports its C type declarations too. Each C type belongs
+to its declaring library; dependent headers include that library's c/bsd.h.
+Compile every emitted cpp/natural_types.cc, cpp/common_types.cc and c/bsd.cc
+once per library. The generated c/bridge.h contains private inline C++
+conversions shared between libraries; C applications include c/bsd.h instead.
+Composed protocols retain their original method ordinals and payload types.
+Rejected graphs or schemas leave previously generated files intact.
+lib/libfidl/tests/library_test.py exercises three libraries, including a
+composed client talking to the original base-protocol server. The same test
+runs with the staged SDK and extracted pkgbase payloads.
+
+Binary-facing API
+-----------------
+The native library builds with `make -C lib/libfidl -j$(sysctl -n hw.ncpu)`.
+Public headers install under /usr/include/fidl/bsd; pinned codec support
+headers are isolated under /usr/include/fidl/support. The libfidl-dev package
+includes fidl.pc. The optional host SDK installs fidlc, fidl-format,
+fidl-lint and fidlgen-bsd, with its private generator under /usr/libexec/fidl.
+Build/bootstrap and staging targets live in tools/build/fuchsia/Makefile.
+They use the existing pinned imports and do not fetch on install.
+Host tools require Python 3.12 and RE2; generated binaries do not.
+The optional tools subpackage is selected with FIDL_SDK=yes only after staging
+that SDK; it is not required for a normal world build. Release packaging and
+external dependency validation remain a maturity gate. After installation, obtain include/link flags with
+`pkgconf --cflags --libs fidl`. Generated C applications compile as C11; their
+generated bridge compiles as C++20. Link the bridge and generated natural types
+with the application. This C ABI does not require a C++ application source.
+
+`test-installed.py` creates a disposable /usr/obj staging root, uses the native
+install rules, and compiles/links/runs C11 and C++ consumers against that root.
+The test generates bindings using the staged compiler and matching adapter,
+then compiles and runs C11/C++ binaries with shared and static native runtimes.
+Dependency files must contain no source-tree headers; dynamic dependency
+checks distinguish shared from static linkage. Package ownership is recorded
+in METALOG. The support-header manifest follows the source include closure
+from native public headers and supported generator templates; unrelated
+Fuchsia dispatcher headers are not installed.
+It neither installs into / nor activates an upgraded service.
+
+FIDL_BSD_ABI_VERSION and fidl_bsd_runtime_abi_version identify the C runtime
+ABI. fidl_bsd_connection_create_with_options accepts a sized options structure
+for pending-request and outgoing queue limits; initialize it with
+FIDL_BSD_OPTIONS_INITIALIZER. Unknown sizes/reserved bits fail with EINVAL.
+The original create function uses defaults. Failed creation leaves the fd with
+the caller and clears the result pointer. fidl_bsd_connection_peer_epitaph
+returns ENOENT until a peer epitaph arrives, then returns its signed status.
+
+Generation uses the explicit upstream -native-bsd mode and upstream-derived
+name metadata; it no longer edits generated C++ source. Unsupported schemas
+leave prior outputs intact. Accepted fixture implementations are compiled,
+linked, and regenerated identically, in addition to public C-header checks.
+
+Ownership and event handling
+----------------------------
+Connection::Create / fidl_bsd_connection_create take the native endpoint FD
+only on success. One thread owns dispatch and all operations on a connection.
+Poll uses native kqueue; applications with an existing event loop can register
+fd(), use wants_write() to manage write readiness, and call Dispatch().
+Close is safe from a callback; destroying the Connection object from its own
+callback is not supported. Incoming request contexts may be retained for
+asynchronous replies. On the C side retain/release fidl_bsd_request explicitly.
+Context retention does not extend borrowed decoded buffers or descriptors.
+
+C++ Descriptor is move-only and uses -1 for absence; descriptor 0 is valid.
+The internal codec representation is fd+1 so it can use upstream's absent
+slot marker. Those numbers are never encoded as authority: wire bytes carry
+only FIDL's handle-presence marker, while native channel attachments carry
+actual descriptors. C++ send arguments consume their Descriptor fields even
+when encoding or sending fails. Encoded packets own attachments, libchannel
+borrows them for immediate sends or makes protected duplicates when queueing,
+and packet destruction closes the original owned descriptors.
+
+C outgoing buffers and descriptors are borrowed. The bridge duplicates FDs
+with the same close-on-exec/fork locks used by libchannel, then applies the
+C++ ownership rules to those duplicates. The original C descriptor remains
+owned by the caller and retains its rights. Transfer state remains enforced
+by the kernel; copying a descriptor is not a right to increase its ceiling.
+
+Decoded C callback buffers last only until callback return. Descriptor fields
+are also released then unless fidl_bsd_take_fd(&value->fd) is used to take
+ownership; it replaces the field with -1. Do not close a borrowed descriptor
+or overwrite it with another FD. Take it first. Copy strings before retaining
+them. C++ callbacks receive owning generated values. A retained Incoming or
+C request context still exposes the original kernel-stamped native message.
+Neither a peer UID/PID nor a message field grants authorization.
+
+All C status functions return errno values directly (zero means success).
+The fd accessor returns a borrowed descriptor or -1. C++ uses fit::result
+with errno errors for calls and errno values for other operations. Callbacks
+complete pending calls once, including cancellation and shutdown. Cancellation
+is local; it does not undo remote work. Late replies and their descriptors
+are discarded by libchannel. Each pending call checks both the FIDL txid and
+method ordinal after native token matching. Native 64-bit reply tokens are
+never truncated to FIDL's 32-bit IDs; IDs are never reused on a connection.
+Reconnect if the ID space is exhausted.
+
+Shutdown sends an epitaph and stops new server sends/replies. Continue polling
+until the peer observes it and closes, or apply an application deadline then
+Close. Sending is not a delivery guarantee; immediately closing can discard
+queued output. Remote epitaph status is available from peer_epitaph(). An
+unknown strict interaction or malformed message closes the connection. Providers must
+still implement application authorization, quotas, and retry/idempotency rules.
+
+Protocol evolution
+------------------
+Closed protocols reject all unknown interactions. Ajar protocols accept only
+unknown flexible one-way methods/events. Open protocols additionally answer
+unknown flexible two-way calls with the standard FIDL unknown-method result.
+The generated client reports that result as EOPNOTSUPP without closing the
+connection. C callbacks receive a null result pointer in this case. Application
+error results remain separate from callback errno status.
+
+Generated C server/event handler structures for open/ajar protocols expose an
+optional unknown_interaction callback (ordinal, plus two-way flag for servers).
+C++ handlers provide OnUnknownMethod/OnUnknownEvent hooks. Unknown attachments
+are closed by the runtime; these hooks receive no payload or capabilities.
+Known interactions ignore the sender's strict/flexible flag for compatibility.
+Creating a generated client supplies a default event handler when none exists;
+known unhandled events are decoded and discarded, and unknown events follow
+the protocol's openness rules. In C this occurs on the first generated client
+call; bind event handlers explicitly to receive events before making a call.
+Explicitly bound event handlers take precedence.
+
+Supported and unsupported features
+----------------------------------
+The C/C++ adapters support closed, ajar, and open protocols with strict or
+flexible methods and events as permitted by the FIDL compiler. Payloads use local or imported structs/tables/unions, with
+upstream C++ name transformations. Anonymous and payload-free methods work.
+Upstream natural codecs implement their value types, bounds, padding, UTF-8,
+and resource envelopes. The native wrapper also enforces the kernel's 14,336
+byte / 32 attachment limit, even where an upstream schema permits more.
+The C projection supports local/imported structs, tables, unions, enums/bits, nested
+arrays/vectors, optional strings/vectors and boxed types, descriptors, and
+protocol endpoints. Strict application-error replies expose their generated
+result union; callback errno status remains reserved for transport/conversion
+errors. C is the primary application API.
+C++ ClientEnd<Protocol> and ServerEnd<Protocol> own native channel descriptors;
+C exposes them as owned/borrowed FD fields under the same rules as handles.
+Optional endpoints use an empty wrapper or -1, not descriptor zero.
+C source member names are preserved where possible. Keywords and size-field
+collisions gain a deterministic _fidl suffix, repeated until unambiguous.
+The C++ getter name always comes from upstream name metadata. Container
+wrappers use readable layout-derived names, with a hash suffix only for very
+long nested type names. Missing dependency IR fails generation.
+
+C layout/ownership rules:
+- Strings use a pointer plus NAME_size; vectors use a mutable element pointer
+  plus NAME_size. String/vector elements in other containers have a generated
+  wrapper with data/data_size fields. Arrays are inline C arrays.
+- Optional strings/vectors add NAME_present. An absent input must have a null
+  pointer and zero size. A present empty value sets present=true and size=0.
+- Boxed structs and optional unions use nullable pointers. Tables use has_NAME
+  flags independently of their member's optional-value presence.
+- Unions use an ordinal tag and a value union, with generated NAME_MEMBER_tag
+  constants. An unknown flexible union decodes with NAME_unknown_tag; unknown
+  data is discarded by the codec and cannot be sent back as a known value.
+- Enum/bits values have fixed-width C typedefs and prefixed value constants.
+  The upstream codec validates strict values and preserves flexible values.
+- Every nested callback buffer lasts only through the callback. Taking a
+  nested descriptor transfers ownership exactly as taking a top-level one.
+  Retaining the request context does not retain these buffers.
+- Conversion bounds allocation work, recursion and descriptor count before
+  encoding. Cyclic boxed C input fails rather than overflowing the stack.
+  A response-view allocation failure completes the C callback once with
+  ENOMEM and releases unclaimed descriptors.
+
+zx.Handle fields map to native Descriptor values; supported subtypes are
+NONE (a generic FD), SOCKET (a native socket), and CHANNEL (a native capability
+channel). Unsupported Zircon object subtypes fail generation. READ and WRITE
+are explicitly mapped to CAP_READ and CAP_WRITE; masks are not cast between
+platforms. Explicit socket rights also require/preserve CAP_FSTAT for type
+validation. CHANNEL requires SAME_RIGHTS with any native attenuation performed
+beforehand. Type verification uses the actual FD; a socket needs fstat rights,
+and a channel needs GETINFO permission. SAME_RIGHTS preserves already attenuated
+rights and does not grant new ones. Descriptor transfer ceilings, revocation,
+and locked exec/fork flags remain kernel policy.
+
+Rust runtime bindings remain an implementation gap, not a permanent architectural restriction.
+Add them with generated round-trip and rejection tests before accepting them
+in the generator. Full upstream conformance and performance parity are not
+claimed. Zircon-only object types and Fuchsia component routing should only
+be introduced where a real native capability contract exists; no fake rights
+or objects should be added just to make source compile.
+
+Tests
+-----
+The runtime suite uses actual kernel channels and generated types/client/server
+adapters. It covers capability-mode process exchange, descriptor zero, rights
+attenuation and transfer ceilings, wrong types, transfer-once/no-transfer,
+malformed headers/padding/UTF-8/booleans/attachments, unknown resource envelopes,
+typed endpoint exchange/rejection, encoder/decoder allocation failures,
+request correlation, reordering, cancellation and late replies, queued-FD
+cleanup, peer death, callback shutdown/exceptions, and epitaphs. Deterministic
+byte and resource mutation corpora run under the same codecs.
+
+The C11 test covers calls, replies, one-way messages, events, borrowed outbound
+FDs, taking a received descriptor, deferred replies, cancellation, invalid
+buffers/bounds, and shutdown. ASan and UBSan run the native suites. This host's
+LeakSanitizer is unavailable; detect_leaks is explicitly disabled and not
+reported as a passed check. Descriptor cleanup is checked by pipe EOF after
+all intended owners are gone, including rejection and backpressure cases.
+
+Ongoing maturity work and acceptance gates: lib/libfidl/MATURITY.
+
+The native source-tree build supports LIBADD=fidl_bsd for C programs, including
+fully static linkage. The dependency declaration includes the C++ runtime;
+applications do not need to guess extra C++ ABI libraries. The installed API
+test includes a C-only program built through these native make rules.
+
+Native test and package integration
+----------------------------------
+MK_TESTS builds tests/ through bsd.test.mk and installs its Kyuafile and test
+executables under /usr/tests/lib/libfidl. The C11 integration test is always
+included; MK_GOOGLETEST controls the C++ runtime suite. libfidl-tests packages
+these tests, with a debug subpackage when split debug files are enabled.
+The binaries link statically so allocation-failure injection covers the runtime;
+no FIDL host compiler, Python, Go, or source tree is needed to run them.
+Run `kyua test -k /usr/tests/lib/libfidl/Kyuafile` on a matching 5BSD kernel.
+
+Nine runtime fixture files are checked in under tests/generated, and nine
+provider binding files under lib/libtimecmp/generated. Ordinary
+world/test builds need no host generator. After editing the schema or generator,
+run `python3.12 tools/build/fuchsia/test-bindings.py --write` from /usr/src;
+without --write, the command rejects stale, missing, or extra generated files.
+The host-tool check and check-native targets verify these fixtures.
+
+`make -C tools/build/fuchsia check-native` runs native and sanitizer suites,
+staged C/C++ SDK consumers, bsd.test.mk/Kyua tests, and pkgbase archive checks.
+It requires the already bootstrapped host tools and Kyua. The installed check
+uses the running host's base libraries, plus freshly built FIDL/libchannel;
+world builds use the target libraries and must run on their matching kernel.
+`test-installed.py --packages` stages and verifies the SDK and native tests,
+then tests their extracted packages without installing anything on the host.
+Full world/release validation, conformance and provider migration still apply.
+
+BSDTime and libtimecmp are the first source-tree C provider/client migration.
+Their native host-safe tests use the actual FIDL handlers with simulated clock
+gates; test-provider.py is included in check-native. Public C ABI 1 is retained;
+source wire framing changes to bsd.time.v1 with explicit version negotiation.
+Production activation, real-gate VM and coordinated rollback remain required.
+
+The provider package check, test-provider.py --packages, also validates split
+manual/debug packages and the registered bsdtime-tests package. Extracted
+payloads pass native tests and C/C++ API probes; debug-link CRCs and staged-file
+ownership are checked. Its runtime archive contains only BSDTime/BSDTimectl,
+not a deployable complete world. See tools/build/fuchsia/README.
