@@ -100,6 +100,7 @@ struct service_provider {
 	pid_t			 owner;
 	bool			 quiescing;
 	bool			 quiesce_complete;
+	uint32_t		 quiesce_reason;
 };
 static struct service_context service_default_context;
 static struct service_provider *service_providers;
@@ -960,10 +961,12 @@ service_control_event(struct channel *channel,
 		if (quiesce->op == SVC_OP_QUIESCE && quiesce->flags == 0 &&
 		    quiesce->deadline_ms != 0 &&
 		    quiesce->reason >= SVC_QUIESCE_REASON_STOP &&
-		    quiesce->reason <= SVC_QUIESCE_REASON_RELOAD) {
+		    quiesce->reason <= SVC_QUIESCE_REASON_IDLE) {
 			for (struct service_provider *provider = service_providers;
-			    provider != NULL; provider = provider->next)
+			    provider != NULL; provider = provider->next) {
 				provider->quiescing = true;
+				provider->quiesce_reason = quiesce->reason;
+			}
 			for (listener = service_listeners; listener != NULL;
 			    listener = listener->next) {
 				listener->provider->quiescing = true;
@@ -1875,6 +1878,11 @@ service_provider_quiesce_complete(struct service_provider *provider,
 		(void)pthread_mutex_unlock(&service_state_lock);
 		return (errno = provider->quiesce_complete ? EALREADY : EPERM, -1);
 	}
+	if (status == EBUSY &&
+	    provider->quiesce_reason != SVC_QUIESCE_REASON_IDLE) {
+		(void)pthread_mutex_unlock(&service_state_lock);
+		return (errno = EINVAL, -1);
+	}
 	(void)pthread_mutex_unlock(&service_state_lock);
 	memset(&request, 0, sizeof(request));
 	request.op = SVC_OP_QUIESCE_RESULT;
@@ -1884,7 +1892,20 @@ service_provider_quiesce_complete(struct service_provider *provider,
 	error = pthread_mutex_lock(&service_state_lock);
 	if (error != 0)
 		return (errno = error, -1);
-	provider->quiesce_complete = true;
+	if (status == EBUSY) {
+		for (struct service_provider *item = service_providers;
+		    item != NULL; item = item->next) {
+			item->quiescing = false;
+			item->quiesce_reason = 0;
+		}
+		for (struct service_listener *listener = service_listeners;
+		    listener != NULL; listener = listener->next) {
+			listener->closing = false;
+			(void)pthread_cond_broadcast(&listener->cond);
+			service_listener_signal(listener);
+		}
+	} else
+		provider->quiesce_complete = true;
 	(void)pthread_mutex_unlock(&service_state_lock);
 	return (0);
 }

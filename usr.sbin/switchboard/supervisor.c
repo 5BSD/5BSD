@@ -881,7 +881,8 @@ svc_graceful_stop(struct svc_runtime *svc, int kq)
 		message.op = SVC_OP_QUIESCE;
 		message.reason = sd.shutting_down ? SVC_QUIESCE_REASON_SHUTDOWN :
 		    (svc->reload_pending ? SVC_QUIESCE_REASON_RELOAD :
-		    SVC_QUIESCE_REASON_STOP);
+		    (svc->idle_stop_pending ? SVC_QUIESCE_REASON_IDLE :
+		    SVC_QUIESCE_REASON_STOP));
 		message.deadline_ms = svc->manifest.stop_timeout * 1000;
 		if (svc_channel_send_event(svc, &message, sizeof(message), NULL, 0,
 		    kq) == 0) {
@@ -919,6 +920,16 @@ svc_quiesce_complete(struct svc_runtime *svc, int status, int kq)
 		return;
 	svc->quiesce_pending = false;
 	SWITCHBOARD_PROBE_QUIESCE_COMPLETE(svc->manifest.label, status);
+	if (svc->idle_stop_pending && status == EBUSY) {
+		/* Accepted work won the race with the idle timer. */
+		cancel_stop_timer(svc);
+		svc->idle_stop_pending = false;
+		svc->idle_timeout_sec = 0;
+		svc->state = SVC_STATE_RUNNING;
+		arm_watchdog_timer(svc, kq);
+		svc_channel_sync_events(svc, kq);
+		return;
+	}
 	if (status != 0)
 		syslog(LOG_WARNING, "service %s: quiesce completed with %s",
 		    svc->manifest.label, strerror(status));

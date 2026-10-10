@@ -233,6 +233,13 @@ client to re-arm the timer, or with
 .Fa seconds
 set to zero to cancel a pending idle shutdown.
 New client demand arriving before the timer fires cancels it automatically.
+If accepted work becomes active as the timer fires, the provider may reply to
+the idle quiesce with
+.Er EBUSY
+through
+.Fn service_provider_quiesce_complete .
+This resumes client admission and cancels the pending stop; the provider must
+request idle shutdown again when the work completes.
 .Pp
 .Fn service_heartbeat
 sends a liveness ping to

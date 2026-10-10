@@ -1736,6 +1736,41 @@ scenario_idle(const char *name, const char *seconds_str, const char *prefix)
 }
 
 /*
+ * The idle timer can fire while accepted work is still active.  Declining the
+ * idle quiesce keeps this incarnation and reopens its listener.
+ */
+static int
+scenario_idle_busy(const char *name, const char *ready)
+{
+	struct service_listener *listener;
+	int i;
+
+	listener = NULL;
+	if (fixture_service_initialize() == -1 ||
+	    service_provider_expose(fixture_service_provider, name,
+	    &listener) == -1 || fixture_service_ready() == -1)
+		err(1, "idle-busy provider initialization");
+	write_result(ready, "pid=%jd\n", (intmax_t)getpid());
+	if (service_idle_shutdown(fixture_service_context, 1) == -1)
+		err(1, "service_idle_shutdown");
+	for (i = 0; i < 500; i++) {
+		if (service_provider_quiescing(fixture_service_provider) == 1)
+			break;
+		if (poll(NULL, 0, 10) == -1 && errno != EINTR)
+			err(1, "poll");
+	}
+	if (i == 500)
+		fixture_fail(ready, "idle quiesce did not arrive");
+	if (service_provider_quiesce_complete(fixture_service_provider,
+	    EBUSY) == -1)
+		fixture_fail(ready, "idle quiesce EBUSY failed");
+	if (service_provider_quiescing(fixture_service_provider) != 0)
+		fixture_fail(ready, "idle quiesce did not resume admission");
+	write_result(ready, "pid=%jd busy=1\n", (intmax_t)getpid());
+	hold();
+}
+
+/*
  * Arm an idle timeout, then immediately cancel it with seconds == 0.  switchboard
  * must clear the pending stop, so the provider stays running past the timeout.
  */
@@ -2390,6 +2425,8 @@ main(int argc, char **argv)
 		return (scenario_worker_channel(argv[2]));
 	if (argc == 5 && strcmp(argv[1], "idle-provider") == 0)
 		return (scenario_idle(argv[2], argv[3], argv[4]));
+	if (argc == 4 && strcmp(argv[1], "idle-busy") == 0)
+		return (scenario_idle_busy(argv[2], argv[3]));
 	if (argc == 5 && strcmp(argv[1], "idle-cancel") == 0)
 		return (scenario_idle_cancel(argv[2], argv[3], argv[4]));
 	if (argc == 4 && strcmp(argv[1], "watchdog-hold") == 0)

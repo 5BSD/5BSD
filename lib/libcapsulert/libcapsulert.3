@@ -534,7 +534,13 @@ for reason
 .Dv SVC_QUIESCE_REASON_STOP ,
 .Dv SVC_QUIESCE_REASON_SHUTDOWN
 or
-.Dv SVC_QUIESCE_REASON_RELOAD .
+.Dv SVC_QUIESCE_REASON_RELOAD
+or
+.Dv SVC_QUIESCE_REASON_IDLE .
+An idle quiesce may be declined with
+.Er EBUSY
+if accepted work is still active; the provider resumes admission and must
+request idle shutdown again after that work finishes.
 .El
 .Ss BSDFilesystem protocol
 .In bsdfilesystem_proto.h

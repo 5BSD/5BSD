@@ -1061,6 +1061,35 @@ ATF_TC_BODY(handle_ready_ambient_promotion, tc)
 	(void)close(kq);
 }
 
+ATF_TC_WITHOUT_HEAD(idle_quiesce_busy_resumes_provider);
+ATF_TC_BODY(idle_quiesce_busy_resumes_provider, tc)
+{
+	struct svc_runtime svc;
+	int kq;
+
+	(void)tc;
+	kq = kqueue();
+	ATF_REQUIRE(kq >= 0);
+	switchboard_kq = kq;
+	idle_runtime_init(&svc, "org.test.idle-busy");
+	svc.state = SVC_STATE_STOPPING;
+	svc.protocol_ready = true;
+	svc.idle_stop_pending = true;
+	svc.quiesce_pending = true;
+	svc.idle_timeout_sec = 5;
+	svc.manifest.stop_timeout = 2;
+	schedule_stop_kill(&svc, kq);
+	ATF_REQUIRE(svc.stop_kill_pending);
+	svc_quiesce_complete(&svc, EBUSY, kq);
+	ATF_CHECK_EQ(SVC_STATE_RUNNING, svc.state);
+	ATF_CHECK(!svc.idle_stop_pending);
+	ATF_CHECK(!svc.quiesce_pending);
+	ATF_CHECK(!svc.stop_kill_pending);
+	ATF_CHECK_EQ(0, svc.idle_timeout_sec);
+	switchboard_kq = -1;
+	(void)close(kq);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, provider_incarnation);
@@ -1071,6 +1100,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, idle_timer_arm_cancel);
 	ATF_TP_ADD_TC(tp, idle_timer_ident_range);
 	ATF_TP_ADD_TC(tp, idle_timer_fire_stops_provider);
+	ATF_TP_ADD_TC(tp, idle_quiesce_busy_resumes_provider);
 	ATF_TP_ADD_TC(tp, idle_note_exit_reactivatable);
 	ATF_TP_ADD_TC(tp, handle_idle_protocol);
 	ATF_TP_ADD_TC(tp, handle_ready_ambient_promotion);

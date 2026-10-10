@@ -84,6 +84,9 @@
 #define	SVC_QUIESCE_REASON_STOP		1
 #define	SVC_QUIESCE_REASON_SHUTDOWN	2
 #define	SVC_QUIESCE_REASON_RELOAD	3
+#define	SVC_QUIESCE_REASON_IDLE		4
+
+/* Only an idle quiesce may be declined with EBUSY to resume admission. */
 
 struct svc_quiesce_msg {
 	uint32_t	op;		/* SVC_OP_QUIESCE */
