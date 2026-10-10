@@ -9,7 +9,8 @@
 #include <time.h>
 
 static unsigned clocks, event_calls, terms, kills, waits;
-static int mode, kill_failure, wait_failure;
+static int mode, kill_failure, wait_failure, exit_wait, exit_error;
+static void *exit_worker;
 static int
 fake_clock(clockid_t id, struct timespec *time)
 {
@@ -39,6 +40,13 @@ fake_wait(int fd, int *status, int options, struct rusage *usage, siginfo_t *inf
 	(void)fd;
 	(void)usage;
 	(void)info;
+	if (exit_wait) {
+		ATF_CHECK_EQ(WEXITED | WNOHANG, options);
+		if (++waits == 1)
+			return (errno = EINTR, -1);
+		*status = 0;
+		return (exit_error ? (errno = exit_error, -1) : 0);
+	}
 	ATF_CHECK_EQ(WEXITED | ((kill_failure ||
 	    (wait_failure && waits != 0)) ? WNOHANG : 0), options);
 	waits++;
@@ -61,6 +69,12 @@ fake_event(int kq, const struct kevent *changes, int nchanges,
 	ATF_CHECK_EQ(3, timeout->tv_sec);
 	ATF_CHECK_EQ(0, timeout->tv_nsec);
 	event_calls++;
+	if (exit_worker != NULL) {
+		events_out->filter = EVFILT_PROCDESC;
+		events_out->udata = exit_worker;
+		exit_worker = NULL;
+		return (1);
+	}
 	return (0);
 }
 #define clock_gettime fake_clock
@@ -151,9 +165,43 @@ ATF_TC_BODY(shutdown_reports_cleanup_failure, tc)
 	}
 }
 
+ATF_TC_WITHOUT_HEAD(exit_event_reap_errors);
+ATF_TC_BODY(exit_event_reap_errors, tc)
+{
+	struct audit_worker *head;
+	size_t count;
+	int errors[] = { 0, EIO, ECHILD };
+	int pd;
+
+	for (size_t i = 0; i < nitems(errors); i++) {
+		head = calloc(1, sizeof(*head));
+		ATF_REQUIRE(head != NULL);
+		head->pd = pd = open("/dev/null", O_RDONLY);
+		ATF_REQUIRE(pd >= 0);
+
+		count = 1;
+		mode = 2;
+		exit_wait = 1;
+		exit_error = errors[i];
+		exit_worker = head;
+		clocks = event_calls = terms = kills = waits = 0;
+		if (exit_error == EIO)
+			ATF_CHECK_ERRNO(EIO, workers_shutdown(-1, &head, &count) == -1);
+		else
+			ATF_CHECK_EQ(0, workers_shutdown(-1, &head, &count));
+		ATF_CHECK_EQ(NULL, head);
+		ATF_CHECK_EQ(0, count);
+		ATF_CHECK_EQ(1, terms);
+		ATF_CHECK_EQ(0, kills);
+		ATF_CHECK_EQ(2, waits);
+		ATF_CHECK_ERRNO(EBADF, fcntl(pd, F_GETFD) == -1);
+	}
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, shutdown_clock_failure);
+	ATF_TP_ADD_TC(tp, exit_event_reap_errors);
 	ATF_TP_ADD_TC(tp, shutdown_reports_cleanup_failure);
 	ATF_TP_ADD_TC(tp, bootstrap_failure_reaps_child);
 	return (atf_no_error());

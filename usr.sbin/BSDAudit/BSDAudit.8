@@ -75,6 +75,10 @@ a successful quiescence acknowledgement.
 Remaining reap attempts are nonblocking after a failure; the supervisor may
 need to recover any surviving worker.
 The grace period does not bound the final kernel reap wait.
+Worker exit-event reaping retries interrupted calls and tolerates children
+already reaped.
+Other reap errors fail shutdown or the active service loop instead of being
+silently discarded.
 .Sh SEE ALSO
 .Xr audit 2 ,
 .Xr libauditcmp 3 ,

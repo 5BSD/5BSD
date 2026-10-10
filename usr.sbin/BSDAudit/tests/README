@@ -31,3 +31,9 @@ shutdown_reports_cleanup_failure injects forced-kill and final-reap errors.
 It checks first-error preservation, nonblocking remaining reap attempts, and
 release of all tracking nodes and descriptors. Actual denied termination and
 supervisor recovery of a surviving protected worker remain integration gates.
+
+exit_event_reap_errors injects an exit event during graceful shutdown and
+checks retry after EINTR, propagation of EIO, and acceptance of ECHILD. It
+verifies list/count cleanup and actual FD closure without sending SIGKILL to
+a child whose exit event was observed. Kernel event delivery and real reap
+failure remain separate integration checks.

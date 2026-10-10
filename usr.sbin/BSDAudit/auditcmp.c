@@ -434,23 +434,28 @@ struct audit_worker {
 	pid_t pid;
 };
 
-static void
+static int
 worker_remove(struct audit_worker **workers, struct audit_worker *worker,
     size_t *count)
 {
 	struct audit_worker **cursor;
-	int status;
+	int status, result, error;
 
 	for (cursor = workers; *cursor != NULL && *cursor != worker;
 	    cursor = &(*cursor)->next)
 		;
 	if (*cursor == worker)
 		*cursor = worker->next;
-	(void)pdwait(worker->pd, &status, WEXITED | WNOHANG, NULL, NULL);
+	do {
+		result = pdwait(worker->pd, &status, WEXITED | WNOHANG,
+		    NULL, NULL);
+	} while (result == -1 && errno == EINTR);
+	error = result == -1 && errno != ECHILD ? errno : 0;
 	close(worker->pd);
 	free(worker);
 	if (*count != 0)
 		(*count)--;
+	return (error != 0 ? (errno = error, -1) : 0);
 }
 
 static int
@@ -486,8 +491,9 @@ workers_shutdown(int kq, struct audit_worker **workers, size_t *count)
 				continue;
 			break;
 		}
-		if (event.filter == EVFILT_PROCDESC)
-			worker_remove(workers, event.udata, count);
+		if (event.filter == EVFILT_PROCDESC &&
+		    worker_remove(workers, event.udata, count) == -1 && error == 0)
+			error = errno;
 	}
 force:
 	for (worker = *workers; worker != NULL; worker = worker->next) {
@@ -569,7 +575,10 @@ main(void)
 			goto out;
 		}
 		if (event.filter == EVFILT_PROCDESC) {
-			worker_remove(&workers, event.udata, &nworkers);
+			if (worker_remove(&workers, event.udata, &nworkers) == -1) {
+				warn("worker reap");
+				goto out;
+			}
 			continue;
 		}
 		memset(&identity, 0, sizeof(identity));
