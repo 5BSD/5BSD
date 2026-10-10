@@ -18,6 +18,7 @@ p.add_argument('--log-provider',action='store_true')
 p.add_argument('--atf-suite',action='append',default=[],help='static ATF binary relative to objtop; repeatable')
 p.add_argument('--atf-case',action='append',default=[],help='static ATF binary relative to objtop followed by :case; repeatable')
 p.add_argument('--timeout',type=int,default=240)
+p.add_argument('--cpus',type=int,choices=range(1,5),default=4,help='guest vCPUs (default 4, maximum 4)')
 p.add_argument('--tcg-thread',choices=['multi','single'],default='multi',help='diagnostic TCG threading mode')
 p.add_argument('--eventtimer',choices=['LAPIC','i8254','HPET'],help='guest event timer override for diagnosis')
 a=p.parse_args()
@@ -160,8 +161,8 @@ for f in sorted(stage.rglob('*')):
 subprocess.run(['makefs','-t','ffs','-s','256m','-F',str(work/'METALOG'),'-o','version=2',str(work/'root.ufs'),str(stage)],check=True)
 subprocess.run(['mkimg','-s','gpt','-f','raw','-b',str(stage/'boot/pmbr'),'-p','freebsd-boot:='+str(stage/'boot/gptboot'),'-p','freebsd-ufs:='+str(work/'root.ufs'),'-o',str(work/'guest.img')],check=True)
 log=work/'serial.log'
-cmd=[a.qemu,'-L',str(a.qemu_data),'-accel','tcg,thread='+a.tcg_thread,'-machine','q35','-cpu','max','-m','1024','-smp','2','-drive',f'file={work}/guest.img,format=raw,if=virtio,snapshot=on','-nic','none','-display','none','-monitor','none','-serial','file:'+str(log)]
-provenance={'requested_eventtimer':a.eventtimer,'tcg_thread':a.tcg_thread,'host_loadavg_start':os.getloadavg(),'host_logical_cpus':os.cpu_count(),'kernel_sha256':hashes[str(kernel)],'fixture_sha256':hashes[str(helper)],'test_sha256':hashes[str(test)],'filesystem_test_sha256':hashes[str(fs_test)],'ownership_test_hashes':extra_hashes,'objtop':str(obj),'staged_root':str(root),'command':cmd,'selected_atf_suites':selected_suites,'scope':'isolated native daemon/library fixtures; not integrated bundle or installer acceptance'}
+cmd=[a.qemu,'-L',str(a.qemu_data),'-accel','tcg,thread='+a.tcg_thread,'-machine','q35','-cpu','max','-m','1024','-smp',str(a.cpus),'-drive',f'file={work}/guest.img,format=raw,if=virtio,snapshot=on','-nic','none','-display','none','-monitor','none','-serial','file:'+str(log)]
+provenance={'guest_cpus':a.cpus,'guest_memory_mib':1024,'requested_eventtimer':a.eventtimer,'tcg_thread':a.tcg_thread,'host_loadavg_start':os.getloadavg(),'host_logical_cpus':os.cpu_count(),'kernel_sha256':hashes[str(kernel)],'fixture_sha256':hashes[str(helper)],'test_sha256':hashes[str(test)],'filesystem_test_sha256':hashes[str(fs_test)],'ownership_test_hashes':extra_hashes,'objtop':str(obj),'staged_root':str(root),'command':cmd,'selected_atf_suites':selected_suites,'scope':'isolated native daemon/library fixtures; not integrated bundle or installer acceptance'}
 (work/'inputs.json').write_text(json.dumps(provenance,indent=2)+'\n')
 proc=subprocess.Popen(cmd); deadline=time.monotonic()+a.timeout; forced=False
 try:

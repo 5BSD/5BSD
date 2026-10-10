@@ -11,7 +11,8 @@ configurations, and static test/fixture binaries. It copies inputs into its
 own staging tree, with root ownership represented in a makefs METALOG.
 No host root login, install, mount or reboot is needed. It does not write the
 input staging root or attach another VM's writable disk. Compilation uses all
-logical CPUs; this small runtime guest uses two CPUs and 1 GiB RAM.
+logical CPUs; this small runtime guest uses four CPUs and 1 GiB RAM by default.
+--cpus selects one through four guest CPUs; this task uses four.
 
 The VM has no network and boots a PID 1 fixture instead of the capability plane.
 It runs native session/bootstrap deadline and session lifecycle tests as root,
@@ -171,7 +172,7 @@ Diagnostic comparisons may select --eventtimer LAPIC/i8254/HPET and
 and multi-thread TCG. The requested settings are recorded in provenance;
 RUNTIME_CLOCK prints actual guest eventtimer and timecounter selections.
 A timer override can fall back if unavailable, so inspect the actual value.
-Both modes retain two guest CPUs and all acceptance thresholds.
+Both modes retain the selected guest CPU count and all acceptance thresholds.
 
 Further 2026-10-10 host ktrace captured a QEMU CPU thread descheduled for
 174.972ms while its main thread waited175.002ms on the same mutex; the CPU
