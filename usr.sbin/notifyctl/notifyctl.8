@@ -1,5 +1,5 @@
 .\" SPDX-License-Identifier: BSD-2-Clause
-.Dd September 14, 2026
+.Dd October 10, 2026
 .Dt NOTIFYCTL 8
 .Os
 .Sh NAME
@@ -22,6 +22,11 @@
 .Op Fl s
 .Cm state-set
 .Ar topic value
+.Nm
+.Op Fl s
+.Cm state-watch
+.Ar topic
+.Op Ar count Op Ar timeout-ms
 .Nm
 .Op Fl s
 .Cm timer
@@ -76,6 +81,7 @@ It does not modify or reload the running service.
 .Cm publish ,
 .Cm state-get ,
 .Cm state-set ,
+.Cm state-watch ,
 .Cm timer ,
 .Cm watch ,
 and
@@ -96,6 +102,21 @@ The optional receive timeout applies separately to each event.
 The
 .Cm watch
 command explicitly unsubscribes after receiving its event.
+.Pp
+The
+.Cm state-watch
+command prints the current topic snapshot immediately, including its presence,
+then waits for changes until
+.Ar count
+snapshots have been printed (default one).
+An absent state has
+.Li present=0 state=0 .
+Updates coalesce, and repeated identical values do not wake readers.
+Each line is flushed immediately for use in pipelines.
+The timeout applies to each call; its default is an infinite wait.
+Zero polls, and an unchanged value or expired wait exits with status 75.
+A changed epoch identifies a new observation stream after reconnection.
+The subscription policy governs access on both tiers.
 .Sh SEE ALSO
 .Xr libnotify 3 ,
 .Xr bsdnotify 8 ,

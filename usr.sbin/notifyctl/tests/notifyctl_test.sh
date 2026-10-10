@@ -352,8 +352,46 @@ double_dash_body()
 	    env CMP_TEST_TRACE_OPEN=1 "$success" -s publish "$topic" -- payload
 }
 
+atf_test_case state_watch
+state_watch_head()
+{
+	atf_set "descr" "state-watch renders snapshots and absence, bounds waits and closes on errors"
+}
+state_watch_body()
+{
+	notifyctl="$(atf_get_srcdir)/notifyctl_success_bin"
+	topic=org.5bsd.test.changed
+	atf_check -s exit:0 -o inline:'epoch=7 generation=1 present=1 state=42\n' \
+	    -e empty "$notifyctl" state-watch "$topic"
+	atf_check -s exit:0 \
+	    -o inline:'epoch=7 generation=1 present=1 state=42\nepoch=7 generation=2 present=0 state=0\nepoch=7 generation=3 present=1 state=42\n' \
+	    -e inline:'client-open system.Notify.System\nclient-closed\n' \
+	    env CMP_TEST_TRACE_OPEN=1 CMP_TEST_TRACE_CLOSE=1 \
+	    "$notifyctl" -s state-watch "$topic" 3 25
+	atf_check -s exit:75 -o inline:'epoch=7 generation=1 present=1 state=42\n' \
+	    -e match:'state-watch' -e match:'client-closed' \
+	    env CMP_TEST_TIMEOUT=1 CMP_TEST_TRACE_CLOSE=1 \
+	    "$notifyctl" state-watch "$topic" 2 0
+	atf_check -s exit:69 -o empty -e match:'Input/output error' \
+	    -e match:'client-closed' env CMP_TEST_FAIL=state-watch \
+	    CMP_TEST_TRACE_CLOSE=1 "$notifyctl" state-watch "$topic"
+	for count in 0 4294967296 invalid; do
+		atf_check -s exit:64 -o empty -e match:count \
+		    -e not-match:client-open env CMP_TEST_TRACE_OPEN=1 \
+		    "$notifyctl" state-watch "$topic" "$count"
+	done
+	for timeout in 4294967296 invalid; do
+		atf_check -s exit:64 -o empty -e match:timeout \
+		    -e not-match:client-open env CMP_TEST_TRACE_OPEN=1 \
+		    "$notifyctl" state-watch "$topic" 1 "$timeout"
+	done
+	atf_check -s exit:64 -e match:usage "$notifyctl" state-watch
+	atf_check -s exit:64 -e match:usage "$notifyctl" state-watch a 1 2 3
+}
+
 atf_init_test_cases()
 {
+	atf_add_test_case state_watch
 	atf_add_test_case configtest
 	atf_add_test_case config_errors
 	atf_add_test_case arguments

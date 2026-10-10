@@ -37,6 +37,7 @@ usage(void)
 	    "       notifyctl [-s] publish topic [payload]\n"
 	    "       notifyctl [-s] state-get topic\n"
 	    "       notifyctl [-s] state-set topic value\n"
+	    "       notifyctl [-s] state-watch topic [count [timeout-ms]]\n"
 	    "       notifyctl [-s] timer timer-id interval-ms [count [timeout-ms]]\n"
 	    "       notifyctl [-s] watch topic [timeout-ms]\n"
 	    "       notifyctl [-s] stats\n");
@@ -122,6 +123,37 @@ state_get(const char *topic)
 	notify_client_close(client);
 	printf("epoch=%" PRIu64 " generation=%" PRIu64 " state=%" PRIu64
 	    "\n", state.router_epoch, state.generation, state.state);
+	return (0);
+}
+
+static int
+state_watch(const char *topic, uint32_t count, uint32_t timeout)
+{
+	struct notify_state_watch_reply state;
+	struct notify_client *client;
+	uint32_t i;
+	int error;
+
+	client = open_client();
+	for (i = 0; i < count; i++) {
+		if (notify_state_watch(client, topic, &state, timeout) == -1) {
+			error = errno;
+			notify_client_close(client);
+			errno = error;
+			err(error == EAGAIN || error == ETIMEDOUT ?
+			    EX_TEMPFAIL : EX_UNAVAILABLE, "state-watch %s", topic);
+		}
+		if (printf("epoch=%" PRIu64 " generation=%" PRIu64
+		    " present=%u state=%" PRIu64 "\n", state.watch_epoch,
+		    state.generation, state.present, state.state) < 0 ||
+		    fflush(stdout) == EOF) {
+			error = errno;
+			notify_client_close(client);
+			errno = error;
+			err(EX_IOERR, "stdout");
+		}
+	}
+	notify_client_close(client);
 	return (0);
 }
 
@@ -341,6 +373,16 @@ main(int argc, char **argv)
 		return (state_get(argv[2]));
 	if (strcmp(argv[1], "state-set") == 0 && argc == 4)
 		return (state_set(argv[2], argv[3]));
+	if (strcmp(argv[1], "state-watch") == 0 && argc >= 3 && argc <= 5) {
+		count = argc >= 4 ? parse_u64(argv[3], "count") : 1;
+		timeout = argc == 5 ? parse_u64(argv[4], "timeout") :
+		    NOTIFY_TIMEOUT_INFINITE;
+		if (count == 0 || count > UINT32_MAX)
+			errx(EX_USAGE, "count must be between 1 and %u", UINT32_MAX);
+		if (timeout > UINT32_MAX)
+			errx(EX_USAGE, "timeout exceeds %u", UINT32_MAX);
+		return (state_watch(argv[2], (uint32_t)count, (uint32_t)timeout));
+	}
 	if (strcmp(argv[1], "timer") == 0 && argc >= 4 && argc <= 6) {
 		timer_id = parse_u64(argv[2], "timer id");
 		interval = parse_u64(argv[3], "interval");
