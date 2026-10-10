@@ -15,6 +15,7 @@ p.add_argument('--log-store',action='store_true')
 p.add_argument('--log-storage',action='store_true')
 p.add_argument('--log-provider',action='store_true')
 p.add_argument('--atf-suite',action='append',default=[],help='static ATF binary relative to objtop; repeatable')
+p.add_argument('--atf-case',action='append',default=[],help='static ATF binary relative to objtop followed by :case; repeatable')
 p.add_argument('--timeout',type=int,default=240)
 a=p.parse_args()
 if a.timeout<=0: p.error('timeout must be positive')
@@ -108,7 +109,12 @@ if a.log_provider:
  extra_cases.extend(('/tests/log_provider_test',case) for case in cases)
  (stage/'tests/extra-cases').write_text(''.join(program+' '+case+'\n' for program,case in extra_cases))
 selected_suites=[]
-for number, relative in enumerate(a.atf_suite):
+selections=[(relative,None) for relative in a.atf_suite]
+for selection in a.atf_case:
+ relative, separator, case=selection.rpartition(':')
+ if not separator or not relative or not case: p.error('ATF case must be relative/path:case')
+ selections.append((relative,case))
+for number, (relative,selected_case) in enumerate(selections):
  path=Path(relative)
  if path.is_absolute() or '..' in path.parts: p.error('ATF suite must be relative to objtop')
  source=(obj/path).resolve()
@@ -120,10 +126,13 @@ for number, relative in enumerate(a.atf_suite):
  if digest(source)!=before or digest(stage/'tests'/alias)!=before: p.error('ATF suite changed: '+relative)
  cases=[line.split(': ',1)[1] for line in listing.splitlines() if line.startswith('ident: ')]
  if not cases or len(cases)!=len(set(cases)) or any(re.fullmatch(r'[A-Za-z0-9_][A-Za-z0-9_.-]{0,126}',case) is None for case in cases): p.error('invalid ATF case listing: '+relative)
+ if selected_case is not None:
+  if selected_case not in cases: p.error('unknown ATF case: '+relative+':'+selected_case)
+  cases=[selected_case]
  extra_hashes[alias]=before
  selected_suites.append({'source':relative,'alias':alias,'cases':cases,'sha256':before})
  extra_cases.extend(('/tests/'+alias,case) for case in cases)
-if a.atf_suite:
+if selections:
  (stage/'tests/extra-cases').write_text(''.join(program+' '+case+'\n' for program,case in extra_cases))
 (stage/'etc/passwd').write_text('root:*:0:0:Charlie &:/root:/bin/sh\n')
 (stage/'boot/loader.conf').write_text('console="comconsole"\nautoboot_delay="1"\ncapability_plane="NO"\ninit_path="/sbin/runtime-init"\nvfs.root.mountfrom="ufs:/dev/vtbd0p2"\nvfs.root.mountfrom.options="rw"\n')

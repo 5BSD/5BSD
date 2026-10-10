@@ -85,3 +85,10 @@ distinct labels, rejects excess clients, and verifies slot/lease-owner reuse
 after disconnect. Its lifecycle case waits through the real 30-second idle
 limit: an unleased session expires while a lease holder remains usable. Allow
 at least 40 seconds per case and enough VM wall time for boot plus that interval.
+
+Use --atf-case relative/path:case (repeatable) to run a specific listed ATF
+case from a static object-tree binary. Unknown case names are rejected. The
+same path, static-link and hash checks apply as for --atf-suite. inputs.json
+and result.json record the exact selected cases; a selected-case pass does
+not certify the rest of that suite. The minimal guest does not configure
+loopback addresses, so network bind/connect suites need a fuller fixture.
