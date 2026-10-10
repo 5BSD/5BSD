@@ -1,6 +1,6 @@
 .\" SPDX-License-Identifier: BSD-2-Clause
 .\" Copyright (c) 2026 Kory Heard
-.Dd September 19, 2026
+.Dd October 10, 2026
 .Dt BSDPOWERCTL 8
 .Os
 .Sh NAME
@@ -9,6 +9,8 @@
 .Sh SYNOPSIS
 .Nm Cm states
 .Nm Cm suspend Ar state
+.Nm Cm inhibitors
+.Nm Cm inhibit Ar seconds
 .Sh DESCRIPTION
 .Nm
 queries and, with authority, drives ACPI power management through the
@@ -28,6 +30,16 @@ Fails with
 unless the caller's label is granted suspend authority in
 .Xr BSDPower 8 Ns 's
 .Pa power.conf .
+.It Cm inhibitors
+Print the number of active suspend inhibitors.
+.It Cm inhibit Ar seconds
+Hold a session-owned inhibitor for 1 to 86400 seconds, checking the service
+connection once per second.
+Requires the separate inhibit policy grant.
+SIGINT or SIGTERM releases it early.
+Disconnect or process death also
+releases it.
+A lost provider connection causes an error, without reacquiring.
 .El
 .Sh SEE ALSO
 .Xr libpowercmp 3 ,

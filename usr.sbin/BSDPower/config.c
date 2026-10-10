@@ -3,7 +3,7 @@
  *
  * Copyright (c) 2026 Kory Heard
  *
- * BSDTime per-label policy: which labels may suspend the machine.  Mirrors the
+ * BSDPower per-label policy: which labels may suspend the machine.  Mirrors the
  * hardened UCL load of the sibling providers (BSDSysctl/BSDNetwork).
  */
 #include <sys/stat.h>
@@ -53,12 +53,13 @@ valid_label(const char *label, size_t length)
  * lookup must name "suspend", or every documented grant silently no-ops.
  */
 static bool
-object_set_flag(const ucl_object_t *obj)
+object_set_flag(const ucl_object_t *obj, const char *key)
 {
 	const ucl_object_t *v;
 
-	v = ucl_object_lookup(obj, "suspend");
-	return (v != NULL && ucl_object_toboolean(v));
+	v = ucl_object_lookup(obj, key);
+	return (v != NULL && v->next == NULL &&
+	    ucl_object_type(v) == UCL_BOOLEAN && ucl_object_toboolean(v));
 }
 
 static int
@@ -86,7 +87,8 @@ config_parse(const char *text, struct powercmp_config *config)
 	if (def != NULL) {
 		if (ucl_object_type(def) != UCL_OBJECT)
 			goto out_root;
-		config->default_suspend = object_set_flag(def);
+		config->default_suspend = object_set_flag(def, "suspend");
+		config->default_inhibit = object_set_flag(def, "inhibit");
 	}
 
 	clients = ucl_object_lookup(root, "clients");
@@ -105,7 +107,9 @@ config_parse(const char *text, struct powercmp_config *config)
 			(void)strlcpy(config->clients[config->nclients].label,
 			    label, sizeof(config->clients[0].label));
 			config->clients[config->nclients].may_suspend =
-			    object_set_flag(entry);
+			    object_set_flag(entry, "suspend");
+			config->clients[config->nclients].may_inhibit =
+			    object_set_flag(entry, "inhibit");
 			config->nclients++;
 		}
 	}
@@ -225,4 +229,17 @@ powercmp_config_permits_suspend(const struct powercmp_config *config,
 		if (strcmp(config->clients[i].label, label) == 0)
 			return (config->clients[i].may_suspend);
 	return (config->default_suspend);
+}
+
+bool
+powercmp_config_permits_inhibit(const struct powercmp_config *config,
+    const char *label)
+{
+	size_t i;
+	if (config == NULL || label == NULL || label[0] == '\0')
+		return (false);
+	for (i = 0; i < config->nclients; i++)
+		if (strcmp(config->clients[i].label, label) == 0)
+			return (config->clients[i].may_inhibit);
+	return (config->default_inhibit);
 }

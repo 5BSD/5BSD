@@ -98,9 +98,28 @@ ATF_TC_BODY(reply_with_positive_status_is_rejected, tc)
 	    POWERCMP_MESSAGE_REQUEST));
 }
 
+ATF_TC_WITHOUT_HEAD(lease_framing);
+ATF_TC_BODY(lease_framing, tc)
+{
+ struct powercmp_msg m;
+ init(&m, POWERCMP_OP_INHIBIT);
+ ATF_CHECK_EQ(0, powercmp_validate_message(&m, sizeof(m), POWERCMP_MESSAGE_REQUEST));
+ ATF_CHECK_EQ(-1, powercmp_validate_message(&m, POWERCMP_MAX_MESSAGE, POWERCMP_MESSAGE_REQUEST));
+ m.flags = 1;
+ ATF_CHECK_EQ(-1, powercmp_validate_message(&m, sizeof(m), POWERCMP_MESSAGE_REQUEST));
+ m.flags = 0; m.status = 1;
+ ATF_CHECK_EQ(-1, powercmp_validate_message(&m, sizeof(m), POWERCMP_MESSAGE_REQUEST));
+ init(&m, POWERCMP_OP_INHIBITORS);
+ ATF_CHECK_EQ(-1, powercmp_validate_message(&m, sizeof(m), POWERCMP_MESSAGE_REPLY));
+ ATF_CHECK_EQ(0, powercmp_validate_message(&m, POWERCMP_MAX_MESSAGE, POWERCMP_MESSAGE_REPLY));
+ m.status = -1;
+ ATF_CHECK_EQ(0, powercmp_validate_message(&m, sizeof(m), POWERCMP_MESSAGE_REPLY));
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
+	ATF_TP_ADD_TC(tp, lease_framing);
 	ATF_TP_ADD_TC(tp, bare_header_is_valid);
 	ATF_TP_ADD_TC(tp, header_plus_one_time_is_valid);
 	ATF_TP_ADD_TC(tp, bad_magic_is_rejected);

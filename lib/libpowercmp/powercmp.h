@@ -27,6 +27,13 @@ int	powercmp_states(struct powercmp_client *, uint32_t *supported);
  */
 int	powercmp_suspend(struct powercmp_client *, uint32_t state);
 
+/* One inhibitor per client session; separately policy-gated. EALREADY on
+ * duplicate acquisition, ENOENT on release without a lease. Disconnect,
+ * client close, or provider death revokes it. No automatic reacquisition.
+ * Calls require external serialization, as do other powercmp operations. */
+int powercmp_inhibit(struct powercmp_client *);
+int powercmp_uninhibit(struct powercmp_client *);
+int powercmp_inhibitors(struct powercmp_client *, uint32_t *);
 __END_DECLS
 
 #endif /* _POWERCMP_H_ */

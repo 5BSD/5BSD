@@ -1,6 +1,6 @@
 .\" SPDX-License-Identifier: BSD-2-Clause
 .\" Copyright (c) 2026 Kory Heard
-.Dd September 19, 2026
+.Dd October 10, 2026
 .Dt BSDPOWER 8
 .Os
 .Sh NAME
@@ -40,9 +40,13 @@ It is launched by
 .Xr switchboard 8
 as the
 .Pa /Capabilities/System/Power.cap
-bundle and never started by hand; each client is served by a
-.Xr pdfork 2
-worker that drops inherited authority.
+bundle and never started by hand.
+One bounded kqueue loop serves up to
+64 sessions, with at most four sessions per exact client label.
+Non-inhibiting sessions expire after 30 seconds without a request.
+Active inhibitors remain until release or disconnect and decline idle quiesce.
+An explicit supervisor stop still revokes them.
+Suspend checks and inhibitor acquisition are serialized in this loop.
 .Sh POLICY
 Querying the supported sleep states is unprivileged and allowed to every holder.
 Suspending is
@@ -52,9 +56,10 @@ a label may put the machine to sleep only if
 grants it.
 The file is UCL:
 .Bd -literal -offset indent
-default { suspend = false; }
+default { suspend = false; inhibit = false; }
 clients {
 	"org.5bsd.powerd" { suspend = true; }
+	"org.example.updater" { inhibit = true; }
 }
 .Ed
 .Pp
@@ -66,10 +71,27 @@ is fail-soft: the built-in default-deny stands.
 An unexpected suspend is a denial of service, so grant
 .Va suspend
 only to a trusted power manager.
+.Sh SUSPEND INHIBITORS
+The separate default-deny
+.Va inhibit
+permission authorizes one suspend inhibitor per session.
+It does not grant suspend authority.
+An acknowledged inhibitor makes suspend return EBUSY until it is released
+or its owning session disconnects.
+Inhibitors are reclaimed on client death
+and do not survive provider restart.
+No request can release another
+session's inhibitor.
+Grant inhibition only to trusted clients; holding an
+inhibitor indefinitely prevents all BSDPower suspend requests.
+These leases do not govern reboot, halt or other kernel suspend paths.
+.Pp
+Admission and session-failure counters use the shared libservice health
+accounting and are logged when the provider exits its session loop.
 .Sh SEE ALSO
+.Xr libpowercmp 3 ,
 .Xr acpi 4 ,
 .Xr acpiconf 8 ,
-.Xr libpowercmp 3 ,
 .Xr switchboard 8
 .Sh AUTHORS
 .An Kory Heard

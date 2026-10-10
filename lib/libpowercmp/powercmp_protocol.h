@@ -19,7 +19,10 @@
 
 enum powercmp_opcode {
 	POWERCMP_OP_STATES = 1,	/* reply: supported S-state bitmask (unpriv) */
-	POWERCMP_OP_SUSPEND	/* request: enter S-state N -- privileged */
+	POWERCMP_OP_SUSPEND,	/* request: enter S-state N -- privileged */
+	POWERCMP_OP_INHIBIT, /* acquire one session-lifetime suspend inhibitor */
+	POWERCMP_OP_UNINHIBIT, /* release this session's inhibitor */
+	POWERCMP_OP_INHIBITORS /* body.supported: global inhibitor count */
 };
 
 enum powercmp_message_role {

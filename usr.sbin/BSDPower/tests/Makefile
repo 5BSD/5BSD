@@ -25,4 +25,11 @@ NO_SHARED.provider_test=	yes
 
 .PATH:	${SRCTOP}/usr.sbin/BSDPower
 
+ATF_TESTS_C+= lease_test
+SRCS.lease_test= lease_test.c config.c
+CFLAGS.lease_test+= -I${SRCTOP}/lib/libpowercmp -I${SRCTOP}/lib/libservice
+CFLAGS.lease_test+= -I${SRCTOP}/lib/libchannel -I${SRCTOP}/sys -Wno-unused-function
+LIBADD.lease_test= powercmp channel service ucl
+NO_SHARED.lease_test= yes
+
 .include <bsd.test.mk>

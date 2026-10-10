@@ -10,20 +10,30 @@
  */
 #include <err.h>
 #include <errno.h>
+#include <powercmp.h>
+#include <signal.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
-#include <powercmp.h>
+static volatile sig_atomic_t stop;
+static void
+stopped(int sig)
+{
+	(void)sig;
+	stop = 1;
+}
 
 static void
 usage(void)
 {
-
 	fprintf(stderr,
 	    "usage: BSDPowerctl states\n"
-	    "       BSDPowerctl suspend <1-5>\n");
+	    "       BSDPowerctl suspend <1-5>\n"
+	    "       BSDPowerctl inhibitors\n"
+	    "       BSDPowerctl inhibit <seconds>\n");
 	exit(2);
 }
 
@@ -51,6 +61,34 @@ main(int argc, char **argv)
 				first = 0;
 			}
 		printf("%s\n", first ? "(none)" : "");
+		rc = 0;
+	} else if (strcmp(argv[1], "inhibitors") == 0 && argc == 2) {
+		uint32_t count;
+		if (powercmp_inhibitors(client, &count) == -1)
+			err(1, "inhibitors");
+		printf("%u\n", count);
+		rc = 0;
+	} else if (strcmp(argv[1], "inhibit") == 0 && argc == 3) {
+		char *end;
+		errno = 0;
+		unsigned long seconds = strtoul(argv[2], &end, 10);
+		if (errno != 0 || *end != '\0' || end == argv[2] ||
+		    seconds == 0 || seconds > 86400)
+			errx(1, "inhibit: duration must be 1-86400 seconds");
+		signal(SIGINT, stopped);
+		signal(SIGTERM, stopped);
+		if (powercmp_inhibit(client) == -1)
+			err(1, "inhibit");
+		while (seconds-- != 0 && !stop) {
+			sleep(1);
+			uint32_t count;
+			/* An existing session must still be alive; never reopen
+			 * a lost lease. */
+			if (powercmp_inhibitors(client, &count) == -1)
+				err(1, "lease lost");
+		}
+		if (powercmp_uninhibit(client) == -1)
+			err(1, "uninhibit");
 		rc = 0;
 	} else if (strcmp(argv[1], "suspend") == 0 && argc == 3) {
 		char *end;

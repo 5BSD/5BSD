@@ -43,12 +43,30 @@ powercmp_validate_message(const struct powercmp_msg *msg, size_t length,
 	switch (msg->opcode) {
 	case POWERCMP_OP_STATES:
 	case POWERCMP_OP_SUSPEND:
+	case POWERCMP_OP_INHIBIT:
+	case POWERCMP_OP_UNINHIBIT:
+	case POWERCMP_OP_INHIBITORS:
 		break;
 	default:
 		return (-1);
 	}
-	if (role == POWERCMP_MESSAGE_REPLY && msg->status > 0)
+	if (role == POWERCMP_MESSAGE_REPLY &&
+	    (msg->status > 0 || msg->status < -ELAST))
 		return (-1);
+	if (msg->opcode >= POWERCMP_OP_INHIBIT) {
+		if (msg->flags != 0 ||
+		    (role != POWERCMP_MESSAGE_REQUEST &&
+			role != POWERCMP_MESSAGE_REPLY))
+			return (-1);
+		if (role == POWERCMP_MESSAGE_REQUEST && msg->status != 0)
+			return (-1);
+		size_t expected = sizeof(*msg);
+		if (role == POWERCMP_MESSAGE_REPLY && msg->status == 0 &&
+		    msg->opcode == POWERCMP_OP_INHIBITORS)
+			expected += sizeof(struct powercmp_body);
+		if (length != expected)
+			return (-1);
+	}
 	return (0);
 }
 
@@ -185,4 +203,44 @@ powercmp_suspend(struct powercmp_client *client, uint32_t state)
 	body->state = state;
 	return (call(client, &request,
 	    sizeof(struct powercmp_msg) + sizeof(*body), &reply, NULL));
+}
+
+static int
+inhibitor_call(struct powercmp_client *client, uint32_t opcode, uint32_t *count)
+{
+	union powercmp_buffer request, reply;
+	const struct powercmp_body *body;
+	size_t length;
+	build_header(&request, opcode);
+	if (call(client, &request, sizeof(struct powercmp_msg), &reply,
+		&length) == -1)
+		return (-1);
+	if (length !=
+	    sizeof(struct powercmp_msg) + (count != NULL ? sizeof(*body) : 0)) {
+		(void)service_session_fail(client->session, EPROTO);
+		return (errno = EPROTO, -1);
+	}
+	if (count != NULL) {
+		body = (const void *)(reply.bytes +
+		    sizeof(struct powercmp_msg));
+		*count = body->supported;
+	}
+	return (0);
+}
+int
+powercmp_inhibit(struct powercmp_client *c)
+{
+	return (inhibitor_call(c, POWERCMP_OP_INHIBIT, NULL));
+}
+int
+powercmp_uninhibit(struct powercmp_client *c)
+{
+	return (inhibitor_call(c, POWERCMP_OP_UNINHIBIT, NULL));
+}
+int
+powercmp_inhibitors(struct powercmp_client *c, uint32_t *count)
+{
+	if (count == NULL)
+		return (errno = EINVAL, -1);
+	return (inhibitor_call(c, POWERCMP_OP_INHIBITORS, count));
 }

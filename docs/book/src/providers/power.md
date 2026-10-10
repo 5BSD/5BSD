@@ -6,7 +6,7 @@ BSDPower is the `system.Power` provider: the trusted broker for ACPI sleep. A un
 
 Unlike [system.Time](time.md) and [system.Sysctl](sysctl.md), BSDPower needs no system gate. `ACPIIO_REQSLPSTATE` is gated only by device-node access, not by an in-kernel `priv_check`, so authority rides on a descriptor. Switchboard delivers `/dev` as a directory descriptor (manifest `directories = ["/dev"]`); at startup BSDPower opens the leaf `acpi` beneath it with `openat(2)`, narrows the result to `CAP_IOCTL` limited by `cap_ioctls_limit(2)` to exactly `ACPIIO_REQSLPSTATE`, and only then enters capability mode. The sandbox therefore exposes one privileged operation and nothing else. The supported-state mask is read once, also before capability mode, from the `CTLFLAG_CAPRD` sysctl `hw.acpi.supported_sleep_state` and cached.
 
-If `/dev/acpi` is absent (a VM without ACPI, or a non-ACPI board) the daemon fails soft: it still starts, STATES reports the cached mask (zero when the sysctl is missing too), and SUSPEND returns `ENODEV`. Each accepted client is served from a `pdfork(2)` worker that inherits the narrowed descriptor, the loaded policy and the cached mask; the parent remains an accept loop.
+If `/dev/acpi` is absent (a VM without ACPI, or a non-ACPI board) the daemon fails soft: it still starts, STATES reports the cached mask (zero when the sysctl is missing too), and SUSPEND returns `ENODEV`. One shared libservice kqueue loop serves at most 64 sessions, with at most four per exact client label. Non-inhibiting sessions expire after 30 seconds without requests. Active inhibitors remain until release or disconnect and decline idle quiesce; explicit supervisor stop still revokes them. Inhibitor acquisition and suspend checks are serialized.
 
 ## Unit
 
@@ -35,9 +35,9 @@ Defined in `lib/libpowercmp/powercmp_protocol.h`. Fixed-size messages: `struct p
 | Op | Request | Reply | Errors |
 |---|---|---|---|
 | `STATES` (1) | header | `powercmp_body.supported`: bit N set means SN is supported, e.g. `(1<<3)|(1<<4)|(1<<5)` for "S3 S4 S5" | none beyond transport |
-| `SUSPEND` (2) | `powercmp_body.state` in 1..5 | header | `EPROTO` body missing; `EPERM` label not granted `suspend`; `EINVAL` state outside 1..5; `ENODEV` no `/dev/acpi`; ioctl errors |
+| `SUSPEND` (2) | `powercmp_body.state` in 1..5 | header | `EPROTO` body missing; `EPERM` label not granted `suspend`; `EINVAL` state outside 1..5; `EBUSY` an inhibitor is held; `ENODEV` no `/dev/acpi`; ioctl errors |
 
-The checks run in that order: policy first, then range, then device presence, so a denied label learns nothing about arguments or hardware. A granted SUSPEND is logged with the caller's label and fires the `BSDPower` provider's `suspend` probe before the reply; the machine may sleep before the reply is read.
+The checks run in that order: policy first, then range, inhibitor count, then device presence, so a denied label learns nothing about arguments or hardware. A granted SUSPEND is logged with the caller's label and fires the `BSDPower` provider's `suspend` probe before the reply; the machine may sleep before the reply is read.
 
 ## Client library
 
@@ -81,7 +81,7 @@ BSDPowerctl(8) is the operator front end, bound by the invoking label's policy l
 | `states` | `BSDPowerctl states` | `S3 S4 S5`, or `(none)` when the mask is zero |
 | `suspend state` | `BSDPowerctl suspend 3` | exit status; `EPERM` without `suspend` authority, `ENODEV` without ACPI |
 
-There is no ctl test suite; the tool is thin enough that the daemon's provider test covers every path it exercises.
+`BSDPowerctl inhibitors` reports the active inhibitor count. `BSDPowerctl inhibit seconds` holds one for 1–86400 seconds, checks the connection once per second, and releases on SIGINT/SIGTERM. Provider loss is an error; it does not reacquire. The CLI lifecycle is a VM acceptance gate.
 
 ## Policy
 
@@ -100,8 +100,8 @@ The shipped file is exactly the `default` block plus a commented example. A miss
 
 | Where | Programs | What they prove |
 |---|---|---|
-| `usr.sbin/BSDPower/tests` (package `runtime-tests`, `/usr/tests/usr.sbin/BSDPower`) | `provider_test` (17 cases), `config_test` (8) | provider_test compiles `BSDPower.c` with `-DBSDPOWER_TESTING`, which exposes the per-session worker and the two startup-cached globals (the state mask and the narrowed ACPI descriptor) so a test can drive the real request handler over a mac_capability channel without the switchboard launch path and without holding a real `/dev/acpi`. Cases: bad serve arguments, the supported mask matches the sysctl, STATES reports the cached mask and zero without ACPI, SUSPEND is denied by default policy, an allowed label reaches the device, policy is per label, a bad state is `EINVAL`, denial precedes the state check, wrong magic, unknown and zero opcode, short, oversized and partial bodies, missing SUSPEND body is `EPROTO`, and an attached fd is rejected. Two of the cases are plane-free and run anywhere. config_test covers the parser and fail-soft loading. |
-| `lib/libpowercmp/tests` (`libpowercmp-tests`) | `protocol_test` (6) | `powercmp_validate_message()` for both roles |
+| `usr.sbin/BSDPower/tests` (package `runtime-tests`, `/usr/tests/usr.sbin/BSDPower`) | `provider_test` (17 cases), `config_test` (9), `lease_test` (2) | provider_test compiles `BSDPower.c` with `-DBSDPOWER_TESTING`, which exposes the per-session worker and the two startup-cached globals (the state mask and the narrowed ACPI descriptor) so a test can drive the real request handler over a mac_capability channel without the switchboard launch path and without holding a real `/dev/acpi`. Cases: bad serve arguments, the supported mask matches the sysctl, STATES reports the cached mask and zero without ACPI, SUSPEND is denied by default policy, an allowed label reaches the device, policy is per label, a bad state is `EINVAL`, denial precedes the state check, wrong magic, unknown and zero opcode, short, oversized and partial bodies, missing SUSPEND body is `EPROTO`, and an attached fd is rejected. Two of the cases are plane-free and run anywhere. config_test covers the parser and fail-soft loading. |
+| `lib/libpowercmp/tests` (`libpowercmp-tests`) | `protocol_test` (7) | `powercmp_validate_message()` for both roles |
 
 Run with `kyua test -k /usr/tests/usr.sbin/BSDPower/Kyuafile` on a booted plane ([Testing](../develop/testing.md)). The suite was added on the BSDTime pattern in commit 5692d3ef2c5e; the worker never touches real hardware under test, so `suspend_allowed_reaches_device` proves the ioctl is issued on the injected descriptor, not that the machine sleeps.
 
@@ -116,3 +116,11 @@ Known gaps and drift:
 - No ctl test suite for BSDPowerctl(8).
 - The op set is deliberately minimal: no wake scheduling, no battery or AC state, no lid or button events, and no notification on entering or leaving sleep. A unit that wants to observe sleep transitions has nothing to subscribe to through [system.Notify](notify.md) yet.
 - STATES is cached at startup; a machine whose ACPI state set changes at run time (unusual) would report the boot-time mask until restart.
+
+## Session-owned suspend inhibitors
+
+`powercmp_inhibit(client)` requires the separate, default-deny `inhibit = true` permission. It grants one inhibitor per live client session; duplicate acquisition returns `EALREADY`. `powercmp_uninhibit(client)` releases it (`ENOENT` if absent). `powercmp_inhibitors(client, &count)` reports the global count. A held inhibitor makes every BSDPower suspend request return `EBUSY`, including requests from the owning session.
+
+The provider uses libservice's bounded lease set. Disconnect cleanup reclaims all leases owned by that session. Provider restart loses every lease; client libraries never transparently reopen or reacquire. A timed-out acquisition may have reached the server: close the client to abandon uncertain ownership. Leases do not govern direct kernel suspend, reboot, or halt. The narrow device descriptor and exact-label authorization still govern requests.
+
+Lease handler tests cover separate authorization, duplicate acquisition, foreign-session release, EBUSY before device access, owner cleanup and failed-reply cleanup without touching ACPI. Shared reactor regressions cover idle isolation, admission/reuse and writable-event idle expiry. Native multi-client disconnect, restart and real suspend remain VM tests.
