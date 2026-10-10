@@ -150,6 +150,18 @@ sctl_cmd_status(struct sctl_reply *reply, char *summary, size_t sumlen)
 			BUF_APPEND(summary, sumlen, &off, " mgmt=%s",
 			    svc_management_name(svc->manifest.management));
 
+			if (svc->cleanup.pending) {
+				BUF_APPEND(summary, sumlen, &off,
+				    " cleanup=%s child=%s coalition=%s observed=%s",
+				    svc->cleanup.error == 0 ? "pending" : "blocked",
+				    svc->cleanup.child_pending ? "waiting" : "exited",
+				    svc->cleanup.coalition_complete ? "complete" : "unconfirmed",
+				    svc->cleanup.fd >= 0 ? "yes" : "no");
+				if (svc->cleanup.error != 0)
+					BUF_APPEND(summary, sumlen, &off, " cleanup-error=%d(%s)",
+					    svc->cleanup.error, strerror(svc->cleanup.error));
+			}
+
 			if (svc->restart_count > 0)
 				BUF_APPEND(summary, sumlen, &off,
 				    " restarts=%u", svc->restart_count);
@@ -390,6 +402,10 @@ sctl_execute_op(uint32_t op, const char *payload, uint32_t datalen,
 				SWITCHBOARD_PROBE_SCTL_DENY(op, audit_uid);
 				switchboard_audit(AUE_SWITCHBOARD_CTL, audit_uid,
 				    EPERM, "start denied svc=%s", payload);
+			} else if (svc->cleanup.pending) {
+				reply->status = EBUSY;
+				snprintf(summary, summary_cap,
+				    "start: \"%s\" cleanup unconfirmed; replacement blocked", payload);
 			} else if (svc->state != SVC_STATE_STOPPED &&
 			    svc->state != SVC_STATE_DONE) {
 				reply->status = EALREADY;

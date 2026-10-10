@@ -46,6 +46,24 @@ for a shared provider activated on demand,
 the requesting unit's label for a private helper or a per-user unit
 started by another unit of the same owner.
 Software attributes do not establish a login-session coalition.
+.Pp
+A service waiting for resource teardown also shows
+.Ql cleanup= ,
+.Ql child= ,
+.Ql coalition= ,
+and
+.Ql observed=
+fields.
+.Ql cleanup=blocked
+includes a numeric and textual
+.Ql cleanup-error .
+A timeout keeps replacement blocked; a retained observer can still report
+completion later.
+An authorized start during pending cleanup returns
+.Er EBUSY .
+Stop records the request to suppress automatic restart but does not assert
+that cleanup has finished.
+There is no command to force unconfirmed cleanup to count as complete.
 .It Cm tree
 Show the responsibility tree: every running unit indented under the
 coalition it answers to, starting from the switchboard's own root

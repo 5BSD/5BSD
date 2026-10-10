@@ -631,6 +631,117 @@ ATF_TC_BODY(idle_timer_fire_stops_provider, tc)
 	(void)close(kq);
 }
 
+/* Exercise actual compaction without replacing other fixtures' leaf stubs. */
+struct svc_runtime *reload_test_by_label(const char *);
+void reload_test_remove(unsigned);
+void reload_test_reregister(int);
+static int
+reload_test_channel_rebind(struct svc_runtime *svc)
+{
+	(void)svc;
+	atf_tc_fail("cleanup compaction fixture has no control channel");
+	return (-1);
+}
+#define svc_channel_rebind reload_test_channel_rebind
+#define svc_by_label reload_test_by_label
+#define svc_remove reload_test_remove
+#define svc_reregister_kevents reload_test_reregister
+#include "../reload.c"
+#undef svc_channel_rebind
+#undef svc_by_label
+#undef svc_remove
+#undef svc_reregister_kevents
+
+void
+svc_launch_cancel(struct svc_runtime *svc, int kq)
+{
+	(void)kq;
+	ATF_REQUIRE(svc->launch == NULL);
+}
+
+void
+activation_source_teardown(struct svc_runtime *svc, int kq)
+{
+	(void)svc;
+	(void)kq;
+}
+
+void
+naming_rebind_owner(struct svc_runtime *old, struct svc_runtime *new)
+{
+	(void)old;
+	(void)new;
+}
+
+ATF_TC(cleanup_compaction);
+ATF_TC_HEAD(cleanup_compaction, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "real service compaction rebinds pending cleanup events without losing ownership");
+}
+ATF_TC_BODY(cleanup_compaction, tc)
+{
+	struct svc_runtime *slots;
+	struct kevent event;
+	struct timespec timeout = { .tv_sec = 1 }, deadline;
+	int fds[2], kq;
+	char byte = 'x';
+
+	(void)tc;
+	slots = calloc(2, sizeof(*slots));
+	ATF_REQUIRE(slots != NULL);
+	idle_runtime_init(&slots[0], "org.test.removed");
+	idle_runtime_init(&slots[1], "org.test.pending");
+	ATF_REQUIRE_EQ(0, pipe(fds));
+	kq = kqueue();
+	ATF_REQUIRE(kq >= 0);
+	switchboard_kq = kq;
+	sd.services = slots;
+	sd.nservices = 2;
+	slots[1].state = SVC_STATE_STOPPING;
+	slots[1].cleanup.pending = true;
+	slots[1].cleanup.fd = fds[0];
+	slots[1].cleanup.timer_ident = ++cleanup_timer_next_ident;
+	ATF_REQUIRE_EQ(0, clock_gettime(CLOCK_MONOTONIC, &deadline));
+	deadline.tv_sec += 30;
+	slots[1].cleanup.deadline = deadline;
+	ATF_REQUIRE_EQ(0, supervisor_cleanup_rebind(&slots[1], kq));
+	/* Removing the pending slot records intent, without releasing it. */
+	reload_test_remove(1);
+	ATF_CHECK_EQ(2, sd.nservices);
+	ATF_CHECK(slots[1].remove_pending);
+	ATF_CHECK(fcntl(fds[0], F_GETFD) >= 0);
+	/* Removing its predecessor really moves the pending slot. */
+	reload_test_remove(0);
+	reload_test_reregister(kq);
+	ATF_REQUIRE_EQ(1, sd.nservices);
+	ATF_CHECK_STREQ("org.test.pending", slots[0].manifest.label);
+	ATF_CHECK(slots[0].cleanup.pending);
+	ATF_CHECK(slots[0].remove_pending);
+	ATF_CHECK_EQ(deadline.tv_sec, slots[0].cleanup.deadline.tv_sec);
+	ATF_CHECK_EQ(deadline.tv_nsec, slots[0].cleanup.deadline.tv_nsec);
+	ATF_REQUIRE_EQ(1, write(fds[1], &byte, 1));
+	ATF_REQUIRE_EQ(1, kevent(kq, NULL, 0, &event, 1, &timeout));
+	ATF_CHECK_EQ(EVFILT_READ, event.filter);
+	ATF_CHECK_EQ(fds[0], (int)event.ident);
+	ATF_CHECK(event.udata == &slots[0]);
+	ATF_REQUIRE_EQ(1, read(fds[0], &byte, 1));
+	/* Expire the preserved timer and verify its relocated pointer too. */
+	slots[0].cleanup.deadline.tv_sec -= 31;
+	reload_test_reregister(kq);
+	ATF_REQUIRE_EQ(1, kevent(kq, NULL, 0, &event, 1, &timeout));
+	ATF_CHECK_EQ(EVFILT_TIMER, event.filter);
+	ATF_CHECK_EQ(slots[0].cleanup.timer_ident, event.ident);
+	ATF_CHECK(event.udata == &slots[0]);
+	close(fds[0]);
+	close(fds[1]);
+	close(kq);
+	free(slots);
+	sd.services = NULL;
+	sd.nservices = 0;
+	switchboard_kq = -1;
+}
+
 ATF_TC(cleanup_updated_intent);
 ATF_TC_HEAD(cleanup_updated_intent, tc)
 {
@@ -1507,6 +1618,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, cleanup_live_process);
 	ATF_TP_ADD_TC(tp, cleanup_unenlisted_child);
 	ATF_TP_ADD_TC(tp, cleanup_updated_intent);
+	ATF_TP_ADD_TC(tp, cleanup_compaction);
 	ATF_TP_ADD_TC(tp, handle_idle_protocol);
 	ATF_TP_ADD_TC(tp, handle_ready_ambient_promotion);
 	return (atf_no_error());

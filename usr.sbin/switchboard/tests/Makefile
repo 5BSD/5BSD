@@ -316,4 +316,12 @@ SRCTREE_MANIFESTS!=	cd ${SRCTOP} && find usr.sbin -type f \
 SRCTREE_FILES+=	${SRCTREE_MANIFESTS}
 .include "${SRCTOP}/tests/srctree.mk"
 
+ATF_TESTS_C+= cleanup_status_test
+CFLAGS.cleanup_status_test+= -I${SRCTOP}/usr.sbin/switchboard \
+    -I${SRCTOP}/lib/libchannel -I${SRCTOP}/lib/libcapsulert \
+    -I${SRCTOP}/lib/libservice -I${SRCTOP}/sys \
+    -ffunction-sections -fdata-sections
+LDFLAGS.cleanup_status_test+= -Wl,--gc-sections
+NO_SHARED.cleanup_status_test= yes
+
 .include <bsd.test.mk>
