@@ -1837,7 +1837,7 @@ cleanup_snapshot(int fd)
 }
 
 static int
-cleanup_watch(int fd)
+cleanup_watch_flags(int fd, uint32_t flags)
 {
 	struct coalition_req_hdr req = { .op = COALITION_OP_CLEANUP_WATCH };
 	struct coalition_reply reply;
@@ -1845,6 +1845,7 @@ cleanup_watch(int fd)
 	int watch = -1;
 
 	memset(&ca, 0, sizeof(ca));
+	ca.flags = flags;
 	ca.req = &req;
 	ca.req_len = sizeof(req);
 	ca.reply = &reply;
@@ -1856,6 +1857,52 @@ cleanup_watch(int fd)
 	ATF_REQUIRE_EQ(1, ca.reply_nfds);
 	ATF_REQUIRE(watch >= 0);
 	return (watch);
+}
+
+static int
+cleanup_watch(int fd)
+{
+	return (cleanup_watch_flags(fd, 0));
+}
+
+ATF_TC(cleanup_watch_inheritance);
+ATF_TC_HEAD(cleanup_watch_inheritance, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "CALL installs returned descriptor inheritance flags atomically");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(cleanup_watch_inheritance, tc)
+{
+	struct mac_capability_call_args ca;
+	int cfd, watch, bits, status;
+	pid_t child;
+	uint32_t flags;
+
+	cfd = mac_capability_connect("coalition");
+	ATF_REQUIRE(cfd >= 0);
+	memset(&ca, 0, sizeof(ca));
+	ca.flags = UINT32_MAX;
+	ATF_CHECK_ERRNO(EINVAL, ioctl(cfd, MAC_CAPABILITY_CALL, &ca) == -1);
+	for (unsigned i = 0; i < 4; i++) {
+		flags = ((i & 1) ? MAC_CAPABILITY_CALL_F_CLOEXEC : 0) |
+		    ((i & 2) ? MAC_CAPABILITY_CALL_F_CLOFORK : 0);
+		watch = cleanup_watch_flags(cfd, flags);
+		bits = fcntl(watch, F_GETFD);
+		ATF_REQUIRE(bits >= 0);
+		ATF_CHECK_EQ((i & 1) != 0, (bits & FD_CLOEXEC) != 0);
+		ATF_CHECK_EQ((i & 2) != 0, (bits & FD_CLOFORK) != 0);
+		child = fork();
+		ATF_REQUIRE(child >= 0);
+		if (child == 0) {
+			bits = fcntl(watch, F_GETFD);
+			_exit((i & 2) ? (bits == -1 && errno == EBADF ? 0 : 1) :
+			    (bits >= 0 ? 0 : 1));
+		}
+		ATF_REQUIRE_EQ(child, waitpid(child, &status, 0));
+		ATF_CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+		ATF_REQUIRE_EQ(0, close(watch));
+	}
+	ATF_REQUIRE_EQ(0, close(cfd));
 }
 
 static void
@@ -5230,6 +5277,7 @@ ATF_TC_BODY(coalition_churn_no_leak, tc)
 
 ATF_TP_ADD_TCS(tp)
 {
+	ATF_TP_ADD_TC(tp, cleanup_watch_inheritance);
 	ATF_TP_ADD_TC(tp, cleanup_watch_close);
 	/* Lifecycle */
 	ATF_TP_ADD_TC(tp, connect_coalition);

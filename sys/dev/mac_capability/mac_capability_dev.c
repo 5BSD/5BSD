@@ -1039,7 +1039,8 @@ mac_capability_instance_ioctl(struct file *fp, u_long cmd, void *data,
 			error = EACCES;
 			goto call_done;
 		}
-		if (ca->flags != 0 || (ca->_reserved[0] |
+		if ((ca->flags & ~(MAC_CAPABILITY_CALL_F_CLOEXEC |
+		    MAC_CAPABILITY_CALL_F_CLOFORK)) != 0 || (ca->_reserved[0] |
 		    ca->_reserved[1]) != 0) {
 			error = EINVAL;
 			goto call_done;
@@ -1276,7 +1277,11 @@ mac_capability_instance_ioctl(struct file *fp, u_long cmd, void *data,
 					error = fdalloc(td, 0, &fdbuf[i]);
 					if (error == 0) {
 						_finstall(fdesc, out_fds[i],
-						    fdbuf[i], 0, install_fcaps);
+						    fdbuf[i],
+						    ((ca->flags & MAC_CAPABILITY_CALL_F_CLOEXEC) ?
+						    O_CLOEXEC : 0) |
+						    ((ca->flags & MAC_CAPABILITY_CALL_F_CLOFORK) ?
+						    O_CLOFORK : 0), install_fcaps);
 						if (j >= 0) {
 							fdesc->fd_ofiles[
 							    fdbuf[i]].

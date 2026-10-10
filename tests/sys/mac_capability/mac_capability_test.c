@@ -2338,7 +2338,7 @@ ATF_TC(call_flags_nonzero);
 ATF_TC_HEAD(call_flags_nonzero, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
-	    "MAC_CAPABILITY_CALL with nonzero flags returns EINVAL on sync service");
+	    "MAC_CAPABILITY_CALL with unknown flags returns EINVAL on sync service");
 	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_kernelstore");
 }
 ATF_TC_BODY(call_flags_nonzero, tc)
@@ -2350,7 +2350,7 @@ ATF_TC_BODY(call_flags_nonzero, tc)
 	ATF_REQUIRE(fd >= 0);
 
 	memset(&ca, 0, sizeof(ca));
-	ca.flags = 1;
+	ca.flags = UINT32_MAX;
 	ATF_CHECK_ERRNO(EINVAL, ioctl(fd, MAC_CAPABILITY_CALL, &ca) == -1);
 
 	close(fd);
