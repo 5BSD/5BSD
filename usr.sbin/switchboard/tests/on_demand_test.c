@@ -851,6 +851,55 @@ ATF_TC_BODY(cleanup_unenlisted_child, tc)
 	switchboard_kq = -1;
 }
 
+/* A failed child registration must not suppress the other cleanup watches. */
+ATF_TC_WITHOUT_HEAD(cleanup_registration_failure);
+ATF_TC_BODY(cleanup_registration_failure, tc)
+{
+	struct svc_runtime svc;
+	struct kevent event;
+	struct timespec deadline, timeout = { .tv_sec = 5 };
+	int fds[2], badfd, kq;
+
+	(void)tc;
+	idle_runtime_init(&svc, "org.test.cleanup.registration");
+	ATF_REQUIRE_EQ(0, pipe(fds));
+	kq = kqueue();
+	ATF_REQUIRE(kq >= 0);
+	badfd = dup(fds[0]);
+	ATF_REQUIRE(badfd >= 0);
+	ATF_REQUIRE_EQ(0, close(badfd));
+	svc.pd_fd = badfd;
+	svc.cleanup.pending = true;
+	svc.cleanup.child_pending = true;
+	svc.cleanup.fd = fds[0];
+	svc.cleanup.timer_ident = ++cleanup_timer_next_ident;
+	ATF_REQUIRE_EQ(0, clock_gettime(CLOCK_MONOTONIC, &deadline));
+	deadline.tv_sec += 1;
+	svc.cleanup.deadline = deadline;
+	runtime_removals = 0;
+	ATF_REQUIRE_EQ(-1, supervisor_cleanup_rebind(&svc, kq));
+	ATF_CHECK_EQ(EBADF, errno);
+	ATF_CHECK(svc.cleanup.pending);
+	ATF_CHECK(svc.cleanup.child_pending);
+	ATF_CHECK_EQ(0, runtime_removals);
+	ATF_CHECK_EQ(deadline.tv_sec, svc.cleanup.deadline.tv_sec);
+	ATF_CHECK_EQ(deadline.tv_nsec, svc.cleanup.deadline.tv_nsec);
+	/* The timer remains observable despite the preceding EBADF. */
+	ATF_REQUIRE_EQ(1, kevent(kq, NULL, 0, &event, 1, &timeout));
+	ATF_CHECK_EQ(EVFILT_TIMER, event.filter);
+	ATF_CHECK_EQ(svc.cleanup.timer_ident, event.ident);
+	ATF_CHECK(event.udata == &svc);
+	/* The coalition watch is also registered; this pipe stands in for it. */
+	ATF_REQUIRE_EQ(1, write(fds[1], "R", 1));
+	ATF_REQUIRE_EQ(1, kevent(kq, NULL, 0, &event, 1, &timeout));
+	ATF_CHECK_EQ(EVFILT_READ, event.filter);
+	ATF_CHECK_EQ(fds[0], (int)event.ident);
+	ATF_CHECK(event.udata == &svc);
+	close(fds[0]);
+	close(fds[1]);
+	close(kq);
+}
+
 ATF_TC_WITHOUT_HEAD(cleanup_missing_coalition);
 ATF_TC_BODY(cleanup_missing_coalition, tc)
 {
@@ -1667,6 +1716,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, cleanup_live_process);
 	ATF_TP_ADD_TC(tp, cleanup_unenlisted_child);
 	ATF_TP_ADD_TC(tp, cleanup_missing_coalition);
+	ATF_TP_ADD_TC(tp, cleanup_registration_failure);
 	ATF_TP_ADD_TC(tp, cleanup_updated_intent);
 	ATF_TP_ADD_TC(tp, cleanup_compaction);
 	ATF_TP_ADD_TC(tp, handle_idle_protocol);
