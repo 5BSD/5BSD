@@ -490,10 +490,6 @@ DeleteLink(struct alias_link **plnk, int deletePermanent)
 	if (!deletePermanent && (lnk->flags & LINK_PERMANENT))
 		return;
 
-#ifndef NO_FW_PUNCH
-	/* Delete associated firewall hole, if any */
-	ClearFWHole(lnk);
-#endif
 
 	switch (lnk->link_type) {
 	case LINK_PPTP:
@@ -682,7 +678,6 @@ AddLink(struct libalias *la, struct in_addr src_addr, struct in_addr dst_addr,
 		aux_tcp->state.ack_modified = 0;
 		for (i = 0; i < N_LINK_TCP_DATA; i++)
 			aux_tcp->ack[i].active = 0;
-		aux_tcp->fwhole = -1;
 		lnk->data.tcp = aux_tcp;
 	}
 		break;
@@ -762,13 +757,6 @@ ReLink(struct alias_link *old_lnk,
 	new_lnk = AddLink(la, src_addr, dst_addr, alias_addr,
 	    src_port, dst_port, alias_port_param,
 	    link_type);
-#ifndef NO_FW_PUNCH
-	if (new_lnk != NULL &&
-	    old_lnk->link_type == LINK_TCP &&
-	    old_lnk->data.tcp->fwhole > 0) {
-		PunchFWHole(new_lnk);
-	}
-#endif
 	DeleteLink(&old_lnk, deletePermanent);
 	return (new_lnk);
 }
@@ -1630,14 +1618,6 @@ GetAliasPort(struct alias_link *lnk)
 	return (lnk->alias_port);
 }
 
-#ifndef NO_FW_PUNCH
-static u_short
-GetDestPort(struct alias_link *lnk)
-{
-	return (lnk->dst_port);
-}
-
-#endif
 
 /* Indicate that ACK numbers have been modified in a TCP connection */
 void
@@ -2238,9 +2218,6 @@ LibAliasInit(struct libalias *la)
 	    | PKT_ALIAS_USE_SOCKETS
 #endif
 	    | PKT_ALIAS_RESET_ON_ADDR_CHANGE;
-#ifndef NO_FW_PUNCH
-	la->fireWallFD = -1;
-#endif
 #ifndef _KERNEL
 	LibAliasRefreshModules();
 #endif
@@ -2257,9 +2234,6 @@ LibAliasUninit(struct libalias *la)
 #endif
 	CleanupAliasData(la, 1);
 	UninitPacketAliasLog(la);
-#ifndef NO_FW_PUNCH
-	UninitPunchFW(la);
-#endif
 	LIST_REMOVE(la, instancelist);
 	LIBALIAS_UNLOCK(la);
 	LIBALIAS_LOCK_DESTROY(la);
@@ -2277,6 +2251,10 @@ LibAliasSetMode(
 {
 	int res = -1;
 
+	/* Reject the retired mode before changing any other flags. */
+	if (flags & mask & PKT_ALIAS_PUNCH_FW)
+		return (-1);
+
 	LIBALIAS_LOCK(la);
 	if (flags & mask & PKT_ALIAS_LOG) {
 		/* Enable logging */
@@ -2286,14 +2264,6 @@ LibAliasSetMode(
 		/* _Disable_ logging */
 		UninitPacketAliasLog(la);
 
-#ifndef NO_FW_PUNCH
-	if (flags & mask & PKT_ALIAS_PUNCH_FW)
-		/* Start punching holes in the firewall? */
-		InitPunchFW(la);
-	else if (~flags & mask & PKT_ALIAS_PUNCH_FW)
-		/* Stop punching holes in the firewall? */
-		UninitPunchFW(la);
-#endif
 
 	/* Other flags can be set/cleared without special action */
 	la->packetAliasMode = (flags & mask) | (la->packetAliasMode & ~mask);
@@ -2303,245 +2273,14 @@ getout:
 	return (res);
 }
 
-#ifndef NO_FW_PUNCH
-
-/*****************
-  Code to support firewall punching.  This shouldn't really be in this
-  file, but making variables global is evil too.
-  ****************/
-
-/* Firewall include files */
-#include <net/if.h>
-#include <netinet/ip_fw.h>
-#include <string.h>
-#include <err.h>
-
-/*
- * helper function, updates the pointer to cmd with the length
- * of the current command, and also cleans up the first word of
- * the new command in case it has been clobbered before.
- */
-static ipfw_insn *
-next_cmd(ipfw_insn * cmd)
-{
-	cmd += F_LEN(cmd);
-	bzero(cmd, sizeof(*cmd));
-	return (cmd);
-}
-
-/*
- * A function to fill simple commands of size 1.
- * Existing flags are preserved.
- */
-static ipfw_insn *
-fill_cmd(ipfw_insn * cmd, enum ipfw_opcodes opcode, int size,
-    int flags, u_int16_t arg)
-{
-	cmd->opcode = opcode;
-	cmd->len = ((cmd->len | flags) & (F_NOT | F_OR)) | (size & F_LEN_MASK);
-	cmd->arg1 = arg;
-	return next_cmd(cmd);
-}
-
-static ipfw_insn *
-fill_ip(ipfw_insn * cmd1, enum ipfw_opcodes opcode, u_int32_t addr)
-{
-	ipfw_insn_ip *cmd = (ipfw_insn_ip *)cmd1;
-
-	cmd->addr.s_addr = addr;
-	return fill_cmd(cmd1, opcode, F_INSN_SIZE(ipfw_insn_u32), 0, 0);
-}
-
-static ipfw_insn *
-fill_one_port(ipfw_insn * cmd1, enum ipfw_opcodes opcode, u_int16_t port)
-{
-	ipfw_insn_u16 *cmd = (ipfw_insn_u16 *)cmd1;
-
-	cmd->ports[0] = cmd->ports[1] = port;
-	return fill_cmd(cmd1, opcode, F_INSN_SIZE(ipfw_insn_u16), 0, 0);
-}
-
-static int
-fill_rule(void *buf, int bufsize, int rulenum,
-    enum ipfw_opcodes action, int proto,
-    struct in_addr sa, u_int16_t sp, struct in_addr da, u_int16_t dp)
-{
-	struct ip_fw *rule = (struct ip_fw *)buf;
-	ipfw_insn *cmd = (ipfw_insn *)rule->cmd;
-
-	bzero(buf, bufsize);
-	rule->rulenum = rulenum;
-
-	cmd = fill_cmd(cmd, O_PROTO, F_INSN_SIZE(ipfw_insn), 0, proto);
-	cmd = fill_ip(cmd, O_IP_SRC, sa.s_addr);
-	cmd = fill_one_port(cmd, O_IP_SRCPORT, sp);
-	cmd = fill_ip(cmd, O_IP_DST, da.s_addr);
-	cmd = fill_one_port(cmd, O_IP_DSTPORT, dp);
-
-	rule->act_ofs = (u_int32_t *)cmd - (u_int32_t *)rule->cmd;
-	cmd = fill_cmd(cmd, action, F_INSN_SIZE(ipfw_insn), 0, 0);
-
-	rule->cmd_len = (u_int32_t *)cmd - (u_int32_t *)rule->cmd;
-
-	return ((char *)cmd - (char *)buf);
-}
-
-static void
-InitPunchFW(struct libalias *la)
-{
-	la->fireWallField = malloc(la->fireWallNumNums);
-	if (la->fireWallField) {
-		memset(la->fireWallField, 0, la->fireWallNumNums);
-		if (la->fireWallFD < 0) {
-			la->fireWallFD = socket(AF_INET, SOCK_RAW, IPPROTO_RAW);
-		}
-		ClearAllFWHoles(la);
-		la->fireWallActiveNum = la->fireWallBaseNum;
-	}
-}
-
-static void
-UninitPunchFW(struct libalias *la)
-{
-	ClearAllFWHoles(la);
-	if (la->fireWallFD >= 0)
-		close(la->fireWallFD);
-	la->fireWallFD = -1;
-	if (la->fireWallField)
-		free(la->fireWallField);
-	la->fireWallField = NULL;
-	la->packetAliasMode &= ~PKT_ALIAS_PUNCH_FW;
-}
-
-/* Make a certain link go through the firewall */
-void
-PunchFWHole(struct alias_link *lnk)
-{
-	struct libalias *la;
-	int r;			/* Result code */
-	struct ip_fw rule;	/* On-the-fly built rule */
-	int fwhole;		/* Where to punch hole */
-
-	la = lnk->la;
-
-	/* Don't do anything unless we are asked to */
-	if (!(la->packetAliasMode & PKT_ALIAS_PUNCH_FW) ||
-	    la->fireWallFD < 0 ||
-	    lnk->link_type != LINK_TCP)
-		return;
-
-	memset(&rule, 0, sizeof rule);
-
-	/** Build rule **/
-
-	/* Find empty slot */
-	for (fwhole = la->fireWallActiveNum;
-	    fwhole < la->fireWallBaseNum + la->fireWallNumNums &&
-	    fw_tstfield(la, la->fireWallField, fwhole);
-	    fwhole++);
-	if (fwhole == la->fireWallBaseNum + la->fireWallNumNums) {
-		for (fwhole = la->fireWallBaseNum;
-		    fwhole < la->fireWallActiveNum &&
-		    fw_tstfield(la, la->fireWallField, fwhole);
-		    fwhole++);
-		if (fwhole == la->fireWallActiveNum) {
-			/* No rule point empty - we can't punch more holes. */
-			la->fireWallActiveNum = la->fireWallBaseNum;
-#ifdef LIBALIAS_DEBUG
-			fprintf(stderr, "libalias: Unable to create firewall hole!\n");
-#endif
-			return;
-		}
-	}
-	/* Start next search at next position */
-	la->fireWallActiveNum = fwhole + 1;
-
-	/*
-	 * generate two rules of the form
-	 *
-	 * add fwhole accept tcp from OAddr OPort to DAddr DPort add fwhole
-	 * accept tcp from DAddr DPort to OAddr OPort
-	 */
-	if (GetOriginalPort(lnk) != 0 && GetDestPort(lnk) != 0) {
-		u_int32_t rulebuf[255];
-		int i;
-
-		i = fill_rule(rulebuf, sizeof(rulebuf), fwhole,
-		    O_ACCEPT, IPPROTO_TCP,
-		    GetOriginalAddress(lnk), ntohs(GetOriginalPort(lnk)),
-		    GetDestAddress(lnk), ntohs(GetDestPort(lnk)));
-		r = setsockopt(la->fireWallFD, IPPROTO_IP, IP_FW_ADD, rulebuf, i);
-		if (r)
-			err(1, "alias punch inbound(1) setsockopt(IP_FW_ADD)");
-
-		i = fill_rule(rulebuf, sizeof(rulebuf), fwhole,
-		    O_ACCEPT, IPPROTO_TCP,
-		    GetDestAddress(lnk), ntohs(GetDestPort(lnk)),
-		    GetOriginalAddress(lnk), ntohs(GetOriginalPort(lnk)));
-		r = setsockopt(la->fireWallFD, IPPROTO_IP, IP_FW_ADD, rulebuf, i);
-		if (r)
-			err(1, "alias punch inbound(2) setsockopt(IP_FW_ADD)");
-	}
-
-	/* Indicate hole applied */
-	lnk->data.tcp->fwhole = fwhole;
-	fw_setfield(la, la->fireWallField, fwhole);
-}
-
-/* Remove a hole in a firewall associated with a particular alias
-   lnk.  Calling this too often is harmless. */
-static void
-ClearFWHole(struct alias_link *lnk)
-{
-	struct libalias *la;
-
-	la = lnk->la;
-	if (lnk->link_type == LINK_TCP) {
-		int fwhole = lnk->data.tcp->fwhole;  /* Where is the firewall hole? */
-		struct ip_fw rule;
-
-		if (fwhole < 0)
-			return;
-
-		memset(&rule, 0, sizeof rule);	/* useless for ipfw2 */
-		while (!setsockopt(la->fireWallFD, IPPROTO_IP, IP_FW_DEL,
-		    &fwhole, sizeof fwhole));
-		fw_clrfield(la, la->fireWallField, fwhole);
-		lnk->data.tcp->fwhole = -1;
-	}
-}
-
-/* Clear out the entire range dedicated to firewall holes. */
-static void
-ClearAllFWHoles(struct libalias *la)
-{
-	struct ip_fw rule;	/* On-the-fly built rule */
-	int i;
-
-	if (la->fireWallFD < 0)
-		return;
-
-	memset(&rule, 0, sizeof rule);
-	for (i = la->fireWallBaseNum; i < la->fireWallBaseNum + la->fireWallNumNums; i++) {
-		int r = i;
-
-		while (!setsockopt(la->fireWallFD, IPPROTO_IP, IP_FW_DEL, &r, sizeof r));
-	}
-	/* XXX: third arg correct here ? /phk */
-	memset(la->fireWallField, 0, la->fireWallNumNums);
-}
-
-#endif /* !NO_FW_PUNCH */
 
 void
 LibAliasSetFWBase(struct libalias *la, unsigned int base, unsigned int num)
 {
-	LIBALIAS_LOCK(la);
-#ifndef NO_FW_PUNCH
-	la->fireWallBaseNum = base;
-	la->fireWallNumNums = num;
-#endif
-	LIBALIAS_UNLOCK(la);
+	/* Retained as a no-op for existing library consumers. */
+	(void)la;
+	(void)base;
+	(void)num;
 }
 
 void

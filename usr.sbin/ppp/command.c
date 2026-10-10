@@ -775,10 +775,6 @@ static struct cmdtab const NatCommands[] =
    "nat proto proto localIP [publicIP [remoteIP]]", NULL},
   {"proxy", NULL, nat_ProxyRule, LOCAL_AUTH,
    "proxy control", "nat proxy server host[:port] ...", NULL},
-#ifndef NO_FW_PUNCH
-  {"punch_fw", NULL, nat_PunchFW, LOCAL_AUTH,
-   "firewall control", "nat punch_fw [base count]", NULL},
-#endif
   {"skinny_port", NULL, nat_SkinnyPort, LOCAL_AUTH,
    "TCP port used by Skinny Station protocol", "nat skinny_port [port]", NULL},
   {"same_ports", NULL, NatOption, LOCAL_AUTH,

@@ -1,4 +1,4 @@
-PACKAGE=	natd
+PACKAGE=	libalias
 NAME=		smedia
 SRCS=		alias_smedia.c
 

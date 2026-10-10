@@ -1,4 +1,4 @@
-.PATH:  ${SRCTOP}/sys/netpfil/ipfw
+.PATH:  ${SRCTOP}/sys/netpfil/dummynet
 KMOD=   dummynet
 SRCS=   ip_dummynet.c ip_dn_io.c
 SRCS+= dn_aqm_codel.c dn_aqm_pie.c

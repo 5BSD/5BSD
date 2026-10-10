@@ -119,20 +119,6 @@ struct libalias {
 	FILE	       *logDesc;
 #endif
 
-#ifndef NO_FW_PUNCH
-	/* File descriptor to be able to control firewall.
-	 * Opened by PacketAliasSetMode on first setting
-	 * the PKT_ALIAS_PUNCH_FW flag. */
-	int		fireWallFD;
-	/* The first firewall entry free for our use */
-	int		fireWallBaseNum;
-	/* How many entries can we use? */
-	int		fireWallNumNums;
-	/* Which entry did we last use? */
-	int		fireWallActiveNum;
-	/* bool array for entries */
-	char	       *fireWallField;
-#endif
 	/* TCP port used by the Skinny protocol. */
 	unsigned int	skinnyPort;
 
@@ -329,10 +315,6 @@ void		SetProtocolFlags(struct alias_link *_lnk, int _pflags);
 int		GetProtocolFlags(struct alias_link *_lnk);
 void		SetDestCallId(struct alias_link *_lnk, u_int16_t _cid);
 
-#ifndef NO_FW_PUNCH
-void		PunchFWHole(struct alias_link *_lnk);
-
-#endif
 
 /* Housekeeping function */
 void		HouseKeeping(struct libalias *);

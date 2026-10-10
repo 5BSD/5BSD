@@ -26,12 +26,6 @@ IPFILTER+=		610.ipf6denied
 IPFILTERPACKAGE=	ipf
 .endif
 
-.if ${MK_IPFW} != "no"
-CONFGROUPS+=	IPFW
-IPFW+=		500.ipfwdenied \
-		550.ipfwlimit
-IPFWPACKAGE=	ipfw
-.endif
 
 .if ${MK_PF} != "no"
 CONFGROUPS+=	PF

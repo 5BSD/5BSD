@@ -455,46 +455,12 @@ to additionally filter on the physical interface for locally destined packets.
 Set to
 .Li 0
 to disable this feature.
-.It Va net.link.bridge.ipfw
-Set to
-.Li 1
-to enable layer2 filtering with
-.Xr ipfirewall 4 ,
-set to
-.Li 0
-to disable it.
-This needs to be enabled for
-.Xr dummynet 4
-support.
-When
-.Va ipfw
-is enabled,
-.Va pfil_bridge
-and
-.Va pfil_member
-will be disabled so that IPFW
-is not run twice; these can be re-enabled if desired.
-.It Va net.link.bridge.ipfw_arp
-Set to
-.Li 1
-to enable layer2 ARP filtering with
-.Xr ipfirewall 4 ,
-set to
-.Li 0
-to disable it.
-Requires
-.Va ipfw
-to be enabled.
 .El
 .Pp
 ARP and REVARP packets are forwarded without being filtered and others
 that are not IP nor IPv6 packets are not forwarded when
 .Va pfil_onlyip
 is enabled.
-IPFW can filter Ethernet types using
-.Cm mac-type
-so all packets are passed to
-the filter for processing.
 .Pp
 The packets originating from the bridging host will be seen by
 the filter on the interface that is looked up in the routing
@@ -709,7 +675,6 @@ ifconfig bridge0 addm fxp0 addm gif0 up
 .Sh SEE ALSO
 .Xr gif 4 ,
 .Xr ipf 4 ,
-.Xr ipfw 4 ,
 .Xr netmap 4 ,
 .Xr pf 4 ,
 .Xr vlan 4 ,

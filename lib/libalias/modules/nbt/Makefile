@@ -1,4 +1,4 @@
-PACKAGE=	natd
+PACKAGE=	libalias
 NAME=		nbt
 SRCS=		alias_nbt.c
 

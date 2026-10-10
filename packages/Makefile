@@ -81,13 +81,13 @@ SUBDIR=	blocklist \
 	libpathconv \
 	librss \
 	libsqlite3 \
+	libalias \
 	libthread_db \
 	libucl \
 	libyaml \
 	locales \
 	mandoc \
 	mtree \
-	natd \
 	ncurses \
 	netmap \
 	newsyslog \
@@ -157,7 +157,7 @@ SUBDIR.${MK_HAST}+=		hast
 SUBDIR.${MK_HYPERV}+=		hyperv-tools
 SUBDIR.${MK_INETD}+=		inetd
 SUBDIR.${MK_IPFILTER}+=		ipf
-SUBDIR.${MK_IPFW}+=		ipfw
+SUBDIR.${MK_DUMMYNET}+=		dummynet
 SUBDIR.${MK_ISCSI}+=		iscsi
 SUBDIR.${MK_JAIL}+=		jail
 SUBDIR.${MK_KERBEROS}+=		kerberos kerberos-kdc librpcsec_gss gssd

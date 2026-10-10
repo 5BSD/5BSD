@@ -1,0 +1,2 @@
+comment = "Packet aliasing library for native consumers"
+desc = "libalias and protocol helpers used by native consumers including PPP and ng_nat. The retired natd and IPFW utilities are not included."

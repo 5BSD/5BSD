@@ -370,10 +370,6 @@ AliasHandleIrcOut(struct libalias *la,
 							 * aliasing */
 				int n;
 
-#ifndef NO_FW_PUNCH
-				/* Generate firewall hole as appropriate */
-				PunchFWHole(dcc_lnk);
-#endif
 
 				alias_address = GetAliasAddress(lnk);
 				n = snprintf(&newpacket[iCopy],

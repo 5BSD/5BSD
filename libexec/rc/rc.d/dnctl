@@ -3,7 +3,7 @@
 #
 
 # PROVIDE: dnctl
-# BEFORE: pf ipfw
+# BEFORE: pf
 # KEYWORD: nojailvnet
 
 . /etc/rc.subr

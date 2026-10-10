@@ -468,17 +468,6 @@ SYSCTL_INT(_net_link_bridge, OID_AUTO, pfil_bridge,
     CTLFLAG_RWTUN | CTLFLAG_VNET, &VNET_NAME(pfil_bridge), 0,
     "Packet filter on the bridge interface");
 
-/* layer2 filter with ipfw */
-VNET_DEFINE_STATIC(int, pfil_ipfw);
-#define	V_pfil_ipfw	VNET(pfil_ipfw)
-
-/* layer2 ARP filter with ipfw */
-VNET_DEFINE_STATIC(int, pfil_ipfw_arp);
-#define	V_pfil_ipfw_arp	VNET(pfil_ipfw_arp)
-SYSCTL_INT(_net_link_bridge, OID_AUTO, ipfw_arp,
-    CTLFLAG_RWTUN | CTLFLAG_VNET, &VNET_NAME(pfil_ipfw_arp), 0,
-    "Filter ARP packets through IPFW layer2");
-
 /* run pfil hooks on the member interface */
 VNET_DEFINE_STATIC(int, pfil_member) = 0;
 #define	V_pfil_member	VNET(pfil_member)
@@ -748,41 +737,6 @@ static moduledata_t bridge_mod = {
 DECLARE_MODULE(if_bridge, bridge_mod, SI_SUB_PSEUDO, SI_ORDER_ANY);
 MODULE_VERSION(if_bridge, 1);
 MODULE_DEPEND(if_bridge, bridgestp, 1, 1, 1);
-
-/*
- * handler for net.link.bridge.ipfw
- */
-static int
-sysctl_pfil_ipfw(SYSCTL_HANDLER_ARGS)
-{
-	int enable = V_pfil_ipfw;
-	int error;
-
-	error = sysctl_handle_int(oidp, &enable, 0, req);
-	enable &= 1;
-
-	if (enable != V_pfil_ipfw) {
-		V_pfil_ipfw = enable;
-
-		/*
-		 * Disable pfil so that ipfw doesnt run twice, if the user
-		 * really wants both then they can re-enable pfil_bridge and/or
-		 * pfil_member. Also allow non-ip packets as ipfw can filter by
-		 * layer2 type.
-		 */
-		if (V_pfil_ipfw) {
-			V_pfil_onlyip = 0;
-			V_pfil_bridge = 0;
-			V_pfil_member = 0;
-		}
-	}
-
-	return (error);
-}
-SYSCTL_PROC(_net_link_bridge, OID_AUTO, ipfw,
-    CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_VNET | CTLFLAG_NEEDGIANT,
-    &VNET_NAME(pfil_ipfw), 0, &sysctl_pfil_ipfw, "I",
-    "Layer2 filter with IPFW");
 
 #ifdef VIMAGE
 static void
@@ -3956,7 +3910,7 @@ bridge_pfil(struct mbuf **mp, struct ifnet *bifp, struct ifnet *ifp, int dir)
 	KASSERT(M_WRITABLE(*mp), ("%s: modifying a shared mbuf", __func__));
 #endif
 
-	if (V_pfil_bridge == 0 && V_pfil_member == 0 && V_pfil_ipfw == 0)
+	if (V_pfil_bridge == 0 && V_pfil_member == 0)
 		return (0); /* filtering is disabled */
 
 	i = min((*mp)->m_pkthdr.len, max_protohdr);
@@ -3999,10 +3953,7 @@ bridge_pfil(struct mbuf **mp, struct ifnet *bifp, struct ifnet *ifp, int dir)
 #ifdef INET
 		case ETHERTYPE_ARP:
 		case ETHERTYPE_REVARP:
-			if (V_pfil_ipfw_arp == 0)
-				return (0); /* Automatically pass */
-
-			/* FALLTHROUGH */
+			return (0); /* ARP is not an IP pfil protocol. */
 		case ETHERTYPE_IP:
 #endif
 #ifdef INET6
@@ -4020,17 +3971,6 @@ bridge_pfil(struct mbuf **mp, struct ifnet *bifp, struct ifnet *ifp, int dir)
 			 */
 			if (V_pfil_onlyip)
 				goto bad;
-	}
-
-	/* Run the packet through pfil before stripping link headers */
-	if (PFIL_HOOKED_OUT(V_link_pfil_head) && V_pfil_ipfw != 0 &&
-	    dir == PFIL_OUT && ifp != NULL) {
-		switch (pfil_mbuf_out(V_link_pfil_head, mp, ifp, NULL)) {
-		case PFIL_DROPPED:
-			return (EACCES);
-		case PFIL_CONSUMED:
-			return (0);
-		}
 	}
 
 	/* Strip off the Ethernet header and keep a copy. */

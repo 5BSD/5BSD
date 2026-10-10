@@ -329,14 +329,6 @@ alias_rtsp_out(struct libalias *la, struct ip *pip,
 							    htons(base_port + j), htons(base_alias + j),
 							    IPPROTO_UDP);
 							if (rtsp_lnk != NULL) {
-#ifndef NO_FW_PUNCH
-								/*
-								 * Punch
-								 * hole in
-								 * firewall
-								 */
-								PunchFWHole(rtsp_lnk);
-#endif
 							} else {
 #ifdef LIBALIAS_DEBUG
 								fprintf(stderr,
@@ -438,10 +430,6 @@ alias_pna_out(struct libalias *la, struct ip *pip,
 			(void)FindUdpTcpOut(la, pip->ip_src, GetDestAddress(lnk),
 			    port, 0, IPPROTO_UDP, 1, &pna_links);
 			if (pna_links != NULL) {
-#ifndef NO_FW_PUNCH
-				/* Punch hole in firewall */
-				PunchFWHole(pna_links);
-#endif
 				tc = (struct tcphdr *)ip_next(pip);
 				alias_port = GetAliasPort(pna_links);
 				memcpy(work, &alias_port, 2);

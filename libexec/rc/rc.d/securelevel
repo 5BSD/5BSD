@@ -3,7 +3,7 @@
 #
 
 # PROVIDE: securelevel
-# REQUIRE: adjkerntz ipfw pf sysctl_lastload
+# REQUIRE: adjkerntz pf sysctl_lastload
 
 . /etc/rc.subr
 

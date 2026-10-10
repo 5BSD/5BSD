@@ -454,14 +454,6 @@ IPFILTER_DEFAULT_BLOCK	opt_ipfilter.h
 IPFILTER_LOG		opt_ipfilter.h
 IPFILTER_LOOKUP		opt_ipfilter.h
 IPFILTER_IPFS		opt_ipfilter.h
-IPFIREWALL		opt_ipfw.h
-IPFIREWALL_DEFAULT_TO_ACCEPT	opt_ipfw.h
-IPFIREWALL_NAT		opt_ipfw.h
-IPFIREWALL_NAT64	opt_ipfw.h
-IPFIREWALL_NPTV6	opt_ipfw.h
-IPFIREWALL_VERBOSE	opt_ipfw.h
-IPFIREWALL_VERBOSE_LIMIT	opt_ipfw.h
-IPFIREWALL_PMOD		opt_ipfw.h
 IPSEC			opt_ipsec.h
 IPSEC_DEBUG		opt_ipsec.h
 IPSEC_SUPPORT		opt_ipsec.h
@@ -546,7 +538,6 @@ NETGRAPH_GIF_DEMUX	opt_netgraph.h
 NETGRAPH_HOLE		opt_netgraph.h
 NETGRAPH_IFACE		opt_netgraph.h
 NETGRAPH_IP_INPUT	opt_netgraph.h
-NETGRAPH_IPFW		opt_netgraph.h
 NETGRAPH_KSOCKET	opt_netgraph.h
 NETGRAPH_L2TP		opt_netgraph.h
 NETGRAPH_LMI		opt_netgraph.h

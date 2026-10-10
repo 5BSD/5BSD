@@ -88,16 +88,14 @@ VNET_DEFINE(struct inpcbinfo, ripcbinfo);
 #define	V_ripcbinfo		VNET(ripcbinfo)
 
 /*
- * Control and data hooks for ipfw, dummynet, divert and so on.
+ * Control and data hooks for Dummynet and packet diversion.
  * The data hooks are not used here but it is convenient
  * to keep them all in one place.
  */
-VNET_DEFINE(ip_fw_ctl_ptr_t, ip_fw_ctl_ptr) = NULL;
 
 int	(*ip_dn_ctl_ptr)(struct sockopt *);
 int	(*ip_dn_io_ptr)(struct mbuf **, struct ip_fw_args *);
 void	(*ip_divert_ptr)(struct mbuf *, bool);
-int	(*ng_ipfw_input_p)(struct mbuf **, struct ip_fw_args *, bool);
 
 #ifdef INET
 /*
@@ -600,19 +598,6 @@ rip_ctloutput(struct socket *so, struct sockopt *sopt)
 			error = sooptcopyout(sopt, &optval, sizeof optval);
 			break;
 
-		case IP_FW3:	/* generic ipfw v.3 functions */
-		case IP_FW_ADD:	/* ADD actually returns the body... */
-		case IP_FW_GET:
-		case IP_FW_TABLE_GETSIZE:
-		case IP_FW_TABLE_LIST:
-		case IP_FW_NAT_GET_CONFIG:
-		case IP_FW_NAT_GET_LOG:
-			if (V_ip_fw_ctl_ptr != NULL)
-				error = V_ip_fw_ctl_ptr(sopt);
-			else
-				error = ENOPROTOOPT;
-			break;
-
 		case IP_DUMMYNET3:	/* generic dummynet v.3 functions */
 			if (ip_dn_ctl_ptr != NULL)
 				error = ip_dn_ctl_ptr(sopt);
@@ -660,23 +645,6 @@ rip_ctloutput(struct socket *so, struct sockopt *sopt)
 			else
 				inp->inp_flags &= ~INP_HDRINCL;
 			INP_WUNLOCK(inp);
-			break;
-
-		case IP_FW3:	/* generic ipfw v.3 functions */
-		case IP_FW_ADD:
-		case IP_FW_DEL:
-		case IP_FW_FLUSH:
-		case IP_FW_ZERO:
-		case IP_FW_RESETLOG:
-		case IP_FW_TABLE_ADD:
-		case IP_FW_TABLE_DEL:
-		case IP_FW_TABLE_FLUSH:
-		case IP_FW_NAT_CFG:
-		case IP_FW_NAT_DEL:
-			if (V_ip_fw_ctl_ptr != NULL)
-				error = V_ip_fw_ctl_ptr(sopt);
-			else
-				error = ENOPROTOOPT;
 			break;
 
 		case IP_DUMMYNET3:	/* generic dummynet v.3 functions */

@@ -654,10 +654,6 @@ NewFtpMessage(struct libalias *la, struct ip *pip,
 		int slen, hlen, tlen, dlen;
 		struct tcphdr *tc;
 
-#ifndef NO_FW_PUNCH
-		/* Punch hole in firewall */
-		PunchFWHole(ftp_lnk);
-#endif
 
 		/* Calculate data length of TCP packet */
 		tc = (struct tcphdr *)ip_next(pip);

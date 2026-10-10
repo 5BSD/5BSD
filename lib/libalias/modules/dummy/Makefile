@@ -1,4 +1,4 @@
-PACKAGE=	natd
+PACKAGE=	libalias
 NAME=		dummy
 SRCS=		alias_dummy.c
 

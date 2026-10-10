@@ -29,7 +29,7 @@
 #
 
 # PROVIDE: blocklistd
-# REQUIRE: netif ipfilter ipfw pf
+# REQUIRE: netif ipfilter pf
 
 . /etc/rc.subr
 

@@ -189,7 +189,6 @@ SUBDIR.${MK_INET6}+=	rtadvd
 SUBDIR.${MK_INET6}+=	rtsold
 SUBDIR.${MK_INET6}+=	traceroute6
 SUBDIR.${MK_INETD}+=	inetd
-SUBDIR.${MK_IPFW}+=	ipfwpcap
 SUBDIR.${MK_ISCSI}+=	iscsid
 SUBDIR.${MK_JAIL}+=	jail
 SUBDIR.${MK_JAIL}+=	jexec

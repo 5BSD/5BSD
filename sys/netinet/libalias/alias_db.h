@@ -241,8 +241,6 @@ struct tcp_state {
 struct tcp_dat {
 	struct tcp_state state;
 	struct ack_data_record ack[N_LINK_TCP_DATA];
-	/* Which firewall record is used for this hole? */
-	int		fwhole;
 };
 
 /* LSNAT server pool (circular list) */
@@ -333,13 +331,6 @@ static struct group_in *
 StartPointIn(struct libalias *, struct in_addr, u_short, int, int);
 static int	SeqDiff(u_long, u_long);
 
-#ifndef NO_FW_PUNCH
-/* Firewall control */
-static void	InitPunchFW(struct libalias *);
-static void	UninitPunchFW(struct libalias *);
-static void	ClearFWHole(struct alias_link *);
-
-#endif
 
 /* Log file control */
 static void	ShowAliasStats(struct libalias *);
@@ -441,22 +432,5 @@ static u_short _RandomPort(struct libalias *la);
 #define GET_NEW_PORT_MAX_ATTEMPTS       20
 
 
-#ifndef NO_FW_PUNCH
-
-static void ClearAllFWHoles(struct libalias *la);
-
-#define fw_setfield(la, field, num)			\
-do {						\
-    (field)[(num) - la->fireWallBaseNum] = 1;		\
-} /*lint -save -e717 */ while(0)/* lint -restore */
-
-#define fw_clrfield(la, field, num)			\
-do {							\
-    (field)[(num) - la->fireWallBaseNum] = 0;		\
-} /*lint -save -e717 */ while(0)/* lint -restore */
-
-#define fw_tstfield(la, field, num) ((field)[(num) - la->fireWallBaseNum])
-
-#endif /* !NO_FW_PUNCH */
 
 #endif /* _ALIAS_DB_H_ */

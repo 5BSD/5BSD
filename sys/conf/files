@@ -4383,7 +4383,6 @@ netgraph/ng_gif_demux.c		optional netgraph_gif_demux
 netgraph/ng_hole.c		optional netgraph_hole
 netgraph/ng_iface.c		optional netgraph_iface
 netgraph/ng_ip_input.c		optional netgraph_ip_input
-netgraph/ng_ipfw.c		optional netgraph_ipfw inet ipfirewall
 netgraph/ng_ksocket.c		optional netgraph_ksocket
 netgraph/ng_l2tp.c		optional netgraph_l2tp
 netgraph/ng_lmi.c		optional netgraph_lmi
@@ -4589,53 +4588,18 @@ netlink/route/iface.c		optional netlink
 netlink/route/neigh.c		optional netlink
 netlink/route/nexthop.c		optional netlink
 netlink/route/rt.c		optional netlink
-netpfil/ipfw/dn_aqm_codel.c	optional inet dummynet
-netpfil/ipfw/dn_aqm_pie.c	optional inet dummynet
-netpfil/ipfw/dn_heap.c		optional inet dummynet
-netpfil/ipfw/dn_sched_fifo.c	optional inet dummynet
-netpfil/ipfw/dn_sched_fq_codel.c	optional inet dummynet
-netpfil/ipfw/dn_sched_fq_pie.c	optional inet dummynet
-netpfil/ipfw/dn_sched_prio.c	optional inet dummynet
-netpfil/ipfw/dn_sched_qfq.c	optional inet dummynet
-netpfil/ipfw/dn_sched_rr.c	optional inet dummynet
-netpfil/ipfw/dn_sched_wf2q.c	optional inet dummynet
-netpfil/ipfw/ip_dummynet.c	optional inet dummynet
-netpfil/ipfw/ip_dn_io.c		optional inet dummynet
-netpfil/ipfw/ip_fw2.c		optional inet ipfirewall
-netpfil/ipfw/ip_fw_bpf.c	optional inet ipfirewall
-netpfil/ipfw/ip_fw_dynamic.c	optional inet ipfirewall \
-	compile-with "${NORMAL_C} -I$S/contrib/ck/include"
-netpfil/ipfw/ip_fw_eaction.c	optional inet ipfirewall
-netpfil/ipfw/ip_fw_log.c	optional inet ipfirewall
-netpfil/ipfw/ip_fw_pfil.c	optional inet ipfirewall
-netpfil/ipfw/ip_fw_sockopt.c	optional inet ipfirewall
-netpfil/ipfw/ip_fw_table.c	optional inet ipfirewall
-netpfil/ipfw/ip_fw_table_algo.c	optional inet ipfirewall
-netpfil/ipfw/ip_fw_table_value.c	optional inet ipfirewall
-netpfil/ipfw/ip_fw_iface.c	optional inet ipfirewall
-netpfil/ipfw/ip_fw_nat.c	optional inet ipfirewall_nat
-netpfil/ipfw/nat64/ip_fw_nat64.c	optional inet inet6 ipfirewall \
-	ipfirewall_nat64
-netpfil/ipfw/nat64/nat64clat.c	optional inet inet6 ipfirewall \
-	ipfirewall_nat64
-netpfil/ipfw/nat64/nat64clat_control.c	optional inet inet6 ipfirewall \
-	ipfirewall_nat64
-netpfil/ipfw/nat64/nat64lsn.c	optional inet inet6 ipfirewall \
-	ipfirewall_nat64 compile-with "${NORMAL_C} -I$S/contrib/ck/include"
-netpfil/ipfw/nat64/nat64lsn_control.c	optional inet inet6 ipfirewall \
-	ipfirewall_nat64 compile-with "${NORMAL_C} -I$S/contrib/ck/include"
-netpfil/ipfw/nat64/nat64stl.c	optional inet inet6 ipfirewall \
-	ipfirewall_nat64
-netpfil/ipfw/nat64/nat64stl_control.c	optional inet inet6 ipfirewall \
-	ipfirewall_nat64
-netpfil/ipfw/nat64/nat64_translate.c	optional inet inet6 ipfirewall \
-	ipfirewall_nat64
-netpfil/ipfw/nptv6/ip_fw_nptv6.c	optional inet inet6 ipfirewall \
-	ipfirewall_nptv6
-netpfil/ipfw/nptv6/nptv6.c	optional inet inet6 ipfirewall \
-	ipfirewall_nptv6
-netpfil/ipfw/pmod/ip_fw_pmod.c	optional inet ipfirewall_pmod
-netpfil/ipfw/pmod/tcpmod.c	optional inet ipfirewall_pmod
+netpfil/dummynet/dn_aqm_codel.c	optional inet dummynet
+netpfil/dummynet/dn_aqm_pie.c	optional inet dummynet
+netpfil/dummynet/dn_heap.c		optional inet dummynet
+netpfil/dummynet/dn_sched_fifo.c	optional inet dummynet
+netpfil/dummynet/dn_sched_fq_codel.c	optional inet dummynet
+netpfil/dummynet/dn_sched_fq_pie.c	optional inet dummynet
+netpfil/dummynet/dn_sched_prio.c	optional inet dummynet
+netpfil/dummynet/dn_sched_qfq.c	optional inet dummynet
+netpfil/dummynet/dn_sched_rr.c	optional inet dummynet
+netpfil/dummynet/dn_sched_wf2q.c	optional inet dummynet
+netpfil/dummynet/ip_dummynet.c	optional inet dummynet
+netpfil/dummynet/ip_dn_io.c		optional inet dummynet
 netpfil/pf/if_pflog.c		optional pflog pf inet
 netpfil/pf/if_pfsync.c		optional pfsync pf inet
 netpfil/pf/pf.c			optional pf inet
