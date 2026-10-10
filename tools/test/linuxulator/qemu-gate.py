@@ -96,6 +96,8 @@ def main():
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--timeout', type=int, default=1800)
     parser.add_argument('--memory-mib', type=int, default=2048)
+    parser.add_argument('--cpus', type=int, default=4,
+                        help='Guest vCPUs (default 4)')
     args = parser.parse_args()
     manifest = None
     if args.amd64_manifest is not None:
@@ -127,7 +129,7 @@ def main():
     for arch, binary, image in guests:
         executable = (args.amd64_qemu if arch == 'amd64' else args.arm64_qemu) or args.qemu_dir / binary
         command = [str(executable), '-L', str(args.firmware_dir),
-                   '-accel', 'tcg,thread=multi', '-m', str(args.memory_mib), '-smp', '2',
+                   '-accel', 'tcg,thread=multi', '-m', str(args.memory_mib), '-smp', str(args.cpus),
                    '-nic', ('user,model=virtio-net-pci,restrict=on' if arch == 'amd64' else 'none'), '-display', 'none', '-monitor', 'none',
                    '-serial', 'stdio', '-no-reboot',
                    '-drive', f'file={image.resolve()},format=raw,if=virtio,snapshot=on']
