@@ -3,7 +3,7 @@
 PACKAGE=lib${LIB}
 LIB=	notify
 SHLIB_MAJOR=	1
-MAN=	libnotify.3
+MAN=	libnotify.3 notify_watch.3
 MLINKS+=libnotify.3 notify_client_open.3
 MLINKS+=libnotify.3 notify_subscribe.3
 MLINKS+=libnotify.3 notify_unsubscribe.3
@@ -16,8 +16,8 @@ MLINKS+=libnotify.3 notify_list_subscriptions.3
 MLINKS+=libnotify.3 notify_list_timers.3
 MLINKS+=libnotify.3 notify_client_close.3
 
-SRCS=	notify.c
-INCS=	notify.h notify_protocol.h notify_server.h
+SRCS=	notify.c notify_watch.c
+INCS=	notify.h notify_protocol.h notify_server.h notify_watch.h
 LIBADD=	pthread service
 CFLAGS+=	-I${SRCTOP}/lib/libservice
 STATIC_CFLAGS+=	${PICFLAG}
