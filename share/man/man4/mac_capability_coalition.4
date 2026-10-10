@@ -413,6 +413,11 @@ or member-limit exhaustion is sent SIGKILL before it can execute user code.
 At this stage the fork has already succeeded, so the parent may receive a
 child PID and must reap the child normally.
 A successful fork return does not imply the child completed initialization.
+While the coalition remains open, these rejected children are still counted
+as members until their file tables and address spaces have been released.
+This cleanup accounting can temporarily exceed the soft member limit.
+Closing or revoking the coalition discards its membership tracking; retain
+the handle while observing cleanup.
 .Ss Coalition Flags
 The
 .Fa flags
@@ -440,6 +445,8 @@ Soft limit, best-effort enforcement.
 .It Va kern.mac_capability_coalition.max_members
 Maximum total members across all coalitions; 0 means unlimited.
 Soft limit, best-effort enforcement.
+Rejected fork children remain accounted for during resource cleanup even
+when this limit is reached.
 .It Va kern.mac_capability_coalition.members
 Total members across all coalitions (read-only).
 .El

@@ -2086,6 +2086,7 @@ coalition_process_fork(void *arg __unused, struct proc *parent,
 {
 	struct coalition_member *pcm, *ccm;
 	struct coalition *co;
+	bool rejected;
 
 	/*
 	 * Every child of a member inherits membership, pdfork(2) children
@@ -2114,23 +2115,26 @@ coalition_process_fork(void *arg __unused, struct proc *parent,
 	 */
 	sx_xlock(&co->co_sx);
 
-	if (co->co_flags & (COF_TERMINATING | COF_GRACE_ACTIVE)) {
+	if (co->co_flags & COF_CLOSING) {
 		sx_xunlock(&co->co_sx);
 		uma_zfree(coalition_member_zone, ccm);
 		coalition_rel(co);
 		goto reject_child;
 	}
 
-	/* Enforce member limits — refuse fork inheritance if exceeded */
-	if (coalition_check_limits() != 0) {
-		sx_xunlock(&co->co_sx);
-		uma_zfree(coalition_member_zone, ccm);
-		coalition_rel(co);
+	/*
+	 * The child already owns inherited resources.  Even when admission is
+	 * rejected, retain its membership until the resource-exit hook runs.
+	 * The member limit is soft: cleanup accounting must not disappear when
+	 * the limit is reached.  No rejected child can execute user code.
+	 */
+	rejected = (co->co_flags & (COF_TERMINATING | COF_GRACE_ACTIVE)) != 0;
+	if (!rejected && coalition_check_limits() != 0) {
 		SDT_PROBE3(mac_capability_coalition, , , deny, (uintptr_t)"fork-limit",
 		    ENOMEM, child->p_pid);
 		log(LOG_WARNING,
 		    "mac_capability_coalition: fork child killed by member limit\n");
-		goto reject_child;
+		rejected = true;
 	}
 
 	ccm->cm_data = child;
@@ -2153,7 +2157,8 @@ coalition_process_fork(void *arg __unused, struct proc *parent,
 	SDT_PROBE2(mac_capability_coalition, , , fork__inherit,
 	    parent->p_pid, child->p_pid);
 	coalition_rel(co);
-	return;
+	if (!rejected)
+		return;
 
 reject_child:
 	/*

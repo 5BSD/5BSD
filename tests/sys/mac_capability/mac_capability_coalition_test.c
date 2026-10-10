@@ -183,6 +183,29 @@ kqueue_poll(int kq_fd, struct kevent *events, int nevents, int timeout_ms)
 	return (kevent(kq_fd, NULL, 0, events, nevents, &ts));
 }
 
+/* Drain the small, controlled event history in these lifecycle fixtures. */
+static uint32_t
+coalition_drain_event_flags(int fd)
+{
+	struct coalition_event_msg event;
+	struct kevent kev;
+	uint32_t flags = 0;
+	int kq, ready, count = 0;
+
+	kq = kqueue();
+	ATF_REQUIRE(kq >= 0);
+	EV_SET(&kev, fd, EVFILT_READ, EV_ADD, 0, 0, NULL);
+	ATF_REQUIRE_EQ(0, kevent(kq, &kev, 1, NULL, 0, NULL));
+	while ((ready = kqueue_poll(kq, &kev, 1, 0)) > 0) {
+		ATF_REQUIRE(++count <= 64);
+		ATF_REQUIRE_EQ(0, coalition_recv_event(fd, &event));
+		flags |= event.flags;
+	}
+	ATF_REQUIRE_EQ(0, ready);
+	close(kq);
+	return (flags);
+}
+
 static int
 create_jail_with_desc(const char *name)
 {
@@ -1979,6 +2002,7 @@ ATF_TC_BODY(terminated_coalition_cannot_fork_escape, tc)
 	    .op = COALITION_OP_SET_SIGNAL, .signal = 0 };
 	struct coalition_reply reply;
 	int cfd, pd, wstatus;
+	struct coalition_stat_reply remaining;
 	int32_t status;
 	pid_t child;
 
@@ -1992,6 +2016,7 @@ ATF_TC_BODY(terminated_coalition_cannot_fork_escape, tc)
 	/* Freeze membership without killing this test process. */
 	ATF_REQUIRE_EQ(0, coalition_op(cfd, COALITION_OP_TERMINATE, &status));
 	ATF_REQUIRE_EQ(0, status);
+	(void)coalition_drain_event_flags(cfd);
 	child = pdfork(&pd, PD_DAEMON);
 	ATF_REQUIRE(child >= 0);
 	if (child == 0)
@@ -2001,6 +2026,10 @@ ATF_TC_BODY(terminated_coalition_cannot_fork_escape, tc)
 	    wstatus);
 	if (WIFSIGNALED(wstatus))
 		ATF_CHECK_EQ(SIGKILL, WTERMSIG(wstatus));
+	ATF_CHECK_EQ(COALITION_NOTE_MEMBER_ADDED | COALITION_NOTE_MEMBER_REMOVED,
+	    coalition_drain_event_flags(cfd));
+	ATF_REQUIRE_EQ(0, coalition_stat(cfd, &remaining));
+	ATF_CHECK_EQ(1, remaining.process_count);
 	close(pd);
 	close(cfd);
 }
@@ -2019,6 +2048,7 @@ ATF_TC_BODY(member_limit_cannot_fork_escape, tc)
 	unsigned original, members;
 	size_t size;
 	int cfd, pd, wstatus, restored;
+	struct coalition_stat_reply remaining;
 	int32_t status;
 	pid_t child;
 	const char *limit = "kern.mac_capability_coalition.max_members";
@@ -2027,6 +2057,7 @@ ATF_TC_BODY(member_limit_cannot_fork_escape, tc)
 	ATF_REQUIRE(cfd >= 0);
 	ATF_REQUIRE_EQ(0, coalition_op(cfd, COALITION_OP_JOIN, &status));
 	ATF_REQUIRE_EQ(0, status);
+	(void)coalition_drain_event_flags(cfd);
 	size = sizeof(original);
 	ATF_REQUIRE_EQ(0, sysctlbyname(limit, &original, &size, NULL, 0));
 	size = sizeof(members);
@@ -2046,6 +2077,10 @@ ATF_TC_BODY(member_limit_cannot_fork_escape, tc)
 	    wstatus);
 	if (WIFSIGNALED(wstatus))
 		ATF_CHECK_EQ(SIGKILL, WTERMSIG(wstatus));
+	ATF_CHECK_EQ(COALITION_NOTE_MEMBER_ADDED | COALITION_NOTE_MEMBER_REMOVED,
+	    coalition_drain_event_flags(cfd));
+	ATF_REQUIRE_EQ(0, coalition_stat(cfd, &remaining));
+	ATF_CHECK_EQ(1, remaining.process_count);
 	close(pd);
 	close(cfd);
 }
@@ -2097,6 +2132,7 @@ ATF_TC_BODY(grace_fork_containment_and_cancel, tc)
 			ATF_REQUIRE_EQ(0, st.flags & COF_GRACE_ACTIVE);
 		}
 		for (int i = 0; i < 8; i++) {
+			(void)coalition_drain_event_flags(cfd);
 			pd = -1;
 			child = i % 2 == 0 ? fork() : pdfork(&pd, PD_DAEMON);
 			ATF_REQUIRE(child >= 0);
@@ -2111,6 +2147,11 @@ ATF_TC_BODY(grace_fork_containment_and_cancel, tc)
 				ATF_CHECK(WIFEXITED(wstatus) && WEXITSTATUS(wstatus) == 0);
 			else
 				ATF_CHECK(WIFSIGNALED(wstatus) && WTERMSIG(wstatus) == SIGKILL);
+			ATF_CHECK_EQ(COALITION_NOTE_MEMBER_ADDED |
+			    COALITION_NOTE_MEMBER_REMOVED,
+			    coalition_drain_event_flags(cfd));
+			ATF_REQUIRE_EQ(0, coalition_stat(cfd, &st));
+			ATF_CHECK_EQ(1, st.process_count);
 			if (pd >= 0)
 				close(pd);
 		}
