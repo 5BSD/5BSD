@@ -1591,11 +1591,11 @@ mac_capability_instance_fdclose(struct file *fp, int fd, struct thread *td)
 	s = fp->f_data;
 
 	/*
-	 * Skip if finalized — co_revoke already ran and the service
-	 * module may have unloaded.  The ops pointer could be stale.
+	 * Bracket the callback as in-flight work: revoke and unload must
+	 * not free service state or code between this check and invocation.
 	 */
 	mtx_lock(&s->ci_mtx);
-	if (s->ci_flags & MAC_CAPABILITY_SF_FINALIZED) {
+	if (!mac_capability_op_enter_locked(s)) {
 		mtx_unlock(&s->ci_mtx);
 		return;
 	}
@@ -1608,6 +1608,7 @@ mac_capability_instance_fdclose(struct file *fp, int fd, struct thread *td)
 		    mac_capability_proc_nonce(td->td_ucred));
 	if (svc != NULL && svc->csvc_ops->co_fdclose != NULL)
 		svc->csvc_ops->co_fdclose(s, fd, td, svc->csvc_arg);
+	mac_capability_op_exit(s);
 }
 
 static int
@@ -1696,9 +1697,9 @@ mac_capability_instance_close(struct file *fp, struct thread *td __unused)
 	 * Deferred tasks may still reference ci_priv; co_revoke may
 	 * free it.
 	 */
-	while (refcount_load(&s->ci_refcnt) > 1)
+	/* Atomically exclude registry/peer tryhold before claiming final close. */
+	while (!refcount_release_if_last(&s->ci_refcnt))
 		tsleep(s, 0, "mac_capabilityfr", MAC_CAPABILITY_POLL_TICKS);
-	refcount_release(&s->ci_refcnt);
 
 	/* Fire co_revoke exactly once, after all work is done. */
 	mtx_lock(&s->ci_mtx);
@@ -1727,6 +1728,8 @@ mac_capability_instance_close(struct file *fp, struct thread *td __unused)
 		}
 		mac_capability_revoke_callback(s, reason);
 	} else {
+		while (!(s->ci_flags & MAC_CAPABILITY_SF_REVOKE_DONE))
+			msleep(&s->ci_flags, &s->ci_mtx, 0, "caprevokedone", 0);
 		mtx_unlock(&s->ci_mtx);
 	}
 

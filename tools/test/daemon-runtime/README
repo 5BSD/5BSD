@@ -93,3 +93,31 @@ and result.json record the exact selected cases; a selected-case pass does
 not certify the rest of that suite. The guest configures lo0 with 127.0.0.1/8 for local IPv4 TCP/UDP
 fixtures. QEMU still has no network adapter or external connectivity. IPv6
 loopback and deterministic unresponsive peers are not configured.
+
+Cleanup callback versus unload regression
+-----------------------------------------
+Build the private fixture with:
+    make -j$(sysctl -n hw.ncpu) -C /usr/src/tools/test/daemon-runtime/cleanup-fixture SYSDIR=/usr/src/sys
+Build the selected ATF binary statically with:
+    make -B -j$(sysctl -n hw.ncpu) -C /usr/src/tests/sys/mac_capability NO_SHARED.mac_capability_test=yes mac_capability_test
+Add these options to the normal run-vm.py invocation:
+    --cleanup-lifecycle
+    --atf-case tests/sys/mac_capability/mac_capability_test:unload_waits_for_cleanup_callback
+The runner stages and hashes the test-only module from the standard object
+root. The test loads it inside the guest, blocks a revoke callback, starts
+module unload, confirms unload remains blocked for one second, then releases
+cleanup and checks both syscalls finish. It repeats with final close owning a
+zero-reference instance, using a pipe gate to make the last close deterministic.
+The kernel fixture bounds an unreleased
+callback at ten seconds. It is not part of the installed base; never install
+or load this fixture on the host. Without the staged module this case skips;
+the VM runner treats a selected-case skip as failure. This covers the running
+callback/unload ordering, not every close/refcount interleaving or async service
+resource obligation. Keep WITNESS/INVARIANTS close/unload stress on the VM list.
+
+Build fixtures against syscall headers and static libraries matching the guest
+kernel. A source kernel with renumbered 5BSD syscalls cannot use syscall stubs
+from an older host libc.a. A complete matching world build supplies these;
+standalone test builds must explicitly link the matching libsys.a ahead of
+host libc.a. Verify the linked executable, not only header macros. The runner
+rejects skipped hardening checks and does not treat ENOSYS as acceptance.

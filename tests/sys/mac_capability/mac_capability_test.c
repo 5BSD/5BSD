@@ -16,6 +16,7 @@
 #include <sys/ioctl.h>
 #include <sys/event.h>
 #include <sys/jail.h>
+#include <sys/linker.h>
 #include <sys/mman.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
@@ -7811,9 +7812,99 @@ ATF_TC_BODY(kstore_revoke_member, tc)
 	close(owner_fd);
 }
 
+/* This module is staged only in the isolated lifecycle VM. */
+ATF_TC(unload_waits_for_cleanup_callback);
+ATF_TC_HEAD(unload_waits_for_cleanup_callback, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "Module unload waits for revoke and final-close callbacks");
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "timeout", "30");
+}
+
+static unsigned
+cleanup_fixture_value(const char *name)
+{
+	unsigned value = 0;
+	size_t len = sizeof(value);
+
+	ATF_REQUIRE_EQ(0, sysctlbyname(name, &value, &len, NULL, 0));
+	return (value);
+}
+
+static void
+check_unload_waits_for_cleanup(bool last_close)
+{
+	const char *entered = "debug.capability_cleanup_test.entered";
+	const char *destroy = "debug.capability_cleanup_test.destroy_entered";
+	unsigned release = 1;
+	int module, fd, status, gate[2];
+	char go = 1;
+	pid_t terminator, unloader, observed = 0;
+
+	if (access("/boot/kernel/mac_capability_test_cleanup.ko", R_OK) != 0)
+		atf_tc_skip("private VM cleanup fixture is not staged");
+	module = kldload("/boot/kernel/mac_capability_test_cleanup.ko");
+	ATF_REQUIRE_MSG(module >= 0, "load cleanup fixture: %s", strerror(errno));
+	fd = mac_capability_connect("test_cleanup");
+	ATF_REQUIRE(fd >= 0);
+	ATF_REQUIRE_EQ(0, pipe(gate));
+	terminator = fork();
+	ATF_REQUIRE(terminator >= 0);
+	if (terminator == 0) {
+		close(gate[1]);
+		if (read(gate[0], &go, 1) != 1)
+			_exit(2);
+		close(gate[0]);
+		_exit((last_close ? close(fd) :
+		    ioctl(fd, MAC_CAPABILITY_TERMINATE, NULL)) == 0 ? 0 : 1);
+	}
+	close(gate[0]);
+	if (last_close) {
+		ATF_REQUIRE_EQ(0, close(fd));
+		fd = -1;
+	}
+	ATF_REQUIRE_EQ(1, write(gate[1], &go, 1));
+	close(gate[1]);
+	for (unsigned i = 0; i < 300 && cleanup_fixture_value(entered) == 0; i++)
+		usleep(10000);
+	ATF_REQUIRE_EQ(1, cleanup_fixture_value(entered));
+	unloader = fork();
+	ATF_REQUIRE(unloader >= 0);
+	if (unloader == 0)
+		_exit(kldunload(module) == 0 ? 0 : 1);
+	for (unsigned i = 0; i < 300 && cleanup_fixture_value(destroy) == 0; i++)
+		usleep(10000);
+	ATF_REQUIRE_EQ(1, cleanup_fixture_value(destroy));
+	/* Keep the callback blocked while the unload syscall is in progress. */
+	for (unsigned i = 0; i < 100; i++) {
+		observed = waitpid(unloader, &status, WNOHANG);
+		if (observed != 0)
+			break;
+		usleep(10000);
+	}
+	ATF_CHECK_EQ_MSG(0, observed, "unload returned before callback release");
+	ATF_REQUIRE_EQ(0, sysctlbyname("debug.capability_cleanup_test.release",
+	    NULL, NULL, &release, sizeof(release)));
+	ATF_REQUIRE_EQ(terminator, waitpid(terminator, &status, 0));
+	ATF_CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	if (observed == 0) {
+		ATF_REQUIRE_EQ(unloader, waitpid(unloader, &status, 0));
+		ATF_CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	}
+	if (fd >= 0)
+		close(fd);
+}
+
+ATF_TC_BODY(unload_waits_for_cleanup_callback, tc)
+{
+	check_unload_waits_for_cleanup(false);
+	check_unload_waits_for_cleanup(true);
+}
+
 /* ================================================================ */
 ATF_TP_ADD_TCS(tp)
 {
+	ATF_TP_ADD_TC(tp, unload_waits_for_cleanup_callback);
 	/* Lifecycle */
 	ATF_TP_ADD_TC(tp, open_close);
 

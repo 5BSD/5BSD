@@ -643,6 +643,7 @@ mac_capability_service_destroy(struct mac_capability_service *svc)
 {
 	struct mac_capability_instance *s;
 	struct mac_capability_msgq deadq;
+	struct mac_capability_callback_state *waiting;
 	bool need_revoke;
 
 	STAILQ_INIT(&deadq);
@@ -727,33 +728,53 @@ mac_capability_service_destroy(struct mac_capability_service *svc)
 	 *
 	 * We do NOT unlink instances or release reservation refs
 	 * here.  Close handles that.  If close races, it checks
-	 * FINALIZED under ci_mtx and skips co_revoke.
+	 * FINALIZED under ci_mtx and waits for callback return.  A claimed
+	 * callback on another thread must also return before unload completes.
 	 *
 	 * Scan from the list head each time: find the first
-	 * instance that isn't FINALIZED, mark it, hold a ref,
+	 * instance that isn't FINALIZED, acquire a live reference, mark it,
 	 * drop xlock, fire co_revoke, release ref, repeat.
 	 * O(N²) worst case, but N is small and this only runs
 	 * during module unload.
 	 */
 	for (;;) {
+		waiting = NULL;
 		sx_xlock(&mac_capability_registry_lock);
 		LIST_FOREACH(s, &svc->csvc_instances, ci_svc_link) {
 			mtx_lock(&s->ci_mtx);
 			need_revoke =
 			    !(s->ci_flags & MAC_CAPABILITY_SF_FINALIZED);
-			if (need_revoke) {
+			if (need_revoke && mac_capability_instance_tryhold(s)) {
 				s->ci_flags |= MAC_CAPABILITY_SF_FINALIZED;
-				mac_capability_instance_hold(s);
 				mtx_unlock(&s->ci_mtx);
+				break;
+			}
+			if (!(s->ci_flags & MAC_CAPABILITY_SF_REVOKE_DONE)) {
+				/*
+				 * Close may own a zero-ref instance, or another
+				 * finalizer may still be inside module code.  Pin
+				 * only its result while registry lock keeps s alive.
+				 */
+				mtx_unlock(&s->ci_mtx);
+				waiting = mac_capability_callback_state_get(s);
 				break;
 			}
 			mtx_unlock(&s->ci_mtx);
 		}
 		sx_xunlock(&mac_capability_registry_lock);
 
+		if (waiting != NULL) {
+			while (!mac_capability_callback_state_done(waiting))
+				pause("caprevokewait", MAC_CAPABILITY_POLL_TICKS);
+			mac_capability_callback_state_rele(waiting);
+			continue;
+		}
 		if (s == NULL)
 			break;
 
+		/* Our hold plus the file reference are the only permitted refs. */
+		while (refcount_load(&s->ci_refcnt) > 2)
+			tsleep(s, 0, "caprevokerefs", MAC_CAPABILITY_POLL_TICKS);
 		SDT_PROBE6(mac_capability, , , instance__finalize,
 		    svc->csvc_name, s->ci_badge, MAC_CAPABILITY_REVOKE_UNLOAD,
 		    curthread->td_proc->p_pid, curthread->td_ucred,

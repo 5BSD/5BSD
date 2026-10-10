@@ -13,6 +13,7 @@ p.add_argument('--client-ownership',action='store_true')
 p.add_argument('--oes-factory',action='store_true')
 p.add_argument('--log-store',action='store_true')
 p.add_argument('--log-storage',action='store_true')
+p.add_argument('--cleanup-lifecycle',action='store_true',help='stage private cleanup/unload kernel fixture')
 p.add_argument('--log-provider',action='store_true')
 p.add_argument('--atf-suite',action='append',default=[],help='static ATF binary relative to objtop; repeatable')
 p.add_argument('--atf-case',action='append',default=[],help='static ATF binary relative to objtop followed by :case; repeatable')
@@ -44,6 +45,12 @@ for source,dest in [(kernel,stage/'boot/kernel/kernel'),(helper,stage/'sbin/runt
 shutil.copyfile(fs_test,stage/'tests/namespace_test')
 if digest(stage/'tests/namespace_test')!=hashes[str(fs_test)] or digest(fs_test)!=hashes[str(fs_test)]: p.error('filesystem test changed during staging')
 extra_cases=[]; extra_hashes={}
+if a.cleanup_lifecycle:
+ source=obj/'tools/test/daemon-runtime/cleanup-fixture/mac_capability_test_cleanup.ko'
+ before=digest(source); dest=stage/'boot/kernel/mac_capability_test_cleanup.ko'
+ shutil.copyfile(source,dest)
+ if digest(source)!=before or digest(dest)!=before: p.error('cleanup fixture changed during staging')
+ extra_hashes['cleanup_fixture_module']=before
 if a.client_ownership:
  for library,program in [('auditcmp','client_lifecycle_test'),('cryptocmp','client_protocol_test'),('tracecmp','client_lifecycle_test'),('logcmp','client_lifecycle_test')]:
   source=obj/'lib'/('lib'+library)/'tests'/program

@@ -120,6 +120,9 @@ enum mac_capability_revoke_reason {
  *     even if other fds still reference it (dup, SCM_RIGHTS).
  *     Lets services track handle count.  NOT called on final close
  *     (co_revoke covers that).
+ *     Not invoked after revocation begins.
+ *     Counted as in-flight work; revoke and service unload wait for it.
+ *     Must not synchronously revoke its own instance.
  *     NULL → no notification.
  *
  * co_txdrain(instance, arg)
