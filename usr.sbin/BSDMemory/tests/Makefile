@@ -24,5 +24,10 @@ LDFLAGS.startup_test+= -Wl,--wrap=service_set_proctitle \
     -Wl,--wrap=service_provider_enter_capability_mode \
     -Wl,--wrap=service_provider_ready -Wl,--wrap=service_provider_quiescing \
     -Wl,--wrap=service_provider_quiesce_complete \
-    -Wl,--wrap=kqueue -Wl,--wrap=kevent
+    -Wl,--wrap=kqueue -Wl,--wrap=kevent -Wl,--wrap=service_monotime_ms \
+    -Wl,--wrap=service_provider_heartbeat -Wl,--wrap=syslog \
+    -Wl,--wrap=sysctlcmp_client_open -Wl,--wrap=sysctlcmp_client_close \
+    -Wl,--wrap=sysctlcmp_get -Wl,--wrap=notify_client_open_system \
+    -Wl,--wrap=notify_client_close -Wl,--wrap=notify_state_get \
+    -Wl,--wrap=notify_state_set
 .include <bsd.test.mk>
