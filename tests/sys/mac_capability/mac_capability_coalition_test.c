@@ -1823,6 +1823,62 @@ ATF_TC_BODY(closed_coalition_rejects_fork, tc)
 	ATF_CHECK_EQ(base, coalition_count());
 }
 
+ATF_TC(deferred_capability_cleanup_retains_coalition);
+ATF_TC_HEAD(deferred_capability_cleanup_retains_coalition, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Deferred capability callback retains coalition without pinning instance");
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "require.kmods",
+	    "mac_capability mac_capability_coalition mac_capability_channel");
+	atf_tc_set_md_var(tc, "timeout", "30");
+}
+ATF_TC_BODY(deferred_capability_cleanup_retains_coalition, tc)
+{
+	unsigned base = coalition_count();
+	int cfds[2], member;
+	int32_t status;
+
+	/* Also exercise multiple independent readers of one callback record. */
+	for (unsigned holders = 1; holders <= nitems(cfds); holders++) {
+		member = mac_capability_connect("channel");
+		ATF_REQUIRE(member >= 0);
+		for (unsigned i = 0; i < holders; i++) {
+			cfds[i] = mac_capability_connect("coalition");
+			ATF_REQUIRE(cfds[i] >= 0);
+			ATF_REQUIRE_EQ(0, coalition_enlist(cfds[i], member, &status));
+			ATF_REQUIRE_EQ(0, status);
+		}
+		/* Collection holds the instance, so core defers its callback. */
+		for (unsigned i = 0; i < holders; i++) {
+			ATF_REQUIRE_EQ(0, coalition_op(cfds[i],
+			    COALITION_OP_TERMINATE, &status));
+			ATF_REQUIRE_EQ(0, status);
+			ATF_REQUIRE_EQ(0, close(cfds[i]));
+		}
+		ATF_CHECK_EQ_MSG(base + holders, coalition_count(),
+		    "coalition disappeared before member callback ran");
+		/* No retained instance reference may block this final close. */
+		ATF_REQUIRE_EQ(0, close(member));
+		for (unsigned i = 0; i < 500 && coalition_count() != base; i++)
+			usleep(10000);
+		ATF_CHECK_EQ(base, coalition_count());
+	}
+	/* A late subscriber observes a callback that already returned. */
+	member = mac_capability_connect("channel");
+	cfds[0] = mac_capability_connect("coalition");
+	ATF_REQUIRE(member >= 0 && cfds[0] >= 0);
+	ATF_REQUIRE_EQ(0, ioctl(member, MAC_CAPABILITY_TERMINATE, NULL));
+	ATF_REQUIRE_EQ(0, coalition_enlist(cfds[0], member, &status));
+	ATF_REQUIRE_EQ(0, status);
+	ATF_REQUIRE_EQ(0, close(cfds[0]));
+	for (unsigned i = 0; i < 500 && coalition_count() != base; i++)
+		usleep(10000);
+	ATF_CHECK_EQ_MSG(base, coalition_count(),
+	    "late callback reader missed completion");
+	close(member);
+}
+
 ATF_TC(nested_cleanup_retains_parent);
 ATF_TC_HEAD(nested_cleanup_retains_parent, tc)
 {
@@ -4979,7 +5035,8 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, responsible_chain_depth_limit);
 	ATF_TP_ADD_TC(tp, set_signal_zero_releases);
 	ATF_TP_ADD_TC(tp, close_retains_signalled_process);
-	ATF_TP_ADD_TC(tp, nested_cleanup_retains_parent);
+	ATF_TP_ADD_TC(tp, deferred_capability_cleanup_retains_coalition);
+		ATF_TP_ADD_TC(tp, nested_cleanup_retains_parent);
 	ATF_TP_ADD_TC(tp, closed_coalition_rejects_fork);
 	ATF_TP_ADD_TC(tp, pdfork_inherits_and_rehomes);
 	ATF_TP_ADD_TC(tp, close_terminates_live_member);

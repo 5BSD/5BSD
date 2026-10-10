@@ -131,6 +131,7 @@ MALLOC_DEFINE(M_COALITION, "mac_capability_coalition",
 struct coalition_dependency {
 	struct coalition *cd_parent;
 	struct coalition *cd_child;
+	struct mac_capability_callback_state *cd_callback;
 	struct timeout_task cd_task;
 };
 
@@ -156,6 +157,7 @@ struct coalition {
 	int			co_signal;
 	int			co_termination_error; /* First cleanup error, co_sx. */
 	u_int			co_pending_jails; /* Retained jail cleanup, co_sx. */
+	u_int			co_pending_caps; /* Capability callbacks, co_sx. */
 	u_int			co_pending_nested; /* Recursive cleanup, co_sx. */
 	u_int			co_pending_external; /* Work outside co_sx. */
 	volatile u_int		co_pending_forks; /* Hash lookup to publication. */
@@ -318,7 +320,8 @@ coalition_free(struct coalition *co)
 	    ("coalition_free: members not empty"));
 	KASSERT(co->co_pending_jails == 0,
 	    ("coalition_free: pending jail cleanup"));
-	KASSERT(co->co_pending_nested == 0 && co->co_pending_external == 0,
+	KASSERT(co->co_pending_nested == 0 && co->co_pending_external == 0 &&
+	    co->co_pending_caps == 0,
 	    ("coalition_free: pending external cleanup"));
 	KASSERT(atomic_load_acq_int(&co->co_pending_forks) == 0,
 	    ("coalition_free: pending fork publication"));
@@ -1223,19 +1226,24 @@ coalition_enlist(struct coalition *co, struct thread *td, struct file *fp,
 		}
 	}
 
-	/* Every nested member owns an independent recursive cleanup link. */
-	if (cm->cm_nested_co != NULL) {
+	/* Detached completion references must not pin capability instances. */
+	if (dtype == DTYPE_MAC_CAPABILITY) {
 		struct coalition_dependency *cd;
 
 		cd = malloc(sizeof(*cd), M_COALITION, M_WAITOK | M_ZERO);
 		cd->cd_parent = co;
-		cd->cd_child = cm->cm_nested_co;
 		coalition_ref(co);
-		coalition_ref(cd->cd_child);
+		if (cm->cm_nested_co != NULL) {
+			cd->cd_child = cm->cm_nested_co;
+			coalition_ref(cd->cd_child);
+			co->co_pending_nested++;
+		} else {
+			cd->cd_callback = mac_capability_callback_state_get(fp->f_data);
+			co->co_pending_caps++;
+		}
 		TIMEOUT_TASK_INIT(taskqueue_thread, &cd->cd_task, 0,
 		    coalition_dependency_task, cd);
 		cm->cm_dependency = cd;
-		co->co_pending_nested++;
 	}
 
 	/* Common member setup */
@@ -1623,14 +1631,19 @@ coalition_dependency_task(void *arg, int pending __unused)
 	bool done;
 	int error;
 
-	sx_xlock(&child->co_sx);
-	done = (child->co_flags & COF_TERMINATING) != 0 &&
-	    coalition_count_process_members_locked(child) == 0 &&
-	    child->co_pending_jails == 0 && child->co_pending_nested == 0 &&
-	    child->co_pending_external == 0 &&
-	    atomic_load_acq_int(&child->co_pending_forks) == 0;
-	error = child->co_termination_error;
-	sx_xunlock(&child->co_sx);
+	if (child != NULL) {
+		sx_xlock(&child->co_sx);
+		done = (child->co_flags & COF_TERMINATING) != 0 &&
+		    coalition_count_process_members_locked(child) == 0 &&
+		    child->co_pending_jails == 0 && child->co_pending_nested == 0 &&
+		    child->co_pending_caps == 0 && child->co_pending_external == 0 &&
+		    atomic_load_acq_int(&child->co_pending_forks) == 0;
+		error = child->co_termination_error;
+		sx_xunlock(&child->co_sx);
+	} else {
+		done = mac_capability_callback_state_done(cd->cd_callback);
+		error = 0;
+	}
 	if (!done) {
 		taskqueue_enqueue_timeout(taskqueue_thread, &cd->cd_task,
 		    MAX(1, hz / 10));
@@ -1639,10 +1652,18 @@ coalition_dependency_task(void *arg, int pending __unused)
 	callout_drain(&cd->cd_task.c);
 	sx_xlock(&parent->co_sx);
 	coalition_record_error_locked(parent, error);
-	KASSERT(parent->co_pending_nested != 0, ("nested cleanup underflow"));
-	parent->co_pending_nested--;
+	if (child != NULL) {
+		KASSERT(parent->co_pending_nested != 0, ("nested cleanup underflow"));
+		parent->co_pending_nested--;
+	} else {
+		KASSERT(parent->co_pending_caps != 0, ("capability cleanup underflow"));
+		parent->co_pending_caps--;
+	}
 	sx_xunlock(&parent->co_sx);
-	coalition_rel(child);
+	if (child != NULL)
+		coalition_rel(child);
+	else
+		mac_capability_callback_state_rele(cd->cd_callback);
 	coalition_rel(parent);
 	free(cd, M_COALITION);
 }

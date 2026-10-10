@@ -56,8 +56,16 @@ These survive removal of public membership and drain recursively after process
 resource exit, jail cleanup, and in-flight external termination calls.
 A fork that has captured its parent's coalition remains accounted for while
 its child membership is being registered, including a concurrent parent move.
-A revoked descriptor remaining open does not by itself keep cleanup pending.
+A revoked descriptor for a nested coalition does not by itself keep that
+coalition's cleanup pending.
 Nested cleanup errors are retained by the parent.
+For other capability members, an independent record retains coalition state
+until the member's revoke callback returns, even if core revocation deferred
+that callback.
+The record does not hold an instance reference and cannot itself prevent final
+close.
+Callback return does not certify completion of asynchronous work started by
+that callback.
 Close does not wait for retained members, and this lifetime retention does not
 provide a public completion-wait operation.
 .Ss Operations

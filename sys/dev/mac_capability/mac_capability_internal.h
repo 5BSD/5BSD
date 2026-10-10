@@ -109,6 +109,12 @@ STAILQ_HEAD(mac_capability_msgq, mac_capability_msg);
 #define	MAC_CAPABILITY_RF_NO_CALL		0x0004
 #define	MAC_CAPABILITY_RF_NO_MINT		0x0008
 
+/* Refcounted callback result; holds no instance or service reference. */
+struct mac_capability_callback_state {
+	u_int cs_refs;
+	volatile u_int cs_done;
+};
+
 /*
  * Instance — one per struct file.  Internal layout.
  *
@@ -121,6 +127,7 @@ STAILQ_HEAD(mac_capability_msgq, mac_capability_msg);
  */
 struct mac_capability_instance {
 	struct mac_capability_service *ci_service;	/* (I) owning service */
+	struct mac_capability_callback_state *ci_callback_state; /* (M) lazy */
 	void		*ci_priv;		/* (I) service-private data */
 	struct cap_authority *ci_authority; /* (M) Bind once; pins authority. */
 	uint64_t	ci_badge;		/* (I) connection badge */
@@ -185,6 +192,11 @@ extern counter_u64_t mac_capability_stat_services;
 extern counter_u64_t mac_capability_stat_instances;
 
 /* Internal functions. */
+/* Caller pins s; returned state must be released, but does not pin s itself. */
+struct mac_capability_callback_state *mac_capability_callback_state_get(
+	    struct mac_capability_instance *s);
+bool	mac_capability_callback_state_done(struct mac_capability_callback_state *cs);
+void	mac_capability_callback_state_rele(struct mac_capability_callback_state *cs);
 /* Caller owns FINALIZED and keeps the instance/service alive through return. */
 void	mac_capability_revoke_callback(struct mac_capability_instance *s,
 	    enum mac_capability_revoke_reason reason);

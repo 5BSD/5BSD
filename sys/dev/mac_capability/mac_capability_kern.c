@@ -284,6 +284,43 @@ mac_capability_auto_reply(struct mac_capability_instance *s, uint64_t reply_toke
 		    s->ci_txqlen, 0);
 }
 
+/* A completion reader must not hold the references revocation drains. */
+struct mac_capability_callback_state *
+mac_capability_callback_state_get(struct mac_capability_instance *s)
+{
+	struct mac_capability_callback_state *cs, *candidate;
+
+	candidate = malloc(sizeof(*candidate), M_MAC_CAPABILITY, M_WAITOK | M_ZERO);
+	refcount_init(&candidate->cs_refs, 1);
+	mtx_lock(&s->ci_mtx);
+	if (s->ci_callback_state == NULL) {
+		s->ci_callback_state = candidate;
+		candidate = NULL;
+		if ((s->ci_flags & MAC_CAPABILITY_SF_REVOKE_DONE) != 0)
+			atomic_store_rel_int(&s->ci_callback_state->cs_done, 1);
+	}
+	cs = s->ci_callback_state;
+	refcount_acquire(&cs->cs_refs);
+	mtx_unlock(&s->ci_mtx);
+	free(candidate, M_MAC_CAPABILITY);
+	return (cs);
+}
+
+bool
+mac_capability_callback_state_done(struct mac_capability_callback_state *cs)
+{
+
+	return (atomic_load_acq_int(&cs->cs_done) != 0);
+}
+
+void
+mac_capability_callback_state_rele(struct mac_capability_callback_state *cs)
+{
+
+	if (cs != NULL && refcount_release(&cs->cs_refs))
+		free(cs, M_MAC_CAPABILITY);
+}
+
 /*
  * FINALIZED is an exclusion claim, not evidence that service cleanup returned.
  * Keep the completion latch separate.  This covers the callback itself only;
@@ -304,6 +341,8 @@ mac_capability_revoke_callback(struct mac_capability_instance *s,
 		svc->csvc_ops->co_revoke(s, s->ci_badge, reason, svc->csvc_arg);
 	mtx_lock(&s->ci_mtx);
 	s->ci_flags |= MAC_CAPABILITY_SF_REVOKE_DONE;
+	if (s->ci_callback_state != NULL)
+		atomic_store_rel_int(&s->ci_callback_state->cs_done, 1);
 	wakeup(&s->ci_flags);
 	mtx_unlock(&s->ci_mtx);
 }

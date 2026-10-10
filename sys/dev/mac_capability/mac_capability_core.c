@@ -294,6 +294,7 @@ void
 mac_capability_instance_free(struct mac_capability_instance *s)
 {
 
+	mac_capability_callback_state_rele(s->ci_callback_state);
 	cap_authority_drop(s->ci_authority);
 	knlist_destroy(&s->ci_rknotes);
 	knlist_destroy(&s->ci_wknotes);
