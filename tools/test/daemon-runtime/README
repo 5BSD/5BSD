@@ -22,3 +22,10 @@ and the exact QEMU command; serial.log retains output, including failed runs.
 This gate does not qualify booted daemons, actual OOM, ACPI suspend, hardware,
 installer behavior, or a complete system image. Never run runtime_init as the
 host's init. Source and object inputs must be coordinated before full acceptance.
+
+Use --client-ownership to include the static audit, crypto, trace and log
+client lifecycle suites. Build these libraries/tests first. The runner records
+each binary hash and derives the required cases from its ATF listing; each
+case gets its own directory and 40-second process timeout. No skip is a pass.
+These suites exercise real descriptor operations with service test doubles;
+they do not replace integrated daemon/provider tests.

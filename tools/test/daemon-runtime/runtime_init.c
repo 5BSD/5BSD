@@ -25,7 +25,7 @@ run_case(const char *program, const char *name)
 	pid_t child;
 	int status = 0;
 	FILE *f;
-	snprintf(path, sizeof(path), "/tmp/%s", name);
+	snprintf(path, sizeof(path), "/tmp/%s_%s", strrchr(program, '/') + 1, name);
 	if (mkdir(path, 0700) == -1) {
 		perror(path);
 		return (-1);
@@ -70,7 +70,7 @@ run_case(const char *program, const char *name)
 		    status, line);
 		return (-1);
 	}
-	printf("RUNTIME_CASE_PASS %s\n", name);
+	printf("RUNTIME_CASE_PASS %s:%s\n", program, name);
 	return (0);
 }
 int
@@ -117,6 +117,17 @@ main(void)
 			failed = 1;
 	if (run_case("/tests/namespace_test", "delivery_hardening_failure") == -1)
 		failed = 1;
+	FILE *extra = fopen("/tests/extra-cases", "r");
+	if (extra != NULL) {
+		char program[128], test_case[128];
+		int fields;
+		while ((fields = fscanf(extra, "%127s %127s", program, test_case)) == 2)
+			if (run_case(program, test_case) == -1)
+				failed = 1;
+		if (fields != EOF || ferror(extra))
+			failed = 1;
+		fclose(extra);
+	}
 	puts(failed ? "RUNTIME_VM_FAIL" : "RUNTIME_VM_PASS");
 	sync();
 	reboot(RB_POWEROFF);

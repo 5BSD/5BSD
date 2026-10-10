@@ -606,6 +606,8 @@ notify_client_adopt(int fd, struct notify_client **result)
 		errno = error;
 		goto fail;
 	}
+	/* The session owns a duplicate of this descriptor. */
+	(void)close(fd);
 	if (rpc_locked(client, NOTIFY_OP_HELLO, NULL, 0, &reply, &payload,
 	    30000) == -1)
 		goto fail_channel;
@@ -715,6 +717,8 @@ reconnect_locked(struct notify_client *client)
 		errno = error;
 		return (-1);
 	}
+	/* The session owns a duplicate of this descriptor. */
+	(void)close(fd);
 	if (rpc_locked(client, NOTIFY_OP_HELLO, NULL, 0, &reply, &payload,
 	    30000) == -1)
 		goto fail;

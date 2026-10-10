@@ -74,6 +74,8 @@ session_get(struct service_session **out)
 		(void)close(fd);
 		return (-1);
 	}
+	/* The session owns a duplicate of this descriptor. */
+	(void)close(fd);
 	devicecmp_session = session;
 	devicecmp_owner = getpid();
 	*out = session;

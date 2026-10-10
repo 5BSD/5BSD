@@ -939,6 +939,8 @@ client_establish(struct logcmp_client *client)
 			errno = error;
 			return (-1);
 		}
+		/* The session owns a duplicate of this descriptor. */
+		(void)close(fd);
 		if (attempt == 0)
 			hello.features |= LOGCMP_FEATURE_INTEREST;
 		else

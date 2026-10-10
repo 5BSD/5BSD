@@ -84,6 +84,8 @@ cryptocmp_open(struct cryptocmp_client **out)
 	if (service_session_create(owned, &client->session) == -1) {
 		error = errno; (void)close(owned); errno = error; goto fail;
 	}
+	/* The session owns a duplicate of this descriptor. */
+	(void)close(owned);
 	client->owner = getpid();
 	*out = client; return (0);
 fail: free(client); return (-1);

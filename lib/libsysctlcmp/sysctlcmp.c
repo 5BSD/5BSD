@@ -445,6 +445,8 @@ sysctlcmp_client_open(struct sysctlcmp_client **clientp)
 		free(client);
 		return (errno = error, -1);
 	}
+	/* The session owns a duplicate of this descriptor. */
+	(void)close(owned);
 	*clientp = client;
 	return (0);
 }

@@ -20,7 +20,7 @@
 #include "fake_service.h"
 
 struct service_context { int unused; };
-struct service_session { unsigned ident; };
+struct service_session { int owned_fd; unsigned ident; };
 
 static struct service_context context;
 static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
@@ -246,7 +246,12 @@ service_session_create(int fd, struct service_session **result)
 	session = calloc(1, sizeof(*session));
 	if (session == NULL)
 		return (-1);
-	close(fd);
+	session->owned_fd = dup(fd);
+	if (session->owned_fd == -1) {
+		int saved = errno;
+		free(session);
+		return (errno = saved, -1);
+	}
 	pthread_mutex_lock(&lock);
 	session->ident = ++created;
 	if (session->ident < FAKE_MAX_SESSIONS)
@@ -266,6 +271,7 @@ service_session_close(struct service_session *session)
 	pthread_mutex_lock(&lock);
 	closed++;
 	pthread_mutex_unlock(&lock);
+	close(session->owned_fd);
 	free(session);
 }
 

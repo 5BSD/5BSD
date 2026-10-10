@@ -2176,6 +2176,9 @@ service_cached_session_get(const char *name, struct service_session **slot)
 		return (-1);
 	}
 
+	/* The candidate owns its own duplicate. */
+	(void)close(fd);
+
 	error = pthread_mutex_lock(&service_state_lock);
 	if (error != 0) {
 		service_session_close(candidate);
