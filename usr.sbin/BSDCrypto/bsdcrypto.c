@@ -989,7 +989,8 @@ main(void)
 		close(fd);
 		EV_SET(&change, w->pd, EVFILT_PROCDESC, EV_ADD | EV_ENABLE,
 		    NOTE_EXIT, 0, w);
-		if (kevent(kq, &change, 1, NULL, 0, NULL) == -1) {
+		if (service_harden_fd(w->pd, 0) == -1 ||
+		    kevent(kq, &change, 1, NULL, 0, NULL) == -1) {
 			int status;
 
 			/*

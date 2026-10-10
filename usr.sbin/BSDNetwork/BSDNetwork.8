@@ -29,6 +29,15 @@ label in
 The displayed title is diagnostic and does not grant authority.
 Network-session worker startup uses a five-second status-and-release handshake;
 a stalled or failed worker is terminated and reaped before admission fails.
+The broker permits at most 4096 session workers in total and 64 per
+authenticated client label, shared across the Network, Network.Admin and PF
+endpoints.
+Excess connections are closed before a worker or device descriptor is created.
+A worker exit returns its admission slot.
+Before acknowledging shutdown, the broker terminates and reaps its tracked
+workers; a teardown failure prevents a successful shutdown acknowledgement.
+Parent process descriptors are locked against transfer and inheritance by
+later workers.
 Name resolution runs in-process: the worker resolves names itself, reading
 .Pa /etc/resolv.conf ,
 .Pa /etc/hosts ,

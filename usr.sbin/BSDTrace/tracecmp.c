@@ -594,6 +594,8 @@ worker_track(int kq, struct trace_worker **workers, struct trace_worker *worker,
 	(*count)++;
 	EV_SET(&change, worker->pd, EVFILT_PROCDESC, EV_ADD | EV_ENABLE,
 	    NOTE_EXIT, 0, worker);
+	if (service_harden_fd(worker->pd, 0) == -1)
+		return (-1);
 	return (kevent(kq, &change, 1, NULL, 0, NULL));
 }
 
