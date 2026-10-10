@@ -157,7 +157,7 @@ subprocess.run(['makefs','-t','ffs','-s','256m','-F',str(work/'METALOG'),'-o','v
 subprocess.run(['mkimg','-s','gpt','-f','raw','-b',str(stage/'boot/pmbr'),'-p','freebsd-boot:='+str(stage/'boot/gptboot'),'-p','freebsd-ufs:='+str(work/'root.ufs'),'-o',str(work/'guest.img')],check=True)
 log=work/'serial.log'
 cmd=[a.qemu,'-L',str(a.qemu_data),'-accel','tcg,thread=multi','-machine','q35','-cpu','max','-m','1024','-smp','2','-drive',f'file={work}/guest.img,format=raw,if=virtio,snapshot=on','-nic','none','-display','none','-monitor','none','-serial','file:'+str(log)]
-provenance={'kernel_sha256':hashes[str(kernel)],'fixture_sha256':hashes[str(helper)],'test_sha256':hashes[str(test)],'filesystem_test_sha256':hashes[str(fs_test)],'ownership_test_hashes':extra_hashes,'objtop':str(obj),'staged_root':str(root),'command':cmd,'selected_atf_suites':selected_suites,'scope':'isolated native daemon/library fixtures; not integrated bundle or installer acceptance'}
+provenance={'host_loadavg_start':os.getloadavg(),'host_logical_cpus':os.cpu_count(),'kernel_sha256':hashes[str(kernel)],'fixture_sha256':hashes[str(helper)],'test_sha256':hashes[str(test)],'filesystem_test_sha256':hashes[str(fs_test)],'ownership_test_hashes':extra_hashes,'objtop':str(obj),'staged_root':str(root),'command':cmd,'selected_atf_suites':selected_suites,'scope':'isolated native daemon/library fixtures; not integrated bundle or installer acceptance'}
 (work/'inputs.json').write_text(json.dumps(provenance,indent=2)+'\n')
 proc=subprocess.Popen(cmd); deadline=time.monotonic()+a.timeout; forced=False
 try:

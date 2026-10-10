@@ -145,3 +145,23 @@ voluntary/involuntary context switches around its timeout call. The existing
 75 ms allowance for a 10 ms request is unchanged. Retain failing runs even if
 a later run passes; low CPU time alone does not identify whether excess elapsed
 time came from scheduling, timer delivery, lock contention, or another wait.
+
+For deadline-overrun diagnosis, select
+  --atf-case lib/libservice/tests/libservice_api_test:deadline_timer_control
+This takes 128 plain 10ms nanosleeps without session/channel operations and
+checks the same 75ms allowance. It is diagnostic, not a substitute for the
+mandatory session test; either failure keeps the run failed. The timer control
+can also run on the host without capability operations. Compare results to
+distinguish a service-only failure from broader guest timing delays. Both
+inputs.json and result.json include host_loadavg_start and host_logical_cpus;
+these are context, not proof that host scheduling caused a failure.
+
+2026-10-10 investigation: deadline-timer-control VM failed the service check
+(411.978ms) and timer control (33/128 overruns, maximum348.478ms). The same
+host timer control passed (maximum10.063ms). Concurrent host load was24.64
+with builds and other QEMU processes. This demonstrates VM timing delays
+independent of libservice, but does not distinguish emulator scheduling from
+guest timer delivery or establish the original failure's sole cause. A quiet
+host/hardware-accelerated comparison and guest timer trace remain required.
+An icount experiment exited before tests with QEMU "Bad icount read"; no
+virtual-clock option is shipped and no failing allowance was relaxed.

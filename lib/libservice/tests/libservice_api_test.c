@@ -1319,10 +1319,46 @@ ATF_TC_BODY(stale_bootstrap_preserves_descriptor, tc)
 	    "stale bootstrap closed unrelated descriptor: status=%#x", status);
 }
 
+/* Diagnostic control for the session deadline acceptance limit. */
+ATF_TC(deadline_timer_control);
+ATF_TC_HEAD(deadline_timer_control, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "10ms plain sleeps meet the same 75ms scheduling allowance as sessions");
+	atf_tc_set_md_var(tc, "timeout", "30");
+}
+ATF_TC_BODY(deadline_timer_control, tc)
+{
+	struct timespec before, after, delay = { .tv_nsec = 10000000 };
+	double elapsed, maximum = 0;
+	unsigned i, overruns = 0;
+
+	(void)tc;
+	for (i = 0; i < 128; i++) {
+		ATF_REQUIRE_EQ(0, clock_gettime(CLOCK_MONOTONIC, &before));
+		ATF_REQUIRE_EQ(0, nanosleep(&delay, NULL));
+		ATF_REQUIRE_EQ(0, clock_gettime(CLOCK_MONOTONIC, &after));
+		elapsed = (after.tv_sec - before.tv_sec) * 1000.0 +
+		    (after.tv_nsec - before.tv_nsec) / 1000000.0;
+		if (elapsed > maximum)
+			maximum = elapsed;
+		if (elapsed >= 75.0) {
+			overruns++;
+			printf("TIMER_CONTROL sample=%u elapsed_ms=%.3f\n", i, elapsed);
+		}
+	}
+	printf("TIMER_CONTROL samples=128 requested_ms=10 max_ms=%.3f overruns=%u\n",
+	    maximum, overruns);
+	ATF_CHECK_MSG(overruns == 0,
+	    "plain timer exceeded the session allowance: %u overruns, max %.3fms",
+	    overruns, maximum);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
 	ATF_TP_ADD_TC(tp, service_budget_wire);
+	ATF_TP_ADD_TC(tp, deadline_timer_control);
 	ATF_TP_ADD_TC(tp, capability_rights_algebra);
 	ATF_TP_ADD_TC(tp, provider_reply_validation);
 	ATF_TP_ADD_TC(tp, bootstrap_validation);
