@@ -16,6 +16,7 @@
 #include <sys/ioctl.h>
 #include <sys/event.h>
 #include <sys/jail.h>
+#include <sys/mman.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/syscall.h>
@@ -1995,6 +1996,57 @@ ATF_TC_BODY(channel_forwards_fds_and_metadata, tc)
 	close(pipefd[0]);
 	close(pipefd[1]);
 	close(ks_fd);
+	close(fd_b);
+	close(fd_a);
+}
+
+ATF_TC(channel_forwards_fd_capmode_flags);
+ATF_TC_HEAD(channel_forwards_fd_capmode_flags, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Channel forwarding preserves directory and mmap capability-mode limits");
+	atf_tc_set_md_var(tc, "require.kmods",
+	    "mac_capability mac_capability_channel");
+}
+ATF_TC_BODY(channel_forwards_fd_capmode_flags, tc)
+{
+	struct mac_capability_sendmsg_args sa;
+	struct mac_capability_recvmsg_args ra;
+	int fd_a, fd_b, sent[2], received[2];
+	char payload[8];
+
+	mac_capability_channel_create(&fd_a, &fd_b);
+	sent[0] = open(".", O_RDONLY | O_DIRECTORY);
+	ATF_REQUIRE(sent[0] >= 0);
+	sent[1] = open("/dev/zero", O_RDONLY);
+	ATF_REQUIRE(sent[1] >= 0);
+	ATF_REQUIRE(cap_lookup_capmode(sent[0]) == 0);
+	ATF_REQUIRE(cap_mmap_capmode(sent[1]) == 0);
+
+	memset(&sa, 0, sizeof(sa));
+	sa.payload = "fd";
+	sa.payload_len = 2;
+	sa.fds = sent;
+	sa.nfds = 2;
+	ATF_REQUIRE(ioctl(fd_a, MAC_CAPABILITY_SENDMSG, &sa) == 0);
+
+	memset(&ra, 0, sizeof(ra));
+	ra.payload = payload;
+	ra.payload_len = sizeof(payload);
+	ra.fds = received;
+	ra.nfds = 2;
+	ATF_REQUIRE(ioctl(fd_b, MAC_CAPABILITY_RECVMSG, &ra) == 0);
+	ATF_REQUIRE_EQ(ra.nfds, 2);
+	ATF_REQUIRE_ERRNO(ENOTCAPABLE,
+	    openat(received[0], ".", O_RDONLY) == -1);
+	ATF_REQUIRE_ERRNO(ENOTCAPABLE,
+	    mmap(NULL, 4096, PROT_READ, MAP_PRIVATE, received[1], 0) ==
+	    MAP_FAILED);
+
+	close(received[0]);
+	close(received[1]);
+	close(sent[0]);
+	close(sent[1]);
 	close(fd_b);
 	close(fd_a);
 }
@@ -7839,6 +7891,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, channel_bidirectional);
 	ATF_TP_ADD_TC(tp, channel_forwards_metadata);
 	ATF_TP_ADD_TC(tp, channel_forwards_fds_and_metadata);
+	ATF_TP_ADD_TC(tp, channel_forwards_fd_capmode_flags);
 	ATF_TP_ADD_TC(tp, channel_close_one_end);
 	ATF_TP_ADD_TC(tp, channel_multiproc);
 	ATF_TP_ADD_TC(tp, channel_crossproc_forwards_metadata);

@@ -96,6 +96,8 @@ is accepted but is a deliberate no-op: the in-process resolver does not
 enumerate the host's own configured source families, so it never suppresses a
 family on that basis.
 It never reads resolver configuration from the consumer filesystem.
+DNS queries use UDP first and retry truncated replies over TCP to the same
+configured nameserver, with a bounded TCP exchange.
 Resolution runs on a dedicated thread that issues its own bounded DNS queries,
 so a slow resolver cannot stop socket operations on the session.
 At most one resolution is active per private session; an overlapping request

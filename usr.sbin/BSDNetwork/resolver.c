@@ -9,8 +9,8 @@
  * res_ninit() and retains read-only descriptors for /etc/hosts and
  * /etc/services.  netresolve() then serves lookups in capability mode using
  * only those already-open descriptors, pure in-memory parsing, and freshly
- * created UDP sockets (socket/sendto/recvfrom/poll are all capability-mode
- * legal on a socket the process itself creates).
+ * created UDP or TCP sockets connected to a configured nameserver with
+ * connectat(2).
  *
  * This code parses untrusted DNS responses; every field is bounds-checked
  * before use and the number of collected results is capped.
@@ -23,12 +23,15 @@
 #include <resolv.h>
 #include <netdb.h>
 #include <poll.h>
+#include <stdbool.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <limits.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <unistd.h>
 
 #include <libservice.h>
@@ -46,6 +49,7 @@ static int			g_servfd = -1;
 #define	RSLV_SERV_BUFSZ		(1024 * 1024)	/* /etc/services snapshot cap  */
 #define	RSLV_DFL_RETRANS	5	/* seconds, if g_res.retrans unset     */
 #define	RSLV_DFL_RETRY		2	/* attempts, if g_res.retry unset      */
+#define	RSLV_MAX_RETRANS	30	/* bound each UDP/TCP exchange in sec */
 
 /*
  * Nameservers parsed from the delivered /etc/resolv.conf.  Born in capability
@@ -433,7 +437,7 @@ hosts_lookup(const char *host, int family, struct rslv_addr *addrs,
 }
 
 /* =====================================================================
- * host resolution: DNS over freshly-created UDP sockets
+ * host resolution: DNS over freshly-created sockets
  * ===================================================================== */
 
 /*
@@ -456,12 +460,17 @@ dns_parse(const u_char *ans, int anslen, int want, struct rslv_addr *addrs,
 		return (-1);
 
 	count = ns_msg_count(msg, ns_s_an);
+	/* Do not expose partial results from a malformed answer section. */
+	for (i = 0; i < count; i++) {
+		if (ns_parserr(&msg, ns_s_an, i, &rr) < 0)
+			return (-1);
+	}
 	for (i = 0; i < count && *n < max; i++) {
 		const u_char *rdata;
 		size_t rdlen;
 
 		if (ns_parserr(&msg, ns_s_an, i, &rr) < 0)
-			break;
+			return (-1);
 		if ((int)ns_rr_type(rr) != want)
 			continue;
 
@@ -498,6 +507,130 @@ dns_parse(const u_char *ans, int anslen, int want, struct rslv_addr *addrs,
 	return (added);
 }
 
+/* Return -1 for an invalid reply, 1 for a truncated UDP reply, or 0. */
+static int
+dns_reply_status(const u_char *ans, int anslen, const u_char *qbuf,
+    const char *host, int rrtype)
+{
+	ns_msg msg;
+	ns_rr question;
+	int rcode;
+
+	if (anslen < NS_HFIXEDSZ || ans[0] != qbuf[0] ||
+	    ans[1] != qbuf[1] || ns_initparse(ans, anslen, &msg) < 0 ||
+	    !ns_msg_getflag(msg, ns_f_qr) ||
+	    ns_msg_getflag(msg, ns_f_opcode) != ns_o_query ||
+	    ns_msg_count(msg, ns_s_qd) != 1 ||
+	    ns_parserr(&msg, ns_s_qd, 0, &question) < 0 ||
+	    ns_rr_class(question) != ns_c_in ||
+	    (int)ns_rr_type(question) != rrtype ||
+	    ns_samename(ns_rr_name(question), host) != 1)
+		return (-1);
+	rcode = ns_msg_getflag(msg, ns_f_rcode);
+	if (rcode != ns_r_noerror && rcode != ns_r_nxdomain)
+		return (-1);
+	return (ns_msg_getflag(msg, ns_f_tc) ? 1 : 0);
+}
+
+/* All TCP operations share one monotonic deadline, including connect. */
+static int
+dns_wait(int fd, short events, const struct timespec *deadline)
+{
+	struct timespec now;
+	struct pollfd pfd;
+	int64_t remaining, ms;
+	int pr;
+
+	pfd.fd = fd;
+	pfd.events = events;
+	for (;;) {
+		if (clock_gettime(CLOCK_MONOTONIC, &now) == -1)
+			return (-1);
+		remaining = ((int64_t)deadline->tv_sec - now.tv_sec) *
+		    1000000000 + deadline->tv_nsec - now.tv_nsec;
+		if (remaining <= 0)
+			return (-1);
+		ms = (remaining + 999999) / 1000000;
+		if (ms > INT_MAX)
+			ms = INT_MAX;
+		pfd.revents = 0;
+		pr = poll(&pfd, 1, (int)ms);
+		if (pr > 0)
+			return ((pfd.revents & events) != 0 ? 0 : -1);
+		if (pr < 0 && errno != EINTR)
+			return (-1);
+	}
+}
+
+static int
+dns_tcp_transfer(int fd, u_char *buf, size_t len, bool sending,
+    const struct timespec *deadline)
+{
+	size_t done = 0;
+	ssize_t n;
+
+	while (done < len) {
+		if (dns_wait(fd, sending ? POLLOUT : POLLIN, deadline) == -1)
+			return (-1);
+		if (sending)
+			n = send(fd, buf + done, len - done, MSG_NOSIGNAL);
+		else
+			n = recv(fd, buf + done, len - done, 0);
+		if (n > 0) {
+			done += (size_t)n;
+			continue;
+		}
+		if (n == -1 && (errno == EINTR || errno == EAGAIN))
+			continue;
+		return (-1);
+	}
+	return (0);
+}
+
+/* DNS over TCP uses a two-byte length prefix in each direction. */
+static int
+dns_tcp_query(const struct sockaddr *sa, socklen_t salen, u_char *qbuf,
+    int qlen, u_char *ans, int timeout)
+{
+	struct timespec deadline;
+	u_char prefix[2];
+	int s, error, len, result = -1;
+	socklen_t errorlen;
+
+	if (clock_gettime(CLOCK_MONOTONIC, &deadline) == -1)
+		return (-1);
+	deadline.tv_sec += timeout;
+	s = socket(sa->sa_family, SOCK_STREAM, 0);
+	if (s == -1)
+		return (-1);
+	if (fcntl(s, F_SETFL, O_NONBLOCK) == -1)
+		goto done;
+	if (connectat(s, s, sa, salen) == -1) {
+		if (errno != EINPROGRESS ||
+		    dns_wait(s, POLLOUT, &deadline) == -1)
+			goto done;
+		errorlen = sizeof(error);
+		if (getsockopt(s, SOL_SOCKET, SO_ERROR, &error, &errorlen) == -1 ||
+		    error != 0)
+			goto done;
+	}
+	prefix[0] = (u_char)(qlen >> 8);
+	prefix[1] = (u_char)qlen;
+	if (dns_tcp_transfer(s, prefix, sizeof(prefix), true, &deadline) == -1 ||
+	    dns_tcp_transfer(s, qbuf, (size_t)qlen,
+	    true, &deadline) == -1 ||
+	    dns_tcp_transfer(s, prefix, sizeof(prefix), false, &deadline) == -1)
+		goto done;
+	len = ((int)prefix[0] << 8) | prefix[1];
+	if (len < NS_HFIXEDSZ || len > NS_MAXMSG ||
+	    dns_tcp_transfer(s, ans, (size_t)len, false, &deadline) == -1)
+		goto done;
+	result = len;
+done:
+	(void)close(s);
+	return (result);
+}
+
 /*
  * Issue one DNS query of the given record type for host, trying each
  * configured nameserver with retransmission.  Appends results to addrs.
@@ -529,6 +662,8 @@ dns_query(const char *host, int rrtype, struct rslv_addr *addrs, int max,
 		return (-1);
 
 	retrans = g_res.retrans > 0 ? g_res.retrans : RSLV_DFL_RETRANS;
+	if (retrans > RSLV_MAX_RETRANS)
+		retrans = RSLV_MAX_RETRANS;
 	retry = g_res.retry > 0 ? g_res.retry : RSLV_DFL_RETRY;
 
 	for (attempt = 0; attempt < retry && !answered; attempt++) {
@@ -539,7 +674,7 @@ dns_query(const char *host, int rrtype, struct rslv_addr *addrs, int max,
 			socklen_t salen;
 			struct pollfd pfd;
 			ssize_t sent, rlen;
-			int added, pr;
+			int added, pr, status;
 
 			if (sa->sa_family == AF_INET)
 				salen = sizeof(struct sockaddr_in);
@@ -585,18 +720,19 @@ dns_query(const char *host, int rrtype, struct rslv_addr *addrs, int max,
 			(void)close(s);
 			if (rlen <= 0)
 				continue;
-			/*
-			 * Reject a reply whose header transaction id does not
-			 * match the query, or that is not a response (QR clear).
-			 * The connected socket already drops datagrams not from
-			 * the nameserver's address; this restores the 16-bit id
-			 * barrier a spoofer who can forge that source would
-			 * otherwise skip (res_nmkquery put the id in qbuf[0..1];
-			 * ans[2] bit 0x80 is QR).
-			 */
-			if (rlen < NS_HFIXEDSZ || ans[0] != qbuf[0] ||
-			    ans[1] != qbuf[1] || (ans[2] & 0x80) == 0)
+			/* The connected socket enforces the configured source. */
+			status = dns_reply_status(ans, (int)rlen, qbuf, host,
+			    rrtype);
+			if (status == -1)
 				continue;
+			if (status == 1) {
+				/* Truncated UDP data is never treated as an answer. */
+				rlen = dns_tcp_query(sa, salen, qbuf, qlen, ans,
+				    retrans);
+				if (rlen < 0 || dns_reply_status(ans, (int)rlen,
+				    qbuf, host, rrtype) != 0)
+					continue;
+			}
 
 			added = dns_parse(ans, (int)rlen, rrtype, addrs, max,
 			    n, canon, canonsz);

@@ -14,6 +14,10 @@ ATF_TESTS_SH_SED_bundle_test+=	-e 's,@MK_DTRACE@,${MK_DTRACE},g'
 ATF_TESTS_C+=	policy_test
 SRCS.policy_test=	policy_test.c policy.c
 
+ATF_TESTS_C+=	resolver_test
+SRCS.resolver_test=	resolver_test.c
+LIBADD.resolver_test=	service
+
 ATF_TESTS_C+=	config_test
 SRCS.config_test=	config_test.c config.c policy.c
 CFLAGS.config_test+=	-I${SRCTOP}/sys
