@@ -13,3 +13,8 @@ per-session and reconnect-resistant admission limits. policy_test and
 submit_test check authenticated identity/event selection and submission rules.
 Full bundle activation, actual audit subsystem delivery, protected workers and
 SwitchBoard shutdown acknowledgement ordering remain integration gates.
+
+bootstrap_failure_reaps_child checks rejected-worker SIGKILL, retry of an
+interrupted reap, actual handle closure, and preservation of the handshake
+error. Signal/reap operations are injected; real protected-worker bootstrap
+failure and kill failure remain integration/fault-injection gates.

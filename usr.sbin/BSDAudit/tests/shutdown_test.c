@@ -100,8 +100,24 @@ ATF_TC_BODY(shutdown_clock_failure, tc)
 			ATF_CHECK_ERRNO(EBADF, fcntl(fds[i], F_GETFD) == -1);
 	}
 }
+ATF_TC_WITHOUT_HEAD(bootstrap_failure_reaps_child);
+ATF_TC_BODY(bootstrap_failure_reaps_child, tc)
+{
+	int pd;
+
+	pd = open("/dev/null", O_RDONLY);
+	ATF_REQUIRE(pd >= 0);
+	terms = kills = waits = 0;
+	ATF_CHECK_ERRNO(EACCES, reject_worker(pd, EACCES) == -1);
+	ATF_CHECK_EQ(0, terms);
+	ATF_CHECK_EQ(1, kills);
+	ATF_CHECK_EQ(2, waits);
+	ATF_CHECK_ERRNO(EBADF, fcntl(pd, F_GETFD) == -1);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, shutdown_clock_failure);
+	ATF_TP_ADD_TC(tp, bootstrap_failure_reaps_child);
 	return (atf_no_error());
 }

@@ -268,6 +268,21 @@ worker(int fd, int barrier, const char *provider, int event)
 	return (serve_session(fd, provider, event, &system_backend));
 }
 
+/* A failed handshake must not leave an untracked PD_DAEMON child. */
+static int
+reject_worker(int pd, int error)
+{
+	int result, status;
+
+	if (pdkill(pd, SIGKILL) == 0 || errno == ESRCH) {
+		do {
+			result = pdwait(pd, &status, WEXITED, NULL, NULL);
+		} while (result == -1 && errno == EINTR);
+	}
+	close(pd);
+	return (errno = error, -1);
+}
+
 static int
 start_session(int fd, const char *provider, int *pdp, pid_t *pidp)
 {
@@ -305,7 +320,7 @@ start_session(int fd, const char *provider, int *pdp, pid_t *pidp)
 		status = EIO;
 	close(syncfd[0]);
 	if (status != 0)
-		return (close(pd), errno = status, -1);
+		return (reject_worker(pd, status));
 	*pdp = pd;
 	*pidp = pid;
 	BSDAUDIT_PROBE_SESSION(__DECONST(char *, provider),
