@@ -470,6 +470,10 @@ service_session_call(struct service_session *session,
 		inspect_record_locked((const void *)(request + 1));
 		writes++;
 	}
+	/* Model a committed write whose reply is lost with the connection. */
+	if (request->opcode == LOGCMP_OP_WRITE &&
+	    fault == FAKE_SERVICE_FAULT_COMMITTED_RESET)
+		failure = ECONNRESET;
 	pthread_mutex_unlock(&lock);
 	if (fault == FAKE_SERVICE_FAULT_DELAY)
 		usleep(50000);

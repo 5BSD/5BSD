@@ -46,6 +46,11 @@ edge notifications, lifecycle control, and explicit flush barriers.
 The storage manager drains active rings in bounded round-robin batches, so a
 continuously active producer cannot prevent other sessions from making
 progress.
+Ingress workers also use a bounded round-robin queue: a producer that keeps
+refilling its ring is requeued after its configured drain batch, allowing
+other ready sessions to run.
+This is a work-count bound, not a real-time latency guarantee for storage
+operations or flushes.
 .Pp
 Retained-record queries are served from the private store and are always
 restricted to the authenticated switchboard client label associated with the
