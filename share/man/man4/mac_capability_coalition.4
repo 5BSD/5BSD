@@ -115,6 +115,18 @@ jails are removed via
 sockets are shut down, and
 .Xr mac_capability 4
 members are revoked.
+Nested coalitions are explicitly terminated before their capabilities are
+revoked, so retained child handles do not postpone member termination.
+Cleanup continues after an individual failure, and the first reported cleanup
+error is retained and returned in the reply status.
+For example, a shared-memory shrink seal can prevent truncation with
+.Er EPERM ;
+such a failure is not reported as successful cleanup.
+A later termination request returns the retained error, or
+.Er ESHUTDOWN
+if termination has already started without a recorded error.
+Successful signalling or revocation still does not confirm process resource
+cleanup, and a concurrent termination request is not a completion wait.
 Returns
 .Vt struct coalition_reply .
 .It Dv COALITION_OP_STAT

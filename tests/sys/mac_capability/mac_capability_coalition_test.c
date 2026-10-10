@@ -3748,6 +3748,111 @@ ATF_TC_BODY(terminate_truncates_shm, tc)
 	close(shm_fd);
 }
 
+ATF_TC(terminate_reports_sealed_shm_failure);
+ATF_TC_HEAD(terminate_reports_sealed_shm_failure, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Termination reports sealed SHM failure, continues cleanup and retains the error");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_coalition");
+}
+ATF_TC_BODY(terminate_reports_sealed_shm_failure, tc)
+{
+	struct coalition_graceful_req req = {
+	    .op = COALITION_OP_GRACEFUL, .signal = SIGTERM, .timeout_ms = 0 };
+	struct coalition_reply reply;
+	struct stat sb;
+	int cfd, target, sealed, other;
+	int32_t status;
+
+	for (int mode = 0; mode < 3; mode++) {
+		cfd = mac_capability_connect("coalition");
+		ATF_REQUIRE(cfd >= 0);
+		target = mode == 2 ? mac_capability_connect("coalition") : cfd;
+		ATF_REQUIRE(target >= 0);
+		sealed = memfd_create("coalition-sealed", MFD_ALLOW_SEALING);
+		other = shm_open(SHM_ANON, O_RDWR | O_CREAT, 0600);
+		ATF_REQUIRE(sealed >= 0 && other >= 0);
+		ATF_REQUIRE_EQ(0, ftruncate(sealed, 4096));
+		ATF_REQUIRE_EQ(0, ftruncate(other, 4096));
+		ATF_REQUIRE_EQ(0, fcntl(sealed, F_ADD_SEALS, F_SEAL_SHRINK));
+		ATF_REQUIRE_EQ(0, coalition_enlist(target, sealed, &status));
+		ATF_REQUIRE_EQ(0, status);
+		ATF_REQUIRE_EQ(0, coalition_enlist(target, other, &status));
+		ATF_REQUIRE_EQ(0, status);
+		if (mode == 2) {
+			ATF_REQUIRE_EQ(0, coalition_enlist(cfd, target, &status));
+			ATF_REQUIRE_EQ(0, status);
+		}
+		if (mode == 1) {
+			ATF_REQUIRE_EQ(0, coalition_call(cfd, &req, sizeof(req),
+			    NULL, 0, &reply, sizeof(reply)));
+			status = reply.status;
+		} else
+			ATF_REQUIRE_EQ(0, coalition_op(cfd, COALITION_OP_TERMINATE, &status));
+		ATF_CHECK_EQ(EPERM, status);
+		ATF_REQUIRE_EQ(0, fstat(sealed, &sb));
+		ATF_CHECK_EQ(4096, sb.st_size);
+		ATF_REQUIRE_EQ(0, fstat(other, &sb));
+		ATF_CHECK_EQ(0, sb.st_size);
+		ATF_REQUIRE_EQ(0, coalition_op(cfd, COALITION_OP_TERMINATE, &status));
+		ATF_CHECK_EQ(EPERM, status);
+		if (target != cfd)
+			close(target);
+		close(cfd);
+		close(sealed);
+		close(other);
+	}
+}
+
+ATF_TC(nested_process_termination_with_open_handles);
+ATF_TC_HEAD(nested_process_termination_with_open_handles, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Parent terminate/close kills nested process even while child coalition handle stays open");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_coalition");
+}
+ATF_TC_BODY(nested_process_termination_with_open_handles, tc)
+{
+	int parent, nested, pd, wstatus;
+	int32_t status;
+	pid_t child;
+
+	for (int closing = 0; closing < 2; closing++) {
+		parent = mac_capability_connect("coalition");
+		nested = mac_capability_connect("coalition");
+		ATF_REQUIRE(parent >= 0 && nested >= 0);
+		ATF_REQUIRE_EQ(0, coalition_enlist(parent, nested, &status));
+		ATF_REQUIRE_EQ(0, status);
+		child = pdfork(&pd, 0);
+		ATF_REQUIRE(child >= 0);
+		if (child == 0) {
+			close(parent);
+			close(nested);
+			for (;;)
+				pause();
+		}
+		ATF_REQUIRE_EQ(0, coalition_enlist(nested, pd, &status));
+		ATF_REQUIRE_EQ(0, status);
+		if (closing) {
+			close(parent);
+			parent = -1;
+		} else {
+			ATF_REQUIRE_EQ(0, coalition_op(parent, COALITION_OP_TERMINATE, &status));
+			ATF_CHECK_EQ(0, status);
+		}
+		if (!wait_exit_bounded(child, &wstatus)) {
+			atf_tc_fail_nonfatal("nested process survived parent termination");
+			(void)pdkill(pd, SIGKILL);
+			ATF_REQUIRE(wait_exit_bounded(child, &wstatus));
+		} else
+			ATF_CHECK(WIFSIGNALED(wstatus) && WTERMSIG(wstatus) == SIGKILL);
+		close(pd);
+		close(nested);
+		if (parent >= 0)
+			close(parent);
+	}
+}
+
 ATF_TC(enlist_shm_requires_ftruncate_right);
 ATF_TC_HEAD(enlist_shm_requires_ftruncate_right, tc)
 {
@@ -4565,6 +4670,8 @@ ATF_TP_ADD_TCS(tp)
 
 		/* SHM */
 		ATF_TP_ADD_TC(tp, terminate_truncates_shm);
+		ATF_TP_ADD_TC(tp, terminate_reports_sealed_shm_failure);
+		ATF_TP_ADD_TC(tp, nested_process_termination_with_open_handles);
 		ATF_TP_ADD_TC(tp, enlist_shm_requires_ftruncate_right);
 
 	/* Rusage */

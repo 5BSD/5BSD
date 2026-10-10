@@ -144,6 +144,7 @@ struct coalition {
 	u_int			co_flags;
 	u_int			co_manual_grace_count;
 	int			co_signal;
+	int			co_termination_error; /* First cleanup error, co_sx. */
 	u_int			co_nesting_depth;
 	volatile u_int		co_member_count;
 	u_int			co_refcount;
@@ -265,7 +266,7 @@ static void	coalition_collect_external_members_locked(
 		    int *jail_countp,
 		    struct mac_capability_instance ***mac_capability_cisp,
 		    int *mac_capability_countp);
-static void	coalition_terminate_external_members(struct thread *td,
+static void	coalition_terminate_external_members(struct coalition *co, struct thread *td,
 		    struct file **jail_fps, int jail_count,
 		    struct mac_capability_instance **mac_capability_cis,
 		    int mac_capability_count);
@@ -1451,21 +1452,75 @@ coalition_collect_external_members_locked(struct coalition *co,
 	*mac_capability_countp = mac_capability_count;
 }
 
+/* Cleanup remains best-effort, but the first failure is never success. */
 static void
-coalition_terminate_external_members(struct thread *td, struct file **jail_fps,
+coalition_record_error_locked(struct coalition *co, int error)
+{
+
+	sx_assert(&co->co_sx, SA_XLOCKED);
+	if (error != 0 && co->co_termination_error == 0)
+		co->co_termination_error = error;
+}
+
+static int
+coalition_termination_error(struct coalition *co)
+{
+	int error;
+
+	sx_slock(&co->co_sx);
+	error = co->co_termination_error;
+	sx_sunlock(&co->co_sx);
+	return (error);
+}
+
+static void
+coalition_record_error(struct coalition *co, int error)
+{
+
+	if (error == 0)
+		return;
+	sx_xlock(&co->co_sx);
+	coalition_record_error_locked(co, error);
+	sx_xunlock(&co->co_sx);
+}
+
+static void
+coalition_terminate_external_members(struct coalition *co, struct thread *td, struct file **jail_fps,
     int jail_count, struct mac_capability_instance **mac_capability_cis, int mac_capability_count)
 {
-	int i;
+	struct coalition *nested;
+	int error, i;
 
 	for (i = 0; i < mac_capability_count; i++) {
+		/* Pin nested state across revoke, which clears instance private data. */
+		nested = NULL;
+		sx_xlock(&coalition_nest_lock);
+		if (mac_capability_cis[i]->ci_service == coalition_svc) {
+			nested = mac_capability_instance_get_priv(mac_capability_cis[i]);
+			if (nested != NULL)
+				coalition_ref(nested);
+		}
+		sx_xunlock(&coalition_nest_lock);
+		/* Revocation may defer co_revoke while other holders remain. */
+		if (nested != NULL) {
+			error = coalition_terminate(nested);
+			if (error != ESHUTDOWN)
+				coalition_record_error(co, error);
+		}
 		mac_capability_instance_revoke(mac_capability_cis[i]);
+		if (nested != NULL) {
+			coalition_record_error(co, coalition_termination_error(nested));
+			coalition_rel(nested);
+		}
 		mac_capability_instance_rele(mac_capability_cis[i]);
 	}
 	if (mac_capability_cis != NULL)
 		free(mac_capability_cis, M_COALITION);
 
 	for (i = 0; i < jail_count; i++) {
-		(void)coalition_jail_terminate(jail_fps[i]);
+		error = coalition_jail_terminate(jail_fps[i]);
+		if (error != ENOENT)
+			coalition_record_error(co, error);
 		fdrop(jail_fps[i], td);
 	}
 	if (jail_fps != NULL)
@@ -1549,13 +1604,17 @@ coalition_terminate_members_locked(struct coalition *co, struct thread *td,
 		if (cm->cm_dtype == DTYPE_SOCKET && cm->cm_fp != NULL) {
 			struct socket *so = cm->cm_fp->f_data;
 
-			(void)soshutdown(so, SHUT_RDWR);
+			int error = soshutdown(so, SHUT_RDWR);
+
+			if (error != ENOTCONN)
+				coalition_record_error_locked(co, error);
 			continue;
 		}
 
 		/* SHM — truncate to zero */
 		if (cm->cm_dtype == DTYPE_SHM && cm->cm_fp != NULL) {
-			(void)fo_truncate(cm->cm_fp, 0, td->td_ucred, td);
+			coalition_record_error_locked(co,
+			    fo_truncate(cm->cm_fp, 0, td->td_ucred, td));
 			continue;
 		}
 	}
@@ -1572,8 +1631,10 @@ coalition_terminate(struct coalition *co)
 	sx_xlock(&co->co_sx);
 
 	if (co->co_flags & COF_TERMINATING) {
+		int error = co->co_termination_error;
+
 		sx_xunlock(&co->co_sx);
-		return (ESHUTDOWN);
+		return (error != 0 ? error : ESHUTDOWN);
 	}
 
 	coalition_collect_external_members_locked(co, &jail_fps,
@@ -1583,12 +1644,12 @@ coalition_terminate(struct coalition *co)
 	coalition_terminate_members_locked(co, td, false, 0);
 	sx_xunlock(&co->co_sx);
 
-	coalition_terminate_external_members(td, jail_fps, jail_count,
+	coalition_terminate_external_members(co, td, jail_fps, jail_count,
 	    mac_capability_cis, mac_capability_count);
 
 	SDT_PROBE2(mac_capability_coalition, , , terminate,
 	    atomic_load_acq_int(&co->co_member_count), 0);
-	return (0);
+	return (coalition_termination_error(co));
 }
 
 static int
@@ -1609,8 +1670,10 @@ coalition_terminate_graceful(struct coalition *co, int sig, u_int timeout_ms)
 
 	sx_xlock(&co->co_sx);
 	if (co->co_flags & COF_TERMINATING) {
+		int error = co->co_termination_error;
+
 		sx_xunlock(&co->co_sx);
-		return (ESHUTDOWN);
+		return (error != 0 ? error : ESHUTDOWN);
 	}
 
 	/* Freeze membership during grace period */
@@ -1640,7 +1703,7 @@ coalition_terminate_graceful(struct coalition *co, int sig, u_int timeout_ms)
 				co->co_manual_grace_count--;
 			coalition_update_grace_flag_locked(co);
 			sx_xunlock(&co->co_sx);
-			return (0);
+			return (coalition_termination_error(co));
 		}
 	}
 
@@ -1661,7 +1724,7 @@ coalition_terminate_graceful(struct coalition *co, int sig, u_int timeout_ms)
 		coalition_terminate_members_locked(co, curthread, false,
 		    force_kill ? SIGKILL : 0);
 		sx_xunlock(&co->co_sx);
-		coalition_terminate_external_members(curthread, jail_fps,
+		coalition_terminate_external_members(co, curthread, jail_fps,
 		    jail_count, mac_capability_cis, mac_capability_count);
 	} else {
 		/*
@@ -1670,7 +1733,7 @@ coalition_terminate_graceful(struct coalition *co, int sig, u_int timeout_ms)
 		 */
 		sx_xunlock(&co->co_sx);
 	}
-	return (0);
+	return (coalition_termination_error(co));
 }
 
 static bool
@@ -1767,7 +1830,7 @@ coalition_deadline_task_fn(void *context, int pending __unused)
 		    &jail_count, &mac_capability_cis, &mac_capability_count);
 		coalition_terminate_members_locked(co, td, false, SIGKILL);
 		sx_xunlock(&co->co_sx);
-		coalition_terminate_external_members(td, jail_fps, jail_count,
+		coalition_terminate_external_members(co, td, jail_fps, jail_count,
 		    mac_capability_cis, mac_capability_count);
 		coalition_rel(co);
 		return;
@@ -1796,7 +1859,7 @@ coalition_deadline_task_fn(void *context, int pending __unused)
 		    co->co_deadline_signal : SIGKILL;
 		coalition_terminate_members_locked(co, td, false, sig_override);
 		sx_xunlock(&co->co_sx);
-		coalition_terminate_external_members(td, jail_fps, jail_count,
+		coalition_terminate_external_members(co, td, jail_fps, jail_count,
 		    mac_capability_cis, mac_capability_count);
 		coalition_rel(co);
 		return;
@@ -1842,7 +1905,7 @@ coalition_watchdog_task_fn(void *context, int pending __unused)
 	    &jail_count, &mac_capability_cis, &mac_capability_count);
 	coalition_terminate_members_locked(co, curthread, false, SIGKILL);
 	sx_xunlock(&co->co_sx);
-	coalition_terminate_external_members(curthread, jail_fps, jail_count,
+	coalition_terminate_external_members(co, curthread, jail_fps, jail_count,
 	    mac_capability_cis, mac_capability_count);
 	coalition_rel(co);
 }
@@ -2323,13 +2386,22 @@ coalition_close_internal(struct coalition *co, struct thread *td)
 		if (cm->cm_dtype == DTYPE_MAC_CAPABILITY && cm->cm_fp != NULL) {
 			struct mac_capability_instance *ci = cm->cm_fp->f_data;
 
+			if (cm->cm_nested_co != NULL) {
+				int error = coalition_terminate(cm->cm_nested_co);
+
+				if (error != ESHUTDOWN)
+					coalition_record_error(co, error);
+			}
 			if (ci != NULL)
 				mac_capability_instance_revoke(ci);
 		}
 
-		/* Release nested coalition ref */
-		if (cm->cm_nested_co != NULL)
+		/* Preserve nested cleanup errors before releasing its state. */
+		if (cm->cm_nested_co != NULL) {
+			coalition_record_error(co,
+			    coalition_termination_error(cm->cm_nested_co));
 			coalition_rel(cm->cm_nested_co);
+		}
 
 		if (cm->cm_fp != NULL)
 			fdrop(cm->cm_fp, td);
@@ -2366,8 +2438,12 @@ coalition_close_internal(struct coalition *co, struct thread *td)
 			}
 		}
 
-			if (cm->cm_fp != NULL)
-				(void)coalition_jail_terminate(cm->cm_fp);
+			if (cm->cm_fp != NULL) {
+				int error = coalition_jail_terminate(cm->cm_fp);
+
+				if (error != ENOENT)
+					coalition_record_error(co, error);
+			}
 
 			if (cm->cm_data != NULL) {
 				pr = cm->cm_data;
