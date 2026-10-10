@@ -540,9 +540,52 @@ ATF_TC_BODY(latest_state_watch, tc)
 	notify_broker_destroy(broker);
 }
 
+ATF_TC_WITHOUT_HEAD(state_updates_are_owner_scoped);
+ATF_TC_BODY(state_updates_are_owner_scoped, tc)
+{
+	struct notify_broker_client *owner, *sibling, *other, *reader;
+	struct notify_state_reply state, before;
+	struct notify_state_watch_reply watched;
+	struct notify_broker *broker;
+	union event_buffer buffer;
+
+	broker = notify_broker_create();
+	ATF_REQUIRE(broker != NULL);
+	owner = notify_broker_add(broker, "org.a", 4);
+	sibling = notify_broker_add(broker, "org.a", 4);
+	other = notify_broker_add(broker, "org.b", 4);
+	reader = notify_broker_add(broker, "reader", 4);
+	ATF_REQUIRE(owner != NULL && sibling != NULL && other != NULL && reader != NULL);
+	ATF_REQUIRE_EQ(0, notify_broker_state_set(broker, owner, "svc.state", 9, 7, &before));
+	ATF_REQUIRE_EQ(0, notify_broker_subscribe(broker, reader, "svc.state", 9));
+	ATF_REQUIRE_EQ(0, notify_broker_watch_begin(broker, reader, "svc.state", 9));
+	ATF_REQUIRE_EQ(0, notify_broker_watch_next(reader, &watched));
+	ATF_REQUIRE_EQ(0, notify_broker_watch_begin(broker, reader, "svc.state", 9));
+	ATF_CHECK_ERRNO(EACCES, notify_broker_state_set(broker, other,
+	    "svc.state", 9, 99, &state) == -1);
+	ATF_REQUIRE_EQ(0, notify_broker_state_get(broker, "svc.state", 9, &state));
+	ATF_CHECK_EQ(before.state, state.state);
+	ATF_CHECK_EQ(before.generation, state.generation);
+	ATF_CHECK_ERRNO(EAGAIN, notify_broker_watch_next(reader, &watched) == -1);
+	ATF_CHECK_ERRNO(EAGAIN, notify_broker_next(reader,
+	    (void *)buffer.bytes, sizeof(buffer)) == -1);
+	/* A second session with the authenticated owner label may update. */
+	ATF_REQUIRE_EQ(0, notify_broker_state_set(broker, sibling, "svc.state", 9, 8, &state));
+	ATF_REQUIRE_EQ(0, notify_broker_watch_next(reader, &watched));
+	ATF_CHECK_EQ(8, watched.state);
+	notify_broker_remove(broker, owner);
+	ATF_REQUIRE_EQ(0, notify_broker_state_get(broker, "svc.state", 9, &state));
+	notify_broker_remove(broker, sibling);
+	ATF_CHECK_ERRNO(ENOENT, notify_broker_state_get(broker, "svc.state", 9, &state) == -1);
+	/* A new owner can claim the topic after the previous owner is gone. */
+	ATF_REQUIRE_EQ(0, notify_broker_state_set(broker, other, "svc.state", 9, 99, &state));
+	notify_broker_destroy(broker);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
+	ATF_TP_ADD_TC(tp, state_updates_are_owner_scoped);
 	ATF_TP_ADD_TC(tp, latest_state_watch);
 	ATF_TP_ADD_TC(tp, route_and_identity);
 	ATF_TP_ADD_TC(tp, queue_pressure);

@@ -500,6 +500,10 @@ notify_broker_state_set(struct notify_broker *broker,
 		return (-1);
 	bucket = topic_hash(topic, topic_length);
 	state = state_find(broker, topic, topic_length);
+	if (state != NULL && strcmp(state->owner, publisher->label) != 0) {
+		errno = EACCES;
+		return (-1);
+	}
 	if (state != NULL && state->generation == UINT64_MAX) {
 		errno = EOVERFLOW;
 		return (-1);

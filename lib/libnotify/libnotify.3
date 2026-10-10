@@ -117,6 +117,10 @@ They must not contain secrets or the only copy of application state.
 .Fn notify_state_set
 stores a 64-bit topic state and atomically advances a broker-assigned
 generation.
+An existing topic may only be updated by sessions sharing its original
+authenticated owner label; other publishers receive
+.Er EACCES .
+Ownership ends when the state is cleared or its last owner session closes.
 .Fn notify_state_get
 returns the current router epoch, generation, and state.
 Subscribers should subscribe before reading state and query the owning typed
