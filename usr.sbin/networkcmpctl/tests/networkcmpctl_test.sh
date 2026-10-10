@@ -76,8 +76,29 @@ state_watch_body()
 	atf_check -s exit:64 -e match:'usage:' "$tool" state-watch 1 2 3
 }
 
+atf_test_case resolve_selection
+resolve_selection_body()
+{
+	tool="$(atf_get_srcdir)/networkcmpctl_success_bin"
+	atf_check -s exit:0 -o match:'family=inet4 address=127.0.0.1' -e empty \
+	    env CMP_TEST_FAMILY=1 "$tool" resolve -4 localhost 80
+	atf_check -s exit:0 -o match:'family=inet6 address=::1' -e empty \
+	    env CMP_TEST_FAMILY=2 "$tool" resolve -6 localhost
+	atf_check -s exit:0 -o match:'family=inet6 address=::ffff:127.0.0.1' -e empty \
+	    env CMP_TEST_FAMILY=2 CMP_TEST_FLAGS=34 "$tool" resolve -6 -m localhost
+	atf_check -s exit:0 -o match:'family=inet6' -e empty \
+	    env CMP_TEST_FAMILY=2 CMP_TEST_FLAGS=98 "$tool" resolve -6 -m -a localhost
+	atf_check -s exit:0 -o match:'count=1' -e empty "$tool" resolve -- localhost
+	atf_check -s exit:64 -e match:'usage:' "$tool" resolve -4 -6 localhost
+	atf_check -s exit:64 -e match:'usage:' "$tool" resolve -m localhost
+	atf_check -s exit:64 -e match:'usage:' "$tool" resolve -6 -a localhost
+	atf_check -s exit:64 -e match:'usage:' "$tool" resolve -6
+	atf_check -s exit:64 -e match:'usage:' "$tool" resolve -x localhost
+}
+
 atf_init_test_cases()
 {
+	atf_add_test_case resolve_selection
 	atf_add_test_case state_watch
 	atf_add_test_case config
 	atf_add_test_case arguments

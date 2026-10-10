@@ -23,6 +23,9 @@
 .Ar addr Ar port
 .Nm
 .Cm resolve
+.Op Fl 4 | Fl 6
+.Op Fl m
+.Op Fl a
 .Ar host
 .Op Ar service
 .Sh DESCRIPTION
@@ -84,6 +87,25 @@ Subject to the label's connect policy and the internal-destination filter.
 .It Cm resolve Ar host Op Ar service
 Resolve a name through the component's bounded resolver and print each typed
 endpoint.
+The optional
+.Fl 4
+and
+.Fl 6
+select IPv4 and IPv6 respectively; the default requests both.
+With
+.Fl 6 ,
+.Fl m
+allows IPv4-mapped IPv6 results when native IPv6 results are absent, and
+.Fl a
+requests both native and mapped results.
+.Fl a
+requires
+.Fl m .
+Use
+.Fl -
+to end option parsing before the hostname.
+These flags also apply to numeric addresses and the local hosts snapshot.
+Temporary DNS failures are reported as errors and are not retried by this tool.
 .El
 .Sh FILES
 .Bl -tag -width indent

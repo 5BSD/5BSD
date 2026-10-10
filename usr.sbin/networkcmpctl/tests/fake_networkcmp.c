@@ -74,11 +74,17 @@ networkcmp_resolve(struct networkcmp_client *value, const char *host,
     size_t canonname_size, uint32_t *ttl)
 {
 	static const uint8_t loopback[16] = { 127, 0, 0, 1 };
+	const char *expected_family = getenv("CMP_TEST_FAMILY");
+	const char *expected_flags = getenv("CMP_TEST_FLAGS");
+	uint32_t want_family = expected_family != NULL ?
+	    (uint32_t)strtoul(expected_family, NULL, 0) : NETWORKCMP_AF_UNSPEC;
+	uint32_t want_flags = expected_flags != NULL ?
+	    (uint32_t)strtoul(expected_flags, NULL, 0) : NETWORKCMP_RESOLVE_F_CANONNAME;
 
 	if (value != &client || !client.open || strcmp(host, "localhost") != 0 ||
 	    (service != NULL && strcmp(service, "80") != 0) ||
-	    family != NETWORKCMP_AF_UNSPEC || socket_type != NETWORKCMP_SOCK_ANY ||
-	    flags != NETWORKCMP_RESOLVE_F_CANONNAME || results == NULL ||
+	    family != want_family || socket_type != NETWORKCMP_SOCK_ANY ||
+	    flags != want_flags || results == NULL ||
 	    count == NULL || *count < 1 || canonname == NULL ||
 	    canonname_size < sizeof("localhost") || ttl == NULL) {
 		errno = EINVAL;
@@ -90,6 +96,16 @@ networkcmp_resolve(struct networkcmp_client *value, const char *host,
 	results[0].endpoint.family = getenv("CMP_TEST_BAD_FAMILY") == NULL ?
 	    NETWORKCMP_AF_INET4 : 99;
 	memcpy(results[0].endpoint.address, loopback, sizeof(loopback));
+	if (family == NETWORKCMP_AF_INET6) {
+		results[0].endpoint.family = NETWORKCMP_AF_INET6;
+		memset(results[0].endpoint.address, 0, 16);
+		if ((flags & NETWORKCMP_RESOLVE_F_V4MAPPED) != 0) {
+			results[0].endpoint.address[10] = 0xff;
+			results[0].endpoint.address[11] = 0xff;
+			memcpy(results[0].endpoint.address + 12, loopback, 4);
+		} else
+			results[0].endpoint.address[15] = 1;
+	}
 	results[0].endpoint.port = service == NULL ? 0 : 80;
 	results[0].socket_type = NETWORKCMP_SOCK_STREAM;
 	results[0].protocol = 6;
