@@ -1,0 +1,9 @@
+activation { boot = true; }
+control = "system";
+program = "BSDPressure";
+restart = "on-failure";
+user = "capability";
+attributes = ["system.notify.system"];
+protect = ["ptrace", "signal", "wait", "sigkill", "sigcont", "sched", "core", "ktrace"];
+limits { nofile = 64; nproc = 4; core = 0; }
+umask = "0077";

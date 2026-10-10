@@ -1,0 +1,121 @@
+.\" SPDX-License-Identifier: BSD-2-Clause
+.Dd October 10, 2026
+.Dt BSD_CACHE 3
+.Os
+.Sh NAME
+.Nm bsd_cache_create ,
+.Nm bsd_cache_put ,
+.Nm bsd_cache_get ,
+.Nm bsd_cache_remove ,
+.Nm bsd_cache_purge ,
+.Nm bsd_cache_set_limits ,
+.Nm bsd_cache_set_pressure ,
+.Nm bsd_cache_get_stats ,
+.Nm bsd_cache_destroy
+.Nd bounded application caches with automatic pressure eviction
+.Sh LIBRARY
+.Li libcache
+.Pq Fl lcache
+.Sh SYNOPSIS
+.In bsd_cache.h
+.Ft int
+.Fn bsd_cache_create "size_t entries" "size_t cost" "unsigned flags" "bsd_cache_evicted_fn callback" "void *argument" "struct bsd_cache **out"
+.Ft int
+.Fn bsd_cache_put "struct bsd_cache *cache" "const char *key" "const void *value" "size_t length" "size_t cost"
+.Ft int
+.Fn bsd_cache_get "struct bsd_cache *cache" "const char *key" "void *value" "size_t *length"
+.Ft int
+.Fn bsd_cache_remove "struct bsd_cache *cache" "const char *key"
+.Ft int
+.Fn bsd_cache_purge "struct bsd_cache *cache"
+.Ft int
+.Fn bsd_cache_set_limits "struct bsd_cache *cache" "size_t entries" "size_t cost"
+.Ft int
+.Fn bsd_cache_set_pressure "struct bsd_cache *cache" "unsigned level"
+.Ft int
+.Fn bsd_cache_get_stats "struct bsd_cache *cache" "struct bsd_cache_stats *out"
+.Ft int
+.Fn bsd_cache_destroy "struct bsd_cache *cache"
+.Sh DESCRIPTION
+The cache owns copies of keys and byte values, with explicit entry and cost
+limits and least-recently-used eviction.
+Entries are disposable: callers must handle cache misses and reconstruct data.
+Keys are nonempty strings of at most 255 bytes; values are at most 16 MiB.
+At most 65536 entries are permitted.
+Cost must be at least the value length; callers may charge a larger logical
+cost.
+Metadata and key storage are additionally bounded by the entry limit.
+Changing limits immediately evicts entries exceeding the effective budget.
+Replacing a key copies the new value before changing the old entry.
+.Pp
+Get copies data into caller-owned storage and updates LRU order.
+The length argument supplies capacity and receives the required or copied size.
+Insufficient capacity returns
+.Er ENOMEM
+without a partial copy; missing keys return
+.Er ENOENT .
+Other failures leave outputs unchanged.
+No pointer into an evictable entry escapes the cache.
+.Pp
+With
+.Dv BSD_CACHE_AUTOMATIC ,
+a private thread watches BSDNotify's reserved
+.Va system.memory.pressure
+state, reconnecting after failures.
+No privileged publisher attribute is needed to observe it.
+Warning pressure halves both budgets; critical pressure purges the cache and
+rejects insertions with
+.Er EAGAIN
+until recovery.
+Normal pressure restores configured limits.
+Missing or unavailable state is reported as unknown and preserves the last
+known restriction; initial unknown state uses configured limits.
+The cache remains bounded when the notification service is absent.
+The manual pressure setter applies the same policy to this cache only.
+.Pp
+Statistics include current entries and cost, configured limits, hits, misses,
+limit/pressure evictions, current pressure, and the last notification error.
+The optional callback receives key, value, length, reason, and argument after
+an entry is detached and the cache lock is released.
+Its key and value are borrowed only for the callback duration.
+Callbacks may inspect or operate on the cache, but must not destroy it.
+Insertions during destruction callbacks are refused with
+.Er EAGAIN .
+They can run on the calling thread or the automatic watcher thread and must
+synchronize their own application state.
+.Pp
+Operations are synchronized across threads.
+Destroy requires exclusive ownership after all application calls and callbacks
+have finished, stops the watcher, joins it, then frees remaining entries.
+An outstanding notification RPC can delay destruction until its bounded
+transport timeout; destruction does not cancel arbitrary application callbacks.
+A watcher callback attempting destruction is refused with
+.Er EDEADLK .
+Inherited cache objects cannot be used or destroyed in a child after fork;
+create a fresh cache there.
+.Sh RETURN VALUES
+Functions return zero on success or minus one with
+.Va errno
+set.
+Invalid inputs return
+.Er EINVAL ;
+inherited handles return
+.Er ECHILD .
+A value exceeding the current effective cost budget returns
+.Er EAGAIN .
+Allocation and thread errors are also returned.
+.Sh EXAMPLES
+.Bd -literal -offset indent
+struct bsd_cache *cache;
+if (bsd_cache_create(128, 8 * 1024 * 1024,
+    BSD_CACHE_AUTOMATIC, NULL, NULL, &cache) == -1)
+        return (-1);
+/* Values are copied; a miss requires rebuilding the value. */
+bsd_cache_put(cache, "thumbnail", bytes, size, size);
+/* Finish application users before destruction. */
+bsd_cache_destroy(cache);
+.Ed
+.Sh SEE ALSO
+.Xr notify_state_watch 3 ,
+.Xr BSDPressure 8 ,
+.Xr notifyctl 8

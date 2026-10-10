@@ -34,6 +34,7 @@ SUBDIR=	blocklist \
 	bsdlog \
 	bsdnetwork \
 	bsdnotify \
+	bsdpressure \
 	bsdtrace-provider \
 	mac-abac \
 	devd \
@@ -60,6 +61,7 @@ SUBDIR=	blocklist \
 	libsysctlcmp \
 	libtimecmp \
 	libpowercmp \
+	libcache \
 	libcapreclaim \
 	libnotify \
 	libcapsulert \
@@ -204,7 +206,7 @@ SUBDIR.${MK_TESTS}+=		libchannel-tests libshmring-tests
 SUBDIR.${MK_TESTS}+=		libcryptocmp-tests libcryptodesc-tests
 SUBDIR.${MK_TESTS}+=		libnetworkcmp-tests libsysctlcmp-tests libtimecmp-tests libpowercmp-tests
 SUBDIR.${MK_TESTS}+=		libcapreclaim-tests
-SUBDIR.${MK_TESTS}+=		liblogcmp-tests libnotify-tests
+SUBDIR.${MK_TESTS}+=		liblogcmp-tests libnotify-tests libcache-tests bsdpressure-tests
 SUBDIR.${MK_TESTS}+=		libotelexport-tests
 SUBDIR.${MK_TESTS}+=		libtracecmp-tests
 SUBDIR.${MK_TESTS}+=		libtrustedzfs-tests

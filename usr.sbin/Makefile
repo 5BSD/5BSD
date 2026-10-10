@@ -60,6 +60,7 @@ SUBDIR=	adduser \
 	BSDSysctl \
 	BSDTime \
 	BSDTimectl \
+	BSDPressure \
 	BSDPower \
 	BSDPowerctl \
 	sysctlcmpctl \

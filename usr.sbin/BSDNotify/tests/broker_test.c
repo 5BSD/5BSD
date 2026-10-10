@@ -582,9 +582,33 @@ ATF_TC_BODY(state_updates_are_owner_scoped, tc)
 	notify_broker_destroy(broker);
 }
 
+ATF_TC_WITHOUT_HEAD(pressure_publisher_identity);
+ATF_TC_BODY(pressure_publisher_identity, tc)
+{
+	struct notify_broker *broker = notify_broker_create();
+	struct notify_broker_client *owner, *other;
+	struct notify_state_reply state;
+	const char *topic = "system.memory.pressure";
+	ATF_REQUIRE(broker != NULL);
+	owner = notify_broker_add(broker, "system.Pressure/bsdpressure", 4);
+	other = notify_broker_add(broker, "org.other", 4);
+	ATF_REQUIRE(owner != NULL && other != NULL);
+	ATF_CHECK_ERRNO(EACCES, notify_broker_state_set(broker, other, topic,
+	    strlen(topic), 2, &state) == -1);
+	ATF_REQUIRE_EQ(0, notify_broker_state_set(broker, owner, topic,
+	    strlen(topic), 2, &state));
+	ATF_CHECK_ERRNO(EINVAL, notify_broker_state_set(broker, owner, topic,
+	    strlen(topic), 4, &state) == -1);
+	notify_broker_remove(broker, owner);
+	ATF_CHECK_ERRNO(EACCES, notify_broker_state_set(broker, other, topic,
+	    strlen(topic), 0, &state) == -1);
+	notify_broker_destroy(broker);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
+	ATF_TP_ADD_TC(tp, pressure_publisher_identity);
 	ATF_TP_ADD_TC(tp, state_updates_are_owner_scoped);
 	ATF_TP_ADD_TC(tp, latest_state_watch);
 	ATF_TP_ADD_TC(tp, route_and_identity);

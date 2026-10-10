@@ -18,7 +18,7 @@ MLINKS+=libnotify.3 notify_list_timers.3
 MLINKS+=libnotify.3 notify_client_close.3
 
 SRCS=	notify.c notify_watch.c
-INCS=	notify.h notify_protocol.h notify_server.h notify_watch.h
+INCS=	notify.h notify_protocol.h notify_server.h notify_watch.h notify_pressure.h
 LIBADD=	pthread service
 CFLAGS+=	-I${SRCTOP}/lib/libservice
 STATIC_CFLAGS+=	${PICFLAG}

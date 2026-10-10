@@ -1468,9 +1468,39 @@ ATF_TC_BODY(null_arguments_and_size_boundary, tc)
 	free(db);
 }
 
+ATF_TC_WITHOUT_HEAD(shipped_pressure_policy);
+ATF_TC_BODY(shipped_pressure_policy, tc)
+{
+	struct notify_policy_db *db;
+	const struct notify_policy *policy;
+	char path[4096];
+	const char *topic = "system.memory.pressure";
+	snprintf(path, sizeof(path), "%s/srctree/usr.sbin/BSDNotify/capbundle/bsdnotify.conf",
+	    atf_tc_get_config_var(tc, "srcdir"));
+	ATF_REQUIRE(access(path, R_OK) == 0);
+	db = calloc(1, sizeof(*db));
+	ATF_REQUIRE(db != NULL);
+	ATF_REQUIRE_EQ(0, notify_policy_db_load(path, db));
+	policy = notify_policy_db_select(db, NOTIFY_TIER_SYSTEM, "system.Pressure/bsdpressure");
+	ATF_REQUIRE(policy != NULL);
+	ATF_CHECK_EQ(1, policy->npublish);
+	ATF_CHECK_EQ(1, policy->nsubscribe);
+	ATF_CHECK(!policy->publish_all && !policy->subscribe_all && !policy->timers);
+	ATF_CHECK(notify_policy_can_publish(policy, topic, strlen(topic)));
+	/* The producer checks existing state before publishing an unchanged value. */
+	ATF_CHECK(notify_policy_can_subscribe(policy, topic, strlen(topic)));
+	ATF_CHECK(!notify_policy_can_publish(policy, "system.other", 12));
+	ATF_CHECK(!notify_policy_can_subscribe(policy, "system.other", 12));
+	policy = notify_policy_db_select(db, NOTIFY_TIER_OPEN, "org.application/app");
+	ATF_CHECK(notify_policy_can_subscribe(policy, topic, strlen(topic)));
+	ATF_CHECK(!notify_policy_can_publish(policy, topic, strlen(topic)));
+	free(db);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
+	ATF_TP_ADD_TC(tp, shipped_pressure_policy);
 	ATF_TP_ADD_TC(tp, default_deny);
 	ATF_TP_ADD_TC(tp, exact_topics);
 	ATF_TP_ADD_TC(tp, wildcard);

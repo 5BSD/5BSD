@@ -45,6 +45,7 @@ SUBDIR=	${SUBDIR_BOOTSTRAP} \
 	libcam \
 	libcapability \
 	libcapbundle \
+	libcache \
 	libcapreclaim \
 	libcryptodesc \
 	libcryptocmp \
@@ -170,6 +171,7 @@ SUBDIR_DEPEND_libsysctlcmp= libservice
 SUBDIR_DEPEND_libtimecmp= libservice
 SUBDIR_DEPEND_libpowercmp= libservice
 SUBDIR_DEPEND_libnotify= libservice
+SUBDIR_DEPEND_libcache= libnotify
 SUBDIR_DEPEND_libpam= libcrypt ${_libradius} librpcsvc libtacplus libutil ${_libypclnt} ${_libcom_err}
 SUBDIR_DEPEND_libpjdlog= libutil
 SUBDIR_DEPEND_libprocstat= libkvm libutil

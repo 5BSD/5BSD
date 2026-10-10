@@ -223,8 +223,30 @@ ATF_TC_BODY(shipped_network_policy, tc)
 	ATF_CHECK(!sysctlcmp_config_permits(&config, "org.unlisted", "net.routetable", false));
 }
 
+ATF_TC_WITHOUT_HEAD(shipped_pressure_policy);
+ATF_TC_BODY(shipped_pressure_policy, tc)
+{
+	struct sysctlcmp_config config;
+	char path[4096];
+	const char *label = "system.Pressure/bsdpressure";
+	const char *names[] = { "vm.stats.vm.v_free_count", "vm.stats.vm.v_free_min",
+	    "vm.stats.vm.v_free_target" };
+	snprintf(path, sizeof(path), "%s/srctree/usr.sbin/BSDSysctl/capbundle/sysctl.conf",
+	    atf_tc_get_config_var(tc, "srcdir"));
+	ATF_REQUIRE(access(path, R_OK) == 0);
+	ATF_REQUIRE_EQ(0, sysctlcmp_config_load(&config, path));
+	for (unsigned i = 0; i < 3; i++) {
+		ATF_CHECK(sysctlcmp_config_permits(&config, label, names[i], false));
+		ATF_CHECK(!sysctlcmp_config_permits(&config, label, names[i], true));
+	}
+	ATF_CHECK(!sysctlcmp_config_permits(&config, label, "vm.stats.vm", false));
+	ATF_CHECK(!sysctlcmp_config_permits(&config, label, "vm.stats.vm.v_free_countx", false));
+	ATF_CHECK(!sysctlcmp_config_permits(&config, label, "kern.maxfiles", true));
+}
+
 ATF_TP_ADD_TCS(tp)
 {
+	ATF_TP_ADD_TC(tp, shipped_pressure_policy);
 	ATF_TP_ADD_TC(tp, shipped_network_policy);
 
 	ATF_TP_ADD_TC(tp, defaults);

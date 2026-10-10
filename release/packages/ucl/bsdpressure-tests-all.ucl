@@ -1,0 +1,2 @@
+comment = "Memory-pressure regression tests"
+desc = "Tests pressure thresholds, unavailable samples and recovery hysteresis."

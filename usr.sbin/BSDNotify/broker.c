@@ -5,6 +5,7 @@
 #include <sys/param.h>
 
 #include <errno.h>
+#include <notify_pressure.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -498,6 +499,13 @@ notify_broker_state_set(struct notify_broker *broker,
 	if (broker == NULL || publisher == NULL || reply == NULL ||
 	    notify_validate_topic(topic, topic_length) == -1)
 		return (-1);
+	if (topic_length == sizeof(NOTIFY_PRESSURE_TOPIC) - 1 &&
+	    memcmp(topic, NOTIFY_PRESSURE_TOPIC, topic_length) == 0) {
+		if (strcmp(publisher->label, NOTIFY_PRESSURE_OWNER) != 0)
+			return (errno = EACCES, -1);
+		if (value > NOTIFY_PRESSURE_UNKNOWN)
+			return (errno = EINVAL, -1);
+	}
 	bucket = topic_hash(topic, topic_length);
 	state = state_find(broker, topic, topic_length);
 	if (state != NULL && strcmp(state->owner, publisher->label) != 0) {

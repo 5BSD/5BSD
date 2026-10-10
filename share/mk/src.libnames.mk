@@ -113,6 +113,7 @@ _LIBRARIES=	\
 		9p \
 		alias \
 		capbundle \
+		cache \
 		capreclaim \
 		cryptocmp \
 		cryptodesc \
@@ -353,6 +354,7 @@ _DP_devicecmp=	pthread service
 _DP_logcmp=	pthread service shmring
 _DP_kldmgr=	service
 _DP_notify=	pthread service
+_DP_cache=	notify pthread
 _DP_oes=
 _DP_rebootctl=	service
 _DP_tracecmp=	dtrace service
