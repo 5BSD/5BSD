@@ -55,6 +55,112 @@ ATF_TC_HEAD(ignores_bad_udp_reply, tc)
 	atf_tc_set_md_var(tc, "descr",
 	    "A bad UDP packet does not discard a later valid answer");
 }
+
+static size_t
+append_test_a(u_char *packet, size_t at, const u_char *owner,
+    size_t ownerlen, u_char last_octet)
+{
+	memcpy(packet + at, owner, ownerlen);
+	at += ownerlen;
+	memset(packet + at, 0, 10);
+	packet[at + 1] = ns_t_a;
+	packet[at + 3] = ns_c_in;
+	packet[at + 9] = 4;
+	at += 10;
+	packet[at++] = 192;
+	packet[at++] = 0;
+	packet[at++] = 2;
+	packet[at++] = last_octet;
+	return (at);
+}
+
+ATF_TC(answer_owner_chain);
+ATF_TC_HEAD(answer_owner_chain, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Only the question or a valid CNAME target supplies addresses");
+}
+ATF_TC_BODY(answer_owner_chain, tc)
+{
+	static const u_char other[] =
+	    { 5, 'o', 't', 'h', 'e', 'r', 4, 't', 'e', 's', 't', 0 };
+	static const u_char alias[] =
+	    { 5, 'a', 'l', 'i', 'a', 's', 4, 't', 'e', 's', 't', 0 };
+	static const u_char question_owner[] = { 0xc0, 0x0c };
+	struct rslv_addr addrs[2];
+	char canon[NS_MAXDNAME];
+	u_char query[NS_PACKETSZ], reply[NS_PACKETSZ + 128];
+	u_char alias_owner[2];
+	size_t at, alias_offset;
+	int qlen, n;
+
+	ATF_REQUIRE(res_ninit(&g_res) == 0);
+	qlen = res_nmkquery(&g_res, ns_o_query, "example.test", ns_c_in,
+	    ns_t_a, NULL, 0, NULL, query, sizeof(query));
+	ATF_REQUIRE(qlen > NS_HFIXEDSZ);
+	memcpy(reply, query, (size_t)qlen);
+	reply[2] |= 0x80;
+	reply[3] = 0x80;
+	reply[7] = 1;
+	at = append_test_a(reply, (size_t)qlen, other, sizeof(other), 44);
+	n = 0;
+	canon[0] = '\0';
+	ATF_CHECK_EQ(dns_parse(reply, (int)at, "example.test", ns_t_a,
+	    addrs, 2, &n, canon, sizeof(canon)), 0);
+	ATF_CHECK_EQ(n, 0);
+
+	/* The CNAME target can be compressed as the following A owner. */
+	reply[7] = 2;
+	at = (size_t)qlen;
+	memcpy(reply + at, question_owner, sizeof(question_owner));
+	at += sizeof(question_owner);
+	memset(reply + at, 0, 10);
+	reply[at + 1] = ns_t_cname;
+	reply[at + 3] = ns_c_in;
+	reply[at + 9] = sizeof(alias);
+	at += 10;
+	alias_offset = at;
+	memcpy(reply + at, alias, sizeof(alias));
+	at += sizeof(alias);
+	alias_owner[0] = 0xc0 | (u_char)(alias_offset >> 8);
+	alias_owner[1] = (u_char)alias_offset;
+	at = append_test_a(reply, at, alias_owner, sizeof(alias_owner), 45);
+	n = 0;
+	canon[0] = '\0';
+	ATF_CHECK_EQ(dns_parse(reply, (int)at, "example.test", ns_t_a,
+	    addrs, 2, &n, canon, sizeof(canon)), 1);
+	ATF_CHECK_EQ(n, 1);
+	ATF_CHECK_STREQ(canon, "alias.test");
+	if (n == 1)
+		ATF_CHECK_EQ(((const u_char *)&addrs[0].a.v4)[3], 45);
+	/* A later malformed address must not leak the earlier valid one. */
+	reply[7] = 3;
+	{
+		size_t second = at;
+
+		at = append_test_a(reply, at, alias_owner,
+		    sizeof(alias_owner), 46);
+		reply[second + sizeof(alias_owner) + 9] = 3;
+	}
+	n = 0;
+	canon[0] = '\0';
+	ATF_CHECK_EQ(dns_parse(reply, (int)at, "example.test", ns_t_a,
+	    addrs, 2, &n, canon, sizeof(canon)), -1);
+	ATF_CHECK_EQ(n, 0);
+	ATF_CHECK_STREQ(canon, "");
+
+	/* A compression pointer back to itself must be rejected. */
+	reply[7] = 1;
+	at = alias_offset;
+	reply[at - 1] = 2;
+	reply[at] = 0xc0 | (u_char)(at >> 8);
+	reply[at + 1] = (u_char)at;
+	n = 0;
+	ATF_CHECK_EQ(dns_parse(reply, (int)at + 2, "example.test",
+	    ns_t_a, addrs, 2, &n, canon, sizeof(canon)), -1);
+	ATF_CHECK_EQ(n, 0);
+	res_nclose(&g_res);
+}
 ATF_TC_BODY(ignores_bad_udp_reply, tc)
 {
 	struct sockaddr_in sa, peer;
@@ -269,6 +375,7 @@ ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, reply_validation);
 	ATF_TP_ADD_TC(tp, ignores_bad_udp_reply);
+	ATF_TP_ADD_TC(tp, answer_owner_chain);
 	ATF_TP_ADD_TC(tp, truncated_udp_falls_back_to_tcp);
 	return (atf_no_error());
 }

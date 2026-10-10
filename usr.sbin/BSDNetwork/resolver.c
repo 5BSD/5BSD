@@ -50,6 +50,7 @@ static int			g_servfd = -1;
 #define	RSLV_DFL_RETRANS	5	/* seconds, if g_res.retrans unset     */
 #define	RSLV_DFL_RETRY		2	/* attempts, if g_res.retry unset      */
 #define	RSLV_MAX_RETRANS	30	/* bound each UDP/TCP exchange in sec */
+#define	RSLV_MAX_CNAME_HOPS	16	/* reject cyclic or excessive chains */
 
 /*
  * Nameservers parsed from the delivered /etc/resolv.conf.  Born in capability
@@ -441,22 +442,27 @@ hosts_lookup(const char *host, int family, struct rslv_addr *addrs,
  * ===================================================================== */
 
 /*
- * Parse a DNS response (ans, anslen) collecting A (want ns_t_a) or AAAA
- * (want ns_t_aaaa) records into addrs.  Every rdata access is bounds-checked
- * against [ans, ans+anslen) and the result count is capped at max.  Returns
- * the number of addresses appended (>=0), or -1 if the message is malformed.
+ * Parse A or AAAA records owned by the question or its CNAME target.  Every
+ * rdata access is bounds-checked and the result count is capped at max.
+ * Returns addresses appended, or -1 for a malformed answer chain.
  */
 static int
-dns_parse(const u_char *ans, int anslen, int want, struct rslv_addr *addrs,
-    int max, int *n, char *canon, size_t canonsz)
+dns_parse(const u_char *ans, int anslen, const char *host, int want,
+    struct rslv_addr *addrs, int max, int *n, char *canon, size_t canonsz)
 {
 	ns_msg msg;
 	ns_rr rr;
-	int count, i, added = 0;
+	char owner[NS_MAXDNAME], target[NS_MAXDNAME];
+	const u_char *rdata;
+	size_t rdlen;
+	int count, i, hops, consumed, added = 0;
+	bool found;
 
 	if (anslen <= 0)
 		return (-1);
 	if (ns_initparse(ans, anslen, &msg) < 0)
+		return (-1);
+	if (strlcpy(owner, host, sizeof(owner)) >= sizeof(owner))
 		return (-1);
 
 	count = ns_msg_count(msg, ns_s_an);
@@ -465,13 +471,57 @@ dns_parse(const u_char *ans, int anslen, int want, struct rslv_addr *addrs,
 		if (ns_parserr(&msg, ns_s_an, i, &rr) < 0)
 			return (-1);
 	}
-	for (i = 0; i < count && *n < max; i++) {
-		const u_char *rdata;
-		size_t rdlen;
-
+	/* Resolve only CNAMEs reachable from the question, in any RR order. */
+	for (hops = 0; hops <= RSLV_MAX_CNAME_HOPS; hops++) {
+		found = false;
+		for (i = 0; i < count; i++) {
+			if (ns_parserr(&msg, ns_s_an, i, &rr) < 0)
+				return (-1);
+			if (ns_rr_class(rr) != ns_c_in ||
+			    ns_rr_type(rr) != ns_t_cname ||
+			    ns_samename(ns_rr_name(rr), owner) != 1)
+				continue;
+			if (found)
+				return (-1);
+			rdata = ns_rr_rdata(rr);
+			rdlen = ns_rr_rdlen(rr);
+			if (rdata < ans || rdata > ans + anslen ||
+			    rdlen > (size_t)(ans + anslen - rdata))
+				return (-1);
+			consumed = ns_name_uncompress(ans, ans + anslen, rdata,
+			    target, sizeof(target));
+			if (consumed < 0 || (size_t)consumed != rdlen)
+				return (-1);
+			found = true;
+		}
+		if (!found)
+			break;
+		if (hops == RSLV_MAX_CNAME_HOPS ||
+		    ns_samename(owner, target) == 1)
+			return (-1);
+		(void)strlcpy(owner, target, sizeof(owner));
+	}
+	/* Validate every matching address before exposing any of them. */
+	for (i = 0; i < count; i++) {
 		if (ns_parserr(&msg, ns_s_an, i, &rr) < 0)
 			return (-1);
-		if ((int)ns_rr_type(rr) != want)
+		if (ns_rr_class(rr) != ns_c_in ||
+		    (int)ns_rr_type(rr) != want ||
+		    ns_samename(ns_rr_name(rr), owner) != 1)
+			continue;
+		rdata = ns_rr_rdata(rr);
+		rdlen = ns_rr_rdlen(rr);
+		if (rdata < ans || rdata > ans + anslen ||
+		    rdlen > (size_t)(ans + anslen - rdata) ||
+		    rdlen != (want == ns_t_a ? 4 : 16))
+			return (-1);
+	}
+	for (i = 0; i < count && *n < max; i++) {
+		if (ns_parserr(&msg, ns_s_an, i, &rr) < 0)
+			return (-1);
+		if (ns_rr_class(rr) != ns_c_in ||
+		    (int)ns_rr_type(rr) != want ||
+		    ns_samename(ns_rr_name(rr), owner) != 1)
 			continue;
 
 		rdata = ns_rr_rdata(rr);
@@ -480,17 +530,17 @@ dns_parse(const u_char *ans, int anslen, int want, struct rslv_addr *addrs,
 		/* Defense in depth: rdata must lie fully inside the message. */
 		if (rdata < ans || rdata > ans + anslen ||
 		    rdlen > (size_t)(ans + anslen - rdata))
-			continue;
+			return (-1);
 
 		if (want == ns_t_a) {
 			if (rdlen != 4)
-				continue;
+				return (-1);
 			addrs[*n].family = AF_INET;
 			memset(&addrs[*n].a, 0, sizeof(addrs[*n].a));
 			memcpy(&addrs[*n].a.v4, rdata, 4);
 		} else {	/* ns_t_aaaa */
 			if (rdlen != 16)
-				continue;
+				return (-1);
 			addrs[*n].family = AF_INET6;
 			memset(&addrs[*n].a, 0, sizeof(addrs[*n].a));
 			memcpy(&addrs[*n].a.v6, rdata, 16);
@@ -739,7 +789,7 @@ dns_query(const char *host, int rrtype, struct rslv_addr *addrs, int max,
 					continue;
 			}
 
-			added = dns_parse(ans, (int)rlen, rrtype, addrs, max,
+		added = dns_parse(ans, (int)rlen, host, rrtype, addrs, max,
 			    n, canon, canonsz);
 			if (added < 0)
 				continue;	/* malformed: try next server */
