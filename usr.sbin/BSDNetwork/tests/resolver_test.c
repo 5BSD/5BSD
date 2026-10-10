@@ -30,7 +30,16 @@ ATF_TC_BODY(reply_validation, tc)
 	reply[2] |= 0x02;
 	ATF_CHECK_EQ(dns_reply_status(reply, len, query, "example.test",
 	    ns_t_a), 1);
+	/* TC can cut off the last RR; the question remains verifiable. */
+	reply[7] = 1;
+	reply[len] = 0xc0;
+	reply[len + 1] = 0x0c;
+	ATF_CHECK_EQ(dns_reply_status(reply, len + 2, query,
+	    "example.test", ns_t_a), 1);
 	reply[2] &= ~0x02;
+	ATF_CHECK_EQ(dns_reply_status(reply, len + 2, query,
+	    "example.test", ns_t_a), -1);
+	reply[7] = 0;
 	reply[13] = 'x';
 	ATF_CHECK_EQ(dns_reply_status(reply, len, query, "example.test",
 	    ns_t_a), -1);
@@ -249,10 +258,14 @@ serve_truncated_then_tcp(int udp, int tcp)
 	    (struct sockaddr *)&peer, &peerlen);
 	if (n <= NS_HFIXEDSZ || n > NS_PACKETSZ)
 		_exit(1);
-	query[2] |= 0x82;
-	query[3] = 0x80;
-	if (sendto(udp, query, (size_t)n, 0,
-	    (struct sockaddr *)&peer, peerlen) != n)
+	memcpy(answer, query, (size_t)n);
+	answer[2] |= 0x82;
+	answer[3] = 0x80;
+	answer[7] = 1;
+	answer[n] = 0xc0;
+	answer[n + 1] = 0x0c;
+	if (sendto(udp, answer, (size_t)n + 2, 0,
+	    (struct sockaddr *)&peer, peerlen) != n + 2)
 		_exit(2);
 	conn = accept(tcp, NULL, NULL);
 	if (conn < 0 || recv(conn, prefix, 2, MSG_WAITALL) != 2)

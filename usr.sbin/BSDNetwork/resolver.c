@@ -564,23 +564,29 @@ dns_reply_status(const u_char *ans, int anslen, const u_char *qbuf,
     const char *host, int rrtype)
 {
 	ns_msg msg;
-	ns_rr question;
-	int rcode;
+	char qname[NS_MAXDNAME];
+	int consumed, qend, rcode;
 
 	if (anslen < NS_HFIXEDSZ || ans[0] != qbuf[0] ||
-	    ans[1] != qbuf[1] || ns_initparse(ans, anslen, &msg) < 0 ||
-	    !ns_msg_getflag(msg, ns_f_qr) ||
-	    ns_msg_getflag(msg, ns_f_opcode) != ns_o_query ||
-	    ns_msg_count(msg, ns_s_qd) != 1 ||
-	    ns_parserr(&msg, ns_s_qd, 0, &question) < 0 ||
-	    ns_rr_class(question) != ns_c_in ||
-	    (int)ns_rr_type(question) != rrtype ||
-	    ns_samename(ns_rr_name(question), host) != 1)
+	    ans[1] != qbuf[1] || (ans[2] & 0x80) == 0 ||
+	    (ans[2] & 0x78) != 0 || ans[4] != 0 || ans[5] != 1)
 		return (-1);
-	rcode = ns_msg_getflag(msg, ns_f_rcode);
+	consumed = ns_name_uncompress(ans, ans + anslen,
+	    ans + NS_HFIXEDSZ, qname, sizeof(qname));
+	if (consumed < 0 || consumed > anslen - NS_HFIXEDSZ - 4)
+		return (-1);
+	qend = NS_HFIXEDSZ + consumed;
+	if (ans[qend] != 0 || ans[qend + 1] != rrtype ||
+	    ans[qend + 2] != 0 || ans[qend + 3] != ns_c_in ||
+	    ns_samename(qname, host) != 1)
+		return (-1);
+	rcode = ans[3] & 0x0f;
 	if (rcode != ns_r_noerror && rcode != ns_r_nxdomain)
 		return (-2);
-	return (ns_msg_getflag(msg, ns_f_tc) ? 1 : 0);
+	/* A TC reply may end inside an RR, so only parse complete messages. */
+	if ((ans[2] & 0x02) != 0)
+		return (1);
+	return (ns_initparse(ans, anslen, &msg) == 0 ? 0 : -1);
 }
 
 /* All TCP operations share one monotonic deadline, including connect. */
@@ -788,8 +794,12 @@ dns_query(const char *host, int rrtype, struct rslv_addr *addrs, int max,
 				    qbuf, host, rrtype) != 0)
 					continue;
 			}
+			if ((ans[3] & 0x0f) == ns_r_nxdomain) {
+				answered = 1;
+				continue;
+			}
 
-		added = dns_parse(ans, (int)rlen, host, rrtype, addrs, max,
+			added = dns_parse(ans, (int)rlen, host, rrtype, addrs, max,
 			    n, canon, canonsz);
 			if (added < 0)
 				continue;	/* malformed: try next server */
