@@ -2049,6 +2049,75 @@ ATF_TC_BODY(member_limit_cannot_fork_escape, tc)
 	close(cfd);
 }
 
+ATF_TC(grace_fork_containment_and_cancel);
+ATF_TC_HEAD(grace_fork_containment_and_cancel, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Grace rejects fork/pdfork children; cancellation restores inheritance");
+	atf_tc_set_md_var(tc, "require.kmods",
+	    "mac_capability mac_capability_coalition");
+}
+ATF_TC_BODY(grace_fork_containment_and_cancel, tc)
+{
+	struct coalition_set_deadline_req req = {
+	    .op = COALITION_OP_SET_DEADLINE, .timeout_ms = 10,
+	    .signal = SIGUSR1, .grace_ms = 60000 };
+	struct coalition_stat_reply st;
+	struct coalition_reply reply;
+	struct kinfo_proc kp;
+	void (*previous)(int);
+	int cfd, pd, wstatus;
+	int32_t status;
+	pid_t child;
+
+	previous = signal(SIGUSR1, SIG_IGN);
+	ATF_REQUIRE(previous != SIG_ERR);
+	cfd = mac_capability_connect("coalition");
+	ATF_REQUIRE(cfd >= 0);
+	ATF_REQUIRE_EQ(0, coalition_op(cfd, COALITION_OP_JOIN, &status));
+	ATF_REQUIRE_EQ(0, status);
+	ATF_REQUIRE_EQ(0, coalition_call(cfd, &req, sizeof(req), NULL, 0,
+	    &reply, sizeof(reply)));
+	ATF_REQUIRE_EQ(0, reply.status);
+	for (int i = 0; i < 500; i++) {
+		ATF_REQUIRE_EQ(0, coalition_stat(cfd, &st));
+		if ((st.flags & COF_GRACE_ACTIVE) != 0)
+			break;
+		usleep(10000);
+	}
+	ATF_REQUIRE((st.flags & COF_GRACE_ACTIVE) != 0);
+	for (int cancelled = 0; cancelled < 2; cancelled++) {
+		if (cancelled) {
+			req.timeout_ms = 0;
+			ATF_REQUIRE_EQ(0, coalition_call(cfd, &req, sizeof(req),
+			    NULL, 0, &reply, sizeof(reply)));
+			ATF_REQUIRE_EQ(0, reply.status);
+			ATF_REQUIRE_EQ(0, coalition_stat(cfd, &st));
+			ATF_REQUIRE_EQ(0, st.flags & COF_GRACE_ACTIVE);
+		}
+		for (int i = 0; i < 8; i++) {
+			pd = -1;
+			child = i % 2 == 0 ? fork() : pdfork(&pd, PD_DAEMON);
+			ATF_REQUIRE(child >= 0);
+			if (child == 0) {
+				if (!cancelled)
+					_exit(42);
+				_exit(kinfo_of(getpid(), &kp) == 0 &&
+				    kp.ki_coalition == st.id ? 0 : 43);
+			}
+			ATF_REQUIRE(wait_exit_bounded(child, &wstatus));
+			if (cancelled)
+				ATF_CHECK(WIFEXITED(wstatus) && WEXITSTATUS(wstatus) == 0);
+			else
+				ATF_CHECK(WIFSIGNALED(wstatus) && WTERMSIG(wstatus) == SIGKILL);
+			if (pd >= 0)
+				close(pd);
+		}
+	}
+	close(cfd);
+	ATF_REQUIRE(signal(SIGUSR1, previous) != SIG_ERR);
+}
+
 ATF_TC(refattach_confined_descriptors);
 ATF_TC_HEAD(refattach_confined_descriptors, tc)
 {
@@ -4236,6 +4305,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, close_terminates_shielded_orphan);
 	ATF_TP_ADD_TC(tp, terminated_coalition_cannot_fork_escape);
 	ATF_TP_ADD_TC(tp, member_limit_cannot_fork_escape);
+	ATF_TP_ADD_TC(tp, grace_fork_containment_and_cancel);
 	ATF_TP_ADD_TC(tp, refattach_confined_descriptors);
 	ATF_TP_ADD_TC(tp, set_signal_zero_releases_joined);
 
