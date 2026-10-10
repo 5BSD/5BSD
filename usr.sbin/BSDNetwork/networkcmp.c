@@ -37,6 +37,7 @@
 #include <auditcmp.h>
 #include <auditcmp_server.h>
 #include <libservice.h>
+#include <service_runtime.h>
 #include <networkcmp.h>
 
 #include "resolver.h"
@@ -1440,10 +1441,8 @@ start_session(int fd, const char *peer_label,
 {
 	struct networkcmp_policy policy;
 	const char *policy_source;
-	int syncfd[2], resolver_pipe[2], pd, audit_fd, child_error, error;
+	int syncfd[2], resolver_pipe[2], pd, audit_fd, error;
 	pid_t pid;
-	char byte;
-	ssize_t n;
 
 	audit_fd = -1;
 	resolver_pipe[0] = resolver_pipe[1] = -1;
@@ -1518,16 +1517,16 @@ start_session(int fd, const char *peer_label,
 	close(resolver_pipe[1]);
 	resolver_pipe[0] = resolver_pipe[1] = -1;
 	close(syncfd[1]);
-	n = read(syncfd[0], &child_error, sizeof(child_error));
-	if (n != sizeof(child_error) || child_error != 0) {
-		error = n == sizeof(child_error) ? child_error : EIO;
+	/* One bounded handshake, including fragmented status and release ACK. */
+	if (service_bootstrap_parent(syncfd[0], 5000) == -1) {
+		error = errno;
 		(void)pdkill(pd, SIGKILL);
+		while (pdwait(pd, NULL, WEXITED, NULL, NULL) == -1 && errno == EINTR)
+			;
 		close(pd);
 		close(syncfd[0]);
 		goto reject;
 	}
-	byte = 1;
-	(void)write(syncfd[0], &byte, 1);
 	close(syncfd[0]);
 	*pdp = pd;	/* parent tracks the worker's process descriptor */
 	return (0);
