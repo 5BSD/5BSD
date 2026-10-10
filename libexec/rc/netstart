@@ -42,7 +42,6 @@ _start=quietstart
 /etc/rc.d/netif ${_start}
 /etc/rc.d/ipsec ${_start}
 /etc/rc.d/ppp ${_start}
-/etc/rc.d/ipfw ${_start}
 /etc/rc.d/routing ${_start}
 /etc/rc.d/route6d ${_start}
 /etc/rc.d/routed ${_start}

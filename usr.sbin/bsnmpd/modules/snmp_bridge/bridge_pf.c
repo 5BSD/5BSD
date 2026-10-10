@@ -91,6 +91,8 @@ op_begemot_bridge_pf(struct snmp_context *ctx, struct snmp_value *val,
 			return (SNMP_ERR_NOERROR);
 
 		case SNMP_OP_SET:
+			if (val->var.subs[sub - 1] == LEAF_begemotBridgeLayer2PfStatus)
+				return (SNMP_ERR_NOT_WRITEABLE);
 			ctx->scratch->int1 =
 			    bridge_get_pfval(val->var.subs[sub - 1]);
 

@@ -60,7 +60,7 @@
 #include <net/if.h>	/* IFNAMSIZ, struct ifaddr, ifq head, lock.h mutex.h */
 #include <netinet/in.h>
 #include <netinet/ip_var.h>	/* ip_output(), IP_FORWARDING */
-#include <netinet/ip_fw.h>
+#include <netinet/ip_dn_flow.h>
 #include <netinet/ip_dummynet.h>
 #include <net/vnet.h>
 
@@ -201,8 +201,8 @@ flow_id_mask(struct ipfw_flow_id *mask, struct ipfw_flow_id *id)
 	id->proto &= mask->proto;
 	id->extra &= mask->extra;
 	if (is_v6) {
-		APPLY_MASK(&id->dst_ip6, &mask->dst_ip6);
-		APPLY_MASK(&id->src_ip6, &mask->src_ip6);
+		DN_APPLY_MASK(&id->dst_ip6, &mask->dst_ip6);
+		DN_APPLY_MASK(&id->src_ip6, &mask->src_ip6);
 		id->flow_id6 &= mask->flow_id6;
 	} else {
 		id->dst_ip &= mask->dst_ip;

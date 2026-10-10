@@ -42,7 +42,7 @@
 #include <net/if.h>	/* IFNAMSIZ */
 #include <netinet/in.h>
 #include <netinet/ip_var.h>		/* ipfw_rule_ref */
-#include <netinet/ip_fw.h>	/* flow_id */
+#include <netinet/ip_dn_flow.h>	/* flow_id */
 #include <netinet/ip_dummynet.h>
 #include <netpfil/dummynet/dn_packet.h>
 #include <netpfil/dummynet/dn_heap.h>

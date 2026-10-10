@@ -122,8 +122,48 @@ table_cleanup()
 	pft_cleanup
 }
 
+atf_test_case "retired_bridge_filter" "cleanup"
+retired_bridge_filter_head()
+{
+	atf_set descr 'Retired bridge IPFW SNMP leaf remains readable and rejects writes'
+	atf_set require.user root
+}
+
+retired_bridge_filter_body()
+{
+	pft_init
+	epair=$(vnet_mkepair)
+	ifconfig ${epair}b 192.0.2.2/24 up
+	vnet_mkjail bridge_snmp ${epair}a
+	jexec bridge_snmp ifconfig ${epair}a 192.0.2.1/24 up
+	sed -e 's@snmp_pf.so@snmp_bridge.so@' \
+	    -e 's@ModulePath."pf"@ModulePath."bridge"@' \
+	    $(atf_get_srcdir)/bsnmpd.conf > bridge.conf
+	echo 'begemotSnmpdCommunityString.0.2 = "geheim"' >> bridge.conf
+	jexec bridge_snmp bsnmpd -c ${PWD}/bridge.conf
+	# Exercise the stable wire OID independently of symbolic MIB imports.
+	legacy_oid=1.3.6.1.4.1.12325.1.205.4.4.0
+	control_oid=1.3.6.1.4.1.12325.1.205.4.3.0
+	atf_check -s exit:0 -o match:'^2$' \
+	    bsnmpget -n -v 2 -o quiet -s public@192.0.2.1 "$legacy_oid"
+	# A successful write proves that the write community works. bsnmpset
+	# returns zero even for agent errors, so check the response as well.
+	atf_check -s exit:0 -o empty -e empty \
+	    bsnmpset -n -v 2 -o quiet -s geheim@192.0.2.1 "$control_oid=Integer:1"
+	atf_check -s exit:0 -o match:'caused error - Not writable' -e ignore \
+	    bsnmpset -n -v 2 -s geheim@192.0.2.1 "$legacy_oid=Integer:1"
+	atf_check -s exit:0 -o match:'^2$' \
+	    bsnmpget -n -v 2 -o quiet -s public@192.0.2.1 "$legacy_oid"
+}
+
+retired_bridge_filter_cleanup()
+{
+	pft_cleanup
+}
+
 atf_init_test_cases()
 {
+	atf_add_test_case "retired_bridge_filter"
 	atf_add_test_case "basic"
 	atf_add_test_case "table"
 }

@@ -11,8 +11,6 @@
             netlink
             ..
             netpfil
-                ipfw
-                ..
             ..
         ..
     ..
@@ -523,11 +521,11 @@
         ..
         dhclient
         ..
+        dnctl
+        ..
         growfs
         ..
         ifconfig
-        ..
-        ipfw
         ..
         md5
         ..
@@ -959,8 +957,6 @@
         ..
         netpfil
             common
-            ..
-            ipfw
             ..
             pf
                 ioctl

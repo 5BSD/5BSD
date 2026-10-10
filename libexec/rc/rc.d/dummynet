@@ -1,0 +1,16 @@
+#!/bin/sh
+# SPDX-License-Identifier: BSD-2-Clause
+# PROVIDE: dummynet
+# BEFORE: dnctl pf
+# KEYWORD: nojailvnet
+
+. /etc/rc.subr
+name="dummynet"
+desc="Dummynet traffic shaping module"
+rcvar="dummynet_enable"
+load_rc_config $name
+required_modules="dummynet"
+start_cmd=":"
+stop_cmd=":"
+dummynet_svcj="NO"
+run_rc_command "$1"

@@ -82,7 +82,6 @@
 #include <netinet/in_var.h>
 #include <netinet/in_fib.h>
 #include <netinet/ip.h>
-#include <netinet/ip_fw.h>
 #include <netinet/ip_icmp.h>
 #include <netinet/icmp_var.h>
 #include <netinet/ip_var.h>
@@ -96,7 +95,6 @@
 
 /* dummynet */
 #include <netinet/ip_dummynet.h>
-#include <netinet/ip_fw.h>
 #include <netpfil/dummynet/dn_heap.h>
 #include <netpfil/dummynet/dn_packet.h>
 #include <netpfil/dummynet/ip_dn_private.h>

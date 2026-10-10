@@ -50,11 +50,7 @@ firewall_config()
 		shift
 	done
 
-	if [ ${fw} == "ipfw" ]; then
-		jexec ${jname} ipfw -q -f flush
-		jexec ${jname} ipfw -q -f table all destroy
-		jexec ${jname} /bin/sh $cwd/ipfw.rule
-	elif [ ${fw} == "pf" ]; then
+	if [ ${fw} == "pf" ]; then
 		jexec ${jname} sysctl net.pf.filter_local=1
 		jexec ${jname} pfctl -e
 		jexec ${jname} pfctl -F all
@@ -84,13 +80,7 @@ firewall_init()
 	firewall=$1
 	vnet_init
 
-	if [ ${firewall} == "ipfw" ]; then
-		if ! kldstat -q -m ipfw; then
-			atf_skip "This test requires ipfw"
-		elif [ $(sysctl -n net.inet.ip.fw.default_to_accept) -ne 1 ]; then
-			atf_skip "ipfw tests require net.inet.ip.fw.default_to_accept=1 tunable"
-		fi
-	elif [ ${firewall} == "pf" ]; then
+	if [ ${firewall} == "pf" ]; then
 		if [ ! -c /dev/pf ]; then
 			atf_skip "This test requires pf"
 		fi
@@ -117,7 +107,7 @@ dummynet_init()
 	fi
 
 	case $firewall in
-	ipfw|pf)
+	pf)
 		# Nothing. This is okay.
 		;;
 	*)
@@ -128,17 +118,12 @@ dummynet_init()
 
 nat_init()
 {
-	firewall=$1
-	if [ ${firewall} == "ipfw" ]; then
-		if ! kldstat -q -m ipfw_nat; then
-			atf_skip "This test requires ipfw_nat"
-		fi
-	fi
+	:
 }
 
 is_firewall()
 {
-	if [ "$1" = "pf" -o "$1" = "ipfw" -o "$1" = "ipf" -o "$1" = "ipfnat" ]; then
+	if [ "$1" = "pf" -o "$1" = "ipf" -o "$1" = "ipfnat" ]; then
 		echo 1
 	else
 		echo 0

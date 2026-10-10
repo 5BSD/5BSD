@@ -505,12 +505,8 @@ _if_stf=	if_stf
 
 .if (${KERN_OPTS:MINET} && ${MK_INET_SUPPORT} != "no") || defined(ALL_MODULES)
 _if_me=		if_me
-.if ${MK_INET6_SUPPORT} != "no" || defined(ALL_MODULES)
-.endif
 .endif
 
-.if ${MK_INET6_SUPPORT} != "no" || defined(ALL_MODULES)
-.endif
 
 .if ${MK_IPFILTER} != "no" || defined(ALL_MODULES)
 _ipfilter=	ipfilter

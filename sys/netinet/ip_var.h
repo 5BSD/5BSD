@@ -263,32 +263,12 @@ VNET_DECLARE(struct pfil_head *, inet_local_pfil_head);
 void	in_delayed_cksum(struct mbuf *m);
 void	in_delayed_cksum_o(struct mbuf *m, uint16_t o);
 
-/* Hooks for ipfw, dummynet, divert etc. Most are declared in raw_ip.c */
+/* Shared Dummynet/divert packet handoff; control hooks are in raw_ip.c. */
 /*
- * Reference to an ipfw or packet filter rule that can be carried
- * outside critical sections.
- * A rule is identified by rulenum:rule_id which is ordered.
- * In version chain_id the rule can be found in slot 'slot', so
- * we don't need a lookup if chain_id == chain->id.
- *
- * On exit from the firewall this structure refers to the rule after
- * the matching one (slot points to the new rule; rulenum:rule_id-1
- * is the matching rule), and additional info (e.g. info often contains
- * the insn argument or tablearg in the low 16 bits, in host format).
- * On entry, the structure is valid if slot>0, and refers to the starting
- * rules. 'info' contains the reason for reinject, e.g. divert port,
- * divert direction, and so on.
- *
- * Packet Mark is an analogue to ipfw tags with O(1) lookup from mbuf while
- * regular tags require a single-linked list traversal. Mark is a 32-bit
- * number that can be looked up in a table [with 'number' table-type], matched
- * or compared with a number with optional mask applied before comparison.
- * Having generic nature, Mark can be used in a variety of needs.
- * For example, it could be used as a security group: mark will hold a
- * security group id and represent a group of packet flows that shares same
- * access control policy.
- * O_MASK opcode can match mark value bitwise so one can build a hierarchical
- * model designating different meanings for a bit range(s).
+ * Historical rule reference carried in packet tags. PF, Dummynet and divert
+ * use this metadata to preserve direction, reinjection and queue/port IDs.
+ * Keep the structure layout, tag cookies and info bits stable for consumers.
+ * The IPFW filtering engine is no longer present.
  */
 struct ipfw_rule_ref {
 /* struct m_tag spans 24 bytes above this point, see mbuf_tags(9) */

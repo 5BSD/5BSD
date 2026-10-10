@@ -1442,7 +1442,7 @@ static struct {
 	{ 1, "pfil_bridge" },
 	{ 1, "pfil_member" },
 	{ 1, "pfil_onlyip" },
-	{ 0, "ipfw" },
+	{ 0, "retired_layer2" },
 };
 
 int32_t
@@ -1462,8 +1462,15 @@ bridge_do_pfctl(int32_t bridge_ctl, enum snmp_op op, int32_t *val)
 	size_t len, s_len;
 	int32_t i, s_i;
 
-	if (bridge_ctl >= LEAF_begemotBridgeLayer2PfStatus)
+	if (bridge_ctl < 0 || bridge_ctl >= (int32_t)nitems(bridge_pf_sysctl))
 		return (-2);
+
+	if (bridge_ctl == LEAF_begemotBridgeLayer2PfStatus - 1) {
+		if (op == SNMP_OP_SET)
+			return (-2);
+		*val = 0;
+		return (0);
+	}
 
 	if (op == SNMP_OP_SET) {
 		s_i = *val;

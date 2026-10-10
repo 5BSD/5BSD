@@ -27,15 +27,7 @@ The following options in the kernel configuration file are related to
 .Nm
 operation:
 .Pp
-.Bl -tag -width ".Dv IPFIREWALL_VERBOSE_LIMIT" -offset indent -compact
-.It Dv IPFIREWALL
-enable ipfirewall (if
-.Nm
-is to be used with ipfw)
-.It Dv IPFIREWALL_VERBOSE
-enable firewall output
-.It Dv IPFIREWALL_VERBOSE_LIMIT
-limit firewall output
+.Bl -tag -width ".Dv DUMMYNET" -offset indent -compact
 .It Dv DUMMYNET
 enable
 .Nm
@@ -46,7 +38,7 @@ set the timer granularity
 .Pp
 Generally, the following options are required:
 .Bd -literal -offset indent
-options IPFIREWALL
+device pf
 options DUMMYNET
 options HZ=1000		# strongly recommended
 .Ed
@@ -61,7 +53,6 @@ pipes.
 .Xr ip 4 ,
 .Xr pf.conf 5 ,
 .Xr dnctl 8 ,
-.Xr ipfw 8 ,
 .Xr sysctl 8
 .Sh HISTORY
 The
@@ -75,6 +66,6 @@ as described on ACM Computer Communication Review, Jan.97 issue.
 Later it has been modified to work at the
 .Tn IP
 and bridging levels, integrated with the
-.Xr ipfw 4
+historical IPFW
 packet filter, and extended to
 support multiple queueing and scheduling policies.

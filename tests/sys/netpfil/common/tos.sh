@@ -58,8 +58,6 @@ tos_body()
 	firewall_config "iron" ${firewall} \
 		"pf" \
 			"scrub out proto icmp set-tos 36" \
-		"ipfw" \
-			"ipfw -q add 100 setdscp 9 ip from any to any"
 		# dscp is set to 9 because last two bits are for
 		# EN and hence tos would be 36
 
@@ -74,8 +72,6 @@ tos_body()
 	firewall_config "iron" ${firewall} \
 		"pf" \
 			"scrub out proto icmp set-tos 36" \
-		"ipfw" \
-			"ipfw -q add 100 setdscp 9 ip from any to any"
 
 	atf_check -s exit:0 $(atf_get_srcdir)/pft_ping.py \
 		--sendif ${epair_send}a \
@@ -89,8 +85,6 @@ tos_body()
 	firewall_config "iron" ${firewall} \
 		"pf" \
 			"block all tos 36" \
-		"ipfw" \
-			"ipfw -q add 100 deny all from any to any dscp 9"
 
 	atf_check -s exit:1 $(atf_get_srcdir)/pft_ping.py \
 		--sendif ${epair_send}a \
@@ -111,7 +105,4 @@ tos_cleanup()
 	firewall_cleanup $firewall
 }
 
-setup_tests \
-		"tos" \
-			"pf" \
-			"ipfw"
+setup_tests tos pf ipf

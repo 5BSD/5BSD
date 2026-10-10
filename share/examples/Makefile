@@ -15,7 +15,6 @@ LDIRS=	BSD_daemon \
 	flua \
 	indent \
 	inotify \
-	ipfw \
 	jails \
 	kld \
 	libvgl \
@@ -96,10 +95,6 @@ SE_INOTIFY=	inotify.c \
 .if ${MK_IPFILTER} != "no"
 SUBDIR+=	ipfilter
 .endif
-
-SE_DIRS+=	ipfw
-SE_IPFWPACKAGE=	ipfw
-SE_IPFW=	change_rules.sh
 
 SE_DIRS+=	jails
 SE_JAILPACKAGE=	jail

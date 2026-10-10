@@ -6,7 +6,7 @@
 #include <sys/socket.h>
 #include <net/if.h>
 #include <netinet/in.h>
-#include <netinet/ip_fw.h>
+#include <netinet/ip_dn_flow.h>
 #include <netinet/ip_dummynet.h>
 #include <ctype.h>
 #include <err.h>

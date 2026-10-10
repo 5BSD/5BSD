@@ -245,7 +245,6 @@ BADHDRS= \
 	netinet/ip6.h \
 	netinet/ip_carp.h \
 	netinet/ip_dummynet.h \
-	netinet/ip_fw.h \
 	netinet/ip_icmp.h \
 	netinet/ip_mroute.h \
 	netinet/ip_options.h \
@@ -274,8 +273,6 @@ BADHDRS= \
 	netinet6/ip6.h \
 	netinet6/ip6_mroute.h \
 	netinet6/ip6_var.h \
-	netinet6/ip_fw_nat64.h \
-	netinet6/ip_fw_nptv6.h \
 	netinet6/mld6.h \
 	netinet6/mld6_var.h \
 	netinet6/nd6.h \

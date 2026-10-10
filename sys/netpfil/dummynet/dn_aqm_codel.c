@@ -53,7 +53,7 @@
 #include <netinet/in.h>
 #include <netinet/ip.h>		/* ip_len, ip_off */
 #include <netinet/ip_var.h>	/* ip_output(), IP_FORWARDING */
-#include <netinet/ip_fw.h>
+#include <netinet/ip_dn_flow.h>
 #include <netinet/ip_dummynet.h>
 #include <netinet/if_ether.h> /* various ether_* routines */
 #include <netinet/ip6.h>       /* for ip6_input, ip6_output prototypes */

@@ -1092,11 +1092,11 @@ begemotBridgeLayer2PfStatus OBJECT-TYPE
 		    enabled(1),
 		    disabled(2)
 		}
-    MAX-ACCESS	read-write
-    STATUS	current
+    MAX-ACCESS	read-only
+    STATUS	deprecated
     DESCRIPTION
-	"This value indicates whether layer2 filtering by a
-	firewall package is enabled for bridge interfaces."
+	"Legacy IPFW bridge filtering status. IPFW is retired in 5BSD;
+	this object always reports disabled and cannot be changed."
     ::= { begemotBridgePf 4 }
 
 -- ---------------------------------------------------------- --

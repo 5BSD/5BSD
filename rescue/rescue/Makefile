@@ -118,10 +118,6 @@ CRUNCH_PROGS_sbin+= ipf
 CRUNCH_LIBS_ipf+=	${LIBIPF}
 .endif
 
-.if ${MK_IPFW} != "no"
-CRUNCH_PROGS_sbin+= ipfw
-.endif
-
 .if ${MK_PF} != "no"
 CRUNCH_PROGS_sbin+= pfctl
 CRUNCH_LIBS_pfctl+= ${LIBPFCTL} ${LIBNV}
