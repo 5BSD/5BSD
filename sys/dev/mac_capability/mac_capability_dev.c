@@ -1440,18 +1440,24 @@ call_done:
 			return (EOPNOTSUPP);
 		}
 
+		error = mac_capability_service_enter(svc);
+		if (error != 0)
+			return (error);
+
 		/* Run co_connect for authorization. */
 		badge = 0;
 		if (svc->csvc_ops->co_connect != NULL) {
 			error = svc->csvc_ops->co_connect(td->td_ucred,
 			    svc->csvc_arg, &badge);
 			if (error != 0) {
+				mac_capability_service_exit(svc);
 				mac_capability_probe_error(s, cmd, error, td);
 				return (error);
 			}
 		}
 
 		error = mac_capability_instance_create(svc, td, badge, &newfd);
+		mac_capability_service_exit(svc);
 		if (error != 0) {
 			mac_capability_probe_error(s, cmd, error, td);
 			return (error);

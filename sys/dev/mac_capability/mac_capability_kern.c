@@ -674,6 +674,10 @@ mac_capability_service_destroy(struct mac_capability_service *svc)
 	 */
 	sx_xlock(&mac_capability_registry_lock);
 	svc->csvc_flags |= MAC_CAPABILITY_SVCF_DESTROYING;
+	/* Include unlinked constructors, authorization, and failed rollback. */
+	while (svc->csvc_admissions != 0)
+		sx_sleep(&svc->csvc_admissions, &mac_capability_registry_lock,
+		    0, "capadmit", 0);
 	LIST_FOREACH(s, &svc->csvc_instances, ci_svc_link) {
 		mtx_lock(&s->ci_mtx);
 		if (!(s->ci_flags & MAC_CAPABILITY_SF_DEAD)) {

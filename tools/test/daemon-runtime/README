@@ -129,3 +129,12 @@ checks EIO and unchanged active
 instance counts, verifies revoke was not called for failed instances, then
 checks successful creation/close and module unload. Initialization rollback
 must publish cleanup completion even though it deliberately skips co_revoke.
+
+The --cleanup-lifecycle case
+    --atf-case tests/sys/mac_capability/mac_capability_test:unload_waits_for_admission
+blocks authorization and initialization while another process unloads the
+provider. It covers direct CONNECT and MINT_INSTANCE, success and failure
+returns (eight interleavings), verifies unload waits, checks rejected creation,
+rejects mint on descriptors retained after unload, and checks instance counts
+after rollback. This does not force every allocator
+failure or replace WITNESS/INVARIANTS stress testing.
