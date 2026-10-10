@@ -215,4 +215,8 @@ pn_destroy(PFS_DESTROY_ARGS)
 	return ((pn->pn_destroy)(PFS_DESTROY_ARGNAMES));
 }
 
+/* Initialize per-open vnode file operations at module load. */
+void pfs_vnops_init(void);
+int pfs_vnops_unload(void);
+
 #endif

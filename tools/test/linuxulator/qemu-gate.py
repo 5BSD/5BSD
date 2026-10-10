@@ -19,7 +19,10 @@ CASES = {
 UNSHARE_CASES = {"zero_preserves_sharing", "fs_detaches_only_paths_and_umask",
                  "invalid_flags", "rejection_preserves_sharing", "fs_unprivileged",
                  "fs_repeated", "fs_fork_exec_lifetime", "fs_root_lifetime",
-                 "fs_concurrent_shared_mutation", "bsd_rejected_flags", "bsd_thread_rejection"}
+                 "fs_concurrent_shared_mutation", "bsd_rejected_flags", "bsd_thread_rejection",
+                 "files_detaches_only_descriptors", "fs_files_detach_both",
+                 "files_preserves_open_description", "files_exec_detaches",
+                 "fs_exec_preserves_sharing", "bsd_epoll_rejection"}
 
 XSTATE_CASES = {'roundtrip', 'write_resume', 'lengths', 'invalid', 'init_state', 'faults', 'metadata'}
 PEER_CASES = {'inet4', 'inet6', 'local', 'pathname', 'state', 'faults', 'lifetime'}
@@ -58,9 +61,29 @@ PERF_CASES = {"basic_task_clock", "disabled_transitions", "read_formats",
               "fork_inheritance"}
 
 
+def artifact_errors(console, manifest):
+    """Verify the bounded artifact section emitted before guest execution."""
+    lines = console.replace('\r\n', '\n').splitlines()
+    begin, end = 'GATE_ARTIFACTS_BEGIN', 'GATE_ARTIFACTS_END'
+    if not manifest:
+        return ['empty artifact manifest']
+    if lines.count(begin) != 1 or lines.count(end) != 1:
+        return ['missing or duplicate artifact section']
+    first, last = lines.index(begin), lines.index(end)
+    if first >= last:
+        return ['artifact section reversed']
+    observed = lines[first + 1:last]
+    expected = [f'SHA256 ({path}) = {digest}' for path, digest in manifest.items()]
+    if len(observed) != len(expected) or set(observed) != set(expected):
+        return ['missing, duplicate, unexpected or mismatched artifact hashes']
+    return []
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--amd64-image', type=Path, required=True)
+    parser.add_argument('--amd64-manifest', type=Path,
+                        help='Expected path-to-SHA256 map in the bounded guest artifact section')
     parser.add_argument('--amd64-swap-image', type=Path, required=True,
                         help='Disposable second disk for the swapoff gate')
     parser.add_argument('--amd64-swap-image2', type=Path, required=True,
@@ -74,6 +97,14 @@ def main():
     parser.add_argument('--timeout', type=int, default=1800)
     parser.add_argument('--memory-mib', type=int, default=2048)
     args = parser.parse_args()
+    manifest = None
+    if args.amd64_manifest is not None:
+        manifest = json.loads(args.amd64_manifest.read_text())
+        if not isinstance(manifest, dict) or not manifest or any(
+                not isinstance(path, str) or not path.startswith('/') or
+                not isinstance(digest, str) or not re.fullmatch(r'[0-9a-f]{64}', digest)
+                for path, digest in manifest.items()):
+            parser.error('invalid amd64 artifact manifest')
     if args.memory_mib < 1024:
         parser.error('QEMU guests need at least 1024 MiB of memory')
     if args.amd64_swap_image.resolve() == args.amd64_image.resolve():
@@ -87,6 +118,9 @@ def main():
     # Refuse to overwrite evidence from an earlier run.
     args.output.mkdir(parents=True, exist_ok=False)
     results = {}
+    if manifest is not None:
+        (args.output / 'amd64-manifest.json').write_text(
+            json.dumps(manifest, indent=2) + '\n')
     guests = [('amd64', 'qemu-system-x86_64', args.amd64_image)]
     if args.arm64_image is not None:
         guests.append(('arm64', 'qemu-system-aarch64', args.arm64_image))
@@ -280,7 +314,13 @@ def main():
                 for name, entries in result_rows.items()
                 if any(row[-1] != '0' for row in entries)
             }
+            hash_errors = artifact_errors(text, manifest) if arch == 'amd64' and manifest is not None else []
+            record['artifact_errors'] = hash_errors
+            record['verified_artifacts'] = len(manifest) if arch == 'amd64' and manifest is not None and not hash_errors else 0
             record['passed'] = (
+                not hash_errors and
+                (arch != 'amd64' or ('All buffers synced.' in text and
+                                     'acpi0: Powering system off...' in text)) and
                 len(ptrace) == len(expected_ptrace) and set(ptrace) == expected_ptrace and
                 len(cookie) == len(expected_cookie) and set(cookie) == expected_cookie and
                 len(peer) == len(expected_peer) and set(peer) == expected_peer and

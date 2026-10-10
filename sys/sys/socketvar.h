@@ -466,6 +466,7 @@ struct socket_hhook_data {
 
 extern int	maxsockets;
 extern u_long	sb_max;
+extern u_long	sb_max_adj;
 extern so_gen_t so_gencnt;
 
 struct file;

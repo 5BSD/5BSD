@@ -6,15 +6,19 @@ PATH=/sbin:/bin:/usr/sbin:/usr/bin
 export PATH
 mount -uw /
 mount -t devfs devfs /dev 2>/dev/null || true
-kldload linux64
+kldstat -q -m linux64 || kldstat -q -n linux64.ko || kldload linux64
 kldstat -q -m nullfs || kldload nullfs
 kldstat -q -m tmpfs || kldload tmpfs
 mkdir -p /proc
 mount -t linprocfs linprocfs /proc
+echo MAPPING_BEGIN
+mount -p
+while IFS= read -r artifact; do sha256 "$artifact"; done < /root/mapping-artifacts
 before=$(sysctl -n vfs.inotify.watches)
 failed=0
 for fs in zfs tmpfs; do
  if [ "$fs" = tmpfs ]; then mount -t tmpfs tmpfs /tmp; fi
+ mount -p
  chmod 1777 /tmp
  for program in mapping-linux lifetime-linux; do
   cp "/root/$program" "/tmp/$program"

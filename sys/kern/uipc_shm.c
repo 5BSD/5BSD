@@ -561,7 +561,9 @@ shm_seek(struct file *fp, off_t offset, int whence, struct thread *td)
 		error = EINVAL;
 	}
 	if (error == 0) {
-		if (offset < 0 || offset > shmfd->shm_size)
+		/* Growable objects (including memfd) may seek before extending. */
+		if (offset < 0 || (offset > shmfd->shm_size &&
+		    (shmfd->shm_flags & SHM_GROW_ON_WRITE) == 0))
 			error = EINVAL;
 		else
 			td->td_uretoff.tdu_off = offset;

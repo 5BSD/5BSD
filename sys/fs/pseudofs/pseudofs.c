@@ -529,9 +529,13 @@ pfs_modevent(module_t mod, int evt, void *arg)
 {
 	switch (evt) {
 	case MOD_LOAD:
+		pfs_vnops_init();
 		pfs_vncache_load();
 		break;
 	case MOD_UNLOAD:
+		if (pfs_vnops_unload() != 0)
+			return (EBUSY);
+		/* FALLTHROUGH */
 	case MOD_SHUTDOWN:
 		pfs_vncache_unload();
 		break;

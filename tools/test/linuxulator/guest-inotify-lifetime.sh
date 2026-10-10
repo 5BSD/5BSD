@@ -16,6 +16,11 @@ if [ "${INOTIFY_TMPFS:-0}" = 1 ]; then
 fi
 mkdir -p /proc
 mount -t linprocfs linprocfs /proc
+# Native late-watch lookup must reach the held vnode after unlink.
+mkdir -p /inotify-fds
+mount -t fdescfs -o nodup fdesc /inotify-fds
+INOTIFY_FD_ROOT=/inotify-fds
+export INOTIFY_FD_ROOT
 for program in lifetime-linux lifetime-native; do
  cp "/root/$program" "/tmp/$program"
  chmod 755 "/tmp/$program"
@@ -53,6 +58,7 @@ for attempt in 1 2 3 4 5; do
 done
 echo LIFETIME_WATCHES "$before" "$after"
 [ "$before" = "$after" ]
+umount /inotify-fds
 zpool status -x
 echo LIFETIME_DONE
 exit "$failed"

@@ -675,6 +675,97 @@ test_unix(void)
 }
 
 static int
+truncated_option(int fd, int level, int option, int width)
+{
+	unsigned char full[32], value[32];
+	int len, capacity, copied, i;
+
+	len = sizeof(full);
+	if (getopt(fd, level, option, full, &len) != 0 || len != width)
+		return (1);
+	for (capacity = 0; capacity <= width + 8; capacity++) {
+		for (i = 0; i < (int)sizeof(value); i++)
+			value[i] = 0xcd;
+		len = capacity;
+		copied = capacity < width ? capacity : width;
+		if (getopt(fd, level, option, value, &len) != 0 || len != copied)
+			return (2);
+		for (i = 0; i < (int)sizeof(value); i++)
+			if (value[i] != (i < copied ? full[i] : 0xcd))
+				return (3);
+	}
+	return (0);
+}
+
+/*
+ * Starnix socket_test.cc GetsockoptTruncationTest at
+ * 8a938a3224e768f6254ee12d240b6492361ebccf, plus both send-timeout
+ * variants and SO_RCVTIMEO_NEW.
+ */
+static int
+test_truncation(void)
+{
+	struct sock_timeval tv = { 42, 123456 };
+	static const int options[] = { 1, 2, 2, 2, 20, 66, 21, 67 };
+	long fd;
+	int i, domain, type, level, option, width, error;
+
+	for (i = 0; i < (int)(sizeof(options) / sizeof(options[0])); i++) {
+		domain = i == 3 ? AF_UNIX : AF_INET;
+		type = i == 2 ? SOCK_DGRAM : SOCK_STREAM;
+		level = i == 0 ? SOL_TCP : SOL_SOCKET;
+		option = options[i];
+		width = i < 4 ? sizeof(int) : sizeof(tv);
+		fd = call(SYS_socket, domain, type, 0, 0, 0, 0);
+		if (fd < 0)
+			return (210 + i);
+		if (i < 4)
+			error = setint(fd, level, option, 1) != 0;
+		else
+			error = setopt(fd, level, option, &tv, sizeof(tv)) != 0;
+		if (!error)
+			error = truncated_option(fd, level, option, width);
+		(void)call(SYS_close, fd, 0, 0, 0, 0, 0);
+		if (error)
+			return (210 + i);
+	}
+	return (0);
+}
+
+/* Extend the Starnix length/canary method to translated fixed-size options. */
+static int
+test_translated_truncation(void)
+{
+	static const int options[] = { 4, 39, 13, 18 };
+	struct { int onoff, seconds; } linger = { 1, 7 };
+	long fd;
+	int i, level, width, error, failures = 0;
+
+	/* Failure bits: SO_ERROR, SO_DOMAIN, SO_LINGER, TCP_USER_TIMEOUT. */
+	for (i = 0; i < 4; i++) {
+		fd = call(SYS_socket, AF_INET, SOCK_STREAM, 0, 0, 0, 0);
+		if (fd < 0) {
+			failures |= 1 << i;
+			continue;
+		}
+		level = i == 3 ? SOL_TCP : SOL_SOCKET;
+		width = i == 2 ? sizeof(linger) : sizeof(int);
+		error = 0;
+		if (i == 2)
+			error = setopt(fd, level, options[i], &linger,
+			    sizeof(linger)) != 0;
+		if (i == 3)
+			error = setint(fd, level, options[i], 7000) != 0;
+		if (!error)
+			error = truncated_option(fd, level, options[i], width);
+		(void)call(SYS_close, fd, 0, 0, 0, 0, 0);
+		if (error)
+			failures |= 1 << i;
+	}
+	return (failures);
+}
+
+static int
 test(void)
 {
 	int r;
@@ -683,12 +774,17 @@ test(void)
 	if ((r = test_tcp()) != 0) return (r);
 	if ((r = test_ipv6()) != 0) return (r);
 	if ((r = test_unix()) != 0) return (r);
+	if ((r = test_truncation()) != 0) return (r);
 	return (0);
 }
 
 __attribute__((force_align_arg_pointer)) void
 _start(void)
 {
-	(void)call(SYS_exit, test(), 0, 0, 0, 0, 0);
+#ifndef SOCKOPT_TRANSLATED_ONLY
+#define SOCKOPT_TRANSLATED_ONLY 0
+#endif
+	(void)call(SYS_exit, SOCKOPT_TRANSLATED_ONLY ?
+	    test_translated_truncation() : test(), 0, 0, 0, 0, 0);
 	__builtin_unreachable();
 }

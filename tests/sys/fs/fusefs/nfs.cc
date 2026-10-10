@@ -38,6 +38,8 @@ extern "C" {
 #include <unistd.h>
 }
 
+#include <atomic>
+
 #include "mockfs.hh"
 #include "utils.hh"
 
@@ -215,6 +217,7 @@ TEST_F(Fhstat, cache_expired)
 	struct stat sb;
 	const uint64_t ino = 42;
 	const mode_t mode = S_IFDIR | 0755;
+	std::atomic<unsigned> lookups{0};
 
 	EXPECT_LOOKUP(FUSE_ROOT_ID, RELDIRPATH)
 	.WillOnce(Invoke(ReturnImmediate([=](auto in __unused, auto& out) {
@@ -225,11 +228,12 @@ TEST_F(Fhstat, cache_expired)
 		out.body.entry.generation = 1;
 		out.body.entry.attr.ino = ino;
 		out.body.entry.attr_valid = UINT64_MAX;
-		out.body.entry.entry_valid_nsec = NAP_NS / 2;
+		out.body.entry.entry_valid = 1;
 	})));
 
 	EXPECT_LOOKUP(ino, ".")
-	.WillOnce(Invoke(ReturnImmediate([=](auto in __unused, auto& out) {
+	.Times(AtLeast(1))
+	.WillRepeatedly(Invoke(ReturnImmediate([&](auto in __unused, auto& out) {
 		SET_OUT_HEADER_LEN(out, entry);
 		out.body.entry.attr.mode = mode;
 		out.body.entry.nodeid = ino;
@@ -237,18 +241,26 @@ TEST_F(Fhstat, cache_expired)
 		out.body.entry.generation = 1;
 		out.body.entry.attr.ino = ino;
 		out.body.entry.attr_valid = UINT64_MAX;
-		out.body.entry.entry_valid = 0;
+		out.body.entry.entry_valid = 1;
+		lookups++;
 	})));
 
 	ASSERT_EQ(0, getfh(FULLPATH, &fhp)) << strerror(errno);
 	ASSERT_EQ(0, fhstat(&fhp, &sb)) << strerror(errno);
 	EXPECT_EQ(ino, sb.st_ino);
 
-	nap();
+	/* Allow an early expiry during slow getfh/first fhstat execution.
+	 * The second fhstat must still refresh after the last one-second TTL.
+	 */
+	unsigned before = lookups.load();
+	unsigned remaining = 2;
+	while ((remaining = sleep(remaining)) != 0)
+		;
 
 	/* Cache should be expired; fuse should issue a FUSE_LOOKUP */
 	ASSERT_EQ(0, fhstat(&fhp, &sb)) << strerror(errno);
 	EXPECT_EQ(ino, sb.st_ino);
+	EXPECT_EQ(before + 1, lookups.load());
 }
 
 /*

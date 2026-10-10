@@ -61,6 +61,7 @@
 #include <net/if_types.h>
 
 #include <dev/evdev/input.h>
+#include <dev/evdev/uinput.h>
 #include <dev/hid/hidraw.h>
 #include <dev/iicbus/iic.h>
 #include <dev/usb/usb_ioctl.h>
@@ -116,6 +117,7 @@ DEFINE_LINUX_IOCTL_SET(v4l, VIDEO);
 DEFINE_LINUX_IOCTL_SET(v4l2, VIDEO2);
 DEFINE_LINUX_IOCTL_SET(fbsd_usb, FBSD_LUSB);
 DEFINE_LINUX_IOCTL_SET(evdev, EVDEV);
+DEFINE_LINUX_IOCTL_SET(uinput, UINPUT);
 DEFINE_LINUX_IOCTL_SET(kcov, KCOV);
 #ifndef COMPAT_LINUX32
 DEFINE_LINUX_IOCTL_SET(nvme, NVME);
@@ -3644,10 +3646,60 @@ static int
 linux_ioctl_evdev(struct thread *td, struct linux_ioctl_args *args)
 {
 	struct file *fp;
+	char *buffer;
 	clockid_t clock;
+	size_t len;
 	int error;
 
 	args->cmd = SETDIR(args->cmd);
+
+	/*
+	 * evdev string and bitmap queries return the number of bytes copied.
+	 * Strings include a terminator only when it fits.  sys_ioctl() rejects
+	 * zero lengths
+	 * and copies the entire encoded buffer size back to userspace.
+	 */
+	switch (IOCBASECMD(args->cmd)) {
+	case EVIOCGNAME(0):
+	case EVIOCGPHYS(0):
+	case EVIOCGUNIQ(0):
+	case EVIOCGPROP(0):
+	case EVIOCGKEY(0):
+	case EVIOCGLED(0):
+	case EVIOCGSND(0):
+	case EVIOCGSW(0):
+	case EVIOCGBIT(0, 0) ... EVIOCGBIT(EV_MAX, 0):
+		len = IOCPARM_LEN(args->cmd);
+		if (len > IOCPARM_MAX)
+			return (ENOTTY);
+		/* Native's unsupported force-feedback bitmap is all zeros. */
+		if (IOCBASECMD(args->cmd) == EVIOCGBIT(EV_FF, 0)) {
+			len = MIN(len, roundup2(FF_CNT, NBBY * sizeof(long)) /
+			    NBBY);
+			args->cmd = EVIOCGBIT(EV_FF, len);
+		}
+		buffer = malloc(MAX(len, 1), M_LINUX, M_WAITOK | M_ZERO);
+		error = kern_ioctl(td, args->fd, args->cmd, buffer);
+		if (error == 0 && len != 0) {
+			if (td->td_retval[0] < 0 ||
+			    (size_t)td->td_retval[0] > len)
+				error = EIO;
+			else {
+				/*
+				 * Native evdev supports SYN implicitly; Linux lists it.
+				 */
+				if (IOCBASECMD(args->cmd) == EVIOCGBIT(0, 0) &&
+				    td->td_retval[0] > 0)
+					buffer[0] |= 1U << EV_SYN;
+				error = copyout(buffer, PTRIN(args->arg),
+				    td->td_retval[0]);
+			}
+		}
+		free(buffer, M_LINUX);
+		return (error);
+	default:
+		break;
+	}
 
 	switch (args->cmd) {
 	case (EVIOCGRAB & ~IOC_DIRMASK) | IOC_IN:
@@ -3686,6 +3738,93 @@ linux_ioctl_evdev(struct thread *td, struct linux_ioctl_args *args)
 	    ((EVIOCGMTSLOTS(0) & ~IOC_DIRMASK) | IOC_OUT))
 		args->cmd = (args->cmd & ~IOC_DIRMASK) | IOC_INOUT;
 
+	return (sys_ioctl(td, (struct ioctl_args *)args));
+}
+
+/* Linux uses immediate arguments for _IOW uinput bit setters. */
+static int
+linux_ioctl_uinput(struct thread *td, struct linux_ioctl_args *args)
+{
+	struct uinput_setup setup;
+	struct uinput_abs_setup abs = { 0 };
+	char name[80] = { 0 };
+	int64_t range;
+	size_t len;
+	int error;
+
+	args->cmd = SETDIR(args->cmd);
+	if (IOCBASECMD(args->cmd) == IOCBASECMD(UI_ABS_SETUP)) {
+		/* Linux permits an older, shorter prefix of this structure. */
+		len = IOCPARM_LEN(args->cmd);
+		if (len > sizeof(abs))
+			return (E2BIG);
+		error = copyin(PTRIN(args->arg), &abs, len);
+		if (error != 0)
+			return (error);
+		if (abs.code > ABS_MAX)
+			return (ERANGE);
+		range = (int64_t)abs.absinfo.maximum - abs.absinfo.minimum;
+		if (range < 0 || (range <= INT_MAX && abs.absinfo.flat > range) ||
+		    (abs.code == ABS_MT_SLOT && abs.absinfo.maximum > 99))
+			return (EINVAL);
+		return (kern_ioctl(td, args->fd, UI_ABS_SETUP, (caddr_t)&abs));
+	}
+	if (IOCBASECMD(args->cmd) == UI_GET_SYSNAME(0)) {
+		/* Native returns an event node name; preserve Linux copy bounds. */
+		len = IOCPARM_LEN(args->cmd);
+		error = kern_ioctl(td, args->fd, UI_GET_SYSNAME(sizeof(name)), name);
+		if (error != 0)
+			return (error);
+		if (len == 0)
+			return (EINVAL);
+		len = MIN(len, strlen(name) + 1);
+		name[len - 1] = '\0';
+		error = copyout(name, PTRIN(args->arg), len);
+		if (error == 0)
+			td->td_retval[0] = len;
+		return (error);
+	}
+
+	switch (args->cmd) {
+	case UI_DEV_CREATE:
+	case UI_DEV_DESTROY:
+	case UI_GET_VERSION:
+		break;
+	case UI_DEV_SETUP:
+		error = copyin(PTRIN(args->arg), &setup, sizeof(setup));
+		if (error != 0)
+			return (error);
+		if (setup.ff_effects_max != 0)
+			return (EOPNOTSUPP);
+		return (kern_ioctl(td, args->fd, UI_DEV_SETUP, (caddr_t)&setup));
+	case _IOW('U', 100, int):
+		if (args->arg == EV_FF)
+			return (EOPNOTSUPP);
+		/* FALLTHROUGH */
+	case _IOW('U', 101, int):
+	case _IOW('U', 102, int):
+	case _IOW('U', 103, int):
+	case _IOW('U', 104, int):
+	case _IOW('U', 105, int):
+	case _IOW('U', 106, int):
+	case _IOW('U', 109, int):
+	case _IOW('U', 110, int):
+		if (args->arg > INT_MAX)
+			return (EINVAL);
+		args->cmd = (args->cmd & ~IOC_DIRMASK) | IOC_VOID;
+		break;
+	case _IOW('U', 108, l_uintptr_t):
+		args->cmd = UI_SET_PHYS;
+		break;
+	case _IOW('U', 107, int):
+	case UI_BEGIN_FF_UPLOAD:
+	case UI_END_FF_UPLOAD:
+	case UI_BEGIN_FF_ERASE:
+	case UI_END_FF_ERASE:
+		return (EOPNOTSUPP);
+	default:
+		return (EINVAL);
+	}
 	return (sys_ioctl(td, (struct ioctl_args *)args));
 }
 

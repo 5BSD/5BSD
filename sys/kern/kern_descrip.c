@@ -133,6 +133,9 @@ static void	export_file_to_kinfo(struct file *fp, int fd,
 		    cap_rights_t *rightsp, struct kinfo_file *kif,
 		    struct filedesc *fdp, int flags);
 static int	fd_first_free(struct filedesc *fdp, int low, int size);
+static struct filedesc *fdcopy_internal(struct filedesc *fdp,
+    struct proc *p1, bool isfork, bool reject_lossy);
+static void	fdescfree_fds(struct thread *td, struct filedesc *fdp);
 static void	fdgrowtable(struct filedesc *fdp, int nfd);
 static void	fdgrowtable_exp(struct filedesc *fdp, int nfd);
 static void	fdunused(struct filedesc *fdp, int fd);
@@ -2746,6 +2749,28 @@ fdunshare(struct thread *td)
 }
 
 /*
+ * Linux unshare must retain every descriptor and its open description.  The
+ * native fork copy path can omit or recreate descriptors, including kqueues
+ * that back Linux epoll.  Reject such tables during the source snapshot.
+ */
+int
+fdunshare_preserving(struct thread *td)
+{
+	struct filedesc *tmp;
+	struct proc *p;
+
+	p = td->td_proc;
+	if (refcount_load(&p->p_fd->fd_refcnt) == 1)
+		return (0);
+	tmp = fdcopy_internal(p->p_fd, p, false, true);
+	if (tmp == NULL)
+		return (EINVAL);
+	fdescfree(td);
+	p->p_fd = tmp;
+	return (0);
+}
+
+/*
  * Unshare a pwddesc structure.
  */
 void
@@ -2768,10 +2793,12 @@ pdunshare(struct thread *td)
  * Copy a filedesc structure.  A NULL pointer in returns a NULL reference,
  * this is to ease callers, not catch errors.  If isfork is true, consume
  * CAP_CLOFORK_ONCE states while constructing the child's table.  Internal
- * copies used to unshare a table must not consume a fork boundary.
+ * copies used to unshare a table must not consume a fork boundary.  A Linux
+ * unshare copy rejects entries that this native copy would omit or recreate.
  */
-struct filedesc *
-fdcopy(struct filedesc *fdp, struct proc *p1, bool isfork)
+static struct filedesc *
+fdcopy_internal(struct filedesc *fdp, struct proc *p1, bool isfork,
+    bool reject_lossy)
 {
 	struct filedesc *newfdp;
 	struct filedescent *nfde, *ofde;
@@ -2806,6 +2833,22 @@ fdcopy(struct filedesc *fdp, struct proc *p1, bool isfork)
 			FILEDESC_XLOCK(fdp);
 		else
 			FILEDESC_SLOCK(fdp);
+	}
+	if (reject_lossy) {
+		FILEDESC_FOREACH_FDE(fdp, i, ofde) {
+			const struct fileops *ops;
+
+			ops = ofde->fde_file->f_ops;
+			if ((ops->fo_flags & DFLAG_FORK) != 0 ||
+			    (ops->fo_flags & DFLAG_PASSABLE) == 0 ||
+			    (ofde->fde_flags & UF_FOCLOSE) != 0 ||
+			    ofde->fde_clofork_state == CAP_CLOFORK_LOCKED) {
+				FILEDESC_SUNLOCK(fdp);
+				(void)refcount_release(&newfdp->fd_refcnt);
+				fdescfree_fds(curthread, newfdp);
+				return (NULL);
+			}
+		}
 	}
 
 	/*
@@ -2902,6 +2945,12 @@ fdcopy(struct filedesc *fdp, struct proc *p1, bool isfork)
 		}
 	}
 	return (newfdp);
+}
+
+struct filedesc *
+fdcopy(struct filedesc *fdp, struct proc *p1, bool isfork)
+{
+	return (fdcopy_internal(fdp, p1, isfork, false));
 }
 
 /*

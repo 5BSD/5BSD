@@ -50,6 +50,10 @@
 #include <sys/timespec.h>
 #include <sys/user.h>
 
+#include <vm/vm.h>
+#include <vm/pmap.h>
+#include <vm/vm_map.h>
+
 #ifdef COMPAT_LINUX32
 #include <machine/../linux32/linux.h>
 #include <machine/../linux32/linux32_proto.h>
@@ -458,6 +462,9 @@ linux_epoll_wait_ts(struct thread *td, int epfd, struct epoll_event *events,
 					NULL};
 	cap_rights_t rights;
 	struct file *epfp;
+	vm_offset_t maxaddr;
+	uintptr_t addr;
+	size_t len;
 	int error;
 
 	if (maxevents <= 0 || maxevents > LINUX_MAX_EVENTS)
@@ -469,6 +476,17 @@ linux_epoll_wait_ts(struct thread *td, int epfd, struct epoll_event *events,
 		return (error);
 	if (epfp->f_type != DTYPE_KQUEUE) {
 		error = EINVAL;
+		goto leave;
+	}
+	/*
+	 * Linux rejects an obviously out-of-range result buffer before waiting,
+	 * even when no events are ready.  Keep actual page faults in copyout.
+	 */
+	addr = (uintptr_t)events;
+	len = (size_t)maxevents * sizeof(*events);
+	maxaddr = vm_map_max(&td->td_proc->p_vmspace->vm_map);
+	if (len > maxaddr || addr > maxaddr - len) {
+		error = EFAULT;
 		goto leave;
 	}
 	if (uset != NULL) {

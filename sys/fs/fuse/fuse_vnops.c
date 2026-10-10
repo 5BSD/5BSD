@@ -1429,10 +1429,32 @@ static int
 fuse_vnop_getattr(struct vop_getattr_args *ap)
 {
 	struct vnode *vp = ap->a_vp;
+	struct fuse_data *data = fuse_get_mpdata(vnode_mount(vp));
 	struct vattr *vap = ap->a_vap;
 	struct ucred *cred = ap->a_cred;
 	struct thread *td = curthread;
 	int err = 0;
+
+	/*
+	 * Mount event handlers can inspect the root before nmount returns.
+	 * The daemon may not service INIT until then, so waiting for it here
+	 * deadlocks the mount.  As with pre-INIT statfs, supply only local
+	 * bootstrap attributes.  Never cache these: after INIT the daemon
+	 * must provide the real root attributes.
+	 */
+	if (vnode_isvroot(vp) && !(data->dataflags & FSESS_INITED) &&
+	    !fdata_get_dead(data)) {
+		bzero(vap, sizeof(*vap));
+		vap->va_type = VDIR;
+		vap->va_mode = S_IRWXU;
+		vap->va_nlink = 1;
+		vap->va_uid = data->daemoncred->cr_uid;
+		vap->va_gid = data->daemoncred->cr_gid;
+		vap->va_fsid = vnode_mount(vp)->mnt_stat.f_fsid.val[0];
+		vap->va_fileid = FUSE_ROOT_ID;
+		vap->va_blocksize = PAGE_SIZE;
+		return (0);
+	}
 
 	err = fuse_internal_getattr(vp, vap, cred, td);
 	if (err == ENOTCONN && vnode_isvroot(vp)) {
@@ -2425,7 +2447,7 @@ fuse_vnop_rename(struct vop_rename_args *ap)
 		err = EXTERROR(EXDEV, "Cross-device rename");
 		goto out;
 	}
-	if (ap->a_flags != 0) {
+	if ((ap->a_flags & ~AT_RENAME_NOREPLACE) != 0) {
 		err = EOPNOTSUPP;
 		goto out;
 	}
@@ -2468,7 +2490,7 @@ fuse_vnop_rename(struct vop_rename_args *ap)
 		if (err)
 			goto unlock;
 	}
-	err = fuse_internal_rename(fdvp, fcnp, tdvp, tcnp);
+	err = fuse_internal_rename(fdvp, fcnp, tdvp, tcnp, ap->a_flags);
 	if (err == 0) {
 		vn_inotify_path_rename(fvp, fdvp, fcnp, tvp, tdvp, tcnp);
 		if (tdvp != fdvp)

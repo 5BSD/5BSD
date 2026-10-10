@@ -300,6 +300,7 @@ void	fdcloseexec(struct thread *td, struct ucred *newcred);
 void	fdsetugidsafety(struct thread *td);
 struct	filedesc *fdcopy(struct filedesc *fdp, struct proc *p1, bool isfork);
 void	fdunshare(struct thread *td);
+int	fdunshare_preserving(struct thread *td);
 void	fdescfree(struct thread *td);
 int	fdlastfile(struct filedesc *fdp);
 int	fdlastfile_single(struct filedesc *fdp);

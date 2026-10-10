@@ -67,6 +67,41 @@ virtual void SetUp() {
 }
 };
 
+class GetattrBeforeInit: public FuseTest {
+public:
+void SetUp() override {
+	m_no_auto_init = true;
+	FuseTest::SetUp();
+}
+};
+
+/* Mount hooks must not wait for a daemon that starts after nmount returns. */
+TEST_F(GetattrBeforeInit, root_attributes_are_not_cached)
+{
+	struct stat after;
+
+	/* SetUp completed nmount without replying to INIT. */
+
+	EXPECT_CALL(*m_mock, process(
+		ResultOf([](auto in) {
+			return in.header.opcode == FUSE_GETATTR &&
+			    in.header.nodeid == FUSE_ROOT_ID;
+		}, Eq(true)), _))
+	.WillOnce(Invoke(ReturnImmediate([](auto in __unused, auto& out) {
+		SET_OUT_HEADER_LEN(out, attr);
+		out.body.attr.attr.ino = FUSE_ROOT_ID;
+		out.body.attr.attr.mode = S_IFDIR | 0751;
+		out.body.attr.attr.nlink = 7;
+		out.body.attr.attr_valid = UINT64_MAX;
+	})));
+	m_mock->init(0);
+	m_mock->start_daemon();
+	ASSERT_EQ(0, stat("mountpoint", &after)) << strerror(errno);
+	EXPECT_EQ(static_cast<mode_t>(S_IFDIR | 0751), after.st_mode);
+	EXPECT_EQ(7u, after.st_nlink);
+	EXPECT_EQ(static_cast<ino_t>(FUSE_ROOT_ID), after.st_ino);
+}
+
 /*
  * If getattr returns a non-zero cache timeout, then subsequent VOP_GETATTRs
  * should use the cached attributes, rather than query the daemon

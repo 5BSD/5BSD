@@ -33,10 +33,13 @@
  */
 
 extern "C" {
+#include <sys/event.h>
 #include <fcntl.h>
 #include <semaphore.h>
 #include <unistd.h>
 }
+
+#include <chrono>
 
 #include "mockfs.hh"
 #include "utils.hh"
@@ -107,6 +110,38 @@ static void* statter(void* arg) {
 	return ((void*)(intptr_t)stat(name, &sb));
 }
 
+/* Observe the blocked daemon's queue without consuming any request. */
+static bool
+wait_for_requests(MockFS &mock, intptr_t count)
+{
+	int fd = mock.dup_dev_fuse();
+	if (fd < 0)
+		return (false);
+	int observer = kqueue();
+	if (observer < 0) {
+		close(fd);
+		return (false);
+	}
+	bool ready = false;
+	auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+	do {
+		struct kevent change, event;
+		struct timespec zero = {};
+		EV_SET(&change, fd, EVFILT_READ, EV_ADD | EV_ONESHOT, 0, 0, 0);
+		int n = kevent(observer, &change, 1, &event, 1, &zero);
+		if (n < 0 || (n == 1 && (event.flags & (EV_ERROR | EV_EOF))))
+			break;
+		if (n == 1 && event.data >= count) {
+			ready = true;
+			break;
+		}
+		usleep(1000);
+	} while (std::chrono::steady_clock::now() < deadline);
+	close(observer);
+	close(fd);
+	return (ready);
+}
+
 /*
  * A kevent's data field should contain the number of operations available to
  * be immediately read.
@@ -146,6 +181,30 @@ TEST_F(Kqueue, data)
 		out.body.entry.attr.mode = S_IFREG | 0644;
 		out.body.entry.nodeid = baz_ino;
 	})));
+
+	/*
+	 * stat also loads the native MAC label.  Prime those GETXATTRs before
+	 * blocking the daemon; otherwise the two queued requests may be label
+	 * queries, with the GETATTRs arriving one at a time afterward.
+	 * Keep attribute TTL zero so the measured stats still issue GETATTR.
+	 */
+	EXPECT_CALL(*m_mock, process(
+		ResultOf([=](auto in) {
+			return (in.header.opcode == FUSE_GETATTR &&
+			    (in.header.nodeid == foo_ino ||
+			    in.header.nodeid == bar_ino || in.header.nodeid == baz_ino));
+		}, Eq(true)), _))
+	.Times(3)
+	.WillRepeatedly(Invoke(ReturnImmediate([](auto in, auto &out) {
+		SET_OUT_HEADER_LEN(out, attr);
+		out.body.attr.attr.ino = in.header.nodeid;
+		out.body.attr.attr.mode = S_IFREG | 0644;
+		out.body.attr.attr_valid = 0;
+	})));
+	struct stat prime;
+	ASSERT_EQ(0, stat("mountpoint/foo", &prime)) << strerror(errno);
+	ASSERT_EQ(0, stat("mountpoint/bar", &prime)) << strerror(errno);
+	ASSERT_EQ(0, stat("mountpoint/baz", &prime)) << strerror(errno);
 
 	EXPECT_CALL(*m_mock, process(
 		ResultOf([=](auto in) {
@@ -195,13 +254,7 @@ TEST_F(Kqueue, data)
 		out.header.len = sizeof(out.header);
 	})));
 
-	/* 
-	 * Create cached lookup entries for these files.  It seems that only
-	 * one thread at a time can be in VOP_LOOKUP for a given directory
-	 */
-	access("mountpoint/foo", F_OK);
-	access("mountpoint/bar", F_OK);
-	access("mountpoint/baz", F_OK);
+	/* Name entries and MAC labels are already cached by the priming stats. */
 	ASSERT_EQ(0, pthread_create(&th0, NULL, statter,
 		__DECONST(void*, "mountpoint/foo"))) << strerror(errno);
 	EXPECT_EQ(0, sem_wait(&sem0)) << strerror(errno);
@@ -210,8 +263,11 @@ TEST_F(Kqueue, data)
 	ASSERT_EQ(0, pthread_create(&th2, NULL, statter,
 		__DECONST(void*, "mountpoint/baz"))) << strerror(errno);
 
-	nap();		// Allow th1 and th2 to send their ops to the daemon
+	/* A fixed sleep cannot establish that both statters reached FUSE. */
+	bool queued = wait_for_requests(*m_mock, 2);
+	/* Always release the daemon, including on observer failure. */
 	EXPECT_EQ(0, sem_post(&sem1)) << strerror(errno);
+	EXPECT_TRUE(queued) << "Both GETATTR requests did not become pending";
 
 	pthread_join(th0, &th_ret);
 	ASSERT_EQ(-1, (intptr_t)th_ret);

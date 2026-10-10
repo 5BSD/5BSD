@@ -40,7 +40,7 @@ if [ "$(uname -m)" = amd64 ]; then
     mount -t tmpfs tmpfs /tmp/linuxulator-gate/unshare-tmpfs || exit 1
     for fs in zfs tmpfs; do
         for round in 1 2 3; do
-            for case in zero_preserves_sharing fs_detaches_only_paths_and_umask invalid_flags rejection_preserves_sharing fs_unprivileged fs_repeated fs_fork_exec_lifetime fs_root_lifetime fs_concurrent_shared_mutation bsd_rejected_flags bsd_thread_rejection; do
+            for case in zero_preserves_sharing fs_detaches_only_paths_and_umask files_detaches_only_descriptors fs_files_detach_both files_preserves_open_description invalid_flags rejection_preserves_sharing fs_unprivileged fs_repeated fs_fork_exec_lifetime files_exec_detaches fs_exec_preserves_sharing fs_root_lifetime fs_concurrent_shared_mutation bsd_rejected_flags bsd_thread_rejection bsd_epoll_rejection; do
                 (cd "/tmp/linuxulator-gate/unshare-$fs" && timeout 30 /root/linux_unshare "$case")
                 rc=$?
                 echo GATE_UNSHARE "$fs" "$round" "$case" "$rc"

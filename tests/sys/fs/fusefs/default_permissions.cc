@@ -195,7 +195,9 @@ void expect_getxattr(ProcessMockerT r)
 {
 	EXPECT_CALL(*m_mock, process(
 		ResultOf([=](auto in) {
-			return (in.header.opcode == FUSE_GETXATTR);
+			return in.header.opcode == FUSE_GETXATTR &&
+			    strcmp(reinterpret_cast<const char *>(
+			    &in.body.getxattr + 1), "user.foo") == 0;
 		}, Eq(true)),
 		_)
 	).WillOnce(Invoke(r));

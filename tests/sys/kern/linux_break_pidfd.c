@@ -4,7 +4,8 @@
  * cycles), pid reuse safety, pidfd_getfd racing the target closing the
  * descriptor, close() racing a poller, epoll fan-in of hundreds of
  * children with exactly-once exit events, mass SIGKILL through pidfds,
- * zombie/reaped state transitions, and waitid(P_PIDFD) races.  Exit
+ * zombie/reaped state transitions, waitid(P_PIDFD) races, and WNOHANG
+ * siginfo clearing.  Exit
  * status = failed check number.
  */
 #include "linux_test.h"
@@ -14,6 +15,7 @@
 #define	EPOLL_CTL_ADD	1
 #define	EPOLLIN		1
 #define	EPOLLET		(1u << 31)
+#define	PIDFD_NONBLOCK	000004000
 #define	NCHILD		200
 #define	CHURN		1500
 #define	SYS_epoll_ctl_	233
@@ -83,7 +85,7 @@ test(int argc, char **argv, char **envp)
 	struct pollfd pf;
 	struct epoll_event ev, evs[64];
 	long pids[NCHILD], pfds[NCHILD];
-	long pid, pidfd, r, i, n, seen;
+	long pid, pidfd, nbpidfd, r, i, n, seen;
 	int status;
 	unsigned char got[NCHILD];
 
@@ -256,8 +258,45 @@ test(int argc, char **argv, char **envp)
 			return (21);
 	}
 	(void)sys1(SYS_close, pidfd);
-	/* 22: nothing left behind. */
+	/*
+	 * 22-25: empty WNOHANG clears siginfo, but leaves rusage untouched.
+	 * Adapted from the Starnix pidfd_test.cc regression at Fuchsia commit
+	 * c6af7c1ef9a32cc236e98c31f37151b9e40e9540.
+	 */
+	pid = spawn(child_spin, (void *)30000);
+	if (pid <= 0) return (22);
+	pidfd = sys2(SYS_pidfd_open, pid, 0);
+	nbpidfd = sys2(SYS_pidfd_open, pid, PIDFD_NONBLOCK);
+	if (pidfd < 0 || nbpidfd < 0) return (22);
+	for (i = 0; i < 3; i++) {
+		long si[16];
+		long ru[32];
+		long which = i == 2 ? P_PID : P_PIDFD;
+		long id = i == 0 ? pidfd : i == 1 ? nbpidfd : pid;
+
+		xmemset(si, 0xff, sizeof(si));
+		xmemset(ru, 0xff, sizeof(ru));
+		if (sys5(SYS_waitid, which, id, si, WEXITED | WNOHANG, ru) != 0)
+			return (23);
+		/* Linux x86-64 siginfo_t: si_signo at 0, si_pid at 16. */
+		if (((int *)si)[0] != 0 || ((int *)si)[4] != 0)
+			return (24);
+		for (n = 0; n < 32; n++)
+			if (ru[n] != -1)
+				return (25);
+	}
+	if (sys4(SYS_pidfd_send_signal, pidfd, SIGKILL, 0, 0) != 0)
+		return (26);
+	{
+		long si[16];
+
+		if (sys5(SYS_waitid, P_PIDFD, pidfd, si, WEXITED, 0) != 0)
+			return (26);
+	}
+	(void)sys1(SYS_close, nbpidfd);
+	(void)sys1(SYS_close, pidfd);
+	/* 27: nothing left behind. */
 	if (sys4(SYS_wait4, -1, &status, WNOHANG | __WALL, 0) != -ECHILD)
-		return (22);
+		return (27);
 	return (0);
 }

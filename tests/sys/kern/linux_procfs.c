@@ -67,5 +67,34 @@ test(int argc __attribute__((unused)), char **argv __attribute__((unused)),
 		r = readfile(path, buf, sizeof(buf) - 1);
 		if (r < 4 || buf[0] != '0') { msgnum("pid cgroup ", r); return (4); }
 	}
+
+	/*
+	 * Starnix procfs_test.cc DynamicFileSeek/PastEnd: pseudo-dynamic
+	 * cmdline supports offset reads and EOF after a seek beyond its end.
+	 */
+	{
+		char full[256], tail[256], byte;
+		long fd, n, t;
+
+		xmemset(full, 0, sizeof(full));
+		n = readfile("/proc/self/cmdline", full, sizeof(full));
+		if (n <= 5 || n >= (long)sizeof(full))
+			return (5);
+		fd = sys3(SYS_open, "/proc/self/cmdline", 0, 0);
+		if (fd < 0)
+			return (5);
+		if (sys3(SYS_lseek, fd, 3, 0 /* SEEK_SET */) != 3)
+			return (5);
+		t = sys3(SYS_read, fd, tail, sizeof(tail));
+		if (t != n - 3)
+			return (5);
+		for (i = 0; i < t; i++)
+			if (tail[i] != full[i + 3])
+				return (5);
+		if (sys3(SYS_lseek, fd, n + 1, 0) != n + 1 ||
+		    sys3(SYS_read, fd, &byte, 1) != 0)
+			return (6);
+		(void)sys1(SYS_close, fd);
+	}
 	return (0);
 }

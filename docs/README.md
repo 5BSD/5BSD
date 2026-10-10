@@ -15,6 +15,7 @@ files beside it are the ones that are not prose.
 | `descriptor-addressing-ledger.md` | How every kernel control surface names its target, and which ambient forms still lack a descriptor form |
 | `bhyve-virtio-state-nested-architecture.md` | Device state, snapshot and nested virtualization |
 | `linuxulator-syscall-coverage.md` | The Linux syscall table, call by call |
+| `starnix-linuxulator-inventory.md` | Pinned Starnix comparison of Linux calls, options, backing subsystems and reusable tests |
 | `waspnest-completion-matrix.md` | Virtualization status, requirement by requirement |
 | `protected-authority-context.md` | Discovery and software authority |
 | `trusted-embedded-compute.md` | What 5BSD must modernize for trusted embedded compute |

@@ -63,6 +63,46 @@ ATF_TC_BODY(basic, tc)
 	close(fd);
 }
 
+ATF_TC_WITHOUT_HEAD(seek_past_eof);
+ATF_TC_BODY(seek_past_eof, tc)
+{
+	struct stat sb;
+	char byte;
+	int fd, alias, plain;
+
+	ATF_REQUIRE((fd = memfd_create("seek", MFD_ALLOW_SEALING)) != -1);
+	ATF_REQUIRE((alias = dup(fd)) != -1);
+	ATF_REQUIRE(lseek(fd, 4096, SEEK_SET) == 4096);
+	ATF_REQUIRE(lseek(alias, 16, SEEK_CUR) == 4112);
+	ATF_REQUIRE(lseek(fd, 1024, SEEK_END) == 1024);
+	ATF_REQUIRE(fstat(fd, &sb) == 0);
+	ATF_REQUIRE(sb.st_size == 0);
+	ATF_REQUIRE(read(alias, &byte, 1) == 0);
+	ATF_REQUIRE(lseek(fd, 0, SEEK_CUR) == 1024);
+	ATF_REQUIRE(write(fd, "x", 1) == 1);
+	ATF_REQUIRE(fstat(fd, &sb) == 0);
+	ATF_REQUIRE(sb.st_size == 1025);
+	ATF_REQUIRE(pread(fd, &byte, 1, 1023) == 1);
+	ATF_REQUIRE(byte == 0);
+	ATF_REQUIRE(pread(fd, &byte, 1, 1024) == 1);
+	ATF_REQUIRE(byte == 'x');
+	ATF_REQUIRE(fcntl(fd, F_ADD_SEALS, F_SEAL_GROW) == 0);
+	ATF_REQUIRE(lseek(fd, 8192, SEEK_SET) == 8192);
+	ATF_REQUIRE_ERRNO(EPERM, write(fd, "y", 1) == -1);
+	ATF_REQUIRE(lseek(alias, 0, SEEK_CUR) == 8192);
+	ATF_REQUIRE_ERRNO(EINVAL, lseek(fd, -1, SEEK_SET) == -1);
+	ATF_REQUIRE(lseek(alias, 0, SEEK_CUR) == 8192);
+	ATF_REQUIRE(fstat(fd, &sb) == 0);
+	ATF_REQUIRE(sb.st_size == 1025);
+	ATF_REQUIRE(close(alias) == 0);
+	ATF_REQUIRE(close(fd) == 0);
+
+	/* Fixed-size POSIX shared memory retains its existing seek bound. */
+	ATF_REQUIRE((plain = shm_open(SHM_ANON, O_RDWR, 0600)) != -1);
+	ATF_REQUIRE_ERRNO(EINVAL, lseek(plain, 1, SEEK_SET) == -1);
+	ATF_REQUIRE(close(plain) == 0);
+}
+
 ATF_TC_WITHOUT_HEAD(cloexec);
 ATF_TC_BODY(cloexec, tc)
 {
@@ -117,7 +157,7 @@ ATF_TC_BODY(write_seal, tc)
 
 	ATF_REQUIRE(mmap(0, BUF_SIZE, (PROT_READ | PROT_WRITE), MAP_SHARED,
 	    fd, 0) == MAP_FAILED);
-	ATF_REQUIRE(errno == EACCES);
+	ATF_REQUIRE(errno == EPERM);
 
 	close(fd);
 }
@@ -159,7 +199,7 @@ ATF_TC_BODY(mmap_write_seal, tc)
 	ATF_REQUIRE(munmap(paddr, BUF_SIZE) == 0);
 	ATF_REQUIRE(mmap(0, BUF_SIZE, (PROT_READ | PROT_WRITE), MAP_SHARED,
 	    fd, 0) == MAP_FAILED);
-	ATF_REQUIRE(errno == EACCES);
+	ATF_REQUIRE(errno == EPERM);
 
 	/* Make sure we can still map privately r/w or shared r/o. */
 	paddr = mmap(0, BUF_SIZE, (PROT_READ | PROT_WRITE), MAP_PRIVATE, fd, 0);
@@ -246,7 +286,7 @@ ATF_TC_BODY(dup_seals, tc)
 
 	ATF_REQUIRE(mmap(0, BUF_SIZE, (PROT_READ | PROT_WRITE), MAP_SHARED,
 	    fdx, 0) == MAP_FAILED);
-	ATF_REQUIRE(errno == EACCES);
+	ATF_REQUIRE(errno == EPERM);
 
 	close(fd);
 	close(fdx);
@@ -315,6 +355,7 @@ ATF_TP_ADD_TCS(tp)
 {
 
 	ATF_TP_ADD_TC(tp, basic);
+	ATF_TP_ADD_TC(tp, seek_past_eof);
 	ATF_TP_ADD_TC(tp, cloexec);
 	ATF_TP_ADD_TC(tp, disallowed_sealing);
 	ATF_TP_ADD_TC(tp, write_seal);

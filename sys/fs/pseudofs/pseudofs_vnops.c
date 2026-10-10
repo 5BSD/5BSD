@@ -37,6 +37,7 @@
 #include <sys/ctype.h>
 #include <sys/dirent.h>
 #include <sys/fcntl.h>
+#include <sys/file.h>
 #include <sys/limits.h>
 #include <sys/lock.h>
 #include <sys/malloc.h>
@@ -67,6 +68,79 @@
 	    ("%s(): VLNK vnode refers to non-link pfs_node", __func__))
 
 #define	PFS_MAXBUFSIZ		1024 * 1024
+
+/* Shared by dup/fork; independent opens have independent generated records. */
+struct pfs_snapshot {
+	struct sx lock;
+	struct sbuf *record;
+	off_t next_offset;
+};
+static struct fileops pfs_snapshotops;
+static volatile u_int pfs_snapshot_open;
+static MALLOC_DEFINE(M_PFSSNAPSHOT, "pfssnapshot", "pseudofs open records");
+
+static int
+pfs_snapshot_read(struct file *fp, struct uio *uio, struct ucred *cred,
+    int flags, struct thread *td)
+{
+	struct pfs_snapshot *snap = fp->f_data;
+	int error;
+
+	sx_xlock(&snap->lock);
+	error = vnops.fo_read(fp, uio, cred, flags, td);
+	sx_xunlock(&snap->lock);
+	return (error);
+}
+
+static int
+pfs_snapshot_seek(struct file *fp, off_t offset, int whence, struct thread *td)
+{
+	struct pfs_snapshot *snap = fp->f_data;
+	off_t previous;
+	int error;
+
+	sx_xlock(&snap->lock);
+	previous = fp->f_offset;
+	error = vnops.fo_seek(fp, offset, whence, td);
+	if (error == 0 && fp->f_offset != previous && snap->record != NULL) {
+		sbuf_delete(snap->record);
+		snap->record = NULL;
+	}
+	sx_xunlock(&snap->lock);
+	return (error);
+}
+
+static int
+pfs_snapshot_close(struct file *fp, struct thread *td)
+{
+	struct pfs_snapshot *snap = fp->f_data;
+	int error;
+
+	if (snap->record != NULL)
+		sbuf_delete(snap->record);
+	sx_destroy(&snap->lock);
+	free(snap, M_PFSSNAPSHOT);
+	fp->f_data = NULL;
+	error = vnops.fo_close(fp, td);
+	atomic_subtract_int(&pfs_snapshot_open, 1);
+	return (error);
+}
+
+/* A forced unmount can leave descriptors pointing at our fileops. */
+int
+pfs_vnops_unload(void)
+{
+	return (atomic_load_int(&pfs_snapshot_open) != 0 ? EBUSY : 0);
+}
+
+void
+pfs_vnops_init(void)
+{
+	pfs_snapshotops = vnops;
+	pfs_snapshotops.fo_read = pfs_snapshot_read;
+	pfs_snapshotops.fo_seek = pfs_snapshot_seek;
+	pfs_snapshotops.fo_close = pfs_snapshot_close;
+}
 
 /*
  * Returns the fileno, adjusted for target pid
@@ -733,6 +807,18 @@ pfs_open(struct vop_open_args *va)
 	if ((mode & O_SHLOCK) || (mode & O_EXLOCK))
 		PFS_RETURN (EOPNOTSUPP);
 
+	if ((pn->pn_flags & PFS_SNAPSHOT) != 0 && va->a_fp != NULL) {
+		struct pfs_snapshot *snap;
+
+		/* Streaming and process-dependent records need other lifetimes. */
+		if (vn->v_type != VREG || (pn->pn_flags &
+		    (PFS_WR | PFS_RAW | PFS_AUTODRAIN | PFS_PROCDEP)) != 0)
+			PFS_RETURN (EINVAL);
+		snap = malloc(sizeof(*snap), M_PFSSNAPSHOT, M_WAITOK | M_ZERO);
+		sx_init(&snap->lock, "pfs snapshot");
+		atomic_add_int(&pfs_snapshot_open, 1);
+		finit_vnode(va->a_fp, mode, snap, &pfs_snapshotops);
+	}
 	PFS_RETURN (0);
 }
 
@@ -795,6 +881,8 @@ pfs_read(struct vop_read_args *va)
 	int error, locked;
 	off_t buflen, buflim;
 	struct sbuf_seek_helper ssh;
+	struct vn_file_context *ctx;
+	struct pfs_snapshot *snap;
 
 	PFS_TRACE(("%s", pn->pn_name));
 	pfs_assert_not_owned(pn);
@@ -841,6 +929,49 @@ pfs_read(struct vop_read_args *va)
 	if (uio->uio_resid < 0 || uio->uio_offset < 0 ||
 	    uio->uio_resid >= OFF_MAX - uio->uio_offset) {
 		error = EINVAL;
+		goto ret;
+	}
+	ctx = vn_file_context_current();
+	if ((pn->pn_flags & PFS_SNAPSHOT) != 0 && ctx != NULL &&
+	    ctx->fp != NULL && ctx->fp->f_vnode == vn &&
+	    ctx->fp->f_ops == &pfs_snapshotops &&
+	    sx_xlocked(&((struct pfs_snapshot *)ctx->fp->f_data)->lock)) {
+		/*
+		 * Only file reads own this record.  A vnode-only kernel read
+		 * (for example copy_file_range) may inherit a file context
+		 * without passing through our serialized read wrapper.  Such
+		 * callers retain the ordinary fill path below.
+		 */
+		snap = ctx->fp->f_data;
+		if (uio->uio_resid == 0) {
+			error = 0;
+			goto ret;
+		}
+		/* Positional reads can move within the generated sequence too. */
+		if (snap->record != NULL &&
+		    uio->uio_offset != snap->next_offset) {
+			sbuf_delete(snap->record);
+			snap->record = NULL;
+		}
+		if (snap->record == NULL) {
+			sb = sbuf_new(NULL, NULL, PAGE_SIZE, 0);
+			if (sb == NULL) {
+				error = ENOMEM;
+				goto ret;
+			}
+			error = pn_fill(curthread, proc, pn, sb, uio,
+			    pvd->pvd_tid, pvd->pvd_cookie, pvd->pvd_fd);
+			if (error == 0)
+				error = sbuf_finish(sb);
+			if (error != 0) {
+				sbuf_delete(sb);
+				goto ret;
+			}
+			snap->record = sb;
+		}
+		error = uiomove_frombuf(sbuf_data(snap->record),
+		    sbuf_len(snap->record), uio);
+		snap->next_offset = uio->uio_offset;
 		goto ret;
 	}
 	buflen = uio->uio_offset + uio->uio_resid + 1;

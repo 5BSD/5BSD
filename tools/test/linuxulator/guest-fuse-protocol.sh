@@ -8,24 +8,29 @@ mount -uw /
 mount -t devfs devfs /dev 2>/dev/null || true
 chmod 1777 /tmp
 chmod 755 /root
-kldload fusefs
+kldload /boot/kernel/fusefs.ko
+echo FUSE_PROTOCOL_ARTIFACT kernel "$(sha256 -q "$(sysctl -n kern.bootfile)")"
+echo FUSE_PROTOCOL_ARTIFACT fusefs "$(sha256 -q /boot/kernel/fusefs.ko)"
 sysctl vfs.usermount=1
 sysctl vfs.aio.enable_unsafe=1
 chmod 666 /dev/fuse
 failed=0
-for name in access allow_other bad_server bmap cache copy_file_range create default_permissions default_permissions_privileged destroy dev_fuse_poll fallocate fifo flush forget fsync fsyncdir getattr interrupt io ioctl last_local_modify link locks lookup lseek mkdir mknod mount nfs notify open openfile opendir pre-init read readdir readlink release releasedir rename rmdir setattr statfs symlink unlink write xattr; do
+while IFS= read -r name; do
+ case "$name" in ''|*[!a-zA-Z0-9_-]*) exit 2 ;; esac
  mkdir -p /tmp/fuse-protocol/$name
  chmod 777 /tmp/fuse-protocol/$name
  cd /tmp/fuse-protocol/$name
  uid=0
  [ "$name" != default_permissions ] || uid=65534
  echo FUSE_PROTOCOL_BEGIN "$name"
+ echo FUSE_PROTOCOL_ARTIFACT "$name" "$(sha256 -q /root/fuse-tests/"$name")"
  rc=0
- timeout -k 5 180 /root/native-exec "$uid" /root/fuse-tests/"$name" || rc=$?
+ timeout -k 5 180 /root/native-exec "$uid" /root/fuse-tests/"$name" \
+  '--gtest_filter=*' --gtest_repeat=1 || rc=$?
  echo FUSE_PROTOCOL_END "$name" "$rc"
  [ "$rc" -eq 0 ] || failed=1
  cd /
-done
+done < /root/fuse-protocol.programs
 zpool sync linuxgate
 zpool status -x
 echo FUSE_PROTOCOL_DONE

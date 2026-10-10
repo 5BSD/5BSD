@@ -241,7 +241,8 @@ TEST_P(LastLocalModify, lookup)
 		SET_OUT_HEADER_LEN(out, entry);
 		out.body.entry.nodeid = ino;
 		out.body.entry.attr.size = oldsize;
-		out.body.entry.attr_valid_nsec = NAP_NS / 2;
+		/* The race is ordered by replies, not wall-clock expiry. */
+		out.body.entry.attr_valid = UINT64_MAX;
 		out.body.entry.attr.ino = ino;
 		out.body.entry.attr.mode = S_IFREG | 0644;
 	})));
@@ -400,7 +401,8 @@ TEST_P(LastLocalModify, vfs_vget)
 		SET_OUT_HEADER_LEN(out, entry);
 		out.body.entry.nodeid = ino;
 		out.body.entry.attr.size = oldsize;
-		out.body.entry.attr_valid_nsec = NAP_NS / 2;
+		/* The race is ordered by replies, not wall-clock expiry. */
+		out.body.entry.attr_valid = UINT64_MAX;
 		out.body.entry.attr.ino = ino;
 		out.body.entry.attr.mode = S_IFREG | 0644;
 	})));
@@ -421,7 +423,8 @@ TEST_P(LastLocalModify, vfs_vget)
 		SET_OUT_HEADER_LEN(out, entry);
 		out.body.entry.nodeid = ino;
 		out.body.entry.attr.size = oldsize;
-		out.body.entry.attr_valid_nsec = NAP_NS / 2;
+		/* The race is ordered by replies, not wall-clock expiry. */
+		out.body.entry.attr_valid = UINT64_MAX;
 		out.body.entry.attr.ino = ino;
 		out.body.entry.attr.mode = S_IFREG | 0644;
 	})));

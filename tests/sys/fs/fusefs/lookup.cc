@@ -123,6 +123,41 @@ TEST_F(Lookup, attr_cache)
 	EXPECT_EQ(0u, sb.st_flags);
 }
 
+/* Starnix fuse_test.cc LookupUpdatesExistingNodeAttributes, rewritten. */
+TEST_F(Lookup, second_name_refreshes_cached_inode)
+{
+	const uint64_t ino = 42;
+	struct stat sb;
+	int fd;
+
+	for (unsigned nlink = 1; nlink <= 2; nlink++) {
+		const char *name = nlink == 1 ? "first" : "second";
+		EXPECT_LOOKUP(FUSE_ROOT_ID, name)
+		.WillOnce(Invoke(ReturnImmediate([=](auto in __unused, auto& out) {
+			SET_OUT_HEADER_LEN(out, entry);
+			out.body.entry.nodeid = ino;
+			out.body.entry.entry_valid = UINT64_MAX;
+			out.body.entry.attr_valid = UINT64_MAX;
+			out.body.entry.attr.ino = ino;
+			out.body.entry.attr.mode = S_IFREG | 0644;
+			out.body.entry.attr.nlink = nlink;
+		})));
+	}
+	expect_open(ino, 0, 1);
+	/* Keep the first vnode alive while looking up the alias. */
+	fd = open("mountpoint/first", O_RDONLY);
+	ASSERT_GE(fd, 0) << strerror(errno);
+	leak(fd);
+	ASSERT_EQ(0, fstat(fd, &sb)) << strerror(errno);
+	EXPECT_EQ(1u, sb.st_nlink);
+	ASSERT_EQ(0, stat("mountpoint/second", &sb)) << strerror(errno);
+	EXPECT_EQ(ino, sb.st_ino);
+	EXPECT_EQ(2u, sb.st_nlink);
+	/* No GETATTR is expected: the alias lookup must refresh the cache. */
+	ASSERT_EQ(0, fstat(fd, &sb)) << strerror(errno);
+	EXPECT_EQ(2u, sb.st_nlink);
+}
+
 /*
  * If lookup returns a finite but non-zero cache timeout, then we should discard
  * the cached attributes and requery the daemon.

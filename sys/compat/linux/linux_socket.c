@@ -3504,6 +3504,37 @@ linux_shutdown(struct thread *td, struct linux_shutdown_args *args)
 	return (kern_shutdown(td, args->s, args->how));
 }
 
+static int
+linux_setsockopt_buffer(struct thread *td, struct linux_setsockopt_args *args)
+{
+	u_long ceiling, requested, minimum;
+	int error, value, name;
+
+	if (args->optlen < sizeof(value))
+		return (EINVAL);
+	error = copyin(PTRIN(args->optval), &value, sizeof(value));
+	if (error != 0)
+		return (error);
+	/* No Linux CAP_NET_ADMIN grant exists; capget reports an empty set. */
+	if (args->optname == LINUX_SO_SNDBUFFORCE ||
+	    args->optname == LINUX_SO_RCVBUFFORCE)
+		return (EPERM);
+	name = args->optname == LINUX_SO_SNDBUF ? SO_SNDBUF : SO_RCVBUF;
+	/*
+	 * Linux counts twice the requested space.  Reserve that space in the
+	 * native buffer as well, retaining sbreserve's per-user resource checks.
+	 * Use the native hard limit as our ceiling, with native packet-storage
+	 * minima (two packets for send, one for receive).  These tunable limits
+	 * need not equal a particular Linux kernel's skb sizes or sysctl values.
+	 */
+	ceiling = MIN(sb_max_adj, INT_MAX);
+	minimum = (MCLBYTES + MSIZE) * (name == SO_SNDBUF ? 2 : 1);
+	requested = MIN((u_int)value, ceiling / 2) * 2;
+	value = MIN(MAX(requested, minimum), ceiling);
+	return (kern_setsockopt(td, args->s, SOL_SOCKET, name, &value,
+	    UIO_SYSSPACE, sizeof(value)));
+}
+
 int
 linux_setsockopt(struct thread *td, struct linux_setsockopt_args *args)
 {
@@ -3529,6 +3560,11 @@ linux_setsockopt(struct thread *td, struct linux_setsockopt_args *args)
 	switch (level) {
 	case SOL_SOCKET:
 		switch (args->optname) {
+		case LINUX_SO_SNDBUF:
+		case LINUX_SO_RCVBUF:
+		case LINUX_SO_SNDBUFFORCE:
+		case LINUX_SO_RCVBUFFORCE:
+			return (linux_setsockopt_buffer(td, args));
 		case LINUX_SO_RCVTIMEO_NEW:
 			return (linux_setsockopt_sock_timeval(td, args,
 			    SO_RCVTIMEO));
@@ -3963,7 +3999,7 @@ linux_getsockopt_so_linger(struct thread *td,
 	if (error != 0)
 		return (error);
 	ling.l_onoff = ((ling.l_onoff & SO_LINGER) != 0);
-	return (linux_sockopt_copyout(td, &ling, len, args));
+	return (linux_sockopt_copyout_trunc(td, &ling, len, args));
 }
 
 int
@@ -3991,6 +4027,9 @@ linux_getsockopt(struct thread *td, struct linux_getsockopt_args *args)
 	switch (level) {
 	case SOL_SOCKET:
 		switch (args->optname) {
+		case LINUX_SO_SNDBUFFORCE:
+		case LINUX_SO_RCVBUFFORCE:
+			return (ENOPROTOOPT); /* Linux FORCE options are set-only. */
 #if defined(__amd64__) && !defined(COMPAT_LINUX32)
 		case LINUX_SO_COOKIE:
 			return (linux_getsockopt_cookie(td, args));
@@ -4051,7 +4090,7 @@ linux_getsockopt(struct thread *td, struct linux_getsockopt_args *args)
 				return (error);
 			linux_tv.tv_sec = tv.tv_sec;
 			linux_tv.tv_usec = tv.tv_usec;
-			return (linux_sockopt_copyout(td, &linux_tv,
+			return (linux_sockopt_copyout_trunc(td, &linux_tv,
 			    sizeof(linux_tv), args));
 			/* NOTREACHED */
 		case LOCAL_PEERCRED:
@@ -4070,7 +4109,7 @@ linux_getsockopt(struct thread *td, struct linux_getsockopt_args *args)
 			if (error != 0)
 				return (error);
 			newval = -bsd_to_linux_errno(newval);
-			return (linux_sockopt_copyout(td, &newval,
+			return (linux_sockopt_copyout_trunc(td, &newval,
 			    len, args));
 			/* NOTREACHED */
 		case SO_DOMAIN:
@@ -4082,7 +4121,7 @@ linux_getsockopt(struct thread *td, struct linux_getsockopt_args *args)
 			newval = bsd_to_linux_domain((sa_family_t)newval);
 			if (newval == AF_UNKNOWN)
 				return (ENOPROTOOPT);
-			return (linux_sockopt_copyout(td, &newval,
+			return (linux_sockopt_copyout_trunc(td, &newval,
 			    len, args));
 			/* NOTREACHED */
 		case SO_LINGER:
@@ -4164,7 +4203,7 @@ linux_getsockopt(struct thread *td, struct linux_getsockopt_args *args)
 
 			linux_timeout = bsd_to_linux_tcp_user_timeout(
 			    bsd_timeout);
-			return (linux_sockopt_copyout(td, &linux_timeout,
+			return (linux_sockopt_copyout_trunc(td, &linux_timeout,
 			    sizeof(linux_timeout), args));
 		default:
 			break;

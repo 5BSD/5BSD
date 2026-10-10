@@ -2,9 +2,9 @@
 atf_test_case break_pidfd
 break_pidfd_head()
 {
-	atf_set "descr" "Linux adversarial pidfd: churn, pid reuse, getfd races, epoll fan-in, mass kill"
+	atf_set "descr" "Linux adversarial pidfd: churn, reuse, getfd races, epoll, waitid WNOHANG"
 	atf_set "require.arch" "amd64"
-	atf_set "require.progs" "clang ld.lld"
+	atf_set "require.progs" "clang ld.lld brandelf"
 	atf_set "require.kmods" "linux64"
 	atf_set "require.user" "root"
 	atf_set "timeout" "300"
@@ -15,6 +15,7 @@ break_pidfd_body()
 	    -fuse-ld=lld -nostdlib -static -fno-stack-protector -fno-builtin \
 	    -O2 -Wall -Wextra -Werror -o break_pidfd \
 	    "$(atf_get_srcdir)/linux_break_pidfd.c"
+	atf_check -s exit:0 -o empty -e empty brandelf -t Linux break_pidfd
 	./break_pidfd 2>stderr.txt; rc=$?
 	cat stderr.txt >&2
 	[ $rc -eq 0 ] || atf_fail "exit status $rc"

@@ -1262,6 +1262,29 @@ vn_inotify_inactive(struct vnode *vp)
 }
 
 /*
+ * rmdir's lookup reference must not put the parent's Linux event ahead of
+ * the child's terminal events.  After converting watches to holds, a sole
+ * remaining reference belongs to this locked namespace operation.  An open
+ * directory, cwd, or other active reference still defers deletion to inactive.
+ * Regular files retain their existing open/mapped-object lifetime handling.
+ */
+static void
+inotify_unlinked_dir(struct vnode *vp)
+{
+	struct inotify_watch *watch, *tmp;
+
+	ASSERT_VOP_LOCKED(vp, __func__);
+	if (vp->v_type != VDIR || refcount_load(&vp->v_usecount) != 1)
+		return;
+	mtx_lock(&vp->v_pollinfo->vpi_lock);
+	TAILQ_FOREACH_SAFE(watch, &vp->v_pollinfo->vpi_inotify, vlink, tmp) {
+		if (watch->unlinked && watch->sc->linux_abi)
+			inotify_log_one(watch, NULL, 0, IN_DELETE_SELF, 0);
+	}
+	mtx_unlock(&vp->v_pollinfo->vpi_lock);
+}
+
+/*
  * An inotify event occurred on a watched vnode.
  */
 void
@@ -1321,6 +1344,7 @@ vn_inotify(struct vnode *vp, struct vnode *dvp, struct componentname *cnp,
 
 			if (selfevent == IN_DELETE_SELF) {
 				inotify_unlinked(vp);
+				inotify_unlinked_dir(vp);
 				selfevent = 0;
 			}
 			if ((selfevent & ~_IN_DIR_EVENTS) != 0 ||

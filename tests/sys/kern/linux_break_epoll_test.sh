@@ -2,9 +2,9 @@
 atf_test_case break_epoll
 break_epoll_head()
 {
-	atf_set "descr" "Linux adversarial epoll/eventfd/timerfd: ET exactness, ONESHOT, EXCLUSIVE, DEL races, CANCEL_ON_SET"
+	atf_set "descr" "Linux epoll/eventfd/timerfd: ET, ONESHOT, EXCLUSIVE, MOD data, alias, poll, DEL races, CANCEL_ON_SET"
 	atf_set "require.arch" "amd64"
-	atf_set "require.progs" "clang ld.lld"
+	atf_set "require.progs" "clang ld.lld brandelf"
 	atf_set "require.kmods" "linux64"
 	atf_set "require.user" "root"
 	atf_set "timeout" "300"
@@ -15,6 +15,7 @@ break_epoll_body()
 	    -fuse-ld=lld -nostdlib -static -fno-stack-protector -fno-builtin \
 	    -O2 -Wall -Wextra -Werror -o break_epoll \
 	    "$(atf_get_srcdir)/linux_break_epoll.c"
+	atf_check -s exit:0 -o empty -e empty brandelf -t Linux break_epoll
 	./break_epoll 2>stderr.txt; rc=$?
 	cat stderr.txt >&2
 	[ $rc -eq 0 ] || atf_fail "exit status $rc"
