@@ -1964,6 +1964,91 @@ ATF_TC_BODY(close_terminates_shielded_orphan, tc)
 	check_orphan_close(true);
 }
 
+ATF_TC(terminated_coalition_cannot_fork_escape);
+ATF_TC_HEAD(terminated_coalition_cannot_fork_escape, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "A child forked during coalition termination cannot run uncontained");
+	atf_tc_set_md_var(tc, "require.kmods",
+	    "mac_capability mac_capability_coalition");
+}
+ATF_TC_BODY(terminated_coalition_cannot_fork_escape, tc)
+{
+	struct coalition_set_signal_req req = {
+	    .op = COALITION_OP_SET_SIGNAL, .signal = 0 };
+	struct coalition_reply reply;
+	int cfd, pd, wstatus;
+	int32_t status;
+	pid_t child;
+
+	cfd = mac_capability_connect("coalition");
+	ATF_REQUIRE(cfd >= 0);
+	ATF_REQUIRE_EQ(0, coalition_call(cfd, &req, sizeof(req), NULL, 0,
+	    &reply, sizeof(reply)));
+	ATF_REQUIRE_EQ(0, reply.status);
+	ATF_REQUIRE_EQ(0, coalition_op(cfd, COALITION_OP_JOIN, &status));
+	ATF_REQUIRE_EQ(0, status);
+	/* Freeze membership without killing this test process. */
+	ATF_REQUIRE_EQ(0, coalition_op(cfd, COALITION_OP_TERMINATE, &status));
+	ATF_REQUIRE_EQ(0, status);
+	child = pdfork(&pd, PD_DAEMON);
+	ATF_REQUIRE(child >= 0);
+	if (child == 0)
+		_exit(42); /* Reaching user code would escape the frozen coalition. */
+	ATF_REQUIRE(wait_exit_bounded(child, &wstatus));
+	ATF_CHECK_MSG(WIFSIGNALED(wstatus), "child reached user code: status %d",
+	    wstatus);
+	if (WIFSIGNALED(wstatus))
+		ATF_CHECK_EQ(SIGKILL, WTERMSIG(wstatus));
+	close(pd);
+	close(cfd);
+}
+
+ATF_TC(member_limit_cannot_fork_escape);
+ATF_TC_HEAD(member_limit_cannot_fork_escape, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Member limit exhaustion cannot create an uncontained fork child");
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "require.kmods",
+	    "mac_capability mac_capability_coalition");
+}
+ATF_TC_BODY(member_limit_cannot_fork_escape, tc)
+{
+	unsigned original, members;
+	size_t size;
+	int cfd, pd, wstatus, restored;
+	int32_t status;
+	pid_t child;
+	const char *limit = "kern.mac_capability_coalition.max_members";
+
+	cfd = mac_capability_connect("coalition");
+	ATF_REQUIRE(cfd >= 0);
+	ATF_REQUIRE_EQ(0, coalition_op(cfd, COALITION_OP_JOIN, &status));
+	ATF_REQUIRE_EQ(0, status);
+	size = sizeof(original);
+	ATF_REQUIRE_EQ(0, sysctlbyname(limit, &original, &size, NULL, 0));
+	size = sizeof(members);
+	ATF_REQUIRE_EQ(0, sysctlbyname("kern.mac_capability_coalition.members",
+	    &members, &size, NULL, 0));
+	ATF_REQUIRE(members > 0);
+	ATF_REQUIRE_EQ(0, sysctlbyname(limit, NULL, NULL, &members, sizeof(members)));
+	child = pdfork(&pd, PD_DAEMON);
+	if (child == 0)
+		_exit(42);
+	/* Restore the system limit before any assertion or wait. */
+	restored = sysctlbyname(limit, NULL, NULL, &original, sizeof(original));
+	ATF_REQUIRE_EQ(0, restored);
+	ATF_REQUIRE(child >= 0);
+	ATF_REQUIRE(wait_exit_bounded(child, &wstatus));
+	ATF_CHECK_MSG(WIFSIGNALED(wstatus), "child escaped member limit: %d",
+	    wstatus);
+	if (WIFSIGNALED(wstatus))
+		ATF_CHECK_EQ(SIGKILL, WTERMSIG(wstatus));
+	close(pd);
+	close(cfd);
+}
+
 ATF_TC(refattach_confined_descriptors);
 ATF_TC_HEAD(refattach_confined_descriptors, tc)
 {
@@ -4149,6 +4234,8 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, close_terminates_live_member);
 	ATF_TP_ADD_TC(tp, close_terminates_orphan_descendant);
 	ATF_TP_ADD_TC(tp, close_terminates_shielded_orphan);
+	ATF_TP_ADD_TC(tp, terminated_coalition_cannot_fork_escape);
+	ATF_TP_ADD_TC(tp, member_limit_cannot_fork_escape);
 	ATF_TP_ADD_TC(tp, refattach_confined_descriptors);
 	ATF_TP_ADD_TC(tp, set_signal_zero_releases_joined);
 

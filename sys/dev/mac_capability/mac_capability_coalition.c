@@ -2037,7 +2037,7 @@ coalition_process_fork(void *arg __unused, struct proc *parent,
 		sx_xunlock(&co->co_sx);
 		uma_zfree(coalition_member_zone, ccm);
 		coalition_rel(co);
-		return;
+		goto reject_child;
 	}
 
 	/* Enforce member limits — refuse fork inheritance if exceeded */
@@ -2048,8 +2048,8 @@ coalition_process_fork(void *arg __unused, struct proc *parent,
 		SDT_PROBE3(mac_capability_coalition, , , deny, (uintptr_t)"fork-limit",
 		    ENOMEM, child->p_pid);
 		log(LOG_WARNING,
-		    "mac_capability_coalition: fork denied by member limit\n");
-		return;
+		    "mac_capability_coalition: fork child killed by member limit\n");
+		goto reject_child;
 	}
 
 	ccm->cm_data = child;
@@ -2072,6 +2072,18 @@ coalition_process_fork(void *arg __unused, struct proc *parent,
 	SDT_PROBE2(mac_capability_coalition, , , fork__inherit,
 	    parent->p_pid, child->p_pid);
 	coalition_rel(co);
+	return;
+
+reject_child:
+	/*
+	 * process_fork runs after fork can no longer fail, before child execution.
+	 * Never return a live child outside its parent's containment.  Mark
+	 * it for the fork-return kill check as well as queuing SIGKILL.
+	 */
+	PROC_LOCK(child);
+	proc_wkilled(child);
+	kern_psignal(child, SIGKILL);
+	PROC_UNLOCK(child);
 }
 
 /* ----------------------------------------------------------------
