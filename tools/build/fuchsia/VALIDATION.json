@@ -640,7 +640,8 @@
   "license_review": {
     "date": "2026-10-10",
     "fuchsia": "BSD-2-Clause (LICENSE) plus PATENTS; ICU helper compiled into fidlc; go-cmp BSD-3 test-only; no copyleft or proprietary; every shipped/installed file has a header. Fixed: records said BSD-3; libfidl-tools now installs Fuchsia, ICU and Go runtime notices; bsd_names.go relicensed BSD-2-Clause (5BSD); local-changes list completed; libtimecmp drops BSD3CLAUSE.",
-    "openthread": "BSD-3 plus Mbed TLS Apache-2.0 (elected) OR GPL-2.0-or-later; no blocker; not committed: import .gitignore drops DartConfiguration.tcl and .gitattributes text=auto would rewrite 66 CRLF/binary mbedtls files.",
-    "connectedhomeip": "not committable as imported: CSA-licensed data_model (no redistribution), LG/Nest/Cypress/Silicon Labs/Nordic/ST vendor terms, unlicensed ESP32 ROM images; trim to the py_matter_idl test subset before committing."
-  }
+    "openthread": "BSD-3 plus Mbed TLS Apache-2.0 (elected) OR GPL-2.0-or-later, Everest Apache-2.0; no blocker. Committed with patches/openthread-vendor-git.patch (ignore anchoring, Mbed TLS -text) and AGENTS.md/.gemini excluded; 4,480 files stage byte-identical, 0 end-of-line rewrites.",
+    "connectedhomeip": "Committed as a subset (sources.json include list): py_matter_idl plus six test data files, LICENSE, NOTICE; 252 entries, all Apache-2.0. Excluded: CSA internal-use data_model, vendor confidential/chip-only files, unlicensed ESP32 ROM images. 120 IDL tests pass on the subset."
+  },
+  "source_reproduction_trimmed": "2026-10-10 import.py --patch into empty staging: fuchsia 5,028 identical to the committed tree; openthread 4,480; connectedhomeip 252 (subset)."
 }

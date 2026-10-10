@@ -955,13 +955,24 @@ Archive URL and SHA256: contrib/openthread/UPSTREAM.5BSD.json and
 Dependencies: Mbed TLS e185d7fd85499c8ce5ca2a54f5cf8fe7dbe3f8df and its
   framework 457996474728cb8e968ed21953b72f74d2f536b2, exactly matching the
   upstream gitlinks; URLs/checksums in third_party/mbedtls/*UPSTREAM.5BSD.json.
-License: LICENSE (BSD-3-Clause), subject to individual third-party notices,
-  including BSD TCP code in tcplp. Mbed TLS and framework retain their dual
-  Apache-2.0 OR GPL-2.0-or-later LICENSE; use the Apache-2.0 option here.
+License: LICENSE (BSD-3-Clause), subject to individual third-party notices:
+  tcplp BSD TCP code (UCB, FreeBSD Foundation, Juniper, WIDE; tcp_sack.c
+  carries the NRL notice with an advertising clause, as in sys/netinet);
+  third_party/jlink SEGGER RTT (BSD-3-style).  NOTICE is the Thread Group
+  certification and patent disclaimer.  Mbed TLS and framework retain their
+  dual Apache-2.0 OR GPL-2.0-or-later LICENSE; use the Apache-2.0 option
+  here.  Its 3rdparty/everest is Apache-2.0 only (INRIA/Microsoft) and one
+  configs/ext file is BSD-3-Clause (Arm).  No copyleft-only, proprietary or
+  non-commercial terms (license review 2026-10-10).  If ot-daemon or ot-ctl
+  ships, install LICENSE, NOTICE, the tcplp notices and the Apache-2.0 text.
 Local changes: BSD process-reset support, BSD libedit include spelling,
   and explicit IPv6 header. Native build selects libedit, enables required
   uptime support, and uses the unpruned crypto config. POSIX platform UDP
   is disabled pending interface-scoping support; OpenThread UDP is used.
+  Upstream AGENTS.md and .gemini/ (coding-agent instructions) are excluded
+  at import.  patches/openthread-vendor-git.patch anchors the top-level
+  DartConfiguration.tcl ignore and marks the vendored Mbed TLS subtree
+  -text, so the committed tree matches the pinned archives byte for byte.
 Integration: native simulation, CLI/NCP/radio targets and unit tests;
   POSIX daemon/ot-ctl build. No radio activation, installed service, world
   target, or package yet. Physical radio testing remains pending.
@@ -975,15 +986,20 @@ Upstream: https://github.com/project-chip/connectedhomeip.git
 Revision: d2a28e75da517d7aa5558244fcd2487c7239d02e
 Imported: 2026-10-09
 Archive URL and SHA256: UPSTREAM.5BSD.json and tools/build/fuchsia/sources.json.
-Scope: upstream source, tests, examples and tooling. The 79 gitlinks are
-  recorded in SUBMODULES.5BSD.json; submodules are not populated.
-License: LICENSE (Apache-2.0) and NOTICE retained, subject to file-specific
-  exceptions. third_party/inipp/repo/inipp/LICENSE.txt is MIT. The silabs
-  FreeRTOSConfig.h and bouffalolab bl602/bl702/bl702l FreeRTOSConfig.h
-  examples contain additional FreeRTOS/GPL-exception and Silicon Labs
-  notices; retained as upstream source and not built or installed here.
-  Do not describe the entire import as BSD or uniformly Apache-2.0.
-Local changes: provenance records only; native test runner is outside contrib.
+Scope: a subset: scripts/py_matter_idl (the Matter IDL tooling) and the
+  data files its tests read (four example .matter files,
+  controller-clusters.matter and zcl chip-types.xml), with LICENSE and
+  NOTICE.  The include list in tools/build/fuchsia/sources.json defines it.
+  The full archive is not imported because parts may not be redistributed:
+  data_model/ is CSA spec data licensed for internal use only, and some
+  vendor files (LG webOS, Nest lwIP, Cypress PSoC6, Silicon Labs MSLA,
+  Nordic-5-Clause, ST) and the ESP32 ROM images carry confidential,
+  chip-only or no license terms (license review 2026-10-10).
+License: LICENSE (Apache-2.0) and NOTICE (CSA rights and trademark notice)
+  retained; every imported file is Apache-2.0.  Re-review licenses before
+  widening the include list.
+Local changes: subset import and provenance records; the native test
+  runner is outside contrib.
 Integration: standalone Matter IDL tools tested with dependencies in an
   /usr/obj virtualenv, pinned in requirements-matter-tools.txt. The Matter
   device/controller platform and capability-service integration are unported.
@@ -1068,3 +1084,62 @@ PF consolidation source retirement (2026-10-10):
   with IPFW absent; the limiter alias test failed only its expected-name output
   assertion (native output contains numeric IDs). Numeric assertion corrected;
   full post-retirement VM qualification remains pending. No host changes.
+
+PF retirement cleanup follow-up (2026-10-10):
+  Removed obsolete IPFW/natd defaults from libexec/rc/rc.conf. Corrected the
+  preserved shaping manual examples to use dnctl. Removed unused firewall
+  parser tokens, options and declarations from dnctl's private header; no
+  shared kernel or public ABI layouts changed. Existing original notices
+  retained; these are local extractions/cleanup, with no new external import.
+  Recovery patches and hash-verified inputs are now durably retained under
+  /usr/obj/5BSD-pf-consolidation-20261010/removal-review.
+  Standalone dnctl rebuild and all three parser ATF cases pass after cleanup.
+  Three build/removal contract tests pass. Post-removal GENERIC #13 builds
+  and runs the six PF packet cases successfully in a four-CPU networked VM.
+  Smoke4 retained as failed: source limiter output assertion mistook address
+  capacity for per-source limit; both alias/native comparisons passed. The
+  corrected assertion explicitly checks ID 2, capacity 128 and limit 3.
+  Smoke5 was not run: staging hit a read-only file and produced an unchanged
+  image. Smoke6 stages hash-verified replacements and is under qualification.
+  Remaining-consumer inventory broadened to match IPFW/IPFIREWALL/IPFilter/natd
+  without word boundaries (remaining-consumer-inventory.json). Matches include
+  preserved ABI names, historical records and unretired consumers; counts are
+  not counts of active firewall dependencies. Full world/upgrade gates remain.
+
+PF retirement VM gate result (2026-10-10):
+  Smoke6 passed all ten ATF cases on post-removal GENERIC #13, four vCPUs,
+  restricted user-mode networking plus VNET packet tests. All 17 runtime
+  hashes matched; IPFW module load rejected; QEMU exit 0, buffers synced and
+  ZFS healthy. Evidence: /usr/obj/5BSD-pf-consolidation-20261010/smoke6-results.json
+  Log SHA256 dc352b60e9a3260caedecbecfda74598246f88c7039596dc4bdbcea10bebd647.
+  Five rc ordering comments also no longer require the removed IPFW service;
+  all five scripts pass shell syntax checks (not normal-boot qualification).
+  This is a selected-artifact VM gate, not clean-world/pkgbase/upgrade approval.
+  Remaining cleanup and full PF parity requirements are tracked in
+  docs/pf-consolidation-status.md and the Desktop kernel subsystem audit.
+
+IPFW consumer retirement: libalias and bridge (2026-10-10):
+  Local removal of native IPFW hole-punching implementation and helper calls
+  from sys/netinet/libalias, plus PPP's nat punch_fw command and documentation.
+  No upstream import. Copyright notices retained. Normal alias translation,
+  FTP/IRC/media helpers and kernel alias support remain. The historical 0x100
+  mode bit is rejected before any other mode changes; LibAliasSetFWBase is a
+  no-op compatibility symbol. NO_FW_PUNCH remains a consumer feature marker.
+  New test exercises rejection and mode atomicity using the old numeric bit.
+  Updated library/helpers, PPP and kernel alias modules build. Libalias suite:
+  22 passed, one existing expected failure, zero unexpected failures/skips.
+  Evidence: libalias-retirement-tests.db under the PF evidence root.
+  Removed bridge IPFW/ARP sysctls, their legacy L2 hook and manual entries.
+  Existing PF IP pfil member/bridge paths retained. New bridge_filter regression
+  exercises both paths with allow/block/ICMP rules, fresh ARP resolution and
+  absence of the retired sysctls. Full GENERIC rebuild/staging passed; smoke7
+  runs the extended eleven-case gate in a four-vCPU networked VM.
+  Reviewed recovery patches/inputs and exact source hashes are under
+  /usr/obj/5BSD-pf-consolidation-20261010. Full world/upgrade gates remain open.
+
+Bridge retirement VM result (2026-10-10):
+  Smoke7 passed all eleven cases, including bridge_filter; all 17 artifact
+  hashes matched, IPFW load rejected, clean QEMU exit 0 and healthy ZFS.
+  Log SHA256 cc799067072b1ec9b4b055088d55172e1d7ed4da779c8a84203035f920a82b1f.
+  Evidence: /usr/obj/5BSD-pf-consolidation-20261010/smoke7-results.json.
+  Remaining world/package/upgrade and full PF parity gates stay open.

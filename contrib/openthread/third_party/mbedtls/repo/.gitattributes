@@ -1,0 +1,4 @@
+# Classify all '.function' files as C for syntax highlighting purposes
+*.function linguist-language=C
+# 5BSD: vendored verbatim; no end-of-line conversion.
+* -text

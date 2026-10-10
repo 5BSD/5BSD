@@ -1,0 +1,11 @@
+{
+  "path": "openthread",
+  "url": "https://codeload.github.com/openthread/openthread/tar.gz/0542780e3ac117196b77a60abc1052e4c3cdad12",
+  "archive_sha256": "d2cbd4a083a5c44c5f046ed158b066eb16cf0ff18dc8d99b0d313f6725539814",
+  "repository": "https://github.com/openthread/openthread.git",
+  "commit": "0542780e3ac117196b77a60abc1052e4c3cdad12",
+  "submodules": {
+    "third_party/mbedtls/repo": "e185d7fd85499c8ce5ca2a54f5cf8fe7dbe3f8df",
+    "third_party/mbedtls/repo/framework": "457996474728cb8e968ed21953b72f74d2f536b2"
+  }
+}

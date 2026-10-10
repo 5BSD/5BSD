@@ -79,6 +79,11 @@ for entry in lock['sources']:
         (dest / path).parent.mkdir(parents=True, exist_ok=True)
         (dest / path).write_bytes(source.read_bytes())
     else:
+        # Optional include/exclude lists keep or drop those paths and
+        # everything under them; the trim is part of the lock, so it
+        # reproduces.
+        include = [Path(i).parts for i in entry.get('include', [])]
+        exclude = [Path(i).parts for i in entry.get('exclude', [])]
         with tarfile.open(source) as archive:
             members = []
             for member in archive.getmembers():
@@ -87,6 +92,10 @@ for entry in lock['sources']:
                     raise RuntimeError('Unsafe archive path: ' + member.name)
                 parts = parts[entry.get('strip_components', 0):]
                 if not parts:
+                    continue
+                if include and not any(parts[:len(i)] == i for i in include):
+                    continue
+                if any(parts[:len(x)] == x for x in exclude):
                     continue
                 member.name = str(path.joinpath(*parts))
                 # Gitiles export timestamps vary and may be in the future.
