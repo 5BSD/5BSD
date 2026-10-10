@@ -22,7 +22,7 @@ denial and supervisor recovery of surviving protected workers remain full
 integration checks.
 
 exit_event_reap_errors injects an exit event during graceful shutdown and
-checks retry after EINTR, propagation of EIO, and acceptance of ECHILD. It
+checks retry after EINTR, propagation of EIO, and acceptance of ECHILD and ESRCH. It
 verifies list/count cleanup and actual FD closure without sending SIGKILL to
 a child whose exit event was observed. Kernel event delivery and real reap
 failure remain separate integration checks.

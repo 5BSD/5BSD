@@ -309,7 +309,7 @@ service_processes_stop(struct service_process **head)
 			result = pdwait(process->pd, &status,
 			    WEXITED | (error != 0 ? WNOHANG : 0), NULL, NULL);
 		} while (result == -1 && errno == EINTR);
-		if (result == -1 && errno != ECHILD && error == 0)
+		if (result == -1 && errno != ECHILD && errno != ESRCH && error == 0)
 			error = errno;
 		close(process->pd);
 		free(process);

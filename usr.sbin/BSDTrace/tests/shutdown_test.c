@@ -159,7 +159,7 @@ ATF_TC_BODY(exit_event_reap_errors, tc)
 {
 	struct trace_worker *head;
 	size_t count;
-	int errors[] = { 0, EIO, ECHILD };
+	int errors[] = { 0, EIO, ECHILD, ESRCH };
 	int pd;
 
 	for (size_t i = 0; i < nitems(errors); i++) {

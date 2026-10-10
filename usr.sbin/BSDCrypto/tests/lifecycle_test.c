@@ -37,6 +37,9 @@ ATF_TC_BODY(worker_cleanup, tc)
 		head = entry;
 		count++;
 	}
+	status = pdkill(descriptors[0], SIGKILL);
+	ATF_REQUIRE(status == 0 || errno == ESRCH);
+	ATF_REQUIRE(pdwait(descriptors[0], &status, WEXITED, NULL, NULL) != -1);
 	close(pipefd[1]);
 	ATF_REQUIRE_EQ(0, crypto_workers_stop(&head, &count));
 	ATF_CHECK_EQ(NULL, head);

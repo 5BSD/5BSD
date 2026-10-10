@@ -450,7 +450,7 @@ worker_remove(struct audit_worker **workers, struct audit_worker *worker,
 		result = pdwait(worker->pd, &status, WEXITED | WNOHANG,
 		    NULL, NULL);
 	} while (result == -1 && errno == EINTR);
-	error = result == -1 && errno != ECHILD ? errno : 0;
+	error = result == -1 && errno != ECHILD && errno != ESRCH ? errno : 0;
 	close(worker->pd);
 	free(worker);
 	if (*count != 0)
@@ -507,7 +507,7 @@ force:
 			result = pdwait(worker->pd, &status,
 			    WEXITED | (error != 0 ? WNOHANG : 0), NULL, NULL);
 		} while (result == -1 && errno == EINTR);
-		if (result == -1 && errno != ECHILD && error == 0)
+		if (result == -1 && errno != ECHILD && errno != ESRCH && error == 0)
 			error = errno;
 		close(worker->pd);
 		free(worker);

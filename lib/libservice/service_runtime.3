@@ -104,6 +104,8 @@ list access; the list must be acyclic and descriptors must not be duplicated.
 All children are signalled with SIGKILL before waiting for their exit.
 Interrupted waits are retried.
 Already-exited or already-reaped children are allowed.
+In particular, ESRCH from pdwait indicates an already-reaped process
+on this system; ECHILD is also tolerated.
 Every node is freed, every descriptor is closed, and the head is cleared,
 including on failure.
 An empty list succeeds; a NULL head pointer fails with EINVAL.
