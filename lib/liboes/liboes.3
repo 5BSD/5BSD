@@ -85,6 +85,12 @@ and
 .Va ef_meta_flags
 because path, credential, filesystem, and attribute data can be unavailable
 independently.
+.Pp
+Path mute and unmute helpers reject null or empty paths with
+.Er EINVAL
+and paths exceeding the ABI buffer with
+.Er ENAMETOOLONG .
+They never silently truncate a path or issue an ioctl for these invalid inputs.
 .Sh DESCRIPTOR OWNERSHIP
 .Fn oes_client_create_from_fd
 borrows a descriptor; destroying its wrapper leaves the descriptor open.

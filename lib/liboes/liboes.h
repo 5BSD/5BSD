@@ -219,6 +219,8 @@ int oes_unmute_process(oes_client_t *client, const oes_proc_token_t *token);
  *
  * type: OES_MUTE_PATH_LITERAL or OES_MUTE_PATH_PREFIX
  * This is target-object muting, not executable/source-process muting.
+ * All four path mute/unmute helpers reject NULL/empty paths with EINVAL and
+ * paths that do not fit the kernel ABI with ENAMETOOLONG, without truncation.
  */
 int oes_mute_path(oes_client_t *client, const char *path, uint32_t type);
 

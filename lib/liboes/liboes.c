@@ -594,6 +594,20 @@ oes_unmute_process(oes_client_t *client, const oes_proc_token_t *token)
 	return (ioctl(fd, OES_IOC_UNMUTE_PROCESS, &args));
 }
 
+static int
+oes_copy_mute_path(char *dst, size_t capacity, const char *path)
+{
+	size_t length;
+
+	if (path == NULL || path[0] == '\0')
+		return (errno = EINVAL, -1);
+	length = strnlen(path, capacity);
+	if (length == capacity)
+		return (errno = ENAMETOOLONG, -1);
+	memcpy(dst, path, length + 1);
+	return (0);
+}
+
 /*
  * oes_mute_path - Mute events by path
  */
@@ -608,8 +622,8 @@ oes_mute_path(oes_client_t *client, const char *path, uint32_t type)
 		return (-1);
 
 	memset(&args, 0, sizeof(args));
-	if (path != NULL)
-		strlcpy(args.emp_path, path, sizeof(args.emp_path));
+	if (oes_copy_mute_path(args.emp_path, sizeof(args.emp_path), path) == -1)
+		return (-1);
 	args.emp_type = type;
 	args.emp_flags = 0;
 
@@ -630,8 +644,8 @@ oes_unmute_path(oes_client_t *client, const char *path, uint32_t type)
 		return (-1);
 
 	memset(&args, 0, sizeof(args));
-	if (path != NULL)
-		strlcpy(args.emp_path, path, sizeof(args.emp_path));
+	if (oes_copy_mute_path(args.emp_path, sizeof(args.emp_path), path) == -1)
+		return (-1);
 	args.emp_type = type;
 	args.emp_flags = 0;
 
@@ -652,8 +666,8 @@ oes_mute_target_path(oes_client_t *client, const char *path, uint32_t type)
 		return (-1);
 
 	memset(&args, 0, sizeof(args));
-	if (path != NULL)
-		strlcpy(args.emp_path, path, sizeof(args.emp_path));
+	if (oes_copy_mute_path(args.emp_path, sizeof(args.emp_path), path) == -1)
+		return (-1);
 	args.emp_type = type;
 	args.emp_flags = OES_MUTE_PATH_FLAG_TARGET;
 
@@ -674,8 +688,8 @@ oes_unmute_target_path(oes_client_t *client, const char *path, uint32_t type)
 		return (-1);
 
 	memset(&args, 0, sizeof(args));
-	if (path != NULL)
-		strlcpy(args.emp_path, path, sizeof(args.emp_path));
+	if (oes_copy_mute_path(args.emp_path, sizeof(args.emp_path), path) == -1)
+		return (-1);
 	args.emp_type = type;
 	args.emp_flags = OES_MUTE_PATH_FLAG_TARGET;
 
