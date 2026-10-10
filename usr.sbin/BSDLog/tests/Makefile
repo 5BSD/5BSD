@@ -20,6 +20,7 @@ LIBADD.session_test+=	logcmp shmring
 ATF_TESTS_C+=	store_test
 SRCS.store_test=	store_test.c store.c
 LIBADD.store_test+=	logcmp md
+LDFLAGS.store_test+= -Wl,--wrap=writev -Wl,--wrap=ftruncate -Wl,--wrap=lseek
 
 ATF_TESTS_C+=	store_limit_test
 SRCS.store_limit_test=	store_limit_test.c store_limit_impl.c

@@ -43,3 +43,8 @@ mediation of a real intermediate-directory alias to /dev/oes. It proves the
 alias resolves before mediation, is denied by the grant path, and an ordinary
 /dev/null grant remains usable. The shipped manifest parser test is separate;
 neither check substitutes for full SwitchBoard client admission.
+
+Use --log-store to run every static BSDLog store_test case, including partial
+write rollback, failed rollback admission, reopening recovery, privacy, scoped
+queries, reclamation and retention. Tests use real files with injected write
+and truncation errors; they do not qualify physical power-loss durability.

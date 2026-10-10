@@ -142,6 +142,14 @@ completed segment names if a crash occurred after rotating the old active
 segment or after creating an empty successor.  Incomplete trailing records in
 the active segment are truncated to the last checksummed boundary; corruption
 inside a complete record fails closed.
+.Sh WRITE FAILURE RECOVERY
+A failed record write rolls back to the end of the last complete record.
+The failed append returns its original error even when rollback succeeds.
+If truncation or file-position restoration fails, the store rejects further
+appends and flushes until it is closed and reopened for recovery.
+This prevents later records from being appended behind an incomplete record.
+A failed durability sync after a complete write does not undo that record;
+callers must not interpret a failed acknowledgement as proof of absence.
 .Sh SECURITY
 Workers cannot open files, sockets, or other sinks.
 They cannot fork or execute, and ring consumer descriptors cannot be

@@ -11,6 +11,7 @@ p.add_argument('--qemu-data',type=Path,required=True)
 p.add_argument('--kernconf',default='GENERIC-NODEBUG')
 p.add_argument('--client-ownership',action='store_true')
 p.add_argument('--oes-factory',action='store_true')
+p.add_argument('--log-store',action='store_true')
 p.add_argument('--timeout',type=int,default=240)
 a=p.parse_args()
 if a.timeout<=0: p.error('timeout must be positive')
@@ -68,6 +69,17 @@ if a.oes_factory:
  if digest(handoff)!=before or digest(stage/'tests/oes_handoff_test')!=before: p.error('handoff input changed')
  extra_hashes['oes_handoff_test']=before
  extra_cases.extend(('/tests/oes_handoff_test',case) for case in ['real_handoff','malformed_request','idle_timeout'])
+ (stage/'tests/extra-cases').write_text(''.join(program+' '+case+'\n' for program,case in extra_cases))
+if a.log_store:
+ source=obj/'usr.sbin/BSDLog/tests/store_test'
+ if 'statically linked' not in subprocess.check_output(['file',str(source)],text=True): p.error('log store test must be static')
+ before=digest(source);shutil.copyfile(source,stage/'tests/log_store_test')
+ if digest(source)!=before or digest(stage/'tests/log_store_test')!=before: p.error('log store input changed')
+ extra_hashes['log_store_test']=before
+ listing=subprocess.check_output([str(source),'-l'],text=True)
+ cases=[line.split(': ',1)[1] for line in listing.splitlines() if line.startswith('ident: ')]
+ if not cases: p.error('no log store cases')
+ extra_cases.extend(('/tests/log_store_test',case) for case in cases)
  (stage/'tests/extra-cases').write_text(''.join(program+' '+case+'\n' for program,case in extra_cases))
 (stage/'etc/passwd').write_text('root:*:0:0:Charlie &:/root:/bin/sh\n')
 (stage/'boot/loader.conf').write_text('console="comconsole"\nautoboot_delay="1"\ncapability_plane="NO"\ninit_path="/sbin/runtime-init"\nvfs.root.mountfrom="ufs:/dev/vtbd0p2"\nvfs.root.mountfrom.options="rw"\n')
