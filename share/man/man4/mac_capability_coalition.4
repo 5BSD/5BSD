@@ -209,6 +209,24 @@ revoke callback.
 This snapshot is not a replacement for those services' completion contracts.
 The control descriptor must remain usable; it cannot query after revocation,
 and this operation creates no separate wait descriptor or completion event.
+Use CLEANUP_WATCH before closing control to retain observation access.
+.It Dv COALITION_OP_CLEANUP_WATCH
+Create a read-only cleanup observation descriptor through CALL.
+The request is exactly a coalition_req_hdr with no attached descriptors;
+provide room for a coalition_reply and one returned descriptor.
+SENDMSG does not support this operation.
+The descriptor supports CLEANUP_STATUS through CALL and receives one
+coalition_cleanup_reply notification when tracked cleanup reaches COMPLETE,
+FAILED, or RELEASED.
+Register EVFILT_READ and receive it with RECVMSG.
+A view created after completion receives the notification immediately.
+The view holds coalition state without retaining control; closing control
+still starts cleanup.
+Closing or revoking the view only cancels observation.
+.Pp
+Direct connections to the coalition_wait service are denied.
+Views cannot mint, mutate coalition state, or be enlisted in any coalition.
+They retain the same completion scope and limitations as CLEANUP_STATUS.
 .It Dv COALITION_OP_STAT
 Query coalition membership and state.
 For processes that remain in this coalition, exit removes membership after

@@ -149,9 +149,17 @@ struct coalition_member {
 	char			cm_svc_name[MAC_CAPABILITY_MAXNAME]; /* mac_capability service name */
 };
 
+struct coalition_waiter {
+	LIST_ENTRY(coalition_waiter) cw_link;
+	struct coalition *cw_co;
+	struct mac_capability_instance *cw_instance;
+	bool cw_notified;
+};
+
 struct coalition {
 	struct sx		co_sx;
 	TAILQ_HEAD(, coalition_member) co_members;
+	LIST_HEAD(, coalition_waiter) co_waiters;
 	u_int			co_flags;
 	u_int			co_manual_grace_count;
 	int			co_signal;
@@ -199,6 +207,8 @@ struct coalition {
  * ---------------------------------------------------------------- */
 
 static struct mac_capability_service *coalition_svc;
+static struct mac_capability_service *coalition_wait_svc;
+static void coalition_notify_cleanup_locked(struct coalition *);
 
 static uma_zone_t coalition_zone;
 static uma_zone_t coalition_member_zone;
@@ -317,6 +327,7 @@ static void
 coalition_free(struct coalition *co)
 {
 
+	KASSERT(LIST_EMPTY(&co->co_waiters), ("coalition_free: waiters remain"));
 	KASSERT(TAILQ_EMPTY(&co->co_members),
 	    ("coalition_free: members not empty"));
 	KASSERT(co->co_pending_jails == 0,
@@ -363,6 +374,7 @@ coalition_alloc(void)
 	co = uma_zalloc(coalition_zone, M_WAITOK | M_ZERO);
 	sx_init_flags(&co->co_sx, "mac_capability_coalition", SX_DUPOK);
 	TAILQ_INIT(&co->co_members);
+	LIST_INIT(&co->co_waiters);
 	co->co_signal = SIGKILL;
 	co->co_nesting_depth = 0;
 	refcount_init(&co->co_refcount, 1);
@@ -435,6 +447,8 @@ coalition_notify_event(struct coalition *co, uint32_t flags)
 	struct coalition_event_msg ev;
 	int error;
 
+	if (co != NULL)
+		coalition_notify_cleanup_locked(co);
 	if (co == NULL || co->co_instance == NULL || flags == 0)
 		return;
 	sx_assert(&co->co_sx, SA_XLOCKED);
@@ -658,6 +672,7 @@ coalition_jail_cleanup_task_fn(void *context, int pending __unused)
 	sx_xlock(&co->co_sx);
 	KASSERT(co->co_pending_jails != 0, ("jail cleanup underflow"));
 	co->co_pending_jails--;
+	coalition_notify_cleanup_locked(co);
 	sx_xunlock(&co->co_sx);
 	coalition_rel(co);
 	free(cjo, M_COALITION);
@@ -1002,6 +1017,11 @@ coalition_enlist(struct coalition *co, struct thread *td, struct file *fp,
 	bool is_nested;
 
 	dtype = fp->f_type;
+	/* Observation must not create cleanup/reference cycles. */
+	if (dtype == DTYPE_MAC_CAPABILITY && fp->f_data != NULL &&
+	    ((struct mac_capability_instance *)fp->f_data)->ci_service ==
+	    coalition_wait_svc)
+		return (EOPNOTSUPP);
 	is_nested = coalition_is_nested(fp);
 
 	error = coalition_validate_member_rights(dtype, fcaps);
@@ -1496,6 +1516,111 @@ coalition_cleanup_status_locked(struct coalition *co,
 		reply->phase = COALITION_CLEANUP_COMPLETE;
 }
 
+/* co_sx stabilizes waiter instances against their revoke callback. */
+static void
+coalition_notify_cleanup_locked(struct coalition *co)
+{
+	struct coalition_cleanup_reply state;
+	struct coalition_waiter *cw;
+
+	sx_assert(&co->co_sx, SA_XLOCKED);
+	if (LIST_EMPTY(&co->co_waiters))
+		return;
+	coalition_cleanup_status_locked(co, &state);
+	if (state.phase == COALITION_CLEANUP_ACTIVE ||
+	    state.phase == COALITION_CLEANUP_DRAINING)
+		return;
+	LIST_FOREACH(cw, &co->co_waiters, cw_link) {
+		if (!cw->cw_notified && mac_capability_notify(cw->cw_instance,
+		    &state, sizeof(state), NULL, NULL, 0) == 0)
+			cw->cw_notified = true;
+	}
+}
+
+static int
+coalition_wait_connect(struct ucred *cred __unused, void *arg __unused,
+    uint64_t *badge __unused)
+{
+	return (EACCES);
+}
+
+static int
+coalition_wait_call(struct mac_capability_instance *s,
+    const void *req, size_t reqlen, struct file **fds __unused,
+    struct filecaps *fcaps __unused, int nfds, void *reply, size_t *replylenp,
+    struct file **reply_fds __unused, int *reply_nfdsp, void *arg __unused)
+{
+	struct coalition_waiter *cw = mac_capability_instance_get_priv(s);
+	const struct coalition_req_hdr *hdr = req;
+
+	*reply_nfdsp = 0;
+	if (cw == NULL)
+		return (EBADF);
+	if (reqlen != sizeof(*hdr) || nfds != 0)
+		return (EINVAL);
+	if (hdr->op != COALITION_OP_CLEANUP_STATUS)
+		return (EOPNOTSUPP);
+	if (*replylenp < sizeof(struct coalition_cleanup_reply)) {
+		*replylenp = sizeof(struct coalition_cleanup_reply);
+		return (EMSGSIZE);
+	}
+	sx_xlock(&cw->cw_co->co_sx);
+	coalition_cleanup_status_locked(cw->cw_co, reply);
+	sx_xunlock(&cw->cw_co->co_sx);
+	*replylenp = sizeof(struct coalition_cleanup_reply);
+	return (0);
+}
+
+static void
+coalition_wait_revoke(struct mac_capability_instance *s,
+    uint64_t badge __unused, enum mac_capability_revoke_reason reason __unused,
+    void *arg __unused)
+{
+	struct coalition_waiter *cw = mac_capability_instance_get_priv(s);
+	struct coalition *co;
+
+	if (cw == NULL)
+		return;
+	co = cw->cw_co;
+	sx_xlock(&co->co_sx);
+	LIST_REMOVE(cw, cw_link);
+	sx_xunlock(&co->co_sx);
+	mac_capability_instance_set_priv(s, NULL);
+	free(cw, M_COALITION);
+	coalition_rel(co);
+}
+
+static const struct mac_capability_ops coalition_wait_ops = {
+	.co_connect = coalition_wait_connect,
+	.co_call = coalition_wait_call,
+	.co_revoke = coalition_wait_revoke,
+};
+
+static int
+coalition_wait_create(struct coalition *co, struct file **fpp)
+{
+	struct coalition_waiter *cw;
+	struct file *fp;
+	int error;
+
+	cw = malloc(sizeof(*cw), M_COALITION, M_WAITOK | M_ZERO);
+	error = mac_capability_mint_fp(coalition_wait_svc, 0, &fp);
+	if (error != 0) {
+		free(cw, M_COALITION);
+		return (error);
+	}
+	cw->cw_co = co;
+	cw->cw_instance = fp->f_data;
+	coalition_ref(co);
+	mac_capability_instance_set_priv(cw->cw_instance, cw);
+	sx_xlock(&co->co_sx);
+	LIST_INSERT_HEAD(&co->co_waiters, cw, cw_link);
+	coalition_notify_cleanup_locked(co);
+	sx_xunlock(&co->co_sx);
+	*fpp = fp;
+	return (0);
+}
+
 static u_int
 coalition_count_live_procs_locked(struct coalition *co)
 {
@@ -1690,6 +1815,7 @@ coalition_dependency_task(void *arg, int pending __unused)
 		KASSERT(parent->co_pending_caps != 0, ("capability cleanup underflow"));
 		parent->co_pending_caps--;
 	}
+	coalition_notify_cleanup_locked(parent);
 	sx_xunlock(&parent->co_sx);
 	if (child != NULL)
 		coalition_rel(child);
@@ -1743,6 +1869,7 @@ coalition_terminate_external_members(struct coalition *co, struct thread *td, st
 	sx_xlock(&co->co_sx);
 	KASSERT(co->co_pending_external != 0, ("external cleanup underflow"));
 	co->co_pending_external--;
+	coalition_notify_cleanup_locked(co);
 	sx_xunlock(&co->co_sx);
 }
 
@@ -2703,6 +2830,7 @@ coalition_close_internal(struct coalition *co, struct thread *td)
 	sx_xlock(&co->co_sx);
 	KASSERT(co->co_pending_external != 0, ("close cleanup underflow"));
 	co->co_pending_external--;
+	coalition_notify_cleanup_locked(co);
 	sx_xunlock(&co->co_sx);
 
 	coalition_rel(co);
@@ -2902,7 +3030,7 @@ coalition_call(struct mac_capability_instance *s,
     const void *req, size_t reqlen,
     struct file **fds, struct filecaps *fcaps, int nfds,
     void *reply, size_t *replylenp,
-    struct file **reply_fds __unused, int *reply_nfdsp __unused,
+    struct file **reply_fds, int *reply_nfdsp,
     void *arg __unused)
 {
 	struct coalition *co;
@@ -2986,6 +3114,25 @@ coalition_call(struct mac_capability_instance *s,
 
 	case COALITION_OP_TERMINATE:
 		rpl->status = coalition_terminate(co);
+		break;
+
+	case COALITION_OP_CLEANUP_WATCH:
+		if (reqlen != sizeof(*hdr) || nfds != 0) {
+			rpl->status = EINVAL;
+			break;
+		}
+		if (reply_fds == NULL || reply_nfdsp == NULL) {
+			rpl->status = EOPNOTSUPP;
+			break;
+		}
+		if (*reply_nfdsp < 1) {
+			rpl->status = EMSGSIZE;
+			break;
+		}
+		*reply_nfdsp = 0;
+		rpl->status = coalition_wait_create(co, &reply_fds[0]);
+		if (rpl->status == 0)
+			*reply_nfdsp = 1;
 		break;
 
 	case COALITION_OP_CLEANUP_STATUS:
@@ -3650,14 +3797,24 @@ coalition_mod_init(void)
 	}
 
 	memset(&p, 0, sizeof(p));
+	p.name = "coalition_wait";
+	p.ops = &coalition_wait_ops;
+	p.flags = MAC_CAPABILITY_SVC_NOTIFY;
+	error = mac_capability_service_create(&p, &coalition_wait_svc);
+	if (error != 0)
+		goto fail_svc;
+
+	memset(&p, 0, sizeof(p));
 	p.name = "coalition";
 	p.ops = &coalition_ops;
 	p.flags = MAC_CAPABILITY_SVC_NOTIFY | MAC_CAPABILITY_SVC_MINTABLE |
 	    MAC_CAPABILITY_SVC_REFATTACH;
 
 	error = mac_capability_service_create(&p, &coalition_svc);
-	if (error != 0)
+	if (error != 0) {
+		mac_capability_service_destroy(coalition_wait_svc);
 		goto fail_svc;
+	}
 
 	mac_capability_proc_coalition_hook_set(coalition_proc_info);
 	log(LOG_INFO, "mac_capability_coalition: loaded\n");
@@ -3698,6 +3855,7 @@ coalition_modevent(module_t mod __unused, int type, void *arg __unused)
 
 		mac_capability_proc_coalition_hook_set(NULL);
 		mac_capability_service_destroy(coalition_svc);
+		mac_capability_service_destroy(coalition_wait_svc);
 		EVENTHANDLER_DEREGISTER(process_exit_resources, coalition_resources_tag);
 		EVENTHANDLER_DEREGISTER(process_exit, coalition_exit_tag);
 		EVENTHANDLER_DEREGISTER(process_fork, coalition_fork_tag);
