@@ -345,7 +345,6 @@ bsdpower_test_supported_states(void)
 }
 #endif /* BSDPOWER_TESTING */
 
-#ifndef BSDPOWER_TESTING
 static struct powercmp_config g_config;
 
 static int
@@ -455,6 +454,17 @@ sessions_run(struct service_provider *provider,
 	return (result);
 }
 
+#ifdef BSDPOWER_TESTING
+int
+bsdpower_test_serve_reactor(struct service_provider *provider,
+    struct service_listener *listener, const struct powercmp_config *config)
+{
+	if (config == NULL)
+		return (errno = EINVAL, -1);
+	g_config = *config;
+	return (sessions_run(provider, listener));
+}
+#else
 int
 main(void)
 {

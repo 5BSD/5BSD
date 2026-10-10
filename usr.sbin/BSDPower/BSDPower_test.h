@@ -9,6 +9,8 @@
 #include <stdint.h>
 
 struct powercmp_config;
+struct service_provider;
+struct service_listener;
 
 /*
  * Test-only entrypoints, compiled into BSDPower.c only under -DBSDPOWER_TESTING
@@ -23,5 +25,9 @@ int	bsdpower_test_serve_session(int fd, const char *label,
 void	bsdpower_test_set_states(uint32_t mask);
 void	bsdpower_test_set_acpi_fd(int fd);
 uint32_t bsdpower_test_supported_states(void);
+
+/* Production shared reactor; the fixture supplies listener/lifecycle calls. */
+int bsdpower_test_serve_reactor(struct service_provider *,
+    struct service_listener *, const struct powercmp_config *);
 
 #endif /* _BSDPOWER_TEST_H_ */

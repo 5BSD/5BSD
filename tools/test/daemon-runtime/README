@@ -72,3 +72,10 @@ records the source, private alias, enumerated cases and stable input hash in its
 provenance. Every selected case must pass; skips and missing results fail the
 run. Each case has the fixture's 40-second deadline. This does not replace full
 bundle activation, authority admission, production sandbox or hardware tests.
+
+The BSDPower reactor_test runs the production sessions_run loop with three
+real capability channels. Listener identity and quiesce controls are injected.
+It verifies two simultaneous inhibitors, per-owner disconnect cleanup, suspend
+blocking, idle quiesce refusal, and explicit stop cleanup while the server
+process remains alive. It never opens /dev/acpi. SwitchBoard admission and
+actual hardware transitions still need full-system acceptance.
