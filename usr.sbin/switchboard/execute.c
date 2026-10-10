@@ -2245,12 +2245,13 @@ fail_postfork:
 	svc_authority_revoke_unit(svc);
 	SWITCHBOARD_PROBE_SVC_EXEC_FAIL(m->label, saved_errno);
 	pdkill(pd_fd, SIGKILL);
-	waitpid(pid, NULL, WNOHANG);
-	close(pd_fd);
-	/* child_end/bootstrap_fd/token/service fds already closed. */
-	svc->pid = 0;
-	svc->pd_fd = -1;
+	/* Preserve coalition control while disposing of the launch context. */
+	svc->coalition_fd = L->coalition_fd;
+	L->coalition_fd = -1;
 	svc_launch_abort(svc, saved_errno, kq);
+	svc->pid = pid;
+	svc->pd_fd = pd_fd;
+	supervisor_cleanup_failed_launch(svc);
 }
 
 /*

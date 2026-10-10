@@ -79,7 +79,7 @@ svc_close_fds(struct svc_runtime *svc)
 		svc->have_protection_lease = false;
 	}
 
-	if (svc->pd_fd >= 0) {
+	if (svc->pd_fd >= 0 && !svc->cleanup.child_pending) {
 		close(svc->pd_fd);
 		svc->pd_fd = -1;
 	}
@@ -582,6 +582,12 @@ supervisor_cleanup_rebind(struct svc_runtime *svc, int kq)
 
 	if (!svc->cleanup.pending)
 		return (0);
+	if (svc->cleanup.child_pending && svc->pd_fd >= 0) {
+		EV_SET(&event, svc->pd_fd, EVFILT_PROCDESC, EV_ADD,
+		    NOTE_EXIT, 0, svc);
+		if (kevent(kq, &event, 1, NULL, 0, NULL) == -1)
+			error = errno;
+	}
 	if (svc->cleanup.fd >= 0) {
 		EV_SET(&event, svc->cleanup.fd, EVFILT_READ, EV_ADD, 0, 0, svc);
 		if (kevent(kq, &event, 1, NULL, 0, NULL) == -1)
@@ -629,11 +635,22 @@ supervisor_cleanup_progress(struct svc_runtime *svc)
 	struct capability_coalition_status state = { 0 };
 	int error;
 
-	if (svc->cleanup.fd < 0)
+	if (svc->cleanup.coalition_complete)
+		state.phase = CAPABILITY_COALITION_COMPLETE;
+	else if (svc->cleanup.fd < 0)
 		return (false);
-	if (capability_coalition_status(svc->cleanup.fd, &state) == -1)
+	if (!svc->cleanup.coalition_complete &&
+	    capability_coalition_status(svc->cleanup.fd, &state) == -1)
 		error = errno;
 	else if (state.phase == CAPABILITY_COALITION_COMPLETE) {
+		svc->cleanup.coalition_complete = true;
+		if (svc->cleanup.child_pending) {
+			/* Terminal notification is level-triggered; consume its fd. */
+			if (svc->cleanup.fd >= 0)
+				close(svc->cleanup.fd);
+			svc->cleanup.fd = -1;
+			return (false);
+		}
 		supervisor_cleanup_disarm(svc);
 		svc->cleanup.pending = false;
 		svc->cleanup.error = 0;
@@ -669,6 +686,7 @@ supervisor_begin_native_cleanup(struct svc_runtime *svc, int exit_status,
 
 	/* Zero uptime conservatively selects restart backoff on clock failure. */
 	error = clock_gettime(CLOCK_MONOTONIC, &now) == -1 ? errno : 0;
+	svc->cleanup.coalition_complete = false;
 	svc->cleanup.exit_status = exit_status;
 	svc->cleanup.was_stopping = was_stopping;
 	svc->cleanup.uptime_sec = error == 0 ?
@@ -701,11 +719,12 @@ supervisor_begin_native_cleanup(struct svc_runtime *svc, int exit_status,
 	(void)supervisor_cleanup_progress(svc);
 }
 
-/* The failed child must already be enlisted in svc->coalition_fd. */
+/* Keep the child descriptor until NOTE_EXIT, even if enlistment failed. */
 void
 supervisor_cleanup_failed_launch(struct svc_runtime *svc)
 {
 
+	svc->cleanup.child_pending = svc->pd_fd >= 0;
 	on_demand_provider_failed(svc, ECONNRESET, switchboard_kq);
 	on_demand_requester_gone(svc, switchboard_kq);
 	naming_remove_owner(svc);
@@ -721,8 +740,18 @@ supervisor_handle_procdesc(struct kevent *kev)
 	svc = kev->udata;
 
 	/* A queued exit may outlive the descriptor closed by launch rollback. */
-	if (svc->cleanup.pending)
+	if (svc->cleanup.pending) {
+		if (svc->cleanup.child_pending &&
+		    (int)kev->ident == svc->pd_fd && (kev->fflags & NOTE_EXIT)) {
+			/* Kernel emits NOTE_EXIT after process_exit_resources. */
+			(void)waitpid(svc->pid, NULL, WNOHANG);
+			close(svc->pd_fd);
+			svc->pd_fd = -1;
+			svc->cleanup.child_pending = false;
+			(void)supervisor_cleanup_progress(svc);
+		}
 		return;
+	}
 
 	if ((kev->fflags & NOTE_EXEC) &&
 	    svc->state == SVC_STATE_STARTING) {

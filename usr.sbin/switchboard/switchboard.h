@@ -191,7 +191,7 @@ struct svc_runtime {
 	int		coalition_fd;	/* coalition service instance */
 	struct {
 		int fd, exit_status, error;
-		bool pending, was_stopping;
+		bool pending, was_stopping, child_pending, coalition_complete;
 		time_t uptime_sec;
 		uintptr_t timer_ident;
 		struct timespec deadline;

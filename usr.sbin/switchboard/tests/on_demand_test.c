@@ -680,6 +680,66 @@ ATF_TC_BODY(cleanup_updated_intent, tc)
 	cleanup_mock = false;
 }
 
+ATF_TC(cleanup_unenlisted_child);
+ATF_TC_HEAD(cleanup_unenlisted_child, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "empty coalition cannot release runtime while an unenlisted child lives");
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_coalition");
+	atf_tc_set_md_var(tc, "timeout", "30");
+}
+ATF_TC_BODY(cleanup_unenlisted_child, tc)
+{
+	struct svc_runtime svc;
+	struct kevent event;
+	struct timespec zero = { 0 }, timeout = { .tv_sec = 5 };
+	int device, pd;
+	pid_t child;
+
+	(void)tc;
+	cleanup_mock = false;
+	child = pdfork(&pd, 0);
+	ATF_REQUIRE(child >= 0);
+	if (child == 0) {
+		for (;;)
+			pause();
+	}
+	device = open("/dev/mac_capability", O_RDWR | O_CLOEXEC);
+	ATF_REQUIRE(device >= 0);
+	idle_runtime_init(&svc, "org.test.cleanup.unenlisted");
+	svc.pid = child;
+	svc.pd_fd = pd;
+	svc.cleanup.fd = -1;
+	svc.coalition_fd = capability_service_connect(device, "coalition");
+	ATF_REQUIRE(svc.coalition_fd >= 0);
+	switchboard_kq = kqueue();
+	ATF_REQUIRE(switchboard_kq >= 0);
+	runtime_removals = 0;
+	supervisor_cleanup_failed_launch(&svc);
+	ATF_REQUIRE(svc.cleanup.pending);
+	ATF_REQUIRE(svc.cleanup.child_pending);
+	ATF_REQUIRE(svc.cleanup.coalition_complete);
+	ATF_CHECK_EQ(pd, svc.pd_fd);
+	ATF_CHECK_EQ(-1, svc.cleanup.fd);
+	ATF_CHECK_EQ(0, runtime_removals);
+	ATF_CHECK_EQ(0, kevent(switchboard_kq, NULL, 0, &event, 1, &zero));
+	ATF_REQUIRE_EQ(0, pdkill(pd, SIGKILL));
+	ATF_REQUIRE_EQ(1, kevent(switchboard_kq, NULL, 0, &event, 1, &timeout));
+	ATF_REQUIRE_EQ(EVFILT_PROCDESC, event.filter);
+	ATF_REQUIRE_EQ(pd, (int)event.ident);
+	ATF_REQUIRE((event.fflags & NOTE_EXIT) != 0);
+	supervisor_handle_procdesc(&event);
+	ATF_CHECK(!svc.cleanup.pending);
+	ATF_CHECK(!svc.cleanup.child_pending);
+	ATF_CHECK_EQ(-1, svc.pd_fd);
+	ATF_CHECK_EQ(1, runtime_removals);
+	ATF_CHECK_EQ(SVC_STATE_STOPPED, svc.state);
+	close(device);
+	close(switchboard_kq);
+	switchboard_kq = -1;
+}
+
 ATF_TC(cleanup_live_process);
 ATF_TC_HEAD(cleanup_live_process, tc)
 {
@@ -1445,6 +1505,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, cleanup_rebind_deadline);
 	ATF_TP_ADD_TC(tp, cleanup_live_outcomes);
 	ATF_TP_ADD_TC(tp, cleanup_live_process);
+	ATF_TP_ADD_TC(tp, cleanup_unenlisted_child);
 	ATF_TP_ADD_TC(tp, cleanup_updated_intent);
 	ATF_TP_ADD_TC(tp, handle_idle_protocol);
 	ATF_TP_ADD_TC(tp, handle_ready_ambient_promotion);
