@@ -207,7 +207,7 @@ mac_capability_msg_alloc_full(const void *data, size_t datalen,
 	KASSERT(nfds <= MAC_CAPABILITY_MAX_FDS,
 	    ("%s: nfds %d > MAC_CAPABILITY_MAX_FDS", __func__, nfds));
 
-	msg = uma_zalloc(mac_capability_msg_zone, M_WAITOK | M_ZERO);
+	msg = mac_capability_msg_get(datalen, fds != NULL ? nfds : 0);
 
 	if (datalen > 0 && data != NULL) {
 		memcpy(msg->cm_data, data, datalen);
@@ -221,22 +221,22 @@ mac_capability_msg_alloc_full(const void *data, size_t datalen,
 				    "<msg>", (uint64_t)0, "fhold-failed",
 				    i, nfds);
 				while (--i >= 0)
-					fdrop(msg->cm_fds[i], curthread);
+					fdrop(msg->cm_fdset->fds[i], curthread);
 				msg->cm_nfds = 0;
-				uma_zfree(mac_capability_msg_zone, msg);
+				mac_capability_msg_free(msg);
 				return (NULL);
 			}
-			msg->cm_fds[i] = fds[i];
+			msg->cm_fdset->fds[i] = fds[i];
 		}
 		msg->cm_nfds = nfds;
 
 		if (fcaps != NULL) {
 			for (i = 0; i < nfds; i++)
 				filecaps_copy(&fcaps[i],
-				    &msg->cm_fcaps[i], true);
+				    &msg->cm_fdset->fcaps[i], true);
 		}
 		if (xfer_state != NULL)
-			memcpy(msg->cm_xfer_state, xfer_state,
+			memcpy(msg->cm_fdset->xfer_state, xfer_state,
 			    nfds * sizeof(uint8_t));
 	}
 
@@ -269,7 +269,7 @@ mac_capability_auto_reply(struct mac_capability_instance *s, uint64_t reply_toke
 	uint32_t err32;
 	int tx_error;
 
-	msg = uma_zalloc(mac_capability_msg_zone, M_WAITOK | M_ZERO);
+	msg = mac_capability_msg_get(sizeof(err32), 0);
 	err32 = (uint32_t)(error != 0 ? error : EIO);
 	memcpy(msg->cm_data, &err32, sizeof(err32));
 	msg->cm_datalen = sizeof(err32);
@@ -814,7 +814,9 @@ mac_capability_forward(struct mac_capability_instance *s, const struct mac_capab
 		    s->ci_service->csvc_name, s->ci_badge, src->cm_datalen);
 
 	msg = mac_capability_msg_alloc_full(src->cm_data, src->cm_datalen,
-	    src->cm_fds, src->cm_fcaps, src->cm_xfer_state, src->cm_nfds,
+	    src->cm_nfds > 0 ? src->cm_fdset->fds : NULL,
+	    src->cm_nfds > 0 ? src->cm_fdset->fcaps : NULL,
+	    src->cm_nfds > 0 ? src->cm_fdset->xfer_state : NULL, src->cm_nfds,
 	    src->cm_badge, src->cm_reply_token, src->cm_cred, src->cm_abi);
 	if (msg == NULL)
 		return (src->cm_nfds > 0 ? EBADF : ENOMEM);
@@ -823,11 +825,11 @@ mac_capability_forward(struct mac_capability_instance *s, const struct mac_capab
 	msg->cm_authority = src->cm_authority;
 	cap_authority_retain(msg->cm_authority);
 	if (src->cm_nfds > 0) {
-		memcpy(msg->cm_fde_flags, src->cm_fde_flags,
-		    src->cm_nfds * sizeof(msg->cm_fde_flags[0]));
-		memcpy(msg->cm_cloexec_state, src->cm_cloexec_state,
+		memcpy(msg->cm_fdset->fde_flags, src->cm_fdset->fde_flags,
+		    src->cm_nfds * sizeof(msg->cm_fdset->fde_flags[0]));
+		memcpy(msg->cm_fdset->cloexec_state, src->cm_fdset->cloexec_state,
 		    src->cm_nfds * sizeof(uint8_t));
-		memcpy(msg->cm_clofork_state, src->cm_clofork_state,
+		memcpy(msg->cm_fdset->clofork_state, src->cm_fdset->clofork_state,
 		    src->cm_nfds * sizeof(uint8_t));
 	}
 
@@ -859,6 +861,19 @@ mac_capability_instance_hold(struct mac_capability_instance *s)
 {
 
 	refcount_acquire(&s->ci_refcnt);
+}
+
+/*
+ * Take a reference only if the instance is not already being torn down.
+ * A close drops the count to zero before co_revoke detaches the instance
+ * from its owner's structures, so a lookup through such a structure, made
+ * under the structure's lock, must not revive it.
+ */
+bool
+mac_capability_instance_tryhold(struct mac_capability_instance *s)
+{
+
+	return (refcount_acquire_if_not_zero(&s->ci_refcnt));
 }
 
 void
@@ -976,13 +991,17 @@ mac_capability_msg_datalen(const struct mac_capability_msg *msg)
 struct file **
 mac_capability_msg_fds(const struct mac_capability_msg *msg)
 {
-	return (__DECONST(struct file **, msg->cm_fds));
+	if (msg->cm_fdset == NULL)
+		return (NULL);
+	return (__DECONST(struct file **, msg->cm_fdset->fds));
 }
 
 struct filecaps *
 mac_capability_msg_fcaps(const struct mac_capability_msg *msg)
 {
-	return (__DECONST(struct filecaps *, msg->cm_fcaps));
+	if (msg->cm_fdset == NULL)
+		return (NULL);
+	return (__DECONST(struct filecaps *, msg->cm_fdset->fcaps));
 }
 
 int

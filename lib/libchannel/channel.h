@@ -7,6 +7,7 @@
 #ifndef _CHANNEL_H_
 #define _CHANNEL_H_
 
+#include <sys/cdefs.h>
 #include <sys/types.h>
 
 #include <stddef.h>
@@ -76,20 +77,68 @@ struct channel_sender {
 _Static_assert(sizeof(struct channel_sender) == 32,
     "channel_sender layout is shared with consumers; abi fits in tail padding");
 
+/*
+ * Optional expectation for one attached descriptor.  The kernel checks the
+ * type and rights of every descriptor before accepting the message and
+ * narrows only the delivered copy to the requested rights.  Without kernel
+ * support the library performs the same checks itself.
+ */
+#define	CHANNEL_FD_TYPE_ANY	0
+#define	CHANNEL_FD_TYPE_SOCKET	1
+#define	CHANNEL_FD_TYPE_CHANNEL	2	/* a channel endpoint */
+#define	CHANNEL_FD_TYPE_OTHER	3	/* channel_message_fd_info() only */
+#define	CHANNEL_FD_RIGHT_READ	0x00000001
+#define	CHANNEL_FD_RIGHT_WRITE	0x00000002
+#define	CHANNEL_FD_RIGHT_FSTAT	0x00000004	/* fd_info only */
+#define	CHANNEL_FD_RIGHTS_ALL	0x40000000	/* fd_info: unrestricted */
+#define	CHANNEL_FD_RIGHTS_EXACT	0x80000000	/* fd_info: no other rights */
+#define	CHANNEL_FD_LOCK_INHERIT	0x00000001	/* spec flag, see below */
+
+struct channel_fd_spec {
+	uint32_t	type;		/* CHANNEL_FD_TYPE_* */
+	uint32_t	rights;		/* CHANNEL_FD_RIGHT_READ|WRITE, 0: keep */
+	uint32_t	flags;		/* CHANNEL_FD_LOCK_INHERIT */
+	uint32_t	reserved;	/* must be 0 */
+};
+
+struct channel_fd_info {
+	uint32_t	type;		/* CHANNEL_FD_TYPE_* */
+	uint32_t	rights;		/* CHANNEL_FD_RIGHT* */
+};
+
+/*
+ * Outgoing flags.  CHANNEL_SEND_MOVE transfers ownership of the attached
+ * descriptors: once the message is accepted (sent or queued) they are
+ * closed for the caller; on failure they remain the caller's.
+ * CHANNEL_FD_LOCK_INHERIT (per descriptor) delivers it with close-on-exec
+ * and close-on-fork locked.  All descriptors, however many, are handled in
+ * the one send system call.
+ */
+#define	CHANNEL_SEND_MOVE		0x00000001
+/* CHANNEL_FD_LOCK_INHERIT for every attached descriptor. */
+#define	CHANNEL_SEND_LOCK_INHERIT	0x00000002
+
 struct channel_outgoing {
 	size_t		size;
 	const void	*data;
 	size_t		length;
 	const int	*fds;
 	size_t		nfds;
+	/* Read only when size covers them (libchannel 2). */
+	const struct channel_fd_spec *fd_specs;	/* NULL or nfds entries */
+	uint32_t	flags;			/* CHANNEL_SEND_* */
 };
+/* Callers built before fd_specs and flags existed pass this size. */
+#define	CHANNEL_OUTGOING_SIZE_V1	offsetof(struct channel_outgoing, fd_specs)
 
 #define	CHANNEL_OUTGOING_INITIALIZER(_data, _length) {	\
 	.size = sizeof(struct channel_outgoing),		\
 	.data = (_data),					\
 	.length = (_length),				\
 	.fds = NULL,					\
-	.nfds = 0					\
+	.nfds = 0,					\
+	.fd_specs = NULL,				\
+	.flags = 0					\
 }
 
 typedef void (*channel_reply_handler)(struct channel_request *,
@@ -104,6 +153,8 @@ typedef void (*channel_event_handler)(struct channel *,
  * close-on-fork/exec duplicate, whose number is returned by channel_fd();
  * the input descriptor remains owned by the caller on failure.
  */
+__BEGIN_DECLS
+
 int	channel_create(int, const struct channel_options *, struct channel **);
 void	channel_destroy(struct channel *);
 void	channel_abandon(struct channel *);
@@ -148,6 +199,10 @@ const struct cap_authority_stamp *
 size_t	channel_message_fd_count(const struct channel_message *);
 int	channel_message_borrow_fd(const struct channel_message *, size_t);
 int	channel_message_take_fd(struct channel_message *, size_t);
+/* Kernel-reported type and rights of an attached descriptor; -1 (ENOTSUP)
+ * when the kernel does not report them. */
+int	channel_message_fd_info(const struct channel_message *, size_t,
+	    struct channel_fd_info *);
 void	channel_message_free(struct channel_message *);
 
 /*
@@ -163,5 +218,7 @@ int	mac_capability_channel_create(int fds[2]);
 int	channel_request_cancel(struct channel_request *);
 int	channel_request_status(const struct channel_request *);
 void	channel_request_release(struct channel_request *);
+
+__END_DECLS
 
 #endif /* _CHANNEL_H_ */

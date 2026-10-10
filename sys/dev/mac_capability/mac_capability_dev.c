@@ -29,6 +29,7 @@
 #include <sys/filio.h>
 #include <sys/jail.h>
 #include <sys/kernel.h>
+#include <sys/limits.h>
 #include <sys/lock.h>
 #include <sys/malloc.h>
 #include <sys/mutex.h>
@@ -36,6 +37,7 @@
 #include <sys/proc.h>
 #include <sys/stat.h>
 #include <sys/syscallsubr.h>
+#include <sys/sysctl.h>
 #include <sys/sysent.h>
 #include <sys/taskqueue.h>
 #include <sys/ucred.h>
@@ -226,11 +228,228 @@ mac_capability_instance_enqueue_rx(struct mac_capability_instance *s,
 	return (0);
 }
 
+/*
+ * Direct delivery.  A service such as the channel bearer, whose handler only
+ * forwards each message unchanged to a peer, may name that peer so a send
+ * lands on the peer's TX queue in the sender's context: no taskqueue wakeup,
+ * no second message, payload copy or descriptor re-hold.  Anything unusual
+ * (earlier messages queued or in flight, peer dead or at its TX limit) uses
+ * the normal RX path, which keeps its ordering, retry and revoke semantics.
+ * Only one instance mutex is held at a time.
+ */
+SYSCTL_DECL(_kern_mac_capability);
+static int mac_capability_direct_delivery = 1;
+SYSCTL_INT(_kern_mac_capability, OID_AUTO, direct_delivery, CTLFLAG_RWTUN,
+    &mac_capability_direct_delivery, 0,
+    "Deliver forwarding-service messages directly to the peer queue");
+
+/*
+ * Bracket a service op called from a user thread.  co_revoke may free the
+ * op's private state, and revocation waits for in-flight work before firing
+ * it, so an op that runs only while counted in flight, and only before any
+ * revocation began, never sees freed state.
+ */
+static void
+mac_capability_op_exit(struct mac_capability_instance *s)
+{
+
+	mtx_lock(&s->ci_mtx);
+	if (--s->ci_inflight == 0)
+		wakeup(&s->ci_inflight);
+	mtx_unlock(&s->ci_mtx);
+}
+
+static bool
+mac_capability_op_enter_locked(struct mac_capability_instance *s)
+{
+
+	mtx_assert(&s->ci_mtx, MA_OWNED);
+	if (s->ci_flags & (MAC_CAPABILITY_SF_DEAD | MAC_CAPABILITY_SF_FINALIZED))
+		return (false);
+	s->ci_inflight++;
+	return (true);
+}
+
+static struct mac_capability_instance *
+mac_capability_direct_peer(struct mac_capability_instance *s)
+{
+	struct mac_capability_instance *peer;
+	struct mac_capability_service *svc;
+	bool idle;
+
+	svc = s->ci_service;
+	if (svc == NULL || svc->csvc_ops->co_direct_peer == NULL ||
+	    atomic_load_int(&mac_capability_direct_delivery) == 0)
+		return (NULL);
+	mtx_lock(&s->ci_mtx);
+	idle = STAILQ_EMPTY(&s->ci_rxq) && !s->ci_dispatching &&
+	    s->ci_inflight == 0 && mac_capability_op_enter_locked(s);
+	mtx_unlock(&s->ci_mtx);
+	if (!idle)
+		return (NULL);
+	peer = svc->csvc_ops->co_direct_peer(s, svc->csvc_arg);
+	mac_capability_op_exit(s);
+	return (peer);
+}
+
+/* The same acceptance test mac_capability_forward() applies (soft limit). */
+static bool
+mac_capability_direct_room(struct mac_capability_instance *peer)
+{
+
+	mtx_assert(&peer->ci_mtx, MA_OWNED);
+	return ((peer->ci_flags & MAC_CAPABILITY_SF_DEAD) == 0 &&
+	    peer->ci_service != NULL &&
+	    peer->ci_txqlen < (int)peer->ci_service->csvc_tx_limit);
+}
+
+static void
+mac_capability_direct_insert(struct mac_capability_instance *peer,
+    struct mac_capability_msg *msg)
+{
+
+	mtx_assert(&peer->ci_mtx, MA_OWNED);
+	STAILQ_INSERT_TAIL(&peer->ci_txq, msg, cm_link);
+	peer->ci_txqlen++;
+	KNOTE_LOCKED(&peer->ci_rknotes, 0);
+	wakeup(&peer->ci_txq);
+}
+
+/*
+ * Record per-descriptor transfer state and consume one-hop transfer
+ * authority.  Caller holds FILEDESC_XLOCK and the lock of the queue that is
+ * accepting the message, so authority is consumed only on acceptance.
+ */
+/* Classify a descriptor for SENDMSG_V2 expectations and RECVMSG_V4 info. */
+static uint32_t
+mac_capability_fd_type(struct file *fp)
+{
+	struct mac_capability_instance *other;
+
+	if (fp->f_type == DTYPE_SOCKET)
+		return (MAC_CAPABILITY_FD_TYPE_SOCKET);
+	if (fp->f_type == DTYPE_MAC_CAPABILITY &&
+	    fp->f_ops == &mac_capability_instance_ops &&
+	    (other = fp->f_data) != NULL && other->ci_service != NULL &&
+	    strcmp(other->ci_service->csvc_name, "channel") == 0)
+		return (MAC_CAPABILITY_FD_TYPE_CHANNEL);
+	return (MAC_CAPABILITY_FD_TYPE_OTHER);
+}
+
+/*
+ * Check one descriptor against its expectation and narrow the copy that
+ * will be delivered (never the sender's descriptor), with the same effect
+ * on ioctl and fcntl limits as cap_rights_limit(2).  The rights mapping
+ * matches libfidl: READ and WRITE, plus FSTAT for sockets.
+ */
+static int
+mac_capability_fd_expect(struct file *fp, struct filecaps *fc,
+    const struct mac_capability_fd_spec *spec)
+{
+	cap_rights_t needed;
+
+	if (spec->type > MAC_CAPABILITY_FD_TYPE_CHANNEL ||
+	    (spec->rights & ~(MAC_CAPABILITY_FD_RIGHT_READ |
+	    MAC_CAPABILITY_FD_RIGHT_WRITE)) != 0 ||
+	    (spec->flags & ~MAC_CAPABILITY_FD_SPEC_LOCK_INHERIT) != 0 ||
+	    spec->_reserved != 0 ||
+	    (spec->type == MAC_CAPABILITY_FD_TYPE_CHANNEL && spec->rights != 0))
+		return (EOPNOTSUPP);
+	if (spec->type != MAC_CAPABILITY_FD_TYPE_ANY &&
+	    mac_capability_fd_type(fp) != spec->type)
+		return (EFTYPE);
+	if (spec->rights == 0)
+		return (0);
+	cap_rights_init(&needed);
+	if (spec->type == MAC_CAPABILITY_FD_TYPE_SOCKET)
+		cap_rights_set(&needed, CAP_FSTAT);
+	if (spec->rights & MAC_CAPABILITY_FD_RIGHT_READ)
+		cap_rights_set(&needed, CAP_READ);
+	if (spec->rights & MAC_CAPABILITY_FD_RIGHT_WRITE)
+		cap_rights_set(&needed, CAP_WRITE);
+	if (!cap_rights_contains(&fc->fc_rights, &needed))
+		return (ENOTCAPABLE);
+	/*
+	 * needed never includes CAP_IOCTL or CAP_FCNTL, so, as for
+	 * cap_rights_limit(2), the ioctl list and fcntl mask are dropped.
+	 */
+	filecaps_free(fc);
+	fc->fc_rights = needed;
+	return (0);
+}
+
+/* Type and rights of a descriptor about to be delivered (RECVMSG_V4). */
+static void
+mac_capability_fd_describe(struct file *fp, const struct filecaps *fc,
+    struct mac_capability_fd_info *info)
+{
+	cap_rights_t reported;
+
+	info->type = mac_capability_fd_type(fp);
+	if (fc->fc_rights.cr_rights[0] == 0 && fc->fc_rights.cr_rights[1] == 0) {
+		info->rights = MAC_CAPABILITY_FD_RIGHT_READ |
+		    MAC_CAPABILITY_FD_RIGHT_WRITE |
+		    MAC_CAPABILITY_FD_RIGHT_FSTAT | MAC_CAPABILITY_FD_RIGHTS_ALL;
+		return;
+	}
+	info->rights = 0;
+	cap_rights_init(&reported);
+	if (cap_rights_is_set(&fc->fc_rights, CAP_READ)) {
+		info->rights |= MAC_CAPABILITY_FD_RIGHT_READ;
+		cap_rights_set(&reported, CAP_READ);
+	}
+	if (cap_rights_is_set(&fc->fc_rights, CAP_WRITE)) {
+		info->rights |= MAC_CAPABILITY_FD_RIGHT_WRITE;
+		cap_rights_set(&reported, CAP_WRITE);
+	}
+	if (cap_rights_is_set(&fc->fc_rights, CAP_FSTAT)) {
+		info->rights |= MAC_CAPABILITY_FD_RIGHT_FSTAT;
+		cap_rights_set(&reported, CAP_FSTAT);
+	}
+	if (cap_rights_contains(&reported, &fc->fc_rights))
+		info->rights |= MAC_CAPABILITY_FD_RIGHTS_EXACT;
+}
+
+static void
+mac_capability_commit_fds(struct filedesc *fdesc, const int *fdbuf, int nfds,
+    struct mac_capability_service *svc, struct mac_capability_msg *msg,
+    uint32_t send_flags, const struct mac_capability_fd_spec *specs)
+{
+	struct filedescent *fde;
+	int i;
+
+	for (i = 0; i < nfds; i++) {
+		fde = &fdesc->fd_ofiles[fdbuf[i]];
+		if (fde->fde_xfer_state == CAP_XFER_ONCE &&
+		    (svc->csvc_svc_flags & MAC_CAPABILITY_SVC_REFATTACH) == 0) {
+			fde->fde_xfer_state = CAP_XFER_NONE;
+			msg->cm_fdset->xfer_state[i] = CAP_XFER_NONE;
+		} else {
+			msg->cm_fdset->xfer_state[i] = fde->fde_xfer_state;
+		}
+		if ((send_flags & MAC_CAPABILITY_SEND_F_LOCK_INHERIT) ||
+		    (specs != NULL &&
+		    (specs[i].flags & MAC_CAPABILITY_FD_SPEC_LOCK_INHERIT))) {
+			msg->cm_fdset->cloexec_state[i] = CAP_CLOEXEC_LOCKED;
+			msg->cm_fdset->clofork_state[i] = CAP_CLOFORK_LOCKED;
+		} else {
+			msg->cm_fdset->cloexec_state[i] = fde->fde_cloexec_state;
+			msg->cm_fdset->clofork_state[i] = fde->fde_clofork_state;
+		}
+		msg->cm_fdset->fde_flags[i] = fde->fde_flags &
+		    (UF_MMAP_CAPMODE | UF_LOOKUP_CAPMODE);
+	}
+}
+
 static int
 mac_capability_instance_do_sendmsg(struct mac_capability_instance *s,
-    struct mac_capability_sendmsg_args *args, struct thread *td)
+    struct mac_capability_sendmsg_args *args, struct thread *td,
+    const struct mac_capability_fd_spec *uspecs, uint32_t send_flags)
 {
+	struct mac_capability_fd_spec specs[MAC_CAPABILITY_MAX_FDS];
+	struct file *moved[MAC_CAPABILITY_MAX_FDS];
 	struct mac_capability_service *svc;
+	struct mac_capability_instance *peer;
 	struct mac_capability_msg *msg;
 	sbintime_t start __unused;
 	const char *svc_name __unused;
@@ -267,7 +486,7 @@ mac_capability_instance_do_sendmsg(struct mac_capability_instance *s,
 		goto out;
 	}
 
-	msg = uma_zalloc(mac_capability_msg_zone, M_WAITOK | M_ZERO);
+	msg = mac_capability_msg_get(args->payload_len, (int)args->nfds);
 	/* Snapshot before taking fd-table or channel locks. */
 	{
 		struct mac_cap_process_info info;
@@ -307,17 +526,20 @@ mac_capability_instance_do_sendmsg(struct mac_capability_instance *s,
 
 	if (args->nfds > 0) {
 		error = copyin(args->fds, fdbuf, args->nfds * sizeof(int));
+		if (error == 0 && uspecs != NULL)
+			error = copyin(uspecs, specs,
+			    args->nfds * sizeof(specs[0]));
 		if (error != 0) {
 			mac_capability_msg_free(msg);
 			goto out;
 		}
 		for (i = 0; i < (int)args->nfds; i++) {
 			error = fget_cap(td, fdbuf[i], &cap_no_rights,
-			    NULL, &msg->cm_fds[i], &msg->cm_fcaps[i]);
+			    NULL, &msg->cm_fdset->fds[i], &msg->cm_fdset->fcaps[i]);
 			if (error != 0)
 				goto sendmsg_fd_err;
 			msg->cm_nfds++;
-			if (!(msg->cm_fds[i]->f_ops->fo_flags &
+			if (!(msg->cm_fdset->fds[i]->f_ops->fo_flags &
 			    DFLAG_PASSABLE)) {
 				error = EINVAL;
 				goto sendmsg_fd_err;
@@ -336,7 +558,7 @@ mac_capability_instance_do_sendmsg(struct mac_capability_instance *s,
 			FILEDESC_XLOCK(fdesc);
 			for (i = 0; i < (int)args->nfds; i++) {
 				fde = &fdesc->fd_ofiles[fdbuf[i]];
-				if (fde->fde_file != msg->cm_fds[i]) {
+				if (fde->fde_file != msg->cm_fdset->fds[i]) {
 					FILEDESC_XUNLOCK(fdesc);
 					error = EBADF;
 					goto sendmsg_fd_err;
@@ -363,11 +585,45 @@ mac_capability_instance_do_sendmsg(struct mac_capability_instance *s,
 			 */
 			for (i = 0; i < (int)args->nfds; i++) {
 				fde = &fdesc->fd_ofiles[fdbuf[i]];
-				filecaps_free(&msg->cm_fcaps[i]);
+				filecaps_free(&msg->cm_fdset->fcaps[i]);
 				filecaps_copy(&fde->fde_caps,
-				    &msg->cm_fcaps[i], true);
-				filecaps_intersect(&msg->cm_fcaps[i],
+				    &msg->cm_fdset->fcaps[i], true);
+				filecaps_intersect(&msg->cm_fdset->fcaps[i],
 				    &fde->fde_xfer_caps);
+			}
+			/* Expectations are checked before anything commits. */
+			for (i = 0; uspecs != NULL && i < (int)args->nfds; i++) {
+				error = mac_capability_fd_expect(
+				    msg->cm_fdset->fds[i],
+				    &msg->cm_fdset->fcaps[i], &specs[i]);
+				if (error != 0) {
+					FILEDESC_XUNLOCK(fdesc);
+					goto sendmsg_fd_err;
+				}
+			}
+			for (i = 0; i < (int)args->nfds; i++)
+				moved[i] = msg->cm_fdset->fds[i];
+
+			msg->cm_badge = s->ci_badge;
+			msg->cm_reply_token = args->reply_token;
+			msg->cm_cred = crhold(td->td_ucred);
+			msg->cm_abi = SV_PROC_ABI(td->td_proc);
+
+			peer = mac_capability_direct_peer(s);
+			if (peer != NULL) {
+				mtx_lock(&peer->ci_mtx);
+				if (mac_capability_direct_room(peer)) {
+					mac_capability_commit_fds(fdesc, fdbuf,
+					    (int)args->nfds, svc, msg, send_flags,
+					    uspecs != NULL ? specs : NULL);
+					mac_capability_direct_insert(peer, msg);
+					mtx_unlock(&peer->ci_mtx);
+					FILEDESC_XUNLOCK(fdesc);
+					mac_capability_instance_rele(peer);
+					goto fd_sent;
+				}
+				mtx_unlock(&peer->ci_mtx);
+				mac_capability_instance_rele(peer);
 			}
 
 			mtx_lock(&s->ci_mtx);
@@ -377,34 +633,20 @@ mac_capability_instance_do_sendmsg(struct mac_capability_instance *s,
 				FILEDESC_XUNLOCK(fdesc);
 				goto sendmsg_fd_err;
 			}
-			for (i = 0; i < (int)args->nfds; i++) {
-				fde = &fdesc->fd_ofiles[fdbuf[i]];
-				if (fde->fde_xfer_state == CAP_XFER_ONCE &&
-				    (svc->csvc_svc_flags &
-				    MAC_CAPABILITY_SVC_REFATTACH) == 0) {
-					fde->fde_xfer_state = CAP_XFER_NONE;
-					msg->cm_xfer_state[i] = CAP_XFER_NONE;
-				} else {
-					msg->cm_xfer_state[i] =
-					    fde->fde_xfer_state;
-				}
-				msg->cm_cloexec_state[i] =
-				    fde->fde_cloexec_state;
-				msg->cm_clofork_state[i] =
-				    fde->fde_clofork_state;
-				msg->cm_fde_flags[i] =
-				    fde->fde_flags &
-				    (UF_MMAP_CAPMODE | UF_LOOKUP_CAPMODE);
-			}
-			msg->cm_badge = s->ci_badge;
-			msg->cm_reply_token = args->reply_token;
-			msg->cm_cred = crhold(td->td_ucred);
-			msg->cm_abi = SV_PROC_ABI(td->td_proc);
-
+			mac_capability_commit_fds(fdesc, fdbuf, (int)args->nfds,
+			    svc, msg, send_flags, uspecs != NULL ? specs : NULL);
 			mac_capability_instance_enqueue_rx_committed(s, msg);
 			mtx_unlock(&s->ci_mtx);
 			FILEDESC_XUNLOCK(fdesc);
-
+fd_sent:
+			/*
+			 * Accepted.  With SEND_F_MOVE, close the sender's
+			 * descriptors (only if each index still names the file
+			 * that was sent); the message holds its own references.
+			 */
+			if (send_flags & MAC_CAPABILITY_SEND_F_MOVE)
+				for (i = 0; i < (int)args->nfds; i++)
+					fdclose(td, moved[i], fdbuf[i]);
 			SDT_PROBE3(mac_capability, , , send,
 			    svc->csvc_name, s->ci_badge, args->payload_len);
 			error = 0;
@@ -421,6 +663,22 @@ sendmsg_fd_err:
 	msg->cm_reply_token = args->reply_token;
 	msg->cm_cred = crhold(td->td_ucred);
 	msg->cm_abi = SV_PROC_ABI(td->td_proc);
+
+	peer = mac_capability_direct_peer(s);
+	if (peer != NULL) {
+		mtx_lock(&peer->ci_mtx);
+		if (mac_capability_direct_room(peer)) {
+			mac_capability_direct_insert(peer, msg);
+			mtx_unlock(&peer->ci_mtx);
+			mac_capability_instance_rele(peer);
+			SDT_PROBE3(mac_capability, , , send,
+			    svc->csvc_name, s->ci_badge, args->payload_len);
+			error = 0;
+			goto out;
+		}
+		mtx_unlock(&peer->ci_mtx);
+		mac_capability_instance_rele(peer);
+	}
 
 	mtx_lock(&s->ci_mtx);
 	error = mac_capability_instance_enqueue_rx(s, msg);
@@ -441,21 +699,37 @@ static int
 mac_capability_instance_do_recvmsg(struct mac_capability_instance *s, struct file *fp,
     struct mac_capability_recvmsg_args *args, struct thread *td,
     struct mac_capability_process_stamp *process,
-    struct cap_authority_stamp *authority)
+    struct cap_authority_stamp *authority,
+    struct mac_capability_fd_info *uinfo)
 {
+	struct mac_capability_fd_info info[MAC_CAPABILITY_MAX_FDS];
 	struct mac_capability_msg *msg;
 	sbintime_t start __unused;
 	const char *svc_name __unused;
 	int fdbuf[MAC_CAPABILITY_MAX_FDS];
-	int error, i, nfds_out;
+	bool drained, txdrain, wait;
+	uint32_t wait_ms;
+	int error, i, nfds_out, timo;
 
 	start = getsbinuptime();
 	svc_name = (s->ci_service != NULL) ? s->ci_service->csvc_name : "<none>";
 	error = 0;
-	if (args->flags != 0 || (args->_reserved[0] | args->_reserved[1] | args->_reserved[2] | args->_reserved[3]) != 0) {
+	wait = (args->flags & MAC_CAPABILITY_RECV_F_WAIT) != 0;
+	wait_ms = args->_reserved[0];
+	if ((args->flags & ~MAC_CAPABILITY_RECV_F_WAIT) != 0 ||
+	    (!wait && wait_ms != 0) ||
+	    (args->_reserved[1] | args->_reserved[2] | args->_reserved[3]) != 0) {
 		error = EINVAL;
 		goto out;
 	}
+	if (!wait)
+		timo = 0;
+	else if (wait_ms == MAC_CAPABILITY_RECV_WAIT_FOREVER)
+		timo = 0;
+	else if (wait_ms == 0)
+		timo = -1;	/* poll */
+	else
+		timo = MAX(1, (int)MIN((uint64_t)wait_ms * hz / 1000, INT_MAX));
 
 	mtx_lock(&s->ci_mtx);
 	while (STAILQ_EMPTY(&s->ci_txq)) {
@@ -474,15 +748,17 @@ mac_capability_instance_do_recvmsg(struct mac_capability_instance *s, struct fil
 			error = 0;
 			goto out;
 		}
-		if (fp->f_flag & FNONBLOCK) {
+		if (((fp->f_flag & FNONBLOCK) && !wait) || timo < 0) {
 			mtx_unlock(&s->ci_mtx);
 			error = EAGAIN;
 			goto out;
 		}
 		error = msleep(&s->ci_txq, &s->ci_mtx,
-		    PCATCH, "mac_capabilityrv", 0);
+		    PCATCH, "mac_capabilityrv", wait ? timo : 0);
 		if (error != 0) {
 			mtx_unlock(&s->ci_mtx);
+			if (error == EWOULDBLOCK)
+				error = ETIMEDOUT;
 			goto out;
 		}
 	}
@@ -517,16 +793,22 @@ mac_capability_instance_do_recvmsg(struct mac_capability_instance *s, struct fil
 
 	STAILQ_REMOVE_HEAD(&s->ci_txq, cm_link);
 	s->ci_txqlen--;
-	mtx_unlock(&s->ci_mtx);
-
+	drained = STAILQ_EMPTY(&s->ci_txq);
 	/*
 	 * Notify a bearer after capacity is genuinely released.  The callback
 	 * may schedule a peer whose accepted RX head is waiting to forward.
+	 * A revoked instance may already have lost its bearer state.
 	 */
-	if (s->ci_service != NULL &&
-	    s->ci_service->csvc_ops->co_txdrain != NULL)
+	txdrain = s->ci_service != NULL &&
+	    s->ci_service->csvc_ops->co_txdrain != NULL &&
+	    mac_capability_op_enter_locked(s);
+	mtx_unlock(&s->ci_mtx);
+
+	if (txdrain) {
 		s->ci_service->csvc_ops->co_txdrain(s,
 		    s->ci_service->csvc_arg);
+		mac_capability_op_exit(s);
+	}
 
 	/* Copyout payload. */
 	if (msg->cm_datalen > 0)
@@ -560,19 +842,22 @@ mac_capability_instance_do_recvmsg(struct mac_capability_instance *s, struct fil
 		int installed;
 
 		for (i = 0; i < nfds_out; i++) {
-			if (!fhold(msg->cm_fds[i])) {
+			if (!fhold(msg->cm_fdset->fds[i])) {
 				/* Drop refs already taken. */
 				while (--i >= 0)
-					fdrop(msg->cm_fds[i], td);
+					fdrop(msg->cm_fdset->fds[i], td);
 				error = EBADF;
 				mac_capability_msg_free(msg);
 				args->nfds = 0;
 				goto out;
 			}
 		}
+		for (i = 0; uinfo != NULL && i < nfds_out; i++)
+			mac_capability_fd_describe(msg->cm_fdset->fds[i],
+			    &msg->cm_fdset->fcaps[i], &info[i]);
 		FILEDESC_XLOCK(fdesc);
 		for (installed = 0; installed < nfds_out; installed++) {
-			struct filecaps *fc = &msg->cm_fcaps[installed];
+			struct filecaps *fc = &msg->cm_fdset->fcaps[installed];
 
 			error = fdalloc(td, 0, &fdbuf[installed]);
 			if (error != 0)
@@ -580,23 +865,23 @@ mac_capability_instance_do_recvmsg(struct mac_capability_instance *s, struct fil
 			if (fc->fc_rights.cr_rights[0] == 0 &&
 			    fc->fc_rights.cr_rights[1] == 0)
 				fc = NULL;
-			_finstall(fdesc, msg->cm_fds[installed],
+			_finstall(fdesc, msg->cm_fdset->fds[installed],
 			    fdbuf[installed], 0, fc);
 			fdesc->fd_ofiles[fdbuf[installed]].fde_xfer_state =
-			    msg->cm_xfer_state[installed];
+			    msg->cm_fdset->xfer_state[installed];
 			fdesc->fd_ofiles[fdbuf[installed]].fde_cloexec_state =
-			    msg->cm_cloexec_state[installed];
+			    msg->cm_fdset->cloexec_state[installed];
 			fdesc->fd_ofiles[fdbuf[installed]].fde_clofork_state =
-			    msg->cm_clofork_state[installed];
+			    msg->cm_fdset->clofork_state[installed];
 			fdesc->fd_ofiles[fdbuf[installed]].fde_flags |=
-			    msg->cm_fde_flags[installed] &
+			    msg->cm_fdset->fde_flags[installed] &
 			    (UF_MMAP_CAPMODE | UF_LOOKUP_CAPMODE);
 		}
 		FILEDESC_XUNLOCK(fdesc);
 		if (installed < nfds_out) {
 			/* fdrop refs for fds not installed. */
 			for (i = installed; i < nfds_out; i++)
-				fdrop(msg->cm_fds[i], td);
+				fdrop(msg->cm_fdset->fds[i], td);
 			/* Close fds that were installed. */
 			for (i = 0; i < installed; i++)
 				kern_close(td, fdbuf[i]);
@@ -605,10 +890,12 @@ mac_capability_instance_do_recvmsg(struct mac_capability_instance *s, struct fil
 			goto out;
 		}
 		for (i = 0; i < nfds_out; i++)
-			mac_capability_probe_fd_receive(msg->cm_fds[i], fdbuf[i], td);
+			mac_capability_probe_fd_receive(msg->cm_fdset->fds[i], fdbuf[i], td);
 	}
 	if (nfds_out > 0 && args->fds != NULL) {
 		error = copyout(fdbuf, args->fds, nfds_out * sizeof(int));
+		if (error == 0 && uinfo != NULL)
+			error = copyout(info, uinfo, nfds_out * sizeof(info[0]));
 		if (error != 0) {
 			for (i = 0; i < nfds_out; i++)
 				kern_close(td, fdbuf[i]);
@@ -623,6 +910,8 @@ mac_capability_instance_do_recvmsg(struct mac_capability_instance *s, struct fil
 		SDT_PROBE3(mac_capability, , , recv,
 		    s->ci_service->csvc_name, s->ci_badge, args->payload_len);
 
+	args->flags = MAC_CAPABILITY_RECV_F_STATUS |
+	    (drained ? MAC_CAPABILITY_RECV_F_EMPTY : 0);
 	mac_capability_msg_free(msg);
 out:
 	SDT_PROBE6(mac_capability, , , recv__done, svc_name, s->ci_badge,
@@ -663,14 +952,47 @@ mac_capability_instance_ioctl(struct file *fp, u_long cmd, void *data,
 			return (EACCES);
 		}
 		return (mac_capability_instance_do_sendmsg(s,
-		    (struct mac_capability_sendmsg_args *)data, td));
+		    (struct mac_capability_sendmsg_args *)data, td, NULL, 0));
+	case MAC_CAPABILITY_SENDMSG_V2: {
+		struct mac_capability_sendmsg_v2_args *args = data;
+		struct mac_capability_sendmsg_args message;
+		uint32_t flags;
+
+		if (s->ci_restricted & MAC_CAPABILITY_RF_NO_SEND) {
+			mac_capability_probe_error(s, cmd, EACCES, td);
+			return (EACCES);
+		}
+		flags = args->message.flags;
+		if ((flags & ~(MAC_CAPABILITY_SEND_F_MOVE |
+		    MAC_CAPABILITY_SEND_F_LOCK_INHERIT)) != 0 ||
+		    (args->_reserved2[0] | args->_reserved2[1]) != 0)
+			return (EINVAL);
+		message = args->message;
+		message.flags = 0;
+		return (mac_capability_instance_do_sendmsg(s, &message, td,
+		    args->fd_specs, flags));
+	}
 	case MAC_CAPABILITY_RECVMSG:
 		if (s->ci_restricted & MAC_CAPABILITY_RF_NO_RECV) {
 			mac_capability_probe_error(s, cmd, EACCES, td);
 			return (EACCES);
 		}
 		return (mac_capability_instance_do_recvmsg(s, fp,
-		    (struct mac_capability_recvmsg_args *)data, td, NULL, NULL));
+		    (struct mac_capability_recvmsg_args *)data, td, NULL, NULL,
+		    NULL));
+	case MAC_CAPABILITY_RECVMSG_V4: {
+		struct mac_capability_recvmsg_v4_args *args = data;
+
+		bzero(&args->v3.process, sizeof(args->v3.process));
+		bzero(&args->v3.authority, sizeof(args->v3.authority));
+		if (s->ci_restricted & MAC_CAPABILITY_RF_NO_RECV)
+			return (EACCES);
+		if ((args->_reserved2[0] | args->_reserved2[1]) != 0)
+			return (EINVAL);
+		return (mac_capability_instance_do_recvmsg(s, fp,
+		    &args->v3.message, td, &args->v3.process,
+		    &args->v3.authority, args->fd_info));
+	}
 	case MAC_CAPABILITY_RECVMSG_V3: {
 		struct mac_capability_recvmsg_v3_args *args = data;
 
@@ -679,7 +1001,8 @@ mac_capability_instance_ioctl(struct file *fp, u_long cmd, void *data,
 		if (s->ci_restricted & MAC_CAPABILITY_RF_NO_RECV)
 			return (EACCES);
 		return (mac_capability_instance_do_recvmsg(s, fp,
-		    &args->message, td, &args->process, &args->authority));
+		    &args->message, td, &args->process, &args->authority,
+		    NULL));
 	}
 	case MAC_CAPABILITY_RECVMSG_V2: {
 		struct mac_capability_recvmsg_v2_args *args =
@@ -689,7 +1012,7 @@ mac_capability_instance_ioctl(struct file *fp, u_long cmd, void *data,
 		if (s->ci_restricted & MAC_CAPABILITY_RF_NO_RECV)
 			return (EACCES);
 		return (mac_capability_instance_do_recvmsg(s, fp,
-		    &args->message, td, &args->process, NULL));
+		    &args->message, td, &args->process, NULL, NULL));
 	}
 	case MAC_CAPABILITY_CALL: {
 		struct mac_capability_call_args *ca = (struct mac_capability_call_args *)data;

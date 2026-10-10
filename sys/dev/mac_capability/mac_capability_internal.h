@@ -50,6 +50,20 @@
  * Anything larger must be sent via an attached fd (shared memory).
  */
 #define	MAC_CAPABILITY_MSG_PAYLOAD_SIZE	14336
+/*
+ * Messages whose payload fits come from a smaller zone, so a queued request
+ * pins ~3 KiB rather than ~16 KiB and its item stays cache-resident.
+ */
+#define	MAC_CAPABILITY_MSG_SMALL_PAYLOAD	1024
+
+struct mac_capability_msg_fdset {
+	struct file	*fds[MAC_CAPABILITY_MAX_FDS];
+	struct filecaps	fcaps[MAC_CAPABILITY_MAX_FDS];
+	uint8_t		xfer_state[MAC_CAPABILITY_MAX_FDS];
+	uint8_t		cloexec_state[MAC_CAPABILITY_MAX_FDS];
+	uint8_t		clofork_state[MAC_CAPABILITY_MAX_FDS];
+	uint8_t		fde_flags[MAC_CAPABILITY_MAX_FDS];
+};
 
 struct mac_capability_msg {
 	/* Queue linkage. */
@@ -65,14 +79,14 @@ struct mac_capability_msg {
 	uint32_t	cm_datalen;
 	uint8_t		cm_nfds;
 	uint8_t		cm_abi;		/* SV_ABI_* of sender, 0 if kernel-originated */
+	uint32_t	cm_capacity;	/* payload bytes in this zone item */
 
-	/* Inline fd slots — 32 max, no separate allocation. */
-	struct file	*cm_fds[MAC_CAPABILITY_MAX_FDS];
-	struct filecaps	cm_fcaps[MAC_CAPABILITY_MAX_FDS];
-	uint8_t		cm_xfer_state[MAC_CAPABILITY_MAX_FDS];
-	uint8_t		cm_cloexec_state[MAC_CAPABILITY_MAX_FDS];
-	uint8_t		cm_clofork_state[MAC_CAPABILITY_MAX_FDS];
-	uint8_t		cm_fde_flags[MAC_CAPABILITY_MAX_FDS];
+	/*
+	 * Descriptor slots live in a separate record allocated only for
+	 * messages that carry descriptors (most carry none), so a plain
+	 * message stays small and cheap to clear.
+	 */
+	struct mac_capability_msg_fdset *cm_fdset;	/* NULL if cm_nfds == 0 */
 
 	/* Inline payload — user data copied directly here. */
 	char		cm_data[];  /* sized by UMA zone: MAC_CAPABILITY_MSG_PAYLOAD_SIZE */
@@ -164,6 +178,8 @@ LIST_HEAD(mac_capability_service_list, mac_capability_service);
 extern struct mac_capability_service_list mac_capability_services;
 extern uma_zone_t mac_capability_instance_zone;
 extern uma_zone_t mac_capability_msg_zone;
+extern uma_zone_t mac_capability_msg_small_zone;
+extern uma_zone_t mac_capability_msg_fdset_zone;
 extern counter_u64_t mac_capability_stat_services;
 extern counter_u64_t mac_capability_stat_instances;
 
@@ -171,6 +187,7 @@ extern counter_u64_t mac_capability_stat_instances;
 int	mac_capability_init(void);
 void	mac_capability_uninit(void);
 struct mac_capability_service *mac_capability_service_lookup(const char *name);
+struct mac_capability_msg *mac_capability_msg_get(size_t datalen, int nfds);
 void	mac_capability_msg_free(struct mac_capability_msg *msg);
 struct mac_capability_instance *mac_capability_instance_init(struct mac_capability_service *svc,
 	    uint64_t badge);

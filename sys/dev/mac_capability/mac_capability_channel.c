@@ -173,14 +173,14 @@ channel_handler(struct mac_capability_instance *s, const struct mac_capability_m
 		goto out;
 	}
 	peer = (s == cp->cp_a) ? cp->cp_b : cp->cp_a;
-	if (peer == NULL) {
+	if (peer == NULL || !mac_capability_instance_tryhold(peer)) {
+		/* Gone, or closing before its revoke detached it. */
 		mtx_unlock(&cp->cp_mtx);
 		SDT_PROBE5(mac_capability_channel, , , state, (uintptr_t)"peer-dead",
 		    0, mac_capability_instance_get_badge(s), ECONNRESET, 0);
 		error = ECONNRESET;
 		goto out;
 	}
-	mac_capability_instance_hold(peer);
 	mtx_unlock(&cp->cp_mtx);
 
 	SDT_PROBE3(mac_capability_channel, , , forward,
@@ -204,6 +204,33 @@ out:
 	return (error);
 }
 
+/*
+ * A connected endpoint's handler only forwards to its peer, so the transport
+ * may deliver straight to the peer (see co_direct_peer).  An unconnected
+ * endpoint still needs the handler for CHANNEL_OP_CREATE; a dead pair uses
+ * the handler's revoke path.
+ */
+static struct mac_capability_instance *
+channel_direct_peer(struct mac_capability_instance *s, void *arg __unused)
+{
+	struct mac_capability_cap_channel *cp;
+	struct mac_capability_instance *peer;
+
+	cp = mac_capability_instance_get_priv(s);
+	if (cp == NULL)
+		return (NULL);
+	mtx_lock(&cp->cp_mtx);
+	peer = cp->cp_dead ? NULL : (s == cp->cp_a ? cp->cp_b : cp->cp_a);
+	if (peer != NULL && !mac_capability_instance_tryhold(peer))
+		peer = NULL;	/* Closing: its revoke has not detached it yet. */
+	mtx_unlock(&cp->cp_mtx);
+	if (peer != NULL)
+		SDT_PROBE3(mac_capability_channel, , , forward,
+		    mac_capability_instance_get_badge(s),
+		    mac_capability_instance_get_badge(peer), 0);
+	return (peer);
+}
+
 static void
 channel_txdrain(struct mac_capability_instance *s, void *arg __unused)
 {
@@ -216,10 +243,9 @@ channel_txdrain(struct mac_capability_instance *s, void *arg __unused)
 
 	mtx_lock(&cp->cp_mtx);
 	peer = s == cp->cp_a ? cp->cp_b : cp->cp_a;
-	if (!cp->cp_dead && peer != NULL)
-		mac_capability_instance_hold(peer);
-	else
-		peer = NULL;
+	if (cp->cp_dead || peer == NULL ||
+	    !mac_capability_instance_tryhold(peer))
+		peer = NULL;	/* Gone or closing. */
 	mtx_unlock(&cp->cp_mtx);
 
 	if (peer != NULL) {
@@ -253,8 +279,8 @@ channel_revoke(struct mac_capability_instance *s, uint64_t badge __unused,
 
 	if (peer != NULL && !cp->cp_dead) {
 		cp->cp_dead = 1;
-		mac_capability_instance_hold(peer);
-		do_revoke = true;
+		/* A peer already closing finalizes itself. */
+		do_revoke = mac_capability_instance_tryhold(peer);
 	}
 
 	mtx_unlock(&cp->cp_mtx);
@@ -277,6 +303,7 @@ static const struct mac_capability_ops channel_ops = {
 	.co_handler = channel_handler,
 	.co_revoke = channel_revoke,
 	.co_txdrain = channel_txdrain,
+	.co_direct_peer = channel_direct_peer,
 };
 
 /*

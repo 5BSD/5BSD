@@ -1,6 +1,6 @@
 .\" SPDX-License-Identifier: BSD-2-Clause
 .\" Copyright (c) 2026 Kory Heard
-.Dd July 31, 2026
+.Dd October 10, 2026
 .Dt LIBCHANNEL 3
 .Os
 .Sh NAME
@@ -49,6 +49,12 @@ Capability channel library
 .Fn channel_request_status "const struct channel_request *request"
 .Ft void
 .Fn channel_request_release "struct channel_request *request"
+.Ft int
+.Fo channel_message_fd_info
+.Fa "const struct channel_message *message"
+.Fa "size_t slot"
+.Fa "struct channel_fd_info *info"
+.Fc
 .Sh DESCRIPTION
 The
 .Nm
@@ -102,6 +108,9 @@ transfers one descriptor to the caller; all untaken descriptors are closed
 when the message is freed.
 Every delivered message must eventually be passed to
 .Fn channel_message_free .
+Each message is one allocation sized from recent traffic on its channel,
+not the maximum message size, so a retained request costs about its own
+payload plus a fixed header.
 .Pp
 Handlers execute synchronously from
 .Fn channel_dispatch .
@@ -167,7 +176,85 @@ the service protocol above
 .Nm .
 The
 .Va size
-field may be larger than the current structure size.
+field is either
+.Dv CHANNEL_OUTGOING_SIZE_V1 ,
+for callers built before
+.Va fd_specs
+and
+.Va flags
+existed, which are then not read, or at least the current structure size.
+.Sh DESCRIPTOR ATTACHMENTS
+Every send hands the message and all of its descriptors to the kernel in one
+system call, however many descriptors are attached.
+Optional per-descriptor work is folded into that call:
+.Bl -tag -width CHANNEL_SEND_LOCK_INHERIT
+.It Va fd_specs
+Null, or one
+.Vt struct channel_fd_spec
+per descriptor.
+.Va type
+is
+.Dv CHANNEL_FD_TYPE_ANY ,
+.Dv CHANNEL_FD_TYPE_SOCKET ,
+or
+.Dv CHANNEL_FD_TYPE_CHANNEL .
+.Va rights
+is zero, which keeps the descriptor's rights, or a combination of
+.Dv CHANNEL_FD_RIGHT_READ
+and
+.Dv CHANNEL_FD_RIGHT_WRITE ;
+socket expectations also require
+.Dv CAP_FSTAT .
+Every expectation is checked before the message is accepted; a mismatch fails
+the whole send with
+.Er EFTYPE ,
+.Er ENOTCAPABLE ,
+or
+.Er EOPNOTSUPP ,
+and consumes no transfer authority.
+Requested rights narrow only the delivered copy, as
+.Xr cap_rights_limit 2
+would, and never the caller's descriptor.
+.Dv CHANNEL_FD_LOCK_INHERIT
+in
+.Va flags
+delivers that descriptor with close-on-exec and close-on-fork locked.
+.It Dv CHANNEL_SEND_MOVE
+Transfers ownership of the attached descriptors once the send is accepted,
+whether it was sent at once or queued behind backpressure; they must then not
+be used or closed by the caller.
+A queued message adopts them without duplicating them.
+After a failed send the caller still owns them, unchanged.
+.It Dv CHANNEL_SEND_LOCK_INHERIT
+Applies
+.Dv CHANNEL_FD_LOCK_INHERIT
+to every attached descriptor.
+.El
+.Pp
+On kernels without this support,
+.Nm
+performs the same checks itself, narrowing or locking a private duplicate,
+with equivalent results at the cost of additional system calls.
+.Pp
+.Fn channel_message_fd_info
+reports the kernel's view of an attached descriptor, recorded when the message
+was received: its type
+.Pq Dv CHANNEL_FD_TYPE_OTHER No when neither socket nor channel
+and its rights as
+.Dv CHANNEL_FD_RIGHT_READ ,
+.Dv CHANNEL_FD_RIGHT_WRITE ,
+and
+.Dv CHANNEL_FD_RIGHT_FSTAT ,
+with
+.Dv CHANNEL_FD_RIGHTS_EXACT
+when it holds no other rights and
+.Dv CHANNEL_FD_RIGHTS_ALL
+when it is unrestricted.
+A receiver can validate an attachment from this report without further system
+calls.
+It fails with
+.Er ENOTSUP
+when the kernel does not report descriptors.
 .Sh EVENT LOOP
 .Fn channel_fd
 returns the borrowed kernel descriptor.
@@ -286,7 +373,8 @@ is only for the child side of
 .Xr fork 2
 when callbacks and locks may belong to vanished threads.
 Channel descriptors and hidden queued attachment duplicates are locked
-close-on-fork and close-on-exec.
+close-on-fork and close-on-exec; moved attachments keep the caller's
+inheritance state while queued.
 Every channel and received attachment is process-bound.
 An inherited operation fails with
 .Er ECHILD .
@@ -321,8 +409,14 @@ Protocol-role and ownership violations produce
 .Er EINVAL .
 Invalid or already completed cancellation produces
 .Er EALREADY .
-Payloads larger than the kernel channel maximum are rejected with
+Payloads larger than the kernel channel maximum, unknown outgoing flags, and
+an outgoing
+.Va size
+that is neither layout are rejected with
 .Er EINVAL .
+Descriptor expectation failures are described in
+.Sx DESCRIPTOR ATTACHMENTS ;
+they do not end the channel.
 The terminal channel error is available through
 .Fn channel_error .
 .Sh DTRACE PROVIDER
@@ -335,6 +429,14 @@ Its probes cover channel creation, immediate sends, local queueing, received
 message classification, request completion, policy discards, and terminal
 peer death.
 Payload contents and descriptor numbers are never exposed by these probes.
+.Sh FIDL INTEGRATION
+The experimental FIDL source import does not change this API or its
+current wire and descriptor ownership contracts.
+An experimental native backend and generated C bridge now use this library.
+Production services still require an explicit protocol migration.
+See
+.Xr fidl 7
+for status and adaptation requirements.
 .Sh SEE ALSO
 .Xr fork 2 ,
 .Xr kqueue 2 ,
