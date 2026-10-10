@@ -231,6 +231,12 @@ with an epoch, generation, and explicit source error.
 It exposes neither addresses nor packet counters.
 A shared sampler reads BSDSysctl approximately one second after each read;
 identical samples are suppressed and slow watchers receive the latest state.
+Discovery, HELLO negotiation, reconnect and interface sampling share one
+one-second libservice RPC budget per iteration.
+A stalled dependency therefore cannot accumulate separate RPC wait limits
+before the sampler checks for shutdown.
+This budget bounds RPC waits, not scheduling delays, mutex acquisition or
+arbitrary kernel work.
 A failed read publishes unavailable state with zero records, then recovery
 publishes a new snapshot.
 This does not indicate Internet reachability.
@@ -255,7 +261,8 @@ Joining an existing job does not extend its original deadline.
 Coalescing never crosses sessions or authenticated client labels.
 A failed reply terminates the session and releases all retained requests.
 .Sh DNS CACHE AND TTL
-Each connection worker retains at most 32 validated positive or negative DNS answers,
+Each connection worker retains at most 32 validated positive or negative DNS
+answers,
 keyed by hostname and record type, for at most five minutes and never beyond
 the minimum TTL of the matching addresses and their CNAME chain.
 The cache is private to that worker and its immutable client policy;
@@ -309,7 +316,6 @@ Native IPv6 hosts entries take precedence unless
 .Dv AI_ALL
 requests both native and mapped entries.
 A matching hosts entry satisfies the lookup before DNS is attempted.
-
 .Sh SEE ALSO
 .Xr libnetworkcmp 3 ,
 .Xr switchboard 8

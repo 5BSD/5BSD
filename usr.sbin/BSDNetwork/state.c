@@ -7,6 +7,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <libservice.h>
+#include <service_runtime.h>
 #include <network_state_protocol.h>
 #include <notify_watch.h>
 #include <poll.h>
@@ -200,11 +201,17 @@ sample(void *argument)
 	for (;;) {
 		memset(&state, 0, sizeof(state));
 		count = nitems(entries);
-		result = client == NULL ? sysctlcmp_client_open(&client) : 0;
-		if (result == 0)
-			result = sysctlcmp_interfaces(client, entries, &count);
-		if (result == -1) {
+		/* Discovery, HELLO and sampling share one shutdown-bounded wait. */
+		result = service_budget_begin(1000);
+		if (result == 0) {
+			result = client == NULL ? sysctlcmp_client_open(&client) : 0;
+			if (result == 0)
+				result = sysctlcmp_interfaces(client, entries, &count);
+			error = result == -1 ? (errno != 0 ? errno : EIO) : 0;
+			service_budget_end();
+		} else
 			error = errno != 0 ? errno : EIO;
+		if (result == -1) {
 			if (client != NULL)
 				sysctlcmp_client_close(client);
 			client = NULL;
