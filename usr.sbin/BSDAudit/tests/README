@@ -1,0 +1,15 @@
+Audit shutdown coverage
+=======================
+
+shutdown_test calls the production workers_shutdown function with injected
+monotonic clock, kevent, signal and reap operations. It checks initial and
+subsequent clock-read failure, normal grace-period remainder, interrupted
+final reaping, descriptor closure and clearing the worker list/count. Real
+ordinary descriptors stand in for procdescs; the test does not establish
+real protected-worker termination or wall-clock shutdown latency.
+
+session_test uses real channels in the native guest. rate_test covers the
+per-session and reconnect-resistant admission limits. policy_test and
+submit_test check authenticated identity/event selection and submission rules.
+Full bundle activation, actual audit subsystem delivery, protected workers and
+SwitchBoard shutdown acknowledgement ordering remain integration gates.

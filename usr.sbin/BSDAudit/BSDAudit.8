@@ -57,6 +57,12 @@ They report the authenticated provider label, selected fixed event, submitted
 error value, and operation result without exposing an arbitrary audit record.
 Submission and rejection outcomes are also represented by the broker's BSM
 records where a record can be submitted safely.
+.Sh SHUTDOWN
+The supervisor allows a five-second graceful worker exit after SIGTERM.
+If the monotonic clock cannot establish or check the deadline, it proceeds
+to forced termination.
+Interrupted final reap calls are retried.
+The grace period does not bound the final kernel reap wait.
 .Sh SEE ALSO
 .Xr audit 2 ,
 .Xr libauditcmp 3 ,
