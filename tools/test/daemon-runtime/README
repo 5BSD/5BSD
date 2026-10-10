@@ -121,3 +121,11 @@ from an older host libc.a. A complete matching world build supplies these;
 standalone test builds must explicitly link the matching libsys.a ahead of
 host libc.a. Verify the linked executable, not only header macros. The runner
 rejects skipped hardening checks and does not treat ENOSYS as acceptance.
+
+The same --cleanup-lifecycle fixture supports
+    --atf-case tests/sys/mac_capability/mac_capability_test:failed_init_completes_cleanup
+It injects initialization failure sixteen times against a four-instance limit,
+checks EIO and unchanged active
+instance counts, verifies revoke was not called for failed instances, then
+checks successful creation/close and module unload. Initialization rollback
+must publish cleanup completion even though it deliberately skips co_revoke.

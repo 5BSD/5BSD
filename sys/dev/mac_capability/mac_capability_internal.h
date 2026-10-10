@@ -197,6 +197,8 @@ struct mac_capability_callback_state *mac_capability_callback_state_get(
 	    struct mac_capability_instance *s);
 bool	mac_capability_callback_state_done(struct mac_capability_callback_state *cs);
 void	mac_capability_callback_state_rele(struct mac_capability_callback_state *cs);
+/* Caller holds ci_mtx and owns FINALIZED; publish completed rollback/callback. */
+void	mac_capability_revoke_done_locked(struct mac_capability_instance *s);
 /* Caller owns FINALIZED and keeps the instance/service alive through return. */
 void	mac_capability_revoke_callback(struct mac_capability_instance *s,
 	    enum mac_capability_revoke_reason reason);

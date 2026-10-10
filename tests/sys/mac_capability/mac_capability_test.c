@@ -7901,9 +7901,57 @@ ATF_TC_BODY(unload_waits_for_cleanup_callback, tc)
 	check_unload_waits_for_cleanup(true);
 }
 
+ATF_TC(failed_init_completes_cleanup);
+ATF_TC_HEAD(failed_init_completes_cleanup, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "Failed initialization completes rollback without revoke");
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "timeout", "20");
+}
+ATF_TC_BODY(failed_init_completes_cleanup, tc)
+{
+	uint64_t before, after;
+	size_t len;
+	unsigned fail = 1, release = 1;
+	int module, fd;
+
+	if (access("/boot/kernel/mac_capability_test_cleanup.ko", R_OK) != 0)
+		atf_tc_skip("private VM cleanup fixture is not staged");
+	module = kldload("/boot/kernel/mac_capability_test_cleanup.ko");
+	ATF_REQUIRE(module >= 0);
+	len = sizeof(before);
+	ATF_REQUIRE_EQ(0, sysctlbyname("kern.mac_capability.instances",
+	    &before, &len, NULL, 0));
+	ATF_REQUIRE_EQ(0, sysctlbyname("debug.capability_cleanup_test.fail_init",
+	    NULL, NULL, &fail, sizeof(fail)));
+	for (unsigned i = 0; i < 16; i++) {
+		ATF_CHECK_ERRNO(EIO, mac_capability_connect("test_cleanup") == -1);
+		len = sizeof(after);
+		ATF_REQUIRE_EQ(0, sysctlbyname("kern.mac_capability.instances",
+		    &after, &len, NULL, 0));
+		ATF_CHECK_EQ(before, after);
+	}
+	ATF_CHECK_EQ(0, cleanup_fixture_value("debug.capability_cleanup_test.entered"));
+	fail = 0;
+	ATF_REQUIRE_EQ(0, sysctlbyname("debug.capability_cleanup_test.fail_init",
+	    NULL, NULL, &fail, sizeof(fail)));
+	ATF_REQUIRE_EQ(0, sysctlbyname("debug.capability_cleanup_test.release",
+	    NULL, NULL, &release, sizeof(release)));
+	fd = mac_capability_connect("test_cleanup");
+	ATF_REQUIRE(fd >= 0);
+	ATF_REQUIRE_EQ(0, close(fd));
+	ATF_CHECK_EQ(1, cleanup_fixture_value("debug.capability_cleanup_test.entered"));
+	ATF_REQUIRE_EQ(0, kldunload(module));
+	len = sizeof(after);
+	ATF_REQUIRE_EQ(0, sysctlbyname("kern.mac_capability.instances",
+	    &after, &len, NULL, 0));
+	ATF_CHECK_EQ(before, after);
+}
+
 /* ================================================================ */
 ATF_TP_ADD_TCS(tp)
 {
+	ATF_TP_ADD_TC(tp, failed_init_completes_cleanup);
 	ATF_TP_ADD_TC(tp, unload_waits_for_cleanup_callback);
 	/* Lifecycle */
 	ATF_TP_ADD_TC(tp, open_close);

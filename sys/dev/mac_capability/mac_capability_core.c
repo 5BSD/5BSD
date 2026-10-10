@@ -398,10 +398,13 @@ mac_capability_instance_setup(struct mac_capability_service *svc, struct thread 
 			/*
 			 * co_init failed.  Mark FINALIZED so close
 			 * (triggered by fdrop) does NOT fire co_revoke.
-			 * co_init's error path owns cleanup.
+			 * co_init's error path has completed rollback.  Publish
+			 * completion too: close must not wait for a callback
+			 * that will never run.
 			 */
 			mtx_lock(&s->ci_mtx);
 			s->ci_flags |= MAC_CAPABILITY_SF_FINALIZED;
+			mac_capability_revoke_done_locked(s);
 			mtx_unlock(&s->ci_mtx);
 			fdrop(fp, td);
 			mac_capability_service_unreserve(svc);
