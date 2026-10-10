@@ -691,7 +691,8 @@ supervisor_begin_native_cleanup(struct svc_runtime *svc, int exit_status,
 	svc->cleanup.was_stopping = was_stopping;
 	svc->cleanup.uptime_sec = error == 0 ?
 	    MAX(now.tv_sec - svc->last_start.tv_sec, 0) : 0;
-	if (svc->coalition_fd < 0) {
+	/* An unconfirmed launch child must never use the legacy exit shortcut. */
+	if (svc->coalition_fd < 0 && !svc->cleanup.child_pending) {
 		svc_close_fds(svc);
 		supervisor_finish_native_exit(svc, exit_status, was_stopping,
 		    svc->reload_pending, svc->remove_pending, svc->cleanup.uptime_sec);
