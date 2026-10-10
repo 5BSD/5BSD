@@ -35,10 +35,15 @@ Review/implementation loop
     descriptor-batching soak (fd1).  Limit: release upgrade/rollback across
     boot environments is not yet run.
 [x] Comparative latency/memory/allocation evidence; documented limitations.
-[ ] Final review, source reproduction, manuals/book, complete validation record.
-    Source reproduction (5,028 entries) and manuals/book are current; open:
-    review of a committed tree, republished packages and the release
-    upgrade/rollback VM.
+[x] Final review, source reproduction, manuals/book, complete validation record.
+    Source reproduction (5,028 entries) and manuals/book are current; the tree
+    is committed (dev d51b2cf8c22) and validated in a plane-on VM (fd4).
+    Closed 2026-10-10 by user decision without a separate release
+    upgrade/rollback pipeline run: upgrade compatibility is covered by the 8
+    evolve:1/evolve:2 schema pairings, the BE candidate/rollback test in
+    tools/test/software-authority/software-be-guest.sh (BSDTime among its
+    checked units) and the plane-on VM runs.  Package republication is a
+    release step, held until the user approves it.
 
 Keep compiler/codecs, upstream tests/goldens, license notices, and necessary
 wire/status headers. Remove only proven unused runtime dependencies; remove

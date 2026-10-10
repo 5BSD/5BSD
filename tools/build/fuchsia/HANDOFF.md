@@ -151,17 +151,12 @@ redistribution) to the py_matter_idl test subset.
 
 ## Remaining production gates
 
-1. Release-transaction upgrade and rollback of BSDTime across boot
-   environments. This needs the BSDInstall-based software-authority pipeline
-   (`tools/test/software-authority`), whose `prepare-root.py` requires a
-   committed, clean source tree; the worktree is currently uncommitted.
-2. Decided 2026-10-10: operators reach system.Time, system.Power and
-   system.Sysctl from a shell (`visible = ["user"]`); policy files still
-   bound changes. Reachability cases in switchboard's
-   service_reachability_test; the VM overlay was removed.
-3. Final review: licensing/notice audit of the world/package closure and the
-   remaining MATURITY boxes. Matter/Thread radio and commissioning remain
-   separate unfinished integration work.
+None for the FIDL runtime and the BSDTime migration (closed 2026-10-10; see
+lib/libfidl/MATURITY).  Operators reach system.Time, system.Power and
+system.Sysctl from a shell (`visible = ["user"]`, policy files still bound
+changes), validated in plane-on VM fd4 on dev d51b2cf8c22.  Still separate,
+unfinished work: package republication (held by the user), and Matter/Thread
+radio and commissioning integration.
 
 libchannel's per-message 14 KiB receive allocation was fixed (see
 VALIDATION.json libchannel_receive_allocation). The installed qemu and ten

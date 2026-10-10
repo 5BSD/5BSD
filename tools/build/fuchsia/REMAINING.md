@@ -1,12 +1,10 @@
 # FIDL / IPC work: what is left (2026-10-10 15:45 UTC)
 
-Status 2026-10-10 22:00 UTC:
-- Step 1 done: libnetgraph fix committed (1ca64091990); dev builds clean.
-- Step 2: changes committed; plane-on VM validation running on a clean
-  worktree (/usr/obj/5BSD-fidl-val, results in /usr/obj/5bsd-fidl-vm/fd4).
-- Step 3: user approved closing the gate on the existing evidence (no
-  full release pipeline run); records to update after step 2 passes.
-- Step 4: user said not yet (hold until the FreeBSD sync lands as dev).
+Status 2026-10-10 23:00 UTC: steps 1-3 and 5 DONE.
+- 1: libnetgraph fix (1ca64091990); dev builds clean.
+- 2: committed (58977d8dfd1) and VM-validated (fd4 on dev d51b2cf8c22).
+- 3: MATURITY box checked, HANDOFF gates closed, VALIDATION.json updated.
+- 4: HELD by the user until further notice.
 
 Read `/home/koryheard/AGENTS.md` first (build in /usr/obj, all CPUs, never
 install or reboot the host, publish only through the maintained /usr/src

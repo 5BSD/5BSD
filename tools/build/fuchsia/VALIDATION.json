@@ -32,13 +32,11 @@
     "Fuchsia lowpan service integration",
     "Matter native device/controller platform",
     "radio/commissioning validation",
-    "production capability-plane VM validation of migrated FIDL services",
-    "full world/release-package integration, including target ports dependency closure",
-    "release-transaction upgrade/rollback VM validation"
+    "full world/release-package integration, including target ports dependency closure"
   ],
   "logs": "/usr/obj/5bsd-fuchsia-import",
   "fidl_native_runtime": {
-    "status": "experimental native libchannel backend; BSDTime/libtimecmp source migration tested, installed-plane activation and VM validation pending",
+    "status": "native libchannel backend; BSDTime/libtimecmp migration validated in plane-on VMs on the committed dev tree",
     "runtime_tests": {
       "passed": 67,
       "failed": 0,
@@ -591,6 +589,15 @@
       "final_corpus_files": 561,
       "evidence": "/usr/obj/5bsd-fidl-runtime/fuzz-nkwpiqem/result.json",
       "harness_fix": "bounded poll until the receive handler runs (a single zero-timeout poll could skip decoding under load)"
+    },
+    "operator_visibility_vm": {
+      "status": "PASS",
+      "evidence": "plane-on VM fd4 on the landed dev tree d51b2cf8c22 (2026-10-10): PLANEON_GATE_PASS, BSDTIME_LIFECYCLE_PASS, BSDPowerctl/sysctlcmpctl from a login shell ok, time/power/sysctl_reachable pass, 338/432 passed, 0 failed, 0 broken",
+      "log": "/usr/obj/5bsd-fidl-vm/fd4/serial.log"
+    },
+    "release_upgrade_gate": {
+      "status": "CLOSED by user decision 2026-10-10",
+      "evidence": "8 evolve:1/evolve:2 schema pairings; software-be-guest.sh BE candidate/rollback (BSDTime checked); plane-on VM runs"
     }
   },
   "documentation": {
