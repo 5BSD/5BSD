@@ -74,7 +74,6 @@
 #include <netgraph/ng_hub.h>
 #include <netgraph/ng_iface.h>
 #include <netgraph/ng_ip_input.h>
-#include <netgraph/ng_ipfw.h>
 #include <netgraph/ng_ksocket.h>
 #include <netgraph/ng_l2tp.h>
 #include <netgraph/ng_lmi.h>
@@ -148,7 +147,6 @@ static const struct ng_cookie cookies[] = {
 	COOKIE(HUB),
 	COOKIE(IFACE),
 	COOKIE(IP_INPUT),
-	COOKIE(IPFW),
 	COOKIE(KSOCKET),
 	COOKIE(L2TP),
 	COOKIE(LMI),
