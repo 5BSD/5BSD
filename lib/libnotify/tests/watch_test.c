@@ -1,4 +1,5 @@
 /*- SPDX-License-Identifier: BSD-2-Clause */
+#include <sys/wait.h>
 #include <atf-c.h>
 #include <errno.h>
 #include <pthread.h>
@@ -209,8 +210,71 @@ ATF_TC_BODY(concurrent_snapshot, tc)
 	ATF_REQUIRE_EQ(0, notify_watch_destroy(s));
 }
 
+ATF_TC(inherited_watch_rejected);
+ATF_TC_HEAD(inherited_watch_rejected, tc)
+{
+	atf_tc_set_md_var(tc, "timeout", "5");
+}
+ATF_TC_BODY(inherited_watch_rejected, tc)
+{
+	struct notify_watch *store, *fresh;
+	struct notify_watcher *watcher, *opened;
+	struct notify_watch_cursor cursor = { 0 };
+	uint32_t flags = 99;
+	size_t length = 99;
+	char byte = 'x';
+	pid_t child;
+	int status;
+
+	ATF_REQUIRE_EQ(0, notify_watch_create(1, 1, &store));
+	ATF_REQUIRE_EQ(1, notify_watch_publish(store, "a", 1));
+	ATF_REQUIRE_EQ(0, notify_watch_open(store, NULL, &watcher));
+	ATF_REQUIRE_EQ(0, notify_watch_begin(watcher));
+	ATF_REQUIRE_EQ(0, pthread_mutex_lock(&store->lock));
+	child = fork();
+	if (child == 0) {
+		/* No inherited operation may acquire this locked mutex. */
+		ATF_REQUIRE_ERRNO(ECHILD, notify_watch_publish(store, "b", 1) == -1);
+		ATF_REQUIRE_ERRNO(ECHILD, notify_watch_open(store, NULL, &opened) == -1);
+		ATF_REQUIRE(opened == NULL);
+		ATF_REQUIRE_ERRNO(ECHILD, notify_watch_begin(watcher) == -1);
+		ATF_REQUIRE_ERRNO(ECHILD, notify_watch_cancel(watcher) == -1);
+		ATF_REQUIRE_ERRNO(ECHILD, notify_watch_take(watcher, &byte, 1,
+		    &length, &cursor, &flags) == -1);
+		ATF_REQUIRE_EQ('x', byte);
+		ATF_REQUIRE_EQ(99, length);
+		ATF_REQUIRE_EQ(99, flags);
+		ATF_REQUIRE_EQ(0, cursor.epoch);
+		errno = 0;
+		notify_watch_close(watcher);
+		ATF_REQUIRE_EQ(ECHILD, errno);
+		ATF_REQUIRE_ERRNO(ECHILD, notify_watch_destroy(store) == -1);
+		ATF_REQUIRE_EQ(0, notify_watch_create(1, 1, &fresh));
+		ATF_REQUIRE_EQ(1, notify_watch_publish(fresh, "c", 1));
+		ATF_REQUIRE_EQ(0, notify_watch_open(fresh, NULL, &opened));
+		ATF_REQUIRE_EQ(0, notify_watch_begin(opened));
+		ATF_REQUIRE_EQ(1, notify_watch_take(opened, &byte, 1,
+		    &length, &cursor, &flags));
+		ATF_REQUIRE_EQ('c', byte);
+		notify_watch_close(opened);
+		ATF_REQUIRE_EQ(0, notify_watch_destroy(fresh));
+		_exit(0);
+	}
+	ATF_REQUIRE_EQ(0, pthread_mutex_unlock(&store->lock));
+	ATF_REQUIRE(child > 0);
+	ATF_REQUIRE_EQ(child, waitpid(child, &status, 0));
+	ATF_REQUIRE(WIFEXITED(status));
+	ATF_CHECK_EQ(0, WEXITSTATUS(status));
+	ATF_REQUIRE_EQ(1, notify_watch_take(watcher, &byte, 1,
+	    &length, &cursor, &flags));
+	ATF_CHECK_EQ('a', byte);
+	notify_watch_close(watcher);
+	ATF_REQUIRE_EQ(0, notify_watch_destroy(store));
+}
+
 ATF_TP_ADD_TCS(tp)
 {
+	ATF_TP_ADD_TC(tp, inherited_watch_rejected);
 	ATF_TP_ADD_TC(tp, snapshot_coalescing);
 	ATF_TP_ADD_TC(tp, cancel_retry_and_resume);
 	ATF_TP_ADD_TC(tp, bounds_and_overflow);

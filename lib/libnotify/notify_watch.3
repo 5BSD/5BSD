@@ -86,7 +86,13 @@ Store access is protected by a mutex.
 Calls using the same observer, including close, must be serialized by the
 caller.
 Creation and destruction require exclusive ownership of the store.
-These objects cannot be used in a child after fork without exec.
+Inherited stores and observers reject operations in a child after fork with
+.Er ECHILD
+before acquiring a potentially inherited locked mutex.
+The void close function sets
+.Va errno
+and leaves an inherited observer unchanged.
+The child may create and use fresh stores and observers.
 .Sh RETURN VALUES
 Create, destroy, open, begin and cancel return 0 on success and -1 on error.
 Publish returns 1 for a changed snapshot, 0 for identical data, and -1 on error.

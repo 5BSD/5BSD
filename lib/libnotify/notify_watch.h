@@ -23,7 +23,9 @@ struct notify_watch_cursor {
  * after publish. Values must have canonical bytes (including padding).
  * Store access is synchronized. The caller must serialize calls using the
  * same watcher, including close; create/destroy require exclusive ownership.
- * A process must not use these objects after fork without exec.
+ * Inherited objects reject operations with ECHILD before touching locks.
+ * close is void: it sets errno and leaves an inherited object unchanged.
+ * A child may create fresh objects.
  */
 __BEGIN_DECLS
 int notify_watch_create(size_t, size_t, struct notify_watch **);

@@ -6,10 +6,12 @@
 #include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 #include "notify_watch.h"
 
 struct notify_watch {
+	pid_t owner;
 	pthread_mutex_t lock;
 	struct notify_watch_cursor cursor;
 	size_t capacity, length, limit, subscribers;
@@ -30,6 +32,8 @@ watch_lock(struct notify_watch *store) __no_lock_analysis
 {
 	int error;
 
+	if (store->owner != getpid())
+		return (errno = ECHILD, -1);
 	error = pthread_mutex_lock(&store->lock);
 	if (error != 0)
 		errno = error;
@@ -60,6 +64,7 @@ notify_watch_create(size_t capacity, size_t subscribers,
 	do {
 		arc4random_buf(&store->cursor.epoch, sizeof(store->cursor.epoch));
 	} while (store->cursor.epoch == 0);
+	store->owner = getpid();
 	store->capacity = capacity;
 	store->limit = subscribers;
 	*result = store;
@@ -71,6 +76,8 @@ notify_watch_destroy(struct notify_watch *store)
 {
 	if (store == NULL)
 		return (errno = EINVAL, -1);
+	if (store->owner != getpid())
+		return (errno = ECHILD, -1);
 	if (store->subscribers != 0)
 		return (errno = EBUSY, -1);
 	(void)pthread_mutex_destroy(&store->lock);
@@ -163,6 +170,8 @@ notify_watch_begin(struct notify_watcher *watcher)
 {
 	if (watcher == NULL)
 		return (errno = EINVAL, -1);
+	if (watcher->store->owner != getpid())
+		return (errno = ECHILD, -1);
 	if (watcher->pending)
 		return (errno = EBUSY, -1);
 	watcher->pending = true;
@@ -174,6 +183,8 @@ notify_watch_cancel(struct notify_watcher *watcher)
 {
 	if (watcher == NULL)
 		return (errno = EINVAL, -1);
+	if (watcher->store->owner != getpid())
+		return (errno = ECHILD, -1);
 	watcher->pending = false;
 	return (0);
 }
@@ -187,6 +198,8 @@ notify_watch_take(struct notify_watcher *watcher, void *data, size_t capacity,
 	if (watcher == NULL || length == NULL || cursor == NULL || flags == NULL ||
 	    (data == NULL && capacity != 0))
 		return (errno = EINVAL, -1);
+	if (watcher->store->owner != getpid())
+		return (errno = ECHILD, -1);
 	if (!watcher->pending)
 		return (errno = ENOENT, -1);
 	store = watcher->store;
