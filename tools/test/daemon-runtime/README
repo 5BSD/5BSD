@@ -56,3 +56,8 @@ manager test entry point without activating its production sandbox. The barrier
 case exercises the real packet handler with injected ring/storage results; it
 verifies terminal flush/query ingestion errors, healthy peers and retryable
 sync-only errors. It is not a full-provider disk-exhaustion acceptance test.
+
+Use --log-provider for provider dispatch and ring lifecycle tests over real
+capability channels. The sink is injected; cases cover backend errors, trusted
+receive timestamps, malformed descriptor rejection and terminal ring-drain
+failures during flush/detach. This does not activate a full logging bundle.

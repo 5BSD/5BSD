@@ -434,6 +434,9 @@ drain_session(struct worker_state *state, const char *operation)
 	}
 failed:
 	error = errno != 0 ? errno : EPROTO;
+	/* A consumed ring record must never be hidden by a later barrier. */
+	if (state->session.ring != NULL)
+		state->terminal_error = error;
 	records = state->session.stats.accepted - before;
 	BSDLOG_PROBE_BATCH(state->sink.label, state->sink.instance,
 	    operation, records, error);
@@ -527,6 +530,11 @@ handle_event(struct channel *channel __unused,
 	size_t length;
 
 	state = argument;
+	/* Dispatch may have more messages queued after a terminal failure. */
+	if (state->terminal_error != 0) {
+		channel_message_free(event_message);
+		return;
+	}
 	message = channel_message_data(event_message);
 	length = channel_message_length(event_message);
 	if (logcmp_validate_message(message, length, LOGCMP_MESSAGE_EVENT) ==
@@ -563,6 +571,11 @@ handle_request(struct channel *channel __unused,
 	int error;
 
 	state = argument;
+	/* Dispatch may have more messages queued after a terminal failure. */
+	if (state->terminal_error != 0) {
+		channel_message_free(request_message);
+		return;
+	}
 	message = channel_message_data(request_message);
 	length = channel_message_length(request_message);
 	if (logcmp_validate_message(message, length,

@@ -160,6 +160,9 @@ An ingestion failure closes the affected storage session after reporting the
 error when possible, including failures while draining for a flush or query.
 A subsequent flush cannot acknowledge records discarded by an earlier failure.
 Reconnecting does not replay those records.
+Failure to drain a client ring into storage also ends that provider session,
+including drains requested by flush or detach.
+Queued requests cannot resume a session after this terminal failure.
 .Sh SECURITY
 Workers cannot open files, sockets, or other sinks.
 They cannot fork or execute, and ring consumer descriptors cannot be
