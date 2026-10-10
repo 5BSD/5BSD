@@ -280,6 +280,8 @@ channel_request_complete(struct channel_request *request,
 	handler = request->handler;
 	context = request->context;
 	request->callback_active = true;
+	LIBCHANNEL_PROBE_REQUEST_DONE((uintptr_t)request->channel,
+	    request->token, error);
 	LIBCHANNEL_PROBE_COMPLETE(request->token, error);
 	if (handler != NULL)
 		handler(request, message, error, context);
@@ -787,6 +789,8 @@ channel_abandon(struct channel *channel)
 	channel->out_tail = NULL;
 	while ((request = channel->requests) != NULL) {
 		channel->requests = request->next;
+		LIBCHANNEL_PROBE_REQUEST_DONE((uintptr_t)channel, request->token,
+		    ECANCELED);
 		free(request);
 	}
 	channel->npending = channel->nqueued = 0;
@@ -1065,6 +1069,8 @@ channel_send_request(struct channel *channel,
 	request->next = channel->requests;
 	channel->requests = request;
 	channel->npending++;
+	LIBCHANNEL_PROBE_REQUEST_START((uintptr_t)channel, request->token,
+	    length, nfds);
 	if (channel_send_or_queue(channel, data, length, fds, nfds,
 	    request->token, request, specs, flags) == -1) {
 		error = errno;
@@ -1075,6 +1081,8 @@ channel_send_request(struct channel *channel,
 				break;
 			}
 		channel->npending--;
+		LIBCHANNEL_PROBE_REQUEST_DONE((uintptr_t)channel, request->token,
+		    error);
 		free(request);
 		if (channel_terminal_error(error))
 			channel_mark_dead(channel, error);
@@ -1382,6 +1390,8 @@ channel_dispatch(struct channel *channel)
 	struct channel_message *message;
 	struct channel_request *request, **link;
 	int error, dispatched;
+	uint64_t trace_token;
+	uintptr_t trace_channel = (uintptr_t)channel;
 
 	if (!channel_owned(channel))
 		return (-1);
@@ -1389,6 +1399,8 @@ channel_dispatch(struct channel *channel)
 		errno = EINVAL;
 		return (-1);
 	}
+	LIBCHANNEL_PROBE_DISPATCH_START(trace_channel, channel->npending,
+	    channel->nqueued);
 	channel->dispatch_depth++;
 	error = 0;
 	dispatched = 0;
@@ -1409,13 +1421,18 @@ channel_dispatch(struct channel *channel)
 			break;
 		}
 		dispatched++;
+		trace_token = message->token;
 		if (message->token == 0) {
 			message->kind = CHANNEL_MESSAGE_EVENT;
 			LIBCHANNEL_PROBE_RECEIVE(message->kind, message->token,
 			    message->length, message->nfds);
 			if (channel->event_handler != NULL) {
+				LIBCHANNEL_PROBE_HANDLER_START(trace_channel,
+				    trace_token, CHANNEL_MESSAGE_EVENT);
 				channel->event_handler(channel, message,
 				    channel->event_context);
+				LIBCHANNEL_PROBE_HANDLER_DONE(trace_channel,
+				    trace_token, CHANNEL_MESSAGE_EVENT);
 				message = NULL;
 			} else
 				LIBCHANNEL_PROBE_DISCARD(message->token,
@@ -1435,8 +1452,12 @@ channel_dispatch(struct channel *channel)
 			LIBCHANNEL_PROBE_RECEIVE(message->kind, message->token,
 			    message->length, message->nfds);
 			if (channel->request_handler != NULL) {
+				LIBCHANNEL_PROBE_HANDLER_START(trace_channel,
+				    trace_token, CHANNEL_MESSAGE_REQUEST);
 				channel->request_handler(channel, message,
 				    channel->request_context);
+				LIBCHANNEL_PROBE_HANDLER_DONE(trace_channel,
+				    trace_token, CHANNEL_MESSAGE_REQUEST);
 				message = NULL;
 			} else
 				LIBCHANNEL_PROBE_DISCARD(message->token,
@@ -1449,6 +1470,7 @@ channel_dispatch(struct channel *channel)
 		if (channel->destroy_pending || channel->rx_drained)
 			break;
 	}
+	LIBCHANNEL_PROBE_DISPATCH_DONE(trace_channel, dispatched, error);
 	channel->dispatch_depth--;
 	if (channel->destroy_pending && channel->dispatch_depth == 0) {
 		channel_destroy_now(channel);

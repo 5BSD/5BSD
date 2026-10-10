@@ -474,6 +474,19 @@ drain_session_until_idle(struct worker_state *state, const char *operation,
 	return (errno = ETIMEDOUT, -1);
 }
 
+static int
+receive_wakeup(struct worker_state *state)
+{
+	int result, saved;
+
+	result = logcmp_wakeup_drain(state->wake_fd);
+	saved = errno;
+	BSDLOG_PROBE_WAKE(state->sink.label, state->sink.instance,
+	    result == -1 ? saved : 0);
+	errno = saved;
+	return (result);
+}
+
 static void
 close_wakeup(struct worker_state *state)
 {
@@ -899,7 +912,7 @@ logcmp_test_serve(int fd, const char *label, uint32_t ring_size,
 		}
 		if (state.wake_fd >= 0 &&
 		    event.ident == (uintptr_t)state.wake_fd) {
-			if (logcmp_wakeup_drain(state.wake_fd) == -1 ||
+			if (receive_wakeup(&state) == -1 ||
 			    drain_session(&state, "test-wakeup") == -1) {
 				result = 1;
 				break;
@@ -1294,7 +1307,7 @@ pool_worker(int control_fd, int audit_fd,
 			}
 			if (state->wake_fd >= 0 && events[i].filter == EVFILT_READ &&
 			    events[i].ident == (uintptr_t)state->wake_fd) {
-				if (logcmp_wakeup_drain(state->wake_fd) == -1 ||
+				if (receive_wakeup(state) == -1 ||
 				    drain_session(state, "edge-wakeup") == -1)
 					state->terminal_error = errno;
 			} else if (events[i].filter == EVFILT_WRITE) {

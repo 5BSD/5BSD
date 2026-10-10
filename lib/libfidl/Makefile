@@ -38,5 +38,10 @@ FIDL_LICENSESDIR= /usr/share/licenses/libfidl
 HAS_TESTS=
 SUBDIR.${MK_TESTS}+= tests
 
+.if ${MK_DTRACE} != "no"
+SRCS+= fidl_provider.d
+CXXFLAGS+= -I${.OBJDIR} -DWITH_DTRACE
+.endif
+
 .include <bsd.lib.mk>
 

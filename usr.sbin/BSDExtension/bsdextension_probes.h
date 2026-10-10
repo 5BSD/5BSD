@@ -10,11 +10,15 @@
  */
 #ifdef WITH_DTRACE
 #include "bsdextension_provider.h"
+#define BSDEXTENSION_PROBE_REQUEST_DONE(op, status, error) \
+	BSDEXTENSION_REQUEST_DONE(op, status, error)
 #define	BSDEXTENSION_PROBE_LIST(client, count, result) \
 	BSDEXTENSION_LIST(__DECONST(char *, client), count, result)
 #define	BSDEXTENSION_PROBE_RECLAIM_PASS(when, live, owned, orphans, destroyed, failed) \
 	BSDEXTENSION_RECLAIM_PASS(when, live, owned, orphans, destroyed, failed)
 #else
+#define BSDEXTENSION_PROBE_REQUEST_DONE(op, status, error) \
+	do { (void)(op); (void)(status); (void)(error); } while (0)
 #define	BSDEXTENSION_PROBE_LIST(client, count, result) \
 	do { (void)(client); (void)(count); (void)(result); } while (0)
 #define	BSDEXTENSION_PROBE_RECLAIM_PASS(when, live, owned, orphans, destroyed, failed) \

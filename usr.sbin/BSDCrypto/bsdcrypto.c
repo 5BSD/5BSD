@@ -101,7 +101,7 @@ request(struct channel *c __unused, struct channel_message *m, void *arg __unuse
 	uint8_t public_key[CRYPTODESC_ED25519_PUBLIC_SIZE];
 	uint64_t generation;
 	uint32_t random_bytes;
-	int fd, error, deliver_fd;
+	int fd, error, deliver_fd, transport_error;
 
 	fd = -1;
 	error = EPROTO;
@@ -336,7 +336,8 @@ reply:
 			list_out.entries[i].rights = list_entries[i].cd_rights;
 		}
 	}
-	CRYPTO_PROBE_NAMED_LIST(worker->owner, list_count, error);
+	if (out.opcode == CRYPTOCMP_OP_NAMED_LIST)
+		CRYPTO_PROBE_NAMED_LIST(worker->owner, list_count, error);
 	random_out.msg = out;
 	random_out.nbytes = error == 0 ? random_bytes : 0;
 	audit_operation(worker, operation, error);
@@ -406,12 +407,13 @@ reply:
 		fd = -1;
 		deliver_fd = 0;
 	}
-	(void)channel_send_reply(m, &(struct channel_outgoing){
+	transport_error = channel_send_reply(m, &(struct channel_outgoing){
 	    .size = sizeof(struct channel_outgoing),
 	    .data = reply_data,
 	    .length = reply_length,
 	    .fds = deliver_fd != 0 ? &fd : NULL,
-	    .nfds = deliver_fd });
+	    .nfds = deliver_fd }) == -1 ? errno : 0;
+	CRYPTO_PROBE_REQUEST_DONE(out.opcode, out.status, transport_error);
 	if (fd >= 0)
 		close(fd);
 	explicit_bzero(public_key, sizeof(public_key));

@@ -72,6 +72,20 @@
 #include <netpfil/dummynet/dn_sched.h>
 
 SDT_PROVIDER_DEFINE(dummynet);
+SDT_PROBE_DEFINE4(dummynet, sched, enqueue, result, "struct dn_sch_inst *",
+    "int", "int", "uint32_t");
+SDT_PROBE_DEFINE4(dummynet, sched, dequeue, packet, "struct dn_sch_inst *",
+    "struct mbuf *", "uint64_t", "uint32_t");
+SDT_PROBE_DEFINE3(dummynet, sched, credit, wait, "struct dn_sch_inst *",
+    "int64_t", "uint64_t");
+SDT_PROBE_DEFINE3(dummynet, delay, release, packet, "struct delay_line *",
+    "struct mbuf *", "uint64_t");
+SDT_PROBE_DEFINE2(dummynet, io, input, error, "int", "const char *");
+SDT_PROBE_DEFINE2(dummynet, io, output, packet, "struct mbuf *", "int");
+SDT_PROBE_DEFINE3(dummynet, queue, enqueue, done, "struct dn_queue *",
+    "uint32_t", "uint32_t");
+SDT_PROBE_DEFINE3(dummynet, queue, drop, reason, "struct dn_queue *",
+    "struct mbuf *", "const char *");
 SDT_PROBE_DEFINE2(dummynet, , , drop, "struct mbuf *", "struct dn_queue *");
 
 /*
@@ -484,10 +498,13 @@ dn_enqueue(struct dn_queue *q, struct mbuf* m, int drop)
 	struct dn_fs *f;
 	struct dn_flow *ni;	/* stats for scheduler instance */
 	uint64_t len;
+	const char *drop_reason = "loss model";
 
 	if (q->fs == NULL || q->_si == NULL) {
 		printf("%s fs %p si %p, dropping\n",
 			__FUNCTION__, q->fs, q->_si);
+		SDT_PROBE3(dummynet, queue, drop, reason, q, m,
+		    "orphan queue");
 		FREE_PKT(m);
 		return 1;
 	}
@@ -499,8 +516,10 @@ dn_enqueue(struct dn_queue *q, struct mbuf* m, int drop)
 	q->ni.tot_pkts++;
 	ni->tot_bytes += len;
 	ni->tot_pkts++;
-	if (drop)
+	if (drop) {
+		drop_reason = "forced";
 		goto drop;
+	}
 	if (f->plr[0] || f->plr[1]) {
 		if (__predict_true(f->plr[1] == 0)) {
 			if (random() < f->plr[0])
@@ -530,10 +549,12 @@ dn_enqueue(struct dn_queue *q, struct mbuf* m, int drop)
 	if (q->fs->aqmfp)
 		return q->fs->aqmfp->enqueue(q ,m);
 #endif
+	drop_reason = "RED";
 	if (f->flags & DN_IS_RED && red_drops(q, m->m_pkthdr.len)) {
 		if (!(f->flags & DN_IS_ECN) || !ecn_mark(m))
 			goto drop;
 	}
+	drop_reason = "queue limit";
 	if (f->flags & DN_QSIZE_BYTES) {
 		if (q->ni.len_bytes > f->qsize)
 			goto drop;
@@ -545,9 +566,12 @@ dn_enqueue(struct dn_queue *q, struct mbuf* m, int drop)
 	q->ni.len_bytes += len;
 	ni->length++;
 	ni->len_bytes += len;
+	SDT_PROBE3(dummynet, queue, enqueue, done, q, q->ni.length,
+	    q->ni.len_bytes);
 	return (0);
 
 drop:
+	SDT_PROBE3(dummynet, queue, drop, reason, q, m, drop_reason);
 	V_dn_cfg.io_pkt_drop++;
 	SDT_PROBE2(dummynet, , , drop, m, q);
 	q->ni.drops++;
@@ -572,6 +596,8 @@ transmit_event(struct mq *q, struct delay_line *dline, uint64_t now)
 		pkt = dn_tag_get(m);
 		if (!DN_KEY_LEQ(pkt->output_time, now))
 			break;
+		SDT_PROBE3(dummynet, delay, release, packet, dline, m,
+		    (now - pkt->output_time));
 		dline->mq.head = m->m_nextpkt;
 		dline->mq.count--;
 		if (m->m_pkthdr.rcvif != NULL &&
@@ -641,6 +667,8 @@ serve_sched(struct mq *q, struct dn_sch_inst *si, uint64_t now)
 	while (si->credit >= 0 && (m = s->fp->dequeue(si)) != NULL) {
 		uint64_t len_scaled;
 
+		SDT_PROBE4(dummynet, sched, dequeue, packet, si, m,
+		    (now - dn_tag_get(m)->output_time), si->ni.length);
 		done++;
 		len_scaled = (bw == 0) ? 0 : hz *
 			(m->m_pkthdr.len * 8 + extra_bits(m, s));
@@ -663,6 +691,7 @@ serve_sched(struct mq *q, struct dn_sch_inst *si, uint64_t now)
 		uint64_t t;
 		KASSERT (bw > 0, ("bw=0 and credit<0 ?"));
 		t = div64(bw - 1 - si->credit, bw);
+		SDT_PROBE3(dummynet, sched, credit, wait, si, si->credit, t);
 		if (m)
 			dn_tag_get(m)->output_time += t;
 		si->kflags |= DN_ACTIVE;
@@ -807,6 +836,7 @@ dummynet_send(struct mbuf *m)
 			}
 		}
 
+		SDT_PROBE2(dummynet, io, output, packet, m, dst);
 		switch (dst) {
 		case DIR_OUT:
 			ip_output(m, NULL, NULL, IP_FORWARDING, NULL, NULL);
@@ -909,7 +939,8 @@ dummynet_io(struct mbuf **m0, struct ip_fw_args *fwa)
 	struct dn_fsk *fs = NULL;
 	struct dn_sch_inst *si;
 	struct dn_queue *q = NULL;	/* default */
-	int fs_id, dir;
+	int fs_id, dir, enqueue_error;
+	const char *drop_reason = "tag allocation";
 
 	fs_id = (fwa->rule.info & IPFW_INFO_MASK) +
 		((fwa->rule.info & IPFW_IS_PIPE) ? 2*DN_MAX_ID : 0);
@@ -927,13 +958,16 @@ dummynet_io(struct mbuf **m0, struct ip_fw_args *fwa)
 	/* we could actually tag outside the lock, but who cares... */
 	if (tag_mbuf(m, dir, fwa))
 		goto dropit;
+	drop_reason = "flowset missing";
 	/* XXX locate_flowset could be optimised with a direct ref. */
 	fs = dn_ht_find(V_dn_cfg.fshash, fs_id, 0, NULL);
 	if (fs == NULL)
 		goto dropit;	/* This queue/pipe does not exist! */
+	drop_reason = "scheduler missing";
 	if (fs->sched == NULL)	/* should not happen */
 		goto dropit;
 	/* find scheduler instance, possibly applying sched_mask */
+	drop_reason = "scheduler instance allocation";
 	si = ipdn_si_find(fs->sched, &(fwa->f_id));
 	if (si == NULL)
 		goto dropit;
@@ -942,11 +976,16 @@ dummynet_io(struct mbuf **m0, struct ip_fw_args *fwa)
 	 * (otherwise it will be ignored by enqueue).
 	 */
 	if (fs->sched->fp->flags & DN_MULTIQUEUE) {
+		drop_reason = "queue allocation";
 		q = ipdn_q_find(fs, si, &(fwa->f_id));
 		if (q == NULL)
 			goto dropit;
 	}
-	if (fs->sched->fp->enqueue(si, q, m)) {
+	drop_reason = "scheduler enqueue rejected";
+	enqueue_error = fs->sched->fp->enqueue(si, q, m);
+	SDT_PROBE4(dummynet, sched, enqueue, result, si, fs_id,
+	    enqueue_error, si->ni.length);
+	if (enqueue_error) {
 		/* packet was dropped by enqueue() */
 		m = *m0 = NULL;
 
@@ -1005,6 +1044,7 @@ done:
 	return 0;
 
 dropit:
+	SDT_PROBE2(dummynet, io, input, error, fs_id, drop_reason);
 	V_dn_cfg.io_pkt_drop++;
 	SDT_PROBE2(dummynet, , , drop, m, q);
 	DN_BH_WUNLOCK();

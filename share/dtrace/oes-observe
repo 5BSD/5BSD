@@ -1,0 +1,15 @@
+#!/usr/sbin/dtrace -s
+/* SPDX-License-Identifier: BSD-2-Clause
+ * OpenES functional counts and group authorization wait, all processes.
+ * No paths or event payloads are printed. Ctrl-C for summary.
+ */
+#pragma D option quiet
+oes:::wait-start { ow[tid,arg0] = timestamp; @listeners = quantize(arg1); }
+oes:::wait-done
+/ow[tid,arg0] != 0/
+{ @wait_ns[arg1] = quantize(timestamp-ow[tid,arg0]); ow[tid,arg0] = 0; }
+oes:::auth-allow, oes:::auth-deny, oes:::auth-timeout,
+oes:::cache-hit, oes:::cache-miss, oes:::event-enqueue, oes:::event-drop
+{ @oevents[probename,arg0] = count(); }
+ERROR { oes_faults++; }
+END { printf("OES_SUMMARY faults=%d\n",oes_faults); printf("Event/type counts\n"); printa(@oevents); printf("Authorization group wait elapsed ns by errno (not full hook latency)\n"); printa(@wait_ns); printf("Group listener count\n"); printa(@listeners); }

@@ -1196,3 +1196,20 @@ IPFW package policy preservation (2026-10-10):
   scripts in isolated roots; all eight retirement/preservation/fresh-install
   checks pass. Evidence: /usr/obj/5BSD-pf-upgrade-20261010/
   package-policy-regression/results.json. Full VM upgrade remains pending.
+
+System and capability tracing review (2026-10-10):
+  Native 5BSD instrumentation changes; no new external source imported.
+  Expanded PF/Dummynet, libchannel, native libfidl adapter and OpenES probes;
+  added BSDMemory probes and filled daemon request-result/call-site gaps.
+  Added installed observation scripts, operator contract tests and a single
+  per-component review ledger under tools/test/system-tracing. Matter coverage
+  is limited to the existing connectedhomeip IDL tooling, not a Matter daemon.
+  Changed user-space source units compile with tracing enabled and disabled;
+  USDT relocation generation/link checks and 19-daemon operator tests pass.
+  PF/Dummynet/OpenES object compilation passes. These checks do not establish
+  live DTrace script execution or installed-daemon/VM behavior. Runtime gates
+  remain explicit in coverage.json and the Desktop subsystem audit checklist.
+  Evidence: /usr/obj/5BSD-system-tracing-20261010 and
+  /usr/obj/5BSD-pf-upgrade-20261010. The earlier successful world/kernel build
+  predates the last daemon review fixes; a final source freeze/rebuild and
+  four-core networked VM qualification are still required before publication.

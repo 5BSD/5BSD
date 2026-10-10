@@ -162,7 +162,7 @@ request(struct channel *c __unused, struct channel_message *m, void *arg)
 	const void *reply_data;
 	size_t reply_length;
 	uint32_t granted;
-	int fd, error, deliver_fd;
+	int fd, error, deliver_fd, transport_error;
 
 	fd = -1;
 	error = EPROTO;
@@ -272,12 +272,13 @@ request(struct channel *c __unused, struct channel_message *m, void *arg)
 	}
 
 	deliver_fd = (error == 0 && out.opcode == DEVICECMP_OP_OPEN) ? 1 : 0;
-	(void)channel_send_reply(m, &(struct channel_outgoing){
+	transport_error = channel_send_reply(m, &(struct channel_outgoing){
 	    .size = sizeof(struct channel_outgoing),
 	    .data = reply_data,
 	    .length = reply_length,
 	    .fds = deliver_fd != 0 ? &fd : NULL,
-	    .nfds = deliver_fd });
+	    .nfds = deliver_fd }) == -1 ? errno : 0;
+	BSDDEVICE_PROBE_REQUEST_DONE(out.opcode, out.status, transport_error);
 	if (fd >= 0)
 		(void)close(fd);
 	channel_message_free(m);

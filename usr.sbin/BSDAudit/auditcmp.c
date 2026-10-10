@@ -122,6 +122,7 @@ handle_request(struct channel *channel __unused,
 	const struct auditcmp_submit_request *submit;
 	const struct auditcmp_msg *request;
 	struct session *session;
+	uint32_t opcode = UINT32_MAX;
 	int error, result;
 
 	session = argument;
@@ -136,8 +137,10 @@ handle_request(struct channel *channel __unused,
 		BSDAUDIT_PROBE_REJECT(
 		    __DECONST(char *, session->provider), EPROTO);
 		session->error = EPROTO;
+		error = EPROTO;
 		goto out;
 	}
+	opcode = request->opcode;
 	switch (request->opcode) {
 	case AUDITCMP_OP_SUBMIT:
 		submit = (const void *)(request + 1);
@@ -164,6 +167,8 @@ handle_request(struct channel *channel __unused,
 	if (result == -1)
 		session->error = errno;
 out:
+	BSDAUDIT_PROBE_REQUEST_DONE(opcode, error,
+	    result == -1 ? session->error : 0);
 	channel_message_free(message);
 }
 

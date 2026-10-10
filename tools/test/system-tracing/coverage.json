@@ -1,0 +1,962 @@
+{
+  "scope": "One additional source coverage review per component, replacing the ten-pass requirement at user request. Source review is complete; live tracing qualification is separate and pending.",
+  "components": [
+    {
+      "component": "BSDAudit",
+      "source": "usr.sbin/BSDAudit",
+      "providers": [
+        {
+          "name": "bsdaudit",
+          "file": "usr.sbin/BSDAudit/bsdaudit_provider.d",
+          "probes": [
+            "request__done",
+            "session",
+            "submit",
+            "reject"
+          ]
+        }
+      ],
+      "review": {
+        "status": "source-reviewed",
+        "date": "2026-10-10",
+        "finding": "Added scalar results for submission, statistics, unknown requests and malformed framing, alongside existing session/rejection probes."
+      },
+      "runtime": {
+        "status": "pending",
+        "required": "Submit/stats success, malformed framing, transport failure; attach serving worker."
+      },
+      "scripts": [
+        "capability-observe",
+        "channel-observe"
+      ]
+    },
+    {
+      "component": "BSDCrypto",
+      "source": "usr.sbin/BSDCrypto",
+      "providers": [
+        {
+          "name": "crypto",
+          "file": "usr.sbin/BSDCrypto/crypto_provider.d",
+          "probes": [
+            "request__done",
+            "named__list",
+            "reclaim__pass",
+            "reclaim__drop"
+          ]
+        }
+      ],
+      "review": {
+        "status": "source-reviewed",
+        "date": "2026-10-10",
+        "finding": "Added every-reply opcode/wire-status/transport result. Corrected named-list probe firing on unrelated operations. No key bytes exposed."
+      },
+      "runtime": {
+        "status": "pending",
+        "required": "Generate/random/named-key success and denial, malformed input, disconnected reply; wire status is negative errno."
+      },
+      "scripts": [
+        "capability-observe",
+        "channel-observe"
+      ]
+    },
+    {
+      "component": "BSDDevice",
+      "source": "usr.sbin/BSDDevice",
+      "providers": [
+        {
+          "name": "bsddevice",
+          "file": "usr.sbin/BSDDevice/bsddevice_provider.d",
+          "probes": [
+            "request__done",
+            "open",
+            "list"
+          ]
+        }
+      ],
+      "review": {
+        "status": "source-reviewed",
+        "date": "2026-10-10",
+        "finding": "Added every-reply result, including malformed open/list requests omitted by existing domain probes."
+      },
+      "runtime": {
+        "status": "pending",
+        "required": "Open/list success, policy denial, malformed name/header, reply failure; wire status is negative errno."
+      },
+      "scripts": [
+        "capability-observe",
+        "channel-observe"
+      ]
+    },
+    {
+      "component": "BSDExtension",
+      "source": "usr.sbin/BSDExtension",
+      "providers": [
+        {
+          "name": "bsdextension",
+          "file": "usr.sbin/BSDExtension/bsdextension_provider.d",
+          "probes": [
+            "request__done",
+            "list",
+            "reclaim_pass"
+          ]
+        }
+      ],
+      "review": {
+        "status": "source-reviewed",
+        "date": "2026-10-10",
+        "finding": "Added results at all four reply exits: ordinary, stat, list, and info. Covers permission and reload failures."
+      },
+      "runtime": {
+        "status": "pending",
+        "required": "Ensure/stat/list/info/reload and malformed/denied requests; no real host module load."
+      },
+      "scripts": [
+        "capability-observe",
+        "channel-observe"
+      ]
+    },
+    {
+      "component": "BSDFilesystem",
+      "source": "usr.sbin/BSDFilesystem",
+      "providers": [
+        {
+          "name": "bsdfilesystem",
+          "file": "usr.sbin/BSDFilesystem/bsdfilesystem_provider.d",
+          "probes": [
+            "request__msg",
+            "request__validate",
+            "request__grant",
+            "request__reply",
+            "reclaim__pass",
+            "reclaim__destroy",
+            "reclaim__snapshot"
+          ]
+        }
+      ],
+      "review": {
+        "status": "source-reviewed",
+        "date": "2026-10-10",
+        "finding": "Existing message, validation, grant, reply and reclaim probes plus common callback/send timing cover storage service activity. Existing reply probes use opcode 0; version-operation detail remains limited."
+      },
+      "runtime": {
+        "status": "pending",
+        "required": "Grant/list/open/denial, fd attenuation, version operation and reclaim workloads; require transport timing, do not claim per-version semantic status from existing probes."
+      },
+      "scripts": [
+        "capability-observe",
+        "channel-observe"
+      ]
+    },
+    {
+      "component": "BSDLog",
+      "source": "usr.sbin/BSDLog",
+      "providers": [
+        {
+          "name": "bsdlog",
+          "file": "usr.sbin/BSDLog/bsdlog_provider.d",
+          "probes": [
+            "pool__start",
+            "pool__admit",
+            "pool__shutdown",
+            "session__start",
+            "session__end",
+            "record__write",
+            "record__drop",
+            "wakeup__receive",
+            "batch__drain",
+            "flush__complete",
+            "storage__persist",
+            "storage__rotate",
+            "storage__corruption",
+            "storage__quarantine",
+            "query__complete",
+            "query__filter",
+            "retention__prune",
+            "storage__reclaim",
+            "storage__reconcile"
+          ]
+        }
+      ],
+      "review": {
+        "status": "source-reviewed",
+        "date": "2026-10-10",
+        "finding": "Reviewed pool/session/record/storage/flush result fields. Connected declared-but-unused wakeup probe in production and test paths, preserving errno."
+      },
+      "runtime": {
+        "status": "pending",
+        "required": "Ring wakeups, flush and storage failure, corrupt records, query, pool shutdown; include events outside channel dispatch."
+      },
+      "scripts": [
+        "capability-observe",
+        "channel-observe"
+      ]
+    },
+    {
+      "component": "BSDMemory",
+      "source": "usr.sbin/BSDMemory",
+      "providers": [
+        {
+          "name": "bsdmemory",
+          "file": "usr.sbin/BSDMemory/bsdmemory_provider.d",
+          "probes": [
+            "ready",
+            "sample__start",
+            "sample__done",
+            "pressure",
+            "publish__start",
+            "publish__done",
+            "exit"
+          ]
+        }
+      ],
+      "review": {
+        "status": "source-reviewed",
+        "date": "2026-10-10",
+        "finding": "Dedicated sample/publish/pressure/lifecycle script selected instead of requiring libchannel. Failed samples carry initialized values; no false successful sample claim. Free-page histogram excludes failed samples."
+      },
+      "runtime": {
+        "status": "pending",
+        "required": "Sample dependency failure/recovery, pressure transitions, publication failure; controlled fixtures."
+      },
+      "scripts": [
+        "capability-observe",
+        "bsdmemory-observe"
+      ]
+    },
+    {
+      "component": "BSDNamespace",
+      "source": "usr.sbin/BSDNamespace",
+      "providers": [
+        {
+          "name": "bsdnamespace",
+          "file": "usr.sbin/BSDNamespace/bsdnamespace_provider.d",
+          "probes": [
+            "request__done",
+            "enter",
+            "reclaim_pass"
+          ]
+        }
+      ],
+      "review": {
+        "status": "source-reviewed",
+        "date": "2026-10-10",
+        "finding": "Added every-reply result for enter/destroy/list/framing rejection after final fd attenuation. Safe opcode extraction only with sufficient message length."
+      },
+      "runtime": {
+        "status": "pending",
+        "required": "Enter/reuse/list/destroy/denial, malformed requests, fd hardening failure and reply failure."
+      },
+      "scripts": [
+        "capability-observe",
+        "channel-observe"
+      ]
+    },
+    {
+      "component": "BSDNetwork",
+      "source": "usr.sbin/BSDNetwork",
+      "providers": [
+        {
+          "name": "bsdnetwork",
+          "file": "usr.sbin/BSDNetwork/bsdnetwork_provider.d",
+          "probes": [
+            "session__start",
+            "session__end",
+            "request__done",
+            "resolve__start",
+            "resolve__done",
+            "connect__done",
+            "reject"
+          ]
+        }
+      ],
+      "review": {
+        "status": "source-reviewed",
+        "date": "2026-10-10",
+        "finding": "Reviewed request completion, resolve/connect and reject outcomes; common channel timings avoid unsafe pairing of concurrent DNS requests by hostname."
+      },
+      "runtime": {
+        "status": "pending",
+        "required": "Resolve/connect success/refusal/timeout, bad framing, concurrent requests; include serving workers."
+      },
+      "scripts": [
+        "capability-observe",
+        "channel-observe"
+      ]
+    },
+    {
+      "component": "BSDNotify",
+      "source": "usr.sbin/BSDNotify",
+      "providers": [
+        {
+          "name": "bsdnotify",
+          "file": "usr.sbin/BSDNotify/bsdnotify_provider.d",
+          "probes": [
+            "session__start",
+            "session__end",
+            "subscribe",
+            "publish",
+            "deliver",
+            "timer",
+            "reject",
+            "list",
+            "session__admit",
+            "tier__policy"
+          ]
+        }
+      ],
+      "review": {
+        "status": "source-reviewed",
+        "date": "2026-10-10",
+        "finding": "Reviewed subscription/publication/delivery/timer/reject metrics and common channel timing. List probe count is not decoded as errno."
+      },
+      "runtime": {
+        "status": "pending",
+        "required": "Subscribe/publish/delivery/timer, state operations and policy denial; assert activity for each workload."
+      },
+      "scripts": [
+        "capability-observe",
+        "channel-observe"
+      ]
+    },
+    {
+      "component": "BSDPower",
+      "source": "usr.sbin/BSDPower",
+      "providers": [
+        {
+          "name": "bsdpower",
+          "file": "usr.sbin/BSDPower/BSDPower_provider.d",
+          "probes": [
+            "request",
+            "suspend"
+          ]
+        }
+      ],
+      "review": {
+        "status": "source-reviewed",
+        "date": "2026-10-10",
+        "finding": "Existing request outcome and suspend probes plus callback/dispatch/send timings; no host power operation performed."
+      },
+      "runtime": {
+        "status": "pending",
+        "required": "Query/denial/framing fixtures; suspend/reboot effects only in disposable VM if explicitly part of fixture."
+      },
+      "scripts": [
+        "capability-observe",
+        "channel-observe"
+      ]
+    },
+    {
+      "component": "BSDSysctl",
+      "source": "usr.sbin/BSDSysctl",
+      "providers": [
+        {
+          "name": "bsdsysctl",
+          "file": "usr.sbin/BSDSysctl/bsdsysctl_provider.d",
+          "probes": [
+            "request__start",
+            "request__done"
+          ]
+        }
+      ],
+      "review": {
+        "status": "source-reviewed",
+        "date": "2026-10-10",
+        "finding": "Reviewed request start/done, bytes, semantic result and separate transport errno positions."
+      },
+      "runtime": {
+        "status": "pending",
+        "required": "Read/write/denial, malformed request and transport failure; scoped writable test sysctl."
+      },
+      "scripts": [
+        "capability-observe",
+        "channel-observe"
+      ]
+    },
+    {
+      "component": "BSDTime",
+      "source": "usr.sbin/BSDTime",
+      "providers": [
+        {
+          "name": "bsdtime",
+          "file": "usr.sbin/BSDTime/BSDTime_provider.d",
+          "probes": [
+            "request",
+            "clock__set",
+            "clock__adjust"
+          ]
+        }
+      ],
+      "review": {
+        "status": "source-reviewed",
+        "date": "2026-10-10",
+        "finding": "Wrapper now loads FIDL observations as well as daemon results and common channel timings. Existing request probe covers semantic result; transport failure comes from FIDL/channel."
+      },
+      "runtime": {
+        "status": "pending",
+        "required": "FIDL protocol negotiation, read/denied set, malformed message and disconnect; avoid changing host clock."
+      },
+      "scripts": [
+        "capability-observe",
+        "channel-observe",
+        "fidl-observe"
+      ]
+    },
+    {
+      "component": "BSDTrace",
+      "source": "usr.sbin/BSDTrace",
+      "providers": [
+        {
+          "name": "bsdtrace",
+          "file": "usr.sbin/BSDTrace/bsdtrace_provider.d",
+          "probes": [
+            "request__done",
+            "session__start",
+            "session__end",
+            "delegate",
+            "reject"
+          ]
+        }
+      ],
+      "review": {
+        "status": "source-reviewed",
+        "date": "2026-10-10",
+        "finding": "Added hello/open/stats/invalid-request results; third field is terminal connection error, including protocol errors, not exclusively send errno."
+      },
+      "runtime": {
+        "status": "pending",
+        "required": "Authorized/denied delegation, hello/stats, malformed input, one-shot descriptor reuse and disconnect."
+      },
+      "scripts": [
+        "capability-observe",
+        "channel-observe"
+      ]
+    },
+    {
+      "component": "BSDVM",
+      "source": "usr.sbin/BSDVM",
+      "providers": [
+        {
+          "name": "bsdvm",
+          "file": "usr.sbin/BSDVM/bsdvm_provider.d",
+          "probes": [
+            "request__done",
+            "vsock__list"
+          ]
+        }
+      ],
+      "review": {
+        "status": "source-reviewed",
+        "date": "2026-10-10",
+        "finding": "Reviewed new connect/bind/list/framing results and separate reply errno; requests run in child workers."
+      },
+      "runtime": {
+        "status": "pending",
+        "required": "Attach actual worker before connect/bind/list/malformed requests; observe status and callback timing."
+      },
+      "scripts": [
+        "capability-observe",
+        "channel-observe"
+      ]
+    },
+    {
+      "component": "BSDBluetooth",
+      "source": "usr.sbin/bluetooth/BSDBluetooth",
+      "providers": [
+        {
+          "name": "blued",
+          "file": "usr.sbin/bluetooth/BSDBluetooth/blued_provider.d",
+          "probes": [
+            "conn__open",
+            "conn__close",
+            "att__recv",
+            "att__send",
+            "att__error",
+            "att__robust__transition",
+            "gatt__disc__step",
+            "smp__pair__start",
+            "smp__pair__done",
+            "smp__method__select",
+            "smp__phase",
+            "smp__timeout",
+            "hid__report",
+            "bond__add",
+            "bond__remove",
+            "bond__load",
+            "bond__save",
+            "gatt__svc__add",
+            "gatt__svc__remove",
+            "reclaim__pass",
+            "scan__start",
+            "scan__result",
+            "encrypt__start",
+            "auth__fail",
+            "sandbox__enter",
+            "hci__cmd__req",
+            "hci__cmd__raw",
+            "hci__disconnect__req",
+            "hci__le__conn__complete",
+            "hci__le__enh__conn__complete",
+            "hci__le__conn__update",
+            "hci__le__phy__update",
+            "hci__le__remote__features",
+            "hci__le__ltk__request",
+            "hci__enc__change",
+            "hci__auth__payload__timeout",
+            "hci__le__adv__report",
+            "hci__le__ext__adv__report",
+            "hci__le__set__phy",
+            "hci__le__data__length",
+            "l2cap__coc__connect",
+            "l2cap__ecred__connect",
+            "l2cap__ecred__reconfig",
+            "l2cap__connparam__update",
+            "att__mtu",
+            "att__notify",
+            "att__indicate",
+            "att__notify__multi",
+            "att__confirm",
+            "att__client__error",
+            "att__cache__oos",
+            "att__cache__aware",
+            "att__cache__hash",
+            "att__cache__invalidate",
+            "gatt__char__add",
+            "gatt__cccd__write",
+            "gatt__subscribe",
+            "gatt__unsubscribe",
+            "smp__pdu__tx",
+            "smp__pdu__rx",
+            "smp__fail__rx",
+            "smp__crypto",
+            "smp__dhkey",
+            "smp__key__dist",
+            "smp__key__recv",
+            "smp__timer__arm",
+            "conn__alloc",
+            "conn__free",
+            "conn__state",
+            "gap__adv__params",
+            "gap__adv__enable",
+            "gap__adv__data",
+            "gap__scan__params",
+            "gap__scan__enable",
+            "per__adv__params",
+            "per__adv__sync",
+            "per__adv__report",
+            "past__receive__enable",
+            "past__transfer",
+            "privacy__rpa__generate",
+            "privacy__rpa__rotate",
+            "privacy__resolve",
+            "privacy__irk__load",
+            "privacy__reslist__load",
+            "hogp__map__parse",
+            "hogp__report__classify",
+            "hogp__protomode",
+            "hogp__boot__setup",
+            "hogp__subscribe",
+            "hogp__vhid__write",
+            "hogp__discover",
+            "iso__cig__params",
+            "iso__cis__create",
+            "iso__cis__accept",
+            "iso__cis__reject",
+            "iso__cig__remove",
+            "iso__big__create",
+            "iso__big__terminate",
+            "iso__datapath__setup",
+            "iso__cis__established",
+            "iso__cis__request",
+            "iso__big__complete",
+            "iso__big__sync",
+            "power__path__loss",
+            "power__tx__report",
+            "power__tx__read",
+            "power__pathloss__enable",
+            "power__report__enable"
+          ]
+        }
+      ],
+      "review": {
+        "status": "source-reviewed",
+        "date": "2026-10-10",
+        "finding": "Wrapper now reports scalar HCI/ATT/pairing results. Connected validated ATT error reply to declared client-error probe; reserved wire error 0 maps to effective nonzero error."
+      },
+      "runtime": {
+        "status": "pending",
+        "required": "ATT valid/error/reserved-zero/malformed replies, HCI/pairing fixtures; hardware-dependent cases remain explicit."
+      },
+      "scripts": [
+        "capability-observe",
+        "channel-observe"
+      ]
+    },
+    {
+      "component": "capsule",
+      "source": "usr.sbin/capsule",
+      "providers": [
+        {
+          "name": "capsule",
+          "file": "usr.sbin/capsule/capsule_provider.d",
+          "probes": [
+            "startup",
+            "shutdown",
+            "shutdown__done",
+            "config__load",
+            "claim__path",
+            "claim__path__fail",
+            "claim__net",
+            "claim__net__fail",
+            "claim__net__release",
+            "claim__system__release",
+            "dyn__claim__net",
+            "dyn__claim__system",
+            "dyn__claim__vsock",
+            "dyn__release__net",
+            "dyn__release__system",
+            "dyn__release__vsock",
+            "integrity",
+            "ctl__accept",
+            "ctl__cmd",
+            "ctl__cmd__done",
+            "ctl__deny",
+            "reload",
+            "reload__claims__start",
+            "reload__claims__done",
+            "mint__net",
+            "mint__system",
+            "mint__vsock",
+            "channel__create",
+            "coalition__create",
+            "service__delegate",
+            "ipc__recv",
+            "ipc__reply",
+            "ipc__dispatch__done",
+            "ipc__nonce__mismatch",
+            "bootstrap__start",
+            "bootstrap__exit",
+            "bootstrap__restart",
+            "conn__count",
+            "capsule__handoff",
+            "capsule__transition",
+            "capsule__reaper__status",
+            "capsule__mac__up",
+            "capsule__mac__fail",
+            "capsule__shield__raise",
+            "capsule__shield__fail",
+            "capsule__engine__up",
+            "capsule__converge",
+            "capsule__converge__fail",
+            "capsule__ambient__install",
+            "capsule__ambient__fail",
+            "capsule__ambient__carry",
+            "capsule__lifecycle",
+            "capsule__world__stop",
+            "capsule__world__kill",
+            "capsule__world__stopped",
+            "error"
+          ]
+        }
+      ],
+      "review": {
+        "status": "source-reviewed",
+        "date": "2026-10-10",
+        "finding": "Wrapper now reports existing IPC/control/creation/delegation results and native elapsed timings. PID1 and daemon-mode paths differ."
+      },
+      "runtime": {
+        "status": "pending",
+        "required": "Use correct capability-plane boot; control request/denial and IPC timings; no parent-only substitute for workers."
+      },
+      "scripts": [
+        "capability-observe",
+        "channel-observe"
+      ]
+    },
+    {
+      "component": "switchboard",
+      "source": "usr.sbin/switchboard",
+      "providers": [
+        {
+          "name": "switchboard",
+          "file": "usr.sbin/switchboard/switchboard_provider.d",
+          "probes": [
+            "svc__start",
+            "svc__exec",
+            "svc__capmode",
+            "svc__exit",
+            "svc__restart",
+            "svc__stop",
+            "svc__load",
+            "svc__disabled",
+            "registry__change",
+            "registry__reload",
+            "live__publish",
+            "reload",
+            "svc__removed",
+            "svc__changed",
+            "naming__register",
+            "naming__unregister",
+            "naming__lookup",
+            "naming__deny",
+            "sctl__cmd",
+            "sctl__cmd__done",
+            "sctl__deny",
+            "mint__domain",
+            "mint__deny",
+            "domain__lookup",
+            "domain__lookup__deny",
+            "anoint__deny",
+            "anoint__allow",
+            "anoint__set",
+            "mint__anoint",
+            "anoint__visibility",
+            "cap__mint",
+            "cap__service",
+            "cap__channel",
+            "worker__channel",
+            "cap__coalition",
+            "identity__validate",
+            "svc__exec__done",
+            "svc__count",
+            "naming__count",
+            "fd__reserve",
+            "fd__pressure",
+            "ipc__recv",
+            "ipc__reply",
+            "timeout__arm",
+            "timeout__fire",
+            "watchdog__heartbeat",
+            "shutdown__start",
+            "shutdown__done",
+            "quiesce__request",
+            "quiesce__complete",
+            "conn__accept",
+            "conn__close",
+            "startup__begin",
+            "startup__tier",
+            "startup__done",
+            "on__demand__launch",
+            "on__demand__coalesce",
+            "on__demand__deny",
+            "on__demand__ready",
+            "on__demand__fail",
+            "on__demand__cancel",
+            "on__demand__timeout",
+            "endpoint__claim",
+            "endpoint__activate",
+            "endpoint__withdraw",
+            "bundle__load",
+            "bundle__scan",
+            "manifest__reject",
+            "identity",
+            "error",
+            "svc__exec__fail",
+            "capsule__disconnected"
+          ]
+        }
+      ],
+      "review": {
+        "status": "source-reviewed",
+        "date": "2026-10-10",
+        "finding": "Wrapper now reports naming/IPC/control/exec/activation results and elapsed timings. Connected declared-but-unused control completion probe after reply attempt."
+      },
+      "runtime": {
+        "status": "pending",
+        "required": "Control success/denial/malformed request, naming denial, activation failure, exec and quiesce workloads."
+      },
+      "scripts": [
+        "capability-observe",
+        "channel-observe"
+      ]
+    },
+    {
+      "component": "meshd",
+      "source": "usr.sbin/bluetooth/meshd",
+      "providers": [
+        {
+          "name": "meshd",
+          "file": "usr.sbin/bluetooth/meshd/meshd_provider.d",
+          "probes": [
+            "app__connect",
+            "app__disconnect",
+            "app__register",
+            "app__event__queue",
+            "app__event__drop",
+            "app__event__send"
+          ]
+        }
+      ],
+      "review": {
+        "status": "source-reviewed",
+        "date": "2026-10-10",
+        "finding": "Uses mesh socket provider without libchannel. Fixed dropped-event total to count drop events rather than summing cumulative counters. Queue depth and functional event counts retained."
+      },
+      "runtime": {
+        "status": "pending",
+        "required": "Queue overflow must count one per dropped event; attach/disconnect/register/send and mesh fixtures."
+      },
+      "scripts": [
+        "capability-observe"
+      ]
+    },
+    {
+      "component": "FIDL",
+      "source": "lib/libfidl",
+      "note": "",
+      "providers": [
+        {
+          "name": "fidl_bsd",
+          "file": "lib/libfidl/fidl_provider.d",
+          "probes": [
+            "request__start",
+            "request__done",
+            "dispatch__start",
+            "dispatch__done",
+            "message",
+            "close"
+          ]
+        }
+      ],
+      "review": {
+        "status": "source-reviewed",
+        "date": "2026-10-10",
+        "finding": "Reviewed native request-start/done correlation by PID/connection/txid, pre-callback completion and nested dispatch timing. Close/error events expose metadata only."
+      },
+      "runtime": {
+        "status": "pending",
+        "required": "Concurrent transactions, malformed reply, cancellation/close, callback failure; verify no stale correlation or DTrace drops."
+      },
+      "scripts": [
+        "fidl-observe"
+      ]
+    },
+    {
+      "component": "BSDChannel",
+      "source": "lib/libchannel",
+      "note": "",
+      "providers": [
+        {
+          "name": "libchannel",
+          "file": "lib/libchannel/channel_provider.d",
+          "probes": [
+            "request__start",
+            "request__done",
+            "dispatch__start",
+            "dispatch__done",
+            "handler__start",
+            "handler__done",
+            "create",
+            "queue",
+            "send",
+            "receive",
+            "complete",
+            "discard",
+            "peer__death"
+          ]
+        }
+      ],
+      "review": {
+        "status": "source-reviewed",
+        "date": "2026-10-10",
+        "finding": "Reviewed callback lifetime safety, nested dispatch, request completion/abandonment and kernel sbintime conversion. Added creation/send result aggregates."
+      },
+      "runtime": {
+        "status": "pending",
+        "required": "Nested handlers, destroy-from-callback, cancel/peer death, queued sends; positive user/kernel timing samples."
+      },
+      "scripts": [
+        "channel-observe",
+        "bsdchannel-kernel"
+      ]
+    },
+    {
+      "component": "Linuxulator",
+      "source": "sys/compat/linux",
+      "note": "",
+      "review": {
+        "status": "source-reviewed",
+        "date": "2026-10-10",
+        "finding": "Verified syscall provider module names linux/linux32 and native errno meaning. Script covers syscall elapsed time and diagnostic counts without arguments."
+      },
+      "runtime": {
+        "status": "pending",
+        "required": "Load ABI systrace modules; run native/compat successful and failing Linux syscalls, including blocking call."
+      },
+      "scripts": [
+        "linuxulator-observe"
+      ]
+    },
+    {
+      "component": "OpenES",
+      "source": "sys/security/oes",
+      "note": "",
+      "review": {
+        "status": "source-reviewed",
+        "date": "2026-10-10",
+        "finding": "Verified event argument types and auth-group wait start/done placement. Script reports event types and waits without reading paths."
+      },
+      "runtime": {
+        "status": "pending",
+        "required": "Allow/deny/timeout/cache-hit/miss, listener count and positive wait duration; full hook latency is not measured."
+      },
+      "scripts": [
+        "oes-observe"
+      ]
+    },
+    {
+      "component": "Matter",
+      "source": "contrib/connectedhomeip",
+      "note": "IDL tooling only; no Matter service, commissioning stack or hardware runtime exists in this import.",
+      "review": {
+        "status": "source-reviewed",
+        "date": "2026-10-10",
+        "finding": "Import contains IDL tooling only. Script profiles target tool syscalls/exit; no Matter runtime provider or daemon exists to qualify."
+      },
+      "runtime": {
+        "status": "IDL tooling pending; daemon runtime not applicable",
+        "required": "Run imported IDL fixture under script; Matter commissioning/radio runtime is not applicable."
+      },
+      "scripts": [
+        "matter-idl-observe"
+      ]
+    },
+    {
+      "component": "PF",
+      "source": "sys/netpfil/pf",
+      "review": {
+        "status": "source-reviewed",
+        "date": "2026-10-10",
+        "finding": "Reviewed nested packet/rule/handoff timing, state/error/translation fields and script claims. Handoff excludes asynchronous queue residence."
+      },
+      "runtime": {
+        "status": "pending",
+        "required": "Existing tracing-smoke.sh in four-core networked VM: IPv4/6 pass/block, state limits, shaping/reinjection."
+      },
+      "scripts": [
+        "pf-observe"
+      ]
+    },
+    {
+      "component": "Dummynet",
+      "source": "sys/netpfil/dummynet",
+      "review": {
+        "status": "source-reviewed",
+        "date": "2026-10-10",
+        "finding": "Reviewed queue admission/dequeue/credit/delay/drop fields. Queue residence uses ticks and basic drops do not claim every AQM outcome."
+      },
+      "runtime": {
+        "status": "pending",
+        "required": "Existing tracing-smoke.sh: forced loss, queue limit/credit wait, positive dequeue/release timing and no DTrace faults."
+      },
+      "scripts": [
+        "dn-observe"
+      ]
+    }
+  ],
+  "verification": {
+    "operator_test": "19 daemon selections, 14 invalid inputs, provider argument bounds and source call sites; mocked dtrace only",
+    "changed_source_compilation": "Nine source units compile with tracing enabled and disabled; evidence under /usr/obj/5BSD-system-tracing-20261010",
+    "usdt_relocations": "single-review-usdt.json",
+    "vm": "Networking and four cores; final source snapshot/rebuild required. Earlier package/VM workers remain held."
+  }
+}

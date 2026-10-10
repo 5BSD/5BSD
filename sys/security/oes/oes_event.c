@@ -81,6 +81,8 @@ extern struct sx proctree_lock;
  *   dtrace -n 'oes:::auth-deny { printf("%s pid=%d", execname, arg1); }'
  */
 SDT_PROVIDER_DEFINE(oes);
+SDT_PROBE_DEFINE2(oes, , , wait__start, "uintptr_t", "size_t");
+SDT_PROBE_DEFINE2(oes, , , wait__done, "uintptr_t", "int");
 
 SDT_PROBE_DEFINE3(oes, , , auth__allow,
     "oes_event_type_t",		/* event type */
@@ -353,6 +355,7 @@ oes_auth_group_wait(struct oes_auth_group *ag, struct oes_pending **eps,
 	size_t i;
 	bool denied = false;
 
+	SDT_PROBE2(oes, , , wait__start, (uintptr_t)ag, count);
 	for (;;) {
 		oes_auth_group_update_timeouts(ag, eps, count);
 
@@ -399,6 +402,8 @@ oes_auth_group_wait(struct oes_auth_group *ag, struct oes_pending **eps,
 		mtx_unlock(&ag->ag_mtx);
 	}
 
+	SDT_PROBE2(oes, , , wait__done, (uintptr_t)ag,
+	    (denied ? EACCES : 0));
 	return (denied ? EACCES : 0);
 }
 

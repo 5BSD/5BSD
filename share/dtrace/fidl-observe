@@ -1,0 +1,27 @@
+#!/usr/sbin/dtrace -s
+/* SPDX-License-Identifier: BSD-2-Clause
+ * Usage: dtrace -s fidl-observe -p PID (or -c command).
+ * Native send-to-validated-reply timing; excludes prior encoding and user callback.
+ */
+#pragma D option quiet
+#pragma D option dynvarsize=16m
+fidl_bsd$target:::request-start
+{ fr[pid,arg0,arg1] = timestamp; @fbytes = quantize(arg3); @ffds = quantize(arg4); }
+fidl_bsd$target:::request-done
+/fr[pid,arg0,arg1] != 0/
+{ @frequest_ns[arg2,arg3] = quantize(timestamp-fr[pid,arg0,arg1]); @fresults[arg2,arg3] = count(); fr[pid,arg0,arg1] = 0; }
+fidl_bsd$target:::dispatch-start
+{ self->fd++; fs[tid,self->fd] = timestamp; }
+fidl_bsd$target:::dispatch-done
+/self->fd > 0 && fs[tid,self->fd] != 0/
+{ @fdispatch_ns[arg1] = quantize(timestamp-fs[tid,self->fd]); fs[tid,self->fd] = 0; self->fd--; }
+fidl_bsd$target:::message { @fmessages[arg2,arg1 != 0] = count(); }
+fidl_bsd$target:::close { @fclose[arg1] = count(); }
+ERROR { fidl_faults++; }
+END {
+ printf("FIDL_SUMMARY faults=%d\n",fidl_faults);
+ printf("Completed native transactions: ordinal errno; elapsed ns\n"); printa(@fresults); printa(@frequest_ns);
+ printf("Dispatch elapsed ns by errno\n"); printa(@fdispatch_ns);
+ printf("Messages: ordinal has-txid; close reasons\n"); printa(@fmessages); printa(@fclose);
+ printf("Bytes and descriptors\n"); printa(@fbytes); printa(@ffds);
+}

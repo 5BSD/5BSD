@@ -15,11 +15,15 @@
 
 #ifdef WITH_DTRACE
 #include "bsdnamespace_provider.h"
+#define BSDNAMESPACE_PROBE_REQUEST_DONE(op, status, error) \
+	BSDNAMESPACE_REQUEST_DONE(op, status, error)
 #define	BSDNAMESPACE_PROBE_ENTER(client, jid, result) \
 	BSDNAMESPACE_ENTER(__DECONST(char *, client), jid, result)
 #define	BSDNAMESPACE_PROBE_RECLAIM_PASS(when, live, owned, orphans, destroyed, failed) \
 	BSDNAMESPACE_RECLAIM_PASS(when, live, owned, orphans, destroyed, failed)
 #else
+#define BSDNAMESPACE_PROBE_REQUEST_DONE(op, status, error) \
+	do { (void)(op); (void)(status); (void)(error); } while (0)
 #define	BSDNAMESPACE_PROBE_ENTER(client, jid, result) \
 	do { (void)(client); (void)(jid); (void)(result); } while (0)
 #define	BSDNAMESPACE_PROBE_RECLAIM_PASS(when, live, owned, orphans, destroyed, failed) \

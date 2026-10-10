@@ -927,6 +927,9 @@ att_request(struct att_conn *ac, const void *req, size_t reqlen,
 			ae->code = (((uint8_t *)rsp)[4] == 0x00) ?
 			    ATT_ERR_UNLIKELY_ERROR : ((uint8_t *)rsp)[4];
 		}
+		BLUED_PROBE_ATT_CLIENT_ERROR(((uint8_t *)rsp)[1],
+		    get_le16((uint8_t *)rsp + 2), ((uint8_t *)rsp)[4] == 0 ?
+		    ATT_ERR_UNLIKELY_ERROR : ((uint8_t *)rsp)[4]);
 		warnx("ATT error: req=%02x handle=%04x code=%02x",
 		    ((uint8_t *)rsp)[1], get_le16((uint8_t *)rsp + 2),
 		    ((uint8_t *)rsp)[4]);

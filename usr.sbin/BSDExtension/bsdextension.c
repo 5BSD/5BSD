@@ -472,7 +472,8 @@ sysext_request(struct channel *ch __unused, struct channel_message *m, void *arg
 	struct sysext_list_reply lrp;
 	struct sysext_info_reply irp;
 	struct channel_outgoing out;
-	int loaded;
+	uint32_t opcode = UINT32_MAX;
+	int loaded, transport_error;
 
 	memset(&rp, 0, sizeof(rp));
 	memset(&srp, 0, sizeof(srp));
@@ -483,6 +484,7 @@ sysext_request(struct channel *ch __unused, struct channel_message *m, void *arg
 		goto reply;
 	}
 	rq = channel_message_data(m);
+	opcode = rq->op;
 	if (rq->_reserved != 0 ||
 	    (rq->op != SYSEXT_OP_ENSURE && rq->op != SYSEXT_OP_STAT &&
 	    rq->op != SYSEXT_OP_LIST && rq->op != SYSEXT_OP_RELOAD &&
@@ -531,7 +533,8 @@ sysext_request(struct channel *ch __unused, struct channel_message *m, void *arg
 		out.size = sizeof(out);
 		out.data = &irp;
 		out.length = sizeof(irp);
-		(void)channel_send_reply(m, &out);
+		transport_error = channel_send_reply(m, &out) == -1 ? errno : 0;
+		BSDEXTENSION_PROBE_REQUEST_DONE(opcode, irp.status, transport_error);
 		channel_message_free(m);
 		return;
 	}
@@ -637,7 +640,8 @@ reply:
 	out.size = sizeof(out);
 	out.data = &rp;
 	out.length = sizeof(rp);
-	(void)channel_send_reply(m, &out);
+	transport_error = channel_send_reply(m, &out) == -1 ? errno : 0;
+	BSDEXTENSION_PROBE_REQUEST_DONE(opcode, rp.status, transport_error);
 	channel_message_free(m);
 	return;
 
@@ -646,7 +650,8 @@ stat_reply:
 	out.size = sizeof(out);
 	out.data = &srp;
 	out.length = sizeof(srp);
-	(void)channel_send_reply(m, &out);
+	transport_error = channel_send_reply(m, &out) == -1 ? errno : 0;
+	BSDEXTENSION_PROBE_REQUEST_DONE(opcode, srp.status, transport_error);
 	channel_message_free(m);
 	return;
 
@@ -655,7 +660,8 @@ list_reply:
 	out.size = sizeof(out);
 	out.data = &lrp;
 	out.length = sizeof(lrp);
-	(void)channel_send_reply(m, &out);
+	transport_error = channel_send_reply(m, &out) == -1 ? errno : 0;
+	BSDEXTENSION_PROBE_REQUEST_DONE(opcode, lrp.status, transport_error);
 	channel_message_free(m);
 }
 

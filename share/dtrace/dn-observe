@@ -1,0 +1,54 @@
+#!/usr/sbin/dtrace -s
+/* SPDX-License-Identifier: BSD-2-Clause
+ * Dummynet queue/scheduler summary, all VNETs. Ctrl-C prints results.
+ * Usage: dtrace -s /usr/share/dtrace/dn-observe -c 'sleep 30'
+ * Residence and lateness use Dummynet ticks. Release is not delivery.
+ */
+#pragma D option quiet
+
+dummynet:sched:enqueue:result
+{
+    @dn_admission[arg1, arg2] = count();
+    @dn_depth[args[0]->sched->sch.sched_nr] = quantize(arg3);
+}
+dummynet:sched:dequeue:packet
+{
+    @dn_dequeued = count();
+    @dn_residence[args[0]->sched->sch.sched_nr] = quantize(arg2);
+    @dn_sizes = quantize(args[1]->m_pkthdr.len);
+}
+dummynet:sched:credit:wait
+{
+    @dn_credit_wait[args[0]->sched->sch.sched_nr] = quantize(arg2);
+    @dn_credit[args[0]->sched->sch.sched_nr] = min((int64_t)arg1);
+}
+dummynet:delay:release:packet
+{
+    @dn_released = count();
+    @dn_lateness[args[0]->si->sched->sch.sched_nr] = quantize(arg2);
+}
+dummynet:queue:enqueue:done
+{
+    @dn_queue_pkts = quantize(arg1);
+    @dn_queue_bytes = quantize(arg2);
+}
+dummynet:queue:drop:reason { @dn_queue_drops[stringof(args[2])] = count(); }
+dummynet:io:input:error { @dn_input_errors[arg0, stringof(args[1])] = count(); }
+dummynet:io:output:packet { @dn_output[arg1] = count(); }
+ERROR { dn_faults++; }
+END
+{
+    printf("DN_SUMMARY faults=%d\n", dn_faults);
+    printa("DN_DEQUEUED %@d\n", @dn_dequeued);
+    printa("DN_RELEASED %@d\n", @dn_released);
+    printf("Admission: internal flowset ID scheduler-return count\n"); printa(@dn_admission);
+    printf("Scheduler depth (packets)\n"); printa(@dn_depth);
+    printf("Queue residence before dequeue (ticks)\n"); printa(@dn_residence);
+    printf("Credit wait (ticks); minimum credit (scaled bits)\n"); printa(@dn_credit_wait); printa(@dn_credit);
+    printf("Delay release lateness (ticks)\n"); printa(@dn_lateness);
+    printf("Packet sizes (bytes)\n"); printa(@dn_sizes);
+    printf("Basic queue occupancy: packets / bytes\n"); printa(@dn_queue_pkts); printa(@dn_queue_bytes);
+    printf("Basic queue drop reasons (not all AQM internals)\n"); printa(@dn_queue_drops);
+    printf("Input errors: internal flowset ID reason count\n"); printa(@dn_input_errors);
+    printf("Output dispatch: direction count (excludes immediate return)\n"); printa(@dn_output);
+}

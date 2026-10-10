@@ -549,10 +549,15 @@ sctl_cap_request(struct channel *ch __unused, struct channel_message *request,
 	const void *data;
 	size_t len;
 	struct sctl_reply reply;
+	struct timespec trace_start = { 0 }, trace_end = { 0 };
+	uint32_t trace_opcode = UINT32_MAX;
+	uint64_t trace_duration = 0;
+	bool trace_clock_valid;
 	char summary[SWITCHBOARD_CTL_SUMMARY_MAX];
 	char payload[SWITCHBOARD_CTL_MAX_PAYLOAD + 1];
 	char out[sizeof(struct sctl_reply) + SWITCHBOARD_CTL_SUMMARY_MAX];
 
+	trace_clock_valid = clock_gettime(CLOCK_MONOTONIC, &trace_start) == 0;
 	memset(&reply, 0, sizeof(reply));
 	summary[0] = '\0';
 	data = channel_message_data(request);
@@ -565,6 +570,7 @@ sctl_cap_request(struct channel *ch __unused, struct channel_message *request,
 		reply.status = EINVAL;
 	} else {
 		req = data;
+		trace_opcode = req->op;
 		if (req->flags != 0 ||
 		    req->datalen > SWITCHBOARD_CTL_MAX_PAYLOAD ||
 		    len != sizeof(*req) + (size_t)req->datalen ||
@@ -616,6 +622,11 @@ sctl_cap_request(struct channel *ch __unused, struct channel_message *request,
 		.nfds = 0
 	    }) == -1)
 		syslog(LOG_WARNING, "sctl: capability control reply: %m");
+	if (trace_clock_valid && clock_gettime(CLOCK_MONOTONIC, &trace_end) == 0)
+		trace_duration = (uint64_t)(trace_end.tv_sec - trace_start.tv_sec) *
+		    1000000000ULL + trace_end.tv_nsec - trace_start.tv_nsec;
+	SWITCHBOARD_PROBE_SCTL_CMD_DONE(trace_opcode, c->uid, reply.status,
+	    trace_duration);
 	sctl_cap_sync_events(c);
 }
 

@@ -1,0 +1,37 @@
+#!/usr/sbin/dtrace -s
+/* SPDX-License-Identifier: BSD-2-Clause
+ * Usage: dtrace -s channel-observe -p PID (or -c command).
+ * Request timing includes user-space queueing until completion delivery.
+ * Callback/dispatch timing is inclusive elapsed ns, not exclusive CPU time.
+ */
+#pragma D option quiet
+#pragma D option dynvarsize=16m
+libchannel$target:::request-start
+{ req[pid, arg0, arg1] = timestamp; @request_bytes = quantize(arg2); @request_fds = quantize(arg3); }
+libchannel$target:::request-done
+/req[pid, arg0, arg1] != 0/
+{ @request_ns[arg2] = quantize(timestamp - req[pid, arg0, arg1]); @completed[arg2] = count(); req[pid, arg0, arg1] = 0; }
+libchannel$target:::dispatch-start
+{ self->dd++; ds[tid, self->dd] = timestamp; @pending = quantize(arg1); @queued = quantize(arg2); }
+libchannel$target:::dispatch-done
+/self->dd > 0 && ds[tid, self->dd] != 0/
+{ @dispatch_ns[arg2] = quantize(timestamp - ds[tid, self->dd]); @batch = quantize(arg1); ds[tid, self->dd] = 0; self->dd--; }
+libchannel$target:::handler-start
+{ self->hd++; hs[tid, self->hd] = timestamp; }
+libchannel$target:::handler-done
+/self->hd > 0 && hs[tid, self->hd] != 0/
+{ @handler_ns[arg2] = quantize(timestamp - hs[tid, self->hd]); hs[tid, self->hd] = 0; self->hd--; }
+libchannel$target:::create { @channel_create_results[(int)arg2] = count(); }
+libchannel$target:::send { @channel_send_results[(int)arg3] = count(); }
+libchannel$target:::peer-death { @peer_errors[arg0] = count(); }
+libchannel$target:::discard { @discard[arg2] = count(); }
+ERROR { channel_faults++; }
+END {
+ printf("CHANNEL_SUMMARY faults=%d\n", channel_faults);
+ printf("Request completion counts and elapsed ns, keyed by errno\n"); printa(@completed); printa(@request_ns);
+ printf("Dispatch elapsed ns by errno; callback elapsed ns by message kind\n"); printa(@dispatch_ns); printa(@handler_ns);
+ printf("Pending requests; queued messages; dispatch batch sizes\n"); printa(@pending); printa(@queued); printa(@batch);
+ printf("Request byte/fd distributions (no payloads or descriptor contents)\n"); printa(@request_bytes); printa(@request_fds);
+ printf("Channel creation/send results\n"); printa(@channel_create_results); printa(@channel_send_results);
+ printf("Peer-death errors; discard reasons\n"); printa(@peer_errors); printa(@discard);
+}

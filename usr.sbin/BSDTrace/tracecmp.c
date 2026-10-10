@@ -239,6 +239,7 @@ handle_request(struct channel *channel __unused,
 	    channel_message_fd_count(request_message),
 	    TRACECMP_MESSAGE_REQUEST) == -1) {
 		state->terminal_error = EPROTO;
+		BSDTRACE_PROBE_REQUEST_DONE(UINT32_MAX, EPROTO, 0);
 		channel_message_free(request_message);
 		return;
 	}
@@ -309,6 +310,8 @@ handle_request(struct channel *channel __unused,
 		    -1)
 			state->terminal_error = errno;
 	}
+	BSDTRACE_PROBE_REQUEST_DONE(message->opcode, error,
+	    state->terminal_error);
 	channel_message_free(request_message);
 }
 

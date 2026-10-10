@@ -26,5 +26,9 @@ UNITMODE= 0444
 UNITPACKAGE= ${PACKAGE}
 HAS_TESTS=
 SUBDIR.${MK_TESTS}+= tests
+.if ${MK_DTRACE} != "no"
+SRCS+= bsdmemory_provider.d
+CFLAGS+= -I${.OBJDIR} -DWITH_DTRACE
+.endif
 .include <bsd.prog.mk>
 _proginstall: installdirs-MEMORY_BIN

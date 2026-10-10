@@ -10,6 +10,8 @@
 #include <limits>
 #include <new>
 
+#include "fidl_probes.h"
+
 namespace fidl::bsd {
 static_assert(kMaxMessageBytes == MAC_CAPABILITY_MAX_MSG);
 static_assert(kMaxDescriptors == MAC_CAPABILITY_MAX_FDS);
@@ -330,6 +332,7 @@ Connection::Close(int error)
 {
 	if (!error_)
 		error_ = error ? error : ECANCELED;
+	FIDL_BSD_CLOSE(reinterpret_cast<uintptr_t>(this), error_);
 	channel *old = std::exchange(channel_, nullptr);
 	if (old)
 		channel_destroy(old);
@@ -452,9 +455,13 @@ Connection::SendRequest(uint32_t id, uint64_t ordinal, Outgoing &packet,
 	pending->completion = std::move(completion);
 	auto view = packet.MoveView(lock_inherit_);
 	auto *raw = pending.get();
+	FIDL_BSD_REQUEST_START(reinterpret_cast<uintptr_t>(this), id, ordinal,
+	    view.length, view.nfds);
 	if (channel_send_request(channel_, &view, OnReply, raw,
 		&raw->request) != 0) {
 		int error = errno;
+		FIDL_BSD_REQUEST_DONE(reinterpret_cast<uintptr_t>(this), id,
+		    ordinal, error);
 		RecyclePending(std::move(pending));
 		return error;
 	}
@@ -482,6 +489,8 @@ Connection::OnReply(channel_request *request, channel_message *message,
 		error = self->error_;
 	if (!error)
 		error = incoming.Validate(pending->ordinal, pending->id);
+	FIDL_BSD_REQUEST_DONE(reinterpret_cast<uintptr_t>(self), pending->id,
+	    pending->ordinal, error);
 	if (error == EPROTO || error == ENOMEM)
 		self->Close(error);
 	try {
@@ -505,6 +514,8 @@ Connection::OnMessage(channel *, channel_message *message, void *context)
 			self->Close(EPROTO);
 			return;
 		}
+		FIDL_BSD_MESSAGE(reinterpret_cast<uintptr_t>(self), h.txid,
+		    h.ordinal);
 		if (h.ordinal == kFidlOrdinalEpitaph) {
 			if (self->role_ != CHANNEL_ROLE_CLIENT || h.txid != 0 ||
 			    channel_message_length(incoming->native()) != 24 ||
@@ -544,25 +555,33 @@ Connection::OnMessage(channel *, channel_message *message, void *context)
 		self->Close(ECANCELED);
 	}
 }
+#define FIDL_DISPATCH_RETURN(value) do { \
+	int trace_error = (value); \
+	FIDL_BSD_DISPATCH_DONE(reinterpret_cast<uintptr_t>(this), trace_error); \
+	return trace_error; \
+} while (0)
 int
 Connection::Dispatch()
 {
+	FIDL_BSD_DISPATCH_START(reinterpret_cast<uintptr_t>(this));
 	if (error())
-		return error();
+		FIDL_DISPATCH_RETURN(error());
 	if (channel_dispatch(channel_) < 0) {
 		int e = errno;
 		Close(e);
-		return e;
+		FIDL_DISPATCH_RETURN(e);
 	}
 	if (error())
-		return error();
+		FIDL_DISPATCH_RETURN(error());
 	if (channel_flush(channel_) != 0) {
 		int e = errno;
 		Close(e);
-		return e;
+		FIDL_DISPATCH_RETURN(e);
 	}
-	return error();
+	FIDL_DISPATCH_RETURN(error());
 }
+#undef FIDL_DISPATCH_RETURN
+
 int
 Connection::Poll(int timeout_ms)
 {

@@ -25,4 +25,16 @@
 	DTRACE_PROBE3(libchannel, discard, token, fds, reason)
 #define	LIBCHANNEL_PROBE_PEER_DEATH(error, pending) \
 	DTRACE_PROBE2(libchannel, peer__death, error, pending)
+#define LIBCHANNEL_PROBE_REQUEST_START(ch, token, bytes, fds) \
+	DTRACE_PROBE4(libchannel, request__start, ch, token, bytes, fds)
+#define LIBCHANNEL_PROBE_REQUEST_DONE(ch, token, error) \
+	DTRACE_PROBE3(libchannel, request__done, ch, token, error)
+#define LIBCHANNEL_PROBE_DISPATCH_START(ch, pending, queued) \
+	DTRACE_PROBE3(libchannel, dispatch__start, ch, pending, queued)
+#define LIBCHANNEL_PROBE_DISPATCH_DONE(ch, messages, error) \
+	DTRACE_PROBE3(libchannel, dispatch__done, ch, messages, error)
+#define LIBCHANNEL_PROBE_HANDLER_START(ch, token, kind) \
+	DTRACE_PROBE3(libchannel, handler__start, ch, token, kind)
+#define LIBCHANNEL_PROBE_HANDLER_DONE(ch, token, kind) \
+	DTRACE_PROBE3(libchannel, handler__done, ch, token, kind)
 #endif

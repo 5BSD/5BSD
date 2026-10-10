@@ -389,8 +389,8 @@ vmd_request_handler(struct channel *ch __unused, struct channel_message *m,
 	struct vmd_reply rp;
 	struct channel_outgoing out;
 	cap_rights_t rights;
-	uint32_t port = 0;
-	int s = -1;
+	uint32_t port = 0, opcode = UINT32_MAX;
+	int s = -1, transport_error;
 
 	memset(&rp, 0, sizeof(rp));
 
@@ -400,6 +400,7 @@ vmd_request_handler(struct channel *ch __unused, struct channel_message *m,
 		goto reply;
 	}
 	rq = channel_message_data(m);
+	opcode = rq->op;
 	if (!valid_request(rq)) {
 		rp.status = EINVAL;
 		goto reply;
@@ -429,7 +430,8 @@ vmd_request_handler(struct channel *ch __unused, struct channel_message *m,
 		lout.size = sizeof(lout);
 		lout.data = &lrp;
 		lout.length = sizeof(lrp);
-		(void)channel_send_reply(m, &lout);
+		transport_error = channel_send_reply(m, &lout) == -1 ? errno : 0;
+		BSDVM_PROBE_REQUEST_DONE(opcode, lrp.status, transport_error);
 		channel_message_free(m);
 		return;
 	}
@@ -518,7 +520,8 @@ reply:
 		out.fds = &s;
 		out.nfds = 1;
 	}
-	(void)channel_send_reply(m, &out);
+	transport_error = channel_send_reply(m, &out) == -1 ? errno : 0;
+	BSDVM_PROBE_REQUEST_DONE(opcode, rp.status, transport_error);
 	if (s >= 0)
 		(void)close(s);
 	channel_message_free(m);
