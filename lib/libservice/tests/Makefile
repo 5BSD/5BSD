@@ -85,4 +85,13 @@ all:
 
 LIBADD.capd_service_fixture+= capsulert
 
+ATF_TESTS_C+= client_deadline_test
+CFLAGS.client_deadline_test+= -I${SRCTOP}/lib/libservice \
+    -I${SRCTOP}/lib/libchannel -I${SRCTOP}/lib/libcapsulert \
+    -I${SRCTOP}/usr.sbin/switchboard -I${SRCTOP}/sys \
+    -ffunction-sections -fdata-sections
+LDFLAGS.client_deadline_test+= -Wl,--gc-sections
+LIBADD.client_deadline_test+= pthread
+NO_SHARED.client_deadline_test= yes
+
 .include <bsd.test.mk>

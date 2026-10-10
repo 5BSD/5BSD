@@ -225,22 +225,45 @@ remaining_poll_ms(const struct timespec *deadline, uint32_t timeout_ms)
 	    (int)milliseconds : CLIENT_POLL_MS);
 }
 
+/* Every timed condition wait uses the session deadline's clock. */
+static int
+monotonic_cond_init(pthread_cond_t *condition)
+{
+	pthread_condattr_t attributes;
+	int error;
+
+	error = pthread_condattr_init(&attributes);
+	if (error != 0)
+		return (error);
+	error = pthread_condattr_setclock(&attributes, CLOCK_MONOTONIC);
+	if (error == 0)
+		error = pthread_cond_init(condition, &attributes);
+	(void)pthread_condattr_destroy(&attributes);
+	return (error);
+}
+
 static void
-wait_slice(pthread_cond_t *condition, pthread_mutex_t *lock, int timeout_ms)
+wait_slice(pthread_cond_t *condition, pthread_mutex_t *lock,
+    const struct timespec *deadline, uint32_t timeout_ms)
     __no_lock_analysis
 {
 	struct timespec until;
 
-	if (timeout_ms <= 0)
+	if (timeout_ms == 0)
 		return;
-	if (clock_gettime(CLOCK_REALTIME, &until) == -1)
+	if (clock_gettime(CLOCK_MONOTONIC, &until) == -1)
 		return;
-	until.tv_sec += timeout_ms / 1000;
-	until.tv_nsec += (timeout_ms % 1000) * 1000000L;
+	until.tv_sec += CLIENT_POLL_MS / 1000;
+	until.tv_nsec += (CLIENT_POLL_MS % 1000) * 1000000L;
 	if (until.tv_nsec >= 1000000000L) {
 		until.tv_sec++;
 		until.tv_nsec -= 1000000000L;
 	}
+	/* Never restart the remaining budget after acquiring the mutex. */
+	if (timeout_ms != SERVICE_CLIENT_TIMEOUT_INFINITE &&
+	    (until.tv_sec > deadline->tv_sec ||
+	    (until.tv_sec == deadline->tv_sec && until.tv_nsec > deadline->tv_nsec)))
+		until = *deadline;
 	(void)pthread_cond_timedwait(condition, lock, &until);
 }
 
@@ -460,7 +483,7 @@ service_client_create_internal(int fd, struct service_client **clientp)
 	}
 	if (error == 0) {
 		initialized = 2;
-		error = pthread_cond_init(&client->idle, NULL);
+		error = monotonic_cond_init(&client->idle);
 	}
 	if (error != 0)
 		goto fail;
@@ -545,7 +568,7 @@ service_client_call_internal(struct service_client *client,
 	for (i = 0; i < call.reply_fd_capacity; i++)
 		reply_fds[i] = -1;
 	*reply_nfds = 0;
-	error = pthread_cond_init(&call.cond, NULL);
+	error = monotonic_cond_init(&call.cond);
 	if (error != 0)
 		goto fail_cancel;
 	if (lock_mutex(&client->lock) == -1) {
@@ -618,7 +641,8 @@ service_client_call_internal(struct service_client *client,
 				goto cancel;
 			}
 			if (!call.done)
-				wait_slice(&call.cond, &client->lock, poll_ms);
+				wait_slice(&call.cond, &client->lock, &deadline,
+				    timeout_ms);
 			(void)pthread_mutex_unlock(&client->lock);
 		}
 	}
@@ -755,7 +779,8 @@ service_client_event_internal(struct service_client *client, void *data,
 				goto fail_active;
 			}
 			if (client->events_head == NULL)
-				wait_slice(&client->idle, &client->lock, poll_ms);
+				wait_slice(&client->idle, &client->lock, &deadline,
+				    timeout_ms);
 			(void)pthread_mutex_unlock(&client->lock);
 		}
 	}
