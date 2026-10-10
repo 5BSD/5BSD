@@ -22,25 +22,49 @@ sample(struct sysctlcmp_client **client, uint32_t values[3])
 		return (-1);
 	for (unsigned i = 0; i < 3; i++) {
 		size_t length = sizeof(values[i]);
-		if (sysctlcmp_get(*client, names[i], &values[i], &length) ==
-			-1 ||
-		    length != sizeof(values[i])) {
-			if (length != sizeof(values[i]))
-				errno = EPROTO;
+		int result = sysctlcmp_get(*client, names[i], &values[i], &length);
+		if (result == -1 || length != sizeof(values[i])) {
+			int error = result == -1 ? (errno != 0 ? errno : EIO) : EPROTO;
 			sysctlcmp_client_close(*client);
 			*client = NULL;
-			return (-1);
+			return (errno = error, -1);
 		}
 	}
 	return (0);
 }
+static int
+publish_pressure(struct notify_client **client, unsigned level,
+    unsigned *published)
+{
+	struct notify_state_reply observed;
+	int error;
+
+	if (*client == NULL) {
+		if (notify_client_open_system(client) == -1)
+			return (-1);
+		*published = NOTIFY_PRESSURE_UNKNOWN + 1;
+	}
+	/* Check unchanged state too: missing state and router restarts must heal. */
+	if (*published == level &&
+	    notify_state_get(*client, NOTIFY_PRESSURE_TOPIC, &observed) == 0 &&
+	    observed.state == level)
+		return (0);
+	if (notify_state_set(*client, NOTIFY_PRESSURE_TOPIC, level) == -1) {
+		error = errno != 0 ? errno : EIO;
+		notify_client_close(*client);
+		*client = NULL;
+		return (errno = error, -1);
+	}
+	*published = level;
+	return (0);
+}
+
 int
 main(void)
 {
 	struct service_provider *provider;
 	struct sysctlcmp_client *source = NULL;
 	struct notify_client *notify = NULL;
-	struct notify_state_reply observed;
 	struct pressure_filter filter = { .level = NOTIFY_PRESSURE_UNKNOWN };
 	struct kevent timer, event;
 	struct service_retry source_retry, notify_retry;
@@ -89,30 +113,11 @@ main(void)
 		    values[2]);
 		if (service_retry_ready(&notify_retry, service_monotime_ms()) &&
 		    service_budget_begin(400) == 0) {
-			if (notify == NULL) {
-				if (notify_client_open_system(&notify) == 0)
-					published = NOTIFY_PRESSURE_UNKNOWN + 1;
-			}
-			/* Check unchanged state too, so a router restart is
-			 * detected.
-			 */
-			if (notify != NULL &&
-			    !(published == level &&
-				notify_state_get(notify, NOTIFY_PRESSURE_TOPIC,
-				    &observed) == 0 &&
-				observed.state == level) &&
-			    notify_state_set(notify, NOTIFY_PRESSURE_TOPIC,
-				level) == -1) {
-				notify_client_close(notify);
-				notify = NULL;
-			} else if (notify != NULL && published != level) {
-				syslog(LOG_INFO, "memory pressure level=%u",
-				    level);
-				published = level;
-			}
-			int saved = notify == NULL ?
-			    (errno != 0 ? errno : EIO) :
-			    0;
+			unsigned previous = published;
+			int saved = publish_pressure(&notify, level, &published) == -1 ?
+			    (errno != 0 ? errno : EIO) : 0;
+			if (saved == 0 && previous != published)
+				syslog(LOG_INFO, "memory pressure level=%u", level);
 			service_budget_end();
 			service_retry_result(&notify_retry,
 			    service_monotime_ms(), saved == 0);
