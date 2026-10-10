@@ -44,6 +44,14 @@ in the payload.
 .Pp
 The default termination signal is
 .Dv SIGKILL .
+.Pp
+Closing the control instance retains process membership for signalled members
+until their descriptor and address-space exit cleanup reaches the resource-exit
+hook. In-flight rejected children remain tracked through the same hook.
+Signal-zero release and the closing caller's exclusion still detach those
+members without signalling them.
+Close does not wait for retained members, and this lifetime retention does not
+provide a public completion-wait operation.
 .Ss Operations
 All operations begin with a common request header:
 .Bd -literal -offset indent

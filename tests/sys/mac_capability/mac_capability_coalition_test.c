@@ -1703,6 +1703,58 @@ ATF_TC_BODY(responsible_chain_depth_limit, tc)
 }
 
 
+ATF_TC(close_retains_signalled_process);
+ATF_TC_HEAD(close_retains_signalled_process, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Final control close retains a signalled member until resource exit");
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_coalition");
+	atf_tc_set_md_var(tc, "timeout", "30");
+}
+ATF_TC_BODY(close_retains_signalled_process, tc)
+{
+	struct coalition_set_signal_req req = {
+	    .op = COALITION_OP_SET_SIGNAL, .signal = SIGSTOP };
+	struct coalition_reply reply;
+	unsigned base = coalition_count();
+	int pd, cfd, wstatus = 0;
+	int32_t status;
+	pid_t child, observed = 0;
+
+	child = pdfork(&pd, 0);
+	ATF_REQUIRE(child >= 0);
+	if (child == 0) {
+		for (;;)
+			pause();
+	}
+	/* Created after fork: the child cannot retain the control descriptor. */
+	cfd = mac_capability_connect("coalition");
+	ATF_REQUIRE(cfd >= 0);
+	ATF_REQUIRE_EQ(0, coalition_call(cfd, &req, sizeof(req), NULL, 0,
+	    &reply, sizeof(reply)));
+	ATF_REQUIRE_EQ(0, reply.status);
+	ATF_REQUIRE_EQ(0, coalition_enlist(cfd, pd, &status));
+	ATF_REQUIRE_EQ(0, status);
+	ATF_REQUIRE_EQ(0, close(cfd));
+	for (unsigned i = 0; i < 500; i++) {
+		observed = waitpid(child, &wstatus, WNOHANG | WUNTRACED);
+		if (observed != 0)
+			break;
+		usleep(10000);
+	}
+	ATF_CHECK_EQ(child, observed);
+	ATF_CHECK(WIFSTOPPED(wstatus));
+	ATF_CHECK_EQ_MSG(base + 1, coalition_count(),
+	    "control close discarded the still-live process lifetime");
+	ATF_REQUIRE_EQ(0, pdkill(pd, SIGKILL));
+	ATF_REQUIRE_EQ(child, waitpid(child, &wstatus, 0));
+	ATF_REQUIRE_EQ(0, close(pd));
+	for (unsigned i = 0; i < 500 && coalition_count() != base; i++)
+		usleep(10000);
+	ATF_CHECK_EQ(base, coalition_count());
+}
+
 ATF_TC(set_signal_zero_releases);
 ATF_TC_HEAD(set_signal_zero_releases, tc)
 {
@@ -4703,6 +4755,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, responsible_kinfo_export);
 	ATF_TP_ADD_TC(tp, responsible_chain_depth_limit);
 	ATF_TP_ADD_TC(tp, set_signal_zero_releases);
+	ATF_TP_ADD_TC(tp, close_retains_signalled_process);
 	ATF_TP_ADD_TC(tp, pdfork_inherits_and_rehomes);
 	ATF_TP_ADD_TC(tp, close_terminates_live_member);
 	ATF_TP_ADD_TC(tp, close_terminates_orphan_descendant);

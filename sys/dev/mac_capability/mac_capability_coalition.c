@@ -2192,20 +2192,14 @@ coalition_process_fork(void *arg __unused, struct proc *parent,
 	 */
 	sx_xlock(&co->co_sx);
 
-	if (co->co_flags & COF_CLOSING) {
-		sx_xunlock(&co->co_sx);
-		uma_zfree(coalition_member_zone, ccm);
-		coalition_rel(co);
-		goto reject_child;
-	}
-
 	/*
 	 * The child already owns inherited resources.  Even when admission is
 	 * rejected, retain its membership until the resource-exit hook runs.
 	 * The member limit is soft: cleanup accounting must not disappear when
 	 * the limit is reached.  No rejected child can execute user code.
 	 */
-	rejected = (co->co_flags & (COF_TERMINATING | COF_GRACE_ACTIVE)) != 0;
+	rejected = (co->co_flags &
+	    (COF_CLOSING | COF_TERMINATING | COF_GRACE_ACTIVE)) != 0;
 	if (!rejected && coalition_check_limits() != 0) {
 		SDT_PROBE3(mac_capability_coalition, , , deny, (uintptr_t)"fork-limit",
 		    ENOMEM, child->p_pid);
@@ -2237,7 +2231,6 @@ coalition_process_fork(void *arg __unused, struct proc *parent,
 	if (!rejected)
 		return;
 
-reject_child:
 	/*
 	 * process_fork runs after fork can no longer fail, before child execution.
 	 * Never return a live child outside its parent's containment.  Mark
@@ -2327,7 +2320,8 @@ coalition_close_internal(struct coalition *co, struct thread *td)
 
 	/*
 	 * Re-acquire co_sx to collect members.
-	 * COF_TERMINATING is set, so no new members will be added.
+	 * Admission is frozen; in-flight forks still register rejected children
+	 * so resource-exit accounting includes their inherited resources.
 	 */
 	sx_xlock(&co->co_sx);
 
@@ -2344,6 +2338,15 @@ coalition_close_internal(struct coalition *co, struct thread *td)
 	jail_tailp = &jail_list;
 
 	TAILQ_FOREACH_SAFE(cm, &co->co_members, cm_link, cm_temp) {
+		/*
+		 * Signalling is asynchronous.  Retain signalled processes and
+		 * their coalition references until process_exit_resources, even
+		 * though the control instance has been revoked.  Release mode
+		 * and close's caller exclusion still detach without killing.
+		 */
+		if (cm->cm_dtype == DTYPE_PROCDESC && co->co_signal != 0 &&
+		    (td == NULL || cm->cm_data != td->td_proc))
+			continue;
 		TAILQ_REMOVE(&co->co_members, cm, cm_link);
 		cm->cm_link.tqe_prev = NULL;	/* sentinel for exit handler */
 
