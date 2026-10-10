@@ -25,6 +25,9 @@ int  netresolve_worker_enter(void);
  * when no native AAAA exists, and AI_ALL additionally returns mapped A records
  * alongside AAAA.  AI_ADDRCONFIG is accepted but is a no-op: this resolver does
  * not enumerate the host's configured source-address families.
+ * With no usable addresses, a failed DNS query returns EAI_AGAIN; complete
+ * negative replies return EAI_NONAME. A usable address wins over failure
+ * of another queried family, including the IPv4-mapped fallback.
  */
 int  netresolve(const char *host, const char *serv,
      const struct addrinfo *hints, struct addrinfo **res);

@@ -449,8 +449,99 @@ ATF_TC_BODY(nameserver_refresh_existing_worker, tc)
 	g_nameservers_fd = -1;
 }
 
+
+/* -1 in a response plan means a successful A record. */
+static void
+check_resolution_status(int family, int flags, const int *plan,
+    size_t queries, int expected)
+{
+	struct sockaddr_in sa = { .sin_len = sizeof(sa), .sin_family = AF_INET,
+	    .sin_addr = { .s_addr = htonl(INADDR_LOOPBACK) } };
+	struct addrinfo hints = { .ai_family = family, .ai_socktype = SOCK_STREAM,
+	    .ai_flags = flags }, *result = NULL;
+	socklen_t length = sizeof(sa);
+	int udp, status, actual;
+	pid_t child;
+
+	udp = socket(AF_INET, SOCK_DGRAM, 0);
+	ATF_REQUIRE(udp >= 0);
+	ATF_REQUIRE_EQ(0, bind(udp, (struct sockaddr *)&sa, sizeof(sa)));
+	ATF_REQUIRE_EQ(0, getsockname(udp, (struct sockaddr *)&sa, &length));
+	ATF_REQUIRE_EQ(0, res_ninit(&g_res));
+	g_res.retry = g_res.retrans = 1;
+	g_ns[0].sin = sa;
+	g_nns = 1;
+	child = fork();
+	ATF_REQUIRE(child >= 0);
+	if (child == 0) {
+		struct sockaddr_in peer;
+		u_char query[NS_PACKETSZ], answer[NS_PACKETSZ + 32];
+		static const u_char owner[] = { 0xc0, 0x0c };
+		ssize_t size;
+		size_t answer_size;
+
+		alarm(5);
+		for (size_t i = 0; i < queries; i++) {
+			length = sizeof(peer);
+			size = recvfrom(udp, query, sizeof(query), 0,
+			    (struct sockaddr *)&peer, &length);
+			if (size <= NS_HFIXEDSZ)
+				_exit(1);
+			memcpy(answer, query, size);
+			answer[2] |= 0x80;
+			answer[3] = plan[i] < 0 ? 0 : plan[i];
+			answer_size = size;
+			if (plan[i] < 0) {
+				answer[7] = 1;
+				answer_size = append_test_a(answer, size, owner, sizeof(owner), 8);
+			}
+			if (sendto(udp, answer, answer_size, 0,
+			    (struct sockaddr *)&peer, length) != (ssize_t)answer_size)
+				_exit(2);
+		}
+		_exit(0);
+	}
+	actual = netresolve("errors.example.test", "80", &hints, &result);
+	ATF_CHECK_EQ(expected, actual);
+	ATF_CHECK((actual == 0) == (result != NULL));
+	netfreeaddrinfo(result);
+	ATF_REQUIRE_EQ(child, waitpid(child, &status, 0));
+	ATF_REQUIRE(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	res_nclose(&g_res);
+	close(udp);
+}
+ATF_TC_WITHOUT_HEAD(negative_and_temporary_errors);
+ATF_TC_BODY(negative_and_temporary_errors, tc)
+{
+	check_resolution_status(AF_INET, 0, (int[]){ ns_r_servfail }, 1, EAI_AGAIN);
+	check_resolution_status(AF_INET, 0, (int[]){ ns_r_nxdomain }, 1, EAI_NONAME);
+	check_resolution_status(AF_INET, 0, (int[]){ ns_r_noerror }, 1, EAI_NONAME);
+	check_resolution_status(AF_UNSPEC, 0,
+	    (int[]){ ns_r_noerror, ns_r_servfail }, 2, EAI_AGAIN);
+	check_resolution_status(AF_UNSPEC, 0,
+	    (int[]){ ns_r_servfail, ns_r_noerror }, 2, EAI_AGAIN);
+	check_resolution_status(AF_UNSPEC, 0,
+	    (int[]){ -1, ns_r_servfail }, 2, 0);
+	check_resolution_status(AF_INET6, AI_V4MAPPED,
+	    (int[]){ ns_r_noerror, ns_r_servfail }, 2, EAI_AGAIN);
+	check_resolution_status(AF_INET6, AI_V4MAPPED,
+	    (int[]){ ns_r_servfail, -1 }, 2, 0);
+}
+ATF_TC_WITHOUT_HEAD(no_nameservers);
+ATF_TC_BODY(no_nameservers, tc)
+{
+	struct addrinfo hints = { .ai_family = AF_INET }, *result = NULL;
+	g_nns = 0;
+	ATF_CHECK_EQ(EAI_AGAIN, netresolve("errors.example.test", "80", &hints, &result));
+	ATF_CHECK(result == NULL);
+	ATF_REQUIRE_EQ(0, netresolve("192.0.2.8", "80", &hints, &result));
+	netfreeaddrinfo(result);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
+	ATF_TP_ADD_TC(tp, negative_and_temporary_errors);
+	ATF_TP_ADD_TC(tp, no_nameservers);
 	ATF_TP_ADD_TC(tp, reply_validation);
 	ATF_TP_ADD_TC(tp, ignores_bad_udp_reply);
 	ATF_TP_ADD_TC(tp, answer_owner_chain);

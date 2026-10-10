@@ -245,6 +245,23 @@ A 30-second idle limit applies between requests.
 See
 .Xr network_state 3
 for timeout and reconnect semantics.
+.Sh DNS FAILURES
+When no usable address is available, an unsuccessful DNS query returns
+.Er EAGAIN
+through the broker protocol, or
+.Er EAI_AGAIN
+from
+.Fn networkcmp_getaddrinfo .
+Complete negative answers return
+.Er ENOENT
+or
+.Er EAI_NONAME ,
+respectively.
+If one queried family fails and another returns only a negative answer,
+the result remains retryable.
+A usable address from either family, including IPv4-mapped IPv6 fallback,
+can still satisfy the lookup.
+Numeric addresses do not require a working nameserver.
 .Sh SEE ALSO
 .Xr libnetworkcmp 3 ,
 .Xr switchboard 8

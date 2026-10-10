@@ -1,6 +1,6 @@
 .\" SPDX-License-Identifier: BSD-2-Clause
 .\" Copyright (c) 2026 Kory Heard
-.Dd August 27, 2026
+.Dd October 10, 2026
 .Dt LIBNETWORKCMP 3
 .Os
 .Sh NAME
@@ -239,6 +239,23 @@ DTrace provider exposes component-open, message-send, message-receive, and
 message-reject probes.
 Provider daemons audit policy decisions through OpenBSM; client-library
 activity is operational telemetry and is not audited.
+.Sh DNS FAILURES
+When no usable address is available, an unsuccessful DNS query returns
+.Er EAGAIN
+through the broker protocol, or
+.Er EAI_AGAIN
+from
+.Fn networkcmp_getaddrinfo .
+Complete negative answers return
+.Er ENOENT
+or
+.Er EAI_NONAME ,
+respectively.
+If one queried family fails and another returns only a negative answer,
+the result remains retryable.
+A usable address from either family, including IPv4-mapped IPv6 fallback,
+can still satisfy the lookup.
+Numeric addresses do not require a working nameserver.
 .Sh SEE ALSO
 .Xr cap_net 3 ,
 .Xr getaddrinfo 3 ,

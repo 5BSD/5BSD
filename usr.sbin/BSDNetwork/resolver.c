@@ -973,7 +973,8 @@ dns_query(const char *host, int rrtype, struct rslv_addr *addrs, int max,
 /*
  * AI_V4MAPPED support (RFC 3493).  Query A records for host and append each as
  * an IPv4-mapped IPv6 address (::ffff:a.b.c.d) to addrs, which the caller then
- * emits as AF_INET6 results.  Returns the number appended (>=0).
+ * emits as AF_INET6 results.  Returns the number appended (>=0), or -1
+ * when the A lookup fails.
  */
 static int
 dns_query_v4mapped(const char *host, struct rslv_addr *addrs, int max, int *n,
@@ -982,7 +983,8 @@ dns_query_v4mapped(const char *host, struct rslv_addr *addrs, int max, int *n,
 	struct rslv_addr tmp[RSLV_MAX_RESULTS];
 	int tn = 0, i, added = 0;
 
-	(void)dns_query(host, ns_t_a, tmp, RSLV_MAX_RESULTS, &tn, canon, canonsz);
+	if (dns_query(host, ns_t_a, tmp, RSLV_MAX_RESULTS, &tn, canon, canonsz) < 0)
+		return (-1);
 	for (i = 0; i < tn && *n < max; i++) {
 		struct in6_addr mapped;
 
@@ -1077,6 +1079,7 @@ netresolve(const char *host, const char *serv, const struct addrinfo *hints,
 	struct addrinfo *head = NULL, *tail = NULL;
 	int family, flags, nports, naddr = 0;
 	int i, j, ret;
+	bool dns_failed = false;
 
 	if (res == NULL)
 		return (EAI_FAIL);
@@ -1155,14 +1158,14 @@ netresolve(const char *host, const char *serv, const struct addrinfo *hints,
 			if (naddr == 0) {
 				if (family == AF_UNSPEC ||
 				    family == AF_INET)
-					(void)dns_query(host, ns_t_a, addrs,
+					dns_failed |= dns_query(host, ns_t_a, addrs,
 					    RSLV_MAX_RESULTS, &naddr, canon,
-					    sizeof(canon));
+					    sizeof(canon)) < 0;
 				if (family == AF_UNSPEC ||
 				    family == AF_INET6)
-					(void)dns_query(host, ns_t_aaaa,
+					dns_failed |= dns_query(host, ns_t_aaaa,
 					    addrs, RSLV_MAX_RESULTS, &naddr,
-					    canon, sizeof(canon));
+					    canon, sizeof(canon)) < 0;
 				/*
 				 * AI_V4MAPPED / AI_ALL (RFC 3493), meaningful
 				 * only for an AF_INET6 query: when no native
@@ -1177,13 +1180,13 @@ netresolve(const char *host, const char *serv, const struct addrinfo *hints,
 				if (family == AF_INET6 &&
 				    (flags & AI_V4MAPPED) != 0 &&
 				    (naddr == 0 || (flags & AI_ALL) != 0))
-					(void)dns_query_v4mapped(host, addrs,
+					dns_failed |= dns_query_v4mapped(host, addrs,
 					    RSLV_MAX_RESULTS, &naddr, canon,
-					    sizeof(canon));
+					    sizeof(canon)) < 0;
 			}
 
 			if (naddr == 0)
-				return (EAI_NONAME);
+				return (dns_failed ? EAI_AGAIN : EAI_NONAME);
 
 			/* Canonical name requested but numeric literal used. */
 			if ((flags & AI_CANONNAME) == 0)
