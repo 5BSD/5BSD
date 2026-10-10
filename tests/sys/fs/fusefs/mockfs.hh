@@ -384,10 +384,8 @@ class MockFS {
 	/* Kill the filesystem daemon without unmounting the filesystem */
 	void kill_daemon();
 
-	/* Start after installing expectations when no_auto_init is set. */
 	/* Complete INIT explicitly for tests using no_auto_init. */
 	void init(uint32_t flags);
-	void start_daemon();
 
 	/* Wait until the daemon thread terminates */
 	void join_daemon();

@@ -95,7 +95,7 @@ TEST_F(GetattrBeforeInit, root_attributes_are_not_cached)
 		out.body.attr.attr_valid = UINT64_MAX;
 	})));
 	m_mock->init(0);
-	m_mock->start_daemon();
+	m_mock->start_service();
 	ASSERT_EQ(0, stat("mountpoint", &after)) << strerror(errno);
 	EXPECT_EQ(static_cast<mode_t>(S_IFDIR | 0751), after.st_mode);
 	EXPECT_EQ(7u, after.st_nlink);
