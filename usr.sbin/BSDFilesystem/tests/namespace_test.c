@@ -1605,8 +1605,83 @@ ATF_TC_BODY(oes_device_alias, tc)
 	ATF_CHECK_EQ(0, rmdir(directory));
 }
 
+static int
+reclaim_test_enumerate(void *arg __unused,
+    void (*emit)(void *, const char *), void *emit_arg)
+{
+	emit(emit_arg, "Victim");
+	return (0);
+}
+
+static int
+reclaim_test_destroy(void *arg, const char *owner)
+{
+	unsigned *destroyed = arg;
+
+	ATF_REQUIRE_STREQ(owner, "Victim");
+	(*destroyed)++;
+	return (0);
+}
+
+ATF_TC_WITHOUT_HEAD(reclaim_requires_complete_owner_view);
+ATF_TC_BODY(reclaim_requires_complete_owner_view, tc)
+{
+	struct capreclaim r = CAPRECLAIM_INIT;
+	unsigned destroyed = 0;
+	int root, fd;
+
+	ATF_REQUIRE_EQ(0, mkdir("Capabilities", 0700));
+	ATF_REQUIRE_EQ(0, mkdir("Capabilities/System", 0700));
+	ATF_REQUIRE_EQ(0, mkdir("Capabilities/System/Filesystem.cap", 0700));
+	ATF_REQUIRE_EQ(0, mkdir("Capabilities/Run", 0700));
+	root = open(".", O_RDONLY | O_DIRECTORY);
+	ATF_REQUIRE(root >= 0);
+	r.enumerate = reclaim_test_enumerate;
+	r.destroy = reclaim_test_destroy;
+	r.arg = &destroyed;
+	r.status_dirfd = -1;
+
+	/* A readable System alone cannot authorize a destructive boot pass. */
+	ATF_CHECK_EQ(-1, bsdfilesystem_test_reclaim_bundles(root, &r,
+	    CAPRECLAIM_BOOT));
+	ATF_CHECK_EQ(0, destroyed);
+	ATF_REQUIRE_EQ(0, mkdir("Capabilities/Run/live", 0700));
+	ATF_REQUIRE_EQ(0, mkdir("Capabilities/Run/live/Victim", 0700));
+	ATF_CHECK_EQ(0, bsdfilesystem_test_reclaim_bundles(root, &r,
+	    CAPRECLAIM_BOOT));
+	ATF_CHECK_EQ(0, destroyed);
+	ATF_REQUIRE_EQ(0, rmdir("Capabilities/Run/live/Victim"));
+
+	/* An absent Apps root is optional; an unreadable one is not. */
+	fd = open("Capabilities/Apps", O_CREAT | O_WRONLY, 0600);
+	ATF_REQUIRE(fd >= 0);
+	ATF_REQUIRE_EQ(0, close(fd));
+	ATF_CHECK_EQ(-1, bsdfilesystem_test_reclaim_bundles(root, &r,
+	    CAPRECLAIM_BOOT));
+	ATF_CHECK_EQ(ENOTDIR, errno);
+	ATF_CHECK_EQ(0, destroyed);
+	ATF_REQUIRE_EQ(0, unlink("Capabilities/Apps"));
+
+	/* Losing a required source between timer passes resets the grace. */
+	ATF_CHECK_EQ(0, bsdfilesystem_test_reclaim_bundles(root, &r,
+	    CAPRECLAIM_TIMER));
+	ATF_REQUIRE_EQ(0, rmdir("Capabilities/Run/live"));
+	ATF_CHECK_EQ(-1, bsdfilesystem_test_reclaim_bundles(root, &r,
+	    CAPRECLAIM_TIMER));
+	ATF_REQUIRE_EQ(0, mkdir("Capabilities/Run/live", 0700));
+	ATF_CHECK_EQ(0, bsdfilesystem_test_reclaim_bundles(root, &r,
+	    CAPRECLAIM_TIMER));
+	ATF_CHECK_EQ(0, destroyed);
+	ATF_CHECK_EQ(1, bsdfilesystem_test_reclaim_bundles(root, &r,
+	    CAPRECLAIM_TIMER));
+	ATF_CHECK_EQ(1, destroyed);
+	capreclaim_fini(&r);
+	ATF_REQUIRE_EQ(0, close(root));
+}
+
 ATF_TP_ADD_TCS(tp)
 {
+	ATF_TP_ADD_TC(tp, reclaim_requires_complete_owner_view);
 	ATF_TP_ADD_TC(tp, oes_device_alias);
 	ATF_TP_ADD_TC(tp, oes_endpoint_isolation);
  ATF_TP_ADD_TC(tp, unmatched_ioctl_grant_is_empty);

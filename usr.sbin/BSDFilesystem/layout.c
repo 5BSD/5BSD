@@ -926,11 +926,65 @@ groups_destroy(void *arg, const char *group)
 }
 
 /*
+ * Acquire a complete owner view before allowing destructive reconciliation.
+ * Apps may be absent on a system-only installation.  Run/live is a required
+ * readiness gate: switchboard publishes it before launching providers.
+ */
+static int
+reclaim_bundles(int root_fd, struct capreclaim *r, enum capreclaim_when when)
+{
+	static const char *paths[] = {
+		"Capabilities/System", "Capabilities/Apps", "Capabilities/Run/live"
+	};
+	int fds[3] = { -1, -1, -1 };
+	int error, result;
+	unsigned i;
+
+	if (r->stats != NULL)
+		memset(r->stats, 0, sizeof(*r->stats));
+	for (i = 0; i < nitems(fds); i++) {
+		fds[i] = openat(root_fd, paths[i],
+		    O_DIRECTORY | O_RDONLY | O_CLOEXEC);
+		if (fds[i] == -1 && !(i == 1 && errno == ENOENT)) {
+			error = errno;
+			/* An unobserved interval cannot confirm prior absence. */
+			capreclaim_fini(r);
+			result = -1;
+			goto out;
+		}
+	}
+	for (i = 0; i < nitems(fds); i++) {
+		r->sources[i].fd = fds[i];
+		r->sources[i].strip_cap = i != 2;
+	}
+	r->nsources = nitems(fds);
+	result = capreclaim_run(r, when);
+	error = errno;
+out:
+	for (i = 0; i < nitems(fds); i++) {
+		if (fds[i] != -1)
+			(void)close(fds[i]);
+		r->sources[i].fd = -1;
+	}
+	if (result == -1)
+		errno = error;
+	return (result);
+}
+
+#ifdef BSDFILESYSTEM_TESTING
+int
+bsdfilesystem_test_reclaim_bundles(int root_fd, struct capreclaim *r,
+    enum capreclaim_when when)
+{
+	return (reclaim_bundles(root_fd, r, when));
+}
+#endif
+
+/*
  * The reconcile loop: the container-model cleanup for persistent state.  Runs
- * in a forked child so it never blocks the serve loop, and stays out of
- * capability mode so it can re-open the live directory by path each pass (it is
- * a privileged reaper; it never accepts client input).  It compares the owners
- * it holds against switchboard's published live set and destroys the orphans --
+ * in a forked child so it never blocks the serve loop.  It reopens owner
+ * directories relative to its retained root descriptor in capability mode.
+ * It compares the owners it holds against switchboard's published live set and destroys the orphans --
  * immediately on the first authoritative pass (BOOT: the state is settled), and
  * only "seen gone twice" thereafter (TIMER: the interval is the grace window,
  * so an upgrade's transient absence is never confirmed).  It NEVER reaps unless
@@ -967,37 +1021,10 @@ bsdfilesystem_reaper_loop(struct bsdfilesystem_state *st)
 	g.allow_empty_live = true;
 
 	for (;;) {
-		int sys_fd, apps_fd, run_fd;
-
-		/*
-		 * System/ is the authoritative install root; its presence is the
-		 * readiness gate.  While it cannot be opened (an installer image with
-		 * no plane, say) the reconcile reaps nothing.
-		 */
-		/*
-		 * Born in capability mode: reopen the install directories from the
-		 * retained, switchboard-delivered root fd (openat with a relative
-		 * path), never by absolute path.  A fresh openat each pass yields a
-		 * dir handle at offset 0 reflecting the current install state.
-		 * root_fd < 0 (no delivered root) => no reconcile source.
-		 */
-		sys_fd = st->root_fd >= 0 ? openat(st->root_fd,
-		    "Capabilities/System", O_DIRECTORY | O_RDONLY | O_CLOEXEC) : -1;
-		if (sys_fd != -1) {
+		{
 			int n;
 
-			apps_fd = openat(st->root_fd, "Capabilities/Apps",
-			    O_DIRECTORY | O_RDONLY | O_CLOEXEC);
-			run_fd = openat(st->root_fd, "Capabilities/Run/live",
-			    O_DIRECTORY | O_RDONLY | O_CLOEXEC);
-			r.sources[0].fd = sys_fd;
-			r.sources[0].strip_cap = true;	/* System/<Bundle>.cap */
-			r.sources[1].fd = apps_fd;	/* -1 if absent: skipped */
-			r.sources[1].strip_cap = true;	/* Apps/<Bundle>.cap */
-			r.sources[2].fd = run_fd;	/* -1 if absent: skipped */
-			r.sources[2].strip_cap = false;	/* Run/live/<bundle> */
-			r.nsources = 3;
-			n = capreclaim_run(&r, when);
+			n = reclaim_bundles(st->root_fd, &r, when);
 			BSDFILESYSTEM_PROBE_RECLAIM_PASS((int)when, stats.nlive,
 			    stats.nowned, stats.norphans, stats.ndestroyed,
 			    stats.nfailed);
@@ -1014,11 +1041,6 @@ bsdfilesystem_reaper_loop(struct bsdfilesystem_state *st)
 			/* A floored pass saw nothing: the boot pass is still owed. */
 			if (n >= 0 && !stats.floored)
 				when = CAPRECLAIM_TIMER;
-			if (apps_fd != -1)
-				(void)close(apps_fd);
-			if (run_fd != -1)
-				(void)close(run_fd);
-			(void)close(sys_fd);
 		}
 		/*
 		 * Group containers reconcile against switchboard's installed-
@@ -1056,6 +1078,9 @@ bsdfilesystem_reaper_loop(struct bsdfilesystem_state *st)
 				if (n >= 0 && !gstats.floored)
 					gwhen = CAPRECLAIM_TIMER;
 				(void)close(groups_fd);
+			} else {
+				/* Missing owner information restarts the grace window. */
+				capreclaim_fini(&g);
 			}
 		}
 		/*

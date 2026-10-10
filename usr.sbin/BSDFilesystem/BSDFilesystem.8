@@ -3,7 +3,7 @@
 .\"
 .\" Copyright (c) 2026 Kory Heard
 .\"
-.Dd September 8, 2026
+.Dd October 10, 2026
 .Dt BSDFILESYSTEM 8
 .Os
 .Sh NAME
@@ -90,6 +90,12 @@ once at boot and then periodically, destroying the container of a bundle that
 is neither installed nor running
 .Pq a group container once no member is installed ,
 snapshots included.
+The bundle scan requires readable System and Run/live directories.
+An absent optional Apps directory is allowed; other errors opening or reading
+owner sources prevent bundle reclamation for that pass.
+An incomplete pass resets the timer grace history, requiring two subsequent
+successful observations of absence before removal.
+Missing group-owner information likewise resets the group grace history.
 A container whose snapshot is pinned by a clone outside it is left intact:
 that reap fails
 .Pq ZFS reports the branch point as Er EEXIST ,
