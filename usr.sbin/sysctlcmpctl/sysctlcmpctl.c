@@ -11,6 +11,7 @@
 #include <ctype.h>
 #include <err.h>
 #include <errno.h>
+#include <inttypes.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -28,7 +29,8 @@ usage(void)
 	    "       sysctlcmpctl set <name> <value>\n"
 	    "       sysctlcmpctl fmt <name>\n"
 	    "       sysctlcmpctl descr <name>\n"
-	    "       sysctlcmpctl list [start-name]\n");
+	    "       sysctlcmpctl list [start-name]\n"
+	    "       sysctlcmpctl interfaces\n");
 	exit(EX_USAGE);
 }
 
@@ -72,6 +74,41 @@ print_value(const unsigned char *buf, size_t len)
 	printf("\n");
 }
 
+static void
+print_interfaces(struct sysctlcmp_client *client)
+{
+	struct sysctlcmp_interface entries[SYSCTLCMP_MAX_INTERFACES];
+	static const char *const states[] = { "unknown", "down", "up" };
+	size_t count = SYSCTLCMP_MAX_INTERFACES;
+	int error;
+
+	if (sysctlcmp_interfaces(client, entries, &count) == -1) {
+		error = errno;
+		sysctlcmp_client_close(client);
+		errno = error;
+		err(EX_UNAVAILABLE, "interfaces");
+	}
+	for (size_t i = 0; i < count; i++) {
+		printf("index=%" PRIu32 " name=", entries[i].index);
+		for (size_t j = 0; entries[i].name[j] != '\0'; j++) {
+			unsigned char ch = entries[i].name[j];
+			/* Interface names may contain terminal controls or whitespace. */
+			if (ch >= 33 && ch <= 126 && ch != '\\')
+				putchar(ch);
+			else
+				printf("\\x%02x", ch);
+		}
+		printf(" flags=0x%08" PRIx32 " mtu=%" PRIu32 " link=%s\n",
+		    entries[i].flags, entries[i].mtu, states[entries[i].link_state]);
+	}
+	if (fflush(stdout) == EOF) {
+		error = errno;
+		sysctlcmp_client_close(client);
+		errno = error;
+		err(EX_IOERR, "stdout");
+	}
+}
+
 int
 main(int argc, char **argv)
 {
@@ -81,7 +118,8 @@ main(int argc, char **argv)
 	size_t len;
 
 	valid = argc >= 2 &&
-	    ((strcmp(argv[1], "get") == 0 && argc == 3) ||
+	    ((strcmp(argv[1], "interfaces") == 0 && argc == 2) ||
+	    (strcmp(argv[1], "get") == 0 && argc == 3) ||
 	    (strcmp(argv[1], "set") == 0 && argc == 4) ||
 	    (strcmp(argv[1], "fmt") == 0 && argc == 3) ||
 	    (strcmp(argv[1], "descr") == 0 && argc == 3) ||
@@ -91,7 +129,9 @@ main(int argc, char **argv)
 	if (sysctlcmp_client_open(&client) == -1)
 		err(EX_UNAVAILABLE, "open system.Sysctl");
 
-	if (strcmp(argv[1], "get") == 0) {
+	if (strcmp(argv[1], "interfaces") == 0) {
+		print_interfaces(client);
+	} else if (strcmp(argv[1], "get") == 0) {
 		len = sizeof(buf);
 		if (sysctlcmp_get(client, argv[2], buf, &len) == -1)
 			err(EX_UNAVAILABLE, "get %s", argv[2]);
