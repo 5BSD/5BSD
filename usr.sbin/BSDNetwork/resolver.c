@@ -507,7 +507,8 @@ dns_parse(const u_char *ans, int anslen, int want, struct rslv_addr *addrs,
 	return (added);
 }
 
-/* Return -1 for an invalid reply, 1 for a truncated UDP reply, or 0. */
+/* Return -1 for an unrelated/invalid reply, -2 for a server error, 1 for
+ * truncation, or 0 for a complete answer. */
 static int
 dns_reply_status(const u_char *ans, int anslen, const u_char *qbuf,
     const char *host, int rrtype)
@@ -528,7 +529,7 @@ dns_reply_status(const u_char *ans, int anslen, const u_char *qbuf,
 		return (-1);
 	rcode = ns_msg_getflag(msg, ns_f_rcode);
 	if (rcode != ns_r_noerror && rcode != ns_r_nxdomain)
-		return (-1);
+		return (-2);
 	return (ns_msg_getflag(msg, ns_f_tc) ? 1 : 0);
 }
 
@@ -672,9 +673,9 @@ dns_query(const char *host, int rrtype, struct rslv_addr *addrs, int max,
 		for (ns = 0; ns < nsrv && !answered; ns++) {
 			struct sockaddr *sa = (struct sockaddr *)&srv[ns];
 			socklen_t salen;
-			struct pollfd pfd;
+			struct timespec deadline;
 			ssize_t sent, rlen;
-			int added, pr, status;
+			int added, status;
 
 			if (sa->sa_family == AF_INET)
 				salen = sizeof(struct sockaddr_in);
@@ -707,23 +708,27 @@ dns_query(const char *host, int rrtype, struct rslv_addr *addrs, int max,
 				continue;
 			}
 
-			pfd.fd = s;
-			pfd.events = POLLIN;
-			pfd.revents = 0;
-			pr = poll(&pfd, 1, retrans * 1000);
-			if (pr <= 0 || (pfd.revents & POLLIN) == 0) {
+			if (clock_gettime(CLOCK_MONOTONIC, &deadline) == -1) {
 				(void)close(s);
-				continue;	/* timeout/error: next server */
+				continue;
+			}
+			deadline.tv_sec += retrans;
+			status = -1;
+			while (dns_wait(s, POLLIN, &deadline) == 0) {
+				rlen = recv(s, ans, NS_MAXMSG, 0);
+				if (rlen == -1 && errno == EINTR)
+					continue;
+				if (rlen <= 0)
+					break;
+				/* A stray reply must not discard this server's turn. */
+				status = dns_reply_status(ans, (int)rlen, qbuf,
+				    host, rrtype);
+				if (status != -1)
+					break;
 			}
 
-			rlen = recvfrom(s, ans, NS_MAXMSG, 0, NULL, NULL);
 			(void)close(s);
-			if (rlen <= 0)
-				continue;
-			/* The connected socket enforces the configured source. */
-			status = dns_reply_status(ans, (int)rlen, qbuf, host,
-			    rrtype);
-			if (status == -1)
+			if (status < 0)
 				continue;
 			if (status == 1) {
 				/* Truncated UDP data is never treated as an answer. */

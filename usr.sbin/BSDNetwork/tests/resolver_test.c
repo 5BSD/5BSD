@@ -39,10 +39,93 @@ ATF_TC_BODY(reply_validation, tc)
 	ATF_CHECK_EQ(dns_reply_status(reply, len, query, "example.test",
 	    ns_t_a), -1);
 	reply[2] &= ~0x08;
+	reply[3] = ns_r_servfail;
+	ATF_CHECK_EQ(dns_reply_status(reply, len, query, "example.test",
+	    ns_t_a), -2);
+	reply[3] = 0;
 	reply[0] ^= 1;
 	ATF_CHECK_EQ(dns_reply_status(reply, len, query, "example.test",
 	    ns_t_a), -1);
 	res_nclose(&g_res);
+}
+
+ATF_TC(ignores_bad_udp_reply);
+ATF_TC_HEAD(ignores_bad_udp_reply, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "A bad UDP packet does not discard a later valid answer");
+}
+ATF_TC_BODY(ignores_bad_udp_reply, tc)
+{
+	struct sockaddr_in sa, peer;
+	struct rslv_addr addrs[1];
+	struct in_addr expected;
+	socklen_t salen = sizeof(sa), peerlen = sizeof(peer);
+	char canon[NS_MAXDNAME] = "";
+	u_char query[NS_PACKETSZ], answer[NS_PACKETSZ + 16];
+	int udp, n = 0, status, added;
+	ssize_t qlen;
+	pid_t server;
+
+	udp = socket(AF_INET, SOCK_DGRAM, 0);
+	ATF_REQUIRE(udp >= 0);
+	memset(&sa, 0, sizeof(sa));
+	sa.sin_len = sizeof(sa);
+	sa.sin_family = AF_INET;
+	sa.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+	ATF_REQUIRE(bind(udp, (struct sockaddr *)&sa, sizeof(sa)) == 0);
+	ATF_REQUIRE(getsockname(udp, (struct sockaddr *)&sa, &salen) == 0);
+	ATF_REQUIRE(res_ninit(&g_res) == 0);
+	g_res.retrans = 1;
+	g_res.retry = 1;
+	memset(g_ns, 0, sizeof(g_ns));
+	g_ns[0].sin = sa;
+	g_nns = 1;
+	server = fork();
+	ATF_REQUIRE(server >= 0);
+	if (server == 0) {
+		alarm(5);
+		qlen = recvfrom(udp, query, sizeof(query), 0,
+		    (struct sockaddr *)&peer, &peerlen);
+		if (qlen <= NS_HFIXEDSZ || qlen > NS_PACKETSZ)
+			_exit(1);
+		memcpy(answer, query, (size_t)qlen);
+		answer[2] |= 0x80;
+		answer[3] = 0x80;
+		answer[6] = 0;
+		answer[7] = 1;
+		memset(answer + qlen, 0, 16);
+		answer[qlen] = 0xc0;
+		answer[qlen + 1] = 0x0c;
+		answer[qlen + 3] = ns_t_a;
+		answer[qlen + 5] = ns_c_in;
+		answer[qlen + 11] = 4;
+		answer[qlen + 12] = 192;
+		answer[qlen + 13] = 0;
+		answer[qlen + 14] = 2;
+		answer[qlen + 15] = 43;
+		answer[0] ^= 1;
+		if (sendto(udp, answer, (size_t)qlen + 16, 0,
+		    (struct sockaddr *)&peer, peerlen) != qlen + 16)
+			_exit(2);
+		answer[0] ^= 1;
+		if (sendto(udp, answer, (size_t)qlen + 16, 0,
+		    (struct sockaddr *)&peer, peerlen) != qlen + 16)
+			_exit(3);
+		_exit(0);
+	}
+	added = dns_query("example.test", ns_t_a, addrs, 1, &n,
+	    canon, sizeof(canon));
+	ATF_REQUIRE(waitpid(server, &status, 0) == server);
+	ATF_REQUIRE_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
+	    "test nameserver failed: status %d", status);
+	ATF_CHECK_EQ(added, 1);
+	ATF_CHECK_EQ(n, 1);
+	ATF_REQUIRE(inet_pton(AF_INET, "192.0.2.43", &expected) == 1);
+	if (n == 1)
+		ATF_CHECK(memcmp(&addrs[0].a.v4, &expected, sizeof(expected)) == 0);
+	res_nclose(&g_res);
+	close(udp);
 }
 
 /* The child sends a truncated datagram, then a framed TCP A record. */
@@ -185,6 +268,7 @@ ATF_TC_BODY(truncated_udp_falls_back_to_tcp, tc)
 ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, reply_validation);
+	ATF_TP_ADD_TC(tp, ignores_bad_udp_reply);
 	ATF_TP_ADD_TC(tp, truncated_udp_falls_back_to_tcp);
 	return (atf_no_error());
 }
