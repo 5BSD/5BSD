@@ -12,6 +12,12 @@ LDFLAGS+=	-fprofile-instr-generate
 TESTSDIR=	${TESTSBASE}/usr.sbin/bluetooth/BSDBluetooth
 BINDIR=		${TESTSDIR}
 
+ATF_TESTS_C+= libble_plane_test
+SRCS.libble_plane_test= libble_plane_test.c ble.c
+LDFLAGS.libble_plane_test+= -Wl,--wrap=service_open \
+    -Wl,--wrap=service_session_create -Wl,--wrap=service_session_close \
+    -Wl,--wrap=service_session_call
+
 ATF_TESTS_C+=	audio_avdtp_test
 CFLAGS.audio_avdtp_test.c+= -I${SRCTOP}/lib/virtual_oss/bt
 audio_avdtp_test.o: ${SRCTOP}/lib/virtual_oss/bt/avdtp.c \
