@@ -587,9 +587,37 @@ ATF_TC_BODY(system_tier_reconnect_refused_stays_on_tier, tc)
 	ATF_CHECK_EQ(2, fake_service_closed());
 }
 
+
+ATF_TC_WITHOUT_HEAD(state_watch_reconnect_and_validation);
+ATF_TC_BODY(state_watch_reconnect_and_validation, tc)
+{
+	struct notify_client *client;
+	struct notify_state_watch_reply state, saved;
+
+	fake_service_reset();
+	ATF_REQUIRE_EQ(0, notify_client_open(&client));
+	ATF_REQUIRE_EQ(0, notify_state_watch(client, "svc.state", &state, 0));
+	ATF_CHECK_EQ(42, state.state);
+	ATF_CHECK_EQ(1, state.present);
+	saved = state;
+	fake_service_fault_next(FAKE_SERVICE_FAULT_INVALID_STATE);
+	ATF_CHECK_ERRNO(EPROTO, notify_state_watch(client, "svc.state", &state, 0) == -1);
+	ATF_CHECK_EQ(0, memcmp(&state, &saved, sizeof(state)));
+	ATF_CHECK_EQ(1, fake_service_closed());
+	ATF_REQUIRE_EQ(0, notify_state_watch(client, "svc.state", &state, 0));
+	ATF_CHECK(state.watch_epoch != saved.watch_epoch);
+	fake_service_fault_next(FAKE_SERVICE_FAULT_TIMEOUT);
+	ATF_CHECK_ERRNO(ETIMEDOUT, notify_state_watch(client, "svc.state", &state, 1) == -1);
+	ATF_CHECK_EQ(2, fake_service_closed());
+	ATF_REQUIRE_EQ(0, notify_state_watch(client, "svc.state", &state, 0));
+	ATF_CHECK_ERRNO(EINVAL, notify_state_watch(client, "", &state, 0) == -1);
+	notify_client_close(client);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
+	ATF_TP_ADD_TC(tp, state_watch_reconnect_and_validation);
 	ATF_TP_ADD_TC(tp, independent_concurrent_clients);
 	ATF_TP_ADD_TC(tp, binary_payload_and_same_client_serialization);
 	ATF_TP_ADD_TC(tp, peer_death_reconnect_and_replay);

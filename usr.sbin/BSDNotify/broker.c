@@ -12,6 +12,13 @@
 #include <time.h>
 
 #include "broker.h"
+#include <notify_watch.h>
+
+struct state_value {
+	uint64_t value;
+	uint32_t present;
+	uint32_t reserved;
+};
 
 #define	NOTIFY_TOPIC_BUCKETS	257
 
@@ -30,6 +37,13 @@ struct broker_subscription {
 };
 
 struct notify_broker_client {
+	struct notify_broker_client *watch_next;
+	struct notify_watch *watch_store;
+	struct notify_watcher *watcher;
+	size_t watch_topic_length;
+	char watch_topic[NOTIFY_MAX_TOPIC];
+	int watch_error;
+	bool watching;
 	struct notify_broker_client	*next;
 	struct broker_subscription	*subscriptions;
 	struct broker_event		**queue;
@@ -59,6 +73,7 @@ struct notify_broker {
 	uint64_t			 epoch;
 	size_t				 nstates;
 	struct broker_topic_state	*states[NOTIFY_TOPIC_BUCKETS];
+	struct notify_broker_client *watchers[NOTIFY_TOPIC_BUCKETS];
 };
 
 static unsigned int
@@ -73,6 +88,45 @@ topic_hash(const char *topic, size_t length)
 		hash *= 16777619U;
 	}
 	return (hash % NOTIFY_TOPIC_BUCKETS);
+}
+
+static void
+watch_update(struct notify_broker *broker, const char *topic, size_t length,
+    bool present, uint64_t value)
+{
+	struct notify_broker_client *client;
+	struct state_value snapshot = { .value = value, .present = present };
+
+	for (client = broker->watchers[topic_hash(topic, length)]; client != NULL;
+	    client = client->watch_next) {
+		if (client->watch_topic_length == length &&
+		    memcmp(client->watch_topic, topic, length) == 0 &&
+		    notify_watch_publish(client->watch_store, &snapshot,
+		    sizeof(snapshot)) == -1)
+			client->watch_error = errno;
+	}
+}
+
+static void
+watch_remove(struct notify_broker *broker, struct notify_broker_client *client)
+{
+	struct notify_broker_client **cursor;
+
+	if (client->watch_store == NULL)
+		return;
+	cursor = &broker->watchers[topic_hash(client->watch_topic,
+	    client->watch_topic_length)];
+	while (*cursor != NULL && *cursor != client)
+		cursor = &(*cursor)->watch_next;
+	if (*cursor == client)
+		*cursor = client->watch_next;
+	notify_watch_close(client->watcher);
+	(void)notify_watch_destroy(client->watch_store);
+	client->watch_store = NULL;
+	client->watcher = NULL;
+	client->watch_error = 0;
+	client->watching = false;
+	client->watch_next = NULL;
 }
 
 static void
@@ -237,6 +291,7 @@ state_unlink(struct notify_broker *broker, struct broker_topic_state *state)
 		cursor = &(*cursor)->next;
 	if (*cursor == state) {
 		*cursor = state->next;
+		watch_update(broker, state->topic, state->topic_length, false, 0);
 		broker->nstates--;
 		free(state);
 	}
@@ -269,6 +324,7 @@ notify_broker_remove(struct notify_broker *broker,
 		cursor = &(*cursor)->next;
 	if (*cursor == client)
 		*cursor = client->next;
+	watch_remove(broker, client);
 	/*
 	 * Reclaim persistent states owned by this label once its last session
 	 * is gone, so a client cannot permanently exhaust the global state
@@ -285,6 +341,8 @@ notify_broker_remove(struct notify_broker *broker,
 			while ((state = *state_cursor) != NULL) {
 				if (strcmp(state->owner, client->label) == 0) {
 					*state_cursor = state->next;
+					watch_update(broker, state->topic,
+					    state->topic_length, false, 0);
 					broker->nstates--;
 					free(state);
 				} else
@@ -474,6 +532,7 @@ notify_broker_state_set(struct notify_broker *broker,
 	}
 	state->state = value;
 	state->generation++;
+	watch_update(broker, topic, topic_length, true, value);
 	event->event.generation = state->generation;
 	event->event.state = state->state;
 	for (subscription = broker->buckets[bucket]; subscription != NULL;
@@ -507,6 +566,96 @@ notify_broker_state_get(struct notify_broker *broker, const char *topic,
 	reply->generation = state->generation;
 	reply->state = state->state;
 	return (0);
+}
+
+int
+notify_broker_watch_begin(struct notify_broker *broker,
+    struct notify_broker_client *client, const char *topic, size_t length)
+{
+	struct notify_watch *store;
+	struct notify_watcher *watcher;
+	struct broker_topic_state *state;
+	struct state_value value = {0};
+	unsigned bucket;
+	int error;
+
+	if (broker == NULL || client == NULL ||
+	    notify_validate_topic(topic, length) == -1)
+		return (errno = EINVAL, -1);
+	if (client->watching)
+		return (errno = EBUSY, -1);
+	if (client->watch_store != NULL && client->watch_topic_length == length &&
+	    memcmp(client->watch_topic, topic, length) == 0) {
+		if (notify_watch_begin(client->watcher) == -1)
+			return (-1);
+		client->watching = true;
+		return (0);
+	}
+	if (notify_watch_create(sizeof(value), 1, &store) == -1)
+		return (-1);
+	if (notify_watch_open(store, NULL, &watcher) == -1) {
+		error = errno;
+		(void)notify_watch_destroy(store);
+		return (errno = error, -1);
+	}
+	state = state_find(broker, topic, length);
+	if (state != NULL) {
+		value.present = 1;
+		value.value = state->state;
+	}
+	if (notify_watch_publish(store, &value, sizeof(value)) == -1 ||
+	    notify_watch_begin(watcher) == -1) {
+		error = errno;
+		notify_watch_close(watcher);
+		(void)notify_watch_destroy(store);
+		return (errno = error, -1);
+	}
+	watch_remove(broker, client);
+	client->watch_store = store;
+	client->watcher = watcher;
+	client->watching = true;
+	client->watch_topic_length = length;
+	memcpy(client->watch_topic, topic, length);
+	bucket = topic_hash(topic, length);
+	client->watch_next = broker->watchers[bucket];
+	broker->watchers[bucket] = client;
+	return (0);
+}
+
+int
+notify_broker_watch_next(struct notify_broker_client *client,
+    struct notify_state_watch_reply *reply)
+{
+	struct notify_watch_cursor cursor;
+	struct state_value value;
+	size_t length;
+	uint32_t flags;
+	int result;
+
+	if (client == NULL || reply == NULL || client->watcher == NULL)
+		return (errno = EINVAL, -1);
+	if (client->watch_error != 0)
+		return (errno = client->watch_error, -1);
+	result = notify_watch_take(client->watcher, &value, sizeof(value),
+	    &length, &cursor, &flags);
+	if (result != 1)
+		return (result == 0 ? (errno = EAGAIN, -1) : -1);
+	client->watching = false;
+	memset(reply, 0, sizeof(*reply));
+	reply->watch_epoch = cursor.epoch;
+	reply->generation = cursor.generation;
+	reply->state = value.value;
+	reply->present = value.present;
+	return (0);
+}
+
+void
+notify_broker_watch_cancel(struct notify_broker_client *client)
+{
+	if (client != NULL && client->watcher != NULL) {
+		(void)notify_watch_cancel(client->watcher);
+		client->watching = false;
+	}
 }
 
 int

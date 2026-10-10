@@ -9,6 +9,7 @@ MLINKS+=libnotify.3 notify_subscribe.3
 MLINKS+=libnotify.3 notify_unsubscribe.3
 MLINKS+=libnotify.3 notify_publish.3
 MLINKS+=libnotify.3 notify_next.3
+MLINKS+=libnotify.3 notify_state_watch.3
 MLINKS+=libnotify.3 notify_timer_add.3
 MLINKS+=libnotify.3 notify_timer_cancel.3
 MLINKS+=libnotify.3 notify_stats.3

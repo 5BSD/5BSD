@@ -32,6 +32,7 @@ struct notify_client {
 	const char		*interface;	/* endpoint name for (re)connects */
 	pid_t			 owner;
 	uint64_t		 router_epoch;
+	uint32_t		 features;
 	pthread_mutex_t		 lock;
 	size_t			 nsubscriptions;
 	char			 subscriptions[NOTIFY_MAX_SUBSCRIPTIONS]
@@ -284,7 +285,8 @@ notify_validate_message(const struct notify_msg *msg, size_t length,
 			if (payload != sizeof(*hello))
 				goto invalid;
 			hello = (const void *)(msg + 1);
-			if (hello->features != (NOTIFY_FEATURE_PUBSUB |
+			if ((hello->features & ~NOTIFY_FEATURE_STATE_WATCH) !=
+			    (NOTIFY_FEATURE_PUBSUB |
 			    NOTIFY_FEATURE_TIMERS |
 			    NOTIFY_FEATURE_BOUNDED_QUEUE |
 			    NOTIFY_FEATURE_STATE |
@@ -308,6 +310,18 @@ notify_validate_message(const struct notify_msg *msg, size_t length,
 			if (payload != sizeof(struct notify_stats))
 				goto invalid;
 			break;
+		case NOTIFY_OP_STATE_WATCH: {
+			const struct notify_state_watch_reply *state;
+
+			if (payload != sizeof(*state))
+				goto invalid;
+			state = (const void *)(msg + 1);
+			if (state->watch_epoch == 0 || state->generation == 0 ||
+			    state->present > 1 || state->reserved != 0 ||
+			    (state->present == 0 && state->state != 0))
+				goto invalid;
+			break;
+		}
 		case NOTIFY_OP_STATE_SET:
 		case NOTIFY_OP_STATE_GET:
 			if (payload != sizeof(struct notify_state_reply))
@@ -329,6 +343,17 @@ notify_validate_message(const struct notify_msg *msg, size_t length,
 		goto invalid;
 	switch (msg->opcode) {
 	case NOTIFY_OP_HELLO:
+		if (payload != 0) {
+			const struct notify_hello_request *hello_request;
+
+			if (payload != sizeof(*hello_request))
+				goto invalid;
+			hello_request = (const void *)(msg + 1);
+			if (hello_request->reserved != 0 ||
+			    (hello_request->features & ~NOTIFY_FEATURE_STATE_WATCH) != 0)
+				goto invalid;
+		}
+		break;
 	case NOTIFY_OP_STATS:
 		if (payload != 0)
 			goto invalid;
@@ -351,6 +376,22 @@ notify_validate_message(const struct notify_msg *msg, size_t length,
 		    topic->topic_length) != 0)
 			goto invalid;
 		break;
+	case NOTIFY_OP_STATE_WATCH: {
+		const struct notify_state_watch_request *watch;
+
+		if (payload != sizeof(*watch))
+			goto invalid;
+		watch = (const void *)(msg + 1);
+		topic = &watch->topic;
+		if (watch->reserved != 0 || topic->reserved16 != 0 ||
+		    topic->reserved32 != 0 ||
+		    notify_validate_topic(topic->topic, topic->topic_length) == -1 ||
+		    memcmp(topic->topic + topic->topic_length,
+		    (char[NOTIFY_MAX_TOPIC]){}, sizeof(topic->topic) -
+		    topic->topic_length) != 0)
+			goto invalid;
+		break;
+	}
 	case NOTIFY_OP_STATE_SET:
 		if (payload != sizeof(*state_set))
 			goto invalid;
@@ -574,6 +615,7 @@ notify_client_adopt(int fd, struct notify_client **result)
 		memcpy(&hello, (struct notify_msg *)reply.bytes + 1,
 		    sizeof(hello));
 		client->router_epoch = hello.router_epoch;
+		client->features = hello.features;
 	}
 	*result = client;
 	return (0);
@@ -678,6 +720,7 @@ reconnect_locked(struct notify_client *client)
 		goto fail;
 	memcpy(&hello, (struct notify_msg *)reply.bytes + 1, sizeof(hello));
 	client->router_epoch = hello.router_epoch;
+	client->features = hello.features;
 	for (i = 0; i < client->nsubscriptions; i++)
 		if (topic_rpc(client, NOTIFY_OP_SUBSCRIBE,
 		    client->subscriptions[i]) == -1)
@@ -917,6 +960,65 @@ notify_state_get(struct notify_client *client, const char *topic,
 	}
 	error = result == -1 ? errno : 0;
 	if (result == -1 && connection_unusable(error))
+		disconnect_locked(client);
+	pthread_mutex_unlock(&client->lock);
+	errno = error;
+	return (result);
+}
+
+int
+notify_state_watch(struct notify_client *client, const char *topic,
+    struct notify_state_watch_reply *state, uint32_t timeout_ms)
+{
+	union notify_buffer reply;
+	struct notify_state_watch_request request;
+	struct notify_hello_request hello_request = {
+	    .features = NOTIFY_FEATURE_STATE_WATCH };
+	struct notify_hello_reply hello;
+	size_t length, payload;
+	int error, result;
+
+	if (client == NULL || client->owner != getpid() || topic == NULL ||
+	    state == NULL)
+		return (errno = EINVAL, -1);
+	length = strnlen(topic, NOTIFY_MAX_TOPIC + 1);
+	if (notify_validate_topic(topic, length) == -1)
+		return (-1);
+	memset(&request, 0, sizeof(request));
+	request.topic.topic_length = length;
+	memcpy(request.topic.topic, topic, length);
+	request.timeout_ms = timeout_ms;
+	pthread_mutex_lock(&client->lock);
+	result = 0;
+	if (client->channel == NULL && reconnect_locked(client) == -1)
+		result = -1;
+	if (result == 0 && (client->features & NOTIFY_FEATURE_STATE_WATCH) == 0) {
+		result = rpc_locked(client, NOTIFY_OP_HELLO, &hello_request,
+		    sizeof(hello_request), &reply, &payload, 30000);
+		if (result == 0) {
+			memcpy(&hello, (struct notify_msg *)reply.bytes + 1,
+			    sizeof(hello));
+			if (hello.router_epoch != client->router_epoch) {
+				errno = EPROTO;
+				result = -1;
+			} else {
+				client->features = hello.features;
+				if ((hello.features & NOTIFY_FEATURE_STATE_WATCH) == 0) {
+					errno = EOPNOTSUPP;
+					result = -1;
+				}
+			}
+		}
+	}
+	if (result == 0)
+		result = rpc_locked(client, NOTIFY_OP_STATE_WATCH, &request,
+		    sizeof(request), &reply, &payload,
+		    notify_rpc_timeout(timeout_ms));
+	if (result == 0)
+		memcpy(state, (struct notify_msg *)reply.bytes + 1, sizeof(*state));
+	error = result == -1 ? errno : 0;
+	/* A transport timeout cannot leave a hidden pending server watch. */
+	if (result == -1 && (connection_unusable(error) || error == ETIMEDOUT))
 		disconnect_locked(client);
 	pthread_mutex_unlock(&client->lock);
 	errno = error;

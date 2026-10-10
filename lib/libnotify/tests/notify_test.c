@@ -293,9 +293,82 @@ ATF_TC_BODY(event_classes, tc)
 	    NOTIFY_MESSAGE_REPLY));
 }
 
+
+ATF_TC_WITHOUT_HEAD(state_watch_wire);
+ATF_TC_BODY(state_watch_wire, tc)
+{
+	struct {
+		struct notify_msg msg;
+		struct notify_state_watch_request body;
+	} request = {0};
+	struct {
+		struct notify_msg msg;
+		struct notify_state_watch_reply body;
+	} reply = {0};
+
+	request.msg = message(NOTIFY_OP_STATE_WATCH);
+	request.body.topic.topic_length = 3;
+	memcpy(request.body.topic.topic, "a.b", 3);
+	ATF_CHECK_EQ(0, notify_validate_message(&request.msg, sizeof(request),
+	    NOTIFY_MESSAGE_REQUEST));
+	request.body.topic.topic[3] = 'x';
+	ATF_CHECK_EQ(-1, notify_validate_message(&request.msg, sizeof(request),
+	    NOTIFY_MESSAGE_REQUEST));
+	request.body.topic.topic[3] = 0;
+	request.body.topic.topic_length = UINT16_MAX;
+	ATF_CHECK_EQ(-1, notify_validate_message(&request.msg, sizeof(request),
+	    NOTIFY_MESSAGE_REQUEST));
+	reply.msg = message(NOTIFY_OP_STATE_WATCH);
+	reply.body.watch_epoch = 1;
+	reply.body.generation = 1;
+	ATF_CHECK_EQ(0, notify_validate_message(&reply.msg, sizeof(reply),
+	    NOTIFY_MESSAGE_REPLY));
+	reply.body.state = 7;
+	ATF_CHECK_EQ(-1, notify_validate_message(&reply.msg, sizeof(reply),
+	    NOTIFY_MESSAGE_REPLY));
+	reply.body.present = 1;
+	ATF_CHECK_EQ(0, notify_validate_message(&reply.msg, sizeof(reply),
+	    NOTIFY_MESSAGE_REPLY));
+	reply.body.present = 2;
+	ATF_CHECK_EQ(-1, notify_validate_message(&reply.msg, sizeof(reply),
+	    NOTIFY_MESSAGE_REPLY));
+	reply.body.present = 1;
+	reply.body.generation = 0;
+	ATF_CHECK_EQ(-1, notify_validate_message(&reply.msg, sizeof(reply),
+	    NOTIFY_MESSAGE_REPLY));
+}
+
+
+ATF_TC_WITHOUT_HEAD(hello_extension_wire);
+ATF_TC_BODY(hello_extension_wire, tc)
+{
+	struct {
+		struct notify_msg msg;
+		struct notify_hello_request body;
+	} request = {0};
+
+	request.msg = message(NOTIFY_OP_HELLO);
+	request.body.features = NOTIFY_FEATURE_STATE_WATCH;
+	ATF_CHECK_EQ(0, notify_validate_message(&request.msg, sizeof(request.msg),
+	    NOTIFY_MESSAGE_REQUEST));
+	ATF_CHECK_EQ(0, notify_validate_message(&request.msg, sizeof(request),
+	    NOTIFY_MESSAGE_REQUEST));
+	ATF_CHECK_EQ(-1, notify_validate_message(&request.msg, sizeof(request) - 1,
+	    NOTIFY_MESSAGE_REQUEST));
+	request.body.reserved = 1;
+	ATF_CHECK_EQ(-1, notify_validate_message(&request.msg, sizeof(request),
+	    NOTIFY_MESSAGE_REQUEST));
+	request.body.reserved = 0;
+	request.body.features = UINT32_MAX;
+	ATF_CHECK_EQ(-1, notify_validate_message(&request.msg, sizeof(request),
+	    NOTIFY_MESSAGE_REQUEST));
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
+	ATF_TP_ADD_TC(tp, hello_extension_wire);
+	ATF_TP_ADD_TC(tp, state_watch_wire);
 	ATF_TP_ADD_TC(tp, abi);
 	ATF_TP_ADD_TC(tp, topics);
 	ATF_TP_ADD_TC(tp, validation);
