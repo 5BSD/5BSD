@@ -109,6 +109,13 @@ At most 65536 entries are permitted.
 Cost must be at least the value length; callers may charge a larger logical
 cost.
 Metadata and key storage are additionally bounded by the entry limit.
+A balanced-tree key index bounds lookup comparisons logarithmically in the
+number of entries, including sorted or common-prefix keys.
+Its links are stored within each entry; it does not allocate a separate bucket
+array or require allocation during lookup.
+The LRU list still determines eviction order.
+Index, LRU order, accounting and copied lookup values are protected by the
+same cache mutex.
 Changing limits immediately evicts entries exceeding the effective budget.
 Replacing a key copies the new value before changing the old entry.
 Insertion checks pressure, budget and any generation token before allocating

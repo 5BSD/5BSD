@@ -5,6 +5,7 @@
 
 #include <stdatomic.h>
 #include <stdlib.h>
+#include <stdio.h>
 static atomic_uint allocation_calls;
 static void (*allocation_hook)(void);
 static void *
@@ -433,8 +434,72 @@ ATF_TC_BODY(pressure_during_allocation, tc)
 	ATF_CHECK_EQ(0, stats.entries);
 	ATF_REQUIRE_EQ(0, bsd_cache_destroy(allocating_cache));
 }
+ATF_TC_WITHOUT_HEAD(large_cache_lifecycle);
+ATF_TC_BODY(large_cache_lifecycle, tc)
+{
+	struct bsd_cache *cache;
+	struct bsd_cache_stats stats;
+	char key[64];
+	unsigned value;
+	size_t length;
+	const unsigned count = 8192;
+
+	ATF_REQUIRE_EQ(0, bsd_cache_create(count, count * sizeof(value),
+	    0, NULL, NULL, &cache));
+	for (unsigned i = 0; i < count; i++) {
+		snprintf(key, sizeof(key), "shared-prefix-%08u", i);
+		ATF_REQUIRE_EQ(0, bsd_cache_put(cache, key, &i, sizeof(i), sizeof(i)));
+	}
+	/* Read oldest-first: this is quadratic with a linear LRU search. */
+	for (unsigned i = 0; i < count; i++) {
+		snprintf(key, sizeof(key), "shared-prefix-%08u", i);
+		length = sizeof(value);
+		ATF_REQUIRE_EQ(0, bsd_cache_get(cache, key, &value, &length));
+		ATF_REQUIRE_EQ(i, value);
+	}
+	for (unsigned i = 0; i < count; i++) {
+		snprintf(key, sizeof(key), "shared-prefix-%08u", i);
+		if (i % 2 != 0)
+			ATF_REQUIRE_EQ(0, bsd_cache_remove(cache, key));
+		else {
+			value = i + count;
+			ATF_REQUIRE_EQ(0, bsd_cache_put(cache, key, &value,
+			    sizeof(value), sizeof(value)));
+		}
+	}
+	for (unsigned i = 0; i < count; i++) {
+		snprintf(key, sizeof(key), "shared-prefix-%08u", i);
+		length = sizeof(value);
+		if (i % 2 != 0)
+			ATF_REQUIRE_EQ(BSD_CACHE_MISS,
+			    bsd_cache_lookup(cache, key, &value, &length));
+		else {
+			ATF_REQUIRE_EQ(BSD_CACHE_HIT,
+			    bsd_cache_lookup(cache, key, &value, &length));
+			ATF_REQUIRE_EQ(i + count, value);
+		}
+	}
+	ATF_REQUIRE_EQ(0, bsd_cache_set_limits(cache, 16, 16 * sizeof(value)));
+	ATF_REQUIRE_EQ(0, bsd_cache_get_stats(cache, &stats));
+	ATF_CHECK_EQ(16, stats.entries);
+	ATF_REQUIRE_EQ(0, bsd_cache_purge(cache));
+	length = sizeof(value);
+	ATF_REQUIRE_EQ(BSD_CACHE_MISS,
+	    bsd_cache_lookup(cache, "shared-prefix-00008190", &value, &length));
+	ATF_REQUIRE_EQ(0, bsd_cache_put(cache, "shared-prefix-00008190", "x", 1, 1));
+	ATF_REQUIRE_EQ(0, bsd_cache_set_pressure(cache, NOTIFY_PRESSURE_CRITICAL));
+	ATF_REQUIRE_EQ(0, bsd_cache_set_pressure(cache, NOTIFY_PRESSURE_NORMAL));
+	ATF_REQUIRE_EQ(0, bsd_cache_put(cache, "shared-prefix-00008190", "y", 1, 1));
+	length = sizeof(value);
+	char byte;
+	ATF_REQUIRE_EQ(0, bsd_cache_get(cache, "shared-prefix-00008190", &byte, &length));
+	ATF_CHECK_EQ('y', byte);
+	ATF_REQUIRE_EQ(0, bsd_cache_destroy(cache));
+}
+
 ATF_TP_ADD_TCS(tp)
 {
+	ATF_TP_ADD_TC(tp, large_cache_lifecycle);
 	ATF_TP_ADD_TC(tp, invalidation_during_rebuild);
 	ATF_TP_ADD_TC(tp, generation_invalidation);
 	ATF_TP_ADD_TC(tp, pressure_during_allocation);

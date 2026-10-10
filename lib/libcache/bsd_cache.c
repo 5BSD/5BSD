@@ -1,4 +1,6 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+#include <sys/tree.h>
+
 #include <errno.h>
 #include <notify.h>
 #include <pthread.h>
@@ -12,10 +14,19 @@
 
 struct cache_entry {
 	struct cache_entry *next, *prev;
+	RB_ENTRY(cache_entry) index;
 	size_t length, cost;
 	char key[BSD_CACHE_KEY_MAX + 1];
 	unsigned char value[];
 };
+static int
+entry_compare(struct cache_entry *a, struct cache_entry *b)
+{
+	return (strcmp(a->key, b->key));
+}
+RB_HEAD(cache_index, cache_entry);
+RB_GENERATE_STATIC(cache_index, cache_entry, index, entry_compare);
+
 struct bsd_cache {
 	pthread_mutex_t lock;
 	pthread_t watcher;
@@ -25,6 +36,7 @@ struct bsd_cache {
 	uint64_t generation;
 	unsigned effective_pressure;
 	struct cache_entry *first, *last;
+	struct cache_index index;
 	struct bsd_cache_stats stats;
 	bsd_cache_evicted_fn callback;
 	void *argument;
@@ -50,14 +62,15 @@ valid_key(const char *key)
 static struct cache_entry *
 find_entry(struct bsd_cache *c, const char *key)
 {
-	for (struct cache_entry *e = c->first; e != NULL; e = e->next)
-		if (strcmp(e->key, key) == 0)
-			return (e);
-	return (NULL);
+	struct cache_entry probe;
+
+	strlcpy(probe.key, key, sizeof(probe.key));
+	return (RB_FIND(cache_index, &c->index, &probe));
 }
 static void
 unlink_entry(struct bsd_cache *c, struct cache_entry *e)
 {
+	RB_REMOVE(cache_index, &c->index, e);
 	if (e->prev != NULL)
 		e->prev->next = e->next;
 	else
@@ -72,6 +85,7 @@ unlink_entry(struct bsd_cache *c, struct cache_entry *e)
 static void
 link_first(struct bsd_cache *c, struct cache_entry *e)
 {
+	RB_INSERT(cache_index, &c->index, e);
 	e->prev = NULL;
 	e->next = c->first;
 	if (c->first != NULL)
@@ -304,6 +318,7 @@ bsd_cache_purge(struct bsd_cache *c)
 	invalidate_generation(c);
 	trash = c->first;
 	c->first = c->last = NULL;
+	RB_INIT(&c->index);
 	c->stats.entries = c->stats.cost = 0;
 	pthread_mutex_unlock(&c->lock);
 	dispose(c, trash, BSD_CACHE_PURGED);
@@ -431,6 +446,7 @@ bsd_cache_create(size_t entries, size_t cost, unsigned flags,
 	if (c == NULL)
 		return (-1);
 	c->owner = getpid();
+	RB_INIT(&c->index);
 	c->callback = callback;
 	c->argument = argument;
 	c->stats.entry_limit = entries;
@@ -474,6 +490,7 @@ bsd_cache_destroy(struct bsd_cache *c)
 	c->destroying = true;
 	trash = c->first;
 	c->first = c->last = NULL;
+	RB_INIT(&c->index);
 	c->stats.entries = c->stats.cost = 0;
 	dispose(c, trash, BSD_CACHE_DESTROYED);
 	pthread_mutex_destroy(&c->lock);
