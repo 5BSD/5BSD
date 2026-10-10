@@ -1559,8 +1559,55 @@ ATF_TC_BODY(oes_endpoint_isolation, tc)
 	ATF_CHECK(bsdfilesystem_test_oes_admit(3, 3, 62));
 }
 
+ATF_TC(oes_device_alias);
+ATF_TC_HEAD(oes_device_alias, tc)
+{
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "descr",
+	    "OES directory aliases cannot bypass admission; ordinary devices work");
+}
+ATF_TC_BODY(oes_device_alias, tc)
+{
+	struct bsdfilesystem_state st;
+	struct bsdfilesystem_open_request rq;
+	char directory[] = "/tmp/oes-alias.XXXXXX";
+	char linkpath[1024], devicepath[1024], byte;
+	int rootfd, fd;
+
+	fd = open("/dev/oes", O_RDONLY | O_NONBLOCK);
+	if (fd < 0)
+		atf_tc_skip("requires loaded OES and privileged open: %s", strerror(errno));
+	close(fd);
+	ATF_REQUIRE(mkdtemp(directory) != NULL);
+	snprintf(linkpath, sizeof(linkpath), "%s/device", directory);
+	/* Intermediate symlink stays beneath /, as production resolution allows. */
+	ATF_REQUIRE_EQ(0, symlink("../../dev", linkpath));
+	snprintf(devicepath, sizeof(devicepath), "%s/oes", linkpath);
+	rootfd = open("/", O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+	ATF_REQUIRE(rootfd >= 0);
+	fd = openat(rootfd, devicepath + 1,
+	    O_RDONLY | O_NONBLOCK | O_NOFOLLOW | O_RESOLVE_BENEATH);
+	ATF_REQUIRE_MSG(fd >= 0, "alias must reach OES before mediation: %s", strerror(errno));
+	close(fd);
+	open_state_init(&st, rootfd);
+	open_policy_set(&st, "client", devicepath, BSDFILESYSTEM_OPEN_READ, false);
+	open_request_set(&rq, devicepath, BSDFILESYSTEM_OPEN_READ);
+	ATF_CHECK_EQ(-1, bsdfilesystem_test_grant_open(&st, "client", &rq));
+	ATF_CHECK_EQ(EACCES, errno);
+	open_policy_set(&st, "client", "/dev/null", BSDFILESYSTEM_OPEN_READ, false);
+	open_request_set(&rq, "/dev/null", BSDFILESYSTEM_OPEN_READ);
+	fd = bsdfilesystem_test_grant_open(&st, "client", &rq);
+	ATF_REQUIRE_MSG(fd >= 0, "ordinary character device rejected: %s", strerror(errno));
+	ATF_CHECK_EQ(0, read(fd, &byte, 1));
+	close(fd);
+	close(rootfd);
+	ATF_CHECK_EQ(0, unlink(linkpath));
+	ATF_CHECK_EQ(0, rmdir(directory));
+}
+
 ATF_TP_ADD_TCS(tp)
 {
+	ATF_TP_ADD_TC(tp, oes_device_alias);
 	ATF_TP_ADD_TC(tp, oes_endpoint_isolation);
  ATF_TP_ADD_TC(tp, unmatched_ioctl_grant_is_empty);
  ATF_TP_ADD_TC(tp, delivery_hardening_failure);

@@ -37,3 +37,9 @@ denial of AUTH subscriptions and mode/scope changes. It does not validate
 SwitchBoard attribute admission. The handoff cases exercise real channel
 descriptor delivery, denied onward transfer, malformed-request rejection, and
 the five-second idle deadline.
+
+The OES gate also checks factory quota boundaries and ordinary filesystem
+mediation of a real intermediate-directory alias to /dev/oes. It proves the
+alias resolves before mediation, is denied by the grant path, and an ordinary
+/dev/null grant remains usable. The shipped manifest parser test is separate;
+neither check substitutes for full SwitchBoard client admission.

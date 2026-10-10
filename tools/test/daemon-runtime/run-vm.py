@@ -60,6 +60,7 @@ if a.oes_factory:
   before=digest(src); shutil.copyfile(src,dst)
   if digest(src)!=before or digest(dst)!=before: p.error('OES input changed during staging')
   extra_hashes[key]=before
+ extra_cases.extend(('/tests/namespace_test',case) for case in ['oes_endpoint_isolation','oes_device_alias'])
  extra_cases.extend([('/tests/oes_factory_test','invalid_root'),('/tests/oes_factory_test','notify_only_in_capmode')])
  handoff=obj/'usr.sbin/BSDFilesystem/tests/oes_handoff_test'
  if 'statically linked' not in subprocess.check_output(['file',str(handoff)],text=True): p.error('handoff test must be static')

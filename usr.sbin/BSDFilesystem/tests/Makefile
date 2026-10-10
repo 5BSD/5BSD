@@ -56,4 +56,12 @@ CFLAGS+= -I${SRCTOP}/lib/liboes
 LIBADD.oes_handoff_test= channel service
 NO_SHARED.oes_handoff_test= yes
 
+ATF_TESTS_C+= manifest_test
+CFLAGS.manifest_test+= -I${SRCTOP}/lib/libcapbundle
+LIBADD.manifest_test= capbundle
+NO_SHARED.manifest_test= yes
+.PATH: ${.CURDIR}/../capbundle
+FILES+= bsdfilesystem.ucl
+FILESDIR= ${TESTSDIR}
+
 .include <bsd.test.mk>
