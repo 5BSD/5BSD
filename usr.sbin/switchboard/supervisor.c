@@ -424,12 +424,156 @@ supervisor_command_exited(struct svc_runtime *svc, int exit_status)
 		    svc->manifest.label, exit_status);
 }
 
+/*
+ * Complete native exit policy after resource teardown. Keep one continuation
+ * for removal, reload, idle reactivation, and crash restart decisions so an
+ * asynchronous cleanup wait can resume here without duplicating policy.
+ * The caller supplies the exit-time policy snapshot.
+ */
+static void
+supervisor_finish_native_exit(struct svc_runtime *svc, int exit_status,
+    bool was_stopping, bool reload_pending, bool remove_pending)
+{
+	struct timespec now;
+	long uptime_sec;
+
+	svc->state = SVC_STATE_STOPPED;
+
+	if (was_stopping && remove_pending) {
+		unsigned idx;
+
+		idx = (unsigned)(svc - sd.services);
+		svc_remove(idx);
+		svc_reregister_kevents(switchboard_kq);
+		return;
+	}
+
+	if (was_stopping && reload_pending) {
+		svc->manifest = svc->pending_manifest;
+		svc_slot_apply_bundle_policy(svc, svc->bundle_idx);
+		memset(&svc->pending_manifest, 0,
+		    sizeof(svc->pending_manifest));
+		svc->reload_pending = false;
+		svc->restart_count = 0;
+		if (svc_exec(svc, switchboard_kq) == -1)
+			syslog(LOG_ERR,
+			    "service %s: reload re-exec failed; "
+			    "left stopped", svc->manifest.label);
+		return;
+	}
+
+	/*
+	 * Idle stop: the provider was gracefully stopped because it went
+	 * idle.  Keep the runtime slot, its manifest, and its bundle
+	 * origin so the next lookup relaunches it on demand.  Reset the
+	 * slot to the same fresh, relaunchable state an on-demand launch
+	 * starts from: every name_state[] entry returns to
+	 * SVC_NAME_UNCLAIMED (via svc_runtime_init_fds) so the relaunched
+	 * process re-claims each provides[] name from scratch.  The
+	 * published names were already dropped by naming_remove_owner()
+	 * above, so a lookup now misses and triggers on_demand relaunch.
+	 */
+	if (svc->idle_stop_pending) {
+		int saved_listen[SWITCHBOARD_MAX_ACTIVATION_SOCKETS];
+		unsigned saved_nlisten;
+		int saved_path_fd, saved_queue_fd;
+		uintptr_t saved_mount_ident;
+
+		/*
+		 * Activation sources (socket listeners, path watch, queue
+		 * directory, mount watch) OUTLIVE the unit's stop cycles —
+		 * they must keep firing to re-activate it on demand.
+		 * svc_runtime_init_fds() would reset them all to -1/0
+		 * WITHOUT closing the fds or removing their kevents (leaking
+		 * the listener/queue fd and orphaning a level-triggered
+		 * registration).  Snapshot and restore ALL of them across the
+		 * fresh-slot reset — the queue fd and mount ident were
+		 * previously dropped here, so after the first idle stop a
+		 * queue_directory/on_mount unit leaked its fd and its
+		 * activation went permanently dead.
+		 */
+		memcpy(saved_listen, svc->activation_listen_fds,
+		    sizeof(saved_listen));
+		saved_nlisten = svc->nactivation_listen;
+		saved_path_fd = svc->activation_path_fd;
+		saved_queue_fd = svc->activation_queue_fd;
+		saved_mount_ident = svc->activation_mount_ident;
+
+		svc->pid = 0;
+		svc->launch_id = 0;
+		svc->quiesce_pending = false;
+		svc->restart_count = 0;
+		svc->idle_stop_pending = false;
+		svc->idle_timeout_sec = 0;
+		svc_runtime_init_fds(svc);
+		memcpy(svc->activation_listen_fds, saved_listen,
+		    sizeof(saved_listen));
+		svc->nactivation_listen = saved_nlisten;
+		svc->activation_path_fd = saved_path_fd;
+		svc->activation_queue_fd = saved_queue_fd;
+		svc->activation_mount_ident = saved_mount_ident;
+		svc->state = SVC_STATE_STOPPED;
+		syslog(LOG_INFO, "service %s: stopped for idle; "
+		    "reservations kept for on-demand relaunch",
+		    svc->manifest.label);
+		return;
+	}
+
+	/* No restart if we asked it to stop. */
+	if (was_stopping)
+		return;
+
+	switch (svc->manifest.restart) {
+	case SVC_RESTART_NEVER:
+		return;
+	case SVC_RESTART_ON_FAILURE:
+		if (WIFEXITED(exit_status) &&
+		    WEXITSTATUS(exit_status) == 0)
+			return;
+		break;
+	case SVC_RESTART_ON_CRASH:
+		if (!WIFSIGNALED(exit_status))
+			return;
+		break;
+	case SVC_RESTART_ALWAYS:
+		break;
+	}
+
+	svc->restart_count++;
+
+	/* Reset counter if the service ran for a while. */
+	clock_gettime(CLOCK_MONOTONIC, &now);
+	uptime_sec = now.tv_sec - svc->last_start.tv_sec;
+	if (uptime_sec >= RESTART_RESET_SEC)
+		svc->restart_count = 1;
+
+	/* Circuit breaker: disable service after too many failures. */
+	if (svc->restart_count >= svc->manifest.max_failures) {
+		syslog(LOG_CRIT, "service %s: failed %u times, "
+		    "disabling", svc->manifest.label,
+		    svc->restart_count);
+		SWITCHBOARD_PROBE_SVC_DISABLED(svc->manifest.label,
+		    svc->restart_count);
+		svc->state = SVC_STATE_STOPPED;
+		return;
+	}
+
+	/* Backoff if it died too fast. */
+	if (uptime_sec < (time_t)(svc->manifest.throttle_interval != 0 ?
+	    svc->manifest.throttle_interval : RESTART_MIN_UPTIME_SEC)) {
+		schedule_restart(svc, switchboard_kq);
+	} else {
+		syslog(LOG_INFO, "service %s: restarting "
+		    "(count %u)", svc->manifest.label,
+		    svc->restart_count);
+		svc_restart_now(svc, switchboard_kq);
+	}
+}
+
 void
 supervisor_handle_procdesc(struct kevent *kev)
 {
 	struct svc_runtime *svc;
-	struct timespec now;
-	long uptime_sec;
 
 	svc = kev->udata;
 
@@ -547,137 +691,8 @@ supervisor_handle_procdesc(struct kevent *kev)
 		svc_release_dynamic_claims(svc);
 
 		svc_close_fds(svc);
-		svc->state = SVC_STATE_STOPPED;
-
-		if (was_stopping && remove_pending) {
-			unsigned idx;
-
-			idx = (unsigned)(svc - sd.services);
-			svc_remove(idx);
-			svc_reregister_kevents(switchboard_kq);
-			return;
-		}
-
-		if (was_stopping && reload_pending) {
-			svc->manifest = svc->pending_manifest;
-			svc_slot_apply_bundle_policy(svc, svc->bundle_idx);
-			memset(&svc->pending_manifest, 0,
-			    sizeof(svc->pending_manifest));
-			svc->reload_pending = false;
-			svc->restart_count = 0;
-			if (svc_exec(svc, switchboard_kq) == -1)
-				syslog(LOG_ERR,
-				    "service %s: reload re-exec failed; "
-				    "left stopped", svc->manifest.label);
-			return;
-		}
-
-		/*
-		 * Idle stop: the provider was gracefully stopped because it went
-		 * idle.  Keep the runtime slot, its manifest, and its bundle
-		 * origin so the next lookup relaunches it on demand.  Reset the
-		 * slot to the same fresh, relaunchable state an on-demand launch
-		 * starts from: every name_state[] entry returns to
-		 * SVC_NAME_UNCLAIMED (via svc_runtime_init_fds) so the relaunched
-		 * process re-claims each provides[] name from scratch.  The
-		 * published names were already dropped by naming_remove_owner()
-		 * above, so a lookup now misses and triggers on_demand relaunch.
-		 */
-		if (svc->idle_stop_pending) {
-			int saved_listen[SWITCHBOARD_MAX_ACTIVATION_SOCKETS];
-			unsigned saved_nlisten;
-			int saved_path_fd, saved_queue_fd;
-			uintptr_t saved_mount_ident;
-
-			/*
-			 * Activation sources (socket listeners, path watch, queue
-			 * directory, mount watch) OUTLIVE the unit's stop cycles —
-			 * they must keep firing to re-activate it on demand.
-			 * svc_runtime_init_fds() would reset them all to -1/0
-			 * WITHOUT closing the fds or removing their kevents (leaking
-			 * the listener/queue fd and orphaning a level-triggered
-			 * registration).  Snapshot and restore ALL of them across the
-			 * fresh-slot reset — the queue fd and mount ident were
-			 * previously dropped here, so after the first idle stop a
-			 * queue_directory/on_mount unit leaked its fd and its
-			 * activation went permanently dead.
-			 */
-			memcpy(saved_listen, svc->activation_listen_fds,
-			    sizeof(saved_listen));
-			saved_nlisten = svc->nactivation_listen;
-			saved_path_fd = svc->activation_path_fd;
-			saved_queue_fd = svc->activation_queue_fd;
-			saved_mount_ident = svc->activation_mount_ident;
-
-			svc->pid = 0;
-			svc->launch_id = 0;
-			svc->quiesce_pending = false;
-			svc->restart_count = 0;
-			svc->idle_stop_pending = false;
-			svc->idle_timeout_sec = 0;
-			svc_runtime_init_fds(svc);
-			memcpy(svc->activation_listen_fds, saved_listen,
-			    sizeof(saved_listen));
-			svc->nactivation_listen = saved_nlisten;
-			svc->activation_path_fd = saved_path_fd;
-			svc->activation_queue_fd = saved_queue_fd;
-			svc->activation_mount_ident = saved_mount_ident;
-			svc->state = SVC_STATE_STOPPED;
-			syslog(LOG_INFO, "service %s: stopped for idle; "
-			    "reservations kept for on-demand relaunch",
-			    svc->manifest.label);
-			return;
-		}
-
-		/* No restart if we asked it to stop. */
-		if (was_stopping)
-			return;
-
-		switch (svc->manifest.restart) {
-		case SVC_RESTART_NEVER:
-			return;
-		case SVC_RESTART_ON_FAILURE:
-			if (WIFEXITED(exit_status) &&
-			    WEXITSTATUS(exit_status) == 0)
-				return;
-			break;
-		case SVC_RESTART_ON_CRASH:
-			if (!WIFSIGNALED(exit_status))
-				return;
-			break;
-		case SVC_RESTART_ALWAYS:
-			break;
-		}
-
-		svc->restart_count++;
-
-		/* Reset counter if the service ran for a while. */
-		clock_gettime(CLOCK_MONOTONIC, &now);
-		uptime_sec = now.tv_sec - svc->last_start.tv_sec;
-		if (uptime_sec >= RESTART_RESET_SEC)
-			svc->restart_count = 1;
-
-		/* Circuit breaker: disable service after too many failures. */
-		if (svc->restart_count >= svc->manifest.max_failures) {
-			syslog(LOG_CRIT, "service %s: failed %u times, "
-			    "disabling", svc->manifest.label,
-			    svc->restart_count);
-			SWITCHBOARD_PROBE_SVC_DISABLED(svc->manifest.label,
-			    svc->restart_count);
-			svc->state = SVC_STATE_STOPPED;
-			return;
-		}
-
-		/* Backoff if it died too fast. */
-		if (uptime_sec < (time_t)(svc->manifest.throttle_interval != 0 ?
-		    svc->manifest.throttle_interval : RESTART_MIN_UPTIME_SEC)) {
-			schedule_restart(svc, switchboard_kq);
-		} else {
-			syslog(LOG_INFO, "service %s: restarting "
-			    "(count %u)", svc->manifest.label,
-			    svc->restart_count);
-			svc_restart_now(svc, switchboard_kq);
-		}
+		supervisor_finish_native_exit(svc, exit_status, was_stopping,
+		    reload_pending, remove_pending);
 	}
 }
 
