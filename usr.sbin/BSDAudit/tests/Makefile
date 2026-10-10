@@ -58,4 +58,10 @@ CFLAGS.shutdown_test+= -I${SRCTOP}/lib/libchannel -I${SRCTOP}/sys
 LIBADD.shutdown_test= auditcmp bsm channel service logcmp
 NO_SHARED.shutdown_test= yes
 
+ATF_TESTS_C+= lifecycle_test
+SRCS.lifecycle_test= lifecycle_test.c auditcmp_policy.c auditcmp_rate.c auditcmp_submit.c
+CFLAGS.lifecycle_test+= -I${SRCTOP}/lib/libchannel -I${SRCTOP}/sys
+LIBADD.lifecycle_test= auditcmp bsm channel service logcmp
+NO_SHARED.lifecycle_test= yes
+
 .include <bsd.test.mk>

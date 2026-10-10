@@ -18,3 +18,11 @@ bootstrap_failure_reaps_child checks rejected-worker SIGKILL, retry of an
 interrupted reap, actual handle closure, and preservation of the handshake
 error. Signal/reap operations are injected; real protected-worker bootstrap
 failure and kill failure remain integration/fault-injection gates.
+
+lifecycle_test calls the actual daemon main with injected provider, listener,
+and event-queue operations. It exercises startup stages, fatal event and accept
+errors, successful quiescence and acknowledgement failure. A real stand-in FD
+checks queue closure before acknowledgement. Failure paths must destroy any
+created provider and must not acknowledge successful quiescence. These cases
+use an empty worker list; live protected workers during fatal loop exit remain
+a full-system integration gate, alongside the worker-helper coverage above.

@@ -511,12 +511,12 @@ main(void)
 	struct kevent event, change;
 	struct service_identity identity;
 	struct service_listener *listener;
-	struct service_provider *provider;
+	struct service_provider *provider = NULL;
 	struct label_rate *rate_table;
 	struct auditcmp_rate *rate;
 	struct timespec now;
 	size_t nworkers;
-	int error, fd, kq, status;
+	int error, fd, kq = -1, status, result = 1;
 
 	openlog("bsdaudit", LOG_PID | LOG_NDELAY, LOG_AUTHPRIV);
 	/* ps(1) shows the unit name, not the ld-elf.so.1 launcher. */
@@ -539,7 +539,7 @@ main(void)
 	nworkers = 0;
 	rate_table = calloc(AUDITCMP_RATE_LABELS, sizeof(*rate_table));
 	if (rate_table == NULL)
-		err(1, "initialize");
+		goto initialize_failed;
 	kq = kqueuex(KQUEUE_CLOEXEC);
 	if (kq == -1 || service_provider_create(&provider) == -1 ||
 	    service_provider_authorize_capabilities(provider) == -1 ||
@@ -547,18 +547,19 @@ main(void)
 	    SERVICE_PROTECT_NOEXEC) == -1 ||
 	    service_provider_expose(provider, AUDITCMP_INTERFACE,
 	    &listener) == -1)
-		err(1, "initialize");
+		goto initialize_failed;
 	EV_SET(&change, service_listener_fd(listener), EVFILT_READ,
 	    EV_ADD | EV_ENABLE, 0, 0, listener);
 	if (kevent(kq, &change, 1, NULL, 0, NULL) == -1 ||
 	    service_provider_enter_capability_mode(provider) == -1 ||
 	    service_provider_ready(provider) == -1)
-		err(1, "initialize");
+		goto initialize_failed;
 	for (;;) {
 		if (kevent(kq, NULL, 0, &event, 1, NULL) == -1) {
 			if (errno == EINTR)
 				continue;
-			err(1, "kevent");
+			warn("kevent");
+			goto out;
 		}
 		if (event.filter == EVFILT_PROCDESC) {
 			worker_remove(&workers, event.udata, &nworkers);
@@ -573,7 +574,8 @@ main(void)
 			errno = error;
 			if (errno == EINTR)
 				continue;
-			err(1, "accept");
+			warn("accept");
+			goto out;
 		}
 		if (nworkers >= AUDITCMP_MAX_WORKERS) {
 			errno = ENOSPC;
@@ -621,11 +623,20 @@ main(void)
 		workers = worker;
 		nworkers++;
 	}
+	result = 0;
+	goto out;
+initialize_failed:
+	warn("initialize");
+out:
 	workers_shutdown(kq, &workers, &nworkers);
-	status = service_provider_quiesce_complete(provider, 0);
-	close(kq);
+	if (kq != -1)
+		close(kq);
 	free(rate_table);
+	if (result == 0 && service_provider_quiesce_complete(provider, 0) == -1)
+		result = 1;
+	if (provider != NULL)
+		service_provider_destroy(provider);
 	closelog();
-	return (status == 0 ? 0 : 1);
+	return (result);
 }
 #endif
