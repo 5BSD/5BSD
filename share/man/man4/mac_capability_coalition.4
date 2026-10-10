@@ -74,6 +74,11 @@ and
 A
 .Dv DTYPE_MAC_CAPABILITY
 descriptor backed by the coalition service is treated as a nested coalition.
+A process descriptor may replace an inherited membership atomically.
+A rejected move preserves the existing membership.
+The source and destination must both permit admission; a coalition that
+is closing, terminating, or in its grace period rejects a move.
+A process that has begun exiting cannot be enlisted.
 Returns
 .Vt struct coalition_reply .
 .It Dv COALITION_OP_JOIN
@@ -565,7 +570,7 @@ Invalid operation code, signal number, or timeout value.
 .It Bq Er ENOTCAPABLE
 The member fd lacks the required Capsicum rights.
 .It Bq Er ESRCH
-The target process or member was not found.
+The target process or member was not found, or the process has begun exiting.
 .It Bq Er EPERM
 Permission denied.
 .It Bq Er ELOOP
@@ -575,7 +580,12 @@ or create a cycle.
 .It Bq Er ENOMEM
 Insufficient memory for a new member.
 .It Bq Er EBUSY
-The coalition is in a terminating or grace state and rejects new members.
+The process already has an explicit process-descriptor membership.
+.It Bq Er ESHUTDOWN
+The coalition rejects admission because it is terminating or in its grace
+period; a process move also rejects a closing source or destination.
+.It Bq Er EAGAIN
+A concurrent membership change prevented a process move; retry the operation.
 .It Bq Er EALREADY
 The responsible parent has already been set.
 .It Bq Er EBADF

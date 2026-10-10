@@ -2135,7 +2135,7 @@ ATF_TC_BODY(exit_membership_waits_for_socket_close, tc)
 	struct coalition_stat_reply st;
 	struct kinfo_proc kp = { 0 };
 	socklen_t length = sizeof(address);
-	int listener, client, server, cfd, pd, gate[2], wstatus, small = 1024;
+	int listener, client, server, cfd, other, pd, gate[2], wstatus, small = 1024;
 	int32_t status;
 	int stalled = 0;
 	pid_t child;
@@ -2202,6 +2202,11 @@ ATF_TC_BODY(exit_membership_waits_for_socket_close, tc)
 	ATF_CHECK_MSG(held, "fixture did not block: flags=%lx state=%d wait=%s errno=%d",
 	    (unsigned long)kp.ki_flag, kp.ki_stat, kp.ki_wmesg, errno);
 	if (held) {
+		other = mac_capability_connect("coalition");
+		ATF_REQUIRE(other >= 0);
+		ATF_REQUIRE_EQ(0, coalition_enlist(other, pd, &status));
+		ATF_CHECK_EQ(ESRCH, status);
+		close(other);
 		ATF_REQUIRE_EQ(0, coalition_stat(cfd, &st));
 		ATF_CHECK_EQ(1, st.process_count);
 		ATF_CHECK_EQ(0, waitpid(child, &wstatus, WNOHANG));
@@ -2213,6 +2218,69 @@ ATF_TC_BODY(exit_membership_waits_for_socket_close, tc)
 	ATF_CHECK_EQ(0, st.process_count);
 	close(pd);
 	close(cfd);
+}
+
+ATF_TC(failed_procdesc_rehome_preserves_membership);
+ATF_TC_HEAD(failed_procdesc_rehome_preserves_membership, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Frozen source/destination rejects procdesc moves without detaching membership");
+	atf_tc_set_md_var(tc, "require.kmods",
+	    "mac_capability mac_capability_coalition");
+}
+ATF_TC_BODY(failed_procdesc_rehome_preserves_membership, tc)
+{
+	struct coalition_set_signal_req req = {
+	    .op = COALITION_OP_SET_SIGNAL, .signal = 0 };
+	struct coalition_reply reply;
+	struct coalition_stat_reply source, destination;
+	struct kinfo_proc kp;
+	int a, b, c, pd, wstatus;
+	int32_t status;
+	pid_t child;
+
+	for (int frozen_source = 0; frozen_source < 2; frozen_source++) {
+		a = mac_capability_connect("coalition");
+		b = mac_capability_connect("coalition");
+		c = mac_capability_connect("coalition");
+		ATF_REQUIRE(a >= 0 && b >= 0 && c >= 0);
+		ATF_REQUIRE_EQ(0, coalition_call(a, &req, sizeof(req), NULL, 0,
+		    &reply, sizeof(reply)));
+		ATF_REQUIRE_EQ(0, reply.status);
+		ATF_REQUIRE_EQ(0, coalition_op(a, COALITION_OP_JOIN, &status));
+		ATF_REQUIRE_EQ(0, status);
+		child = pdfork(&pd, 0);
+		ATF_REQUIRE(child >= 0);
+		if (child == 0) {
+			close(a); close(b); close(c);
+			for (;;)
+				pause();
+		}
+		ATF_REQUIRE_EQ(0, coalition_stat(a, &source));
+		ATF_REQUIRE_EQ(2, source.process_count);
+		ATF_REQUIRE_EQ(0, coalition_op(frozen_source ? a : b,
+		    COALITION_OP_TERMINATE, &status));
+		ATF_REQUIRE_EQ(0, status);
+		ATF_REQUIRE_EQ(0, coalition_enlist(b, pd, &status));
+		ATF_CHECK_EQ(ESHUTDOWN, status);
+		ATF_REQUIRE_EQ(0, kinfo_of(child, &kp));
+		ATF_CHECK_EQ(source.id, kp.ki_coalition);
+		ATF_REQUIRE_EQ(0, coalition_stat(a, &source));
+		ATF_CHECK_EQ(2, source.process_count);
+		ATF_REQUIRE_EQ(0, coalition_stat(b, &destination));
+		ATF_CHECK_EQ(0, destination.process_count);
+		if (!frozen_source) {
+			/* Failure preserved authority for a later valid handoff. */
+			ATF_REQUIRE_EQ(0, coalition_enlist(c, pd, &status));
+			ATF_CHECK_EQ(0, status);
+			ATF_REQUIRE_EQ(0, coalition_stat(c, &destination));
+			ATF_REQUIRE_EQ(0, kinfo_of(child, &kp));
+			ATF_CHECK_EQ(destination.id, kp.ki_coalition);
+		}
+		ATF_REQUIRE_EQ(0, pdkill(pd, SIGKILL));
+		ATF_REQUIRE(wait_exit_bounded(child, &wstatus));
+		close(pd); close(c); close(b); close(a);
+	}
 }
 
 ATF_TC(refattach_confined_descriptors);
@@ -4404,6 +4472,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, member_limit_cannot_fork_escape);
 	ATF_TP_ADD_TC(tp, grace_fork_containment_and_cancel);
 	ATF_TP_ADD_TC(tp, exit_membership_waits_for_socket_close);
+	ATF_TP_ADD_TC(tp, failed_procdesc_rehome_preserves_membership);
 	ATF_TP_ADD_TC(tp, refattach_confined_descriptors);
 	ATF_TP_ADD_TC(tp, set_signal_zero_releases_joined);
 

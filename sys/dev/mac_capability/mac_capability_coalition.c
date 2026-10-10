@@ -293,7 +293,6 @@ coalition_ref(struct coalition *co)
 }
 
 static void	coalition_rel(struct coalition *co);
-static void	coalition_rehome_inherited(struct proc *p);
 
 static void
 coalition_free(struct coalition *co)
@@ -785,6 +784,102 @@ coalition_has_member(struct coalition *co, struct file *fp)
 	return (false);
 }
 
+/* Consume the prepared member/file reference only on successful enlist. */
+static int
+coalition_enlist_process(struct coalition *co, struct file *fp,
+    struct coalition_member *prepared)
+{
+	struct procdesc *pd = fp->f_data;
+	struct proc *p;
+	struct coalition_member *member;
+	struct coalition *old, *first, *second;
+	int error = 0;
+	bool moved = false, inserted = false;
+
+	/* Pin the proc through admission; exit waits before its event hooks. */
+	sx_slock(&proctree_lock);
+	p = pd->pd_proc;
+	if (p == NULL) {
+		sx_sunlock(&proctree_lock);
+		return (ESRCH);
+	}
+	PROC_LOCK(p);
+	if ((p->p_flag & P_WEXIT) != 0) {
+		PROC_UNLOCK(p);
+		sx_sunlock(&proctree_lock);
+		return (ESRCH);
+	}
+	_PHOLD(p);
+	PROC_UNLOCK(p);
+	sx_sunlock(&proctree_lock);
+
+	rw_rlock(&coalition_proc_hash_lock);
+	member = coalition_proc_hash_lookup(p);
+	old = member != NULL ? member->cm_coalition : NULL;
+	if (old != NULL)
+		coalition_ref(old);
+	rw_runlock(&coalition_proc_hash_lock);
+
+	first = old != NULL && (uintptr_t)old < (uintptr_t)co ? old : co;
+	second = old == NULL || old == co ? NULL : (first == old ? co : old);
+	sx_xlock(&first->co_sx);
+	if (second != NULL)
+		sx_xlock(&second->co_sx);
+	rw_wlock(&coalition_proc_hash_lock);
+	member = coalition_proc_hash_lookup(p);
+	if ((member == NULL) != (old == NULL) ||
+	    (member != NULL && member->cm_coalition != old))
+		error = EAGAIN;
+	else if (member != NULL && member->cm_fp != NULL)
+		error = EBUSY;
+	else if ((co->co_flags | (old != NULL ? old->co_flags : 0)) &
+	    (COF_CLOSING | COF_TERMINATING | COF_GRACE_ACTIVE))
+		error = ESHUTDOWN;
+	else if (member != NULL) {
+		/* Both coalitions are locked: failure cannot detach the old member. */
+		member->cm_fp = fp;
+		if (old != co) {
+			TAILQ_REMOVE(&old->co_members, member, cm_link);
+			if ((old->co_flags & COF_HAS_LEADER) && old->co_leader == member) {
+				old->co_leader = NULL;
+				old->co_flags &= ~COF_HAS_LEADER;
+			}
+			coalition_ref(co);
+			member->cm_coalition = co;
+			TAILQ_INSERT_TAIL(&co->co_members, member, cm_link);
+			atomic_subtract_int(&old->co_member_count, 1);
+			atomic_add_int(&co->co_member_count, 1);
+			moved = true;
+		}
+	} else {
+		prepared->cm_data = p;
+		prepared->cm_fp = fp;
+		prepared->cm_coalition = co;
+		coalition_proc_hash_insert(prepared, p);
+		TAILQ_INSERT_TAIL(&co->co_members, prepared, cm_link);
+		atomic_add_int(&co->co_member_count, 1);
+		atomic_add_int(&coalition_total_members, 1);
+		coalition_ref(co);
+		inserted = true;
+	}
+	rw_wunlock(&coalition_proc_hash_lock);
+	if (moved)
+		coalition_notify_event(old, COALITION_NOTE_MEMBER_REMOVED);
+	if (moved || inserted)
+		coalition_notify_event(co, COALITION_NOTE_MEMBER_ADDED);
+	if (second != NULL)
+		sx_xunlock(&second->co_sx);
+	sx_xunlock(&first->co_sx);
+	if (moved)
+		coalition_rel(old); /* Transferred membership reference. */
+	if (old != NULL)
+		coalition_rel(old); /* Lookup reference. */
+	PRELE(p);
+	if (error == 0 && !inserted)
+		uma_zfree(coalition_member_zone, prepared);
+	return (error);
+}
+
 static int
 coalition_enlist(struct coalition *co, struct thread *td, struct file *fp,
     const struct filecaps *fcaps)
@@ -833,65 +928,13 @@ coalition_enlist(struct coalition *co, struct thread *td, struct file *fp,
 	}
 
 	if (dtype == DTYPE_PROCDESC) {
-		struct procdesc *pd = fp->f_data;
-		struct proc *p;
-
-		sx_slock(&proctree_lock);
-		p = pd->pd_proc;
-		if (p == NULL) {
-			sx_sunlock(&proctree_lock);
+		error = coalition_enlist_process(co, fp, cm);
+		if (error != 0) {
 			uma_zfree(coalition_member_zone, cm);
 			fdrop(fp, td);
-			SDT_PROBE3(mac_capability_coalition, , , deny,
-			    "enlist-dead", ESRCH, td->td_proc->p_pid);
-			return (ESRCH);
-		}
-		sx_sunlock(&proctree_lock);
-
-		cm->cm_data = p;
-
-		/*
-		 * A membership the process merely inherited (fork, pdfork,
-		 * JOIN: cm_fp == NULL) yields to an explicit enlist by a holder
-		 * of its process descriptor: detach it from the old coalition
-		 * first, then insert as usual.  An explicit procdesc membership
-		 * (cm_fp != NULL) is pinned and fails below with EBUSY.
-		 */
-		coalition_rehome_inherited(p);
-
-		/*
-		 * Lock order: co_sx → hash_lock.
-		 * Take co_sx first to match timer task paths.
-		 */
-		sx_xlock(&co->co_sx);
-		if (co->co_flags & (COF_TERMINATING | COF_GRACE_ACTIVE)) {
-			sx_xunlock(&co->co_sx);
-			uma_zfree(coalition_member_zone, cm);
-			fdrop(fp, td);
-			SDT_PROBE3(mac_capability_coalition, , , deny,
-			    "enlist-shutdown", ESHUTDOWN, td->td_proc->p_pid);
-			return (ESHUTDOWN);
-		}
-
-		rw_wlock(&coalition_proc_hash_lock);
-		if (coalition_proc_hash_lookup(p) != NULL) {
-			rw_wunlock(&coalition_proc_hash_lock);
-			sx_xunlock(&co->co_sx);
-			uma_zfree(coalition_member_zone, cm);
-			fdrop(fp, td);
-			SDT_PROBE3(mac_capability_coalition, , , deny,
-			    "enlist-busy", EBUSY, td->td_proc->p_pid);
-			return (EBUSY);
-		}
-
-		/*
-		 * Lock-free-of-co_sx readers (the OES/proc info hook) find the
-		 * member as soon as it is hashed; it must be complete by then.
-		 */
-		cm->cm_coalition = co;
-		coalition_proc_hash_insert(cm, p);
-		rw_wunlock(&coalition_proc_hash_lock);
-
+		} else
+			SDT_PROBE2(mac_capability_coalition, , , enlist, dtype, 0);
+		return (error);
 	} else if (dtype == DTYPE_JAILDESC) {
 		struct jaildesc *jd = fp->f_data;
 		struct prison *pr;
@@ -1203,7 +1246,7 @@ coalition_join_rehome(struct coalition *co, struct thread *td)
 	else if (cm->cm_fp != NULL)
 		error = EBUSY;
 	else if ((old->co_flags | co->co_flags) &
-	    (COF_TERMINATING | COF_GRACE_ACTIVE))
+	    (COF_CLOSING | COF_TERMINATING | COF_GRACE_ACTIVE))
 		error = ESHUTDOWN;
 	else {
 		TAILQ_REMOVE(&old->co_members, cm, cm_link);
@@ -2325,62 +2368,6 @@ coalition_close_internal(struct coalition *co, struct thread *td)
 	}
 
 	coalition_rel(co);
-}
-
-/* ----------------------------------------------------------------
- * Re-homing an inherited membership
- * ---------------------------------------------------------------- */
-
-/*
- * Detach p from a coalition it belongs to only by inheritance (fork, pdfork
- * or JOIN: no held file).  Mirrors the exit path: unhash under the hash
- * lock, then re-find the member under the old coalition's lock.  A moved
- * leader stops being the leader; it does not terminate the old coalition,
- * because the process is alive and merely changing hands.  No-op when p is
- * in no coalition or its membership is an explicit procdesc enlist.
- */
-static void
-coalition_rehome_inherited(struct proc *p)
-{
-	struct coalition_member *cm;
-	struct coalition *old;
-
-	rw_wlock(&coalition_proc_hash_lock);
-	cm = coalition_proc_hash_lookup(p);
-	if (cm == NULL || cm->cm_fp != NULL) {
-		rw_wunlock(&coalition_proc_hash_lock);
-		return;
-	}
-	old = cm->cm_coalition;
-	coalition_ref(old);
-	LIST_REMOVE(cm, cm_hash);
-	cm->cm_hash.le_prev = NULL;
-	rw_wunlock(&coalition_proc_hash_lock);
-
-	cm = NULL;
-	sx_xlock(&old->co_sx);
-	TAILQ_FOREACH(cm, &old->co_members, cm_link) {
-		if (cm->cm_data == p && cm->cm_fp == NULL)
-			break;
-	}
-	if (cm != NULL) {
-		TAILQ_REMOVE(&old->co_members, cm, cm_link);
-		cm->cm_link.tqe_prev = NULL;
-		if ((old->co_flags & COF_HAS_LEADER) != 0 &&
-		    old->co_leader == cm) {
-			old->co_leader = NULL;
-			old->co_flags &= ~COF_HAS_LEADER;
-		}
-		atomic_subtract_int(&old->co_member_count, 1);
-		atomic_subtract_int(&coalition_total_members, 1);
-		coalition_notify_event(old, COALITION_NOTE_MEMBER_REMOVED);
-	}
-	sx_xunlock(&old->co_sx);
-	if (cm != NULL) {
-		uma_zfree(coalition_member_zone, cm);
-		coalition_rel(old);	/* the member's reference */
-	}
-	coalition_rel(old);
 }
 
 /* ----------------------------------------------------------------
