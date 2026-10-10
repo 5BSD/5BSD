@@ -154,6 +154,14 @@ endpoint provided by
 performs software-attribute admission and delivers a restricted NOTIFY client.
 Ordinary BSDDevice workers also drop privileges before opening device nodes;
 they cannot satisfy the kernel OES privileged-open check through a device alias.
+.Sh LIFECYCLE
+Live client workers decline idle shutdown.
+Explicit stop and event-loop failure terminate and reap tracked workers.
+Successful shutdown acknowledgement follows worker cleanup.
+Device descriptors already delivered to clients are not revoked by worker
+termination; they retain their kernel-defined lifetime and narrowed rights.
+These cleanup guarantees cover controlled parent exit, not an abrupt parent
+crash or an uncatchable signal.
 .Sh SEE ALSO
 .Xr cap_enter 2 ,
 .Xr cap_ioctls_limit 2 ,
@@ -161,8 +169,8 @@ they cannot satisfy the kernel OES privileged-open check through a device alias.
 .Xr openat 2 ,
 .Xr pdfork 2 ,
 .Xr mac_capability 4 ,
-.Xr switchboard 8 ,
-.Xr bsdfilesystem 8
+.Xr bsdfilesystem 8 ,
+.Xr switchboard 8
 .Sh HISTORY
 The
 .Nm
