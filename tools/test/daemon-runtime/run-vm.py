@@ -12,6 +12,7 @@ p.add_argument('--kernconf',default='GENERIC-NODEBUG')
 p.add_argument('--client-ownership',action='store_true')
 p.add_argument('--oes-factory',action='store_true')
 p.add_argument('--log-store',action='store_true')
+p.add_argument('--log-storage',action='store_true')
 p.add_argument('--timeout',type=int,default=240)
 a=p.parse_args()
 if a.timeout<=0: p.error('timeout must be positive')
@@ -80,6 +81,18 @@ if a.log_store:
  cases=[line.split(': ',1)[1] for line in listing.splitlines() if line.startswith('ident: ')]
  if not cases: p.error('no log store cases')
  extra_cases.extend(('/tests/log_store_test',case) for case in cases)
+ (stage/'tests/extra-cases').write_text(''.join(program+' '+case+'\n' for program,case in extra_cases))
+if a.log_storage:
+ for name in ['storage_test','storage_barrier_test']:
+  source=obj/'usr.sbin/BSDLog/tests'/name
+  if 'statically linked' not in subprocess.check_output(['file',str(source)],text=True): p.error('storage test must be static')
+  alias='log_'+name; before=digest(source);shutil.copyfile(source,stage/'tests'/alias)
+  if digest(source)!=before or digest(stage/'tests'/alias)!=before: p.error('storage input changed')
+  extra_hashes[alias]=before
+  listing=subprocess.check_output([str(source),'-l'],text=True)
+  cases=[line.split(': ',1)[1] for line in listing.splitlines() if line.startswith('ident: ')]
+  if not cases: p.error('no storage cases')
+  extra_cases.extend(('/tests/'+alias,case) for case in cases)
  (stage/'tests/extra-cases').write_text(''.join(program+' '+case+'\n' for program,case in extra_cases))
 (stage/'etc/passwd').write_text('root:*:0:0:Charlie &:/root:/bin/sh\n')
 (stage/'boot/loader.conf').write_text('console="comconsole"\nautoboot_delay="1"\ncapability_plane="NO"\ninit_path="/sbin/runtime-init"\nvfs.root.mountfrom="ufs:/dev/vtbd0p2"\nvfs.root.mountfrom.options="rw"\n')

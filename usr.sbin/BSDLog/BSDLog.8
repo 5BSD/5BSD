@@ -150,6 +150,10 @@ appends and flushes until it is closed and reopened for recovery.
 This prevents later records from being appended behind an incomplete record.
 A failed durability sync after a complete write does not undo that record;
 callers must not interpret a failed acknowledgement as proof of absence.
+An ingestion failure closes the affected storage session after reporting the
+error when possible, including failures while draining for a flush or query.
+A subsequent flush cannot acknowledge records discarded by an earlier failure.
+Reconnecting does not replay those records.
 .Sh SECURITY
 Workers cannot open files, sockets, or other sinks.
 They cannot fork or execute, and ring consumer descriptors cannot be

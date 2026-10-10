@@ -48,3 +48,11 @@ Use --log-store to run every static BSDLog store_test case, including partial
 write rollback, failed rollback admission, reopening recovery, privacy, scoped
 queries, reclamation and retention. Tests use real files with injected write
 and truncation errors; they do not qualify physical power-loss durability.
+
+Use --log-storage to run the storage_test manager suite and storage_barrier_test.
+The manager suite exercises actual processes, sockets, shared rings, concurrent
+writers, backpressure, identity scoping, reclamation and restart. It uses the
+manager test entry point without activating its production sandbox. The barrier
+case exercises the real packet handler with injected ring/storage results; it
+verifies terminal flush/query ingestion errors, healthy peers and retryable
+sync-only errors. It is not a full-provider disk-exhaustion acceptance test.
