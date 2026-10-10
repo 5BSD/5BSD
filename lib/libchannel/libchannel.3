@@ -24,6 +24,8 @@ Capability channel library
 .Ft int
 .Fn channel_wants_write "const struct channel *channel"
 .Ft int
+.Fn channel_wait "struct channel *channel" "int want_write" "int timeout_ms"
+.Ft int
 .Fo channel_send_request
 .Fa "struct channel *channel"
 .Fa "const struct channel_outgoing *message"
@@ -56,6 +58,15 @@ Capability channel library
 .Fa "struct channel_fd_info *info"
 .Fc
 .Sh DESCRIPTION
+.Fn channel_wait
+returns CHANNEL_WAIT_READ and/or CHANNEL_WAIT_WRITE readiness bits, zero on
+timeout, or minus one with errno on failure.
+A negative timeout waits indefinitely; zero polls once without sleeping.
+Positive timeouts use one monotonic deadline across interrupted receives,
+kqueue waits, and compatibility fallback.
+Signals and wakeups do not restart the original timeout budget.
+Scheduler delays can still postpone when the calling thread runs again.
+.Pp
 The
 .Nm
 library provides a nonblocking, event-loop-native abstraction over

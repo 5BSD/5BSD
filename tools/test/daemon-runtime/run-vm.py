@@ -5,12 +5,14 @@ from pathlib import Path
 p=argparse.ArgumentParser(description=__doc__)
 p.add_argument('--root',type=Path,required=True)
 p.add_argument('--objtop',type=Path,required=True)
+p.add_argument('--fixture-objtop',type=Path,help='private static test tree under /usr/obj; defaults to objtop')
 p.add_argument('--work',type=Path,required=True)
 p.add_argument('--qemu',required=True)
 p.add_argument('--qemu-data',type=Path,required=True)
 p.add_argument('--kernconf',default='GENERIC-NODEBUG')
 p.add_argument('--client-ownership',action='store_true')
 p.add_argument('--oes-factory',action='store_true')
+p.add_argument('--oes-admission',action='store_true',help='run real Capsule/SwitchBoard with OES test bundles')
 p.add_argument('--log-store',action='store_true')
 p.add_argument('--log-storage',action='store_true')
 p.add_argument('--cleanup-lifecycle',action='store_true',help='stage private cleanup/unload kernel fixture')
@@ -18,14 +20,20 @@ p.add_argument('--log-provider',action='store_true')
 p.add_argument('--atf-suite',action='append',default=[],help='static ATF binary relative to objtop; repeatable')
 p.add_argument('--atf-case',action='append',default=[],help='static ATF binary relative to objtop followed by :case; repeatable')
 p.add_argument('--timeout',type=int,default=240)
+p.add_argument('--cpus',type=int,choices=range(1,5),default=4,help='guest vCPUs (default 4, maximum 4)')
+p.add_argument('--tcg-thread',choices=['multi','single'],default='multi',help='diagnostic TCG threading mode')
+p.add_argument('--eventtimer',choices=['LAPIC','i8254','HPET'],help='guest event timer override for diagnosis')
 a=p.parse_args()
+if a.oes_admission: a.oes_factory=True
 if a.timeout<=0: p.error('timeout must be positive')
 root=a.root.resolve(); obj=a.objtop.resolve(); work=a.work.resolve()
+fixtures=(a.fixture_objtop or obj).resolve()
+if not fixtures.is_relative_to('/usr/obj/usr/src'): p.error('fixtures must use standard /usr/obj/usr/src staging')
 if not work.is_relative_to('/usr/obj'): p.error('VM staging must be under /usr/obj')
 kernel=obj/'sys'/a.kernconf/'kernel'
-helper=obj/'tools/test/daemon-runtime/runtime_init'
-test=obj/'lib/libservice/tests/libservice_api_test'
-fs_test=obj/'usr.sbin/BSDFilesystem/tests/namespace_test'
+helper=fixtures/'tools/test/daemon-runtime/runtime_init'
+test=fixtures/'lib/libservice/tests/libservice_api_test'
+fs_test=fixtures/'usr.sbin/BSDFilesystem/tests/namespace_test'
 def digest(path): return hashlib.file_digest(path.open('rb'),'sha256').hexdigest()
 for f in [kernel,root/'boot/kernel/kernel',root/'boot/pmbr',root/'boot/gptboot',root/'boot/defaults/loader.conf',helper,test,fs_test]:
  if not f.is_file(): p.error('missing '+str(f))
@@ -53,7 +61,7 @@ if a.cleanup_lifecycle:
  extra_hashes['cleanup_fixture_module']=before
 if a.client_ownership:
  for library,program in [('auditcmp','client_lifecycle_test'),('cryptocmp','client_protocol_test'),('tracecmp','client_lifecycle_test'),('logcmp','client_lifecycle_test')]:
-  source=obj/'lib'/('lib'+library)/'tests'/program
+  source=fixtures/'lib'/('lib'+library)/'tests'/program
   if 'statically linked' not in subprocess.check_output(['file',str(source)],text=True): p.error('ownership fixture must be static: '+str(source))
   alias=library+'_'+program; before=digest(source)
   shutil.copyfile(source,stage/'tests'/alias)
@@ -65,7 +73,7 @@ if a.client_ownership:
   extra_cases.extend(('/tests/'+alias,case) for case in cases)
  (stage/'tests/extra-cases').write_text(''.join(program+' '+case+'\n' for program,case in extra_cases))
 if a.oes_factory:
- source=obj/'usr.sbin/BSDFilesystem/tests/oes_factory_test'
+ source=fixtures/'usr.sbin/BSDFilesystem/tests/oes_factory_test'
  module=obj/'sys'/a.kernconf/'modules/usr/src/sys/modules/oes/oes.ko'
  if 'statically linked' not in subprocess.check_output(['file',str(source)],text=True): p.error('OES test must be static')
  for src,dst,key in [(source,stage/'tests/oes_factory_test','oes_factory_test'),(module,stage/'boot/kernel/oes.ko','oes_module')]:
@@ -74,15 +82,15 @@ if a.oes_factory:
   extra_hashes[key]=before
  extra_cases.extend(('/tests/namespace_test',case) for case in ['oes_endpoint_isolation','oes_device_alias'])
  extra_cases.extend([('/tests/oes_factory_test','invalid_root'),('/tests/oes_factory_test','notify_only_in_capmode')])
- handoff=obj/'usr.sbin/BSDFilesystem/tests/oes_handoff_test'
+ handoff=fixtures/'usr.sbin/BSDFilesystem/tests/oes_handoff_test'
  if 'statically linked' not in subprocess.check_output(['file',str(handoff)],text=True): p.error('handoff test must be static')
  before=digest(handoff);shutil.copyfile(handoff,stage/'tests/oes_handoff_test')
  if digest(handoff)!=before or digest(stage/'tests/oes_handoff_test')!=before: p.error('handoff input changed')
  extra_hashes['oes_handoff_test']=before
- extra_cases.extend(('/tests/oes_handoff_test',case) for case in ['real_handoff','malformed_request','idle_timeout'])
+ extra_cases.extend(('/tests/oes_handoff_test',case) for case in ['real_handoff','nonroot_handoff','malformed_request','idle_timeout'])
  (stage/'tests/extra-cases').write_text(''.join(program+' '+case+'\n' for program,case in extra_cases))
 if a.log_store:
- source=obj/'usr.sbin/BSDLog/tests/store_test'
+ source=fixtures/'usr.sbin/BSDLog/tests/store_test'
  if 'statically linked' not in subprocess.check_output(['file',str(source)],text=True): p.error('log store test must be static')
  before=digest(source);shutil.copyfile(source,stage/'tests/log_store_test')
  if digest(source)!=before or digest(stage/'tests/log_store_test')!=before: p.error('log store input changed')
@@ -94,7 +102,7 @@ if a.log_store:
  (stage/'tests/extra-cases').write_text(''.join(program+' '+case+'\n' for program,case in extra_cases))
 if a.log_storage:
  for name in ['storage_test','storage_barrier_test']:
-  source=obj/'usr.sbin/BSDLog/tests'/name
+  source=fixtures/'usr.sbin/BSDLog/tests'/name
   if 'statically linked' not in subprocess.check_output(['file',str(source)],text=True): p.error('storage test must be static')
   alias='log_'+name; before=digest(source);shutil.copyfile(source,stage/'tests'/alias)
   if digest(source)!=before or digest(stage/'tests'/alias)!=before: p.error('storage input changed')
@@ -105,7 +113,7 @@ if a.log_storage:
   extra_cases.extend(('/tests/'+alias,case) for case in cases)
  (stage/'tests/extra-cases').write_text(''.join(program+' '+case+'\n' for program,case in extra_cases))
 if a.log_provider:
- source=obj/'usr.sbin/BSDLog/tests/provider_test'
+ source=fixtures/'usr.sbin/BSDLog/tests/provider_test'
  if 'statically linked' not in subprocess.check_output(['file',str(source)],text=True): p.error('log provider test must be static')
  before=digest(source);shutil.copyfile(source,stage/'tests/log_provider_test')
  if digest(source)!=before or digest(stage/'tests/log_provider_test')!=before: p.error('log provider input changed')
@@ -124,8 +132,8 @@ for selection in a.atf_case:
 for number, (relative,selected_case) in enumerate(selections):
  path=Path(relative)
  if path.is_absolute() or '..' in path.parts: p.error('ATF suite must be relative to objtop')
- source=(obj/path).resolve()
- if not source.is_relative_to(obj) or not source.is_file(): p.error('invalid ATF suite: '+relative)
+ source=(fixtures/path).resolve()
+ if not source.is_relative_to(fixtures) or not source.is_file(): p.error('invalid ATF suite: '+relative)
  if 'statically linked' not in subprocess.check_output(['file',str(source)],text=True): p.error('ATF suite must be static: '+relative)
  alias='atf_suite_'+str(number); before=digest(source)
  shutil.copyfile(source,stage/'tests'/alias)
@@ -142,7 +150,17 @@ for number, (relative,selected_case) in enumerate(selections):
 if selections:
  (stage/'tests/extra-cases').write_text(''.join(program+' '+case+'\n' for program,case in extra_cases))
 (stage/'etc/passwd').write_text('root:*:0:0:Charlie &:/root:/bin/sh\n')
+if a.oes_admission:
+ from oes_admission import stage_admission
+ admission_hashes, admission_cases=stage_admission(stage,fixtures)
+ extra_hashes.update(admission_hashes); extra_cases.extend(admission_cases)
+ (stage/'tests/extra-cases').write_text(''.join(program+' '+case+'\n' for program,case in extra_cases))
+
 (stage/'boot/loader.conf').write_text('console="comconsole"\nautoboot_delay="1"\ncapability_plane="NO"\ninit_path="/sbin/runtime-init"\nvfs.root.mountfrom="ufs:/dev/vtbd0p2"\nvfs.root.mountfrom.options="rw"\n')
+if a.oes_admission:
+ with (stage/'boot/loader.conf').open('a') as f: f.write('capability_plane="YES"\n')
+if a.eventtimer:
+ with (stage/'boot/loader.conf').open('a') as f: f.write('kern.eventtimer.timer="'+a.eventtimer+'"\n')
 if a.oes_factory:
  with (stage/'boot/loader.conf').open('a') as f: f.write('oes_load="YES"\n')
 (stage/'boot.config').write_text('-h\n')
@@ -156,14 +174,19 @@ for f in sorted(stage.rglob('*')):
 subprocess.run(['makefs','-t','ffs','-s','256m','-F',str(work/'METALOG'),'-o','version=2',str(work/'root.ufs'),str(stage)],check=True)
 subprocess.run(['mkimg','-s','gpt','-f','raw','-b',str(stage/'boot/pmbr'),'-p','freebsd-boot:='+str(stage/'boot/gptboot'),'-p','freebsd-ufs:='+str(work/'root.ufs'),'-o',str(work/'guest.img')],check=True)
 log=work/'serial.log'
-cmd=[a.qemu,'-L',str(a.qemu_data),'-accel','tcg,thread=multi','-machine','q35','-cpu','max','-m','1024','-smp','2','-drive',f'file={work}/guest.img,format=raw,if=virtio,snapshot=on','-nic','none','-display','none','-monitor','none','-serial','file:'+str(log)]
-provenance={'kernel_sha256':hashes[str(kernel)],'fixture_sha256':hashes[str(helper)],'test_sha256':hashes[str(test)],'filesystem_test_sha256':hashes[str(fs_test)],'ownership_test_hashes':extra_hashes,'objtop':str(obj),'staged_root':str(root),'command':cmd,'selected_atf_suites':selected_suites,'scope':'isolated native daemon/library fixtures; not integrated bundle or installer acceptance'}
+cmd=[a.qemu,'-L',str(a.qemu_data),'-accel','tcg,thread='+a.tcg_thread,'-machine','q35','-cpu','max','-m','1024','-smp',str(a.cpus),'-drive',f'file={work}/guest.img,format=raw,if=virtio,snapshot=on','-nic','none','-display','none','-monitor','none','-serial','file:'+str(log)]
+provenance={'oes_admission':a.oes_admission,'guest_cpus':a.cpus,'guest_memory_mib':1024,'requested_eventtimer':a.eventtimer,'tcg_thread':a.tcg_thread,'host_loadavg_start':os.getloadavg(),'host_logical_cpus':os.cpu_count(),'kernel_sha256':hashes[str(kernel)],'fixture_sha256':hashes[str(helper)],'test_sha256':hashes[str(test)],'filesystem_test_sha256':hashes[str(fs_test)],'ownership_test_hashes':extra_hashes,'objtop':str(obj),'fixture_objtop':str(fixtures),'staged_root':str(root),'command':cmd,'selected_atf_suites':selected_suites,'scope':'isolated native daemon/library fixtures; not integrated bundle or installer acceptance'}
+if a.oes_admission:
+ provenance['scope']='native fixtures followed by PID1 Capsule/SwitchBoard OES admission and live coalition reload/removal; OES-only provider, not installed ZFS/installer acceptance'
 (work/'inputs.json').write_text(json.dumps(provenance,indent=2)+'\n')
 proc=subprocess.Popen(cmd); deadline=time.monotonic()+a.timeout; forced=False
 try:
  while proc.poll() is None and time.monotonic()<deadline:
   text=log.read_text(errors='replace') if log.exists() else ''
   if any(x in text for x in ['panic:','Fatal trap','lock order reversal','mountroot>']): break
+  if a.oes_admission and any(x in text for x in ['invalid pkgbase default service identity', 'protected authority issuer unavailable']):
+   provenance['admission_startup_failure']='required service identity or PID1 authority issuer unavailable'
+   break
   time.sleep(1)
 finally:
  if proc.poll() is None:
@@ -174,7 +197,9 @@ text=log.read_text(errors='replace') if log.exists() else ''
 expected=['/tests/namespace_test:delivery_hardening_failure']+['/tests/libservice_api_test:'+case for case in ['service_budget_wire','service_session_payload_and_attachment_lifecycle','service_session_close_cancels_event']]+[program+':'+case for program,case in extra_cases]
 lines=text.splitlines()
 passed=all(lines.count('RUNTIME_CASE_PASS '+case)==1 for case in expected)
-passed=passed and 'RUNTIME_VM_PASS' in text and 'RUNTIME_VM_FAIL' not in text and 'RUNTIME_CASE_FAIL' not in text
+passed=passed and lines.count('RUNTIME_VM_PASS')==1 and 'RUNTIME_VM_FAIL' not in text and 'RUNTIME_CASE_FAIL' not in text
+if a.oes_admission:
+ passed=passed and lines.count('COALITION_LIFECYCLE_PASS')==1 and 'COALITION_LIFECYCLE_FAIL' not in text and lines.count('OES_ADMISSION_PASS')==1 and 'OES_ADMISSION_FAIL' not in text and lines.count('RUNTIME_FIXTURES_PASS')==1
 passed=passed and not forced and proc.returncode==0 and 'Powering system off' in text and not any(x in text for x in ['panic:','Fatal trap','lock order reversal'])
 provenance.update(result='PASS' if passed else 'FAIL',forced_termination=forced,qemu_exit=proc.returncode,serial_sha256=digest(log) if log.exists() else None)
 (work/'result.json').write_text(json.dumps(provenance,indent=2)+'\n')

@@ -10,10 +10,14 @@
  */
 #ifdef WITH_DTRACE
 #include "bsdvm_provider.h"
+#define BSDVM_PROBE_REQUEST_DONE(op, status, error) \
+	BSDVM_REQUEST_DONE(op, status, error)
 #define	BSDVM_PROBE_VSOCK_LIST(client, port_base, port_limit, result) \
 	BSDVM_VSOCK_LIST(__DECONST(char *, client), port_base, port_limit, \
 	    result)
 #else
+#define BSDVM_PROBE_REQUEST_DONE(op, status, error) \
+	do { (void)(op); (void)(status); (void)(error); } while (0)
 #define	BSDVM_PROBE_VSOCK_LIST(client, port_base, port_limit, result) \
 	do { (void)(client); (void)(port_base); (void)(port_limit); \
 	    (void)(result); } while (0)

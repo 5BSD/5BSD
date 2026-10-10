@@ -1,0 +1,13 @@
+#!/usr/sbin/dtrace -s
+/* SPDX-License-Identifier: BSD-2-Clause
+ * Load Linux ABI systrace modules first. Covers linux and linux32 modules.
+ * All Linux processes; errors are native kernel errno values before Linux ABI translation.
+ */
+#pragma D option quiet
+syscall:linux*::entry { self->ls = timestamp; }
+syscall:linux*::return
+/self->ls != 0/
+{ @linux_ns[probemod,probefunc] = quantize(timestamp-self->ls); @linux_calls[probemod,probefunc,errno] = count(); self->ls = 0; }
+linuxulator*::: { @linux_diagnostics[probemod,probefunc,probename] = count(); }
+ERROR { linux_faults++; }
+END { printf("LINUXULATOR_SUMMARY faults=%d\n",linux_faults); printf("Module syscall native-errno count\n"); printa(@linux_calls); printf("Inclusive syscall elapsed ns (blocking time included)\n"); printa(@linux_ns); printf("Linuxulator diagnostic probe counts\n"); printa(@linux_diagnostics); }

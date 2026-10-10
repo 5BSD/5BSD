@@ -51,6 +51,36 @@
 #   xargs -n1 | sort | uniq -d;
 # done
 
+# 20261010: retired IPFW examples, tracing and Python test support.
+OLD_FILES+=usr/lib/dtrace/ipfw.d
+OLD_FILES+=usr/share/examples/ipfw/change_rules.sh
+OLD_DIRS+=usr/share/examples/ipfw
+OLD_FILES+=usr/tests/atf_python/sys/netpfil/ipfw/__init__.py
+OLD_FILES+=usr/tests/atf_python/sys/netpfil/ipfw/insn_headers.py
+OLD_FILES+=usr/tests/atf_python/sys/netpfil/ipfw/insns.py
+OLD_FILES+=usr/tests/atf_python/sys/netpfil/ipfw/ioctl.py
+OLD_FILES+=usr/tests/atf_python/sys/netpfil/ipfw/ioctl_headers.py
+OLD_FILES+=usr/tests/atf_python/sys/netpfil/ipfw/ipfw.py
+OLD_FILES+=usr/tests/atf_python/sys/netpfil/ipfw/utils.py
+OLD_DIRS+=usr/tests/atf_python/sys/netpfil/ipfw
+
+# 20261010: retired IPFW modules and manual pages.
+OLD_FILES+=usr/share/man/man4/ipfirewall.4.gz
+OLD_FILES+=usr/share/man/man4/ipfw.4.gz
+OLD_FILES+=usr/share/man/man4/ipaccounting.4.gz
+OLD_FILES+=usr/share/man/man4/ipacct.4.gz
+OLD_FILES+=usr/share/man/man4/ng_ipfw.4.gz
+OLD_FILES+=boot/kernel/ipfw.ko
+OLD_FILES+=boot/kernel/ipfw_nat.ko
+OLD_FILES+=boot/kernel/ipfw_nat64.ko
+OLD_FILES+=boot/kernel/ipfw_nptv6.ko
+OLD_FILES+=boot/kernel/ipfw_pmod.ko
+OLD_FILES+=boot/kernel/ng_ipfw.ko
+# 20261010: retired IPFW public firewall definitions; Dummynet has its own ABI.
+OLD_FILES+=usr/include/netinet/ip_fw.h
+OLD_FILES+=usr/include/netinet6/ip_fw_nat64.h
+OLD_FILES+=usr/include/netinet6/ip_fw_nptv6.h
+
 # 20261008: hardware telemetry renamed to hwstat (no compatibility alias)
 OLD_FILES+=usr/sbin/hwtlm
 OLD_FILES+=usr/share/man/man8/hwtlm.8.gz

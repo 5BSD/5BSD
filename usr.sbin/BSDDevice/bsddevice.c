@@ -162,7 +162,7 @@ request(struct channel *c __unused, struct channel_message *m, void *arg)
 	const void *reply_data;
 	size_t reply_length;
 	uint32_t granted;
-	int fd, error, deliver_fd;
+	int fd, error, deliver_fd, transport_error;
 
 	fd = -1;
 	error = EPROTO;
@@ -272,12 +272,13 @@ request(struct channel *c __unused, struct channel_message *m, void *arg)
 	}
 
 	deliver_fd = (error == 0 && out.opcode == DEVICECMP_OP_OPEN) ? 1 : 0;
-	(void)channel_send_reply(m, &(struct channel_outgoing){
+	transport_error = channel_send_reply(m, &(struct channel_outgoing){
 	    .size = sizeof(struct channel_outgoing),
 	    .data = reply_data,
 	    .length = reply_length,
 	    .fds = deliver_fd != 0 ? &fd : NULL,
-	    .nfds = deliver_fd });
+	    .nfds = deliver_fd }) == -1 ? errno : 0;
+	BSDDEVICE_PROBE_REQUEST_DONE(out.opcode, out.status, transport_error);
 	if (fd >= 0)
 		(void)close(fd);
 	channel_message_free(m);
@@ -366,6 +367,7 @@ bsddevice_test_serve(int fd, const char *label)
 static int
 worker(int fd, const char *label)
 {
+	setproctitle("-BSDDevice: %s", label);
 
 	/*
 	 * The retained /dev directory descriptor is already open, so the worker
@@ -402,7 +404,26 @@ start_session(int fd, const char *peer_label, int *pdp)
 
 #define	DEVICECMP_MAX_WORKERS	4096u
 
-/* One live pdfork'd worker, tracked so its exit can account the slot. */
+struct device_worker_ent {
+	struct service_process process; /* First: shared teardown owns this node. */
+	char label[64];
+};
+
+#define	DEVICE_MAX_LABEL_WORKERS	64u
+
+/* The caller serializes admission and removal using authenticated labels. */
+static bool
+device_worker_admit(const struct service_process *workers, const char *label)
+{
+	unsigned same = 0;
+
+	for (; workers != NULL; workers = workers->next)
+		if (strcmp(((const struct device_worker_ent *)workers)->label, label) == 0 &&
+		    ++same >= DEVICE_MAX_LABEL_WORKERS)
+			return (false);
+	return (true);
+}
+
 
 static void
 device_worker_ent_remove(struct service_process **head,
@@ -538,13 +559,14 @@ main(void)
 			}
 			goto out;
 		}
-		if (nworkers >= DEVICECMP_MAX_WORKERS) {
+		if (nworkers >= DEVICECMP_MAX_WORKERS ||
+		    !device_worker_admit(workers, id.client_label)) {
 			syslog(LOG_WARNING, "worker limit reached; dropping %s",
 			    id.client_label);
 			(void)close(fd);
 			continue;
 		}
-		w = calloc(1, sizeof(*w));
+		w = calloc(1, sizeof(struct device_worker_ent));
 		if (w == NULL || start_session(fd, id.client_label,
 		    &w->pd) == -1) {
 			syslog(LOG_WARNING, "session for %s rejected: %m",
@@ -556,7 +578,8 @@ main(void)
 		(void)close(fd);
 		EV_SET(&change, w->pd, EVFILT_PROCDESC, EV_ADD | EV_ENABLE,
 		    NOTE_EXIT, 0, w);
-		if (kevent(kq, &change, 1, NULL, 0, NULL) == -1) {
+		if (service_harden_fd(w->pd, 0) == -1 ||
+		    kevent(kq, &change, 1, NULL, 0, NULL) == -1) {
 			int status;
 
 			/*
@@ -572,11 +595,15 @@ main(void)
 			syslog(LOG_WARNING, "procdesc watch for %s: %m",
 			    id.client_label);
 			(void)pdkill(w->pd, SIGKILL);
-			(void)pdwait(w->pd, &status, WEXITED, NULL, NULL);
+			while (pdwait(w->pd, &status, WEXITED, NULL, NULL) == -1 &&
+			    errno == EINTR)
+				;
 			(void)close(w->pd);
 			free(w);
 			continue;
 		}
+		strlcpy(((struct device_worker_ent *)w)->label,
+		    id.client_label, sizeof(((struct device_worker_ent *)w)->label));
 		w->next = workers;
 		workers = w;
 		nworkers++;

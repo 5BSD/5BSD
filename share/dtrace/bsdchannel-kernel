@@ -1,0 +1,12 @@
+#!/usr/sbin/dtrace -s
+/* SPDX-License-Identifier: BSD-2-Clause
+ * Kernel channel forwarding handler, all processes. Existing sbintime latency.
+ */
+#pragma D option quiet
+mac_capability_channel:::handler-done
+{ @kernel_channel_ns[arg0,arg2] = quantize(((arg3 >> 32) * 1000000000) + (((arg3 & 0xffffffff) * 1000000000) >> 32)); @handler_results[arg0,arg2] = count(); }
+mac_capability_channel:::create { @created[arg2] = count(); }
+mac_capability_channel:::forward { @forward_bytes = quantize(arg2); }
+mac_capability_channel:::state { @states[stringof(args[0]),arg1,arg3] = count(); }
+ERROR { kernel_channel_faults++; }
+END { printf("BSDCHANNEL_KERNEL_SUMMARY faults=%d\n",kernel_channel_faults); printf("Handler op result; elapsed ns\n"); printa(@handler_results); printa(@kernel_channel_ns); printf("Create results; forwarded byte sizes; state/error counts\n"); printa(@created); printa(@forward_bytes); printa(@states); }

@@ -11,6 +11,10 @@ MLINKS+=	libcapability.3 capability_service_call.3
 MLINKS+=	libcapability.3 capability_service_call_fds.3
 MLINKS+=	libcapability.3 capability_confine_fd.3
 
+MLINKS+=	libcapability.3 capability_coalition_watch.3
+MLINKS+=	libcapability.3 capability_coalition_status.3
+MLINKS+=	libcapability.3 capability_coalition_receive.3
+
 SRCS=	capability.c
 INCS=	capability.h
 

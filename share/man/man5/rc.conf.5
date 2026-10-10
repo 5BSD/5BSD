@@ -641,232 +641,19 @@ or
 .Pq Vt int
 When set to a positive value, wait up to this long after configuring
 DHCP interfaces at startup to give the interfaces time to receive a lease.
-.It Va firewall_enable
-.Pq Vt bool
-Set to
-.Dq Li YES
-to load firewall rules at startup.
-If the kernel was not built with
-.Cd "options IPFIREWALL" ,
-the
-.Pa ipfw.ko
-kernel module will be loaded.
-See also
-.Va ipfilter_enable .
-.It Va firewall_script
-.Pq Vt str
-This variable specifies the full path to the firewall script to run.
-The default is
-.Pa /etc/rc.firewall .
-.It Va firewall_type
-.Pq Vt str
-Names the firewall type from the selection in
-.Pa /etc/rc.firewall ,
-or the file which contains the local firewall ruleset.
-Valid selections from
-.Pa /etc/rc.firewall
-are:
-.Pp
-.Bl -tag -width ".Li workstation" -compact
-.It Li open
-unrestricted IP access
-.It Li closed
-all IP services disabled, except via
-.Dq Li lo0
-.It Li client
-basic protection for a workstation
-.It Li workstation
-basic protection for a workstation using stateful firewalling
-.It Li simple
-basic protection for a LAN.
-.El
-.Pp
-If a filename is specified, the full path
-must be given.
-.Pp
-Most of the predefined rulesets define additional configuration variables.
-These are documented in
-.Pa /etc/rc.firewall .
-.It Va firewall_quiet
-.Pq Vt bool
-Set to
-.Dq Li YES
-to disable the display of firewall rules on the console during boot.
-.It Va firewall_logging
-.Pq Vt bool
-Set to
-.Dq Li YES
-to enable firewall event logging.
-This is equivalent to the
-.Dv IPFIREWALL_VERBOSE
-kernel option.
-.It Va firewall_logif
-.Pq Vt bool
-Set to
-.Dq Li YES
-to create pseudo interface
-.Li ipfw0
-for logging.
-For more details, see
-.Xr ipfw 8
-manual page.
-.It Va firewall_flags
-.Pq Vt str
-Flags passed to
-.Xr ipfw 8
-if
-.Va firewall_type
-specifies a filename.
-.It Va firewall_coscripts
-.Pq Vt str
-List of executables and/or rc scripts to run after firewall starts/stops.
-Default is empty.
-.\" ----- firewall_nat_enable setting --------------------------------
-.It Va firewall_nat_enable
-.Pq Vt bool
-The
-.Xr ipfw 8
-equivalent of
-.Va natd_enable .
-Setting this to
-.Dq Li YES
-will automatically load the
-.Xr ipfw 8
-NAT kernel module if
-.Va firewall_enable
-is also set to
-.Dq Li YES .
-.It Va firewall_nat_interface
-.Pq Vt str
-The
-.Xr ipfw 8
-equivalent of
-.Va natd_interface .
-This is the name of the public interface or IP address on which
-kernel NAT should run.
-.It Va firewall_nat_flags
-.Pq Vt str
-Additional configuration parameters for kernel NAT should be placed here.
-.It Va firewall_nat64_enable
-.Pq Vt bool
-Setting this to
-.Dq Li YES
-will automatically load the
-.Xr ipfw 8
-NAT64 kernel module if
-.Va firewall_enable
-is also set to
-.Dq Li YES .
-.It Va firewall_nptv6_enable
-.Pq Vt bool
-Setting this to
-.Dq Li YES
-will automatically load the
-.Xr ipfw 8
-NPTv6 kernel module if
-.Va firewall_enable
-is also set to
-.Dq Li YES .
-.It Va firewall_pmod_enable
-.Pq Vt bool
-Setting this to
-.Dq Li YES
-will automatically load the
-.Xr ipfw 8
-pmod kernel module if
-.Va firewall_enable
-is also set to
-.Dq Li YES .
 .It Va dummynet_enable
 .Pq Vt bool
 Setting this to
 .Dq Li YES
 will automatically load the
 .Xr dummynet 4
-module if
-.Va firewall_enable
-is also set to
-.Dq Li YES .
-.\" -------------------------------------------------------------------
-.It Va ipfw_netflow_enable
-.Pq Vt bool
-Setting this to
-.Dq Li YES
-will enable netflow logging via
-.Xr ng_netflow 4 .
-.Pp
-By default a ipfw rule is inserted and all packets are duplicated with
-the ngtee command and netflow packets are sent to 127.0.0.1 on the netflow
-port using protocol version 5.
-.It Va ipfw_netflow_hook
-.Pq Vt int
-netflow hook name, must be numerical
-(default
-.Pa 9995 ) .
-.It Va ipfw_netflow_rule
-.Pq Vt int
-ipfw rule number
-(default
-.Pa 1000 ) .
-.It Va ipfw_netflow_ip
-.Pq Vt str
-Destination server ip for receiving netflow data
-(default
-.Pa 127.0.0.1 ) .
-.It Va ipfw_netflow_port
-.Pq Vt int
-Destination server port for receiving netflow data
-(default
-.Pa 9995 ) .
-.It Va ipfw_netflow_version
-.Pq Vt int
-Do not set for using version 5 of the netflow protocol, set it to 9 for using
-version 9.
-.It Va ipfw_netflow_fib
-.Pq Vt int
-Only match packet in FIB
-.Pa ipfw_netflow_fib
-(default is undefined meaning all FIBs).
-.It Va natd_program
-.Pq Vt str
-Path to
-.Xr natd 8 .
-.It Va natd_enable
-.Pq Vt bool
-Set to
-.Dq Li YES
-to enable
-.Xr natd 8 .
-.Va firewall_enable
-must also be set to
-.Dq Li YES ,
+module independently of PF rule loading.
+Use
+.Va dnctl_enable
 and
-.Xr divert 4
-sockets must be enabled in the kernel.
-If the kernel was not built with
-.Cd "options IPDIVERT" ,
-the
-.Pa ipdivert.ko
-kernel module will be loaded.
-.It Va natd_interface
-.Pq Vt str
-This is the name of the public interface on which
-.Xr natd 8
-should run.
-The interface may be given as an interface name or as an IP address.
-.It Va natd_flags
-.Pq Vt str
-Additional
-.Xr natd 8
-flags should be placed here.
-The
-.Fl n
-or
-.Fl a
-flag is automatically added with the above
-.Va natd_interface
-as an argument.
-.\" ----- ipfilter_enable setting --------------------------------
+.Va dnctl_rules
+to configure shaping objects before PF starts.
+.\" -------------------------------------------------------------------
 .It Va ipfilter_enable
 .Pq Vt bool
 Set to
@@ -5138,7 +4925,6 @@ to
 .Xr dummynet 4 ,
 .Xr ip 4 ,
 .Xr ipf 4 ,
-.Xr ipfw 4 ,
 .Xr ipnat 4 ,
 .Xr kld 4 ,
 .Xr pf 4 ,
@@ -5175,7 +4961,6 @@ to
 .Xr inetd 8 ,
 .Xr iovctl 8 ,
 .Xr ipf 8 ,
-.Xr ipfw 8 ,
 .Xr ipnat 8 ,
 .Xr jail 8 ,
 .Xr kldxref 8 ,

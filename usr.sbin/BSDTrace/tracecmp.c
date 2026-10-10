@@ -239,6 +239,7 @@ handle_request(struct channel *channel __unused,
 	    channel_message_fd_count(request_message),
 	    TRACECMP_MESSAGE_REQUEST) == -1) {
 		state->terminal_error = EPROTO;
+		BSDTRACE_PROBE_REQUEST_DONE(UINT32_MAX, EPROTO, 0);
 		channel_message_free(request_message);
 		return;
 	}
@@ -309,6 +310,8 @@ handle_request(struct channel *channel __unused,
 		    -1)
 			state->terminal_error = errno;
 	}
+	BSDTRACE_PROBE_REQUEST_DONE(message->opcode, error,
+	    state->terminal_error);
 	channel_message_free(request_message);
 }
 
@@ -459,6 +462,7 @@ worker(int fd, int barrier, int dtrace_fd, bool authorized,
 	char byte;
 	int error;
 
+	setproctitle("-BSDTrace: %s", client_label);
 	/*
 	 * The privileged /dev/dtrace consumer descriptor is opened by the parent
 	 * before the fork, so the worker never needs root: drop privileges with
@@ -576,10 +580,26 @@ reject:
 
 struct trace_worker {
 	struct trace_worker *next;
+	char label[64];
 	int pd;
 	int liveness;
 	pid_t pid;
 };
+
+#define	TRACE_MAX_LABEL_WORKERS	16u
+
+/* The caller serializes admission and removal using authenticated labels. */
+static bool
+trace_worker_admit(const struct trace_worker *workers, const char *label)
+{
+	unsigned same = 0;
+
+	for (; workers != NULL; workers = workers->next)
+		if (strcmp(workers->label, label) == 0 &&
+		    ++same >= TRACE_MAX_LABEL_WORKERS)
+			return (false);
+	return (true);
+}
 
 /* Own the worker before installing its watch, including on failure. */
 static int
@@ -593,6 +613,8 @@ worker_track(int kq, struct trace_worker **workers, struct trace_worker *worker,
 	(*count)++;
 	EV_SET(&change, worker->pd, EVFILT_PROCDESC, EV_ADD | EV_ENABLE,
 	    NOTE_EXIT, 0, worker);
+	if (service_harden_fd(worker->pd, 0) == -1)
+		return (-1);
 	return (kevent(kq, &change, 1, NULL, 0, NULL));
 }
 
@@ -760,7 +782,8 @@ main(void)
 				continue;
 			goto fail;
 		}
-		if (nworkers >= TRACECMP_MAX_WORKERS) {
+		if (nworkers >= TRACECMP_MAX_WORKERS ||
+		    !trace_worker_admit(workers, identity.client_label)) {
 			logcmp_log(LOG_WARNING, "session limit for %s",
 			    identity.client_label);
 			close(fd);
@@ -768,6 +791,7 @@ main(void)
 		}
 		worker = calloc(1, sizeof(*worker));
 		if (worker != NULL) {
+			strlcpy(worker->label, identity.client_label, sizeof(worker->label));
 			worker->pd = -1;
 			worker->liveness = -1;
 		}

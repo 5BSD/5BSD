@@ -9,15 +9,20 @@
 # $6 port
 # $7 id
 
+# Retired IPFW configuration requires explicit migration; never source it.
+for legacy in /etc/ipfw-blocklist.rc /etc/ipfw-blacklist.rc; do
+	if [ -f "$legacy" ]; then
+		echo "$0: $legacy uses retired IPFW; migrate blocklist policy to PF" >&2
+		exit 1
+	fi
+done
 pf=
-if [ -f "/etc/ipfw-blocklist.rc" ]; then
-	pf="ipfw"
-	. /etc/ipfw-blocklist.rc
-	ipfw_offset=${ipfw_offset:-2000}
+if [ -x /sbin/pfctl ] && /sbin/pfctl -si 2>/dev/null | grep -q '^Status: Enabled'; then
+	pf=pf
 fi
 
 if [ -z "$pf" ]; then
-	for f in npf pf ipfilter ipfw; do
+	for f in pf npf ipfilter; do
 		if [ -x /etc/rc.d/$f ]; then
 			if /etc/rc.d/$f status >/dev/null 2>&1; then
 				pf="$f"
@@ -127,18 +132,6 @@ add)
 		    /sbin/ipf -A -f - >/dev/null 2>&1 && echo OK
 		;;
 
-	ipfw)
-		# use $ipfw_offset+$port for rule number
-		rule=$(($ipfw_offset + $6))
-		tname="port$6"
-		/sbin/ipfw table $tname create type addr 2>/dev/null
-		/sbin/ipfw -q table $tname add "$addr/$mask"
-		# if rule number $rule does not already exist, create it
-		/sbin/ipfw show $rule >/dev/null 2>&1 || \
-			/sbin/ipfw add $rule drop $3 from \
-			table"("$tname")" to any dst-port $6 >/dev/null && \
-			echo OK
-		;;
 
 	iptables)
 		if ! /sbin/iptables --list "$2" >/dev/null 2>&1; then
@@ -180,10 +173,6 @@ rem)
 		    /sbin/ipf -A -r -f - >/dev/null 2>&1 && echo OK
 		;;
 
-	ipfw)
-		/sbin/ipfw table "port$6" delete "$addr/$mask" 2>/dev/null && \
-		    echo OK
-		;;
 
 	iptables)
 		if /sbin/iptables --list "$2" >/dev/null 2>&1; then
@@ -240,9 +229,6 @@ flush)
 		/sbin/ipf -s && echo OK
 		;;
 
-	ipfw)
-		/sbin/ipfw table "port$6" flush 2>/dev/null && echo OK
-		;;
 
 	iptables)
 		if /sbin/iptables --list "$2" >/dev/null 2>&1; then

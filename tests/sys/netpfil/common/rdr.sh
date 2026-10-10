@@ -136,4 +136,3 @@ setup_tests \
 		local_redirect \
 			pf \
 			ipfnat
-

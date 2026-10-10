@@ -570,8 +570,43 @@ bridge_filter_cleanup()
 	pft_cleanup
 }
 
+atf_test_case "blocklist_helpers" "cleanup"
+blocklist_helpers_head()
+{
+	atf_set descr 'Blocklist helpers maintain PF anchors after IPFW retirement'
+	atf_set require.user root
+}
+blocklist_helpers_body()
+{
+	pft_init
+	vnet_mkjail blocklist_test
+	pft_set_rules blocklist_test 'anchor "blocklistd/*"' 'pass'
+	jexec blocklist_test pfctl -e
+	for helper in blocklistd-helper blacklistd-helper; do
+		atf_check -s exit:0 -o match:OK -e ignore jexec blocklist_test \
+		    /usr/libexec/${helper} add blocklistd tcp 192.0.2.99 32 22 test
+		atf_check -s exit:0 -o match:192.0.2.99 -e ignore jexec blocklist_test \
+		    pfctl -a blocklistd/22 -t port22 -T show
+		atf_check -s exit:0 -o match:OK -e ignore jexec blocklist_test \
+		    /usr/libexec/${helper} rem blocklistd tcp 192.0.2.99 32 22 test
+		atf_check -s exit:0 -o empty -e ignore jexec blocklist_test \
+		    pfctl -a blocklistd/22 -t port22 -T show
+		atf_check -s exit:0 -o match:OK -e ignore jexec blocklist_test \
+		    /usr/libexec/${helper} add blocklistd tcp 192.0.2.99 32 22 test
+		atf_check -s exit:0 -o match:OK -e ignore jexec blocklist_test \
+		    /usr/libexec/${helper} flush blocklistd tcp 192.0.2.99 32 22 test
+		atf_check -s exit:0 -o empty -e ignore jexec blocklist_test \
+		    pfctl -a blocklistd/22 -sr
+	done
+}
+blocklist_helpers_cleanup()
+{
+	pft_cleanup
+}
+
 atf_init_test_cases()
 {
+	atf_add_test_case "blocklist_helpers"
 	atf_add_test_case "bridge_filter"
 	atf_add_test_case "enable_disable"
 	atf_add_test_case "v4"

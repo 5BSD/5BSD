@@ -205,3 +205,13 @@ are design-only (`docs/book/src/providers/crypto.md`). BSDCrypto runs as
 root for the `PRIV_DRIVER` snapshot and is on the list of providers to move
 to a gate-based launch. This is not a key vault and there is no plan to
 add one: persistence would put recoverable keys outside the kernel.
+
+## Client admission and worker ownership
+
+The provider allows at most 4096 concurrent admission workers globally and 64
+per authenticated client label. The client label used for this limit is distinct
+from the bundle resource owner used for named keys. Capacity returns when the
+exited worker is removed. Excess connections close before worker creation.
+Parent supervision descriptors cannot pass into later workers. Controlled exit
+kills and reaps admission workers and the reclaim child before successful
+shutdown acknowledgement. Quota and lifecycle tests cover these boundaries.

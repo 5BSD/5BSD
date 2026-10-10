@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
 /* Disposable VM PID 1 only. Never invoke as the host's init. */
 #include <sys/types.h>
+#include <sys/sysctl.h>
 #include <sys/mount.h>
 #include <sys/ioctl.h>
 #include <sys/socket.h>
@@ -149,6 +150,18 @@ main(void)
 	}
 	setvbuf(stdout, NULL, _IONBF, 0);
 	setvbuf(stderr, NULL, _IONBF, 0);
+	{
+		const char *names[] = { "kern.eventtimer.timer", "kern.timecounter.hardware" };
+		char value[128];
+		size_t length;
+		for (unsigned i = 0; i < sizeof(names) / sizeof(names[0]); i++) {
+			length = sizeof(value);
+			if (sysctlbyname(names[i], value, &length, NULL, 0) == 0)
+				printf("RUNTIME_CLOCK %s=%s\n", names[i], value);
+			else
+				perror(names[i]);
+		}
+	}
 	setenv("HOME", "/root", 1);
 	setenv("TMPDIR", "/tmp", 1);
 	puts("RUNTIME_VM_START");
@@ -182,6 +195,50 @@ main(void)
 			failed = 1;
 		fclose(extra);
 	}
+	if (!failed && access("/tests/oes-admission-boot", F_OK) == 0) {
+		/* rc normally supplies writable runtime mounts; this fixture skips rc. */
+		char run_path[] = "/Capabilities/Run", var_path[] = "/var";
+		char coalition_path[] = "/Capabilities/System/CoalitionLifecycle.cap";
+		char *paths[] = { run_path, var_path, coalition_path };
+
+		for (size_t i = 0; i < sizeof(paths) / sizeof(paths[0]); i++) {
+			tmpiov[3].iov_base = paths[i];
+			tmpiov[3].iov_len = strlen(paths[i]) + 1;
+			if (nmount(tmpiov, 4, 0) == -1) {
+				perror(paths[i]);
+				failed = 1;
+			}
+		}
+		if (mkdir("/var/run", 0755) == -1 || mkdir("/var/log", 0755) == -1) {
+			perror("OES runtime directories");
+			failed = 1;
+		}
+		if (failed)
+			goto done;
+		pid_t prepare = fork();
+		int prepare_status;
+		if (prepare == 0) {
+			execl("/tests/oes-unregistered", "/tests/oes-unregistered",
+			    "prepare-coalition", NULL);
+			_exit(127);
+		}
+		if (prepare == -1 || waitpid(prepare, &prepare_status, 0) != prepare ||
+		    !WIFEXITED(prepare_status) || WEXITSTATUS(prepare_status) != 0) {
+			puts("COALITION_LIFECYCLE_FAIL preparation");
+			failed = 1;
+			goto done;
+		}
+		puts("RUNTIME_FIXTURES_PASS");
+		setenv("SWITCHBOARD_SKIP_RC", "1", 1);
+		setenv("SWITCHBOARD_BUNDLE_DIR_SYSTEM", "/Capabilities/System", 1);
+		setenv("SWITCHBOARD_BUNDLE_DIR_USER", "/Capabilities/Apps", 1);
+		setenv("SWITCHBOARD_RUN_DIR", "/Capabilities/Run", 1);
+		/* Preserve PID 1: only Capsule may mint the boot authority issuer. */
+		execl("/tests/capsule", "/tests/capsule", NULL);
+		perror("OES admission Capsule handoff");
+		failed = 1;
+	}
+done:
 	puts(failed ? "RUNTIME_VM_FAIL" : "RUNTIME_VM_PASS");
 	/* Let the serial transmitter finish before kernel shutdown messages. */
 	if (tcdrain(STDOUT_FILENO) == -1) {

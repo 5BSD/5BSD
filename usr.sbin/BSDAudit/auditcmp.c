@@ -122,6 +122,7 @@ handle_request(struct channel *channel __unused,
 	const struct auditcmp_submit_request *submit;
 	const struct auditcmp_msg *request;
 	struct session *session;
+	uint32_t opcode = UINT32_MAX;
 	int error, result;
 
 	session = argument;
@@ -136,8 +137,10 @@ handle_request(struct channel *channel __unused,
 		BSDAUDIT_PROBE_REJECT(
 		    __DECONST(char *, session->provider), EPROTO);
 		session->error = EPROTO;
+		error = EPROTO;
 		goto out;
 	}
+	opcode = request->opcode;
 	switch (request->opcode) {
 	case AUDITCMP_OP_SUBMIT:
 		submit = (const void *)(request + 1);
@@ -164,6 +167,8 @@ handle_request(struct channel *channel __unused,
 	if (result == -1)
 		session->error = errno;
 out:
+	BSDAUDIT_PROBE_REQUEST_DONE(opcode, error,
+	    result == -1 ? session->error : 0);
 	channel_message_free(message);
 }
 
@@ -256,6 +261,7 @@ worker(int fd, int barrier, const char *provider, int event)
 	char byte;
 	int error;
 
+	setproctitle("-BSDAudit: %s", provider);
 	error = service_worker_enter_capability_mode(SERVICE_PROTECT_EXTERNAL |
 	    SERVICE_PROTECT_NOFORK | SERVICE_PROTECT_NOIPC |
 	    SERVICE_PROTECT_NOFDRECV | SERVICE_PROTECT_NOEXEC |
@@ -429,6 +435,8 @@ worker_track(int kq, struct audit_worker **workers, struct audit_worker *worker,
 	(*count)++;
 	EV_SET(&change, worker->pd, EVFILT_PROCDESC, EV_ADD | EV_ENABLE,
 	    NOTE_EXIT, 0, worker);
+	if (service_harden_fd(worker->pd, 0) == -1)
+		return (-1);
 	return (kevent(kq, &change, 1, NULL, 0, NULL));
 }
 

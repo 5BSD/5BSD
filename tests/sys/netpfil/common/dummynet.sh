@@ -51,8 +51,6 @@ interface_removal_body()
 	jexec alcatraz dnctl pipe 1 config delay 1500
 
 	firewall_config alcatraz ${fw} \
-		"ipfw"	\
-			"ipfw add 1000 pipe 1 ip from any to any" \
 		"pf"	\
 			"pass on ${epair}b dnpipe 1"
 
@@ -98,8 +96,6 @@ pipe_body()
 	jexec alcatraz dnctl pipe 1 config bw 30Byte/s
 
 	firewall_config alcatraz ${fw} \
-		"ipfw"	\
-			"ipfw add 1000 pipe 1 ip from any to any" \
 		"pf"	\
 			"pass on ${epair}b dnpipe 1"
 
@@ -142,8 +138,6 @@ pipe_v6_body()
 	jexec alcatraz dnctl pipe 1 config bw 100Byte/s
 
 	firewall_config alcatraz ${fw} \
-		"ipfw"	\
-			"ipfw add 1000 pipe 1 ip6 from any to any" \
 		"pf"	\
 			"pass on ${epair}b dnpipe 1"
 
@@ -188,8 +182,6 @@ codel_body()
 	jexec alcatraz dnctl queue 1 config pipe 1 droptail
 
 	firewall_config alcatraz ${fw} \
-		"ipfw"	\
-			"ipfw add 1000 queue 1 ip from any to any" \
 		"pf"	\
 			"pass dnqueue 1"
 
@@ -290,10 +282,6 @@ queue_body()
 	jexec alcatraz dnctl queue 200 config sched 1 weight 1 mask all
 
 	firewall_config alcatraz ${fw} \
-		"ipfw"	\
-			"ipfw add 1000 queue 100 tcp from 192.0.2.2 to any out" \
-			"ipfw add 1001 queue 200 icmp from 192.0.2.2 to any out" \
-			"ipfw add 1002 allow ip from any to any" \
 		"pf"	\
 			"pass in proto tcp dnqueue (0, 100)" \
 			"pass in proto icmp dnqueue (0, 200)"
@@ -332,10 +320,6 @@ queue_body()
 
 	# This will fail if we reverse the pola^W priority
 	firewall_config alcatraz ${fw} \
-		"ipfw"	\
-			"ipfw add 1000 queue 200 tcp from 192.0.2.2 to any out" \
-			"ipfw add 1001 queue 100 icmp from 192.0.2.2 to any out" \
-			"ipfw add 1002 allow ip from any to any" \
 		"pf"	\
 			"pass in proto tcp dnqueue (0, 200)" \
 			"pass in proto icmp dnqueue (0, 100)"
@@ -399,10 +383,6 @@ queue_v6_body()
 	jexec alcatraz dnctl queue 200 config sched 1 weight 1 mask all
 
 	firewall_config alcatraz ${fw} \
-		"ipfw"	\
-			"ipfw add 1001 queue 100 tcp from 2001:db8:42::2 to any out" \
-			"ipfw add 1000 queue 200 ipv6-icmp from 2001:db8:42::2 to any out" \
-			"ipfw add 1002 allow ip6 from any to any" \
 		"pf" \
 			"pass in proto tcp dnqueue (0, 100)"	\
 			"pass in proto icmp6 dnqueue (0, 200)"
@@ -441,10 +421,6 @@ queue_v6_body()
 
 	# What happens if we prioritise ICMP over TCP?
 	firewall_config alcatraz ${fw} \
-		"ipfw"	\
-			"ipfw add 1001 queue 200 tcp from 2001:db8:42::2 to any out" \
-			"ipfw add 1000 queue 100 ipv6-icmp from 2001:db8:42::2 to any out" \
-			"ipfw add 1002 allow ip6 from any to any" \
 		"pf" \
 			"pass in proto tcp dnqueue (0, 200)"	\
 			"pass in proto icmp6 dnqueue (0, 100)"
@@ -533,8 +509,6 @@ pls_basic_body()
 	jexec alcatraz ifconfig ${epair}b 192.0.2.2/24 up
 
 	firewall_config alcatraz ${fw} \
-		"ipfw"	\
-			"ipfw add 65432 ip from any to any" \
 		"pf"	\
 			"pass on ${epair}b"
 
@@ -544,8 +518,6 @@ pls_basic_body()
 	jexec alcatraz dnctl pipe 1 config plr 0.1
 
 	firewall_config alcatraz ${fw} \
-		"ipfw"	\
-			"ipfw add 1000 pipe 1 ip from 192.0.2.1 to 192.0.2.2" \
 		"pf"	\
 			"pass on ${epair}b dnpipe 1"
 
@@ -580,8 +552,6 @@ pls_gilbert_body()
 	jexec alcatraz ifconfig ${epair}b 192.0.2.2/24 up
 
 	firewall_config alcatraz ${fw} \
-		"ipfw"	\
-			"ipfw add 65432 ip from any to any" \
 		"pf"	\
 			"pass on ${epair}b"
 
@@ -591,8 +561,6 @@ pls_gilbert_body()
 	jexec alcatraz dnctl pipe 1 config plr 0.01,0.1,0.8,0.2
 
 	firewall_config alcatraz ${fw} \
-		"ipfw"	\
-			"ipfw add 1000 pipe 1 ip from 192.0.2.1 to 192.0.2.2" \
 		"pf"	\
 			"pass on ${epair}b dnpipe 1"
 
@@ -612,30 +580,22 @@ pls_gilbert_cleanup()
 
 setup_tests		\
 	interface_removal	\
-		ipfw	\
 		pf	\
 	pipe		\
-		ipfw	\
 		pf	\
 	pipe_v6		\
-		ipfw	\
 		pf	\
 	codel		\
-		ipfw	\
 		pf	\
 	wf2q_heap	\
 		pf	\
 	queue		\
-		ipfw	\
 		pf	\
 	queue_v6	\
-		ipfw	\
 		pf	\
 	nat		\
 		pf	\
 	pls_basic	\
-		ipfw	\
 		pf	\
 	pls_gilbert	\
-		ipfw	\
 		pf

@@ -2338,7 +2338,7 @@ ATF_TC(call_flags_nonzero);
 ATF_TC_HEAD(call_flags_nonzero, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
-	    "MAC_CAPABILITY_CALL with nonzero flags returns EINVAL on sync service");
+	    "MAC_CAPABILITY_CALL with unknown flags returns EINVAL on sync service");
 	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_test_kernelstore");
 }
 ATF_TC_BODY(call_flags_nonzero, tc)
@@ -2350,7 +2350,7 @@ ATF_TC_BODY(call_flags_nonzero, tc)
 	ATF_REQUIRE(fd >= 0);
 
 	memset(&ca, 0, sizeof(ca));
-	ca.flags = 1;
+	ca.flags = UINT32_MAX;
 	ATF_CHECK_ERRNO(EINVAL, ioctl(fd, MAC_CAPABILITY_CALL, &ca) == -1);
 
 	close(fd);
@@ -7901,9 +7901,145 @@ ATF_TC_BODY(unload_waits_for_cleanup_callback, tc)
 	check_unload_waits_for_cleanup(true);
 }
 
+static void
+cleanup_fixture_set(const char *name, unsigned value)
+{
+	ATF_REQUIRE_EQ(0, sysctlbyname(name, NULL, NULL, &value, sizeof(value)));
+}
+
+static void
+check_unload_waits_for_admission(unsigned stage, bool fail, bool mint)
+{
+	const char *entered = "debug.capability_cleanup_test.stage_entered";
+	const char *destroy = "debug.capability_cleanup_test.destroy_entered";
+	uint64_t before, after;
+	size_t len = sizeof(before);
+	int module, fd = -1, status;
+	pid_t creator, unloader, observed = 0;
+
+	ATF_REQUIRE_EQ(0, sysctlbyname("kern.mac_capability.instances",
+	    &before, &len, NULL, 0));
+	module = kldload("/boot/kernel/mac_capability_test_cleanup.ko");
+	ATF_REQUIRE(module >= 0);
+	cleanup_fixture_set("debug.capability_cleanup_test.release", 1);
+	if (mint) {
+		fd = mac_capability_connect("test_cleanup");
+		ATF_REQUIRE(fd >= 0);
+	}
+	cleanup_fixture_set("debug.capability_cleanup_test.block_stage", stage);
+	cleanup_fixture_set("debug.capability_cleanup_test.fail_stage", fail);
+	creator = fork();
+	ATF_REQUIRE(creator >= 0);
+	if (creator == 0) {
+		int result = mint ? channel_mint_instance(fd) :
+		    mac_capability_connect("test_cleanup");
+		int expected = fail ? EIO : stage == 1 ? EAGAIN : ECONNABORTED;
+		_exit(result == -1 && errno == expected ? 0 : 1);
+	}
+	for (unsigned i = 0; i < 300 && cleanup_fixture_value(entered) == 0; i++)
+		usleep(10000);
+	ATF_REQUIRE_EQ(stage, cleanup_fixture_value(entered));
+	unloader = fork();
+	ATF_REQUIRE(unloader >= 0);
+	if (unloader == 0)
+		_exit(kldunload(module) == 0 ? 0 : 1);
+	for (unsigned i = 0; i < 300 && cleanup_fixture_value(destroy) == 0; i++)
+		usleep(10000);
+	ATF_REQUIRE_EQ(1, cleanup_fixture_value(destroy));
+	for (unsigned i = 0; i < 100; i++) {
+		observed = waitpid(unloader, &status, WNOHANG);
+		if (observed != 0)
+			break;
+		usleep(10000);
+	}
+	ATF_REQUIRE_EQ_MSG(0, observed,
+	    "unload returned during stage %u (fail=%d mint=%d)", stage, fail, mint);
+	cleanup_fixture_set("debug.capability_cleanup_test.release_stage", 1);
+	ATF_REQUIRE_EQ(creator, waitpid(creator, &status, 0));
+	ATF_CHECK_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
+	    "constructor result stage=%u fail=%d mint=%d status=%d",
+	    stage, fail, mint, status);
+	ATF_REQUIRE_EQ(unloader, waitpid(unloader, &status, 0));
+	ATF_CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	if (fd >= 0) {
+		ATF_CHECK_ERRNO(ECONNABORTED, channel_mint_instance(fd) == -1);
+		ATF_REQUIRE_EQ(0, close(fd));
+	}
+	len = sizeof(after);
+	ATF_REQUIRE_EQ(0, sysctlbyname("kern.mac_capability.instances",
+	    &after, &len, NULL, 0));
+	ATF_CHECK_EQ(before, after);
+}
+
+ATF_TC(unload_waits_for_admission);
+ATF_TC_HEAD(unload_waits_for_admission, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "Unload drains authorization, initialization, and rollback");
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "timeout", "60");
+}
+ATF_TC_BODY(unload_waits_for_admission, tc)
+{
+	if (access("/boot/kernel/mac_capability_test_cleanup.ko", R_OK) != 0)
+		atf_tc_skip("private VM cleanup fixture is not staged");
+	for (unsigned stage = 1; stage <= 2; stage++)
+		for (unsigned fail = 0; fail <= 1; fail++)
+			for (unsigned mint = 0; mint <= 1; mint++)
+				check_unload_waits_for_admission(stage, fail, mint);
+}
+
+ATF_TC(failed_init_completes_cleanup);
+ATF_TC_HEAD(failed_init_completes_cleanup, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "Failed initialization completes rollback without revoke");
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "timeout", "20");
+}
+ATF_TC_BODY(failed_init_completes_cleanup, tc)
+{
+	uint64_t before, after;
+	size_t len;
+	unsigned fail = 1, release = 1;
+	int module, fd;
+
+	if (access("/boot/kernel/mac_capability_test_cleanup.ko", R_OK) != 0)
+		atf_tc_skip("private VM cleanup fixture is not staged");
+	module = kldload("/boot/kernel/mac_capability_test_cleanup.ko");
+	ATF_REQUIRE(module >= 0);
+	len = sizeof(before);
+	ATF_REQUIRE_EQ(0, sysctlbyname("kern.mac_capability.instances",
+	    &before, &len, NULL, 0));
+	ATF_REQUIRE_EQ(0, sysctlbyname("debug.capability_cleanup_test.fail_init",
+	    NULL, NULL, &fail, sizeof(fail)));
+	for (unsigned i = 0; i < 16; i++) {
+		ATF_CHECK_ERRNO(EIO, mac_capability_connect("test_cleanup") == -1);
+		len = sizeof(after);
+		ATF_REQUIRE_EQ(0, sysctlbyname("kern.mac_capability.instances",
+		    &after, &len, NULL, 0));
+		ATF_CHECK_EQ(before, after);
+	}
+	ATF_CHECK_EQ(0, cleanup_fixture_value("debug.capability_cleanup_test.entered"));
+	fail = 0;
+	ATF_REQUIRE_EQ(0, sysctlbyname("debug.capability_cleanup_test.fail_init",
+	    NULL, NULL, &fail, sizeof(fail)));
+	ATF_REQUIRE_EQ(0, sysctlbyname("debug.capability_cleanup_test.release",
+	    NULL, NULL, &release, sizeof(release)));
+	fd = mac_capability_connect("test_cleanup");
+	ATF_REQUIRE(fd >= 0);
+	ATF_REQUIRE_EQ(0, close(fd));
+	ATF_CHECK_EQ(1, cleanup_fixture_value("debug.capability_cleanup_test.entered"));
+	ATF_REQUIRE_EQ(0, kldunload(module));
+	len = sizeof(after);
+	ATF_REQUIRE_EQ(0, sysctlbyname("kern.mac_capability.instances",
+	    &after, &len, NULL, 0));
+	ATF_CHECK_EQ(before, after);
+}
+
 /* ================================================================ */
 ATF_TP_ADD_TCS(tp)
 {
+	ATF_TP_ADD_TC(tp, unload_waits_for_admission);
+	ATF_TP_ADD_TC(tp, failed_init_completes_cleanup);
 	ATF_TP_ADD_TC(tp, unload_waits_for_cleanup_callback);
 	/* Lifecycle */
 	ATF_TP_ADD_TC(tp, open_close);

@@ -26,7 +26,7 @@ LIBADD=		blemesh bluetooth crypto
 CFLAGS+=	-I${SRCTOP}/lib/libmesh -I${SRCTOP}/lib/libble \
 		-I${SRCTOP}/usr.sbin/bluetooth/BSDBluetooth
 
-.if ${MK_DTRACE} != "no" && defined(MESHD_DTRACE_PROBES)
+.if ${MK_DTRACE} != "no"
 SRCS+=		meshd_provider.d
 CFLAGS+=	-DMESHD_DTRACE_PROBES
 .endif

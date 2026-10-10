@@ -63,8 +63,6 @@ v4_body()
 	firewall_config "iron" ${firewall} \
 		"pf" \
 			"block in" \
-		"ipfw" \
-			"ipfw -q add 100 deny all from any to any in" \
 		"ipf" \
 			"block in all" \
 
@@ -76,8 +74,6 @@ v4_body()
 	firewall_config "iron" ${firewall} \
 		"pf" \
 			"block out" \
-		"ipfw" \
-			"ipfw -q add 100 deny all from any to any out" \
 		"ipf" \
 			"block out all" \
 
@@ -96,5 +92,4 @@ v4_cleanup()
 setup_tests \
 		v4 \
 			pf \
-			ipfw \
 			ipf

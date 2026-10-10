@@ -1415,6 +1415,7 @@ main(void)
 	if (router_pid == -1)
 		goto fail;
 	if (router_pid == 0) {
+		setproctitle("-BSDNotify: router");
 		close(router_pair[0]);
 		_exit(router_main(router_pair[1], policy_db, audit_fd));
 	}

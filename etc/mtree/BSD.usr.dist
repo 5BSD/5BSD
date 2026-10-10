@@ -318,8 +318,6 @@
             ..
             ipfilter
             ..
-            ipfw
-            ..
             jails
             ..
             kld

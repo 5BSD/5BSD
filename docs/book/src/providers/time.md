@@ -195,7 +195,7 @@ is refused by design.
 
 **Status (October 10, 2026):** FIDL migration built into the complete world and published packages. In a plane-on VM the provider activates as a core unit, the real held-gate `gate_test` passes with the other 40 provider, policy, legacy and runtime cases, and BSDTimectl reaches the live provider: reads succeed, the shipped policy refuses unauthorized `set`/`adjust` with `EPERM`, and 200 consecutive sessions succeed. As for every core provider, `switchboardctl restart system.Time/bsdtime` is refused at runtime; provider replacement is a release transaction. Release upgrade and rollback across boot environments remain to be validated with the integrated software-authority run. Capmode, user `capability`, and gate `settime` are unchanged.
 
-Login shells look names up through a USER-domain channel, and the `bsdtime` unit does not declare `visible = ["user"]`, so `BSDTimectl` run from a shell receives `ENOENT` (the same as `BSDPowerctl` and `sysctlcmpctl`). The VM validation used a test-only overlay adding that declaration. Whether operators should reach `system.Time` from a login is a policy decision that has not been made.
+Login shells look names up through a USER-domain channel. The `bsdtime` unit declares `visible = ["user"]`, as do the `BSDPower` and `BSDSysctl` units, so operators reach `BSDTimectl`, `BSDPowerctl` and `sysctlcmpctl` from a shell. Visibility only makes the name resolvable: every adjustment is still decided by `time.conf`, default-deny.
 
 Known gaps and drift:
 

@@ -221,11 +221,62 @@ Compiled bounds cap the damage a client can do: 32 claims per connection,
 64 per namespace, 256 snapshots per claim, 32 `open_paths` entries, 4096
 workers, and a destroy depth of 64.
 
+## OpenEndpointSecurity clients
+
+BSDFilesystem also publishes `system.OES`, restricted to the `system.oes`
+software attribute. The requesting program declares the attribute in its
+approved unit `.ucl`:
+
+```ucl
+attributes = ["system.oes"];
+```
+
+Use `oes_client_create_brokered()` from `liboes` to discover the endpoint and
+obtain an owned client. It returns `NULL` with `errno` on failure and never
+falls back to opening `/dev/oes`. Discovery and delivery share a five-second
+budget, bounded further by an existing caller budget. Destroy the client with
+`oes_client_destroy()` when finished.
+
+The delivered descriptor supports NOTIFY subscriptions, event reads, and
+mode, scope, subscription and statistics queries. AUTH subscriptions, mode or
+scope changes, writes, and onward descriptor transfer are denied. Event scope
+is global; the kernel's original opener is the factory worker. This factory
+does not provide recipient-scoped descendant monitoring. The descriptor stays
+usable after the factory session closes and is released on its last close.
+
+Each factory session serves one request and expires after five seconds.
+Admission allows at most 64 concurrent factory sessions and four per client
+label; the kernel separately limits outstanding OES clients. Across ordinary
+Filesystem and OES factories combined, one authenticated label may hold at most
+64 workers, within the global 4096-worker limit. Ordinary
+filesystem opens reject `/dev/oes` and its device aliases.
+
+The private four-core VM tests cover real factory restrictions, delivery to a
+recipient with UID/GID 65534 and no supplementary groups, and public `liboes`
+subscription/query/destruction after factory closure. The combined
+`tools/test/oes-admission` fixture also boots real PID1 Capsule and SwitchBoard:
+an approved non-root managed unit and approved ordinary application succeed;
+missing attributes, the wrong-case attribute, root without the attribute, an
+unapproved registered application, and an unregistered executable are denied.
+A provider-readiness barrier prevents provider startup failure from passing as
+policy denial. This uses an OES-only provider with the production factory code;
+it does not qualify the installed Filesystem daemon's ZFS storage backend.
+See `BSDFilesystem(8)` and `liboes(3)` for the API and ownership contracts.
+
+## Worker shutdown
+
+The provider refuses graceful quiesce while admission workers remain. When its
+accept loop exits, it kills and reaps those workers before releasing provider
+ownership or acknowledging successful shutdown. Failed teardown prevents a
+success acknowledgement. Interrupted waits are retried, including when worker
+watch registration fails. The separate storage reaper is not an admission worker.
+
 ## Tests
 
 | Suite | Location | Installed under | What it proves |
 |---|---|---|---|
 | `namespace_test` (60 cases), `provider_test` (11) | `usr.sbin/BSDFilesystem/tests` | `/usr/tests/usr.sbin/BSDFilesystem` | label-to-dataset derivation, name validation, reserved version shapes, group scoping, the request handlers against a fake service |
+| `quota_test`, `lifecycle_test` | `usr.sbin/BSDFilesystem/tests` | `/usr/tests/usr.sbin/BSDFilesystem` | admission boundaries, real child teardown, busy-quiesce refusal with isolated provider callbacks |
 | `bsdfilesystem_test` (18) | `lib/libbsdfilesystem/tests` | `/usr/tests/lib/libbsdfilesystem` | the client's wire encoding and fd handling |
 | `trustedzfs_capsicum_test` (27) | `lib/libtrustedzfs/tests` | `/usr/tests/lib/libtrustedzfs` | `tzfs_*` verbs and ioctl-limit profiles under `cap_enter(2)` |
 | ten `zfshandle_*_test` programs | `tests/sys/zfshandle` | `/usr/tests/sys/zfshandle` | kernel rights, derive, pinning, anonymous mounts, pool handles, negative and hardening cases |

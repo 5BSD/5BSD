@@ -48,8 +48,6 @@ v4_body()
 	firewall_config "iron" ${firewall} \
 		"pf" \
 			"block in" \
-		"ipfw" \
-			"ipfw -q add 100 deny all from any to any" \
 		"ipf" \
 			"block in all"
 
@@ -59,8 +57,6 @@ v4_body()
 	firewall_config "iron" ${firewall} \
 		"pf" \
 			"pass in" \
-		"ipfw" \
-			"ipfw -q add 100 allow all from any to any" \
 		"ipf" \
 			"pass in all"
 
@@ -93,8 +89,6 @@ v6_body()
 	firewall_config "iron" ${firewall} \
 		"pf" \
 			"block in" \
-		"ipfw" \
-			"ipfw -q add 100 deny all from any to any" \
 		"ipf" \
 			"block in all"
 
@@ -104,8 +98,6 @@ v6_body()
 	firewall_config "iron" ${firewall} \
 		"pf" \
 			"pass in" \
-		"ipfw" \
-			"ipfw -q add 100 allow all from any to any" \
 		"ipf" \
 			"pass in all"
 
@@ -120,9 +112,7 @@ v6_cleanup()
 
 setup_tests "v4" \
 				"pf" \
-				"ipfw" \
 				"ipf" \
 			"v6" \
 				"pf" \
-				"ipfw" \
 				"ipf"

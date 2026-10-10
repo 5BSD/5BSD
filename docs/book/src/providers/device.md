@@ -101,6 +101,13 @@ devices = [
 
 The shipped file contains only these two sample entries for a label that no real unit carries; replace them with the fleet's device policy. The granted mask is `want_rights & policy_max & DEVICECMP_RIGHT_ALL`; an empty intersection is `EACCES` even when the entry exists. There is no admin bypass in BSDDevice: unlike system.Network and system.Notify it does not consult `SERVICE_RIGHTS_ADMIN`, so a root login session with no entry is denied like any other label.
 
+## Client admission
+
+Admission is limited to 4096 workers globally and 64 per authenticated client
+label. `quota_test` covers the per-client boundary and returned capacity;
+`lifecycle_test` covers child teardown. These are focused implementation tests,
+not full endpoint saturation stress.
+
 ## Tests
 
 | Where | Programs | What they prove |
@@ -117,7 +124,5 @@ Status: shipped; capmode; user `capability`; `visible = ["system"]`; ops OPEN, L
 Known gaps and drift:
 
 - No ctl tool and no operator-facing enumeration of the effective policy beyond reading `device.conf`.
-- BSDDevice(8) FILES names the unit directory `BSDDevice.unit`; the Makefile installs `bsddevice.unit`. Use the lowercase path.
 - The shipped policy grants only sample entries for `system.Example`; a fresh install brokers no real device until an operator writes entries.
 - The protocol is deliberately thin (a narrowed fd, optionally ioctl-whitelisted). Richer driver semantics behind the same name are reserved, not built.
-- Test coverage is at the fleet minimum (10 provider cases); there is no stress or concurrency case for the worker cap (`DEVICECMP_MAX_WORKERS` 4096).

@@ -150,6 +150,18 @@ sctl_cmd_status(struct sctl_reply *reply, char *summary, size_t sumlen)
 			BUF_APPEND(summary, sumlen, &off, " mgmt=%s",
 			    svc_management_name(svc->manifest.management));
 
+			if (svc->cleanup.pending) {
+				BUF_APPEND(summary, sumlen, &off,
+				    " cleanup=%s child=%s coalition=%s observed=%s",
+				    svc->cleanup.error == 0 ? "pending" : "blocked",
+				    svc->cleanup.child_pending ? "waiting" : "exited",
+				    svc->cleanup.coalition_complete ? "complete" : "unconfirmed",
+				    svc->cleanup.fd >= 0 ? "yes" : "no");
+				if (svc->cleanup.error != 0)
+					BUF_APPEND(summary, sumlen, &off, " cleanup-error=%d(%s)",
+					    svc->cleanup.error, strerror(svc->cleanup.error));
+			}
+
 			if (svc->restart_count > 0)
 				BUF_APPEND(summary, sumlen, &off,
 				    " restarts=%u", svc->restart_count);
@@ -390,6 +402,10 @@ sctl_execute_op(uint32_t op, const char *payload, uint32_t datalen,
 				SWITCHBOARD_PROBE_SCTL_DENY(op, audit_uid);
 				switchboard_audit(AUE_SWITCHBOARD_CTL, audit_uid,
 				    EPERM, "start denied svc=%s", payload);
+			} else if (svc->cleanup.pending) {
+				reply->status = EBUSY;
+				snprintf(summary, summary_cap,
+				    "start: \"%s\" cleanup unconfirmed; replacement blocked", payload);
 			} else if (svc->state != SVC_STATE_STOPPED &&
 			    svc->state != SVC_STATE_DONE) {
 				reply->status = EALREADY;
@@ -460,6 +476,13 @@ sctl_execute_op(uint32_t op, const char *payload, uint32_t datalen,
 				reply->status = EALREADY;
 				snprintf(summary, summary_cap,
 				    "stop: \"%s\" already stopped", payload);
+			} else if (svc->cleanup.pending) {
+				svc_graceful_stop(svc, switchboard_kq);
+				reply->status = 0;
+				snprintf(summary, summary_cap,
+				    "stop: \"%s\" restart suppressed; cleanup pending", payload);
+				switchboard_audit(AUE_SWITCHBOARD_CTL, audit_uid, 0,
+				    "stop during cleanup svc=%s", payload);
 			} else if (svc->state == SVC_STATE_STOPPING) {
 				reply->status = EALREADY;
 				snprintf(summary, summary_cap,
@@ -526,10 +549,15 @@ sctl_cap_request(struct channel *ch __unused, struct channel_message *request,
 	const void *data;
 	size_t len;
 	struct sctl_reply reply;
+	struct timespec trace_start = { 0 }, trace_end = { 0 };
+	uint32_t trace_opcode = UINT32_MAX;
+	uint64_t trace_duration = 0;
+	bool trace_clock_valid;
 	char summary[SWITCHBOARD_CTL_SUMMARY_MAX];
 	char payload[SWITCHBOARD_CTL_MAX_PAYLOAD + 1];
 	char out[sizeof(struct sctl_reply) + SWITCHBOARD_CTL_SUMMARY_MAX];
 
+	trace_clock_valid = clock_gettime(CLOCK_MONOTONIC, &trace_start) == 0;
 	memset(&reply, 0, sizeof(reply));
 	summary[0] = '\0';
 	data = channel_message_data(request);
@@ -542,6 +570,7 @@ sctl_cap_request(struct channel *ch __unused, struct channel_message *request,
 		reply.status = EINVAL;
 	} else {
 		req = data;
+		trace_opcode = req->op;
 		if (req->flags != 0 ||
 		    req->datalen > SWITCHBOARD_CTL_MAX_PAYLOAD ||
 		    len != sizeof(*req) + (size_t)req->datalen ||
@@ -593,6 +622,11 @@ sctl_cap_request(struct channel *ch __unused, struct channel_message *request,
 		.nfds = 0
 	    }) == -1)
 		syslog(LOG_WARNING, "sctl: capability control reply: %m");
+	if (trace_clock_valid && clock_gettime(CLOCK_MONOTONIC, &trace_end) == 0)
+		trace_duration = (uint64_t)(trace_end.tv_sec - trace_start.tv_sec) *
+		    1000000000ULL + trace_end.tv_nsec - trace_start.tv_nsec;
+	SWITCHBOARD_PROBE_SCTL_CMD_DONE(trace_opcode, c->uid, reply.status,
+	    trace_duration);
 	sctl_cap_sync_events(c);
 }
 

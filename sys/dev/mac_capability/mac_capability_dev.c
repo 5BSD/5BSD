@@ -730,12 +730,12 @@ mac_capability_instance_do_recvmsg(struct mac_capability_instance *s, struct fil
 {
 	struct mac_capability_fd_info info[MAC_CAPABILITY_MAX_FDS];
 	struct mac_capability_msg *msg;
-	sbintime_t start __unused;
+	sbintime_t start __unused, deadline;
 	const char *svc_name __unused;
 	int fdbuf[MAC_CAPABILITY_MAX_FDS];
 	bool drained, txdrain, wait;
 	uint32_t wait_ms;
-	int error, i, nfds_out, timo;
+	int error, i, nfds_out;
 
 	start = getsbinuptime();
 	svc_name = (s->ci_service != NULL) ? s->ci_service->csvc_name : "<none>";
@@ -748,14 +748,9 @@ mac_capability_instance_do_recvmsg(struct mac_capability_instance *s, struct fil
 		error = EINVAL;
 		goto out;
 	}
-	if (!wait)
-		timo = 0;
-	else if (wait_ms == MAC_CAPABILITY_RECV_WAIT_FOREVER)
-		timo = 0;
-	else if (wait_ms == 0)
-		timo = -1;	/* poll */
-	else
-		timo = MAX(1, (int)MIN((uint64_t)wait_ms * hz / 1000, INT_MAX));
+	deadline = wait && wait_ms != 0 &&
+	    wait_ms != MAC_CAPABILITY_RECV_WAIT_FOREVER ?
+	    sbinuptime() + (sbintime_t)wait_ms * SBT_1MS : 0;
 
 	mtx_lock(&s->ci_mtx);
 	while (STAILQ_EMPTY(&s->ci_txq)) {
@@ -774,13 +769,15 @@ mac_capability_instance_do_recvmsg(struct mac_capability_instance *s, struct fil
 			error = 0;
 			goto out;
 		}
-		if (((fp->f_flag & FNONBLOCK) && !wait) || timo < 0) {
+		if (((fp->f_flag & FNONBLOCK) && !wait) ||
+		    (wait && wait_ms == 0)) {
 			mtx_unlock(&s->ci_mtx);
 			error = EAGAIN;
 			goto out;
 		}
-		error = msleep(&s->ci_txq, &s->ci_mtx,
-		    PCATCH, "mac_capabilityrv", wait ? timo : 0);
+		/* Repeated wakeups cannot restart a finite receive budget. */
+		error = msleep_sbt(&s->ci_txq, &s->ci_mtx, PCATCH,
+		    "mac_capabilityrv", deadline, 0, C_ABSOLUTE);
 		if (error != 0) {
 			mtx_unlock(&s->ci_mtx);
 			if (error == EWOULDBLOCK)
@@ -1070,7 +1067,8 @@ mac_capability_instance_ioctl(struct file *fp, u_long cmd, void *data,
 			error = EACCES;
 			goto call_done;
 		}
-		if (ca->flags != 0 || (ca->_reserved[0] |
+		if ((ca->flags & ~(MAC_CAPABILITY_CALL_F_CLOEXEC |
+		    MAC_CAPABILITY_CALL_F_CLOFORK)) != 0 || (ca->_reserved[0] |
 		    ca->_reserved[1]) != 0) {
 			error = EINVAL;
 			goto call_done;
@@ -1340,7 +1338,11 @@ mac_capability_instance_ioctl(struct file *fp, u_long cmd, void *data,
 							    call_fde_flags[j];
 						}
 						_finstall_prop(fdesc,
-						    out_fds[i], fdbuf[i], 0,
+						    out_fds[i], fdbuf[i],
+						    ((ca->flags & MAC_CAPABILITY_CALL_F_CLOEXEC) ?
+						    O_CLOEXEC : 0) |
+						    ((ca->flags & MAC_CAPABILITY_CALL_F_CLOFORK) ?
+						    O_CLOFORK : 0),
 						    install_fcaps,
 						    j >= 0 ? &prop : NULL);
 					}
@@ -1492,18 +1494,24 @@ call_done:
 			return (EOPNOTSUPP);
 		}
 
+		error = mac_capability_service_enter(svc);
+		if (error != 0)
+			return (error);
+
 		/* Run co_connect for authorization. */
 		badge = 0;
 		if (svc->csvc_ops->co_connect != NULL) {
 			error = svc->csvc_ops->co_connect(td->td_ucred,
 			    svc->csvc_arg, &badge);
 			if (error != 0) {
+				mac_capability_service_exit(svc);
 				mac_capability_probe_error(s, cmd, error, td);
 				return (error);
 			}
 		}
 
 		error = mac_capability_instance_create(svc, td, badge, &newfd);
+		mac_capability_service_exit(svc);
 		if (error != 0) {
 			mac_capability_probe_error(s, cmd, error, td);
 			return (error);

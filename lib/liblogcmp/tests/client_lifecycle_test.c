@@ -737,6 +737,35 @@ ATF_TC_BODY(peer_death_reconnects_without_replay, tc)
 	ATF_CHECK_EQ(2, fake_service_closed());
 }
 
+ATF_TC_WITHOUT_HEAD(committed_write_is_not_replayed);
+ATF_TC_BODY(committed_write_is_not_replayed, tc)
+{
+	struct logcmp_emit_options options;
+	struct logcmp_client *client;
+	struct logcmp_logger *logger;
+
+	fake_service_reset();
+	ATF_REQUIRE_EQ(0, logcmp_client_open(&client));
+	ATF_REQUIRE_EQ(0, logcmp_logger_create(client, "test.service",
+	    "restart", &logger));
+	memset(&options, 0, sizeof(options));
+	options.size = sizeof(options);
+	options.severity = LOGCMP_SEVERITY_ERROR;
+	options.kind = LOGCMP_KIND_LOG;
+	options.message_privacy = LOGCMP_PRIVACY_PUBLIC;
+	options.message = "unknown acceptance";
+	fake_service_fault_next(FAKE_SERVICE_FAULT_COMMITTED_RESET);
+	ATF_CHECK_ERRNO(ECONNRESET, logcmp_emit(logger, &options) == -1);
+	ATF_CHECK_EQ(1, fake_service_writes());
+	ATF_CHECK_EQ(1, fake_service_closed());
+	ATF_REQUIRE_EQ(0, logcmp_emit(logger, &options));
+	ATF_CHECK_EQ(2, fake_service_created());
+	ATF_CHECK_EQ(2, fake_service_writes());
+	logcmp_logger_destroy(logger);
+	logcmp_client_close(client);
+	ATF_CHECK_EQ(2, fake_service_closed());
+}
+
 ATF_TC_WITHOUT_HEAD(per_severity_drop_accounting);
 ATF_TC_BODY(per_severity_drop_accounting, tc)
 {
@@ -967,6 +996,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, open_failure_is_retryable);
 	ATF_TP_ADD_TC(tp, malformed_replies_invalidate_session);
 	ATF_TP_ADD_TC(tp, peer_death_reconnects_without_replay);
+	ATF_TP_ADD_TC(tp, committed_write_is_not_replayed);
 	ATF_TP_ADD_TC(tp, per_severity_drop_accounting);
 	ATF_TP_ADD_TC(tp, scoped_query_cursor_and_retry);
 	ATF_TP_ADD_TC(tp, query_ex_validates_and_passes_filters);

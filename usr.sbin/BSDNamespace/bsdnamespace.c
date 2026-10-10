@@ -862,6 +862,20 @@ struct bsdnamespace_conn {
 };
 
 /* Send a status-only reply (no SCM fd): ENTER errors, DESTROY, dispatch. */
+/* Every reply path, including framing rejection and final fd attenuation. */
+static void
+trace_reply(struct channel_message *m, const struct channel_outgoing *out,
+    int status)
+{
+	uint32_t opcode = UINT32_MAX;
+	int transport_error;
+
+	if (channel_message_length(m) >= sizeof(opcode))
+		memcpy(&opcode, channel_message_data(m), sizeof(opcode));
+	transport_error = channel_send_reply(m, out) == -1 ? errno : 0;
+	BSDNAMESPACE_PROBE_REQUEST_DONE(opcode, status, transport_error);
+}
+
 static void
 send_status(struct channel_message *m, int32_t status)
 {
@@ -874,7 +888,7 @@ send_status(struct channel_message *m, int32_t status)
 	out.size = sizeof(out);
 	out.data = &rp;
 	out.length = sizeof(rp);
-	(void)channel_send_reply(m, &out);
+	trace_reply(m, &out, status);
 }
 
 /*
@@ -1003,7 +1017,7 @@ reply:
 			out.nfds = 1;
 		}
 	}
-	(void)channel_send_reply(m, &out);
+	trace_reply(m, &out, rp.status);
 	if (jd >= 0)
 		(void)close(jd);
 }
@@ -1199,7 +1213,7 @@ reply:
 	out.size = sizeof(out);
 	out.data = &lr;
 	out.length = sizeof(lr);
-	(void)channel_send_reply(m, &out);
+	trace_reply(m, &out, lr.status);
 }
 
 /*

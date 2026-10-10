@@ -101,7 +101,7 @@ request(struct channel *c __unused, struct channel_message *m, void *arg __unuse
 	uint8_t public_key[CRYPTODESC_ED25519_PUBLIC_SIZE];
 	uint64_t generation;
 	uint32_t random_bytes;
-	int fd, error, deliver_fd;
+	int fd, error, deliver_fd, transport_error;
 
 	fd = -1;
 	error = EPROTO;
@@ -336,7 +336,8 @@ reply:
 			list_out.entries[i].rights = list_entries[i].cd_rights;
 		}
 	}
-	CRYPTO_PROBE_NAMED_LIST(worker->owner, list_count, error);
+	if (out.opcode == CRYPTOCMP_OP_NAMED_LIST)
+		CRYPTO_PROBE_NAMED_LIST(worker->owner, list_count, error);
 	random_out.msg = out;
 	random_out.nbytes = error == 0 ? random_bytes : 0;
 	audit_operation(worker, operation, error);
@@ -406,12 +407,13 @@ reply:
 		fd = -1;
 		deliver_fd = 0;
 	}
-	(void)channel_send_reply(m, &(struct channel_outgoing){
+	transport_error = channel_send_reply(m, &(struct channel_outgoing){
 	    .size = sizeof(struct channel_outgoing),
 	    .data = reply_data,
 	    .length = reply_length,
 	    .fds = deliver_fd != 0 ? &fd : NULL,
-	    .nfds = deliver_fd });
+	    .nfds = deliver_fd }) == -1 ? errno : 0;
+	CRYPTO_PROBE_REQUEST_DONE(out.opcode, out.status, transport_error);
 	if (fd >= 0)
 		close(fd);
 	explicit_bzero(public_key, sizeof(public_key));
@@ -756,6 +758,7 @@ worker(int fd, int audit_fd, const char *owner, const char *actor)
 	struct auditcmp_client *audit;
 	int result;
 
+	setproctitle("-BSDCrypto: %s", actor);
 	audit = NULL;
 	if (auditcmp_client_adopt(audit_fd, &audit) == -1 ||
 	    harden_control_descriptor(true) == -1) {
@@ -813,7 +816,26 @@ start_session(int fd, const char *peer_label, const char *actor, int *pdp)
 
 #define	CRYPTOCMP_MAX_WORKERS	4096u
 
-/* One live pdfork'd worker, tracked so its exit can account the slot. */
+struct crypto_worker_ent {
+	struct service_process process; /* First: shared teardown owns this node. */
+	char label[64];
+};
+
+#define	CRYPTO_MAX_LABEL_WORKERS	64u
+
+/* The caller serializes admission and removal using authenticated labels. */
+static bool
+crypto_worker_admit(const struct service_process *workers, const char *label)
+{
+	unsigned same = 0;
+
+	for (; workers != NULL; workers = workers->next)
+		if (strcmp(((const struct crypto_worker_ent *)workers)->label, label) == 0 &&
+		    ++same >= CRYPTO_MAX_LABEL_WORKERS)
+			return (false);
+	return (true);
+}
+
 
 static void
 crypto_worker_remove(struct service_process **head,
@@ -969,14 +991,15 @@ main(void)
 			}
 			goto out;
 		}
-		if (nworkers >= CRYPTOCMP_MAX_WORKERS) {
+		if (nworkers >= CRYPTOCMP_MAX_WORKERS ||
+		    !crypto_worker_admit(workers, id.client_label)) {
 			logcmp_log(LOG_WARNING, "worker limit reached; dropping %s",
 			    id.client_label);
 			close(fd);
 			continue;
 		}
 		bundle_of(id.container, bundle, sizeof(bundle));
-		w = calloc(1, sizeof(*w));
+		w = calloc(1, sizeof(struct crypto_worker_ent));
 		if (w == NULL || start_session(fd, bundle, id.client_label,
 		    &w->pd) == -1) {
 			logcmp_log(LOG_WARNING, "session for %s rejected: %m",
@@ -988,7 +1011,8 @@ main(void)
 		close(fd);
 		EV_SET(&change, w->pd, EVFILT_PROCDESC, EV_ADD | EV_ENABLE,
 		    NOTE_EXIT, 0, w);
-		if (kevent(kq, &change, 1, NULL, 0, NULL) == -1) {
+		if (service_harden_fd(w->pd, 0) == -1 ||
+		    kevent(kq, &change, 1, NULL, 0, NULL) == -1) {
 			int status;
 
 			/*
@@ -1004,11 +1028,15 @@ main(void)
 			logcmp_log(LOG_WARNING, "procdesc watch for %s: %m",
 			    id.client_label);
 			(void)pdkill(w->pd, SIGKILL);
-			(void)pdwait(w->pd, &status, WEXITED, NULL, NULL);
+			while (pdwait(w->pd, &status, WEXITED, NULL, NULL) == -1 &&
+			    errno == EINTR)
+				;
 			(void)close(w->pd);
 			free(w);
 			continue;
 		}
+		strlcpy(((struct crypto_worker_ent *)w)->label,
+		    id.client_label, sizeof(((struct crypto_worker_ent *)w)->label));
 		w->next = workers;
 		workers = w;
 		nworkers++;

@@ -1,0 +1,231 @@
+#!/bin/sh
+# SPDX-License-Identifier: BSD-2-Clause
+# Observe one capability daemon without changing its policy or workload.
+set -eu
+usage() { echo 'usage: capability-observe DAEMON PID [SECONDS=30]' >&2; }
+if [ "${1-}" = --list ]; then
+    [ "$#" -eq 1 ] || { usage; exit 2; }
+    echo 'BSDAudit BSDCrypto BSDDevice BSDExtension BSDFilesystem BSDLog BSDMemory BSDNamespace BSDNetwork BSDNotify BSDPower BSDSysctl BSDTime BSDTrace BSDVM BSDBluetooth capsule switchboard meshd'
+    exit 0
+fi
+[ "$#" -ge 2 ] && [ "$#" -le 3 ] || { usage; exit 2; }
+case "$1" in
+BSDAudit) provider=bsdaudit;; BSDCrypto) provider=crypto;;
+BSDDevice) provider=bsddevice;; BSDExtension) provider=bsdextension;;
+BSDFilesystem) provider=bsdfilesystem;; BSDLog) provider=bsdlog;;
+BSDMemory) provider=bsdmemory;; BSDNamespace) provider=bsdnamespace;;
+BSDNetwork) provider=bsdnetwork;; BSDNotify) provider=bsdnotify;;
+BSDPower) provider=bsdpower;; BSDSysctl) provider=bsdsysctl;;
+BSDTime) provider=bsdtime;; BSDTrace) provider=bsdtrace;;
+BSDVM) provider=bsdvm;; BSDBluetooth) provider=blued;;
+capsule) provider=capsule;; switchboard) provider=switchboard;;
+meshd) provider=meshd;; *) usage; exit 2;;
+esac
+daemon=$1
+pid=$2
+seconds=${3-30}
+case "$pid" in ''|0|0*|*[!0-9]*) usage; exit 2;; esac
+case "$seconds" in ''|*[!0-9]*) usage; exit 2;; esac
+[ "${#seconds}" -le 4 ] && [ "$seconds" -ge 1 ] && [ "$seconds" -le 3600 ] || { usage; exit 2; }
+script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+# Fail if the named daemon provider is absent from this PID. No -Z fallback.
+dtrace -l -p "$pid" -P "${provider}${pid}" >/dev/null
+capture=$(mktemp /tmp/capability-observe.XXXXXX)
+trap 'rm -f "$capture"' EXIT HUP INT TERM
+printf '%s\n' "${provider}${pid}::: { @functional[probefunc, probename] = count(); }" > "$capture"
+# Scalar status fields are provider-specific; payloads and labels are not read.
+case "$daemon" in
+capsule)
+    cat >> "$capture" <<D
+${provider}${pid}:::ipc-reply { @status[probename, (int)arg1] = count(); }
+${provider}${pid}:::ctl-cmd-done { @status[probename, (int)arg2] = count(); }
+${provider}${pid}:::channel-create { @status[probename, (int)arg0] = count(); }
+${provider}${pid}:::coalition-create { @status[probename, (int)arg0] = count(); }
+${provider}${pid}:::service-delegate { @status[probename, (int)arg1] = count(); }
+${provider}${pid}:::ipc-dispatch-done { @native_duration_ns[probename] = quantize(arg2); }
+${provider}${pid}:::ctl-cmd-done { @native_duration_ns[probename] = quantize(arg3); }
+${provider}${pid}:::shutdown-done { @native_duration_ns[probename] = quantize(arg0); }
+D
+    ;;
+switchboard)
+    cat >> "$capture" <<D
+${provider}${pid}:::ipc-reply { @status[probename, (int)arg2] = count(); }
+${provider}${pid}:::sctl-cmd-done { @status[probename, (int)arg2] = count(); }
+${provider}${pid}:::svc-exec-fail { @status[probename, (int)arg1] = count(); }
+${provider}${pid}:::naming-deny { @status[probename, (int)arg1] = count(); }
+${provider}${pid}:::domain-lookup-deny { @status[probename, (int)arg2] = count(); }
+${provider}${pid}:::on-demand-fail { @status[probename, (int)arg1] = count(); }
+${provider}${pid}:::quiesce-complete { @status[probename, (int)arg1] = count(); }
+${provider}${pid}:::svc-exec-done { @native_duration_ns[probename] = quantize(arg1); }
+${provider}${pid}:::sctl-cmd-done { @native_duration_ns[probename] = quantize(arg3); }
+${provider}${pid}:::shutdown-done { @native_duration_ns[probename] = quantize(arg0); }
+D
+    ;;
+BSDBluetooth)
+    cat >> "$capture" <<D
+${provider}${pid}:::att-error { @status[probename, (int)arg2] = count(); }
+${provider}${pid}:::att-client-error { @status[probename, (int)arg2] = count(); }
+${provider}${pid}:::smp-pair-done { @status[probename, (int)arg1] = count(); }
+${provider}${pid}:::auth-fail { @status[probename, (int)arg1] = count(); }
+${provider}${pid}:::hci-cmd-req { @status[probename, (int)arg1] = count(); }
+${provider}${pid}:::hci-le-conn-complete { @status[probename, (int)arg0] = count(); }
+${provider}${pid}:::hci-le-enh-conn-complete { @status[probename, (int)arg0] = count(); }
+${provider}${pid}:::hci-enc-change { @status[probename, (int)arg0] = count(); }
+D
+    ;;
+BSDAudit)
+    cat >> "$capture" <<D
+${provider}${pid}:::request-done { @operation_status[arg0, (int)arg1, (int)arg2] = count(); }
+${provider}${pid}:::submit { @status[probename, (int)arg3] = count(); }
+${provider}${pid}:::reject { @status[probename, (int)arg1] = count(); }
+D
+    ;;
+BSDCrypto)
+    cat >> "$capture" <<D
+${provider}${pid}:::request-done { @operation_status[arg0, (int)arg1, (int)arg2] = count(); }
+${provider}${pid}:::named-list { @status[probename, (int)arg2] = count(); }
+${provider}${pid}:::reclaim-drop { @status[probename, (int)arg2] = count(); }
+D
+    ;;
+BSDDevice)
+    cat >> "$capture" <<D
+${provider}${pid}:::request-done { @operation_status[arg0, (int)arg1, (int)arg2] = count(); }
+${provider}${pid}:::open { @status[probename, (int)arg3] = count(); }
+${provider}${pid}:::list { @status[probename, (int)arg3] = count(); }
+D
+    ;;
+BSDExtension)
+    cat >> "$capture" <<D
+${provider}${pid}:::request-done { @operation_status[arg0, (int)arg1, (int)arg2] = count(); }
+${provider}${pid}:::list { @status[probename, (int)arg2] = count(); }
+D
+    ;;
+BSDFilesystem)
+    cat >> "$capture" <<D
+${provider}${pid}:::request-grant { @status[probename, (int)arg3] = count(); }
+${provider}${pid}:::request-reply { @status[probename, (int)arg1] = count(); }
+${provider}${pid}:::reclaim-destroy { @status[probename, (int)arg1] = count(); }
+D
+    ;;
+BSDLog)
+    cat >> "$capture" <<D
+${provider}${pid}:::pool-start { @status[probename, (int)arg2] = count(); }
+${provider}${pid}:::pool-admit { @status[probename, (int)arg3] = count(); }
+${provider}${pid}:::pool-shutdown { @status[probename, (int)arg2] = count(); }
+${provider}${pid}:::session-start { @status[probename, (int)arg2] = count(); }
+${provider}${pid}:::session-end { @status[probename, (int)arg2] = count(); }
+${provider}${pid}:::record-write { @status[probename, (int)arg3] = count(); }
+${provider}${pid}:::record-drop { @status[probename, (int)arg2] = count(); }
+${provider}${pid}:::wakeup-receive { @status[probename, (int)arg2] = count(); }
+${provider}${pid}:::batch-drain { @status[probename, (int)arg4] = count(); }
+${provider}${pid}:::flush-complete { @status[probename, (int)arg4] = count(); }
+${provider}${pid}:::storage-persist { @status[probename, (int)arg4] = count(); }
+${provider}${pid}:::storage-rotate { @status[probename, (int)arg1] = count(); }
+${provider}${pid}:::storage-corruption { @status[probename, (int)arg2] = count(); }
+${provider}${pid}:::storage-quarantine { @status[probename, (int)arg1] = count(); }
+${provider}${pid}:::query-complete { @status[probename, (int)arg5] = count(); }
+${provider}${pid}:::query-filter { @status[probename, (int)arg3] = count(); }
+${provider}${pid}:::storage-reclaim { @status[probename, (int)arg2] = count(); }
+D
+    ;;
+BSDMemory)
+    cat >> "$capture" <<D
+${provider}${pid}:::sample-done { @status[probename, (int)arg0] = count(); }
+${provider}${pid}:::publish-done { @status[probename, (int)arg2] = count(); }
+${provider}${pid}:::exit { @status[probename, (int)arg0] = count(); }
+D
+    ;;
+BSDNamespace)
+    cat >> "$capture" <<D
+${provider}${pid}:::request-done { @operation_status[arg0, (int)arg1, (int)arg2] = count(); }
+${provider}${pid}:::enter { @status[probename, (int)arg2] = count(); }
+D
+    ;;
+BSDNetwork)
+    cat >> "$capture" <<D
+${provider}${pid}:::session-end { @status[probename, (int)arg1] = count(); }
+${provider}${pid}:::request-done { @status[probename, (int)arg2] = count(); }
+${provider}${pid}:::resolve-done { @status[probename, (int)arg2] = count(); }
+${provider}${pid}:::connect-done { @status[probename, (int)arg3] = count(); }
+${provider}${pid}:::reject { @status[probename, (int)arg1] = count(); }
+D
+    ;;
+BSDNotify)
+    cat >> "$capture" <<D
+${provider}${pid}:::session-start { @status[probename, (int)arg2] = count(); }
+${provider}${pid}:::session-end { @status[probename, (int)arg1] = count(); }
+${provider}${pid}:::subscribe { @status[probename, (int)arg2] = count(); }
+${provider}${pid}:::publish { @status[probename, (int)arg3] = count(); }
+${provider}${pid}:::deliver { @status[probename, (int)arg2] = count(); }
+${provider}${pid}:::timer { @status[probename, (int)arg2] = count(); }
+${provider}${pid}:::reject { @status[probename, (int)arg2] = count(); }
+D
+    ;;
+BSDPower)
+    cat >> "$capture" <<D
+${provider}${pid}:::request { @status[probename, (int)arg2] = count(); }
+D
+    ;;
+BSDSysctl)
+    cat >> "$capture" <<D
+${provider}${pid}:::request-done { @status[probename, (int)arg3] = count(); }
+D
+    ;;
+BSDTime)
+    cat >> "$capture" <<D
+${provider}${pid}:::request { @status[probename, (int)arg2] = count(); }
+D
+    ;;
+BSDTrace)
+    cat >> "$capture" <<D
+${provider}${pid}:::request-done { @operation_status[arg0, (int)arg1, (int)arg2] = count(); }
+${provider}${pid}:::session-start { @status[probename, (int)arg2] = count(); }
+${provider}${pid}:::session-end { @status[probename, (int)arg2] = count(); }
+${provider}${pid}:::delegate { @status[probename, (int)arg2] = count(); }
+${provider}${pid}:::reject { @status[probename, (int)arg2] = count(); }
+D
+    ;;
+BSDVM)
+    cat >> "$capture" <<D
+${provider}${pid}:::request-done { @status[probename, (int)arg1] = count(); @vm_transport[(int)arg2] = count(); }
+${provider}${pid}:::vsock-list { @status[probename, (int)arg3] = count(); }
+D
+    ;;
+esac
+case "$daemon" in
+BSDSysctl)
+    printf '%s\n' "${provider}${pid}:::request-done { @transport[(int)arg4] = count(); }" >> "$capture";;
+BSDLog)
+    printf '%s\n' "${provider}${pid}:::flush-complete { @flush_ns = quantize(arg3); }" >> "$capture";;
+meshd)
+    printf '%s\n' "${provider}${pid}:::app-event-drop { @dropped = count(); }" >> "$capture"
+    printf '%s\n' "${provider}${pid}:::app-event-queue { @queue_depth = quantize(arg2); }" >> "$capture";;
+esac
+# Print all populated aggregates, including optional daemon-specific metrics.
+cat >> "$capture" <<'D'
+ERROR { daemon_faults++; }
+END { printf("DAEMON_SUMMARY faults=%d\n", daemon_faults); printf("DAEMON_FUNCTIONAL_EVENTS and provider-specific status/metrics\n"); }
+D
+case "$daemon" in
+BSDTime) set -- -s "$script_dir/channel-observe" -s "$script_dir/fidl-observe";;
+BSDMemory) set -- -s "$script_dir/bsdmemory-observe";;
+meshd) set -- ;; # Unix mesh sockets, not libchannel.
+*) set -- -s "$script_dir/channel-observe";;
+esac
+# -q suppresses automatic aggregate printing: print explicit common/status
+# aggregates, plus the selected daemon's optional metrics.
+printf '%s\n' 'END { printa(@functional); }' >> "$capture"
+case "$daemon" in
+meshd) ;;
+*) printf '%s\n' 'END { printf("STATUS probe result count\n"); printa(@status); }' >> "$capture";;
+esac
+case "$daemon" in
+BSDCrypto|BSDExtension|BSDNamespace|BSDDevice|BSDAudit|BSDTrace) printf '%s\n' 'END { printf("OPERATION wire-op wire-status connection-error count\n"); printa(@operation_status); }' >> "$capture";;
+capsule|switchboard) printf '%s\n' 'END { printf("NATIVE elapsed ns by probe\n"); printa(@native_duration_ns); }' >> "$capture";;
+BSDVM) printf '%s\n' 'END { printf("VM TRANSPORT errno count\n"); printa(@vm_transport); }' >> "$capture";;
+BSDSysctl) printf '%s\n' 'END { printf("TRANSPORT errno count\n"); printa(@transport); }' >> "$capture";;
+BSDLog) printf '%s\n' 'END { printf("FLUSH elapsed ns\n"); printa(@flush_ns); }' >> "$capture";;
+meshd) printf '%s\n' 'END { printf("MESH dropped events; queue depth\n"); printa(@dropped); printa(@queue_depth); }' >> "$capture";;
+esac
+dtrace -q -p "$pid" "$@" -s "$capture" \
+    -n "tick-${seconds}sec { exit(0); }"

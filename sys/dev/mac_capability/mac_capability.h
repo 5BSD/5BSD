@@ -51,6 +51,9 @@ enum mac_capability_revoke_reason {
  * Service operations — implement these in your module.
  *
  * The framework holds NO mac_capability locks when calling any callback.
+ * Service destruction waits for admitted authorization and initialization,
+ * including rollback before publication. Callbacks must not synchronously
+ * destroy their own service or wait for that destruction to finish.
  *
  * co_connect(cred, arg, badge_out)
  *     Access control.  Runs in the ioctl caller's thread.

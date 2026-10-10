@@ -8,7 +8,9 @@
 # Confirm what a program run in a login session can reach over the ambient
 # lookup channel (SERVICE_LOOKUP_FD), including the on-demand activation a
 # lookup must trigger.  Reach is decided by the caller's software identity:
-# user-visible services (Notify, Log) are open to any session; SYSTEM-only and
+# user-visible services (Notify, Log, Time, Power, Sysctl) are open to any
+# session, each provider's own policy still bounding what a caller may do;
+# SYSTEM-only and
 # attribute-gated names are refused to unapproved programs; approved software
 # reaches its gated endpoint from the same session (networkcmpctl holds
 # system.network.admin and opens system.Network.Admin).  It also
@@ -130,10 +132,39 @@ log_reachable_body()
 	check_reachable "system.Log"
 }
 
+# Operator services: reachable from a login session; their policy files, not
+# lookup visibility, decide what a caller may change.
+atf_test_case time_reachable
+time_reachable_head()
+{
+	atf_set "descr" "system.Time is reachable via the ambient channel"
+	atf_set "require.user" "root"
+}
+time_reachable_body() { check_reachable "system.Time"; }
+
+atf_test_case power_reachable
+power_reachable_head()
+{
+	atf_set "descr" "system.Power is reachable via the ambient channel"
+	atf_set "require.user" "root"
+}
+power_reachable_body() { check_reachable "system.Power"; }
+
+atf_test_case sysctl_reachable
+sysctl_reachable_head()
+{
+	atf_set "descr" "system.Sysctl is reachable via the ambient channel"
+	atf_set "require.user" "root"
+}
+sysctl_reachable_body() { check_reachable "system.Sysctl"; }
+
 atf_init_test_cases()
 {
 	atf_add_test_case unapproved_refused
 	atf_add_test_case networkcmpctl_approved
 	atf_add_test_case notify_reachable
 	atf_add_test_case log_reachable
+	atf_add_test_case time_reachable
+	atf_add_test_case power_reachable
+	atf_add_test_case sysctl_reachable
 }

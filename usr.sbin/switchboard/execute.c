@@ -902,6 +902,10 @@ static int svc_exec_oneshot(struct svc_runtime *svc, int kq);
 int
 svc_exec(struct svc_runtime *svc, int kq)
 {
+	if (svc->cleanup.pending) {
+		errno = EBUSY;
+		return (-1);
+	}
 
 	if (svc->manifest.exec_application)
 		return (errno = EOPNOTSUPP, -1);
@@ -1869,6 +1873,43 @@ svc_launch_abort(struct svc_runtime *svc, int error, int kq __unused)
 	svc->state = SVC_STATE_STOPPED;
 }
 
+/* Register supervision before releasing the child; consumes gate_fd.
+ * Failure retains the procdesc and coalition for the cleanup completion gate. */
+static int
+svc_launch_release(struct svc_runtime *svc, int kq, int gate_fd)
+{
+	struct svc_launch *L = svc->launch;
+	struct svc_manifest *m = &svc->manifest;
+	struct kevent kev[3];
+	int error;
+
+	EV_SET(&kev[0], svc->pd_fd, EVFILT_PROCDESC, EV_ADD,
+	    NOTE_EXIT | NOTE_EXEC | NOTE_CAPMODE, 0, svc);
+	EV_SET(&kev[1], svc->coalition_fd, EVFILT_READ, EV_ADD, 0, 0, svc);
+	EV_SET(&kev[2], svc->channel_fd, EVFILT_READ, EV_ADD, 0, 0, svc);
+	if (kevent(kq, kev, m->unix_protocol ? 2 : 3, NULL, 0, NULL) == -1 ||
+	    write(gate_fd, "R", 1) != 1) {
+		error = errno != 0 ? errno : EIO;
+		syslog(LOG_ERR, "svc_exec %s: launch gate or event registration: %m", m->label);
+		close(gate_fd);
+		svc_authority_revoke_unit(svc);
+		domain_unit_channels_close(svc);
+		pdkill(svc->pd_fd, SIGKILL);
+		waitpid(svc->pid, NULL, WNOHANG);
+		capsule_release_manifest(sd.capsule_channel_fd, &L->minted);
+		if (L->capprotect_fd >= 0)
+			close(L->capprotect_fd);
+		free(L);
+		svc->launch = NULL;
+		/* The enlisted child's resource teardown may outlast SIGKILL. */
+		supervisor_cleanup_failed_launch(svc);
+		errno = error;
+		return (-1);
+	}
+	close(gate_fd);
+	return (0);
+}
+
 /*
  * Finalize storage delivery, confine child descriptors, and fork/exec.  The
  * tail of the native launch, operating on the launch context.  switchboard builds
@@ -1938,12 +1979,14 @@ svc_launch_finish(struct svc_runtime *svc, int kq)
 	    &authority_fd) == -1)
 		goto fail_prefork;
 	if (svc_authority_constrain_application(svc, authority_fd) == -1) {
+		saved_errno = errno;
 		syslog(LOG_ERR, "svc_exec %s: executable authority: %m", m->label);
 		goto fail_prefork;
 	}
 	bootstrap_fd = create_service_bootstrap(m, L->ntokens, L->nservices,
 	    L->service_names, L->service_types, L->capprotect_fd >= 0);
 	if (bootstrap_fd == -1) {
+		saved_errno = errno;
 		syslog(LOG_ERR, "svc_exec %s: bootstrap descriptor: %m",
 		    m->label);
 		goto fail_prefork;
@@ -1954,6 +1997,7 @@ svc_launch_finish(struct svc_runtime *svc, int kq)
 		goto fail_prefork;
 	pid = pdfork(&pd_fd, PD_CLOEXEC);
 	if (pid == -1) {
+		saved_errno = errno;
 		syslog(LOG_ERR, "svc_exec %s: pdfork: %m", m->label);
 		goto fail_prefork;
 	}
@@ -2130,33 +2174,8 @@ svc_launch_finish(struct svc_runtime *svc, int kq)
 	memset(svc->name_sendable, 0, sizeof(svc->name_sendable));
 	clock_gettime(CLOCK_MONOTONIC, &svc->last_start);
 
-	EV_SET(&kev[0], pd_fd, EVFILT_PROCDESC, EV_ADD,
-	    NOTE_EXIT | NOTE_EXEC | NOTE_CAPMODE, 0, svc);
-	EV_SET(&kev[1], svc->coalition_fd, EVFILT_READ, EV_ADD, 0, 0, svc);
-	EV_SET(&kev[2], svc->channel_fd, EVFILT_READ, EV_ADD, 0, 0, svc);
-	if (kevent(kq, kev, m->unix_protocol ? 2 : 3, NULL, 0, NULL) == -1 ||
-	    write(launch_gate[1], "R", 1) != 1) {
-		syslog(LOG_ERR, "svc_exec %s: launch gate or event registration: %m", m->label);
-		close(launch_gate[1]);
-		svc_authority_revoke_unit(svc);
-		domain_unit_channels_close(svc);
-		pdkill(pd_fd, SIGKILL);
-		waitpid(pid, NULL, WNOHANG);
-		capsule_release_manifest(sd.capsule_channel_fd, &L->minted);
-		close(svc->pd_fd);
-		svc->pd_fd = -1;
-		svc_channel_close(svc);
-		close(svc->coalition_fd);
-		svc->coalition_fd = -1;
-		svc->pid = 0;
-		svc->state = SVC_STATE_STOPPED;
-		if (L->capprotect_fd >= 0)
-			close(L->capprotect_fd);
-		free(L);
-		svc->launch = NULL;
+	if (svc_launch_release(svc, kq, launch_gate[1]) == -1)
 		return;
-	}
-	close(launch_gate[1]);
 	launch_gate[1] = -1;
 	svc_channel_sync_events(svc, kq);
 
@@ -2164,7 +2183,7 @@ svc_launch_finish(struct svc_runtime *svc, int kq)
 	    m->label, (intmax_t)pid, (uintmax_t)L->uid, (uintmax_t)L->gid);
 	SWITCHBOARD_PROBE_SVC_START(m->label, pid);
 	{
-		char rbuf[64];
+		char rbuf[64] __unused;
 
 		/*
 		 * The responsibility token: this unit's coalition id, the id
@@ -2223,7 +2242,9 @@ svc_launch_finish(struct svc_runtime *svc, int kq)
 	return;
 
 fail_prefork:
-	saved_errno = errno;
+	/* Diagnostics and descriptor cleanup must not replace the original error. */
+	if (saved_errno == 0)
+		saved_errno = errno;
 	if (launch_gate[0] >= 0)
 		close(launch_gate[0]);
 	if (launch_gate[1] >= 0)
@@ -2233,8 +2254,8 @@ fail_prefork:
 	svc_authority_revoke_unit(svc);
 	if (discovery_fd >= 0)
 		close(discovery_fd);
-	syslog(LOG_ERR, "svc_exec %s: child descriptor confinement: %m",
-	    m->label);
+	syslog(LOG_ERR, "svc_exec %s: launch setup: %s",
+	    m->label, strerror(saved_errno));
 	if (bootstrap_fd >= 0)
 		close(bootstrap_fd);
 	svc_launch_abort(svc, saved_errno, kq);
@@ -2246,12 +2267,13 @@ fail_postfork:
 	svc_authority_revoke_unit(svc);
 	SWITCHBOARD_PROBE_SVC_EXEC_FAIL(m->label, saved_errno);
 	pdkill(pd_fd, SIGKILL);
-	waitpid(pid, NULL, WNOHANG);
-	close(pd_fd);
-	/* child_end/bootstrap_fd/token/service fds already closed. */
-	svc->pid = 0;
-	svc->pd_fd = -1;
+	/* Preserve coalition control while disposing of the launch context. */
+	svc->coalition_fd = L->coalition_fd;
+	L->coalition_fd = -1;
 	svc_launch_abort(svc, saved_errno, kq);
+	svc->pid = pid;
+	svc->pd_fd = pd_fd;
+	supervisor_cleanup_failed_launch(svc);
 }
 
 /*

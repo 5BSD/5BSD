@@ -76,4 +76,16 @@ CFLAGS.connect_deadline_test+= -I${SRCTOP}/lib/liblogcmp -I${SRCTOP}/sys
 LIBADD.connect_deadline_test+= auditcmp channel networkcmp pthread service ucl
 NO_SHARED.connect_deadline_test= yes
 
+
+# Actual admission logic and real procdesc teardown; unused daemon paths drop.
+ATF_TESTS_C+= worker_test
+SRCS.worker_test= worker_test.c service_runtime.c
+.PATH: ${SRCTOP}/lib/libservice
+CFLAGS.worker_test+= ${CFLAGS.provider_test:N-DNETWORKCMP_TESTING} \
+    -I${SRCTOP}/lib/liblogcmp -I${SRCTOP}/lib/libnotify \
+    -I${SRCTOP}/lib/libsysctlcmp -ffunction-sections -fdata-sections
+LIBADD.worker_test+= service
+LDFLAGS.worker_test+= -Wl,--gc-sections
+NO_SHARED.worker_test= yes
+
 .include <bsd.test.mk>

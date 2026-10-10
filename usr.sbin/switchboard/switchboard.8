@@ -399,8 +399,34 @@ by default, to remaining members, including inherited children whose parent
 has already exited.
 This cleanup requires those processes to remain in that coalition and no
 other holder to retain its handle.
-Signal delivery is not a wait for every descendant to finish exiting, and
-restart does not establish that all descendant teardown has completed.
+Signal delivery alone does not confirm resource teardown.
+For native service process-exit events, the supervisor obtains a separate
+cleanup observation descriptor before closing its coalition control handle.
+It retains the runtime directory and keeps the service in STOPPING until
+coalition status reports COMPLETE.
+The same gate applies to failures after the child has been created,
+including failure to enlist the child, register its events, or release
+the launch gate.
+The supervisor retains the process descriptor until its exit event arrives;
+completion of an empty coalition cannot stand in for the unenlisted child's
+resource teardown.
+The observation descriptor does not retain coalition control authority.
+A missing coalition descriptor during failed-launch cleanup also retains
+the runtime, even after the child exits; child exit alone cannot confirm
+coalition cleanup.
+.Pp
+A failed or released cleanup, or inability to observe cleanup, keeps
+replacement blocked and retains the runtime for diagnosis.
+Event-registration failures during reload are retained in the cleanup error
+reported by the control status command, even when another cleanup watch
+was successfully registered.
+After 30 seconds the supervisor logs an overdue cleanup; this deadline
+does not authorize deletion or replacement.
+A still-observed cleanup can complete after the deadline and resume exit
+processing.
+An operator stop received during cleanup suppresses automatic crash restart.
+This gate covers tracked coalition cleanup obligations; it does not prove
+that independently owned storage or other persistent resources are unused.
 .Ss Service States
 A service transitions through the following states:
 .Bl -tag -width "STOPPING (3)" -compact

@@ -6,6 +6,8 @@
  * USDT provider for bsdnamespace(8), the Namespace (jail) capability provider.
  */
 provider bsdnamespace {
+	/* Scalar wire operation/result and reply transport errno; no payloads. */
+	probe request__done(uint32_t opcode, int status, int transport_error);
 	/*
 	 * One ENTER_JAIL request from `client`: jid is the jail id when bsdnamespace
 	 * created it here (-1 when a persistent jail was reused, or on failure),

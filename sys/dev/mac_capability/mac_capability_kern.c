@@ -321,6 +321,20 @@ mac_capability_callback_state_rele(struct mac_capability_callback_state *cs)
 		free(cs, M_MAC_CAPABILITY);
 }
 
+void
+mac_capability_revoke_done_locked(struct mac_capability_instance *s)
+{
+
+	mtx_assert(&s->ci_mtx, MA_OWNED);
+	KASSERT((s->ci_flags & MAC_CAPABILITY_SF_FINALIZED) != 0 &&
+	    (s->ci_flags & MAC_CAPABILITY_SF_REVOKE_DONE) == 0,
+	    ("invalid capability cleanup completion"));
+	s->ci_flags |= MAC_CAPABILITY_SF_REVOKE_DONE;
+	if (s->ci_callback_state != NULL)
+		atomic_store_rel_int(&s->ci_callback_state->cs_done, 1);
+	wakeup(&s->ci_flags);
+}
+
 /*
  * FINALIZED is an exclusion claim, not evidence that service cleanup returned.
  * Keep the completion latch separate.  This covers the callback itself only;
@@ -340,10 +354,7 @@ mac_capability_revoke_callback(struct mac_capability_instance *s,
 	if (svc != NULL && svc->csvc_ops->co_revoke != NULL)
 		svc->csvc_ops->co_revoke(s, s->ci_badge, reason, svc->csvc_arg);
 	mtx_lock(&s->ci_mtx);
-	s->ci_flags |= MAC_CAPABILITY_SF_REVOKE_DONE;
-	if (s->ci_callback_state != NULL)
-		atomic_store_rel_int(&s->ci_callback_state->cs_done, 1);
-	wakeup(&s->ci_flags);
+	mac_capability_revoke_done_locked(s);
 	mtx_unlock(&s->ci_mtx);
 }
 
@@ -663,6 +674,10 @@ mac_capability_service_destroy(struct mac_capability_service *svc)
 	 */
 	sx_xlock(&mac_capability_registry_lock);
 	svc->csvc_flags |= MAC_CAPABILITY_SVCF_DESTROYING;
+	/* Include unlinked constructors, authorization, and failed rollback. */
+	while (svc->csvc_admissions != 0)
+		sx_sleep(&svc->csvc_admissions, &mac_capability_registry_lock,
+		    0, "capadmit", 0);
 	LIST_FOREACH(s, &svc->csvc_instances, ci_svc_link) {
 		mtx_lock(&s->ci_mtx);
 		if (!(s->ci_flags & MAC_CAPABILITY_SF_DEAD)) {

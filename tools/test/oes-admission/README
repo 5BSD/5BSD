@@ -1,0 +1,81 @@
+OES software-attribute admission in a disposable VM
+=================================================
+
+Build current liboes/libservice dependencies and the matching libsys first,
+then run from /usr/src:
+
+  /usr/local/bin/python3.12 tools/test/oes-admission/build.py
+
+This compiles daemon objects with all logical CPUs and links private static
+Capsule/SwitchBoard copies under /usr/obj/usr/src/.../tools/test/oes-admission.
+It does not install programs, load host modules, or run either host daemon.
+Use tools/test/daemon-runtime/run-vm.py with --oes-admission --cpus 4 and the
+usual explicit kernel/root/object/QEMU inputs. The runner keeps its kernel
+identity checks, 1 GiB memory, networkless snapshot disk, and mandatory tests.
+Each work directory must be new. The provider/client/coordinator are VM-only.
+
+The integration runs real PID1 Capsule and SwitchBoard with staged test bundles.
+The managed-unit policies grant system.oes only to OESAllowed/client (UID65534).
+OESDenied/client has no attribute; OESWrongAttribute/client has system.OES;
+OESRootDenied/client runs as UID0 without the attribute. Every client calls
+actual oes_client_create_brokered(). The allowed client queries NOTIFY/global
+mode and subscribes through liboes; denial must be an admission-shaped discovery
+error, not a transport error. Result files verify expected contents and owner.
+Clients wait up to 60 seconds for the provider to receive SwitchBoard's
+readiness acknowledgement before beginning their single brokered request. This
+fixture barrier does not alter the public API budget or retry a failed request.
+Denied clients also wait for the authorized result so an unavailable provider
+cannot masquerade as policy denial. Acceptance requires all managed and
+application outcomes and clean guest poweroff through Capsule.
+
+OESProvider is an OES-only test provider. It uses the real libservice provider
+API and BSDFilesystem oes_factory.c/oes_session.c, but no ZFS storage backend.
+The endpoint has requires=["system.oes"] in its own Unit.ucl. This exercises
+unit parsing, daemon registration/launch, software identity, discovery policy,
+restricted descriptor delivery and public client APIs as one running stack.
+It does not qualify the installed BSDFilesystem storage daemon, its ZFS setup,
+installer, quotas, or hardware. Existing shipped-manifest and factory tests
+remain complementary requirements. A failure or skip is not acceptance.
+
+The runtime PID1 first runs the mandatory and OES native tests. Only after
+those pass does it mount private tmpfs runtime/log directories and exec
+Capsule, preserving PID1 and the kernel boot-authority
+issuer boundary. The loader enables the plane only for this explicit option.
+The staged passwd/group databases include the standard capability service
+identity as well as the two test identities. No UID-based authority bypass is
+added. The coordinator also forks ordinary UID65534 applications: an approved
+activation.exec program, an unapproved registered program, and an unregistered
+copy of the same executable. Children clear supplementary groups before exec.
+A root coordinator checks all seven result files for 25 seconds, prints
+/var/log/capability.log and requests guest poweroff through the public
+system.lifecycle API. Only that coordinator receives system.switchboard.admin
+in its Unit.ucl; UID0 alone is insufficient. The VM
+runner requires the baseline pass, admission pass, and clean guest shutdown;
+use --timeout 360 for the combined boot. If the coordinator cannot start or
+poweroff fails, the VM deadline produces a failure. Do not relax the separate
+mandatory 10ms/75ms RPC deadline to obtain a pass.
+
+Coalition lifecycle acceptance
+------------------------------
+The combined fixture also mounts one disposable tmpfs bundle, CoalitionLifecycle,
+and prepares it before handing PID1 to Capsule. Its worker creates a runtime
+file with O_EXCL and forks a descendant that retains the descriptor and ignores
+SIGTERM. The coordinator updates the worker manifest and requests reload through
+system.switchboard. The replacement must start with a clean runtime directory
+and both previous processes gone. It then removes the worker from the bundle's
+unit list and deletes its unit directory, requests reload again, and requires the old processes, runtime directory,
+and service status entry to disappear. A non-activated keeper leaves a valid
+bundle so this tests intentional removal, not retention after invalid metadata.
+COALITION_LIFECYCLE_PASS is required in addition to the OES/native pass markers.
+The fixture does not inject delayed kernel resource callbacks; native cleanup
+observer tests cover retained runtime and late completion separately.
+
+Isolated fixture builds
+-----------------------
+Both build.py and the runtime runner accept --fixture-objtop for a private static
+test tree under /usr/obj/usr/src. Kernel/module inputs still come from --objtop.
+Capsule and SwitchBoard fixture objects always use private subdirectories rather
+than their normal world-build object directories. Build every selected test
+against the matching source libraries and libsys; record and check library hashes
+across a build if another build is running. An isolated build does not establish
+that the shared world/kernel build or package publication has completed.

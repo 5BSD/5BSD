@@ -6,6 +6,8 @@
 
 #include <sys/types.h>
 #include <sys/event.h>
+#include <sys/mman.h>
+#include <dev/mac_capability/mac_capability_coalition_proto.h>
 
 #include <dev/mac_capability/mac_capability_channel_proto.h>
 #include <dev/mac_capability/mac_capability_ioctl.h>
@@ -20,6 +22,25 @@
 #include <unistd.h>
 
 #include <channel.h>
+#include <capability.h>
+
+static bool cleanup_mock;
+static uint32_t cleanup_phase;
+static unsigned runtime_removals;
+static unsigned slot_removals, launch_calls;
+
+static int
+cleanup_test_status(int fd, struct capability_coalition_status *state)
+{
+	if (!cleanup_mock)
+		return (capability_coalition_status(fd, state));
+	memset(state, 0, sizeof(*state));
+	state->phase = cleanup_phase;
+	if (cleanup_phase == CAPABILITY_COALITION_FAILED)
+		state->cleanup_error = EIO;
+	return (0);
+}
+
 
 /*
  * This test includes the implementation so it can exercise the deliberately
@@ -35,7 +56,11 @@
  * below.
  */
 #include "../on_demand.c"
+
+/* The function-like macro leaves the status structure tag intact. */
+#define capability_coalition_status(...) cleanup_test_status(__VA_ARGS__)
 #include "../supervisor.c"
+#undef capability_coalition_status
 #include "../svc_proto.c"
 
 struct switchboard_state sd;
@@ -66,6 +91,7 @@ void
 svc_remove(unsigned idx)
 {
 
+	slot_removals++;
 	(void)idx;
 }
 
@@ -80,6 +106,7 @@ int
 svc_exec(struct svc_runtime *svc, int kq)
 {
 
+	launch_calls++;
 	(void)svc;
 	(void)kq;
 	return (0);
@@ -89,6 +116,7 @@ void
 svc_run_container_remove(const char *label)
 {
 
+	runtime_removals++;
 	(void)label;
 }
 
@@ -603,6 +631,586 @@ ATF_TC_BODY(idle_timer_fire_stops_provider, tc)
 	(void)close(kq);
 }
 
+/* Exercise actual compaction without replacing other fixtures' leaf stubs. */
+struct svc_runtime *reload_test_by_label(const char *);
+void reload_test_remove(unsigned);
+void reload_test_reregister(int);
+static int
+reload_test_channel_rebind(struct svc_runtime *svc)
+{
+	(void)svc;
+	atf_tc_fail("cleanup compaction fixture has no control channel");
+	return (-1);
+}
+#define svc_channel_rebind reload_test_channel_rebind
+#define svc_by_label reload_test_by_label
+#define svc_remove reload_test_remove
+#define svc_reregister_kevents reload_test_reregister
+#include "../reload.c"
+#undef svc_channel_rebind
+#undef svc_by_label
+#undef svc_remove
+#undef svc_reregister_kevents
+
+void
+svc_launch_cancel(struct svc_runtime *svc, int kq)
+{
+	(void)kq;
+	ATF_REQUIRE(svc->launch == NULL);
+}
+
+void
+activation_source_teardown(struct svc_runtime *svc, int kq)
+{
+	(void)svc;
+	(void)kq;
+}
+
+void
+naming_rebind_owner(struct svc_runtime *old, struct svc_runtime *new)
+{
+	(void)old;
+	(void)new;
+}
+
+ATF_TC(cleanup_compaction);
+ATF_TC_HEAD(cleanup_compaction, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "real service compaction rebinds pending cleanup events without losing ownership");
+}
+ATF_TC_BODY(cleanup_compaction, tc)
+{
+	struct svc_runtime *slots;
+	struct kevent event;
+	struct timespec timeout = { .tv_sec = 1 }, deadline;
+	int fds[2], kq;
+	char byte = 'x';
+
+	(void)tc;
+	slots = calloc(2, sizeof(*slots));
+	ATF_REQUIRE(slots != NULL);
+	idle_runtime_init(&slots[0], "org.test.removed");
+	idle_runtime_init(&slots[1], "org.test.pending");
+	ATF_REQUIRE_EQ(0, pipe(fds));
+	kq = kqueue();
+	ATF_REQUIRE(kq >= 0);
+	switchboard_kq = kq;
+	sd.services = slots;
+	sd.nservices = 2;
+	slots[1].state = SVC_STATE_STOPPING;
+	slots[1].cleanup.pending = true;
+	slots[1].cleanup.fd = fds[0];
+	slots[1].cleanup.timer_ident = ++cleanup_timer_next_ident;
+	ATF_REQUIRE_EQ(0, clock_gettime(CLOCK_MONOTONIC, &deadline));
+	deadline.tv_sec += 30;
+	slots[1].cleanup.deadline = deadline;
+	ATF_REQUIRE_EQ(0, supervisor_cleanup_rebind(&slots[1], kq));
+	/* Removing the pending slot records intent, without releasing it. */
+	reload_test_remove(1);
+	ATF_CHECK_EQ(2, sd.nservices);
+	ATF_CHECK(slots[1].remove_pending);
+	ATF_CHECK(fcntl(fds[0], F_GETFD) >= 0);
+	/* Removing its predecessor really moves the pending slot. */
+	reload_test_remove(0);
+	reload_test_reregister(kq);
+	ATF_REQUIRE_EQ(1, sd.nservices);
+	ATF_CHECK_STREQ("org.test.pending", slots[0].manifest.label);
+	ATF_CHECK(slots[0].cleanup.pending);
+	ATF_CHECK(slots[0].remove_pending);
+	ATF_CHECK_EQ(deadline.tv_sec, slots[0].cleanup.deadline.tv_sec);
+	ATF_CHECK_EQ(deadline.tv_nsec, slots[0].cleanup.deadline.tv_nsec);
+	ATF_REQUIRE_EQ(1, write(fds[1], &byte, 1));
+	ATF_REQUIRE_EQ(1, kevent(kq, NULL, 0, &event, 1, &timeout));
+	ATF_CHECK_EQ(EVFILT_READ, event.filter);
+	ATF_CHECK_EQ(fds[0], (int)event.ident);
+	ATF_CHECK(event.udata == &slots[0]);
+	ATF_REQUIRE_EQ(1, read(fds[0], &byte, 1));
+	/* Expire the preserved timer and verify its relocated pointer too. */
+	slots[0].cleanup.deadline.tv_sec -= 31;
+	reload_test_reregister(kq);
+	ATF_REQUIRE_EQ(1, kevent(kq, NULL, 0, &event, 1, &timeout));
+	ATF_CHECK_EQ(EVFILT_TIMER, event.filter);
+	ATF_CHECK_EQ(slots[0].cleanup.timer_ident, event.ident);
+	ATF_CHECK(event.udata == &slots[0]);
+	close(fds[0]);
+	close(fds[1]);
+	close(kq);
+	free(slots);
+	sd.services = NULL;
+	sd.nservices = 0;
+	switchboard_kq = -1;
+}
+
+ATF_TC(cleanup_updated_intent);
+ATF_TC_HEAD(cleanup_updated_intent, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "completion applies reload/removal requested while cleanup was pending");
+}
+ATF_TC_BODY(cleanup_updated_intent, tc)
+{
+	struct svc_runtime svc;
+	int fds[2];
+	unsigned remove;
+
+	(void)tc;
+	cleanup_mock = true;
+	switchboard_kq = -1;
+	for (remove = 0; remove < 2; remove++) {
+		idle_runtime_init(&svc, "org.test.cleanup.intent");
+		ATF_REQUIRE_EQ(0, pipe(fds));
+		svc.cleanup.fd = fds[0];
+		svc.cleanup.pending = true;
+		svc.state = SVC_STATE_STOPPING;
+		sd.services = &svc;
+		sd.nservices = 1;
+		launch_calls = slot_removals = runtime_removals = 0;
+		cleanup_phase = CAPABILITY_COALITION_DRAINING;
+		supervisor_cleanup_event(&svc);
+		ATF_CHECK_EQ(0, runtime_removals);
+		/* New intent arrives after the original exit-time snapshot. */
+		svc.reload_pending = true;
+		svc.remove_pending = remove != 0;
+		svc.pending_manifest = svc.manifest;
+		svc.pending_manifest.throttle_interval = 123;
+		cleanup_phase = CAPABILITY_COALITION_COMPLETE;
+		supervisor_cleanup_event(&svc);
+		ATF_CHECK(!svc.cleanup.pending);
+		ATF_CHECK_EQ(1, runtime_removals);
+		ATF_CHECK_EQ(remove, slot_removals);
+		ATF_CHECK_EQ(remove ? 0 : 1, launch_calls);
+		if (!remove) {
+			ATF_CHECK(!svc.reload_pending);
+			ATF_CHECK_EQ(123, svc.manifest.throttle_interval);
+		}
+		close(fds[1]);
+	}
+	sd.services = NULL;
+	sd.nservices = 0;
+	cleanup_mock = false;
+}
+
+ATF_TC(cleanup_unenlisted_child);
+ATF_TC_HEAD(cleanup_unenlisted_child, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "empty coalition cannot release runtime while an unenlisted child lives");
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_coalition");
+	atf_tc_set_md_var(tc, "timeout", "30");
+}
+ATF_TC_BODY(cleanup_unenlisted_child, tc)
+{
+	struct svc_runtime svc;
+	struct kevent event;
+	struct timespec zero = { 0 }, timeout = { .tv_sec = 5 };
+	int device, pd;
+	pid_t child;
+
+	(void)tc;
+	cleanup_mock = false;
+	child = pdfork(&pd, 0);
+	ATF_REQUIRE(child >= 0);
+	if (child == 0) {
+		for (;;)
+			pause();
+	}
+	device = open("/dev/mac_capability", O_RDWR | O_CLOEXEC);
+	ATF_REQUIRE(device >= 0);
+	idle_runtime_init(&svc, "org.test.cleanup.unenlisted");
+	svc.pid = child;
+	svc.pd_fd = pd;
+	svc.cleanup.fd = -1;
+	svc.coalition_fd = capability_service_connect(device, "coalition");
+	ATF_REQUIRE(svc.coalition_fd >= 0);
+	switchboard_kq = kqueue();
+	ATF_REQUIRE(switchboard_kq >= 0);
+	runtime_removals = 0;
+	supervisor_cleanup_failed_launch(&svc);
+	ATF_REQUIRE(svc.cleanup.pending);
+	ATF_REQUIRE(svc.cleanup.child_pending);
+	ATF_REQUIRE(svc.cleanup.coalition_complete);
+	ATF_CHECK_EQ(pd, svc.pd_fd);
+	ATF_CHECK_EQ(-1, svc.cleanup.fd);
+	ATF_CHECK_EQ(0, runtime_removals);
+	ATF_CHECK_EQ(0, kevent(switchboard_kq, NULL, 0, &event, 1, &zero));
+	ATF_REQUIRE_EQ(0, pdkill(pd, SIGKILL));
+	ATF_REQUIRE_EQ(1, kevent(switchboard_kq, NULL, 0, &event, 1, &timeout));
+	ATF_REQUIRE_EQ(EVFILT_PROCDESC, event.filter);
+	ATF_REQUIRE_EQ(pd, (int)event.ident);
+	ATF_REQUIRE((event.fflags & NOTE_EXIT) != 0);
+	supervisor_handle_procdesc(&event);
+	ATF_CHECK(!svc.cleanup.pending);
+	ATF_CHECK(!svc.cleanup.child_pending);
+	ATF_CHECK_EQ(-1, svc.pd_fd);
+	ATF_CHECK_EQ(1, runtime_removals);
+	ATF_CHECK_EQ(SVC_STATE_STOPPED, svc.state);
+	close(device);
+	close(switchboard_kq);
+	switchboard_kq = -1;
+}
+
+/* A failed child registration must not suppress the other cleanup watches. */
+ATF_TC_WITHOUT_HEAD(cleanup_registration_failure);
+ATF_TC_BODY(cleanup_registration_failure, tc)
+{
+	struct svc_runtime svc;
+	struct kevent event;
+	struct timespec deadline, timeout = { .tv_sec = 5 };
+	int fds[2], badfd, kq;
+
+	(void)tc;
+	idle_runtime_init(&svc, "org.test.cleanup.registration");
+	ATF_REQUIRE_EQ(0, pipe(fds));
+	kq = kqueue();
+	ATF_REQUIRE(kq >= 0);
+	badfd = dup(fds[0]);
+	ATF_REQUIRE(badfd >= 0);
+	ATF_REQUIRE_EQ(0, close(badfd));
+	svc.pd_fd = badfd;
+	svc.cleanup.pending = true;
+	svc.cleanup.child_pending = true;
+	svc.cleanup.fd = fds[0];
+	svc.cleanup.timer_ident = ++cleanup_timer_next_ident;
+	ATF_REQUIRE_EQ(0, clock_gettime(CLOCK_MONOTONIC, &deadline));
+	deadline.tv_sec += 1;
+	svc.cleanup.deadline = deadline;
+	runtime_removals = 0;
+	ATF_REQUIRE_EQ(-1, supervisor_cleanup_rebind(&svc, kq));
+	ATF_CHECK_EQ(EBADF, errno);
+	ATF_CHECK_EQ(EBADF, svc.cleanup.error);
+	ATF_CHECK(svc.cleanup.pending);
+	ATF_CHECK(svc.cleanup.child_pending);
+	ATF_CHECK_EQ(0, runtime_removals);
+	ATF_CHECK_EQ(deadline.tv_sec, svc.cleanup.deadline.tv_sec);
+	ATF_CHECK_EQ(deadline.tv_nsec, svc.cleanup.deadline.tv_nsec);
+	/* The timer remains observable despite the preceding EBADF. */
+	ATF_REQUIRE_EQ(1, kevent(kq, NULL, 0, &event, 1, &timeout));
+	ATF_CHECK_EQ(EVFILT_TIMER, event.filter);
+	ATF_CHECK_EQ(svc.cleanup.timer_ident, event.ident);
+	ATF_CHECK(event.udata == &svc);
+	/* The coalition watch is also registered; this pipe stands in for it. */
+	ATF_REQUIRE_EQ(1, write(fds[1], "R", 1));
+	ATF_REQUIRE_EQ(1, kevent(kq, NULL, 0, &event, 1, &timeout));
+	ATF_CHECK_EQ(EVFILT_READ, event.filter);
+	ATF_CHECK_EQ(fds[0], (int)event.ident);
+	ATF_CHECK(event.udata == &svc);
+	close(fds[0]);
+	close(fds[1]);
+	close(kq);
+}
+
+ATF_TC_WITHOUT_HEAD(cleanup_missing_coalition);
+ATF_TC_BODY(cleanup_missing_coalition, tc)
+{
+	struct svc_runtime svc;
+	struct kevent event;
+	struct timespec timeout = { .tv_sec = 5 };
+	int pd;
+	pid_t child;
+
+	(void)tc;
+	cleanup_mock = false;
+	child = pdfork(&pd, 0);
+	ATF_REQUIRE(child >= 0);
+	if (child == 0) {
+		for (;;)
+			pause();
+	}
+	idle_runtime_init(&svc, "org.test.cleanup.missing");
+	svc.pid = child;
+	svc.pd_fd = pd;
+	svc.coalition_fd = -1;
+	svc.cleanup.fd = -1;
+	switchboard_kq = kqueue();
+	ATF_REQUIRE(switchboard_kq >= 0);
+	runtime_removals = 0;
+	supervisor_cleanup_failed_launch(&svc);
+	ATF_REQUIRE(svc.cleanup.pending);
+	ATF_REQUIRE(svc.cleanup.child_pending);
+	ATF_REQUIRE(!svc.cleanup.coalition_complete);
+	ATF_CHECK_EQ(SVC_STATE_STOPPING, svc.state);
+	ATF_CHECK(svc.cleanup.error != 0);
+	ATF_CHECK_EQ(pd, svc.pd_fd);
+	ATF_CHECK_EQ(0, runtime_removals);
+	ATF_REQUIRE_EQ(0, pdkill(pd, SIGKILL));
+	ATF_REQUIRE_EQ(1, kevent(switchboard_kq, NULL, 0, &event, 1, &timeout));
+	ATF_REQUIRE_EQ(EVFILT_PROCDESC, event.filter);
+	ATF_REQUIRE_EQ(pd, (int)event.ident);
+	ATF_REQUIRE((event.fflags & NOTE_EXIT) != 0);
+	supervisor_handle_procdesc(&event);
+	ATF_CHECK(!svc.cleanup.child_pending);
+	ATF_CHECK_EQ(-1, svc.pd_fd);
+	/* Child exit alone cannot prove the missing coalition was cleaned up. */
+	ATF_CHECK(svc.cleanup.pending);
+	ATF_CHECK_EQ(SVC_STATE_STOPPING, svc.state);
+	ATF_CHECK_EQ(0, runtime_removals);
+	close(switchboard_kq);
+	switchboard_kq = -1;
+}
+
+ATF_TC(cleanup_live_process);
+ATF_TC_HEAD(cleanup_live_process, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "supervisor retains runtime until a real enlisted process finishes exiting");
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_coalition");
+	atf_tc_set_md_var(tc, "timeout", "30");
+}
+ATF_TC_BODY(cleanup_live_process, tc)
+{
+	struct svc_runtime svc;
+	struct coalition_req_hdr enlist = { .op = COALITION_OP_ENLIST };
+	struct coalition_set_signal_req stop = {
+	    .op = COALITION_OP_SET_SIGNAL, .signal = SIGSTOP };
+	struct coalition_reply reply;
+	struct capability_coalition_status state = { 0 };
+	struct kevent event;
+	struct timespec zero = { 0 }, timeout = { .tv_sec = 5 };
+	int device, pd, status;
+	pid_t child;
+
+	(void)tc;
+	cleanup_mock = false;
+	child = pdfork(&pd, 0);
+	ATF_REQUIRE(child >= 0);
+	if (child == 0) {
+		for (;;)
+			pause();
+	}
+	device = open("/dev/mac_capability", O_RDWR | O_CLOEXEC);
+	ATF_REQUIRE(device >= 0);
+	idle_runtime_init(&svc, "org.test.cleanup.process");
+	svc.cleanup.fd = -1;
+	svc.coalition_fd = capability_service_connect(device, "coalition");
+	ATF_REQUIRE(svc.coalition_fd >= 0);
+	ATF_REQUIRE_EQ(0, capability_service_call_fds(svc.coalition_fd,
+	    &stop, sizeof(stop), NULL, 0, &reply, sizeof(reply), NULL, 0));
+	ATF_REQUIRE_EQ(0, reply.status);
+	ATF_REQUIRE_EQ(0, capability_service_call_fds(svc.coalition_fd,
+	    &enlist, sizeof(enlist), &pd, 1, &reply, sizeof(reply), NULL, 0));
+	ATF_REQUIRE_EQ(0, reply.status);
+	switchboard_kq = kqueue();
+	ATF_REQUIRE(switchboard_kq >= 0);
+	runtime_removals = 0;
+	supervisor_cleanup_failed_launch(&svc);
+	ATF_REQUIRE(svc.cleanup.pending);
+	ATF_REQUIRE(svc.cleanup.fd >= 0);
+	ATF_CHECK_EQ(SVC_STATE_STOPPING, svc.state);
+	ATF_CHECK_EQ(0, runtime_removals);
+	ATF_REQUIRE_EQ(0, capability_coalition_status(svc.cleanup.fd, &state));
+	ATF_CHECK_EQ(CAPABILITY_COALITION_DRAINING, state.phase);
+	ATF_CHECK_EQ(1, state.processes);
+	ATF_CHECK_EQ(0, kevent(switchboard_kq, NULL, 0, &event, 1, &zero));
+	ATF_REQUIRE_EQ(0, pdkill(pd, SIGKILL));
+	ATF_REQUIRE_EQ(child, waitpid(child, &status, 0));
+	ATF_REQUIRE_EQ(1, kevent(switchboard_kq, NULL, 0, &event, 1, &timeout));
+	ATF_REQUIRE_EQ(EVFILT_READ, event.filter);
+	ATF_REQUIRE_EQ(svc.cleanup.fd, (int)event.ident);
+	ATF_REQUIRE(event.udata == &svc);
+	supervisor_handle_channel(&event);
+	ATF_CHECK(!svc.cleanup.pending);
+	ATF_CHECK_EQ(-1, svc.cleanup.fd);
+	ATF_CHECK_EQ(0, svc.cleanup.timer_ident);
+	ATF_CHECK_EQ(SVC_STATE_STOPPED, svc.state);
+	ATF_CHECK_EQ(1, runtime_removals);
+	close(pd);
+	close(device);
+	close(switchboard_kq);
+	switchboard_kq = -1;
+}
+
+ATF_TC(cleanup_live_outcomes);
+ATF_TC_HEAD(cleanup_live_outcomes, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "supervisor gate consumes real coalition completion and failure outcomes");
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_coalition");
+	atf_tc_set_md_var(tc, "timeout", "30");
+}
+ATF_TC_BODY(cleanup_live_outcomes, tc)
+{
+	struct svc_runtime svc;
+	struct coalition_req_hdr request = { .op = COALITION_OP_ENLIST };
+	struct coalition_reply reply;
+	int device, shm;
+	unsigned fail;
+
+	(void)tc;
+	cleanup_mock = false;
+	device = open("/dev/mac_capability", O_RDWR | O_CLOEXEC);
+	ATF_REQUIRE(device >= 0);
+	switchboard_kq = kqueue();
+	ATF_REQUIRE(switchboard_kq >= 0);
+	for (fail = 0; fail < 2; fail++) {
+		idle_runtime_init(&svc, "org.test.cleanup.live");
+		svc.cleanup.fd = -1;
+		svc.state = SVC_STATE_STARTING;
+		svc.coalition_fd = capability_service_connect(device, "coalition");
+		ATF_REQUIRE(svc.coalition_fd >= 0);
+		shm = -1;
+		if (fail) {
+			shm = memfd_create("cleanup-live", MFD_ALLOW_SEALING);
+			ATF_REQUIRE(shm >= 0);
+			ATF_REQUIRE_EQ(0, ftruncate(shm, 4096));
+			ATF_REQUIRE_EQ(0, fcntl(shm, F_ADD_SEALS, F_SEAL_SHRINK));
+			ATF_REQUIRE_EQ(0, capability_service_call_fds(svc.coalition_fd,
+			    &request, sizeof(request), &shm, 1, &reply, sizeof(reply),
+			    NULL, 0));
+			ATF_REQUIRE_EQ(0, reply.status);
+		}
+		runtime_removals = 0;
+		supervisor_cleanup_failed_launch(&svc);
+		ATF_CHECK_EQ(-1, svc.coalition_fd);
+		ATF_CHECK_EQ(-1, svc.cleanup.fd);
+		ATF_CHECK_EQ(fail != 0, svc.cleanup.pending);
+		ATF_CHECK_EQ(fail ? EPERM : 0, svc.cleanup.error);
+		ATF_CHECK_EQ(fail ? 0 : 1, runtime_removals);
+		ATF_CHECK_EQ(fail ? SVC_STATE_STOPPING : SVC_STATE_STOPPED,
+		    svc.state);
+		if (shm >= 0)
+			close(shm);
+	}
+	close(switchboard_kq);
+	switchboard_kq = -1;
+	close(device);
+}
+
+ATF_TC(cleanup_rebind_deadline);
+ATF_TC_HEAD(cleanup_rebind_deadline, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "cleanup rebind preserves expired deadline and arms timer despite bad observer");
+	atf_tc_set_md_var(tc, "timeout", "5");
+}
+ATF_TC_BODY(cleanup_rebind_deadline, tc)
+{
+	struct svc_runtime svc;
+	struct kevent event;
+	struct timespec timeout = { .tv_sec = 1 };
+	struct timespec deadline;
+	int kq;
+
+	(void)tc;
+	idle_runtime_init(&svc, "org.test.cleanup");
+	kq = kqueue();
+	ATF_REQUIRE(kq >= 0);
+	svc.cleanup.pending = true;
+	svc.cleanup.fd = -1;
+	svc.cleanup.timer_ident = ++cleanup_timer_next_ident;
+	ATF_REQUIRE_EQ(0, clock_gettime(CLOCK_MONOTONIC, &deadline));
+	deadline.tv_sec--;
+	svc.cleanup.deadline = deadline;
+	ATF_REQUIRE_EQ(0, supervisor_cleanup_rebind(&svc, kq));
+	ATF_REQUIRE_EQ(1, kevent(kq, NULL, 0, &event, 1, &timeout));
+	ATF_CHECK_EQ(EVFILT_TIMER, event.filter);
+	ATF_CHECK_EQ(svc.cleanup.timer_ident, event.ident);
+	ATF_CHECK(event.udata == &svc);
+	ATF_CHECK_EQ(deadline.tv_sec, svc.cleanup.deadline.tv_sec);
+	ATF_CHECK_EQ(deadline.tv_nsec, svc.cleanup.deadline.tv_nsec);
+
+	/* A failed read registration must not skip the independent timer. */
+	svc.cleanup.fd = INT_MAX;
+	ATF_REQUIRE_ERRNO(EBADF, supervisor_cleanup_rebind(&svc, kq) == -1);
+	ATF_REQUIRE_EQ(1, kevent(kq, NULL, 0, &event, 1, &timeout));
+	ATF_CHECK_EQ(EVFILT_TIMER, event.filter);
+	ATF_CHECK_EQ(svc.cleanup.timer_ident, event.ident);
+	ATF_CHECK(event.udata == &svc);
+	ATF_CHECK_EQ(deadline.tv_sec, svc.cleanup.deadline.tv_sec);
+	close(kq);
+}
+
+ATF_TC(cleanup_terminal_states);
+ATF_TC_HEAD(cleanup_terminal_states, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "failed/released cleanup retains runtime; a timed-out wait can complete later");
+}
+ATF_TC_BODY(cleanup_terminal_states, tc)
+{
+	struct svc_runtime svc;
+	struct kevent event;
+	uint32_t phases[] = { CAPABILITY_COALITION_FAILED,
+	    CAPABILITY_COALITION_RELEASED, CAPABILITY_COALITION_DRAINING };
+	unsigned i;
+	int fds[2];
+
+	(void)tc;
+	cleanup_mock = true;
+	switchboard_kq = kqueue();
+	ATF_REQUIRE(switchboard_kq >= 0);
+	for (i = 0; i < nitems(phases); i++) {
+		idle_runtime_init(&svc, "org.test.cleanup");
+		ATF_REQUIRE_EQ(0, pipe(fds));
+		svc.cleanup.fd = fds[0];
+		svc.cleanup.pending = true;
+		svc.cleanup.was_stopping = true;
+		svc.state = SVC_STATE_STOPPING;
+		cleanup_phase = phases[i];
+		runtime_removals = 0;
+		supervisor_cleanup_event(&svc);
+		ATF_CHECK(svc.cleanup.pending);
+		ATF_CHECK_EQ(0, runtime_removals);
+		ATF_CHECK_EQ(SVC_STATE_STOPPING, svc.state);
+		if (cleanup_phase == CAPABILITY_COALITION_DRAINING) {
+			/* An already-queued procdesc exit cannot restart cleanup. */
+			EV_SET(&event, 0, EVFILT_PROCDESC, 0, NOTE_EXIT, 0, &svc);
+			supervisor_handle_procdesc(&event);
+			ATF_CHECK(svc.cleanup.pending);
+			ATF_CHECK_EQ(fds[0], svc.cleanup.fd);
+			ATF_CHECK_EQ(0, runtime_removals);
+			svc.cleanup.timer_ident = ++cleanup_timer_next_ident;
+			EV_SET(&event, svc.cleanup.timer_ident, EVFILT_TIMER,
+			    0, 0, 0, &svc);
+			supervisor_handle_timer(&event);
+			ATF_CHECK_EQ(ETIMEDOUT, svc.cleanup.error);
+			ATF_CHECK(svc.cleanup.pending);
+			ATF_CHECK_EQ(0, runtime_removals);
+			ATF_CHECK_EQ(fds[0], svc.cleanup.fd);
+			cleanup_phase = CAPABILITY_COALITION_COMPLETE;
+			supervisor_cleanup_event(&svc);
+			ATF_CHECK(!svc.cleanup.pending);
+			ATF_CHECK_EQ(0, svc.cleanup.error);
+			ATF_CHECK_EQ(1, runtime_removals);
+			ATF_CHECK_EQ(SVC_STATE_STOPPED, svc.state);
+			supervisor_cleanup_event(&svc);
+			ATF_CHECK_EQ(1, runtime_removals);
+		} else {
+			ATF_CHECK_EQ(-1, svc.cleanup.fd);
+			ATF_CHECK_EQ(phases[i] == CAPABILITY_COALITION_FAILED ?
+			    EIO : EBUSY, svc.cleanup.error);
+		}
+		ATF_CHECK_EQ(-1, fcntl(fds[0], F_GETFD));
+		close(fds[1]);
+	}
+	close(switchboard_kq);
+	switchboard_kq = -1;
+	cleanup_mock = false;
+}
+
+ATF_TC(cleanup_stop_intent);
+ATF_TC_HEAD(cleanup_stop_intent, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "explicit stop during cleanup suppresses restart without releasing the gate");
+}
+ATF_TC_BODY(cleanup_stop_intent, tc)
+{
+	struct svc_runtime svc;
+
+	(void)tc;
+	idle_runtime_init(&svc, "org.test.cleanup");
+	svc.state = SVC_STATE_STOPPING;
+	svc.cleanup.pending = true;
+	svc_graceful_stop(&svc, -1);
+	ATF_CHECK(svc.cleanup.was_stopping);
+	ATF_CHECK(svc.cleanup.pending);
+	ATF_CHECK_EQ(SVC_STATE_STOPPING, svc.state);
+}
+
 ATF_TC(idle_note_exit_reactivatable);
 ATF_TC_HEAD(idle_note_exit_reactivatable, tc)
 {
@@ -1102,6 +1710,16 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, idle_timer_fire_stops_provider);
 	ATF_TP_ADD_TC(tp, idle_quiesce_busy_resumes_provider);
 	ATF_TP_ADD_TC(tp, idle_note_exit_reactivatable);
+	ATF_TP_ADD_TC(tp, cleanup_stop_intent);
+	ATF_TP_ADD_TC(tp, cleanup_terminal_states);
+	ATF_TP_ADD_TC(tp, cleanup_rebind_deadline);
+	ATF_TP_ADD_TC(tp, cleanup_live_outcomes);
+	ATF_TP_ADD_TC(tp, cleanup_live_process);
+	ATF_TP_ADD_TC(tp, cleanup_unenlisted_child);
+	ATF_TP_ADD_TC(tp, cleanup_missing_coalition);
+	ATF_TP_ADD_TC(tp, cleanup_registration_failure);
+	ATF_TP_ADD_TC(tp, cleanup_updated_intent);
+	ATF_TP_ADD_TC(tp, cleanup_compaction);
 	ATF_TP_ADD_TC(tp, handle_idle_protocol);
 	ATF_TP_ADD_TC(tp, handle_ready_ambient_promotion);
 	return (atf_no_error());

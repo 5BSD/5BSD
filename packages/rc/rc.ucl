@@ -25,12 +25,25 @@ the service scripts for the base system.
 EOD
 
 scripts: {
+    pre-install = <<EOD
+    # pkg removes configuration files that disappear from the new manifest,
+    # including locally modified files. Save retired IPFW policy first.
+    legacy="${PKG_ROOTDIR}/etc/rc.firewall"
+    if [ -f "$legacy" ]; then
+        backup=$(/usr/bin/mktemp "${legacy}.pkgsave.XXXXXX") || exit 1
+        if ! /bin/cp -p "$legacy" "$backup"; then
+            /bin/rm -f "$backup"
+            exit 1
+        fi
+        echo "Retired IPFW configuration saved to $backup; review it when migrating to PF."
+    fi
+EOD
     post-install = <<EOD
     rootdir="${PKG_ROOTDIR}"
     [ -n "$rootdir" ] || rootdir=/
 
-    # Capsule is PID 1 now.  pkg/installworld preserve removed configuration
-    # files, and this obsolete script would start a competing daemon instance.
+    # Capsule is PID 1 now. Legacy installations can retain this obsolete
+    # script, which would start a competing daemon instance.
     /bin/rm -f "$rootdir/etc/rc.d/oracled"
 EOD
 }

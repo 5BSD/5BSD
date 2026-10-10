@@ -12,6 +12,7 @@
 #include <unistd.h>
 
 #include "pressure.h"
+#include "bsdmemory_probes.h"
 
 static int
 sample(struct sysctlcmp_client **client, uint32_t values[3])
@@ -93,17 +94,20 @@ main(void)
 	    service_provider_ready(provider) == -1)
 		goto out;
 	ready = true;
+	BSDMEMORY_READY();
 	for (;;) {
 		if (service_provider_quiescing(provider) == 1)
 			break;
 		values[0] = values[1] = values[2] = 0;
 		int error = -1;
 		if (service_retry_ready(&source_retry, service_monotime_ms())) {
+			BSDMEMORY_SAMPLE_START();
 			if (service_budget_begin(400) == 0) {
 				error = sample(&source, values);
 				service_budget_end();
 			}
 			int saved = error == 0 ? 0 : (errno != 0 ? errno : EIO);
+			BSDMEMORY_SAMPLE_DONE(saved, values[0], values[1], values[2]);
 			service_retry_result(&source_retry,
 			    service_monotime_ms(), error == 0);
 			if (service_health_record(&source_health, saved))
@@ -113,11 +117,14 @@ main(void)
 		}
 		level = pressure_update(&filter, error, values[0], values[1],
 		    values[2]);
+		BSDMEMORY_PRESSURE(level, filter.effective, filter.recovery);
 		if (service_retry_ready(&notify_retry, service_monotime_ms()) &&
 		    service_budget_begin(400) == 0) {
 			unsigned previous = published;
+			BSDMEMORY_PUBLISH_START(level);
 			int saved = publish_pressure(&notify, level, &published) == -1 ?
 			    (errno != 0 ? errno : EIO) : 0;
+			BSDMEMORY_PUBLISH_DONE(level, published, saved);
 			if (saved == 0 && previous != published)
 				syslog(LOG_INFO, "memory pressure level=%u", level);
 			service_budget_end();
@@ -152,5 +159,6 @@ out:
 		result = 0;
 	if (provider != NULL)
 		service_provider_destroy(provider);
+	BSDMEMORY_EXIT(result);
 	return (result);
 }

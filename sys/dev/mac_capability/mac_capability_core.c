@@ -304,7 +304,49 @@ mac_capability_instance_free(struct mac_capability_instance *s)
 }
 
 /*
- * Reserve an instance slot (increment ninstances + refcnt under xlock).
+ * Pin module callbacks before an instance exists on the service list.
+ * The allocation reference alone cannot prevent module unload.
+ */
+int
+mac_capability_service_enter_locked(struct mac_capability_service *svc)
+{
+
+	sx_assert(&mac_capability_registry_lock, SA_XLOCKED);
+	if (svc->csvc_flags & MAC_CAPABILITY_SVCF_DESTROYING)
+		return (ECONNABORTED);
+	svc->csvc_admissions++;
+	refcount_acquire(&svc->csvc_refcnt);
+	return (0);
+}
+
+int
+mac_capability_service_enter(struct mac_capability_service *svc)
+{
+	int error;
+
+	sx_xlock(&mac_capability_registry_lock);
+	error = mac_capability_service_enter_locked(svc);
+	sx_xunlock(&mac_capability_registry_lock);
+	return (error);
+}
+
+void
+mac_capability_service_exit(struct mac_capability_service *svc)
+{
+
+	sx_xlock(&mac_capability_registry_lock);
+	KASSERT(svc->csvc_admissions != 0, ("unbalanced capability admission"));
+	if (--svc->csvc_admissions == 0)
+		wakeup(&svc->csvc_admissions);
+	sx_xunlock(&mac_capability_registry_lock);
+	if (refcount_release(&svc->csvc_refcnt))
+		mac_capability_service_free(svc);
+}
+
+/*
+ * Reserve an instance slot and admit its constructor under xlock.
+ * Setup must release admission after publication or completed rollback; the
+ * reservation reference lasts until unreserve or linked-instance close.
  * Returns 0 on success, EAGAIN if the limit or destroying.
  */
 int
@@ -320,6 +362,8 @@ mac_capability_service_reserve(struct mac_capability_service *svc)
 		sx_xunlock(&mac_capability_registry_lock);
 		return (EAGAIN);
 	}
+	/* DESTROYING was checked under this same exclusive lock. */
+	(void)mac_capability_service_enter_locked(svc);
 	svc->csvc_ninstances++;
 	refcount_acquire(&svc->csvc_refcnt);
 	sx_xunlock(&mac_capability_registry_lock);
@@ -339,8 +383,8 @@ mac_capability_service_unreserve(struct mac_capability_service *svc)
 /*
  * Link an instance into the service's instance list.
  * Rechecks DESTROYING under xlock to close the race with
- * mac_capability_service_destroy — a destroy that started after our
- * reserve will see this instance on the list.
+ * mac_capability_service_destroy. Destruction waits for admitted setup to
+ * either publish here or finish rollback after a rejected link.
  * Returns ECONNABORTED if the service is being torn down.
  */
 int
@@ -387,6 +431,7 @@ mac_capability_instance_setup(struct mac_capability_service *svc, struct thread 
 	if (error != 0) {
 		mac_capability_instance_free(s);
 		mac_capability_service_unreserve(svc);
+		mac_capability_service_exit(svc);
 		return (error);
 	}
 
@@ -398,13 +443,17 @@ mac_capability_instance_setup(struct mac_capability_service *svc, struct thread 
 			/*
 			 * co_init failed.  Mark FINALIZED so close
 			 * (triggered by fdrop) does NOT fire co_revoke.
-			 * co_init's error path owns cleanup.
+			 * co_init's error path has completed rollback.  Publish
+			 * completion too: close must not wait for a callback
+			 * that will never run.
 			 */
 			mtx_lock(&s->ci_mtx);
 			s->ci_flags |= MAC_CAPABILITY_SF_FINALIZED;
+			mac_capability_revoke_done_locked(s);
 			mtx_unlock(&s->ci_mtx);
 			fdrop(fp, td);
 			mac_capability_service_unreserve(svc);
+			mac_capability_service_exit(svc);
 			return (error);
 		}
 	}
@@ -418,9 +467,11 @@ mac_capability_instance_setup(struct mac_capability_service *svc, struct thread 
 	if (error != 0) {
 		fdrop(fp, td);
 		mac_capability_service_unreserve(svc);
+		mac_capability_service_exit(svc);
 		return (error);
 	}
 
+	mac_capability_service_exit(svc);
 	*fpp = fp;
 	return (0);
 }
@@ -508,16 +559,16 @@ mac_capability_ioctl_connect(struct mac_capability_connect_args *args, struct th
 		goto out;
 	}
 
-	sx_slock(&mac_capability_registry_lock);
+	sx_xlock(&mac_capability_registry_lock);
 	svc = mac_capability_service_lookup(args->name);
 	if (svc == NULL || (svc->csvc_flags & MAC_CAPABILITY_SVCF_DESTROYING)) {
-		sx_sunlock(&mac_capability_registry_lock);
+		sx_xunlock(&mac_capability_registry_lock);
 		error = ENOENT;
 		goto out;
 	}
-	/* Hold a refcount so svc stays alive across co_connect. */
-	refcount_acquire(&svc->csvc_refcnt);
-	sx_sunlock(&mac_capability_registry_lock);
+	/* Admit authorization before dropping the registry lock. */
+	(void)mac_capability_service_enter_locked(svc);
+	sx_xunlock(&mac_capability_registry_lock);
 
 	if (svc->csvc_ops->co_connect != NULL) {
 		error = svc->csvc_ops->co_connect(td->td_ucred,
@@ -526,17 +577,16 @@ mac_capability_ioctl_connect(struct mac_capability_connect_args *args, struct th
 			SDT_PROBE6(mac_capability, , , error, svc->csvc_name,
 			    badge, (u_long)MAC_CAPABILITY_CONNECT, td->td_proc->p_pid,
 			    mac_capability_proc_nonce(td->td_ucred), error);
-			refcount_release(&svc->csvc_refcnt);
+			mac_capability_service_exit(svc);
 			goto out;
 		}
 	}
 
 	error = mac_capability_instance_create(svc, td, badge, &args->fd);
 	/*
-	 * instance_create acquires its own refcount on success.
-	 * Drop the one we took for the co_connect window.
+	 * Construction and any rollback are finished; unload may now proceed.
 	 */
-	refcount_release(&svc->csvc_refcnt);
+	mac_capability_service_exit(svc);
 out:
 	SDT_PROBE5(mac_capability, , , connect__done, svc_name, badge,
 	    td->td_proc->p_pid, error, getsbinuptime() - start);

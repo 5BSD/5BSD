@@ -120,7 +120,7 @@ device directory delivered as an inherited descriptor
 .It Pa /Capabilities/System/Device.cap
 capability bundle shipping
 .Nm
-.It Pa /Capabilities/System/Device.cap/Units/BSDDevice.unit/Config/device.conf
+.It Pa /Capabilities/System/Device.cap/Units/bsddevice.unit/Config/device.conf
 per-label device policy
 .El
 .Sh DTRACE PROBES
@@ -162,6 +162,12 @@ Device descriptors already delivered to clients are not revoked by worker
 termination; they retain their kernel-defined lifetime and narrowed rights.
 These cleanup guarantees cover controlled parent exit, not an abrupt parent
 crash or an uncatchable signal.
+
+.Ss Client admission limits
+At most 64 concurrent workers may serve one authenticated client label.
+An excess connection is closed before allocating session resources.
+Capacity returns when the provider removes the closed session or exited worker.
+Existing sessions are preserved; clients must handle connection failure.
 .Sh SEE ALSO
 .Xr cap_enter 2 ,
 .Xr cap_ioctls_limit 2 ,

@@ -53,7 +53,7 @@ NO_SHARED.oes_session_test= yes
 ATF_TESTS_C+= oes_handoff_test
 SRCS.oes_handoff_test= oes_handoff_test.c oes_session.c oes_factory.c
 CFLAGS+= -I${SRCTOP}/lib/liboes
-LIBADD.oes_handoff_test= channel service
+LIBADD.oes_handoff_test= oes channel service
 NO_SHARED.oes_handoff_test= yes
 
 ATF_TESTS_C+= manifest_test
@@ -71,5 +71,18 @@ NO_SHARED.cleanup_test= yes
 .for symbol in tzfs_openat tzfs_info tzfs_list_children tzfs_list_snapshots tzfs_snap_destroy tzfs_destroy
 LDFLAGS.cleanup_test+= -Wl,--wrap=${symbol}
 .endfor
+
+
+ATF_TESTS_C+= quota_test
+CFLAGS.quota_test+= -I${SRCTOP}/lib/libcapsulert -I${SRCTOP}/lib/libtrustedzfs -I${SRCTOP}/lib/libcapreclaim -I${SRCTOP}/lib/liblogcmp -I${SRCTOP}/lib/libservice -I${SRCTOP}/lib/libchannel -I${SRCTOP}/sys -I${SRCTOP}/lib/liboes -I${SRCTOP}/contrib/libucl/include -ffunction-sections -fdata-sections
+LDFLAGS.quota_test+= -Wl,--gc-sections
+NO_SHARED.quota_test= yes
+
+ATF_TESTS_C+= lifecycle_test
+SRCS.lifecycle_test= lifecycle_test.c layout.c nvwalk.c config.c oes_factory.c oes_session.c
+CFLAGS.lifecycle_test+= -I${SRCTOP}/lib/liboes -ffunction-sections -fdata-sections
+LDFLAGS.lifecycle_test+= -Wl,--gc-sections
+LIBADD.lifecycle_test= ${BSDFILESYSTEM_LIBADD}
+NO_SHARED.lifecycle_test= yes
 
 .include <bsd.test.mk>

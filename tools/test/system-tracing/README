@@ -1,0 +1,78 @@
+System tracing qualification
+============================
+
+Scope: all 16 capability daemons, capsule, switchboard, Bluetooth meshd,
+FIDL, BSDChannel, Linuxulator, OpenES, and the imported Matter IDL tooling.
+coverage.json records one additional source coverage review per component,
+as requested on 2026-10-10. The source review is complete; runtime entries
+remain pending until measured in the VM. There is no Matter daemon in this import.
+
+Operator entry points (installed under /usr/share/dtrace):
+  capability-observe --list
+  capability-observe BSDTime PID 30
+  dtrace -s /usr/share/dtrace/fidl-observe -p PID
+  dtrace -s /usr/share/dtrace/bsdchannel-kernel
+  dtrace -s /usr/share/dtrace/linuxulator-observe
+  dtrace -s /usr/share/dtrace/oes-observe
+
+The capability wrapper selects libchannel callback/request/dispatch timing
+for channel users, dedicated sampling/publishing timing for BSDMemory, and
+socket queue/drop metrics for meshd. It refuses a missing daemon provider.
+Attach to the PID actually serving requests. Forked daemons such as BSDVM
+serve requests in workers; tracing the parent does not follow future children.
+Record each tested worker PID and attach before sending its test requests.
+Functional counts cover existing daemon probes; scalar result fields are
+explicitly selected from provider declarations. A zero result is not proof
+that an expected operation ran: qualify required events and workloads too.
+Capsule, switchboard, and Bluetooth scalar results are included in the
+wrapper; their existing dedicated scripts offer additional detail. BSDTime
+also loads fidl-observe. The JSON findings record limits of per-operation
+coverage, including Filesystem version replies and Matter tooling.
+
+Durations are elapsed time, including blocking. Channel request timing ends
+before the completion callback; callback timing covers inbound handlers.
+FIDL request timing starts after encoding. OpenES timing measures the auth
+group wait. These are not CPU-time or complete end-to-end operation metrics.
+Payloads, keys, pathnames and client labels are not read by the new scripts.
+
+Host-safe test:
+  python3.12 tools/test/system-tracing/operator-test.py
+
+This mocks dtrace and verifies argument rejection, all 19 daemon selections,
+missing-provider failure, temporary-file cleanup, probe argument bounds,
+and source call sites (a declaration alone is insufficient). It does NOT validate D
+syntax, generated USDT relocation objects, live probes or real workloads.
+
+VM gates still required (networking, four cores):
+  * Compile/link tracing-enabled and disabled components; verify installed
+    binaries and libraries match the final source snapshot.
+  * Enumerate each expected provider on the actual running daemon PID.
+  * Exercise successful requests, malformed/unauthorized requests, transport
+    failure, cancellation and disconnect with matching functional counters.
+  * Exercise concurrent and nested callbacks; assert positive timing samples
+    and balanced completed lifetimes, without DTrace errors or drops.
+  * Exercise BSDMemory sampling/pressure/publish recovery using controlled
+    fixtures; do not induce host memory pressure.
+  * Exercise Bluetooth/meshd with maintained fixtures and mark radio-dependent
+    cases pending unless hardware or a validated emulator is available.
+  * Exercise Linux native/compat errors, OpenES allow/deny/timeout, and the
+    FIDL/channel closure/cancellation paths. Assert expected events explicitly.
+  * Run PF/Dummynet tracing-smoke.sh plus the package-upgrade/network suite.
+  * Capture command, source hashes, exit status, counters and logs for each
+    component runtime test. An idle daemon is not a functional pass.
+
+Do not publish a combined repository or qualify the VM using the earlier
+PF-only source snapshot after the expanded tracing changes.
+
+Result conventions
+------------------
+Scalar values retain their provider definitions; they are not all errno.
+Crypto/Device request results use negative wire errno. Audit/Extension/
+Namespace use positive semantic errno. Trace reports semantic error plus
+terminal connection error (which may be protocol or transport). Bluetooth
+ATT/HCI values are protocol results. Mesh dropped events are counted once
+per probe firing; arg1 is a cumulative counter and must not be summed.
+
+Review fixes were native instrumentation changes; no new upstream code was
+copied. Source review, compile checks and USDT relocation checks do not replace
+live provider enumeration, functional workloads and DTrace script execution.

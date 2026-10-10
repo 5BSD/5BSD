@@ -75,7 +75,6 @@
 #include <netinet/in_pcb.h>
 #include <netinet/ip_var.h>
 #include <netinet/ip_encap.h>
-#include <netinet/ip_fw.h>
 #include <netinet/ip_icmp.h>
 #include <netinet/igmp_var.h>
 #include <netinet/ip_options.h>

@@ -1,5 +1,5 @@
 .\" SPDX-License-Identifier: BSD-2-Clause
-.Dd September 8, 2026
+.Dd October 10, 2026
 .Dt BSDLOG 8
 .Os
 .Sh NAME
@@ -11,8 +11,16 @@ is the base provider for
 .Dq system.Log .
 It runs only from
 .Pa /Capabilities/System/Log.cap .
-Each global service connection creates an isolated worker and bounded
-single-producer record ring.
+Each global service connection creates a session and bounded single-producer
+record ring, assigned to one of a fixed number of shared ingress workers.
+A worker can serve several client labels; session checks retain each client's
+authenticated label.
+Workers display their pool number in
+.Xr ps 1 ,
+and the separate storage manager displays its storage role.
+These process titles describe shared roles, not per-client authority.
+Pool startup uses a five-second status-and-release handshake.
+A failed pool is terminated and reaped before startup reports the error.
 The client sends an edge-coalesced wakeup when a shared ring changes from
 empty to nonempty, and the worker drains the burst through
 .Xr kqueue 2 .
@@ -38,6 +46,11 @@ edge notifications, lifecycle control, and explicit flush barriers.
 The storage manager drains active rings in bounded round-robin batches, so a
 continuously active producer cannot prevent other sessions from making
 progress.
+Ingress workers also use a bounded round-robin queue: a producer that keeps
+refilling its ring is requeued after its configured drain batch, allowing
+other ready sessions to run.
+This is a work-count bound, not a real-time latency guarantee for storage
+operations or flushes.
 .Pp
 Retained-record queries are served from the private store and are always
 restricted to the authenticated switchboard client label associated with the
@@ -212,6 +225,15 @@ Default 30; values outside 10 to 86400 are ignored.
 Set through the unit manifest's
 .Va environment .
 .El
+
+.Ss Client admission limits
+Each ingress shard permits at most 64 concurrent sessions per authenticated
+client label, independent of the resource owner used for stored records.
+The total per-client ceiling is 64 times the configured ingress shard count.
+Admission can fail earlier when the selected shard or global capacity is full.
+An excess connection is closed before allocating session resources.
+Capacity returns when the provider removes the closed session or exited worker.
+Existing sessions are preserved; clients must handle connection failure.
 .Sh SEE ALSO
 .Xr liblogcmp 3 ,
 .Xr libshmring 3 ,

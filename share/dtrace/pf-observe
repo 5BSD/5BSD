@@ -1,0 +1,98 @@
+#!/usr/sbin/dtrace -s
+/* SPDX-License-Identifier: BSD-2-Clause
+ * PF performance and functional summary. Requires the extended pf provider.
+ * Usage: pf-observe (Ctrl-C prints summary)
+ *        dtrace -s /usr/share/dtrace/pf-observe -c 'sleep 30'
+ * Latencies are inclusive elapsed nanoseconds, not CPU time. Handoff timing
+ * excludes asynchronous queue residence. All VNETs are included. Nested calls
+ * use per-thread depth keys. No packet payloads or per-packet output.
+ */
+#pragma D option quiet
+#pragma D option dynvarsize=16m
+
+BEGIN { began = timestamp; printf("PF observation started; Ctrl-C for summary.\n"); }
+
+pf:ip:test:entry
+{
+    self->depth++;
+    started[tid, self->depth] = timestamp;
+    family[tid, self->depth] = arg0;
+    direction[tid, self->depth] = arg1;
+}
+pf:ip:test:finish
+/self->depth > 0 && started[tid, self->depth] != 0/
+{
+    @packet_ns[family[tid, self->depth], direction[tid, self->depth], arg0] =
+        quantize(timestamp - started[tid, self->depth]);
+    @calls[family[tid, self->depth], direction[tid, self->depth], arg0] = count();
+    @total = count();
+    started[tid, self->depth] = 0;
+    family[tid, self->depth] = 0;
+    direction[tid, self->depth] = 0;
+    self->depth--;
+}
+pf:ip:rules:entry
+{
+    self->rules_depth++;
+    rule_started[tid, self->rules_depth] = timestamp;
+}
+pf:ip:rules:finish
+/self->rules_depth > 0 && rule_started[tid, self->rules_depth] != 0/
+{
+    @rule_samples = count();
+    @rules_ns[arg0, arg1] = quantize(timestamp - rule_started[tid, self->rules_depth]);
+    rule_started[tid, self->rules_depth] = 0;
+    self->rules_depth--;
+}
+pf:ip:dummynet:submit
+{
+    self->dn_depth++;
+    dn_started[tid, self->dn_depth] = timestamp;
+    @pipes[arg2 & 0xffff, (arg2 & 0x08000000) != 0] = count();
+}
+pf:ip:dummynet:returned
+/self->dn_depth > 0 && dn_started[tid, self->dn_depth] != 0/
+{
+    @handoff_samples = count();
+    @handoff_ns[arg0 & 0xffff, arg1] = quantize(timestamp - dn_started[tid, self->dn_depth]);
+    dn_started[tid, self->dn_depth] = 0;
+    self->dn_depth--;
+}
+pf:ip:state:lookup { @lookups[arg4 != 0] = count(); }
+pf:ip:test:result { @decisions[arg0, arg1, arg2, arg3] = count(); }
+pf:ip:rules:selected
+{ @rules[arg1, args[1]->nr, stringof(args[1]->label[0])] = count(); }
+pf:ip:translation:result { @translations[arg1, arg2] = count(); }
+pf:ip:state:insert, pf:ip:state:remove { @states[probename] = count(); }
+pf:ip:state:transition { @transitions[arg1, arg2, arg3] = count(); }
+pf:ip:state:insert_error { @insert_errors[arg1] = count(); }
+pf:ip:state:create_error
+{ @create_errors[args[1]->nr, stringof(args[1]->label[0]), arg2] = count(); }
+pf:ip:dummynet:error { @dn_errors[arg1, stringof(args[2])] = count(); }
+pf:ip:dummynet:reinject { @reinjected[arg0, arg1] = count(); }
+ERROR { faults++; }
+
+END
+{
+    printf("PF_SUMMARY elapsed_ms=%d faults=%d\n",
+        (timestamp - began) / 1000000, faults);
+    printa("PF_TOTAL %@d\n", @total);
+    printa("PF_RULE_SAMPLES %@d\n", @rule_samples);
+    printa("PF_HANDOFF_SAMPLES %@d\n", @handoff_samples);
+    printf("PF calls: family direction returned-action count (includes bypass)\n");
+    printa("%d %d %d %@d\n", @calls);
+    printf("PF inclusive elapsed ns: family direction returned-action\n"); printa(@packet_ns);
+    printf("Rule evaluation elapsed ns: action reason\n"); printa(@rules_ns);
+    printf("Synchronous handoff elapsed ns: pipe/queue packet-returned\n"); printa(@handoff_ns);
+    printf("Decisions: family direction action reason count\n"); printa(@decisions);
+    printf("Selected rules: pointer number first-label count\n"); printa(@rules);
+    printf("State lookups: hit(1)/miss(0) count\n"); printa(@lookups);
+    printf("State lifecycle counts\n"); printa(@states);
+    printf("State transitions: peer old new count\n"); printa(@transitions);
+    printf("State insertion errors: errno count\n"); printa(@insert_errors);
+    printf("State creation errors: rule first-label reason count\n"); printa(@create_errors);
+    printf("Translation results: stage(0=legacy,1=rule) reason count\n"); printa(@translations);
+    printf("Shaping submissions: number is-pipe count\n"); printa(@pipes);
+    printf("Shaping errors: errno diagnostic count\n"); printa(@dn_errors);
+    printf("Reinjections: family direction count\n"); printa(@reinjected);
+}

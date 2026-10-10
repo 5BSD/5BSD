@@ -170,6 +170,7 @@ struct mac_capability_service {
 	const struct mac_capability_ops *csvc_ops;	/* (I) operation callbacks */
 	void		*csvc_arg;		/* (I) callback argument */
 	LIST_HEAD(, mac_capability_instance) csvc_instances; /* (L) instance list */
+	u_int		csvc_admissions;	/* (L) constructors/authorization */
 	int		csvc_ninstances;	/* (L) instance count */
 	int		csvc_instance_limit;	/* (I) max instances */
 	volatile u_int	csvc_refcnt;		/* (R) reference count */
@@ -197,6 +198,8 @@ struct mac_capability_callback_state *mac_capability_callback_state_get(
 	    struct mac_capability_instance *s);
 bool	mac_capability_callback_state_done(struct mac_capability_callback_state *cs);
 void	mac_capability_callback_state_rele(struct mac_capability_callback_state *cs);
+/* Caller holds ci_mtx and owns FINALIZED; publish completed rollback/callback. */
+void	mac_capability_revoke_done_locked(struct mac_capability_instance *s);
 /* Caller owns FINALIZED and keeps the instance/service alive through return. */
 void	mac_capability_revoke_callback(struct mac_capability_instance *s,
 	    enum mac_capability_revoke_reason reason);
@@ -208,6 +211,9 @@ void	mac_capability_msg_free(struct mac_capability_msg *msg);
 struct mac_capability_instance *mac_capability_instance_init(struct mac_capability_service *svc,
 	    uint64_t badge);
 void	mac_capability_instance_free(struct mac_capability_instance *s);
+int	mac_capability_service_enter_locked(struct mac_capability_service *svc);
+int	mac_capability_service_enter(struct mac_capability_service *svc);
+void	mac_capability_service_exit(struct mac_capability_service *svc);
 int	mac_capability_service_reserve(struct mac_capability_service *svc);
 void	mac_capability_service_unreserve(struct mac_capability_service *svc);
 int	mac_capability_instance_link(struct mac_capability_service *svc, struct mac_capability_instance *s);

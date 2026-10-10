@@ -36,6 +36,10 @@
 /* Self-join, atomically replacing inherited (never procdesc-pinned) membership. */
 #define	COALITION_OP_JOIN_REHOME		14
 #define	COALITION_OP_CLEANUP_STATUS	15
+/* CALL only: exact header, no input FDs; coalition_reply plus one wait FD.
+ * Wait FD accepts CLEANUP_STATUS CALL and one terminal cleanup_reply via RECVMSG.
+ */
+#define	COALITION_OP_CLEANUP_WATCH	16
 
 /*
  * Common request header.

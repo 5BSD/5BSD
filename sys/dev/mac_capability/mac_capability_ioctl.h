@@ -226,10 +226,13 @@ struct mac_capability_recvmsg_v4_args {
  * The handler runs in the caller's thread context.
  * Only available if the service registered co_call.
  */
+/* Atomically set inheritance flags on returned descriptor slots only. */
+#define MAC_CAPABILITY_CALL_F_CLOEXEC 0x0001u
+#define MAC_CAPABILITY_CALL_F_CLOFORK 0x0002u
 struct mac_capability_call_args {
 	const void	*req;
 	uint32_t	req_len;
-	uint32_t	flags;		/* reserved, must be 0 */
+	uint32_t	flags;		/* MAC_CAPABILITY_CALL_F_* */
 	const int	*req_fds;
 	uint32_t	req_nfds;
 	void		*reply;

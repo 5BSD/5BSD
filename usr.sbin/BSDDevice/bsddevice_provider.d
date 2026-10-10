@@ -7,6 +7,7 @@
  */
 
 provider bsddevice {
+	probe request__done(uint32_t opcode, int status, int transport_error);
 	/*
 	 * An OPEN was resolved for a client label: the requested /dev leaf, the
 	 * rights actually granted (request intersected with policy; 0 on denial),

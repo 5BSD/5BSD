@@ -1,0 +1,20 @@
+#!/usr/sbin/dtrace -s
+/* SPDX-License-Identifier: BSD-2-Clause
+ * Usage: dtrace -s bsdmemory-observe -p PID
+ */
+#pragma D option quiet
+bsdmemory$target:::sample-start { self->sample_ts = timestamp; }
+bsdmemory$target:::sample-done
+/self->sample_ts != 0/
+{ @sample_ns[arg0] = quantize(timestamp-self->sample_ts); @sample_errors[arg0] = count(); self->sample_ts = 0; }
+bsdmemory$target:::sample-done
+/arg0 == 0/
+{ @free_pages = quantize(arg1); }
+bsdmemory$target:::publish-start { self->publish_ts = timestamp; }
+bsdmemory$target:::publish-done
+/self->publish_ts != 0/
+{ @publish_ns[arg2] = quantize(timestamp-self->publish_ts); @published[arg0,arg1,arg2] = count(); self->publish_ts = 0; }
+bsdmemory$target:::pressure { @pressure[arg0,arg1,arg2] = count(); }
+bsdmemory$target:::ready, bsdmemory$target:::exit { @memory_lifecycle[probename] = count(); }
+ERROR { memory_faults++; }
+END { printf("BSDMEMORY_SUMMARY faults=%d\n",memory_faults); printf("Sample elapsed ns and native errors\n"); printa(@sample_ns); printa(@sample_errors); printf("Publish elapsed ns; requested/published/error\n"); printa(@publish_ns); printa(@published); printf("Pressure level/effective/recovery; free pages (successful samples only); lifecycle\n"); printa(@pressure); printa(@free_pages); printa(@memory_lifecycle); }

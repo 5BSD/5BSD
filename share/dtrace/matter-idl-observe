@@ -1,0 +1,13 @@
+#!/usr/sbin/dtrace -s
+/* SPDX-License-Identifier: BSD-2-Clause
+ * Imported Matter IDL tooling ONLY; there is no Matter daemon in this tree.
+ * Usage: dtrace -s matter-idl-observe -c 'python3.12 ...IDL command...'
+ * This profiles process syscalls and exit status, not Matter commissioning.
+ */
+#pragma D option quiet
+syscall:::entry /pid == $target/ { self->matter_start = timestamp; }
+syscall:::return /pid == $target && self->matter_start != 0/
+{ @matter_ns[probefunc] = quantize(timestamp-self->matter_start); @matter_calls[probefunc,errno] = count(); self->matter_start = 0; }
+proclife:::exit-status /arg0 == $target/ { @matter_exit[arg1,arg2] = count(); }
+ERROR { matter_faults++; }
+END { printf("MATTER_IDL_TOOLING_ONLY faults=%d\n",matter_faults); printf("Syscall/native-errno counts and elapsed ns\n"); printa(@matter_calls); printa(@matter_ns); printf("Tool exit value/signal\n"); printa(@matter_exit); }

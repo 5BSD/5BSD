@@ -37,4 +37,10 @@ CFLAGS.lifecycle_test+= -I${SRCTOP}/lib/liblogcmp
 LIBADD.lifecycle_test= auditcmp channel cryptocmp cryptodesc service logcmp capreclaim
 NO_SHARED.lifecycle_test= yes
 
+
+ATF_TESTS_C+= quota_test
+CFLAGS.quota_test+= -I${SRCTOP}/lib/libauditcmp -I${SRCTOP}/lib/libchannel -I${SRCTOP}/lib/libcryptocmp -I${SRCTOP}/lib/libcryptodesc -I${SRCTOP}/lib/liblogcmp -I${SRCTOP}/lib/libservice -I${SRCTOP}/sys -I${SRCTOP}/lib/libcapreclaim -ffunction-sections -fdata-sections
+LDFLAGS.quota_test+= -Wl,--gc-sections
+NO_SHARED.quota_test= yes
+
 .include <bsd.test.mk>

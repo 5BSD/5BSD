@@ -82,7 +82,6 @@
 #include <netinet/in_var.h>
 #include <netinet/in_fib.h>
 #include <netinet/ip.h>
-#include <netinet/ip_fw.h>
 #include <netinet/ip_icmp.h>
 #include <netinet/icmp_var.h>
 #include <netinet/ip_var.h>
@@ -96,7 +95,6 @@
 
 /* dummynet */
 #include <netinet/ip_dummynet.h>
-#include <netinet/ip_fw.h>
 #include <netpfil/dummynet/dn_heap.h>
 #include <netpfil/dummynet/dn_packet.h>
 #include <netpfil/dummynet/ip_dn_private.h>
@@ -120,6 +118,30 @@
 #include <security/mac/mac_framework.h>
 
 SDT_PROVIDER_DEFINE(pf);
+SDT_PROBE_DEFINE3(pf, ip, test, entry, "int", "int", "struct ifnet *");
+SDT_PROBE_DEFINE1(pf, ip, test, finish, "int");
+SDT_PROBE_DEFINE1(pf, ip, rules, entry, "struct pf_pdesc *");
+SDT_PROBE_DEFINE2(pf, ip, rules, finish, "int", "int");
+SDT_PROBE_DEFINE2(pf, ip, rules, selected, "struct pf_pdesc *",
+    "struct pf_krule *");
+SDT_PROBE_DEFINE3(pf, ip, translation, result, "struct pf_pdesc *",
+    "int", "int");
+SDT_PROBE_DEFINE3(pf, ip, state, create_error, "struct pf_pdesc *",
+    "struct pf_krule *", "int");
+SDT_PROBE_DEFINE6(pf, ip, test, result, "int", "int", "int", "int",
+    "struct ifnet *", "int");
+SDT_PROBE_DEFINE1(pf, ip, state, insert, "struct pf_kstate *");
+SDT_PROBE_DEFINE2(pf, ip, state, insert_error, "struct pf_kstate *", "int");
+SDT_PROBE_DEFINE1(pf, ip, state, remove, "struct pf_kstate *");
+SDT_PROBE_DEFINE4(pf, ip, state, transition, "struct pf_kstate *", "int",
+    "uint8_t", "uint8_t");
+SDT_PROBE_DEFINE4(pf, ip, dummynet, submit, "struct pf_pdesc *",
+    "struct pf_kstate *", "uint32_t", "int");
+SDT_PROBE_DEFINE3(pf, ip, dummynet, reinject, "int", "int",
+    "struct ifnet *");
+SDT_PROBE_DEFINE2(pf, ip, dummynet, returned, "uint32_t", "int");
+SDT_PROBE_DEFINE3(pf, ip, dummynet, error, "struct pf_pdesc *", "int",
+    "const char *");
 SDT_PROBE_DEFINE2(pf, , test, reason_set, "int", "int");
 SDT_PROBE_DEFINE4(pf, ip, test, done, "int", "int", "struct pf_krule *",
     "struct pf_kstate *");
@@ -1043,8 +1065,12 @@ pf_state_hash(struct pf_kstate *s)
 static __inline void
 pf_set_protostate(struct pf_kstate *s, int which, u_int8_t newstate)
 {
-	if (which == PF_PEER_DST || which == PF_PEER_BOTH)
+	if (which == PF_PEER_DST || which == PF_PEER_BOTH) {
+		if (s->dst.state != newstate)
+			SDT_PROBE4(pf, ip, state, transition, s, PF_PEER_DST,
+			    s->dst.state, newstate);
 		s->dst.state = newstate;
+	}
 	if (which == PF_PEER_DST)
 		return;
 	if (s->src.state == newstate)
@@ -1057,6 +1083,8 @@ pf_set_protostate(struct pf_kstate *s, int which, u_int8_t newstate)
 	    (TCPS_HAVEESTABLISHED(newstate) || newstate == TCPS_CLOSED))
 		atomic_add_32(&V_pf_status.states_halfopen, -1);
 
+	SDT_PROBE4(pf, ip, state, transition, s, PF_PEER_SRC,
+	    s->src.state, newstate);
 	s->src.state = newstate;
 }
 
@@ -2080,8 +2108,10 @@ pf_state_insert(struct pfi_kkif *kif, struct pfi_kkif *orig_kif,
 	}
 
 	/* Returns with ID locked on success. */
-	if ((error = pf_state_key_attach(skw, sks, s)) != 0)
+	if ((error = pf_state_key_attach(skw, sks, s)) != 0) {
+		SDT_PROBE2(pf, ip, state, insert_error, s, error);
 		return (error);
+	}
 	skw = sks = NULL;
 
 	ih = &V_pf_idhash[PF_IDHASH(s)];
@@ -2099,6 +2129,7 @@ pf_state_insert(struct pfi_kkif *kif, struct pfi_kkif *orig_kif,
 			    (unsigned long long)be64toh(s->id),
 			    ntohl(s->creatorid));
 		}
+		SDT_PROBE2(pf, ip, state, insert_error, s, EEXIST);
 		pf_detach_state(s);
 		return (EEXIST);
 	}
@@ -2106,6 +2137,7 @@ pf_state_insert(struct pfi_kkif *kif, struct pfi_kkif *orig_kif,
 	/* One for keys, one for ID hash. */
 	refcount_init(&s->refs, 2);
 
+	SDT_PROBE1(pf, ip, state, insert, s);
 	pf_counter_u64_add(&V_pf_status.fcounters[FCNT_STATE_INSERT], 1);
 	if (V_pfsync_insert_state_ptr != NULL)
 		V_pfsync_insert_state_ptr(s);
@@ -3108,6 +3140,7 @@ pf_remove_state(struct pf_kstate *s)
 		    s->act.rtableid, NULL);
 	}
 
+	SDT_PROBE1(pf, ip, state, remove, s);
 	LIST_REMOVE(s, entry);
 	pf_src_tree_remove_state(s);
 
@@ -6361,6 +6394,12 @@ pf_match_rule(struct pf_test_ctx *ctx, struct pf_kruleset *ruleset)
 	return (ctx->test_status);
 }
 
+#define PF_RULE_RETURN(value) do {\
+	int pf_result = (value);\
+	SDT_PROBE2(pf, ip, rules, finish, pf_result, *reason);\
+	return (pf_result);\
+} while (0)
+
 static int
 pf_test_rule(struct pf_krule **rm, struct pf_kstate **sm,
     struct pf_pdesc *pd, struct pf_krule **am,
@@ -6376,6 +6415,7 @@ pf_test_rule(struct pf_krule **rm, struct pf_kstate **sm,
 	enum pf_test_status	 rv;
 
 	PF_RULES_RASSERT();
+	SDT_PROBE1(pf, ip, rules, entry, pd);
 
 	bzero(&ctx, sizeof(ctx));
 	ctx.tag = -1;
@@ -6457,6 +6497,7 @@ pf_test_rule(struct pf_krule **rm, struct pf_kstate **sm,
 
 	/* check packet for BINAT/NAT/RDR */
 	transerror = pf_get_translation(&ctx);
+	SDT_PROBE3(pf, ip, translation, result, pd, 0, transerror);
 	switch (transerror) {
 	default:
 		/* A translation error occurred. */
@@ -6497,6 +6538,7 @@ pf_test_rule(struct pf_krule **rm, struct pf_kstate **sm,
 		/* apply actions for last matching pass/block rule */
 		pf_rule_to_actions(r, &pd->act);
 		transerror = pf_rule_apply_nat(&ctx, r);
+		SDT_PROBE3(pf, ip, translation, result, pd, 1, transerror);
 		switch (transerror) {
 		case PFRES_MATCH:
 			/* Translation action found in rule and applied successfully */
@@ -6510,6 +6552,7 @@ pf_test_rule(struct pf_krule **rm, struct pf_kstate **sm,
 		}
 	}
 
+	SDT_PROBE2(pf, ip, rules, selected, pd, r);
 	REASON_SET(&ctx.reason, PFRES_MATCH);
 
 	if (r->log) {
@@ -6576,7 +6619,7 @@ pf_test_rule(struct pf_krule **rm, struct pf_kstate **sm,
 				    bproto_sum, bip_sum, &ctx.reason,
 				    pd->act.rtableid);
 			*reason = ctx.reason;
-			return (action);
+			PF_RULE_RETURN(action);
 		}
 
 		if (pd->proto == IPPROTO_TCP &&
@@ -6637,11 +6680,11 @@ pf_test_rule(struct pf_krule **rm, struct pf_kstate **sm,
 		 * replies through it.
 		 */
 		*reason = ctx.reason;
-		return (PF_DEFER);
+		PF_RULE_RETURN(PF_DEFER);
 	}
 
 	*reason = ctx.reason;
-	return (action);
+	PF_RULE_RETURN(action);
 
 cleanup:
 	uma_zfree(V_pf_state_key_z, ctx.sk);
@@ -6650,8 +6693,10 @@ cleanup:
 	pf_udp_mapping_release(ctx.udp_mapping);
 	*reason = ctx.reason;
 
-	return (PF_DROP);
+	PF_RULE_RETURN(PF_DROP);
 }
+
+#undef PF_RULE_RETURN
 
 static int
 pf_create_state(struct pf_krule *r, struct pf_test_ctx *ctx,
@@ -6999,6 +7044,7 @@ csfailed:
 	}
 
 drop:
+	SDT_PROBE3(pf, ip, state, create_error, pd, r, ctx->reason);
 	if (s != NULL) {
 		struct pf_state_link *npfl;
 
@@ -10702,6 +10748,8 @@ pf_dummynet_route(struct pf_pdesc *pd, struct pf_kstate *s,
 		return (0);
 
 	if (ip_dn_io_ptr == NULL) {
+		SDT_PROBE3(pf, ip, dummynet, error, pd, ENOMEM,
+		    "backend unavailable");
 		m_freem(*m0);
 		*m0 = NULL;
 		return (ENOMEM);
@@ -10709,6 +10757,8 @@ pf_dummynet_route(struct pf_pdesc *pd, struct pf_kstate *s,
 
 	if (pd->pf_mtag == NULL &&
 	    ((pd->pf_mtag = pf_get_mtag(*m0)) == NULL)) {
+		SDT_PROBE3(pf, ip, dummynet, error, pd, ENOMEM,
+		    "packet tag allocation");
 		m_freem(*m0);
 		*m0 = NULL;
 		return (ENOMEM);
@@ -10752,7 +10802,12 @@ pf_dummynet_route(struct pf_pdesc *pd, struct pf_kstate *s,
 	if (pf_pdesc_to_dnflow(pd, r, s, &dnflow)) {
 		pd->pf_mtag->flags |= PF_MTAG_FLAG_DUMMYNET;
 		pd->pf_mtag->flags |= PF_MTAG_FLAG_DUMMYNETED;
+		SDT_PROBE4(pf, ip, dummynet, submit, pd, s,
+		    dnflow.rule.info, dnflow.flags);
 		ip_dn_io_ptr(m0, &dnflow);
+		/* The backend may have consumed the packet. */
+		SDT_PROBE2(pf, ip, dummynet, returned, dnflow.rule.info,
+		    (*m0 != NULL));
 		if (*m0 != NULL) {
 			pd->pf_mtag->flags &= ~PF_MTAG_FLAG_ROUTE_TO;
 			pf_dummynet_flag_remove(*m0, pd->pf_mtag);
@@ -11643,6 +11698,13 @@ pf_log_matches(struct pf_pdesc *pd, struct pf_krule *rm,
 }
 
 #if defined(INET) || defined(INET6)
+/* Evaluate return values once and trace every normal/bypass return. */
+#define PF_TEST_RETURN(value) do {\
+	int pf_result = (value);\
+	SDT_PROBE1(pf, ip, test, finish, pf_result);\
+	return (pf_result);\
+} while (0)
+
 int
 pf_test(sa_family_t af, int dir, int pflags, struct ifnet *ifp, struct mbuf **m0,
     struct inpcb *inp, struct pf_rule_actions *default_actions)
@@ -11665,8 +11727,10 @@ pf_test(sa_family_t af, int dir, int pflags, struct ifnet *ifp, struct mbuf **m0
 	M_ASSERTPKTHDR(*m0);
 	NET_EPOCH_ASSERT();
 
+	SDT_PROBE3(pf, ip, test, entry, af, dir, ifp);
+
 	if (!V_pf_status.running)
-		return (PF_PASS);
+		PF_TEST_RETURN(PF_PASS);
 
 	kif = (struct pfi_kkif *)ifp->if_pf_kif;
 
@@ -11674,14 +11738,14 @@ pf_test(sa_family_t af, int dir, int pflags, struct ifnet *ifp, struct mbuf **m0
 		DPFPRINTF(PF_DEBUG_URGENT,
 		    "%s: kif == NULL, if_xname %s",
 		    __func__, ifp->if_xname);
-		return (PF_DROP);
+		PF_TEST_RETURN(PF_DROP);
 	}
 	if (kif->pfik_flags & PFI_IFLAG_SKIP) {
-		return (PF_PASS);
+		PF_TEST_RETURN(PF_PASS);
 	}
 
 	if ((*m0)->m_flags & M_SKIP_FIREWALL) {
-		return (PF_PASS);
+		PF_TEST_RETURN(PF_PASS);
 	}
 
 	if (__predict_false(! M_WRITABLE(*m0))) {
@@ -11693,7 +11757,7 @@ pf_test(sa_family_t af, int dir, int pflags, struct ifnet *ifp, struct mbuf **m0
 		MPASS(*m0 == m);
 		*m0 = m_unshare(*m0, M_NOWAIT);
 		if (*m0 == NULL) {
-			return (PF_DROP);
+			PF_TEST_RETURN(PF_DROP);
 		}
 	}
 
@@ -11708,7 +11772,7 @@ pf_test(sa_family_t af, int dir, int pflags, struct ifnet *ifp, struct mbuf **m0
 		if (ifp == NULL || ifp->if_flags & IFF_DYING) {
 			m_freem(*m0);
 			*m0 = NULL;
-			return (PF_PASS);
+			PF_TEST_RETURN(PF_PASS);
 		}
 
 		/*
@@ -11720,7 +11784,7 @@ pf_test(sa_family_t af, int dir, int pflags, struct ifnet *ifp, struct mbuf **m0
 		M_ASSERTMAPPED(*m0);
 		(ifp->if_output)(ifp, *m0, sintosa(&pd.pf_mtag->dst), NULL);
 		*m0 = NULL;
-		return (PF_PASS);
+		PF_TEST_RETURN(PF_PASS);
 	}
 
 	if (ip_dn_io_ptr != NULL && pd.pf_mtag != NULL &&
@@ -11732,8 +11796,9 @@ pf_test(sa_family_t af, int dir, int pflags, struct ifnet *ifp, struct mbuf **m0
 		/* But only once. We may see the packet multiple times (e.g.
 		 * PFIL_IN/PFIL_OUT). */
 		pf_dummynet_flag_remove(pd.m, pd.pf_mtag);
+		SDT_PROBE3(pf, ip, dummynet, reinject, af, dir, ifp);
 
-		return (PF_PASS);
+		PF_TEST_RETURN(PF_PASS);
 	}
 
 	PF_RULES_RLOCK();
@@ -11752,7 +11817,7 @@ pf_test(sa_family_t af, int dir, int pflags, struct ifnet *ifp, struct mbuf **m0
 		icmp_error(*m0, ICMP_UNREACH, ICMP_UNREACH_NEEDFRAG,
 			0, ifp->if_mtu);
 		*m0 = NULL;
-		return (PF_DROP);
+		PF_TEST_RETURN(PF_DROP);
 	}
 #endif /* INET */
 #ifdef INET6
@@ -11766,7 +11831,7 @@ pf_test(sa_family_t af, int dir, int pflags, struct ifnet *ifp, struct mbuf **m0
 		PF_RULES_RUNLOCK();
 		icmp6_error(*m0, ICMP6_PACKET_TOO_BIG, 0, in6_ifmtu(ifp));
 		*m0 = NULL;
-		return (PF_DROP);
+		PF_TEST_RETURN(PF_DROP);
 	}
 #endif /* INET6 */
 
@@ -12047,7 +12112,7 @@ done:
 			}
 			ip_divert_ptr(*m0, s != NULL ? s->id : 0, dir == PF_IN);
 			*m0 = NULL;
-			return (action);
+			PF_TEST_RETURN(action);
 		} else if (mtag == NULL) {
 			/* XXX: ipfw has the same behaviour! */
 			action = PF_DROP;
@@ -12174,6 +12239,11 @@ out:
 
 	pf_sctp_multihome_delayed(&pd, kif, s, action);
 
-	return (action);
+	/* State and packet pointers may no longer be valid here. */
+	SDT_PROBE6(pf, ip, test, result, af, dir, action, reason,
+	    ifp, (*m0 != NULL));
+	PF_TEST_RETURN(action);
 }
+#undef PF_TEST_RETURN
+
 #endif /* INET || INET6 */

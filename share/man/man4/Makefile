@@ -283,7 +283,6 @@ MAN=	aac.4 \
 	ip.4 \
 	ip17x.4 \
 	ip6.4 \
-	ipfirewall.4 \
 	ipheth.4 \
 	${_ipmi.4} \
 	ips.4 \
@@ -424,7 +423,6 @@ MAN=	aac.4 \
 	ng_hole.4 \
 	ng_hub.4 \
 	ng_iface.4 \
-	ng_ipfw.4 \
 	ng_ip_input.4 \
 	ng_ksocket.4 \
 	ng_l2cap.4 \
@@ -787,9 +785,6 @@ MLINKS+=${_hv_netvsc.4} ${_hn.4} \
 MLINKS+=${_hptrr.4} ${_rr232x.4}
 MLINKS+=${_attimer.4} ${_i8254.4}
 MLINKS+=ip.4 rawip.4
-MLINKS+=ipfirewall.4 ipaccounting.4 \
-	ipfirewall.4 ipacct.4 \
-	ipfirewall.4 ipfw.4
 MLINKS+=ice.4 if_ice.4
 MLINKS+=ipheth.4 if_ipheth.4
 MLINKS+=ipw.4 if_ipw.4

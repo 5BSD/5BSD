@@ -29,6 +29,7 @@
 #include <auditcmp_server.h>
 #include <channel.h>
 #include <libservice.h>
+#include <service_runtime.h>
 #include <logcmp.h>
 #include <logcmp_server.h>
 #include <shmring.h>
@@ -473,6 +474,19 @@ drain_session_until_idle(struct worker_state *state, const char *operation,
 	return (errno = ETIMEDOUT, -1);
 }
 
+static int
+receive_wakeup(struct worker_state *state)
+{
+	int result, saved;
+
+	result = logcmp_wakeup_drain(state->wake_fd);
+	saved = errno;
+	BSDLOG_PROBE_WAKE(state->sink.label, state->sink.instance,
+	    result == -1 ? saved : 0);
+	errno = saved;
+	return (result);
+}
+
 static void
 close_wakeup(struct worker_state *state)
 {
@@ -898,7 +912,7 @@ logcmp_test_serve(int fd, const char *label, uint32_t ring_size,
 		}
 		if (state.wake_fd >= 0 &&
 		    event.ident == (uintptr_t)state.wake_fd) {
-			if (logcmp_wakeup_drain(state.wake_fd) == -1 ||
+			if (receive_wakeup(&state) == -1 ||
 			    drain_session(&state, "test-wakeup") == -1) {
 				result = 1;
 				break;
@@ -1059,6 +1073,21 @@ pool_collect(struct pool_state *pool)
 	}
 }
 
+#define	LOGCMP_MAX_ACTOR_SESSIONS_PER_SHARD	64u
+
+/* The caller serializes admission and removal using authenticated labels. */
+static bool
+pool_actor_admit(const struct worker_state *workers, const char *label)
+{
+	unsigned same = 0;
+
+	for (; workers != NULL; workers = workers->next)
+		if (strcmp(workers->actor, label) == 0 &&
+		    ++same >= LOGCMP_MAX_ACTOR_SESSIONS_PER_SHARD)
+			return (false);
+	return (true);
+}
+
 static int
 pool_add_session(struct pool_state *pool)
 {
@@ -1096,6 +1125,12 @@ pool_add_session(struct pool_state *pool)
 		close(fd);
 		atomic_fetch_sub_explicit(pool->admitted, 1, memory_order_release);
 		return (errno = EPROTO, -1);
+	}
+	/* The actor is the authenticated client, not its resource-owner key. */
+	if (!pool_actor_admit(pool->sessions, control.actor)) {
+		close(fd);
+		atomic_fetch_sub_explicit(pool->admitted, 1, memory_order_release);
+		return (errno = EDQUOT, -1);
 	}
 	state = calloc(1, sizeof(*state));
 	if (state == NULL) {
@@ -1187,7 +1222,9 @@ pool_worker(int control_fd, int audit_fd,
 	struct pool_event_source *source;
 	struct worker_state *state, *next;
 	int count, error, i, wants_write;
+	char release;
 
+	setproctitle("-BSDLog: pool %u", (unsigned)shard);
 	memset(&pool, 0, sizeof(pool));
 	pool.control_fd = control_fd;
 	pool.storage = storage;
@@ -1218,7 +1255,9 @@ pool_worker(int control_fd, int audit_fd,
 	    SERVICE_PROTECT_NOSOCK) == -1)
 		return (1);
 	error = 0;
-	if (write(control_fd, &error, sizeof(error)) != sizeof(error))
+	if (write(control_fd, &error, sizeof(error)) != sizeof(error) ||
+	    read(control_fd, &release, sizeof(release)) != sizeof(release) ||
+	    release != 1)
 		return (1);
 	BSDLOG_PROBE_POOL_START(shard, capacity, 0);
 	for (;;) {
@@ -1268,7 +1307,7 @@ pool_worker(int control_fd, int audit_fd,
 			}
 			if (state->wake_fd >= 0 && events[i].filter == EVFILT_READ &&
 			    events[i].ident == (uintptr_t)state->wake_fd) {
-				if (logcmp_wakeup_drain(state->wake_fd) == -1 ||
+				if (receive_wakeup(state) == -1 ||
 				    drain_session(state, "edge-wakeup") == -1)
 					state->terminal_error = errno;
 			} else if (events[i].filter == EVFILT_WRITE) {
@@ -1338,8 +1377,7 @@ start_pool(struct pool_parent *parent,
     _Atomic uint32_t *admitted, uint32_t capacity, uint32_t shard)
 {
 	struct logcmp_storage_session storage;
-	int sockets[2], audit_fd, child_error, error, flags, pd;
-	ssize_t amount;
+	int sockets[2], audit_fd, error, flags, pd;
 	pid_t pid;
 
 	memset(&storage, 0, sizeof(storage));
@@ -1365,10 +1403,11 @@ start_pool(struct pool_parent *parent,
 	close(sockets[1]);
 	logcmp_storage_session_close(&storage);
 	close(audit_fd);
-	amount = read(sockets[0], &child_error, sizeof(child_error));
-	if (amount != sizeof(child_error) || child_error != 0) {
-		error = amount == sizeof(child_error) ? child_error : EIO;
+	if (service_bootstrap_parent(sockets[0], LOGCMP_STORAGE_TIMEOUT_MS) == -1) {
+		error = errno;
 		(void)pdkill(pd, SIGKILL);
+		while (pdwait(pd, NULL, WEXITED, NULL, NULL) == -1 && errno == EINTR)
+			;
 		close(pd);
 		close(sockets[0]);
 		return (errno = error, -1);
@@ -1383,6 +1422,8 @@ start_pool(struct pool_parent *parent,
 	    cap_cloexec_limit(pd, CAP_CLOEXEC_LOCKED) == -1) {
 		error = errno;
 		(void)pdkill(pd, SIGKILL);
+		while (pdwait(pd, NULL, WEXITED, NULL, NULL) == -1 && errno == EINTR)
+			;
 		close(pd);
 		close(sockets[0]);
 		return (errno = error, -1);

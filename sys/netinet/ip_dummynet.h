@@ -29,6 +29,8 @@
 
 #ifndef _IP_DUMMYNET_H
 #define _IP_DUMMYNET_H
+
+#include <netinet/ip_dn_flow.h>
 #define NEW_AQM
 /*
  * Definition of the kernel-userland API for dummynet.

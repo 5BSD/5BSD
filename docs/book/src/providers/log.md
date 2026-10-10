@@ -199,6 +199,19 @@ keys, wrong types and out-of-range values prevent startup.
 | `rate_limit_interval_ms`, `rate_limit_burst` | at most one hour and one million; both zero disables, one zero is rejected | 30000, 10000 |
 | `ingress_shards`, `max_sessions`, `drain_batch` | pool sizing | 4, 65536, 256 |
 
+Each ingress shard admits at most 64 simultaneous sessions per authenticated
+client label, independently of the resource owner used for stored records. The
+aggregate per-client ceiling is 64 times `ingress_shards`; a full selected shard
+can refuse a connection earlier. Removing a session returns its admission slot.
+This bounds session growth as well as the fixed pool's process count.
+
+Pending ring drains share a bounded round-robin work queue. The fairness test
+keeps one producer continuously busy and checks that another producer still gets
+service. This is a bound on scheduled work, not on storage or flush latency.
+Lost replies never cause the client library to replay an earlier record: a new
+explicit call may reconnect, and the caller decides how to handle an ambiguous
+previous result.
+
 Records below `minimum_severity` and records beyond a session's fixed-window
 budget advance the sequence but never reach the store, and they are counted
 as filtered and rate-limited respectively, distinct from malformed records

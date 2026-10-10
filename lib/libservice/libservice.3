@@ -979,6 +979,9 @@ separates buffer and descriptor capacities from returned lengths and includes
 authenticated sender metadata.
 .Vt struct service_call_options
 sets a bounded timeout.
+Finite waits use one monotonic deadline, including condition waits behind
+another dispatcher; wall-clock adjustments do not extend that budget.
+This is a waiting budget, not a guarantee of scheduling latency under load.
 .Pp
 Concurrent calls share one dispatcher and are correlated by channel reply
 tokens.

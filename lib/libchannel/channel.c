@@ -20,6 +20,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <unistd.h>
 
 #include "channel.h"
@@ -279,6 +280,8 @@ channel_request_complete(struct channel_request *request,
 	handler = request->handler;
 	context = request->context;
 	request->callback_active = true;
+	LIBCHANNEL_PROBE_REQUEST_DONE((uintptr_t)request->channel,
+	    request->token, error);
 	LIBCHANNEL_PROBE_COMPLETE(request->token, error);
 	if (handler != NULL)
 		handler(request, message, error, context);
@@ -786,6 +789,8 @@ channel_abandon(struct channel *channel)
 	channel->out_tail = NULL;
 	while ((request = channel->requests) != NULL) {
 		channel->requests = request->next;
+		LIBCHANNEL_PROBE_REQUEST_DONE((uintptr_t)channel, request->token,
+		    ECANCELED);
 		free(request);
 	}
 	channel->npending = channel->nqueued = 0;
@@ -828,17 +833,42 @@ channel_fd(const struct channel *channel)
  * filters (0 on timeout), or -1 with errno set on error.  A dead/EOF channel
  * reports CHANNEL_WAIT_READ ready so the caller's dispatch observes the error.
  */
+/* One monotonic deadline covers receive retries and the kqueue fallback. */
+static int
+channel_wait_remaining(const struct timespec *deadline, struct timespec *left)
+{
+	struct timespec now;
+
+	if (clock_gettime(CLOCK_MONOTONIC, &now) == -1)
+		return (-1);
+	if (timespeccmp(deadline, &now, <=)) {
+		left->tv_sec = left->tv_nsec = 0;
+		return (0);
+	}
+	timespecsub(deadline, &now, left);
+	return (0);
+}
+
 int
 channel_wait(struct channel *channel, int want_write, int timeout_ms)
 {
 	struct kevent chg, out[2];
-	struct timespec ts, *tsp;
+	struct timespec ts, deadline, *tsp;
+	bool attempted;
+	int remaining_ms;
 	int n, i, nchg, ready;
 
 	if (!channel_owned(channel) || channel->destroy_pending ||
 	    channel->fd < 0) {
 		errno = EBADF;
 		return (-1);
+	}
+	if (timeout_ms >= 0) {
+		if (clock_gettime(CLOCK_MONOTONIC, &deadline) == -1)
+			return (-1);
+		ts.tv_sec = timeout_ms / 1000;
+		ts.tv_nsec = (long)(timeout_ms % 1000) * 1000000L;
+		timespecadd(&deadline, &ts, &deadline);
 	}
 	/*
 	 * Read-only waits receive in the same system call: the kernel waits
@@ -848,11 +878,21 @@ channel_wait(struct channel *channel, int want_write, int timeout_ms)
 	if (!want_write && !channel->rx_wait_unsupported) {
 		if (channel->rx_prefetched != NULL)
 			return (CHANNEL_WAIT_READ);
+		attempted = false;
 		for (;;) {
 			struct channel_message *m;
 
-			m = channel_message_receive_wait(channel,
-			    timeout_ms < 0 ? -1 : timeout_ms);
+			remaining_ms = -1;
+			if (timeout_ms >= 0) {
+				if (channel_wait_remaining(&deadline, &ts) == -1)
+					return (-1);
+				remaining_ms = (int)(ts.tv_sec * 1000 +
+				    (ts.tv_nsec + 999999) / 1000000);
+				if (attempted && remaining_ms == 0)
+					return (0);
+			}
+			attempted = true;
+			m = channel_message_receive_wait(channel, remaining_ms);
 			if (m != NULL) {
 				channel->rx_prefetched = m;
 				return (CHANNEL_WAIT_READ);
@@ -896,14 +936,17 @@ channel_wait(struct channel *channel, int want_write, int timeout_ms)
 		nchg = 1;
 	}
 
-	if (timeout_ms < 0) {
-		tsp = NULL;
-	} else {
-		ts.tv_sec = timeout_ms / 1000;
-		ts.tv_nsec = (long)(timeout_ms % 1000) * 1000000L;
-		tsp = &ts;
-	}
+	attempted = false;
 	for (;;) {
+		tsp = NULL;
+		if (timeout_ms >= 0) {
+			if (channel_wait_remaining(&deadline, &ts) == -1)
+				return (-1);
+			if (attempted && !timespecisset(&ts))
+				return (0);
+			tsp = &ts;
+		}
+		attempted = true;
 		n = kevent(channel->kqueue_fd, nchg ? &chg : NULL, nchg, out, 2,
 		    tsp);
 		nchg = 0;
@@ -1026,6 +1069,8 @@ channel_send_request(struct channel *channel,
 	request->next = channel->requests;
 	channel->requests = request;
 	channel->npending++;
+	LIBCHANNEL_PROBE_REQUEST_START((uintptr_t)channel, request->token,
+	    length, nfds);
 	if (channel_send_or_queue(channel, data, length, fds, nfds,
 	    request->token, request, specs, flags) == -1) {
 		error = errno;
@@ -1036,6 +1081,8 @@ channel_send_request(struct channel *channel,
 				break;
 			}
 		channel->npending--;
+		LIBCHANNEL_PROBE_REQUEST_DONE((uintptr_t)channel, request->token,
+		    error);
 		free(request);
 		if (channel_terminal_error(error))
 			channel_mark_dead(channel, error);
@@ -1343,6 +1390,8 @@ channel_dispatch(struct channel *channel)
 	struct channel_message *message;
 	struct channel_request *request, **link;
 	int error, dispatched;
+	uint64_t trace_token;
+	uintptr_t trace_channel = (uintptr_t)channel;
 
 	if (!channel_owned(channel))
 		return (-1);
@@ -1350,6 +1399,8 @@ channel_dispatch(struct channel *channel)
 		errno = EINVAL;
 		return (-1);
 	}
+	LIBCHANNEL_PROBE_DISPATCH_START(trace_channel, channel->npending,
+	    channel->nqueued);
 	channel->dispatch_depth++;
 	error = 0;
 	dispatched = 0;
@@ -1370,13 +1421,18 @@ channel_dispatch(struct channel *channel)
 			break;
 		}
 		dispatched++;
+		trace_token = message->token;
 		if (message->token == 0) {
 			message->kind = CHANNEL_MESSAGE_EVENT;
 			LIBCHANNEL_PROBE_RECEIVE(message->kind, message->token,
 			    message->length, message->nfds);
 			if (channel->event_handler != NULL) {
+				LIBCHANNEL_PROBE_HANDLER_START(trace_channel,
+				    trace_token, CHANNEL_MESSAGE_EVENT);
 				channel->event_handler(channel, message,
 				    channel->event_context);
+				LIBCHANNEL_PROBE_HANDLER_DONE(trace_channel,
+				    trace_token, CHANNEL_MESSAGE_EVENT);
 				message = NULL;
 			} else
 				LIBCHANNEL_PROBE_DISCARD(message->token,
@@ -1396,8 +1452,12 @@ channel_dispatch(struct channel *channel)
 			LIBCHANNEL_PROBE_RECEIVE(message->kind, message->token,
 			    message->length, message->nfds);
 			if (channel->request_handler != NULL) {
+				LIBCHANNEL_PROBE_HANDLER_START(trace_channel,
+				    trace_token, CHANNEL_MESSAGE_REQUEST);
 				channel->request_handler(channel, message,
 				    channel->request_context);
+				LIBCHANNEL_PROBE_HANDLER_DONE(trace_channel,
+				    trace_token, CHANNEL_MESSAGE_REQUEST);
 				message = NULL;
 			} else
 				LIBCHANNEL_PROBE_DISCARD(message->token,
@@ -1410,6 +1470,7 @@ channel_dispatch(struct channel *channel)
 		if (channel->destroy_pending || channel->rx_drained)
 			break;
 	}
+	LIBCHANNEL_PROBE_DISPATCH_DONE(trace_channel, dispatched, error);
 	channel->dispatch_depth--;
 	if (channel->destroy_pending && channel->dispatch_depth == 0) {
 		channel_destroy_now(channel);

@@ -159,6 +159,12 @@ Bootstrap acknowledgement errors are checked without generating SIGPIPE.
 The parent uses one five-second monotonic deadline for the bootstrap status
 and acknowledgement, using nonblocking socket operations.
 Timeout follows the failed-bootstrap shutdown path.
+
+.Ss Client admission limits
+At most 16 concurrent workers may serve one authenticated client label.
+An excess connection is closed before allocating session resources.
+Capacity returns when the provider removes the closed session or exited worker.
+Existing sessions are preserved; clients must handle connection failure.
 .Sh SEE ALSO
 .Xr dtrace 1 ,
 .Xr openat 2 ,

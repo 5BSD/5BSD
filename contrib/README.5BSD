@@ -1143,3 +1143,73 @@ Bridge retirement VM result (2026-10-10):
   Log SHA256 cc799067072b1ec9b4b055088d55172e1d7ed4da779c8a84203035f920a82b1f.
   Evidence: /usr/obj/5BSD-pf-consolidation-20261010/smoke7-results.json.
   Remaining world/package/upgrade and full PF parity gates stay open.
+
+IPFW final-dependency pass (2026-10-10):
+  Extracted the unchanged 56-byte ipfw_flow_id ABI and IPv6 masking helper
+  into netinet/ip_dn_flow.h with the original notice. Removed public firewall,
+  NAT64 and NPTv6 headers and updated PF/Dummynet includes. Added layout checks
+  for every field. Independent dnctl build against source headers passes.
+  Blocklist helpers no longer source or dispatch IPFW policy; they diagnose
+  legacy configuration and prefer enabled PF. Two fixture tests (ten helper
+  scenarios) pass without host firewall access. Removed retired rescue,
+  netstart, manual/example/DTrace and test-directory registrations. Added an
+  independent Dummynet startup service and deprecated the SNMP IPFW bridge
+  control as read-only disabled. Scheduler/heap test sources originally under
+  sys/netpfil/ipfw/test are retained under sys/netpfil/dummynet/test; their
+  historical harness is not yet qualified against the current scheduler API.
+  Custom ports: sshguard 2.5.1 tar SHA256
+  997a1e0ec2b2165b4757c42f8948162eb534183946af52efc406885d97cb89fc;
+  mpd 5.9 tar SHA256
+  1f2cda9b3e610713f94e90f3826bbb0d638c6fb678986b1eaa9cd9930b0d66ba.
+  Both fetched through their existing SourceForge MASTER_SITES, checked against
+  distinfo and patched. sshguard packages the PF script rather than other
+  platform scripts; mpd's IPFW probe/compile definitions are removed. Both
+  build, stage and check-plist successfully in private /usr/obj work directories.
+  Ports commit: 148e7fb74400edecee584f5e3d5471b172cd7986. No new
+  upstream base import; these are local extractions/removals and port policy.
+  After the concurrent build ended, full GENERIC build and staging into the
+  disposable VM root passed. Native PF/Dummynet, dnctl, SNMP bridge and
+  libnetgraph builds also passed. The concurrent world build has no successful
+  completion result; clean-world/package/upgrade qualification remains open.
+  No host installation or firewall changes performed.
+
+Final removal VM evidence (2026-10-10):
+  Eighteen distinct ATF cases passed across component runs in four-vCPU
+  networked VMs. Smoke8 verified normal PF/Dummynet/dnctl startup and passed
+  thirteen cases; its SNMP fixture failed. Smoke15 passed seven focused cases
+  (two overlapping), including retired SNMP read/write behavior and four PF
+  shaper cases. All 42 hashes matched, IPFW loading failed, QEMU exited 0,
+  buffers synced and ZFS was healthy. This is selected-artifact evidence,
+  not a complete passing normal-boot suite or clean-world/upgrade result.
+  Earlier failures/timeouts and the corrected private SNMP library load path
+  are retained in finish-component-qualification.json under the evidence root.
+  Numeric OID coverage does not qualify symbolic SNMP client/MIB parsing.
+  Smoke15 log SHA256:
+  28808fd36486e77dfe1ddf6bcad5f5d6a1864b27b0f45fc5a5f3017c08875aa7.
+
+IPFW package policy preservation (2026-10-10):
+  Local change, no upstream code imported. A real pkg fixture transaction
+  showed that removing rc.firewall from the rc manifest also deletes local
+  modifications. The rc pre-install script saves that retired policy to a
+  unique rc.firewall.pkgsave file before replacement. The maintained
+  tools/test/pf-consolidation/package-upgrade-test.py exercises the production
+  scripts in isolated roots; all eight retirement/preservation/fresh-install
+  checks pass. Evidence: /usr/obj/5BSD-pf-upgrade-20261010/
+  package-policy-regression/results.json. Full VM upgrade remains pending.
+
+System and capability tracing review (2026-10-10):
+  Native 5BSD instrumentation changes; no new external source imported.
+  Expanded PF/Dummynet, libchannel, native libfidl adapter and OpenES probes;
+  added BSDMemory probes and filled daemon request-result/call-site gaps.
+  Added installed observation scripts, operator contract tests and a single
+  per-component review ledger under tools/test/system-tracing. Matter coverage
+  is limited to the existing connectedhomeip IDL tooling, not a Matter daemon.
+  Changed user-space source units compile with tracing enabled and disabled;
+  USDT relocation generation/link checks and 19-daemon operator tests pass.
+  PF/Dummynet/OpenES object compilation passes. These checks do not establish
+  live DTrace script execution or installed-daemon/VM behavior. Runtime gates
+  remain explicit in coverage.json and the Desktop subsystem audit checklist.
+  Evidence: /usr/obj/5BSD-system-tracing-20261010 and
+  /usr/obj/5BSD-pf-upgrade-20261010. The earlier successful world/kernel build
+  predates the last daemon review fixes; a final source freeze/rebuild and
+  four-core networked VM qualification are still required before publication.

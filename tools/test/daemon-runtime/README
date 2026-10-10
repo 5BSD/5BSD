@@ -11,15 +11,17 @@ configurations, and static test/fixture binaries. It copies inputs into its
 own staging tree, with root ownership represented in a makefs METALOG.
 No host root login, install, mount or reboot is needed. It does not write the
 input staging root or attach another VM's writable disk. Compilation uses all
-logical CPUs; this small runtime guest uses two CPUs and 1 GiB RAM.
+logical CPUs; this small runtime guest uses four CPUs and 1 GiB RAM by default.
+--cpus selects one through four guest CPUs; this task uses four.
 
-The VM has no network and boots a PID 1 fixture instead of the capability plane.
+The VM has no network. By default it boots a PID 1 fixture with the capability
+plane disabled; --oes-admission enables the additional integration described below.
 It runs native session/bootstrap deadline and session lifecycle tests as root,
 plus the BSDFilesystem descriptor-hardening failure regression.
 A skip, missing/duplicate pass marker, timeout, panic, WITNESS reversal or
 unclean shutdown fails the run. inputs.json and result.json retain input hashes
 and the exact QEMU command; serial.log retains output, including failed runs.
-This gate does not qualify booted daemons, actual OOM, ACPI suspend, hardware,
+The default gate does not qualify booted daemons, actual OOM, ACPI suspend, hardware,
 installer behavior, or a complete system image. Never run runtime_init as the
 host's init. Source and object inputs must be coordinated before full acceptance.
 
@@ -33,10 +35,22 @@ they do not replace integrated daemon/provider tests.
 Use --oes-factory to stage the current object tree's oes.ko and boot it in the
 disposable guest. The runner hashes the module and static factory and handoff tests.
 This exercises real OES NOTIFY descriptor attenuation after cap_enter, including
-denial of AUTH subscriptions and mode/scope changes. It does not validate
+denial of AUTH subscriptions and mode/scope changes.
+The handoff suite also drops the recipient to UID/GID65534 with no
+supplementary groups before requesting and using a client; the factory stays
+privileged. Child assertions are fatal and propagated to the root ATF parent.
+After the factory session closes, both recipients use liboes to adopt the fd,
+query mode/scope, subscribe and unsubscribe NOTIFY events, read subscription
+sets and statistics, reject a scope change, and destroy the owned descriptor.
+This tests descriptor delivery to a non-root recipient, not .ucl admission. It does not validate
 SwitchBoard attribute admission. The handoff cases exercise real channel
 descriptor delivery, denied onward transfer, malformed-request rejection, and
 the five-second idle deadline.
+
+Use --oes-admission for the additional real Capsule/SwitchBoard .ucl allow/deny
+stack. Build its private static fixtures with tools/test/oes-admission/build.py;
+see that directory for the exact scope and invocation. This option implies
+--oes-factory and uses an OES-only provider with production factory code.
 
 The OES gate also checks factory quota boundaries and ordinary filesystem
 mediation of a real intermediate-directory alias to /dev/oes. It proves the
@@ -121,3 +135,70 @@ from an older host libc.a. A complete matching world build supplies these;
 standalone test builds must explicitly link the matching libsys.a ahead of
 host libc.a. Verify the linked executable, not only header macros. The runner
 rejects skipped hardening checks and does not treat ENOSYS as acceptance.
+
+The same --cleanup-lifecycle fixture supports
+    --atf-case tests/sys/mac_capability/mac_capability_test:failed_init_completes_cleanup
+It injects initialization failure sixteen times against a four-instance limit,
+checks EIO and unchanged active
+instance counts, verifies revoke was not called for failed instances, then
+checks successful creation/close and module unload. Initialization rollback
+must publish cleanup completion even though it deliberately skips co_revoke.
+
+The --cleanup-lifecycle case
+    --atf-case tests/sys/mac_capability/mac_capability_test:unload_waits_for_admission
+blocks authorization and initialization while another process unloads the
+provider. It covers direct CONNECT and MINT_INSTANCE, success and failure
+returns (eight interleavings), verifies unload waits, checks rejected creation,
+rejects mint on descriptors retained after unload, and checks instance counts
+after rollback. This does not force every allocator
+failure or replace WITNESS/INVARIANTS stress testing.
+
+The mandatory session payload/attachment case prints SESSION_DEADLINE with
+requested and elapsed milliseconds, calling-thread CPU milliseconds, and
+voluntary/involuntary context switches around its timeout call. The existing
+75 ms allowance for a 10 ms request is unchanged. Retain failing runs even if
+a later run passes; low CPU time alone does not identify whether excess elapsed
+time came from scheduling, timer delivery, lock contention, or another wait.
+
+For deadline-overrun diagnosis, select
+  --atf-case lib/libservice/tests/libservice_api_test:deadline_timer_control
+This takes 128 plain 10ms nanosleeps without session/channel operations and
+checks the same 75ms allowance. It is diagnostic, not a substitute for the
+mandatory session test; either failure keeps the run failed. The timer control
+can also run on the host without capability operations. Compare results to
+distinguish a service-only failure from broader guest timing delays. Both
+inputs.json and result.json include host_loadavg_start and host_logical_cpus;
+these are context, not proof that host scheduling caused a failure.
+
+2026-10-10 investigation: deadline-timer-control VM failed the service check
+(411.978ms) and timer control (33/128 overruns, maximum348.478ms). The same
+host timer control passed (maximum10.063ms). Concurrent host load was24.64
+with builds and other QEMU processes. This demonstrates VM timing delays
+independent of libservice, but does not distinguish emulator scheduling from
+guest timer delivery or establish the original failure's sole cause. A quiet
+host/hardware-accelerated comparison and guest timer trace remain required.
+An icount experiment exited before tests with QEMU "Bad icount read"; no
+virtual-clock option is shipped and no failing allowance was relaxed.
+
+Diagnostic comparisons may select --eventtimer LAPIC/i8254/HPET and
+--tcg-thread multi/single. Defaults retain automatic guest timer selection
+and multi-thread TCG. The requested settings are recorded in provenance;
+RUNTIME_CLOCK prints actual guest eventtimer and timecounter selections.
+A timer override can fall back if unavailable, so inspect the actual value.
+Both modes retain the selected guest CPU count and all acceptance thresholds.
+
+Further 2026-10-10 host ktrace captured a QEMU CPU thread descheduled for
+174.972ms while its main thread waited175.002ms on the same mutex; the CPU
+thread resumed and woke the main thread. CPU deschedules reached936.947ms.
+This demonstrates host lock-holder scheduling delays in the failing VM.
+Both LAPIC/i8254 and single/multi TCG reproduced overruns. No production
+timeout change or relaxed allowance follows from this result; repeat latency
+acceptance on a quiet host and keep the timer control. Tracing can perturb
+timings and does not prove the sole cause of every earlier untraced failure.
+
+The --oes-admission option now also requires live coalition reload/removal
+acceptance using a private tmpfs bundle. See tools/test/oes-admission/README.
+--fixture-objtop selects a separately built static fixture tree beneath
+/usr/obj/usr/src, leaving --objtop as the authoritative kernel/module tree.
+This keeps fixture compilation from overwriting active world-build objects;
+all staged hashes, kernel checks and pass requirements still apply.

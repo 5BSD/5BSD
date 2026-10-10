@@ -6,7 +6,17 @@
 .include <src.opts.mk>
 
 PACKAGE=	dtrace
-SCRIPTS=	blued-att \
+SCRIPTS=	capability-observe \
+		channel-observe \
+		fidl-observe \
+		oes-observe \
+		linuxulator-observe \
+		bsdchannel-kernel \
+		bsdmemory-observe \
+		matter-idl-observe \
+		dn-observe \
+		pf-observe \
+		blued-att \
 		blued-connections \
 		blued-overview \
 		blued-pairing \
@@ -104,7 +114,7 @@ SCRIPTS=	blued-att \
 
 SCRIPTSDIR= ${SHAREDIR}/dtrace
 
-DSRCS=		mbuf.d ipfw.d
+DSRCS=		mbuf.d
 
 FILES=		${DSRCS}
 FILESDIR=	/usr/lib/dtrace

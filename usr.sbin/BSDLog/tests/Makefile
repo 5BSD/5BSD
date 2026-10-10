@@ -64,4 +64,20 @@ SRCTREE_FILES=	lib/liblogcmp/logcmp.c \
 		usr.sbin/BSDLog/logcmp.c
 .include "${SRCTOP}/tests/srctree.mk"
 
+
+ATF_TESTS_C+= pool_fairness_test
+SRCS.pool_fairness_test= pool_fairness_test.c session.c
+CFLAGS.pool_fairness_test+= -I${SRCTOP}/lib/libauditcmp \
+    -I${SRCTOP}/lib/libchannel -I${SRCTOP}/sys \
+    -ffunction-sections -fdata-sections
+LDFLAGS.pool_fairness_test+= -Wl,--gc-sections
+LIBADD.pool_fairness_test+= auditcmp channel logcmp service shmring pthread
+NO_SHARED.pool_fairness_test= yes
+
+
+ATF_TESTS_C+= quota_test
+CFLAGS.quota_test+= -I${SRCTOP}/lib/libauditcmp -I${SRCTOP}/lib/libcapreclaim -I${SRCTOP}/lib/libchannel -I${SRCTOP}/lib/liblogcmp -I${SRCTOP}/lib/libservice -I${SRCTOP}/lib/libshmring -I${SRCTOP}/contrib/libucl/include -I${SRCTOP}/sys -ffunction-sections -fdata-sections
+LDFLAGS.quota_test+= -Wl,--gc-sections
+NO_SHARED.quota_test= yes
+
 .include <bsd.test.mk>

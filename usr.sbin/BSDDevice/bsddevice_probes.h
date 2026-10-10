@@ -14,12 +14,16 @@
 
 #ifdef WITH_DTRACE
 #include "bsddevice_provider.h"
+#define BSDDEVICE_PROBE_REQUEST_DONE(op, status, error) \
+	BSDDEVICE_REQUEST_DONE(op, status, error)
 #define	BSDDEVICE_PROBE_OPEN(label, device, granted, error) \
 	BSDDEVICE_OPEN(__DECONST(char *, label), \
 	    __DECONST(char *, device), granted, error)
 #define	BSDDEVICE_PROBE_LIST(label, cursor, count, error) \
 	BSDDEVICE_LIST(__DECONST(char *, label), cursor, count, error)
 #else
+#define BSDDEVICE_PROBE_REQUEST_DONE(op, status, error) \
+	do { (void)(op); (void)(status); (void)(error); } while (0)
 #define	BSDDEVICE_PROBE_OPEN(label, device, granted, error) \
 	do { (void)(label); (void)(device); (void)(granted); \
 	    (void)(error); } while (0)

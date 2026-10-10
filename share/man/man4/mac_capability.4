@@ -241,6 +241,8 @@ milliseconds
 .Pq Dv MAC_CAPABILITY_RECV_WAIT_FOREVER No for no limit , 0 No to poll ;
 a timeout fails with
 .Er ETIMEDOUT .
+The finite timeout uses one absolute monotonic deadline across queue wakeups;
+another receiver consuming a message does not restart the budget.
 This replaces a readiness wait followed by a receive.
 .It Dv MAC_CAPABILITY_SENDMSG_V2
 As
@@ -299,6 +301,15 @@ Synchronous request/reply in the caller's thread.
 Returns
 .Er EMSGSIZE
 with the required size if the reply buffer is too small.
+The flags field accepts MAC_CAPABILITY_CALL_F_CLOEXEC and
+MAC_CAPABILITY_CALL_F_CLOFORK to install returned descriptors atomically
+with close-on-exec or close-on-fork set, respectively.
+These options affect returned descriptor slots, including returned references
+to request files; they do not change the caller's request descriptors.
+Zero preserves the existing inheritance behavior.
+These options set ordinary descriptor flags; they do not lock inheritance
+policy or prevent the caller from subsequently clearing the flags.
+Unknown flag bits and nonzero reserved fields are rejected with EINVAL.
 .It Dv MAC_CAPABILITY_GETINFO
 Query capability metadata: service name, badge, queue limits, and
 feature flags.

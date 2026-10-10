@@ -1836,6 +1836,176 @@ cleanup_snapshot(int fd)
 	return (reply);
 }
 
+static int
+cleanup_watch_flags(int fd, uint32_t flags)
+{
+	struct coalition_req_hdr req = { .op = COALITION_OP_CLEANUP_WATCH };
+	struct coalition_reply reply;
+	struct mac_capability_call_args ca;
+	int watch = -1;
+
+	memset(&ca, 0, sizeof(ca));
+	ca.flags = flags;
+	ca.req = &req;
+	ca.req_len = sizeof(req);
+	ca.reply = &reply;
+	ca.reply_len = sizeof(reply);
+	ca.reply_fds = &watch;
+	ca.reply_nfds = 1;
+	ATF_REQUIRE_EQ(0, ioctl(fd, MAC_CAPABILITY_CALL, &ca));
+	ATF_REQUIRE_EQ(0, reply.status);
+	ATF_REQUIRE_EQ(1, ca.reply_nfds);
+	ATF_REQUIRE(watch >= 0);
+	return (watch);
+}
+
+static int
+cleanup_watch(int fd)
+{
+	return (cleanup_watch_flags(fd, 0));
+}
+
+ATF_TC(cleanup_watch_inheritance);
+ATF_TC_HEAD(cleanup_watch_inheritance, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "CALL installs returned descriptor inheritance flags atomically");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(cleanup_watch_inheritance, tc)
+{
+	struct mac_capability_call_args ca;
+	int cfd, watch, bits, status;
+	pid_t child;
+	uint32_t flags;
+
+	cfd = mac_capability_connect("coalition");
+	ATF_REQUIRE(cfd >= 0);
+	memset(&ca, 0, sizeof(ca));
+	ca.flags = UINT32_MAX;
+	ATF_CHECK_ERRNO(EINVAL, ioctl(cfd, MAC_CAPABILITY_CALL, &ca) == -1);
+	for (unsigned i = 0; i < 4; i++) {
+		flags = ((i & 1) ? MAC_CAPABILITY_CALL_F_CLOEXEC : 0) |
+		    ((i & 2) ? MAC_CAPABILITY_CALL_F_CLOFORK : 0);
+		watch = cleanup_watch_flags(cfd, flags);
+		bits = fcntl(watch, F_GETFD);
+		ATF_REQUIRE(bits >= 0);
+		ATF_CHECK_EQ((i & 1) != 0, (bits & FD_CLOEXEC) != 0);
+		ATF_CHECK_EQ((i & 2) != 0, (bits & FD_CLOFORK) != 0);
+		child = fork();
+		ATF_REQUIRE(child >= 0);
+		if (child == 0) {
+			bits = fcntl(watch, F_GETFD);
+			_exit((i & 2) ? (bits == -1 && errno == EBADF ? 0 : 1) :
+			    (bits >= 0 ? 0 : 1));
+		}
+		ATF_REQUIRE_EQ(child, waitpid(child, &status, 0));
+		ATF_CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+		ATF_REQUIRE_EQ(0, close(watch));
+	}
+	ATF_REQUIRE_EQ(0, close(cfd));
+}
+
+static void
+cleanup_wait_event(int watch, int kq, unsigned phase)
+{
+	struct kevent event;
+	struct timespec timeout = { .tv_sec = 5 };
+	struct coalition_cleanup_reply state;
+	struct mac_capability_recvmsg_args recv;
+
+	ATF_REQUIRE_EQ(1, kevent(kq, NULL, 0, &event, 1, &timeout));
+	ATF_CHECK_EQ((uintptr_t)watch, event.ident);
+	ATF_CHECK_EQ(EVFILT_READ, event.filter);
+	memset(&recv, 0, sizeof(recv));
+	recv.payload = &state;
+	recv.payload_len = sizeof(state);
+	ATF_REQUIRE_EQ(0, ioctl(watch, MAC_CAPABILITY_RECVMSG, &recv));
+	ATF_REQUIRE_EQ(sizeof(state), recv.payload_len);
+	ATF_CHECK_EQ(phase, state.phase);
+	ATF_CHECK_EQ(0, state.status);
+	timeout.tv_sec = 0;
+	ATF_CHECK_EQ(0, kevent(kq, NULL, 0, &event, 1, &timeout));
+}
+
+ATF_TC(cleanup_watch_close);
+ATF_TC_HEAD(cleanup_watch_close, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "Read-only cleanup view survives control close and notifies once");
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "timeout", "30");
+}
+ATF_TC_BODY(cleanup_watch_close, tc)
+{
+	struct coalition_set_signal_req signal_req = {
+	    .op = COALITION_OP_SET_SIGNAL, .signal = SIGSTOP };
+	struct coalition_reply reply;
+	struct coalition_cleanup_reply state;
+	struct kevent event;
+	struct timespec zero = { 0 };
+	int cfd, watch, cancel, pd, status, kq;
+	int32_t error;
+	unsigned base = coalition_count();
+	pid_t child;
+
+	ATF_CHECK_ERRNO(EACCES, mac_capability_connect("coalition_wait") == -1);
+	child = pdfork(&pd, 0);
+	ATF_REQUIRE(child >= 0);
+	if (child == 0) {
+		for (;;)
+			pause();
+	}
+	cfd = mac_capability_connect("coalition");
+	ATF_REQUIRE(cfd >= 0);
+	watch = cleanup_watch(cfd);
+	cancel = cleanup_watch(cfd);
+	ATF_REQUIRE_EQ(0, close(cancel));
+	state = cleanup_snapshot(watch);
+	ATF_CHECK_EQ(COALITION_CLEANUP_ACTIVE, state.phase);
+	ATF_CHECK_ERRNO(EOPNOTSUPP,
+	    coalition_op(watch, COALITION_OP_TERMINATE, &error) == -1);
+	ATF_REQUIRE_EQ(0, coalition_enlist(cfd, watch, &error));
+	ATF_CHECK_EQ(EOPNOTSUPP, error);
+	ATF_REQUIRE_EQ(0, coalition_call(cfd, &signal_req, sizeof(signal_req),
+	    NULL, 0, &reply, sizeof(reply)));
+	ATF_REQUIRE_EQ(0, reply.status);
+	ATF_REQUIRE_EQ(0, coalition_enlist(cfd, pd, &error));
+	ATF_REQUIRE_EQ(0, error);
+	kq = kqueue();
+	ATF_REQUIRE(kq >= 0);
+	EV_SET(&event, watch, EVFILT_READ, EV_ADD, 0, 0, NULL);
+	ATF_REQUIRE_EQ(0, kevent(kq, &event, 1, NULL, 0, NULL));
+	ATF_REQUIRE_EQ(0, close(cfd));
+	state = cleanup_snapshot(watch);
+	ATF_CHECK_EQ(COALITION_CLEANUP_DRAINING, state.phase);
+	ATF_CHECK_EQ(1, state.processes);
+	ATF_CHECK_EQ(0, kevent(kq, NULL, 0, &event, 1, &zero));
+	ATF_REQUIRE_EQ(0, pdkill(pd, SIGKILL));
+	ATF_REQUIRE_EQ(child, waitpid(child, &status, 0));
+	cleanup_wait_event(watch, kq, COALITION_CLEANUP_COMPLETE);
+	state = cleanup_snapshot(watch);
+	ATF_CHECK_EQ(COALITION_CLEANUP_COMPLETE, state.phase);
+	close(pd);
+	close(kq);
+	close(watch);
+	ATF_CHECK_EQ(base, coalition_count());
+
+	/* Subscription after completion must not miss the terminal event. */
+	cfd = mac_capability_connect("coalition");
+	ATF_REQUIRE(cfd >= 0);
+	ATF_REQUIRE_EQ(0, coalition_op(cfd, COALITION_OP_TERMINATE, &error));
+	ATF_REQUIRE_EQ(0, error);
+	watch = cleanup_watch(cfd);
+	kq = kqueue();
+	ATF_REQUIRE(kq >= 0);
+	EV_SET(&event, watch, EVFILT_READ, EV_ADD, 0, 0, NULL);
+	ATF_REQUIRE_EQ(0, kevent(kq, &event, 1, NULL, 0, NULL));
+	close(cfd);
+	cleanup_wait_event(watch, kq, COALITION_CLEANUP_COMPLETE);
+	close(kq);
+	close(watch);
+	ATF_CHECK_EQ(base, coalition_count());
+}
+
 ATF_TC(cleanup_status_process);
 ATF_TC_HEAD(cleanup_status_process, tc)
 {
@@ -1917,6 +2087,8 @@ ATF_TC_HEAD(cleanup_status_failure, tc)
 ATF_TC_BODY(cleanup_status_failure, tc)
 {
 	struct coalition_cleanup_reply state;
+	struct kevent event;
+	int watch, kq;
 	int cfd, shm;
 	int32_t error;
 
@@ -1927,6 +2099,11 @@ ATF_TC_BODY(cleanup_status_failure, tc)
 	ATF_REQUIRE_EQ(0, fcntl(shm, F_ADD_SEALS, F_SEAL_SHRINK));
 	ATF_REQUIRE_EQ(0, coalition_enlist(cfd, shm, &error));
 	ATF_REQUIRE_EQ(0, error);
+	watch = cleanup_watch(cfd);
+	kq = kqueue();
+	ATF_REQUIRE(kq >= 0);
+	EV_SET(&event, watch, EVFILT_READ, EV_ADD, 0, 0, NULL);
+	ATF_REQUIRE_EQ(0, kevent(kq, &event, 1, NULL, 0, NULL));
 	ATF_REQUIRE_EQ(0, coalition_op(cfd, COALITION_OP_TERMINATE, &error));
 	ATF_REQUIRE_EQ(EPERM, error);
 	state = cleanup_snapshot(cfd);
@@ -1934,6 +2111,9 @@ ATF_TC_BODY(cleanup_status_failure, tc)
 	ATF_CHECK_EQ(EPERM, state.cleanup_error);
 	close(shm);
 	close(cfd);
+	cleanup_wait_event(watch, kq, COALITION_CLEANUP_FAILED);
+	close(kq);
+	close(watch);
 }
 
 ATF_TC(cleanup_status_released_nested);
@@ -1949,6 +2129,8 @@ ATF_TC_BODY(cleanup_status_released_nested, tc)
 	    .op = COALITION_OP_SET_SIGNAL, .signal = 0 };
 	struct coalition_reply reply;
 	struct coalition_cleanup_reply state;
+	struct kevent event;
+	int watch, kq;
 	int parent, nested, pd, status;
 	int32_t error;
 	pid_t child;
@@ -1970,6 +2152,11 @@ ATF_TC_BODY(cleanup_status_released_nested, tc)
 	ATF_REQUIRE_EQ(0, coalition_enlist(parent, nested, &error));
 	ATF_REQUIRE_EQ(0, error);
 	ATF_REQUIRE_EQ(0, ioctl(nested, MAC_CAPABILITY_TERMINATE, NULL));
+	watch = cleanup_watch(parent);
+	kq = kqueue();
+	ATF_REQUIRE(kq >= 0);
+	EV_SET(&event, watch, EVFILT_READ, EV_ADD, 0, 0, NULL);
+	ATF_REQUIRE_EQ(0, kevent(kq, &event, 1, NULL, 0, NULL));
 	ATF_REQUIRE_EQ(0, coalition_op(parent, COALITION_OP_TERMINATE, &error));
 	ATF_REQUIRE_EQ(0, error);
 	for (unsigned i = 0; i < 500; i++) {
@@ -1987,6 +2174,9 @@ ATF_TC_BODY(cleanup_status_released_nested, tc)
 	close(pd);
 	close(nested);
 	close(parent);
+	cleanup_wait_event(watch, kq, COALITION_CLEANUP_RELEASED);
+	close(kq);
+	close(watch);
 }
 
 ATF_TC(deferred_capability_cleanup_retains_coalition);
@@ -5087,6 +5277,8 @@ ATF_TC_BODY(coalition_churn_no_leak, tc)
 
 ATF_TP_ADD_TCS(tp)
 {
+	ATF_TP_ADD_TC(tp, cleanup_watch_inheritance);
+	ATF_TP_ADD_TC(tp, cleanup_watch_close);
 	/* Lifecycle */
 	ATF_TP_ADD_TC(tp, connect_coalition);
 	ATF_TP_ADD_TC(tp, stat_empty);

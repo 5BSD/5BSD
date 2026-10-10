@@ -155,10 +155,10 @@ redistribution) to the py_matter_idl test subset.
    environments. This needs the BSDInstall-based software-authority pipeline
    (`tools/test/software-authority`), whose `prepare-root.py` requires a
    committed, clean source tree; the worktree is currently uncommitted.
-2. Policy decision: login shells use a USER-domain lookup channel and
-   `system.Time` is not `visible = ["user"]`, so `BSDTimectl` from a shell
-   gets ENOENT (as do `BSDPowerctl` and `sysctlcmpctl`). The VM validation
-   used a test-only overlay. Decide whether operators should reach it.
+2. Decided 2026-10-10: operators reach system.Time, system.Power and
+   system.Sysctl from a shell (`visible = ["user"]`); policy files still
+   bound changes. Reachability cases in switchboard's
+   service_reachability_test; the VM overlay was removed.
 3. Final review: licensing/notice audit of the world/package closure and the
    remaining MATURITY boxes. Matter/Thread radio and commissioning remain
    separate unfinished integration work.

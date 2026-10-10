@@ -29,6 +29,22 @@ struct capability_info {
 	uint32_t	reserved[4];
 };
 
+/* Tracked coalition cleanup; terminal does not always mean successful. */
+#define CAPABILITY_COALITION_ACTIVE 0
+#define CAPABILITY_COALITION_DRAINING 1
+#define CAPABILITY_COALITION_COMPLETE 2
+#define CAPABILITY_COALITION_FAILED 3
+#define CAPABILITY_COALITION_RELEASED 4
+#define CAPABILITY_COALITION_F_RELEASED 0x0001u
+
+struct capability_coalition_status {
+	size_t size; /* Initialize to zero or sizeof(this structure). */
+	uint32_t phase;
+	int32_t cleanup_error;
+	uint32_t flags;
+	uint32_t processes, forks, jails, nested, capabilities, external;
+};
+
 __BEGIN_DECLS
 
 int	capability_get_info(int fd, struct capability_info *);
@@ -67,6 +83,16 @@ int	capability_service_call_fds(int fd, const void *request,
  * close-on-fork and close-on-exec locked.  A no-op for fd < 0.  0 or -1/errno.
  */
 int	capability_confine_fd(int fd);
+
+/*
+ * Create a nonblocking cleanup view, atomically close-on-exec and close-on-fork.
+ * Returns the owned descriptor, or -1/errno. Does not retain coalition control.
+ */
+int	capability_coalition_watch(int control_fd);
+/* 0/-1; output changes only on success. Status accepts control or view. */
+int	capability_coalition_status(int fd, struct capability_coalition_status *);
+/* Consume one terminal event; a watch returned above yields EAGAIN if empty. */
+int	capability_coalition_receive(int watch_fd, struct capability_coalition_status *);
 
 __END_DECLS
 

@@ -37,6 +37,7 @@
 #include <auditcmp.h>
 #include <auditcmp_server.h>
 #include <libservice.h>
+#include <service_runtime.h>
 #include <networkcmp.h>
 
 #include "resolver.h"
@@ -1391,6 +1392,7 @@ worker(int fd, int barrier,
 	char byte;
 	int error, result;
 
+	setproctitle("-BSDNetwork: network %s", label);
 	audit = NULL;
 	memset(&wlog, 0, sizeof(wlog));
 	if (netresolve_worker_enter() == -1)
@@ -1439,10 +1441,8 @@ start_session(int fd, const char *peer_label,
 {
 	struct networkcmp_policy policy;
 	const char *policy_source;
-	int syncfd[2], resolver_pipe[2], pd, audit_fd, child_error, error;
+	int syncfd[2], resolver_pipe[2], pd, audit_fd, error;
 	pid_t pid;
-	char byte;
-	ssize_t n;
 
 	audit_fd = -1;
 	resolver_pipe[0] = resolver_pipe[1] = -1;
@@ -1517,16 +1517,16 @@ start_session(int fd, const char *peer_label,
 	close(resolver_pipe[1]);
 	resolver_pipe[0] = resolver_pipe[1] = -1;
 	close(syncfd[1]);
-	n = read(syncfd[0], &child_error, sizeof(child_error));
-	if (n != sizeof(child_error) || child_error != 0) {
-		error = n == sizeof(child_error) ? child_error : EIO;
+	/* One bounded handshake, including fragmented status and release ACK. */
+	if (service_bootstrap_parent(syncfd[0], 5000) == -1) {
+		error = errno;
 		(void)pdkill(pd, SIGKILL);
+		while (pdwait(pd, NULL, WEXITED, NULL, NULL) == -1 && errno == EINTR)
+			;
 		close(pd);
 		close(syncfd[0]);
 		goto reject;
 	}
-	byte = 1;
-	(void)write(syncfd[0], &byte, 1);
 	close(syncfd[0]);
 	*pdp = pd;	/* parent tracks the worker's process descriptor */
 	return (0);
@@ -1543,8 +1543,9 @@ reject:
 }
 
 static int
-pf_worker(int fd, int pf_fd, int open_error)
+pf_worker(int fd, int pf_fd, int open_error, const char *label)
 {
+	setproctitle("-BSDNetwork: PF %s", label);
 	if (netresolve_worker_enter() == -1 ||
 	    service_worker_enter_capability_mode(SERVICE_PROTECT_EXTERNAL |
 	    SERVICE_PROTECT_NOPRIVS | SERVICE_PROTECT_NOFORK |
@@ -1558,7 +1559,7 @@ pf_worker(int fd, int pf_fd, int open_error)
 }
 
 static int
-start_pf_session(int fd, struct service_context *ctx, int *pdp)
+start_pf_session(int fd, struct service_context *ctx, const char *label, int *pdp)
 {
 	pid_t pid;
 	int pf_fd, open_error, pd, error;
@@ -1577,7 +1578,7 @@ start_pf_session(int fd, struct service_context *ctx, int *pdp)
 		return (errno = error, -1);
 	}
 	if (pid == 0)
-		_exit(pf_worker(fd, pf_fd, open_error));
+		_exit(pf_worker(fd, pf_fd, open_error, label));
 	if (pf_fd >= 0)
 		(void)close(pf_fd);
 	*pdp = pd;
@@ -1590,15 +1591,32 @@ start_pf_session(int fd, struct service_context *ctx, int *pdp)
 
 /* One live pdfork'd worker, tracked so its exit can account the slot. */
 struct net_worker_ent {
-	struct net_worker_ent	*next;
-	int			 pd;
+	/* First member permits the shared process teardown helper to free it. */
+	struct service_process process;
+	char label[64];
 };
+#define NETWORKCMP_MAX_LABEL_WORKERS 64u
+
+static bool
+net_worker_admit(const struct service_process *workers, const char *label)
+{
+	unsigned count = 0;
+
+	for (; workers != NULL; workers = workers->next) {
+		const struct net_worker_ent *entry = (const void *)workers;
+
+		if (strcmp(entry->label, label) == 0 &&
+		    ++count >= NETWORKCMP_MAX_LABEL_WORKERS)
+			return (false);
+	}
+	return (true);
+}
 
 static void
-net_worker_remove(struct net_worker_ent **head, struct net_worker_ent *w,
+net_worker_remove(struct service_process **head, struct service_process *w,
     size_t *count)
 {
-	struct net_worker_ent **cursor;
+	struct service_process **cursor;
 	int status;
 
 	for (cursor = head; *cursor != NULL && *cursor != w;
@@ -1616,7 +1634,8 @@ net_worker_remove(struct net_worker_ent **head, struct net_worker_ent *w,
 int
 main(void)
 {
-	struct net_worker_ent *workers = NULL, *w;
+	struct service_process *workers = NULL, *w;
+	struct net_worker_ent *entry;
 	struct networkcmp_config config;
 	struct service_identity identity;
 	struct service_listener *listener, *listeners[4];
@@ -1694,7 +1713,7 @@ main(void)
 	 * a client cannot fork-bomb the broker by churning connections.
 	 */
 	kq = kqueuex(KQUEUE_CLOEXEC);
-	if (kq == -1)
+	if (kq == -1 || service_harden_fd(kq, 0) == -1)
 		goto fail;
 	if (network_state_server_create(kq, &state_server) == -1)
 		goto fail;
@@ -1737,7 +1756,12 @@ main(void)
 			if (service_provider_quiescing(provider) == 1) {
 				int status;
 
+				status = service_processes_stop(&workers) == -1 ? errno : 0;
 				network_state_server_destroy(state_server);
+				if (status != 0) {
+					errno = status;
+					return (1);
+				}
 				status = service_provider_quiesce_complete(provider, 0);
 				if (g_log.client != NULL)
 					logcmp_client_close(g_log.client);
@@ -1774,7 +1798,8 @@ main(void)
 				    identity.client_label);
 			continue;
 		}
-		if (nworkers >= NETWORKCMP_MAX_WORKERS) {
+		if (nworkers >= NETWORKCMP_MAX_WORKERS ||
+		    !net_worker_admit(workers, identity.client_label)) {
 			net_log(main_logger(), LOG_WARNING,
 			    "worker limit reached; dropping %s",
 			    identity.client_label);
@@ -1790,9 +1815,12 @@ main(void)
 			close(fd);
 			continue;
 		}
-		w = calloc(1, sizeof(*w));
+		entry = calloc(1, sizeof(*entry));
+		w = entry != NULL ? &entry->process : NULL;
+		if (entry != NULL)
+			strlcpy(entry->label, identity.client_label, sizeof(entry->label));
 		if (w == NULL || (listener == listeners[2] ?
-		    start_pf_session(fd, ctx, &w->pd) :
+		    start_pf_session(fd, ctx, identity.client_label, &w->pd) :
 		    start_session(fd, identity.client_label, identity.rights,
 		    &config, &w->pd)) == -1) {
 			net_log(main_logger(), LOG_WARNING,
@@ -1805,7 +1833,8 @@ main(void)
 		close(fd);
 		EV_SET(&change, w->pd, EVFILT_PROCDESC, EV_ADD | EV_ENABLE,
 		    NOTE_EXIT, 0, w);
-		if (kevent(kq, &change, 1, NULL, 0, NULL) == -1) {
+		if (service_harden_fd(w->pd, 0) == -1 ||
+		    kevent(kq, &change, 1, NULL, 0, NULL) == -1) {
 			int status;
 
 			/*
@@ -1821,7 +1850,9 @@ main(void)
 			net_log(main_logger(), LOG_WARNING,
 			    "procdesc watch for %s: %m", identity.client_label);
 			(void)pdkill(w->pd, SIGKILL);
-			(void)pdwait(w->pd, &status, WEXITED, NULL, NULL);
+			while (pdwait(w->pd, &status, WEXITED, NULL, NULL) == -1 &&
+			    errno == EINTR)
+				;
 			(void)close(w->pd);
 			free(w);
 			continue;
@@ -1833,6 +1864,8 @@ main(void)
 
 fail:
 	net_log(main_logger(), LOG_ERR, "initialization or service loop: %m");
+	if (service_processes_stop(&workers) == -1)
+		net_log(main_logger(), LOG_ERR, "worker shutdown: %m");
 	network_state_server_destroy(state_server);
 	return (1);
 }

@@ -52,8 +52,6 @@ fragments_body()
 	firewall_config "iron" ${firewall} \
 		"pf" \
 			"scrub all fragment reassemble" \
-		"ipfw" \
-			"ipfw -q add 100 reass all from any to any in" \
 		"ipf" \
 			"pass in all with frags"
 
@@ -75,5 +73,4 @@ fragments_cleanup()
 setup_tests \
 		"fragments" \
 			"pf" \
-			"ipfw" \
 			"ipf"
