@@ -149,7 +149,8 @@ svc_reclaim_publish_live(void)
 		int fd;
 
 		if (svc->state != SVC_STATE_RUNNING &&
-		    svc->state != SVC_STATE_STARTING)
+		    svc->state != SVC_STATE_STARTING &&
+		    svc->state != SVC_STATE_STOPPING)
 			continue;
 		bundle_of(svc, bundle, sizeof(bundle));
 		if (bundle[0] == '\0' || bundle_present(live, nlive, bundle))
@@ -159,14 +160,15 @@ svc_reclaim_publish_live(void)
 			void *p = reallocarray(live, ncap, sizeof(*live));
 
 			if (p == NULL)
-				break;
+				goto incomplete;
 			live = p;
 			cap = ncap;
 		}
 		(void)strlcpy(live[nlive++], bundle, BUNDLE_MAX);
 		fd = openat(dfd, bundle, O_CREAT | O_WRONLY | O_CLOEXEC, 0600);
-		if (fd != -1)
-			(void)close(fd);
+		if (fd == -1)
+			goto incomplete;
+		(void)close(fd);
 	}
 
 	/* 2. Remove markers for bundles that are no longer running. */
@@ -186,6 +188,14 @@ svc_reclaim_publish_live(void)
 	SWITCHBOARD_PROBE_LIVE_PUBLISH((unsigned int)nlive);
 	free(live);
 	svc_reclaim_publish_groups();
+	return;
+
+incomplete:
+	/* Never prune old ownership using a partially collected live set. */
+	syslog(LOG_WARNING, "reclaim: incomplete live publication: %m");
+	publish_dirty = true;
+	(void)close(dfd);
+	free(live);
 }
 
 /*

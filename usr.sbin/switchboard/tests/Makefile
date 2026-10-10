@@ -52,6 +52,7 @@ PROGS+=		service_probe
 ATF_TESTS_C+=	activation_test
 ATF_TESTS_C+=	domain_test
 ATF_TESTS_C+=	anoint_test
+ATF_TESTS_C+=	reclaim_publish_test
 ATF_TESTS_C+=	on_demand_test
 ATF_TESTS_C+=	fd_budget_test
 ATF_TESTS_C+=	launch_limits_test
