@@ -160,13 +160,63 @@ Successful signalling or revocation still does not confirm process resource
 cleanup, and a concurrent termination request is not a completion wait.
 Returns
 .Vt struct coalition_reply .
+.It Dv COALITION_OP_CLEANUP_STATUS
+Read a snapshot of tracked teardown, with no wait and no attached descriptors.
+The request must be exactly
+.Vt struct coalition_req_hdr .
+Both synchronous calls and asynchronous messages return:
+.Bd -literal -offset indent
+struct coalition_cleanup_reply {
+	int32_t  status;
+	uint32_t phase;
+	int32_t  cleanup_error;
+	uint32_t flags;
+	uint32_t processes, forks, jails, nested;
+	uint32_t capabilities, external;
+};
+.Ed
+.Pp
+A successful query has zero
+.Va status ;
+.Va cleanup_error
+separately preserves the first teardown error, even while work remains.
+The counters cover process resource exits, unpublished forks, jail cleanup,
+nested dependencies, capability callback return, and external termination
+calls respectively; they are not allocation counts and must not be summed as
+a count of distinct resources.
+.Pp
+The phases are
+.Dv COALITION_CLEANUP_ACTIVE
+(termination is not committed, including a cancellable grace period),
+.Dv COALITION_CLEANUP_DRAINING
+(tracked work remains),
+.Dv COALITION_CLEANUP_COMPLETE
+(tracked actions drained without error or release),
+.Dv COALITION_CLEANUP_FAILED
+(drained with a recorded error), and
+.Dv COALITION_CLEANUP_RELEASED
+(drained after detaching processes without confirming their resource exit).
+Signal-zero release and closing-caller exclusion set
+.Dv COALITION_CLEANUP_F_RELEASED ;
+this outcome propagates through nested coalitions, including when another
+cleanup error takes precedence in the phase.
+An empty active coalition is not complete.
+.Pp
+Completion covers the coalition's tracked actions.
+It does not certify reclamation of resources shared with other owners,
+static storage, or asynchronous work independently started by a service's
+revoke callback.
+This snapshot is not a replacement for those services' completion contracts.
+The control descriptor must remain usable; it cannot query after revocation,
+and this operation creates no separate wait descriptor or completion event.
 .It Dv COALITION_OP_STAT
 Query coalition membership and state.
 For processes that remain in this coalition, exit removes membership after
 the process releases its file table and detaches its address space.
 Leader-death termination still begins at the early exit hook.
-Closing or revoking the coalition discards membership tracking; supervisors
-that need to observe it must retain the handle while terminating members.
+Closing or revoking the coalition removes access through its control handle.
+Internal cleanup tracking can outlive that handle; supervisors querying this
+interface must retain the handle while terminating members.
 A zero direct process count does not cover nested coalitions, jails,
 rehomed processes, or references deliberately shared with other processes.
 It is not by itself a complete service restart barrier.

@@ -155,6 +155,7 @@ struct coalition {
 	u_int			co_flags;
 	u_int			co_manual_grace_count;
 	int			co_signal;
+	bool			co_cleanup_released; /* Detached unconfirmed processes. */
 	int			co_termination_error; /* First cleanup error, co_sx. */
 	u_int			co_pending_jails; /* Retained jail cleanup, co_sx. */
 	u_int			co_pending_caps; /* Capability callbacks, co_sx. */
@@ -1466,6 +1467,35 @@ coalition_count_process_members_locked(struct coalition *co)
 	return (count);
 }
 
+static void
+coalition_cleanup_status_locked(struct coalition *co,
+    struct coalition_cleanup_reply *reply)
+{
+
+	sx_assert(&co->co_sx, SA_XLOCKED);
+	memset(reply, 0, sizeof(*reply));
+	reply->cleanup_error = co->co_termination_error;
+	reply->flags = co->co_cleanup_released ? COALITION_CLEANUP_F_RELEASED : 0;
+	reply->processes = coalition_count_process_members_locked(co);
+	reply->forks = atomic_load_acq_int(&co->co_pending_forks);
+	reply->jails = co->co_pending_jails;
+	reply->nested = co->co_pending_nested;
+	reply->capabilities = co->co_pending_caps;
+	reply->external = co->co_pending_external;
+	if (!(co->co_flags & (COF_TERMINATING | COF_CLOSING)))
+		reply->phase = COALITION_CLEANUP_ACTIVE;
+	else if (reply->processes != 0 || reply->forks != 0 ||
+	    reply->jails != 0 || reply->nested != 0 ||
+	    reply->capabilities != 0 || reply->external != 0)
+		reply->phase = COALITION_CLEANUP_DRAINING;
+	else if (reply->cleanup_error != 0)
+		reply->phase = COALITION_CLEANUP_FAILED;
+	else if (reply->flags & COALITION_CLEANUP_F_RELEASED)
+		reply->phase = COALITION_CLEANUP_RELEASED;
+	else
+		reply->phase = COALITION_CLEANUP_COMPLETE;
+}
+
 static u_int
 coalition_count_live_procs_locked(struct coalition *co)
 {
@@ -1628,17 +1658,17 @@ coalition_dependency_task(void *arg, int pending __unused)
 	struct coalition_dependency *cd = arg;
 	struct coalition *child = cd->cd_child;
 	struct coalition *parent = cd->cd_parent;
-	bool done;
+	struct coalition_cleanup_reply state;
+	bool done, released = false;
 	int error;
 
 	if (child != NULL) {
 		sx_xlock(&child->co_sx);
-		done = (child->co_flags & COF_TERMINATING) != 0 &&
-		    coalition_count_process_members_locked(child) == 0 &&
-		    child->co_pending_jails == 0 && child->co_pending_nested == 0 &&
-		    child->co_pending_caps == 0 && child->co_pending_external == 0 &&
-		    atomic_load_acq_int(&child->co_pending_forks) == 0;
-		error = child->co_termination_error;
+		coalition_cleanup_status_locked(child, &state);
+		done = state.phase != COALITION_CLEANUP_ACTIVE &&
+		    state.phase != COALITION_CLEANUP_DRAINING;
+		error = state.cleanup_error;
+		released = (state.flags & COALITION_CLEANUP_F_RELEASED) != 0;
 		sx_xunlock(&child->co_sx);
 	} else {
 		done = mac_capability_callback_state_done(cd->cd_callback);
@@ -1652,6 +1682,7 @@ coalition_dependency_task(void *arg, int pending __unused)
 	callout_drain(&cd->cd_task.c);
 	sx_xlock(&parent->co_sx);
 	coalition_record_error_locked(parent, error);
+	parent->co_cleanup_released |= released;
 	if (child != NULL) {
 		KASSERT(parent->co_pending_nested != 0, ("nested cleanup underflow"));
 		parent->co_pending_nested--;
@@ -2549,6 +2580,8 @@ coalition_close_internal(struct coalition *co, struct thread *td)
 		if (cm->cm_dtype == DTYPE_PROCDESC && co->co_signal != 0 &&
 		    (td == NULL || cm->cm_data != td->td_proc))
 			continue;
+		if (cm->cm_dtype == DTYPE_PROCDESC)
+			co->co_cleanup_released = true;
 		TAILQ_REMOVE(&co->co_members, cm, cm_link);
 		cm->cm_link.tqe_prev = NULL;	/* sentinel for exit handler */
 
@@ -2953,6 +2986,22 @@ coalition_call(struct mac_capability_instance *s,
 
 	case COALITION_OP_TERMINATE:
 		rpl->status = coalition_terminate(co);
+		break;
+
+	case COALITION_OP_CLEANUP_STATUS:
+		if (reqlen != sizeof(*hdr) || nfds != 0) {
+			rpl->status = EINVAL;
+			break;
+		}
+		if (reply_avail < sizeof(struct coalition_cleanup_reply)) {
+			*replylenp = sizeof(struct coalition_cleanup_reply);
+			error = EMSGSIZE;
+			goto out;
+		}
+		sx_xlock(&co->co_sx);
+		coalition_cleanup_status_locked(co, reply);
+		sx_xunlock(&co->co_sx);
+		*replylenp = sizeof(struct coalition_cleanup_reply);
 		break;
 
 	case COALITION_OP_STAT:
@@ -3474,6 +3523,7 @@ coalition_handler(struct mac_capability_instance *s, const struct mac_capability
 		struct coalition_enlist_set_reply cesr;
 		struct coalition_stat_reply csr;
 		struct coalition_rusage_reply crr;
+		struct coalition_cleanup_reply ccr;
 	} reply;
 	const struct coalition_req_hdr *hdr;
 	const void *req;

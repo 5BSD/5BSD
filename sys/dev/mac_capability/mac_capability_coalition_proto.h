@@ -35,12 +35,38 @@
 #define	COALITION_OP_SET_RESPONSIBLE	13
 /* Self-join, atomically replacing inherited (never procdesc-pinned) membership. */
 #define	COALITION_OP_JOIN_REHOME		14
+#define	COALITION_OP_CLEANUP_STATUS	15
 
 /*
  * Common request header.
  */
 struct coalition_req_hdr {
 	uint32_t	op;
+};
+
+/*
+ * CLEANUP_STATUS: exact coalition_req_hdr, no attached descriptors.
+ * Counters describe outstanding tracked teardown, not allocation references.
+ * COMPLETE certifies tracked actions only, not reclamation of shared storage
+ * or asynchronous work independently started by a service callback.
+ */
+#define COALITION_CLEANUP_ACTIVE		0
+#define COALITION_CLEANUP_DRAINING	1
+#define COALITION_CLEANUP_COMPLETE	2
+#define COALITION_CLEANUP_FAILED		3
+#define COALITION_CLEANUP_RELEASED	4
+#define COALITION_CLEANUP_F_RELEASED	0x0001
+struct coalition_cleanup_reply {
+	int32_t status;
+	uint32_t phase;
+	int32_t cleanup_error;
+	uint32_t flags;
+	uint32_t processes;
+	uint32_t forks;
+	uint32_t jails;
+	uint32_t nested;
+	uint32_t capabilities;
+	uint32_t external;
 };
 
 /*

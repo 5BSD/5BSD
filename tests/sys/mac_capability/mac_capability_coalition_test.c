@@ -1823,6 +1823,172 @@ ATF_TC_BODY(closed_coalition_rejects_fork, tc)
 	ATF_CHECK_EQ(base, coalition_count());
 }
 
+static struct coalition_cleanup_reply
+cleanup_snapshot(int fd)
+{
+	struct coalition_req_hdr req = { .op = COALITION_OP_CLEANUP_STATUS };
+	struct coalition_cleanup_reply reply;
+
+	memset(&reply, 0xa5, sizeof(reply));
+	ATF_REQUIRE_EQ(0, coalition_call(fd, &req, sizeof(req), NULL, 0,
+	    &reply, sizeof(reply)));
+	ATF_REQUIRE_EQ(0, reply.status);
+	return (reply);
+}
+
+ATF_TC(cleanup_status_process);
+ATF_TC_HEAD(cleanup_status_process, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "Cleanup status follows resource exit, not signal delivery");
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "timeout", "30");
+}
+ATF_TC_BODY(cleanup_status_process, tc)
+{
+	struct coalition_set_signal_req signal_req = {
+	    .op = COALITION_OP_SET_SIGNAL, .signal = SIGSTOP };
+	struct coalition_req_hdr req = { .op = COALITION_OP_CLEANUP_STATUS };
+	struct coalition_reply reply;
+	struct coalition_cleanup_reply state;
+	struct mac_capability_sendmsg_args send;
+	struct mac_capability_recvmsg_args recv;
+	int cfd, pd, status;
+	int32_t error;
+	pid_t child;
+
+	child = pdfork(&pd, 0);
+	ATF_REQUIRE(child >= 0);
+	if (child == 0) {
+		for (;;)
+			pause();
+	}
+	cfd = mac_capability_connect("coalition");
+	ATF_REQUIRE(cfd >= 0);
+	state = cleanup_snapshot(cfd);
+	ATF_CHECK_EQ(COALITION_CLEANUP_ACTIVE, state.phase);
+	ATF_CHECK_EQ(0, state.processes | state.forks | state.jails |
+	    state.nested | state.capabilities | state.external | state.flags);
+	memset(&send, 0, sizeof(send));
+	send.payload = &req;
+	send.payload_len = sizeof(req);
+	ATF_REQUIRE_EQ(0, ioctl(cfd, MAC_CAPABILITY_SENDMSG, &send));
+	memset(&recv, 0, sizeof(recv));
+	recv.payload = &state;
+	recv.payload_len = sizeof(state);
+	ATF_REQUIRE_EQ(0, ioctl(cfd, MAC_CAPABILITY_RECVMSG, &recv));
+	ATF_CHECK_EQ(sizeof(state), recv.payload_len);
+	ATF_CHECK_EQ(0, state.status);
+	ATF_CHECK_EQ(COALITION_CLEANUP_ACTIVE, state.phase);
+	ATF_CHECK_ERRNO(EMSGSIZE, coalition_call(cfd, &req, sizeof(req),
+	    NULL, 0, &reply, sizeof(reply)) == -1);
+	ATF_REQUIRE_EQ(0, coalition_call(cfd, &req, sizeof(req), &pd, 1,
+	    &reply, sizeof(reply)));
+	ATF_CHECK_EQ(EINVAL, reply.status);
+	ATF_REQUIRE_EQ(0, coalition_call(cfd, &signal_req, sizeof(signal_req),
+	    NULL, 0, &reply, sizeof(reply)));
+	ATF_REQUIRE_EQ(0, reply.status);
+	ATF_REQUIRE_EQ(0, coalition_enlist(cfd, pd, &error));
+	ATF_REQUIRE_EQ(0, error);
+	ATF_REQUIRE_EQ(0, coalition_op(cfd, COALITION_OP_TERMINATE, &error));
+	ATF_REQUIRE_EQ(0, error);
+	state = cleanup_snapshot(cfd);
+	ATF_CHECK_EQ(COALITION_CLEANUP_DRAINING, state.phase);
+	ATF_CHECK_EQ(1, state.processes);
+	ATF_REQUIRE_EQ(0, pdkill(pd, SIGKILL));
+	ATF_REQUIRE_EQ(child, waitpid(child, &status, 0));
+	for (unsigned i = 0; i < 500; i++) {
+		state = cleanup_snapshot(cfd);
+		if (state.phase != COALITION_CLEANUP_DRAINING)
+			break;
+		usleep(10000);
+	}
+	ATF_CHECK_EQ(COALITION_CLEANUP_COMPLETE, state.phase);
+	ATF_CHECK_EQ(0, state.cleanup_error);
+	ATF_CHECK_EQ(0, state.processes | state.flags);
+	close(pd);
+	close(cfd);
+}
+
+ATF_TC(cleanup_status_failure);
+ATF_TC_HEAD(cleanup_status_failure, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "Cleanup status retains failed tracked actions");
+}
+ATF_TC_BODY(cleanup_status_failure, tc)
+{
+	struct coalition_cleanup_reply state;
+	int cfd, shm;
+	int32_t error;
+
+	cfd = mac_capability_connect("coalition");
+	shm = memfd_create("cleanup-status", MFD_ALLOW_SEALING);
+	ATF_REQUIRE(cfd >= 0 && shm >= 0);
+	ATF_REQUIRE_EQ(0, ftruncate(shm, 4096));
+	ATF_REQUIRE_EQ(0, fcntl(shm, F_ADD_SEALS, F_SEAL_SHRINK));
+	ATF_REQUIRE_EQ(0, coalition_enlist(cfd, shm, &error));
+	ATF_REQUIRE_EQ(0, error);
+	ATF_REQUIRE_EQ(0, coalition_op(cfd, COALITION_OP_TERMINATE, &error));
+	ATF_REQUIRE_EQ(EPERM, error);
+	state = cleanup_snapshot(cfd);
+	ATF_CHECK_EQ(COALITION_CLEANUP_FAILED, state.phase);
+	ATF_CHECK_EQ(EPERM, state.cleanup_error);
+	close(shm);
+	close(cfd);
+}
+
+ATF_TC(cleanup_status_released_nested);
+ATF_TC_HEAD(cleanup_status_released_nested, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "Nested release cannot masquerade as successful cleanup");
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "timeout", "30");
+}
+ATF_TC_BODY(cleanup_status_released_nested, tc)
+{
+	struct coalition_set_signal_req req = {
+	    .op = COALITION_OP_SET_SIGNAL, .signal = 0 };
+	struct coalition_reply reply;
+	struct coalition_cleanup_reply state;
+	int parent, nested, pd, status;
+	int32_t error;
+	pid_t child;
+
+	child = pdfork(&pd, 0);
+	ATF_REQUIRE(child >= 0);
+	if (child == 0) {
+		for (;;)
+			pause();
+	}
+	parent = mac_capability_connect("coalition");
+	nested = mac_capability_connect("coalition");
+	ATF_REQUIRE(parent >= 0 && nested >= 0);
+	ATF_REQUIRE_EQ(0, coalition_call(nested, &req, sizeof(req), NULL, 0,
+	    &reply, sizeof(reply)));
+	ATF_REQUIRE_EQ(0, reply.status);
+	ATF_REQUIRE_EQ(0, coalition_enlist(nested, pd, &error));
+	ATF_REQUIRE_EQ(0, error);
+	ATF_REQUIRE_EQ(0, coalition_enlist(parent, nested, &error));
+	ATF_REQUIRE_EQ(0, error);
+	ATF_REQUIRE_EQ(0, ioctl(nested, MAC_CAPABILITY_TERMINATE, NULL));
+	ATF_REQUIRE_EQ(0, coalition_op(parent, COALITION_OP_TERMINATE, &error));
+	ATF_REQUIRE_EQ(0, error);
+	for (unsigned i = 0; i < 500; i++) {
+		state = cleanup_snapshot(parent);
+		if (state.phase != COALITION_CLEANUP_DRAINING)
+			break;
+		usleep(10000);
+	}
+	ATF_CHECK_EQ(COALITION_CLEANUP_RELEASED, state.phase);
+	ATF_CHECK_EQ(COALITION_CLEANUP_F_RELEASED, state.flags);
+	ATF_CHECK_EQ(0, state.cleanup_error);
+	ATF_REQUIRE_EQ(0, pdkill(pd, 0));
+	ATF_REQUIRE_EQ(0, pdkill(pd, SIGKILL));
+	ATF_REQUIRE_EQ(child, waitpid(child, &status, 0));
+	close(pd);
+	close(nested);
+	close(parent);
+}
+
 ATF_TC(deferred_capability_cleanup_retains_coalition);
 ATF_TC_HEAD(deferred_capability_cleanup_retains_coalition, tc)
 {
@@ -5035,7 +5201,10 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, responsible_chain_depth_limit);
 	ATF_TP_ADD_TC(tp, set_signal_zero_releases);
 	ATF_TP_ADD_TC(tp, close_retains_signalled_process);
-	ATF_TP_ADD_TC(tp, deferred_capability_cleanup_retains_coalition);
+	ATF_TP_ADD_TC(tp, cleanup_status_process);
+		ATF_TP_ADD_TC(tp, cleanup_status_failure);
+		ATF_TP_ADD_TC(tp, cleanup_status_released_nested);
+		ATF_TP_ADD_TC(tp, deferred_capability_cleanup_retains_coalition);
 		ATF_TP_ADD_TC(tp, nested_cleanup_retains_parent);
 	ATF_TP_ADD_TC(tp, closed_coalition_rejects_fork);
 	ATF_TP_ADD_TC(tp, pdfork_inherits_and_rehomes);
