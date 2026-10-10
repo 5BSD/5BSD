@@ -2168,7 +2168,8 @@ ATF_TC_HEAD(exit_membership_waits_for_socket_close, tc)
 	atf_tc_set_md_var(tc, "require.kmods",
 	    "mac_capability mac_capability_coalition");
 }
-ATF_TC_BODY(exit_membership_waits_for_socket_close, tc)
+static void
+check_exit_membership_socket_close(bool jailed)
 {
 	struct sockaddr_in address = { .sin_len = sizeof(address),
 	    .sin_family = AF_INET, .sin_addr.s_addr = htonl(INADDR_LOOPBACK) };
@@ -2178,7 +2179,8 @@ ATF_TC_BODY(exit_membership_waits_for_socket_close, tc)
 	socklen_t length = sizeof(address);
 	int listener, client, server, cfd, other, pd, gate[2], wstatus, small = 1024;
 	int32_t status;
-	int stalled = 0;
+	int stalled = 0, jfd = -1, jid = -1;
+	const char *jname = COALITION_TEST_JAIL_NAME "_linger";
 	pid_t child;
 	char byte, data[4096] = { 0 };
 	ssize_t n;
@@ -2215,10 +2217,24 @@ ATF_TC_BODY(exit_membership_waits_for_socket_close, tc)
 	ATF_REQUIRE_EQ(10, stalled);
 	cfd = mac_capability_connect("coalition");
 	ATF_REQUIRE(cfd >= 0);
+	if (jailed) {
+		remove_jail_by_name(jname);
+		jfd = create_jail_with_desc(jname);
+		ATF_REQUIRE(jfd >= 0);
+		jid = jail_getid(jname);
+		ATF_REQUIRE(jid > 0);
+		ATF_REQUIRE_EQ(0, coalition_enlist(cfd, jfd, &status));
+		ATF_REQUIRE_EQ(0, status);
+	}
 	ATF_REQUIRE_EQ(0, pipe(gate));
 	child = pdfork(&pd, 0);
 	ATF_REQUIRE(child >= 0);
 	if (child == 0) {
+		if (jailed) {
+			close(jfd);
+			if (jail_attach(jid) == -1)
+				_exit(3);
+		}
 		close(cfd);
 		close(server);
 		close(gate[1]);
@@ -2243,6 +2259,8 @@ ATF_TC_BODY(exit_membership_waits_for_socket_close, tc)
 	ATF_CHECK_MSG(held, "fixture did not block: flags=%lx state=%d wait=%s errno=%d",
 	    (unsigned long)kp.ki_flag, kp.ki_stat, kp.ki_wmesg, errno);
 	if (held) {
+		if (jailed)
+			ATF_CHECK_EQ(jid, kp.ki_jid);
 		other = mac_capability_connect("coalition");
 		ATF_REQUIRE(other >= 0);
 		ATF_REQUIRE_EQ(0, coalition_enlist(other, pd, &status));
@@ -2252,13 +2270,47 @@ ATF_TC_BODY(exit_membership_waits_for_socket_close, tc)
 		ATF_CHECK_EQ(1, st.process_count);
 		ATF_CHECK_EQ(0, waitpid(child, &wstatus, WNOHANG));
 	}
+	/* Jail removal can interrupt linger; retention was checked above. */
+	if (jailed)
+		ATF_REQUIRE_EQ(0, jail_remove(jid));
 	close(server); /* Release linger, even when the assertion above fails. */
 	ATF_REQUIRE(wait_exit_bounded(child, &wstatus));
 	ATF_CHECK(WIFEXITED(wstatus) && WEXITSTATUS(wstatus) == 0);
 	ATF_REQUIRE_EQ(0, coalition_stat(cfd, &st));
 	ATF_CHECK_EQ(0, st.process_count);
+	if (jailed) {
+		for (int i = 0; i < 500 && st.jail_count != 0; i++) {
+			usleep(10000);
+			ATF_REQUIRE_EQ(0, coalition_stat(cfd, &st));
+		}
+		ATF_CHECK_EQ(0, st.jail_count);
+		ATF_CHECK_EQ(0, st.member_count);
+	}
+	if (jailed) {
+		remove_jail_by_name(jname);
+		close(jfd);
+	}
 	close(pd);
 	close(cfd);
+}
+
+ATF_TC_BODY(exit_membership_waits_for_socket_close, tc)
+{
+	check_exit_membership_socket_close(false);
+}
+
+ATF_TC(jailed_exit_membership_waits_for_socket_close);
+ATF_TC_HEAD(jailed_exit_membership_waits_for_socket_close, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "An exiting jailed process stays tracked through blocked close and jail removal");
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "require.kmods",
+	    "mac_capability mac_capability_coalition");
+}
+ATF_TC_BODY(jailed_exit_membership_waits_for_socket_close, tc)
+{
+	check_exit_membership_socket_close(true);
 }
 
 ATF_TC(failed_procdesc_rehome_preserves_membership);
@@ -4552,6 +4604,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, member_limit_cannot_fork_escape);
 	ATF_TP_ADD_TC(tp, grace_fork_containment_and_cancel);
 	ATF_TP_ADD_TC(tp, exit_membership_waits_for_socket_close);
+	ATF_TP_ADD_TC(tp, jailed_exit_membership_waits_for_socket_close);
 	ATF_TP_ADD_TC(tp, failed_procdesc_rehome_preserves_membership);
 	ATF_TP_ADD_TC(tp, refattach_confined_descriptors);
 	ATF_TP_ADD_TC(tp, set_signal_zero_releases_joined);
