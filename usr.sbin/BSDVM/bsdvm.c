@@ -643,24 +643,29 @@ struct vmd_worker_ent {
 };
 
 /* Reap an exited worker: drop its window reference and account the slot. */
-static void
+static int
 vmd_worker_remove(struct vmd_worker_ent **head, struct vmd_worker_ent *w,
     size_t *count)
 {
 	struct vmd_worker_ent **cursor;
-	int status;
+	int status, result, error;
 
 	for (cursor = head; *cursor != NULL && *cursor != w;
 	    cursor = &(*cursor)->next)
 		;
 	if (*cursor == w)
 		*cursor = w->next;
-	window_release(w->widx);
-	(void)pdwait(w->pd, &status, WEXITED | WNOHANG, NULL, NULL);
+	do {
+		result = pdwait(w->pd, &status, WEXITED | WNOHANG, NULL, NULL);
+	} while (result == -1 && errno == EINTR);
+	error = result == -1 && errno != ECHILD && errno != ESRCH ? errno : 0;
+	if (error == 0)
+		window_release(w->widx);
 	(void)close(w->pd);
 	free(w);
 	if (*count != 0)
 		(*count)--;
+	return (error != 0 ? (errno = error, -1) : 0);
 }
 
 /* Release a window only after its worker has been confirmed reaped. */
@@ -677,7 +682,7 @@ vmd_workers_stop(struct vmd_worker_ent **head, size_t *count)
 			do {
 				result = pdwait(w->pd, &status, WEXITED, NULL, NULL);
 			} while (result == -1 && errno == EINTR);
-			if (result != -1 || errno == ECHILD)
+			if (result != -1 || errno == ECHILD || errno == ESRCH)
 				window_release(w->widx);
 			else if (error == 0)
 				error = errno;
@@ -739,7 +744,8 @@ vmd_serve(void)
 			goto out;
 		}
 		if (event.filter == EVFILT_PROCDESC) {
-			vmd_worker_remove(&workers, event.udata, &nworkers);
+			if (vmd_worker_remove(&workers, event.udata, &nworkers) == -1)
+				goto out;
 			continue;
 		}
 		/* Listener readable: accept exactly one connection. */
@@ -816,26 +822,13 @@ vmd_serve(void)
 		EV_SET(&change, w->pd, EVFILT_PROCDESC, EV_ADD | EV_ENABLE,
 		    NOTE_EXIT, 0, w);
 		if (kevent(kq, &change, 1, NULL, 0, NULL) == -1) {
-			int status;
+			size_t rejected = 1;
 
-			/*
-			 * Cannot watch it.  The child is already running under a
-			 * PD_DAEMON descriptor, so close(pd) alone would NOT kill
-			 * it: it would keep serving its client and could still
-			 * VSOCK_BIND inside this label's port window AFTER we
-			 * release the window below and the slot is handed to a
-			 * different label -- a cross-label port squat.  So KILL it
-			 * first, then reap, then release the window.  The worker
-			 * is not on the `workers` list yet and was never counted
-			 * (nworkers++ is below), so do not touch nworkers here.
-			 */
 			syslog(LOG_WARNING, "procdesc watch %s: %m",
 			    id.resource_owner);
-			(void)pdkill(w->pd, SIGKILL);
-			(void)pdwait(w->pd, &status, WEXITED, NULL, NULL);
-			(void)close(w->pd);
-			window_release(w->widx);
-			free(w);
+			/* This uncounted worker owns its window until reaped. */
+			if (vmd_workers_stop(&w, &rejected) == -1)
+				goto out;
 			continue;
 		}
 		w->next = workers;

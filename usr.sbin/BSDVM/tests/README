@@ -12,4 +12,7 @@ Full SwitchBoard idle decline/explicit stop, startup failures, event-loop
 faults with live protected workers, delivered socket lifetime, and parent
 restart after failed termination remain integration gates. Registry references
 are process-local and do not protect against reuse across parent restart.
-Normal exit-event and failed-procdesc-watch cleanup paths need separate review.
+Exit-event errors now retain the reference; failed procdesc-watch setup uses
+the controlled-stop helper. The tests cover invalid-handle exit-event failure
+and cleanup of a real child already reaped through its retained procdesc.
+Actual failed-watch injection remains a full-provider test gate.

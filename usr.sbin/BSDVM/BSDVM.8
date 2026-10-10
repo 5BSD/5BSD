@@ -155,6 +155,8 @@ A worker's window reference is released only after successful reaping or
 confirmation that the child was already reaped.
 Termination or reap failure makes shutdown fail without acknowledging success.
 Its window reference remains reserved in the current parent's registry.
+Exit-event reap failures and failure to register a process watch follow the
+same reference-retention rule.
 That registry is not persistent across parent restart; supervisor recovery of
 surviving workers remains necessary.
 Delivered vsock descriptors are not revoked by terminating their worker.
