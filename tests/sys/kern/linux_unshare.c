@@ -15,6 +15,29 @@
 #define F_WRLCK 1
 #define F_UNLCK 2
 
+static char root_path[4096] = "/";
+
+#ifdef UNSHARE_BSD_SUBSET
+/* Linuxulator absolute lookup may select its native emulation root. */
+static int
+capture_root_path(void)
+{
+	long fd;
+	int error = 0;
+
+	fd = sys4(SYS_openat, AT_FDCWD, ".", O_RDONLY | O_DIRECTORY, 0);
+	if (fd < 0)
+		return (95);
+	if (sys1(SYS_chdir, "/") != 0 ||
+	    sys2(SYS_getcwd, root_path, sizeof(root_path)) < 0)
+		error = 96;
+	if (sys1(SYS_fchdir, fd) != 0)
+		error = 97;
+	(void)sys1(SYS_close, fd);
+	return (error);
+}
+#endif
+
 static int
 wait_child(long pid)
 {
@@ -39,7 +62,7 @@ sharing(void *arg)
 	if (sys2(SYS_getcwd, before, sizeof(before)) < 0)
 		return (1);
 	/* The runner must use a private working directory, not /. */
-	if (xstreq(before, "/"))
+	if (xstreq(before, root_path))
 		return (2);
 	fd = sys2(SYS_memfd_create, "unshare-fd", 0);
 	if (fd < 0)
@@ -67,7 +90,7 @@ sharing(void *arg)
 	if (mask != ((flags & CLONE_FS) != 0 ? 0022 : 0077))
 		return (8);
 	if (sys2(SYS_getcwd, after, sizeof(after)) < 0 ||
-	    !xstreq(after, (flags & CLONE_FS) != 0 ? before : "/"))
+	    !xstreq(after, (flags & CLONE_FS) != 0 ? before : root_path))
 		return (9);
 	return (0);
 }
@@ -413,7 +436,7 @@ static int
 exec_lifetime(void *unused)
 {
 	char before[4096], after[4096];
-	char *args[] = { (char *)self_path, "exec_check", 0 };
+	char *args[] = { (char *)self_path, "exec_check", root_path, 0 };
 	char *env[] = { 0 };
 	long pid;
 	int rc;
@@ -448,6 +471,73 @@ exec_lifetime(void *unused)
 }
 
 static int fs_exec(void) { return (run_child(exec_lifetime, 0)); }
+
+/* Starnix task_test.cc: exec detaches CLONE_FILES, but retains CLONE_FS. */
+static int
+exec_clone_files(void *unused)
+{
+	char *args[] = { (char *)self_path, "exec_close_fd", 0 };
+	char *env[] = { 0 };
+	long fd, pid;
+	int rc;
+
+	(void)unused;
+	fd = sys2(SYS_memfd_create, "exec-clone-files", 0);
+	if (fd < 0 || sys2(SYS_dup2, fd, 100) != 100)
+		return (1);
+	if (fd != 100)
+		(void)sys1(SYS_close, fd);
+	pid = sys5(SYS_clone, CLONE_FILES | SIGCHLD, 0, 0, 0, 0);
+	if (pid < 0)
+		return (2);
+	if (pid == 0) {
+		(void)sys3(SYS_execve, self_path, args, env);
+		(void)sys1(SYS_exit, 3);
+		__builtin_unreachable();
+	}
+	rc = wait_child(pid);
+	if (rc != 0)
+		return (rc);
+	return (sys3(SYS_fcntl, 100, F_GETFD, 0) == 0 ? 0 : 4);
+}
+
+static int
+exec_clone_fs(void *unused)
+{
+	char *args[] = { (char *)self_path, "exec_chdir_root", 0 };
+	char *env[] = { 0 };
+	char before[4096], after[4096];
+	long pid;
+	int rc;
+
+	(void)unused;
+	if (sys2(SYS_getcwd, before, sizeof(before)) < 0 ||
+	    xstreq(before, root_path))
+		return (1);
+	pid = sys5(SYS_clone, CLONE_FS | SIGCHLD, 0, 0, 0, 0);
+	if (pid < 0)
+		return (2);
+	if (pid == 0) {
+		(void)sys3(SYS_execve, self_path, args, env);
+		(void)sys1(SYS_exit, 3);
+		__builtin_unreachable();
+	}
+	rc = wait_child(pid);
+	if (rc != 0)
+		return (rc);
+	return (sys2(SYS_getcwd, after, sizeof(after)) > 0 &&
+	    xstreq(after, root_path) ? 0 : 4);
+}
+
+static int files_exec_detaches(void)
+{
+	return (run_child(exec_clone_files, 0));
+}
+
+static int fs_exec_preserves_sharing(void)
+{
+	return (run_child(exec_clone_fs, 0));
+}
 
 static int
 root_lifetime(void *unused)
@@ -543,13 +633,50 @@ thread_detach(void *unused)
 static int per_thread(void) { return (run_child(thread_detach, 0)); }
 
 #ifdef UNSHARE_BSD_SUBSET
+/* A native kqueue backs epoll and cannot survive fdcopy unchanged. */
+static int
+epoll_rejection(void *unused)
+{
+	long epfd, pid;
+	int rc;
+
+	(void)unused;
+	epfd = sys1(SYS_epoll_create1, 0);
+	if (epfd < 0)
+		return (1);
+	(void)sys1(SYS_umask, 0022);
+	/* Both resources must be shared before testing rejection atomicity. */
+	pid = sys5(SYS_clone, CLONE_FS | CLONE_FILES | SIGCHLD, 0, 0, 0, 0);
+	if (pid < 0)
+		return (2);
+	if (pid == 0) {
+		if (sys1(SYS_unshare, CLONE_FS | CLONE_FILES) != -EINVAL ||
+		    sys1(SYS_close, epfd) != 0)
+			(void)sys1(SYS_exit, 3);
+		(void)sys1(SYS_umask, 0077);
+		(void)sys1(SYS_exit, 0);
+		__builtin_unreachable();
+	}
+	rc = wait_child(pid);
+	if (rc != 0)
+		return (rc);
+	return (sys3(SYS_fcntl, epfd, F_GETFD, 0) == -EBADF &&
+	    sys1(SYS_umask, 0022) == 0077 ? 0 : 4);
+}
+
+static int bsd_epoll_rejection(void)
+{
+	return (run_child(epoll_rejection, 0));
+}
+
 static int
 bsd_rejections(void)
 {
 	unsigned int bit;
 
 	for (bit = 0; bit < 64; bit++) {
-		if ((1UL << bit) == CLONE_FS)
+		if ((1UL << bit) == CLONE_FS ||
+		    (1UL << bit) == CLONE_FILES)
 			continue;
 		if (sys1(SYS_unshare, 1UL << bit) != -EINVAL ||
 		    sys1(SYS_unshare, (1UL << bit) | CLONE_FS) != -EINVAL)
@@ -564,6 +691,8 @@ reject_thread(void *arg)
 	struct worker_state *state = arg;
 
 	if (sys1(SYS_unshare, CLONE_FS) != -EINVAL ||
+	    sys1(SYS_unshare, CLONE_FILES) != -EINVAL ||
+	    sys1(SYS_unshare, CLONE_FS | CLONE_FILES) != -EINVAL ||
 	    sys1(SYS_unshare, 0) != 0)
 		state->error = 1;
 	(void)sys1(SYS_umask, 0077);
@@ -608,6 +737,7 @@ test(int argc, char **argv, char **envp)
 #ifdef UNSHARE_BSD_SUBSET
 		{ "bsd_rejected_flags", bsd_rejections },
 		{ "bsd_thread_rejection", bsd_thread_rejection },
+		{ "bsd_epoll_rejection", bsd_epoll_rejection },
 #endif
 		{ "zero_preserves_sharing", zero },
 		{ "fs_detaches_only_paths_and_umask", fs },
@@ -618,6 +748,8 @@ test(int argc, char **argv, char **envp)
 		{ "fs_repeated", repeated },
 		{ "fs_concurrent_shared_mutation", fs_concurrent },
 		{ "fs_fork_exec_lifetime", fs_exec },
+		{ "files_exec_detaches", files_exec_detaches },
+		{ "fs_exec_preserves_sharing", fs_exec_preserves_sharing },
 		{ "fs_root_lifetime", fs_root },
 		{ "rejection_preserves_sharing", reject_atomicity },
 		{ "files_preserves_open_description", shared_description },
@@ -630,11 +762,22 @@ test(int argc, char **argv, char **envp)
 
 	(void)envp;
 	self_path = argv[0];
-	if (argc == 2 && xstreq(argv[1], "exec_check")) {
+	if (argc == 3 && xstreq(argv[1], "exec_check")) {
 		return (sys1(SYS_umask, 0077) == 0077 &&
 		    sys2(SYS_getcwd, cwd, sizeof(cwd)) > 0 &&
-		    xstreq(cwd, "/") ? 0 : 20);
+		    xstreq(cwd, argv[2]) ? 0 : 20);
 	}
+	if (argc == 2 && xstreq(argv[1], "exec_close_fd"))
+		return (sys1(SYS_close, 100) == 0 ? 0 : 21);
+	if (argc == 2 && xstreq(argv[1], "exec_chdir_root"))
+		return (sys1(SYS_chdir, "/") == 0 ? 0 : 22);
+#ifdef UNSHARE_BSD_SUBSET
+	if (argc != 2 || !xstreq(argv[1], "-l")) {
+		int error = capture_root_path();
+		if (error != 0)
+			return (error);
+	}
+#endif
 	return (run_subtests(argc, argv, cases,
 	    sizeof(cases) / sizeof(cases[0])));
 }

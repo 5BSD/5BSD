@@ -1,0 +1,14 @@
+// Copyright 2026 The Fuchsia Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
+
+library test.nonzero;
+
+alias NonzeroUint8 = uint8:nonzero;
+alias NonzeroUint16 = uint16:nonzero;
+alias NonzeroUint32 = uint32:nonzero;
+alias NonzeroUint64 = uint64:nonzero;
+alias NonzeroInt8 = int8:nonzero;
+alias NonzeroInt16 = int16:nonzero;
+alias NonzeroInt32 = int32:nonzero;
+alias NonzeroInt64 = int64:nonzero;

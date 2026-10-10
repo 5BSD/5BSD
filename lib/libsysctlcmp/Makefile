@@ -11,6 +11,7 @@ MLINKS+=	libsysctlcmp.3 sysctlcmp_client_open.3 \
 		libsysctlcmp.3 sysctlcmp_oidfmt.3 \
 		libsysctlcmp.3 sysctlcmp_describe.3 \
 		libsysctlcmp.3 sysctlcmp_next.3
+MLINKS+=	libsysctlcmp.3 sysctlcmp_interfaces.3
 SRCS=	sysctlcmp.c
 INCS=	sysctlcmp.h sysctlcmp_protocol.h sysctlcmp_server.h
 LIBADD=	service

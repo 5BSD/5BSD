@@ -78,7 +78,7 @@ shipped_policy_body()
 	cp "${conf}" bsdnotify.conf
 	chmod 0644 bsdnotify.conf
 	atf_check -s exit:0 \
-	    -o match:'valid \(0 clients, default explicit, system_default explicit\)' \
+	    -o match:'valid \(1 client, default explicit, system_default explicit\)' \
 	    "${notifyctl}" configtest bsdnotify.conf
 }
 

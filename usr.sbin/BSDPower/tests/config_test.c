@@ -138,9 +138,25 @@ ATF_TC_BODY(missing_file_is_default, tc)
 	ATF_CHECK(!powercmp_config_permits_suspend(&config, "org.any"));
 }
 
+ATF_TC_WITHOUT_HEAD(inhibit_is_separate);
+ATF_TC_BODY(inhibit_is_separate, tc)
+{
+ struct powercmp_config config;
+ ATF_REQUIRE_EQ(0, load_text(&config,
+     "clients { a { suspend = true; } b { inhibit = true; } c { inhibit = 1; } }"));
+ ATF_CHECK(!powercmp_config_permits_inhibit(&config, "a"));
+ ATF_CHECK(powercmp_config_permits_inhibit(&config, "b"));
+ ATF_CHECK(!powercmp_config_permits_suspend(&config, "b"));
+ ATF_CHECK(!powercmp_config_permits_inhibit(&config, "c"));
+ ATF_CHECK(!powercmp_config_permits_inhibit(&config, "unknown"));
+ ATF_REQUIRE_EQ(0, load_text(&config, "clients { a { inhibit = true; inhibit = false; } }"));
+ ATF_CHECK(!powercmp_config_permits_inhibit(&config, "a"));
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
+	ATF_TP_ADD_TC(tp, inhibit_is_separate);
 	ATF_TP_ADD_TC(tp, default_denies_all);
 	ATF_TP_ADD_TC(tp, explicit_grant_is_scoped);
 	ATF_TP_ADD_TC(tp, listed_but_false_is_denied);

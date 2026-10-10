@@ -264,7 +264,7 @@ int fuse_internal_remove(struct vnode *dvp, struct vnode *vp,
 /* rename */
 
 int fuse_internal_rename(struct vnode *fdvp, struct componentname *fcnp,
-    struct vnode *tdvp, struct componentname *tcnp);
+    struct vnode *tdvp, struct componentname *tcnp, u_int flags);
 
 /* revoke */
 

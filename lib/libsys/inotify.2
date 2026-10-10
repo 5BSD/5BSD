@@ -455,6 +455,18 @@ on the documentation available at
 The inotify system calls first appeared in
 .Fx 15.0 .
 .Sh BUGS
+For ordinary native file descriptors, deletion notification follows vnode
+lifetime.
+A private mapping of a tmpfs file can retain its data after the final
+descriptor close without keeping the vnode active.
+In that case, an unlinked file's
+.Dv IN_DELETE_SELF
+and
+.Dv IN_IGNORED
+events can arrive before the mapping is unmapped.
+Linux64 mappings retain their open file description until the final unmap
+and defer these events accordingly.
+.Pp
 The following limitations apply to events attributed through the name cache,
 that is, to accesses by native processes and to operations that do not go
 through an open file description.

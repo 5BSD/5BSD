@@ -1,0 +1,127 @@
+// Copyright 2026 The Fuchsia Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
+
+library test.zxtypes;
+
+using zx;
+
+alias StatusAlias = zx.Status;
+
+type StatusEnum = flexible enum : zx . Status {
+    OK = 0;
+};
+
+type StatusEnumAlias = flexible enum : StatusAlias {
+    OK = 0;
+};
+
+type StatusStruct = struct {
+    status zx.Status;
+    status_array array<zx.Status, 10>;
+    status_vector vector<zx.Status>;
+};
+
+type StatusStructAlias = struct {
+    status StatusAlias;
+    status_array array<StatusAlias, 10>;
+    status_vector vector<StatusAlias>;
+};
+
+type StatusTable = table {
+    1: status zx.Status;
+    2: status_array array<zx.Status, 10>;
+    3: status_vector vector<zx.Status>;
+};
+
+type StatusTableAlias = table {
+    1: status StatusAlias;
+    2: status_array array<StatusAlias, 10>;
+    3: status_vector vector<StatusAlias>;
+};
+
+type StatusUnion = union {
+    1: status zx.Status;
+    2: status_array array<zx.Status, 10>;
+    3: status_vector vector<zx.Status>;
+};
+
+type StatusUnionAlias = union {
+    1: status StatusAlias;
+    2: status_array array<StatusAlias, 10>;
+    3: status_vector vector<StatusAlias>;
+};
+
+protocol StatusProtocol {
+    A(struct {
+        arg zx.Status;
+    }) -> (struct {
+        status zx.Status;
+    }) error zx.Status;
+
+    B(struct {
+        arg StatusAlias;
+    }) -> (struct {
+        status StatusAlias;
+    }) error StatusAlias;
+};
+
+alias ResultAlias = zx.Result;
+
+type ResultEnum = flexible enum : zx . Result {
+    OK = 0;
+};
+
+type ResultEnumAlias = flexible enum : ResultAlias {
+    OK = 0;
+};
+
+type ResultStruct = struct {
+    result zx.Result;
+    result_array array<zx.Result, 10>;
+    result_vector vector<zx.Result>;
+};
+
+type ResultStructAlias = struct {
+    result ResultAlias;
+    result_array array<ResultAlias, 10>;
+    result_vector vector<ResultAlias>;
+};
+
+type ResultTable = table {
+    1: result zx.Result;
+    2: result_array array<zx.Result, 10>;
+    3: result_vector vector<zx.Result>;
+};
+
+type ResultTableAlias = table {
+    1: result ResultAlias;
+    2: result_array array<ResultAlias, 10>;
+    3: result_vector vector<ResultAlias>;
+};
+
+type ResultUnion = union {
+    1: result zx.Result;
+    2: result_array array<zx.Result, 10>;
+    3: result_vector vector<zx.Result>;
+};
+
+type ResultUnionAlias = union {
+    1: result ResultAlias;
+    2: result_array array<ResultAlias, 10>;
+    3: result_vector vector<ResultAlias>;
+};
+
+protocol ResultProtocol {
+    A(struct {
+        arg zx.Result;
+    }) -> (struct {
+        result zx.Result;
+    }) error zx.Result;
+
+    B(struct {
+        arg ResultAlias;
+    }) -> (struct {
+        result ResultAlias;
+    }) error ResultAlias;
+};

@@ -60,8 +60,29 @@ failures_body()
 	done
 }
 
+atf_test_case interfaces
+interfaces_body()
+{
+	tool="$(atf_get_srcdir)/sysctlcmpctl_success_bin"
+	atf_check -s exit:0 \
+	    -o inline:'index=1 name=em0 flags=0x00000001 mtu=1500 link=up\nindex=2 name=em1 flags=0x00000000 mtu=1500 link=down\nindex=3 name=lo0 flags=0x00000000 mtu=16384 link=unknown\n' \
+	    -e inline:'client-closed\n' env SYSCTLCMP_TEST_TRACE_CLOSE=1 \
+	    "$tool" interfaces
+	atf_check -s exit:0 -o empty -e empty \
+	    env SYSCTLCMP_TEST_EMPTY=1 "$tool" interfaces
+	atf_check -s exit:0 -o save:output -e empty \
+	    env SYSCTLCMP_TEST_NAME=1 "$tool" interfaces
+	atf_check -s exit:0 -o ignore grep -F 'name=bad\x0aname ' output
+	atf_check -s exit:0 -o inline:'3\n' awk 'END { print NR }' output
+	atf_check -s exit:69 -o empty -e match:'interfaces: Input/output error' \
+	    -e match:'client-closed' env SYSCTLCMP_TEST_FAIL=interfaces \
+	    SYSCTLCMP_TEST_TRACE_CLOSE=1 "$tool" interfaces
+	atf_check -s exit:64 -o empty -e match:usage "$tool" interfaces extra
+}
+
 atf_init_test_cases()
 {
+	atf_add_test_case interfaces
 	atf_add_test_case arguments
 	atf_add_test_case commands
 	atf_add_test_case list_start

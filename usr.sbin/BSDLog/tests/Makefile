@@ -20,6 +20,7 @@ LIBADD.session_test+=	logcmp shmring
 ATF_TESTS_C+=	store_test
 SRCS.store_test=	store_test.c store.c
 LIBADD.store_test+=	logcmp md
+LDFLAGS.store_test+= -Wl,--wrap=writev -Wl,--wrap=ftruncate -Wl,--wrap=lseek
 
 ATF_TESTS_C+=	store_limit_test
 SRCS.store_limit_test=	store_limit_test.c store_limit_impl.c
@@ -30,6 +31,14 @@ ATF_TESTS_C+=	storage_test
 SRCS.storage_test=	storage_test.c storage.c store.c
 LIBADD.storage_test+=	logcmp md service shmring capsulert capreclaim
 CFLAGS.storage_test+= -I${SRCTOP}/lib/libcapsulert
+
+ATF_TESTS_C+= storage_barrier_test
+SRCS.storage_barrier_test= storage_barrier_test.c store.c
+LIBADD.storage_barrier_test+= logcmp md service shmring capsulert capreclaim
+CFLAGS.storage_barrier_test+= -I${SRCTOP}/lib/libcapsulert
+LDFLAGS.storage_barrier_test+= -Wl,--wrap=shmring_read_record \
+    -Wl,--wrap=shmring_consumer_arm -Wl,--wrap=logcmp_store_append \
+    -Wl,--wrap=logcmp_store_flush
 
 ATF_TESTS_C+=	provider_test
 SRCS.provider_test=	provider_test.c logcmp.c session.c

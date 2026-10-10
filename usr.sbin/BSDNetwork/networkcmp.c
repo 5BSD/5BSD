@@ -40,6 +40,10 @@
 #include <networkcmp.h>
 
 #include "resolver.h"
+#include "pf_protocol.h"
+#include "pf_session.h"
+#include "state.h"
+#include <network_state.h>
 #include <networkcmp_server.h>
 #include <logcmp.h>
 
@@ -68,8 +72,10 @@ union provider_buffer {
 	} wire;
 };
 
+#define NETWORKCMP_RESOLVE_WAITERS 16
 struct resolver_job {
-	struct channel_message		*request_message;
+	struct channel_message *requests[NETWORKCMP_RESOLVE_WAITERS];
+	size_t nrequests;
 	const char			*label;
 	struct networkcmp_policy	 policy;
 	struct networkcmp_msg		 request_header;
@@ -597,6 +603,10 @@ net_log(struct net_logger *nl, int pri, const char *fmt, ...)
 		struct logcmp_emit_options opt;
 		char expfmt[256], msg[512];
 
+		if (!logcmp_enabled(nl->logger, net_severity(pri))) {
+			errno = saved;
+			return;
+		}
 		net_expand_m(expfmt, sizeof(expfmt), fmt, saved);
 		va_start(ap, fmt);
 		(void)vsnprintf(msg, sizeof(msg), expfmt, ap);
@@ -726,7 +736,7 @@ resolve_perform(struct resolver_job *job)
 	struct addrinfo hints, *addresses, *ai;
 	char *canonical;
 	size_t canonical_length, payload_length;
-	uint32_t count, maximum;
+	uint32_t count, maximum, ttl_seconds;
 	int error;
 
 	request = &job->request;
@@ -790,10 +800,10 @@ resolve_perform(struct resolver_job *job)
 
 	BSDNETWORK_RESOLVE_START(__DECONST(char *, job->label), job->host);
 	addresses = NULL;
-	error = netresolve(
+	error = netresolve_ex(
 	    request->host_length != 0 ? job->host : NULL,
 	    request->service_length != 0 ? job->service : NULL, &hints,
-	    &addresses);
+	    &addresses, &ttl_seconds);
 	if (error != 0) {
 		error = gai_to_errno(error);
 		goto reject_probe;
@@ -848,8 +858,8 @@ resolve_perform(struct resolver_job *job)
 		canonical_length = NETWORKCMP_CANONNAME_MAX;
 	reply->result_count = count;
 	reply->canonname_length = (uint32_t)canonical_length;
-	/* cap_net/getaddrinfo does not expose DNS TTLs; zero means unknown. */
-	reply->ttl_seconds = 0;
+	/* Conservative remaining lifetime, including CNAMEs and cache age. */
+	reply->ttl_seconds = ttl_seconds;
 	if (canonical_length != 0)
 		memcpy(results + count, canonical, canonical_length);
 	payload_length = sizeof(*reply) + count * sizeof(*results) +
@@ -903,7 +913,9 @@ resolver_thread(void *argument)
 	    (errno != 0 ? errno : EIO) : 0;
 	atomic_store_explicit(&job->complete, true, memory_order_release);
 	byte = 1;
-	(void)write(job->notify_fd, &byte, sizeof(byte));
+	while (write(job->notify_fd, &byte, sizeof(byte)) == -1 &&
+	    errno == EINTR) {
+	}
 	return (NULL);
 }
 
@@ -917,14 +929,28 @@ start_resolve(struct session_state *state,
 	struct resolver_job *job;
 	int error;
 
-	if (state->resolver != NULL)
-		return (errno = EBUSY, -1);
 	request = (const void *)(message + 1);
 	wire = (const void *)(request + 1);
+	/* No authoritative configured-address snapshot is available yet. */
+	if ((request->flags & NETWORKCMP_RESOLVE_F_ADDRCONFIG) != 0)
+		return (errno = EOPNOTSUPP, -1);
+	if (state->resolver != NULL) {
+		job = state->resolver;
+		if (job->nrequests == NETWORKCMP_RESOLVE_WAITERS ||
+		    memcmp(&job->request_header, message, sizeof(*message)) != 0 ||
+		    memcmp(&job->request, request, sizeof(*request)) != 0 ||
+		    memcmp(job->host, wire, request->host_length) != 0 ||
+		    memcmp(job->service, wire + request->host_length,
+		    request->service_length) != 0)
+			return (errno = EBUSY, -1);
+		job->requests[job->nrequests++] = request_message;
+		return (0);
+	}
 	job = calloc(1, sizeof(*job));
 	if (job == NULL)
 		return (-1);
-	job->request_message = request_message;
+	job->requests[0] = request_message;
+	job->nrequests = 1;
 	job->label = state->label;
 	job->policy = state->policy;
 	job->request_header = *message;
@@ -986,13 +1012,18 @@ finish_resolve(struct session_state *state)
 	error = pthread_join(job->thread, NULL);
 	if (error != 0)
 		return (errno = error, -1);
-	audit_policy(state->audit, state->logchan, state->label, "resolve", job->error);
-	result = send_reply(job->request_message, state->label,
-	    &job->request_header, job->error,
-	    job->error == 0 ? job->payload : NULL,
-	    job->error == 0 ? job->payload_length : 0, -1);
-	error = result == -1 ? errno : 0;
-	channel_message_free(job->request_message);
+	result = error = 0;
+	for (size_t i = 0; i < job->nrequests; i++) {
+		audit_policy(state->audit, state->logchan, state->label, "resolve", job->error);
+		if (result == 0 && send_reply(job->requests[i], state->label,
+		    &job->request_header, job->error,
+		    job->error == 0 ? job->payload : NULL,
+		    job->error == 0 ? job->payload_length : 0, -1) == -1) {
+			result = -1;
+			error = errno;
+		}
+		channel_message_free(job->requests[i]);
+	}
 	state->resolver = NULL;
 	state->resolver_deadline_ns = 0;
 	free(job);
@@ -1362,6 +1393,8 @@ worker(int fd, int barrier,
 
 	audit = NULL;
 	memset(&wlog, 0, sizeof(wlog));
+	if (netresolve_worker_enter() == -1)
+		goto fail;
 	if (auditcmp_client_adopt(audit_fd, &audit) == -1)
 		goto fail;
 	/*
@@ -1509,7 +1542,51 @@ reject:
 	return (-1);
 }
 
+static int
+pf_worker(int fd, int pf_fd, int open_error)
+{
+	if (netresolve_worker_enter() == -1 ||
+	    service_worker_enter_capability_mode(SERVICE_PROTECT_EXTERNAL |
+	    SERVICE_PROTECT_NOPRIVS | SERVICE_PROTECT_NOFORK |
+	    SERVICE_PROTECT_NOIPC | SERVICE_PROTECT_NOEXEC) == -1) {
+		(void)close(fd);
+		if (pf_fd >= 0)
+			(void)close(pf_fd);
+		return (1);
+	}
+	return (network_pf_serve(fd, pf_fd, open_error));
+}
+
+static int
+start_pf_session(int fd, struct service_context *ctx, int *pdp)
+{
+	pid_t pid;
+	int pf_fd, open_error, pd, error;
+
+	if (harden_worker_fd(fd) == -1)
+		return (-1);
+	/* Only the PF endpoint reaches here, after the SwitchBoard anointment
+	 * and the per-session read right have both been checked. */
+	pf_fd = network_pf_open(ctx);
+	open_error = pf_fd == -1 ? errno : 0;
+	pid = pdfork(&pd, PD_CLOEXEC | PD_DAEMON);
+	if (pid == -1) {
+		error = errno;
+		if (pf_fd >= 0)
+			(void)close(pf_fd);
+		return (errno = error, -1);
+	}
+	if (pid == 0)
+		_exit(pf_worker(fd, pf_fd, open_error));
+	if (pf_fd >= 0)
+		(void)close(pf_fd);
+	*pdp = pd;
+	return (0);
+}
+
 #define	NETWORKCMP_MAX_WORKERS	4096u
+#define	NETWORKCMP_RESOLVER_TIMER	1
+#define	NETWORKCMP_RESOLVER_REFRESH_SECONDS	5
 
 /* One live pdfork'd worker, tracked so its exit can account the slot. */
 struct net_worker_ent {
@@ -1542,14 +1619,17 @@ main(void)
 	struct net_worker_ent *workers = NULL, *w;
 	struct networkcmp_config config;
 	struct service_identity identity;
-	struct service_listener *listener, *listeners[2];
-	static const char *const listener_names[2] = {
-		BSDNETWORK_NAME, BSDNETWORK_ADMIN_NAME };
+	struct service_listener *listener, *listeners[4];
+	struct network_state_server *state_server = NULL;
+	static const char *const listener_names[4] = {
+		BSDNETWORK_NAME, BSDNETWORK_ADMIN_NAME, PF_MONITOR_SERVICE,
+	    NETWORK_STATE_INTERFACE };
 	struct service_provider *provider;
 	struct service_context *ctx;
 	struct kevent event, change;
 	size_t nworkers = 0;
 	int error, fd, cfgfd, kq;
+	const char *expected_name;
 
 	openlog("bsdnetwork", LOG_PID | LOG_NDELAY, LOG_DAEMON);
 	/* ps(1) shows the unit name, not the ld-elf.so.1 launcher. */
@@ -1563,6 +1643,7 @@ main(void)
 	 * compiled-in default policy (outbound allowed, internal denied) stays in
 	 * force and the problem is logged for the operator.
 	 */
+	ctx = NULL;
 	networkcmp_config_defaults(&config);
 	if (service_config_open(NETWORKCMP_CONFIG_NAME, &cfgfd) == -1) {
 		if (errno != ENOENT)
@@ -1579,14 +1660,14 @@ main(void)
 	 * over it: born in capability mode, the resolver obtains /etc/resolv.conf
 	 * (parsed for nameservers), /etc/hosts and /etc/services on demand through
 	 * the filesystem provider.  Workers pdfork'd later inherit the retained
-	 * descriptors and parsed nameservers.  Non-fatal: numeric literals (and,
-	 * given hosts, local names) still resolve; log and proceed.
+	 * descriptors and a read-only nameserver generation.  Non-fatal: numeric
+	 * literals (and, given hosts, local names) still resolve; log and proceed.
 	 */
 	if (service_acquire(&ctx) == -1)
 		net_log(main_logger(), LOG_WARNING, "service_acquire: %m");
 	else if (netresolve_init(ctx) == -1)
 		net_log(main_logger(), LOG_WARNING,
-		    "resolver init failed; only numeric addresses will resolve: %m");
+		    "resolver shared nameservers unavailable: %m");
 	/*
 	 * Operator logging goes through system.Log (main_logger()), acquired
 	 * lazily over the lookup channel after the provider is exposed — no
@@ -1600,6 +1681,10 @@ main(void)
 	    &listeners[0]) == -1 ||
 	    service_provider_expose(provider, listener_names[1],
 	    &listeners[1]) == -1 ||
+	    service_provider_expose(provider, listener_names[2],
+	    &listeners[2]) == -1 ||
+	    service_provider_expose(provider, listener_names[3],
+	    &listeners[3]) == -1 ||
 	    service_provider_enter_capability_mode(provider) == -1 ||
 	    service_provider_ready(provider) == -1)
 		goto fail;
@@ -1611,9 +1696,18 @@ main(void)
 	kq = kqueuex(KQUEUE_CLOEXEC);
 	if (kq == -1)
 		goto fail;
-	for (int i = 0; i < 2; i++) {
+	if (network_state_server_create(kq, &state_server) == -1)
+		goto fail;
+	for (int i = 0; i < 4; i++) {
 		EV_SET(&change, service_listener_fd(listeners[i]), EVFILT_READ,
 		    EV_ADD | EV_ENABLE, 0, 0, listeners[i]);
+		if (kevent(kq, &change, 1, NULL, 0, NULL) == -1)
+			goto fail;
+	}
+	if (ctx != NULL) {
+		EV_SET(&change, NETWORKCMP_RESOLVER_TIMER, EVFILT_TIMER,
+		    EV_ADD | EV_ENABLE, NOTE_SECONDS,
+		    NETWORKCMP_RESOLVER_REFRESH_SECONDS, NULL);
 		if (kevent(kq, &change, 1, NULL, 0, NULL) == -1)
 			goto fail;
 	}
@@ -1622,6 +1716,14 @@ main(void)
 			if (errno == EINTR)
 				continue;
 			goto fail;
+		}
+		if (network_state_server_event(state_server, &event))
+			continue;
+		if (event.filter == EVFILT_TIMER) {
+			if (netresolve_refresh(ctx) == -1)
+				net_log(main_logger(), LOG_WARNING,
+				    "nameserver refresh failed: %m");
+			continue;
 		}
 		if (event.filter == EVFILT_PROCDESC) {
 			net_worker_remove(&workers, event.udata, &nworkers);
@@ -1635,6 +1737,7 @@ main(void)
 			if (service_provider_quiescing(provider) == 1) {
 				int status;
 
+				network_state_server_destroy(state_server);
 				status = service_provider_quiesce_complete(provider, 0);
 				if (g_log.client != NULL)
 					logcmp_client_close(g_log.client);
@@ -1650,12 +1753,25 @@ main(void)
 		 * The listener that fired must be the endpoint SwitchBoard
 		 * resolved; a disagreement is a routing bug and is refused.
 		 */
-		if (strcmp(identity.service_name, listener == listeners[1] ?
-		    listener_names[1] : listener_names[0]) != 0) {
+		expected_name = listener == listeners[3] ? listener_names[3] :
+		    listener == listeners[2] ? listener_names[2] :
+		    (listener == listeners[1] ? listener_names[1] :
+		    listener_names[0]);
+		if (strcmp(identity.service_name, expected_name) != 0) {
 			net_log(main_logger(), LOG_ERR,
 			    "refusing %s: resolved %s on another listener",
 			    identity.client_label, identity.service_name);
 			close(fd);
+			continue;
+		}
+		if (listener == listeners[3]) {
+			if (!service_rights_allow(identity.rights, NETWORK_STATE_RIGHT_READ)) {
+				close(fd);
+				continue;
+			}
+			if (network_state_server_add(state_server, fd, identity.client_label) == -1)
+				net_log(main_logger(), LOG_WARNING, "state session for %s rejected: %m",
+				    identity.client_label);
 			continue;
 		}
 		if (nworkers >= NETWORKCMP_MAX_WORKERS) {
@@ -1665,9 +1781,20 @@ main(void)
 			close(fd);
 			continue;
 		}
+		if (listener == listeners[2] &&
+		    !service_rights_allow(identity.rights,
+		    PF_MONITOR_RIGHT_READ)) {
+			net_log(main_logger(), LOG_WARNING,
+			    "PF session for %s lacks read right",
+			    identity.client_label);
+			close(fd);
+			continue;
+		}
 		w = calloc(1, sizeof(*w));
-		if (w == NULL || start_session(fd, identity.client_label,
-		    identity.rights, &config, &w->pd) == -1) {
+		if (w == NULL || (listener == listeners[2] ?
+		    start_pf_session(fd, ctx, &w->pd) :
+		    start_session(fd, identity.client_label, identity.rights,
+		    &config, &w->pd)) == -1) {
 			net_log(main_logger(), LOG_WARNING,
 			    "session for %s rejected: %m",
 			    identity.client_label);
@@ -1706,6 +1833,7 @@ main(void)
 
 fail:
 	net_log(main_logger(), LOG_ERR, "initialization or service loop: %m");
+	network_state_server_destroy(state_server);
 	return (1);
 }
 #endif

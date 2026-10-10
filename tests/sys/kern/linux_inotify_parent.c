@@ -7,6 +7,7 @@
 #include <sys/wait.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <limits.h>
 #include <stdio.h>
 #include <sched.h>
 #include <stdlib.h>
@@ -67,7 +68,9 @@ race_events(int fd, int wd, int wd2, int rename_case)
 int
 main(int argc, char **argv)
 {
- char dir[] = "/tmp/inotify-parent-XXXXXX";
+ const char *tmpdir = getenv("TMPDIR");
+ int length;
+ char dir[PATH_MAX];
  int f, g = -1, fd, wd, wd2, self_fd = -1, self_wd = -1;
  unsigned mask = IN_OPEN | IN_ACCESS | IN_MODIFY | IN_CLOSE_WRITE;
  CHECK(argc >= 2);
@@ -75,6 +78,10 @@ main(int argc, char **argv)
  if (argc > 2 && !strcmp(argv[2], "unprivileged")) {
   CHECK(setgid(65534) == 0); CHECK(setuid(65534) == 0);
  }
+ if (tmpdir == NULL || tmpdir[0] == '\0') tmpdir = "/tmp";
+ CHECK(tmpdir[0] == '/');
+ length = snprintf(dir, sizeof(dir), "%s/inotify-parent-XXXXXX", tmpdir);
+ CHECK(length > 0 && (size_t)length < sizeof(dir));
  CHECK(mkdtemp(dir) != NULL); CHECK(chdir(dir) == 0);
  CHECK(mkdir("a", 0700) == 0); CHECK(mkdir("b", 0700) == 0);
  f = open("a/first", O_CREAT | O_RDWR, 0600); CHECK(f >= 0);

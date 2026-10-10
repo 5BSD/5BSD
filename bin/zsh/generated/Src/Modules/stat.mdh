@@ -1,0 +1,35 @@
+#ifndef have_zshQsstat_module
+#define have_zshQsstat_module
+
+# ifndef IMPORTING_MODULE_zshQsstat
+#   define boot_ boot_zshQsstat
+#   define cleanup_ cleanup_zshQsstat
+#   define features_ features_zshQsstat
+#   define enables_ enables_zshQsstat
+#   define setup_ setup_zshQsstat
+#   define finish_ finish_zshQsstat
+# endif /* !IMPORTING_MODULE_zshQsstat */
+
+/* Module dependencies */
+# define IMPORTING_MODULE_zshQsmain 1
+# include "../../Src/zsh.mdh"
+
+# undef mod_import_variable
+# undef mod_import_function
+# if defined(IMPORTING_MODULE_zshQsstat) &&  defined(MODULE)
+#  define mod_import_variable 
+#  define mod_import_function 
+# else
+#  define mod_import_function
+#  define mod_import_variable
+# endif /* IMPORTING_MODULE_zshQsstat && MODULE */
+# include "stat.epro"
+# undef mod_import_variable
+# define mod_import_variable
+# undef mod_import_variable
+# define mod_import_variable
+# ifndef mod_export
+#  define mod_export 
+# endif /* mod_export */
+
+#endif /* !have_zshQsstat_module */

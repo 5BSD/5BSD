@@ -3,7 +3,10 @@
 PACKAGE=lib${LIB}
 LIB=	networkcmp
 SHLIB_MAJOR=	1
-MAN=	libnetworkcmp.3
+MAN=	libnetworkcmp.3 network_state.3
+MLINKS+=network_state.3 network_state_open.3
+MLINKS+=network_state.3 network_state_watch.3
+MLINKS+=network_state.3 network_state_close.3
 MLINKS+=libnetworkcmp.3 networkcmp_hello.3
 MLINKS+=libnetworkcmp.3 networkcmp_connect.3
 MLINKS+=libnetworkcmp.3 networkcmp_connect_ex.3
@@ -16,8 +19,9 @@ MLINKS+=libnetworkcmp.3 networkcmp_client_open.3
 MLINKS+=libnetworkcmp.3 networkcmp_client_limits.3
 MLINKS+=libnetworkcmp.3 networkcmp_client_close.3
 
-SRCS=	networkcmp.c
-INCS=	networkcmp.h networkcmp_protocol.h networkcmp_server.h
+SRCS=	networkcmp.c network_state.c
+INCS=	networkcmp.h networkcmp_protocol.h networkcmp_server.h \
+	network_state.h network_state_protocol.h
 
 LIBADD=	pthread service
 CFLAGS+=	-I${SRCTOP}/lib/libservice

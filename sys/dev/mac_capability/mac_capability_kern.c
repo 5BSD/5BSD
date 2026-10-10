@@ -207,7 +207,7 @@ mac_capability_msg_alloc_full(const void *data, size_t datalen,
 	KASSERT(nfds <= MAC_CAPABILITY_MAX_FDS,
 	    ("%s: nfds %d > MAC_CAPABILITY_MAX_FDS", __func__, nfds));
 
-	msg = uma_zalloc(mac_capability_msg_zone, M_WAITOK | M_ZERO);
+	msg = mac_capability_msg_get(datalen, fds != NULL ? nfds : 0);
 
 	if (datalen > 0 && data != NULL) {
 		memcpy(msg->cm_data, data, datalen);
@@ -221,22 +221,22 @@ mac_capability_msg_alloc_full(const void *data, size_t datalen,
 				    "<msg>", (uint64_t)0, "fhold-failed",
 				    i, nfds);
 				while (--i >= 0)
-					fdrop(msg->cm_fds[i], curthread);
+					fdrop(msg->cm_fdset->fds[i], curthread);
 				msg->cm_nfds = 0;
-				uma_zfree(mac_capability_msg_zone, msg);
+				mac_capability_msg_free(msg);
 				return (NULL);
 			}
-			msg->cm_fds[i] = fds[i];
+			msg->cm_fdset->fds[i] = fds[i];
 		}
 		msg->cm_nfds = nfds;
 
 		if (fcaps != NULL) {
 			for (i = 0; i < nfds; i++)
 				filecaps_copy(&fcaps[i],
-				    &msg->cm_fcaps[i], true);
+				    &msg->cm_fdset->fcaps[i], true);
 		}
 		if (xfer_state != NULL)
-			memcpy(msg->cm_xfer_state, xfer_state,
+			memcpy(msg->cm_fdset->xfer_state, xfer_state,
 			    nfds * sizeof(uint8_t));
 	}
 
@@ -269,7 +269,7 @@ mac_capability_auto_reply(struct mac_capability_instance *s, uint64_t reply_toke
 	uint32_t err32;
 	int tx_error;
 
-	msg = uma_zalloc(mac_capability_msg_zone, M_WAITOK | M_ZERO);
+	msg = mac_capability_msg_get(sizeof(err32), 0);
 	err32 = (uint32_t)(error != 0 ? error : EIO);
 	memcpy(msg->cm_data, &err32, sizeof(err32));
 	msg->cm_datalen = sizeof(err32);
@@ -282,6 +282,69 @@ mac_capability_auto_reply(struct mac_capability_instance *s, uint64_t reply_toke
 		SDT_PROBE5(mac_capability, , , queue__pressure,
 		    s->ci_service->csvc_name, s->ci_badge, "auto-reply-drop",
 		    s->ci_txqlen, 0);
+}
+
+/* A completion reader must not hold the references revocation drains. */
+struct mac_capability_callback_state *
+mac_capability_callback_state_get(struct mac_capability_instance *s)
+{
+	struct mac_capability_callback_state *cs, *candidate;
+
+	candidate = malloc(sizeof(*candidate), M_MAC_CAPABILITY, M_WAITOK | M_ZERO);
+	refcount_init(&candidate->cs_refs, 1);
+	mtx_lock(&s->ci_mtx);
+	if (s->ci_callback_state == NULL) {
+		s->ci_callback_state = candidate;
+		candidate = NULL;
+		if ((s->ci_flags & MAC_CAPABILITY_SF_REVOKE_DONE) != 0)
+			atomic_store_rel_int(&s->ci_callback_state->cs_done, 1);
+	}
+	cs = s->ci_callback_state;
+	refcount_acquire(&cs->cs_refs);
+	mtx_unlock(&s->ci_mtx);
+	free(candidate, M_MAC_CAPABILITY);
+	return (cs);
+}
+
+bool
+mac_capability_callback_state_done(struct mac_capability_callback_state *cs)
+{
+
+	return (atomic_load_acq_int(&cs->cs_done) != 0);
+}
+
+void
+mac_capability_callback_state_rele(struct mac_capability_callback_state *cs)
+{
+
+	if (cs != NULL && refcount_release(&cs->cs_refs))
+		free(cs, M_MAC_CAPABILITY);
+}
+
+/*
+ * FINALIZED is an exclusion claim, not evidence that service cleanup returned.
+ * Keep the completion latch separate.  This covers the callback itself only;
+ * asynchronous service-owned cleanup needs its own completion contract.
+ */
+void
+mac_capability_revoke_callback(struct mac_capability_instance *s,
+    enum mac_capability_revoke_reason reason)
+{
+	struct mac_capability_service *svc = s->ci_service;
+
+	mtx_lock(&s->ci_mtx);
+	KASSERT((s->ci_flags & MAC_CAPABILITY_SF_FINALIZED) != 0 &&
+	    (s->ci_flags & MAC_CAPABILITY_SF_REVOKE_DONE) == 0,
+	    ("invalid capability revoke callback claim"));
+	mtx_unlock(&s->ci_mtx);
+	if (svc != NULL && svc->csvc_ops->co_revoke != NULL)
+		svc->csvc_ops->co_revoke(s, s->ci_badge, reason, svc->csvc_arg);
+	mtx_lock(&s->ci_mtx);
+	s->ci_flags |= MAC_CAPABILITY_SF_REVOKE_DONE;
+	if (s->ci_callback_state != NULL)
+		atomic_store_rel_int(&s->ci_callback_state->cs_done, 1);
+	wakeup(&s->ci_flags);
+	mtx_unlock(&s->ci_mtx);
 }
 
 /*
@@ -377,19 +440,20 @@ mac_capability_dispatch_task(void *context, int pending __unused)
 				 * Wait for deferred work first.  Our own
 				 * hold adds 1, so wait for refcnt <= 2.
 				 */
-				while (refcount_load(&s->ci_refcnt) > 2) {
+				while (refcount_load(&s->ci_refcnt) > 2 &&
+				    !(s->ci_flags & MAC_CAPABILITY_SF_FINALIZED)) {
 					mtx_unlock(&s->ci_mtx);
 					tsleep(s, 0, "mac_capabilitysr", MAC_CAPABILITY_POLL_TICKS);
 					mtx_lock(&s->ci_mtx);
 				}
-				s->ci_flags |= MAC_CAPABILITY_SF_FINALIZED;
-				mtx_unlock(&s->ci_mtx);
-				if (svc->csvc_ops->co_revoke != NULL)
-					svc->csvc_ops->co_revoke(s,
-					    s->ci_badge,
-					    MAC_CAPABILITY_REVOKE_BY_SERVICE,
-					    svc->csvc_arg);
-				mtx_lock(&s->ci_mtx);
+				/* Another finalizer may have won while we slept. */
+				if (!(s->ci_flags & MAC_CAPABILITY_SF_FINALIZED)) {
+					s->ci_flags |= MAC_CAPABILITY_SF_FINALIZED;
+					mtx_unlock(&s->ci_mtx);
+					mac_capability_revoke_callback(s,
+					    MAC_CAPABILITY_REVOKE_BY_SERVICE);
+					mtx_lock(&s->ci_mtx);
+				}
 			}
 		}
 		if (retry)
@@ -551,9 +615,7 @@ mac_capability_instance_revoke_reason(struct mac_capability_instance *s,
 		    s->ci_flags, s->ci_restricted, curthread->td_proc->p_pid,
 		    mac_capability_proc_nonce(curthread->td_ucred));
 	}
-	if (svc != NULL && svc->csvc_ops->co_revoke != NULL)
-		svc->csvc_ops->co_revoke(s, s->ci_badge, reason,
-		    svc->csvc_arg);
+	mac_capability_revoke_callback(s, reason);
 
 out:
 	if (svc != NULL) {
@@ -581,6 +643,7 @@ mac_capability_service_destroy(struct mac_capability_service *svc)
 {
 	struct mac_capability_instance *s;
 	struct mac_capability_msgq deadq;
+	struct mac_capability_callback_state *waiting;
 	bool need_revoke;
 
 	STAILQ_INIT(&deadq);
@@ -665,33 +728,53 @@ mac_capability_service_destroy(struct mac_capability_service *svc)
 	 *
 	 * We do NOT unlink instances or release reservation refs
 	 * here.  Close handles that.  If close races, it checks
-	 * FINALIZED under ci_mtx and skips co_revoke.
+	 * FINALIZED under ci_mtx and waits for callback return.  A claimed
+	 * callback on another thread must also return before unload completes.
 	 *
 	 * Scan from the list head each time: find the first
-	 * instance that isn't FINALIZED, mark it, hold a ref,
+	 * instance that isn't FINALIZED, acquire a live reference, mark it,
 	 * drop xlock, fire co_revoke, release ref, repeat.
 	 * O(N²) worst case, but N is small and this only runs
 	 * during module unload.
 	 */
 	for (;;) {
+		waiting = NULL;
 		sx_xlock(&mac_capability_registry_lock);
 		LIST_FOREACH(s, &svc->csvc_instances, ci_svc_link) {
 			mtx_lock(&s->ci_mtx);
 			need_revoke =
 			    !(s->ci_flags & MAC_CAPABILITY_SF_FINALIZED);
-			if (need_revoke) {
+			if (need_revoke && mac_capability_instance_tryhold(s)) {
 				s->ci_flags |= MAC_CAPABILITY_SF_FINALIZED;
-				mac_capability_instance_hold(s);
 				mtx_unlock(&s->ci_mtx);
+				break;
+			}
+			if (!(s->ci_flags & MAC_CAPABILITY_SF_REVOKE_DONE)) {
+				/*
+				 * Close may own a zero-ref instance, or another
+				 * finalizer may still be inside module code.  Pin
+				 * only its result while registry lock keeps s alive.
+				 */
+				mtx_unlock(&s->ci_mtx);
+				waiting = mac_capability_callback_state_get(s);
 				break;
 			}
 			mtx_unlock(&s->ci_mtx);
 		}
 		sx_xunlock(&mac_capability_registry_lock);
 
+		if (waiting != NULL) {
+			while (!mac_capability_callback_state_done(waiting))
+				pause("caprevokewait", MAC_CAPABILITY_POLL_TICKS);
+			mac_capability_callback_state_rele(waiting);
+			continue;
+		}
 		if (s == NULL)
 			break;
 
+		/* Our hold plus the file reference are the only permitted refs. */
+		while (refcount_load(&s->ci_refcnt) > 2)
+			tsleep(s, 0, "caprevokerefs", MAC_CAPABILITY_POLL_TICKS);
 		SDT_PROBE6(mac_capability, , , instance__finalize,
 		    svc->csvc_name, s->ci_badge, MAC_CAPABILITY_REVOKE_UNLOAD,
 		    curthread->td_proc->p_pid, curthread->td_ucred,
@@ -699,9 +782,7 @@ mac_capability_service_destroy(struct mac_capability_service *svc)
 		SDT_PROBE6(mac_capability, , , state, svc->csvc_name, s->ci_badge,
 		    s->ci_flags, s->ci_restricted, curthread->td_proc->p_pid,
 		    mac_capability_proc_nonce(curthread->td_ucred));
-		if (svc->csvc_ops->co_revoke != NULL)
-			svc->csvc_ops->co_revoke(s, s->ci_badge,
-			    MAC_CAPABILITY_REVOKE_UNLOAD, svc->csvc_arg);
+		mac_capability_revoke_callback(s, MAC_CAPABILITY_REVOKE_UNLOAD);
 		mac_capability_instance_rele(s);
 	}
 
@@ -814,7 +895,9 @@ mac_capability_forward(struct mac_capability_instance *s, const struct mac_capab
 		    s->ci_service->csvc_name, s->ci_badge, src->cm_datalen);
 
 	msg = mac_capability_msg_alloc_full(src->cm_data, src->cm_datalen,
-	    src->cm_fds, src->cm_fcaps, src->cm_xfer_state, src->cm_nfds,
+	    src->cm_nfds > 0 ? src->cm_fdset->fds : NULL,
+	    src->cm_nfds > 0 ? src->cm_fdset->fcaps : NULL,
+	    src->cm_nfds > 0 ? src->cm_fdset->xfer_state : NULL, src->cm_nfds,
 	    src->cm_badge, src->cm_reply_token, src->cm_cred, src->cm_abi);
 	if (msg == NULL)
 		return (src->cm_nfds > 0 ? EBADF : ENOMEM);
@@ -823,9 +906,11 @@ mac_capability_forward(struct mac_capability_instance *s, const struct mac_capab
 	msg->cm_authority = src->cm_authority;
 	cap_authority_retain(msg->cm_authority);
 	if (src->cm_nfds > 0) {
-		memcpy(msg->cm_cloexec_state, src->cm_cloexec_state,
+		memcpy(msg->cm_fdset->fde_flags, src->cm_fdset->fde_flags,
+		    src->cm_nfds * sizeof(msg->cm_fdset->fde_flags[0]));
+		memcpy(msg->cm_fdset->cloexec_state, src->cm_fdset->cloexec_state,
 		    src->cm_nfds * sizeof(uint8_t));
-		memcpy(msg->cm_clofork_state, src->cm_clofork_state,
+		memcpy(msg->cm_fdset->clofork_state, src->cm_fdset->clofork_state,
 		    src->cm_nfds * sizeof(uint8_t));
 	}
 
@@ -857,6 +942,19 @@ mac_capability_instance_hold(struct mac_capability_instance *s)
 {
 
 	refcount_acquire(&s->ci_refcnt);
+}
+
+/*
+ * Take a reference only if the instance is not already being torn down.
+ * A close drops the count to zero before co_revoke detaches the instance
+ * from its owner's structures, so a lookup through such a structure, made
+ * under the structure's lock, must not revive it.
+ */
+bool
+mac_capability_instance_tryhold(struct mac_capability_instance *s)
+{
+
+	return (refcount_acquire_if_not_zero(&s->ci_refcnt));
 }
 
 void
@@ -974,13 +1072,17 @@ mac_capability_msg_datalen(const struct mac_capability_msg *msg)
 struct file **
 mac_capability_msg_fds(const struct mac_capability_msg *msg)
 {
-	return (__DECONST(struct file **, msg->cm_fds));
+	if (msg->cm_fdset == NULL)
+		return (NULL);
+	return (__DECONST(struct file **, msg->cm_fdset->fds));
 }
 
 struct filecaps *
 mac_capability_msg_fcaps(const struct mac_capability_msg *msg)
 {
-	return (__DECONST(struct filecaps *, msg->cm_fcaps));
+	if (msg->cm_fdset == NULL)
+		return (NULL);
+	return (__DECONST(struct filecaps *, msg->cm_fdset->fcaps));
 }
 
 int

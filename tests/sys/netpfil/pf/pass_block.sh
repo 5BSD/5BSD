@@ -529,8 +529,50 @@ auto_tables_cleanup()
 	pft_cleanup
 }
 
+atf_test_case "bridge_filter" "cleanup"
+bridge_filter_head()
+{
+	atf_set descr 'PF bridge and member filtering work without IPFW controls'
+	atf_set require.user root
+}
+bridge_filter_body()
+{
+	pft_init
+	vnet_init_bridge
+	left=$(vnet_mkepair)
+	right=$(vnet_mkepair)
+	ifconfig ${left}a 192.0.2.1/24 up
+	vnet_mkjail bridge_filter ${left}b ${right}a
+	vnet_mkjail bridge_peer ${right}b
+	jexec bridge_peer ifconfig ${right}b 192.0.2.2/24 up
+	bridge=$(jexec bridge_filter ifconfig bridge create)
+	jexec bridge_filter ifconfig ${left}b up
+	jexec bridge_filter ifconfig ${right}a up
+	jexec bridge_filter ifconfig ${bridge} addm ${left}b addm ${right}a up
+	atf_check -s exit:1 -e ignore jexec bridge_filter sysctl -n net.link.bridge.ipfw
+	atf_check -s exit:1 -e ignore jexec bridge_filter sysctl -n net.link.bridge.ipfw_arp
+	jexec bridge_filter pfctl -e
+	for mode in member bridge; do
+		jexec bridge_filter sysctl net.link.bridge.pfil_member=0 net.link.bridge.pfil_bridge=0
+		jexec bridge_filter sysctl net.link.bridge.pfil_${mode}=1
+		pft_set_rules bridge_filter 'pass all no state'
+		# Fresh ARP resolution must work with either IP filtering path.
+		arp -d 192.0.2.2 >/dev/null 2>&1 || true
+		atf_check -s exit:0 -o ignore ping -c 1 -t 3 192.0.2.2
+		pft_set_rules bridge_filter 'block all'
+		atf_check -s exit:2 -o ignore ping -c 1 -t 2 192.0.2.2
+		pft_set_rules bridge_filter 'block all' 'pass proto icmp no state'
+		atf_check -s exit:0 -o ignore ping -c 1 -t 3 192.0.2.2
+	done
+}
+bridge_filter_cleanup()
+{
+	pft_cleanup
+}
+
 atf_init_test_cases()
 {
+	atf_add_test_case "bridge_filter"
 	atf_add_test_case "enable_disable"
 	atf_add_test_case "v4"
 	atf_add_test_case "v6"

@@ -1,0 +1,329 @@
+.\" SPDX-License-Identifier: BSD-2-Clause
+.Dd October 10, 2026
+.Dt LIBFIDL_BSD 3
+.Os
+.Sh NAME
+.Nm libfidl_bsd
+.Nd experimental native FIDL bindings over capability channels
+.Sh LIBRARY
+Native FIDL library
+.Pq libfidl_bsd, Fl lfidl_bsd
+.Sh SYNOPSIS
+.In fidl/bsd/runtime_c.h
+.Ft int
+.Fn fidl_bsd_connection_create "int fd" "enum fidl_bsd_role role" "struct fidl_bsd_connection **result"
+.Ft uint32_t
+.Fn fidl_bsd_runtime_abi_version "void"
+.Ft int
+.Fn fidl_bsd_connection_create_with_options "int fd" "enum fidl_bsd_role role" "const struct fidl_bsd_options *options" "struct fidl_bsd_connection **result"
+.Ft int
+.Fn fidl_bsd_connection_peer_epitaph "const struct fidl_bsd_connection *connection" "int32_t *status"
+.Ft void
+.Fn fidl_bsd_connection_destroy "struct fidl_bsd_connection *connection"
+.Ft void
+.Fn fidl_bsd_connection_close "struct fidl_bsd_connection *connection" "int error"
+.Ft int
+.Fn fidl_bsd_connection_poll "struct fidl_bsd_connection *connection" "int timeout_ms"
+.Ft int
+.Fn fidl_bsd_connection_dispatch "struct fidl_bsd_connection *connection"
+.Ft int
+.Fn fidl_bsd_connection_fd "const struct fidl_bsd_connection *connection"
+.Ft int
+.Fn fidl_bsd_connection_wants_write "const struct fidl_bsd_connection *connection"
+.Ft int
+.Fn fidl_bsd_connection_error "const struct fidl_bsd_connection *connection"
+.Ft int
+.Fn fidl_bsd_connection_cancel "struct fidl_bsd_connection *connection" "uint32_t txid"
+.Ft int
+.Fn fidl_bsd_connection_shutdown "struct fidl_bsd_connection *connection" "int32_t epitaph"
+.Ft void
+.Fn fidl_bsd_request_retain "struct fidl_bsd_request *request"
+.Ft void
+.Fn fidl_bsd_request_release "struct fidl_bsd_request *request"
+.Ft int
+.Fn fidl_bsd_take_fd "int *fd"
+.Ft "const struct channel_message *"
+.Fn fidl_bsd_request_native "const struct fidl_bsd_request *request"
+.Sh DESCRIPTION
+The
+.Nm
+library combines upstream FIDL natural types and codecs with
+.Xr libchannel 3 .
+Generated C++ client and server adapters use
+.Vt fidl::bsd::Connection ;
+generated C interfaces use the opaque types in the synopsis.
+C is the primary application interface.
+The C bridge is implemented in C++ but its public headers and application
+callbacks compile as C.
+No Zircon kernel, syscall emulation, or Fuchsia dispatcher is used.
+.Ss Status
+This is an experimental source-tree backend.
+Native library, header, and manual installation targets are registered.
+C11 and C++ consumers pass against a staged shared-library installation.
+Production service migration and full world/package validation remain open.
+The standalone build produces
+.Pa /usr/obj/5bsd-fidl-runtime/libfidl_bsd.a .
+See
+.Xr fidl 7
+for the integration's scope and remaining work.
+.Ss Building applications
+Installed public headers live under
+.Pa /usr/include/fidl/bsd ;
+pinned support headers live under
+.Pa /usr/include/fidl/support .
+Use
+.Cm pkgconf --cflags --libs fidl
+to obtain compiler and linker flags.
+Add
+.Fl -static
+to pkgconf for private dependencies when linking the static runtime archive.
+Generated natural types and the generated C bridge compile as C++20.
+Application sources can compile as C11 and use the C linker with those flags.
+The runtime installs as
+.Pa libfidl_bsd.so.1
+and
+.Pa libfidl_bsd.a .
+The optional host SDK provides
+.Xr fidlgen-bsd 1 .
+.Ss Connection lifecycle
+.Fn fidl_bsd_connection_create
+takes ownership of the endpoint descriptor on success only.
+Failed creation clears the result pointer.
+.Fn fidl_bsd_connection_create_with_options
+accepts explicit resource limits in a sized
+.Vt struct fidl_bsd_options
+initialized with
+.Dv FIDL_BSD_OPTIONS_INITIALIZER .
+Unknown sizes or nonzero reserved fields return
+.Er EINVAL .
+.Fn fidl_bsd_runtime_abi_version
+returns
+.Dv FIDL_BSD_ABI_VERSION .
+Use
+.Dv FIDL_BSD_CLIENT
+or
+.Dv FIDL_BSD_SERVER
+for the role.
+Each connection has one dispatch thread.
+.Fn fidl_bsd_connection_poll
+waits through kqueue and dispatches messages;
+its timeout is in milliseconds, with zero for a poll and a negative value
+for an indefinite wait.
+An existing event loop may instead register the borrowed connection fd,
+monitor write readiness while
+.Fn fidl_bsd_connection_wants_write
+is nonzero, and call
+.Fn fidl_bsd_connection_dispatch .
+.Pp
+Closing from a callback is supported.
+Destroying the connection object from its own callback is not supported.
+Pending calls complete with an error on cancellation or peer death.
+.Fn fidl_bsd_connection_destroy
+first closes the connection, so pending calls complete with
+.Er ECANCELED
+while the handle is still valid; those callbacks may query or close it.
+Cancellation is local and does not undo remote work.
+Replies are checked against both the FIDL transaction ID and method ordinal
+after native reply-token matching.
+Transaction IDs are never reused on a connection; reconnect on exhaustion.
+.Pp
+A server may begin protocol shutdown with
+.Fn fidl_bsd_connection_shutdown .
+It queues an epitaph and refuses new sends and replies.
+Keep polling until the peer closes, or enforce an application deadline and
+close locally.
+A successful send does not guarantee delivery; immediate destruction may
+discard queued output.
+.Fn fidl_bsd_connection_peer_epitaph
+returns the received signed protocol status, or
+.Er ENOENT
+before an epitaph arrives.
+.Ss Descriptors and buffers
+Descriptors travel as native channel attachments.
+An integer in message bytes is not authority.
+The expected type comes from the generated schema.
+The message body carries a presence marker, not a descriptor-type label.
+The receiver validates the actual kernel attachment against its schema;
+it does not trust peer-supplied type or rights claims.
+Generic descriptors have no narrower object-type constraint.
+Checking a channel endpoint's object type does not prove that the peer
+implements the named protocol.
+.Pp
+The C++ descriptor wrapper is move-only and consumes outgoing descriptor
+fields even when encoding or sending fails.
+Descriptor zero is valid.
+.Pp
+Descriptor checks are made by the message system calls: the sender's
+expectations are checked and applied by the kernel before a message is
+accepted, moved descriptors are closed by the kernel, and the receiver
+validates against the kernel's report of each attachment, as described in
+.Xr libchannel 3 .
+.Pp
+The C interface borrows outgoing buffers and descriptors and sends a private
+duplicate of each, which is delivered with close-on-exec and close-on-fork
+locked.
+The caller retains its original descriptor and rights.
+A private duplicate preserves kernel transfer restrictions.
+Sending a descriptor restricted with
+.Dv CAP_XFER_NONE
+fails with
+.Er ENOTCAPABLE ;
+a non-passable object such as a kqueue fails with
+.Er EINVAL .
+Immediate send failure preserves the C caller's original descriptor and
+returns an error without invoking a two-way call's callback.
+Accepted queued output can fail later during dispatch.
+.Pp
+Decoded C callback buffers last until callback return.
+Callback descriptors are also released on return unless taken with
+.Fn fidl_bsd_take_fd ,
+which returns the descriptor and replaces its field with \-1.
+Take a descriptor before closing or retaining it, and copy a string before
+retaining its bytes.
+.Pp
+A server callback may retain its request context for a deferred reply using
+.Fn fidl_bsd_request_retain
+and later release it with
+.Fn fidl_bsd_request_release .
+This does not extend the lifetime of decoded callback buffers.
+The context exposes its original kernel-stamped message through
+.Fn fidl_bsd_request_native .
+Application authorization remains the provider's responsibility.
+.Ss Supported bindings
+The C/C++ adapters support closed, ajar, and open protocols, with strict or
+flexible methods and events as permitted by the FIDL compiler.
+Payload types may be named, anonymous, local, or imported.
+Payload-free transactions carry only their header.
+The C projection supports local and imported structs, tables, unions,
+enums/bits,
+nested arrays and vectors, optional values, descriptors, and protocol endpoints.
+Strict application-error replies expose a generated result union;
+the callback errno argument reports transport or conversion failure.
+Dependent libraries reuse the declaring library's C types and private
+inline conversion support.
+Use the repeated
+.Fl -dependency-json
+option of
+.Xr fidlgen-bsd 1
+to supply their compiler IR.
+Composed protocol methods preserve their original ordinals and payload types.
+.Ss Protocol evolution
+Closed protocols reject unknown interactions.
+Ajar protocols accept unknown flexible one-way methods and events.
+Open protocols also answer unknown flexible two-way methods with the standard
+FIDL unknown-method result.
+The generated client reports
+.Er EOPNOTSUPP
+without closing the connection; the C callback receives a null result pointer.
+Application errors remain separate from callback errno status.
+Unknown strict interactions and malformed messages close the connection.
+.Pp
+Open/ajar C server and event structures have an optional
+.Va unknown_interaction
+callback receiving the ordinal, plus a two-way flag for servers.
+C++ handlers provide
+.Fn OnUnknownMethod
+and
+.Fn OnUnknownEvent .
+These hooks receive no unknown payload or descriptors.
+The runtime closes unknown attachments.
+.Pp
+Known methods tolerate a different strict/flexible header flag.
+A generated client installs a default event handler if none exists:
+known events are decoded and discarded, while unknown events follow the
+protocol openness rules.
+In C this occurs on the first generated client call; bind event handlers
+explicitly to receive events before making a call.
+An explicitly bound event handler takes precedence.
+.Ss C aggregate layouts
+Strings and vectors use pointer/size pairs.
+Optional strings and vectors also have a
+.Li _present
+flag; an absent outgoing value must have a null pointer and zero size.
+Arrays are inline C arrays.
+Boxed structs and optional unions use nullable pointers.
+Tables have
+.Li has_MEMBER
+flags, and unions have
+.Li tag
+and
+.Li value
+fields with generated tag constants.
+An unknown flexible union is exposed using the generated unknown-tag constant;
+its discarded unknown data cannot be re-encoded.
+Enum/bits types use fixed-width integer typedefs and prefixed constants.
+.Pp
+Nested callback buffers have the same borrowed lifetime as top-level buffers.
+Use
+.Fn fidl_bsd_take_fd
+to retain a nested descriptor.
+Conversion bounds recursion, allocation work, and descriptor count.
+Cyclic boxed input fails with
+.Er EINVAL .
+Failure to allocate a C response view completes the callback once with
+.Er ENOMEM
+and releases unclaimed descriptors.
+.Pp
+C++ endpoint wrappers preserve their protocol and direction in their type.
+C endpoint fields are descriptors with the same ownership rules as handles.
+Absent optional endpoints use \-1 in C.
+Keyword and helper-field collisions are escaped with a deterministic
+.Li _fidl
+suffix.
+Unsupported schemas fail generation.
+.Pp
+Supported handle subtypes map to generic native descriptors, sockets, and
+capability channels.
+READ and WRITE have explicit Capsicum mappings; SAME_RIGHTS preserves
+existing attenuation.
+Socket type checks need fstat rights; explicit socket rights preserve
+CAP_FSTAT for that check.
+Channel type checks need GETINFO permission and currently require SAME_RIGHTS.
+The kernel continues to enforce transfer ceilings, revocation, and locked
+exec and fork restrictions.
+.Sh RETURN VALUES
+Status functions return errno values directly, with zero for success.
+.Fn fidl_bsd_connection_fd
+returns a borrowed descriptor, or \-1 for an invalid connection.
+.Fn fidl_bsd_take_fd
+returns the taken descriptor, or \-1 if absent.
+.Sh FILES
+.Bl -tag -width indent
+.It Pa /usr/src/lib/libfidl/README
+Build, ownership, supported schema, and validation details.
+.It Pa /usr/src/tools/build/fuchsia/generate-bsd.py
+Generate native adapters; the --c option also emits C interfaces.
+.It Pa /usr/src/tools/build/fuchsia/build-runtime.py
+Build and test the native runtime, including the sanitizer variant.
+.El
+.Sh ERRORS
+.Bl -tag -width EOPNOTSUPP
+.It Er EINVAL
+Invalid argument or failed encoding constraint.
+.It Er EPROTO
+Malformed or unexpected protocol message.
+.It Er ENOTCAPABLE
+Insufficient descriptor rights or forbidden transfer.
+.It Er EFTYPE
+Wrong descriptor type.
+.It Er ENOBUFS
+Native pending-call or outgoing-queue limit reached.
+.It Er EMSGSIZE
+The message exceeds native byte or descriptor limits.
+.It Er EOVERFLOW
+Transaction IDs are exhausted; create a new connection.
+.It Er EALREADY
+A request is already completed, cancelled, or replied to.
+.It Er ESHUTDOWN
+The server has begun protocol shutdown.
+.It Er EOPNOTSUPP
+A descriptor type or rights mapping is unsupported.
+.El
+Other native transport and allocation errors are propagated.
+.Sh SEE ALSO
+.Xr fidlgen-bsd 1 ,
+.Xr kqueue 2 ,
+.Xr libchannel 3 ,
+.Xr libservice 3 ,
+.Xr capsicum 4 ,
+.Xr fidl 7

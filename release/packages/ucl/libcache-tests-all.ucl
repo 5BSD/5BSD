@@ -1,0 +1,2 @@
+comment = "Bounded pressure-aware application cache tests"
+desc = "Copied-value C caches with LRU limits and automatic BSDNotify pressure handling."

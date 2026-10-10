@@ -68,10 +68,24 @@ oes_client_t *oes_client_create_descendants(void);
 oes_client_t *oes_client_create_from_fd(int fd);
 
 /*
+ * Take ownership of an existing descriptor on success only.  On failure the
+ * caller still owns it.  No duplication, ioctl, rights or scope changes occur.
+ * The caller must supply an OES descriptor and arrange close-on-exec before
+ * adoption.  Destruction closes this descriptor, not other duplicates.
+ */
+oes_client_t *oes_client_adopt_fd(int fd);
+
+/* Obtain a global NOTIFY-only client via the system.oes attribute-gated
+ * system.OES endpoint. Owns the returned FD. No ambient fallback or reconnect.
+ * Uses a 5s RPC budget unless the caller already has a scoped budget. */
+oes_client_t *oes_client_create_brokered(void);
+
+/*
  * oes_client_destroy - Destroy a client
  *
  * Closes the underlying fd (unless created with _from_fd).
- * Any pending AUTH events get default response.
+ * Pending AUTH resolution follows kernel last-close semantics; destroying a
+ * borrowed wrapper or closing one of several duplicates does not end a client.
  */
 void oes_client_destroy(oes_client_t *client);
 
@@ -210,6 +224,8 @@ int oes_unmute_process(oes_client_t *client, const oes_proc_token_t *token);
  *
  * type: OES_MUTE_PATH_LITERAL or OES_MUTE_PATH_PREFIX
  * This is target-object muting, not executable/source-process muting.
+ * All four path mute/unmute helpers reject NULL/empty paths with EINVAL and
+ * paths that do not fit the kernel ABI with ENAMETOOLONG, without truncation.
  */
 int oes_mute_path(oes_client_t *client, const char *path, uint32_t type);
 

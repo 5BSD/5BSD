@@ -44,7 +44,7 @@ f_include_lang $BSDCFG_LIBE/$APP_DIR/include/messages.subr
 # set some reasonable defaults if /etc/adduser.conf does not exist.
 [ -f /etc/adduser.conf ] && f_include /etc/adduser.conf
 : ${defaultclass:=""}
-: ${defaultshell:="/bin/sh"}
+: ${defaultshell:="/bin/zsh"}
 : ${homeprefix:="/home"}
 : ${passwdtype:="yes"}
 : ${udotdir:="/usr/share/skel"}
@@ -208,7 +208,7 @@ f_user_copy_dotfiles()
 # 		expiration time is to be set. Default is to never expire the
 # 		account password.
 # 	VAR_USER_SHELL [Optional]
-# 		Path to login shell to use. Default is `/bin/sh'.
+# 		Path to login shell to use. Default is `/bin/zsh'.
 # 	VAR_USER_UID [Optional]
 # 		Numerical user ID to use. If NULL or unset, the user ID is
 # 		automatically chosen.

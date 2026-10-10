@@ -1,0 +1,757 @@
+.\"
+." SPDX-License-Identifier: BSD-2-Clause
+.Dd October 10, 2026
+.Dt DNCTL 8
+.Os
+.Sh NAME
+.Nm dnctl
+.Nd configure Dummynet traffic shaping
+.Sh SYNOPSIS
+.Nm
+.Op Fl fnqv
+.Op Fl s Ar sort
+.Cm pipe | queue | sched
+.Op Ar number
+.Ar command ...
+.Nm
+.Op Fl fnqv
+.Ar /absolute/config/file
+.Sh DESCRIPTION
+The
+.Nm
+utility configures the Dummynet traffic shaping engine independently of
+IPFW packet filtering.
+PF rules select configured objects with
+.Cm dnpipe
+and
+.Cm dnqueue .
+Commands include
+.Cm config , delete , list , show
+and
+.Cm flush .
+The configuration syntax is the existing Dummynet pipe, queue and scheduler
+syntax, including bandwidth, delay, loss, flow masks and queue algorithms.
+.Cm flush
+removes all Dummynet objects, irrespective of the selected object type.
+.Pp
+.Fl n
+checks configuration syntax without changing the kernel.
+.Fl f
+suppresses interactive flush confirmation.
+.Fl q
+requests quiet operation;
+.Fl v
+requests verbose output.
+.Fl s
+selects the sort field for displayed objects.
+.Pp
+An absolute configuration filename reads one command per line.
+Blank lines and comments beginning with a hash are ignored.
+Firewall rule, NAT and table commands are not accepted.
+.Sh TRAFFIC SHAPER (DUMMYNET) CONFIGURATION
+.Nm dnctl
+is also the user interface for the
+.Nm dummynet
+traffic shaper, packet scheduler and network emulator, a subsystem that
+can artificially queue, delay or drop packets
+emulating the behaviour of certain network links
+or queueing systems.
+.Pp
+.Nm dummynet
+operates by first using the firewall to select packets
+using any match pattern that can be used in
+.Nm dnctl
+rules.
+Matching packets are then passed to either of two
+different objects, which implement the traffic regulation:
+.Bl -hang -offset XXXX
+.It Em pipe
+A
+.Em pipe
+emulates a
+.Em link
+with given bandwidth and propagation delay,
+driven by a FIFO scheduler and a single queue with programmable
+queue size and packet loss rate.
+Packets are appended to the queue as they come out from
+.Nm dnctl ,
+and then transferred in FIFO order to the link at the desired rate.
+.It Em queue
+A
+.Em queue
+is an abstraction used to implement packet scheduling
+using one of several packet scheduling algorithms.
+Packets sent to a
+.Em queue
+are first grouped into flows according to a mask on the 5-tuple.
+Flows are then passed to the scheduler associated to the
+.Em queue ,
+and each flow uses scheduling parameters (weight and others)
+as configured in the
+.Em queue
+itself.
+A scheduler in turn is connected to an emulated link,
+and arbitrates the link's bandwidth among backlogged flows according to
+weights and to the features of the scheduling algorithm in use.
+.El
+.Pp
+In practice,
+.Em pipes
+can be used to set hard limits to the bandwidth that a flow can use, whereas
+.Em queues
+can be used to determine how different flows share the available bandwidth.
+.Pp
+A graphical representation of the binding of queues,
+flows, schedulers and links is below.
+.Bd -literal -offset indent
+                 (flow_mask|sched_mask)  sched_mask
+         +---------+   weight Wx  +-------------+
+         |         |->-[flow]-->--|             |-+
+    -->--| QUEUE x |   ...        |             | |
+         |         |->-[flow]-->--| SCHEDuler N | |
+         +---------+              |             | |
+             ...                  |             +--[LINK N]-->--
+         +---------+   weight Wy  |             | +--[LINK N]-->--
+         |         |->-[flow]-->--|             | |
+    -->--| QUEUE y |   ...        |             | |
+         |         |->-[flow]-->--|             | |
+         +---------+              +-------------+ |
+                                    +-------------+
+.Ed
+It is important to understand the role of the SCHED_MASK
+and FLOW_MASK, which are configured through the commands
+.Dl "dnctl sched N config mask SCHED_MASK ..."
+and
+.Dl "dnctl queue X config mask FLOW_MASK ..." .
+.Pp
+The SCHED_MASK is used to assign flows to one or more
+scheduler instances, one for each
+value of the packet's 5-tuple after applying SCHED_MASK.
+As an example, using ``src-ip 0xffffff00'' creates one instance
+for each /24 destination subnet.
+.Pp
+The FLOW_MASK, together with the SCHED_MASK, is used to split
+packets into flows.
+As an example, using
+``src-ip 0x000000ff''
+together with the previous SCHED_MASK makes a flow for
+each individual source address.
+In turn, flows for each /24
+subnet will be sent to the same scheduler instance.
+.Pp
+The above diagram holds even for the
+.Em pipe
+case, with the only restriction that a
+.Em pipe
+only supports a SCHED_MASK, and forces the use of a FIFO
+scheduler (these are for backward compatibility reasons;
+in fact, internally, a
+.Nm dummynet's
+pipe is implemented exactly as above).
+.Pp
+There are two modes of
+.Nm dummynet
+operation:
+.Dq normal
+and
+.Dq fast .
+The
+.Dq normal
+mode tries to emulate a real link: the
+.Nm dummynet
+scheduler ensures that the packet will not leave the pipe faster than it
+would on the real link with a given bandwidth.
+The
+.Dq fast
+mode allows certain packets to bypass the
+.Nm dummynet
+scheduler (if packet flow does not exceed pipe's bandwidth).
+This is the reason why the
+.Dq fast
+mode requires less CPU cycles per packet (on average) and packet latency
+can be significantly lower in comparison to a real link with the same
+bandwidth.
+The default mode is
+.Dq normal .
+The
+.Dq fast
+mode can be enabled by setting the
+.Va net.inet.ip.dummynet.io_fast
+.Xr sysctl 8
+variable to a non-zero value.
+.Ss PIPE, QUEUE AND SCHEDULER CONFIGURATION
+The
+.Em pipe ,
+.Em queue
+and
+.Em scheduler
+configuration commands are the following:
+.Bd -ragged -offset indent
+.Cm pipe Ar number Cm config Ar pipe-configuration
+.Pp
+.Cm queue Ar number Cm config Ar queue-configuration
+.Pp
+.Cm sched Ar number Cm config Ar sched-configuration
+.Ed
+.Pp
+The following parameters can be configured for a pipe:
+.Pp
+.Bl -tag -width indent -compact
+.It Cm bw Ar bandwidth | device
+Bandwidth, measured in
+.Sm off
+.Op Cm K | M | G
+.Brq Cm bit/s | Byte/s .
+.Sm on
+.Pp
+A value of 0 (default) means unlimited bandwidth.
+The unit must immediately follow the number, as in
+.Pp
+.Dl "dnctl pipe 1 config bw 300Kbit/s"
+.Pp
+If a device name is specified instead of a numeric value, as in
+.Pp
+.Dl "dnctl pipe 1 config bw tun0"
+.Pp
+then the transmit clock is supplied by the specified device.
+At the moment only the
+.Xr tun 4
+device supports this
+functionality, for use in conjunction with
+.Xr ppp 8 .
+.Pp
+.It Cm delay Ar ms-delay
+Propagation delay, measured in milliseconds.
+The value is rounded to the next multiple of the clock tick
+(typically 10ms, but it is a good practice to run kernels
+with
+.Dq "options HZ=1000"
+to reduce
+the granularity to 1ms or less).
+The default value is 0, meaning no delay.
+.Pp
+.It Cm burst Ar size
+If the data to be sent exceeds the pipe's bandwidth limit
+(and the pipe was previously idle), up to
+.Ar size
+bytes of data are allowed to bypass the
+.Nm dummynet
+scheduler, and will be sent as fast as the physical link allows.
+Any additional data will be transmitted at the rate specified
+by the
+.Nm pipe
+bandwidth.
+The burst size depends on how long the pipe has been idle;
+the effective burst size is calculated as follows:
+MAX(
+.Ar size
+,
+.Nm bw
+* pipe_idle_time).
+.Pp
+.It Cm profile Ar filename
+A file specifying the additional overhead incurred in the transmission
+of a packet on the link.
+.Pp
+Some link types introduce extra delays in the transmission
+of a packet, e.g., because of MAC level framing, contention on
+the use of the channel, MAC level retransmissions and so on.
+From our point of view, the channel is effectively unavailable
+for this extra time, which is constant or variable depending
+on the link type.
+Additionally, packets may be dropped after this
+time (e.g., on a wireless link after too many retransmissions).
+We can model the additional delay with an empirical curve
+that represents its distribution.
+.Bd -literal -offset indent
+      cumulative probability
+      1.0 ^
+          |
+      L   +-- loss-level          x
+          |                 ******
+          |                *
+          |           *****
+          |          *
+          |        **
+          |       *
+          +-------*------------------->
+                      delay
+.Ed
+The empirical curve may have both vertical and horizontal lines.
+Vertical lines represent constant delay for a range of
+probabilities.
+Horizontal lines correspond to a discontinuity in the delay
+distribution: the pipe will use the largest delay for a
+given probability.
+.Pp
+The file format is the following, with whitespace acting as
+a separator and '#' indicating the beginning a comment:
+.Bl -tag -width indent
+.It Cm name Ar identifier
+optional name (listed by "dnctl pipe show")
+to identify the delay distribution;
+.It Cm bw Ar value
+the bandwidth used for the pipe.
+If not specified here, it must be present
+explicitly as a configuration parameter for the pipe;
+.It Cm loss-level Ar L
+the probability above which packets are lost.
+(0.0 <= L <= 1.0, default 1.0 i.e., no loss);
+.It Cm samples Ar N
+the number of samples used in the internal
+representation of the curve (2..1024; default 100);
+.It Cm "delay prob" | "prob delay"
+One of these two lines is mandatory and defines
+the format of the following lines with data points.
+.It Ar XXX Ar YYY
+2 or more lines representing points in the curve,
+with either delay or probability first, according
+to the chosen format.
+The unit for delay is milliseconds.
+Data points do not need to be sorted.
+Also, the number of actual lines can be different
+from the value of the "samples" parameter:
+.Nm dnctl
+utility will sort and interpolate
+the curve as needed.
+.El
+.Pp
+Example of a profile file:
+.Bd -literal -offset indent
+name    bla_bla_bla
+samples 100
+loss-level    0.86
+prob    delay
+0       200	# minimum overhead is 200ms
+0.5     200
+0.5     300
+0.8     1000
+0.9     1300
+1       1300
+#configuration file end
+.Ed
+.El
+.Pp
+The following parameters can be configured for a queue:
+.Pp
+.Bl -tag -width indent -compact
+.It Cm pipe Ar pipe_nr
+Connects a queue to the specified pipe.
+Multiple queues (with the same or different weights) can be connected to
+the same pipe, which specifies the aggregate rate for the set of queues.
+.Pp
+.It Cm weight Ar weight
+Specifies the weight to be used for flows matching this queue.
+The weight must be in the range 1..100, and defaults to 1.
+.El
+.Pp
+The following case-insensitive parameters can be configured for a
+scheduler:
+.Pp
+.Bl -tag -width indent -compact
+.It Cm type Ar {fifo | wf2q+ | rr | qfq | fq_codel | fq_pie}
+specifies the scheduling algorithm to use.
+.Bl -tag -width indent -compact
+.It Cm fifo
+is just a FIFO scheduler (which means that all packets
+are stored in the same queue as they arrive to the scheduler).
+FIFO has O(1) per-packet time complexity, with very low
+constants (estimate 60-80ns on a 2GHz desktop machine)
+but gives no service guarantees.
+.It Cm wf2q+
+implements the WF2Q+ algorithm, which is a Weighted Fair Queueing
+algorithm which permits flows to share bandwidth according to
+their weights.
+Note that weights are not priorities; even a flow
+with a minuscule weight will never starve.
+WF2Q+ has O(log N) per-packet processing cost, where N is the number
+of flows, and is the default algorithm used by previous versions
+dummynet's queues.
+.It Cm rr
+implements the Deficit Round Robin algorithm, which has O(1) processing
+costs (roughly, 100-150ns per packet)
+and permits bandwidth allocation according to weights, but
+with poor service guarantees.
+.It Cm qfq
+implements the QFQ algorithm, which is a very fast variant of
+WF2Q+, with similar service guarantees and O(1) processing
+costs (roughly, 200-250ns per packet).
+.It Cm fq_codel
+implements the FQ-CoDel (FlowQueue-CoDel) scheduler/AQM algorithm, which
+uses a modified Deficit Round Robin scheduler to manage two lists of sub-queues
+(old sub-queues and new sub-queues) for providing brief periods of priority to
+lightweight or short burst flows.
+By default, the total number of sub-queues is 1024.
+FQ-CoDel's internal, dynamically
+created sub-queues are controlled by separate instances of CoDel AQM.
+.It Cm fq_pie
+implements the FQ-PIE (FlowQueue-PIE) scheduler/AQM algorithm, which similar to
+.Cm fq_codel
+but uses per sub-queue PIE AQM instance to control the queue delay.
+.El
+.Pp
+.Cm fq_codel
+inherits AQM parameters and options from
+.Cm codel
+(see below), and
+.Cm fq_pie
+inherits AQM parameters and options from
+.Cm pie
+(see below).
+Additionally, both of
+.Cm fq_codel
+and
+.Cm fq_pie
+have shared scheduler parameters which are:
+.Bl -tag -width indent
+.It Cm quantum
+.Ar m
+specifies the quantum (credit) of the scheduler.
+.Ar m
+is the number of bytes a queue can serve before being moved to the tail
+of old queues list.
+The default is 1514 bytes, and the maximum acceptable value
+is 9000 bytes.
+.It Cm limit
+.Ar m
+specifies the hard size limit (in unit of packets) of all queues managed by an
+instance of the scheduler.
+The default value of
+.Ar m
+is 10240 packets, and the maximum acceptable value is 20480 packets.
+.It Cm flows
+.Ar m
+specifies the total number of flow queues (sub-queues) that fq_*
+creates and manages.
+By default, 1024 sub-queues are created when an instance
+of the fq_{codel/pie} scheduler is created.
+The maximum acceptable value is
+65536.
+.El
+.Pp
+Note that any token after
+.Cm fq_codel
+or
+.Cm fq_pie
+is considered a parameter for fq_{codel/pie}.
+So, ensure all scheduler
+configuration options not related to fq_{codel/pie} are written before
+.Cm fq_codel/fq_pie
+tokens.
+.El
+.Pp
+In addition to the type, all parameters allowed for a pipe can also
+be specified for a scheduler.
+.Pp
+Finally, the following parameters can be configured for both
+pipes and queues:
+.Pp
+.Bl -tag -width XXXX -compact
+.It Cm buckets Ar hash-table-size
+Specifies the size of the hash table used for storing the
+various queues.
+Default value is 64 controlled by the
+.Xr sysctl 8
+variable
+.Va net.inet.ip.dummynet.hash_size ,
+allowed range is 16 to 65536.
+.Pp
+.It Cm mask Ar mask-specifier
+Packets sent to a given pipe or queue by an
+.Nm dnctl
+rule can be further classified into multiple flows, each of which is then
+sent to a different
+.Em dynamic
+pipe or queue.
+A flow identifier is constructed by masking the IP addresses,
+ports and protocol types as specified with the
+.Cm mask
+options in the configuration of the pipe or queue.
+For each different flow identifier, a new pipe or queue is created
+with the same parameters as the original object, and matching packets
+are sent to it.
+.Pp
+Thus, when
+.Em dynamic pipes
+are used, each flow will get the same bandwidth as defined by the pipe,
+whereas when
+.Em dynamic queues
+are used, each flow will share the parent's pipe bandwidth evenly
+with other flows generated by the same queue (note that other queues
+with different weights might be connected to the same pipe).
+.br
+Available mask specifiers are a combination of one or more of the following:
+.Pp
+.Cm dst-ip Ar mask ,
+.Cm dst-ip6 Ar mask ,
+.Cm src-ip Ar mask ,
+.Cm src-ip6 Ar mask ,
+.Cm dst-port Ar mask ,
+.Cm src-port Ar mask ,
+.Cm flow-id Ar mask ,
+.Cm proto Ar mask
+or
+.Cm all ,
+.Pp
+where the latter means all bits in all fields are significant.
+.Pp
+.It Cm noerror
+When a packet is dropped by a
+.Nm dummynet
+queue or pipe, the error
+is normally reported to the caller routine in the kernel, in the
+same way as it happens when a device queue fills up.
+Setting this
+option reports the packet as successfully delivered, which can be
+needed for some experimental setups where you want to simulate
+loss or congestion at a remote router.
+.Pp
+.It Cm plr Ar packet-loss-rate
+.It Cm plr Ar K,p,H,r
+Packet loss rate.
+Argument
+.Ar packet-loss-rate
+is a floating-point number between 0 and 1, with 0 meaning no
+loss, 1 meaning 100% loss.
+.Pp
+When invoked with four arguments, the simple Gilbert-Elliott
+channel model with two states (Good and Bad) is used.
+.Bd -literal -offset indent
+                        r
+               .----------------.
+               v                |
+         .------------.   .------------.
+         |     G      |   |     B      |
+         |  drop (K)  |   |  drop (H)  |
+         '------------'   '------------'
+               |                ^
+               '----------------'
+                        p
+
+.Ed
+This has the associated probabilities
+.Po Ar K
+and
+.Ar H Pc
+for the loss probability.
+This is different from the literature, where this model is described with
+probabilities of successful transmission k and h.
+However, converting from literature is easy:
+.Pp
+K = 1 - k ; H = 1 - h
+.Pp
+This is to retain consistency within the interface and allow the
+quick re-use of loss probability when giving only a single argument.
+In addition the state change probabilities
+.Po Ar p
+and
+.Ar r Pc
+are given.
+All of the above probabilities are internally represented on 31 bits.
+.Pp
+.It Cm queue Brq Ar slots | size Ns Cm Kbytes
+Queue size, in
+.Ar slots
+or
+.Cm KBytes .
+Default value is 50 slots, which
+is the typical queue size for Ethernet devices.
+Note that for slow speed links you should keep the queue
+size short or your traffic might be affected by a significant
+queueing delay.
+E.g., 50 max-sized Ethernet packets (1500 bytes) mean 600Kbit
+or 20s of queue on a 30Kbit/s pipe.
+Even worse effects can result if you get packets from an
+interface with a much larger MTU, e.g.\& the loopback interface
+with its 16KB packets.
+The
+.Xr sysctl 8
+variables
+.Em net.inet.ip.dummynet.pipe_byte_limit
+and
+.Em net.inet.ip.dummynet.pipe_slot_limit
+control the maximum lengths that can be specified.
+.Pp
+.It Cm red | gred Ar w_q Ns / Ns Ar min_th Ns / Ns Ar max_th Ns / Ns Ar max_p
+[ecn]
+Make use of the RED (Random Early Detection) queue management algorithm.
+.Ar w_q
+and
+.Ar max_p
+are floating
+point numbers between 0 and 1 (inclusive), while
+.Ar min_th
+and
+.Ar max_th
+are integer numbers specifying thresholds for queue management
+(thresholds are computed in bytes if the queue has been defined
+in bytes, in slots otherwise).
+The two parameters can also be of the same value if needed.
+The
+.Nm dummynet
+also supports the gentle RED variant (gred) and ECN (Explicit Congestion
+Notification) as optional.
+Three
+.Xr sysctl 8
+variables can be used to control the RED behaviour:
+.Bl -tag -width indent
+.It Va net.inet.ip.dummynet.red_lookup_depth
+specifies the accuracy in computing the average queue
+when the link is idle (defaults to 256, must be greater than zero)
+.It Va net.inet.ip.dummynet.red_avg_pkt_size
+specifies the expected average packet size (defaults to 512, must be
+greater than zero)
+.It Va net.inet.ip.dummynet.red_max_pkt_size
+specifies the expected maximum packet size, only used when queue
+thresholds are in bytes (defaults to 1500, must be greater than zero).
+.El
+.Pp
+.It Cm codel Oo Cm target Ar time Oc Oo Cm interval Ar time Oc Oo Cm ecn |
+.Cm noecn Oc
+Make use of the CoDel (Controlled-Delay) queue management algorithm.
+.Ar time
+is interpreted as milliseconds by default but seconds (s), milliseconds (ms) or
+microseconds (us) can be specified instead.
+CoDel drops or marks (ECN) packets
+depending on packet sojourn time in the queue.
+.Cm target
+.Ar time
+(5ms by default) is the minimum acceptable persistent queue delay that CoDel
+allows.
+CoDel does not drop packets directly after packets sojourn time becomes
+higher than
+.Cm target
+.Ar time
+but waits for
+.Cm interval
+.Ar time
+(100ms default) before dropping.
+.Cm interval
+.Ar time
+should be set to maximum RTT for all expected connections.
+.Cm ecn
+enables (disabled by default) packet marking (instead of dropping) for
+ECN-enabled TCP flows when queue delay becomes high.
+.Pp
+Note that any token after
+.Cm codel
+is considered a parameter for CoDel.
+So, ensure all pipe/queue
+configuration options are written before
+.Cm codel
+token.
+.Pp
+The
+.Xr sysctl 8
+variables
+.Va net.inet.ip.dummynet.codel.target
+and
+.Va net.inet.ip.dummynet.codel.interval
+can be used to set CoDel default parameters.
+.Pp
+.It Cm pie Oo Cm target Ar time Oc Oo Cm tupdate Ar time Oc Oo
+.Cm alpha Ar n Oc Oo Cm beta Ar n Oc Oo Cm max_burst Ar time Oc Oo
+.Cm max_ecnth Ar n Oc Oo Cm ecn | Cm noecn Oc Oo Cm capdrop |
+.Cm nocapdrop Oc Oo Cm drand | Cm nodrand Oc Oo Cm onoff
+.Oc Oo Cm dre | Cm ts Oc
+Make use of the PIE (Proportional Integral controller Enhanced) queue management
+algorithm.
+PIE drops or marks packets depending on a calculated drop probability during
+en-queue process, with the aim of achieving high throughput while keeping queue
+delay low.
+At regular time intervals of
+.Cm tupdate
+.Ar time
+(15ms by default) a background process (re)calculates the probability based on
+queue delay deviations from
+.Cm target
+.Ar time
+(15ms by default) and queue delay trends.
+PIE approximates current queue
+delay by using a departure rate estimation method, or (optionally) by using a
+packet timestamp method similar to CoDel.
+.Ar time
+is interpreted as milliseconds by default but seconds (s), milliseconds (ms) or
+microseconds (us) can be specified instead.
+The other PIE parameters and options are as follows:
+.Bl -tag -width indent
+.It Cm alpha Ar n
+.Ar n
+is a floating point number between 0 and 7 which specifies the weight of queue
+delay deviations that is used in drop probability calculation.
+0.125 is the default.
+.It Cm beta Ar n
+.Ar n
+is a floating point number between 0 and 7 which specifies is the weight of
+queue delay trend that is used in drop probability calculation.
+1.25 is the default.
+.It Cm max_burst Ar time
+The maximum period of time that PIE does not drop/mark packets.
+150ms is the
+default and 10s is the maximum value.
+.It Cm max_ecnth Ar n
+Even when ECN is enabled, PIE drops packets instead of marking them when drop
+probability becomes higher than ECN probability threshold
+.Cm max_ecnth Ar n
+, the default is 0.1 (i.e 10%) and 1 is the maximum value.
+.It Cm ecn | noecn
+enable or disable ECN marking for ECN-enabled TCP flows.
+Disabled by default.
+.It Cm capdrop | nocapdrop
+enable or disable cap drop adjustment.
+Cap drop adjustment is enabled by default.
+.It Cm drand | nodrand
+enable or disable drop probability de-randomisation.
+De-randomisation eliminates
+the problem of dropping packets too close or too far.
+De-randomisation is enabled by default.
+.It Cm onoff
+enable turning PIE on and off depending on queue load.
+If this option is enabled,
+PIE turns on when over 1/3 of queue becomes full.
+This option is disabled by
+default.
+.It Cm dre | ts
+Calculate queue delay using departure rate estimation
+.Cm dre
+or timestamps
+.Cm ts .
+.Cm dre
+is used by default.
+.El
+.Pp
+Note that any token after
+.Cm pie
+is considered a parameter for PIE.
+So ensure all pipe/queue
+the configuration options are written before
+.Cm pie
+token.
+.Xr sysctl 8
+variables can be used to control the
+.Cm pie
+default parameters.
+See the
+.Sx SYSCTL VARIABLES
+section for more details.
+.El
+.Pp
+When used with IPv6 data,
+.Nm dummynet
+currently has several limitations.
+Information necessary to route link-local packets to an
+interface is not available after processing by
+.Nm dummynet
+so those packets are dropped in the output path.
+Care should be taken to ensure that link-local packets are not passed to
+.Nm dummynet .
+.Sh EXAMPLES
+.Bd -literal -offset indent
+dnctl pipe 1 config bw 10Mbit/s delay 20ms
+dnctl pipe list
+dnctl pipe delete 1
+.Ed
+.Sh SEE ALSO
+.Xr dummynet 4 ,
+.Xr pf.conf 5 ,
+.Xr pfctl 8

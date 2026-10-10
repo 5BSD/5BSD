@@ -17,14 +17,18 @@
  */
 #include <sys/param.h>
 #include <sys/capsicum.h>
+#include <sys/event.h>
 #include <sys/ioctl.h>
 #include <sys/procdesc.h>
 #include <sys/sysctl.h>
 
 #include <dev/acpica/acpiio.h>
 
+#include <channel.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <libservice.h>
+#include <service_runtime.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -32,17 +36,19 @@
 #include <syslog.h>
 #include <unistd.h>
 
-#include <channel.h>
-#include <libservice.h>
-
-#include "powercmp_protocol.h"
-#include "config.h"
 #include "BSDPower_probes.h"
+#include "config.h"
+#include "powercmp_protocol.h"
 
 static int g_acpi_fd = -1;		/* /dev/acpi, narrowed to CAP_IOCTL/REQSLPSTATE */
 static uint32_t g_states;		/* supported sleep-state mask, cached at startup */
 
+static struct service_lease_set *g_leases;
+
 struct session {
+	struct channel *channel;
+	uint64_t owner, lease, last_ms;
+	char label_storage[256];
 	const char			*label;
 	const struct powercmp_config	*config;
 	int				 error;
@@ -132,6 +138,11 @@ handle_request(struct channel *channel __unused,
 	int result, status;
 
 	session = argument;
+	if (session->error != 0) {
+		channel_message_free(message);
+		return;
+	}
+	session->last_ms = service_monotime_ms();
 	request = channel_message_data(message);
 	message_len = channel_message_length(message);
 	opcode = UINT16_MAX;
@@ -145,7 +156,7 @@ handle_request(struct channel *channel __unused,
 	    POWERCMP_MESSAGE_REQUEST) == -1) {
 		status = EPROTO;
 		session->error = status;
-		(void)send_status(message, request, -status);
+		/* Malformed headers cannot safely be echoed as replies. */
 		goto out;
 	}
 	body = (const void *)(request + 1);
@@ -154,6 +165,35 @@ handle_request(struct channel *channel __unused,
 	case POWERCMP_OP_STATES:
 		memset(&out, 0, sizeof(out));
 		out.supported = g_states;	/* cached pre-capmode at startup */
+		result = send_body(message, request, &out);
+		break;
+	case POWERCMP_OP_INHIBIT:
+		if (!powercmp_config_permits_inhibit(session->config,
+			session->label))
+			status = EPERM;
+		else if (session->lease != 0)
+			status = EALREADY;
+		else if (g_leases == NULL ||
+		    service_lease_acquire(g_leases, session->owner,
+			&session->lease) == -1)
+			status = g_leases == NULL ? ENOTSUP : errno;
+		result = send_status(message, request, -status);
+		break;
+	case POWERCMP_OP_UNINHIBIT:
+		if (session->lease == 0)
+			status = ENOENT;
+		else {
+			(void)service_lease_release(g_leases, session->owner,
+			    session->lease);
+			session->lease = 0;
+		}
+		result = send_status(message, request, -status);
+		break;
+	case POWERCMP_OP_INHIBITORS:
+		memset(&out, 0, sizeof(out));
+		out.supported = g_leases == NULL ?
+		    0 :
+		    service_lease_count(g_leases);
 		result = send_body(message, request, &out);
 		break;
 	case POWERCMP_OP_SUSPEND: {
@@ -172,6 +212,11 @@ handle_request(struct channel *channel __unused,
 		}
 		if (body->state < 1 || body->state > 5) {
 			status = EINVAL;
+			result = send_status(message, request, -status);
+			break;
+		}
+		if (g_leases != NULL && service_lease_count(g_leases) != 0) {
+			status = EBUSY;
 			result = send_status(message, request, -status);
 			break;
 		}
@@ -204,6 +249,16 @@ out:
 	channel_message_free(message);
 }
 
+static void
+session_close(struct session *s)
+{
+	if (s->channel != NULL)
+		channel_destroy(s->channel);
+	service_lease_release_owner(g_leases, s->owner);
+	memset(s, 0, sizeof(*s));
+}
+
+#ifdef BSDPOWER_TESTING
 static int
 serve_session(int fd, const char *label, const struct powercmp_config *config)
 {
@@ -241,11 +296,14 @@ serve_session(int fd, const char *label, const struct powercmp_config *config)
 		if (session.error != 0)
 			break;
 	}
-	channel_destroy(channel);
+	session.channel = channel;
+	if (g_leases != NULL)
+		session_close(&session);
+	else
+		channel_destroy(channel);
 	return (0);
 }
 
-#ifdef BSDPOWER_TESTING
 /*
  * Test entrypoints.  Expose the per-session channel worker and the two
  * startup-cached globals (the supported-state mask and the narrowed /dev/acpi
@@ -287,33 +345,134 @@ bsdpower_test_supported_states(void)
 }
 #endif /* BSDPOWER_TESTING */
 
-#ifndef BSDPOWER_TESTING
 static struct powercmp_config g_config;
 
-/*
- * Per-client worker.  BSDPower is born in capability mode: g_acpi_fd (already
- * narrowed to CAP_IOCTL/ACPIIO_REQSLPSTATE), g_config, and g_states were
- * established before the pdfork, so each worker inherits them and reaches the
- * device only through the pre-limited descriptor.  The per-label policy in
- * handle_request remains the authorization boundary.
- */
 static int
-worker(int fd, const char *label)
+sessions_run(struct service_provider *provider,
+    struct service_listener *listener)
 {
-
-	service_worker_drop_inherited_authority();
-	return (serve_session(fd, label, &g_config));
+	struct session sessions[64] = { 0 };
+	struct service_channel_slot slots[64];
+	struct service_health health = { 0 };
+	struct service_identity identity;
+	struct channel_options options = CHANNEL_OPTIONS_INITIALIZER(
+	    CHANNEL_ROLE_PROVIDER);
+	size_t i, slot, matching;
+	int fd, ready, kq, result = -1;
+	if (service_lease_set_create(64, &g_leases) == -1)
+		return (-1);
+	kq = kqueue();
+	if (kq == -1) {
+		service_lease_set_destroy(g_leases);
+		g_leases = NULL;
+		return (-1);
+	}
+	for (;;) {
+		if (service_provider_quiescing(provider) == 1) {
+			/* Leases keep an idle provider alive; explicit stop still wins. */
+			if (service_lease_count(g_leases) != 0) {
+				if (service_provider_quiesce_complete(provider, EBUSY) == 0)
+					continue;
+				if (errno != EINVAL)
+					break;
+			}
+			result = 0;
+			break;
+		}
+		for (i = 0; i < 64; i++) {
+			if (sessions[i].channel != NULL &&
+			    sessions[i].lease == 0 &&
+			    service_monotime_ms() - sessions[i].last_ms >=
+				30000)
+				session_close(&sessions[i]);
+			slots[i].channel = sessions[i].channel;
+		}
+		ready = service_channels_wait(kq, slots, 64,
+		    service_listener_fd(listener), 250);
+		if (ready == -1)
+			break;
+		for (i = 0; i < 64; i++) {
+			if (slots[i].error != 0 || sessions[i].error != 0) {
+				service_health_record(&health,
+				    slots[i].error != 0 ? slots[i].error :
+							  sessions[i].error);
+				session_close(&sessions[i]);
+			}
+		}
+		if (!ready)
+			continue;
+		memset(&identity, 0, sizeof(identity));
+		identity.size = sizeof(identity);
+		if (service_listener_accept(listener, &identity, &fd) == -1) {
+			if (service_provider_quiescing(provider) == 1)
+				continue;
+			if (errno == EINTR)
+				continue;
+			break;
+		}
+		slot = 64;
+		matching = 0;
+		for (i = 0; i < 64; i++) {
+			if (sessions[i].channel == NULL) {
+				if (slot == 64)
+					slot = i;
+			} else if (strcmp(sessions[i].label,
+				       identity.client_label) == 0)
+				matching++;
+		}
+		if (slot == 64 || matching >= 4) {
+			close(fd);
+			service_health_record(&health, ENOSPC);
+			continue;
+		}
+		struct session *s = &sessions[slot];
+		strlcpy(s->label_storage, identity.client_label,
+		    sizeof(s->label_storage));
+		s->label = s->label_storage;
+		s->config = &g_config;
+		s->owner = slot + 1;
+		s->last_ms = service_monotime_ms();
+		if (channel_create(fd, &options, &s->channel) == -1) {
+			close(fd);
+			session_close(s);
+			continue;
+		}
+		if (channel_set_request_handler(s->channel, handle_request,
+			s) == -1) {
+			session_close(s);
+			continue;
+		}
+		service_health_record(&health, 0);
+	}
+	for (i = 0; i < 64; i++)
+		session_close(&sessions[i]);
+	service_lease_set_destroy(g_leases);
+	close(kq);
+	g_leases = NULL;
+	syslog(LOG_INFO, "sessions accepted=%ju failures=%ju",
+	    (uintmax_t)health.successes, (uintmax_t)health.failures);
+	return (result);
 }
 
+#ifdef BSDPOWER_TESTING
+int
+bsdpower_test_serve_reactor(struct service_provider *provider,
+    struct service_listener *listener, const struct powercmp_config *config)
+{
+	if (config == NULL)
+		return (errno = EINVAL, -1);
+	g_config = *config;
+	return (sessions_run(provider, listener));
+}
+#else
 int
 main(void)
 {
-	struct service_identity identity;
 	struct service_listener *listener;
 	struct service_provider *provider;
 	cap_rights_t rights;
 	const unsigned long acpi_ioctls[] = { ACPIIO_REQSLPSTATE };
-	int error, fd, cfgfd, devdir;
+	int cfgfd, devdir;
 
 	openlog("BSDPower", LOG_PID | LOG_NDELAY, LOG_DAEMON);
 	powercmp_config_defaults(&g_config);
@@ -366,45 +525,9 @@ main(void)
 	    service_provider_enter_capability_mode(provider) == -1 ||
 	    service_provider_ready(provider) == -1)
 		goto fail;
-	for (;;) {
-		pid_t pid;
-		int pd;
-
-		memset(&identity, 0, sizeof(identity));
-		identity.size = sizeof(identity);
-		if (service_listener_accept(listener, &identity, &fd) == -1) {
-			error = errno;
-			if (service_provider_quiescing(provider) == 1) {
-				int st;
-
-				st = service_provider_quiesce_complete(provider,
-				    0);
-				closelog();
-				return (st == 0 ? 0 : 1);
-			}
-			errno = error;
-			if (errno == EINTR)
-				continue;
-			goto fail;
-		}
-		pid = pdfork(&pd, PD_CLOEXEC | PD_DAEMON);
-		if (pid == -1) {
-			syslog(LOG_WARNING, "pdfork for %s: %m",
-			    identity.client_label);
-			(void)close(fd);
-			continue;
-		}
-		if (pid == 0) {
-			if (service_worker_protect(SERVICE_PROTECT_EXTERNAL) ==
-			    -1) {
-				syslog(LOG_ERR, "worker protection: %m");
-				_exit(1);
-			}
-			_exit(worker(fd, identity.client_label));
-		}
-		(void)close(fd);
-		(void)close(pd);
-	}
+	if (sessions_run(provider, listener) == -1)
+		goto fail;
+	return (service_provider_quiesce_complete(provider, 0) == -1 ? 1 : 0);
 fail:
 	syslog(LOG_ERR, "initialization or service loop: %m");
 	return (1);

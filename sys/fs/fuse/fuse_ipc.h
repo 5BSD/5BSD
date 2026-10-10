@@ -200,6 +200,8 @@ struct fuse_data {
 	uint32_t			max_readahead_blocks;
 	uint32_t			max_write;
 	uint32_t			max_read;
+	bool				readdirplus;
+	bool				readdirplus_auto;
 
 	struct selinfo			ks_rsel;
 

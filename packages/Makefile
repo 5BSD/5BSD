@@ -34,6 +34,7 @@ SUBDIR=	\
 	bsdlog \
 	bsdnetwork \
 	bsdnotify \
+	bsdmemory \
 	bsdtrace-provider \
 	mac-abac \
 	devd \
@@ -45,13 +46,14 @@ SUBDIR=	\
 	fwget \
 	geom \
 	ggate \
-	hwtlm \
+	hwstat \
 	lib9p \
 	libauditcmp \
 	libarchive \
 	libcapability \
 	libcapbundle \
 	libchannel \
+	libfidl \
 	libcryptocmp \
 	libcryptodesc \
 	libdevicecmp \
@@ -60,6 +62,7 @@ SUBDIR=	\
 	libsysctlcmp \
 	libtimecmp \
 	libpowercmp \
+	libcache \
 	libcapreclaim \
 	libnotify \
 	libcapsulert \
@@ -78,13 +81,13 @@ SUBDIR=	\
 	libpathconv \
 	librss \
 	libsqlite3 \
+	libalias \
 	libthread_db \
 	libucl \
 	libyaml \
 	locales \
 	mandoc \
 	mtree \
-	natd \
 	ncurses \
 	netmap \
 	newsyslog \
@@ -155,7 +158,7 @@ SUBDIR.${MK_HAST}+=		hast
 SUBDIR.${MK_HYPERV}+=		hyperv-tools
 SUBDIR.${MK_INETD}+=		inetd
 SUBDIR.${MK_IPFILTER}+=		ipf
-SUBDIR.${MK_IPFW}+=		ipfw
+SUBDIR.${MK_DUMMYNET}+=		dummynet
 SUBDIR.${MK_ISCSI}+=		iscsi
 SUBDIR.${MK_JAIL}+=		jail
 SUBDIR.${MK_KERBEROS}+=		kerberos kerberos-kdc librpcsec_gss gssd
@@ -197,15 +200,15 @@ SUBDIR.${MK_TESTS}+=		capsule-tests capsulectl-tests
 .if ${MK_DTRACE} != "no"
 SUBDIR.${MK_TESTS}+=		bsdinstruments-tests
 .endif
-SUBDIR.${MK_TESTS}+=		hwtlm-tests
+SUBDIR.${MK_TESTS}+=		hwstat-tests
 SUBDIR.${MK_TESTS}+=		switchboard-tests switchboardctl-tests
 SUBDIR.${MK_TESTS}+=		libcapability-tests libcapbundle-tests
 SUBDIR.${MK_TESTS}+=		libauditcmp-tests bsdaudit-tests
-SUBDIR.${MK_TESTS}+=		libchannel-tests libshmring-tests
+SUBDIR.${MK_TESTS}+=		libchannel-tests libshmring-tests libfidl-tests bsdtime-tests
 SUBDIR.${MK_TESTS}+=		libcryptocmp-tests libcryptodesc-tests
 SUBDIR.${MK_TESTS}+=		libnetworkcmp-tests libsysctlcmp-tests libtimecmp-tests libpowercmp-tests
 SUBDIR.${MK_TESTS}+=		libcapreclaim-tests
-SUBDIR.${MK_TESTS}+=		liblogcmp-tests libnotify-tests
+SUBDIR.${MK_TESTS}+=		liblogcmp-tests libnotify-tests libcache-tests bsdmemory-tests
 SUBDIR.${MK_TESTS}+=		libotelexport-tests
 SUBDIR.${MK_TESTS}+=		libtracecmp-tests
 SUBDIR.${MK_TESTS}+=		libtrustedzfs-tests

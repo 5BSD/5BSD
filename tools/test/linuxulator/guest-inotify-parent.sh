@@ -6,13 +6,15 @@ export PATH
 trap 'rc=$?; echo PARENT_EXIT "$rc"; /sbin/halt -p' EXIT
 mount -uw /
 mount -t devfs devfs /dev 2>/dev/null || true
-kldload linux64 || exit 1
-kldload linprocfs || exit 1
+for module in linux64 linprocfs nullfs; do
+ kldstat -q -m "$module" || kldstat -q -n "$module.ko" || kldload "$module"
+done
 mkdir -p /proc
 mount -t linprocfs linprocfs /proc || exit 1
 before=$(sysctl -n vfs.inotify.watches)
 paths=$(sysctl -n vfs.inotify.paths)
-kldload nullfs || exit 1
+echo PARENT_BEGIN
+while IFS= read -r artifact; do sha256 "$artifact"; done < /root/parent-artifacts
 mkdir -p /parent-lower
 chmod 1777 /parent-lower
 failed=0
@@ -21,6 +23,8 @@ for fs in zfs tmpfs nullfs; do
  tmpfs) mount -t tmpfs -o mode=1777 tmpfs /tmp || exit 1 ;;
  nullfs) mount -t nullfs /parent-lower /tmp || exit 1 ;;
  esac
+chmod 1777 /tmp
+mount -p
 for user in root unprivileged; do
  for case in hardlinks rename crossrename unlink exclude recreate overwrite dup procfd procfddeleted failedopen createlate fork mapclose unlinklast excludelast procfdlast renamechurn unlinkrace excluderace dual; do
   rc=0

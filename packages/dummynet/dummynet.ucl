@@ -1,0 +1,2 @@
+comment = "Dummynet traffic shaping control"
+desc = "Standalone dnctl administration for Dummynet pipes, queues and schedulers used by PF."

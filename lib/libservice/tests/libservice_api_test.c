@@ -28,6 +28,7 @@
 #include <atf-c.h>
 #include <channel.h>
 #include <libservice.h>
+#include <service_runtime.h>
 #include <service_bootstrap.h>
 #include <switchboard_svc_proto.h>
 #include <service_private.h>
@@ -923,6 +924,16 @@ ATF_TC_BODY(service_session_payload_and_attachment_lifecycle, tc)
 	    -1);
 	ATF_CHECK_EQ(sizeof("reply-larger-than-buffer"), incoming.length);
 	ATF_CHECK_EQ(1, incoming.nfds);
+	/*
+	 * Receiving L can race the provider's close of its original writer.
+	 * A subsequent reply proves that callback and its send cleanup finished;
+	 * EOF then tests the client's discarded attachment, not thread scheduling.
+	 */
+	ATF_REQUIRE_EQ(0,
+	    test_session_call(session, "K", 1, reply, sizeof(reply), 2000,
+	    &received));
+	ATF_CHECK_EQ(sizeof("ok"), received);
+	ATF_CHECK_STREQ("ok", reply);
 	ATF_CHECK_EQ(0, read(large_pipe[0], &byte, sizeof(byte)));
 
 	errno = 0;
@@ -944,7 +955,7 @@ ATF_TC_BODY(service_session_payload_and_attachment_lifecycle, tc)
 	service_session_close(session);
 	ATF_REQUIRE_EQ(0, pthread_join(thread, NULL));
 	ATF_CHECK_EQ(0, provider.error);
-	ATF_CHECK_EQ(3, provider.requests);
+	ATF_CHECK_EQ(4, provider.requests);
 	close(event_pipe[0]);
 	close(large_pipe[0]);
 	close(late_pipe[0]);
@@ -1058,7 +1069,7 @@ idle_switchboard_peer(int fd, struct idle_capture *capture)
 
 static pid_t
 idle_shutdown_child(int child_fd, int peer_fd, unsigned seconds,
-    bool expect_success)
+    bool expect_success, unsigned budget_ms)
 {
 	struct service_bootstrap bootstrap;
 	struct service_context *context;
@@ -1081,8 +1092,15 @@ idle_shutdown_child(int child_fd, int peer_fd, unsigned seconds,
 		_exit(2);
 	if (service_acquire(&context) == -1)
 		_exit(3);
+	if (budget_ms != 0 && service_budget_begin(budget_ms) == -1)
+		_exit(4);
 	errno = 0;
 	result = service_idle_shutdown(context, seconds);
+	if (budget_ms != 0) {
+		int saved = errno;
+		service_budget_end();
+		_exit(result == -1 && saved == ETIMEDOUT ? 0 : 12);
+	}
 	if (expect_success)
 		_exit(result == 0 ? 0 : 10);
 	/* Channel is unusable: a failure with a sane errno, no crash. */
@@ -1111,7 +1129,7 @@ ATF_TC_BODY(service_idle_shutdown_wire, tc)
 
 	/* Arm form: seconds == 30 travels on the wire verbatim. */
 	capability_channel_pair(&channel[0], &channel[1]);
-	child = idle_shutdown_child(channel[0], channel[1], 30, true);
+	child = idle_shutdown_child(channel[0], channel[1], 30, true, 0);
 	close(channel[0]);
 	memset(&capture, 0, sizeof(capture));
 	idle_switchboard_peer(channel[1], &capture);
@@ -1126,7 +1144,7 @@ ATF_TC_BODY(service_idle_shutdown_wire, tc)
 
 	/* Cancel form: seconds == 0. */
 	capability_channel_pair(&channel[0], &channel[1]);
-	child = idle_shutdown_child(channel[0], channel[1], 0, true);
+	child = idle_shutdown_child(channel[0], channel[1], 0, true, 0);
 	close(channel[0]);
 	memset(&capture, 0, sizeof(capture));
 	idle_switchboard_peer(channel[1], &capture);
@@ -1141,12 +1159,45 @@ ATF_TC_BODY(service_idle_shutdown_wire, tc)
 
 	/* Dead channel: the switchboard end is closed before the request lands. */
 	capability_channel_pair(&channel[0], &channel[1]);
-	child = idle_shutdown_child(channel[0], channel[1], 30, false);
+	child = idle_shutdown_child(channel[0], channel[1], 30, false, 0);
 	close(channel[0]);
 	close(channel[1]);
 	ATF_REQUIRE(waitpid(child, &status, 0) == child);
 	ATF_CHECK_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
 	    "dead-channel child status=%#x", status);
+}
+
+ATF_TC(service_budget_wire);
+ATF_TC_HEAD(service_budget_wire, tc)
+{
+ atf_tc_set_md_var(tc, "require.user", "root");
+ atf_tc_set_md_var(tc, "timeout", "10");
+}
+ATF_TC_BODY(service_budget_wire, tc)
+{
+ struct service_session *client;
+ char reply[8];
+ int pair[2], status;
+ pid_t child;
+ uint64_t start;
+ capability_channel_pair(&pair[0], &pair[1]);
+ ATF_REQUIRE_EQ(0, service_session_create(pair[0], &client));
+ ATF_REQUIRE_EQ(0, service_budget_begin(25));
+ start = service_monotime_ms();
+ ATF_CHECK_ERRNO(ETIMEDOUT, test_session_call(client, "x", 1,
+     reply, sizeof(reply), 5000, NULL) == -1);
+ ATF_CHECK(service_monotime_ms() - start < 1000);
+ service_budget_end();
+ service_session_close(client);
+ close(pair[1]);
+ /* Bootstrap discovery/lifecycle RPCs use a different dispatcher. */
+ capability_channel_pair(&pair[0], &pair[1]);
+ child = idle_shutdown_child(pair[0], pair[1], 30, false, 25);
+ close(pair[0]);
+ ATF_REQUIRE_EQ(child, waitpid(child, &status, 0));
+ ATF_CHECK_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
+     "bootstrap budget child status=%#x", status);
+ close(pair[1]);
 }
 
 ATF_TC_WITHOUT_HEAD(capability_rights_algebra);
@@ -1254,6 +1305,7 @@ ATF_TC_BODY(stale_bootstrap_preserves_descriptor, tc)
 ATF_TP_ADD_TCS(tp)
 {
 
+	ATF_TP_ADD_TC(tp, service_budget_wire);
 	ATF_TP_ADD_TC(tp, capability_rights_algebra);
 	ATF_TP_ADD_TC(tp, provider_reply_validation);
 	ATF_TP_ADD_TC(tp, bootstrap_validation);

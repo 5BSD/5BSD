@@ -270,7 +270,7 @@ an aggregate.
 
 ## Limits and status
 
-OTLP export of log records is deferred; only bsdinstruments and hwtlm
+OTLP export of log records is deferred; only bsdinstruments and hwstat
 export OTLP today. BSDLog's query is label-scoped with severity, subsystem,
 category and time filters, and a separately authorized administrative query
 is not built; an operator reads other units' records from the store. BSDAudit

@@ -1,5 +1,5 @@
 .\" SPDX-License-Identifier: BSD-2-Clause
-.Dd July 31, 2026
+.Dd October 10, 2026
 .Dt LIBNOTIFY 3
 .Os
 .Sh NAME
@@ -10,6 +10,7 @@
 .Nm notify_publish ,
 .Nm notify_state_set ,
 .Nm notify_state_get ,
+.Nm notify_state_watch ,
 .Nm notify_next ,
 .Nm notify_timer_add ,
 .Nm notify_timer_cancel ,
@@ -37,6 +38,8 @@
 .Fn notify_state_set "struct notify_client *client" "const char *topic" "uint64_t state"
 .Ft int
 .Fn notify_state_get "struct notify_client *client" "const char *topic" "struct notify_state_reply *state"
+.Ft int
+.Fn notify_state_watch "struct notify_client *client" "const char *topic" "struct notify_state_watch_reply *state" "uint32_t timeout_ms"
 .Ft ssize_t
 .Fn notify_next "struct notify_client *client" "struct notify_event *event" "size_t capacity" "uint32_t timeout_ms"
 .Ft int
@@ -114,10 +117,48 @@ They must not contain secrets or the only copy of application state.
 .Fn notify_state_set
 stores a 64-bit topic state and atomically advances a broker-assigned
 generation.
+An existing topic may only be updated by sessions sharing its original
+authenticated owner label; other publishers receive
+.Er EACCES .
+Ownership ends when the state is cleared or its last owner session closes.
 .Fn notify_state_get
 returns the current router epoch, generation, and state.
 Subscribers should subscribe before reading state and query the owning typed
 service when a notification only identifies what changed.
+.Pp
+.Fn notify_state_watch
+returns the latest value of one exact topic, under the subscription policy.
+The first call returns immediately, including when the topic is absent.
+Later calls on the same client and topic wait for a changed value or presence.
+Repeated identical values do not wake readers; intervening changes coalesce
+into the latest snapshot without filling the publication queue.
+The reply contains
+.Va watch_epoch ,
+.Va generation ,
+.Va state ,
+and
+.Va present .
+An absent topic has zero state and presence.
+Clearing state or losing its last owner makes it absent.
+Each client tracks one watched topic; switching topics or reconnecting starts
+a new stream with a new epoch and an immediate snapshot.
+Watch generations are separate from state-get generations.
+.Pp
+A zero timeout polls; an unchanged snapshot returns
+.Er EAGAIN .
+A finite expired wait also returns
+.Er EAGAIN
+without advancing the observation cursor.
+.Dv NOTIFY_TIMEOUT_INFINITE
+waits without a deadline.
+The client exchange lock serializes watches with other operations on that
+client; use a separate client for concurrent publications or event reads.
+A transport timeout closes the session to cancel any outstanding watch.
+Failed calls leave the caller's output unchanged.
+The watch feature is negotiated on demand; existing operations keep their
+original HELLO format for compatibility with older providers and clients.
+Older providers may reject the extended handshake with a protocol or
+connection error.
 .Pp
 .Fn notify_list_subscriptions
 and

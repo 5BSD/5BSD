@@ -552,6 +552,10 @@ indefinitely.
 wraps an already-connected file descriptor in a
 .Vt ble_ctx_t ,
 useful for testing or pre-established connections.
+On success the context owns the descriptor and
+.Fn ble_close
+closes it; allocation failure leaves ownership with the caller.
+The constructor does not validate that the descriptor is a connected socket.
 It does
 .Em not
 perform the handshake; callers must invoke
@@ -578,6 +582,10 @@ set on failure:
 when the caller's domain may not reach the name,
 .Er EPROTO
 on a malformed hand-off.
+A reply must contain either a successful status with exactly one descriptor or
+a valid positive errno with no descriptor.
+Negative or out-of-range statuses are protocol errors.
+Malformed replies close any attached descriptor before returning.
 .Pp
 .Fn ble_handshake
 negotiates the framed binary control protocol on an open context: it sends

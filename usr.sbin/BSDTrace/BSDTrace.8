@@ -1,5 +1,5 @@
 .\" SPDX-License-Identifier: BSD-2-Clause
-.Dd September 25, 2026
+.Dd October 8, 2026
 .Dt BSDTRACE 8
 .Os
 .Sh NAME
@@ -25,6 +25,14 @@ Managed shutdown stops admission, gives workers five seconds to exit after
 then terminates stragglers and reaps every worker before acknowledging
 quiesce to
 .Xr switchboard 8 .
+Failure to read the monotonic clock skips the graceful wait and proceeds
+to forced termination.
+Interrupted reap calls are retried.
+Failure of forced termination or final reaping suppresses successful
+quiescence acknowledgement and returns failure.
+After a failure, remaining reap attempts are nonblocking; surviving workers
+may require supervisor recovery.
+The five-second grace period does not bound the final kernel reap wait.
 Clients named explicitly in the allow list
 .Pa bsdtrace.allow
 may request one independently opened DTrace consumer descriptor.
@@ -77,6 +85,22 @@ configuration error.
 The descriptor is close-on-fork, close-on-exec, transferable once, and limited
 to the ioctl set required by the libdtrace consumer library
 .Pq see Xr dtrace_fdopen 3 .
+.Sh CONCURRENT CONSUMERS
+The service does not reserve exclusive access to
+.Pa /dev/dtrace/dtrace .
+Each authorized session receives a separately opened consumer with its own
+enabled probes, options, buffers, and tracing state.
+Traditional privileged DTrace tools may open the device concurrently.
+Duplicating or passing a descriptor shares its consumer; opening the device
+again creates a new consumer.
+.Pp
+A tool that opens the device by pathname still needs a conventional execution
+environment and device permissions.
+An application born in capability mode must use descriptor delegation and
+.Xr dtrace_fdopen 3
+or
+.Fn tracecmp_dtrace_open ;
+delegation does not automatically adapt an unchanged pathname-based tool.
 .Sh SECURITY
 Raw DTrace authority is an administrator-only capability.
 An ioctl allowlist cannot constrain D programs, probes, actions, targets, or
@@ -120,6 +144,21 @@ Default file validated by
 not read by
 .Nm .
 .El
+Worker exit-event reaping retries interrupted calls and tolerates children
+already reaped.
+Other reap errors fail shutdown or the active service loop instead of being
+silently discarded.
+The provider object is released on normal and failed exits.
+Successful shutdown acknowledgement follows worker cleanup and closure of
+the event queue and DTrace directory.
+Failure to install a worker exit watch stops admission and enters controlled
+shutdown with the worker still tracked.
+Post-fork bootstrap failure also stops admission and retains the child for
+controlled shutdown.
+Bootstrap acknowledgement errors are checked without generating SIGPIPE.
+The parent uses one five-second monotonic deadline for the bootstrap status
+and acknowledgement, using nonblocking socket operations.
+Timeout follows the failed-bootstrap shutdown path.
 .Sh SEE ALSO
 .Xr dtrace 1 ,
 .Xr openat 2 ,

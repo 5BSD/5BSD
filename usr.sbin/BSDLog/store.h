@@ -62,6 +62,9 @@ struct logcmp_query_filter {
  * on EILSEQ the owner calls logcmp_store_quarantine() to move the bad active
  * segment aside, then reopens (which starts a fresh segment), so a single
  * corrupt record left by an unclean shutdown cannot brick the logging plane.
+ * A failed append rolls back to the last complete record. If rollback fails,
+ * further appends and flushes return the original error until close/reopen.
+ * A failed durability sync after a complete append does not undo that record.
  */
 int	logcmp_store_open(int, uint64_t, uint32_t, struct logcmp_store **);
 int	logcmp_store_quarantine(int);

@@ -502,6 +502,8 @@ exit1(struct thread *td, int rval, int signo)
 
 	exec_free_abi_mappings(p);
 	vmspace_exit(td);
+	/* File-table and address-space references have now been released. */
+	EVENTHANDLER_DIRECT_INVOKE(process_exit_resources, p);
 	(void)acct_process(td);
 
 #ifdef KTRACE

@@ -304,6 +304,7 @@ See section 3.1.
 | faccessat2 | AT_EACCESS, AT_SYMLINK_NOFOLLOW, AT_EMPTY_PATH | mapped | unknown flags / invalid mode EINVAL; "" without AT_EMPTY_PATH ENOENT |
 | fchownat | AT_EMPTY_PATH, -1/-1 | mapped | unknown flags EINVAL; "" without AT_EMPTY_PATH ENOENT |
 | copy_file_range | flags | rejected-correctly | any nonzero flags EINVAL, validated before the descriptors |
+| close_range | CLOSE_RANGE_UNSHARE, optionally with CLOSE_RANGE_CLOEXEC | implemented, VM pending | A single-threaded process detaches a descriptor table shared with another process before closing or setting CLOEXEC. Multithreaded use and a shared table whose calling leader may hold POSIX locks return EINVAL: native tables belong to processes, and `fdunshare` would clear that leader's locks. A table containing descriptors native `fdcopy` would omit or recreate, including epoll backed by kqueue, also returns EINVAL before detachment. Unknown flags and reversed ranges fail before detachment. `linux_break_files` covers close, CLOEXEC, POSIX-lock and epoll rejection against a CLONE_FILES child on amd64 Linux64; the new cases compile and the GENERIC kernel and both Linux modules build, but guest execution is pending. Other ABIs remain unqualified. |
 | inotify_init1 | IN_NONBLOCK, IN_CLOEXEC | mapped | unknown flags EINVAL |
 | inotify_add_watch | IN_ONLYDIR, IN_MASK_ADD, IN_MASK_CREATE, IN_ISDIR in mask | mapped | MASK_ADD\|MASK_CREATE EINVAL, MASK_CREATE on an existing watch EEXIST, mask 0 / flags-only mask / unknown bits EINVAL, ONLYDIR on a file ENOTDIR |
 
@@ -644,7 +645,7 @@ Refreshed from `syscalls.master`, the DUMMY lists and hand-written stubs on
 | 269 | faccessat | STD-real |
 | 270 | pselect6 | STD-real |
 | 271 | ppoll | STD-real |
-| 272 | unshare | STD-real: amd64 single-threaded CLONE_FS only; named ABI cases VM-tested |
+| 272 | unshare | STD-real: amd64 single-threaded CLONE_FS VM-tested; CLONE_FILES source/build validated, VM pending |
 | 273 | set_robust_list | STD-real |
 | 274 | get_robust_list | STD-real |
 | 275 | splice | STD-real |
@@ -829,7 +830,7 @@ The 15 deliberately absent ancient slots are `uselib`, `create_module`,
 | 2 | Restartable sequences (`rseq`) | Linux64 amd64 registration, signal abort and migration are implemented; same-CPU preemption is VM-tested; descriptor overflow and pending-signal unregister are VM-tested; deeper teardown races remain | Complete the remaining rseq negative/stress matrix and test a real librseq consumer. Linux32 and arm64 remain ENOSYS. |
 | 3 | Seccomp filters | `linux_seccomp` and related prctl requests reject operations | Implement syscall-entry enforcement, filter validation and actions, fork/exec inheritance and thread synchronization. Validate with libseccomp and targeted sandbox clients. |
 | 4 | Quota interfaces | amd64 fd quota query, byte hard-limit changes and sync are implemented; legacy device selection remains unsupported | Start with query operations and exact structure translation against ZFS user/group/project quota data, then gated mutation and privilege tests. |
-| 5 | Namespace identity | `setns` and `listns` remain DUMMY; `unshare` only detaches single-threaded amd64 path state | Implement only namespace types that can have a coherent jail/vnet-backed lifetime and descriptor identity; reject combinations that cannot preserve Linux isolation. |
+| 5 | Namespace identity | `setns` and `listns` remain DUMMY; `unshare` detaches single-threaded amd64 path and descriptor state, with descriptor cases VM pending | Implement only namespace types that can have a coherent jail/vnet-backed lifetime and descriptor identity; reject combinations that cannot preserve Linux isolation. |
 | 6 | Process memory lifecycle | `process_mrelease`, `userfaultfd` and `memfd_secret` remain DUMMY | Treat these as separate projects; begin with caller-driven workload evidence and full lifetime/race tests rather than success-only shims. |
 | 7 | Security metadata services | keyrings, Landlock and LSM self-attribute calls remain DUMMY | Select a real consumer first, then implement persistent object ownership, inheritance and policy enforcement as required by that client. |
 | 8 | Observability | perf, fanotify, BPF and uprobes remain DUMMY | Split by subsystem and require a useful tool or application target plus negative privilege and teardown tests. |
@@ -985,7 +986,26 @@ EINVAL; other architectures retain ENOSYS. Linux-reference tests and the
 focused BSD ZFS-root matrix pass; the full amd64 ZFS-root regression gate
 also passes. Application and broader unshare qualification remain pending.
 See [System Calls](book/src/compat/linux/syscalls.md) and the
-[unshare gate section](../tools/test/linuxulator/README.md#unshare-path-state-subset).
+[unshare gate section](../tools/test/linuxulator/README.md#unshare-path-and-descriptor-state-subset).
+
+The later `CLONE_FILES` addition also accepts its combination with `CLONE_FS`
+for single-threaded callers. It uses guarded native `fdunshare()` to copy the
+descriptor table while retaining shared open file descriptions. A shared table
+whose calling leader may hold POSIX locks returns EINVAL because native
+`fdescfree()` would clear them; the guard checks sticky `P_ADVLOCK` and may
+reject a process whose locks were already removed. Per-thread detachment and
+namespace flags remain unsupported. Native `fdcopy` may omit or recreate
+nonpassable descriptors, including Linux epoll's kqueue, so a guarded source
+snapshot rejects those tables with EINVAL. The three positive descriptor tests
+and expanded rejection cases compile, and the GENERIC kernel and both Linux
+modules build; guest execution remains pending.
+
+Starnix's `ExecUnsharesCloneFiles` and `ExecDoesNotUnshareCloneFs` task tests
+identify an exec boundary absent from the earlier matrix. The portable
+`files_exec_detaches` and `fs_exec_preserves_sharing` cases are now in
+`linux_unshare` and the guest gate. Native exec still detaches file tables;
+for a Linux caller it now retains a shared path table. The probe compiles and
+the kernel builds; guest execution remains pending.
 
 ### Quota subset (2026-09-21)
 
@@ -1039,3 +1059,16 @@ visibility, signal interception/detach, and an immediate TRACEEXIT event.
 `PTRACE_INTERRUPT` and `PTRACE_LISTEN` are VM-qualified, and Linux32 is
 unchanged. The INTERRUPT and LISTEN contracts are summarized in
 [Sandboxing and Debugging](book/src/compat/linux/sandboxing.md#debugging-linux-processes).
+
+## Starnix batch validation update (2026-10-10)
+
+The earlier pending VM notes for this batch are superseded by the accepted
+pre-Binder audit in [the Starnix inventory](starnix-linuxulator-inventory.md).
+The amd64 Linux64 broad gate passed 1,191 result rows, including the expanded
+unshare cases; the focused ATF gate passed 98/98 executions. Subsequent procfs
+snapshot and uinput gates passed 16/16 and 12/12 respectively. Native FUSE Kyua
+passed all 890 active GTest cases, the NFS cookie decoder, and 32 additional
+polling repetitions. CTL-over-FUSE was skipped for missing external tools.
+Each gate records its own kernel and artifact hashes; historical gates were
+not all run on the final kernel. This qualifies the tested subsets only.
+Binder and io_uring remain deferred for this work.

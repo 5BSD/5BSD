@@ -713,6 +713,7 @@ fuse_body_audit(struct fuse_ticket *ftick, size_t blen)
 		break;
 
 	case FUSE_RENAME:
+	case FUSE_RENAME2:
 		err = (blen == 0) ? 0 : EINVAL;
 		break;
 
@@ -785,6 +786,7 @@ fuse_body_audit(struct fuse_ticket *ftick, size_t blen)
 		break;
 
 	case FUSE_READDIR:
+	case FUSE_READDIRPLUS:
 		err = (((struct fuse_read_in *)(
 		    (char *)ftick->tk_ms_fiov.base +
 		    sizeof(struct fuse_in_header)

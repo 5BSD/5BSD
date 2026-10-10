@@ -1,4 +1,4 @@
-PACKAGE=	natd
+PACKAGE=	libalias
 NAME=		skinny
 SRCS=		alias_skinny.c
 

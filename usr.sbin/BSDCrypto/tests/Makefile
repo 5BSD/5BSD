@@ -29,4 +29,12 @@ SRCTREE_FILES=	usr.sbin/BSDCrypto/Makefile \
 		usr.sbin/BSDCrypto/bsdcrypto.c
 .include "${SRCTOP}/tests/srctree.mk"
 
+ATF_TESTS_C+= lifecycle_test
+SRCS.lifecycle_test= lifecycle_test.c policy.c
+CFLAGS.lifecycle_test+= -I${SRCTOP}/lib/libauditcmp -I${SRCTOP}/lib/libchannel
+CFLAGS.lifecycle_test+= -I${SRCTOP}/lib/libcryptodesc -I${SRCTOP}/lib/libservice
+CFLAGS.lifecycle_test+= -I${SRCTOP}/lib/liblogcmp
+LIBADD.lifecycle_test= auditcmp channel cryptocmp cryptodesc service logcmp capreclaim
+NO_SHARED.lifecycle_test= yes
+
 .include <bsd.test.mk>

@@ -1,6 +1,9 @@
 .include <src.opts.mk>
 
-MANGROUPS=	MAN
+MANGROUPS=	MAN FIDL
+
+FIDL=		fidl.7
+FIDLPACKAGE=	runtime-man
 
 #MISSING: eqnchar.7 ms.7 term.7
 MAN=	arch.7 \

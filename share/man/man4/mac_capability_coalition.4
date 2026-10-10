@@ -44,6 +44,30 @@ in the payload.
 .Pp
 The default termination signal is
 .Dv SIGKILL .
+.Pp
+Closing the control instance retains process membership for signalled members
+until their descriptor and address-space exit cleanup reaches the resource-exit
+hook.
+In-flight rejected children remain tracked through the same hook.
+Signal-zero release and the closing caller's exclusion still detach those
+members without signalling them.
+Parents also retain independent cleanup dependencies on nested coalitions.
+These survive removal of public membership and drain recursively after process
+resource exit, jail cleanup, and in-flight external termination calls.
+A fork that has captured its parent's coalition remains accounted for while
+its child membership is being registered, including a concurrent parent move.
+A revoked descriptor for a nested coalition does not by itself keep that
+coalition's cleanup pending.
+Nested cleanup errors are retained by the parent.
+For other capability members, an independent record retains coalition state
+until the member's revoke callback returns, even if core revocation deferred
+that callback.
+The record does not hold an instance reference and cannot itself prevent final
+close.
+Callback return does not certify completion of asynchronous work started by
+that callback.
+Close does not wait for retained members, and this lifetime retention does not
+provide a public completion-wait operation.
 .Ss Operations
 All operations begin with a common request header:
 .Bd -literal -offset indent
@@ -74,6 +98,23 @@ and
 A
 .Dv DTYPE_MAC_CAPABILITY
 descriptor backed by the coalition service is treated as a nested coalition.
+A process descriptor may replace an inherited membership atomically.
+A rejected move preserves the existing membership.
+The source and destination must both permit admission; a coalition that
+is closing, terminating, or in its grace period rejects a move.
+A process that has begun exiting cannot be enlisted.
+A jail must still be alive when its membership is attached.
+Logical jail removal asynchronously retires that membership, even if the
+coalition and jail descriptors remain open.
+Jail membership removal does not certify that all jailed processes have
+completed resource cleanup.
+The coalition separately retains the removed prison's identity until user
+references throughout its descendants drain, including deferred last-user
+release.
+References used only to retain the jail hierarchy are excluded: an unreaped
+process's credential can keep a prison allocation alive after resource cleanup.
+This retains coalition state after control closure without keeping a jail
+user reference itself; it is not an exposed completion-wait operation.
 Returns
 .Vt struct coalition_reply .
 .It Dv COALITION_OP_JOIN
@@ -105,10 +146,80 @@ jails are removed via
 sockets are shut down, and
 .Xr mac_capability 4
 members are revoked.
+Nested coalitions are explicitly terminated before their capabilities are
+revoked, so retained child handles do not postpone member termination.
+Cleanup continues after an individual failure, and the first reported cleanup
+error is retained and returned in the reply status.
+For example, a shared-memory shrink seal can prevent truncation with
+.Er EPERM ;
+such a failure is not reported as successful cleanup.
+A later termination request returns the retained error, or
+.Er ESHUTDOWN
+if termination has already started without a recorded error.
+Successful signalling or revocation still does not confirm process resource
+cleanup, and a concurrent termination request is not a completion wait.
 Returns
 .Vt struct coalition_reply .
+.It Dv COALITION_OP_CLEANUP_STATUS
+Read a snapshot of tracked teardown, with no wait and no attached descriptors.
+The request must be exactly
+.Vt struct coalition_req_hdr .
+Both synchronous calls and asynchronous messages return:
+.Bd -literal -offset indent
+struct coalition_cleanup_reply {
+	int32_t  status;
+	uint32_t phase;
+	int32_t  cleanup_error;
+	uint32_t flags;
+	uint32_t processes, forks, jails, nested;
+	uint32_t capabilities, external;
+};
+.Ed
+.Pp
+A successful query has zero
+.Va status ;
+.Va cleanup_error
+separately preserves the first teardown error, even while work remains.
+The counters cover process resource exits, unpublished forks, jail cleanup,
+nested dependencies, capability callback return, and external termination
+calls respectively; they are not allocation counts and must not be summed as
+a count of distinct resources.
+.Pp
+The phases are
+.Dv COALITION_CLEANUP_ACTIVE
+(termination is not committed, including a cancellable grace period),
+.Dv COALITION_CLEANUP_DRAINING
+(tracked work remains),
+.Dv COALITION_CLEANUP_COMPLETE
+(tracked actions drained without error or release),
+.Dv COALITION_CLEANUP_FAILED
+(drained with a recorded error), and
+.Dv COALITION_CLEANUP_RELEASED
+(drained after detaching processes without confirming their resource exit).
+Signal-zero release and closing-caller exclusion set
+.Dv COALITION_CLEANUP_F_RELEASED ;
+this outcome propagates through nested coalitions, including when another
+cleanup error takes precedence in the phase.
+An empty active coalition is not complete.
+.Pp
+Completion covers the coalition's tracked actions.
+It does not certify reclamation of resources shared with other owners,
+static storage, or asynchronous work independently started by a service's
+revoke callback.
+This snapshot is not a replacement for those services' completion contracts.
+The control descriptor must remain usable; it cannot query after revocation,
+and this operation creates no separate wait descriptor or completion event.
 .It Dv COALITION_OP_STAT
 Query coalition membership and state.
+For processes that remain in this coalition, exit removes membership after
+the process releases its file table and detaches its address space.
+Leader-death termination still begins at the early exit hook.
+Closing or revoking the coalition removes access through its control handle.
+Internal cleanup tracking can outlive that handle; supervisors querying this
+interface must retain the handle while terminating members.
+A zero direct process count does not cover nested coalitions, jails,
+rehomed processes, or references deliberately shared with other processes.
+It is not by itself a complete service restart barrier.
 Returns:
 .Bd -literal -offset indent
 struct coalition_stat_reply {
@@ -209,9 +320,11 @@ Returns
 .Vt struct coalition_reply .
 .It Dv COALITION_OP_GRACEFUL
 Perform graceful termination: deliver the specified signal to all process
-members, wait for the timeout, then
+members, wait for processes to begin exiting or for the timeout, then
 .Dv SIGKILL
 any survivors.
+The exit-in-progress check does not wait for descriptor or address-space
+cleanup to finish.
 .Bd -literal -offset indent
 struct coalition_graceful_req {
 	uint32_t	op;
@@ -385,6 +498,24 @@ struct coalition_event_msg {
 .It Dv COALITION_NOTE_WATCHDOG_FIRED Ta 0x0040
 .It Dv COALITION_NOTE_GRACE_STARTED Ta 0x0080
 .El
+.Pp
+.Dv COALITION_NOTE_TERMINATED
+reports the start of instance revocation.
+It is emitted before member cleanup and does not confirm that every process
+member has exited or released its resources.
+Neither this event nor successful termination signalling is a descendant
+exit barrier for a supervisor preparing to restart a service.
+.Pp
+A child whose coalition inheritance is rejected during termination, grace,
+or member-limit exhaustion is sent SIGKILL before it can execute user code.
+At this stage the fork has already succeeded, so the parent may receive a
+child PID and must reap the child normally.
+A successful fork return does not imply the child completed initialization.
+While the coalition remains open, these rejected children are still counted
+as members until their file tables and address spaces have been released.
+This cleanup accounting can temporarily exceed the soft member limit.
+Closing or revoking the coalition discards its membership tracking; retain
+the handle while observing cleanup.
 .Ss Coalition Flags
 The
 .Fa flags
@@ -412,6 +543,8 @@ Soft limit, best-effort enforcement.
 .It Va kern.mac_capability_coalition.max_members
 Maximum total members across all coalitions; 0 means unlimited.
 Soft limit, best-effort enforcement.
+Rejected fork children remain accounted for during resource cleanup even
+when this limit is reached.
 .It Va kern.mac_capability_coalition.members
 Total members across all coalitions (read-only).
 .El
@@ -542,7 +675,7 @@ Invalid operation code, signal number, or timeout value.
 .It Bq Er ENOTCAPABLE
 The member fd lacks the required Capsicum rights.
 .It Bq Er ESRCH
-The target process or member was not found.
+The target process or member was not found, or the process has begun exiting.
 .It Bq Er EPERM
 Permission denied.
 .It Bq Er ELOOP
@@ -552,7 +685,12 @@ or create a cycle.
 .It Bq Er ENOMEM
 Insufficient memory for a new member.
 .It Bq Er EBUSY
-The coalition is in a terminating or grace state and rejects new members.
+The process already has an explicit process-descriptor membership.
+.It Bq Er ESHUTDOWN
+The coalition rejects admission because it is terminating or in its grace
+period; a process move also rejects a closing source or destination.
+.It Bq Er EAGAIN
+A concurrent membership change prevented a process move; retry the operation.
 .It Bq Er EALREADY
 The responsible parent has already been set.
 .It Bq Er EBADF

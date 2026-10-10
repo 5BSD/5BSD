@@ -57,6 +57,7 @@ __<src.opts.mk>__:	.NOTMAIN
 # of being removed.
 
 __DEFAULT_YES_OPTIONS = \
+    DUMMYNET \
     ACCT \
     ACPI \
     APM \
@@ -110,7 +111,6 @@ __DEFAULT_YES_OPTIONS = \
     INET6 \
     INETD \
     IPFILTER \
-    IPFW \
     ISCSI \
     JAIL \
     JEMALLOC_LG_VADDR_WIDE \
@@ -544,3 +544,9 @@ MK_${vv:H}:=	${MK_${vv:T}}
 .endfor
 
 .endif #  !target(__<src.opts.mk>__)
+
+# Retired source: old WITHOUT_IPFW remains harmless.
+.if defined(WITH_IPFW)
+.error IPFW has been removed; use PF and Dummynet
+.endif
+MK_IPFW= no

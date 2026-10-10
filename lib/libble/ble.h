@@ -401,7 +401,8 @@ typedef void (*ble_numcmp_cb)(const ble_addr_t *addr,
 /* Open a connection to blued.  sock_path NULL uses default. */
 ble_ctx_t	*ble_open(const char *sock_path);
 
-/* Wrap an already-connected fd in a ble_ctx_t (for testing). */
+/* Wrap an already-connected fd. Takes ownership on success; failure leaves
+ * ownership with the caller. No handshake or socket validation is performed. */
 ble_ctx_t	*ble_open_fd(int fd);
 /*
  * Open the daemon over the capability plane instead of the socket path: the

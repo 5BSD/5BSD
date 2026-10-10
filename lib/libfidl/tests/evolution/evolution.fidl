@@ -1,0 +1,41 @@
+// SPDX-License-Identifier: BSD-2-Clause
+// One schema compiled at two versions. Peers built from evolve:1 and
+// evolve:2 must interoperate in both directions.
+@available(platform="evolve", added=1)
+library bsd.evolution;
+
+type Color = flexible enum : uint32 {
+    RED = 1;
+    @available(added=2)
+    GREEN = 2;
+};
+type Perms = flexible bits : uint32 {
+    READ = 1;
+    @available(added=2)
+    WRITE = 2;
+};
+type Shape = flexible union {
+    1: circle uint32;
+    @available(added=2)
+    2: square uint64;
+};
+type Record = table {
+    1: name string:32;
+    @available(added=2)
+    2: extra uint32;
+    @available(added=2)
+    3: tint Color;
+};
+type Payload = struct {
+    record Record;
+    shape Shape;
+    color Color;
+    perms Perms;
+};
+open protocol Evolve {
+    strict Exchange(Payload) -> (Payload);
+    @available(added=2)
+    flexible Added() -> ();
+    @available(added=2)
+    flexible -> Announced(Payload);
+};

@@ -1,0 +1,11 @@
+/* Generated automatically */
+#ifndef have_Src_Zle_zle_bindings_globals
+#define have_Src_Zle_zle_bindings_globals
+
+extern mod_import_variable struct thingy thingies[];
+extern int emacsbind[32];
+extern int metabind[128];
+extern int viinsbind[32];
+extern int vicmdbind[128];
+
+#endif /* !have_Src_Zle_zle_bindings_globals */

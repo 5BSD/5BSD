@@ -2,8 +2,11 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <sys/param.h>
 #include <sys/types.h>
+#include <sys/capsicum.h>
 #include <sys/ioctl.h>
+#include <sys/socket.h>
 #include <sys/cap_process.h>
 #include <sys/sysctl.h>
 #include <sys/wait.h>
@@ -908,6 +911,570 @@ ATF_TC_CLEANUP(sender_identity_stamp, tc)
 	(void)tc;
 }
 
+/*
+ * Receive blocks are sized from the previous message and grow before
+ * dequeue when a message is larger.  Every size class must arrive intact,
+ * including the maximum payload and attached descriptors, and retained
+ * messages must not share storage with later receives.
+ */
+static const size_t receive_sizes[] = { 1, 600, MAC_CAPABILITY_MAX_MSG, 100,
+    MAC_CAPABILITY_MAX_MSG, 5000, 512, 513 };
+#define	RECEIVE_COUNT	(sizeof(receive_sizes) / sizeof(receive_sizes[0]))
+
+struct receive_state {
+	struct channel_message *held[RECEIVE_COUNT];
+	unsigned count;
+};
+
+static unsigned char
+receive_byte(size_t message, size_t offset)
+{
+
+	return ((unsigned char)(message * 31 + offset * 7 + 1));
+}
+
+static void
+receive_event_handler(struct channel *channel, struct channel_message *event,
+    void *argument)
+{
+	struct receive_state *state;
+
+	(void)channel;
+	state = argument;
+	ATF_REQUIRE(state->count < RECEIVE_COUNT);
+	state->held[state->count++] = event;
+}
+
+ATF_TC(receive_blocks_resize);
+ATF_TC_HEAD(receive_blocks_resize, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "messages of every size class arrive intact and stay independent");
+	atf_tc_set_md_var(tc, "require.kmods",
+	    "mac_capability mac_capability_channel");
+}
+ATF_TC_BODY(receive_blocks_resize, tc)
+{
+	struct channel_options client_options = CHANNEL_OPTIONS_INITIALIZER(
+	    CHANNEL_ROLE_CLIENT);
+	struct channel_options provider_options = CHANNEL_OPTIONS_INITIALIZER(
+	    CHANNEL_ROLE_PROVIDER);
+	struct receive_state state;
+	struct channel *client, *provider;
+	unsigned char *payload;
+	char byte;
+	int first, second, pipefd[2], fd;
+	size_t i, j;
+
+	(void)tc;
+	memset(&state, 0, sizeof(state));
+	payload = malloc(MAC_CAPABILITY_MAX_MSG);
+	ATF_REQUIRE(payload != NULL);
+	ATF_REQUIRE(pipe(pipefd) == 0);
+	capability_channel_pair(&first, &second);
+	ATF_REQUIRE(channel_create(first, &client_options, &client) == 0);
+	ATF_REQUIRE(channel_create(second, &provider_options, &provider) == 0);
+	ATF_REQUIRE(channel_set_event_handler(client, receive_event_handler,
+	    &state) == 0);
+	for (i = 0; i < RECEIVE_COUNT; i++) {
+		for (j = 0; j < receive_sizes[i]; j++)
+			payload[j] = receive_byte(i, j);
+		/* Attach a descriptor to the second maximum-size message. */
+		if (i == 4)
+			ATF_REQUIRE(channel_send_event(provider,
+			    OUT_FDS(payload, receive_sizes[i], &pipefd[1], 1)) == 0);
+		else
+			ATF_REQUIRE(channel_send_event(provider,
+			    OUT(payload, receive_sizes[i])) == 0);
+		/* Receive each before sending the next: exercise every grow. */
+		while (state.count <= i)
+			ATF_REQUIRE(dispatch_wait(client) >= 0);
+	}
+	close(pipefd[1]);
+	for (i = 0; i < RECEIVE_COUNT; i++) {
+		const unsigned char *data = channel_message_data(state.held[i]);
+
+		ATF_REQUIRE_EQ(receive_sizes[i],
+		    channel_message_length(state.held[i]));
+		for (j = 0; j < receive_sizes[i]; j++)
+			if (data[j] != receive_byte(i, j))
+				atf_tc_fail("message %zu byte %zu corrupted", i, j);
+		ATF_CHECK_EQ(i == 4 ? 1 : 0,
+		    channel_message_fd_count(state.held[i]));
+	}
+	fd = channel_message_take_fd(state.held[4], 0);
+	ATF_REQUIRE(fd >= 0);
+	ATF_REQUIRE(write(fd, "x", 1) == 1);
+	ATF_REQUIRE(read(pipefd[0], &byte, 1) == 1 && byte == 'x');
+	close(fd);
+	for (i = 0; i < RECEIVE_COUNT; i++)
+		channel_message_free(state.held[i]);
+	channel_destroy(client);
+	channel_destroy(provider);
+	close(pipefd[0]);
+	free(payload);
+}
+
+
+struct prefetch_state {
+	unsigned events;
+};
+
+static void
+prefetch_event(struct channel *channel, struct channel_message *event,
+    void *argument)
+{
+	struct prefetch_state *state = argument;
+
+	(void)channel;
+	ATF_CHECK_EQ(4, channel_message_length(event));
+	state->events++;
+	channel_message_free(event);
+}
+
+ATF_TC(wait_then_dispatch_once);
+ATF_TC_HEAD(wait_then_dispatch_once, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "a message found by channel_wait is dispatched exactly once, and an "
+	    "undispatched one is released (with its descriptors) on destroy");
+	atf_tc_set_md_var(tc, "require.kmods",
+	    "mac_capability mac_capability_channel");
+}
+ATF_TC_BODY(wait_then_dispatch_once, tc)
+{
+	struct channel_options client_options = CHANNEL_OPTIONS_INITIALIZER(
+	    CHANNEL_ROLE_CLIENT);
+	struct channel_options provider_options = CHANNEL_OPTIONS_INITIALIZER(
+	    CHANNEL_ROLE_PROVIDER);
+	struct prefetch_state state = { 0 };
+	struct channel *client, *provider;
+	int first, second, pipefd[2], flags;
+	char byte;
+
+	capability_channel_pair(&first, &second);
+	ATF_REQUIRE(channel_create(first, &client_options, &client) == 0);
+	ATF_REQUIRE(channel_create(second, &provider_options, &provider) == 0);
+	ATF_REQUIRE(channel_set_event_handler(client, prefetch_event,
+	    &state) == 0);
+
+	ATF_REQUIRE(channel_send_event(provider, OUT("evt1", 4)) == 0);
+	ATF_REQUIRE_EQ(CHANNEL_WAIT_READ, channel_wait(client, 0, 5000));
+	/* A second wait before dispatch reports the held message again. */
+	ATF_REQUIRE_EQ(CHANNEL_WAIT_READ, channel_wait(client, 0, 0));
+	ATF_REQUIRE(channel_dispatch(client) >= 1);
+	ATF_REQUIRE_EQ(1, state.events);
+	ATF_REQUIRE(channel_dispatch(client) == 0);
+	ATF_REQUIRE_EQ(1, state.events);
+	/* Nothing queued: a bounded wait times out. */
+	ATF_REQUIRE_EQ(0, channel_wait(client, 0, 50));
+
+	/* A waited-for but undispatched message is freed by destroy. */
+	ATF_REQUIRE(pipe(pipefd) == 0);
+	ATF_REQUIRE(channel_send_event(provider,
+	    OUT_FDS("evt2", 4, &pipefd[1], 1)) == 0);
+	close(pipefd[1]);
+	ATF_REQUIRE_EQ(CHANNEL_WAIT_READ, channel_wait(client, 0, 5000));
+	channel_destroy(client);
+	flags = fcntl(pipefd[0], F_GETFL);
+	ATF_REQUIRE(fcntl(pipefd[0], F_SETFL, flags | O_NONBLOCK) == 0);
+	ATF_REQUIRE_EQ_MSG(0, read(pipefd[0], &byte, 1),
+	    "received descriptor survived destroy");
+	ATF_REQUIRE_EQ(1, state.events);
+	close(pipefd[0]);
+	channel_destroy(provider);
+}
+
+#define	OUT_SPEC(_data, _length, _fds, _nfds, _specs, _flags)		\
+	(&(struct channel_outgoing){					\
+	    .size = sizeof(struct channel_outgoing),			\
+	    .data = (_data),						\
+	    .length = (_length),					\
+	    .fds = (_fds),						\
+	    .nfds = (_nfds),						\
+	    .fd_specs = (_specs),					\
+	    .flags = (_flags)						\
+	})
+
+struct spec_state {
+	unsigned events;
+	int fds[2];
+	size_t nfds;
+	bool have_info;
+	struct channel_fd_info info[2];
+};
+
+static void
+spec_event_handler(struct channel *channel, struct channel_message *event,
+    void *argument)
+{
+	struct spec_state *state;
+	size_t i;
+
+	(void)channel;
+	state = argument;
+	state->events++;
+	state->nfds = channel_message_fd_count(event);
+	ATF_REQUIRE(state->nfds <= 2);
+	state->have_info = true;
+	for (i = 0; i < state->nfds; i++) {
+		if (channel_message_fd_info(event, i, &state->info[i]) != 0) {
+			/* Kernels without RECVMSG_V4 do not report. */
+			ATF_CHECK_EQ(ENOTSUP, errno);
+			state->have_info = false;
+		}
+		state->fds[i] = channel_message_take_fd(event, i);
+	}
+	channel_message_free(event);
+}
+
+static void
+spec_receive(struct channel *provider, struct spec_state *state)
+{
+	unsigned before;
+
+	before = state->events;
+	while (state->events == before)
+		ATF_REQUIRE(dispatch_wait(provider) >= 0);
+}
+
+static bool
+inheritance_locked(int fd)
+{
+	bool exec_locked, fork_locked;
+
+	exec_locked = cap_cloexec_limit(fd, CAP_CLOEXEC_UNLOCKED) == -1 &&
+	    errno == ENOTCAPABLE;
+	fork_locked = cap_clofork_limit(fd, CAP_CLOFORK_UNLOCKED) == -1 &&
+	    errno == ENOTCAPABLE;
+	ATF_CHECK_EQ(exec_locked, fork_locked);
+	return (exec_locked && fork_locked);
+}
+
+ATF_TC_WITH_CLEANUP(descriptor_specs_move_and_lock);
+ATF_TC_HEAD(descriptor_specs_move_and_lock, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "descriptor expectations, narrowing, move and inheritance locks "
+	    "are applied in the send call, atomically");
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "require.kmods",
+	    "mac_capability mac_capability_channel");
+}
+ATF_TC_BODY(descriptor_specs_move_and_lock, tc)
+{
+	struct channel_options client_options = CHANNEL_OPTIONS_INITIALIZER(
+	    CHANNEL_ROLE_CLIENT);
+	struct channel_options provider_options = CHANNEL_OPTIONS_INITIALIZER(
+	    CHANNEL_ROLE_PROVIDER);
+	struct channel_fd_spec specs[2];
+	struct spec_state state;
+	struct channel *client, *provider;
+	cap_rights_t rights, expected;
+	int ends[2], sv[2], fds[2], first, second;
+	char byte;
+
+	(void)tc;
+	memset(&state, 0, sizeof(state));
+	capability_channel_pair(&first, &second);
+	ATF_REQUIRE(channel_create(first, &client_options, &client) == 0);
+	ATF_REQUIRE(channel_create(second, &provider_options, &provider) == 0);
+	channel_set_event_handler(provider, spec_event_handler, &state);
+	ATF_REQUIRE(pipe(ends) == 0);
+	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, sv) == 0);
+
+	/* A failed expectation leaves every descriptor with the caller. */
+	memset(specs, 0, sizeof(specs));
+	specs[1].type = CHANNEL_FD_TYPE_SOCKET;
+	fds[0] = sv[0];
+	fds[1] = ends[1];
+	errno = 0;
+	ATF_CHECK_ERRNO(EFTYPE, channel_send_event(client,
+	    OUT_SPEC("x", 1, fds, 2, specs, CHANNEL_SEND_MOVE)) == -1);
+	ATF_CHECK(fcntl(sv[0], F_GETFD) != -1);
+	ATF_CHECK(fcntl(ends[1], F_GETFD) != -1);
+	cap_rights_init(&rights, CAP_WRITE);
+	ATF_REQUIRE(cap_rights_limit(ends[1], &rights) == 0);
+	memset(specs, 0, sizeof(specs));
+	specs[0].rights = CHANNEL_FD_RIGHT_READ;
+	errno = 0;
+	ATF_CHECK_ERRNO(ENOTCAPABLE, channel_send_event(client,
+	    OUT_SPEC("x", 1, &ends[1], 1, specs, CHANNEL_SEND_MOVE)) == -1);
+	ATF_CHECK(fcntl(ends[1], F_GETFD) != -1);
+	specs[0].reserved = 1;
+	specs[0].rights = 0;
+	errno = 0;
+	ATF_CHECK_ERRNO(EOPNOTSUPP, channel_send_event(client,
+	    OUT_SPEC("x", 1, &ends[1], 1, specs, 0)) == -1);
+	errno = 0;
+	ATF_CHECK_ERRNO(EINVAL, channel_send_event(client,
+	    OUT_SPEC("x", 1, &ends[1], 1, NULL, 0x80)) == -1);
+
+	/* Narrowing applies to the delivered copy only. */
+	memset(specs, 0, sizeof(specs));
+	specs[0].type = CHANNEL_FD_TYPE_SOCKET;
+	specs[0].rights = CHANNEL_FD_RIGHT_READ;
+	ATF_REQUIRE(channel_send_event(client,
+	    OUT_SPEC("s", 1, &sv[0], 1, specs, 0)) == 0);
+	spec_receive(provider, &state);
+	ATF_REQUIRE_EQ(1, state.nfds);
+	ATF_REQUIRE(state.fds[0] >= 0);
+	ATF_REQUIRE(cap_rights_get(state.fds[0], &rights) == 0);
+	cap_rights_init(&expected, CAP_READ, CAP_FSTAT);
+	ATF_CHECK(cap_rights_contains(&expected, &rights));
+	ATF_CHECK(cap_rights_contains(&rights, &expected));
+	if (state.have_info) {
+		ATF_CHECK_EQ(CHANNEL_FD_TYPE_SOCKET, state.info[0].type);
+		ATF_CHECK_EQ(CHANNEL_FD_RIGHT_READ | CHANNEL_FD_RIGHT_FSTAT |
+		    CHANNEL_FD_RIGHTS_EXACT, state.info[0].rights);
+	}
+	ATF_REQUIRE(cap_rights_get(sv[0], &rights) == 0);
+	ATF_CHECK(cap_rights_is_set(&rights, CAP_WRITE));
+	ATF_CHECK(!inheritance_locked(state.fds[0]));
+	close(state.fds[0]);
+
+	/* Move with locked inheritance: the sender's descriptor is gone. */
+	memset(specs, 0, sizeof(specs));
+	specs[0].flags = CHANNEL_FD_LOCK_INHERIT;
+	ATF_REQUIRE(channel_send_event(client,
+	    OUT_SPEC("m", 1, &ends[1], 1, specs, CHANNEL_SEND_MOVE)) == 0);
+	errno = 0;
+	ATF_CHECK_ERRNO(EBADF, fcntl(ends[1], F_GETFD) == -1);
+	spec_receive(provider, &state);
+	ATF_REQUIRE_EQ(1, state.nfds);
+	ATF_CHECK(inheritance_locked(state.fds[0]));
+	if (state.have_info) {
+		ATF_CHECK_EQ(CHANNEL_FD_TYPE_OTHER, state.info[0].type);
+		ATF_CHECK_EQ(CHANNEL_FD_RIGHT_WRITE | CHANNEL_FD_RIGHTS_EXACT,
+		    state.info[0].rights);
+	}
+	ATF_CHECK_EQ(1, write(state.fds[0], "z", 1));
+	close(state.fds[0]);
+	ATF_CHECK_EQ(1, read(ends[0], &byte, 1));
+	/* The moved copy was the last writer. */
+	ATF_CHECK_EQ(0, read(ends[0], &byte, 1));
+
+	/* Whole-message lock, channel type check, no specs. */
+	capability_channel_pair(&fds[0], &fds[1]);
+	memset(specs, 0, sizeof(specs));
+	specs[0].type = CHANNEL_FD_TYPE_CHANNEL;
+	ATF_REQUIRE(channel_send_event(client, OUT_SPEC("c", 1, &fds[0], 1,
+	    specs, CHANNEL_SEND_MOVE | CHANNEL_SEND_LOCK_INHERIT)) == 0);
+	spec_receive(provider, &state);
+	ATF_REQUIRE_EQ(1, state.nfds);
+	ATF_CHECK(inheritance_locked(state.fds[0]));
+	if (state.have_info)
+		ATF_CHECK_EQ(CHANNEL_FD_TYPE_CHANNEL, state.info[0].type);
+	close(state.fds[0]);
+	close(fds[1]);
+	specs[0].rights = CHANNEL_FD_RIGHT_READ;
+	errno = 0;
+	ATF_CHECK_ERRNO(EOPNOTSUPP, channel_send_event(client,
+	    OUT_SPEC("c", 1, &sv[1], 1, specs, 0)) == -1);
+
+	close(ends[0]);
+	close(sv[0]);
+	close(sv[1]);
+	channel_destroy(client);
+	channel_destroy(provider);
+}
+ATF_TC_CLEANUP(descriptor_specs_move_and_lock, tc)
+{
+	(void)tc;
+}
+
+ATF_TC_WITH_CLEANUP(queued_move_delivers_once);
+ATF_TC_HEAD(queued_move_delivers_once, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "a moved descriptor queued behind backpressure is adopted, "
+	    "delivered once, and leaves no copy behind");
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "require.kmods",
+	    "mac_capability mac_capability_channel");
+}
+ATF_TC_BODY(queued_move_delivers_once, tc)
+{
+	struct channel_options client_options = CHANNEL_OPTIONS_INITIALIZER(
+	    CHANNEL_ROLE_CLIENT);
+	struct channel_options provider_options = CHANNEL_OPTIONS_INITIALIZER(
+	    CHANNEL_ROLE_PROVIDER);
+	struct channel_fd_spec spec;
+	struct spec_state state;
+	struct channel *client, *provider;
+	unsigned sends, moved_events;
+	int ends[2], first, second, received;
+	char byte;
+
+	(void)tc;
+	memset(&state, 0, sizeof(state));
+	capability_channel_pair(&first, &second);
+	ATF_REQUIRE(channel_create(first, &client_options, &client) == 0);
+	ATF_REQUIRE(channel_create(second, &provider_options, &provider) == 0);
+	channel_set_event_handler(provider, spec_event_handler, &state);
+	ATF_REQUIRE(pipe(ends) == 0);
+	for (sends = 0; sends < MAC_CAPABILITY_DEFAULT_QUEUE_DEPTH +
+	    MAC_CAPABILITY_DEFAULT_TX_LIMIT + 2; sends++) {
+		ATF_REQUIRE(channel_send_event(client, OUT("q", 1)) == 0);
+		if (channel_wants_write(client) == 1)
+			break;
+	}
+	ATF_REQUIRE(channel_wants_write(client) == 1);
+	memset(&spec, 0, sizeof(spec));
+	spec.rights = CHANNEL_FD_RIGHT_WRITE;
+	ATF_REQUIRE(channel_send_event(client,
+	    OUT_SPEC("m", 1, &ends[1], 1, &spec, CHANNEL_SEND_MOVE)) == 0);
+	/* Queued: the library owns the descriptor now. */
+	received = -1;
+	moved_events = 0;
+	while (received == -1) {
+		ATF_REQUIRE(dispatch_wait(provider) >= 0);
+		ATF_REQUIRE(channel_flush(client) == 0);
+		if (state.nfds == 1 && state.fds[0] >= 0) {
+			received = state.fds[0];
+			state.fds[0] = -1;
+			moved_events++;
+		}
+		state.nfds = 0;
+	}
+	ATF_CHECK_EQ(1, moved_events);
+	ATF_CHECK_EQ(0, channel_wants_write(client));
+	ATF_CHECK_EQ(1, write(received, "y", 1));
+	close(received);
+	ATF_REQUIRE(fcntl(ends[0], F_SETFL, O_NONBLOCK) == 0);
+	ATF_CHECK_EQ(1, read(ends[0], &byte, 1));
+	ATF_CHECK_EQ(0, read(ends[0], &byte, 1));
+	close(ends[0]);
+	channel_destroy(client);
+	channel_destroy(provider);
+}
+ATF_TC_CLEANUP(queued_move_delivers_once, tc)
+{
+	(void)tc;
+}
+
+ATF_TC_WITH_CLEANUP(outgoing_v1_layout);
+ATF_TC_HEAD(outgoing_v1_layout, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "callers built against the original outgoing layout keep working");
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "require.kmods",
+	    "mac_capability mac_capability_channel");
+}
+ATF_TC_BODY(outgoing_v1_layout, tc)
+{
+	struct channel_options client_options = CHANNEL_OPTIONS_INITIALIZER(
+	    CHANNEL_ROLE_CLIENT);
+	struct channel_options provider_options = CHANNEL_OPTIONS_INITIALIZER(
+	    CHANNEL_ROLE_PROVIDER);
+	struct channel_outgoing old;
+	struct spec_state state;
+	struct channel *client, *provider;
+	int ends[2], first, second;
+
+	(void)tc;
+	memset(&state, 0, sizeof(state));
+	capability_channel_pair(&first, &second);
+	ATF_REQUIRE(channel_create(first, &client_options, &client) == 0);
+	ATF_REQUIRE(channel_create(second, &provider_options, &provider) == 0);
+	channel_set_event_handler(provider, spec_event_handler, &state);
+	ATF_REQUIRE(pipe(ends) == 0);
+	/* Garbage past the v1 size must be ignored, not interpreted. */
+	memset(&old, 0xa5, sizeof(old));
+	old.size = CHANNEL_OUTGOING_SIZE_V1;
+	old.data = "v";
+	old.length = 1;
+	old.fds = &ends[1];
+	old.nfds = 1;
+	ATF_REQUIRE(channel_send_event(client, &old) == 0);
+	ATF_CHECK(fcntl(ends[1], F_GETFD) != -1);
+	spec_receive(provider, &state);
+	ATF_REQUIRE_EQ(1, state.nfds);
+	close(state.fds[0]);
+	old.size = CHANNEL_OUTGOING_SIZE_V1 - 1;
+	errno = 0;
+	ATF_CHECK_ERRNO(EINVAL, channel_send_event(client, &old) == -1);
+	/* Between the two layouts is neither. */
+	old.size = CHANNEL_OUTGOING_SIZE_V1 + 1;
+	errno = 0;
+	ATF_CHECK_ERRNO(EINVAL, channel_send_event(client, &old) == -1);
+	close(ends[0]);
+	close(ends[1]);
+	channel_destroy(client);
+	channel_destroy(provider);
+}
+ATF_TC_CLEANUP(outgoing_v1_layout, tc)
+{
+	(void)tc;
+}
+
+ATF_TC_WITH_CLEANUP(ioctl_allowlist_falls_back);
+ATF_TC_HEAD(ioctl_allowlist_falls_back, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "a channel allowlisted to the older send and receive commands "
+	    "still honors descriptor expectations and moves");
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "require.kmods",
+	    "mac_capability mac_capability_channel");
+}
+ATF_TC_BODY(ioctl_allowlist_falls_back, tc)
+{
+	static const cap_ioctl_t older[] = { MAC_CAPABILITY_GETINFO,
+	    MAC_CAPABILITY_SENDMSG, MAC_CAPABILITY_RECVMSG,
+	    MAC_CAPABILITY_RECVMSG_V2, MAC_CAPABILITY_RECVMSG_V3 };
+	struct channel_options client_options = CHANNEL_OPTIONS_INITIALIZER(
+	    CHANNEL_ROLE_CLIENT);
+	struct channel_options provider_options = CHANNEL_OPTIONS_INITIALIZER(
+	    CHANNEL_ROLE_PROVIDER);
+	struct channel_fd_spec spec;
+	struct spec_state state;
+	struct channel *client, *provider;
+	cap_rights_t rights;
+	int ends[2], first, second;
+
+	(void)tc;
+	memset(&state, 0, sizeof(state));
+	capability_channel_pair(&first, &second);
+	ATF_REQUIRE(cap_ioctls_limit(first, older, nitems(older)) == 0);
+	ATF_REQUIRE(cap_ioctls_limit(second, older, nitems(older)) == 0);
+	ATF_REQUIRE(channel_create(first, &client_options, &client) == 0);
+	ATF_REQUIRE(channel_create(second, &provider_options, &provider) == 0);
+	channel_set_event_handler(provider, spec_event_handler, &state);
+	ATF_REQUIRE(pipe(ends) == 0);
+	cap_rights_init(&rights, CAP_WRITE, CAP_FSTAT);
+	ATF_REQUIRE(cap_rights_limit(ends[1], &rights) == 0);
+	memset(&spec, 0, sizeof(spec));
+	spec.rights = CHANNEL_FD_RIGHT_READ;
+	errno = 0;
+	ATF_CHECK_ERRNO(ENOTCAPABLE, channel_send_event(client,
+	    OUT_SPEC("a", 1, &ends[1], 1, &spec, CHANNEL_SEND_MOVE)) == -1);
+	ATF_CHECK(fcntl(ends[1], F_GETFD) != -1);
+	ATF_CHECK_EQ(0, channel_error(client));
+	spec.rights = CHANNEL_FD_RIGHT_WRITE;
+	spec.flags = CHANNEL_FD_LOCK_INHERIT;
+	ATF_REQUIRE(channel_send_event(client,
+	    OUT_SPEC("a", 1, &ends[1], 1, &spec, CHANNEL_SEND_MOVE)) == 0);
+	errno = 0;
+	ATF_CHECK_ERRNO(EBADF, fcntl(ends[1], F_GETFD) == -1);
+	spec_receive(provider, &state);
+	ATF_REQUIRE_EQ(1, state.nfds);
+	ATF_CHECK(!state.have_info);
+	ATF_REQUIRE(cap_rights_get(state.fds[0], &rights) == 0);
+	ATF_CHECK(!cap_rights_is_set(&rights, CAP_FSTAT));
+	ATF_CHECK(cap_rights_is_set(&rights, CAP_WRITE));
+	ATF_CHECK(inheritance_locked(state.fds[0]));
+	close(state.fds[0]);
+	close(ends[0]);
+	channel_destroy(client);
+	channel_destroy(provider);
+}
+ATF_TC_CLEANUP(ioctl_allowlist_falls_back, tc)
+{
+	(void)tc;
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, invalid_arguments);
@@ -923,5 +1490,11 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, stale_reply_closes_descriptors);
 	ATF_TP_ADD_TC(tp, queued_attachments_close_on_destroy);
 	ATF_TP_ADD_TC(tp, destroy_from_callback);
+	ATF_TP_ADD_TC(tp, receive_blocks_resize);
+	ATF_TP_ADD_TC(tp, wait_then_dispatch_once);
+	ATF_TP_ADD_TC(tp, descriptor_specs_move_and_lock);
+	ATF_TP_ADD_TC(tp, queued_move_delivers_once);
+	ATF_TP_ADD_TC(tp, outgoing_v1_layout);
+	ATF_TP_ADD_TC(tp, ioctl_allowlist_falls_back);
 	return (atf_no_error());
 }

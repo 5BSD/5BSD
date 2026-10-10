@@ -46,7 +46,12 @@ int	logcmp_storage_retire_owner(int, const char *);
 int	logcmp_storage_reclaim(int, const char *);
 int	logcmp_storage_note_owner(int, const char *owner, const char *bundle);
 
-/* Per-session worker API. */
+/*
+ * Per-session worker API. Ingestion failure ends the affected session after
+ * reporting the error when possible. A later flush cannot acknowledge records
+ * lost by an earlier drain. A sync-only failure may be retried: it has not
+ * consumed and discarded a record. Reconnecting does not replay lost records.
+ */
 int	logcmp_storage_session_activate(struct logcmp_storage_session *);
 void	logcmp_storage_session_close(struct logcmp_storage_session *);
 int	logcmp_storage_append(struct logcmp_storage_session *,

@@ -84,6 +84,9 @@
 #define	SVC_QUIESCE_REASON_STOP		1
 #define	SVC_QUIESCE_REASON_SHUTDOWN	2
 #define	SVC_QUIESCE_REASON_RELOAD	3
+#define	SVC_QUIESCE_REASON_IDLE		4
+
+/* Only an idle quiesce may be declined with EBUSY to resume admission. */
 
 struct svc_quiesce_msg {
 	uint32_t	op;		/* SVC_OP_QUIESCE */
@@ -110,7 +113,10 @@ struct svc_quiesce_result_req {
  * expiry gracefully stops the provider yet keeps its name reservations so the
  * next lookup relaunches it on demand.  seconds == 0 cancels a pending idle
  * timer; a fresh call re-arms (resetting the countdown).
+ * Nonzero timeouts are bounded so their millisecond kqueue value fits in a
+ * signed 32-bit intptr_t, including on 32-bit hosts.
  */
+#define	SVC_IDLE_MAX_SECONDS	2147483U
 struct svc_idle_req {
 	uint32_t	op;		/* SVC_OP_IDLE */
 	uint32_t	seconds;	/* idle timeout; 0 cancels pending timer */

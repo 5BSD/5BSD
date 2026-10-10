@@ -33,6 +33,7 @@ extern "C" {
 #include <sys/mount.h>
 
 #include <fcntl.h>
+#include <poll.h>
 #include <pthread.h>
 #include <semaphore.h>
 }
@@ -86,12 +87,11 @@ void assert_unmounted() {
 
 };
 
-static void* open_th(void* arg) {
-	int fd;
-	const char *path = (const char*)arg;
+static void* read_th(void* arg) {
+	int fd = *(int *)arg;
+	char byte;
 
-	fd = open(path, O_RDONLY);
-	EXPECT_EQ(-1, fd);
+	EXPECT_EQ(-1, pread(fd, &byte, 1, 0));
 	EXPECT_EQ(ENOTCONN, errno);
 	return 0;
 }
@@ -171,6 +171,9 @@ TEST_F(Death, unsent_operations)
 	ino_t ino0 = 42, ino1 = 43;
 	sem_t sem;
 	mode_t mode = S_IFREG | 0644;
+	struct pollfd pending;
+	int poll_result;
+	int fd0, fd1;
 
 	sem_init(&sem, 0, 0);
 
@@ -181,6 +184,9 @@ TEST_F(Death, unsent_operations)
 		out.body.entry.attr.mode = mode;
 		out.body.entry.nodeid = ino0;
 		out.body.entry.attr.nlink = 1;
+		out.body.entry.attr.size = 4096;
+		out.body.entry.entry_valid = UINT64_MAX;
+		out.body.entry.attr_valid = UINT64_MAX;
 	})));
 	EXPECT_LOOKUP(FUSE_ROOT_ID, RELPATH1)
 	.WillRepeatedly(Invoke(
@@ -189,11 +195,30 @@ TEST_F(Death, unsent_operations)
 		out.body.entry.attr.mode = mode;
 		out.body.entry.nodeid = ino1;
 		out.body.entry.attr.nlink = 1;
+		out.body.entry.attr.size = 4096;
+		out.body.entry.entry_valid = UINT64_MAX;
+		out.body.entry.attr_valid = UINT64_MAX;
 	})));
+
+	/*
+	 * Resolve names and labels before blocking the daemon.  Path-based
+	 * OPEN can stall in a MAC label query instead of queuing the operation
+	 * being tested.  Direct reads on already-open files avoid that race.
+	 */
+	expect_open(ino0, FOPEN_DIRECT_IO, 1);
+	expect_open(ino1, FOPEN_DIRECT_IO, 1);
+	fd0 = open(FULLPATH0, O_RDONLY);
+	ASSERT_GE(fd0, 0) << strerror(errno);
+	fd1 = open(FULLPATH1, O_RDONLY);
+	ASSERT_GE(fd1, 0) << strerror(errno);
+	pending.fd = m_mock->dup_dev_fuse();
+	ASSERT_GE(pending.fd, 0);
+	pending.events = POLLIN;
+	pending.revents = 0;
 
 	EXPECT_CALL(*m_mock, process(
 		ResultOf([&](auto in) {
-			return (in.header.opcode == FUSE_OPEN);
+			return (in.header.opcode == FUSE_READ);
 		}, Eq(true)),
 		_)
 	).WillOnce(Invoke([&](auto in __unused, auto &out __unused) {
@@ -205,22 +230,25 @@ TEST_F(Death, unsent_operations)
 	 * One thread's operation will be sent to the daemon and block, and the
 	 * other's will be stuck in the message queue.
 	 */
-	ASSERT_EQ(0, pthread_create(&th0, NULL, open_th,
-		__DECONST(void*, FULLPATH0))) << strerror(errno);
-	ASSERT_EQ(0, pthread_create(&th1, NULL, open_th,
-		__DECONST(void*, FULLPATH1))) << strerror(errno);
+	ASSERT_EQ(0, pthread_create(&th0, NULL, read_th, &fd0)) << strerror(errno);
+	ASSERT_EQ(0, pthread_create(&th1, NULL, read_th, &fd1)) << strerror(errno);
 
 	/* Wait for the first thread to block */
 	sem_wait(&sem);
-	/* Give the second thread time to block */
-	nap();
+	/* The first READ was consumed; readable data is the queued second one. */
+	poll_result = poll(&pending, 1, 5000);
+	close(pending.fd);
 
 	m_mock->kill_daemon();
 
 	pthread_join(th0, NULL);
 	pthread_join(th1, NULL);
+	close(fd0);
+	close(fd1);
 
 	sem_destroy(&sem);
+	EXPECT_EQ(1, poll_result);
+	EXPECT_NE(0, pending.revents & POLLIN);
 }
 
 /*
@@ -249,4 +277,63 @@ TEST_F(Destroy, ok)
 	 * for every vnode on this mp, triggering FUSE_FORGET for each of them.
 	 */
 	m_mock->unmount();
+}
+
+/*
+ * Release a successful LOOKUP reply while another thread forces the mount
+ * down.  Repeating this in an isolated VM exercises creation/reclaim races;
+ * it does not force every scheduling outcome inside insmntque().
+ */
+TEST_F(Destroy, forced_unmount_pending_lookup)
+{
+	sem_t pending, unmount_started;
+	pthread_t lookup_thread, unmount_thread;
+	uint64_t unique = 0;
+	void *lookup_result, *unmount_result;
+	struct statfs fs;
+
+	ASSERT_EQ(0, sem_init(&pending, 0, 0));
+	ASSERT_EQ(0, sem_init(&unmount_started, 0, 0));
+	EXPECT_LOOKUP(FUSE_ROOT_ID, "racing")
+	.WillOnce(Invoke([&](auto in, auto &out __unused) {
+		unique = in.header.unique;
+		sem_post(&pending);
+	}));
+	/* Forced purge ends the session; it need not send FORGET or DESTROY. */
+	m_mock->m_expect_unmount = true;
+	ASSERT_EQ(0, pthread_create(&lookup_thread, nullptr,
+	    [](void *) -> void * {
+		int error = access("mountpoint/racing", F_OK) == 0 ? 0 : errno;
+		return ((void *)(intptr_t)error);
+	    }, nullptr));
+	while (sem_wait(&pending) != 0 && errno == EINTR)
+		;
+	ASSERT_EQ(0, pthread_create(&unmount_thread, nullptr,
+	    [](void *arg) -> void * {
+		sem_post(static_cast<sem_t *>(arg));
+		int error = ::unmount("mountpoint", MNT_FORCE) == 0 ? 0 : errno;
+		return ((void *)(intptr_t)error);
+	    }, &unmount_started));
+	while (sem_wait(&unmount_started) != 0 && errno == EINTR)
+		;
+	std::unique_ptr<mockfs_buf_out> reply(new mockfs_buf_out{});
+	reply->header.unique = unique;
+	SET_OUT_HEADER_LEN(*reply, entry);
+	reply->body.entry.nodeid = 42;
+	reply->body.entry.attr.ino = 42;
+	reply->body.entry.attr.mode = S_IFREG | 0644;
+	reply->body.entry.attr.nlink = 1;
+	reply->body.entry.attr_valid = UINT64_MAX;
+	m_mock->write_response(*reply);
+	ASSERT_EQ(0, pthread_join(lookup_thread, &lookup_result));
+	ASSERT_EQ(0, pthread_join(unmount_thread, &unmount_result));
+	/* Mount teardown may reject insertion of the freshly returned inode. */
+	EXPECT_TRUE((intptr_t)lookup_result == 0 ||
+	    (intptr_t)lookup_result == EBUSY ||
+	    (intptr_t)lookup_result == ENOTCONN) << (intptr_t)lookup_result;
+	EXPECT_EQ(0, (intptr_t)unmount_result);
+	ASSERT_EQ(0, statfs("mountpoint", &fs)) << strerror(errno);
+	EXPECT_STRNE("fusefs", fs.f_fstypename);
+	EXPECT_EQ(0, sem_destroy(&pending));
+	EXPECT_EQ(0, sem_destroy(&unmount_started));
 }

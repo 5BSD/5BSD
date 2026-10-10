@@ -38,6 +38,80 @@ using namespace testing;
 class BadServer: public FuseTest {};
 
 /*
+ * Starnix fuse_test.cc HeaderLengthUnderflow/OverlongHeaderLength,
+ * revision 8a938a3224e768f6254ee12d240b6492361ebccf: declared length must
+ * agree with the write size.  Our native policy terminates the session on
+ * malformed framing; Starnix's overlong test instead retries a valid reply.
+ */
+class BadHeaderLength: public BadServer,
+	public WithParamInterface<uint32_t> {};
+
+TEST_P(BadHeaderLength, Reject)
+{
+	struct fuse_out_header header = {};
+	int fd;
+
+	header.len = GetParam();
+	header.unique = 99999;
+	fd = m_mock->dup_dev_fuse();
+	ASSERT_GE(fd, 0);
+	m_mock->m_expect_unmount = true;
+	errno = 0;
+	ssize_t written = write(fd, &header, sizeof(header));
+	int saved_errno = errno;
+	close(fd);
+	ASSERT_EQ(-1, written);
+	ASSERT_EQ(EINVAL, saved_errno);
+	ASSERT_EQ(-1, access("mountpoint/no_file", F_OK));
+	/* A new LOOKUP on a dead native session fails before dispatch. */
+	ASSERT_EQ(ENXIO, errno);
+}
+
+INSTANTIATE_TEST_SUITE_P(Starnix, BadHeaderLength,
+	Values(0U, (uint32_t)sizeof(struct fuse_out_header) - 1,
+	    (uint32_t)sizeof(struct fuse_out_header) + 1024));
+
+/* Local follow-up to the framing audit: never negate an unchecked errno. */
+class BadReplyErrno: public BadServer,
+	public WithParamInterface<std::tuple<bool, int32_t>> {
+public:
+void SetUp() override
+{
+	m_linux_errnos = std::get<0>(GetParam());
+	BadServer::SetUp();
+}
+};
+
+TEST_P(BadReplyErrno, Reject)
+{
+	const int32_t wire_error = std::get<1>(GetParam());
+
+	EXPECT_LOOKUP(FUSE_ROOT_ID, "bad_errno")
+	.WillOnce(Invoke([&](auto in, auto &out) {
+		auto bad = std::make_unique<mockfs_buf_out>();
+		bad->header.len = sizeof(bad->header);
+		bad->header.unique = in.header.unique;
+		bad->header.error = wire_error;
+		bad->expected_errno = EINVAL;
+		out.push_back(std::move(bad));
+		if (m_linux_errnos && wire_error < 0) {
+			/* Invalid Linux errno leaves this request outstanding. */
+			auto valid = std::make_unique<mockfs_buf_out>();
+			valid->header.len = sizeof(valid->header);
+			valid->header.unique = in.header.unique;
+			valid->header.error = -ENOENT;
+			out.push_back(std::move(valid));
+		}
+	}));
+
+	ASSERT_EQ(-1, access("mountpoint/bad_errno", F_OK));
+	ASSERT_EQ(m_linux_errnos && wire_error < 0 ? ENOENT : EIO, errno);
+}
+
+INSTANTIATE_TEST_SUITE_P(ErrnoBounds, BadReplyErrno,
+	Combine(Bool(), Values(INT32_MIN, -4096, 1)));
+
+/*
  * If the server sends a response for an unknown request, the kernel should
  * gracefully return EINVAL.
  */

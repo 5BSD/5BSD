@@ -127,6 +127,16 @@ MALLOC_DEFINE(M_COALITION, "mac_capability_coalition",
  * Data structures
  * ---------------------------------------------------------------- */
 
+/* Detached from public membership once cleanup starts. */
+struct coalition_dependency {
+	struct coalition *cd_parent;
+	struct coalition *cd_child;
+	struct mac_capability_callback_state *cd_callback;
+	struct timeout_task cd_task;
+};
+
+static void coalition_dependency_task(void *, int);
+
 struct coalition_member {
 	TAILQ_ENTRY(coalition_member)	cm_link;
 	LIST_ENTRY(coalition_member)	cm_hash;	/* process hash */
@@ -134,6 +144,7 @@ struct coalition_member {
 	struct coalition	*cm_coalition;
 	void			*cm_data;	/* proc ptr for process members */
 	struct coalition	*cm_nested_co;	/* ref'd child coalition (nested only) */
+	struct coalition_dependency *cm_dependency; /* co_sx */
 	int			cm_dtype;
 	char			cm_svc_name[MAC_CAPABILITY_MAXNAME]; /* mac_capability service name */
 };
@@ -144,6 +155,13 @@ struct coalition {
 	u_int			co_flags;
 	u_int			co_manual_grace_count;
 	int			co_signal;
+	bool			co_cleanup_released; /* Detached unconfirmed processes. */
+	int			co_termination_error; /* First cleanup error, co_sx. */
+	u_int			co_pending_jails; /* Retained jail cleanup, co_sx. */
+	u_int			co_pending_caps; /* Capability callbacks, co_sx. */
+	u_int			co_pending_nested; /* Recursive cleanup, co_sx. */
+	u_int			co_pending_external; /* Work outside co_sx. */
+	volatile u_int		co_pending_forks; /* Hash lookup to publication. */
 	u_int			co_nesting_depth;
 	volatile u_int		co_member_count;
 	u_int			co_refcount;
@@ -225,12 +243,14 @@ struct coalition_jail_osd {
 	struct coalition	*cjo_coalition;
 	struct coalition_member	*cjo_member;
 	struct file		*cjo_fp;
-	struct task		cjo_cleanup_task;
+	struct timeout_task	cjo_cleanup_task;
+	struct prison		*cjo_prison; /* Ordinary hold, never a user hold. */
 	bool			cjo_cleanup_queued;
 };
 
 static eventhandler_tag coalition_fork_tag;
 static eventhandler_tag coalition_exit_tag;
+static eventhandler_tag coalition_resources_tag;
 
 /*
  * Sysctl tunables — soft limits, best-effort enforcement.
@@ -264,7 +284,7 @@ static void	coalition_collect_external_members_locked(
 		    int *jail_countp,
 		    struct mac_capability_instance ***mac_capability_cisp,
 		    int *mac_capability_countp);
-static void	coalition_terminate_external_members(struct thread *td,
+static void	coalition_terminate_external_members(struct coalition *co, struct thread *td,
 		    struct file **jail_fps, int jail_count,
 		    struct mac_capability_instance **mac_capability_cis,
 		    int mac_capability_count);
@@ -292,7 +312,6 @@ coalition_ref(struct coalition *co)
 }
 
 static void	coalition_rel(struct coalition *co);
-static void	coalition_rehome_inherited(struct proc *p);
 
 static void
 coalition_free(struct coalition *co)
@@ -300,6 +319,13 @@ coalition_free(struct coalition *co)
 
 	KASSERT(TAILQ_EMPTY(&co->co_members),
 	    ("coalition_free: members not empty"));
+	KASSERT(co->co_pending_jails == 0,
+	    ("coalition_free: pending jail cleanup"));
+	KASSERT(co->co_pending_nested == 0 && co->co_pending_external == 0 &&
+	    co->co_pending_caps == 0,
+	    ("coalition_free: pending external cleanup"));
+	KASSERT(atomic_load_acq_int(&co->co_pending_forks) == 0,
+	    ("coalition_free: pending fork publication"));
 	KASSERT(co->co_refcount == 0,
 	    ("coalition_free: refcount %u", co->co_refcount));
 	sx_destroy(&co->co_sx);
@@ -461,10 +487,18 @@ coalition_jail_set_atomic(struct prison *pr, struct coalition *co,
 		return (EBADF);
 	}
 	cjo->cjo_fp = fp;
-	TASK_INIT(&cjo->cjo_cleanup_task, 0, coalition_jail_cleanup_task_fn, cjo);
+	TIMEOUT_TASK_INIT(taskqueue_thread, &cjo->cjo_cleanup_task, 0,
+	    coalition_jail_cleanup_task_fn, cjo);
 	rsv = osd_reserve(coalition_jail_osd_slot);
 
 	prison_lock(pr);
+	if (!prison_isalive(pr)) {
+		prison_unlock(pr);
+		osd_free_reserved(rsv);
+		fdrop(cjo->cjo_fp, NULL);
+		free(cjo, M_COALITION);
+		return (ENOENT);
+	}
 	existing = osd_jail_get(pr, coalition_jail_osd_slot);
 	if (existing != NULL) {
 		prison_unlock(pr);
@@ -473,6 +507,11 @@ coalition_jail_set_atomic(struct prison *pr, struct coalition *co,
 		free(cjo, M_COALITION);
 		return (EBUSY);
 	}
+	/* Keep the cleanup dependency after logical OSD/member removal. */
+	prison_hold(pr);
+	cjo->cjo_prison = pr;
+	sx_assert(&co->co_sx, SA_XLOCKED);
+	co->co_pending_jails++;
 	osd_jail_set_reserved(pr, coalition_jail_osd_slot, rsv, cjo);
 	prison_unlock(pr);
 	return (0);
@@ -490,6 +529,53 @@ coalition_jail_set_member(struct prison *pr, struct coalition_member *cm)
 	if (cjo != NULL)
 		cjo->cjo_member = cm;
 	prison_unlock(pr);
+}
+
+/* allprison_lock stabilizes child links and their parent-reference pairing. */
+static bool
+coalition_prison_has_users_locked(struct prison *pr)
+{
+	struct prison *child;
+	u_int children = 0;
+	bool pending;
+
+	sx_assert(&allprison_lock, SA_LOCKED);
+	FOREACH_PRISON_CHILD(pr, child)
+		children++;
+	prison_lock(pr);
+	/*
+	 * Each extant child prison contributes one parent user reference until
+	 * its allocation is destroyed.  That reference is not a process: an
+	 * unreaped zombie's credential can retain the child allocation after
+	 * all its resources and user references have gone.  Examine each child
+	 * separately rather than waiting for those hierarchy references.
+	 * Any mismatch remains pending, including attach/fork reservations and
+	 * the deferred last-process release.  Alive prisons are never complete.
+	 */
+	pending = prison_isalive(pr) ||
+	    refcount_load(&pr->pr_uref) != children;
+	prison_unlock(pr);
+	return (pending);
+}
+
+static bool
+coalition_jail_has_users(struct prison *pr)
+{
+	struct prison *child;
+	bool descend, pending;
+
+	sx_slock(&allprison_lock);
+	pending = coalition_prison_has_users_locked(pr);
+	if (!pending) {
+		FOREACH_PRISON_DESCENDANT(pr, child, descend) {
+			if (coalition_prison_has_users_locked(child)) {
+				pending = true;
+				break;
+			}
+		}
+	}
+	sx_sunlock(&allprison_lock);
+	return (pending);
 }
 
 static void
@@ -525,6 +611,8 @@ coalition_jail_cleanup_task_fn(void *context, int pending __unused)
 				co->co_leader = NULL;
 				co->co_flags &= ~COF_HAS_LEADER;
 			}
+			atomic_subtract_int(&co->co_member_count, 1);
+			atomic_subtract_int(&coalition_total_members, 1);
 			coalition_notify_event(co, COALITION_NOTE_MEMBER_REMOVED);
 			removed = true;
 		}
@@ -537,8 +625,6 @@ coalition_jail_cleanup_task_fn(void *context, int pending __unused)
 	}
 
 	if (removed) {
-		atomic_subtract_int(&co->co_member_count, 1);
-		atomic_subtract_int(&coalition_total_members, 1);
 		if (cm->cm_fp != NULL)
 			fdrop(cm->cm_fp, NULL);
 		if (cm->cm_data != NULL) {
@@ -551,10 +637,29 @@ coalition_jail_cleanup_task_fn(void *context, int pending __unused)
 		coalition_rel(co);
 	}
 
-	if (cjo->cjo_fp != NULL)
+	if (cjo->cjo_fp != NULL) {
 		fdrop(cjo->cjo_fp, NULL);
-	if (co != NULL)
-		coalition_rel(co);
+		cjo->cjo_fp = NULL;
+	}
+	/*
+	 * Removal precedes process exit.  Preserve the prison identity and
+	 * coalition until user references drain, including deferred last-user
+	 * release.  Do not hold a user reference ourselves or block taskqueue
+	 * workers waiting for processes.  Check descendants while excluding
+	 * hierarchy-only references; this is not a public wait API.
+	 */
+	if (coalition_jail_has_users(cjo->cjo_prison)) {
+		taskqueue_enqueue_timeout(taskqueue_thread,
+		    &cjo->cjo_cleanup_task, MAX(1, hz / 10));
+		return;
+	}
+	callout_drain(&cjo->cjo_cleanup_task.c);
+	prison_free(cjo->cjo_prison);
+	sx_xlock(&co->co_sx);
+	KASSERT(co->co_pending_jails != 0, ("jail cleanup underflow"));
+	co->co_pending_jails--;
+	sx_xunlock(&co->co_sx);
+	coalition_rel(co);
 	free(cjo, M_COALITION);
 }
 
@@ -562,28 +667,36 @@ static void
 coalition_jail_osd_dtor(void *value)
 {
 	struct coalition_jail_osd *cjo = value;
-	struct coalition *co;
 
 	if (cjo == NULL)
 		return;
-
-	co = cjo->cjo_coalition;
-
-	if (cjo->cjo_member != NULL || cjo->cjo_cleanup_queued) {
-		if (!cjo->cjo_cleanup_queued) {
-			cjo->cjo_cleanup_queued = true;
-			taskqueue_enqueue(taskqueue_thread,
-			    &cjo->cjo_cleanup_task);
-		}
-		return;
+	/*
+	 * The removal callback may run while enlist still holds co_sx and has
+	 * not published the member.  Always defer: the task waits for that
+	 * publication and never drops file/prison references under pr_mtx.
+	 */
+	if (!cjo->cjo_cleanup_queued) {
+		cjo->cjo_cleanup_queued = true;
+		taskqueue_enqueue_timeout(taskqueue_thread,
+		    &cjo->cjo_cleanup_task, 0);
 	}
-
-	if (cjo->cjo_fp != NULL)
-		fdrop(cjo->cjo_fp, NULL);
-	if (co != NULL)
-		coalition_rel(co);
-	free(cjo, M_COALITION);
 }
+
+static int
+coalition_jail_remove(void *obj, void *data __unused)
+{
+	struct prison *pr = obj;
+
+	/* Break the membership/prison reference cycle at logical removal. */
+	prison_lock(pr);
+	osd_jail_del(pr, coalition_jail_osd_slot);
+	prison_unlock(pr);
+	return (0);
+}
+
+static const osd_method_t coalition_jail_methods[PR_MAXMETHOD] = {
+	[PR_METHOD_REMOVE] = coalition_jail_remove,
+};
 
 /* ----------------------------------------------------------------
  * Jail termination
@@ -784,6 +897,102 @@ coalition_has_member(struct coalition *co, struct file *fp)
 	return (false);
 }
 
+/* Consume the prepared member/file reference only on successful enlist. */
+static int
+coalition_enlist_process(struct coalition *co, struct file *fp,
+    struct coalition_member *prepared)
+{
+	struct procdesc *pd = fp->f_data;
+	struct proc *p;
+	struct coalition_member *member;
+	struct coalition *old, *first, *second;
+	int error = 0;
+	bool moved = false, inserted = false;
+
+	/* Pin the proc through admission; exit waits before its event hooks. */
+	sx_slock(&proctree_lock);
+	p = pd->pd_proc;
+	if (p == NULL) {
+		sx_sunlock(&proctree_lock);
+		return (ESRCH);
+	}
+	PROC_LOCK(p);
+	if ((p->p_flag & P_WEXIT) != 0) {
+		PROC_UNLOCK(p);
+		sx_sunlock(&proctree_lock);
+		return (ESRCH);
+	}
+	_PHOLD(p);
+	PROC_UNLOCK(p);
+	sx_sunlock(&proctree_lock);
+
+	rw_rlock(&coalition_proc_hash_lock);
+	member = coalition_proc_hash_lookup(p);
+	old = member != NULL ? member->cm_coalition : NULL;
+	if (old != NULL)
+		coalition_ref(old);
+	rw_runlock(&coalition_proc_hash_lock);
+
+	first = old != NULL && (uintptr_t)old < (uintptr_t)co ? old : co;
+	second = old == NULL || old == co ? NULL : (first == old ? co : old);
+	sx_xlock(&first->co_sx);
+	if (second != NULL)
+		sx_xlock(&second->co_sx);
+	rw_wlock(&coalition_proc_hash_lock);
+	member = coalition_proc_hash_lookup(p);
+	if ((member == NULL) != (old == NULL) ||
+	    (member != NULL && member->cm_coalition != old))
+		error = EAGAIN;
+	else if (member != NULL && member->cm_fp != NULL)
+		error = EBUSY;
+	else if ((co->co_flags | (old != NULL ? old->co_flags : 0)) &
+	    (COF_CLOSING | COF_TERMINATING | COF_GRACE_ACTIVE))
+		error = ESHUTDOWN;
+	else if (member != NULL) {
+		/* Both coalitions are locked: failure cannot detach the old member. */
+		member->cm_fp = fp;
+		if (old != co) {
+			TAILQ_REMOVE(&old->co_members, member, cm_link);
+			if ((old->co_flags & COF_HAS_LEADER) && old->co_leader == member) {
+				old->co_leader = NULL;
+				old->co_flags &= ~COF_HAS_LEADER;
+			}
+			coalition_ref(co);
+			member->cm_coalition = co;
+			TAILQ_INSERT_TAIL(&co->co_members, member, cm_link);
+			atomic_subtract_int(&old->co_member_count, 1);
+			atomic_add_int(&co->co_member_count, 1);
+			moved = true;
+		}
+	} else {
+		prepared->cm_data = p;
+		prepared->cm_fp = fp;
+		prepared->cm_coalition = co;
+		coalition_proc_hash_insert(prepared, p);
+		TAILQ_INSERT_TAIL(&co->co_members, prepared, cm_link);
+		atomic_add_int(&co->co_member_count, 1);
+		atomic_add_int(&coalition_total_members, 1);
+		coalition_ref(co);
+		inserted = true;
+	}
+	rw_wunlock(&coalition_proc_hash_lock);
+	if (moved)
+		coalition_notify_event(old, COALITION_NOTE_MEMBER_REMOVED);
+	if (moved || inserted)
+		coalition_notify_event(co, COALITION_NOTE_MEMBER_ADDED);
+	if (second != NULL)
+		sx_xunlock(&second->co_sx);
+	sx_xunlock(&first->co_sx);
+	if (moved)
+		coalition_rel(old); /* Transferred membership reference. */
+	if (old != NULL)
+		coalition_rel(old); /* Lookup reference. */
+	PRELE(p);
+	if (error == 0 && !inserted)
+		uma_zfree(coalition_member_zone, prepared);
+	return (error);
+}
+
 static int
 coalition_enlist(struct coalition *co, struct thread *td, struct file *fp,
     const struct filecaps *fcaps)
@@ -832,106 +1041,13 @@ coalition_enlist(struct coalition *co, struct thread *td, struct file *fp,
 	}
 
 	if (dtype == DTYPE_PROCDESC) {
-		struct procdesc *pd = fp->f_data;
-		struct proc *p;
-
-		sx_slock(&proctree_lock);
-		p = pd->pd_proc;
-		if (p == NULL) {
-			sx_sunlock(&proctree_lock);
+		error = coalition_enlist_process(co, fp, cm);
+		if (error != 0) {
 			uma_zfree(coalition_member_zone, cm);
 			fdrop(fp, td);
-			SDT_PROBE3(mac_capability_coalition, , , deny,
-			    "enlist-dead", ESRCH, td->td_proc->p_pid);
-			return (ESRCH);
-		}
-		/*
-		 * A process descriptor keeps an exited process's zombie
-		 * (PZOMBIEREF_PROCDESC) until the last descriptor closes, so
-		 * pd_proc stays non-NULL after exit and even after pdwait(2).
-		 * An exiting process has run, or is about to run,
-		 * coalition_process_exit(): a member hashed now would never be
-		 * removed and would pin the zombie.  Reject it here, and again
-		 * under the hash lock below to close the race with an exit.
-		 */
-		PROC_LOCK(p);
-		sx_sunlock(&proctree_lock);
-		if ((p->p_flag & P_WEXIT) != 0) {
-			PROC_UNLOCK(p);
-			uma_zfree(coalition_member_zone, cm);
-			fdrop(fp, td);
-			SDT_PROBE3(mac_capability_coalition, , , deny,
-			    "enlist-dead", ESRCH, td->td_proc->p_pid);
-			return (ESRCH);
-		}
-		PROC_UNLOCK(p);
-
-		cm->cm_data = p;
-
-		/*
-		 * A membership the process merely inherited (fork, pdfork,
-		 * JOIN: cm_fp == NULL) yields to an explicit enlist by a holder
-		 * of its process descriptor: detach it from the old coalition
-		 * first, then insert as usual.  An explicit procdesc membership
-		 * (cm_fp != NULL) is pinned and fails below with EBUSY.
-		 */
-		coalition_rehome_inherited(p);
-
-		/*
-		 * Lock order: co_sx → hash_lock.
-		 * Take co_sx first to match timer task paths.
-		 */
-		sx_xlock(&co->co_sx);
-		if (co->co_flags & (COF_TERMINATING | COF_GRACE_ACTIVE)) {
-			sx_xunlock(&co->co_sx);
-			uma_zfree(coalition_member_zone, cm);
-			fdrop(fp, td);
-			SDT_PROBE3(mac_capability_coalition, , , deny,
-			    "enlist-shutdown", ESHUTDOWN, td->td_proc->p_pid);
-			return (ESHUTDOWN);
-		}
-
-		/*
-		 * exit1() sets P_WEXIT under the process lock before it runs
-		 * the process_exit handlers, so holding the process lock
-		 * across this check and the hash insert guarantees that either
-		 * the exit is seen here or coalition_process_exit() runs later
-		 * and finds the member.  The proc lock -> hash lock order
-		 * matches coalition_proc_info(), which may run with the
-		 * process lock held.  p stays valid: the held fp keeps the
-		 * procdesc, and its zombie reference keeps the proc.
-		 */
-		PROC_LOCK(p);
-		if ((p->p_flag & P_WEXIT) != 0) {
-			PROC_UNLOCK(p);
-			sx_xunlock(&co->co_sx);
-			uma_zfree(coalition_member_zone, cm);
-			fdrop(fp, td);
-			SDT_PROBE3(mac_capability_coalition, , , deny,
-			    "enlist-dead", ESRCH, td->td_proc->p_pid);
-			return (ESRCH);
-		}
-		rw_wlock(&coalition_proc_hash_lock);
-		if (coalition_proc_hash_lookup(p) != NULL) {
-			rw_wunlock(&coalition_proc_hash_lock);
-			PROC_UNLOCK(p);
-			sx_xunlock(&co->co_sx);
-			uma_zfree(coalition_member_zone, cm);
-			fdrop(fp, td);
-			SDT_PROBE3(mac_capability_coalition, , , deny,
-			    "enlist-busy", EBUSY, td->td_proc->p_pid);
-			return (EBUSY);
-		}
-
-		/*
-		 * Lock-free-of-co_sx readers (the OES/proc info hook) find the
-		 * member as soon as it is hashed; it must be complete by then.
-		 */
-		cm->cm_coalition = co;
-		coalition_proc_hash_insert(cm, p);
-		rw_wunlock(&coalition_proc_hash_lock);
-		PROC_UNLOCK(p);
-
+		} else
+			SDT_PROBE2(mac_capability_coalition, , , enlist, dtype, 0);
+		return (error);
 	} else if (dtype == DTYPE_JAILDESC) {
 		struct jaildesc *jd = fp->f_data;
 		struct prison *pr;
@@ -1111,6 +1227,26 @@ coalition_enlist(struct coalition *co, struct thread *td, struct file *fp,
 		}
 	}
 
+	/* Detached completion references must not pin capability instances. */
+	if (dtype == DTYPE_MAC_CAPABILITY) {
+		struct coalition_dependency *cd;
+
+		cd = malloc(sizeof(*cd), M_COALITION, M_WAITOK | M_ZERO);
+		cd->cd_parent = co;
+		coalition_ref(co);
+		if (cm->cm_nested_co != NULL) {
+			cd->cd_child = cm->cm_nested_co;
+			coalition_ref(cd->cd_child);
+			co->co_pending_nested++;
+		} else {
+			cd->cd_callback = mac_capability_callback_state_get(fp->f_data);
+			co->co_pending_caps++;
+		}
+		TIMEOUT_TASK_INIT(taskqueue_thread, &cd->cd_task, 0,
+		    coalition_dependency_task, cd);
+		cm->cm_dependency = cd;
+	}
+
 	/* Common member setup */
 	cm->cm_fp = fp;
 	cm->cm_coalition = co;
@@ -1243,7 +1379,7 @@ coalition_join_rehome(struct coalition *co, struct thread *td)
 	else if (cm->cm_fp != NULL)
 		error = EBUSY;
 	else if ((old->co_flags | co->co_flags) &
-	    (COF_TERMINATING | COF_GRACE_ACTIVE))
+	    (COF_CLOSING | COF_TERMINATING | COF_GRACE_ACTIVE))
 		error = ESHUTDOWN;
 	else {
 		TAILQ_REMOVE(&old->co_members, cm, cm_link);
@@ -1331,6 +1467,35 @@ coalition_count_process_members_locked(struct coalition *co)
 	return (count);
 }
 
+static void
+coalition_cleanup_status_locked(struct coalition *co,
+    struct coalition_cleanup_reply *reply)
+{
+
+	sx_assert(&co->co_sx, SA_XLOCKED);
+	memset(reply, 0, sizeof(*reply));
+	reply->cleanup_error = co->co_termination_error;
+	reply->flags = co->co_cleanup_released ? COALITION_CLEANUP_F_RELEASED : 0;
+	reply->processes = coalition_count_process_members_locked(co);
+	reply->forks = atomic_load_acq_int(&co->co_pending_forks);
+	reply->jails = co->co_pending_jails;
+	reply->nested = co->co_pending_nested;
+	reply->capabilities = co->co_pending_caps;
+	reply->external = co->co_pending_external;
+	if (!(co->co_flags & (COF_TERMINATING | COF_CLOSING)))
+		reply->phase = COALITION_CLEANUP_ACTIVE;
+	else if (reply->processes != 0 || reply->forks != 0 ||
+	    reply->jails != 0 || reply->nested != 0 ||
+	    reply->capabilities != 0 || reply->external != 0)
+		reply->phase = COALITION_CLEANUP_DRAINING;
+	else if (reply->cleanup_error != 0)
+		reply->phase = COALITION_CLEANUP_FAILED;
+	else if (reply->flags & COALITION_CLEANUP_F_RELEASED)
+		reply->phase = COALITION_CLEANUP_RELEASED;
+	else
+		reply->phase = COALITION_CLEANUP_COMPLETE;
+}
+
 static u_int
 coalition_count_live_procs_locked(struct coalition *co)
 {
@@ -1371,6 +1536,23 @@ coalition_count_live_procs_locked(struct coalition *co)
 	return (count);
 }
 
+/* Transfer ownership to the task before membership can be removed. */
+static void
+coalition_start_dependencies_locked(struct coalition *co)
+{
+	struct coalition_member *cm;
+	struct coalition_dependency *cd;
+
+	sx_assert(&co->co_sx, SA_XLOCKED);
+	TAILQ_FOREACH(cm, &co->co_members, cm_link) {
+		cd = cm->cm_dependency;
+		if (cd == NULL)
+			continue;
+		cm->cm_dependency = NULL;
+		taskqueue_enqueue_timeout(taskqueue_thread, &cd->cd_task, 0);
+	}
+}
+
 static void
 coalition_collect_external_members_locked(struct coalition *co,
     struct file ***jail_fpsp, int *jail_countp,
@@ -1382,6 +1564,9 @@ coalition_collect_external_members_locked(struct coalition *co,
 	int jail_count, mac_capability_count, i;
 
 	sx_assert(&co->co_sx, SA_XLOCKED);
+
+	co->co_pending_external++;
+	coalition_start_dependencies_locked(co);
 
 	jail_count = 0;
 	mac_capability_count = 0;
@@ -1434,25 +1619,131 @@ coalition_collect_external_members_locked(struct coalition *co,
 	*mac_capability_countp = mac_capability_count;
 }
 
+/* Cleanup remains best-effort, but the first failure is never success. */
 static void
-coalition_terminate_external_members(struct thread *td, struct file **jail_fps,
+coalition_record_error_locked(struct coalition *co, int error)
+{
+
+	sx_assert(&co->co_sx, SA_XLOCKED);
+	if (error != 0 && co->co_termination_error == 0)
+		co->co_termination_error = error;
+}
+
+static int
+coalition_termination_error(struct coalition *co)
+{
+	int error;
+
+	sx_slock(&co->co_sx);
+	error = co->co_termination_error;
+	sx_sunlock(&co->co_sx);
+	return (error);
+}
+
+static void
+coalition_record_error(struct coalition *co, int error)
+{
+
+	if (error == 0)
+		return;
+	sx_xlock(&co->co_sx);
+	coalition_record_error_locked(co, error);
+	sx_xunlock(&co->co_sx);
+}
+
+/* Never hold parent and child locks together or wait on a worker thread. */
+static void
+coalition_dependency_task(void *arg, int pending __unused)
+{
+	struct coalition_dependency *cd = arg;
+	struct coalition *child = cd->cd_child;
+	struct coalition *parent = cd->cd_parent;
+	struct coalition_cleanup_reply state;
+	bool done, released = false;
+	int error;
+
+	if (child != NULL) {
+		sx_xlock(&child->co_sx);
+		coalition_cleanup_status_locked(child, &state);
+		done = state.phase != COALITION_CLEANUP_ACTIVE &&
+		    state.phase != COALITION_CLEANUP_DRAINING;
+		error = state.cleanup_error;
+		released = (state.flags & COALITION_CLEANUP_F_RELEASED) != 0;
+		sx_xunlock(&child->co_sx);
+	} else {
+		done = mac_capability_callback_state_done(cd->cd_callback);
+		error = 0;
+	}
+	if (!done) {
+		taskqueue_enqueue_timeout(taskqueue_thread, &cd->cd_task,
+		    MAX(1, hz / 10));
+		return;
+	}
+	callout_drain(&cd->cd_task.c);
+	sx_xlock(&parent->co_sx);
+	coalition_record_error_locked(parent, error);
+	parent->co_cleanup_released |= released;
+	if (child != NULL) {
+		KASSERT(parent->co_pending_nested != 0, ("nested cleanup underflow"));
+		parent->co_pending_nested--;
+	} else {
+		KASSERT(parent->co_pending_caps != 0, ("capability cleanup underflow"));
+		parent->co_pending_caps--;
+	}
+	sx_xunlock(&parent->co_sx);
+	if (child != NULL)
+		coalition_rel(child);
+	else
+		mac_capability_callback_state_rele(cd->cd_callback);
+	coalition_rel(parent);
+	free(cd, M_COALITION);
+}
+
+static void
+coalition_terminate_external_members(struct coalition *co, struct thread *td, struct file **jail_fps,
     int jail_count, struct mac_capability_instance **mac_capability_cis, int mac_capability_count)
 {
-	int i;
+	struct coalition *nested;
+	int error, i;
 
 	for (i = 0; i < mac_capability_count; i++) {
+		/* Pin nested state across revoke, which clears instance private data. */
+		nested = NULL;
+		sx_xlock(&coalition_nest_lock);
+		if (mac_capability_cis[i]->ci_service == coalition_svc) {
+			nested = mac_capability_instance_get_priv(mac_capability_cis[i]);
+			if (nested != NULL)
+				coalition_ref(nested);
+		}
+		sx_xunlock(&coalition_nest_lock);
+		/* Revocation may defer co_revoke while other holders remain. */
+		if (nested != NULL) {
+			error = coalition_terminate(nested);
+			if (error != ESHUTDOWN)
+				coalition_record_error(co, error);
+		}
 		mac_capability_instance_revoke(mac_capability_cis[i]);
+		if (nested != NULL) {
+			coalition_record_error(co, coalition_termination_error(nested));
+			coalition_rel(nested);
+		}
 		mac_capability_instance_rele(mac_capability_cis[i]);
 	}
 	if (mac_capability_cis != NULL)
 		free(mac_capability_cis, M_COALITION);
 
 	for (i = 0; i < jail_count; i++) {
-		(void)coalition_jail_terminate(jail_fps[i]);
+		error = coalition_jail_terminate(jail_fps[i]);
+		if (error != ENOENT)
+			coalition_record_error(co, error);
 		fdrop(jail_fps[i], td);
 	}
 	if (jail_fps != NULL)
 		free(jail_fps, M_COALITION);
+	sx_xlock(&co->co_sx);
+	KASSERT(co->co_pending_external != 0, ("external cleanup underflow"));
+	co->co_pending_external--;
+	sx_xunlock(&co->co_sx);
 }
 
 /*
@@ -1532,13 +1823,17 @@ coalition_terminate_members_locked(struct coalition *co, struct thread *td,
 		if (cm->cm_dtype == DTYPE_SOCKET && cm->cm_fp != NULL) {
 			struct socket *so = cm->cm_fp->f_data;
 
-			(void)soshutdown(so, SHUT_RDWR);
+			int error = soshutdown(so, SHUT_RDWR);
+
+			if (error != ENOTCONN)
+				coalition_record_error_locked(co, error);
 			continue;
 		}
 
 		/* SHM — truncate to zero */
 		if (cm->cm_dtype == DTYPE_SHM && cm->cm_fp != NULL) {
-			(void)fo_truncate(cm->cm_fp, 0, td->td_ucred, td);
+			coalition_record_error_locked(co,
+			    fo_truncate(cm->cm_fp, 0, td->td_ucred, td));
 			continue;
 		}
 	}
@@ -1555,8 +1850,10 @@ coalition_terminate(struct coalition *co)
 	sx_xlock(&co->co_sx);
 
 	if (co->co_flags & COF_TERMINATING) {
+		int error = co->co_termination_error;
+
 		sx_xunlock(&co->co_sx);
-		return (ESHUTDOWN);
+		return (error != 0 ? error : ESHUTDOWN);
 	}
 
 	coalition_collect_external_members_locked(co, &jail_fps,
@@ -1566,12 +1863,12 @@ coalition_terminate(struct coalition *co)
 	coalition_terminate_members_locked(co, td, false, 0);
 	sx_xunlock(&co->co_sx);
 
-	coalition_terminate_external_members(td, jail_fps, jail_count,
+	coalition_terminate_external_members(co, td, jail_fps, jail_count,
 	    mac_capability_cis, mac_capability_count);
 
 	SDT_PROBE2(mac_capability_coalition, , , terminate,
 	    atomic_load_acq_int(&co->co_member_count), 0);
-	return (0);
+	return (coalition_termination_error(co));
 }
 
 static int
@@ -1592,8 +1889,10 @@ coalition_terminate_graceful(struct coalition *co, int sig, u_int timeout_ms)
 
 	sx_xlock(&co->co_sx);
 	if (co->co_flags & COF_TERMINATING) {
+		int error = co->co_termination_error;
+
 		sx_xunlock(&co->co_sx);
-		return (ESHUTDOWN);
+		return (error != 0 ? error : ESHUTDOWN);
 	}
 
 	/* Freeze membership during grace period */
@@ -1623,7 +1922,7 @@ coalition_terminate_graceful(struct coalition *co, int sig, u_int timeout_ms)
 				co->co_manual_grace_count--;
 			coalition_update_grace_flag_locked(co);
 			sx_xunlock(&co->co_sx);
-			return (0);
+			return (coalition_termination_error(co));
 		}
 	}
 
@@ -1644,7 +1943,7 @@ coalition_terminate_graceful(struct coalition *co, int sig, u_int timeout_ms)
 		coalition_terminate_members_locked(co, curthread, false,
 		    force_kill ? SIGKILL : 0);
 		sx_xunlock(&co->co_sx);
-		coalition_terminate_external_members(curthread, jail_fps,
+		coalition_terminate_external_members(co, curthread, jail_fps,
 		    jail_count, mac_capability_cis, mac_capability_count);
 	} else {
 		/*
@@ -1653,7 +1952,7 @@ coalition_terminate_graceful(struct coalition *co, int sig, u_int timeout_ms)
 		 */
 		sx_xunlock(&co->co_sx);
 	}
-	return (0);
+	return (coalition_termination_error(co));
 }
 
 static bool
@@ -1750,7 +2049,7 @@ coalition_deadline_task_fn(void *context, int pending __unused)
 		    &jail_count, &mac_capability_cis, &mac_capability_count);
 		coalition_terminate_members_locked(co, td, false, SIGKILL);
 		sx_xunlock(&co->co_sx);
-		coalition_terminate_external_members(td, jail_fps, jail_count,
+		coalition_terminate_external_members(co, td, jail_fps, jail_count,
 		    mac_capability_cis, mac_capability_count);
 		coalition_rel(co);
 		return;
@@ -1779,7 +2078,7 @@ coalition_deadline_task_fn(void *context, int pending __unused)
 		    co->co_deadline_signal : SIGKILL;
 		coalition_terminate_members_locked(co, td, false, sig_override);
 		sx_xunlock(&co->co_sx);
-		coalition_terminate_external_members(td, jail_fps, jail_count,
+		coalition_terminate_external_members(co, td, jail_fps, jail_count,
 		    mac_capability_cis, mac_capability_count);
 		coalition_rel(co);
 		return;
@@ -1825,7 +2124,7 @@ coalition_watchdog_task_fn(void *context, int pending __unused)
 	    &jail_count, &mac_capability_cis, &mac_capability_count);
 	coalition_terminate_members_locked(co, curthread, false, SIGKILL);
 	sx_xunlock(&co->co_sx);
-	coalition_terminate_external_members(curthread, jail_fps, jail_count,
+	coalition_terminate_external_members(co, curthread, jail_fps, jail_count,
 	    mac_capability_cis, mac_capability_count);
 	coalition_rel(co);
 }
@@ -1970,8 +2269,45 @@ coalition_leader_monitor_stop_locked(struct coalition *co)
  * Process exit / fork eventhandlers
  * ---------------------------------------------------------------- */
 
+/* Preserve prompt leader-death termination while retaining exit membership. */
 static void
 coalition_process_exit(void *arg __unused, struct proc *p)
+{
+	struct coalition_member *cm;
+	struct coalition *co;
+	bool was_leader = false;
+
+	rw_rlock(&coalition_proc_hash_lock);
+	cm = coalition_proc_hash_lookup(p);
+	if (cm == NULL) {
+		rw_runlock(&coalition_proc_hash_lock);
+		return;
+	}
+	co = cm->cm_coalition;
+	coalition_ref(co);
+	rw_runlock(&coalition_proc_hash_lock);
+	/* Re-find under co_sx; close may have freed the hash entry. */
+	sx_xlock(&co->co_sx);
+	TAILQ_FOREACH(cm, &co->co_members, cm_link) {
+		if (cm->cm_data == p) {
+			if ((co->co_flags & COF_HAS_LEADER) && co->co_leader == cm) {
+				was_leader = true;
+				co->co_leader = NULL;
+				co->co_flags &= ~COF_HAS_LEADER;
+			}
+			break;
+		}
+	}
+	sx_xunlock(&co->co_sx);
+	if (was_leader) {
+		SDT_PROBE1(mac_capability_coalition, , , leader__exit, p->p_pid);
+		(void)coalition_terminate(co);
+	}
+	coalition_rel(co);
+}
+
+static void
+coalition_process_exit_resources(void *arg __unused, struct proc *p)
 {
 	struct coalition_member *cm;
 	struct coalition *co;
@@ -2046,6 +2382,7 @@ coalition_process_fork(void *arg __unused, struct proc *parent,
 {
 	struct coalition_member *pcm, *ccm;
 	struct coalition *co;
+	bool rejected;
 
 	/*
 	 * Every child of a member inherits membership, pdfork(2) children
@@ -2065,6 +2402,14 @@ coalition_process_fork(void *arg __unused, struct proc *parent,
 	}
 	co = pcm->cm_coalition;
 	coalition_ref(co);
+	/*
+	 * Reserve cleanup accounting before dropping the membership hash lock.
+	 * Another thread may rehome the parent while allocation sleeps below;
+	 * an empty member list must not hide this already-created child.
+	 * Readers hold co_sx, so a move removing the last member cannot pass
+	 * the reservation: it must also acquire the hash lock exclusively.
+	 */
+	atomic_add_int(&co->co_pending_forks, 1);
 	rw_runlock(&coalition_proc_hash_lock);
 
 	ccm = uma_zalloc(coalition_member_zone, M_WAITOK | M_ZERO);
@@ -2074,23 +2419,20 @@ coalition_process_fork(void *arg __unused, struct proc *parent,
 	 */
 	sx_xlock(&co->co_sx);
 
-	if (co->co_flags & (COF_TERMINATING | COF_GRACE_ACTIVE)) {
-		sx_xunlock(&co->co_sx);
-		uma_zfree(coalition_member_zone, ccm);
-		coalition_rel(co);
-		return;
-	}
-
-	/* Enforce member limits — refuse fork inheritance if exceeded */
-	if (coalition_check_limits() != 0) {
-		sx_xunlock(&co->co_sx);
-		uma_zfree(coalition_member_zone, ccm);
-		coalition_rel(co);
+	/*
+	 * The child already owns inherited resources.  Even when admission is
+	 * rejected, retain its membership until the resource-exit hook runs.
+	 * The member limit is soft: cleanup accounting must not disappear when
+	 * the limit is reached.  No rejected child can execute user code.
+	 */
+	rejected = (co->co_flags &
+	    (COF_CLOSING | COF_TERMINATING | COF_GRACE_ACTIVE)) != 0;
+	if (!rejected && coalition_check_limits() != 0) {
 		SDT_PROBE3(mac_capability_coalition, , , deny, (uintptr_t)"fork-limit",
 		    ENOMEM, child->p_pid);
 		log(LOG_WARNING,
-		    "mac_capability_coalition: fork denied by member limit\n");
-		return;
+		    "mac_capability_coalition: fork child killed by member limit\n");
+		rejected = true;
 	}
 
 	ccm->cm_data = child;
@@ -2106,6 +2448,10 @@ coalition_process_fork(void *arg __unused, struct proc *parent,
 	atomic_add_int(&co->co_member_count, 1);
 	atomic_add_int(&coalition_total_members, 1);
 	coalition_ref(co);
+	/* Transfer the reservation to published membership under co_sx. */
+	KASSERT(atomic_load_acq_int(&co->co_pending_forks) != 0,
+	    ("fork publication underflow"));
+	atomic_subtract_int(&co->co_pending_forks, 1);
 	coalition_notify_event(co, COALITION_NOTE_MEMBER_ADDED);
 
 	sx_xunlock(&co->co_sx);
@@ -2113,6 +2459,18 @@ coalition_process_fork(void *arg __unused, struct proc *parent,
 	SDT_PROBE2(mac_capability_coalition, , , fork__inherit,
 	    parent->p_pid, child->p_pid);
 	coalition_rel(co);
+	if (!rejected)
+		return;
+
+	/*
+	 * process_fork runs after fork can no longer fail, before child execution.
+	 * Never return a live child outside its parent's containment.  Mark
+	 * it for the fork-return kill check as well as queuing SIGKILL.
+	 */
+	PROC_LOCK(child);
+	proc_wkilled(child);
+	kern_psignal(child, SIGKILL);
+	PROC_UNLOCK(child);
 }
 
 /* ----------------------------------------------------------------
@@ -2148,6 +2506,8 @@ coalition_close_internal(struct coalition *co, struct thread *td)
 	 * callout_drain below.
 	 */
 	sx_xlock(&co->co_sx);
+	co->co_pending_external++;
+	coalition_start_dependencies_locked(co);
 	co->co_flags |= COF_CLOSING;
 	sx_xunlock(&co->co_sx);
 
@@ -2193,7 +2553,8 @@ coalition_close_internal(struct coalition *co, struct thread *td)
 
 	/*
 	 * Re-acquire co_sx to collect members.
-	 * COF_TERMINATING is set, so no new members will be added.
+	 * Admission is frozen; in-flight forks still register rejected children
+	 * so resource-exit accounting includes their inherited resources.
 	 */
 	sx_xlock(&co->co_sx);
 
@@ -2210,6 +2571,17 @@ coalition_close_internal(struct coalition *co, struct thread *td)
 	jail_tailp = &jail_list;
 
 	TAILQ_FOREACH_SAFE(cm, &co->co_members, cm_link, cm_temp) {
+		/*
+		 * Signalling is asynchronous.  Retain signalled processes and
+		 * their coalition references until process_exit_resources, even
+		 * though the control instance has been revoked.  Release mode
+		 * and close's caller exclusion still detach without killing.
+		 */
+		if (cm->cm_dtype == DTYPE_PROCDESC && co->co_signal != 0 &&
+		    (td == NULL || cm->cm_data != td->td_proc))
+			continue;
+		if (cm->cm_dtype == DTYPE_PROCDESC)
+			co->co_cleanup_released = true;
 		TAILQ_REMOVE(&co->co_members, cm, cm_link);
 		cm->cm_link.tqe_prev = NULL;	/* sentinel for exit handler */
 
@@ -2252,13 +2624,22 @@ coalition_close_internal(struct coalition *co, struct thread *td)
 		if (cm->cm_dtype == DTYPE_MAC_CAPABILITY && cm->cm_fp != NULL) {
 			struct mac_capability_instance *ci = cm->cm_fp->f_data;
 
+			if (cm->cm_nested_co != NULL) {
+				int error = coalition_terminate(cm->cm_nested_co);
+
+				if (error != ESHUTDOWN)
+					coalition_record_error(co, error);
+			}
 			if (ci != NULL)
 				mac_capability_instance_revoke(ci);
 		}
 
-		/* Release nested coalition ref */
-		if (cm->cm_nested_co != NULL)
+		/* Preserve nested cleanup errors before releasing its state. */
+		if (cm->cm_nested_co != NULL) {
+			coalition_record_error(co,
+			    coalition_termination_error(cm->cm_nested_co));
 			coalition_rel(cm->cm_nested_co);
+		}
 
 		if (cm->cm_fp != NULL)
 			fdrop(cm->cm_fp, td);
@@ -2295,8 +2676,12 @@ coalition_close_internal(struct coalition *co, struct thread *td)
 			}
 		}
 
-			if (cm->cm_fp != NULL)
-				(void)coalition_jail_terminate(cm->cm_fp);
+			if (cm->cm_fp != NULL) {
+				int error = coalition_jail_terminate(cm->cm_fp);
+
+				if (error != ENOENT)
+					coalition_record_error(co, error);
+			}
 
 			if (cm->cm_data != NULL) {
 				pr = cm->cm_data;
@@ -2315,63 +2700,12 @@ coalition_close_internal(struct coalition *co, struct thread *td)
 		cm = next;
 	}
 
+	sx_xlock(&co->co_sx);
+	KASSERT(co->co_pending_external != 0, ("close cleanup underflow"));
+	co->co_pending_external--;
+	sx_xunlock(&co->co_sx);
+
 	coalition_rel(co);
-}
-
-/* ----------------------------------------------------------------
- * Re-homing an inherited membership
- * ---------------------------------------------------------------- */
-
-/*
- * Detach p from a coalition it belongs to only by inheritance (fork, pdfork
- * or JOIN: no held file).  Mirrors the exit path: unhash under the hash
- * lock, then re-find the member under the old coalition's lock.  A moved
- * leader stops being the leader; it does not terminate the old coalition,
- * because the process is alive and merely changing hands.  No-op when p is
- * in no coalition or its membership is an explicit procdesc enlist.
- */
-static void
-coalition_rehome_inherited(struct proc *p)
-{
-	struct coalition_member *cm;
-	struct coalition *old;
-
-	rw_wlock(&coalition_proc_hash_lock);
-	cm = coalition_proc_hash_lookup(p);
-	if (cm == NULL || cm->cm_fp != NULL) {
-		rw_wunlock(&coalition_proc_hash_lock);
-		return;
-	}
-	old = cm->cm_coalition;
-	coalition_ref(old);
-	LIST_REMOVE(cm, cm_hash);
-	cm->cm_hash.le_prev = NULL;
-	rw_wunlock(&coalition_proc_hash_lock);
-
-	cm = NULL;
-	sx_xlock(&old->co_sx);
-	TAILQ_FOREACH(cm, &old->co_members, cm_link) {
-		if (cm->cm_data == p && cm->cm_fp == NULL)
-			break;
-	}
-	if (cm != NULL) {
-		TAILQ_REMOVE(&old->co_members, cm, cm_link);
-		cm->cm_link.tqe_prev = NULL;
-		if ((old->co_flags & COF_HAS_LEADER) != 0 &&
-		    old->co_leader == cm) {
-			old->co_leader = NULL;
-			old->co_flags &= ~COF_HAS_LEADER;
-		}
-		atomic_subtract_int(&old->co_member_count, 1);
-		atomic_subtract_int(&coalition_total_members, 1);
-		coalition_notify_event(old, COALITION_NOTE_MEMBER_REMOVED);
-	}
-	sx_xunlock(&old->co_sx);
-	if (cm != NULL) {
-		uma_zfree(coalition_member_zone, cm);
-		coalition_rel(old);	/* the member's reference */
-	}
-	coalition_rel(old);
 }
 
 /* ----------------------------------------------------------------
@@ -2652,6 +2986,22 @@ coalition_call(struct mac_capability_instance *s,
 
 	case COALITION_OP_TERMINATE:
 		rpl->status = coalition_terminate(co);
+		break;
+
+	case COALITION_OP_CLEANUP_STATUS:
+		if (reqlen != sizeof(*hdr) || nfds != 0) {
+			rpl->status = EINVAL;
+			break;
+		}
+		if (reply_avail < sizeof(struct coalition_cleanup_reply)) {
+			*replylenp = sizeof(struct coalition_cleanup_reply);
+			error = EMSGSIZE;
+			goto out;
+		}
+		sx_xlock(&co->co_sx);
+		coalition_cleanup_status_locked(co, reply);
+		sx_xunlock(&co->co_sx);
+		*replylenp = sizeof(struct coalition_cleanup_reply);
 		break;
 
 	case COALITION_OP_STAT:
@@ -3173,6 +3523,7 @@ coalition_handler(struct mac_capability_instance *s, const struct mac_capability
 		struct coalition_enlist_set_reply cesr;
 		struct coalition_stat_reply csr;
 		struct coalition_rusage_reply crr;
+		struct coalition_cleanup_reply ccr;
 	} reply;
 	const struct coalition_req_hdr *hdr;
 	const void *req;
@@ -3271,7 +3622,7 @@ coalition_mod_init(void)
 		LIST_INIT(&coalition_proc_hash[i]);
 
 	coalition_jail_osd_slot = osd_jail_register(
-	    coalition_jail_osd_dtor, NULL);
+	    coalition_jail_osd_dtor, coalition_jail_methods);
 	if (coalition_jail_osd_slot == 0) {
 		error = ENOMEM;
 		goto fail_osd;
@@ -3291,6 +3642,13 @@ coalition_mod_init(void)
 		goto fail_exit;
 	}
 
+	coalition_resources_tag = EVENTHANDLER_REGISTER(process_exit_resources,
+	    coalition_process_exit_resources, NULL, EVENTHANDLER_PRI_ANY);
+	if (coalition_resources_tag == NULL) {
+		error = ENOMEM;
+		goto fail_resources;
+	}
+
 	memset(&p, 0, sizeof(p));
 	p.name = "coalition";
 	p.ops = &coalition_ops;
@@ -3306,6 +3664,8 @@ coalition_mod_init(void)
 	return (0);
 
 fail_svc:
+	EVENTHANDLER_DEREGISTER(process_exit_resources, coalition_resources_tag);
+fail_resources:
 	EVENTHANDLER_DEREGISTER(process_exit, coalition_exit_tag);
 fail_exit:
 	EVENTHANDLER_DEREGISTER(process_fork, coalition_fork_tag);
@@ -3338,6 +3698,7 @@ coalition_modevent(module_t mod __unused, int type, void *arg __unused)
 
 		mac_capability_proc_coalition_hook_set(NULL);
 		mac_capability_service_destroy(coalition_svc);
+		EVENTHANDLER_DEREGISTER(process_exit_resources, coalition_resources_tag);
 		EVENTHANDLER_DEREGISTER(process_exit, coalition_exit_tag);
 		EVENTHANDLER_DEREGISTER(process_fork, coalition_fork_tag);
 		osd_jail_deregister(coalition_jail_osd_slot);

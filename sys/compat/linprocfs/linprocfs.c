@@ -3345,7 +3345,7 @@ linprocfs_init(PFS_INIT_ARGS)
 	pfs_create_file(root, NULL, "swaps", &linprocfs_doswaps, NULL, NULL,
 	    NULL, PFS_RD);
 	pfs_create_file(root, NULL, "uptime", &linprocfs_douptime, NULL, NULL,
-	    NULL, PFS_RD);
+	    NULL, PFS_RD | PFS_SNAPSHOT);
 	pfs_create_file(root, NULL, "version", &linprocfs_doversion, NULL, NULL,
 	    NULL, PFS_RD);
 

@@ -30,6 +30,7 @@ __DEFAULT_YES_OPTIONS = \
     CDDL \
     CRYPT \
     CUSE \
+    DUMMYNET \
     DTRACE \
     EFI \
     FORMAT_EXTENSIONS \
@@ -229,3 +230,9 @@ MK_FDT:=no
 MK_FDT:=yes
 .endif
 .endif
+
+# Retired source: old WITHOUT_IPFW remains harmless.
+.if defined(WITH_IPFW)
+.error IPFW has been removed; use PF and Dummynet
+.endif
+MK_IPFW= no

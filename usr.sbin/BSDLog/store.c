@@ -82,6 +82,7 @@ struct store_reclaim {
 
 struct logcmp_store {
 	int		fd;
+	int		append_error;
 	int		dirfd;
 	uint64_t	generation;
 	uint64_t	segment_limit;
@@ -1420,6 +1421,8 @@ logcmp_store_append(struct logcmp_store *store, const char *label,
 	if (store == NULL || store->fd < 0 ||
 	    !valid_label(label, &label_length))
 		return (errno = EINVAL, -1);
+	if (store->append_error != 0)
+		return (errno = store->append_error, -1);
 	struct store_reclaim *retired = reclaim_find(store, label);
 	if (retired != NULL && retired->generation == UINT64_MAX &&
 	    retired->offset == UINT64_MAX)
@@ -1451,9 +1454,15 @@ logcmp_store_append(struct logcmp_store *store, const char *label,
 	iov[3] = (struct iovec){ .iov_base = redacted,
 	    .iov_len = redacted_length };
 	if (full_writev(store->fd, iov, nitems(iov)) == -1) {
+		int error = errno != 0 ? errno : EIO;
+
+		/* Never append behind a partial record: that defeats tail recovery. */
+		if (ftruncate(store->fd, store->offset) == -1 ||
+		    lseek(store->fd, store->offset, SEEK_SET) == -1)
+			store->append_error = error;
 		BSDLOG_PROBE_PERSIST(label, store->generation, store->offset,
-		    redacted_length, errno != 0 ? errno : EIO);
-		return (-1);
+		    redacted_length, error);
+		return (errno = error, -1);
 	}
 	store->offset += (off_t)entry_length;
 	store_label_bump(store, label);
@@ -1475,6 +1484,8 @@ logcmp_store_flush(struct logcmp_store *store)
 		errno = EINVAL;
 		return (-1);
 	}
+	if (store->append_error != 0)
+		return (errno = store->append_error, -1);
 	return (fdatasync(store->fd));
 }
 

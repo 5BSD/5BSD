@@ -22,6 +22,7 @@
 #include <sys/wait.h>
 
 #include <dev/hid/vhid.h>
+#include <net/pfvar.h>
 
 #include <ctype.h>
 #include <errno.h>
@@ -41,6 +42,8 @@
 #include <trustedzfs.h>
 
 #include "bsdfilesystem.h"
+#include "oes_factory.h"
+#include <oes_broker_protocol.h>
 #include "bsdfilesystem_probes.h"
 
 /*
@@ -850,6 +853,31 @@ mounted:
 	return (granted);
 }
 
+/* Compare components without opening the privileged device. */
+static bool
+is_oes_path(const char *path)
+{
+	const char *expected[] = { "dev", "oes" };
+	unsigned component = 0;
+	size_t length;
+
+	while (*path != '\0') {
+		path += strspn(path, "/");
+		length = strcspn(path, "/");
+		if (length == 0)
+			break;
+		if (!(length == 1 && path[0] == '.')) {
+			if (component == nitems(expected) ||
+			    strlen(expected[component]) != length ||
+			    strncmp(path, expected[component], length) != 0)
+				return (false);
+			component++;
+		}
+		path += length;
+	}
+	return (component == nitems(expected));
+}
+
 /*
  * Open an isolated path descriptor for a BSDFILESYSTEM_OP_OPEN request from `client`.
  * Default-deny: the client's unforgeable label and the exact path must match a
@@ -887,6 +915,9 @@ grant_open(struct bsdfilesystem_state *st, const char *client,
 		errno = EINVAL;
 		return (-1);
 	}
+	/* OES descriptors are issued only by the attribute-gated factory. */
+	if (is_oes_path(rq->path))
+		return (errno = EACCES, -1);
 	if (st->root_fd == -1) {
 		errno = ENXIO;
 		return (-1);
@@ -958,13 +989,22 @@ grant_open(struct bsdfilesystem_state *st, const char *client,
 	fd = openat(st->root_fd, rq->path + 1, flags);
 	if (fd == -1)
 		return (-1);
-	if (cfg->open_policy[i].verify) {
-		if (fstat(fd, &sb) == -1) {
-			saved = errno;
+	/* Device identity also catches aliases through an intermediate directory. */
+	if (fstat(fd, &sb) == -1) {
+		saved = errno;
+		close(fd);
+		return (errno = saved, -1);
+	}
+	if (S_ISCHR(sb.st_mode)) {
+		char device[SPECNAMELEN + 1];
+
+		if (fdevname_r(fd, device, sizeof(device)) == NULL ||
+		    strcmp(device, "oes") == 0) {
 			close(fd);
-			errno = saved;
-			return (-1);
+			return (errno = EACCES, -1);
 		}
+	}
+	if (cfg->open_policy[i].verify) {
 		if (!S_ISREG(sb.st_mode)) {
 			close(fd);
 			errno = EINVAL;
@@ -990,18 +1030,35 @@ grant_open(struct bsdfilesystem_state *st, const char *client,
 		return (-1);
 	}
 	/*
-	 * A delivered CAP_IOCTL descriptor must not be able to issue every ioctl
-	 * the node supports.  The only ioctl consumer of an OP_OPEN device grant
-	 * is blued <-> /dev/vhid{,N}: VHID_CREATE on the control node, VHID_ATTACH
-	 * on a created unit, VHID_DESTROY to tear one down.  Cap the delivered fd
-	 * to exactly that set (blued narrows further per-node on its own side).
+	 * Limit the device descriptor to the ioctl set authorized for its exact
+	 * policy entry.  Network may read PF states; blued manages virtual HID.
 	 */
 	if (rq->rights & BSDFILESYSTEM_OPEN_IOCTL) {
 		static const unsigned long vhid_ioctls[] = {
 			VHID_CREATE, VHID_ATTACH, VHID_DESTROY,
 		};
+		static const unsigned long pf_ioctls[] = {
+			/* The compat ABI is guarded in pfvar.h for userland. */
+			_IOWR('D', 93, struct pfioc_states_v2),
+		};
+		const unsigned long *ioctls;
+		size_t nioctls;
 
-		if (cap_ioctls_limit(fd, vhid_ioctls, nitems(vhid_ioctls)) == -1) {
+		if (strcmp(client, "system.Network/bsdnetwork") == 0 &&
+		    strcmp(rq->path, "/dev/pf") == 0) {
+			ioctls = pf_ioctls;
+			nioctls = nitems(pf_ioctls);
+		} else if (strcmp(client, "org.5bsd.Blued/blued") == 0 &&
+		    strncmp(rq->path, "/dev/vhid", 9) == 0 &&
+		    strspn(rq->path + 9, "0123456789") == strlen(rq->path + 9)) {
+			ioctls = vhid_ioctls;
+			nioctls = nitems(vhid_ioctls);
+		} else {
+			ioctls = NULL;
+			nioctls = 0;
+		}
+
+		if (cap_ioctls_limit(fd, ioctls, nioctls) == -1) {
 			saved = errno;
 			(void)close(fd);
 			errno = saved;
@@ -1009,6 +1066,20 @@ grant_open(struct bsdfilesystem_state *st, const char *client,
 		}
 	}
 	return (fd);
+}
+
+/* Caller retains ownership on failure and must not attach the descriptor. */
+static int
+harden_delivery(int fd, bool pf_relay)
+{
+	if (!pf_relay)
+		return (service_harden_fd(fd, SERVICE_HARDEN_XFER_ONCE |
+		    SERVICE_HARDEN_CLOFORK_ONCE));
+	if (cap_xfer_limit(fd, CAP_XFER_UNLIMITED) == -1 ||
+	    cap_clofork_limit(fd, CAP_CLOFORK_ONCE) == -1 ||
+	    cap_cloexec_limit(fd, CAP_CLOEXEC_LOCKED) == -1)
+		return (-1);
+	return (0);
 }
 
 /*
@@ -2028,6 +2099,7 @@ tzfs_request(struct channel *ch __unused, struct channel_message *m, void *arg)
 	struct bsdfilesystem_reply rp;
 	struct channel_outgoing out;
 	int handle = -1;
+	bool pf_relay = false;
 
 	memset(&rp, 0, sizeof(rp));
 
@@ -2067,6 +2139,9 @@ tzfs_request(struct channel *ch __unused, struct channel_message *m, void *arg)
 				syslog(LOG_INFO, "OPEN rights=%#x -> %s",
 				    orq->rights, strerror(rp.status));
 			} else {
+				pf_relay = strcmp(conn->label,
+				    "system.Network/bsdnetwork") == 0 &&
+				    strcmp(orq->path, "/dev/pf") == 0;
 				syslog(LOG_INFO, "OPEN %s rights=%#x -> granted",
 				    orq->path, orq->rights);
 			}
@@ -2441,21 +2516,23 @@ reply:
 	out.data = &rp;
 	out.length = sizeof(rp);
 	if (handle != -1 && rp.status == 0) {
-		/*
-		 * Harden every delivered descriptor (dataset handle, mounted store
-		 * dirfd, or isolated-open fd) as a single-hop capability: this SCM
-		 * send is the one-and-only delegation (CAP_XFER_ONCE -> the client's
-		 * copy lands at CAP_XFER_NONE, non-re-delegable), close-on-fork, and
-		 * close-on-exec.  Without this a client could re-send its label-scoped
-		 * storage/device handle to an unrelated component, bypassing the
-		 * per-label/per-container policy the broker exists to enforce (and the
-		 * libservice client contract already assumes this limit was applied).
+		/* Most delivered descriptors have one transfer and cannot be
+		 * redelegated.  The exact PF descriptor granted to BSDNetwork is
+		 * an exception: Network narrows it to one transfer before replying
+		 * to a client admitted through the anointed PF endpoint.
 		 */
-		(void)service_harden_fd(handle, SERVICE_HARDEN_XFER_ONCE |
-		    SERVICE_HARDEN_CLOFORK_ONCE);
+		if (harden_delivery(handle, pf_relay) == -1) {
+			rp.status = errno;
+			out.fds = NULL;
+			out.nfds = 0;
+			goto send_reply;
+		}
 		out.fds = &handle;
 		out.nfds = 1;
 	}
+send_reply:
+	if (rp.status != 0)
+		out.nfds = 0;
 	(void)channel_send_reply(m, &out);
 	if (handle != -1)
 		(void)close(handle);
@@ -2586,9 +2663,26 @@ tzfs_worker(struct bsdfilesystem_state *st, int fd, const char *client,
 #define	BSDFILESYSTEM_MAX_WORKERS	4096
 
 struct fs_worker {
+	bool oes_factory;
+	char label[64];
 	struct fs_worker	*next;
 	int			 pd;	/* process descriptor for the worker */
 };
+
+/* Counts factory sessions, not delivered OES descriptor lifetimes. */
+static bool
+fs_oes_admit(const struct fs_worker *workers, const char *label)
+{
+	unsigned total = 0, same = 0;
+	for (; workers != NULL; workers = workers->next) {
+		if (!workers->oes_factory)
+			continue;
+		total++;
+		if (strcmp(workers->label, label) == 0)
+			same++;
+	}
+	return (total < 64 && same < 4);
+}
 
 /*
  * Reap an EXITED worker: remove it from the list, drain its zombie through the
@@ -2630,7 +2724,7 @@ int
 bsdfilesystem_serve(struct bsdfilesystem_state *st)
 {
 	struct service_identity id;
-	struct service_listener *listener;
+	struct service_listener *listener, *oes_listener, *ready_listener;
 	struct service_provider *provider;
 	int fd;
 
@@ -2646,6 +2740,7 @@ bsdfilesystem_serve(struct bsdfilesystem_state *st)
 	    service_provider_authorize_capabilities(provider) == -1 ||
 	    service_provider_expose(provider, BSDFILESYSTEM_SERVICE_NAME, &listener) ==
 	    -1 ||
+	    service_provider_expose(provider, OES_BROKER_ENDPOINT, &oes_listener) == -1 ||
 	    service_provider_enter_capability_mode(provider) == -1 ||
 	    service_provider_ready(provider) == -1)
 		return (-1);
@@ -2681,6 +2776,13 @@ bsdfilesystem_serve(struct bsdfilesystem_state *st)
 		return (-1);
 	}
 
+	EV_SET(&change, service_listener_fd(oes_listener), EVFILT_READ,
+	    EV_ADD | EV_ENABLE, 0, 0, oes_listener);
+	if (kevent(kq, &change, 1, NULL, 0, NULL) == -1) {
+		(void)close(kq);
+		return (-1);
+	}
+
 	for (;;) {
 		pid_t pid;
 		int error;
@@ -2699,7 +2801,10 @@ bsdfilesystem_serve(struct bsdfilesystem_state *st)
 		/* The listener is readable: accept the pending client. */
 		memset(&id, 0, sizeof(id));
 		id.size = sizeof(id);
-		if (service_listener_accept(listener, &id, &fd) == -1) {
+		ready_listener = event.udata;
+		if (ready_listener != listener && ready_listener != oes_listener)
+			continue;
+		if (service_listener_accept(ready_listener, &id, &fd) == -1) {
 			error = errno;
 			/* A clean quiesce is the only reason to leave the loop. */
 			if (service_provider_quiescing(provider) == 1) {
@@ -2722,7 +2827,8 @@ bsdfilesystem_serve(struct bsdfilesystem_state *st)
 				syslog(LOG_ERR, "accept: %s", strerror(error));
 			continue;
 		}
-		if (nworkers >= BSDFILESYSTEM_MAX_WORKERS) {
+		if (nworkers >= BSDFILESYSTEM_MAX_WORKERS ||
+		    (ready_listener == oes_listener && !fs_oes_admit(workers, id.client_label))) {
 			syslog(LOG_WARNING, "worker limit reached; dropping %s",
 			    id.client_label);
 			(void)close(fd);
@@ -2734,6 +2840,8 @@ bsdfilesystem_serve(struct bsdfilesystem_state *st)
 			(void)close(fd);
 			continue;
 		}
+		w->oes_factory = ready_listener == oes_listener;
+		strlcpy(w->label, id.client_label, sizeof(w->label));
 		pid = pdfork(&w->pd, PD_CLOEXEC | PD_DAEMON);
 		if (pid == -1) {
 			syslog(LOG_ERR, "pdfork: %m");
@@ -2747,6 +2855,10 @@ bsdfilesystem_serve(struct bsdfilesystem_state *st)
 			if (service_worker_protect(SERVICE_PROTECT_EXTERNAL) == -1) {
 				syslog(LOG_ERR, "worker protection: %m");
 				_exit(1);
+			}
+			if (w->oes_factory) {
+				service_worker_drop_inherited_authority();
+				_exit(bsdfilesystem_oes_serve(st->root_fd, fd));
 			}
 			_exit(tzfs_worker(st, fd, id.client_label,
 			    id.resource_owner, id.container,
@@ -2780,6 +2892,23 @@ bsdfilesystem_serve(struct bsdfilesystem_state *st)
 }
 
 #ifdef BSDFILESYSTEM_TESTING
+bool
+bsdfilesystem_test_oes_admit(unsigned total, unsigned same, unsigned ordinary)
+{
+	struct fs_worker workers[65];
+	unsigned count = total + ordinary;
+
+	if (count > nitems(workers) || same > total)
+		return (false);
+	memset(workers, 0, sizeof(workers));
+	for (unsigned i = 0; i < count; i++) {
+		workers[i].oes_factory = i < total;
+		strlcpy(workers[i].label, i < same ? "client" : "other", 64);
+		workers[i].next = i + 1 < count ? &workers[i + 1] : NULL;
+	}
+	return (fs_oes_admit(count != 0 ? workers : NULL, "client"));
+}
+
 /*
  * Test-only accessors.  These expose the file-private pure-logic functions and a
  * single-channel serve entrypoint so the ATF suite can exercise the tenant-
@@ -2876,6 +3005,12 @@ bsdfilesystem_test_valid_request(const struct bsdfilesystem_request *rq)
  * (_reserved must be zero, is_dir must be a canonical 0/1) and the default-deny
  * policy outcome without reaching any ZFS machinery.
  */
+int
+bsdfilesystem_test_harden_delivery(int fd, bool relay)
+{
+	return (harden_delivery(fd, relay));
+}
+
 int
 bsdfilesystem_test_grant_open(struct bsdfilesystem_state *st, const char *client,
     const struct bsdfilesystem_open_request *rq)

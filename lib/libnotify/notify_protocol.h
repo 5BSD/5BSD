@@ -28,6 +28,7 @@
 #define	NOTIFY_FEATURE_BOUNDED_QUEUE	0x00000004U
 #define	NOTIFY_FEATURE_STATE		0x00000008U
 #define	NOTIFY_FEATURE_LOSS_REPORTING	0x00000010U
+#define	NOTIFY_FEATURE_STATE_WATCH	0x00000020U
 
 #define	NOTIFY_MSG_F_MASK		0U
 
@@ -47,11 +48,12 @@ enum notify_opcode {
 	NOTIFY_OP_STATE_GET,
 	NOTIFY_OP_STATE_CLEAR,
 	NOTIFY_OP_LIST_SUBSCRIPTIONS,
-	NOTIFY_OP_LIST_TIMERS
+	NOTIFY_OP_LIST_TIMERS,
+	NOTIFY_OP_STATE_WATCH
 };
 
 /* Newest opcode; used for wire bounds checks (keep in sync with the enum). */
-#define	NOTIFY_OP_MAX			NOTIFY_OP_LIST_TIMERS
+#define	NOTIFY_OP_MAX			NOTIFY_OP_STATE_WATCH
 
 enum notify_event_type {
 	NOTIFY_EVENT_PUBLISH = 1,
@@ -79,6 +81,12 @@ struct notify_msg {
 
 _Static_assert(sizeof(struct notify_msg) == 16,
     "notify message header ABI");
+
+/* Empty HELLO remains compatible with clients requiring the original mask. */
+struct notify_hello_request {
+	uint32_t features;
+	uint32_t reserved;
+};
 
 struct notify_hello_reply {
 	uint32_t	features;
@@ -134,6 +142,21 @@ struct notify_state_reply {
 	uint64_t	router_epoch;
 	uint64_t	generation;
 	uint64_t	state;
+};
+
+/* One latest-state watch per session; topic changes start a new stream. */
+struct notify_state_watch_request {
+	struct notify_topic_request topic;
+	uint32_t timeout_ms;
+	uint32_t reserved;
+};
+
+struct notify_state_watch_reply {
+	uint64_t watch_epoch;
+	uint64_t generation;
+	uint64_t state;
+	uint32_t present;
+	uint32_t reserved;
 };
 
 struct notify_event {

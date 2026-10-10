@@ -21,6 +21,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <stdbool.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/stat.h>
@@ -1478,8 +1479,213 @@ ATF_TC_BODY(grant_open_verified_types, tc)
 	ATF_REQUIRE_EQ(0, rmdir(dir));
 }
 
+ATF_TC_WITHOUT_HEAD(delivery_hardening_failure);
+ATF_TC_BODY(delivery_hardening_failure, tc)
+{
+	char path[] = "/tmp/bsdfs-delivery.XXXXXX";
+	int fd;
+
+	/* An older host kernel may not implement the source tree's syscall. */
+	void (*previous)(int) = signal(SIGSYS, SIG_IGN);
+	ATF_REQUIRE(previous != SIG_ERR);
+	int probe = cap_xfer_limit(-1, CAP_XFER_NONE);
+	int saved = errno;
+	ATF_REQUIRE(signal(SIGSYS, previous) != SIG_ERR);
+	if (probe == -1 && saved == ENOSYS)
+		atf_tc_skip("kernel lacks descriptor hardening syscalls");
+	ATF_CHECK_ERRNO(EBADF, bsdfilesystem_test_harden_delivery(-1, false) == -1);
+	ATF_CHECK_ERRNO(EBADF, bsdfilesystem_test_harden_delivery(-1, true) == -1);
+	fd = mkstemp(path);
+	ATF_REQUIRE(fd >= 0);
+	ATF_REQUIRE_EQ(0, unlink(path));
+	ATF_REQUIRE_EQ(0, cap_xfer_limit(fd, CAP_XFER_NONE));
+	/* Neither ordinary nor relay delivery may widen a nontransferable FD. */
+	ATF_CHECK_EQ(-1, bsdfilesystem_test_harden_delivery(fd, false));
+	ATF_CHECK_EQ(-1, bsdfilesystem_test_harden_delivery(fd, true));
+	ATF_CHECK(fcntl(fd, F_GETFD) != -1);
+	ATF_REQUIRE_EQ(0, close(fd));
+}
+
+ATF_TC_WITHOUT_HEAD(unmatched_ioctl_grant_is_empty);
+ATF_TC_BODY(unmatched_ioctl_grant_is_empty, tc)
+{
+	struct bsdfilesystem_open_request rq;
+	struct bsdfilesystem_state st;
+	char path[] = "/tmp/bsdfs-ioctl.XXXXXX";
+	const char *labels[] = {"system.Other/unit", "org.5bsd.Blued/blued",
+	    "system.Network/bsdnetwork"};
+	unsigned long commands[8];
+	int seed, fd;
+
+	seed = mkstemp(path);
+	ATF_REQUIRE(seed >= 0);
+	ATF_REQUIRE_EQ(0, close(seed));
+	open_state_init(&st, open("/", O_DIRECTORY | O_RDONLY | O_CLOEXEC));
+	ATF_REQUIRE(st.root_fd >= 0);
+	for (unsigned i = 0; i < nitems(labels); i++) {
+		open_policy_set(&st, labels[i], path,
+		    BSDFILESYSTEM_OPEN_READ | BSDFILESYSTEM_OPEN_IOCTL, false);
+		open_request_set(&rq, path,
+		    BSDFILESYSTEM_OPEN_READ | BSDFILESYSTEM_OPEN_IOCTL);
+		fd = bsdfilesystem_test_grant_open(&st, labels[i], &rq);
+		ATF_REQUIRE_MSG(fd >= 0, "grant failed: %s", strerror(errno));
+		ATF_CHECK_EQ(0, cap_ioctls_get(fd, commands, nitems(commands)));
+		ATF_REQUIRE_EQ(0, close(fd));
+	}
+	ATF_REQUIRE_EQ(0, close(st.root_fd));
+	ATF_REQUIRE_EQ(0, unlink(path));
+}
+
+ATF_TC_WITHOUT_HEAD(oes_endpoint_isolation);
+ATF_TC_BODY(oes_endpoint_isolation, tc)
+{
+	struct bsdfilesystem_state st;
+	struct bsdfilesystem_open_request rq;
+	const char *paths[] = { "/dev/oes", "//dev//oes", "/dev/./oes",
+	    "/./dev/oes", "/dev/oes/", "/dev/oes/." };
+
+	/* Even an explicit ordinary-open policy must not bypass the endpoint. */
+	open_state_init(&st, -1);
+	for (unsigned i = 0; i < sizeof(paths) / sizeof(paths[0]); i++) {
+		open_policy_set(&st, "client", paths[i], BSDFILESYSTEM_OPEN_READ, false);
+		open_request_set(&rq, paths[i], BSDFILESYSTEM_OPEN_READ);
+		ATF_CHECK_EQ(-1, bsdfilesystem_test_grant_open(&st, "client", &rq));
+		ATF_CHECK_EQ(EACCES, errno);
+	}
+	ATF_CHECK(bsdfilesystem_test_oes_admit(0, 0, 0));
+	ATF_CHECK(bsdfilesystem_test_oes_admit(63, 3, 2));
+	ATF_CHECK(!bsdfilesystem_test_oes_admit(64, 0, 0));
+	ATF_CHECK(!bsdfilesystem_test_oes_admit(4, 4, 0));
+	ATF_CHECK(bsdfilesystem_test_oes_admit(3, 3, 62));
+}
+
+ATF_TC(oes_device_alias);
+ATF_TC_HEAD(oes_device_alias, tc)
+{
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "descr",
+	    "OES directory aliases cannot bypass admission; ordinary devices work");
+}
+ATF_TC_BODY(oes_device_alias, tc)
+{
+	struct bsdfilesystem_state st;
+	struct bsdfilesystem_open_request rq;
+	char directory[] = "/tmp/oes-alias.XXXXXX";
+	char linkpath[1024], devicepath[1024], byte;
+	int rootfd, fd;
+
+	fd = open("/dev/oes", O_RDONLY | O_NONBLOCK);
+	if (fd < 0)
+		atf_tc_skip("requires loaded OES and privileged open: %s", strerror(errno));
+	close(fd);
+	ATF_REQUIRE(mkdtemp(directory) != NULL);
+	snprintf(linkpath, sizeof(linkpath), "%s/device", directory);
+	/* Intermediate symlink stays beneath /, as production resolution allows. */
+	ATF_REQUIRE_EQ(0, symlink("../../dev", linkpath));
+	snprintf(devicepath, sizeof(devicepath), "%s/oes", linkpath);
+	rootfd = open("/", O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+	ATF_REQUIRE(rootfd >= 0);
+	fd = openat(rootfd, devicepath + 1,
+	    O_RDONLY | O_NONBLOCK | O_NOFOLLOW | O_RESOLVE_BENEATH);
+	ATF_REQUIRE_MSG(fd >= 0, "alias must reach OES before mediation: %s", strerror(errno));
+	close(fd);
+	open_state_init(&st, rootfd);
+	open_policy_set(&st, "client", devicepath, BSDFILESYSTEM_OPEN_READ, false);
+	open_request_set(&rq, devicepath, BSDFILESYSTEM_OPEN_READ);
+	ATF_CHECK_EQ(-1, bsdfilesystem_test_grant_open(&st, "client", &rq));
+	ATF_CHECK_EQ(EACCES, errno);
+	open_policy_set(&st, "client", "/dev/null", BSDFILESYSTEM_OPEN_READ, false);
+	open_request_set(&rq, "/dev/null", BSDFILESYSTEM_OPEN_READ);
+	fd = bsdfilesystem_test_grant_open(&st, "client", &rq);
+	ATF_REQUIRE_MSG(fd >= 0, "ordinary character device rejected: %s", strerror(errno));
+	ATF_CHECK_EQ(0, read(fd, &byte, 1));
+	close(fd);
+	close(rootfd);
+	ATF_CHECK_EQ(0, unlink(linkpath));
+	ATF_CHECK_EQ(0, rmdir(directory));
+}
+
+static int
+reclaim_test_enumerate(void *arg __unused,
+    void (*emit)(void *, const char *), void *emit_arg)
+{
+	emit(emit_arg, "Victim");
+	return (0);
+}
+
+static int
+reclaim_test_destroy(void *arg, const char *owner)
+{
+	unsigned *destroyed = arg;
+
+	ATF_REQUIRE_STREQ(owner, "Victim");
+	(*destroyed)++;
+	return (0);
+}
+
+ATF_TC_WITHOUT_HEAD(reclaim_requires_complete_owner_view);
+ATF_TC_BODY(reclaim_requires_complete_owner_view, tc)
+{
+	struct capreclaim r = CAPRECLAIM_INIT;
+	unsigned destroyed = 0;
+	int root, fd;
+
+	ATF_REQUIRE_EQ(0, mkdir("Capabilities", 0700));
+	ATF_REQUIRE_EQ(0, mkdir("Capabilities/System", 0700));
+	ATF_REQUIRE_EQ(0, mkdir("Capabilities/System/Filesystem.cap", 0700));
+	ATF_REQUIRE_EQ(0, mkdir("Capabilities/Run", 0700));
+	root = open(".", O_RDONLY | O_DIRECTORY);
+	ATF_REQUIRE(root >= 0);
+	r.enumerate = reclaim_test_enumerate;
+	r.destroy = reclaim_test_destroy;
+	r.arg = &destroyed;
+	r.status_dirfd = -1;
+
+	/* A readable System alone cannot authorize a destructive boot pass. */
+	ATF_CHECK_EQ(-1, bsdfilesystem_test_reclaim_bundles(root, &r,
+	    CAPRECLAIM_BOOT));
+	ATF_CHECK_EQ(0, destroyed);
+	ATF_REQUIRE_EQ(0, mkdir("Capabilities/Run/live", 0700));
+	ATF_REQUIRE_EQ(0, mkdir("Capabilities/Run/live/Victim", 0700));
+	ATF_CHECK_EQ(0, bsdfilesystem_test_reclaim_bundles(root, &r,
+	    CAPRECLAIM_BOOT));
+	ATF_CHECK_EQ(0, destroyed);
+	ATF_REQUIRE_EQ(0, rmdir("Capabilities/Run/live/Victim"));
+
+	/* An absent Apps root is optional; an unreadable one is not. */
+	fd = open("Capabilities/Apps", O_CREAT | O_WRONLY, 0600);
+	ATF_REQUIRE(fd >= 0);
+	ATF_REQUIRE_EQ(0, close(fd));
+	ATF_CHECK_EQ(-1, bsdfilesystem_test_reclaim_bundles(root, &r,
+	    CAPRECLAIM_BOOT));
+	ATF_CHECK_EQ(ENOTDIR, errno);
+	ATF_CHECK_EQ(0, destroyed);
+	ATF_REQUIRE_EQ(0, unlink("Capabilities/Apps"));
+
+	/* Losing a required source between timer passes resets the grace. */
+	ATF_CHECK_EQ(0, bsdfilesystem_test_reclaim_bundles(root, &r,
+	    CAPRECLAIM_TIMER));
+	ATF_REQUIRE_EQ(0, rmdir("Capabilities/Run/live"));
+	ATF_CHECK_EQ(-1, bsdfilesystem_test_reclaim_bundles(root, &r,
+	    CAPRECLAIM_TIMER));
+	ATF_REQUIRE_EQ(0, mkdir("Capabilities/Run/live", 0700));
+	ATF_CHECK_EQ(0, bsdfilesystem_test_reclaim_bundles(root, &r,
+	    CAPRECLAIM_TIMER));
+	ATF_CHECK_EQ(0, destroyed);
+	ATF_CHECK_EQ(1, bsdfilesystem_test_reclaim_bundles(root, &r,
+	    CAPRECLAIM_TIMER));
+	ATF_CHECK_EQ(1, destroyed);
+	capreclaim_fini(&r);
+	ATF_REQUIRE_EQ(0, close(root));
+}
+
 ATF_TP_ADD_TCS(tp)
 {
+	ATF_TP_ADD_TC(tp, reclaim_requires_complete_owner_view);
+	ATF_TP_ADD_TC(tp, oes_device_alias);
+	ATF_TP_ADD_TC(tp, oes_endpoint_isolation);
+ ATF_TP_ADD_TC(tp, unmatched_ioctl_grant_is_empty);
+ ATF_TP_ADD_TC(tp, delivery_hardening_failure);
 	ATF_TP_ADD_TC(tp, config_verified_paths);
 	ATF_TP_ADD_TC(tp, grant_open_verified_types);
 

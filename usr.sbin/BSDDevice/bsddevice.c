@@ -30,6 +30,7 @@
 #include <channel.h>
 #include <devicecmp_protocol.h>
 #include <libservice.h>
+#include <service_runtime.h>
 
 #include "policy.h"
 #include "bsddevice_probes.h"
@@ -402,16 +403,12 @@ start_session(int fd, const char *peer_label, int *pdp)
 #define	DEVICECMP_MAX_WORKERS	4096u
 
 /* One live pdfork'd worker, tracked so its exit can account the slot. */
-struct device_worker_ent {
-	struct device_worker_ent	*next;
-	int				 pd;
-};
 
 static void
-device_worker_ent_remove(struct device_worker_ent **head,
-    struct device_worker_ent *w, size_t *count)
+device_worker_ent_remove(struct service_process **head,
+    struct service_process *w, size_t *count)
 {
-	struct device_worker_ent **cursor;
+	struct service_process **cursor;
 	int status;
 
 	for (cursor = head; *cursor != NULL && *cursor != w;
@@ -424,6 +421,17 @@ device_worker_ent_remove(struct device_worker_ent **head,
 	free(w);
 	if (*count != 0)
 		(*count)--;
+}
+
+/* Stop admission workers before acknowledging provider shutdown. */
+static int
+device_workers_stop(struct service_process **head, size_t *count)
+{
+	int result;
+
+	result = service_processes_stop(head);
+	*count = 0;
+	return (result);
 }
 
 /*
@@ -452,13 +460,13 @@ load_policy(void)
 int
 main(void)
 {
-	struct device_worker_ent *workers = NULL;
+	struct service_process *workers = NULL;
 	struct service_identity id;
 	struct service_listener *listener;
-	struct service_provider *provider;
+	struct service_provider *provider = NULL;
 	struct kevent event, change;
 	size_t nworkers = 0;
-	int fd, kq;
+	int fd, kq = -1, result = 1;
 
 	service_set_proctitle();
 	openlog("bsddevice", LOG_PID | LOG_NDELAY, LOG_DAEMON);
@@ -471,7 +479,7 @@ main(void)
 	 * beneath it with openat(2) rather than by global path.
 	 */
 	if (service_resource_dir("/dev", &devdir) == -1)
-		return (1);
+		goto out;
 
 	/*
 	 * Self-harden the accept/fork parent.  It must still pdfork workers and
@@ -483,7 +491,7 @@ main(void)
 	    service_provider_protect(provider, SERVICE_PROTECT_EXTERNAL |
 	    SERVICE_PROTECT_NOPRIVS | SERVICE_PROTECT_NOEXEC) == -1 ||
 	    service_provider_expose(provider, DEVICECMP_NAME, &listener) == -1)
-		return (1);
+		goto out;
 
 	/*
 	 * A kqueue drives the accept loop AND watches each worker's process
@@ -492,21 +500,21 @@ main(void)
 	 */
 	kq = kqueuex(KQUEUE_CLOEXEC);
 	if (kq == -1)
-		return (1);
+		goto out;
 	EV_SET(&change, service_listener_fd(listener), EVFILT_READ,
 	    EV_ADD | EV_ENABLE, 0, 0, listener);
 	if (kevent(kq, &change, 1, NULL, 0, NULL) == -1 ||
 	    service_provider_enter_capability_mode(provider) == -1 ||
 	    service_provider_ready(provider) == -1)
-		return (1);
+		goto out;
 
 	for (;;) {
-		struct device_worker_ent *w;
+		struct service_process *w;
 
 		if (kevent(kq, NULL, 0, &event, 1, NULL) == -1) {
 			if (errno == EINTR)
 				continue;
-			return (1);
+			goto out;
 		}
 		if (event.filter == EVFILT_PROCDESC) {
 			device_worker_ent_remove(&workers, event.udata,
@@ -518,9 +526,17 @@ main(void)
 		if (service_listener_accept(listener, &id, &fd) == -1) {
 			if (errno == EINTR)
 				continue;
-			if (service_provider_quiescing(provider) == 1)
-				return (0);
-			return (1);
+			if (service_provider_quiescing(provider) == 1) {
+				if (nworkers != 0) {
+					if (service_provider_quiesce_complete(provider,
+					    EBUSY) == 0)
+						continue;
+					if (errno != EINVAL)
+						goto out;
+				}
+				result = 0;
+			}
+			goto out;
 		}
 		if (nworkers >= DEVICECMP_MAX_WORKERS) {
 			syslog(LOG_WARNING, "worker limit reached; dropping %s",
@@ -565,5 +581,15 @@ main(void)
 		workers = w;
 		nworkers++;
 	}
+out:
+	if (device_workers_stop(&workers, &nworkers) == -1)
+		result = 1;
+	if (kq != -1)
+		close(kq);
+	if (result == 0 && service_provider_quiesce_complete(provider, 0) == -1)
+		result = 1;
+	if (provider != NULL)
+		service_provider_destroy(provider);
+	return (result);
 }
 #endif /* !BSDDEVICE_TESTING */

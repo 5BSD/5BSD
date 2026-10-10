@@ -1898,13 +1898,21 @@ ATF_TC_BODY(unwritable_owner_map_fails_the_note, tc)
 	struct logcmp_store *store;
 	struct bundle_set set;
 
-	if (geteuid() == 0)
-		atf_tc_skip("root bypasses directory permissions");
+	uid_t original_euid = geteuid();
+	int error, result;
+
 	fixture_create(&fixture);
 	ATF_REQUIRE_EQ(0, logcmp_store_open(fixture.dirfd,
 	    LOGCMP_STORE_SEGMENT_MIN, LOGCMP_STORE_SEGMENTS_DEFAULT, &store));
 	ATF_REQUIRE_EQ(0, fchmod(fixture.dirfd, 0500));
-	ATF_CHECK_EQ(-1, logcmp_store_note_owner(store, "cap.a", "Alpha"));
+	if (original_euid == 0)
+		ATF_REQUIRE_EQ(0, seteuid(65534));
+	result = logcmp_store_note_owner(store, "cap.a", "Alpha");
+	error = errno;
+	if (original_euid == 0)
+		ATF_REQUIRE_EQ(0, seteuid(original_euid));
+	ATF_CHECK_EQ(-1, result);
+	ATF_CHECK_EQ(EACCES, error);
 	ATF_REQUIRE_EQ(0, fchmod(fixture.dirfd, 0700));
 	/* The failed note left the mapping in memory; it is persisted next time. */
 	ATF_CHECK_EQ(0, logcmp_store_note_owner(store, "cap.b", "Beta"));
@@ -1918,8 +1926,99 @@ ATF_TC_BODY(unwritable_owner_map_fails_the_note, tc)
 	fixture_destroy(&fixture);
 }
 
+static int injected_write, injected_truncate, injected_seek;
+ssize_t __real_writev(int, const struct iovec *, int);
+ssize_t __wrap_writev(int, const struct iovec *, int);
+int __real_ftruncate(int, off_t);
+int __wrap_ftruncate(int, off_t);
+off_t __real_lseek(int, off_t, int);
+off_t __wrap_lseek(int, off_t, int);
+ssize_t
+__wrap_writev(int fd, const struct iovec *iov, int count)
+{
+	if (injected_write == 1) {
+		injected_write = 2;
+		return (write(fd, iov[0].iov_base, 3));
+	}
+	if (injected_write == 2) {
+		injected_write = 0;
+		return (errno = ENOSPC, -1);
+	}
+	return (__real_writev(fd, iov, count));
+}
+int
+__wrap_ftruncate(int fd, off_t length)
+{
+	if (injected_truncate)
+		return (errno = EIO, -1);
+	return (__real_ftruncate(fd, length));
+}
+
+off_t
+__wrap_lseek(int fd, off_t offset, int whence)
+{
+	if (injected_seek)
+		return (errno = EIO, -1);
+	return (__real_lseek(fd, offset, whence));
+}
+
+ATF_TC_WITHOUT_HEAD(partial_append_recovery);
+ATF_TC_BODY(partial_append_recovery, tc)
+{
+	struct fixture fixture;
+	struct logcmp_store *store;
+	uint8_t record[LOGCMP_MAX_RECORD];
+	size_t length;
+	off_t good;
+	struct stat before, after;
+	int fd;
+
+	for (int fail_rollback = 0; fail_rollback < 3; fail_rollback++) {
+		fixture_create(&fixture);
+		length = make_record(record, "public", LOGCMP_PRIVACY_PUBLIC,
+		    "value", LOGCMP_PRIVACY_PUBLIC);
+		ATF_REQUIRE_EQ(0, logcmp_store_open(fixture.dirfd,
+		    LOGCMP_STORE_SEGMENT_MIN, LOGCMP_STORE_SEGMENTS_DEFAULT, &store));
+		ATF_REQUIRE_EQ(0, logcmp_store_append(store, "org.test",
+		    (void *)record, length, false));
+		good = logcmp_store_offset(store);
+		injected_write = 1;
+		injected_truncate = fail_rollback == 1;
+		injected_seek = fail_rollback == 2;
+		ATF_CHECK_ERRNO(ENOSPC, logcmp_store_append(store, "org.test",
+		    (void *)record, length, false) == -1);
+		ATF_CHECK_EQ(good, logcmp_store_offset(store));
+		injected_truncate = injected_seek = 0;
+		if (fail_rollback) {
+			fd = openat(fixture.dirfd, "active.segment", O_RDONLY);
+			ATF_REQUIRE(fd >= 0);
+			ATF_REQUIRE_EQ(0, fstat(fd, &before));
+			ATF_CHECK_ERRNO(ENOSPC, logcmp_store_append(store, "org.test",
+			    (void *)record, length, false) == -1);
+			ATF_CHECK_ERRNO(ENOSPC, logcmp_store_flush(store) == -1);
+			ATF_REQUIRE_EQ(0, fstat(fd, &after));
+			ATF_CHECK_EQ(before.st_size, after.st_size);
+			close(fd);
+			logcmp_store_close(store);
+			ATF_REQUIRE_EQ(0, logcmp_store_open(fixture.dirfd,
+			    LOGCMP_STORE_SEGMENT_MIN, LOGCMP_STORE_SEGMENTS_DEFAULT, &store));
+			ATF_CHECK_EQ(good, logcmp_store_offset(store));
+		}
+		ATF_REQUIRE_EQ(0, logcmp_store_append(store, "org.test",
+		    (void *)record, length, true));
+		good = logcmp_store_offset(store);
+		logcmp_store_close(store);
+		ATF_REQUIRE_EQ(0, logcmp_store_open(fixture.dirfd,
+		    LOGCMP_STORE_SEGMENT_MIN, LOGCMP_STORE_SEGMENTS_DEFAULT, &store));
+		ATF_CHECK_EQ(good, logcmp_store_offset(store));
+		logcmp_store_close(store);
+		fixture_destroy(&fixture);
+	}
+}
+
 ATF_TP_ADD_TCS(tp)
 {
+	ATF_TP_ADD_TC(tp, partial_append_recovery);
 	ATF_TP_ADD_TC(tp, owner_map_rejects_malformed_names);
 	ATF_TP_ADD_TC(tp, retire_owner_prunes_the_map);
 	ATF_TP_ADD_TC(tp, truncated_owner_map_opens_empty_and_heals);

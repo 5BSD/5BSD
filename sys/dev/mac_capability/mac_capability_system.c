@@ -46,6 +46,8 @@
 #include <sys/ucred.h>
 #include <sys/vnode.h>
 
+#include <net/vnet.h>
+
 #include <security/mac/mac_policy.h>
 
 #include "mac_capability.h"
@@ -1537,9 +1539,16 @@ sys_call(struct mac_capability_instance *s,
 		oldp = (sysr->oldlen > 0) ? reply : NULL;
 		oldlen = sysr->oldlen;
 		retval = 0;
+		/*
+		 * Unlike userland_sysctl(), kernel_sysctl() does not enter the
+		 * caller's vnet; VNET-virtualized handlers (net.route iflist,
+		 * net.inet stats) dereference curvnet.
+		 */
+		CURVNET_SET(TD_TO_VNET(curthread));
 		error = kernel_sysctl(curthread, mib, depth, oldp,
 		    (oldp != NULL) ? &oldlen : NULL, newp, (size_t)sysr->newlen,
 		    &retval, SCTL_GATED);
+		CURVNET_RESTORE();
 		if (error != 0)
 			return (error);
 		*replylenp = (oldp != NULL) ? retval : 0;

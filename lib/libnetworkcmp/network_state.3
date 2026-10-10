@@ -1,0 +1,103 @@
+.\" SPDX-License-Identifier: BSD-2-Clause
+.Dd October 10, 2026
+.Dt NETWORK_STATE 3
+.Os
+.Sh NAME
+.Nm network_state_open ,
+.Nm network_state_watch ,
+.Nm network_state_close
+.Nd observe sampled network interface state
+.Sh LIBRARY
+.Li libnetworkcmp
+.Pq Fl lnetworkcmp
+.Sh SYNOPSIS
+.In network_state.h
+.Ft int
+.Fn network_state_open "struct network_state_client **client"
+.Ft int
+.Fn network_state_watch "struct network_state_client *client" "struct network_state_snapshot *snapshot" "uint32_t timeout_ms"
+.Ft void
+.Fn network_state_close "struct network_state_client *client"
+.Sh DESCRIPTION
+These functions observe the latest interface inventory from
+.Va system.Network.State .
+The caller needs the approved software attribute
+.Va system.network.observe
+and session right
+.Dv NETWORK_STATE_RIGHT_READ .
+No kernel token or network socket is returned.
+.Pp
+.Fn network_state_open
+opens a session.
+.Fn network_state_watch
+returns the initial snapshot immediately, then waits for a changed snapshot.
+Identical samples are suppressed and intermediate changes may be coalesced.
+The snapshot contains nonzero epoch and generation values, a
+.Va source_error ,
+and up to 256 interface records sorted by index.
+Each record contains index, name, flags, MTU, and link state
+(unknown, down, or up).
+No addresses or packet counters are exposed.
+Names are byte strings; escape control bytes before terminal output.
+.Pp
+A nonzero
+.Va source_error
+is an errno value indicating unavailable source data;
+.Va count
+is then zero.
+This is a successful observation, not a failed watch or an empty inventory.
+The initial source error may be
+.Er EAGAIN
+before the first sample finishes.
+Recovery produces another snapshot.
+.Pp
+BSDNetwork samples BSDSysctl's read-only interface inventory approximately
+one second after each completed read.
+This is neither an event history nor proof of Internet connectivity.
+Interface fields are not an atomic snapshot across all interfaces.
+Compare generations only within the same epoch.
+Reconnects and provider restarts establish a fresh observation cursor.
+.Pp
+A zero timeout polls; a finite timeout is in milliseconds.
+.Dv NETWORK_STATE_TIMEOUT_INFINITE
+waits without a watch deadline.
+An unchanged snapshot at the deadline returns
+.Er EAGAIN .
+The transport adds a five-second allowance to finite watch deadlines,
+saturating below the infinite value.
+.Pp
+Calls on a client are serialized.
+Only one watch may be outstanding per session.
+The provider allows 128 sessions, at most 16 per authenticated label,
+and closes sessions idle between requests for 30 seconds.
+Pending watches are governed by their watch deadline instead.
+.Pp
+.Fn network_state_close
+releases the client; callers must first finish concurrent calls.
+A client inherited across fork cannot be used in the child.
+.Sh RETURN VALUES
+Open and watch return zero on success or minus one with
+.Va errno
+set on failure.
+Watch leaves the caller's snapshot unchanged on failure.
+A validated server timeout preserves the session.
+Transport or protocol failures discard it; the next call attempts to reopen,
+and receives a fresh initial snapshot.
+The failed call is never silently retried.
+.Sh ERRORS
+.Bl -tag -width Er
+.It Bq Er EAGAIN
+No change before the watch deadline.
+.It Bq Er ECHILD
+The client belongs to the parent process.
+.It Bq Er EPROTO
+Malformed reply.
+.It Bq Er ETIMEDOUT
+Transport deadline expired.
+.El
+Discovery, authorization, allocation, and channel errors are also returned.
+.Sh SEE ALSO
+.Xr libnetworkcmp 3 ,
+.Xr sysctlcmp_interfaces 3 ,
+.Xr BSDNetwork 8 ,
+.Xr networkcmpctl 8

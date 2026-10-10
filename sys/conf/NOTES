@@ -858,7 +858,6 @@ options 	NETGRAPH_GIF_DEMUX
 options 	NETGRAPH_HOLE
 options 	NETGRAPH_IFACE
 options 	NETGRAPH_IP_INPUT
-options 	NETGRAPH_IPFW
 options 	NETGRAPH_KSOCKET
 options 	NETGRAPH_L2TP
 options 	NETGRAPH_LMI
@@ -1016,38 +1015,8 @@ device		dummymbuf
 # MROUTING enables the kernel multicast packet forwarder, which works
 # with mrouted and XORP.
 #
-# IPFIREWALL enables support for IP firewall construction, in
-# conjunction with the `ipfw' program.  IPFIREWALL_VERBOSE sends
-# logged packets to the system logger.  IPFIREWALL_VERBOSE_LIMIT
-# limits the number of times a matching entry can be logged.
-#
-# WARNING:  IPFIREWALL defaults to a policy of "deny ip from any to any"
-# and if you do not add other rules during startup to allow access,
-# YOU WILL LOCK YOURSELF OUT.  It is suggested that you set firewall_type=open
-# in /etc/rc.conf when first enabling this feature, then refining the
-# firewall rules in /etc/rc.firewall after you've tested that the new kernel
-# feature works properly.
-#
-# IPFIREWALL_DEFAULT_TO_ACCEPT causes the default rule (at boot) to
-# allow everything.  Use with care, if a cracker can crash your
-# firewall machine, they can get to your protected machines.  However,
-# if you are using it as an as-needed filter for specific problems as
-# they arise, then this may be for you.  Changing the default to 'allow'
-# means that you won't get stuck if the kernel and /sbin/ipfw binary get
-# out of sync.
-#
-# IPDIVERT enables the divert IP sockets, used by ``ipfw divert''.  It
-# depends on IPFIREWALL if compiled into the kernel.
-#
-# IPFIREWALL_NAT adds support for in kernel nat in ipfw, and it requires
-# LIBALIAS.
-#
-# IPFIREWALL_NAT64 adds support for in kernel NAT64 in ipfw.
-#
-# IPFIREWALL_NPTV6 adds support for in kernel NPTv6 in ipfw.
-#
-# IPFIREWALL_PMOD adds support for protocols modification module. Currently
-# it supports only TCP MSS modification.
+# IPDIVERT retains packet-diversion socket infrastructure.
+# Packet filtering is provided by PF; shaping is provided by Dummynet.
 #
 # IPSTEALTH enables code to support stealth forwarding (i.e., forwarding
 # packets without touching the TTL).  This can be useful to hide firewalls
@@ -1061,13 +1030,6 @@ device		dummymbuf
 # SOCKET_HHOOK enables the hhook(9) framework hooks for socket operations.
 #
 options 	MROUTING		# Multicast routing
-options 	IPFIREWALL		#firewall
-options 	IPFIREWALL_VERBOSE	#enable logging to syslogd(8)
-options 	IPFIREWALL_VERBOSE_LIMIT=100	#limit verbosity
-options 	IPFIREWALL_DEFAULT_TO_ACCEPT	#allow everything by default
-options 	IPFIREWALL_NAT		#ipfw kernel nat support
-options 	IPFIREWALL_NAT64	#ipfw kernel NAT64 support
-options 	IPFIREWALL_NPTV6	#ipfw kernel IPv6 NPT support
 options 	IPDIVERT		#divert sockets
 options 	IPFILTER		#ipfilter support
 options 	IPFILTER_LOG		#ipfilter logging
@@ -1104,8 +1066,8 @@ options		ACCEPT_FILTER_TLS
 # 'options IPSEC_SUPPORT'.
 options 	TCP_SIGNATURE		#include support for RFC 2385
 
-# DUMMYNET enables the "dummynet" bandwidth limiter.  You need IPFIREWALL
-# as well.  See dummynet(4) and ipfw(8) for more info.  When you run
+# DUMMYNET enables the Dummynet bandwidth limiter used by PF.
+# See dummynet(4), dnctl(8) and pf.conf(5).  When you run
 # DUMMYNET, HZ/kern.hz should be at least 1000 for adequate response.
 options 	DUMMYNET
 

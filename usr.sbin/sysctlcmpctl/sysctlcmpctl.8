@@ -1,5 +1,5 @@
 .\" SPDX-License-Identifier: BSD-2-Clause
-.Dd September 5, 2026
+.Dd October 10, 2026
 .Dt SYSCTLCMPCTL 8
 .Os
 .Sh NAME
@@ -16,6 +16,8 @@
 .Cm descr Ar name
 .Nm
 .Cm list Op Ar start-name
+.Nm
+.Cm interfaces
 .Sh DESCRIPTION
 .Nm
 reads and writes kernel
@@ -44,6 +46,19 @@ enumerates variable names in order, beginning at
 .Ar start-name
 or, when it is omitted, at the root.
 Every subcommand is subject to the caller's per-label read or write policy.
+.Sh INTERFACE INVENTORY
+.Cm interfaces
+prints one bounded snapshot as index, name, flags, MTU, and link-state fields.
+Control bytes, whitespace, and backslashes in names are escaped as hexadecimal
+bytes so each interface occupies one output line.
+The link state is unknown, down, or up; it is not a connectivity probe.
+The caller requires read permission for
+.Dq net.routetable
+in the provider policy.
+The command grants no additional access and performs no writes.
+See
+.Xr sysctlcmp_interfaces 3
+for snapshot size limits and error handling.
 .Sh SEE ALSO
 .Xr sysctl 8 ,
 .Xr libsysctlcmp 3 ,

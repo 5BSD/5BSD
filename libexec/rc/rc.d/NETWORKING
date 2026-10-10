@@ -3,7 +3,7 @@
 #
 
 # PROVIDE: NETWORKING
-# REQUIRE: netif netwait netoptions routing ppp ipfw stf
+# REQUIRE: netif netwait netoptions routing ppp stf
 # REQUIRE: defaultroute route6d resolv bridge
 # REQUIRE: static_arp static_ndp
 

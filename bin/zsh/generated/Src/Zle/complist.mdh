@@ -1,0 +1,39 @@
+#ifndef have_zshQscomplist_module
+#define have_zshQscomplist_module
+
+# ifndef IMPORTING_MODULE_zshQscomplist
+#   define boot_ boot_zshQscomplist
+#   define cleanup_ cleanup_zshQscomplist
+#   define features_ features_zshQscomplist
+#   define enables_ enables_zshQscomplist
+#   define setup_ setup_zshQscomplist
+#   define finish_ finish_zshQscomplist
+# endif /* !IMPORTING_MODULE_zshQscomplist */
+
+/* Module dependencies */
+# define IMPORTING_MODULE_zshQscomplete 1
+# include "complete.mdh"
+# define IMPORTING_MODULE_zshQszle 1
+# include "zle.mdh"
+# define IMPORTING_MODULE_zshQsmain 1
+# include "../../Src/zsh.mdh"
+
+# undef mod_import_variable
+# undef mod_import_function
+# if defined(IMPORTING_MODULE_zshQscomplist) &&  defined(MODULE)
+#  define mod_import_variable 
+#  define mod_import_function 
+# else
+#  define mod_import_function
+#  define mod_import_variable
+# endif /* IMPORTING_MODULE_zshQscomplist && MODULE */
+# include "complist.epro"
+# undef mod_import_variable
+# define mod_import_variable
+# undef mod_import_variable
+# define mod_import_variable
+# ifndef mod_export
+#  define mod_export 
+# endif /* mod_export */
+
+#endif /* !have_zshQscomplist_module */

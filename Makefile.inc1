@@ -3415,6 +3415,7 @@ _prebuild_libs=	${_kerberos5_lib_libasn1} \
 		lib/libcrypt \
 		lib/libc++ \
 		lib/libelf lib/libexpat \
+		lib/libfidl \
 		${_lib_libgssapi} \
 		lib/libjail \
 		lib/libkiconv lib/libkldelf lib/libkvm \
@@ -3460,6 +3461,7 @@ _prebuild_libs=	${_kerberos5_lib_libasn1} \
 lib/libservice__L: lib/libcapability__L lib/libchannel__L lib/libthr__L \
 	lib/libtrustedzfs__L lib/libcapsulert__L
 lib/libbsdfilesystem__L: lib/libchannel__L lib/libservice__L lib/libtrustedzfs__L
+lib/libfidl__L: lib/libc++__L lib/libchannel__L lib/libthr__L
 
 .if ${MK_GOOGLETEST} != "no"
 _prebuild_libs+= lib/libregex

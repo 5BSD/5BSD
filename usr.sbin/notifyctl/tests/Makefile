@@ -4,6 +4,11 @@ ATF_TESTS_SH=	notifyctl_test
 
 PROGS+=		notifyctl_test_bin
 PROGS+=		notifyctl_success_bin
+PROGS+=		no_ambient_exec
+BINDIR_no_ambient_exec=	${TESTSDIR}
+NO_SHARED.no_ambient_exec=	yes
+CFLAGS.no_ambient_exec+=	-I${SRCTOP}/lib/libservice
+LIBADD.no_ambient_exec+=	service
 BINDIR_notifyctl_test_bin=	${TESTSDIR}
 SRCS.notifyctl_test_bin=	notifyctl.c policy.c
 NO_SHARED.notifyctl_test_bin=	yes

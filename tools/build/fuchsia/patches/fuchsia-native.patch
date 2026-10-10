@@ -1,0 +1,239 @@
+--- a/fuchsia/tools/fidl/fidlgen_cpp/main.go
++++ b/fuchsia/tools/fidl/fidlgen_cpp/main.go
+@@ -5,14 +5,37 @@
+ package main
+ 
+ import (
++	"encoding/json"
++	"flag"
+ 	"go.fuchsia.dev/fuchsia/tools/fidl/fidlgen_cpp/codegen"
+ 	cpp "go.fuchsia.dev/fuchsia/tools/fidl/lib/fidlgen_cpp"
++	"log"
++	"os"
+ )
+ 
+ func main() {
+ 	flags := cpp.NewCmdlineFlags("llcpp", []string{"api_coverage"})
+-	root := cpp.Compile(flags.ParseAndLoadIR())
++	flag.BoolVar(&flags.NativeBSD, "native-bsd", false, "generate native BSD natural types only")
++	namesPath := flag.String("bsd-names", "", "write native binding name metadata")
++	ir := flags.ParseAndLoadIR()
++	root := cpp.Compile(ir)
++	if flags.NativeBSD {
++		root = cpp.CompileBSD(ir)
++	}
+ 	generator := codegen.NewGenerator(flags)
++	if flags.NativeBSD {
++		if *namesPath != "" {
++			data, err := json.MarshalIndent(cpp.BSDNames(ir), "", "  ")
++			if err != nil {
++				log.Fatal(err)
++			}
++			if err := os.WriteFile(*namesPath, append(data, '\n'), 0644); err != nil {
++				log.Fatal(err)
++			}
++		}
++		generator.GenerateFiles(root, []string{"Markers", "CommonTypesHeader", "CommonTypesSource", "NaturalTypesHeader", "NaturalTypesSource"})
++		return
++	}
+ 	generator.GenerateFiles(root, []string{
+ 		"WireHeader", "UnifiedHeader", "WireTestBase", "TestBase", "Markers",
+ 		"CommonTypesHeader", "CommonTypesSource",
+--- a/fuchsia/tools/fidl/lib/fidlgen_cpp/codegen_options.go
++++ b/fuchsia/tools/fidl/lib/fidlgen_cpp/codegen_options.go
+@@ -27,6 +27,9 @@
+ 
+ // CmdlineFlags are the common command-line flags for all C++ backends.
+ type CmdlineFlags struct {
++	// NativeBSD emits only native natural types; no Zircon messaging APIs.
++	NativeBSD bool
++
+ 	// Flags
+ 
+ 	// json is the path to the JSON IR.
+--- a/fuchsia/tools/fidl/lib/fidlgen_cpp/ir.go
++++ b/fuchsia/tools/fidl/lib/fidlgen_cpp/ir.go
+@@ -483,6 +483,8 @@
+ }
+ 
+ type compiler struct {
++	nativeBSD bool
++
+ 	symbolPrefix   string
+ 	decls          fidlgen.DeclInfoMap
+ 	library        fidlgen.LibraryIdentifier
+@@ -633,6 +635,9 @@
+ 			c.containsDriverReferences = true
+ 		}
+ 		r.nameVariants = nameVariantsForHandle(val.ResourceIdentifier, val.HandleSubtype)
++		if c.nativeBSD {
++			r.nameVariants.Unified = makeName("fidl::bsd::Descriptor")
++		}
+ 		r.WireFamily = FamilyKinds.Reference
+ 		r.NeedsDtor = true
+ 		r.Kind = TypeKinds.Handle
+@@ -675,6 +680,16 @@
+ 		r.Kind = TypeKinds.Endpoint
+ 		r.IsResource = true
+ 		r.NaturalFieldConstraint = fmt.Sprintf("fidl::internal::NaturalCodingConstraintHandle<ZX_OBJ_TYPE_CHANNEL, ZX_DEFAULT_CHANNEL_RIGHTS, %t>", val.Nullable)
++		if c.nativeBSD {
++			c.handleTypes[fidlgen.HandleSubtypeChannel] = struct{}{}
++			endpoint := "fidl::bsd::ClientEnd"
++			if val.Role == fidlgen.ServerRole {
++				endpoint = "fidl::bsd::ServerEnd"
++			}
++			r.nameVariants.Unified = makeName(endpoint).template(p.Unified)
++			r.NaturalFieldConstraint = fmt.Sprintf("fidl::internal::NaturalCodingConstraintHandle<ZX_OBJ_TYPE_CHANNEL, ZX_RIGHT_SAME_RIGHTS, %t>", val.Nullable)
++		}
++
+ 		r.WireFieldConstraint = fmt.Sprintf("fidl::internal::WireCodingConstraintHandle<ZX_OBJ_TYPE_CHANNEL, ZX_DEFAULT_CHANNEL_RIGHTS, %t>", val.Nullable)
+ 	case fidlgen.PrimitiveType:
+ 		r.nameVariants = NameVariantsForPrimitive(val.PrimitiveSubtype)
+@@ -770,12 +785,22 @@
+ }
+ 
+ func Compile(r fidlgen.Root) *Root {
++	return compile(r, false)
++}
++
++// CompileBSD selects native descriptor types without rewriting generated C++.
++func CompileBSD(r fidlgen.Root) *Root {
++	return compile(r, true)
++}
++
++func compile(r fidlgen.Root, nativeBSD bool) *Root {
+ 	root := Root{
+ 		Experiments: r.Experiments,
+ 		Library:     r.Name.Parse(),
+ 	}
+ 
+ 	c := compiler{
++		nativeBSD:         nativeBSD,
+ 		symbolPrefix:      formatLibraryPrefix(root.Library),
+ 		decls:             r.DeclInfo(),
+ 		library:           root.Library,
+@@ -952,6 +977,9 @@
+ 	}
+ 	sort.Sort(sort.StringSlice(handleTypes))
+ 	root.HandleTypes = handleTypes
++	if nativeBSD && len(handleTypes) != 0 {
++		root.HandleTypes = []string{"fidl/bsd/descriptor.h", "fidl/bsd/endpoint.h"}
++	}
+ 
+ 	root.ContainsDriverReferences = c.containsDriverReferences
+ 
+--- a/fuchsia/tools/fidl/lib/fidlgen_cpp/generator.go
++++ b/fuchsia/tools/fidl/lib/fidlgen_cpp/generator.go
+@@ -29,6 +29,7 @@
+ 
+ 	funcs := mergeFuncMaps(commonTemplateFuncs, extraFuncs)
+ 	funcs = mergeFuncMaps(funcs, template.FuncMap{
++		"NativeBSD": func() bool { return flags.NativeBSD },
+ 		"Filename": func(name string, library fidlgen.LibraryIdentifier) string {
+ 			return gen.generateFilename(name, library)
+ 		},
+@@ -36,6 +37,35 @@
+ 			return gen.ExperimentEnabled(experiment)
+ 		},
+ 	})
++
++	if flags.NativeBSD {
++		// Resource definitions are native on BSD. Preserve namespace bookkeeping
++		// without emitting Fuchsia platform guards.
++		begin := func() string {
++			namespaceStack = append(namespaceStack, currentNamespace)
++			return ""
++		}
++		end := func() string {
++			last := len(namespaceStack) - 1
++			ns := namespaceStack[last]
++			namespaceStack = namespaceStack[:last]
++			return ensureNamespace(ns)
++		}
++		funcs["IfdefFuchsia"] = begin
++		funcs["EndifFuchsia"] = end
++		funcs["IfdefFuchsiaIf"] = func(condition bool) string {
++			if condition {
++				return begin()
++			}
++			return ""
++		}
++		funcs["EndifFuchsiaIf"] = func(condition bool) string {
++			if condition {
++				return end()
++			}
++			return ""
++		}
++	}
+ 
+ 	formatter := NewFormatter(flags.clangFormatPath)
+ 	gen.gen = fidlgen.NewGenerator(flags.name, templates, formatter, funcs)
+--- a/fuchsia/tools/fidl/fidlgen_cpp/codegen/file_markers.tmpl
++++ b/fuchsia/tools/fidl/fidlgen_cpp/codegen/file_markers.tmpl
+@@ -22,6 +22,10 @@
+   #include <lib/fidl/cpp/wire/unknown_interactions.h>
+   #include <lib/fidl/cpp/features.h>
+ 
++  {{ if NativeBSD }}
++  namespace fidl::bsd { struct Transport; }
++  {{ end }}
++
+   {{ range .Protocols }}
+     {{- $protocol := . }}
+     {{ EnsureNamespace . }}
+@@ -29,7 +33,7 @@
+     class {{ .Name }} final {
+       {{ .Name }}() = delete;
+      public:
+-      using Transport = {{ .Transport.Type }};
++      using Transport = {{ if NativeBSD }}::fidl::bsd::Transport{{ else }}{{ .Transport.Type }}{{ end }};
+ 
+       static constexpr ::fidl::internal::Openness kOpenness = {{ .OpennessValue }};
+ 
+--- a/fuchsia/tools/fidl/lib/fidlgen_cpp/bsd_names.go
++++ b/fuchsia/tools/fidl/lib/fidlgen_cpp/bsd_names.go
+@@ -0,0 +1,44 @@
++// SPDX-License-Identifier: BSD-2-Clause
++// Copyright 2026 The 5BSD Authors.
++// 5BSD addition to the Fuchsia import; not covered by Fuchsia's PATENTS.
++
++package fidlgen_cpp
++
++import "go.fuchsia.dev/fuchsia/tools/fidl/lib/fidlgen"
++
++// BSDNames exports the same transformations used by the natural-type templates.
++// Native protocol/C projections must not guess C++ spelling from FIDL names.
++func BSDNames(r fidlgen.Root) map[string]map[string]string {
++	c := compiler{decls: r.DeclInfo(), library: r.Name.Parse()}
++	types := map[string]string{}
++	members := map[string]string{}
++	for id, info := range c.decls {
++		switch info.Type {
++		case fidlgen.AliasDeclType, fidlgen.BitsDeclType, fidlgen.ConstDeclType,
++			fidlgen.EnumDeclType, fidlgen.ProtocolDeclType, fidlgen.StructDeclType,
++			fidlgen.TableDeclType, fidlgen.UnionDeclType:
++			types[string(id)] = c.compileNameVariants(id).Unified.String()
++		}
++	}
++	for _, d := range r.Structs {
++		for _, m := range d.Members {
++			members[string(d.Name)+"/"+string(m.Name)] = structMemberContext.transform(m.Name).Unified.String()
++		}
++	}
++	for _, d := range r.Tables {
++		for _, m := range d.Members {
++			members[string(d.Name)+"/"+string(m.Name)] = tableMemberContext.transform(m.Name).Unified.String()
++		}
++	}
++	for _, d := range r.Unions {
++		for _, m := range d.Members {
++			members[string(d.Name)+"/"+string(m.Name)] = unionMemberContext.transform(m.Name).Unified.String()
++		}
++	}
++	for _, d := range r.Protocols {
++		for _, m := range d.Methods {
++			members[string(d.Name)+"/"+string(m.Name)] = methodNameContext.transform(m.Name).Unified.String()
++		}
++	}
++	return map[string]map[string]string{"types": types, "members": members}
++}

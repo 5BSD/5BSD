@@ -1,0 +1,14 @@
+--- a/fuchsia/zircon/system/public/zircon/compiler.h
++++ b/fuchsia/zircon/system/public/zircon/compiler.h
+@@ -234,7 +234,11 @@
+ 
+ // The given function or global should be given a weak symbol, or a weak
+ // alias to another symbol.
++// FreeBSD reserves __WEAK for its assembler declaration macro. FIDL does not
++// use this Zircon shorthand; preserve the native public-header namespace.
++#if !defined(__FreeBSD__)
+ #define __WEAK __attribute__((__weak__))
++#endif
+ #define __WEAK_ALIAS(x) __attribute__((__weak__, __alias__(x)))
+ 
+ // The given static variable should still be emitted by the compiler, even if it

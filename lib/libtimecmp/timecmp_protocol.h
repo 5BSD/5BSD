@@ -3,13 +3,19 @@
  *
  * Copyright (c) 2026 Kory Heard
  *
- * system.Time wire protocol.  A client holds a system.Time channel and asks the
+ * Legacy pre-FIDL system.Time wire protocol, retained for source/ABI compatibility.
+ * The current client and provider use timecmp.fidl; these records are rejected
+ * by the current provider.  This header does not describe the active wire format.
+ *
+ * Historical protocol:  A client holds a system.Time channel and asks the
  * broker to read CLOCK_REALTIME (unprivileged, allowed to any holder) or, when
  * the per-label policy permits, to STEP it (clock_settime) or SLEW it (adjtime)
  * -- the two privileged operations.  Fixed-size messages; no variable payload.
  */
 #ifndef _TIMECMP_PROTOCOL_H_
 #define	_TIMECMP_PROTOCOL_H_
+
+#include <sys/cdefs.h>
 
 #include <stddef.h>
 #include <stdint.h>
@@ -59,10 +65,13 @@ _Static_assert(sizeof(struct timecmp_time) == 16, "timecmp time ABI");
 /*
  * Validate a received message of the given role: magic, a known
  * opcode, and a length that is either the bare header or header + one
- * timecmp_time.  Returns 0 if well-formed, -1 otherwise.  Shared by the client
- * and the BSDTime daemon (both link libtimecmp).
+ * timecmp_time.  Returns 0 if well-formed, -1 otherwise.  Retained for legacy
+ * consumers; the current client and provider use generated FIDL validation.
  */
+__BEGIN_DECLS
 int	timecmp_validate_message(const struct timecmp_msg *, size_t length,
 	    enum timecmp_message_role);
+
+__END_DECLS
 
 #endif /* _TIMECMP_PROTOCOL_H_ */

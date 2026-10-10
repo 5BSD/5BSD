@@ -197,6 +197,83 @@ get_cppc_regs_one(const struct hwp_softc *const sc,
 
 #define MSR_NOT_READ_MSG "Not read (fault or previous errors)"
 
+struct hwp_caps_read {
+	uint64_t value;
+	int error;
+};
+
+static void
+intel_hwp_read_caps(void *arg)
+{
+	struct hwp_caps_read *data = arg;
+
+	data->error = rdmsr_safe(MSR_IA32_HWP_CAPABILITIES, &data->value);
+}
+
+static int
+intel_hwp_caps_sysctl_handler(SYSCTL_HANDLER_ARGS)
+{
+	struct hwp_softc *sc = arg1;
+	struct hwp_caps_read data;
+	struct pcpu *pc;
+	u_int value;
+
+	if (req->newptr != NULL)
+		return (EPERM);
+	pc = cpu_get_pcpu(sc->dev);
+	if (pc == NULL)
+		return (ENXIO);
+	/* Guaranteed/efficient capabilities may change; do not use attach cache. */
+	smp_rendezvous_cpu(pc->pc_cpuid, smp_no_rendezvous_barrier,
+	    intel_hwp_read_caps, smp_no_rendezvous_barrier, &data);
+	if (data.error != 0)
+		return (EIO);
+	value = (data.value >> arg2) & 0xff;
+	return (sysctl_handle_int(oidp, &value, 0, req));
+}
+
+struct hwp_frequency_read {
+	u_int regs[4];
+	int error;
+};
+
+static void
+intel_hwp_read_frequency(void *arg)
+{
+	struct hwp_frequency_read *data = arg;
+
+	do_cpuid(0, data->regs);
+	if (data->regs[0] < 0x16) {
+		data->error = EOPNOTSUPP;
+		return;
+	}
+	do_cpuid(0x16, data->regs);
+	data->error = 0;
+}
+
+static int
+intel_hwp_frequency_sysctl_handler(SYSCTL_HANDLER_ARGS)
+{
+	struct hwp_softc *sc = arg1;
+	struct hwp_frequency_read data;
+	struct pcpu *pc;
+	u_int value;
+
+	if (req->newptr != NULL)
+		return (EPERM);
+	pc = cpu_get_pcpu(sc->dev);
+	if (pc == NULL)
+		return (ENXIO);
+	smp_rendezvous_cpu(pc->pc_cpuid, smp_no_rendezvous_barrier,
+	    intel_hwp_read_frequency, smp_no_rendezvous_barrier, &data);
+	if (data.error != 0)
+		return (data.error);
+	value = data.regs[arg2] & 0xffff;
+	if (value == 0)
+		return (ENXIO);
+	return (sysctl_handle_int(oidp, &value, 0, req));
+}
+
 static int
 intel_hwp_dump_sysctl_handler(SYSCTL_HANDLER_ARGS)
 {
@@ -536,7 +613,16 @@ out:
 static int
 intel_hwpstate_attach(device_t dev)
 {
+	static const char *frequencies[] = {
+		"cpuid_base_frequency_mhz", "cpuid_max_frequency_mhz",
+		"cpuid_bus_frequency_mhz"
+	};
+	static const char *caps[] = {
+		"caps_highest_performance", "caps_guaranteed_performance",
+		"caps_efficient_performance", "caps_lowest_performance"
+	};
 	struct hwp_softc *sc;
+	size_t i;
 
 	sc = device_get_softc(dev);
 	sc->dev = dev;
@@ -565,6 +651,20 @@ intel_hwpstate_attach(device_t dev)
 		sc->hwp_perf_bias = true;
 
 	set_autonomous_hwp(sc);
+
+	for (i = 0; i < nitems(frequencies); i++)
+		SYSCTL_ADD_PROC(device_get_sysctl_ctx(dev),
+		    SYSCTL_CHILDREN(device_get_sysctl_tree(dev)), OID_AUTO,
+		    frequencies[i], CTLTYPE_UINT | CTLFLAG_RD | CTLFLAG_MPSAFE,
+		    sc, i, intel_hwp_frequency_sysctl_handler, "IU",
+		    "CPUID.16H specification frequency (MHz, not measured)");
+	for (i = 0; i < nitems(caps); i++)
+		SYSCTL_ADD_PROC(device_get_sysctl_ctx(dev),
+		    SYSCTL_CHILDREN(device_get_sysctl_tree(dev)), OID_AUTO,
+		    caps[i], CTLTYPE_UINT | CTLFLAG_RD | CTLFLAG_MPSAFE,
+		    sc, i * 8, intel_hwp_caps_sysctl_handler, "IU",
+		    "Hardware performance capability (HWP units, not MHz)");
+
 	SYSCTL_ADD_PROC(device_get_sysctl_ctx(dev),
 	    SYSCTL_STATIC_CHILDREN(_debug), OID_AUTO, device_get_nameunit(dev),
 	    CTLTYPE_STRING | CTLFLAG_RD | CTLFLAG_SKIP | CTLFLAG_MPSAFE,

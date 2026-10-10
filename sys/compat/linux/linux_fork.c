@@ -57,6 +57,7 @@
 #endif
 #include <compat/linux/linux.h>
 #include <compat/linux/linux_emul.h>
+#include <compat/linux/linux_file.h>
 #include <compat/linux/linux_fork.h>
 #include <compat/linux/linux_futex.h>
 #include <compat/linux/linux_mib.h>
@@ -65,17 +66,19 @@
 #include <compat/linux/linux_util.h>
 
 /*
- * Path-state detachment is currently supported only for single-threaded
+ * Path and file-table detachment are supported only for single-threaded
  * Linux64 amd64 processes.  Linux permits per-thread resource ownership;
- * replacing p_pd in a multithreaded process would affect its siblings too.
+ * replacing p_pd or p_fd in a multithreaded process would affect siblings.
  */
 int
 linux_unshare(struct thread *td, struct linux_unshare_args *args)
 {
 #if defined(__amd64__) && !defined(COMPAT_LINUX32)
 	struct proc *p;
+	int error;
 
-	if ((args->flags & ~((l_ulong)LINUX_CLONE_FS)) != 0)
+	if ((args->flags & ~((l_ulong)(LINUX_CLONE_FS |
+	    LINUX_CLONE_FILES))) != 0)
 		return (EINVAL);
 	if (args->flags == 0)
 		return (0);
@@ -88,8 +91,14 @@ linux_unshare(struct thread *td, struct linux_unshare_args *args)
 	}
 	PROC_UNLOCK(p);
 
-	/* No sibling can create a thread while we detach the path state. */
-	pdunshare(td);
+	/* No sibling can create a thread while we detach either resource. */
+	if ((args->flags & LINUX_CLONE_FILES) != 0) {
+		error = linux_fdunshare(td);
+		if (error != 0)
+			return (error);
+	}
+	if ((args->flags & LINUX_CLONE_FS) != 0)
+		pdunshare(td);
 	return (0);
 #else
 	return (ENOSYS);

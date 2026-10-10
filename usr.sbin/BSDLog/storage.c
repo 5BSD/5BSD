@@ -657,9 +657,12 @@ handle_session(struct storage_session *session, struct logcmp_store *store)
 		if (message->length != 0)
 			error = EPROTO;
 		else if (drain_storage_session(session, store, SIZE_MAX,
-		    &session->pending) == -1)
+		    &session->pending) == -1) {
 			error = errno != 0 ? errno : EIO;
-		else if (logcmp_store_flush(store) == -1)
+			(void)send_status(session->fd, STORAGE_OP_FLUSH, error);
+			/* The consumed record cannot be acknowledged by a later flush. */
+			return (1);
+		} else if (logcmp_store_flush(store) == -1)
 			error = errno != 0 ? errno : EIO;
 		if (send_status(session->fd, STORAGE_OP_FLUSH, error) == -1)
 			return (1);
@@ -693,7 +696,7 @@ handle_session(struct storage_session *session, struct logcmp_store *store)
 		    &session->pending) == -1) {
 			error = errno != 0 ? errno : EIO;
 			(void)send_status(session->fd, STORAGE_OP_QUERY, error);
-			break;
+			return (1);
 		}
 		query->label[query->label_length] = '\0';
 		{

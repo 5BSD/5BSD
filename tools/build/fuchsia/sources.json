@@ -1,0 +1,383 @@
+{
+  "format": 1,
+  "sources": [
+    {
+      "path": "fuchsia/tools/fidl",
+      "url": "https://fuchsia.googlesource.com/fuchsia/+archive/3c0275544589e9bc156739d210052e8174ae9c60/tools/fidl.tar.gz",
+      "sha256": "ab955c1ce543fe040b4b10184249d45d0a55fa86e716e811f280f21df03e50b7",
+      "tree_sha256": "dd37724a82cc59e01bf63887b3d9c5f5a760b9e65480f9a526bfdef9ba12da33"
+    },
+    {
+      "path": "fuchsia/sdk/lib/fidl",
+      "url": "https://fuchsia.googlesource.com/fuchsia/+archive/3c0275544589e9bc156739d210052e8174ae9c60/sdk/lib/fidl.tar.gz",
+      "sha256": "802be9535d965f321f900a0ebe2523a5947a3dc9e5f554e717b9a082ead50b06",
+      "tree_sha256": "919f2498e590d630c7073c38760e0165dc13c16ae5f20c069d6801a35e1b751c"
+    },
+    {
+      "path": "fuchsia/sdk/lib/fit",
+      "url": "https://fuchsia.googlesource.com/fuchsia/+archive/3c0275544589e9bc156739d210052e8174ae9c60/sdk/lib/fit.tar.gz",
+      "sha256": "d0fc5e9a18706e25d0bd848ad7d5d1d2e4868cd3fa155e078cd9af66048c1690",
+      "tree_sha256": "7622ffcf7707a92f943d13f5e6cd81bbddd593573bdb546967d2ba9a495ea580"
+    },
+    {
+      "path": "fuchsia/sdk/lib/stdcompat",
+      "url": "https://fuchsia.googlesource.com/fuchsia/+archive/3c0275544589e9bc156739d210052e8174ae9c60/sdk/lib/stdcompat.tar.gz",
+      "sha256": "3854e9423012e0f50d9ad747103fc0f374add2b0770a3256d9fd76b31cc30cb0",
+      "tree_sha256": "431b9c4aabb3d11bf44a88dce683d1168ae4bf40a67e7e02f188f6225a9cc32f"
+    },
+    {
+      "path": "fuchsia/src/lib/fxl",
+      "url": "https://fuchsia.googlesource.com/fuchsia/+archive/3c0275544589e9bc156739d210052e8174ae9c60/src/lib/fxl.tar.gz",
+      "sha256": "d4ca58bbe91b05720162c6f099ff3255ccca11345d9dc82b1b05d5a53f219ce7",
+      "tree_sha256": "161c831ebbdc6969a6140c85f6f10476f17560188413c8bf312db5cf3cfa6fdb"
+    },
+    {
+      "path": "fuchsia/src/lib/cmdline",
+      "url": "https://fuchsia.googlesource.com/fuchsia/+archive/3c0275544589e9bc156739d210052e8174ae9c60/src/lib/cmdline.tar.gz",
+      "sha256": "4d90c939b06b5a04b7ffb957cb83dbb2de3dd928ca2b6496c71de7709595ea4e",
+      "tree_sha256": "0dba4f389f33dbf2baad2991c1e78706fa2d9b8e96549be20a50eed8ec841ad2"
+    },
+    {
+      "path": "fuchsia/zircon/system/public",
+      "url": "https://fuchsia.googlesource.com/fuchsia/+archive/3c0275544589e9bc156739d210052e8174ae9c60/zircon/system/public.tar.gz",
+      "sha256": "2f54a5b624b93684ba9f1b9c2715d4191d8c814121eb4150af45bcd8a3a32943",
+      "tree_sha256": "feec7eb6e84291ca9c0c08c4dcfa3592eb0c10784163cd32ff500570801815be"
+    },
+    {
+      "path": "fuchsia/zircon/system/ulib/zx",
+      "url": "https://fuchsia.googlesource.com/fuchsia/+archive/3c0275544589e9bc156739d210052e8174ae9c60/zircon/system/ulib/zx.tar.gz",
+      "sha256": "f623e4da2d1dcfedf9b565c7b283841751ecf2a69868a8d5cebbbf3450d23775",
+      "tree_sha256": "82ebdf971f44b5ca6d73573cd20cd58fce5aad84ce3758bbfe20dba6dc0c9151"
+    },
+    {
+      "path": "fuchsia/src/connectivity/lowpan",
+      "url": "https://fuchsia.googlesource.com/fuchsia/+archive/3c0275544589e9bc156739d210052e8174ae9c60/src/connectivity/lowpan.tar.gz",
+      "sha256": "de89f140b97fb9e0383374f1d66f58b4718754426995f3874ffaa9283c7b2627",
+      "tree_sha256": "b951dc76601ce72b55a130aeee0fc8ad45fc33d72663775cecad03c4edcfce30"
+    },
+    {
+      "path": "fuchsia/src/connectivity/openthread",
+      "url": "https://fuchsia.googlesource.com/fuchsia/+archive/3c0275544589e9bc156739d210052e8174ae9c60/src/connectivity/openthread.tar.gz",
+      "sha256": "f7915425cfd348a520aca639bc47e3f713eee03a5a707a6aefd1a9cd2115fdb7",
+      "tree_sha256": "f30035a672a0de63690b37c7acbcaba4bca64d6819bc9c7316d524bf0b6451f9"
+    },
+    {
+      "path": "fuchsia/sdk/fidl/fuchsia.lowpan",
+      "url": "https://fuchsia.googlesource.com/fuchsia/+archive/3c0275544589e9bc156739d210052e8174ae9c60/sdk/fidl/fuchsia.lowpan.tar.gz",
+      "sha256": "e536eb26e02dbefcbb6972fa612ddb76aa600bc655120f06aadd62ce6453e3af",
+      "tree_sha256": "d1438306660b2f0f37f03e65429843d85a659e771084bdc55dd2a7e731819fff"
+    },
+    {
+      "path": "fuchsia/sdk/fidl/fuchsia.lowpan.device",
+      "url": "https://fuchsia.googlesource.com/fuchsia/+archive/3c0275544589e9bc156739d210052e8174ae9c60/sdk/fidl/fuchsia.lowpan.device.tar.gz",
+      "sha256": "143b4007e305f57df068a74bc93a8ae5792f273e6b5fe85a6dfb01d42736f8d4",
+      "tree_sha256": "d9b494cb1fcba179310e902307c12f19fa9044753bf1fc81827b0411c69b93c2"
+    },
+    {
+      "path": "fuchsia/sdk/fidl/fuchsia.lowpan.thread",
+      "url": "https://fuchsia.googlesource.com/fuchsia/+archive/3c0275544589e9bc156739d210052e8174ae9c60/sdk/fidl/fuchsia.lowpan.thread.tar.gz",
+      "sha256": "87374979ff85a197466983f65a2d6e944a58d1aac5e2c1ad027e4c554be5e857",
+      "tree_sha256": "80fde8535a2f60625c599d242de4ebec3a7799b57c17280b34576fd1cf9d5b33"
+    },
+    {
+      "path": "fuchsia/sdk/fidl/fuchsia.lowpan.spinel",
+      "url": "https://fuchsia.googlesource.com/fuchsia/+archive/3c0275544589e9bc156739d210052e8174ae9c60/sdk/fidl/fuchsia.lowpan.spinel.tar.gz",
+      "sha256": "7c3e5c723bd39395684ec8133428647fa385d1cf7afe8c8c4807c593815f8864",
+      "tree_sha256": "f6c601cd15fe74a62c3bd6968bd34bff1b0d70c7a9cc2ac99b4887e324b9f8f7"
+    },
+    {
+      "path": "fuchsia/sdk/fidl/zx",
+      "url": "https://fuchsia.googlesource.com/fuchsia/+archive/3c0275544589e9bc156739d210052e8174ae9c60/sdk/fidl/zx.tar.gz",
+      "sha256": "bd9093c3937eb4cba128c2d57558b0985d2f34d13e58ad3d38349fb4c9d74c65",
+      "tree_sha256": "633dfca5815e3de222a44b4eb44d28e36c4c8b3aaa60334ffa01b91b6a366f33"
+    },
+    {
+      "path": "fuchsia/sdk/lib/zircon-assert",
+      "url": "https://fuchsia.googlesource.com/fuchsia/+archive/3c0275544589e9bc156739d210052e8174ae9c60/sdk/lib/zircon-assert.tar.gz",
+      "sha256": "dd91073ce2d468813994fa42ecfea8347526bde76a5435a5ae4894790a1c3e7a",
+      "tree_sha256": "bb2b7332b1b7fbc19ffb70e8c0158b8e916dcc4c909005218cecc48ce4c280c0"
+    },
+    {
+      "path": "fuchsia/docs/reference/fidl/language",
+      "url": "https://fuchsia.googlesource.com/fuchsia/+archive/3c0275544589e9bc156739d210052e8174ae9c60/docs/reference/fidl/language.tar.gz",
+      "sha256": "571244cdd6b1a576c0dade4cf7aec0d91b58a9dacdc490b8133cc43ca890b780",
+      "tree_sha256": "327eafc7536e1e21181d2434a9b3f387080b0708a51675c6cc45d2c5dd43f89c"
+    },
+    {
+      "path": "fuchsia/docs/error",
+      "url": "https://fuchsia.googlesource.com/fuchsia/+archive/3c0275544589e9bc156739d210052e8174ae9c60/docs/error.tar.gz",
+      "sha256": "7bd77b1c8603ad8d81f080a5728403806d5594b76283ef6d3aa9066b6cac5fef",
+      "tree_sha256": "6d7908f5fc49e65992434f3971315da18a53b21665be7f5f1ba7a42f4b83fa18"
+    },
+    {
+      "path": "fuchsia/sdk/lib/fidl_base",
+      "url": "https://fuchsia.googlesource.com/fuchsia/+archive/3c0275544589e9bc156739d210052e8174ae9c60/sdk/lib/fidl_base.tar.gz",
+      "sha256": "2ac437dcb56fccfc69695ddabac9bad3b64615b43d3127ff03bf688e66df3c7f",
+      "tree_sha256": "86602ad52c0f0928d92f182626b8240f51786e25a8dd929c35fab565fc87f181"
+    },
+    {
+      "path": "fuchsia/LICENSE",
+      "url": "https://fuchsia.googlesource.com/fuchsia/+/3c0275544589e9bc156739d210052e8174ae9c60/LICENSE?format=TEXT",
+      "sha256": "83c1763356e822adde0a2cae748d938a73fdc263849ccff6b27776dff213bd32",
+      "file": true,
+      "base64": true
+    },
+    {
+      "path": "fuchsia/PATENTS",
+      "url": "https://fuchsia.googlesource.com/fuchsia/+/3c0275544589e9bc156739d210052e8174ae9c60/PATENTS?format=TEXT",
+      "sha256": "52beb3ac72a0e7f5060384d16e4e6f91573016448fbff363c0b01a66fe99f547",
+      "file": true,
+      "base64": true
+    },
+    {
+      "path": "fuchsia/AUTHORS",
+      "url": "https://fuchsia.googlesource.com/fuchsia/+/3c0275544589e9bc156739d210052e8174ae9c60/AUTHORS?format=TEXT",
+      "sha256": "48815dbcb90b34f9c93914a5ec66a463821d51f47bf44986ed5f9f5a8f12d433",
+      "file": true,
+      "base64": true
+    },
+    {
+      "path": "openthread",
+      "url": "https://codeload.github.com/openthread/openthread/tar.gz/0542780e3ac117196b77a60abc1052e4c3cdad12",
+      "sha256": "d2cbd4a083a5c44c5f046ed158b066eb16cf0ff18dc8d99b0d313f6725539814",
+      "strip_components": 1,
+      "exclude": [
+        "AGENTS.md",
+        ".gemini"
+      ],
+      "exclude_reason": "Upstream coding-agent instructions; they would direct agents working in the 5BSD tree."
+    },
+    {
+      "path": "connectedhomeip",
+      "url": "https://codeload.github.com/project-chip/connectedhomeip/tar.gz/d2a28e75da517d7aa5558244fcd2487c7239d02e",
+      "sha256": "c3c6ac961dd147bb61c7fd543da599e609f3b62241ff586f1c1f4b506e3a2316",
+      "strip_components": 1,
+      "include": [
+        "LICENSE",
+        "NOTICE",
+        "scripts/py_matter_idl",
+        "examples/all-clusters-app/all-clusters-common/all-clusters-app.matter",
+        "examples/lighting-app/lighting-common/lighting-app.matter",
+        "examples/lock-app/lock-common/lock-app.matter",
+        "examples/thermostat/thermostat-common/thermostat.matter",
+        "src/app/zap-templates/zcl/data-model/chip/chip-types.xml",
+        "src/controller/data_model/controller-clusters.matter"
+      ],
+      "include_reason": "Only the Matter IDL tooling and its test inputs are imported. The full archive contains CSA data_model files licensed for internal use only, vendor files under confidential or chip-only terms, and unlicensed ROM images, which must not be redistributed (license review 2026-10-10)."
+    },
+    {
+      "path": "openthread/third_party/mbedtls/repo",
+      "url": "https://codeload.github.com/Mbed-TLS/mbedtls/tar.gz/e185d7fd85499c8ce5ca2a54f5cf8fe7dbe3f8df",
+      "sha256": "052dccf3a404dce25a467c6fe044b0c858d609ace8e883b59e9dfd479fdd4528",
+      "strip_components": 1
+    },
+    {
+      "path": "openthread/third_party/mbedtls/repo/framework",
+      "url": "https://codeload.github.com/Mbed-TLS/mbedtls-framework/tar.gz/457996474728cb8e968ed21953b72f74d2f536b2",
+      "sha256": "c15bcc24fc43bdf325b0e04fa63270daf6e9488167b94b46547d8134efa9c906",
+      "strip_components": 1
+    },
+    {
+      "path": "fuchsia/third_party/go-cmp",
+      "url": "https://codeload.github.com/google/go-cmp/tar.gz/9b12f366a942ebc7254abc7f32ca05068b455fb7",
+      "sha256": "c81581c6613dce036c54e569260feea583ca7a09a8d8c411622e0c179fc79047",
+      "strip_components": 1
+    },
+    {
+      "path": "fuchsia/sdk/lib/utf-utils",
+      "url": "https://fuchsia.googlesource.com/fuchsia/+archive/3c0275544589e9bc156739d210052e8174ae9c60/sdk/lib/utf-utils.tar.gz",
+      "sha256": "cc76fb25537f7ed73bdc781ced23ee022f89ccec04b18705d5f55297a6201c6c",
+      "tree_sha256": "070b9ad802e9c6a588b30c295e3b6c65669a07780ac459d65ebf5dcdf9830635"
+    },
+    {
+      "path": "fuchsia/src/zircon/lib/zircon",
+      "url": "https://fuchsia.googlesource.com/fuchsia/+archive/3c0275544589e9bc156739d210052e8174ae9c60/src/zircon/lib/zircon.tar.gz",
+      "sha256": "99da88e57153a05612ed2d949b36d31b16137d05e504a7f9a66ef37a9b034c17",
+      "tree_sha256": "2491b38c917e53f4588de31c8eb6e944c41cad3778ae3ec000a2204756afd785"
+    },
+    {
+      "path": "fuchsia/src/tests/fidl/conformance_suite",
+      "url": "https://fuchsia.googlesource.com/fuchsia/+archive/3c0275544589e9bc156739d210052e8174ae9c60/src/tests/fidl/conformance_suite.tar.gz",
+      "sha256": "ba80bb7ca98e510dd420fc9324efdb7efe19ecd34e3284d4b2c869cad61eed3f",
+      "tree_sha256": "adb06568e9bf9c7843fd2686a58f26106346606d9534c84e0e444ca5caa39f2e"
+    }
+  ],
+  "metadata": {
+    "fuchsia/UPSTREAM.json": {
+      "repository": "https://fuchsia.googlesource.com/fuchsia",
+      "commit": "3c0275544589e9bc156739d210052e8174ae9c60",
+      "archives": [
+        {
+          "path": "fuchsia/tools/fidl",
+          "url": "https://fuchsia.googlesource.com/fuchsia/+archive/3c0275544589e9bc156739d210052e8174ae9c60/tools/fidl.tar.gz",
+          "archive_sha256": "ab955c1ce543fe040b4b10184249d45d0a55fa86e716e811f280f21df03e50b7",
+          "tree_sha256": "dd37724a82cc59e01bf63887b3d9c5f5a760b9e65480f9a526bfdef9ba12da33"
+        },
+        {
+          "path": "fuchsia/sdk/lib/fidl",
+          "url": "https://fuchsia.googlesource.com/fuchsia/+archive/3c0275544589e9bc156739d210052e8174ae9c60/sdk/lib/fidl.tar.gz",
+          "archive_sha256": "802be9535d965f321f900a0ebe2523a5947a3dc9e5f554e717b9a082ead50b06",
+          "tree_sha256": "919f2498e590d630c7073c38760e0165dc13c16ae5f20c069d6801a35e1b751c"
+        },
+        {
+          "path": "fuchsia/sdk/lib/fit",
+          "url": "https://fuchsia.googlesource.com/fuchsia/+archive/3c0275544589e9bc156739d210052e8174ae9c60/sdk/lib/fit.tar.gz",
+          "archive_sha256": "d0fc5e9a18706e25d0bd848ad7d5d1d2e4868cd3fa155e078cd9af66048c1690",
+          "tree_sha256": "7622ffcf7707a92f943d13f5e6cd81bbddd593573bdb546967d2ba9a495ea580"
+        },
+        {
+          "path": "fuchsia/sdk/lib/stdcompat",
+          "url": "https://fuchsia.googlesource.com/fuchsia/+archive/3c0275544589e9bc156739d210052e8174ae9c60/sdk/lib/stdcompat.tar.gz",
+          "archive_sha256": "3854e9423012e0f50d9ad747103fc0f374add2b0770a3256d9fd76b31cc30cb0",
+          "tree_sha256": "431b9c4aabb3d11bf44a88dce683d1168ae4bf40a67e7e02f188f6225a9cc32f"
+        },
+        {
+          "path": "fuchsia/src/lib/fxl",
+          "url": "https://fuchsia.googlesource.com/fuchsia/+archive/3c0275544589e9bc156739d210052e8174ae9c60/src/lib/fxl.tar.gz",
+          "archive_sha256": "d4ca58bbe91b05720162c6f099ff3255ccca11345d9dc82b1b05d5a53f219ce7",
+          "tree_sha256": "161c831ebbdc6969a6140c85f6f10476f17560188413c8bf312db5cf3cfa6fdb"
+        },
+        {
+          "path": "fuchsia/src/lib/cmdline",
+          "url": "https://fuchsia.googlesource.com/fuchsia/+archive/3c0275544589e9bc156739d210052e8174ae9c60/src/lib/cmdline.tar.gz",
+          "archive_sha256": "4d90c939b06b5a04b7ffb957cb83dbb2de3dd928ca2b6496c71de7709595ea4e",
+          "tree_sha256": "0dba4f389f33dbf2baad2991c1e78706fa2d9b8e96549be20a50eed8ec841ad2"
+        },
+        {
+          "path": "fuchsia/zircon/system/public",
+          "url": "https://fuchsia.googlesource.com/fuchsia/+archive/3c0275544589e9bc156739d210052e8174ae9c60/zircon/system/public.tar.gz",
+          "archive_sha256": "2f54a5b624b93684ba9f1b9c2715d4191d8c814121eb4150af45bcd8a3a32943",
+          "tree_sha256": "feec7eb6e84291ca9c0c08c4dcfa3592eb0c10784163cd32ff500570801815be"
+        },
+        {
+          "path": "fuchsia/zircon/system/ulib/zx",
+          "url": "https://fuchsia.googlesource.com/fuchsia/+archive/3c0275544589e9bc156739d210052e8174ae9c60/zircon/system/ulib/zx.tar.gz",
+          "archive_sha256": "f623e4da2d1dcfedf9b565c7b283841751ecf2a69868a8d5cebbbf3450d23775",
+          "tree_sha256": "82ebdf971f44b5ca6d73573cd20cd58fce5aad84ce3758bbfe20dba6dc0c9151"
+        },
+        {
+          "path": "fuchsia/src/connectivity/lowpan",
+          "url": "https://fuchsia.googlesource.com/fuchsia/+archive/3c0275544589e9bc156739d210052e8174ae9c60/src/connectivity/lowpan.tar.gz",
+          "archive_sha256": "de89f140b97fb9e0383374f1d66f58b4718754426995f3874ffaa9283c7b2627",
+          "tree_sha256": "b951dc76601ce72b55a130aeee0fc8ad45fc33d72663775cecad03c4edcfce30"
+        },
+        {
+          "path": "fuchsia/src/connectivity/openthread",
+          "url": "https://fuchsia.googlesource.com/fuchsia/+archive/3c0275544589e9bc156739d210052e8174ae9c60/src/connectivity/openthread.tar.gz",
+          "archive_sha256": "f7915425cfd348a520aca639bc47e3f713eee03a5a707a6aefd1a9cd2115fdb7",
+          "tree_sha256": "f30035a672a0de63690b37c7acbcaba4bca64d6819bc9c7316d524bf0b6451f9"
+        },
+        {
+          "path": "fuchsia/sdk/fidl/fuchsia.lowpan",
+          "url": "https://fuchsia.googlesource.com/fuchsia/+archive/3c0275544589e9bc156739d210052e8174ae9c60/sdk/fidl/fuchsia.lowpan.tar.gz",
+          "archive_sha256": "e536eb26e02dbefcbb6972fa612ddb76aa600bc655120f06aadd62ce6453e3af",
+          "tree_sha256": "d1438306660b2f0f37f03e65429843d85a659e771084bdc55dd2a7e731819fff"
+        },
+        {
+          "path": "fuchsia/sdk/fidl/fuchsia.lowpan.device",
+          "url": "https://fuchsia.googlesource.com/fuchsia/+archive/3c0275544589e9bc156739d210052e8174ae9c60/sdk/fidl/fuchsia.lowpan.device.tar.gz",
+          "archive_sha256": "143b4007e305f57df068a74bc93a8ae5792f273e6b5fe85a6dfb01d42736f8d4",
+          "tree_sha256": "d9b494cb1fcba179310e902307c12f19fa9044753bf1fc81827b0411c69b93c2"
+        },
+        {
+          "path": "fuchsia/sdk/fidl/fuchsia.lowpan.thread",
+          "url": "https://fuchsia.googlesource.com/fuchsia/+archive/3c0275544589e9bc156739d210052e8174ae9c60/sdk/fidl/fuchsia.lowpan.thread.tar.gz",
+          "archive_sha256": "87374979ff85a197466983f65a2d6e944a58d1aac5e2c1ad027e4c554be5e857",
+          "tree_sha256": "80fde8535a2f60625c599d242de4ebec3a7799b57c17280b34576fd1cf9d5b33"
+        },
+        {
+          "path": "fuchsia/sdk/fidl/fuchsia.lowpan.spinel",
+          "url": "https://fuchsia.googlesource.com/fuchsia/+archive/3c0275544589e9bc156739d210052e8174ae9c60/sdk/fidl/fuchsia.lowpan.spinel.tar.gz",
+          "archive_sha256": "7c3e5c723bd39395684ec8133428647fa385d1cf7afe8c8c4807c593815f8864",
+          "tree_sha256": "f6c601cd15fe74a62c3bd6968bd34bff1b0d70c7a9cc2ac99b4887e324b9f8f7"
+        },
+        {
+          "path": "fuchsia/sdk/fidl/zx",
+          "url": "https://fuchsia.googlesource.com/fuchsia/+archive/3c0275544589e9bc156739d210052e8174ae9c60/sdk/fidl/zx.tar.gz",
+          "archive_sha256": "bd9093c3937eb4cba128c2d57558b0985d2f34d13e58ad3d38349fb4c9d74c65",
+          "tree_sha256": "633dfca5815e3de222a44b4eb44d28e36c4c8b3aaa60334ffa01b91b6a366f33"
+        },
+        {
+          "path": "fuchsia/sdk/lib/zircon-assert",
+          "url": "https://fuchsia.googlesource.com/fuchsia/+archive/3c0275544589e9bc156739d210052e8174ae9c60/sdk/lib/zircon-assert.tar.gz",
+          "archive_sha256": "dd91073ce2d468813994fa42ecfea8347526bde76a5435a5ae4894790a1c3e7a",
+          "tree_sha256": "bb2b7332b1b7fbc19ffb70e8c0158b8e916dcc4c909005218cecc48ce4c280c0"
+        },
+        {
+          "path": "fuchsia/docs/reference/fidl/language",
+          "url": "https://fuchsia.googlesource.com/fuchsia/+archive/3c0275544589e9bc156739d210052e8174ae9c60/docs/reference/fidl/language.tar.gz",
+          "archive_sha256": "571244cdd6b1a576c0dade4cf7aec0d91b58a9dacdc490b8133cc43ca890b780",
+          "tree_sha256": "327eafc7536e1e21181d2434a9b3f387080b0708a51675c6cc45d2c5dd43f89c"
+        },
+        {
+          "path": "fuchsia/docs/error",
+          "url": "https://fuchsia.googlesource.com/fuchsia/+archive/3c0275544589e9bc156739d210052e8174ae9c60/docs/error.tar.gz",
+          "archive_sha256": "7bd77b1c8603ad8d81f080a5728403806d5594b76283ef6d3aa9066b6cac5fef",
+          "tree_sha256": "6d7908f5fc49e65992434f3971315da18a53b21665be7f5f1ba7a42f4b83fa18"
+        },
+        {
+          "path": "fuchsia/sdk/lib/fidl_base",
+          "url": "https://fuchsia.googlesource.com/fuchsia/+archive/3c0275544589e9bc156739d210052e8174ae9c60/sdk/lib/fidl_base.tar.gz",
+          "archive_sha256": "2ac437dcb56fccfc69695ddabac9bad3b64615b43d3127ff03bf688e66df3c7f",
+          "tree_sha256": "86602ad52c0f0928d92f182626b8240f51786e25a8dd929c35fab565fc87f181"
+        },
+        {
+          "path": "fuchsia/sdk/lib/utf-utils",
+          "url": "https://fuchsia.googlesource.com/fuchsia/+archive/3c0275544589e9bc156739d210052e8174ae9c60/sdk/lib/utf-utils.tar.gz",
+          "tree_sha256": "070b9ad802e9c6a588b30c295e3b6c65669a07780ac459d65ebf5dcdf9830635",
+          "archive_sha256": "cc76fb25537f7ed73bdc781ced23ee022f89ccec04b18705d5f55297a6201c6c"
+        },
+        {
+          "path": "fuchsia/src/zircon/lib/zircon",
+          "url": "https://fuchsia.googlesource.com/fuchsia/+archive/3c0275544589e9bc156739d210052e8174ae9c60/src/zircon/lib/zircon.tar.gz",
+          "tree_sha256": "2491b38c917e53f4588de31c8eb6e944c41cad3778ae3ec000a2204756afd785",
+          "archive_sha256": "99da88e57153a05612ed2d949b36d31b16137d05e504a7f9a66ef37a9b034c17"
+        },
+        {
+          "path": "fuchsia/src/tests/fidl/conformance_suite",
+          "url": "https://fuchsia.googlesource.com/fuchsia/+archive/3c0275544589e9bc156739d210052e8174ae9c60/src/tests/fidl/conformance_suite.tar.gz",
+          "archive_sha256": "ba80bb7ca98e510dd420fc9324efdb7efe19ecd34e3284d4b2c869cad61eed3f",
+          "tree_sha256": "adb06568e9bf9c7843fd2686a58f26106346606d9534c84e0e444ca5caa39f2e"
+        }
+      ]
+    },
+    "openthread/UPSTREAM.5BSD.json": {
+      "path": "openthread",
+      "url": "https://codeload.github.com/openthread/openthread/tar.gz/0542780e3ac117196b77a60abc1052e4c3cdad12",
+      "archive_sha256": "d2cbd4a083a5c44c5f046ed158b066eb16cf0ff18dc8d99b0d313f6725539814",
+      "repository": "https://github.com/openthread/openthread.git",
+      "commit": "0542780e3ac117196b77a60abc1052e4c3cdad12",
+      "submodules": {
+        "third_party/mbedtls/repo": "e185d7fd85499c8ce5ca2a54f5cf8fe7dbe3f8df",
+        "third_party/mbedtls/repo/framework": "457996474728cb8e968ed21953b72f74d2f536b2"
+      }
+    },
+    "connectedhomeip/UPSTREAM.5BSD.json": {
+      "path": "connectedhomeip",
+      "url": "https://codeload.github.com/project-chip/connectedhomeip/tar.gz/d2a28e75da517d7aa5558244fcd2487c7239d02e",
+      "archive_sha256": "c3c6ac961dd147bb61c7fd543da599e609f3b62241ff586f1c1f4b506e3a2316",
+      "repository": "https://github.com/project-chip/connectedhomeip.git",
+      "commit": "d2a28e75da517d7aa5558244fcd2487c7239d02e",
+      "submodules": "Not populated; consult .gitmodules and pinned upstream gitlinks",
+      "subset": "Trimmed to the include list in tools/build/fuchsia/sources.json"
+    },
+    "openthread/third_party/mbedtls/UPSTREAM.5BSD.json": {
+      "path": "openthread/third_party/mbedtls/repo",
+      "url": "https://codeload.github.com/Mbed-TLS/mbedtls/tar.gz/e185d7fd85499c8ce5ca2a54f5cf8fe7dbe3f8df",
+      "archive_sha256": "052dccf3a404dce25a467c6fe044b0c858d609ace8e883b59e9dfd479fdd4528",
+      "commit": "e185d7fd85499c8ce5ca2a54f5cf8fe7dbe3f8df"
+    },
+    "openthread/third_party/mbedtls/framework.UPSTREAM.5BSD.json": {
+      "path": "openthread/third_party/mbedtls/repo/framework",
+      "url": "https://codeload.github.com/Mbed-TLS/mbedtls-framework/tar.gz/457996474728cb8e968ed21953b72f74d2f536b2",
+      "archive_sha256": "c15bcc24fc43bdf325b0e04fa63270daf6e9488167b94b46547d8134efa9c906",
+      "commit": "457996474728cb8e968ed21953b72f74d2f536b2"
+    },
+    "fuchsia/third_party/go-cmp/UPSTREAM.5BSD.json": {
+      "path": "fuchsia/third_party/go-cmp",
+      "url": "https://codeload.github.com/google/go-cmp/tar.gz/9b12f366a942ebc7254abc7f32ca05068b455fb7",
+      "archive_sha256": "c81581c6613dce036c54e569260feea583ca7a09a8d8c411622e0c179fc79047",
+      "commit": "9b12f366a942ebc7254abc7f32ca05068b455fb7"
+    }
+  }
+}

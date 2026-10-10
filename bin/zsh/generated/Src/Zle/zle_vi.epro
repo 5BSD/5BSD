@@ -1,0 +1,51 @@
+/* Generated automatically */
+#ifndef have_Src_Zle_zle_vi_globals
+#define have_Src_Zle_zle_vi_globals
+
+extern int virangeflag;
+extern int wordflag;
+extern int vilinerange;
+extern struct vichange lastvichg;
+extern struct vichange curvichg;
+extern int vichgflag;
+extern int viinrepeat;
+extern int viinsbegin;
+extern void startvichange(int im);
+extern ZLE_INT_T vigetkey(void);
+extern int viaddnext(UNUSED(char**args));
+extern int viaddeol(UNUSED(char**args));
+extern int viinsert(UNUSED(char**args));
+extern void viinsert_init(void);
+extern int viinsertbol(UNUSED(char**args));
+extern int videlete(UNUSED(char**args));
+extern int videletechar(char**args);
+extern int vichange(UNUSED(char**args));
+extern int visubstitute(UNUSED(char**args));
+extern int vichangeeol(UNUSED(char**args));
+extern int vichangewholeline(char**args);
+extern int viyank(UNUSED(char**args));
+extern int viyankeol(UNUSED(char**args));
+extern int viyankwholeline(UNUSED(char**args));
+extern int vireplace(UNUSED(char**args));
+extern int vireplacechars(UNUSED(char**args));
+extern int vicmdmode(UNUSED(char**args));
+extern int viopenlinebelow(UNUSED(char**args));
+extern int viopenlineabove(UNUSED(char**args));
+extern int vioperswapcase(UNUSED(char**args));
+extern int viupcase(UNUSED(char**args));
+extern int vidowncase(UNUSED(char**args));
+extern int virepeatchange(UNUSED(char**args));
+extern int viindent(UNUSED(char**args));
+extern int viunindent(UNUSED(char**args));
+extern int vibackwarddeletechar(char**args);
+extern int vikillline(UNUSED(char**args));
+extern int vijoin(UNUSED(char**args));
+extern int viswapcase(UNUSED(char**args));
+extern int vicapslockpanic(UNUSED(char**args));
+extern int visetbuffer(char**args);
+extern int vikilleol(UNUSED(char**args));
+extern int vipoundinsert(UNUSED(char**args));
+extern int viquotedinsert(char**args);
+extern int vidigitorbeginningofline(char**args);
+
+#endif /* !have_Src_Zle_zle_vi_globals */

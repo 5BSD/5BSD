@@ -7,7 +7,7 @@
 #
 # This file is optional.  When it is absent, bsdextension's built-in allow-list
 # stands: the exact set of extensions the base system loads on demand today
-# (cryptodev, vhid, zfs, Linux runtime support and the graphics drivers below).
+# (cryptodev, vhid, zfs, Linux runtime support, graphics and CPU telemetry).
 # When present, "allowed_extensions" REPLACES that
 # built-in set — so an operator narrows or extends the policy in one place.
 # Each entry must be a single, safe module name (no "/", not "." or "..").
@@ -29,4 +29,8 @@ allowed_extensions = [
     "i915kms",     # Intel graphics
     "amdgpu",      # AMD graphics
     "radeonkms",   # older Radeon graphics
+    "cpuctl",      # hwstat: Intel/AMD CPU identification and energy MSRs
+    "coretemp",    # hwstat: Intel temperature
+    "amdsmn",      # amdtemp: AMD System Management Network
+    "amdtemp",     # hwstat: AMD temperature
 ]

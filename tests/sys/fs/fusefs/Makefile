@@ -6,6 +6,10 @@ TESTSDIR=	${TESTSBASE}/sys/fs/fusefs
 
 ATF_TESTS_SH+=	ctl
 ATF_TESTS_SH+=	ext2-misc
+PLAIN_TESTS_CXX+=	nfs_cookie_client
+# The wire decoder is independent of mounts, root and the FUSE module.
+TEST_METADATA.nfs_cookie_client+=	required_kmods=""
+TEST_METADATA.nfs_cookie_client+=	required_user="unprivileged"
 
 # We could simply link all of these files into a single executable.  But since
 # Kyua treats googletest programs as plain tests, it's better to separate them
@@ -41,6 +45,7 @@ GTESTS+=	mkdir
 GTESTS+=	mknod
 GTESTS+=	mount
 GTESTS+=	nfs
+GTESTS+=	nfs_readdir
 GTESTS+=	notify
 GTESTS+=	open
 GTESTS+=	openfile
@@ -68,8 +73,13 @@ SRCS.$p+=	utils.cc
 
 TEST_METADATA.default_permissions+=	required_user="unprivileged"
 TEST_METADATA.default_permissions_privileged+=	required_user="root"
+# io contains 204 parameterized cases; retain them all on emulated VMs.
+TEST_METADATA.io+=	timeout=300
 TEST_METADATA.mknod+=	required_user="root"
 TEST_METADATA.nfs+=	required_user="root"
+TEST_METADATA.nfs_readdir+=	required_user="root"
+TEST_METADATA.nfs_readdir+=	is_exclusive="true"
+TEST_METADATA.nfs_readdir+=	timeout=120
 # NB: per-testcase metadata properties override global metadata properties.
 # This must reference all of the required modules for the test.
 TEST_METADATA.ctl+=	required_kmods="ctl fusefs"

@@ -43,6 +43,7 @@ static int fail_attach_error;
 static uint16_t fail_opcode;
 static int fail_operation_error;
 static bool ring_enabled;
+static bool legacy_hello;
 static bool corrupt_next_ring;
 static bool break_next_wakeup;
 static enum fake_service_fault next_fault;
@@ -62,6 +63,7 @@ fake_service_reset(void)
 	fail_opcode = 0;
 	fail_operation_error = 0;
 	ring_enabled = false;
+	legacy_hello = false;
 	corrupt_next_ring = false;
 	break_next_wakeup = false;
 	next_fault = FAKE_SERVICE_FAULT_NONE;
@@ -92,6 +94,15 @@ fake_service_enable_ring(void)
 
 	pthread_mutex_lock(&lock);
 	ring_enabled = true;
+	pthread_mutex_unlock(&lock);
+}
+
+void
+fake_service_use_legacy_hello(void)
+{
+
+	pthread_mutex_lock(&lock);
+	legacy_hello = true;
 	pthread_mutex_unlock(&lock);
 }
 
@@ -422,7 +433,7 @@ service_session_call(struct service_session *session,
 	struct logcmp_msg *response;
 	enum fake_service_fault fault;
 	int failure, operation_error;
-	bool use_ring;
+	bool use_ring, old_hello;
 	size_t length;
 
 	if (session == NULL || outgoing == NULL || reply == NULL ||
@@ -447,6 +458,11 @@ service_session_call(struct service_session *session,
 	}
 	fault = next_fault;
 	use_ring = ring_enabled;
+	old_hello = legacy_hello;
+	if (old_hello && request->opcode == LOGCMP_OP_HELLO &&
+	    (((const struct logcmp_hello *)(request + 1))->features &
+	    LOGCMP_FEATURE_INTEREST) != 0)
+		failure = EPROTO;
 	next_fault = FAKE_SERVICE_FAULT_NONE;
 	if (failure != 0)
 		fail_write_error = 0;
@@ -477,6 +493,8 @@ service_session_call(struct service_session *session,
 		    LOGCMP_FEATURE_TYPED_RECORDS | LOGCMP_FEATURE_PRIVACY |
 		    LOGCMP_FEATURE_TRACE_CONTEXT | LOGCMP_FEATURE_EDGE_WAKEUP |
 		    LOGCMP_FEATURE_SCOPED_QUERY;
+		if (!old_hello)
+			hello->features |= LOGCMP_FEATURE_INTEREST;
 		if (use_ring) {
 			hello->features |= LOGCMP_FEATURE_SHM_RING;
 			hello->ring_size = 64U * 1024;
@@ -484,7 +502,10 @@ service_session_call(struct service_session *session,
 		hello->max_record = LOGCMP_MAX_RECORD;
 		hello->max_text = LOGCMP_MAX_TEXT;
 		hello->max_fields = LOGCMP_MAX_FIELDS;
-		length += sizeof(*hello);
+		hello->minimum_severity = LOGCMP_SEVERITY_INFO;
+		length += old_hello ?
+		    offsetof(struct logcmp_hello_reply, minimum_severity) :
+		    sizeof(*hello);
 		if (fault == FAKE_SERVICE_FAULT_INVALID_HELLO)
 			hello->features = 0;
 	} else if (request->opcode == LOGCMP_OP_ATTACH) {

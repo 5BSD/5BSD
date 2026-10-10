@@ -1,5 +1,5 @@
 .\" SPDX-License-Identifier: BSD-2-Clause
-.Dd September 25, 2026
+.Dd October 8, 2026
 .Dt LIBTRACECMP 3
 .Os
 .Sh NAME
@@ -50,7 +50,20 @@ Applications may call
 before enabling probes to replace these defaults.
 .Fn tracecmp_open
 is the lower-level interface for consumers that deliberately manage the raw
-descriptor.
+descriptor; it does not apply the constructor's buffer tuning.
+The normal
+.Xr dtrace 1
+command has its own defaults and accepts
+.Fl b
+and
+.Fl x
+overrides.
+Buffer sizes are per consumer and principal and aggregation sizes are per CPU;
+switch buffering also requires alternate buffers.
+These defaults are not a global memory quota and do not guarantee lossless
+tracing.
+Consumers should monitor drops and adjust sizes or drain rates for
+their workload.
 .Pp
 .Fn tracecmp_stats
 retrieves the provider's operational counters into

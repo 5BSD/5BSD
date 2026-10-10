@@ -157,7 +157,8 @@ capbundle_verify(const struct capbundle *b, char *errbuf, size_t errlen)
 		    s->activation_path[0] != '\0' || s->nactivation_sockets != 0 ||
 		    s->has_calendar || s->queue_directory[0] != '\0' ||
 		    s->activation_on_mount || s->narguments != 0 ||
-		    s->nenvironment != 0 || s->ambient || s->unix_protocol)) {
+		    s->nenvironment != 0 || s->ambient || s->unix_protocol ||
+		    s->oom_protect)) {
 			if (errbuf != NULL)
 				snprintf(errbuf, errlen,
 				    "%s: exec application cannot declare daemon launch settings",

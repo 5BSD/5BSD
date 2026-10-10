@@ -1,0 +1,21 @@
+Crypto lifecycle coverage
+=========================
+
+lifecycle_test includes the production daemon and calls its teardown helper
+with real PD_DAEMON children. It checks child reaping, closed process handles,
+release of inherited pipe writers, repeated empty cleanup and failure reporting.
+reaper_cleanup calls the actual start_reaper function and tears down its returned
+process descriptor. No crypto control device or installed-bundle authority is
+supplied in that case; it does not test key reclamation decisions.
+
+provider_test covers the real channel provider and crypto descriptor operations
+in the native guest. policy_test covers the provider's key/digest/random policy.
+
+Remaining integration gates: installed bundle startup and diagnostic exit codes,
+protected worker termination, SwitchBoard idle decline and explicit stop/restart,
+cleanup before acknowledgement, and reclamation while real install roots change.
+Abrupt parent death is separate from controlled teardown. Delivered descriptors
+are not revoked by stopping their worker. Device and Crypto now delegate teardown to libservice service_processes_stop;
+these tests therefore exercise the shared implementation. Procdesc ownership
+is exclusive and tracking nodes are consumed even on error. Other providers
+require separate review of their worker ownership and shutdown contracts.

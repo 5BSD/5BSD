@@ -3627,26 +3627,56 @@ linux_vmsplice(struct thread *td, struct linux_vmsplice_args *args)
 }
 
 int
+linux_fdunshare(struct thread *td)
+{
+	struct proc *p;
+	bool may_have_posix_locks;
+
+	/*
+	 * FreeBSD owns the descriptor table per process.  A single-threaded
+	 * Linux process can detach its table from another process that shares
+	 * it, but a thread cannot detach without affecting its siblings.
+	 */
+	p = td->td_proc;
+	PROC_LOCK(p);
+	if (p->p_numthreads != 1) {
+		PROC_UNLOCK(p);
+		return (EINVAL);
+	}
+	PROC_UNLOCK(p);
+	/*
+	 * fdunshare() calls fdescfree(), which drops this leader's POSIX
+	 * locks on the old shared table.  Linux keeps those locks with the
+	 * old table.  P_ADVLOCK is sticky, so reject this case conservatively
+	 * until we have a lock-preserving detach path.
+	 */
+	if (refcount_load(&p->p_fd->fd_refcnt) > 1) {
+		PROC_LOCK(p->p_leader);
+		may_have_posix_locks =
+		    (p->p_leader->p_flag & P_ADVLOCK) != 0;
+		PROC_UNLOCK(p->p_leader);
+		if (may_have_posix_locks)
+			return (EINVAL);
+	}
+	return (fdunshare_preserving(td));
+}
+
+int
 linux_close_range(struct thread *td, struct linux_close_range_args *args)
 {
 	u_int flags = 0;
+	int error;
 
-	/*
-	 * Implementing close_range(CLOSE_RANGE_UNSHARE) allows Linux to
-	 * unshare filedesc table of the calling thread from others threads
-	 * in a thread group (i.e., process in the FreeBSD) or others processes,
-	 * which shares the same table, before closing the files. FreeBSD does
-	 * not have compatible unsharing mechanism due to the fact that sharing
-	 * process resources, including filedesc table, is at thread level in the
-	 * Linux, while in the FreeBSD it is at the process level.
-	 * Return EINVAL for now if the CLOSE_RANGE_UNSHARE flag is specified
-	 * until this new Linux API stabilizes.
-	 */
-
-	if ((args->flags & ~(LINUX_CLOSE_RANGE_CLOEXEC)) != 0)
+	if ((args->flags & ~(LINUX_CLOSE_RANGE_UNSHARE |
+	    LINUX_CLOSE_RANGE_CLOEXEC)) != 0)
 		return (EINVAL);
 	if (args->first > args->last)
 		return (EINVAL);
+	if ((args->flags & LINUX_CLOSE_RANGE_UNSHARE) != 0) {
+		error = linux_fdunshare(td);
+		if (error != 0)
+			return (error);
+	}
 	if ((args->flags & LINUX_CLOSE_RANGE_CLOEXEC) != 0)
 		flags |= CLOSE_RANGE_CLOEXEC;
 	return (kern_close_range(td, flags, args->first, args->last));

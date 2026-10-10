@@ -315,7 +315,9 @@ uinput_write(struct cdev *dev, struct uio *uio, int ioflag)
 		}
 
 		while (ret == 0 && uio->uio_resid > 0) {
-			uiomove(&event, sizeof(struct input_event), uio);
+			ret = uiomove(&event, sizeof(struct input_event), uio);
+			if (ret != 0)
+				break;
 			ret = evdev_push_event(state->ucs_evdev, event.type,
 			    event.code, event.value);
 		}

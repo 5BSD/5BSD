@@ -35,12 +35,38 @@
 #define	COALITION_OP_SET_RESPONSIBLE	13
 /* Self-join, atomically replacing inherited (never procdesc-pinned) membership. */
 #define	COALITION_OP_JOIN_REHOME		14
+#define	COALITION_OP_CLEANUP_STATUS	15
 
 /*
  * Common request header.
  */
 struct coalition_req_hdr {
 	uint32_t	op;
+};
+
+/*
+ * CLEANUP_STATUS: exact coalition_req_hdr, no attached descriptors.
+ * Counters describe outstanding tracked teardown, not allocation references.
+ * COMPLETE certifies tracked actions only, not reclamation of shared storage
+ * or asynchronous work independently started by a service callback.
+ */
+#define COALITION_CLEANUP_ACTIVE		0
+#define COALITION_CLEANUP_DRAINING	1
+#define COALITION_CLEANUP_COMPLETE	2
+#define COALITION_CLEANUP_FAILED		3
+#define COALITION_CLEANUP_RELEASED	4
+#define COALITION_CLEANUP_F_RELEASED	0x0001
+struct coalition_cleanup_reply {
+	int32_t status;
+	uint32_t phase;
+	int32_t cleanup_error;
+	uint32_t flags;
+	uint32_t processes;
+	uint32_t forks;
+	uint32_t jails;
+	uint32_t nested;
+	uint32_t capabilities;
+	uint32_t external;
 };
 
 /*
@@ -251,6 +277,7 @@ struct coalition_event_msg {
 #define	COALITION_NOTE_MEMBER_ADDED	0x0001
 #define	COALITION_NOTE_MEMBER_REMOVED	0x0002
 #define	COALITION_NOTE_TERMINATING	0x0004
+/* Instance revocation begins; does not confirm member process exit. */
 #define	COALITION_NOTE_TERMINATED	0x0008
 #define	COALITION_NOTE_LEADER_DIED	0x0010
 #define	COALITION_NOTE_DEADLINE_FIRED	0x0020

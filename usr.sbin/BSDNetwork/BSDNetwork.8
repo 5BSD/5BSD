@@ -1,5 +1,5 @@
 .\" SPDX-License-Identifier: BSD-2-Clause
-.Dd September 4, 2026
+.Dd October 10, 2026
 .Dt BSDNETWORK 8
 .Os
 .Sh NAME
@@ -76,6 +76,24 @@ only; a
 request ignores it.
 The protocol exposes only DNS, connect, and udp.
 .Pp
+The same daemon also serves
+.Dq system.Network.PF .
+SwitchBoard admits only clients anointed with
+.Dq system.network.pf.read ;
+the daemon additionally requires the PF read session right.
+For each admitted session it obtains an exact
+.Pa /dev/pf
+descriptor from
+.Xr BSDFilesystem 8
+and passes it to a private worker.
+The descriptor is limited to the read-only PF state export ioctl and one
+transfer to the client; the client cannot change PF rules or settings through
+it.
+The daemon itself runs as the unprivileged
+.Dq capability
+user and does not hold a directory descriptor for
+.Pa /dev .
+.Pp
 Resolver requests cap host and service lengths, flags, address families, and
 result counts.
 Among the accepted resolver flags,
@@ -92,10 +110,16 @@ is also set,
 .Sy A
 records are fetched and appended as IPv4-mapped IPv6 addresses.
 .Dv AI_ADDRCONFIG
-is accepted but is a deliberate no-op: the in-process resolver does not
-enumerate the host's own configured source families, so it never suppresses a
-family on that basis.
+is unsupported because no configured source-address family snapshot is
+available.
+The compatibility API returns
+.Dv EAI_BADFLAGS ;
+the provider rejects the corresponding wire flag with
+.Er EOPNOTSUPP
+without terminating the session.
 It never reads resolver configuration from the consumer filesystem.
+DNS queries use UDP first and retry truncated replies over TCP to the same
+configured nameserver, with a bounded TCP exchange.
 Resolution runs on a dedicated thread that issues its own bounded DNS queries,
 so a slow resolver cannot stop socket operations on the session.
 At most one resolution is active per private session; an overlapping request
@@ -200,6 +224,102 @@ dialed, the requested timeout in milliseconds
 .Pq zero for a blocking connect ,
 and the errno-style outcome
 .Pq zero connected, Er ETIMEDOUT No on expiry .
+.Sh NETWORK STATE
+The separately gated
+.Va system.Network.State
+endpoint requires
+.Va system.network.observe
+and read session right bit 1.
+It publishes sampled interface index, name, flags, MTU, and link state,
+with an epoch, generation, and explicit source error.
+It exposes neither addresses nor packet counters.
+A shared sampler reads BSDSysctl approximately one second after each read;
+identical samples are suppressed and slow watchers receive the latest state.
+Discovery, HELLO negotiation, reconnect and interface sampling share one
+one-second libservice RPC budget per iteration.
+A stalled dependency therefore cannot accumulate separate RPC wait limits
+before the sampler checks for shutdown.
+This budget bounds RPC waits, not scheduling delays, mutex acquisition or
+arbitrary kernel work.
+A failed read publishes unavailable state with zero records, then recovery
+publishes a new snapshot.
+This does not indicate Internet reachability.
+.Pp
+The provider uses only the BSDSysctl read grant for
+.Va net.routetable ;
+it receives no sysctl token or write permission.
+Existing sysctl isolation remains unchanged.
+State sessions stay in the parent reactor, with at most 128 sessions,
+16 per authenticated label, and one outstanding watch per session.
+A 30-second idle limit applies between requests.
+See
+.Xr network_state 3
+for timeout and reconnect semantics.
+.Sh CONCURRENT DNS REQUESTS
+Each session runs one resolver job at a time.
+Up to 16 byte-identical requests may share that job and receive separate
+replies on their original channel transactions.
+Different overlapping requests and additional duplicates are refused with
+.Er EBUSY .
+Joining an existing job does not extend its original deadline.
+Coalescing never crosses sessions or authenticated client labels.
+A failed reply terminates the session and releases all retained requests.
+.Sh DNS CACHE AND TTL
+Each connection worker retains at most 32 validated positive or negative DNS
+answers,
+keyed by hostname and record type, for at most five minutes and never beyond
+the minimum TTL of the matching addresses and their CNAME chain.
+The cache is private to that worker and its immutable client policy;
+answers are not shared across sessions, labels, or network namespaces.
+NXDOMAIN and NODATA responses are cached only with a usable IN-class SOA
+covering the terminal name in the CNAME chain.
+Their lifetime is the minimum of the SOA TTL, SOA MINIMUM, CNAME lifetimes,
+and five minutes.
+Negative entries remain keyed by both hostname and record type; they do not
+suppress queries for another type or descendant names.
+Missing, malformed, zero-lifetime, or high-bit SOA lifetimes are not cached.
+Temporary server and transport failures are not cached.
+Numeric and local hosts results are resolved before consulting DNS.
+.Pp
+Every query checks the nameserver snapshot and its generation.
+A change clears the worker's cache, including when the server list later
+returns to an earlier value.
+An in-flight query may finish against its original configuration, but the
+next query invalidates its cached result after a generation change.
+.Pp
+The reply TTL is the conservative whole-second remaining minimum across
+returned address families and CNAMEs; it accounts for elapsed time and cache
+age.
+Zero means no positive cache lifetime is advertised, including local results.
+.Sh DNS FAILURES
+When no usable address is available, an unsuccessful DNS query returns
+.Er EAGAIN
+through the broker protocol, or
+.Er EAI_AGAIN
+from
+.Fn networkcmp_getaddrinfo .
+Complete negative answers return
+.Er ENOENT
+or
+.Er EAI_NONAME ,
+respectively.
+If one queried family fails and another returns only a negative answer,
+the result remains retryable.
+A usable address from either family, including IPv4-mapped IPv6 fallback,
+can still satisfy the lookup.
+Numeric addresses do not require a working nameserver.
+.Pp
+.Dv AI_V4MAPPED
+with
+.Dv AF_INET6
+also maps numeric IPv4 literals and matching local hosts entries.
+A numeric literal with
+.Dv AI_NUMERICHOST
+never requires DNS.
+Native IPv6 hosts entries take precedence unless
+.Dv AI_ALL
+requests both native and mapped entries.
+A matching hosts entry satisfies the lookup before DNS is attempted.
 .Sh SEE ALSO
 .Xr libnetworkcmp 3 ,
 .Xr switchboard 8

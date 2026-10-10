@@ -344,7 +344,7 @@ case "$PARTMODE" in
 "$msg_shell")		# Shell
 	clear
 	echo "Use this shell to set up partitions for the new system. When finished, mount the system at $BSDINSTALL_CHROOT and place an fstab file for the new system at $PATH_FSTAB. Then type 'exit'. You can also enter the partition editor at any time by entering 'bsdinstall partedit'."
-	sh 2>&1
+	/bin/zsh 2>&1
 	bsdinstall mount_aux || error "Failed to mount auxiliary filesystems"
 	;;
 "$msg_manual")		# Manual
@@ -410,7 +410,7 @@ if [ -z "$BSDINSTALL_SKIP_MANUAL" ]; then
 		clear
 		echo This shell is operating in a chroot in the new system. \
 		    When finished making configuration changes, type \"exit\".
-		chroot "$BSDINSTALL_CHROOT" /bin/sh -l 2>&1
+		chroot "$BSDINSTALL_CHROOT" /bin/zsh -l 2>&1
 	fi
 fi
 

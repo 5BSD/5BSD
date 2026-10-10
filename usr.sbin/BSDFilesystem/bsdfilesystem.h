@@ -201,6 +201,11 @@ void	bsdfilesystem_start_reaper(struct bsdfilesystem_state *st);
 int	bsdfilesystem_serve(struct bsdfilesystem_state *st);
 
 #ifdef BSDFILESYSTEM_TESTING
+#include <capreclaim.h>
+int bsdfilesystem_test_reclaim_bundles(int, struct capreclaim *,
+    enum capreclaim_when);
+bool bsdfilesystem_test_oes_admit(unsigned, unsigned, unsigned);
+int bsdfilesystem_test_harden_delivery(int, bool);
 /* Test-only accessors from the implementation units. */
 bool	bsdfilesystem_test_derive_ns(const char *client, char *out, size_t outsz);
 bool	bsdfilesystem_test_valid_dataset(const char *name);

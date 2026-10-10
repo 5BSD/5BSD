@@ -10,20 +10,32 @@
  */
 #include <err.h>
 #include <errno.h>
+#include <powercmp.h>
+#include <signal.h>
+#include <service_runtime.h>
+#include <time.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
-#include <powercmp.h>
+static volatile sig_atomic_t stop;
+static void
+stopped(int sig)
+{
+	(void)sig;
+	stop = 1;
+}
 
 static void
 usage(void)
 {
-
 	fprintf(stderr,
 	    "usage: BSDPowerctl states\n"
-	    "       BSDPowerctl suspend <1-5>\n");
+	    "       BSDPowerctl suspend <1-5>\n"
+	    "       BSDPowerctl inhibitors\n"
+	    "       BSDPowerctl inhibit <seconds>\n");
 	exit(2);
 }
 
@@ -51,6 +63,63 @@ main(int argc, char **argv)
 				first = 0;
 			}
 		printf("%s\n", first ? "(none)" : "");
+		rc = 0;
+	} else if (strcmp(argv[1], "inhibitors") == 0 && argc == 2) {
+		uint32_t count;
+		if (powercmp_inhibitors(client, &count) == -1)
+			err(1, "inhibitors");
+		printf("%u\n", count);
+		rc = 0;
+	} else if (strcmp(argv[1], "inhibit") == 0 && argc == 3) {
+		char *end;
+		errno = 0;
+		unsigned long seconds = strtoul(argv[2], &end, 10);
+		if (errno != 0 || *end != '\0' || end == argv[2] ||
+		    seconds == 0 || seconds > 86400)
+			errx(1, "inhibit: duration must be 1-86400 seconds");
+		signal(SIGINT, stopped);
+		signal(SIGTERM, stopped);
+		if (powercmp_inhibit(client) == -1)
+			err(1, "inhibit");
+		uint64_t deadline = service_monotime_ms() + seconds * 1000;
+		while (!stop) {
+			uint64_t now = service_monotime_ms();
+			if (now >= deadline)
+				break;
+			uint64_t delay = deadline - now;
+			if (delay > 1000)
+				delay = 1000;
+			struct timespec pause_time = {
+				.tv_sec = delay / 1000,
+				.tv_nsec = (delay % 1000) * 1000000
+			};
+			if (nanosleep(&pause_time, NULL) == -1 && errno != EINTR)
+				err(1, "lease wait");
+			now = service_monotime_ms();
+			if (stop || now >= deadline)
+				break;
+			uint32_t budget = deadline - now > 1000 ? 1000 :
+			    (uint32_t)(deadline - now);
+			if (service_budget_begin(budget) == -1)
+				err(1, "lease budget");
+			uint32_t count;
+			int result = powercmp_inhibitors(client, &count);
+			int saved = errno;
+			service_budget_end();
+			if (result == -1) {
+				errno = saved;
+				err(1, "lease lost");
+			}
+		}
+		if (service_budget_begin(1000) == -1)
+			err(1, "release budget");
+		int result = powercmp_uninhibit(client);
+		int saved = errno;
+		service_budget_end();
+		if (result == -1) {
+			errno = saved;
+			err(1, "uninhibit");
+		}
 		rc = 0;
 	} else if (strcmp(argv[1], "suspend") == 0 && argc == 3) {
 		char *end;

@@ -964,6 +964,47 @@ sysctl_bcm2835_cpufreq_voltage_sdram(SYSCTL_HANDLER_ARGS)
 }
 
 static int
+sysctl_bcm2835_cpufreq_clock_limit(SYSCTL_HANDLER_ARGS)
+{
+	struct bcm2835_cpufreq_softc *sc = arg1;
+	uint32_t value;
+	int rate;
+
+	if (req->newptr != NULL)
+		return (EPERM);
+	VC_LOCK(sc);
+	if (arg2 & 0x10000)
+		rate = bcm2835_cpufreq_get_max_clock_rate(sc, arg2 & 0xffff);
+	else
+		rate = bcm2835_cpufreq_get_min_clock_rate(sc, arg2 & 0xffff);
+	VC_UNLOCK(sc);
+	if (rate == MSG_ERROR)
+		return (EIO);
+	value = (uint32_t)rate;
+	return (sysctl_handle_int(oidp, &value, 0, req));
+}
+
+static int
+sysctl_bcm2835_cpufreq_throttled(SYSCTL_HANDLER_ARGS)
+{
+	struct bcm2835_cpufreq_softc *sc = arg1;
+	uint32_t flags;
+	int error;
+
+	if (req->newptr != NULL)
+		return (EPERM);
+	/* Zero requests status without clearing the firmware's sticky bits. */
+	flags = 0;
+	VC_LOCK(sc);
+	error = bcm2835_firmware_property(sc->firmware,
+	    BCM2835_FIRMWARE_TAG_GET_THROTTLED, &flags, sizeof(flags));
+	VC_UNLOCK(sc);
+	if (error != 0)
+		return (error);
+	return (sysctl_handle_int(oidp, &flags, 0, req));
+}
+
+static int
 sysctl_bcm2835_cpufreq_temperature(SYSCTL_HANDLER_ARGS)
 {
 	struct bcm2835_cpufreq_softc *sc = arg1;
@@ -1254,6 +1295,49 @@ bcm2835_cpufreq_attach(device_t dev)
 		oid = SYSCTL_ADD_NODE(&bcm2835_sysctl_ctx,
 		    SYSCTL_STATIC_CHILDREN(_hw), OID_AUTO, "cpufreq",
 		    CTLFLAG_RD | CTLFLAG_MPSAFE, NULL, "");
+
+		SYSCTL_ADD_PROC(&bcm2835_sysctl_ctx, SYSCTL_CHILDREN(oid),
+		    OID_AUTO, "throttled",
+		    CTLTYPE_UINT | CTLFLAG_RD | CTLFLAG_NEEDGIANT, sc, 0,
+		    sysctl_bcm2835_cpufreq_throttled, "IU",
+		    "Firmware throttle flags (current and historical, non-clearing)");
+
+		SYSCTL_ADD_PROC(&bcm2835_sysctl_ctx, SYSCTL_CHILDREN(oid),
+		    OID_AUTO, "arm_min_freq",
+		    CTLTYPE_UINT | CTLFLAG_RD | CTLFLAG_NEEDGIANT, sc,
+		    BCM2835_FIRMWARE_CLOCK_ID_ARM,
+		    sysctl_bcm2835_cpufreq_clock_limit, "IU",
+		    "Firmware arm minimum frequency (Hz)");
+		SYSCTL_ADD_PROC(&bcm2835_sysctl_ctx, SYSCTL_CHILDREN(oid),
+		    OID_AUTO, "arm_max_freq",
+		    CTLTYPE_UINT | CTLFLAG_RD | CTLFLAG_NEEDGIANT, sc,
+		    BCM2835_FIRMWARE_CLOCK_ID_ARM | 0x10000,
+		    sysctl_bcm2835_cpufreq_clock_limit, "IU",
+		    "Firmware arm maximum frequency (Hz)");
+		SYSCTL_ADD_PROC(&bcm2835_sysctl_ctx, SYSCTL_CHILDREN(oid),
+		    OID_AUTO, "core_min_freq",
+		    CTLTYPE_UINT | CTLFLAG_RD | CTLFLAG_NEEDGIANT, sc,
+		    BCM2835_FIRMWARE_CLOCK_ID_CORE,
+		    sysctl_bcm2835_cpufreq_clock_limit, "IU",
+		    "Firmware core minimum frequency (Hz)");
+		SYSCTL_ADD_PROC(&bcm2835_sysctl_ctx, SYSCTL_CHILDREN(oid),
+		    OID_AUTO, "core_max_freq",
+		    CTLTYPE_UINT | CTLFLAG_RD | CTLFLAG_NEEDGIANT, sc,
+		    BCM2835_FIRMWARE_CLOCK_ID_CORE | 0x10000,
+		    sysctl_bcm2835_cpufreq_clock_limit, "IU",
+		    "Firmware core maximum frequency (Hz)");
+		SYSCTL_ADD_PROC(&bcm2835_sysctl_ctx, SYSCTL_CHILDREN(oid),
+		    OID_AUTO, "sdram_min_freq",
+		    CTLTYPE_UINT | CTLFLAG_RD | CTLFLAG_NEEDGIANT, sc,
+		    BCM2835_FIRMWARE_CLOCK_ID_SDRAM,
+		    sysctl_bcm2835_cpufreq_clock_limit, "IU",
+		    "Firmware sdram minimum frequency (Hz)");
+		SYSCTL_ADD_PROC(&bcm2835_sysctl_ctx, SYSCTL_CHILDREN(oid),
+		    OID_AUTO, "sdram_max_freq",
+		    CTLTYPE_UINT | CTLFLAG_RD | CTLFLAG_NEEDGIANT, sc,
+		    BCM2835_FIRMWARE_CLOCK_ID_SDRAM | 0x10000,
+		    sysctl_bcm2835_cpufreq_clock_limit, "IU",
+		    "Firmware sdram maximum frequency (Hz)");
 
 		/* Frequency (Hz) */
 		SYSCTL_ADD_PROC(&bcm2835_sysctl_ctx, SYSCTL_CHILDREN(oid),

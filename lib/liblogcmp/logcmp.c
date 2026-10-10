@@ -51,11 +51,14 @@ struct logcmp_client {
 	uint32_t		ring_shape;
 	int			 wake_fd;
 	struct logcmp_hello_reply limits;
+	_Atomic uint32_t	interest_minimum;
+	_Atomic uint64_t	interest_until_ns;
 };
 
 #define	LOGCMP_COMPACT_RING_SIZE	(16U * 1024U)
 #define	LOGCMP_INLINE_RECORD_THRESHOLD	8U
 #define	LOGCMP_INLINE_BYTE_THRESHOLD	(8U * 1024U)
+#define	LOGCMP_INTEREST_LEASE_NS	5000000000ULL
 
 struct logcmp_logger {
 	struct logcmp_client *client;
@@ -405,20 +408,31 @@ logcmp_validate_message(const struct logcmp_msg *msg, size_t length,
 		case LOGCMP_OP_HELLO: {
 			const struct logcmp_hello_reply *hello;
 
-			if (payload != sizeof(struct logcmp_hello_reply))
+			if (payload != offsetof(struct logcmp_hello_reply,
+			    minimum_severity) &&
+			    payload != sizeof(struct logcmp_hello_reply))
 				goto invalid;
 			hello = (const void *)(msg + 1);
+			if (payload == offsetof(struct logcmp_hello_reply,
+			    minimum_severity) &&
+			    (hello->features & LOGCMP_FEATURE_INTEREST) != 0)
+				goto invalid;
 			if ((hello->features & ~(LOGCMP_FEATURE_INLINE |
 		    LOGCMP_FEATURE_SHM_RING | LOGCMP_FEATURE_SYSLOG |
 			    LOGCMP_FEATURE_TYPED_RECORDS | LOGCMP_FEATURE_PRIVACY |
 		    LOGCMP_FEATURE_TRACE_CONTEXT |
 		    LOGCMP_FEATURE_EDGE_WAKEUP |
-		    LOGCMP_FEATURE_SCOPED_QUERY)) != 0 ||
+		    LOGCMP_FEATURE_SCOPED_QUERY |
+		    LOGCMP_FEATURE_INTEREST)) != 0 ||
 			    hello->max_record == 0 ||
 			    hello->max_record > LOGCMP_MAX_RECORD ||
 			    hello->max_text == 0 ||
 			    hello->max_text > LOGCMP_MAX_TEXT ||
-			    hello->max_fields > LOGCMP_MAX_FIELDS)
+			    hello->max_fields > LOGCMP_MAX_FIELDS ||
+			    (payload == sizeof(*hello) &&
+			    (hello->features & LOGCMP_FEATURE_INTEREST) != 0 &&
+			    (hello->minimum_severity < 1 ||
+			    hello->minimum_severity > 24)))
 				goto invalid;
 			break;
 		}
@@ -476,7 +490,8 @@ logcmp_validate_message(const struct logcmp_msg *msg, size_t length,
 		    LOGCMP_FEATURE_TYPED_RECORDS | LOGCMP_FEATURE_PRIVACY |
 		    LOGCMP_FEATURE_TRACE_CONTEXT |
 		    LOGCMP_FEATURE_EDGE_WAKEUP |
-		    LOGCMP_FEATURE_SCOPED_QUERY)) != 0)
+		    LOGCMP_FEATURE_SCOPED_QUERY |
+		    LOGCMP_FEATURE_INTEREST)) != 0)
 			goto invalid;
 		break;
 	}
@@ -804,6 +819,10 @@ client_emit_loss_record(struct logcmp_client *client)
 static void
 client_disconnect(struct logcmp_client *client)
 {
+	atomic_store_explicit(&client->interest_minimum,
+	    LOGCMP_SEVERITY_TRACE, memory_order_relaxed);
+	atomic_store_explicit(&client->interest_until_ns, 0,
+	    memory_order_relaxed);
 
 	shmring_close(client->ring);
 	client->ring = NULL;
@@ -901,26 +920,41 @@ client_establish(struct logcmp_client *client)
 {
 	union logcmp_buffer reply;
 	struct logcmp_hello hello;
-	int error, fd;
+	struct timespec now;
+	int attempt, error, fd;
 
 	client->wake_fd = -1;
-	fd = logcmp_open_channel();
-	if (fd == -1)
-		return (-1);
-	if (service_session_create(fd, &client->channel) == -1) {
-		error = errno;
-		close(fd);
-		errno = error;
-		return (-1);
-	}
 	memset(&hello, 0, sizeof(hello));
 	hello.features = LOGCMP_FEATURE_INLINE | LOGCMP_FEATURE_SHM_RING |
 	    LOGCMP_FEATURE_TYPED_RECORDS | LOGCMP_FEATURE_PRIVACY |
 	    LOGCMP_FEATURE_TRACE_CONTEXT | LOGCMP_FEATURE_EDGE_WAKEUP |
 	    LOGCMP_FEATURE_SCOPED_QUERY;
-	if (rpc(client, LOGCMP_OP_HELLO, &hello, sizeof(hello), NULL, 0,
-	    &reply) == -1)
-		goto fail;
+	for (attempt = 0; attempt < 2; attempt++) {
+		fd = logcmp_open_channel();
+		if (fd == -1)
+			return (-1);
+		if (service_session_create(fd, &client->channel) == -1) {
+			error = errno;
+			close(fd);
+			errno = error;
+			return (-1);
+		}
+		if (attempt == 0)
+			hello.features |= LOGCMP_FEATURE_INTEREST;
+		else
+			hello.features &= ~LOGCMP_FEATURE_INTEREST;
+		memset(&reply, 0, sizeof(reply));
+		if (rpc(client, LOGCMP_OP_HELLO, &hello, sizeof(hello),
+		    NULL, 0, &reply) == 0)
+			break;
+		error = errno;
+		client_disconnect(client);
+		if (attempt != 0 || (error != EPROTO &&
+		    error != ECONNRESET && error != EPIPE)) {
+			errno = error;
+			return (-1);
+		}
+	}
 	memcpy(&client->limits, &reply.wire.msg + 1, sizeof(client->limits));
 	if ((client->limits.features & (LOGCMP_FEATURE_SHM_RING |
 	    LOGCMP_FEATURE_INLINE)) == 0 ||
@@ -940,6 +974,14 @@ client_establish(struct logcmp_client *client)
 		errno = EPROTO;
 		goto fail;
 	}
+	atomic_store_explicit(&client->interest_minimum,
+	    (client->limits.features & LOGCMP_FEATURE_INTEREST) != 0 ?
+	    client->limits.minimum_severity : LOGCMP_SEVERITY_TRACE,
+	    memory_order_relaxed);
+	if (clock_gettime(CLOCK_MONOTONIC, &now) == 0)
+		atomic_store_explicit(&client->interest_until_ns,
+		    (uint64_t)now.tv_sec * 1000000000 + now.tv_nsec +
+		    LOGCMP_INTEREST_LEASE_NS, memory_order_relaxed);
 	return (0);
 fail:
 	error = errno;
@@ -1119,6 +1161,31 @@ logcmp_logger_destroy(struct logcmp_logger *logger)
 		logcmp_client_close(logger->client);
 	memset(logger, 0, sizeof(*logger));
 	free(logger);
+}
+
+bool
+logcmp_enabled(const struct logcmp_logger *logger, uint32_t severity)
+{
+	struct timespec now;
+	uint64_t now_ns;
+
+	if (logger == NULL || logger->owner != getpid() ||
+	    severity < 1 || severity > 24)
+		return (false);
+	if (severity >= atomic_load_explicit(&logger->client->interest_minimum,
+	    memory_order_relaxed))
+		return (true);
+	if (clock_gettime(CLOCK_MONOTONIC, &now) == -1)
+		return (true);
+	now_ns = (uint64_t)now.tv_sec * 1000000000 + now.tv_nsec;
+	if (now_ns >= atomic_load_explicit(&logger->client->interest_until_ns,
+	    memory_order_relaxed)) {
+		/* Allow one emit to detect a dead peer or changed interest. */
+		atomic_store_explicit(&logger->client->interest_until_ns,
+		    now_ns + LOGCMP_INTEREST_LEASE_NS, memory_order_relaxed);
+		return (true);
+	}
+	return (false);
 }
 
 int
@@ -1590,6 +1657,11 @@ logcmp_vlog(int priority, const char *fmt, va_list ap)
 		char expfmt[256], msg[512];
 		va_list aq;
 
+		if (!logcmp_enabled(logcmp_default_logger,
+		    logcmp_severity_from_priority(priority))) {
+			errno = saved;
+			return;
+		}
 		logcmp_expand_m(expfmt, sizeof(expfmt), fmt, saved);
 		va_copy(aq, ap);
 		(void)vsnprintf(msg, sizeof(msg), expfmt, aq);

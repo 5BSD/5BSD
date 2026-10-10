@@ -16,4 +16,8 @@ LIBADD.networkcmp_test+=	pthread service
 CFLAGS.networkcmp_test+=	-I${SRCTOP}/lib/libnetworkcmp
 CFLAGS.networkcmp_test+=	-I${SRCTOP}/lib/libservice
 
+ATF_TESTS_C+= state_client_test
+CFLAGS.state_client_test+= -I${SRCTOP}/lib/libnetworkcmp -I${SRCTOP}/lib/libservice
+LIBADD.state_client_test+= pthread
+
 .include <bsd.test.mk>

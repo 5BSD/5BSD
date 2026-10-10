@@ -1,0 +1,10 @@
+prefix=/usr
+libdir=${prefix}/lib
+includedir=${prefix}/include
+
+Name: fidl
+Description: Native 5BSD FIDL C/C++ bindings over capability channels
+Version: 0.1.0
+Libs: -L${libdir} -lfidl_bsd -lc++
+Libs.private: -lchannel -lpthread -lcxxrt -lm
+Cflags: -I${includedir} -I${includedir}/fidl/support

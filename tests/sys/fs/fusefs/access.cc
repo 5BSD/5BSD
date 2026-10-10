@@ -47,6 +47,7 @@ virtual void SetUp() {
 	FuseTest::SetUp();
 	// Clear the default FUSE_ACCESS expectation
 	Mock::VerifyAndClearExpectations(m_mock);
+	expect_mac_label();
 }
 
 void expect_lookup(const char *relpath, uint64_t ino)

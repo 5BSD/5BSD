@@ -113,6 +113,7 @@ _LIBRARIES=	\
 		80211 \
 		alias \
 		capbundle \
+		cache \
 		capreclaim \
 		cryptocmp \
 		cryptodesc \
@@ -148,6 +149,7 @@ _LIBRARIES=	\
 		cap_syslog \
 		com_err \
 		compiler_rt \
+		cplusplus \
 		crypt \
 		crypto \
 		ctf \
@@ -165,6 +167,7 @@ _LIBRARIES=	\
 		elf \
 		execinfo \
 		fetch \
+		fidl_bsd \
 		formw \
 		geom \
 		gpio \
@@ -339,19 +342,22 @@ _DP_auditcmp=	service
 _DP_capbundle=	capsulert ucl md
 _DP_capreclaim=	
 _DP_capsulert=	ucl
+_DP_fidl_bsd=	channel pthread cplusplus
+_DP_cplusplus=	cxxrt m pthread
 _DP_bsdfilesystem=	trustedzfs service channel
 _DP_service=	capability channel pthread trustedzfs capsulert
 _DP_shmring=
 _DP_networkcmp=	pthread service
 _DP_sysctlcmp=	service
-_DP_timecmp=	service
+_DP_timecmp= service fidl_bsd cplusplus
 _DP_powercmp=	service
 _DP_cryptocmp=	pthread service
 _DP_devicecmp=	pthread service
 _DP_logcmp=	pthread service shmring
 _DP_kldmgr=	service
 _DP_notify=	pthread service
-_DP_oes=
+_DP_cache=	notify service pthread
+_DP_oes= service
 _DP_rebootctl=	service
 _DP_tracecmp=	dtrace service
 _DP_capability=
@@ -589,6 +595,15 @@ _DP_rdmacm=	ibverbs
 
 # Define special cases
 LDADD_supcplusplus=	-lsupc++
+# libc++'s unversioned shared-library name is an installed linker script,
+# not an object-directory symlink. Dynamic C++ consumers use the toolchain's
+# search path (and SYSROOT), just as the C++ driver does. Adding the object
+# directory would select its non-PIC static archive for shared-library links.
+LDADD_cplusplus=	-lc++
+.if (defined(NO_SHARED) && ${NO_SHARED:tl} != "no") || \
+    (defined(BOOTSTRAPPING) && ${.MAKE.OS} != "FreeBSD")
+LDADD_cplusplus=	${LDADD_cplusplus_L} -lc++
+.endif
 LIBATF_C=	${LIBDESTDIR}${LIBDIR_BASE}/libprivateatf-c.a
 LIBATF_CXX=	${LIBDESTDIR}${LIBDIR_BASE}/libprivateatf-c++.a
 LDADD_atf_c=	-lprivateatf-c
@@ -958,6 +973,8 @@ LIBCAP_NETDIR=	${_LIB_OBJTOP}/lib/libcasper/services/cap_net
 LIBCAP_PWDDIR=	${_LIB_OBJTOP}/lib/libcasper/services/cap_pwd
 LIBCAP_SYSCTLDIR=	${_LIB_OBJTOP}/lib/libcasper/services/cap_sysctl
 LIBCAP_SYSLOGDIR=	${_LIB_OBJTOP}/lib/libcasper/services/cap_syslog
+LIBFIDL_BSDDIR=	${_LIB_OBJTOP}/lib/libfidl
+LIBCPLUSPLUSDIR=	${_LIB_OBJTOP}/lib/libc++
 LIBCBORDIR=	${_LIB_OBJTOP}/lib/libcbor
 LIBBSDXMLDIR=	${_LIB_OBJTOP}/lib/libexpat
 LIBFIDO2DIR=	${_LIB_OBJTOP}/lib/libfido2

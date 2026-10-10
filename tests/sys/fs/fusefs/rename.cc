@@ -29,14 +29,49 @@
  */
 
 extern "C" {
+#include <fcntl.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <sys/wait.h>
 }
 
 #include "mockfs.hh"
 #include "utils.hh"
 
 using namespace testing;
+
+/* Optional Linux syscall entry, used by the dedicated Linuxulator VM gate. */
+static int
+rename_noreplace(FuseTest *fixture, const char *src, const char *dst)
+{
+	const char *probe = getenv("FUSE_LINUX_RENAME_PROBE");
+	if (probe == nullptr)
+		return (renameat2(AT_FDCWD, src, AT_FDCWD, dst, RENAME_NOREPLACE));
+	if (probe[0] != '/') {
+		errno = EINVAL;
+		return (-1);
+	}
+	int status = -1;
+	/* Registers the child with MockFS before releasing it to issue RPCs. */
+	fixture->fork(false, &status, []() {}, [=]() {
+		execl(probe, probe, src, dst, (char *)nullptr);
+		return (255);
+	});
+	if (!WIFEXITED(status)) {
+		errno = EIO;
+		return (-1);
+	}
+	/* Exit status carries Linux errno, not the native errno numbering. */
+	switch (WEXITSTATUS(status)) {
+	case 0: return (0);
+	case 17: errno = EEXIST; break;
+	case 38: errno = ENOSYS; break;
+	case 95: errno = EOPNOTSUPP; break;
+	default: errno = EIO; break;
+	}
+	return (-1);
+}
 
 class Rename: public FuseTest {
 	public:
@@ -52,6 +87,73 @@ class Rename: public FuseTest {
 		FuseTest::TearDown();
 	}
 };
+
+class RenameNoReplace: public Rename, public WithParamInterface<int> {};
+
+TEST_P(RenameNoReplace, forwards_atomic_flag_without_legacy_fallback)
+{
+	const int server_error = GetParam();
+	const int attempts = server_error == ENOSYS ? 2 : 1;
+
+	for (int attempt = 0; attempt < attempts; attempt++) {
+		expect_lookup("src", 42, S_IFREG | 0644, 0, 1);
+		EXPECT_LOOKUP(FUSE_ROOT_ID, "dst")
+		.WillOnce(Invoke(ReturnErrno(ENOENT)));
+		if (attempt == 0) {
+			EXPECT_CALL(*m_mock, process(
+				ResultOf([](auto in) {
+					if (in.header.opcode != FUSE_RENAME2)
+						return (false);
+					const char *src = (const char *)in.body.bytes +
+					    sizeof(fuse_rename2_in);
+					const char *dst = src + strlen(src) + 1;
+					return (in.header.nodeid == FUSE_ROOT_ID &&
+					    in.body.rename2.newdir == FUSE_ROOT_ID &&
+					    in.body.rename2.flags == 1 &&
+					    strcmp(src, "src") == 0 &&
+					    strcmp(dst, "dst") == 0);
+				}, Eq(true)), _))
+			.WillOnce(Invoke(ReturnErrno(server_error)));
+		}
+		errno = 0;
+		int result = rename_noreplace(this, "mountpoint/src", "mountpoint/dst");
+		if (server_error == 0)
+			ASSERT_EQ(0, result) << strerror(errno);
+		else {
+			ASSERT_EQ(-1, result);
+			ASSERT_EQ(server_error == ENOSYS ? EOPNOTSUPP : server_error,
+			    errno);
+		}
+	}
+}
+
+INSTANTIATE_TEST_SUITE_P(DaemonReply, RenameNoReplace,
+	Values(0, EEXIST, ENOSYS, EOPNOTSUPP));
+
+TEST_F(Rename, noreplace_existing_destination)
+{
+	expect_lookup("src", 42, S_IFREG | 0644, 0, 1);
+	expect_lookup("dst", 43, S_IFREG | 0644, 0, 1);
+	ASSERT_EQ(-1, rename_noreplace(this, "mountpoint/src", "mountpoint/dst"));
+	ASSERT_EQ(EEXIST, errno);
+}
+
+class RenameOld: public Rename {
+public:
+void SetUp() override {
+	m_kernel_minor_version = 22;
+	Rename::SetUp();
+}
+};
+
+TEST_F(RenameOld, noreplace_requires_protocol_7_23)
+{
+	expect_lookup("src", 42, S_IFREG | 0644, 0, 1);
+	EXPECT_LOOKUP(FUSE_ROOT_ID, "dst")
+	.WillOnce(Invoke(ReturnErrno(ENOENT)));
+	ASSERT_EQ(-1, rename_noreplace(this, "mountpoint/src", "mountpoint/dst"));
+	ASSERT_EQ(EOPNOTSUPP, errno);
+}
 
 // EINVAL, dst is subdir of src
 TEST_F(Rename, einval)

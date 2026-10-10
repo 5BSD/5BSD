@@ -1,4 +1,4 @@
-PACKAGE=	natd
+PACKAGE=	libalias
 NAME=		ftp
 SRCS=		alias_ftp.c
 

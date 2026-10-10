@@ -111,12 +111,18 @@ enum mac_capability_revoke_reason {
  *     Called exactly once when an instance dies.  Fires after all
  *     handlers and deferred work complete.
  *     NULL → no cleanup.
+ *     The framework records callback return separately from the claim that
+ *     prevents duplicate invocation.  Callback return alone does not certify
+ *     completion of asynchronous resource teardown started by the service.
  *
  * co_fdclose(instance, fd, td, arg)
  *     Called when a specific fd pointing at this instance is closed,
  *     even if other fds still reference it (dup, SCM_RIGHTS).
  *     Lets services track handle count.  NOT called on final close
  *     (co_revoke covers that).
+ *     Not invoked after revocation begins.
+ *     Counted as in-flight work; revoke and service unload wait for it.
+ *     Must not synchronously revoke its own instance.
  *     NULL → no notification.
  *
  * co_txdrain(instance, arg)
@@ -138,6 +144,14 @@ struct mac_capability_ops {
 	void	(*co_fdclose)(struct mac_capability_instance *s, int fd,
 		    struct thread *td, void *arg);
 	void	(*co_txdrain)(struct mac_capability_instance *s, void *arg);
+	/*
+	 * Optional: return a held instance that may receive this instance's
+	 * next message directly on its TX queue, bypassing co_handler and the
+	 * service taskqueue, or NULL to use the normal path.  Called only
+	 * when no earlier message from this instance is queued or in flight.
+	 */
+	struct mac_capability_instance *(*co_direct_peer)(
+		    struct mac_capability_instance *s, void *arg);
 	int	(*co_call)(struct mac_capability_instance *s,
 		    const void *req, size_t reqlen,
 		    struct file **fds, struct filecaps *fcaps, int nfds,
@@ -201,6 +215,7 @@ int	mac_capability_forward(struct mac_capability_instance *s, const struct mac_c
 /* Instance management. */
 void	mac_capability_instance_revoke(struct mac_capability_instance *s);
 void	mac_capability_instance_hold(struct mac_capability_instance *s);
+bool	mac_capability_instance_tryhold(struct mac_capability_instance *s);
 void	mac_capability_instance_rele(struct mac_capability_instance *s);
 void	mac_capability_instance_kick(struct mac_capability_instance *s);
 void	mac_capability_instance_set_priv(struct mac_capability_instance *s, void *priv);

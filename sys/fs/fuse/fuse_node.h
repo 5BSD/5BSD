@@ -266,6 +266,9 @@ void fuse_vnode_destroy(struct vnode *vp);
 int fuse_vnode_get(struct mount *mp, struct fuse_entry_out *feo,
     uint64_t nodeid, struct vnode *dvp, struct vnode **vpp,
     struct componentname *cnp, __enum_uint8(vtype) vtyp);
+int fuse_vnode_get_flags(struct mount *mp, struct fuse_entry_out *feo,
+    uint64_t nodeid, struct vnode *dvp, struct vnode **vpp,
+    struct componentname *cnp, __enum_uint8(vtype) vtyp, int lkflags);
 
 void fuse_vnode_open(struct vnode *vp, int32_t fuse_open_flags,
     struct thread *td);

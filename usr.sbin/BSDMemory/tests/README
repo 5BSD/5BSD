@@ -1,0 +1,26 @@
+BSDMemory test coverage
+=======================
+
+pressure_test exercises watermark boundaries, immediate escalation, three-sample
+recovery, and retention of the last valid restriction across unknown samples.
+
+dependency_test calls the daemon's actual sampling/publication helpers with
+injected clients. It checks failure errno across cleanup, counter length
+validation, missing notification state, unchanged-state suppression and
+republication after reconnect.
+
+startup_test calls the daemon's actual main function. Provider operations,
+kqueue/timer events, dependency clients and the sampling clock are injected.
+The fixture checks all startup failure points, readiness after timer setup,
+resource release before quiescence acknowledgement, retry timing, uninterrupted
+heartbeats through dependency failures, and three valid samples before pressure
+recovery. Each RPC stub checks that a real libservice budget is active. The
+heartbeat failure case starts with both clients live and checks their cleanup,
+provider destruction, failure exit status and removal of the active RPC budget.
+The timer advances virtual time; these are not wall-clock latency measurements.
+Queue cleanup uses a real descriptor standing in for the event queue.
+
+Remaining full-system checks include actual SwitchBoard readiness/stop RPCs,
+capability-mode queue creation, real BSDSysctl/BSDNotify stalls and restarts,
+pressure delivery to caches, and low-memory/OOM survivability. These fixtures
+do not reserve memory, activate the bundle, or exercise the kernel OOM selector.

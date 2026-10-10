@@ -1,0 +1,61 @@
+/* Generated automatically */
+#ifndef have_Src_Zle_zle_main_globals
+#define have_Src_Zle_zle_main_globals
+
+extern mod_import_variable ZLE_STRING_T zleline;
+extern mod_import_variable int zlecs;
+extern mod_import_variable int zlell;
+extern mod_import_variable int incompctlfunc;
+extern mod_import_variable int hascompmod;
+extern mod_import_variable int zle_recursive;
+extern int zlereadflags;
+extern int zlecontext;
+extern int done;
+extern int mark;
+extern mod_import_variable int lastchar;
+extern mod_import_variable ZLE_INT_T lastchar_wide;
+extern mod_import_variable int lastchar_wide_valid;
+extern mod_import_variable Thingy lbindk;
+extern mod_import_variable Thingy bindk;
+extern int insmode;
+extern mod_import_variable int lastcmd;
+extern mod_import_variable Widget compwidget;
+extern mod_import_variable char*statusline;
+extern int stackhist;
+extern int stackcs;
+extern zlong vistartchange;
+extern mod_import_variable struct modifier zmod;
+extern int prefixflag;
+extern int kungetct;
+extern mod_import_variable char*zlenoargs[1];
+extern int nwatch;
+extern Watch_fd watch_fds;
+extern mod_import_function void zsetterm(void);
+extern void ungetbyte(int ch);
+extern void ungetbytes(char*s,int len);
+extern void ungetbytes_unmeta(char*s,int len);
+extern mod_import_function int getbyte(long do_keytmout,int*timeout,int full);
+extern mod_import_function ZLE_INT_T getfullchar(int do_keytmout);
+#ifdef MULTIBYTE_SUPPORT
+extern mod_import_function ZLE_INT_T getrestchar(int inchar,char*outstr,int*outcount);
+#endif
+extern mod_import_function void redrawhook(void);
+extern void zlecore(void);
+extern char*zleread(char**lp,char**rp,int flags,int context,char*init,char*finish);
+extern int execzlefunc(Thingy func,char**args,int set_bindk,int set_lbindk);
+extern mod_import_variable char*varedarg;
+extern int describekeybriefly(UNUSED(char**args));
+extern int whereis(UNUSED(char**args));
+extern int recursiveedit(UNUSED(char**args));
+extern void reexpandprompt(void);
+extern int resetprompt(UNUSED(char**args));
+extern mod_import_function void trashzle(void);
+extern mod_import_variable struct hookdef zlehooks[];
+extern int setup_(UNUSED(Module m));
+extern int features_(Module m,char***features);
+extern int enables_(Module m,int**enables);
+extern int boot_(Module m);
+extern int cleanup_(Module m);
+extern int finish_(UNUSED(Module m));
+
+#endif /* !have_Src_Zle_zle_main_globals */

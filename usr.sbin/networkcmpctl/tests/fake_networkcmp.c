@@ -74,11 +74,17 @@ networkcmp_resolve(struct networkcmp_client *value, const char *host,
     size_t canonname_size, uint32_t *ttl)
 {
 	static const uint8_t loopback[16] = { 127, 0, 0, 1 };
+	const char *expected_family = getenv("CMP_TEST_FAMILY");
+	const char *expected_flags = getenv("CMP_TEST_FLAGS");
+	uint32_t want_family = expected_family != NULL ?
+	    (uint32_t)strtoul(expected_family, NULL, 0) : NETWORKCMP_AF_UNSPEC;
+	uint32_t want_flags = expected_flags != NULL ?
+	    (uint32_t)strtoul(expected_flags, NULL, 0) : NETWORKCMP_RESOLVE_F_CANONNAME;
 
 	if (value != &client || !client.open || strcmp(host, "localhost") != 0 ||
 	    (service != NULL && strcmp(service, "80") != 0) ||
-	    family != NETWORKCMP_AF_UNSPEC || socket_type != NETWORKCMP_SOCK_ANY ||
-	    flags != NETWORKCMP_RESOLVE_F_CANONNAME || results == NULL ||
+	    family != want_family || socket_type != NETWORKCMP_SOCK_ANY ||
+	    flags != want_flags || results == NULL ||
 	    count == NULL || *count < 1 || canonname == NULL ||
 	    canonname_size < sizeof("localhost") || ttl == NULL) {
 		errno = EINVAL;
@@ -90,6 +96,16 @@ networkcmp_resolve(struct networkcmp_client *value, const char *host,
 	results[0].endpoint.family = getenv("CMP_TEST_BAD_FAMILY") == NULL ?
 	    NETWORKCMP_AF_INET4 : 99;
 	memcpy(results[0].endpoint.address, loopback, sizeof(loopback));
+	if (family == NETWORKCMP_AF_INET6) {
+		results[0].endpoint.family = NETWORKCMP_AF_INET6;
+		memset(results[0].endpoint.address, 0, 16);
+		if ((flags & NETWORKCMP_RESOLVE_F_V4MAPPED) != 0) {
+			results[0].endpoint.address[10] = 0xff;
+			results[0].endpoint.address[11] = 0xff;
+			memcpy(results[0].endpoint.address + 12, loopback, 4);
+		} else
+			results[0].endpoint.address[15] = 1;
+	}
 	results[0].endpoint.port = service == NULL ? 0 : 80;
 	results[0].socket_type = NETWORKCMP_SOCK_STREAM;
 	results[0].protocol = 6;
@@ -141,4 +157,46 @@ networkcmp_udp(struct networkcmp_client *value, const struct sockaddr *peer,
 		return (-1);
 	*out_fd = -1;
 	return (0);
+}
+
+#include <network_state.h>
+struct network_state_client { unsigned calls; };
+static struct network_state_client state_client;
+int
+network_state_open(struct network_state_client **out)
+{
+	if (fail("state-open") == -1)
+		return (-1);
+	state_client.calls = 0;
+	*out = &state_client;
+	return (0);
+}
+int
+network_state_watch(struct network_state_client *value,
+    struct network_state_snapshot *out, uint32_t timeout)
+{
+	if (fail("state-watch") == -1)
+		return (-1);
+	if (getenv("CMP_TEST_TIMEOUT") != NULL && timeout != 17)
+		return (errno = EINVAL, -1);
+	memset(out, 0, sizeof(*out));
+	out->epoch = 7;
+	out->generation = ++value->calls;
+	if (getenv("CMP_TEST_SOURCE_ERROR") != NULL) {
+		out->source_error = EIO;
+		return (0);
+	}
+	out->count = 1;
+	out->interfaces[0].index = 1;
+	out->interfaces[0].mtu = 1500;
+	out->interfaces[0].link_state = NETWORK_STATE_LINK_UP;
+	strlcpy(out->interfaces[0].name, "v\n0", sizeof(out->interfaces[0].name));
+	return (0);
+}
+void
+network_state_close(struct network_state_client *value)
+{
+	(void)value;
+	if (getenv("CMP_TEST_TRACE_CLOSE") != NULL)
+		fprintf(stderr, "state-client-closed\n");
 }

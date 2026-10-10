@@ -107,7 +107,7 @@ SUBDIR=	\
 	${_dpdk_lpm6} \
 	${_dpms} \
 	dummymbuf \
-	dummynet \
+	${_dummynet} \
 	${_dwwdt} \
 	e6000sw \
 	${_efirt} \
@@ -187,11 +187,6 @@ SUBDIR=	\
         ${_ipoib} \
 	ipdivert \
 	${_ipfilter} \
-	${_ipfw} \
-	ipfw_nat \
-	${_ipfw_nat64} \
-	${_ipfw_nptv6} \
-	${_ipfw_pmod} \
 	${_ipmi} \
 	ip6_mroute_mod \
 	ip_mroute_mod \
@@ -503,7 +498,6 @@ _if_gre=	if_gre
 .if ${MK_CRYPT} != "no" || defined(ALL_MODULES)
 _if_wg=		if_wg
 .endif
-_ipfw_pmod=	ipfw_pmod
 .if ${KERN_OPTS:MIPSEC_SUPPORT} && !${KERN_OPTS:MIPSEC}
 _ipsec=		ipsec
 .endif
@@ -519,14 +513,11 @@ _if_stf=	if_stf
 
 .if (${KERN_OPTS:MINET} && ${MK_INET_SUPPORT} != "no") || defined(ALL_MODULES)
 _if_me=		if_me
-_ipfw=		ipfw
 .if ${MK_INET6_SUPPORT} != "no" || defined(ALL_MODULES)
-_ipfw_nat64=	ipfw_nat64
 .endif
 .endif
 
 .if ${MK_INET6_SUPPORT} != "no" || defined(ALL_MODULES)
-_ipfw_nptv6=	ipfw_nptv6
 .endif
 
 .if ${MK_IPFILTER} != "no" || defined(ALL_MODULES)
@@ -1010,6 +1001,11 @@ afterinstall: .PHONY
 	echo ".${DISTBASE}${KMODDIR}/linker.hints type=file uname=root gname=wheel mode=0644" | \
 	    cat -l >> ${METALOG}
 .endif
+.endif
+
+
+.if ${MK_DUMMYNET} != "no" || defined(ALL_MODULES)
+_dummynet= dummynet
 .endif
 
 SUBDIR:= ${SUBDIR:u:O}

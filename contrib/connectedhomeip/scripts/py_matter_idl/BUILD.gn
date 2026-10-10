@@ -1,0 +1,91 @@
+# Copyright (c) 2022 Project CHIP Authors
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+import("//build_overrides/build.gni")
+import("//build_overrides/chip.gni")
+
+import("//build_overrides/pigweed.gni")
+import("$dir_pw_build/python.gni")
+
+import("${chip_root}/scripts/py_matter_idl/files.gni")
+
+pw_python_package("matter-idl") {
+  setup = [
+    "setup.py",
+    "setup.cfg",
+    "pyproject.toml",
+  ]
+
+  inputs = []
+  inputs += matter_idl_generator_templates
+  inputs += [
+    # Dependency grammar
+    "matter/idl/lint/lint_rules_grammar.lark",
+    "matter/idl/matter_grammar.lark",
+
+    # Marker file to indicate to mypy that matter_idl is type-annotated
+    "matter/idl/py.typed",
+
+    # IDL plugin example used by test
+    "examples/matter_idl_plugin/__init__.py",
+    "examples/matter_idl_plugin/matter_cluster_proto.jinja",
+
+    # Unit test data
+    "matter/idl/tests/available_tests.yaml",
+    "matter/idl/tests/inputs/cluster_struct_attribute.matter",
+    "matter/idl/tests/inputs/cluster_with_commands.matter",
+    "matter/idl/tests/inputs/global_struct_attribute.matter",
+    "matter/idl/tests/inputs/large_all_clusters_app.matter",
+    "matter/idl/tests/inputs/large_lighting_app.matter",
+    "matter/idl/tests/inputs/optional_argument.matter",
+    "matter/idl/tests/inputs/several_clusters.matter",
+    "matter/idl/tests/inputs/simple_attribute.matter",
+    "matter/idl/tests/outputs/cluster_struct_attribute/cpp-tlvmeta/clusters_meta.cpp",
+    "matter/idl/tests/outputs/cluster_with_commands/cpp-tlvmeta/clusters_meta.cpp",
+    "matter/idl/tests/outputs/large_all_clusters_app/cpp-app/callback-stub.cpp",
+    "matter/idl/tests/outputs/large_all_clusters_app/cpp-app/cluster-callbacks.cpp",
+    "matter/idl/tests/outputs/large_lighting_app/cpp-app/callback-stub.cpp",
+    "matter/idl/tests/outputs/large_lighting_app/cpp-app/cluster-callbacks.cpp",
+    "matter/idl/tests/outputs/proto/first_cluster.proto",
+    "matter/idl/tests/outputs/proto/second_cluster.proto",
+    "matter/idl/tests/outputs/proto/third_cluster.proto",
+    "matter/idl/tests/outputs/several_clusters/cpp-app/callback-stub.cpp",
+    "matter/idl/tests/outputs/several_clusters/cpp-app/cluster-callbacks.cpp",
+    "matter/idl/tests/outputs/several_clusters/java/ChipClusters.java",
+    "matter/idl/tests/outputs/several_clusters/java/ChipEventStructs.java",
+    "matter/idl/tests/outputs/several_clusters/java/ChipStructs.java",
+    "matter/idl/tests/outputs/several_clusters/java/ClusterIDMapping.java",
+    "matter/idl/tests/outputs/several_clusters/java/ClusterInfoMapping.java",
+    "matter/idl/tests/outputs/several_clusters/java/ClusterReadMapping.java",
+    "matter/idl/tests/outputs/several_clusters/java/ClusterWriteMapping.java",
+    "matter/idl/tests/outputs/several_clusters/java/SecondClusterFabricDescriptorStruct.kt",
+  ]
+
+  sources = matter_idl_generator_sources
+
+  tests = [
+    "matter/idl/test_backwards_compatibility.py",
+    "matter/idl/test_case_conversion.py",
+    "matter/idl/test_data_model_xml.py",
+    "matter/idl/test_matter_idl_parser.py",
+    "matter/idl/test_generators.py",
+    "matter/idl/test_idl_generator.py",
+    "matter/idl/test_supported_types.py",
+    "matter/idl/test_zapxml.py",
+  ]
+
+  # TODO: at a future time consider enabling all (* or missing) here to get
+  #       pylint checking these files
+  static_analysis = []
+}

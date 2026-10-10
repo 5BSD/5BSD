@@ -40,12 +40,6 @@ manifest_body()
 		atf_check -s exit:0 -o not-match:'.SUNW_dof' readelf -S \
 		    "${installed_unit}/bin/BSDNetwork"
 	fi
-	pfunit="${bundle}/Units/pf.unit"
-	mkdir -p "${pfunit}/bin"
-	cp "${installed}/Units/pf.unit/Unit.ucl" "${pfunit}/Unit.ucl"
-	cp "${installed}/Units/pf.unit/bin/BSDPF" "${pfunit}/bin/BSDPF"
-	chmod 0555 "${pfunit}" "${pfunit}/bin" "${pfunit}/bin/BSDPF"
-	chmod 0444 "${pfunit}/Unit.ucl"
 	cp "${manifest}" "${unit}/Unit.ucl"
 	chmod 0555 "${bundle}" "${bundle}/Units" "${unit}" "${unit}/bin" \
 	    "${unit}/bin/BSDNetwork"
@@ -53,15 +47,21 @@ manifest_body()
 
 	atf_check -s exit:0 -o match:'Verification: PASSED' \
 	    "${switchboardctl}" verify "${bundle}"
-	# The activation block publishes the broker and its gated admin name.
+	atf_check -s exit:0 -o ignore \
+	    grep -F '{ name = "system.Network.State"; requires = ["system.network.observe"]; }' \
+	    "${manifest}"
+	# The activation block publishes the broker and its gated names.
 	atf_check -s exit:0 -o ignore grep -F '"system.Network",' "${manifest}"
 	atf_check -s exit:0 -o ignore \
 	    grep -F '{ name = "system.Network.Admin"; requires = ["system.network.admin"]; }' \
 	    "${manifest}"
+	atf_check -s exit:0 -o ignore \
+	    grep -F '{ name = "system.Network.PF"; requires = ["system.network.pf.read"]; }' \
+	    "${manifest}"
 	atf_check -s exit:1 -o empty -e empty \
 	    grep 'interface' "${manifest}"
-	atf_check -s exit:0 -o match:'version = "1.0.0"' \
-	    grep 'version = "1.0.0"' "${installed}/Bundle.ucl"
+	atf_check -s exit:0 -o match:'version = "1.0.5"' \
+	    grep 'version = "1.0.5"' "${installed}/Bundle.ucl"
 }
 manifest_cleanup()
 {

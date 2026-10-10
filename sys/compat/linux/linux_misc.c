@@ -975,15 +975,14 @@ linux_common_wait(struct thread *td, idtype_t idtype, int id, int *statusp,
 		if (statusp != NULL)
 			error = copyout(&tmpstat, statusp, sizeof(int));
 	}
-	if (error == 0 && rup != NULL)
+	if (error == 0 && rup != NULL && td->td_retval[0] != 0)
 		error = linux_copyout_rusage(&wru.wru_self, rup);
 	if (error == 0 && infop != NULL &&
 	    !(suppress_empty && td->td_retval[0] == 0)) {
 		if (td->td_retval[0] == 0) {
-			/* Linux waitid clears si_signo when WNOHANG finds no exit. */
-			const l_int signo = 0;
-
-			error = copyout(&signo, &infop->lsi_signo, sizeof(signo));
+			/* No waitable child: Linux clears the returned siginfo. */
+			memset(&lsi, 0, sizeof(lsi));
+			error = copyout(&lsi, infop, sizeof(lsi));
 		} else {
 			sig = bsd_to_linux_signal(siginfo.si_signo);
 			memset(&lsi, 0, sizeof(lsi));

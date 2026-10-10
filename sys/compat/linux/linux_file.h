@@ -398,6 +398,7 @@ struct l_file_handle {
 };
 
 int	linux_enobufs2eagain(struct thread *, int, int);
+int	linux_fdunshare(struct thread *);
 int	linux_common_openflags(int);
 int	linux_kern_fadvise(struct thread *, int, off_t, off_t, int);
 int	linux_kern_fallocate(struct thread *, int, int, off_t, off_t);
@@ -407,11 +408,7 @@ int	linux_kern_splice(struct thread *, int, off_t *, int, off_t *,
 	    size_t, unsigned int);
 #endif
 
-/*
- * Look at linux_close_range() for an explanation.
- *
- * #define	LINUX_CLOSE_RANGE_UNSHARE	(1U << 1)
- */
+#define	LINUX_CLOSE_RANGE_UNSHARE	(1U << 1)
 #define	LINUX_CLOSE_RANGE_CLOEXEC	(1U << 2)
 
 #endif	/* !_LINUX_FILE_H_ */

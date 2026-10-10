@@ -119,7 +119,7 @@ $BSDDIALOG_CANCEL)	# Live System
 $BSDDIALOG_EXTRA)	# Shell
 	clear
 	echo "When finished, type 'exit' to return to the installer."
-	/bin/sh
+	/bin/zsh
 	. "$0"
 	;;
 esac

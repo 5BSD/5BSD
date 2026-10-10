@@ -1,0 +1,8 @@
+// SPDX-License-Identifier: BSD-2-Clause
+// Wire identifiers used by upstream FIDL; these do not provide Zircon objects.
+library zx;
+type ObjType = strict enum : uint32 { NONE = 0; CHANNEL = 4; SOCKET = 14; };
+type Rights = strict bits : uint32 { READ = 4; WRITE = 8; };
+resource_definition Handle : uint32 {
+    properties { subtype ObjType; rights Rights; };
+};

@@ -189,23 +189,14 @@ IPF=		ipfilter \
 		ipnat \
 		ippool
 
-CONFGROUPS.${MK_IPFW}+=		IPFW
-IPFWPACKAGE=			ipfw
-IPFW=		ipfw \
-		dnctl
-.if ${MK_NETGRAPH} != "no"
-IPFW+=		ipfw_netflow
-.endif
+CONFGROUPS.${MK_DUMMYNET}+=	DUMMYNET
+DUMMYNETPACKAGE=		dummynet
+DUMMYNET=		dnctl
 
 CONFGROUPS.${MK_ISCSI}+=	ISCSI
 ISCSIPACKAGE=			iscsi
 ISCSI=		iscsictl \
 		iscsid
-
-# natd is only built when ipfw is built
-CONFGROUPS.${MK_IPFW}+=		NATD
-NATDPACKAGE=			natd
-NATD=		natd
 
 CONFGROUPS.${MK_JAIL}+=		JAIL
 JAILPACKAGE=			jail

@@ -143,6 +143,11 @@ sysctl_handle_attr(SYSCTL_HANDLER_ARGS)
 	if (buf == NULL)
 		return (ENOMEM);
 	ops = kobj->ktype->sysfs_ops;
+	if ((oidp->oid_kind & CTLTYPE) == CTLTYPE_OPAQUE &&
+	    (req->newptr != NULL || ops->show == NULL)) {
+		error = req->newptr != NULL ? EPERM : ENODEV;
+		goto out;
+	}
 	if (ops->show) {
 		len = ops->show(kobj, attr, buf);
 		/*
@@ -151,11 +156,22 @@ sysctl_handle_attr(SYSCTL_HANDLER_ARGS)
 		 */
 		if (len < 0) {
 			error = -len;
-			if (error != EIO)
+			if (error != EIO ||
+			    (oidp->oid_kind & CTLTYPE) == CTLTYPE_OPAQUE)
 				goto out;
 			buf[0] = '\0';
+		} else if ((oidp->oid_kind & CTLTYPE) == CTLTYPE_OPAQUE) {
+			/* Preserve embedded NULs and the final byte. */
+			if (req->newptr != NULL)
+				error = EPERM;
+			else if (len > PAGE_SIZE)
+				error = EOVERFLOW;
+			else
+				error = SYSCTL_OUT(req, buf, len);
+			goto out;
 		} else if (len) {
-			len--;
+			if (len <= PAGE_SIZE && buf[len - 1] == '\n')
+				len--;
 			if (len >= PAGE_SIZE)
 				len = PAGE_SIZE - 1;
 			/* Trim trailing newline. */
@@ -178,14 +194,27 @@ out:
 	return (error);
 }
 
+/*
+ * Some Linux drivers use a regular sysfs attribute for a binary ABI.
+ * Classify these by ABI name, never by the bytes in a particular reading.
+ */
+static inline bool
+linux_sysfs_binary_attr(const struct attribute *attr)
+{
+
+	return (strcmp(attr->name, "gpu_metrics") == 0);
+}
+
 static inline int
 sysfs_create_file(struct kobject *kobj, const struct attribute *attr)
 {
 	struct sysctl_oid *oid;
 
 	oid = SYSCTL_ADD_OID(NULL, SYSCTL_CHILDREN(kobj->oidp), OID_AUTO,
-	    attr->name, CTLTYPE_STRING|CTLFLAG_RW|CTLFLAG_MPSAFE, kobj,
-	    (uintptr_t)attr, sysctl_handle_attr, "A", "");
+	    attr->name, (linux_sysfs_binary_attr(attr) ?
+	    CTLTYPE_OPAQUE | CTLFLAG_RD : CTLTYPE_STRING | CTLFLAG_RW) |
+	    CTLFLAG_MPSAFE, kobj, (uintptr_t)attr, sysctl_handle_attr,
+	    linux_sysfs_binary_attr(attr) ? "" : "A", "");
 	if (!oid) {
 		return (-ENOMEM);
 	}
@@ -385,8 +414,10 @@ sysfs_create_group(struct kobject *kobj, const struct attribute_group *grp)
 		oidp = kobj->oidp;
 	for (attr = grp->attrs; attr != NULL && *attr != NULL; attr++) {
 		SYSCTL_ADD_OID(NULL, SYSCTL_CHILDREN(oidp), OID_AUTO,
-		    (*attr)->name, CTLTYPE_STRING|CTLFLAG_RW|CTLFLAG_MPSAFE,
-		    kobj, (uintptr_t)*attr, sysctl_handle_attr, "A", "");
+		    (*attr)->name, (linux_sysfs_binary_attr(*attr) ?
+		    CTLTYPE_OPAQUE | CTLFLAG_RD : CTLTYPE_STRING | CTLFLAG_RW) |
+		    CTLFLAG_MPSAFE, kobj, (uintptr_t)*attr, sysctl_handle_attr,
+		    linux_sysfs_binary_attr(*attr) ? "" : "A", "");
 	}
 	for (bin_attr = grp->bin_attrs;
 	    bin_attr != NULL && *bin_attr != NULL;

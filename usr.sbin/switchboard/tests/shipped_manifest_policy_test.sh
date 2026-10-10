@@ -29,6 +29,7 @@ usr.sbin/BSDDevice/capbundle/device.ucl
 usr.sbin/BSDExtension/capbundle/bsdextension.ucl
 usr.sbin/BSDFilesystem/capbundle/bsdfilesystem.ucl
 usr.sbin/BSDLog/capbundle/bsdlog.ucl
+usr.sbin/BSDMemory/capbundle/Unit.ucl
 usr.sbin/BSDNamespace/capbundle/bsdnamespace.ucl
 usr.sbin/BSDNetwork/capbundle/bsdnetwork.ucl
 usr.sbin/BSDNotify/capbundle/bsdnotify.ucl

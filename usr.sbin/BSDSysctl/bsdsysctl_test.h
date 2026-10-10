@@ -2,6 +2,8 @@
 #ifndef _BSDSYSCTL_TEST_H_
 #define _BSDSYSCTL_TEST_H_
 
+#include <stddef.h>
+#include <stdint.h>
 #include "config.h"
 
 /*
@@ -11,5 +13,8 @@
  * can be driven over the plane without switchboard or a config-directory overlay.
  */
 int sysctlcmp_test_serve(int, const char *, const struct sysctlcmp_config *);
+
+int sysctlcmp_test_serve_many(const int *, const char *const *, size_t,
+    const struct sysctlcmp_config *, uint32_t);
 
 #endif /* !_BSDSYSCTL_TEST_H_ */

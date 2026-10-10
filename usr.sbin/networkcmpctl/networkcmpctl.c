@@ -18,6 +18,7 @@
 #include <unistd.h>
 
 #include <networkcmp.h>
+#include <network_state.h>
 
 static void usage(void) __dead2;
 
@@ -28,10 +29,11 @@ usage(void)
 	fprintf(stderr,
 	    "usage: networkcmpctl config\n"
 	    "       networkcmpctl info\n"
+	    "       networkcmpctl state-watch [count [timeout-ms]]\n"
 	    "       networkcmpctl listen\n"
 	    "       networkcmpctl connect addr port\n"
 	    "       networkcmpctl udp addr port\n"
-	    "       networkcmpctl resolve host [service]\n");
+	    "       networkcmpctl resolve [-4|-6] [-m] [-a] host [service]\n");
 	exit(EX_USAGE);
 }
 
@@ -95,7 +97,7 @@ endpoint_address(const struct networkcmp_resolve_result *result,
 }
 
 static int
-resolve(const char *host, const char *service)
+resolve(const char *host, const char *service, uint32_t family, uint32_t flags)
 {
 	struct networkcmp_resolve_result results[NETWORKCMP_RESOLVE_MAX_RESULTS];
 	struct networkcmp_client *client;
@@ -107,8 +109,8 @@ resolve(const char *host, const char *service)
 	client = open_client();
 	count = nitems(results);
 	memset(canonname, 0, sizeof(canonname));
-	if (networkcmp_resolve(client, host, service, NETWORKCMP_AF_UNSPEC,
-	    NETWORKCMP_SOCK_ANY, NETWORKCMP_RESOLVE_F_CANONNAME, results,
+	if (networkcmp_resolve(client, host, service, family,
+	    NETWORKCMP_SOCK_ANY, flags | NETWORKCMP_RESOLVE_F_CANONNAME, results,
 	    &count, canonname, sizeof(canonname), &ttl) == -1) {
 		int error = errno;
 
@@ -135,6 +137,39 @@ resolve(const char *host, const char *service)
 		    results[i].socket_type, results[i].protocol);
 	networkcmp_client_close(client);
 	return (0);
+}
+
+static int
+resolve_command(int argc, char **argv)
+{
+	uint32_t family = NETWORKCMP_AF_UNSPEC, flags = 0, selected;
+
+	while (argc > 0 && argv[0][0] == '-') {
+		if (strcmp(argv[0], "--") == 0) {
+			argc--;
+			argv++;
+			break;
+		}
+		if (strcmp(argv[0], "-4") == 0 || strcmp(argv[0], "-6") == 0) {
+			selected = argv[0][1] == '4' ? NETWORKCMP_AF_INET4 : NETWORKCMP_AF_INET6;
+			if (family != NETWORKCMP_AF_UNSPEC && family != selected)
+				usage();
+			family = selected;
+		} else if (strcmp(argv[0], "-m") == 0)
+			flags |= NETWORKCMP_RESOLVE_F_V4MAPPED;
+		else if (strcmp(argv[0], "-a") == 0)
+			flags |= NETWORKCMP_RESOLVE_F_ALL;
+		else
+			usage();
+		argc--;
+		argv++;
+	}
+	if (argc < 1 || argc > 2 ||
+	    (flags != 0 && family != NETWORKCMP_AF_INET6) ||
+	    ((flags & NETWORKCMP_RESOLVE_F_ALL) != 0 &&
+	    (flags & NETWORKCMP_RESOLVE_F_V4MAPPED) == 0))
+		usage();
+	return (resolve(argv[0], argc == 2 ? argv[1] : NULL, family, flags));
 }
 
 /*
@@ -264,10 +299,76 @@ do_udp(const char *ip, const char *port)
 	return (0);
 }
 
+static uint32_t
+state_number(const char *text, uint32_t minimum)
+{
+	char *end;
+	uintmax_t value;
+
+	if (*text < '0' || *text > '9')
+		errx(EX_USAGE, "state-watch: invalid number %s", text);
+	errno = 0;
+	value = strtoumax(text, &end, 10);
+	if (errno != 0 || *end != '\0' || value < minimum ||
+	    value > UINT32_MAX)
+		errx(EX_USAGE, "state-watch: invalid number %s", text);
+	return ((uint32_t)value);
+}
+
+static int
+state_watch(int argc, char **argv)
+{
+	struct network_state_client *client;
+	struct network_state_snapshot state;
+	uint32_t count = argc >= 3 ? state_number(argv[2], 1) : 1;
+	uint32_t timeout = argc >= 4 ? state_number(argv[3], 0) :
+	    NETWORK_STATE_TIMEOUT_INFINITE;
+	int error;
+
+	if (network_state_open(&client) == -1)
+		err(EX_UNAVAILABLE, "open %s", NETWORK_STATE_INTERFACE);
+	for (uint32_t sample = 0; sample < count; sample++) {
+		if (network_state_watch(client, &state, timeout) == -1) {
+			error = errno;
+			network_state_close(client);
+			errno = error;
+			err(EX_UNAVAILABLE, "state-watch");
+		}
+		printf("epoch=%" PRIu64 " generation=%" PRIu64
+		    " source_error=%d count=%u\n", state.epoch,
+		    state.generation, state.source_error, state.count);
+		for (uint32_t i = 0; i < state.count; i++) {
+			const struct network_state_interface *entry = &state.interfaces[i];
+			printf("index=%u name=", entry->index);
+			for (size_t j = 0; entry->name[j] != '\0'; j++) {
+				unsigned char c = entry->name[j];
+				if (c <= ' ' || c >= 127 || c == '\\')
+					printf("\\x%02x", c);
+				else
+					putchar(c);
+			}
+			printf(" flags=0x%08x mtu=%u link=%s\n", entry->flags,
+			    entry->mtu, entry->link_state == NETWORK_STATE_LINK_UP ?
+			    "up" : entry->link_state == NETWORK_STATE_LINK_DOWN ?
+			    "down" : "unknown");
+		}
+		if (fflush(stdout) == EOF) {
+			error = errno;
+			network_state_close(client);
+			errno = error;
+			err(EX_IOERR, "stdout");
+		}
+	}
+	network_state_close(client);
+	return (0);
+}
+
 int
 main(int argc, char **argv)
 {
 
+	if (argc >= 2 && argc <= 4 && strcmp(argv[1], "state-watch") == 0)
+		return (state_watch(argc, argv));
 	if (argc == 2 && strcmp(argv[1], "config") == 0) {
 		puts("# No manifest declaration is required: link libnetworkcmp and");
 		puts("# call networkcmp_*().  The system.Network service is reached at");
@@ -282,7 +383,7 @@ main(int argc, char **argv)
 		return (do_connect(argv[2], argv[3]));
 	if (argc == 4 && strcmp(argv[1], "udp") == 0)
 		return (do_udp(argv[2], argv[3]));
-	if ((argc == 3 || argc == 4) && strcmp(argv[1], "resolve") == 0)
-		return (resolve(argv[2], argc == 4 ? argv[3] : NULL));
+	if (argc >= 2 && strcmp(argv[1], "resolve") == 0)
+		return (resolve_command(argc - 2, argv + 2));
 	usage();
 }

@@ -4,31 +4,38 @@
  *
  * The daemon's per-connection workers run under cap_enter(2); after that
  * point no path may be opened and libc getaddrinfo(3) is unusable (it opens
- * /etc/resolv.conf, /etc/hosts and /etc/services on demand).  netresolve_init()
- * is therefore called once BEFORE cap_enter: it parses resolv.conf via
- * res_ninit() and retains read-only descriptors for /etc/hosts and
- * /etc/services.  netresolve() then serves lookups in capability mode using
- * only those already-open descriptors, pure in-memory parsing, and freshly
- * created UDP sockets (socket/sendto/recvfrom/poll are all capability-mode
- * legal on a socket the process itself creates).
+ * /etc/resolv.conf, /etc/hosts and /etc/services on demand).  Before
+ * workers fork, netresolve_init() reads resolv.conf through the filesystem
+ * provider and retains read-only descriptors for /etc/hosts and
+ * /etc/services.  The parent periodically refreshes nameservers through the
+ * filesystem provider; existing workers read a shared, read-only generation.
+ * netresolve() serves lookups in capability mode using retained descriptors,
+ * pure in-memory parsing, and fresh UDP or TCP sockets connected to a
+ * configured nameserver with connectat(2).
  *
  * This code parses untrusted DNS responses; every field is bounds-checked
  * before use and the number of collected results is capped.
  */
 #include <sys/types.h>
 #include <sys/socket.h>
+#include <sys/capsicum.h>
+#include <sys/mman.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <arpa/nameser.h>
 #include <resolv.h>
 #include <netdb.h>
 #include <poll.h>
+#include <stdbool.h>
+#include <stdatomic.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <limits.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <unistd.h>
 
 #include <libservice.h>
@@ -46,12 +53,13 @@ static int			g_servfd = -1;
 #define	RSLV_SERV_BUFSZ		(1024 * 1024)	/* /etc/services snapshot cap  */
 #define	RSLV_DFL_RETRANS	5	/* seconds, if g_res.retrans unset     */
 #define	RSLV_DFL_RETRY		2	/* attempts, if g_res.retry unset      */
+#define	RSLV_MAX_RETRANS	30	/* bound each UDP/TCP exchange in sec */
+#define	RSLV_MAX_CNAME_HOPS	16	/* reject cyclic or excessive chains */
 
 /*
- * Nameservers parsed from the delivered /etc/resolv.conf.  Born in capability
- * mode, we cannot let res_ninit(3) read resolv.conf by path, so we parse it
- * ourselves and drive the query send loop from this list rather than
- * res_getservers(3) (which would read the res_state's own, unpopulated, list).
+ * Initial nameservers parsed from the delivered /etc/resolv.conf.  Workers
+ * retain this process-local snapshot as a fallback if the shared writer dies.
+ * DNS queries normally read the latest complete shared generation.
  */
 static union res_sockaddr_union	g_ns[RSLV_MAX_NS];
 static int			g_nns;
@@ -85,6 +93,7 @@ open_resolver_config(struct service_context *ctx, int *fdp)
 
 struct rslv_addr {
 	int	family;
+	uint64_t expires_ns;
 	union {
 		struct in_addr	v4;
 		struct in6_addr	v6;
@@ -97,16 +106,201 @@ struct rslv_port {
 	uint16_t	port;		/* host byte order                     */
 };
 
+/*
+ * The parent refreshes nameservers while long-lived workers serve requests.
+ * Workers remap this anonymous object read-only, with CAP_MMAP_R rights, before
+ * entering capability mode.  Atomic bytes and a sequence number let each DNS
+ * query take one complete generation without a control fd per worker.
+ */
+struct rslv_nameservers {
+	_Atomic uint32_t generation;
+	_Atomic uint32_t count;
+	_Atomic unsigned char bytes[sizeof(g_ns)];
+};
+static struct rslv_nameservers *g_nameservers;
+static int g_nameservers_fd = -1;
+
+static void
+nameservers_publish(const union res_sockaddr_union *servers, int count)
+{
+	const unsigned char *bytes;
+	size_t i;
+
+	if (g_nameservers == NULL)
+		return;
+	bytes = (const unsigned char *)(const void *)servers;
+	(void)atomic_fetch_add_explicit(&g_nameservers->generation, 1,
+	    memory_order_seq_cst);
+	atomic_store_explicit(&g_nameservers->count, (uint32_t)count,
+	    memory_order_seq_cst);
+	for (i = 0; i < sizeof(g_ns); i++)
+		atomic_store_explicit(&g_nameservers->bytes[i], bytes[i],
+		    memory_order_seq_cst);
+	(void)atomic_fetch_add_explicit(&g_nameservers->generation, 1,
+	    memory_order_seq_cst);
+}
+
+static int
+nameservers_snapshot_version(union res_sockaddr_union *servers, uint32_t *version)
+{
+	unsigned char *bytes;
+	uint32_t before, after, count;
+	int attempt;
+	size_t i;
+
+	if (g_nameservers != NULL) {
+		bytes = (unsigned char *)(void *)servers;
+		for (attempt = 0; attempt < 64; attempt++) {
+			before = atomic_load_explicit(&g_nameservers->generation,
+			    memory_order_seq_cst);
+			if ((before & 1) != 0)
+				continue;
+			count = atomic_load_explicit(&g_nameservers->count,
+			    memory_order_seq_cst);
+			if (count > RSLV_MAX_NS)
+				break;
+			for (i = 0; i < sizeof(g_ns); i++)
+				bytes[i] = atomic_load_explicit(
+				    &g_nameservers->bytes[i], memory_order_seq_cst);
+			after = atomic_load_explicit(&g_nameservers->generation,
+			    memory_order_seq_cst);
+			if (before == after) {
+				*version = after;
+				return ((int)count);
+			}
+		}
+	}
+	/* A dead writer cannot stall DNS forever; use the startup snapshot. */
+	*version = UINT32_MAX;
+	memcpy(servers, g_ns, sizeof(g_ns));
+	return (g_nns);
+}
+
+static int
+nameservers_share_init(void)
+{
+	int fd;
+	void *mapping;
+
+	fd = shm_open(SHM_ANON, O_RDWR | O_CLOEXEC, 0600);
+	if (fd == -1)
+		return (-1);
+	if (ftruncate(fd, sizeof(*g_nameservers)) == -1) {
+		(void)close(fd);
+		return (-1);
+	}
+	mapping = mmap(NULL, sizeof(*g_nameservers), PROT_READ | PROT_WRITE,
+	    MAP_SHARED, fd, 0);
+	if (mapping == MAP_FAILED) {
+		(void)close(fd);
+		return (-1);
+	}
+	g_nameservers = mapping;
+	g_nameservers_fd = fd;
+	atomic_init(&g_nameservers->generation, 0);
+	atomic_init(&g_nameservers->count, 0);
+	nameservers_publish(g_ns, g_nns);
+	return (0);
+}
+
+int
+netresolve_worker_enter(void)
+{
+	cap_rights_t rights;
+	void *mapping;
+
+	if (g_nameservers == NULL)
+		return (0);
+	if (g_nameservers_fd == -1)
+		return (0);
+	cap_rights_init(&rights, CAP_MMAP_R);
+	if (cap_rights_limit(g_nameservers_fd, &rights) == -1)
+		return (-1);
+	mapping = mmap(NULL, sizeof(*g_nameservers), PROT_READ, MAP_SHARED,
+	    g_nameservers_fd, 0);
+	if (mapping == MAP_FAILED)
+		return (-1);
+	(void)munmap(g_nameservers, sizeof(*g_nameservers));
+	g_nameservers = mapping;
+	(void)close(g_nameservers_fd);
+	g_nameservers_fd = -1;
+	return (0);
+}
+
+static int
+nameservers_load(struct service_context *ctx,
+    union res_sockaddr_union *servers, int *countp)
+{
+	char buf[8192];
+	char *cursor, *line, *kw, *val, *save;
+	ssize_t r;
+	int fd, count;
+
+	memset(servers, 0, sizeof(g_ns));
+	*countp = 0;
+	if (open_resolver_config(ctx, &fd) == -1)
+		return (errno == ENOENT ? 0 : -1);
+	do {
+		r = pread(fd, buf, sizeof(buf) - 1, 0);
+	} while (r == -1 && errno == EINTR);
+	(void)close(fd);
+	if (r == -1)
+		return (-1);
+	buf[r] = '\0';
+	cursor = buf;
+	count = 0;
+	while ((line = strsep(&cursor, "\n")) != NULL &&
+	    count < RSLV_MAX_NS) {
+		kw = strtok_r(line, " \t", &save);
+		if (kw == NULL || strcmp(kw, "nameserver") != 0)
+			continue;
+		val = strtok_r(NULL, " \t\r", &save);
+		if (val == NULL)
+			continue;
+		memset(&servers[count], 0, sizeof(servers[count]));
+		if (inet_pton(AF_INET, val,
+		    &servers[count].sin.sin_addr) == 1) {
+			servers[count].sin.sin_family = AF_INET;
+			servers[count].sin.sin_len = sizeof(servers[count].sin);
+			servers[count].sin.sin_port = htons(53);
+			count++;
+		} else if (inet_pton(AF_INET6, val,
+		    &servers[count].sin6.sin6_addr) == 1) {
+			servers[count].sin6.sin6_family = AF_INET6;
+			servers[count].sin6.sin6_len = sizeof(servers[count].sin6);
+			servers[count].sin6.sin6_port = htons(53);
+			count++;
+		}
+	}
+	*countp = count;
+	return (0);
+}
+
+int
+netresolve_refresh(struct service_context *ctx)
+{
+	union res_sockaddr_union servers[RSLV_MAX_NS];
+	int count;
+
+	if (ctx == NULL)
+		return (errno = EINVAL, -1);
+	if (nameservers_load(ctx, servers, &count) == -1)
+		return (-1);
+	if (count == g_nns && memcmp(servers, g_ns, sizeof(g_ns)) == 0)
+		return (0);
+	memcpy(g_ns, servers, sizeof(g_ns));
+	g_nns = count;
+	nameservers_publish(g_ns, g_nns);
+	return (0);
+}
+
 /* =====================================================================
  * init
  * ===================================================================== */
 int
 netresolve_init(struct service_context *ctx)
 {
-	char buf[8192];
-	char *cursor, *line, *kw, *val, *save;
-	ssize_t r;
-	int fd;
+	int shared_error;
 
 	/*
 	 * res_ninit sets up the query machinery (id, options, retrans/retry).
@@ -116,45 +310,11 @@ netresolve_init(struct service_context *ctx)
 	 */
 	(void)res_ninit(&g_res);
 
-	/*
-	 * Nameservers: parse the plane-delivered /etc/resolv.conf ourselves.
-	 * Absent/unreadable -> no nameservers (DNS is skipped; /etc/hosts and
-	 * numeric literals still resolve).
-	 */
+	/* Nameserver updates reach workers through the shared generation. */
 	g_nns = 0;
-	if (open_resolver_config(ctx, &fd) == 0) {
-		r = pread(fd, buf, sizeof(buf) - 1, 0);
-		(void)close(fd);
-		if (r > 0) {
-			buf[r] = '\0';
-			cursor = buf;
-			while ((line = strsep(&cursor, "\n")) != NULL &&
-			    g_nns < RSLV_MAX_NS) {
-				kw = strtok_r(line, " \t", &save);
-				if (kw == NULL || strcmp(kw, "nameserver") != 0)
-					continue;
-				val = strtok_r(NULL, " \t\r", &save);
-				if (val == NULL)
-					continue;
-				memset(&g_ns[g_nns], 0, sizeof(g_ns[g_nns]));
-				if (inet_pton(AF_INET, val,
-				    &g_ns[g_nns].sin.sin_addr) == 1) {
-					g_ns[g_nns].sin.sin_family = AF_INET;
-					g_ns[g_nns].sin.sin_len =
-					    sizeof(g_ns[g_nns].sin);
-					g_ns[g_nns].sin.sin_port = htons(53);
-					g_nns++;
-				} else if (inet_pton(AF_INET6, val,
-				    &g_ns[g_nns].sin6.sin6_addr) == 1) {
-					g_ns[g_nns].sin6.sin6_family = AF_INET6;
-					g_ns[g_nns].sin6.sin6_len =
-					    sizeof(g_ns[g_nns].sin6);
-					g_ns[g_nns].sin6.sin6_port = htons(53);
-					g_nns++;
-				}
-			}
-		}
-	}
+	memset(g_ns, 0, sizeof(g_ns));
+	shared_error = nameservers_share_init() == -1 ? errno : 0;
+	(void)netresolve_refresh(ctx);
 
 	/*
 	 * hosts/services on demand through the filesystem provider (born in
@@ -167,6 +327,8 @@ netresolve_init(struct service_context *ctx)
 	if (service_open_isolated(ctx, "/etc/services", SERVICE_OPEN_READ, 0,
 	    &g_servfd) == -1)
 		g_servfd = -1;
+	if (shared_error != 0)
+		return (errno = shared_error, -1);
 	return (0);
 }
 
@@ -433,36 +595,152 @@ hosts_lookup(const char *host, int family, struct rslv_addr *addrs,
 }
 
 /* =====================================================================
- * host resolution: DNS over freshly-created UDP sockets
+ * host resolution: DNS over freshly-created sockets
  * ===================================================================== */
 
 /*
- * Parse a DNS response (ans, anslen) collecting A (want ns_t_a) or AAAA
- * (want ns_t_aaaa) records into addrs.  Every rdata access is bounds-checked
- * against [ans, ans+anslen) and the result count is capped at max.  Returns
- * the number of addresses appended (>=0), or -1 if the message is malformed.
+ * Parse A or AAAA records owned by the question or its CNAME target.  Every
+ * rdata access is bounds-checked and the result count is capped at max.
+ * Returns addresses appended, or -1 for a malformed answer chain.
  */
+static uint64_t
+dns_now_ns(void)
+{
+	struct timespec now;
+	if (clock_gettime(CLOCK_MONOTONIC, &now) == -1)
+		return (0);
+	return ((uint64_t)now.tv_sec * 1000000000 + now.tv_nsec);
+}
+
+/* RFC2308: SOA TTL and MINIMUM both bound a negative answer. */
+static uint32_t
+dns_negative_ttl(const u_char *answer, int length, ns_msg *message,
+    const char *owner, uint32_t chain_ttl)
+{
+	ns_rr record;
+	char name[NS_MAXDNAME];
+	const u_char *cursor, *end;
+	uint32_t ttl, minimum, result = 0;
+	int used;
+
+	for (int i = 0; i < ns_msg_count(*message, ns_s_ns); i++) {
+		if (ns_parserr(message, ns_s_ns, i, &record) < 0)
+			return (0);
+		if (ns_rr_type(record) != ns_t_soa || ns_rr_class(record) != ns_c_in ||
+		    !ns_samedomain(owner, ns_rr_name(record)))
+			continue;
+		cursor = ns_rr_rdata(record);
+		end = cursor + ns_rr_rdlen(record);
+		if (end > answer + length)
+			return (0);
+		for (int j = 0; j < 2; j++) {
+			used = ns_name_uncompress(answer, answer + length, cursor,
+			    name, sizeof(name));
+			if (used <= 0 || used > end - cursor)
+				return (0);
+			cursor += used;
+		}
+		if (end - cursor != 20)
+			return (0);
+		ttl = ns_rr_ttl(record);
+		minimum = ns_get32(cursor + 16);
+		if (ttl >= 0x80000000U || minimum >= 0x80000000U)
+			return (0);
+		if (minimum < ttl) ttl = minimum;
+		if (chain_ttl < ttl) ttl = chain_ttl;
+		if (ttl == 0) return (0);
+		if (result == 0 || ttl < result) result = ttl;
+	}
+	return (result);
+}
+
 static int
-dns_parse(const u_char *ans, int anslen, int want, struct rslv_addr *addrs,
-    int max, int *n, char *canon, size_t canonsz)
+dns_parse(const u_char *ans, int anslen, const char *host, int want,
+    struct rslv_addr *addrs, int max, int *n, char *canon, size_t canonsz, uint32_t *negative_ttl)
 {
 	ns_msg msg;
 	ns_rr rr;
-	int count, i, added = 0;
+	char owner[NS_MAXDNAME], target[NS_MAXDNAME];
+	const u_char *rdata;
+	size_t rdlen;
+	int count, i, hops, consumed, added = 0;
+	bool found;
+	uint32_t chain_ttl = UINT32_MAX, record_ttl;
+	uint64_t now = dns_now_ns();
 
+	if (negative_ttl != NULL)
+		*negative_ttl = 0;
 	if (anslen <= 0)
 		return (-1);
 	if (ns_initparse(ans, anslen, &msg) < 0)
 		return (-1);
+	if (strlcpy(owner, host, sizeof(owner)) >= sizeof(owner))
+		return (-1);
 
 	count = ns_msg_count(msg, ns_s_an);
-	for (i = 0; i < count && *n < max; i++) {
-		const u_char *rdata;
-		size_t rdlen;
-
+	/* Do not expose partial results from a malformed answer section. */
+	for (i = 0; i < count; i++) {
 		if (ns_parserr(&msg, ns_s_an, i, &rr) < 0)
+			return (-1);
+	}
+	/* Resolve only CNAMEs reachable from the question, in any RR order. */
+	for (hops = 0; hops <= RSLV_MAX_CNAME_HOPS; hops++) {
+		found = false;
+		for (i = 0; i < count; i++) {
+			if (ns_parserr(&msg, ns_s_an, i, &rr) < 0)
+				return (-1);
+			if (ns_rr_class(rr) != ns_c_in ||
+			    ns_rr_type(rr) != ns_t_cname ||
+			    ns_samename(ns_rr_name(rr), owner) != 1)
+				continue;
+			if (found)
+				return (-1);
+			rdata = ns_rr_rdata(rr);
+			rdlen = ns_rr_rdlen(rr);
+			if (rdata < ans || rdata > ans + anslen ||
+			    rdlen > (size_t)(ans + anslen - rdata))
+				return (-1);
+			consumed = ns_name_uncompress(ans, ans + anslen, rdata,
+			    target, sizeof(target));
+			if (consumed < 0 || (size_t)consumed != rdlen)
+				return (-1);
+			record_ttl = ns_rr_ttl(rr);
+			if (record_ttl >= 0x80000000U)
+				record_ttl = 0;
+			if (record_ttl < chain_ttl)
+				chain_ttl = record_ttl;
+			found = true;
+		}
+		if (!found)
 			break;
-		if ((int)ns_rr_type(rr) != want)
+		if (hops == RSLV_MAX_CNAME_HOPS ||
+		    ns_samename(owner, target) == 1)
+			return (-1);
+		(void)strlcpy(owner, target, sizeof(owner));
+	}
+	/* Validate every matching address before exposing any of them. */
+	for (i = 0; i < count; i++) {
+		if (ns_parserr(&msg, ns_s_an, i, &rr) < 0)
+			return (-1);
+		if (ns_rr_class(rr) != ns_c_in ||
+		    (int)ns_rr_type(rr) != want ||
+		    ns_samename(ns_rr_name(rr), owner) != 1)
+			continue;
+		if (ns_msg_getflag(msg, ns_f_rcode) == ns_r_nxdomain)
+			return (-1);
+		rdata = ns_rr_rdata(rr);
+		rdlen = ns_rr_rdlen(rr);
+		if (rdata < ans || rdata > ans + anslen ||
+		    rdlen > (size_t)(ans + anslen - rdata) ||
+		    rdlen != (want == ns_t_a ? 4 : 16))
+			return (-1);
+	}
+	for (i = 0; i < count && *n < max; i++) {
+		if (ns_parserr(&msg, ns_s_an, i, &rr) < 0)
+			return (-1);
+		if (ns_rr_class(rr) != ns_c_in ||
+		    (int)ns_rr_type(rr) != want ||
+		    ns_samename(ns_rr_name(rr), owner) != 1)
 			continue;
 
 		rdata = ns_rr_rdata(rr);
@@ -471,21 +749,30 @@ dns_parse(const u_char *ans, int anslen, int want, struct rslv_addr *addrs,
 		/* Defense in depth: rdata must lie fully inside the message. */
 		if (rdata < ans || rdata > ans + anslen ||
 		    rdlen > (size_t)(ans + anslen - rdata))
-			continue;
+			return (-1);
 
 		if (want == ns_t_a) {
 			if (rdlen != 4)
-				continue;
+				return (-1);
 			addrs[*n].family = AF_INET;
 			memset(&addrs[*n].a, 0, sizeof(addrs[*n].a));
 			memcpy(&addrs[*n].a.v4, rdata, 4);
 		} else {	/* ns_t_aaaa */
 			if (rdlen != 16)
-				continue;
+				return (-1);
 			addrs[*n].family = AF_INET6;
 			memset(&addrs[*n].a, 0, sizeof(addrs[*n].a));
 			memcpy(&addrs[*n].a.v6, rdata, 16);
 		}
+
+		record_ttl = ns_rr_ttl(rr);
+		if (record_ttl >= 0x80000000U)
+			record_ttl = 0;
+		if (chain_ttl < record_ttl)
+			record_ttl = chain_ttl;
+		/* High-bit TTLs and zero TTLs must not extend cache lifetime. */
+		addrs[*n].expires_ns = now != 0 && record_ttl < 0x80000000U ?
+		    now + (uint64_t)record_ttl * 1000000000 : 0;
 
 		/* Owner name of the address record is the canonical name. */
 		if (canonsz > 0 && canon[0] == '\0') {
@@ -495,7 +782,140 @@ dns_parse(const u_char *ans, int anslen, int want, struct rslv_addr *addrs,
 		(*n)++;
 		added++;
 	}
+	if (added == 0 && negative_ttl != NULL)
+		*negative_ttl = dns_negative_ttl(ans, anslen, &msg, owner, chain_ttl);
 	return (added);
+}
+
+/* Return -1 for an unrelated/invalid reply, -2 for a server error, 1 for
+ * truncation, or 0 for a complete answer. */
+static int
+dns_reply_status(const u_char *ans, int anslen, const u_char *qbuf,
+    const char *host, int rrtype)
+{
+	ns_msg msg;
+	char qname[NS_MAXDNAME];
+	int consumed, qend, rcode;
+
+	if (anslen < NS_HFIXEDSZ || ans[0] != qbuf[0] ||
+	    ans[1] != qbuf[1] || (ans[2] & 0x80) == 0 ||
+	    (ans[2] & 0x78) != 0 || ans[4] != 0 || ans[5] != 1)
+		return (-1);
+	consumed = ns_name_uncompress(ans, ans + anslen,
+	    ans + NS_HFIXEDSZ, qname, sizeof(qname));
+	if (consumed < 0 || consumed > anslen - NS_HFIXEDSZ - 4)
+		return (-1);
+	qend = NS_HFIXEDSZ + consumed;
+	if (ans[qend] != 0 || ans[qend + 1] != rrtype ||
+	    ans[qend + 2] != 0 || ans[qend + 3] != ns_c_in ||
+	    ns_samename(qname, host) != 1)
+		return (-1);
+	rcode = ans[3] & 0x0f;
+	if (rcode != ns_r_noerror && rcode != ns_r_nxdomain)
+		return (-2);
+	/* A TC reply may end inside an RR, so only parse complete messages. */
+	if ((ans[2] & 0x02) != 0)
+		return (1);
+	return (ns_initparse(ans, anslen, &msg) == 0 ? 0 : -1);
+}
+
+/* All TCP operations share one monotonic deadline, including connect. */
+static int
+dns_wait(int fd, short events, const struct timespec *deadline)
+{
+	struct timespec now;
+	struct pollfd pfd;
+	int64_t remaining, ms;
+	int pr;
+
+	pfd.fd = fd;
+	pfd.events = events;
+	for (;;) {
+		if (clock_gettime(CLOCK_MONOTONIC, &now) == -1)
+			return (-1);
+		remaining = ((int64_t)deadline->tv_sec - now.tv_sec) *
+		    1000000000 + deadline->tv_nsec - now.tv_nsec;
+		if (remaining <= 0)
+			return (-1);
+		ms = (remaining + 999999) / 1000000;
+		if (ms > INT_MAX)
+			ms = INT_MAX;
+		pfd.revents = 0;
+		pr = poll(&pfd, 1, (int)ms);
+		if (pr > 0)
+			return ((pfd.revents & events) != 0 ? 0 : -1);
+		if (pr < 0 && errno != EINTR)
+			return (-1);
+	}
+}
+
+static int
+dns_tcp_transfer(int fd, u_char *buf, size_t len, bool sending,
+    const struct timespec *deadline)
+{
+	size_t done = 0;
+	ssize_t n;
+
+	while (done < len) {
+		if (dns_wait(fd, sending ? POLLOUT : POLLIN, deadline) == -1)
+			return (-1);
+		if (sending)
+			n = send(fd, buf + done, len - done, MSG_NOSIGNAL);
+		else
+			n = recv(fd, buf + done, len - done, 0);
+		if (n > 0) {
+			done += (size_t)n;
+			continue;
+		}
+		if (n == -1 && (errno == EINTR || errno == EAGAIN))
+			continue;
+		return (-1);
+	}
+	return (0);
+}
+
+/* DNS over TCP uses a two-byte length prefix in each direction. */
+static int
+dns_tcp_query(const struct sockaddr *sa, socklen_t salen, u_char *qbuf,
+    int qlen, u_char *ans, int timeout)
+{
+	struct timespec deadline;
+	u_char prefix[2];
+	int s, error, len, result = -1;
+	socklen_t errorlen;
+
+	if (clock_gettime(CLOCK_MONOTONIC, &deadline) == -1)
+		return (-1);
+	deadline.tv_sec += timeout;
+	s = socket(sa->sa_family, SOCK_STREAM, 0);
+	if (s == -1)
+		return (-1);
+	if (fcntl(s, F_SETFL, O_NONBLOCK) == -1)
+		goto done;
+	if (connectat(s, s, sa, salen) == -1) {
+		if (errno != EINPROGRESS ||
+		    dns_wait(s, POLLOUT, &deadline) == -1)
+			goto done;
+		errorlen = sizeof(error);
+		if (getsockopt(s, SOL_SOCKET, SO_ERROR, &error, &errorlen) == -1 ||
+		    error != 0)
+			goto done;
+	}
+	prefix[0] = (u_char)(qlen >> 8);
+	prefix[1] = (u_char)qlen;
+	if (dns_tcp_transfer(s, prefix, sizeof(prefix), true, &deadline) == -1 ||
+	    dns_tcp_transfer(s, qbuf, (size_t)qlen,
+	    true, &deadline) == -1 ||
+	    dns_tcp_transfer(s, prefix, sizeof(prefix), false, &deadline) == -1)
+		goto done;
+	len = ((int)prefix[0] << 8) | prefix[1];
+	if (len < NS_HFIXEDSZ || len > NS_MAXMSG ||
+	    dns_tcp_transfer(s, ans, (size_t)len, false, &deadline) == -1)
+		goto done;
+	result = len;
+done:
+	(void)close(s);
+	return (result);
 }
 
 /*
@@ -504,20 +924,17 @@ dns_parse(const u_char *ans, int anslen, int want, struct rslv_addr *addrs,
  * Returns the number of addresses added, or -1 if no server answered.
  */
 static int
-dns_query(const char *host, int rrtype, struct rslv_addr *addrs, int max,
-    int *n, char *canon, size_t canonsz)
+dns_query_uncached(const char *host, int rrtype, struct rslv_addr *addrs, int max,
+    int *n, char *canon, size_t canonsz,
+    const union res_sockaddr_union *srv, int nsrv, uint32_t *negative_ttl)
 {
-	union res_sockaddr_union srv[RSLV_MAX_NS];
 	u_char qbuf[NS_PACKETSZ];
 	u_char *ans;
-	int nsrv, qlen, attempt, s, retrans, retry, added_total = 0;
+	int qlen, attempt, s, retrans, retry, added_total = 0;
 	int answered = 0;
 
-	/* Nameservers come from the resolv.conf we parsed in netresolve_init. */
-	if (g_nns <= 0)
+	if (nsrv <= 0)
 		return (-1);
-	nsrv = g_nns;
-	memcpy(srv, g_ns, (size_t)nsrv * sizeof(srv[0]));
 
 	qlen = res_nmkquery(&g_res, ns_o_query, host, ns_c_in, rrtype, NULL,
 	    0, NULL, qbuf, (int)sizeof(qbuf));
@@ -529,17 +946,19 @@ dns_query(const char *host, int rrtype, struct rslv_addr *addrs, int max,
 		return (-1);
 
 	retrans = g_res.retrans > 0 ? g_res.retrans : RSLV_DFL_RETRANS;
+	if (retrans > RSLV_MAX_RETRANS)
+		retrans = RSLV_MAX_RETRANS;
 	retry = g_res.retry > 0 ? g_res.retry : RSLV_DFL_RETRY;
 
 	for (attempt = 0; attempt < retry && !answered; attempt++) {
 		int ns;
 
 		for (ns = 0; ns < nsrv && !answered; ns++) {
-			struct sockaddr *sa = (struct sockaddr *)&srv[ns];
+			const struct sockaddr *sa = (const struct sockaddr *)&srv[ns];
 			socklen_t salen;
-			struct pollfd pfd;
+			struct timespec deadline;
 			ssize_t sent, rlen;
-			int added, pr;
+			int added, status;
 
 			if (sa->sa_family == AF_INET)
 				salen = sizeof(struct sockaddr_in);
@@ -572,35 +991,39 @@ dns_query(const char *host, int rrtype, struct rslv_addr *addrs, int max,
 				continue;
 			}
 
-			pfd.fd = s;
-			pfd.events = POLLIN;
-			pfd.revents = 0;
-			pr = poll(&pfd, 1, retrans * 1000);
-			if (pr <= 0 || (pfd.revents & POLLIN) == 0) {
+			if (clock_gettime(CLOCK_MONOTONIC, &deadline) == -1) {
 				(void)close(s);
-				continue;	/* timeout/error: next server */
+				continue;
+			}
+			deadline.tv_sec += retrans;
+			status = -1;
+			while (dns_wait(s, POLLIN, &deadline) == 0) {
+				rlen = recv(s, ans, NS_MAXMSG, 0);
+				if (rlen == -1 && errno == EINTR)
+					continue;
+				if (rlen <= 0)
+					break;
+				/* A stray reply must not discard this server's turn. */
+				status = dns_reply_status(ans, (int)rlen, qbuf,
+				    host, rrtype);
+				if (status != -1)
+					break;
 			}
 
-			rlen = recvfrom(s, ans, NS_MAXMSG, 0, NULL, NULL);
 			(void)close(s);
-			if (rlen <= 0)
+			if (status < 0)
 				continue;
-			/*
-			 * Reject a reply whose header transaction id does not
-			 * match the query, or that is not a response (QR clear).
-			 * The connected socket already drops datagrams not from
-			 * the nameserver's address; this restores the 16-bit id
-			 * barrier a spoofer who can forge that source would
-			 * otherwise skip (res_nmkquery put the id in qbuf[0..1];
-			 * ans[2] bit 0x80 is QR).
-			 */
-			if (rlen < NS_HFIXEDSZ || ans[0] != qbuf[0] ||
-			    ans[1] != qbuf[1] || (ans[2] & 0x80) == 0)
-				continue;
-
-			added = dns_parse(ans, (int)rlen, rrtype, addrs, max,
-			    n, canon, canonsz);
-			if (added < 0)
+			if (status == 1) {
+				/* Truncated UDP data is never treated as an answer. */
+				rlen = dns_tcp_query(sa, salen, qbuf, qlen, ans,
+				    retrans);
+				if (rlen < 0 || dns_reply_status(ans, (int)rlen,
+				    qbuf, host, rrtype) != 0)
+					continue;
+			}
+			added = dns_parse(ans, (int)rlen, host, rrtype, addrs, max,
+			    n, canon, canonsz, negative_ttl);
+			if (added < 0 || ((ans[3] & 0x0f) == ns_r_nxdomain && added != 0))
 				continue;	/* malformed: try next server */
 
 			/*
@@ -617,10 +1040,127 @@ dns_query(const char *host, int rrtype, struct rslv_addr *addrs, int max,
 	return (answered ? added_total : -1);
 }
 
+/* One resolver job at a time per worker; never shared across client labels. */
+#define RSLV_CACHE_ENTRIES 32
+#define RSLV_CACHE_MAX_AGE 300
+struct dns_cache_entry {
+	char host[NS_MAXDNAME], canon[NS_MAXDNAME];
+	int type, count;
+	uint64_t expires_ns;
+	struct rslv_addr addresses[RSLV_MAX_RESULTS];
+};
+static struct dns_cache_entry g_dns_cache[RSLV_CACHE_ENTRIES];
+static union res_sockaddr_union g_cache_servers[RSLV_MAX_NS];
+static uint32_t g_cache_version;
+static int g_cache_server_count = -1;
+static unsigned g_cache_next;
+
+static int
+dns_query(const char *host, int rrtype, struct rslv_addr *addrs, int max,
+    int *n, char *canon, size_t canonsz)
+{
+	union res_sockaddr_union servers[RSLV_MAX_NS];
+	struct rslv_addr answers[RSLV_MAX_RESULTS];
+	struct dns_cache_entry *entry = NULL;
+	char name[NS_MAXDNAME] = "";
+	uint32_t version, negative_ttl = 0;
+	uint64_t now, expires;
+	int count = 0, nsrv, result, added = 0;
+
+	nsrv = nameservers_snapshot_version(servers, &version);
+	if (nsrv != g_cache_server_count || version != g_cache_version ||
+	    memcmp(servers, g_cache_servers, sizeof(servers)) != 0) {
+		memset(g_dns_cache, 0, sizeof(g_dns_cache));
+		memcpy(g_cache_servers, servers, sizeof(servers));
+		g_cache_server_count = nsrv;
+		g_cache_version = version;
+		g_cache_next = 0;
+	}
+	now = dns_now_ns();
+	for (unsigned i = 0; now != 0 && i < RSLV_CACHE_ENTRIES; i++) {
+		if (g_dns_cache[i].expires_ns > now &&
+		    g_dns_cache[i].type == rrtype &&
+		    ns_samename(g_dns_cache[i].host, host) == 1) {
+			entry = &g_dns_cache[i];
+			break;
+		}
+	}
+	if (entry != NULL) {
+		count = entry->count;
+		memcpy(answers, entry->addresses, count * sizeof(*answers));
+		strlcpy(name, entry->canon, sizeof(name));
+	} else {
+		result = dns_query_uncached(host, rrtype, answers, RSLV_MAX_RESULTS,
+		    &count, name, sizeof(name), servers, nsrv, &negative_ttl);
+		if (result < 0)
+			return (-1);
+		now = dns_now_ns();
+		expires = now + (uint64_t)RSLV_CACHE_MAX_AGE * 1000000000;
+		for (int i = 0; i < count; i++)
+			if (answers[i].expires_ns < expires)
+				expires = answers[i].expires_ns;
+		if (count == 0 && negative_ttl < RSLV_CACHE_MAX_AGE)
+			expires = now + (uint64_t)negative_ttl * 1000000000;
+		/* Empty results require a valid SOA lifetime, never a retry failure. */
+		if ((count != 0 || negative_ttl != 0) && now != 0 && expires > now &&
+		    strlen(host) < sizeof(g_dns_cache[0].host)) {
+			entry = &g_dns_cache[g_cache_next++ % RSLV_CACHE_ENTRIES];
+			memset(entry, 0, sizeof(*entry));
+			strlcpy(entry->host, host, sizeof(entry->host));
+			strlcpy(entry->canon, name, sizeof(entry->canon));
+			entry->type = rrtype;
+			entry->count = count;
+			entry->expires_ns = expires;
+			memcpy(entry->addresses, answers, count * sizeof(*answers));
+		}
+	}
+	for (int i = 0; i < count && *n < max; i++) {
+		addrs[(*n)++] = answers[i];
+		added++;
+	}
+	if (added != 0 && canonsz != 0 && canon[0] == '\0')
+		strlcpy(canon, name, canonsz);
+	return (added);
+}
+
+/* Convert a native IPv4 address without consulting DNS. */
+static void
+map_v4(struct rslv_addr *destination, const struct in_addr *source)
+{
+	struct in_addr address = *source;
+
+	memset(destination, 0, sizeof(*destination));
+	destination->family = AF_INET6;
+	destination->a.v6.s6_addr[10] = 0xff;
+	destination->a.v6.s6_addr[11] = 0xff;
+	memcpy(&destination->a.v6.s6_addr[12], &address, sizeof(address));
+}
+
+static int
+hosts_lookup_v4mapped(const char *host, struct rslv_addr *addrs, int max,
+    int *n, char *canon, size_t canonsz)
+{
+	struct rslv_addr tmp[RSLV_MAX_RESULTS];
+	char name[NS_MAXDNAME];
+	int count, added = 0;
+
+	count = hosts_lookup(host, AF_INET, tmp, RSLV_MAX_RESULTS,
+	    name, sizeof(name));
+	for (int i = 0; i < count && *n < max; i++) {
+		map_v4(&addrs[*n], &tmp[i].a.v4);
+		addrs[(*n)++].expires_ns = tmp[i].expires_ns;
+		added++;
+	}
+	if (added != 0 && canonsz != 0 && canon[0] == '\0')
+		strlcpy(canon, name, canonsz);
+	return (added);
+}
+
 /*
  * AI_V4MAPPED support (RFC 3493).  Query A records for host and append each as
  * an IPv4-mapped IPv6 address (::ffff:a.b.c.d) to addrs, which the caller then
- * emits as AF_INET6 results.  Returns the number appended (>=0).
+ * emits as AF_INET6 results.  Returns the number appended (>=0), or -1
+ * when the A lookup fails.
  */
 static int
 dns_query_v4mapped(const char *host, struct rslv_addr *addrs, int max, int *n,
@@ -629,20 +1169,13 @@ dns_query_v4mapped(const char *host, struct rslv_addr *addrs, int max, int *n,
 	struct rslv_addr tmp[RSLV_MAX_RESULTS];
 	int tn = 0, i, added = 0;
 
-	(void)dns_query(host, ns_t_a, tmp, RSLV_MAX_RESULTS, &tn, canon, canonsz);
+	if (dns_query(host, ns_t_a, tmp, RSLV_MAX_RESULTS, &tn, canon, canonsz) < 0)
+		return (-1);
 	for (i = 0; i < tn && *n < max; i++) {
-		struct in6_addr mapped;
-
 		if (tmp[i].family != AF_INET)
 			continue;
-		memset(&mapped, 0, sizeof(mapped));
-		mapped.s6_addr[10] = 0xff;
-		mapped.s6_addr[11] = 0xff;
-		memcpy(&mapped.s6_addr[12], &tmp[i].a.v4, 4);
-		addrs[*n].family = AF_INET6;
-		memset(&addrs[*n].a, 0, sizeof(addrs[*n].a));
-		addrs[*n].a.v6 = mapped;
-		(*n)++;
+		map_v4(&addrs[*n], &tmp[i].a.v4);
+		addrs[(*n)++].expires_ns = tmp[i].expires_ns;
 		added++;
 	}
 	return (added);
@@ -715,23 +1248,29 @@ netfreeaddrinfo(struct addrinfo *res)
 }
 
 int
-netresolve(const char *host, const char *serv, const struct addrinfo *hints,
-    struct addrinfo **res)
+netresolve_ex(const char *host, const char *serv, const struct addrinfo *hints,
+    struct addrinfo **res, uint32_t *ttl_seconds)
 {
-	struct rslv_addr addrs[RSLV_MAX_RESULTS];
+	struct rslv_addr addrs[RSLV_MAX_RESULTS] = { 0 };
 	struct rslv_port ports[2];
 	char canon[NS_MAXDNAME];
 	struct addrinfo *head = NULL, *tail = NULL;
 	int family, flags, nports, naddr = 0;
 	int i, j, ret;
+	bool dns_failed = false;
 
 	if (res == NULL)
 		return (EAI_FAIL);
 	*res = NULL;
+	if (ttl_seconds != NULL)
+		*ttl_seconds = 0;
 	canon[0] = '\0';
 
 	family = hints ? hints->ai_family : AF_UNSPEC;
 	flags = hints ? hints->ai_flags : 0;
+	if ((flags & ~(AI_PASSIVE | AI_CANONNAME | AI_NUMERICHOST |
+	    AI_NUMERICSERV | AI_V4MAPPED | AI_ALL)) != 0)
+		return (EAI_BADFLAGS);
 
 	if (family != AF_UNSPEC && family != AF_INET && family != AF_INET6)
 		return (EAI_FAMILY);
@@ -778,6 +1317,10 @@ netresolve(const char *host, const char *serv, const struct addrinfo *hints,
 			addrs[naddr].a.v4 = v4;
 			naddr++;
 			is_numeric = 1;
+		} else if (family == AF_INET6 && (flags & AI_V4MAPPED) != 0 &&
+		    inet_pton(AF_INET, host, &v4) == 1) {
+			map_v4(&addrs[naddr++], &v4);
+			is_numeric = 1;
 		} else if ((family == AF_UNSPEC || family == AF_INET6) &&
 		    inet_pton(AF_INET6, host, &v6) == 1) {
 			addrs[naddr].family = AF_INET6;
@@ -798,39 +1341,39 @@ netresolve(const char *host, const char *serv, const struct addrinfo *hints,
 			/* /etc/hosts first, then DNS. */
 			naddr = hosts_lookup(host, family, addrs,
 			    RSLV_MAX_RESULTS, canon, sizeof(canon));
+			if (family == AF_INET6 && (flags & AI_V4MAPPED) != 0 &&
+			    (naddr == 0 || (flags & AI_ALL) != 0))
+				(void)hosts_lookup_v4mapped(host, addrs,
+				    RSLV_MAX_RESULTS, &naddr, canon, sizeof(canon));
 
 			if (naddr == 0) {
 				if (family == AF_UNSPEC ||
 				    family == AF_INET)
-					(void)dns_query(host, ns_t_a, addrs,
+					dns_failed |= dns_query(host, ns_t_a, addrs,
 					    RSLV_MAX_RESULTS, &naddr, canon,
-					    sizeof(canon));
+					    sizeof(canon)) < 0;
 				if (family == AF_UNSPEC ||
 				    family == AF_INET6)
-					(void)dns_query(host, ns_t_aaaa,
+					dns_failed |= dns_query(host, ns_t_aaaa,
 					    addrs, RSLV_MAX_RESULTS, &naddr,
-					    canon, sizeof(canon));
+					    canon, sizeof(canon)) < 0;
 				/*
 				 * AI_V4MAPPED / AI_ALL (RFC 3493), meaningful
 				 * only for an AF_INET6 query: when no native
 				 * AAAA was found — or AI_ALL was also set —
 				 * fetch A records and append them as
-				 * IPv4-mapped IPv6.  AI_ADDRCONFIG is accepted
-				 * but is a documented no-op here: this in-process
-				 * resolver does not enumerate the host's own
-				 * configured source families, so it never
-				 * suppresses a family on that basis.
+				 * IPv4-mapped IPv6.
 				 */
 				if (family == AF_INET6 &&
 				    (flags & AI_V4MAPPED) != 0 &&
 				    (naddr == 0 || (flags & AI_ALL) != 0))
-					(void)dns_query_v4mapped(host, addrs,
+					dns_failed |= dns_query_v4mapped(host, addrs,
 					    RSLV_MAX_RESULTS, &naddr, canon,
-					    sizeof(canon));
+					    sizeof(canon)) < 0;
 			}
 
 			if (naddr == 0)
-				return (EAI_NONAME);
+				return (dns_failed ? EAI_AGAIN : EAI_NONAME);
 
 			/* Canonical name requested but numeric literal used. */
 			if ((flags & AI_CANONNAME) == 0)
@@ -874,6 +1417,16 @@ netresolve(const char *host, const char *serv, const struct addrinfo *hints,
 
 	if (head == NULL)
 		return (EAI_NONAME);
+	if (ttl_seconds != NULL) {
+		uint64_t now = dns_now_ns(), remaining = UINT32_MAX;
+		for (i = 0; i < naddr; i++) {
+			uint64_t seconds = now != 0 && addrs[i].expires_ns > now ?
+			    (addrs[i].expires_ns - now) / 1000000000 : 0;
+			if (seconds < remaining)
+				remaining = seconds;
+		}
+		*ttl_seconds = (uint32_t)remaining;
+	}
 	*res = head;
 	return (0);
 
@@ -881,4 +1434,11 @@ fail:
 	netfreeaddrinfo(head);
 	*res = NULL;
 	return (ret);
+}
+
+int
+netresolve(const char *host, const char *serv, const struct addrinfo *hints,
+    struct addrinfo **res)
+{
+	return (netresolve_ex(host, serv, hints, res, NULL));
 }

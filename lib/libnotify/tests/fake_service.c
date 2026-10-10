@@ -435,6 +435,8 @@ service_session_call(struct service_session *session,
 		hello->features = NOTIFY_FEATURE_PUBSUB |
 		    NOTIFY_FEATURE_TIMERS | NOTIFY_FEATURE_BOUNDED_QUEUE |
 		    NOTIFY_FEATURE_STATE | NOTIFY_FEATURE_LOSS_REPORTING;
+		if (outgoing->length > sizeof(*request))
+			hello->features |= NOTIFY_FEATURE_STATE_WATCH;
 		hello->max_topic = NOTIFY_MAX_TOPIC;
 		hello->max_payload = NOTIFY_MAX_PAYLOAD;
 		hello->max_subscriptions = NOTIFY_MAX_SUBSCRIPTIONS;
@@ -449,6 +451,16 @@ service_session_call(struct service_session *session,
 	case NOTIFY_OP_STATS:
 		length += sizeof(struct notify_stats);
 		break;
+	case NOTIFY_OP_STATE_WATCH: {
+		struct notify_state_watch_reply *watch = (void *)(response + 1);
+
+		watch->watch_epoch = session->ident;
+		watch->generation = 1;
+		watch->state = 42;
+		watch->present = fault == FAKE_SERVICE_FAULT_INVALID_STATE ? 2 : 1;
+		length += sizeof(*watch);
+		break;
+	}
 	case NOTIFY_OP_STATE_SET:
 	case NOTIFY_OP_STATE_GET:
 		state = (void *)(response + 1);

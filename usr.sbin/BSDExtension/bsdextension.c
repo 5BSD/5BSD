@@ -186,6 +186,7 @@ valid_module_name(const char *name)
  *   linux64    sysextctl:                        Linux application runtime.
  *   pty/fdescfs/linprocfs/linsysfs:               Linux terminals and filesystems.
  *   drm/i915kms/amdgpu/radeonkms:                 installed graphics drivers.
+ *   cpuctl/coretemp/amdsmn/amdtemp:                hwstat CPU telemetry.
  *
  * Deliberately narrow — every entry corresponds to a concrete on-demand
  * consumer.  Do not broaden without a matching consumer.
@@ -196,7 +197,8 @@ sysext_config_defaults(struct sysext_config *cfg)
 	static const char *const builtin[] = {
 		"cryptodev", "vhid", "zfs", "linux64",
 		"pty", "fdescfs", "linprocfs", "linsysfs",
-		"drm", "i915kms", "amdgpu", "radeonkms"
+		"drm", "i915kms", "amdgpu", "radeonkms",
+		"cpuctl", "coretemp", "amdsmn", "amdtemp"
 	};
 	size_t i;
 

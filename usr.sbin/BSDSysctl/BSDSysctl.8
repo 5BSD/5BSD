@@ -1,5 +1,5 @@
 .\" SPDX-License-Identifier: BSD-2-Clause
-.Dd September 5, 2026
+.Dd October 10, 2026
 .Dt BSDSYSCTL 8
 .Os
 .Sh NAME
@@ -22,16 +22,21 @@ helper.
 .Pp
 .Nm
 is a socket-free
-.Xr service_provider
+.Xr libservice 3
 launched on demand by
 .Xr switchboard 8 ;
 it ships as the
 .Pa /Capabilities/System/Sysctl.cap
 bundle and is not spawned from
 .Pa /usr/sbin .
-Each accepted client is served
-.Em inline
-in the single provider process:
+Up to 128 client channels are multiplexed in the single provider process.
+Each ready channel receives a bounded dispatch batch, so an idle client does
+not prevent other clients from making requests.
+A session without a complete request for 30 seconds is closed; write readiness
+alone does not renew that deadline.
+Each authenticated label may hold at most 16 sessions.
+Additional sessions are closed when either limit is reached.
+The gate remains in its original process:
 .Nm
 holds a
 .Dq system
@@ -69,7 +74,54 @@ A read of an unlisted name, or any unlisted write, is refused with
 .Er EPERM .
 A missing or malformed file falls back to the compiled-in default (a small
 safe read set, no writes) with a warning.
+.Sh KERNEL ISOLATION
+The bundle's
+.Va isolate
+list controls which privileged sysctl writes the kernel protects from
+ordinary UNIX callers, including root, while a covering claim remains active.
+The shipped list contains only
+.Va kern.maxfiles .
+Scoped isolation matches exact numeric OIDs, not name prefixes.
+Unlisted sysctls retain their ordinary kernel permissions.
+Reads and nodes marked
+.Dv CTLFLAG_ANYBODY
+are outside this write gate; this preserves name resolution and self-scoped
+process-title updates.
+.Pp
+A write covered by an active claim requires the owning nonzero capability
+nonce or explicit authorization from a covering owner.
+Root privilege alone does not bypass that check.
+The per-label read/write policy described above is a separate boundary:
+it controls what clients may ask this provider to perform.
+An ACL entry does not add an OID to the kernel isolation list.
+.Pp
+Isolation lasts only while a covering claim remains active.
+Closing the last covering claim releases this additional protection;
+ordinary non-capability callers then return to normal UNIX checks.
+Provider restart and claim ownership must therefore be included in lifecycle
+testing; isolation is not a persistent boot-time deny list.
+A legacy coarse claim protects all privileged sysctl writes for its lifetime.
+.Sh INTERFACE INVENTORY
+The fixed interface-inventory operation reads
+.Dv NET_RT_IFLISTL
+through the held sysctl token and returns at most 256 interface summaries.
+The caller must have read permission for
+.Dq net.routetable .
+No permission is added to the shipped default policy.
+The explicit
+.Va system.Network/bsdnetwork
+client entry grants only read access to
+.Va net.routetable
+for network state observation; it grants no writes.
+No caller-supplied MIB or write data is accepted.
+Native records are validated and reduced to names, indexes, flags, MTUs,
+and link states; addresses and counters are not returned.
+The temporary native dump is capped at four megabytes, with three attempts
+when the interface list grows during collection.
+See
+.Xr sysctlcmp_interfaces 3
+for the snapshot and error contracts.
 .Sh SEE ALSO
-.Xr sysctl 3 ,
 .Xr libsysctlcmp 3 ,
+.Xr sysctl 3 ,
 .Xr switchboard 8

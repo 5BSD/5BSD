@@ -1,4 +1,4 @@
-PACKAGE=	natd
+PACKAGE=	libalias
 NAME=		irc
 SRCS=		alias_irc.c
 

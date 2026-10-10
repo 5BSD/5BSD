@@ -20,7 +20,12 @@
 #define	F_GET_SEALS		1034
 #define	F_SEAL_WRITE		8
 #define	MFD_ALLOW_SEALING	2
+#define	CLOSE_RANGE_UNSHARE	2
 #define	CLOSE_RANGE_CLOEXEC	4
+#ifdef CLOSE_RANGE_BSD_SUBSET
+#define	F_SETLK			6
+#define	F_WRLCK			1
+#endif
 
 struct open_how { u64 flags, mode, resolve; };
 struct dirent64 { u64 d_ino; long d_off; u16 d_reclen; u8 d_type; char d_name[]; };
@@ -90,6 +95,127 @@ memfd_writer(void *arg)
 	}
 	return (0);
 }
+
+static int
+close_range_unshare_case(unsigned int flags)
+{
+	long fd, pid;
+	int status;
+
+	fd = sys2(SYS_memfd_create, "close-range-unshare", 0);
+	if (fd < 0)
+		return (1);
+	pid = sys5(SYS_clone, CLONE_FILES | SIGCHLD, 0, 0, 0, 0);
+	if (pid < 0) {
+		(void)sys1(SYS_close, fd);
+		return (2);
+	}
+	if (pid == 0) {
+		int ok;
+
+		ok = sys3(SYS_close_range, fd, fd,
+		    CLOSE_RANGE_UNSHARE | flags) == 0;
+		ok = ok && sys3(SYS_fcntl, fd, 1 /* F_GETFD */, 0) ==
+		    ((flags & CLOSE_RANGE_CLOEXEC) != 0 ? 1 : -EBADF);
+		(void)sys1(SYS_exit, ok ? 0 : 1);
+		__builtin_unreachable();
+	}
+	status = 0;
+	if (sys4(SYS_wait4, pid, &status, 0, 0) != pid || status != 0) {
+		(void)sys1(SYS_close, fd);
+		return (3);
+	}
+	if (sys3(SYS_fcntl, fd, 1 /* F_GETFD */, 0) != 0) {
+		(void)sys1(SYS_close, fd);
+		return (4);
+	}
+	(void)sys1(SYS_close, fd);
+	return (0);
+}
+
+#ifdef CLOSE_RANGE_BSD_SUBSET
+struct linux_flock {
+	short type, whence;
+	long start, len;
+	int pid;
+};
+
+static int
+close_range_unshare_lock_case(void)
+{
+	struct linux_flock lock = { .type = F_WRLCK, .len = 1 };
+	int ready[2], release[2], status;
+	long lockfd, targetfd, pid, result;
+	char byte;
+
+	lockfd = tmpfile_fd("close-range-lock");
+	if (lockfd < 0)
+		return (1);
+	(void)sys1(SYS_unlink, "close-range-lock");
+	targetfd = sys2(SYS_memfd_create, "close-range-locked", 0);
+	if (targetfd < 0 || sys3(SYS_fcntl, lockfd, F_SETLK, &lock) != 0 ||
+	    sys2(SYS_pipe2, ready, 0) != 0 ||
+	    sys2(SYS_pipe2, release, 0) != 0)
+		return (2);
+	pid = sys5(SYS_clone, CLONE_FILES | SIGCHLD, 0, 0, 0, 0);
+	if (pid < 0)
+		return (3);
+	if (pid == 0) {
+		if (sys3(SYS_write, ready[1], "x", 1) != 1 ||
+		    sys3(SYS_read, release[0], &byte, 1) != 1 ||
+		    sys1(SYS_close, targetfd) != 0)
+			(void)sys1(SYS_exit, 1);
+		(void)sys1(SYS_exit, 0);
+		__builtin_unreachable();
+	}
+	result = sys3(SYS_read, ready[0], &byte, 1);
+	if (result == 1)
+		result = sys3(SYS_close_range, targetfd, targetfd,
+		    CLOSE_RANGE_UNSHARE);
+	(void)sys3(SYS_write, release[1], "x", 1);
+	status = 0;
+	if (sys4(SYS_wait4, pid, &status, 0, 0) != pid || status != 0 ||
+	    result != -EINVAL ||
+	    sys3(SYS_fcntl, targetfd, 1 /* F_GETFD */, 0) != -EBADF)
+		return (4);
+	(void)sys1(SYS_close, lockfd);
+	(void)sys1(SYS_close, ready[0]);
+	(void)sys1(SYS_close, ready[1]);
+	(void)sys1(SYS_close, release[0]);
+	(void)sys1(SYS_close, release[1]);
+	return (0);
+}
+
+static int
+close_range_unshare_epoll_case(void)
+{
+	long epfd, targetfd, pid;
+	int status;
+
+	epfd = sys1(SYS_epoll_create1, 0);
+	targetfd = sys2(SYS_memfd_create, "close-range-epoll", 0);
+	if (epfd < 0 || targetfd < 0)
+		return (1);
+	pid = sys5(SYS_clone, CLONE_FILES | SIGCHLD, 0, 0, 0, 0);
+	if (pid < 0)
+		return (2);
+	if (pid == 0) {
+		if (sys3(SYS_close_range, targetfd, targetfd,
+		    CLOSE_RANGE_UNSHARE) != -EINVAL ||
+		    sys1(SYS_close, targetfd) != 0)
+			(void)sys1(SYS_exit, 1);
+		(void)sys1(SYS_exit, 0);
+		__builtin_unreachable();
+	}
+	status = 0;
+	if (sys4(SYS_wait4, pid, &status, 0, 0) != pid || status != 0 ||
+	    sys3(SYS_fcntl, targetfd, 1 /* F_GETFD */, 0) != -EBADF ||
+	    sys3(SYS_fcntl, epfd, 1 /* F_GETFD */, 0) != 0)
+		return (3);
+	(void)sys1(SYS_close, epfd);
+	return (0);
+}
+#endif
 
 static int
 test(int argc, char **argv, char **envp)
@@ -188,6 +314,17 @@ test(int argc, char **argv, char **envp)
 	if (sys3(SYS_fcntl, fd, 1, 0) != -EBADF) return (9);
 	/* dfd (below fd) is still open */
 	if (sys2(SYS_fstat, dfd, &st) != 0) return (9);
+	/* 25: unshare before close or CLOEXEC leaves the other process's
+	 * descriptor table untouched. */
+	if (close_range_unshare_case(0) != 0 ||
+	    close_range_unshare_case(CLOSE_RANGE_CLOEXEC) != 0)
+		return (25);
+#ifdef CLOSE_RANGE_BSD_SUBSET
+	if (close_range_unshare_lock_case() != 0)
+		return (26);
+	if (close_range_unshare_epoll_case() != 0)
+		return (27);
+#endif
 	/* 10: dup3 same fd is EINVAL; dup2 same fd is a no-op success. */
 	if (sys3(SYS_dup3, dfd, dfd, 0) != -EINVAL) return (10);
 	if (sys2(SYS_dup2, dfd, dfd) != dfd) return (10);

@@ -56,4 +56,6 @@ CFLAGS+=	-I${.OBJDIR}
 CFLAGS+=	-DWITH_DTRACE
 .endif
 
+SRCS+= oom_protect.c
+
 .include <bsd.prog.mk>

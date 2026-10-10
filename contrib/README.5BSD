@@ -1,0 +1,1145 @@
+5BSD contributed software register
+==================================
+
+Record new third-party imports and upstream refreshes here. Keep upstream
+sources separate from native build integration where practical. An entry
+must identify the source directory, upstream project and release or revision,
+source URL and archive SHA256 (or exact upstream commit), license files and
+exceptions, local changes, build/install scope, and update instructions.
+Update the entry in the same change as the import or refresh. Preserve the
+upstream notices and review file-specific licenses, including files omitted
+from the installed system.
+
+Also record upstream-derived tests, implementation examples and behavioral
+references used in native code outside contrib/. For each addition, identify
+the pinned upstream files, local destination files and whether code was
+copied/adapted or independently implemented from observed behavior. Update
+this register in the same change; source comments alone are not the register.
+
+Coverage
+--------
+This register starts with the zsh import on 2026-10-09. It is not yet a
+complete inventory or license audit of inherited FreeBSD third-party code.
+Existing imports also live under crypto/, sys/contrib/, cddl/contrib/,
+sys/cddl/contrib/, and other source directories. Presence in the source tree
+does not establish that a component is built or installed. Existing entries
+must be added from verified provenance, not inferred versions or licenses.
+Ports and separately packaged hardware need their own provenance records;
+this register describes imports into the base source tree.
+
+zsh
+---
+Upstream project: Z Shell, https://www.zsh.org/
+Version: 5.9.2
+Imported: 2026-10-09
+Import commit: ab50a49aab46e9d1a1edfdd7899bea983afc3adc
+Source: contrib/zsh/
+Archive: https://www.zsh.org/pub/zsh-5.9.2.tar.xz
+SHA256: 36fa734374b44783582cec09bcd67822e2f992c779ec1624ab5596df078d2f81
+License: contrib/zsh/LICENCE, subject to individual file notices. The main
+  license is permissive and MIT-style; do not label the entire source import
+  simply MIT. GPL-licensed completions _darcs, _osc, _qdbus and _zypper are
+  retained in source but excluded from installation.
+Integration: bin/zsh/Makefile and bin/zsh/generated/; userland /bin/zsh in
+  the runtime package, functions under /usr/share/zsh/functions, manuals,
+  and /usr/share/doc/zsh/LICENCE. This is not kernel code.
+Local changes: RLIMIT_VMM support and documentation, terminal restoration
+  on timeout, diff -u completion, BSD iconv conversion handling, retention
+  of release-generated inputs, and synchronized W02/W03 job-control tests.
+  PCRE and GDBM are disabled and their test groups are omitted. The _mdo
+  completion and ports fixes came from the 5BSD shells/zsh port.
+Update procedure and detailed build policy: bin/zsh/README and
+  bin/zsh/import-build.py. Recheck module choices and function licenses on
+  each update; regenerate the native build inputs and run validation.
+
+Fuchsia FIDL and lowpan/OpenThread integration
+--------------------------------------------
+Source: contrib/fuchsia/
+Upstream: https://fuchsia.googlesource.com/fuchsia
+Revision: 3c0275544589e9bc156739d210052e8174ae9c60 (selected main snapshot,
+  not an F31 release checkout).
+Imported: 2026-10-09
+Scope: tools/fidl including tests/goldens; C++ FIDL runtime and wire support;
+  fit/stdcompat/FXL/cmdline/headers; lowpan/OpenThread integration source;
+  selected protocol definitions and compiler documentation/test data.
+Provenance: contrib/fuchsia/UPSTREAM.json and tools/build/fuchsia/sources.json
+  list exact subtree URLs, original archive SHA256, and canonical archive
+  tree SHA256 (Gitiles changes timestamps between exports of the same commit).
+License: LICENSE (BSD-2-Clause, The Fuchsia Authors) and PATENTS (Google's
+  patent grant for the unmodified implementation) retained.  The FXL UTF
+  helper src/lib/fxl/third_party/icu/icu_utf.{h,cc} is under the ICU license
+  (src/lib/fxl/third_party/icu/LICENSE) and is compiled into fidlc,
+  fidl-format and fidl-lint (package libfidl-tools, which installs the
+  Fuchsia, ICU and Go runtime notices).  Nested third_party/go-cmp is
+  BSD-3-Clause at commit 9b12f366a942ebc7254abc7f32ca05068b455fb7 (v0.7.0),
+  used only by Go tests; its UPSTREAM.5BSD.json records its URL and archive
+  checksum.  The OpenThread platform copy under src/connectivity is
+  BSD-3-Clause and is source only.  No copyleft or proprietary terms
+  (license review 2026-10-10).  Preserve file-specific notices.
+Local changes (tools/build/fuchsia/patches): FreeBSD host definition and
+  initialized lexer SOF span; explicit BSD natural-type generator mode and
+  exported upstream names, including the 5BSD-authored
+  tools/fidl/lib/fidlgen_cpp/bsd_names.go (BSD-2-Clause, outside Fuchsia's
+  PATENTS grant); preserve the native __WEAK macro in public headers;
+  value-initialized vector<bool> decode temporaries
+  (fuchsia-natural-bool.patch); natural encoder buffer reuse
+  (fuchsia-natural-encoder-reuse.patch); allocation-failure handling in the
+  natural encoder (fuchsia-natural-oom.patch); std::slices use in GIDL
+  (fuchsia-gidl-std-slices.patch).
+Integration: standalone native host compiler/formatter/linter, C++/Rust
+  generators and tests; native C++ runtime and generated C bridge over
+  libchannel, plus the initial descriptor transport feasibility test.
+  Native runtime support uses sdk/lib/utf-utils and src/zircon/lib/zircon
+  wire/status headers at the same pinned revision; their archives are locked
+  in sources.json and UPSTREAM.json. No Zircon dispatcher/kernel is linked.
+  Native runtime/header/manual build targets and libfidl package registration
+  are present; staged C/C++ consumers pass. Full world/package validation,
+  installed host tools, service migration, and the Fuchsia lowpan service
+  port remain incomplete.
+Refresh/build/status: tools/build/fuchsia/README, import.py, sources.json,
+  patches/fuchsia-host.patch. Import into empty /usr/obj staging; review
+  diffs, preserve notices/local patches, and run the documented test suites.
+
+Fuchsia Starnix Linuxulator references
+--------------------------------------
+Recorded: 2026-10-10
+Upstream: https://fuchsia.googlesource.com/fuchsia
+Revision: 8a938a3224e768f6254ee12d240b6492361ebccf (inventory snapshot;
+  the earlier pidfd regression revision is recorded separately below).
+Source root at that revision: src/starnix/
+Browse: https://fuchsia.googlesource.com/fuchsia/+/8a938a3224e768f6254ee12d240b6492361ebccf/src/starnix/
+Archive: https://fuchsia.googlesource.com/fuchsia/+archive/8a938a3224e768f6254ee12d240b6492361ebccf/src/starnix.tar.gz
+Reviewed archive SHA256:
+  bbfd58bc2350014e439a62fb250ff7bc94901a30f27ae2ff637960711de943e6
+Scope: behavioral reference and test ideas rewritten as freestanding Linux
+  syscall probes and native 5BSD fixes. No Starnix Rust/Zircon implementation
+  is imported or linked by this work. This revision is separate from the
+  FIDL/lowpan source import above. The reviewed archive was extracted under
+  /tmp/starnix-inventory-8a938a32; that temporary path is not a durable source.
+License/notices: reviewed Starnix files carry The Fuchsia Authors copyright
+  notices referring to the upstream root LICENSE (BSD-style). Consult LICENSE
+  and PATENTS at the pinned revision and each file's notices before copying
+  source text; retain applicable notices for any subsequent code adaptation.
+  contrib/fuchsia/LICENSE and PATENTS belong to the separately pinned import.
+
+Upstream-to-local mappings (upstream paths relative to src/starnix/;
+local paths relative to the 5BSD source root):
+  - kernel/core/vfs/syscalls.rs, close_range table detachment:
+    sys/compat/linux/linux_file.c, linux_file.h and linux_fork.c;
+    sys/kern/kern_descrip.c and sys/sys/filedesc.h;
+    tests/sys/kern/linux_break_files.c and linux_unshare.c.
+    Native guarded table-copy implementation and independent regression
+    tests; Starnix's per-task table model is a behavioral reference.
+  - tests/syscalls/cpp/task_test.cc, clone/exec sharing:
+    tests/sys/kern/linux_unshare.c and sys/kern/kern_exec.c.
+    Rewritten CLONE_FILES detachment/CLONE_FS preservation tests and a native
+    exec correction. tools/test/linuxulator/guest-gate.sh selects the cases.
+  - tests/syscalls/cpp/epoll_test.cc and kernel/core/vfs/syscalls.rs:
+    tests/sys/kern/linux_break_epoll.c and sys/compat/linux/linux_event.c.
+    Rewritten MOD-data, alias-self, poll-readiness and invalid-wait tests;
+    native result-buffer address-range validation prompted by these tests.
+  - tests/syscalls/cpp/pidfd_test.cc:
+    Original regression reference recorded in the local test:
+    c6af7c1ef9a32cc236e98c31f37151b9e40e9540.
+    https://fuchsia.googlesource.com/fuchsia/+/c6af7c1ef9a32cc236e98c31f37151b9e40e9540/src/starnix/tests/syscalls/cpp/pidfd_test.cc
+    tests/sys/kern/linux_break_pidfd.c and sys/compat/linux/linux_misc.c.
+    Rewritten waitid WNOHANG siginfo/rusage regression with additional PID
+    and nonblocking PIDFD cases; native no-event siginfo correction.
+  - tests/syscalls/cpp/procfs_test.cc, DynamicFileSeek/PastEnd:
+    tests/sys/kern/linux_procfs.c, cmdline seek and past-EOF test ideas.
+  - tests/syscalls/cpp/io_uring_test.cc and modules/iouring/io_uring.rs:
+    tests/sys/kern/linux_io_uring_reference.c. Rewritten setup-flag and
+    READV/WRITEV reference tests, extended with invalid setup checks.
+    Local round trip submits sequentially; it does not reproduce upstream's
+    simultaneous-submission ordering case or import its ring backend.
+  - tests/syscalls/cpp/inotify_test.cc:
+    tests/sys/kern/linux_inotify_starnix.c and linux_inotify_starnix_test.sh.
+    Five rewritten upstream test scenarios plus a local open-directory
+    lifetime guard. Initially child-before-parent was an expected failure.
+    Follow-up: Linux 6.12.110-0-lts runtime confirms that ordering. The native
+    vfs_inotify.c adapter now emits terminal events for Linux directory watches
+    before the parent notification when only the operation's reference remains.
+    Other active references and regular files retain inactive-time deletion.
+    Added held-directory parent-order and cwd lifetime guards; all eight cases
+    pass in the Linux reference guest. New 5BSD runtime remains pending; the
+    ATF expected-failure annotation was removed.
+  - tests/syscalls/cpp/socket_test.cc, GetsockoptTruncationTest:
+    tests/sys/kern/linux_sockopt.c and sys/compat/linux/linux_socket.c.
+    Rewritten option-length/prefix/canary tests, extended to send timeouts and
+    NEW timeout variants; native legacy timeout copyout truncation fix.
+    Follow-up: the same test method now covers SO_ERROR, SO_DOMAIN,
+    SO_LINGER and TCP_USER_TIMEOUT in the separate translated_truncation
+    ATF case, compiled from linux_sockopt.c with SOCKOPT_TRANSLATED_ONLY=1.
+    All four native translation paths now use the existing truncating helper.
+    Behavior was also checked against Linux v6.12 sk_getsockopt and
+    do_tcp_getsockopt (reference only; no Linux source text copied):
+    https://github.com/torvalds/linux/blob/v6.12/net/core/sock.c
+    https://github.com/torvalds/linux/blob/v6.12/net/ipv4/tcp.c
+    Those Linux files carry SPDX GPL-2.0-or-later notices. This follow-up
+    extends locally written tests and uses the existing 5BSD copyout helper.
+  - tests/syscalls/cpp/input_test.cc GetDeviceName and ioctl_test.cc
+    EVIOCGNAME_Success/EVIOCGNAME_TooSmall:
+    tests/sys/kern/linux_evdev_starnix.c, linux_evdev_fixture.c and
+    linux_evdev_starnix_test.sh; sys/compat/linux/linux_ioctl.c.
+    Rewritten zero-length and truncated-name tests, extended locally to
+    physical/unique strings and untouched trailing bytes. The native uinput
+    fixture creates its own device. The adapter bypasses generic ioctl's
+    zero-size rejection and copies only the evdev-reported string length.
+    Uses Linux prefix truncation, preserving the upstream test's explicit
+    distinction from Starnix's truncated-string NUL termination.
+  - tests/syscalls/cpp/terminal_test.cc ioctl_TCSETSF and PacketMode:
+    tests/sys/kern/linux_terminal_starnix.c and its ATF wrapper.
+    Rewritten terminal cases with a stronger queued-input flush check,
+    packet header-only read, retained payload and packet-mode disable.
+    No native TTY implementation change in this batch.
+  - tests/syscalls/cpp/fuse_test.cc HeaderLengthUnderflow and
+    OverlongHeaderLength: tests/sys/fs/fusefs/bad_server.cc.
+    Three locally written framing cases exercise declared lengths zero,
+    less than the header and greater than the actual write. Preserve native
+    malformed-session termination; upstream's retry-on-same-session behavior
+    is not claimed. No FUSE kernel change in this batch.
+    Subsequent local audit: sys/fs/fuse/fuse_device.c now checks daemon errno
+    bounds before negation, avoiding signed overflow for INT32_MIN in both
+    Linux errno translation and native reply completion. Six additional
+    BadReplyErrno cases in bad_server.cc cover negative extremes and positive
+    reply errors in both errno modes, preserving existing request behavior.
+    This is a local follow-up, not copied Starnix implementation code.
+  - Pre-Binder follow-up (2026-10-10), same pinned Starnix revision:
+    input_test.cc CurrentStateQueriesSucceed and capability-query tests:
+    linux_evdev_starnix.c adds zero-size and bounded-copy bitmap checks.
+    linux_ioctl_evdev now bounds bitmap copyout, including the native empty
+    force-feedback bitmap. Native state and capability storage are reused.
+    uinput_test.cc UiGetVersion, UiSet*bit, UiSetPhys, UiDevSetup/Null,
+    UiDevCreateFailedWithoutDevSetup and create/destroy cases:
+    linux_uinput_starnix.c and ATF wrapper are rewritten validation/lifecycle
+    tests; linux_ioctl.c/h now translate supported uinput commands to the
+    native backend. Force-feedback is explicitly unsupported. UI_GET_SYSNAME
+    returns the native event-node name with Linux length/termination rules.
+    terminal_test.cc PacketModeEvents: adds a rewritten packet-event case
+    and a local /dev/ptmx nonblocking-open regression. The latter exposed
+    dropped FNONBLOCK in sys/dev/pty/pty.c; the clone-open path now retains it.
+    procfs_test.cc UptimeProgressSeek/UptimeProgressReopen and
+    ProcSysKernelRandomBootIdExists: linux_procfs_starnix.c adds rewritten
+    refresh checks and a stronger UUID format/stability check.
+    fuse_test.cc LookupUpdatesExistingNodeAttributes: lookup.cc adds
+    second_name_refreshes_cached_inode using existing native mock helpers.
+    Linux v6.12 evdev/uinput source used only to check ABI behavior (no GPL
+    implementation text copied):
+    https://github.com/torvalds/linux/blob/v6.12/drivers/input/evdev.c
+    https://github.com/torvalds/linux/blob/v6.12/drivers/input/misc/uinput.c
+    Licenses there: GPL-2.0-only and GPL-2.0-or-later respectively.
+    Inotify ordering audit also consulted Linux v6.12 fs/namei.c
+    (vfs_rmdir) and include/linux/fsnotify.h (d_delete_notify); reference
+    only, no code copied. URLs:
+    https://github.com/torvalds/linux/blob/v6.12/fs/namei.c
+    https://github.com/torvalds/linux/blob/v6.12/include/linux/fsnotify.h
+    Runtime comparison remains necessary; pinned Starnix expectations are
+    not assumed universal across Linux versions/filesystems.
+    Also inspected the same fsnotify helper at Linux v7.1. A reference-only
+    Alpine Linux v3.22 netboot kernel was downloaded for isolated qualification
+    (no source imported or guest booted; local QEMU lacks libusb.so.4):
+    https://dl-cdn.alpinelinux.org/alpine/v3.22/releases/x86_64/netboot/vmlinuz-lts
+    SHA256 49eac7bf8cedfd316897bef805111616f3d2855492ee7870e82cb1e6a88c7572
+    Stored at /tmp/starnix-linux-reference/vmlinuz-lts.
+    socket_test.cc SndRcvBufSockOpt.DoubledOnGet also guided a temporary
+    native-baseline probe in /tmp/starnix-linux-reference/socket-buffers.c;
+    persistent tests and buffer accounting changes are still pending.
+  - Additional pre-Binder option work (2026-10-10), same Starnix revision:
+    uinput_test.cc UiDevCreateTouchscreenWithSize informs axis readback in
+    linux_uinput_starnix.c: the adapter accepts short UI_ABS_SETUP prefixes,
+    zero-fills omitted fields, rejects oversized requests/invalid axes/ranges
+    and limits MT slots. A new abs_setup ATF case verifies readback through
+    the native event node; it uses Linux axis values, not Fuchsia display
+    coordinate remapping. Linux v6.12 drivers/input/misc/uinput.c was an ABI
+    reference for request sizes and validation (no code copied).
+    socket_test.cc SndRcvBufSockOpt.DoubledOnGet:
+    tests/sys/kern/linux_socket_buffers.c and its ATF wrapper add four socket
+    family/type combinations, dup alias checks, zero/min/max/negative sizes,
+    failed-set preservation and unprivileged force-option rejection.
+    linux_setsockopt_buffer in linux_socket.c reserves doubled native space,
+    bounded by sb_max_adj and native mbuf minima; native quota checks remain.
+    No Linux CAP_NET_ADMIN grant exists (capget reports no capabilities), so
+    forced setters return EPERM instead of silently acting as normal setters;
+    forced getters return ENOPROTOOPT. Privileged Linux force support is not
+    claimed. Minima/ceilings follow native storage/accounting, not fixed Linux
+    skb sizes. Linux v6.12 net/core/sock.c and include/net/sock.h were consulted
+    for normalization, clamping, force permissions and set-only semantics:
+    https://github.com/torvalds/linux/blob/v6.12/net/core/sock.c
+    https://github.com/torvalds/linux/blob/v6.12/include/net/sock.h
+    Reference only; no GPL source text copied.
+  - Linux reference qualification follow-up: 18/18 inotify/socket/procfs/TTY
+    cases passed on the downloaded Alpine 6.12.110-0-lts kernel in a diskless,
+    networkless QEMU guest using tmpfs. This supersedes the earlier QEMU
+    dependency blocker and resolves the source-only inotify ordering concern.
+    QEMU loaded a private copy of libusb.so.4 from
+    /usr/obj/5BSD-linuxgate/run-20261009T202958Z/root-amd64/usr/lib/libusb.so.4;
+    no host library was replaced. Inputs/source hashes and console output:
+    /tmp/starnix-linux-reference/results.json and console-final.log.
+    Reference execution found a timing assumption in the rewritten TCSETSF
+    test: linux_terminal_starnix.c now waits for POLLIN before checking the
+    line-discipline input count. This is a local test correction.
+  - FUSE directory parser follow-up (2026-10-10), same pinned revision:
+    modules/fuse/lib.rs FuseOperation::parse_response(Readdir) informed a
+    bounds review of sys/fs/fuse/fuse_internal.c. Validate namelen before
+    aligned-record sizing so oversized names cannot masquerade as EOF.
+    tests/sys/fs/fusefs/readdir.cc adds six malformed/truncated wire-record
+    cases, checking the next request retains offset zero, and one successful
+    MAXNAMLEN boundary case. These are newly written native regressions, not
+    copied upstream tests. Native partial-tail short-read semantics remain;
+    Starnix instead rejects incomplete records with EINVAL. No Rust code was
+    copied. READDIRPLUS cache population/reference ownership remains open.
+    modules/input/uinput.rs ioctl and tests/syscalls/cpp/uinput_test.cc
+    UiSetPhys were also checked: pinned Starnix UI_SET_PHYS simply succeeds
+    without storing its argument. It does not provide an implementation for
+    our remaining native 80-byte physical-name storage limit.
+  - READDIRPLUS implementation follow-up (2026-10-10), same pinned revision:
+    modules/fuse/lib.rs FuseFileObject::readdir and
+    FuseOperation::parse_response(Readdir) supply the behavioral model:
+    negotiated PLUS/AUTO selection, offset-zero AUTO policy, bounded aligned
+    records, cache prefill even after the caller's buffer fills. Native code
+    in fuse_internal.c/fuse_ipc.c/h uses the existing vnode, namecache,
+    attribute cache and FORGET backend. fuse_node.c/h adds nonblocking vnode
+    acquisition for optional prefetch; the vfs_hash_insert error path now
+    respects that helper's existing reclaim/release ownership. No Rust or
+    Zircon code was copied. Native dot/zero-nodeid semantics, ENOSYS fallback,
+    cookie preservation and nonblocking-cache behavior are local integration.
+    tests/sys/fs/fusefs/readdir.cc adds 15 newly written PLUS cases;
+    mockfs.cc audits the new opcode. Tests cover alias/FORGET accounting,
+    dot/zero nodeids, AUTO/old protocol/ENOSYS, small user buffers, EFAULT,
+    invalid cache names, invalid lengths followed by valid entries, and six
+    malformed framing cases. Kernel/test builds do not establish VM acceptance;
+    teardown of unparseable replies, vnode races, cache TTLs and NFS cookies
+    remain in Desktop/Fuchsia tests for next VM.txt.
+  - FUSE option/concurrency follow-up (2026-10-10), same pinned revision:
+    readdir.cc adds busy_vnode_returns_reference_without_waiting, a native
+    regression for the nonblocking prefetch integration. It holds a GETATTR
+    reply pending, checks PLUS completes and returns its unused reference,
+    then checks reclaim returns only the original LOOKUP reference.
+    The PLUS test count is now 16. This test is locally written.
+    modules/fuse/lib.rs FuseFs::rename / FuseOperation::Rename serialization
+    references the RENAME2 wire layout, but Starnix sends flags zero there.
+    Native fuse_internal.c/h, fuse_vnops.c and fuse_ipc.c now implement
+    NOREPLACE through RENAME2 for protocol 7.23+, using the Linux flag value
+    already defined in sys/compat/linux/linux_file.h. Daemon EEXIST survives;
+    ENOSYS is remembered and returns EOPNOTSUPP without a destructive legacy
+    fallback. Native rename.cc adds six rewritten RPC/atomicity/error cases;
+    mockfs.cc/h audits the new request. No Starnix/GPL code was copied.
+    Poll audit: FuseFileObject::query_events requests kh=0/flags=0 and its
+    wait_async returns None; tests/syscalls/cpp/fuse_test.cc FuseTest.Poll
+    checks immediate readiness. These are not asynchronous notification
+    support. Splice audit: Starnix advertises SPLICE flags, while native
+    Linuxulator buffered splice needs FUSE frame/error ownership work before
+    those flags can be advertised. Findings and VM gates are recorded in
+    docs/starnix-linuxulator-inventory.md and the Desktop checklist.
+  - Cache lifetime and VM-gate follow-up (2026-10-10), same pinned revision:
+    tests/syscalls/cpp/fuse_test.cc FuseServerCacheAttributesTest.CacheAttributes
+    supplied the attribute-cache lifetime model. Three newly written native
+    Timeouts/ReaddirPlusCache.honors_cache_lifetimes cases exercise PLUS with
+    zero attribute TTL, zero entry TTL, and finite entry TTL expiration;
+    expired names may resolve to a different inode and all lookup references
+    must be reclaimed. PLUS coverage is now 19 cases. No upstream code copied.
+    tools/test/linuxulator/fuse-protocol-manifest.py and the revised
+    qemu-fuse-protocol.py/guest-fuse-protocol.sh qualify exact case names and
+    kernel/module/test SHA256s instead of a historical fixed pass count.
+    The build helper now uses every logical CPU. These are local test tools,
+    not imported Fuchsia implementations. test-fuse-protocol-gate.py checks
+    rejection of incomplete, duplicate, stale and failed/skip evidence.
+    Current manifest: 48 native GTest programs, 885 active cases; generated
+    at /tmp/starnix-fuse-protocol-20261010-cache.json. This is build/listing
+    evidence only, not a claim that 885 cases ran in a VM.
+  - Native vnode teardown review (2026-10-10): fuse_node.c now respects
+    insmntque()'s failure ownership contract as well as vfs_hash_insert()'s.
+    insmntque clears v_data and reclaims/releases the vnode; FUSE must not
+    assert or unlock that released vnode. The error path instead destroys
+    the private attribute mutex, frees private data and balances the node
+    counter. This is a native integration fix found while reviewing PLUS
+    prefetch/forced-unmount lifetime; no upstream implementation was copied.
+    Matching GENERIC kernel/modules built and were staged with NO_ROOT=yes
+    in /usr/obj/5BSD-starnix-fuse-vm-20261010/root for isolated validation.
+    No host kernel/module installation or reboot was performed.
+  - Native FUSE bootstrap review (2026-10-10): the isolated VM exposed a
+    pre-INIT root GETATTR deadlock from mac_veriexec_vfs_mounted. Native
+    fuse_vnop_getattr now supplies uncached owner-only bootstrap root
+    attributes, including the same local fsid used after INIT. This follows
+    the native pre-INIT statfs model, not copied Starnix implementation.
+    GetattrBeforeInit.root_attributes_are_not_cached checks mount completion
+    before INIT and daemon-provided root mode/link count after INIT. The
+    existing mock's INIT helper is exposed for this delayed-INIT test.
+    Full mounted validation remains required; initial failure/stack evidence
+    is in /usr/obj/5BSD-starnix-fuse-vm-20261010/diag-console.log.
+    Native fixture integration explicitly answers system.mac_abac GETXATTR
+    queries with ENOATTR (Linux ENODATA for linux_errnos mounts), representing
+    an unlabeled test filesystem while retaining active MAC policy. Other
+    xattr requests remain subject to normal per-test expectations.
+    Full native VM run-2 completed 881/886 active cases, including all 19
+    READDIRPLUS and six NOREPLACE additions. Follow-up fixture corrections:
+    malformed framing checks ENXIO for a new LOOKUP on an already-dead native
+    session (in-flight requests still use ENOTCONN); default_permissions
+    matches the requested user.foo xattr instead of consuming policy queries;
+    Death.unsent_operations warms name/label caches and polls the daemon fd
+    for the queued second request before killing the daemon, replacing a
+    scheduling-dependent sleep. These are native integration/test fixes.
+    Run-3 reached 885/886 passes; a policy query could still precede a
+    path-based OPEN. The death regression now uses direct reads on two
+    already-open files, retaining the dispatched/queued split and strict
+    ENOTCONN checks without path-label interference.
+    Native run-4 now passes all 886 active GTest cases with matching artifact
+    hashes, active MAC policies and clean ZFS shutdown. Evidence:
+    /usr/obj/5BSD-starnix-fuse-vm-20261010/run-4. The separate Linuxulator,
+    device and extended teardown gates remain open. The local
+    guest-starnix-prebinder-atf.sh stages no upstream implementation; it runs
+    the seven selected ATF programs on ZFS/tmpfs in a disposable guest.
+    VM qualification follow-up: those seven wrappers explicitly brand their
+    freestanding Linux ELF probes with brandelf -t Linux and declare that
+    tool dependency. They previously relied on a host fallback-brand sysctl
+    that a clean VM does not enable. Native evdev fixtures remain native.
+    The guest driver accepts built-in uinput and stages Kyua/ATF runtime
+    data plus resolved compiler headers. No Starnix code was copied for
+    these harness corrections; results remain in the Desktop VM checklist.
+    The first branded ATF run passed 27/28 cases on ZFS and exposed missing
+    EV_SYN in Linux EVIOCGBIT(0). Native evdev accepts synchronization events
+    independently of its advertised type bitmap, so linux_ioctl_evdev now
+    exposes that implicit support in nonempty event-type replies. The existing
+    bitmap-bounds regression fails at check 120 before this fix; the native
+    fixture deliberately does not request EV_SYN. Pinned Starnix input_file.rs
+    also omits this bit; Linux input_register_device is the behavioral check:
+    https://kernel.googlesource.com/pub/scm/linux/kernel/git/torvalds/linux/+/8934827db5403eae57d4537114a9ff88b0a8460f/drivers/input/input.c
+    This is an independently written ABI translation, not copied GPL code.
+    Rebuilt-kernel VM qualification remains required.
+    Follow-up qualification completed: atf8-results.json verifies all 56
+    selected ATF executions on ZFS/tmpfs, including the EV_SYN fix; run-5
+    verifies all 886 native FUSE cases on the rebuilt kernel. Both retain
+    exact hashes and clean shutdown evidence in the same VM directory.
+    Additional earlier Linuxulator gates and teardown diagnostics remain open.
+  - FUSE vnode type-replacement lifetime follow-up (2026-10-10):
+    reviewing the native LOOKUP path alongside READDIRPLUS exposed a retained
+    reference from vfs_hash_get when an inode changes type. vgone reclaims
+    the vnode but does not release that reference; fuse_node.c now uses
+    vput instead of a bare unlock. This is an independent native fix, with
+    no upstream implementation copied. The existing Lookup.vtype_conflict
+    regression passed even while leaking: 256 repetitions grew vfs.numvnodes
+    by 257 with zero FUSE nodes in the isolated pre-fix VM. The new local
+    tools/test/linuxulator/guest-fuse-vnode-lifetime.sh additionally checks
+    native vnode growth, exact repeat count and FUSE cleanup. The rebuilt
+    lifetime2 VM passes all 256 repetitions with native vnodes 80 -> 80,
+    zero FUSE nodes, matching hashes and clean shutdown without diagnostics.
+    lifetime2-results.json and its manifest/console are retained under
+    /usr/obj/5BSD-starnix-fuse-vm-20261010. Native run-6 also passes all 886
+    active protocol cases with the corrected module, matching hashes and
+    clean shutdown. The core kernel and test binaries match run-5/ATF8.
+  - Native FUSE forced-unmount follow-up (2026-10-10): destroy.cc adds
+    Destroy.forced_unmount_pending_lookup, releasing a successful LOOKUP
+    reply concurrently with a forced unmount and checking request completion
+    or cancellation and mount removal. guest-fuse-teardown-stress.sh repeats the race 256
+    times in an isolated VM, checking native vnode growth and FUSE cleanup.
+    This is locally written lifecycle coverage prompted by the READDIRPLUS
+    integration audit, not copied upstream code. It samples scheduling and
+    does not establish that every insmntque failure branch was executed.
+    First VM run exposed a fixture assumption: native forced purge marks
+    the session dead before reclaim, so FORGET/DESTROY delivery is not a
+    requirement. The corrected fixture accepts expected daemon ENODEV and
+    request ENOTCONN (or EBUSY if mount insertion loses the race). The
+    corrected teardown3 VM passes 256 repetitions, native vnodes 80 -> 80,
+    zero FUSE nodes and request tickets, exact artifact hashes and clean
+    shutdown without diagnostics. Evidence: teardown3-results.json plus its
+    manifest/console under /usr/obj/5BSD-starnix-fuse-vm-20261010. Kernel and
+    module match lifetime2/run-6; READDIRPLUS teardown remains separate.
+  - READDIRPLUS forced-unmount follow-up (2026-10-10): readdir.cc adds
+    ReaddirPlus.forced_unmount_pending_reply. The native mock can hold its
+    serialized PLUS response while another thread forces unmount. A first
+    long-name reply fills most of the user buffer; a second valid two-entry
+    wire reply exceeds remaining user capacity, exercising optional prefetch
+    during teardown. Checks cover completion/cancellation and mount removal.
+    The local teardown stress job now repeats both LOOKUP and PLUS races
+    256 times each and checks native vnodes, FUSE nodes and request tickets.
+    This extends native integration tests; no upstream code was copied.
+    Fixture review/VM failures corrected semaphore lifetime, the native
+    minimum read-buffer size and the kernel's maximum requested wire size.
+    The corrected teardown8 VM passes 512/512 races, FUSE nodes/tickets zero,
+    native vnode growth +4 within the isolated-job limit of 16, exact hashes
+    and clean shutdown without diagnostics. Evidence is in teardown8-*.json
+    and teardown8-console.log under /usr/obj/5BSD-starnix-fuse-vm-20261010.
+    Full native protocol run-10 passes all 888 active cases after the helper
+    change, with exact hashes, healthy ZFS and clean shutdown. Its kernel
+    and module match run-6; only destroy/readdir test artifacts changed.
+  - Earlier regression VM integration follow-up (2026-10-10): the existing
+    break_files, break_epoll and break_pidfd ATF wrappers now explicitly
+    brand their Linux ELF probes. linux_unshare_test.sh registers the 17
+    supported-subset cases already selected by guest-gate.sh plus the native
+    capability-mode guard from linux_unshare_capmode.c. Linux-only per-thread
+    detachment and shared-table POSIX-lock cases remain reference probes;
+    this wrapper does not claim those backends exist. Exec tests receive an
+    absolute probe path so chdir does not change the executable under test.
+    These are local harness changes around the previously recorded Starnix
+    task/descriptor/epoll/waitid test adaptations. No upstream text copied.
+    tests/sys/kern/Makefile installs the wrapper and both source files.
+    Expanded VM matrix: 11 ATF programs, 49 cases per filesystem. ATF9
+    finished at 86/98, with the same six unshare failures on ZFS and tmpfs;
+    hashes/filesystems/shutdown verified, guest exit 1. It is not an accepted
+    pass. A diagnostic confirmed native shm_seek rejects offsets
+    beyond an empty memfd's size. Cwd/exec failures remain under investigation;
+    the corrected epoll fixture also requires a new runtime result.
+    verify-starnix-atf.py is a local acceptance verifier for explicit case/hash
+    manifests, filesystem phases, result statuses and shutdown evidence. It
+    accepts the retained ATF8 passing log and rejects nine altered failure
+    variants; checks are recorded in atf-verifier-checks.json. No import.
+  - Inotify baseline integration review (2026-10-10): the existing local
+    linux_inotify_lifetime.c and linux_inotify_parent.c probes now honor an
+    absolute TMPDIR (default /tmp) and check bounded path construction.
+    Their hard-coded /tmp previously prevented TMPDIR alone from selecting
+    tmpfs. inotify_lifetime_test.sh registers eleven native lifetime cases
+    covering aliases, multiple opens, held directories/mappings, late watches,
+    unlink/replace, watch removal and fork/exit, using an unprivileged runner.
+    This is local backend regression coverage; no upstream code copied.
+    Native probe/wrapper builds passed; VM execution remains pending.
+    guest-starnix-prebinder-atf.sh accepts an explicit STARNIX_ATF_TESTDIR
+    for separately staged native matrices while retaining the default suite.
+  - Unshare rejection fixture correction: epoll_rejection in linux_unshare.c
+    now clones with CLONE_FS as well as CLONE_FILES before checking that a
+    failed combined unshare leaves both resources shared. Previously its
+    final umask check expected sharing the clone had never requested. This
+    is a local test correction; the ATF9 run and corrected rerun remain open.
+  - Memfd seek follow-up (2026-10-10): the rewritten unshare descriptor-
+    description case exposed native shm_seek rejecting an offset beyond EOF
+    on an empty Linux memfd (EINVAL; confirmed in unshare-diag VM). Native
+    sys/kern/uipc_shm.c now permits this for SHM_GROW_ON_WRITE objects,
+    including memfd, while retaining fixed-size POSIX shm bounds. Seeking
+    does not resize the object; existing write-time growth/seal checks apply.
+    tests/sys/posixshm/memfd_test.c adds seek_past_eof for SET/CUR/END, dup
+    offset sharing, EOF reads, sparse writes, negative seeks, growth seals
+    and fixed-size shm bounds. The existing Linux unshare test also exercises
+    this path. kernel/core/vfs/file_object.rs default_seek at the pinned
+    Starnix revision was a behavioral reference. Linux v6.12 fs/read_write.c
+    generic_file_llseek_size was checked for EOF versus maximum-offset
+    semantics (GPL-2.0 reference only; no source text copied):
+    https://github.com/torvalds/linux/blob/v6.12/fs/read_write.c
+    Native implementation and new test are independently written. GENERIC
+    kernel and native test builds passed; matching VM acceptance is pending.
+  - Unshare cwd fixture follow-up (2026-10-10): ATF-context diagnostics
+    established chdir("/") selects /compat/linux and getcwd reports that
+    native pathname in this guest. The BSD-subset probe now captures the
+    selected root pathname before cloning, restores its working directory,
+    and checks cwd sharing/detachment against that pathname. Exec helpers
+    receive the same expected path. The Linux-reference build retains the
+    strict / expectation. This tests resource sharing without claiming
+    emulation-root pathname virtualization. No upstream source copied.
+    Both freestanding variants compile with warnings as errors; acceptance
+    rerun is pending. The corrected epoll fixture passes in the diagnostic
+    ATF context; diagnostic runs do not qualify the full matrix.
+    Full FUSE run-11 passes 888/888 active cases on the memfd-fixed kernel,
+    with matching hashes, healthy ZFS and clean shutdown. Evidence:
+    /usr/obj/5BSD-starnix-fuse-vm-20261010/run-11/results.json and console.log.
+  - Native baseline results follow-up (2026-10-10): native1 completed
+    73/82 executions, so it is not accepted. The new memfd seek_past_eof
+    and Linux files_preserves_open_description cases pass on both ZFS and
+    tmpfs. Three older native sealing tests expected EACCES despite the
+    committed shm_mmap implementation returning EPERM for a write seal on
+    a writable descriptor (EACCES remains for a read-only descriptor).
+    Their assertions now require EPERM; no production seal behavior changed.
+    The native inotify late-watch fixture incorrectly used /proc/self/fd;
+    it still needs a native descriptor-path fixture. Private mapping lifetime
+    fails on tmpfs but passes on ZFS; shared mappings pass on both. Preserve
+    this failure pending VM/vnode lifetime diagnosis, without weakening the
+    deletion-event expectation. Evidence: native1-results.json and console
+    under /usr/obj/5BSD-starnix-fuse-vm-20261010. These are local baseline
+    test corrections/findings, with no additional upstream source copied.
+  - Native inotify fixture follow-up (2026-10-10): late_watch now creates
+    a private fdescfs nodup mount, whose native lookup returns the held vnode
+    even after unlink. The probe drops uid/gid before accessing the descriptor
+    path; cleanup unmounts the fixture. Linux builds retain /proc/self/fd.
+    linux_inotify_lifetime.c reports the failing source line and unexpected
+    event metadata when an empty queue was required. This keeps the private
+    mmap deletion expectation strict while enabling tmpfs lifetime diagnosis.
+    Native probe and ATF builds pass; native2 will rerun the same 82-case
+    matrix including the three corrected memfd sealing assertions.
+    Native2 exposed duplicate ATF metadata in late_watch before execution;
+    the helper now accepts user/program arguments and emits each property
+    once. Rebuilt listing confirms the intended root fixture metadata.
+    A corrected runtime rerun remains required. These are independently
+    written native test adaptations, no new import.
+  - Linux64 mapping qualification preparation (2026-10-10): rebuilt the
+    existing linux_mapping_lifetime.c and linux_inotify_lifetime.c probes
+    with Alpine v3.22 x86_64 musl-dev 1.2.5-r12 (package license MIT),
+    https://dl-cdn.alpinelinux.org/alpine/v3.22/main/x86_64/musl-dev-1.2.5-r12.apk
+    SHA256 1c2068d910cfdbbcb4eb107a5a478f8b48edf3a6311953c8fa5180c5190efab3.
+    This is an isolated test-build sysroot under /usr/obj, not a base import
+    or host package installation. Package metadata and source/binary hashes
+    are retained in the VM evidence directory (mapping1-build-inputs.json,
+    mapping1-manifest.json). Both probes explicitly carry the Linux ELF brand.
+    guest-mapping-lifetime.sh now hashes listed artifacts and reports mounts;
+    qemu-mapping-lifetime.py takes configurable QEMU/firmware paths, uses no
+    guest network, retains the supplied manifest and requires exact hashes
+    and clean shutdown. It no longer uses historical home-directory helpers.
+    Existing matrix remains 580 Linux64 executions plus 18 native cases.
+    The verifier accepts a complete synthetic transcript and rejects eleven
+    controls: missing/duplicate/failed case, missing/wrong hash, bad guest
+    exit, missing shutdown, panic, watch leak, wrong mount and nonzero QEMU
+    exit. Evidence: mapping-verifier-controls/checks.json and retained test
+    driver. These are verifier controls, not VM acceptance. Runtime pending.
+  - Mapping runtime and FUSE coverage reconciliation (2026-10-10):
+    mapping1 passes all 580 Linux64 probes plus 18 native cases, exact hashes,
+    watch counts 0 -> 0, both mounts and clean shutdown. Linux64 tmpfs
+    private-map passes all ten root/unprivileged rounds; ordinary native
+    tmpfs mapping lifetime remains separately under review. No kernel change
+    is inferred from the native-only discrepancy.
+    Rechecked FuseInitFlags in pinned modules/fuse/lib.rs against native
+    fuse_internal_init and run-11's exact case manifest. Existing native
+    interrupt/forget/cache/notify/permission/locking/read/write/destroy tests
+    passed in the 888-case gate. Starnix's flags do not supply missing native
+    VM/VFS/authority backends; the inventory records remaining ACL,
+    passthrough, splice and asynchronous poll dependencies explicitly.
+    Reviewed tests/sys/fs/fusefs/ctl.sh: its external fuse-ext2/mkfs.ext2
+    dependency serves a native SCSI CTL LUN atime regression, not Linux
+    fusectl. Earlier shorthand calling it fusectl was incorrect; retain
+    the native integration dependency separately. This is source/coverage
+    review, not an additional source import.
+  - Native mapping baseline correction (2026-10-10): native3 completes
+    81/82, with only tmpfs private_map failing. Its diagnostic records
+    IN_DELETE_SELF (0x400) at close while a private mapping remains. This
+    matches native tmpfs_pager_writecount_recalc/vn_inotify_inactive behavior:
+    an ordinary native private mapping holds data without a vnode use
+    reference. vn_mmap explicitly retains the open description for Linux64;
+    the Linux64 mapping1 matrix passes the strict delayed-deletion contract.
+    linux_inotify_lifetime.c now distinguishes the native tmpfs private
+    baseline using fstatfs, checks exact terminal events at close in that
+    case and requires no duplicate events at unmap. Linux builds still
+    require deletion only at unmap. Both variants additionally assert mapped
+    data survives unlink/close. No kernel behavior changed. inotify(2)
+    documents the existing distinction; manual lint and both strict probe
+    builds pass. Mapping2 passes all 580 Linux64 probes plus 18 native
+    cases with the new data check, exact hashes, zero retained watches and
+    clean shutdown (mapping2/results.json). Native4 remains pending.
+    This is a local test/documentation correction, no upstream text copied.
+  - Parent-path matrix qualification preparation (2026-10-10): rebuilt
+    existing linux_inotify_parent.c using the same isolated Alpine musl
+    sysroot. Its existing 21 cases run as root/unprivileged on ZFS, tmpfs
+    and nullfs (126 executions), covering hardlinks, rename, procfd,
+    exclusion, recreation and concurrent unlink/name changes. This is the
+    parent matrix required alongside the Starnix lifetime/order checks;
+    no new kernel code or upstream test text is imported.
+    guest-inotify-parent.sh handles built-in modules and records artifact
+    hashes/mounts. qemu-inotify-parent.py uses configurable installed QEMU,
+    no guest network, a fresh evidence directory and a supplied hash manifest.
+    Acceptance additionally requires all three mount types and clean halt.
+    Build/source/package hashes are retained as parent1-build-inputs.json
+    and parent1-manifest.json in the Starnix VM evidence directory.
+    Parent1 completes 105/126: every unprivileged ZFS case fails mkdtemp
+    with EACCES because the runner omitted /tmp mode setup. All other cases
+    pass and watch/path counts return to zero. The runner now sets mode
+    1777 on /tmp in every filesystem phase; full parent2 rerun is required.
+    Its verifier accepts complete synthetic evidence and rejects twelve
+    malformed/failure controls (parent-verifier-controls/checks.json).
+  - Final native/parent baseline results (2026-10-10): native4 passes82/82
+    executions with exact hashes/cases, both filesystems, clean shutdown and
+    no skips. This includes the corrected native tmpfs private-map data and
+    event-lifetime checks. Parent2 passes126/126 on ZFS/tmpfs/nullfs, both
+    user types, exact hashes, zero watches/paths and clean shutdown. Evidence
+    is native4-results.json and parent2/results.json under the Starnix VM root.
+  - Linux syscall entry for FUSE NOREPLACE (2026-10-10): existing six native
+    rename cases now optionally use FUSE_LINUX_RENAME_PROBE to execute the
+    independently written linux_fuse_rename.c raw Linux renameat2 helper.
+    No environment override retains the native syscall path. The fixture
+    translates the helper's Linux errno status explicitly; exec/signal or
+    unexpected errors fail the existing expectations. This extends the
+    previously recorded Starnix Rename wire-layout reference with local
+    integration coverage, not new upstream source text.
+    guest-fuse-linux-rename.sh runs all15 native rename cases and the six
+    Linux-entry cases, including success, EEXIST, remembered ENOSYS without
+    legacy fallback, EOPNOTSUPP and protocol7.22 rejection. The FUSE gate
+    accepts the Linux module/probe hash group only as a complete set; new
+    verifier controls reject missing helper/module evidence. Strict probe
+    and native rename builds plus all six gate tests pass. First VM run
+    passes15 native cases but rejects all six Linux cases: the helper child
+    was not registered in MockFS's PID filter, so default handling returned
+    EOPNOTSUPP before the expected LOOKUP. The adapter now uses the existing
+    synchronized FuseTest::fork helper, which registers the child before
+    releasing it. No kernel fix is inferred from that fixture failure;
+    linux-rename2 now passes all21 executions with exact kernel/FUSE/Linux
+    module/probe/test hashes, healthy ZFS and clean shutdown. Evidence:
+    linux-rename2/results.json and console.log under the Starnix VM root.
+  - Expanded Linuxulator ATF qualification (2026-10-10): ATF11 passes
+    all98 executions, 49 on ZFS and49 on tmpfs, including the corrected
+    unshare fixtures and memfd seek behavior. The maintained verifier
+    validates exact cases/hashes, healthy filesystems and clean shutdown;
+    terminal QEMU exit0. Evidence: atf11-results.json/atf11-console.log,
+    prebinder-atf10-manifest.json and atf10-cases.json under the Starnix VM
+    evidence root. The newly added uptime_by_char case is not in this image
+    and remains an open regression requiring its own matching-kernel run.
+  - Procfs partial-read snapshot (2026-10-10): procfs_test.cc
+    ProcUptimeTest.UptimeByChar supplies the test idea for the independently
+    rewritten linux_procfs_starnix.c:uptime_by_char. Read one byte, read a
+    second descriptor, wait, and finish the first descriptor bytewise; its
+    uptime must remain between the two initial readings. Both decimal
+    fields and EOF are checked. Registered in linux_procfs_test.sh.
+    Strict freestanding compilation passes. The installed 5BSD kernel
+    fails check7 (1860407 -> partial record1860507 centiseconds); a
+    dedicated Linux6.12.110-0-lts reference run passes all four procfs
+    cases with exact case rows, manifest and clean poweroff/QEMU exit0
+    (procfs-snapshot-reference/results.json). This new regression is
+    not covered by ATF11's immutable 98-case image and remains open.
+  - Uptime snapshot implementation follow-up (2026-10-10): independently
+    written PFS_SNAPSHOT opt-in uses a per-file generated record in
+    pseudofs, with serialized reads/seeks and last-reference cleanup.
+    Only linprocfs uptime opts in; records are page-bounded and read-only.
+    Existing native vnode fileops provide permission checks and context.
+    The Starnix UptimeByChar idea is extended locally to duplicate-close,
+    fork/parent-close, failed seek and offset-query lifetime checks.
+    Strict probe build and shell syntax checks pass; GENERIC build is
+    active in /tmp/starnix-procfs-snapshot-build.log. The implementation
+    remains under review and has not passed matching-kernel VM acceptance.
+  - Expanded uptime Linux reference passes6/6 (2026-10-10), including
+    duplicate-close, fork/parent-close and seek-preservation checks, on
+    Linux6.12.110-0-lts. Exact rows, proc mount, clean poweroff and observed
+    QEMU exit0 are recorded in procfs-lifetime-reference/results.json,
+    manifest.json and console.log under the Starnix evidence root.
+    Initial GENERIC build passed. Review then guarded snapshot access by
+    read-wrapper lock ownership: vnode-only kernel reads may inherit a
+    file context without owning that lock and retain ordinary fill behavior.
+    This amendment needs rebuild. Forced-unmount/module lifetime review
+    and matching-kernel runtime qualification remain open. The user's
+    latest build concurrency limit is six CPUs, superseding the earlier16.
+  - Snapshot lifetime/build follow-up (2026-10-10): pseudofs refuses module
+    unload while any snapshot file descriptions remain, including after a
+    forced mount teardown. Last-close cleanup releases the count after
+    native vnode close. This avoids retaining a mount reference, which
+    would block forced unmount. Runtime unload/teardown coverage remains
+    required; GENERIC includes pseudofs in the kernel.
+    Revised GENERIC kernel/modules build passes with make -j6; private
+    NO_ROOT installkernel staging also passes under /usr/obj. A focused
+    seven-case procfs ATF matrix is prepared for ZFS/tmpfs; no runtime
+    acceptance is claimed yet. Build log:
+    /tmp/starnix-procfs-snapshot2-build.log.
+  - Native snapshot teardown regression (2026-10-10): independently
+    written procfs_snapshot_teardown.c extends the adopted uptime behavior
+    with16 forced linprocfs unmounts and512 live snapshot descriptors.
+    Old descriptors must read ENXIO, close successfully, and allow the next
+    mount. Registered as linux_procfs_test:snapshot_teardown with cleanup.
+    Strict native compilation passes; this does not establish leak freedom
+    or unload behavior on a modular kernel.
+    First snapshot VM gate fails0/14 before tests run: duplicate descr
+    metadata breaks ATF listing. The wrapper now emits the description once
+    through a parameterized helper, and local ATF listing succeeds for all
+    eight cases. Failure evidence is retained in procfs-snapshot-results.json.
+    The new snapshot2 image targets16 executions, including teardown; VM
+    acceptance remains pending, with the same rebuilt kernel/modules.
+  - Final focused snapshot VM qualification (2026-10-10): snapshot2
+    passes16/16, eight procfs cases on each of ZFS/tmpfs, exact case sets
+    and artifact hashes, no skips/broken/failures, healthy ZFS and clean
+    poweroff with observed terminal QEMU exit0. Includes rewritten Starnix
+    partial-read behavior, local dup/fork extensions, seek/reopen refresh,
+    existing procfs/boot-id cases and native teardown (16 mounts and512
+    descriptors per filesystem). Evidence: procfs-snapshot2-results.json,
+    console.log naming uses procfs-snapshot2-console.log, and matching
+    manifest/cases files under /usr/obj/5BSD-starnix-fuse-vm-20261010.
+    This qualifies the focused snapshot fix; it does not establish modular
+    pseudofs unload behavior, quantitative leak freedom or the broader ABI
+    gate. The initial fixture failure remains recorded separately.
+  - Broader gate preparation (2026-10-10): qemu-gate.py's unshare
+    expectation still listed11 cases while guest-gate.sh executes17.
+    The verifier now expects all17,102 executions over three rounds and
+    two filesystems. test-gate-contract.py checks guest/host agreement,
+    duplicates and parity with the18 registered ATF cases including
+    capability mode; both checks pass. This is local gate maintenance for
+    the earlier Starnix-inspired descriptor work, not a new code import.
+    Corrected unshare/capmode probes were rebuilt and staged privately;
+    source/binary hashes and build commands are recorded in
+    broad-gate-prep/unshare-build-inputs.json under the VM evidence root.
+    The full broader gate has not yet run on this kernel.
+  - Broader gate artifact qualification (2026-10-10): optional amd64
+    manifest support in qemu-gate.py checks a bounded pre-execution hash
+    section and preserves the expected manifest. Missing/duplicate/bad
+    hashes or markers fail; amd64 acceptance also requires synced buffers
+    and ACPI poweroff. All six local contract tests pass. This is original
+    test infrastructure, not an upstream code import. Current guest and
+    companion scripts are staged with a frozen broad-gate-manifest.json;
+    disposable64MiB swap disks are prepared. New image construction is
+    active; broader runtime acceptance is still pending.
+  - Broader matching-kernel qualification (2026-10-10): broad-gate1
+    passes the maintained full amd64 Linuxulator guest/host gate on the
+    snapshot-fixed GENERIC core and matching modules. Every expected case
+    set passes, all123 artifact hashes match, nonzero_results is empty,
+    no rejected kernel diagnostics, healthy ZFS and clean poweroff/QEMU0.
+    Includes102 unshare executions plus3 capability checks,63 legacy-AIO
+    rows,180 OFD rows and144 path-resolution rows among the broader matrix.
+    Evidence: broad-gate1/results.json, amd64.console.log and preserved
+    amd64-manifest.json; launch/tool hashes in broad-gate1-inputs.json.
+    These are regression executions, not a count of newly imported tests.
+    NFS export cookies, external CTL integration and modular snapshot-unload
+    remain separate; Binder/io_uring stay deferred and were not implemented.
+  - NFS cookie integration groundwork (2026-10-10): original test-only
+    nfs_cookie_client.hh supplies direct loopback NFSv3 READDIR request and
+    reply handling for the pending kernel-server/FUSE integration fixture.
+    Wire layout was checked against native nfs_nfsdport.c/nfs_commonsubs.c,
+    not copied from Starnix. It extends qualification of the previously
+    attributed READDIRPLUS work. nfs_cookie_client.cc is registered as a
+    plain unprivileged decoder test: validates64-bit cookies/fileids,
+    optional attributes, truncated records, invalid names/lengths/booleans
+    and oversized lists. Native make -j6 build and execution pass; evidence
+    nfs-cookie-decoder-results.json contains exact source/binary hashes.
+    No NFS service/mount is started by this decoder test. The real kernel
+    server/mock integration and its VM qualification are still pending.
+  - Kernel NFS cookie fixture (2026-10-10): original nfs_readdir.cc
+    extends the above READDIRPLUS qualification with a loopback kernel
+    NFSv3 server, exported mock FUSE directory, and direct RPCs. Checks
+    exact names, inode numbers and nonconsecutive64-bit cookies across
+    small replies, both PLUS and ENOSYS fallback. Uses native export_args,
+    nfsd foreground UDP mode and a PID handshake to retain MockFS process
+    filtering. No Starnix implementation copied. Opt-in disposable-VM
+    execution only (FUSE_NFS_LOOPBACK=1); requires rpcbind and root.
+    make -j6 compilation passes; runtime qualification remains pending.
+  - Kernel NFS cookie VM qualification (2026-10-10): nfs-cookie2
+    passes both PLUS and ENOSYS fallback cases against the real native
+    kernel NFS server. Exact names/inodes/nonconsecutive64-bit cookies,
+    multiple replies, EOF and opcode counts pass; all7 artifact hashes
+    match, healthy ZFS, buffers synced, ACPI poweroff and QEMU exit0.
+    The first run failed before server startup because the fixture lacked
+    FUSE_STATFS; the mock response was added and that failed evidence is
+    retained in nfs-cookie1-results.json. No production fix was needed.
+    Evidence: nfs-cookie2-results.json, console/manifest/source/input files
+    and verify-nfs-cookie.py in the Starnix VM evidence root. This closes
+    the UIO_SYSSPACE/cookie-array integration gap, not general NFS export
+    conformance. Binder/io_uring remain deferred.
+  - Uinput event delivery follow-up (2026-10-10): pinned
+    tests/syscalls/cpp/uinput_test.cc WriteEVKEY and WriteEVABS motivate
+    independently written Linux64 event_key/event_abs probes. They extend
+    the reference's successful-write checks with evdev readback, SYN_REPORT
+    packet readiness, empty-queue EAGAIN and key/axis state queries.
+    The local write_fault case checks invalid userspace buffers and later
+    successful delivery. Review found native uinput_write ignored uiomove
+    failure before pushing the event; it now returns that error without
+    processing the incomplete record. This is an original native fix,
+    not copied upstream implementation. Strict probe build and shell syntax
+    pass; rebuilt-kernel VM execution is pending. VM-only synthetic input.
+  - Uinput delivery VM qualification (2026-10-10): uinput-events1
+    passes12/12 (six cases each on ZFS/tmpfs) with exact case/source/kernel
+    hashes, no skips/failures, healthy ZFS and clean poweroff/QEMU0. Built
+    GENERIC #11 with six jobs; staged only into the private VM root.
+    Includes key and ABS delivery/state, SYN_REPORT readiness, invalid-copy
+    EFAULT followed by successful delivery, and all three setup cases.
+    Evidence: uinput-events1-results.json, console/manifest/cases/sources/
+    inputs JSON under the Starnix VM root. The old kernel was not exercised
+    with the potentially nonterminating invalid-copy case; the original
+    missing error check is established by source inspection.
+  - Remaining procfs/socket/TTY source audit (2026-10-10): compared pinned
+    modules/procfs/{pid_directory,proc_directory,fs}.rs and
+    modules/devpts/lib.rs with linprocfs/pseudofs and Linux socket/ioctl/
+    prctl translators. Inventory now names missing memory-accounting views,
+    timerslack state/permissions, hidepid mount policy, socket filters/device
+    binding and PTY locking as separate backend contracts. Existing native
+    linux_pty.c already covers the reference IoctlTIOCGPTPEER test's main
+    transfer/nonblock/CLOEXEC behavior. No source copied or support claimed
+    for the remaining contracts. This is source audit, not runtime parity.
+  - Completion audit follow-up (2026-10-10): the earlier888-case FUSE
+    gate used a custom privilege-aware runner, whereas the Desktop checklist
+    explicitly requires Kyua metadata enforcement. A dedicated Kyua VM gate
+    now stages all51 programs with generated metadata, including the new NFS
+    cookie fixture/decoder and the CTL case (external tools still absent).
+    Runtime acceptance is pending. The maintained build-fuse-protocol.sh
+    now uses six jobs, honoring the user's revised build cap. This is local
+    qualification infrastructure, with no additional upstream import.
+  - Kyua fixture correction (2026-10-10): first native Kyua gate
+    records889/890 GTest passes plus decoder success and the expected CTL
+    missing-fuse-ext2 skip. Kqueue.data observed only one queued operation
+    after its fixed100ms sleep. The fixture now uses a separate kqueue on
+    a duplicated FUSE descriptor to wait up to five seconds for both pending
+    requests, then releases the mock daemon even on observer failure. Exact
+    1/2/1 readiness assertions are retained. This is a local synchronization
+    fix to the existing native regression, not copied Starnix code or a new
+    kernel change. Six-job build passes; full rerun remains pending.
+  - Kyua second-run investigation (2026-10-10): fuse-kyua2 is terminal
+    QEMU0 but rejected701/890 GTest passes. Polling still reports1 instead
+    of2, so bounded queue observation alone is not a sufficient explanation.
+    LastLocalModify's50ms setup attributes expired before its reply-ordered
+    race finished; these now remain valid while entry behavior and response
+    order stay intact. NFS cache_expired now gives each response a one-second
+    TTL, permits an early refresh during slow setup, and requires exactly
+    one new LOOKUP after a two-second expiry wait. It retains inode checks.
+    io completed23 of204 cases without a reported failure before its20-second
+    group deadline; only this program receives timeout300, retaining all204
+    cases. Strict six-job builds pass. A focused VM with verbose polling
+    trace is prepared; final acceptance still requires the full890-case
+    Kyua gate. These are original native fixture changes, not new imports.
+  - Polling diagnosis and correction (2026-10-10): fuse-triage1
+    passes224 focused executions with exact hashes and clean poweroff/QEMU0:
+    all204 io cases, eight LastLocalModify cases, eleven NFS cases and one
+    verbose Kqueue.data trace. The trace shows GETXATTR43/44 between held
+    GETATTR42 and GETATTR43/44. Thus the observer's two pending requests can
+    be native MAC-label queries, not the GETATTRs whose count is asserted.
+    Kqueue.data now primes each file with stat before installing the held
+    callbacks; priming GETATTRs have TTL0 so measured stats still send new
+    GETATTRs. MAC remains enabled; exact1/2/1 counts and the bounded observer
+    remain. Six-job build passes. Full Kyua rerun plus32 repetitions pending.
+    This is an original native fixture fix; no additional Starnix import.
+  - Final native Kyua qualification (2026-10-10): fuse-kyua3 passes
+    all890 active GTest cases, the unprivileged decoder, and32 additional
+    Kqueue.data repetitions. Kyua reports50 programs passed, one explicit
+    CTL missing-fuse-ext2 skip, zero failures/broken/expected failures.
+    All59 runtime artifact hashes match; all57 staged native test-source
+    hashes match the current tree. Healthy ZFS, synced buffers, ACPI poweroff
+    and observed QEMU exit0. The MAC-label priming fix closes the polling
+    race without disabling policy or relaxing1/2/1 assertions. Failed
+    fuse-kyua1/2 evidence and focused fuse-triage1 evidence are retained.
+    Evidence: fuse-kyua3-results.json, console/manifest/sources/inputs JSON,
+    verify-fuse-kyua-repeat.py and prebinder-completion-audit.json under the
+    Starnix VM root. The audit reconciles selected gates, provenance and
+    explicitly remaining backend/VM dependencies. No host install/reboot;
+    six-job cap retained; Binder/io_uring deferred and ext4 cancelled.
+  - Remaining FUSE INIT audit (2026-10-10): modules/fuse/lib.rs
+    FuseInitFlags, FuseConfiguration, INIT completion, create umask and
+    passthrough handle lifetime were compared with native INIT exclusions.
+    docs/starnix-linuxulator-inventory.md records per-contract disposition.
+    MAX_PAGES is absent from the reference flag set although max_pages is
+    read and used to bound transfers; max_read mount parsing is explicitly
+    unimplemented there. Missing flags are not treated as reusable backend
+    implementations. This is source-reference documentation, with no new
+    imported code or newly advertised native capability.
+  - tests/syscalls/cpp/binder_test.cc InvalidCommandError,
+    ValidThenInvalidCommand, IgnoreAlreadyConsumed, MmapRejectsProtWrite,
+    MprotectCannotAddWriteToBinder, CrossProcessMmapFails and
+    CrossProcessIoctlSucceeds:
+    tests/sys/kern/linux_binder_reference.c. Eight rewritten reference cases
+    include a separate Binder64 protocol-version check. Source is packaged
+    as reference-only, requires a dedicated Binder test device, and has not
+    yet run against a Linux reference. No Binder backend is imported/enabled.
+
+Integration: tests/sys/kern/Makefile and the corresponding ATF wrappers;
+  kernel fixes use the existing Linuxulator/native build targets. The io_uring
+  probe is reference-only. Build success does not establish VM acceptance.
+Detailed comparison/status: docs/starnix-linuxulator-inventory.md and
+  tools/test/linuxulator/README.md. Pending VM checks are also recorded in
+  /home/koryheard/Desktop/Fuchsia tests for next VM.txt.
+Whole-tree review follow-up (2026-10-10): the inventory now covers all 43
+  module directories and 41 feature-enum entries at the pinned revision,
+  plus kernel/core, libraries, runner integration and test-suite surfaces.
+  Added explicit Binder, ashmem, SELinux, dm-verity/fs-verity, image filesystem,
+  graphics/DMA/fence, input/USB, power/tracing and networking assessments.
+  Upstream evidence: modules/BUILD.gn, modules/lib.rs, modules/binderfs/,
+  kernel/core/, lib/features/src/lib.rs, kernel/runner/src/features.rs,
+  tests/BUILD.gn and tests/syscalls/cpp/ including expectations and Binder
+  helpers. These are source-review references, not additional imported code
+  or implemented backends. Exact enumerations and anchor hashes are retained
+  in docs/starnix-source-census.json; regenerate/check with
+  tools/test/linuxulator/starnix-source-census.py. Local native-primitive
+  mappings reference libchannel/libservice, VM/VFS, AIO, netlink, FUSE,
+  GEOM, evdev and MAC framework APIs; they are architecture proposals.
+Ext4/FUSE follow-up review (2026-10-10): no new source import. Existing
+  native ext2fs and the maintained ports checkout were inspected for reuse.
+  Ports revision a10d155af86ac9370c9f9411f4a8414a225127ed has
+  filesystems/e2fsprogs-core 1.47.4 (FUSEFS/libfuse3 enabled by default),
+  filesystems/ext2 and filesystems/lkl. Their port license/checksum/patch
+  records remain authoritative; separate packages do not become base imports.
+  Upstream behavior references:
+  https://github.com/tytso/e2fsprogs/blob/master/misc/fuse2fs.1.in
+  https://github.com/gerard/ext4fuse
+  At the Starnix revision above, modules/ext4/{lib,pager}.rs and
+  tests/syscalls/cpp/ext4_write_test.cc were reviewed: limited same-length
+  overwrite tests do not establish general writable ext4 support.
+  The user subsequently cancelled native fuse2fs qualification; this entry
+  retains the research provenance only. No third-party implementation text
+  copied. Continue the original FUSE compatibility work. Binder and io_uring
+  are deferred by user request (2026-10-10); retain reference provenance only.
+Update procedure: append each further reuse to this entry with exact revision,
+  upstream file/test names, local destinations, reuse type and license notes.
+  On revision changes, review source/license diffs and preserve older mappings
+  for adaptations still present. Re-run the relevant Linux reference and
+  disposable 5BSD VM tests; record unresolved differences explicitly.
+
+OpenThread
+----------
+Source: contrib/openthread/
+Upstream: https://github.com/openthread/openthread.git
+Revision: 0542780e3ac117196b77a60abc1052e4c3cdad12
+Imported: 2026-10-09
+Archive URL and SHA256: contrib/openthread/UPSTREAM.5BSD.json and
+  tools/build/fuchsia/sources.json.
+Dependencies: Mbed TLS e185d7fd85499c8ce5ca2a54f5cf8fe7dbe3f8df and its
+  framework 457996474728cb8e968ed21953b72f74d2f536b2, exactly matching the
+  upstream gitlinks; URLs/checksums in third_party/mbedtls/*UPSTREAM.5BSD.json.
+License: LICENSE (BSD-3-Clause), subject to individual third-party notices:
+  tcplp BSD TCP code (UCB, FreeBSD Foundation, Juniper, WIDE; tcp_sack.c
+  carries the NRL notice with an advertising clause, as in sys/netinet);
+  third_party/jlink SEGGER RTT (BSD-3-style).  NOTICE is the Thread Group
+  certification and patent disclaimer.  Mbed TLS and framework retain their
+  dual Apache-2.0 OR GPL-2.0-or-later LICENSE; use the Apache-2.0 option
+  here.  Its 3rdparty/everest is Apache-2.0 only (INRIA/Microsoft) and one
+  configs/ext file is BSD-3-Clause (Arm).  No copyleft-only, proprietary or
+  non-commercial terms (license review 2026-10-10).  If ot-daemon or ot-ctl
+  ships, install LICENSE, NOTICE, the tcplp notices and the Apache-2.0 text.
+Local changes: BSD process-reset support, BSD libedit include spelling,
+  and explicit IPv6 header. Native build selects libedit, enables required
+  uptime support, and uses the unpruned crypto config. POSIX platform UDP
+  is disabled pending interface-scoping support; OpenThread UDP is used.
+  Upstream AGENTS.md and .gemini/ (coding-agent instructions) are excluded
+  at import.  patches/openthread-vendor-git.patch anchors the top-level
+  DartConfiguration.tcl ignore and marks the vendored Mbed TLS subtree
+  -text, so the committed tree matches the pinned archives byte for byte.
+Integration: native simulation, CLI/NCP/radio targets and unit tests;
+  POSIX daemon/ot-ctl build. No radio activation, installed service, world
+  target, or package yet. Physical radio testing remains pending.
+Refresh/build/status: tools/build/fuchsia/README, build-openthread.py,
+  import.py, sources.json, patches/openthread-bsd.patch.
+
+Matter / connectedhomeip
+-----------------------
+Source: contrib/connectedhomeip/
+Upstream: https://github.com/project-chip/connectedhomeip.git
+Revision: d2a28e75da517d7aa5558244fcd2487c7239d02e
+Imported: 2026-10-09
+Archive URL and SHA256: UPSTREAM.5BSD.json and tools/build/fuchsia/sources.json.
+Scope: a subset: scripts/py_matter_idl (the Matter IDL tooling) and the
+  data files its tests read (four example .matter files,
+  controller-clusters.matter and zcl chip-types.xml), with LICENSE and
+  NOTICE.  The include list in tools/build/fuchsia/sources.json defines it.
+  The full archive is not imported because parts may not be redistributed:
+  data_model/ is CSA spec data licensed for internal use only, and some
+  vendor files (LG webOS, Nest lwIP, Cypress PSoC6, Silicon Labs MSLA,
+  Nordic-5-Clause, ST) and the ESP32 ROM images carry confidential,
+  chip-only or no license terms (license review 2026-10-10).
+License: LICENSE (Apache-2.0) and NOTICE (CSA rights and trademark notice)
+  retained; every imported file is Apache-2.0.  Re-review licenses before
+  widening the include list.
+Local changes: subset import and provenance records; the native test
+  runner is outside contrib.
+Integration: standalone Matter IDL tools tested with dependencies in an
+  /usr/obj virtualenv, pinned in requirements-matter-tools.txt. The Matter
+  device/controller platform and capability-service integration are unported.
+  Nothing installed by world or packages.
+Refresh/build/status: tools/build/fuchsia/README, import.py, sources.json,
+  test-matter.py. Re-review licenses of selected files and submodules before
+  adding an installed target. Run upstream tooling tests after refresh.
+
+FIDL native SDK follow-up (2026-10-09):
+  The native generator patch includes typed client/server channel endpoints
+  and upstream-derived name metadata. fuchsia-native-headers.patch preserves
+  BSD's __WEAK definition; fuchsia-natural-oom.patch checks handle metadata
+  allocation and closes the currently moved descriptor on failure;
+  fuchsia-natural-bool.patch initializes vector<bool> decode temporaries so
+  an invalid wire boolean cannot load an indeterminate value;
+  fuchsia-gidl-std-slices.patch replaces golang.org/x/exp/slices with the
+  standard library so the pinned GIDL tool builds offline. The upstream
+  conformance suite (src/tests/fidl/conformance_suite) is imported at the
+  same pinned commit for tools/build/fuchsia/generate-conformance.py. Native
+  runtime headers/libraries and optional compiler/generator SDK have staged
+  installation targets. Installed support headers follow the native source
+  include closure, not the entire imported Zircon/Fuchsia API surface.
+  Full world/release packaging and provider migration remain open.
+
+PF consolidation / standalone Dummynet control (2026-10-10)
+----------------------------------------------------------
+Reference: existing FreeBSD-derived source in 5BSD at
+  b82c2373684cab0c72d4244f8786c4f7952476f2; no new upstream archive import.
+Source-to-local mappings:
+  sbin/ipfw/dummynet.c -> sbin/dnctl/dummynet.c (moved parser);
+  shared declarations from sbin/ipfw/ipfw2.h -> sbin/dnctl/dnctl.h;
+  buffer, allocation, token and mask helpers from sbin/ipfw/ipfw2.c ->
+  sbin/dnctl/common.c (shared by both tools, not duplicated implementations).
+Original upstream copyright and redistribution notices are retained.
+New local main.c/support.c provide standalone shaper dispatch and restrict
+control requests to IP_DUMMYNET3. A separate dummynet world package and
+MK_DUMMYNET option preserve control with WITHOUT_IPFW. Native Dummynet's
+existing shared flow ABI and kernel source dependencies are still retained;
+this first extraction is not yet complete IPFW retirement.
+Validation so far: both utility builds pass with six jobs, nine initial
+syntax/rejection checks pass, and build selection retains dnctl/dummynet
+with WITHOUT_IPFW. ATF regressions added. Network-enabled four-vCPU VM
+qualification, kernel source extraction and PF parity work remain pending.
+
+PF limiter command compatibility (2026-10-10):
+  OpenBSD src 896fef95f254ad4a5ff07e37e02f2fac2dabf509; sbin/pfctl/pfctl.c
+  SHA256 f12a46245ab3e9cbaa706983afc280a69c6e795d62259b3ad8b81784dc465df7
+  Existing reviewed reference: https://raw.githubusercontent.com/openbsd/src/896fef95f254ad4a5ff07e37e02f2fac2dabf509/sbin/pfctl/pfctl.c
+  Exact Stlimiters/Srclimiters show aliases mapped to existing native limiter
+  backends in sbin/pfctl/pfctl.c, with manual updates and a populated-ruleset
+  comparison test in tests/sys/netpfil/pf/limiters.sh. New local implementation
+  from documented command behavior; no new upstream source import. Existing
+  native short modifiers retain their meaning. VM validation pending.
+  This does not complete P08 CLI compatibility or alter conflicting flags.
+
+Dummynet kernel ownership follow-up (2026-10-10):
+  Twenty existing dn_*/ip_dn*/ip_dummynet source/header files moved from
+  sys/netpfil/ipfw to sys/netpfil/dummynet, with native config/module and PF
+  include paths updated. Shared packet arguments, wrapper macros and checksum
+  helpers extracted from ip_fw_private.h into dummynet/dn_packet.h. Names,
+  structure layouts and existing packet-tag ABI are retained; original notices
+  remain. Both Dummynet and PF standalone module builds pass. Full kernel build
+  with WITHOUT_IPFW is in progress; runtime qualification of the new kernel is
+  pending. Module/Netgraph selection now honors WITHOUT_IPFW, and the separate
+  MK_DUMMYNET option controls shaper and utility. Three build-selection tests
+  pass. Source movement alone is not a claim of complete IPFW elimination.
+
+PF consolidation source retirement (2026-10-10):
+  User explicitly confirmed source deletion rather than build disablement.
+  Removed IPFW firewall engine, firewall NAT/NAT64/NPTv6/pmod implementations,
+  ng_ipfw, ipfw/ipfwpcap/natd utilities and their package/startup/test
+  registrations. Removed orphaned raw-IP firewall control hooks. Dummynet
+  implementation/service and shared packet ABI remain; its full shaping manual
+  was retained from sbin/ipfw/ipfw.8 with original notices. libalias and its
+  protocol helpers remain for PPP/ng_nat under a separate libalias package.
+  Exact removal scope manifests are in the PF VM evidence directory under
+  /usr/obj/5BSD-pf-consolidation-20261010; reviewed patches and hash-verified
+  recovery archives are temporarily in /tmp/pf-removal-review.
+  Three independent build/removal checks pass, including explicit rejection
+  of WITH_IPFW. Fresh kernel build after retirement is running. Earlier smoke3
+  proved all six PF packet tests and three dnctl cases on the pre-removal kernel
+  with IPFW absent; the limiter alias test failed only its expected-name output
+  assertion (native output contains numeric IDs). Numeric assertion corrected;
+  full post-retirement VM qualification remains pending. No host changes.
+
+PF retirement cleanup follow-up (2026-10-10):
+  Removed obsolete IPFW/natd defaults from libexec/rc/rc.conf. Corrected the
+  preserved shaping manual examples to use dnctl. Removed unused firewall
+  parser tokens, options and declarations from dnctl's private header; no
+  shared kernel or public ABI layouts changed. Existing original notices
+  retained; these are local extractions/cleanup, with no new external import.
+  Recovery patches and hash-verified inputs are now durably retained under
+  /usr/obj/5BSD-pf-consolidation-20261010/removal-review.
+  Standalone dnctl rebuild and all three parser ATF cases pass after cleanup.
+  Three build/removal contract tests pass. Post-removal GENERIC #13 builds
+  and runs the six PF packet cases successfully in a four-CPU networked VM.
+  Smoke4 retained as failed: source limiter output assertion mistook address
+  capacity for per-source limit; both alias/native comparisons passed. The
+  corrected assertion explicitly checks ID 2, capacity 128 and limit 3.
+  Smoke5 was not run: staging hit a read-only file and produced an unchanged
+  image. Smoke6 stages hash-verified replacements and is under qualification.
+  Remaining-consumer inventory broadened to match IPFW/IPFIREWALL/IPFilter/natd
+  without word boundaries (remaining-consumer-inventory.json). Matches include
+  preserved ABI names, historical records and unretired consumers; counts are
+  not counts of active firewall dependencies. Full world/upgrade gates remain.
+
+PF retirement VM gate result (2026-10-10):
+  Smoke6 passed all ten ATF cases on post-removal GENERIC #13, four vCPUs,
+  restricted user-mode networking plus VNET packet tests. All 17 runtime
+  hashes matched; IPFW module load rejected; QEMU exit 0, buffers synced and
+  ZFS healthy. Evidence: /usr/obj/5BSD-pf-consolidation-20261010/smoke6-results.json
+  Log SHA256 dc352b60e9a3260caedecbecfda74598246f88c7039596dc4bdbcea10bebd647.
+  Five rc ordering comments also no longer require the removed IPFW service;
+  all five scripts pass shell syntax checks (not normal-boot qualification).
+  This is a selected-artifact VM gate, not clean-world/pkgbase/upgrade approval.
+  Remaining cleanup and full PF parity requirements are tracked in
+  docs/pf-consolidation-status.md and the Desktop kernel subsystem audit.
+
+IPFW consumer retirement: libalias and bridge (2026-10-10):
+  Local removal of native IPFW hole-punching implementation and helper calls
+  from sys/netinet/libalias, plus PPP's nat punch_fw command and documentation.
+  No upstream import. Copyright notices retained. Normal alias translation,
+  FTP/IRC/media helpers and kernel alias support remain. The historical 0x100
+  mode bit is rejected before any other mode changes; LibAliasSetFWBase is a
+  no-op compatibility symbol. NO_FW_PUNCH remains a consumer feature marker.
+  New test exercises rejection and mode atomicity using the old numeric bit.
+  Updated library/helpers, PPP and kernel alias modules build. Libalias suite:
+  22 passed, one existing expected failure, zero unexpected failures/skips.
+  Evidence: libalias-retirement-tests.db under the PF evidence root.
+  Removed bridge IPFW/ARP sysctls, their legacy L2 hook and manual entries.
+  Existing PF IP pfil member/bridge paths retained. New bridge_filter regression
+  exercises both paths with allow/block/ICMP rules, fresh ARP resolution and
+  absence of the retired sysctls. Full GENERIC rebuild/staging passed; smoke7
+  runs the extended eleven-case gate in a four-vCPU networked VM.
+  Reviewed recovery patches/inputs and exact source hashes are under
+  /usr/obj/5BSD-pf-consolidation-20261010. Full world/upgrade gates remain open.
+
+Bridge retirement VM result (2026-10-10):
+  Smoke7 passed all eleven cases, including bridge_filter; all 17 artifact
+  hashes matched, IPFW load rejected, clean QEMU exit 0 and healthy ZFS.
+  Log SHA256 cc799067072b1ec9b4b055088d55172e1d7ed4da779c8a84203035f920a82b1f.
+  Evidence: /usr/obj/5BSD-pf-consolidation-20261010/smoke7-results.json.
+  Remaining world/package/upgrade and full PF parity gates stay open.

@@ -1,0 +1,123 @@
+Native daemon-runtime maturity gate
+===================================
+Build the static VM-only PID 1 fixture with:
+  make -j$(sysctl -n hw.ncpu) -C /usr/src/tools/test/daemon-runtime all
+Build libservice, BSDFilesystem and their tests from the same source state first.
+
+run-vm.py requires --root (a NO_ROOT staged world), --objtop (the standard
+/usr/obj/usr/src/amd64.amd64), a new --work beneath /usr/obj, --qemu and
+--qemu-data. It requires exact staged/object kernel hashes and matching kernel
+configurations, and static test/fixture binaries. It copies inputs into its
+own staging tree, with root ownership represented in a makefs METALOG.
+No host root login, install, mount or reboot is needed. It does not write the
+input staging root or attach another VM's writable disk. Compilation uses all
+logical CPUs; this small runtime guest uses two CPUs and 1 GiB RAM.
+
+The VM has no network and boots a PID 1 fixture instead of the capability plane.
+It runs native session/bootstrap deadline and session lifecycle tests as root,
+plus the BSDFilesystem descriptor-hardening failure regression.
+A skip, missing/duplicate pass marker, timeout, panic, WITNESS reversal or
+unclean shutdown fails the run. inputs.json and result.json retain input hashes
+and the exact QEMU command; serial.log retains output, including failed runs.
+This gate does not qualify booted daemons, actual OOM, ACPI suspend, hardware,
+installer behavior, or a complete system image. Never run runtime_init as the
+host's init. Source and object inputs must be coordinated before full acceptance.
+
+Use --client-ownership to include the static audit, crypto, trace and log
+client lifecycle suites. Build these libraries/tests first. The runner records
+each binary hash and derives the required cases from its ATF listing; each
+case gets its own directory and 40-second process timeout. No skip is a pass.
+These suites exercise real descriptor operations with service test doubles;
+they do not replace integrated daemon/provider tests.
+
+Use --oes-factory to stage the current object tree's oes.ko and boot it in the
+disposable guest. The runner hashes the module and static factory and handoff tests.
+This exercises real OES NOTIFY descriptor attenuation after cap_enter, including
+denial of AUTH subscriptions and mode/scope changes. It does not validate
+SwitchBoard attribute admission. The handoff cases exercise real channel
+descriptor delivery, denied onward transfer, malformed-request rejection, and
+the five-second idle deadline.
+
+The OES gate also checks factory quota boundaries and ordinary filesystem
+mediation of a real intermediate-directory alias to /dev/oes. It proves the
+alias resolves before mediation, is denied by the grant path, and an ordinary
+/dev/null grant remains usable. The shipped manifest parser test is separate;
+neither check substitutes for full SwitchBoard client admission.
+
+Use --log-store to run every static BSDLog store_test case, including partial
+write rollback, failed rollback admission, reopening recovery, privacy, scoped
+queries, reclamation and retention. Tests use real files with injected write
+and truncation errors; they do not qualify physical power-loss durability.
+
+Use --log-storage to run the storage_test manager suite and storage_barrier_test.
+The manager suite exercises actual processes, sockets, shared rings, concurrent
+writers, backpressure, identity scoping, reclamation and restart. It uses the
+manager test entry point without activating its production sandbox. The barrier
+case exercises the real packet handler with injected ring/storage results; it
+verifies terminal flush/query ingestion errors, healthy peers and retryable
+sync-only errors. It is not a full-provider disk-exhaustion acceptance test.
+
+Use --log-provider for provider dispatch and ring lifecycle tests over real
+capability channels. The sink is injected; cases cover backend errors, trusted
+receive timestamps, malformed descriptor rejection and terminal ring-drain
+failures during flush/detach. This does not activate a full logging bundle.
+
+Additional static ATF programs can be selected with repeated --atf-suite paths
+relative to --objtop, for example:
+    --atf-suite usr.sbin/BSDPower/tests/provider_test
+    --atf-suite lib/libnotify/tests/watch_test
+Only self-contained tests are suitable: this fixture supplies neither installed
+suite data nor a full service plane. Paths must remain inside objtop. The runner
+records the source, private alias, enumerated cases and stable input hash in its
+provenance. Every selected case must pass; skips and missing results fail the
+run. Each case has the fixture's 40-second deadline. This does not replace full
+bundle activation, authority admission, production sandbox or hardware tests.
+
+The BSDPower reactor_test runs the production sessions_run loop with three
+real capability channels. Listener identity and quiesce controls are injected.
+It verifies two simultaneous inhibitors, per-owner disconnect cleanup, suspend
+blocking, idle quiesce refusal, and explicit stop cleanup while the server
+process remains alive. It never opens /dev/acpi. SwitchBoard admission and
+actual hardware transitions still need full-system acceptance.
+
+The reactor suite also fills four sessions for one injected label and 64 across
+distinct labels, rejects excess clients, and verifies slot/lease-owner reuse
+after disconnect. Its lifecycle case waits through the real 30-second idle
+limit: an unleased session expires while a lease holder remains usable. Allow
+at least 40 seconds per case and enough VM wall time for boot plus that interval.
+
+Use --atf-case relative/path:case (repeatable) to run a specific listed ATF
+case from a static object-tree binary. Unknown case names are rejected. The
+same path, static-link and hash checks apply as for --atf-suite. inputs.json
+and result.json record the exact selected cases; a selected-case pass does
+not certify the rest of that suite. The guest configures lo0 with 127.0.0.1/8 for local IPv4 TCP/UDP
+fixtures. QEMU still has no network adapter or external connectivity. IPv6
+loopback and deterministic unresponsive peers are not configured.
+
+Cleanup callback versus unload regression
+-----------------------------------------
+Build the private fixture with:
+    make -j$(sysctl -n hw.ncpu) -C /usr/src/tools/test/daemon-runtime/cleanup-fixture SYSDIR=/usr/src/sys
+Build the selected ATF binary statically with:
+    make -B -j$(sysctl -n hw.ncpu) -C /usr/src/tests/sys/mac_capability NO_SHARED.mac_capability_test=yes mac_capability_test
+Add these options to the normal run-vm.py invocation:
+    --cleanup-lifecycle
+    --atf-case tests/sys/mac_capability/mac_capability_test:unload_waits_for_cleanup_callback
+The runner stages and hashes the test-only module from the standard object
+root. The test loads it inside the guest, blocks a revoke callback, starts
+module unload, confirms unload remains blocked for one second, then releases
+cleanup and checks both syscalls finish. It repeats with final close owning a
+zero-reference instance, using a pipe gate to make the last close deterministic.
+The kernel fixture bounds an unreleased
+callback at ten seconds. It is not part of the installed base; never install
+or load this fixture on the host. Without the staged module this case skips;
+the VM runner treats a selected-case skip as failure. This covers the running
+callback/unload ordering, not every close/refcount interleaving or async service
+resource obligation. Keep WITNESS/INVARIANTS close/unload stress on the VM list.
+
+Build fixtures against syscall headers and static libraries matching the guest
+kernel. A source kernel with renumbered 5BSD syscalls cannot use syscall stubs
+from an older host libc.a. A complete matching world build supplies these;
+standalone test builds must explicitly link the matching libsys.a ahead of
+host libc.a. Verify the linked executable, not only header macros. The runner
+rejects skipped hardening checks and does not treat ENOSYS as acceptance.

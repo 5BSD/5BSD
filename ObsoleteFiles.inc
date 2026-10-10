@@ -51,6 +51,16 @@
 #   xargs -n1 | sort | uniq -d;
 # done
 
+# 20261008: hardware telemetry renamed to hwstat (no compatibility alias)
+OLD_FILES+=usr/sbin/hwtlm
+OLD_FILES+=usr/share/man/man8/hwtlm.8.gz
+OLD_FILES+=usr/tests/usr.sbin/hwtlm/Kyuafile
+OLD_FILES+=usr/tests/usr.sbin/hwtlm/hwtlm_test
+OLD_FILES+=usr/tests/usr.sbin/hwtlm/rapl_test
+OLD_FILES+=usr/tests/usr.sbin/hwtlm/sensors_test
+OLD_FILES+=usr/tests/usr.sbin/hwtlm/metrics_test
+OLD_DIRS+=usr/tests/usr.sbin/hwtlm
+
 # 20261008: retired chapters of the native book
 OLD_FILES+=usr/share/doc/5bsd/compat/linux/io-uring.md
 OLD_FILES+=usr/share/doc/5bsd/plane/anointments.md

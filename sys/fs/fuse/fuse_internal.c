@@ -678,6 +678,104 @@ fuse_internal_mknod(struct vnode *dvp, struct vnode **vpp,
 
 /* readdir */
 
+/* Each non-dot entry transfers one daemon lookup reference to the client. */
+static void
+fuse_internal_readdirplus_cache(struct vnode *dvp,
+    struct fuse_direntplus *plus, const struct timespec *start)
+{
+	struct fuse_entry_out *feo = &plus->entry_out;
+	struct fuse_dirent *dirent = &plus->dirent;
+	struct fuse_vnode_data *fvdat;
+	struct componentname cnp = { 0 };
+	struct vnode *vp;
+	__enum_uint8(vtype) vtyp;
+	int error;
+
+	if (feo->nodeid == 0 ||
+	    (dirent->namelen == 1 && dirent->name[0] == '.') ||
+	    (dirent->namelen == 2 && dirent->name[0] == '.' &&
+	    dirent->name[1] == '.'))
+		return;
+	/* Do not turn an invalid directory name into a namecache entry. */
+	if (dirent->namelen == 0 || dirent->namelen > MAXNAMLEN ||
+	    feo->nodeid == FUSE_ROOT_ID ||
+	    memchr(dirent->name, '\0', dirent->namelen) != NULL ||
+	    memchr(dirent->name, '/', dirent->namelen) != NULL)
+		goto forget;
+	vtyp = IFTOVT(feo->attr.mode);
+	if (vtyp == VNON || vtyp == VBAD)
+		goto forget;
+	cnp.cn_nameiop = LOOKUP;
+	cnp.cn_flags = MAKEENTRY;
+	cnp.cn_nameptr = dirent->name;
+	cnp.cn_namelen = dirent->namelen;
+	cnp.cn_cred = curthread->td_ucred;
+	/*
+	 * Prefetch is optional.  Never wait for another vnode lock while
+	 * holding the directory: aliases or concurrent directory operations
+	 * must not introduce a lock-order reversal.
+	 */
+	error = fuse_vnode_get_flags(dvp->v_mount, feo, feo->nodeid, dvp,
+	    &vp, &cnp, vtyp, LK_EXCLUSIVE | LK_NOWAIT);
+	if (error != 0)
+		goto forget;
+	fvdat = VTOFUD(vp);
+	if (timespeccmp(start, &fvdat->last_local_modify, >))
+		fuse_internal_cache_attrs(vp, &feo->attr, feo->attr_valid,
+		    feo->attr_valid_nsec, NULL, true);
+	fuse_validity_2_bintime(feo->entry_valid, feo->entry_valid_nsec,
+	    &fvdat->entry_cache_timeout);
+	vput(vp);
+	return;
+forget:
+	fuse_internal_forget_send(dvp->v_mount, curthread, NULL, feo->nodeid, 1);
+}
+
+static int
+fuse_internal_readdirplus_processdata(struct vnode *vp, struct uio *uio,
+    void *buf, size_t bufsize, struct fuse_iov *cookediov, int *ncookies,
+    uint64_t **cookies, const struct timespec *start)
+{
+	struct fuse_direntplus *plus;
+	size_t reclen;
+	ssize_t resid;
+	int error = 0, copyerror;
+
+	if (bufsize == 0)
+		return (-1);
+	while (bufsize != 0) {
+		if (bufsize < FUSE_NAME_OFFSET_DIRENTPLUS)
+			return (EINVAL);
+		plus = buf;
+		/* Bound the untrusted length before aligned-size arithmetic. */
+		if (plus->dirent.namelen >
+		    bufsize - FUSE_NAME_OFFSET_DIRENTPLUS)
+			return (EINVAL);
+		reclen = FUSE_DIRENTPLUS_SIZE(plus);
+		if (bufsize < reclen)
+			return (EINVAL);
+		/* Account for all entries, even after uiomove fails or fills up. */
+		fuse_internal_readdirplus_cache(vp, plus, start);
+		if (plus->dirent.namelen == 0 ||
+		    plus->dirent.namelen > MAXNAMLEN)
+			error = EINVAL;
+		if (error == 0) {
+			resid = uio_resid(uio);
+			copyerror = fuse_internal_readdir_processdata(uio,
+			    reclen - sizeof(plus->entry_out), &plus->dirent,
+			    reclen - sizeof(plus->entry_out), cookediov,
+			    ncookies, cookies);
+			if (copyerror > 0)
+				error = copyerror;
+			else if (uio_resid(uio) == resid)
+				error = -1;
+		}
+		buf = (char *)buf + reclen;
+		bufsize -= reclen;
+	}
+	return (error);
+}
+
 int
 fuse_internal_readdir(struct vnode *vp,
     struct uio *uio,
@@ -689,6 +787,9 @@ fuse_internal_readdir(struct vnode *vp,
 	int err = 0;
 	struct fuse_dispatcher fdi;
 	struct fuse_read_in *fri = NULL;
+	struct fuse_data *data = fuse_get_mpdata(vp->v_mount);
+	struct timespec start;
+	bool plus;
 
 	if (uio_resid(uio) == 0)
 		return 0;
@@ -699,18 +800,35 @@ fuse_internal_readdir(struct vnode *vp,
 	 * I/O).
 	 */
 	while (uio_resid(uio) > 0) {
+		plus = data->readdirplus &&
+		    (!data->readdirplus_auto || uio_offset(uio) == 0) &&
+		    fsess_maybe_impl(vp->v_mount, FUSE_READDIRPLUS);
 		fdi.iosize = sizeof(*fri);
-		fdisp_make_vp(&fdi, FUSE_READDIR, vp, NULL, NULL);
+		fdisp_make_vp(&fdi, plus ? FUSE_READDIRPLUS : FUSE_READDIR,
+		    vp, NULL, NULL);
 		fri = fdi.indata;
 		fri->fh = fufh->fh_id;
 		fri->offset = uio_offset(uio);
-		fri->size = MIN(uio->uio_resid,
-		    fuse_get_mpdata(vp->v_mount)->max_read);
+		fri->size = MIN(plus ? MAX(uio->uio_resid,
+		    FUSE_DIRENT_ALIGN(FUSE_NAME_OFFSET_DIRENTPLUS + MAXNAMLEN)) :
+		    uio->uio_resid, data->max_read);
+		getnanouptime(&start);
 
-		if ((err = fdisp_wait_answ(&fdi)))
+		err = fdisp_wait_answ(&fdi);
+		if (plus && err == ENOSYS) {
+			fsess_set_notimpl(vp->v_mount, FUSE_READDIRPLUS);
+			continue;
+		}
+		if (err != 0)
 			break;
-		if ((err = fuse_internal_readdir_processdata(uio, fri->size,
-			fdi.answ, fdi.iosize, cookediov, ncookies, &cookies)))
+		if (plus)
+			err = fuse_internal_readdirplus_processdata(vp, uio,
+			    fdi.answ, fdi.iosize, cookediov, ncookies, &cookies,
+			    &start);
+		else
+			err = fuse_internal_readdir_processdata(uio, fri->size,
+			    fdi.answ, fdi.iosize, cookediov, ncookies, &cookies);
+		if (err != 0)
 			break;
 	}
 
@@ -735,6 +853,7 @@ fuse_internal_readdir_processdata(struct uio *uio,
 	int err = 0;
 	int oreclen;
 	size_t freclen;
+	off_t cookie;
 
 	struct dirent *de;
 	struct fuse_dirent *fudge;
@@ -749,6 +868,11 @@ fuse_internal_readdir_processdata(struct uio *uio,
 			break;
 		}
 		fudge = (struct fuse_dirent *)buf;
+		/* Validate the length before using it to size the wire record. */
+		if (!fudge->namelen || fudge->namelen > MAXNAMLEN) {
+			err = EINVAL;
+			break;
+		}
 		freclen = FUSE_DIRENT_SIZE(fudge);
 
 		if (bufsize < freclen) {
@@ -766,14 +890,11 @@ fuse_internal_readdir_processdata(struct uio *uio,
 		}
 #endif
 
-		if (!fudge->namelen || fudge->namelen > MAXNAMLEN) {
-			err = EINVAL;
-			break;
-		}
 		oreclen = GENERIC_DIRSIZ((struct pseudo_dirent *)
 					    &fudge->namelen);
 
-		if (oreclen > uio_resid(uio)) {
+		if (oreclen > uio_resid(uio) ||
+		    (cookies != NULL && *ncookies == 0)) {
 			/* Out of space for the dir so we are done. */
 			err = -1;
 			break;
@@ -792,14 +913,14 @@ fuse_internal_readdir_processdata(struct uio *uio,
 		       (char *)buf + FUSE_NAME_OFFSET, fudge->namelen);
 		dirent_terminate(de);
 
+		cookie = uio_offset(uio);
 		err = uiomove(cookediov->base, cookediov->len, uio);
-		if (err)
+		if (err) {
+			/* A directory offset is a cookie, not a byte count. */
+			uio_setoffset(uio, cookie);
 			break;
+		}
 		if (cookies != NULL) {
-			if (*ncookies == 0) {
-				err = -1;
-				break;
-			}
 			*cookies = fudge->off;
 			cookies++;
 			(*ncookies)--;
@@ -873,26 +994,47 @@ int
 fuse_internal_rename(struct vnode *fdvp,
     struct componentname *fcnp,
     struct vnode *tdvp,
-    struct componentname *tcnp)
+    struct componentname *tcnp, u_int flags)
 {
 	struct fuse_dispatcher fdi;
 	struct fuse_rename_in *fri;
+	struct fuse_rename2_in *fri2;
+	struct mount *mp = fdvp->v_mount;
+	size_t insize;
+	enum fuse_opcode opcode;
 	int err = 0;
 
-	fdisp_init(&fdi, sizeof(*fri) + fcnp->cn_namelen + tcnp->cn_namelen + 2);
-	fdisp_make_vp(&fdi, FUSE_RENAME, fdvp, curthread, tcnp->cn_cred);
+	KASSERT((flags & ~AT_RENAME_NOREPLACE) == 0,
+	    ("unsupported FUSE rename flags"));
+	if (flags != 0 && (!fuse_libabi_geq(fuse_get_mpdata(mp), 7, 23) ||
+	    !fsess_maybe_impl(mp, FUSE_RENAME2)))
+		return (EOPNOTSUPP);
+	opcode = flags != 0 ? FUSE_RENAME2 : FUSE_RENAME;
+	insize = flags != 0 ? sizeof(*fri2) : sizeof(*fri);
+	fdisp_init(&fdi, insize + fcnp->cn_namelen + tcnp->cn_namelen + 2);
+	fdisp_make_vp(&fdi, opcode, fdvp, curthread, tcnp->cn_cred);
 
 	fri = fdi.indata;
 	fri->newdir = VTOI(tdvp);
-	memcpy((char *)fdi.indata + sizeof(*fri), fcnp->cn_nameptr,
+	if (flags != 0) {
+		fri2 = fdi.indata;
+		fri2->flags = 1; /* Linux RENAME_NOREPLACE wire flag. */
+		fri2->padding = 0;
+	}
+	memcpy((char *)fdi.indata + insize, fcnp->cn_nameptr,
 	    fcnp->cn_namelen);
-	((char *)fdi.indata)[sizeof(*fri) + fcnp->cn_namelen] = '\0';
-	memcpy((char *)fdi.indata + sizeof(*fri) + fcnp->cn_namelen + 1,
+	((char *)fdi.indata)[insize + fcnp->cn_namelen] = '\0';
+	memcpy((char *)fdi.indata + insize + fcnp->cn_namelen + 1,
 	    tcnp->cn_nameptr, tcnp->cn_namelen);
-	((char *)fdi.indata)[sizeof(*fri) + fcnp->cn_namelen +
+	((char *)fdi.indata)[insize + fcnp->cn_namelen +
 	    tcnp->cn_namelen + 1] = '\0';
 
 	err = fdisp_wait_answ(&fdi);
+	if (opcode == FUSE_RENAME2 && err == ENOSYS) {
+		/* Never emulate NOREPLACE with an overwriting legacy RENAME. */
+		fsess_set_notimpl(mp, FUSE_RENAME2);
+		err = EOPNOTSUPP;
+	}
 	fdisp_destroy(&fdi);
 	return err;
 }
@@ -1181,6 +1323,11 @@ fuse_internal_init_callback(struct fuse_ticket *tick, struct uio *uio)
 	if (!fuse_libabi_geq(data, 7, 19)) {
 		fsess_set_notimpl(data->mp, FUSE_FALLOCATE);
 	}
+	if (fuse_libabi_geq(data, 7, 21)) {
+		data->readdirplus = (fiio->flags & FUSE_DO_READDIRPLUS) != 0;
+		data->readdirplus_auto = data->readdirplus &&
+		    (fiio->flags & FUSE_READDIRPLUS_AUTO) != 0;
+	}
 
 	if (fuse_libabi_geq(data, 7, 23) && fiio->time_gran >= 1 &&
 	    fiio->time_gran <= 1000000000)
@@ -1238,11 +1385,10 @@ fuse_internal_send_init(struct fuse_data *data, struct thread *td)
 	 * FUSE_ATOMIC_O_TRUNC: our VFS cannot support it
 	 * FUSE_DONT_MASK: unlike Linux, FreeBSD always applies the umask, even
 	 *	when default ACLs are in use.
-	 * FUSE_SPLICE_WRITE, FUSE_SPLICE_MOVE, FUSE_SPLICE_READ: FreeBSD
-	 *	doesn't have splice(2).
+	 * FUSE_SPLICE_WRITE, FUSE_SPLICE_MOVE, FUSE_SPLICE_READ: the
+	 *	Linuxulator's buffered splice adapter does not provide
+	 *	frame-aware pipe transfers for the native FUSE device.
 	 * FUSE_AUTO_INVAL_DATA: not yet implemented
-	 * FUSE_DO_READDIRPLUS: not yet implemented
-	 * FUSE_READDIRPLUS_AUTO: not yet implemented
 	 * FUSE_ASYNC_DIO: not yet implemented
 	 * FUSE_PARALLEL_DIROPS: not yet implemented
 	 * FUSE_HANDLE_KILLPRIV: not yet implemented
@@ -1254,7 +1400,8 @@ fuse_internal_send_init(struct fuse_data *data, struct thread *td)
 	fiii->flags = FUSE_ASYNC_READ | FUSE_POSIX_LOCKS | FUSE_EXPORT_SUPPORT
 		| FUSE_BIG_WRITES | FUSE_HAS_IOCTL_DIR | FUSE_WRITEBACK_CACHE
 		| FUSE_NO_OPEN_SUPPORT | FUSE_NO_OPENDIR_SUPPORT
-		| FUSE_SETXATTR_EXT | FUSE_FLOCK_LOCKS;
+		| FUSE_SETXATTR_EXT | FUSE_FLOCK_LOCKS
+		| FUSE_DO_READDIRPLUS | FUSE_READDIRPLUS_AUTO;
 
 	fuse_insert_callback(fdi.tick, fuse_internal_init_callback);
 	fuse_insert_message(fdi.tick, false);

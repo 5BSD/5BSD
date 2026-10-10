@@ -1,5 +1,6 @@
 #ifndef _BSDNETWORK_RESOLVER_H_
 #define _BSDNETWORK_RESOLVER_H_
+#include <stdint.h>
 #include <netdb.h>   /* struct addrinfo */
 
 struct service_context;
@@ -12,6 +13,9 @@ struct service_context;
  * missing files just narrow what resolves), or -1+errno.
  */
 int  netresolve_init(struct service_context *ctx);
+/* Parent refreshes nameservers; workers remap the shared generation read-only. */
+int  netresolve_refresh(struct service_context *ctx);
+int  netresolve_worker_enter(void);
 /*
  * A capability-mode-safe subset of getaddrinfo(3).  Same return convention:
  * 0 on success (*res is a malloc'd addrinfo list, free with netfreeaddrinfo),
@@ -20,10 +24,17 @@ int  netresolve_init(struct service_context *ctx);
  * (AI_PASSIVE, AI_CANONNAME, AI_NUMERICHOST, AI_NUMERICSERV, AI_V4MAPPED,
  * AI_ALL).  AI_V4MAPPED (with AF_INET6) returns IPv4-mapped IPv6 addresses
  * when no native AAAA exists, and AI_ALL additionally returns mapped A records
- * alongside AAAA.  AI_ADDRCONFIG is accepted but is a no-op: this resolver does
- * not enumerate the host's configured source-address families.
+ * alongside AAAA. Numeric IPv4 literals and local hosts entries also honor
+ * AI_V4MAPPED; local hosts matches take precedence over DNS. AI_ADDRCONFIG
+ * and unknown flags return EAI_BADFLAGS: no configured source-address family
+ * snapshot is available.
+ * With no usable addresses, a failed DNS query returns EAI_AGAIN; complete
+ * negative replies return EAI_NONAME. A usable address wins over failure
+ * of another queried family, including the IPv4-mapped fallback.
  */
 int  netresolve(const char *host, const char *serv,
      const struct addrinfo *hints, struct addrinfo **res);
+int netresolve_ex(const char *, const char *, const struct addrinfo *,
+    struct addrinfo **, uint32_t *ttl_seconds);
 void netfreeaddrinfo(struct addrinfo *res);
 #endif

@@ -1,0 +1,86 @@
+.\" SPDX-License-Identifier: BSD-2-Clause
+.Dd October 9, 2026
+.Dt FIDLGEN-BSD 1
+.Os
+.Sh NAME
+.Nm fidlgen-bsd
+.Nd generate native C and C++ FIDL bindings
+.Sh SYNOPSIS
+.Nm
+.Fl -json Ar file
+.Fl -root Ar directory
+.Op Fl -c
+.Op Fl -dependency-json Ar file
+.Op Fl -fidlgen-cpp Ar generator
+.Sh DESCRIPTION
+The
+.Nm
+utility consumes the JSON intermediate representation produced by
+.Cm fidlc
+and generates native 5BSD client, server, event, and natural type bindings.
+The
+.Fl -c
+option also emits a C header and a C++ implementation of its C ABI.
+Use
+.Fl -dependency-json
+once per dependency-library JSON file, including transitive dependencies.
+The adapter orders and generates the complete supplied graph.
+Missing libraries, duplicate inputs, cycles, and inconsistent available
+imported-declaration metadata are rejected.
+The native
+.Li zx.Handle
+mapping needs no separate Zircon runtime library.
+Unsupported schemas fail generation without replacing previous outputs.
+.Pp
+Generated code uses
+.Xr libfidl_bsd 3
+and native capability-channel descriptors.
+No Fuchsia dispatcher or Zircon syscall emulation is required.
+The installed adapter selects its matching private C++ generator under
+.Pa /usr/libexec/fidl .
+The override option is for toolchain development.
+.Pp
+The host tools require Python 3.12 and the RE2 library from ports.
+The generated binaries need neither Python nor Go.
+This SDK remains experimental; its presence does not mean system providers
+have migrated to FIDL.
+.Sh EXIT STATUS
+.Ex -std
+.Sh EXAMPLES
+Generate C and C++ bindings for a local schema:
+.Bd -literal -offset indent
+fidlc --json example.json --files example.fidl
+fidlgen-bsd --json example.json --root generated --c
+pkgconf --cflags --libs fidl
+.Ed
+.Pp
+Compile generated natural types and the C bridge as C++20.
+Compile a C application as C11 and link its objects with the generated
+objects and the libraries returned by pkgconf.
+Add
+.Fl -static
+to the pkgconf command to obtain private library dependencies for static
+runtime linking.
+The generated public C header is usable by a C compiler.
+For several libraries, compile each library's emitted
+.Pa cpp/natural_types.cc ,
+.Pa cpp/common_types.cc ,
+and
+.Pa c/bsd.cc
+exactly once.
+The generated
+.Pa c/bridge.h
+is private C++ conversion support shared between dependent bindings;
+C application sources include
+.Pa c/bsd.h .
+.Pp
+Generate a service and its common type library:
+.Bd -literal -offset indent
+fidlc --json common.json --files common.fidl
+fidlc --json service.json --files common.fidl --files service.fidl
+fidlgen-bsd --json service.json --dependency-json common.json \
+    --root generated --c
+.Ed
+.Sh SEE ALSO
+.Xr libfidl_bsd 3 ,
+.Xr fidl 7

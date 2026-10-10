@@ -53,7 +53,7 @@ Header `<networkcmp.h>` (installs `networkcmp.h`, `networkcmp_protocol.h`, `netw
 | Sockets | `networkcmp_connect`, `networkcmp_connect_ex` (adds `timeout_ms`), `networkcmp_udp`, `networkcmp_listen` |
 | Resolution | `networkcmp_resolve`, `networkcmp_getaddrinfo`, `networkcmp_freeaddrinfo` |
 
-The library keeps one process-wide session; repeated opens return borrows of it and `networkcmp_client_close()` releases a borrow. `networkcmp_getaddrinfo()` accepts `AI_PASSIVE`, `AI_CANONNAME`, `AI_NUMERICHOST`, `AI_NUMERICSERV`, `AI_ADDRCONFIG` (a documented no-op), `AI_V4MAPPED` and `AI_ALL`, returns an `EAI_*` status, and its list must be freed with `networkcmp_freeaddrinfo()`. A malformed reply marks the session terminal: every later call fails with `EPROTO`. A child after `fork(2)` cannot reuse the parent's session.
+The library keeps one process-wide session; repeated opens return borrows of it and `networkcmp_client_close()` releases a borrow. `networkcmp_getaddrinfo()` accepts `AI_PASSIVE`, `AI_CANONNAME`, `AI_NUMERICHOST`, `AI_NUMERICSERV`, `AI_V4MAPPED` and `AI_ALL`, returns an `EAI_*` status, and its list must be freed with `networkcmp_freeaddrinfo()`. A malformed reply marks the session terminal: every later call fails with `EPROTO`. A child after `fork(2)` cannot reuse the parent's session.
 
 ```c
 #include <networkcmp.h>
@@ -138,5 +138,5 @@ Known gaps and drift:
 
 - `bundle_test.sh` refers to the pre-rename source directory `usr.sbin/bsdnetwork` and binary name, so it skips or fails outside the source tree layout it was written for.
 - A timeout op for resolve (as opposed to the fixed 30 second deadline) is deferred, per the inventory.
-- `AI_ADDRCONFIG` is a no-op: the resolver never suppresses a family based on the host's configured addresses.
+- `AI_ADDRCONFIG` returns `EAI_BADFLAGS`: a configured source-address family snapshot is not available. The raw resolve API and provider reject `NETWORKCMP_RESOLVE_F_ADDRCONFIG` with `EOPNOTSUPP`, keeping the session usable.
 - The `listen` policy key is not in the shipped `bsdnetwork.conf`; operators must add it explicitly per label.

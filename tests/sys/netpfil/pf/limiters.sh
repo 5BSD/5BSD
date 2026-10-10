@@ -351,8 +351,37 @@ out_cleanup()
 	pft_cleanup
 }
 
+atf_test_case "show_aliases" "cleanup"
+show_aliases_head()
+{
+	atf_set descr 'OpenBSD limiter show names preserve native output and old abbreviations'
+	atf_set require.user root
+}
+show_aliases_body()
+{
+	pft_init
+	vnet_mkjail alcatraz
+	pft_set_rules alcatraz \
+	    'state limiter "state-test" id 1 limit 5' \
+	    'source limiter "source-test" id 2 entries 128 limit 3' \
+	    'pass'
+	atf_check -s exit:0 -o save:states -e ignore jexec alcatraz pfctl -s LimiterStates
+	atf_check -s exit:0 -o file:states -e ignore jexec alcatraz pfctl -s Stlimiters
+	atf_check -s exit:0 -o save:sources -e ignore jexec alcatraz pfctl -s LimiterSrcs
+	atf_check -s exit:0 -o file:sources -e ignore jexec alcatraz pfctl -s Srclimiters
+	atf_check -s exit:0 -o match:"1[[:space:]]+0/5" cat states
+	atf_check -s exit:0 -o match:"^[[:space:]]*2[[:space:]]+0/128[[:space:]]+3[[:space:]]" cat sources
+	atf_check -s exit:0 -o save:old_sources -e ignore jexec alcatraz pfctl -s Sources
+	atf_check -s exit:0 -o file:old_sources -e ignore jexec alcatraz pfctl -s S
+}
+show_aliases_cleanup()
+{
+	pft_cleanup
+}
+
 atf_init_test_cases()
 {
+	atf_add_test_case "show_aliases"
 	atf_add_test_case "state_basic"
 	atf_add_test_case "state_rate"
 	atf_add_test_case "state_block"

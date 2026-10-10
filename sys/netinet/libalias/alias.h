@@ -44,11 +44,15 @@
 #include <netinet/ip.h>
 
 #define LIBALIAS_BUF_SIZE 128
+
+/* IPFW hole punching is retired for all consumers. */
+#define NO_FW_PUNCH
+/* Reserved compatibility bit: LibAliasSetMode rejects attempts to enable it. */
+#define PKT_ALIAS_PUNCH_FW 0x100
 #ifdef _KERNEL
 /*
  * The kernel version of libalias does not support these features.
  */
-#define	NO_FW_PUNCH
 #define	NO_USE_SOCKETS
 #endif
 
@@ -202,16 +206,6 @@ struct mbuf    *m_megapullup(struct mbuf *, int);
  */
 #define	PKT_ALIAS_REVERSE		0x80
 
-#ifndef NO_FW_PUNCH
-/*
- * If PKT_ALIAS_PUNCH_FW is set, active FTP and IRC DCC connections will
- * create a 'hole' in the firewall to allow the transfers to work.  The
- * ipfw rule number that the hole is created with is controlled by
- * PacketAliasSetFWBase().  The hole will be attached to that
- * particular alias_link, so when the link goes away the hole is deleted.
- */
-#define	PKT_ALIAS_PUNCH_FW		0x100
-#endif
 
 /*
  * If PKT_ALIAS_SKIP_GLOBAL is set, nat instance is not checked for matching

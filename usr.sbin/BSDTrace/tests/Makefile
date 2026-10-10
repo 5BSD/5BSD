@@ -28,4 +28,28 @@ SRCTREE_FILES=	lib/libtracecmp/tracecmp.c \
 		usr.sbin/BSDTrace/tracecmp_policy.h
 .include "${SRCTOP}/tests/srctree.mk"
 
+ATF_TESTS_C+= shutdown_test
+SRCS.shutdown_test= shutdown_test.c tracecmp_policy.c
+CFLAGS.shutdown_test+= -I${SRCTOP}/lib/libchannel -I${SRCTOP}/lib/libservice
+CFLAGS.shutdown_test+= -I${SRCTOP}/lib/libtracecmp -I${SRCTOP}/lib/liblogcmp
+CFLAGS.shutdown_test+= -I${SRCTOP}/sys
+LIBADD.shutdown_test= bsm channel service tracecmp logcmp
+NO_SHARED.shutdown_test= yes
+
+ATF_TESTS_C+= lifecycle_test
+SRCS.lifecycle_test= lifecycle_test.c tracecmp_policy.c
+CFLAGS.lifecycle_test+= -I${SRCTOP}/lib/libchannel -I${SRCTOP}/lib/libservice
+CFLAGS.lifecycle_test+= -I${SRCTOP}/lib/libtracecmp -I${SRCTOP}/lib/liblogcmp
+CFLAGS.lifecycle_test+= -I${SRCTOP}/sys
+LIBADD.lifecycle_test= bsm channel service tracecmp logcmp
+NO_SHARED.lifecycle_test= yes
+
+ATF_TESTS_C+= bootstrap_test
+SRCS.bootstrap_test= bootstrap_test.c tracecmp_policy.c
+CFLAGS.bootstrap_test+= -I${SRCTOP}/lib/libchannel -I${SRCTOP}/lib/libservice
+CFLAGS.bootstrap_test+= -I${SRCTOP}/lib/libtracecmp -I${SRCTOP}/lib/liblogcmp
+CFLAGS.bootstrap_test+= -I${SRCTOP}/sys
+LIBADD.bootstrap_test= bsm channel service tracecmp logcmp
+NO_SHARED.bootstrap_test= yes
+
 .include <bsd.test.mk>

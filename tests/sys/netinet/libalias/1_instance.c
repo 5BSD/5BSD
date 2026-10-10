@@ -34,6 +34,7 @@
 #include <atf-c.h>
 #include <alias.h>
 #include <stdio.h>
+#include <limits.h>
 #include <stdlib.h>
 
 #include "util.h"
@@ -105,6 +106,29 @@ ATF_TC_BODY(4_multiinstance, dummy)
 		LibAliasUninit(la[i]);
 }
 
+ATF_TC(retired_firewall_mode);
+ATF_TC_HEAD(retired_firewall_mode, env)
+{
+	atf_tc_set_md_var(env, "descr", "Retired firewall mode is rejected atomically");
+}
+ATF_TC_BODY(retired_firewall_mode, dummy)
+{
+	struct libalias *la;
+	unsigned int before;
+
+	la = LibAliasInit(NULL);
+	ATF_REQUIRE(la != NULL);
+	before = LibAliasSetMode(la, 0, 0);
+	/* Use the historical numeric ABI bit, including old compiled callers. */
+	ATF_CHECK_EQ(UINT_MAX, LibAliasSetMode(la, 0x100 | PKT_ALIAS_REVERSE,
+	    0x100 | PKT_ALIAS_REVERSE));
+	ATF_CHECK_EQ(before, LibAliasSetMode(la, 0, 0));
+	LibAliasSetFWBase(la, 100, 10);
+	ATF_CHECK_EQ(before, LibAliasSetMode(la, 0, 0));
+	ATF_CHECK_EQ(before, LibAliasSetMode(la, 0, 0x100));
+	LibAliasUninit(la);
+}
+
 ATF_TP_ADD_TCS(instance)
 {
 	/* Use "dd if=/dev/random bs=2 count=1 | od -x" to reproduce */
@@ -112,6 +136,7 @@ ATF_TP_ADD_TCS(instance)
 
 	ATF_TP_ADD_TC(instance, 2_destroynull);
 	ATF_TP_ADD_TC(instance, 1_singleinit);
+	ATF_TP_ADD_TC(instance, retired_firewall_mode);
 	ATF_TP_ADD_TC(instance, 3_multiinit);
 	ATF_TP_ADD_TC(instance, 4_multiinstance);
 

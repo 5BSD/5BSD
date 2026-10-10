@@ -52,6 +52,7 @@
 
 #include "libservice.h"
 #include "service_private.h"
+#include "service_runtime.h"
 #include "service_bootstrap.h"
 #include "switchboard_svc_proto.h"
 
@@ -100,6 +101,7 @@ struct service_provider {
 	pid_t			 owner;
 	bool			 quiescing;
 	bool			 quiesce_complete;
+	uint32_t		 quiesce_reason;
 };
 static struct service_context service_default_context;
 static struct service_provider *service_providers;
@@ -960,10 +962,12 @@ service_control_event(struct channel *channel,
 		if (quiesce->op == SVC_OP_QUIESCE && quiesce->flags == 0 &&
 		    quiesce->deadline_ms != 0 &&
 		    quiesce->reason >= SVC_QUIESCE_REASON_STOP &&
-		    quiesce->reason <= SVC_QUIESCE_REASON_RELOAD) {
+		    quiesce->reason <= SVC_QUIESCE_REASON_IDLE) {
 			for (struct service_provider *provider = service_providers;
-			    provider != NULL; provider = provider->next)
+			    provider != NULL; provider = provider->next) {
 				provider->quiescing = true;
+				provider->quiesce_reason = quiesce->reason;
+			}
 			for (listener = service_listeners; listener != NULL;
 			    listener = listener->next) {
 				listener->provider->quiescing = true;
@@ -1129,6 +1133,22 @@ rpc_data(const void *req, uint32_t reqlen, int *reply_fds, size_t reply_nfds,
 	struct channel_request *request;
 	struct service_rpc_waiter waiter;
 	int cancel_state, error, result;
+	uint32_t timeout_ms = UINT32_MAX;
+	struct timespec deadline;
+	pthread_condattr_t attr;
+
+	if (service_budget_timeout(&timeout_ms) == -1)
+		return (-1);
+	if (timeout_ms != UINT32_MAX) {
+		if (clock_gettime(CLOCK_MONOTONIC, &deadline) == -1)
+			return (-1);
+		deadline.tv_sec += timeout_ms / 1000;
+		deadline.tv_nsec += (timeout_ms % 1000) * 1000000L;
+		if (deadline.tv_nsec >= 1000000000L) {
+			deadline.tv_sec++;
+			deadline.tv_nsec -= 1000000000L;
+		}
+	}
 
 	if (service_start_dispatch() == -1)
 		return (-1);
@@ -1141,7 +1161,13 @@ rpc_data(const void *req, uint32_t reqlen, int *reply_fds, size_t reply_nfds,
 	waiter.datalen = datalen;
 	for (size_t i = 0; i < nitems(waiter.fds); i++)
 		waiter.fds[i] = -1;
-	error = pthread_cond_init(&waiter.cond, NULL);
+	error = pthread_condattr_init(&attr);
+	if (error != 0)
+		return (errno = error, -1);
+	error = pthread_condattr_setclock(&attr, CLOCK_MONOTONIC);
+	if (error == 0)
+		error = pthread_cond_init(&waiter.cond, &attr);
+	(void)pthread_condattr_destroy(&attr);
 	if (error != 0) {
 		errno = error;
 		return (-1);
@@ -1199,9 +1225,25 @@ rpc_data(const void *req, uint32_t reqlen, int *reply_fds, size_t reply_nfds,
 		return (-1);
 	}
 	while (!waiter.done) {
-		error = pthread_cond_wait(&waiter.cond, &service_state_lock);
-		if (error != 0) {
-			waiter.status = error;
+		error = timeout_ms == UINT32_MAX ?
+		    pthread_cond_wait(&waiter.cond, &service_state_lock) :
+		    pthread_cond_timedwait(&waiter.cond, &service_state_lock,
+		    &deadline);
+		if (error != 0 && !waiter.done) {
+			int wait_error = error;
+			/* Serialize cancellation with dispatch before freeing the waiter. */
+			(void)pthread_mutex_unlock(&service_state_lock);
+			(void)pthread_mutex_lock(&service_channel_lock);
+			(void)pthread_mutex_lock(&service_state_lock);
+			bool done = waiter.done;
+			(void)pthread_mutex_unlock(&service_state_lock);
+			if (!done)
+				(void)channel_request_cancel(request);
+			(void)pthread_mutex_unlock(&service_channel_lock);
+			(void)pthread_mutex_lock(&service_state_lock);
+			while (!waiter.done)
+				(void)pthread_cond_wait(&waiter.cond, &service_state_lock);
+			waiter.status = wait_error;
 			break;
 		}
 	}
@@ -1875,6 +1917,11 @@ service_provider_quiesce_complete(struct service_provider *provider,
 		(void)pthread_mutex_unlock(&service_state_lock);
 		return (errno = provider->quiesce_complete ? EALREADY : EPERM, -1);
 	}
+	if (status == EBUSY &&
+	    provider->quiesce_reason != SVC_QUIESCE_REASON_IDLE) {
+		(void)pthread_mutex_unlock(&service_state_lock);
+		return (errno = EINVAL, -1);
+	}
 	(void)pthread_mutex_unlock(&service_state_lock);
 	memset(&request, 0, sizeof(request));
 	request.op = SVC_OP_QUIESCE_RESULT;
@@ -1884,7 +1931,20 @@ service_provider_quiesce_complete(struct service_provider *provider,
 	error = pthread_mutex_lock(&service_state_lock);
 	if (error != 0)
 		return (errno = error, -1);
-	provider->quiesce_complete = true;
+	if (status == EBUSY) {
+		for (struct service_provider *item = service_providers;
+		    item != NULL; item = item->next) {
+			item->quiescing = false;
+			item->quiesce_reason = 0;
+		}
+		for (struct service_listener *listener = service_listeners;
+		    listener != NULL; listener = listener->next) {
+			listener->closing = false;
+			(void)pthread_cond_broadcast(&listener->cond);
+			service_listener_signal(listener);
+		}
+	} else
+		provider->quiesce_complete = true;
 	(void)pthread_mutex_unlock(&service_state_lock);
 	return (0);
 }

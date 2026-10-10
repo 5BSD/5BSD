@@ -1085,7 +1085,9 @@ ble_open_plane(void)
 	service_session_close(session);
 	if (in.length != sizeof(rep) || rep.magic != BLUED_PLANE_MAGIC ||
 	    rep.opcode != BLUED_PLANE_OP_ATTACH ||
-	    in.nfds != (rep.status == 0 ? 1 : 0)) {
+	    rep.status < 0 || rep.status > ELAST ||
+	    in.nfds != (rep.status == 0 ? 1 : 0) ||
+	    (rep.status == 0 && fd < 0)) {
 		if (in.nfds != 0 && fd >= 0)
 			(void)close(fd);
 		errno = EPROTO;

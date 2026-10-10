@@ -30,7 +30,7 @@ What lives in `runtime` versus its own package is a deliberate split:
 | `capsule`, `capsulectl`, `switchboard`, `switchboardctl`, `sysextctl` | PID 1, the service manager and their tools |
 | `bsdaudit`, `bsdauth`, `bsdcrypto`, `bsddevice`, `bsdlog`, `bsdnetwork`, `bsdnotify`, `bsdtrace-provider`, `bluetooth` | providers with their `.cap` bundles (`bsdtrace-provider` is the BSDTrace daemon, distinct from the `bsdtrace` Intel PT tool) |
 | `libservice`, `libcapbundle`, `libcapsulert`, `libcapreclaim`, `libcapability`, `libchannel`, `libshmring`, `libcryptodesc`, `lib*cmp`, `libnotify` | the plane's libraries |
-| `oes`, `mac-abac`, `hwtlm`, `bsdinstruments`, `bsdtrace` | security and observability tools |
+| `oes`, `mac-abac`, `hwstat`, `bsdinstruments`, `bsdtrace` | security and observability tools |
 | `runtime` | BSDFilesystem, BSDPower, BSDTime, BSDExtension, BSDNamespace and BSDVM, plus reclaimstat(8): the providers a system cannot boot or reclaim without |
 
 `packages/runtime/runtime.ucl` declares the `capability` user and group and carries pre- and post-install scripts that create uid and gid 976 on an upgraded root and bootstrap `pwd.db` on a fresh one. `packages/switchboard/switchboard.ucl`'s post-install removes retired bundle trees that would otherwise be boot-fatal, since switchboard fails closed on an invalid system bundle. The `rc` package removes a stale `rc.d/oracled`.

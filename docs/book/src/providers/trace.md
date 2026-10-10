@@ -13,7 +13,7 @@ BSDTrace(8).
 One naming point up front: bsdtrace(8), lowercase, in the `bsdtrace`
 package, is the Intel Processor Trace execution tracer built on hwt(4). It
 has nothing to do with this provider. This chapter is about BSDTrace, the
-`system.Trace` broker. The wider observability story (bsdinstruments, hwtlm,
+`system.Trace` broker. The wider observability story (bsdinstruments, hwstat,
 the SDT and USDT catalog) is in [Observability](../operations/observability.md)
 and [Logging, Audit and Trace](../plane/logging-audit-trace.md).
 

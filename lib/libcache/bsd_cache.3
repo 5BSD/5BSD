@@ -1,0 +1,257 @@
+.\" SPDX-License-Identifier: BSD-2-Clause
+.Dd October 10, 2026
+.Dt BSD_CACHE 3
+.Os
+.Sh NAME
+.Nm bsd_cache_open ,
+.Nm bsd_cache_lookup ,
+.Nm bsd_cache_generation ,
+.Nm bsd_cache_put_if_current ,
+.Nm bsd_cache_create ,
+.Nm bsd_cache_put ,
+.Nm bsd_cache_get ,
+.Nm bsd_cache_remove ,
+.Nm bsd_cache_purge ,
+.Nm bsd_cache_set_limits ,
+.Nm bsd_cache_set_pressure ,
+.Nm bsd_cache_get_stats ,
+.Nm bsd_cache_destroy
+.Nd bounded application caches with automatic pressure eviction
+.Sh LIBRARY
+.Li libcache
+.Pq Fl lcache
+.Sh SYNOPSIS
+.In bsd_cache.h
+.Ft int
+.Fn bsd_cache_open "size_t entries" "size_t cost" "struct bsd_cache **out"
+.Ft "enum bsd_cache_result"
+.Fn bsd_cache_lookup "struct bsd_cache *cache" "const char *key" "void *value" "size_t *length"
+.Ft int
+.Fn bsd_cache_create "size_t entries" "size_t cost" "unsigned flags" "bsd_cache_evicted_fn callback" "void *argument" "struct bsd_cache **out"
+.Ft int
+.Fn bsd_cache_put "struct bsd_cache *cache" "const char *key" "const void *value" "size_t length" "size_t cost"
+.Ft int
+.Fn bsd_cache_get "struct bsd_cache *cache" "const char *key" "void *value" "size_t *length"
+.Ft int
+.Fn bsd_cache_remove "struct bsd_cache *cache" "const char *key"
+.Ft int
+.Fn bsd_cache_purge "struct bsd_cache *cache"
+.Ft int
+.Fn bsd_cache_set_limits "struct bsd_cache *cache" "size_t entries" "size_t cost"
+.Ft int
+.Fn bsd_cache_set_pressure "struct bsd_cache *cache" "unsigned level"
+.Ft int
+.Fn bsd_cache_get_stats "struct bsd_cache *cache" "struct bsd_cache_stats *out"
+.Ft int
+.Fn bsd_cache_destroy "struct bsd_cache *cache"
+.Ft int
+.Fn bsd_cache_generation "struct bsd_cache *cache" "uint64_t *generation"
+.Ft int
+.Fn bsd_cache_put_if_current "struct bsd_cache *cache" "const char *key" "const void *value" "size_t length" "size_t cost" "uint64_t generation"
+.Sh DESCRIPTION
+For the simple interface, call
+.Fn bsd_cache_open
+with entry and byte-cost limits.
+It enables automatic pressure handling with no application notification loop
+or eviction callback required.
+Use
+.Fn bsd_cache_create
+for explicit flags and callbacks.
+.Pp
+.Fn bsd_cache_lookup
+returns
+.Dv BSD_CACHE_HIT
+with a copied value,
+.Dv BSD_CACHE_MISS
+when the entry is absent, or
+.Dv BSD_CACHE_ERROR
+with
+.Va errno
+set for an actual error.
+A miss leaves the buffer and length unchanged.
+Hits and misses preserve
+.Va errno .
+An undersized buffer is an error, not a miss, and reports the required length.
+The lookup performs the presence check and copy under one lock.
+Do not perform a separate validity check before reading an entry.
+The returned copy remains usable even if pressure immediately evicts the entry.
+.Pp
+When rebuilding data outside the cache lock, capture a token with
+.Fn bsd_cache_generation
+before reading the source, then insert with
+.Fn bsd_cache_put_if_current .
+The token check and insertion happen under one lock.
+An intervening invalidation causes
+.Er ESTALE
+and leaves existing entries untouched.
+Tokens belong to one cache instance and must not be reused after destruction.
+Any successful insertion, purge, remove attempt (including a missing key),
+limit change, or change of effective pressure invalidates prior tokens.
+The generation is cache-wide: unrelated writes may conservatively reject
+an insertion, which callers can skip or retry by rebuilding from the source.
+A token never wraps: exhaustion returns
+.Er EOVERFLOW
+from the getter and refuses conditional insertion.
+Plain put intentionally inserts without this check.
+.Pp
+Cache presence does not establish freshness against changing application data.
+Use versioned keys, remove affected keys, or purge the cache when the source
+changes; memory-pressure notifications do not detect those source changes.
+Notifications are asynchronous; critical pressure empties the cache when its
+watcher processes the notification, not at the instant system pressure rises.
+Warning pressure trims the budget without necessarily emptying the cache.
+.Pp
+The cache owns copies of keys and byte values, with explicit entry and cost
+limits and least-recently-used eviction.
+Entries are disposable: callers must handle cache misses and reconstruct data.
+Keys are nonempty strings of at most 255 bytes; values are at most 16 MiB.
+At most 65536 entries are permitted.
+Cost must be at least the value length; callers may charge a larger logical
+cost.
+Metadata and key storage are additionally bounded by the entry limit.
+A balanced-tree key index bounds lookup comparisons logarithmically in the
+number of entries, including sorted or common-prefix keys.
+Its links are stored within each entry; it does not allocate a separate bucket
+array or require allocation during lookup.
+The LRU list still determines eviction order.
+Index, LRU order, accounting and copied lookup values are protected by the
+same cache mutex.
+Changing limits immediately evicts entries exceeding the effective budget.
+Replacing a key copies the new value before changing the old entry.
+Insertion checks pressure, budget and any generation token before allocating
+the copy, then rechecks under the lock before changing the cache.
+Pressure arriving during the copy may still cause that allocation to be
+discarded.
+.Pp
+Get copies data into caller-owned storage and updates LRU order.
+The length argument supplies capacity and receives the required or copied size.
+Insufficient capacity returns
+.Er ENOMEM
+without a partial copy; missing keys return
+.Er ENOENT .
+Other failures leave outputs unchanged.
+No pointer into an evictable entry escapes the cache.
+.Pp
+With
+.Dv BSD_CACHE_AUTOMATIC ,
+one process-wide thread and notification client watch BSDNotify's reserved
+.Va system.memory.pressure
+state, reconnecting after failures.
+All automatic caches share this subscription; manual caches do not join it.
+Each cache tracks its own observed epoch and generation.
+A newly registered cache receives the latest snapshot even when no new
+notification arrives.
+Delivery pins registered caches without allocating memory and invokes callbacks
+outside the registry lock.
+A slow callback delays notification delivery to other caches; keep callbacks
+short and avoid waiting for other watcher callbacks.
+No privileged publisher attribute is needed to observe it.
+Warning pressure halves both budgets; critical pressure purges the cache and
+rejects insertions with
+.Er EAGAIN
+until recovery.
+Normal pressure restores configured limits.
+Missing or unavailable state is reported as unknown and preserves the last
+known restriction; initial unknown state uses configured limits.
+The cache remains bounded when the notification service is absent.
+Failed client opens, including
+.Er EAGAIN ,
+are reported in the notification error statistic and retried at most once per
+second.
+An ordinary unchanged-state watch timeout does not report a notification error.
+The first notification snapshot, a changed watcher epoch, or skipped state
+generations purge entries and invalidate rebuild tokens: a coalesced critical
+and recovery transition must not leave older cached entries behind.
+The manual pressure setter applies the same policy to this cache only.
+.Pp
+Statistics include current entries and cost, configured limits, hits, misses,
+limit/pressure evictions, current pressure, and the last notification error.
+The optional callback receives key, value, length, reason, and argument after
+an entry is detached and the cache lock is released.
+Its key and value are borrowed only for the callback duration.
+Callbacks may inspect or operate on the cache, but must not destroy it.
+Insertions during destruction callbacks are refused with
+.Er EAGAIN .
+They can run on the calling thread or the automatic watcher thread and must
+synchronize their own application state.
+.Pp
+Operations are synchronized across threads.
+Destroy requires exclusive application ownership after all application calls
+and callbacks running on application threads have finished.
+It unregisters the cache and waits for any pinned delivery to finish before
+freeing remaining entries.
+Destroying the last automatic cache closes the notification client and joins
+the shared watcher thread; a later automatic cache starts a new thread.
+A small process-local registry remains available for reuse.
+Each watcher iteration uses one one-second libservice RPC budget across
+client discovery, HELLO negotiation, reconnect and the state watch.
+An outstanding notification RPC can delay destruction until that budget expires.
+The budget covers RPC waits, not scheduling delays, mutex acquisition, arbitrary
+kernel work or application callbacks.
+Destruction does not cancel application callbacks.
+A watcher callback attempting to destroy any automatic cache is refused with
+.Er EDEADLK .
+Inherited cache objects cannot be used or destroyed in a child after fork;
+create a fresh cache there.
+A fresh automatic cache in the child uses a separate registry without acquiring
+inherited registry locks.
+If a watcher callback attempts to create an automatic cache while another
+thread is destroying the last registered cache, creation returns
+.Er EAGAIN
+rather than waiting for its own callback to finish.
+.Sh RETURN VALUES
+Except for the three-result lookup described above, functions return zero
+on success or minus one with
+.Va errno
+set.
+Invalid inputs return
+.Er EINVAL ;
+inherited handles return
+.Er ECHILD .
+A value exceeding the current effective cost budget returns
+.Er EAGAIN .
+Allocation and thread errors are also returned.
+.Sh EXAMPLES
+.Bd -literal -offset indent
+struct bsd_cache *cache;
+char value[256];
+size_t length = sizeof(value);
+if (bsd_cache_open(128, 8 * 1024 * 1024, &cache) == -1)
+        return (-1);
+switch (bsd_cache_lookup(cache, "thumbnail-v3", value, &length)) {
+case BSD_CACHE_HIT:
+        /* Use value: this copy survives later cache eviction. */
+        break;
+case BSD_CACHE_MISS:
+        /* Rebuild value from its source, then optionally cache it.
+         * Failure to cache must not prevent using rebuilt data. */
+        break;
+case BSD_CACHE_ERROR:
+        /* Handle errno; ENOMEM means the output buffer is too small. */
+        break;
+}
+/* Finish application users before destruction. */
+bsd_cache_destroy(cache);
+.Ed
+.Pp
+For a rebuild that must not repopulate an invalidated cache:
+.Bd -literal -offset indent
+uint64_t generation;
+if (bsd_cache_generation(cache, &generation) == 0) {
+        /* Read the source and build bytes after capturing the token. */
+        if (bsd_cache_put_if_current(cache, key, bytes, size, size,
+            generation) == -1) {
+                /* ESTALE: discard this cache insertion.
+                 * EAGAIN: pressure or budget prevents caching.
+                 * Handle other errors as appropriate. */
+        }
+}
+.Ed
+A returned value is a snapshot; the library cannot guarantee that an external
+source stays unchanged after lookup or reconstruction.
+Applications needing stronger consistency must coordinate source updates
+with their own synchronization and cache invalidation.
+.Sh SEE ALSO
+.Xr notify_state_watch 3 ,
+.Xr BSDMemory 8 ,
+.Xr notifyctl 8

@@ -184,6 +184,7 @@ union fuse_payloads_in {
 	fuse_release_in	release;
 	fuse_release_in	releasedir;
 	fuse_rename_in	rename;
+	fuse_rename2_in	rename2;
 	char		rmdir[0];
 	fuse_setattr_in	setattr;
 	fuse_setxattr_in setxattr;
@@ -324,9 +325,6 @@ class MockFS {
 	void debug_request(const mockfs_buf_in&, ssize_t buflen);
 	void debug_response(const mockfs_buf_out&);
 
-	/* Initialize a session after mounting */
-	void init(uint32_t flags);
-
 	/* Is pid from a process that might be involved in the test? */
 	bool pid_ok(pid_t pid);
 
@@ -387,6 +385,9 @@ class MockFS {
 	void kill_daemon();
 
 	/* Start after installing expectations when no_auto_init is set. */
+	/* Complete INIT explicitly for tests using no_auto_init. */
+	void init(uint32_t flags);
+	void start_daemon();
 
 	/* Wait until the daemon thread terminates */
 	void join_daemon();

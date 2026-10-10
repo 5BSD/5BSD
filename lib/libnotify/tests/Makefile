@@ -14,6 +14,10 @@ SRCS.client_lifecycle_test=	client_lifecycle_test.c \
 CFLAGS.client_lifecycle_test+=	-I${.CURDIR}/..
 CFLAGS.client_lifecycle_test+=	-I${SRCTOP}/lib/libservice
 LIBADD.client_lifecycle_test+=	pthread
+ATF_TESTS_C+=	watch_test
+CFLAGS.watch_test+=	-I${.CURDIR}/..
+LIBADD.watch_test+=	pthread
+
 .PATH:	${.CURDIR}/..
 
 .include <bsd.test.mk>

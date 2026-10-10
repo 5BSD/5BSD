@@ -1,4 +1,4 @@
-PACKAGE=	natd
+PACKAGE=	libalias
 NAME=		pptp
 SRCS=		alias_pptp.c
 

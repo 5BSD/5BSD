@@ -904,7 +904,9 @@ interpret:
 	 * shared after an exec.
 	 */
 	fdunshare(td);
-	pdunshare(td);
+	/* Linux exec keeps CLONE_FS sharing with another process. */
+	if (SV_PROC_ABI(p) != SV_ABI_LINUX)
+		pdunshare(td);
 	/* close files on exec */
 	fdcloseexec(td, imgp->newcred);
 

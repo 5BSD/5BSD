@@ -14,12 +14,13 @@
 # inherited directory descriptors -- "/" (isolated-open base, the operator config
 # under /Capabilities/Config, and the reclaim child's install-dir reads) and /dev
 # (openat("zfs") for the control device), declared in `directories` below.  user =
-# root is retained for the ONE privileged op the substrate needs: the pool-root
-# mint (ZFS_IOC_POOL_OPEN runs secpolicy_zfs).  Every derived dataset handle is
+# root is retained for pool-root minting (ZFS_IOC_POOL_OPEN runs
+# secpolicy_zfs) and opening NOTIFY-only OES clients for system.OES.  Every derived dataset handle is
 # then authorized by handle rights, not privilege, and the whole serving window
 # runs inside the capsicum sandbox.  The pool is the boot pool (already imported by
 # the loader); a non-preimported pool cannot be brought up from capmode.
-activation { boot = true; ipc = ["system.Filesystem"]; }
+activation { boot = true; ipc = ["system.Filesystem",
+    { name = "system.OES"; requires = ["system.oes"]; }]; }
 # Delivered as read-only directory descriptors (service_resource_dir): / as the
 # isolated-open / config / reclaim base, /dev to openat("zfs") the control device.
 directories = ["/dev", "/"];

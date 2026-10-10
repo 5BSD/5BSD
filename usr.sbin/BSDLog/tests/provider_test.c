@@ -357,12 +357,47 @@ ATF_TC_BODY(provider_dispatch_and_ring_lifecycle, tc)
 	fixture_destroy(&fixture, 0);
 }
 
+ATF_TC(provider_ring_sink_failure_is_terminal);
+ATF_TC_HEAD(provider_ring_sink_failure_is_terminal, tc)
+{
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "descr",
+	    "flush and detach cannot leave a session usable after discarding a ring record");
+}
+ATF_TC_BODY(provider_ring_sink_failure_is_terminal, tc)
+{
+	const uint16_t operations[] = { LOGCMP_OP_FLUSH, LOGCMP_OP_DETACH };
+	union wire_buffer reply;
+	struct fixture fixture;
+	struct shmring *ring;
+	uint8_t record[LOGCMP_MAX_RECORD];
+	size_t length, record_length;
+	int status, wake;
+
+	for (size_t i = 0; i < nitems(operations); i++) {
+		fixture_create(&fixture, ENOSPC);
+		attach_ring(&fixture, 20 + i, &ring, &wake, &status);
+		ATF_REQUIRE_EQ(0, status);
+		record_length = make_record(record, 1, "cannot-persist");
+		ATF_REQUIRE_EQ(0, shmring_write_record(ring, record, record_length));
+		/* No wake: the request itself must encounter the sink failure. */
+		ATF_REQUIRE_EQ(0, call(&fixture, operations[i], NULL, 0,
+		    NULL, 0, &reply, &length));
+		ATF_CHECK_EQ(ENOSPC, reply_status(&reply, length, operations[i]));
+		ATF_CHECK_EQ(-1, call(&fixture, LOGCMP_OP_FLUSH, NULL, 0,
+		    NULL, 0, &reply, &length));
+		shmring_close(ring);
+		close(wake);
+		fixture_destroy(&fixture, 1);
+	}
+}
+
 ATF_TC(provider_backend_failures);
 ATF_TC_HEAD(provider_backend_failures, tc)
 {
 	atf_tc_set_md_var(tc, "require.user", "root");
 	atf_tc_set_md_var(tc, "descr",
-	    "sink, flush, and query backend failures are returned and counted without killing the session");
+	    "inline rejection and sync/query errors are returned and counted without killing the session");
 }
 ATF_TC_BODY(provider_backend_failures, tc)
 {
@@ -371,9 +406,7 @@ ATF_TC_BODY(provider_backend_failures, tc)
 	struct logcmp_stats *stats;
 	struct logcmp_msg *message;
 	struct fixture fixture;
-	struct shmring *ring;
 	uint8_t record[LOGCMP_MAX_RECORD];
-	int status, wake;
 	size_t length, record_length;
 
 	fixture_create(&fixture, EIO);
@@ -388,22 +421,13 @@ ATF_TC_BODY(provider_backend_failures, tc)
 	ATF_REQUIRE_EQ(0, call(&fixture, LOGCMP_OP_QUERY, &query, sizeof(query),
 	    NULL, 0, &reply, &length));
 	ATF_CHECK_EQ(EIO, reply_status(&reply, length, LOGCMP_OP_QUERY));
-	attach_ring(&fixture, 20, &ring, &wake, &status);
-	ATF_REQUIRE_EQ(0, status);
-	record_length = make_record(record, 2, "ring-rejected");
-	ATF_REQUIRE_EQ(0, shmring_write_record(ring, record, record_length));
-	ATF_REQUIRE_EQ(0, call(&fixture, LOGCMP_OP_FLUSH, NULL, 0, NULL, 0,
-	    &reply, &length));
-	ATF_CHECK_EQ(EIO, reply_status(&reply, length, LOGCMP_OP_FLUSH));
 	ATF_REQUIRE_EQ(0, call(&fixture, LOGCMP_OP_STATS, NULL, 0, NULL, 0,
 	    &reply, &length));
 	ATF_REQUIRE_EQ(0, reply_status(&reply, length, LOGCMP_OP_STATS));
 	message = (void *)reply.bytes;
 	stats = (void *)(message + 1);
 	ATF_CHECK_EQ(0, stats->accepted);
-	ATF_CHECK_EQ(4, stats->rejected);
-	shmring_close(ring);
-	close(wake);
+	ATF_CHECK_EQ(3, stats->rejected);
 	fixture_destroy(&fixture, 0);
 }
 
@@ -452,6 +476,7 @@ ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, provider_dispatch_and_ring_lifecycle);
 	ATF_TP_ADD_TC(tp, provider_backend_failures);
+	ATF_TP_ADD_TC(tp, provider_ring_sink_failure_is_terminal);
 	ATF_TP_ADD_TC(tp, provider_malformed_descriptor_is_terminal);
 	ATF_TP_ADD_TC(tp, provider_stamps_trusted_receive_time);
 	ATF_TP_ADD_TC(tp, arguments);

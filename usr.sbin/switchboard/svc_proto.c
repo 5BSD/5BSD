@@ -228,11 +228,15 @@ handle_idle(struct svc_runtime *svc, struct channel_message *request)
 		error = EBUSY;
 	else {
 		req = channel_message_data(request);
-		svc->idle_timeout_sec = req->seconds;
-		if (req->seconds > 0)
-			arm_idle_timer(svc, switchboard_kq);
-		else
-			cancel_idle_timer(svc, switchboard_kq);
+		if (req->seconds > SVC_IDLE_MAX_SECONDS)
+			error = EINVAL;
+		else {
+			svc->idle_timeout_sec = req->seconds;
+			if (req->seconds > 0)
+				arm_idle_timer(svc, switchboard_kq);
+			else
+				cancel_idle_timer(svc, switchboard_kq);
+		}
 	}
 	(void)svc_channel_reply(svc, request, SVC_OP_IDLE, error, NULL, 0);
 }

@@ -359,7 +359,7 @@ local function adduser(pwd)
 		extraargs = extraargs .. " -m "
 	end
 	if not pwd.shell then
-		pwd.shell = "/bin/sh"
+		pwd.shell = "/bin/zsh"
 	end
 	local postcmd = ""
 	local input = nil

@@ -10,6 +10,27 @@ one-time migration from a FreeBSD pkgbase system, and what to verify after
 the reboot. Building the repository is in [Building](building.md); pkg(8)
 itself, boot environments and `bectl` are FreeBSD Handbook material.
 
+## Hardware telemetry package rename (2026-10-08)
+
+Existing `5BSD-hwtlm`, `-man`, `-dbg`, and `-tests` packages require an
+explicit transition to `5BSD-hwstat`. After publishing the combined
+repository and creating the usual boot environment snapshot, run
+`pkg update -r 5BSD-base`, then
+`sh /usr/src/tools/build/migrate-hwstat-packages.sh` before the normal
+`pkg upgrade -n -r 5BSD-base` preview and `pkg upgrade -r 5BSD-base`.
+These commands require root in the installation being upgraded.
+
+The helper checks all installed old packages before renaming their database
+identities and dependency references. It refuses missing replacements,
+equal or older replacement versions, locked packages, or an installation
+containing both names. Publish a strictly newer `PKG_VERSION` before this
+transition; a database rename alone does not force file replacement.
+An interrupted migration is checked again, including already renamed
+entries whose installed origin still identifies the old package. The following
+upgrade replaces the old files and package origins; no command or manual
+alias remains. Repeating the helper is safe. Fresh installations do not
+need this step. This migration does not install an upgrade or reboot by itself.
+
 ## Why the rule exists
 
 `pkg upgrade` resolves by package name and version across every enabled
@@ -90,12 +111,51 @@ repository selected.
 With the default ZFS layout, the root boot environment contains the base
 system, `/Capabilities/System`, and `/var/db/pkg`. The parent `zroot/var`
 has `canmount=off`; its existence does not mean all of `/var` is shared.
-Only `/var/audit`, `/var/crash`, `/var/log`, `/var/mail`, and `/var/tmp` are
+Only `/var/audit`, `/var/cache`, `/var/crash`, `/var/log`, `/var/mail`, and `/var/tmp` are
 separate shared datasets under `/var`. `/usr/local` and home are shared too.
 `/Capabilities/Run` is transient. `bectl create` therefore preserves the
 package database with base; do not restore it separately after BE rollback.
 Check `df /var/db/pkg` and `zfs list -o name,mountpoint,canmount,mounted` for
 custom layouts. A BE does not roll back ports files in shared `/usr/local`.
+
+### Storage requirements for a future immutable base
+
+The immutable-base mechanism is not implemented. The current boot environment
+layout is a starting point, not a complete read-only system layout.
+
+A base generation must keep its files and package metadata consistent. The
+current shared `/usr/local` is outside BE rollback, while `/var/db/pkg` is
+inside it. If ports are changed after a snapshot, rolling back that database
+can disagree with the surviving ports files. A future layout must either
+separate base and ports package state, including dependency handling, or
+coordinate their files and metadata within the same rollback operation.
+Moving the entire package database to a shared dataset would instead separate
+base files from their metadata and does not solve this problem.
+
+Configuration and durable application data need explicit compatibility and
+migration rules across generations. `/etc` cannot simply become read-only
+without providing for local configuration changes. Likewise, `/var/db` mixes
+package metadata with writable service state; sharing or freezing that entire
+tree is not a substitute for identifying its owners. Caches, logs, runtime
+state, temporary files, and update staging need writable locations and space
+policies. Fresh installer defaults and release VM images keep `/usr/obj`,
+including the local package repository, outside the base boot environment.
+They also give `/var/cache` its own shared dataset. Cache contents must remain
+reconstructible and consumers must validate formats across upgrades and rollback.
+This layout does not authorize deleting caches currently used by an application
+or package transaction. Existing installations require a separate migration;
+changing installer defaults does not move their directories.
+
+Reclamation must preserve installed generations, rollback targets, active
+updates, and resources held by users of either generation. Age or a missing
+path alone cannot establish that storage is unused. The future shared reaper
+must coordinate with installation and storage ownership before deleting it.
+
+Acceptance requires a disposable installed VM: exercise package changes,
+upgrade and rollback, interrupted updates, low-space recovery, and a read-only
+base trial while checking configuration and application data remain usable.
+These requirements do not prescribe or authorize repartitioning existing
+systems; migration remains separate work.
 
 ### Publish base and matching hardware together
 

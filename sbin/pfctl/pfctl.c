@@ -3769,7 +3769,13 @@ main(int argc, char *argv[])
 			opts |= PF_OPT_NUMERIC;
 			break;
 		case 's':
-			showopt = pfctl_lookup_id(optarg, showopt_list);
+			/* Exact aliases preserve existing short modifiers (e.g. S). */
+			if (strcmp(optarg, "Stlimiters") == 0)
+				showopt = SHOWOPT_STATELIMS;
+			else if (strcmp(optarg, "Srclimiters") == 0)
+				showopt = SHOWOPT_SOURCELIMS;
+			else
+				showopt = pfctl_lookup_id(optarg, showopt_list);
 			if (showopt == 0) {
 				warnx("Unknown show modifier '%s'", optarg);
 				usage();

@@ -4,6 +4,7 @@
 
 #include <atf-c.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <pthread.h>
 #include <unistd.h>
 
@@ -173,8 +174,35 @@ ATF_TC_BODY(protocol_errors_fail_closed, tc)
 	auditcmp_client_close(client);
 }
 
+ATF_TC_WITHOUT_HEAD(no_constructor_descriptor_leak);
+ATF_TC_BODY(no_constructor_descriptor_leak, tc)
+{
+	struct auditcmp_client *client;
+	int before, after, before_count = 0, after_count = 0;
+
+	fake_service_reset();
+	before = open("/dev/null", O_RDONLY | O_CLOEXEC);
+	ATF_REQUIRE(before >= 0);
+	ATF_REQUIRE_EQ(0, close(before));
+	ATF_REQUIRE(before < 128);
+	for (int fd = 0; fd < 1024; fd++)
+		before_count += fcntl(fd, F_GETFD) != -1;
+	for (unsigned i = 0; i < 32; i++) {
+		ATF_REQUIRE_EQ(0, auditcmp_client_open(&client));
+		auditcmp_client_close(client);
+	}
+	for (int fd = 0; fd < 1024; fd++)
+		after_count += fcntl(fd, F_GETFD) != -1;
+	ATF_CHECK_EQ(before_count, after_count);
+	after = open("/dev/null", O_RDONLY | O_CLOEXEC);
+	ATF_REQUIRE(after >= 0);
+	ATF_CHECK_EQ(before, after);
+	ATF_REQUIRE_EQ(0, close(after));
+}
+
 ATF_TP_ADD_TCS(tp)
 {
+	ATF_TP_ADD_TC(tp, no_constructor_descriptor_leak);
 	ATF_TP_ADD_TC(tp, independent_open_close_reopen);
 	ATF_TP_ADD_TC(tp, concurrent_independent_sessions);
 	ATF_TP_ADD_TC(tp, concurrent_calls_on_one_session);

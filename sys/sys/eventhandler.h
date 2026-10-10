@@ -243,6 +243,8 @@ EVENTHANDLER_DECLARE(process_dtor, proc_dtor_fn);
 EVENTHANDLER_DECLARE(process_init, proc_init_fn);
 EVENTHANDLER_DECLARE(process_fini, proc_fini_fn);
 EVENTHANDLER_DECLARE(process_exit, exitlist_fn);
+/* After file-table release and vmspace_exit; no proc/proctree locks held. */
+EVENTHANDLER_DECLARE(process_exit_resources, exitlist_fn);
 EVENTHANDLER_DECLARE(process_fork, forklist_fn);
 EVENTHANDLER_DECLARE(process_exec, execlist_fn);
 /* Explicit trace attach/detach: proc and proctree locks held; must not sleep. */

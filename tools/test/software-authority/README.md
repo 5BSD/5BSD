@@ -59,3 +59,89 @@ This kernel-only result does not qualify login, SSH, services, boot environments
 or installer media. Those require the integrated guest and BSDInstall tests
 above. Using existing build inputs validates the harness; only fresh inputs
 can provide clean-build evidence.
+
+## BSDInstall target acceptance
+
+`run-installed.py` runs the integrated guest suite in QEMU's temporary snapshot
+of a BSDInstall-created target. It requires an installation directory containing
+`installed.img`, successful `install-result.json` and `installed-boot/result.json`
+evidence, and a fixture directory containing `fixtures.tar` and `fixtures.json`.
+The fixture manifest binds the archive to its prerequisite VM result and the
+installed kernel identity. These inputs are produced by the installer and
+fixture preparation stages; this runner does not create or replace those stages.
+
+```sh
+python3.12 tools/test/software-authority/run-installed.py \
+    --installation /usr/obj/qualification/installation \
+    --fixtures /usr/obj/qualification/fixtures \
+    --work /tmp/5bsd-installed-acceptance
+```
+
+Use `--qemu`, `--qemu-data`, `--cpus`, and `--timeout` to select the emulator,
+firmware, guest CPU count, and run deadline. Keep the output path short enough
+for local UNIX-domain serial and QMP sockets. The runner preserves the original
+disk, attaches the fixtures read-only, and installs test bundles only into the
+VM snapshot. It requires all 30 acceptance markers independently of the
+prerequisite result's marker list. `--require-marker` can add requirements.
+
+`qmp_shutdown.py` records lifecycle events without requesting shutdown. Passing
+requires a guest-originated shutdown, exit status zero, no forced termination,
+all suite markers, and no panic or lock-order reversal. Sequential and parallel
+control requests also run; their timings describe QEMU execution, not native
+hardware performance. Run with ordinary Python settings: `-O` is rejected
+because it disables evidence assertions.
+
+The installer and first-boot gates use the same emulator options:
+
+```sh
+python3.12 tools/test/software-authority/run-installer.py \
+    --iso /usr/obj/qualification/installer/software-installer-test.iso \
+    --work /usr/obj/qualification/installation
+python3.12 tools/test/software-authority/boot-installed.py \
+    --installation /usr/obj/qualification/installation \
+    --expected-kernel /usr/obj/qualification/root/boot/kernel/kernel
+```
+
+The installer runner accepts only private automated test media with a matching
+`media.json` hash and creates a new 32 GiB sparse disk. It runs without a network
+interface and never selects a host block device. Its result alone does not
+prove installed boot or service behavior. The first-boot runner uses a temporary
+disk snapshot, validates the installed kernel hash and package inventory, and
+checks control discovery and the DTrace module. The full suite follows it.
+`boot-installed.py --work` allows a separate diagnostic run without overwriting
+the prerequisite result used by the full suite.
+
+## Fresh integration input preparation
+
+The portable preparation tools use a frozen source checkout, its fresh object
+root, and the disposable `NO_ROOT` staging root. `prepare-root.py` requires a
+successful clean kernel VM result, verifies the source revision and clean tree,
+and records fixture-source hashes. It adds test accounts only under the build's
+`root` directory. `stage-vm.py` makes a separate seed image, preserving installed
+control programs and adding explicitly attributed test bundles.
+
+```sh
+python3.12 tools/test/software-authority/prepare-root.py \
+    --build "$build" --root "$build/root" --source "$build/src" --objtop "$objtop"
+python3.12 tools/test/software-authority/stage-vm.py \
+    --build "$build" --root "$build/root" --source "$build/src" --objtop "$objtop" \
+    --work "$build/integration" --retired-packages "$retired_packages"
+python3.12 tools/test/software-authority/run-seed.py --work "$build/integration"
+python3.12 tools/test/software-authority/run-vm.py --work "$build/integration"
+```
+
+`retired_packages` is an existing pkgbase generation containing the four old
+BSDAuth packages, used solely to verify removal in an inactive guest boot
+environment. It is not a configured update repository. Both VM runners accept
+`--qemu`, `--qemu-data`, `--cpus`, and `--timeout`. Keep build compilation and
+acceptance VMs serialized to avoid contaminating timeout-sensitive tests with
+compiler load. Preserve failures before retrying.
+
+After integration passes, export only test additions with
+`prepare-installed-fixtures.py --vm "$build/integration" --out "$build/fixtures"`.
+Prepare private installation media with `prepare-installer.py`, supplying
+`--source`, `--build`, `--root`, `--qualified-vm`, `--release-root`, and `--out`.
+That tool checks production executable and documentation identities against
+the qualified staging root. Private automation media contains disposable test
+credentials and must never be published as a release image. Public media needs
+its own unmodified boot tests.

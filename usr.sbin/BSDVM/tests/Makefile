@@ -25,4 +25,14 @@ SRCS.provider_test=	provider_test.c bsdvm.c
 LIBADD.provider_test=	service channel pthread
 NO_SHARED.provider_test=	yes
 
+ATF_TESTS_C+= lifecycle_test
+SRCS.lifecycle_test= lifecycle_test.c
+LIBADD.lifecycle_test= service channel pthread
+NO_SHARED.lifecycle_test= yes
+
+ATF_TESTS_C+= serve_test
+SRCS.serve_test= serve_test.c
+LIBADD.serve_test= service channel pthread
+NO_SHARED.serve_test= yes
+
 .include <bsd.test.mk>

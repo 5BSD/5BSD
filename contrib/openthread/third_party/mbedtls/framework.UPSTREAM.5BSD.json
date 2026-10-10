@@ -1,0 +1,6 @@
+{
+  "path": "openthread/third_party/mbedtls/repo/framework",
+  "url": "https://codeload.github.com/Mbed-TLS/mbedtls-framework/tar.gz/457996474728cb8e968ed21953b72f74d2f536b2",
+  "archive_sha256": "c15bcc24fc43bdf325b0e04fa63270daf6e9488167b94b46547d8134efa9c906",
+  "commit": "457996474728cb8e968ed21953b72f74d2f536b2"
+}

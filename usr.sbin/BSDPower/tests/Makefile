@@ -25,4 +25,22 @@ NO_SHARED.provider_test=	yes
 
 .PATH:	${SRCTOP}/usr.sbin/BSDPower
 
+ATF_TESTS_C+= lease_test
+SRCS.lease_test= lease_test.c config.c
+CFLAGS.lease_test+= -I${SRCTOP}/lib/libpowercmp -I${SRCTOP}/lib/libservice
+CFLAGS.lease_test+= -I${SRCTOP}/lib/libchannel -I${SRCTOP}/sys -Wno-unused-function
+LIBADD.lease_test= powercmp channel service ucl
+NO_SHARED.lease_test= yes
+
+
+ATF_TESTS_C+= reactor_test
+SRCS.reactor_test= reactor_test.c reactor_impl.c config.c
+CFLAGS.reactor_test+= -DBSDPOWER_TESTING -I${SRCTOP}/lib/libpowercmp
+CFLAGS.reactor_test+= -I${SRCTOP}/lib/libchannel -I${SRCTOP}/lib/libservice -I${SRCTOP}/sys
+LIBADD.reactor_test= powercmp channel service ucl
+NO_SHARED.reactor_test= yes
+LDFLAGS.reactor_test+= -Wl,--wrap=service_listener_fd \
+    -Wl,--wrap=service_listener_accept -Wl,--wrap=service_provider_quiescing \
+    -Wl,--wrap=service_provider_quiesce_complete
+
 .include <bsd.test.mk>

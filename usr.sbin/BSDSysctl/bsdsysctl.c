@@ -7,51 +7,51 @@
  * system.Sysctl channel and asks the broker to read (and, policy permitting,
  * write) kernel sysctl variables by name, instead of calling sysctl(3) itself
  * or forking a Casper cap_sysctl helper.  __sysctlbyname(2) is capability-mode
- * enabled, so each client is served INLINE in the single token-holding process
+ * enabled, so client channels are multiplexed in the single token-holding process
  * (the gate token is close-on-fork, so a pdfork worker could not inherit it),
  * performing the sysctl directly after a per-label policy check; no Casper is
  * involved.
  */
 
-#include <sys/capsicum.h>
 #include <sys/param.h>
+#include <sys/capsicum.h>
+#include <sys/event.h>
 #include <sys/procdesc.h>
 #include <sys/socket.h>
 #include <sys/sysctl.h>
 
+#include <net/route.h>
+
+#include <channel.h>
 #include <errno.h>
-#include <signal.h>
 #include <fcntl.h>
+#include <libservice.h>
 #include <limits.h>
+#include <service_runtime.h>
+#include <signal.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sysctlcmp.h>
+#include <sysctlcmp_server.h>
 #include <syslog.h>
 #include <time.h>
 #include <unistd.h>
 
-#include <channel.h>
-#include <libservice.h>
-#include <sysctlcmp.h>
-#include <sysctlcmp_server.h>
-
-#include "config.h"
 #include "bsdsysctl_probes.h"
+#include "config.h"
+#include "interfaces.h"
 
 #ifndef SYSCTLCMP_TESTING
 /* Loaded once in main() before the provider sandboxes. */
 static struct sysctlcmp_config g_config;
 #endif
 
-/*
- * Per-session idle deadline.  Because clients are served inline and
- * sequentially in the single token-holding process, a client that connects and
- * never sends a complete request must not pin serve_session forever and wedge
- * the accept loop for everyone else.  Drop a session idle this long; the client
- * reconnects for its next call.
- */
-#define	BSDSYSCTL_SESSION_IDLE_SEC	30
+/* Bound idle sessions and total channel/memory use in the token holder. */
+#define BSDSYSCTL_SESSION_IDLE_MS 30000U
+#define BSDSYSCTL_MAX_SESSIONS 128
+#define BSDSYSCTL_MAX_LABEL_SESSIONS 16
 
 /*
  * The held "system" gate token covering SYS_GATE_SYSCTL, dup'd in main() before
@@ -86,8 +86,22 @@ gate_sysctl(const char *name, void *oldp, size_t *oldlenp, const void *newp,
 	return (sysctlbyname(name, oldp, oldlenp, newp, newlen));
 }
 
+static int
+read_interfaces(void *context __unused, void *data, size_t *length)
+{
+	int mib[] = { CTL_NET, PF_ROUTE, 0, 0, NET_RT_IFLISTL, 0 };
+
+	if (g_sysctl_token >= 0)
+		return (service_system_sysctl(g_sysctl_token, mib, nitems(mib),
+		    data, length, NULL, 0));
+	return (sysctl(mib, nitems(mib), data, length, NULL, 0));
+}
+
 struct session {
-	const char			*label;
+	char				*label;
+	struct channel			*channel;
+	uint64_t			 last_request_ms;
+	bool				 activity;
 	const struct sysctlcmp_config	*config;
 	int				 error;
 };
@@ -364,7 +378,27 @@ handle_request(struct channel *channel __unused,
 		session->error = status;
 		goto out;
 	}
+	session->activity = true;
 	switch (request->opcode) {
+	case SYSCTLCMP_OP_INTERFACES: {
+		struct sysctlcmp_interface entries[SYSCTLCMP_MAX_INTERFACES];
+		size_t count;
+
+		if (!sysctlcmp_config_permits(session->config, session->label,
+		    SYSCTLCMP_INTERFACES_POLICY, false)) {
+			status = EPERM;
+			result = send_status(message, request, -status);
+			break;
+		}
+		if (sysctlcmp_interfaces_collect(read_interfaces, NULL, entries, &count) == -1) {
+			status = errno;
+			result = send_status(message, request, -status);
+		} else {
+			bytes = count * sizeof(*entries);
+			result = send_value(message, request, entries, bytes);
+		}
+		break;
+	}
 	case SYSCTLCMP_OP_GET:
 		body = (const void *)(request + 1);
 		name = (const char *)(body + 1);
@@ -488,91 +522,171 @@ out:
 }
 
 static int
-serve_session(int fd, const char *label, const struct sysctlcmp_config *config)
+monotonic_ms(uint64_t *result)
+{
+	struct timespec now;
+
+	if (clock_gettime(CLOCK_MONOTONIC, &now) == -1)
+		return (-1);
+	*result = (uint64_t)now.tv_sec * 1000 + now.tv_nsec / 1000000;
+	return (0);
+}
+
+static void
+session_close(struct session *session)
+{
+	if (session->channel != NULL)
+		channel_destroy(session->channel);
+	free(session->label);
+	memset(session, 0, sizeof(*session));
+}
+
+/* Consumes fd, including on failure. Slots stay at stable addresses. */
+static int
+session_open(struct session *session, int fd, const char *label,
+    const struct sysctlcmp_config *config)
 {
 	struct channel_options options =
 	    CHANNEL_OPTIONS_INITIALIZER(CHANNEL_ROLE_PROVIDER);
-	struct channel *channel;
-	struct session session;
-	struct timespec now, last;
-	int ready, wants_write;
+	int error;
 
-	if (fd < 0 || label == NULL || label[0] == '\0' || config == NULL)
-		return (errno = EINVAL, -1);
-	memset(&session, 0, sizeof(session));
-	session.label = label;
-	session.config = config;
-	if (clock_gettime(CLOCK_MONOTONIC, &now) == -1) {
-		(void)close(fd);
-		return (1);
+	memset(session, 0, sizeof(*session));
+	session->label = strdup(label);
+	session->config = config;
+	if (session->label == NULL ||
+	    monotonic_ms(&session->last_request_ms) == -1 ||
+	    channel_create(fd, &options, &session->channel) == -1) {
+		error = errno;
+		close(fd);
+		session_close(session);
+		return (errno = error, -1);
 	}
-	/*
-	 * channel_create() consumes (closes) fd on success, leaves it on failure.
-	 * Close it here on failure and never after return -- the caller must not
-	 * close it again (a double-close that, once any fd is allocated between the
-	 * two closes, would tear down an unrelated live descriptor).
-	 */
-	if (channel_create(fd, &options, &channel) == -1) {
-		(void)close(fd);
-		return (1);
+	if (channel_set_request_handler(session->channel, handle_request,
+	    session) == -1) {
+		error = errno;
+		session_close(session);
+		return (errno = error, -1);
 	}
-	if (channel_set_request_handler(channel, handle_request,
-	    &session) == -1) {
-		channel_destroy(channel);
-		return (1);
-	}
-	/*
-	 * BSDSysctl holds a close-on-fork-locked gate token, so it serves each
-	 * client INLINE and sequentially in the single token-holding process
-	 * (no pdfork).  A client that connects and never sends a complete request
-	 * would otherwise pin this on an infinite channel_wait and wedge the accept
-	 * loop, denying service to every other client.  Bound the session by idle
-	 * time; the client reconnects for its next call.
-	 */
-	last = now;
-	for (;;) {
-		long elapsed_ms, remaining_ms;
+	return (0);
+}
 
-		wants_write = channel_wants_write(channel);
-		if (wants_write == -1)
-			break;
-		if (clock_gettime(CLOCK_MONOTONIC, &now) == -1)
-			break;
-		elapsed_ms = (now.tv_sec - last.tv_sec) * 1000 +
-		    (now.tv_nsec - last.tv_nsec) / 1000000;
-		remaining_ms = (long)BSDSYSCTL_SESSION_IDLE_SEC * 1000 -
-		    elapsed_ms;
-		if (remaining_ms <= 0)
-			break;			/* idle too long: drop the session */
-		ready = channel_wait(channel, wants_write,
-		    remaining_ms > INT_MAX ? INT_MAX : (int)remaining_ms);
-		if (ready < 0)
-			break;
-		if (ready == 0)
-			break;			/* idle deadline elapsed */
-		last = now;			/* activity: re-arm the deadline */
-		if ((ready & CHANNEL_WAIT_WRITE) != 0 &&
-		    channel_flush(channel) == -1)
-			break;
-		if ((ready & CHANNEL_WAIT_READ) != 0 &&
-		    channel_dispatch(channel) == -1)
-			break;
-		if (session.error != 0)
-			break;
+/* Admission consumes fd; one label cannot fill the entire session table. */
+static int
+sessions_admit(struct session *sessions, size_t count, int fd,
+    const char *label, const struct sysctlcmp_config *config)
+{
+	size_t i, free_slot, matching;
+
+	free_slot = count;
+	matching = 0;
+	for (i = 0; i < count; i++) {
+		if (sessions[i].channel == NULL) {
+			if (free_slot == count)
+				free_slot = i;
+		} else if (strcmp(sessions[i].label, label) == 0)
+			matching++;
 	}
-	channel_destroy(channel);
-	return (session.error == 0 ? 0 : 1);
+	if (free_slot == count || matching >= BSDSYSCTL_MAX_LABEL_SESSIONS) {
+		close(fd);
+		return (errno = ENOSPC, -1);
+	}
+	return (session_open(&sessions[free_slot], fd, label, config));
+}
+
+/* One bounded dispatch batch per ready session; no client owns the loop. */
+static int
+sessions_wait(int kq, struct session *sessions, size_t count, int listener_fd,
+    uint32_t idle_ms, int *failed)
+{
+	struct service_channel_slot slots[BSDSYSCTL_MAX_SESSIONS];
+	uint64_t now = service_monotime_ms(), wait_ms = INT_MAX;
+	size_t i;
+	bool active = false;
+	int ready;
+	for (i = 0; i < count; i++) {
+		if (sessions[i].channel != NULL) {
+			uint64_t elapsed = now - sessions[i].last_request_ms;
+			if (elapsed >= idle_ms)
+				session_close(&sessions[i]);
+			else {
+				active = true;
+				if (idle_ms - elapsed < wait_ms)
+					wait_ms = idle_ms - elapsed;
+			}
+		}
+		sessions[i].activity = false;
+		slots[i].channel = sessions[i].channel;
+	}
+	if (!active && listener_fd == -1)
+		return (0);
+	ready = service_channels_wait(kq, slots, count, listener_fd,
+	    active ? (int)wait_ms : -1);
+	if (ready == -1)
+		return (-1);
+	now = service_monotime_ms();
+	for (i = 0; i < count; i++) {
+		if (sessions[i].activity)
+			sessions[i].last_request_ms = now;
+		if (slots[i].error != 0 || sessions[i].error != 0 ||
+		    (sessions[i].channel != NULL &&
+			now - sessions[i].last_request_ms >= idle_ms)) {
+			if (sessions[i].error != 0)
+				*failed = 1;
+			session_close(&sessions[i]);
+		}
+	}
+	return (ready);
 }
 
 #ifdef SYSCTLCMP_TESTING
 #include "bsdsysctl_test.h"
 
 int
+sysctlcmp_test_serve_many(const int *fds, const char *const *labels,
+    size_t count, const struct sysctlcmp_config *config, uint32_t idle_ms)
+{
+	struct session sessions[BSDSYSCTL_MAX_SESSIONS] = {0};
+	size_t i;
+	int kq, failed = 0;
+	bool active;
+
+	if (count == 0 || count > BSDSYSCTL_MAX_SESSIONS || fds == NULL ||
+	    labels == NULL || config == NULL || idle_ms == 0 || idle_ms > INT_MAX)
+		return (errno = EINVAL, -1);
+	for (i = 0; i < count; i++)
+		if (fds[i] < 0 || labels[i] == NULL || labels[i][0] == '\0')
+			return (errno = EINVAL, -1);
+	kq = kqueue();
+	if (kq == -1) {
+		for (i = 0; i < count; i++)
+			close(fds[i]);
+		return (1);
+	}
+	for (i = 0; i < count; i++) {
+		if (sessions_admit(sessions, count, fds[i], labels[i], config) == -1)
+			failed = 1;
+	}
+	do {
+		if (sessions_wait(kq, sessions, count, -1, idle_ms, &failed) == -1) {
+			failed = 1;
+			break;
+		}
+		active = false;
+		for (i = 0; i < count; i++)
+			active |= sessions[i].channel != NULL;
+	} while (active);
+	for (i = 0; i < count; i++)
+		session_close(&sessions[i]);
+	close(kq);
+	return (failed);
+}
+
+int
 sysctlcmp_test_serve(int fd, const char *label,
     const struct sysctlcmp_config *config)
 {
-
-	return (serve_session(fd, label, config));
+	return (sysctlcmp_test_serve_many(&fd, &label, 1, config,
+	    BSDSYSCTL_SESSION_IDLE_MS));
 }
 #else
 
@@ -582,7 +696,9 @@ main(void)
 	struct service_identity identity;
 	struct service_listener *listener;
 	struct service_provider *provider;
-	int error, fd, cfgfd;
+	struct session sessions[BSDSYSCTL_MAX_SESSIONS] = {0};
+	size_t i;
+	int error, fd, cfgfd, ready, failed = 0, kq = -1;
 
 	openlog("bsdsysctl", LOG_PID | LOG_NDELAY, LOG_DAEMON);
 	/*
@@ -611,7 +727,7 @@ main(void)
 	 * go THROUGH a held SYS_GATE_SYSCTL token (gate_sysctl -> kernel_sysctl
 	 * with SCTL_GATED); introspection (name2oid/oidfmt/descr/next) uses the
 	 * CAPRD magic sysctls directly.  The token is delivered close-on-fork, so
-	 * only the holder can use it: serve each client INLINE (no per-client
+	 * only the holder can use it: multiplex channels here (no per-client
 	 * pdfork worker, which could not inherit the token).  Dup the token
 	 * before entering capmode; fail-soft if none was delivered.
 	 */
@@ -620,10 +736,19 @@ main(void)
 		    "capmode-confined nodes will fail: %m");
 		g_sysctl_token = -1;
 	}
+	kq = kqueue();
+	if (kq == -1)
+		goto fail;
 	if (service_provider_enter_capability_mode(provider) == -1 ||
 	    service_provider_ready(provider) == -1)
 		goto fail;
 	for (;;) {
+		ready = sessions_wait(kq, sessions, nitems(sessions),
+		    service_listener_fd(listener), BSDSYSCTL_SESSION_IDLE_MS, &failed);
+		if (ready == -1)
+			goto fail;
+		if (ready == 0)
+			continue;
 		memset(&identity, 0, sizeof(identity));
 		identity.size = sizeof(identity);
 		if (service_listener_accept(listener, &identity, &fd) == -1) {
@@ -631,8 +756,11 @@ main(void)
 			if (service_provider_quiescing(provider) == 1) {
 				int status;
 
+				for (i = 0; i < nitems(sessions); i++)
+					session_close(&sessions[i]);
 				status = service_provider_quiesce_complete(
 				    provider, 0);
+				close(kq);
 				closelog();
 				return (status == 0 ? 0 : 1);
 			}
@@ -641,17 +769,15 @@ main(void)
 				continue;
 			goto fail;
 		}
-		/*
-		 * Serve inline: the CLOFORK token cannot cross a fork, so the
-		 * holder itself handles the session.  A per-label policy check
-		 * in handle_request remains the access boundary.
-		 */
-		/* serve_session owns fd (channel_create consumes it, or closes it on
-		 * failure) -- do not close it again here. */
-		(void)serve_session(fd, identity.client_label, &g_config);
+		(void)sessions_admit(sessions, nitems(sessions), fd,
+		    identity.client_label, &g_config);
 	}
 fail:
 	syslog(LOG_ERR, "initialization or service loop: %m");
+	if (kq != -1)
+		close(kq);
+	for (i = 0; i < nitems(sessions); i++)
+		session_close(&sessions[i]);
 	return (1);
 }
 #endif /* !SYSCTLCMP_TESTING */

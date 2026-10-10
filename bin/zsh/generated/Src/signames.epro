@@ -1,0 +1,8 @@
+/* Generated automatically */
+#ifndef have_Src_signames_globals
+#define have_Src_signames_globals
+
+extern mod_import_variable char*sig_msg[SIGCOUNT+2];
+extern char*sigs[SIGCOUNT+4];
+
+#endif /* !have_Src_signames_globals */

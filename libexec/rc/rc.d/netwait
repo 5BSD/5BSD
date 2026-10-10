@@ -1,7 +1,7 @@
 #!/bin/sh
 #
 # PROVIDE: netwait
-# REQUIRE: devd ipfw pf routing
+# REQUIRE: devd pf routing
 #
 # The netwait script helps handle three situations:
 #  - Systems with USB or other late-attaching network hardware which

@@ -34,9 +34,6 @@ extern int nat_RedirectAddr(struct cmdargs const *);
 extern int nat_RedirectProto(struct cmdargs const *);
 extern int nat_ProxyRule(struct cmdargs const *);
 extern int nat_SetTarget(struct cmdargs const *);
-#ifndef NO_FW_PUNCH
-extern int nat_PunchFW(struct cmdargs const *);
-#endif
 extern int nat_SkinnyPort(struct cmdargs const *);
 
 extern struct layer natlayer;

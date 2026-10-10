@@ -223,6 +223,12 @@ if pkgprefix ~= nil and obj["deps"] ~= nil then
 	newdeps = {}
 	for dep, opts in pairs(obj["deps"]) do
 		local newdep = pkgprefix .. "-" .. dep
+		-- Explicit ports origins keep their package names.  Host SDKs may
+		-- depend on ports without inventing matching base packages.
+		if opts["origin"] ~= nil and
+		    not opts["origin"]:match("^base/") then
+			newdep = dep
+		end
 		-- Make sure origin is set.
 		opts["origin"] = opts["origin"] or "base/"..newdep
 		newdeps[newdep] = opts

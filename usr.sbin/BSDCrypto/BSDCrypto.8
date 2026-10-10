@@ -183,14 +183,23 @@ The result argument is zero on success or an
 .Xr errno 2
 value on failure.
 Key material and key names are never probe arguments.
+.Sh LIFECYCLE
+Live client workers decline idle shutdown.
+Explicit stop and controlled failure exits terminate and reap tracked client
+workers and the key-reclaim child before successful shutdown acknowledgement.
+Startup failures retain their diagnostic exit codes while releasing resources.
+Already delivered key descriptors retain their kernel-defined lifetime and
+rights; stopping a worker does not revoke them.
+Abrupt parent crashes and uncatchable signals require separate supervisor
+recovery and are not covered by controlled-exit cleanup.
 .Sh SEE ALSO
 .Xr cap_enter 2 ,
 .Xr pdfork 2 ,
 .Xr explicit_bzero 3 ,
 .Xr crypto 4 ,
 .Xr mac_capability 4 ,
-.Xr switchboard 8 ,
-.Xr bsdextension 8
+.Xr bsdextension 8 ,
+.Xr switchboard 8
 .Sh HISTORY
 The
 .Nm

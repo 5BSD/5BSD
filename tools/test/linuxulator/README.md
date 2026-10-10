@@ -104,6 +104,19 @@ the gate. Keep the full console logs for review of other warnings as well.
 
 ## Running
 
+For amd64 artifact-qualified runs, pass `qemu-gate.py --amd64-manifest FILE`
+with a JSON map of absolute guest paths to SHA256 digests. Before executing
+the gate, the guest driver must print `GATE_ARTIFACTS_BEGIN`, exactly one
+`sha256` result for each manifest entry, then `GATE_ARTIFACTS_END`. The host
+rejects missing, duplicate, unexpected or mismatched entries and preserves
+its manifest in the output directory. Existing per-test hash logging can
+remain outside this bounded section. A listed artifact is not evidence that
+every test in that artifact executed; the case matrix is checked separately.
+Amd64 acceptance also requires buffers synced and ACPI poweroff with QEMU
+exit zero. Run `python3 -B tools/test/linuxulator/test-gate-contract.py` to
+check the manifest parser and unshare guest/verifier/ATF case-list agreement.
+
+
 ```sh
 python3 tools/test/linuxulator/qemu-gate.py \
     --amd64-image /tmp/gate/amd64.img \
@@ -363,15 +376,20 @@ a swap-backed `mdconfig` device. The runner requires six successful results
 across ZFS and tmpfs; see
 [the swap discard contract](../../../docs/book/src/compat/linux/syscalls.md).
 
-## unshare path-state subset
+## unshare path and descriptor state subset
 
 On amd64 build `tests/sys/kern/linux_unshare.c` with the freestanding Linux
 flags above and `-DUNSHARE_BSD_SUBSET`, brand it Linux, and stage it as
 `/root/linux_unshare` with a `METALOG.minimal` entry. The full gate requires
-66 executions: eleven supported-contract/rejection cases, three rounds each on
-ZFS and tmpfs. Build without that define for the complete Linux reference
-matrix. Some reference cases describe future functionality and intentionally
-cannot pass on BSD yet. See [the contract](../../../docs/book/src/compat/linux/syscalls.md).
+102 executions: seventeen supported-contract/rejection cases, three rounds each
+on ZFS and tmpfs. Build without that define for the complete Linux reference
+matrix. The POSIX-lock ownership and per-thread detachment reference cases
+describe functionality outside this subset. The BSD-only epoll case verifies
+that a table containing epoll is rejected before descriptor loss. The two
+exec cases are adapted from Starnix's
+[clone/exec tests](https://fuchsia.googlesource.com/fuchsia/+/8a938a3224e768f6254ee12d240b6492361ebccf/src/starnix/tests/syscalls/cpp/task_test.cc): exec detaches `CLONE_FILES`
+while retaining `CLONE_FS` sharing. See
+[the contract](../../../docs/book/src/compat/linux/syscalls.md).
 
 Also build `linux_unshare_capmode.c` as static native `unshare_capmode`, and
 with the Linux freestanding flags plus `-DLINUX_PROBE` as
@@ -379,6 +397,20 @@ with the Linux freestanding flags plus `-DLINUX_PROBE` as
 add both to `METALOG.minimal`. The gate runs the native tracer three times
 to verify capability-mode rejection without requiring the Linux tracee to
 make further syscalls after entering capability mode.
+
+## Starnix-derived Linux reference probe
+
+`tests/sys/kern/linux_io_uring_reference.c` is a freestanding amd64 probe for
+`io_uring_setup` flag combinations, invalid setup parameters and a sequential
+READV/WRITEV round trip. Build it with the Linux flags above and run its three
+cases on a permissive Linux 6.1+ guest. It is packaged as test source but is
+not in the 5BSD gate while syscall numbers 425–427 return `ENOSYS`.
+`tests/sys/kern/linux_procfs.c` also includes Starnix's cmdline offset and
+past-EOF seek cases; its existing ATF wrapper runs them on 5BSD.
+The existing `linux_break_epoll_test.sh` wrapper now runs Starnix-derived
+`MOD` data, alias, poll-readiness and invalid wait-buffer checks. The installed
+kernel exposes the bad-buffer regression; the rebuilt `linux64` module and
+kernel need the disposable guest for a passing result.
 
 ## amd64 quota subset
 
@@ -667,6 +699,119 @@ See [the four-batch implementation and qualification record](../../../docs/book/
 
 ## Linux64 UNIX socket diagnostics
 
+### Additional Starnix regression cases
+
+Run `linux_evdev_starnix_test.sh` in a disposable guest as root with uinput
+and linux64 available. Its native fixture creates and destroys one synthetic
+device; it does not use a physical input device. `zero_length` and `copy_bounds`
+check name, physical and unique strings, including zero-length NULL buffers,
+short prefixes, terminators and untouched trailing canaries. Both source
+probes compile; runtime validation is pending.
+
+Run both cases of `linux_terminal_starnix_test.sh`: `flush_input` and
+`packet_mode`. They cover TCSETSF queued-input discard and packet-header/data
+reads, slave-side rejection, and disabling packet mode. They pass on the
+installed host; repeat in the guest with matching modules.
+
+Run the native `tests/sys/fs/fusefs/bad_server` program with
+`--gtest_filter='Starnix/BadHeaderLength.*'` in the disposable guest, followed
+by its existing cases. The three new cases test inconsistent header lengths
+and native session termination. This differs from Starnix's retryable overlong
+response test; do not report identical recovery semantics. Build and test
+registration checks pass; mounted runtime execution remains pending.
+
+The same `bad_server` binary now has six `ErrnoBounds/BadReplyErrno.*` cases.
+They test INT32_MIN, -4096 and positive reply errors in native and Linux errno
+modes. The kernel validates bounds before negation. Invalid negative Linux
+errors leave the request outstanding for a corrected response; native invalid
+errors complete the caller with EIO, retaining the existing policy. Run the
+notification regression in `notify` too: positive asynchronous notification
+opcodes must bypass errno translation.
+
+### Binder reference qualification
+
+`tests/sys/kern/linux_binder_reference.c` builds with the same freestanding
+amd64 flags as `linux_io_uring_reference.c`. Invoke `probe DEVICE CASE` on a
+dedicated test device in a disposable Linux binderfs mount. Cases: `version`,
+`invalid_command`, `valid_then_invalid`, `already_consumed`, `mmap_write`,
+`mprotect_write`, `inherited_mmap`, `inherited_ioctl`. The probe does not claim
+the Binder context manager. It fails if the device is missing; no skip is
+counted as support. These compile-only reference tests are not in the 5BSD
+acceptance gate yet. Linux execution, transaction/fd-transfer/death-notification
+tests and a native backend remain required.
+
+Binder fd lifecycle differs from BSDChannel: the inherited-fd ioctl is allowed,
+while a child mapping is rejected and the opener may still map it. A future
+transport adapter must preserve this distinction rather than exposing a native
+channel fd directly as the Binder device.
+
+Run `linux_inotify_starnix_test.sh` from `tests/sys/kern` on both ZFS and
+tmpfs in the disposable guest. It covers ignored/self event selection,
+child/parent ordering, open-directory lifetime and both hard-link removal
+orders. The suite now has eight cases, including a held-directory parent event
+and cwd lifetime. The Linux reference guest passes all eight. A native fix queues
+Linux terminal events before the parent notification only when the namespace
+operation has the last directory reference. `child_before_parent` is now an
+ordinary required pass, not an expected failure. The matching VM must also pass
+the existing native/Linux `linux_inotify_lifetime` matrices on ZFS and tmpfs.
+
+For Linux64 mapping ownership, `guest-mapping-lifetime.sh` runs 18 mapping
+and 11 inotify lifetime cases as root and unprivileged, five rounds on each
+filesystem (580 probe executions), followed by 18 native inotify cases.
+Stage the branded `mapping-linux` and `lifetime-linux` binaries, native
+`inotify_test`, its `inotify-cases` list with cleanup metadata, and the guest
+script under `/root`. `/root/mapping-artifacts` lists absolute guest paths
+to hash, including the kernel, Linux modules, probes and runner. Supply a JSON
+object mapping these guest paths to expected SHA256 values to the host runner:
+
+```sh
+python3.12 -B tools/test/linuxulator/qemu-mapping-lifetime.py \
+    --image /usr/obj/qualified-build/guest.img \
+    --manifest /usr/obj/qualified-build/mapping-manifest.json \
+    --output /usr/obj/qualified-build/mapping-results
+```
+
+The output directory must be new. Optional `--qemu` and `--firmware-dir`
+select installed QEMU paths; library environment overrides are inherited.
+The guest has no network. Acceptance requires exact cases and hashes,
+watch-count recovery, both filesystem mounts and healthy, clean shutdown.
+Native private mappings and Linux64 mappings use different file-reference
+lifetime paths; native-only results do not qualify Linux mapping semantics.
+
+The companion parent-path gate uses `guest-inotify-parent.sh` and
+`qemu-inotify-parent.py` with the same host options and JSON hash format.
+Stage `/root/parent-linux`, the guest script, and `/root/parent-artifacts`
+(absolute paths to the kernel, required modules, probe and script).
+Its 21 cases run as root/unprivileged on ZFS, tmpfs and nullfs, for 126
+executions. Acceptance also requires path/watch counts to return to zero.
+
+For Linux-on-FUSE NOREPLACE coverage, `build-fuse-protocol.sh` also builds
+the branded freestanding `linux-fuse-rename` helper. The six NOREPLACE cases
+in native `rename` use the Linux syscall when `FUSE_LINUX_RENAME_PROBE`
+names that helper by absolute path. Without it they use native `renameat2`.
+`guest-fuse-linux-rename.sh` runs the full native rename suite, then those
+six Linux-entry cases. Stage the helper at `/root/linux-fuse-rename` and
+the native binary at `/root/fuse-tests/rename`. Its FUSE-protocol manifest
+uses program aliases `rename_native` and `rename_linux`, and adds all three
+artifact hashes `linux64`, `linux_common`, `linux_rename_probe` to the
+required kernel/FUSE hashes. Each alias has the exact cases it executes.
+
+Run `linux_sockopt_test.sh:sockopt` explicitly; the main guest gate does not
+automatically execute this wrapper. Its Starnix-derived truncation checks cover
+TCP_NODELAY, TCP/UDP/UNIX SO_REUSEADDR and both OLD/NEW receive/send timeouts.
+The installed host fails at legacy SO_RCVTIMEO (exit 214); the new image must
+pass with short buffers untouched beyond the returned length. The legacy
+timeout copyout fix builds but still requires this guest run.
+
+Also run `linux_sockopt_test.sh:translated_truncation`. This independent case
+extends the same capacity/prefix/canary checks to SO_ERROR, SO_DOMAIN,
+SO_LINGER and TCP_USER_TIMEOUT. Its exit status is a failure bitmask (1, 2,
+4, 8 respectively); the installed kernel returns 15. All four translation
+paths now use the truncating copyout helper and must return zero in the guest.
+The standalone build uses the same flags with `-DSOCKOPT_TRANSLATED_ONLY=1`.
+
+### UNIX diagnostics fixture
+
 Build `linux_unix_diag` with `build-unix-diag.sh <musl-sysroot> <output>` and brand
 the FreeBSD guest copy as Linux. Stage it with native-exec, jail/jexec, the Linux64
 modules, and `guest-unix-diag.sh`. Run `qemu-unix-diag.py --image <image> --output
@@ -705,3 +850,155 @@ and unloads/reloads the compatibility modules. This batch supplies actual networ
 device events. PCI/DRM hotplug, user-injected events, and the userspace libudev
 relay are separate contracts. See
 [the qualification record](../../../docs/book/src/compat/linux/overview.md).
+
+### Pre-Binder option follow-up
+
+Run `linux_socket_buffers_test` (`doubled`, `limits`, `rejected`) unprivileged
+in the matching guest. It covers both buffer directions on INET/UNIX stream
+and datagram sockets. Limits are native: doubling changes the real reservation,
+clamps to the native hard ceiling and uses native mbuf minima. Per-user socket
+quotas still apply. FORCE setters remain denied while Linux capabilities are
+unimplemented, and FORCE getters are set-only errors. The limit tests assume
+the disposable guest permits one socket's send/receive reservations up to the
+configured native ceiling; record quota-related failures rather than skipping.
+
+Run `linux_uinput_starnix_test:abs_setup` as well as validation/lifecycle. It
+checks omitted fields, invalid sizes/axes/ranges/MT slots and reads the configured
+axis back through the native event node. It creates its own synthetic device
+and sends no events. A passing compile is not device runtime acceptance.
+
+### Native FUSE protocol qualification with current test manifests
+
+`qemu-fuse-protocol.py` now takes explicit executable/firmware paths and checks
+an exact build manifest. Historical home-directory paths and a fixed 843-case
+count are no longer used. Build the native fixtures from `/usr/src`, using all
+logical CPUs, then generate a manifest from the binaries that will be staged:
+
+```sh
+make -C /usr/src/tests/sys/fs/fusefs -j"$(sysctl -n hw.ncpu)" all
+mkdir -p /usr/obj/5BSD-starnix-fuse
+python3.12 -B /usr/src/tools/test/linuxulator/fuse-protocol-manifest.py \
+  --tests /usr/obj/usr/src/amd64.amd64/tests/sys/fs/fusefs \
+  --kernel /usr/obj/usr/src/amd64.amd64/sys/GENERIC/kernel \
+  --fusefs-module /usr/obj/usr/src/amd64.amd64/sys/GENERIC/modules/usr/src/sys/modules/fusefs/fusefs.ko \
+  --output /usr/obj/5BSD-starnix-fuse/manifest.json
+```
+
+The manifest generator refuses to overwrite existing evidence. Use a new output
+name for a later build. It enumerates the current Makefile's GTest programs,
+records active and disabled case names, and hashes the kernel, FUSE module and
+each test executable. It only runs `--gtest_list_tests` on the host. The current
+review build has 48 programs and 885 active cases; future runs use their own
+manifest, not that count as a constant.
+
+In a disposable guest image with ZFS pool `linuxgate`, stage the **matching full
+kernel/module set** under `/boot/kernel`, fixtures under `/root/fuse-tests`, the
+native privilege-drop helper as `/root/native-exec`, the generated
+`manifest.programs` as `/root/fuse-protocol.programs`, and the updated
+`guest-fuse-protocol.sh` as the guest job. Keep the kernel/config/source identity
+and source-patch records described above. Rebuilding a binary after manifest
+generation requires regenerating the manifest and restaging it.
+
+Run the host runner with the chosen QEMU binary, firmware directory, staged
+image and unused evidence directory:
+
+```sh
+python3.12 -B /usr/src/tools/test/linuxulator/qemu-fuse-protocol.py \
+  --qemu /path/to/qemu-system-x86_64 --firmware-dir /path/to/qemu-firmware \
+  --image /usr/obj/5BSD-starnix-fuse/guest.img \
+  --manifest /usr/obj/5BSD-starnix-fuse/manifest.json \
+  --output /usr/obj/5BSD-starnix-fuse/run-1
+```
+
+The runner uses a snapshot with networking disabled and inherits the caller's
+library environment. It verifies every active case exactly once within the
+correct program, artifact hashes reported inside the guest, all program exits,
+clean guest completion/shutdown and ZFS status, and absence of failures, skips
+or kernel diagnostics. Upstream disabled cases remain explicitly listed in the
+manifest. This is the native **GTest protocol** gate; the `ctl` ATF test and
+Linuxulator/device/inotify matrices remain separate required gates.
+
+Host-only verifier tests (no guest, mount or device activity):
+
+```sh
+python3.12 -B /usr/src/tools/test/linuxulator/test-fuse-protocol-gate.py
+```
+
+### Pre-Binder Linuxulator ATF checks
+
+`guest-starnix-prebinder-atf.sh` is a disposable-VM boot job for the procfs,
+socket-buffer/socket-option, terminal, evdev/uinput and inotify wrappers.
+Stage the eleven corresponding `*_test` programs with their C sources and
+`linux_test.h` in `/usr/tests/starnix-prebinder`, and supply a Kyuafile naming
+those programs. The current selection contains 49 cases. In addition to the
+original seven programs, include `linux_break_files_test`,
+`linux_break_epoll_test`, `linux_break_pidfd_test` and `linux_unshare_test`
+(with `linux_unshare_capmode.c`). The unshare wrapper registers the 17 native
+subset cases and a capability-mode guard; it preserves the backend limits
+recorded in the provenance register. The job runs them
+on both ZFS and tmpfs and emits verbose Kyua reports to the serial console.
+Use a ZFS-root image, matching kernel/modules, root privileges, and no host
+devices. This does not replace the broader Linuxulator gate.
+
+The guest needs clang, ld.lld, a native C compiler, Kyua, atf-sh and atf-check,
+their shared libraries, `/usr/share/kyua` (including database schemas), and
+`/usr/share/atf/libatf-sh.subr`. Supply resolved build headers: symlinks from
+the object-tree sysroot can point outside a copied guest root. The native
+evdev fixture compiles inside the guest; include the compiler runtime and
+nonshared libc link archives (`libgcc.a` and `libc_nonshared.a`) as well as
+the shared libraries. The Linux probes are explicitly branded with brandelf,
+so the VM does not need a fallback ELF brand setting. Module setup accepts built-in
+modules as well as loaded `.ko` files.
+
+Retain case/source/artifact hashes and the full console. Require all selected
+cases on each filesystem, no unexpected skips or expected failures, matching
+artifact hashes, and clean shutdown without kernel diagnostics. QEMU exit
+zero alone does not indicate test success; inspect the `STARNIX_ATF_*`
+markers and verbose case results.
+
+For machine-checked acceptance, supply a JSON mapping of artifact paths to
+SHA256 digests (`manifest`) and a JSON mapping of program names to case-name
+lists (`cases`). Generate both from the exact staged inputs before boot, and
+retain the actual terminal QEMU exit status. Verify the completed console:
+
+```sh
+python3.12 -B /usr/src/tools/test/linuxulator/verify-starnix-atf.py \
+  --console /path/to/console.log --manifest /path/to/artifact-hashes.json \
+  --cases /path/to/expected-cases.json --qemu-exit 0 \
+  --output /path/to/new-results.json
+```
+
+Replace `0` with the observed process exit; a polling timeout is not a process
+exit. The verifier requires each expected case exactly once per filesystem,
+all passes, matching hashes, the expected TMPDIR and mounts, completion markers
+and clean shutdown without kernel diagnostics. Its output file must be new.
+
+### FUSE vnode replacement lifetime
+
+Stage `guest-fuse-vnode-lifetime.sh` as `/root/fuse-lifetime.sh` and select it
+as the boot job in an otherwise idle disposable VM with the same kernel,
+module, `lookup` GTest binary and `/root/native-exec` helper used above.
+It repeats `Lookup.vtype_conflict` 256 times after warming the fixture,
+checks all 256 successes and zero remaining FUSE nodes, and rejects growth
+of more than 16 native vnodes. The global counter requires an isolated guest;
+this threshold detects a reference leaked on each replacement and is not
+a proof that every vnode lifetime path is leak-free. Preserve console output
+and artifact hashes, require `FUSE_LIFETIME_PASS`, `FUSE_LIFETIME_EXIT 0`,
+healthy ZFS, clean shutdown and no kernel diagnostics. The unfixed path
+grew by 257 native vnodes while its FUSE node counter still returned zero.
+
+### FUSE forced-unmount stress
+
+Stage `guest-fuse-teardown-stress.sh` as `/root/fuse-teardown.sh` in the same
+isolated VM setup, with the updated `destroy` and `readdir` GTest binaries.
+It repeats `Destroy.forced_unmount_pending_lookup` and
+`ReaddirPlus.forced_unmount_pending_reply` 256 times each. Successful inode
+or directory replies are released concurrently with forced unmount; the tests
+check completion/cancellation and mount removal. The PLUS reply contains
+two entries exceeding remaining capacity after a long-name entry, exercising
+prefetch cleanup within the size requested by the kernel.
+Require exactly 256 successes for each named case (512 total), zero FUSE
+nodes and request tickets, native vnode growth at most 16, matching hashes,
+`FUSE_TEARDOWN_PASS`, exit zero, healthy ZFS and clean shutdown without kernel
+diagnostics. This samples thread scheduling; it does not prove every
+vnode-insertion failure branch was reached.

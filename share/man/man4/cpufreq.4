@@ -63,6 +63,25 @@ or by indicating to
 .Pa /etc/rc.d/power_profile
 that it should switch settings when the AC line state changes via
 .Xr rc.conf 5 .
+.Sh BROADCOM FIRMWARE TELEMETRY
+On supported Raspberry Pi platforms, the Broadcom driver exports
+.Va hw.cpufreq.arm_min_freq ,
+.Va hw.cpufreq.arm_max_freq ,
+.Va hw.cpufreq.core_min_freq ,
+.Va hw.cpufreq.core_max_freq ,
+.Va hw.cpufreq.sdram_min_freq ,
+and
+.Va hw.cpufreq.sdram_max_freq .
+These are read-only firmware clock limits in Hz.
+They reflect firmware configuration and do not establish rated boost clocks.
+The read-only
+.Va hw.cpufreq.throttled
+bitmap reports current undervoltage, frequency capping, throttling, and
+soft-temperature-limit conditions in bits 0 through 3, respectively.
+Bits 16 through 19 record the corresponding historical conditions.
+Reading the bitmap does not clear firmware history.
+Availability depends on the firmware and board driver; these interfaces do
+not imply Pi 5 support.
 .Sh SYSCTL VARIABLES
 These settings may be overridden by kernel drivers requesting alternate
 settings.

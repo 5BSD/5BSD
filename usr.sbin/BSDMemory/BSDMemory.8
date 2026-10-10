@@ -1,0 +1,95 @@
+.\" SPDX-License-Identifier: BSD-2-Clause
+.Dd October 10, 2026
+.Dt BSDMEMORY 8
+.Os
+.Sh NAME
+.Nm BSDMemory
+.Nd publish bounded memory-pressure state
+.Sh DESCRIPTION
+.Nm
+runs unprivileged in capability mode and samples three BSDSysctl counters:
+.Va vm.stats.vm.v_free_count ,
+.Va vm.stats.vm.v_free_min ,
+and
+.Va vm.stats.vm.v_free_target .
+Its explicit policy grants only these reads and no writes or kernel tokens.
+The counters are sampled separately and are not an atomic VM snapshot.
+.Pp
+The latest state is published through BSDNotify at
+.Va system.memory.pressure :
+0 normal, 1 warning, 2 critical, or 3 unknown.
+Free pages at or below the minimum threshold mean critical; pages at or
+below the target mean warning.
+Higher free-page counts mean normal.
+Escalation is immediate; recovery requires three consecutive lower-pressure
+samples.
+Read failures or inconsistent thresholds publish unknown and reset recovery.
+The last valid pressure restriction is retained internally; recovery after
+a failure still requires three consecutive lower-pressure samples.
+These are free-page watermarks, not a prediction of allocation failure or a
+complete accounting of reclaimable filesystem caches.
+.Pp
+Sampling occurs approximately once a second, subject to bounded source RPCs.
+Notification state is checked even when unchanged so router restart can be
+recovered.
+BSDNotify reserves this state topic for the authenticated label
+.Va system.Memory/bsdmemory ,
+including before the producer starts and after it disconnects.
+The producer's gated notification policy permits only this topic.
+No client payload can choose a publisher identity.
+.Pp
+Use
+.Dl notifyctl state-watch system.memory.pressure 10 5000
+to inspect changes.
+A missing state or an unknown value must not be interpreted as normal.
+A stopped producer loses ownership when its last session disconnects.
+.Sh READINESS
+The daemon reports ready only after capability authorization, process
+protection, capability-mode entry, event-queue creation and installation of
+the sampling timer have succeeded.
+A startup failure releases initialized resources and exits unsuccessfully.
+Readiness means the sampling loop is prepared; it does not certify that
+BSDSysctl or BSDNotify is currently available or that pressure is normal.
+Dependency failures continue through the recovery policy below.
+On an orderly stop, dependency clients and the event queue are closed before
+the daemon acknowledges quiescence.
+.Sh OOM PROTECTION
+The shipped manifest requests
+.Va oom_protect = true .
+Switchboard applies the kernel's
+.Dv P_PROTECTED
+OOM exclusion before allowing the program to execute.
+BSDNotify and BSDSysctl request the same exclusion because they are required
+by this notification path; Capsule protects the supervisor at bootstrap.
+Only bundles loaded from the trusted system registry may request this policy.
+Failure to apply it prevents launch.
+The daemon remains unprivileged and cannot grant this exemption to clients.
+The exemption survives exec and credential changes, is not inherited by
+forked children, and ends when the process exits.
+It excludes the process from the kernel OOM victim selector; it does not
+reserve RAM, prevent allocation failures, or override deliberate supervisor
+shutdown, fatal faults, resource-limit enforcement or kernel panic.
+Signal shields remain a separate protection.
+.Sh DEPENDENCY RECOVERY
+Sampling and pressure publication each use a 400 millisecond libservice RPC
+budget, including discovery and handshake waits.
+Failed dependencies retry
+with exponential delays from one to thirty seconds.
+Success resets the delay.
+Health transitions and cumulative failure counts are logged once per transition.
+Dependency failures retain the original operation error across client cleanup.
+A successful sample with an incorrect counter size is a protocol error;
+a failed read retains its own error even if it reports a different required
+size.
+An unchanged pressure level is republished if notification state is missing
+or no longer matches, and a newly opened notification client always publishes
+before treating the state as current.
+Missing samples retain the last valid pressure restriction.
+These budgets bound RPC waits, not arbitrary kernel stalls, allocation or
+mutex contention.
+The provider heartbeat uses a separate 400 millisecond
+budget so a failed supervisor does not cause an unlimited reply wait.
+.Sh SEE ALSO
+.Xr BSDNotify 8 ,
+.Xr BSDSysctl 8 ,
+.Xr notifyctl 8

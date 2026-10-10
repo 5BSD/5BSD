@@ -576,6 +576,7 @@ capbundle_svc_fill_manifest(const struct capbundle_service *s,
 	m->max_failures = s->max_failures > 0 ? s->max_failures : 10;
 	m->watchdog_interval = s->watchdog_interval;
 	m->ambient = s->ambient;
+	m->oom_protect = s->oom_protect;
 	m->unix_protocol = s->unix_protocol;
 	/* Pre-exec process policy: limits / band / umask. */
 	m->limits = s->limits;

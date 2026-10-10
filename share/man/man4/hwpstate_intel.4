@@ -22,7 +22,7 @@
 .\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
 .\" SUCH DAMAGE.
 .\"
-.Dd June 24, 2026
+.Dd October 8, 2026
 .Dt HWPSTATE_INTEL 4
 .Os
 .Sh NAME
@@ -48,13 +48,13 @@ Can be used to disable
 allowing other compatible drivers to manage performance states, like
 .Xr est 4 .
 Defaults to
-.Dv Qq 0
+.Dq 0
 (enabled).
 .It Va machdep.hwpstate_pkg_ctrl
 Selects between package-level control (the default) and per-core control.
-.Dv Qq 1
+.Dq 1
 selects package-level control and
-.Dv Qq 0
+.Dq 0
 selects core-level control.
 .El
 .Sh SYSCTL VARIABLES
@@ -73,6 +73,26 @@ The CPU that is exposing these frequencies.
 For example
 .Va cpu0 .
 .It dev.hwpstate_intel.0.%parent: cpu0
+.It Va dev.hwpstate_intel.%d.caps_highest_performance
+Highest performance capability in abstract HWP units, not MHz.
+.It Va dev.hwpstate_intel.%d.caps_guaranteed_performance
+Current guaranteed performance capability in HWP units.
+.It Va dev.hwpstate_intel.%d.caps_efficient_performance
+Current most-efficient performance capability in HWP units.
+.It Va dev.hwpstate_intel.%d.caps_lowest_performance
+Lowest performance capability in HWP units.
+These four read-only values are read from IA32_HWP_CAPABILITIES on the
+associated logical CPU; changing values are not served from an attach-time
+cache.
+.It Va dev.hwpstate_intel.%d.cpuid_base_frequency_mhz
+Processor base specification frequency from CPUID leaf 16H, in MHz.
+.It Va dev.hwpstate_intel.%d.cpuid_max_frequency_mhz
+Processor maximum specification frequency from CPUID leaf 16H, in MHz.
+.It Va dev.hwpstate_intel.%d.cpuid_bus_frequency_mhz
+Bus/reference specification frequency from CPUID leaf 16H, in MHz.
+These read-only values describe specifications rather than measured clocks.
+Unsupported leaves or zero fields return an error rather than a frequency.
+They are not guaranteed sustained or per-core turbo limits.
 .It Va dev.hwpstate_intel.%d.epp
 Energy/Performance Preference.
 Valid values range from 0 to 255.

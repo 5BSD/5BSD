@@ -13,6 +13,35 @@ not launch services, and does not run `/etc/rc`. It is the spine: lifecycle
 authority (reboot, halt, single-user, reroot), capability minting for
 switchboard, orphan reaping, and `/etc/ttys` getty management.
 
+## OOM and kill protection
+
+The essential memory-notification path has two separate protections:
+
+| Process | Exclusion from kernel OOM victim selection |
+|---|---|
+| Capsule as PID 1 | The kernel explicitly skips PID 1, independently of `P_PROTECTED`. |
+| Capsule as a normal supervisor | Production startup sets `P_PROTECTED` through `PROC_SPROTECT`; failure prevents startup. `-T` test mode skips this step. |
+| Switchboard | Capsule sets `P_PROTECTED` before executing the supervisor. |
+| BSDMemory, BSDNotify, BSDSysctl | Their trusted system manifests request `oom_protect = true`; Switchboard sets `P_PROTECTED` before releasing the launch gate. |
+
+These processes are therefore excluded from the normal kernel OOM victim
+selector once the corresponding protection is established. The grants do not
+propagate to ordinary forked children. A service's exemption survives exec and
+credential changes. Applications cannot obtain it by claiming a system label,
+control class or discovery domain: the launcher checks trusted registry origin.
+
+Capsule's mandatory signal shields and the other four processes' shipped
+shields also block unauthorized external signals, including `SIGKILL`.
+Ordinary UNIX root credentials alone do not bypass the shields. Explicitly
+authorized supervisors retain lifecycle control, so planned shutdown and
+restart remain possible.
+
+OOM exclusion does not reserve RAM or prevent allocation failures, fatal
+faults, resource-limit termination or kernel panic. It is not a promise that a
+process can never terminate. The privileged lifecycle and real OOM tests for
+the new launch policy remain VM acceptance gates; source implementation alone
+does not establish that the running image has the policy installed.
+
 ## The boot spine
 
 The loader picks PID 1 from `init_path`. The capsule package installs

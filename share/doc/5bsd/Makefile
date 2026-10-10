@@ -59,6 +59,7 @@ FILESGROUPS+=	BOOK_DEVELOP
 BOOK_DEVELOP=	${BOOKSRC}/develop/choosing.md \
 		${BOOKSRC}/develop/consumer-app.md \
 		${BOOKSRC}/develop/device-driver-bundle.md \
+		${BOOKSRC}/develop/fidl.md \
 		${BOOKSRC}/develop/kernel-extension.md \
 		${BOOKSRC}/develop/linux-application.md \
 		${BOOKSRC}/develop/migrating-an-rc-daemon.md \

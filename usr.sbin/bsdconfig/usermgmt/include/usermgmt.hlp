@@ -71,6 +71,6 @@ the ls(1) command by default) will be looked up.  It is often created
 under /usr/home/ or /home/.
 
 Finally, the shell is the user's initial command interpreter.  The
-default shell is /bin/sh, some users prefer the more historic
-/bin/csh.  Other, often more user-friendly and comfortable shells can
-be found in the ports and packages collection.
+default shell is /bin/zsh.  Other base shells include /bin/sh and
+/bin/csh.  Additional shells can be found in the ports and packages
+collection.

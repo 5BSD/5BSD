@@ -57,6 +57,33 @@ They report the authenticated provider label, selected fixed event, submitted
 error value, and operation result without exposing an arbitrary audit record.
 Submission and rejection outcomes are also represented by the broker's BSM
 records where a record can be submitted safely.
+.Sh SHUTDOWN
+Startup and fatal event-loop errors release initialized resources.
+Fatal event-loop errors also run worker shutdown.
+Only a requested quiescence sends a completion acknowledgement, after worker
+cleanup and event-queue closure.
+Failed startup or event-loop exits return failure.
+A failed worker-bootstrap handshake terminates and reaps the rejected child
+before releasing its process descriptor.
+The reported error remains the original handshake failure.
+The supervisor allows a five-second graceful worker exit after SIGTERM.
+If the monotonic clock cannot establish or check the deadline, it proceeds
+to forced termination.
+Interrupted final reap calls are retried.
+A failed forced termination or final reap makes shutdown fail and suppresses
+a successful quiescence acknowledgement.
+Remaining reap attempts are nonblocking after a failure; the supervisor may
+need to recover any surviving worker.
+The grace period does not bound the final kernel reap wait.
+Worker exit-event reaping retries interrupted calls and tolerates children
+already reaped.
+Other reap errors fail shutdown or the active service loop instead of being
+silently discarded.
+Parent bootstrap uses the shared library handshake with a single five-second
+monotonic deadline for child status and acknowledgement.
+Timeout follows the failed-worker cleanup path.
+A child remains tracked after bootstrap or exit-watch setup failure.
+These failures stop admission and enter controlled shutdown.
 .Sh SEE ALSO
 .Xr audit 2 ,
 .Xr libauditcmp 3 ,

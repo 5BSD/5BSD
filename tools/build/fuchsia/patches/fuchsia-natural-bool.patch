@@ -1,0 +1,22 @@
+--- a/fuchsia/sdk/lib/fidl/cpp/include/lib/fidl/cpp/natural_coding_traits.h
++++ b/fuchsia/sdk/lib/fidl/cpp/include/lib/fidl/cpp/natural_coding_traits.h
+@@ -189,7 +189,8 @@
+   }
+   static void Decode(NaturalDecoder* decoder, const std::vector<bool>::iterator& value,
+                      size_t offset, size_t recursion_depth) {
+-    bool b;
++    // Decode() leaves |b| untouched when the wire byte is not 0 or 1.
++    bool b = false;
+     Decode(decoder, &b, offset, recursion_depth);
+     *value = b;
+   }
+@@ -253,7 +254,8 @@
+       out->emplace_back(DefaultConstructPossiblyInvalidObject<T>::Make());
+     }
+     if constexpr (std::is_same_v<T, bool>) {
+-      bool b;
++      // Decode() leaves |b| untouched when the wire byte is not 0 or 1.
++      bool b = false;
+       NaturalCodingTraits<bool, Constraint>::Decode(decoder, &b, in_offset, recursion_depth);
+       (*out)[index] = b;
+     } else {

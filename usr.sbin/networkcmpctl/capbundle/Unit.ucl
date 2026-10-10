@@ -1,3 +1,3 @@
 program = "networkcmpctl";
 activation { exec = true; }
-attributes = ["system.network.admin"];
+attributes = ["system.network.admin", "system.network.observe"];

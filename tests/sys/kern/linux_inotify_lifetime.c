@@ -5,8 +5,12 @@
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
+#ifndef __linux__
+#include <sys/mount.h>
+#endif
 #include <errno.h>
 #include <fcntl.h>
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -14,11 +18,19 @@
 #define CHECK(x) do { if (!(x)) { \
  fprintf(stderr, "%s:%d: %s (errno=%d)\n", __func__, __LINE__, #x, errno); \
  exit(1); } } while (0)
-static void empty(int fd)
+static void empty_at(int fd, int line)
 {
- char buf[4096];
- CHECK(read(fd, buf, sizeof(buf)) == -1 && errno == EAGAIN);
+ struct inotify_event ev;
+ ssize_t n = read(fd, &ev, sizeof(ev));
+ if (n == -1 && errno == EAGAIN) return;
+ fprintf(stderr, "empty at line %d: read=%zd errno=%d", line, n, errno);
+ if (n == sizeof(ev))
+  fprintf(stderr, " wd=%d mask=%x cookie=%u len=%u", ev.wd, ev.mask,
+   ev.cookie, ev.len);
+ fputc('\n', stderr);
+ exit(1);
 }
+#define empty(fd) empty_at((fd), __LINE__)
 static void event(int fd, int wd, unsigned mask)
 {
  struct inotify_event ev;
@@ -53,15 +65,23 @@ static int watch(int fd, const char *path, unsigned mask)
 }
 int main(int argc, char **argv)
 {
- char dir[] = "/tmp/inotify-life-XXXXXX", path[256], other[256];
+ const char *tmpdir = getenv("TMPDIR");
+ int length;
+ char dir[PATH_MAX], path[PATH_MAX], other[PATH_MAX];
  CHECK(argc >= 2);
  alarm(60);
  if (argc > 2 && !strcmp(argv[2], "unprivileged")) {
   CHECK(setgid(65534) == 0); CHECK(setuid(65534) == 0);
  }
+ if (tmpdir == NULL || tmpdir[0] == '\0') tmpdir = "/tmp";
+ CHECK(tmpdir[0] == '/');
+ length = snprintf(dir, sizeof(dir), "%s/inotify-life-XXXXXX", tmpdir);
+ CHECK(length > 0 && (size_t)length < sizeof(dir));
  CHECK(mkdtemp(dir) != NULL);
- snprintf(path, sizeof(path), "%s/file", dir);
- snprintf(other, sizeof(other), "%s/other", dir);
+ length = snprintf(path, sizeof(path), "%s/file", dir);
+ CHECK(length > 0 && (size_t)length < sizeof(path));
+ length = snprintf(other, sizeof(other), "%s/other", dir);
+ CHECK(length > 0 && (size_t)length < sizeof(other));
  int directory = !strcmp(argv[1], "directory");
  if (directory) CHECK(mkdir(path, 0700) == 0);
  int file = open(path, directory ? O_RDONLY | O_DIRECTORY : O_CREAT | O_RDWR, 0600);
@@ -101,17 +121,39 @@ int main(int argc, char **argv)
   CHECK(close(second) == 0);
  } else if (!strcmp(argv[1], "shared-map") || !strcmp(argv[1], "private-map")) {
   CHECK(ftruncate(file, 4096) == 0);
+  CHECK(pwrite(file, "x", 1, 0) == 1);
   int flags = !strcmp(argv[1], "shared-map") ? MAP_SHARED : MAP_PRIVATE;
+  int native_tmpfs_private = 0;
+#ifndef __linux__
+  struct statfs fs;
+  CHECK(fstatfs(file, &fs) == 0);
+  /* Native tmpfs private mappings hold the VM object, not the vnode.
+   * Linux64 mappings separately retain the open description through unmap. */
+  native_tmpfs_private = flags == MAP_PRIVATE &&
+   strcmp(fs.f_fstypename, "tmpfs") == 0;
+#endif
   void *map = mmap(NULL, 4096, PROT_READ, flags, file, 0);
   CHECK(map != MAP_FAILED);
   /* This case tests watch deletion, independently of close-event timing. */
   wd = watch(fd, path, IN_DELETE_SELF);
   CHECK(unlink(path) == 0); empty(fd);
-  CHECK(close(file) == 0); empty(fd);
-  CHECK(munmap(map, 4096) == 0); deleted(fd, wd, 0);
+  CHECK(close(file) == 0);
+  if (native_tmpfs_private) deleted(fd, wd, 0); else empty(fd);
+  /* The mapped data must survive unlink/close even if the vnode is inactive. */
+  CHECK(*(volatile const char *)map == 'x');
+  CHECK(munmap(map, 4096) == 0);
+  if (native_tmpfs_private) empty(fd); else deleted(fd, wd, 0);
  } else if (!strcmp(argv[1], "late-watch")) {
   CHECK(unlink(path) == 0);
-  snprintf(other, sizeof(other), "/proc/self/fd/%d", file);
+#ifdef __linux__
+  const char *fdroot = "/proc/self/fd";
+#else
+  /* Native runner supplies a private fdescfs mount with vnode handoff. */
+  const char *fdroot = getenv("INOTIFY_FD_ROOT");
+  CHECK(fdroot != NULL && fdroot[0] == '/');
+#endif
+  length = snprintf(other, sizeof(other), "%s/%d", fdroot, file);
+  CHECK(length > 0 && (size_t)length < sizeof(other));
   wd = watch(fd, other, IN_DELETE_SELF | IN_MODIFY);
   CHECK(write(file, "a", 1) == 1); event(fd, wd, IN_MODIFY); empty(fd);
   CHECK(close(file) == 0); deleted(fd, wd, 0);

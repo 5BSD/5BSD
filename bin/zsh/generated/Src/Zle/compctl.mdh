@@ -1,0 +1,42 @@
+#ifndef have_zshQscompctl_module
+#define have_zshQscompctl_module
+
+# ifndef IMPORTING_MODULE_zshQscompctl
+#   define boot_ boot_zshQscompctl
+#   define cleanup_ cleanup_zshQscompctl
+#   define features_ features_zshQscompctl
+#   define enables_ enables_zshQscompctl
+#   define setup_ setup_zshQscompctl
+#   define finish_ finish_zshQscompctl
+# endif /* !IMPORTING_MODULE_zshQscompctl */
+
+/* Module dependencies */
+# define IMPORTING_MODULE_zshQscomplete 1
+# include "complete.mdh"
+# define IMPORTING_MODULE_zshQszle 1
+# include "zle.mdh"
+# define IMPORTING_MODULE_zshQsmain 1
+# include "../../Src/zsh.mdh"
+
+/* Extra headers for this module */
+# include "compctl.h"
+
+# undef mod_import_variable
+# undef mod_import_function
+# if defined(IMPORTING_MODULE_zshQscompctl) &&  defined(MODULE)
+#  define mod_import_variable 
+#  define mod_import_function 
+# else
+#  define mod_import_function
+#  define mod_import_variable
+# endif /* IMPORTING_MODULE_zshQscompctl && MODULE */
+# include "compctl.epro"
+# undef mod_import_variable
+# define mod_import_variable
+# undef mod_import_variable
+# define mod_import_variable
+# ifndef mod_export
+#  define mod_export 
+# endif /* mod_export */
+
+#endif /* !have_zshQscompctl_module */

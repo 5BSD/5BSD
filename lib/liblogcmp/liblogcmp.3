@@ -6,6 +6,7 @@
 .Nm logcmp_client_open ,
 .Nm logcmp_logger_create ,
 .Nm logcmp_emit ,
+.Nm logcmp_enabled ,
 .Nm logcmp_log ,
 .Nm logcmp_vlog ,
 .Nm logcmp_flush ,
@@ -30,6 +31,8 @@
 .Fc
 .Ft int
 .Fn logcmp_emit "struct logcmp_logger *logger" "const struct logcmp_emit_options *options"
+.Ft bool
+.Fn logcmp_enabled "const struct logcmp_logger *logger" "uint32_t severity"
 .Ft void
 .Fn logcmp_log "int priority" "const char *fmt" "..."
 .Ft void
@@ -100,6 +103,17 @@ are rejected with
 .Er EMSGSIZE
 before publication.
 Every string and value is copied before the function returns.
+.Pp
+.Fn logcmp_enabled
+returns whether the connected provider expressed interest in a severity.
+Callers may check it before formatting an expensive message or building typed
+attributes.
+The check is advisory: the provider still enforces its configured minimum
+severity, and a reconnect may change the answer.
+A suppressed level is retried periodically so a restarted provider cannot
+leave it disabled indefinitely.
+A disconnected client reports all valid severities as enabled so a later emit
+can reconnect.
 .Pp
 Normal publication performs no per-record control RPC.
 Ring saturation returns

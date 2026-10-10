@@ -80,9 +80,11 @@ query.
 Ring exhaustion is explicit and observable through total and per-severity
 drop counters; it never overwrites unread records.
 Each session also has an administrator-configured fixed-window ingestion
-budget.  Records below the configured severity threshold and records beyond
+budget.
+Records below the configured severity threshold and records beyond
 the session budget advance sequence accounting but do not reach the
-private store.  Separate filtered and rate-limited counters make
+private store.
+Separate filtered and rate-limited counters make
 these deliberate losses distinguishable from malformed records and
 client-ring exhaustion.
 .Pp
@@ -94,7 +96,8 @@ The strict UCL configuration accepts only
 .Va ring_size ,
 a power of two from 64 KiB through 64 MiB, and
 .Va fallback_drain_ms ,
-from 1 through 1000 milliseconds.  The default one-second scan is a
+from 1 through 1000 milliseconds.
+The default one-second scan is a
 lost-wakeup safety net; normal ingestion is edge-woken and hot rings are
 rescheduled through a bounded fair-work queue,
 .Va segment_size ,
@@ -108,7 +111,8 @@ and
 .Va rate_limit_burst
 values.
 The rate interval is at most one hour and the burst at most one million
-records.  Both rate values may be zero to disable limiting; setting only one
+records.
+Both rate values may be zero to disable limiting; setting only one
 to zero is invalid.
 The default retains 64 completed segments plus the active segment.
 The optional
@@ -137,11 +141,28 @@ is ever dropped, since a pruned segment's records were by definition already
 outside policy.
 .Pp
 Segment rotation synchronizes both file contents and directory namespace
-changes.  On restart, the store reconstructs the next generation from
+changes.
+On restart, the store reconstructs the next generation from
 completed segment names if a crash occurred after rotating the old active
-segment or after creating an empty successor.  Incomplete trailing records in
+segment or after creating an empty successor.
+Incomplete trailing records in
 the active segment are truncated to the last checksummed boundary; corruption
 inside a complete record fails closed.
+.Sh WRITE FAILURE RECOVERY
+A failed record write rolls back to the end of the last complete record.
+The failed append returns its original error even when rollback succeeds.
+If truncation or file-position restoration fails, the store rejects further
+appends and flushes until it is closed and reopened for recovery.
+This prevents later records from being appended behind an incomplete record.
+A failed durability sync after a complete write does not undo that record;
+callers must not interpret a failed acknowledgement as proof of absence.
+An ingestion failure closes the affected storage session after reporting the
+error when possible, including failures while draining for a flush or query.
+A subsequent flush cannot acknowledge records discarded by an earlier failure.
+Reconnecting does not replay those records.
+Failure to drain a client ring into storage also ends that provider session,
+including drains requested by flush or detach.
+Queued requests cannot resume a session after this terminal failure.
 .Sh SECURITY
 Workers cannot open files, sockets, or other sinks.
 They cannot fork or execute, and ring consumer descriptors cannot be

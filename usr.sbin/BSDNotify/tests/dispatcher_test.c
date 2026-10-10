@@ -1602,9 +1602,111 @@ ATF_TC_BODY(null_policy_fails_closed, tc)
 	fixture_close(&fixture);
 }
 
+
+ATF_TC_WITHOUT_HEAD(state_watch_dispatch);
+ATF_TC_BODY(state_watch_dispatch, tc)
+{
+	struct fixture f;
+	union notify_buffer outgoing, incoming;
+	struct notify_state_watch_request watch = {0};
+	struct notify_state_watch_reply snapshot;
+	struct notify_state_reply state;
+	struct notify_msg *reply;
+	struct notify_policy policy;
+	const char *operation;
+	size_t length;
+
+	fixture_open(&f);
+	watch.topic.topic_length = 9;
+	memcpy(watch.topic.topic, "svc.state", 9);
+	length = request(outgoing.bytes, NOTIFY_OP_STATE_WATCH, &watch,
+	    sizeof(watch));
+	ATF_REQUIRE_EQ(sizeof(struct notify_msg) + sizeof(snapshot),
+	    roundtrip(&f, outgoing.bytes, length, incoming.bytes, sizeof(incoming)));
+	reply = (void *)incoming.bytes;
+	memcpy(&snapshot, reply + 1, sizeof(snapshot));
+	ATF_CHECK_EQ(0, snapshot.present);
+	/* Poll does not consume the cursor or leave a hidden pending request. */
+	ATF_REQUIRE_EQ(sizeof(*reply), roundtrip(&f, outgoing.bytes, length,
+	    incoming.bytes, sizeof(incoming)));
+	ATF_CHECK_EQ(-EAGAIN, reply->status);
+	ATF_CHECK(!f.session.pending_active);
+	watch.timeout_ms = 1000;
+	length = request(outgoing.bytes, NOTIFY_OP_STATE_WATCH, &watch,
+	    sizeof(watch));
+	ATF_REQUIRE_EQ(0, internal_send(f.peer, outgoing.bytes, length,
+	    NOTIFY_MESSAGE_REQUEST));
+	ATF_REQUIRE_EQ(0, router_handle_request(&f.router, &f.session, NULL));
+	ATF_CHECK(f.session.pending_active);
+	ATF_REQUIRE_EQ(sizeof(*reply), roundtrip(&f, outgoing.bytes, length,
+	    incoming.bytes, sizeof(incoming)));
+	ATF_CHECK_EQ(-EBUSY, reply->status);
+	ATF_REQUIRE_EQ(0, notify_broker_state_set(f.router.broker, f.publisher,
+	    "svc.state", 9, 7, &state));
+	ATF_REQUIRE_EQ(0, router_deliver_pending(&f.router));
+	ATF_REQUIRE_EQ(sizeof(*reply) + sizeof(snapshot), internal_receive(f.peer,
+	    incoming.bytes, sizeof(incoming), NOTIFY_MESSAGE_REPLY));
+	memcpy(&snapshot, reply + 1, sizeof(snapshot));
+	ATF_CHECK_EQ(7, snapshot.state);
+	ATF_CHECK_EQ(1, snapshot.present);
+	ATF_CHECK(!f.session.pending_active);
+	ATF_CHECK(f.session.next_timer == NULL);
+	/* Timeout releases the single pending slot and preserves the cursor. */
+	ATF_REQUIRE_EQ(0, internal_send(f.peer, outgoing.bytes, length,
+	    NOTIFY_MESSAGE_REQUEST));
+	ATF_REQUIRE_EQ(0, router_handle_request(&f.router, &f.session, NULL));
+	ATF_REQUIRE_EQ(0, router_watch_timeout(&f.router, &f.session));
+	ATF_REQUIRE_EQ(sizeof(*reply), internal_receive(f.peer, incoming.bytes,
+	    sizeof(incoming), NOTIFY_MESSAGE_REPLY));
+	ATF_CHECK_EQ(-EAGAIN, reply->status);
+	ATF_REQUIRE_EQ(0, notify_broker_state_clear(f.router.broker, f.publisher,
+	    "svc.state", 9));
+	ATF_REQUIRE_EQ(sizeof(*reply) + sizeof(snapshot), roundtrip(&f,
+	    outgoing.bytes, length, incoming.bytes, sizeof(incoming)));
+	memcpy(&snapshot, reply + 1, sizeof(snapshot));
+	ATF_CHECK_EQ(0, snapshot.present);
+	/* Watch uses the same topic read policy as ordinary subscriptions. */
+	memset(&policy, 0, sizeof(policy));
+	ATF_CHECK(!relay_authorized(&policy, (void *)outgoing.bytes, &operation));
+	ATF_CHECK_STREQ("state-watch", operation);
+	fixture_close(&f);
+}
+
+
+ATF_TC_WITHOUT_HEAD(hello_watch_negotiation);
+ATF_TC_BODY(hello_watch_negotiation, tc)
+{
+	struct fixture fixture;
+	union notify_buffer outgoing, incoming;
+	struct notify_hello_request options = {
+	    .features = NOTIFY_FEATURE_STATE_WATCH };
+	struct notify_hello_reply *hello;
+	uint32_t original_features;
+	size_t length;
+
+	fixture_open(&fixture);
+	length = request(outgoing.bytes, NOTIFY_OP_HELLO, NULL, 0);
+	ATF_REQUIRE_EQ(sizeof(struct notify_msg) + sizeof(*hello),
+	    roundtrip(&fixture, outgoing.bytes, length, incoming.bytes,
+	    sizeof(incoming)));
+	hello = (void *)((struct notify_msg *)incoming.bytes + 1);
+	original_features = NOTIFY_FEATURE_PUBSUB | NOTIFY_FEATURE_TIMERS |
+	    NOTIFY_FEATURE_BOUNDED_QUEUE | NOTIFY_FEATURE_STATE |
+	    NOTIFY_FEATURE_LOSS_REPORTING;
+	ATF_CHECK_EQ(original_features, hello->features);
+	length = request(outgoing.bytes, NOTIFY_OP_HELLO, &options, sizeof(options));
+	ATF_REQUIRE_EQ(sizeof(struct notify_msg) + sizeof(*hello),
+	    roundtrip(&fixture, outgoing.bytes, length, incoming.bytes,
+	    sizeof(incoming)));
+	ATF_CHECK_EQ(original_features | NOTIFY_FEATURE_STATE_WATCH, hello->features);
+	fixture_close(&fixture);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, hello_stats_and_errors);
+	ATF_TP_ADD_TC(tp, hello_watch_negotiation);
+	ATF_TP_ADD_TC(tp, state_watch_dispatch);
 	ATF_TP_ADD_TC(tp, pubsub_state_and_next);
 	ATF_TP_ADD_TC(tp, timers_and_pending_request);
 	ATF_TP_ADD_TC(tp, admission_failure_classes);

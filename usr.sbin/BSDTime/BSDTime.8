@@ -1,6 +1,6 @@
 .\" SPDX-License-Identifier: BSD-2-Clause
 .\" Copyright (c) 2026 Kory Heard
-.Dd September 19, 2026
+.Dd October 9, 2026
 .Dt BSDTIME 8
 .Os
 .Sh NAME
@@ -41,11 +41,41 @@ It is launched by
 as the
 .Pa /Capabilities/System/Time.cap
 bundle and never started by hand.
-Because the gate token is close-on-fork, each client is served inline in the
-single token-holding process rather than a
-.Xr pdfork 2
-worker; the security boundary is the Capsicum sandbox plus the per-label
-policy.
+The gate token remains in one process, which multiplexes client channels with
+.Xr kqueue 2 .
+The security boundary is the Capsicum sandbox plus the per-label policy.
+.Sh RESOURCE LIMITS
+The provider admits at most 32 sessions and eight sessions per trusted client
+label.
+Excess connections are closed while existing sessions continue.
+Idle sessions expire after 30 seconds.
+Each ready peer receives one bounded dispatch batch, at most 64 messages,
+with the starting peer rotating between iterations.
+A session may queue at most 16 replies and 4096 bytes, with no descriptors.
+A nonreading peer that exhausts its reply queue is closed.
+Quiescing closes all sessions before acknowledging completion.
+.Sh PROTOCOL
+The source implementation uses the generated C bindings for
+.Li bsd.time.v1
+from
+.Pa /usr/share/fidl/timecmp.fidl .
+Clients first call GetProtocolInfo and verify wire version 1 before Get, Set,
+or Adjust.
+Legacy messages, unknown methods, malformed messages, and unexpected descriptors
+close the session.
+Application errors remain distinct from transport errors.
+.Pp
+Set uses signed seconds and a nonnegative nanosecond fraction.
+Adjust uses signed seconds and signed microseconds, preserving negative deltas.
+Policy checks precede application range checks and gate calls.
+.Ss Migration status
+The FIDL provider/client migration is implemented in the source tree and has
+native host tests; activation, real-gate VM tests, and rollback validation
+remain required.
+The bundle advances to version 2.0.0, sequence 2.
+Deploy or roll back the provider and its matching libtimecmp together;
+restart provider and consumers to avoid mixed in-memory wire implementations.
+Do not replay clock writes after an ambiguous transport failure.
 .Sh POLICY
 Reading the clock is unprivileged and allowed to every holder.
 Stepping and slewing are
@@ -72,9 +102,28 @@ certificate validity windows, audit ordering, and Kerberos tickets \(em so
 grant
 .Va set
 only to a trusted time source.
+.Sh TESTS
+The
+.Li 5BSD-bsdtime-tests
+package installs provider and policy tests under
+.Pa /usr/tests/usr.sbin/BSDTime .
+The provider tests use real channels with simulated clock writes.
+The separate real-gate test requires explicit
+.Li vm_clock_test=true
+configuration in a disposable VM; it is disabled by default.
+The auxiliary
+.Pa /usr/tests/usr.sbin/BSDTime/resource_soak
+program takes an explicit duration in seconds (1 through 86400).
+It repeatedly reconnects eight C clients and four idle peers in capability
+mode, checking policy results, descriptor cleanup, and allocation growth.
+Clock writes and logging are simulated.
+Runs shorter than 30 seconds are reported as smoke checks.
+This program is not included in ordinary Kyua runs.
+Split test debugging symbols are in
+.Li 5BSD-bsdtime-tests-dbg .
 .Sh FILES
 .Bl -tag -width indent
-.It Pa /Capabilities/System/Time.cap/Units/BSDTime.unit/Config/time.conf
+.It Pa /Capabilities/System/Time.cap/Units/bsdtime.unit/Config/time.conf
 per-label clock-write policy
 .El
 .Sh SEE ALSO

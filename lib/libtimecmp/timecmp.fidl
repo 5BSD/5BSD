@@ -1,0 +1,14 @@
+// SPDX-License-Identifier: BSD-2-Clause
+library bsd.time.v1;
+
+// The schema name and ordinals are stable for this wire major version.
+type ProtocolInfo = struct { wire_version uint32; };
+type Timestamp = struct { seconds int64; nanoseconds int32; };
+// Signed timeval components, each microsecond fraction in [-999999, 999999].
+type Delta = struct { seconds int64; microseconds int32; };
+closed protocol Time {
+    strict GetProtocolInfo() -> (ProtocolInfo);
+    strict Get() -> (Timestamp) error uint32;
+    strict Set(Timestamp) -> () error uint32;
+    strict Adjust(Delta) -> (Delta) error uint32;
+};

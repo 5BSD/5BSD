@@ -808,6 +808,10 @@ networkcmp_resolve(struct networkcmp_client *client, const char *host,
 		errno = EINVAL;
 		return (-1);
 	}
+	if ((flags & NETWORKCMP_RESOLVE_F_ADDRCONFIG) != 0) {
+		errno = EOPNOTSUPP;
+		return (-1);
+	}
 	capacity = *nresults;
 	memset(&request, 0, sizeof(request));
 	resolve = (void *)request.wire.payload;
@@ -955,7 +959,7 @@ networkcmp_getaddrinfo(struct networkcmp_client *client, const char *host,
 			return (EAI_SERVICE);
 		}
 		if ((hints->ai_flags & ~(AI_PASSIVE | AI_CANONNAME |
-		    AI_NUMERICHOST | AI_NUMERICSERV | AI_ADDRCONFIG |
+		    AI_NUMERICHOST | AI_NUMERICSERV |
 		    AI_V4MAPPED | AI_ALL)) != 0)
 			return (EAI_BADFLAGS);
 		if ((hints->ai_flags & AI_PASSIVE) != 0)
@@ -966,8 +970,6 @@ networkcmp_getaddrinfo(struct networkcmp_client *client, const char *host,
 			flags |= NETWORKCMP_RESOLVE_F_NUMERIC_HOST;
 		if ((hints->ai_flags & AI_NUMERICSERV) != 0)
 			flags |= NETWORKCMP_RESOLVE_F_NUMERIC_SERVICE;
-		if ((hints->ai_flags & AI_ADDRCONFIG) != 0)
-			flags |= NETWORKCMP_RESOLVE_F_ADDRCONFIG;
 		if ((hints->ai_flags & AI_V4MAPPED) != 0)
 			flags |= NETWORKCMP_RESOLVE_F_V4MAPPED;
 		if ((hints->ai_flags & AI_ALL) != 0)

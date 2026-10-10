@@ -1,0 +1,6 @@
+comment = "Tests for hwstat"
+
+desc = <<EOD
+ATF/Kyua command-line and telemetry-export tests for hwstat.
+The test scripts are packaged separately from the telemetry tool.
+EOD

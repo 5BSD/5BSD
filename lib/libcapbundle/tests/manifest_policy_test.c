@@ -651,11 +651,28 @@ ATF_TC_BODY(watchdog_unknown_key_rejected, tc)
 	    &svc, err, sizeof(err)));
 }
 
+ATF_TC_WITHOUT_HEAD(oom_policy);
+ATF_TC_BODY(oom_policy, tc)
+{
+	struct capbundle_service svc;
+	char err[256];
+	ATF_REQUIRE_EQ(0, parse_unit("activation { boot = true; }", &svc, err, sizeof(err)));
+	ATF_CHECK(!svc.oom_protect);
+	ATF_REQUIRE_EQ(0, parse_unit("activation { boot = true; } oom_protect = true;", &svc, err, sizeof(err)));
+	ATF_CHECK(svc.oom_protect);
+	ATF_REQUIRE_EQ(0, parse_unit("activation { boot = true; } oom_protect = false;", &svc, err, sizeof(err)));
+	ATF_CHECK(!svc.oom_protect);
+	ATF_CHECK_EQ(-1, parse_unit("activation { exec = true; } oom_protect = true;", &svc, err, sizeof(err)));
+	ATF_CHECK_EQ(-1, parse_unit("activation { boot = true; } oom_protect = 1;", &svc, err, sizeof(err)));
+	ATF_CHECK_EQ(-1, parse_unit("activation { boot = true; } oom_protect = [true];", &svc, err, sizeof(err)));
+	ATF_CHECK_EQ(-1, parse_unit("activation { boot = true; } oom_protect = true; oom_protect = false;", &svc, err, sizeof(err)));
+}
 ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, helper_unit_parses);
 	ATF_TP_ADD_TC(tp, helper_with_ipc_rejected);
 	ATF_TP_ADD_TC(tp, non_helper_defaults_false);
+	ATF_TP_ADD_TC(tp, oom_policy);
 	ATF_TP_ADD_TC(tp, limits_defaults_when_absent);
 	ATF_TP_ADD_TC(tp, limits_integers_parse);
 	ATF_TP_ADD_TC(tp, limits_size_suffixes_parse);

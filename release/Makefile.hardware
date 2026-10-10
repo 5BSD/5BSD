@@ -11,7 +11,9 @@ HARDWARE_REPO?= ${BASE_REPOSITORY:tA}.hardware
 COMPLETE_REPOSITORY?= ${BASE_REPOSITORY:tA}.complete
 KERNBUILDDIR?= ${MAKEOBJDIRPREFIX:U/usr/obj}${.CURDIR}/${MACHINE}.${MACHINE_ARCH}/sys/${KERNCONF}
 HARDWARE_PORT_LIST?= ${.CURDIR}/release/tools/hardware-ports.${MACHINE_ARCH}
-HARDWARE_WORKDIR?= ${HARDWARE_REPO}.work
+# make(1) treats ':' in WRKDIRPREFIX as a dependency separator, so keep port
+# work out of the ABI-named repository directory.
+HARDWARE_WORKDIR?= ${MAKEOBJDIRPREFIX:U/usr/obj}${.CURDIR}/hardware-work/${BASE_REPOSITORY:tA:T}
 DISTDIR?= ${PORTSDIR}/distfiles
 
 hardware-packages hardware-packages-check: .PHONY

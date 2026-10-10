@@ -21,6 +21,7 @@
 #include <cryptodesc.h>
 #include <cryptocmp_protocol.h>
 #include <libservice.h>
+#include <service_runtime.h>
 #include <logcmp.h>
 
 #include "policy.h"
@@ -31,7 +32,7 @@
 
 #define CRYPTOCMP_NAME "system.Crypto"
 
-static int control_fd;
+static int control_fd = -1;
 struct crypto_worker {
 	char	owner[CRYPTODESC_KEY_OWNER_MAX];
 	char	actor[64];
@@ -730,21 +731,23 @@ crypto_reaper_loop(void)
  * install-directory descriptors.  Non-fatal: a fork failure just defers
  * cleanup.
  */
-static void
+static int
 start_reaper(void)
 {
 	pid_t pid;
+	int pd;
 
-	pid = fork();
+	pid = pdfork(&pd, PD_CLOEXEC | PD_DAEMON);
 	if (pid == -1) {
-		logcmp_log(LOG_WARNING, "reclaim: fork: %m");
-		return;
+		logcmp_log(LOG_WARNING, "reclaim: pdfork: %m");
+		return (-1);
 	}
 	if (pid == 0) {
 		(void)signal(SIGCHLD, SIG_DFL);
 		crypto_reaper_loop();
 		/* NOTREACHED */
 	}
+	return (pd);
 }
 
 static int
@@ -794,7 +797,7 @@ start_session(int fd, const char *peer_label, const char *actor, int *pdp)
 	 * pdfork (not fork): the parent watches the returned process descriptor on
 	 * its kqueue so it can bound the live-worker count.  A pdfork'd worker is
 	 * reaped via pdwait on that descriptor, not SIGCHLD, so it does not depend
-	 * on the SIG_IGN reaping the plain-fork reclaim child still uses.
+	 * on SIGCHLD disposition.  The reclaim child also uses a procdesc.
 	 */
 	pid = pdfork(&pd, PD_CLOEXEC | PD_DAEMON);
 	if (pid == -1) {
@@ -811,16 +814,12 @@ start_session(int fd, const char *peer_label, const char *actor, int *pdp)
 #define	CRYPTOCMP_MAX_WORKERS	4096u
 
 /* One live pdfork'd worker, tracked so its exit can account the slot. */
-struct crypto_worker_ent {
-	struct crypto_worker_ent	*next;
-	int				 pd;
-};
 
 static void
-crypto_worker_remove(struct crypto_worker_ent **head,
-    struct crypto_worker_ent *w, size_t *count)
+crypto_worker_remove(struct service_process **head,
+    struct service_process *w, size_t *count)
 {
-	struct crypto_worker_ent **cursor;
+	struct service_process **cursor;
 	int status;
 
 	for (cursor = head; *cursor != NULL && *cursor != w;
@@ -835,37 +834,40 @@ crypto_worker_remove(struct crypto_worker_ent **head,
 		(*count)--;
 }
 
+/* Stop admission workers before acknowledging provider shutdown. */
+static int
+crypto_workers_stop(struct service_process **head, size_t *count)
+{
+	int result;
+
+	result = service_processes_stop(head);
+	*count = 0;
+	return (result);
+}
+
 /* Distinct startup exit codes make pre-readiness failures diagnosable in
  * switchboard's service-exit log, even before the logging provider is reachable. */
 #define STARTUP_CHECK(test, code) do { if ((test) == -1) { \
     logcmp_log(LOG_ERR, "startup step %d failed: %m", code); \
-    return (code); } } while (0)
+    result = (code); goto out; } } while (0)
 
 int
 main(void)
 {
-	struct crypto_worker_ent *workers = NULL, *w;
+	struct service_process *workers = NULL, *reaper = NULL, *w;
 	struct service_context *ctx = NULL;
 	struct service_identity id;
 	struct service_listener *listener;
-	struct service_provider *provider;
+	struct service_provider *provider = NULL;
 	struct kevent event, change;
 	char bundle[CRYPTODESC_KEY_OWNER_MAX];
-	size_t nworkers = 0;
-	int fd, kq;
+	size_t nworkers = 0, nreapers = 0;
+	int fd, kq = -1, result = 1;
 
 	setproctitle("[CRYPTO] capability component");
 	openlog("bsdcrypto", LOG_PID | LOG_NDELAY, LOG_DAEMON);
 
-	/*
-	 * Reap per-client worker children automatically: sessions are served by
-	 * plain fork()ed workers that _exit() on client disconnect, and nothing
-	 * waitpid()s them.  Without SIG_IGN each finished session leaves a zombie,
-	 * accumulating on this long-lived provider until the PID table fills and
-	 * fork() in start_session() begins failing (a slow DoS).  The reclaim child
-	 * resets this to SIG_DFL for its own use.
-	 */
-	(void)signal(SIGCHLD, SIG_IGN);
+	/* Session and reclaim children are explicitly reaped through procdescs. */
 
 	/*
 	 * /dev/crypto is provided either by a static `device cryptodev` compiled
@@ -886,6 +888,7 @@ main(void)
 		logcmp_log(LOG_NOTICE, "ensure cryptodev module: %m; continuing "
 		    "(cryptodev may be built into the kernel)");
 	service_release(ctx);
+	ctx = NULL;
 
 	/*
 	 * Born in capability mode: switchboard delivered /dev as a directory
@@ -911,7 +914,16 @@ main(void)
 	 * (its ioctl allow-list includes owner/named list + delete), so the child
 	 * inherits it along with the switchboard-delivered install directories.
 	 */
-	start_reaper();
+	reaper = calloc(1, sizeof(*reaper));
+	if (reaper != NULL) {
+		reaper->pd = start_reaper();
+		if (reaper->pd == -1) {
+			free(reaper);
+			reaper = NULL;
+		} else
+			nreapers = 1;
+	} else
+		logcmp_log(LOG_WARNING, "reclaim: allocate tracker: %m");
 	STARTUP_CHECK(service_provider_create(&provider), 16);
 	STARTUP_CHECK(service_provider_authorize_capabilities(provider), 17);
 	STARTUP_CHECK(service_provider_protect(provider, SERVICE_PROTECT_EXTERNAL |
@@ -934,7 +946,7 @@ main(void)
 		if (kevent(kq, NULL, 0, &event, 1, NULL) == -1) {
 			if (errno == EINTR)
 				continue;
-			return (1);
+			goto out;
 		}
 		if (event.filter == EVFILT_PROCDESC) {
 			crypto_worker_remove(&workers, event.udata, &nworkers);
@@ -945,9 +957,17 @@ main(void)
 		if (service_listener_accept(listener, &id, &fd) == -1) {
 			if (errno == EINTR)
 				continue;
-			if (service_provider_quiescing(provider) == 1)
-				return (0);
-			return (1);
+			if (service_provider_quiescing(provider) == 1) {
+				if (nworkers != 0) {
+					if (service_provider_quiesce_complete(provider,
+					    EBUSY) == 0)
+						continue;
+					if (errno != EINVAL)
+						goto out;
+				}
+				result = 0;
+			}
+			goto out;
 		}
 		if (nworkers >= CRYPTOCMP_MAX_WORKERS) {
 			logcmp_log(LOG_WARNING, "worker limit reached; dropping %s",
@@ -993,5 +1013,23 @@ main(void)
 		workers = w;
 		nworkers++;
 	}
+out:
+	if (crypto_workers_stop(&workers, &nworkers) == -1 && result == 0)
+		result = 1;
+	if (crypto_workers_stop(&reaper, &nreapers) == -1 && result == 0)
+		result = 1;
+	if (kq != -1)
+		close(kq);
+	if (control_fd != -1) {
+		close(control_fd);
+		control_fd = -1;
+	}
+	if (ctx != NULL)
+		service_release(ctx);
+	if (result == 0 && service_provider_quiesce_complete(provider, 0) == -1)
+		result = 1;
+	if (provider != NULL)
+		service_provider_destroy(provider);
+	return (result);
 }
 #endif /* !BSDCRYPTO_TESTING */

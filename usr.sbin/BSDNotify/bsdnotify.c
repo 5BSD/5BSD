@@ -28,6 +28,7 @@
 #include <auditcmp_server.h>
 #include <channel.h>
 #include <libservice.h>
+#include <service_runtime.h>
 #include <logcmp.h>
 
 #include "broker.h"
@@ -456,29 +457,39 @@ static int
 router_deliver(struct router *router, struct router_session *session)
 {
 	union notify_buffer buffer;
-	struct notify_event *event;
+	struct notify_state_watch_reply state;
+	const void *payload;
 	ssize_t length;
 	int error;
 
 	if (!session->pending_active)
 		return (0);
-	event = (void *)buffer.bytes;
-	length = notify_broker_next(session->client, event, sizeof(buffer));
+	if (session->pending_wire.opcode == NOTIFY_OP_STATE_WATCH) {
+		length = notify_broker_watch_next(session->client, &state) == 0 ?
+		    (ssize_t)sizeof(state) : -1;
+		payload = &state;
+	} else {
+		length = notify_broker_next(session->client,
+		    (void *)buffer.bytes, sizeof(buffer));
+		payload = buffer.bytes;
+	}
 	if (length == -1) {
 		if (errno == EAGAIN)
 			return (0);
 		error = errno;
+		if (session->pending_wire.opcode == NOTIFY_OP_STATE_WATCH)
+			notify_broker_watch_cancel(session->client);
 	} else
 		error = 0;
 	if (session->next_timer != NULL)
 		router_delete_timer(router, session->next_timer);
-	if (router_send_reply(session, session->pending,
-	    session->pending != NULL ? channel_message_data(session->pending) :
-	    &session->pending_wire, error,
-	    error == 0 ? event : NULL, error == 0 ? (size_t)length : 0) == -1)
+	if (router_send_reply(session, session->pending, &session->pending_wire,
+	    error, error == 0 ? payload : NULL,
+	    error == 0 ? (size_t)length : 0) == -1)
 		return (-1);
 	BSDNOTIFY_PROBE_DELIVER(__DECONST(char *, session->label),
-	    error == 0 ? event->type : 0, error);
+	    error == 0 && session->pending_wire.opcode == NOTIFY_OP_NEXT ?
+	    ((const struct notify_event *)payload)->type : 0, error);
 	if (session->pending != NULL)
 		channel_message_free(session->pending);
 	session->pending = NULL;
@@ -490,13 +501,37 @@ static int
 router_deliver_pending(struct router *router)
 {
 	struct router_session *session, *next;
+	bool removed;
 
-	for (session = router->sessions; session != NULL; session = next) {
-		next = session->next;
-		if (router_deliver(router, session) == -1)
-			router_remove_session(router, session);
-	}
+	/* Removal can retire an owner's states and wake an earlier session. */
+	do {
+		removed = false;
+		for (session = router->sessions; session != NULL; session = next) {
+			next = session->next;
+			if (router_deliver(router, session) == -1) {
+				router_remove_session(router, session);
+				removed = true;
+			}
+		}
+	} while (removed);
 	return (0);
+}
+
+static int
+router_watch_timeout(struct router *router, struct router_session *session)
+{
+	int result;
+
+	notify_broker_watch_cancel(session->client);
+	result = router_send_reply(session, session->pending,
+	    &session->pending_wire, EAGAIN, NULL, 0);
+	if (session->pending != NULL)
+		channel_message_free(session->pending);
+	session->pending = NULL;
+	session->pending_active = false;
+	if (session->next_timer != NULL)
+		router_delete_timer(router, session->next_timer);
+	return (result);
 }
 
 /*
@@ -634,6 +669,7 @@ router_handle_request(struct router *router, struct router_session *session,
 	const struct notify_state_set_request *state_set;
 	struct router_timer *timer;
 	char topic_name[NOTIFY_MAX_TOPIC + 1];
+	size_t message_length;
 	int error;
 
 	if (request_message == NULL) {
@@ -644,9 +680,12 @@ router_handle_request(struct router *router, struct router_session *session,
 		if (received == -1)
 			return (-1);
 		message = (const void *)buffer.bytes;
-	} else
+		message_length = (size_t)received;
+	} else {
 		message = channel_message_data(request_message);
-	/* Preserve the token of an outstanding long-poll NEXT request. */
+		message_length = channel_message_length(request_message);
+	}
+	/* Preserve the token of an outstanding long-poll request. */
 	if (session->pending_active)
 		return (router_send_reply(session, request_message, message, EBUSY,
 		    NULL, 0));
@@ -659,6 +698,12 @@ router_handle_request(struct router *router, struct router_session *session,
 		    NOTIFY_FEATURE_BOUNDED_QUEUE |
 		    NOTIFY_FEATURE_STATE |
 		    NOTIFY_FEATURE_LOSS_REPORTING;
+		if (message_length > sizeof(*message)) {
+			const struct notify_hello_request *requested;
+
+			requested = (const void *)(message + 1);
+			hello.features |= requested->features & NOTIFY_FEATURE_STATE_WATCH;
+		}
 		hello.max_topic = NOTIFY_MAX_TOPIC;
 		hello.max_payload = NOTIFY_MAX_PAYLOAD;
 		hello.max_subscriptions = NOTIFY_MAX_SUBSCRIPTIONS;
@@ -696,10 +741,25 @@ router_handle_request(struct router *router, struct router_session *session,
 		if (error == 0)
 			(void)router_deliver_pending(router);
 		break;
+	case NOTIFY_OP_STATE_WATCH:
 	case NOTIFY_OP_NEXT: {
-		const struct notify_next_request *next_request;
+		uint32_t timeout_ms;
 
-		next_request = (const void *)(message + 1);
+		if (message->opcode == NOTIFY_OP_STATE_WATCH) {
+			const struct notify_state_watch_request *watch;
+
+			watch = (const void *)(message + 1);
+			if (notify_broker_watch_begin(router->broker, session->client,
+			    watch->topic.topic, watch->topic.topic_length) == -1)
+				return (router_send_reply(session, request_message,
+				    message, errno, NULL, 0));
+			timeout_ms = watch->timeout_ms;
+		} else {
+			const struct notify_next_request *next_request;
+
+			next_request = (const void *)(message + 1);
+			timeout_ms = next_request->timeout_ms;
+		}
 		session->pending = request_message;
 		session->pending_wire = *message;
 		session->pending_active = true;
@@ -707,21 +767,22 @@ router_handle_request(struct router *router, struct router_session *session,
 			return (-1);
 		if (!session->pending_active)
 			return (request_message != NULL ? 1 : 0);
-		if (next_request->timeout_ms == 0) {
+		if (timeout_ms == 0) {
+			notify_broker_watch_cancel(session->client);
 			session->pending = NULL;
 			session->pending_active = false;
-			return (router_send_reply(session, request_message, message, EAGAIN,
-			    NULL, 0));
+			return (router_send_reply(session, request_message, message,
+			    EAGAIN, NULL, 0));
 		}
-		if (next_request->timeout_ms != NOTIFY_TIMEOUT_INFINITE &&
-		    router_add_timer(router, session, 0,
-		    next_request->timeout_ms, 0,
+		if (timeout_ms != NOTIFY_TIMEOUT_INFINITE &&
+		    router_add_timer(router, session, 0, timeout_ms, 0,
 		    ROUTER_EVENT_NEXT_TIMER) == -1) {
 			error = errno;
+			notify_broker_watch_cancel(session->client);
 			session->pending = NULL;
 			session->pending_active = false;
-			return (router_send_reply(session, request_message, message, error,
-			    NULL, 0));
+			return (router_send_reply(session, request_message, message,
+			    error, NULL, 0));
 		}
 		return (request_message != NULL ? 1 : 0);
 	}
@@ -784,6 +845,8 @@ router_handle_request(struct router *router, struct router_session *session,
 		error = notify_broker_state_clear(router->broker,
 		    session->client, topic->topic, topic->topic_length) == -1 ?
 		    errno : 0;
+		if (error == 0)
+			(void)router_deliver_pending(router);
 		break;
 	}
 	if (error != 0)
@@ -824,6 +887,14 @@ relay_authorized(const struct notify_policy *policy,
 		topic = (const void *)(message + 1);
 		return (notify_policy_can_publish(policy, topic->topic,
 		    topic->topic_length));
+	case NOTIFY_OP_STATE_WATCH: {
+		const struct notify_state_watch_request *watch;
+
+		*operation = "state-watch";
+		watch = (const void *)(message + 1);
+		return (notify_policy_can_subscribe(policy, watch->topic.topic,
+		    watch->topic.topic_length));
+	}
 	case NOTIFY_OP_STATE_GET:
 		*operation = "state-get";
 		topic = (const void *)(message + 1);
@@ -1002,7 +1073,7 @@ router_main(int control, const struct notify_policy_db *policy_db,
 	struct event_source *source;
 	struct router_timer *timer;
 	struct router_session *session;
-	int count, i, error, wants_write;
+	int count, i, wants_write;
 
 	memset(&router, 0, sizeof(router));
 	router.control = control;
@@ -1092,15 +1163,8 @@ router_main(int control, const struct notify_policy_db *policy_db,
 			timer = (void *)source;
 			session = timer->session;
 			if (source->type == ROUTER_EVENT_NEXT_TIMER) {
-				error = router_send_reply(session, session->pending,
-				    channel_message_data(session->pending), EAGAIN,
-				    NULL, 0) == -1 ? errno : 0;
-				channel_message_free(session->pending);
-				session->pending = NULL;
-				session->pending_active = false;
 				timer->ident = 0;
-				router_delete_timer(&router, timer);
-				if (error != 0)
+				if (router_watch_timeout(&router, session) == -1)
 					router_remove_session(&router, session);
 				continue;
 			}
@@ -1117,6 +1181,7 @@ router_main(int control, const struct notify_policy_db *policy_db,
 			if (router_deliver(&router, session) == -1)
 				router_remove_session(&router, session);
 		}
+		(void)router_deliver_pending(&router);
 		router_collect_garbage(&router);
 	}
 
@@ -1282,6 +1347,13 @@ tier_name(uint32_t tier)
 	return (tier == NOTIFY_TIER_SYSTEM ? "system" : "open");
 }
 
+static int
+router_exited(void *argument)
+{
+ struct router_watch_context *context = argument;
+ return (atomic_load_explicit(&context->exited, memory_order_acquire) ? 1 : 0);
+}
+
 int
 main(void)
 {
@@ -1411,23 +1483,14 @@ main(void)
 			if (errno == EINTR)
 				continue;
 			if (service_provider_quiescing(provider) == 1) {
-				struct timespec pause;
-				unsigned waits;
 				int shutdown_error;
 
 				atomic_store_explicit(&watch_context.expected_exit, true,
 				    memory_order_release);
 				service_session_close(router_session);
 				router_session = NULL;
-				pause.tv_sec = 0;
-				pause.tv_nsec = 10000000L;
-				for (waits = 0; waits < 500 &&
-				    !atomic_load_explicit(&watch_context.exited,
-				    memory_order_acquire); waits++)
-					(void)nanosleep(&pause, NULL);
-				shutdown_error = atomic_load_explicit(
-				    &watch_context.exited, memory_order_acquire) ? 0 :
-				    ETIMEDOUT;
+				shutdown_error = service_drain_wait(router_exited,
+				    &watch_context, 5000) == -1 ? errno : 0;
 				if (shutdown_error != 0)
 					(void)pdkill(router_pd, SIGKILL);
 				watcher_error = pthread_join(watcher, NULL);

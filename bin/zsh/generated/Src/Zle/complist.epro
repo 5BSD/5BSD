@@ -1,0 +1,12 @@
+/* Generated automatically */
+#ifndef have_Src_Zle_complist_globals
+#define have_Src_Zle_complist_globals
+
+extern int setup_(UNUSED(Module m));
+extern int features_(Module m,char***features);
+extern int enables_(Module m,int**enables);
+extern int boot_(Module m);
+extern int cleanup_(Module m);
+extern int finish_(UNUSED(Module m));
+
+#endif /* !have_Src_Zle_complist_globals */

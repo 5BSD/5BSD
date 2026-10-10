@@ -11,6 +11,11 @@ back what it is given. Every call below is declared in
 `lib/libservice/libservice.h` and `lib/libchannel/channel.h`; the complete
 sources compile against the tree and are the basis of every fragment shown.
 
+**FIDL status:** This chapter uses the current C protocol interfaces.
+The experimental [FIDL integration](fidl.md) aims to replace manual
+wire definitions with schemas and generated bindings. Its experimental native
+backend and C bridge are tested; production service migration is not complete.
+
 ## Two ways to write a service
 
 | | The BSD way (still supported) | The 5BSD way |

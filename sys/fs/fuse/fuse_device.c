@@ -465,9 +465,10 @@ fuse_device_write(struct cdev *dev, struct uio *uio, int ioflag)
 	/* A notification carries a positive opcode, not a Linux errno. */
 	if (data->linux_errnos != 0 && ohead.unique != 0 &&
 	    ohead.error < 0) {
+		/* Validate before negating: the daemon can send INT32_MIN. */
+		if (ohead.error <= -(int)nitems(linux_to_bsd_errtbl))
+			return (EXTERROR(EINVAL, "Unknown Linux errno", ohead.error));
 		err = -ohead.error;
-		if (err < 0 || err >= nitems(linux_to_bsd_errtbl))
-			return (EXTERROR(EINVAL, "Unknown Linux errno", err));
 
 		/* '-', because it will get flipped again below */
 		ohead.error = -linux_to_bsd_errtbl[err];
@@ -528,8 +529,7 @@ fuse_device_write(struct cdev *dev, struct uio *uio, int ioflag)
 			SDT_PROBE2(fusefs, , device, trace, 1,
 				"pass ticket to a callback");
 			/* Sanitize the linuxism of negative errnos */
-			ohead.error *= -1;
-			if (ohead.error < 0 || ohead.error > ELAST) {
+			if (ohead.error > 0 || ohead.error < -ELAST) {
 				/* Illegal error code */
 				ohead.error = EIO;
 				memcpy(&tick->tk_aw_ohead, &ohead,
@@ -537,6 +537,7 @@ fuse_device_write(struct cdev *dev, struct uio *uio, int ioflag)
 				tick->tk_aw_handler(tick, uio);
 				err = EXTERROR(EINVAL, "Unknown errno", ohead.error);
 			} else {
+				ohead.error = -ohead.error;
 				memcpy(&tick->tk_aw_ohead, &ohead,
 					sizeof(ohead));
 				err = tick->tk_aw_handler(tick, uio);

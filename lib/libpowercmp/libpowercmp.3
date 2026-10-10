@@ -1,6 +1,6 @@
 .\" SPDX-License-Identifier: BSD-2-Clause
 .\" Copyright (c) 2026 Kory Heard
-.Dd September 19, 2026
+.Dd October 10, 2026
 .Dt LIBPOWERCMP 3
 .Os
 .Sh NAME
@@ -10,14 +10,14 @@
 .Nm powercmp_suspend
 .Nd client for the system.Power capability
 .Sh LIBRARY
-.Lb libpowercmp
+Power Capability Library (libpowercmp, -lpowercmp)
 .Sh SYNOPSIS
 .In powercmp.h
 .Ft int
 .Fn powercmp_client_open "struct powercmp_client **clientp"
 .Ft void
 .Fn powercmp_client_close "struct powercmp_client *client"
-\.Ft int
+.Ft int
 .Fn powercmp_states "struct powercmp_client *client" "uint32_t *supported"
 .Ft int
 .Fn powercmp_suspend "struct powercmp_client *client" "uint32_t state"
@@ -45,6 +45,47 @@ set.
 fails with
 .Er EPERM
 when the caller's label is not granted suspend authority.
+.Sh SUSPEND INHIBITORS
+.Fn powercmp_inhibit client
+acquires one session-owned suspend inhibitor, subject to the separate
+.Va inhibit
+policy.
+It returns EALREADY if this session already holds one.
+.Fn powercmp_uninhibit client
+releases it, or returns ENOENT when absent.
+.Fn powercmp_inhibitors client count
+returns the global inhibitor count to any system.Power holder.
+An acknowledged inhibitor makes suspend return EBUSY, including suspend
+requests from its owner.
+Release it before requesting suspend.
+.Pp
+Closing the client, client death, or provider restart revokes its inhibitor.
+A transport or protocol failure closes the underlying session and leaves the
+client handle unusable; free it with
+.Fn powercmp_client_close .
+The provider releases any lease when it observes the disconnect.
+A failed call may already have reached the provider; disconnecting cannot undo
+an operation already performed.
+Policy errors leave the session usable.
+There is no transparent reopen or reacquisition.
+Check errors on subsequent calls and treat a lost session as a lost lease.
+The lease does not prevent reboot, halt, panic, or suspend outside BSDPower.
+Calls on a client require external serialization.
+Clients inherited across
+fork reject use with ECHILD; leases belong to the original process session.
+.Pp
+Typical use:
+.Bd -literal -offset indent
+if (powercmp_client_open(&power) == -1)
+        return (-1);
+if (powercmp_inhibit(power) == -1) {
+        powercmp_client_close(power);
+        return (-1);
+}
+/* Perform bounded work; a lost service connection loses protection. */
+error = powercmp_uninhibit(power);
+powercmp_client_close(power);
+.Ed
 .Sh SEE ALSO
 .Xr acpi 4 ,
 .Xr BSDPower 8

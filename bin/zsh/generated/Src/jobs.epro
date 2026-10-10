@@ -1,0 +1,68 @@
+/* Generated automatically */
+#ifndef have_Src_jobs_globals
+#define have_Src_jobs_globals
+
+extern pid_t origpgrp;
+extern mod_import_variable pid_t mypgrp;
+extern pid_t last_attached_pgrp;
+extern mod_import_variable int thisjob;
+extern mod_import_variable int curjob;
+extern mod_import_variable int prevjob;
+extern mod_import_variable struct job*jobtab;
+extern mod_import_variable int jobtabsize;
+extern mod_import_variable int maxjob;
+#ifdef HAVE_GETRUSAGE
+#else
+#endif
+extern mod_import_variable int ttyfrozen;
+extern int prev_errflag;
+extern int prev_breaks;
+extern int errbrk_saved;
+extern int numpipestats;
+extern int pipestats[MAX_PIPESTATS];
+extern void makerunning(Job jn);
+extern int findproc(pid_t pid,Job*jptr,Process*pptr,int aux);
+extern int hasprocs(int job);
+extern void get_usage(void);
+extern void update_process(Process pn,int status);
+extern void check_cursh_sig(int sig);
+extern void storepipestats(Job jn,int inforeground,int fixlastval);
+extern void update_job(Job jn);
+extern long get_clktck(void);
+extern mod_import_function char*sigmsg(int sig);
+extern int printjob(Job jn,int lng,int synch);
+extern void addfilelist(const char*name,int fd);
+extern void pipecleanfilelist(LinkList filelist,int proc_subst_only);
+extern void deletefilelist(LinkList file_list,int disowning);
+extern void cleanfilelists(void);
+extern void freejob(Job jn,int deleting);
+extern void deletejob(Job jn,int disowning);
+extern void addproc(pid_t pid,char*text,int aux,struct timeval*bgtime,int gleader,int list_pipe_job_used);
+extern int havefiles(void);
+extern int waitforpid(pid_t pid,int wait_cmd);
+extern void waitjobs(void);
+extern mod_import_function void clearjobtab(int monitor);
+extern void clearoldjobtab(void);
+extern int initjob(void);
+extern void setjobpwd(void);
+extern void spawnjob(void);
+extern void shelltime(void);
+extern void scanjobs(void);
+extern mod_import_function void selectjobtab(Job*jtabp,int*jmaxp);
+extern mod_import_function int getjob(const char*s,const char*prog);
+extern void init_jobs(char**argv,char**envp);
+extern int expandjobtab(void);
+extern void maybeshrinkjobtab(void);
+extern void addbgstatus(pid_t pid,int status);
+extern int bin_fg(char*name,char**argv,Options ops,int func);
+extern int bin_kill(char*nam,char**argv,UNUSED(Options ops),UNUSED(int func));
+extern mod_import_function int getsigidx(const char*s);
+extern mod_import_function const char*getsigname(int sig);
+extern HashNode gettrapnode(int sig,int ignoredisable);
+extern void removetrapnode(int sig);
+extern int bin_suspend(char*name,UNUSED(char**argv),Options ops,UNUSED(int func));
+extern int findjobnam(const char*s);
+extern void acquire_pgrp(void);
+extern void release_pgrp(void);
+
+#endif /* !have_Src_jobs_globals */

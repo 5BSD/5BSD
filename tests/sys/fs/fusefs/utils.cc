@@ -154,6 +154,7 @@ void FuseTest::SetUp() {
 			m_nointr, m_noatime, m_fsname, m_subtype,
 			m_no_auto_init, m_auto_unmount, m_daemon_timeout,
 			m_linux_errnos);
+		expect_mac_label();
 		/* 
 		 * FUSE_ACCESS is called almost universally.  Expecting it in
 		 * each test case would be super-annoying.  Instead, set a
@@ -186,6 +187,20 @@ void FuseTest::SetUp() {
 	} catch (std::system_error const& err) {
 		FAIL() << err.what();
 	}
+}
+
+void
+FuseTest::expect_mac_label()
+{
+	/* Model an unlabeled filesystem without disabling native MAC policy. */
+	EXPECT_CALL(*m_mock, process(
+		ResultOf([](auto in) {
+			return in.header.opcode == FUSE_GETXATTR &&
+			    strcmp(reinterpret_cast<const char *>(
+			    &in.body.getxattr + 1), "system.mac_abac") == 0;
+		}, Eq(true)), _))
+	.Times(AnyNumber())
+	.WillRepeatedly(Invoke(ReturnErrno(m_linux_errnos ? 61 : ENOATTR)));
 }
 
 void

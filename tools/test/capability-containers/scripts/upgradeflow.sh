@@ -1,9 +1,9 @@
 #!/bin/sh
-# Container-model UPGRADE-SAFETY proof.  An upgrade is the same bundle_id with a
-# bumped sequence/version, in place.  The dangerous outcome is that the
-# reconcile mistakes the transient for a removal and reaps the bundle's durable
-# container.  This proves the opposite, and that the container is still
-# reclaimable AFTER an upgrade (the upgrade did not strand it un-attributable):
+# Container persistence smoke test across metadata reload and reboot.
+# This edits Bundle.ucl in place: the installed bundle directory never vanishes.
+# It does NOT exercise pkg transactions, concurrent reaping during replacement,
+# upgrade exclusion, transaction abort, or installer crash recovery.  Its PASS
+# markers establish only the persistence/reclamation cases described below.
 #
 #   boot #1 install v1            -> the unit claims a fresh persistent container
 #                                    (reclaimprobe appends one "launch" line)

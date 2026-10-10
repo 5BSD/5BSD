@@ -110,10 +110,27 @@ struct mac_capability_sendmsg_args {
  * extraction and metadata.  Blocks until a message is available
  * (EAGAIN with O_NONBLOCK).
  */
+/*
+ * Receive status, set on successful return.  RECV_F_STATUS means the kernel
+ * reports queue state; RECV_F_EMPTY means no further message was queued when
+ * this one was taken, so a dispatch loop can wait instead of issuing a receive
+ * that would only fail with EAGAIN.  Older kernels leave flags zero.
+ */
+#define	MAC_CAPABILITY_RECV_F_STATUS	0x00000001
+#define	MAC_CAPABILITY_RECV_F_EMPTY	0x00000002
+/*
+ * Input: wait for a message even on a non-blocking descriptor, for at most
+ * _reserved[0] milliseconds (MAC_CAPABILITY_RECV_WAIT_FOREVER waits without
+ * a limit).  A timeout fails with ETIMEDOUT.  One call replaces a readiness
+ * wait followed by a receive.  Older kernels reject the flag with EINVAL.
+ */
+#define	MAC_CAPABILITY_RECV_F_WAIT	0x00000004
+#define	MAC_CAPABILITY_RECV_WAIT_FOREVER	0xffffffffu
+
 struct mac_capability_recvmsg_args {
 	void		*payload;
 	uint32_t	payload_len;	/* IN: buffer size, OUT: actual */
-	uint32_t	flags;		/* reserved, must be 0 */
+	uint32_t	flags;		/* IN: must be 0; OUT: RECV_F_* */
 	int		*fds;		/* OUT: received fds */
 	uint32_t	nfds;		/* IN: max, OUT: actual */
 	uint64_t	badge;		/* OUT: message badge */
@@ -145,6 +162,64 @@ struct mac_capability_recvmsg_v3_args {
 };
 #define MAC_CAPABILITY_RECVMSG_V3 \
 	_IOWR('Y', 14, struct mac_capability_recvmsg_v3_args)
+
+/*
+ * Descriptor handling in one call, for any number of descriptors.
+ *
+ * MAC_CAPABILITY_SENDMSG_V2 takes an optional expectation per attached
+ * descriptor.  The kernel checks every type and rights expectation before
+ * the message is accepted (failing with EFTYPE, ENOTCAPABLE or EOPNOTSUPP
+ * and consuming no transfer authority), and narrows only the delivered
+ * copy to the requested rights; the sender's descriptor keeps its rights.
+ * message.flags may add:
+ *   SEND_F_MOVE: close the sender's descriptors once the message is
+ *	accepted; on failure they are left open and unchanged.
+ *   SEND_F_LOCK_INHERIT: deliver with close-on-exec and close-on-fork
+ *	locked (CAP_CLOEXEC_LOCKED, CAP_CLOFORK_LOCKED).
+ * MAC_CAPABILITY_RECVMSG_V4 additionally reports each received
+ * descriptor's type and rights, so a receiver can validate them without
+ * further system calls.  Older kernels fail both with ENOTTY.
+ */
+#define	MAC_CAPABILITY_FD_TYPE_ANY	0	/* spec: no type requirement */
+#define	MAC_CAPABILITY_FD_TYPE_SOCKET	1
+#define	MAC_CAPABILITY_FD_TYPE_CHANNEL	2	/* a channel bearer endpoint */
+#define	MAC_CAPABILITY_FD_TYPE_OTHER	3	/* info only */
+#define	MAC_CAPABILITY_FD_RIGHT_READ	0x00000001
+#define	MAC_CAPABILITY_FD_RIGHT_WRITE	0x00000002
+#define	MAC_CAPABILITY_FD_RIGHT_FSTAT	0x00000004	/* info only */
+#define	MAC_CAPABILITY_FD_RIGHTS_ALL	0x40000000	/* info: unrestricted */
+#define	MAC_CAPABILITY_FD_RIGHTS_EXACT	0x80000000	/* info: no other rights */
+#define	MAC_CAPABILITY_SEND_F_MOVE		0x00000001
+#define	MAC_CAPABILITY_SEND_F_LOCK_INHERIT	0x00000002
+
+/* Per-descriptor spec flag: as SEND_F_LOCK_INHERIT, for this one. */
+#define	MAC_CAPABILITY_FD_SPEC_LOCK_INHERIT	0x00000001
+
+struct mac_capability_fd_spec {
+	uint32_t	type;		/* MAC_CAPABILITY_FD_TYPE_* */
+	uint32_t	rights;		/* FD_RIGHT_READ|WRITE; 0 keeps rights */
+	uint32_t	flags;		/* MAC_CAPABILITY_FD_SPEC_* */
+	uint32_t	_reserved;
+};
+struct mac_capability_sendmsg_v2_args {
+	struct mac_capability_sendmsg_args message;
+	const struct mac_capability_fd_spec *fd_specs;	/* NULL or nfds */
+	uint64_t	_reserved2[2];
+};
+#define	MAC_CAPABILITY_SENDMSG_V2 \
+	_IOW('Y', 15, struct mac_capability_sendmsg_v2_args)
+
+struct mac_capability_fd_info {
+	uint32_t	type;		/* MAC_CAPABILITY_FD_TYPE_* */
+	uint32_t	rights;		/* FD_RIGHT_* | FD_RIGHTS_ALL | EXACT */
+};
+struct mac_capability_recvmsg_v4_args {
+	struct mac_capability_recvmsg_v3_args v3;
+	struct mac_capability_fd_info *fd_info;	/* NULL or nfds entries */
+	uint64_t	_reserved2[2];
+};
+#define	MAC_CAPABILITY_RECVMSG_V4 \
+	_IOWR('Y', 16, struct mac_capability_recvmsg_v4_args)
 
 /*
  * Synchronous call — request and reply in one ioctl.

@@ -1,6 +1,6 @@
 .\" SPDX-License-Identifier: BSD-2-Clause
 .\" Copyright (c) 2026 Kory Heard
-.Dd September 26, 2026
+.Dd October 9, 2026
 .Dt LIBSERVICE 3
 .Os
 .Sh NAME
@@ -233,6 +233,13 @@ client to re-arm the timer, or with
 .Fa seconds
 set to zero to cancel a pending idle shutdown.
 New client demand arriving before the timer fires cancels it automatically.
+If accepted work becomes active as the timer fires, the provider may reply to
+the idle quiesce with
+.Er EBUSY
+through
+.Fn service_provider_quiesce_complete .
+This resumes client admission and cancels the pending stop; the provider must
+request idle shutdown again when the work completes.
 .Pp
 .Fn service_heartbeat
 sends a liveness ping to
@@ -280,7 +287,7 @@ set.
 asks the
 .Dq system.Filesystem
 provider
-.Pq Xr bsdfilesystem 8
+.Pq Xr BSDFilesystem 8
 for the owned, type-checked storage claim named
 .Fa name ,
 mounts the delivered rights-limited handle, and returns its directory root in
@@ -344,7 +351,7 @@ the unit's bundle must declare membership in
 .Fa group
 .Pq Bundle.ucl Va groups , see Xr switchboard 5 ,
 which switchboard stamps on the connection and
-.Xr bsdfilesystem 8
+.Xr BSDFilesystem 8
 enforces; a non-member is refused with
 .Er EPERM .
 The group container is reaped only when no installed bundle claims the group
@@ -545,7 +552,7 @@ and takes no object name.
 opens an existing filesystem
 .Fa path
 through
-.Xr bsdfilesystem 8 Ns 's
+.Xr BSDFilesystem 8 Ns 's
 per-label default-deny policy and returns a Capsicum-rights-limited,
 close-on-exec descriptor in
 .Fa fdp .
@@ -577,7 +584,7 @@ returning it in
 asks the
 .Dq system.Namespace
 provider
-.Pq Xr bsdnamespace 8
+.Pq Xr BSDNamespace 8
 to create a jail rooted at
 .Fa path
 (scoped by this process's channel label) and attaches the calling process to it;
@@ -639,7 +646,7 @@ Each address field is empty when the jail has no address of that family.
 asks the
 .Dq system.SystemExtension
 provider
-.Pq Xr bsdextension 8
+.Pq Xr BSDExtension 8
 to ensure the kernel extension (module) named
 .Fa module
 is loaded (success includes an already-loaded module).
@@ -663,7 +670,7 @@ a denied name fails with
 .Pp
 .Fn service_extension_list
 enumerates the module names
-.Xr bsdextension 8 Ns 's
+.Xr BSDExtension 8 Ns 's
 allow-list permits, so a consumer can discover what it may
 .Fn service_ensure_extension
 without probing names blindly.
@@ -762,7 +769,7 @@ for operator commands and persistence semantics.
 asks the
 .Dq system.VM
 provider
-.Pq Xr bsdvm 8
+.Pq Xr BSDVM 8
 to bind a host-local listening
 .Dv AF_VSOCK
 socket on the caller's behalf.
@@ -784,7 +791,7 @@ when non-NULL, the concrete host-local CID and port bound.
 .Pp
 .Fn service_vsock_connect
 dials a peer's advertised vsock via
-.Xr bsdvm 8
+.Xr BSDVM 8
 and returns the connected
 .Dv AF_VSOCK
 socket in
@@ -799,7 +806,7 @@ is the target CID, which must not be
 .Pp
 .Fn service_vsock_list
 reports the caller's own vsock port window from
-.Xr bsdvm 8 ,
+.Xr BSDVM 8 ,
 so a component can discover the concrete port range it may
 .Fn service_vsock_listen
 within
@@ -828,7 +835,7 @@ launches and connects a private helper unit declared in the caller's own
 bundle, named by its bare unit
 .Fa name
 .Pq the helper unit's directory name, not a
-.Ql system.
+.Ql system\&.
 name .
 The service manager resolves it through a synthetic bundle-local provider name
 that ordinary
@@ -1096,12 +1103,21 @@ Service names authorize discovery, not application operations.
 Typed protocols must validate magic, version, opcode, status, payload shape,
 attachment count, and every attachment slot before use.
 Delivery durability and remote cancellation remain service-specific.
+.Sh FIDL INTEGRATION
+The experimental FIDL source import does not change this API or its
+current wire and descriptor ownership contracts.
+An experimental native backend and generated C bridge now use
+.Xr libchannel 3 .
+Production services still require an explicit protocol migration.
+See
+.Xr fidl 7
+for status and adaptation requirements.
 .Sh SEE ALSO
 .Xr kqueue 2 ,
 .Xr libchannel 3 ,
 .Xr capsicum 4 ,
-.Xr switchboard 8 ,
-.Xr bsdextension 8 ,
-.Xr bsdfilesystem 8 ,
-.Xr bsdvm 8 ,
-.Xr bsdnamespace 8
+.Xr BSDExtension 8 ,
+.Xr BSDFilesystem 8 ,
+.Xr BSDNamespace 8 ,
+.Xr BSDVM 8 ,
+.Xr switchboard 8

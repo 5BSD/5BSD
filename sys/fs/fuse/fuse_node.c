@@ -204,7 +204,7 @@ fuse_vnode_alloc(struct mount *mp,
     struct thread *td,
     uint64_t nodeid,
     __enum_uint8(vtype) vtyp,
-    struct vnode **vpp)
+    struct vnode **vpp, int lkflags)
 {
 	struct fuse_data *data;
 	struct fuse_vnode_data *fvdat;
@@ -216,7 +216,7 @@ fuse_vnode_alloc(struct mount *mp,
 		return EINVAL;
 	}
 	*vpp = NULL;
-	err = vfs_hash_get(mp, fuse_vnode_hash(nodeid), LK_EXCLUSIVE, td, vpp,
+	err = vfs_hash_get(mp, fuse_vnode_hash(nodeid), lkflags, td, vpp,
 	    fuse_vnode_cmp, &nodeid);
 	if (err)
 		return (err);
@@ -230,6 +230,12 @@ fuse_vnode_alloc(struct mount *mp,
 				"vnode taken from hash");
 			return (0);
 		} else {
+			/* Speculative directory prefetch must not recycle a vnode. */
+			if ((lkflags & LK_NOWAIT) != 0) {
+				vput(*vpp);
+				*vpp = NULL;
+				return (EAGAIN);
+			}
 			/*
 			 * The inode changed types!  If we get here, we can't
 			 * tell whether the inode's entry cache had expired
@@ -241,7 +247,9 @@ fuse_vnode_alloc(struct mount *mp,
 				nodeid);
 			fuse_internal_vnode_disappear(*vpp);
 			vgone(*vpp);
-			lockmgr((*vpp)->v_vnlock, LK_RELEASE, NULL);
+			/* Release the reference acquired by vfs_hash_get(). */
+			vput(*vpp);
+			*vpp = NULL;
 		}
 	}
 	fvdat = malloc(sizeof(*fvdat), M_FUSEVN, M_WAITOK | M_ZERO);
@@ -260,27 +268,37 @@ fuse_vnode_alloc(struct mount *mp,
 	lockmgr((*vpp)->v_vnlock, LK_EXCLUSIVE, NULL);
 	fuse_vnode_init(*vpp, fvdat, nodeid, vtyp);
 	err = insmntque(*vpp, mp);
-	ASSERT_VOP_ELOCKED(*vpp, "fuse_vnode_alloc");
 	if (err) {
-		lockmgr((*vpp)->v_vnlock, LK_RELEASE, NULL);
+		/*
+		 * insmntque clears v_data and reclaims/releases the vnode on
+		 * failure.  Only the private data still belongs to us.
+		 */
+		mtx_destroy(&fvdat->cached_attr_mtx);
 		free(fvdat, M_FUSEVN);
+		counter_u64_add(fuse_node_count, -1);
 		*vpp = NULL;
 		return (err);
 	}
+	ASSERT_VOP_ELOCKED(*vpp, "fuse_vnode_alloc");
 	/* Disallow async reads for fifos because UFS does.  I don't know why */
 	if (data->dataflags & FSESS_ASYNC_READ && vtyp != VFIFO)
 		VN_LOCK_ASHARE(*vpp);
 
 	vn_set_state(*vpp, VSTATE_CONSTRUCTED);
-	err = vfs_hash_insert(*vpp, fuse_vnode_hash(nodeid), LK_EXCLUSIVE,
+	err = vfs_hash_insert(*vpp, fuse_vnode_hash(nodeid), lkflags,
 	    td, &vp2, fuse_vnode_cmp, &nodeid);
 	if (err) {
-		lockmgr((*vpp)->v_vnlock, LK_RELEASE, NULL);
-		free(fvdat, M_FUSEVN);
+		/* vfs_hash_insert has already reclaimed and released our vnode. */
 		*vpp = NULL;
 		return (err);
 	}
 	if (vp2 != NULL) {
+		/* The insertion race may have found a different inode type. */
+		if ((lkflags & LK_NOWAIT) != 0 && vp2->v_type != vtyp) {
+			vput(vp2);
+			*vpp = NULL;
+			return (EAGAIN);
+		}
 		*vpp = vp2;
 		return (0);
 	}
@@ -298,6 +316,15 @@ fuse_vnode_get(struct mount *mp,
     struct vnode **vpp,
     struct componentname *cnp,
     __enum_uint8(vtype) vtyp)
+{
+	return (fuse_vnode_get_flags(mp, feo, nodeid, dvp, vpp, cnp, vtyp,
+	    LK_EXCLUSIVE));
+}
+
+int
+fuse_vnode_get_flags(struct mount *mp, struct fuse_entry_out *feo,
+    uint64_t nodeid, struct vnode *dvp, struct vnode **vpp,
+    struct componentname *cnp, __enum_uint8(vtype) vtyp, int lkflags)
 {
 	struct thread *td = curthread;
 	bool exportable = fuse_get_mpdata(mp)->dataflags & FSESS_EXPORT_SUPPORT;
@@ -332,7 +359,9 @@ fuse_vnode_get(struct mount *mp,
 		    "file has different inode number and nodeid.");
 	}
 
-	err = fuse_vnode_alloc(mp, td, nodeid, vtyp, vpp);
+	KASSERT((lkflags & LK_TYPE_MASK) == LK_EXCLUSIVE,
+	    ("fuse vnode allocation requires an exclusive lock"));
+	err = fuse_vnode_alloc(mp, td, nodeid, vtyp, vpp, lkflags);
 	if (err) {
 		return err;
 	}

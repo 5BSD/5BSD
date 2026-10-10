@@ -176,8 +176,40 @@ ATF_TC_BODY(client_args, tc)
 	    0) == -1);
 }
 
+ATF_TC_WITHOUT_HEAD(interface_wire);
+ATF_TC_BODY(interface_wire, tc)
+{
+	union buffer buf;
+	struct sysctlcmp_msg *msg = (void *)buf.bytes;
+	struct sysctlcmp_body *body;
+	struct sysctlcmp_interface *entry;
+	size_t length;
+
+	length = build_get(&buf, SYSCTLCMP_INTERFACES_POLICY);
+	msg->opcode = SYSCTLCMP_OP_INTERFACES;
+	ATF_CHECK_EQ(0, sysctlcmp_validate_message(msg, length, SYSCTLCMP_MESSAGE_REQUEST));
+	body = (void *)(msg + 1);
+	((char *)(body + 1))[0] = 'x';
+	ATF_CHECK_ERRNO(EPROTO, sysctlcmp_validate_message(msg, length, SYSCTLCMP_MESSAGE_REQUEST) == -1);
+	memset(&buf, 0, sizeof(buf));
+	msg->magic = SYSCTLCMP_MAGIC; msg->opcode = SYSCTLCMP_OP_INTERFACES;
+	body->value_length = 2 * sizeof(*entry);
+	entry = (void *)(body + 1);
+	entry[0].index = 1; strlcpy(entry[0].name, "em0", sizeof(entry[0].name));
+	entry[1].index = 2; strlcpy(entry[1].name, "lo0", sizeof(entry[1].name));
+	length = sizeof(*msg) + sizeof(*body) + body->value_length;
+	ATF_CHECK_EQ(0, sysctlcmp_validate_message(msg, length, SYSCTLCMP_MESSAGE_REPLY));
+	entry[1].index = 1;
+	ATF_CHECK_ERRNO(EPROTO, sysctlcmp_validate_message(msg, length, SYSCTLCMP_MESSAGE_REPLY) == -1);
+	entry[1].index = 2; entry[0].link_state = 3;
+	ATF_CHECK_ERRNO(EPROTO, sysctlcmp_validate_message(msg, length, SYSCTLCMP_MESSAGE_REPLY) == -1);
+	entry[0].link_state = 0; entry[0].name[4] = 'x';
+	ATF_CHECK_ERRNO(EPROTO, sysctlcmp_validate_message(msg, length, SYSCTLCMP_MESSAGE_REPLY) == -1);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
+	ATF_TP_ADD_TC(tp, interface_wire);
 
 	ATF_TP_ADD_TC(tp, abi);
 	ATF_TP_ADD_TC(tp, message_init);

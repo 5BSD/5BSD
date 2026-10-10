@@ -36,6 +36,9 @@ open_paths = [
       rights = ["read"]; },
     { label = "system.Network/bsdnetwork"; path = "/etc/services";
       rights = ["read"]; },
+    # PF monitor authority is limited to the Network broker and this one node.
+    { label = "system.Network/bsdnetwork"; path = "/dev/pf";
+      rights = ["read", "ioctl"]; },
     # blued owns the virtual-HID devices: the /dev/vhid control node and the
     # dynamically-numbered /dev/vhidN units it creates (prefix), read/write/ioctl.
     { label = "org.5bsd.Blued/blued"; path = "/dev/vhid"; prefix = true;

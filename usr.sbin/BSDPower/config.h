@@ -15,17 +15,19 @@
 #define	POWERCMP_MAX_CLIENTS		64
 
 /*
- * Per-label authority to SUSPEND the machine.  Reading the clock is
+ * Per-label authority to SUSPEND the machine.  Querying supported states is
  * unprivileged and never gated.  `may_suspend` covers the SUSPEND op: a label either may put the machine to sleep or it may not.  The
  * default is deny -- requesting a suspend is dangerous (an unexpected suspend is a denial-of-service), so only
- * an explicitly-granted label (e.g. an NTP daemon's) is allowed.
+ * an explicitly-granted label (e.g. a power manager's) is allowed.
  */
 struct powercmp_client_perm {
 	char	label[POWERCMP_CONFIG_LABEL_MAX + 1];
 	bool	may_suspend;
+	bool	may_inhibit;
 };
 
 struct powercmp_config {
+	bool				default_inhibit;
 	bool				default_suspend;	/* default: false */
 	struct powercmp_client_perm	clients[POWERCMP_MAX_CLIENTS];
 	size_t				nclients;
@@ -41,8 +43,8 @@ void	powercmp_config_defaults(struct powercmp_config *);
  * regular file, trusted owner, not group/other writable, size cap).  load_fd
  * takes ownership of fd and closes it.  UCL shape:
  *
- *	default { set = false; }
- *	clients { "org.example.ntp" { set = true; } }
+ *	default { suspend = false; inhibit = false; }
+ *	clients { "org.example.power" { suspend = true; inhibit = true; } }
  */
 int	powercmp_config_load(struct powercmp_config *, const char *path);
 int	powercmp_config_load_fd(struct powercmp_config *, int fd);
@@ -54,4 +56,5 @@ int	powercmp_config_load_fd(struct powercmp_config *, int fd);
 bool	powercmp_config_permits_suspend(const struct powercmp_config *,
 	    const char *label);
 
+bool powercmp_config_permits_inhibit(const struct powercmp_config *, const char *);
 #endif /* _BSDPOWER_CONFIG_H_ */

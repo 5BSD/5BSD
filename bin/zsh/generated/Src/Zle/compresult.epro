@@ -1,0 +1,25 @@
+/* Generated automatically */
+#ifndef have_Src_Zle_compresult_globals
+#define have_Src_Zle_compresult_globals
+
+extern mod_import_variable int invcount;
+extern char*unambig_data(int*cp,char**pp,char**ip);
+extern mod_import_function int hasbrpsfx(Cmatch m,char*pre,char*suf);
+extern int do_ambiguous(void);
+extern mod_import_function int ztat(char*nam,struct stat*buf,int ls);
+extern void do_allmatches(UNUSED(int end));
+extern mod_import_function void do_single(Cmatch m);
+extern mod_import_function void do_menucmp(int lst);
+extern mod_import_function int accept_last(void);
+extern void do_ambig_menu(void);
+extern zlong list_lines(void);
+extern void comp_list(char*v);
+extern mod_import_function Cmatch*skipnolist(Cmatch*p,int showall);
+extern mod_import_function int calclist(int showall);
+extern mod_import_function int asklist(void);
+extern mod_import_function void bld_all_str(Cmatch all);
+extern int ilistmatches(UNUSED(Hookdef dummy),UNUSED(Chdata dat));
+extern int list_matches(UNUSED(Hookdef dummy),UNUSED(void*dummy2));
+extern mod_import_function int invalidate_list(void);
+
+#endif /* !have_Src_Zle_compresult_globals */

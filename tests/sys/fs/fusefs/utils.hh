@@ -122,6 +122,7 @@ class FuseTest : public ::testing::Test {
 	 * given inode with the given access_mode, returning the given errno
 	 */
 	void expect_access(uint64_t ino, mode_t access_mode, int error);
+	void expect_mac_label();
 
 	/* Expect FUSE_DESTROY and shutdown the daemon */
 	void expect_destroy(int error);

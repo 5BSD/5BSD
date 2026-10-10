@@ -5,9 +5,6 @@ CONFETCDIR=	/etc
 CONFETC=	network.subr rc rc.initdiskless rc.subr rc.shutdown rc.bsdextended
 CONFETCPACKAGE=	rc
 
-.if ${MK_IPFW} != "no"
-CONFETC+=	rc.firewall
-.endif
 CONFETCMODE=	644
 CONFETCEXEC=	netstart pccard_ether rc.resume rc.suspend
 CONFETCEXECDIR=	/etc

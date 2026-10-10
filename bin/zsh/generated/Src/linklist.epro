@@ -1,0 +1,25 @@
+/* Generated automatically */
+#ifndef have_Src_linklist_globals
+#define have_Src_linklist_globals
+
+extern mod_import_function LinkList newlinklist(void);
+extern mod_import_function LinkList znewlinklist(void);
+extern mod_import_function LinkNode insertlinknode(LinkList list,LinkNode node,void*dat);
+extern mod_import_function LinkNode zinsertlinknode(LinkList list,LinkNode node,void*dat);
+extern mod_import_function LinkNode uinsertlinknode(LinkList list,LinkNode node,LinkNode new);
+extern mod_import_function void insertlinklist(LinkList l,LinkNode where,LinkList x);
+extern mod_import_function void*getlinknode(LinkList list);
+extern mod_import_function void*ugetnode(LinkList list);
+extern mod_import_function void*remnode(LinkList list,LinkNode nd);
+extern mod_import_function void*uremnode(LinkList list,LinkNode nd);
+extern mod_import_function void freelinklist(LinkList list,FreeFunc freefunc);
+extern mod_import_function int countlinknodes(LinkList list);
+extern mod_import_function void rolllist(LinkList l,LinkNode nd);
+extern mod_import_function LinkList newsizedlist(int size);
+extern mod_import_function LinkList joinlists(LinkList first,LinkList second);
+extern mod_import_function LinkNode linknodebydatum(LinkList list,void*dat);
+extern mod_import_function LinkNode linknodebystring(LinkList list,char*dat);
+extern mod_import_function char**hlinklist2array(LinkList list,int copy);
+extern mod_import_function char**zlinklist2array(LinkList list,int copy);
+
+#endif /* !have_Src_linklist_globals */

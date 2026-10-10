@@ -227,23 +227,9 @@ between dial-up attempts.
 If this mode bit is not set, the link table will never be reset in the event
 of an address change.
 .It Dv PKT_ALIAS_PUNCH_FW
-This option makes
-.Nm
-.Dq punch holes
-in an
-.Xr ipfirewall 4 -
-based firewall for FTP/IRC DCC connections.
-The holes punched are bound by from/to IP address and port; it will not be
-possible to use a hole for another connection.
-A hole is removed when the connection that uses it dies.
-To cater to unexpected death of a program using
-.Nm
-(e.g.\& kill -9),
-changing the state of the flag will clear the entire firewall range
-allocated for holes.
-This clearing will also happen on the initial call to
-.Fn LibAliasSetFWBase ,
-which must happen prior to setting this flag.
+Retired compatibility flag.
+Attempts to enable it return an error without changing the instance's mode.
+IPFW rule insertion is no longer supported.
 .It Dv PKT_ALIAS_REVERSE
 This option makes
 .Nm
@@ -296,10 +282,7 @@ by port forwarding on the NAT, or tunnelling through an in-between server.
 .Ft void
 .Fn LibAliasSetFWBase "struct libalias *" "unsigned int base" "unsigned int num"
 .Bd -ragged -offset indent
-Set the firewall range allocated for punching firewall holes (with the
-.Dv PKT_ALIAS_PUNCH_FW
-flag).
-The range is cleared for all rules on initialization.
+Retained for binary compatibility; this function has no effect.
 .Ed
 .Pp
 .Ft void

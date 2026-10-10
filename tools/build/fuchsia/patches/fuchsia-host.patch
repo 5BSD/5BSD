@@ -1,0 +1,23 @@
+--- a/fuchsia/src/lib/fxl/build_config.h
++++ b/fuchsia/src/lib/fxl/build_config.h
+@@ -11,6 +11,8 @@
+ #define OS_FUCHSIA 1
+ #elif defined(__APPLE__)
+ #define OS_MACOSX 1
++#elif defined(__FreeBSD__)
++#define OS_FREEBSD 1
+ #elif defined(__linux__)
+ #define OS_LINUX 1
+ #else
+--- a/fuchsia/tools/fidl/fidlc/src/lexer.cc
++++ b/fuchsia/tools/fidl/fidlc/src/lexer.cc
+@@ -352,6 +352,9 @@
+ 
+   if (start_of_file_) {
+     start_of_file_ = false;
++    // The zero-width SOF token must still point into its source buffer.
++    // A null pointer here makes SourceElement::span subtract unrelated pointers.
++    token_start_ = current_;
+     return Finish(Token::Kind::kStartOfFile);
+   }
+ 

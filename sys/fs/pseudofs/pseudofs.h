@@ -81,6 +81,7 @@ typedef enum {
 #define PFS_MAGICLINK	0x0080	/* Kernel-generated object link */
 #define PFS_FDNAME	0x0400	/* Numeric descriptor template */
 #define PFS_DEBUGOPEN	0x0800	/* Check debugger access at open, not lookup */
+#define PFS_SNAPSHOT	0x1000	/* Per-open, page-bounded read-only record */
 #define PFS_TIDNAME	0x0200	/* Enumerate thread IDs using pi_thread_id */
 #define PFS_PIDNAME	0x0100	/* Name is the inherited process ID */
 

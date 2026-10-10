@@ -1,0 +1,56 @@
+/* Generated automatically */
+#ifndef have_Src_Zle_zle_hist_globals
+#define have_Src_Zle_zle_hist_globals
+
+extern int lastcol;
+extern int histline;
+extern char*previous_search;
+extern int previous_search_len;
+extern char*previous_aborted_search;
+extern Keymap isearch_keymap;
+extern void remember_edits(void);
+extern void forget_edits(void);
+extern int uphistory(UNUSED(char**args));
+extern int upline(char**args);
+extern int uplineorhistory(char**args);
+extern int viuplineorhistory(char**args);
+extern int uplineorsearch(char**args);
+extern int downline(char**args);
+extern int downlineorhistory(char**args);
+extern int vidownlineorhistory(char**args);
+extern int downlineorsearch(char**args);
+extern int acceptlineanddownhistory(UNUSED(char**args));
+extern int downhistory(UNUSED(char**args));
+extern int historysearchbackward(char**args);
+extern int historysearchforward(char**args);
+extern int beginningofbufferorhistory(char**args);
+extern int beginningofhistory(UNUSED(char**args));
+extern int endofbufferorhistory(char**args);
+extern int endofhistory(UNUSED(char**args));
+extern int insertlastword(char**args);
+extern void zle_setline(Histent he);
+extern int setlocalhistory(UNUSED(char**args));
+extern int zle_goto_hist(int ev,int n,int skipdups);
+extern int pushline(UNUSED(char**args));
+extern int pushlineoredit(char**args);
+extern int pushinput(char**args);
+extern int zgetline(UNUSED(char**args));
+extern int historyincrementalsearchbackward(char**args);
+extern int historyincrementalsearchforward(char**args);
+extern int historyincrementalpatternsearchbackward(char**args);
+extern int historyincrementalpatternsearchforward(char**args);
+extern void free_isrch_spots(void);
+extern int isearch_active;
+extern int isearch_startpos;
+extern int isearch_endpos;
+extern int acceptandinfernexthistory(char**args);
+extern int infernexthistory(char**args);
+extern int vifetchhistory(UNUSED(char**args));
+extern int vihistorysearchforward(char**args);
+extern int vihistorysearchbackward(char**args);
+extern int virepeatsearch(UNUSED(char**args));
+extern int virevrepeatsearch(char**args);
+extern int historybeginningsearchbackward(char**args);
+extern int historybeginningsearchforward(char**args);
+
+#endif /* !have_Src_Zle_zle_hist_globals */

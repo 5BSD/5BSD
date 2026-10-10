@@ -3,7 +3,8 @@
  * Adversarial epoll/eventfd/timerfd tests: edge-triggered exactness under
  * a producer thread, EPOLLONESHOT re-arm races, EPOLLEXCLUSIVE with
  * several waiters, epoll_ctl DEL racing epoll_wait, close() of a
- * registered fd, nested epoll, dup rules, epoll_pwait2 timeouts/sigmask,
+ * registered fd, nested epoll, dup rules, MOD data, bad wait buffers,
+ * epoll poll-readiness, epoll_pwait2 timeouts/sigmask,
  * eventfd semaphore/overflow semantics, timerfd expirations and
  * TFD_TIMER_CANCEL_ON_SET.  Exit status = failed check number.
  */
@@ -34,6 +35,7 @@
 #define	ECANCELED	125
 
 struct epoll_event { unsigned int events; unsigned long data; } __attribute__((packed));
+struct pollfd { int fd; short events, revents; };
 struct itimerspec { struct timespec it_interval, it_value; };
 struct timeval { long tv_sec, tv_usec; };
 
@@ -323,6 +325,48 @@ test(int argc, char **argv, char **envp)
 	if (sys6(SYS_epoll_pwait2, ep, evs, 16, &ts, 0, 8) != -EINVAL) return (26);
 	/* 27: maxevents 0 is EINVAL, a bad events pointer EFAULT (when ready). */
 	if (sys4(SYS_epoll_wait, ep, evs, 0, 0) != -EINVAL) return (27);
+	/* Starnix epoll_test.cc: MOD changes delivered data, even while ready. */
+	{
+		int fds[2];
+		long e, alias;
+		struct pollfd p;
+
+		if (sys2(SYS_pipe2, fds, O_NONBLOCK) != 0) return (28);
+		e = sys1(SYS_epoll_create1, 0);
+		if (e < 0) return (28);
+		ev.events = EPOLLIN; ev.data = 1;
+		if (sys4(SYS_epoll_ctl_, e, EPOLL_CTL_ADD, fds[0], &ev) != 0 ||
+		    sys3(SYS_write, fds[1], "a", 1) != 1 ||
+		    sys4(SYS_epoll_wait, e, evs, 1, 0) != 1 ||
+		    evs[0].data != 1)
+			return (28);
+		ev.data = 2;
+		if (sys4(SYS_epoll_ctl_, e, EPOLL_CTL_MOD, fds[0], &ev) != 0 ||
+		    sys4(SYS_epoll_wait, e, evs, 1, 0) != 1 ||
+		    evs[0].data != 2)
+			return (28);
+		/* A dup still refers to this same epoll object. */
+		alias = sys1(SYS_dup, e);
+		if (alias < 0 ||
+		    sys4(SYS_epoll_ctl_, e, EPOLL_CTL_ADD, alias, &ev) != -EINVAL)
+			return (29);
+		(void)sys1(SYS_close, alias);
+		/* epoll itself becomes poll-readable when it has a ready entry. */
+		p.fd = (int)e; p.events = EPOLLIN; p.revents = 0;
+		if (sys3(SYS_poll, &p, 1, 0) != 1 ||
+		    (p.revents & EPOLLIN) == 0)
+			return (30);
+		(void)sys1(SYS_close, e);
+		(void)sys1(SYS_close, fds[0]);
+		(void)sys1(SYS_close, fds[1]);
+	}
+	/* Starnix WaitInvalidParams: count validation precedes copyout. */
+	if (sys4(SYS_epoll_wait, ep, evs, -1, 0) != -EINVAL ||
+	    sys4(SYS_epoll_wait, ep, 0, 0, 0) != -EINVAL ||
+	    sys4(SYS_epoll_wait, ep, 0, 1, 0) != 0)
+		return (31);
+	if (sys4(SYS_epoll_wait, ep, (void *)-1, 1, 0) != -EFAULT)
+		return (32);
 	(void)sys1(SYS_close, ep);
 	(void)sys1(SYS_close, pfd[0]);
 	(void)sys1(SYS_close, pfd[1]);

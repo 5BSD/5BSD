@@ -1,0 +1,72 @@
+// SPDX-License-Identifier: BSD-2-Clause
+library bsd.runtime.test;
+using zx;
+type Request = struct { text string:256; };
+type Response = struct { text string:256; };
+type Empty = struct {};
+type Resource = resource struct { fd zx.Handle; };
+type ReadOnly = resource struct { fd zx.Handle:<NONE, zx.Rights.READ>; };
+type SocketResource = resource struct { fd zx.Handle:SOCKET; };
+type ChannelResource = resource struct { fd zx.Handle:CHANNEL; };
+type OptionalResource = resource struct { fd zx.Handle:optional; };
+type ManyResources = resource struct { fds vector<zx.Handle>:40; };
+type Large = struct { bytes vector<uint8>:20000; };
+type Flag = struct { flag bool; };
+type Extensible = resource table { 1: fd zx.Handle; };
+closed protocol Service {
+    strict RoundTrip(Request) -> (Response);
+    strict Take(ReadOnly) -> (Response);
+    strict Notify(Request);
+    strict -> Changed(Response);
+};
+
+closed protocol Shapes {
+    strict Ping() -> ();
+    strict Echo(struct { value uint32; }) -> (struct { value uint32; });
+};
+
+type DecodeAllocation = resource struct { prefix string:1024; fd zx.Handle; items vector<uint32>:16; };
+
+type EndpointRequest = resource struct { ep client_end:Shapes; };
+type ServerEndpointRequest = resource struct { ep server_end:Shapes; };
+type OptionalEndpointRequest = resource struct { ep client_end:<Shapes, optional>; };
+closed protocol EndpointExchange { strict RoundTrip(EndpointRequest) -> (EndpointRequest); };
+
+type EscapedNames = struct { switch uint32; text string:16; text_size uint32; UpperCase uint32; };
+closed protocol Naming { strict RoundTrip(EscapedNames) -> (EscapedNames); };
+
+// C-first aggregate, dictionary and application-result integration coverage.
+type DictionaryEntry = struct { key string:32; value string:64; };
+type Linked = struct { value uint32; next box<Linked>; };
+type Mode = strict enum : uint32 { OFF = 0; ON = 1; };
+type Features = strict bits : uint32 { FIRST = 1; SECOND = 2; };
+type Collection = resource struct {
+    descriptors vector<zx.Handle>:4;
+    entries vector<DictionaryEntry>:4;
+    numbers array<uint32,3>;
+    switches vector<bool>:4;
+    label string:<32,optional>;
+    optional_numbers vector<uint32>:<4,optional>;
+    chain box<Linked>;
+    mode Mode;
+    features Features;
+};
+type Selection = flexible union { 1: number uint32; 2: entry DictionaryEntry; };
+type Configuration = table { 1: selection Selection; 2: label string:32; };
+closed protocol Collections {
+    strict Echo(Collection) -> (Collection);
+    strict Configure(Configuration) -> (Configuration);
+    strict Check(Request) -> (Response) error uint32;
+};
+
+open protocol Flexible {
+    flexible Ping() -> ();
+    flexible Echo(Request) -> (Response);
+    flexible Check(Request) -> (Response) error uint32;
+    flexible Note(Request);
+    flexible -> Changed(Response);
+    strict StrictPing() -> ();
+};
+open protocol OpenSurface {};
+ajar protocol AjarSurface {};
+closed protocol ClosedSurface {};

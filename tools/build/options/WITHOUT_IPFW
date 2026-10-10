@@ -1,1 +1,2 @@
-Do not build IPFW tools.
+IPFW has been removed. This legacy setting is accepted but has no effect.
+Use PF for filtering and DUMMYNET for the independent shaper and dnctl.

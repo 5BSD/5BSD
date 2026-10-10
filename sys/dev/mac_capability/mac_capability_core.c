@@ -124,6 +124,8 @@ struct mac_capability_service_list mac_capability_services =
     LIST_HEAD_INITIALIZER(mac_capability_services);
 uma_zone_t mac_capability_instance_zone;
 uma_zone_t mac_capability_msg_zone;
+uma_zone_t mac_capability_msg_small_zone;
+uma_zone_t mac_capability_msg_fdset_zone;
 
 
 static struct cdev *mac_capability_cdev;
@@ -212,20 +214,52 @@ mac_capability_service_lookup(const char *name)
 	return (NULL);
 }
 
+/*
+ * Allocate a message able to hold datalen payload bytes.  Only the header is
+ * cleared: the payload area is written before cm_datalen covers it, and
+ * receivers copy out exactly cm_datalen bytes, so zeroing up to 14 KiB of
+ * payload per message was pure overhead.
+ */
+struct mac_capability_msg *
+mac_capability_msg_get(size_t datalen, int nfds)
+{
+	struct mac_capability_msg *msg;
+	uint32_t capacity;
+
+	KASSERT(datalen <= MAC_CAPABILITY_MSG_PAYLOAD_SIZE,
+	    ("%s: payload %zu too large", __func__, datalen));
+	if (datalen <= MAC_CAPABILITY_MSG_SMALL_PAYLOAD) {
+		msg = uma_zalloc(mac_capability_msg_small_zone, M_WAITOK);
+		capacity = MAC_CAPABILITY_MSG_SMALL_PAYLOAD;
+	} else {
+		msg = uma_zalloc(mac_capability_msg_zone, M_WAITOK);
+		capacity = MAC_CAPABILITY_MSG_PAYLOAD_SIZE;
+	}
+	memset(msg, 0, offsetof(struct mac_capability_msg, cm_data));
+	msg->cm_capacity = capacity;
+	if (nfds > 0)
+		msg->cm_fdset = uma_zalloc(mac_capability_msg_fdset_zone,
+		    M_WAITOK | M_ZERO);
+	return (msg);
+}
+
 void
 mac_capability_msg_free(struct mac_capability_msg *msg)
 {
 	int i;
 
 	for (i = 0; i < msg->cm_nfds; i++) {
-		if (msg->cm_fds[i] != NULL)
-			fdrop(msg->cm_fds[i], curthread);
-		filecaps_free(&msg->cm_fcaps[i]);
+		if (msg->cm_fdset->fds[i] != NULL)
+			fdrop(msg->cm_fdset->fds[i], curthread);
+		filecaps_free(&msg->cm_fdset->fcaps[i]);
 	}
+	if (msg->cm_fdset != NULL)
+		uma_zfree(mac_capability_msg_fdset_zone, msg->cm_fdset);
 	if (msg->cm_cred != NULL)
 		crfree(msg->cm_cred);
 	cap_authority_drop(msg->cm_authority);
-	uma_zfree(mac_capability_msg_zone, msg);
+	uma_zfree(msg->cm_capacity == MAC_CAPABILITY_MSG_SMALL_PAYLOAD ?
+	    mac_capability_msg_small_zone : mac_capability_msg_zone, msg);
 }
 
 /*
@@ -260,6 +294,7 @@ void
 mac_capability_instance_free(struct mac_capability_instance *s)
 {
 
+	mac_capability_callback_state_rele(s->ci_callback_state);
 	cap_authority_drop(s->ci_authority);
 	knlist_destroy(&s->ci_rknotes);
 	knlist_destroy(&s->ci_wknotes);
@@ -533,6 +568,12 @@ mac_capability_init(void)
 	mac_capability_msg_zone = uma_zcreate("mac_capability_msg",
 	    sizeof(struct mac_capability_msg) + MAC_CAPABILITY_MSG_PAYLOAD_SIZE,
 	    NULL, NULL, NULL, NULL, UMA_ALIGN_PTR, 0);
+	mac_capability_msg_small_zone = uma_zcreate("mac_capability_msg_small",
+	    sizeof(struct mac_capability_msg) + MAC_CAPABILITY_MSG_SMALL_PAYLOAD,
+	    NULL, NULL, NULL, NULL, UMA_ALIGN_PTR, 0);
+	mac_capability_msg_fdset_zone = uma_zcreate("mac_capability_msg_fdset",
+	    sizeof(struct mac_capability_msg_fdset), NULL, NULL, NULL, NULL,
+	    UMA_ALIGN_PTR, 0);
 	mac_capability_stat_services = counter_u64_alloc(M_WAITOK);
 	mac_capability_stat_instances = counter_u64_alloc(M_WAITOK);
 	return (0);
@@ -544,6 +585,8 @@ mac_capability_uninit(void)
 
 	counter_u64_free(mac_capability_stat_instances);
 	counter_u64_free(mac_capability_stat_services);
+	uma_zdestroy(mac_capability_msg_fdset_zone);
+	uma_zdestroy(mac_capability_msg_small_zone);
 	uma_zdestroy(mac_capability_msg_zone);
 	uma_zdestroy(mac_capability_instance_zone);
 	sx_destroy(&mac_capability_registry_lock);

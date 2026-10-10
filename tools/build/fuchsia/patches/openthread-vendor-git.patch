@@ -1,0 +1,21 @@
+Keep the vendored OpenThread tree byte-identical to its pinned archives when
+committed to the 5BSD repository.  OpenThread's DartConfiguration.tcl ignore
+pattern also matched Mbed TLS's tracked copy, and OpenThread's text=auto
+attribute (written for a tree where Mbed TLS is a submodule) would rewrite
+CRLF sources and binary test data in the vendored Mbed TLS subtree.
+--- a/openthread/.gitignore
++++ b/openthread/.gitignore
+@@ -57,5 +57,5 @@
+ tests/nexus/nexus_*
+ 
+ # Misc
+-DartConfiguration.tcl
++/DartConfiguration.tcl
+ third_party/mbedtls/openthread-mbedtls-config.h
+--- a/openthread/third_party/mbedtls/repo/.gitattributes
++++ b/openthread/third_party/mbedtls/repo/.gitattributes
+@@ -1,2 +1,4 @@
+ # Classify all '.function' files as C for syntax highlighting purposes
+ *.function linguist-language=C
++# 5BSD: vendored verbatim; no end-of-line conversion.
++* -text

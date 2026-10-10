@@ -2,10 +2,13 @@
 # OpenEndpointSecurity userland client library (liboes).
 #
 
+.include <src.opts.mk>
+
 PACKAGE=	oes
 LIB=		oes
 SHLIB_MAJOR=	1
-SRCS=		liboes.c
+SRCS=		liboes.c broker.c
+LIBADD=		service
 
 MAN=		liboes.3
 
@@ -18,8 +21,11 @@ OESINCS=	${SRCTOP}/sys/security/oes/oes.h \
 		${SRCTOP}/sys/security/oes/oes_event_table.h
 OESINCSDIR=	${INCLUDEDIR}/security/oes
 
-CFLAGS+=	-I${SRCTOP}/sys
+CFLAGS+=	-I${SRCTOP}/sys -I${SRCTOP}/lib/libservice
 
 WARNS?=		6
+
+HAS_TESTS=
+SUBDIR.${MK_TESTS}+= tests
 
 .include <bsd.lib.mk>

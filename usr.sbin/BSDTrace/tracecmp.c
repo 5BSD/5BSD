@@ -28,6 +28,7 @@
 
 #include <channel.h>
 #include <libservice.h>
+#include <service_runtime.h>
 #include <logcmp.h>
 
 #include "tracecmp.h"
@@ -489,9 +490,7 @@ start_session(int fd, int dtrace_directory, bool authorized,
     int *livenessp)
 {
 	static uint64_t next_instance;
-	char byte;
-	int syncfd[2], pd, child_error, dtrace_fd, device_error, error;
-	ssize_t n;
+	int syncfd[2], pd, dtrace_fd, device_error, error;
 	pid_t pid;
 	uint64_t instance_id;
 
@@ -547,24 +546,19 @@ start_session(int fd, int dtrace_directory, bool authorized,
 	if (dtrace_fd >= 0)
 		close(dtrace_fd);
 	close(syncfd[1]);
-	n = read(syncfd[0], &child_error, sizeof(child_error));
-	if (n != sizeof(child_error) || child_error != 0) {
-		error = n == sizeof(child_error) ? child_error : EIO;
-		(void)pdkill(pd, SIGKILL);
-		close(pd);
-		close(syncfd[0]);
+	*pdp = pd;
+	*pidp = pid;
+	*livenessp = syncfd[0];
+	if (service_bootstrap_parent(syncfd[0], 5000) == -1) {
+		error = errno;
+		/* Caller owns this child even when bootstrap fails. */
 		goto reject;
 	}
-	byte = 1;
-	(void)write(syncfd[0], &byte, 1);
 	/*
 	 * Retain the parent's end of the socketpair as the worker's liveness
 	 * signal: closed only when this process (or the worker) exits.  It is
 	 * CLOFORK_LOCKED, so it does not leak into subsequently forked workers.
 	 */
-	*pdp = pd;
-	*pidp = pid;
-	*livenessp = syncfd[0];
 	audit_policy(peer_label, "session-bootstrap", 0);
 	BSDTRACE_PROBE_SESSION_START(__DECONST(char *, peer_label),
 	    instance_id, 0);
@@ -587,39 +581,60 @@ struct trace_worker {
 	pid_t pid;
 };
 
-static void
+/* Own the worker before installing its watch, including on failure. */
+static int
+worker_track(int kq, struct trace_worker **workers, struct trace_worker *worker,
+    size_t *count)
+{
+	struct kevent change;
+
+	worker->next = *workers;
+	*workers = worker;
+	(*count)++;
+	EV_SET(&change, worker->pd, EVFILT_PROCDESC, EV_ADD | EV_ENABLE,
+	    NOTE_EXIT, 0, worker);
+	return (kevent(kq, &change, 1, NULL, 0, NULL));
+}
+
+static int
 worker_remove(struct trace_worker **workers, struct trace_worker *worker,
     size_t *count)
 {
 	struct trace_worker **cursor;
-	int status;
+	int status, result, error;
 
 	for (cursor = workers; *cursor != NULL && *cursor != worker;
 	    cursor = &(*cursor)->next)
 		;
 	if (*cursor == worker)
 		*cursor = worker->next;
-	(void)pdwait(worker->pd, &status, WEXITED | WNOHANG, NULL, NULL);
+	do {
+		result = pdwait(worker->pd, &status, WEXITED | WNOHANG,
+		    NULL, NULL);
+	} while (result == -1 && errno == EINTR);
+	error = result == -1 && errno != ECHILD && errno != ESRCH ? errno : 0;
 	close(worker->pd);
 	if (worker->liveness >= 0)
 		close(worker->liveness);
 	free(worker);
 	if (*count != 0)
 		(*count)--;
+	return (error != 0 ? (errno = error, -1) : 0);
 }
 
-static void
+static int
 workers_shutdown(int kq, struct trace_worker **workers, size_t *count)
 {
 	struct trace_worker *worker, *next;
 	struct kevent event;
 	struct timespec deadline, now, timeout;
-	int result, status;
+	int status, result, error = 0;
 
 	for (worker = *workers; worker != NULL; worker = worker->next)
 		(void)pdkill(worker->pd, SIGTERM);
-	if (clock_gettime(CLOCK_MONOTONIC, &deadline) == 0)
-		deadline.tv_sec += 5;
+	if (clock_gettime(CLOCK_MONOTONIC, &deadline) == -1)
+		goto force;
+	deadline.tv_sec += 5;
 	while (*workers != NULL &&
 	    clock_gettime(CLOCK_MONOTONIC, &now) == 0) {
 		if (now.tv_sec > deadline.tv_sec ||
@@ -632,22 +647,32 @@ workers_shutdown(int kq, struct trace_worker **workers, size_t *count)
 			timeout.tv_sec--;
 			timeout.tv_nsec += 1000000000L;
 		}
-		result = kevent(kq, NULL, 0, &event, 1, &timeout);
-		if (result == 0)
+		status = kevent(kq, NULL, 0, &event, 1, &timeout);
+		if (status == 0)
 			break;
-		if (result == -1) {
+		if (status == -1) {
 			if (errno == EINTR)
 				continue;
 			break;
 		}
-		if (event.filter == EVFILT_PROCDESC)
-			worker_remove(workers, event.udata, count);
+		if (event.filter == EVFILT_PROCDESC &&
+		    worker_remove(workers, event.udata, count) == -1 && error == 0)
+			error = errno;
 	}
-	for (worker = *workers; worker != NULL; worker = worker->next)
-		(void)pdkill(worker->pd, SIGKILL);
+force:
+	for (worker = *workers; worker != NULL; worker = worker->next) {
+		if (pdkill(worker->pd, SIGKILL) == -1 && errno != ESRCH &&
+		    error == 0)
+			error = errno;
+	}
 	for (worker = *workers; worker != NULL; worker = next) {
 		next = worker->next;
-		(void)pdwait(worker->pd, &status, WEXITED, NULL, NULL);
+		do {
+			result = pdwait(worker->pd, &status,
+			    WEXITED | (error != 0 ? WNOHANG : 0), NULL, NULL);
+		} while (result == -1 && errno == EINTR);
+		if (result == -1 && errno != ECHILD && errno != ESRCH && error == 0)
+			error = errno;
 		close(worker->pd);
 		if (worker->liveness >= 0)
 			close(worker->liveness);
@@ -655,6 +680,7 @@ workers_shutdown(int kq, struct trace_worker **workers, size_t *count)
 	}
 	*workers = NULL;
 	*count = 0;
+	return (error != 0 ? (errno = error, -1) : 0);
 }
 
 int
@@ -673,6 +699,7 @@ main(void)
 	/* ps(1) shows the unit name, not the ld-elf.so.1 launcher. */
 	service_set_proctitle();
 	workers = NULL;
+	provider = NULL;
 	nworkers = 0;
 	dtrace_directory = -1;
 	kq = -1;
@@ -717,7 +744,9 @@ main(void)
 			goto fail;
 		}
 		if (event.filter == EVFILT_PROCDESC) {
-			worker_remove(&workers, event.udata, &nworkers);
+			if (worker_remove(&workers, event.udata, &nworkers) == -1) {
+				goto fail;
+			}
 			continue;
 		}
 		memset(&identity, 0, sizeof(identity));
@@ -746,44 +775,47 @@ main(void)
 		    tracecmp_policy_allows(&policy, identity.client_label),
 		    identity.client_label, identity.rights, &worker->pd,
 		    &worker->pid, &worker->liveness) == -1) {
+			error = errno;
 			logcmp_log(LOG_WARNING, "session for %s rejected: %m",
 			    identity.client_label);
-			free(worker);
 			close(fd);
+			if (worker != NULL && worker->pd >= 0) {
+				worker->next = workers;
+				workers = worker;
+				nworkers++;
+				errno = error;
+				goto fail;
+			}
+			free(worker);
 			continue;
 		}
 		close(fd);
-		EV_SET(&change, worker->pd, EVFILT_PROCDESC, EV_ADD | EV_ENABLE,
-		    NOTE_EXIT, 0, worker);
-		if (kevent(kq, &change, 1, NULL, 0, NULL) == -1) {
-			(void)pdkill(worker->pd, SIGKILL);
-			(void)pdwait(worker->pd, &status, WEXITED, NULL, NULL);
-			close(worker->pd);
-			if (worker->liveness >= 0)
-				close(worker->liveness);
-			free(worker);
-			continue;
-		}
-		worker->next = workers;
-		workers = worker;
-		nworkers++;
+		if (worker_track(kq, &workers, worker, &nworkers) == -1)
+			goto fail;
 	}
-	workers_shutdown(kq, &workers, &nworkers);
-	status = service_provider_quiesce_complete(provider, 0);
+	status = workers_shutdown(kq, &workers, &nworkers);
+	if (status != 0)
+		logcmp_log(LOG_ERR, "worker shutdown: %m");
 	close(kq);
 	if (dtrace_directory >= 0)
 		close(dtrace_directory);
+	if (status == 0)
+		status = service_provider_quiesce_complete(provider, 0);
+	service_provider_destroy(provider);
 	closelog();
 	return (status == 0 ? 0 : 1);
 
 fail:
 	error = errno != 0 ? errno : EIO;
-	if (workers != NULL && kq >= 0)
-		workers_shutdown(kq, &workers, &nworkers);
+	if (workers != NULL && kq >= 0 &&
+	    workers_shutdown(kq, &workers, &nworkers) == -1)
+		logcmp_log(LOG_ERR, "worker shutdown after service failure: %m");
 	if (dtrace_directory >= 0)
 		close(dtrace_directory);
 	if (kq >= 0)
 		close(kq);
+	if (provider != NULL)
+		service_provider_destroy(provider);
 	errno = error;
 	logcmp_log(LOG_ERR, "initialization or service loop: %m");
 	closelog();

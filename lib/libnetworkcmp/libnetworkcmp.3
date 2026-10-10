@@ -1,6 +1,6 @@
 .\" SPDX-License-Identifier: BSD-2-Clause
 .\" Copyright (c) 2026 Kory Heard
-.Dd August 27, 2026
+.Dd October 10, 2026
 .Dt LIBNETWORKCMP 3
 .Os
 .Sh NAME
@@ -155,7 +155,10 @@ The caller supplies the result-array capacity through
 .Fa nresults ;
 on success it contains the number returned.
 An optional canonical-name buffer and TTL output may be supplied; a TTL of
-zero means the provider does not expose TTL information.
+zero means no positive cache lifetime is advertised.
+For DNS results, the provider reports the remaining minimum across address
+records and CNAMEs, rounded down and aged across cached queries.
+Numeric and local hosts results report zero.
 The broker resolves independently of its request loop and permits one active
 resolution per session; an overlapping resolution fails with
 .Er EBUSY .
@@ -175,14 +178,21 @@ The
 .Va ai_flags
 may combine
 .Dv AI_PASSIVE , AI_CANONNAME , AI_NUMERICHOST , AI_NUMERICSERV ,
-.Dv AI_ADDRCONFIG , AI_V4MAPPED ,
+.Dv AI_V4MAPPED ,
 and
 .Dv AI_ALL ;
 any other flag fails with
 .Dv EAI_BADFLAGS .
 .Dv AI_ADDRCONFIG
-is accepted but is a documented no-op in the in-process
-resolver.
+returns
+.Dv EAI_BADFLAGS
+because configured source-address filtering is unavailable.
+The raw
+.Fn networkcmp_resolve
+API rejects
+.Dv NETWORKCMP_RESOLVE_F_ADDRCONFIG
+with
+.Er EOPNOTSUPP .
 .Dv AI_V4MAPPED
 and
 .Dv AI_ALL
@@ -239,6 +249,42 @@ DTrace provider exposes component-open, message-send, message-receive, and
 message-reject probes.
 Provider daemons audit policy decisions through OpenBSM; client-library
 activity is operational telemetry and is not audited.
+.Sh CONCURRENT RESOLUTION
+The provider can coalesce at most 16 identical concurrent requests within
+one session.
+Each call still receives its own reply.
+Different concurrent requests and excess duplicates return
+.Er EBUSY ;
+a duplicate shares the original job deadline.
+.Sh DNS FAILURES
+When no usable address is available, an unsuccessful DNS query returns
+.Er EAGAIN
+through the broker protocol, or
+.Er EAI_AGAIN
+from
+.Fn networkcmp_getaddrinfo .
+Complete negative answers return
+.Er ENOENT
+or
+.Er EAI_NONAME ,
+respectively.
+If one queried family fails and another returns only a negative answer,
+the result remains retryable.
+A usable address from either family, including IPv4-mapped IPv6 fallback,
+can still satisfy the lookup.
+Numeric addresses do not require a working nameserver.
+.Pp
+.Dv AI_V4MAPPED
+with
+.Dv AF_INET6
+also maps numeric IPv4 literals and matching local hosts entries.
+A numeric literal with
+.Dv AI_NUMERICHOST
+never requires DNS.
+Native IPv6 hosts entries take precedence unless
+.Dv AI_ALL
+requests both native and mapped entries.
+A matching hosts entry satisfies the lookup before DNS is attempted.
 .Sh SEE ALSO
 .Xr cap_net 3 ,
 .Xr getaddrinfo 3 ,

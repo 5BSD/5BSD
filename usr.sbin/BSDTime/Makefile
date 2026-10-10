@@ -6,10 +6,12 @@ MAN=	BSDTime.8
 SRCS=	BSDTime.c config.c
 
 CFLAGS+=	-I${SRCTOP}/lib/libtimecmp
+CFLAGS+=	-I${SRCTOP}/lib/libtimecmp/generated
+CFLAGS+=	-I${SRCTOP}/lib/libfidl/include
 CFLAGS+=	-I${SRCTOP}/lib/libservice
 CFLAGS+=	-I${SRCTOP}/lib/libchannel
 CFLAGS+=	-I${SRCTOP}/contrib/libucl/include
-LIBADD=		timecmp service channel ucl
+LIBADD=		timecmp service channel ucl fidl_bsd
 # Full binding at load so no lazy PLT work remains after startup.
 LDFLAGS+=	-Wl,-z,now
 

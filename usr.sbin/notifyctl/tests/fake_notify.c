@@ -13,6 +13,7 @@ static struct notify_client client;
 static char subscribed[NOTIFY_MAX_TOPIC + 1];
 static uint64_t active_timer;
 static uint64_t timer_sequence;
+static unsigned state_watches;
 static int timer_periodic;
 
 int
@@ -67,6 +68,7 @@ open_tier(struct notify_client **result, const char *interface)
 	if (result == NULL || fail("open") == -1)
 		return (-1);
 	client.open = 1;
+	state_watches = 0;
 	subscribed[0] = '\0';
 	active_timer = 0;
 	timer_periodic = 0;
@@ -166,6 +168,26 @@ notify_state_get(struct notify_client *value, const char *topic,
 		return (-1);
 	*state = (struct notify_state_reply){
 	    .router_epoch = 7, .generation = 8, .state = 42 };
+	return (0);
+}
+
+int
+notify_state_watch(struct notify_client *value, const char *topic,
+    struct notify_state_watch_reply *state, uint32_t timeout)
+{
+	if (value != &client || !client.open || state == NULL ||
+	    strcmp(topic, "org.5bsd.test.changed") != 0 ||
+	    (timeout != 25 && timeout != 0 && timeout != NOTIFY_TIMEOUT_INFINITE))
+		return (errno = EINVAL, -1);
+	if (fail("state-watch") == -1)
+		return (-1);
+	if (getenv("CMP_TEST_TIMEOUT") != NULL && state_watches != 0)
+		return (errno = EAGAIN, -1);
+	state_watches++;
+	*state = (struct notify_state_watch_reply){
+	    .watch_epoch = 7, .generation = state_watches,
+	    .state = state_watches == 2 ? 0 : 42,
+	    .present = state_watches == 2 ? 0 : 1 };
 	return (0);
 }
 

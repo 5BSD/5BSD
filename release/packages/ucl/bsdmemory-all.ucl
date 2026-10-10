@@ -1,0 +1,2 @@
+comment = "Bounded memory-pressure notifications"
+desc = "Publishes sampled VM free-page pressure through BSDNotify without sysctl write authority."

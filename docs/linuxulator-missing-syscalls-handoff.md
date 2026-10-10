@@ -22,11 +22,11 @@ x86_64 ABI through local syscall 472. Linux v7.1's
 ends its common sequence at 471; local 472 (`fchroot`) is already implemented.
 Recheck upstream numbering when starting work against a newer Linux release.
 
-`unshare` has a VM-qualified amd64 Linux64 `CLONE_FS` subset, documented in
-[System Calls](book/src/compat/linux/syscalls.md). Its row remains because the
-other namespace flags and non-amd64-Linux64 ABIs still need functional work.
-A follow-up adds VM-tested concurrent path-state mutation and Linux reference
-cases for descriptor-table lock ownership; it does not extend supported flags.
+`unshare` has a VM-qualified amd64 Linux64 `CLONE_FS` subset and a new
+source/build-validated `CLONE_FILES` subset, documented in
+[System Calls](book/src/compat/linux/syscalls.md). Its row remains because
+POSIX-lock-preserving descriptor detachment, per-thread resource ownership,
+namespace flags and non-amd64-Linux64 ABIs still need functional work.
 The queue now contains 36 `DUMMY()` calls, reject-only `seccomp`, and
 partially implemented `unshare`, `quotactl`, `quotactl_fd`, and
 `perf_event_open`. The initial software-counter subset is documented in
@@ -49,7 +49,7 @@ calls; those are additional correctness work, not missing dispatch entries.
 |---:|---|---|---|
 | 155 | `pivot_root` | `DUMMY` | Mount-tree/root transition; cannot be represented by `chroot` alone. |
 | 179 | `quotactl` | Partial: global quota sync | Legacy device-selected operations remain pending; use the fd variant for ZFS datasets. |
-| 272 | `unshare` | Partial: amd64 single-threaded `CLONE_FS`; named ABI cases VM-tested | [Contract summary](book/src/compat/linux/syscalls.md) and [gate](../tools/test/linuxulator/README.md#unshare-path-state-subset); descriptor, thread-local and namespace ownership remain pending. |
+| 272 | `unshare` | Partial: amd64 single-threaded `CLONE_FS` VM-tested; `CLONE_FILES` source/build validated, VM pending | [Contract summary](book/src/compat/linux/syscalls.md) and [gate](../tools/test/linuxulator/README.md#unshare-path-and-descriptor-state-subset); POSIX-lock-preserving, thread-local and namespace ownership remain pending. |
 | 308 | `setns` | `DUMMY` | Namespace-fd identity, permissions and lifetime. |
 | 428 | `open_tree` | `DUMMY` | Detached mount-tree objects and mount-fd lifecycle. |
 | 429 | `move_mount` | `DUMMY` | Atomic mount-tree movement and path/fd resolution. |
@@ -220,3 +220,16 @@ absent from the 41-call table.
    Only then mark the named contract QEMU validated. A fresh arm64 VM gate is
    required for an arm64 ABI or machine-dependent change, not for a
    purely architecture-neutral Linux64 change.
+
+## Starnix batch validation update (2026-10-10)
+
+The earlier pending VM notes for this batch are superseded by the accepted
+pre-Binder audit in [the Starnix inventory](starnix-linuxulator-inventory.md).
+The amd64 Linux64 broad gate passed 1,191 result rows, including the expanded
+unshare cases; the focused ATF gate passed 98/98 executions. Subsequent procfs
+snapshot and uinput gates passed 16/16 and 12/12 respectively. Native FUSE Kyua
+passed all 890 active GTest cases, the NFS cookie decoder, and 32 additional
+polling repetitions. CTL-over-FUSE was skipped for missing external tools.
+Each gate records its own kernel and artifact hashes; historical gates were
+not all run on the final kernel. This qualifies the tested subsets only.
+Binder and io_uring remain deferred for this work.

@@ -1,0 +1,94 @@
+zsh in the 5BSD base system
+==========================
+
+contrib/zsh is imported from the zsh 5.9.2 source release from
+https://www.zsh.org/pub/zsh-5.9.2.tar.xz.
+SHA256: 36fa734374b44783582cec09bcd67822e2f992c779ec1624ab5596df078d2f81
+This matches shells/zsh/distinfo in the 5BSD ports checkout.
+The central import record is in contrib/README.5BSD.
+Local source changes adapt the maintained ports fixes for RLIMIT_VMM,
+terminal restoration on timeout, and diff -u completion. Character conversion
+also treats a positive iconv result (non-reversible conversion) as out of
+range, preserving strict errors and byte fallback in parameter expansion with
+BSD iconv. The resource-limit manual is updated, and .gitignore retains
+release-generated build inputs.
+The _mdo completion is taken from the same ports checkout. The W02/W03
+job-control test harnesses acknowledge an end marker before their zpty session
+leader exits, preventing BSD tty revocation from discarding unread output.
+
+The native bsd.prog.mk build installs /bin/zsh, its functions and license
+in the runtime package, so minimal installations and installation media
+have the default login shell. Manuals follow the standard base MAN option.
+No ports libraries, configure step, Python, GNU make, target executables,
+or network access are required during buildworld. Normal compilation uses
+make's parallel job count. Modules are linked into zsh; shared base libraries
+are still used unless WITHOUT_DYNAMICROOT is selected.
+
+The upstream license is MIT-style, with file-specific exceptions. The optional
+GPL-licensed completions _darcs, _osc, _qdbus, and _zypper are retained in
+the vendor source but excluded from installed functions. GDBM and PCRE are
+not built; their test groups are removed from the vendor import by
+import-build.py. The privileged-mode tests remain because they cover built-in
+shell behavior. The upstream license is installed in /usr/share/doc/zsh/LICENCE.
+
+/bin/sh remains the system script interpreter and /rescue/sh remains available
+for recovery. Service accounts keep their existing restricted shells. Account
+creation defaults to /bin/zsh unless the administrator explicitly selects a
+shell or has configured an override. The installer Shell action and final
+configuration shell also use zsh. Existing password databases are not rewritten
+by building or installing these source templates; migrating an existing account
+requires an explicit chsh/pw change after /bin/zsh has been installed.
+
+/etc/zshrc initializes interactive completion and key bindings. Root and new
+users receive .zprofile and .zshrc. zsh does not read .profile or .shrc; users
+migrating existing accounts should move applicable personal settings into zsh's
+startup files rather than blindly sourcing a file written for another shell.
+
+Refreshing generated files
+--------------------------
+The checked-in headers are generated using upstream's own scripts. They keep
+normal and cross builds independent of autoconf and the build host's ability to
+execute target programs. Integer types use the target ABI, MACHTYPE comes from
+MACHINE_ARCH, and signal/errno tables are regenerated from target headers.
+
+For an upstream refresh on 5BSD, create a fresh object directory under /usr/obj
+and run the vendor configure script there with:
+
+  --prefix=/usr --bindir=/bin --sysconfdir=/etc
+  --enable-zshenv=/etc/zshenv --enable-zprofile=/etc/zprofile
+  --enable-zshrc=/etc/zshrc --enable-zlogin=/etc/zlogin
+  --enable-zlogout=/etc/zlogout --disable-dynamic --disable-gdbm
+  --disable-pcre --enable-multibyte
+  --enable-fndir=/usr/share/zsh/functions --disable-site-fndir
+  --enable-additional-fpath=/usr/local/share/zsh/site-functions
+  --with-term-lib=ncursesw
+
+Copy this directory's modules.conf to that object directory as config.modules.
+Review available features and module choices when updating versions, then run:
+
+  make prep
+  make -C Src headers
+  make -C Src -f Makemod zshpaths.h zshxmods.h bltinmods.list version.h \
+      patchlevel.h main.epro
+  make -C Src/Zle zle_widget.h widgets.list thingies.list
+  make -C Src/Modules curses_keys.h
+  python3.12 /usr/src/bin/zsh/import-build.py /usr/src/contrib/zsh \
+      /usr/obj/PATH-TO-CONFIGURED-BUILD /usr/src/bin/zsh
+
+Review config.h for newly introduced host-dependent feature checks, and audit
+new function licenses before accepting the update. Test the native binary with
+contrib/zsh/Test/runtests.zsh, including completion and ZLE tests. Upstream's
+header-generation makefiles serialize work; the native compilation does not.
+
+Validation notes
+----------------
+Native amd64 compilation, a NO_ROOT staged install, isolated pw account
+creation, startup/completion checks, and the upstream test groups were checked.
+The retained suite has 63 groups: 62 passed and privileged execution was
+skipped because root access was unavailable. The PCRE and GDBM groups were
+removed because those modules are not included in the base shell. The W02/W03 harness fix passed ten consecutive runs of each
+complete group and a final run of each checked-in version. A system-call trace
+and a shell-independent pty reproducer confirmed output loss on terminal
+revocation; job-control commands and expected output were not changed.
+The privileged group still requires execution from a root shell. Cross builds
+and a complete world/image build have not been validated by this component check.

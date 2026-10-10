@@ -1,0 +1,20 @@
+--- a/fuchsia/sdk/lib/fidl/cpp/natural_encoder.cc
++++ b/fuchsia/sdk/lib/fidl/cpp/natural_encoder.cc
+@@ -61,6 +61,17 @@
+       if (handle_metadata_ == nullptr && coding_config_->handle_metadata_stride != 0) {
+         handle_metadata_ = MallocedUniquePtr(
+             malloc(ZX_CHANNEL_MAX_MSG_HANDLES * coding_config_->handle_metadata_stride), free);
++        if (!handle_metadata_) {
++          // The current handle has not yet entered the owned prefix. Close it
++          // explicitly, then let Reset() release the previously encoded ones.
++          handles_[handle_actual_] = FIDL_HANDLE_INVALID;
++          coding_config_->close(handle);
++          if (status_ == ZX_OK) {
++            status_ = ZX_ERR_NO_MEMORY;
++            error_ = "failed to allocate handle metadata";
++          }
++          return;
++        }
+       }
+ 
+       const char* error;

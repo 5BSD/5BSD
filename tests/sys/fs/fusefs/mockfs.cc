@@ -303,6 +303,7 @@ void MockFS::debug_request(const mockfs_buf_in &in, ssize_t buflen)
 				printf(" fh=%#" PRIx64 " flags=%#x", in.body.read.fh, in.body.read.flags);
 			break;
 		case FUSE_READDIR:
+		case FUSE_READDIRPLUS:
 			printf(" fh=%#" PRIx64 " offset=%" PRIu64 " size=%u",
 				in.body.readdir.fh, in.body.readdir.offset,
 				in.body.readdir.size);
@@ -625,6 +626,11 @@ void MockFS::audit_request(const mockfs_buf_in &in, ssize_t buflen) {
 			"Missing request filename";
 		// No redundant information for checking buflen
 		break;
+	case FUSE_RENAME2:
+		EXPECT_GT(inlen, fih + sizeof(in.body.rename2));
+		EXPECT_EQ(0u, in.body.rename2.padding);
+		EXPECT_EQ((size_t)buflen, inlen);
+		break;
 	case FUSE_LINK:
 		EXPECT_GE(inlen, fih + sizeof(in.body.link)) <<
 			"Missing request body";
@@ -708,6 +714,7 @@ void MockFS::audit_request(const mockfs_buf_in &in, ssize_t buflen) {
 		EXPECT_EQ((size_t)buflen, inlen);
 		break;
 	case FUSE_READDIR:
+	case FUSE_READDIRPLUS:
 		EXPECT_EQ(inlen, fih + sizeof(in.body.readdir));
 		EXPECT_EQ((size_t)buflen, inlen);
 		break;
@@ -759,7 +766,6 @@ void MockFS::audit_request(const mockfs_buf_in &in, ssize_t buflen) {
 	case FUSE_NOTIFY_REPLY:
 	case FUSE_BATCH_FORGET:
 	case FUSE_POLL:
-	case FUSE_READDIRPLUS:
 		FAIL() << "Unsupported opcode?";
 	default:
 		FAIL() << "Unknown opcode " << in.header.opcode;

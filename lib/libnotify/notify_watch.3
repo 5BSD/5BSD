@@ -1,0 +1,103 @@
+.\" SPDX-License-Identifier: BSD-2-Clause
+.Dd October 10, 2026
+.Dt NOTIFY_WATCH 3
+.Os
+.Sh NAME
+.Nm notify_watch_create ,
+.Nm notify_watch_destroy ,
+.Nm notify_watch_publish ,
+.Nm notify_watch_open ,
+.Nm notify_watch_close ,
+.Nm notify_watch_begin ,
+.Nm notify_watch_cancel ,
+.Nm notify_watch_take
+.Nd bounded provider-side snapshot and watch storage
+.Sh LIBRARY
+Notification Library (libnotify, \-lnotify)
+.Sh SYNOPSIS
+.In notify_watch.h
+.Ft int
+.Fn notify_watch_create "size_t capacity" "size_t subscribers" "struct notify_watch **result"
+.Ft int
+.Fn notify_watch_destroy "struct notify_watch *store"
+.Ft int
+.Fn notify_watch_publish "struct notify_watch *store" "const void *data" "size_t length"
+.Ft int
+.Fn notify_watch_open "struct notify_watch *store" "const struct notify_watch_cursor *resume" "struct notify_watcher **result"
+.Ft void
+.Fn notify_watch_close "struct notify_watcher *watcher"
+.Ft int
+.Fn notify_watch_begin "struct notify_watcher *watcher"
+.Ft int
+.Fn notify_watch_cancel "struct notify_watcher *watcher"
+.Ft int
+.Fn notify_watch_take "struct notify_watcher *watcher" "void *data" "size_t capacity" "size_t *length" "struct notify_watch_cursor *cursor" "uint32_t *flags"
+.Sh DESCRIPTION
+These functions retain one latest snapshot for a provider and a cursor for
+each observer.
+They do not publish to BSDNotify, grant authority, or create threads.
+The provider validates its typed values, authorizes subscribers, and wakes
+its event loop after publishing a change.
+Updates are coalesced; intermediate values are not an event history.
+.Pp
+.Fn notify_watch_create
+allocates a fixed buffer and sets a subscriber limit.
+Capacity is between 1 and
+.Dv NOTIFY_WATCH_MAX_BYTES ;
+the subscriber limit is between 1 and
+.Dv NOTIFY_WATCH_MAX_SUBSCRIBERS .
+No snapshot exists until the first publish, which may have zero length.
+Publishing does not allocate memory.
+Identical bytes do not advance the generation, so providers must initialize
+padding and encode equivalent values consistently.
+.Pp
+.Fn notify_watch_open
+creates an observer.
+A NULL or zero resume cursor starts with the current snapshot.
+A cursor from a previous instance causes the next delivered snapshot to carry
+.Dv NOTIFY_WATCH_RESET .
+A cursor in the current epoch cannot name a future generation.
+.Pp
+.Fn notify_watch_begin
+starts one watch; another begin while pending fails with
+.Er EBUSY .
+.Fn notify_watch_take
+returns 1 after copying a changed snapshot and atomically advancing the cursor,
+0 when no changed snapshot is available, or -1 on error.
+A successful take completes the watch.
+When the output buffer is too small,
+.Er EMSGSIZE
+is returned and
+.Fa length
+receives the required size; the watch and cursor remain unchanged.
+A provider whose subsequent transport delivery fails must close the observer
+or reopen it from its last acknowledged cursor.
+.Pp
+.Fn notify_watch_cancel
+ends a pending watch without advancing its cursor.
+Closing an observer cancels its watch and releases its subscriber slot.
+Destroying a store with live observers fails with
+.Er EBUSY .
+Generation exhaustion fails with
+.Er EOVERFLOW
+without replacing the retained value.
+.Pp
+Store access is protected by a mutex.
+Calls using the same observer, including close, must be serialized by the
+caller.
+Creation and destruction require exclusive ownership of the store.
+Inherited stores and observers reject operations in a child after fork with
+.Er ECHILD
+before acquiring a potentially inherited locked mutex.
+The void close function sets
+.Va errno
+and leaves an inherited observer unchanged.
+The child may create and use fresh stores and observers.
+.Sh RETURN VALUES
+Create, destroy, open, begin and cancel return 0 on success and -1 on error.
+Publish returns 1 for a changed snapshot, 0 for identical data, and -1 on error.
+Take has the return values described above.
+Errors set
+.Va errno .
+.Sh SEE ALSO
+.Xr libnotify 3

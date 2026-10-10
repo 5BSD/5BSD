@@ -1,0 +1,21 @@
+/* Generated automatically */
+static int ask(void);
+static int bin_sync(UNUSED(char*nam),UNUSED(char**args),UNUSED(Options ops),UNUSED(int func));
+static int bin_mkdir(char*nam,char**args,Options ops,UNUSED(int func));
+static int domkdir(char*nam,char*path,mode_t mode,int p);
+static int bin_rmdir(char*nam,char**args,UNUSED(Options ops),UNUSED(int func));
+static int bin_ln(char*nam,char**args,Options ops,int func);
+static int domove(char*nam,MoveFunc movefn,char*p,char*q,int flags);
+static int recursivecmd(char*nam,int opt_noerr,int opt_recurse,int opt_safe,char**args,RecurseFunc dirpre_func,RecurseFunc dirpost_func,RecurseFunc leaf_func,void*magic);
+static int recursivecmd_doone(struct recursivecmd const*reccmd,char*arg,char*rp,struct dirsav*ds,int first);
+static int recursivecmd_dorec(struct recursivecmd const*reccmd,char*arg,char*rp,struct stat const*sp,struct dirsav*ds,int first);
+static int recurse_donothing(UNUSED(char*arg),UNUSED(char*rp),UNUSED(struct stat const*sp),UNUSED(void*magic));
+static int rm_leaf(char*arg,char*rp,struct stat const*sp,void*magic);
+static int rm_dirpost(char*arg,char*rp,UNUSED(struct stat const*sp),void*magic);
+static int bin_rm(char*nam,char**args,Options ops,UNUSED(int func));
+static int chmod_dochmod(char*arg,char*rp,UNUSED(struct stat const*sp),void*magic);
+static int bin_chmod(char*nam,char**args,Options ops,UNUSED(int func));
+static int chown_dochown(char*arg,char*rp,UNUSED(struct stat const*sp),void*magic);
+static int chown_dolchown(char*arg,char*rp,UNUSED(struct stat const*sp),void*magic);
+static unsigned long getnumeric(char*p,int*errp);
+static int bin_chown(char*nam,char**args,Options ops,int func);

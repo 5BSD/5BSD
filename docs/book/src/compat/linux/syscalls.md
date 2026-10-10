@@ -1,6 +1,6 @@
 # System Calls
 
-This chapter is the map of the Linux x86-64 syscall surface as 5BSD implements it: which families work, to what depth, what proves it, what is still missing, and how to find out what a particular binary needs. It summarizes two living documents, `docs/linuxulator-syscall-coverage.md` (the table and its per-option notes) and `docs/linuxulator-missing-syscalls-handoff.md` (the queue), and it inherits their rule: a handler is evidence of dispatch, not of every option working.
+This chapter is the map of the Linux x86-64 syscall surface as 5BSD implements it: which families work, to what depth, what proves it, what is still missing, and how to find out what a particular binary needs. It summarizes two living documents, `docs/linuxulator-syscall-coverage.md` (the table and its per-option notes) and `docs/linuxulator-missing-syscalls-handoff.md` (the queue), and it inherits their rule: a handler is evidence of dispatch, not of every option working. The Starnix comparison, `docs/starnix-linuxulator-inventory.md`, inventories Fuchsia's implementation, options, backends and portable test examples against that queue.
 
 The counts from [the overview](overview.md) apply throughout: 386 named slots through 472, 331 STD-real, 36 DUMMY, one reject-only stub, 15 deliberately absent, and the three `io_uring_*` calls UNIMPL. All test programs named below live in `tests/sys/kern/` and are installed under `/usr/tests/sys/kern`; freestanding Linux probes are compiled with `clang --target=x86_64-linux-gnu -nostdlib -static` and branded with brandelf(1), so they need no Linux userland.
 
@@ -8,7 +8,7 @@ The counts from [the overview](overview.md) apply throughout: 386 named slots th
 
 | Family | What works | Status | Proof (test, man page) |
 |---|---|---|---|
-| Process, pidfd, clone, unshare | `pidfd_open`/`send_signal`/`getfd`, `CLONE_PIDFD`, `waitid(P_PIDFD)`, `SO_PEERPIDFD`; `__WALL` maps to native `WLINUXALL` (`sys/sys/wait.h`); `clone3`; `unshare(CLONE_FS)` for single-threaded amd64 processes | shipped; `unshare` namespace flags rejected; `setns`, `listns` DUMMY | `linux_pidfd`, `linux_break_pidfd`, `linux_peerpidfd`, `linux_cloneflags`, `linux_unshare`, `linux_unshare_capmode` |
+| Process, pidfd, clone, unshare | `pidfd_open`/`send_signal`/`getfd`, `CLONE_PIDFD`, `waitid(P_PIDFD)`, `SO_PEERPIDFD`; `__WALL` maps to native `WLINUXALL` (`sys/sys/wait.h`); `clone3`; `unshare(CLONE_FS\|CLONE_FILES)` for single-threaded amd64 processes | shipped; `CLONE_FILES` source/build validated, VM pending; namespace flags rejected; `setns`, `listns` DUMMY | `linux_pidfd`, `linux_break_pidfd`, `linux_peerpidfd`, `linux_cloneflags`, `linux_unshare`, `linux_unshare_capmode` |
 | futex, futex2 | `futex` ops including CMP_REQUEUE and CLOCK_REALTIME; `futex_wait`/`wake`/`requeue`; `futex_waitv` with per-address umtx entries sharing one wait channel | shipped; `FUTEX_WAIT_REQUEUE_PI` and `CMP_REQUEUE_PI` return `ENOSYS`, `FUTEX2_NUMA` `EINVAL` | `linux_futex2`, `linux_futex_waitv`, `linux_break_futex` |
 | Signals, signalfd | `signalfd`/`signalfd4` as an own file type over `kern_sigtimedwait`, fed by a `process_signal` eventhandler; `rt_sigqueueinfo`; sigaction flag translation | shipped; a blocked signalfd read captures the mask at call time (Linux re-evaluates) | `linux_signalfd`, `linux_break_signalfd`, `linux_break_signals`, `linux_evsig` |
 | Files | `openat2` with `RESOLVE_NO_SYMLINKS`/`NO_MAGICLINKS`/`NO_XDEV`/`IN_ROOT`/`BENEATH` (native namei flags in `vfs_lookup.c`), `execveat`, `fchmodat2`, `faccessat2`, `renameat2` (including `RENAME_EXCHANGE` where the filesystem supports it), `*xattrat`, `statx` with mount ids, `statmount`/`listmount`, `cachestat`, `splice`/`tee`/`vmsplice` including explicit offsets, `preadv2`/`pwritev2` with `RWF_*`, `fallocate` mode 0 and `PUNCH_HOLE\|KEEP_SIZE`, OFD locks (`F_OFD_*`, native in `kern_lockf.c`), `mseal`, `fchroot`, `FS_IOC_GETFLAGS`/`SETFLAGS`, `file_getattr`/`setattr`, `O_TMPFILE` rejected honestly | shipped; other `fallocate` modes `EOPNOTSUPP`; OFD advertised by ZFS, UFS and tmpfs only | `linux_openat2`, `linux_resolve`, `linux_splice`, `linux_tee`, `linux_cachestat`, `linux_statmount`, `linux_rwf`, `linux_mseal`, `linux_break_mseal`, `linux_fchroot`, `linux_xattrat`, `linux_fallocate`, `linux_fileflags`, `linux_fileattr`, `linux_openflags`, `linux_break_files`, `ofd_lock`; fcntl(2), inotify(2) |
@@ -24,6 +24,12 @@ The counts from [the overview](overview.md) apply throughout: 386 named slots th
 | Legacy AIO | `io_setup`, `io_destroy`, `io_submit`, `io_getevents`, `io_cancel` over native AIO with a Linux mmap ring; `RWF_*` and `IOCB_FLAG_IOPRIO` on IOCBs; eventfd completion; poll IOCBs | partial; `io_pgetevents` implemented on amd64 Linux64 (`linux_aio.c`), `DUMMY()` on arm64; direct-I/O priority unqualified | `linux_aio`, `linux_aio_counts`, `linux_aio_signal`, `linux_aio_timeout`, `aio_compat_native`; aio(4) |
 
 Every row above is the amd64 Linux64 ABI. Where the table says "pending", the missing-syscalls handoff or the option review has a named row for it.
+
+`close_range(CLOSE_RANGE_UNSHARE)` now detaches a descriptor table shared with another process before applying the range, including with `CLOSE_RANGE_CLOEXEC`. This is a single-threaded subset: a multithreaded caller gets `EINVAL` because native descriptor tables belong to processes. A caller whose shared table may hold its POSIX locks also gets `EINVAL`, since native `fdunshare` would release them; this is a conservative check on the sticky `P_ADVLOCK` flag. The native copy now rejects tables containing entries it would omit or recreate, including kqueues that back Linux epoll, before changing either table. The new `linux_break_files` cases compile, and the GENERIC kernel and both Linux modules build; disposable VM execution and other ABIs remain unqualified.
+
+`unshare(CLONE_FILES)` uses the same guarded detachment and can be combined with `CLONE_FS`. The Linux reference matrix checks descriptor isolation, path-state isolation, shared open-file descriptions, invalid-flag atomicity and multithread rejection. A BSD-only case checks that a table with epoll returns `EINVAL` without detaching either resource. The new cases compile and are in the guest gate; their execution is pending. Linux's per-thread detachment and POSIX-lock ownership cases remain outside this subset.
+
+The [Starnix clone/exec cases](https://fuchsia.googlesource.com/fuchsia/+/8a938a3224e768f6254ee12d240b6492361ebccf/src/starnix/tests/syscalls/cpp/task_test.cc) exposed a separate lifetime rule: `execve` detaches a table shared through `CLONE_FILES` but keeps `CLONE_FS` path sharing. `linux_unshare` now tests both. The kernel exec path retains `CLONE_FS` sharing for a Linux caller; the new cases compile and are in the guest gate, with VM execution pending.
 
 ## The 41 remaining calls
 
@@ -64,3 +70,16 @@ dtrace -n 'syscall:linux::entry { @[probefunc] = count(); }'
 ```
 
 When the census turns up a failing call, look it up in section 5 of `docs/linuxulator-syscall-coverage.md` to see whether it is DUMMY (queue it under the right group in the handoff) or STD-real (find the flag in the family table above or the option notes in `docs/linuxulator-syscall-coverage.md` and record whether the failure is a BUG, a GAP or a rejected-unimplementable option). The three real static binaries the coverage work trussed this way, jq, ripgrep and caddy, made zero unimplemented syscalls; their only gaps were missing procfs and sysfs files, which is why [the next chapter](procfs-sysfs.md) exists.
+
+## Starnix batch validation update (2026-10-10)
+
+The earlier pending VM notes for this batch are superseded by the accepted
+pre-Binder audit in [the Starnix inventory](../../../../starnix-linuxulator-inventory.md).
+The amd64 Linux64 broad gate passed 1,191 result rows, including the expanded
+unshare cases; the focused ATF gate passed 98/98 executions. Subsequent procfs
+snapshot and uinput gates passed 16/16 and 12/12 respectively. Native FUSE Kyua
+passed all 890 active GTest cases, the NFS cookie decoder, and 32 additional
+polling repetitions. CTL-over-FUSE was skipped for missing external tools.
+Each gate records its own kernel and artifact hashes; historical gates were
+not all run on the final kernel. This qualifies the tested subsets only.
+Binder and io_uring remain deferred for this work.

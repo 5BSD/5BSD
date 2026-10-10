@@ -183,3 +183,27 @@ sysctlcmp_next(struct sysctlcmp_client *client, const char *name, char *buf,
 	*lenp = len;
 	return (0);
 }
+
+int
+sysctlcmp_interfaces(struct sysctlcmp_client *client,
+    struct sysctlcmp_interface *out, size_t *count)
+{
+	struct sysctlcmp_interface entries[] = {
+	    {.index = 1, .flags = 1, .mtu = 1500, .link_state = SYSCTLCMP_LINK_UP, .name = "em0"},
+	    {.index = 2, .mtu = 1500, .link_state = SYSCTLCMP_LINK_DOWN, .name = "em1"},
+	    {.index = 3, .mtu = 16384, .link_state = SYSCTLCMP_LINK_UNKNOWN, .name = "lo0"}
+	};
+	if (valid(client, "interfaces") == -1)
+		return (-1);
+	if (count == NULL || out == NULL || *count < 3)
+		return (errno = EINVAL, -1);
+	if (getenv("SYSCTLCMP_TEST_EMPTY") != NULL) {
+		*count = 0;
+		return (0);
+	}
+	if (getenv("SYSCTLCMP_TEST_NAME") != NULL)
+		strlcpy(entries[0].name, "bad\nname", sizeof(entries[0].name));
+	memcpy(out, entries, sizeof(entries));
+	*count = 3;
+	return (0);
+}

@@ -97,9 +97,9 @@
 /* dummynet */
 #include <netinet/ip_dummynet.h>
 #include <netinet/ip_fw.h>
-#include <netpfil/ipfw/dn_heap.h>
-#include <netpfil/ipfw/ip_fw_private.h>
-#include <netpfil/ipfw/ip_dn_private.h>
+#include <netpfil/dummynet/dn_heap.h>
+#include <netpfil/dummynet/dn_packet.h>
+#include <netpfil/dummynet/ip_dn_private.h>
 
 #ifdef INET6
 #include <netinet/ip6.h>

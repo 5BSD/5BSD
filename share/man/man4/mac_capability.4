@@ -23,7 +23,7 @@
 .\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
 .\" SUCH DAMAGE.
 .\"
-.Dd July 25, 2026
+.Dd October 10, 2026
 .Dt MAC_CAPABILITY 4
 .Os
 .Sh NAME
@@ -221,6 +221,79 @@ Receive an async message.
 Blocks unless
 .Dv O_NONBLOCK
 is set.
+If the payload or descriptor buffer is too small, the call fails with
+.Er EMSGSIZE
+and leaves the message queued.
+On success,
+.Va flags
+reports
+.Dv MAC_CAPABILITY_RECV_F_STATUS ,
+and also
+.Dv MAC_CAPABILITY_RECV_F_EMPTY
+if no further message was queued, so a dispatch loop need not issue a
+receive that would only fail with
+.Er EAGAIN .
+Setting
+.Dv MAC_CAPABILITY_RECV_F_WAIT
+on input waits for a message even on a non-blocking descriptor, for at most
+.Va _reserved[0]
+milliseconds
+.Pq Dv MAC_CAPABILITY_RECV_WAIT_FOREVER No for no limit , 0 No to poll ;
+a timeout fails with
+.Er ETIMEDOUT .
+This replaces a readiness wait followed by a receive.
+.It Dv MAC_CAPABILITY_SENDMSG_V2
+As
+.Dv MAC_CAPABILITY_SENDMSG ,
+with per-descriptor work for any number of attachments done in the same call.
+.Va fd_specs
+is null or holds one
+.Vt struct mac_capability_fd_spec
+per descriptor: an expected
+.Va type
+.Pq Dv MAC_CAPABILITY_FD_TYPE_ANY , _SOCKET , _CHANNEL ,
+expected
+.Va rights
+.Pq Dv MAC_CAPABILITY_FD_RIGHT_READ , _WRITE ; No zero keeps the rights ,
+and
+.Dv MAC_CAPABILITY_FD_SPEC_LOCK_INHERIT .
+All expectations are checked before the message is accepted; a mismatch fails
+the call with
+.Er EFTYPE ,
+.Er ENOTCAPABLE ,
+or
+.Er EOPNOTSUPP
+and consumes no transfer authority.
+Requested rights narrow the delivered copy only
+.Pq sockets also keep Dv CAP_FSTAT ,
+with the effect of
+.Xr cap_rights_limit 2
+on its ioctl and fcntl limits.
+Message
+.Va flags :
+.Dv MAC_CAPABILITY_SEND_F_MOVE
+closes the sender's descriptors once the message is accepted, and
+.Dv MAC_CAPABILITY_SEND_F_LOCK_INHERIT
+delivers every descriptor with close-on-exec and close-on-fork locked.
+.It Dv MAC_CAPABILITY_RECVMSG_V4
+As
+.Dv MAC_CAPABILITY_RECVMSG_V3 ,
+and when
+.Va fd_info
+is not null, one
+.Vt struct mac_capability_fd_info
+per received descriptor: its type
+.Pq Dv MAC_CAPABILITY_FD_TYPE_OTHER No for neither socket nor channel
+and its rights as
+.Dv MAC_CAPABILITY_FD_RIGHT_READ , _WRITE , _FSTAT ,
+with
+.Dv MAC_CAPABILITY_FD_RIGHTS_EXACT
+when it holds no other rights and
+.Dv MAC_CAPABILITY_FD_RIGHTS_ALL
+when it is unrestricted.
+A receiver can validate attachments without further system calls.
+Descriptors whose ioctl allowlist names the older commands should also list
+these to use them.
 .It Dv MAC_CAPABILITY_CALL
 Synchronous request/reply in the caller's thread.
 Returns
@@ -385,8 +458,9 @@ existing authorization onto it, and the locked design decisions, are recorded in
 4096 messages maximum async queue depth.
 .El
 .Pp
-Messages are fixed at 16384 bytes (4 pages) including a 2048-byte
-header reserved for framework use.
+Queued messages are allocated by size: payloads up to 1024 bytes use a small
+zone, larger ones the maximum-size zone, and descriptor bookkeeping is
+allocated only for messages that carry descriptors.
 Sync-only services do not allocate message queues.
 .Sh SYSCTL VARIABLES
 .Bl -tag -width kern.mac_capability.service_details
@@ -399,6 +473,13 @@ Newline-separated list of registered service names.
 .It Va kern.mac_capability.service_details
 Newline-separated list of registered services with flags, queue depth,
 TX limit, instance limit, active instance count, and destroying state.
+.It Va kern.mac_capability.direct_delivery
+When 1 (the default), a service that only forwards messages to a peer, such
+as the channel bearer, receives each message directly on the peer's queue in
+the sender's context when nothing earlier is queued and the peer is below its
+TX limit, instead of through the service taskqueue.
+Ordering, flow control and peer-death behavior are unchanged.
+Set to 0 to always use the taskqueue path.
 .El
 .Sh DTRACE PROBES
 The

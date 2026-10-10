@@ -1,0 +1,39 @@
+/* Generated automatically */
+#ifndef have_Src_Modules_tcp_globals
+#define have_Src_Modules_tcp_globals
+
+#ifndef HAVE_INET_NTOP
+extern mod_import_function char const*zsh_inet_ntop(int af,void const*cp,char*buf,size_t len);
+#else /* !HAVE_INET_NTOP */
+# define zsh_inet_ntop inet_ntop
+#endif /* !HAVE_INET_NTOP */
+#ifndef HAVE_INET_ATON
+extern mod_import_function int zsh_inet_aton(char const*src,struct in_addr*dst);
+#else /* !HAVE_INET_ATON */
+# define zsh_inet_aton inet_aton
+#endif /* !HAVE_INET_ATON */
+#ifndef HAVE_INET_PTON
+extern mod_import_function int zsh_inet_pton(int af,char const*src,void*dst);
+#endif /* !HAVE_INET_PTON */
+#ifndef HAVE_GETIPNODEBYNAME
+# ifndef HAVE_GETHOSTBYNAME2
+extern mod_import_function struct hostent*zsh_gethostbyname2(char const*name,int af);
+#else /* !HAVE_GETHOSTBYNAME2 */
+# define zsh_gethostbyname2 gethostbyname2
+# endif /* !HAVE_GETHOSTBYNAME2 */
+extern mod_import_function struct hostent*zsh_getipnodebyname(char const*name,int af,UNUSED(int flags),int*errorp);
+extern mod_import_function void freehostent(UNUSED(struct hostent*ptr));
+#else /* !HAVE_GETIPNODEBYNAME */
+# define zsh_getipnodebyname getipnodebyname
+#endif /* !HAVE_GETIPNODEBYNAME */
+extern mod_import_function Tcp_session tcp_socket(int domain,int type,int protocol,int ztflags);
+extern mod_import_function int tcp_close(Tcp_session sess);
+extern mod_import_function int tcp_connect(Tcp_session sess,char*addrp,struct hostent*zhost,int d_port);
+extern int setup_(UNUSED(Module m));
+extern int features_(Module m,char***features);
+extern int enables_(Module m,int**enables);
+extern int boot_(UNUSED(Module m));
+extern int cleanup_(Module m);
+extern int finish_(UNUSED(Module m));
+
+#endif /* !have_Src_Modules_tcp_globals */

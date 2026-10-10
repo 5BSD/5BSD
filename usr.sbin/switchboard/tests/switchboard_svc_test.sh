@@ -851,6 +851,54 @@ idle_stop_and_relaunch_cleanup()
 }
 
 # ===================================================================
+# Active work can decline an idle stop and keep the listener usable
+# ===================================================================
+
+atf_test_case idle_busy_keeps_provider cleanup
+idle_busy_keeps_provider_head()
+{
+	atf_set "descr" "an idle quiesce declined with EBUSY resumes the same provider and accepts new demand"
+	atf_set "require.user" "root"
+	require_capsule_stack_kmods
+}
+idle_busy_keeps_provider_body()
+{
+	require_ambient_control
+	local pid1 pid2
+
+	find_capd_service_fixture
+	prepare_paths
+	make_svc_bin system org.test.idle.busy \
+	    "activation { boot = true; ipc = [\"org.test.idle.busy\"]; }
+arguments = [\"idle-busy\", \"org.test.idle.busy\", \"$(pwd)/idlebusy.out\"];" \
+	    "$capd_service_fixture"
+	write_config
+	start_stack
+	if ! wait_for_file idlebusy.out; then
+		cat "$logfile" 2>/dev/null
+		atf_fail "idle-busy provider did not become ready"
+	fi
+	pid1=$(sed -n 's/^pid=\([0-9]*\).*$/\1/p' idlebusy.out)
+	atf_check -s exit:0 -o ignore sh -c \
+	    "i=0; while ! grep -q 'busy=1' idlebusy.out && [ \$i -lt 100 ]; do i=\$((i + 1)); sleep 0.1; done; grep -q 'busy=1' idlebusy.out"
+	if ! run_lookup_client org.test.idle.busy 10; then
+		cat "$logfile" 2>/dev/null
+		atf_fail "lookup after declined idle stop failed"
+	fi
+	pid2=$(sed -n 's/^pid=\([0-9]*\).*$/\1/p' idlebusy.out)
+	[ -n "$pid1" ] && [ "$pid1" = "$pid2" ] ||
+	    atf_fail "provider changed across declined idle stop"
+	atf_check -s exit:0 -o match:"org.test.idle.busy.*running" \
+	    switchboardctl status
+	assert_stack_alive
+}
+idle_busy_keeps_provider_cleanup()
+{
+	cleanup_common
+	rm -f idlebusy.out
+}
+
+# ===================================================================
 # Demand before the idle timeout keeps the provider running
 # ===================================================================
 
@@ -1145,6 +1193,7 @@ atf_init_test_cases()
 
 	# Provider-driven idle shutdown
 	atf_add_test_case idle_stop_and_relaunch
+	atf_add_test_case idle_busy_keeps_provider
 	atf_add_test_case idle_demand_cancels_stop
 	atf_add_test_case idle_cancel_keeps_running
 

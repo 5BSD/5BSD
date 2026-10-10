@@ -22,4 +22,10 @@ CFLAGS.provider_test+=	-I${SRCTOP}/sys
 LIBADD.provider_test=	channel devicecmp service ucl
 NO_SHARED.provider_test=	yes
 
+ATF_TESTS_C+= lifecycle_test
+SRCS.lifecycle_test= lifecycle_test.c policy.c
+CFLAGS.lifecycle_test+= -I${SRCTOP}/lib/libchannel -I${SRCTOP}/lib/libservice
+LIBADD.lifecycle_test= channel devicecmp service ucl
+NO_SHARED.lifecycle_test= yes
+
 .include <bsd.test.mk>

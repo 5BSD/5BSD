@@ -60,6 +60,14 @@ int	sysctlcmp_describe(struct sysctlcmp_client *, const char *name,
 int	sysctlcmp_next(struct sysctlcmp_client *, const char *name,
 	    char *buf, size_t *lenp);
 
+/*
+ * Read one sorted interface inventory. *count is capacity in, total count out.
+ * NULL with capacity zero queries count. A short output gets ENOMEM and the
+ * required count, without a partial copy. No addresses or counters are exposed.
+ */
+int sysctlcmp_interfaces(struct sysctlcmp_client *, struct sysctlcmp_interface *,
+    size_t *count);
+
 __END_DECLS
 
 #endif

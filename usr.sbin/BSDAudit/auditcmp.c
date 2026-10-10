@@ -28,6 +28,7 @@
 #include <auditcmp_server.h>
 #include <channel.h>
 #include <libservice.h>
+#include <service_runtime.h>
 #include <logcmp.h>
 
 #include "auditcmp_policy.h"
@@ -299,15 +300,12 @@ start_session(int fd, const char *provider, int *pdp, pid_t *pidp)
 		_exit(worker(fd, syncfd[1], provider, event));
 	}
 	close(syncfd[1]);
-	if (read(syncfd[0], &status, sizeof(status)) != sizeof(status))
-		status = EIO;
-	if (status == 0 && write(syncfd[0], "", 1) != 1)
-		status = EIO;
-	close(syncfd[0]);
-	if (status != 0)
-		return (close(pd), errno = status, -1);
 	*pdp = pd;
 	*pidp = pid;
+	status = service_bootstrap_parent(syncfd[0], 5000) == -1 ? errno : 0;
+	close(syncfd[0]);
+	if (status != 0)
+		return (errno = status, -1);
 	BSDAUDIT_PROBE_SESSION(__DECONST(char *, provider),
 	    event);
 	return (0);
@@ -419,37 +417,58 @@ struct audit_worker {
 	pid_t pid;
 };
 
-static void
+/* Own the worker before installing its watch, including on failure. */
+static int
+worker_track(int kq, struct audit_worker **workers, struct audit_worker *worker,
+    size_t *count)
+{
+	struct kevent change;
+
+	worker->next = *workers;
+	*workers = worker;
+	(*count)++;
+	EV_SET(&change, worker->pd, EVFILT_PROCDESC, EV_ADD | EV_ENABLE,
+	    NOTE_EXIT, 0, worker);
+	return (kevent(kq, &change, 1, NULL, 0, NULL));
+}
+
+static int
 worker_remove(struct audit_worker **workers, struct audit_worker *worker,
     size_t *count)
 {
 	struct audit_worker **cursor;
-	int status;
+	int status, result, error;
 
 	for (cursor = workers; *cursor != NULL && *cursor != worker;
 	    cursor = &(*cursor)->next)
 		;
 	if (*cursor == worker)
 		*cursor = worker->next;
-	(void)pdwait(worker->pd, &status, WEXITED | WNOHANG, NULL, NULL);
+	do {
+		result = pdwait(worker->pd, &status, WEXITED | WNOHANG,
+		    NULL, NULL);
+	} while (result == -1 && errno == EINTR);
+	error = result == -1 && errno != ECHILD && errno != ESRCH ? errno : 0;
 	close(worker->pd);
 	free(worker);
 	if (*count != 0)
 		(*count)--;
+	return (error != 0 ? (errno = error, -1) : 0);
 }
 
-static void
+static int
 workers_shutdown(int kq, struct audit_worker **workers, size_t *count)
 {
 	struct audit_worker *worker, *next;
 	struct kevent event;
 	struct timespec deadline, now, timeout;
-	int status;
+	int status, result, error = 0;
 
 	for (worker = *workers; worker != NULL; worker = worker->next)
 		(void)pdkill(worker->pd, SIGTERM);
-	if (clock_gettime(CLOCK_MONOTONIC, &deadline) == 0)
-		deadline.tv_sec += 5;
+	if (clock_gettime(CLOCK_MONOTONIC, &deadline) == -1)
+		goto force;
+	deadline.tv_sec += 5;
 	while (*workers != NULL &&
 	    clock_gettime(CLOCK_MONOTONIC, &now) == 0) {
 		if (now.tv_sec > deadline.tv_sec ||
@@ -470,19 +489,30 @@ workers_shutdown(int kq, struct audit_worker **workers, size_t *count)
 				continue;
 			break;
 		}
-		if (event.filter == EVFILT_PROCDESC)
-			worker_remove(workers, event.udata, count);
+		if (event.filter == EVFILT_PROCDESC &&
+		    worker_remove(workers, event.udata, count) == -1 && error == 0)
+			error = errno;
 	}
-	for (worker = *workers; worker != NULL; worker = worker->next)
-		(void)pdkill(worker->pd, SIGKILL);
+force:
+	for (worker = *workers; worker != NULL; worker = worker->next) {
+		if (pdkill(worker->pd, SIGKILL) == -1 && errno != ESRCH &&
+		    error == 0)
+			error = errno;
+	}
 	for (worker = *workers; worker != NULL; worker = next) {
 		next = worker->next;
-		(void)pdwait(worker->pd, &status, WEXITED, NULL, NULL);
+		do {
+			result = pdwait(worker->pd, &status,
+			    WEXITED | (error != 0 ? WNOHANG : 0), NULL, NULL);
+		} while (result == -1 && errno == EINTR);
+		if (result == -1 && errno != ECHILD && errno != ESRCH && error == 0)
+			error = errno;
 		close(worker->pd);
 		free(worker);
 	}
 	*workers = NULL;
 	*count = 0;
+	return (error != 0 ? (errno = error, -1) : 0);
 }
 
 int
@@ -492,12 +522,12 @@ main(void)
 	struct kevent event, change;
 	struct service_identity identity;
 	struct service_listener *listener;
-	struct service_provider *provider;
+	struct service_provider *provider = NULL;
 	struct label_rate *rate_table;
 	struct auditcmp_rate *rate;
 	struct timespec now;
 	size_t nworkers;
-	int error, fd, kq, status;
+	int error, fd, kq = -1, result = 1;
 
 	openlog("bsdaudit", LOG_PID | LOG_NDELAY, LOG_AUTHPRIV);
 	/* ps(1) shows the unit name, not the ld-elf.so.1 launcher. */
@@ -520,7 +550,7 @@ main(void)
 	nworkers = 0;
 	rate_table = calloc(AUDITCMP_RATE_LABELS, sizeof(*rate_table));
 	if (rate_table == NULL)
-		err(1, "initialize");
+		goto initialize_failed;
 	kq = kqueuex(KQUEUE_CLOEXEC);
 	if (kq == -1 || service_provider_create(&provider) == -1 ||
 	    service_provider_authorize_capabilities(provider) == -1 ||
@@ -528,21 +558,25 @@ main(void)
 	    SERVICE_PROTECT_NOEXEC) == -1 ||
 	    service_provider_expose(provider, AUDITCMP_INTERFACE,
 	    &listener) == -1)
-		err(1, "initialize");
+		goto initialize_failed;
 	EV_SET(&change, service_listener_fd(listener), EVFILT_READ,
 	    EV_ADD | EV_ENABLE, 0, 0, listener);
 	if (kevent(kq, &change, 1, NULL, 0, NULL) == -1 ||
 	    service_provider_enter_capability_mode(provider) == -1 ||
 	    service_provider_ready(provider) == -1)
-		err(1, "initialize");
+		goto initialize_failed;
 	for (;;) {
 		if (kevent(kq, NULL, 0, &event, 1, NULL) == -1) {
 			if (errno == EINTR)
 				continue;
-			err(1, "kevent");
+			warn("kevent");
+			goto out;
 		}
 		if (event.filter == EVFILT_PROCDESC) {
-			worker_remove(&workers, event.udata, &nworkers);
+			if (worker_remove(&workers, event.udata, &nworkers) == -1) {
+				warn("worker reap");
+				goto out;
+			}
 			continue;
 		}
 		memset(&identity, 0, sizeof(identity));
@@ -554,7 +588,8 @@ main(void)
 			errno = error;
 			if (errno == EINTR)
 				continue;
-			err(1, "accept");
+			warn("accept");
+			goto out;
 		}
 		if (nworkers >= AUDITCMP_MAX_WORKERS) {
 			errno = ENOSPC;
@@ -580,33 +615,45 @@ main(void)
 			continue;
 		}
 		worker = calloc(1, sizeof(*worker));
+		if (worker != NULL)
+			worker->pd = -1;
 		if (worker == NULL || start_session(fd, identity.client_label,
 		    &worker->pd, &worker->pid) == -1) {
 			logcmp_log(LOG_WARNING, "session for %s: %m",
 			    identity.client_label);
-			free(worker);
 			close(fd);
+			if (worker != NULL && worker->pd >= 0) {
+				worker->next = workers;
+				workers = worker;
+				nworkers++;
+				goto out;
+			}
+			free(worker);
 			continue;
 		}
 		close(fd);
-		EV_SET(&change, worker->pd, EVFILT_PROCDESC, EV_ADD | EV_ENABLE,
-		    NOTE_EXIT, 0, worker);
-		if (kevent(kq, &change, 1, NULL, 0, NULL) == -1) {
-			(void)pdkill(worker->pd, SIGKILL);
-			(void)pdwait(worker->pd, &status, WEXITED, NULL, NULL);
-			close(worker->pd);
-			free(worker);
-			continue;
+		if (worker_track(kq, &workers, worker, &nworkers) == -1) {
+			warn("worker watch");
+			goto out;
 		}
-		worker->next = workers;
-		workers = worker;
-		nworkers++;
 	}
-	workers_shutdown(kq, &workers, &nworkers);
-	status = service_provider_quiesce_complete(provider, 0);
-	close(kq);
+	result = 0;
+	goto out;
+initialize_failed:
+	warn("initialize");
+out:
+	if (workers_shutdown(kq, &workers, &nworkers) == -1) {
+		warn("worker shutdown");
+		result = 1;
+	}
+	if (kq != -1)
+		close(kq);
 	free(rate_table);
+	if (result == 0 && service_provider_quiesce_complete(provider, 0) == -1)
+		result = 1;
+	if (provider != NULL)
+		service_provider_destroy(provider);
 	closelog();
-	return (status == 0 ? 0 : 1);
+	return (result);
 }
 #endif

@@ -1,0 +1,8 @@
+/* Generated automatically */
+#ifndef have_Src_Zle_zle_params_globals
+#define have_Src_Zle_zle_params_globals
+
+extern mod_import_function void makezleparams(int ro);
+extern void free_prepostdisplay(void);
+
+#endif /* !have_Src_Zle_zle_params_globals */

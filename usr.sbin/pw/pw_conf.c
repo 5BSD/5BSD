@@ -61,11 +61,12 @@ enum {
 	_UC_FIELDS
 };
 
-static char     bourne_shell[] = "sh";
+static char     default_shell[] = "zsh";
 
 static char    *system_shells[_UC_MAXSHELLS] =
 {
-	bourne_shell,
+	default_shell,
+	"sh",
 	"csh",
 	"tcsh"
 };
@@ -92,7 +93,7 @@ static struct userconf config =
 	_DEF_DIRMODE,		/* Home directory perms, modified by umask */
 	"/bin",			/* Where shells are located */
 	system_shells,		/* List of shells (first is default) */
-	bourne_shell,		/* Default shell */
+	default_shell,		/* Default shell */
 	NULL,			/* Default group name */
 	NULL,			/* Default (additional) groups */
 	NULL,			/* Default login class */
@@ -322,7 +323,7 @@ read_userconfig(char const * file)
 				break;
 			case _UC_DEFAULTSHELL:
 				config.shell_default = (q == NULL || !boolean_val(q, 1))
-					? (char *) bourne_shell : newstr(q);
+					? (char *) default_shell : newstr(q);
 				break;
 			case _UC_DEFAULTGROUP:
 				q = unquote(q);
@@ -489,7 +490,7 @@ write_userconfig(struct userconf *cnf, const char *file)
 			break;
 		case _UC_DEFAULTSHELL:
 			fputs(cnf->shell_default ?  cnf->shell_default :
-			    bourne_shell, buffp);
+			    default_shell, buffp);
 			break;
 		case _UC_DEFAULTGROUP:
 			fputs(cnf->default_group ?  cnf->default_group : "",
