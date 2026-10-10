@@ -3,7 +3,7 @@
 .\"
 .\" Copyright (c) 2026 Kory Heard
 .\"
-.Dd September 25, 2026
+.Dd October 10, 2026
 .Dt LIBCAPABILITY 3
 .Os
 .Sh NAME
@@ -12,8 +12,11 @@
 .Nm capability_service_connect ,
 .Nm capability_service_call ,
 .Nm capability_service_call_fds ,
+.Nm capability_coalition_watch ,
+.Nm capability_coalition_status ,
+.Nm capability_coalition_receive ,
 .Nm capability_confine_fd
-.Nd invoke synchronous kernel capability services
+.Nd invoke kernel capability services and observe coalition cleanup
 .Sh LIBRARY
 Kernel capability wrapper library
 .Pq libcapability, Fl lcapability
@@ -57,6 +60,12 @@ Kernel capability wrapper library
 .Fc
 .Ft int
 .Fn capability_confine_fd "int fd"
+.Ft int
+.Fn capability_coalition_watch "int control_fd"
+.Ft int
+.Fn capability_coalition_status "int fd" "struct capability_coalition_status *status"
+.Ft int
+.Fn capability_coalition_receive "int watch_fd" "struct capability_coalition_status *status"
 .Sh DESCRIPTION
 The
 .Nm
@@ -206,9 +215,52 @@ A negative
 .Fa fd
 is ignored and reported as success, which lets callers confine optional
 descriptors unconditionally.
+.Ss Coalition cleanup
+.Fn capability_coalition_watch
+returns an owned, nonblocking cleanup observation descriptor.
+Its close-on-exec and close-on-fork flags are installed atomically by CALL.
+Older kernels that do not support these flags fail; the helper does not fall
+back to installing an inheritable descriptor and changing it afterwards.
+The view retains coalition state without keeping its control descriptor open.
+Closing or revoking the view cancels observation only.
+.Pp
+Initialize a
+.Vt struct capability_coalition_status
+with zeroes, or set its
+.Va size
+field to its current size.
+.Fn capability_coalition_status
+queries either a control descriptor or a cleanup view.
+.Fn capability_coalition_receive
+consumes one terminal notification from a view.
+Register EVFILT_READ with kqueue to be notified, then receive;
+.Er EAGAIN
+means no message is available on the nonblocking view.
+Only one terminal notification is emitted per view, including for subscriptions
+created after completion.
+The receive helper respects the descriptor's current blocking mode.
+.Pp
+Both functions return zero when they successfully report a state, including
+FAILED or RELEASED; the return value alone does not certify successful cleanup.
+They leave the output unchanged on error, so callers must check the return
+value before using it.
+The phase is one of CAPABILITY_COALITION_ACTIVE, _DRAINING, _COMPLETE, _FAILED,
+or _RELEASED (each name uses the CAPABILITY_COALITION prefix).
+Only COMPLETE means all tracked cleanup actions succeeded.
+FAILED reports the first error in cleanup_error; RELEASED means resources were
+deliberately detached without confirmed cleanup.
+CAPABILITY_COALITION_F_RELEASED may also accompany a failure.
+The processes, forks, jails, nested, capabilities, and external fields count
+outstanding tracked obligations, not allocation references.
+Completion does not certify reclamation of shared/static storage or independent
+asynchronous work started by service callbacks.
+See
+.Xr mac_capability_coalition 4 .
 .Sh RETURN VALUES
 .Fn capability_service_connect
-returns the new instance descriptor on success and
+and
+.Fn capability_coalition_watch
+return the new owned descriptor on success and
 .Dv -1
 on error.
 The other functions return zero on success and
@@ -241,6 +293,8 @@ does not fit in
 The kernel returned malformed metadata (an unterminated service name) or
 counts exceeding the supplied capacities, or an exact-shape call received a
 reply of a different size or descriptor count.
+Coalition helpers also reject unrecognized phases, flags, negative errors,
+and nonterminal receive notifications.
 .It Bq Er ENOMEM
 The temporary ABI object could not be allocated.
 .El
@@ -259,6 +313,7 @@ and
 .Xr libservice 3 ,
 .Xr mac_capability 4 ,
 .Xr mac_capability_capprotect 4 ,
+.Xr mac_capability_coalition 4 ,
 .Xr mac_capability_system 4 ,
 .Xr capsule 8
 .Sh HISTORY

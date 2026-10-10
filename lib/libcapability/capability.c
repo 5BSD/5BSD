@@ -9,6 +9,7 @@
 #include <sys/ioctl.h>
 
 #include <dev/mac_capability/mac_capability_ioctl.h>
+#include <dev/mac_capability/mac_capability_coalition_proto.h>
 
 #include <errno.h>
 #include <fcntl.h>
@@ -61,10 +62,10 @@ capability_get_info(int fd, struct capability_info *information)
 	return (0);
 }
 
-int
-capability_kernel_call(int fd, const void *request, size_t request_length,
+static int
+capability_kernel_call_flags(int fd, const void *request, size_t request_length,
     const int *request_fds, size_t request_nfds, void *reply,
-    size_t *reply_length, int *reply_fds, size_t *reply_nfds)
+    size_t *reply_length, int *reply_fds, size_t *reply_nfds, uint32_t flags)
 {
 	struct mac_capability_call_args *call;
 	size_t fd_capacity, i, reply_capacity;
@@ -98,6 +99,7 @@ capability_kernel_call(int fd, const void *request, size_t request_length,
 	call = calloc(1, sizeof(*call));
 	if (call == NULL)
 		return (-1);
+	call->flags = flags;
 	call->req = request;
 	call->req_len = (uint32_t)request_length;
 	call->req_fds = request_fds;
@@ -131,6 +133,16 @@ capability_kernel_call(int fd, const void *request, size_t request_length,
 	*reply_nfds = call->reply_nfds;
 	free(call);
 	return (0);
+}
+
+int
+capability_kernel_call(int fd, const void *request, size_t request_length,
+    const int *request_fds, size_t request_nfds, void *reply,
+    size_t *reply_length, int *reply_fds, size_t *reply_nfds)
+{
+	return (capability_kernel_call_flags(fd, request, request_length,
+	    request_fds, request_nfds, reply, reply_length, reply_fds,
+	    reply_nfds, 0));
 }
 
 int
@@ -203,4 +215,126 @@ capability_confine_fd(int fd)
 	    cap_cloexec_limit(fd, CAP_CLOEXEC_LOCKED) == -1)
 		return (-1);
 	return (0);
+}
+
+_Static_assert(CAPABILITY_COALITION_ACTIVE == COALITION_CLEANUP_ACTIVE &&
+    CAPABILITY_COALITION_DRAINING == COALITION_CLEANUP_DRAINING &&
+    CAPABILITY_COALITION_COMPLETE == COALITION_CLEANUP_COMPLETE &&
+    CAPABILITY_COALITION_FAILED == COALITION_CLEANUP_FAILED &&
+    CAPABILITY_COALITION_RELEASED == COALITION_CLEANUP_RELEASED &&
+    CAPABILITY_COALITION_F_RELEASED == COALITION_CLEANUP_F_RELEASED,
+    "coalition public phases must match the wire protocol");
+
+int
+capability_coalition_watch(int control_fd)
+{
+	struct coalition_req_hdr req = { .op = COALITION_OP_CLEANUP_WATCH };
+	struct coalition_reply reply;
+	size_t length = sizeof(reply), nfds = 1;
+	int fd = -1, error, flags;
+
+	if (capability_kernel_call_flags(control_fd, &req, sizeof(req), NULL, 0,
+	    &reply, &length, &fd, &nfds, MAC_CAPABILITY_CALL_F_CLOEXEC |
+	    MAC_CAPABILITY_CALL_F_CLOFORK) == -1)
+		return (-1);
+	if (length != sizeof(reply) || reply.status < 0) {
+		error = EPROTO;
+		goto fail;
+	}
+	if (reply.status != 0) {
+		error = reply.status;
+		goto fail;
+	}
+	if (nfds != 1 || fd < 0) {
+		error = EPROTO;
+		goto fail;
+	}
+	flags = fcntl(fd, F_GETFL);
+	if (flags == -1 || fcntl(fd, F_SETFL, flags | O_NONBLOCK) == -1) {
+		error = errno;
+		goto fail;
+	}
+	return (fd);
+fail:
+	if (fd >= 0)
+		(void)close(fd);
+	errno = error;
+	return (-1);
+}
+
+static int
+coalition_status_arguments(int fd, struct capability_coalition_status *status)
+{
+	if (fd < 0 || status == NULL ||
+	    (status->size != 0 && status->size != sizeof(*status))) {
+		errno = EINVAL;
+		return (-1);
+	}
+	return (0);
+}
+
+static int
+coalition_status_decode(const struct coalition_cleanup_reply *reply,
+    struct capability_coalition_status *status)
+{
+	struct capability_coalition_status result;
+
+	if (reply->status < 0 || reply->cleanup_error < 0 ||
+	    reply->phase > COALITION_CLEANUP_RELEASED ||
+	    (reply->flags & ~COALITION_CLEANUP_F_RELEASED) != 0) {
+		errno = EPROTO;
+		return (-1);
+	}
+	if (reply->status != 0) {
+		errno = reply->status;
+		return (-1);
+	}
+	memset(&result, 0, sizeof(result));
+	result.size = sizeof(result);
+	result.phase = reply->phase;
+	result.cleanup_error = reply->cleanup_error;
+	result.flags = reply->flags;
+	result.processes = reply->processes;
+	result.forks = reply->forks;
+	result.jails = reply->jails;
+	result.nested = reply->nested;
+	result.capabilities = reply->capabilities;
+	result.external = reply->external;
+	*status = result;
+	return (0);
+}
+
+int
+capability_coalition_status(int fd, struct capability_coalition_status *status)
+{
+	struct coalition_req_hdr req = { .op = COALITION_OP_CLEANUP_STATUS };
+	struct coalition_cleanup_reply reply;
+
+	if (coalition_status_arguments(fd, status) == -1)
+		return (-1);
+	if (capability_service_call(fd, &req, sizeof(req), &reply,
+	    sizeof(reply)) == -1)
+		return (-1);
+	return (coalition_status_decode(&reply, status));
+}
+
+int
+capability_coalition_receive(int fd, struct capability_coalition_status *status)
+{
+	struct mac_capability_recvmsg_args args;
+	struct coalition_cleanup_reply reply;
+
+	if (coalition_status_arguments(fd, status) == -1)
+		return (-1);
+	memset(&args, 0, sizeof(args));
+	args.payload = &reply;
+	args.payload_len = sizeof(reply);
+	if (ioctl(fd, MAC_CAPABILITY_RECVMSG, &args) == -1)
+		return (-1);
+	if (args.payload_len != sizeof(reply) || args.nfds != 0 ||
+	    reply.phase < COALITION_CLEANUP_COMPLETE) {
+		errno = EPROTO;
+		return (-1);
+	}
+	return (coalition_status_decode(&reply, status));
 }
