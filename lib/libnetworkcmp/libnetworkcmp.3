@@ -155,7 +155,10 @@ The caller supplies the result-array capacity through
 .Fa nresults ;
 on success it contains the number returned.
 An optional canonical-name buffer and TTL output may be supplied; a TTL of
-zero means the provider does not expose TTL information.
+zero means no positive cache lifetime is advertised.
+For DNS results, the provider reports the remaining minimum across address
+records and CNAMEs, rounded down and aged across cached queries.
+Numeric and local hosts results report zero.
 The broker resolves independently of its request loop and permits one active
 resolution per session; an overlapping resolution fails with
 .Er EBUSY .

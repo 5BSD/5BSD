@@ -106,6 +106,8 @@ Use
 to end option parsing before the hostname.
 These flags also apply to numeric addresses and the local hosts snapshot.
 Temporary DNS failures are reported as errors and are not retried by this tool.
+The printed TTL is the remaining conservative DNS lifetime; zero advertises
+no positive cache lifetime, including numeric and local hosts results.
 .El
 .Sh FILES
 .Bl -tag -width indent

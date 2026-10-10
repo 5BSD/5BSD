@@ -734,7 +734,7 @@ resolve_perform(struct resolver_job *job)
 	struct addrinfo hints, *addresses, *ai;
 	char *canonical;
 	size_t canonical_length, payload_length;
-	uint32_t count, maximum;
+	uint32_t count, maximum, ttl_seconds;
 	int error;
 
 	request = &job->request;
@@ -798,10 +798,10 @@ resolve_perform(struct resolver_job *job)
 
 	BSDNETWORK_RESOLVE_START(__DECONST(char *, job->label), job->host);
 	addresses = NULL;
-	error = netresolve(
+	error = netresolve_ex(
 	    request->host_length != 0 ? job->host : NULL,
 	    request->service_length != 0 ? job->service : NULL, &hints,
-	    &addresses);
+	    &addresses, &ttl_seconds);
 	if (error != 0) {
 		error = gai_to_errno(error);
 		goto reject_probe;
@@ -856,8 +856,8 @@ resolve_perform(struct resolver_job *job)
 		canonical_length = NETWORKCMP_CANONNAME_MAX;
 	reply->result_count = count;
 	reply->canonname_length = (uint32_t)canonical_length;
-	/* cap_net/getaddrinfo does not expose DNS TTLs; zero means unknown. */
-	reply->ttl_seconds = 0;
+	/* Conservative remaining lifetime, including CNAMEs and cache age. */
+	reply->ttl_seconds = ttl_seconds;
 	if (canonical_length != 0)
 		memcpy(results + count, canonical, canonical_length);
 	payload_length = sizeof(*reply) + count * sizeof(*results) +

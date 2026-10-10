@@ -93,6 +93,7 @@ open_resolver_config(struct service_context *ctx, int *fdp)
 
 struct rslv_addr {
 	int	family;
+	uint64_t expires_ns;
 	union {
 		struct in_addr	v4;
 		struct in6_addr	v6;
@@ -140,7 +141,7 @@ nameservers_publish(const union res_sockaddr_union *servers, int count)
 }
 
 static int
-nameservers_snapshot(union res_sockaddr_union *servers)
+nameservers_snapshot_version(union res_sockaddr_union *servers, uint32_t *version)
 {
 	unsigned char *bytes;
 	uint32_t before, after, count;
@@ -163,11 +164,14 @@ nameservers_snapshot(union res_sockaddr_union *servers)
 				    &g_nameservers->bytes[i], memory_order_seq_cst);
 			after = atomic_load_explicit(&g_nameservers->generation,
 			    memory_order_seq_cst);
-			if (before == after)
+			if (before == after) {
+				*version = after;
 				return ((int)count);
+			}
 		}
 	}
 	/* A dead writer cannot stall DNS forever; use the startup snapshot. */
+	*version = UINT32_MAX;
 	memcpy(servers, g_ns, sizeof(g_ns));
 	return (g_nns);
 }
@@ -599,6 +603,15 @@ hosts_lookup(const char *host, int family, struct rslv_addr *addrs,
  * rdata access is bounds-checked and the result count is capped at max.
  * Returns addresses appended, or -1 for a malformed answer chain.
  */
+static uint64_t
+dns_now_ns(void)
+{
+	struct timespec now;
+	if (clock_gettime(CLOCK_MONOTONIC, &now) == -1)
+		return (0);
+	return ((uint64_t)now.tv_sec * 1000000000 + now.tv_nsec);
+}
+
 static int
 dns_parse(const u_char *ans, int anslen, const char *host, int want,
     struct rslv_addr *addrs, int max, int *n, char *canon, size_t canonsz)
@@ -610,6 +623,8 @@ dns_parse(const u_char *ans, int anslen, const char *host, int want,
 	size_t rdlen;
 	int count, i, hops, consumed, added = 0;
 	bool found;
+	uint32_t chain_ttl = UINT32_MAX, record_ttl;
+	uint64_t now = dns_now_ns();
 
 	if (anslen <= 0)
 		return (-1);
@@ -645,6 +660,11 @@ dns_parse(const u_char *ans, int anslen, const char *host, int want,
 			    target, sizeof(target));
 			if (consumed < 0 || (size_t)consumed != rdlen)
 				return (-1);
+			record_ttl = ns_rr_ttl(rr);
+			if (record_ttl >= 0x80000000U)
+				record_ttl = 0;
+			if (record_ttl < chain_ttl)
+				chain_ttl = record_ttl;
 			found = true;
 		}
 		if (!found)
@@ -698,6 +718,15 @@ dns_parse(const u_char *ans, int anslen, const char *host, int want,
 			memset(&addrs[*n].a, 0, sizeof(addrs[*n].a));
 			memcpy(&addrs[*n].a.v6, rdata, 16);
 		}
+
+		record_ttl = ns_rr_ttl(rr);
+		if (record_ttl >= 0x80000000U)
+			record_ttl = 0;
+		if (chain_ttl < record_ttl)
+			record_ttl = chain_ttl;
+		/* High-bit TTLs and zero TTLs must not extend cache lifetime. */
+		addrs[*n].expires_ns = now != 0 && record_ttl < 0x80000000U ?
+		    now + (uint64_t)record_ttl * 1000000000 : 0;
 
 		/* Owner name of the address record is the canonical name. */
 		if (canonsz > 0 && canon[0] == '\0') {
@@ -847,17 +876,15 @@ done:
  * Returns the number of addresses added, or -1 if no server answered.
  */
 static int
-dns_query(const char *host, int rrtype, struct rslv_addr *addrs, int max,
-    int *n, char *canon, size_t canonsz)
+dns_query_uncached(const char *host, int rrtype, struct rslv_addr *addrs, int max,
+    int *n, char *canon, size_t canonsz,
+    const union res_sockaddr_union *srv, int nsrv)
 {
-	union res_sockaddr_union srv[RSLV_MAX_NS];
 	u_char qbuf[NS_PACKETSZ];
 	u_char *ans;
-	int nsrv, qlen, attempt, s, retrans, retry, added_total = 0;
+	int qlen, attempt, s, retrans, retry, added_total = 0;
 	int answered = 0;
 
-	/* Snapshot one complete nameserver generation for this query. */
-	nsrv = nameservers_snapshot(srv);
 	if (nsrv <= 0)
 		return (-1);
 
@@ -879,7 +906,7 @@ dns_query(const char *host, int rrtype, struct rslv_addr *addrs, int max,
 		int ns;
 
 		for (ns = 0; ns < nsrv && !answered; ns++) {
-			struct sockaddr *sa = (struct sockaddr *)&srv[ns];
+			const struct sockaddr *sa = (const struct sockaddr *)&srv[ns];
 			socklen_t salen;
 			struct timespec deadline;
 			ssize_t sent, rlen;
@@ -970,6 +997,87 @@ dns_query(const char *host, int rrtype, struct rslv_addr *addrs, int max,
 	return (answered ? added_total : -1);
 }
 
+/* One resolver job at a time per worker; never shared across client labels. */
+#define RSLV_CACHE_ENTRIES 32
+#define RSLV_CACHE_MAX_AGE 300
+struct dns_cache_entry {
+	char host[NS_MAXDNAME], canon[NS_MAXDNAME];
+	int type, count;
+	uint64_t expires_ns;
+	struct rslv_addr addresses[RSLV_MAX_RESULTS];
+};
+static struct dns_cache_entry g_dns_cache[RSLV_CACHE_ENTRIES];
+static union res_sockaddr_union g_cache_servers[RSLV_MAX_NS];
+static uint32_t g_cache_version;
+static int g_cache_server_count = -1;
+static unsigned g_cache_next;
+
+static int
+dns_query(const char *host, int rrtype, struct rslv_addr *addrs, int max,
+    int *n, char *canon, size_t canonsz)
+{
+	union res_sockaddr_union servers[RSLV_MAX_NS];
+	struct rslv_addr answers[RSLV_MAX_RESULTS];
+	struct dns_cache_entry *entry = NULL;
+	char name[NS_MAXDNAME] = "";
+	uint32_t version;
+	uint64_t now, expires;
+	int count = 0, nsrv, result, added = 0;
+
+	nsrv = nameservers_snapshot_version(servers, &version);
+	if (nsrv != g_cache_server_count || version != g_cache_version ||
+	    memcmp(servers, g_cache_servers, sizeof(servers)) != 0) {
+		memset(g_dns_cache, 0, sizeof(g_dns_cache));
+		memcpy(g_cache_servers, servers, sizeof(servers));
+		g_cache_server_count = nsrv;
+		g_cache_version = version;
+		g_cache_next = 0;
+	}
+	now = dns_now_ns();
+	for (unsigned i = 0; now != 0 && i < RSLV_CACHE_ENTRIES; i++) {
+		if (g_dns_cache[i].expires_ns > now &&
+		    g_dns_cache[i].type == rrtype &&
+		    ns_samename(g_dns_cache[i].host, host) == 1) {
+			entry = &g_dns_cache[i];
+			break;
+		}
+	}
+	if (entry != NULL) {
+		count = entry->count;
+		memcpy(answers, entry->addresses, count * sizeof(*answers));
+		strlcpy(name, entry->canon, sizeof(name));
+	} else {
+		result = dns_query_uncached(host, rrtype, answers, RSLV_MAX_RESULTS,
+		    &count, name, sizeof(name), servers, nsrv);
+		if (result < 0)
+			return (-1);
+		now = dns_now_ns();
+		expires = now + (uint64_t)RSLV_CACHE_MAX_AGE * 1000000000;
+		for (int i = 0; i < count; i++)
+			if (answers[i].expires_ns < expires)
+				expires = answers[i].expires_ns;
+		/* Only validated positive answers with time remaining are cached. */
+		if (count != 0 && now != 0 && expires > now &&
+		    strlen(host) < sizeof(g_dns_cache[0].host)) {
+			entry = &g_dns_cache[g_cache_next++ % RSLV_CACHE_ENTRIES];
+			memset(entry, 0, sizeof(*entry));
+			strlcpy(entry->host, host, sizeof(entry->host));
+			strlcpy(entry->canon, name, sizeof(entry->canon));
+			entry->type = rrtype;
+			entry->count = count;
+			entry->expires_ns = expires;
+			memcpy(entry->addresses, answers, count * sizeof(*answers));
+		}
+	}
+	for (int i = 0; i < count && *n < max; i++) {
+		addrs[(*n)++] = answers[i];
+		added++;
+	}
+	if (added != 0 && canonsz != 0 && canon[0] == '\0')
+		strlcpy(canon, name, canonsz);
+	return (added);
+}
+
 /* Convert a native IPv4 address without consulting DNS. */
 static void
 map_v4(struct rslv_addr *destination, const struct in_addr *source)
@@ -994,7 +1102,8 @@ hosts_lookup_v4mapped(const char *host, struct rslv_addr *addrs, int max,
 	count = hosts_lookup(host, AF_INET, tmp, RSLV_MAX_RESULTS,
 	    name, sizeof(name));
 	for (int i = 0; i < count && *n < max; i++) {
-		map_v4(&addrs[(*n)++], &tmp[i].a.v4);
+		map_v4(&addrs[*n], &tmp[i].a.v4);
+		addrs[(*n)++].expires_ns = tmp[i].expires_ns;
 		added++;
 	}
 	if (added != 0 && canonsz != 0 && canon[0] == '\0')
@@ -1020,7 +1129,8 @@ dns_query_v4mapped(const char *host, struct rslv_addr *addrs, int max, int *n,
 	for (i = 0; i < tn && *n < max; i++) {
 		if (tmp[i].family != AF_INET)
 			continue;
-		map_v4(&addrs[(*n)++], &tmp[i].a.v4);
+		map_v4(&addrs[*n], &tmp[i].a.v4);
+		addrs[(*n)++].expires_ns = tmp[i].expires_ns;
 		added++;
 	}
 	return (added);
@@ -1093,10 +1203,10 @@ netfreeaddrinfo(struct addrinfo *res)
 }
 
 int
-netresolve(const char *host, const char *serv, const struct addrinfo *hints,
-    struct addrinfo **res)
+netresolve_ex(const char *host, const char *serv, const struct addrinfo *hints,
+    struct addrinfo **res, uint32_t *ttl_seconds)
 {
-	struct rslv_addr addrs[RSLV_MAX_RESULTS];
+	struct rslv_addr addrs[RSLV_MAX_RESULTS] = { 0 };
 	struct rslv_port ports[2];
 	char canon[NS_MAXDNAME];
 	struct addrinfo *head = NULL, *tail = NULL;
@@ -1107,6 +1217,8 @@ netresolve(const char *host, const char *serv, const struct addrinfo *hints,
 	if (res == NULL)
 		return (EAI_FAIL);
 	*res = NULL;
+	if (ttl_seconds != NULL)
+		*ttl_seconds = 0;
 	canon[0] = '\0';
 
 	family = hints ? hints->ai_family : AF_UNSPEC;
@@ -1261,6 +1373,16 @@ netresolve(const char *host, const char *serv, const struct addrinfo *hints,
 
 	if (head == NULL)
 		return (EAI_NONAME);
+	if (ttl_seconds != NULL) {
+		uint64_t now = dns_now_ns(), remaining = UINT32_MAX;
+		for (i = 0; i < naddr; i++) {
+			uint64_t seconds = now != 0 && addrs[i].expires_ns > now ?
+			    (addrs[i].expires_ns - now) / 1000000000 : 0;
+			if (seconds < remaining)
+				remaining = seconds;
+		}
+		*ttl_seconds = (uint32_t)remaining;
+	}
 	*res = head;
 	return (0);
 
@@ -1268,4 +1390,11 @@ fail:
 	netfreeaddrinfo(head);
 	*res = NULL;
 	return (ret);
+}
+
+int
+netresolve(const char *host, const char *serv, const struct addrinfo *hints,
+    struct addrinfo **res)
+{
+	return (netresolve_ex(host, serv, hints, res, NULL));
 }

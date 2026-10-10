@@ -245,6 +245,26 @@ A 30-second idle limit applies between requests.
 See
 .Xr network_state 3
 for timeout and reconnect semantics.
+.Sh DNS CACHE AND TTL
+Each connection worker retains at most 32 validated positive DNS answers,
+keyed by hostname and record type, for at most five minutes and never beyond
+the minimum TTL of the matching addresses and their CNAME chain.
+The cache is private to that worker and its immutable client policy;
+answers are not shared across sessions, labels, or network namespaces.
+Zero-TTL answers, negative answers, malformed replies, and failures are not
+cached.
+Numeric and local hosts results are resolved before consulting DNS.
+.Pp
+Every query checks the nameserver snapshot and its generation.
+A change clears the worker's cache, including when the server list later
+returns to an earlier value.
+An in-flight query may finish against its original configuration, but the
+next query invalidates its cached result after a generation change.
+.Pp
+The reply TTL is the conservative whole-second remaining minimum across
+returned address families and CNAMEs; it accounts for elapsed time and cache
+age.
+Zero means no positive cache lifetime is advertised, including local results.
 .Sh DNS FAILURES
 When no usable address is available, an unsuccessful DNS query returns
 .Er EAGAIN

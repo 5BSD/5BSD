@@ -1,5 +1,6 @@
 #ifndef _BSDNETWORK_RESOLVER_H_
 #define _BSDNETWORK_RESOLVER_H_
+#include <stdint.h>
 #include <netdb.h>   /* struct addrinfo */
 
 struct service_context;
@@ -32,5 +33,7 @@ int  netresolve_worker_enter(void);
  */
 int  netresolve(const char *host, const char *serv,
      const struct addrinfo *hints, struct addrinfo **res);
+int netresolve_ex(const char *, const char *, const struct addrinfo *,
+    struct addrinfo **, uint32_t *ttl_seconds);
 void netfreeaddrinfo(struct addrinfo *res);
 #endif

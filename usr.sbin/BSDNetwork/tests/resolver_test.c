@@ -9,6 +9,15 @@
 /* Exercise the resolver's internal DNS path with a local nameserver. */
 #include "../resolver.c"
 
+static int
+nameservers_snapshot(union res_sockaddr_union *servers)
+{
+	uint32_t version;
+	return (nameservers_snapshot_version(servers, &version));
+}
+
+
+
 ATF_TC(reply_validation);
 ATF_TC_HEAD(reply_validation, tc)
 {
@@ -599,11 +608,131 @@ ATF_TC_BODY(local_v4mapped, tc)
 	g_hostsfd = -1;
 }
 
+ATF_TC(cache_lifetime_and_configuration);
+ATF_TC_HEAD(cache_lifetime_and_configuration, tc)
+{
+	atf_tc_set_md_var(tc, "timeout", "10");
+}
+ATF_TC_BODY(cache_lifetime_and_configuration, tc)
+{
+	struct sockaddr_in sa = { .sin_len = sizeof(sa), .sin_family = AF_INET,
+	    .sin_addr = { .s_addr = htonl(INADDR_LOOPBACK) } };
+	struct addrinfo hints = { .ai_family = AF_INET, .ai_socktype = SOCK_STREAM };
+	struct addrinfo *result;
+	socklen_t length = sizeof(sa);
+	uint32_t ttl;
+	int udp, status;
+	pid_t child;
+
+	udp = socket(AF_INET, SOCK_DGRAM, 0);
+	ATF_REQUIRE(udp >= 0);
+	ATF_REQUIRE_EQ(0, bind(udp, (struct sockaddr *)&sa, sizeof(sa)));
+	ATF_REQUIRE_EQ(0, getsockname(udp, (struct sockaddr *)&sa, &length));
+	ATF_REQUIRE_EQ(0, res_ninit(&g_res));
+	g_res.retry = g_res.retrans = 1;
+	g_ns[0].sin = sa;
+	g_nns = 1;
+	ATF_REQUIRE_EQ(0, nameservers_share_init());
+	child = fork();
+	ATF_REQUIRE(child >= 0);
+	if (child == 0) {
+		struct sockaddr_in peer;
+		u_char query[NS_PACKETSZ], answer[NS_PACKETSZ + 32];
+		static const u_char owner[] = { 0xc0, 0x0c };
+		ssize_t qlen;
+		size_t alen;
+		alarm(5);
+		for (unsigned i = 0; i < 3; i++) {
+			length = sizeof(peer);
+			qlen = recvfrom(udp, query, sizeof(query), 0,
+			    (struct sockaddr *)&peer, &length);
+			if (qlen <= NS_HFIXEDSZ) _exit(1);
+			memcpy(answer, query, qlen);
+			answer[2] |= 0x80;
+			answer[7] = 1;
+			alen = append_test_a(answer, qlen, owner, sizeof(owner), 10 + i);
+			answer[qlen + 9] = 60;
+			if (sendto(udp, answer, alen, 0, (struct sockaddr *)&peer,
+			    length) != (ssize_t)alen) _exit(2);
+		}
+		_exit(0);
+	}
+	for (unsigned i = 0; i < 4; i++) {
+		if (i == 2)
+			for (unsigned j = 0; j < RSLV_CACHE_ENTRIES; j++)
+				g_dns_cache[j].expires_ns = 0;
+		if (i == 3)
+			nameservers_publish(g_ns, g_nns);
+		ATF_REQUIRE_EQ(0, netresolve_ex("cache.example.test", "80", &hints,
+		    &result, &ttl));
+		ATF_CHECK(ttl > 0 && ttl <= 60);
+		const struct sockaddr_in *address = (const void *)result->ai_addr;
+		ATF_CHECK_EQ(0xc000020aU + (i > 1 ? i - 1 : 0), ntohl(address->sin_addr.s_addr));
+		netfreeaddrinfo(result);
+	}
+	ATF_REQUIRE_EQ(child, waitpid(child, &status, 0));
+	ATF_REQUIRE(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	ATF_REQUIRE_EQ(0, netresolve_ex("192.0.2.1", "80", &hints, &result, &ttl));
+	ATF_CHECK_EQ(0, ttl);
+	netfreeaddrinfo(result);
+	munmap(g_nameservers, sizeof(*g_nameservers));
+	close(g_nameservers_fd);
+	g_nameservers = NULL;
+	g_nameservers_fd = -1;
+	res_nclose(&g_res);
+	close(udp);
+}
+ATF_TC_WITHOUT_HEAD(cname_ttl);
+ATF_TC_BODY(cname_ttl, tc)
+{
+	static const u_char owner[] = { 0xc0, 0x0c };
+	static const u_char alias[] = { 5, 'a','l','i','a','s', 4, 't','e','s','t', 0 };
+	u_char query[NS_PACKETSZ], answer[NS_PACKETSZ + 128];
+	struct rslv_addr addresses[2];
+	char canonical[NS_MAXDNAME] = "";
+	int qlen, count;
+	size_t at, address_at;
+	uint64_t now;
+
+	ATF_REQUIRE_EQ(0, res_ninit(&g_res));
+	qlen = res_nmkquery(&g_res, ns_o_query, "example.test", ns_c_in, ns_t_a,
+	    NULL, 0, NULL, query, sizeof(query));
+	ATF_REQUIRE(qlen > NS_HFIXEDSZ);
+	memcpy(answer, query, qlen);
+	answer[2] |= 0x80;
+	answer[7] = 2;
+	at = qlen;
+	memcpy(answer + at, owner, sizeof(owner)); at += sizeof(owner);
+	memset(answer + at, 0, 10);
+	answer[at + 1] = ns_t_cname; answer[at + 3] = ns_c_in;
+	answer[at + 7] = 2; answer[at + 9] = sizeof(alias); at += 10;
+	memcpy(answer + at, alias, sizeof(alias)); at += sizeof(alias);
+	address_at = at;
+	at = append_test_a(answer, at, alias, sizeof(alias), 9);
+	answer[address_at + sizeof(alias) + 7] = 120;
+	for (unsigned variant = 0; variant < 3; variant++) {
+		if (variant == 1) answer[qlen + 9] = 0;
+		if (variant == 2) answer[qlen + 6] = 0x80;
+		count = 0;
+		now = dns_now_ns();
+		ATF_REQUIRE_EQ(1, dns_parse(answer, at, "example.test", ns_t_a,
+		    addresses, 2, &count, canonical, sizeof(canonical)));
+		if (variant == 0)
+			ATF_CHECK(addresses[0].expires_ns > now &&
+			    addresses[0].expires_ns - now < 2100000000ULL);
+		else
+			ATF_CHECK(addresses[0].expires_ns <= dns_now_ns());
+	}
+	res_nclose(&g_res);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, negative_and_temporary_errors);
 	ATF_TP_ADD_TC(tp, no_nameservers);
 	ATF_TP_ADD_TC(tp, local_v4mapped);
+	ATF_TP_ADD_TC(tp, cache_lifetime_and_configuration);
+	ATF_TP_ADD_TC(tp, cname_ttl);
 	ATF_TP_ADD_TC(tp, reply_validation);
 	ATF_TP_ADD_TC(tp, ignores_bad_udp_reply);
 	ATF_TP_ADD_TC(tp, answer_owner_chain);
