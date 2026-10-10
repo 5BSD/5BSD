@@ -131,6 +131,8 @@ fake_free(struct channel_message *m)
 #define channel_message_free	    fake_free
 #define SYSCTLCMP_TESTING
 #include "../bsdsysctl.c"
+/* Exercise the extracted implementation through the same socket adapter. */
+#include "service_runtime.c"
 
 static int
 request_op(int fd, uint32_t opcode, const char *name)

@@ -60,6 +60,15 @@ It excludes the process from the kernel OOM victim selector; it does not
 reserve RAM, prevent allocation failures, or override deliberate supervisor
 shutdown, fatal faults, resource-limit enforcement or kernel panic.
 Signal shields remain a separate protection.
+.Sh DEPENDENCY RECOVERY
+Sampling and pressure publication each use a 400 millisecond libservice RPC
+budget, including discovery and handshake waits.  Failed dependencies retry
+with exponential delays from one to thirty seconds.  Success resets the delay.
+Health transitions and cumulative failure counts are logged once per transition.
+Missing samples retain the last valid pressure restriction.
+These budgets bound RPC waits, not arbitrary kernel stalls, allocation or
+mutex contention.  The provider heartbeat uses a separate 400 millisecond
+budget so a failed supervisor does not cause an unlimited reply wait.
 .Sh SEE ALSO
 .Xr BSDNotify 8 ,
 .Xr BSDSysctl 8 ,

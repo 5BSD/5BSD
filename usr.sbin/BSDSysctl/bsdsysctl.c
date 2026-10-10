@@ -13,34 +13,35 @@
  * involved.
  */
 
-#include <sys/capsicum.h>
 #include <sys/param.h>
+#include <sys/capsicum.h>
+#include <sys/event.h>
 #include <sys/procdesc.h>
 #include <sys/socket.h>
 #include <sys/sysctl.h>
+
 #include <net/route.h>
 
+#include <channel.h>
 #include <errno.h>
-#include <signal.h>
 #include <fcntl.h>
+#include <libservice.h>
 #include <limits.h>
-#include <sys/event.h>
+#include <service_runtime.h>
+#include <signal.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sysctlcmp.h>
+#include <sysctlcmp_server.h>
 #include <syslog.h>
 #include <time.h>
 #include <unistd.h>
 
-#include <channel.h>
-#include <libservice.h>
-#include <sysctlcmp.h>
-#include <sysctlcmp_server.h>
-
+#include "bsdsysctl_probes.h"
 #include "config.h"
 #include "interfaces.h"
-#include "bsdsysctl_probes.h"
 
 #ifndef SYSCTLCMP_TESTING
 /* Loaded once in main() before the provider sandboxes. */
@@ -597,89 +598,44 @@ static int
 sessions_wait(int kq, struct session *sessions, size_t count, int listener_fd,
     uint32_t idle_ms, int *failed)
 {
-	struct kevent changes[BSDSYSCTL_MAX_SESSIONS * 2 + 1];
-	struct kevent events[BSDSYSCTL_MAX_SESSIONS * 2 + 1];
-	struct timespec timeout;
-	struct session *session;
-	uint64_t now, elapsed, remaining, wait_ms;
+	struct service_channel_slot slots[BSDSYSCTL_MAX_SESSIONS];
+	uint64_t now = service_monotime_ms(), wait_ms = INT_MAX;
 	size_t i;
-	int nchanges, nevents, wants_write, result, listener_ready;
-
-	if (monotonic_ms(&now) == -1)
-		return (-1);
-	nchanges = 0;
-	if (listener_fd != -1) {
-		EV_SET(&changes[nchanges], listener_fd, EVFILT_READ,
-		    EV_ADD | EV_ENABLE, 0, 0, NULL);
-		nchanges++;
-	}
-	wait_ms = UINT64_MAX;
+	bool active = false;
+	int ready;
 	for (i = 0; i < count; i++) {
-		session = &sessions[i];
-		if (session->channel == NULL)
-			continue;
-		elapsed = now - session->last_request_ms;
-		wants_write = channel_wants_write(session->channel);
-		if (elapsed >= idle_ms || wants_write == -1) {
-			session_close(session);
-			continue;
+		if (sessions[i].channel != NULL) {
+			uint64_t elapsed = now - sessions[i].last_request_ms;
+			if (elapsed >= idle_ms)
+				session_close(&sessions[i]);
+			else {
+				active = true;
+				if (idle_ms - elapsed < wait_ms)
+					wait_ms = idle_ms - elapsed;
+			}
 		}
-		remaining = idle_ms - elapsed;
-		if (remaining < wait_ms)
-			wait_ms = remaining;
-		EV_SET(&changes[nchanges], channel_fd(session->channel), EVFILT_READ,
-		    EV_ADD | EV_ENABLE, 0, 0, session);
-		nchanges++;
-		EV_SET(&changes[nchanges], channel_fd(session->channel), EVFILT_WRITE,
-		    EV_ADD | (wants_write ? EV_ENABLE : EV_DISABLE), 0, 0, session);
-		nchanges++;
+		sessions[i].activity = false;
+		slots[i].channel = sessions[i].channel;
 	}
-	if (wait_ms == UINT64_MAX && listener_fd == -1)
+	if (!active && listener_fd == -1)
 		return (0);
-	timeout.tv_sec = wait_ms == UINT64_MAX ? 0 : wait_ms / 1000;
-	timeout.tv_nsec = wait_ms == UINT64_MAX ? 0 : (wait_ms % 1000) * 1000000;
-	nevents = kevent(kq, changes, nchanges, events, nitems(events),
-	    wait_ms == UINT64_MAX ? NULL : &timeout);
-	if (nevents == -1)
-		return (errno == EINTR ? 0 : -1);
-	listener_ready = 0;
-	for (int e = 0; e < nevents; e++) {
-		session = events[e].udata;
-		if (session == NULL) {
-			if (events[e].flags & EV_ERROR)
-				return (errno = events[e].data, -1);
-			listener_ready = 1;
-			continue;
-		}
-		/* Closing one filter invalidates any later event for that slot. */
-		if (session->channel == NULL)
-			continue;
-		result = 0;
-		session->activity = false;
-		if (events[e].flags & EV_ERROR)
-			result = -1;
-		else if (events[e].filter == EVFILT_WRITE)
-			result = channel_flush(session->channel);
-		else if (events[e].filter == EVFILT_READ)
-			result = channel_dispatch(session->channel);
-		if (session->activity &&
-		    monotonic_ms(&session->last_request_ms) == -1)
-			return (-1);
-		if (result == -1 || session->error != 0 ||
-		    (events[e].flags & EV_EOF)) {
-			if (session->error != 0)
+	ready = service_channels_wait(kq, slots, count, listener_fd,
+	    active ? (int)wait_ms : -1);
+	if (ready == -1)
+		return (-1);
+	now = service_monotime_ms();
+	for (i = 0; i < count; i++) {
+		if (sessions[i].activity)
+			sessions[i].last_request_ms = now;
+		if (slots[i].error != 0 || sessions[i].error != 0 ||
+		    (sessions[i].channel != NULL &&
+			now - sessions[i].last_request_ms >= idle_ms)) {
+			if (sessions[i].error != 0)
 				*failed = 1;
-			session_close(session);
+			session_close(&sessions[i]);
 		}
 	}
-	/* Expire silent sessions even while other descriptors stay ready. */
-	if (monotonic_ms(&now) == -1)
-		return (-1);
-	for (i = 0; i < count; i++)
-		if (sessions[i].channel != NULL &&
-		    now - sessions[i].last_request_ms >= idle_ms)
-			session_close(&sessions[i]);
-	return (listener_ready);
+	return (ready);
 }
 
 #ifdef SYSCTLCMP_TESTING

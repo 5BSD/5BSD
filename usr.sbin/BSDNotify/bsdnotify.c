@@ -28,6 +28,7 @@
 #include <auditcmp_server.h>
 #include <channel.h>
 #include <libservice.h>
+#include <service_runtime.h>
 #include <logcmp.h>
 
 #include "broker.h"
@@ -1346,6 +1347,13 @@ tier_name(uint32_t tier)
 	return (tier == NOTIFY_TIER_SYSTEM ? "system" : "open");
 }
 
+static int
+router_exited(void *argument)
+{
+ struct router_watch_context *context = argument;
+ return (atomic_load_explicit(&context->exited, memory_order_acquire) ? 1 : 0);
+}
+
 int
 main(void)
 {
@@ -1475,23 +1483,14 @@ main(void)
 			if (errno == EINTR)
 				continue;
 			if (service_provider_quiescing(provider) == 1) {
-				struct timespec pause;
-				unsigned waits;
 				int shutdown_error;
 
 				atomic_store_explicit(&watch_context.expected_exit, true,
 				    memory_order_release);
 				service_session_close(router_session);
 				router_session = NULL;
-				pause.tv_sec = 0;
-				pause.tv_nsec = 10000000L;
-				for (waits = 0; waits < 500 &&
-				    !atomic_load_explicit(&watch_context.exited,
-				    memory_order_acquire); waits++)
-					(void)nanosleep(&pause, NULL);
-				shutdown_error = atomic_load_explicit(
-				    &watch_context.exited, memory_order_acquire) ? 0 :
-				    ETIMEDOUT;
+				shutdown_error = service_drain_wait(router_exited,
+				    &watch_context, 5000) == -1 ? errno : 0;
 				if (shutdown_error != 0)
 					(void)pdkill(router_pd, SIGKILL);
 				watcher_error = pthread_join(watcher, NULL);

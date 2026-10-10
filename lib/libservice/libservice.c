@@ -52,6 +52,7 @@
 
 #include "libservice.h"
 #include "service_private.h"
+#include "service_runtime.h"
 #include "service_bootstrap.h"
 #include "switchboard_svc_proto.h"
 
@@ -1132,6 +1133,22 @@ rpc_data(const void *req, uint32_t reqlen, int *reply_fds, size_t reply_nfds,
 	struct channel_request *request;
 	struct service_rpc_waiter waiter;
 	int cancel_state, error, result;
+	uint32_t timeout_ms = UINT32_MAX;
+	struct timespec deadline;
+	pthread_condattr_t attr;
+
+	if (service_budget_timeout(&timeout_ms) == -1)
+		return (-1);
+	if (timeout_ms != UINT32_MAX) {
+		if (clock_gettime(CLOCK_MONOTONIC, &deadline) == -1)
+			return (-1);
+		deadline.tv_sec += timeout_ms / 1000;
+		deadline.tv_nsec += (timeout_ms % 1000) * 1000000L;
+		if (deadline.tv_nsec >= 1000000000L) {
+			deadline.tv_sec++;
+			deadline.tv_nsec -= 1000000000L;
+		}
+	}
 
 	if (service_start_dispatch() == -1)
 		return (-1);
@@ -1144,7 +1161,13 @@ rpc_data(const void *req, uint32_t reqlen, int *reply_fds, size_t reply_nfds,
 	waiter.datalen = datalen;
 	for (size_t i = 0; i < nitems(waiter.fds); i++)
 		waiter.fds[i] = -1;
-	error = pthread_cond_init(&waiter.cond, NULL);
+	error = pthread_condattr_init(&attr);
+	if (error != 0)
+		return (errno = error, -1);
+	error = pthread_condattr_setclock(&attr, CLOCK_MONOTONIC);
+	if (error == 0)
+		error = pthread_cond_init(&waiter.cond, &attr);
+	(void)pthread_condattr_destroy(&attr);
 	if (error != 0) {
 		errno = error;
 		return (-1);
@@ -1202,9 +1225,25 @@ rpc_data(const void *req, uint32_t reqlen, int *reply_fds, size_t reply_nfds,
 		return (-1);
 	}
 	while (!waiter.done) {
-		error = pthread_cond_wait(&waiter.cond, &service_state_lock);
-		if (error != 0) {
-			waiter.status = error;
+		error = timeout_ms == UINT32_MAX ?
+		    pthread_cond_wait(&waiter.cond, &service_state_lock) :
+		    pthread_cond_timedwait(&waiter.cond, &service_state_lock,
+		    &deadline);
+		if (error != 0 && !waiter.done) {
+			int wait_error = error;
+			/* Serialize cancellation with dispatch before freeing the waiter. */
+			(void)pthread_mutex_unlock(&service_state_lock);
+			(void)pthread_mutex_lock(&service_channel_lock);
+			(void)pthread_mutex_lock(&service_state_lock);
+			bool done = waiter.done;
+			(void)pthread_mutex_unlock(&service_state_lock);
+			if (!done)
+				(void)channel_request_cancel(request);
+			(void)pthread_mutex_unlock(&service_channel_lock);
+			(void)pthread_mutex_lock(&service_state_lock);
+			while (!waiter.done)
+				(void)pthread_cond_wait(&waiter.cond, &service_state_lock);
+			waiter.status = wait_error;
 			break;
 		}
 	}

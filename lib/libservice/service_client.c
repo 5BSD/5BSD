@@ -28,6 +28,7 @@
 #include "libservice.h"
 #include "service_bootstrap.h"
 #include "service_private.h"
+#include "service_runtime.h"
 #include "switchboard_ctl.h"
 #include "switchboard_svc_proto.h"
 
@@ -525,7 +526,8 @@ service_client_call_internal(struct service_client *client,
 		errno = EINVAL;
 		return (-1);
 	}
-	if (make_deadline(&deadline, timeout_ms) == -1)
+	if (service_budget_timeout(&timeout_ms) == -1 ||
+	    make_deadline(&deadline, timeout_ms) == -1)
 		return (-1);
 	error = pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &cancel_state);
 	if (error != 0) {
@@ -688,7 +690,8 @@ service_client_event_internal(struct service_client *client, void *data,
 		errno = EINVAL;
 		return (-1);
 	}
-	if (make_deadline(&deadline, timeout_ms) == -1)
+	if (service_budget_timeout(&timeout_ms) == -1 ||
+	    make_deadline(&deadline, timeout_ms) == -1)
 		return (-1);
 	error = pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &cancel_state);
 	if (error != 0) {
