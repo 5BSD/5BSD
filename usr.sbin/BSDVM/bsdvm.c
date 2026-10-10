@@ -810,6 +810,7 @@ vmd_serve(void)
 			continue;
 		}
 		if (pid == 0) {
+			setproctitle("-BSDVM: %s", id.client_label);
 			(void)close(kq);
 			/* Protect before dropping the inherited bootstrap authority. */
 			if (service_worker_protect(SERVICE_PROTECT_EXTERNAL) == -1) {

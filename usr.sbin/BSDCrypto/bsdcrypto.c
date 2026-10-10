@@ -756,6 +756,7 @@ worker(int fd, int audit_fd, const char *owner, const char *actor)
 	struct auditcmp_client *audit;
 	int result;
 
+	setproctitle("-BSDCrypto: %s", actor);
 	audit = NULL;
 	if (auditcmp_client_adopt(audit_fd, &audit) == -1 ||
 	    harden_control_descriptor(true) == -1) {
