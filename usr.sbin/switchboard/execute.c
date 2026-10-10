@@ -1873,6 +1873,43 @@ svc_launch_abort(struct svc_runtime *svc, int error, int kq __unused)
 	svc->state = SVC_STATE_STOPPED;
 }
 
+/* Register supervision before releasing the child; consumes gate_fd.
+ * Failure retains the procdesc and coalition for the cleanup completion gate. */
+static int
+svc_launch_release(struct svc_runtime *svc, int kq, int gate_fd)
+{
+	struct svc_launch *L = svc->launch;
+	struct svc_manifest *m = &svc->manifest;
+	struct kevent kev[3];
+	int error;
+
+	EV_SET(&kev[0], svc->pd_fd, EVFILT_PROCDESC, EV_ADD,
+	    NOTE_EXIT | NOTE_EXEC | NOTE_CAPMODE, 0, svc);
+	EV_SET(&kev[1], svc->coalition_fd, EVFILT_READ, EV_ADD, 0, 0, svc);
+	EV_SET(&kev[2], svc->channel_fd, EVFILT_READ, EV_ADD, 0, 0, svc);
+	if (kevent(kq, kev, m->unix_protocol ? 2 : 3, NULL, 0, NULL) == -1 ||
+	    write(gate_fd, "R", 1) != 1) {
+		error = errno != 0 ? errno : EIO;
+		syslog(LOG_ERR, "svc_exec %s: launch gate or event registration: %m", m->label);
+		close(gate_fd);
+		svc_authority_revoke_unit(svc);
+		domain_unit_channels_close(svc);
+		pdkill(svc->pd_fd, SIGKILL);
+		waitpid(svc->pid, NULL, WNOHANG);
+		capsule_release_manifest(sd.capsule_channel_fd, &L->minted);
+		if (L->capprotect_fd >= 0)
+			close(L->capprotect_fd);
+		free(L);
+		svc->launch = NULL;
+		/* The enlisted child's resource teardown may outlast SIGKILL. */
+		supervisor_cleanup_failed_launch(svc);
+		errno = error;
+		return (-1);
+	}
+	close(gate_fd);
+	return (0);
+}
+
 /*
  * Finalize storage delivery, confine child descriptors, and fork/exec.  The
  * tail of the native launch, operating on the launch context.  switchboard builds
@@ -2137,28 +2174,8 @@ svc_launch_finish(struct svc_runtime *svc, int kq)
 	memset(svc->name_sendable, 0, sizeof(svc->name_sendable));
 	clock_gettime(CLOCK_MONOTONIC, &svc->last_start);
 
-	EV_SET(&kev[0], pd_fd, EVFILT_PROCDESC, EV_ADD,
-	    NOTE_EXIT | NOTE_EXEC | NOTE_CAPMODE, 0, svc);
-	EV_SET(&kev[1], svc->coalition_fd, EVFILT_READ, EV_ADD, 0, 0, svc);
-	EV_SET(&kev[2], svc->channel_fd, EVFILT_READ, EV_ADD, 0, 0, svc);
-	if (kevent(kq, kev, m->unix_protocol ? 2 : 3, NULL, 0, NULL) == -1 ||
-	    write(launch_gate[1], "R", 1) != 1) {
-		syslog(LOG_ERR, "svc_exec %s: launch gate or event registration: %m", m->label);
-		close(launch_gate[1]);
-		svc_authority_revoke_unit(svc);
-		domain_unit_channels_close(svc);
-		pdkill(pd_fd, SIGKILL);
-		waitpid(pid, NULL, WNOHANG);
-		capsule_release_manifest(sd.capsule_channel_fd, &L->minted);
-		if (L->capprotect_fd >= 0)
-			close(L->capprotect_fd);
-		free(L);
-		svc->launch = NULL;
-		/* The enlisted child's resource teardown may outlast SIGKILL. */
-		supervisor_cleanup_failed_launch(svc);
+	if (svc_launch_release(svc, kq, launch_gate[1]) == -1)
 		return;
-	}
-	close(launch_gate[1]);
 	launch_gate[1] = -1;
 	svc_channel_sync_events(svc, kq);
 

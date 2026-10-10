@@ -324,4 +324,10 @@ CFLAGS.cleanup_status_test+= -I${SRCTOP}/usr.sbin/switchboard \
 LDFLAGS.cleanup_status_test+= -Wl,--gc-sections
 NO_SHARED.cleanup_status_test= yes
 
+
+ATF_TESTS_C+= launch_gate_test
+CFLAGS.launch_gate_test+= -I${SRCTOP}/sys -I${SRCTOP}/lib/libcapsulert -I${SRCTOP}/lib/libcapbundle -I${SRCTOP}/lib/libcapability -I${SRCTOP}/lib/libchannel -I${SRCTOP}/lib/libservice -I${SRCTOP}/contrib/libucl/include -ffunction-sections -fdata-sections
+LDFLAGS.launch_gate_test+= -Wl,--gc-sections
+NO_SHARED.launch_gate_test= yes
+
 .include <bsd.test.mk>
