@@ -970,6 +970,38 @@ dns_query(const char *host, int rrtype, struct rslv_addr *addrs, int max,
 	return (answered ? added_total : -1);
 }
 
+/* Convert a native IPv4 address without consulting DNS. */
+static void
+map_v4(struct rslv_addr *destination, const struct in_addr *source)
+{
+	struct in_addr address = *source;
+
+	memset(destination, 0, sizeof(*destination));
+	destination->family = AF_INET6;
+	destination->a.v6.s6_addr[10] = 0xff;
+	destination->a.v6.s6_addr[11] = 0xff;
+	memcpy(&destination->a.v6.s6_addr[12], &address, sizeof(address));
+}
+
+static int
+hosts_lookup_v4mapped(const char *host, struct rslv_addr *addrs, int max,
+    int *n, char *canon, size_t canonsz)
+{
+	struct rslv_addr tmp[RSLV_MAX_RESULTS];
+	char name[NS_MAXDNAME];
+	int count, added = 0;
+
+	count = hosts_lookup(host, AF_INET, tmp, RSLV_MAX_RESULTS,
+	    name, sizeof(name));
+	for (int i = 0; i < count && *n < max; i++) {
+		map_v4(&addrs[(*n)++], &tmp[i].a.v4);
+		added++;
+	}
+	if (added != 0 && canonsz != 0 && canon[0] == '\0')
+		strlcpy(canon, name, canonsz);
+	return (added);
+}
+
 /*
  * AI_V4MAPPED support (RFC 3493).  Query A records for host and append each as
  * an IPv4-mapped IPv6 address (::ffff:a.b.c.d) to addrs, which the caller then
@@ -986,18 +1018,9 @@ dns_query_v4mapped(const char *host, struct rslv_addr *addrs, int max, int *n,
 	if (dns_query(host, ns_t_a, tmp, RSLV_MAX_RESULTS, &tn, canon, canonsz) < 0)
 		return (-1);
 	for (i = 0; i < tn && *n < max; i++) {
-		struct in6_addr mapped;
-
 		if (tmp[i].family != AF_INET)
 			continue;
-		memset(&mapped, 0, sizeof(mapped));
-		mapped.s6_addr[10] = 0xff;
-		mapped.s6_addr[11] = 0xff;
-		memcpy(&mapped.s6_addr[12], &tmp[i].a.v4, 4);
-		addrs[*n].family = AF_INET6;
-		memset(&addrs[*n].a, 0, sizeof(addrs[*n].a));
-		addrs[*n].a.v6 = mapped;
-		(*n)++;
+		map_v4(&addrs[(*n)++], &tmp[i].a.v4);
 		added++;
 	}
 	return (added);
@@ -1134,6 +1157,10 @@ netresolve(const char *host, const char *serv, const struct addrinfo *hints,
 			addrs[naddr].a.v4 = v4;
 			naddr++;
 			is_numeric = 1;
+		} else if (family == AF_INET6 && (flags & AI_V4MAPPED) != 0 &&
+		    inet_pton(AF_INET, host, &v4) == 1) {
+			map_v4(&addrs[naddr++], &v4);
+			is_numeric = 1;
 		} else if ((family == AF_UNSPEC || family == AF_INET6) &&
 		    inet_pton(AF_INET6, host, &v6) == 1) {
 			addrs[naddr].family = AF_INET6;
@@ -1154,6 +1181,10 @@ netresolve(const char *host, const char *serv, const struct addrinfo *hints,
 			/* /etc/hosts first, then DNS. */
 			naddr = hosts_lookup(host, family, addrs,
 			    RSLV_MAX_RESULTS, canon, sizeof(canon));
+			if (family == AF_INET6 && (flags & AI_V4MAPPED) != 0 &&
+			    (naddr == 0 || (flags & AI_ALL) != 0))
+				(void)hosts_lookup_v4mapped(host, addrs,
+				    RSLV_MAX_RESULTS, &naddr, canon, sizeof(canon));
 
 			if (naddr == 0) {
 				if (family == AF_UNSPEC ||

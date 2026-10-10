@@ -23,7 +23,8 @@ int  netresolve_worker_enter(void);
  * (AI_PASSIVE, AI_CANONNAME, AI_NUMERICHOST, AI_NUMERICSERV, AI_V4MAPPED,
  * AI_ALL).  AI_V4MAPPED (with AF_INET6) returns IPv4-mapped IPv6 addresses
  * when no native AAAA exists, and AI_ALL additionally returns mapped A records
- * alongside AAAA.  AI_ADDRCONFIG is accepted but is a no-op: this resolver does
+ * alongside AAAA. Numeric IPv4 literals and local hosts entries also honor
+ * AI_V4MAPPED; local hosts matches take precedence over DNS. AI_ADDRCONFIG is accepted but is a no-op: this resolver does
  * not enumerate the host's configured source-address families.
  * With no usable addresses, a failed DNS query returns EAI_AGAIN; complete
  * negative replies return EAI_NONAME. A usable address wins over failure

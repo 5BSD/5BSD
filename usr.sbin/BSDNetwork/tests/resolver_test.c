@@ -538,10 +538,72 @@ ATF_TC_BODY(no_nameservers, tc)
 	netfreeaddrinfo(result);
 }
 
+ATF_TC_WITHOUT_HEAD(local_v4mapped);
+ATF_TC_BODY(local_v4mapped, tc)
+{
+	struct addrinfo hints = { .ai_family = AF_INET6, .ai_socktype = SOCK_STREAM,
+	    .ai_flags = AI_V4MAPPED | AI_NUMERICHOST | AI_CANONNAME };
+	struct addrinfo *result = NULL;
+	struct in6_addr expected;
+	const struct sockaddr_in6 *address;
+	static const char hosts[] = "192.0.2.8 v4.test alias.test\n"
+	    "192.0.2.9 dual.test\n2001:db8::9 dual.test\n";
+	char path[] = "/tmp/network-hosts.XXXXXX";
+	int error;
+
+	g_nns = 0;
+	error = netresolve("192.0.2.8", "80", &hints, &result);
+	ATF_CHECK_EQ(0, error);
+	if (error == 0) {
+		ATF_REQUIRE_EQ(AF_INET6, result->ai_family);
+		address = (const void *)result->ai_addr;
+		ATF_REQUIRE_EQ(1, inet_pton(AF_INET6, "::ffff:192.0.2.8", &expected));
+		ATF_CHECK_EQ(0, memcmp(&address->sin6_addr, &expected, sizeof(expected)));
+		ATF_CHECK_EQ(htons(80), address->sin6_port);
+		ATF_CHECK_STREQ("192.0.2.8", result->ai_canonname);
+		ATF_CHECK(result->ai_next == NULL);
+		netfreeaddrinfo(result);
+	}
+	g_hostsfd = mkstemp(path);
+	ATF_REQUIRE(g_hostsfd >= 0);
+	ATF_REQUIRE_EQ(0, unlink(path));
+	ATF_REQUIRE_EQ(sizeof(hosts) - 1, write(g_hostsfd, hosts, sizeof(hosts) - 1));
+	hints.ai_flags = AI_V4MAPPED | AI_CANONNAME;
+	error = netresolve("alias.test", "80", &hints, &result);
+	ATF_CHECK_EQ(0, error);
+	if (error == 0) {
+		address = (const void *)result->ai_addr;
+		ATF_CHECK(IN6_IS_ADDR_V4MAPPED(&address->sin6_addr));
+		ATF_CHECK_STREQ("v4.test", result->ai_canonname);
+		netfreeaddrinfo(result);
+	}
+	ATF_REQUIRE_EQ(0, netresolve("dual.test", "80", &hints, &result));
+	address = (const void *)result->ai_addr;
+	ATF_CHECK(!IN6_IS_ADDR_V4MAPPED(&address->sin6_addr));
+	ATF_CHECK(result->ai_next == NULL);
+	netfreeaddrinfo(result);
+	hints.ai_flags |= AI_ALL;
+	ATF_REQUIRE_EQ(0, netresolve("dual.test", "80", &hints, &result));
+	ATF_CHECK(result->ai_next != NULL);
+	if (result->ai_next != NULL) {
+		address = (const void *)result->ai_next->ai_addr;
+		ATF_CHECK(IN6_IS_ADDR_V4MAPPED(&address->sin6_addr));
+		ATF_CHECK(result->ai_next->ai_next == NULL);
+	}
+	netfreeaddrinfo(result);
+	hints.ai_family = AF_UNSPEC;
+	ATF_REQUIRE_EQ(0, netresolve("alias.test", "80", &hints, &result));
+	ATF_CHECK_EQ(AF_INET, result->ai_family);
+	netfreeaddrinfo(result);
+	close(g_hostsfd);
+	g_hostsfd = -1;
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, negative_and_temporary_errors);
 	ATF_TP_ADD_TC(tp, no_nameservers);
+	ATF_TP_ADD_TC(tp, local_v4mapped);
 	ATF_TP_ADD_TC(tp, reply_validation);
 	ATF_TP_ADD_TC(tp, ignores_bad_udp_reply);
 	ATF_TP_ADD_TC(tp, answer_owner_chain);

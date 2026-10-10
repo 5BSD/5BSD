@@ -262,6 +262,19 @@ the result remains retryable.
 A usable address from either family, including IPv4-mapped IPv6 fallback,
 can still satisfy the lookup.
 Numeric addresses do not require a working nameserver.
+.Pp
+.Dv AI_V4MAPPED
+with
+.Dv AF_INET6
+also maps numeric IPv4 literals and matching local hosts entries.
+A numeric literal with
+.Dv AI_NUMERICHOST
+never requires DNS.
+Native IPv6 hosts entries take precedence unless
+.Dv AI_ALL
+requests both native and mapped entries.
+A matching hosts entry satisfies the lookup before DNS is attempted.
+
 .Sh SEE ALSO
 .Xr libnetworkcmp 3 ,
 .Xr switchboard 8
