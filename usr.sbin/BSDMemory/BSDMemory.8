@@ -24,6 +24,8 @@ Higher free-page counts mean normal.
 Escalation is immediate; recovery requires three consecutive lower-pressure
 samples.
 Read failures or inconsistent thresholds publish unknown and reset recovery.
+The last valid pressure restriction is retained internally; recovery after
+a failure still requires three consecutive lower-pressure samples.
 These are free-page watermarks, not a prediction of allocation failure or a
 complete accounting of reclaimable filesystem caches.
 .Pp

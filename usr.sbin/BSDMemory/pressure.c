@@ -14,12 +14,13 @@ pressure_update(struct pressure_filter *filter, int error, uint32_t free_pages,
 	next = free_pages <= minimum ? NOTIFY_PRESSURE_CRITICAL :
 	    free_pages <= target     ? NOTIFY_PRESSURE_WARNING :
 				       NOTIFY_PRESSURE_NORMAL;
-	if (filter->level == NOTIFY_PRESSURE_UNKNOWN || next >= filter->level) {
+	if (!filter->have_sample || next >= filter->effective) {
 		filter->recovery = 0;
-		filter->level = next;
+		filter->effective = next;
 	} else if (++filter->recovery == 3) {
 		filter->recovery = 0;
-		filter->level = next;
+		filter->effective = next;
 	}
-	return (filter->level);
+	filter->have_sample = true;
+	return (filter->level = filter->effective);
 }

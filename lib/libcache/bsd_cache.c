@@ -146,14 +146,32 @@ bsd_cache_generation(struct bsd_cache *c, uint64_t *out)
 	return (0);
 }
 static int
+admission_error(struct bsd_cache *c, size_t cost, const uint64_t *generation,
+    size_t *entries, size_t *budget)
+{
+	if (generation != NULL &&
+	    (c->generation_exhausted || *generation != c->generation))
+		return (ESTALE);
+	limits(c, entries, budget);
+	return (c->destroying || *entries == 0 || cost > *budget ? EAGAIN : 0);
+}
+static int
 cache_put(struct bsd_cache *c, const char *key, const void *value,
     size_t length, size_t cost, const uint64_t *generation)
 {
 	struct cache_entry *e, *old, *trash;
 	size_t entries, budget;
+	int error;
 	if (!valid_key(key) || (value == NULL && length != 0) ||
 	    length > BSD_CACHE_VALUE_MAX || cost < length)
 		return (errno = EINVAL, -1);
+	/* Avoid copying values that are already known to be inadmissible. */
+	if (cache_lock(c) != 0)
+		return (-1);
+	error = admission_error(c, cost, generation, &entries, &budget);
+	pthread_mutex_unlock(&c->lock);
+	if (error != 0)
+		return (errno = error, -1);
 	e = malloc(sizeof(*e) + length);
 	if (e == NULL)
 		return (-1);
@@ -166,17 +184,12 @@ cache_put(struct bsd_cache *c, const char *key, const void *value,
 		free(e);
 		return (-1);
 	}
-	if (generation != NULL &&
-	    (c->generation_exhausted || *generation != c->generation)) {
+	/* Pressure, invalidation or limits may have changed while copying. */
+	error = admission_error(c, cost, generation, &entries, &budget);
+	if (error != 0) {
 		pthread_mutex_unlock(&c->lock);
 		free(e);
-		return (errno = ESTALE, -1);
-	}
-	limits(c, &entries, &budget);
-	if (c->destroying || entries == 0 || cost > budget) {
-		pthread_mutex_unlock(&c->lock);
-		free(e);
-		return (errno = EAGAIN, -1);
+		return (errno = error, -1);
 	}
 	old = find_entry(c, key);
 	if (old != NULL) {

@@ -3,7 +3,22 @@
 
 #include <atf-c.h>
 
+#include <stdatomic.h>
+#include <stdlib.h>
+static atomic_uint allocation_calls;
+static void (*allocation_hook)(void);
+static void *
+counted_malloc(size_t size)
+{
+	atomic_fetch_add(&allocation_calls, 1);
+	void *p = malloc(size);
+	if (allocation_hook != NULL)
+		allocation_hook();
+	return (p);
+}
+#define malloc counted_malloc
 #include "../bsd_cache.c"
+#undef malloc
 struct notify_client {
 	unsigned last;
 	uint64_t generation;
@@ -379,10 +394,51 @@ ATF_TC_BODY(coalesced_pressure, tc)
 	    bsd_cache_lookup(cache, "key", &out, &length));
 	ATF_REQUIRE_EQ(0, bsd_cache_destroy(cache));
 }
+ATF_TC_WITHOUT_HEAD(reject_without_allocation);
+ATF_TC_BODY(reject_without_allocation, tc)
+{
+	struct bsd_cache *cache;
+	uint64_t generation;
+	unsigned before;
+	ATF_REQUIRE_EQ(0, bsd_cache_create(4, 32, 0, NULL, NULL, &cache));
+	ATF_REQUIRE_EQ(0, bsd_cache_generation(cache, &generation));
+	ATF_REQUIRE_EQ(0, bsd_cache_set_pressure(cache, NOTIFY_PRESSURE_CRITICAL));
+	before = atomic_load(&allocation_calls);
+	ATF_CHECK_ERRNO(EAGAIN, bsd_cache_put(cache, "key", "x", 1, 1) == -1);
+	ATF_CHECK_EQ(before, atomic_load(&allocation_calls));
+	ATF_REQUIRE_EQ(0, bsd_cache_set_pressure(cache, NOTIFY_PRESSURE_NORMAL));
+	ATF_CHECK_ERRNO(ESTALE, bsd_cache_put_if_current(cache, "key", "x", 1, 1, generation) == -1);
+	ATF_CHECK_EQ(before, atomic_load(&allocation_calls));
+	ATF_CHECK_ERRNO(EAGAIN, bsd_cache_put(cache, "key", "x", 1, 33) == -1);
+	ATF_CHECK_EQ(before, atomic_load(&allocation_calls));
+	ATF_REQUIRE_EQ(0, bsd_cache_put(cache, "key", "x", 1, 1));
+	ATF_CHECK_EQ(before + 1, atomic_load(&allocation_calls));
+	ATF_REQUIRE_EQ(0, bsd_cache_destroy(cache));
+}
+static struct bsd_cache *allocating_cache;
+static void
+pressure_during_copy(void)
+{
+	ATF_REQUIRE_EQ(0, bsd_cache_set_pressure(allocating_cache, NOTIFY_PRESSURE_CRITICAL));
+}
+ATF_TC_WITHOUT_HEAD(pressure_during_allocation);
+ATF_TC_BODY(pressure_during_allocation, tc)
+{
+	struct bsd_cache_stats stats;
+	ATF_REQUIRE_EQ(0, bsd_cache_create(4, 32, 0, NULL, NULL, &allocating_cache));
+	allocation_hook = pressure_during_copy;
+	ATF_CHECK_ERRNO(EAGAIN, bsd_cache_put(allocating_cache, "key", "x", 1, 1) == -1);
+	allocation_hook = NULL;
+	ATF_REQUIRE_EQ(0, bsd_cache_get_stats(allocating_cache, &stats));
+	ATF_CHECK_EQ(0, stats.entries);
+	ATF_REQUIRE_EQ(0, bsd_cache_destroy(allocating_cache));
+}
 ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, invalidation_during_rebuild);
 	ATF_TP_ADD_TC(tp, generation_invalidation);
+	ATF_TP_ADD_TC(tp, pressure_during_allocation);
+	ATF_TP_ADD_TC(tp, reject_without_allocation);
 	ATF_TP_ADD_TC(tp, coalesced_pressure);
 	ATF_TP_ADD_TC(tp, lookup_contract);
 	ATF_TP_ADD_TC(tp, cost_overflow);

@@ -111,6 +111,10 @@ cost.
 Metadata and key storage are additionally bounded by the entry limit.
 Changing limits immediately evicts entries exceeding the effective budget.
 Replacing a key copies the new value before changing the old entry.
+Insertion checks pressure, budget and any generation token before allocating
+the copy, then rechecks under the lock before changing the cache.
+Pressure arriving during the copy may still cause that allocation to be
+discarded.
 .Pp
 Get copies data into caller-owned storage and updates LRU order.
 The length argument supplies capacity and receives the required or copied size.
