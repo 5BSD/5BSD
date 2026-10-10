@@ -25,6 +25,10 @@ Managed shutdown stops admission, gives workers five seconds to exit after
 then terminates stragglers and reaps every worker before acknowledging
 quiesce to
 .Xr switchboard 8 .
+Failure to read the monotonic clock skips the graceful wait and proceeds
+to forced termination.
+Interrupted reap calls are retried.
+The five-second grace period does not bound the final kernel reap wait.
 Clients named explicitly in the allow list
 .Pa bsdtrace.allow
 may request one independently opened DTrace consumer descriptor.

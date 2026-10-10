@@ -28,4 +28,12 @@ SRCTREE_FILES=	lib/libtracecmp/tracecmp.c \
 		usr.sbin/BSDTrace/tracecmp_policy.h
 .include "${SRCTOP}/tests/srctree.mk"
 
+ATF_TESTS_C+= shutdown_test
+SRCS.shutdown_test= shutdown_test.c tracecmp_policy.c
+CFLAGS.shutdown_test+= -I${SRCTOP}/lib/libchannel -I${SRCTOP}/lib/libservice
+CFLAGS.shutdown_test+= -I${SRCTOP}/lib/libtracecmp -I${SRCTOP}/lib/liblogcmp
+CFLAGS.shutdown_test+= -I${SRCTOP}/sys
+LIBADD.shutdown_test= bsm channel service tracecmp logcmp
+NO_SHARED.shutdown_test= yes
+
 .include <bsd.test.mk>

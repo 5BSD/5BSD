@@ -1,0 +1,16 @@
+Trace shutdown coverage
+=======================
+
+shutdown_test calls the production shutdown helper with injected monotonic
+clock, kevent, signal and reap operations. It covers failure to establish the
+grace deadline, failure while checking it, normal remaining-time calculation,
+and interrupted final reaping. Real descriptors stand in for process and
+liveness handles so their closure is verified. These are control-flow tests,
+not proof of real protected-worker termination or a wall-clock shutdown bound.
+
+session_test exercises real channel sessions on the native guest. Full bundle
+admission, actual tracing-device teardown, parent-liveness behavior, and
+SwitchBoard acknowledgement ordering remain separate integration gates.
+The five-second graceful phase and per-worker liveness sockets differ from
+Device/Crypto's immediate cleanup, so they must be preserved in any further
+shared-library extraction.

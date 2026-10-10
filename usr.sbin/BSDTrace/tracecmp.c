@@ -618,8 +618,9 @@ workers_shutdown(int kq, struct trace_worker **workers, size_t *count)
 
 	for (worker = *workers; worker != NULL; worker = worker->next)
 		(void)pdkill(worker->pd, SIGTERM);
-	if (clock_gettime(CLOCK_MONOTONIC, &deadline) == 0)
-		deadline.tv_sec += 5;
+	if (clock_gettime(CLOCK_MONOTONIC, &deadline) == -1)
+		goto force;
+	deadline.tv_sec += 5;
 	while (*workers != NULL &&
 	    clock_gettime(CLOCK_MONOTONIC, &now) == 0) {
 		if (now.tv_sec > deadline.tv_sec ||
@@ -643,11 +644,14 @@ workers_shutdown(int kq, struct trace_worker **workers, size_t *count)
 		if (event.filter == EVFILT_PROCDESC)
 			worker_remove(workers, event.udata, count);
 	}
+force:
 	for (worker = *workers; worker != NULL; worker = worker->next)
 		(void)pdkill(worker->pd, SIGKILL);
 	for (worker = *workers; worker != NULL; worker = next) {
 		next = worker->next;
-		(void)pdwait(worker->pd, &status, WEXITED, NULL, NULL);
+		do {
+			result = pdwait(worker->pd, &status, WEXITED, NULL, NULL);
+		} while (result == -1 && errno == EINTR);
 		close(worker->pd);
 		if (worker->liveness >= 0)
 			close(worker->liveness);
