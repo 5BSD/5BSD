@@ -594,20 +594,26 @@ supervisor_cleanup_rebind(struct svc_runtime *svc, int kq)
 			error = errno;
 	}
 	if (svc->cleanup.timer_ident == 0) {
-		if (error != 0)
+		if (error != 0) {
+			svc->cleanup.error = error;
 			errno = error;
+		}
 		return (error != 0 ? -1 : 0);
 	}
-	if (clock_gettime(CLOCK_MONOTONIC, &now) == -1)
+	if (clock_gettime(CLOCK_MONOTONIC, &now) == -1) {
+		svc->cleanup.error = errno;
 		return (-1);
+	}
 	milliseconds = (svc->cleanup.deadline.tv_sec - now.tv_sec) * 1000 +
 	    (svc->cleanup.deadline.tv_nsec - now.tv_nsec + 999999) / 1000000;
 	EV_SET(&event, svc->cleanup.timer_ident, EVFILT_TIMER,
 	    EV_ADD | EV_ONESHOT, NOTE_MSECONDS, MAX(milliseconds, 1), svc);
 	if (kevent(kq, &event, 1, NULL, 0, NULL) == -1 && error == 0)
 		error = errno;
-	if (error != 0)
+	if (error != 0) {
+		svc->cleanup.error = error;
 		errno = error;
+	}
 	return (error != 0 ? -1 : 0);
 }
 

@@ -879,6 +879,7 @@ ATF_TC_BODY(cleanup_registration_failure, tc)
 	runtime_removals = 0;
 	ATF_REQUIRE_EQ(-1, supervisor_cleanup_rebind(&svc, kq));
 	ATF_CHECK_EQ(EBADF, errno);
+	ATF_CHECK_EQ(EBADF, svc.cleanup.error);
 	ATF_CHECK(svc.cleanup.pending);
 	ATF_CHECK(svc.cleanup.child_pending);
 	ATF_CHECK_EQ(0, runtime_removals);

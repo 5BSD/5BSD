@@ -417,6 +417,9 @@ coalition cleanup.
 .Pp
 A failed or released cleanup, or inability to observe cleanup, keeps
 replacement blocked and retains the runtime for diagnosis.
+Event-registration failures during reload are retained in the cleanup error
+reported by the control status command, even when another cleanup watch
+was successfully registered.
 After 30 seconds the supervisor logs an overdue cleanup; this deadline
 does not authorize deletion or replacement.
 A still-observed cleanup can complete after the deadline and resume exit
