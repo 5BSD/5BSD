@@ -54,6 +54,8 @@ members without signalling them.
 Parents also retain independent cleanup dependencies on nested coalitions.
 These survive removal of public membership and drain recursively after process
 resource exit, jail cleanup, and in-flight external termination calls.
+A fork that has captured its parent's coalition remains accounted for while
+its child membership is being registered, including a concurrent parent move.
 A revoked descriptor remaining open does not by itself keep cleanup pending.
 Nested cleanup errors are retained by the parent.
 Close does not wait for retained members, and this lifetime retention does not

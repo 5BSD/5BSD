@@ -158,6 +158,7 @@ struct coalition {
 	u_int			co_pending_jails; /* Retained jail cleanup, co_sx. */
 	u_int			co_pending_nested; /* Recursive cleanup, co_sx. */
 	u_int			co_pending_external; /* Work outside co_sx. */
+	volatile u_int		co_pending_forks; /* Hash lookup to publication. */
 	u_int			co_nesting_depth;
 	volatile u_int		co_member_count;
 	u_int			co_refcount;
@@ -319,6 +320,8 @@ coalition_free(struct coalition *co)
 	    ("coalition_free: pending jail cleanup"));
 	KASSERT(co->co_pending_nested == 0 && co->co_pending_external == 0,
 	    ("coalition_free: pending external cleanup"));
+	KASSERT(atomic_load_acq_int(&co->co_pending_forks) == 0,
+	    ("coalition_free: pending fork publication"));
 	KASSERT(co->co_refcount == 0,
 	    ("coalition_free: refcount %u", co->co_refcount));
 	sx_destroy(&co->co_sx);
@@ -1624,7 +1627,8 @@ coalition_dependency_task(void *arg, int pending __unused)
 	done = (child->co_flags & COF_TERMINATING) != 0 &&
 	    coalition_count_process_members_locked(child) == 0 &&
 	    child->co_pending_jails == 0 && child->co_pending_nested == 0 &&
-	    child->co_pending_external == 0;
+	    child->co_pending_external == 0 &&
+	    atomic_load_acq_int(&child->co_pending_forks) == 0;
 	error = child->co_termination_error;
 	sx_xunlock(&child->co_sx);
 	if (!done) {
@@ -2346,6 +2350,14 @@ coalition_process_fork(void *arg __unused, struct proc *parent,
 	}
 	co = pcm->cm_coalition;
 	coalition_ref(co);
+	/*
+	 * Reserve cleanup accounting before dropping the membership hash lock.
+	 * Another thread may rehome the parent while allocation sleeps below;
+	 * an empty member list must not hide this already-created child.
+	 * Readers hold co_sx, so a move removing the last member cannot pass
+	 * the reservation: it must also acquire the hash lock exclusively.
+	 */
+	atomic_add_int(&co->co_pending_forks, 1);
 	rw_runlock(&coalition_proc_hash_lock);
 
 	ccm = uma_zalloc(coalition_member_zone, M_WAITOK | M_ZERO);
@@ -2384,6 +2396,10 @@ coalition_process_fork(void *arg __unused, struct proc *parent,
 	atomic_add_int(&co->co_member_count, 1);
 	atomic_add_int(&coalition_total_members, 1);
 	coalition_ref(co);
+	/* Transfer the reservation to published membership under co_sx. */
+	KASSERT(atomic_load_acq_int(&co->co_pending_forks) != 0,
+	    ("fork publication underflow"));
+	atomic_subtract_int(&co->co_pending_forks, 1);
 	coalition_notify_event(co, COALITION_NOTE_MEMBER_ADDED);
 
 	sx_xunlock(&co->co_sx);
