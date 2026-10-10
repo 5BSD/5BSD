@@ -81,7 +81,7 @@ BSDPowerctl(8) is the operator front end, bound by the invoking label's policy l
 | `states` | `BSDPowerctl states` | `S3 S4 S5`, or `(none)` when the mask is zero |
 | `suspend state` | `BSDPowerctl suspend 3` | exit status; `EPERM` without `suspend` authority, `ENODEV` without ACPI |
 
-`BSDPowerctl inhibitors` reports the active inhibitor count. `BSDPowerctl inhibit seconds` holds one for 1–86400 seconds, checks the connection once per second, and releases on SIGINT/SIGTERM. Provider loss is an error; it does not reacquire. The CLI lifecycle is a VM acceptance gate.
+`BSDPowerctl inhibitors` reports the active inhibitor count. `BSDPowerctl inhibit seconds` holds one for 1–86400 seconds using a monotonic deadline, checks the connection approximately once per second, and releases on SIGINT/SIGTERM. Health-check RPC time counts toward that deadline; release has a separate one-second RPC budget. Scheduling delays can extend observed wall time. Provider loss is an error; it does not reacquire. The CLI lifecycle is a VM acceptance gate.
 
 ## Policy
 

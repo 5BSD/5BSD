@@ -35,6 +35,9 @@ Print the number of active suspend inhibitors.
 .It Cm inhibit Ar seconds
 Hold a session-owned inhibitor for 1 to 86400 seconds, checking the service
 connection once per second.
+The hold duration uses a monotonic deadline, including health-check RPC time.
+Release has a separate one-second RPC budget.
+Scheduling delays may extend observed wall time.
 Requires the separate inhibit policy grant.
 SIGINT or SIGTERM releases it early.
 Disconnect or process death also

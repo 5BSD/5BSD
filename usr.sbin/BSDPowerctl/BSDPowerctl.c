@@ -12,6 +12,8 @@
 #include <errno.h>
 #include <powercmp.h>
 #include <signal.h>
+#include <service_runtime.h>
+#include <time.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -79,16 +81,45 @@ main(int argc, char **argv)
 		signal(SIGTERM, stopped);
 		if (powercmp_inhibit(client) == -1)
 			err(1, "inhibit");
-		while (seconds-- != 0 && !stop) {
-			sleep(1);
+		uint64_t deadline = service_monotime_ms() + seconds * 1000;
+		while (!stop) {
+			uint64_t now = service_monotime_ms();
+			if (now >= deadline)
+				break;
+			uint64_t delay = deadline - now;
+			if (delay > 1000)
+				delay = 1000;
+			struct timespec pause_time = {
+				.tv_sec = delay / 1000,
+				.tv_nsec = (delay % 1000) * 1000000
+			};
+			if (nanosleep(&pause_time, NULL) == -1 && errno != EINTR)
+				err(1, "lease wait");
+			now = service_monotime_ms();
+			if (stop || now >= deadline)
+				break;
+			uint32_t budget = deadline - now > 1000 ? 1000 :
+			    (uint32_t)(deadline - now);
+			if (service_budget_begin(budget) == -1)
+				err(1, "lease budget");
 			uint32_t count;
-			/* An existing session must still be alive; never reopen
-			 * a lost lease. */
-			if (powercmp_inhibitors(client, &count) == -1)
+			int result = powercmp_inhibitors(client, &count);
+			int saved = errno;
+			service_budget_end();
+			if (result == -1) {
+				errno = saved;
 				err(1, "lease lost");
+			}
 		}
-		if (powercmp_uninhibit(client) == -1)
+		if (service_budget_begin(1000) == -1)
+			err(1, "release budget");
+		int result = powercmp_uninhibit(client);
+		int saved = errno;
+		service_budget_end();
+		if (result == -1) {
+			errno = saved;
 			err(1, "uninhibit");
+		}
 		rc = 0;
 	} else if (strcmp(argv[1], "suspend") == 0 && argc == 3) {
 		char *end;
