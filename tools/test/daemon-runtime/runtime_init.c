@@ -15,6 +15,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <termios.h>
 #include <unistd.h>
 
 static int
@@ -129,6 +130,11 @@ main(void)
 		fclose(extra);
 	}
 	puts(failed ? "RUNTIME_VM_FAIL" : "RUNTIME_VM_PASS");
+	/* Let the serial transmitter finish before kernel shutdown messages. */
+	if (tcdrain(STDOUT_FILENO) == -1) {
+		perror("console drain");
+		puts("RUNTIME_VM_FAIL");
+	}
 	sync();
 	reboot(RB_POWEROFF);
 	for (;;)
