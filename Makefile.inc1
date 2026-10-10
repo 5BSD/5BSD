@@ -3418,7 +3418,7 @@ _prebuild_libs=	${_kerberos5_lib_libasn1} \
 		${_lib_libgssapi} \
 		lib/libjail \
 		lib/libkiconv lib/libkldelf lib/libkvm \
-		lib/liblzma lib/libmd lib/libnv \
+		lib/liblzma lib/libmd lib/libnotify lib/libnv \
 		lib/libucl lib/libcapsulert \
 		lib/libtrustedzfs lib/libbsdfilesystem \
 		lib/libzstd \
@@ -3461,6 +3461,7 @@ lib/libservice__L: lib/libcapability__L lib/libchannel__L lib/libthr__L \
 	lib/libtrustedzfs__L lib/libcapsulert__L
 lib/libbsdfilesystem__L: lib/libchannel__L lib/libservice__L lib/libtrustedzfs__L
 lib/libfidl__L: lib/libc++__L lib/libchannel__L lib/libthr__L
+lib/libnotify__L: lib/libservice__L lib/libthr__L
 
 .if ${MK_DIALOG} != "no"
 _prebuild_libs+= gnu/lib/libdialog
