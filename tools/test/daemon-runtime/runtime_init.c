@@ -18,7 +18,7 @@
 #include <unistd.h>
 
 static int
-run_case(const char *name)
+run_case(const char *program, const char *name)
 {
 	char path[256], result[256], line[1024] = { 0 };
 	struct timespec start, now, pause_time = { .tv_nsec = 100000000 };
@@ -37,7 +37,7 @@ run_case(const char *name)
 	if (child == 0) {
 		if (chdir(path) == -1)
 			_exit(126);
-		execl("/tests/libservice_api_test", "libservice_api_test", "-s", "/tests", "-r",
+		execl(program, program, "-s", "/tests", "-r",
 		    result, name, NULL);
 		_exit(127);
 	}
@@ -113,8 +113,10 @@ main(void)
 		failed = 1;
 	}
 	for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++)
-		if (run_case(cases[i]) == -1)
+		if (run_case("/tests/libservice_api_test", cases[i]) == -1)
 			failed = 1;
+	if (run_case("/tests/namespace_test", "delivery_hardening_failure") == -1)
+		failed = 1;
 	puts(failed ? "RUNTIME_VM_FAIL" : "RUNTIME_VM_PASS");
 	sync();
 	reboot(RB_POWEROFF);

@@ -17,15 +17,16 @@ if not work.is_relative_to('/usr/obj'): p.error('VM staging must be under /usr/o
 kernel=obj/'sys'/a.kernconf/'kernel'
 helper=obj/'tools/test/daemon-runtime/runtime_init'
 test=obj/'lib/libservice/tests/libservice_api_test'
+fs_test=obj/'usr.sbin/BSDFilesystem/tests/namespace_test'
 def digest(path): return hashlib.file_digest(path.open('rb'),'sha256').hexdigest()
-for f in [kernel,root/'boot/kernel/kernel',root/'boot/pmbr',root/'boot/gptboot',root/'boot/defaults/loader.conf',helper,test]:
+for f in [kernel,root/'boot/kernel/kernel',root/'boot/pmbr',root/'boot/gptboot',root/'boot/defaults/loader.conf',helper,test,fs_test]:
  if not f.is_file(): p.error('missing '+str(f))
 if digest(kernel)!=digest(root/'boot/kernel/kernel'): p.error('staged and object kernels differ')
 if subprocess.check_output(['config','-x',str(kernel)])!=subprocess.check_output(['config','-x',str(root/'boot/kernel/kernel')]): p.error('kernel configurations differ')
-for f in [helper,test]:
+for f in [helper,test,fs_test]:
  if 'statically linked' not in subprocess.check_output(['file',str(f)],text=True): p.error('fixture must be static: '+str(f))
 subprocess.run([a.qemu,'--version'],check=True,stdout=subprocess.DEVNULL)
-hashes={str(f):digest(f) for f in [kernel,helper,test]}
+hashes={str(f):digest(f) for f in [kernel,helper,test,fs_test]}
 work.mkdir(parents=True,exist_ok=False); stage=work/'root'; stage.mkdir()
 shutil.copytree(root/'boot',stage/'boot',ignore=shutil.ignore_patterns('kernel','modules','dtb','firmware','loader.conf','loader.conf.local','loader.conf.d','zfs'))
 shutil.copy2(root/'boot/defaults/loader.conf',stage/'boot/defaults/loader.conf')
@@ -33,6 +34,8 @@ for d in ['boot/kernel','dev','sbin','etc','root','tests','tmp']: (stage/d).mkdi
 shutil.copyfile(kernel,stage/'boot/kernel/kernel'); shutil.copyfile(helper,stage/'sbin/runtime-init'); shutil.copyfile(test,stage/'tests/libservice_api_test')
 for source,dest in [(kernel,stage/'boot/kernel/kernel'),(helper,stage/'sbin/runtime-init'),(test,stage/'tests/libservice_api_test')]:
  if digest(dest)!=hashes[str(source)] or digest(source)!=hashes[str(source)]: p.error('input changed during staging: '+str(source))
+shutil.copyfile(fs_test,stage/'tests/namespace_test')
+if digest(stage/'tests/namespace_test')!=hashes[str(fs_test)] or digest(fs_test)!=hashes[str(fs_test)]: p.error('filesystem test changed during staging')
 (stage/'etc/passwd').write_text('root:*:0:0:Charlie &:/root:/bin/sh\n')
 (stage/'boot/loader.conf').write_text('console="comconsole"\nautoboot_delay="1"\ncapability_plane="NO"\ninit_path="/sbin/runtime-init"\nvfs.root.mountfrom="ufs:/dev/vtbd0p2"\nvfs.root.mountfrom.options="rw"\n')
 (stage/'boot.config').write_text('-h\n')
@@ -47,7 +50,7 @@ subprocess.run(['makefs','-t','ffs','-s','256m','-F',str(work/'METALOG'),'-o','v
 subprocess.run(['mkimg','-s','gpt','-f','raw','-b',str(stage/'boot/pmbr'),'-p','freebsd-boot:='+str(stage/'boot/gptboot'),'-p','freebsd-ufs:='+str(work/'root.ufs'),'-o',str(work/'guest.img')],check=True)
 log=work/'serial.log'
 cmd=[a.qemu,'-L',str(a.qemu_data),'-accel','tcg,thread=multi','-machine','q35','-cpu','max','-m','1024','-smp','2','-drive',f'file={work}/guest.img,format=raw,if=virtio,snapshot=on','-nic','none','-display','none','-monitor','none','-serial','file:'+str(log)]
-provenance={'kernel_sha256':hashes[str(kernel)],'fixture_sha256':hashes[str(helper)],'test_sha256':hashes[str(test)],'objtop':str(obj),'staged_root':str(root),'command':cmd,'scope':'isolated native libservice tests, not integrated daemon/installer acceptance'}
+provenance={'kernel_sha256':hashes[str(kernel)],'fixture_sha256':hashes[str(helper)],'test_sha256':hashes[str(test)],'filesystem_test_sha256':hashes[str(fs_test)],'objtop':str(obj),'staged_root':str(root),'command':cmd,'scope':'isolated native libservice tests, not integrated daemon/installer acceptance'}
 (work/'inputs.json').write_text(json.dumps(provenance,indent=2)+'\n')
 proc=subprocess.Popen(cmd); deadline=time.monotonic()+a.timeout; forced=False
 try:
@@ -61,7 +64,7 @@ finally:
   try: proc.wait(timeout=10)
   except subprocess.TimeoutExpired: proc.kill(); proc.wait()
 text=log.read_text(errors='replace') if log.exists() else ''
-expected=['service_budget_wire','service_session_payload_and_attachment_lifecycle','service_session_close_cancels_event']
+expected=['delivery_hardening_failure','service_budget_wire','service_session_payload_and_attachment_lifecycle','service_session_close_cancels_event']
 passed=all(text.count('RUNTIME_CASE_PASS '+case)==1 for case in expected)
 passed=passed and 'RUNTIME_VM_PASS' in text and 'RUNTIME_VM_FAIL' not in text and 'RUNTIME_CASE_FAIL' not in text
 passed=passed and not forced and proc.returncode==0 and 'Powering system off' in text and not any(x in text for x in ['panic:','Fatal trap','lock order reversal'])

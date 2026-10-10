@@ -21,6 +21,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <stdbool.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/stat.h>
@@ -1478,8 +1479,67 @@ ATF_TC_BODY(grant_open_verified_types, tc)
 	ATF_REQUIRE_EQ(0, rmdir(dir));
 }
 
+ATF_TC_WITHOUT_HEAD(delivery_hardening_failure);
+ATF_TC_BODY(delivery_hardening_failure, tc)
+{
+	char path[] = "/tmp/bsdfs-delivery.XXXXXX";
+	int fd;
+
+	/* An older host kernel may not implement the source tree's syscall. */
+	void (*previous)(int) = signal(SIGSYS, SIG_IGN);
+	ATF_REQUIRE(previous != SIG_ERR);
+	int probe = cap_xfer_limit(-1, CAP_XFER_NONE);
+	int saved = errno;
+	ATF_REQUIRE(signal(SIGSYS, previous) != SIG_ERR);
+	if (probe == -1 && saved == ENOSYS)
+		atf_tc_skip("kernel lacks descriptor hardening syscalls");
+	ATF_CHECK_ERRNO(EBADF, bsdfilesystem_test_harden_delivery(-1, false) == -1);
+	ATF_CHECK_ERRNO(EBADF, bsdfilesystem_test_harden_delivery(-1, true) == -1);
+	fd = mkstemp(path);
+	ATF_REQUIRE(fd >= 0);
+	ATF_REQUIRE_EQ(0, unlink(path));
+	ATF_REQUIRE_EQ(0, cap_xfer_limit(fd, CAP_XFER_NONE));
+	/* Neither ordinary nor relay delivery may widen a nontransferable FD. */
+	ATF_CHECK_EQ(-1, bsdfilesystem_test_harden_delivery(fd, false));
+	ATF_CHECK_EQ(-1, bsdfilesystem_test_harden_delivery(fd, true));
+	ATF_CHECK(fcntl(fd, F_GETFD) != -1);
+	ATF_REQUIRE_EQ(0, close(fd));
+}
+
+ATF_TC_WITHOUT_HEAD(unmatched_ioctl_grant_is_empty);
+ATF_TC_BODY(unmatched_ioctl_grant_is_empty, tc)
+{
+	struct bsdfilesystem_open_request rq;
+	struct bsdfilesystem_state st;
+	char path[] = "/tmp/bsdfs-ioctl.XXXXXX";
+	const char *labels[] = {"system.Other/unit", "org.5bsd.Blued/blued",
+	    "system.Network/bsdnetwork"};
+	unsigned long commands[8];
+	int seed, fd;
+
+	seed = mkstemp(path);
+	ATF_REQUIRE(seed >= 0);
+	ATF_REQUIRE_EQ(0, close(seed));
+	open_state_init(&st, open("/", O_DIRECTORY | O_RDONLY | O_CLOEXEC));
+	ATF_REQUIRE(st.root_fd >= 0);
+	for (unsigned i = 0; i < nitems(labels); i++) {
+		open_policy_set(&st, labels[i], path,
+		    BSDFILESYSTEM_OPEN_READ | BSDFILESYSTEM_OPEN_IOCTL, false);
+		open_request_set(&rq, path,
+		    BSDFILESYSTEM_OPEN_READ | BSDFILESYSTEM_OPEN_IOCTL);
+		fd = bsdfilesystem_test_grant_open(&st, labels[i], &rq);
+		ATF_REQUIRE_MSG(fd >= 0, "grant failed: %s", strerror(errno));
+		ATF_CHECK_EQ(0, cap_ioctls_get(fd, commands, nitems(commands)));
+		ATF_REQUIRE_EQ(0, close(fd));
+	}
+	ATF_REQUIRE_EQ(0, close(st.root_fd));
+	ATF_REQUIRE_EQ(0, unlink(path));
+}
+
 ATF_TP_ADD_TCS(tp)
 {
+ ATF_TP_ADD_TC(tp, unmatched_ioctl_grant_is_empty);
+ ATF_TP_ADD_TC(tp, delivery_hardening_failure);
 	ATF_TP_ADD_TC(tp, config_verified_paths);
 	ATF_TP_ADD_TC(tp, grant_open_verified_types);
 

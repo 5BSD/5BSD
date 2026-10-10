@@ -144,6 +144,18 @@ configuration file
 .It Pa /var/run/BSDFilesystem.ready
 readiness marker, written once serving begins
 .El
+.Sh DESCRIPTOR DELIVERY
+Descriptor-hardening failures are returned to the caller without attaching a
+file descriptor.
+The broker closes its local descriptor on either outcome.
+Isolated-open ioctl grants use a whitelist selected by both client identity
+and device path.
+Unmatched grants receive an empty ioctl whitelist.
+The virtual-HID whitelist applies only to the Blued client opening
+.Pa /dev/vhid
+or a decimal-numbered unit; the PF whitelist applies only to the Network client
+opening
+.Pa /dev/pf .
 .Sh SEE ALSO
 .Xr cap_enter 2 ,
 .Xr libbsdfilesystem 3 ,

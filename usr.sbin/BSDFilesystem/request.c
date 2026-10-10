@@ -1009,9 +1009,14 @@ grant_open(struct bsdfilesystem_state *st, const char *client,
 		    strcmp(rq->path, "/dev/pf") == 0) {
 			ioctls = pf_ioctls;
 			nioctls = nitems(pf_ioctls);
-		} else {
+		} else if (strcmp(client, "org.5bsd.Blued/blued") == 0 &&
+		    strncmp(rq->path, "/dev/vhid", 9) == 0 &&
+		    strspn(rq->path + 9, "0123456789") == strlen(rq->path + 9)) {
 			ioctls = vhid_ioctls;
 			nioctls = nitems(vhid_ioctls);
+		} else {
+			ioctls = NULL;
+			nioctls = 0;
 		}
 
 		if (cap_ioctls_limit(fd, ioctls, nioctls) == -1) {
@@ -1022,6 +1027,20 @@ grant_open(struct bsdfilesystem_state *st, const char *client,
 		}
 	}
 	return (fd);
+}
+
+/* Caller retains ownership on failure and must not attach the descriptor. */
+static int
+harden_delivery(int fd, bool pf_relay)
+{
+	if (!pf_relay)
+		return (service_harden_fd(fd, SERVICE_HARDEN_XFER_ONCE |
+		    SERVICE_HARDEN_CLOFORK_ONCE));
+	if (cap_xfer_limit(fd, CAP_XFER_UNLIMITED) == -1 ||
+	    cap_clofork_limit(fd, CAP_CLOFORK_ONCE) == -1 ||
+	    cap_cloexec_limit(fd, CAP_CLOEXEC_LOCKED) == -1)
+		return (-1);
+	return (0);
 }
 
 /*
@@ -2463,21 +2482,11 @@ reply:
 		 * an exception: Network narrows it to one transfer before replying
 		 * to a client admitted through the anointed PF endpoint.
 		 */
-		if (pf_relay) {
-			/* Keep this exact descriptor transferable until Network applies
-			 * CAP_XFER_ONCE for the client handoff. */
-			if (cap_xfer_limit(handle, CAP_XFER_UNLIMITED) == -1 ||
-			    cap_clofork_limit(handle, CAP_CLOFORK_ONCE) == -1 ||
-			    cap_cloexec_limit(handle, CAP_CLOEXEC_LOCKED) == -1) {
-				rp.status = errno;
-				out.fds = NULL;
-				out.nfds = 0;
-				goto send_reply;
-			}
-		} else {
-			(void)service_harden_fd(handle,
-			    SERVICE_HARDEN_XFER_ONCE |
-			    SERVICE_HARDEN_CLOFORK_ONCE);
+		if (harden_delivery(handle, pf_relay) == -1) {
+			rp.status = errno;
+			out.fds = NULL;
+			out.nfds = 0;
+			goto send_reply;
 		}
 		out.fds = &handle;
 		out.nfds = 1;
@@ -2905,6 +2914,12 @@ bsdfilesystem_test_valid_request(const struct bsdfilesystem_request *rq)
  * (_reserved must be zero, is_dir must be a canonical 0/1) and the default-deny
  * policy outcome without reaching any ZFS machinery.
  */
+int
+bsdfilesystem_test_harden_delivery(int fd, bool relay)
+{
+	return (harden_delivery(fd, relay));
+}
+
 int
 bsdfilesystem_test_grant_open(struct bsdfilesystem_state *st, const char *client,
     const struct bsdfilesystem_open_request *rq)
