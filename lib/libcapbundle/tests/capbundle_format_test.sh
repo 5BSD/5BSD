@@ -156,7 +156,7 @@ protect = ["visible", "bogus"];' > "$unit"
 
 	# No protect stanza: nothing printed.
 	printf '%s\n' 'activation { boot = true; }' > "$unit"
-	atf_check -s exit:0 -o not-match:'protect:' \
+	atf_check -s exit:0 -o not-match:'^ *protect:' \
 	    "$(atf_get_srcdir)/switchboardctl" verify "$dir"
 }
 protect_policy_cleanup() { cleanup_work; }

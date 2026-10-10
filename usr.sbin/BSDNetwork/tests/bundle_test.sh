@@ -60,8 +60,8 @@ manifest_body()
 	    "${manifest}"
 	atf_check -s exit:1 -o empty -e empty \
 	    grep 'interface' "${manifest}"
-	atf_check -s exit:0 -o match:'version = "1.0.2"' \
-	    grep 'version = "1.0.2"' "${installed}/Bundle.ucl"
+	atf_check -s exit:0 -o match:'version = "1.0.5"' \
+	    grep 'version = "1.0.5"' "${installed}/Bundle.ucl"
 }
 manifest_cleanup()
 {

@@ -229,19 +229,21 @@ operation_failures_body()
 unavailable_body()
 {
 	notifyctl="$(atf_get_srcdir)/notifyctl_test_bin"
+	# Drop both the environment descriptor and the inherited kernel route.
+	noroute="$(atf_get_srcdir)/no_ambient_exec"
 	atf_check -s exit:69 -e match:'open system.Notify:' \
-	    env -u SERVICE_LOOKUP_FD "$notifyctl" stats 3>&-
+	    env -u SERVICE_LOOKUP_FD "$noroute" "$notifyctl" stats 3>&-
 	atf_check -s exit:69 -e match:'open system.Notify.System:' \
-	    env -u SERVICE_LOOKUP_FD "$notifyctl" -s stats 3>&-
+	    env -u SERVICE_LOOKUP_FD "$noroute" "$notifyctl" -s stats 3>&-
 	atf_check -s exit:69 -e match:'open system.Notify.System:' \
-	    env -u SERVICE_LOOKUP_FD "$notifyctl" -s publish user.x v 3>&-
+	    env -u SERVICE_LOOKUP_FD "$noroute" "$notifyctl" -s publish user.x v 3>&-
 	for command in 'publish org.5bsd.test.changed value' \
 	    'state-get org.5bsd.test.changed' \
 	    'state-set org.5bsd.test.changed 18446744073709551615' \
 	    'timer 99 10 3 25' \
 	    'watch org.5bsd.test.changed 1'; do
 		atf_check -s exit:69 -e match:'open system.Notify' \
-		    env -u SERVICE_LOOKUP_FD "$notifyctl" $command 3>&-
+		    env -u SERVICE_LOOKUP_FD "$noroute" "$notifyctl" $command 3>&-
 	done
 }
 
