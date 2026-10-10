@@ -14,10 +14,13 @@ submit_test check authenticated identity/event selection and submission rules.
 Full bundle activation, actual audit subsystem delivery, protected workers and
 SwitchBoard shutdown acknowledgement ordering remain integration gates.
 
-bootstrap_failure_reaps_child checks rejected-worker SIGKILL, retry of an
-interrupted reap, actual handle closure, and preservation of the handshake
-error. Signal/reap operations are injected; real protected-worker bootstrap
-failure and kill failure remain integration/fault-injection gates.
+bootstrap_retains_child exercises actual start_session/pdfork with injected
+protection denial, then production shutdown reaps the retained child and
+closes its descriptor. This replaces the old injected reject_worker test.
+failed_watch_retains_worker injects watch failure, checks retained ownership,
+then tests successful cleanup and signal/reap errors through shutdown.
+Actual protected-worker termination denial and supervisor recovery remain
+integration gates; the full main admission loop is not covered by these cases.
 
 lifecycle_test calls the actual daemon main with injected provider, listener,
 and event-queue operations. It exercises startup stages, fatal event and accept

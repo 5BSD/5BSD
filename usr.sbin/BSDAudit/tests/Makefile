@@ -64,4 +64,10 @@ CFLAGS.lifecycle_test+= -I${SRCTOP}/lib/libchannel -I${SRCTOP}/sys
 LIBADD.lifecycle_test= auditcmp bsm channel service logcmp
 NO_SHARED.lifecycle_test= yes
 
+ATF_TESTS_C+= bootstrap_test
+SRCS.bootstrap_test= bootstrap_test.c auditcmp_policy.c auditcmp_rate.c auditcmp_submit.c
+CFLAGS.bootstrap_test+= -I${SRCTOP}/lib/libchannel -I${SRCTOP}/sys
+LIBADD.bootstrap_test= auditcmp bsm channel service logcmp
+NO_SHARED.bootstrap_test= yes
+
 .include <bsd.test.mk>

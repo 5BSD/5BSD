@@ -269,21 +269,6 @@ worker(int fd, int barrier, const char *provider, int event)
 	return (serve_session(fd, provider, event, &system_backend));
 }
 
-/* A failed handshake must not leave an untracked PD_DAEMON child. */
-static int
-reject_worker(int pd, int error)
-{
-	int result, status;
-
-	if (pdkill(pd, SIGKILL) == 0 || errno == ESRCH) {
-		do {
-			result = pdwait(pd, &status, WEXITED, NULL, NULL);
-		} while (result == -1 && errno == EINTR);
-	}
-	close(pd);
-	return (errno = error, -1);
-}
-
 static int
 start_session(int fd, const char *provider, int *pdp, pid_t *pidp)
 {
@@ -315,12 +300,12 @@ start_session(int fd, const char *provider, int *pdp, pid_t *pidp)
 		_exit(worker(fd, syncfd[1], provider, event));
 	}
 	close(syncfd[1]);
+	*pdp = pd;
+	*pidp = pid;
 	status = service_bootstrap_parent(syncfd[0], 5000) == -1 ? errno : 0;
 	close(syncfd[0]);
 	if (status != 0)
-		return (reject_worker(pd, status));
-	*pdp = pd;
-	*pidp = pid;
+		return (errno = status, -1);
 	BSDAUDIT_PROBE_SESSION(__DECONST(char *, provider),
 	    event);
 	return (0);
@@ -432,6 +417,21 @@ struct audit_worker {
 	pid_t pid;
 };
 
+/* Own the worker before installing its watch, including on failure. */
+static int
+worker_track(int kq, struct audit_worker **workers, struct audit_worker *worker,
+    size_t *count)
+{
+	struct kevent change;
+
+	worker->next = *workers;
+	*workers = worker;
+	(*count)++;
+	EV_SET(&change, worker->pd, EVFILT_PROCDESC, EV_ADD | EV_ENABLE,
+	    NOTE_EXIT, 0, worker);
+	return (kevent(kq, &change, 1, NULL, 0, NULL));
+}
+
 static int
 worker_remove(struct audit_worker **workers, struct audit_worker *worker,
     size_t *count)
@@ -527,7 +527,7 @@ main(void)
 	struct auditcmp_rate *rate;
 	struct timespec now;
 	size_t nworkers;
-	int error, fd, kq = -1, status, result = 1;
+	int error, fd, kq = -1, result = 1;
 
 	openlog("bsdaudit", LOG_PID | LOG_NDELAY, LOG_AUTHPRIV);
 	/* ps(1) shows the unit name, not the ld-elf.so.1 launcher. */
@@ -615,27 +615,27 @@ main(void)
 			continue;
 		}
 		worker = calloc(1, sizeof(*worker));
+		if (worker != NULL)
+			worker->pd = -1;
 		if (worker == NULL || start_session(fd, identity.client_label,
 		    &worker->pd, &worker->pid) == -1) {
 			logcmp_log(LOG_WARNING, "session for %s: %m",
 			    identity.client_label);
-			free(worker);
 			close(fd);
+			if (worker != NULL && worker->pd >= 0) {
+				worker->next = workers;
+				workers = worker;
+				nworkers++;
+				goto out;
+			}
+			free(worker);
 			continue;
 		}
 		close(fd);
-		EV_SET(&change, worker->pd, EVFILT_PROCDESC, EV_ADD | EV_ENABLE,
-		    NOTE_EXIT, 0, worker);
-		if (kevent(kq, &change, 1, NULL, 0, NULL) == -1) {
-			(void)pdkill(worker->pd, SIGKILL);
-			(void)pdwait(worker->pd, &status, WEXITED, NULL, NULL);
-			close(worker->pd);
-			free(worker);
-			continue;
+		if (worker_track(kq, &workers, worker, &nworkers) == -1) {
+			warn("worker watch");
+			goto out;
 		}
-		worker->next = workers;
-		workers = worker;
-		nworkers++;
 	}
 	result = 0;
 	goto out;

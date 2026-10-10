@@ -82,6 +82,8 @@ silently discarded.
 Parent bootstrap uses the shared library handshake with a single five-second
 monotonic deadline for child status and acknowledgement.
 Timeout follows the failed-worker cleanup path.
+A child remains tracked after bootstrap or exit-watch setup failure.
+These failures stop admission and enter controlled shutdown.
 .Sh SEE ALSO
 .Xr audit 2 ,
 .Xr libauditcmp 3 ,

@@ -11,6 +11,7 @@
 static unsigned clocks, event_calls, terms, kills, waits;
 static int mode, kill_failure, wait_failure, exit_wait, exit_error;
 static void *exit_worker;
+static int watch_failure;
 static int
 fake_clock(clockid_t id, struct timespec *time)
 {
@@ -64,6 +65,12 @@ fake_event(int kq, const struct kevent *changes, int nchanges,
 	(void)kq;
 	(void)changes;
 	(void)events_out;
+	if (watch_failure && nchanges == 1) {
+		ATF_CHECK_EQ(EVFILT_PROCDESC, changes->filter);
+		ATF_CHECK_EQ(NOTE_EXIT, changes->fflags);
+		ATF_CHECK(changes->udata != NULL);
+		return (errno = ENOMEM, -1);
+	}
 	ATF_CHECK_EQ(0, nchanges);
 	ATF_CHECK_EQ(1, count);
 	ATF_CHECK_EQ(3, timeout->tv_sec);
@@ -117,21 +124,6 @@ ATF_TC_BODY(shutdown_clock_failure, tc)
 			ATF_CHECK_ERRNO(EBADF, fcntl(fds[i], F_GETFD) == -1);
 	}
 }
-ATF_TC_WITHOUT_HEAD(bootstrap_failure_reaps_child);
-ATF_TC_BODY(bootstrap_failure_reaps_child, tc)
-{
-	int pd;
-
-	pd = open("/dev/null", O_RDONLY);
-	ATF_REQUIRE(pd >= 0);
-	terms = kills = waits = 0;
-	ATF_CHECK_ERRNO(EACCES, reject_worker(pd, EACCES) == -1);
-	ATF_CHECK_EQ(0, terms);
-	ATF_CHECK_EQ(1, kills);
-	ATF_CHECK_EQ(2, waits);
-	ATF_CHECK_ERRNO(EBADF, fcntl(pd, F_GETFD) == -1);
-}
-
 ATF_TC_WITHOUT_HEAD(shutdown_reports_cleanup_failure);
 ATF_TC_BODY(shutdown_reports_cleanup_failure, tc)
 {
@@ -198,11 +190,47 @@ ATF_TC_BODY(exit_event_reap_errors, tc)
 	}
 }
 
+ATF_TC_WITHOUT_HEAD(failed_watch_retains_worker);
+ATF_TC_BODY(failed_watch_retains_worker, tc)
+{
+	struct audit_worker *head, *node;
+	size_t count;
+	int pd;
+
+	for (int failure = 0; failure < 3; failure++) {
+		head = NULL;
+		count = 0;
+		node = calloc(1, sizeof(*node));
+		ATF_REQUIRE(node != NULL);
+		node->pd = pd = open("/dev/null", O_RDONLY);
+		ATF_REQUIRE(pd >= 0);
+		watch_failure = 1;
+		ATF_CHECK_ERRNO(ENOMEM, worker_track(-1, &head, node, &count) == -1);
+		ATF_CHECK_EQ(node, head);
+		ATF_CHECK_EQ(1, count);
+		ATF_CHECK(fcntl(pd, F_GETFD) >= 0);
+		mode = 0; /* No grace clock: exercise final cleanup directly. */
+		clocks = event_calls = terms = kills = waits = 0;
+		kill_failure = failure == 1;
+		wait_failure = failure == 2;
+		if (failure == 0)
+			ATF_CHECK_EQ(0, workers_shutdown(-1, &head, &count));
+		else
+			ATF_CHECK_ERRNO(kill_failure ? EPERM : EIO,
+			    workers_shutdown(-1, &head, &count) == -1);
+		ATF_CHECK_EQ(NULL, head);
+		ATF_CHECK_EQ(0, count);
+		ATF_CHECK_EQ(1, kills);
+		ATF_CHECK_EQ(failure == 0 ? 2 : 1, waits);
+		ATF_CHECK_ERRNO(EBADF, fcntl(pd, F_GETFD) == -1);
+	}
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, shutdown_clock_failure);
 	ATF_TP_ADD_TC(tp, exit_event_reap_errors);
 	ATF_TP_ADD_TC(tp, shutdown_reports_cleanup_failure);
-	ATF_TP_ADD_TC(tp, bootstrap_failure_reaps_child);
+	ATF_TP_ADD_TC(tp, failed_watch_retains_worker);
 	return (atf_no_error());
 }
