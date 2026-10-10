@@ -69,4 +69,11 @@ CFLAGS.coalesce_test+= -I${SRCTOP}/lib/liblogcmp -I${SRCTOP}/sys
 LIBADD.coalesce_test+= auditcmp channel networkcmp pthread service ucl
 NO_SHARED.coalesce_test= yes
 
+ATF_TESTS_C+= connect_deadline_test
+SRCS.connect_deadline_test= connect_deadline_test.c config.c policy.c resolver.c
+CFLAGS.connect_deadline_test+= -I${SRCTOP}/lib/libauditcmp -I${SRCTOP}/lib/libchannel
+CFLAGS.connect_deadline_test+= -I${SRCTOP}/lib/liblogcmp -I${SRCTOP}/sys
+LIBADD.connect_deadline_test+= auditcmp channel networkcmp pthread service ucl
+NO_SHARED.connect_deadline_test= yes
+
 .include <bsd.test.mk>

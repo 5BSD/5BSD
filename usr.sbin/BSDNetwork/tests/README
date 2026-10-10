@@ -1,0 +1,21 @@
+Network provider deadline coverage
+==================================
+
+provider_test uses real capability channels and local sockets. Its loopback
+bind/connect cases require 127.0.0.1 to be configured. The disposable native
+runtime fixture now supplies that address without an external network adapter.
+Provider policy identities and startup remain fixture inputs, so passing this
+suite does not prove SwitchBoard admission or installed bundle activation.
+
+provider_connect_timeout_expires attempts to create an unresponsive peer by
+saturating a local listen queue. Kernels that refuse the extra connection
+immediately cannot satisfy that precondition; the case explicitly skips.
+The native runner treats skips as failures. Keep this real stalled-peer gate
+pending until a suitable isolated packet-loss fixture is available.
+
+connect_deadline_test calls the production broker_perform_connect helper with
+injected connect, poll and monotonic-clock operations and real socket fcntl
+state. It verifies that EINTR does not restart the timeout, timeout and poll
+errors survive cleanup, and both initially blocking and nonblocking sockets
+retain their original flags on failure and successful completion. This is
+control-flow coverage, not a wall-clock latency or real TCP timeout result.
