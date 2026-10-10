@@ -204,10 +204,16 @@ arm_idle_timer(struct svc_runtime *svc, int kq)
 
 	if (svc->idle_timeout_sec == 0)
 		return;
+	if (svc->idle_timeout_sec > SVC_IDLE_MAX_SECONDS) {
+		syslog(LOG_ERR, "service %s: idle timeout exceeds limit",
+		    svc->manifest.label);
+		return;
+	}
 	cancel_idle_timer(svc, kq);
 	svc->idle_timer_ident = idle_timer_next_ident++;
 	EV_SET(&kev, svc->idle_timer_ident, EVFILT_TIMER,
-	    EV_ADD | EV_ONESHOT, 0, svc->idle_timeout_sec * 1000, svc);
+	    EV_ADD | EV_ONESHOT, 0, (intptr_t)svc->idle_timeout_sec * 1000,
+	    svc);
 	if (kevent(kq, &kev, 1, NULL, 0, NULL) == -1) {
 		syslog(LOG_ERR, "service %s: idle timer: %m",
 		    svc->manifest.label);

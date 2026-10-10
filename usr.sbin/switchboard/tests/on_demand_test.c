@@ -453,6 +453,9 @@ ATF_TC_BODY(idle_timer_arm_cancel, tc)
 	svc.idle_timeout_sec = 0;
 	arm_idle_timer(&svc, kq);
 	ATF_CHECK_EQ(0, svc.idle_timer_ident);
+	svc.idle_timeout_sec = SVC_IDLE_MAX_SECONDS + 1;
+	arm_idle_timer(&svc, kq);
+	ATF_CHECK_EQ(0, svc.idle_timer_ident);
 	/* Cancel with nothing armed is a no-op. */
 	cancel_idle_timer(&svc, kq);
 	ATF_CHECK_EQ(0, svc.idle_timer_ident);
@@ -874,6 +877,7 @@ ATF_TC_BODY(handle_idle_protocol, tc)
 	int kq, status;
 	const unsigned arm_only[] = { 5 };
 	const unsigned arm_then_cancel[] = { 5, 0 };
+	const unsigned oversized[] = { SVC_IDLE_MAX_SECONDS + 1 };
 
 	(void)tc;
 	/* handle_idle arms via the global switchboard_kq. */
@@ -893,6 +897,13 @@ ATF_TC_BODY(handle_idle_protocol, tc)
 	idle_run(SVC_STATE_RUNNING, true, arm_then_cancel, nitems(arm_then_cancel),
 	    &svc, &status);
 	ATF_CHECK_EQ(0, status);
+	ATF_CHECK_EQ(0, svc.idle_timeout_sec);
+	ATF_CHECK_EQ(0, svc.idle_timer_ident);
+
+	/* An overflowing millisecond timeout is rejected without arming. */
+	idle_run(SVC_STATE_RUNNING, true, oversized, nitems(oversized),
+	    &svc, &status);
+	ATF_CHECK_EQ(EINVAL, status);
 	ATF_CHECK_EQ(0, svc.idle_timeout_sec);
 	ATF_CHECK_EQ(0, svc.idle_timer_ident);
 
