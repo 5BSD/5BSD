@@ -1,10 +1,13 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
 #include <sys/types.h>
 #include <sys/event.h>
+#include <sys/procdesc.h>
+#include <sys/wait.h>
 
 #include <channel.h>
 #include <errno.h>
 #include <limits.h>
+#include <signal.h>
 #include <stdlib.h>
 #include <time.h>
 #include <unistd.h>
@@ -285,4 +288,33 @@ service_channels_wait(int kq, struct service_channel_slot *slots, size_t count,
 			slots[i].error = ECONNRESET;
 	}
 	return (listener_ready);
+}
+
+int
+service_processes_stop(struct service_process **head)
+{
+	struct service_process *process;
+	int error = 0, status, result;
+
+	if (head == NULL)
+		return (errno = EINVAL, -1);
+	for (process = *head; process != NULL; process = process->next) {
+		if (pdkill(process->pd, SIGKILL) == -1 && errno != ESRCH &&
+		    error == 0)
+			error = errno;
+	}
+	while ((process = *head) != NULL) {
+		*head = process->next;
+		do {
+			result = pdwait(process->pd, &status,
+			    WEXITED | (error != 0 ? WNOHANG : 0), NULL, NULL);
+		} while (result == -1 && errno == EINTR);
+		if (result == -1 && errno != ECHILD && error == 0)
+			error = errno;
+		close(process->pd);
+		free(process);
+	}
+	if (error != 0)
+		return (errno = error, -1);
+	return (0);
 }

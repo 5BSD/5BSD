@@ -14,7 +14,7 @@ ATF_TC_HEAD(worker_cleanup, tc)
 }
 ATF_TC_BODY(worker_cleanup, tc)
 {
-	struct device_worker_ent *head = NULL, *entry;
+	struct service_process *head = NULL, *entry;
 	size_t count = 0;
 	int descriptors[3], pipefd[2], status;
 	pid_t pids[3];
@@ -54,7 +54,7 @@ ATF_TC_BODY(worker_cleanup, tc)
 ATF_TC_WITHOUT_HEAD(cleanup_reports_failure);
 ATF_TC_BODY(cleanup_reports_failure, tc)
 {
-	struct device_worker_ent *head;
+	struct service_process *head;
 	size_t count = 1;
 
 	head = calloc(1, sizeof(*head));

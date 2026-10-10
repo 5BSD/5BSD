@@ -15,6 +15,7 @@ Remaining integration gates: installed bundle startup and diagnostic exit codes,
 protected worker termination, SwitchBoard idle decline and explicit stop/restart,
 cleanup before acknowledgement, and reclamation while real install roots change.
 Abrupt parent death is separate from controlled teardown. Delivered descriptors
-are not revoked by stopping their worker. The Device and Crypto teardown loops
-now share semantics; consolidate them into a library after reviewing procdesc
-ownership and the other providers' worker models.
+are not revoked by stopping their worker. Device and Crypto now delegate teardown to libservice service_processes_stop;
+these tests therefore exercise the shared implementation. Procdesc ownership
+is exclusive and tracking nodes are consumed even on error. Other providers
+require separate review of their worker ownership and shutdown contracts.

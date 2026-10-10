@@ -30,6 +30,7 @@
 #include <channel.h>
 #include <devicecmp_protocol.h>
 #include <libservice.h>
+#include <service_runtime.h>
 
 #include "policy.h"
 #include "bsddevice_probes.h"
@@ -402,16 +403,12 @@ start_session(int fd, const char *peer_label, int *pdp)
 #define	DEVICECMP_MAX_WORKERS	4096u
 
 /* One live pdfork'd worker, tracked so its exit can account the slot. */
-struct device_worker_ent {
-	struct device_worker_ent	*next;
-	int				 pd;
-};
 
 static void
-device_worker_ent_remove(struct device_worker_ent **head,
-    struct device_worker_ent *w, size_t *count)
+device_worker_ent_remove(struct service_process **head,
+    struct service_process *w, size_t *count)
 {
-	struct device_worker_ent **cursor;
+	struct service_process **cursor;
 	int status;
 
 	for (cursor = head; *cursor != NULL && *cursor != w;
@@ -428,31 +425,13 @@ device_worker_ent_remove(struct device_worker_ent **head,
 
 /* Stop admission workers before acknowledging provider shutdown. */
 static int
-device_workers_stop(struct device_worker_ent **head, size_t *count)
+device_workers_stop(struct service_process **head, size_t *count)
 {
-	struct device_worker_ent *w;
-	int error = 0, status, result;
+	int result;
 
-	/* Signal every worker first so teardown is not serialized behind one. */
-	for (w = *head; w != NULL; w = w->next) {
-		if (pdkill(w->pd, SIGKILL) == -1 && errno != ESRCH)
-			error = errno;
-	}
-	while ((w = *head) != NULL) {
-		*head = w->next;
-		do {
-			result = pdwait(w->pd, &status,
-			    WEXITED | (error != 0 ? WNOHANG : 0), NULL, NULL);
-		} while (result == -1 && errno == EINTR);
-		if (result == -1 && errno != ECHILD && error == 0)
-			error = errno;
-		close(w->pd);
-		free(w);
-	}
+	result = service_processes_stop(head);
 	*count = 0;
-	if (error != 0)
-		return (errno = error, -1);
-	return (0);
+	return (result);
 }
 
 /*
@@ -481,7 +460,7 @@ load_policy(void)
 int
 main(void)
 {
-	struct device_worker_ent *workers = NULL;
+	struct service_process *workers = NULL;
 	struct service_identity id;
 	struct service_listener *listener;
 	struct service_provider *provider = NULL;
@@ -530,7 +509,7 @@ main(void)
 		goto out;
 
 	for (;;) {
-		struct device_worker_ent *w;
+		struct service_process *w;
 
 		if (kevent(kq, NULL, 0, &event, 1, NULL) == -1) {
 			if (errno == EINTR)

@@ -21,6 +21,7 @@
 #include <cryptodesc.h>
 #include <cryptocmp_protocol.h>
 #include <libservice.h>
+#include <service_runtime.h>
 #include <logcmp.h>
 
 #include "policy.h"
@@ -813,16 +814,12 @@ start_session(int fd, const char *peer_label, const char *actor, int *pdp)
 #define	CRYPTOCMP_MAX_WORKERS	4096u
 
 /* One live pdfork'd worker, tracked so its exit can account the slot. */
-struct crypto_worker_ent {
-	struct crypto_worker_ent	*next;
-	int				 pd;
-};
 
 static void
-crypto_worker_remove(struct crypto_worker_ent **head,
-    struct crypto_worker_ent *w, size_t *count)
+crypto_worker_remove(struct service_process **head,
+    struct service_process *w, size_t *count)
 {
-	struct crypto_worker_ent **cursor;
+	struct service_process **cursor;
 	int status;
 
 	for (cursor = head; *cursor != NULL && *cursor != w;
@@ -839,31 +836,13 @@ crypto_worker_remove(struct crypto_worker_ent **head,
 
 /* Stop admission workers before acknowledging provider shutdown. */
 static int
-crypto_workers_stop(struct crypto_worker_ent **head, size_t *count)
+crypto_workers_stop(struct service_process **head, size_t *count)
 {
-	struct crypto_worker_ent *w;
-	int error = 0, status, result;
+	int result;
 
-	/* Signal every worker first so teardown is not serialized behind one. */
-	for (w = *head; w != NULL; w = w->next) {
-		if (pdkill(w->pd, SIGKILL) == -1 && errno != ESRCH)
-			error = errno;
-	}
-	while ((w = *head) != NULL) {
-		*head = w->next;
-		do {
-			result = pdwait(w->pd, &status,
-			    WEXITED | (error != 0 ? WNOHANG : 0), NULL, NULL);
-		} while (result == -1 && errno == EINTR);
-		if (result == -1 && errno != ECHILD && error == 0)
-			error = errno;
-		close(w->pd);
-		free(w);
-	}
+	result = service_processes_stop(head);
 	*count = 0;
-	if (error != 0)
-		return (errno = error, -1);
-	return (0);
+	return (result);
 }
 
 /* Distinct startup exit codes make pre-readiness failures diagnosable in
@@ -875,7 +854,7 @@ crypto_workers_stop(struct crypto_worker_ent **head, size_t *count)
 int
 main(void)
 {
-	struct crypto_worker_ent *workers = NULL, *reaper = NULL, *w;
+	struct service_process *workers = NULL, *reaper = NULL, *w;
 	struct service_context *ctx = NULL;
 	struct service_identity id;
 	struct service_listener *listener;

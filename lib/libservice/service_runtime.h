@@ -16,6 +16,11 @@ struct service_health {
 	uint64_t successes, failures, consecutive_failures, changes;
 	int last_error;
 };
+/* Caller-owned, malloc-allocated tracking nodes and exclusive procdescs. */
+struct service_process {
+	struct service_process *next;
+	int pd;
+};
 struct service_lease_set;
 struct channel;
 struct service_channel_slot {
@@ -53,5 +58,9 @@ size_t service_lease_count(const struct service_lease_set *);
  * before slot reuse and releases their leases. Callbacks must not destroy
  * channels or recursively enter this helper. */
 int service_channels_wait(int, struct service_channel_slot *, size_t, int, int);
+/* Consumes all nodes/FDs and clears *head, including on failure. Signal all,
+ * then reap; retry EINTR. Caller is the parent and serializes list access.
+ * No cancellation/deadline guarantee; does not handle abrupt parent death. */
+int service_processes_stop(struct service_process **);
 __END_DECLS
 #endif

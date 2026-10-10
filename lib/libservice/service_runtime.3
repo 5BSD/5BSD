@@ -86,6 +86,36 @@ Capacity exhaustion returns ENOSPC.
 .Fn service_lease_set_destroy set
 releases the set.
 No helper authorizes a lease or survives provider restart.
+.Ss Process teardown
+.Fn service_processes_stop head
+stops a caller-owned list of
+.Vt struct service_process
+nodes, each containing a
+.Va next
+pointer and a process descriptor in
+.Va pd .
+Nodes must be allocated with
+.Xr malloc 3
+or
+.Xr calloc 3 .
+The caller must be the parent, own each descriptor exclusively, and serialize
+list access; the list must be acyclic and descriptors must not be duplicated.
+.Pp
+All children are signalled with SIGKILL before waiting for their exit.
+Interrupted waits are retried.
+Already-exited or already-reaped children are allowed.
+Every node is freed, every descriptor is closed, and the head is cleared,
+including on failure.
+An empty list succeeds; a NULL head pointer fails with EINVAL.
+The return value is 0 on success or -1 with the first error in errno.
+After an error, remaining reap attempts are nonblocking; children whose
+termination failed may still exist and require supervisor recovery.
+.Pp
+This function allocates no memory and grants no process authority.
+It does not revoke descriptors previously delivered by a child.
+It has no wait deadline and does not protect children against abrupt parent
+death; callers must not advertise a bounded teardown time.
+It does not acknowledge provider shutdown.
 .Sh SEE ALSO
 .Xr libservice 3 ,
 .Xr BSDMemory 8 ,
