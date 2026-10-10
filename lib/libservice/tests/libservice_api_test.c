@@ -6,6 +6,7 @@
 #include <sys/capsicum.h>
 #include <sys/envfd.h>
 #include <sys/ioctl.h>
+#include <sys/resource.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
 
@@ -841,7 +842,9 @@ ATF_TC_BODY(service_session_payload_and_attachment_lifecycle, tc)
 	struct service_reply incoming;
 	struct session_provider_context provider;
 	struct service_session *session;
-	struct timespec timeout_after, timeout_before;
+	struct timespec timeout_after, timeout_before, cpu_before, cpu_after;
+	struct rusage usage_before, usage_after;
+	double elapsed_ms, cpu_ms;
 	pthread_t thread;
 	char byte, event[32], reply[64], small[4];
 	int channel[2], event_pipe[2], large_pipe[2], late_pipe[2];
@@ -936,15 +939,29 @@ ATF_TC_BODY(service_session_payload_and_attachment_lifecycle, tc)
 	ATF_CHECK_STREQ("ok", reply);
 	ATF_CHECK_EQ(0, read(large_pipe[0], &byte, sizeof(byte)));
 
+	ATF_REQUIRE_EQ(0, getrusage(RUSAGE_THREAD, &usage_before));
+	ATF_REQUIRE_EQ(0, clock_gettime(CLOCK_THREAD_CPUTIME_ID, &cpu_before));
 	errno = 0;
 	ATF_REQUIRE(clock_gettime(CLOCK_MONOTONIC, &timeout_before) == 0);
 	ATF_CHECK_ERRNO(ETIMEDOUT,
 	    test_session_call(session, "T", 1, reply, sizeof(reply), 10,
 	    NULL) == -1);
 	ATF_REQUIRE(clock_gettime(CLOCK_MONOTONIC, &timeout_after) == 0);
-	ATF_CHECK_MSG(timeout_after.tv_sec - timeout_before.tv_sec +
-	    (timeout_after.tv_nsec - timeout_before.tv_nsec) / 1000000000.0 <
-	    0.075, "10 ms call deadline exceeded its scheduling allowance");
+	ATF_REQUIRE_EQ(0, clock_gettime(CLOCK_THREAD_CPUTIME_ID, &cpu_after));
+	ATF_REQUIRE_EQ(0, getrusage(RUSAGE_THREAD, &usage_after));
+	elapsed_ms = (timeout_after.tv_sec - timeout_before.tv_sec) * 1000.0 +
+	    (timeout_after.tv_nsec - timeout_before.tv_nsec) / 1000000.0;
+	cpu_ms = (cpu_after.tv_sec - cpu_before.tv_sec) * 1000.0 +
+	    (cpu_after.tv_nsec - cpu_before.tv_nsec) / 1000000.0;
+	printf("SESSION_DEADLINE requested_ms=10 elapsed_ms=%.3f "
+	    "thread_cpu_ms=%.3f voluntary_switches=%ld involuntary_switches=%ld\n",
+	    elapsed_ms, cpu_ms, usage_after.ru_nvcsw - usage_before.ru_nvcsw,
+	    usage_after.ru_nivcsw - usage_before.ru_nivcsw);
+	ATF_CHECK_MSG(elapsed_ms < 75.0,
+	    "10 ms call deadline exceeded 75 ms allowance: elapsed %.3f ms, "
+	    "thread CPU %.3f ms, voluntary switches %ld, involuntary switches %ld",
+	    elapsed_ms, cpu_ms, usage_after.ru_nvcsw - usage_before.ru_nvcsw,
+	    usage_after.ru_nivcsw - usage_before.ru_nivcsw);
 	ATF_REQUIRE_EQ(0,
 	    test_session_call(session, "K", 1, reply, sizeof(reply), 2000,
 	    &received));

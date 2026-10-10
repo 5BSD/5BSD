@@ -138,3 +138,10 @@ returns (eight interleavings), verifies unload waits, checks rejected creation,
 rejects mint on descriptors retained after unload, and checks instance counts
 after rollback. This does not force every allocator
 failure or replace WITNESS/INVARIANTS stress testing.
+
+The mandatory session payload/attachment case prints SESSION_DEADLINE with
+requested and elapsed milliseconds, calling-thread CPU milliseconds, and
+voluntary/involuntary context switches around its timeout call. The existing
+75 ms allowance for a 10 ms request is unchanged. Retain failing runs even if
+a later run passes; low CPU time alone does not identify whether excess elapsed
+time came from scheduling, timer delivery, lock contention, or another wait.
