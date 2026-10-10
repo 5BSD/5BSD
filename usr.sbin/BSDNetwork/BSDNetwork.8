@@ -245,6 +245,15 @@ A 30-second idle limit applies between requests.
 See
 .Xr network_state 3
 for timeout and reconnect semantics.
+.Sh CONCURRENT DNS REQUESTS
+Each session runs one resolver job at a time.
+Up to 16 byte-identical requests may share that job and receive separate
+replies on their original channel transactions.
+Different overlapping requests and additional duplicates are refused with
+.Er EBUSY .
+Joining an existing job does not extend its original deadline.
+Coalescing never crosses sessions or authenticated client labels.
+A failed reply terminates the session and releases all retained requests.
 .Sh DNS CACHE AND TTL
 Each connection worker retains at most 32 validated positive DNS answers,
 keyed by hostname and record type, for at most five minutes and never beyond

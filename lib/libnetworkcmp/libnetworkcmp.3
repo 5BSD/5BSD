@@ -242,6 +242,13 @@ DTrace provider exposes component-open, message-send, message-receive, and
 message-reject probes.
 Provider daemons audit policy decisions through OpenBSM; client-library
 activity is operational telemetry and is not audited.
+.Sh CONCURRENT RESOLUTION
+The provider can coalesce at most 16 identical concurrent requests within
+one session.
+Each call still receives its own reply.
+Different concurrent requests and excess duplicates return
+.Er EBUSY ;
+a duplicate shares the original job deadline.
 .Sh DNS FAILURES
 When no usable address is available, an unsuccessful DNS query returns
 .Er EAGAIN

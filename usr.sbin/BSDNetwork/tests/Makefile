@@ -62,4 +62,11 @@ CFLAGS.state_sampler_test+= -I${SRCTOP}/lib/libsysctlcmp -I${SRCTOP}/sys
 LIBADD.state_sampler_test+= networkcmp notify channel service pthread
 NO_SHARED.state_sampler_test= yes
 
+ATF_TESTS_C+= coalesce_test
+SRCS.coalesce_test= coalesce_test.c config.c policy.c resolver.c
+CFLAGS.coalesce_test+= -I${SRCTOP}/lib/libauditcmp -I${SRCTOP}/lib/libchannel
+CFLAGS.coalesce_test+= -I${SRCTOP}/lib/liblogcmp -I${SRCTOP}/sys
+LIBADD.coalesce_test+= auditcmp channel networkcmp pthread service ucl
+NO_SHARED.coalesce_test= yes
+
 .include <bsd.test.mk>

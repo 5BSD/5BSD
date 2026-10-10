@@ -72,8 +72,10 @@ union provider_buffer {
 	} wire;
 };
 
+#define NETWORKCMP_RESOLVE_WAITERS 16
 struct resolver_job {
-	struct channel_message		*request_message;
+	struct channel_message *requests[NETWORKCMP_RESOLVE_WAITERS];
+	size_t nrequests;
 	const char			*label;
 	struct networkcmp_policy	 policy;
 	struct networkcmp_msg		 request_header;
@@ -911,7 +913,9 @@ resolver_thread(void *argument)
 	    (errno != 0 ? errno : EIO) : 0;
 	atomic_store_explicit(&job->complete, true, memory_order_release);
 	byte = 1;
-	(void)write(job->notify_fd, &byte, sizeof(byte));
+	while (write(job->notify_fd, &byte, sizeof(byte)) == -1 &&
+	    errno == EINTR) {
+	}
 	return (NULL);
 }
 
@@ -925,14 +929,25 @@ start_resolve(struct session_state *state,
 	struct resolver_job *job;
 	int error;
 
-	if (state->resolver != NULL)
-		return (errno = EBUSY, -1);
 	request = (const void *)(message + 1);
 	wire = (const void *)(request + 1);
+	if (state->resolver != NULL) {
+		job = state->resolver;
+		if (job->nrequests == NETWORKCMP_RESOLVE_WAITERS ||
+		    memcmp(&job->request_header, message, sizeof(*message)) != 0 ||
+		    memcmp(&job->request, request, sizeof(*request)) != 0 ||
+		    memcmp(job->host, wire, request->host_length) != 0 ||
+		    memcmp(job->service, wire + request->host_length,
+		    request->service_length) != 0)
+			return (errno = EBUSY, -1);
+		job->requests[job->nrequests++] = request_message;
+		return (0);
+	}
 	job = calloc(1, sizeof(*job));
 	if (job == NULL)
 		return (-1);
-	job->request_message = request_message;
+	job->requests[0] = request_message;
+	job->nrequests = 1;
 	job->label = state->label;
 	job->policy = state->policy;
 	job->request_header = *message;
@@ -994,13 +1009,18 @@ finish_resolve(struct session_state *state)
 	error = pthread_join(job->thread, NULL);
 	if (error != 0)
 		return (errno = error, -1);
-	audit_policy(state->audit, state->logchan, state->label, "resolve", job->error);
-	result = send_reply(job->request_message, state->label,
-	    &job->request_header, job->error,
-	    job->error == 0 ? job->payload : NULL,
-	    job->error == 0 ? job->payload_length : 0, -1);
-	error = result == -1 ? errno : 0;
-	channel_message_free(job->request_message);
+	result = error = 0;
+	for (size_t i = 0; i < job->nrequests; i++) {
+		audit_policy(state->audit, state->logchan, state->label, "resolve", job->error);
+		if (result == 0 && send_reply(job->requests[i], state->label,
+		    &job->request_header, job->error,
+		    job->error == 0 ? job->payload : NULL,
+		    job->error == 0 ? job->payload_length : 0, -1) == -1) {
+			result = -1;
+			error = errno;
+		}
+		channel_message_free(job->requests[i]);
+	}
 	state->resolver = NULL;
 	state->resolver_deadline_ns = 0;
 	free(job);

@@ -733,7 +733,7 @@ ATF_TC_BODY(provider_resolver_does_not_block_session, tc)
 		close(fd);
 	close(listener);
 
-	/* A second, overlapping resolve is bounded. */
+	/* A different overlapping resolve remains bounded. */
 	memset(&resolve, 0, sizeof(resolve));
 	ATF_REQUIRE_EQ(0, networkcmp_message_init(&resolve.message,
 	    NETWORKCMP_OP_RESOLVE, 0));
@@ -741,7 +741,7 @@ ATF_TC_BODY(provider_resolver_does_not_block_session, tc)
 	resolve.request.family = NETWORKCMP_AF_UNSPEC;
 	resolve.request.socket_type = NETWORKCMP_SOCK_ANY;
 	resolve.request.max_results = 1;
-	memcpy(resolve.host, "localhost", sizeof(resolve.host));
+	memcpy(resolve.host, "different", sizeof(resolve.host));
 	ATF_REQUIRE_EQ(0, call(&fixture, &resolve, sizeof(resolve.message) +
 	    sizeof(resolve.request) + sizeof(resolve.host), &reply, &length,
 	    NULL));
