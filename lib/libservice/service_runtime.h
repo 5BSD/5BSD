@@ -62,5 +62,9 @@ int service_channels_wait(int, struct service_channel_slot *, size_t, int, int);
  * then reap; retry EINTR. Caller is the parent and serializes list access.
  * No cancellation/deadline guarantee; does not handle abrupt parent death. */
 int service_processes_stop(struct service_process **);
+/* Borrows an exclusively used local stream socket. Read native int status,
+ * then send byte 1 on success. One deadline; no FD close or child cleanup.
+ * timeout_ms must be nonzero and less than UINT32_MAX. */
+int service_bootstrap_parent(int, uint32_t);
 __END_DECLS
 #endif

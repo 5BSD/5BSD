@@ -118,6 +118,26 @@ It does not revoke descriptors previously delivered by a child.
 It has no wait deadline and does not protect children against abrupt parent
 death; callers must not advertise a bounded teardown time.
 It does not acknowledge provider shutdown.
+.Pp
+.Fn service_bootstrap_parent fd timeout_ms
+borrows an exclusively used local stream socket for a parent/child bootstrap.
+It reads one native integer status, then sends byte 1 if the status is zero.
+A positive status becomes errno; negative status fails with EPROTO and an
+incomplete status at EOF fails with EIO.
+Socket errors are preserved, SIGPIPE is suppressed, and EINTR and EAGAIN
+retry under one monotonic deadline covering both status and acknowledgement.
+Zero timeout, UINT32_MAX, and negative descriptors fail with EINVAL;
+expiry fails with ETIMEDOUT.
+The return value is 0 on success or -1 with errno on failure.
+The socket flags are unchanged and the descriptor remains caller-owned on
+both success and failure.
+The protocol is local to processes sharing this ABI, not a network format.
+Do not reuse a failed handshake stream: the peer may have observed partial
+progress.
+The caller must close or retain the socket according to its worker
+lifecycle and terminate/reap failed children as necessary.
+No authority is granted and no child cleanup or hard scheduling bound is
+provided by this helper.
 .Sh SEE ALSO
 .Xr libservice 3 ,
 .Xr BSDMemory 8 ,

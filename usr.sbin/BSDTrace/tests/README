@@ -56,3 +56,7 @@ acknowledgement. All three must time out under the shared five-
 second drain wait without changing socket file flags. Scheduling tolerance is
 three seconds; this is not a hard real-time bound. The same deadline covers
 status and acknowledgement; transient I/O retries return to the shared wait.
+
+The parent protocol now resides in libservice service_bootstrap_parent.
+Fragment/EINTR injection moved to libservice/tests/bootstrap_test; Trace tests
+link the library implementation and retain real socket and pdfork coverage.

@@ -28,6 +28,7 @@
 #include <auditcmp_server.h>
 #include <channel.h>
 #include <libservice.h>
+#include <service_runtime.h>
 #include <logcmp.h>
 
 #include "auditcmp_policy.h"
@@ -314,10 +315,7 @@ start_session(int fd, const char *provider, int *pdp, pid_t *pidp)
 		_exit(worker(fd, syncfd[1], provider, event));
 	}
 	close(syncfd[1]);
-	if (read(syncfd[0], &status, sizeof(status)) != sizeof(status))
-		status = EIO;
-	if (status == 0 && write(syncfd[0], "", 1) != 1)
-		status = EIO;
+	status = service_bootstrap_parent(syncfd[0], 5000) == -1 ? errno : 0;
 	close(syncfd[0]);
 	if (status != 0)
 		return (reject_worker(pd, status));

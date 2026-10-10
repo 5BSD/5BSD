@@ -8,6 +8,11 @@ NO_SHARED.software_identity_test=	yes
 
 .PATH: ${SRCTOP}/usr.sbin/capsule/tests
 
+ATF_TESTS_C+= bootstrap_test
+CFLAGS.bootstrap_test+= -I${SRCTOP}/lib/libservice -I${SRCTOP}/lib/libchannel
+LIBADD.bootstrap_test+= channel pthread
+NO_SHARED.bootstrap_test= yes
+
 ATF_TESTS_C+= runtime_test
 SRCS.runtime_test= runtime_test.c service_runtime.c
 CFLAGS.runtime_test+= -I${SRCTOP}/lib/libservice -I${SRCTOP}/lib/libchannel

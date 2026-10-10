@@ -79,6 +79,9 @@ Worker exit-event reaping retries interrupted calls and tolerates children
 already reaped.
 Other reap errors fail shutdown or the active service loop instead of being
 silently discarded.
+Parent bootstrap uses the shared library handshake with a single five-second
+monotonic deadline for child status and acknowledgement.
+Timeout follows the failed-worker cleanup path.
 .Sh SEE ALSO
 .Xr audit 2 ,
 .Xr libauditcmp 3 ,

@@ -484,51 +484,6 @@ worker(int fd, int barrier, int dtrace_fd, bool authorized,
 	    client_label, rights, instance_id));
 }
 
-struct bootstrap_state {
-	int fd;
-	int child_error;
-	size_t offset;
-};
-
-/* One nonblocking step: the shared wait owns the entire handshake deadline. */
-static int
-bootstrap_step(void *arg)
-{
-	struct bootstrap_state *state = arg;
-	ssize_t n;
-	char byte = 1;
-
-	if (state->offset < sizeof(state->child_error)) {
-		n = recv(state->fd, (char *)&state->child_error + state->offset,
-		    sizeof(state->child_error) - state->offset, MSG_DONTWAIT);
-		if (n == -1)
-			return (errno == EINTR || errno == EAGAIN ? 0 : -1);
-		if (n == 0)
-			return (errno = EIO, -1);
-		state->offset += (size_t)n;
-		if (state->offset < sizeof(state->child_error))
-			return (0);
-	}
-	if (state->child_error != 0)
-		return (errno = state->child_error > 0 ?
-		    state->child_error : EPROTO, -1);
-	n = send(state->fd, &byte, sizeof(byte), MSG_NOSIGNAL | MSG_DONTWAIT);
-	if (n == -1)
-		return (errno == EINTR || errno == EAGAIN ? 0 : -1);
-	if (n != sizeof(byte))
-		return (errno = EIO, -1);
-	return (1);
-}
-
-/* The parent retains the procdesc until bootstrap and watch setup finish. */
-static int
-bootstrap_parent(int fd)
-{
-	struct bootstrap_state state = { .fd = fd };
-
-	return (service_drain_wait(bootstrap_step, &state, 5000));
-}
-
 static int
 start_session(int fd, int dtrace_directory, bool authorized,
     const char *peer_label, service_rights_t rights, int *pdp, pid_t *pidp,
@@ -594,7 +549,7 @@ start_session(int fd, int dtrace_directory, bool authorized,
 	*pdp = pd;
 	*pidp = pid;
 	*livenessp = syncfd[0];
-	if (bootstrap_parent(syncfd[0]) == -1) {
+	if (service_bootstrap_parent(syncfd[0], 5000) == -1) {
 		error = errno;
 		/* Caller owns this child even when bootstrap fails. */
 		goto reject;

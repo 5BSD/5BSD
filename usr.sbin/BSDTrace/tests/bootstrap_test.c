@@ -6,35 +6,13 @@
 #include <stdint.h>
 #include <unistd.h>
 
-static int fragment, reads, writes;
-static ssize_t
-injected_recv(int fd, void *buffer, size_t length, int flags)
-{
-	ATF_CHECK((flags & MSG_DONTWAIT) != 0);
-	if (fragment && ++reads == 1)
-		return (errno = EINTR, -1);
-	return (recv(fd, buffer, fragment ? 1 : length, flags));
-}
-static ssize_t
-injected_send(int fd, const void *buffer, size_t length, int flags)
-{
-	ATF_CHECK((flags & MSG_NOSIGNAL) != 0);
-	ATF_CHECK((flags & MSG_DONTWAIT) != 0);
-	if (fragment && ++writes == 1)
-		return (errno = EINTR, -1);
-	return (send(fd, buffer, length, flags));
-}
 static int denied_protection(uint32_t flags)
 { (void)flags; return (errno = EACCES, -1); }
 #define service_worker_enter_capability_mode denied_protection
-#define recv injected_recv
-#define send injected_send
 int bsdtrace_main(void);
 #define main bsdtrace_main
 #include "../tracecmp.c"
 #undef main
-#undef recv
-#undef send
 
 ATF_TC_WITHOUT_HEAD(bootstrap_socket_errors);
 ATF_TC_BODY(bootstrap_socket_errors, tc)
@@ -44,8 +22,6 @@ ATF_TC_BODY(bootstrap_socket_errors, tc)
 
 	for (int mode = 0; mode < 6; mode++) {
 		ATF_REQUIRE_EQ(0, socketpair(AF_UNIX, SOCK_STREAM, 0, pair));
-		fragment = mode == 1;
-		reads = writes = 0;
 		child_error = mode == 2 ? EACCES : mode == 3 ? -1 : 0;
 		ATF_REQUIRE_EQ(mode == 4 ? 1 : sizeof(child_error),
 		    write(pair[1], &child_error, mode == 4 ? 1 : sizeof(child_error)));
@@ -56,15 +32,11 @@ ATF_TC_BODY(bootstrap_socket_errors, tc)
 		expected = mode == 2 ? EACCES : mode == 3 ? EPROTO :
 		    mode == 4 ? EIO : mode == 5 ? EPIPE : 0;
 		if (expected != 0)
-			ATF_CHECK_ERRNO(expected, bootstrap_parent(pair[0]) == -1);
+			ATF_CHECK_ERRNO(expected, service_bootstrap_parent(pair[0], 5000) == -1);
 		else {
-			ATF_REQUIRE_EQ(0, bootstrap_parent(pair[0]));
+			ATF_REQUIRE_EQ(0, service_bootstrap_parent(pair[0], 5000));
 			ATF_REQUIRE_EQ(1, read(pair[1], &byte, 1));
 			ATF_CHECK_EQ(1, byte);
-		}
-		if (fragment) {
-			ATF_CHECK_EQ(1 + sizeof(child_error), reads);
-			ATF_CHECK_EQ(2, writes);
 		}
 		close(pair[0]);
 		if (pair[1] >= 0)
@@ -131,7 +103,7 @@ ATF_TC_BODY(bootstrap_stall_deadline, tc)
 			ATF_REQUIRE_ERRNO(EAGAIN, n == -1);
 		}
 		start = service_monotime_ms();
-		ATF_CHECK_ERRNO(ETIMEDOUT, bootstrap_parent(pair[0]) == -1);
+		ATF_CHECK_ERRNO(ETIMEDOUT, service_bootstrap_parent(pair[0], 5000) == -1);
 		elapsed = service_monotime_ms() - start;
 		ATF_CHECK(elapsed >= 5000);
 		ATF_CHECK_MSG(elapsed < 8000, "bootstrap took %ju ms",

@@ -4,6 +4,7 @@ PACKAGE=lib${LIB}
 LIB=	service
 SHLIB_MAJOR=	1
 MAN=	libservice.3 service_runtime.3
+MLINKS+= service_runtime.3 service_bootstrap_parent.3
 # Shared provider runtime policy entry points.
 .for api in service_monotime_ms service_retry_init service_retry_ready \
     service_retry_result service_health_record service_budget_begin \
