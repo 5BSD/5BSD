@@ -109,6 +109,12 @@ setup_auth_client(int *out_fd, uint32_t timeout_ms,
 		perror("open /dev/oes");
 		return (-1);
 	}
+	/* Only the forked child is answered; never stall or deny the guest. */
+	if (test_set_descendants_scope(fd) < 0) {
+		perror("OES_IOC_SET_SCOPE");
+		close(fd);
+		return (-1);
+	}
 
 	memset(&mode, 0, sizeof(mode));
 	mode.ema_mode = OES_MODE_AUTH;
@@ -150,7 +156,8 @@ setup_passive_client(int *out_fd)
 	fd = open("/dev/oes", O_RDWR | O_NONBLOCK);
 	if (fd < 0)
 		return (-1);
-	if (test_set_mode(fd, OES_MODE_PASSIVE) < 0 ||
+	if (test_set_descendants_scope(fd) < 0 ||
+	    test_set_mode(fd, OES_MODE_PASSIVE) < 0 ||
 	    test_subscribe(fd, &event, 1, OES_SUB_REPLACE) < 0) {
 		close(fd);
 		return (-1);

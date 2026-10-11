@@ -1,5 +1,8 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
-/* Disposable-guest signal capture identity and recycling regression. */
+/*
+ * Signal capture identity and recycling.  The client is descendants-scoped, so
+ * signals sent by unrelated processes cannot perturb the counts.
+ */
 #include <sys/types.h>
 #include <pthread.h>
 #include <signal.h>
@@ -49,10 +52,7 @@ main(void)
 	int fd = -1, status = 0, failed = 1, done = 0, installed = 0;
 	int pipe_ignored = 0;
 	pid_t child = -1, target = getpid();
-	const char *guard = getenv("LINUXULATOR_DISPOSABLE");
 
-	if (guard == NULL || strcmp(guard, "yes") != 0)
-		return (125);
 	sigemptyset(&ignore.sa_mask);
 	if (sigaction(SIGPIPE, &ignore, &old_pipe) != 0)
 		goto out;
@@ -66,7 +66,8 @@ main(void)
 		workers[i] = (struct worker){ target, signals[i], pipes[i][0], 0 };
 	}
 	fd = open("/dev/oes", O_RDWR | O_NONBLOCK | O_CLOEXEC);
-	if (fd < 0 || ioctl(fd, OES_IOC_SET_MODE, &mode) != 0 ||
+	if (fd < 0 || test_set_descendants_scope(fd) != 0 ||
+	    ioctl(fd, OES_IOC_SET_MODE, &mode) != 0 ||
 	    ioctl(fd, OES_IOC_SUBSCRIBE, &sub) != 0 ||
 	    clock_gettime(CLOCK_MONOTONIC, &begin) != 0)
 		goto out;

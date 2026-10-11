@@ -132,6 +132,23 @@ test_open_oes(void)
 	return (fd);
 }
 
+/*
+ * Restrict a client to the calling process and its descendants.  Tests that
+ * deny AUTH events, leave them unanswered, or run fail-closed must call this
+ * before setting the mode: a global AUTH client blocks or denies every other
+ * process on the guest (including kyua opening its own output files) for as
+ * long as it is subscribed.
+ */
+static inline int
+test_set_descendants_scope(int fd)
+{
+	struct oes_scope_args args;
+
+	memset(&args, 0, sizeof(args));
+	args.esa_scope = OES_SCOPE_DESCENDANTS;
+	return (ioctl(fd, OES_IOC_SET_SCOPE, &args));
+}
+
 static inline int
 test_set_mode(int fd, uint32_t mode)
 {

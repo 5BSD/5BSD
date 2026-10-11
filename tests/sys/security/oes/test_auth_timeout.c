@@ -125,6 +125,16 @@ main(void)
 		return (1);
 	}
 
+	/*
+	 * Fail-closed with nobody answering: a global client would deny every
+	 * open(2) on the system for the life of the test.
+	 */
+	if (test_set_descendants_scope(fd) < 0) {
+		perror("OES_IOC_SET_SCOPE");
+		close(fd);
+		return (1);
+	}
+
 	memset(&mode, 0, sizeof(mode));
 	mode.ema_mode = OES_MODE_AUTH;
 	mode.ema_default_deadline_ms = 200;

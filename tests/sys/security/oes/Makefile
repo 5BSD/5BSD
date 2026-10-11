@@ -15,6 +15,15 @@ CFLAGS+=	-I${SRCTOP}/sys -I${SRCTOP}/lib/liboes
 # Several tests spawn client threads (multi-client auth/notify, stress).
 LIBADD+=	pthread
 
+# Most of these tests attach a global OES client: they observe, mute or answer
+# every process on the system, and several assert on the exact event stream.
+# Run them alone so they neither perturb nor are perturbed by concurrent test
+# programs (kyua parallelism > 1).  Clients that deny, leave AUTH events
+# unanswered or run fail-closed are additionally descendants-scoped
+# (test_set_descendants_scope()), because even an exclusive test must not
+# deny the rest of the guest, kyua included.
+TEST_METADATA+=	is_exclusive="true"
+
 # Unit-ish coverage that exercises the wire ABI and harness without the module
 # is still a plain test; module-dependent tests fail fast if /dev/oes is absent.
 PLAIN_TESTS_C=	\

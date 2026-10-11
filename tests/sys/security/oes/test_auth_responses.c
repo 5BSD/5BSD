@@ -45,6 +45,12 @@ test_auth_allow(void)
 		perror("open /dev/oes");
 		return (1);
 	}
+	/* These clients answer (or deny) the first matching event: scope them. */
+	if (test_set_descendants_scope(fd) < 0) {
+		perror("OES_IOC_SET_SCOPE");
+		close(fd);
+		return (1);
+	}
 
 	memset(&mode, 0, sizeof(mode));
 	mode.ema_mode = OES_MODE_AUTH;
@@ -133,6 +139,12 @@ test_auth_deny(void)
 		perror("open /dev/oes");
 		return (1);
 	}
+	/* These clients answer (or deny) the first matching event: scope them. */
+	if (test_set_descendants_scope(fd) < 0) {
+		perror("OES_IOC_SET_SCOPE");
+		close(fd);
+		return (1);
+	}
 
 	memset(&mode, 0, sizeof(mode));
 	mode.ema_mode = OES_MODE_AUTH;
@@ -217,6 +229,12 @@ test_auth_flags_response(void)
 	fd = open("/dev/oes", O_RDWR | O_NONBLOCK | O_CLOEXEC);
 	if (fd < 0) {
 		perror("open /dev/oes");
+		return (1);
+	}
+	/* These clients answer (or deny) the first matching event: scope them. */
+	if (test_set_descendants_scope(fd) < 0) {
+		perror("OES_IOC_SET_SCOPE");
+		close(fd);
 		return (1);
 	}
 
@@ -314,6 +332,12 @@ test_out_of_order_responses(void)
 		perror("open /dev/oes");
 		return (1);
 	}
+	/* These clients answer (or deny) the first matching event: scope them. */
+	if (test_set_descendants_scope(fd) < 0) {
+		perror("OES_IOC_SET_SCOPE");
+		close(fd);
+		return (1);
+	}
 
 	memset(&mode, 0, sizeof(mode));
 	mode.ema_mode = OES_MODE_AUTH;
@@ -405,6 +429,12 @@ test_zero_id_response(void)
 		perror("open /dev/oes");
 		return (1);
 	}
+	/* These clients answer (or deny) the first matching event: scope them. */
+	if (test_set_descendants_scope(fd) < 0) {
+		perror("OES_IOC_SET_SCOPE");
+		close(fd);
+		return (1);
+	}
 
 	memset(&mode, 0, sizeof(mode));
 	mode.ema_mode = OES_MODE_AUTH;
@@ -446,6 +476,12 @@ test_response_in_notify_mode(void)
 	fd = open("/dev/oes", O_RDWR | O_NONBLOCK | O_CLOEXEC);
 	if (fd < 0) {
 		perror("open /dev/oes");
+		return (1);
+	}
+	/* These clients answer (or deny) the first matching event: scope them. */
+	if (test_set_descendants_scope(fd) < 0) {
+		perror("OES_IOC_SET_SCOPE");
+		close(fd);
 		return (1);
 	}
 
@@ -492,6 +528,12 @@ test_rapid_auth_cycling(void)
 	fd = open("/dev/oes", O_RDWR | O_NONBLOCK | O_CLOEXEC);
 	if (fd < 0) {
 		perror("open /dev/oes");
+		return (1);
+	}
+	/* These clients answer (or deny) the first matching event: scope them. */
+	if (test_set_descendants_scope(fd) < 0) {
+		perror("OES_IOC_SET_SCOPE");
+		close(fd);
 		return (1);
 	}
 
@@ -570,6 +612,12 @@ test_wrong_write_size(void)
 	fd = open("/dev/oes", O_RDWR | O_NONBLOCK | O_CLOEXEC);
 	if (fd < 0) {
 		perror("open /dev/oes");
+		return (1);
+	}
+	/* These clients answer (or deny) the first matching event: scope them. */
+	if (test_set_descendants_scope(fd) < 0) {
+		perror("OES_IOC_SET_SCOPE");
+		close(fd);
 		return (1);
 	}
 
@@ -680,6 +728,12 @@ test_concurrent_auth_threads(void)
 	fd = open("/dev/oes", O_RDWR | O_NONBLOCK | O_CLOEXEC);
 	if (fd < 0) {
 		perror("open /dev/oes");
+		return (1);
+	}
+	/* These clients answer (or deny) the first matching event: scope them. */
+	if (test_set_descendants_scope(fd) < 0) {
+		perror("OES_IOC_SET_SCOPE");
+		close(fd);
 		return (1);
 	}
 

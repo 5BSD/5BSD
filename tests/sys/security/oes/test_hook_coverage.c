@@ -774,8 +774,10 @@ test_auth_denial(void)
 	printf("\n=== AUTH DENIAL ===\n");
 
 	close_oes();
-	if (open_oes() < 0) {
+	/* The first AUTH_LINK read is denied: only this test's child may send it. */
+	if (open_oes() < 0 || test_set_descendants_scope(oes_fd) < 0) {
 		FAIL("AUTH_LINK denial", "setup failed");
+		close_oes();
 		return;
 	}
 

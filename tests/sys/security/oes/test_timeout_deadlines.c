@@ -178,6 +178,12 @@ test_deadline_field(void)
 		perror("open /dev/oes");
 		return (1);
 	}
+	/* Subscribed AUTH clients must never stall or deny the rest of the guest. */
+	if (test_set_descendants_scope(fd) < 0) {
+		perror("OES_IOC_SET_SCOPE");
+		close(fd);
+		return (1);
+	}
 
 	memset(&mode, 0, sizeof(mode));
 	mode.ema_mode = OES_MODE_AUTH;
@@ -277,6 +283,12 @@ test_late_response(void)
 	fd = open("/dev/oes", O_RDWR | O_NONBLOCK | O_CLOEXEC);
 	if (fd < 0) {
 		perror("open /dev/oes");
+		return (1);
+	}
+	/* Subscribed AUTH clients must never stall or deny the rest of the guest. */
+	if (test_set_descendants_scope(fd) < 0) {
+		perror("OES_IOC_SET_SCOPE");
+		close(fd);
 		return (1);
 	}
 
@@ -392,6 +404,12 @@ test_wrong_message_id(void)
 		perror("open /dev/oes");
 		return (1);
 	}
+	/* Subscribed AUTH clients must never stall or deny the rest of the guest. */
+	if (test_set_descendants_scope(fd) < 0) {
+		perror("OES_IOC_SET_SCOPE");
+		close(fd);
+		return (1);
+	}
 
 	memset(&mode, 0, sizeof(mode));
 	mode.ema_mode = OES_MODE_AUTH;
@@ -476,6 +494,12 @@ test_duplicate_response(void)
 	fd = open("/dev/oes", O_RDWR | O_NONBLOCK | O_CLOEXEC);
 	if (fd < 0) {
 		perror("open /dev/oes");
+		return (1);
+	}
+	/* Subscribed AUTH clients must never stall or deny the rest of the guest. */
+	if (test_set_descendants_scope(fd) < 0) {
+		perror("OES_IOC_SET_SCOPE");
+		close(fd);
 		return (1);
 	}
 
@@ -564,6 +588,12 @@ test_invalid_result_code(void)
 	fd = open("/dev/oes", O_RDWR | O_NONBLOCK | O_CLOEXEC);
 	if (fd < 0) {
 		perror("open /dev/oes");
+		return (1);
+	}
+	/* Subscribed AUTH clients must never stall or deny the rest of the guest. */
+	if (test_set_descendants_scope(fd) < 0) {
+		perror("OES_IOC_SET_SCOPE");
+		close(fd);
 		return (1);
 	}
 
@@ -688,6 +718,12 @@ test_queue_full_fail_closed(void)
 	fd = open("/dev/oes", O_RDWR | O_NONBLOCK | O_CLOEXEC);
 	if (fd < 0) {
 		perror("open /dev/oes");
+		return (1);
+	}
+	/* Subscribed AUTH clients must never stall or deny the rest of the guest. */
+	if (test_set_descendants_scope(fd) < 0) {
+		perror("OES_IOC_SET_SCOPE");
+		close(fd);
 		return (1);
 	}
 	memset(&mode, 0, sizeof(mode));

@@ -1,5 +1,9 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
-/* Disposable-guest regression for per-thread rename authorization metadata. */
+/*
+ * Per-thread rename authorization metadata.  The client is descendants-scoped,
+ * so only the forked workers are authorized and the rest of the guest is never
+ * stalled or denied.
+ */
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <pthread.h>
@@ -52,14 +56,11 @@ main(void)
 	struct timespec begin, now;
 	test_msg_buf buf;
 	char dir[] = "oes-concurrent.XXXXXX";
-	const char *guard = getenv("LINUXULATOR_DISPOSABLE");
 	unsigned seen[2] = {0, 0};
 	uint64_t tids[2] = {0, 0};
 	int fd = -1, file, status = 0, failed = 1, done = 0;
 	pid_t child = -1;
 
-	if (guard == NULL || strcmp(guard, "yes") != 0)
-		return (125);
 	if (mkdtemp(dir) == NULL)
 		return (1);
 	if (chdir(dir) != 0) {
@@ -76,7 +77,8 @@ main(void)
 			goto out;
 	}
 	fd = open("/dev/oes", O_RDWR | O_NONBLOCK | O_CLOEXEC);
-	if (fd < 0 || ioctl(fd, OES_IOC_SET_MODE, &mode) != 0 ||
+	if (fd < 0 || test_set_descendants_scope(fd) != 0 ||
+	    ioctl(fd, OES_IOC_SET_MODE, &mode) != 0 ||
 	    ioctl(fd, OES_IOC_SUBSCRIBE, &sub) != 0 ||
 	    clock_gettime(CLOCK_MONOTONIC, &begin) != 0)
 		goto out;
