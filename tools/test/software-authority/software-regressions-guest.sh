@@ -24,8 +24,9 @@ for program in libservice_api_test service_ambient_test software_identity_test a
   count=$((count + 1))
  done
 done
-if [ "$count" -ne 76 ]; then
- echo "SOFTWARE_CLIENT_REGRESSIONS count mismatch: ran $count, expected 76"
+# Minimums, not exact counts: a lost or unlisted case fails, a new one does not.
+if [ "$count" -lt 76 ]; then
+ echo "SOFTWARE_CLIENT_REGRESSIONS count too low: ran $count, expected at least 76"
  exit 1
 fi
 printf '%s\n' SOFTWARE_CLIENT_REGRESSIONS_PASS
@@ -46,8 +47,8 @@ for program in lib/libcapbundle/api_test lib/libcapbundle/manifest_activation_te
   policy_count=$((policy_count + 1))
  done
 done
-if [ "$policy_count" -ne 181 ]; then
- echo "SOFTWARE_MANIFEST_REGRESSIONS count mismatch: ran $policy_count, expected 181"
+if [ "$policy_count" -lt 182 ]; then
+ echo "SOFTWARE_MANIFEST_REGRESSIONS count too low: ran $policy_count, expected at least 182"
  exit 1
 fi
 printf '%s\n' SOFTWARE_MANIFEST_REGRESSIONS_PASS
