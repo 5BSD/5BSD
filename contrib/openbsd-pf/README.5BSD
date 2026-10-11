@@ -16,6 +16,14 @@ Contents (verbatim, upstream relative paths):
   regress/sys/netinet/{frag,pmtu,tcpstate}, regress/sys/netinet6/{frag6,rh0}
                                          IP-stack suites using pf as a tool
                                          (secondary, reported separately)
+  regress/sys/netinet/ipsec, regress/sys/net/pair
+                                         secondary: pflog of IPsec/enc0 traffic
+                                         and pflog on pair(4) (epair on 5BSD)
+
+Not imported (see UPSTREAM.json "not_imported"): usr.sbin/bgpd pftable
+integration tests, usr.sbin/relayd (no PF use), sys/kern/pledge/ioctl
+(pledge-specific), and suites that only check pf is enabled (sosplice, gif,
+loop, mpath, snmpd).
   share/mk/bsd.regress.mk               OpenBSD regress driver; the upstream
                                          Makefiles include it unchanged
 

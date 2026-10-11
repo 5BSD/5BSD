@@ -101,7 +101,25 @@
       "path": "share/mk/bsd.regress.mk",
       "git_blob": "1b75eb9b3caa3aa75eba1b49aeb81611307ea3c7",
       "local": "share/mk/bsd.regress.mk"
+    },
+    {
+      "path": "regress/sys/netinet/ipsec",
+      "git_tree": "da5c7f80a878d6cac76442ee807b4c2ca4a5083d",
+      "local": "regress/sys/netinet/ipsec",
+      "tier": "secondary"
+    },
+    {
+      "path": "regress/sys/net/pair",
+      "git_tree": "28736260b4cf10dd2f5895dc8bb667def914a311",
+      "local": "regress/sys/net/pair",
+      "tier": "secondary"
     }
   ],
-  "verification": "git -C <openbsd-src> diff --stat <commit> -- <path> must be empty against the local copy; tree hashes are git tree object IDs at the pinned commit."
+  "verification": "git -C <openbsd-src> diff --stat <commit> -- <path> must be empty against the local copy; tree hashes are git tree object IDs at the pinned commit.",
+  "not_imported": {
+    "regress/usr.sbin/bgpd/integrationtests": "bgpd pftable maintenance; OpenBGPD is not part of 5BSD base (only relevant with a bgpd port); records pf table updates by another daemon, not PF behaviour",
+    "regress/usr.sbin/relayd": "relay tests; no pf/pfctl/anchor references at this revision",
+    "regress/sys/kern/pledge/ioctl": "PF ioctls under pledge(2); OpenBSD-specific pledge promise 'pf'. 5BSD has no pledge; the analogous control is the capability/MAC authority on /dev/pf (tracked as PF075)",
+    "regress/sys/kern/sosplice, sys/net/gif, sys/net/loop, sys/net/mpath, usr.sbin/snmpd": "only check that pf is enabled or that a regress anchor exists; not PF tests"
+  }
 }

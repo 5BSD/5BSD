@@ -1241,8 +1241,9 @@ Provenance: contrib/openbsd-pf/UPSTREAM.json lists every subtree with its git
   (OpenBSD 8.0-current amd64, GENERIC.MP#88) the tests were baselined on.
 License: contrib/openbsd-pf/LICENSE (ISC-style); per-file notices retained.
   Test data fixtures are under the same terms. No copyleft files.
-Scope: regress/sbin/pfctl, regress/sys/net/pf_*, pflog, pflow and five
-  IP-stack suites that use pf as a tool; share/mk/bsd.regress.mk. Test-only:
+Scope: regress/sbin/pfctl, regress/sys/net/pf_*, pflog, pflow, IP-stack
+  suites that use pf as a tool (netinet/{frag,pmtu,tcpstate,ipsec},
+  netinet6/{frag6,rh0}, net/pair); share/mk/bsd.regress.mk. Test-only:
   installed as a Kyua fixture corpus, never part of the runtime system.
 Local changes: none (see contrib/openbsd-pf/README.5BSD for the policy on
   expected-output divergence and on recording merged OpenBSD-derived code).
