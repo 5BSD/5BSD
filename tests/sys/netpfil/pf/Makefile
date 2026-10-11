@@ -2,6 +2,7 @@ PACKAGE=	tests
 
 TESTSDIR=       ${TESTSBASE}/sys/netpfil/pf
 TESTS_SUBDIRS+=	ioctl
+TESTS_SUBDIRS+=	openbsd
 
 ATF_TESTS_SH+=	altq \
 		anchor \

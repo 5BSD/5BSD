@@ -1,0 +1,31 @@
+OpenBSD PF regress runner (two disposable guests)
+=================================================
+
+Corpus: contrib/openbsd-pf (verbatim, pinned; see its README.5BSD).
+
+Topology (vm.py; patched QEMU only, 4 vCPUs each, at most these two guests):
+  helper  OpenBSD guest: SRC (rdomain 0, vio1), RT (rdomain 2, vio2 and
+          pair2 mtu 1300), ECO (rdomain 3, pair3 and vether3, inetd echo)
+  dut     OpenBSD reference or 5BSD: PF_IFIN (link A), PF_IFOUT (link B,
+          mtu 1400), routes/reject routes, pf.conf "pass; anchor regress"
+  Control: QEMU user networking, ssh forwarded to 127.0.0.1:2241 (dut) and
+  :2242 (helper) only.  Test links: QEMU dgram over unix sockets.
+
+Addresses are the upstream Makefile defaults (10.188.21x.0/24 and
+fdd7:e83e:66bc:21x::/64); setup-helper-openbsd.sh, setup-dut-openbsd.sh and
+setup-dut-5bsd.sh configure them.  pf_state uses FAKE_NET 10.188.219.0/24,
+pf_divert FAKE_ADDR 10.188.222.188.
+
+regress.py DUT_OS OUTDIR [--suite NAME]... runs the upstream Makefiles with
+REGRESS_LOG (one SUCCESS/FAIL/SKIP line per target).  pfctl runs every
+numbered target individually (REGRESS_TARGETS override), so totals count
+upstream test cases, not aggregate targets.  Local suites run on the DUT;
+multi-host suites run on the helper with PF_SSH/REMOTE_SSH set to the DUT.
+
+On a 5BSD DUT the upstream Makefiles run through bmake with
+MAKESYSPATH=<bsd.regress.mk dir>:/usr/share/mk.  image-5bsd.sh builds the
+DUT disk from a completed buildworld/buildkernel without root (NO_ROOT
+METALOG); test tools (perl5, p5-Socket6, p5-Net-Flow, oksh as /bin/ksh,
+python312, py312-scapy) come from catalogue-verified FreeBSD:16 packages.
+
+Plumbing only: never change expected outputs here.

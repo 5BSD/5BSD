@@ -1,0 +1,107 @@
+{
+  "repository": "https://github.com/openbsd/src.git",
+  "upstream_vcs": "OpenBSD CVS (anoncvs.openbsd.org:/cvs), mirrored to git",
+  "commit": "facc8d7ec5d1f7a22cd5b7f1e8c6ac4990d91244",
+  "commit_date": "2026-10-10T19:06:34Z",
+  "reference_build": {
+    "snapshot": "OpenBSD 8.0-current amd64",
+    "buildinfo": "Build date: 1791662218 - Sat Oct 10 19:56:58 UTC 2026",
+    "kernel": "GENERIC.MP#88 Sat Oct 10 13:45:22 MDT 2026",
+    "media_verification": "install80.iso SHA256 checked against Ed25519-signed SHA256.sig with etc/signify/openbsd-80-base.pub"
+  },
+  "pf_source_alignment": "No commit touched sys/net/pf*, sys/net/if_pf*, sbin/pfctl, usr.sbin/authpf, regress/sbin/pfctl or regress/sys/net between fcd4e55 (2026-10-08) and c27e9422e69 (2026-10-10T22:51:25Z).",
+  "imported": "2026-10-11",
+  "subtrees": [
+    {
+      "path": "regress/sbin/pfctl",
+      "git_tree": "dec823215056417899a94220816b098ca0f95525",
+      "local": "regress/sbin/pfctl"
+    },
+    {
+      "path": "regress/sys/net/pf_divert",
+      "git_tree": "837c97e949924fb23a611ca137b2db90de9a9c75",
+      "local": "regress/sys/net/pf_divert"
+    },
+    {
+      "path": "regress/sys/net/pf_forward",
+      "git_tree": "13aacae081cb5da606e983f6e566fe2873543729",
+      "local": "regress/sys/net/pf_forward"
+    },
+    {
+      "path": "regress/sys/net/pf_fragment",
+      "git_tree": "b42cb429eabec104787fb62f016830a9f22fd1f7",
+      "local": "regress/sys/net/pf_fragment"
+    },
+    {
+      "path": "regress/sys/net/pf_opts",
+      "git_tree": "3e94722e07ba9f377ef923888582af82171286d5",
+      "local": "regress/sys/net/pf_opts"
+    },
+    {
+      "path": "regress/sys/net/pf_policy",
+      "git_tree": "11e749aa1567045d3698ad6a295056c41d3ed501",
+      "local": "regress/sys/net/pf_policy"
+    },
+    {
+      "path": "regress/sys/net/pf_print",
+      "git_tree": "8a6419c494a39c11c8744a5c0b0f73c4ad68a00d",
+      "local": "regress/sys/net/pf_print"
+    },
+    {
+      "path": "regress/sys/net/pf_state",
+      "git_tree": "d1e381cbacc8404e0a5df033e3ae8cb54fc3c36c",
+      "local": "regress/sys/net/pf_state"
+    },
+    {
+      "path": "regress/sys/net/pf_table",
+      "git_tree": "d188df2563a50c0c10eec96392de13016faeb4c7",
+      "local": "regress/sys/net/pf_table"
+    },
+    {
+      "path": "regress/sys/net/pf_trans",
+      "git_tree": "51040d98d13b5821f70275da0c4d91bcc3f53348",
+      "local": "regress/sys/net/pf_trans"
+    },
+    {
+      "path": "regress/sys/net/pflog",
+      "git_tree": "40bdeeaca27d71a61bbae4bbc743095f4d157247",
+      "local": "regress/sys/net/pflog"
+    },
+    {
+      "path": "regress/sys/net/pflow",
+      "git_tree": "3e18189996135597d58cf249e709512c99fb8b70",
+      "local": "regress/sys/net/pflow"
+    },
+    {
+      "path": "regress/sys/netinet/frag",
+      "git_tree": "2758cd6ca3041591557365419e549dd337b8a1e6",
+      "local": "regress/sys/netinet/frag"
+    },
+    {
+      "path": "regress/sys/netinet/pmtu",
+      "git_tree": "8ea51db9fa846df2ecf5d39dab38d24613de4e2a",
+      "local": "regress/sys/netinet/pmtu"
+    },
+    {
+      "path": "regress/sys/netinet/tcpstate",
+      "git_tree": "bf6fe69d624430da78db0f4cba55da15eeff4dcf",
+      "local": "regress/sys/netinet/tcpstate"
+    },
+    {
+      "path": "regress/sys/netinet6/frag6",
+      "git_tree": "ad79154355bdc8f7bc378166357b3028dd20a55d",
+      "local": "regress/sys/netinet6/frag6"
+    },
+    {
+      "path": "regress/sys/netinet6/rh0",
+      "git_tree": "be97cb8197d423ea08e5918c9da8ee04cd9da719",
+      "local": "regress/sys/netinet6/rh0"
+    },
+    {
+      "path": "share/mk/bsd.regress.mk",
+      "git_blob": "1b75eb9b3caa3aa75eba1b49aeb81611307ea3c7",
+      "local": "share/mk/bsd.regress.mk"
+    }
+  ],
+  "verification": "git -C <openbsd-src> diff --stat <commit> -- <path> must be empty against the local copy; tree hashes are git tree object IDs at the pinned commit."
+}

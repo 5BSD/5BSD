@@ -1,0 +1,46 @@
+OpenBSD PF reference material for 5BSD PF parity
+================================================
+
+Source: https://github.com/openbsd/src.git (OpenBSD CVS mirror)
+Revision: facc8d7ec5d1f7a22cd5b7f1e8c6ac4990d91244 (2026-10-10), matching the
+  OpenBSD 8.0-current amd64 snapshot used as the reference guest; see
+  UPSTREAM.json for the snapshot identity, the PF source-alignment check and
+  the git tree object ID of every imported subtree.
+Imported: 2026-10-11
+License: LICENSE (ISC-style OpenBSD notice); per-file notices retained.
+
+Contents (verbatim, upstream relative paths):
+  regress/sbin/pfctl, regress/sys/net/pf_{divert,forward,fragment,opts,
+  policy,print,state,table,trans}, regress/sys/net/pflog,
+  regress/sys/net/pflow                 primary PF parity suites
+  regress/sys/netinet/{frag,pmtu,tcpstate}, regress/sys/netinet6/{frag6,rh0}
+                                         IP-stack suites using pf as a tool
+                                         (secondary, reported separately)
+  share/mk/bsd.regress.mk               OpenBSD regress driver; the upstream
+                                         Makefiles include it unchanged
+
+Not present upstream at this revision: regress for pfsync, queues,
+syncookies, authpf, pflogd, ftp-proxy/tftp-proxy.
+
+Local changes: none.  Never edit files here to make a test pass; expected
+outputs change only through a recorded, user-approved compatibility decision,
+and such divergence is kept as a separate, clearly named patch in the glue,
+not as an edit in this directory.
+
+5BSD glue: tests/sys/netpfil/pf/openbsd (Kyua/ATF wrapper; installs this
+corpus beneath its srctree/ through tests/srctree.mk) and
+tools/test/pf-parity/openbsd-regress (two-guest topology runner: OpenBSD
+helper as SRC/RT/ECO, DUT = OpenBSD reference or 5BSD).
+
+OpenBSD-derived PF code: whole files adopted for parity are imported here
+with provenance and wired in from their native build directories.  Code
+merged into FreeBSD-derived sys/netpfil/pf or sbin/pfctl files is recorded
+below (OpenBSD file, revision, local destination) and in the commit message.
+
+Merged OpenBSD-derived code (pf/parity):
+  (none yet)
+
+Update procedure: fetch the new pinned commit, replace the subtrees,
+regenerate UPSTREAM.json (git rev-parse <commit>:<path>), rerun the reference
+baseline on the matching signed OpenBSD snapshot, and record any expected
+output changes in the PF parity gap report.

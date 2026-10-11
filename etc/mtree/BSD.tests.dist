@@ -967,6 +967,8 @@
             pf
                 ioctl
                 ..
+                openbsd
+                ..
             ..
         ..
         opencrypto
