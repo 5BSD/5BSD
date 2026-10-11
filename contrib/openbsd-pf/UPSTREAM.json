@@ -245,6 +245,42 @@
       "git_tree": "0675209b884512e40fe58c8023fb5ac5095d80c1",
       "local": "regress/sbin/ifconfig",
       "tier": "rdomain"
+    },
+    {
+      "path": "usr.sbin/authpf",
+      "git_tree": "ea327f569532402ae35b12a9383a8147411cf911",
+      "local": "usr.sbin/authpf",
+      "tier": "vendor-source"
+    },
+    {
+      "path": "usr.sbin/ftp-proxy",
+      "git_tree": "a85ae55222ad8a858959c6087bc9a13a117f76ae",
+      "local": "usr.sbin/ftp-proxy",
+      "tier": "vendor-source"
+    },
+    {
+      "path": "usr.sbin/tftp-proxy",
+      "git_tree": "2c3dd5affe6dd872a6f93fd18fc301a70fd90630",
+      "local": "usr.sbin/tftp-proxy",
+      "tier": "vendor-source"
+    },
+    {
+      "path": "sbin/pflogd",
+      "git_tree": "59a5465e77f9177681b76314f35ab52f6b985821",
+      "local": "sbin/pflogd",
+      "tier": "vendor-source"
+    },
+    {
+      "path": "usr.sbin/tcpdump/print-pflog.c",
+      "git_blob": "d8c0b824334caee1f0f8b9a775f6a0998f7fef6c",
+      "local": "usr.sbin/tcpdump/print-pflog.c",
+      "tier": "vendor-source"
+    },
+    {
+      "path": "usr.sbin/tcpdump/print-pfsync.c",
+      "git_blob": "3eb1e4f06124b2c897debd7598a89509b06bf1f6",
+      "local": "usr.sbin/tcpdump/print-pfsync.c",
+      "tier": "vendor-source"
     }
   ],
   "verification": "git -C <openbsd-src> diff --stat <commit> -- <path> must be empty against the local copy; tree hashes are git tree object IDs at the pinned commit.",

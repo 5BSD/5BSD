@@ -35,6 +35,8 @@ loop, mpath, snmpd).
   sbin/pfctl                            OpenBSD pfctl (vendor source for the
                                          PF convergence; wired in by
                                          sbin/pfctl/Makefile when adopted)
+  usr.sbin/authpf, usr.sbin/ftp-proxy, usr.sbin/tftp-proxy, sbin/pflogd,
+  usr.sbin/tcpdump/print-pf{log,sync}.c  OpenBSD PF userland (vendor source)
   sys/net/pf*.[ch], if_pflog.[ch], if_pflow.[ch], if_pfsync.[ch]
                                          OpenBSD kernel PF (vendor reference
                                          for merges into sys/netpfil/pf)
