@@ -222,9 +222,39 @@ always included; `MK_GOOGLETEST` controls the C++ runtime suite. These static
 binaries need no compiler, Python, Go, or source checkout at run time. Run their
 `Kyuafile` with Kyua on a matching 5BSD kernel.
 
-Ordinary world/test builds use checked-in generated runtime and BSDTime fixture files. After
-changing a schema or generator, run `python3.12 tools/build/fuchsia/test-bindings.py --write`;
-without `--write`, it verifies exact regeneration and rejects stale outputs.
+### Checked-in bindings
+
+Ordinary world and test builds compile checked-in generated bindings (the
+runtime fixtures, BSDTime and each migrated provider), so buildworld needs no
+Python, Go or FIDL compiler. After changing a `.fidl` file or the generator,
+run
+
+```sh
+make -C tools/build/fuchsia regen
+```
+
+and commit the result with the schema. `regen` needs the bootstrapped host
+tools (`make -C tools/build/fuchsia bootstrap`). Each generated library
+directory carries a `SOURCE.sha256` stamp naming the SHA-256 of every input
+schema (the library's `.fidl` and its dependencies such as `zx.fidl`), with
+the pinned Fuchsia revision and generator script digests as comments.
+
+Two checks keep a schema from shipping with stale bindings:
+
+- **Build time.** Every Makefile that compiles a binding tree sets
+  `FIDL_BINDINGS` and includes `lib/libfidl/fidl-bindings.mk`, which runs
+  before anything is built and uses only `sh` and `sha256(1)` (a buildworld
+  bootstrap tool). A schema that no longer matches its stamp stops the build
+  with `lib/libX/X.fidl changed; run make -C tools/build/fuchsia regen and
+  commit the result`.
+- **Drift.** `make -C tools/build/fuchsia check-bindings` (part of `check`)
+  regenerates every tree into a scratch directory and compares it, stamps
+  included, with the checked-in files, so hand-edited output, a changed
+  generator or a stale stamp is reported by path. It also proves that each
+  provider's evolution schema is the production schema at `bsd:1`.
+
+The stamps exist only while bindings are committed; generating them into the
+object tree at build time would remove both the stamps and the fragment.
 After bootstrapping the host tools, `make -C tools/build/fuchsia check-native`
 runs native and sanitizer suites, staged SDK consumers, normal native tests,
 and extracted pkgbase checks. `test-installed.py --packages` runs the staged

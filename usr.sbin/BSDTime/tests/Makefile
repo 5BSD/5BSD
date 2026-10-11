@@ -38,4 +38,9 @@ UCL_NOTICE= ${SRCTOP}/contrib/libucl/COPYING
 UCL_NOTICEDIR= /usr/share/licenses/bsdtime-tests/libucl
 
 .PATH: ${SRCTOP}/usr.sbin/BSDTime
+# Checked-in bindings must match their schemas (fidl-bindings.mk).
+FIDL_BINDINGS+= \
+    lib/libtimecmp/generated/fidl/bsd.time.v1
+.include "${SRCTOP}/lib/libfidl/fidl-bindings.mk"
+
 .include <bsd.test.mk>

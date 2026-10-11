@@ -39,12 +39,20 @@ ${group}MODE= 0444
 .endfor
 MAN= fidlgen-bsd.1
 
-.PHONY: bootstrap check check-native check-soak check-fuzz check-bench
+.PHONY: bootstrap regen check check-bindings check-native check-soak check-fuzz \
+    check-bench
 bootstrap:
 	${PYTHON} ${.CURDIR}/build-fidl.py --src ${SRCTOP} --obj ${FIDL_TOOLS_OBJ}
 	${PYTHON} ${.CURDIR}/build-generators.py --src ${SRCTOP} --obj ${FIDL_TOOLS_OBJ} --go ${GO}
-check:
+# Regenerate every checked-in binding tree (and its SOURCE.sha256 stamp) from
+# its .fidl; commit the result.  buildworld fails on a schema whose stamp no
+# longer matches (lib/libfidl/fidl-bindings.mk), and check-bindings
+# regenerates into a scratch tree and diffs, catching hand-edited output.
+regen:
+	${PYTHON} ${.CURDIR}/test-bindings.py --src ${SRCTOP} --tools ${FIDL_TOOLS_OBJ} --write
+check-bindings:
 	${PYTHON} ${.CURDIR}/test-bindings.py --src ${SRCTOP} --tools ${FIDL_TOOLS_OBJ}
+check: check-bindings
 	${PYTHON} ${.CURDIR}/tests/import_test.py
 	${PYTHON} ${.CURDIR}/build-fidl.py --src ${SRCTOP} --obj ${FIDL_TOOLS_OBJ} --test-only
 	${PYTHON} ${.CURDIR}/build-generators.py --src ${SRCTOP} --obj ${FIDL_TOOLS_OBJ} --go ${GO} --test

@@ -50,6 +50,11 @@ GTEST_NOTICEDIR= /usr/share/licenses/libfidl-tests/googletest
 GTEST_NOTICEPACKAGE= ${PACKAGE}
 .endif
 
+# Checked-in bindings must match their schemas (fidl-bindings.mk).
+FIDL_BINDINGS+= \
+    lib/libfidl/tests/generated/fidl/bsd.runtime.test
+.include "${SRCTOP}/lib/libfidl/fidl-bindings.mk"
+
 .include <bsd.test.mk>
 
 # The binding objects are shared by several programs, and bsd.progs.mk records

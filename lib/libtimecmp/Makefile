@@ -31,4 +31,9 @@ STATIC_CFLAGS+=	${PICFLAG}
 HAS_TESTS=
 SUBDIR.${MK_TESTS}+=	tests
 
+# Checked-in bindings must match their schemas (fidl-bindings.mk).
+FIDL_BINDINGS+= \
+    lib/libtimecmp/generated/fidl/bsd.time.v1
+.include "${SRCTOP}/lib/libfidl/fidl-bindings.mk"
+
 .include <bsd.lib.mk>

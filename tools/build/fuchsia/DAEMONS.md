@@ -62,8 +62,9 @@ speaking the old protocol:
 1. `.fidl` library `bsd.<name>.v1` next to the client library, installed under
    `/usr/share/fidl`; closed protocol, strict methods, `GetProtocolInfo`
    negotiation first (as `bsd.time.v1`); application errors are errno values.
-   Generated C/C++ bindings checked in under `generated/` and verified by
-   `tools/build/fuchsia/test-bindings.py`.
+   Generated C/C++ bindings checked in under `generated/` with a
+   `SOURCE.sha256` stamp (see "Generated bindings" below); the library is
+   listed in `tools/build/fuchsia/test-bindings.py`.
 2. Provider and every in-tree client converted together.  The old
    `*_validate_message` symbol and protocol header stay only for ABI
    compatibility and are marked legacy; the provider rejects legacy records.
@@ -93,6 +94,35 @@ Shared pieces added once (first conversion): `fidl_bsd_connections_wait()`
 (the FIDL analogue of `service_channels_wait()`) and the header-only
 `<fidl/bsd/sync_c.h>` synchronous-call helpers, which also honour the
 caller's `service_budget_begin()` deadline.
+
+## Generated bindings
+
+Bindings are committed, so a `.fidl` edit could ship with stale output.
+Three pieces prevent that (since the first conversion commit):
+
+- `make -C tools/build/fuchsia regen` regenerates every checked-in tree
+  (runtime fixtures, BSDTime, each provider and each evolution schema) and
+  writes `generated/fidl/<library>/SOURCE.sha256`: the SHA-256 of each input
+  schema relative to the source root, plus the pinned Fuchsia revision and
+  generator script digests as comments.
+- `lib/libfidl/fidl-bindings.mk`, included by every Makefile that compiles a
+  tree (`FIDL_BINDINGS=` paths relative to `SRCTOP`), hooks `beforebuild`
+  and fails with "`<file>.fidl` changed; run make -C tools/build/fuchsia
+  regen and commit the result".  It uses only `sh` and `sha256(1)` (the
+  `sbin/md5` bootstrap tool), so buildworld still needs no Python or Go.
+- `make -C tools/build/fuchsia check-bindings` (in `check`) regenerates into
+  a scratch tree and diffs everything, stamps included, catching hand-edited
+  output and generator changes.
+
+Verified in a scratch worktree: appending to `lib/libtimecmp/timecmp.fidl`
+makes `make -C lib/libtimecmp all` stop before compiling with the message
+above; `regen` then makes it pass; a hand edit to a generated header fails
+`check-bindings` naming the file.
+
+Follow-up (not part of this migration): generate the bindings into the
+object tree at build time, so nothing generated is committed.  Then the
+stamps, `fidl-bindings.mk` and `regen` are deleted together; nothing else
+depends on them.  See "Binding generation: end state" below.
 
 ## Order
 
