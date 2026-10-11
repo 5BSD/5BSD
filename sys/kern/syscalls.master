@@ -223,13 +223,7 @@
 		    _In_ char *nsize
 		);
 	}
-18	AUE_GETFSSTAT	COMPAT4 {
-		int getfsstat(
-		    _Out_writes_bytes_opt_(bufsize) _Contains_long_ struct ostatfs *buf,
-		    long bufsize,
-		    int mode
-		);
-	}
+18	AUE_NULL	OBSOL	freebsd4_getfsstat
 19	AUE_LSEEK	COMPAT|CAPENABLED {
 		long lseek(
 		    int fd,
@@ -998,18 +992,8 @@
 		    _Out_opt_ long *basep
 		);
 	}
-157	AUE_STATFS	COMPAT4 {
-		int statfs(
-		    _In_z_ const char *path,
-		    _Out_ _Contains_long_ struct ostatfs *buf
-		);
-	}
-158	AUE_FSTATFS	COMPAT4|CAPENABLED {
-		int fstatfs(
-		    int fd,
-		    _Out_ _Contains_long_ struct ostatfs *buf
-		);
-	}
+157	AUE_NULL	OBSOL	freebsd4_statfs
+158	AUE_NULL	OBSOL	freebsd4_fstatfs
 159	AUE_NULL	RESERVED
 160	AUE_LGETFH	STD {
 		int lgetfh(
@@ -1023,23 +1007,9 @@
 		    _Out_ struct fhandle *fhp
 		);
 	}
-162	AUE_SYSCTL	COMPAT4|CAPENABLED {
-		int getdomainname(
-		    _Out_writes_z_(len) char *domainname,
-		    int len
-		);
-	}
-163	AUE_SYSCTL	COMPAT4 {
-		int setdomainname(
-		    _In_reads_z_(len) char *domainname,
-		    int len
-		);
-	}
-164	AUE_NULL	COMPAT4 {
-		int uname(
-		    _Out_ struct utsname *name
-		);
-	}
+162	AUE_NULL	OBSOL	freebsd4_getdomainname
+163	AUE_NULL	OBSOL	freebsd4_setdomainname
+164	AUE_NULL	OBSOL	freebsd4_uname
 165	AUE_SYSARCH	STD|CAPENABLED {
 		int sysarch(
 		    int op,
@@ -1085,24 +1055,8 @@
 	}
 ; XXX should be { int shmsys(int which, ...); }
 172	AUE_NULL	RESERVED
-173	AUE_PREAD	COMPAT6|CAPENABLED {
-		ssize_t pread(
-		    int fd,
-		    _Out_writes_bytes_(nbyte) void *buf,
-		    size_t nbyte,
-		    int pad,
-		    off_t offset
-		);
-	}
-174	AUE_PWRITE	COMPAT6|CAPENABLED {
-		ssize_t pwrite(
-		    int fd,
-		    _In_reads_bytes_(nbyte) const void *buf,
-		    size_t nbyte,
-		    int pad,
-		    off_t offset
-		);
-	}
+173	AUE_NULL	OBSOL	freebsd6_pread
+174	AUE_NULL	OBSOL	freebsd6_pwrite
 175	AUE_SETFIB	STD {
 		int setfib(
 		    int fibnum
@@ -1184,45 +1138,16 @@
 		    _Out_opt_ long *basep
 		);
 	}
-197	AUE_MMAP	COMPAT6|CAPENABLED {
-		void *mmap(
-		    _In_ void *addr,
-		    size_t len,
-		    int prot,
-		    int flags,
-		    int fd,
-		    int pad,
-		    off_t pos
-		);
-	}
+197	AUE_NULL	OBSOL	freebsd6_mmap
 198	AUE_NULL	SYSMUX {
 		int __syscall(
 		    int64_t number,
 		    ...
 		);
 	}
-199	AUE_LSEEK	COMPAT6|CAPENABLED {
-		off_t lseek(
-		    int fd,
-		    int pad,
-		    off_t offset,
-		    int whence
-		);
-	}
-200	AUE_TRUNCATE	COMPAT6 {
-		int truncate(
-		    _In_z_ const char *path,
-		    int pad,
-		    off_t length
-		);
-	}
-201	AUE_FTRUNCATE	COMPAT6|CAPENABLED {
-		int ftruncate(
-		    int fd,
-		    int pad,
-		    off_t length
-		);
-	}
+199	AUE_NULL	OBSOL	freebsd6_lseek
+200	AUE_NULL	OBSOL	freebsd6_truncate
+201	AUE_NULL	OBSOL	freebsd6_ftruncate
 202	AUE_SYSCTL	STD|CAPENABLED {
 		int __sysctl(
 		    _In_reads_(namelen) const int *name,
@@ -1282,14 +1207,7 @@
 217	AUE_NULL	NODEF|NOTSTATIC	lkmnosys lkmnosys nosys_args int
 218	AUE_NULL	NODEF|NOTSTATIC	lkmnosys lkmnosys nosys_args int
 219	AUE_NULL	NODEF|NOTSTATIC	lkmnosys lkmnosys nosys_args int
-220	AUE_SEMCTL	COMPAT7|NOSTD {
-		int __semctl(
-		    int semid,
-		    int semnum,
-		    int cmd,
-		    _Contains_ptr_ union semun_old *arg
-		);
-	}
+220	AUE_NULL	OBSOL	freebsd7___semctl
 221	AUE_SEMGET	NOSTD {
 		int semget(
 		    key_t key,
@@ -1305,13 +1223,7 @@
 		);
 	}
 223	AUE_NULL	OBSOL	semconfig
-224	AUE_MSGCTL	COMPAT7|NOSTD {
-		int msgctl(
-		    int msqid,
-		    int cmd,
-		    _Contains_long_ptr_timet_ struct msqid_ds_old *buf
-		);
-	}
+224	AUE_NULL	OBSOL	freebsd7_msgctl
 225	AUE_MSGGET	NOSTD {
 		int msgget(
 		    key_t key,
@@ -1342,13 +1254,7 @@
 		    int shmflg
 		);
 	}
-229	AUE_SHMCTL	COMPAT7|NOSTD {
-		int shmctl(
-		    int shmid,
-		    int cmd,
-		    _Inout_opt_ _Contains_long_ struct shmid_ds_old *buf
-		);
-	}
+229	AUE_NULL	OBSOL	freebsd7_shmctl
 230	AUE_SHMDT	NOSTD {
 		int shmdt(
 		    _In_ const void *shmaddr
@@ -1553,12 +1459,7 @@
 		);
 	}
 291-296	AUE_NULL	RESERVED
-297	AUE_FHSTATFS	COMPAT4 {
-		int fhstatfs(
-		    _In_ const struct fhandle *u_fhp,
-		    _Out_ _Contains_long_ struct ostatfs *buf
-		);
-	}
+297	AUE_NULL	OBSOL	freebsd4_fhstatfs
 298	AUE_FHOPEN	STD {
 		int fhopen(
 		    _In_ const struct fhandle *u_fhp,
@@ -1666,24 +1567,9 @@
 		    _In_ _Contains_long_ptr_ struct aiocb *aiocbp
 		);
 	}
-318	AUE_AIO_READ	COMPAT6|CAPENABLED {
-		int aio_read(
-		    _Inout_ _Contains_long_ptr_ struct oaiocb *aiocbp
-		);
-	}
-319	AUE_AIO_WRITE	COMPAT6|CAPENABLED {
-		int aio_write(
-		    _Inout_ _Contains_long_ptr_ struct oaiocb *aiocbp
-		);
-	}
-320	AUE_LIO_LISTIO	COMPAT6|CAPENABLED {
-		int lio_listio(
-		    int mode,
-		    _Inout_updates_(nent) _Contains_long_ptr_ struct oaiocb * const *acb_list,
-		    int nent,
-		    _In_opt_ _Contains_ptr_ struct osigevent *sig
-		);
-	}
+318	AUE_NULL	OBSOL	freebsd6_aio_read
+319	AUE_NULL	OBSOL	freebsd6_aio_write
+320	AUE_NULL	OBSOL	freebsd6_lio_listio
 321	AUE_NULL	STD|CAPENABLED|NOLIB {
 		int yield(void);
 	}
@@ -1752,17 +1638,7 @@
 		    size_t len
 		);
 	}
-336	AUE_SENDFILE	COMPAT4|CAPENABLED {
-		int sendfile(
-		    int fd,
-		    int s,
-		    off_t offset,
-		    size_t nbytes,
-		    _In_opt_ _Contains_ptr_ struct sf_hdtr *hdtr,
-		    _Out_opt_ off_t *sbytes,
-		    int flags
-		);
-	}
+336	AUE_NULL	OBSOL	freebsd4_sendfile
 337	AUE_NULL	STD {
 		int kldsym(
 		    int fileid,
@@ -1796,23 +1672,13 @@
 		    _In_ const sigset_t *sigmask
 		);
 	}
-342	AUE_SIGACTION	COMPAT4|CAPENABLED {
-		int sigaction(
-		    int sig,
-		    _In_opt_ _Contains_ptr_ const struct sigaction *act,
-		    _Out_opt_ _Contains_ptr_ struct sigaction *oact
-		);
-	}
+342	AUE_NULL	OBSOL	freebsd4_sigaction
 343	AUE_SIGPENDING	STD|CAPENABLED {
 		int sigpending(
 		    _In_ sigset_t *set
 		);
 	}
-344	AUE_SIGRETURN	COMPAT4|CAPENABLED {
-		int sigreturn(
-		    _In_ _Contains_long_ptr_ const struct freebsd4_ucontext *sigcntxp
-		);
-	}
+344	AUE_NULL	OBSOL	freebsd4_sigreturn
 345	AUE_SIGWAIT	STD|CAPENABLED {
 		int sigtimedwait(
 		    _In_ const sigset_t *set,

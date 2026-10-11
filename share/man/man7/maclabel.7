@@ -61,21 +61,11 @@ A MAC label consists of a policy name,
 followed by a forward slash,
 followed by the subject or object's qualifier,
 optionally followed by a comma and one or more additional policy labels.
-For example:
-.Bd -literal -offset indent
-biba/low(low-low)
-biba/high(low-high),mls/equal(equal-equal),partition/0
-.Ed
+The policy defines the syntax and meaning of its qualifier.
 .Sh SEE ALSO
 .Xr mac 3 ,
 .Xr posix1e 3 ,
-.Xr mac_biba 4 ,
-.Xr mac_bsdextended 4 ,
-.Xr mac_ifoff 4 ,
-.Xr mac_mls 4 ,
 .Xr mac_none 4 ,
-.Xr mac_partition 4 ,
-.Xr mac_seeotheruids 4 ,
 .Xr mac_test 4 ,
 .Xr login.conf 5 ,
 .Xr getfmac 8 ,

@@ -68,7 +68,7 @@ passed = (len(proc_records) == len(expected_proc) and set(proc_records) == expec
           [('base', '0'), ('default_permissions', '0'), ('allow_other', '0')]
           and 'FUSE_CLIENT_DONE' in s and 'FUSE_OPTIONS_PASS' in s
           and 'COMMON_RELOAD_PASS' in s
-          and 'NATIVE_PROC_PASS' in s and 'PROC_RELOAD_PASS' in s
+          and 'NATIVE_PROC_RETIRED_PASS' in s and 'PROC_RELOAD_PASS' in s
           and not timed_out and child.returncode == 0 and not diagnostics
           and len(records) == len(expected) and set(records) == expected
           and len(links) == len(expected_links) and set(links) == expected_links

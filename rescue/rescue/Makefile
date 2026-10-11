@@ -100,9 +100,6 @@ CRUNCH_PROGS_sbin= 						\
 	restore rcorder route savecore		 		\
 	shutdown swapon sysctl tunefs umount
 
-.if ${MK_CCD} != "no"
-CRUNCH_PROGS_sbin+= ccdconfig
-.endif
 
 .if ${MK_INET} != "no" || ${MK_INET6} != "no"
 CRUNCH_PROGS_sbin+= ping

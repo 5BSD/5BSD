@@ -381,8 +381,8 @@ by convention, it serves as a home directory for user accounts
 that need no home directory; see also
 .Pa /var/empty/
 .It Pa /proc/
-process file system; see
-.Xr procfs 4
+optional mount point for Linux process information; see
+.Xr linprocfs 4
 .It Pa /rescue/
 statically linked programs for emergency recovery; see
 .Xr rescue 8
@@ -623,9 +623,6 @@ templates for make; see
 .Xr make 1
 .It Pa nls/
 national language support files
-.It Pa security/
-data files for security policies such as
-.Xr mac_lomac 4
 .It Pa sendmail/
 .Xr sendmail 8
 configuration files

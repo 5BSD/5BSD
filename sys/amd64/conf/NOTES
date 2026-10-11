@@ -149,7 +149,6 @@ device		xentimer	# Xen x86 PV timer device
 options 	COMPAT_FREEBSD32
 
 # Enable (32-bit) a.out binary support
-options 	COMPAT_AOUT
 
 #####################################################################
 # ZFS support

@@ -72,7 +72,6 @@ CONFS=	DAEMON \
 	sysctl_lastload \
 	sysvipc \
 	tmp \
-	ugidfw \
 	var \
 	var_run \
 	watchdogd
@@ -131,9 +130,6 @@ CONFGROUPS.${MK_BSNMP}+=	BSNMP
 BSNMPPACKAGE=			bsnmp
 BSNMP=		bsnmpd
 
-CONFGROUPS.${MK_CCD}+=		CCD
-CCDPACKAGE=			ccdconfig
-CCD=		ccd
 
 CONFGROUPS+=			DEVD
 DEVDPACKAGE=			devd

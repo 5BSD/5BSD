@@ -128,7 +128,6 @@ SUBDIR=	adduser \
 	tzfsctl \
 	BSDFilesystem \
 	tzsetup \
-	ugidfw \
 	valectl \
 	vigr \
 	vipw \

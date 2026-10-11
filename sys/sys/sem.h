@@ -29,21 +29,6 @@ typedef	__time_t	time_t;
 #define	_TIME_T_DECLARED
 #endif
 
-#if defined(COMPAT_FREEBSD4) || defined(COMPAT_FREEBSD5) || \
-    defined(COMPAT_FREEBSD6) || defined(COMPAT_FREEBSD7)
-struct semid_ds_old {
-	struct ipc_perm_old sem_perm;	/* operation permission struct */
-	struct sem	*__sem_base;	/* pointer to first semaphore in set */
-	unsigned short	sem_nsems;	/* number of sems in set */
-	time_t		sem_otime;	/* last operation time */
-	long		sem_pad1;	/* SVABI/386 says I need this here */
-	time_t		sem_ctime;	/* last change time */
-    					/* Times measured in secs since */
-    					/* 00:00:00 UTC, Jan. 1, 1970, without leap seconds */
-	long		sem_pad2;	/* SVABI/386 says I need this here */
-	long		sem_pad3[4];	/* SVABI/386 says I need this here */
-};
-#endif
 
 struct semid_ds {
 	struct ipc_perm	sem_perm;	/* operation permission struct */
@@ -65,9 +50,7 @@ struct sembuf {
 };
 #define SEM_UNDO	010000
 
-#if defined(COMPAT_FREEBSD4) || defined(COMPAT_FREEBSD5) || \
-    defined(COMPAT_FREEBSD6) || defined(COMPAT_FREEBSD7) || \
-    defined(_WANT_SEMUN_OLD)
+#if defined(COMPAT_FREEBSD4) || defined(COMPAT_FREEBSD5) ||      defined(COMPAT_FREEBSD6) || defined(COMPAT_FREEBSD7) ||      defined(_WANT_SEMUN_OLD)
 union semun_old {
 	int		val;		/* value for SETVAL */
 	struct		semid_ds_old *buf; /* buffer for IPC_STAT & IPC_SET */

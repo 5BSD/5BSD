@@ -79,10 +79,6 @@
 #ifdef UFS_DIRHASH
 #include <ufs/ufs/dirhash.h>
 #endif
-#ifdef UFS_GJOURNAL
-#include <ufs/ufs/gjournal.h>
-FEATURE(ufs_gjournal, "Journaling support through GEOM for UFS");
-#endif
 
 #ifdef QUOTA
 FEATURE(ufs_quota, "UFS disk quotas support");
@@ -1062,9 +1058,6 @@ ufs_remove(
 		}
 	}
 
-#ifdef UFS_GJOURNAL
-	ufs_gjournal_orphan(vp);
-#endif
 	error = ufs_dirremove(dvp, ip, ap->a_cnp->cn_flags, false);
 	if (ip->i_nlink <= 0)
 		vp->v_vflag |= VV_NOSYNC;
@@ -2315,9 +2308,6 @@ ufs_rmdir(
 		}
 	}
 
-#ifdef UFS_GJOURNAL
-	ufs_gjournal_orphan(vp);
-#endif
 	/*
 	 * Delete reference to directory before purging
 	 * inode.  If we crash in between, the directory

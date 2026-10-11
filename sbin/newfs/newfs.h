@@ -83,7 +83,6 @@ extern int	Rflag;		/* regression test */
 extern int	Uflag;		/* enable soft updates for file system */
 extern int	jflag;		/* enable soft updates journaling for filesys */
 extern int	Xflag;		/* exit in middle of newfs for testing */
-extern int	Jflag;		/* enable gjournal for file system */
 extern int	lflag;		/* enable multilabel MAC for file system */
 extern int	nflag;		/* do not create .snap directory */
 extern int	tflag;		/* enable TRIM */

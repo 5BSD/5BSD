@@ -79,13 +79,6 @@ The reserved area in front of the superblock (for bootcode) will not be erased.
 Erasing is only relevant to flash-memory or thinly provisioned devices.
 Erasing may take a long time.
 If the device does not support BIO_DELETE, the command will fail.
-.It Fl J
-Enable journaling on the new file system via gjournal.
-See
-.Xr gjournal 8
-for details.
-This is incompatible with soft updates
-.Pq Fl U .
 .It Fl L Ar volname
 Add a volume label to the new file system.
 Legal characters are alphanumerics, dashes, and underscores.
@@ -100,14 +93,12 @@ The default format is UFS2.
 For backward compatibility.
 .It Fl U
 Enable soft updates on the new file system.
-This is incompatible with GEOM journaling
-.Pq Fl J .
 If neither
 .Fl U
 nor
 .Fl u
 is specified, soft updates are enabled by default for UFS2 format file
-systems unless GEOM journaling was requested and disabled otherwise.
+systems and disabled otherwise.
 .It Fl u
 Do not enable soft updates on the new file system.
 If neither
@@ -181,9 +172,7 @@ specifies the average file size on the file system.
 .It Fl j
 Enable soft updates journaling on the new file system.
 This implies soft updates
-.Pq Fl U
-and is incompatible with GEOM journaling
-.Pq Fl J .
+.Pq Fl U .
 This flag is implemented by running the
 .Xr tunefs 8
 utility found in the user's
@@ -377,7 +366,6 @@ on file systems that contain many small files.
 .Xr dumpfs 8 ,
 .Xr fdformat 8 ,
 .Xr fsck 8 ,
-.Xr gjournal 8 ,
 .Xr gpart 8 ,
 .Xr growfs 8 ,
 .Xr makefs 8 ,

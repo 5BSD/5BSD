@@ -79,7 +79,6 @@ int	Rflag;			/* regression test */
 int	Uflag = -1;		/* enable soft updates for file system */
 int	jflag;			/* enable soft updates journaling for filesys */
 int	Xflag = 0;		/* exit in middle of newfs for testing */
-int	Jflag;			/* enable gjournal for file system */
 int	lflag;			/* enable multilabel for file system */
 int	nflag;			/* do not create .snap directory */
 int	tflag;			/* enable TRIM */
@@ -135,8 +134,7 @@ main(int argc, char *argv[])
 			Eflag = 1;
 			break;
 		case 'J':
-			Jflag = 1;
-			break;
+			errx(1, "GEOM journaling is retired; use -j for UFS soft updates journaling");
 		case 'L':
 			volumelabel = optarg;
 			for (i = 0; isalnum(volumelabel[i]) ||
@@ -390,9 +388,7 @@ main(int argc, char *argv[])
 	}
 	/* Use soft updates by default for UFS2 and above */
 	if (Uflag < 0)
-		Uflag = Oflag > 1 && !Jflag;
-	if (Uflag && Jflag)
-		errx(1, "Cannot enable both soft updates and GEOM journaling");
+		Uflag = Oflag > 1;
 	realsectorsize = sectorsize;
 	if (sectorsize != DEV_BSIZE) {		/* XXX */
 		int secperblk = sectorsize / DEV_BSIZE;
@@ -463,7 +459,6 @@ usage(void)
 	    " [device-type]");
 	fprintf(stderr, "where fsoptions are:\n");
 	fprintf(stderr, "\t-E Erase previous disk content\n");
-	fprintf(stderr, "\t-J Enable journaling via gjournal\n");
 	fprintf(stderr, "\t-L volume label to add to superblock\n");
 	fprintf(stderr,
 	    "\t-N do not create file system, just print out parameters\n");

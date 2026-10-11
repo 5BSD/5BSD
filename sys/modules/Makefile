@@ -38,7 +38,6 @@ SUBDIR=	\
 	${_amdsbwd} \
 	${_amdsmn} \
 	${_amdtemp} \
-	${_aout} \
 	${_arcmsr} \
 	${_allwinner} \
 	${_armv8crypto} \
@@ -229,21 +228,13 @@ SUBDIR=	\
 	linuxkpi_wlan \
 	${_lio} \
 	lpt \
-	${_mac_biba} \
-	${_mac_bsdextended} \
 	${_mac_ddb} \
 	${_mac_do} \
-	${_mac_ifoff} \
-	${_mac_ipacl} \
-	${_mac_lomac} \
-	${_mac_mls} \
 	${_mac_none} \
 	${_mac_ntpd} \
-	${_mac_partition} \
 	${_mac_pimd} \
 	${_mac_portacl} \
 	${_mac_priority} \
-	${_mac_seeotheruids} \
 	${_mac_stub} \
 	${_mac_test} \
 	${_mac_veriexec} \
@@ -329,7 +320,6 @@ SUBDIR=	\
 	ppc \
 	ppi \
 	pps \
-	procfs \
 	proto \
 	pseudofs \
 	${_pst} \
@@ -619,23 +609,15 @@ _ossl=		ossl
 # MAC framework
 .if ${KERN_OPTS:MMAC} || defined(ALL_MODULES)
 _mac_abac=	mac_abac
-_mac_biba=	mac_biba
-_mac_bsdextended= mac_bsdextended
 .if ${KERN_OPTS:MDDB} || defined(ALL_MODULES)
 _mac_ddb=	mac_ddb
 .endif
 _mac_do=	mac_do
-_mac_ifoff=	mac_ifoff
-_mac_ipacl=	mac_ipacl
-_mac_lomac=	mac_lomac
-_mac_mls=	mac_mls
 _mac_none=	mac_none
 _mac_ntpd=	mac_ntpd
-_mac_partition=	mac_partition
 _mac_pimd=	mac_pimd
 _mac_portacl=	mac_portacl
 _mac_priority=	mac_priority
-_mac_seeotheruids= mac_seeotheruids
 _mac_stub=	mac_stub
 _mac_test=	mac_test
 .if ${MK_VERIEXEC} != "no" || defined(ALL_MODULES)
@@ -770,9 +752,6 @@ _imx=		imx
 .if ${MACHINE_CPUARCH} == "i386" || ${MACHINE_CPUARCH} == "amd64"
 _aq=		aq
 _agp=		agp
-.if ${MACHINE_CPUARCH} == "i386" || !empty(COMPAT_FREEBSD32_ENABLED)
-_aout=		aout
-.endif
 _bios=		bios
 .if ${MK_SOURCELESS_UCODE} != "no"
 _bxe=		bxe

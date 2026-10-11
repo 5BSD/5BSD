@@ -55,9 +55,6 @@
 #include <ufs/ufs/dir.h>
 #include <ufs/ufs/dirhash.h>
 #endif
-#ifdef UFS_GJOURNAL
-#include <ufs/ufs/gjournal.h>
-#endif
 
 int
 ufs_need_inactive(struct vop_need_inactive_args *ap)
@@ -116,9 +113,6 @@ ufs_inactive(
 	 */
 	if (ip->i_mode == 0)
 		goto out;
-#ifdef UFS_GJOURNAL
-	ufs_gjournal_close(vp);
-#endif
 #ifdef QUOTA
 	/*
 	 * Before moving off the active list, we must be sure that

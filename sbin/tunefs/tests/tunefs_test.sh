@@ -130,58 +130,22 @@ suj_cleanup()
 	tunefs_cleanup
 }
 
-# GEOM journaling
-atf_test_case gjournal cleanup
-gjournal_head()
+# The retired option must fail before opening or modifying a filesystem.
+atf_test_case gjournal_retired
+gjournal_retired_head()
 {
-	atf_set descr "Turn GEOM journaling on and off"
-	atf_set require.user "root"
-	atf_set "require.progs" tunefs
+	atf_set descr "Retired GEOM journaling option leaves its target unchanged"
+	atf_set require.progs "tunefs sha256"
 }
-gjournal_body()
+gjournal_retired_body()
 {
-	tunefs_setup -u
-	tunefs_test -J "gjournal" "GEOM journaling"
-}
-gjournal_cleanup()
-{
-	tunefs_cleanup
-}
-
-# Try combining Soft Updates with GEOM journaling
-atf_test_case conflict cleanup
-conflict_head()
-{
-	atf_set descr "Soft Updates and GEOM journaling are mutually exclusive"
-	atf_set require.user "root"
-	atf_set "require.progs" tunefs
-}
-conflict_body()
-{
-	tunefs_setup -U
-
-	# Verify that SU is enabled
-	atf_check -o match:"soft updates" \
-	    file -s $tunefs_dev
-	# Verify that enabling gjournal fails
-	atf_check -e match:"cannot be enabled" \
-	    tunefs -J enable $tunefs_dev
-	# Now turn SU off
-	atf_check -e match:"soft updates cleared" \
-	    tunefs -n disable $tunefs_dev
-	# Enable gjournal
-	atf_check -e match:"gjournal set" \
-	    tunefs -J enable $tunefs_dev
-	# Verify that enabling SU+J fails
-	atf_check -e match:"cannot be enabled" \
-	    tunefs -j enable $tunefs_dev
-	# Verify that enabling SU alone fails
-	atf_check -e match:"cannot be enabled" \
-	    tunefs -n enable $tunefs_dev
-}
-conflict_cleanup()
-{
-	tunefs_cleanup
+	echo "unchanged filesystem sentinel" > image
+	before=$(sha256 -q image)
+	atf_check -s not-exit:0 -e match:"GEOM journaling is retired" tunefs -J enable image
+	atf_check -s not-exit:0 -e match:"GEOM journaling is retired" tunefs -J disable image
+	[ "$before" = "$(sha256 -q image)" ] || atf_fail "target changed"
+	atf_check -s not-exit:0 -e match:"GEOM journaling is retired" tunefs -J enable missing
+	[ ! -e missing ] || atf_fail "target created"
 }
 
 atf_init_test_cases()
@@ -190,6 +154,5 @@ atf_init_test_cases()
 	atf_add_test_case nfs4acl
 	atf_add_test_case sunoj
 	atf_add_test_case suj
-	atf_add_test_case gjournal
-	atf_add_test_case conflict
+	atf_add_test_case gjournal_retired
 }

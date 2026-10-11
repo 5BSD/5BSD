@@ -583,30 +583,8 @@ run_command(struct cfjail *j)
 		break;
 
 	case IP_MOUNT_PROCFS:
-		argv = alloca(7 * sizeof(char *));
-		path = string_param(j->intparams[KP_PATH]);
-		if (path == NULL) {
-			jail_warnx(j, "mount.procfs: no jail root path defined");
-			return -1;
-		}
-		devpath = alloca(strlen(path) + 6);
-		sprintf(devpath, "%s/proc", path);
-		if (check_path(j, "mount.procfs", devpath, 0,
-		    down ? "procfs" : NULL) < 0)
-			return -1;
-		if (down) {
-			argv[0] = "/sbin/umount";
-			argv[1] = devpath;
-			argv[2] = NULL;
-		} else {
-			argv[0] = _PATH_MOUNT;
-			argv[1] = "-t";
-			argv[2] = "procfs";
-			argv[3] = ".";
-			argv[4] = devpath;
-			argv[5] = NULL;
-		}
-		break;
+		jail_warnx(j, "mount.procfs is retired; use linprocfs for Linux jails");
+		return (-1);
 
 	case IP_ZFS_DATASET:
 		argv = alloca(4 * sizeof(char *));

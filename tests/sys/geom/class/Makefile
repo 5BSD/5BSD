@@ -14,12 +14,9 @@ TESTS_SUBDIRS+=	mirror
 TESTS_SUBDIRS+=	multipath
 TESTS_SUBDIRS+=	nop
 TESTS_SUBDIRS+=	part
-TESTS_SUBDIRS+=	raid3
-TESTS_SUBDIRS+=	shsec
 TESTS_SUBDIRS+=	stripe
 TESTS_SUBDIRS+=	union
 TESTS_SUBDIRS+=	uzip
-TESTS_SUBDIRS+=	virstor
 TESTS_SUBDIRS+=	zoned
 
 ${PACKAGE}FILES+=	geom_subr.sh

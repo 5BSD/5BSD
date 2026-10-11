@@ -45,7 +45,7 @@
  * mount policy engine.  It constrains the broad shape of requests:
  * approved fstypes, approved generic flags, and safe paths.
  *
- * Whitelisted fstypes: tmpfs, devfs, fdescfs, nullfs, procfs,
+ * Whitelisted fstypes: tmpfs, devfs, fdescfs, nullfs,
  *   linprocfs, linsysfs, fusefs.
  *
  * fsopts is a comma-separated string of fs-specific options

@@ -655,8 +655,8 @@ if [ "$(uname -m)" = amd64 ]; then
     umount /tmp/linuxulator-gate/swap-discard-tmp || exit 1
 fi
 mount -t fdescfs -o linrdlnk fdescfs /dev/fd || exit 1
-mkdir -p /tmp/resolve-procfs /tmp/resolve-fd-plain /tmp/resolve-fd-rdlnk /tmp/resolve-fd-nodup || exit 1
-mount -t procfs procfs /tmp/resolve-procfs || exit 1
+mkdir -p /tmp/resolve-linprocfs /tmp/resolve-fd-plain /tmp/resolve-fd-rdlnk /tmp/resolve-fd-nodup || exit 1
+mount -t linprocfs linprocfs /tmp/resolve-linprocfs || exit 1
 mount -t fdescfs fdescfs /tmp/resolve-fd-plain || exit 1
 mount -t fdescfs -o rdlnk fdescfs /tmp/resolve-fd-rdlnk || exit 1
 mount -t fdescfs -o nodup fdescfs /tmp/resolve-fd-nodup || exit 1
@@ -727,7 +727,7 @@ umount /tmp/resolve-tmpfs || exit 1
 umount /tmp/resolve-fd-nodup || exit 1
 umount /tmp/resolve-fd-rdlnk || exit 1
 umount /tmp/resolve-fd-plain || exit 1
-umount /tmp/resolve-procfs || exit 1
+umount /tmp/resolve-linprocfs || exit 1
 umount /dev/fd || exit 1
 umount /proc || exit 1
 dmesg | tail -30

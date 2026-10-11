@@ -344,7 +344,6 @@ isa/vga_isa.c			optional	vga
 libkern/strcmp.c		standard
 libkern/strncmp.c		standard
 libkern/x86/crc32_sse42.c	standard
-kern/imgact_aout.c		optional	compat_aout
 #
 # x86 shared code between IA32 and AMD64 architectures
 #

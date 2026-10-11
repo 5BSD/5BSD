@@ -3724,17 +3724,6 @@ fs/p9fs/p9_transport.c		optional p9fs
 fs/p9fs/p9fs_subr.c		optional p9fs
 fs/p9fs/p9fs_vfsops.c		optional p9fs
 fs/p9fs/p9fs_vnops.c		optional p9fs
-fs/procfs/procfs.c		optional procfs
-fs/procfs/procfs_dbregs.c	optional procfs
-fs/procfs/procfs_fpregs.c	optional procfs
-fs/procfs/procfs_map.c		optional procfs
-fs/procfs/procfs_mem.c		optional procfs
-fs/procfs/procfs_note.c		optional procfs
-fs/procfs/procfs_osrel.c	optional procfs
-fs/procfs/procfs_regs.c		optional procfs
-fs/procfs/procfs_rlimit.c	optional procfs
-fs/procfs/procfs_status.c	optional procfs
-fs/procfs/procfs_type.c		optional procfs
 fs/pseudofs/pseudofs.c		optional pseudofs
 fs/pseudofs/pseudofs_fileno.c	optional pseudofs
 fs/pseudofs/pseudofs_vncache.c	optional pseudofs
@@ -3777,7 +3766,6 @@ geom/eli/g_eli_privacy.c	optional geom_eli
 geom/eli/pkcs5v2.c		optional geom_eli
 geom/gate/g_gate.c		optional geom_gate
 geom/geom_bsd_enc.c		optional geom_part_bsd
-geom/geom_ccd.c			optional ccd | geom_ccd
 geom/geom_ctl.c			standard
 geom/geom_dev.c			standard
 geom/geom_disk.c		standard
@@ -3789,8 +3777,6 @@ geom/geom_kern.c		standard
 geom/geom_slice.c		standard
 geom/geom_subr.c		standard
 geom/geom_vfs.c			standard
-geom/journal/g_journal.c	optional geom_journal
-geom/journal/g_journal_ufs.c	optional geom_journal
 geom/label/g_label.c		optional geom_label | geom_label_gpt
 geom/label/g_label_ext2fs.c	optional geom_label
 geom/label/g_label_flashmap.c	optional geom_label
@@ -3831,9 +3817,6 @@ geom/raid/tr_raid0.c		optional geom_raid
 geom/raid/tr_raid1.c		optional geom_raid
 geom/raid/tr_raid1e.c		optional geom_raid
 geom/raid/tr_raid5.c		optional geom_raid
-geom/raid3/g_raid3.c		optional geom_raid3
-geom/raid3/g_raid3_ctl.c	optional geom_raid3
-geom/shsec/g_shsec.c		optional geom_shsec
 geom/stripe/g_stripe.c		optional geom_stripe
 geom/union/g_union.c		optional geom_union
 geom/uzip/g_uzip.c		optional geom_uzip
@@ -3842,9 +3825,6 @@ geom/uzip/g_uzip_wrkthr.c	optional geom_uzip
 geom/uzip/g_uzip_zlib.c		optional geom_uzip
 geom/uzip/g_uzip_zstd.c		optional geom_uzip zstdio \
 	compile-with "${NORMAL_C} -I$S/contrib/zstd/lib/freebsd"
-geom/virstor/binstream.c	optional geom_virstor
-geom/virstor/g_virstor.c	optional geom_virstor
-geom/virstor/g_virstor_md.c	optional geom_virstor
 geom/zero/g_zero.c		optional geom_zero
 fs/ext2fs/ext2_acl.c		optional ext2fs
 fs/ext2fs/ext2_alloc.c		optional ext2fs
@@ -4074,7 +4054,6 @@ kern/sysv_msg.c			optional sysvmsg
 kern/sysv_sem.c			optional sysvsem
 kern/sysv_shm.c			optional sysvshm
 kern/tty.c			standard
-kern/tty_compat.c		optional compat_43tty
 kern/tty_info.c			standard
 kern/tty_inq.c			standard
 kern/tty_outq.c			standard
@@ -5368,22 +5347,12 @@ dev/mac_capability/mac_capability_accounting.c	standard
 dev/mac_capability/mac_capability_coalition.c	standard
 dev/mac_capability/mac_capability_node.c	standard
 dev/mac_capability/mac_capability_isolation.c	standard
-security/mac_biba/mac_biba.c	optional mac_biba
-security/mac_bsdextended/mac_bsdextended.c	optional mac_bsdextended
-security/mac_bsdextended/ugidfw_system.c	optional mac_bsdextended
-security/mac_bsdextended/ugidfw_vnode.c		optional mac_bsdextended
 security/mac_ddb/mac_ddb.c	optional mac_ddb
 security/mac_do/mac_do.c	optional mac_do
-security/mac_ifoff/mac_ifoff.c	optional mac_ifoff
-security/mac_ipacl/mac_ipacl.c	optional mac_ipacl
-security/mac_lomac/mac_lomac.c	optional mac_lomac
-security/mac_mls/mac_mls.c	optional mac_mls
 security/mac_none/mac_none.c	optional mac_none
 security/mac_ntpd/mac_ntpd.c	optional mac_ntpd
-security/mac_partition/mac_partition.c optional mac_partition
 security/mac_portacl/mac_portacl.c optional mac_portacl
 security/mac_priority/mac_priority.c	optional mac_priority
-security/mac_seeotheruids/mac_seeotheruids.c optional mac_seeotheruids
 security/mac_stub/mac_stub.c	optional mac_stub
 security/mac_test/mac_test.c	optional mac_test
 security/mac_grantbylabel/mac_grantbylabel.c		optional mac_grantbylabel
@@ -5417,7 +5386,6 @@ ufs/ufs/ufs_acl.c		optional ffs
 ufs/ufs/ufs_bmap.c		optional ffs
 ufs/ufs/ufs_dirhash.c		optional ffs
 ufs/ufs/ufs_extattr.c		optional ffs
-ufs/ufs/ufs_gjournal.c		optional ffs UFS_GJOURNAL
 ufs/ufs/ufs_inode.c		optional ffs
 ufs/ufs/ufs_lookup.c		optional ffs
 ufs/ufs/ufs_quota.c		optional ffs

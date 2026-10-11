@@ -198,16 +198,6 @@ __sigseteq(sigset_t *set1, sigset_t *set2)
 	return (1);
 }
 
-#ifdef COMPAT_FREEBSD6
-struct osigevent {
-	int	sigev_notify;		/* Notification type */
-	union {
-		int	__sigev_signo;	/* Signal number */
-		int	__sigev_notify_kqueue;
-	} __sigev_u;
-	union sigval sigev_value;	/* Signal value */
-};
-#endif
 
 typedef struct ksiginfo {
 	TAILQ_ENTRY(ksiginfo)	ksi_link;

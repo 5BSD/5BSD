@@ -258,18 +258,6 @@ SYSCTL_INT(_p1003_1b, CTL_P1003_1B_AIO_LISTIO_MAX, aio_listio_max,
     CTLFLAG_RD | CTLFLAG_CAPRD, &max_aio_queue_per_proc,
     0, "Maximum aio requests for a single lio_listio call");
 
-#ifdef COMPAT_FREEBSD6
-typedef struct oaiocb {
-	int	aio_fildes;		/* File descriptor */
-	off_t	aio_offset;		/* File offset for I/O */
-	volatile void *aio_buf;         /* I/O buffer in process space */
-	size_t	aio_nbytes;		/* Number of bytes for I/O */
-	struct	osigevent aio_sigevent;	/* Signal to deliver */
-	int	aio_lio_opcode;		/* LIO opcode */
-	int	aio_reqprio;		/* Request priority -- ignored */
-	struct	__aiocb_private	_aiocb_private;
-} oaiocb_t;
-#endif
 
 /*
  * Below is a key of locks used to protect each member of struct kaiocb
@@ -1522,50 +1510,6 @@ unref:
 	return (error);
 }
 
-#ifdef COMPAT_FREEBSD6
-static int
-convert_old_sigevent(struct osigevent *osig, struct sigevent *nsig)
-{
-
-	/*
-	 * Only SIGEV_NONE, SIGEV_SIGNAL, and SIGEV_KEVENT are
-	 * supported by AIO with the old sigevent structure.
-	 */
-	nsig->sigev_notify = osig->sigev_notify;
-	switch (nsig->sigev_notify) {
-	case SIGEV_NONE:
-		break;
-	case SIGEV_SIGNAL:
-		nsig->sigev_signo = osig->__sigev_u.__sigev_signo;
-		break;
-	case SIGEV_KEVENT:
-		nsig->sigev_notify_kqueue =
-		    osig->__sigev_u.__sigev_notify_kqueue;
-		nsig->sigev_value.sival_ptr = osig->sigev_value.sival_ptr;
-		break;
-	default:
-		return (EINVAL);
-	}
-	return (0);
-}
-
-static int
-aiocb_copyin_old_sigevent(struct aiocb *ujob, struct kaiocb *kjob,
-    int type __unused)
-{
-	struct oaiocb *ojob;
-	struct aiocb *kcb = &kjob->uaiocb;
-	int error;
-
-	bzero(kcb, sizeof(struct aiocb));
-	error = copyin(ujob, kcb, sizeof(struct oaiocb));
-	if (error)
-		return (error);
-	/* No need to copyin aio_iov, because it did not exist in FreeBSD 6 */
-	ojob = (struct oaiocb *)kcb;
-	return (convert_old_sigevent(&ojob->aio_sigevent, &kcb->aio_sigevent));
-}
-#endif
 
 static int
 aiocb_copyin(struct aiocb *ujob, struct kaiocb *kjob, int type)
@@ -1631,16 +1575,6 @@ static struct aiocb_ops aiocb_ops = {
 	.store_aiocb = aiocb_store_aiocb,
 };
 
-#ifdef COMPAT_FREEBSD6
-static struct aiocb_ops aiocb_ops_osigevent = {
-	.aio_copyin = aiocb_copyin_old_sigevent,
-	.fetch_status = aiocb_fetch_status,
-	.fetch_error = aiocb_fetch_error,
-	.store_status = aiocb_store_status,
-	.store_error = aiocb_store_error,
-	.store_aiocb = aiocb_store_aiocb,
-};
-#endif
 
 /*
  * Queue a new AIO request.  Choosing either the threaded or direct bio VCHR
@@ -2521,15 +2455,6 @@ sys_aio_error(struct thread *td, struct aio_error_args *uap)
 }
 
 /* syscall - asynchronous read from a file (REALTIME) */
-#ifdef COMPAT_FREEBSD6
-int
-freebsd6_aio_read(struct thread *td, struct freebsd6_aio_read_args *uap)
-{
-
-	return (aio_aqueue(td, (struct aiocb *)uap->aiocbp, NULL, LIO_READ,
-	    &aiocb_ops_osigevent));
-}
-#endif
 
 int
 sys_aio_read(struct thread *td, struct aio_read_args *uap)
@@ -2546,15 +2471,6 @@ sys_aio_readv(struct thread *td, struct aio_readv_args *uap)
 }
 
 /* syscall - asynchronous write to a file (REALTIME) */
-#ifdef COMPAT_FREEBSD6
-int
-freebsd6_aio_write(struct thread *td, struct freebsd6_aio_write_args *uap)
-{
-
-	return (aio_aqueue(td, (struct aiocb *)uap->aiocbp, NULL, LIO_WRITE,
-	    &aiocb_ops_osigevent));
-}
-#endif
 
 int
 sys_aio_write(struct thread *td, struct aio_write_args *uap)
@@ -2727,43 +2643,6 @@ kern_lio_listio(struct thread *td, int mode, struct aiocb * const *uacb_list,
 }
 
 /* syscall - list directed I/O (REALTIME) */
-#ifdef COMPAT_FREEBSD6
-int
-freebsd6_lio_listio(struct thread *td, struct freebsd6_lio_listio_args *uap)
-{
-	struct aiocb **acb_list;
-	struct sigevent *sigp, sig;
-	struct osigevent osig;
-	int error, nent;
-
-	if ((uap->mode != LIO_NOWAIT) && (uap->mode != LIO_WAIT))
-		return (EINVAL);
-
-	nent = uap->nent;
-	if (nent < 0 || nent > max_aio_queue_per_proc)
-		return (EINVAL);
-
-	if (uap->sig && (uap->mode == LIO_NOWAIT)) {
-		error = copyin(uap->sig, &osig, sizeof(osig));
-		if (error)
-			return (error);
-		error = convert_old_sigevent(&osig, &sig);
-		if (error)
-			return (error);
-		sigp = &sig;
-	} else
-		sigp = NULL;
-
-	acb_list = malloc(sizeof(struct aiocb *) * nent, M_LIO, M_WAITOK);
-	error = copyin(uap->acb_list, acb_list, nent * sizeof(acb_list[0]));
-	if (error == 0)
-		error = kern_lio_listio(td, uap->mode,
-		    (struct aiocb * const *)uap->acb_list, acb_list, nent, sigp,
-		    &aiocb_ops_osigevent);
-	free(acb_list, M_LIO);
-	return (error);
-}
-#endif
 
 /* syscall - list directed I/O (REALTIME) */
 int
@@ -3094,22 +2973,6 @@ struct __aiocb_private32 {
 	uint32_t spare;
 };
 
-#ifdef COMPAT_FREEBSD6
-typedef struct oaiocb32 {
-	int	aio_fildes;		/* File descriptor */
-#ifdef __amd64__
-	uint64_t aio_offset __packed;	/* File offset for I/O */
-#else
-	uint64_t aio_offset;		/* File offset for I/O */
-#endif
-	uint32_t aio_buf;		/* I/O buffer in process space */
-	uint32_t aio_nbytes;		/* Number of bytes for I/O */
-	struct	osigevent32 aio_sigevent; /* Signal to deliver */
-	int	aio_lio_opcode;		/* LIO opcode */
-	int	aio_reqprio;		/* Request priority -- ignored */
-	struct	__aiocb_private32 _aiocb_private;
-} oaiocb32_t;
-#endif
 
 typedef struct aiocb32 {
 	int32_t	aio_fildes;		/* File descriptor */
@@ -3128,60 +2991,6 @@ typedef struct aiocb32 {
 	struct	sigevent32 aio_sigevent;	/* Signal to deliver */
 } aiocb32_t;
 
-#ifdef COMPAT_FREEBSD6
-static int
-convert_old_sigevent32(struct osigevent32 *osig, struct sigevent *nsig)
-{
-
-	/*
-	 * Only SIGEV_NONE, SIGEV_SIGNAL, and SIGEV_KEVENT are
-	 * supported by AIO with the old sigevent structure.
-	 */
-	CP(*osig, *nsig, sigev_notify);
-	switch (nsig->sigev_notify) {
-	case SIGEV_NONE:
-		break;
-	case SIGEV_SIGNAL:
-		nsig->sigev_signo = osig->__sigev_u.__sigev_signo;
-		break;
-	case SIGEV_KEVENT:
-		nsig->sigev_notify_kqueue =
-		    osig->__sigev_u.__sigev_notify_kqueue;
-		PTRIN_CP(*osig, *nsig, sigev_value.sival_ptr);
-		break;
-	default:
-		return (EINVAL);
-	}
-	return (0);
-}
-
-static int
-aiocb32_copyin_old_sigevent(struct aiocb *ujob, struct kaiocb *kjob,
-    int type __unused)
-{
-	struct oaiocb32 job32;
-	struct aiocb *kcb = &kjob->uaiocb;
-	int error;
-
-	bzero(kcb, sizeof(struct aiocb));
-	error = copyin(ujob, &job32, sizeof(job32));
-	if (error)
-		return (error);
-
-	/* No need to copyin aio_iov, because it did not exist in FreeBSD 6 */
-
-	CP(job32, *kcb, aio_fildes);
-	CP(job32, *kcb, aio_offset);
-	PTRIN_CP(job32, *kcb, aio_buf);
-	CP(job32, *kcb, aio_nbytes);
-	CP(job32, *kcb, aio_lio_opcode);
-	CP(job32, *kcb, aio_reqprio);
-	CP(job32, *kcb, _aiocb_private.status);
-	CP(job32, *kcb, _aiocb_private.error);
-	return (convert_old_sigevent32(&job32.aio_sigevent,
-	    &kcb->aio_sigevent));
-}
-#endif
 
 static int
 aiocb32_copyin(struct aiocb *ujob, struct kaiocb *kjob, int type)
@@ -3271,16 +3080,6 @@ static struct aiocb_ops aiocb32_ops = {
 	.store_aiocb = aiocb32_store_aiocb,
 };
 
-#ifdef COMPAT_FREEBSD6
-static struct aiocb_ops aiocb32_ops_osigevent = {
-	.aio_copyin = aiocb32_copyin_old_sigevent,
-	.fetch_status = aiocb32_fetch_status,
-	.fetch_error = aiocb32_fetch_error,
-	.store_status = aiocb32_store_status,
-	.store_error = aiocb32_store_error,
-	.store_aiocb = aiocb32_store_aiocb,
-};
-#endif
 
 int
 freebsd32_aio_return(struct thread *td, struct freebsd32_aio_return_args *uap)
@@ -3332,16 +3131,6 @@ freebsd32_aio_error(struct thread *td, struct freebsd32_aio_error_args *uap)
 	return (kern_aio_error(td, (struct aiocb *)uap->aiocbp, &aiocb32_ops));
 }
 
-#ifdef COMPAT_FREEBSD6
-int
-freebsd6_freebsd32_aio_read(struct thread *td,
-    struct freebsd6_freebsd32_aio_read_args *uap)
-{
-
-	return (aio_aqueue(td, (struct aiocb *)uap->aiocbp, NULL, LIO_READ,
-	    &aiocb32_ops_osigevent));
-}
-#endif
 
 int
 freebsd32_aio_read(struct thread *td, struct freebsd32_aio_read_args *uap)
@@ -3359,16 +3148,6 @@ freebsd32_aio_readv(struct thread *td, struct freebsd32_aio_readv_args *uap)
 	    &aiocb32_ops));
 }
 
-#ifdef COMPAT_FREEBSD6
-int
-freebsd6_freebsd32_aio_write(struct thread *td,
-    struct freebsd6_freebsd32_aio_write_args *uap)
-{
-
-	return (aio_aqueue(td, (struct aiocb *)uap->aiocbp, NULL, LIO_WRITE,
-	    &aiocb32_ops_osigevent));
-}
-#endif
 
 int
 freebsd32_aio_write(struct thread *td, struct freebsd32_aio_write_args *uap)
@@ -3425,53 +3204,6 @@ freebsd32_aio_fsync(struct thread *td, struct freebsd32_aio_fsync_args *uap)
 	    &aiocb32_ops));
 }
 
-#ifdef COMPAT_FREEBSD6
-int
-freebsd6_freebsd32_lio_listio(struct thread *td,
-    struct freebsd6_freebsd32_lio_listio_args *uap)
-{
-	struct aiocb **acb_list;
-	struct sigevent *sigp, sig;
-	struct osigevent32 osig;
-	uint32_t *acb_list32;
-	int error, i, nent;
-
-	if ((uap->mode != LIO_NOWAIT) && (uap->mode != LIO_WAIT))
-		return (EINVAL);
-
-	nent = uap->nent;
-	if (nent < 0 || nent > max_aio_queue_per_proc)
-		return (EINVAL);
-
-	if (uap->sig && (uap->mode == LIO_NOWAIT)) {
-		error = copyin(uap->sig, &osig, sizeof(osig));
-		if (error)
-			return (error);
-		error = convert_old_sigevent32(&osig, &sig);
-		if (error)
-			return (error);
-		sigp = &sig;
-	} else
-		sigp = NULL;
-
-	acb_list32 = malloc(sizeof(uint32_t) * nent, M_LIO, M_WAITOK);
-	error = copyin(uap->acb_list, acb_list32, nent * sizeof(uint32_t));
-	if (error) {
-		free(acb_list32, M_LIO);
-		return (error);
-	}
-	acb_list = malloc(sizeof(struct aiocb *) * nent, M_LIO, M_WAITOK);
-	for (i = 0; i < nent; i++)
-		acb_list[i] = PTRIN(acb_list32[i]);
-	free(acb_list32, M_LIO);
-
-	error = kern_lio_listio(td, uap->mode,
-	    (struct aiocb * const *)uap->acb_list, acb_list, nent, sigp,
-	    &aiocb32_ops_osigevent);
-	free(acb_list, M_LIO);
-	return (error);
-}
-#endif
 
 int
 freebsd32_lio_listio(struct thread *td, struct freebsd32_lio_listio_args *uap)

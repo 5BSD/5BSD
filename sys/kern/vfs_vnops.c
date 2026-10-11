@@ -3485,19 +3485,6 @@ vn_mmap(struct file *fp, vm_map_t map, vm_offset_t *addr, vm_size_t size,
 	boolean_t writecounted;
 	int error;
 
-#if defined(COMPAT_FREEBSD7) || defined(COMPAT_FREEBSD6) || \
-    defined(COMPAT_FREEBSD5) || defined(COMPAT_FREEBSD4)
-	/*
-	 * POSIX shared-memory objects are defined to have
-	 * kernel persistence, and are not defined to support
-	 * read(2)/write(2) -- or even open(2).  Thus, we can
-	 * use MAP_ASYNC to trade on-disk coherence for speed.
-	 * The shm_open(3) library routine turns on the FPOSIXSHM
-	 * flag to request this behavior.
-	 */
-	if ((fp->f_flag & FPOSIXSHM) != 0)
-		flags |= MAP_NOSYNC;
-#endif
 	vp = fp->f_vnode;
 
 	/*

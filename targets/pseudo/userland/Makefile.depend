@@ -47,7 +47,6 @@ DIRDEPS+= \
 	sbin/atacontrol \
 	sbin/atm/atmconfig \
 	sbin/camcontrol \
-	sbin/ccdconfig \
 	sbin/clri \
 	sbin/comcontrol \
 	sbin/conscontrol \
@@ -692,7 +691,6 @@ DIRDEPS+= \
 	usr.sbin/tzsetup \
 	usr.sbin/uathload \
 	usr.sbin/uefisign \
-	usr.sbin/ugidfw \
 	usr.sbin/uhsoctl \
 	usr.sbin/unbound/anchor \
 	usr.sbin/unbound/checkconf \

@@ -792,8 +792,7 @@ static int
 gpiokeys_ioctl_locked(keyboard_t *kbd, u_long cmd, caddr_t arg)
 {
 	struct gpiokeys_softc *sc = kbd->kb_data;
-#if defined(COMPAT_FREEBSD6) || defined(COMPAT_FREEBSD5) || \
-    defined(COMPAT_FREEBSD4) || defined(COMPAT_43)
+#if defined(COMPAT_FREEBSD6) || defined(COMPAT_FREEBSD5) ||      defined(COMPAT_FREEBSD4) || defined(COMPAT_43)
 	int ival;
 
 #endif
@@ -802,8 +801,7 @@ gpiokeys_ioctl_locked(keyboard_t *kbd, u_long cmd, caddr_t arg)
 	case KDGKBMODE:		/* get keyboard mode */
 		*(int *)arg = sc->sc_mode;
 		break;
-#if defined(COMPAT_FREEBSD6) || defined(COMPAT_FREEBSD5) || \
-    defined(COMPAT_FREEBSD4) || defined(COMPAT_43)
+#if defined(COMPAT_FREEBSD6) || defined(COMPAT_FREEBSD5) ||      defined(COMPAT_FREEBSD4) || defined(COMPAT_43)
 	case _IO('K', 7):
 		ival = IOCPARM_IVAL(arg);
 		arg = (caddr_t)&ival;
@@ -834,8 +832,7 @@ gpiokeys_ioctl_locked(keyboard_t *kbd, u_long cmd, caddr_t arg)
 	case KDGETLED:			/* get keyboard LED */
 		*(int *)arg = KBD_LED_VAL(kbd);
 		break;
-#if defined(COMPAT_FREEBSD6) || defined(COMPAT_FREEBSD5) || \
-    defined(COMPAT_FREEBSD4) || defined(COMPAT_43)
+#if defined(COMPAT_FREEBSD6) || defined(COMPAT_FREEBSD5) ||      defined(COMPAT_FREEBSD4) || defined(COMPAT_43)
 	case _IO('K', 66):
 		ival = IOCPARM_IVAL(arg);
 		arg = (caddr_t)&ival;
@@ -847,8 +844,7 @@ gpiokeys_ioctl_locked(keyboard_t *kbd, u_long cmd, caddr_t arg)
 	case KDGKBSTATE:		/* get lock key state */
 		*(int *)arg = sc->sc_state & LOCK_MASK;
 		break;
-#if defined(COMPAT_FREEBSD6) || defined(COMPAT_FREEBSD5) || \
-    defined(COMPAT_FREEBSD4) || defined(COMPAT_43)
+#if defined(COMPAT_FREEBSD6) || defined(COMPAT_FREEBSD5) ||      defined(COMPAT_FREEBSD4) || defined(COMPAT_43)
 	case _IO('K', 20):
 		ival = IOCPARM_IVAL(arg);
 		arg = (caddr_t)&ival;
@@ -880,8 +876,7 @@ gpiokeys_ioctl_locked(keyboard_t *kbd, u_long cmd, caddr_t arg)
 		kbd->kb_delay2 = ((int *)arg)[1];
 		return (0);
 
-#if defined(COMPAT_FREEBSD6) || defined(COMPAT_FREEBSD5) || \
-    defined(COMPAT_FREEBSD4) || defined(COMPAT_43)
+#if defined(COMPAT_FREEBSD6) || defined(COMPAT_FREEBSD5) ||      defined(COMPAT_FREEBSD4) || defined(COMPAT_43)
 	case _IO('K', 67):
 		ival = IOCPARM_IVAL(arg);
 		arg = (caddr_t)&ival;

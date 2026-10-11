@@ -242,10 +242,6 @@ nodevice	snd_cmi
 
 # arm64 didn't exist for these releases, so doesn't have the required compat
 # support. Just disable them because they are meaningless.
-nooptions 	COMPAT_FREEBSD4
-nooptions 	COMPAT_FREEBSD5
-nooptions 	COMPAT_FREEBSD6
-nooptions 	COMPAT_FREEBSD7
 nooptions 	COMPAT_FREEBSD9
 nooptions 	COMPAT_FREEBSD10
 

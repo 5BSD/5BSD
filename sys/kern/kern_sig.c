@@ -914,14 +914,6 @@ kern_sigaction(struct thread *td, int sig, const struct sigaction *act,
 			else
 				SIGADDSET(ps->ps_sigcatch, sig);
 		}
-#ifdef COMPAT_FREEBSD4
-		if (ps->ps_sigact[_SIG_IDX(sig)] == SIG_IGN ||
-		    ps->ps_sigact[_SIG_IDX(sig)] == SIG_DFL ||
-		    (flags & KSA_FREEBSD4) == 0)
-			SIGDELSET(ps->ps_freebsd4, sig);
-		else
-			SIGADDSET(ps->ps_freebsd4, sig);
-#endif
 #ifdef COMPAT_43
 		if (ps->ps_sigact[_SIG_IDX(sig)] == SIG_IGN ||
 		    ps->ps_sigact[_SIG_IDX(sig)] == SIG_DFL ||
@@ -963,34 +955,6 @@ sys_sigaction(struct thread *td, struct sigaction_args *uap)
 	return (error);
 }
 
-#ifdef COMPAT_FREEBSD4
-#ifndef _SYS_SYSPROTO_H_
-struct freebsd4_sigaction_args {
-	int	sig;
-	struct	sigaction *act;
-	struct	sigaction *oact;
-};
-#endif
-int
-freebsd4_sigaction(struct thread *td, struct freebsd4_sigaction_args *uap)
-{
-	struct sigaction act, oact;
-	struct sigaction *actp, *oactp;
-	int error;
-
-	actp = (uap->act != NULL) ? &act : NULL;
-	oactp = (uap->oact != NULL) ? &oact : NULL;
-	if (actp) {
-		error = copyin(uap->act, actp, sizeof(act));
-		if (error)
-			return (error);
-	}
-	error = kern_sigaction(td, uap->sig, actp, oactp, KSA_FREEBSD4);
-	if (oactp && !error)
-		error = copyout(oactp, uap->oact, sizeof(oact));
-	return (error);
-}
-#endif	/* COMAPT_FREEBSD4 */
 
 #ifdef COMPAT_43	/* XXX - COMPAT_FBSD3 */
 #ifndef _SYS_SYSPROTO_H_

@@ -141,7 +141,6 @@ SUBDIR.${MK_BLUETOOTH}+=	bluetooth
 SUBDIR.${MK_BOOT}+=		bootloader
 SUBDIR.${MK_BSDINSTALL}+=	bsdinstall
 SUBDIR.${MK_BSNMP}+=		bsnmp
-SUBDIR.${MK_CCD}+=		ccdconfig
 SUBDIR.${MK_CUSE}+=		libcuse
 SUBDIR.${MK_CXGBETOOL}+=	cxgbe-tools
 SUBDIR.${MK_DMAGENT}+=		dma

@@ -39,9 +39,6 @@ extern	u_int	cyrix_did;
 #if defined(I586_CPU) && !defined(NO_F00F_HACK)
 extern	int	has_f00f_bug;
 #endif
-#ifdef COMPAT_FREEBSD4
-extern	int	szfreebsd4_sigcode;
-#endif
 #ifdef COMPAT_43
 extern	int	szosigcode;
 extern	int	sz_lcall_tramp;

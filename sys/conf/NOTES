@@ -158,7 +158,6 @@ options 	GEOM_CACHE		# Disk cache.
 options 	GEOM_CONCAT		# Disk concatenation.
 options 	GEOM_ELI		# Disk encryption.
 options 	GEOM_GATE		# Userland services.
-options 	GEOM_JOURNAL		# Journaling.
 options 	GEOM_LABEL		# Providers labelization.
 options 	GEOM_LINUX_LVM		# Linux LVM2 volumes
 options 	GEOM_MAP		# Map based partitioning
@@ -173,11 +172,8 @@ options 	GEOM_PART_GPT		# GPT partitioning
 options 	GEOM_PART_LDM		# Logical Disk Manager
 options 	GEOM_PART_MBR		# MBR partitioning
 options 	GEOM_RAID		# Soft RAID functionality.
-options 	GEOM_RAID3		# RAID3 functionality.
-options 	GEOM_SHSEC		# Shared secret.
 options 	GEOM_STRIPE		# Disk striping.
 options 	GEOM_UZIP		# Read-only compressed disks
-options 	GEOM_VIRSTOR		# Virtual storage.
 options 	GEOM_ZERO		# Performance testing helper.
 
 #
@@ -341,22 +337,17 @@ options 	EPOCH_TRACE
 # COMPATIBILITY OPTIONS
 
 # Old tty interface.
-options 	COMPAT_43TTY
 
 # Note that as a general rule, COMPAT_FREEBSD<n> depends on
 # COMPAT_FREEBSD<n+1>, COMPAT_FREEBSD<n+2>, etc.
 
 # Enable FreeBSD4 compatibility syscalls
-options 	COMPAT_FREEBSD4
 
 # Enable FreeBSD5 compatibility syscalls
-options 	COMPAT_FREEBSD5
 
 # Enable FreeBSD6 compatibility syscalls
-options 	COMPAT_FREEBSD6
 
 # Enable FreeBSD7 compatibility syscalls
-options 	COMPAT_FREEBSD7
 
 # Enable FreeBSD9 compatibility syscalls
 options 	COMPAT_FREEBSD9
@@ -1112,7 +1103,6 @@ options 	NFSD			#Network Filesystem Server
 options 	KGSSAPI			#Kernel GSSAPI implementation
 
 options 	NULLFS			#NULL filesystem
-options 	PROCFS			#Process filesystem (requires PSEUDOFS)
 options 	PSEUDOFS		#Pseudo-filesystem framework
 options 	PSEUDOFS_TRACE		#Debugging support for PSEUDOFS
 options 	SMBFS			#SMB/CIFS filesystem
@@ -1144,7 +1134,6 @@ options 	UFS_ACL
 options 	UFS_DIRHASH
 
 # Gjournal-based UFS journaling support.
-options 	UFS_GJOURNAL
 
 # Make space in the kernel for a root filesystem on a md device.
 # Define to the number of kilobytes to reserve for the filesystem.
@@ -1236,20 +1225,12 @@ options 	AUDIT
 
 # Support for Mandatory Access Control (MAC):
 options 	MAC
-options 	MAC_BIBA
-options 	MAC_BSDEXTENDED
 options 	MAC_DDB
 options 	MAC_DO
-options 	MAC_IFOFF
-options 	MAC_IPACL
-options 	MAC_LOMAC
-options 	MAC_MLS
 options 	MAC_NONE
 options 	MAC_NTPD
-options 	MAC_PARTITION
 options 	MAC_PORTACL
 options 	MAC_PRIORITY
-options 	MAC_SEEOTHERUIDS
 options 	MAC_STUB
 options 	MAC_TEST
 options 	MAC_VERIEXEC
@@ -1471,7 +1452,6 @@ device		pty		#BSD-style compatibility pseudo ttys
 device		nmdm		#back-to-back tty devices
 device		md		#Memory/malloc disk
 device		snp		#Snoop device - to look at pty/vty/etc..
-device		ccd		#Concatenated disk driver
 device		firmware	#firmware(9) support
 
 # Kernel side iconv library

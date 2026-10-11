@@ -369,14 +369,6 @@ sys_sigreturn(struct thread *td, struct sigreturn_args *uap)
 	return (EJUSTRETURN);
 }
 
-#ifdef COMPAT_FREEBSD4
-int
-freebsd4_sigreturn(struct thread *td, struct freebsd4_sigreturn_args *uap)
-{
-
-	return sys_sigreturn(td, (struct sigreturn_args *)uap);
-}
-#endif
 
 /*
  * Reset the hardware debug registers if they were in use.

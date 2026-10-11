@@ -170,7 +170,6 @@ DIRDEPS = \
 	lib/libthread_db \
 	lib/libucl \
 	lib/libufs \
-	lib/libugidfw \
 	lib/libulog \
 	lib/libunbound \
 	lib/libusb \

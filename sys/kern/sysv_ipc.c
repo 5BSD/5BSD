@@ -156,35 +156,6 @@ ipcperm(struct thread *td, struct ipc_perm *perm, int acc_mode)
 		return (EACCES);
 }
 
-#if defined(COMPAT_FREEBSD4) || defined(COMPAT_FREEBSD5) || \
-    defined(COMPAT_FREEBSD6) || defined(COMPAT_FREEBSD7)
-void
-ipcperm_old2new(struct ipc_perm_old *old, struct ipc_perm *new)
-{
-
-	new->cuid = old->cuid;
-	new->cgid = old->cgid;
-	new->uid = old->uid;
-	new->gid = old->gid;
-	new->mode = old->mode;
-	new->seq = old->seq;
-	new->key = old->key;
-}
-
-void
-ipcperm_new2old(struct ipc_perm *new, struct ipc_perm_old *old)
-{
-
-	/* XXX: How to handle ID's > USHORT_MAX? */
-	old->cuid = new->cuid;
-	old->cgid = new->cgid;
-	old->uid = new->uid;
-	old->gid = new->gid;
-	old->mode = new->mode;
-	old->seq = new->seq;
-	old->key = new->key;
-}
-#endif
 
 #ifdef COMPAT_FREEBSD32
 #include <sys/mount.h>
@@ -196,34 +167,6 @@ ipcperm_new2old(struct ipc_perm *new, struct ipc_perm_old *old)
 #include <compat/freebsd32/freebsd32_syscall.h>
 #include <compat/freebsd32/freebsd32_util.h>
 
-#if defined(COMPAT_FREEBSD4) || defined(COMPAT_FREEBSD5) || \
-    defined(COMPAT_FREEBSD6) || defined(COMPAT_FREEBSD7)
-void
-freebsd32_ipcperm_old_in(struct ipc_perm_old32 *ip32, struct ipc_perm *ip)
-{
-
-	CP(*ip32, *ip, cuid);
-	CP(*ip32, *ip, cgid);
-	CP(*ip32, *ip, uid);
-	CP(*ip32, *ip, gid);
-	CP(*ip32, *ip, mode);
-	CP(*ip32, *ip, seq);
-	CP(*ip32, *ip, key);
-}
-
-void
-freebsd32_ipcperm_old_out(struct ipc_perm *ip, struct ipc_perm_old32 *ip32)
-{
-
-	CP(*ip, *ip32, cuid);
-	CP(*ip, *ip32, cgid);
-	CP(*ip, *ip32, uid);
-	CP(*ip, *ip32, gid);
-	CP(*ip, *ip32, mode);
-	CP(*ip, *ip32, seq);
-	CP(*ip, *ip32, key);
-}
-#endif
 
 void
 freebsd32_ipcperm_in(struct ipc_perm32 *ip32, struct ipc_perm *ip)

@@ -349,8 +349,8 @@ native_mounts(void)
 {
 	const char *roots[] = {"/tmp/resolve-fd-plain/", "/tmp/resolve-fd-rdlnk/",
 	    "/tmp/resolve-fd-nodup/"};
-	const char *procpaths[] = {"/tmp/resolve-procfs/curproc/file",
-	    "/tmp/resolve-procfs/curproc/exe"};
+	const char *procpaths[] = {"/tmp/resolve-linprocfs/self/exe",
+	    "/tmp/resolve-linprocfs/thread-self/exe"};
 	char p[128];
 	long fd;
 	CHECK(setup() == 0);

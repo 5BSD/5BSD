@@ -6,7 +6,6 @@ SUBDIR=	geom_cache \
 	geom_eli \
 	geom_flashmap \
 	geom_gate \
-	geom_journal \
 	geom_label \
 	geom_linux_lvm \
 	geom_mirror \
@@ -15,17 +14,11 @@ SUBDIR=	geom_cache \
 	geom_nop \
 	geom_part \
 	geom_raid \
-	geom_raid3 \
-	geom_shsec \
 	geom_stripe \
 	geom_union \
 	geom_uzip \
-	geom_virstor \
 	geom_zero \
 	geom_zoned
 
-.if ${MK_CCD} != "no" || defined(ALL_MODULES)
-SUBDIR+=	geom_ccd
-.endif
 
 .include <bsd.subdir.mk>

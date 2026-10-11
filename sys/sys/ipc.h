@@ -68,9 +68,7 @@ typedef	__uid_t		uid_t;
 #define	_UID_T_DECLARED
 #endif
 
-#if defined(COMPAT_FREEBSD4) || defined(COMPAT_FREEBSD5) || \
-    defined(COMPAT_FREEBSD6) || defined(COMPAT_FREEBSD7) || \
-    defined(COMPAT_43)
+#if defined(COMPAT_FREEBSD4) || defined(COMPAT_FREEBSD5) ||      defined(COMPAT_FREEBSD6) || defined(COMPAT_FREEBSD7) ||      defined(COMPAT_43)
 struct ipc_perm_old {
 	unsigned short	cuid;	/* creator user id */
 	unsigned short	cgid;	/* creator group id */
@@ -129,11 +127,6 @@ struct proc;
 struct vmspace;
 struct vm_object;
 
-#if defined(COMPAT_FREEBSD4) || defined(COMPAT_FREEBSD5) || \
-    defined(COMPAT_FREEBSD6) || defined(COMPAT_FREEBSD7)
-void	ipcperm_old2new(struct ipc_perm_old *, struct ipc_perm *);
-void	ipcperm_new2old(struct ipc_perm *, struct ipc_perm_old *);
-#endif
 
 int	ipcperm(struct thread *, struct ipc_perm *, int);
 extern void (*shmfork_hook)(struct proc *, struct proc *);

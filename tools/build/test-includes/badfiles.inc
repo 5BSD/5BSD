@@ -55,7 +55,6 @@ BADHDRS= \
 	sys/imgact_elf.h \
 	sys/interrupt.h \
 	sys/intr.h \
-	sys/ioctl_compat.h \
 	sys/iov.h \
 	sys/iov_schema.h \
 	sys/ipmi.h \

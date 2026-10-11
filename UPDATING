@@ -27,6 +27,25 @@ NOTE TO PEOPLE WHO THINK THAT FreeBSD 16.x IS SLOW:
 	world, or to merely disable the most expensive debugging functionality
 	at runtime, run "ln -s 'abort:false,junk:false' /etc/malloc.conf".)
 
+20261011:
+	5BSD has retired native procfs, a.out execution, COMPAT_43TTY and the
+	FreeBSD 4-7 syscall compatibility options. Remove native procfs entries
+	from fstab and jail configuration; mount.procfs now reports an error.
+	Linux linprocfs/linsysfs and ELF compatibility sources remain supported.
+	The existing GENERIC restriction on native 32-bit binaries is unchanged.
+
+	GEOM CCD, journal, RAID3, shsec and virstor are retired. Migrate data
+	using the previous system before upgrading. UFS volumes marked for GEOM
+	journaling are rejected, and newfs/tunefs -J fail before changing a disk.
+	ZFS, ordinary UFS, UFS soft updates journaling and modern GEOM remain.
+
+	The optional mac_biba, mac_mls, mac_lomac, mac_bsdextended, mac_partition,
+	mac_seeotheruids, mac_ifoff and mac_ipacl policies and their dedicated
+	tools are removed. Replace any policy-dependent configuration before
+	upgrading, including ugidfw rules and obsolete module-load entries.
+	MAC, mac_capability, mac_abac, audit and veriexec remain. Existing local
+	configuration files are not automatically translated or deleted.
+
 20261008:
 	5BSD hardware telemetry is renamed from hwtlm to hwstat, including
 	its main, man, dbg, and tests packages.  There is no command or man

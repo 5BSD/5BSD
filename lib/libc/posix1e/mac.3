@@ -53,13 +53,7 @@ and convert to and from text the MAC labels on files and processes.
 .Pp
 MAC labels consist of a set of (name, value) tuples, representing security
 attributes from MAC policies.
-For example, this label contains security labels defined by two policies,
-.Xr mac_biba 4
-and
-.Xr mac_mls 4 :
-.Bd -literal -offset indent
-biba/low,mls/low
-.Ed
+Each policy defines the syntax and meaning of its label values.
 .Pp
 Further syntax and semantics of MAC labels may be found in
 .Xr maclabel 7 .

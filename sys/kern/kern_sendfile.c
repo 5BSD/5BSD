@@ -1251,19 +1251,6 @@ kern_sendfile(struct thread *td, int fd, int s, off_t offset, size_t nbytes,
 			    &hdr_uio);
 			if (error != 0)
 				goto out;
-#ifdef COMPAT_FREEBSD4
-			/*
-			 * In FreeBSD < 5.0 the nbytes to send also included
-			 * the header.  If compat is specified subtract the
-			 * header size from nbytes.
-			 */
-			if (compat) {
-				if (nbytes > hdr_uio->uio_resid)
-					nbytes -= hdr_uio->uio_resid;
-				else
-					nbytes = 0;
-			}
-#endif
 		}
 		if (hdtr.trailers != NULL) {
 			error = copyinuio_f(hdtr.trailers, hdtr.trl_cnt,
@@ -1315,13 +1302,3 @@ sys_sendfile(struct thread *td, struct sendfile_args *uap)
 	    uap->nbytes, uap->hdtr, uap->sbytes, uap->flags, false,
 	    (copyin_hdtr_t *)copyin_hdtr, (copyinuio_t *)copyinuio));
 }
-
-#ifdef COMPAT_FREEBSD4
-int
-freebsd4_sendfile(struct thread *td, struct freebsd4_sendfile_args *uap)
-{
-	return (kern_sendfile(td, uap->fd, uap->s, uap->offset,
-	    uap->nbytes, uap->hdtr, uap->sbytes, uap->flags, true,
-	    (copyin_hdtr_t *)copyin_hdtr, (copyinuio_t *)copyinuio));
-}
-#endif /* COMPAT_FREEBSD4 */

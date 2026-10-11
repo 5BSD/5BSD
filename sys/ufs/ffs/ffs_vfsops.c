@@ -61,7 +61,6 @@
 
 #include <ufs/ufs/dir.h>
 #include <ufs/ufs/extattr.h>
-#include <ufs/ufs/gjournal.h>
 #include <ufs/ufs/quota.h>
 #include <ufs/ufs/ufsmount.h>
 #include <ufs/ufs/inode.h>
@@ -987,35 +986,13 @@ ffs_mountfs(struct vnode *odevvp, struct mount *mp, struct thread *td)
 		fs->fs_pendingblocks = 0;
 		fs->fs_pendinginodes = 0;
 	}
+	mp->mnt_gjprovider = NULL;
 	if ((fs->fs_flags & FS_GJOURNAL) != 0) {
-#ifdef UFS_GJOURNAL
-		/*
-		 * Get journal provider name.
-		 */
-		len = 1024;
-		mp->mnt_gjprovider = malloc((uint64_t)len, M_UFSMNT, M_WAITOK);
-		if (g_io_getattr("GJOURNAL::provider", cp, &len,
-		    mp->mnt_gjprovider) == 0) {
-			mp->mnt_gjprovider = realloc(mp->mnt_gjprovider, len,
-			    M_UFSMNT, M_WAITOK);
-			MNT_ILOCK(mp);
-			mp->mnt_flag |= MNT_GJOURNAL;
-			MNT_IUNLOCK(mp);
-		} else {
-			if ((mp->mnt_flag & MNT_RDONLY) == 0)
-				printf("WARNING: %s: GJOURNAL flag on fs "
-				    "but no gjournal provider below\n",
-				    mp->mnt_stat.f_mntonname);
-			free(mp->mnt_gjprovider, M_UFSMNT);
-			mp->mnt_gjprovider = NULL;
-		}
-#else
-		printf("WARNING: %s: GJOURNAL flag on fs but no "
-		    "UFS_GJOURNAL support\n", mp->mnt_stat.f_mntonname);
-#endif
-	} else {
-		mp->mnt_gjprovider = NULL;
+		vfs_mount_error(mp, "GEOM-journaled UFS is no longer supported");
+		error = EOPNOTSUPP;
+		goto out;
 	}
+
 	ump = malloc(sizeof *ump, M_UFSMNT, M_WAITOK | M_ZERO);
 	ump->um_cp = cp;
 	ump->um_bo = &devvp->v_bufobj;

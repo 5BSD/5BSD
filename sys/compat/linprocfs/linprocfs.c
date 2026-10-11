@@ -130,7 +130,7 @@
 #include <compat/linux/linux_misc.h>
 #include <compat/linux/linux_util.h>
 #include <fs/pseudofs/pseudofs.h>
-#include <fs/procfs/procfs.h>
+#include <compat/linprocfs/linprocfs_helpers.h>
 
 /*
  * Various conversion macros
@@ -1704,7 +1704,7 @@ linprocfs_doprocmem(PFS_FILL_ARGS)
 	int error;
 
 	resid = uio->uio_resid;
-	error = procfs_doprocmem(PFS_FILL_ARGNAMES);
+	error = linprocfs_common_doprocmem(PFS_FILL_ARGNAMES);
 
 	if (uio->uio_rw == UIO_READ && resid != uio->uio_resid)
 		return (0);
@@ -3338,7 +3338,7 @@ linprocfs_init(PFS_INIT_ARGS)
 	    PFS_RD);
 	pfs_create_file(root, NULL, "partitions", &linprocfs_dopartitions, NULL,
 	    NULL, NULL, PFS_RD);
-	pfs_create_link(root, NULL, "self", &procfs_docurproc, NULL, NULL, NULL,
+	pfs_create_link(root, NULL, "self", &linprocfs_common_docurproc, NULL, NULL, NULL,
 	    0);
 	pfs_create_file(root, NULL, "stat", &linprocfs_dostat, NULL, NULL, NULL,
 	    PFS_RD);
@@ -3379,13 +3379,13 @@ linprocfs_init(PFS_INIT_ARGS)
 	pfs_create_link(dir, NULL, "cwd", &linprocfs_doproccwd, NULL, NULL,
 	    NULL, PFS_MAGICLINK);
 	pfs_create_file(dir, NULL, "environ", &linprocfs_doprocenviron, NULL,
-	    &procfs_candebug, NULL, PFS_RD);
-	pfs_create_link(dir, NULL, "exe", &procfs_doprocfile, NULL,
-	    &procfs_notsystem, NULL, PFS_MAGICLINK);
+	    &linprocfs_common_candebug, NULL, PFS_RD);
+	pfs_create_link(dir, NULL, "exe", &linprocfs_common_doprocfile, NULL,
+	    &linprocfs_common_notsystem, NULL, PFS_MAGICLINK);
 	pfs_create_file(dir, NULL, "maps", &linprocfs_doprocmaps, NULL, NULL,
 	    NULL, PFS_RD | PFS_AUTODRAIN);
-	pfs_create_file(dir, NULL, "mem", &linprocfs_doprocmem, procfs_attr_rw,
-	    &procfs_candebug, NULL, PFS_RDWR | PFS_RAW);
+	pfs_create_file(dir, NULL, "mem", &linprocfs_doprocmem, linprocfs_common_attr_rw,
+	    &linprocfs_common_candebug, NULL, PFS_RDWR | PFS_RAW);
 	pfs_create_file(dir, NULL, "mountinfo", &linprocfs_doprocmountinfo,
 	    NULL, NULL, NULL, PFS_RD);
 	pfs_create_file(dir, NULL, "mounts", &linprocfs_domtab, NULL, NULL,
@@ -3398,26 +3398,26 @@ linprocfs_init(PFS_INIT_ARGS)
 	    NULL, PFS_RD);
 	pfs_create_file(dir, NULL, "status", &linprocfs_doprocstatus, NULL,
 	    NULL, NULL, PFS_RD);
-	pfs_create_dir(dir, &fddir, "fd", linprocfs_fdattr, procfs_candebug,
+	pfs_create_dir(dir, &fddir, "fd", linprocfs_fdattr, linprocfs_common_candebug,
 	    NULL, 0);
 	fddir->pn_fdlist = linprocfs_fdlist;
 	pfs_create_link(fddir, &fdnode, "descriptor", linprocfs_fd_fill, NULL,
-	    procfs_candebug, NULL, PFS_FDNAME | PFS_MAGICLINK);
+	    linprocfs_common_candebug, NULL, PFS_FDNAME | PFS_MAGICLINK);
 	fdnode->pn_fill_fd = linprocfs_dofd;
 	fdnode->pn_fdlookup = linprocfs_fdlookup;
-	pfs_create_dir(dir, &fddir, "fdinfo", linprocfs_fdattr, procfs_candebug,
+	pfs_create_dir(dir, &fddir, "fdinfo", linprocfs_fdattr, linprocfs_common_candebug,
 	    NULL, 0);
 	fddir->pn_fdlist = linprocfs_fdlist;
 	pfs_create_file(fddir, &fdnode, "descriptor", linprocfs_fd_fill,
-	    linprocfs_fdattr, procfs_candebug, NULL, PFS_FDNAME | PFS_RD | PFS_AUTODRAIN);
+	    linprocfs_fdattr, linprocfs_common_candebug, NULL, PFS_FDNAME | PFS_RD | PFS_AUTODRAIN);
 	fdnode->pn_fill_fd = linprocfs_dofdinfo;
 	fdnode->pn_fdlookup = linprocfs_fdinfolookup;
 	pfs_create_file(dir, NULL, "auxv", &linprocfs_doauxv, NULL,
-	    &procfs_candebug, NULL, PFS_RD | PFS_RAWRD);
+	    &linprocfs_common_candebug, NULL, PFS_RD | PFS_RAWRD);
 	pfs_create_file(dir, NULL, "limits", &linprocfs_doproclimits, NULL,
 	    NULL, NULL, PFS_RD);
 	pfs_create_file(dir, NULL, "oom_score_adj", &linprocfs_do_oom_score_adj,
-	    procfs_attr_rw, &procfs_candebug, NULL, PFS_RDWR);
+	    linprocfs_common_attr_rw, &linprocfs_common_candebug, NULL, PFS_RDWR);
 
 	pfs_create_file(dir, NULL, "comm", linprocfs_doproccomm,
 	    linprocfs_commattr, NULL, NULL, PFS_RDWR | PFS_RAWWR);
@@ -3427,13 +3427,13 @@ linprocfs_init(PFS_INIT_ARGS)
 	/* Threads share memory views but retain their own identity. */
 	pfs_create_dir(dir, &dir, "tid", NULL, NULL, NULL, PFS_TIDNAME);
 	pfs_create_link(dir, NULL, "cwd", linprocfs_doproccwd, NULL,
-	    procfs_candebug, NULL, PFS_MAGICLINK);
+	    linprocfs_common_candebug, NULL, PFS_MAGICLINK);
 	pfs_create_link(dir, NULL, "root", linprocfs_doprocroot, NULL,
-	    procfs_candebug, NULL, PFS_MAGICLINK);
-	pfs_create_link(dir, NULL, "exe", procfs_doprocfile, NULL,
-	    procfs_candebug, NULL, PFS_MAGICLINK);
-	pfs_create_file(dir, NULL, "mem", &linprocfs_doprocmem, procfs_attr_rw,
-	    &procfs_candebug, NULL, PFS_RDWR | PFS_RAW);
+	    linprocfs_common_candebug, NULL, PFS_MAGICLINK);
+	pfs_create_link(dir, NULL, "exe", linprocfs_common_doprocfile, NULL,
+	    linprocfs_common_candebug, NULL, PFS_MAGICLINK);
+	pfs_create_file(dir, NULL, "mem", &linprocfs_doprocmem, linprocfs_common_attr_rw,
+	    &linprocfs_common_candebug, NULL, PFS_RDWR | PFS_RAW);
 	pfs_create_file(dir, NULL, "maps", &linprocfs_doprocmaps, NULL, NULL,
 	    NULL, PFS_RD | PFS_AUTODRAIN);
 	pfs_create_file(dir, &threadfile, "status", &linprocfs_doprocstatus,
@@ -3453,26 +3453,26 @@ linprocfs_init(PFS_INIT_ARGS)
 	pfs_create_file(dir, NULL, "limits", linprocfs_doproclimits, NULL, NULL,
 	    NULL, PFS_RD);
 	pfs_create_file(dir, NULL, "environ", linprocfs_doprocenviron, NULL,
-	    procfs_candebug, NULL, PFS_RD);
+	    linprocfs_common_candebug, NULL, PFS_RD);
 	pfs_create_file(dir, NULL, "auxv", linprocfs_doauxv, NULL,
-	    procfs_candebug, NULL, PFS_RD | PFS_RAWRD);
+	    linprocfs_common_candebug, NULL, PFS_RD | PFS_RAWRD);
 	pfs_create_file(dir, NULL, "mounts", linprocfs_domtab, NULL, NULL, NULL,
 	    PFS_RD);
 	pfs_create_file(dir, NULL, "mountinfo", linprocfs_doprocmountinfo, NULL,
 	    NULL, NULL, PFS_RD);
 
-	pfs_create_dir(dir, &fddir, "fd", linprocfs_fdattr, procfs_candebug,
+	pfs_create_dir(dir, &fddir, "fd", linprocfs_fdattr, linprocfs_common_candebug,
 	    NULL, 0);
 	fddir->pn_fdlist = linprocfs_fdlist;
 	pfs_create_link(fddir, &fdnode, "descriptor", linprocfs_fd_fill, NULL,
-	    procfs_candebug, NULL, PFS_FDNAME | PFS_MAGICLINK);
+	    linprocfs_common_candebug, NULL, PFS_FDNAME | PFS_MAGICLINK);
 	fdnode->pn_fill_fd = linprocfs_dofd;
 	fdnode->pn_fdlookup = linprocfs_fdlookup;
-	pfs_create_dir(dir, &fddir, "fdinfo", linprocfs_fdattr, procfs_candebug,
+	pfs_create_dir(dir, &fddir, "fdinfo", linprocfs_fdattr, linprocfs_common_candebug,
 	    NULL, 0);
 	fddir->pn_fdlist = linprocfs_fdlist;
 	pfs_create_file(fddir, &fdnode, "descriptor", linprocfs_fd_fill,
-	    linprocfs_fdattr, procfs_candebug, NULL, PFS_FDNAME | PFS_RD | PFS_AUTODRAIN);
+	    linprocfs_fdattr, linprocfs_common_candebug, NULL, PFS_FDNAME | PFS_RD | PFS_AUTODRAIN);
 	fdnode->pn_fill_fd = linprocfs_dofdinfo;
 	fdnode->pn_fdlookup = linprocfs_fdinfolookup;
 
@@ -3599,7 +3599,6 @@ MODULE_DEPEND(linprocfs, linux_common, 1, 1, 1);
 #else
 MODULE_DEPEND(linprocfs, linux, 1, 1, 1);
 #endif
-MODULE_DEPEND(linprocfs, procfs, 1, 1, 1);
 MODULE_DEPEND(linprocfs, sysvmsg, 1, 1, 1);
 MODULE_DEPEND(linprocfs, sysvsem, 1, 1, 1);
 MODULE_DEPEND(linprocfs, sysvshm, 1, 1, 1);

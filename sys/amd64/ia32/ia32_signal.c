@@ -84,9 +84,6 @@ extern const char _binary_elf_vdso32_so_1_start[];
 extern const char _binary_elf_vdso32_so_1_end[];
 extern char _binary_elf_vdso32_so_1_size;
 
-#ifdef COMPAT_FREEBSD4
-static void freebsd4_ia32_sendsig(sig_t, ksiginfo_t *, sigset_t *);
-#endif
 
 /*
  * Check that the value r is 16bit, i.e. fits into a segment register.
@@ -445,117 +442,6 @@ ia32_osendsig(sig_t catcher, ksiginfo_t *ksi, sigset_t *mask)
 }
 #endif
 
-#ifdef COMPAT_FREEBSD4
-static void
-freebsd4_ia32_sendsig(sig_t catcher, ksiginfo_t *ksi, sigset_t *mask)
-{
-	struct ia32_freebsd4_sigframe sf, *sfp;
-	struct __siginfo32 siginfo;
-	struct proc *p;
-	struct thread *td;
-	struct sigacts *psp;
-	struct trapframe *regs;
-	int oonstack;
-	int sig;
-
-	td = curthread;
-	p = td->td_proc;
-	siginfo_to_siginfo32(&ksi->ksi_info, &siginfo);
-
-	PROC_LOCK_ASSERT(p, MA_OWNED);
-	sig = siginfo.si_signo;
-	psp = p->p_sigacts;
-	mtx_assert(&psp->ps_mtx, MA_OWNED);
-	regs = td->td_frame;
-	oonstack = sigonstack(regs->tf_rsp);
-
-	/* Save user context. */
-	bzero(&sf, sizeof(sf));
-	sf.sf_uc.uc_sigmask = *mask;
-	sf.sf_uc.uc_stack.ss_sp = (uintptr_t)td->td_sigstk.ss_sp;
-	sf.sf_uc.uc_stack.ss_size = td->td_sigstk.ss_size;
-	sf.sf_uc.uc_stack.ss_flags = (td->td_pflags & TDP_ALTSTACK)
-	    ? ((oonstack) ? SS_ONSTACK : 0) : SS_DISABLE;
-	sf.sf_uc.uc_mcontext.mc_onstack = (oonstack) ? 1 : 0;
-	sf.sf_uc.uc_mcontext.mc_edi = regs->tf_rdi;
-	sf.sf_uc.uc_mcontext.mc_esi = regs->tf_rsi;
-	sf.sf_uc.uc_mcontext.mc_ebp = regs->tf_rbp;
-	sf.sf_uc.uc_mcontext.mc_isp = regs->tf_rsp; /* XXX */
-	sf.sf_uc.uc_mcontext.mc_ebx = regs->tf_rbx;
-	sf.sf_uc.uc_mcontext.mc_edx = regs->tf_rdx;
-	sf.sf_uc.uc_mcontext.mc_ecx = regs->tf_rcx;
-	sf.sf_uc.uc_mcontext.mc_eax = regs->tf_rax;
-	sf.sf_uc.uc_mcontext.mc_trapno = regs->tf_trapno;
-	sf.sf_uc.uc_mcontext.mc_err = regs->tf_err;
-	sf.sf_uc.uc_mcontext.mc_eip = regs->tf_rip;
-	sf.sf_uc.uc_mcontext.mc_cs = regs->tf_cs;
-	sf.sf_uc.uc_mcontext.mc_eflags = regs->tf_rflags;
-	sf.sf_uc.uc_mcontext.mc_esp = regs->tf_rsp;
-	sf.sf_uc.uc_mcontext.mc_ss = regs->tf_ss;
-	sf.sf_uc.uc_mcontext.mc_ds = regs->tf_ds;
-	sf.sf_uc.uc_mcontext.mc_es = regs->tf_es;
-	sf.sf_uc.uc_mcontext.mc_fs = regs->tf_fs;
-	sf.sf_uc.uc_mcontext.mc_gs = regs->tf_gs;
-	bzero(sf.sf_uc.uc_mcontext.mc_fpregs,
-	    sizeof(sf.sf_uc.uc_mcontext.mc_fpregs));
-	bzero(sf.sf_uc.uc_mcontext.__spare__,
-	    sizeof(sf.sf_uc.uc_mcontext.__spare__));
-	bzero(sf.sf_uc.__spare__, sizeof(sf.sf_uc.__spare__));
-
-	/* Allocate space for the signal handler context. */
-	if ((td->td_pflags & TDP_ALTSTACK) != 0 && !oonstack &&
-	    SIGISMEMBER(psp->ps_sigonstack, sig)) {
-		sfp = (struct ia32_freebsd4_sigframe *)((uintptr_t)td->td_sigstk.ss_sp +
-		    td->td_sigstk.ss_size - sizeof(sf));
-	} else
-		sfp = (struct ia32_freebsd4_sigframe *)regs->tf_rsp - 1;
-	PROC_UNLOCK(p);
-
-	/* Build the argument list for the signal handler. */
-	sf.sf_signum = sig;
-	sf.sf_ucontext = (register_t)&sfp->sf_uc;
-	bzero(&sf.sf_si, sizeof(sf.sf_si));
-	if (SIGISMEMBER(psp->ps_siginfo, sig)) {
-		/* Signal handler installed with SA_SIGINFO. */
-		sf.sf_siginfo = (u_int32_t)(uintptr_t)&sfp->sf_si;
-		sf.sf_ah = (u_int32_t)(uintptr_t)catcher;
-
-		/* Fill in POSIX parts */
-		sf.sf_si = siginfo;
-		sf.sf_si.si_signo = sig;
-	} else {
-		/* Old FreeBSD-style arguments. */
-		sf.sf_siginfo = siginfo.si_code;
-		sf.sf_addr = (u_int32_t)siginfo.si_addr;
-		sf.sf_ah = (u_int32_t)(uintptr_t)catcher;
-	}
-	mtx_unlock(&psp->ps_mtx);
-
-	/*
-	 * Copy the sigframe out to the user's stack.
-	 */
-	if (copyout(&sf, sfp, sizeof(*sfp)) != 0) {
-#ifdef DEBUG
-		printf("process %ld has trashed its stack\n", (long)p->p_pid);
-#endif
-		PROC_LOCK(p);
-		sigexit(td, SIGILL);
-	}
-
-	regs->tf_rsp = (uintptr_t)sfp;
-	regs->tf_rip = PROC_SIGCODE(p) +
-	    VDSO_FREEBSD4_IA32_SIGCODE_OFFSET - VDSO_IA32_SIGCODE_OFFSET;
-	regs->tf_rflags &= ~(PSL_T | PSL_D);
-	regs->tf_cs = _ucode32sel;
-	regs->tf_ss = _udatasel;
-	regs->tf_ds = _udatasel;
-	regs->tf_es = _udatasel;
-	set_pcb_flags(td->td_pcb, PCB_FULL_IRET);
-	/* leave user %fs and %gs untouched */
-	PROC_LOCK(p);
-	mtx_lock(&psp->ps_mtx);
-}
-#endif	/* COMPAT_FREEBSD4 */
 
 void
 ia32_sendsig(sig_t catcher, ksiginfo_t *ksi, sigset_t *mask)
@@ -578,12 +464,6 @@ ia32_sendsig(sig_t catcher, ksiginfo_t *ksi, sigset_t *mask)
 	PROC_LOCK_ASSERT(p, MA_OWNED);
 	sig = siginfo.si_signo;
 	psp = p->p_sigacts;
-#ifdef COMPAT_FREEBSD4
-	if (SIGISMEMBER(psp->ps_freebsd4, sig)) {
-		freebsd4_ia32_sendsig(catcher, ksi, mask);
-		return;
-	}
-#endif
 #ifdef COMPAT_43
 	if (SIGISMEMBER(psp->ps_osigset, sig)) {
 		ia32_osendsig(catcher, ksi, mask);
@@ -759,81 +639,6 @@ ofreebsd32_sigreturn(struct thread *td, struct ofreebsd32_sigreturn_args *uap)
 }
 #endif
 
-#ifdef COMPAT_FREEBSD4
-int
-freebsd4_freebsd32_sigreturn(struct thread *td,
-    struct freebsd4_freebsd32_sigreturn_args *uap)
-{
-	struct ia32_freebsd4_ucontext uc;
-	struct trapframe *regs;
-	struct ia32_freebsd4_ucontext *ucp;
-	int cs, eflags, error;
-	ksiginfo_t ksi;
-
-	error = copyin(uap->sigcntxp, &uc, sizeof(uc));
-	if (error != 0)
-		return (error);
-	ucp = &uc;
-	regs = td->td_frame;
-	eflags = ucp->uc_mcontext.mc_eflags;
-	/*
-	 * Don't allow users to change privileged or reserved flags.
-	 */
-	if (!EFL_SECURE(eflags, regs->tf_rflags)) {
-		uprintf("pid %d (%s): freebsd4_freebsd32_sigreturn eflags = 0x%x\n",
-		    td->td_proc->p_pid, td->td_name, eflags);
-		return (EINVAL);
-	}
-
-	if (!is_seg_val(ucp->uc_mcontext.mc_ss) ||
-	    !is_seg_val(ucp->uc_mcontext.mc_cs)) {
-		uprintf("pid %d (%s): sigreturn cs = %#x ss = %#x\n",
-		    td->td_proc->p_pid, td->td_name, ucp->uc_mcontext.mc_cs,
-		    ucp->uc_mcontext.mc_ss);
-		return (EINVAL);
-	}
-	/*
-	 * Don't allow users to load a valid privileged %cs.  Let the
-	 * hardware check for invalid selectors, excess privilege in
-	 * other selectors, invalid %eip's and invalid %esp's.
-	 */
-	cs = ucp->uc_mcontext.mc_cs;
-	if (!CS_SECURE(cs)) {
-		uprintf("pid %d (%s): freebsd4_sigreturn cs = 0x%x\n",
-		    td->td_proc->p_pid, td->td_name, cs);
-		ksiginfo_init_trap(&ksi);
-		ksi.ksi_signo = SIGBUS;
-		ksi.ksi_code = BUS_OBJERR;
-		ksi.ksi_trapno = T_PROTFLT;
-		ksi.ksi_addr = (void *)regs->tf_rip;
-		trapsignal(td, &ksi);
-		return (EINVAL);
-	}
-
-	regs->tf_rdi = ucp->uc_mcontext.mc_edi;
-	regs->tf_rsi = ucp->uc_mcontext.mc_esi;
-	regs->tf_rbp = ucp->uc_mcontext.mc_ebp;
-	regs->tf_rbx = ucp->uc_mcontext.mc_ebx;
-	regs->tf_rdx = ucp->uc_mcontext.mc_edx;
-	regs->tf_rcx = ucp->uc_mcontext.mc_ecx;
-	regs->tf_rax = ucp->uc_mcontext.mc_eax;
-	regs->tf_trapno = ucp->uc_mcontext.mc_trapno;
-	regs->tf_err = ucp->uc_mcontext.mc_err;
-	regs->tf_rip = ucp->uc_mcontext.mc_eip;
-	regs->tf_cs = cs;
-	regs->tf_rflags = ucp->uc_mcontext.mc_eflags;
-	regs->tf_rsp = ucp->uc_mcontext.mc_esp;
-	regs->tf_ss = ucp->uc_mcontext.mc_ss;
-	regs->tf_ds = ucp->uc_mcontext.mc_ds;
-	regs->tf_es = ucp->uc_mcontext.mc_es;
-	regs->tf_fs = ucp->uc_mcontext.mc_fs;
-	regs->tf_gs = ucp->uc_mcontext.mc_gs;
-
-	kern_sigprocmask(td, SIG_SETMASK, &ucp->uc_sigmask, NULL, 0);
-	set_pcb_flags(td->td_pcb, PCB_FULL_IRET);
-	return (EJUSTRETURN);
-}
-#endif	/* COMPAT_FREEBSD4 */
 
 int
 freebsd32_sigreturn(struct thread *td, struct freebsd32_sigreturn_args *uap)

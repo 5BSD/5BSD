@@ -473,27 +473,6 @@ sysctl_bufdomain_long(SYSCTL_HANDLER_ARGS)
 	return (error);
 }
 
-#if defined(COMPAT_FREEBSD4) || defined(COMPAT_FREEBSD5) || \
-    defined(COMPAT_FREEBSD6) || defined(COMPAT_FREEBSD7)
-static int
-sysctl_bufspace(SYSCTL_HANDLER_ARGS)
-{
-	long lvalue;
-	int ivalue;
-	int i;
-
-	lvalue = 0;
-	for (i = 0; i < buf_domains; i++)
-		lvalue += bdomain[i].bd_bufspace;
-	if (sizeof(int) == sizeof(long) || req->oldlen >= sizeof(long))
-		return (sysctl_handle_long(oidp, &lvalue, 0, req));
-	if (lvalue > INT_MAX)
-		/* On overflow, still write out a long to trigger ENOMEM. */
-		return (sysctl_handle_long(oidp, &lvalue, 0, req));
-	ivalue = lvalue;
-	return (sysctl_handle_int(oidp, &ivalue, 0, req));
-}
-#else
 static int
 sysctl_bufspace(SYSCTL_HANDLER_ARGS)
 {
@@ -505,7 +484,6 @@ sysctl_bufspace(SYSCTL_HANDLER_ARGS)
 		lvalue += bdomain[i].bd_bufspace;
 	return (sysctl_handle_long(oidp, &lvalue, 0, req));
 }
-#endif
 
 static int
 sysctl_numdirtybuffers(SYSCTL_HANDLER_ARGS)

@@ -30,10 +30,3 @@ ASSYM(IA32_UC_GSBASE, offsetof(struct ia32_ucontext, uc_mcontext.mc_gsbase));
 #ifdef COMPAT_43
 ASSYM(IA32_SIGF_SC, offsetof(struct ia32_osigframe, sf_siginfo.si_sc));
 #endif
-#ifdef COMPAT_FREEBSD4
-ASSYM(IA32_SIGF_UC4, offsetof(struct ia32_freebsd4_sigframe, sf_uc));
-ASSYM(IA32_UC4_GS, offsetof(struct ia32_freebsd4_ucontext, uc_mcontext.mc_gs));
-ASSYM(IA32_UC4_FS, offsetof(struct ia32_freebsd4_ucontext, uc_mcontext.mc_fs));
-ASSYM(IA32_UC4_ES, offsetof(struct ia32_freebsd4_ucontext, uc_mcontext.mc_es));
-ASSYM(IA32_UC4_DS, offsetof(struct ia32_freebsd4_ucontext, uc_mcontext.mc_ds));
-#endif

@@ -71,7 +71,6 @@ SUBDIR=adjkerntz \
 SUBDIR+=	ping
 .endif
 
-SUBDIR.${MK_CCD}+=	ccdconfig
 SUBDIR.${MK_HAST}+=	hastctl
 SUBDIR.${MK_HAST}+=	hastd
 SUBDIR.${MK_INET6}+=	rtsol

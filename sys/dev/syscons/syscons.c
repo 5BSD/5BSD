@@ -892,8 +892,7 @@ sctty_ioctl(struct tty *tp, u_long cmd, caddr_t data, struct thread *td)
 	sc_softc_t *sc;
 	scr_stat *scp;
 	int s;
-#if defined(COMPAT_FREEBSD6) || defined(COMPAT_FREEBSD5) || \
-    defined(COMPAT_FREEBSD4) || defined(COMPAT_43)
+#if defined(COMPAT_FREEBSD6) || defined(COMPAT_FREEBSD5) ||      defined(COMPAT_FREEBSD4) || defined(COMPAT_43)
 	int ival;
 #endif
 
@@ -1221,8 +1220,7 @@ sctty_ioctl(struct tty *tp, u_long cmd, caddr_t data, struct thread *td)
 		bcopy(&scp->smode, data, sizeof(struct vt_mode));
 		return 0;
 
-#if defined(COMPAT_FREEBSD6) || defined(COMPAT_FREEBSD5) || \
-    defined(COMPAT_FREEBSD4) || defined(COMPAT_43)
+#if defined(COMPAT_FREEBSD6) || defined(COMPAT_FREEBSD5) ||      defined(COMPAT_FREEBSD4) || defined(COMPAT_43)
 	case _IO('v', 4):
 		ival = IOCPARM_IVAL(data);
 		data = (caddr_t)&ival;
@@ -1279,8 +1277,7 @@ sctty_ioctl(struct tty *tp, u_long cmd, caddr_t data, struct thread *td)
 		}
 		return EINVAL;
 
-#if defined(COMPAT_FREEBSD6) || defined(COMPAT_FREEBSD5) || \
-    defined(COMPAT_FREEBSD4) || defined(COMPAT_43)
+#if defined(COMPAT_FREEBSD6) || defined(COMPAT_FREEBSD5) ||      defined(COMPAT_FREEBSD4) || defined(COMPAT_43)
 	case _IO('v', 5):
 		ival = IOCPARM_IVAL(data);
 		data = (caddr_t)&ival;
@@ -1296,8 +1293,7 @@ sctty_ioctl(struct tty *tp, u_long cmd, caddr_t data, struct thread *td)
 		error = sc_switch_scr(sc, i);
 		return (error);
 
-#if defined(COMPAT_FREEBSD6) || defined(COMPAT_FREEBSD5) || \
-    defined(COMPAT_FREEBSD4) || defined(COMPAT_43)
+#if defined(COMPAT_FREEBSD6) || defined(COMPAT_FREEBSD5) ||      defined(COMPAT_FREEBSD4) || defined(COMPAT_43)
 	case _IO('v', 6):
 		ival = IOCPARM_IVAL(data);
 		data = (caddr_t)&ival;
@@ -1350,8 +1346,7 @@ sctty_ioctl(struct tty *tp, u_long cmd, caddr_t data, struct thread *td)
 #endif
 		return 0;
 
-#if defined(COMPAT_FREEBSD6) || defined(COMPAT_FREEBSD5) || \
-    defined(COMPAT_FREEBSD4) || defined(COMPAT_43)
+#if defined(COMPAT_FREEBSD6) || defined(COMPAT_FREEBSD5) ||      defined(COMPAT_FREEBSD4) || defined(COMPAT_43)
 	case _IO('K', 20):
 		ival = IOCPARM_IVAL(data);
 		data = (caddr_t)&ival;
@@ -1379,8 +1374,7 @@ sctty_ioctl(struct tty *tp, u_long cmd, caddr_t data, struct thread *td)
 			error = ENODEV;
 		return error;
 
-#if defined(COMPAT_FREEBSD6) || defined(COMPAT_FREEBSD5) || \
-    defined(COMPAT_FREEBSD4) || defined(COMPAT_43)
+#if defined(COMPAT_FREEBSD6) || defined(COMPAT_FREEBSD5) ||      defined(COMPAT_FREEBSD4) || defined(COMPAT_43)
 	case _IO('K', 67):
 		ival = IOCPARM_IVAL(data);
 		data = (caddr_t)&ival;
@@ -1394,8 +1388,7 @@ sctty_ioctl(struct tty *tp, u_long cmd, caddr_t data, struct thread *td)
 			error = ENODEV;
 		return error;
 
-#if defined(COMPAT_FREEBSD6) || defined(COMPAT_FREEBSD5) || \
-    defined(COMPAT_FREEBSD4) || defined(COMPAT_43)
+#if defined(COMPAT_FREEBSD6) || defined(COMPAT_FREEBSD5) ||      defined(COMPAT_FREEBSD4) || defined(COMPAT_43)
 	case _IO('K', 7):
 		ival = IOCPARM_IVAL(data);
 		data = (caddr_t)&ival;
@@ -1425,8 +1418,7 @@ sctty_ioctl(struct tty *tp, u_long cmd, caddr_t data, struct thread *td)
 			error = ENODEV;
 		return error;
 
-#if defined(COMPAT_FREEBSD6) || defined(COMPAT_FREEBSD5) || \
-    defined(COMPAT_FREEBSD4) || defined(COMPAT_43)
+#if defined(COMPAT_FREEBSD6) || defined(COMPAT_FREEBSD5) ||      defined(COMPAT_FREEBSD4) || defined(COMPAT_43)
 	case _IO('K', 8):
 		ival = IOCPARM_IVAL(data);
 		data = (caddr_t)&ival;
@@ -1440,8 +1432,7 @@ sctty_ioctl(struct tty *tp, u_long cmd, caddr_t data, struct thread *td)
 			sc_bell(scp, scp->bell_pitch, scp->bell_duration);
 		return 0;
 
-#if defined(COMPAT_FREEBSD6) || defined(COMPAT_FREEBSD5) || \
-    defined(COMPAT_FREEBSD4) || defined(COMPAT_43)
+#if defined(COMPAT_FREEBSD6) || defined(COMPAT_FREEBSD5) ||      defined(COMPAT_FREEBSD4) || defined(COMPAT_43)
 	case _IO('K', 63):
 		ival = IOCPARM_IVAL(data);
 		data = (caddr_t)&ival;
@@ -1464,8 +1455,7 @@ sctty_ioctl(struct tty *tp, u_long cmd, caddr_t data, struct thread *td)
 		}
 		return 0;
 
-#if defined(COMPAT_FREEBSD6) || defined(COMPAT_FREEBSD5) || \
-    defined(COMPAT_FREEBSD4) || defined(COMPAT_43)
+#if defined(COMPAT_FREEBSD6) || defined(COMPAT_FREEBSD5) ||      defined(COMPAT_FREEBSD4) || defined(COMPAT_43)
 	case _IO('K', 66):
 		ival = IOCPARM_IVAL(data);
 		data = (caddr_t)&ival;
@@ -1493,8 +1483,7 @@ sctty_ioctl(struct tty *tp, u_long cmd, caddr_t data, struct thread *td)
 			error = ENODEV;
 		return error;
 
-#if defined(COMPAT_FREEBSD6) || defined(COMPAT_FREEBSD5) || \
-    defined(COMPAT_FREEBSD4) || defined(COMPAT_43)
+#if defined(COMPAT_FREEBSD6) || defined(COMPAT_FREEBSD5) ||      defined(COMPAT_FREEBSD4) || defined(COMPAT_43)
 	case _IO('c', 110):
 		ival = IOCPARM_IVAL(data);
 		data = (caddr_t)&ival;

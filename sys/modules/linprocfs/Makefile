@@ -3,7 +3,7 @@
 KMOD=	linprocfs
 SRCS=	vnode_if.h \
 	device_if.h bus_if.h opt_inet.h \
-	linprocfs.c
+	linprocfs.c linprocfs_helpers.c
 
 .if !defined(KERNBUILDDIR)
 .warning Building Linuxulator outside of a kernel does not make sense

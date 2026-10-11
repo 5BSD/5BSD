@@ -29,11 +29,7 @@ The
 policy implements flexible, label-based Mandatory Access Control (MAC)
 for
 .Fx .
-Unlike fixed policies like
-.Xr mac_biba 4
-or
-.Xr mac_mls 4 ,
-.Nm
+The policy
 allows administrators to define arbitrary label attributes and custom
 access control rules.
 .Pp
@@ -264,8 +260,6 @@ find /bin /sbin /usr/bin /usr/sbin -type f -exec \\
 .Ed
 .Sh SEE ALSO
 .Xr mac 4 ,
-.Xr mac_biba 4 ,
-.Xr mac_mls 4 ,
 .Xr mac_abac.conf 5 ,
 .Xr mac_abac_ctl 8
 .Sh HISTORY

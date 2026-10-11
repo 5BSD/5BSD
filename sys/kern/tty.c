@@ -41,9 +41,6 @@
 #include <sys/file.h>
 #include <sys/filedesc.h>
 #include <sys/filio.h>
-#ifdef COMPAT_43TTY
-#include <sys/ioctl_compat.h>
-#endif /* COMPAT_43TTY */
 #include <sys/jail.h>
 #include <sys/kernel.h>
 #include <sys/limits.h>
@@ -862,16 +859,6 @@ ttydev_ioctl(struct cdev *dev, u_long cmd, caddr_t data, int fflag,
 	case TIOCSDRAINWAIT:
 	case TIOCSETD:
 #endif
-#ifdef COMPAT_43TTY
-	case  TIOCLBIC:
-	case  TIOCLBIS:
-	case  TIOCLSET:
-	case  TIOCSETC:
-	case OTIOCSETD:
-	case  TIOCSETN:
-	case  TIOCSETP:
-	case  TIOCSLTC:
-#endif /* COMPAT_43TTY */
 		/*
 		 * If the ioctl() causes the TTY to be modified, let it
 		 * wait in the background.
@@ -2200,11 +2187,7 @@ tty_generic_ioctl(struct tty *tp, u_long cmd, void *data, int fflag,
 		return (0);
 	}
 
-#ifdef COMPAT_43TTY
-	return tty_ioctl_compat(tp, cmd, data, fflag, td);
-#else /* !COMPAT_43TTY */
 	return (ENOIOCTL);
-#endif /* COMPAT_43TTY */
 }
 
 int

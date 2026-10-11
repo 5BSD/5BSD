@@ -56,10 +56,10 @@ LSUBDIRS=	dev/acpica dev/agp dev/ciss dev/filemon dev/firewire \
 	dev/ofw dev/pbio dev/pci ${_dev_powermac_nvram} dev/ppbus dev/pwm \
 	dev/smbus dev/speaker dev/tcp_log dev/veriexec dev/vkbd dev/wg \
 	fs/devfs fs/fdescfs fs/msdosfs fs/nfs fs/nullfs \
-	fs/procfs fs/smbfs fs/udf fs/unionfs \
-	geom/cache geom/concat geom/eli geom/gate geom/journal geom/label \
+	fs/smbfs fs/udf fs/unionfs \
+	geom/cache geom/concat geom/eli geom/gate geom/label \
 	geom/mirror geom/mountver geom/multipath geom/nop \
-	geom/raid geom/raid3 geom/shsec geom/stripe geom/union geom/virstor \
+	geom/raid geom/stripe geom/union \
 	geom/zoned \
 	net/altq \
 	net/route \
@@ -68,10 +68,7 @@ LSUBDIRS=	dev/acpica dev/agp dev/ciss dev/filemon dev/firewire \
 	netinet/netdump \
 	netinet/tcp_stacks \
 	netlink/route \
-	security/mac_biba security/mac_bsdextended \
 	security/mac_grantbylabel \
-	security/mac_lomac \
-	security/mac_mls security/mac_partition \
 	security/mac_veriexec \
 	sys/disk \
 	ufs/ffs ufs/ufs

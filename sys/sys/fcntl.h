@@ -197,18 +197,6 @@ typedef	__pid_t		pid_t;
 /* bits settable by fcntl(F_SETFL, ...) */
 #define	FCNTLFLAGS	(FAPPEND|FASYNC|FFSYNC|FDSYNC|FNONBLOCK|FRDAHEAD|O_DIRECT)
 
-#if defined(COMPAT_FREEBSD7) || defined(COMPAT_FREEBSD6) || \
-    defined(COMPAT_FREEBSD5) || defined(COMPAT_FREEBSD4)
-/*
- * Set by shm_open(3) in older libc's to get automatic MAP_ASYNC
- * behavior for POSIX shared memory objects (which are otherwise
- * implemented as plain files).
- */
-#define	FPOSIXSHM	O_NOFOLLOW
-#undef FCNTLFLAGS
-#define	FCNTLFLAGS	(FAPPEND|FASYNC|FFSYNC|FNONBLOCK|FPOSIXSHM|FRDAHEAD| \
-			 O_DIRECT)
-#endif
 #endif
 
 /*

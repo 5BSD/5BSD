@@ -125,7 +125,6 @@ MAN=	aac.4 \
 	cc_htcp.4 \
 	cc_newreno.4 \
 	cc_vegas.4 \
-	${_ccd.4} \
 	ccr.4 \
 	cd9660.4 \
 	cd.4 \
@@ -336,20 +335,12 @@ MAN=	aac.4 \
 	lpt.4 \
 	ltc430x.4 \
 	mac.4 \
-	mac_biba.4 \
-	mac_bsdextended.4 \
 	mac_ddb.4 \
 	mac_do.4 \
-	mac_ifoff.4 \
-	mac_ipacl.4 \
-	mac_lomac.4 \
-	mac_mls.4 \
 	mac_none.4 \
 	mac_ntpd.4 \
-	mac_partition.4 \
 	mac_portacl.4 \
 	mac_priority.4 \
-	mac_seeotheruids.4 \
 	mac_stub.4 \
 	mac_test.4 \
 	malo.4 \
@@ -507,7 +498,6 @@ MAN=	aac.4 \
 	ppc.4 \
 	ppi.4 \
 	procdesc.4 \
-	procfs.4 \
 	proto.4 \
 	ps4dshock.4 \
 	ps5dsense.4 \
@@ -1059,9 +1049,6 @@ MAN+=		autofs.4
 MAN+=		ng_bluetooth.4
 .endif
 
-.if ${MK_CCD} != "no"
-_ccd.4=		ccd.4
-.endif
 
 .if ${MK_CDDL} != "no"
 _dtrace_provs=	dtrace_audit.4 \

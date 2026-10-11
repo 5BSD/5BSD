@@ -494,20 +494,6 @@ done:
 	return (error);
 }
 
-#if defined(COMPAT_FREEBSD6)
-int
-freebsd6_mmap(struct thread *td, struct freebsd6_mmap_args *uap)
-{
-	return (kern_mmap(td, &(struct mmap_req){
-		.mr_hint = (uintptr_t)uap->addr,
-		.mr_len = uap->len,
-		.mr_prot = uap->prot,
-		.mr_flags = uap->flags,
-		.mr_fd = uap->fd,
-		.mr_pos = uap->pos,
-	    }));
-}
-#endif
 
 #ifdef COMPAT_43
 #ifndef _SYS_SYSPROTO_H_

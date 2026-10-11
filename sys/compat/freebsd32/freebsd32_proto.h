@@ -930,151 +930,6 @@ int	ofreebsd32_getdirentries(struct thread *, struct ofreebsd32_getdirentries_ar
 #endif /* COMPAT_43 */
 
 
-#ifdef COMPAT_FREEBSD4
-
-struct freebsd4_freebsd32_getfsstat_args {
-	char buf_l_[PADL_(struct ostatfs32 *)]; struct ostatfs32 * buf; char buf_r_[PADR_(struct ostatfs32 *)];
-	char bufsize_l_[PADL_(int32_t)]; int32_t bufsize; char bufsize_r_[PADR_(int32_t)];
-	char mode_l_[PADL_(int)]; int mode; char mode_r_[PADR_(int)];
-};
-struct freebsd4_freebsd32_statfs_args {
-	char path_l_[PADL_(const char *)]; const char * path; char path_r_[PADR_(const char *)];
-	char buf_l_[PADL_(struct ostatfs32 *)]; struct ostatfs32 * buf; char buf_r_[PADR_(struct ostatfs32 *)];
-};
-struct freebsd4_freebsd32_fstatfs_args {
-	char fd_l_[PADL_(int)]; int fd; char fd_r_[PADR_(int)];
-	char buf_l_[PADL_(struct ostatfs32 *)]; struct ostatfs32 * buf; char buf_r_[PADR_(struct ostatfs32 *)];
-};
-struct freebsd4_freebsd32_fhstatfs_args {
-	char u_fhp_l_[PADL_(const struct fhandle *)]; const struct fhandle * u_fhp; char u_fhp_r_[PADR_(const struct fhandle *)];
-	char buf_l_[PADL_(struct ostatfs32 *)]; struct ostatfs32 * buf; char buf_r_[PADR_(struct ostatfs32 *)];
-};
-struct freebsd4_freebsd32_sendfile_args {
-	char fd_l_[PADL_(int)]; int fd; char fd_r_[PADR_(int)];
-	char s_l_[PADL_(int)]; int s; char s_r_[PADR_(int)];
-	char offset1_l_[PADL_(uint32_t)]; uint32_t offset1; char offset1_r_[PADR_(uint32_t)];
-	char offset2_l_[PADL_(uint32_t)]; uint32_t offset2; char offset2_r_[PADR_(uint32_t)];
-	char nbytes_l_[PADL_(size_t)]; size_t nbytes; char nbytes_r_[PADR_(size_t)];
-	char hdtr_l_[PADL_(struct sf_hdtr32 *)]; struct sf_hdtr32 * hdtr; char hdtr_r_[PADR_(struct sf_hdtr32 *)];
-	char sbytes_l_[PADL_(off_t *)]; off_t * sbytes; char sbytes_r_[PADR_(off_t *)];
-	char flags_l_[PADL_(int)]; int flags; char flags_r_[PADR_(int)];
-};
-struct freebsd4_freebsd32_sigaction_args {
-	char sig_l_[PADL_(int)]; int sig; char sig_r_[PADR_(int)];
-	char act_l_[PADL_(const struct sigaction32 *)]; const struct sigaction32 * act; char act_r_[PADR_(const struct sigaction32 *)];
-	char oact_l_[PADL_(struct sigaction32 *)]; struct sigaction32 * oact; char oact_r_[PADR_(struct sigaction32 *)];
-};
-struct freebsd4_freebsd32_sigreturn_args {
-	char sigcntxp_l_[PADL_(const struct freebsd4_ucontext32 *)]; const struct freebsd4_ucontext32 * sigcntxp; char sigcntxp_r_[PADR_(const struct freebsd4_ucontext32 *)];
-};
-int	freebsd4_freebsd32_getfsstat(struct thread *, struct freebsd4_freebsd32_getfsstat_args *);
-int	freebsd4_freebsd32_statfs(struct thread *, struct freebsd4_freebsd32_statfs_args *);
-int	freebsd4_freebsd32_fstatfs(struct thread *, struct freebsd4_freebsd32_fstatfs_args *);
-int	freebsd4_freebsd32_fhstatfs(struct thread *, struct freebsd4_freebsd32_fhstatfs_args *);
-int	freebsd4_freebsd32_sendfile(struct thread *, struct freebsd4_freebsd32_sendfile_args *);
-int	freebsd4_freebsd32_sigaction(struct thread *, struct freebsd4_freebsd32_sigaction_args *);
-int	freebsd4_freebsd32_sigreturn(struct thread *, struct freebsd4_freebsd32_sigreturn_args *);
-
-#endif /* COMPAT_FREEBSD4 */
-
-
-#ifdef COMPAT_FREEBSD6
-
-struct freebsd6_freebsd32_pread_args {
-	char fd_l_[PADL_(int)]; int fd; char fd_r_[PADR_(int)];
-	char buf_l_[PADL_(void *)]; void * buf; char buf_r_[PADR_(void *)];
-	char nbyte_l_[PADL_(size_t)]; size_t nbyte; char nbyte_r_[PADR_(size_t)];
-	char pad_l_[PADL_(int)]; int pad; char pad_r_[PADR_(int)];
-	char offset1_l_[PADL_(uint32_t)]; uint32_t offset1; char offset1_r_[PADR_(uint32_t)];
-	char offset2_l_[PADL_(uint32_t)]; uint32_t offset2; char offset2_r_[PADR_(uint32_t)];
-};
-struct freebsd6_freebsd32_pwrite_args {
-	char fd_l_[PADL_(int)]; int fd; char fd_r_[PADR_(int)];
-	char buf_l_[PADL_(const void *)]; const void * buf; char buf_r_[PADR_(const void *)];
-	char nbyte_l_[PADL_(size_t)]; size_t nbyte; char nbyte_r_[PADR_(size_t)];
-	char pad_l_[PADL_(int)]; int pad; char pad_r_[PADR_(int)];
-	char offset1_l_[PADL_(uint32_t)]; uint32_t offset1; char offset1_r_[PADR_(uint32_t)];
-	char offset2_l_[PADL_(uint32_t)]; uint32_t offset2; char offset2_r_[PADR_(uint32_t)];
-};
-struct freebsd6_freebsd32_mmap_args {
-	char addr_l_[PADL_(void *)]; void * addr; char addr_r_[PADR_(void *)];
-	char len_l_[PADL_(size_t)]; size_t len; char len_r_[PADR_(size_t)];
-	char prot_l_[PADL_(int)]; int prot; char prot_r_[PADR_(int)];
-	char flags_l_[PADL_(int)]; int flags; char flags_r_[PADR_(int)];
-	char fd_l_[PADL_(int)]; int fd; char fd_r_[PADR_(int)];
-	char pad_l_[PADL_(int)]; int pad; char pad_r_[PADR_(int)];
-	char pos1_l_[PADL_(uint32_t)]; uint32_t pos1; char pos1_r_[PADR_(uint32_t)];
-	char pos2_l_[PADL_(uint32_t)]; uint32_t pos2; char pos2_r_[PADR_(uint32_t)];
-};
-struct freebsd6_freebsd32_lseek_args {
-	char fd_l_[PADL_(int)]; int fd; char fd_r_[PADR_(int)];
-	char pad_l_[PADL_(int)]; int pad; char pad_r_[PADR_(int)];
-	char offset1_l_[PADL_(uint32_t)]; uint32_t offset1; char offset1_r_[PADR_(uint32_t)];
-	char offset2_l_[PADL_(uint32_t)]; uint32_t offset2; char offset2_r_[PADR_(uint32_t)];
-	char whence_l_[PADL_(int)]; int whence; char whence_r_[PADR_(int)];
-};
-struct freebsd6_freebsd32_truncate_args {
-	char path_l_[PADL_(const char *)]; const char * path; char path_r_[PADR_(const char *)];
-	char pad_l_[PADL_(int)]; int pad; char pad_r_[PADR_(int)];
-	char length1_l_[PADL_(uint32_t)]; uint32_t length1; char length1_r_[PADR_(uint32_t)];
-	char length2_l_[PADL_(uint32_t)]; uint32_t length2; char length2_r_[PADR_(uint32_t)];
-};
-struct freebsd6_freebsd32_ftruncate_args {
-	char fd_l_[PADL_(int)]; int fd; char fd_r_[PADR_(int)];
-	char pad_l_[PADL_(int)]; int pad; char pad_r_[PADR_(int)];
-	char length1_l_[PADL_(uint32_t)]; uint32_t length1; char length1_r_[PADR_(uint32_t)];
-	char length2_l_[PADL_(uint32_t)]; uint32_t length2; char length2_r_[PADR_(uint32_t)];
-};
-struct freebsd6_freebsd32_aio_read_args {
-	char aiocbp_l_[PADL_(struct oaiocb32 *)]; struct oaiocb32 * aiocbp; char aiocbp_r_[PADR_(struct oaiocb32 *)];
-};
-struct freebsd6_freebsd32_aio_write_args {
-	char aiocbp_l_[PADL_(struct oaiocb32 *)]; struct oaiocb32 * aiocbp; char aiocbp_r_[PADR_(struct oaiocb32 *)];
-};
-struct freebsd6_freebsd32_lio_listio_args {
-	char mode_l_[PADL_(int)]; int mode; char mode_r_[PADR_(int)];
-	char acb_list_l_[PADL_(uint32_t *)]; uint32_t * acb_list; char acb_list_r_[PADR_(uint32_t *)];
-	char nent_l_[PADL_(int)]; int nent; char nent_r_[PADR_(int)];
-	char sig_l_[PADL_(struct osigevent32 *)]; struct osigevent32 * sig; char sig_r_[PADR_(struct osigevent32 *)];
-};
-int	freebsd6_freebsd32_pread(struct thread *, struct freebsd6_freebsd32_pread_args *);
-int	freebsd6_freebsd32_pwrite(struct thread *, struct freebsd6_freebsd32_pwrite_args *);
-int	freebsd6_freebsd32_mmap(struct thread *, struct freebsd6_freebsd32_mmap_args *);
-int	freebsd6_freebsd32_lseek(struct thread *, struct freebsd6_freebsd32_lseek_args *);
-int	freebsd6_freebsd32_truncate(struct thread *, struct freebsd6_freebsd32_truncate_args *);
-int	freebsd6_freebsd32_ftruncate(struct thread *, struct freebsd6_freebsd32_ftruncate_args *);
-int	freebsd6_freebsd32_aio_read(struct thread *, struct freebsd6_freebsd32_aio_read_args *);
-int	freebsd6_freebsd32_aio_write(struct thread *, struct freebsd6_freebsd32_aio_write_args *);
-int	freebsd6_freebsd32_lio_listio(struct thread *, struct freebsd6_freebsd32_lio_listio_args *);
-
-#endif /* COMPAT_FREEBSD6 */
-
-
-#ifdef COMPAT_FREEBSD7
-
-struct freebsd7_freebsd32___semctl_args {
-	char semid_l_[PADL_(int)]; int semid; char semid_r_[PADR_(int)];
-	char semnum_l_[PADL_(int)]; int semnum; char semnum_r_[PADR_(int)];
-	char cmd_l_[PADL_(int)]; int cmd; char cmd_r_[PADR_(int)];
-	char arg_l_[PADL_(union semun_old32 *)]; union semun_old32 * arg; char arg_r_[PADR_(union semun_old32 *)];
-};
-struct freebsd7_freebsd32_msgctl_args {
-	char msqid_l_[PADL_(int)]; int msqid; char msqid_r_[PADR_(int)];
-	char cmd_l_[PADL_(int)]; int cmd; char cmd_r_[PADR_(int)];
-	char buf_l_[PADL_(struct msqid_ds_old32 *)]; struct msqid_ds_old32 * buf; char buf_r_[PADR_(struct msqid_ds_old32 *)];
-};
-struct freebsd7_freebsd32_shmctl_args {
-	char shmid_l_[PADL_(int)]; int shmid; char shmid_r_[PADR_(int)];
-	char cmd_l_[PADL_(int)]; int cmd; char cmd_r_[PADR_(int)];
-	char buf_l_[PADL_(struct shmid_ds_old32 *)]; struct shmid_ds_old32 * buf; char buf_r_[PADR_(struct shmid_ds_old32 *)];
-};
-int	freebsd7_freebsd32___semctl(struct thread *, struct freebsd7_freebsd32___semctl_args *);
-int	freebsd7_freebsd32_msgctl(struct thread *, struct freebsd7_freebsd32_msgctl_args *);
-int	freebsd7_freebsd32_shmctl(struct thread *, struct freebsd7_freebsd32_shmctl_args *);
-
-#endif /* COMPAT_FREEBSD7 */
-
-
 #ifdef COMPAT_FREEBSD10
 
 struct freebsd10_freebsd32__umtx_lock_args {
@@ -1177,7 +1032,6 @@ int	freebsd11_freebsd32_fstatat(struct thread *, struct freebsd11_freebsd32_fsta
 #endif /* COMPAT_FREEBSD14 */
 
 #define	FREEBSD32_SYS_AUE_freebsd32_wait4	AUE_WAIT4
-#define	FREEBSD32_SYS_AUE_freebsd4_freebsd32_getfsstat	AUE_GETFSSTAT
 #define	FREEBSD32_SYS_AUE_ofreebsd32_lseek	AUE_LSEEK
 #define	FREEBSD32_SYS_AUE_freebsd32_ptrace	AUE_PTRACE
 #define	FREEBSD32_SYS_AUE_freebsd32_recvmsg	AUE_RECVMSG
@@ -1211,30 +1065,19 @@ int	freebsd11_freebsd32_fstatat(struct thread *, struct freebsd11_freebsd32_fsta
 #define	FREEBSD32_SYS_AUE_freebsd32_adjtime	AUE_ADJTIME
 #define	FREEBSD32_SYS_AUE_ofreebsd32_sethostid	AUE_SYSCTL
 #define	FREEBSD32_SYS_AUE_ofreebsd32_getdirentries	AUE_GETDIRENTRIES
-#define	FREEBSD32_SYS_AUE_freebsd4_freebsd32_statfs	AUE_STATFS
-#define	FREEBSD32_SYS_AUE_freebsd4_freebsd32_fstatfs	AUE_FSTATFS
 #define	FREEBSD32_SYS_AUE_freebsd32_sysarch	AUE_SYSARCH
 #define	FREEBSD32_SYS_AUE_freebsd32_semsys	AUE_SEMSYS
 #define	FREEBSD32_SYS_AUE_freebsd32_msgsys	AUE_MSGSYS
 #define	FREEBSD32_SYS_AUE_freebsd32_shmsys	AUE_SHMSYS
-#define	FREEBSD32_SYS_AUE_freebsd6_freebsd32_pread	AUE_PREAD
-#define	FREEBSD32_SYS_AUE_freebsd6_freebsd32_pwrite	AUE_PWRITE
 #define	FREEBSD32_SYS_AUE_freebsd32_ntp_adjtime	AUE_NTP_ADJTIME
 #define	FREEBSD32_SYS_AUE_freebsd11_freebsd32_stat	AUE_STAT
 #define	FREEBSD32_SYS_AUE_freebsd11_freebsd32_fstat	AUE_FSTAT
 #define	FREEBSD32_SYS_AUE_freebsd11_freebsd32_lstat	AUE_LSTAT
 #define	FREEBSD32_SYS_AUE_freebsd11_freebsd32_getdirentries	AUE_GETDIRENTRIES
-#define	FREEBSD32_SYS_AUE_freebsd6_freebsd32_mmap	AUE_MMAP
-#define	FREEBSD32_SYS_AUE_freebsd6_freebsd32_lseek	AUE_LSEEK
-#define	FREEBSD32_SYS_AUE_freebsd6_freebsd32_truncate	AUE_TRUNCATE
-#define	FREEBSD32_SYS_AUE_freebsd6_freebsd32_ftruncate	AUE_FTRUNCATE
 #define	FREEBSD32_SYS_AUE_freebsd32___sysctl	AUE_SYSCTL
 #define	FREEBSD32_SYS_AUE_freebsd32_futimes	AUE_FUTIMES
-#define	FREEBSD32_SYS_AUE_freebsd7_freebsd32___semctl	AUE_SEMCTL
-#define	FREEBSD32_SYS_AUE_freebsd7_freebsd32_msgctl	AUE_MSGCTL
 #define	FREEBSD32_SYS_AUE_freebsd32_msgsnd	AUE_MSGSND
 #define	FREEBSD32_SYS_AUE_freebsd32_msgrcv	AUE_MSGRCV
-#define	FREEBSD32_SYS_AUE_freebsd7_freebsd32_shmctl	AUE_SHMCTL
 #define	FREEBSD32_SYS_AUE_freebsd32_clock_gettime	AUE_NULL
 #define	FREEBSD32_SYS_AUE_freebsd32_clock_settime	AUE_CLOCK_SETTIME
 #define	FREEBSD32_SYS_AUE_freebsd32_clock_getres	AUE_NULL
@@ -1255,21 +1098,14 @@ int	freebsd11_freebsd32_fstatat(struct thread *, struct freebsd11_freebsd32_fsta
 #define	FREEBSD32_SYS_AUE_freebsd11_freebsd32_nlstat	AUE_LSTAT
 #define	FREEBSD32_SYS_AUE_freebsd32_preadv	AUE_PREADV
 #define	FREEBSD32_SYS_AUE_freebsd32_pwritev	AUE_PWRITEV
-#define	FREEBSD32_SYS_AUE_freebsd4_freebsd32_fhstatfs	AUE_FHSTATFS
 #define	FREEBSD32_SYS_AUE_freebsd11_freebsd32_fhstat	AUE_FHSTAT
 #define	FREEBSD32_SYS_AUE_freebsd32_modstat	AUE_NULL
 #define	FREEBSD32_SYS_AUE_freebsd32_kldstat	AUE_NULL
 #define	FREEBSD32_SYS_AUE_freebsd32_aio_return	AUE_AIO_RETURN
 #define	FREEBSD32_SYS_AUE_freebsd32_aio_suspend	AUE_AIO_SUSPEND
 #define	FREEBSD32_SYS_AUE_freebsd32_aio_error	AUE_AIO_ERROR
-#define	FREEBSD32_SYS_AUE_freebsd6_freebsd32_aio_read	AUE_AIO_READ
-#define	FREEBSD32_SYS_AUE_freebsd6_freebsd32_aio_write	AUE_AIO_WRITE
-#define	FREEBSD32_SYS_AUE_freebsd6_freebsd32_lio_listio	AUE_LIO_LISTIO
 #define	FREEBSD32_SYS_AUE_freebsd32_sched_rr_get_interval	AUE_NULL
-#define	FREEBSD32_SYS_AUE_freebsd4_freebsd32_sendfile	AUE_SENDFILE
 #define	FREEBSD32_SYS_AUE_freebsd32_jail	AUE_JAIL
-#define	FREEBSD32_SYS_AUE_freebsd4_freebsd32_sigaction	AUE_SIGACTION
-#define	FREEBSD32_SYS_AUE_freebsd4_freebsd32_sigreturn	AUE_SIGRETURN
 #define	FREEBSD32_SYS_AUE_freebsd32_sigtimedwait	AUE_SIGWAIT
 #define	FREEBSD32_SYS_AUE_freebsd32_sigwaitinfo	AUE_NULL
 #define	FREEBSD32_SYS_AUE_freebsd32_aio_waitcomplete	AUE_AIO_WAITCOMPLETE

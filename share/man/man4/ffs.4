@@ -45,7 +45,6 @@ In the kernel configuration file:
 .Cd "options UFS_DIRHASH"
 .Cd "options UFS_EXTATTR"
 .Cd "options UFS_EXTATTR_AUTOSTART"
-.Cd "options UFS_GJOURNAL"
 .Pp
 In
 .Xr fstab 5 :
@@ -226,51 +225,6 @@ will search for a
 subdirectory of the file system root during the mount operation.
 If found, extended attribute support will be
 automatically started for that file system.
-.El
-.Ss GEOM-based Journaling
-.Bl -tag -width 2n
-.It Cd "options UFS_GJOURNAL"
-Implements a block level journaling of a UFS file system,
-which is for both data and metadata.
-To enable this,
-create a
-.Xr gjournal 8
-GEOM provider for a block device by using the
-following command:
-.Pp
-.D1 Nm gjournal label Ar da0
-.Pp
-In this example,
-.Pa /dev/da0
-is used as the target block device,
-and
-.Pa /dev/da0.journal
-is created.
-Then create a new file system by using
-.Xr newfs 8
-with the block level journaling flag and mount it:
-.Pp
-.D1 Nm newfs Fl J Ar /dev/da0.journal
-.D1 Nm mount Fl o Cm async Ar /dev/da0.journal Ar /mnt
-.Pp
-.Cm async
-option is not mandatory but recommended for better performance
-because the journaling guarantees the consistency of an
-.Cm async
-mount.
-.Pp
-It is also possible to enable the block level journaling
-on an existing file system.
-To do so,
-use
-.Xr gjournal 8
-utility to label the underlying block device and
-.Xr tunefs 8
-utility to enable the block level journaling flag:
-.Pp
-.D1 Nm gjournal label Ar da0
-.D1 Nm tunefs Fl J Cm enable Ar /dev/da0.journal
-.D1 Nm mount Fl o Cm async Ar /dev/da0.journal Ar /mnt
 .El
 .Ss Xr sysctl 8 MIBs
 The following

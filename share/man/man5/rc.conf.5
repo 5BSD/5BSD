@@ -4064,21 +4064,6 @@ to prevent the system from trying to
 recover prematurely terminated
 .Xr vi 1
 sessions.
-.It Va ugidfw_enable
-.Pq Vt bool
-Set to
-.Dq Li YES
-to load the
-.Xr mac_bsdextended 4
-module upon system initialization and load a default
-ruleset file.
-.It Va bsdextended_script
-.Pq Vt str
-The default
-.Xr mac_bsdextended 4
-ruleset file to load.
-The default value of this variable is
-.Pa /etc/rc.bsdextended .
 .It Va newsyslog_enable
 .Pq Vt bool
 If set to

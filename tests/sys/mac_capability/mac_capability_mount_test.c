@@ -455,50 +455,35 @@ ATF_TC_BODY(mount_tmpfs_with_opts, tc)
 	close(fd);
 }
 
-ATF_TC(mount_procfs);
-ATF_TC_HEAD(mount_procfs, tc)
+ATF_TC(mount_procfs_retired);
+ATF_TC_HEAD(mount_procfs_retired, tc)
 {
-	atf_tc_set_md_var(tc, "descr",
-	    "MOUNT_OP_MOUNT mounts procfs");
-	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_mount procfs");
+	atf_tc_set_md_var(tc, "descr", "Retired native procfs cannot be mounted");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_mount");
 	atf_tc_set_md_var(tc, "require.user", "root");
 }
-ATF_TC_BODY(mount_procfs, tc)
+ATF_TC_BODY(mount_procfs_retired, tc)
 {
 	struct mount_request mreq;
-	struct unmount_request ureq;
 	struct mount_reply reply;
-	struct stat sb;
 	char mntpath[MOUNT_MAXPATH];
-	char curproc[MOUNT_MAXPATH + 32];
+	int fd;
 
-	snprintf(mntpath, sizeof(mntpath),
-	    "/tmp/mac_capability_procfs_test.%d", (int)getpid());
-	ATF_REQUIRE(mkdir(mntpath, 0755) == 0 || errno == EEXIST);
-
-	int fd = mount_connect();
-
+	snprintf(mntpath, sizeof(mntpath), "/tmp/mac_capability_procfs_test.%d",
+	    (int)getpid());
+	ATF_REQUIRE(mkdir(mntpath, 0755) == 0);
+	fd = mount_connect();
 	memset(&mreq, 0, sizeof(mreq));
 	mreq.op = MOUNT_OP_MOUNT;
 	strlcpy(mreq.fstype, "procfs", sizeof(mreq.fstype));
 	strlcpy(mreq.fspath, mntpath, sizeof(mreq.fspath));
 	ATF_REQUIRE(mount_call_raw(fd, &mreq, sizeof(mreq),
 	    &reply, sizeof(reply)) == 0);
-	if (reply.status != MOUNT_STATUS_OK) {
-		rmdir(mntpath);
-		close(fd);
-		atf_tc_skip("procfs mount not permitted");
-	}
-
-	snprintf(curproc, sizeof(curproc), "%s/%d", mntpath, (int)getpid());
-	ATF_CHECK(stat(curproc, &sb) == 0);
-
-	memset(&ureq, 0, sizeof(ureq));
-	ureq.op = MOUNT_OP_UNMOUNT;
-	strlcpy(ureq.fspath, mntpath, sizeof(ureq.fspath));
-	mount_call_raw(fd, &ureq, sizeof(ureq), &reply, sizeof(reply));
-
-	rmdir(mntpath);
+	ATF_CHECK_MSG(reply.status != MOUNT_STATUS_OK,
+	    "retired native procfs unexpectedly mounted");
+	if (reply.status == MOUNT_STATUS_OK)
+		(void)unmount(mntpath, 0);
+	ATF_CHECK(rmdir(mntpath) == 0);
 	close(fd);
 }
 
@@ -708,7 +693,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, mount_tmpfs);
 	ATF_TP_ADD_TC(tp, mount_devfs);
 	ATF_TP_ADD_TC(tp, mount_tmpfs_with_opts);
-	ATF_TP_ADD_TC(tp, mount_procfs);
+	ATF_TP_ADD_TC(tp, mount_procfs_retired);
 	ATF_TP_ADD_TC(tp, mount_fdescfs);
 	ATF_TP_ADD_TC(tp, mount_linprocfs);
 	ATF_TP_ADD_TC(tp, mount_linsysfs);

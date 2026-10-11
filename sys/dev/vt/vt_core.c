@@ -2591,8 +2591,7 @@ vtterm_ioctl(struct terminal *tm, u_long cmd, caddr_t data,
 	struct vt_device *vd = vw->vw_device;
 	keyboard_t *kbd;
 	int error, i, s;
-#if defined(COMPAT_FREEBSD6) || defined(COMPAT_FREEBSD5) || \
-    defined(COMPAT_FREEBSD4) || defined(COMPAT_43)
+#if defined(COMPAT_FREEBSD6) || defined(COMPAT_FREEBSD5) ||      defined(COMPAT_FREEBSD4) || defined(COMPAT_43)
 	int ival;
 
 	switch (cmd) {

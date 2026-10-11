@@ -126,7 +126,6 @@ SUBDIR=	${SUBDIR_BOOTSTRAP} \
 	libbsdfilesystem \
 	libucl \
 	libufs \
-	libugidfw \
 	libulog \
 	libutil \
 	libutil++ \

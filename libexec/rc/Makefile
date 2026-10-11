@@ -2,7 +2,7 @@
 
 CONFGROUPS=	CONFETC CONFETCEXEC CONFETCDEFAULTS
 CONFETCDIR=	/etc
-CONFETC=	network.subr rc rc.initdiskless rc.subr rc.shutdown rc.bsdextended
+CONFETC=	network.subr rc rc.initdiskless rc.subr rc.shutdown
 CONFETCPACKAGE=	rc
 
 CONFETCMODE=	644

@@ -480,8 +480,7 @@ sc_vid_ioctl(struct tty *tp, u_long cmd, caddr_t data, struct thread *td)
     video_adapter_info_t adp_info;
     int error;
     int s;
-#if defined(COMPAT_FREEBSD6) || defined(COMPAT_FREEBSD5) || \
-    defined(COMPAT_FREEBSD4) || defined(COMPAT_43)
+#if defined(COMPAT_FREEBSD6) || defined(COMPAT_FREEBSD5) ||      defined(COMPAT_FREEBSD4) || defined(COMPAT_43)
     int ival;
 #endif
 
@@ -585,8 +584,7 @@ sc_vid_ioctl(struct tty *tp, u_long cmd, caddr_t data, struct thread *td)
     case FBIO_FINDMODE:
 	return fb_ioctl(adp, FBIO_FINDMODE, data);
 
-#if defined(COMPAT_FREEBSD6) || defined(COMPAT_FREEBSD5) || \
-    defined(COMPAT_FREEBSD4) || defined(COMPAT_43)
+#if defined(COMPAT_FREEBSD6) || defined(COMPAT_FREEBSD5) ||      defined(COMPAT_FREEBSD4) || defined(COMPAT_43)
     case _IO('c', 104):
 	ival = IOCPARM_IVAL(data);
 	data = (caddr_t)&ival;
@@ -664,8 +662,7 @@ sc_vid_ioctl(struct tty *tp, u_long cmd, caddr_t data, struct thread *td)
 	return sc_set_graphics_mode(scp, tp, cmd & 0xff);
 #endif /* SC_NO_MODE_CHANGE */
 
-#if defined(COMPAT_FREEBSD6) || defined(COMPAT_FREEBSD5) || \
-    defined(COMPAT_FREEBSD4) || defined(COMPAT_43)
+#if defined(COMPAT_FREEBSD6) || defined(COMPAT_FREEBSD5) ||      defined(COMPAT_FREEBSD4) || defined(COMPAT_43)
     case _IO('K', 10):
 	ival = IOCPARM_IVAL(data);
 	data = (caddr_t)&ival;
@@ -793,8 +790,7 @@ sc_vid_ioctl(struct tty *tp, u_long cmd, caddr_t data, struct thread *td)
 	*data = ISGRAPHSC(scp) ? KD_GRAPHICS : KD_TEXT;
 	return 0;
 
-#if defined(COMPAT_FREEBSD6) || defined(COMPAT_FREEBSD5) || \
-    defined(COMPAT_FREEBSD4) || defined(COMPAT_43)
+#if defined(COMPAT_FREEBSD6) || defined(COMPAT_FREEBSD5) ||      defined(COMPAT_FREEBSD4) || defined(COMPAT_43)
     case _IO('K', 13):
 	ival = IOCPARM_IVAL(data);
 	data = (caddr_t)&ival;

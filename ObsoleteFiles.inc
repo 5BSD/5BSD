@@ -1,3 +1,79 @@
+# 20261011: retire native procfs, old ABIs, GEOM classes and optional MAC policies
+OLD_FILES+= boot/kernel/aout.ko
+OLD_FILES+= boot/kernel/geom_ccd.ko
+OLD_FILES+= boot/kernel/geom_journal.ko
+OLD_FILES+= boot/kernel/geom_raid3.ko
+OLD_FILES+= boot/kernel/geom_shsec.ko
+OLD_FILES+= boot/kernel/geom_virstor.ko
+OLD_FILES+= boot/kernel/mac_biba.ko
+OLD_FILES+= boot/kernel/mac_bsdextended.ko
+OLD_FILES+= boot/kernel/mac_ifoff.ko
+OLD_FILES+= boot/kernel/mac_ipacl.ko
+OLD_FILES+= boot/kernel/mac_lomac.ko
+OLD_FILES+= boot/kernel/mac_mls.ko
+OLD_FILES+= boot/kernel/mac_partition.ko
+OLD_FILES+= boot/kernel/mac_seeotheruids.ko
+OLD_FILES+= boot/kernel/procfs.ko
+OLD_FILES+= etc/periodic/daily/407.status-graid3
+OLD_FILES+= etc/rc.d/ccd
+OLD_FILES+= etc/rc.d/ugidfw
+OLD_FILES+= lib/geom/geom_journal.so
+OLD_FILES+= lib/geom/geom_raid3.so
+OLD_FILES+= lib/geom/geom_shsec.so
+OLD_FILES+= lib/geom/geom_virstor.so
+OLD_FILES+= rescue/ccdconfig
+OLD_FILES+= sbin/ccdconfig
+OLD_FILES+= sbin/gjournal
+OLD_FILES+= sbin/graid3
+OLD_FILES+= sbin/gshsec
+OLD_FILES+= sbin/gvirstor
+OLD_FILES+= usr/include/fs/procfs/procfs.h
+OLD_FILES+= usr/include/geom/journal/g_journal.h
+OLD_FILES+= usr/include/geom/raid3/g_raid3.h
+OLD_FILES+= usr/include/geom/shsec/g_shsec.h
+OLD_FILES+= usr/include/geom/virstor/binstream.h
+OLD_FILES+= usr/include/geom/virstor/g_virstor.h
+OLD_FILES+= usr/include/geom/virstor/g_virstor_md.h
+OLD_FILES+= usr/include/security/mac_biba/mac_biba.h
+OLD_FILES+= usr/include/security/mac_bsdextended/mac_bsdextended.h
+OLD_FILES+= usr/include/security/mac_bsdextended/ugidfw_internal.h
+OLD_FILES+= usr/include/security/mac_lomac/mac_lomac.h
+OLD_FILES+= usr/include/security/mac_mls/mac_mls.h
+OLD_FILES+= usr/include/security/mac_partition/mac_partition.h
+OLD_FILES+= usr/include/ugidfw.h
+OLD_FILES+= usr/lib/libugidfw.a
+OLD_FILES+= usr/lib/libugidfw.so
+OLD_LIBS+= usr/lib/libugidfw.so.5
+OLD_FILES+= usr/lib/libugidfw_p.a
+OLD_FILES+= usr/sbin/ugidfw
+OLD_FILES+= usr/share/man/man3/bsde_add_rule.3.gz
+OLD_FILES+= usr/share/man/man3/bsde_delete_rule.3.gz
+OLD_FILES+= usr/share/man/man3/bsde_get_rule.3.gz
+OLD_FILES+= usr/share/man/man3/bsde_get_rule_count.3.gz
+OLD_FILES+= usr/share/man/man3/bsde_get_rule_slots.3.gz
+OLD_FILES+= usr/share/man/man3/bsde_parse_rule.3.gz
+OLD_FILES+= usr/share/man/man3/bsde_parse_rule_string.3.gz
+OLD_FILES+= usr/share/man/man3/bsde_rule_to_string.3.gz
+OLD_FILES+= usr/share/man/man3/bsde_set_rule.3.gz
+OLD_FILES+= usr/share/man/man3/libugidfw.3.gz
+OLD_FILES+= usr/share/man/man4/ccd.4.gz
+OLD_FILES+= usr/share/man/man4/mac_biba.4.gz
+OLD_FILES+= usr/share/man/man4/mac_bsdextended.4.gz
+OLD_FILES+= usr/share/man/man4/mac_ifoff.4.gz
+OLD_FILES+= usr/share/man/man4/mac_ipacl.4.gz
+OLD_FILES+= usr/share/man/man4/mac_lomac.4.gz
+OLD_FILES+= usr/share/man/man4/mac_mls.4.gz
+OLD_FILES+= usr/share/man/man4/mac_partition.4.gz
+OLD_FILES+= usr/share/man/man4/mac_seeotheruids.4.gz
+OLD_FILES+= usr/share/man/man4/procfs.4.gz
+OLD_FILES+= usr/share/man/man8/ccdconfig.8.gz
+OLD_FILES+= usr/share/man/man8/gjournal.8.gz
+OLD_FILES+= usr/share/man/man8/graid3.8.gz
+OLD_FILES+= usr/share/man/man8/gshsec.8.gz
+OLD_FILES+= usr/share/man/man8/gvirstor.8.gz
+OLD_FILES+= usr/share/man/man8/ugidfw.8.gz
+OLD_FILES+= usr/share/security/lomac-policy.contexts
+
 #
 #
 # This file lists old files (OLD_FILES), libraries (OLD_LIBS, MOVED_LIBS)
@@ -12557,3 +12633,17 @@ OLD_FILES+=usr/share/man/man4/stg.4.gz
 OLD_FILES+=usr/share/man/man4/mse.4.gz
 
 .include "tools/build/mk/OptionalObsoleteFiles.inc"
+
+# Retired 4.3BSD tty interface.
+OLD_FILES+=usr/include/sys/ioctl_compat.h
+
+# Dedicated files from the retired MAC policies and UFS GEOM journal.
+OLD_FILES+= usr/tests/sys/mac/bsdextended/Kyuafile
+OLD_FILES+= usr/tests/sys/mac/bsdextended/matches_test
+OLD_FILES+= usr/tests/sys/mac/bsdextended/ugidfw_test
+OLD_FILES+= usr/tests/sys/mac/ipacl/Kyuafile
+OLD_FILES+= usr/tests/sys/mac/ipacl/ipacl_test
+OLD_FILES+= usr/tests/sys/mac/ipacl/utils.subr
+OLD_FILES+= usr/include/ufs/ufs/gjournal.h
+OLD_DIRS+= usr/tests/sys/mac/bsdextended
+OLD_DIRS+= usr/tests/sys/mac/ipacl

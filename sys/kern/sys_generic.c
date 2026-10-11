@@ -252,14 +252,6 @@ kern_pread(struct thread *td, int fd, void *buf, size_t nbyte, off_t offset)
 	return (error);
 }
 
-#if defined(COMPAT_FREEBSD6)
-int
-freebsd6_pread(struct thread *td, struct freebsd6_pread_args *uap)
-{
-
-	return (kern_pread(td, uap->fd, uap->buf, uap->nbyte, uap->offset));
-}
-#endif
 
 /*
  * Scatter read system call.
@@ -454,14 +446,6 @@ kern_pwrite(struct thread *td, int fd, const void *buf, size_t nbyte,
 	return (error);
 }
 
-#if defined(COMPAT_FREEBSD6)
-int
-freebsd6_pwrite(struct thread *td, struct freebsd6_pwrite_args *uap)
-{
-
-	return (kern_pwrite(td, uap->fd, uap->buf, uap->nbyte, uap->offset));
-}
-#endif
 
 /*
  * Gather write system call.

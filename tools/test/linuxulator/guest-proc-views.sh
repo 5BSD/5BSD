@@ -25,16 +25,23 @@ for round in 1 2 3; do
   done
  done
 done
-mount -t procfs proc /nativeproc
-cat /nativeproc/curproc/status
-ls /nativeproc/curproc > /tmp/native-list
-umount /nativeproc
-if kldstat -q -n procfs.ko; then kldunload procfs; fi
+if mount -t procfs proc /nativeproc; then
+ echo "retired native procfs unexpectedly mounted"
+ umount /nativeproc
+ exit 1
+fi
+if kldstat -q -m procfs; then
+ echo "native procfs module unexpectedly loaded"
+ exit 1
+fi
+# Linux procfs must remain mounted and functional after native mount failure.
+/tmp/proc_views tasklinks root
+/tmp/proc_views memory root
 mount -t fdescfs fdesc /nativefd
 ls /nativefd > /tmp/native-fd-list
 umount /nativefd
 if kldstat -q -n fdescfs.ko; then kldunload fdescfs; fi
-echo NATIVE_PROC_PASS
+echo NATIVE_PROC_RETIRED_PASS
 if [ -f /root/guest-proc-stress.sh ]; then
  sh /root/guest-proc-stress.sh
 fi

@@ -28,11 +28,11 @@ resolve_body()
 	atf_check -s exit:0 -o save:cases.txt ./resolve -l
 	[ "$(wc -l <cases.txt | tr -d ' ')" -eq 24 ] || atf_fail "missing cases"
 	# Alternate mount coverage has fixed disposable-guest paths.
-	for name in procfs fd-plain fd-rdlnk fd-nodup; do
+	for name in linprocfs fd-plain fd-rdlnk fd-nodup; do
 		mkdir "/tmp/resolve-$name" || atf_fail "path already exists: /tmp/resolve-$name"
 		echo "$name" >>created-dirs.txt
 	done
-	atf_check -s exit:0 mount -t procfs procfs /tmp/resolve-procfs
+	atf_check -s exit:0 mount -t linprocfs linprocfs /tmp/resolve-linprocfs
 	atf_check -s exit:0 mount -t fdescfs fdescfs /tmp/resolve-fd-plain
 	atf_check -s exit:0 mount -t fdescfs -o rdlnk fdescfs /tmp/resolve-fd-rdlnk
 	atf_check -s exit:0 mount -t fdescfs -o nodup fdescfs /tmp/resolve-fd-nodup

@@ -192,11 +192,6 @@ static struct syscall_helper_data msg_syscalls[] = {
 	SYSCALL_INIT_HELPER(msgget),
 	SYSCALL_INIT_HELPER(msgsnd),
 	SYSCALL_INIT_HELPER(msgrcv),
-#if defined(COMPAT_FREEBSD4) || defined(COMPAT_FREEBSD5) || \
-    defined(COMPAT_FREEBSD6) || defined(COMPAT_FREEBSD7)
-	SYSCALL_INIT_HELPER(msgsys),
-	SYSCALL_INIT_HELPER_COMPAT(freebsd7_msgctl),
-#endif
 	SYSCALL_INIT_LAST
 };
 
@@ -214,10 +209,6 @@ static struct syscall_helper_data msg32_syscalls[] = {
 	SYSCALL32_INIT_HELPER(freebsd32_msgrcv),
 	SYSCALL32_INIT_HELPER_COMPAT(msgget),
 	SYSCALL32_INIT_HELPER(freebsd32_msgsys),
-#if defined(COMPAT_FREEBSD4) || defined(COMPAT_FREEBSD5) || \
-    defined(COMPAT_FREEBSD6) || defined(COMPAT_FREEBSD7)
-	SYSCALL32_INIT_HELPER(freebsd7_freebsd32_msgctl),
-#endif
 	SYSCALL_INIT_LAST
 };
 #endif
@@ -1739,74 +1730,9 @@ int
 freebsd32_msgsys(struct thread *td, struct freebsd32_msgsys_args *uap)
 {
 
-#if defined(COMPAT_FREEBSD4) || defined(COMPAT_FREEBSD5) || \
-    defined(COMPAT_FREEBSD6) || defined(COMPAT_FREEBSD7)
-	AUDIT_ARG_SVIPC_WHICH(uap->which);
-	switch (uap->which) {
-	case 0:
-		return (freebsd7_freebsd32_msgctl(td,
-		    (struct freebsd7_freebsd32_msgctl_args *)&uap->a2));
-	case 2:
-		return (freebsd32_msgsnd(td,
-		    (struct freebsd32_msgsnd_args *)&uap->a2));
-	case 3:
-		return (freebsd32_msgrcv(td,
-		    (struct freebsd32_msgrcv_args *)&uap->a2));
-	default:
-		return (sys_msgsys(td, (struct msgsys_args *)uap));
-	}
-#else
 	return (kern_nosys(td, 0));
-#endif
 }
 
-#if defined(COMPAT_FREEBSD4) || defined(COMPAT_FREEBSD5) || \
-    defined(COMPAT_FREEBSD6) || defined(COMPAT_FREEBSD7)
-int
-freebsd7_freebsd32_msgctl(struct thread *td,
-    struct freebsd7_freebsd32_msgctl_args *uap)
-{
-	struct msqid_ds msqbuf;
-	struct msqid_ds_old32 msqbuf32;
-	int error;
-
-	if (uap->cmd == IPC_SET) {
-		error = copyin(uap->buf, &msqbuf32, sizeof(msqbuf32));
-		if (error)
-			return (error);
-		freebsd32_ipcperm_old_in(&msqbuf32.msg_perm, &msqbuf.msg_perm);
-		PTRIN_CP(msqbuf32, msqbuf, __msg_first);
-		PTRIN_CP(msqbuf32, msqbuf, __msg_last);
-		CP(msqbuf32, msqbuf, msg_cbytes);
-		CP(msqbuf32, msqbuf, msg_qnum);
-		CP(msqbuf32, msqbuf, msg_qbytes);
-		CP(msqbuf32, msqbuf, msg_lspid);
-		CP(msqbuf32, msqbuf, msg_lrpid);
-		CP(msqbuf32, msqbuf, msg_stime);
-		CP(msqbuf32, msqbuf, msg_rtime);
-		CP(msqbuf32, msqbuf, msg_ctime);
-	}
-	error = kern_msgctl(td, uap->msqid, uap->cmd, &msqbuf);
-	if (error)
-		return (error);
-	if (uap->cmd == IPC_STAT) {
-		bzero(&msqbuf32, sizeof(msqbuf32));
-		freebsd32_ipcperm_old_out(&msqbuf.msg_perm, &msqbuf32.msg_perm);
-		PTROUT_CP(msqbuf, msqbuf32, __msg_first);
-		PTROUT_CP(msqbuf, msqbuf32, __msg_last);
-		CP(msqbuf, msqbuf32, msg_cbytes);
-		CP(msqbuf, msqbuf32, msg_qnum);
-		CP(msqbuf, msqbuf32, msg_qbytes);
-		CP(msqbuf, msqbuf32, msg_lspid);
-		CP(msqbuf, msqbuf32, msg_lrpid);
-		CP(msqbuf, msqbuf32, msg_stime);
-		CP(msqbuf, msqbuf32, msg_rtime);
-		CP(msqbuf, msqbuf32, msg_ctime);
-		error = copyout(&msqbuf32, uap->buf, sizeof(struct msqid_ds32));
-	}
-	return (error);
-}
-#endif
 
 int
 freebsd32_msgctl(struct thread *td, struct freebsd32_msgctl_args *uap)
@@ -1885,99 +1811,3 @@ freebsd32_msgrcv(struct thread *td, struct freebsd32_msgrcv_args *uap)
 	return (copyout(&mtype32, msgp, sizeof(mtype32)));
 }
 #endif
-
-#if defined(COMPAT_FREEBSD4) || defined(COMPAT_FREEBSD5) || \
-    defined(COMPAT_FREEBSD6) || defined(COMPAT_FREEBSD7)
-
-/* XXX casting to (sy_call_t *) is bogus, as usual. */
-static sy_call_t *msgcalls[] = {
-	(sy_call_t *)freebsd7_msgctl, (sy_call_t *)sys_msgget,
-	(sy_call_t *)sys_msgsnd, (sy_call_t *)sys_msgrcv
-};
-
-/*
- * Entry point for all MSG calls.
- *
- * XXX actually varargs.
- * struct msgsys_args {
- *		int	which;
- *		int	a2;
- *		int	a3;
- *		int	a4;
- *		int	a5;
- *		int	a6;
- *	} *uap;
- */
-int
-sys_msgsys(struct thread *td, struct msgsys_args *uap)
-{
-	int error;
-
-	AUDIT_ARG_SVIPC_WHICH(uap->which);
-	if (uap->which < 0 || uap->which >= nitems(msgcalls))
-		return (EINVAL);
-	error = (*msgcalls[uap->which])(td, &uap->a2);
-	return (error);
-}
-
-#ifndef CP
-#define CP(src, dst, fld)	do { (dst).fld = (src).fld; } while (0)
-#endif
-
-#ifndef _SYS_SYSPROTO_H_
-struct freebsd7_msgctl_args {
-	int	msqid;
-	int	cmd;
-	struct	msqid_ds_old *buf;
-};
-#endif
-int
-freebsd7_msgctl(struct thread *td, struct freebsd7_msgctl_args *uap)
-{
-	struct msqid_ds_old msqold;
-	struct msqid_ds msqbuf;
-	int error;
-
-	DPRINTF(("call to freebsd7_msgctl(%d, %d, %p)\n", uap->msqid, uap->cmd,
-	    uap->buf));
-	if (uap->cmd == IPC_SET) {
-		error = copyin(uap->buf, &msqold, sizeof(msqold));
-		if (error)
-			return (error);
-		ipcperm_old2new(&msqold.msg_perm, &msqbuf.msg_perm);
-		CP(msqold, msqbuf, __msg_first);
-		CP(msqold, msqbuf, __msg_last);
-		CP(msqold, msqbuf, msg_cbytes);
-		CP(msqold, msqbuf, msg_qnum);
-		CP(msqold, msqbuf, msg_qbytes);
-		CP(msqold, msqbuf, msg_lspid);
-		CP(msqold, msqbuf, msg_lrpid);
-		CP(msqold, msqbuf, msg_stime);
-		CP(msqold, msqbuf, msg_rtime);
-		CP(msqold, msqbuf, msg_ctime);
-	}
-	error = kern_msgctl(td, uap->msqid, uap->cmd, &msqbuf);
-	if (error)
-		return (error);
-	if (uap->cmd == IPC_STAT) {
-		bzero(&msqold, sizeof(msqold));
-		ipcperm_new2old(&msqbuf.msg_perm, &msqold.msg_perm);
-		CP(msqbuf, msqold, __msg_first);
-		CP(msqbuf, msqold, __msg_last);
-		CP(msqbuf, msqold, msg_cbytes);
-		CP(msqbuf, msqold, msg_qnum);
-		CP(msqbuf, msqold, msg_qbytes);
-		CP(msqbuf, msqold, msg_lspid);
-		CP(msqbuf, msqold, msg_lrpid);
-		CP(msqbuf, msqold, msg_stime);
-		CP(msqbuf, msqold, msg_rtime);
-		CP(msqbuf, msqold, msg_ctime);
-		error = copyout(&msqold, uap->buf, sizeof(struct msqid_ds_old));
-	}
-	return (error);
-}
-
-#undef CP
-
-#endif	/* COMPAT_FREEBSD4 || COMPAT_FREEBSD5 || COMPAT_FREEBSD6 ||
-	   COMPAT_FREEBSD7 */

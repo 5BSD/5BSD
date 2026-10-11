@@ -82,12 +82,12 @@ typedef union {
 int
 main(int argc, char *argv[])
 {
-	const char *avalue, *jvalue, *Jvalue, *Lvalue, *lvalue, *Nvalue, *nvalue;
+	const char *avalue, *jvalue, *Lvalue, *lvalue, *Nvalue, *nvalue;
 	const char *tvalue;
 	const char *special;
 	const char *name;
 	char *diskname;
-	int Aflag, aflag, eflag, evalue, fflag, fvalue, jflag, Jflag, kflag;
+	int Aflag, aflag, eflag, evalue, fflag, fvalue, jflag, kflag;
 	int kvalue, Lflag, lflag, mflag, mvalue, Nflag, nflag, oflag, ovalue;
 	int pflag, sflag, svalue, Svalue, tflag;
 	int ch, found_arg, i;
@@ -95,9 +95,9 @@ main(int argc, char *argv[])
 
 	if (argc < 3)
 		usage();
-	Aflag = aflag = eflag = fflag = jflag = Jflag = kflag = Lflag = 0;
+	Aflag = aflag = eflag = fflag = jflag = kflag = Lflag = 0;
 	lflag = mflag = Nflag = nflag = oflag = pflag = sflag = tflag = 0;
-	avalue = jvalue = Jvalue = Lvalue = lvalue = Nvalue = nvalue = NULL;
+	avalue = jvalue = Lvalue = lvalue = Nvalue = nvalue = NULL;
 	evalue = fvalue = mvalue = ovalue = svalue = Svalue = 0;
 	found_arg = 0;		/* At least one arg is required. */
 	while ((ch = getopt(argc, argv, "Aa:e:f:j:J:k:L:l:m:N:n:o:ps:S:t:"))
@@ -154,16 +154,7 @@ main(int argc, char *argv[])
 			break;
 
 		case 'J':
-			found_arg++;
-			name = "gjournaled file system";
-			Jvalue = optarg;
-			if (strcmp(Jvalue, "enable") &&
-			    strcmp(Jvalue, "disable")) {
-				errx(10, "bad %s (options are %s)",
-				    name, "`enable' or `disable'");
-			}
-			Jflag = 1;
-			break;
+			errx(10, "GEOM journaling is retired; migrate the filesystem first");
 
 		case 'k':
 			found_arg++;
@@ -391,29 +382,7 @@ main(int argc, char *argv[])
 			}
  		}
 	}
-	if (Jflag) {
-		name = "gjournal";
-		if (strcmp(Jvalue, "enable") == 0) {
-			if (sblock.fs_flags & FS_GJOURNAL) {
-				warnx("%s remains unchanged as enabled", name);
-			} if (sblock.fs_flags & FS_DOSOFTDEP) {
-				warnx("%s cannot be enabled while soft "
-				    "updates are enabled", name);
-			} else {
-				sblock.fs_flags |= FS_GJOURNAL;
-				warnx("%s set", name);
-			}
-		} else if (strcmp(Jvalue, "disable") == 0) {
-			if ((~sblock.fs_flags & FS_GJOURNAL) ==
-			    FS_GJOURNAL) {
-				warnx("%s remains unchanged as disabled",
-				    name);
-			} else {
-				sblock.fs_flags &= ~FS_GJOURNAL;
-				warnx("%s cleared", name);
-			}
-		}
-	}
+
 	if (kflag) {
 		name = "space to hold for metadata blocks";
 		if (sblock.fs_metaspace == kvalue) {

@@ -22,7 +22,6 @@ GEOM+=		221.backup-gpart \
 		222.backup-gmirror \
 		401.status-graid \
 		406.status-gmirror \
-		407.status-graid3 \
 		408.status-gstripe \
 		409.status-gconcat
 GEOMPACKAGE=	geom

@@ -259,7 +259,6 @@ _LIBRARIES=	\
 		trustedzfs \
 		bsdfilesystem \
 		ufs \
-		ugidfw \
 		ulog \
 		umem \
 		usb \

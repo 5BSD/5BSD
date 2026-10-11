@@ -946,10 +946,6 @@ static struct syscall_helper_data shm_syscalls[] = {
 	SYSCALL_INIT_HELPER(shmctl),
 	SYSCALL_INIT_HELPER(shmdt),
 	SYSCALL_INIT_HELPER(shmget),
-#if defined(COMPAT_FREEBSD4) || defined(COMPAT_FREEBSD5) || \
-    defined(COMPAT_FREEBSD6) || defined(COMPAT_FREEBSD7)
-	SYSCALL_INIT_HELPER_COMPAT(freebsd7_shmctl),
-#endif
 #if defined(__i386__) && (defined(COMPAT_FREEBSD4) || defined(COMPAT_43))
 	SYSCALL_INIT_HELPER(shmsys),
 #endif
@@ -970,10 +966,6 @@ static struct syscall_helper_data shm32_syscalls[] = {
 	SYSCALL32_INIT_HELPER_COMPAT(shmget),
 	SYSCALL32_INIT_HELPER(freebsd32_shmsys),
 	SYSCALL32_INIT_HELPER(freebsd32_shmctl),
-#if defined(COMPAT_FREEBSD4) || defined(COMPAT_FREEBSD5) || \
-    defined(COMPAT_FREEBSD6) || defined(COMPAT_FREEBSD7)
-	SYSCALL32_INIT_HELPER(freebsd7_freebsd32_shmctl),
-#endif
 	SYSCALL_INIT_LAST
 };
 #endif
@@ -1468,137 +1460,9 @@ int
 freebsd32_shmsys(struct thread *td, struct freebsd32_shmsys_args *uap)
 {
 
-#if defined(COMPAT_FREEBSD4) || defined(COMPAT_FREEBSD5) || \
-    defined(COMPAT_FREEBSD6) || defined(COMPAT_FREEBSD7)
-	AUDIT_ARG_SVIPC_WHICH(uap->which);
-	switch (uap->which) {
-	case 0:	{	/* shmat */
-		struct shmat_args ap;
-
-		ap.shmid = uap->a2;
-		ap.shmaddr = PTRIN(uap->a3);
-		ap.shmflg = uap->a4;
-		return (sysent[SYS_shmat].sy_call(td, &ap));
-	}
-	case 2: {	/* shmdt */
-		struct shmdt_args ap;
-
-		ap.shmaddr = PTRIN(uap->a2);
-		return (sysent[SYS_shmdt].sy_call(td, &ap));
-	}
-	case 3: {	/* shmget */
-		struct shmget_args ap;
-
-		ap.key = uap->a2;
-		ap.size = uap->a3;
-		ap.shmflg = uap->a4;
-		return (sysent[SYS_shmget].sy_call(td, &ap));
-	}
-	case 4: {	/* shmctl */
-		struct freebsd7_freebsd32_shmctl_args ap;
-
-		ap.shmid = uap->a2;
-		ap.cmd = uap->a3;
-		ap.buf = PTRIN(uap->a4);
-		return (freebsd7_freebsd32_shmctl(td, &ap));
-	}
-	case 1:		/* oshmctl */
-	default:
-		return (EINVAL);
-	}
-#else
 	return (kern_nosys(td, 0));
-#endif
 }
 
-#if defined(COMPAT_FREEBSD4) || defined(COMPAT_FREEBSD5) || \
-    defined(COMPAT_FREEBSD6) || defined(COMPAT_FREEBSD7)
-int
-freebsd7_freebsd32_shmctl(struct thread *td,
-    struct freebsd7_freebsd32_shmctl_args *uap)
-{
-	int error;
-	union {
-		struct shmid_ds shmid_ds;
-		struct shm_info shm_info;
-		struct shminfo shminfo;
-	} u;
-	union {
-		struct shmid_ds_old32 shmid_ds32;
-		struct shm_info32 shm_info32;
-		struct shminfo32 shminfo32;
-	} u32;
-	size_t sz;
-
-	if (uap->cmd == IPC_SET) {
-		if ((error = copyin(uap->buf, &u32.shmid_ds32,
-		    sizeof(u32.shmid_ds32))))
-			goto done;
-		freebsd32_ipcperm_old_in(&u32.shmid_ds32.shm_perm,
-		    &u.shmid_ds.shm_perm);
-		CP(u32.shmid_ds32, u.shmid_ds, shm_segsz);
-		CP(u32.shmid_ds32, u.shmid_ds, shm_lpid);
-		CP(u32.shmid_ds32, u.shmid_ds, shm_cpid);
-		CP(u32.shmid_ds32, u.shmid_ds, shm_nattch);
-		CP(u32.shmid_ds32, u.shmid_ds, shm_atime);
-		CP(u32.shmid_ds32, u.shmid_ds, shm_dtime);
-		CP(u32.shmid_ds32, u.shmid_ds, shm_ctime);
-	}
-
-	error = kern_shmctl(td, uap->shmid, uap->cmd, (void *)&u, &sz);
-	if (error)
-		goto done;
-
-	/* Cases in which we need to copyout */
-	switch (uap->cmd) {
-	case IPC_INFO:
-		CP(u.shminfo, u32.shminfo32, shmmax);
-		CP(u.shminfo, u32.shminfo32, shmmin);
-		CP(u.shminfo, u32.shminfo32, shmmni);
-		CP(u.shminfo, u32.shminfo32, shmseg);
-		CP(u.shminfo, u32.shminfo32, shmall);
-		error = copyout(&u32.shminfo32, uap->buf,
-		    sizeof(u32.shminfo32));
-		break;
-	case SHM_INFO:
-		CP(u.shm_info, u32.shm_info32, used_ids);
-		CP(u.shm_info, u32.shm_info32, shm_rss);
-		CP(u.shm_info, u32.shm_info32, shm_tot);
-		CP(u.shm_info, u32.shm_info32, shm_swp);
-		CP(u.shm_info, u32.shm_info32, swap_attempts);
-		CP(u.shm_info, u32.shm_info32, swap_successes);
-		error = copyout(&u32.shm_info32, uap->buf,
-		    sizeof(u32.shm_info32));
-		break;
-	case SHM_STAT:
-	case IPC_STAT:
-		memset(&u32.shmid_ds32, 0, sizeof(u32.shmid_ds32));
-		freebsd32_ipcperm_old_out(&u.shmid_ds.shm_perm,
-		    &u32.shmid_ds32.shm_perm);
-		if (u.shmid_ds.shm_segsz > INT32_MAX)
-			u32.shmid_ds32.shm_segsz = INT32_MAX;
-		else
-			CP(u.shmid_ds, u32.shmid_ds32, shm_segsz);
-		CP(u.shmid_ds, u32.shmid_ds32, shm_lpid);
-		CP(u.shmid_ds, u32.shmid_ds32, shm_cpid);
-		CP(u.shmid_ds, u32.shmid_ds32, shm_nattch);
-		CP(u.shmid_ds, u32.shmid_ds32, shm_atime);
-		CP(u.shmid_ds, u32.shmid_ds32, shm_dtime);
-		CP(u.shmid_ds, u32.shmid_ds32, shm_ctime);
-		u32.shmid_ds32.shm_internal = 0;
-		error = copyout(&u32.shmid_ds32, uap->buf,
-		    sizeof(u32.shmid_ds32));
-		break;
-	}
-
-done:
-	if (error) {
-		/* Invalidate the return value */
-		td->td_retval[0] = -1;
-	}
-	return (error);
-}
-#endif
 
 int
 freebsd32_shmctl(struct thread *td, struct freebsd32_shmctl_args *uap)
@@ -1684,84 +1548,6 @@ done:
 }
 #endif
 
-#if defined(COMPAT_FREEBSD4) || defined(COMPAT_FREEBSD5) || \
-    defined(COMPAT_FREEBSD6) || defined(COMPAT_FREEBSD7)
-
-#ifndef _SYS_SYSPROTO_H_
-struct freebsd7_shmctl_args {
-	int shmid;
-	int cmd;
-	struct shmid_ds_old *buf;
-};
-#endif
-int
-freebsd7_shmctl(struct thread *td, struct freebsd7_shmctl_args *uap)
-{
-	int error;
-	struct shmid_ds_old old;
-	struct shmid_ds buf;
-	size_t bufsz;
-
-	/*
-	 * The only reason IPC_INFO, SHM_INFO, SHM_STAT exists is to support
-	 * Linux binaries.  If we see the call come through the FreeBSD ABI,
-	 * return an error back to the user since we do not to support this.
-	 */
-	if (uap->cmd == IPC_INFO || uap->cmd == SHM_INFO ||
-	    uap->cmd == SHM_STAT)
-		return (EINVAL);
-
-	/* IPC_SET needs to copyin the buffer before calling kern_shmctl */
-	if (uap->cmd == IPC_SET) {
-		if ((error = copyin(uap->buf, &old, sizeof(old))))
-			goto done;
-		ipcperm_old2new(&old.shm_perm, &buf.shm_perm);
-		CP(old, buf, shm_segsz);
-		CP(old, buf, shm_lpid);
-		CP(old, buf, shm_cpid);
-		CP(old, buf, shm_nattch);
-		CP(old, buf, shm_atime);
-		CP(old, buf, shm_dtime);
-		CP(old, buf, shm_ctime);
-	}
-
-	error = kern_shmctl(td, uap->shmid, uap->cmd, (void *)&buf, &bufsz);
-	if (error)
-		goto done;
-
-	/* Cases in which we need to copyout */
-	switch (uap->cmd) {
-	case IPC_STAT:
-		memset(&old, 0, sizeof(old));
-		ipcperm_new2old(&buf.shm_perm, &old.shm_perm);
-		if (buf.shm_segsz > INT_MAX)
-			old.shm_segsz = INT_MAX;
-		else
-			CP(buf, old, shm_segsz);
-		CP(buf, old, shm_lpid);
-		CP(buf, old, shm_cpid);
-		if (buf.shm_nattch > SHRT_MAX)
-			old.shm_nattch = SHRT_MAX;
-		else
-			CP(buf, old, shm_nattch);
-		CP(buf, old, shm_atime);
-		CP(buf, old, shm_dtime);
-		CP(buf, old, shm_ctime);
-		old.shm_internal = NULL;
-		error = copyout(&old, uap->buf, sizeof(old));
-		break;
-	}
-
-done:
-	if (error) {
-		/* Invalidate the return value */
-		td->td_retval[0] = -1;
-	}
-	return (error);
-}
-
-#endif	/* COMPAT_FREEBSD4 || COMPAT_FREEBSD5 || COMPAT_FREEBSD6 ||
-	   COMPAT_FREEBSD7 */
 
 static int
 sysvshm_modload(struct module *module, int cmd, void *arg)

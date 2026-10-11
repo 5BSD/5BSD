@@ -38,7 +38,6 @@
 .Op Fl e Ar maxbpg
 .Op Fl f Ar avgfilesize
 .Op Fl j Cm enable | disable
-.Op Fl J Cm enable | disable
 .Op Fl k Ar held-for-metadata-blocks
 .Op Fl L Ar volname
 .Op Fl l Cm enable | disable
@@ -129,9 +128,6 @@ will be about half of normal during the time that the background
 is running.
 Running a full fsck on a UFS filesystem is the equivalent of
 running a scrub on a ZFS filesystem.
-.It Fl J Cm enable | disable
-Turn on/off GEOM journaling.
-GEOM journaling is incompatible with soft updates.
 .It Fl k Ar held-for-metadata-blocks
 Set the amount of space to be held for metadata blocks.
 When set, the file system preference routines will try to save
@@ -223,7 +219,6 @@ specified mount point.
 .Xr fs 5 ,
 .Xr tuning 7 ,
 .Xr dumpfs 8 ,
-.Xr gjournal 8 ,
 .Xr growfs 8 ,
 .Xr newfs 8
 .Rs

@@ -22,7 +22,7 @@
 #define	FREEBSD32_SYS_chmod	15
 #define	FREEBSD32_SYS_chown	16
 #define	FREEBSD32_SYS_break	17
-				/* 18 is freebsd4 freebsd32_getfsstat */
+				/* 18 is obsolete freebsd4_getfsstat */
 				/* 19 is old freebsd32_lseek */
 #define	FREEBSD32_SYS_getpid	20
 #define	FREEBSD32_SYS_mount	21
@@ -153,19 +153,19 @@
 				/* 149 is old quota */
 				/* 150 is old getsockname */
 				/* 156 is old freebsd32_getdirentries */
-				/* 157 is freebsd4 freebsd32_statfs */
-				/* 158 is freebsd4 freebsd32_fstatfs */
+				/* 157 is obsolete freebsd4_statfs */
+				/* 158 is obsolete freebsd4_fstatfs */
 #define	FREEBSD32_SYS_getfh	161
-				/* 162 is freebsd4 getdomainname */
-				/* 163 is freebsd4 setdomainname */
-				/* 164 is freebsd4 uname */
+				/* 162 is obsolete freebsd4_getdomainname */
+				/* 163 is obsolete freebsd4_setdomainname */
+				/* 164 is obsolete freebsd4_uname */
 #define	FREEBSD32_SYS_freebsd32_sysarch	165
 #define	FREEBSD32_SYS_rtprio	166
 #define	FREEBSD32_SYS_freebsd32_semsys	169
 #define	FREEBSD32_SYS_freebsd32_msgsys	170
 #define	FREEBSD32_SYS_freebsd32_shmsys	171
-				/* 173 is freebsd6 freebsd32_pread */
-				/* 174 is freebsd6 freebsd32_pwrite */
+				/* 173 is obsolete freebsd6_pread */
+				/* 174 is obsolete freebsd6_pwrite */
 #define	FREEBSD32_SYS_setfib	175
 #define	FREEBSD32_SYS_freebsd32_ntp_adjtime	176
 #define	FREEBSD32_SYS_setgid	181
@@ -183,11 +183,11 @@
 #define	FREEBSD32_SYS_getrlimit	194
 #define	FREEBSD32_SYS_setrlimit	195
 #define	FREEBSD32_SYS_freebsd11_freebsd32_getdirentries	196
-				/* 197 is freebsd6 freebsd32_mmap */
+				/* 197 is obsolete freebsd6_mmap */
 #define	FREEBSD32_SYS___syscall	198
-				/* 199 is freebsd6 freebsd32_lseek */
-				/* 200 is freebsd6 freebsd32_truncate */
-				/* 201 is freebsd6 freebsd32_ftruncate */
+				/* 199 is obsolete freebsd6_lseek */
+				/* 200 is obsolete freebsd6_truncate */
+				/* 201 is obsolete freebsd6_ftruncate */
 #define	FREEBSD32_SYS_freebsd32___sysctl	202
 #define	FREEBSD32_SYS_mlock	203
 #define	FREEBSD32_SYS_munlock	204
@@ -195,16 +195,16 @@
 #define	FREEBSD32_SYS_freebsd32_futimes	206
 #define	FREEBSD32_SYS_getpgid	207
 #define	FREEBSD32_SYS_poll	209
-#define	FREEBSD32_SYS_freebsd7_freebsd32___semctl	220
+				/* 220 is obsolete freebsd7___semctl */
 #define	FREEBSD32_SYS_semget	221
 #define	FREEBSD32_SYS_semop	222
 				/* 223 is obsolete semconfig */
-#define	FREEBSD32_SYS_freebsd7_freebsd32_msgctl	224
+				/* 224 is obsolete freebsd7_msgctl */
 #define	FREEBSD32_SYS_msgget	225
 #define	FREEBSD32_SYS_freebsd32_msgsnd	226
 #define	FREEBSD32_SYS_freebsd32_msgrcv	227
 #define	FREEBSD32_SYS_shmat	228
-#define	FREEBSD32_SYS_freebsd7_freebsd32_shmctl	229
+				/* 229 is obsolete freebsd7_shmctl */
 #define	FREEBSD32_SYS_shmdt	230
 #define	FREEBSD32_SYS_shmget	231
 #define	FREEBSD32_SYS_freebsd32_clock_gettime	232
@@ -239,7 +239,7 @@
 #define	FREEBSD32_SYS_freebsd11_freebsd32_nlstat	280
 #define	FREEBSD32_SYS_freebsd32_preadv	289
 #define	FREEBSD32_SYS_freebsd32_pwritev	290
-				/* 297 is freebsd4 freebsd32_fhstatfs */
+				/* 297 is obsolete freebsd4_fhstatfs */
 #define	FREEBSD32_SYS_fhopen	298
 #define	FREEBSD32_SYS_freebsd11_freebsd32_fhstat	299
 #define	FREEBSD32_SYS_modnext	300
@@ -260,9 +260,9 @@
 #define	FREEBSD32_SYS_freebsd32_aio_suspend	315
 #define	FREEBSD32_SYS_aio_cancel	316
 #define	FREEBSD32_SYS_freebsd32_aio_error	317
-				/* 318 is freebsd6 freebsd32_aio_read */
-				/* 319 is freebsd6 freebsd32_aio_write */
-				/* 320 is freebsd6 freebsd32_lio_listio */
+				/* 318 is obsolete freebsd6_aio_read */
+				/* 319 is obsolete freebsd6_aio_write */
+				/* 320 is obsolete freebsd6_lio_listio */
 #define	FREEBSD32_SYS_yield	321
 				/* 322 is obsolete thr_sleep */
 				/* 323 is obsolete thr_wakeup */
@@ -278,13 +278,13 @@
 #define	FREEBSD32_SYS_sched_get_priority_min	333
 #define	FREEBSD32_SYS_freebsd32_sched_rr_get_interval	334
 #define	FREEBSD32_SYS_utrace	335
-				/* 336 is freebsd4 freebsd32_sendfile */
+				/* 336 is obsolete freebsd4_sendfile */
 #define	FREEBSD32_SYS_freebsd32_jail	338
 #define	FREEBSD32_SYS_sigprocmask	340
 #define	FREEBSD32_SYS_sigsuspend	341
-				/* 342 is freebsd4 freebsd32_sigaction */
+				/* 342 is obsolete freebsd4_sigaction */
 #define	FREEBSD32_SYS_sigpending	343
-				/* 344 is freebsd4 freebsd32_sigreturn */
+				/* 344 is obsolete freebsd4_sigreturn */
 #define	FREEBSD32_SYS_freebsd32_sigtimedwait	345
 #define	FREEBSD32_SYS_freebsd32_sigwaitinfo	346
 #define	FREEBSD32_SYS___acl_get_file	347

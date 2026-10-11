@@ -143,7 +143,6 @@
 #	foo:/home_part			/home   nfs     rw      	0 0
 #	md				/tmp	mfs     -s=30m,rw	0 0
 #	md				/var	mfs	-s=30m,rw	0 0
-#	proc				/proc	procfs	rw		0 0
 #
 # plus, possibly, overrides for password files etc.
 #

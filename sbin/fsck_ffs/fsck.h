@@ -508,7 +508,6 @@ struct inoinfo *getinoinfo(ino_t inumber);
 union dinode   *getnextinode(ino_t inumber, int rebuiltcg);
 void		getpathname(char *namebuf, ino_t curdir, ino_t ino);
 void		ginode(ino_t, struct inode *);
-void		gjournal_check(const char *filesys);
 void		infohandler(int sig);
 void		irelse(struct inode *);
 ufs2_daddr_t	ino_blkatoff(union dinode *, ino_t, ufs_lbn_t, int *,

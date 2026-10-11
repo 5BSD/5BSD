@@ -293,8 +293,6 @@
         ..
         nullfs
         ..
-        procfs
-        ..
         smbfs
         ..
         udf
@@ -311,8 +309,6 @@
         ..
         gate
         ..
-        journal
-        ..
         label
         ..
         mirror
@@ -325,15 +321,9 @@
         ..
         raid
         ..
-        raid3
-        ..
-        shsec
-        ..
         stripe
         ..
         union
-        ..
-        virstor
         ..
         zoned
         ..
@@ -449,17 +439,7 @@
     security
         audit           tags=package=audit-dev
         ..
-        mac_biba
-        ..
-        mac_bsdextended
-        ..
         mac_grantbylabel
-        ..
-        mac_lomac
-        ..
-        mac_mls
-        ..
-        mac_partition
         ..
         mac_veriexec
         ..

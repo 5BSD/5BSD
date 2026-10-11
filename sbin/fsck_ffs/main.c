@@ -280,39 +280,6 @@ checkfilesys(char *filesys)
 			exit(7);	/* Filesystem clean, report it now */
 		exit(0);
 	}
-	if (ckclean && skipclean) {
-		/*
-		 * If file system is gjournaled, check it here.
-		 */
-		if (sbreadfailed)
-			exit(3);	/* Cannot read superblock */
-		if (bkgrdflag == 0 &&
-		    (nflag || (fswritefd = open(filesys, O_WRONLY)) < 0)) {
-			fswritefd = -1;
-			if (preen)
-				pfatal("NO WRITE ACCESS");
-			printf(" (NO WRITE)");
-		}
-		if ((sblock.fs_flags & FS_GJOURNAL) != 0) {
-			if (sblock.fs_clean == 1) {
-				pwarn("FILE SYSTEM CLEAN; SKIPPING CHECKS\n");
-				exit(0);
-			}
-			if ((sblock.fs_flags &
-			    (FS_UNCLEAN | FS_NEEDSFSCK)) == 0) {
-				bufinit();
-				gjournal_check(filesys);
-				if (chkdoreload(mntp, pwarn) == 0)
-					exit(0);
-				exit(4);
-			} else {
-				pfatal("FULL FSCK NEEDED, CANNOT RUN FAST "
-				    "FSCK\n");
-			}
-		}
-		close(fswritefd);
-		fswritefd = -1;
-	}
 	if (bkgrdflag) {
 		switch (setup_bkgrdchk(mntp, sbreadfailed, &filesys)) {
 		case -1: /* filesystem clean */

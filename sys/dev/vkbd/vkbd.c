@@ -1089,9 +1089,6 @@ vkbd_ioctl(keyboard_t *kbd, u_long cmd, caddr_t arg)
 {
 	vkbd_state_t	*state = (vkbd_state_t *) kbd->kb_data;
 	int		 i;
-#ifdef COMPAT_FREEBSD6
-	int		 ival;
-#endif
 
 	VKBD_LOCK(state);
 
@@ -1100,12 +1097,6 @@ vkbd_ioctl(keyboard_t *kbd, u_long cmd, caddr_t arg)
 		*(int *)arg = state->ks_mode;
 		break;
 
-#ifdef COMPAT_FREEBSD6
-	case _IO('K', 7):
-		ival = IOCPARM_IVAL(arg);
-		arg = (caddr_t)&ival;
-		/* FALLTHROUGH */
-#endif
 	case KDSKBMODE:		/* set keyboard mode */
 		switch (*(int *)arg) {
 		case K_XLATE:
@@ -1136,12 +1127,6 @@ vkbd_ioctl(keyboard_t *kbd, u_long cmd, caddr_t arg)
 		*(int *)arg = KBD_LED_VAL(kbd);
 		break;
 
-#ifdef COMPAT_FREEBSD6
-	case _IO('K', 66):
-		ival = IOCPARM_IVAL(arg);
-		arg = (caddr_t)&ival;
-		/* FALLTHROUGH */
-#endif
 	case KDSETLED:		/* set keyboard LED */
 		/* NOTE: lock key state in ks_state won't be changed */
 		if (*(int *)arg & ~LOCK_MASK) {
@@ -1167,12 +1152,6 @@ vkbd_ioctl(keyboard_t *kbd, u_long cmd, caddr_t arg)
 		*(int *)arg = state->ks_state & LOCK_MASK;
 		break;
 
-#ifdef COMPAT_FREEBSD6
-	case _IO('K', 20):
-		ival = IOCPARM_IVAL(arg);
-		arg = (caddr_t)&ival;
-		/* FALLTHROUGH */
-#endif
 	case KDSKBSTATE:	/* set lock key state */
 		if (*(int *)arg & ~LOCK_MASK) {
 			VKBD_UNLOCK(state);
@@ -1192,12 +1171,6 @@ vkbd_ioctl(keyboard_t *kbd, u_long cmd, caddr_t arg)
 		vkbd_status_changed(state);
 		break;
 
-#ifdef COMPAT_FREEBSD6
-	case _IO('K', 67):
-		ival = IOCPARM_IVAL(arg);
-		arg = (caddr_t)&ival;
-		/* FALLTHROUGH */
-#endif
 	case KDSETRAD:		/* set keyboard repeat rate (old interface) */
 		kbd->kb_delay1 = typematic_delay(*(int *)arg);
 		kbd->kb_delay2 = typematic_rate(*(int *)arg);

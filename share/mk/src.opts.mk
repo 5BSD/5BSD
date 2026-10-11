@@ -76,7 +76,6 @@ __DEFAULT_YES_OPTIONS = \
     BSNMP \
     CALENDAR \
     CAROOT \
-    CCD \
     CDDL \
     CLANG \
     CLANG_BOOTSTRAP \
