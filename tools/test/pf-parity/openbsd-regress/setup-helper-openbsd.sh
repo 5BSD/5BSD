@@ -6,6 +6,10 @@
 #  SRC vio1 ==link A== PF_IFIN [DUT] PF_IFOUT ==link B== vio2 RT(rd2)
 #  RT pair2 (mtu 1300) <-> pair3 ECO(rd3), ECO_OUT/RTT_* on vether3 (rd3)
 set -eu
+# No DNS in the isolated topology: fail lookups immediately (as NXDOMAIN
+# would) instead of timing out against the unreachable slirp resolver.
+rcctl stop resolvd >/dev/null 2>&1 || true
+printf 'lookup file\n' > /etc/resolv.conf
 [ -f /root/pf-parity-disposable ] || { echo "not a disposable guest"; exit 1; }
 p6=fdd7:e83e:66bc
 
@@ -67,12 +71,18 @@ ifconfig vether3 inet6 $p6:218:5054:ff:fe12:3452/64
 route -q -T 3 add -inet default 10.188.212.51 || true
 route -q -T 3 add -inet6 default $p6:212:5054:ff:fe12:3451 || true
 
-cat > /etc/inetd.eco.conf <<'EOF'
-echo	stream	tcp	nowait	root	internal
-echo	stream	tcp6	nowait	root	internal
-echo	dgram	udp	wait	root	internal
-echo	dgram	udp6	wait	root	internal
-EOF
+# Bind UDP echo per address so replies leave from the probed address
+# (a wildcard socket would answer ECO_OUT/RTT_* probes from pair3's address).
+{
+	echo "echo	stream	tcp	nowait	root	internal"
+	echo "echo	stream	tcp6	nowait	root	internal"
+	for a in 10.188.212.52 10.188.213.52 10.188.217.52 10.188.218.52; do
+		echo "$a:echo	dgram	udp	wait	root	internal"
+	done
+	for a in 212 213 217 218; do
+		echo "[$p6:$a:5054:ff:fe12:3452]:echo	dgram	udp6	wait	root	internal"
+	done
+} > /etc/inetd.eco.conf
 pkill -f 'inetd /etc/inetd.eco.conf' || true
 route -T 3 exec /usr/sbin/inetd /etc/inetd.eco.conf
 # SRC also echoes for 2-host suites (pf_state/pf_divert use REMOTE echo on DUT).

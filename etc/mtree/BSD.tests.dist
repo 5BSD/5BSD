@@ -968,6 +968,8 @@
                 ioctl
                 ..
                 openbsd
+                    mk
+                    ..
                 ..
             ..
         ..

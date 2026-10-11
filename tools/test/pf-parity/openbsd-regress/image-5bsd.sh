@@ -18,7 +18,7 @@ case $out in /usr/obj/5BSD-pf-parity/*) ;; *) echo "OUTDIR must be below /usr/ob
 mkdir -p "$out/root"
 R=$out/root
 export MAKEOBJDIRPREFIX=$objp
-make -C "$src" -j"$(sysctl -n hw.ncpu)" -DNO_ROOT -DDB_FROM_SRC DESTDIR="$R" \
+make -C "$src" -j"${JOBS:-8}" -DNO_ROOT -DDB_FROM_SRC DESTDIR="$R" \
     installworld distribution > "$out/install.log" 2>&1
 make -C "$src" -DNO_ROOT -DDB_FROM_SRC DESTDIR="$R" KERNCONF="$kernconf" \
     installkernel >> "$out/install.log" 2>&1
@@ -62,6 +62,11 @@ put boot/loader.conf 0644 <<'EOF'
 console="comconsole"
 autoboot_delay="1"
 beastie_disable="YES"
+# The capability plane denies late kldload; preload PF modules at boot.
+pf_load="YES"
+pflog_load="YES"
+pfsync_load="YES"
+pflow_load="YES"
 EOF
 put etc/rc.conf 0644 <<'EOF'
 hostname="pf-dut-5bsd"
@@ -83,7 +88,7 @@ put root/pf-parity-disposable 0644 < /dev/null
 mkdir -p "$R/usr/local/share/pf-parity/mk"
 add usr/local/share/pf-parity dir 0755
 add usr/local/share/pf-parity/mk dir 0755
-put usr/local/share/pf-parity/mk/bsd.regress.mk 0644 < "$src/contrib/openbsd-pf/share/mk/bsd.regress.mk"
+sed -f "$src/tests/sys/netpfil/pf/openbsd/bsd.regress.mk.sed" "$src/contrib/openbsd-pf/share/mk/bsd.regress.mk" | put usr/local/share/pf-parity/mk/bsd.regress.mk 0644
 
 ( cd "$R" && makefs -t ffs -B little -s 16g -o version=2,label=root,softupdates=1 \
     -D "$out/root.ufs" METALOG ) > "$out/makefs.log" 2>&1

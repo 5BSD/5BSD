@@ -5,11 +5,13 @@
 # topology.  The regress tree is expected at /usr/src/regress.
 set -eu
 [ -f /root/pf-parity-disposable ] || { echo "not a disposable guest"; exit 1; }
+# No DNS in the isolated topology: fail lookups immediately (as NXDOMAIN
+# would) instead of timing out against the unreachable slirp resolver.
+sed -i '' 's/^hosts:.*/hosts: files/' /etc/nsswitch.conf
 p6=fdd7:e83e:66bc
 IFIN=vtnet1 IFOUT=vtnet2 IFCTL=vtnet0
 
-kldload -n pf pflog pfsync 2>/dev/null || true
-kldload -n pflow 2>/dev/null || true
+# PF modules are preloaded by loader.conf (late kldload is brokered).
 sysctl -q net.inet.ip.forwarding=1 net.inet6.ip6.forwarding=1 >/dev/null
 sysctl -q net.inet6.ip6.accept_rtadv=0 >/dev/null 2>&1 || true
 ifconfig $IFIN up mtu 1500
@@ -40,8 +42,7 @@ anchor "regress"
 EOF
 pfctl -f /etc/pf.conf
 pfctl -e >/dev/null 2>&1 || true
-ifconfig pflog0 create 2>/dev/null || true
-ifconfig pflog0 up
+# pflog0 is a BPF tap created by the pflog module (no ifnet on 5BSD).
 
 cat > /etc/inetd.conf <<'EOF'
 echo	stream	tcp	nowait	root	internal

@@ -33,7 +33,7 @@ run_suite()
 	log=$(pwd)/regress.log
 	: > "${log}"
 	(cd "${work}/regress/${dir}" && \
-	    env MAKESYSPATH="${corpus}/share/mk:/usr/share/mk" \
+	    env MAKESYSPATH="$(atf_get_srcdir)/mk:/usr/share/mk" \
 	    BSDSRCDIR="${work}" make REGRESS_LOG="${log}" REGRESS_FAIL_EARLY=no \
 	    "$@" regress) > out 2>&1 || true
 	cat out

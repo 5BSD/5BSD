@@ -2,6 +2,10 @@
 # SPDX-License-Identifier: BSD-2-Clause
 # Configure the OpenBSD reference DUT ("PF" role).  Disposable guest only.
 set -eu
+# No DNS in the isolated topology: fail lookups immediately (as NXDOMAIN
+# would) instead of timing out against the unreachable slirp resolver.
+rcctl stop resolvd >/dev/null 2>&1 || true
+printf 'lookup file\n' > /etc/resolv.conf
 [ -f /root/pf-parity-disposable ] || { echo "not a disposable guest"; exit 1; }
 p6=fdd7:e83e:66bc
 IFIN=vio1 IFOUT=vio2 IFCTL=vio0

@@ -74,35 +74,52 @@ def suites(dut_os):
            'LOCAL_ADDR6': P6 + ':210:fce1:baff:fed1:561f',
            'REMOTE_ADDR6': P6 + ':210:5054:ff:fe12:3450',
            'REMOTE_SSH': pf_ssh}
+    sec = dict(two, LOCAL_MAC='fe:e1:ba:d1:0a:dc', REMOTE_MAC='52:54:00:12:34:50')
     return {
-        'pfctl': dict(host='dut', dir='regress/sbin/pfctl', targets=pfctl_targets(), timeout=7200),
+        'pfctl': dict(host='dut', dir='regress/sbin/pfctl', targets=pfctl_targets(), timeout=28800),
         'pf_table': dict(host='dut', dir='regress/sys/net/pf_table'),
-        'pf_trans': dict(host='dut', dir='regress/sys/net/pf_trans'),
+        'pf_trans': dict(host='dut', dir='regress/sys/net/pf_trans',
+                         vars={'TIMEOUT': '60'}),  # max allowed; TCG guests fork slowly
         'pf_print': dict(host='dut', dir='regress/sys/net/pf_print'),
         'pf_policy': dict(host='dut', dir='regress/sys/net/pf_policy',
                           vars={'REMOTE_ADDR': SRC_ADDR}),
         'pf_opts': dict(host='dut', dir='regress/sys/net/pf_opts'),
         'pflog': dict(host='dut', dir='regress/sys/net/pflog'),
         'pflow': dict(host='dut', dir='regress/sys/net/pflow'),
-        'pf_forward': dict(host='helper', dir='regress/sys/net/pf_forward', vars=four, timeout=7200),
-        'pf_fragment': dict(host='helper', dir='regress/sys/net/pf_fragment', vars=four, timeout=7200),
+        'pf_forward': dict(host='helper', dir='regress/sys/net/pf_forward', vars=four, timeout=28800),
+        'pf_fragment': dict(host='helper', dir='regress/sys/net/pf_fragment', vars=four, timeout=28800),
         'pf_state': dict(host='helper', dir='regress/sys/net/pf_state', vars=dict(two,
                          FAKE_NET='10.188.219.0/24', FAKE_NET_ADDR='10.188.219.188',
                          FAKE_NET6=P6 + ':219::/64', FAKE_NET_ADDR6=P6 + ':219::188')),
         'pf_divert': dict(host='helper', dir='regress/sys/net/pf_divert', vars=dict(two,
                           FAKE_ADDR='10.188.222.188', FAKE_ADDR6=P6 + ':222::188'),
-                          timeout=7200),
+                          timeout=28800),
+        # Secondary tier: IP-stack suites that use pf as a tool.
+        'frag': dict(tier=2, host='helper', dir='regress/sys/netinet/frag', vars=sec),
+        'frag6': dict(tier=2, host='helper', dir='regress/sys/netinet6/frag6', vars=sec),
+        'rh0': dict(tier=2, host='helper', dir='regress/sys/netinet6/rh0', vars=dict(sec,
+                    OTHER_ADDR6=P6 + ':211:5054:ff:fe12:3450',
+                    OTHER_FAKE1_ADDR6=P6 + ':211::dead', OTHER_FAKE2_ADDR6=P6 + ':211::beef')),
+        'tcpstate': dict(tier=2, host='helper', dir='regress/sys/netinet/tcpstate', vars=dict(sec,
+                         FAKE_NET='10.188.219.0/24', FAKE_NET_ADDR='10.188.219.188')),
+        'pmtu': dict(tier=2, host='helper', dir='regress/sys/netinet/pmtu', vars=dict(sec,
+                     FAKE_NET='10.188.219.0/24', FAKE_NET_ADDR='10.188.219.188',
+                     FAKE_NET6=P6 + ':219::/64', FAKE_NET_ADDR6=P6 + ':219::188')),
+        'pair': dict(tier=2, host='dut', dir='regress/sys/net/pair'),
     }
 
 
 def ssh(host, command, timeout, out=None):
     cmd = ['ssh', '-F', SSHCFG, host, command]
-    with (open(out, 'wb') if out else subprocess.DEVNULL) as o:
-        try:
-            return subprocess.run(cmd, stdout=o if out else subprocess.PIPE,
-                                  stderr=subprocess.STDOUT, timeout=timeout).returncode
-        except subprocess.TimeoutExpired:
-            return 124
+    o = open(out, 'wb') if out else subprocess.DEVNULL
+    try:
+        return subprocess.run(cmd, stdout=o, stderr=subprocess.STDOUT,
+                              timeout=timeout).returncode
+    except subprocess.TimeoutExpired:
+        return 124
+    finally:
+        if out:
+            o.close()
 
 
 def run_suite(name, s, out, hosts, make):
@@ -113,10 +130,14 @@ def run_suite(name, s, out, hosts, make):
     if 'targets' in s:
         words.append('REGRESS_TARGETS=' + ' '.join(s['targets']))
     words += ['%s=%s' % kv for kv in vars_.items()]
+    # Plumbing: some suites flush the main ruleset (pfchksum uses -Fa), so
+    # restore the DUT's baseline pf.conf ("pass; anchor regress") first.
+    ssh(hosts['dut'], 'pfctl -a "regress/*" -Fa >/dev/null 2>&1; pfctl -Fa >/dev/null 2>&1; '
+        'pfctl -f /etc/pf.conf && pfctl -e >/dev/null 2>&1; true', 300)
     command = 'rm -f %s; touch %s; cd %s/%s && %s %s regress; echo REGRESS_EXIT $?' % (
         log, log, GUEST_SRC, s['dir'], make, ' '.join(shlex.quote(w) for w in words))
     started = time.time()
-    rc = ssh(host, command, s.get('timeout', 3600), out / (name + '.out'))
+    rc = ssh(host, command, s.get('timeout', 14400), out / (name + '.out'))
     subprocess.run(['ssh', '-F', SSHCFG, host, 'cat ' + log],
                    stdout=open(out / (name + '.regress.log'), 'wb'), timeout=600)
     results = {}
@@ -148,7 +169,7 @@ def main():
     a = p.parse_args()
     a.out.mkdir(parents=True, exist_ok=True)
     all_s = suites(a.dut_os)
-    names = a.suite or list(all_s)
+    names = a.suite or [n for n, x in all_s.items() if x.get('tier', 1) == 1]
     resfile = a.out / 'results.json'
     res = json.loads(resfile.read_text()) if resfile.exists() else {}
     for name in names:
