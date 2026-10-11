@@ -51,8 +51,10 @@ NOTE TO PEOPLE WHO THINK THAT FreeBSD 16.x IS SLOW:
 	sc/SC_*/SCHED_4BSD/MAC_NONE/MAC_STUB custom kernel settings and legacy
 	*_saver/splash_bmp/splash_pcx/splash_txt module-load entries.
 	Modern DRM hardware packages, LinuxKPI, vt framebuffers and vt/loader
-	splash images remain. The rc service named syscons now configures vt only
-	and retains legacy keymap-name translation. kern.vty=sc now falls back
+	splash images remain. Kernel *_DFLT_KEYMAP options now resolve vt keymap
+	names only (for example it or jp, not it.iso or jp.106). The rc service
+	named syscons now configures vt only and retains legacy keymap-name
+	translation. kern.vty=sc now falls back
 	to vt, and obsolete scheduler selections fall back to ULE.
 	Capability keystore/kernelstore fixtures moved to the explicit test-only
 	build under tests/sys/mac_capability/fixtures; they are no longer shipped

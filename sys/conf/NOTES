@@ -1465,7 +1465,7 @@ options 	KBD_DELAY2=15		# define key delay
 
 device		kbdmux			# keyboard multiplexer
 options 	KBDMUX_DFLT_KEYMAP	# specify the built-in keymap
-makeoptions	KBDMUX_DFLT_KEYMAP=it.iso
+makeoptions	KBDMUX_DFLT_KEYMAP=it
 
 options 	FB_DEBUG		# Frame buffer debugging
 
@@ -2536,7 +2536,7 @@ options 	U3G_DEBUG
 
 # options for ukbd:
 options 	UKBD_DFLT_KEYMAP	# specify the built-in keymap
-makeoptions	UKBD_DFLT_KEYMAP=jp.106
+makeoptions	UKBD_DFLT_KEYMAP=jp
 
 # options for uplcom:
 options 	UPLCOM_INTR_INTERVAL=100	# interrupt pipe interval
