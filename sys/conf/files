@@ -3984,8 +3984,8 @@ kern/uipc_sockbuf.c		standard
 kern/uipc_socket.c		standard
 kern/uipc_syscalls.c		standard
 kern/uipc_usrreq.c		standard
-kern/uipc_vsock.c		optional	vsock
-kern/uipc_vsock_user.c		optional	vsock
+kern/uipc_vsock.c		optional	vsock | virtio_vsock
+kern/uipc_vsock_user.c		optional	vsock | virtio_vsock
 kern/vfs_acl.c			standard
 kern/vfs_aio.c			standard
 kern/vfs_bio.c			standard
@@ -4288,6 +4288,7 @@ netgraph/bluetooth/socket/ng_btsocket_l2cap.c optional netgraph_bluetooth_socket
 netgraph/bluetooth/socket/ng_btsocket_l2cap_raw.c optional netgraph_bluetooth_socket
 netgraph/bluetooth/socket/ng_btsocket_rfcomm.c optional netgraph_bluetooth_socket
 netgraph/bluetooth/socket/ng_btsocket_sco.c optional netgraph_bluetooth_socket
+netgraph/bluetooth/socket/ng_btsocket_iso.c optional netgraph_bluetooth_socket
 netgraph/netflow/netflow.c	optional netgraph_netflow
 netgraph/netflow/netflow_v9.c	optional netgraph_netflow
 netgraph/netflow/ng_netflow.c	optional netgraph_netflow

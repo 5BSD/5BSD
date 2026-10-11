@@ -128,8 +128,6 @@ struct vesa_mode
 
 #define VESA_MODE(x)	((x) >= M_VESA_BASE && (x) <= M_VESA_MODE_MAX)
 
-int vesa_load_ioctl(void);
-int vesa_unload_ioctl(void);
 
 #endif
 

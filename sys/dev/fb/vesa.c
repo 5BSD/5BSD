@@ -1117,7 +1117,6 @@ vesa_configure(int flags)
 {
 	video_adapter_t *adp;
 	int adapters;
-	int error;
 	int i;
 
 	if (vesa_init_done)
@@ -1167,14 +1166,9 @@ vesa_configure(int flags)
 				     V_INFO_COLOR : 0);
 	}
 
-	if ((error = vesa_load_ioctl()) == 0) {
-		prevvidsw = vidsw[vesa_adp->va_index];
-		vidsw[vesa_adp->va_index] = &vesavidsw;
-		vesa_init_done = TRUE;
-	} else {
-		vesa_adp = NULL;
-		return (error);
-	}
+	prevvidsw = vidsw[vesa_adp->va_index];
+	vidsw[vesa_adp->va_index] = &vesavidsw;
+	vesa_init_done = TRUE;
 
 	return (0);
 }
@@ -1951,8 +1945,6 @@ vesa_load(void)
 static int
 vesa_unload(void)
 {
-	int error;
-
 	/* The driver never initialized, so make it easy to unload. */
 	if (vesa_adp == NULL)
 		return (0);
@@ -1965,20 +1957,18 @@ vesa_unload(void)
 	 * we shouldn't be unloading! XXX
 	 */
 
-	if ((error = vesa_unload_ioctl()) == 0) {
-		if (vesa_adp != NULL) {
-			if ((vesa_adp->va_flags & V_ADP_DAC8) != 0) {
-				vesa_bios_set_dac(6);
-				vesa_adp->va_flags &= ~V_ADP_DAC8;
-			}
-			vesa_adp->va_flags &= ~V_ADP_VESA;
-			vidsw[vesa_adp->va_index] = prevvidsw;
+	if (vesa_adp != NULL) {
+		if ((vesa_adp->va_flags & V_ADP_DAC8) != 0) {
+			vesa_bios_set_dac(6);
+			vesa_adp->va_flags &= ~V_ADP_DAC8;
 		}
+		vesa_adp->va_flags &= ~V_ADP_VESA;
+		vidsw[vesa_adp->va_index] = prevvidsw;
 	}
 
 	vesa_bios_uninit();
 
-	return (error);
+	return (0);
 }
 
 static int
