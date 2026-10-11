@@ -2457,8 +2457,6 @@ ATF_TC_HEAD(close_terminates_live_member, tc)
 	    "member terminates the member (default SIGKILL) and frees the "
 	    "coalition");
 	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_coalition");
-	/* Asserts on the global kern.mac_capability_coalition.count. */
-	atf_tc_set_md_var(tc, "is_exclusive", "true");
 }
 ATF_TC_BODY(close_terminates_live_member, tc)
 {

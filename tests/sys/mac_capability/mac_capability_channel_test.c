@@ -954,8 +954,6 @@ ATF_TC_HEAD(ordering_mixed_paths, tc)
 	atf_tc_set_md_var(tc, "require.kmods",
 	    "mac_capability mac_capability_channel");
 	atf_tc_set_md_var(tc, "require.user", "root");
-	/* Toggles the global kern.mac_capability.direct_delivery knob. */
-	atf_tc_set_md_var(tc, "is_exclusive", "true");
 }
 ATF_TC_BODY(ordering_mixed_paths, tc)
 {
