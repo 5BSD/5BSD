@@ -336,7 +336,7 @@ virtio_reinit_complete(device_t dev)
 int
 virtio_reset_virtqueue(device_t dev, struct virtqueue *vq)
 {
-	uint16_t index __diagused;
+	uint16_t index __sdt_used;
 	int error;
 
 	index = virtqueue_index(vq);
