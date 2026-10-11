@@ -991,13 +991,23 @@ mac_capability_instance_kick(struct mac_capability_instance *s)
 	mtx_lock(&s->ci_mtx);
 	svc = s->ci_service;
 	if (svc == NULL || svc->csvc_taskq == NULL ||
-	    (s->ci_flags & MAC_CAPABILITY_SF_DEAD) ||
-	    STAILQ_EMPTY(&s->ci_rxq)) {
+	    (s->ci_flags & MAC_CAPABILITY_SF_DEAD)) {
 		mtx_unlock(&s->ci_mtx);
 		return;
 	}
+	/*
+	 * A running dispatch has already removed the message it is handling
+	 * from ci_rxq.  If that handler returns MAC_CAPABILITY_HANDLER_RETRY,
+	 * the message goes back to the RX head and waits for a kick, so a kick
+	 * that arrives meanwhile must be latched even though ci_rxq looks
+	 * empty; otherwise the retried message stalls until some later kick.
+	 * The dispatcher drops the latch if the queue is empty when it ends.
+	 */
 	if (s->ci_dispatching) {
 		s->ci_kick_pending = true;
+	} else if (STAILQ_EMPTY(&s->ci_rxq)) {
+		mtx_unlock(&s->ci_mtx);
+		return;
 	} else {
 		s->ci_dispatching = true;
 		taskqueue_enqueue(svc->csvc_taskq, &s->ci_task);
