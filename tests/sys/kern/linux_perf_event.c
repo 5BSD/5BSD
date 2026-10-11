@@ -519,11 +519,14 @@ fork_inheritance(void)
 	if (pid < 0)
 		return (2);
 	if (pid == 0) {
-		int rc = sys3(SYS_read, fd, &v, 8) == 8 && v != 0 ? 0 : 1;
+		/* The parent may still be on CPU: its slice must count. */
+		int rc = sys3(SYS_read, fd, &v, 8) != 8 ? 1 : v == 0 ? 2 : 0;
 		sys1(SYS_exit_group, rc);
 	}
-	if (sys4(SYS_wait4, pid, &status, 0, 0) != pid || status != 0)
+	if (sys4(SYS_wait4, pid, &status, 0, 0) != pid || status != 0) {
+		msgnum("fork child status ", status);
 		return (3);
+	}
 	if (sys3(SYS_read, fd, &v, 8) != 8 || v == 0)
 		return (4);
 	sys1(SYS_close, fd);

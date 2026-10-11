@@ -13,6 +13,7 @@
 #include <sys/lock.h>
 #include <sys/malloc.h>
 #include <sys/mutex.h>
+#include <sys/pcpu.h>
 #include <sys/proc.h>
 #include <sys/queue.h>
 #include <sys/resourcevar.h>
@@ -165,16 +166,42 @@ linux_perf_now(void)
 	return ((uint64_t)ts.tv_sec * 1000000000ULL + ts.tv_nsec);
 }
 
+/*
+ * Task clock in nanoseconds, including the slice the thread is running now.
+ * A thread on another CPU has not folded its current slice into td_runtime;
+ * rusage-based values for it lag (and are truncated differently from) the
+ * value taken at open, so a read from another thread or a forked child
+ * could see no progress at all.  Both open and read use this function.
+ */
+static uint64_t
+linux_perf_task_clock(struct thread *td)
+{
+	uint64_t now, runtime, switchtime;
+
+	THREAD_LOCK_ASSERT(td, MA_OWNED);
+	runtime = td->td_runtime;
+	if (td == curthread || TD_IS_RUNNING(td)) {
+		switchtime = td == curthread ? PCPU_GET(switchtime) :
+		    pcpu_find(td->td_oncpu)->pc_switchtime;
+		now = cpu_ticks();
+		if (now > switchtime)
+			runtime += now - switchtime;
+	}
+	return (cputick2usec(runtime) * 1000ULL);
+}
+
 static void
 linux_perf_snapshot_current(struct linux_perf_raw *raw)
 {
-	struct timespec ts;
+	struct thread *td;
 	struct rusage *ru;
 
 	bzero(raw, sizeof(*raw));
-	kern_thread_cputime(NULL, &ts);
-	raw->task_clock = (uint64_t)ts.tv_sec * 1000000000ULL + ts.tv_nsec;
-	ru = &curthread->td_ru;
+	td = curthread;
+	thread_lock(td);
+	raw->task_clock = linux_perf_task_clock(td);
+	thread_unlock(td);
+	ru = &td->td_ru;
 	raw->faults = (uint64_t)ru->ru_minflt + ru->ru_majflt;
 	raw->context_switches = (uint64_t)ru->ru_nvcsw + ru->ru_nivcsw;
 	raw->minflt = ru->ru_minflt;
@@ -202,13 +229,11 @@ linux_perf_snapshot_target(struct linux_perf_event *pe,
 	PROC_STATLOCK(p);
 	thread_lock(td);
 	rufetchtd(td, &ru);
+	raw->task_clock = linux_perf_task_clock(td);
 	thread_unlock(td);
 	PROC_STATUNLOCK(p);
 	PROC_UNLOCK(p);
 
-	raw->task_clock = ((uint64_t)ru.ru_utime.tv_sec + ru.ru_stime.tv_sec) *
-	    1000000000ULL + ((uint64_t)ru.ru_utime.tv_usec +
-	    ru.ru_stime.tv_usec) * 1000ULL;
 	raw->faults = (uint64_t)ru.ru_minflt + ru.ru_majflt;
 	raw->context_switches = (uint64_t)ru.ru_nvcsw + ru.ru_nivcsw;
 	raw->minflt = ru.ru_minflt;
