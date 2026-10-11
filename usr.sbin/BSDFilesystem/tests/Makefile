@@ -60,9 +60,11 @@ ATF_TESTS_C+= manifest_test
 CFLAGS.manifest_test+= -I${SRCTOP}/lib/libcapbundle
 LIBADD.manifest_test= capbundle
 NO_SHARED.manifest_test= yes
-.PATH: ${.CURDIR}/../capbundle
-FILES+= bsdfilesystem.ucl
-FILESDIR= ${TESTSDIR}
+# bsd.test.mk installs the ${PACKAGE}FILES group into ${TESTSDIR}; a plain
+# FILES group is not in FILESGROUPS here and was never installed.  Name the
+# capbundle unit explicitly: the .PATH above also has the daemon's
+# configuration file of the same name.
+${PACKAGE}FILES+= ${.CURDIR}/../capbundle/bsdfilesystem.ucl
 
 ATF_TESTS_C+= cleanup_test
 SRCS.cleanup_test= cleanup_test.c layout.c nvwalk.c config.c
