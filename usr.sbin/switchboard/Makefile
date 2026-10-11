@@ -21,6 +21,7 @@ CAPABILITIES_SYSTEMPACKAGE=	switchboard
 DIRS+= CAPABILITIES_CONFIG SWITCHBOARD_CONFIG
 CAPABILITIES_CONFIG= /Capabilities/Config
 SWITCHBOARD_CONFIG= /Capabilities/Config/switchboard
+SWITCHBOARD_CONFIGPACKAGE= switchboard
 
 # The rc.d adoption allow-list is policy, read at boot from this file rather
 # than hardcoded in switchboard (rc_adopt.c).
