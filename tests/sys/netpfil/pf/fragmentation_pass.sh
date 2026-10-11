@@ -714,8 +714,103 @@ counters_cleanup()
 	pft_cleanup
 }
 
+atf_test_case "direction_v4" "cleanup"
+direction_v4_head()
+{
+	atf_set descr 'Identical IPv4 fragment keys stay isolated across PF directions'
+	atf_set require.user root
+	atf_set require.progs 'python3 scapy'
+	atf_set timeout 600
+}
+
+direction_test()
+{
+	family=$1
+	pft_init
+	left=$(vnet_mkepair)
+	right=$(vnet_mkepair)
+	vnet_mkjail router ${left}b ${right}a
+	vnet_mkjail server ${right}b
+	if [ "$family" = inet ]; then
+		left_prefix=192.0.2.; right_prefix=198.51.100.; mask=24
+		ping_family=-4; forwarding=net.inet.ip.forwarding
+	else
+		left_prefix=2001:db8:1::; right_prefix=2001:db8:2::; mask=64
+		ping_family=-6; forwarding=net.inet6.ip6.forwarding
+	fi
+	ifconfig ${left}a $family ${left_prefix}1/$mask up
+	jexec router ifconfig ${left}b $family ${left_prefix}2/$mask up
+	jexec router ifconfig ${right}a $family ${right_prefix}1/$mask up
+	jexec server ifconfig ${right}b $family ${right_prefix}2/$mask up
+	jexec router sysctl $forwarding=1
+	if [ "$family" = inet6 ]; then
+		while { ifconfig ${left}a; jexec router ifconfig; jexec server ifconfig; } | grep -q tentative; do sleep 1; done
+	fi
+	atf_check -s exit:0 -o ignore ping $ping_family -c 1 -t 3 ${left_prefix}2
+	atf_check -s exit:0 -o ignore jexec router ping $ping_family -c 1 -t 3 ${right_prefix}2
+	jexec router pfctl -e
+	pft_set_rules router 'set reassemble yes' 'set timeout frag 600' 'pass no state'
+	jexec router pfctl -x loud
+	mac=$(jexec router ifconfig ${left}b | awk '/ether/ { print $2 }')
+	helper=$(atf_get_srcdir)/frag-direction.py
+	ready=$(pwd)/receiver.ready
+	jexec server python3 "$helper" receive --family "$family" --ready "$ready" >receiver.log 2>&1 &
+	rx=$!
+	echo "$rx" >receiver.pid
+	tries=0
+	while [ ! -f "$ready" ]; do
+		kill -0 "$rx" || atf_fail 'fragment receiver exited before readiness'
+		tries=$((tries + 1))
+		[ "$tries" -lt 120 ] || atf_fail 'fragment receiver did not become ready'
+		sleep 1
+	done
+	# The old shared key joins A's input head to B's output tail.
+	atf_check -s exit:0 -o ignore python3 "$helper" input --family "$family" --part head --interface ${left}a --mac "$mac"
+	atf_check -s exit:0 -o ignore jexec router python3 "$helper" output --family "$family" --part tail
+	atf_check -s exit:0 -o ignore python3 "$helper" input --family "$family" --part tail --interface ${left}a --mac "$mac"
+	atf_check -s exit:0 -o ignore jexec router python3 "$helper" output --family "$family" --part head
+	jexec router pfctl -si
+	if ! wait "$rx"; then
+		cat receiver.log
+		atf_fail "fragment payload mismatch or missing datagram; see receiver output"
+	fi
+	rm receiver.pid
+}
+
+direction_v4_body()
+{
+	direction_test inet
+}
+
+atf_test_case "direction_v6" "cleanup"
+direction_v6_head()
+{
+	atf_set descr 'Identical IPv6 fragment keys stay isolated across PF directions'
+	atf_set require.user root
+	atf_set require.progs 'python3 scapy'
+	atf_set timeout 600
+}
+
+direction_v6_body()
+{
+	direction_test inet6
+}
+
+direction_v6_cleanup()
+{
+	pft_cleanup
+}
+
+direction_v4_cleanup()
+{
+	# The receiver lives in the disposable server jail; jail removal stops it.
+	pft_cleanup
+}
+
 atf_init_test_cases()
 {
+	atf_add_test_case "direction_v4"
+	atf_add_test_case "direction_v6"
 	atf_add_test_case "too_many_fragments"
 	atf_add_test_case "v6"
 	atf_add_test_case "v6_route_to"

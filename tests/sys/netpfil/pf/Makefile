@@ -84,6 +84,9 @@ ${PACKAGE}FILES+=	\
 			daytime_inetd.conf \
 			echo_inetd.conf \
 			fragcommon.py \
+			frag-direction.py \
+			mld-group.py \
+			tcp-original-ack.py \
 			frag-overindex.py \
 			frag-overlimit.py \
 			frag-overreplace.py \
