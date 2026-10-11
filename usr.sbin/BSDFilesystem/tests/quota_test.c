@@ -35,7 +35,7 @@ ATF_TC_BODY(worker_shutdown, tc)
 	for (unsigned i = 0; i < nitems(descriptors); i++) {
 		entry = calloc(1, sizeof(*entry));
 		ATF_REQUIRE(entry != NULL);
-		children[i] = pdfork(&entry->pd, PD_CLOEXEC);
+		children[i] = pdfork(&entry->pd, PD_CLOEXEC | PD_NOWAITPID);
 		ATF_REQUIRE(children[i] >= 0);
 		if (children[i] == 0)
 			for (;;)
