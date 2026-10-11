@@ -26,6 +26,12 @@ integration tests, usr.sbin/relayd (no PF use), sys/kern/pledge/ioctl
 loop, mpath, snmpd).
   share/mk/bsd.regress.mk               OpenBSD regress driver; the upstream
                                          Makefiles include it unchanged
+  sbin/pfctl                            OpenBSD pfctl (vendor source for the
+                                         PF convergence; wired in by
+                                         sbin/pfctl/Makefile when adopted)
+  sys/net/pf*.[ch], if_pflog.[ch], if_pflow.[ch], if_pfsync.[ch]
+                                         OpenBSD kernel PF (vendor reference
+                                         for merges into sys/netpfil/pf)
 
 Not present upstream at this revision: regress for pfsync, queues,
 syncookies, authpf, pflogd, ftp-proxy/tftp-proxy.

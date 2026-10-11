@@ -113,6 +113,114 @@
       "git_tree": "28736260b4cf10dd2f5895dc8bb667def914a311",
       "local": "regress/sys/net/pair",
       "tier": "secondary"
+    },
+    {
+      "path": "sys/net/if_pflog.c",
+      "git_blob": "803d7e2e44bac880c247e46cb1dff3f39e6f21ca",
+      "local": "sys/net/if_pflog.c",
+      "tier": "vendor-source"
+    },
+    {
+      "path": "sys/net/if_pflog.h",
+      "git_blob": "440d8f056c2fda5486b035040b253dfde36a6e0a",
+      "local": "sys/net/if_pflog.h",
+      "tier": "vendor-source"
+    },
+    {
+      "path": "sys/net/if_pflow.c",
+      "git_blob": "fced85a31866f041057472a808165a881655ec42",
+      "local": "sys/net/if_pflow.c",
+      "tier": "vendor-source"
+    },
+    {
+      "path": "sys/net/if_pflow.h",
+      "git_blob": "61f7c452309c05c14506a9d531064e45e8c88fef",
+      "local": "sys/net/if_pflow.h",
+      "tier": "vendor-source"
+    },
+    {
+      "path": "sys/net/if_pfsync.c",
+      "git_blob": "59e314aab4ca8e2c685569c7a7aaaec65b47dd43",
+      "local": "sys/net/if_pfsync.c",
+      "tier": "vendor-source"
+    },
+    {
+      "path": "sys/net/if_pfsync.h",
+      "git_blob": "5d96c02d45a3ce773a4fe7671618d64b512d1fc9",
+      "local": "sys/net/if_pfsync.h",
+      "tier": "vendor-source"
+    },
+    {
+      "path": "sys/net/pf.c",
+      "git_blob": "837c2e3229ab6503925aa1b08e707108f7380189",
+      "local": "sys/net/pf.c",
+      "tier": "vendor-source"
+    },
+    {
+      "path": "sys/net/pf_if.c",
+      "git_blob": "455cdbd87b4bf4179fe81309bbd488d14a174e7e",
+      "local": "sys/net/pf_if.c",
+      "tier": "vendor-source"
+    },
+    {
+      "path": "sys/net/pf_ioctl.c",
+      "git_blob": "2683a3096c302a74f903be4bd68aeff0a33a6ece",
+      "local": "sys/net/pf_ioctl.c",
+      "tier": "vendor-source"
+    },
+    {
+      "path": "sys/net/pf_lb.c",
+      "git_blob": "ebd23ac14c99b469128e193bbf05e0b993669ca7",
+      "local": "sys/net/pf_lb.c",
+      "tier": "vendor-source"
+    },
+    {
+      "path": "sys/net/pf_norm.c",
+      "git_blob": "ef20e1055f5073294a266c8292a0f8449a5e39a4",
+      "local": "sys/net/pf_norm.c",
+      "tier": "vendor-source"
+    },
+    {
+      "path": "sys/net/pf_osfp.c",
+      "git_blob": "f86bb028ca9f8150b360bc12c15ecda2620cf102",
+      "local": "sys/net/pf_osfp.c",
+      "tier": "vendor-source"
+    },
+    {
+      "path": "sys/net/pf_ruleset.c",
+      "git_blob": "e30fff24059c84d4127e3da1cf353709a6638adc",
+      "local": "sys/net/pf_ruleset.c",
+      "tier": "vendor-source"
+    },
+    {
+      "path": "sys/net/pf_syncookies.c",
+      "git_blob": "b373f08ca15425e0a34abbe1df7fa15017962984",
+      "local": "sys/net/pf_syncookies.c",
+      "tier": "vendor-source"
+    },
+    {
+      "path": "sys/net/pf_table.c",
+      "git_blob": "3036319c5db26a4bfbf394166e8f47efbd591d8f",
+      "local": "sys/net/pf_table.c",
+      "tier": "vendor-source"
+    },
+    {
+      "path": "sys/net/pfvar.h",
+      "git_blob": "750fe0ef144c5e6bdd78744dcbbab0674fb9e28a",
+      "local": "sys/net/pfvar.h",
+      "tier": "vendor-source"
+    },
+    {
+      "path": "sys/net/pfvar_priv.h",
+      "git_blob": "d8bc3cb4365d3298eb5f69af28c30b937b2a532d",
+      "local": "sys/net/pfvar_priv.h",
+      "tier": "vendor-source"
+    },
+    {
+      "path": "sbin/pfctl",
+      "git_tree": "1fe7e881d458c91161ce773a63013123e4aa1cf0",
+      "local": "sbin/pfctl",
+      "tier": "vendor-source"
     }
   ],
   "verification": "git -C <openbsd-src> diff --stat <commit> -- <path> must be empty against the local copy; tree hashes are git tree object IDs at the pinned commit.",
