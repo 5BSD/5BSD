@@ -146,9 +146,15 @@ linux_signalfd_pending(struct thread *td, const sigset_t *mask)
 	return (!SIGISEMPTY(set));
 }
 
-/* tdsendsignal() hook: wake every signalfd interested in this signal. */
+/*
+ * tdsendsignal() hook: wake every signalfd interested in this signal.
+ * Pollers re-check their own pending set, but an EPOLLET (EV_CLEAR) knote is
+ * re-armed by any activation.  Pass the target process so that only knotes
+ * registered from that process fire, as Linux wakes only the target's
+ * signalfd wait queue.
+ */
 static void
-linux_signalfd_signal(void *arg __unused, struct proc *p __unused, int sig)
+linux_signalfd_signal(void *arg __unused, struct proc *p, int sig)
 {
 	struct linux_signalfd *lsf;
 
@@ -157,7 +163,8 @@ linux_signalfd_signal(void *arg __unused, struct proc *p __unused, int sig)
 		LSF_LOCK(lsf);
 		if (SIGISMEMBER(lsf->lsf_mask, sig)) {
 			selwakeuppri(&lsf->lsf_sel, PSOCK);
-			KNOTE_LOCKED(&lsf->lsf_sel.si_note, sig);
+			KNOTE_LOCKED(&lsf->lsf_sel.si_note,
+			    (long)(uintptr_t)p);
 			LIN_SDT_PROBE1(signalfd, linux_signalfd_signal, notify, sig);
 		}
 		LSF_UNLOCK(lsf);
@@ -353,9 +360,14 @@ linux_signalfd_kqevent(struct knote *kn, long hint)
 	/*
 	 * From the process_signal hook the signal is about to be queued
 	 * (tdsendsignal runs the hook before sigqueue_add); report ready,
-	 * the reader finds it queued by the time it runs.
+	 * the reader finds it queued by the time it runs.  The hint is the
+	 * target process; a signal for any other process must not activate
+	 * this knote, or EPOLLET would report an already-seen record again.
 	 */
 	if (hint != 0) {
+		if (kn->kn_hook != NULL &&
+		    (void *)(uintptr_t)hint != kn->kn_hook)
+			return (0);
 		kn->kn_data = 0;
 		return (1);
 	}
@@ -373,11 +385,20 @@ linux_signalfd_kqevent(struct knote *kn, long hint)
 	return (!SIGISEMPTY(set));
 }
 
+/* A knote copied into a forked child's kqueue follows the child. */
+static int
+linux_signalfd_kqcopy(struct knote *kn, struct proc *p1)
+{
+
+	kn->kn_hook = p1;
+	return (0);
+}
+
 static const struct filterops linux_signalfd_rfiltops = {
 	.f_isfd = 1,
 	.f_detach = linux_signalfd_kqdetach,
 	.f_event = linux_signalfd_kqevent,
-	.f_copy = knote_triv_copy,
+	.f_copy = linux_signalfd_kqcopy,
 };
 
 static int
@@ -389,6 +410,12 @@ linux_signalfd_kqfilter(struct file *fp, struct knote *kn)
 	switch (kn->kn_filter) {
 	case EVFILT_READ:
 		kn->kn_fop = &linux_signalfd_rfiltops;
+		/*
+		 * As with Linux epoll_ctl(), notification follows the process
+		 * that registered the descriptor.  Only compared, never
+		 * dereferenced, so a stale pointer costs a spurious wakeup.
+		 */
+		kn->kn_hook = curproc;
 		knlist_add(&lsf->lsf_sel.si_note, kn, 0);
 		return (0);
 	default:

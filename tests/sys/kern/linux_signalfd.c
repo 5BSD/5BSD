@@ -272,10 +272,17 @@ test(int argc, char **argv, char **envp)
 	if (sys3(SYS_read, sfd, si, sizeof(si[0])) != (long)sizeof(si[0])) return (26);
 	if (sys4(SYS_epoll_wait, ep, &ev, 1, 0) != 0) return (26);
 	ev.events = EPOLLIN | EPOLLET; ev.data = 1;
-	if (sys4(SYS_epoll_ctl, ep, 3 /* MOD */, sfd, &ev) != 0) return (27);
+	if ((r = sys4(SYS_epoll_ctl, ep, 3 /* MOD */, sfd, &ev)) != 0) {
+		msgnum("ET mod ", r); return (27);
+	}
 	(void)sys2(SYS_kill, pid, SIGUSR2);
-	if (sys4(SYS_epoll_wait, ep, &ev, 1, 1000) != 1) return (27);
-	if (sys4(SYS_epoll_wait, ep, &ev, 1, 50) != 0) return (27);
+	if ((r = sys4(SYS_epoll_wait, ep, &ev, 1, 1000)) != 1) {
+		msgnum("ET first wait ", r); return (27);
+	}
+	/* Other processes' signals must not re-arm this edge. */
+	if ((r = sys4(SYS_epoll_wait, ep, &ev, 1, 50)) != 0) {
+		msgnum("ET second wait ", r); return (27);
+	}
 	(void)sys3(SYS_read, sfd, si, sizeof(si[0]));
 	(void)sys1(SYS_close, ep);
 
