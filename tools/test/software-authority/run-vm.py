@@ -28,18 +28,30 @@ if args.qemu_data:cmd += ['-L',str(args.qemu_data.resolve())]
 (w/'command.json').write_text(json.dumps(cmd,indent=2)+'\n')
 p=subprocess.Popen(cmd)
 shutdown.start(p)
-forced=False;diagnosed=False;started=time.monotonic();deadline=started+args.timeout
+forced=False;diagnosed=0;next_diagnosis=0;started=time.monotonic();deadline=started+args.timeout
+def quiet(path,settle=3,limit=60):
+ end=time.monotonic()+limit;size=-1;stable=time.monotonic()
+ while time.monotonic()<end:
+  n=path.stat().st_size if path.exists() else 0
+  if n!=size:size=n;stable=time.monotonic()
+  elif time.monotonic()-stable>=settle:return
+  time.sleep(0.5)
 try:
  while p.poll() is None and time.monotonic()<deadline:
   s=log.read_text(errors='replace') if log.exists() else ''
   if any(x in s for x in ['panic:','Fatal trap','lock order reversal']):break
-  if 'SOFTWARE_APPLICATION_FAIL' in s.splitlines() and not diagnosed:
-   time.sleep(2)
+  if 'SOFTWARE_APPLICATION_FAIL' in s.splitlines() and diagnosed<2 and time.monotonic()>=next_diagnosis and 'SOFTWARE_DIAGNOSTICS_COMPLETE' not in s.splitlines():
+   # The root login shell (zsh) starts its line editor after the guest
+   # script exits and drops a burst typed before or during that, so wait
+   # for the console to go quiet, then type paced lines like run-installed.
+   quiet(log)
    with socket.socket(socket.AF_UNIX,socket.SOCK_STREAM) as c:
     c.settimeout(5)
     c.connect(str(w/'serial.sock'))
-    c.sendall(b'cat /var/log/capability.log; echo SOFTWARE_DIAGNOSTICS_COMPLETE; /usr/sbin/capsulectl poweroff\n')
-   diagnosed=True
+    for line in ['cat /var/log/capability.log','echo SOFTWARE_DIAGNOSTICS_COMPLETE','/usr/sbin/capsulectl poweroff']:
+     c.sendall(line.encode()+b'\r')
+     time.sleep(0.5)
+   diagnosed+=1;next_diagnosis=time.monotonic()+60
   time.sleep(1)
 finally:
  if p.poll() is None:
