@@ -12,6 +12,9 @@ ATF_TESTS_C+=	mac_capability_accounting_test
 ATF_TESTS_C+=	mac_capability_procdesc_test
 ATF_TESTS_C+=	mac_capability_mount_test
 ATF_TESTS_C+=	mac_capability_system_test
+# System gate claims (SYSCTL, SETTIME, KLDLOAD, ...) are global: they deny
+# every other nonce, including concurrently running test cases.
+TEST_METADATA.mac_capability_system_test+=	is_exclusive="true"
 ATF_TESTS_C+=	mac_capability_channel_test
 PROGS+=		mac_capability_exec_helper
 PROGS+=		mac_capability_channel_helper

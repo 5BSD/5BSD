@@ -2457,27 +2457,40 @@ ATF_TC_HEAD(close_terminates_live_member, tc)
 	    "member terminates the member (default SIGKILL) and frees the "
 	    "coalition");
 	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_coalition");
+	/* Asserts on the global kern.mac_capability_coalition.count. */
+	atf_tc_set_md_var(tc, "is_exclusive", "true");
 }
 ATF_TC_BODY(close_terminates_live_member, tc)
 {
 	unsigned before, mid, after;
-	int cfd, pd, wstatus;
+	int cfd, pd, sync[2], wstatus;
 	int32_t status;
 	pid_t pid;
+	char byte;
 
 	before = coalition_count();
 	cfd = mac_capability_connect("coalition");
 	ATF_REQUIRE(cfd >= 0);
 	mid = coalition_count();
 	ATF_CHECK_EQ(mid, before + 1);
+	ATF_REQUIRE(pipe(sync) == 0);
 	pid = pdfork(&pd, 0);
 	ATF_REQUIRE(pid >= 0);
 	if (pid == 0) {
-		/* The child must not pin the coalition's file. */
+		/*
+		 * The child must not pin the coalition's file.  Report the
+		 * close before the parent closes: otherwise the member's own
+		 * close can be the last one, and close exempts its caller.
+		 */
+		close(sync[0]);
 		close(cfd);
+		(void)write(sync[1], "x", 1);
 		pause();
 		_exit(0);
 	}
+	close(sync[1]);
+	ATF_REQUIRE_EQ(1, read(sync[0], &byte, 1));
+	close(sync[0]);
 	ATF_REQUIRE(coalition_enlist(cfd, pd, &status) == 0);
 	ATF_CHECK_EQ(status, 0);
 	close(cfd);

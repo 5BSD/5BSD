@@ -954,6 +954,8 @@ ATF_TC_HEAD(ordering_mixed_paths, tc)
 	atf_tc_set_md_var(tc, "require.kmods",
 	    "mac_capability mac_capability_channel");
 	atf_tc_set_md_var(tc, "require.user", "root");
+	/* Toggles the global kern.mac_capability.direct_delivery knob. */
+	atf_tc_set_md_var(tc, "is_exclusive", "true");
 }
 ATF_TC_BODY(ordering_mixed_paths, tc)
 {
@@ -1292,6 +1294,28 @@ recv_v4(int fd, int *fds, struct mac_capability_fd_info *info,
 	return (0);
 }
 
+/*
+ * recv_v4 on a nonblocking endpoint for a message whose send was accepted.
+ * Only direct delivery is synchronous; the queued path (direct delivery
+ * off, or the sender not idle) forwards through the bearer taskqueue, so
+ * retry EAGAIN for a bounded time.
+ */
+static int
+recv_v4_accepted(int fd, int *fds, struct mac_capability_fd_info *info,
+    uint32_t *nfds)
+{
+	int i;
+
+	for (i = 0; i < 5000; i++) {
+		if (recv_v4(fd, fds, info, nfds) == 0)
+			return (0);
+		if (errno != EAGAIN)
+			return (-1);
+		usleep(1000);
+	}
+	return (-1);
+}
+
 static bool
 locked_inheritance(int fd)
 {
@@ -1343,7 +1367,7 @@ ATF_TC_BODY(sendmsg_v2_atomic, tc)
 	ATF_REQUIRE(send_v2(P[0], fds, 2, specs, 0) == -1);
 	ATF_REQUIRE_EQ(ENOTCAPABLE, errno);
 	ATF_REQUIRE(send_v2(P[0], fds, 1, NULL, 0) == 0);
-	ATF_REQUIRE(recv_v4(P[1], rfds, NULL, &nfds) == 0);
+	ATF_REQUIRE(recv_v4_accepted(P[1], rfds, NULL, &nfds) == 0);
 	ATF_REQUIRE_EQ(1, nfds);
 	close(rfds[0]);
 
@@ -1372,7 +1396,7 @@ ATF_TC_BODY(sendmsg_v2_atomic, tc)
 	a._reserved2[1] = 0;
 	a.fd_specs = (void *)(uintptr_t)1;
 	ATF_REQUIRE(ioctl(P[0], MAC_CAPABILITY_SENDMSG_V2, &a) == 0);
-	ATF_REQUIRE(recv_v4(P[1], rfds, NULL, &nfds) == 0);
+	ATF_REQUIRE(recv_v4_accepted(P[1], rfds, NULL, &nfds) == 0);
 	ATF_REQUIRE_EQ(0, nfds);
 	/* An unreadable spec array faults without side effects. */
 	ATF_REQUIRE(send_v2(P[0], &pipefd[0], 1,

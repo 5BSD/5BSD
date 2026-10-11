@@ -2939,6 +2939,8 @@ ATF_TC_BODY(vsock_token_claim_mint_authorize, tc)
 		atf_tc_set_md_var(tc, "require.user", "root");\
 		atf_tc_set_md_var(tc, "require.kmods",\
 		    "mac_capability mac_capability_isolation");\
+		/* Wildcard/overlapping vsock claims: EBUSY across nonces. */\
+		atf_tc_set_md_var(tc, "is_exclusive", "true");\
 	}
 
 VSOCK_TC_HEAD(vsock_claim_blocks_foreign_bind,
@@ -3652,6 +3654,8 @@ ATF_TC_HEAD(net_wildcard_claim_blocks_exact_bind, tc)
 	atf_tc_set_md_var(tc, "descr",
 	    "Wildcard 0..65535 claim blocks foreign exact bind on port 443");
 	atf_tc_set_md_var(tc, "require.user", "root");
+	/* A 0..65535 TCP claim conflicts (EBUSY) with any concurrent claim. */
+	atf_tc_set_md_var(tc, "is_exclusive", "true");
 }
 ATF_TC_BODY(net_wildcard_claim_blocks_exact_bind, tc)
 {

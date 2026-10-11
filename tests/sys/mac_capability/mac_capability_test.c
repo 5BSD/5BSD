@@ -2937,13 +2937,18 @@ ATF_TC_BODY(channel_backpressure_xfer_retry_atomic, tc)
 		ATF_REQUIRE(mac_capability_recv(fd_b, &value, &len, NULL) == 0);
 		ATF_CHECK_EQ(value, 0);
 	}
-	for (attempt = 0; attempt < 200; attempt++) {
+	/*
+	 * Capacity returns only after the bearer taskqueue forwards the
+	 * sender's RX head into the drained peer queue; allow for a loaded
+	 * or emulated machine (about 10s).
+	 */
+	for (attempt = 0; attempt < 10000; attempt++) {
 		if (ioctl(fd_a, MAC_CAPABILITY_SENDMSG, &sa) == 0)
 			break;
 		ATF_REQUIRE_EQ(errno, EAGAIN);
 		usleep(1000);
 	}
-	ATF_REQUIRE_MSG(attempt < 200,
+	ATF_REQUIRE_MSG(attempt < 10000,
 	    "attachment retry never observed released capacity");
 
 	/* Drain the remaining fillers in order. */
