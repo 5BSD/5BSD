@@ -40,7 +40,7 @@
 The
 .Nm
 command is used to set various keyboard related options for the
-.Xr syscons 4
+.Em retired syscons console
 or
 .Xr vt 4
 console driver and the keyboard drivers,
@@ -219,22 +219,22 @@ See keyboard driver manuals
 .Xr ukbd 4 )
 for details.
 .Sh FILES
-.Bl -tag -width /usr/share/syscons/keymaps/foo_bar -compact
-.It Pa /usr/share/syscons/keymaps/*
-keyboard map files for syscons
+.Bl -tag -width /usr/share/vt/keymaps/foo_bar -compact
+.It Pa /usr/share/vt/keymaps/*
+keyboard map files for vt
 .It Pa /usr/share/vt/keymaps/*
 keyboard map files for vt
 .El
 .Sh EXAMPLES
 The following command will load the keyboard map file
-.Pa /usr/share/syscons/keymaps/ru.koi8-r.kbd .
+.Pa /usr/share/vt/keymaps/ru.kbd .
 .Pp
-.Dl kbdcontrol -l /usr/share/syscons/keymaps/ru.koi8-r.kbd
+.Dl kbdcontrol -l /usr/share/vt/keymaps/ru.kbd
 .Pp
 So long as the keyboard map file resides in
-.Pa /usr/share/syscons/keymaps
+.Pa /usr/share/vt/keymaps
 (if using
-.Xr syscons 4 ) or
+.Em retired syscons console ) or
 .Pa /usr/share/vt/keymaps
 (if using
 .Xr vt 4 ) ,
@@ -286,7 +286,6 @@ kbdcontrol -k /dev/kbdmux0 < /dev/console
 .Xr kbdmux 4 ,
 .Xr keyboard 4 ,
 .Xr screen 4 ,
-.Xr syscons 4 ,
 .Xr ukbd 4 ,
 .Xr vt 4 ,
 .Xr kbdmap 5 ,

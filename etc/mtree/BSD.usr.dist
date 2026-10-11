@@ -855,14 +855,6 @@
             mibs
             ..
         ..
-        syscons
-            fonts
-            ..
-            keymaps
-            ..
-            scrnmaps
-            ..
-        ..
         tabset                tags=package=ncurses-lib
         ..
         vi

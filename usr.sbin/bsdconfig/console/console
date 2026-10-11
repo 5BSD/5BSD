@@ -53,8 +53,6 @@ dialog_menu_main()
 		'2 $msg_font'      '$msg_choose_alternate_screen_font'
 		'3 $msg_keymap'    '$msg_choose_alternate_keyboard_map'
 		'4 $msg_repeat'    '$msg_set_repeat_rate'
-		'5 $msg_saver'     '$msg_configure_screen_saver'
-		'6 $msg_screenmap' '$msg_choose_alternate_screenmap'
 		'7 $msg_ttys'      '$msg_choose_console_terminal_type'
 	" # END-QUOTE
 	local defaultitem= # Calculated below
@@ -126,8 +124,6 @@ while :; do
 	"2 $msg_font")      command=font      ;; # Choose alternate screen font
 	"3 $msg_keymap")    command=keymap    ;; # Choose alt. keyboard map
 	"4 $msg_repeat")    command=repeat    ;; # Set key repeat rate
-	"5 $msg_saver")     command=saver     ;; # Configure the screen saver
-	"6 $msg_screenmap") command=screenmap ;; # Choose alternate screenmap
 	"7 $msg_ttys")      command=ttys      ;; # Choose console terminal type
 	esac
 

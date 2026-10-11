@@ -148,21 +148,6 @@ add_keymap(const char *desc, int mark, const char *keym)
 	SLIST_INSERT_HEAD(&head, km_new, entries);
 }
 
-/*
- * Return 0 if syscons is in use (to select legacy defaults).
- */
-static int
-check_vt(void)
-{
-	size_t len;
-	char term[3];
-
-	len = 3;
-	if (sysctlbyname("kern.vty", &term, &len, NULL, 0) != 0 ||
-	    strcmp(term, "vt") != 0)
-		return 0;
-	return 1;
-}
 
 /*
  * Figure out the default language to use.
@@ -828,12 +813,7 @@ main(int argc, char **argv)
 		sleep(2);
 	}
 
-	using_vt = check_vt();
-	if (using_vt == 0) {
-		keymapdir = DEFAULT_SC_KEYMAP_DIR;
-		fontdir = DEFAULT_SC_FONT_DIR;
-		font_default = DEFAULT_SC_FONT;
-	}
+	using_vt = 1;
 
 	SLIST_INIT(&head);
 

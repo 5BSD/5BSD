@@ -410,7 +410,12 @@ See
 .El
 .Ss Test fixtures
 The following services exist for testing the MAC_CAPABILITY framework.
-They are not intended for production use.
+They are built explicitly from
+.Pa tests/sys/mac_capability/fixtures
+and are excluded from system kernel and module packages.
+Set
+.Ev MAC_CAPABILITY_FIXTURE_DIR
+to their object directory when running the isolated test suite.
 .Bl -tag -width mac_capability_test_kernelstore
 .It Sy mac_capability_test_kernelstore
 Sync-only shared key-value store (256 keys, 4096 bytes per value).

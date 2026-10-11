@@ -2839,7 +2839,7 @@ no keymap is installed, otherwise the value is used to install
 the keymap file found in
 .Pa /usr/share/syscons/keymaps/ Ns Ao Ar value Ac Ns Pa .kbd
 (if using
-.Xr syscons 4 ) or
+.Em retired syscons console ) or
 .Pa /usr/share/vt/keymaps/ Ns Ao Ar value Ac Ns Pa .kbd
 (if using
 .Xr vt 4 ) .
@@ -2861,70 +2861,30 @@ attempt to program the function keys with the value.
 The value should
 be a single string of the form:
 .Dq Ar funkey_number new_value Op Ar funkey_number new_value ... .
-.It Va cursor
-.Pq Vt str
-Can be set to the value of
-.Dq Li normal ,
-.Dq Li blink ,
-.Dq Li destructive ,
-or
-.Dq Li NO
-to set the cursor behavior explicitly or choose the default behavior.
-.It Va scrnmap
-.Pq Vt str
-If set to
-.Dq Li NO ,
-no screen map is installed, otherwise the value is used to install
-the screen map file in
-.Pa /usr/share/syscons/scrnmaps/ Ns Aq Ar value .
-This parameter is ignored when using
-.Xr vt 4
-as the console driver.
 .It Va font8x16
 .Pq Vt str
 If set to
 .Dq Li NO ,
 the default 8x16 font value is used for screen size requests, otherwise
 the value in
-.Pa /usr/share/syscons/fonts/ Ns Aq Ar value
-or
 .Pa /usr/share/vt/fonts/ Ns Aq Ar value
-is used (depending on the console driver being used).
+is used.
 .It Va font8x14
 .Pq Vt str
 If set to
 .Dq Li NO ,
 the default 8x14 font value is used for screen size requests, otherwise
 the value in
-.Pa /usr/share/syscons/fonts/ Ns Aq Ar value
-or
 .Pa /usr/share/vt/fonts/ Ns Aq Ar value
-is used (depending on the console driver being used).
+is used.
 .It Va font8x8
 .Pq Vt str
 If set to
 .Dq Li NO ,
 the default 8x8 font value is used for screen size requests, otherwise
 the value in
-.Pa /usr/share/syscons/fonts/ Ns Aq Ar value
-or
 .Pa /usr/share/vt/fonts/ Ns Aq Ar value
-is used (depending on the console driver being used).
-.It Va blanktime
-.Pq Vt int
-If set to
-.Dq Li NO ,
-the default screen blanking interval is used, otherwise it is set
-to
-.Ar value
-seconds.
-.It Va saver
-.Pq Vt str
-If not set to
-.Dq Li NO ,
-this is the actual screen saver to use
-.Li ( blank , snake , daemon ,
-etc).
+is used.
 .It Va moused_nondefault_enable
 .Pq Vt str
 If set to
@@ -3113,7 +3073,7 @@ is run with these options for each of the virtual terminals
 For example,
 .Dq Fl h Li 200
 will set the
-.Xr syscons 4
+.Em retired syscons console
 or
 .Xr vt 4
 scrollback (history) buffer to 200 lines.

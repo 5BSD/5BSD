@@ -172,8 +172,9 @@ invalid system policy. A bundle package normally needs no hooks at all.
 `sys/conf/kmod.mk` installs a module with `-T ${KMODTAGS}`, which defaults
 to `package=${PACKAGE:Ukernel}`. A module Makefile that sets `PACKAGE=`
 therefore puts its `.ko` in that pkgbase package; `sys/modules/oes/Makefile`
-sets `PACKAGE= oes` and `sys/modules/mac_capability_test_keystore/Makefile`
-sets `PACKAGE= mac-capability-tests`. `Makefile.inc1`'s `create-world-packages`
+sets `PACKAGE= oes`. Capability test fixtures instead live under
+`tests/sys/mac_capability/fixtures`, are built explicitly, and are never installed
+into the system module package set. `Makefile.inc1`'s `create-world-packages`
 copies every module whose tag is not `kernel` or `dtb` from the kernel stage
 into the world stage, concatenates the two METALOGs, and runs the plist
 script over both, so one package can hold the module, the daemon that loads

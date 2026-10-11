@@ -1,0 +1,14 @@
+These fixtures exercise the MAC capability keystore and channel protocols.
+They are not selected by sys/modules, buildkernel, buildworld or test installation.
+
+In a source checkout, build for the kernel used by the isolated test VM:
+  make -j$(sysctl -n hw.ncpu) -C tests/sys/mac_capability fixtures KERNBUILDDIR=/path/to/kernel/objects
+The normal /usr/obj object root is used. Determine the fixture object root with:
+  make -C tests/sys/mac_capability/fixtures -V .OBJDIR
+Copy its kernelstore/ and keystore/ .ko files to the isolated test VM, preserving
+those subdirectories, and set MAC_CAPABILITY_FIXTURE_DIR to their parent when
+running run_tests.sh. Do not load fixtures on the production capability plane.
+The runner's existing plane-free and root requirements still apply.
+
+The matching protocol headers live in fixtures/include. Tests and fixture
+modules consume the same definitions. Production code does not include them.

@@ -3010,9 +3010,6 @@ ${_bt}-sbin/md5: ${_bt}-lib/libmd
 #
 # build-tools: Build special purpose build tools
 #
-.if !defined(NO_SHARE) && ${MK_SYSCONS} != "no"
-_share=	share/syscons/scrnmaps
-.endif
 
 .if ${MK_RESCUE} != "no"
 # rescue includes programs that have build-tools targets

@@ -40,7 +40,6 @@
 #include <sys/fbio.h>
 
 #include <dev/fb/fbreg.h>
-#include <dev/syscons/syscons.h>
 
 #include <dev/videomode/videomode.h>
 #include <dev/videomode/edidvar.h>

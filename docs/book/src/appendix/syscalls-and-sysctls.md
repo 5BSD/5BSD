@@ -189,7 +189,7 @@ mac_policy_ops`; three of them (`mpo_mount_check_mount`, `_update`,
 `_unmount`) replace 5BSD's early mount hooks with upstream's richer
 signatures, so 62 are net new. Each has a matching `mac_*()` entry in
 `mac_framework.h` and a call site listed in `docs/macf-new-hooks.md`.
-`mac_stub` and `mac_test` implement all of them; `mac_test_hooks.ko`
+`mac_test` implements all of them; `mac_test_hooks.ko`
 counts and can deny them. See [Policy Points](../capability/policy-points.md).
 
 | Group | Count | Hooks |

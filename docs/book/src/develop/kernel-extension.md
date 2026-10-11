@@ -261,7 +261,8 @@ production services (isolation, system, coalition, capprotect, node, mount,
 accounting, identity, channel) are compiled into every kernel as
 `standard` in `sys/conf/files`; the two test fixtures
 `mac_capability_test_keystore` and `mac_capability_test_kernelstore` are
-loadable and are the patterns. The KPI is `sys/dev/mac_capability/mac_capability.h`
+loadable, test-only examples under `tests/sys/mac_capability/fixtures`;
+they require an explicit fixture build and are excluded from system packages. The KPI is `sys/dev/mac_capability/mac_capability.h`
 and `docs/mac_capability-architecture.md` has the full callback contract.
 
 A service fills a `struct mac_capability_ops`. `co_connect` runs when a

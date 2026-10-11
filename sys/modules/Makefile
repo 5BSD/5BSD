@@ -229,12 +229,10 @@ SUBDIR=	\
 	lpt \
 	${_mac_ddb} \
 	${_mac_do} \
-	${_mac_none} \
 	${_mac_ntpd} \
 	${_mac_pimd} \
 	${_mac_portacl} \
 	${_mac_priority} \
-	${_mac_stub} \
 	${_mac_test} \
 	${_mac_veriexec} \
 	${_mac_veriexec_sha1} \
@@ -382,14 +380,12 @@ SUBDIR=	\
 	${_spe} \
 	${_speaker} \
 	spi \
-	${_splash} \
 	ste \
 	stge \
 	${_sume} \
 	${_superio} \
 	${_p2sb} \
 	sym \
-	${_syscons} \
 	sysvipc \
 	tarfs \
 	tcp \
@@ -606,12 +602,10 @@ _mac_abac=	mac_abac
 _mac_ddb=	mac_ddb
 .endif
 _mac_do=	mac_do
-_mac_none=	mac_none
 _mac_ntpd=	mac_ntpd
 _mac_pimd=	mac_pimd
 _mac_portacl=	mac_portacl
 _mac_priority=	mac_priority
-_mac_stub=	mac_stub
 _mac_test=	mac_test
 .if ${MK_VERIEXEC} != "no" || defined(ALL_MODULES)
 _mac_veriexec=	mac_veriexec
@@ -697,8 +691,6 @@ _mpr=		mpr
 
 .if ${MK_TESTS} != "no" || defined(ALL_MODULES)
 SUBDIR+=	ktest
-SUBDIR+=	mac_capability_test_kernelstore
-SUBDIR+=	mac_capability_test_keystore
 .if ${KERN_OPTS:MMAC} || defined(ALL_MODULES)
 SUBDIR+=	mac_test_hooks
 .endif
@@ -776,8 +768,6 @@ _p2sb=		p2sb
 _qat_c2xxx=	qat_c2xxx
 _qat_c2xxxfw=	qat_c2xxxfw
 _speaker=	speaker
-_splash=	splash
-_syscons=	syscons
 _wbwd=		wbwd
 _wdatwd=	wdatwd
 

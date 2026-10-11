@@ -30,9 +30,6 @@
 #define DEFAULT_LANG		"en"
 #define DEFAULT_SYSCONFIG	"/etc/rc.conf"
 
-#define DEFAULT_SC_KEYMAP_DIR	"/usr/share/syscons/keymaps"
-#define DEFAULT_SC_FONT_DIR	"/usr/share/syscons/fonts"
-#define DEFAULT_SC_FONT		"cp437-8x16.fnt"
 
 #define DEFAULT_VT_KEYMAP_DIR	"/usr/share/vt/keymaps"
 #define DEFAULT_VT_FONT_DIR	"/usr/share/vt/fonts"

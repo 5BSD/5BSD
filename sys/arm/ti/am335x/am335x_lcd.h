@@ -52,7 +52,5 @@ struct panel_info {
 	uint32_t pixelclk_active;
 };
 
-int am335x_lcd_syscons_setup(vm_offset_t vaddr, vm_paddr_t paddr,
-    struct panel_info *panel);
 
 #endif /* __AM335X_LCD_H__ */

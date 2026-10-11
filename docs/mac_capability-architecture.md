@@ -844,8 +844,6 @@ sys/dev/mac_capability/
     mac_capability_accounting.c   per-process racct/rctl operations
     mac_capability_mount.c        capability-based filesystem mounting
     mac_capability_channel.c      bidirectional capability channel
-    mac_capability_test_kernelstore.c  test fixture: sync key-value store
-    mac_capability_test_keystore.c     test fixture: async key-value store
 
 usr.sbin/capsule/         Capsule daemon
 usr.sbin/switchboard/        service manager daemon
@@ -855,6 +853,9 @@ share/dtrace/capsule-*    DTrace scripts (8 capsule)
 share/dtrace/switchboard-*   DTrace scripts (10 switchboard)
 
 tests/sys/mac_capability/         ATF kernel tests via kyua
+    fixtures/kernelstore/        explicit test-only sync fixture
+    fixtures/keystore/           explicit test-only async fixture
+    fixtures/include/            shared test protocol definitions
 ```
 
 ## Base System Changes

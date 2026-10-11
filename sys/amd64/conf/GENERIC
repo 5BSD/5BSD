@@ -24,7 +24,6 @@ makeoptions	DEBUG=-g		# Build kernel with gdb(1) debug symbols
 makeoptions	WITH_CTF=1		# Run ctfconvert(1) for DTrace support
 
 options 	SCHED_ULE		# ULE scheduler
-options 	SCHED_4BSD		# Original 4.xBSD scheduler
 options 	NUMA			# Non-Uniform Memory Architecture support
 options 	PREEMPTION		# Enable kernel thread preemption
 options 	EXTERR_STRINGS		# Retain exterror(9) strings in the kernel
@@ -200,11 +199,8 @@ device		psm			# PS/2 mouse
 
 device		kbdmux			# keyboard multiplexer
 
-# syscons is the legacy console driver, resembling an SCO console
 device		vga			# VGA video card driver
 device		splash			# Splash screen and screen saver support
-device		sc
-options 	SC_PIXEL_MODE		# add support for the raster text mode
 
 # vt is the default video console driver
 device		vt

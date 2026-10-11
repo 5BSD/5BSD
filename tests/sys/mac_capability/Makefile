@@ -54,6 +54,7 @@ SCRIPTS+=	run_tests.sh
 BINDIR=		${TESTSDIR}
 
 CFLAGS+=	-I${SRCTOP}/sys -I${SRCTOP}/sys/dev/mac_capability
+CFLAGS+=	-I${.CURDIR}/fixtures/include
 LIBADD.mac_capability_test+=	jail
 LIBADD.mac_capability_test+=	util
 LIBADD.mac_capability_coalition_test+=	jail
@@ -61,3 +62,7 @@ LIBADD.mac_capability_isolation_test+=	jail
 LIBADD.mac_capability_isolation_helper+=	jail
 
 .include <bsd.test.mk>
+
+# Opt-in fixture build; not reached by all/install/world or system packages.
+fixtures: .PHONY
+	${MAKE} -C ${.CURDIR}/fixtures all

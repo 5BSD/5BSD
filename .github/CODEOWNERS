@@ -94,7 +94,6 @@
 /sys/cddl/dev/kinst/	@christosmarg
 /sys/compat/linprocfs/	@dag-erling
 /sys/crypto/openssl/	@ngie-eign
-/sys/dev/drm2	@bsdimp
 /sys/dev/ftgpio/	@stephane-rochoy-stormshield
 /sys/dev/ftwd/	@stephane-rochoy-stormshield
 /sys/dev/iscsi/	@trasz

@@ -33,10 +33,6 @@ feeder_rate_gen.h		optional sound				   \
 	compile-with	"${AWK} -f $S/tools/sound/feeder_rate_mkfilter.awk -- ${FEEDER_RATE_PRESETS} > feeder_rate_gen.h" \
 	no-obj no-implicit-rule before-depend				   \
 	clean		"feeder_rate_gen.h"
-font.h				optional	sc_dflt_font		\
-	compile-with	"uudecode < ${SRCTOP}/share/syscons/fonts/${SC_DFLT_FONT}-8x16.fnt && file2c 'u_char dflt_font_16[16*256] = {' '};' < ${SC_DFLT_FONT}-8x16 > font.h && uudecode < ${SRCTOP}/share/syscons/fonts/${SC_DFLT_FONT}-8x14.fnt && file2c 'u_char dflt_font_14[14*256] = {' '};' < ${SC_DFLT_FONT}-8x14 >> font.h && uudecode < ${SRCTOP}/share/syscons/fonts/${SC_DFLT_FONT}-8x8.fnt && file2c 'u_char dflt_font_8[8*256] = {' '};' < ${SC_DFLT_FONT}-8x8 >> font.h"									\
-	no-obj no-implicit-rule before-depend				\
-	clean		"font.h ${SC_DFLT_FONT}-8x14 ${SC_DFLT_FONT}-8x16 ${SC_DFLT_FONT}-8x8"
 snd_fxdiv_gen.h			optional sound				   \
 	dependency	"$S/tools/sound/snd_fxdiv_gen.awk"		   \
 	compile-with	"${AWK} -f $S/tools/sound/snd_fxdiv_gen.awk -- > snd_fxdiv_gen.h" \
@@ -51,7 +47,7 @@ kbdmuxmap.h			optional	kbdmux_dflt_keymap 	   \
 	compile-with	"${KEYMAP} -L ${KBDMUX_DFLT_KEYMAP} | ${KEYMAP_FIX} > ${.TARGET}" \
 	no-obj no-implicit-rule before-depend				\
 	clean		"kbdmuxmap.h"
-teken_state.h		optional sc | vt				   \
+teken_state.h		optional vt				   \
 	dependency	"$S/teken/gensequences $S/teken/sequences" \
 	compile-with	"${AWK} -f $S/teken/gensequences $S/teken/sequences > teken_state.h" \
 	no-obj no-implicit-rule before-depend				   \
@@ -1569,49 +1565,6 @@ dev/dcons/dcons_os.c		optional dcons
 dev/dialog/da9063/da9063_if.m	optional da9063_pmic
 dev/dialog/da9063/da9063_iic.c	optional da9063_pmic iicbus fdt
 dev/dialog/da9063/da9063_rtc.c	optional da9063_rtc fdt
-dev/drm2/drm_agpsupport.c	optional drm2
-dev/drm2/drm_auth.c		optional drm2
-dev/drm2/drm_bufs.c		optional drm2
-dev/drm2/drm_buffer.c		optional drm2
-dev/drm2/drm_context.c		optional drm2
-dev/drm2/drm_crtc.c		optional drm2
-dev/drm2/drm_crtc_helper.c	optional drm2
-dev/drm2/drm_dma.c		optional drm2
-dev/drm2/drm_dp_helper.c	optional drm2
-dev/drm2/drm_dp_iic_helper.c	optional drm2
-dev/drm2/drm_drv.c		optional drm2
-dev/drm2/drm_edid.c		optional drm2
-dev/drm2/drm_fb_helper.c	optional drm2
-dev/drm2/drm_fops.c		optional drm2
-dev/drm2/drm_gem.c		optional drm2
-dev/drm2/drm_gem_names.c	optional drm2
-dev/drm2/drm_global.c		optional drm2
-dev/drm2/drm_hashtab.c		optional drm2
-dev/drm2/drm_ioctl.c		optional drm2
-dev/drm2/drm_irq.c		optional drm2
-dev/drm2/drm_linux_list_sort.c	optional drm2
-dev/drm2/drm_lock.c		optional drm2
-dev/drm2/drm_memory.c		optional drm2
-dev/drm2/drm_mm.c		optional drm2
-dev/drm2/drm_modes.c		optional drm2
-dev/drm2/drm_pci.c		optional drm2
-dev/drm2/drm_platform.c		optional drm2
-dev/drm2/drm_scatter.c		optional drm2
-dev/drm2/drm_stub.c		optional drm2
-dev/drm2/drm_sysctl.c		optional drm2
-dev/drm2/drm_vm.c		optional drm2
-dev/drm2/drm_os_freebsd.c	optional drm2
-dev/drm2/ttm/ttm_agp_backend.c	optional drm2
-dev/drm2/ttm/ttm_lock.c		optional drm2
-dev/drm2/ttm/ttm_object.c	optional drm2
-dev/drm2/ttm/ttm_tt.c		optional drm2
-dev/drm2/ttm/ttm_bo_util.c	optional drm2
-dev/drm2/ttm/ttm_bo.c		optional drm2
-dev/drm2/ttm/ttm_bo_manager.c	optional drm2
-dev/drm2/ttm/ttm_execbuf_util.c	optional drm2
-dev/drm2/ttm/ttm_memory.c	optional drm2
-dev/drm2/ttm/ttm_page_alloc.c	optional drm2
-dev/drm2/ttm/ttm_bo_vm.c	optional drm2
 dev/dwc/if_dwc.c		optional dwc fdt
 dev/dwc/if_dwc_if.m		optional dwc fdt
 dev/dwc/dwc1000_core.c		optional dwc fdt
@@ -1710,7 +1663,6 @@ dev/evdev/uinput.c			optional evdev uinput
 dev/exca/exca.c			optional cbb
 dev/fb/fbd.c			optional fbd | vt
 dev/fb/fb_if.m			standard
-dev/fb/splash.c			optional sc splash
 dev/fdt/fdt_clock.c		optional fdt fdt_clock
 dev/fdt/fdt_clock_if.m		optional fdt fdt_clock
 dev/fdt/fdt_common.c		optional fdt
@@ -2357,7 +2309,7 @@ dev/ixgbe/ixgbe_dcb_82599.c	optional ix inet | ixv inet \
 	compile-with "${NORMAL_C} -I$S/dev/ixgbe"
 dev/jedec_dimm/jedec_dimm.c	optional jedec_dimm smbus
 dev/jme/if_jme.c		optional jme pci
-dev/kbd/kbd.c			optional atkbd | pckbd | sc | ukbd | vt | hkbd
+dev/kbd/kbd.c			optional atkbd | pckbd | ukbd | vt | hkbd
 dev/kbdmux/kbdmux.c		optional kbdmux
 dev/ksyms/ksyms.c		optional ksyms
 dev/led/led.c			standard
@@ -3252,28 +3204,6 @@ dev/syscon/syscon.c		optional syscon
 dev/syscon/syscon_generic.c	optional syscon fdt
 dev/syscon/syscon_if.m		optional syscon
 dev/syscon/syscon_power.c	optional syscon syscon_power
-dev/syscons/blank/blank_saver.c	optional blank_saver
-dev/syscons/daemon/daemon_saver.c optional daemon_saver
-dev/syscons/dragon/dragon_saver.c optional dragon_saver
-dev/syscons/fade/fade_saver.c	optional fade_saver
-dev/syscons/fire/fire_saver.c	optional fire_saver
-dev/syscons/green/green_saver.c	optional green_saver
-dev/syscons/logo/logo.c		optional logo_saver
-dev/syscons/logo/logo_saver.c	optional logo_saver
-dev/syscons/rain/rain_saver.c	optional rain_saver
-dev/syscons/schistory.c		optional sc
-dev/syscons/scmouse.c		optional sc
-dev/syscons/scterm.c		optional sc
-dev/syscons/scterm-dumb.c	optional sc !SC_NO_TERM_DUMB
-dev/syscons/scterm-sc.c		optional sc !SC_NO_TERM_SC
-dev/syscons/scterm-teken.c	optional sc !SC_NO_TERM_TEKEN
-dev/syscons/scvidctl.c		optional sc
-dev/syscons/scvtb.c		optional sc
-dev/syscons/snake/snake_saver.c	optional snake_saver
-dev/syscons/star/star_saver.c	optional star_saver
-dev/syscons/syscons.c		optional sc
-dev/syscons/sysmouse.c		optional sc
-dev/syscons/warp/warp_saver.c	optional warp_saver
 dev/tcp_log/tcp_log_dev.c	optional tcp_blackbox inet | tcp_blackbox inet6
 dev/tdfx/tdfx_pci.c		optional tdfx pci
 dev/ti/if_ti.c			optional ti pci
@@ -3944,7 +3874,6 @@ kern/link_elf.c			standard
 kern/linker_if.m		standard
 kern/p1003_1b.c			standard
 kern/posix4_mib.c		standard
-kern/sched_4bsd.c		optional sched_4bsd
 kern/sched_shim.c		standard
 kern/sched_ule.c		optional sched_ule
 kern/serdev_if.m		standard
@@ -5330,11 +5259,9 @@ dev/mac_capability/mac_capability_node.c	standard
 dev/mac_capability/mac_capability_isolation.c	standard
 security/mac_ddb/mac_ddb.c	optional mac_ddb
 security/mac_do/mac_do.c	optional mac_do
-security/mac_none/mac_none.c	optional mac_none
 security/mac_ntpd/mac_ntpd.c	optional mac_ntpd
 security/mac_portacl/mac_portacl.c optional mac_portacl
 security/mac_priority/mac_priority.c	optional mac_priority
-security/mac_stub/mac_stub.c	optional mac_stub
 security/mac_test/mac_test.c	optional mac_test
 security/mac_grantbylabel/mac_grantbylabel.c		optional mac_grantbylabel
 security/mac_veriexec/mac_veriexec.c			optional mac_veriexec
@@ -5351,7 +5278,7 @@ security/oes/oes_client.c	optional oes
 security/oes/oes_cache.c	optional oes
 security/oes/oes_event.c	optional oes
 security/oes/oes_mac.c		optional oes
-teken/teken.c			optional sc !SC_NO_TERM_TEKEN | vt
+teken/teken.c			optional vt
 ufs/ffs/ffs_alloc.c		optional ffs
 ufs/ffs/ffs_balloc.c		optional ffs
 ufs/ffs/ffs_inode.c		optional ffs

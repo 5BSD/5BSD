@@ -21,7 +21,6 @@ SUBDIR=	${_colldef} \
 	${_sendmail} \
 	skel \
 	${_snmp} \
-	${_syscons} \
 	tabset \
 	termcap \
 	${_timedef} \
@@ -78,9 +77,6 @@ _sendmail=	 sendmail
 _doc=		doc
 .endif
 
-.if ${MK_SYSCONS} != "no"
-_syscons=	syscons
-.endif
 
 SUBDIR.${MK_TESTS}+= tests
 

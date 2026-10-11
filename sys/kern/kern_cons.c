@@ -736,7 +736,7 @@ sysbeep(int pitch __unused, sbintime_t duration __unused)
 #endif
 
 /*
- * Temporary support for sc(4) to vt(4) transition.
+ * Virtual terminal selection; obsolete kern.vty values fall back to vt.
  */
 static char vty_name[16];
 SYSCTL_STRING(_kern, OID_AUTO, vty, CTLFLAG_RDTUN | CTLFLAG_NOFETCH, vty_name,
@@ -750,12 +750,6 @@ vty_enabled(unsigned vty)
 	if (vty_selected == 0) {
 		TUNABLE_STR_FETCH("kern.vty", vty_name, sizeof(vty_name));
 		do {
-#if defined(DEV_SC)
-			if (strcmp(vty_name, "sc") == 0) {
-				vty_selected = VTY_SC;
-				break;
-			}
-#endif
 #if defined(DEV_VT)
 			if (strcmp(vty_name, "vt") == 0) {
 				vty_selected = VTY_VT;
@@ -764,15 +758,11 @@ vty_enabled(unsigned vty)
 #endif
 #if defined(DEV_VT)
 			vty_selected = VTY_VT;
-#elif defined(DEV_SC)
-			vty_selected = VTY_SC;
 #endif
 		} while (0);
 
 		if (vty_selected == VTY_VT)
 			strcpy(vty_name, "vt");
-		else if (vty_selected == VTY_SC)
-			strcpy(vty_name, "sc");
 	}
 	return ((vty_selected & vty) != 0);
 }

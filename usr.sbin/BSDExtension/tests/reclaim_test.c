@@ -167,14 +167,14 @@ ATF_TC_BODY(destroy_unloads_only_our_unshared_modules, tc)
 	ATF_REQUIRE_EQ(0, sysext_owner_note(fd, "geom_nop", "app.A", true));
 	ATF_REQUIRE_EQ(0, sysext_owner_note(fd, "geom_nop", "app.B", true));
 	ATF_REQUIRE_EQ(0, sysext_owner_note(fd, "if_edsc", "app.A", true));
-	ATF_REQUIRE_EQ(0, sysext_owner_note(fd, "mac_none", "app.A", false));
+	ATF_REQUIRE_EQ(0, sysext_owner_note(fd, "test_loaded", "app.A", false));
 	ATF_REQUIRE_EQ(0, sysext_test_destroy(fd, "app.A"));
 	/* geom_nop: still claimed by app.B, not unloaded. */
 	ATF_CHECK(!was_unloaded("geom_nop"));
 	/* if_edsc: ours and unshared, unloaded. */
 	ATF_CHECK(was_unloaded("if_edsc"));
-	/* mac_none: found already loaded, never unloaded. */
-	ATF_CHECK(!was_unloaded("mac_none"));
+	/* test_loaded: found already loaded, never unloaded. */
+	ATF_CHECK(!was_unloaded("test_loaded"));
 	ATF_CHECK_EQ(1, nunloaded);
 	/* Every attribution of app.A is gone; app.B's stays. */
 	n = sysext_test_owners_load(fd, e, nitems(e));

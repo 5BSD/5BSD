@@ -188,22 +188,7 @@ options 	ROOTDEVNAME=\"ufs:da0s2e\"
 #####################################################################
 # Scheduler options:
 #
-# The options below select the schedulers that are compiled in.  Specifying at
-# least one is mandatory.  Multiple ones can be compiled in.  At boot, the
-# kernel will use ULE by default if present, with a fallback to one of the
-# compiled-in options.  A specific scheduler can be requested by setting the
-# 'kern.sched.name' tunable to a scheduler name, i.e., one of the options below
-# with the SCHED_ prefix removed.
-#
-# SCHED_4BSD is the historical, proven, BSD scheduler.  It has a global run
-# queue and no CPU affinity which makes it suboptimal for SMP.  It has very
-# good interactivity and priority selection.
-#
-# SCHED_ULE provides significant performance advantages over 4BSD on many
-# workloads on SMP machines.  It supports cpu-affinity, per-cpu runqueues
-# and scheduler locks.  It also has a stronger notion of interactivity
-# which leads to better responsiveness even on uniprocessor machines.
-options 	SCHED_4BSD
+# ULE is the supported scheduler; its dispatch and tracing remain.
 options 	SCHED_ULE
 
 # SCHED_STATS is a debugging option which keeps some stats in the sysctl
@@ -280,12 +265,6 @@ options 	SX_NOINLINE
 #	  higher priority [interrupt] threads.  It helps with interactivity
 #	  and allows interrupt threads to run sooner rather than waiting.
 options 	PREEMPTION
-
-# IPI_PREEMPTION instructs the 4BSD scheduler to immediately preempt a thread
-# running on a specific CPU when a thread pinned there has higher priority,
-# instead of waiting for a return to userland.  It has no effect on other
-# schedulers (e.g., ULE).
-options 	IPI_PREEMPTION
 
 # SMP Debugging Options:
 #
@@ -1222,11 +1201,9 @@ options 	AUDIT
 options 	MAC
 options 	MAC_DDB
 options 	MAC_DO
-options 	MAC_NONE
 options 	MAC_NTPD
 options 	MAC_PORTACL
 options 	MAC_PRIORITY
-options 	MAC_STUB
 options 	MAC_TEST
 options 	MAC_VERIEXEC
 options 	MAC_VERIEXEC_SHA1
@@ -1492,7 +1469,7 @@ makeoptions	KBDMUX_DFLT_KEYMAP=it.iso
 
 options 	FB_DEBUG		# Frame buffer debugging
 
-# Enable experimental features of the syscons terminal emulator (teken).
+# Optional teken terminal-emulation features.
 options 	TEKEN_CONS25		# cons25-style terminal emulation
 options 	TEKEN_UTF8		# UTF-8 output handling
 
@@ -2724,8 +2701,6 @@ options 	MSGTQL=41	# Max number of messages in system
 
 options 	NBUF=512	# Number of buffer headers
 
-options 	SC_DEBUG_LEVEL=5	# Syscons debug level
-options 	SC_RENDER_DEBUG	# syscons rendering debugging
 
 options 	VFS_BIO_DEBUG	# VFS buffer I/O debugging
 

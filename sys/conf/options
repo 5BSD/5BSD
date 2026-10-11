@@ -72,11 +72,9 @@ TSLOG_PAGEZERO	opt_global.h
 TSLOGSIZE	opt_global.h
 
 # Scheduler options
-SCHED_4BSD	opt_sched.h
 SCHED_ULE	opt_sched.h
 SCHED_STATS	opt_sched.h
 PREEMPTION	opt_sched.h
-IPI_PREEMPTION	opt_sched.h
 FULL_PREEMPTION	opt_sched.h
 
 # Miscellaneous options
@@ -154,12 +152,10 @@ MAC_ABAC	opt_dontuse.h
 MAC_DDB		opt_dontuse.h
 MAC_DEBUG	opt_mac.h
 MAC_DO		opt_dontuse.h
-MAC_NONE	opt_dontuse.h
 MAC_NTPD	opt_dontuse.h
 MAC_PORTACL	opt_dontuse.h
 MAC_PRIORITY	opt_dontuse.h
 MAC_STATIC	opt_mac.h
-MAC_STUB	opt_dontuse.h
 MAC_TEST	opt_dontuse.h
 MAC_GRANTBYLABEL	opt_dontuse.h
 MAC_VERIEXEC	opt_dontuse.h
@@ -712,41 +708,13 @@ SOCKBUF_DEBUG		opt_global.h
 
 
 
-# syscons/vt options
+# vt options (shared generated header name retained)
 MAXCONS			opt_syscons.h
-SC_ALT_MOUSE_IMAGE	opt_syscons.h
-SC_CUT_SPACES2TABS	opt_syscons.h
-SC_CUT_SEPCHARS		opt_syscons.h
-SC_DEBUG_LEVEL		opt_syscons.h
-SC_DFLT_FONT		opt_syscons.h
-SC_DFLT_TERM		opt_syscons.h
-SC_DISABLE_KDBKEY	opt_syscons.h
-SC_DISABLE_REBOOT	opt_syscons.h
-SC_HISTORY_SIZE		opt_syscons.h
-SC_KERNEL_CONS_ATTR	opt_syscons.h
-SC_KERNEL_CONS_ATTRS	opt_syscons.h
-SC_KERNEL_CONS_REV_ATTR	opt_syscons.h
-SC_MOUSE_CHAR		opt_syscons.h
-SC_NO_CUTPASTE		opt_syscons.h
-SC_NO_FONT_LOADING	opt_syscons.h
-SC_NO_HISTORY		opt_syscons.h
-SC_NO_MODE_CHANGE	opt_syscons.h
-SC_NO_SUSPEND_VTYSWITCH	opt_syscons.h
-SC_NO_SYSMOUSE		opt_syscons.h
-SC_NO_TERM_DUMB		opt_syscons.h
-SC_NO_TERM_SC		opt_syscons.h
-SC_NO_TERM_TEKEN	opt_syscons.h
-SC_NORM_ATTR		opt_syscons.h
-SC_NORM_REV_ATTR	opt_syscons.h
-SC_PIXEL_MODE		opt_syscons.h
-SC_RENDER_DEBUG		opt_syscons.h
-SC_TWOBUTTON_MOUSE	opt_syscons.h
 VT_ALT_TO_ESC_HACK	opt_syscons.h
 VT_FB_MAX_WIDTH		opt_syscons.h
 VT_FB_MAX_HEIGHT	opt_syscons.h
 VT_MAXWINDOWS		opt_syscons.h
 VT_TWOBUTTON_MOUSE	opt_syscons.h
-DEV_SC			opt_syscons.h
 DEV_VT			opt_syscons.h
 
 # teken terminal emulator options

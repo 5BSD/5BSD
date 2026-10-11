@@ -77,9 +77,6 @@ DIRDEPS = \
 	share/sendmail \
 	share/skel \
 	share/snmp/mibs \
-	share/syscons/fonts \
-	share/syscons/keymaps \
-	share/syscons/scrnmaps \
 	share/tabset \
 	share/termcap \
 	share/timedef \

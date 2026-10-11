@@ -175,7 +175,6 @@ __DEFAULT_YES_OPTIONS = \
     SOURCELESS_HOST \
     SOURCELESS_UCODE \
     STATS \
-    SYSCONS \
     SYSTEM_COMPILER \
     SYSTEM_LINKER \
     TALK \
@@ -532,3 +531,14 @@ MK_IPFW= no
 .endif
 MK_IPFILTER= no
 MK_IPFILTER_IPFS= no
+
+# Retired console backend; vt remains the supported console.
+.if defined(WITH_SYSCONS)
+.error syscons has been removed; use vt
+.endif
+MK_SYSCONS= no
+
+.if defined(WITH_MODULE_DRM2)
+.error Old DRM2 has been removed; use the maintained DRM hardware packages
+.endif
+MK_MODULE_DRM2= no

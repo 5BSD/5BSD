@@ -33,7 +33,8 @@
 . /etc/rc.subr
 
 name="syscons"
-desc="Configure the system console"
+desc="Configure the vt system console"
+# Historical service name retained for devd and service(8) callers.
 extra_commands="setkeyboard"
 setkeyboard_cmd="syscons_setkeyboard"
 start_precmd="syscons_precmd"
@@ -49,37 +50,11 @@ _sc_config=
 _sc_console=
 _sc_initdone=
 _sc_keymap_msg=
-_sc_bootmethod=
 sc_init()
 {
-	local bootmethod
-
 	if [ -z "${_sc_initdone}" ]; then
-		if [ -z "${_sc_console}" ]; then
-			if [ x`sysctl -n kern.vty` = x"vt" ]; then
-				_sc_console="vt"
-			else
-				_sc_console="syscons"
-			fi
-			_sc_config="${_sc_console}"
-		fi
-		if [ -z "${_sc_bootmethod}" ]; then
-			bootmethod=$(sysctl -qn machdep.bootmethod)
-			case ${bootmethod} in
-				UEFI)
-					_sc_bootmethod="uefi"
-					;;
-				BIOS)
-					_sc_bootmethod="bios"
-					;;
-				PVH)
-					_sc_bootmethod="pvh"
-					;;
-				*)
-					_sc_bootmethod="uefi" # Default to UEFI
-					;;
-			esac
-		fi
+		_sc_console="vt"
+		: ${_sc_config:="vt"}
 		echo -n "Configuring ${_sc_config}:"
 		_sc_initdone=yes
 	fi
@@ -279,57 +254,6 @@ syscons_precmd()
 	return 0
 }
 
-syscons_bios_start()
-{
-	# cursor type
-	#
-	case ${cursor} in
-	[Nn][Oo] | '')
-		;;
-	*)
-		sc_init
-		echo -n ' cursor';	vidcontrol < ${viddev} -c ${cursor}
-		;;
-	esac
-
-	# screen mapping
-	#
-	case ${scrnmap} in
-	[Nn][Oo] | '')
-		;;
-	*)
-		sc_init
-		echo -n ' scrnmap';	vidcontrol < ${viddev} -l ${scrnmap}
-		;;
-	esac
-
-	# blank time
-	#
-	case ${blanktime} in
-	[Nn][Oo] | '')
-		;;
-	*)
-		sc_init
-		echo -n ' blanktime';	vidcontrol < ${viddev} -t ${blanktime}
-		;;
-	esac
-
-	# screen saver
-	#
-	case ${saver} in
-	[Nn][Oo] | '')
-		;;
-	*)
-		sc_init
-		echo -n ' screensaver'
-		for i in `kldstat | awk '$5 ~ "_saver\.ko$" { print $5 }'`; do
-			kldunload ${i}
-		done
-		load_kld -e _saver ${saver}_saver
-		;;
-	esac
-}
-
 syscons_start()
 {
 	# keyboard
@@ -339,10 +263,6 @@ syscons_start()
 	fi
 
 	syscons_configure_keyboard
-
-	if [ "${_sc_bootmethod}" = "bios" ]; then
-		syscons_bios_start
-	fi
 
 	# font 8x16
 	#

@@ -46,6 +46,21 @@ NOTE TO PEOPLE WHO THINK THAT FreeBSD 16.x IS SLOW:
 	MAC, mac_capability, mac_abac, audit and veriexec remain. Existing local
 	configuration files are not automatically translated or deleted.
 
+	5BSD now uses vt and ULE exclusively. Old in-tree DRM2, syscons and its
+	screen savers, SCHED_4BSD, mac_none and mac_stub are retired. Remove old
+	sc/SC_*/SCHED_4BSD/MAC_NONE/MAC_STUB custom kernel settings and legacy
+	*_saver/splash_bmp/splash_pcx/splash_txt module-load entries.
+	Modern DRM hardware packages, LinuxKPI, vt framebuffers and vt/loader
+	splash images remain. The rc service named syscons now configures vt only
+	and retains legacy keymap-name translation. kern.vty=sc now falls back
+	to vt, and obsolete scheduler selections fall back to ULE.
+	Capability keystore/kernelstore fixtures moved to the explicit test-only
+	build under tests/sys/mac_capability/fixtures; they are no longer shipped
+	by system module builds, even with WITH_TESTS or ALL_MODULES. Set
+	MAC_CAPABILITY_FIXTURE_DIR when running the isolated capability tests.
+	Qualify graphics handoff, recovery consoles, suspend/resume and scheduler
+	workloads before deployment. No running system changes occur from this edit.
+
 	5BSD has removed IPFilter and the deprecated safe(4) accelerator driver.
 	PF remains the firewall and Dummynet remains the shaper. Existing IPFilter
 	rule files are not translated or deleted. Migrate enabled ipfilter/ipnat/

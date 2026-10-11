@@ -59,11 +59,7 @@
 #include <dev/videomode/edidvar.h>
 
 #include <dev/fb/fbreg.h>
-#ifdef DEV_SC
-#include <dev/syscons/syscons.h>
-#else /* VT */
 #include <dev/vt/vt.h>
-#endif
 
 #include <arm/ti/ti_sysc.h>
 #include <arm/ti/ti_scm.h>
@@ -818,17 +814,6 @@ am335x_lcd_configure(struct am335x_lcd_softc *sc)
 	sc->sc_fb_info.fb_width = sc->sc_panel.panel_width;
 	sc->sc_fb_info.fb_height = sc->sc_panel.panel_height;
 
-#ifdef	DEV_SC
-	err = (sc_attach_unit(device_get_unit(sc->sc_dev),
-	    device_get_flags(sc->sc_dev) | SC_AUTODETECT_KBD));
-
-	if (err) {
-		device_printf(sc->sc_dev, "failed to attach syscons\n");
-		goto fail;
-	}
-
-	am335x_lcd_syscons_setup((vm_offset_t)sc->sc_fb_base, sc->sc_fb_phys, &panel);
-#else /* VT */
 	device_t fbd = device_add_child(sc->sc_dev, "fbd",
 	device_get_unit(sc->sc_dev));
 	if (fbd != NULL) {
@@ -836,7 +821,6 @@ am335x_lcd_configure(struct am335x_lcd_softc *sc)
 			device_printf(sc->sc_dev, "failed to attach fbd device\n");
 	} else
 		device_printf(sc->sc_dev, "failed to add fbd child\n");
-#endif
 
 done:
 	return (err);
@@ -929,9 +913,6 @@ am335x_lcd_hdmi_event(void *arg, device_t hdmi, int event)
 static int
 am335x_lcd_probe(device_t dev)
 {
-#ifdef DEV_SC
-	int err;
-#endif
 
 	if (!ofw_bus_status_okay(dev))
 		return (ENXIO);
@@ -941,12 +922,6 @@ am335x_lcd_probe(device_t dev)
 
 	device_set_desc(dev, "AM335x LCD controller");
 
-#ifdef DEV_SC
-	err = sc_probe_unit(device_get_unit(dev), 
-	    device_get_flags(dev) | SC_AUTODETECT_KBD);
-	if (err != 0)
-		return (err);
-#endif
 
 	return (BUS_PROBE_DEFAULT);
 }

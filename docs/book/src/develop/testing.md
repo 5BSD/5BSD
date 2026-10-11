@@ -221,6 +221,12 @@ capsule. Boot the guest with `capability_plane="NO"` (at the loader prompt or
 in `/boot/loader.conf`); capsule still runs first but hands off to stock
 `/sbin/init`, the plane never claims the device, and the kernel services stay
 compiled in. `build-image-authority.sh` does this for you with `CAPLANE_OFF=1`.
+Build the test-only fixtures with `make -j$(sysctl -n hw.ncpu) fixtures` in
+`tests/sys/mac_capability`, using the test kernel's `KERNBUILDDIR`. Set
+`MAC_CAPABILITY_FIXTURE_DIR` to the fixtures object directory on the isolated
+test host; its `kernelstore/` and `keystore/` subdirectories contain the modules.
+These fixtures are excluded from buildkernel, buildworld and system packages.
+
 The runner then verifies the compiled-in core with `kldstat -m`, loads the
 nine loadable service modules including the two test fixtures
 `mac_capability_test_kernelstore` and `mac_capability_test_keystore`, waits

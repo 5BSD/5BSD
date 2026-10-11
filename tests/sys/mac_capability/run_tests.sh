@@ -23,6 +23,8 @@ set -e
 
 SCRIPT_DIR=${TESTSDIR:-$(CDPATH= cd "$(dirname "$0")" && pwd -P)}
 
+FIXTURE_DIR=${MAC_CAPABILITY_FIXTURE_DIR:-}
+
 CORE_MODULE="mac_capability"
 BOOT_MODULES="mac_capability_capprotect mac_capability_isolation"
 SERVICE_MODULES="mac_capability_test_kernelstore mac_capability_test_keystore mac_capability_channel mac_capability_identity mac_capability_node mac_capability_accounting mac_capability_mount mac_capability_system mac_capability_coalition"
@@ -72,6 +74,13 @@ esac
 # Verify test binary exists
 [ -x "$MAC_CAPABILITY_TEST_BIN" ] || die "mac_capability_test not found at $MAC_CAPABILITY_TEST_BIN"
 
+# Fixtures are intentionally absent from system packages and module_path.
+[ -n "$FIXTURE_DIR" ] || die "set MAC_CAPABILITY_FIXTURE_DIR to the fixtures object directory"
+for kind in kernelstore keystore; do
+	[ -f "$FIXTURE_DIR/$kind/mac_capability_test_${kind}.ko" ] ||
+	    die "missing $kind fixture; build tests/sys/mac_capability/fixtures first"
+done
+
 # Unload any stale service modules (reverse order)
 info "Unloading stale modules"
 for m in mac_capability_coalition mac_capability_system mac_capability_mount mac_capability_accounting mac_capability_node mac_capability_identity mac_capability_channel mac_capability_test_keystore mac_capability_test_kernelstore; do
@@ -106,8 +115,17 @@ for m in $SERVICE_MODULES; do
 	if kldstat -m "$m" >/dev/null 2>&1; then
 		continue
 	fi
-	kldload "$m" 2>/dev/null || kldload "./${m}.ko" 2>/dev/null ||
-	    die "kldload $m"
+	case "$m" in
+	mac_capability_test_kernelstore|mac_capability_test_keystore)
+		[ -n "$FIXTURE_DIR" ] || die "set MAC_CAPABILITY_FIXTURE_DIR to the explicitly built fixtures object directory"
+		fixture="$FIXTURE_DIR/${m#mac_capability_test_}/${m}.ko"
+		kldload "$fixture" || die "kldload test fixture $fixture"
+		;;
+	*)
+		kldload "$m" 2>/dev/null || kldload "./${m}.ko" 2>/dev/null ||
+		    die "kldload $m"
+		;;
+	esac
 done
 
 # Verify all modules loaded
