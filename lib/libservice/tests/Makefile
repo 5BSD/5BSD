@@ -29,6 +29,14 @@ ATF_TESTS_C+=	service_ambient_test
 .PATH: ${SRCTOP}/lib/libservice
 ATF_TESTS_C+=	software_identity_test
 
+# A test-local Capsule claims /dev/mac_capability through
+# mac_capability_isolation, which hides the node from every other process,
+# and only one stack can hold the claim.  Programs that start such a stack or
+# open the device directly must not run concurrently with each other or with
+# other device users.
+TEST_METADATA.libservice_test+=	is_exclusive="true"
+TEST_METADATA.software_identity_test+=	is_exclusive="true"
+
 PROGS+=		capd_service_fixture
 PROGS+=		capd_test_guardian
 BINDIR=		${TESTSDIR}

@@ -9,6 +9,15 @@ ATF_TESTS_SH+=	capsule_bootstrap_test
 ATF_TESTS_SH+=	capd_test_guardian_test
 ATF_TESTS_SH+=	capsule_boot_test
 
+# A test-local Capsule claims /dev/mac_capability through
+# mac_capability_isolation, which hides the node from every other process,
+# and only one stack can hold the claim.  Programs that start such a stack or
+# open the device directly must not run concurrently with each other or with
+# other device users.
+TEST_METADATA.capsule_init_test+=	is_exclusive="true"
+TEST_METADATA.capsule_daemon_lifecycle_test+=	is_exclusive="true"
+TEST_METADATA.capsule_bootstrap_test+=	is_exclusive="true"
+
 PROGS+=		capd_test_guardian
 PROGS+=		capd_bootstrap_fixture
 BINDIR=		${TESTSDIR}

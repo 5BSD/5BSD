@@ -18,6 +18,20 @@ ATF_TESTS_SH+=	service_reachability_test
 ATF_TESTS_SH+=	shipped_manifest_policy_test
 ATF_TESTS_SH_SED_bundle_integration_test+= \
 	-e 's,@OBJTOP@,${OBJTOP},g'
+
+# A test-local Capsule claims /dev/mac_capability through
+# mac_capability_isolation, which hides the node from every other process,
+# and only one stack can hold the claim.  Programs that start such a stack or
+# open the device directly must not run concurrently with each other or with
+# other device users.
+TEST_METADATA.switchboard_naming_test+=	is_exclusive="true"
+TEST_METADATA.switchboard_svc_test+=	is_exclusive="true"
+TEST_METADATA.launch_policy_test+=	is_exclusive="true"
+TEST_METADATA.switchboard_integration_test+=	is_exclusive="true"
+TEST_METADATA.switchboard_dynamic_claims_test+=	is_exclusive="true"
+TEST_METADATA.bundle_integration_test+=	is_exclusive="true"
+TEST_METADATA.helper_integration_test+=	is_exclusive="true"
+TEST_METADATA.on_demand_test+=	is_exclusive="true"
 # IPC anointment observability contract: probes, the shipped DTrace script
 # and the bsdinstruments profile clauses (staged source greps; dtrace -e parse).
 ATF_TESTS_SH+=	anoint_observability_test
