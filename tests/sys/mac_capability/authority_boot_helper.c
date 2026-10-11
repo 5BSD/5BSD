@@ -27,6 +27,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <termios.h>
 #include <unistd.h>
 
 static unsigned checks;
@@ -1321,6 +1322,12 @@ main(int argc, char **argv)
 	system_mixed_sysctl_test();
 	run_tests();
 	printf("AUTHORITY_KERNEL_VM_PASS checks=%u\n", checks);
+	/*
+	 * Let the console finish the marker before shutdown starts printing,
+	 * or the host harness can see it interleaved with kernel messages.
+	 */
+	fflush(stdout);
+	(void)tcdrain(STDOUT_FILENO);
 	sync();
 	reboot(RB_POWEROFF);
 	for (;;) pause();
