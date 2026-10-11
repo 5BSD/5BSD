@@ -43,6 +43,8 @@ for n in ['pwd.db','spwd.db','passwd']:
 lines.append('./home/policyuser type=dir uid=2001 gid=2001 mode=0755')
 put('home/policyuser/.profile',b'',0o644,2001,2001)
 put('root/.profile',b'case "$-" in *i*) ;; *) return ;; esac\nif ! sh /root/seed-zfs-guest.sh; then echo SEED_FAILED; fi\nexec sleep 3600\n')
+# root's login shell is zsh (etc/master.passwd), which reads .zprofile instead.
+put('root/.zprofile',b"emulate sh -c '. /root/.profile'\n")
 put('root/seed-zfs-guest.sh',(plan/'seed-zfs-guest.sh').read_bytes(),0o555)
 # This terminal driver is fixture code, compiled anew against the clean sysroot.
 helper=work/'pty-askpass-fixture'

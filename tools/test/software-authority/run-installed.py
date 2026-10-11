@@ -138,6 +138,8 @@ if [ "$(tty)" = /dev/ttyu0 ]; then
  sh /root/software-application-guest.sh
 fi
 PROFILE
+# root's login shell is zsh, which reads .zprofile rather than .profile.
+printf '%s\n' "emulate sh -c '. /root/.profile'" > /root/.zprofile
 trap - EXIT
 printf '%s\n' SOFTWARE_INSTALLED_SUITE_SETUP_PASS
 /usr/sbin/capsulectl reboot

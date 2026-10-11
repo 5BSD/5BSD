@@ -22,6 +22,8 @@ rm /mnt/context-root/seed.tar
 mkdir -p /mnt/context-root/dev /mnt/context-root/proc /mnt/context-root/tmp /mnt/context-root/mnt
 chmod 1777 /mnt/context-root/tmp
 cp /root/integration-profile /mnt/context-root/root/.profile
+# root's login shell is zsh, which reads .zprofile rather than .profile.
+printf '%s\n' "emulate sh -c '. /root/.profile'" > /mnt/context-root/root/.zprofile
 printf '%s\n' 'tmpfs /Capabilities/Run tmpfs rw,mode=0700 0 0' > /mnt/context-root/etc/fstab
 printf '%s\n' 'vfs.root.mountfrom="zfs:policyvm/ROOT/default"' > /mnt/context-root/boot/loader.conf.local
 sync
