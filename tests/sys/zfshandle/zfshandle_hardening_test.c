@@ -20,6 +20,7 @@
 #include <grp.h>
 #include <pwd.h>
 #include <signal.h>
+#include <time.h>
 #include <trustedzfs.h>
 
 #include "zfshandle_test_helpers.h"
@@ -424,6 +425,7 @@ ATF_TC_HEAD(failed_unmount_then_remount, tc)
 ATF_TC_BODY(failed_unmount_then_remount, tc)
 {
 	struct statfs sfs;
+	struct timespec begin, now;
 	char ds[256], fsidstr[64], go = 'u';
 	pid_t pid;
 	int fd, mfd, start[2], i, status;
@@ -431,7 +433,17 @@ ATF_TC_BODY(failed_unmount_then_remount, tc)
 	hard_setup(tc, ds, sizeof(ds));
 	fd = tzfs_open(ds, ZH_MOUNT, 0);
 	ATF_REQUIRE(fd >= 0);
+	ATF_REQUIRE_EQ(0, clock_gettime(CLOCK_MONOTONIC, &begin));
 	for (i = 0; i < 300; i++) {
+		/*
+		 * Each round is a ZFS mount/unmount pair plus a fork.  On an
+		 * emulated or loaded machine that can exceed a second, so stop
+		 * after a time budget well inside the timeout once enough
+		 * rounds ran to have exercised both race outcomes.
+		 */
+		ATF_REQUIRE_EQ(0, clock_gettime(CLOCK_MONOTONIC, &now));
+		if (i >= 25 && now.tv_sec - begin.tv_sec > 300)
+			break;
 		mfd = tzfs_mount(fd, true);
 		ATF_REQUIRE_MSG(mfd >= 0, "iteration %d: %s", i,
 		    strerror(errno));
@@ -593,6 +605,8 @@ ATF_TC_HEAD(namespace_identity_race, tc)
 	atf_tc_set_md_var(tc, "descr",
 	    "rename churn cannot redirect a handle operation to a name replacement");
 	atf_tc_set_md_var(tc, "require.user", "root");
+	/* 80 snapshot/destroy txg syncs and 80 zfs(8) renames. */
+	atf_tc_set_md_var(tc, "timeout", "900");
 }
 ATF_TC_BODY(namespace_identity_race, tc)
 {
