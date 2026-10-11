@@ -25,7 +25,7 @@
 .\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
 .\" SUCH DAMAGE.
 .\"
-.Dd October 13, 2025
+.Dd October 11, 2026
 .Dt RELEASE 7
 .Os
 .Sh NAME
@@ -296,6 +296,18 @@ is expected to exist by alternative means.
 .It Va NOPKGBASE
 Include legacy tarball distribution sets for use on the install media,
 instead of base system packages.
+.It Va RELEASE_MALLOC_PRODUCTION
+Defaults to
+.Dq yes ,
+which builds the release world with
+.Va WITH_MALLOC_PRODUCTION
+so that the release uses production
+.Xr malloc 3 .
+Set to an empty value only for a test release with the debugging
+.Xr malloc 3
+of a development world;
+.Ev ALLOW_DEBUG_MALLOC Ns = Ns Li yes
+is then passed to the release makefile.
 .It Va PKG_CMD
 A path to the
 .Xr pkg 8
@@ -616,6 +628,28 @@ If it is unset or cannot be found, ports will not be included in the release.
 If defined, the Ports Collection will be omitted from the release.
 .It Ev NOSRC
 If set, do not include system source code in the release.
+.It Ev ALLOW_DEBUG_MALLOC
+Release media are built only from a world built with
+.Va WITH_MALLOC_PRODUCTION .
+The
+.Cm pkgbase-repo
+and
+.Fa base.txz
+targets refuse a world whose
+.Pa lib/libc
+object directory lacks the
+.Pa malloc-production.stamp
+marker or whose
+.Pa libc.so.7
+contains
+.Xr jemalloc 3
+debugging assertions.
+If set to
+.Dq yes ,
+the refusal becomes a warning, for test media only.
+The
+.Cm malloc-production-check
+target runs the check alone.
 .It Ev TARGET
 The target hardware platform.
 This is analogous to the

@@ -98,9 +98,14 @@ If package contents change, regenerate the catalogue with `pkg repo`.
 
 ```sh
 cd /usr/src
-make -j$(sysctl -n hw.ncpu) buildworld buildkernel
+make -j$(sysctl -n hw.ncpu) buildworld buildkernel WITH_MALLOC_PRODUCTION=yes
 make -j$(sysctl -n hw.ncpu) packages PKG_CMD=/usr/local/sbin/pkg-static
 ```
+
+A world that will be published is built with `WITH_MALLOC_PRODUCTION=yes`:
+development worlds keep the debugging malloc(3), and `make publish-packages`
+and `make system-packages` refuse a base built from one (see
+[Production malloc for publication](building.md#production-malloc-for-publication)).
 
 `make packages` writes `repo/${ABI}/<version>/` and updates `latest-built`.
 It does **not** change the published `latest` pointer. Build matching hardware
@@ -280,7 +285,7 @@ merging; local overrides continue to take precedence.
 
 | Step | Command | Why |
 |---|---|---|
-| Build kernel and world together | `make buildworld buildkernel` | Modules are packaged from the kernel tree; a world-only build ships stale modules |
+| Build kernel and world together | `make buildworld buildkernel WITH_MALLOC_PRODUCTION=yes` | Modules are packaged from the kernel tree; a world-only build ships stale modules. Publication refuses a debug-malloc world |
 | Package with the static pkg | `make -j$(sysctl -n hw.ncpu) packages PKG_CMD=/usr/local/sbin/pkg-static` | The dynamic ports pkg can fail on libc symbol versions |
 | Confirm repository set | `pkg -vv` | `5BSD-base` has the expected local URL; upstream base and kmods disabled |
 | Checkpoint | `bectl create pre-upgrade` | Rollback for the whole base generation |

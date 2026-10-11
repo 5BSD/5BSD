@@ -32,6 +32,8 @@
 #            for this exact release kernel. Required unless hardware support is
 #            explicitly omitted with WITHOUT_HARDWARE_PACKAGES=yes.
 #  HARDWARE_PYTHON: Python 3.11+ on the release build host.
+#  ALLOW_DEBUG_MALLOC: if set to yes, build media from a world without
+#            WITH_MALLOC_PRODUCTION (test media only; warns instead of failing).
 #  PORTSDIR: location of ports tree to distribute (default: /usr/ports)
 #  XTRADIR:  xtra-bits-dir argument for <arch>/mkisoimages.sh
 #  NOPKG:    if set, do not distribute third-party packages
@@ -186,9 +188,23 @@ beforeclean:
 clean: beforeclean
 
 #
+# Release media publish the world, so it must use production malloc(3)
+# (buildworld WITH_MALLOC_PRODUCTION=yes); see
+# scripts/check-malloc-production.sh.
+#
+MALLOC_PRODUCTION_CHECK= objtop=$$(${IMAKE} -f Makefile.inc1 -C ${WORLDDIR} -V OBJTOP) && \
+	    sh ${.CURDIR}/scripts/check-malloc-production.sh \
+	    ${ALLOW_DEBUG_MALLOC:U:tl:Myes:S/yes/-a/} -o $${objtop}/lib/libc
+
+.PHONY: malloc-production-check
+malloc-production-check:
+	@${MALLOC_PRODUCTION_CHECK}
+
+#
 # Legacy distribution tarballs
 #
 base.txz: # Also (if enabled) tests, compat libs, and -dbg variants for all.
+	@${MALLOC_PRODUCTION_CHECK}
 	mkdir -p ${DISTDIR}
 	( cd ${WORLDDIR} && ${IMAKE} distributeworld DISTDIR=${.OBJDIR}/${DISTDIR} )
 	# Bootstrap etcupdate(8) database.
@@ -272,6 +288,7 @@ dvd: ${DVD_STAGING_DEPS}
 .PHONY: pkgbase-repo pkgbase-repo-dir
 
 pkgbase-repo:
+	@${MALLOC_PRODUCTION_CHECK}
 .if !defined(WITHOUT_HARDWARE_PACKAGES) || empty(WITHOUT_HARDWARE_PACKAGES)
 	@test -n ${HARDWARE_REPO:U:Q} && test -f ${HARDWARE_REPO:U:Q}/hardware.json || \
 	    (echo "Build a matching HARDWARE_REPO, or explicitly set WITHOUT_HARDWARE_PACKAGES=yes" >&2; false)

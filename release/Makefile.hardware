@@ -15,6 +15,16 @@ HARDWARE_PORT_LIST?= ${.CURDIR}/release/tools/hardware-ports.${MACHINE_ARCH}
 # work out of the ABI-named repository directory.
 HARDWARE_WORKDIR?= ${MAKEOBJDIRPREFIX:U/usr/obj}${.CURDIR}/hardware-work/${BASE_REPOSITORY:tA:T}
 DISTDIR?= ${PORTSDIR}/distfiles
+# Publication requires a world built WITH_MALLOC_PRODUCTION; development
+# worlds keep the debug malloc(3) default.  ALLOW_DEBUG_MALLOC=yes turns the
+# refusal into a warning for test publications only.
+LIBC_OBJDIR?= ${OBJTOP}/lib/libc
+MALLOC_PRODUCTION_CHECK= sh ${.CURDIR}/release/scripts/check-malloc-production.sh \
+	    ${ALLOW_DEBUG_MALLOC:U:tl:Myes:S/yes/-a/}
+
+# Read-only: the world in the object tree must use production malloc(3).
+malloc-production-check: .PHONY
+	@${MALLOC_PRODUCTION_CHECK} -o ${LIBC_OBJDIR:Q}
 
 hardware-packages hardware-packages-check: .PHONY
 	${HARDWARE_PYTHON} ${.CURDIR}/release/scripts/native-hardware.py \
@@ -25,6 +35,7 @@ hardware-packages hardware-packages-check: .PHONY
 	    ${.TARGET:Mhardware-packages-check:S/hardware-packages-check/--check/}
 
 publish-packages: .PHONY
+	@${MALLOC_PRODUCTION_CHECK} -r ${BASE_REPOSITORY:Q}
 	${HARDWARE_PYTHON} ${.CURDIR}/release/scripts/hardware-packages.py publish \
 	    --repository ${HARDWARE_REPO:Q} --base-repository ${BASE_REPOSITORY:Q} \
 	    --output ${COMPLETE_REPOSITORY:Q} --pkg ${PKG_CMD:Q} \
@@ -33,6 +44,7 @@ publish-packages: .PHONY
 .ORDER: hardware-packages publish-packages
 
 system-packages: .PHONY
+	${MAKE} -C ${.CURDIR} malloc-production-check
 	${MAKE} -C ${.CURDIR} packages
 	${MAKE} -C ${.CURDIR} hardware-packages
 	${MAKE} -C ${.CURDIR} publish-packages

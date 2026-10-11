@@ -72,6 +72,7 @@ objects that most base daemons now carry link against the target-ABI
 | `LIB32` | broken | `share/mk/src.opts.mk` | Cannot be enabled. |
 | `DTRACE` | on | src.conf(5) | Also controls libdtrace staging, `bsdinstruments`, `dtrace`, `dwatch` and every USDT provider in base. |
 | `PMC` | on | src.conf(5) | Gates `libipt` and therefore the `bsdtrace` Intel PT tool (amd64). |
+| `MALLOC_PRODUCTION` | off | src.conf(5) | Off keeps -CURRENT's debugging malloc(3) (assertions, junk filling) for development worlds. Worlds that are published as packages or release media must be built with `WITH_MALLOC_PRODUCTION=yes`; see [Production malloc for publication](#production-malloc-for-publication). |
 | `KERNCONF` | `GENERIC` | build(7) | Kernel configuration(s) to build. |
 
 The two 5BSD options are documented in `tools/build/options/WITHOUT_BIND_NOW`
@@ -151,6 +152,42 @@ make packages PKG_CMD=/usr/local/sbin/pkg-static \
 
 The plists and the repository are unaffected by where staging happens.
 
+### Production malloc for publication
+
+Development worlds keep -CURRENT's debugging malloc(3): jemalloc is built
+with its assertions and junk filling, which catches heap misuse early and
+costs performance. Anything 5BSD publishes, meaning the combined update
+repository and release media, uses production jemalloc instead. The mode is
+decided when world is built, because `make packages` only packages an
+existing world, so a world meant for publication is built with
+`WITH_MALLOC_PRODUCTION=yes`:
+
+```sh
+make -j$(sysctl -n hw.ncpu) buildworld WITH_MALLOC_PRODUCTION=yes
+```
+
+Setting `WITH_MALLOC_PRODUCTION=yes` in src.conf(5) works too. The libc build
+writes `malloc-production.stamp` into its object directory
+(`${OBJTOP}/lib/libc`) only when the option is set, and removes it on every
+debug build. `release/scripts/check-malloc-production.sh` enforces the rule
+in three places:
+
+- `make malloc-production-check` is a read-only check of the world in the
+  object tree: the marker must be present, and the built `libc.so.7` must not
+  contain jemalloc debug assertions. `make system-packages` runs it before
+  packaging anything.
+- `make publish-packages` checks the `libc.so.7` inside `5BSD-clibs` in
+  `BASE_REPOSITORY` before it builds a complete generation or moves `latest`,
+  so a base repository packaged from a debug world is never published.
+- `release/Makefile` checks the world before it builds the media package
+  repository or the legacy `base.txz`. `release/release.sh` builds its world
+  with `WITH_MALLOC_PRODUCTION=yes` unless `RELEASE_MALLOC_PRODUCTION` is
+  set to an empty value.
+
+A refusal names the cause and the rebuild command. For a test publication
+only, `ALLOW_DEBUG_MALLOC=yes` turns the refusal into a warning. Plain
+`make packages` is not checked, because it only writes `latest-built`.
+
 ### Repository configuration
 
 The standard output location already matches `/etc/pkg/5BSD.conf`:
@@ -165,14 +202,15 @@ For objects built elsewhere, retain the same `MAKEOBJDIRPREFIX` and pass
 location. This requires write access there but no world/kernel rebuild.
 Alternatively, use `docs/pkg/5BSD.conf.sample` to override the URL.
 `make packages` creates the base catalogue and updates `latest-built`, not
-`latest`. After building world and the selected kernel, `make system-packages`
+`latest`. After building a production-malloc world and the selected kernel,
+`make system-packages`
 packages base, builds matching hardware from the custom ports tree, and
 publishes one complete generation. The native hardware stage uses unprivileged ports staging. It never installs
 packages on the build host. Declared external build dependencies must be
 prepared separately; unsupported prerequisites cause an explicit failure.
 
 ```sh
-make -j$(sysctl -n hw.ncpu) buildworld
+make -j$(sysctl -n hw.ncpu) buildworld WITH_MALLOC_PRODUCTION=yes
 make -j$(sysctl -n hw.ncpu) buildkernel KERNCONF=GENERIC-NODEBUG
 # Package as the normal build user.
 make -j$(sysctl -n hw.ncpu) system-packages KERNCONF=GENERIC-NODEBUG \

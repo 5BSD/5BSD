@@ -50,3 +50,18 @@ MLINKS+= \
 .if ${MK_MALLOC_PRODUCTION} != "no" || defined(MALLOC_PRODUCTION)
 CFLAGS+=	-DMALLOC_PRODUCTION
 .endif
+
+# 5BSD: record the malloc(3) mode of this libc build in its object directory.
+# Package publication and release media refuse a world without this marker
+# unless ALLOW_DEBUG_MALLOC=yes (release/scripts/check-malloc-production.sh).
+# The marker is rewritten or removed on every libc build so that it never
+# outlives a later debug build.
+MALLOC_PRODUCTION_MARKER=	malloc-production.stamp
+CLEANFILES+=	${MALLOC_PRODUCTION_MARKER}
+all: _malloc_production_marker
+_malloc_production_marker: .PHONY
+.if ${MK_MALLOC_PRODUCTION} != "no" || defined(MALLOC_PRODUCTION)
+	@echo "MALLOC_PRODUCTION" > ${.OBJDIR}/${MALLOC_PRODUCTION_MARKER}
+.else
+	@rm -f ${.OBJDIR}/${MALLOC_PRODUCTION_MARKER}
+.endif

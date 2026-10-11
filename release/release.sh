@@ -123,6 +123,11 @@ env_setup() {
 	# Set to non-empty value to disable distributing source tree.
 	NOSRC=
 
+	# 5BSD release worlds use production malloc(3) (WITH_MALLOC_PRODUCTION).
+	# Set to an empty value only for a debug-malloc test release; the
+	# release makefile is then passed ALLOW_DEBUG_MALLOC=yes.
+	RELEASE_MALLOC_PRODUCTION=yes
+
 	# Set to non-empty value to build dvd1.iso as part of the release.
 	WITH_DVD=
 	WITH_COMPRESSED_IMAGES=
@@ -218,6 +223,11 @@ env_check() {
 		WITH_CLOUDWARE=${WITH_CLOUDWARE} WITH_OCIIMAGES=${WITH_OCIIMAGES} \
 		XZ_THREADS=${XZ_THREADS} NOPKGBASE=${NOPKGBASE}"
 	RELEASE_RMAKEFLAGS="${RELEASE_RMAKEFLAGS} NO_ROOT=1 WITHOUT_QEMU=1"
+	if [ -n "${RELEASE_MALLOC_PRODUCTION}" ]; then
+		RELEASE_WMAKEFLAGS="${RELEASE_WMAKEFLAGS} WITH_MALLOC_PRODUCTION=yes"
+	else
+		RELEASE_RMAKEFLAGS="${RELEASE_RMAKEFLAGS} ALLOW_DEBUG_MALLOC=yes"
+	fi
 
 	return 0
 } # env_check()

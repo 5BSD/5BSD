@@ -521,7 +521,9 @@ kernels: .PHONY
 worlds: .PHONY
 	@cd ${.CURDIR}; ${SUB_MAKE} UNIVERSE_TARGET=buildworld universe
 
-.if make(hardware-packages) || make(hardware-packages-check) || make(publish-packages) || make(system-packages)
+.if make(hardware-packages) || make(hardware-packages-check) || \
+    make(publish-packages) || make(system-packages) || \
+    make(malloc-production-check)
 .include "${.CURDIR}/release/Makefile.hardware"
 .endif
 
