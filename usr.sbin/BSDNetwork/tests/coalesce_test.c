@@ -77,7 +77,8 @@ check_coalescing(bool delivery_failure)
 	byte = 1;
 	ATF_REQUIRE_EQ(1, write(release[1], &byte, 1));
 	pollfd = (struct pollfd){ .fd = state.resolver_pipe[0], .events = POLLIN };
-	ATF_REQUIRE_EQ(1, poll(&pollfd, 1, 1000));
+	/* The resolver runs the real lookup only now; allow an emulated guest. */
+	ATF_REQUIRE_EQ(1, poll(&pollfd, 1, 30000));
 	if (delivery_failure)
 		ATF_CHECK_ERRNO(EPIPE, finish_resolve(&state) == -1);
 	else
