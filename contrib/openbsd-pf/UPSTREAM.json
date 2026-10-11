@@ -221,6 +221,30 @@
       "git_tree": "1fe7e881d458c91161ce773a63013123e4aa1cf0",
       "local": "sbin/pfctl",
       "tier": "vendor-source"
+    },
+    {
+      "path": "regress/sys/net/rdomains",
+      "git_tree": "24530935018cf61bb5b4a5a8cbfc6a028f584fc6",
+      "local": "regress/sys/net/rdomains",
+      "tier": "rdomain"
+    },
+    {
+      "path": "regress/sys/net/rtable",
+      "git_tree": "155f18d2897d5c75402c6c1bcd313c13925d0700",
+      "local": "regress/sys/net/rtable",
+      "tier": "rdomain"
+    },
+    {
+      "path": "regress/sbin/route",
+      "git_tree": "5b4da36c3c14b0d0654803b3190e6ed4b8348651",
+      "local": "regress/sbin/route",
+      "tier": "rdomain"
+    },
+    {
+      "path": "regress/sbin/ifconfig",
+      "git_tree": "0675209b884512e40fe58c8023fb5ac5095d80c1",
+      "local": "regress/sbin/ifconfig",
+      "tier": "rdomain"
     }
   ],
   "verification": "git -C <openbsd-src> diff --stat <commit> -- <path> must be empty against the local copy; tree hashes are git tree object IDs at the pinned commit.",

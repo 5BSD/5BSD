@@ -20,6 +20,12 @@ Contents (verbatim, upstream relative paths):
                                          secondary: pflog of IPsec/enc0 traffic
                                          and pflog on pair(4) (epair on 5BSD)
 
+  regress/sys/net/rdomains, regress/sys/net/rtable, regress/sbin/route,
+  regress/sbin/ifconfig                 routing domains (rdomain on FIBs) and
+                                         route -T / ifconfig rdomain; rtable is
+                                         a userland unit test of OpenBSD's ART
+                                         routing table code
+
 Not imported (see UPSTREAM.json "not_imported"): usr.sbin/bgpd pftable
 integration tests, usr.sbin/relayd (no PF use), sys/kern/pledge/ioctl
 (pledge-specific), and suites that only check pf is enabled (sosplice, gif,
