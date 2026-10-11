@@ -109,7 +109,6 @@ __DEFAULT_YES_OPTIONS = \
     INET \
     INET6 \
     INETD \
-    IPFILTER \
     ISCSI \
     JAIL \
     JEMALLOC_LG_VADDR_WIDE \
@@ -206,7 +205,6 @@ __DEFAULT_NO_OPTIONS = \
     DTRACE_ASAN \
     DTRACE_TESTS \
     HESIOD \
-    IPFILTER_IPFS \
     LLVM_FULL_DEBUGINFO \
     LLVM_LINK_STATIC_LIBRARIES \
     LOADER_USB \
@@ -311,38 +309,16 @@ __DEFAULT_NO_OPTIONS+=LLDB
 # shim libraries cannot be built and there is no supported 32-bit userland.
 # LIB32 is unconditionally broken.
 BROKEN_OPTIONS+=LIB32
-# EFI doesn't exist on powerpc (well, officially) and doesn't work on i386
-.if ${__T:Mpowerpc*} || ${__T} == "i386"
-BROKEN_OPTIONS+=EFI
-.endif
-# Bad coupling for libsecure stuff with bearssl and efi, so broken on EFI
-.if ${__T:Mpowerpc*}
-BROKEN_OPTIONS+=BEARSSL		# bearssl brings in secure efi stuff xxx
-.endif
-# OFW is only for powerpc, exclude others
-.if ${__T:Mpowerpc*} == ""
-BROKEN_OPTIONS+=LOADER_OFW
-.endif
-# KBOOT is only for powerpc64 (powerpc64le broken) amd64 and aarch64
-.if ${__T} != "powerpc64" && ${__T} != "amd64" && ${__T} != "aarch64"
+# Retired native platforms supplied the OFW and U-Boot loaders.
+BROKEN_OPTIONS+=LOADER_OFW LOADER_UBOOT
+# KBOOT remains available on amd64 and aarch64.
+.if ${__T} != "amd64" && ${__T} != "aarch64"
 BROKEN_OPTIONS+=LOADER_KBOOT
-.endif
-# UBOOT is only for arm, and big-endian powerpc
-.if (${__T:Marm*} == "" && ${__T:Mpowerpc*} == "") || ${__T} == "powerpc64le"
-BROKEN_OPTIONS+=LOADER_UBOOT
 .endif
 # The 32-bit UEFI loader is only for amd64
 .if ${__T} != "amd64"
 BROKEN_OPTIONS+=LOADER_IA32
 .endif
-# GELI and Lua in loader currently cause boot failures on powerpc.
-# Further debugging is required -- probably they are just broken on big
-# endian systems generically (they jump to null pointers or try to read
-# crazy high addresses, which is typical of endianness problems).
-.if ${__T:Mpowerpc*}
-BROKEN_OPTIONS+=LOADER_GELI LOADER_LUA
-.endif
-
 # Kernel TLS is enabled by default on amd64, aarch64, powerpc64*, and riscv64*
 .if ${__T} == "aarch64" || ${__T} == "amd64" || ${__T:Mpowerpc64*} != "" || ${__T:Mriscv64*} != ""
 __DEFAULT_YES_OPTIONS+=OPENSSL_KTLS
@@ -549,3 +525,10 @@ MK_${vv:H}:=	${MK_${vv:T}}
 .error IPFW has been removed; use PF and Dummynet
 .endif
 MK_IPFW= no
+
+# Retired firewall: do not silently accept a request to build it.
+.if defined(WITH_IPFILTER) || defined(WITH_IPFILTER_IPFS)
+.error IPFilter has been removed; use PF and Dummynet
+.endif
+MK_IPFILTER= no
+MK_IPFILTER_IPFS= no

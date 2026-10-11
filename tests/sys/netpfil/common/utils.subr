@@ -55,14 +55,6 @@ firewall_config()
 		jexec ${jname} pfctl -e
 		jexec ${jname} pfctl -F all
 		jexec ${jname} pfctl -f $cwd/pf.rule
-	elif [ ${fw} == "ipf" ]; then
-		jexec ${jname} ipf -E
-		jexec ${jname} ipf -Fa -f $cwd/ipf.rule
-	elif [ ${fw} == "ipfnat" ]; then
-		jexec ${jname} ipf -E
-		jexec ${jname} ipnat -CF -f $cwd/ipfnat.rule
-		jexec ${jname} pfilctl link -o ipfilter:default-ip4 inet-local
-		jexec ${jname} pfilctl link -o ipfilter:default-ip6 inet6-local
 	else
 		atf_fail "$fw is not a valid firewall to configure"
 	fi
@@ -83,14 +75,6 @@ firewall_init()
 	if [ ${firewall} == "pf" ]; then
 		if [ ! -c /dev/pf ]; then
 			atf_skip "This test requires pf"
-		fi
-	elif [ ${firewall} == "ipf" ]; then
-		if ! kldstat -q -m ipfilter; then
-			atf_skip "This test requires ipf"
-		fi
-	elif [ ${firewall} == "ipfnat" ]; then
-		if ! kldstat -q -m ipfilter; then
-			atf_skip "This test requires ipf"
 		fi
 	else
 		atf_fail "$fw is not a valid firewall to initialize"
@@ -123,7 +107,7 @@ nat_init()
 
 is_firewall()
 {
-	if [ "$1" = "pf" -o "$1" = "ipf" -o "$1" = "ipfnat" ]; then
+	if [ "$1" = "pf" ]; then
 		echo 1
 	else
 		echo 0

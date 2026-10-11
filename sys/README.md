@@ -9,6 +9,9 @@ architecture. `GENERIC` is the configuration used in release builds. `NOTES`
 contains documentation of all possible entries. `LINT` is a compile-only
 configuration used to maximize build coverage and detect regressions.
 
+5BSD native targets are `amd64/amd64`, `arm64/aarch64`, and
+`riscv/riscv64` (`TARGET/TARGET_ARCH`).
+
 Documentation:
 --------------
 
@@ -25,7 +28,7 @@ Source Roadmap:
 | Directory | Description |
 | --------- | ----------- |
 | amd64 | AMD64 (64-bit x86) architecture support |
-| arm | 32-bit ARM architecture support |
+| arm | Drivers shared with ARM64 and AArch32 compatibility definitions |
 | arm64 | 64-bit ARM (AArch64) architecture support |
 | bsm | Basic Security Module headers - `audit(4)` and `bsm(3)` |
 | cam | Common Access Method storage subsystem - `cam(4)` and `ctl(4)` |
@@ -41,7 +44,7 @@ Source Roadmap:
 | gdb | kernel remote GDB stub - `gdb(4)` |
 | geom | GEOM framework - `geom(4)` |
 | gnu | GPL-licensed sources |
-| i386 | i386 (32-bit x86) architecture support |
+| i386 | Legacy x86 sources and ABI definitions; native i386 builds retired |
 | isa | PC ISA bus implementation |
 | kern | main part of the kernel |
 | kgssapi | kernel-space GSSAPI implementation |
@@ -54,7 +57,7 @@ Source Roadmap:
 | netinet6 | IPv6 protocol implementation - `inet6(4)` |
 | netipsec | IPsec protocol implementation - `ipsec(4)` |
 | netlink | kernel network configuration protocol - `netlink(4)` |
-| netpfil | packet filters - `ipfw(4)`, `pf(4)`, and `ipfilter(4)` |
+| netpfil | packet filters - `pf(4)` and `dummynet(4)` |
 | netsmb | Server Message Block protocol implementation |
 | nfs | common code and headers for Network File System |
 | nfsclient | NFS client implementation for mounting and stats |
@@ -62,7 +65,7 @@ Source Roadmap:
 | nlm | Network Lock Management protocol implementation |
 | ofed | OpenFabrics Enterprise Distribution implementation |
 | opencrypto | OpenCrypto framework - `crypto(7)` |
-| powerpc | PowerPC/POWER (32 and 64-bit) architecture support |
+| powerpc | Foreign crash-dump and imported driver headers; native platforms retired |
 | riscv | 64-bit RISC-V architecture support |
 | rpc | Open Network Computing Remote Procedure Call implementation - `rpc(3)` |
 | security | security facilities - `audit(4)` and `mac(4)` |

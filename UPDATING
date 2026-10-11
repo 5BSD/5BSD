@@ -46,6 +46,22 @@ NOTE TO PEOPLE WHO THINK THAT FreeBSD 16.x IS SLOW:
 	MAC, mac_capability, mac_abac, audit and veriexec remain. Existing local
 	configuration files are not automatically translated or deleted.
 
+	5BSD has removed IPFilter and the deprecated safe(4) accelerator driver.
+	PF remains the firewall and Dummynet remains the shaper. Existing IPFilter
+	rule files are not translated or deleted. Migrate enabled ipfilter/ipnat/
+	ippool/ipmon/ipfs services and third-party IPFilter backends to PF before
+	upgrading; preserve recovery access. Remove obsolete module-load entries.
+	An old separately installed ipf package must be retired during deployment;
+	source removal does not remove packages from an already running system.
+
+	Native platforms are now amd64/amd64, arm64/aarch64 and riscv/riscv64
+	(TARGET/TARGET_ARCH). PowerPC, i386 and 32-bit ARM native builds are
+	retired. PowerPC kernel/platform and loader implementations are removed.
+	Build ARM systems with TARGET=arm64 TARGET_ARCH=aarch64. AArch32
+	kernel binary compatibility, shared sys/arm drivers, ABI headers and
+	compatibility-library sources are retained. The existing 5BSD restriction
+	on building LIB32 (64-bit capability ABI) is unchanged.
+
 20261008:
 	5BSD hardware telemetry is renamed from hwtlm to hwstat, including
 	its main, man, dbg, and tests packages.  There is no command or man

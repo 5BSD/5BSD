@@ -156,7 +156,6 @@ SUBDIR.${MK_GOOGLETEST}+=	googletest
 SUBDIR.${MK_HAST}+=		hast
 SUBDIR.${MK_HYPERV}+=		hyperv-tools
 SUBDIR.${MK_INETD}+=		inetd
-SUBDIR.${MK_IPFILTER}+=		ipf
 SUBDIR.${MK_DUMMYNET}+=		dummynet
 SUBDIR.${MK_ISCSI}+=		iscsi
 SUBDIR.${MK_JAIL}+=		jail

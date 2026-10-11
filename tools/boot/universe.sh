@@ -50,7 +50,6 @@ cd $top/stand
 for i in \
 	arm64/aarch64 \
 	amd64/amd64 \
-	i386/i386 \
 	; do
     ta=${i##*/}
     dobuild $ta _.boot.${ta}.no_forth.log "WITHOUT_FORTH=yes"
@@ -60,7 +59,6 @@ done
 for i in \
 	arm64/aarch64 \
 	amd64/amd64 \
-	i386/i386 \
 	; do
     ta=${i##*/}
     dobuild $ta _.boot.${ta}.no_geli.log "WITHOUT_LOADER_GELI=yes"
@@ -69,12 +67,7 @@ done
 # Default build for a almost all architectures
 for i in \
 	amd64/amd64 \
-	arm/armv7 \
 	arm64/aarch64 \
-	i386/i386 \
-	powerpc/powerpc \
-	powerpc/powerpc64 \
-	powerpc/powerpc64le \
 	riscv/riscv64 \
 	; do
     ta=${i##*/}
@@ -95,7 +88,6 @@ done
 for i in \
 	arm64/aarch64 \
 	amd64/amd64 \
-	i386/i386 \
 	; do
     ta=${i##*/}
     dobuild $ta _.boot.${ta}.no_zfs.log "MK_LOADER_ZFS=no"
@@ -104,7 +96,6 @@ done
 # Build w/o LOADER_BIOS_TEXTONLY
 for i in \
 	amd64/amd64 \
-	i386/i386 \
 	; do
     ta=${i##*/}
     dobuild $ta _.boot.${ta}.no_vbe.log "MK_LOADER_BIOS_TEXTONLY=no"
@@ -113,9 +104,7 @@ done
 # Build w/ BEARSSL
 for i in \
 	amd64/amd64 \
-	arm/armv7 \
 	arm64/aarch64 \
-	i386/i386 \
 	riscv/riscv64 \
 	; do
     ta=${i##*/}

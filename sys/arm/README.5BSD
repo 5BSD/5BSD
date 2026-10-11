@@ -1,0 +1,10 @@
+5BSD no longer builds or boots a native 32-bit ARM kernel.
+
+This directory remains for drivers shared with arm64 and the ARM headers
+needed to build/run AArch32 compatibility binaries on arm64. The native
+kernel configuration, entry/exception/MMU/scheduler-switch code and release
+profiles are retired. Do not remove this directory wholesale: arm64 still
+uses its GIC, timer, PMU, SoC drivers and compatibility ABI definitions.
+
+Userland ARM libraries, the LLVM ARM backend and arm64 COMPAT_FREEBSD32
+remain intentional. They are not native ARM32 platform support.

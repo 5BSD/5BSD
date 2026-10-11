@@ -51,9 +51,7 @@ fragments_body()
 
 	firewall_config "iron" ${firewall} \
 		"pf" \
-			"scrub all fragment reassemble" \
-		"ipf" \
-			"pass in all with frags"
+			"scrub all fragment reassemble"
 
 	jexec iron sysctl net.inet.ip.maxfragsperpacket=1024
 
@@ -72,5 +70,4 @@ fragments_cleanup()
 
 setup_tests \
 		"fragments" \
-			"pf" \
-			"ipf"
+			"pf"

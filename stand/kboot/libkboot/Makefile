@@ -15,9 +15,7 @@ SRCS+=	seg.c
 SRCS+=	termios.c
 SRCS+=	util.c
 
-.if ${MACHINE_ARCH} != "powerpc64"
 SRCS+=	efi.c
-.endif
 
 .sinclude "${.CURDIR}/arch/${MACHINE_ARCH}/Makefile.inc"
 

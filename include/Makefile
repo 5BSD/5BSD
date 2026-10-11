@@ -204,25 +204,6 @@ UFSHCIDIR=	${INCLUDEDIR}/dev/ufshci
 VERIEXEC=	veriexec_ioctl.h
 VERIEXECDIR=	${INCLUDEDIR}/dev/veriexec
 
-.PATH: ${SRCTOP}/sys/netpfil/ipfilter/netinet
-IPFILTER=	ip_auth.h \
-		ip_compat.h \
-		ip_dstlist.h \
-		ip_fil.h \
-		ip_frag.h \
-		ip_htable.h \
-		ip_lookup.h \
-		ip_nat.h \
-		ip_pool.h \
-		ip_proxy.h \
-		ip_rules.h \
-		ip_scan.h \
-		ip_state.h \
-		ip_sync.h \
-		ipf_rb.h \
-		ipl.h \
-		radix_ipf.h
-IPFILTERDIR=	${INCLUDEDIR}/netinet
 
 .PATH: ${SRCTOP}/sys/netpfil/pf
 PF=		pf.h \
@@ -279,9 +260,6 @@ INCSGROUPS=	INCS \
 		VERIEXEC \
 		WG
 
-.if ${MK_IPFILTER} != "no"
-INCSGROUPS+=	IPFILTER
-.endif
 
 .if ${MK_PF} != "no"
 INCSGROUPS+=	PF
@@ -456,11 +434,6 @@ symlinks: .PHONY .META
 	cd ${SRCTOP}; ${INSTALL_SYMLINK} ${TAG_ARGS:D${TAG_ARGS},dev} \
 	    $$(printf '../../../../../%s ' sys/$i/*.h) ${SDESTDIR}${INCLUDEDIR}/$i
 .endfor
-.if ${MK_IPFILTER} != "no"
-	cd ${SRCTOP}; ${INSTALL_SYMLINK} ${TAG_ARGS:D${TAG_ARGS},dev} \
-	    $$(printf '../../../%s ' sys/netpfil/ipfilter/netinet/*.h) \
-	    ${SDESTDIR}${INCLUDEDIR}/netinet;
-.endif
 .if ${MK_PF} != "no"
 	cd ${SRCTOP}; ${INSTALL_SYMLINK} ${TAG_ARGS:D${TAG_ARGS},dev} \
 	    $$(printf '../../../../%s ' sys/netpfil/pf/*.h) \

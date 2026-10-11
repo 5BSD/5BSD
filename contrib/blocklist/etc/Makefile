@@ -4,7 +4,7 @@ SUBDIR=		rc.d
 
 FILESDIR=	/usr/share/examples/blocklist
 FILESMODE=	644
-FILES=		blocklistd.conf ipf.conf npf.conf
+FILES=		blocklistd.conf npf.conf
 
 .include <bsd.files.mk>
 .include <bsd.subdir.mk>

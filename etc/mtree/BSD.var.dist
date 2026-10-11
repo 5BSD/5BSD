@@ -47,8 +47,6 @@
         ..
         hyperv          mode=0700 tags=package=hyperv-tools
         ..
-        ipf             mode=0700 tags=package=ipf
-        ..
         krb5kdc		mode=0700 tags=package=kerberos-kdc
         ..
         mtree

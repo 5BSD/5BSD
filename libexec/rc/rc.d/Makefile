@@ -177,14 +177,6 @@ CONFGROUPS.${MK_INETD}+=	INETD
 INETDPACKAGE=			inetd
 INETD=		inetd
 
-CONFGROUPS.${MK_IPFILTER}+=	IPF
-IPFPACKAGE=			ipf
-IPF=		ipfilter \
-		ipfs \
-		ipmon \
-		ipnat \
-		ippool
-
 CONFGROUPS.${MK_DUMMYNET}+=	DUMMYNET
 DUMMYNETPACKAGE=		dummynet
 DUMMYNET=		dnctl dummynet

@@ -92,9 +92,6 @@ SE_DIRS+=	inotify
 SE_INOTIFY=	inotify.c \
 		Makefile
 
-.if ${MK_IPFILTER} != "no"
-SUBDIR+=	ipfilter
-.endif
 
 SE_DIRS+=	jails
 SE_JAILPACKAGE=	jail

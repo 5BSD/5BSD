@@ -71,10 +71,7 @@ basic_body()
 
 	firewall_config nat ${firewall} \
 		"pf" \
-			"nat pass on ${epair_host_nat}b inet from any to any -> (${epair_host_nat}b)" \
-		"ipfnat" \
-			"map ${epair_host_nat}b 192.0.3.0/24 -> 0/32" \
-			"map ${epair_host_nat}b 192.0.2.0/24 -> 0/32" \
+			"nat pass on ${epair_host_nat}b inet from any to any -> (${epair_host_nat}b)"
 
 
 	# ping is successful now
@@ -89,4 +86,4 @@ basic_cleanup()
 	firewall_cleanup $firewall
 }
 
-setup_tests basic pf ipfnat
+setup_tests basic pf

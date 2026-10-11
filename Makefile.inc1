@@ -144,14 +144,16 @@ MACHINE_TRIPLE_ABI?=	unknown
 MACHINE_TRIPLE?=${MACHINE_ARCH:S/amd64/x86_64/}-${MACHINE_TRIPLE_ABI}-freebsd${OS_REVISION}
 TARGET_TRIPLE_ABI?=	unknown
 TARGET_TRIPLE?=	${TARGET_ARCH:S/amd64/x86_64/}-${TARGET_TRIPLE_ABI}-freebsd${OS_REVISION}
-KNOWN_ARCHES?=	aarch64/arm64 \
-		amd64 \
-		armv7/arm \
-		i386 \
-		powerpc \
-		powerpc64/powerpc \
-		powerpc64le/powerpc \
-		riscv64/riscv
+KNOWN_ARCHES= aarch64/arm64 amd64 riscv64/riscv
+
+# These internal library targets do not build native kernels or loaders.
+.if defined(COMPAT_LIBCOMPAT) && ${COMPAT_LIBCOMPAT} == "32"
+.if ${TARGET} == "arm" && ${TARGET_ARCH} == "armv7"
+KNOWN_ARCHES+= armv7/arm
+.elif ${TARGET} == "i386" && ${TARGET_ARCH} == "i386"
+KNOWN_ARCHES+= i386
+.endif
+.endif
 
 .if ${TARGET} == ${TARGET_ARCH}
 _t=		${TARGET}
@@ -3513,9 +3515,6 @@ lib/libzstd__L: lib/libthr__L
 lib/librt__L: lib/libthr__L
 
 _generic_libs=	${_cddl_lib} ${_kerberos5_lib} lib ${_secure_lib}
-.if ${MK_IPFILTER} != "no"
-_generic_libs+=	sbin/ipf/libipf
-.endif
 .for _DIR in ${LOCAL_LIB_DIRS}
 .if ${_DIR} == ".WAIT"  || (empty(_generic_libs:M${_DIR}) && exists(${.CURDIR}/${_DIR}/Makefile))
 _generic_libs+= ${_DIR}

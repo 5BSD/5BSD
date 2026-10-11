@@ -83,8 +83,7 @@ cookies, shared divert metadata and reserved socket option numbers remain ABI.
 Retired rescue, startup, periodic defaults, manuals, examples, DTrace and Python
 test registrations are removed. Obsolete-file lists cover the retired installed
 headers, modules, manuals, examples and Python source files. Administrator policy
-files are preserved. Common firewall tests retain PF/IPFilter variants and drop
-IPFW variants; removed IPFW-only NAT/CGN fixtures do not establish PF parity.
+files are preserved. Common firewall tests retain PF variants and drop IPFW/IPFilter variants; removed IPFW-only NAT/CGN fixtures do not establish PF parity.
 The old shaper heap/scheduler harness is preserved under `sys/netpfil/dummynet/test`
 with original notices, but is historical and not qualified against current APIs.
 
@@ -175,7 +174,8 @@ now require the saved policy to remain intact after reboot.
   in the Desktop audit. This includes socket/diversion and routing isolation,
   queue guarantees, pools, counters/logging, pfsync/state-file compatibility,
   transaction behavior, companion tools and their full regression coverage.
-- IPFilter retirement remains part of the Desktop plan, separately pending.
+- IPFilter source, tools, services and manuals were retired on 2026-10-11;
+  deployment migration of existing policy and installed packages is still required.
 
 No host firewall changes, installation, reboot or publication are authorized
 by this source/test work. The goal remains active.

@@ -109,8 +109,8 @@ typedef pfil_return_t	(*pfil_mem_chk_t)(void *, u_int, int, struct ifnet *,
  * A pfil hook is created by a packet filter.
  *
  * Hooks are chained on heads.  Historically some hooking happens
- * automatically, e.g. ipfw(4), pf(4) and ipfilter(4) would register
- * theirselves on IPv4 and IPv6 input/output.
+ * automatically, e.g. pf(4) registers itself on IPv4 and IPv6
+ * input/output.
  */
 
 typedef struct pfil_hook *	pfil_hook_t;

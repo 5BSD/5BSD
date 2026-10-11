@@ -20,12 +20,8 @@ SUBDIR+=	kinst
 .if ${MACHINE_CPUARCH} == "riscv" || ${MACHINE_CPUARCH} == "aarch64"
 SUBDIR+=	kinst
 .endif
-.if ${MACHINE_CPUARCH} == "powerpc"
-SUBDIR+=	fasttrap
-.endif
 .if ${MACHINE_CPUARCH} == "amd64" || \
-    ${MACHINE_CPUARCH} == "aarch64" || \
-    ${MACHINE_ARCH} == "powerpc64"
+    ${MACHINE_CPUARCH} == "aarch64"
 .if !empty(COMPAT_FREEBSD32_ENABLED)
 SUBDIR+=	systrace_freebsd32
 .endif

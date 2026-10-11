@@ -1,5 +1,9 @@
 .include <src.opts.mk>
 
+.if ${MACHINE} != "amd64" && ${MACHINE} != "arm64" && ${MACHINE} != "riscv"
+.error Unsupported native platform ${MACHINE}: use amd64, arm64 or riscv
+.endif
+
 # For amd64 we have to build 32 and 64 bit versions of things. For
 # others we don't. LIB32LIST is a list of libraries, which if
 # included, need to be built 32-bit as well.

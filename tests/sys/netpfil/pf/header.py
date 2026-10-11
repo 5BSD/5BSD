@@ -124,7 +124,6 @@ class TestHeader(VnetTestTemplate):
 
 class TestHeader6(VnetTestTemplate):
     REQUIRED_MODULES = [ "pf" ]
-    SKIP_MODULES = [ "ipfilter" ]
     TOPOLOGY = {
         "vnet1": {"ifaces": ["if1", "if2"]},
         "vnet2": {"ifaces": ["if1", "if2"]},

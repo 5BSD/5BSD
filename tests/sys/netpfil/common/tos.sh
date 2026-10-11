@@ -71,7 +71,7 @@ tos_body()
 	# and persists the EN bits (if already set)
 	firewall_config "iron" ${firewall} \
 		"pf" \
-			"scrub out proto icmp set-tos 36" \
+			"scrub out proto icmp set-tos 36"
 
 	atf_check -s exit:0 $(atf_get_srcdir)/pft_ping.py \
 		--sendif ${epair_send}a \
@@ -84,7 +84,7 @@ tos_body()
 	# packets based on the ToS value
 	firewall_config "iron" ${firewall} \
 		"pf" \
-			"block all tos 36" \
+			"block all tos 36"
 
 	atf_check -s exit:1 $(atf_get_srcdir)/pft_ping.py \
 		--sendif ${epair_send}a \
@@ -105,4 +105,4 @@ tos_cleanup()
 	firewall_cleanup $firewall
 }
 
-setup_tests tos pf ipf
+setup_tests tos pf

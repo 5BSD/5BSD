@@ -52,9 +52,7 @@ basic_body()
 	# Enable redirect filter rule
 	firewall_config alcatraz ${firewall} \
 		"pf" \
-			"rdr pass on ${epair}b proto tcp from any to 198.51.100.0/24 port 1234 -> 192.0.2.1 port 4321" \
-		"ipfnat" \
-			"rdr ${epair}b from any to 198.51.100.0/24 port = 1234 -> 192.0.2.1 port 4321 tcp"
+			"rdr pass on ${epair}b proto tcp from any to 198.51.100.0/24 port 1234 -> 192.0.2.1 port 4321"
 
 
 	echo "foo" | jexec alcatraz nc -N -l 4321 &
@@ -109,9 +107,7 @@ local_redirect_body()
 	# Enable redirect filter rule
 	firewall_config second ${firewall} \
 		"pf" \
-			"rdr pass proto tcp from any to 192.0.2.3/24 port 1234 -> 192.0.2.2 port 4321" \
-		"ipfnat" \
-			"rdr '*' from any to 192.0.2.3/24 port = 1234 -> 192.0.2.2 port 4321 tcp"
+			"rdr pass proto tcp from any to 192.0.2.3/24 port 1234 -> 192.0.2.2 port 4321"
 
 	echo "foo" | jexec first nc -N -l 4321 &
 	sleep 1
@@ -132,7 +128,5 @@ local_redirect_cleanup()
 setup_tests \
 		basic \
 			pf \
-			ipfnat \
 		local_redirect \
-			pf \
-			ipfnat
+			pf

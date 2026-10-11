@@ -35,30 +35,26 @@ v4_head()
 }
 
 v4_body()
-{   
+{
 	firewall=$1
 	firewall_init $firewall
-	
+
 	epair=$(vnet_mkepair)
 	ifconfig ${epair}a 192.0.2.1/24 up
 	vnet_mkjail iron ${epair}b
 	jexec iron ifconfig ${epair}b 192.0.2.2/24 up
-	
+
 	# Block All
 	firewall_config "iron" ${firewall} \
 		"pf" \
-			"block in" \
-		"ipf" \
-			"block in all"
+			"block in"
 
 	atf_check -s exit:2 -o ignore ping -c 1 -t 1 192.0.2.2
-	
+
 	# Pass All
 	firewall_config "iron" ${firewall} \
 		"pf" \
-			"pass in" \
-		"ipf" \
-			"pass in all"
+			"pass in"
 
 	atf_check -s exit:0 -o ignore ping -c 1 -t 1 192.0.2.2
 }
@@ -75,31 +71,27 @@ v6_head()
 }
 
 v6_body()
-{   
+{
 	firewall=$1
 	firewall_init $firewall
-	
+
 	epair=$(vnet_mkepair)
 	ifconfig ${epair}a inet6 fd7a:803f:cc4b::1/64 up no_dad
 
 	vnet_mkjail iron ${epair}b
 	jexec iron ifconfig ${epair}b inet6 fd7a:803f:cc4b::2/64 up no_dad
-	
+
 	# Block All
 	firewall_config "iron" ${firewall} \
 		"pf" \
-			"block in" \
-		"ipf" \
-			"block in all"
+			"block in"
 
 	atf_check -s exit:2 -o ignore ping -6 -c 1 -W 1 fd7a:803f:cc4b::2
-	
+
 	# Pass All
 	firewall_config "iron" ${firewall} \
 		"pf" \
-			"pass in" \
-		"ipf" \
-			"pass in all"
+			"pass in"
 
 	atf_check -s exit:0 -o ignore ping -6 -c 1 -W 1 fd7a:803f:cc4b::2
 }
@@ -110,9 +102,4 @@ v6_cleanup()
 	firewall_cleanup $firewall
 }
 
-setup_tests "v4" \
-				"pf" \
-				"ipf" \
-			"v6" \
-				"pf" \
-				"ipf"
+setup_tests v4 pf v6 pf

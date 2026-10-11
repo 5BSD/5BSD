@@ -74,7 +74,6 @@ SUBDIR+=	ping
 SUBDIR.${MK_HAST}+=	hastctl
 SUBDIR.${MK_HAST}+=	hastd
 SUBDIR.${MK_INET6}+=	rtsol
-SUBDIR.${MK_IPFILTER}+=	ipf
 SUBDIR.${MK_DUMMYNET}+=	dnctl
 SUBDIR.${MK_OPENSSL}+=	decryptcore
 SUBDIR.${MK_PF}+=	pfctl

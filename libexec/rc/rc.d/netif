@@ -79,10 +79,6 @@ netif_start()
 	# Configure the interface(s).
 	netif_common ifn_start $cmdifn
 
-	if [ -f /etc/rc.d/ipfilter ] ; then
-		# Resync ipfilter
-		/etc/rc.d/ipfilter quietresync
-	fi
 	if [ -f /etc/rc.d/bridge -a -n "$cmdifn" ] ; then
 		/etc/rc.d/bridge start $cmdifn
 	fi

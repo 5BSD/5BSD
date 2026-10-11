@@ -316,8 +316,6 @@
             ..
             inotify
             ..
-            ipfilter
-            ..
             jails
             ..
             kld

@@ -26,8 +26,6 @@ SRCS+=	isa_if.h
 
 SUBDIR+= ipmi_linux
 
-.elif ${MACHINE_ARCH:Mpowerpc64*} != ""
-SRCS+=	ipmi_opal.c ofw_bus_if.h
 .endif
 
 .include <bsd.kmod.mk>

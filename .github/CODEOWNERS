@@ -74,7 +74,6 @@
 /lib/libvmmapi		@bsdjhb @bryanv @markjdb @khng300 @markpeek
 /libexec/nuageinit/	@bapt
 /libexec/rc/rc.d/rctl/	@trasz
-/sbin/ipf		@cschuber
 /sbin/mount_fusefs @asomers
 /sbin/nvmecontrol @bsdimp
 /sbin/veriexec/	@stephane-rochoy-stormshield
@@ -126,7 +125,6 @@
 /sys/kern/vfs_aio.c	@asomers
 /sys/net/route		@spmzt
 /sys/netinet/ip_carp.c	@glebius
-/sys/netpfil/ipfilter	@cschuber
 /sys/netpfil/pf	@glebius
 /sys/opencrypto/	@jmgurney
 /sys/security/mac_veriexec/	@stephane-rochoy-stormshield

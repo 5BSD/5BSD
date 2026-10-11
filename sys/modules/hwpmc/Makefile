@@ -30,10 +30,6 @@ SRCS+=	hwpmc_amd.c \
 	hwpmc_uncore.c \
 	hwpmc_x86.c
 
-.elif ${MACHINE_CPUARCH} == "arm"
-SRCS+=	hwpmc_arm.c \
-	hwpmc_armv7.c \
-
 .elif ${MACHINE_CPUARCH} == "i386"
 SRCS+=	hwpmc_amd.c \
 	hwpmc_core.c \

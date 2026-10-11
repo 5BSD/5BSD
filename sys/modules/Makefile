@@ -185,7 +185,6 @@ SUBDIR=	\
 	${_ioat} \
         ${_ipoib} \
 	ipdivert \
-	${_ipfilter} \
 	${_ipmi} \
 	ip6_mroute_mod \
 	ip_mroute_mod \
@@ -356,7 +355,6 @@ SUBDIR=	\
 	${_rtwn_usb} \
 	${_rtwnfw} \
 	${_s3} \
-	${_safe} \
 	safexcel \
 	${_sbni} \
 	scc \
@@ -503,11 +501,6 @@ _if_stf=	if_stf
 
 .if (${KERN_OPTS:MINET} && ${MK_INET_SUPPORT} != "no") || defined(ALL_MODULES)
 _if_me=		if_me
-.endif
-
-
-.if ${MK_IPFILTER} != "no" || defined(ALL_MODULES)
-_ipfilter=	ipfilter
 .endif
 
 .if ${MK_INET_SUPPORT} != "no" && ${KERN_OPTS:MFIB_ALGO} && ${KERN_OPTS:MINET}
@@ -782,7 +775,6 @@ _ocs_fc=	ocs_fc
 _p2sb=		p2sb
 _qat_c2xxx=	qat_c2xxx
 _qat_c2xxxfw=	qat_c2xxxfw
-_safe=		safe
 _speaker=	speaker
 _splash=	splash
 _syscons=	syscons
@@ -923,26 +915,6 @@ _cfi=		cfi
 _cpsw=		cpsw
 .endif
 
-.if ${MACHINE_CPUARCH} == "powerpc"
-_aacraid=	aacraid
-_agp=		agp
-_an=		an
-_cardbus=	cardbus
-_cbb=		cbb
-_cfi=		cfi
-_cpufreq=	cpufreq
-_exca=		exca
-_ffec=		ffec
-.endif
-
-.if ${MACHINE_ARCH:Mpowerpc64*} != ""
-_nvram=		opal_nvram
-.endif
-
-.if ${MACHINE_CPUARCH} == "powerpc"
-_nvram+=	powermac_nvram
-.endif
-
 .if ${MACHINE_CPUARCH} == "arm" || ${MACHINE_CPUARCH} == "aarch64"
 _bcm283x_clkman=  bcm283x_clkman
 _bcm283x_pwm=	bcm283x_pwm
@@ -977,7 +949,6 @@ afterinstall: .PHONY
 	    cat -l >> ${METALOG}
 .endif
 .endif
-
 
 .if ${MK_DUMMYNET} != "no" || defined(ALL_MODULES)
 _dummynet= dummynet

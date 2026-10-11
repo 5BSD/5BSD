@@ -110,10 +110,6 @@ CRUNCH_ALIAS_ping= ping6
 CRUNCH_PROGS_sbin+= rtsol
 .endif
 
-.if ${MK_IPFILTER} != "no"
-CRUNCH_PROGS_sbin+= ipf
-CRUNCH_LIBS_ipf+=	${LIBIPF}
-.endif
 
 .if ${MK_PF} != "no"
 CRUNCH_PROGS_sbin+= pfctl
@@ -180,7 +176,6 @@ CRUNCH_ALIAS_bsdlabel= disklabel
 .endif
 
 CRUNCH_SRCDIR_rtquery= ${SRCTOP}/sbin/routed/rtquery
-CRUNCH_SRCDIR_ipf= ${SRCTOP}/sbin/ipf/ipf
 .if ${MK_ZFS} != "no"
 CRUNCH_SRCDIR_zfs= ${SRCTOP}/cddl/sbin/zfs
 CRUNCH_SRCDIR_zpool= ${SRCTOP}/cddl/sbin/zpool

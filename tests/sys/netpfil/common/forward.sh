@@ -62,9 +62,7 @@ v4_body()
 
 	firewall_config "iron" ${firewall} \
 		"pf" \
-			"block in" \
-		"ipf" \
-			"block in all" \
+			"block in"
 
 	atf_check -s exit:1 $(atf_get_srcdir)/pft_ping.py \
 		--sendif ${epair_send}a \
@@ -73,9 +71,7 @@ v4_body()
 
 	firewall_config "iron" ${firewall} \
 		"pf" \
-			"block out" \
-		"ipf" \
-			"block out all" \
+			"block out"
 
 	atf_check -s exit:1 $(atf_get_srcdir)/pft_ping.py \
 		--sendif ${epair_send}a \
@@ -91,5 +87,4 @@ v4_cleanup()
 
 setup_tests \
 		v4 \
-			pf \
-			ipf
+			pf

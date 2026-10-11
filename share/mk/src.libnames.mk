@@ -56,7 +56,6 @@ _INTERNALLIBS=	\
 		fdt \
 		fifolog \
 		ifconfig \
-		ipf \
 		iscsiutil \
 		kadmin_common \
 		kprop_util \
@@ -436,7 +435,6 @@ _DP_gmock_main=	gmock
 _DP_gtest=	pthread regex
 _DP_gtest_main=	gtest
 _DP_ifconfig=	m
-_DP_ipf=	kvm
 _DP_otelexport=	z ssl crypto pthread
 _DP_iscsiutil=	md
 _DP_kldelf=	elf
@@ -559,7 +557,6 @@ _DP_rpcsec_gss=	gssapi_krb5
 _DP_smb=	kiconv
 _DP_ulog=	md
 _DP_fifolog=	z
-_DP_ipf=	kvm
 _DP_uvmem=	pthread
 _DP_zfs=	md pthread rt umem util m avl bsdxml crypto geom nvpair \
 	z zfs_core zutil
@@ -735,8 +732,6 @@ LIBSL?=		${LIBSLDIR}/libsl${PIE_SUFFIX}.a
 LIBIFCONFIGDIR=	${_LIB_OBJTOP}/lib/libifconfig
 LIBIFCONFIG?=	${LIBIFCONFIGDIR}/libifconfig${PIE_SUFFIX}.a
 
-LIBIPFDIR=	${_LIB_OBJTOP}/sbin/ipf/libipf
-LIBIPF?=	${LIBIPFDIR}/libipf${PIE_SUFFIX}.a
 
 LIBNVDIR=	${_LIB_OBJTOP}/lib/libnv
 LIBNV?=		${LIBNVDIR}/libnv${PIE_SUFFIX}.a

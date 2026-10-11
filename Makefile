@@ -346,6 +346,12 @@ ${XTGTS}: _assert_target
 _TARGET?=	${MACHINE}
 _TARGET_ARCH?=	${MACHINE_ARCH}
 
+.if !((${_TARGET} == "amd64" && ${_TARGET_ARCH} == "amd64") || \
+    (${_TARGET} == "arm64" && ${_TARGET_ARCH} == "aarch64") || \
+    (${_TARGET} == "riscv" && ${_TARGET_ARCH} == "riscv64"))
+.error Unsupported native platform ${_TARGET}/${_TARGET_ARCH}: use amd64/amd64, arm64/aarch64 or riscv/riscv64
+.endif
+
 .if make(native-xtools*)
 NXB_TARGET:=		${_TARGET}
 NXB_TARGET_ARCH:=	${_TARGET_ARCH}
@@ -539,15 +545,12 @@ packages update-packages: .PHONY
 #
 .if make(universe) || make(universe_kernels) || make(tinderbox) || \
     make(targets) || make(universe-toolchain)
-#
-# Don't build rarely used, semi-supported architectures unless requested.
-#
-.if defined(EXTRA_TARGETS)
-EXTRA_ARCHES_powerpc=	powerpc
-.endif
 TARGETS?= ${TARGET_MACHINE_LIST}
 _UNIVERSE_TARGETS=	${TARGETS}
 .for target in ${TARGETS}
+.if ${target} != "amd64" && ${target} != "arm64" && ${target} != "riscv"
+.error Unsupported native platform ${target}
+.endif
 TARGET_ARCHES_${target}= ${MACHINE_ARCH_LIST_${target}}
 .endfor
 
@@ -555,10 +558,7 @@ TARGET_ARCHES_${target}= ${MACHINE_ARCH_LIST_${target}}
 _DEFAULT_GCC_VERSION=	gcc15
 _GCC_VERSION=		${"${USE_GCC_TOOLCHAINS:Mgcc*}" != "":?${USE_GCC_TOOLCHAINS}:${_DEFAULT_GCC_VERSION}}
 TOOLCHAINS_amd64=	amd64-${_GCC_VERSION}
-TOOLCHAINS_arm=		armv7-${_GCC_VERSION}
 TOOLCHAINS_arm64=	aarch64-${_GCC_VERSION}
-TOOLCHAINS_i386=	i386-${_GCC_VERSION}
-TOOLCHAINS_powerpc=	powerpc64-${_GCC_VERSION}
 TOOLCHAINS_riscv=	riscv64-${_GCC_VERSION}
 .endif
 

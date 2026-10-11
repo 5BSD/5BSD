@@ -36,7 +36,6 @@ __DEFAULT_YES_OPTIONS = \
     FORMAT_EXTENSIONS \
     INET \
     INET6 \
-    IPFILTER \
     IPSEC_SUPPORT \
     ISCSI \
     KERNEL_SYMBOLS \
@@ -236,3 +235,14 @@ MK_FDT:=yes
 .error IPFW has been removed; use PF and Dummynet
 .endif
 MK_IPFW= no
+
+# Retired firewall: do not silently accept a request to build it.
+.if defined(WITH_IPFILTER) || defined(WITH_IPFILTER_IPFS)
+.error IPFilter has been removed; use PF and Dummynet
+.endif
+MK_IPFILTER= no
+MK_IPFILTER_IPFS= no
+
+.if ${MACHINE} != "amd64" && ${MACHINE} != "arm64" && ${MACHINE} != "riscv"
+.error Unsupported native platform ${MACHINE}: use amd64, arm64 or riscv
+.endif

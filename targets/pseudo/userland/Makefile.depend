@@ -75,14 +75,6 @@ DIRDEPS+= \
 	sbin/hastd \
 	sbin/ifconfig \
 	sbin/init \
-	sbin/ipf/ipf \
-	sbin/ipf/ipfs \
-	sbin/ipf/ipfstat \
-	sbin/ipf/ipmon \
-	sbin/ipf/ipnat \
-	sbin/ipf/ippool \
-	sbin/ipf/libipf \
-	sbin/ipfw \
 	sbin/kldconfig \
 	sbin/kldload \
 	sbin/kldstat \
@@ -553,7 +545,6 @@ DIRDEPS+= \
 	usr.sbin/iostat \
 	usr.sbin/iovctl \
 	usr.sbin/ip6addrctl \
-	usr.sbin/ipfwpcap \
 	usr.sbin/isc-hmac-fixup \
 	usr.sbin/iscsid \
 	usr.sbin/isfctl \

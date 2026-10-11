@@ -750,9 +750,8 @@ get_epair()
 {
 	local EPAIRD
 
-	if  (which pfctl && pfctl -s info | grep -q 'Status: Enabled') || 
-	    [ `sysctl -n net.inet.ip.fw.enable` = "1" ] ||
-	    (which ipf && ipf -V); then
+	if command -v pfctl >/dev/null &&
+	    pfctl -s info | grep -q 'Status: Enabled'; then
 		atf_skip "firewalls interfere with this test"
 	fi
 

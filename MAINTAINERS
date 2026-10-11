@@ -39,7 +39,6 @@ contrib/atf		ngie,#test		Pre-commit review requested.
 contrib/googletest	ngie,#test		Pre-commit review requested.
 contrib/kyua		ngie,#test		Pre-commit review requested.
 contrib/lutok		ngie			Pre-commit review requested.
-sbin/ipf	cy			Pre-commit review requested.
 contrib/libcxxrt	dim,emaste		Pre-commit review preferred.
 contrib/llvm-project/compiler-rt	dim	Pre-commit review preferred.
 contrib/llvm-project/libcxx	dim		Pre-commit review preferred.
@@ -105,7 +104,6 @@ stdio			des	Pre-commit review requested
 sys/compat/linuxkpi		pre-commit review requested via #linuxkpi phabricator group.
 sys/cddl/dev/kinst	christos	Pre-commit review recommended.
 sys/contrib/dev/ice	erj	Pre-commit phabricator review requested.
-sys/netpfil/ipfilter	cy	Pre-commit review requested.
 sys/dev/e1000	#intel_networking	Pre-commit phabricator review requested.
 sys/dev/ixgbe	#intel_networking	Pre-commit phabricator review requested.
 sys/dev/ixl	#intel_networking	Pre-commit phabricator review requested.

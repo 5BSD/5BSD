@@ -1,3 +1,0 @@
-Enable building the
-.Xr ipfs 8
-tool to save and restore IPFilter state tables.

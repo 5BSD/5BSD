@@ -41,24 +41,3 @@
 
 - if blocklistd was started with '-r' then a SIGHUP should also do a
   "control flush $rulename" and then re-add all the filter rules?
-
-- should/could /etc/rc.conf.d/ipfilter be created with the following?
-
-	reload_postcmd=blocklistd_reload
-	start_postcmd=blocklistd_start
-	stop_precmd=blocklistd_stop
-	blocklistd_reload ()
-	{
-		/etc/rc.d/blocklistd reload	# IFF SIGHUP does flush/re-add
-		# /etc/rc.d/blocklistd restart
-	}
-	blocklistd_stop ()
-	{
-		/etc/rc.d/blocklistd stop
-	}
-	blocklistd_start ()
-	{
-		/etc/rc.d/blocklistd start
-	}
-
-  or is there a better way?

@@ -49,7 +49,6 @@ DIRDEPS = \
 	lib/ncurses/ncurses \
 	lib/ncurses/tinfo \
 	rescue/librescue \
-	sbin/ipf/libipf \
 	secure/lib/libcrypto \
 	secure/lib/libssl \
 	usr.sbin/crunch/crunchgen.host \

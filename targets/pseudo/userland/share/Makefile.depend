@@ -18,7 +18,6 @@ DIRDEPS = \
 	share/dtrace/toolkit \
 	share/examples \
 	share/examples/atf \
-	share/examples/ipfilter \
 	share/examples/pf \
 	share/examples/smbfs \
 	share/examples/smbfs/print \
