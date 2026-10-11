@@ -124,6 +124,55 @@ object tree at build time, so nothing generated is committed.  Then the
 stamps, `fidl-bindings.mk` and `regen` are deleted together; nothing else
 depends on them.  See "Binding generation: end state" below.
 
+## Binding generation: end state
+
+Measured 2026-10-11 on this tree (15 binding trees: runtime fixtures,
+BSDTime, six providers, six evolution schemas, Network in progress).
+
+Today's pipeline per library: fidlc (C++, `contrib/fuchsia`) writes JSON IR;
+fidlgen_cpp (Go, upstream plus the 239-line `fuchsia-native.patch`) writes
+C++ natural types; `generate-bsd.py` keeps 5 of fidlgen_cpp's ~20 output
+kinds (`natural_types.{h,cc}`, `common_types.{h,cc}`, `markers.h`) and adds
+the C++ client/server adapter (`cpp/bsd.h`) and, with `generate_bsd_c*.py`,
+the C bridge (`c/bsd.h`, `c/bridge.h`, `c/bsd.cc`).
+
+What the BSD bindings take from fidlgen_cpp: only declarations.  The kept
+files are the natural classes (storage, constructors, accessors, clone,
+equality) and the trait tables (`IsFidlType`, `TypeTraits` sizes,
+`NaturalCodingTraits` member offsets) that the upstream natural codec
+templates in `sdk/lib/fidl/cpp` (already in the runtime) consume.  No
+messaging, wire-types, HLCPP or ostream output is used.  Every value in
+those files (names, inline sizes, offsets, depths, handle counts, ordinals)
+is in fidlc's JSON IR, so a BSD generator can read the IR directly and the
+Go stage can be removed.  The templates involved are about 1,650 lines
+(`natural_{struct,table,union}.tmpl` 812, file headers/sources 260, enum,
+bits, const and alias fragments 535) plus the parts of `lib/fidlgen_cpp`
+they use (names, keyword escaping, type mapping; that package is 6,254 Go
+lines in all, mostly messaging).  The in-tree schemas use structs, resource
+structs, one table, one flexible union, result unions, aliases, arrays,
+vectors, strings, `box`, optional and `zx.Handle`; no enums, bits or
+constants yet.  The committed output is a byte-exact test oracle for any
+replacement: 150 files, 46,242 lines (2.0 MB), of which 32,174 lines come
+from fidlgen_cpp.
+
+| | (a) native C++ generator | (b) bootstrap CPython | (c) committed + checks |
+|---|---|---|---|
+| Build-time cost | fidlc as a bootstrap tool: 52 translation units, about 11 CPU-s each at `-O1` (sampled under load), so ~10 CPU-min, under 1 min wall at `-j16`; generation in-process in fidlc (today's whole pipeline, fidlc + fidlgen_cpp + Python for all 15 trees and 6 compatibility compiles, takes 11.9 s wall, 3.2 s user) | fidlc as in (a) plus CPython: ~400k lines of C for the interpreter (estimate) and the few extension modules needed (`_json`, `_sre`, `_posixsubprocess`, `select`, `fcntl`), estimated 3-5 CPU-min (not measured; no CPython in tree); generation cost as today minus the Go process | none (stamp check: one `sha256` per schema) |
+| Code to write / maintain | ~2-3k lines C++: a backend inside fidlc walking the compiled AST (no JSON reader needed), replacing fidlgen_cpp's natural output and the 650 Python lines | port ~1.5k lines of Go templates to the existing Python, keep 650 Python lines; import and track CPython in `contrib` (~110 MB unpacked, a subset kept) | none new; 940 lines of Python tooling and the Go fidlgen_cpp build stay host-only |
+| Cross-build host needs | host C++20 compiler (already required); fidlc's RE2 use (4 identifier patterns in `utils.cc`, linter) and OpenSSL `SHA256` (ordinals) must be patched to `<regex>`/hand matching and libmd | as (a) for fidlc, plus CPython's configure on every supported host (FreeBSD, Linux, macOS) | none for buildworld; developers who change a schema need Python 3.12, Go and RE2 from ports (`bootstrap`) |
+| Determinism | deterministic if the backend sorts like fidlc's JSON; verifiable against the oracle | the Python generators already sort; repeated `regen` runs are byte-identical | byte-identical regeneration checked by `check-bindings`; nothing generated at build time |
+| Other | no Python in the build; generated files leave the tree | also enables LLVM `lit` in the build; Python becomes a long-lived build dependency | 46k generated lines in diffs; generator changes need a regen commit |
+
+Recommendation: (a), done after the daemon migration.  It removes both Go
+and Python from schema changes, adds the least to buildworld (fidlc is
+needed by any build-time option), and fidlc's own AST is a better input
+than re-parsing JSON.  (b) is only cheaper if CPython enters the build for
+another reason (lit); if the user wants that, the Go stage can still be
+dropped by porting the natural templates to Python first, against the same
+oracle.  Until then (c) is in place and safe.  Either (a) or (b) deletes
+`SOURCE.sha256`, `lib/libfidl/fidl-bindings.mk`, `regen` and the committed
+`generated/` trees in one change; nothing else depends on them.
+
 ## Order
 
 Smallest and most isolated first; boot-critical and widely linked providers
