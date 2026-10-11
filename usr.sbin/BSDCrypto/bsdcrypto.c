@@ -739,7 +739,7 @@ start_reaper(void)
 	pid_t pid;
 	int pd;
 
-	pid = pdfork(&pd, PD_CLOEXEC | PD_DAEMON);
+	pid = pdfork(&pd, PD_CLOEXEC | PD_DAEMON | PD_NOWAITPID);
 	if (pid == -1) {
 		logcmp_log(LOG_WARNING, "reclaim: pdfork: %m");
 		return (-1);
@@ -802,7 +802,7 @@ start_session(int fd, const char *peer_label, const char *actor, int *pdp)
 	 * reaped via pdwait on that descriptor, not SIGCHLD, so it does not depend
 	 * on SIGCHLD disposition.  The reclaim child also uses a procdesc.
 	 */
-	pid = pdfork(&pd, PD_CLOEXEC | PD_DAEMON);
+	pid = pdfork(&pd, PD_CLOEXEC | PD_DAEMON | PD_NOWAITPID);
 	if (pid == -1) {
 		close(audit_fd);
 		return (-1);

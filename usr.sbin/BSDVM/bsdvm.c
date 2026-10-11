@@ -804,7 +804,7 @@ vmd_serve(void)
 			continue;
 		}
 		w->widx = widx;
-		pid = pdfork(&w->pd, PD_CLOEXEC | PD_DAEMON);
+		pid = pdfork(&w->pd, PD_CLOEXEC | PD_DAEMON | PD_NOWAITPID);
 		if (pid == -1) {
 			syslog(LOG_ERR, "pdfork: %m");
 			free(w);

@@ -24,7 +24,7 @@ ATF_TC_BODY(worker_windows, tc)
 		node = calloc(1, sizeof(*node));
 		ATF_REQUIRE(node != NULL);
 		node->widx = idx;
-		pids[i] = pdfork(&node->pd, PD_CLOEXEC | PD_DAEMON);
+		pids[i] = pdfork(&node->pd, PD_CLOEXEC | PD_DAEMON | PD_NOWAITPID);
 		ATF_REQUIRE(pids[i] >= 0);
 		if (pids[i] == 0)
 			for (;;)

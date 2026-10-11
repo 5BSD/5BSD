@@ -1391,7 +1391,7 @@ start_pool(struct pool_parent *parent,
 		goto fail;
 	if (harden_worker_fd(sockets[1]) == -1)
 		goto fail_sockets;
-	pid = pdfork(&pd, PD_CLOEXEC | PD_DAEMON);
+	pid = pdfork(&pd, PD_CLOEXEC | PD_DAEMON | PD_NOWAITPID);
 	if (pid == -1)
 		goto fail_sockets;
 	if (pid == 0) {

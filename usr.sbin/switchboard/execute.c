@@ -1088,7 +1088,7 @@ svc_exec_command(struct svc_runtime *svc, int kq, char *argv[], bool for_stop)
 		svc->launch_id = ++svc_launch_sequence;
 	if (svc->want_console && svc_authority_issue_boot(svc, &authority_fd) == -1)
 		syslog(LOG_WARNING, "rc bootstrap authority unavailable: %m");
-	pid = pdfork(&pd_fd, PD_CLOEXEC);
+	pid = pdfork(&pd_fd, PD_CLOEXEC | PD_NOWAITPID);
 	if (pid == -1) {
 		syslog(LOG_ERR, "unit %s: pdfork: %m", m->label);
 		SWITCHBOARD_PROBE_SVC_EXEC_FAIL(m->label, errno);
@@ -1995,7 +1995,7 @@ svc_launch_finish(struct svc_runtime *svc, int kq)
 	/* Do not let the child run before protection and event registration. */
 	if (pipe2(launch_gate, O_CLOEXEC) == -1)
 		goto fail_prefork;
-	pid = pdfork(&pd_fd, PD_CLOEXEC);
+	pid = pdfork(&pd_fd, PD_CLOEXEC | PD_NOWAITPID);
 	if (pid == -1) {
 		saved_errno = errno;
 		syslog(LOG_ERR, "svc_exec %s: pdfork: %m", m->label);

@@ -294,7 +294,7 @@ start_session(int fd, const char *provider, int *pdp, pid_t *pidp)
 		close(syncfd[1]);
 		return (errno = error, -1);
 	}
-	pid = pdfork(&pd, PD_CLOEXEC | PD_DAEMON);
+	pid = pdfork(&pd, PD_CLOEXEC | PD_DAEMON | PD_NOWAITPID);
 	if (pid == -1) {
 		error = errno;
 		close(syncfd[0]);

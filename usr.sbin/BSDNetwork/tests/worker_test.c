@@ -37,7 +37,7 @@ ATF_TC_BODY(worker_shutdown, tc)
 	for (unsigned i = 0; i < nitems(descriptors); i++) {
 		entry = calloc(1, sizeof(*entry));
 		ATF_REQUIRE(entry != NULL);
-		child = pdfork(&entry->process.pd, PD_CLOEXEC | PD_DAEMON);
+		child = pdfork(&entry->process.pd, PD_CLOEXEC | PD_DAEMON | PD_NOWAITPID);
 		ATF_REQUIRE(child >= 0);
 		if (child == 0)
 			for (;;)
@@ -60,7 +60,7 @@ ATF_TC_BODY(parent_descriptors_do_not_fork, tc)
 	int pd, kq, status;
 	pid_t child, probe;
 
-	child = pdfork(&pd, PD_CLOEXEC | PD_DAEMON);
+	child = pdfork(&pd, PD_CLOEXEC | PD_DAEMON | PD_NOWAITPID);
 	ATF_REQUIRE(child >= 0);
 	if (child == 0)
 		for (;;)

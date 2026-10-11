@@ -393,7 +393,7 @@ start_session(int fd, const char *peer_label, int *pdp)
 	    strnlen(peer_label, sizeof(label)) == sizeof(label))
 		return (errno = EINVAL, -1);
 	strlcpy(label, peer_label, sizeof(label));
-	pid = pdfork(&pd, PD_CLOEXEC | PD_DAEMON);
+	pid = pdfork(&pd, PD_CLOEXEC | PD_DAEMON | PD_NOWAITPID);
 	if (pid == -1)
 		return (-1);
 	if (pid == 0)

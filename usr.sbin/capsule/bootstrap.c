@@ -423,7 +423,7 @@ bootstrap_start(int kq)
 		return (-1);
 	}
 
-	pid = pdfork(&pd_fd, PD_CLOEXEC);
+	pid = pdfork(&pd_fd, PD_CLOEXEC | PD_NOWAITPID);
 	if (pid == -1) {
 		syslog(LOG_ERR, "bootstrap: pdfork: %m");
 		CAPSULE_PROBE_ERROR("bootstrap", "pdfork failed");

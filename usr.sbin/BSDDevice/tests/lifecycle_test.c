@@ -24,7 +24,7 @@ ATF_TC_BODY(worker_cleanup, tc)
 	for (size_t i = 0; i < nitems(pids); i++) {
 		entry = calloc(1, sizeof(*entry));
 		ATF_REQUIRE(entry != NULL);
-		pids[i] = pdfork(&entry->pd, PD_CLOEXEC | PD_DAEMON);
+		pids[i] = pdfork(&entry->pd, PD_CLOEXEC | PD_DAEMON | PD_NOWAITPID);
 		ATF_REQUIRE(pids[i] >= 0);
 		if (pids[i] == 0) {
 			if (i == 0)

@@ -1411,7 +1411,7 @@ main(void)
 	    service_provider_worker_channel(provider, &router_pair[0],
 	    &router_pair[1]) == -1)
 		goto fail;
-	router_pid = pdfork(&router_pd, PD_CLOEXEC);
+	router_pid = pdfork(&router_pd, PD_CLOEXEC | PD_NOWAITPID);
 	if (router_pid == -1)
 		goto fail;
 	if (router_pid == 0) {

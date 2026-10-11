@@ -2885,7 +2885,7 @@ bsdfilesystem_serve(struct bsdfilesystem_state *st)
 		}
 		w->oes_factory = ready_listener == oes_listener;
 		strlcpy(w->label, id.client_label, sizeof(w->label));
-		pid = pdfork(&w->pd, PD_CLOEXEC | PD_DAEMON);
+		pid = pdfork(&w->pd, PD_CLOEXEC | PD_DAEMON | PD_NOWAITPID);
 		if (pid == -1) {
 			syslog(LOG_ERR, "pdfork: %m");
 			free(w);

@@ -1177,7 +1177,7 @@ logcmp_storage_start(int dirfd, uint64_t segment_limit, uint32_t max_segments,
 		close(sockets[1]);
 		return (errno = error, -1);
 	}
-	pid = pdfork(&pd, PD_CLOEXEC | PD_DAEMON);
+	pid = pdfork(&pd, PD_CLOEXEC | PD_DAEMON | PD_NOWAITPID);
 	if (pid == -1) {
 		error = errno;
 		close(sockets[0]);

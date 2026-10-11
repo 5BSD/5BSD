@@ -1499,7 +1499,7 @@ start_session(int fd, const char *peer_label,
 		close(syncfd[1]);
 		goto reject;
 	}
-	pid = pdfork(&pd, PD_CLOEXEC | PD_DAEMON);
+	pid = pdfork(&pd, PD_CLOEXEC | PD_DAEMON | PD_NOWAITPID);
 	if (pid == -1) {
 		error = errno;
 		close(syncfd[0]);
@@ -1570,7 +1570,7 @@ start_pf_session(int fd, struct service_context *ctx, const char *label, int *pd
 	 * and the per-session read right have both been checked. */
 	pf_fd = network_pf_open(ctx);
 	open_error = pf_fd == -1 ? errno : 0;
-	pid = pdfork(&pd, PD_CLOEXEC | PD_DAEMON);
+	pid = pdfork(&pd, PD_CLOEXEC | PD_DAEMON | PD_NOWAITPID);
 	if (pid == -1) {
 		error = errno;
 		if (pf_fd >= 0)

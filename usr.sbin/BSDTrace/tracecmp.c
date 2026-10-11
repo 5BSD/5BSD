@@ -533,7 +533,7 @@ start_session(int fd, int dtrace_directory, bool authorized,
 			close(dtrace_fd);
 		goto reject;
 	}
-	pid = pdfork(&pd, PD_CLOEXEC | PD_DAEMON);
+	pid = pdfork(&pd, PD_CLOEXEC | PD_DAEMON | PD_NOWAITPID);
 	if (pid == -1) {
 		error = errno;
 		close(syncfd[0]);
