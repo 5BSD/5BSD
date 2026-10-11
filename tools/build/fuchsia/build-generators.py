@@ -29,10 +29,11 @@ env = dict(os.environ, GO111MODULE='off', GOTOOLCHAIN='local', GOPROXY='off',
            GOPATH=str(obj / 'gopath'), GOCACHE=str(obj / 'gocache'),
            GOTMPDIR=str(obj / 'tmp'))
 prefix = 'go.fuchsia.dev/fuchsia/tools/fidl/'
-for name in ['fidlgen_cpp', 'fidlgen_rust', 'gidl/cmd/gidl']:
+# fidlgen_cpp is not built: fidlgen_natural.py runs its templates in Python.
+for name in ['fidlgen_rust', 'gidl/cmd/gidl']:
     output = obj / Path(name).name
     subprocess.run([a.go, 'build', '-o', str(output), prefix + name], env=env, check=True)
-# fidlgen_cpp links the Go runtime statically; ship that toolchain's notice.
+# The Go programs link the Go runtime statically; keep that toolchain's notice.
 goroot = Path(subprocess.check_output([a.go, 'env', 'GOROOT'], env=env, text=True).strip())
 (obj / 'go').mkdir(exist_ok=True)
 shutil.copyfile(goroot / 'LICENSE', obj / 'go' / 'LICENSE')

@@ -168,15 +168,17 @@ dependencies recorded in `tools/build/fuchsia/README`:
 
 ```sh
 python3.12 tools/build/fuchsia/build-fidl.py --test
-python3.12 tools/build/fuchsia/build-generators.py --go /path/to/go --test
+python3.12 tools/build/fuchsia/build-generators.py --go /path/to/go --test  # gidl/Rust only
 python3.12 tools/build/fuchsia/test-fd.py
 python3.12 tools/build/fuchsia/build-runtime.py --test
 python3.12 tools/build/fuchsia/build-runtime.py --test --sanitize
 ```
 
-Replace `/path/to/go` with the installed Go executable. The host compiler
-build requires Python 3.12+, C++20, RE2 development files, base OpenSSL, and
-the tree's googletest import. Output defaults to `/usr/obj/5bsd-fidl`;
+Replace `/path/to/go` with the installed Go executable; Go now builds only
+the GIDL conformance generator and the Rust generator. The host compiler
+build requires Python 3.12+, C++20, RE2 development files (for
+`fidl-lint`), base libmd and OpenSSL (for the compiler tests), and the
+tree's googletest import. Output defaults to `/usr/obj/5bsd-fidl`;
 compilation uses all logical CPUs. These commands do not install or activate
 a service. Exact revisions, licenses, local patches, and refresh commands
 are recorded in `tools/build/fuchsia/README`, `sources.json`, and
@@ -222,39 +224,52 @@ always included; `MK_GOOGLETEST` controls the C++ runtime suite. These static
 binaries need no compiler, Python, Go, or source checkout at run time. Run their
 `Kyuafile` with Kyua on a matching 5BSD kernel.
 
-### Checked-in bindings
+### Bindings generated at build time
 
-Ordinary world and test builds compile checked-in generated bindings (the
-runtime fixtures, BSDTime and each migrated provider), so buildworld needs no
-Python, Go or FIDL compiler. After changing a `.fidl` file or the generator,
-run
+buildworld generates every FIDL binding the system uses (the runtime
+fixtures, BSDTime, each migrated provider and each evolution test's next
+schema) into the object tree; nothing generated is checked in. A Makefile
+that needs bindings names a set and includes `lib/libfidl/fidl-bindings.mk`:
 
-```sh
-make -C tools/build/fuchsia regen
+```make
+FIDL_BINDINGS+=	timecmp
+FIDL_SCHEMAS.timecmp=	lib/libtimecmp/timecmp.fidl
+FIDL_LIBRARY.timecmp=	bsd.time.v1
+.include "${SRCTOP}/lib/libfidl/fidl-bindings.mk"
 ```
 
-and commit the result with the schema. `regen` needs the bootstrapped host
-tools (`make -C tools/build/fuchsia bootstrap`). Each generated library
-directory carries a `SOURCE.sha256` stamp naming the SHA-256 of every input
-schema (the library's `.fidl` and its dependencies such as `zx.fidl`), with
-the pinned Fuchsia revision and generator script digests as comments.
+then adds `-I${FIDLGEN.timecmp}` to `CFLAGS` and, where it compiles the
+bindings (the library itself, or an evolution peer), `${FIDLGEN_SRCS.timecmp}`
+to `SRCS`. Schemas list dependencies first (`lib/libfidl/tests/zx.fidl` for
+`zx.Handle`); `FIDL_FLAGS.NAME` passes extra `fidlc` arguments, such as
+`--available bsd:2` for a next schema. Generation runs in `beforebuild`,
+before anything is compiled, and again whenever a schema or the generator
+changes, so a `.fidl` edit cannot ship with stale bindings.
 
-Two checks keep a schema from shipping with stale bindings:
+The pipeline is `fidlc` (C++, built from `contrib/fuchsia` in buildworld's
+bootstrap-tools stage by `tools/build/fuchsia/fidlc`; patched to use
+`<regex>` and libmd instead of RE2 and OpenSSL), then
+`tools/build/fuchsia/fidlgen-build.py`. The natural C++ types come from
+upstream's own `fidlgen_cpp` templates, executed by a Python port of the
+`fidlgen_cpp` model and of Go's `text/template` (`fidlgen_natural.py`,
+`gotemplate.py`); `generate-bsd.py` adds the C++ client/server adapters and
+the C bridge. There is no Go in the build. The port's output was checked
+byte for byte against the previously committed bindings (180 files) before
+they were deleted.
 
-- **Build time.** Every Makefile that compiles a binding tree sets
-  `FIDL_BINDINGS` and includes `lib/libfidl/fidl-bindings.mk`, which runs
-  before anything is built and uses only `sh` and `sha256(1)` (a buildworld
-  bootstrap tool). A schema that no longer matches its stamp stops the build
-  with `lib/libX/X.fidl changed; run make -C tools/build/fuchsia regen and
-  commit the result`.
-- **Drift.** `make -C tools/build/fuchsia check-bindings` (part of `check`)
-  regenerates every tree into a scratch directory and compares it, stamps
-  included, with the checked-in files, so hand-edited output, a changed
-  generator or a stale stamp is reported by path. It also proves that each
-  provider's evolution schema is the production schema at `bsd:1`.
+Python is a **build-only** prerequisite: it is never installed into the
+target. buildworld needs Python 3.12 or newer on the build host and stops
+first thing (`_python_check` in `Makefile.inc1`) when it is missing,
+naming the `python312` package and its port, `lang/python312` in the 5BSD
+ports tree (`PORTSDIR`, currently `/usr/obj/5BSD-ports`). `PYTHON=` selects
+another interpreter. Cross-build hosts (Linux, macOS) need the same Python
+and a C++20 host compiler for `fidlc`; see build(7).
 
-The stamps exist only while bindings are committed; generating them into the
-object tree at build time would remove both the stamps and the fragment.
+`make -C tools/build/fuchsia check-bindings` (part of `check`) generates
+every set named in the tree's Makefiles twice and requires byte-identical
+output, and proves that each provider's evolution schema is the production
+schema at `bsd:1`.
+
 After bootstrapping the host tools, `make -C tools/build/fuchsia check-native`
 runs native and sanitizer suites, staged SDK consumers, normal native tests,
 and extracted pkgbase checks. `test-installed.py --packages` runs the staged

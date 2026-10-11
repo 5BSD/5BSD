@@ -1,5 +1,5 @@
 .\" SPDX-License-Identifier: BSD-2-Clause
-.Dd October 9, 2026
+.Dd October 11, 2026
 .Dt FIDLGEN-BSD 1
 .Os
 .Sh NAME
@@ -11,7 +11,7 @@
 .Fl -root Ar directory
 .Op Fl -c
 .Op Fl -dependency-json Ar file
-.Op Fl -fidlgen-cpp Ar generator
+.Op Fl -templates Ar directory
 .Sh DESCRIPTION
 The
 .Nm
@@ -36,12 +36,23 @@ Generated code uses
 .Xr libfidl_bsd 3
 and native capability-channel descriptors.
 No Fuchsia dispatcher or Zircon syscall emulation is required.
-The installed adapter selects its matching private C++ generator under
+The natural C++ types are produced by upstream's fidlgen_cpp templates,
+run by the adapter's own template engine; the installed adapter uses its
+private copy of the generator and templates under
 .Pa /usr/libexec/fidl .
-The override option is for toolchain development.
+The
+.Fl -templates
+option names another template directory and is for toolchain development.
 .Pp
-The host tools require Python 3.12 and the RE2 library from ports.
-The generated binaries need neither Python nor Go.
+The host tools require Python 3.12.
+.Cm fidl-lint
+also needs the RE2 library from ports.
+The generated binaries do not need Python.
+buildworld generates the system's own bindings the same way, with a
+build-only
+.Cm fidlc
+and Python; see
+.Xr build 7 .
 This SDK remains experimental; its presence does not mean system providers
 have migrated to FIDL.
 .Sh EXIT STATUS
@@ -83,4 +94,5 @@ fidlgen-bsd --json service.json --dependency-json common.json \
 .Ed
 .Sh SEE ALSO
 .Xr libfidl_bsd 3 ,
+.Xr build 7 ,
 .Xr fidl 7

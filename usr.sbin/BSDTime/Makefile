@@ -6,7 +6,7 @@ MAN=	BSDTime.8
 SRCS=	BSDTime.c config.c
 
 CFLAGS+=	-I${SRCTOP}/lib/libtimecmp
-CFLAGS+=	-I${SRCTOP}/lib/libtimecmp/generated
+CFLAGS+=	-I${FIDLGEN.timecmp}
 CFLAGS+=	-I${SRCTOP}/lib/libfidl/include
 CFLAGS+=	-I${SRCTOP}/lib/libservice
 CFLAGS+=	-I${SRCTOP}/lib/libchannel
@@ -57,9 +57,10 @@ CFLAGS+=	-I${.OBJDIR} -DWITH_DTRACE
 HAS_TESTS=
 SUBDIR.${MK_TESTS}+=	tests
 
-# Checked-in bindings must match their schemas (fidl-bindings.mk).
-FIDL_BINDINGS+= \
-    lib/libtimecmp/generated/fidl/bsd.time.v1
+# Bindings generated at build time (fidl-bindings.mk).
+FIDL_BINDINGS+=	timecmp
+FIDL_SCHEMAS.timecmp=	lib/libtimecmp/timecmp.fidl
+FIDL_LIBRARY.timecmp=	bsd.time.v1
 .include "${SRCTOP}/lib/libfidl/fidl-bindings.mk"
 
 .include <bsd.prog.mk>

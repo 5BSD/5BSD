@@ -843,11 +843,34 @@ KTMAKE=		${TIME_ENV} \
 		MK_RETPOLINE=no \
 		MK_WERROR=no
 
+# Python is a build-only prerequisite: lib/libfidl/fidl-bindings.mk runs it
+# to generate FIDL bindings into the object tree.  It is never installed into
+# the target.  The top-level Makefile resolves it on the caller's PATH (or
+# under LOCALBASE) before sanitizing PATH; resolve it here only when run
+# directly, and hand the absolute path down to the world stage, which may run
+# with a strict PATH.  PYTHON= overrides it.
+PYTHON?=	python3.12
+PYTHON_MIN_VERSION=	3.12
+.if ${PYTHON:M/*} != ""
+_PYTHON_CMD=	${PYTHON}
+.else
+.if !defined(_PYTHON_PATH)
+_PYTHON_PATH!=	command -v ${PYTHON} 2>/dev/null || \
+		{ [ -x ${LOCALBASE:U/usr/local}/bin/${PYTHON} ] && \
+		  echo ${LOCALBASE:U/usr/local}/bin/${PYTHON}; } || true
+.export _PYTHON_PATH
+.endif
+_PYTHON_CMD=	${_PYTHON_PATH}
+.endif
+
 # world stage
 WMAKEENV=	${CROSSENV} \
 		INSTALL="${INSTALL_CMD} -U" \
 		PATH=${TMPPATH:Q} \
 		SYSROOT=${WORLDTMP}
+.if !empty(_PYTHON_CMD)
+WMAKEENV+=	PYTHON=${_PYTHON_CMD:Q}
+.endif
 
 .if ${MK_DTRACE} != "no" && ${TARGET_ARCH} != ${MACHINE_ARCH}
 DTRACE_CROSS_OBJROOT=	${OBJTOP}/host-dtrace-${TARGET_ARCH}
@@ -1078,6 +1101,23 @@ _sanity_check: .PHONY .MAKE
 	@false
 .endif
 
+# FIDL binding generation needs Python ${PYTHON_MIN_VERSION} or newer on the
+# build host (see build(7)); fail before building anything without it.
+_python_check: .PHONY
+	@python=${_PYTHON_CMD:Q}; \
+	if [ -z "$$python" ] || ! "$$python" -c 'import sys; \
+	    sys.exit(sys.version_info < tuple(map(int, "${PYTHON_MIN_VERSION}".split("."))))' \
+	    2>/dev/null; then \
+		echo; \
+		echo "*** Error: buildworld needs Python ${PYTHON_MIN_VERSION} or newer (\"${PYTHON}\" is missing or too old)."; \
+		echo "*** It is a build-only tool that generates the FIDL bindings; it is not installed."; \
+		echo "*** Install the python312 package, built from lang/python312 in the 5BSD"; \
+		echo "*** ports tree (PORTSDIR, e.g. /usr/obj/5BSD-ports/lang/python312),"; \
+		echo "*** or set PYTHON=/path/to/python3.12."; \
+		echo; \
+		false; \
+	fi
+
 # Our current approach to dependency tracking cannot cope with certain source
 # tree changes, particularly with respect to removing source files and
 # replacing generated files.  Handle these cases here in an ad-hoc fashion.
@@ -1258,7 +1298,7 @@ everything: .PHONY
 	@echo "--------------------------------------------------------------"
 	${_+_}cd ${.CURDIR}; _PARALLEL_SUBDIR_OK=1 ${WMAKE} all
 
-WMAKE_TGTS=
+WMAKE_TGTS=	_python_check
 .if !defined(WORLDFAST)
 WMAKE_TGTS+=	_sanity_check _cleanworldtmp _worldtmp _legacy
 .if empty(SUBDIR_OVERRIDE)
@@ -2951,6 +2991,7 @@ bootstrap-tools: ${_bt}-links .PHONY
     lib/liblua \
     lib/libmd \
     lib/libopenbsd \
+    tools/build/fuchsia/fidlc \
     lib/libucl \
     lib/libyaml \
     usr.bin/mandoc \
@@ -2998,6 +3039,9 @@ ${_bt}-${_tool}: ${_bt}-links .PHONY .MAKE
 bootstrap-tools: ${_bt}-${_tool}
 .endif
 .endfor
+# fidlc (FIDL binding generation, lib/libfidl/fidl-bindings.mk) hashes method
+# names with libmd's SHA-256.
+${_bt}-tools/build/fuchsia/fidlc: ${_bt}-lib/libmd
 .if target(${_bt}-lib/libmd)
 # If we are bootstrapping libmd (e.g. when building on macOS/Linux) add the
 # necessary dependencies:

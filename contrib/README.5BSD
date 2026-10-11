@@ -101,9 +101,16 @@ Local changes (tools/build/fuchsia/patches): FreeBSD host definition and
   (fuchsia-natural-bool.patch); natural encoder buffer reuse
   (fuchsia-natural-encoder-reuse.patch); allocation-failure handling in the
   natural encoder (fuchsia-natural-oom.patch); std::slices use in GIDL
-  (fuchsia-gidl-std-slices.patch).
-Integration: standalone native host compiler/formatter/linter, C++/Rust
-  generators and tests; native C++ runtime and generated C bridge over
+  (fuchsia-gidl-std-slices.patch); fidlc's identifier checks use <regex>
+  instead of RE2 and its ordinal hash libmd instead of OpenSSL, so
+  buildworld can build fidlc as a bootstrap tool on any host
+  (fuchsia-fidlc-bootstrap.patch).
+Integration: buildworld builds fidlc (tools/build/fuchsia/fidlc) and
+  generates the system's bindings with it and upstream's fidlgen_cpp
+  templates, run by tools/build/fuchsia/fidlgen_natural.py (Python is a
+  build-only prerequisite; the Go fidlgen_cpp is no longer built);
+  standalone native host compiler/formatter/linter, Rust generator and
+  tests; native C++ runtime and generated C bridge over
   libchannel, plus the initial descriptor transport feasibility test.
   Native runtime support uses sdk/lib/utf-utils and src/zircon/lib/zircon
   wire/status headers at the same pinned revision; their archives are locked

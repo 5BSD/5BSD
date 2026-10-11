@@ -154,17 +154,28 @@ Native generator changes: patches/fuchsia-native.patch and
 patches/fuchsia-native-headers.patch. update-runtime-headers.py maintains the
 installed support-header inventory; --check detects stale manifests.
 
+Build-time generation: buildworld builds fidlc from fidlc/Makefile in its
+bootstrap-tools stage (patches/fuchsia-fidlc-bootstrap.patch replaces RE2
+and OpenSSL with <regex> and libmd) and lib/libfidl/fidl-bindings.mk runs
+fidlgen-build.py for every FIDL_BINDINGS set. fidlgen_natural.py ports the
+fidlgen_cpp model the native backend uses and runs upstream's
+fidlgen_cpp/codegen templates through gotemplate.py, a Go text/template
+interpreter, so the Go fidlgen_cpp is not built. Python 3.12 is a build-only
+prerequisite (Makefile.inc1 _python_check, PYTHON=). Nothing generated is
+checked in; check-bindings generates every set twice and compares.
+
 Binary SDK staging
 ------------------
 The runtime's native Makefile installs shared/static libraries, public C/C++
 headers and fidl.pc. The optional tools/build/fuchsia/Makefile installs the
-matching fidlc, fidl-format, fidl-lint, fidlgen-bsd and private C++ generator.
-Its bootstrap/check targets use the existing build scripts, PYTHON and GO;
+matching fidlc, fidl-format, fidl-lint, fidlgen-bsd and its private Python
+generator and templates. Its bootstrap/check targets use the existing build
+scripts and PYTHON (GO only for the optional gidl/Rust generators);
 installation consumes already built files in FIDL_TOOLS_OBJ (default
 /usr/obj/5bsd-fidl). No install step fetches code. Use a DESTDIR under /usr/obj
 for staging. The libfidl-tools subpackage is opt-in with FIDL_SDK=yes after
 staging these files; normal world packaging does not require host tools.
-Host tools require Python 3.12 and RE2 from ports. External dependency/release
+Host tools require Python 3.12, and fidl-lint RE2, from ports. External dependency/release
 packaging validation remains open; this is not a published toolchain package.
 
 The installed test compiles schemas with the staged tools and runs C11/C++
@@ -198,10 +209,9 @@ Native tests and CI
 -------------------
 The standard lib/libfidl/tests Makefile installs C and (with MK_GOOGLETEST)
 C++ tests plus a Kyuafile, owned by libfidl-tests. They run without host tools.
-Eighteen checked-in generated files (runtime tests and BSDTime) avoid making
-world depend on Go/Python.
-Use test-bindings.py --write to refresh them; its default mode checks exact
-regeneration and rejects stale/missing/extra files. The host check includes it.
+Their bindings are generated into the object tree during the build (see
+"Build-time generation" above); test-bindings.py (make check-bindings, part
+of make check) checks that generation is deterministic.
 
 After bootstrapping the host tools, `make check-native` runs the native and
 ASan/UBSan suites, installed SDK consumers, the normal native test targets,

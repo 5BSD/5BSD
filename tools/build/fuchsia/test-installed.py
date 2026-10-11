@@ -41,12 +41,12 @@ subprocess.run([str(stage/'usr/bin/fidlc'),'--json',str(work/'runtime.json'),
 generator_command=[str(stage/'usr/bin/fidlgen-bsd'),'--json',str(work/'runtime.json'),
                    '--root',str(generated),'--c']
 # An incomplete SDK must not silently borrow a source-tree host generator.
-private=stage/'usr/libexec/fidl/fidlgen_cpp'
+private=stage/'usr/libexec/fidl/fidlgen_natural.py'
 missing=private.with_suffix('.held')
 private.rename(missing)
 try:
     failure=subprocess.run(generator_command,text=True,stdout=subprocess.PIPE,stderr=subprocess.STDOUT)
-    if failure.returncode==0 or str(private) not in failure.stdout:
+    if failure.returncode==0 or 'fidlgen_natural' not in failure.stdout:
         raise RuntimeError('incomplete installed SDK did not fail at its pinned generator')
 finally:
     missing.rename(private)

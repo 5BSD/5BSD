@@ -16,8 +16,8 @@ installed on, activated on, or used to reboot the host.
 | Upstream import, licenses, provenance | `/usr/src/contrib/fuchsia/`, `/usr/src/tools/build/fuchsia/sources.json`, `/usr/src/tools/build/fuchsia/patches/`, `/usr/src/contrib/fuchsia/UPSTREAM*.json` |
 | Native runtime and public C API | `/usr/src/lib/libfidl/`, especially `runtime.cc`, `runtime_c.cc`, `include/fidl/bsd/`, `README`, `MATURITY` |
 | Native IPC transport | `/usr/src/lib/libchannel/`; FIDL attaches real kernel descriptors through this library |
-| Compiler and C/C++ generation | `/usr/src/tools/build/fuchsia/build-fidl.py`, `build-generators.py`, `generate-bsd.py`, `generate_bsd_c.py`, `generate_bsd_c_types.py` |
-| Checked-in generated bindings | `/usr/src/lib/libfidl/tests/generated/`, `/usr/src/lib/libtimecmp/generated/`; verify with `test-bindings.py` |
+| Compiler and C/C++ generation | `/usr/src/tools/build/fuchsia/fidlc/Makefile` (bootstrap fidlc), `fidlgen-build.py`, `fidlgen_natural.py`, `gotemplate.py`, `generate-bsd.py`, `generate_bsd_c.py`, `generate_bsd_c_types.py`; host SDK: `build-fidl.py` |
+| Build-time generated bindings | `/usr/src/lib/libfidl/fidl-bindings.mk` (`FIDL_BINDINGS` sets, generated into `${.OBJDIR}/fidlgen`); nothing generated is committed; `make -C tools/build/fuchsia check-bindings` checks determinism |
 | Representative schema, C client, C provider | `/usr/src/lib/libtimecmp/timecmp.fidl`, `/usr/src/lib/libtimecmp/timecmp.c`, `/usr/src/usr.sbin/BSDTime/BSDTime.c` |
 | Provider configuration and CLI | `/usr/src/usr.sbin/BSDTime/config.c`, `/usr/src/usr.sbin/BSDTimectl/` |
 | Native tests and fuzz target | `/usr/src/lib/libfidl/tests/`, `/usr/src/usr.sbin/BSDTime/tests/`, `/usr/src/tools/build/fuchsia/fuzz-runtime.py` |
@@ -26,6 +26,14 @@ installed on, activated on, or used to reboot the host.
 | Documentation | `/usr/src/docs/book/src/develop/fidl.md`, `/usr/src/docs/book/src/providers/time.md`, `/usr/src/share/man/man7/fidl.7`, `lib/libfidl/libfidl_bsd.3`, `lib/libtimecmp/libtimecmp.3`, `usr.sbin/BSDTime/BSDTime.8` |
 | Gate list and validation record | `/usr/src/lib/libfidl/MATURITY`, `/usr/src/tools/build/fuchsia/VALIDATION.json` |
 | Standalone Matter/OpenThread imports | `/usr/src/contrib/connectedhomeip/`, `/usr/src/contrib/openthread/`; they are not proof of native radio/commissioning integration |
+
+## Build prerequisites (2026-10-11)
+
+Python 3.12 (`python312`, `lang/python312` in the 5BSD ports tree) is a
+build-only prerequisite of buildworld: it generates the FIDL bindings and is
+never installed into base.  `Makefile.inc1` checks for it first
+(`_python_check`; `PYTHON=` overrides).  OpenJDK is approved as a build-only
+prerequisite for Bazel if Bazel is ever reintroduced; Bazel is not used.
 
 ## What is validated (2026-10-10)
 

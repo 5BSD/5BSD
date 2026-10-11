@@ -650,5 +650,15 @@
     "openthread": "BSD-3 plus Mbed TLS Apache-2.0 (elected) OR GPL-2.0-or-later, Everest Apache-2.0; no blocker. Committed with patches/openthread-vendor-git.patch (ignore anchoring, Mbed TLS -text) and AGENTS.md/.gemini excluded; 4,480 files stage byte-identical, 0 end-of-line rewrites.",
     "connectedhomeip": "Committed as a subset (sources.json include list): py_matter_idl plus six test data files, LICENSE, NOTICE; 252 entries, all Apache-2.0. Excluded: CSA internal-use data_model, vendor confidential/chip-only files, unlicensed ESP32 ROM images. 120 IDL tests pass on the subset."
   },
-  "source_reproduction_trimmed": "2026-10-10 import.py --patch into empty staging: fuchsia 5,028 identical to the committed tree; openthread 4,480; connectedhomeip 252 (subset)."
+  "source_reproduction_trimmed": "2026-10-10 import.py --patch into empty staging: fuchsia 5,028 identical to the committed tree; openthread 4,480; connectedhomeip 252 (subset).",
+  "fidl_build_time_generation": {
+    "date": "2026-10-11",
+    "change": "bindings generated into the object tree by buildworld (bootstrap fidlc + Python generator running upstream fidlgen_cpp templates); committed generated/ trees, SOURCE.sha256 stamps and the Go fidlgen_cpp stage removed",
+    "output_equivalence": "20 binding sets (runtime fixtures, BSDTime, 9 providers, 9 evolution schemas), 180 files byte-identical to the previously committed trees, through both generate-bsd.py and the build path fidlgen-build.py",
+    "patched_fidlc": "RE2 -> <regex>, OpenSSL SHA256 -> libmd: IR byte-identical; 2,203 enabled compiler tests pass (4 upstream-disabled)",
+    "determinism": "check-bindings: every set generated twice, byte-identical; 9 next schemas additive at bsd:1",
+    "template_engine_tests": "tools/build/fuchsia/tests/gotemplate_test.py: 11 pass",
+    "python_missing": "buildworld with no python3.12 on PATH or LOCALBASE, with PYTHON=python3.99, and with a 3.11 interpreter: _python_check stops before any build step with the package/port message",
+    "clean_buildworld": "make -j8 buildworld from an empty objdir (MAKEOBJDIRPREFIX=/usr/obj/5bsd-fidl-gen-clean): fidlc built in bootstrap-tools, bindings generated in beforebuild; completed in 7675 s"
+  }
 }

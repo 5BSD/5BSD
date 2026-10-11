@@ -238,6 +238,17 @@ META_TGT_WHITELIST+=	build${libcompat}
 .ORDER: buildkernel update-packages
 .ORDER: kernel-toolchain buildkernel
 
+# Python is a build-only prerequisite (FIDL binding generation; see
+# Makefile.inc1 and build(7)).  Find it on the caller's PATH, or else under
+# LOCALBASE, before PATH is sanitized below, and pass the result down.
+PYTHON?=	python3.12
+.if ${PYTHON:M/*} == "" && !defined(_PYTHON_PATH)
+_PYTHON_PATH!=	command -v ${PYTHON} 2>/dev/null || \
+		{ [ -x ${LOCALBASE:U/usr/local}/bin/${PYTHON} ] && \
+		  echo ${LOCALBASE:U/usr/local}/bin/${PYTHON}; } || true
+.export _PYTHON_PATH
+.endif
+
 # Only sanitize PATH on FreeBSD.
 # PATH may include tools that are required to cross-build
 # on non-FreeBSD systems.

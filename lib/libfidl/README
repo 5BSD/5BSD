@@ -270,12 +270,12 @@ The binaries link statically so allocation-failure injection covers the runtime;
 no FIDL host compiler, Python, Go, or source tree is needed to run them.
 Run `kyua test -k /usr/tests/lib/libfidl/Kyuafile` on a matching 5BSD kernel.
 
-Nine runtime fixture files are checked in under tests/generated, and nine
-provider binding files under lib/libtimecmp/generated. Ordinary
-world/test builds need no host generator. After editing the schema or generator,
-run `python3.12 tools/build/fuchsia/test-bindings.py --write` from /usr/src;
-without --write, the command rejects stale, missing, or extra generated files.
-The host-tool check and check-native targets verify these fixtures.
+The runtime fixtures (tests/runtime.fidl) and every provider's bindings are
+generated into the object tree during buildworld (lib/libfidl/fidl-bindings.mk:
+a bootstrap fidlc plus the Python generator in tools/build/fuchsia; Python
+3.12 is a build-only prerequisite, never installed). Nothing generated is
+checked in. `make -C tools/build/fuchsia check-bindings` generates every set
+twice and rejects any difference.
 
 `make -C tools/build/fuchsia check-native` runs native and sanitizer suites,
 staged C/C++ SDK consumers, bsd.test.mk/Kyua tests, and pkgbase archive checks.

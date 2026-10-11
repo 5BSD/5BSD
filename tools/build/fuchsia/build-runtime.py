@@ -33,7 +33,7 @@ elif a.sanitize: o=o/'sanitized'
 elif a.bench: o=o/'bench'
 o.mkdir(parents=True,exist_ok=True)
 subprocess.run([str(a.tools/'fidlc'),'--json',str(o/'runtime.json'),'--files',str(lib/'tests/zx.fidl'),'--files',str(lib/'tests/runtime.fidl')],check=True)
-subprocess.run([sys.executable,str(a.src/'tools/build/fuchsia/generate-bsd.py'),'--json',str(o/'runtime.json'),'--root',str(o/'gen'),'--fidlgen-cpp',str(a.tools/'fidlgen_cpp'),'--c'],check=True)
+subprocess.run([sys.executable,str(a.src/'tools/build/fuchsia/generate-bsd.py'),'--json',str(o/'runtime.json'),'--root',str(o/'gen'),'--c'],check=True)
 inc=[lib/'include',a.src/'lib/libchannel',a.src/'sys',r/'sdk',r/'src/zircon/lib/zircon/include',r/'zircon/system/public',r/'zircon/system/ulib/zx/include',o/'gen']
 inc += [r/'sdk/lib'/d/'include' for d in ['fidl_base','fidl/cpp','fidl/cpp/wire','fit','stdcompat','zircon-assert']]
 flags=(['-O2'] if a.bench else ['-O1','-g'])+['-pthread']+['-I'+str(i) for i in inc]

@@ -8,8 +8,7 @@
 
 #include <algorithm>
 
-#define BORINGSSL_NO_CXX
-#include <openssl/sha.h>
+#include <sha256.h>
 
 #include "tools/fidl/fidlc/src/attribute_schema.h"
 #include "tools/fidl/fidlc/src/availability_step.h"
@@ -26,8 +25,12 @@
 namespace fidlc {
 
 uint64_t Sha256MethodHasher(std::string_view selector) {
-  uint8_t digest[SHA256_DIGEST_LENGTH];
-  SHA256(reinterpret_cast<const uint8_t*>(selector.data()), selector.size(), digest);
+  // libmd (bootstrapped on non-FreeBSD hosts) rather than OpenSSL/BoringSSL.
+  uint8_t digest[32];
+  SHA256_CTX context;
+  SHA256_Init(&context);
+  SHA256_Update(&context, selector.data(), selector.size());
+  SHA256_Final(digest, &context);
   // The following dance ensures that we treat the bytes as a little-endian
   // int64 regardless of host byte order.
   // clang-format off

@@ -9,14 +9,11 @@ CXXSTD= c++20
 WARNS?= 0
 
 .include "../runtime-includes.mk"
-CFLAGS+= -I${.CURDIR}/generated
+CFLAGS+= -I${FIDLGEN.runtime}
 CXXFLAGS+= -I${SRCTOP}/contrib/googletest/googletest/include
-.PATH: ${.CURDIR}/generated/fidl/bsd.runtime.test/cpp \
-    ${.CURDIR}/generated/fidl/bsd.runtime.test/c
 
-# Checked-in generator outputs let world/tests build without host Go/Python.
-# Regenerate and verify these with tools/build/fuchsia/test-bindings.py.
-BINDING_SRCS= natural_types.cc common_types.cc bsd.cc
+# The bindings are generated from runtime.fidl at build time.
+BINDING_SRCS= ${FIDLGEN_SRCS.runtime}
 PLAIN_TESTS_C+= c_binding_test
 SRCS.c_binding_test= c_binding_test.c ${BINDING_SRCS}
 .if ${MK_GOOGLETEST} != "no"
@@ -50,9 +47,11 @@ GTEST_NOTICEDIR= /usr/share/licenses/libfidl-tests/googletest
 GTEST_NOTICEPACKAGE= ${PACKAGE}
 .endif
 
-# Checked-in bindings must match their schemas (fidl-bindings.mk).
-FIDL_BINDINGS+= \
-    lib/libfidl/tests/generated/fidl/bsd.runtime.test
+# Bindings generated at build time (fidl-bindings.mk).
+FIDL_BINDINGS+=	runtime
+FIDL_SCHEMAS.runtime=	lib/libfidl/tests/zx.fidl \
+	lib/libfidl/tests/runtime.fidl
+FIDL_LIBRARY.runtime=	bsd.runtime.test
 .include "${SRCTOP}/lib/libfidl/fidl-bindings.mk"
 
 .include <bsd.test.mk>

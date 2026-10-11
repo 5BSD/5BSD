@@ -46,7 +46,7 @@ with tempfile.TemporaryDirectory(prefix='generator-tests-',dir=a.obj) as tmp:
   if compiler.returncode: raise RuntimeError(name+' compiler error: '+compiler.stderr)
   for c,expected in [(False,cpp_ok),(True,c_ok)]:
    output=root/(name+('-c' if c else '-cpp'))
-   command=[sys.executable,str(a.src/'tools/build/fuchsia/generate-bsd.py'),'--json',str(ir),'--root',str(output),'--fidlgen-cpp',str(a.tools/'fidlgen_cpp')]
+   command=[sys.executable,str(a.src/'tools/build/fuchsia/generate-bsd.py'),'--json',str(ir),'--root',str(output)]
    if c:command+=['--c']
    result=subprocess.run(command,text=True,capture_output=True)
    if (result.returncode==0)!=expected:raise RuntimeError(name+' unexpected generation result: '+result.stdout+result.stderr)

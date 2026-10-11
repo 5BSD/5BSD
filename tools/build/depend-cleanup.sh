@@ -340,6 +340,19 @@ if [ -f "$OBJTOP"/usr.sbin/moused/moused ]; then
         run rm -fv "$OBJTOP"/usr.sbin/moused/moused
 fi
 
+# 20261011  FIDL bindings are generated into the object tree at build time
+# (lib/libfidl/fidl-bindings.mk); the checked-in generated/ trees are gone.
+for dir in "${OBJTOP%/}"/lib/libfidl/tests "${OBJTOP%/}"/lib/lib*cmp \
+    "${OBJTOP%/}"/lib/lib*cmp/tests "${OBJTOP%/}"/lib/libnotify \
+    "${OBJTOP%/}"/lib/libnotify/tests "${OBJTOP%/}"/usr.sbin/BSD* \
+    "${OBJTOP%/}"/usr.sbin/BSD*/tests; do
+	[ -d "$dir" ] || continue
+	for dep in $(grep -l '/generated/fidl/' "$dir"/.depend.* 2>/dev/null); do
+		echo "Removing stale FIDL binding dependencies in ${dir#${OBJTOP%/}/}"
+		run rm -fv "$dep" "$dir/${dep##*/.depend.}"
+	done
+done
+
 if [ ${MACHINE} = riscv ]; then
 	# 20251031  df21a004be23  libc: scalar strrchr() in RISC-V assembly
 	#clean_dep   lib/libc strrchr c

@@ -97,34 +97,50 @@ caller's `service_budget_begin()` deadline.
 
 ## Generated bindings
 
-Bindings are committed, so a `.fidl` edit could ship with stale output.
-Three pieces prevent that (since the first conversion commit):
+Nothing generated is committed.  buildworld builds `fidlc` as a bootstrap
+tool (`tools/build/fuchsia/fidlc`, the import patched by
+`fuchsia-fidlc-bootstrap.patch` to use `<regex>` and libmd instead of RE2
+and OpenSSL) and every Makefile that needs bindings names a set and
+includes `lib/libfidl/fidl-bindings.mk`:
 
-- `make -C tools/build/fuchsia regen` regenerates every checked-in tree
-  (runtime fixtures, BSDTime, each provider and each evolution schema) and
-  writes `generated/fidl/<library>/SOURCE.sha256`: the SHA-256 of each input
-  schema relative to the source root, plus the pinned Fuchsia revision and
-  generator script digests as comments.
-- `lib/libfidl/fidl-bindings.mk`, included by every Makefile that compiles a
-  tree (`FIDL_BINDINGS=` paths relative to `SRCTOP`), hooks `beforebuild`
-  and fails with "`<file>.fidl` changed; run make -C tools/build/fuchsia
-  regen and commit the result".  It uses only `sh` and `sha256(1)` (the
-  `sbin/md5` bootstrap tool), so buildworld still needs no Python or Go.
-- `make -C tools/build/fuchsia check-bindings` (in `check`) regenerates into
-  a scratch tree and diffs everything, stamps included, catching hand-edited
-  output and generator changes.
+```make
+FIDL_BINDINGS+=	logcmp
+FIDL_SCHEMAS.logcmp=	lib/libfidl/tests/zx.fidl lib/liblogcmp/logcmp.fidl
+FIDL_LIBRARY.logcmp=	bsd.log.v1
+```
 
-Verified in a scratch worktree: appending to `lib/libtimecmp/timecmp.fidl`
-makes `make -C lib/libtimecmp all` stop before compiling with the message
-above; `regen` then makes it pass; a hand edit to a generated header fails
-`check-bindings` naming the file.
+The fragment runs `fidlgen-build.py` in `beforebuild` (fidlc to JSON IR,
+then `generate-bsd.py --c`) into `${.OBJDIR}/fidlgen/<set>`, rerunning when
+a schema or any generator file changes, and exports `FIDLGEN.<set>` (the
+include root) and `FIDLGEN_SRCS.<set>` (natural/common types and the C
+bridge to compile).  An evolution test's next schema is a `<set>_next` set
+with `FIDL_FLAGS.<set>_next= --available bsd:2`.  The natural C++ types come
+from upstream's `fidlgen_cpp` templates, executed by `fidlgen_natural.py`
+(a port of the `fidlgen_cpp` model the native backend uses) and
+`gotemplate.py` (Go `text/template` semantics); the Go `fidlgen_cpp` is no
+longer built.  Python is a build-only prerequisite (`_python_check` in
+`Makefile.inc1`, overridable with `PYTHON=`); it is never installed.
 
-Follow-up (not part of this migration): generate the bindings into the
-object tree at build time, so nothing generated is committed.  Then the
-stamps, `fidl-bindings.mk` and `regen` are deleted together; nothing else
-depends on them.  See "Binding generation: end state" below.
+`make -C tools/build/fuchsia check` runs `check-bindings`: every set named
+in the tree's Makefiles is generated twice and must be byte-identical, and
+each next schema must compile at `bsd:1` to its production schema.
+
+Before the committed trees were deleted, the build-time output was compared
+with them: 20 binding sets, 180 files, all byte-identical (the patched
+`fidlc` also produces byte-identical IR).  The stamp check, `regen` and the
+`SOURCE.sha256` files of `d64f0c3e073` are gone with the committed trees.
 
 ## Binding generation: end state
+
+Decision (2026-10-11, user): Python (and OpenJDK, should Bazel ever be
+reintroduced) may be used as build-only tools, never installed into base.
+That selects (b) below without importing CPython: the build uses the host's
+Python 3.12 (`lang/python312` from the 5BSD ports tree) and the Go stage is
+dropped by running the natural templates in Python ("Generated bindings"
+above).  No concrete reason to bootstrap CPython from source was found.
+OpenJDK is approved as a build-only prerequisite for Bazel if Bazel is ever
+reintroduced; nothing uses it now and Bazel is not being added.  The
+evaluation that preceded the decision follows unchanged.
 
 Measured 2026-10-11 on this tree (15 binding trees: runtime fixtures,
 BSDTime, six providers, six evolution schemas, Network in progress).

@@ -30,7 +30,7 @@ for name in ('types.fidl','shared.fidl','app.fidl','consumer.c'):
     shutil.copyfile(source/'libraries'/name,work/name)
 shutil.copyfile(source/'zx.fidl',work/'zx.fidl')
 compiler=a.sdk/'usr/bin/fidlc' if a.sdk else a.tools/'fidlc'
-adapter=[str(a.sdk/'usr/bin/fidlgen-bsd')] if a.sdk else [sys.executable,str(a.src/'tools/build/fuchsia/generate-bsd.py'),'--fidlgen-cpp',str(a.tools/'fidlgen_cpp')]
+adapter=[str(a.sdk/'usr/bin/fidlgen-bsd')] if a.sdk else [sys.executable,str(a.src/'tools/build/fuchsia/generate-bsd.py')]
 files=['--files',str(work/'zx.fidl')]
 for name in ('types','shared','app'):
     files+=['--files',str(work/(name+'.fidl'))]

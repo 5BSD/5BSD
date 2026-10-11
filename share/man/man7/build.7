@@ -25,7 +25,7 @@
 .\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
 .\" SUCH DAMAGE.
 .\"
-.Dd June 18, 2026
+.Dd October 11, 2026
 .Dt BUILD 7
 .Os
 .Sh NAME
@@ -514,6 +514,38 @@ and
 should be set as with
 .Dq Li "make installworld" .
 .El
+.Ss Build-only prerequisites
+.Cm buildworld
+generates the FIDL bindings of the capability providers and their
+libraries
+.Pq Pa lib/libfidl/fidl-bindings.mk
+with
+.Cm fidlc ,
+which it builds from
+.Pa contrib/fuchsia
+in its bootstrap-tools stage, and with Python.
+Python is a build-only tool: it is never installed into the target and
+nothing in the installed system depends on it.
+The build host needs Python 3.12 or newer; on
+.Fx
+install the
+.Pa python312
+package, built from the
+.Pa lang/python312
+port of the 5BSD ports tree
+.Po
+.Va PORTSDIR ,
+currently
+.Pa /usr/obj/5BSD-ports
+.Pc .
+.Cm buildworld
+checks for it before building anything and stops with a message naming
+the package when it is missing or too old;
+.Va PYTHON
+selects another interpreter.
+Cross-building from Linux or macOS needs the same Python version and a
+C++20 host compiler for
+.Cm fidlc .
 .Sh ENVIRONMENT
 Variables that influence all builds include:
 .Bl -tag -width ".Va MAKEOBJDIRPREFIX"
@@ -744,6 +776,19 @@ Specify a file to override the default
 The src.conf file controls the components to build.
 See
 .Xr src.conf 5
+.It Va PYTHON
+The Python interpreter that
+.Cm buildworld
+uses to generate the system's FIDL bindings into the object tree
+(see
+.Sx Build-only prerequisites ) .
+The default is
+.Pa python3.12
+found in the caller's
+.Ev PATH ,
+or else in
+.Pa ${LOCALBASE}/bin
+.Pq Pa /usr/local/bin .
 .It Va REPODIR
 The root directory used to create the package repository for building
 .Xr packages 7 .

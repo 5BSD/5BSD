@@ -11,7 +11,7 @@ LIBADD.config_test+=	ucl
 # Drive the real C provider and C client with simulated gate writes on the host.
 # The separate gate_test requires an explicitly selected disposable VM.
 ATF_TESTS_C+= provider_test gate_test
-CFLAGS+= -I${SRCTOP}/lib/libtimecmp -I${SRCTOP}/lib/libtimecmp/generated
+CFLAGS+= -I${SRCTOP}/lib/libtimecmp -I${FIDLGEN.timecmp}
 CFLAGS+= -I${SRCTOP}/lib/libfidl/include -I${SRCTOP}/lib/libchannel
 CFLAGS+= -I${SRCTOP}/lib/libservice -I${SRCTOP}/sys
 # Explicit-duration auxiliary program; ordinary Kyua runs remain bounded.
@@ -38,9 +38,10 @@ UCL_NOTICE= ${SRCTOP}/contrib/libucl/COPYING
 UCL_NOTICEDIR= /usr/share/licenses/bsdtime-tests/libucl
 
 .PATH: ${SRCTOP}/usr.sbin/BSDTime
-# Checked-in bindings must match their schemas (fidl-bindings.mk).
-FIDL_BINDINGS+= \
-    lib/libtimecmp/generated/fidl/bsd.time.v1
+# Bindings generated at build time (fidl-bindings.mk).
+FIDL_BINDINGS+=	timecmp
+FIDL_SCHEMAS.timecmp=	lib/libtimecmp/timecmp.fidl
+FIDL_LIBRARY.timecmp=	bsd.time.v1
 .include "${SRCTOP}/lib/libfidl/fidl-bindings.mk"
 
 .include <bsd.test.mk>

@@ -7,8 +7,8 @@
 #include <zircon/assert.h>
 
 #include <algorithm>
+#include <regex>
 
-#include "re2/re2.h"
 #include "src/lib/fxl/strings/split_string.h"
 #include "tools/fidl/fidlc/src/reporter.h"
 
@@ -20,25 +20,26 @@ const std::string kLibraryPattern =
     kLibraryComponentPattern + "(\\." + kLibraryComponentPattern + ")*";
 
 bool IsValidLibraryComponent(std::string_view component) {
-  static const re2::RE2 kPattern("^" + kLibraryComponentPattern + "$");
-  return re2::RE2::FullMatch(component, kPattern);
+  static const std::regex kPattern("^" + kLibraryComponentPattern + "$");
+  return std::regex_match(component.begin(), component.end(), kPattern);
 }
 
 bool IsValidIdentifierComponent(std::string_view component) {
-  static const re2::RE2 kPattern("^" + kIdentifierComponentPattern + "$");
-  return re2::RE2::FullMatch(component, kPattern);
+  static const std::regex kPattern("^" + kIdentifierComponentPattern + "$");
+  return std::regex_match(component.begin(), component.end(), kPattern);
 }
 
 bool IsValidFullyQualifiedMethodIdentifier(std::string_view fq_identifier) {
-  static const re2::RE2 kPattern("^" + kLibraryPattern + "/" +
-                                 /* protocol */ kIdentifierComponentPattern + "\\." +
-                                 /* method */ kIdentifierComponentPattern + "$");
-  return re2::RE2::FullMatch(fq_identifier, kPattern);
+  static const std::regex kPattern("^" + kLibraryPattern + "/" +
+                                   /* protocol */ kIdentifierComponentPattern + "\\." +
+                                   /* method */ kIdentifierComponentPattern + "$");
+  return std::regex_match(fq_identifier.begin(), fq_identifier.end(), kPattern);
 }
 
 bool IsValidDiscoverableName(std::string_view discoverable_name) {
-  static const re2::RE2 kPattern("^" + kLibraryPattern + "\\." + kIdentifierComponentPattern + "$");
-  return re2::RE2::FullMatch(discoverable_name, kPattern);
+  static const std::regex kPattern("^" + kLibraryPattern + "\\." + kIdentifierComponentPattern +
+                                   "$");
+  return std::regex_match(discoverable_name.begin(), discoverable_name.end(), kPattern);
 }
 
 bool IsValidImplementationLocation(std::string_view location) {
@@ -66,7 +67,8 @@ std::string StripStringLiteralQuotes(std::string_view str) {
 
 std::string StripDocCommentSlashes(std::string_view str) {
   std::string no_slashes(str);
-  re2::RE2::GlobalReplace(&no_slashes, "([\\t ]*\\/\\/\\/)(.*)", "\\2");
+  static const std::regex kSlashes("([\\t ]*///)(.*)");
+  no_slashes = std::regex_replace(no_slashes, kSlashes, "$2");
   if (no_slashes[no_slashes.size() - 1] != '\n') {
     return no_slashes + '\n';
   }
@@ -82,27 +84,27 @@ static std::string StripConstantK(std::string_view str) {
 }
 
 bool IsLowerSnakeCase(std::string_view str) {
-  static re2::RE2 re{"^[a-z][a-z0-9_]*$"};
-  return !str.empty() && re2::RE2::FullMatch(str, re);
+  static const std::regex re{"^[a-z][a-z0-9_]*$"};
+  return !str.empty() && std::regex_match(str.begin(), str.end(), re);
 }
 
 bool IsUpperSnakeCase(std::string_view str) {
-  static re2::RE2 re{"^[A-Z][A-Z0-9_]*$"};
-  return !str.empty() && re2::RE2::FullMatch(str, re);
+  static const std::regex re{"^[A-Z][A-Z0-9_]*$"};
+  return !str.empty() && std::regex_match(str.begin(), str.end(), re);
 }
 
 bool IsLowerCamelCase(std::string_view str) {
   if (HasConstantK(str)) {
     return false;
   }
-  static re2::RE2 re{"^[a-z][a-z0-9]*(([A-Z]{1,2}[a-z0-9]+)|(_[0-9]+))*([A-Z][a-z0-9]*)?$"};
-  return !str.empty() && re2::RE2::FullMatch(str, re);
+  static const std::regex re{"^[a-z][a-z0-9]*(([A-Z]{1,2}[a-z0-9]+)|(_[0-9]+))*([A-Z][a-z0-9]*)?$"};
+  return !str.empty() && std::regex_match(str.begin(), str.end(), re);
 }
 
 bool IsUpperCamelCase(std::string_view str) {
-  static re2::RE2 re{
+  static const std::regex re{
       "^(([A-Z]{1,2}[a-z0-9]+)(([A-Z]{1,2}[a-z0-9]+)|(_[0-9]+))*)?([A-Z][a-z0-9]*)?$"};
-  return !str.empty() && re2::RE2::FullMatch(str, re);
+  return !str.empty() && std::regex_match(str.begin(), str.end(), re);
 }
 
 std::vector<std::string> SplitIdentifierWords(std::string_view astr) {

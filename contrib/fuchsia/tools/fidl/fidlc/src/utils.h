@@ -15,7 +15,6 @@
 #include <string>
 #include <string_view>
 
-#include "re2/re2.h"
 #include "tools/fidl/fidlc/src/findings.h"
 
 namespace fidlc {

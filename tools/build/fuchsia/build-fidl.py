@@ -12,6 +12,7 @@ parser.add_argument('--src', type=Path, default=Path('/usr/src'))
 parser.add_argument('--obj', type=Path, default=Path('/usr/obj/5bsd-fidl'))
 parser.add_argument('--test', action='store_true')
 parser.add_argument('--test-only', action='store_true', help='run already built compiler tests')
+parser.add_argument('--jobs', type=int, default=os.cpu_count(), help='parallel compiles')
 args = parser.parse_args()
 root = args.src / 'contrib/fuchsia'
 obj = args.obj.resolve()
@@ -58,11 +59,11 @@ def compile_one(source):
         raise RuntimeError(str(source) + '\n' + log.read_text())
 
 if not args.test_only:
-    with concurrent.futures.ThreadPoolExecutor(max_workers=os.cpu_count()) as pool:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=args.jobs) as pool:
         list(pool.map(compile_one, sources))
     for name, extra in programs.items():
         subprocess.run([cxx, '-pthread', *map(str, map(object_path, core + extra)),
-                        '-L/usr/local/lib', '-Wl,-rpath,/usr/local/lib', '-lre2', '-lcrypto',
+                        '-L/usr/local/lib', '-Wl,-rpath,/usr/local/lib', '-lre2', '-lmd', '-lcrypto',
                         '-o', str(obj / name)], check=True)
         print('Built ' + str(obj / name), flush=True)
 if args.test or args.test_only:

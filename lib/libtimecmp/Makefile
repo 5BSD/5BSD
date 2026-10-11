@@ -10,11 +10,11 @@ MLINKS+=	libtimecmp.3 timecmp_client_open.3 \
 		libtimecmp.3 timecmp_get.3 \
 		libtimecmp.3 timecmp_set.3 \
 		libtimecmp.3 timecmp_adjust.3
-SRCS=	timecmp.c timecmp_legacy.c natural_types.cc common_types.cc bsd.cc
+SRCS=	timecmp.c timecmp_legacy.c \
+	${FIDLGEN_SRCS.timecmp}
 CXXSTD= c++20
 WARNS?= 0
-.PATH: ${.CURDIR}/generated/fidl/bsd.time.v1/cpp ${.CURDIR}/generated/fidl/bsd.time.v1/c
-CFLAGS+= -I${.CURDIR}/generated
+CFLAGS+= -I${FIDLGEN.timecmp}
 .include "../libfidl/runtime-includes.mk"
 FILESGROUPS+= TIMECMP_SCHEMA
 TIMECMP_SCHEMA= timecmp.fidl
@@ -31,9 +31,10 @@ STATIC_CFLAGS+=	${PICFLAG}
 HAS_TESTS=
 SUBDIR.${MK_TESTS}+=	tests
 
-# Checked-in bindings must match their schemas (fidl-bindings.mk).
-FIDL_BINDINGS+= \
-    lib/libtimecmp/generated/fidl/bsd.time.v1
+# Bindings generated at build time (fidl-bindings.mk).
+FIDL_BINDINGS+=	timecmp
+FIDL_SCHEMAS.timecmp=	lib/libtimecmp/timecmp.fidl
+FIDL_LIBRARY.timecmp=	bsd.time.v1
 .include "${SRCTOP}/lib/libfidl/fidl-bindings.mk"
 
 .include <bsd.lib.mk>

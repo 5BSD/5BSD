@@ -64,8 +64,7 @@ host = out / 'conformance-host.json'
 host.write_text(json.dumps(ir))
 
 subprocess.run([sys.executable, str(a.src / 'tools/build/fuchsia/generate-bsd.py'),
-                '--json', str(host), '--root', str(out / 'gen'),
-                '--fidlgen-cpp', str(a.tools / 'fidlgen_cpp')], check=True)
+                '--json', str(host), '--root', str(out / 'gen')], check=True)
 subprocess.run([str(a.tools / 'gidl'), '-json', str(full), '-language', 'cpp',
                 '-type', 'conformance', '-out', str(out / 'conformance_test.cc')]
                + [str(g) for g in gidl], check=True)

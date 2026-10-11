@@ -53,7 +53,7 @@ for version in (1, 2):
                     '--files', str(source / 'evolution.fidl')], check=True)
     generated = work / ('gen%d' % version)
     subprocess.run([sys.executable, str(a.src / 'tools/build/fuchsia/generate-bsd.py'),
-                    '--fidlgen-cpp', str(a.tools / 'fidlgen_cpp'), '--json', str(ir),
+                    '--json', str(ir),
                     '--root', str(generated), '--c'], check=True)
     base = generated / 'fidl/bsd.evolution'
     inputs = [source / 'peer.c', base / 'cpp/natural_types.cc', base / 'cpp/common_types.cc', base / 'c/bsd.cc']
