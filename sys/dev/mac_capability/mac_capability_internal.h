@@ -138,6 +138,7 @@ struct mac_capability_instance {
 
 	struct mac_capability_msgq ci_rxq;	/* (M) inbound queue */
 	int		ci_rxqlen;		/* (M) inbound count */
+	int		ci_rxheld;		/* (M) RX head held by a handler */
 	int		ci_rxqlimit;		/* (I) max RX depth */
 	struct knlist	ci_wknotes;		/* (M) EVFILT_WRITE knotes */
 

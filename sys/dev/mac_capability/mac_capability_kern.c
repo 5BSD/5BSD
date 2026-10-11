@@ -396,6 +396,13 @@ mac_capability_dispatch_task(void *context, int pending __unused)
 
 		STAILQ_REMOVE_HEAD(&s->ci_rxq, cm_link);
 		s->ci_rxqlen--;
+		/*
+		 * The message keeps its RX slot while the handler runs: a
+		 * RETRY puts it back at the head, and a sender must not have
+		 * taken the slot meanwhile or the queue ends up over its limit
+		 * and a later drain of one peer message frees no room here.
+		 */
+		s->ci_rxheld++;
 		s->ci_inflight++;
 
 		s->ci_handler_td = curthread;
@@ -427,6 +434,7 @@ mac_capability_dispatch_task(void *context, int pending __unused)
 
 		mtx_lock(&s->ci_mtx);
 		s->ci_handler_td = NULL;
+		s->ci_rxheld--;
 		s->ci_inflight--;
 		if (retry && !(s->ci_flags & MAC_CAPABILITY_SF_DEAD)) {
 			STAILQ_INSERT_HEAD(&s->ci_rxq, msg, cm_link);

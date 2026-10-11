@@ -174,7 +174,7 @@ mac_capability_instance_rx_ready(struct mac_capability_instance *s)
 	if (s->ci_flags & MAC_CAPABILITY_SF_DEAD) {
 		return (ECONNRESET);
 	}
-	if (s->ci_rxqlen >= s->ci_rxqlimit) {
+	if (s->ci_rxqlen + s->ci_rxheld >= s->ci_rxqlimit) {
 		svc = s->ci_service;
 		if (svc != NULL) {
 			SDT_PROBE5(mac_capability, , , queue__pressure,
@@ -1597,7 +1597,7 @@ mac_capability_wkqops_event(struct knote *kn, long hint __unused)
 		kn->kn_flags |= EV_EOF;
 		return (1);
 	}
-	kn->kn_data = s->ci_rxqlimit - s->ci_rxqlen;
+	kn->kn_data = s->ci_rxqlimit - s->ci_rxqlen - s->ci_rxheld;
 	return (kn->kn_data > 0);
 }
 
