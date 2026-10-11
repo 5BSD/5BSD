@@ -51,11 +51,12 @@ set -eu
 usage() { sed -n '2,/^set -eu/p' "$0" | sed -e '/^set -eu/d' -e 's/^# \{0,1\}//' >&2; exit 64; }
 [ $# -ge 3 ] && [ $# -le 4 ] || usage
 stage=$1 work=$2 suites=$3 timeout=${4:-10800}
-# First runnable emulator: $QEMU, the installed port, then the unpatched local
-# rebuild (the installed package can lag a base library major, e.g. libusb).
+# First runnable emulator: $QEMU, the local build carrying the X86Access
+# page-straddle fix (emulators/qemu patch-target_i386_tcg_access.c; unpatched
+# TCG QEMU 11.1.2 corrupts guest memory), then the installed port.
 qemu=
-for q in ${QEMU:-} /usr/local/bin/qemu-system-x86_64 \
-    /usr/obj/5bsd-qemu-xhci-diagnostic-20261006/qemu-system-x86_64-original; do
+for q in ${QEMU:-} /usr/obj/5bsd-qemu-fstt/qemu-system-x86_64-fstt-fixed \
+    /usr/local/bin/qemu-system-x86_64; do
 	if "$q" --version >/dev/null 2>&1; then qemu=$q; break; fi
 done
 qemu_data=${QEMU_DATA:-/usr/local/share/qemu}
