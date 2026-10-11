@@ -826,7 +826,7 @@ mac_capability_reply(struct mac_capability_instance *s, uint64_t reply_token,
     struct file **out_fds, struct filecaps *out_fcaps, int out_nfds)
 {
 	struct mac_capability_msg *msg;
-	sbintime_t start __diagused;
+	sbintime_t start __sdt_used;
 	int error;
 
 	start = getsbinuptime();
@@ -869,7 +869,7 @@ mac_capability_notify(struct mac_capability_instance *s, const void *data, size_
     struct file **fds, struct filecaps *fcaps, int nfds)
 {
 	struct mac_capability_msg *msg;
-	sbintime_t start __diagused;
+	sbintime_t start __sdt_used;
 	int error;
 
 	start = getsbinuptime();

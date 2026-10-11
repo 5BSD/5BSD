@@ -144,7 +144,7 @@ mac_capability_execve_relabel(struct ucred *old, struct ucred *new,
     struct label *execlabel)
 {
 	struct mac_capability_label *cl;
-	uint64_t old_nonce __diagused, new_nonce __diagused;
+	uint64_t old_nonce __sdt_used, new_nonce __sdt_used;
 
 	old_nonce = mac_capability_proc_nonce(old);
 	cl = SLOT(new->cr_label);

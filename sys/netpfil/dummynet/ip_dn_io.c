@@ -470,7 +470,7 @@ dn_enqueue(struct dn_queue *q, struct mbuf* m, int drop)
 	struct dn_fs *f;
 	struct dn_flow *ni;	/* stats for scheduler instance */
 	uint64_t len;
-	const char *drop_reason = "loss model";
+	const char *drop_reason __sdt_used = "loss model";
 
 	if (q->fs == NULL || q->_si == NULL) {
 		printf("%s fs %p si %p, dropping\n",
@@ -912,7 +912,7 @@ dummynet_io(struct mbuf **m0, struct ip_fw_args *fwa)
 	struct dn_sch_inst *si;
 	struct dn_queue *q = NULL;	/* default */
 	int fs_id, dir, enqueue_error;
-	const char *drop_reason = "tag allocation";
+	const char *drop_reason __sdt_used = "tag allocation";
 
 	fs_id = (fwa->rule.info & IPFW_INFO_MASK) +
 		((fwa->rule.info & IPFW_IS_PIPE) ? 2*DN_MAX_ID : 0);

@@ -267,7 +267,7 @@ jaildesc_close(struct file *fp, struct thread *td)
 {
 	struct jaildesc *jd;
 	struct prison *pr;
-	int jid, owning;
+	int jid __sdt_used, owning __sdt_used;
 
 	jid = 0;
 	owning = 0;

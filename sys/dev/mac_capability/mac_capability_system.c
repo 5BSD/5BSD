@@ -677,7 +677,7 @@ sys_jail_uio_call(const void *req, size_t reqlen, void *reply,
 	struct sys_jail_reply jrep;
 	struct ucred *saved;
 	const uint8_t *p, *pend;
-	uint64_t caller_nonce;
+	uint64_t caller_nonce __sdt_used;
 	uint32_t i, nparams, buflen, jail_flags;
 	size_t resid;
 	int desc_iov, error;

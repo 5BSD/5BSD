@@ -2079,7 +2079,7 @@ soclose(struct socket *so)
 {
 	struct accept_queue lqueue;
 	int error = 0;
-	int sotype = so->so_type;
+	int sotype __sdt_used = so->so_type;
 	bool listening, last __diagused;
 
 	CURVNET_SET(so->so_vnet);

@@ -140,7 +140,7 @@ mac_capability_probe_error(struct mac_capability_instance *s, u_long op, int err
     struct thread *td)
 {
 	struct mac_capability_service *svc;
-	const char *svc_name __diagused;
+	const char *svc_name __sdt_used;
 
 	if (error == 0)
 		return;
@@ -155,7 +155,7 @@ mac_capability_probe_rights_change(struct mac_capability_instance *s, u_long cmd
     struct thread *td)
 {
 	struct mac_capability_service *svc;
-	int flags __diagused, restricted __diagused;
+	int flags __sdt_used, restricted __sdt_used;
 
 	svc = s->ci_service;
 	if (svc == NULL)

@@ -349,7 +349,7 @@ envfd_read(struct file *fp, struct uio *uio, struct ucred *active_cred,
 {
 	struct envfd *ef;
 	struct envfd_blob *blob;
-	uint64_t generation, size;
+	uint64_t generation __sdt_used, size;
 	int error;
 
 	ef = fp->f_data;
@@ -393,7 +393,7 @@ envfd_write(struct file *fp, struct uio *uio, struct ucred *active_cred,
 	struct envfd_blob *blob, *old_blob;
 	size_t original_resid;
 	uint32_t notes;
-	uint64_t generation;
+	uint64_t generation __sdt_used;
 	int error;
 
 	ef = fp->f_data;
@@ -622,12 +622,12 @@ envfd_close(struct file *fp, struct thread *td)
 {
 	struct envfd *ef;
 	struct envfd_blob *blob;
-	struct ucred *cred;
+	struct ucred *cred __sdt_used;
 	struct uidinfo *uip;
 	size_t object_size;
-	uint64_t generation, size;
-	uint32_t state;
-	pid_t pid;
+	uint64_t generation __sdt_used, size __sdt_used;
+	uint32_t state __sdt_used;
+	pid_t pid __sdt_used;
 
 	ef = fp->f_data;
 	object_size = sizeof(*ef);

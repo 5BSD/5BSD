@@ -2118,7 +2118,7 @@ fi_do_claim(struct mac_capability_instance *s, struct fi_priv *priv,
 	struct vnode *vp;
 	struct fi_claim *c, *existing;
 	vm_object_t object;
-	uint64_t owner_nonce, claim_id;
+	uint64_t owner_nonce __sdt_used, claim_id __sdt_used;
 	bool mapped;
 	int error;
 

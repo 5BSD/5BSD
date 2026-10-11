@@ -367,7 +367,7 @@ cp_call(struct mac_capability_instance *s,
 		struct procdesc *pd;
 		struct proc *p;
 		uint32_t flags;
-		pid_t target;
+		pid_t target __sdt_used;
 		int error;
 
 		flags = cr->flags == 0 ? CP_SF_ALL : cr->flags;
