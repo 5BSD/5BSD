@@ -3384,9 +3384,11 @@ _startup_libs+=	lib/libsys
 # Userspace SDT provider objects are linked with drti.o by dtrace -G.  Stage
 # the target-ABI copy before the parallel prebuild-library pass so a clean
 # cross build never falls back to the host object (or finds no object at all).
+# drti.o is only compiled (against the installed headers), never linked, and
+# libc itself carries a provider (nameres), so libc must wait for drti.
 .if ${MK_DTRACE} != "no"
 _startup_libs+=	cddl/lib/drti
-cddl/lib/drti__L: lib/libc__L
+lib/libc__L: cddl/lib/drti__L
 .endif
 
 _prereq_libs+=	lib/libgcc_eh lib/libgcc_s lib/libgcc_s_asneeded
