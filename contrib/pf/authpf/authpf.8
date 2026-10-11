@@ -142,15 +142,22 @@ is assigned the user name.
 Filter and translation rules are stored in a file called
 .Pa authpf.rules .
 This file will first be searched for in
-.Pa /etc/authpf/users/$USER/
-and then in
+.Pa /etc/authpf/users/$USER/ ,
+then in
+.Pa /etc/authpf/groups/$GROUP/
+and finally in
 .Pa /etc/authpf/ .
-Only one of these files will be used if both are present.
+Only the first found file will be used.
+The group is the authenticating user's primary group.
 .Pp
 Per-user rules from the
 .Pa /etc/authpf/users/$USER/
 directory are intended to be used when non-default rules
 are needed on an individual user basis.
+Per-group rules from the
+.Pa /etc/authpf/groups/$GROUP/
+directory are intended to be used when non-default rules
+are needed on a group basis.
 It is important to ensure that a user can not write or change
 these configuration files.
 .Pp
@@ -557,6 +564,8 @@ pass out on $internal_if from (self) to $workstation_ip port 3389 \e
 .It Pa /etc/authpf/authpf.conf
 .It Pa /etc/authpf/authpf.allow
 .It Pa /etc/authpf/authpf.rules
+.It Pa /etc/authpf/users/$USER/authpf.rules
+.It Pa /etc/authpf/groups/$GROUP/authpf.rules
 .It Pa /etc/authpf/authpf.message
 .It Pa /etc/authpf/authpf.problem
 .El

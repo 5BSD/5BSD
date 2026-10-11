@@ -31,6 +31,7 @@
 #define PATH_PROBLEM		"/etc/authpf/authpf.problem"
 #define PATH_MESSAGE		"/etc/authpf/authpf.message"
 #define PATH_USER_DIR		"/etc/authpf/users"
+#define PATH_GROUP_DIR		"/etc/authpf/groups"
 #define PATH_BAN_DIR		"/etc/authpf/banned"
 #define PATH_DEVFILE		"/dev/pf"
 #define PATH_PIDFILE		"/var/authpf"

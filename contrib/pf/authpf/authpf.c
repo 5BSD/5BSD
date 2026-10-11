@@ -755,6 +755,7 @@ change_filter(int add, const char *l_user, const char *ip_src)
 
 	if (add) {
 		struct stat sb;
+		struct group *grent;
 		char *pargv[13] = {
 			"pfctl", "-p", "/dev/pf", "-q", "-a", "anchor/ruleset",
 			"-D", "user_id=X", "-D", "user_ip=X", "-f", "file", NULL
@@ -762,6 +763,13 @@ change_filter(int add, const char *l_user, const char *ip_src)
 
 		if (l_user == NULL || !l_user[0] || ip_src == NULL || !ip_src[0]) {
 			syslog(LOG_ERR, "invalid luser/ipsrc");
+			goto error;
+		}
+
+		/* OpenBSD selects group rules using the login's real primary GID. */
+		if ((grent = getgrgid(getgid())) == NULL) {
+			syslog(LOG_ERR, "Group not found user %s, gid %u",
+			    l_user, (unsigned int)getgid());
 			goto error;
 		}
 
@@ -778,8 +786,14 @@ change_filter(int add, const char *l_user, const char *ip_src)
 			goto no_mem;
 		if (stat(fn, &sb) == -1) {
 			free(fn);
-			if ((fn = strdup(PATH_PFRULES)) == NULL)
+			if (asprintf(&fn, "%s/%s/authpf.rules", PATH_GROUP_DIR,
+			    grent->gr_name) == -1)
 				goto no_mem;
+			if (stat(fn, &sb) == -1) {
+				free(fn);
+				if ((fn = strdup(PATH_PFRULES)) == NULL)
+					goto no_mem;
+			}
 		}
 		pargv[2] = fdpath;
 		pargv[5] = rsn;
