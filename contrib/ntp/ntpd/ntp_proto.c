@@ -7,6 +7,7 @@
  */
 #ifdef HAVE_CONFIG_H
 #include <config.h>
+#include "timediscipline_trace.h"
 #endif
 
 #include "ntpd.h"
@@ -3555,6 +3556,7 @@ clock_select(void)
 	 * Initialize and create endpoint, index and peer lists big
 	 * enough to handle all associations.
 	 */
+	TRACE_TIMEDISCIPLINE_SELECT__START(sys_peer);
 	osys_peer = sys_peer;
 	sys_survivors = 0;
 #ifdef LOCKCLOCK
@@ -4051,7 +4053,10 @@ clock_select(void)
 		sys_peer = NULL;
 		for (peer = peer_list; peer != NULL; peer = peer->p_link)
 			peer->status = peer->new_status;
-		return;
+		{
+			TRACE_TIMEDISCIPLINE_SELECT__DONE(sys_peer, sys_survivors);
+			return;
+		}
 	}
 
 	/*
@@ -4059,7 +4064,10 @@ clock_select(void)
 	 * stability.
 	 */
 	if (typesystem->epoch <= sys_epoch)
-		return;
+		{
+			TRACE_TIMEDISCIPLINE_SELECT__DONE(sys_peer, sys_survivors);
+			return;
+		}
 
 	/*
 	 * We have found the alpha male. Wind the clock.
@@ -4069,6 +4077,7 @@ clock_select(void)
 	for (peer = peer_list; peer != NULL; peer = peer->p_link)
 		peer->status = peer->new_status;
 	clock_update(typesystem);
+	TRACE_TIMEDISCIPLINE_SELECT__DONE(sys_peer, sys_survivors);
 }
 
 

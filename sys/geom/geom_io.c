@@ -93,6 +93,12 @@ static uma_zone_t __read_mostly biozone;
 
 #include <machine/atomic.h>
 
+#include <sys/sdt.h>
+
+SDT_PROVIDER_DECLARE(geom);
+SDT_PROBE_DEFINE4(geom, , , io__retry, "void *", "void *", "int", "int");
+SDT_PROBE_DEFINE4(geom, , , io__complete, "void *", "void *", "int", "int");
+
 static void
 g_bioq_lock(struct g_bioq *bq)
 {
@@ -686,6 +692,7 @@ g_io_deliver(struct bio *bp, int error)
 	mtx_unlock(mtxp);
 
 	if (error != ENOMEM) {
+		SDT_PROBE4(geom, , , io__complete, bp, pp, error, direct);
 		bp->bio_error = error;
 		if (direct) {
 			biodone(bp);
@@ -704,6 +711,7 @@ g_io_deliver(struct bio *bp, int error)
 
 	if (bootverbose)
 		printf("ENOMEM %p on %p(%s)\n", bp, pp, pp->name);
+	SDT_PROBE4(geom, , , io__retry, bp, pp, bp->bio_cmd, error);
 	atomic_add_long(&nomem_count, 1);	/* Rare event, but no locks held */
 	bp->bio_children = 0;
 	bp->bio_inbed = 0;

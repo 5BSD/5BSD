@@ -24,6 +24,7 @@
  */
 
 #include "includes.h"
+#include "sshkeys_trace.h"
 
 #include <sys/types.h>
 #include <errno.h>
@@ -531,19 +532,32 @@ kex_input_newkeys(int type, uint32_t seq, struct ssh *ssh)
 	int r, initial = (kex->flags & KEX_INITIAL) != 0;
 	char *cp, **prop;
 
+	TRACE_SSHKEYS_NEWKEYS__START(ssh, initial);
 	debug("SSH2_MSG_NEWKEYS received");
 	if (kex->ext_info_c && initial)
 		ssh_dispatch_set(ssh, SSH2_MSG_EXT_INFO, &kex_input_ext_info);
 	ssh_dispatch_set(ssh, SSH2_MSG_NEWKEYS, &kex_protocol_error);
 	ssh_dispatch_set(ssh, SSH2_MSG_KEXINIT, &kex_input_kexinit);
 	if ((r = sshpkt_get_end(ssh)) != 0)
-		return r;
+		{
+			int trace_result = r;
+			TRACE_SSHKEYS_NEWKEYS__DONE(ssh, trace_result);
+			return (trace_result);
+		}
 	if ((r = ssh_set_newkeys(ssh, MODE_IN)) != 0)
-		return r;
+		{
+			int trace_result = r;
+			TRACE_SSHKEYS_NEWKEYS__DONE(ssh, trace_result);
+			return (trace_result);
+		}
 	if (initial) {
 		/* Remove initial KEX signalling from proposal for rekeying */
 		if ((r = kex_buf2prop(kex->my, NULL, &prop)) != 0)
-			return r;
+			{
+				int trace_result = r;
+				TRACE_SSHKEYS_NEWKEYS__DONE(ssh, trace_result);
+				return (trace_result);
+			}
 		if ((cp = match_filter_denylist(prop[PROPOSAL_KEX_ALGS],
 		    kex->server ?
 		    "ext-info-s,kex-strict-s-v00@openssh.com" :
@@ -558,7 +572,11 @@ kex_input_newkeys(int type, uint32_t seq, struct ssh *ssh)
  fail:
 			kex_proposal_free_entries(prop);
 			free(prop);
-			return SSH_ERR_INTERNAL_ERROR;
+			{
+				int trace_result = SSH_ERR_INTERNAL_ERROR;
+				TRACE_SSHKEYS_NEWKEYS__DONE(ssh, trace_result);
+				return (trace_result);
+			}
 		}
 		kex_proposal_free_entries(prop);
 		free(prop);
@@ -567,7 +585,11 @@ kex_input_newkeys(int type, uint32_t seq, struct ssh *ssh)
 	kex->flags &= ~KEX_INITIAL;
 	sshbuf_reset(kex->peer);
 	kex->flags &= ~(KEX_INIT_SENT|KEX_INIT_RECVD);
-	return 0;
+	{
+		int trace_result = 0;
+		TRACE_SSHKEYS_NEWKEYS__DONE(ssh, trace_result);
+		return (trace_result);
+	}
 }
 
 int

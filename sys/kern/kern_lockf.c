@@ -58,9 +58,9 @@
  * SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
 #include "opt_debug_lockf.h"
 
+#include <sys/cdefs.h>
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/hash.h>
@@ -81,6 +81,21 @@
 #include <sys/fcntl.h>
 #include <sys/lockf.h>
 #include <sys/taskqueue.h>
+#include <sys/queue.h>
+#include <sys/sdt.h>
+
+SDT_PROVIDER_DEFINE(lockf);
+SDT_PROBE_DEFINE2(lockf, , , wait__done, "void *", "int");
+SDT_PROBE_DEFINE4(lockf, , , wait__start, "void *", "struct vnode *", "int64_t",
+    "int64_t");
+SDT_PROBE_DEFINE3(lockf, , , cancel, "void *", "int64_t", "int64_t");
+SDT_PROBE_DEFINE4(lockf, , , conflict, "struct lockf_entry *",
+    "struct lockf_entry *", "int64_t", "int64_t");
+SDT_PROBE_DEFINE3(lockf, , , deadlock, "struct lockf_entry *",
+    "struct lockf_entry *", "int");
+SDT_PROBE_DEFINE3(lockf, , , grant, "struct lockf_entry *", "int64_t",
+    "int64_t");
+SDT_PROBE_DEFINE1(lockf, , , wake, "struct lockf_entry *");
 
 #ifdef LOCKF_DEBUG
 #include <sys/sysctl.h>
@@ -902,6 +917,8 @@ lf_add_edge(struct lockf_entry *x, struct lockf_entry *y)
 	struct lockf_edge *e;
 	int error;
 
+	SDT_PROBE4(lockf, , , conflict, x, y, x->lf_start, x->lf_end);
+
 #ifdef DIAGNOSTIC
 	LIST_FOREACH(e, &x->lf_outedges, le_outlink)
 		KASSERT(e->le_to != y, ("adding lock edge twice"));
@@ -916,8 +933,10 @@ lf_add_edge(struct lockf_entry *x, struct lockf_entry *y)
 		lf_alloc_vertex(y);
 		error = graph_add_edge(g, x->lf_owner->lo_vertex,
 		    y->lf_owner->lo_vertex);
-		if (error)
+		if (error) {
+			SDT_PROBE3(lockf, , , deadlock, x, y, error);
 			return (error);
+		}
 	}
 
 	e = lf_alloc_edge();
@@ -1117,6 +1136,7 @@ lf_insert_lock(struct lockf *state, struct lockf_entry *lock)
 static void
 lf_wakeup_lock(struct lockf *state, struct lockf_entry *wakelock)
 {
+	SDT_PROBE1(lockf, , , wake, wakelock);
 
 	/*
 	 * Remove from ls_pending list and wake up the caller
@@ -1219,6 +1239,8 @@ lf_activate_lock(struct lockf *state, struct lockf_entry *lock)
 
 	while (!LIST_EMPTY(&granted)) {
 		lock = LIST_FIRST(&granted);
+		SDT_PROBE3(lockf, , , grant, lock, lock->lf_start,
+		    lock->lf_end);
 		LIST_REMOVE(lock, lf_link);
 
 		/*
@@ -1340,6 +1362,7 @@ lf_cancel_lock(struct lockf *state, struct lockf_entry *lock)
 	 * C:		cancel [1..2]	
 	 */
 
+	SDT_PROBE3(lockf, , , cancel, lock, lock->lf_start, lock->lf_end);
 	LIST_REMOVE(lock, lf_link);
 
 	/*
@@ -1464,7 +1487,10 @@ lf_setlock(struct lockf *state, struct lockf_entry *lock, struct vnode *vp,
 
 		lock->lf_refs++;
 		stops_deferred = sigdeferstop(SIGDEFERSTOP_ERESTART);
+		SDT_PROBE4(lockf, , , wait__start, lock, vp, lock->lf_start,
+		    lock->lf_end);
 		error = sx_sleep(lock, &state->ls_lock, priority, lockstr, 0);
+		SDT_PROBE2(lockf, , , wait__done, lock, error);
 		sigallowstop(stops_deferred);
 		if (lf_free_lock(lock)) {
 			error = EDOOFUS;

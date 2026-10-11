@@ -1,0 +1,1311 @@
+{
+  "scope": "Kernel semantic probe expansion and native FIDL diagnostics; source inventory, not live qualification",
+  "probes": [
+    {
+      "provider": "nlm",
+      "module": "",
+      "function": "",
+      "name": "recovery-start",
+      "types": [
+        "struct nlm_host *",
+        "int"
+      ],
+      "source": "sys/nlm/nlm_prot_impl.c",
+      "line": 66,
+      "source_sha256": "75bfe1ab466ec99174b42082353aca5ed36653987d32f2297e941d8af0842cc3"
+    },
+    {
+      "provider": "nlm",
+      "module": "",
+      "function": "",
+      "name": "recovery-done",
+      "types": [
+        "struct nlm_host *",
+        "int"
+      ],
+      "source": "sys/nlm/nlm_prot_impl.c",
+      "line": 67,
+      "source_sha256": "75bfe1ab466ec99174b42082353aca5ed36653987d32f2297e941d8af0842cc3"
+    },
+    {
+      "provider": "nlm",
+      "module": "",
+      "function": "",
+      "name": "wait-start",
+      "types": [
+        "void *",
+        "int"
+      ],
+      "source": "sys/nlm/nlm_prot_impl.c",
+      "line": 68,
+      "source_sha256": "75bfe1ab466ec99174b42082353aca5ed36653987d32f2297e941d8af0842cc3"
+    },
+    {
+      "provider": "nlm",
+      "module": "",
+      "function": "",
+      "name": "wait-done",
+      "types": [
+        "void *",
+        "int"
+      ],
+      "source": "sys/nlm/nlm_prot_impl.c",
+      "line": 69,
+      "source_sha256": "75bfe1ab466ec99174b42082353aca5ed36653987d32f2297e941d8af0842cc3"
+    },
+    {
+      "provider": "nlm",
+      "module": "",
+      "function": "",
+      "name": "cancel",
+      "types": [
+        "struct vnode *"
+      ],
+      "source": "sys/nlm/nlm_prot_impl.c",
+      "line": 70,
+      "source_sha256": "75bfe1ab466ec99174b42082353aca5ed36653987d32f2297e941d8af0842cc3"
+    },
+    {
+      "provider": "kqueue",
+      "module": "",
+      "function": "",
+      "name": "detach-start",
+      "types": [
+        "struct knote *",
+        "uintptr_t",
+        "int",
+        "struct file *"
+      ],
+      "source": "sys/kern/kern_event.c",
+      "line": 97,
+      "source_sha256": "95b99b667fe4a10f4b076cb1b21bf55e7bfb6076dd78f8c6172a60872e6c3a3b"
+    },
+    {
+      "provider": "kqueue",
+      "module": "",
+      "function": "",
+      "name": "detach-done",
+      "types": [
+        "struct knote *"
+      ],
+      "source": "sys/kern/kern_event.c",
+      "line": 99,
+      "source_sha256": "95b99b667fe4a10f4b076cb1b21bf55e7bfb6076dd78f8c6172a60872e6c3a3b"
+    },
+    {
+      "provider": "umtx",
+      "module": "",
+      "function": "",
+      "name": "wake",
+      "types": [
+        "struct umtx_key *",
+        "int",
+        "int"
+      ],
+      "source": "sys/kern/kern_umtx.c",
+      "line": 84,
+      "source_sha256": "339306dae43b4318191669825edde03580b1064a4aa5cba82240d0ae07682148"
+    },
+    {
+      "provider": "umtx",
+      "module": "",
+      "function": "",
+      "name": "sleep-start",
+      "types": [
+        "struct umtx_q *",
+        "int"
+      ],
+      "source": "sys/kern/kern_umtx.c",
+      "line": 85,
+      "source_sha256": "339306dae43b4318191669825edde03580b1064a4aa5cba82240d0ae07682148"
+    },
+    {
+      "provider": "umtx",
+      "module": "",
+      "function": "",
+      "name": "sleep-done",
+      "types": [
+        "struct umtx_q *",
+        "int"
+      ],
+      "source": "sys/kern/kern_umtx.c",
+      "line": 86,
+      "source_sha256": "339306dae43b4318191669825edde03580b1064a4aa5cba82240d0ae07682148"
+    },
+    {
+      "provider": "umtx",
+      "module": "",
+      "function": "",
+      "name": "pi-owner",
+      "types": [
+        "struct umtx_pi *",
+        "struct thread *",
+        "int"
+      ],
+      "source": "sys/kern/kern_umtx.c",
+      "line": 87,
+      "source_sha256": "339306dae43b4318191669825edde03580b1064a4aa5cba82240d0ae07682148"
+    },
+    {
+      "provider": "lockf",
+      "module": "",
+      "function": "",
+      "name": "wait-done",
+      "types": [
+        "void *",
+        "int"
+      ],
+      "source": "sys/kern/kern_lockf.c",
+      "line": 88,
+      "source_sha256": "09a7dedd7e880dbdadfd6e57a0a7e31ac62680adce9383e575152a517535e6e2"
+    },
+    {
+      "provider": "lockf",
+      "module": "",
+      "function": "",
+      "name": "wait-start",
+      "types": [
+        "void *",
+        "struct vnode *",
+        "int64_t",
+        "int64_t"
+      ],
+      "source": "sys/kern/kern_lockf.c",
+      "line": 89,
+      "source_sha256": "09a7dedd7e880dbdadfd6e57a0a7e31ac62680adce9383e575152a517535e6e2"
+    },
+    {
+      "provider": "lockf",
+      "module": "",
+      "function": "",
+      "name": "cancel",
+      "types": [
+        "void *",
+        "int64_t",
+        "int64_t"
+      ],
+      "source": "sys/kern/kern_lockf.c",
+      "line": 91,
+      "source_sha256": "09a7dedd7e880dbdadfd6e57a0a7e31ac62680adce9383e575152a517535e6e2"
+    },
+    {
+      "provider": "lockf",
+      "module": "",
+      "function": "",
+      "name": "conflict",
+      "types": [
+        "struct lockf_entry *",
+        "struct lockf_entry *",
+        "int64_t",
+        "int64_t"
+      ],
+      "source": "sys/kern/kern_lockf.c",
+      "line": 92,
+      "source_sha256": "09a7dedd7e880dbdadfd6e57a0a7e31ac62680adce9383e575152a517535e6e2"
+    },
+    {
+      "provider": "lockf",
+      "module": "",
+      "function": "",
+      "name": "deadlock",
+      "types": [
+        "struct lockf_entry *",
+        "struct lockf_entry *",
+        "int"
+      ],
+      "source": "sys/kern/kern_lockf.c",
+      "line": 94,
+      "source_sha256": "09a7dedd7e880dbdadfd6e57a0a7e31ac62680adce9383e575152a517535e6e2"
+    },
+    {
+      "provider": "lockf",
+      "module": "",
+      "function": "",
+      "name": "grant",
+      "types": [
+        "struct lockf_entry *",
+        "int64_t",
+        "int64_t"
+      ],
+      "source": "sys/kern/kern_lockf.c",
+      "line": 96,
+      "source_sha256": "09a7dedd7e880dbdadfd6e57a0a7e31ac62680adce9383e575152a517535e6e2"
+    },
+    {
+      "provider": "lockf",
+      "module": "",
+      "function": "",
+      "name": "wake",
+      "types": [
+        "struct lockf_entry *"
+      ],
+      "source": "sys/kern/kern_lockf.c",
+      "line": 98,
+      "source_sha256": "09a7dedd7e880dbdadfd6e57a0a7e31ac62680adce9383e575152a517535e6e2"
+    },
+    {
+      "provider": "bufcache",
+      "module": "",
+      "function": "",
+      "name": "reclaim",
+      "types": [
+        "struct bufdomain *",
+        "int",
+        "int"
+      ],
+      "source": "sys/kern/vfs_bio.c",
+      "line": 99,
+      "source_sha256": "895f09b9e7e7931004749af390a92a041bef1d0d27b7bd30668900a8c95f9e5d"
+    },
+    {
+      "provider": "bufcache",
+      "module": "",
+      "function": "",
+      "name": "space-wait",
+      "types": [
+        "struct bufdomain *",
+        "struct vnode *",
+        "int"
+      ],
+      "source": "sys/kern/vfs_bio.c",
+      "line": 100,
+      "source_sha256": "895f09b9e7e7931004749af390a92a041bef1d0d27b7bd30668900a8c95f9e5d"
+    },
+    {
+      "provider": "bufcache",
+      "module": "",
+      "function": "",
+      "name": "space-resume",
+      "types": [
+        "struct bufdomain *",
+        "int"
+      ],
+      "source": "sys/kern/vfs_bio.c",
+      "line": 102,
+      "source_sha256": "895f09b9e7e7931004749af390a92a041bef1d0d27b7bd30668900a8c95f9e5d"
+    },
+    {
+      "provider": "bufcache",
+      "module": "",
+      "function": "",
+      "name": "flush-start",
+      "types": [
+        "struct vnode *",
+        "struct bufdomain *",
+        "int"
+      ],
+      "source": "sys/kern/vfs_bio.c",
+      "line": 103,
+      "source_sha256": "895f09b9e7e7931004749af390a92a041bef1d0d27b7bd30668900a8c95f9e5d"
+    },
+    {
+      "provider": "bufcache",
+      "module": "",
+      "function": "",
+      "name": "flush-done",
+      "types": [
+        "struct vnode *",
+        "struct bufdomain *",
+        "int"
+      ],
+      "source": "sys/kern/vfs_bio.c",
+      "line": 105,
+      "source_sha256": "895f09b9e7e7931004749af390a92a041bef1d0d27b7bd30668900a8c95f9e5d"
+    },
+    {
+      "provider": "bufcache",
+      "module": "",
+      "function": "",
+      "name": "io-wait",
+      "types": [
+        "struct buf *"
+      ],
+      "source": "sys/kern/vfs_bio.c",
+      "line": 107,
+      "source_sha256": "895f09b9e7e7931004749af390a92a041bef1d0d27b7bd30668900a8c95f9e5d"
+    },
+    {
+      "provider": "bufcache",
+      "module": "",
+      "function": "",
+      "name": "io-done",
+      "types": [
+        "struct buf *",
+        "int"
+      ],
+      "source": "sys/kern/vfs_bio.c",
+      "line": 108,
+      "source_sha256": "895f09b9e7e7931004749af390a92a041bef1d0d27b7bd30668900a8c95f9e5d"
+    },
+    {
+      "provider": "tty",
+      "module": "",
+      "function": "",
+      "name": "read-start",
+      "types": [
+        "struct tty *",
+        "int",
+        "int"
+      ],
+      "source": "sys/kern/tty_ttydisc.c",
+      "line": 51,
+      "source_sha256": "3fa7f56b0f748886c0f3bf7ba426c900ac1ce4746913f911d3842a2a640e05c8"
+    },
+    {
+      "provider": "tty",
+      "module": "",
+      "function": "",
+      "name": "read-done",
+      "types": [
+        "struct tty *",
+        "int"
+      ],
+      "source": "sys/kern/tty_ttydisc.c",
+      "line": 52,
+      "source_sha256": "3fa7f56b0f748886c0f3bf7ba426c900ac1ce4746913f911d3842a2a640e05c8"
+    },
+    {
+      "provider": "tty",
+      "module": "",
+      "function": "",
+      "name": "flow",
+      "types": [
+        "struct tty *",
+        "int"
+      ],
+      "source": "sys/kern/tty_ttydisc.c",
+      "line": 53,
+      "source_sha256": "3fa7f56b0f748886c0f3bf7ba426c900ac1ce4746913f911d3842a2a640e05c8"
+    },
+    {
+      "provider": "tty",
+      "module": "",
+      "function": "",
+      "name": "watermark",
+      "types": [
+        "struct tty *",
+        "int"
+      ],
+      "source": "sys/kern/tty_ttydisc.c",
+      "line": 54,
+      "source_sha256": "3fa7f56b0f748886c0f3bf7ba426c900ac1ce4746913f911d3842a2a640e05c8"
+    },
+    {
+      "provider": "tty",
+      "module": "",
+      "function": "",
+      "name": "input-drop",
+      "types": [
+        "struct tty *",
+        "int"
+      ],
+      "source": "sys/kern/tty_ttydisc.c",
+      "line": 55,
+      "source_sha256": "3fa7f56b0f748886c0f3bf7ba426c900ac1ce4746913f911d3842a2a640e05c8"
+    },
+    {
+      "provider": "tty",
+      "module": "",
+      "function": "",
+      "name": "carrier",
+      "types": [
+        "struct tty *",
+        "int"
+      ],
+      "source": "sys/kern/tty_ttydisc.c",
+      "line": 56,
+      "source_sha256": "3fa7f56b0f748886c0f3bf7ba426c900ac1ce4746913f911d3842a2a640e05c8"
+    },
+    {
+      "provider": "taskqueue",
+      "module": "",
+      "function": "",
+      "name": "enqueue",
+      "types": [
+        "struct taskqueue *",
+        "struct task *",
+        "int"
+      ],
+      "source": "sys/kern/subr_taskqueue.c",
+      "line": 53,
+      "source_sha256": "23822a350f223021c97f28a0e0373caaef89bf461547b0fc2c3aaf595484a3f7"
+    },
+    {
+      "provider": "taskqueue",
+      "module": "",
+      "function": "",
+      "name": "coalesce",
+      "types": [
+        "struct taskqueue *",
+        "struct task *",
+        "int"
+      ],
+      "source": "sys/kern/subr_taskqueue.c",
+      "line": 55,
+      "source_sha256": "23822a350f223021c97f28a0e0373caaef89bf461547b0fc2c3aaf595484a3f7"
+    },
+    {
+      "provider": "taskqueue",
+      "module": "",
+      "function": "",
+      "name": "execute-start",
+      "types": [
+        "struct taskqueue *",
+        "struct task *",
+        "u_int",
+        "int"
+      ],
+      "source": "sys/kern/subr_taskqueue.c",
+      "line": 57,
+      "source_sha256": "23822a350f223021c97f28a0e0373caaef89bf461547b0fc2c3aaf595484a3f7"
+    },
+    {
+      "provider": "taskqueue",
+      "module": "",
+      "function": "",
+      "name": "execute-done",
+      "types": [
+        "struct taskqueue *",
+        "struct task *",
+        "u_int"
+      ],
+      "source": "sys/kern/subr_taskqueue.c",
+      "line": 59,
+      "source_sha256": "23822a350f223021c97f28a0e0373caaef89bf461547b0fc2c3aaf595484a3f7"
+    },
+    {
+      "provider": "taskqueue",
+      "module": "",
+      "function": "",
+      "name": "cancel",
+      "types": [
+        "struct taskqueue *",
+        "struct task *",
+        "int"
+      ],
+      "source": "sys/kern/subr_taskqueue.c",
+      "line": 61,
+      "source_sha256": "23822a350f223021c97f28a0e0373caaef89bf461547b0fc2c3aaf595484a3f7"
+    },
+    {
+      "provider": "taskqueue",
+      "module": "",
+      "function": "",
+      "name": "drain-start",
+      "types": [
+        "struct taskqueue *",
+        "struct task *"
+      ],
+      "source": "sys/kern/subr_taskqueue.c",
+      "line": 63,
+      "source_sha256": "23822a350f223021c97f28a0e0373caaef89bf461547b0fc2c3aaf595484a3f7"
+    },
+    {
+      "provider": "taskqueue",
+      "module": "",
+      "function": "",
+      "name": "drain-done",
+      "types": [
+        "struct taskqueue *",
+        "struct task *"
+      ],
+      "source": "sys/kern/subr_taskqueue.c",
+      "line": 65,
+      "source_sha256": "23822a350f223021c97f28a0e0373caaef89bf461547b0fc2c3aaf595484a3f7"
+    },
+    {
+      "provider": "vfs",
+      "module": "",
+      "function": "",
+      "name": "detach-start",
+      "types": [
+        "struct knote *",
+        "struct vnode *"
+      ],
+      "source": "sys/kern/vfs_subr.c",
+      "line": 49,
+      "source_sha256": "4c8e81052990cd55de747ae71844d0ad34961dc506956293fc616b692b4946dc"
+    },
+    {
+      "provider": "vfs",
+      "module": "",
+      "function": "",
+      "name": "detach-done",
+      "types": [
+        "struct knote *",
+        "struct vnode *"
+      ],
+      "source": "sys/kern/vfs_subr.c",
+      "line": 50,
+      "source_sha256": "4c8e81052990cd55de747ae71844d0ad34961dc506956293fc616b692b4946dc"
+    },
+    {
+      "provider": "vm",
+      "module": "",
+      "function": "",
+      "name": "fault-cow",
+      "types": [
+        "void *",
+        "int"
+      ],
+      "source": "sys/vm/vm_fault.c",
+      "line": 116,
+      "source_sha256": "6e323ca5111e132d5c4f1deed50635fc6128ae65a5233de0f0e81302c0b2e928"
+    },
+    {
+      "provider": "vm",
+      "module": "",
+      "function": "",
+      "name": "fault-pager-start",
+      "types": [
+        "void *",
+        "void *",
+        "uint64_t"
+      ],
+      "source": "sys/vm/vm_fault.c",
+      "line": 117,
+      "source_sha256": "6e323ca5111e132d5c4f1deed50635fc6128ae65a5233de0f0e81302c0b2e928"
+    },
+    {
+      "provider": "vm",
+      "module": "",
+      "function": "",
+      "name": "fault-pager-done",
+      "types": [
+        "void *",
+        "int"
+      ],
+      "source": "sys/vm/vm_fault.c",
+      "line": 118,
+      "source_sha256": "6e323ca5111e132d5c4f1deed50635fc6128ae65a5233de0f0e81302c0b2e928"
+    },
+    {
+      "provider": "vm",
+      "module": "",
+      "function": "",
+      "name": "fault-busy-start",
+      "types": [
+        "void *",
+        "int"
+      ],
+      "source": "sys/vm/vm_fault.c",
+      "line": 119,
+      "source_sha256": "6e323ca5111e132d5c4f1deed50635fc6128ae65a5233de0f0e81302c0b2e928"
+    },
+    {
+      "provider": "vm",
+      "module": "",
+      "function": "",
+      "name": "fault-busy-done",
+      "types": [
+        "void *"
+      ],
+      "source": "sys/vm/vm_fault.c",
+      "line": 120,
+      "source_sha256": "6e323ca5111e132d5c4f1deed50635fc6128ae65a5233de0f0e81302c0b2e928"
+    },
+    {
+      "provider": "vm",
+      "module": "",
+      "function": "",
+      "name": "fault-oom",
+      "types": [
+        "void *",
+        "int"
+      ],
+      "source": "sys/vm/vm_fault.c",
+      "line": 121,
+      "source_sha256": "6e323ca5111e132d5c4f1deed50635fc6128ae65a5233de0f0e81302c0b2e928"
+    },
+    {
+      "provider": "ffs",
+      "module": "",
+      "function": "",
+      "name": "alloc-fallback",
+      "types": [
+        "struct inode *",
+        "uint64_t",
+        "int",
+        "int"
+      ],
+      "source": "sys/ufs/ffs/ffs_alloc.c",
+      "line": 102,
+      "source_sha256": "cb804a44e547c69ae51393e7da97454c9aed667e664b249e7338cb707ca79ad9"
+    },
+    {
+      "provider": "ffs",
+      "module": "",
+      "function": "",
+      "name": "alloc-done",
+      "types": [
+        "struct inode *",
+        "int64_t",
+        "int",
+        "int64_t",
+        "int"
+      ],
+      "source": "sys/ufs/ffs/ffs_alloc.c",
+      "line": 104,
+      "source_sha256": "cb804a44e547c69ae51393e7da97454c9aed667e664b249e7338cb707ca79ad9"
+    },
+    {
+      "provider": "ffs",
+      "module": "",
+      "function": "",
+      "name": "alloc-retry",
+      "types": [
+        "struct inode *",
+        "int"
+      ],
+      "source": "sys/ufs/ffs/ffs_alloc.c",
+      "line": 106,
+      "source_sha256": "cb804a44e547c69ae51393e7da97454c9aed667e664b249e7338cb707ca79ad9"
+    },
+    {
+      "provider": "ffs",
+      "module": "",
+      "function": "",
+      "name": "worklist-start",
+      "types": [
+        "struct mount *",
+        "int",
+        "int"
+      ],
+      "source": "sys/ufs/ffs/ffs_softdep.c",
+      "line": 91,
+      "source_sha256": "2b24d0d707730a5bdde1977421c2f0865301cfc5cbb2784d119d9885d833621b"
+    },
+    {
+      "provider": "ffs",
+      "module": "",
+      "function": "",
+      "name": "worklist-done",
+      "types": [
+        "struct mount *",
+        "int",
+        "int"
+      ],
+      "source": "sys/ufs/ffs/ffs_softdep.c",
+      "line": 92,
+      "source_sha256": "2b24d0d707730a5bdde1977421c2f0865301cfc5cbb2784d119d9885d833621b"
+    },
+    {
+      "provider": "ffs",
+      "module": "",
+      "function": "",
+      "name": "journal-start",
+      "types": [
+        "struct mount *",
+        "int"
+      ],
+      "source": "sys/ufs/ffs/ffs_softdep.c",
+      "line": 93,
+      "source_sha256": "2b24d0d707730a5bdde1977421c2f0865301cfc5cbb2784d119d9885d833621b"
+    },
+    {
+      "provider": "ffs",
+      "module": "",
+      "function": "",
+      "name": "journal-done",
+      "types": [
+        "struct mount *",
+        "int"
+      ],
+      "source": "sys/ufs/ffs/ffs_softdep.c",
+      "line": 94,
+      "source_sha256": "2b24d0d707730a5bdde1977421c2f0865301cfc5cbb2784d119d9885d833621b"
+    },
+    {
+      "provider": "ffs",
+      "module": "",
+      "function": "",
+      "name": "slowdown",
+      "types": [
+        "struct mount *",
+        "int",
+        "int",
+        "int"
+      ],
+      "source": "sys/ufs/ffs/ffs_softdep.c",
+      "line": 95,
+      "source_sha256": "2b24d0d707730a5bdde1977421c2f0865301cfc5cbb2784d119d9885d833621b"
+    },
+    {
+      "provider": "linuxulator{,32}",
+      "module": "epoll",
+      "function": "",
+      "name": "deliver",
+      "types": [
+        "uintptr_t",
+        "int",
+        "uint32_t"
+      ],
+      "source": "sys/compat/linux/linux_event.c",
+      "line": 75,
+      "source_sha256": "d5a5b4d4b85499099bacb7a35b5b22f895fdd03dec5c57885af2b5d4aebf1ba4"
+    },
+    {
+      "provider": "linuxulator{,32}",
+      "module": "epoll",
+      "function": "",
+      "name": "ctl-done",
+      "types": [
+        "int",
+        "int",
+        "int",
+        "int"
+      ],
+      "source": "sys/compat/linux/linux_event.c",
+      "line": 76,
+      "source_sha256": "d5a5b4d4b85499099bacb7a35b5b22f895fdd03dec5c57885af2b5d4aebf1ba4"
+    },
+    {
+      "provider": "linuxulator{,32}",
+      "module": "epoll",
+      "function": "",
+      "name": "translate",
+      "types": [
+        "int",
+        "int",
+        "uint32_t",
+        "int"
+      ],
+      "source": "sys/compat/linux/linux_event.c",
+      "line": 77,
+      "source_sha256": "d5a5b4d4b85499099bacb7a35b5b22f895fdd03dec5c57885af2b5d4aebf1ba4"
+    },
+    {
+      "provider": "linuxulator{,32}",
+      "module": "epoll",
+      "function": "",
+      "name": "wait-start",
+      "types": [
+        "int",
+        "int"
+      ],
+      "source": "sys/compat/linux/linux_event.c",
+      "line": 78,
+      "source_sha256": "d5a5b4d4b85499099bacb7a35b5b22f895fdd03dec5c57885af2b5d4aebf1ba4"
+    },
+    {
+      "provider": "linuxulator{,32}",
+      "module": "epoll",
+      "function": "",
+      "name": "wait-done",
+      "types": [
+        "int",
+        "int",
+        "int"
+      ],
+      "source": "sys/compat/linux/linux_event.c",
+      "line": 79,
+      "source_sha256": "d5a5b4d4b85499099bacb7a35b5b22f895fdd03dec5c57885af2b5d4aebf1ba4"
+    },
+    {
+      "provider": "linuxulator{,32}",
+      "module": "futex",
+      "function": "",
+      "name": "wait-start",
+      "types": [
+        "void *",
+        "uint32_t",
+        "int"
+      ],
+      "source": "sys/compat/linux/linux_futex.c",
+      "line": 65,
+      "source_sha256": "bd11a9ef0da397e5d2db229a670d3ba6203248d7b88ef544a322ab0570a411a2"
+    },
+    {
+      "provider": "linuxulator{,32}",
+      "module": "futex",
+      "function": "",
+      "name": "wait-done",
+      "types": [
+        "void *",
+        "int"
+      ],
+      "source": "sys/compat/linux/linux_futex.c",
+      "line": 66,
+      "source_sha256": "bd11a9ef0da397e5d2db229a670d3ba6203248d7b88ef544a322ab0570a411a2"
+    },
+    {
+      "provider": "linuxulator{,32}",
+      "module": "futex",
+      "function": "",
+      "name": "wake-done",
+      "types": [
+        "void *",
+        "int",
+        "int",
+        "int"
+      ],
+      "source": "sys/compat/linux/linux_futex.c",
+      "line": 67,
+      "source_sha256": "bd11a9ef0da397e5d2db229a670d3ba6203248d7b88ef544a322ab0570a411a2"
+    },
+    {
+      "provider": "linuxulator{,32}",
+      "module": "futex",
+      "function": "",
+      "name": "requeue-done",
+      "types": [
+        "void *",
+        "void *",
+        "int",
+        "int",
+        "int"
+      ],
+      "source": "sys/compat/linux/linux_futex.c",
+      "line": 68,
+      "source_sha256": "bd11a9ef0da397e5d2db229a670d3ba6203248d7b88ef544a322ab0570a411a2"
+    },
+    {
+      "provider": "linuxulator{,32}",
+      "module": "futex",
+      "function": "",
+      "name": "pi-done",
+      "types": [
+        "void *",
+        "int",
+        "int"
+      ],
+      "source": "sys/compat/linux/linux_futex.c",
+      "line": 70,
+      "source_sha256": "bd11a9ef0da397e5d2db229a670d3ba6203248d7b88ef544a322ab0570a411a2"
+    },
+    {
+      "provider": "linuxulator{,32}",
+      "module": "futex",
+      "function": "",
+      "name": "owner-death",
+      "types": [
+        "void *",
+        "int",
+        "int"
+      ],
+      "source": "sys/compat/linux/linux_futex.c",
+      "line": 71,
+      "source_sha256": "bd11a9ef0da397e5d2db229a670d3ba6203248d7b88ef544a322ab0570a411a2"
+    },
+    {
+      "provider": "linuxulator{,32}",
+      "module": "socket",
+      "function": "",
+      "name": "cmsg-reject",
+      "types": [
+        "int",
+        "int",
+        "int"
+      ],
+      "source": "sys/compat/linux/linux_socket.c",
+      "line": 94,
+      "source_sha256": "8bee2ef358865aa2a5a019679c559b2d1bdcbcbef8f46851b15de52ec9297860"
+    },
+    {
+      "provider": "linuxulator{,32}",
+      "module": "socket",
+      "function": "",
+      "name": "cmsg-truncate",
+      "types": [
+        "int",
+        "int",
+        "int"
+      ],
+      "source": "sys/compat/linux/linux_socket.c",
+      "line": 95,
+      "source_sha256": "8bee2ef358865aa2a5a019679c559b2d1bdcbcbef8f46851b15de52ec9297860"
+    },
+    {
+      "provider": "linuxulator{,32}",
+      "module": "socket",
+      "function": "",
+      "name": "setopt-done",
+      "types": [
+        "int",
+        "int",
+        "int",
+        "int"
+      ],
+      "source": "sys/compat/linux/linux_socket.c",
+      "line": 96,
+      "source_sha256": "8bee2ef358865aa2a5a019679c559b2d1bdcbcbef8f46851b15de52ec9297860"
+    },
+    {
+      "provider": "linuxulator{,32}",
+      "module": "socket",
+      "function": "",
+      "name": "getopt-done",
+      "types": [
+        "int",
+        "int",
+        "int",
+        "int"
+      ],
+      "source": "sys/compat/linux/linux_socket.c",
+      "line": 97,
+      "source_sha256": "8bee2ef358865aa2a5a019679c559b2d1bdcbcbef8f46851b15de52ec9297860"
+    },
+    {
+      "provider": "linuxulator{,32}",
+      "module": "socket",
+      "function": "",
+      "name": "sockopt-map",
+      "types": [
+        "int",
+        "int",
+        "int"
+      ],
+      "source": "sys/compat/linux/linux_socket.c",
+      "line": 98,
+      "source_sha256": "8bee2ef358865aa2a5a019679c559b2d1bdcbcbef8f46851b15de52ec9297860"
+    },
+    {
+      "provider": "linuxulator{,32}",
+      "module": "socket",
+      "function": "",
+      "name": "cmsg-map",
+      "types": [
+        "int",
+        "int"
+      ],
+      "source": "sys/compat/linux/linux_socket.c",
+      "line": 99,
+      "source_sha256": "8bee2ef358865aa2a5a019679c559b2d1bdcbcbef8f46851b15de52ec9297860"
+    },
+    {
+      "provider": "linuxkpi_work",
+      "module": "",
+      "function": "",
+      "name": "state",
+      "types": [
+        "void *",
+        "int",
+        "int"
+      ],
+      "source": "sys/compat/linuxkpi/common/src/linux_work.c",
+      "line": 41,
+      "source_sha256": "3b6ed1fb3368745c6ec76e23603c8c3600346d709f761a31b0c57a3504a62380"
+    },
+    {
+      "provider": "linuxkpi_work",
+      "module": "",
+      "function": "",
+      "name": "execute-start",
+      "types": [
+        "void *",
+        "void *",
+        "int"
+      ],
+      "source": "sys/compat/linuxkpi/common/src/linux_work.c",
+      "line": 42,
+      "source_sha256": "3b6ed1fb3368745c6ec76e23603c8c3600346d709f761a31b0c57a3504a62380"
+    },
+    {
+      "provider": "linuxkpi_work",
+      "module": "",
+      "function": "",
+      "name": "execute-done",
+      "types": [
+        "void *",
+        "void *"
+      ],
+      "source": "sys/compat/linuxkpi/common/src/linux_work.c",
+      "line": 43,
+      "source_sha256": "3b6ed1fb3368745c6ec76e23603c8c3600346d709f761a31b0c57a3504a62380"
+    },
+    {
+      "provider": "linuxkpi_work",
+      "module": "",
+      "function": "",
+      "name": "cancel-start",
+      "types": [
+        "void *"
+      ],
+      "source": "sys/compat/linuxkpi/common/src/linux_work.c",
+      "line": 44,
+      "source_sha256": "3b6ed1fb3368745c6ec76e23603c8c3600346d709f761a31b0c57a3504a62380"
+    },
+    {
+      "provider": "linuxkpi_work",
+      "module": "",
+      "function": "",
+      "name": "cancel-done",
+      "types": [
+        "void *",
+        "int"
+      ],
+      "source": "sys/compat/linuxkpi/common/src/linux_work.c",
+      "line": 45,
+      "source_sha256": "3b6ed1fb3368745c6ec76e23603c8c3600346d709f761a31b0c57a3504a62380"
+    },
+    {
+      "provider": "linuxkpi_work",
+      "module": "",
+      "function": "",
+      "name": "flush-start",
+      "types": [
+        "void *"
+      ],
+      "source": "sys/compat/linuxkpi/common/src/linux_work.c",
+      "line": 46,
+      "source_sha256": "3b6ed1fb3368745c6ec76e23603c8c3600346d709f761a31b0c57a3504a62380"
+    },
+    {
+      "provider": "linuxkpi_work",
+      "module": "",
+      "function": "",
+      "name": "flush-done",
+      "types": [
+        "void *",
+        "int"
+      ],
+      "source": "sys/compat/linuxkpi/common/src/linux_work.c",
+      "line": 47,
+      "source_sha256": "3b6ed1fb3368745c6ec76e23603c8c3600346d709f761a31b0c57a3504a62380"
+    },
+    {
+      "provider": "iwlwifi",
+      "module": "trace",
+      "function": "dev_irq",
+      "name": "",
+      "types": [
+        "const struct device *"
+      ],
+      "source": "sys/contrib/dev/iwlwifi/iwl-devtrace.c",
+      "line": 85,
+      "source_sha256": "0021c888be5ecb8a43500a31eaea1f3a774c59e308d44693b6f2835f1f190a65"
+    },
+    {
+      "provider": "iwlwifi",
+      "module": "trace",
+      "function": "dev_irq_msix",
+      "name": "",
+      "types": [
+        "const struct device *",
+        "const void *",
+        "int",
+        "uint32_t",
+        "uint32_t"
+      ],
+      "source": "sys/contrib/dev/iwlwifi/iwl-devtrace.c",
+      "line": 86,
+      "source_sha256": "0021c888be5ecb8a43500a31eaea1f3a774c59e308d44693b6f2835f1f190a65"
+    },
+    {
+      "provider": "iwlwifi",
+      "module": "trace",
+      "function": "dev_tx",
+      "name": "",
+      "types": [
+        "const struct device *",
+        "const void *",
+        "size_t",
+        "size_t",
+        "size_t"
+      ],
+      "source": "sys/contrib/dev/iwlwifi/iwl-devtrace.c",
+      "line": 88,
+      "source_sha256": "0021c888be5ecb8a43500a31eaea1f3a774c59e308d44693b6f2835f1f190a65"
+    },
+    {
+      "provider": "bluetooth",
+      "module": "",
+      "function": "",
+      "name": "rfcomm-state",
+      "types": [
+        "void *",
+        "int",
+        "int",
+        "int"
+      ],
+      "source": "sys/netgraph/bluetooth/socket/ng_btsocket_rfcomm.c",
+      "line": 69,
+      "source_sha256": "f830be93b08ec1604e2bd4bfd19c481407e6d40acb343ecd3443e49ad68432f7"
+    },
+    {
+      "provider": "bluetooth",
+      "module": "",
+      "function": "",
+      "name": "rfcomm-close",
+      "types": [
+        "void *",
+        "int",
+        "int",
+        "int"
+      ],
+      "source": "sys/netgraph/bluetooth/socket/ng_btsocket_rfcomm.c",
+      "line": 70,
+      "source_sha256": "f830be93b08ec1604e2bd4bfd19c481407e6d40acb343ecd3443e49ad68432f7"
+    },
+    {
+      "provider": "bluetooth",
+      "module": "",
+      "function": "",
+      "name": "rfcomm-credit",
+      "types": [
+        "void *",
+        "int",
+        "int",
+        "int"
+      ],
+      "source": "sys/netgraph/bluetooth/socket/ng_btsocket_rfcomm.c",
+      "line": 71,
+      "source_sha256": "f830be93b08ec1604e2bd4bfd19c481407e6d40acb343ecd3443e49ad68432f7"
+    },
+    {
+      "provider": "bluetooth",
+      "module": "",
+      "function": "",
+      "name": "rfcomm-drop",
+      "types": [
+        "void *",
+        "int",
+        "int",
+        "int",
+        "int"
+      ],
+      "source": "sys/netgraph/bluetooth/socket/ng_btsocket_rfcomm.c",
+      "line": 72,
+      "source_sha256": "f830be93b08ec1604e2bd4bfd19c481407e6d40acb343ecd3443e49ad68432f7"
+    },
+    {
+      "provider": "bluetooth",
+      "module": "",
+      "function": "",
+      "name": "rfcomm-flow",
+      "types": [
+        "void *",
+        "int",
+        "int",
+        "int",
+        "int"
+      ],
+      "source": "sys/netgraph/bluetooth/socket/ng_btsocket_rfcomm.c",
+      "line": 74,
+      "source_sha256": "f830be93b08ec1604e2bd4bfd19c481407e6d40acb343ecd3443e49ad68432f7"
+    },
+    {
+      "provider": "bluetooth",
+      "module": "",
+      "function": "",
+      "name": "rfcomm-frame-error",
+      "types": [
+        "void *",
+        "int"
+      ],
+      "source": "sys/netgraph/bluetooth/socket/ng_btsocket_rfcomm.c",
+      "line": 76,
+      "source_sha256": "f830be93b08ec1604e2bd4bfd19c481407e6d40acb343ecd3443e49ad68432f7"
+    },
+    {
+      "provider": "mac_capability",
+      "module": "",
+      "function": "",
+      "name": "direct-accept",
+      "types": [
+        "void *",
+        "uint64_t",
+        "int",
+        "uint64_t"
+      ],
+      "source": "sys/dev/mac_capability/mac_capability_dev.c",
+      "line": 52,
+      "source_sha256": "7ac0339e62824d22d0c3e2dec4bd16daf16712633d8b072e5146c3bf212c8562"
+    },
+    {
+      "provider": "mac_capability",
+      "module": "",
+      "function": "",
+      "name": "direct-fallback",
+      "types": [
+        "void *",
+        "uint64_t",
+        "int"
+      ],
+      "source": "sys/dev/mac_capability/mac_capability_dev.c",
+      "line": 54,
+      "source_sha256": "7ac0339e62824d22d0c3e2dec4bd16daf16712633d8b072e5146c3bf212c8562"
+    },
+    {
+      "provider": "mac_capability",
+      "module": "",
+      "function": "",
+      "name": "message-receive",
+      "types": [
+        "void *",
+        "uint64_t"
+      ],
+      "source": "sys/dev/mac_capability/mac_capability_dev.c",
+      "line": 56,
+      "source_sha256": "7ac0339e62824d22d0c3e2dec4bd16daf16712633d8b072e5146c3bf212c8562"
+    },
+    {
+      "provider": "fidl_bsd$target",
+      "module": "",
+      "function": "",
+      "name": "validation-failed",
+      "arguments": [
+        "uintptr_t message",
+        "uint32_t txid",
+        "uint64_t ordinal",
+        "int reason"
+      ],
+      "source": "lib/libfidl/fidl_provider.d",
+      "source_sha256": "11e53a86431d3e9ea0564e3f3a8a467c3baddde80a8ff2b388ec747149336a2f"
+    },
+    {
+      "provider": "fidl_bsd$target",
+      "module": "",
+      "function": "",
+      "name": "message-token",
+      "arguments": [
+        "uintptr_t connection",
+        "uint32_t txid",
+        "uint64_t ordinal",
+        "uint64_t token"
+      ],
+      "source": "lib/libfidl/fidl_provider.d",
+      "source_sha256": "11e53a86431d3e9ea0564e3f3a8a467c3baddde80a8ff2b388ec747149336a2f"
+    },
+    {
+      "provider": "fidl_bsd$target",
+      "module": "",
+      "function": "",
+      "name": "epitaph",
+      "arguments": [
+        "uintptr_t connection",
+        "int status"
+      ],
+      "source": "lib/libfidl/fidl_provider.d",
+      "source_sha256": "11e53a86431d3e9ea0564e3f3a8a467c3baddde80a8ff2b388ec747149336a2f"
+    },
+    {
+      "provider": "fidl_bsd$target",
+      "module": "",
+      "function": "",
+      "name": "reject",
+      "arguments": [
+        "uintptr_t connection",
+        "uint32_t txid",
+        "uint64_t ordinal",
+        "int reason"
+      ],
+      "source": "lib/libfidl/fidl_provider.d",
+      "source_sha256": "11e53a86431d3e9ea0564e3f3a8a467c3baddde80a8ff2b388ec747149336a2f"
+    },
+    {
+      "provider": "fidl_bsd$target",
+      "module": "",
+      "function": "",
+      "name": "transport",
+      "arguments": [
+        "uintptr_t connection",
+        "uintptr_t channel",
+        "uint32_t txid",
+        "uint64_t ordinal"
+      ],
+      "source": "lib/libfidl/fidl_provider.d",
+      "source_sha256": "11e53a86431d3e9ea0564e3f3a8a467c3baddde80a8ff2b388ec747149336a2f"
+    }
+  ]
+}

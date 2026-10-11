@@ -31,9 +31,9 @@
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
 #include "opt_umtx_profiling.h"
 
+#include <sys/cdefs.h>
 #include <sys/param.h>
 #include <sys/kernel.h>
 #include <sys/fcntl.h>
@@ -61,8 +61,8 @@
 #include <sys/eventhandler.h>
 #include <sys/umtx.h>
 #include <sys/umtxvar.h>
-
-#include <security/mac/mac_framework.h>
+#include <sys/queue.h>
+#include <sys/sdt.h>
 
 #include <vm/vm.h>
 #include <vm/vm_param.h>
@@ -74,10 +74,18 @@
 #include <machine/atomic.h>
 #include <machine/cpu.h>
 
+#include <security/mac/mac_framework.h>
 #include <compat/freebsd32/freebsd32.h>
 #ifdef COMPAT_FREEBSD32
 #include <compat/freebsd32/freebsd32_proto.h>
 #endif
+
+SDT_PROVIDER_DEFINE(umtx);
+SDT_PROBE_DEFINE3(umtx, , , wake, "struct umtx_key *", "int", "int");
+SDT_PROBE_DEFINE2(umtx, , , sleep__start, "struct umtx_q *", "int");
+SDT_PROBE_DEFINE2(umtx, , , sleep__done, "struct umtx_q *", "int");
+SDT_PROBE_DEFINE3(umtx, , , pi__owner, "struct umtx_pi *", "struct thread *",
+    "int");
 
 #define _UMUTEX_TRY		1
 #define _UMUTEX_WAIT		2
@@ -604,8 +612,10 @@ umtxq_signal_mask(struct umtx_key *key, int n_wake, u_int bitset)
 	ret = 0;
 	UMTXQ_LOCKED_ASSERT(umtxq_getchain(key));
 	uh = umtxq_queue_lookup(key, UMTX_SHARED_QUEUE);
-	if (uh == NULL)
+	if (uh == NULL) {
+		SDT_PROBE3(umtx, , , wake, key, n_wake, 0);
 		return (0);
+	}
 	TAILQ_FOREACH_SAFE(uq, &uh->head, uq_link, uq_temp) {
 		if ((uq->uq_bitset & bitset) == 0)
 			continue;
@@ -614,7 +624,10 @@ umtxq_signal_mask(struct umtx_key *key, int n_wake, u_int bitset)
 		if (++ret >= n_wake)
 			break;
 	}
-	return (ret);
+	{
+		SDT_PROBE3(umtx, , , wake, key, n_wake, ret);
+		return (ret);
+	}
 }
 
 /*
@@ -635,11 +648,16 @@ umtxq_signal_queue(struct umtx_key *key, int n_wake, int q)
 		while ((uq = TAILQ_FIRST(&uh->head)) != NULL) {
 			umtxq_remove_queue(uq, q);
 			umtxq_notify(uq, false);
-			if (++ret >= n_wake)
+			if (++ret >= n_wake) {
+				SDT_PROBE3(umtx, , , wake, key, n_wake, ret);
 				return (ret);
+			}
 		}
 	}
-	return (ret);
+	{
+		SDT_PROBE3(umtx, , , wake, key, n_wake, ret);
+		return (ret);
+	}
 }
 
 /*
@@ -848,6 +866,7 @@ umtxq_sleep(struct umtx_q *uq, const char *wmesg,
 
 	uc = umtxq_getchain(&uq->uq_key);
 	UMTXQ_LOCKED_ASSERT(uc);
+	SDT_PROBE2(umtx, , , sleep__start, uq, uq->uq_key.type);
 	for (;;) {
 		if (!(uq->uq_flags & UQF_UMTXQ)) {
 			error = 0;
@@ -874,6 +893,7 @@ umtxq_sleep(struct umtx_q *uq, const char *wmesg,
 	}
 
 	curthread->td_rtcgen = 0;
+	SDT_PROBE2(umtx, , , sleep__done, uq, error);
 	return (error);
 }
 
@@ -1973,6 +1993,7 @@ umtx_pi_setowner(struct umtx_pi *pi, struct thread *owner)
 	mtx_assert(&umtx_lock, MA_OWNED);
 	MPASS(pi->pi_owner == NULL);
 	pi->pi_owner = owner;
+	SDT_PROBE3(umtx, , , pi__owner, pi, owner, 1);
 	TAILQ_INSERT_TAIL(&uq_owner->uq_pi_contested, pi, pi_link);
 }
 
@@ -1985,6 +2006,7 @@ umtx_pi_disown(struct umtx_pi *pi)
 
 	mtx_assert(&umtx_lock, MA_OWNED);
 	TAILQ_REMOVE(&pi->pi_owner->td_umtxq->uq_pi_contested, pi, pi_link);
+	SDT_PROBE3(umtx, , , pi__owner, pi, pi->pi_owner, 0);
 	pi->pi_owner = NULL;
 }
 

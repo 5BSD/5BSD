@@ -1,0 +1,195 @@
+Kernel probe expansion
+======================
+
+kernel-probes.json inventories the 95 new source declarations, their argument
+types, and locations. Linuxulator declarations expand into separate native
+and compat32 providers. FIDL is the native userspace import, not a Zircon
+kernel. This inventory does not assert that a running kernel exports probes.
+
+Probe arguments are described below in arg0, arg1, ... order. Double
+underscores in C declarations become hyphens in DTrace names. Empty module
+and function fields should be matched with wildcards when writing scripts.
+These new interfaces are diagnostic and may evolve with the underlying code.
+
+Correlation and safety
+----------------------
+Pointer arguments are short-lived identities. Record the provided scalars
+at the event; do not dereference an identity after an asynchronous callback,
+free, unlock, or a later event. Addresses can be reused. Include PID for
+userspace pointers and Linux userspace futex addresses; use taskqueue's
+execution sequence for callback pairing. Sequence numbers can wrap.
+No probe copies packet data, terminal characters, keys or FIDL payloads.
+No new probe acquires a lock or allocates storage. Compute durations in DTrace
+from paired events rather than adding clocks to normal kernel execution.
+Tracing enabled under an existing lock still adds execution time.
+
+Providers and arguments
+-----------------------
+taskqueue
+  enqueue/coalesce: queue, task, enqueue flags / resulting pending count.
+  execute-start: queue, task, execution sequence, coalesced pending count.
+  execute-done: queue, task, execution sequence. The callback may free task;
+    done intentionally uses only its identity.
+  cancel: queue, task, result (0 or EBUSY). This is the cancellation attempt,
+    not proof that a running callback has exited.
+  drain-start/done: queue, task. Elapsed drain time includes sleep.
+  Enqueue-to-start and start-to-done separate queue residence from execution.
+
+bluetooth (new RFCOMM probes)
+  rfcomm-state: PCB, DLCI, previous state, next state (includes initialization).
+  rfcomm-close: PCB, DLCI, state at close, errno; ETIMEDOUT identifies timeout.
+  rfcomm-credit: PCB, DLCI, current TX credits, current RX credits.
+  rfcomm-flow: PCB, DLCI, direction (0 receive, 1 transmit), credits, modem bits.
+  rfcomm-drop: session, DLCI, errno, remaining frame bytes, reason:
+    1 session flow control, 2 unknown DLCI, 3 wrong DLC state,
+    4 DLC flow control, 5 MTU exceeded, 6 socket receive buffer full.
+    A deliberate protocol drop may have errno 0. A successful credit-only
+    frame does not count as a drop.
+  rfcomm-frame-error: session, errno from frame dispatch/validation.
+    This can overlap a more specific drop event; do not sum both as packets.
+
+linuxulator / linuxulator32, module epoll
+  ctl-done: epoll fd, target fd, ctl operation, errno; includes rejected calls.
+  translate: epoll fd, target fd, Linux event mask, number of native filters.
+  deliver: target ident, native filter, translated Linux mask. This happens
+    before copyout, so it is a translation event, not proof of user delivery.
+  wait-start: epoll fd, maxevents. wait-done: epoll fd, event count, errno.
+    Count is zero on failure. Scope is linux_epoll_wait_ts, after outer
+    timeout/signal-mask conversion, not every syscall validation failure.
+
+linuxulator / linuxulator32, module futex
+  wait-start: userspace address, bitset, sharing flags.
+  wait-done: address, errno (including mismatch, timeout, signal/fault).
+  wake-done: address, requested wake count, actual count or zero on error, errno.
+  requeue-done: source address, destination address, requested wakes,
+    total woken-plus-requeued (zero on failure), errno.
+  pi-done: address, operation (1 lock/trylock, 2 unlock), errno.
+  owner-death: address, PI boolean, had-waiters boolean; after successful
+    owner-death update, before wakeup. Existing futex_waitv probes remain.
+
+umtx
+  sleep-start: wait-queue identity, key type (sys/umtxvar.h).
+  sleep-done: wait-queue identity, raw sleep result. Higher layers may translate
+    this result or observe a racing wake; it is not the final syscall errno.
+  wake: key identity, requested wake count, actual count.
+  pi-owner: PI object, owner thread, action (1 assign, 0 disown).
+
+ffs
+  alloc-done: inode, logical block, requested bytes, allocated block, errno.
+  alloc-retry: inode, requested bytes; cleanup before allocation retry.
+  alloc-fallback: inode, cylinder group, size/mode, stage
+    (2 quadratic rehash, 3 brute-force search). The allocator also serves inode
+    allocation, so the size argument can be an inode mode.
+  worklist-start: mount, full boolean, queued work count.
+  worklist-done: mount, processed count, remaining queued count.
+    No pair is emitted for mounts without softdep state.
+  journal-start/done: mount, journal queue count (only SUJ flushes).
+  slowdown: mount, journal-low boolean, inode dependencies, directory removals.
+    This signals cleanup pressure; journaled mounts may accelerate cleanup
+    without actually blocking the requesting thread.
+
+bufcache
+  space-wait: buffer domain, vnode, getblk flags.
+  space-resume: buffer domain, msleep result. One pair per actual sleep.
+  flush-start: vnode, domain, target count.
+  flush-done: vnode, domain, return count from the first flush pass. The
+    rollback-dependent fallback pass is not included in that return count.
+  reclaim: domain, KVA-only boolean, result (0 or ENOBUFS).
+  io-wait: buffer. io-done: buffer, errno from bufwait.
+
+lockf / nlm
+  lockf conflict: waiter lock, blocking lock, waiter start/end byte offsets.
+  deadlock: waiter, blocker, errno from adding the dependency edge.
+  grant: lock, start/end offsets at activation. Unlock operations also pass
+    through activation; inspect the live lock type when interpreting this event.
+  wake: pending lock removed and caller notified (also used for async NLM).
+  cancel: lock, start/end offsets, before unlink/free.
+  wait-start: lock, vnode, start/end offsets. wait-done: lock, sx_sleep result,
+    before subsequent lock-state validation; this is not final syscall errno.
+  nlm wait-start: waiting-lock handle, timeout ticks. wait-done: handle, errno.
+  nlm cancel: vnode. recovery-start/done: host, monitor state. Done means the
+    recovery routine returned, not that every remote lock was recovered.
+
+tty
+  read-start: tty, VMIN, VTIME (termios units); read-done: tty, errno.
+    This brackets the line-discipline read, including immediate returns.
+  flow: tty, stopped boolean. watermark: tty, output high-water blocked boolean.
+  input-drop: tty, reason 1 (input queue cannot accept the character).
+  carrier: tty, carrier-present boolean, before CLOCAL/open-state handling.
+
+linuxulator / linuxulator32, module socket
+  setopt-done/getopt-done: fd, Linux level, Linux option, errno.
+  sockopt-map: native level, Linux option, native option (or unsupported value).
+  cmsg-map: Linux SOL_SOCKET control type, native type (or unsupported value).
+  cmsg-reject: Linux level, Linux type, direction 1 (send).
+  cmsg-truncate: fd, total ancillary capacity, bytes already copied, at the
+    branch setting CTRUNC. These are metadata; no ancillary payload is exposed.
+
+linuxkpi_work / iwlwifi
+  state: address of work state field, old/new WORK_ST_* enum values.
+    The atomic transition has committed; a later concurrent state change may
+    already have happened. Do not use probe ordering as a synchronization proof.
+  execute-start: workqueue, work, pending. execute-done: workqueue, work.
+    Work may free itself; completion never dereferences it.
+  cancel-start/flush-start: work. done: work, boolean return value (not errno).
+  iwlwifi trace:dev_irq: device.
+  trace:dev_irq_msix: device, MSI-X entry identity, upstream boolean,
+    FH interrupt bits, hardware interrupt bits.
+  trace:dev_tx: device, skb identity, TFD bytes, header bytes, padding bytes.
+    New IRQ/TX calls compile away when KDTRACE_HOOKS is disabled.
+
+vm / mac_capability / kqueue / vfs
+  vm fault-cow: fault-state identity, rename boolean (otherwise copy).
+  fault-pager-start: fault state, object, page index; done: fault state,
+    VM_PAGER_* result (not errno).
+  fault-busy-start: fault state, allocation flags; done: fault state.
+  fault-oom: fault state, stage (0 allocation-pressure retry path, 1 OOM action).
+  mac_capability direct-accept: message identity, destination badge,
+    resulting queue length, reply token. message-receive: message, receiver badge.
+    Their difference measures accepted-direct-message queue residence.
+  direct-fallback: message, peer badge, reason (1 dead, 2 no service, 3 full).
+    Covers failed direct-room checks, not disabled direct mode or missing peers.
+  kqueue detach-start: knote, ident/fd, filter, file identity (NULL for non-fd).
+    detach-done: knote. Both surround f_detach, before knote reclamation.
+  vfs detach-start/done: knote, vnode, surrounding knlist removal before vdrop.
+    These can correlate the filedesc/kqueue/vnode paths with lockstat.
+
+fidl_bsd$target (userspace)
+  validation-failed: incoming identity, txid, ordinal, reason:
+    1 size/count (txid zero, expected ordinal), 2 header/ordinal/txid/version,
+    3 event-versus-request kind mismatch. Unvalidated IDs are peer metadata.
+  reject: connection, txid, ordinal, reason
+    (4 malformed epitaph, 5 closing, 6 missing handler).
+  epitaph: connection, peer's signed protocol status; this is not local errno.
+  transport: connection, libchannel identity, txid, ordinal.
+  message-token: connection, txid, ordinal, libchannel message token. This
+    connects validated received requests/replies to libchannel tracing.
+
+Qualification
+-------------
+With a prepared kernel and module object tree:
+  python3.12 tools/test/system-tracing/kernel-compile.py \
+    --kernel-obj /usr/obj/usr/src/amd64.amd64/sys/GENERIC-NODEBUG
+
+This compiles 48 cases with -Werror and all logical CPUs: each changed kernel
+translation unit and IRQ/TX caller, both Linuxulator ABIs, hooks on and off.
+It writes objects, compiler logs, commands and source hashes under
+/usr/obj/5bsd-dtrace-validation. It does not install, load modules or reboot.
+Use a root shell if /usr/obj permissions require it. Keep source header order;
+several inherited subsystems have dependency-sensitive include sequences.
+
+Before runtime qualification, boot a matching test kernel and load the needed
+modules in a test VM. Verify actual enumeration, then exercise controlled
+workloads: UFS allocation/fsync, conflicting byte-range locks, PTY flow control,
+epoll readiness/timeouts, futex wake/requeue, channel direct/fallback delivery,
+and VM COW/file faults. Confirm expected probe counts, paired events, no DTrace
+errors/drops, and unchanged operation results. Radio/firmware events need a
+real device or validated emulator. Avoid inducing host memory pressure.
+
+The host used for this change has no DTrace device. Compile/link checks and
+functional FIDL tests do not qualify live kernel or USDT firing. On a DTrace
+capable test host, a root shell can run the FIDL runtime fixture under:
+  dtrace -q -n 'fidl_bsd$target:::message-token { @tokens = count(); } \
+    fidl_bsd$target:::validation-failed { @bad[arg3] = count(); }' \
+    -c /path/to/tracing-enabled/runtime-test
+Require nonzero token and malformed-message counts, not merely exit success.

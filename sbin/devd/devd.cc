@@ -197,8 +197,11 @@ event_proc::matches(config &c) const
 	vector<eps *>::const_iterator i;
 
 	for (i = _epsvec.begin(); i != _epsvec.end(); ++i)
-		if (!(*i)->do_match(c))
+		if (!(*i)->do_match(c)) {
+			TRACE_DEVD_RULE(this, 0);
 			return (false);
+		}
+	TRACE_DEVD_RULE(this, 1);
 	return (true);
 }
 
@@ -266,6 +269,7 @@ my_system(const char *command)
 		::execl(_PATH_BSHELL, "sh", "-c", command, (char *)NULL);
 		::_exit(127);
 	default:			/* parent */
+		TRACE_DEVD_CHILD(pid);
 		savedpid = pid;
 		do {
 			pid = ::wait4(savedpid, &pstat, 0, (struct rusage *)0);
@@ -284,7 +288,10 @@ action::do_action(config &c)
 	string s = c.expand_string(_cmd.c_str());
 	devdlog(LOG_INFO, "Executing '%s'\n", s.c_str());
 	DEVD_PROBE_ACTION(c.get_variable("*").c_str(), s.c_str());
-	my_system(s.c_str());
+	TRACE_DEVD_ACTION__START(this);
+	int status = my_system(s.c_str());
+	TRACE_DEVD_ACTION__DONE(this, status);
+	(void)status;
 	return (true);
 }
 
@@ -858,6 +865,7 @@ process_event(char *buffer)
 	sp = buffer + 1;
 	devdlog(LOG_INFO, "Processing event '%s'\n", buffer);
 	type = *buffer++;
+	TRACE_DEVD_EVENT__START(type);
 	cfg.push_var_table();
 	// $* is the entire line
 	cfg.set_variable("*", buffer - 1);
@@ -884,7 +892,10 @@ process_event(char *buffer)
 		//? at location pnp-info on bus
 		sp = strchr(sp, ' ');
 		if (sp == NULL)
-			return;	/* Can't happen? */
+			{
+				TRACE_DEVD_EVENT__DONE(type);
+				return;
+			}	/* Can't happen? */
 		*sp++ = '\0';
 		while (isspace(*sp))
 			sp++;
@@ -900,7 +911,10 @@ process_event(char *buffer)
 	case detach:
 		sp = strchr(sp, ' ');
 		if (sp == NULL)
-			return;	/* Can't happen? */
+			{
+				TRACE_DEVD_EVENT__DONE(type);
+				return;
+			}	/* Can't happen? */
 		*sp++ = '\0';
 		cfg.set_variable("device-name", buffer);
 		while (isspace(*sp))
@@ -917,6 +931,7 @@ process_event(char *buffer)
 
 	cfg.find_and_execute(type);
 	cfg.pop_var_table();
+	TRACE_DEVD_EVENT__DONE(type);
 }
 
 static int

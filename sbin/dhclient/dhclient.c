@@ -56,6 +56,7 @@
  */
 
 #include <sys/cdefs.h>
+#include "dhcplife_trace.h"
 #include "dhcpd.h"
 #include "privsep.h"
 
@@ -635,6 +636,8 @@ state_reboot(void *ipp)
 {
 	struct interface_info *ip = ipp;
 
+	TRACE_DHCPLIFE_STATE(ip, 1);
+
 	cancel_timeout(v6only_wait_expired, ip);
 
 	/* If we don't remember an active lease, go straight to INIT. */
@@ -674,6 +677,8 @@ state_init(void *ipp)
 {
 	struct interface_info *ip = ipp;
 
+	TRACE_DHCPLIFE_STATE(ip, 2);
+
 	ASSERT_STATE(state, S_INIT);
 
 	cancel_timeout(v6only_wait_expired, ip);
@@ -700,6 +705,8 @@ void
 state_selecting(void *ipp)
 {
 	struct interface_info *ip = ipp;
+
+	TRACE_DHCPLIFE_STATE(ip, 3);
 	struct client_lease *lp, *next, *picked;
 
 	ASSERT_STATE(state, S_SELECTING);
@@ -1028,6 +1035,8 @@ void
 state_bound(void *ipp)
 {
 	struct interface_info *ip = ipp;
+
+	TRACE_DHCPLIFE_STATE(ip, 4);
 	u_int8_t *dp = NULL;
 	int len;
 
@@ -1530,6 +1539,8 @@ void
 state_panic(void *ipp)
 {
 	struct interface_info *ip = ipp;
+
+	TRACE_DHCPLIFE_STATE(ip, 5);
 	struct client_lease *loop = ip->client->active;
 	struct client_lease *lp;
 
@@ -2513,6 +2524,7 @@ script_go(void)
 	struct buf	*buf;
 	int		 ret;
 
+	TRACE_DHCPLIFE_SCRIPT__START(ifi);
 	hdr.code = IMSG_SCRIPT_GO;
 	hdr.len = sizeof(struct imsg_hdr);
 
@@ -2535,7 +2547,11 @@ script_go(void)
 
 	scripttime = time(NULL);
 
-	return (ret);
+	{
+		int trace_result = (ret);
+		TRACE_DHCPLIFE_SCRIPT__DONE(ifi, trace_result);
+		return (trace_result);
+	}
 }
 
 int

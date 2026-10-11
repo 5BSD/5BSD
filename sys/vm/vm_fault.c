@@ -96,6 +96,9 @@
 #include <sys/ktrace.h>
 #endif
 
+#include <sys/queue.h>
+#include <sys/sdt.h>
+
 #include <vm/vm.h>
 #include <vm/vm_param.h>
 #include <vm/pmap.h>
@@ -108,6 +111,14 @@
 #include <vm/vm_radix.h>
 #include <vm/vm_extern.h>
 #include <vm/vm_reserv.h>
+
+SDT_PROVIDER_DECLARE(vm);
+SDT_PROBE_DEFINE2(vm, , , fault__cow, "void *", "int");
+SDT_PROBE_DEFINE3(vm, , , fault__pager__start, "void *", "void *", "uint64_t");
+SDT_PROBE_DEFINE2(vm, , , fault__pager__done, "void *", "int");
+SDT_PROBE_DEFINE2(vm, , , fault__busy__start, "void *", "int");
+SDT_PROBE_DEFINE1(vm, , , fault__busy__done, "void *");
+SDT_PROBE_DEFINE2(vm, , , fault__oom, "void *", "int");
 
 #define PFBAK 4
 #define PFFOR 4
@@ -1158,6 +1169,7 @@ vm_fault_cow(struct faultstate *fs)
 	fs->object = fs->first_object;
 	fs->pindex = fs->first_pindex;
 	fs->m = fs->first_m;
+	SDT_PROBE2(vm, , , fault__cow, fs, rename_cow);
 	VM_CNT_INC(v_cow_faults);
 	curthread->td_cow++;
 }
@@ -1274,6 +1286,7 @@ vm_fault_allocate_oom(struct faultstate *fs)
 {
 	struct timeval now;
 
+	SDT_PROBE2(vm, , , fault__oom, fs, 0);
 	vm_fault_unlock_and_deallocate(fs);
 	if (vm_pfault_oom_attempts < 0)
 		return (true);
@@ -1292,6 +1305,7 @@ vm_fault_allocate_oom(struct faultstate *fs)
 		printf(
 	    "proc %d (%s) failed to alloc page on fault, starting OOM\n",
 		    curproc->p_pid, curproc->p_comm);
+	SDT_PROBE2(vm, , , fault__oom, fs, 1);
 	vm_pageout_oom(VM_OOM_MEM_PF);
 	fs->oom_started = false;
 	return (false);
@@ -1465,7 +1479,9 @@ vm_fault_getpages(struct faultstate *fs, int *behindp, int *aheadp)
 	}
 	*behindp = behind;
 	*aheadp = ahead;
+	SDT_PROBE3(vm, , , fault__pager__start, fs, fs->object, fs->pindex);
 	rv = vm_pager_get_pages(fs->object, &fs->m, 1, behindp, aheadp);
+	SDT_PROBE2(vm, , , fault__pager__done, fs, rv);
 	if (rv == VM_PAGER_OK)
 		return (FAULT_HARD);
 	if (rv == VM_PAGER_ERROR)
@@ -1507,6 +1523,7 @@ vm_fault_busy_sleep(struct faultstate *fs, int allocflags)
 	 * sleeping so that the page daemon is less
 	 * likely to reclaim it.
 	 */
+	SDT_PROBE2(vm, , , fault__busy__start, fs, allocflags);
 	vm_page_aflag_set(fs->m, PGA_REFERENCED);
 	if (vm_fault_might_be_cow(fs)) {
 		vm_fault_page_release(&fs->first_m);
@@ -1518,6 +1535,7 @@ vm_fault_busy_sleep(struct faultstate *fs, int allocflags)
 		VM_OBJECT_UNLOCK(fs->object);
 	VM_CNT_INC(v_intrans);
 	vm_object_deallocate(fs->first_object);
+	SDT_PROBE1(vm, , , fault__busy__done, fs);
 }
 
 /*

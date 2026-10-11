@@ -49,6 +49,15 @@
 #include <sys/filedesc.h>
 #include <sys/vnode.h>
 
+#include <sys/sdt.h>
+
+SDT_PROVIDER_DEFINE(firmware);
+SDT_PROBE_DEFINE2(firmware, , , lookup, "char *", "int");
+SDT_PROBE_DEFINE1(firmware, , , module__start, "char *");
+SDT_PROBE_DEFINE2(firmware, , , module__done, "char *", "int");
+SDT_PROBE_DEFINE1(firmware, , , binary__start, "char *");
+SDT_PROBE_DEFINE2(firmware, , , binary__done, "char *", "int");
+
 /*
  * Loadable firmware support. See sys/sys/firmware.h and firmware(9)
  * form more details on the subsystem.
@@ -287,6 +296,7 @@ try_binary_file(const char *imagename, uint32_t flags)
 	 * XXX TODO: Loop over some path instead of a single element path.
 	 * and fetch this path from the 'firmware_path' kenv the loader sets.
 	 */
+	SDT_PROBE1(firmware, , , binary__start, imagename);
 	sb = sbuf_new_auto();
 	sbuf_printf(sb, "%s%s", fw_path, imagename);
 	sbuf_finish(sb);
@@ -330,6 +340,7 @@ try_binary_file(const char *imagename, uint32_t flags)
 	fp->flags |= FW_BINARY;
 	if (bootverbose)
 		printf("%s: Loaded binary firmware using %s\n", imagename, fn);
+	SDT_PROBE2(firmware, , , binary__done, imagename, 1);
 	sbuf_delete(sb);
 	return;
 
@@ -337,6 +348,7 @@ err2: /* cleanup in vn_open through vn_close */
 	VOP_UNLOCK(nd.ni_vp);
 	vn_close(nd.ni_vp, FREAD, cred, td);
 err:
+	SDT_PROBE2(firmware, , , binary__done, imagename, 0);
 	free(data, M_FIRMWARE);
 	if (bootverbose || warn)
 		printf("%s: could not load binary firmware %s either\n", imagename, fn);
@@ -351,7 +363,9 @@ loadimage(void *arg, int npending __unused)
 	linker_file_t result;
 	int error;
 
+	SDT_PROBE1(firmware, , , module__start, fwli->imagename);
 	error = linker_reference_module(fwli->imagename, NULL, &result);
+	SDT_PROBE2(firmware, , , module__done, fwli->imagename, error);
 	if (error != 0) {
 		if (bootverbose || (fwli->flags & FIRMWARE_GET_NOWARN) == 0)
 			printf("%s: could not load firmware image, error %d\n",
@@ -394,6 +408,7 @@ firmware_get_flags(const char *imagename, uint32_t flags)
 
 	mtx_lock(&firmware_mtx);
 	fp = lookup(imagename);
+	SDT_PROBE2(firmware, , , lookup, imagename, (fp != NULL));
 	if (fp != NULL)
 		goto found;
 	/*

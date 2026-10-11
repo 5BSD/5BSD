@@ -30,6 +30,7 @@
  */
 
 #include <sys/param.h>
+#include "umountop_trace.h"
 #include <sys/mount.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
@@ -345,6 +346,7 @@ umountfs(struct statfs *sfs)
 	struct nfscl_dumpmntopts dumpmntopts;
 	const char *proto_ptr = NULL;
 
+	TRACE_UMOUNTOP_OPERATION__START(sfs);
 	ai = NULL;
 	do_rpc = 0;
 	hostp = NULL;
@@ -404,7 +406,11 @@ umountfs(struct statfs *sfs)
 
 	if (!namematch(ai)) {
 		free(orignfsdirname);
-		return (1);
+		{
+			int trace_result = (1);
+			TRACE_UMOUNTOP_OPERATION__DONE(sfs, trace_result);
+			return (trace_result);
+		}
 	}
 	/* First try to unmount using the file system ID. */
 	snprintf(fsidbuf, sizeof(fsidbuf), "FSID:%d:%d", sfs->f_fsid.val[0],
@@ -416,7 +422,11 @@ umountfs(struct statfs *sfs)
 			warn("unmount of %s failed", sfs->f_mntonname);
 		if (errno != ENOENT) {
 			free(orignfsdirname);
-			return (1);
+			{
+				int trace_result = (1);
+				TRACE_UMOUNTOP_OPERATION__DONE(sfs, trace_result);
+				return (trace_result);
+			}
 		}
 		/* Compatibility for old kernels. */
 		if (sfs->f_fsid.val[0] != 0 || sfs->f_fsid.val[1] != 0)
@@ -424,7 +434,11 @@ umountfs(struct statfs *sfs)
 		if (unmount(sfs->f_mntonname, fflag) != 0) {
 			warn("unmount of %s failed", sfs->f_mntonname);
 			free(orignfsdirname);
-			return (1);
+			{
+				int trace_result = (1);
+				TRACE_UMOUNTOP_OPERATION__DONE(sfs, trace_result);
+				return (trace_result);
+			}
 		}
 	}
 	/* Mark this file system as unmounted. */
@@ -442,7 +456,11 @@ umountfs(struct statfs *sfs)
 			warnx("%s: %s", hostp,
 			    clnt_spcreateerror("MOUNTPROG"));
 			free(orignfsdirname);
-			return (1);
+			{
+				int trace_result = (1);
+				TRACE_UMOUNTOP_OPERATION__DONE(sfs, trace_result);
+				return (trace_result);
+			}
 		}
 		clp->cl_auth = authsys_create_default();
 		try.tv_sec = 20;
@@ -453,7 +471,11 @@ umountfs(struct statfs *sfs)
 			warnx("%s: %s", hostp,
 			    clnt_sperror(clp, "RPCMNT_UMOUNT"));
 			free(orignfsdirname);
-			return (1);
+			{
+				int trace_result = (1);
+				TRACE_UMOUNTOP_OPERATION__DONE(sfs, trace_result);
+				return (trace_result);
+			}
 		}
 		/*
 		 * Remove the unmounted entry from /var/db/mounttab.
@@ -476,10 +498,18 @@ umountfs(struct statfs *sfs)
 				(void)printf("%s: detached\n",
 				    sfs->f_mntfromname);
 		} else if (!all)
-			return (-1);
+			{
+				int trace_result = (-1);
+				TRACE_UMOUNTOP_OPERATION__DONE(sfs, trace_result);
+				return (trace_result);
+			}
 	}
 
-	return (0);
+	{
+		int trace_result = (0);
+		TRACE_UMOUNTOP_OPERATION__DONE(sfs, trace_result);
+		return (trace_result);
+	}
 }
 
 struct statfs *

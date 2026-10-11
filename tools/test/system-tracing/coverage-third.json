@@ -1,0 +1,2365 @@
+[
+  {
+    "source": "sys/fs/tmpfs/tmpfs_subr.c",
+    "provider": "tmpfs",
+    "name": "vnode-start",
+    "types": [
+      "void *",
+      "void *",
+      "int"
+    ],
+    "kind": "kernel",
+    "source_sha256": "103e493b5675ec0ecf55907b10972bd56e5342f678722d7cbd03360e18baddaa",
+    "line": 80
+  },
+  {
+    "source": "sys/fs/tmpfs/tmpfs_subr.c",
+    "provider": "tmpfs",
+    "name": "vnode-done",
+    "types": [
+      "void *",
+      "void *",
+      "int"
+    ],
+    "kind": "kernel",
+    "source_sha256": "103e493b5675ec0ecf55907b10972bd56e5342f678722d7cbd03360e18baddaa",
+    "line": 81
+  },
+  {
+    "source": "sys/fs/tmpfs/tmpfs_subr.c",
+    "provider": "tmpfs",
+    "name": "reclaim-wait",
+    "types": [
+      "void *"
+    ],
+    "kind": "kernel",
+    "source_sha256": "103e493b5675ec0ecf55907b10972bd56e5342f678722d7cbd03360e18baddaa",
+    "line": 82
+  },
+  {
+    "source": "sys/fs/tmpfs/tmpfs_subr.c",
+    "provider": "tmpfs",
+    "name": "reclaim-resume",
+    "types": [
+      "void *"
+    ],
+    "kind": "kernel",
+    "source_sha256": "103e493b5675ec0ecf55907b10972bd56e5342f678722d7cbd03360e18baddaa",
+    "line": 83
+  },
+  {
+    "source": "sys/fs/tmpfs/tmpfs_subr.c",
+    "provider": "tmpfs",
+    "name": "resize-start",
+    "types": [
+      "void *",
+      "int64_t"
+    ],
+    "kind": "kernel",
+    "source_sha256": "103e493b5675ec0ecf55907b10972bd56e5342f678722d7cbd03360e18baddaa",
+    "line": 84
+  },
+  {
+    "source": "sys/fs/tmpfs/tmpfs_subr.c",
+    "provider": "tmpfs",
+    "name": "resize-done",
+    "types": [
+      "void *",
+      "int"
+    ],
+    "kind": "kernel",
+    "source_sha256": "103e493b5675ec0ecf55907b10972bd56e5342f678722d7cbd03360e18baddaa",
+    "line": 85
+  },
+  {
+    "source": "sys/fs/msdosfs/msdosfs_fat.c",
+    "provider": "fat",
+    "name": "alloc-start",
+    "types": [
+      "void *",
+      "unsigned long",
+      "unsigned long"
+    ],
+    "kind": "kernel",
+    "source_sha256": "a2b7784fd429d27398883dbb80288ba56a750c931d8615ef3ded6be4f3770bf0",
+    "line": 71
+  },
+  {
+    "source": "sys/fs/msdosfs/msdosfs_fat.c",
+    "provider": "fat",
+    "name": "alloc-done",
+    "types": [
+      "void *",
+      "unsigned long",
+      "unsigned long",
+      "int"
+    ],
+    "kind": "kernel",
+    "source_sha256": "a2b7784fd429d27398883dbb80288ba56a750c931d8615ef3ded6be4f3770bf0",
+    "line": 72
+  },
+  {
+    "source": "sys/fs/msdosfs/msdosfs_vfsops.c",
+    "provider": "fat",
+    "name": "integrity",
+    "types": [
+      "void *"
+    ],
+    "kind": "kernel",
+    "source_sha256": "98a8185224d1233d92c0f1ca66cfa5845f718b5a77f5125f7d4b30988b8ab7e3",
+    "line": 90
+  },
+  {
+    "source": "sys/fs/msdosfs/msdosfs_vfsops.c",
+    "provider": "fat",
+    "name": "remount-start",
+    "types": [
+      "void *"
+    ],
+    "kind": "kernel",
+    "source_sha256": "98a8185224d1233d92c0f1ca66cfa5845f718b5a77f5125f7d4b30988b8ab7e3",
+    "line": 91
+  },
+  {
+    "source": "sys/fs/msdosfs/msdosfs_vfsops.c",
+    "provider": "fat",
+    "name": "remount-done",
+    "types": [
+      "void *",
+      "int"
+    ],
+    "kind": "kernel",
+    "source_sha256": "98a8185224d1233d92c0f1ca66cfa5845f718b5a77f5125f7d4b30988b8ab7e3",
+    "line": 92
+  },
+  {
+    "source": "sys/fs/nfsclient/nfs_clstate.c",
+    "provider": "nfsclient",
+    "name": "recover-start",
+    "types": [
+      "void *"
+    ],
+    "kind": "kernel",
+    "source_sha256": "bfa0771d71e47da4489ce275fb9483c91ecca358fdca8f94cd9265517678ff16",
+    "line": 91
+  },
+  {
+    "source": "sys/fs/nfsclient/nfs_clstate.c",
+    "provider": "nfsclient",
+    "name": "recover-done",
+    "types": [
+      "void *",
+      "int"
+    ],
+    "kind": "kernel",
+    "source_sha256": "bfa0771d71e47da4489ce275fb9483c91ecca358fdca8f94cd9265517678ff16",
+    "line": 92
+  },
+  {
+    "source": "sys/fs/nfsclient/nfs_clstate.c",
+    "provider": "nfsclient",
+    "name": "setclient-result",
+    "types": [
+      "void *",
+      "int",
+      "int"
+    ],
+    "kind": "kernel",
+    "source_sha256": "bfa0771d71e47da4489ce275fb9483c91ecca358fdca8f94cd9265517678ff16",
+    "line": 93
+  },
+  {
+    "source": "sys/fs/nfsserver/nfs_nfsdsocket.c",
+    "provider": "nfsserver",
+    "name": "compound-start",
+    "types": [
+      "void *",
+      "unsigned int"
+    ],
+    "kind": "kernel",
+    "source_sha256": "251a0ad174ca537cbfa0d9617bcc7a78b3484d31da06b17773b962daa4ecaf58",
+    "line": 48
+  },
+  {
+    "source": "sys/fs/nfsserver/nfs_nfsdsocket.c",
+    "provider": "nfsserver",
+    "name": "compound-done",
+    "types": [
+      "void *",
+      "unsigned int",
+      "int",
+      "int"
+    ],
+    "kind": "kernel",
+    "source_sha256": "251a0ad174ca537cbfa0d9617bcc7a78b3484d31da06b17773b962daa4ecaf58",
+    "line": 49
+  },
+  {
+    "source": "sys/fs/nfsserver/nfs_nfsdsocket.c",
+    "provider": "nfsserver",
+    "name": "operation-start",
+    "types": [
+      "void *",
+      "int"
+    ],
+    "kind": "kernel",
+    "source_sha256": "251a0ad174ca537cbfa0d9617bcc7a78b3484d31da06b17773b962daa4ecaf58",
+    "line": 50
+  },
+  {
+    "source": "sys/fs/nfsserver/nfs_nfsdsocket.c",
+    "provider": "nfsserver",
+    "name": "operation-done",
+    "types": [
+      "void *",
+      "int",
+      "int",
+      "int"
+    ],
+    "kind": "kernel",
+    "source_sha256": "251a0ad174ca537cbfa0d9617bcc7a78b3484d31da06b17773b962daa4ecaf58",
+    "line": 51
+  },
+  {
+    "source": "sys/vm/swap_pager.c",
+    "provider": "swap",
+    "name": "io-start",
+    "types": [
+      "void *",
+      "int",
+      "long"
+    ],
+    "kind": "kernel",
+    "source_sha256": "2fa11f633e49d5da146aed3e76d2dda1611be167941c2cdfdc6a5741112ce161",
+    "line": 127
+  },
+  {
+    "source": "sys/vm/swap_pager.c",
+    "provider": "swap",
+    "name": "io-done",
+    "types": [
+      "void *",
+      "int",
+      "long",
+      "int"
+    ],
+    "kind": "kernel",
+    "source_sha256": "2fa11f633e49d5da146aed3e76d2dda1611be167941c2cdfdc6a5741112ce161",
+    "line": 128
+  },
+  {
+    "source": "sys/vm/vm_pageout.c",
+    "provider": "vm",
+    "name": "inactive-start",
+    "types": [
+      "void *",
+      "int"
+    ],
+    "kind": "kernel",
+    "source_sha256": "9596b9d87c69d6f63896426bab856c413fe5fd5a42ec9faad0e9407c65cfd909",
+    "line": 121
+  },
+  {
+    "source": "sys/vm/vm_pageout.c",
+    "provider": "vm",
+    "name": "inactive-done",
+    "types": [
+      "void *",
+      "int",
+      "int"
+    ],
+    "kind": "kernel",
+    "source_sha256": "9596b9d87c69d6f63896426bab856c413fe5fd5a42ec9faad0e9407c65cfd909",
+    "line": 122
+  },
+  {
+    "source": "sys/dev/iommu/iommu_gas.c",
+    "provider": "iommu",
+    "name": "map-start",
+    "types": [
+      "void *",
+      "uint64_t",
+      "unsigned int"
+    ],
+    "kind": "kernel",
+    "source_sha256": "1640693ff21a85fa3a99fc47bbd56f3faf9b14b374bbd0b9eb2eedf775b23cdb",
+    "line": 73
+  },
+  {
+    "source": "sys/dev/iommu/iommu_gas.c",
+    "provider": "iommu",
+    "name": "map-done",
+    "types": [
+      "void *",
+      "int"
+    ],
+    "kind": "kernel",
+    "source_sha256": "1640693ff21a85fa3a99fc47bbd56f3faf9b14b374bbd0b9eb2eedf775b23cdb",
+    "line": 74
+  },
+  {
+    "source": "sys/dev/iommu/busdma_iommu.c",
+    "provider": "iommu",
+    "name": "unload-start",
+    "types": [
+      "void *"
+    ],
+    "kind": "kernel",
+    "source_sha256": "35dcd6bdec8cdf44c2284648932d65c80d6ea4275c6d5d55c41c038da2e2d439",
+    "line": 72
+  },
+  {
+    "source": "sys/dev/iommu/busdma_iommu.c",
+    "provider": "iommu",
+    "name": "unload-done",
+    "types": [
+      "void *"
+    ],
+    "kind": "kernel",
+    "source_sha256": "35dcd6bdec8cdf44c2284648932d65c80d6ea4275c6d5d55c41c038da2e2d439",
+    "line": 73
+  },
+  {
+    "source": "sys/dev/acpica/acpi.c",
+    "provider": "acpi",
+    "name": "device-start",
+    "types": [
+      "void *",
+      "int"
+    ],
+    "kind": "kernel",
+    "source_sha256": "39f915e0a580057d2ebec4900765e3b5bf901981b4f0747611e56245af6e7c76",
+    "line": 89
+  },
+  {
+    "source": "sys/dev/acpica/acpi.c",
+    "provider": "acpi",
+    "name": "device-done",
+    "types": [
+      "void *",
+      "int",
+      "int"
+    ],
+    "kind": "kernel",
+    "source_sha256": "39f915e0a580057d2ebec4900765e3b5bf901981b4f0747611e56245af6e7c76",
+    "line": 90
+  },
+  {
+    "source": "sys/dev/acpica/acpi.c",
+    "provider": "acpi",
+    "name": "sleep-start",
+    "types": [
+      "void *",
+      "int"
+    ],
+    "kind": "kernel",
+    "source_sha256": "39f915e0a580057d2ebec4900765e3b5bf901981b4f0747611e56245af6e7c76",
+    "line": 91
+  },
+  {
+    "source": "sys/dev/acpica/acpi.c",
+    "provider": "acpi",
+    "name": "sleep-done",
+    "types": [
+      "void *",
+      "int",
+      "unsigned int"
+    ],
+    "kind": "kernel",
+    "source_sha256": "39f915e0a580057d2ebec4900765e3b5bf901981b4f0747611e56245af6e7c76",
+    "line": 92
+  },
+  {
+    "source": "sys/opencrypto/crypto.c",
+    "provider": "crypto",
+    "name": "invoke-start",
+    "types": [
+      "void *",
+      "void *",
+      "int"
+    ],
+    "kind": "kernel",
+    "source_sha256": "32027bc07e4b9897423d6c64bad2393c1ee041e66a7024499adfd18d2e1601f1",
+    "line": 104
+  },
+  {
+    "source": "sys/opencrypto/crypto.c",
+    "provider": "crypto",
+    "name": "invoke-done",
+    "types": [
+      "void *",
+      "int"
+    ],
+    "kind": "kernel",
+    "source_sha256": "32027bc07e4b9897423d6c64bad2393c1ee041e66a7024499adfd18d2e1601f1",
+    "line": 105
+  },
+  {
+    "source": "sys/opencrypto/crypto.c",
+    "provider": "crypto",
+    "name": "complete",
+    "types": [
+      "void *",
+      "int"
+    ],
+    "kind": "kernel",
+    "source_sha256": "32027bc07e4b9897423d6c64bad2393c1ee041e66a7024499adfd18d2e1601f1",
+    "line": 106
+  },
+  {
+    "source": "sys/opencrypto/crypto.c",
+    "provider": "crypto",
+    "name": "defer",
+    "types": [
+      "void *"
+    ],
+    "kind": "kernel",
+    "source_sha256": "32027bc07e4b9897423d6c64bad2393c1ee041e66a7024499adfd18d2e1601f1",
+    "line": 107
+  },
+  {
+    "source": "sys/fs/tmpfs/tmpfs_subr.c",
+    "provider": "tmpfs",
+    "name": "node-start",
+    "types": [
+      "void *",
+      "int"
+    ],
+    "kind": "kernel",
+    "source_sha256": "103e493b5675ec0ecf55907b10972bd56e5342f678722d7cbd03360e18baddaa",
+    "line": 77
+  },
+  {
+    "source": "sys/fs/tmpfs/tmpfs_subr.c",
+    "provider": "tmpfs",
+    "name": "node-done",
+    "types": [
+      "void *",
+      "int"
+    ],
+    "kind": "kernel",
+    "source_sha256": "103e493b5675ec0ecf55907b10972bd56e5342f678722d7cbd03360e18baddaa",
+    "line": 78
+  },
+  {
+    "source": "sys/fs/tmpfs/tmpfs_subr.c",
+    "provider": "tmpfs",
+    "name": "capacity",
+    "types": [
+      "void *",
+      "int"
+    ],
+    "kind": "kernel",
+    "source_sha256": "103e493b5675ec0ecf55907b10972bd56e5342f678722d7cbd03360e18baddaa",
+    "line": 79
+  },
+  {
+    "source": "sys/fs/tmpfs/tmpfs_vnops.c",
+    "provider": "tmpfs",
+    "name": "rename-start",
+    "types": [
+      "void *",
+      "void *"
+    ],
+    "kind": "kernel",
+    "source_sha256": "533e296f2444e7941786912e2fa3d9f50bddedf6d151e5b020e28bedf2e48afb",
+    "line": 45
+  },
+  {
+    "source": "sys/fs/tmpfs/tmpfs_vnops.c",
+    "provider": "tmpfs",
+    "name": "rename-done",
+    "types": [
+      "void *",
+      "int",
+      "int"
+    ],
+    "kind": "kernel",
+    "source_sha256": "533e296f2444e7941786912e2fa3d9f50bddedf6d151e5b020e28bedf2e48afb",
+    "line": 46
+  },
+  {
+    "source": "sys/dev/iommu/busdma_iommu.c",
+    "provider": "iommu",
+    "name": "load-complete",
+    "types": [
+      "void *",
+      "int",
+      "int"
+    ],
+    "kind": "kernel",
+    "source_sha256": "35dcd6bdec8cdf44c2284648932d65c80d6ea4275c6d5d55c41c038da2e2d439",
+    "line": 70
+  },
+  {
+    "source": "sys/dev/iommu/busdma_iommu.c",
+    "provider": "iommu",
+    "name": "unload-queue",
+    "types": [
+      "void *",
+      "void *"
+    ],
+    "kind": "kernel",
+    "source_sha256": "35dcd6bdec8cdf44c2284648932d65c80d6ea4275c6d5d55c41c038da2e2d439",
+    "line": 71
+  },
+  {
+    "source": "sys/opencrypto/crypto.c",
+    "provider": "crypto",
+    "name": "submit",
+    "types": [
+      "void *",
+      "void *"
+    ],
+    "kind": "kernel",
+    "source_sha256": "32027bc07e4b9897423d6c64bad2393c1ee041e66a7024499adfd18d2e1601f1",
+    "line": 102
+  },
+  {
+    "source": "sys/opencrypto/crypto.c",
+    "provider": "crypto",
+    "name": "submit-error",
+    "types": [
+      "void *",
+      "int"
+    ],
+    "kind": "kernel",
+    "source_sha256": "32027bc07e4b9897423d6c64bad2393c1ee041e66a7024499adfd18d2e1601f1",
+    "line": 103
+  },
+  {
+    "source": "sys/fs/nfsclient/nfs_clstate.c",
+    "provider": "nfsclient",
+    "name": "open-start",
+    "types": [
+      "void *",
+      "unsigned int"
+    ],
+    "kind": "kernel",
+    "source_sha256": "bfa0771d71e47da4489ce275fb9483c91ecca358fdca8f94cd9265517678ff16",
+    "line": 86
+  },
+  {
+    "source": "sys/fs/nfsclient/nfs_clstate.c",
+    "provider": "nfsclient",
+    "name": "open-done",
+    "types": [
+      "void *",
+      "int"
+    ],
+    "kind": "kernel",
+    "source_sha256": "bfa0771d71e47da4489ce275fb9483c91ecca358fdca8f94cd9265517678ff16",
+    "line": 87
+  },
+  {
+    "source": "sys/fs/nfsclient/nfs_clstate.c",
+    "provider": "nfsclient",
+    "name": "renew-start",
+    "types": [
+      "void *"
+    ],
+    "kind": "kernel",
+    "source_sha256": "bfa0771d71e47da4489ce275fb9483c91ecca358fdca8f94cd9265517678ff16",
+    "line": 88
+  },
+  {
+    "source": "sys/fs/nfsclient/nfs_clstate.c",
+    "provider": "nfsclient",
+    "name": "renew-done",
+    "types": [
+      "void *",
+      "int"
+    ],
+    "kind": "kernel",
+    "source_sha256": "bfa0771d71e47da4489ce275fb9483c91ecca358fdca8f94cd9265517678ff16",
+    "line": 89
+  },
+  {
+    "source": "sys/fs/nfsclient/nfs_clstate.c",
+    "provider": "nfsclient",
+    "name": "lock-release",
+    "types": [
+      "void *",
+      "int",
+      "int"
+    ],
+    "kind": "kernel",
+    "source_sha256": "bfa0771d71e47da4489ce275fb9483c91ecca358fdca8f94cd9265517678ff16",
+    "line": 90
+  },
+  {
+    "source": "sys/fs/nfsserver/nfs_nfsdstate.c",
+    "provider": "nfsserver",
+    "name": "client-start",
+    "types": [
+      "void *",
+      "int"
+    ],
+    "kind": "kernel",
+    "source_sha256": "c3e62d58637b953bf77be782386e34880151133f9dc560b2ef4d9fd278b2a399",
+    "line": 39
+  },
+  {
+    "source": "sys/fs/nfsserver/nfs_nfsdstate.c",
+    "provider": "nfsserver",
+    "name": "client-done",
+    "types": [
+      "void *",
+      "int"
+    ],
+    "kind": "kernel",
+    "source_sha256": "c3e62d58637b953bf77be782386e34880151133f9dc560b2ef4d9fd278b2a399",
+    "line": 40
+  },
+  {
+    "source": "sys/fs/nfsserver/nfs_nfsdstate.c",
+    "provider": "nfsserver",
+    "name": "session-replay",
+    "types": [
+      "void *"
+    ],
+    "kind": "kernel",
+    "source_sha256": "c3e62d58637b953bf77be782386e34880151133f9dc560b2ef4d9fd278b2a399",
+    "line": 41
+  },
+  {
+    "source": "sys/fs/msdosfs/msdosfs_fat.c",
+    "provider": "fat",
+    "name": "entry-start",
+    "types": [
+      "void *",
+      "unsigned long",
+      "int"
+    ],
+    "kind": "kernel",
+    "source_sha256": "a2b7784fd429d27398883dbb80288ba56a750c931d8615ef3ded6be4f3770bf0",
+    "line": 69
+  },
+  {
+    "source": "sys/fs/msdosfs/msdosfs_fat.c",
+    "provider": "fat",
+    "name": "entry-done",
+    "types": [
+      "void *",
+      "unsigned long",
+      "int"
+    ],
+    "kind": "kernel",
+    "source_sha256": "a2b7784fd429d27398883dbb80288ba56a750c931d8615ef3ded6be4f3770bf0",
+    "line": 70
+  },
+  {
+    "source": "sys/dev/acpica/acpi.c",
+    "provider": "acpi",
+    "name": "prepare-start",
+    "types": [
+      "void *",
+      "int"
+    ],
+    "kind": "kernel",
+    "source_sha256": "39f915e0a580057d2ebec4900765e3b5bf901981b4f0747611e56245af6e7c76",
+    "line": 87
+  },
+  {
+    "source": "sys/dev/acpica/acpi.c",
+    "provider": "acpi",
+    "name": "prepare-done",
+    "types": [
+      "void *",
+      "int",
+      "unsigned int"
+    ],
+    "kind": "kernel",
+    "source_sha256": "39f915e0a580057d2ebec4900765e3b5bf901981b4f0747611e56245af6e7c76",
+    "line": 88
+  },
+  {
+    "source": "lib/libc/nameres_provider.d",
+    "provider": "nameres",
+    "name": "query-start",
+    "types": [
+      "uintptr_t",
+      "int",
+      "int"
+    ],
+    "kind": "userspace",
+    "source_sha256": "f233d0ce93df7a79a362464e9384cc98a6518fe76c33e01c0cb7e939f175708b",
+    "call_sources": [
+      "lib/libc/resolv/res_send.c",
+      "lib/libc/net/nsdispatch.c"
+    ],
+    "line": 4,
+    "call_source_sha256": {
+      "lib/libc/resolv/res_send.c": "9dedba91298e973362dcb1a8c4e123fa5e1fcf9d8023a4a55901d32f2f4c422f",
+      "lib/libc/net/nsdispatch.c": "d15969bd7aa65fef0fad5889c322908ce95face269061d64cf44f0528c334351"
+    }
+  },
+  {
+    "source": "lib/libc/nameres_provider.d",
+    "provider": "nameres",
+    "name": "query-done",
+    "types": [
+      "uintptr_t",
+      "int",
+      "int"
+    ],
+    "kind": "userspace",
+    "source_sha256": "f233d0ce93df7a79a362464e9384cc98a6518fe76c33e01c0cb7e939f175708b",
+    "call_sources": [
+      "lib/libc/resolv/res_send.c",
+      "lib/libc/net/nsdispatch.c"
+    ],
+    "line": 5,
+    "call_source_sha256": {
+      "lib/libc/resolv/res_send.c": "9dedba91298e973362dcb1a8c4e123fa5e1fcf9d8023a4a55901d32f2f4c422f",
+      "lib/libc/net/nsdispatch.c": "d15969bd7aa65fef0fad5889c322908ce95face269061d64cf44f0528c334351"
+    }
+  },
+  {
+    "source": "lib/libc/nameres_provider.d",
+    "provider": "nameres",
+    "name": "server-start",
+    "types": [
+      "uintptr_t",
+      "int",
+      "int"
+    ],
+    "kind": "userspace",
+    "source_sha256": "f233d0ce93df7a79a362464e9384cc98a6518fe76c33e01c0cb7e939f175708b",
+    "call_sources": [
+      "lib/libc/resolv/res_send.c",
+      "lib/libc/net/nsdispatch.c"
+    ],
+    "line": 6,
+    "call_source_sha256": {
+      "lib/libc/resolv/res_send.c": "9dedba91298e973362dcb1a8c4e123fa5e1fcf9d8023a4a55901d32f2f4c422f",
+      "lib/libc/net/nsdispatch.c": "d15969bd7aa65fef0fad5889c322908ce95face269061d64cf44f0528c334351"
+    }
+  },
+  {
+    "source": "lib/libc/nameres_provider.d",
+    "provider": "nameres",
+    "name": "server-done",
+    "types": [
+      "uintptr_t",
+      "int",
+      "int",
+      "int"
+    ],
+    "kind": "userspace",
+    "source_sha256": "f233d0ce93df7a79a362464e9384cc98a6518fe76c33e01c0cb7e939f175708b",
+    "call_sources": [
+      "lib/libc/resolv/res_send.c",
+      "lib/libc/net/nsdispatch.c"
+    ],
+    "line": 7,
+    "call_source_sha256": {
+      "lib/libc/resolv/res_send.c": "9dedba91298e973362dcb1a8c4e123fa5e1fcf9d8023a4a55901d32f2f4c422f",
+      "lib/libc/net/nsdispatch.c": "d15969bd7aa65fef0fad5889c322908ce95face269061d64cf44f0528c334351"
+    }
+  },
+  {
+    "source": "lib/libc/nameres_provider.d",
+    "provider": "nameres",
+    "name": "dispatch-start",
+    "types": [
+      "uintptr_t",
+      "uintptr_t"
+    ],
+    "kind": "userspace",
+    "source_sha256": "f233d0ce93df7a79a362464e9384cc98a6518fe76c33e01c0cb7e939f175708b",
+    "call_sources": [
+      "lib/libc/resolv/res_send.c",
+      "lib/libc/net/nsdispatch.c"
+    ],
+    "line": 8,
+    "call_source_sha256": {
+      "lib/libc/resolv/res_send.c": "9dedba91298e973362dcb1a8c4e123fa5e1fcf9d8023a4a55901d32f2f4c422f",
+      "lib/libc/net/nsdispatch.c": "d15969bd7aa65fef0fad5889c322908ce95face269061d64cf44f0528c334351"
+    }
+  },
+  {
+    "source": "lib/libc/nameres_provider.d",
+    "provider": "nameres",
+    "name": "dispatch-done",
+    "types": [
+      "uintptr_t",
+      "int"
+    ],
+    "kind": "userspace",
+    "source_sha256": "f233d0ce93df7a79a362464e9384cc98a6518fe76c33e01c0cb7e939f175708b",
+    "call_sources": [
+      "lib/libc/resolv/res_send.c",
+      "lib/libc/net/nsdispatch.c"
+    ],
+    "line": 9,
+    "call_source_sha256": {
+      "lib/libc/resolv/res_send.c": "9dedba91298e973362dcb1a8c4e123fa5e1fcf9d8023a4a55901d32f2f4c422f",
+      "lib/libc/net/nsdispatch.c": "d15969bd7aa65fef0fad5889c322908ce95face269061d64cf44f0528c334351"
+    }
+  },
+  {
+    "source": "lib/libc/nameres_provider.d",
+    "provider": "nameres",
+    "name": "backend-start",
+    "types": [
+      "uintptr_t",
+      "uintptr_t"
+    ],
+    "kind": "userspace",
+    "source_sha256": "f233d0ce93df7a79a362464e9384cc98a6518fe76c33e01c0cb7e939f175708b",
+    "call_sources": [
+      "lib/libc/resolv/res_send.c",
+      "lib/libc/net/nsdispatch.c"
+    ],
+    "line": 10,
+    "call_source_sha256": {
+      "lib/libc/resolv/res_send.c": "9dedba91298e973362dcb1a8c4e123fa5e1fcf9d8023a4a55901d32f2f4c422f",
+      "lib/libc/net/nsdispatch.c": "d15969bd7aa65fef0fad5889c322908ce95face269061d64cf44f0528c334351"
+    }
+  },
+  {
+    "source": "lib/libc/nameres_provider.d",
+    "provider": "nameres",
+    "name": "backend-done",
+    "types": [
+      "uintptr_t",
+      "uintptr_t",
+      "int"
+    ],
+    "kind": "userspace",
+    "source_sha256": "f233d0ce93df7a79a362464e9384cc98a6518fe76c33e01c0cb7e939f175708b",
+    "call_sources": [
+      "lib/libc/resolv/res_send.c",
+      "lib/libc/net/nsdispatch.c"
+    ],
+    "line": 11,
+    "call_source_sha256": {
+      "lib/libc/resolv/res_send.c": "9dedba91298e973362dcb1a8c4e123fa5e1fcf9d8023a4a55901d32f2f4c422f",
+      "lib/libc/net/nsdispatch.c": "d15969bd7aa65fef0fad5889c322908ce95face269061d64cf44f0528c334351"
+    }
+  },
+  {
+    "source": "lib/libthr/threadwait_provider.d",
+    "provider": "threadwait",
+    "name": "mutex-start",
+    "types": [
+      "uintptr_t"
+    ],
+    "kind": "userspace",
+    "source_sha256": "e6171109b6fe7c97f61ef06760bf52447dcfa763f0973929f0c4b7d41c8d8aae",
+    "call_sources": [
+      "lib/libthr/thread/thr_mutex.c",
+      "lib/libthr/thread/thr_cond.c",
+      "lib/libthr/thread/thr_join.c"
+    ],
+    "line": 4,
+    "call_source_sha256": {
+      "lib/libthr/thread/thr_mutex.c": "7c6346acc0ddf989a8598e1a11485d55ad8ac08300e33c72a2ceff9c20d08563",
+      "lib/libthr/thread/thr_cond.c": "db455a05448fba57363147eb730f25c3af62a8215ef5ade753884a1a4a18f40c",
+      "lib/libthr/thread/thr_join.c": "66cbcfad0c9daf626f325594cfa055854c7d614c75e5fbc43ae40282b9ddecb2"
+    }
+  },
+  {
+    "source": "lib/libthr/threadwait_provider.d",
+    "provider": "threadwait",
+    "name": "mutex-done",
+    "types": [
+      "uintptr_t",
+      "int"
+    ],
+    "kind": "userspace",
+    "source_sha256": "e6171109b6fe7c97f61ef06760bf52447dcfa763f0973929f0c4b7d41c8d8aae",
+    "call_sources": [
+      "lib/libthr/thread/thr_mutex.c",
+      "lib/libthr/thread/thr_cond.c",
+      "lib/libthr/thread/thr_join.c"
+    ],
+    "line": 5,
+    "call_source_sha256": {
+      "lib/libthr/thread/thr_mutex.c": "7c6346acc0ddf989a8598e1a11485d55ad8ac08300e33c72a2ceff9c20d08563",
+      "lib/libthr/thread/thr_cond.c": "db455a05448fba57363147eb730f25c3af62a8215ef5ade753884a1a4a18f40c",
+      "lib/libthr/thread/thr_join.c": "66cbcfad0c9daf626f325594cfa055854c7d614c75e5fbc43ae40282b9ddecb2"
+    }
+  },
+  {
+    "source": "lib/libthr/threadwait_provider.d",
+    "provider": "threadwait",
+    "name": "condition-start",
+    "types": [
+      "uintptr_t",
+      "int"
+    ],
+    "kind": "userspace",
+    "source_sha256": "e6171109b6fe7c97f61ef06760bf52447dcfa763f0973929f0c4b7d41c8d8aae",
+    "call_sources": [
+      "lib/libthr/thread/thr_mutex.c",
+      "lib/libthr/thread/thr_cond.c",
+      "lib/libthr/thread/thr_join.c"
+    ],
+    "line": 6,
+    "call_source_sha256": {
+      "lib/libthr/thread/thr_mutex.c": "7c6346acc0ddf989a8598e1a11485d55ad8ac08300e33c72a2ceff9c20d08563",
+      "lib/libthr/thread/thr_cond.c": "db455a05448fba57363147eb730f25c3af62a8215ef5ade753884a1a4a18f40c",
+      "lib/libthr/thread/thr_join.c": "66cbcfad0c9daf626f325594cfa055854c7d614c75e5fbc43ae40282b9ddecb2"
+    }
+  },
+  {
+    "source": "lib/libthr/threadwait_provider.d",
+    "provider": "threadwait",
+    "name": "condition-done",
+    "types": [
+      "uintptr_t",
+      "int"
+    ],
+    "kind": "userspace",
+    "source_sha256": "e6171109b6fe7c97f61ef06760bf52447dcfa763f0973929f0c4b7d41c8d8aae",
+    "call_sources": [
+      "lib/libthr/thread/thr_mutex.c",
+      "lib/libthr/thread/thr_cond.c",
+      "lib/libthr/thread/thr_join.c"
+    ],
+    "line": 7,
+    "call_source_sha256": {
+      "lib/libthr/thread/thr_mutex.c": "7c6346acc0ddf989a8598e1a11485d55ad8ac08300e33c72a2ceff9c20d08563",
+      "lib/libthr/thread/thr_cond.c": "db455a05448fba57363147eb730f25c3af62a8215ef5ade753884a1a4a18f40c",
+      "lib/libthr/thread/thr_join.c": "66cbcfad0c9daf626f325594cfa055854c7d614c75e5fbc43ae40282b9ddecb2"
+    }
+  },
+  {
+    "source": "lib/libthr/threadwait_provider.d",
+    "provider": "threadwait",
+    "name": "join-start",
+    "types": [
+      "uintptr_t"
+    ],
+    "kind": "userspace",
+    "source_sha256": "e6171109b6fe7c97f61ef06760bf52447dcfa763f0973929f0c4b7d41c8d8aae",
+    "call_sources": [
+      "lib/libthr/thread/thr_mutex.c",
+      "lib/libthr/thread/thr_cond.c",
+      "lib/libthr/thread/thr_join.c"
+    ],
+    "line": 8,
+    "call_source_sha256": {
+      "lib/libthr/thread/thr_mutex.c": "7c6346acc0ddf989a8598e1a11485d55ad8ac08300e33c72a2ceff9c20d08563",
+      "lib/libthr/thread/thr_cond.c": "db455a05448fba57363147eb730f25c3af62a8215ef5ade753884a1a4a18f40c",
+      "lib/libthr/thread/thr_join.c": "66cbcfad0c9daf626f325594cfa055854c7d614c75e5fbc43ae40282b9ddecb2"
+    }
+  },
+  {
+    "source": "lib/libthr/threadwait_provider.d",
+    "provider": "threadwait",
+    "name": "join-done",
+    "types": [
+      "uintptr_t",
+      "int"
+    ],
+    "kind": "userspace",
+    "source_sha256": "e6171109b6fe7c97f61ef06760bf52447dcfa763f0973929f0c4b7d41c8d8aae",
+    "call_sources": [
+      "lib/libthr/thread/thr_mutex.c",
+      "lib/libthr/thread/thr_cond.c",
+      "lib/libthr/thread/thr_join.c"
+    ],
+    "line": 9,
+    "call_source_sha256": {
+      "lib/libthr/thread/thr_mutex.c": "7c6346acc0ddf989a8598e1a11485d55ad8ac08300e33c72a2ceff9c20d08563",
+      "lib/libthr/thread/thr_cond.c": "db455a05448fba57363147eb730f25c3af62a8215ef5ade753884a1a4a18f40c",
+      "lib/libthr/thread/thr_join.c": "66cbcfad0c9daf626f325594cfa055854c7d614c75e5fbc43ae40282b9ddecb2"
+    }
+  },
+  {
+    "source": "lib/libpam/libpam/pamchain_provider.d",
+    "provider": "pamchain",
+    "name": "chain-start",
+    "types": [
+      "uintptr_t",
+      "int"
+    ],
+    "kind": "userspace",
+    "source_sha256": "9ff06b6054325cac87d55b026e0b056d82e6140491bdc7289545e1f01bdeaaff",
+    "call_sources": [
+      "contrib/openpam/lib/libpam/openpam_dispatch.c"
+    ],
+    "line": 4,
+    "call_source_sha256": {
+      "contrib/openpam/lib/libpam/openpam_dispatch.c": "15e8d6e197eb8686cbd807d1d8822120ec92d0b1b463a7a141a8094f104b00a3"
+    }
+  },
+  {
+    "source": "lib/libpam/libpam/pamchain_provider.d",
+    "provider": "pamchain",
+    "name": "chain-done",
+    "types": [
+      "uintptr_t",
+      "int"
+    ],
+    "kind": "userspace",
+    "source_sha256": "9ff06b6054325cac87d55b026e0b056d82e6140491bdc7289545e1f01bdeaaff",
+    "call_sources": [
+      "contrib/openpam/lib/libpam/openpam_dispatch.c"
+    ],
+    "line": 5,
+    "call_source_sha256": {
+      "contrib/openpam/lib/libpam/openpam_dispatch.c": "15e8d6e197eb8686cbd807d1d8822120ec92d0b1b463a7a141a8094f104b00a3"
+    }
+  },
+  {
+    "source": "lib/libpam/libpam/pamchain_provider.d",
+    "provider": "pamchain",
+    "name": "module-start",
+    "types": [
+      "uintptr_t",
+      "uintptr_t",
+      "int"
+    ],
+    "kind": "userspace",
+    "source_sha256": "9ff06b6054325cac87d55b026e0b056d82e6140491bdc7289545e1f01bdeaaff",
+    "call_sources": [
+      "contrib/openpam/lib/libpam/openpam_dispatch.c"
+    ],
+    "line": 6,
+    "call_source_sha256": {
+      "contrib/openpam/lib/libpam/openpam_dispatch.c": "15e8d6e197eb8686cbd807d1d8822120ec92d0b1b463a7a141a8094f104b00a3"
+    }
+  },
+  {
+    "source": "lib/libpam/libpam/pamchain_provider.d",
+    "provider": "pamchain",
+    "name": "module-done",
+    "types": [
+      "uintptr_t",
+      "uintptr_t",
+      "int"
+    ],
+    "kind": "userspace",
+    "source_sha256": "9ff06b6054325cac87d55b026e0b056d82e6140491bdc7289545e1f01bdeaaff",
+    "call_sources": [
+      "contrib/openpam/lib/libpam/openpam_dispatch.c"
+    ],
+    "line": 7,
+    "call_source_sha256": {
+      "contrib/openpam/lib/libpam/openpam_dispatch.c": "15e8d6e197eb8686cbd807d1d8822120ec92d0b1b463a7a141a8094f104b00a3"
+    }
+  },
+  {
+    "source": "lib/libfetch/fetchio_provider.d",
+    "provider": "fetchio",
+    "name": "request-start",
+    "types": [
+      "uintptr_t"
+    ],
+    "kind": "userspace",
+    "source_sha256": "0796aa6527731b200bcad0e0b13dc324940a644c31057a74738580e20802d3d2",
+    "call_sources": [
+      "lib/libfetch/http.c",
+      "lib/libfetch/common.c"
+    ],
+    "line": 4,
+    "call_source_sha256": {
+      "lib/libfetch/http.c": "2b42975becb3ced52fcb9ecc4b6ae50ff5462fdd5ffcb3c589ac68fed5fbd067",
+      "lib/libfetch/common.c": "5365d84947c1b903f61f03eeefcedcd74c7461162e5af39987d3239557849416"
+    }
+  },
+  {
+    "source": "lib/libfetch/fetchio_provider.d",
+    "provider": "fetchio",
+    "name": "request-done",
+    "types": [
+      "uintptr_t",
+      "int",
+      "int"
+    ],
+    "kind": "userspace",
+    "source_sha256": "0796aa6527731b200bcad0e0b13dc324940a644c31057a74738580e20802d3d2",
+    "call_sources": [
+      "lib/libfetch/http.c",
+      "lib/libfetch/common.c"
+    ],
+    "line": 5,
+    "call_source_sha256": {
+      "lib/libfetch/http.c": "2b42975becb3ced52fcb9ecc4b6ae50ff5462fdd5ffcb3c589ac68fed5fbd067",
+      "lib/libfetch/common.c": "5365d84947c1b903f61f03eeefcedcd74c7461162e5af39987d3239557849416"
+    }
+  },
+  {
+    "source": "lib/libfetch/fetchio_provider.d",
+    "provider": "fetchio",
+    "name": "connect-start",
+    "types": [
+      "uintptr_t",
+      "int"
+    ],
+    "kind": "userspace",
+    "source_sha256": "0796aa6527731b200bcad0e0b13dc324940a644c31057a74738580e20802d3d2",
+    "call_sources": [
+      "lib/libfetch/http.c",
+      "lib/libfetch/common.c"
+    ],
+    "line": 6,
+    "call_source_sha256": {
+      "lib/libfetch/http.c": "2b42975becb3ced52fcb9ecc4b6ae50ff5462fdd5ffcb3c589ac68fed5fbd067",
+      "lib/libfetch/common.c": "5365d84947c1b903f61f03eeefcedcd74c7461162e5af39987d3239557849416"
+    }
+  },
+  {
+    "source": "lib/libfetch/fetchio_provider.d",
+    "provider": "fetchio",
+    "name": "connect-done",
+    "types": [
+      "uintptr_t",
+      "int"
+    ],
+    "kind": "userspace",
+    "source_sha256": "0796aa6527731b200bcad0e0b13dc324940a644c31057a74738580e20802d3d2",
+    "call_sources": [
+      "lib/libfetch/http.c",
+      "lib/libfetch/common.c"
+    ],
+    "line": 7,
+    "call_source_sha256": {
+      "lib/libfetch/http.c": "2b42975becb3ced52fcb9ecc4b6ae50ff5462fdd5ffcb3c589ac68fed5fbd067",
+      "lib/libfetch/common.c": "5365d84947c1b903f61f03eeefcedcd74c7461162e5af39987d3239557849416"
+    }
+  },
+  {
+    "source": "lib/libfetch/fetchio_provider.d",
+    "provider": "fetchio",
+    "name": "tls-start",
+    "types": [
+      "uintptr_t"
+    ],
+    "kind": "userspace",
+    "source_sha256": "0796aa6527731b200bcad0e0b13dc324940a644c31057a74738580e20802d3d2",
+    "call_sources": [
+      "lib/libfetch/http.c",
+      "lib/libfetch/common.c"
+    ],
+    "line": 8,
+    "call_source_sha256": {
+      "lib/libfetch/http.c": "2b42975becb3ced52fcb9ecc4b6ae50ff5462fdd5ffcb3c589ac68fed5fbd067",
+      "lib/libfetch/common.c": "5365d84947c1b903f61f03eeefcedcd74c7461162e5af39987d3239557849416"
+    }
+  },
+  {
+    "source": "lib/libfetch/fetchio_provider.d",
+    "provider": "fetchio",
+    "name": "tls-done",
+    "types": [
+      "uintptr_t",
+      "int"
+    ],
+    "kind": "userspace",
+    "source_sha256": "0796aa6527731b200bcad0e0b13dc324940a644c31057a74738580e20802d3d2",
+    "call_sources": [
+      "lib/libfetch/http.c",
+      "lib/libfetch/common.c"
+    ],
+    "line": 9,
+    "call_source_sha256": {
+      "lib/libfetch/http.c": "2b42975becb3ced52fcb9ecc4b6ae50ff5462fdd5ffcb3c589ac68fed5fbd067",
+      "lib/libfetch/common.c": "5365d84947c1b903f61f03eeefcedcd74c7461162e5af39987d3239557849416"
+    }
+  },
+  {
+    "source": "lib/libarchive/archiveio_provider.d",
+    "provider": "archiveio",
+    "name": "operation-start",
+    "types": [
+      "uintptr_t",
+      "int",
+      "uintptr_t"
+    ],
+    "kind": "userspace",
+    "source_sha256": "4406052e9a67ca2d923530cdf95a36e6825c42be575e9422e3ba1df67efb388a",
+    "call_sources": [
+      "contrib/libarchive/libarchive/archive_virtual.c"
+    ],
+    "line": 4,
+    "call_source_sha256": {
+      "contrib/libarchive/libarchive/archive_virtual.c": "5c236123cb557b7128e7d5be2fd0168df714224c9e2b00df480f8428b7c755c3"
+    }
+  },
+  {
+    "source": "lib/libarchive/archiveio_provider.d",
+    "provider": "archiveio",
+    "name": "operation-done",
+    "types": [
+      "uintptr_t",
+      "int",
+      "int64_t"
+    ],
+    "kind": "userspace",
+    "source_sha256": "4406052e9a67ca2d923530cdf95a36e6825c42be575e9422e3ba1df67efb388a",
+    "call_sources": [
+      "contrib/libarchive/libarchive/archive_virtual.c"
+    ],
+    "line": 5,
+    "call_source_sha256": {
+      "contrib/libarchive/libarchive/archive_virtual.c": "5c236123cb557b7128e7d5be2fd0168df714224c9e2b00df480f8428b7c755c3"
+    }
+  },
+  {
+    "source": "sbin/dhclient/dhcplife_provider.d",
+    "provider": "dhcplife",
+    "name": "state",
+    "types": [
+      "uintptr_t",
+      "int"
+    ],
+    "kind": "userspace",
+    "source_sha256": "96d807157dba2fed5f258319ad360a1383e3b66fabb8d4f900fb295f2fb6a0bd",
+    "call_sources": [
+      "sbin/dhclient/dhclient.c"
+    ],
+    "line": 4,
+    "call_source_sha256": {
+      "sbin/dhclient/dhclient.c": "d5ef3b45b2688277d7de55a0d7ce7b89234cf714e1f57d75a33fbe2c71f22f75"
+    }
+  },
+  {
+    "source": "sbin/dhclient/dhcplife_provider.d",
+    "provider": "dhcplife",
+    "name": "script-start",
+    "types": [
+      "uintptr_t"
+    ],
+    "kind": "userspace",
+    "source_sha256": "96d807157dba2fed5f258319ad360a1383e3b66fabb8d4f900fb295f2fb6a0bd",
+    "call_sources": [
+      "sbin/dhclient/dhclient.c"
+    ],
+    "line": 5,
+    "call_source_sha256": {
+      "sbin/dhclient/dhclient.c": "d5ef3b45b2688277d7de55a0d7ce7b89234cf714e1f57d75a33fbe2c71f22f75"
+    }
+  },
+  {
+    "source": "sbin/dhclient/dhcplife_provider.d",
+    "provider": "dhcplife",
+    "name": "script-done",
+    "types": [
+      "uintptr_t",
+      "int"
+    ],
+    "kind": "userspace",
+    "source_sha256": "96d807157dba2fed5f258319ad360a1383e3b66fabb8d4f900fb295f2fb6a0bd",
+    "call_sources": [
+      "sbin/dhclient/dhclient.c"
+    ],
+    "line": 6,
+    "call_source_sha256": {
+      "sbin/dhclient/dhclient.c": "d5ef3b45b2688277d7de55a0d7ce7b89234cf714e1f57d75a33fbe2c71f22f75"
+    }
+  },
+  {
+    "source": "sbin/fsck_ffs/ffscheck_provider.d",
+    "provider": "ffscheck",
+    "name": "phase-start",
+    "types": [
+      "int"
+    ],
+    "kind": "userspace",
+    "source_sha256": "a585c72ef5aeccaa664795738fd04c18c2745378f74f4eb570954d655794ba6d",
+    "call_sources": [
+      "sbin/fsck_ffs/main.c"
+    ],
+    "line": 4,
+    "call_source_sha256": {
+      "sbin/fsck_ffs/main.c": "60d25e0f062cc7bf0dd3fd3ec213e3981907db411605444693853a4f2f1d70fb"
+    }
+  },
+  {
+    "source": "sbin/fsck_ffs/ffscheck_provider.d",
+    "provider": "ffscheck",
+    "name": "phase-done",
+    "types": [
+      "int"
+    ],
+    "kind": "userspace",
+    "source_sha256": "a585c72ef5aeccaa664795738fd04c18c2745378f74f4eb570954d655794ba6d",
+    "call_sources": [
+      "sbin/fsck_ffs/main.c"
+    ],
+    "line": 5,
+    "call_source_sha256": {
+      "sbin/fsck_ffs/main.c": "60d25e0f062cc7bf0dd3fd3ec213e3981907db411605444693853a4f2f1d70fb"
+    }
+  },
+  {
+    "source": "sbin/fsck_msdosfs/fatcheck_provider.d",
+    "provider": "fatcheck",
+    "name": "check-start",
+    "types": [
+      "uintptr_t"
+    ],
+    "kind": "userspace",
+    "source_sha256": "c1763cda6d9bbd6fbf0b78a83fba7c4ec462108abc5c52008a134b8111b5ce0f",
+    "call_sources": [
+      "sbin/fsck_msdosfs/check.c"
+    ],
+    "line": 4,
+    "call_source_sha256": {
+      "sbin/fsck_msdosfs/check.c": "583a5473333631eecbc32639651b47cfebf07cba9ea07eb6a2b51b2edfbc9c64"
+    }
+  },
+  {
+    "source": "sbin/fsck_msdosfs/fatcheck_provider.d",
+    "provider": "fatcheck",
+    "name": "check-done",
+    "types": [
+      "uintptr_t",
+      "int"
+    ],
+    "kind": "userspace",
+    "source_sha256": "c1763cda6d9bbd6fbf0b78a83fba7c4ec462108abc5c52008a134b8111b5ce0f",
+    "call_sources": [
+      "sbin/fsck_msdosfs/check.c"
+    ],
+    "line": 5,
+    "call_source_sha256": {
+      "sbin/fsck_msdosfs/check.c": "583a5473333631eecbc32639651b47cfebf07cba9ea07eb6a2b51b2edfbc9c64"
+    }
+  },
+  {
+    "source": "sbin/mount/mountop_provider.d",
+    "provider": "mountop",
+    "name": "operation-start",
+    "types": [
+      "uintptr_t"
+    ],
+    "kind": "userspace",
+    "source_sha256": "28696fbd983d5f40ec8f80d8e7714e0ac285e67ae4e8bfba038da2e08b0f4c9a",
+    "call_sources": [
+      "sbin/mount/mount.c"
+    ],
+    "line": 4,
+    "call_source_sha256": {
+      "sbin/mount/mount.c": "54e9883af20e5f29b5693c06a1aea2471abf9cd408699f19d3de4d9d4a3e5353"
+    }
+  },
+  {
+    "source": "sbin/mount/mountop_provider.d",
+    "provider": "mountop",
+    "name": "operation-done",
+    "types": [
+      "uintptr_t",
+      "int"
+    ],
+    "kind": "userspace",
+    "source_sha256": "28696fbd983d5f40ec8f80d8e7714e0ac285e67ae4e8bfba038da2e08b0f4c9a",
+    "call_sources": [
+      "sbin/mount/mount.c"
+    ],
+    "line": 5,
+    "call_source_sha256": {
+      "sbin/mount/mount.c": "54e9883af20e5f29b5693c06a1aea2471abf9cd408699f19d3de4d9d4a3e5353"
+    }
+  },
+  {
+    "source": "sbin/umount/umountop_provider.d",
+    "provider": "umountop",
+    "name": "operation-start",
+    "types": [
+      "uintptr_t"
+    ],
+    "kind": "userspace",
+    "source_sha256": "9ccbcf5878dd2fc884808687b735e0f35e3649955b48a816f37307c8021a08d2",
+    "call_sources": [
+      "sbin/umount/umount.c"
+    ],
+    "line": 4,
+    "call_source_sha256": {
+      "sbin/umount/umount.c": "0574df9d922617019df3a68bfa9c8ca1d6cf0bf077dfd5c5a93a333854be3621"
+    }
+  },
+  {
+    "source": "sbin/umount/umountop_provider.d",
+    "provider": "umountop",
+    "name": "operation-done",
+    "types": [
+      "uintptr_t",
+      "int"
+    ],
+    "kind": "userspace",
+    "source_sha256": "9ccbcf5878dd2fc884808687b735e0f35e3649955b48a816f37307c8021a08d2",
+    "call_sources": [
+      "sbin/umount/umount.c"
+    ],
+    "line": 5,
+    "call_source_sha256": {
+      "sbin/umount/umount.c": "0574df9d922617019df3a68bfa9c8ca1d6cf0bf077dfd5c5a93a333854be3621"
+    }
+  },
+  {
+    "source": "usr.sbin/mountd/exports_provider.d",
+    "provider": "exports",
+    "name": "reload-start",
+    "types": [
+      "int"
+    ],
+    "kind": "userspace",
+    "source_sha256": "4d992017a8e372abc43cb55fc9448de42cd1e1bf4808706df54175a67eb70103",
+    "call_sources": [
+      "usr.sbin/mountd/mountd.c"
+    ],
+    "line": 4,
+    "call_source_sha256": {
+      "usr.sbin/mountd/mountd.c": "17d5a21f30e480acb32ed0eba9c335d1b9e0ce5cdd17b225908772953ff3e4b9"
+    }
+  },
+  {
+    "source": "usr.sbin/mountd/exports_provider.d",
+    "provider": "exports",
+    "name": "reload-done",
+    "types": [
+      "int"
+    ],
+    "kind": "userspace",
+    "source_sha256": "4d992017a8e372abc43cb55fc9448de42cd1e1bf4808706df54175a67eb70103",
+    "call_sources": [
+      "usr.sbin/mountd/mountd.c"
+    ],
+    "line": 5,
+    "call_source_sha256": {
+      "usr.sbin/mountd/mountd.c": "17d5a21f30e480acb32ed0eba9c335d1b9e0ce5cdd17b225908772953ff3e4b9"
+    }
+  },
+  {
+    "source": "usr.sbin/newsyslog/logrotate_provider.d",
+    "provider": "logrotate",
+    "name": "rotate-start",
+    "types": [
+      "uintptr_t"
+    ],
+    "kind": "userspace",
+    "source_sha256": "acdb5f1f41696227ee7a932db63e0f5460904b61b0152d06573a862e21e10cfa",
+    "call_sources": [
+      "usr.sbin/newsyslog/newsyslog.c"
+    ],
+    "line": 4,
+    "call_source_sha256": {
+      "usr.sbin/newsyslog/newsyslog.c": "3f9396d72992d03428873316d9be46588011f354fa308af8bda3c521207f31ee"
+    }
+  },
+  {
+    "source": "usr.sbin/newsyslog/logrotate_provider.d",
+    "provider": "logrotate",
+    "name": "rotate-done",
+    "types": [
+      "uintptr_t",
+      "int"
+    ],
+    "kind": "userspace",
+    "source_sha256": "acdb5f1f41696227ee7a932db63e0f5460904b61b0152d06573a862e21e10cfa",
+    "call_sources": [
+      "usr.sbin/newsyslog/newsyslog.c"
+    ],
+    "line": 5,
+    "call_source_sha256": {
+      "usr.sbin/newsyslog/newsyslog.c": "3f9396d72992d03428873316d9be46588011f354fa308af8bda3c521207f31ee"
+    }
+  },
+  {
+    "source": "usr.sbin/newsyslog/logrotate_provider.d",
+    "provider": "logrotate",
+    "name": "compress-start",
+    "types": [
+      "uintptr_t",
+      "int"
+    ],
+    "kind": "userspace",
+    "source_sha256": "acdb5f1f41696227ee7a932db63e0f5460904b61b0152d06573a862e21e10cfa",
+    "call_sources": [
+      "usr.sbin/newsyslog/newsyslog.c"
+    ],
+    "line": 6,
+    "call_source_sha256": {
+      "usr.sbin/newsyslog/newsyslog.c": "3f9396d72992d03428873316d9be46588011f354fa308af8bda3c521207f31ee"
+    }
+  },
+  {
+    "source": "usr.sbin/newsyslog/logrotate_provider.d",
+    "provider": "logrotate",
+    "name": "compress-done",
+    "types": [
+      "uintptr_t",
+      "int",
+      "int",
+      "int"
+    ],
+    "kind": "userspace",
+    "source_sha256": "acdb5f1f41696227ee7a932db63e0f5460904b61b0152d06573a862e21e10cfa",
+    "call_sources": [
+      "usr.sbin/newsyslog/newsyslog.c"
+    ],
+    "line": 7,
+    "call_source_sha256": {
+      "usr.sbin/newsyslog/newsyslog.c": "3f9396d72992d03428873316d9be46588011f354fa308af8bda3c521207f31ee"
+    }
+  },
+  {
+    "source": "usr.sbin/newsyslog/logrotate_provider.d",
+    "provider": "logrotate",
+    "name": "notify",
+    "types": [
+      "uintptr_t",
+      "int",
+      "int"
+    ],
+    "kind": "userspace",
+    "source_sha256": "acdb5f1f41696227ee7a932db63e0f5460904b61b0152d06573a862e21e10cfa",
+    "call_sources": [
+      "usr.sbin/newsyslog/newsyslog.c"
+    ],
+    "line": 8,
+    "call_source_sha256": {
+      "usr.sbin/newsyslog/newsyslog.c": "3f9396d72992d03428873316d9be46588011f354fa308af8bda3c521207f31ee"
+    }
+  },
+  {
+    "source": "usr.sbin/ntp/ntpd/timediscipline_provider.d",
+    "provider": "timediscipline",
+    "name": "select-start",
+    "types": [
+      "uintptr_t"
+    ],
+    "kind": "userspace",
+    "source_sha256": "4cb850deb42314fa3e491a45c4200ff3cc3d8ce3f7058cca69c80095ec7d700b",
+    "call_sources": [
+      "contrib/ntp/ntpd/ntp_proto.c",
+      "contrib/ntp/ntpd/ntp_loopfilter.c"
+    ],
+    "line": 4,
+    "call_source_sha256": {
+      "contrib/ntp/ntpd/ntp_proto.c": "09e9e89cc0dacac505bc728549ee62f64aa6810c8132cfe0e44d22809ba72ae9",
+      "contrib/ntp/ntpd/ntp_loopfilter.c": "dfed1ec187c28ef5c98672983570646ad85f5c0a0d2c2ce593d51b7bc7b8cfc7"
+    }
+  },
+  {
+    "source": "usr.sbin/ntp/ntpd/timediscipline_provider.d",
+    "provider": "timediscipline",
+    "name": "select-done",
+    "types": [
+      "uintptr_t",
+      "int"
+    ],
+    "kind": "userspace",
+    "source_sha256": "4cb850deb42314fa3e491a45c4200ff3cc3d8ce3f7058cca69c80095ec7d700b",
+    "call_sources": [
+      "contrib/ntp/ntpd/ntp_proto.c",
+      "contrib/ntp/ntpd/ntp_loopfilter.c"
+    ],
+    "line": 5,
+    "call_source_sha256": {
+      "contrib/ntp/ntpd/ntp_proto.c": "09e9e89cc0dacac505bc728549ee62f64aa6810c8132cfe0e44d22809ba72ae9",
+      "contrib/ntp/ntpd/ntp_loopfilter.c": "dfed1ec187c28ef5c98672983570646ad85f5c0a0d2c2ce593d51b7bc7b8cfc7"
+    }
+  },
+  {
+    "source": "usr.sbin/ntp/ntpd/timediscipline_provider.d",
+    "provider": "timediscipline",
+    "name": "adjust-start",
+    "types": [
+      "uintptr_t"
+    ],
+    "kind": "userspace",
+    "source_sha256": "4cb850deb42314fa3e491a45c4200ff3cc3d8ce3f7058cca69c80095ec7d700b",
+    "call_sources": [
+      "contrib/ntp/ntpd/ntp_proto.c",
+      "contrib/ntp/ntpd/ntp_loopfilter.c"
+    ],
+    "line": 6,
+    "call_source_sha256": {
+      "contrib/ntp/ntpd/ntp_proto.c": "09e9e89cc0dacac505bc728549ee62f64aa6810c8132cfe0e44d22809ba72ae9",
+      "contrib/ntp/ntpd/ntp_loopfilter.c": "dfed1ec187c28ef5c98672983570646ad85f5c0a0d2c2ce593d51b7bc7b8cfc7"
+    }
+  },
+  {
+    "source": "usr.sbin/ntp/ntpd/timediscipline_provider.d",
+    "provider": "timediscipline",
+    "name": "adjust-done",
+    "types": [
+      "uintptr_t",
+      "int"
+    ],
+    "kind": "userspace",
+    "source_sha256": "4cb850deb42314fa3e491a45c4200ff3cc3d8ce3f7058cca69c80095ec7d700b",
+    "call_sources": [
+      "contrib/ntp/ntpd/ntp_proto.c",
+      "contrib/ntp/ntpd/ntp_loopfilter.c"
+    ],
+    "line": 7,
+    "call_source_sha256": {
+      "contrib/ntp/ntpd/ntp_proto.c": "09e9e89cc0dacac505bc728549ee62f64aa6810c8132cfe0e44d22809ba72ae9",
+      "contrib/ntp/ntpd/ntp_loopfilter.c": "dfed1ec187c28ef5c98672983570646ad85f5c0a0d2c2ce593d51b7bc7b8cfc7"
+    }
+  },
+  {
+    "source": "secure/lib/libssh/sshkeys_provider.d",
+    "provider": "sshkeys",
+    "name": "newkeys-start",
+    "types": [
+      "uintptr_t",
+      "int"
+    ],
+    "kind": "userspace",
+    "source_sha256": "ca260356de5c6ee1993c7454653e9560dd74ef6c6b80f53480fa2621ebbaeae9",
+    "call_sources": [
+      "crypto/openssh/kex.c",
+      "crypto/openssh/channels.c"
+    ],
+    "line": 4,
+    "call_source_sha256": {
+      "crypto/openssh/kex.c": "e1ce93f7a6c09f3464064bef9f2be58e131b9033c0af53e5a52911fdc938e963",
+      "crypto/openssh/channels.c": "56e7d06dcb4cfd413b6008eea2538d5caa88f24fa8a1c11d54e7604c92fb5b73"
+    }
+  },
+  {
+    "source": "secure/lib/libssh/sshkeys_provider.d",
+    "provider": "sshkeys",
+    "name": "newkeys-done",
+    "types": [
+      "uintptr_t",
+      "int"
+    ],
+    "kind": "userspace",
+    "source_sha256": "ca260356de5c6ee1993c7454653e9560dd74ef6c6b80f53480fa2621ebbaeae9",
+    "call_sources": [
+      "crypto/openssh/kex.c",
+      "crypto/openssh/channels.c"
+    ],
+    "line": 5,
+    "call_source_sha256": {
+      "crypto/openssh/kex.c": "e1ce93f7a6c09f3464064bef9f2be58e131b9033c0af53e5a52911fdc938e963",
+      "crypto/openssh/channels.c": "56e7d06dcb4cfd413b6008eea2538d5caa88f24fa8a1c11d54e7604c92fb5b73"
+    }
+  },
+  {
+    "source": "secure/lib/libssh/sshkeys_provider.d",
+    "provider": "sshkeys",
+    "name": "channel-new",
+    "types": [
+      "uintptr_t",
+      "int",
+      "int"
+    ],
+    "kind": "userspace",
+    "source_sha256": "ca260356de5c6ee1993c7454653e9560dd74ef6c6b80f53480fa2621ebbaeae9",
+    "call_sources": [
+      "crypto/openssh/kex.c",
+      "crypto/openssh/channels.c"
+    ],
+    "line": 6,
+    "call_source_sha256": {
+      "crypto/openssh/kex.c": "e1ce93f7a6c09f3464064bef9f2be58e131b9033c0af53e5a52911fdc938e963",
+      "crypto/openssh/channels.c": "56e7d06dcb4cfd413b6008eea2538d5caa88f24fa8a1c11d54e7604c92fb5b73"
+    }
+  },
+  {
+    "source": "secure/lib/libssh/sshkeys_provider.d",
+    "provider": "sshkeys",
+    "name": "channel-free",
+    "types": [
+      "uintptr_t",
+      "int"
+    ],
+    "kind": "userspace",
+    "source_sha256": "ca260356de5c6ee1993c7454653e9560dd74ef6c6b80f53480fa2621ebbaeae9",
+    "call_sources": [
+      "crypto/openssh/kex.c",
+      "crypto/openssh/channels.c"
+    ],
+    "line": 7,
+    "call_source_sha256": {
+      "crypto/openssh/kex.c": "e1ce93f7a6c09f3464064bef9f2be58e131b9033c0af53e5a52911fdc938e963",
+      "crypto/openssh/channels.c": "56e7d06dcb4cfd413b6008eea2538d5caa88f24fa8a1c11d54e7604c92fb5b73"
+    }
+  },
+  {
+    "source": "secure/lib/libssh/sshkeys_provider.d",
+    "provider": "sshkeys",
+    "name": "channel-reply",
+    "types": [
+      "uintptr_t",
+      "int",
+      "int"
+    ],
+    "kind": "userspace",
+    "source_sha256": "ca260356de5c6ee1993c7454653e9560dd74ef6c6b80f53480fa2621ebbaeae9",
+    "call_sources": [
+      "crypto/openssh/kex.c",
+      "crypto/openssh/channels.c"
+    ],
+    "line": 8,
+    "call_source_sha256": {
+      "crypto/openssh/kex.c": "e1ce93f7a6c09f3464064bef9f2be58e131b9033c0af53e5a52911fdc938e963",
+      "crypto/openssh/channels.c": "56e7d06dcb4cfd413b6008eea2538d5caa88f24fa8a1c11d54e7604c92fb5b73"
+    }
+  },
+  {
+    "source": "crypto/openssh/sshauth_provider.d",
+    "provider": "sshauth",
+    "name": "decision",
+    "types": [
+      "uintptr_t",
+      "int",
+      "int",
+      "int",
+      "int"
+    ],
+    "kind": "userspace",
+    "source_sha256": "a832cefb5aea82b7af3876c4ba9cc1b55aeaf488248b060a175394e9971fd655",
+    "call_sources": [
+      "crypto/openssh/auth2.c"
+    ],
+    "line": 4,
+    "call_source_sha256": {
+      "crypto/openssh/auth2.c": "219afec9df30ff0ec107750b2404e3a1f780f6e6eb4b66c905ab43ce32db6137"
+    }
+  },
+  {
+    "source": "crypto/openssh/sshauth_provider.d",
+    "provider": "sshauth",
+    "name": "method-start",
+    "types": [
+      "uintptr_t",
+      "int"
+    ],
+    "kind": "userspace",
+    "source_sha256": "a832cefb5aea82b7af3876c4ba9cc1b55aeaf488248b060a175394e9971fd655",
+    "call_sources": [
+      "crypto/openssh/auth2.c"
+    ],
+    "line": 5,
+    "call_source_sha256": {
+      "crypto/openssh/auth2.c": "219afec9df30ff0ec107750b2404e3a1f780f6e6eb4b66c905ab43ce32db6137"
+    }
+  },
+  {
+    "source": "crypto/openssh/sshauth_provider.d",
+    "provider": "sshauth",
+    "name": "method-done",
+    "types": [
+      "uintptr_t",
+      "int",
+      "int"
+    ],
+    "kind": "userspace",
+    "source_sha256": "a832cefb5aea82b7af3876c4ba9cc1b55aeaf488248b060a175394e9971fd655",
+    "call_sources": [
+      "crypto/openssh/auth2.c"
+    ],
+    "line": 6,
+    "call_source_sha256": {
+      "crypto/openssh/auth2.c": "219afec9df30ff0ec107750b2404e3a1f780f6e6eb4b66c905ab43ce32db6137"
+    }
+  },
+  {
+    "source": "libexec/rtld-elf/rtldtrace_provider.d",
+    "provider": "rtldtrace",
+    "name": "load-start",
+    "types": [
+      "uintptr_t",
+      "int"
+    ],
+    "kind": "userspace",
+    "source_sha256": "9fcfbc719a6aea8a2c1db08a5e2530c5e98fe32dacbfe57c012a47c588f44d74",
+    "call_sources": [
+      "libexec/rtld-elf/rtld.c"
+    ],
+    "line": 4,
+    "call_source_sha256": {
+      "libexec/rtld-elf/rtld.c": "9235c27bdc317238bf166d7c5a2ca889368e87d005c8354f6bad237d33b637a2"
+    }
+  },
+  {
+    "source": "libexec/rtld-elf/rtldtrace_provider.d",
+    "provider": "rtldtrace",
+    "name": "load-done",
+    "types": [
+      "uintptr_t",
+      "uintptr_t"
+    ],
+    "kind": "userspace",
+    "source_sha256": "9fcfbc719a6aea8a2c1db08a5e2530c5e98fe32dacbfe57c012a47c588f44d74",
+    "call_sources": [
+      "libexec/rtld-elf/rtld.c"
+    ],
+    "line": 5,
+    "call_source_sha256": {
+      "libexec/rtld-elf/rtld.c": "9235c27bdc317238bf166d7c5a2ca889368e87d005c8354f6bad237d33b637a2"
+    }
+  },
+  {
+    "source": "libexec/rtld-elf/rtldtrace_provider.d",
+    "provider": "rtldtrace",
+    "name": "relocate-start",
+    "types": [
+      "uintptr_t"
+    ],
+    "kind": "userspace",
+    "source_sha256": "9fcfbc719a6aea8a2c1db08a5e2530c5e98fe32dacbfe57c012a47c588f44d74",
+    "call_sources": [
+      "libexec/rtld-elf/rtld.c"
+    ],
+    "line": 6,
+    "call_source_sha256": {
+      "libexec/rtld-elf/rtld.c": "9235c27bdc317238bf166d7c5a2ca889368e87d005c8354f6bad237d33b637a2"
+    }
+  },
+  {
+    "source": "libexec/rtld-elf/rtldtrace_provider.d",
+    "provider": "rtldtrace",
+    "name": "relocate-done",
+    "types": [
+      "uintptr_t",
+      "int"
+    ],
+    "kind": "userspace",
+    "source_sha256": "9fcfbc719a6aea8a2c1db08a5e2530c5e98fe32dacbfe57c012a47c588f44d74",
+    "call_sources": [
+      "libexec/rtld-elf/rtld.c"
+    ],
+    "line": 7,
+    "call_source_sha256": {
+      "libexec/rtld-elf/rtld.c": "9235c27bdc317238bf166d7c5a2ca889368e87d005c8354f6bad237d33b637a2"
+    }
+  },
+  {
+    "source": "libexec/rtld-elf/rtldtrace_provider.d",
+    "provider": "rtldtrace",
+    "name": "init-start",
+    "types": [
+      "uintptr_t"
+    ],
+    "kind": "userspace",
+    "source_sha256": "9fcfbc719a6aea8a2c1db08a5e2530c5e98fe32dacbfe57c012a47c588f44d74",
+    "call_sources": [
+      "libexec/rtld-elf/rtld.c"
+    ],
+    "line": 8,
+    "call_source_sha256": {
+      "libexec/rtld-elf/rtld.c": "9235c27bdc317238bf166d7c5a2ca889368e87d005c8354f6bad237d33b637a2"
+    }
+  },
+  {
+    "source": "libexec/rtld-elf/rtldtrace_provider.d",
+    "provider": "rtldtrace",
+    "name": "init-done",
+    "types": [
+      "uintptr_t"
+    ],
+    "kind": "userspace",
+    "source_sha256": "9fcfbc719a6aea8a2c1db08a5e2530c5e98fe32dacbfe57c012a47c588f44d74",
+    "call_sources": [
+      "libexec/rtld-elf/rtld.c"
+    ],
+    "line": 9,
+    "call_source_sha256": {
+      "libexec/rtld-elf/rtld.c": "9235c27bdc317238bf166d7c5a2ca889368e87d005c8354f6bad237d33b637a2"
+    }
+  },
+  {
+    "source": "sbin/devd/devd_provider.d",
+    "provider": "devd",
+    "name": "event-start",
+    "types": [
+      "int"
+    ],
+    "kind": "userspace",
+    "source_sha256": "561f670070a6782b4fa6c3eb663ff7b44e78b100bdcd5339482194fa2531542b",
+    "call_sources": [
+      "sbin/devd/devd.cc"
+    ],
+    "line": 9,
+    "call_source_sha256": {
+      "sbin/devd/devd.cc": "542abe215424a6918c4a0dfe8252de25999b2f504e9b3a934ed01df68abe4e22"
+    }
+  },
+  {
+    "source": "sbin/devd/devd_provider.d",
+    "provider": "devd",
+    "name": "event-done",
+    "types": [
+      "int"
+    ],
+    "kind": "userspace",
+    "source_sha256": "561f670070a6782b4fa6c3eb663ff7b44e78b100bdcd5339482194fa2531542b",
+    "call_sources": [
+      "sbin/devd/devd.cc"
+    ],
+    "line": 10,
+    "call_source_sha256": {
+      "sbin/devd/devd.cc": "542abe215424a6918c4a0dfe8252de25999b2f504e9b3a934ed01df68abe4e22"
+    }
+  },
+  {
+    "source": "sbin/devd/devd_provider.d",
+    "provider": "devd",
+    "name": "rule",
+    "types": [
+      "uintptr_t",
+      "int"
+    ],
+    "kind": "userspace",
+    "source_sha256": "561f670070a6782b4fa6c3eb663ff7b44e78b100bdcd5339482194fa2531542b",
+    "call_sources": [
+      "sbin/devd/devd.cc"
+    ],
+    "line": 11,
+    "call_source_sha256": {
+      "sbin/devd/devd.cc": "542abe215424a6918c4a0dfe8252de25999b2f504e9b3a934ed01df68abe4e22"
+    }
+  },
+  {
+    "source": "sbin/devd/devd_provider.d",
+    "provider": "devd",
+    "name": "action-start",
+    "types": [
+      "uintptr_t"
+    ],
+    "kind": "userspace",
+    "source_sha256": "561f670070a6782b4fa6c3eb663ff7b44e78b100bdcd5339482194fa2531542b",
+    "call_sources": [
+      "sbin/devd/devd.cc"
+    ],
+    "line": 12,
+    "call_source_sha256": {
+      "sbin/devd/devd.cc": "542abe215424a6918c4a0dfe8252de25999b2f504e9b3a934ed01df68abe4e22"
+    }
+  },
+  {
+    "source": "sbin/devd/devd_provider.d",
+    "provider": "devd",
+    "name": "action-done",
+    "types": [
+      "uintptr_t",
+      "int"
+    ],
+    "kind": "userspace",
+    "source_sha256": "561f670070a6782b4fa6c3eb663ff7b44e78b100bdcd5339482194fa2531542b",
+    "call_sources": [
+      "sbin/devd/devd.cc"
+    ],
+    "line": 13,
+    "call_source_sha256": {
+      "sbin/devd/devd.cc": "542abe215424a6918c4a0dfe8252de25999b2f504e9b3a934ed01df68abe4e22"
+    }
+  },
+  {
+    "source": "sbin/devd/devd_provider.d",
+    "provider": "devd",
+    "name": "child",
+    "types": [
+      "int"
+    ],
+    "kind": "userspace",
+    "source_sha256": "561f670070a6782b4fa6c3eb663ff7b44e78b100bdcd5339482194fa2531542b",
+    "call_sources": [
+      "sbin/devd/devd.cc"
+    ],
+    "line": 14,
+    "call_source_sha256": {
+      "sbin/devd/devd.cc": "542abe215424a6918c4a0dfe8252de25999b2f504e9b3a934ed01df68abe4e22"
+    }
+  },
+  {
+    "source": "libexec/rtld-elf/rtldtrace_provider.d",
+    "provider": "rtldtrace",
+    "name": "dlopen-start",
+    "types": [
+      "uintptr_t",
+      "int",
+      "int"
+    ],
+    "kind": "userspace",
+    "call_sources": [
+      "libexec/rtld-elf/rtld.c"
+    ],
+    "source_sha256": "9fcfbc719a6aea8a2c1db08a5e2530c5e98fe32dacbfe57c012a47c588f44d74",
+    "call_source_sha256": {
+      "libexec/rtld-elf/rtld.c": "9235c27bdc317238bf166d7c5a2ca889368e87d005c8354f6bad237d33b637a2"
+    },
+    "line": 10
+  },
+  {
+    "source": "libexec/rtld-elf/rtldtrace_provider.d",
+    "provider": "rtldtrace",
+    "name": "dlopen-done",
+    "types": [
+      "uintptr_t",
+      "int",
+      "int",
+      "uintptr_t"
+    ],
+    "kind": "userspace",
+    "call_sources": [
+      "libexec/rtld-elf/rtld.c"
+    ],
+    "source_sha256": "9fcfbc719a6aea8a2c1db08a5e2530c5e98fe32dacbfe57c012a47c588f44d74",
+    "call_source_sha256": {
+      "libexec/rtld-elf/rtld.c": "9235c27bdc317238bf166d7c5a2ca889368e87d005c8354f6bad237d33b637a2"
+    },
+    "line": 11
+  },
+  {
+    "source": "libexec/rtld-elf/rtldtrace_provider.d",
+    "provider": "rtldtrace",
+    "name": "dlclose-start",
+    "types": [
+      "uintptr_t"
+    ],
+    "kind": "userspace",
+    "call_sources": [
+      "libexec/rtld-elf/rtld.c"
+    ],
+    "source_sha256": "9fcfbc719a6aea8a2c1db08a5e2530c5e98fe32dacbfe57c012a47c588f44d74",
+    "call_source_sha256": {
+      "libexec/rtld-elf/rtld.c": "9235c27bdc317238bf166d7c5a2ca889368e87d005c8354f6bad237d33b637a2"
+    },
+    "line": 12
+  },
+  {
+    "source": "libexec/rtld-elf/rtldtrace_provider.d",
+    "provider": "rtldtrace",
+    "name": "dlclose-done",
+    "types": [
+      "uintptr_t",
+      "int"
+    ],
+    "kind": "userspace",
+    "call_sources": [
+      "libexec/rtld-elf/rtld.c"
+    ],
+    "source_sha256": "9fcfbc719a6aea8a2c1db08a5e2530c5e98fe32dacbfe57c012a47c588f44d74",
+    "call_source_sha256": {
+      "libexec/rtld-elf/rtld.c": "9235c27bdc317238bf166d7c5a2ca889368e87d005c8354f6bad237d33b637a2"
+    },
+    "line": 13
+  },
+  {
+    "source": "sys/kern/sys_process.c",
+    "provider": "ptrace",
+    "name": "request-start",
+    "types": [
+      "int",
+      "pid_t",
+      "int",
+      "int"
+    ],
+    "kind": "kernel",
+    "source_sha256": "028310687c1adb2b5f038a8468baa28558e6879aff4840a7a72a87623db0cf00",
+    "line": 78
+  },
+  {
+    "source": "sys/kern/sys_process.c",
+    "provider": "ptrace",
+    "name": "request-done",
+    "types": [
+      "int",
+      "pid_t",
+      "int",
+      "int",
+      "int"
+    ],
+    "kind": "kernel",
+    "source_sha256": "028310687c1adb2b5f038a8468baa28558e6879aff4840a7a72a87623db0cf00",
+    "line": 79
+  },
+  {
+    "source": "sys/security/mac/mac_framework.c",
+    "provider": "mac_framework",
+    "name": "hook-start",
+    "types": [
+      "char *",
+      "char *"
+    ],
+    "kind": "kernel",
+    "source_sha256": "80e96f2a29df9e49dad1edbe372b33835709046753f1b08aa8f2a391aee7bb71",
+    "line": 94
+  },
+  {
+    "source": "sys/security/mac/mac_framework.c",
+    "provider": "mac_framework",
+    "name": "hook-done",
+    "types": [
+      "char *",
+      "char *",
+      "int",
+      "int"
+    ],
+    "kind": "kernel",
+    "source_sha256": "80e96f2a29df9e49dad1edbe372b33835709046753f1b08aa8f2a391aee7bb71",
+    "line": 95
+  },
+  {
+    "source": "sys/security/mac/mac_framework.c",
+    "provider": "mac_framework",
+    "name": "register-start",
+    "types": [
+      "struct mac_policy_conf *"
+    ],
+    "kind": "kernel",
+    "source_sha256": "80e96f2a29df9e49dad1edbe372b33835709046753f1b08aa8f2a391aee7bb71",
+    "line": 96
+  },
+  {
+    "source": "sys/security/mac/mac_framework.c",
+    "provider": "mac_framework",
+    "name": "register-done",
+    "types": [
+      "struct mac_policy_conf *",
+      "int"
+    ],
+    "kind": "kernel",
+    "source_sha256": "80e96f2a29df9e49dad1edbe372b33835709046753f1b08aa8f2a391aee7bb71",
+    "line": 97
+  },
+  {
+    "source": "sys/security/mac/mac_framework.c",
+    "provider": "mac_framework",
+    "name": "unregister-start",
+    "types": [
+      "struct mac_policy_conf *"
+    ],
+    "kind": "kernel",
+    "source_sha256": "80e96f2a29df9e49dad1edbe372b33835709046753f1b08aa8f2a391aee7bb71",
+    "line": 98
+  },
+  {
+    "source": "sys/security/mac/mac_framework.c",
+    "provider": "mac_framework",
+    "name": "unregister-done",
+    "types": [
+      "struct mac_policy_conf *",
+      "int"
+    ],
+    "kind": "kernel",
+    "source_sha256": "80e96f2a29df9e49dad1edbe372b33835709046753f1b08aa8f2a391aee7bb71",
+    "line": 99
+  },
+  {
+    "source": "sys/security/mac/mac_label.c",
+    "provider": "mac_label",
+    "name": "init",
+    "types": [
+      "struct label *"
+    ],
+    "kind": "kernel",
+    "source_sha256": "98ac35222d53945a0ba1c27f3a5743c3d852b7634e10d5751bbc59cdc090dc5d",
+    "line": 54
+  },
+  {
+    "source": "sys/security/mac/mac_label.c",
+    "provider": "mac_label",
+    "name": "destroy",
+    "types": [
+      "struct label *"
+    ],
+    "kind": "kernel",
+    "source_sha256": "98ac35222d53945a0ba1c27f3a5743c3d852b7634e10d5751bbc59cdc090dc5d",
+    "line": 55
+  },
+  {
+    "source": "sys/security/mac/mac_label.c",
+    "provider": "mac_label",
+    "name": "alloc",
+    "types": [
+      "struct label *",
+      "int"
+    ],
+    "kind": "kernel",
+    "source_sha256": "98ac35222d53945a0ba1c27f3a5743c3d852b7634e10d5751bbc59cdc090dc5d",
+    "line": 56
+  },
+  {
+    "source": "sys/security/mac/mac_label.c",
+    "provider": "mac_label",
+    "name": "free",
+    "types": [
+      "struct label *"
+    ],
+    "kind": "kernel",
+    "source_sha256": "98ac35222d53945a0ba1c27f3a5743c3d852b7634e10d5751bbc59cdc090dc5d",
+    "line": 57
+  },
+  {
+    "source": "sys/security/mac/mac_label.c",
+    "provider": "mac_label",
+    "name": "set",
+    "types": [
+      "struct label *",
+      "int",
+      "intptr_t"
+    ],
+    "kind": "kernel",
+    "source_sha256": "98ac35222d53945a0ba1c27f3a5743c3d852b7634e10d5751bbc59cdc090dc5d",
+    "line": 58
+  },
+  {
+    "source": "sys/kern/sys_capability.c",
+    "provider": "capsicum",
+    "name": "limit-start",
+    "types": [
+      "char *",
+      "int"
+    ],
+    "kind": "kernel",
+    "source_sha256": "58445683c54d39c1ee8ffbe49eb5021d53bafb372b5bf789a8d3ec6ba79ea0e3",
+    "line": 105
+  },
+  {
+    "source": "sys/kern/sys_capability.c",
+    "provider": "capsicum",
+    "name": "limit-done",
+    "types": [
+      "char *",
+      "int",
+      "int"
+    ],
+    "kind": "kernel",
+    "source_sha256": "58445683c54d39c1ee8ffbe49eb5021d53bafb372b5bf789a8d3ec6ba79ea0e3",
+    "line": 104
+  },
+  {
+    "source": "sys/kern/sys_capability.c",
+    "provider": "capsicum",
+    "name": "check-allow",
+    "types": [
+      "const cap_rights_t *",
+      "const cap_rights_t *",
+      "int"
+    ],
+    "kind": "kernel",
+    "source_sha256": "58445683c54d39c1ee8ffbe49eb5021d53bafb372b5bf789a8d3ec6ba79ea0e3",
+    "line": 103
+  },
+  {
+    "source": "sys/kern/sys_capability.c",
+    "provider": "capsicum",
+    "name": "ioctl-check",
+    "types": [
+      "int",
+      "u_long",
+      "int"
+    ],
+    "kind": "kernel",
+    "source_sha256": "58445683c54d39c1ee8ffbe49eb5021d53bafb372b5bf789a8d3ec6ba79ea0e3",
+    "line": 102
+  },
+  {
+    "source": "sys/kern/sys_capability.c",
+    "provider": "capsicum",
+    "name": "fcntl-check",
+    "types": [
+      "struct filedescent *",
+      "int",
+      "int"
+    ],
+    "kind": "kernel",
+    "source_sha256": "58445683c54d39c1ee8ffbe49eb5021d53bafb372b5bf789a8d3ec6ba79ea0e3",
+    "line": 101
+  },
+  {
+    "source": "sys/kern/sys_capability.c",
+    "provider": "capsicum",
+    "name": "xfer-rights-start",
+    "types": [
+      "int",
+      "const cap_rights_t *"
+    ],
+    "kind": "kernel",
+    "source_sha256": "58445683c54d39c1ee8ffbe49eb5021d53bafb372b5bf789a8d3ec6ba79ea0e3",
+    "line": 100
+  },
+  {
+    "source": "sys/kern/sys_capability.c",
+    "provider": "capsicum",
+    "name": "xfer-rights-done",
+    "types": [
+      "int",
+      "const cap_rights_t *",
+      "int"
+    ],
+    "kind": "kernel",
+    "source_sha256": "58445683c54d39c1ee8ffbe49eb5021d53bafb372b5bf789a8d3ec6ba79ea0e3",
+    "line": 99
+  },
+  {
+    "source": "sys/kern/sys_capability.c",
+    "provider": "capsicum",
+    "name": "xfer-ioctls-start",
+    "types": [
+      "int",
+      "size_t"
+    ],
+    "kind": "kernel",
+    "source_sha256": "58445683c54d39c1ee8ffbe49eb5021d53bafb372b5bf789a8d3ec6ba79ea0e3",
+    "line": 98
+  },
+  {
+    "source": "sys/kern/sys_capability.c",
+    "provider": "capsicum",
+    "name": "xfer-ioctls-done",
+    "types": [
+      "int",
+      "size_t",
+      "int"
+    ],
+    "kind": "kernel",
+    "source_sha256": "58445683c54d39c1ee8ffbe49eb5021d53bafb372b5bf789a8d3ec6ba79ea0e3",
+    "line": 97
+  },
+  {
+    "source": "sys/kern/sys_capability.c",
+    "provider": "capsicum",
+    "name": "xfer-fcntls-start",
+    "types": [
+      "int",
+      "uint32_t"
+    ],
+    "kind": "kernel",
+    "source_sha256": "58445683c54d39c1ee8ffbe49eb5021d53bafb372b5bf789a8d3ec6ba79ea0e3",
+    "line": 96
+  },
+  {
+    "source": "sys/kern/sys_capability.c",
+    "provider": "capsicum",
+    "name": "xfer-fcntls-done",
+    "types": [
+      "int",
+      "uint32_t",
+      "int"
+    ],
+    "kind": "kernel",
+    "source_sha256": "58445683c54d39c1ee8ffbe49eb5021d53bafb372b5bf789a8d3ec6ba79ea0e3",
+    "line": 95
+  },
+  {
+    "source": "sys/security/mac/mac_framework.c",
+    "provider": "mac_framework",
+    "name": "hook-args",
+    "types": [
+      "char *",
+      "char *",
+      "u_int",
+      "const uint64_t *"
+    ],
+    "kind": "kernel",
+    "source_sha256": "80e96f2a29df9e49dad1edbe372b33835709046753f1b08aa8f2a391aee7bb71"
+  },
+  {
+    "source": "sys/security/mac/mac_framework.c",
+    "provider": "mac_framework",
+    "name": "hook-skip",
+    "types": [
+      "char *",
+      "char *",
+      "int"
+    ],
+    "kind": "kernel",
+    "source_sha256": "80e96f2a29df9e49dad1edbe372b33835709046753f1b08aa8f2a391aee7bb71"
+  }
+]

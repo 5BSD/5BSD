@@ -1,0 +1,6845 @@
+{
+  "destroy": {
+    "result": "void",
+    "arguments": [
+      {
+        "name": "mpc",
+        "type": "struct mac_policy_conf *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "init": {
+    "result": "void",
+    "arguments": [
+      {
+        "name": "mpc",
+        "type": "struct mac_policy_conf *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "syscall": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "td",
+        "type": "struct thread *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "call",
+        "type": "int",
+        "encoding": "scalar"
+      },
+      {
+        "name": "arg",
+        "type": "void *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "bpfdesc_check_receive": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "d",
+        "type": "struct bpf_d *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "dlabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "ifp",
+        "type": "struct ifnet *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "ifplabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "bpfdesc_create": {
+    "result": "void",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "d",
+        "type": "struct bpf_d *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "dlabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "bpfdesc_create_mbuf": {
+    "result": "void",
+    "arguments": [
+      {
+        "name": "d",
+        "type": "struct bpf_d *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "dlabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "m",
+        "type": "struct mbuf *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "mlabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "bpfdesc_destroy_label": {
+    "result": "void",
+    "arguments": [
+      {
+        "name": "label",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "bpfdesc_init_label": {
+    "result": "void",
+    "arguments": [
+      {
+        "name": "label",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "cred_associate_nfsd": {
+    "result": "void",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "cred_check_relabel": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "newlabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "cred_check_setaudit": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "ai",
+        "type": "struct auditinfo *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "cred_check_setaudit_addr": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "aia",
+        "type": "struct auditinfo_addr *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "cred_check_setauid": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "auid",
+        "type": "uid_t",
+        "encoding": "scalar"
+      }
+    ]
+  },
+  "cred_setcred_enter": {
+    "result": "void",
+    "arguments": []
+  },
+  "cred_check_setcred": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "flags",
+        "type": "u_int",
+        "encoding": "scalar"
+      },
+      {
+        "name": "old_cred",
+        "type": "const struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "new_cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "cred_setcred_exit": {
+    "result": "void",
+    "arguments": []
+  },
+  "cred_check_setuid": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "uid",
+        "type": "uid_t",
+        "encoding": "scalar"
+      }
+    ]
+  },
+  "cred_check_seteuid": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "euid",
+        "type": "uid_t",
+        "encoding": "scalar"
+      }
+    ]
+  },
+  "cred_check_setgid": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "gid",
+        "type": "gid_t",
+        "encoding": "scalar"
+      }
+    ]
+  },
+  "cred_check_setegid": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "egid",
+        "type": "gid_t",
+        "encoding": "scalar"
+      }
+    ]
+  },
+  "cred_check_setgroups": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "ngroups",
+        "type": "int",
+        "encoding": "scalar"
+      },
+      {
+        "name": "gidset",
+        "type": "gid_t *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "cred_check_setreuid": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "ruid",
+        "type": "uid_t",
+        "encoding": "scalar"
+      },
+      {
+        "name": "euid",
+        "type": "uid_t",
+        "encoding": "scalar"
+      }
+    ]
+  },
+  "cred_check_setregid": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "rgid",
+        "type": "gid_t",
+        "encoding": "scalar"
+      },
+      {
+        "name": "egid",
+        "type": "gid_t",
+        "encoding": "scalar"
+      }
+    ]
+  },
+  "cred_check_setresuid": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "ruid",
+        "type": "uid_t",
+        "encoding": "scalar"
+      },
+      {
+        "name": "euid",
+        "type": "uid_t",
+        "encoding": "scalar"
+      },
+      {
+        "name": "suid",
+        "type": "uid_t",
+        "encoding": "scalar"
+      }
+    ]
+  },
+  "cred_check_setresgid": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "rgid",
+        "type": "gid_t",
+        "encoding": "scalar"
+      },
+      {
+        "name": "egid",
+        "type": "gid_t",
+        "encoding": "scalar"
+      },
+      {
+        "name": "sgid",
+        "type": "gid_t",
+        "encoding": "scalar"
+      }
+    ]
+  },
+  "cred_check_visible": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cr1",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "cr2",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "cred_copy_label": {
+    "result": "void",
+    "arguments": [
+      {
+        "name": "src",
+        "type": "struct label *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "dest",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "cred_create_kproc0": {
+    "result": "void",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "cred_create_init": {
+    "result": "void",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "cred_destroy_label": {
+    "result": "void",
+    "arguments": [
+      {
+        "name": "label",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "cred_externalize_label": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "label",
+        "type": "struct label *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "element_name",
+        "type": "char *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "sb",
+        "type": "struct sbuf *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "claimed",
+        "type": "int *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "cred_init_label": {
+    "result": "void",
+    "arguments": [
+      {
+        "name": "label",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "cred_internalize_label": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "label",
+        "type": "struct label *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "element_name",
+        "type": "char *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "element_data",
+        "type": "char *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "claimed",
+        "type": "int *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "cred_relabel": {
+    "result": "void",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "newlabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "ddb_command_register": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "table",
+        "type": "struct db_command_table *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "cmd",
+        "type": "struct db_command *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "ddb_command_exec": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cmd",
+        "type": "struct db_command *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "addr",
+        "type": "db_expr_t",
+        "encoding": "scalar"
+      },
+      {
+        "name": "have_addr",
+        "type": "bool",
+        "encoding": "scalar"
+      },
+      {
+        "name": "count",
+        "type": "db_expr_t",
+        "encoding": "scalar"
+      },
+      {
+        "name": "modif",
+        "type": "char *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "devfs_create_device": {
+    "result": "void",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "mp",
+        "type": "struct mount *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "dev",
+        "type": "struct cdev *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "de",
+        "type": "struct devfs_dirent *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "delabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "devfs_create_directory": {
+    "result": "void",
+    "arguments": [
+      {
+        "name": "mp",
+        "type": "struct mount *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "dirname",
+        "type": "char *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "dirnamelen",
+        "type": "int",
+        "encoding": "scalar"
+      },
+      {
+        "name": "de",
+        "type": "struct devfs_dirent *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "delabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "devfs_create_symlink": {
+    "result": "void",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "mp",
+        "type": "struct mount *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "dd",
+        "type": "struct devfs_dirent *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "ddlabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "de",
+        "type": "struct devfs_dirent *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "delabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "devfs_destroy_label": {
+    "result": "void",
+    "arguments": [
+      {
+        "name": "label",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "devfs_init_label": {
+    "result": "void",
+    "arguments": [
+      {
+        "name": "label",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "devfs_update": {
+    "result": "void",
+    "arguments": [
+      {
+        "name": "mp",
+        "type": "struct mount *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "de",
+        "type": "struct devfs_dirent *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "delabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "vp",
+        "type": "struct vnode *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "vplabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "devfs_vnode_associate": {
+    "result": "void",
+    "arguments": [
+      {
+        "name": "mp",
+        "type": "struct mount *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "mplabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "de",
+        "type": "struct devfs_dirent *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "delabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "vp",
+        "type": "struct vnode *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "vplabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "ifnet_check_relabel": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "ifp",
+        "type": "struct ifnet *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "ifplabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "newlabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "ifnet_check_transmit": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "ifp",
+        "type": "struct ifnet *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "ifplabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "m",
+        "type": "struct mbuf *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "mlabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "ifnet_copy_label": {
+    "result": "void",
+    "arguments": [
+      {
+        "name": "src",
+        "type": "struct label *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "dest",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "ifnet_create": {
+    "result": "void",
+    "arguments": [
+      {
+        "name": "ifp",
+        "type": "struct ifnet *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "ifplabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "ifnet_create_mbuf": {
+    "result": "void",
+    "arguments": [
+      {
+        "name": "ifp",
+        "type": "struct ifnet *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "ifplabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "m",
+        "type": "struct mbuf *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "mlabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "ifnet_destroy_label": {
+    "result": "void",
+    "arguments": [
+      {
+        "name": "label",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "ifnet_externalize_label": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "label",
+        "type": "struct label *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "element_name",
+        "type": "char *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "sb",
+        "type": "struct sbuf *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "claimed",
+        "type": "int *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "ifnet_init_label": {
+    "result": "void",
+    "arguments": [
+      {
+        "name": "label",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "ifnet_internalize_label": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "label",
+        "type": "struct label *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "element_name",
+        "type": "char *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "element_data",
+        "type": "char *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "claimed",
+        "type": "int *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "ifnet_relabel": {
+    "result": "void",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "ifp",
+        "type": "struct ifnet *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "ifplabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "newlabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "inpcb_check_deliver": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "inp",
+        "type": "struct inpcb *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "inplabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "m",
+        "type": "struct mbuf *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "mlabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "inpcb_check_visible": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "inp",
+        "type": "struct inpcb *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "inplabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "inpcb_create": {
+    "result": "void",
+    "arguments": [
+      {
+        "name": "so",
+        "type": "struct socket *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "solabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "inp",
+        "type": "struct inpcb *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "inplabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "inpcb_create_mbuf": {
+    "result": "void",
+    "arguments": [
+      {
+        "name": "inp",
+        "type": "struct inpcb *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "inplabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "m",
+        "type": "struct mbuf *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "mlabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "inpcb_destroy_label": {
+    "result": "void",
+    "arguments": [
+      {
+        "name": "label",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "inpcb_init_label": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "label",
+        "type": "struct label *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "flag",
+        "type": "int",
+        "encoding": "scalar"
+      }
+    ]
+  },
+  "inpcb_sosetlabel": {
+    "result": "void",
+    "arguments": [
+      {
+        "name": "so",
+        "type": "struct socket *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "label",
+        "type": "struct label *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "inp",
+        "type": "struct inpcb *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "inplabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "ip4_check_jail": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "ia",
+        "type": "const struct in_addr *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "ifp",
+        "type": "struct ifnet *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "ip6_check_jail": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "ia6",
+        "type": "const struct in6_addr *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "ifp",
+        "type": "struct ifnet *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "ip6q_create": {
+    "result": "void",
+    "arguments": [
+      {
+        "name": "m",
+        "type": "struct mbuf *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "mlabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "q6",
+        "type": "struct ip6q *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "q6label",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "ip6q_destroy_label": {
+    "result": "void",
+    "arguments": [
+      {
+        "name": "label",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "ip6q_init_label": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "label",
+        "type": "struct label *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "flag",
+        "type": "int",
+        "encoding": "scalar"
+      }
+    ]
+  },
+  "ip6q_match": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "m",
+        "type": "struct mbuf *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "mlabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "q6",
+        "type": "struct ip6q *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "q6label",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "ip6q_reassemble": {
+    "result": "void",
+    "arguments": [
+      {
+        "name": "q6",
+        "type": "struct ip6q *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "q6label",
+        "type": "struct label *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "m",
+        "type": "struct mbuf *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "mlabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "ip6q_update": {
+    "result": "void",
+    "arguments": [
+      {
+        "name": "m",
+        "type": "struct mbuf *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "mlabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "q6",
+        "type": "struct ip6q *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "q6label",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "ipq_create": {
+    "result": "void",
+    "arguments": [
+      {
+        "name": "m",
+        "type": "struct mbuf *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "mlabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "q",
+        "type": "struct ipq *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "qlabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "ipq_destroy_label": {
+    "result": "void",
+    "arguments": [
+      {
+        "name": "label",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "ipq_init_label": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "label",
+        "type": "struct label *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "flag",
+        "type": "int",
+        "encoding": "scalar"
+      }
+    ]
+  },
+  "ipq_match": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "m",
+        "type": "struct mbuf *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "mlabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "q",
+        "type": "struct ipq *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "qlabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "ipq_reassemble": {
+    "result": "void",
+    "arguments": [
+      {
+        "name": "q",
+        "type": "struct ipq *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "qlabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "m",
+        "type": "struct mbuf *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "mlabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "ipq_update": {
+    "result": "void",
+    "arguments": [
+      {
+        "name": "m",
+        "type": "struct mbuf *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "mlabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "q",
+        "type": "struct ipq *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "qlabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "kdb_check_backend": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "be",
+        "type": "struct kdb_dbbe *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "kenv_check_dump": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "kenv_check_get": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "name",
+        "type": "char *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "kenv_check_set": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "name",
+        "type": "char *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "value",
+        "type": "char *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "kenv_check_unset": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "name",
+        "type": "char *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "kld_check_load": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "vp",
+        "type": "struct vnode *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "vplabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "kld_check_stat": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "kld_check_unload": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "mbuf_copy_label": {
+    "result": "void",
+    "arguments": [
+      {
+        "name": "src",
+        "type": "struct label *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "dest",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "mbuf_destroy_label": {
+    "result": "void",
+    "arguments": [
+      {
+        "name": "label",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "mbuf_init_label": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "label",
+        "type": "struct label *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "flag",
+        "type": "int",
+        "encoding": "scalar"
+      }
+    ]
+  },
+  "mount_check_mount": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "vp",
+        "type": "struct vnode *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "vplabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "vfsp",
+        "type": "struct vfsconf *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "optlist",
+        "type": "struct vfsoptlist **",
+        "encoding": "pointer"
+      },
+      {
+        "name": "fsflags",
+        "type": "uint64_t",
+        "encoding": "scalar"
+      }
+    ]
+  },
+  "mount_check_snapshot_create": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "snapname",
+        "type": "const char *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "mount_check_snapshot_delete": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "snapname",
+        "type": "const char *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "mount_check_snapshot_revert": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "snapname",
+        "type": "const char *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "mount_check_stat": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "mp",
+        "type": "struct mount *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "mplabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "mount_check_update": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "mp",
+        "type": "struct mount *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "mplabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "optlist",
+        "type": "struct vfsoptlist **",
+        "encoding": "pointer"
+      },
+      {
+        "name": "fsflags",
+        "type": "uint64_t",
+        "encoding": "scalar"
+      }
+    ]
+  },
+  "mount_check_unmount": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "mp",
+        "type": "struct mount *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "mplabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "flags",
+        "type": "uint64_t",
+        "encoding": "scalar"
+      }
+    ]
+  },
+  "mount_create": {
+    "result": "void",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "mp",
+        "type": "struct mount *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "mplabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "mount_destroy_label": {
+    "result": "void",
+    "arguments": [
+      {
+        "name": "label",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "mount_init_label": {
+    "result": "void",
+    "arguments": [
+      {
+        "name": "label",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "netinet_arp_send": {
+    "result": "void",
+    "arguments": [
+      {
+        "name": "ifp",
+        "type": "struct ifnet *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "ifplabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "m",
+        "type": "struct mbuf *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "mlabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "netinet_firewall_reply": {
+    "result": "void",
+    "arguments": [
+      {
+        "name": "mrecv",
+        "type": "struct mbuf *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "mrecvlabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "msend",
+        "type": "struct mbuf *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "msendlabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "netinet_firewall_send": {
+    "result": "void",
+    "arguments": [
+      {
+        "name": "m",
+        "type": "struct mbuf *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "mlabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "netinet_fragment": {
+    "result": "void",
+    "arguments": [
+      {
+        "name": "m",
+        "type": "struct mbuf *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "mlabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "frag",
+        "type": "struct mbuf *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "fraglabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "netinet_icmp_reply": {
+    "result": "void",
+    "arguments": [
+      {
+        "name": "mrecv",
+        "type": "struct mbuf *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "mrecvlabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "msend",
+        "type": "struct mbuf *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "msendlabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "netinet_icmp_replyinplace": {
+    "result": "void",
+    "arguments": [
+      {
+        "name": "m",
+        "type": "struct mbuf *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "mlabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "netinet_igmp_send": {
+    "result": "void",
+    "arguments": [
+      {
+        "name": "ifp",
+        "type": "struct ifnet *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "ifplabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "m",
+        "type": "struct mbuf *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "mlabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "netinet_tcp_reply": {
+    "result": "void",
+    "arguments": [
+      {
+        "name": "m",
+        "type": "struct mbuf *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "mlabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "netinet6_nd6_send": {
+    "result": "void",
+    "arguments": [
+      {
+        "name": "ifp",
+        "type": "struct ifnet *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "ifplabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "m",
+        "type": "struct mbuf *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "mlabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "pipe_check_ioctl": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "pp",
+        "type": "struct pipepair *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "pplabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "cmd",
+        "type": "unsigned long",
+        "encoding": "scalar"
+      },
+      {
+        "name": "data",
+        "type": "void *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "pipe_check_poll": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "pp",
+        "type": "struct pipepair *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "pplabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "pipe_check_read": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "pp",
+        "type": "struct pipepair *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "pplabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "pipe_check_relabel": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "pp",
+        "type": "struct pipepair *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "pplabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "newlabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "pipe_check_stat": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "pp",
+        "type": "struct pipepair *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "pplabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "pipe_check_write": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "pp",
+        "type": "struct pipepair *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "pplabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "pipe_copy_label": {
+    "result": "void",
+    "arguments": [
+      {
+        "name": "src",
+        "type": "struct label *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "dest",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "pipe_create": {
+    "result": "void",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "pp",
+        "type": "struct pipepair *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "pplabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "pipe_destroy_label": {
+    "result": "void",
+    "arguments": [
+      {
+        "name": "label",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "pipe_externalize_label": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "label",
+        "type": "struct label *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "element_name",
+        "type": "char *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "sb",
+        "type": "struct sbuf *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "claimed",
+        "type": "int *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "pipe_init_label": {
+    "result": "void",
+    "arguments": [
+      {
+        "name": "label",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "pipe_internalize_label": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "label",
+        "type": "struct label *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "element_name",
+        "type": "char *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "element_data",
+        "type": "char *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "claimed",
+        "type": "int *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "pipe_relabel": {
+    "result": "void",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "pp",
+        "type": "struct pipepair *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "oldlabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "newlabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "posixsem_check_getvalue": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "active_cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "file_cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "ks",
+        "type": "struct ksem *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "kslabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "posixsem_check_open": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "ks",
+        "type": "struct ksem *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "kslabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "posixsem_check_post": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "active_cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "file_cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "ks",
+        "type": "struct ksem *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "kslabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "posixsem_check_setmode": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "ks",
+        "type": "struct ksem *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "shmlabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "mode",
+        "type": "mode_t",
+        "encoding": "scalar"
+      }
+    ]
+  },
+  "posixsem_check_setowner": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "ks",
+        "type": "struct ksem *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "shmlabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "uid",
+        "type": "uid_t",
+        "encoding": "scalar"
+      },
+      {
+        "name": "gid",
+        "type": "gid_t",
+        "encoding": "scalar"
+      }
+    ]
+  },
+  "posixsem_check_stat": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "active_cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "file_cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "ks",
+        "type": "struct ksem *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "kslabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "posixsem_check_unlink": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "ks",
+        "type": "struct ksem *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "kslabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "posixsem_check_wait": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "active_cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "file_cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "ks",
+        "type": "struct ksem *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "kslabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "posixsem_create": {
+    "result": "void",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "ks",
+        "type": "struct ksem *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "kslabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "posixsem_destroy_label": {
+    "result": "void",
+    "arguments": [
+      {
+        "name": "label",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "posixsem_init_label": {
+    "result": "void",
+    "arguments": [
+      {
+        "name": "label",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "posixshm_check_create": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "path",
+        "type": "const char *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "posixshm_check_mmap": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "shmfd",
+        "type": "struct shmfd *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "shmlabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "prot",
+        "type": "int",
+        "encoding": "scalar"
+      },
+      {
+        "name": "flags",
+        "type": "int",
+        "encoding": "scalar"
+      }
+    ]
+  },
+  "posixshm_check_open": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "shmfd",
+        "type": "struct shmfd *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "shmlabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "accmode",
+        "type": "accmode_t",
+        "encoding": "scalar"
+      }
+    ]
+  },
+  "posixshm_check_read": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "active_cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "file_cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "shmfd",
+        "type": "struct shmfd *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "shmlabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "posixshm_check_setmode": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "shmfd",
+        "type": "struct shmfd *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "shmlabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "mode",
+        "type": "mode_t",
+        "encoding": "scalar"
+      }
+    ]
+  },
+  "posixshm_check_setowner": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "shmfd",
+        "type": "struct shmfd *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "shmlabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "uid",
+        "type": "uid_t",
+        "encoding": "scalar"
+      },
+      {
+        "name": "gid",
+        "type": "gid_t",
+        "encoding": "scalar"
+      }
+    ]
+  },
+  "posixshm_check_stat": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "active_cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "file_cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "shmfd",
+        "type": "struct shmfd *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "shmlabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "posixshm_check_truncate": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "active_cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "file_cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "shmfd",
+        "type": "struct shmfd *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "shmlabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "posixshm_check_unlink": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "shmfd",
+        "type": "struct shmfd *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "shmlabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "posixshm_check_write": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "active_cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "file_cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "shmfd",
+        "type": "struct shmfd *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "shmlabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "posixshm_create": {
+    "result": "void",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "shmfd",
+        "type": "struct shmfd *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "shmlabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "posixshm_destroy_label": {
+    "result": "void",
+    "arguments": [
+      {
+        "name": "label",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "posixshm_init_label": {
+    "result": "void",
+    "arguments": [
+      {
+        "name": "label",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "prison_init_label": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "label",
+        "type": "struct label *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "flag",
+        "type": "int",
+        "encoding": "scalar"
+      }
+    ]
+  },
+  "prison_check_relabel": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "pr",
+        "type": "struct prison *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "prlabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "newlabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "prison_destroy_label": {
+    "result": "void",
+    "arguments": [
+      {
+        "name": "label",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "prison_copy_label": {
+    "result": "void",
+    "arguments": [
+      {
+        "name": "src",
+        "type": "struct label *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "dest",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "prison_externalize_label": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "label",
+        "type": "struct label *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "element_name",
+        "type": "char *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "sb",
+        "type": "struct sbuf *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "claimed",
+        "type": "int *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "prison_internalize_label": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "label",
+        "type": "struct label *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "element_name",
+        "type": "char *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "element_data",
+        "type": "char *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "claimed",
+        "type": "int *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "prison_relabel": {
+    "result": "void",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "pr",
+        "type": "struct prison *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "prlabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "newlabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "prison_check_attach": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "pr",
+        "type": "struct prison *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "prlabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "prison_check_create": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "opts",
+        "type": "struct vfsoptlist *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "flags",
+        "type": "int",
+        "encoding": "scalar"
+      }
+    ]
+  },
+  "prison_check_get": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "pr",
+        "type": "struct prison *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "prlabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "opts",
+        "type": "struct vfsoptlist *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "flags",
+        "type": "int",
+        "encoding": "scalar"
+      }
+    ]
+  },
+  "prison_check_set": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "pr",
+        "type": "struct prison *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "prlabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "opts",
+        "type": "struct vfsoptlist *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "flags",
+        "type": "int",
+        "encoding": "scalar"
+      }
+    ]
+  },
+  "prison_check_remove": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "pr",
+        "type": "struct prison *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "prlabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "prison_created": {
+    "result": "void",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "pr",
+        "type": "struct prison *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "prlabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "prison_cleanup": {
+    "result": "void",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "pr",
+        "type": "struct prison *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "prison_attached": {
+    "result": "void",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "pr",
+        "type": "struct prison *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "prlabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "p",
+        "type": "struct proc *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "proclabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "priv_check": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "priv",
+        "type": "int",
+        "encoding": "scalar"
+      }
+    ]
+  },
+  "priv_grant": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "priv",
+        "type": "int",
+        "encoding": "scalar"
+      }
+    ]
+  },
+  "proc_check_core": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "p",
+        "type": "struct proc *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "proc_check_debug": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "p",
+        "type": "struct proc *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "proc_check_fork": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "flags",
+        "type": "int",
+        "encoding": "scalar"
+      }
+    ]
+  },
+  "proc_check_mmap_anon": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "addr",
+        "type": "vm_offset_t",
+        "encoding": "scalar"
+      },
+      {
+        "name": "len",
+        "type": "vm_size_t",
+        "encoding": "scalar"
+      },
+      {
+        "name": "prot",
+        "type": "int",
+        "encoding": "scalar"
+      },
+      {
+        "name": "flags",
+        "type": "int",
+        "encoding": "scalar"
+      }
+    ]
+  },
+  "proc_check_mprotect": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "addr",
+        "type": "vm_offset_t",
+        "encoding": "scalar"
+      },
+      {
+        "name": "len",
+        "type": "vm_size_t",
+        "encoding": "scalar"
+      },
+      {
+        "name": "prot",
+        "type": "int",
+        "encoding": "scalar"
+      }
+    ]
+  },
+  "proc_check_ktrace": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "target",
+        "type": "struct proc *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "ops",
+        "type": "int",
+        "encoding": "scalar"
+      }
+    ]
+  },
+  "proc_check_sched": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "p",
+        "type": "struct proc *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "proc_check_signal": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "proc",
+        "type": "struct proc *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "signum",
+        "type": "int",
+        "encoding": "scalar"
+      }
+    ]
+  },
+  "proc_check_suspend": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "p",
+        "type": "struct proc *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "sig",
+        "type": "int",
+        "encoding": "scalar"
+      }
+    ]
+  },
+  "proc_check_syscall": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "syscall_num",
+        "type": "int",
+        "encoding": "scalar"
+      }
+    ]
+  },
+  "proc_check_wait": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "proc",
+        "type": "struct proc *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "proc_destroy_label": {
+    "result": "void",
+    "arguments": [
+      {
+        "name": "label",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "proc_init_label": {
+    "result": "void",
+    "arguments": [
+      {
+        "name": "label",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "proc_notify_exec_complete": {
+    "result": "void",
+    "arguments": [
+      {
+        "name": "p",
+        "type": "struct proc *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "proc_notify_exit": {
+    "result": "void",
+    "arguments": [
+      {
+        "name": "p",
+        "type": "struct proc *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "file_check_inherit": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "newcred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "fp",
+        "type": "struct file *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "fd",
+        "type": "int",
+        "encoding": "scalar"
+      }
+    ]
+  },
+  "file_check_receive": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "fp",
+        "type": "struct file *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "file_check_dup": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "fp",
+        "type": "struct file *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "fd",
+        "type": "int",
+        "encoding": "scalar"
+      }
+    ]
+  },
+  "file_check_ioctl": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "fp",
+        "type": "struct file *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "fd",
+        "type": "int",
+        "encoding": "scalar"
+      },
+      {
+        "name": "cmd",
+        "type": "u_long",
+        "encoding": "scalar"
+      }
+    ]
+  },
+  "file_check_mmap": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "fp",
+        "type": "struct file *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "fd",
+        "type": "int",
+        "encoding": "scalar"
+      },
+      {
+        "name": "prot",
+        "type": "int",
+        "encoding": "scalar"
+      },
+      {
+        "name": "flags",
+        "type": "int",
+        "encoding": "scalar"
+      },
+      {
+        "name": "addr",
+        "type": "vm_offset_t",
+        "encoding": "scalar"
+      },
+      {
+        "name": "size",
+        "type": "vm_size_t",
+        "encoding": "scalar"
+      }
+    ]
+  },
+  "file_notify_close": {
+    "result": "void",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "fp",
+        "type": "struct file *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "fd",
+        "type": "int",
+        "encoding": "scalar"
+      }
+    ]
+  },
+  "socket_check_accept": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "so",
+        "type": "struct socket *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "solabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "socket_check_bind": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "so",
+        "type": "struct socket *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "solabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "sa",
+        "type": "struct sockaddr *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "socket_check_connect": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "so",
+        "type": "struct socket *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "solabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "sa",
+        "type": "struct sockaddr *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "socket_check_create": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "domain",
+        "type": "int",
+        "encoding": "scalar"
+      },
+      {
+        "name": "type",
+        "type": "int",
+        "encoding": "scalar"
+      },
+      {
+        "name": "protocol",
+        "type": "int",
+        "encoding": "scalar"
+      }
+    ]
+  },
+  "socket_check_deliver": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "so",
+        "type": "struct socket *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "solabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "m",
+        "type": "struct mbuf *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "mlabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "socket_check_listen": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "so",
+        "type": "struct socket *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "solabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "socket_check_poll": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "so",
+        "type": "struct socket *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "solabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "socket_check_receive": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "so",
+        "type": "struct socket *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "solabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "socket_check_relabel": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "so",
+        "type": "struct socket *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "solabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "newlabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "socket_check_send": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "so",
+        "type": "struct socket *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "solabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "socket_check_setsockopt": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "so",
+        "type": "struct socket *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "solabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "level",
+        "type": "int",
+        "encoding": "scalar"
+      },
+      {
+        "name": "optname",
+        "type": "int",
+        "encoding": "scalar"
+      }
+    ]
+  },
+  "socket_check_stat": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "so",
+        "type": "struct socket *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "solabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "socket_check_visible": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "so",
+        "type": "struct socket *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "solabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "socket_copy_label": {
+    "result": "void",
+    "arguments": [
+      {
+        "name": "src",
+        "type": "struct label *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "dest",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "socket_create": {
+    "result": "void",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "so",
+        "type": "struct socket *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "solabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "socket_create_mbuf": {
+    "result": "void",
+    "arguments": [
+      {
+        "name": "so",
+        "type": "struct socket *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "solabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "m",
+        "type": "struct mbuf *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "mlabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "socket_destroy_label": {
+    "result": "void",
+    "arguments": [
+      {
+        "name": "label",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "socket_externalize_label": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "label",
+        "type": "struct label *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "element_name",
+        "type": "char *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "sb",
+        "type": "struct sbuf *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "claimed",
+        "type": "int *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "socket_init_label": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "label",
+        "type": "struct label *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "flag",
+        "type": "int",
+        "encoding": "scalar"
+      }
+    ]
+  },
+  "socket_internalize_label": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "label",
+        "type": "struct label *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "element_name",
+        "type": "char *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "element_data",
+        "type": "char *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "claimed",
+        "type": "int *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "socket_newconn": {
+    "result": "void",
+    "arguments": [
+      {
+        "name": "oldso",
+        "type": "struct socket *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "oldsolabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "newso",
+        "type": "struct socket *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "newsolabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "socket_relabel": {
+    "result": "void",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "so",
+        "type": "struct socket *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "oldlabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "newlabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "socketpeer_destroy_label": {
+    "result": "void",
+    "arguments": [
+      {
+        "name": "label",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "socketpeer_externalize_label": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "label",
+        "type": "struct label *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "element_name",
+        "type": "char *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "sb",
+        "type": "struct sbuf *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "claimed",
+        "type": "int *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "socketpeer_init_label": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "label",
+        "type": "struct label *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "flag",
+        "type": "int",
+        "encoding": "scalar"
+      }
+    ]
+  },
+  "vsock_provider_init_label": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "label",
+        "type": "struct label *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "flag",
+        "type": "int",
+        "encoding": "scalar"
+      }
+    ]
+  },
+  "vsock_provider_destroy_label": {
+    "result": "void",
+    "arguments": [
+      {
+        "name": "label",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "vsock_provider_check_attach": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "guest_cid",
+        "type": "uint64_t",
+        "encoding": "scalar"
+      },
+      {
+        "name": "label",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "vsock_provider_check_access": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "guest_cid",
+        "type": "uint64_t",
+        "encoding": "scalar"
+      },
+      {
+        "name": "label",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "socketpeer_set_from_mbuf": {
+    "result": "void",
+    "arguments": [
+      {
+        "name": "m",
+        "type": "struct mbuf *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "mlabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "so",
+        "type": "struct socket *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "sopeerlabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "socketpeer_set_from_socket": {
+    "result": "void",
+    "arguments": [
+      {
+        "name": "oldso",
+        "type": "struct socket *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "oldsolabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "newso",
+        "type": "struct socket *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "newsopeerlabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "syncache_init_label": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "label",
+        "type": "struct label *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "flag",
+        "type": "int",
+        "encoding": "scalar"
+      }
+    ]
+  },
+  "syncache_destroy_label": {
+    "result": "void",
+    "arguments": [
+      {
+        "name": "label",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "syncache_create": {
+    "result": "void",
+    "arguments": [
+      {
+        "name": "label",
+        "type": "struct label *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "inp",
+        "type": "struct inpcb *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "syncache_create_mbuf": {
+    "result": "void",
+    "arguments": [
+      {
+        "name": "sc_label",
+        "type": "struct label *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "m",
+        "type": "struct mbuf *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "mlabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "system_check_acct": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "vp",
+        "type": "struct vnode *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "vplabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "system_check_audit": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "record",
+        "type": "void *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "length",
+        "type": "int",
+        "encoding": "scalar"
+      }
+    ]
+  },
+  "system_check_auditctl": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "vp",
+        "type": "struct vnode *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "vplabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "system_check_auditon": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "cmd",
+        "type": "int",
+        "encoding": "scalar"
+      }
+    ]
+  },
+  "system_check_reboot": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "howto",
+        "type": "int",
+        "encoding": "scalar"
+      }
+    ]
+  },
+  "system_check_swapon": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "vp",
+        "type": "struct vnode *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "vplabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "system_check_swapoff": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "vp",
+        "type": "struct vnode *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "vplabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "system_check_sysctl": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "oidp",
+        "type": "struct sysctl_oid *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "arg1",
+        "type": "void *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "arg2",
+        "type": "int",
+        "encoding": "scalar"
+      },
+      {
+        "name": "req",
+        "type": "struct sysctl_req *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "system_check_kas_info": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "p",
+        "type": "struct proc *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "sysvmsg_cleanup": {
+    "result": "void",
+    "arguments": [
+      {
+        "name": "msglabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "sysvmsg_create": {
+    "result": "void",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "msqkptr",
+        "type": "struct msqid_kernel *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "msqlabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "msgptr",
+        "type": "struct msg *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "msglabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "sysvmsg_destroy_label": {
+    "result": "void",
+    "arguments": [
+      {
+        "name": "label",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "sysvmsg_init_label": {
+    "result": "void",
+    "arguments": [
+      {
+        "name": "label",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "sysvmsq_check_msgmsq": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "msgptr",
+        "type": "struct msg *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "msglabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "msqkptr",
+        "type": "struct msqid_kernel *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "msqklabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "sysvmsq_check_msgrcv": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "msgptr",
+        "type": "struct msg *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "msglabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "sysvmsq_check_msgrmid": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "msgptr",
+        "type": "struct msg *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "msglabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "sysvmsq_check_msqctl": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "msqkptr",
+        "type": "struct msqid_kernel *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "msqklabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "cmd",
+        "type": "int",
+        "encoding": "scalar"
+      }
+    ]
+  },
+  "sysvmsq_check_msqget": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "msqkptr",
+        "type": "struct msqid_kernel *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "msqklabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "sysvmsq_check_msqrcv": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "msqkptr",
+        "type": "struct msqid_kernel *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "msqklabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "sysvmsq_check_msqsnd": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "msqkptr",
+        "type": "struct msqid_kernel *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "msqklabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "sysvmsq_cleanup": {
+    "result": "void",
+    "arguments": [
+      {
+        "name": "msqlabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "sysvmsq_create": {
+    "result": "void",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "msqkptr",
+        "type": "struct msqid_kernel *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "msqlabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "sysvmsq_destroy_label": {
+    "result": "void",
+    "arguments": [
+      {
+        "name": "label",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "sysvmsq_init_label": {
+    "result": "void",
+    "arguments": [
+      {
+        "name": "label",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "sysvsem_check_semctl": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "semakptr",
+        "type": "struct semid_kernel *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "semaklabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "cmd",
+        "type": "int",
+        "encoding": "scalar"
+      }
+    ]
+  },
+  "sysvsem_check_semget": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "semakptr",
+        "type": "struct semid_kernel *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "semaklabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "sysvsem_check_semop": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "semakptr",
+        "type": "struct semid_kernel *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "semaklabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "accesstype",
+        "type": "size_t",
+        "encoding": "scalar"
+      }
+    ]
+  },
+  "sysvsem_cleanup": {
+    "result": "void",
+    "arguments": [
+      {
+        "name": "semalabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "sysvsem_create": {
+    "result": "void",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "semakptr",
+        "type": "struct semid_kernel *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "semalabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "sysvsem_destroy_label": {
+    "result": "void",
+    "arguments": [
+      {
+        "name": "label",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "sysvsem_init_label": {
+    "result": "void",
+    "arguments": [
+      {
+        "name": "label",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "sysvshm_check_shmat": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "shmsegptr",
+        "type": "struct shmid_kernel *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "shmseglabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "shmflg",
+        "type": "int",
+        "encoding": "scalar"
+      }
+    ]
+  },
+  "sysvshm_check_shmctl": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "shmsegptr",
+        "type": "struct shmid_kernel *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "shmseglabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "cmd",
+        "type": "int",
+        "encoding": "scalar"
+      }
+    ]
+  },
+  "sysvshm_check_shmdt": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "shmsegptr",
+        "type": "struct shmid_kernel *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "shmseglabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "sysvshm_check_shmget": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "shmsegptr",
+        "type": "struct shmid_kernel *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "shmseglabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "shmflg",
+        "type": "int",
+        "encoding": "scalar"
+      }
+    ]
+  },
+  "sysvshm_cleanup": {
+    "result": "void",
+    "arguments": [
+      {
+        "name": "shmlabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "sysvshm_create": {
+    "result": "void",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "shmsegptr",
+        "type": "struct shmid_kernel *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "shmlabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "sysvshm_destroy_label": {
+    "result": "void",
+    "arguments": [
+      {
+        "name": "label",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "sysvshm_init_label": {
+    "result": "void",
+    "arguments": [
+      {
+        "name": "label",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "thread_userret": {
+    "result": "void",
+    "arguments": [
+      {
+        "name": "thread",
+        "type": "struct thread *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "vnode_check_access": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "vp",
+        "type": "struct vnode *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "vplabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "accmode",
+        "type": "accmode_t",
+        "encoding": "scalar"
+      }
+    ]
+  },
+  "vnode_check_chdir": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "dvp",
+        "type": "struct vnode *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "dvplabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "vnode_check_chroot": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "dvp",
+        "type": "struct vnode *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "dvplabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "vnode_check_close": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "vp",
+        "type": "struct vnode *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "vplabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "vnode_check_create": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "dvp",
+        "type": "struct vnode *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "dvplabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "cnp",
+        "type": "struct componentname *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "vap",
+        "type": "struct vattr *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "vnode_check_deleteacl": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "vp",
+        "type": "struct vnode *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "vplabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "type",
+        "type": "acl_type_t",
+        "encoding": "scalar"
+      }
+    ]
+  },
+  "vnode_check_deleteextattr": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "vp",
+        "type": "struct vnode *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "vplabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "attrnamespace",
+        "type": "int",
+        "encoding": "scalar"
+      },
+      {
+        "name": "name",
+        "type": "const char *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "vnode_check_exec": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "vp",
+        "type": "struct vnode *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "vplabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "imgp",
+        "type": "struct image_params *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "execlabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "vnode_check_getacl": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "vp",
+        "type": "struct vnode *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "vplabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "type",
+        "type": "acl_type_t",
+        "encoding": "scalar"
+      }
+    ]
+  },
+  "vnode_check_getextattr": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "vp",
+        "type": "struct vnode *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "vplabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "attrnamespace",
+        "type": "int",
+        "encoding": "scalar"
+      },
+      {
+        "name": "name",
+        "type": "const char *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "vnode_check_link": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "dvp",
+        "type": "struct vnode *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "dvplabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "vp",
+        "type": "struct vnode *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "vplabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "cnp",
+        "type": "struct componentname *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "vnode_check_listextattr": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "vp",
+        "type": "struct vnode *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "vplabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "attrnamespace",
+        "type": "int",
+        "encoding": "scalar"
+      }
+    ]
+  },
+  "vnode_check_lookup": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "dvp",
+        "type": "struct vnode *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "dvplabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "cnp",
+        "type": "struct componentname *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "vnode_check_mmap": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "vp",
+        "type": "struct vnode *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "label",
+        "type": "struct label *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "prot",
+        "type": "int",
+        "encoding": "scalar"
+      },
+      {
+        "name": "flags",
+        "type": "int",
+        "encoding": "scalar"
+      },
+      {
+        "name": "maxprot",
+        "type": "int",
+        "encoding": "scalar"
+      }
+    ]
+  },
+  "vnode_check_mmap_downgrade": {
+    "result": "void",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "vp",
+        "type": "struct vnode *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "vplabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "prot",
+        "type": "int *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "vnode_check_mprotect": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "vp",
+        "type": "struct vnode *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "vplabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "prot",
+        "type": "int",
+        "encoding": "scalar"
+      }
+    ]
+  },
+  "vnode_check_open": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "vp",
+        "type": "struct vnode *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "vplabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "accmode",
+        "type": "accmode_t",
+        "encoding": "scalar"
+      }
+    ]
+  },
+  "vnode_check_poll": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "active_cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "file_cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "vp",
+        "type": "struct vnode *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "vplabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "vnode_check_read": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "active_cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "file_cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "vp",
+        "type": "struct vnode *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "vplabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "vnode_check_readdir": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "dvp",
+        "type": "struct vnode *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "dvplabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "vnode_check_readlink": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "vp",
+        "type": "struct vnode *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "vplabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "vnode_check_relabel": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "vp",
+        "type": "struct vnode *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "vplabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "newlabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "vnode_check_rename_from": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "dvp",
+        "type": "struct vnode *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "dvplabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "vp",
+        "type": "struct vnode *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "vplabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "cnp",
+        "type": "struct componentname *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "vnode_check_rename_to": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "dvp",
+        "type": "struct vnode *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "dvplabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "vp",
+        "type": "struct vnode *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "vplabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "samedir",
+        "type": "int",
+        "encoding": "scalar"
+      },
+      {
+        "name": "cnp",
+        "type": "struct componentname *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "vnode_check_revoke": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "vp",
+        "type": "struct vnode *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "vplabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "vnode_check_setacl": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "vp",
+        "type": "struct vnode *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "vplabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "type",
+        "type": "acl_type_t",
+        "encoding": "scalar"
+      },
+      {
+        "name": "acl",
+        "type": "struct acl *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "vnode_check_setextattr": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "vp",
+        "type": "struct vnode *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "vplabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "attrnamespace",
+        "type": "int",
+        "encoding": "scalar"
+      },
+      {
+        "name": "name",
+        "type": "const char *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "vnode_check_setflags": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "vp",
+        "type": "struct vnode *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "vplabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "flags",
+        "type": "u_long",
+        "encoding": "scalar"
+      }
+    ]
+  },
+  "vnode_check_setmode": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "vp",
+        "type": "struct vnode *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "vplabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "mode",
+        "type": "mode_t",
+        "encoding": "scalar"
+      }
+    ]
+  },
+  "vnode_check_setowner": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "vp",
+        "type": "struct vnode *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "vplabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "uid",
+        "type": "uid_t",
+        "encoding": "scalar"
+      },
+      {
+        "name": "gid",
+        "type": "gid_t",
+        "encoding": "scalar"
+      }
+    ]
+  },
+  "vnode_check_setutimes": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "vp",
+        "type": "struct vnode *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "vplabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "atime",
+        "type": "struct timespec",
+        "encoding": "address-of-value"
+      },
+      {
+        "name": "mtime",
+        "type": "struct timespec",
+        "encoding": "address-of-value"
+      }
+    ]
+  },
+  "vnode_check_stat": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "active_cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "file_cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "vp",
+        "type": "struct vnode *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "vplabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "vnode_check_unlink": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "dvp",
+        "type": "struct vnode *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "dvplabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "vp",
+        "type": "struct vnode *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "vplabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "cnp",
+        "type": "struct componentname *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "vnode_check_write": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "active_cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "file_cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "vp",
+        "type": "struct vnode *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "vplabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "vnode_associate_extattr": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "mp",
+        "type": "struct mount *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "mplabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "vp",
+        "type": "struct vnode *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "vplabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "vnode_associate_singlelabel": {
+    "result": "void",
+    "arguments": [
+      {
+        "name": "mp",
+        "type": "struct mount *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "mplabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "vp",
+        "type": "struct vnode *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "vplabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "vnode_destroy_label": {
+    "result": "void",
+    "arguments": [
+      {
+        "name": "label",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "vnode_copy_label": {
+    "result": "void",
+    "arguments": [
+      {
+        "name": "src",
+        "type": "struct label *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "dest",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "vnode_create_extattr": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "mp",
+        "type": "struct mount *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "mplabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "dvp",
+        "type": "struct vnode *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "dvplabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "vp",
+        "type": "struct vnode *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "vplabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "cnp",
+        "type": "struct componentname *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "vnode_execve_transition": {
+    "result": "void",
+    "arguments": [
+      {
+        "name": "old",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "new",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "vp",
+        "type": "struct vnode *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "vplabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "interpvplabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "imgp",
+        "type": "struct image_params *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "execlabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "vnode_execve_will_transition": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "old",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "vp",
+        "type": "struct vnode *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "vplabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "interpvplabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "imgp",
+        "type": "struct image_params *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "execlabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "vnode_execve_will_relabel": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "old",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "vp",
+        "type": "struct vnode *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "vplabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "interpvplabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "imgp",
+        "type": "struct image_params *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "execlabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "vnode_execve_relabel": {
+    "result": "void",
+    "arguments": [
+      {
+        "name": "old",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "new",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "vp",
+        "type": "struct vnode *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "vplabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "interpvplabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "imgp",
+        "type": "struct image_params *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "execlabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "vnode_externalize_label": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "label",
+        "type": "struct label *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "element_name",
+        "type": "char *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "sb",
+        "type": "struct sbuf *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "claimed",
+        "type": "int *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "vnode_init_label": {
+    "result": "void",
+    "arguments": [
+      {
+        "name": "label",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "vnode_internalize_label": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "label",
+        "type": "struct label *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "element_name",
+        "type": "char *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "element_data",
+        "type": "char *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "claimed",
+        "type": "int *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "vnode_relabel": {
+    "result": "void",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "vp",
+        "type": "struct vnode *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "vplabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "label",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "vnode_setlabel_extattr": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "vp",
+        "type": "struct vnode *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "vplabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "intlabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "vnode_check_truncate": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "vp",
+        "type": "struct vnode *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "vplabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "vnode_check_uipc_bind": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "dvp",
+        "type": "struct vnode *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "dvplabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "cnp",
+        "type": "struct componentname *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "vap",
+        "type": "struct vattr *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "vnode_check_uipc_connect": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "vp",
+        "type": "struct vnode *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "vplabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "vnode_notify_create": {
+    "result": "void",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "dvp",
+        "type": "struct vnode *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "vp",
+        "type": "struct vnode *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "cnp",
+        "type": "struct componentname *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "vnode_notify_open": {
+    "result": "void",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "vp",
+        "type": "struct vnode *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "fmode",
+        "type": "int",
+        "encoding": "scalar"
+      }
+    ]
+  },
+  "vnode_notify_rename": {
+    "result": "void",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "fromcnp",
+        "type": "struct componentname *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "tocnp",
+        "type": "struct componentname *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "vnode_notify_unlink": {
+    "result": "void",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "dvp",
+        "type": "struct vnode *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "vp",
+        "type": "struct vnode *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "cnp",
+        "type": "struct componentname *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "vnode_notify_link": {
+    "result": "void",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "dvp",
+        "type": "struct vnode *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "vp",
+        "type": "struct vnode *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "cnp",
+        "type": "struct componentname *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "vnode_notify_truncate": {
+    "result": "void",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "vp",
+        "type": "struct vnode *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "vnode_notify_setmode": {
+    "result": "void",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "vp",
+        "type": "struct vnode *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "mode",
+        "type": "mode_t",
+        "encoding": "scalar"
+      }
+    ]
+  },
+  "vnode_notify_setowner": {
+    "result": "void",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "vp",
+        "type": "struct vnode *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "uid",
+        "type": "uid_t",
+        "encoding": "scalar"
+      },
+      {
+        "name": "gid",
+        "type": "gid_t",
+        "encoding": "scalar"
+      }
+    ]
+  },
+  "vnode_notify_setflags": {
+    "result": "void",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "vp",
+        "type": "struct vnode *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "flags",
+        "type": "u_long",
+        "encoding": "scalar"
+      }
+    ]
+  },
+  "vnode_notify_setextattr": {
+    "result": "void",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "vp",
+        "type": "struct vnode *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "attrnamespace",
+        "type": "int",
+        "encoding": "scalar"
+      },
+      {
+        "name": "name",
+        "type": "const char *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "vnode_notify_deleteextattr": {
+    "result": "void",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "vp",
+        "type": "struct vnode *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "attrnamespace",
+        "type": "int",
+        "encoding": "scalar"
+      },
+      {
+        "name": "name",
+        "type": "const char *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "vnode_notify_setacl": {
+    "result": "void",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "vp",
+        "type": "struct vnode *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "type",
+        "type": "acl_type_t",
+        "encoding": "scalar"
+      }
+    ]
+  },
+  "vnode_notify_setutimes": {
+    "result": "void",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "vp",
+        "type": "struct vnode *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "pts_check_open": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "flags",
+        "type": "int",
+        "encoding": "scalar"
+      }
+    ]
+  },
+  "rctl_check_add_rule": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "rule",
+        "type": "const char *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "rctl_check_remove_rule": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "rule",
+        "type": "const char *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "vmm_check_create": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "vmname",
+        "type": "const char *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "vmm_check_destroy": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "vmname",
+        "type": "const char *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "vmm_check_mem_access": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "vmname",
+        "type": "const char *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "gpa",
+        "type": "vm_paddr_t",
+        "encoding": "scalar"
+      },
+      {
+        "name": "len",
+        "type": "size_t",
+        "encoding": "scalar"
+      },
+      {
+        "name": "prot",
+        "type": "int",
+        "encoding": "scalar"
+      }
+    ]
+  },
+  "vmm_check_memseg_access": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "vmname",
+        "type": "const char *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "segname",
+        "type": "const char *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "offset",
+        "type": "vm_ooffset_t",
+        "encoding": "scalar"
+      },
+      {
+        "name": "prot",
+        "type": "int",
+        "encoding": "scalar"
+      }
+    ]
+  },
+  "vmm_check_passthrough": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "vmname",
+        "type": "const char *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "bus",
+        "type": "int",
+        "encoding": "scalar"
+      },
+      {
+        "name": "slot",
+        "type": "int",
+        "encoding": "scalar"
+      },
+      {
+        "name": "func",
+        "type": "int",
+        "encoding": "scalar"
+      }
+    ]
+  },
+  "vmm_check_alloc_memseg": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "vmname",
+        "type": "const char *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "vmm_check_reinit": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "vmname",
+        "type": "const char *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "zfs_check_send": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "dsname",
+        "type": "const char *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "zfs_check_receive": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "dsname",
+        "type": "const char *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "zfs_check_dataset_destroy": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "dsname",
+        "type": "const char *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "zfs_check_pool_destroy": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "poolname",
+        "type": "const char *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "zfs_check_pool_export": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "poolname",
+        "type": "const char *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "zfs_check_key_load": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "dsname",
+        "type": "const char *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "zfs_check_key_unload": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "dsname",
+        "type": "const char *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "zfs_check_key_change": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "dsname",
+        "type": "const char *",
+        "encoding": "pointer"
+      }
+    ]
+  }
+}

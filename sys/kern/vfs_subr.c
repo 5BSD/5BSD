@@ -42,6 +42,12 @@
 #include "opt_watchdog.h"
 
 #include <sys/param.h>
+#include <sys/queue.h>
+#include <sys/sdt.h>
+
+SDT_PROVIDER_DECLARE(vfs);
+SDT_PROBE_DEFINE2(vfs, , , detach__start, "struct knote *", "struct vnode *");
+SDT_PROBE_DEFINE2(vfs, , , detach__done, "struct knote *", "struct vnode *");
 #include <sys/systm.h>
 #include <sys/asan.h>
 #include <sys/bio.h>
@@ -6773,7 +6779,9 @@ filt_vfsdetach(struct knote *kn)
 	struct vnode *vp = (struct vnode *)kn->kn_hook;
 
 	KASSERT(vp->v_pollinfo != NULL, ("Missing v_pollinfo"));
+	SDT_PROBE2(vfs, , , detach__start, kn, vp);
 	knlist_remove(&vp->v_pollinfo->vpi_selinfo.si_note, kn, 0);
+	SDT_PROBE2(vfs, , , detach__done, kn, vp);
 	vdrop(vp);
 }
 

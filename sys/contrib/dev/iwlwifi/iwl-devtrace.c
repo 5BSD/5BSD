@@ -80,3 +80,34 @@ trace_iwlwifi_dev_rx_data(const struct device *dev,
 	    dev, trans, pkt, len);
 }
 
+#ifdef KDTRACE_HOOKS
+/* Metadata only: do not expose packet bytes or command payloads. */
+SDT_PROBE_DEFINE1(iwlwifi, trace, dev_irq, , "const struct device *");
+SDT_PROBE_DEFINE5(iwlwifi, trace, dev_irq_msix, , "const struct device *",
+    "const void *", "int", "uint32_t", "uint32_t");
+SDT_PROBE_DEFINE5(iwlwifi, trace, dev_tx, , "const struct device *",
+    "const void *", "size_t", "size_t", "size_t");
+
+void
+trace_iwlwifi_dev_irq(const struct device *dev)
+{
+	SDT_PROBE1(iwlwifi, trace, dev_irq, , dev);
+}
+
+void
+trace_iwlwifi_dev_irq_msix(const struct device *dev,
+    const struct msix_entry *entry, bool shared, u32 inta_fh, u32 inta_hw)
+{
+	SDT_PROBE5(iwlwifi, trace, dev_irq_msix, , dev, entry, shared, inta_fh,
+	    inta_hw);
+}
+
+void
+trace_iwlwifi_dev_tx(const struct device *dev, const struct sk_buff *skb,
+    const void *tfd __unused, size_t tfdlen, const void *hdr __unused,
+    size_t hdrlen, size_t padlen)
+{
+	SDT_PROBE5(iwlwifi, trace, dev_tx, , dev, skb, tfdlen, hdrlen, padlen);
+}
+
+#endif /* KDTRACE_HOOKS */

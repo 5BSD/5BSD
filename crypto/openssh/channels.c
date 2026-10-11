@@ -40,6 +40,7 @@
  */
 
 #include "includes.h"
+#include "sshkeys_trace.h"
 
 #include <sys/types.h>
 #include <sys/stat.h>
@@ -561,7 +562,11 @@ channel_new(struct ssh *ssh, char *ctype, int type, int rfd, int wfd, int efd,
 	channel_classify(ssh, c);
 	debug("channel %d: new %s [%s] (inactive timeout: %u)",
 	    found, c->ctype, remote_name, c->inactive_deadline);
-	return c;
+	{
+		Channel * trace_result = c;
+		TRACE_SSHKEYS_CHANNEL__NEW(ssh, trace_result->self, trace_result->type);
+		return (trace_result);
+	}
 }
 
 void
@@ -770,6 +775,7 @@ channel_free(struct ssh *ssh, Channel *c)
 	Channel *other;
 	struct channel_confirm *cc;
 
+	TRACE_SSHKEYS_CHANNEL__FREE(ssh, c->self);
 	for (n = 0, i = 0; i < sc->channels_alloc; i++) {
 		if ((other = sc->channels[i]) == NULL)
 			continue;
@@ -3656,7 +3662,11 @@ channel_input_open_confirmation(int type, uint32_t seq, struct ssh *ssh)
 	int r;
 
 	if (channel_proxy_upstream(c, type, seq, ssh))
-		return 0;
+		{
+			int trace_result = 0;
+			TRACE_SSHKEYS_CHANNEL__REPLY(ssh, 1, trace_result);
+			return (trace_result);
+		}
 	if (c->type != SSH_CHANNEL_OPENING)
 		ssh_packet_disconnect(ssh, "Received open confirmation for "
 		    "non-opening channel %d.", c->self);
@@ -3684,7 +3694,11 @@ channel_input_open_confirmation(int type, uint32_t seq, struct ssh *ssh)
 	channel_set_used_time(ssh, c);
 	debug2("channel %d: open confirm rwindow %u rmax %u", c->self,
 	    c->remote_window, c->remote_maxpacket);
-	return 0;
+	{
+		int trace_result = 0;
+		TRACE_SSHKEYS_CHANNEL__REPLY(ssh, 1, trace_result);
+		return (trace_result);
+	}
 }
 
 static char *
@@ -3712,7 +3726,11 @@ channel_input_open_failure(int type, uint32_t seq, struct ssh *ssh)
 	int r;
 
 	if (channel_proxy_upstream(c, type, seq, ssh))
-		return 0;
+		{
+			int trace_result = 0;
+			TRACE_SSHKEYS_CHANNEL__REPLY(ssh, 0, trace_result);
+			return (trace_result);
+		}
 	if (c->type != SSH_CHANNEL_OPENING)
 		ssh_packet_disconnect(ssh, "Received open failure for "
 		    "non-opening channel %d.", c->self);
@@ -3737,7 +3755,11 @@ channel_input_open_failure(int type, uint32_t seq, struct ssh *ssh)
 	}
 	/* Schedule the channel for cleanup/deletion. */
 	chan_mark_dead(ssh, c);
-	return 0;
+	{
+		int trace_result = 0;
+		TRACE_SSHKEYS_CHANNEL__REPLY(ssh, 0, trace_result);
+		return (trace_result);
+	}
 }
 
 int

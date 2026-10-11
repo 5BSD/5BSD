@@ -7,28 +7,45 @@
 #ifndef DEVD_PROBES_H
 #define DEVD_PROBES_H
 
-#ifdef WITH_DTRACE
-#include <sys/sdt.h>
-/*
- * The userland DTRACE_PROBE macros in <sys/sdt.h> declare the __dtrace_*
- * stub with default linkage.  In C++ that mangles the symbol name, so
- * dtrace(1) -G finds no probe sites.  Pre-declaring the stub with C
- * linkage forces the block-scope redeclaration in the macro to refer to
- * this (unmangled) entity.
- */
-#ifdef __cplusplus
-extern "C" {
-#endif
-extern void __dtrace_devd___action(unsigned long, unsigned long);
-#ifdef __cplusplus
-}
-#endif
-#else
-#define DTRACE_PROBE2(p,n,a,b) do { if (0){(void)(a);(void)(b);} } while (0)
-#define DTRACE_PROBE3(p,n,a,b,c) do { if (0){(void)(a);(void)(b);(void)(c);} } while (0)
-#endif
 
-#define	DEVD_PROBE_ACTION(event,cmd) \
-	DTRACE_PROBE2(devd, action, event, cmd)
+#ifdef WITH_DTRACE
+#include <devd_provider.h>
+#define DEVD_PROBE_ACTION(event, cmd) do { \
+	if (DEVD_ACTION_ENABLED()) \
+		DEVD_ACTION((char *)(uintptr_t)(event), (char *)(uintptr_t)(cmd)); \
+} while (0)
+#define TRACE_DEVD_EVENT__START(a0) do { \
+	if (DEVD_EVENT_START_ENABLED()) \
+		DEVD_EVENT_START((int)(a0)); \
+} while (0)
+#define TRACE_DEVD_EVENT__DONE(a0) do { \
+	if (DEVD_EVENT_DONE_ENABLED()) \
+		DEVD_EVENT_DONE((int)(a0)); \
+} while (0)
+#define TRACE_DEVD_RULE(a0, a1) do { \
+	if (DEVD_RULE_ENABLED()) \
+		DEVD_RULE((uintptr_t)(a0), (int)(a1)); \
+} while (0)
+#define TRACE_DEVD_ACTION__START(a0) do { \
+	if (DEVD_ACTION_START_ENABLED()) \
+		DEVD_ACTION_START((uintptr_t)(a0)); \
+} while (0)
+#define TRACE_DEVD_ACTION__DONE(a0, a1) do { \
+	if (DEVD_ACTION_DONE_ENABLED()) \
+		DEVD_ACTION_DONE((uintptr_t)(a0), (int)(a1)); \
+} while (0)
+#define TRACE_DEVD_CHILD(a0) do { \
+	if (DEVD_CHILD_ENABLED()) \
+		DEVD_CHILD((int)(a0)); \
+} while (0)
+#else
+#define DEVD_PROBE_ACTION(event, cmd) do { } while (0)
+#define TRACE_DEVD_EVENT__START(a0) do { } while (0)
+#define TRACE_DEVD_EVENT__DONE(a0) do { } while (0)
+#define TRACE_DEVD_RULE(a0, a1) do { } while (0)
+#define TRACE_DEVD_ACTION__START(a0) do { } while (0)
+#define TRACE_DEVD_ACTION__DONE(a0, a1) do { } while (0)
+#define TRACE_DEVD_CHILD(a0) do { } while (0)
+#endif
 
 #endif /* DEVD_PROBES_H */

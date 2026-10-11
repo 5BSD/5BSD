@@ -1,0 +1,217 @@
+Kernel semantic probes: second expansion
+=======================================
+
+61 declarations across 14 areas, in 17 kernel source files. The matching
+22 BSDInstruments profiles live in cddl/usr.sbin/bsdinstruments/profiles;
+the existing Makefile installs all .d profiles into the base catalog.
+The desktop discovers that catalog; no separate hard-coded list is needed.
+No system installation is performed by these source changes.
+
+Disabled cost
+-------------
+On this tree's amd64 SDT implementation, a disabled call site is a patchable
+nop instruction. Probe arguments are evaluated only in the enabled branch.
+Without KDTRACE_HOOKS, the declarations and calls compile away. There is
+still code/metadata footprint with hooks compiled in, and enabled probes
+can incur substantial cost, especially stacks, printing, or actions under
+locks. A predicate that rejects an event is not the same as disabling its
+probe. No new normal-path timestamps, allocations or locks were added.
+USB's alternate USB_GLOBAL_INCLUDE_FILE environment uses empty local macros.
+
+Conventions
+-----------
+The JSON inventory provides source, declaration argument types, and probe
+names. Arguments below are in arg0 order. C double underscores become
+DTrace hyphens. Empty module/function fields should be wildcarded, e.g.
+usb:::transfer-done. Pointer arguments are transient identities, not handles
+that a later event can safely dereference. Names are copied by scripts at
+the event. Kernel addresses may be reused; scope recording intervals to the
+workload. No packet, audio, crypto, firmware or filesystem event payloads
+are copied by probes.
+
+The profiles aggregate until exit; durations are elapsed microseconds,
+including sleep, not CPU time. Start before reproducing the issue. Missing
+start events produce no latency sample. DTrace drops can invalidate timings;
+check errors and drops before interpreting any capture. Use bounded recording
+intervals for dynamic-variable storage and high-cardinality identities.
+Filters apply to the executing context: PID filters on hardware or worker
+callbacks do NOT select the originating application. Use device, queue or
+operation identity when diagnosing asynchronous work. Completion clauses
+are unfiltered so that starts selected in another context can be retired.
+A profile requires its named providers; do not use -Z for live qualification
+and treat silent/missing events as success. Offline checks use -Z only to
+compile future probe names on a host without a DTrace device.
+
+Contracts and limits
+--------------------
+inotify
+  queue: instance, watch descriptor, event mask, rename cookie, pending count,
+    outcome (0 enqueued, 1 record allocation shortage, 2 coalesced duplicate,
+    3 queue limit). Loss probes precede overflow conversion; outcome 0 may
+    report the resulting IN_Q_OVERFLOW record. Do not sum every outcome as
+    dropped events. Pending count is post-insertion for 0, pre-insertion
+    otherwise. Allocation shortage can recur while an overflow is queued.
+  watch-remove: instance, watch identity, watch descriptor, before unlink.
+  inotify-loss reports outcomes and queue depths, not userspace read delivery.
+
+netlink
+  request: PCB, sequence, protocol, message type after length validation.
+  result: PCB, sequence, message type, handler/translation errno, bad-attribute
+    offset. A result is not proof an ACK reached userspace; it is emitted
+    even when ACK is suppressed or not requested. EINTR retains its meaning
+    in the Netlink dispatcher. Sequence may be reused between requests.
+  malformed: PCB, sequence, declared length, remaining length.
+  rx-drop: PCB, message count, bytes in an outgoing batch rejected at the
+    socket receive-buffer limit. Does not count all allocation/translation
+    failures. Dumps are visible through their handler result, not individual
+    NLMSG_DONE delivery qualification.
+  netlink-errors times dispatch and counts statuses and dropped batches.
+
+wlan
+  state-request: VAP, old state, requested state, state-machine argument.
+  state-result: VAP, old state, requested state, resulting state, return code.
+    These bracket the main deferred state-machine callback; direct iv_newstate
+    calls in coordination/reinit paths are not claimed as covered.
+  assoc-fail: VAP, scan association failure reason (not errno).
+  assoc-success: VAP. Neither event copies the peer address.
+  scan-done: VAP, next channel index, final index, at the driver-requested
+    scan completion path before the scanner callback. Not a general scan
+    timeout signal: ieee80211_scan_timeout ages cached scan entries.
+  wifi-state counts these transitions and outcomes.
+
+usb
+  transfer-start: transfer, USB device, endpoint address, when marked active.
+  transfer-done: transfer, device, endpoint address, USB error, requested bytes,
+    actual bytes after completion validation, before the client callback.
+    Includes cancellation, timeouts and short-transfer status. USB errors
+    are usb_error_t values, not errno. DMA-delay deferrals do not emit done.
+  endpoint-stalled: transfer, endpoint identity when pipe start finds a stall.
+    This is a stalled attempt, not a unique endpoint state transition.
+  usb-latency measures submission through callback preparation, including
+    queue/DMA delay, not solely hardware service time or callback execution.
+
+pcm
+  xrun: channel, direction (0 playback, 1 recording), hard-buffer ready bytes,
+    wanted bytes (playback) / soft-buffer free bytes (recording), at the
+    existing xrun detection branches. Detection is not exact glitch duration.
+  trigger: channel, PCM trigger, driver return code for changed common triggers.
+    No-op and non-common trigger paths are outside this probe's scope.
+  audio-xruns reports detections, buffer distributions and trigger results.
+
+netgraph
+  queue: node, item, reader/writer mode, at insertion under queue lock.
+  dispatch: node, item, NGQF type, nesting depth before handler dispatch.
+  dispatch-done: node, item identity, error before dropping node/hook refs.
+    Item may already have been freed; never dereference it here. A zero error
+    can include a silent discard when no handler exists. Synchronous handler
+    forwarding can nest; counts are per dispatch, not unique packets.
+  disconnect: node, hook before invalidation under topology lock.
+  netgraph-path counts routing/dispatch activity without printing payloads.
+
+krpc
+  dg-retry: client, XID, retransmit ordinal, retry interval in ticks before
+    the next exponential backoff update.
+  dg-done: client, XID, enum clnt_stat at common exit; early closed-client
+    refusal is outside the scope. This is not an errno result.
+  connect-start/done: client / client, enum clnt_stat for the serialized
+    reconnect attempt, including TCP/RDMA setup. Early already-connected,
+    closed, and interrupted-wait exits do not constitute an attempt.
+  replay-hit: cache, XID, reply-present boolean; a hit can still fail when
+    copying the saved reply. This is not proof of reply transmission.
+  rpc-retries counts retry ordinals/statuses and measures connect attempts.
+
+geom
+  io-retry: bio, provider, bio command, ENOMEM at resource resubmission.
+  io-complete: bio, provider, error, direct-delivery boolean before returning
+    completion upstream. Consumer-less bios bypass this path. No identity
+    is dereferenced after biodone. Counts include individual GEOM layers.
+  geom-retries supplements the existing general geom-io/io-latency profiles.
+
+busdma
+  reserve-fail: DMA tag, map, pages needed for a NOWAIT reservation failure.
+  defer: tag, map, pages needed when queued for bounce resources.
+  ready: tag, map when resources are reserved and callback work is queued.
+  callback: tag, map immediately before the deferred load is retried with
+    the driver lock held. This is callback dispatch, not completion status.
+  dma-waits separates resource wait from total time to callback dispatch.
+  subr_busdma_bounce.c is included by architecture wrappers; compile the
+    wrapper, not that file as an independent translation unit.
+
+Grouped taskqueues (provider gtaskqueue)
+  enqueue/coalesce: queue, task. reject: queue, task, EAGAIN.
+  cancel: queue, task after removing any queued instance, before clearing
+    TASK_ENQUEUED. A running task can remain active; this is not completion.
+  execute-start/done: queue, task, queue execution sequence. Start is emitted
+    under the queue lock before releasing it and entering an optional epoch;
+    done follows the callback. Task may free itself; done uses identity only.
+  drain-start/done: queue, task around the locked drain, also in grouptask_block.
+  gtaskqueue-latency pairs execution by sequence and clears queue timing on
+    cancellation. Sequence can wrap. taskqueue-latency uses the first batch's
+    equivalent execution/drain probes (no queue-residence claim).
+
+epoch
+  wait-start/done: epoch, preemptible boolean after early-boot checks. These
+    cover synchronization; preemptible timing also includes binding/priority
+    restoration. Non-preemptible probes execute in a critical section.
+  drain-start/done: epoch; includes serialization and both callback passes,
+    excludes the final PICKUP_GIANT after drain. No per-reader probes added.
+  epoch-stalls measures grace-period and drain duration, not blocker identity.
+
+uma
+  limit-wait: zone, zone name, maximum items immediately before sleepq_wait.
+  limit-resume: zone after that sleep. A wake can be followed by another sleep.
+  alloc-fail: zone, name, domain, allocation flags at direct-item allocation
+    failures, including limit/import/init/constructor paths; not all bucket
+    or fast-path failures. Constructor failures keep existing counter semantics.
+  reclaim-start: zone, name, request, domain at uma_zone_reclaim_domain entry.
+  reclaim-done: zone at return. Not every internal zone_reclaim call.
+  uma-pressure supplements existing uma-alloc allocation/free activity.
+
+firmware
+  lookup: image name, initial registry-hit boolean in firmware_get_flags.
+  module-start/done: image name / image name, linker errno. Successful linking
+    does not imply the module registered the requested firmware.
+  binary-start/done: image name / image name, registered-success boolean.
+    Boolean result avoids inventing errno where existing paths have none.
+  firmware-load copies image names for aggregation; no binary data is read.
+
+ktls
+  mode-change: socket, previous mode, new mode at committed TX replacement.
+  mode-failed: socket, previous mode, requested mode, errno for backend setup,
+    socket send-lock failure or replacement race after retaining a session.
+    Early validation/disabled-offload refusals are not included.
+  tx-fallback: socket, hardware setup error before attempting software TX.
+  disable-done: socket, errno after the automatic retransmission-driven
+    disable helper attempts software mode; early disconnected exit excluded.
+  enqueue: first mbuf in batch, socket, page count on software TX submission.
+  dispatch: first mbuf at worker dispatch (also pending sequential batches).
+  crypto-done: mbuf, socket, error at asynchronous encryption completion only.
+  drop: socket, error at ktls_drop entry. No key or plaintext access.
+  ktls-fallback times batch queue residence; not per-record end-to-end crypto
+    latency, and not receive-side offload coverage.
+
+Profiles for the first expansion
+-------------------------------
+linux-futex-waits, linux-epoll-waits, rfcomm-stalls, ffs-pressure,
+bufcache-waits, tty-flow, linux-socket-compat, and taskqueue-latency consume
+contracts documented in KERNEL-PROBES. Native/compat Linuxulator providers
+are matched together. Raw futex wait results, TTY notifications and FFS
+cleanup pressure must not be interpreted as final syscall/device results.
+
+Qualification
+-------------
+  python3.12 tools/test/system-tracing/kernel-next-compile.py \
+    --kernel-obj /usr/obj/usr/src/amd64.amd64/sys/GENERIC-NODEBUG
+  python3.12 tools/test/system-tracing/kernel-profile-check.py
+
+The compiler matrix uses every logical CPU, hooks on/off, and prepared kernel
+and module headers. The profile check renders both unfiltered and PID-filtered
+scripts, compiles them offline, and checks selectors/argument bounds against
+source inventories. These do not substitute for live workload tests.
+
+Live gates: enumerate required probes without -Z; load relevant modules;
+exercise success and failure paths for each area; verify counts against
+functional results; validate positive timings and cancellation/reuse cleanup;
+check DTrace ERROR and drop reports. USB/audio/wireless need real devices or
+validated emulation. Pressure tests belong in a disposable VM. Verify the
+booted kernel/modules match the source snapshot before claiming coverage.

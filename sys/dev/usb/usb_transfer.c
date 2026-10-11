@@ -27,6 +27,10 @@
 
 #ifdef USB_GLOBAL_INCLUDE_FILE
 #include USB_GLOBAL_INCLUDE_FILE
+#define USB_TRANSFER_PROBE2(...)
+#define USB_TRANSFER_PROBE3(...)
+#define USB_TRANSFER_PROBE6(...)
+
 #else
 #include <sys/stdint.h>
 #include <sys/stddef.h>
@@ -64,6 +68,17 @@
 #include <dev/usb/usb_controller.h>
 #include <dev/usb/usb_bus.h>
 #include <dev/usb/usb_pf.h>
+
+#include <sys/sdt.h>
+
+SDT_PROVIDER_DEFINE(usb);
+SDT_PROBE_DEFINE3(usb, , , transfer__start, "void *", "void *", "int");
+SDT_PROBE_DEFINE6(usb, , , transfer__done, "void *", "void *", "int", "int",
+    "unsigned int", "unsigned int");
+SDT_PROBE_DEFINE2(usb, , , endpoint__stalled, "void *", "void *");
+#define USB_TRANSFER_PROBE2 SDT_PROBE2
+#define USB_TRANSFER_PROBE3 SDT_PROBE3
+#define USB_TRANSFER_PROBE6 SDT_PROBE6
 #endif			/* USB_GLOBAL_INCLUDE_FILE */
 
 struct usb_std_packet_size {
@@ -1753,6 +1768,8 @@ usbd_transfer_submit(struct usb_xfer *xfer)
 	}
 	/* set "transferring" flag */
 	xfer->flags_int.transferring = 1;
+	USB_TRANSFER_PROBE3(usb, , , transfer__start, xfer, xfer->xroot->udev,
+	    xfer->endpoint->edesc->bEndpointAddress);
 
 #if USB_HAVE_POWERD
 	/* increment power reference */
@@ -2814,6 +2831,7 @@ usbd_pipe_start(struct usb_xfer_queue *pq)
 	 * If the endpoint is already stalled we do nothing !
 	 */
 	if (ep->is_stalled) {
+		USB_TRANSFER_PROBE2(usb, , , endpoint__stalled, xfer, ep);
 		return;
 	}
 	/*
@@ -3136,6 +3154,9 @@ usbd_callback_wrapper_sub(struct usb_xfer *xfer)
 	}
 	USB_BUS_UNLOCK(bus);
 done:
+	USB_TRANSFER_PROBE6(usb, , , transfer__done, xfer, xfer->xroot->udev,
+	    xfer->endpoint->edesc->bEndpointAddress, xfer->error, xfer->sumlen,
+	    xfer->actlen);
 	return (0);
 }
 

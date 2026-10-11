@@ -70,6 +70,14 @@ NO_LINT=
 
 LIBADD+=	crypto crypt z
 
+
+.include <src.opts.mk>
+.if ${MK_DTRACE} != "no"
+SRCS+=	sshkeys_provider.d
+DTRACE_STATIC_ANCHOR= yes
+CFLAGS+= -DWITH_COVERAGE_DTRACE
+.endif
+
 .include <bsd.lib.mk>
 
 .PATH: ${SSHDIR} ${SSHDIR}/openbsd-compat

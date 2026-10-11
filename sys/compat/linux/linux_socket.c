@@ -49,9 +49,8 @@
 #include <sys/vnode.h>
 #include <sys/un.h>
 #include <sys/unistd.h>
-
-#include <security/audit/audit.h>
-#include <security/mac/mac_framework.h>
+#include <sys/queue.h>
+#include <sys/sdt.h>
 
 #include <net/if.h>
 #include <net/if_var.h>
@@ -65,6 +64,9 @@
 #include <netinet/ip.h>
 #include <netinet/tcp.h>
 #include <netinet/tcp_fsm.h>
+
+#include <security/audit/audit.h>
+#include <security/mac/mac_framework.h>
 #ifdef INET6
 #include <netinet/icmp6.h>
 #include <netinet/ip6.h>
@@ -87,6 +89,14 @@
 #include <compat/linux/linux_socket.h>
 #include <compat/linux/linux_time.h>
 #include <compat/linux/linux_util.h>
+#include <compat/linux/linux_dtrace.h>
+LIN_SDT_PROVIDER_DECLARE(LINUX_DTRACE);
+LIN_SDT_PROBE_DEFINE3(socket, , cmsg__reject, "int", "int", "int");
+LIN_SDT_PROBE_DEFINE3(socket, , cmsg__truncate, "int", "int", "int");
+LIN_SDT_PROBE_DEFINE4(socket, , setopt__done, "int", "int", "int", "int");
+LIN_SDT_PROBE_DEFINE4(socket, , getopt__done, "int", "int", "int", "int");
+LIN_SDT_PROBE_DEFINE3(socket, , sockopt__map, "int", "int", "int");
+LIN_SDT_PROBE_DEFINE2(socket, , cmsg__map, "int", "int");
 
 _Static_assert(offsetof(struct l_ifreq, ifr_ifru) ==
     offsetof(struct ifreq, ifr_ifru),
@@ -166,7 +176,7 @@ bsd_to_linux_sockopt_level(int level)
  * tables are consulted.
  */
 static int
-linux_to_bsd_ip_sockopt(int opt)
+linux_to_bsd_ip_sockopt_impl(int opt)
 {
 
 	switch (opt) {
@@ -307,7 +317,17 @@ linux_to_bsd_ip_sockopt(int opt)
 }
 
 static int
-linux_to_bsd_ip6_sockopt(int opt)
+linux_to_bsd_ip_sockopt(int opt)
+{
+	int result;
+
+	result = linux_to_bsd_ip_sockopt_impl(opt);
+	LIN_SDT_PROBE3(socket, , sockopt__map, IPPROTO_IP, opt, result);
+	return (result);
+}
+
+static int
+linux_to_bsd_ip6_sockopt_impl(int opt)
 {
 
 	switch (opt) {
@@ -463,7 +483,17 @@ linux_to_bsd_ip6_sockopt(int opt)
 }
 
 static int
-linux_to_bsd_so_sockopt(int opt)
+linux_to_bsd_ip6_sockopt(int opt)
+{
+	int result;
+
+	result = linux_to_bsd_ip6_sockopt_impl(opt);
+	LIN_SDT_PROBE3(socket, , sockopt__map, IPPROTO_IPV6, opt, result);
+	return (result);
+}
+
+static int
+linux_to_bsd_so_sockopt_impl(int opt)
 {
 
 	switch (opt) {
@@ -607,13 +637,23 @@ linux_to_bsd_so_sockopt(int opt)
 	return (-1);
 }
 
+static int
+linux_to_bsd_so_sockopt(int opt)
+{
+	int result;
+
+	result = linux_to_bsd_so_sockopt_impl(opt);
+	LIN_SDT_PROBE3(socket, , sockopt__map, SOL_SOCKET, opt, result);
+	return (result);
+}
+
 /*
  * SOL_UDP: none of the Linux UDP options (corking, GSO/GRO segmentation,
  * ESP/L2TP encapsulation, IPv6 zero-checksum control) has a socket-level
  * equivalent here.  Known numbers are ENOPROTOOPT without a log entry.
  */
 static int
-linux_to_bsd_udp_sockopt(int opt)
+linux_to_bsd_udp_sockopt_impl(int opt)
 {
 
 	switch (opt) {
@@ -629,7 +669,17 @@ linux_to_bsd_udp_sockopt(int opt)
 }
 
 static int
-linux_to_bsd_tcp_sockopt(int opt)
+linux_to_bsd_udp_sockopt(int opt)
+{
+	int result;
+
+	result = linux_to_bsd_udp_sockopt_impl(opt);
+	LIN_SDT_PROBE3(socket, , sockopt__map, IPPROTO_UDP, opt, result);
+	return (result);
+}
+
+static int
+linux_to_bsd_tcp_sockopt_impl(int opt)
 {
 
 	switch (opt) {
@@ -700,6 +750,16 @@ linux_to_bsd_tcp_sockopt(int opt)
 		return (-2);
 	}
 	return (-1);
+}
+
+static int
+linux_to_bsd_tcp_sockopt(int opt)
+{
+	int result;
+
+	result = linux_to_bsd_tcp_sockopt_impl(opt);
+	LIN_SDT_PROBE3(socket, , sockopt__map, IPPROTO_TCP, opt, result);
+	return (result);
 }
 
 static u_int
@@ -1638,7 +1698,7 @@ linux_to_bsd_msg_flags(int flags)
 }
 
 static int
-linux_to_bsd_cmsg_type(int cmsg_type)
+linux_to_bsd_cmsg_type_impl(int cmsg_type)
 {
 
 	switch (cmsg_type) {
@@ -1648,6 +1708,16 @@ linux_to_bsd_cmsg_type(int cmsg_type)
 		return (SCM_CREDS);
 	}
 	return (-1);
+}
+
+static int
+linux_to_bsd_cmsg_type(int cmsg_type)
+{
+	int result;
+
+	result = linux_to_bsd_cmsg_type_impl(cmsg_type);
+	LIN_SDT_PROBE2(socket, , cmsg__map, cmsg_type, result);
+	return (result);
 }
 
 static int
@@ -2710,6 +2780,9 @@ linux_sendmsg_common(struct thread *td, l_int s, struct l_msghdr *msghdr,
 				break;
 			}
 			if (cmsg->cmsg_type == -1) {
+				LIN_SDT_PROBE3(socket, , cmsg__reject,
+				    linux_cmsg.cmsg_level, linux_cmsg.cmsg_type,
+				    1);
 				linux_msg(curthread,
 				    "unsupported sendmsg cmsg level %d type %d",
 				    linux_cmsg.cmsg_level, linux_cmsg.cmsg_type);
@@ -3314,6 +3387,8 @@ linux_recvmsg_common(struct thread *td, l_int s, struct l_msghdr *msghdr,
 			socklen_t available = maxlen - outlen;
 
 			l_msghdr.msg_flags |= LINUX_MSG_CTRUNC;
+			LIN_SDT_PROBE3(socket, , cmsg__truncate, s, maxlen,
+			    outlen);
 			if (available >= L_CMSG_HDRSZ) {
 				lcm->cmsg_len = available;
 				error = copyout(lcm, outbuf, L_CMSG_HDRSZ);
@@ -3338,6 +3413,8 @@ linux_recvmsg_common(struct thread *td, l_int s, struct l_msghdr *msghdr,
 				goto err;
 			} else {
 				l_msghdr.msg_flags |= LINUX_MSG_CTRUNC;
+				LIN_SDT_PROBE3(socket, , cmsg__truncate, s,
+				    maxlen, outlen);
 				m_dispose_extcontrolm(control);
 				free(udata, M_LINUX);
 				goto out;
@@ -3536,8 +3613,8 @@ linux_setsockopt_buffer(struct thread *td, struct linux_setsockopt_args *args)
 	    UIO_SYSSPACE, sizeof(value)));
 }
 
-int
-linux_setsockopt(struct thread *td, struct linux_setsockopt_args *args)
+static int
+linux_setsockopt_impl(struct thread *td, struct linux_setsockopt_args *args)
 {
 	struct proc *p = td->td_proc;
 	struct linux_pemuldata *pem;
@@ -3811,6 +3888,17 @@ linux_setsockopt(struct thread *td, struct linux_setsockopt_args *args)
 	return (error);
 }
 
+int
+linux_setsockopt(struct thread *td, struct linux_setsockopt_args *args)
+{
+	int result;
+
+	result = linux_setsockopt_impl(td, args);
+	LIN_SDT_PROBE4(socket, , setopt__done, args->s, args->level,
+	    args->optname, result);
+	return (result);
+}
+
 static int
 linux_sockopt_copyout(struct thread *td, void *val, socklen_t len,
     struct linux_getsockopt_args *args)
@@ -4011,8 +4099,8 @@ linux_getsockopt_so_linger(struct thread *td,
 	return (linux_sockopt_copyout_trunc(td, &ling, len, args));
 }
 
-int
-linux_getsockopt(struct thread *td, struct linux_getsockopt_args *args)
+static int
+linux_getsockopt_impl(struct thread *td, struct linux_getsockopt_args *args)
 {
 	l_uint linux_timeout;
 	l_timeval linux_tv;
@@ -4324,6 +4412,17 @@ out:
 	}
 
 	return (error);
+}
+
+int
+linux_getsockopt(struct thread *td, struct linux_getsockopt_args *args)
+{
+	int result;
+
+	result = linux_getsockopt_impl(td, args);
+	LIN_SDT_PROBE4(socket, , getopt__done, args->s, args->level,
+	    args->optname, result);
+	return (result);
 }
 
 /*

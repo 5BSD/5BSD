@@ -1,0 +1,58 @@
+Tracing coverage audit for the merge
+===================================
+
+Scope: all three semantic tracing batches and the MAC argument/skip refinement.
+The inventories record 309 new declarations: 95 + 61 + 153. They are source
+interfaces, not a claim that every subsystem branch has a probe or that every
+probe has fired live. Linuxulator declarations expand for both ABIs.
+
+Requested area               Confirmed coverage
+---------------------------  -----------------------------------------------
+Capsicum                     check-allow/check-deny, ioctl/fcntl outcomes;
+                             native limit start/done including validation;
+                             xfer rights/ioctls/fcntls helper pairs.
+Existing descriptor passing  fd xfer-deny, xfer-consume, scm-rights-send/recv
+                             already exist; no duplicate events were added.
+MAC Framework                Every callback dispatch family, init/destroy,
+                             policy syscall, policy registration outcomes,
+                             labels, callback arguments, skip reasons.
+Dynamic loader               dlopen/fdlopen name/fd/mode/result, dlclose,
+                             object load, relocation and initialization.
+Debugger attachment          ptrace action request/outcome including attach,
+                             detach, TRACE_ME and translated Linux requests.
+Bluetooth                    RFCOMM state, credits, flow, drops, frame errors.
+Linuxulator                  epoll, futex, socket options and ancillary data.
+Imports                      Native FIDL runtime, LinuxKPI workqueues and
+                             iwlwifi. No claim of an imported Zircon kernel.
+Older BSD subsystems         tty, lockf, umtx, kqueue, buffer cache, FFS,
+                             NLM/RPC, taskqueues, VM/reclaim/swap, tmpfs/FAT.
+Other kernel areas           NFS client/server, GEOM, USB, audio, UMA, epoch,
+                             netgraph/netlink, Wi-Fi, firmware, KTLS,
+                             busdma/IOMMU, ACPI and crypto.
+Base and contrib utilities   Resolver/NSS, pthread waits, PAM, libfetch,
+                             libarchive, DHCP, devd, fsck, mount/umount,
+                             mountd, ntpd, SSH and newsyslog.
+BSDInstruments               49 new profiles: 22 from batch two, 27 from
+                             batch three and its security/loader extensions.
+
+Detailed contracts: KERNEL-PROBES, KERNEL-PROBES-NEXT, COVERAGE-THIRD, MAC-HOOKS.
+The JSON inventories and mac-hook-arguments.json identify types and sources.
+
+Original-worktree verification includes 48 first-batch, 34 second-batch and
+72 final third-batch kernel compile configurations; enabled/disabled builds,
+a linked GENERIC-NODEBUG kernel, native userspace artifacts, and offline
+profile compilation. MAC dispatch tests additionally verify argument and skip
+semantics. Validation artifacts live under /usr/obj/5bsd-dtrace*-validation
+and /usr/obj/5bsd-mac-hook-validation. The isolated commit review records its
+checks under /usr/obj/5bsd-tracing-commit-validation.
+
+Isolated branch verification: 154 kernel compile configurations pass with
+-Werror against the branch source; all 98 profile checks and both MAC dispatch
+fixtures pass. The generated argument contracts match all 336 callback slots
+in this branch. Both runtime linkers build and pass ordinary startup, nested
+initializers, dlopen/dlclose and missing-library smoke tests. The earlier
+SIGSYS limitation in the larger working tree does not reproduce here.
+
+Limits: live DTrace firing remains unqualified because the running host does
+not expose the device. No kernel installation, publication or reboot is part
+of this change. The commit excludes unrelated loader and MAC policy changes.

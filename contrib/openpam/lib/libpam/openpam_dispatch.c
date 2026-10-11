@@ -38,6 +38,7 @@
 #endif
 
 #include <sys/param.h>
+#include "pamchain_trace.h"
 
 #include <stdint.h>
 
@@ -66,6 +67,7 @@ openpam_dispatch(pam_handle_t *pamh,
 	int err, fail, nsuccess, r;
 	int debug;
 
+	TRACE_PAMCHAIN_CHAIN__START(pamh, primitive);
 	ENTER();
 
 	/* prevent recursion */
@@ -75,7 +77,11 @@ openpam_dispatch(pam_handle_t *pamh,
 		    pam_func_name[primitive],
 		    pamh->current->module->path,
 		    pam_sm_func_name[pamh->primitive]);
-		RETURNC(PAM_ABORT);
+		{
+			int trace_result = (PAM_ABORT);
+			TRACE_PAMCHAIN_CHAIN__DONE(pamh, trace_result);
+			RETURNC(trace_result);
+		}
 	}
 
 	/* pick a chain */
@@ -95,13 +101,18 @@ openpam_dispatch(pam_handle_t *pamh,
 		chain = pamh->chains[PAM_PASSWORD];
 		break;
 	default:
-		RETURNC(PAM_SYSTEM_ERR);
+		{
+			int trace_result = (PAM_SYSTEM_ERR);
+			TRACE_PAMCHAIN_CHAIN__DONE(pamh, trace_result);
+			RETURNC(trace_result);
+		}
 	}
 
 	/* execute */
 	err = PAM_SUCCESS;
 	fail = nsuccess = 0;
 	for (; chain != NULL; chain = chain->next) {
+		TRACE_PAMCHAIN_MODULE__START(pamh, chain, chain->flag);
 		if (chain->module->func[primitive] == NULL) {
 			openpam_log(PAM_LOG_ERROR, "%s: no %s()",
 			    chain->module->path, pam_sm_func_name[primitive]);
@@ -124,6 +135,7 @@ openpam_dispatch(pam_handle_t *pamh,
 				--openpam_debug;
 		}
 
+		TRACE_PAMCHAIN_MODULE__DONE(pamh, chain, r);
 		if (r == PAM_IGNORE)
 			continue;
 		if (r == PAM_SUCCESS) {
@@ -183,7 +195,11 @@ openpam_dispatch(pam_handle_t *pamh,
 		err = PAM_SYSTEM_ERR;
 	}
 
-	RETURNC(err);
+	{
+		int trace_result = (err);
+		TRACE_PAMCHAIN_CHAIN__DONE(pamh, trace_result);
+		RETURNC(trace_result);
+	}
 }
 
 #if !defined(OPENPAM_RELAX_CHECKS)

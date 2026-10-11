@@ -77,6 +77,18 @@
 #include <vm/vm_page.h>
 #include <vm/vm_pagequeue.h>
 
+#include <sys/sdt.h>
+
+SDT_PROVIDER_DEFINE(ktls);
+SDT_PROBE_DEFINE2(ktls, , , tx__fallback, "void *", "int");
+SDT_PROBE_DEFINE4(ktls, , , mode__failed, "void *", "int", "int", "int");
+SDT_PROBE_DEFINE2(ktls, , , disable__done, "void *", "int");
+SDT_PROBE_DEFINE3(ktls, , , mode__change, "void *", "int", "int");
+SDT_PROBE_DEFINE3(ktls, , , enqueue, "void *", "void *", "int");
+SDT_PROBE_DEFINE1(ktls, , , dispatch, "void *");
+SDT_PROBE_DEFINE3(ktls, , , crypto__done, "void *", "void *", "int");
+SDT_PROBE_DEFINE2(ktls, , , drop, "void *", "int");
+
 typedef enum {
 	KTLS_MBUF_CRYPTO_ST_MIXED = 0,
 	KTLS_MBUF_CRYPTO_ST_ENCRYPTED = 1,
@@ -1409,8 +1421,10 @@ ktls_enable_tx(struct socket *so, struct tls_enable *en)
 	if (error)
 #endif
 		error = ktls_try_ifnet(so, tls, KTLS_TX, false);
-	if (error)
+	if (error) {
+		SDT_PROBE2(ktls, , , tx__fallback, so, error);
 		error = ktls_try_sw(tls, KTLS_TX);
+	}
 
 	if (error) {
 		ktls_free(tls);
@@ -1600,6 +1614,7 @@ ktls_set_tx_mode(struct socket *so, int mode)
 	else
 		error = ktls_try_sw(tls_new, KTLS_TX);
 	if (error) {
+		SDT_PROBE4(ktls, , , mode__failed, so, tls->mode, mode, error);
 		counter_u64_add(ktls_switch_failed, 1);
 		ktls_free(tls_new);
 		ktls_free(tls);
@@ -1609,6 +1624,7 @@ ktls_set_tx_mode(struct socket *so, int mode)
 
 	error = SOCK_IO_SEND_LOCK(so, SBL_WAIT);
 	if (error) {
+		SDT_PROBE4(ktls, , , mode__failed, so, tls->mode, mode, error);
 		counter_u64_add(ktls_switch_failed, 1);
 		ktls_free(tls_new);
 		ktls_free(tls);
@@ -1621,6 +1637,7 @@ ktls_set_tx_mode(struct socket *so, int mode)
 	 * session.
 	 */
 	if (tls != so->so_snd.sb_tls_info) {
+		SDT_PROBE4(ktls, , , mode__failed, so, tls->mode, mode, EBUSY);
 		counter_u64_add(ktls_switch_failed, 1);
 		SOCK_IO_SEND_UNLOCK(so);
 		ktls_free(tls_new);
@@ -1631,6 +1648,7 @@ ktls_set_tx_mode(struct socket *so, int mode)
 
 	INP_WLOCK(inp);
 	SOCKBUF_LOCK(&so->so_snd);
+	SDT_PROBE3(ktls, , , mode__change, so, tls->mode, tls_new->mode);
 	so->so_snd.sb_tls_info = tls_new;
 	if (tls_new->mode != TCP_TLS_MODE_SW) {
 		MPASS(tp->t_nic_ktls_xmit == 0);
@@ -2483,6 +2501,8 @@ ktls_drop(struct socket *so, int error)
 	struct inpcb *inp = sotoinpcb(so);
 	struct tcpcb *tp = intotcpcb(inp);
 
+	SDT_PROBE2(ktls, , , drop, so, error);
+
 	NET_EPOCH_ENTER(et);
 	INP_WLOCK(inp);
 	if (!(tp->t_flags & TF_DISCONNECTED)) {
@@ -2903,6 +2923,7 @@ ktls_enqueue(struct mbuf *m, struct socket *so, int page_count)
 	 * for taking an additional reference via soref().
 	 */
 	m->m_epg_so = so;
+	SDT_PROBE3(ktls, , , enqueue, m, so, page_count);
 
 	queued = 1;
 	tls = m->m_epg_tls;
@@ -3109,6 +3130,7 @@ ktls_encrypt_cb(struct ktls_ocf_encrypt_state *state, int error)
 	m->m_flags |= M_RDONLY;
 
 	so = state->so;
+	SDT_PROBE3(ktls, , , crypto__done, m, so, error);
 	free(state, M_KTLS);
 
 	/*
@@ -3323,6 +3345,7 @@ ktls_work_thread(void *ctx)
 				ktls_free(m->m_epg_tls);
 				m_free_raw(m);
 			} else {
+				SDT_PROBE1(ktls, , , dispatch, m);
 				if (m->m_epg_tls->sync_dispatch)
 					ktls_encrypt(wq, m);
 				else
@@ -3363,6 +3386,7 @@ ktls_disable_ifnet_help(void *context, int pending __unused)
 		err = ktls_set_tx_mode(so, TCP_TLS_MODE_SW);
 	else
 		err = ENXIO;
+	SDT_PROBE2(ktls, , , disable__done, so, err);
 	if (err == 0) {
 		counter_u64_add(ktls_ifnet_disable_ok, 1);
 		/* ktls_set_tx_mode() drops inp wlock, so recheck flags */

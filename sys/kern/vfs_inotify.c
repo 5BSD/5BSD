@@ -40,6 +40,13 @@
 #include <sys/user.h>
 #include <sys/vnode.h>
 
+#include <sys/sdt.h>
+
+SDT_PROVIDER_DEFINE(inotify);
+SDT_PROBE_DEFINE6(inotify, , , queue, "void *", "int", "uint32_t", "uint32_t",
+    "int", "int");
+SDT_PROBE_DEFINE3(inotify, , , watch__remove, "void *", "void *", "int");
+
 uint32_t inotify_rename_cookie;
 
 /*
@@ -838,6 +845,7 @@ inotify_unlink_watch_locked(struct inotify_softc *sc, struct inotify_watch *watc
 	atomic_subtract_int(&inotify_watches, 1);
 	(void)chginotifywatchcnt(sc->cred->cr_ruidinfo, -1, 0);
 
+	SDT_PROBE3(inotify, , , watch__remove, sc, watch, watch->wd);
 	TAILQ_REMOVE(&vp->v_pollinfo->vpi_inotify, watch, vlink);
 	if (TAILQ_EMPTY(&vp->v_pollinfo->vpi_inotify))
 		vn_irflag_unset(vp, VIRF_INOTIFY);
@@ -1048,6 +1056,8 @@ inotify_queue_record(struct inotify_softc *sc, struct inotify_record *rec)
 
 	evp = &rec->ev;
 	if (__predict_false(rec == &sc->overflow)) {
+		SDT_PROBE6(inotify, , , queue, sc, evp->wd, evp->mask,
+		    evp->cookie, sc->npending, 1);
 		/*
 		 * Is the overflow record already in the queue?  If so, there's
 		 * not much else we can do: we're here because a kernel memory
@@ -1059,14 +1069,19 @@ inotify_queue_record(struct inotify_softc *sc, struct inotify_record *rec)
 		inotify_overflow_event(evp);
 	} else {
 		/* Try to coalesce duplicate events. */
-		if (inotify_coalesce && inotify_can_coalesce(sc, evp))
+		if (inotify_coalesce && inotify_can_coalesce(sc, evp)) {
+			SDT_PROBE6(inotify, , , queue, sc, evp->wd, evp->mask,
+			    evp->cookie, sc->npending, 2);
 			return (false);
+		}
 
 		/*
 		 * Would this one overflow the queue?  If so, convert it to an
 		 * overflow event and try again to coalesce.
 		 */
 		if (sc->npending >= inotify_max_queued_events) {
+			SDT_PROBE6(inotify, , , queue, sc, evp->wd, evp->mask,
+			    evp->cookie, sc->npending, 3);
 			counter_u64_add(inotify_event_drops, 1);
 			inotify_overflow_event(evp);
 			if (inotify_can_coalesce(sc, evp))
@@ -1074,6 +1089,8 @@ inotify_queue_record(struct inotify_softc *sc, struct inotify_record *rec)
 		}
 	}
 	inotify_enqueue(sc, rec, false);
+	SDT_PROBE6(inotify, , , queue, sc, evp->wd, evp->mask, evp->cookie,
+	    sc->npending, 0);
 	selwakeup(&sc->sel);
 	KNOTE_LOCKED(&sc->sel.si_note, 0);
 	wakeup(&sc->pending);

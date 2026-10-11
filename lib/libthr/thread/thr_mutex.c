@@ -39,6 +39,7 @@
  */
 
 #include "namespace.h"
+#include "threadwait_trace.h"
 #include <stdlib.h>
 #include <errno.h>
 #include <string.h>
@@ -740,7 +741,9 @@ mutex_lock_common(struct pthread_mutex *m, const struct timespec *abstime,
 		if (ret == EOWNERDEAD)
 			m->m_lock.m_flags |= UMUTEX_NONCONSISTENT;
 	} else {
+		TRACE_THREADWAIT_MUTEX__START(m);
 		ret = mutex_lock_sleep(curthread, m, abstime);
+		TRACE_THREADWAIT_MUTEX__DONE(m, ret);
 	}
 	if (!rb_onlist && robust)
 		_mutex_leave_robust(curthread, m);

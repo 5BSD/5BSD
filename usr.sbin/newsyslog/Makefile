@@ -12,4 +12,12 @@ HAS_TESTS=
 SUBDIR.${MK_TESTS}+= tests
 SUBDIR+=	newsyslog.conf.d
 
+
+.include <src.opts.mk>
+.if ${MK_DTRACE} != "no"
+SRCS+=	logrotate_provider.d
+DTRACE_STATIC_ANCHOR= yes
+CFLAGS+= -DWITH_COVERAGE_DTRACE
+.endif
+
 .include <bsd.prog.mk>

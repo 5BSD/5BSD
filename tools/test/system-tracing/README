@@ -76,3 +76,19 @@ per probe firing; arg1 is a cumulative counter and must not be summed.
 Review fixes were native instrumentation changes; no new upstream code was
 copied. Source review, compile checks and USDT relocation checks do not replace
 live provider enumeration, functional workloads and DTrace script execution.
+
+Kernel expansion
+----------------
+KERNEL-PROBES documents the kernel/FIDL semantic probe expansion, result
+units, correlation limits and runtime qualification workloads.
+kernel-probes.json inventories the added declarations.
+kernel-compile.py checks hooks enabled/disabled against a prepared kernel
+object tree, including both Linuxulator ABIs and imported IRQ/TX callers.
+
+The second kernel expansion is documented in KERNEL-PROBES-NEXT, with
+kernel-probes-next.json, kernel-next-compile.py and kernel-profile-check.py.
+It adds the BSDInstruments diagnostic profiles to the installed base catalog.
+NEXT-COVERAGE records the kernel/base audit and operation-pair contracts.
+COVERAGE-THIRD documents their initial implementation; MAC-HOOKS describes
+callback arguments and skips. COVERAGE-AUDIT summarizes all requested areas
+and the remaining runtime qualification limits.

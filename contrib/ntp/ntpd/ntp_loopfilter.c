@@ -12,6 +12,7 @@
 # include <util.h>
 #endif
 #include "ntpd.h"
+#include "timediscipline_trace.h"
 #include "ntp_io.h"
 #include "ntp_unixtime.h"
 #include "ntp_stdlib.h"
@@ -463,6 +464,7 @@ local_clock(
 	double	dtemp, etemp;	/* double temps */
 	char	tbuf[80];	/* report buffer */
 
+	TRACE_TIMEDISCIPLINE_ADJUST__START(peer);
 	(void)ntp_adj_ret; /* not always used below... */
 	/*
 	 * If the loop is opened or the NIST LOCKCLOCK is in use,
@@ -475,7 +477,11 @@ local_clock(
 	{
 		record_loop_stats(fp_offset, drift_comp, clock_jitter,
 		    clock_stability, sys_poll);
-		return (0);
+		{
+			int trace_result = (0);
+			TRACE_TIMEDISCIPLINE_ADJUST__DONE(peer, trace_result);
+			return (trace_result);
+		}
 	}
 
 #ifndef LOCKCLOCK
@@ -494,7 +500,11 @@ local_clock(
 		    "%+.0f s; set clock manually within %.0f s.",
 		    fp_offset, clock_panic);
 		report_event(EVNT_SYSFAULT, NULL, tbuf);
-		return (-1);
+		{
+			int trace_result = (-1);
+			TRACE_TIMEDISCIPLINE_ADJUST__DONE(peer, trace_result);
+			return (trace_result);
+		}
 	}
 
 	allow_panic = FALSE;
@@ -587,7 +597,11 @@ local_clock(
 			    fp_offset);
 			report_event(EVNT_SPIK, NULL, tbuf);
 			state = EVNT_SPIK;
-			return (0);
+			{
+				int trace_result = (0);
+				TRACE_TIMEDISCIPLINE_ADJUST__DONE(peer, trace_result);
+				return (trace_result);
+			}
 
 		/*
 		 * In FREQ state we ignore outliers and inlyers. At the
@@ -596,7 +610,11 @@ local_clock(
 		 */
 		case EVNT_FREQ:
 			if (mu < clock_minstep)
-				return (0);
+				{
+					int trace_result = (0);
+					TRACE_TIMEDISCIPLINE_ADJUST__DONE(peer, trace_result);
+					return (trace_result);
+				}
 
 			clock_frequency = direct_freq(fp_offset);
 
@@ -609,7 +627,11 @@ local_clock(
 		 */
 		case EVNT_SPIK:
 			if (mu < clock_minstep)
-				return (0);
+				{
+					int trace_result = (0);
+					TRACE_TIMEDISCIPLINE_ADJUST__DONE(peer, trace_result);
+					return (trace_result);
+				}
 
 			/* fall through to default */
 
@@ -647,7 +669,11 @@ local_clock(
 			rval = 2;
 			if (state == EVNT_NSET) {
 				rstclock(EVNT_FREQ, 0);
-				return (rval);
+				{
+					int trace_result = (rval);
+					TRACE_TIMEDISCIPLINE_ADJUST__DONE(peer, trace_result);
+					return (trace_result);
+				}
 			}
 			break;
 		}
@@ -684,7 +710,11 @@ local_clock(
 		 */
 		case EVNT_FREQ:
 			if (mu < clock_minstep)
-				return (0);
+				{
+					int trace_result = (0);
+					TRACE_TIMEDISCIPLINE_ADJUST__DONE(peer, trace_result);
+					return (trace_result);
+				}
 
 			clock_frequency = direct_freq(fp_offset);
 			/* fall through */
@@ -928,7 +958,11 @@ local_clock(
 	DPRINTF(1, ("local_clock: offset %.9f jit %.9f freq %.3f stab %.3f poll %d\n",
 		    clock_offset, clock_jitter, drift_comp * 1e6,
 		    clock_stability * 1e6, sys_poll));
-	return (rval);
+	{
+		int trace_result = (rval);
+		TRACE_TIMEDISCIPLINE_ADJUST__DONE(peer, trace_result);
+		return (trace_result);
+	}
 #endif /* not LOCKCLOCK */
 }
 

@@ -77,6 +77,7 @@
 #endif
 
 #include "namespace.h"
+#include "nameres_trace.h"
 #include <sys/param.h>
 #include <sys/time.h>
 #include <sys/socket.h>
@@ -299,14 +300,23 @@ res_nsend(res_state statp,
 	char abuf[NI_MAXHOST];
 #endif
 
+	TRACE_NAMERES_QUERY__START(statp, buflen, anssiz);
 	/* No name servers or res_init() failure */
 	if (statp->nscount == 0 || EXT(statp).ext == NULL) {
 		errno = ESRCH;
-		return (-1);
+		{
+			int trace_result = (-1);
+			TRACE_NAMERES_QUERY__DONE(statp, trace_result, trace_result < 0 ? errno : 0);
+			return (trace_result);
+		}
 	}
 	if (anssiz < HFIXEDSZ) {
 		errno = EINVAL;
-		return (-1);
+		{
+			int trace_result = (-1);
+			TRACE_NAMERES_QUERY__DONE(statp, trace_result, trace_result < 0 ? errno : 0);
+			return (trace_result);
+		}
 	}
 	DprintQ((statp->options & RES_DEBUG) || (statp->pfcode & RES_PRF_QUERY),
 		(stdout, ";; res_send()\n"), buf, buflen);
@@ -317,7 +327,11 @@ res_nsend(res_state statp,
 #ifdef USE_KQUEUE
 	if ((kq = kqueue()) < 0) {
 		Perror(statp, stderr, "kqueue", errno);
-		return (-1);
+		{
+			int trace_result = (-1);
+			TRACE_NAMERES_QUERY__DONE(statp, trace_result, trace_result < 0 ? errno : 0);
+			return (trace_result);
+		}
 	}
 #endif
 
@@ -439,7 +453,11 @@ res_nsend(res_state statp,
 #ifdef USE_KQUEUE
 					_close(kq);
 #endif
-					return (resplen);
+					{
+						int trace_result = (resplen);
+						TRACE_NAMERES_QUERY__DONE(statp, trace_result, trace_result < 0 ? errno : 0);
+						return (trace_result);
+					}
 				case res_modified:
 					/* give the hook another try */
 					if (++loops < 42) /*doug adams*/
@@ -463,8 +481,10 @@ res_nsend(res_state statp,
 		if (v_circuit) {
 			/* Use VC; at most one attempt per server. */
 			tries = statp->retry;
+			TRACE_NAMERES_SERVER__START(statp, ns, 1);
 			n = send_vc(statp, buf, buflen, ans, anssiz, &terrno,
 				    ns);
+			TRACE_NAMERES_SERVER__DONE(statp, ns, n, n <= 0 ? terrno : 0);
 			if (n < 0)
 				goto fail;
 			if (n == 0)
@@ -472,12 +492,14 @@ res_nsend(res_state statp,
 			resplen = n;
 		} else {
 			/* Use datagrams. */
+			TRACE_NAMERES_SERVER__START(statp, ns, 0);
 			n = send_dg(statp,
 #ifdef USE_KQUEUE
 				    kq,
 #endif
 				    buf, buflen, ans, anssiz, &terrno,
 				    ns, tries, &v_circuit, &gotsomewhere);
+			TRACE_NAMERES_SERVER__DONE(statp, ns, n, n <= 0 ? terrno : 0);
 			if (n < 0)
 				goto fail;
 			if (n == 0)
@@ -538,7 +560,11 @@ res_nsend(res_state statp,
 #ifdef USE_KQUEUE
 		_close(kq);
 #endif
-		return (resplen);
+		{
+			int trace_result = (resplen);
+			TRACE_NAMERES_QUERY__DONE(statp, trace_result, trace_result < 0 ? errno : 0);
+			return (trace_result);
+		}
  next_ns: ;
 	   } /*foreach ns*/
 	} /*foreach retry*/
@@ -553,13 +579,21 @@ res_nsend(res_state statp,
 			errno = ETIMEDOUT;	/*%< no answer obtained */
 	} else
 		errno = terrno;
-	return (-1);
+	{
+		int trace_result = (-1);
+		TRACE_NAMERES_QUERY__DONE(statp, trace_result, trace_result < 0 ? errno : 0);
+		return (trace_result);
+	}
  fail:
 	res_nclose(statp);
 #ifdef USE_KQUEUE
 	_close(kq);
 #endif
-	return (-1);
+	{
+		int trace_result = (-1);
+		TRACE_NAMERES_QUERY__DONE(statp, trace_result, trace_result < 0 ? errno : 0);
+		return (trace_result);
+	}
 }
 
 /* Private */

@@ -114,6 +114,13 @@
 #include <vm/vm_extern.h>
 #include <vm/uma.h>
 
+#include <sys/queue.h>
+#include <sys/sdt.h>
+
+SDT_PROVIDER_DECLARE(vm);
+SDT_PROBE_DEFINE2(vm, , , inactive__start, "void *", "int");
+SDT_PROBE_DEFINE3(vm, , , inactive__done, "void *", "int", "int");
+
 /*
  * System initialization
  */
@@ -1428,6 +1435,7 @@ vm_pageout_scan_inactive(struct vm_domain *vmd, int page_shortage)
 	int act_delta, addl_page_shortage, dirty_count, dirty_thresh;
 	int starting_page_shortage, refs;
 
+	SDT_PROBE2(vm, , , inactive__start, (vmd), (page_shortage));
 	object = NULL;
 	vm_batchqueue_init(&rq);
 	getmicrouptime(&start);
@@ -1676,6 +1684,7 @@ reinsert:
 	    end.tv_sec * 1000000 + end.tv_usec);
 	atomic_add_int(&vmd->vmd_inactive_freed,
 	    starting_page_shortage - page_shortage);
+	SDT_PROBE3(vm, , , inactive__done, (vmd), (starting_page_shortage), (page_shortage));
 }
 
 /*

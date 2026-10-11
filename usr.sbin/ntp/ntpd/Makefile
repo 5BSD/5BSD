@@ -56,4 +56,12 @@ CLEANFILES+= .version version.c
 version.c:
 	sh -e ${.CURDIR:H}/scripts/mkver ntpd
 
+
+.include <src.opts.mk>
+.if ${MK_DTRACE} != "no"
+SRCS+=	timediscipline_provider.d
+DTRACE_STATIC_ANCHOR= yes
+CFLAGS+= -DWITH_COVERAGE_DTRACE
+.endif
+
 .include <bsd.prog.mk>

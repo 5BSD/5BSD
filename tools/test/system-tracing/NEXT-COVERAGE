@@ -1,0 +1,227 @@
+Next coverage audit: kernel and base
+===================================
+
+Status: initial coverage implemented in all 21 areas by the third expansion.
+See COVERAGE-THIRD for the exact implemented contracts, omissions, and runtime
+qualification limits; the detailed bullets below remain the broader audit.
+The objective is enough semantic coverage to write new scripts without
+first modifying the subsystem. This is not a claim of complete coverage.
+
+FBT, pid, syscall and other dynamic providers can already trace many routines
+without new static probes. SDT/USDT adds explicit reasons, usable operation
+identities and stable semantic boundaries that function tracing may miss.
+A zero count of literal SDT calls is screening evidence, not proof an area
+is untraceable: inspect wrappers, headers, provider definitions and callers.
+Only the configured build and live enumeration establish available probes.
+
+Coverage contract for each added operation
+-----------------------------------------
+* Start and completion with the same identity; completion on success,
+  failure, timeout, interruption and cancellation wherever the operation
+  actually begins. Document validation that precedes start.
+* Distinguish queue residence, worker execution and asynchronous completion.
+  A function returning after submission is not completion of the I/O.
+* Include operation/result, requested/actual quantity, and failure/retry
+  reason. Preserve errno, protocol and library status domains separately.
+* Correlate nested calls and repeated/reused objects: thread + nesting or
+  explicit sequence/generation, as appropriate. Record identity before free.
+* State-change and drop events are single events; they do not need artificial
+  start/end pairs. Do not count retries or layers as unique requests.
+* No unconditional timestamp, string formatting, allocation, lock or payload
+  copy merely to feed a probe. Both enabled and disabled builds must work.
+* Ship argument documentation, source inventory, companion example profile,
+  and tests. Compile/link both modes, enumerate live probes, and exercise
+  representative success/failure/cancel paths before calling coverage live.
+
+Priority A: next implementation set
+-----------------------------------
+1. tmpfs vnode/reclaim and capacity
+   sys/fs/tmpfs/tmpfs_subr.c: tmpfs_alloc_vp, tmpfs_alloc_node,
+   tmpfs_reg_resize; tmpfs_vnops.c: tmpfs_rename_relock.
+   No direct SDT/USDT sites found in this subtree. Pair vnode allocation,
+   reclaim waits and rename relocking; expose restart reasons, space/node
+   limit refusals, requested size and result. tmpfs_alloc_vp explicitly
+   sleeps on TMPFS_VNODE_WRECLAIM and retries vget/raced vnode identity.
+   Script: tmpfs-stalls.d. Existing generic vnode probes are insufficient to
+   distinguish these branches. Consult the recorded WITNESS issue before
+   instrumenting related detach/reclaim ordering; this audit diagnoses none.
+
+2. FAT/msdosfs allocation and integrity recovery
+   sys/fs/msdosfs/msdosfs_fat.c: clusteralloc1, fatentry;
+   msdosfs_vfsops.c: msdosfs_integrity_error, msdosfs_remount_ro.
+   No direct sites found. Pair allocation/chain extension and sync, report
+   free-cluster search/failure, corruption detection and read-only transition
+   reason/result. Script: fat-pressure.d. Use mount/cluster identities and
+   counts, not file contents.
+
+3. NFS client state recovery
+   sys/fs/nfsclient/nfs_clstate.c: nfscl_recover, nfscl_renewthread,
+   nfscl_open, nfscl_lockrelease.
+   No direct sites found in the client subtree. Pair recovery/renewal,
+   expose reclaim stages, delegation recall and open/lock state outcomes.
+   Include mount/client identity, generation, operation and NFS status.
+   Script: nfs-recovery.d. The newly added RPC probes cover transport retry,
+   not NFS lease/reclaim semantics.
+
+4. NFS server compound and session state
+   sys/fs/nfsserver/nfs_nfsdsocket.c: nfsrvd_compound;
+   nfs_nfsdstate.c: nfsrv_getclient.
+   No direct sites found in the server subtree. Pair compound request and
+   individual operations, report replay/session/sequence decisions and
+   final protocol status; use request identity plus operation index.
+   Script: nfs-server-latency.d. Keep duplicate requests distinguishable.
+
+5. Swap and page reclamation phases
+   sys/vm/swap_pager.c: swap_pager_getpages_locked, swap_pager_putpages,
+   I/O completion callbacks; vm_pageout.c: vm_pageout_scan_inactive.
+   Existing swap on/off and vm lowmem-scan events do not explain page-I/O
+   completion or reclamation effectiveness. Pair actual I/O and scan/laundry
+   phases; report domain, shortage, scanned/freed/dirty/stuck pages and result.
+   Script: reclaim-efficiency.d. Existing swap-activity uses function probes.
+
+6. IOMMU mapping and invalidation
+   sys/dev/iommu/iommu_gas.c: iommu_gas_map;
+   busdma_iommu.c: iommu_bus_dmamap_complete, iommu_domain_unload_task.
+   No direct sites found. Pair address-space reservation, mapping, queued
+   unload and completion; expose reservation vs page-table ENOMEM, deferred
+   work and invalidation completion. Script: iommu-latency.d. Complements
+   bounce-buffer probes: these are separate DMA implementations.
+
+7. ACPI suspend/resume phases
+   sys/dev/acpica/acpi.c: acpi_suspend, acpi_resume,
+   acpi_EnterSleepStatePrep, acpi_EnterSleepState.
+   No direct sites found in the native wrapper subtree. Pair suspend/resume
+   phases, device callbacks and firmware transitions; report sleep type,
+   phase, device and ACPI status/errno separately. Script: suspend-phases.d.
+   Start at native boundaries around imported ACPICA. Check DTrace clock
+   behavior across sleep before claiming whole-suspend duration.
+
+8. Kernel crypto dispatch
+   sys/opencrypto/crypto.c: crypto_newsession, crypto_dispatch_one,
+   crypto_invoke, crypto_done.
+   The framework core lacks direct sites, although other opencrypto files
+   have probes. Pair submit/driver invocation/true completion by cryptop,
+   report hardware/software driver, queue/restart reason and result.
+   Script: crypto-queue.d. KTLS probes cover only one framework consumer.
+   Do not expose keys, IV contents or cleartext.
+
+9. libc resolver and NSS
+   lib/libc/resolv/res_send.c: res_nsend, send_dg, send_vc;
+   lib/libc/net/nsdispatch.c: _nsdispatch.
+   No direct sites found in the reviewed resolver/NSS sources. Pair overall
+   lookup and individual backend/server attempts; report backend selection,
+   timeout, retransmit, TCP fallback, DNS result and NSS status separately.
+   _nsdispatch has nested fallback dispatch, so use depth/attempt identities.
+   Scripts: resolver-attempts.d, nss-latency.d. Avoid raw queries/password data.
+
+10. libthr synchronization
+    lib/libthr/thread/thr_mutex.c: mutex_lock_common; thr_cond.c; thr_join.c.
+    No direct sites found in libthr. Pair contended mutex/condition/join
+    waits, report spin-to-sleep transitions, timeout/cancel/robust outcomes.
+    Script: pthread-contention.d. Kernel umtx observes sleeping/waking but
+    cannot explain userspace adaptive spinning and fast-path decisions.
+
+11. Runtime linker
+    libexec/rtld-elf/rtld.c: load_object, dlopen_object, dlclose_locked;
+    architecture relocation and symbol-resolution entry points.
+    No direct sites found in the reviewed tree. Pair load, dependency search,
+    relocation and initializer execution; expose lookup/cache/fallback and
+    failure reasons with object identity. Script: rtld-startup.d.
+    Use bootstrap-safe USDT integration with no new libc/allocator dependency;
+    explicitly test initial process loading as well as dlopen/dlclose.
+
+12. OpenPAM dispatcher
+    contrib/openpam/lib/libpam/openpam_dispatch.c: openpam_dispatch.
+    Individual native PAM modules already have USDT wrappers. The common
+    dispatcher lacks equivalent semantic events for chain selection, skipped
+    functions, PAM_IGNORE, sufficient/requisite short-circuit and final result.
+    Pair the chain and each module invocation, including dispatch errors.
+    Script: pam-chain.d. Record primitive, module index/control flag and PAM
+    result; never conversation answers or authentication tokens.
+
+Priority B: base utilities and imports
+--------------------------------------
+13. libfetch
+    lib/libfetch/http.c: http_request_body; common.c: fetch_connect, fetch_ssl.
+    No direct sites found. Pair request, connection and TLS phases; record
+    retries/redirects, status, proxy choice and byte counts. Script:
+    fetch-phases.d. Strip credentials/tokens; do not probe bodies or headers.
+
+14. libarchive
+    contrib/libarchive/libarchive/archive_virtual.c: archive_read_next_header2,
+    archive_read_data_block, archive_write_header, archive_write_data_block.
+    No direct sites found in the import. Add common-boundary operation pairs
+    and format/filter selection/error events; include archive identity,
+    operation sequence, requested/actual bytes and ARCHIVE_* status.
+    Script: archive-pipeline.d. Verify vtable/internal paths and both static
+    and shared library linkage rather than assuming public wrappers cover all.
+
+15. dhclient
+    sbin/dhclient/dhclient.c: state_init, state_selecting, bind_lease, state_bound.
+    No direct sites found. Trace state/lease transitions and pair configuration
+    helper actions; expose attempt, timeout, reject and bind outcomes.
+    Script: dhcp-lifecycle.d. Correlate by interface and DHCP transaction ID.
+
+16. devd
+    sbin/devd/devd.cc: process_event, config::find_and_execute, action::do_action.
+    Existing devd action event is not a full lifecycle. Add event ingestion,
+    rule match/no-match, action start/completion, child PID and exit status.
+    Script: devd-actions.d. The current my_system waits via wait4, but
+    do_action ignores its status and returns true: expose the actual child
+    result. Distinguish dispatch delay from command runtime.
+
+17. Filesystem checkers
+    sbin/fsck_ffs/main.c: checkfilesys; pass1.c through pass5.c;
+    sbin/fsck_msdosfs/check.c: checkfilesys.
+    No direct sites found. Pair check phases, expose problem class, repair
+    decision and result/counters. Script: fsck-phases.d. Include cancellation
+    and fatal exits; do not equate proposed repair with successful repair.
+
+18. Mount helpers and mountd
+    sbin/mount/mount.c: mountfs; sbin/umount/umount.c: umountfs;
+    usr.sbin/mountd/mountd.c: get_exportlist, mntsrv, do_mount.
+    No direct sites found in these directories. Pair helper execution and
+    export reload/apply; expose access/export rejection and mount result.
+    Script: mount-lifecycle.d. Distinguish helper exit status from syscall errno.
+
+19. ntpd
+    contrib/ntp/ntpd/ntp_proto.c: clock_select, clock_update;
+    ntp_loopfilter.c: local_clock.
+    No direct sites found in ntpd. Trace peer eligibility/rejection, selection,
+    step/slew decisions and adjustment result; pair meaningful processing
+    phases. Script: time-discipline.d. Existing BSDTime service probes do
+    not describe imported ntpd's selection/filter state machine.
+
+20. OpenSSH
+    crypto/openssh/auth2.c: userauth_finish; kex.c: kex_input_newkeys;
+    connection/channel dispatch and teardown paths.
+    No direct sites found in the reviewed import. Add authentication attempt
+    boundaries/results, KEX/rekey phases, channel open/close/rejection and
+    timeout/disconnect reasons. Script: ssh-lifecycle.d. Privilege-separated
+    processes require connection/attempt IDs, not just PID. No credentials,
+    session keys, command contents or traffic payloads.
+
+21. newsyslog
+    usr.sbin/newsyslog/newsyslog.c: do_rotate and compression/signal workers.
+    No direct sites found. Pair rotation, compression and reopen notification;
+    record trigger, size, child identity/status and filesystem errors.
+    Script: log-rotation.d. Existing syslogd probes describe a different stage.
+
+Already instrumented: inspect gaps, do not recreate providers
+------------------------------------------------------------
+SysV message/semaphore/shared memory, POSIX queues, AIO, pipes and UNIX-domain
+sockets have source probes. TCP/SCTP/IPsec use header/statistics wrappers,
+so searching only C files undercounts them. FUSE has substantial existing
+probe coverage. PAM modules, cron, syslogd and devd have userspace wrappers.
+For these, audit unmatched starts, missing cancellation/result fields and
+cross-thread correlation before adding another broad provider.
+
+Recommended rollout
+-------------------
+First implement Priority A with explicit pair/result contracts and matching
+profiles, then Priority B in coherent library/service groups. Keep each
+subsystem's live workloads and uncovered paths in its inventory. The 61-probe
+batch preceding this audit remains a baseline, with its exact stage limits
+in KERNEL-PROBES-NEXT; it does not fully instrument every operation in those
+14 subsystems. Maximum practical coverage is measured by observable lifecycles
+and branch outcomes, not the total number of declarations.

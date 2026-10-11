@@ -53,9 +53,9 @@
 #include <sys/sysctl.h>
 #include <sys/taskqueue.h>
 #include <sys/uio.h>
+#include <sys/sdt.h>
 
 #include <net/vnet.h>
-
 #include <netgraph/ng_message.h>
 #include <netgraph/netgraph.h>
 #include <netgraph/bluetooth/include/ng_bluetooth.h>
@@ -64,6 +64,16 @@
 #include <netgraph/bluetooth/include/ng_btsocket.h>
 #include <netgraph/bluetooth/include/ng_btsocket_l2cap.h>
 #include <netgraph/bluetooth/include/ng_btsocket_rfcomm.h>
+
+SDT_PROVIDER_DECLARE(bluetooth);
+SDT_PROBE_DEFINE4(bluetooth, , , rfcomm__state, "void *", "int", "int", "int");
+SDT_PROBE_DEFINE4(bluetooth, , , rfcomm__close, "void *", "int", "int", "int");
+SDT_PROBE_DEFINE4(bluetooth, , , rfcomm__credit, "void *", "int", "int", "int");
+SDT_PROBE_DEFINE5(bluetooth, , , rfcomm__drop, "void *", "int", "int", "int",
+    "int");
+SDT_PROBE_DEFINE5(bluetooth, , , rfcomm__flow, "void *", "int", "int", "int",
+    "int");
+SDT_PROBE_DEFINE2(bluetooth, , , rfcomm__frame__error, "void *", "int");
 
 /* MALLOC define */
 #ifdef NG_SEPARATE_MALLOC
@@ -406,7 +416,11 @@ ng_btsocket_rfcomm_attach(struct socket *so, int proto, struct thread *td)
 	pcb->so = so;
 
 	/* Initialize PCB */
-	pcb->state = NG_BTSOCKET_RFCOMM_DLC_CLOSED;
+	do {
+		SDT_PROBE4(bluetooth, , , rfcomm__state, pcb, pcb->dlci,
+		    pcb->state, NG_BTSOCKET_RFCOMM_DLC_CLOSED);
+		pcb->state = NG_BTSOCKET_RFCOMM_DLC_CLOSED;
+	} while (0);
 	pcb->flags = NG_BTSOCKET_RFCOMM_DLC_CFC;
 
 	pcb->lmodem =
@@ -592,13 +606,25 @@ ng_btsocket_rfcomm_connect(struct socket *so, struct sockaddr *nam,
 			bcopy(&so2l2cap_pcb(s->l2so)->src, &pcb->src,
 				sizeof(pcb->src));
 
-			pcb->state = NG_BTSOCKET_RFCOMM_DLC_CONFIGURING;
+			do {
+				SDT_PROBE4(bluetooth, , , rfcomm__state, pcb,
+				    pcb->dlci, pcb->state,
+				    NG_BTSOCKET_RFCOMM_DLC_CONFIGURING);
+
+				pcb->state = NG_BTSOCKET_RFCOMM_DLC_CONFIGURING;
+
+			} while (0);
 
 			error = ng_btsocket_rfcomm_send_pn(pcb);
 			if (error == 0)
 				error = ng_btsocket_rfcomm_task_wakeup();
 		} else
-			pcb->state = NG_BTSOCKET_RFCOMM_DLC_W4_CONNECT;
+			do {
+				SDT_PROBE4(bluetooth, , , rfcomm__state, pcb,
+				    pcb->dlci, pcb->state,
+				    NG_BTSOCKET_RFCOMM_DLC_W4_CONNECT);
+				pcb->state = NG_BTSOCKET_RFCOMM_DLC_W4_CONNECT;
+			} while (0);
 		break;
 
 	default:
@@ -711,7 +737,13 @@ ng_btsocket_rfcomm_detach(struct socket *so)
 		if (pcb->state == NG_BTSOCKET_RFCOMM_DLC_W4_CONNECT)
 			pcb->flags |= NG_BTSOCKET_RFCOMM_DLC_DETACHED;
 		else
-			pcb->state = NG_BTSOCKET_RFCOMM_DLC_DISCONNECTING;
+			do {
+				SDT_PROBE4(bluetooth, , , rfcomm__state, pcb,
+				    pcb->dlci, pcb->state,
+				    NG_BTSOCKET_RFCOMM_DLC_DISCONNECTING);
+				pcb->state =
+				    NG_BTSOCKET_RFCOMM_DLC_DISCONNECTING;
+			} while (0);
 
 		ng_btsocket_rfcomm_task_wakeup();
 		break;
@@ -777,9 +809,15 @@ ng_btsocket_rfcomm_disconnect(struct socket *so)
 		/*
 		 * Just change DLC state and enqueue RFCOMM task. It will
 		 * queue and send DISC on the DLC.
-		 */ 
+		 */
 
-		pcb->state = NG_BTSOCKET_RFCOMM_DLC_DISCONNECTING;
+		do {
+			SDT_PROBE4(bluetooth, , , rfcomm__state, pcb, pcb->dlci,
+			    pcb->state, NG_BTSOCKET_RFCOMM_DLC_DISCONNECTING);
+
+			pcb->state = NG_BTSOCKET_RFCOMM_DLC_DISCONNECTING;
+
+		} while (0);
 		soisdisconnecting(so);
 
 		ng_btsocket_rfcomm_task_wakeup();
@@ -1235,7 +1273,13 @@ ng_btsocket_rfcomm_connect_cfm(ng_btsocket_rfcomm_session_p s)
 
 			error = ng_btsocket_rfcomm_send_pn(pcb);
 			if (error == 0)
-				pcb->state = NG_BTSOCKET_RFCOMM_DLC_CONFIGURING;
+				do {
+					SDT_PROBE4(bluetooth, , , rfcomm__state,
+					    pcb, pcb->dlci, pcb->state,
+					    NG_BTSOCKET_RFCOMM_DLC_CONFIGURING);
+					pcb->state =
+					    NG_BTSOCKET_RFCOMM_DLC_CONFIGURING;
+				} while (0);
 			else
 				ng_btsocket_rfcomm_pcb_kill(pcb, error);
 		}
@@ -1817,8 +1861,8 @@ ng_btsocket_rfcomm_session_by_addr(bdaddr_p src, bdaddr_p dst)
  */
 
 static int
-ng_btsocket_rfcomm_receive_frame(ng_btsocket_rfcomm_session_p s,
-		struct mbuf *m0)
+ng_btsocket_rfcomm_receive_frame_impl(ng_btsocket_rfcomm_session_p s,
+    struct mbuf *m0)
 {
 	struct rfcomm_frame_hdr	*hdr = NULL;
 	struct mbuf		*m = NULL;
@@ -1980,6 +2024,18 @@ ng_btsocket_rfcomm_receive_frame(ng_btsocket_rfcomm_session_p s,
 	NG_FREE_M(m0);
 
 	return (error);
+}
+
+static int
+ng_btsocket_rfcomm_receive_frame(ng_btsocket_rfcomm_session_p s,
+    struct mbuf *m0)
+{
+	int error;
+
+	error = ng_btsocket_rfcomm_receive_frame_impl(s, m0);
+	if (error != 0)
+		SDT_PROBE2(bluetooth, , , rfcomm__frame__error, s, error);
+	return (error);
 } /* ng_btsocket_rfcomm_receive_frame */
 
 /*
@@ -2059,7 +2115,12 @@ ng_btsocket_rfcomm_receive_sabm(ng_btsocket_rfcomm_session_p s, int dlci)
 			error = ng_btsocket_rfcomm_send_msc(pcb);
 
 		if (error == 0) {
-			pcb->state = NG_BTSOCKET_RFCOMM_DLC_CONNECTED;
+			do {
+				SDT_PROBE4(bluetooth, , , rfcomm__state, pcb,
+				    pcb->dlci, pcb->state,
+				    NG_BTSOCKET_RFCOMM_DLC_CONNECTED);
+				pcb->state = NG_BTSOCKET_RFCOMM_DLC_CONNECTED;
+			} while (0);
 			soisconnected(pcb->so);
 		} else
 			ng_btsocket_rfcomm_pcb_kill(pcb, error);
@@ -2085,7 +2146,12 @@ ng_btsocket_rfcomm_receive_sabm(ng_btsocket_rfcomm_session_p s, int dlci)
 			error = ng_btsocket_rfcomm_send_msc(pcb);
 
 		if (error == 0) {
-			pcb->state = NG_BTSOCKET_RFCOMM_DLC_CONNECTED;
+			do {
+				SDT_PROBE4(bluetooth, , , rfcomm__state, pcb,
+				    pcb->dlci, pcb->state,
+				    NG_BTSOCKET_RFCOMM_DLC_CONNECTED);
+				pcb->state = NG_BTSOCKET_RFCOMM_DLC_CONNECTED;
+			} while (0);
 			soisconnected(pcb->so);
 		} else
 			ng_btsocket_rfcomm_pcb_kill(pcb, error);
@@ -2217,7 +2283,13 @@ ng_btsocket_rfcomm_receive_ua(ng_btsocket_rfcomm_session_p s, int dlci)
 
 			error = ng_btsocket_rfcomm_send_msc(pcb);
 			if (error == 0) {
-				pcb->state = NG_BTSOCKET_RFCOMM_DLC_CONNECTED;
+				do {
+					SDT_PROBE4(bluetooth, , , rfcomm__state,
+					    pcb, pcb->dlci, pcb->state,
+					    NG_BTSOCKET_RFCOMM_DLC_CONNECTED);
+					pcb->state =
+					    NG_BTSOCKET_RFCOMM_DLC_CONNECTED;
+				} while (0);
 				soisconnected(pcb->so);
 			}
 			break;
@@ -2301,6 +2373,7 @@ ng_btsocket_rfcomm_receive_uih(ng_btsocket_rfcomm_session_p s, int dlci,
 {
 	ng_btsocket_rfcomm_pcb_p	pcb = NULL;
 	int				error = 0;
+	int drop_reason __unused = 0;
 
 	mtx_assert(&s->session_mtx, MA_OWNED);
 
@@ -2311,6 +2384,7 @@ ng_btsocket_rfcomm_receive_uih(ng_btsocket_rfcomm_session_p s, int dlci,
 
 	/* XXX should we do it here? Check for session flow control */
 	if (s->flags & NG_BTSOCKET_RFCOMM_SESSION_LFC) {
+		drop_reason = 1;
 		NG_BTSOCKET_RFCOMM_WARN(
 "%s: Got UIH with session flow control asserted, state=%d, flags=%#x\n",
 			__func__, s->state, s->flags);
@@ -2320,6 +2394,7 @@ ng_btsocket_rfcomm_receive_uih(ng_btsocket_rfcomm_session_p s, int dlci,
 	/* Check if we have this dlci */
 	pcb = ng_btsocket_rfcomm_pcb_by_dlci(s, dlci);
 	if (pcb == NULL) {
+		drop_reason = 2;
 		NG_BTSOCKET_RFCOMM_WARN(
 "%s: Got UIH for non-existing dlci=%d\n", __func__, dlci);
 		error = ng_btsocket_rfcomm_send_command(s,RFCOMM_FRAME_DM,dlci);
@@ -2333,6 +2408,7 @@ ng_btsocket_rfcomm_receive_uih(ng_btsocket_rfcomm_session_p s, int dlci,
 		NG_BTSOCKET_RFCOMM_WARN(
 "%s: Got UIH for dlci=%d in invalid state=%d, flags=%#x\n",
 			__func__, dlci, pcb->state, pcb->flags);
+		drop_reason = 3;
 		error = EINVAL;
 		goto drop1;
 	}
@@ -2345,6 +2421,9 @@ ng_btsocket_rfcomm_receive_uih(ng_btsocket_rfcomm_session_p s, int dlci,
 "flags=%#x, rx_cred=%d, lmodem=%#x\n",
 			__func__, dlci, pcb->state, pcb->flags,
 			pcb->rx_cred, pcb->lmodem);
+		SDT_PROBE5(bluetooth, , , rfcomm__flow, pcb, dlci, 0,
+		    pcb->rx_cred, pcb->lmodem);
+		drop_reason = 4;
 		goto drop1;
 	}
 
@@ -2357,6 +2436,8 @@ ng_btsocket_rfcomm_receive_uih(ng_btsocket_rfcomm_session_p s, int dlci,
 			pcb->flags, pcb->rx_cred, pcb->tx_cred);
 
 		pcb->tx_cred += *mtod(m0, u_int8_t *);
+		SDT_PROBE4(bluetooth, , , rfcomm__credit, pcb, dlci,
+		    pcb->tx_cred, pcb->rx_cred);
 		m_adj(m0, 1);
 
 		/* Send more from the DLC. XXX check for errors? */
@@ -2384,6 +2465,7 @@ ng_btsocket_rfcomm_receive_uih(ng_btsocket_rfcomm_session_p s, int dlci,
 				__func__, dlci, pcb->state, pcb->flags,
 				pcb->mtu, m0->m_pkthdr.len);
 
+			drop_reason = 5;
 			error = EMSGSIZE;
 		} else if (m0->m_pkthdr.len > sbspace(&pcb->so->so_rcv)) {
 			/*
@@ -2398,6 +2480,7 @@ ng_btsocket_rfcomm_receive_uih(ng_btsocket_rfcomm_session_p s, int dlci,
 				__func__, dlci, pcb->state, pcb->flags,
 				m0->m_pkthdr.len, sbspace(&pcb->so->so_rcv));
 
+			drop_reason = 6;
 			error = ENOBUFS;
 		} else {
 			/* Append packet to the socket receive queue */
@@ -2410,6 +2493,9 @@ ng_btsocket_rfcomm_receive_uih(ng_btsocket_rfcomm_session_p s, int dlci,
 drop1:
 	mtx_unlock(&pcb->pcb_mtx);
 drop:
+	if (m0 != NULL && drop_reason != 0)
+		SDT_PROBE5(bluetooth, , , rfcomm__drop, s, dlci, error,
+		    m0->m_pkthdr.len, drop_reason);
 	NG_FREE_M(m0); /* checks for != NULL */
 
 	return (error);
@@ -2910,7 +2996,15 @@ ng_btsocket_rfcomm_receive_pn(ng_btsocket_rfcomm_session_p s, struct mbuf *m0)
 				ng_btsocket_rfcomm_set_pn(pcb, 0,
 					pn->flow_control, pn->credits, pn->mtu);
 
-				pcb->state = NG_BTSOCKET_RFCOMM_DLC_CONNECTING;
+				do {
+					SDT_PROBE4(bluetooth, , , rfcomm__state,
+					    pcb, pcb->dlci, pcb->state,
+					    NG_BTSOCKET_RFCOMM_DLC_CONNECTING);
+
+					pcb->state =
+					    NG_BTSOCKET_RFCOMM_DLC_CONNECTING;
+
+				} while (0);
 				error = ng_btsocket_rfcomm_send_command(s,
 						RFCOMM_FRAME_SABM, pn->dlci);
 			} else
@@ -2949,7 +3043,13 @@ ng_btsocket_rfcomm_receive_pn(ng_btsocket_rfcomm_session_p s, struct mbuf *m0)
 
 			if (error == 0) {
 				ng_btsocket_rfcomm_timeout(pcb);
-				pcb->state = NG_BTSOCKET_RFCOMM_DLC_CONNECTING;
+				do {
+					SDT_PROBE4(bluetooth, , , rfcomm__state,
+					    pcb, pcb->dlci, pcb->state,
+					    NG_BTSOCKET_RFCOMM_DLC_CONNECTING);
+					pcb->state =
+					    NG_BTSOCKET_RFCOMM_DLC_CONNECTING;
+				} while (0);
 				soisconnecting(pcb->so);
 			} else
 				ng_btsocket_rfcomm_pcb_kill(pcb, error);
@@ -3271,6 +3371,8 @@ ng_btsocket_rfcomm_send_credits(ng_btsocket_rfcomm_pcb_p pcb)
 					pcb->dlci), 1, credits, NULL);
 		if (error == 0) {
 			pcb->rx_cred += credits;
+			SDT_PROBE4(bluetooth, , , rfcomm__credit, pcb,
+			    pcb->dlci, pcb->tx_cred, pcb->rx_cred);
 
 			NG_BTSOCKET_RFCOMM_INFO(
 "%s: Gave remote side %d more credits, dlci=%d, state=%d, flags=%#x, " \
@@ -3316,6 +3418,8 @@ ng_btsocket_rfcomm_pcb_send(ng_btsocket_rfcomm_pcb_p pcb, int limit)
 		limit = 0;
 
 	if (limit == 0) {
+		SDT_PROBE5(bluetooth, , , rfcomm__flow, pcb, pcb->dlci, 1,
+		    pcb->tx_cred, pcb->rmodem);
 		NG_BTSOCKET_RFCOMM_INFO(
 "%s: Could not send - remote flow control asserted, dlci=%d, flags=%#x, " \
 "rmodem=%#x, tx_cred=%d\n",
@@ -3381,6 +3485,8 @@ ng_btsocket_rfcomm_pcb_kill(ng_btsocket_rfcomm_pcb_p pcb, int error)
 
 	mtx_assert(&pcb->session->session_mtx, MA_OWNED);
 	mtx_assert(&pcb->pcb_mtx, MA_OWNED);
+	SDT_PROBE4(bluetooth, , , rfcomm__close, pcb, pcb->dlci, pcb->state,
+	    error);
 
 	if (pcb->flags & NG_BTSOCKET_RFCOMM_DLC_TIMO)
 		ng_btsocket_rfcomm_untimeout(pcb);
@@ -3390,7 +3496,11 @@ ng_btsocket_rfcomm_pcb_kill(ng_btsocket_rfcomm_pcb_p pcb, int error)
 	pcb->session = NULL;
 
 	/* Change DLC state and wakeup all sleepers */
-	pcb->state = NG_BTSOCKET_RFCOMM_DLC_CLOSED;
+	do {
+		SDT_PROBE4(bluetooth, , , rfcomm__state, pcb, pcb->dlci,
+		    pcb->state, NG_BTSOCKET_RFCOMM_DLC_CLOSED);
+		pcb->state = NG_BTSOCKET_RFCOMM_DLC_CLOSED;
+	} while (0);
 	pcb->so->so_error = error;
 	soisdisconnected(pcb->so);
 	wakeup(&pcb->state);
@@ -3551,7 +3661,11 @@ ng_btsocket_rfcomm_process_timeout(void *xpcb)
 	switch (pcb->state) {
 	case NG_BTSOCKET_RFCOMM_DLC_CONFIGURING:
 	case NG_BTSOCKET_RFCOMM_DLC_CONNECTING:
-		pcb->state = NG_BTSOCKET_RFCOMM_DLC_DISCONNECTING;
+		do {
+			SDT_PROBE4(bluetooth, , , rfcomm__state, pcb, pcb->dlci,
+			    pcb->state, NG_BTSOCKET_RFCOMM_DLC_DISCONNECTING);
+			pcb->state = NG_BTSOCKET_RFCOMM_DLC_DISCONNECTING;
+		} while (0);
 		break;
 
 	case NG_BTSOCKET_RFCOMM_DLC_W4_CONNECT:

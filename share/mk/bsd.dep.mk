@@ -154,6 +154,8 @@ OBJS_DEPEND_GUESS.${_YC:R}.o+=	${_YC}
 .endfor
 
 # DTrace probe definitions
+# DTRACE_STATIC_ANCHOR lets instrumented library headers retain a hidden
+# __bsd_dof_anchor_<provider-file> reference, pulling DOF into static links.
 .if ${SRCS:M*.d}
 CFLAGS+=	-I${.OBJDIR}
 .if defined(SYSROOT) && !empty(SYSROOT)
@@ -180,24 +182,39 @@ ${_D}.o: ${_DSRC} ${OBJS:S/^${_D}.o$//} ${_DTRACE_DRTI_DEP}
 	@rm -f ${.TARGET}
 	${DTRACE} ${DTRACEFLAGS} ${_DTRACE_SYSROOT_FLAG} -G -o ${.TARGET} -s ${.ALLSRC:M*.d} \
 	    ${.ALLSRC:M*.o}
+.if defined(DTRACE_STATIC_ANCHOR)
+	${OBJCOPY} --add-symbol __bsd_dof_anchor_${_D}=.SUNW_dof:0,global,hidden ${.TARGET}
+.endif
 ${_D}.pieo: ${_DSRC} ${OBJS:S/^${_D}.pieo$//} ${_DTRACE_DRTI_DEP}
 	@rm -f ${.TARGET}
 	${DTRACE} ${DTRACEFLAGS} ${_DTRACE_SYSROOT_FLAG} -G -o ${.TARGET} -s ${.ALLSRC:M*.d} \
 	    ${.ALLSRC:M*.pieo}
+.if defined(DTRACE_STATIC_ANCHOR)
+	${OBJCOPY} --add-symbol __bsd_dof_anchor_${_D}=.SUNW_dof:0,global,hidden ${.TARGET}
+.endif
 .if defined(LIB) || defined(SHLIB)
 CLEANFILES+= ${_D}.pico ${_D}.pieo ${_D}.po ${_D}.nossppico
 ${_D}.pico: ${_DSRC} ${SOBJS:S/^${_D}.pico$//} ${_DTRACE_DRTI_DEP}
 	@rm -f ${.TARGET}
 	${DTRACE} ${DTRACEFLAGS} ${_DTRACE_SYSROOT_FLAG} -G -o ${.TARGET} -s ${.ALLSRC:M*.d} \
 	    ${.ALLSRC:M*.pico}
+.if defined(DTRACE_STATIC_ANCHOR)
+	${OBJCOPY} --add-symbol __bsd_dof_anchor_${_D}=.SUNW_dof:0,global,hidden ${.TARGET}
+.endif
 ${_D}.po: ${_DSRC} ${POBJS:S/^${_D}.po$//} ${_DTRACE_DRTI_DEP}
 	@rm -f ${.TARGET}
 	${DTRACE} ${DTRACEFLAGS} ${_DTRACE_SYSROOT_FLAG} -G -o ${.TARGET} -s ${.ALLSRC:M*.d} \
 	    ${.ALLSRC:M*.po}
-${_D}.nossppico: ${_DSRC} ${SOBJS:S/^${_D}.nossppico$//} ${_DTRACE_DRTI_DEP}
+.if defined(DTRACE_STATIC_ANCHOR)
+	${OBJCOPY} --add-symbol __bsd_dof_anchor_${_D}=.SUNW_dof:0,global,hidden ${.TARGET}
+.endif
+${_D}.nossppico: ${_DSRC} ${NOSSPSOBJS:S/^${_D}.nossppico$//} ${_DTRACE_DRTI_DEP}
 	@rm -f ${.TARGET}
 	${DTRACE} ${DTRACEFLAGS} ${_DTRACE_SYSROOT_FLAG} -G -o ${.TARGET} -s ${.ALLSRC:M*.d} \
 	    ${.ALLSRC:M*.nossppico}
+.if defined(DTRACE_STATIC_ANCHOR)
+	${OBJCOPY} --add-symbol __bsd_dof_anchor_${_D}=.SUNW_dof:0,global,hidden ${.TARGET}
+.endif
 .endif
 .endfor
 .endfor

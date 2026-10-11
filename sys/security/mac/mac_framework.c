@@ -91,6 +91,16 @@
  */
 SDT_PROVIDER_DEFINE(mac);
 SDT_PROVIDER_DEFINE(mac_framework);
+SDT_PROBE_DEFINE4(mac_framework, , , hook__args, "char *", "char *",
+    "u_int", "const uint64_t *");
+SDT_PROBE_DEFINE3(mac_framework, , , hook__skip, "char *", "char *", "int");
+SDT_PROBE_DEFINE2(mac_framework, , , hook__start, "char *", "char *");
+SDT_PROBE_DEFINE4(mac_framework, , , hook__done, "char *", "char *", "int", "int");
+SDT_PROBE_DEFINE1(mac_framework, , , register__start, "struct mac_policy_conf *");
+SDT_PROBE_DEFINE2(mac_framework, , , register__done, "struct mac_policy_conf *", "int");
+SDT_PROBE_DEFINE1(mac_framework, , , unregister__start, "struct mac_policy_conf *");
+SDT_PROBE_DEFINE2(mac_framework, , , unregister__done, "struct mac_policy_conf *", "int");
+
 
 SDT_PROBE_DEFINE2(mac, , policy, modevent, "int",
     "struct mac_policy_conf *");
@@ -556,6 +566,7 @@ mac_policy_register(struct mac_policy_conf *mpc)
 	 * We don't technically need exclusive access while !mac_late, but
 	 * hold it for assertion consistency.
 	 */
+	SDT_PROBE1(mac_framework, , , register__start, mpc);
 	mac_policy_xlock();
 
 	/*
@@ -605,8 +616,8 @@ mac_policy_register(struct mac_policy_conf *mpc)
 	 * "init" occurring without the lock held.  Likewise, on tear-down,
 	 * breaking out "stop" from "destroy".
 	 */
-	if (mpc->mpc_ops->mpo_init != NULL)
-		(*(mpc->mpc_ops->mpo_init))(mpc);
+	if (MAC_POLICY_PRESENT(init, mpc))
+		MAC_POLICY_CALL_VOID(init, mpc, mpc);
 
 	mac_policy_fastpath_register(mpc);
 
@@ -618,7 +629,11 @@ mac_policy_register(struct mac_policy_conf *mpc)
 
 out:
 	mac_policy_xunlock();
-	return (error);
+	{
+		int trace_result = error;
+		SDT_PROBE2(mac_framework, , , register__done, mpc, trace_result);
+		return (trace_result);
+	}
 }
 
 static int
@@ -629,10 +644,15 @@ mac_policy_unregister(struct mac_policy_conf *mpc)
 	 * If we fail the load, we may get a request to unload.  Check to see
 	 * if we did the run-time registration, and if not, silently succeed.
 	 */
+	SDT_PROBE1(mac_framework, , , unregister__start, mpc);
 	mac_policy_xlock();
 	if ((mpc->mpc_runtime_flags & MPC_RUNTIME_FLAG_REGISTERED) == 0) {
 		mac_policy_xunlock();
-		return (0);
+		{
+		int trace_result = 0;
+		SDT_PROBE2(mac_framework, , , unregister__done, mpc, trace_result);
+		return (trace_result);
+	}
 	}
 #if 0
 	/*
@@ -640,7 +660,11 @@ mac_policy_unregister(struct mac_policy_conf *mpc)
 	 */
 	if (mpc->mpc_field_off != NULL) {
 		mac_policy_xunlock();
-		return (EBUSY);
+		{
+		int trace_result = EBUSY;
+		SDT_PROBE2(mac_framework, , , unregister__done, mpc, trace_result);
+		return (trace_result);
+	}
 	}
 #endif
 	/*
@@ -649,13 +673,17 @@ mac_policy_unregister(struct mac_policy_conf *mpc)
 	 */
 	if ((mpc->mpc_loadtime_flags & MPC_LOADTIME_FLAG_UNLOADOK) == 0) {
 		mac_policy_xunlock();
-		return (EBUSY);
+		{
+		int trace_result = EBUSY;
+		SDT_PROBE2(mac_framework, , , unregister__done, mpc, trace_result);
+		return (trace_result);
+	}
 	}
 
 	mac_policy_fastpath_unregister(mpc);
 
-	if (mpc->mpc_ops->mpo_destroy != NULL)
-		(*(mpc->mpc_ops->mpo_destroy))(mpc);
+	if (MAC_POLICY_PRESENT(destroy, mpc))
+		MAC_POLICY_CALL_VOID(destroy, mpc, mpc);
 
 	LIST_REMOVE(mpc, mpc_list);
 	mpc->mpc_runtime_flags &= ~MPC_RUNTIME_FLAG_REGISTERED;
@@ -666,7 +694,11 @@ mac_policy_unregister(struct mac_policy_conf *mpc)
 	printf("Security policy unload: %s (%s)\n", mpc->mpc_fullname,
 	    mpc->mpc_name);
 
-	return (0);
+	{
+		int trace_result = 0;
+		SDT_PROBE2(mac_framework, , , unregister__done, mpc, trace_result);
+		return (trace_result);
+	}
 }
 
 /*

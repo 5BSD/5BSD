@@ -51,15 +51,23 @@
 #include <sys/taskqueue.h>
 #include <sys/unistd.h>
 #include <sys/vnode.h>
+#include <sys/queue.h>
+#include <sys/sdt.h>
 
 #include <nfs/nfsproto.h>
 #include <nfs/nfs_lock.h>
-
 #include <nlm/nlm_prot.h>
 #include <nlm/sm_inter.h>
 #include <nlm/nlm.h>
 #include <rpc/rpc_com.h>
 #include <rpc/rpcb_prot.h>
+
+SDT_PROVIDER_DEFINE(nlm);
+SDT_PROBE_DEFINE2(nlm, , , recovery__start, "struct nlm_host *", "int");
+SDT_PROBE_DEFINE2(nlm, , , recovery__done, "struct nlm_host *", "int");
+SDT_PROBE_DEFINE2(nlm, , , wait__start, "void *", "int");
+SDT_PROBE_DEFINE2(nlm, , , wait__done, "void *", "int");
+SDT_PROBE_DEFINE1(nlm, , , cancel, "struct vnode *");
 
 MALLOC_DEFINE(M_NLM, "NLM", "Network Lock Manager");
 
@@ -741,7 +749,9 @@ nlm_client_recovery_start(void *arg)
 	NLM_DEBUG(1, "NLM: client lock recovery for %s started\n",
 	    host->nh_caller_name);
 
+	SDT_PROBE2(nlm, , , recovery__start, host, host->nh_monstate);
 	nlm_client_recovery(host);
+	SDT_PROBE2(nlm, , , recovery__done, host, host->nh_monstate);
 
 	NLM_DEBUG(1, "NLM: client lock recovery for %s completed\n",
 	    host->nh_caller_name);
@@ -1367,6 +1377,7 @@ nlm_wait_lock(void *handle, int timo)
 	 * If the granted message arrived before we got here,
 	 * nw->nw_waiting will be FALSE - in that case, don't sleep.
 	 */
+	SDT_PROBE2(nlm, , , wait__start, handle, timo);
 	mtx_lock(&nlm_global_lock);
 	error = 0;
 	if (nw->nw_waiting) {
@@ -1394,6 +1405,7 @@ nlm_wait_lock(void *handle, int timo)
 	}
 	mtx_unlock(&nlm_global_lock);
 
+	SDT_PROBE2(nlm, , , wait__done, handle, error);
 	free(nw, M_NLM);
 
 	return (error);
@@ -1404,6 +1416,7 @@ nlm_cancel_wait(struct vnode *vp)
 {
 	struct nlm_waiting_lock *nw;
 
+	SDT_PROBE1(nlm, , , cancel, vp);
 	mtx_lock(&nlm_global_lock);
 	TAILQ_FOREACH(nw, &nlm_waiting_locks, nw_link) {
 		if (nw->nw_vp == vp) {

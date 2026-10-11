@@ -44,6 +44,17 @@
 #define	DEBUG_MOD_NAME	nl_io
 #define	DEBUG_MAX_LEVEL	LOG_DEBUG3
 #include <netlink/netlink_debug.h>
+
+#include <sys/sdt.h>
+
+SDT_PROVIDER_DEFINE(netlink);
+SDT_PROBE_DEFINE4(netlink, , , request, "void *", "uint32_t", "int", "int");
+SDT_PROBE_DEFINE5(netlink, , , result, "void *", "uint32_t", "int", "int",
+    "int");
+SDT_PROBE_DEFINE3(netlink, , , rx__drop, "void *", "unsigned int",
+    "unsigned int");
+SDT_PROBE_DEFINE4(netlink, , , malformed, "void *", "uint32_t", "unsigned int",
+    "int");
 _DECLARE_DEBUG(LOG_INFO);
 
 /*
@@ -231,6 +242,8 @@ nl_send(struct nl_writer *nw, struct nlpcb *nlp)
 	if (!nw->ignore_limit && __predict_false(sb->sb_hiwat <= sb->sb_ccc)) {
 		SOCK_RECVBUF_UNLOCK(so);
 		NLP_LOCK(nlp);
+		SDT_PROBE3(netlink, , , rx__drop, nlp, nw->num_messages,
+		    nb->datalen);
 		nlp->nl_dropped_bytes += nb->datalen;
 		nlp->nl_dropped_messages += nw->num_messages;
 		NLP_LOG(LOG_DEBUG2, nlp, "RX oveflow: %lu m (+%d), %lu b (+%d)",
@@ -270,15 +283,21 @@ nl_receive_message(struct nlmsghdr *hdr, int remaining_length,
 	if (__predict_false(hdr->nlmsg_len > remaining_length)) {
 		NLP_LOG(LOG_DEBUG, nlp, "message is not entirely present: want %d got %d",
 		    hdr->nlmsg_len, remaining_length);
+		SDT_PROBE4(netlink, , , malformed, nlp, hdr->nlmsg_seq,
+		    hdr->nlmsg_len, remaining_length);
 		return (EINVAL);
 	} else if (__predict_false(hdr->nlmsg_len < sizeof(*hdr))) {
 		NL_LOG(LOG_DEBUG, "message too short: %d", hdr->nlmsg_len);
+		SDT_PROBE4(netlink, , , malformed, nlp, hdr->nlmsg_seq,
+		    hdr->nlmsg_len, remaining_length);
 		return (EINVAL);
 	}
 	/* Stamp each message with sender pid */
 	hdr->nlmsg_pid = nlp->nl_port;
 
 	npt->hdr = hdr;
+	SDT_PROBE4(netlink, , , request, nlp, hdr->nlmsg_seq, nlp->nl_proto,
+	    hdr->nlmsg_type);
 
 	if (hdr->nlmsg_flags & NLM_F_REQUEST &&
 	    hdr->nlmsg_type >= NLMSG_MIN_TYPE) {
@@ -295,6 +314,8 @@ nl_receive_message(struct nlmsghdr *hdr, int remaining_length,
 		NL_LOG(LOG_DEBUG2, "retcode: %d", error);
 	}
 ack:
+	SDT_PROBE5(netlink, , , result, nlp, hdr->nlmsg_seq, hdr->nlmsg_type,
+	    error, npt->err_off);
 	if ((hdr->nlmsg_flags & NLM_F_ACK) || (error != 0 && error != EINTR)) {
 		if (!npt->nw->suppress_ack) {
 			NL_LOG(LOG_DEBUG3, "ack");

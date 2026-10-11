@@ -56,9 +56,18 @@ void trace_iwlwifi_dev_rx_data(const struct device *,
 #define	trace_iwlwifi_dev_iowrite8(...)
 #define	trace_iwlwifi_dev_iowrite_prph32(...)
 #define	trace_iwlwifi_dev_iowrite_prph64(...)
-#define	trace_iwlwifi_dev_irq(...)
-#define	trace_iwlwifi_dev_irq_msix(...)
-#define	trace_iwlwifi_dev_tx(...)
+#ifdef KDTRACE_HOOKS
+struct msix_entry;
+void trace_iwlwifi_dev_irq(const struct device *);
+void trace_iwlwifi_dev_irq_msix(const struct device *,
+    const struct msix_entry *, bool, u32, u32);
+void trace_iwlwifi_dev_tx(const struct device *, const struct sk_buff *,
+    const void *, size_t, const void *, size_t, size_t);
+#else
+#define trace_iwlwifi_dev_irq(...)
+#define trace_iwlwifi_dev_irq_msix(...)
+#define trace_iwlwifi_dev_tx(...)
+#endif
 #define	trace_iwlwifi_dev_tx_tb(...)
 
 #define	maybe_trace_iwlwifi_dev_rx(...)

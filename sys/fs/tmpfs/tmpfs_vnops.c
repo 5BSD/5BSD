@@ -37,6 +37,13 @@
  */
 
 #include <sys/param.h>
+
+#include <sys/queue.h>
+#include <sys/sdt.h>
+
+SDT_PROVIDER_DECLARE(tmpfs);
+SDT_PROBE_DEFINE2(tmpfs, , , rename__start, "void *", "void *");
+SDT_PROBE_DEFINE3(tmpfs, , , rename__done, "void *", "int", "int");
 #include <sys/systm.h>
 #include <sys/dirent.h>
 #include <sys/extattr.h>
@@ -850,6 +857,7 @@ tmpfs_rename_relock(struct vnode *fdvp, struct vnode **fvpp,
 	struct tmpfs_dirent *de;
 	int error, restarts = 0;
 
+	SDT_PROBE2(tmpfs, , , rename__start, (fdvp), (tdvp));
 	VOP_UNLOCK(tdvp);
 	if (*tvpp != NULL && *tvpp != tdvp)
 		VOP_UNLOCK(*tvpp);
@@ -952,7 +960,12 @@ relock:
 	}
 	tmpfs_rename_restarts += restarts;
 
-	return (0);
+	{
+		int trace_result = 0;
+
+		SDT_PROBE3(tmpfs, , , rename__done, (fdvp), (restarts), (trace_result));
+		return (trace_result);
+	}
 
 releout:
 	vrele(fdvp);
@@ -962,7 +975,12 @@ releout:
 		vrele(*tvpp);
 	tmpfs_rename_restarts += restarts;
 
-	return (error);
+	{
+		int trace_result = error;
+
+		SDT_PROBE3(tmpfs, , , rename__done, (fdvp), (restarts), (trace_result));
+		return (trace_result);
+	}
 }
 
 static int

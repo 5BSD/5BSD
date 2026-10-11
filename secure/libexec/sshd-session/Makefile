@@ -55,6 +55,14 @@ LIBADD+=	wrap
 
 LIBADD+=	crypto
 
+
+.include <src.opts.mk>
+.if ${MK_DTRACE} != "no"
+SRCS+= sshauth_provider.d
+DTRACE_STATIC_ANCHOR= yes
+CFLAGS+= -DWITH_COVERAGE_DTRACE
+.endif
+
 .include <bsd.prog.mk>
 
 .PATH:	${SSHDIR}

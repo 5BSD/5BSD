@@ -73,6 +73,14 @@
 #include <netgraph/netgraph.h>
 #include <netgraph/ng_parse.h>
 
+#include <sys/sdt.h>
+
+SDT_PROVIDER_DEFINE(netgraph);
+SDT_PROBE_DEFINE3(netgraph, , , queue, "void *", "void *", "int");
+SDT_PROBE_DEFINE4(netgraph, , , dispatch, "void *", "void *", "int", "int");
+SDT_PROBE_DEFINE3(netgraph, , , dispatch__done, "void *", "void *", "int");
+SDT_PROBE_DEFINE2(netgraph, , , disconnect, "void *", "void *");
+
 MODULE_VERSION(netgraph, NG_ABI_VERSION);
 
 /* Mutex to protect topology events. */
@@ -1175,6 +1183,7 @@ ng_destroy_hook(hook_p hook)
 	 */
 	TOPOLOGY_WLOCK();
 
+	SDT_PROBE2(netgraph, , , disconnect, NG_HOOK_NODE(hook), hook);
 	hook->hk_flags |= HK_INVALID;
 
 	peer = NG_HOOK_PEER(hook);
@@ -2027,6 +2036,7 @@ ng_queue_rw(node_p node, item_p  item, int rw)
 	/* Set OP_PENDING flag and enqueue the item. */
 	atomic_set_int(&ngq->q_flags, OP_PENDING);
 	STAILQ_INSERT_TAIL(&ngq->queue, item, el_next);
+	SDT_PROBE3(netgraph, , , queue, node, item, rw);
 
 	CTR5(KTR_NET, "%20s: node [%x] (%p) queued item %p as %s", __func__,
 	    node->nd_ID, node, item, rw ? "WRITER" : "READER" );
@@ -2380,6 +2390,8 @@ ng_apply_item(node_p node, item_p item, int rw)
 
 	apply = item->apply;
 	depth = item->depth;
+	SDT_PROBE4(netgraph, , , dispatch, node, item,
+	    item->el_flags & NGQF_TYPE, depth);
 
 	switch (item->el_flags & NGQF_TYPE) {
 	case NGQF_DATA:
@@ -2481,6 +2493,8 @@ ng_apply_item(node_p node, item_p item, int rw)
 			error = (*NGI_FN2(item))(node, item, hook);
 		break;
 	}
+	/* The handler may have freed item; use its identity only. */
+	SDT_PROBE3(netgraph, , , dispatch__done, node, item, error);
 	/*
 	 * We held references on some of the resources
 	 * that we took from the item. Now that we have

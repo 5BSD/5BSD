@@ -46,6 +46,24 @@
 #include <sys/sysctl.h>
 #include <sys/taskqueue.h>
 #include <sys/unistd.h>
+#include <sys/queue.h>
+#include <sys/sdt.h>
+
+SDT_PROVIDER_DEFINE(taskqueue);
+SDT_PROBE_DEFINE3(taskqueue, , , enqueue, "struct taskqueue *", "struct task *",
+    "int");
+SDT_PROBE_DEFINE3(taskqueue, , , coalesce, "struct taskqueue *",
+    "struct task *", "int");
+SDT_PROBE_DEFINE4(taskqueue, , , execute__start, "struct taskqueue *",
+    "struct task *", "u_int", "int");
+SDT_PROBE_DEFINE3(taskqueue, , , execute__done, "struct taskqueue *",
+    "struct task *", "u_int");
+SDT_PROBE_DEFINE3(taskqueue, , , cancel, "struct taskqueue *", "struct task *",
+    "int");
+SDT_PROBE_DEFINE2(taskqueue, , , drain__start, "struct taskqueue *",
+    "struct task *");
+SDT_PROBE_DEFINE2(taskqueue, , , drain__done, "struct taskqueue *",
+    "struct task *");
 
 static MALLOC_DEFINE(M_TASKQUEUE, "taskqueue", "Task Queues");
 static void	*taskqueue_giant_ih;
@@ -280,6 +298,8 @@ taskqueue_enqueue_locked(struct taskqueue *queue, struct task *task, int flags)
 		}
 		if (task->ta_pending < USHRT_MAX)
 			task->ta_pending++;
+		SDT_PROBE3(taskqueue, , , coalesce, queue, task,
+		    task->ta_pending);
 		TQ_UNLOCK(queue);
 		return (0);
 	}
@@ -313,6 +333,7 @@ taskqueue_enqueue_locked(struct taskqueue *queue, struct task *task, int flags)
 	}
 
 	task->ta_pending = 1;
+	SDT_PROBE3(taskqueue, , , enqueue, queue, task, flags);
 	if ((queue->tq_flags & TQ_FLAGS_UNLOCKED_ENQUEUE) != 0)
 		TQ_UNLOCK(queue);
 	if ((queue->tq_flags & TQ_FLAGS_BLOCKED) == 0)
@@ -539,7 +560,11 @@ taskqueue_run_locked(struct taskqueue *queue)
 			NET_EPOCH_EXIT(et);
 			epochtasks = 0;
 		}
+		SDT_PROBE4(taskqueue, , , execute__start, queue, task,
+		    tb.tb_seq, pending);
 		task->ta_func(task->ta_context, pending);
+		SDT_PROBE3(taskqueue, , , execute__done, queue, task,
+		    tb.tb_seq);
 		if (epochtasks > net_epoch_task_limit) {
 			NET_EPOCH_EXIT(et);
 			epochtasks = 0;
@@ -605,6 +630,7 @@ taskqueue_cancel_locked(struct taskqueue *queue, struct task *task,
 		retval = EBUSY;
 	}
 
+	SDT_PROBE3(taskqueue, , , cancel, queue, task, retval);
 	return (retval);
 }
 
@@ -649,6 +675,7 @@ taskqueue_drain(struct taskqueue *queue, struct task *task)
 	if (!queue->tq_spin)
 		WITNESS_WARN(WARN_GIANTOK | WARN_SLEEPOK, NULL, __func__);
 
+	SDT_PROBE2(taskqueue, , , drain__start, queue, task);
 	TQ_LOCK(queue);
 	for (;;) {
 		if (task->ta_pending != 0)
@@ -659,6 +686,7 @@ taskqueue_drain(struct taskqueue *queue, struct task *task)
 			break;
 	}
 	TQ_UNLOCK(queue);
+	SDT_PROBE2(taskqueue, , , drain__done, queue, task);
 }
 
 void

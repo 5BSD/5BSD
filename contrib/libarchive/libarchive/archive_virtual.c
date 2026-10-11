@@ -24,6 +24,7 @@
  */
 
 #include "archive_platform.h"
+#include "archiveio_trace.h"
 
 #include "archive.h"
 #include "archive_entry.h"
@@ -64,13 +65,23 @@ archive_free(struct archive *a)
 int
 archive_write_close(struct archive *a)
 {
-	return ((a->vtable->archive_close)(a));
+	TRACE_ARCHIVEIO_OPERATION__START(a, 8, 0);
+	{
+		int trace_result = ((a->vtable->archive_close)(a));
+		TRACE_ARCHIVEIO_OPERATION__DONE(a, 8, trace_result);
+		return (trace_result);
+	}
 }
 
 int
 archive_read_close(struct archive *a)
 {
-	return ((a->vtable->archive_close)(a));
+	TRACE_ARCHIVEIO_OPERATION__START(a, 9, 0);
+	{
+		int trace_result = ((a->vtable->archive_close)(a));
+		TRACE_ARCHIVEIO_OPERATION__DONE(a, 9, trace_result);
+		return (trace_result);
+	}
 }
 
 int
@@ -113,50 +124,89 @@ archive_read_finish(struct archive *a)
 int
 archive_write_header(struct archive *a, struct archive_entry *entry)
 {
+	TRACE_ARCHIVEIO_OPERATION__START(a, 1, 0);
 	++a->file_count;
-	return ((a->vtable->archive_write_header)(a, entry));
+	{
+		int trace_result = ((a->vtable->archive_write_header)(a, entry));
+		TRACE_ARCHIVEIO_OPERATION__DONE(a, 1, trace_result);
+		return (trace_result);
+	}
 }
 
 int
 archive_write_finish_entry(struct archive *a)
 {
-	return ((a->vtable->archive_write_finish_entry)(a));
+	TRACE_ARCHIVEIO_OPERATION__START(a, 7, 0);
+	{
+		int trace_result = ((a->vtable->archive_write_finish_entry)(a));
+		TRACE_ARCHIVEIO_OPERATION__DONE(a, 7, trace_result);
+		return (trace_result);
+	}
 }
 
 la_ssize_t
 archive_write_data(struct archive *a, const void *buff, size_t s)
 {
-	return ((a->vtable->archive_write_data)(a, buff, s));
+	TRACE_ARCHIVEIO_OPERATION__START(a, 2, s);
+	{
+		la_ssize_t trace_result = ((a->vtable->archive_write_data)(a, buff, s));
+		TRACE_ARCHIVEIO_OPERATION__DONE(a, 2, trace_result);
+		return (trace_result);
+	}
 }
 
 la_ssize_t
 archive_write_data_block(struct archive *a, const void *buff, size_t s,
     la_int64_t o)
 {
+	TRACE_ARCHIVEIO_OPERATION__START(a, 3, s);
 	if (a->vtable->archive_write_data_block == NULL) {
 		archive_set_error(a, ARCHIVE_ERRNO_MISC,
 		    "archive_write_data_block not supported");
 		a->state = ARCHIVE_STATE_FATAL;
-		return (ARCHIVE_FATAL);
+		{
+			la_ssize_t trace_result = (ARCHIVE_FATAL);
+			TRACE_ARCHIVEIO_OPERATION__DONE(a, 3, trace_result);
+			return (trace_result);
+		}
 	}
-	return ((a->vtable->archive_write_data_block)(a, buff, s, o));
+	{
+		la_ssize_t trace_result = ((a->vtable->archive_write_data_block)(a, buff, s, o));
+		TRACE_ARCHIVEIO_OPERATION__DONE(a, 3, trace_result);
+		return (trace_result);
+	}
 }
 
 int
 archive_read_next_header(struct archive *a, struct archive_entry **entry)
 {
-	return ((a->vtable->archive_read_next_header)(a, entry));
+	TRACE_ARCHIVEIO_OPERATION__START(a, 4, 0);
+	{
+		int trace_result = ((a->vtable->archive_read_next_header)(a, entry));
+		TRACE_ARCHIVEIO_OPERATION__DONE(a, 4, trace_result);
+		return (trace_result);
+	}
 }
 
 int
 archive_read_next_header2(struct archive *a, struct archive_entry *entry)
 {
-	return ((a->vtable->archive_read_next_header2)(a, entry));
+	TRACE_ARCHIVEIO_OPERATION__START(a, 5, 0);
+	{
+		int trace_result = ((a->vtable->archive_read_next_header2)(a, entry));
+		TRACE_ARCHIVEIO_OPERATION__DONE(a, 5, trace_result);
+		return (trace_result);
+	}
 }
 
 int
 archive_read_data_block(struct archive *a,
     const void **buff, size_t *s, la_int64_t *o)
 {
-	return ((a->vtable->archive_read_data_block)(a, buff, s, o));
+	TRACE_ARCHIVEIO_OPERATION__START(a, 6, 0);
+	{
+		int trace_result = ((a->vtable->archive_read_data_block)(a, buff, s, o));
+		TRACE_ARCHIVEIO_OPERATION__DONE(a, 6, trace_result);
+		return (trace_result);
+	}
 }

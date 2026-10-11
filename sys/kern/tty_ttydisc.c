@@ -41,9 +41,19 @@
 #include <sys/ttydefaults.h>
 #include <sys/uio.h>
 #include <sys/vnode.h>
+#include <sys/queue.h>
+#include <sys/sdt.h>
 
 #include <teken/teken.h>
 #include <teken/teken_wcwidth.h>
+
+SDT_PROVIDER_DECLARE(tty);
+SDT_PROBE_DEFINE3(tty, , , read__start, "struct tty *", "int", "int");
+SDT_PROBE_DEFINE2(tty, , , read__done, "struct tty *", "int");
+SDT_PROBE_DEFINE2(tty, , , flow, "struct tty *", "int");
+SDT_PROBE_DEFINE2(tty, , , watermark, "struct tty *", "int");
+SDT_PROBE_DEFINE2(tty, , , input__drop, "struct tty *", "int");
+SDT_PROBE_DEFINE2(tty, , , carrier, "struct tty *", "int");
 
 /*
  * Standard TTYDISC `termios' line discipline.
@@ -415,9 +425,13 @@ ttydisc_read(struct tty *tp, struct uio *uio, int ioflag)
 	int error;
 
 	tty_assert_locked(tp);
+	SDT_PROBE3(tty, , , read__start, tp, tp->t_termios.c_cc[VMIN],
+	    tp->t_termios.c_cc[VTIME]);
 
-	if (uio->uio_resid == 0)
+	if (uio->uio_resid == 0) {
+		SDT_PROBE2(tty, , , read__done, tp, 0);
 		return (0);
+	}
 
 	if (CMP_FLAG(l, ICANON))
 		error = ttydisc_read_canonical(tp, uio, ioflag);
@@ -435,6 +449,7 @@ ttydisc_read(struct tty *tp, struct uio *uio, int ioflag)
 		tty_hiwat_in_unblock(tp);
 	}
 
+	SDT_PROBE2(tty, , , read__done, tp, error);
 	return (error);
 }
 
@@ -631,6 +646,7 @@ ttydisc_write(struct tty *tp, struct uio *uio, int ioflag)
 
 			/* Watermark reached. Try to sleep. */
 			tp->t_flags |= TF_HIWAT_OUT;
+			SDT_PROBE2(tty, , , watermark, tp, 1);
 
 			if (ioflag & IO_NDELAY) {
 				error = EWOULDBLOCK;
@@ -693,6 +709,7 @@ ttydisc_optimize(struct tty *tp)
 void
 ttydisc_modem(struct tty *tp, int open)
 {
+	SDT_PROBE2(tty, , , carrier, tp, open);
 
 	tty_assert_locked(tp);
 
@@ -1057,6 +1074,8 @@ ttydisc_rint(struct tty *tp, char c, int flags)
 
 	/* Allow any character to perform a wakeup. */
 	if (CMP_FLAG(i, IXANY)) {
+		if ((tp->t_flags & TF_STOPPED) != 0)
+			SDT_PROBE2(tty, , , flow, tp, 0);
 		tp->t_flags &= ~TF_STOPPED;
 		tp->t_termios.c_lflag &= ~FLUSHO;
 	}
@@ -1146,6 +1165,7 @@ ttydisc_rint(struct tty *tp, char c, int flags)
 			/* Stop it if we aren't stopped yet. */
 			if ((tp->t_flags & TF_STOPPED) == 0) {
 				tp->t_flags |= TF_STOPPED;
+				SDT_PROBE2(tty, , , flow, tp, 1);
 				return (0);
 			}
 			/*
@@ -1158,6 +1178,7 @@ ttydisc_rint(struct tty *tp, char c, int flags)
 		}
 		if (CMP_CC(VSTART, c)) {
 			tp->t_flags &= ~TF_STOPPED;
+			SDT_PROBE2(tty, , , flow, tp, 0);
 			return (0);
 		}
 	}
@@ -1237,6 +1258,7 @@ print:
 			return (0);
 
 		tty_hiwat_in_block(tp);
+		SDT_PROBE2(tty, , , input__drop, tp, 1);
 		return (-1);
 	}
 
@@ -1344,6 +1366,7 @@ ttydisc_wakeup_watermark(struct tty *tp)
 
 		/* Reset the watermark. */
 		tp->t_flags &= ~TF_HIWAT_OUT;
+		SDT_PROBE2(tty, , , watermark, tp, 0);
 	} else {
 		/* Only run when we have data at all. */
 		if (c == 0)

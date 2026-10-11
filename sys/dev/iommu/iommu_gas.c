@@ -66,6 +66,13 @@
 #include <machine/iommu.h>
 #include <dev/iommu/busdma_iommu.h>
 
+#include <sys/queue.h>
+#include <sys/sdt.h>
+
+SDT_PROVIDER_DEFINE(iommu);
+SDT_PROBE_DEFINE3(iommu, , , map__start, "void *", "uint64_t", "unsigned int");
+SDT_PROBE_DEFINE2(iommu, , , map__done, "void *", "int");
+
 /*
  * Guest Address Space management.
  */
@@ -804,6 +811,7 @@ iommu_gas_map(struct iommu_domain *domain,
 	struct iommu_map_entry *entry;
 	int error;
 
+	SDT_PROBE3(iommu, , , map__start, (domain), (size), (flags));
 	KASSERT((flags & ~(IOMMU_MF_CANWAIT | IOMMU_MF_CANSPLIT)) == 0,
 	    ("invalid flags 0x%x", flags));
 
@@ -814,14 +822,24 @@ iommu_gas_map(struct iommu_domain *domain,
 	entry = iommu_gas_alloc_entry(domain,
 	    (flags & IOMMU_MF_CANWAIT) != 0 ? IOMMU_PGF_WAITOK : 0);
 	if (entry == NULL)
-		return (ENOMEM);
+		{
+			int trace_result = ENOMEM;
+
+			SDT_PROBE2(iommu, , , map__done, (domain), (trace_result));
+			return (trace_result);
+		}
 	a.entry = entry;
 	IOMMU_DOMAIN_LOCK(domain);
 	error = iommu_gas_find_space(domain, &a);
 	if (error == ENOMEM) {
 		IOMMU_DOMAIN_UNLOCK(domain);
 		iommu_gas_free_entry(entry);
-		return (error);
+		{
+			int trace_result = error;
+
+			SDT_PROBE2(iommu, , , map__done, (domain), (trace_result));
+			return (trace_result);
+		}
 	}
 #ifdef INVARIANTS
 	if (iommu_check_free)
@@ -839,13 +857,23 @@ iommu_gas_map(struct iommu_domain *domain,
 	if (error == ENOMEM) {
 		iommu_domain_unload_entry(entry, true,
 		    (flags & IOMMU_MF_CANWAIT) != 0);
-		return (error);
+		{
+			int trace_result = error;
+
+			SDT_PROBE2(iommu, , , map__done, (domain), (trace_result));
+			return (trace_result);
+		}
 	}
 	KASSERT(error == 0,
 	    ("unexpected error %d from domain_map_buf", error));
 
 	*res = entry;
-	return (0);
+	{
+		int trace_result = 0;
+
+		SDT_PROBE2(iommu, , , map__done, (domain), (trace_result));
+		return (trace_result);
+	}
 }
 
 int

@@ -1,0 +1,343 @@
+Third semantic tracing expansion
+================================
+
+Scope and availability
+----------------------
+This implements an initial semantic surface in all 21 areas listed in
+NEXT-COVERAGE, plus loader/security coverage, with 27 BSDInstruments examples. It does not claim that every
+branch of these subsystems is instrumented. In particular, raw DNS/PAM/SSH
+payloads, credentials, keys, file contents and command contents are absent
+from the new events. Existing devd action arguments are unchanged.
+
+coverage-third.json is the declaration/type/source inventory. A declaration
+is not proof of a loaded or firing probe. Kernel providers require
+KDTRACE_HOOKS; user providers require MK_DTRACE=yes and acquire PID suffixes
+at runtime. The runtime linker registers its DOF after self relocation using
+raw syscalls, without the ordinary libc-dependent drti constructor.
+
+Conventions
+-----------
+Arguments below are positional (arg0 first). An address is an opaque identity,
+not permission to dereference a saved object. Pair synchronous calls by PID,
+thread and nesting depth; object addresses alone are reused and insufficient.
+Pair swap and crypto across workers by live buffer/request identity. Begin
+tracing before the workload. Attaching halfway through loses start events.
+
+Ordinary returned failures have completion probes. Fatal exits, process
+termination, panic, cancellation/nonlocal exits inside external callbacks,
+and constructors that never return can leave unfinished pairs. Missing
+completion never means success. Use proc:::exit and thread lifecycle probes
+when investigating these cases. Threadwait records individual raw waits
+before deferred cancellation is acted on, not the entire pthread API call.
+No timestamps, allocation, locks or string formatting are added to feed probes.
+Opt-in hidden DOF
+anchors retain metadata in ordinary static-archive links; these add constant
+pointer data/relocations, not hot-path calls. Retaining metadata can also
+retain the other instrumented functions referenced by that provider.
+Generated USDT enabled checks guard argument evaluation. Disabled build
+macros discard arguments. Kernel SDT evaluates arguments only on its enabled
+path on architectures supporting the patched static probe implementation.
+
+Kernel contracts
+----------------
+tmpfs:
+  vnode-start(mount,node,lock_flags), vnode-done(mount,node,errno).
+  reclaim-wait(node), reclaim-resume(node): one reclaim msleep interval.
+  resize-start(vnode,new_size), resize-done(vnode,errno).
+  node-start(tmpfs_mount,vtype), node-done(tmpfs_mount,errno).
+  capacity(tmpfs_mount,reason): 1=node limit, 2=page availability refusal.
+  rename-start(source_directory,target_directory),
+  rename-done(source_directory,relock_attempts,errno).
+  Relock attempt count includes the first attempt. Completion identities
+  are not dereferenced after the routine releases vnode references.
+fat:
+  alloc-start(mount,start_cluster,requested_clusters),
+  alloc-done(mount,first_cluster,allocated_clusters,errno). Cluster outputs
+  are zero on error; partial allocations do not imply requested count met.
+  entry-start(mount,cluster,FAT_GET/FAT_SET mask), entry-done(mount,cluster,errno).
+  integrity(mount); remount-start(mount), remount-done(mount,errno).
+  Remount events surround actual vfs_remount_ro, not merely scheduling it.
+nfsclient:
+  recover-start(client), recover-done(client,last_local_or_NFS_status).
+  The recovery done status is the last operation's status, NOT a summary
+  proving all opens/locks/delegations were recovered; state may be discarded.
+  setclient-result(client,status,attempts_remaining_before_decrement).
+  renew-start(client), renew-done(client,status): primary lease renewal;
+  additional pNFS data-server renewals are not included in this pair.
+  open-start(vnode,access_mode), open-done(vnode,status): local open-state
+  preparation, not the whole wire OPEN exchange.
+  lock-release(lock_owner,status,can_delete): before possible owner free.
+nfsserver:
+  compound-start(request,minor_version),
+  compound-done(request,returned_operations,NFS_status,local_error).
+  operation-start(request,opcode),
+  operation-done(request,opcode,NFS_status,local_error).
+  Internal ERELOOKUP retries remain within one operation interval.
+  client-start(request,client_operation_flags), client-done(request,status).
+  session-replay(request): cached CREATE_SESSION sequence detected.
+  Request identity can be NULL in client management; thread/depth still pair.
+swap:
+  io-start(buffer,read_write_command,requested_bytes),
+  io-done(buffer,read_write_command,residual_bytes,errno).
+  Completion precedes buffer release. Synchronous writes invoke the same
+  completion path after bwait; their duration includes waiter scheduling.
+vm:
+  inactive-start(domain,shortage), inactive-done(domain,initial_shortage,
+  remaining_shortage). Shortages are scan accounting, not physical page-I/O
+  counts; negative values must be interpreted as signed integers.
+iommu:
+  map-start(domain,size,flags), map-done(domain,errno): gas-map reservation
+  and mapping function, including address-space and page-table failures.
+  unload-queue(tag,map): entry to unload request (may execute inline).
+  unload-start(domain), unload-done(domain): one deferred unload worker batch,
+  not one request and not hardware invalidation acknowledgement.
+  load-complete(map,segment_count,errno): busdma completion boundary before
+  reacquiring the driver's lock. Correlate queued work separately.
+acpi:
+  device-start(device,operation), device-done(device,operation,errno), where
+  operation 0=suspend and 1=resume at the native ACPI bus boundary.
+  prepare-start(device,sleep_type), prepare-done(device,sleep_type,ACPI_STATUS).
+  sleep-start(softc,sleep_type), sleep-done(softc,sleep_type,ACPI_STATUS).
+  Do not interpret clock deltas across suspend as calibrated asleep time.
+crypto:
+  submit(request,driver), defer(request), invoke-start(request,driver,hint),
+  invoke-done(request,driver_return), complete(request,crypto_error),
+  submit-error(request,immediate_driver_error).
+  Submit is emitted once per dispatch, including asynchronous workqueue
+  dispatch. Driver ERESTART may cause multiple invokes and queueing.
+  Complete is emitted before callback dispatch; the callback may run and
+  free/resubmit the request BEFORE invoke-done. Never read the request at
+  invoke-done or equate driver return with asynchronous completion.
+
+Userspace contracts (provider names below omit their PID suffix)
+---------------------------------------------------------------
+nameres:
+  query-start(resolver_state,query_bytes,answer_capacity),
+  query-done(resolver_state,returned_length,errno_on_failure_else_zero).
+  server-start(resolver_state,server_index,tcp),
+  server-done(resolver_state,server_index,length_or_zero_or_minus_one,
+  last_transport_error_on_nonpositive_result_else_zero).
+  TCP fallback and retries produce separate server attempts. This is
+  res_nsend transport coverage, not resolver-cache hits above it.
+  dispatch-start(database_name_pointer,method_name_pointer),
+  dispatch-done(database_name_pointer,NSS_status).
+  backend-start(database_name_pointer,backend_name_pointer),
+  backend-done(database_name_pointer,backend_name_pointer,NSS_status).
+  Backend pairs cover direct method calls, not special cache/fallback helpers;
+  enclosing dispatch pairs include those paths. NSS statuses are bitmasks.
+threadwait:
+  mutex-start(mutex), mutex-done(mutex,error): contended lock slow path.
+  condition-start(condition,kernel_path), condition-done(condition,raw_error).
+  kernel_path is 1 for kernel condition waits and 0 for user-queue sleeps.
+  join-start(target_thread), join-done(target_thread,raw_wait_error).
+  Raw waits may return EINTR before cancellation or error normalization.
+  A single API call can contain multiple intervals; mutex reacquisition
+  after a condition wait is outside that condition interval.
+rtldtrace:
+  load-start(name_pointer,flags), load-done(name_pointer,object_or_zero).
+  Includes cache hits and failures; name can be NULL for descriptor loads.
+  relocate-start(first_object), relocate-done(first_object,result).
+  init-start(object), init-done(object): initializer group while object held.
+  Constructors can recursively dlopen; use nesting, not a single timestamp.
+  Registration failure (absent helper device) is ignored, preserving errno.
+  Linker startup before self relocation is intentionally not probed.
+pamchain:
+  chain-start(PAM_handle,primitive), chain-done(PAM_handle,PAM_result).
+  module-start(PAM_handle,chain_element,control_flag),
+  module-done(PAM_handle,chain_element,PAM_result).
+  Missing entry points report PAM_SYMBOL_ERR; PAM_IGNORE is visible before
+  being skipped. Control flags and chain result explain short-circuiting.
+fetchio:
+  request-start(URL_identity), request-done(URL_identity,stream_ready,
+  fetchLastErrCode_on_failure_else_zero).
+  Request completion means response headers/stream readiness, not body EOF.
+  connect-start(host_pointer,port), connect-done(host_pointer,connected).
+  tls-start(connection), tls-done(connection,result).
+  Host and URL arguments are identities; examples do not copy their strings.
+archiveio:
+  operation-start(archive,operation,requested_bytes),
+  operation-done(archive,operation,result).
+  Operations: 1=write_header, 2=write_data, 3=write_data_block,
+  4=read_next_header, 5=read_next_header2, 6=read_data_block,
+  7=write_finish_entry, 8=write_close, 9=read_close.
+  Only operation 2 returns a byte count. Other operations report ARCHIVE_*
+  status (including operation 3 despite its la_ssize_t return type).
+  Requested bytes are supplied for 2 and 3, zero otherwise. Internal vtable
+  calls bypassing these public wrappers do not generate these events.
+dhcplife:
+  state(interface,state_entry): 1=reboot, 2=init, 3=selecting, 4=bound,
+  5=panic. This records state-handler entry, not lease success.
+  script-start(interface), script-done(interface,helper_result): privileged
+  IPC round trip including child execution, but fatal IPC errors do not return.
+devd:
+  event-start(event_type), event-done(event_type); rule(rule_identity,matched).
+  action-start(action_identity), action-done(action_identity,wait_status).
+  child(pid): parent fork success. Action result is wait4 status or -1,
+  not the boolean returned by action::do_action. No new command contents.
+ffscheck: phase-start(phase), phase-done(phase), phases 1..5. Completion means
+  the pass returned, not that the filesystem was clean or fully repaired.
+fatcheck: check-start(filename_pointer), check-done(filename_pointer,fsck_exit).
+mountop: operation-start(spec_pointer), operation-done(spec_pointer,result).
+umountop: operation-start(statfs_pointer), operation-done(statfs_pointer,result).
+  Mount/umount results are existing helper return conventions, not errno.
+exports: reload-start(pass), reload-done(pass): export-list reload pass,
+  including its partial failures; done does not assert every export applied.
+logrotate:
+  rotate-start(config), rotate-done(config,FREE_ENT_or_KEEP_ENT). This is a
+  config ownership result, NOT a rotation success code; compression is later.
+  compress-start(work,child_pid), compress-done(work,child_pid,wait_status,
+  wait_errno). wait_status is -1 on wait failure; errno zero otherwise.
+  The pair measures parent wait, not fork/exec setup or post-compression chmod.
+  notify(work,signal,errno_or_zero): actual kill result, not daemon reopen ack.
+timediscipline:
+  select-start(previous_peer), select-done(selected_peer,survivors).
+  Peer identity can change across selection; pair by thread/depth.
+  adjust-start(peer), adjust-done(peer,local_clock_result).
+  These expose selection and discipline processing, not a guarantee that
+  the operating system accepted every adjustment; no double ABI arguments.
+sshkeys:
+  newkeys-start(connection,initial_exchange), newkeys-done(connection,SSH_error).
+  These measure NEWKEYS processing, not the entire key exchange.
+  channel-new(connection,local_channel_number,channel_type),
+  channel-free(connection,local_channel_number),
+  channel-reply(connection,confirmation_not_failure,parser_result).
+  Channel reply result zero means the packet was processed, not acceptance
+  when confirmation_not_failure=0. No channel payload/command strings.
+sshauth:
+  method-start(connection,attempt), method-done(connection,attempt,authenticated).
+  decision(connection,attempt,authenticated,partial,postponed) records the
+  method/authorization-list decision before optional PAM account checks and
+  reply transmission. It is deliberately NOT a final login-success event.
+  Connection addresses are per-process identities. Do not merge them across
+  the monitor/auth/session privilege-separation boundary. Method can postpone;
+  a later decision may arrive without another synchronous method call.
+
+Examples and verification
+-------------------------
+Run bsdinstruments generate -f /usr/share/bsdinstruments/profiles/<name>.d
+(and optionally --pid PID) to render an example. Run the rendered script with
+DTrace on a kernel that exposes the required providers. Profile selectors and
+argument bounds are checked against coverage-third.json before offline
+compilation; -Z alone is not evidence that probes exist.
+
+Use coverage-third-compile.py with a prepared GENERIC-NODEBUG object tree for
+kernel enabled/disabled compilation. coverage-third-profile-check.py renders
+and offline-compiles all 27 profiles with and without a PID filter. Native
+userspace validation builds both modes and links provider objects into the
+actual libraries/executables. Runtime workloads and availability evidence are
+recorded separately in the validation report; absent live DTrace is not
+reported as a passing runtime tracing test.
+
+Current host runtime qualification
+----------------------------------
+The host exposes no DTrace device, so live enumeration/firing is unqualified.
+The isolated tracing branch passes ordinary loader startup, nested constructors,
+dlopen/dlclose and missing-library smoke tests in both hook-enabled and disabled
+builds. Earlier tests against the larger active worktree encountered SIGSYS
+from its cap_process path and needed an explicitly labeled compatibility run;
+that limitation does not reproduce in the isolated tracing commit. No installed
+loader, kernel or host signal policy is changed by these tests.
+
+The ordinary smoke suite exercises shared and static libarchive (including
+DOF retention in the static consumer), loopback HTTP success/404/connect/TLS
+failure, contended pthread mutex/condition cancellation and join, and rotation
+plus compression of disposable logs with daemon notification disabled. The
+core smoke suite exercises invalid and loopback DNS queries, local NSS, and a
+deny-only PAM policy. PAM policy-file verification is disabled only inside its
+unprivileged test process to load the disposable policy; no installed policy
+is edited. Run these only against matching source-built library dependencies.
+
+Build-rule regression checks
+----------------------------
+bsd.dep.mk now supplies NOSSPSOBJS to the .nossppico provider rule. Using SOBJS
+there produced an empty -G input list and failed libc_nossp_pic.a. Libraries
+that opt into DTRACE_STATIC_ANCHOR get a hidden __bsd_dof_anchor_<file> symbol;
+probe wrappers retain a reference so archive extraction keeps their DOF.
+Existing providers do not opt in automatically. The rtld executable links
+its lazy DOF directly and does not need an archive anchor. Test executables
+verify the .SUNW_dof section is present only in hook-enabled variants.
+
+Loader, debugger, MAC Framework and Capsicum extension (28 declarations)
+-----------------------------------------------------------------------
+rtldtrace dlopen-start(name pointer, fd, mode), dlopen-done(name pointer,
+fd, mode, returned handle) encompass rtld_dlopen, including constructors.
+The name is the caller-requested library string, not a canonical path.
+NULL name and fd -1 means dlopen(NULL); fdlopen has NULL name and its fd.
+Read the name using copyinstr at start; library-loads copies and retains it
+per nested call. NULL result means failure; RTLD_TRACE/process exit or a
+nonlocal exit need not complete. dlclose-start(handle), dlclose-done(handle,
+status) cover the public call, including invalid handles. Handles at done
+are identity-only; the referenced object may already have been unloaded.
+
+ptrace request-start(request, pid, descriptor mode, process descriptor),
+request-done(same, errno) encompass ptrace_action, including early errors,
+PT_TRACE_ME, PT_ATTACH, PT_DETACH and internal Linux seize operations.
+The request and target selectors are the originals, before normalization;
+PID is not necessarily a resolved target (descriptor mode and TRACE_ME).
+Existing attach, detach and deny events retain their original contracts.
+This traces debugger requests, not kernel debugger entry or physical JTAG.
+
+mac_framework hook-start(hook name, policy name), hook-done(same, raw return,
+kind) surround actual calls in CHECK, GRANT, BOOLEAN and PERFORM dispatch,
+including sleeping and non-sleeping forms, init/destroy and policy syscalls.
+kind 1 denotes an integer result (boolean/grant/check meanings differ);
+kind 0 denotes a void callback, whose zero status is not an access decision.
+String arguments are kernel strings. Boolean short-circuit evaluation and
+policy ordering are preserved; a skipped callback emits no event. Existing
+combined-check and individual policy-decision events remain available.
+Names cover label initialization/destruction, copy, relabel, internalize,
+externalize, notification and authorization hooks using these dispatchers.
+register-start(policy pointer), register-done(policy pointer, errno), and
+unregister-start/unregister-done include refusals and no-op unregisters.
+Existing mac:policy events still identify successful lifecycle operations.
+mac_label init/destroy/free(label), alloc(label or NULL, allocation flags),
+set(label, slot, new scalar value) expose framework label lifetime and slot
+writes. Values may be policy-private pointer identities; do not dereference
+saved labels after destruction. Labels embedded in mbufs have init/destroy
+without necessarily having zone alloc/free events.
+
+capsicum limit-start(operation name, fd), limit-done(same, errno) cover native
+rights, ioctls, fcntls, xfer, xfer_rights, xfer_ioctls, xfer_fcntls, cloexec
+and clofork limit syscall implementations, including copyin/validation errors.
+Existing specific limit events remain. xfer-rights-start(fd, rights pointer),
+xfer-rights-done(same, errno), xfer-ioctls-start(fd, requested count),
+xfer-ioctls-done(same, errno), xfer-fcntls-start(fd, mask) and
+xfer-fcntls-done(same, errno) also cover shared kernel helpers and compat
+callers. No ioctl-array pointer is exposed after its ownership changes.
+check-allow(have rights pointer, need rights pointer, violation type) fills
+the successful-check gap beside existing check-deny. ioctl-check(fd, command,
+errno) and fcntl-check(filedescent pointer, command, errno) report both outcomes.
+Descriptor and rights pointers are valid only within their probe context.
+Existing fd xfer-deny, xfer-consume, scm-rights-send and scm-rights-recv already
+cover descriptor passing; these are not duplicated by this extension.
+No claim is made that these are every Capsicum enforcement site.
+
+New profiles: library-loads, debugger-requests, mac-hooks, capsicum-limits.
+The batch now adds 151 declarations (79 kernel and 72 userspace).
+
+Earlier worktree validation record (2026-10-11)
+------------------------------
+72 kernel translation-unit compiles (36 with/without hooks), including every
+MAC framework C file, pass with -Werror. The GENERIC-NODEBUG kernel links.
+All 36 disabled kernel objects lack SDT probe/provider references.
+36 userspace artifacts have the expected DOF enabled/disabled state; the
+additional static PAM builds pass in both modes. All 52 profile render and
+offline compile checks pass. MAC dispatch fixtures using the actual header
+macros verify evaluation count, policy order, return composition, boolean
+short-circuiting and balanced locks with and without probe expansions.
+Loader startup, nested initializers, dlopen/dlclose and missing-library tests
+passed under an explicit host compatibility run in the earlier worktree.
+The isolated-commit loader result supersedes that limitation as described above;
+live DTrace qualification remains unavailable.
+Machine-readable results: /usr/obj/5bsd-dtrace-third-validation/validation.json.
+Source inventory: 1862 explicit nonfixture declarations (1210 kernel, 652
+userspace); this excludes dynamic providers and macro-generated declarations.
+Three expansion batches add 307 declarations in total (95 + 61 + 151).
+
+MAC hook enhancement
+--------------------
+MAC-HOOKS documents the added hook-args and hook-skip contracts, per-callback
+argument type mapping and the mac-hook-arguments profile. This adds two kernel
+declarations and one profile: third-batch totals are now 153 declarations
+(81 kernel, 72 userspace) and 27 profiles, or 309 additions across three batches.
+Earlier validation/count records above describe the preceding revision.

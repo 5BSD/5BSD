@@ -30,6 +30,7 @@
  */
 
 #include <sys/param.h>
+#include "fetchio_trace.h"
 #include <sys/socket.h>
 #include <sys/time.h>
 #include <sys/uio.h>
@@ -593,6 +594,7 @@ fetch_connect(const char *host, int port, int af, int verbose)
 	char *sockshost;
 	int socksport;
 
+	TRACE_FETCHIO_CONNECT__START(host, port);
 	DEBUGF("---> %s:%d\n", host, port);
 
 	/*
@@ -735,7 +737,11 @@ next:
 		freeaddrinfo(cais);
 	if (sais != NULL)
 		freeaddrinfo(sais);
-	return (conn);
+	{
+		conn_t * trace_result = (conn);
+		TRACE_FETCHIO_CONNECT__DONE(host, trace_result != NULL);
+		return (trace_result);
+	}
 syserr:
 	fetch_syserr();
 fail:
@@ -750,7 +756,11 @@ fail:
 		freeaddrinfo(cais);
 	if (sais != NULL)
 		freeaddrinfo(sais);
-	return (NULL);
+	{
+		conn_t * trace_result = (NULL);
+		TRACE_FETCHIO_CONNECT__DONE(host, trace_result != NULL);
+		return (trace_result);
+	}
 }
 
 #ifdef WITH_SSL
@@ -1218,6 +1228,7 @@ fetch_ssl_cb_verify_crt(int verified, X509_STORE_CTX *ctx)
 int
 fetch_ssl(conn_t *conn, const struct url *URL, int verbose)
 {
+	TRACE_FETCHIO_TLS__START(conn);
 #ifdef WITH_SSL
 	int ret, ssl_err;
 	X509_NAME *name;
@@ -1226,21 +1237,37 @@ fetch_ssl(conn_t *conn, const struct url *URL, int verbose)
 	if ((conn->ssl_ctx = SSL_CTX_new(TLS_client_method())) == NULL) {
 		fetch_info("SSL context creation failed");
 		ERR_print_errors_fp(stderr);
-		return (-1);
+		{
+			int trace_result = (-1);
+			TRACE_FETCHIO_TLS__DONE(conn, trace_result);
+			return (trace_result);
+		}
 	}
 	SSL_CTX_set_mode(conn->ssl_ctx, SSL_MODE_AUTO_RETRY);
 
 	fetch_ssl_setup_transport_layer(conn->ssl_ctx, verbose);
 	if (!fetch_ssl_setup_peer_verification(conn->ssl_ctx, verbose))
-		return (-1);
+		{
+			int trace_result = (-1);
+			TRACE_FETCHIO_TLS__DONE(conn, trace_result);
+			return (trace_result);
+		}
 	if (!fetch_ssl_setup_client_certificate(conn->ssl_ctx, verbose))
-		return (-1);
+		{
+			int trace_result = (-1);
+			TRACE_FETCHIO_TLS__DONE(conn, trace_result);
+			return (trace_result);
+		}
 
 	conn->ssl = SSL_new(conn->ssl_ctx);
 	if (conn->ssl == NULL) {
 		fetch_info("SSL connection creation failed");
 		ERR_print_errors_fp(stderr);
-		return (-1);
+		{
+			int trace_result = (-1);
+			TRACE_FETCHIO_TLS__DONE(conn, trace_result);
+			return (trace_result);
+		}
 	}
 	SSL_set_fd(conn->ssl, conn->sd);
 
@@ -1248,7 +1275,11 @@ fetch_ssl(conn_t *conn, const struct url *URL, int verbose)
 	if (!SSL_set_tlsext_host_name(conn->ssl, __DECONST(char *, URL->host))) {
 		fetch_info("Failed to set TLS server name indication for host %s",
 		    URL->host);
-		return (-1);
+		{
+			int trace_result = (-1);
+			TRACE_FETCHIO_TLS__DONE(conn, trace_result);
+			return (trace_result);
+		}
 	}
 #endif
 	while ((ret = SSL_connect(conn->ssl)) == -1) {
@@ -1256,14 +1287,22 @@ fetch_ssl(conn_t *conn, const struct url *URL, int verbose)
 		if (ssl_err != SSL_ERROR_WANT_READ &&
 		    ssl_err != SSL_ERROR_WANT_WRITE) {
 			ERR_print_errors_fp(stderr);
-			return (-1);
+			{
+				int trace_result = (-1);
+				TRACE_FETCHIO_TLS__DONE(conn, trace_result);
+				return (trace_result);
+			}
 		}
 	}
 	conn->ssl_cert = SSL_get_peer_certificate(conn->ssl);
 
 	if (conn->ssl_cert == NULL) {
 		fetch_info("No server SSL certificate");
-		return (-1);
+		{
+			int trace_result = (-1);
+			TRACE_FETCHIO_TLS__DONE(conn, trace_result);
+			return (trace_result);
+		}
 	}
 
 	if (getenv("SSL_NO_VERIFY_HOSTNAME") == NULL) {
@@ -1271,7 +1310,11 @@ fetch_ssl(conn_t *conn, const struct url *URL, int verbose)
 		if (!fetch_ssl_verify_hname(conn->ssl_cert, URL->host)) {
 			fetch_info("SSL certificate subject does not match host %s",
 			    URL->host);
-			return (-1);
+			{
+				int trace_result = (-1);
+				TRACE_FETCHIO_TLS__DONE(conn, trace_result);
+				return (trace_result);
+			}
 		}
 	}
 
@@ -1288,13 +1331,21 @@ fetch_ssl(conn_t *conn, const struct url *URL, int verbose)
 		OPENSSL_free(str);
 	}
 
-	return (0);
+	{
+		int trace_result = (0);
+		TRACE_FETCHIO_TLS__DONE(conn, trace_result);
+		return (trace_result);
+	}
 #else
 	(void)conn;
 	(void)verbose;
 	(void)URL;
 	fetch_info("SSL support disabled");
-	return (-1);
+	{
+		int trace_result = (-1);
+		TRACE_FETCHIO_TLS__DONE(conn, trace_result);
+		return (trace_result);
+	}
 #endif
 }
 

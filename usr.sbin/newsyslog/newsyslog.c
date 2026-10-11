@@ -54,6 +54,7 @@
  */
 
 #include <sys/cdefs.h>
+#include "logrotate_trace.h"
 #define	OSF
 
 #include <sys/param.h>
@@ -1863,6 +1864,7 @@ do_rotate(const struct conf_entry *ent)
 	struct tm tm;
 	time_t now;
 
+	TRACE_LOGROTATE_ROTATE__START(ent);
 	flags = ent->flags;
 	free_or_keep = FREE_ENT;
 
@@ -2035,7 +2037,11 @@ do_rotate(const struct conf_entry *ent)
 		}
 	}
 
-	return (free_or_keep);
+	{
+		fk_entry trace_result = (free_or_keep);
+		TRACE_LOGROTATE_ROTATE__DONE(ent, trace_result);
+		return (trace_result);
+	}
 }
 
 static void
@@ -2110,6 +2116,7 @@ do_sigwork(struct sigwork_entry *swork)
 	}
 
 	kres = kill(swork->sw_pid, swork->sw_signum);
+	TRACE_LOGROTATE_NOTIFY(swork, swork->sw_signum, kres < 0 ? errno : 0);
 	if (kres != 0) {
 		/*
 		 * Assume that "no such process" (ESRCH) is something
@@ -2229,7 +2236,9 @@ do_zipwork(struct zipwork_entry *zwork)
 		err(1, "execv(`%s')", sbuf_data(command));
 	}
 
+	TRACE_LOGROTATE_COMPRESS__START(zwork, pidzip);
 	wpid = waitpid(pidzip, &zstatus, 0);
+	TRACE_LOGROTATE_COMPRESS__DONE(zwork, pidzip, wpid < 0 ? -1 : zstatus, wpid < 0 ? errno : 0);
 	if (wpid == -1) {
 		/* XXX - should this be a fatal error? */
 		warn("%s: waitpid(%d)", pgm_path, pidzip);

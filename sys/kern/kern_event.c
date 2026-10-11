@@ -94,6 +94,9 @@ static MALLOC_DEFINE(M_KQUEUE, "kqueue", "memory for kqueue system");
  * deliberately uninstrumented.
  */
 SDT_PROVIDER_DEFINE(kqueue);
+SDT_PROBE_DEFINE4(kqueue, , , detach__start, "struct knote *", "uintptr_t",
+    "int", "struct file *");
+SDT_PROBE_DEFINE1(kqueue, , , detach__done, "struct knote *");
 
 /* A new kqueue fd was created.  Args: pid, fd, flags. */
 SDT_PROBE_DEFINE3(kqueue, , , create, "int", "int", "int");
@@ -3055,8 +3058,12 @@ knote_drop(struct knote *kn, struct thread *td)
 
 	SDT_PROBE4(kqueue, , , knote__drop, td->td_proc->p_pid, kn->kn_kq,
 	    kn->kn_id, kn->kn_filter);
-	if ((kn->kn_status & KN_DETACHED) == 0)
+	if ((kn->kn_status & KN_DETACHED) == 0) {
+		SDT_PROBE4(kqueue, , , detach__start, kn, kn->kn_id,
+		    kn->kn_filter, (kn->kn_fop->f_isfd ? kn->kn_fp : NULL));
 		kn->kn_fop->f_detach(kn);
+		SDT_PROBE1(kqueue, , , detach__done, kn);
+	}
 	knote_drop_detached(kn, td);
 }
 

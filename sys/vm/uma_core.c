@@ -104,6 +104,15 @@
 
 #include <machine/md_var.h>
 
+#include <sys/sdt.h>
+
+SDT_PROVIDER_DEFINE(uma);
+SDT_PROBE_DEFINE3(uma, , , limit__wait, "void *", "char *", "unsigned int");
+SDT_PROBE_DEFINE1(uma, , , limit__resume, "void *");
+SDT_PROBE_DEFINE4(uma, , , alloc__fail, "void *", "char *", "int", "int");
+SDT_PROBE_DEFINE4(uma, , , reclaim__start, "void *", "char *", "int", "int");
+SDT_PROBE_DEFINE1(uma, , , reclaim__done, "void *");
+
 #ifdef INVARIANTS
 #define	UMA_ALWAYS_CTORDTOR	1
 #else
@@ -4230,7 +4239,10 @@ zone_alloc_limit_hard(uma_zone_t zone, int count, int flags)
 		 * protects us from wakeup races.  Sleep now and then retry.
 		 */
 		sleepq_add(&zone->uz_max_items, NULL, "zonelimit", 0, 0);
+		SDT_PROBE3(uma, , , limit__wait, zone, zone->uz_name,
+		    zone->uz_max_items);
 		sleepq_wait(&zone->uz_max_items, PVM);
+		SDT_PROBE1(uma, , , limit__resume, zone);
 
 		/*
 		 * After wakeup, remove ourselves as a sleeper and try
@@ -4422,6 +4434,8 @@ zone_alloc_item(uma_zone_t zone, void *udata, int domain, int flags)
 	void *item;
 
 	if (zone->uz_max_items > 0 && zone_alloc_limit(zone, 1, flags) == 0) {
+		SDT_PROBE4(uma, , , alloc__fail, zone, zone->uz_name, domain,
+		    flags);
 		counter_u64_add(zone->uz_fails, 1);
 		return (NULL);
 	}
@@ -4466,6 +4480,7 @@ fail_cnt:
 fail:
 	if (zone->uz_max_items > 0)
 		zone_free_limit(zone, 1);
+	SDT_PROBE4(uma, , , alloc__fail, zone, zone->uz_name, domain, flags);
 	CTR2(KTR_UMA, "zone_alloc_item failed from %s(%p)",
 	    zone->uz_name, zone);
 
@@ -5450,6 +5465,7 @@ uma_zone_reclaim(uma_zone_t zone, int req)
 void
 uma_zone_reclaim_domain(uma_zone_t zone, int req, int domain)
 {
+	SDT_PROBE4(uma, , , reclaim__start, zone, zone->uz_name, req, domain);
 	switch (req) {
 	case UMA_RECLAIM_TRIM:
 		zone_reclaim(zone, domain, M_NOWAIT, false);
@@ -5464,6 +5480,7 @@ uma_zone_reclaim_domain(uma_zone_t zone, int req, int domain)
 	default:
 		panic("unhandled reclamation request %d", req);
 	}
+	SDT_PROBE1(uma, , , reclaim__done, zone);
 }
 
 /* See uma.h */

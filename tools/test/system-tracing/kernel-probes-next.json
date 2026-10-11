@@ -1,0 +1,718 @@
+[
+  {
+    "source": "sys/kern/vfs_inotify.c",
+    "provider": "inotify",
+    "name": "queue",
+    "types": [
+      "void *",
+      "int",
+      "uint32_t",
+      "uint32_t",
+      "int",
+      "int"
+    ],
+    "line": 46,
+    "source_sha256": "b52267f46a8a8c8a25184e347a9af420b7ac3b7aea5d4d47e908d5f8e789eb19"
+  },
+  {
+    "source": "sys/kern/vfs_inotify.c",
+    "provider": "inotify",
+    "name": "watch-remove",
+    "types": [
+      "void *",
+      "void *",
+      "int"
+    ],
+    "line": 48,
+    "source_sha256": "b52267f46a8a8c8a25184e347a9af420b7ac3b7aea5d4d47e908d5f8e789eb19"
+  },
+  {
+    "source": "sys/netlink/netlink_io.c",
+    "provider": "netlink",
+    "name": "request",
+    "types": [
+      "void *",
+      "uint32_t",
+      "int",
+      "int"
+    ],
+    "line": 51,
+    "source_sha256": "a5ba6c5358d095728ac6da7151e10a193b186a8b6048a7d13a66564b9d5cdee0"
+  },
+  {
+    "source": "sys/netlink/netlink_io.c",
+    "provider": "netlink",
+    "name": "result",
+    "types": [
+      "void *",
+      "uint32_t",
+      "int",
+      "int",
+      "int"
+    ],
+    "line": 52,
+    "source_sha256": "a5ba6c5358d095728ac6da7151e10a193b186a8b6048a7d13a66564b9d5cdee0"
+  },
+  {
+    "source": "sys/netlink/netlink_io.c",
+    "provider": "netlink",
+    "name": "rx-drop",
+    "types": [
+      "void *",
+      "unsigned int",
+      "unsigned int"
+    ],
+    "line": 54,
+    "source_sha256": "a5ba6c5358d095728ac6da7151e10a193b186a8b6048a7d13a66564b9d5cdee0"
+  },
+  {
+    "source": "sys/netlink/netlink_io.c",
+    "provider": "netlink",
+    "name": "malformed",
+    "types": [
+      "void *",
+      "uint32_t",
+      "unsigned int",
+      "int"
+    ],
+    "line": 56,
+    "source_sha256": "a5ba6c5358d095728ac6da7151e10a193b186a8b6048a7d13a66564b9d5cdee0"
+  },
+  {
+    "source": "sys/net80211/ieee80211_proto.c",
+    "provider": "wlan",
+    "name": "state-request",
+    "types": [
+      "void *",
+      "int",
+      "int",
+      "int"
+    ],
+    "line": 66,
+    "source_sha256": "2c2d95a04d030f24ce87773df6eafd51321767af84accb6c544667f3f5c82fc3"
+  },
+  {
+    "source": "sys/net80211/ieee80211_proto.c",
+    "provider": "wlan",
+    "name": "state-result",
+    "types": [
+      "void *",
+      "int",
+      "int",
+      "int",
+      "int"
+    ],
+    "line": 67,
+    "source_sha256": "2c2d95a04d030f24ce87773df6eafd51321767af84accb6c544667f3f5c82fc3"
+  },
+  {
+    "source": "sys/net80211/ieee80211_scan.c",
+    "provider": "wlan",
+    "name": "assoc-fail",
+    "types": [
+      "void *",
+      "int"
+    ],
+    "line": 58,
+    "source_sha256": "85f373dad31aa9b087abb54be2084e2f29377997af0af0d81de8e43e27c312ab"
+  },
+  {
+    "source": "sys/net80211/ieee80211_scan.c",
+    "provider": "wlan",
+    "name": "assoc-success",
+    "types": [
+      "void *"
+    ],
+    "line": 59,
+    "source_sha256": "85f373dad31aa9b087abb54be2084e2f29377997af0af0d81de8e43e27c312ab"
+  },
+  {
+    "source": "sys/net80211/ieee80211_scan.c",
+    "provider": "wlan",
+    "name": "scan-done",
+    "types": [
+      "void *",
+      "int",
+      "int"
+    ],
+    "line": 60,
+    "source_sha256": "85f373dad31aa9b087abb54be2084e2f29377997af0af0d81de8e43e27c312ab"
+  },
+  {
+    "source": "sys/dev/usb/usb_transfer.c",
+    "provider": "usb",
+    "name": "transfer-start",
+    "types": [
+      "void *",
+      "void *",
+      "int"
+    ],
+    "line": 75,
+    "source_sha256": "647e37865a98656dafd5a2b91886552d7c0abb74188888d84e31c624705b0b3e"
+  },
+  {
+    "source": "sys/dev/usb/usb_transfer.c",
+    "provider": "usb",
+    "name": "transfer-done",
+    "types": [
+      "void *",
+      "void *",
+      "int",
+      "int",
+      "unsigned int",
+      "unsigned int"
+    ],
+    "line": 76,
+    "source_sha256": "647e37865a98656dafd5a2b91886552d7c0abb74188888d84e31c624705b0b3e"
+  },
+  {
+    "source": "sys/dev/usb/usb_transfer.c",
+    "provider": "usb",
+    "name": "endpoint-stalled",
+    "types": [
+      "void *",
+      "void *"
+    ],
+    "line": 78,
+    "source_sha256": "647e37865a98656dafd5a2b91886552d7c0abb74188888d84e31c624705b0b3e"
+  },
+  {
+    "source": "sys/dev/sound/pcm/channel.c",
+    "provider": "pcm",
+    "name": "xrun",
+    "types": [
+      "void *",
+      "int",
+      "unsigned int",
+      "unsigned int"
+    ],
+    "line": 48,
+    "source_sha256": "897d746a5397b70375e95320102a3a62f0f24914c9012e142989b58c4cc0e1fb"
+  },
+  {
+    "source": "sys/dev/sound/pcm/channel.c",
+    "provider": "pcm",
+    "name": "trigger",
+    "types": [
+      "void *",
+      "int",
+      "int"
+    ],
+    "line": 50,
+    "source_sha256": "897d746a5397b70375e95320102a3a62f0f24914c9012e142989b58c4cc0e1fb"
+  },
+  {
+    "source": "sys/netgraph/ng_base.c",
+    "provider": "netgraph",
+    "name": "queue",
+    "types": [
+      "void *",
+      "void *",
+      "int"
+    ],
+    "line": 79,
+    "source_sha256": "d8deccfcaa7e86c831959b838ace5e0bc9cf945243c48f777ffc18f122153acd"
+  },
+  {
+    "source": "sys/netgraph/ng_base.c",
+    "provider": "netgraph",
+    "name": "dispatch",
+    "types": [
+      "void *",
+      "void *",
+      "int",
+      "int"
+    ],
+    "line": 80,
+    "source_sha256": "d8deccfcaa7e86c831959b838ace5e0bc9cf945243c48f777ffc18f122153acd"
+  },
+  {
+    "source": "sys/netgraph/ng_base.c",
+    "provider": "netgraph",
+    "name": "dispatch-done",
+    "types": [
+      "void *",
+      "void *",
+      "int"
+    ],
+    "line": 81,
+    "source_sha256": "d8deccfcaa7e86c831959b838ace5e0bc9cf945243c48f777ffc18f122153acd"
+  },
+  {
+    "source": "sys/netgraph/ng_base.c",
+    "provider": "netgraph",
+    "name": "disconnect",
+    "types": [
+      "void *",
+      "void *"
+    ],
+    "line": 82,
+    "source_sha256": "d8deccfcaa7e86c831959b838ace5e0bc9cf945243c48f777ffc18f122153acd"
+  },
+  {
+    "source": "sys/rpc/clnt_dg.c",
+    "provider": "krpc",
+    "name": "dg-retry",
+    "types": [
+      "void *",
+      "uint32_t",
+      "int",
+      "int"
+    ],
+    "line": 63,
+    "source_sha256": "8e29f1c96ce9f76fcd1b4f6ffa994dce0098ab1a0a81178768b43ac7ae0ab435"
+  },
+  {
+    "source": "sys/rpc/clnt_dg.c",
+    "provider": "krpc",
+    "name": "dg-done",
+    "types": [
+      "void *",
+      "uint32_t",
+      "int"
+    ],
+    "line": 64,
+    "source_sha256": "8e29f1c96ce9f76fcd1b4f6ffa994dce0098ab1a0a81178768b43ac7ae0ab435"
+  },
+  {
+    "source": "sys/rpc/replay.c",
+    "provider": "krpc",
+    "name": "replay-hit",
+    "types": [
+      "void *",
+      "uint32_t",
+      "int"
+    ],
+    "line": 45,
+    "source_sha256": "239c2cb8859a80cc949b26defd4e1cef18eda9a173281eac653be6bdf155922c"
+  },
+  {
+    "source": "sys/geom/geom_io.c",
+    "provider": "geom",
+    "name": "io-retry",
+    "types": [
+      "void *",
+      "void *",
+      "int",
+      "int"
+    ],
+    "line": 99,
+    "source_sha256": "5aecf2508d191ef880d060f21184ee71a5ac9cef18615075f6f4ef9b10924959"
+  },
+  {
+    "source": "sys/geom/geom_io.c",
+    "provider": "geom",
+    "name": "io-complete",
+    "types": [
+      "void *",
+      "void *",
+      "int",
+      "int"
+    ],
+    "line": 100,
+    "source_sha256": "5aecf2508d191ef880d060f21184ee71a5ac9cef18615075f6f4ef9b10924959"
+  },
+  {
+    "source": "sys/kern/subr_busdma_bounce.c",
+    "provider": "busdma",
+    "name": "reserve-fail",
+    "types": [
+      "void *",
+      "void *",
+      "int"
+    ],
+    "line": 54,
+    "source_sha256": "4fc07c7c5468eebc7ecb8ce7a1dcf2e1ddd71d0e9450378b8488ef4c7a0072ce"
+  },
+  {
+    "source": "sys/kern/subr_busdma_bounce.c",
+    "provider": "busdma",
+    "name": "defer",
+    "types": [
+      "void *",
+      "void *",
+      "int"
+    ],
+    "line": 55,
+    "source_sha256": "4fc07c7c5468eebc7ecb8ce7a1dcf2e1ddd71d0e9450378b8488ef4c7a0072ce"
+  },
+  {
+    "source": "sys/kern/subr_busdma_bounce.c",
+    "provider": "busdma",
+    "name": "ready",
+    "types": [
+      "void *",
+      "void *"
+    ],
+    "line": 56,
+    "source_sha256": "4fc07c7c5468eebc7ecb8ce7a1dcf2e1ddd71d0e9450378b8488ef4c7a0072ce"
+  },
+  {
+    "source": "sys/kern/subr_busdma_bounce.c",
+    "provider": "busdma",
+    "name": "callback",
+    "types": [
+      "void *",
+      "void *"
+    ],
+    "line": 57,
+    "source_sha256": "4fc07c7c5468eebc7ecb8ce7a1dcf2e1ddd71d0e9450378b8488ef4c7a0072ce"
+  },
+  {
+    "source": "sys/kern/subr_gtaskqueue.c",
+    "provider": "gtaskqueue",
+    "name": "enqueue",
+    "types": [
+      "void *",
+      "void *"
+    ],
+    "line": 51,
+    "source_sha256": "d0df7f8c38dcca0345383d9747e21da24cf713112c168ffec4dcc84df74b3013"
+  },
+  {
+    "source": "sys/kern/subr_gtaskqueue.c",
+    "provider": "gtaskqueue",
+    "name": "coalesce",
+    "types": [
+      "void *",
+      "void *"
+    ],
+    "line": 52,
+    "source_sha256": "d0df7f8c38dcca0345383d9747e21da24cf713112c168ffec4dcc84df74b3013"
+  },
+  {
+    "source": "sys/kern/subr_gtaskqueue.c",
+    "provider": "gtaskqueue",
+    "name": "reject",
+    "types": [
+      "void *",
+      "void *",
+      "int"
+    ],
+    "line": 54,
+    "source_sha256": "d0df7f8c38dcca0345383d9747e21da24cf713112c168ffec4dcc84df74b3013"
+  },
+  {
+    "source": "sys/kern/subr_gtaskqueue.c",
+    "provider": "gtaskqueue",
+    "name": "execute-start",
+    "types": [
+      "void *",
+      "void *",
+      "unsigned int"
+    ],
+    "line": 55,
+    "source_sha256": "d0df7f8c38dcca0345383d9747e21da24cf713112c168ffec4dcc84df74b3013"
+  },
+  {
+    "source": "sys/kern/subr_gtaskqueue.c",
+    "provider": "gtaskqueue",
+    "name": "execute-done",
+    "types": [
+      "void *",
+      "void *",
+      "unsigned int"
+    ],
+    "line": 57,
+    "source_sha256": "d0df7f8c38dcca0345383d9747e21da24cf713112c168ffec4dcc84df74b3013"
+  },
+  {
+    "source": "sys/kern/subr_gtaskqueue.c",
+    "provider": "gtaskqueue",
+    "name": "drain-start",
+    "types": [
+      "void *",
+      "void *"
+    ],
+    "line": 59,
+    "source_sha256": "d0df7f8c38dcca0345383d9747e21da24cf713112c168ffec4dcc84df74b3013"
+  },
+  {
+    "source": "sys/kern/subr_gtaskqueue.c",
+    "provider": "gtaskqueue",
+    "name": "drain-done",
+    "types": [
+      "void *",
+      "void *"
+    ],
+    "line": 60,
+    "source_sha256": "d0df7f8c38dcca0345383d9747e21da24cf713112c168ffec4dcc84df74b3013"
+  },
+  {
+    "source": "sys/kern/subr_epoch.c",
+    "provider": "epoch",
+    "name": "wait-start",
+    "types": [
+      "void *",
+      "int"
+    ],
+    "line": 63,
+    "source_sha256": "763d2abc09265c453a1b021792d42f997d57f76a69b095f6015d093c77cd8511"
+  },
+  {
+    "source": "sys/kern/subr_epoch.c",
+    "provider": "epoch",
+    "name": "wait-done",
+    "types": [
+      "void *",
+      "int"
+    ],
+    "line": 64,
+    "source_sha256": "763d2abc09265c453a1b021792d42f997d57f76a69b095f6015d093c77cd8511"
+  },
+  {
+    "source": "sys/kern/subr_epoch.c",
+    "provider": "epoch",
+    "name": "drain-start",
+    "types": [
+      "void *"
+    ],
+    "line": 65,
+    "source_sha256": "763d2abc09265c453a1b021792d42f997d57f76a69b095f6015d093c77cd8511"
+  },
+  {
+    "source": "sys/kern/subr_epoch.c",
+    "provider": "epoch",
+    "name": "drain-done",
+    "types": [
+      "void *"
+    ],
+    "line": 66,
+    "source_sha256": "763d2abc09265c453a1b021792d42f997d57f76a69b095f6015d093c77cd8511"
+  },
+  {
+    "source": "sys/vm/uma_core.c",
+    "provider": "uma",
+    "name": "limit-wait",
+    "types": [
+      "void *",
+      "char *",
+      "unsigned int"
+    ],
+    "line": 110,
+    "source_sha256": "bea5a784d9c7aaa47e91fc0774e8106bdf7f7ef0a0b6cd02a7b59aa68b825e89"
+  },
+  {
+    "source": "sys/vm/uma_core.c",
+    "provider": "uma",
+    "name": "limit-resume",
+    "types": [
+      "void *"
+    ],
+    "line": 111,
+    "source_sha256": "bea5a784d9c7aaa47e91fc0774e8106bdf7f7ef0a0b6cd02a7b59aa68b825e89"
+  },
+  {
+    "source": "sys/vm/uma_core.c",
+    "provider": "uma",
+    "name": "alloc-fail",
+    "types": [
+      "void *",
+      "char *",
+      "int",
+      "int"
+    ],
+    "line": 112,
+    "source_sha256": "bea5a784d9c7aaa47e91fc0774e8106bdf7f7ef0a0b6cd02a7b59aa68b825e89"
+  },
+  {
+    "source": "sys/vm/uma_core.c",
+    "provider": "uma",
+    "name": "reclaim-start",
+    "types": [
+      "void *",
+      "char *",
+      "int",
+      "int"
+    ],
+    "line": 113,
+    "source_sha256": "bea5a784d9c7aaa47e91fc0774e8106bdf7f7ef0a0b6cd02a7b59aa68b825e89"
+  },
+  {
+    "source": "sys/vm/uma_core.c",
+    "provider": "uma",
+    "name": "reclaim-done",
+    "types": [
+      "void *"
+    ],
+    "line": 114,
+    "source_sha256": "bea5a784d9c7aaa47e91fc0774e8106bdf7f7ef0a0b6cd02a7b59aa68b825e89"
+  },
+  {
+    "source": "sys/kern/subr_firmware.c",
+    "provider": "firmware",
+    "name": "lookup",
+    "types": [
+      "char *",
+      "int"
+    ],
+    "line": 55,
+    "source_sha256": "7b1ef54f1b35c5047b5fea6190736c4f3fda0434a94df0c52b641d5e61d4d1bb"
+  },
+  {
+    "source": "sys/kern/subr_firmware.c",
+    "provider": "firmware",
+    "name": "module-start",
+    "types": [
+      "char *"
+    ],
+    "line": 56,
+    "source_sha256": "7b1ef54f1b35c5047b5fea6190736c4f3fda0434a94df0c52b641d5e61d4d1bb"
+  },
+  {
+    "source": "sys/kern/subr_firmware.c",
+    "provider": "firmware",
+    "name": "module-done",
+    "types": [
+      "char *",
+      "int"
+    ],
+    "line": 57,
+    "source_sha256": "7b1ef54f1b35c5047b5fea6190736c4f3fda0434a94df0c52b641d5e61d4d1bb"
+  },
+  {
+    "source": "sys/kern/subr_firmware.c",
+    "provider": "firmware",
+    "name": "binary-start",
+    "types": [
+      "char *"
+    ],
+    "line": 58,
+    "source_sha256": "7b1ef54f1b35c5047b5fea6190736c4f3fda0434a94df0c52b641d5e61d4d1bb"
+  },
+  {
+    "source": "sys/kern/subr_firmware.c",
+    "provider": "firmware",
+    "name": "binary-done",
+    "types": [
+      "char *",
+      "int"
+    ],
+    "line": 59,
+    "source_sha256": "7b1ef54f1b35c5047b5fea6190736c4f3fda0434a94df0c52b641d5e61d4d1bb"
+  },
+  {
+    "source": "sys/kern/uipc_ktls.c",
+    "provider": "ktls",
+    "name": "mode-change",
+    "types": [
+      "void *",
+      "int",
+      "int"
+    ],
+    "line": 86,
+    "source_sha256": "efa617cd4fdf0da21e4102f5cf01fa6c8b33b267c4df231a682d10c2167efd65"
+  },
+  {
+    "source": "sys/kern/uipc_ktls.c",
+    "provider": "ktls",
+    "name": "enqueue",
+    "types": [
+      "void *",
+      "void *",
+      "int"
+    ],
+    "line": 87,
+    "source_sha256": "efa617cd4fdf0da21e4102f5cf01fa6c8b33b267c4df231a682d10c2167efd65"
+  },
+  {
+    "source": "sys/kern/uipc_ktls.c",
+    "provider": "ktls",
+    "name": "dispatch",
+    "types": [
+      "void *"
+    ],
+    "line": 88,
+    "source_sha256": "efa617cd4fdf0da21e4102f5cf01fa6c8b33b267c4df231a682d10c2167efd65"
+  },
+  {
+    "source": "sys/kern/uipc_ktls.c",
+    "provider": "ktls",
+    "name": "crypto-done",
+    "types": [
+      "void *",
+      "void *",
+      "int"
+    ],
+    "line": 89,
+    "source_sha256": "efa617cd4fdf0da21e4102f5cf01fa6c8b33b267c4df231a682d10c2167efd65"
+  },
+  {
+    "source": "sys/kern/uipc_ktls.c",
+    "provider": "ktls",
+    "name": "drop",
+    "types": [
+      "void *",
+      "int"
+    ],
+    "line": 90,
+    "source_sha256": "efa617cd4fdf0da21e4102f5cf01fa6c8b33b267c4df231a682d10c2167efd65"
+  },
+  {
+    "source": "sys/rpc/clnt_rc.c",
+    "provider": "krpc",
+    "name": "connect-start",
+    "types": [
+      "void *"
+    ],
+    "line": 55,
+    "source_sha256": "f7bbf7bb5f95ed9e9f2d5a328bf9e0036cb1d9c488708d11a0983123b6148a1e"
+  },
+  {
+    "source": "sys/rpc/clnt_rc.c",
+    "provider": "krpc",
+    "name": "connect-done",
+    "types": [
+      "void *",
+      "int"
+    ],
+    "line": 56,
+    "source_sha256": "f7bbf7bb5f95ed9e9f2d5a328bf9e0036cb1d9c488708d11a0983123b6148a1e"
+  },
+  {
+    "source": "sys/kern/subr_gtaskqueue.c",
+    "provider": "gtaskqueue",
+    "name": "cancel",
+    "types": [
+      "void *",
+      "void *"
+    ],
+    "line": 53,
+    "source_sha256": "d0df7f8c38dcca0345383d9747e21da24cf713112c168ffec4dcc84df74b3013"
+  },
+  {
+    "source": "sys/kern/uipc_ktls.c",
+    "provider": "ktls",
+    "name": "tx-fallback",
+    "types": [
+      "void *",
+      "int"
+    ],
+    "line": 83,
+    "source_sha256": "efa617cd4fdf0da21e4102f5cf01fa6c8b33b267c4df231a682d10c2167efd65"
+  },
+  {
+    "source": "sys/kern/uipc_ktls.c",
+    "provider": "ktls",
+    "name": "mode-failed",
+    "types": [
+      "void *",
+      "int",
+      "int",
+      "int"
+    ],
+    "line": 84,
+    "source_sha256": "efa617cd4fdf0da21e4102f5cf01fa6c8b33b267c4df231a682d10c2167efd65"
+  },
+  {
+    "source": "sys/kern/uipc_ktls.c",
+    "provider": "ktls",
+    "name": "disable-done",
+    "types": [
+      "void *",
+      "int"
+    ],
+    "line": 85,
+    "source_sha256": "efa617cd4fdf0da21e4102f5cf01fa6c8b33b267c4df231a682d10c2167efd65"
+  }
+]

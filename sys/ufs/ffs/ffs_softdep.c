@@ -39,11 +39,11 @@
  * USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
 #include "opt_ffs.h"
 #include "opt_quota.h"
 #include "opt_ddb.h"
 
+#include <sys/cdefs.h>
 #include <sys/param.h>
 #include <sys/kernel.h>
 #include <sys/systm.h>
@@ -67,6 +67,12 @@
 #include <sys/syslog.h>
 #include <sys/vnode.h>
 #include <sys/conf.h>
+#include <sys/queue.h>
+#include <sys/sdt.h>
+
+#include <vm/vm.h>
+#include <vm/vm_extern.h>
+#include <vm/vm_object.h>
 
 #include <ufs/ufs/dir.h>
 #include <ufs/ufs/extattr.h>
@@ -77,15 +83,16 @@
 #include <ufs/ffs/softdep.h>
 #include <ufs/ffs/ffs_extern.h>
 #include <ufs/ufs/ufs_extern.h>
-
-#include <vm/vm.h>
-#include <vm/vm_extern.h>
-#include <vm/vm_object.h>
-
 #include <geom/geom.h>
 #include <geom/geom_vfs.h>
-
 #include <ddb/ddb.h>
+
+SDT_PROVIDER_DECLARE(ffs);
+SDT_PROBE_DEFINE3(ffs, , , worklist__start, "struct mount *", "int", "int");
+SDT_PROBE_DEFINE3(ffs, , , worklist__done, "struct mount *", "int", "int");
+SDT_PROBE_DEFINE2(ffs, , , journal__start, "struct mount *", "int");
+SDT_PROBE_DEFINE2(ffs, , , journal__done, "struct mount *", "int");
+SDT_PROBE_DEFINE4(ffs, , , slowdown, "struct mount *", "int", "int", "int");
 
 #define	KTR_SUJ	0	/* Define to KTR_SPARE. */
 
@@ -1744,6 +1751,8 @@ softdep_process_worklist(struct mount *mp, int full)
 		return (0);
 	matchcnt = 0;
 	ACQUIRE_LOCK(ump);
+	SDT_PROBE3(ffs, , , worklist__start, mp, full,
+	    ump->softdep_on_worklist);
 	starttime = time_second;
 	softdep_process_journal(mp, NULL, full ? MNT_WAIT : 0);
 	check_clear_deps(mp);
@@ -1773,6 +1782,8 @@ softdep_process_worklist(struct mount *mp, int full)
 	}
 	if (full == 0)
 		journal_unsuspend(ump);
+	SDT_PROBE3(ffs, , , worklist__done, mp, matchcnt,
+	    ump->softdep_on_worklist);
 	FREE_LOCK(ump);
 	return (matchcnt);
 }
@@ -3552,10 +3563,12 @@ softdep_flushjournal(struct mount *mp)
 	ump = VFSTOUFS(mp);
 	jblocks = ump->softdep_jblocks;
 	ACQUIRE_LOCK(ump);
+	SDT_PROBE2(ffs, , , journal__start, mp, ump->softdep_on_journal);
 	while (ump->softdep_on_journal) {
 		jblocks->jb_needseg = 1;
 		softdep_process_journal(mp, NULL, MNT_WAIT);
 	}
+	SDT_PROBE2(ffs, , , journal__done, mp, ump->softdep_on_journal);
 	FREE_LOCK(ump);
 }
 
@@ -13645,6 +13658,8 @@ softdep_slowdown(struct vnode *vp)
 	if (ump->softdep_curdeps[D_INDIRDEP] <
 	    (max_softdeps_hard / 1000) / stat_flush_threads || jlow)
 		softdep_speedup(ump);
+	SDT_PROBE4(ffs, , , slowdown, vp->v_mount, jlow,
+	    ump->softdep_curdeps[D_INODEDEP], ump->softdep_curdeps[D_DIRREM]);
 	stat_sync_limit_hit += 1;
 	FREE_LOCK(ump);
 	/*

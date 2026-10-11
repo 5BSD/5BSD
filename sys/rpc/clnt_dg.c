@@ -57,6 +57,12 @@
 #include <rpc/rpc.h>
 #include <rpc/rpc_com.h>
 
+#include <sys/sdt.h>
+
+SDT_PROVIDER_DEFINE(krpc);
+SDT_PROBE_DEFINE4(krpc, , , dg__retry, "void *", "uint32_t", "int", "int");
+SDT_PROBE_DEFINE3(krpc, , , dg__done, "void *", "uint32_t", "int");
+
 
 #ifdef _FREEFALL_CONFIG
 /*
@@ -667,6 +673,8 @@ get_reply:
 				goto out;
 			}
 			retrans++;
+			SDT_PROBE4(krpc, , , dg__retry, cl, xid, retrans,
+			    retransmit_time);
 			/* update retransmit_time */
 			if (retransmit_time < RPC_MAX_BACKOFF * hz)
 				retransmit_time = 2 * retransmit_time;
@@ -778,6 +786,7 @@ out:
 		AUTH_VALIDATE(auth, xid, NULL, NULL);
 
 	free(cr, M_RPC);
+	SDT_PROBE3(krpc, , , dg__done, cl, xid, stat);
 
 	return (stat);
 }

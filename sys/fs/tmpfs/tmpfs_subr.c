@@ -70,6 +70,20 @@
 #include <fs/tmpfs/tmpfs_fifoops.h>
 #include <fs/tmpfs/tmpfs_vnops.h>
 
+#include <sys/queue.h>
+#include <sys/sdt.h>
+
+SDT_PROVIDER_DEFINE(tmpfs);
+SDT_PROBE_DEFINE2(tmpfs, , , node__start, "void *", "int");
+SDT_PROBE_DEFINE2(tmpfs, , , node__done, "void *", "int");
+SDT_PROBE_DEFINE2(tmpfs, , , capacity, "void *", "int");
+SDT_PROBE_DEFINE3(tmpfs, , , vnode__start, "void *", "void *", "int");
+SDT_PROBE_DEFINE3(tmpfs, , , vnode__done, "void *", "void *", "int");
+SDT_PROBE_DEFINE1(tmpfs, , , reclaim__wait, "void *");
+SDT_PROBE_DEFINE1(tmpfs, , , reclaim__resume, "void *");
+SDT_PROBE_DEFINE2(tmpfs, , , resize__start, "void *", "int64_t");
+SDT_PROBE_DEFINE2(tmpfs, , , resize__done, "void *", "int");
+
 SYSCTL_NODE(_vfs, OID_AUTO, tmpfs, CTLFLAG_RW | CTLFLAG_MPSAFE, 0,
     "tmpfs file system");
 
@@ -546,6 +560,7 @@ tmpfs_alloc_node(struct mount *mp, struct tmpfs_mount *tmp, __enum_uint8(vtype) 
 	char *symlink;
 	char symlink_smr;
 
+	SDT_PROBE2(tmpfs, , , node__start, (tmp), (type));
 	/* If the root directory of the 'tmp' file system is not yet
 	 * allocated, this must be the request to do it. */
 	MPASS(IMPLIES(tmp->tm_root == NULL, parent == NULL && type == VDIR));
@@ -553,10 +568,24 @@ tmpfs_alloc_node(struct mount *mp, struct tmpfs_mount *tmp, __enum_uint8(vtype) 
 	MPASS((type == VLNK) ^ (target == NULL));
 	MPASS(VTYPE_ISDEV(type) ^ (rdev == VNOVAL));
 
-	if (tmp->tm_nodes_inuse >= tmp->tm_nodes_max)
-		return (ENOSPC);
-	if (!tmpfs_pages_check_avail(tmp, 1))
-		return (ENOSPC);
+	if (tmp->tm_nodes_inuse >= tmp->tm_nodes_max) {
+		SDT_PROBE2(tmpfs, , , capacity, (tmp), (1));
+		{
+			int trace_result = ENOSPC;
+
+			SDT_PROBE2(tmpfs, , , node__done, (tmp), (trace_result));
+			return (trace_result);
+		}
+	}
+	if (!tmpfs_pages_check_avail(tmp, 1)) {
+		SDT_PROBE2(tmpfs, , , capacity, (tmp), (2));
+		{
+			int trace_result = ENOSPC;
+
+			SDT_PROBE2(tmpfs, , , node__done, (tmp), (trace_result));
+			return (trace_result);
+		}
+	}
 
 	if ((mp->mnt_kern_flag & MNTK_UNMOUNT) != 0) {
 		/*
@@ -573,10 +602,20 @@ tmpfs_alloc_node(struct mount *mp, struct tmpfs_mount *tmp, __enum_uint8(vtype) 
 		 * Tmpfs does not need to instantiate new nodes during
 		 * unmount.
 		 */
-		return (EBUSY);
+		{
+			int trace_result = EBUSY;
+
+			SDT_PROBE2(tmpfs, , , node__done, (tmp), (trace_result));
+			return (trace_result);
+		}
 	}
 	if ((mp->mnt_kern_flag & MNT_RDONLY) != 0)
-		return (EROFS);
+		{
+			int trace_result = EROFS;
+
+			SDT_PROBE2(tmpfs, , , node__done, (tmp), (trace_result));
+			return (trace_result);
+		}
 
 	nnode = uma_zalloc_smr(tmpfs_node_pool, M_WAITOK);
 
@@ -682,7 +721,12 @@ tmpfs_alloc_node(struct mount *mp, struct tmpfs_mount *tmp, __enum_uint8(vtype) 
 	TMPFS_UNLOCK(tmp);
 
 	*node = nnode;
-	return (0);
+	{
+		int trace_result = 0;
+
+		SDT_PROBE2(tmpfs, , , node__done, (tmp), (trace_result));
+		return (trace_result);
+	}
 }
 
 /*
@@ -956,6 +1000,7 @@ tmpfs_alloc_vp(struct mount *mp, struct tmpfs_node *node, int lkflag,
 	vm_object_t object;
 	int error;
 
+	SDT_PROBE3(tmpfs, , , vnode__start, (mp), (node), (lkflag));
 	error = 0;
 	tm = VFS_TO_TMPFS(mp);
 	TMPFS_NODE_LOCK(node);
@@ -975,8 +1020,10 @@ loop:
 		if (VN_IS_DOOMED(vp)) {
 			node->tn_vpstate |= TMPFS_VNODE_WRECLAIM;
 			while ((node->tn_vpstate & TMPFS_VNODE_WRECLAIM) != 0) {
+				SDT_PROBE1(tmpfs, , , reclaim__wait, (node));
 				msleep(&node->tn_vnode, TMPFS_NODE_MTX(node),
 				    0, "tmpfsE", 0);
+				SDT_PROBE1(tmpfs, , , reclaim__resume, (node));
 			}
 			goto loop;
 		}
@@ -1128,6 +1175,7 @@ out:
 		TMPFS_NODE_UNLOCK(node);
 #endif
 	}
+	SDT_PROBE3(tmpfs, , , vnode__done, (mp), (node), (error));
 	tmpfs_free_node(tm, node);
 
 	return (error);
@@ -1863,6 +1911,7 @@ tmpfs_reg_resize(struct vnode *vp, off_t newsize, boolean_t ignerr)
 	off_t oldsize;
 	int base, error;
 
+	SDT_PROBE2(tmpfs, , , resize__start, (vp), (newsize));
 	MPASS(vp->v_type == VREG);
 	MPASS(newsize >= 0);
 
@@ -1882,7 +1931,12 @@ tmpfs_reg_resize(struct vnode *vp, off_t newsize, boolean_t ignerr)
 
 	if (__predict_true(newpages == oldpages && newsize >= oldsize)) {
 		node->tn_size = newsize;
-		return (0);
+		{
+			int trace_result = 0;
+
+			SDT_PROBE2(tmpfs, , , resize__done, (vp), (trace_result));
+			return (trace_result);
+		}
 	}
 
 	VM_OBJECT_WLOCK(uobj);
@@ -1897,7 +1951,12 @@ tmpfs_reg_resize(struct vnode *vp, off_t newsize, boolean_t ignerr)
 			    PAGE_SIZE, ignerr);
 			if (error != 0) {
 				VM_OBJECT_WUNLOCK(uobj);
-				return (error);
+				{
+					int trace_result = error;
+
+					SDT_PROBE2(tmpfs, , , resize__done, (vp), (trace_result));
+					return (trace_result);
+				}
 			}
 		}
 
@@ -1911,7 +1970,12 @@ tmpfs_reg_resize(struct vnode *vp, off_t newsize, boolean_t ignerr)
 	VM_OBJECT_WUNLOCK(uobj);
 
 	node->tn_size = newsize;
-	return (0);
+	{
+		int trace_result = 0;
+
+		SDT_PROBE2(tmpfs, , , resize__done, (vp), (trace_result));
+		return (trace_result);
+	}
 }
 
 /*

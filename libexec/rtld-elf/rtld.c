@@ -39,6 +39,7 @@
  */
 
 #include <sys/param.h>
+#include "rtldtrace_trace.h"
 #include <sys/cap_authority.h>
 #include <sys/syscall.h>
 #include <sys/ktrace.h>
@@ -63,6 +64,10 @@
 #include "libmap.h"
 #include "notes.h"
 #include "rtld.h"
+#ifdef WITH_COVERAGE_DTRACE
+#include <sys/dtrace.h>
+#include <sys/ioccom.h>
+#endif
 #include "rtld_libc.h"
 #include "rtld_malloc.h"
 #include "rtld_paths.h"
@@ -602,6 +607,28 @@ _rtld(Elf_Addr *sp, func_ptr_type *exit_proc, Obj_Entry **objp)
 	/* Initialize and relocate ourselves. */
 	assert(aux_info[AT_BASE] != NULL);
 	init_rtld((caddr_t)aux_info[AT_BASE]->a_un.a_ptr, aux_info);
+
+#ifdef WITH_COVERAGE_DTRACE
+	/* Self relocation is complete; no libc or constructor dependency. */
+	{
+		extern const unsigned char ___SUNW_dof[];
+		dof_helper_t helper = { 0 };
+		int trace_fd, saved_errno = errno;
+
+		trace_fd = open("/dev/dtrace/helper", O_RDWR | O_CLOEXEC);
+		if (trace_fd >= 0) {
+			helper.dofhp_dof = (uintptr_t)___SUNW_dof;
+			helper.dofhp_addr = (uintptr_t)obj_rtld.relocbase;
+			helper.dofhp_pid = getpid();
+			strlcpy(helper.dofhp_mod, "ld-elf.so.1",
+			    sizeof(helper.dofhp_mod));
+			(void)syscall(SYS_ioctl, trace_fd, DTRACEHIOC_ADDDOF,
+			    &helper);
+			(void)close(trace_fd);
+		}
+		errno = saved_errno;
+	}
+#endif
 
 	dlerror_dflt_init();
 
@@ -2920,18 +2947,27 @@ load_object(const char *name, int fd_u, const Obj_Entry *refobj, int flags)
 	struct stat sb;
 	char *path;
 
+	TRACE_RTLDTRACE_LOAD__START(name, flags);
 	fd = -1;
 	if (name != NULL) {
 		TAILQ_FOREACH(obj, &obj_list, next) {
 			if (obj->marker || obj->doomed)
 				continue;
 			if (object_match_name(obj, name))
-				return (obj);
+				{
+					Obj_Entry * trace_result = (obj);
+					TRACE_RTLDTRACE_LOAD__DONE(name, trace_result);
+					return (trace_result);
+				}
 		}
 
 		path = find_library(name, refobj, &fd);
 		if (path == NULL)
-			return (NULL);
+			{
+				Obj_Entry * trace_result = (NULL);
+				TRACE_RTLDTRACE_LOAD__DONE(name, trace_result);
+				return (trace_result);
+			}
 	} else
 		path = NULL;
 
@@ -2955,7 +2991,11 @@ load_object(const char *name, int fd_u, const Obj_Entry *refobj, int flags)
 			if (fd == -1) {
 				_rtld_error("Cannot open \"%s\"", path);
 				free(path);
-				return (NULL);
+				{
+					Obj_Entry * trace_result = (NULL);
+					TRACE_RTLDTRACE_LOAD__DONE(name, trace_result);
+					return (trace_result);
+				}
 			}
 		}
 	} else {
@@ -2963,14 +3003,22 @@ load_object(const char *name, int fd_u, const Obj_Entry *refobj, int flags)
 		if (fd == -1) {
 			_rtld_error("Cannot dup fd");
 			free(path);
-			return (NULL);
+			{
+				Obj_Entry * trace_result = (NULL);
+				TRACE_RTLDTRACE_LOAD__DONE(name, trace_result);
+				return (trace_result);
+			}
 		}
 	}
 	if (fstat(fd, &sb) == -1) {
 		_rtld_error("Cannot fstat \"%s\"", printable_path(path));
 		close(fd);
 		free(path);
-		return (NULL);
+		{
+			Obj_Entry * trace_result = (NULL);
+			TRACE_RTLDTRACE_LOAD__DONE(name, trace_result);
+			return (trace_result);
+		}
 	}
 	TAILQ_FOREACH(obj, &obj_list, next) {
 		if (obj->marker || obj->doomed)
@@ -2983,12 +3031,20 @@ load_object(const char *name, int fd_u, const Obj_Entry *refobj, int flags)
 			object_add_name(obj, name);
 		free(path);
 		close(fd);
-		return (obj);
+		{
+			Obj_Entry * trace_result = (obj);
+			TRACE_RTLDTRACE_LOAD__DONE(name, trace_result);
+			return (trace_result);
+		}
 	}
 	if (flags & RTLD_LO_NOLOAD) {
 		free(path);
 		close(fd);
-		return (NULL);
+		{
+			Obj_Entry * trace_result = (NULL);
+			TRACE_RTLDTRACE_LOAD__DONE(name, trace_result);
+			return (trace_result);
+		}
 	}
 
 	/* First use of this object, so we must map it in */
@@ -2997,7 +3053,11 @@ load_object(const char *name, int fd_u, const Obj_Entry *refobj, int flags)
 		free(path);
 	close(fd);
 
-	return (obj);
+	{
+		Obj_Entry * trace_result = (obj);
+		TRACE_RTLDTRACE_LOAD__DONE(name, trace_result);
+		return (trace_result);
+	}
 }
 
 static Obj_Entry *
@@ -3315,6 +3375,7 @@ objlist_call_init(Objlist *list, RtldLockState *lockstate)
 			reg = (void (*)(void (*)(void)))
 			    get_program_var_addr("__libc_atexit", lockstate);
 		}
+		TRACE_RTLDTRACE_INIT__START(elm->obj);
 		lock_release(rtld_bind_lock, lockstate);
 		if (reg != NULL) {
 			reg(rtld_exit);
@@ -3350,6 +3411,7 @@ objlist_call_init(Objlist *list, RtldLockState *lockstate)
 				}
 			}
 		}
+		TRACE_RTLDTRACE_INIT__DONE(elm->obj);
 		wlock_acquire(rtld_bind_lock, lockstate);
 		unhold_object(elm->obj);
 	}
@@ -3581,6 +3643,7 @@ relocate_objects(Obj_Entry *first, bool bind_now, Obj_Entry *rtldobj, int flags,
 	Obj_Entry *obj;
 	int error;
 
+	TRACE_RTLDTRACE_RELOCATE__START(first);
 	for (error = 0, obj = first; obj != NULL; obj = TAILQ_NEXT(obj, next)) {
 		if (obj->marker)
 			continue;
@@ -3589,7 +3652,11 @@ relocate_objects(Obj_Entry *first, bool bind_now, Obj_Entry *rtldobj, int flags,
 		if (error == -1)
 			break;
 	}
-	return (error);
+	{
+		int trace_result = (error);
+		TRACE_RTLDTRACE_RELOCATE__DONE(first, trace_result);
+		return (trace_result);
+	}
 }
 
 /*
@@ -3887,9 +3954,11 @@ dlclose(void *handle)
 	RtldLockState lockstate;
 	int error;
 
+	TRACE_RTLDTRACE_DLCLOSE__START(handle);
 	wlock_acquire(rtld_bind_lock, &lockstate);
 	error = dlclose_locked(handle, &lockstate);
 	lock_release(rtld_bind_lock, &lockstate);
+	TRACE_RTLDTRACE_DLCLOSE__DONE(handle, error);
 	return (error);
 }
 
@@ -3974,6 +4043,9 @@ rtld_dlopen(const char *name, int fd, int mode)
 {
 	RtldLockState lockstate;
 	int lo_flags;
+	void *trace_handle;
+
+	TRACE_RTLDTRACE_DLOPEN__START(name, fd, mode);
 
 	LD_UTRACE(UTRACE_DLOPEN_START, NULL, NULL, 0, mode, name);
 	ld_tracing = (mode & RTLD_TRACE) == 0 ? NULL : "1";
@@ -3995,8 +4067,10 @@ rtld_dlopen(const char *name, int fd, int mode)
 	if (ld_tracing != NULL)
 		lo_flags |= RTLD_LO_TRACE | RTLD_LO_IGNSTLS;
 
-	return (dlopen_object(name, fd, obj_main, lo_flags,
-	    mode & (RTLD_MODEMASK | RTLD_GLOBAL), NULL));
+	trace_handle = dlopen_object(name, fd, obj_main, lo_flags,
+	    mode & (RTLD_MODEMASK | RTLD_GLOBAL), NULL);
+	TRACE_RTLDTRACE_DLOPEN__DONE(name, fd, mode, trace_handle);
+	return (trace_handle);
 }
 
 static void

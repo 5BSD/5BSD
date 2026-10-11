@@ -31,6 +31,7 @@
  */
 
 #include "namespace.h"
+#include "threadwait_trace.h"
 #include <stdlib.h>
 #include <errno.h>
 #include <string.h>
@@ -225,6 +226,7 @@ cond_wait_kernel(struct pthread_cond *cvp, struct pthread_mutex *mp,
 
 	if (cancel)
 		_thr_cancel_enter2(curthread, 0);
+	TRACE_THREADWAIT_CONDITION__START(cvp, 1);
 	if (clockwait) {
 		utime._timeout = *abstime;
 		utime._flags = UMTX_ABSTIME;
@@ -235,6 +237,7 @@ cond_wait_kernel(struct pthread_cond *cvp, struct pthread_mutex *mp,
 		error = _thr_ucond_wait(&cvp->kcond, &mp->m_lock, abstime,
 		    NULL, CVWAIT_ABSTIME | CVWAIT_CLOCKID);
 	}
+	TRACE_THREADWAIT_CONDITION__DONE(cvp, error);
 	if (cancel)
 		_thr_cancel_leave(curthread, 0);
 
@@ -329,7 +332,9 @@ cond_wait_user(struct pthread_cond *cvp, struct pthread_mutex *mp,
 
 		if (cancel)
 			_thr_cancel_enter2(curthread, 0);
+		TRACE_THREADWAIT_CONDITION__START(cvp, 0);
 		error = _thr_sleep(curthread, clockid, abstime);
+		TRACE_THREADWAIT_CONDITION__DONE(cvp, error);
 		if (cancel)
 			_thr_cancel_leave(curthread, 0);
 

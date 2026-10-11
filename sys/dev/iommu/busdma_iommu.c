@@ -63,6 +63,15 @@
 #include <machine/iommu.h>
 #include <dev/iommu/busdma_iommu.h>
 
+#include <sys/queue.h>
+#include <sys/sdt.h>
+
+SDT_PROVIDER_DECLARE(iommu);
+SDT_PROBE_DEFINE3(iommu, , , load__complete, "void *", "int", "int");
+SDT_PROBE_DEFINE2(iommu, , , unload__queue, "void *", "void *");
+SDT_PROBE_DEFINE1(iommu, , , unload__start, "void *");
+SDT_PROBE_DEFINE1(iommu, , , unload__done, "void *");
+
 /*
  * busdma_iommu.c, the implementation of the busdma(9) interface using
  * IOMMU units from Intel VT-d.
@@ -833,6 +842,7 @@ iommu_bus_dmamap_complete(bus_dma_tag_t dmat, bus_dmamap_t map1,
 	struct bus_dma_tag_iommu *tag;
 	struct bus_dmamap_iommu *map;
 
+	SDT_PROBE3(iommu, , , load__complete, (map1), (nsegs), (error));
 	tag = (struct bus_dma_tag_iommu *)dmat;
 	map = (struct bus_dmamap_iommu *)map1;
 
@@ -872,6 +882,7 @@ iommu_bus_dmamap_unload(bus_dma_tag_t dmat, bus_dmamap_t map1)
 	struct iommu_domain *domain;
 	struct iommu_map_entries_tailq entries;
 
+	SDT_PROBE2(iommu, , , unload__queue, (dmat), (map1));
 	tag = (struct bus_dma_tag_iommu *)dmat;
 	map = (struct bus_dmamap_iommu *)map1;
 	ctx = tag->ctx;
@@ -1084,6 +1095,7 @@ iommu_domain_unload_task(void *arg, int pending)
 	struct iommu_map_entries_tailq entries;
 
 	domain = arg;
+	SDT_PROBE1(iommu, , , unload__start, (domain));
 	TAILQ_INIT(&entries);
 
 	for (;;) {
@@ -1095,6 +1107,7 @@ iommu_domain_unload_task(void *arg, int pending)
 			break;
 		iommu_domain_unload(domain, &entries, true);
 	}
+	SDT_PROBE1(iommu, , , unload__done, (domain));
 }
 
 void

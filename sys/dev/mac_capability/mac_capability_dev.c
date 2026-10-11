@@ -48,6 +48,13 @@
 #include "mac_capability_internal.h"
 #include "mac_capability_label.h"
 
+SDT_PROVIDER_DECLARE(mac_capability);
+SDT_PROBE_DEFINE4(mac_capability, , , direct__accept, "void *", "uint64_t",
+    "int", "uint64_t");
+SDT_PROBE_DEFINE3(mac_capability, , , direct__fallback, "void *", "uint64_t",
+    "int");
+SDT_PROBE_DEFINE2(mac_capability, , , message__receive, "void *", "uint64_t");
+
 MALLOC_DECLARE(M_MAC_CAPABILITY);
 
 SDT_PROVIDER_DECLARE(mac_capability);
@@ -328,6 +335,8 @@ mac_capability_direct_insert(struct mac_capability_instance *peer,
 	mtx_assert(&peer->ci_mtx, MA_OWNED);
 	STAILQ_INSERT_TAIL(&peer->ci_txq, msg, cm_link);
 	peer->ci_txqlen++;
+	SDT_PROBE4(mac_capability, , , direct__accept, msg, peer->ci_badge,
+	    peer->ci_txqlen, msg->cm_reply_token);
 	KNOTE_LOCKED(&peer->ci_rknotes, 0);
 	wakeup(&peer->ci_txq);
 }
@@ -648,6 +657,12 @@ mac_capability_instance_do_sendmsg(struct mac_capability_instance *s,
 					mac_capability_instance_rele(peer);
 					goto fd_sent;
 				}
+				SDT_PROBE3(mac_capability, , , direct__fallback,
+				    msg, peer->ci_badge,
+				    (peer->ci_flags & MAC_CAPABILITY_SF_DEAD) !=
+					    0 ?
+					1 :
+					(peer->ci_service == NULL ? 2 : 3));
 				mtx_unlock(&peer->ci_mtx);
 				mac_capability_instance_rele(peer);
 			}
@@ -702,6 +717,11 @@ sendmsg_fd_err:
 			error = 0;
 			goto out;
 		}
+		SDT_PROBE3(mac_capability, , , direct__fallback, msg,
+		    peer->ci_badge,
+		    (peer->ci_flags & MAC_CAPABILITY_SF_DEAD) != 0 ?
+			1 :
+			(peer->ci_service == NULL ? 2 : 3));
 		mtx_unlock(&peer->ci_mtx);
 		mac_capability_instance_rele(peer);
 	}
@@ -814,6 +834,7 @@ mac_capability_instance_do_recvmsg(struct mac_capability_instance *s, struct fil
 		goto out;
 	}
 
+	SDT_PROBE2(mac_capability, , , message__receive, msg, s->ci_badge);
 	STAILQ_REMOVE_HEAD(&s->ci_txq, cm_link);
 	s->ci_txqlen--;
 	drained = STAILQ_EMPTY(&s->ci_txq);

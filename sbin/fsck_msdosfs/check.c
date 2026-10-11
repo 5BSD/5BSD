@@ -27,6 +27,7 @@
 
 
 #include <sys/cdefs.h>
+#include "fatcheck_trace.h"
 #ifndef lint
 __RCSID("$NetBSD: check.c,v 1.14 2006/06/05 16:51:18 christos Exp $");
 #endif /* not lint */
@@ -55,6 +56,7 @@ checkfilesys(const char *fname)
 	int64_t freebytes;
 	int64_t badbytes;
 
+	TRACE_FATCHECK_CHECK__START(fname);
 	rdonly = alwaysno;
 	if (!preen)
 		printf("** %s", fname);
@@ -73,13 +75,21 @@ checkfilesys(const char *fname)
 	if (dosfs < 0) {
 		perr("Can't open `%s'", fname);
 		printf("\n");
-		return 8;
+		{
+			int trace_result = 8;
+			TRACE_FATCHECK_CHECK__DONE(fname, trace_result);
+			return (trace_result);
+		}
 	}
 
 	if (readboot(dosfs, &boot) == FSFATAL) {
 		close(dosfs);
 		printf("\n");
-		return 8;
+		{
+			int trace_result = 8;
+			TRACE_FATCHECK_CHECK__DONE(fname, trace_result);
+			return (trace_result);
+		}
 	}
 
 	if (skipclean && preen && checkdirty(dosfs, &boot)) {
@@ -96,7 +106,11 @@ checkfilesys(const char *fname)
 	mod |= readfat(dosfs, &boot, &fat);
 	if (mod & FSFATAL) {
 		close(dosfs);
-		return 8;
+		{
+			int trace_result = 8;
+			TRACE_FATCHECK_CHECK__DONE(fname, trace_result);
+			return (trace_result);
+		}
 	}
 
 	if (!preen)
@@ -190,5 +204,9 @@ checkfilesys(const char *fname)
 	if (mod & (FSFATMOD|FSDIRMOD))
 		pwarn("\n***** FILE SYSTEM WAS MODIFIED *****\n");
 
-	return ret;
+	{
+		int trace_result = ret;
+		TRACE_FATCHECK_CHECK__DONE(fname, trace_result);
+		return (trace_result);
+	}
 }

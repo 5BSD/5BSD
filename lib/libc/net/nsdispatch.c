@@ -63,6 +63,7 @@
  *
  */
 #include "namespace.h"
+#include "nameres_trace.h"
 #include <sys/param.h>
 #include <sys/stat.h>
 
@@ -643,6 +644,7 @@ _nsdispatch(void *retval, const ns_dtab disp_tab[], const char *database,
 	int		 cache_flag;
 #endif
 	
+	TRACE_NAMERES_DISPATCH__START(database, method_name);
 	dbt = NULL;
 	fb_method = NULL;
 
@@ -723,13 +725,19 @@ _nsdispatch(void *retval, const ns_dtab disp_tab[], const char *database,
 				cache_flag = 0;
 				errno = 0;
 				va_start(ap, defaults);
+				TRACE_NAMERES_BACKEND__START(database, srclist[i].name);
+
 				result = method(retval, mdata, ap);
+				TRACE_NAMERES_BACKEND__DONE(database, srclist[i].name, result);
 				va_end(ap);
 			}
 #else /* NS_CACHING */
 			errno = 0;
 			va_start(ap, defaults);
+			TRACE_NAMERES_BACKEND__START(database, srclist[i].name);
+
 			result = method(retval, mdata, ap);
+			TRACE_NAMERES_BACKEND__DONE(database, srclist[i].name, result);
 			va_end(ap);
 #endif /* NS_CACHING */
 
@@ -778,5 +786,9 @@ _nsdispatch(void *retval, const ns_dtab disp_tab[], const char *database,
 	--st->dispatch_depth;
 fin:
 	errno = serrno;
-	return (result);
+	{
+		int trace_result = (result);
+		TRACE_NAMERES_DISPATCH__DONE(database, trace_result);
+		return (trace_result);
+	}
 }

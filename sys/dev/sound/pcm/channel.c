@@ -42,6 +42,13 @@
 
 #include "feeder_if.h"
 
+#include <sys/sdt.h>
+
+SDT_PROVIDER_DEFINE(pcm);
+SDT_PROBE_DEFINE4(pcm, , , xrun, "void *", "int", "unsigned int",
+    "unsigned int");
+SDT_PROBE_DEFINE3(pcm, , , trigger, "void *", "int", "int");
+
 int report_soft_formats = 1;
 SYSCTL_INT(_hw_snd, OID_AUTO, report_soft_formats, CTLFLAG_RW,
 	&report_soft_formats, 0, "report software-emulated formats");
@@ -412,8 +419,10 @@ chn_wrfeed(struct pcm_channel *c)
 	/*
 	 * Possible xruns. There should be no empty space left in buffer.
 	 */
-	if (sndbuf_getready(b) < want)
+	if (sndbuf_getready(b) < want) {
 		c->xruns++;
+		SDT_PROBE4(pcm, , , xrun, c, 0, sndbuf_getready(b), want);
+	}
 
 	if (sndbuf_getfree(b) < wasfree)
 		chn_wakeup(c);
@@ -512,6 +521,7 @@ chn_rdfeed(struct pcm_channel *c)
 	amt = sndbuf_getready(b);
 	if (amt > 0) {
 		c->xruns++;
+		SDT_PROBE4(pcm, , , xrun, c, 1, amt, sndbuf_getfree(bs));
 		sndbuf_dispose(b, NULL, amt);
 	}
 
@@ -2262,6 +2272,7 @@ chn_trigger(struct pcm_channel *c, int go)
 
 	c->trigger = go;
 	ret = CHANNEL_TRIGGER(c->methods, c->devinfo, go);
+	SDT_PROBE3(pcm, , , trigger, c, go, ret);
 	if (ret != 0)
 		return (ret);
 

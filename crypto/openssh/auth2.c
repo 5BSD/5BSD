@@ -24,6 +24,7 @@
  */
 
 #include "includes.h"
+#include "sshauth_trace.h"
 
 #include <sys/types.h>
 #include <sys/stat.h>
@@ -349,7 +350,9 @@ input_userauth_request(int type, uint32_t seq, struct ssh *ssh)
 	m = authmethod_lookup(authctxt, method);
 	if (m != NULL && authctxt->failures < options.max_authtries) {
 		debug2("input_userauth_request: try method %s", method);
+		TRACE_SSHAUTH_METHOD__START(ssh, authctxt->attempt);
 		authenticated =	m->userauth(ssh, method);
+		TRACE_SSHAUTH_METHOD__DONE(ssh, authctxt->attempt, authenticated);
 	}
 	if (!authctxt->authenticated && strcmp(method, "none") != 0)
 		auth_failure_delay(authctxt, tstart);
@@ -405,6 +408,7 @@ userauth_finish(struct ssh *ssh, int authenticated, const char *packet_method,
 	/* Log before sending the reply */
 	auth_log(ssh, authenticated, partial, method, submethod);
 
+	TRACE_SSHAUTH_DECISION(ssh, authctxt->attempt, authenticated, partial, authctxt->postponed);
 	/* Update information exposed to session */
 	if (authenticated || partial)
 		auth2_update_session_info(authctxt, method, submethod);

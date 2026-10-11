@@ -39,6 +39,11 @@
 #include <rpc/rpc.h>
 #include <rpc/replay.h>
 
+#include <sys/sdt.h>
+
+SDT_PROVIDER_DECLARE(krpc);
+SDT_PROBE_DEFINE3(krpc, , , replay__hit, "void *", "uint32_t", "int");
+
 struct replay_cache_entry {
 	int		rce_hash;
 	struct rpc_msg	rce_msg;
@@ -185,6 +190,8 @@ replay_find(struct replay_cache *rc, struct rpc_msg *msg,
 		    && rce->rce_msg.rm_call.cb_proc == msg->rm_call.cb_proc
 		    && rce->rce_addr.ss_len == addr->sa_len
 		    && bcmp(&rce->rce_addr, addr, addr->sa_len) == 0) {
+			SDT_PROBE3(krpc, , , replay__hit, rc, msg->rm_xid,
+			    rce->rce_repmsg.rm_xid != 0);
 			if (rce->rce_repmsg.rm_xid) {
 				/*
 				 * We have a reply for this

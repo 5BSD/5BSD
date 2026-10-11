@@ -94,6 +94,17 @@
 
 #if defined(__i386__) || defined(__amd64__) || defined(__aarch64__)
 #include <machine/pcb.h>
+
+#include <sys/queue.h>
+#include <sys/sdt.h>
+
+SDT_PROVIDER_DEFINE(crypto);
+SDT_PROBE_DEFINE2(crypto, , , submit, "void *", "void *");
+SDT_PROBE_DEFINE2(crypto, , , submit__error, "void *", "int");
+SDT_PROBE_DEFINE3(crypto, , , invoke__start, "void *", "void *", "int");
+SDT_PROBE_DEFINE2(crypto, , , invoke__done, "void *", "int");
+SDT_PROBE_DEFINE2(crypto, , , complete, "void *", "int");
+SDT_PROBE_DEFINE1(crypto, , , defer, "void *");
 #endif
 
 SDT_PROVIDER_DEFINE(opencrypto);
@@ -1413,6 +1424,7 @@ crypto_dispatch_one(struct cryptop *crp, int hint)
 #ifdef INVARIANTS
 	crp_sanity(crp);
 #endif
+	SDT_PROBE2(crypto, , , submit, (crp), (crp->crp_session->cap));
 	CRYPTOSTAT_INC(cs_ops);
 
 	crp->crp_retw_id = crp->crp_session->id % crypto_workers_num;
@@ -1425,14 +1437,18 @@ crypto_dispatch_one(struct cryptop *crp, int hint)
 	cap = crp->crp_session->cap;
 	if (!atomic_load_int(&cap->cc_qblocked)) {
 		result = crypto_invoke(cap, crp, hint);
-		if (result != ERESTART)
+		if (result != ERESTART) {
+			if (result != 0)
+				SDT_PROBE2(crypto, , , submit__error, (crp), (result));
 			return (result);
+		}
 
 		/*
 		 * The driver ran out of resources, put the request on the
 		 * queue.
 		 */
 	}
+	SDT_PROBE1(crypto, , , defer, (crp));
 	crypto_batch_enqueue(crp);
 	return (0);
 }
@@ -1459,6 +1475,7 @@ crypto_dispatch_async(struct cryptop *crp, int flags)
 #ifdef INVARIANTS
 	crp_sanity(crp);
 #endif
+	SDT_PROBE2(crypto, , , submit, (crp), (crp->crp_session->cap));
 	CRYPTOSTAT_INC(cs_ops);
 
 	crp->crp_retw_id = crp->crp_session->id % crypto_workers_num;
@@ -1521,6 +1538,7 @@ crypto_invoke(struct cryptocap *cap, struct cryptop *crp, int hint)
 {
 	int error;
 
+	SDT_PROBE3(crypto, , , invoke__start, (crp), (cap), (hint));
 	KASSERT(crp != NULL, ("%s: crp == NULL", __func__));
 	KASSERT(crp->crp_callback != NULL,
 	    ("%s: crp->crp_callback == NULL", __func__));
@@ -1580,7 +1598,12 @@ crypto_invoke(struct cryptocap *cap, struct cryptop *crp, int hint)
 		    ("%s: invalid error %d from CRYPTODEV_PROCESS",
 		    __func__, error));
 	}
-	return (error);
+	{
+		int trace_result = error;
+
+		SDT_PROBE2(crypto, , , invoke__done, (crp), (trace_result));
+		return (trace_result);
+	}
 }
 
 void
@@ -1684,6 +1707,7 @@ crypto_done(struct cryptop *crp)
 	if (crp->crp_etype != 0)
 		CRYPTOSTAT_INC(cs_errs);
 
+	SDT_PROBE2(crypto, , , complete, (crp), (crp->crp_etype));
 	/*
 	 * CBIMM means unconditionally do the callback immediately;
 	 * CBIFSYNC means do the callback immediately only if the

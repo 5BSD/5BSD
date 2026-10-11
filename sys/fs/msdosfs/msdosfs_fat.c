@@ -62,6 +62,15 @@
 #include <fs/msdosfs/fat.h>
 #include <fs/msdosfs/msdosfsmount.h>
 
+#include <sys/queue.h>
+#include <sys/sdt.h>
+
+SDT_PROVIDER_DEFINE(fat);
+SDT_PROBE_DEFINE3(fat, , , entry__start, "void *", "unsigned long", "int");
+SDT_PROBE_DEFINE3(fat, , , entry__done, "void *", "unsigned long", "int");
+SDT_PROBE_DEFINE3(fat, , , alloc__start, "void *", "unsigned long", "unsigned long");
+SDT_PROBE_DEFINE4(fat, , , alloc__done, "void *", "unsigned long", "unsigned long", "int");
+
 #define	FULL_RUN	((u_int)0xffffffff)
 
 static int	chainalloc(struct msdosfsmount *pmp, u_long start,
@@ -473,6 +482,7 @@ fatentry(int function, struct msdosfsmount *pmp, u_long cn, u_long *oldcontents,
 	u_long bn, bo, bsize, byteoffset;
 	struct buf *bp;
 
+	SDT_PROBE3(fat, , , entry__start, (pmp), (cn), (function));
 #ifdef	MSDOSFS_DEBUG
 	printf("fatentry(func %d, pmp %p, clust %lu, oldcon %p, newcon %lx)\n",
 	    function, pmp, cn, oldcontents, newcontents);
@@ -486,7 +496,12 @@ fatentry(int function, struct msdosfsmount *pmp, u_long cn, u_long *oldcontents,
 #ifdef MSDOSFS_DEBUG
 		printf("fatentry(): function code doesn't specify get or set\n");
 #endif
-		return (EINVAL);
+		{
+			int trace_result = EINVAL;
+
+			SDT_PROBE3(fat, , , entry__done, (pmp), (cn), (trace_result));
+			return (trace_result);
+		}
 	}
 
 	/*
@@ -497,7 +512,12 @@ fatentry(int function, struct msdosfsmount *pmp, u_long cn, u_long *oldcontents,
 #ifdef MSDOSFS_DEBUG
 		printf("fatentry(): get function with no place to put result\n");
 #endif
-		return (EINVAL);
+		{
+			int trace_result = EINVAL;
+
+			SDT_PROBE3(fat, , , entry__done, (pmp), (cn), (trace_result));
+			return (trace_result);
+		}
 	}
 #endif
 
@@ -505,13 +525,23 @@ fatentry(int function, struct msdosfsmount *pmp, u_long cn, u_long *oldcontents,
 	 * Be sure the requested cluster is in the filesystem.
 	 */
 	if (cn < CLUST_FIRST || cn > pmp->pm_maxcluster)
-		return (EINVAL);
+		{
+			int trace_result = EINVAL;
+
+			SDT_PROBE3(fat, , , entry__done, (pmp), (cn), (trace_result));
+			return (trace_result);
+		}
 
 	byteoffset = FATOFS(pmp, cn);
 	fatblock(pmp, byteoffset, &bn, &bsize, &bo);
 	error = bread(pmp->pm_devvp, bn, bsize, NOCRED, &bp);
 	if (error) {
-		return (error);
+		{
+			int trace_result = error;
+
+			SDT_PROBE3(fat, , , entry__done, (pmp), (cn), (trace_result));
+			return (trace_result);
+		}
 	}
 
 	if (function & FAT_GET) {
@@ -560,7 +590,12 @@ fatentry(int function, struct msdosfsmount *pmp, u_long cn, u_long *oldcontents,
 	}
 	if (bp)
 		brelse(bp);
-	return (0);
+	{
+		int trace_result = 0;
+
+		SDT_PROBE3(fat, , , entry__done, (pmp), (cn), (trace_result));
+		return (trace_result);
+	}
 }
 
 /*
@@ -749,8 +784,10 @@ clusteralloc(struct msdosfsmount *pmp, u_long start, u_long count,
 {
 	int error;
 
+	SDT_PROBE3(fat, , , alloc__start, (pmp), (start), (count));
 	MSDOSFS_LOCK_MP(pmp);
 	error = clusteralloc1(pmp, start, count, fillwith, retcluster, got);
+	SDT_PROBE4(fat, , , alloc__done, (pmp), (error == 0 ? *retcluster : 0), (error == 0 ? *got : 0), (error));
 	MSDOSFS_UNLOCK_MP(pmp);
 	return (error);
 }

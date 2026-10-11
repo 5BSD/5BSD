@@ -49,6 +49,12 @@
 #include <rpc/krpc.h>
 #include <rpc/rpcsec_tls.h>
 
+#include <sys/sdt.h>
+
+SDT_PROVIDER_DECLARE(krpc);
+SDT_PROBE_DEFINE1(krpc, , , connect__start, "void *");
+SDT_PROBE_DEFINE2(krpc, , , connect__done, "void *", "int");
+
 xprt_rdma_check_route_ftype *rdma_check_route = NULL;
 clnt_rdma_create_ftype *clnt_rdma_create_call = NULL;
 svc_rdma_create_backchannel_ftype *svc_rdma_create_backchannel_call = NULL;
@@ -166,6 +172,7 @@ clnt_reconnect_connect(CLIENT *cl)
 	 * since that is the only place it is set non-NULL.
 	 */
 	rc->rc_connecting = TRUE;
+	SDT_PROBE1(krpc, , , connect__start, cl);
 	mtx_unlock(&rc->rc_lock);
 
 	oldcred = td->td_ucred;
@@ -293,6 +300,7 @@ out:
 		rc->rc_client = newclient;
 		newclient = NULL;
 	}
+	SDT_PROBE2(krpc, , , connect__done, cl, stat);
 	rc->rc_connecting = FALSE;
 	wakeup(rc);
 	mtx_unlock(&rc->rc_lock);

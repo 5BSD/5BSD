@@ -92,6 +92,17 @@ SYSCTL_BOOL(_kern, OID_AUTO, trap_enotcap, CTLFLAG_RWTUN, &trap_enotcap, 0,
     "Deliver SIGTRAP on ECAPMODE and ENOTCAPABLE");
 
 SDT_PROVIDER_DEFINE(capsicum);
+SDT_PROBE_DEFINE3(capsicum, , , xfer__fcntls__done, "int", "uint32_t", "int");
+SDT_PROBE_DEFINE2(capsicum, , , xfer__fcntls__start, "int", "uint32_t");
+SDT_PROBE_DEFINE3(capsicum, , , xfer__ioctls__done, "int", "size_t", "int");
+SDT_PROBE_DEFINE2(capsicum, , , xfer__ioctls__start, "int", "size_t");
+SDT_PROBE_DEFINE3(capsicum, , , xfer__rights__done, "int", "const cap_rights_t *", "int");
+SDT_PROBE_DEFINE2(capsicum, , , xfer__rights__start, "int", "const cap_rights_t *");
+SDT_PROBE_DEFINE3(capsicum, , , fcntl__check, "struct filedescent *", "int", "int");
+SDT_PROBE_DEFINE3(capsicum, , , ioctl__check, "int", "u_long", "int");
+SDT_PROBE_DEFINE3(capsicum, , , check__allow, "const cap_rights_t *", "const cap_rights_t *", "int");
+SDT_PROBE_DEFINE3(capsicum, , , limit__done, "char *", "int", "int");
+SDT_PROBE_DEFINE2(capsicum, , , limit__start, "char *", "int");
 SDT_PROBE_DEFINE3(capsicum, , , mode__enter,
     "pid_t", "struct ucred *", "int");
 SDT_PROBE_DEFINE6(capsicum, , , rights__limit,
@@ -248,6 +259,7 @@ _cap_check(const cap_rights_t *havep, const cap_rights_t *needp,
 		    ENOTCAPABLE);
 		return (ENOTCAPABLE);
 	}
+	SDT_PROBE3(capsicum, , , check__allow, havep, needp, type);
 	return (0);
 }
 
@@ -320,7 +332,7 @@ kern_cap_rights_limit(struct thread *td, int fd, cap_rights_t *rights)
 	struct filedescent *fdep;
 	u_long *ioctls;
 	int error;
-	short ftype;
+	short ftype __unused;
 
 	fdp = td->td_proc->p_fd;
 	ftype = -1;
@@ -357,8 +369,8 @@ out_probe:
 /*
  * System call to limit rights of the given capability.
  */
-int
-sys_cap_rights_limit(struct thread *td, struct cap_rights_limit_args *uap)
+static int
+sys_cap_rights_limit_impl(struct thread *td, struct cap_rights_limit_args *uap)
 {
 	cap_rights_t rights;
 	int error, version;
@@ -397,6 +409,17 @@ sys_cap_rights_limit(struct thread *td, struct cap_rights_limit_args *uap)
 	return (kern_cap_rights_limit(td, uap->fd, &rights));
 }
 
+int
+sys_cap_rights_limit(struct thread *td, struct cap_rights_limit_args *uap)
+{
+	int error;
+
+	SDT_PROBE2(capsicum, , , limit__start, "rights", uap->fd);
+	error = sys_cap_rights_limit_impl(td, uap);
+	SDT_PROBE3(capsicum, , , limit__done, "rights", uap->fd, error);
+	return (error);
+}
+
 /*
  * System call to query the rights mask associated with a capability.
  */
@@ -407,7 +430,7 @@ sys___cap_rights_get(struct thread *td, struct __cap_rights_get_args *uap)
 	struct filedescent *fdep;
 	cap_rights_t rights;
 	int error, fd, i, n;
-	short ftype;
+	short ftype __unused;
 
 	fd = uap->fd;
 	cap_rights_init_zero(&rights);
@@ -478,18 +501,30 @@ cap_ioctl_check(struct filedesc *fdp, int fd, u_long cmd)
 
 	ncmds = fdep->fde_nioctls;
 	if (ncmds == -1)
-		return (0);
+		{
+		int trace_result = 0;
+		SDT_PROBE3(capsicum, , , ioctl__check, fd, cmd, trace_result);
+		return (trace_result);
+	}
 
 	cmds = fdep->fde_ioctls;
 	for (i = 0; i < ncmds; i++) {
 		if (cmds[i] == cmd)
-			return (0);
+			{
+		int trace_result = 0;
+		SDT_PROBE3(capsicum, , , ioctl__check, fd, cmd, trace_result);
+		return (trace_result);
+	}
 	}
 
 	SDT_PROBE6(capsicum, , , ioctl__deny, fd,
 	    curthread->td_proc->p_pid, curthread->td_ucred, cmd,
 	    fdep->fde_file->f_type, ENOTCAPABLE);
-	return (ENOTCAPABLE);
+	{
+		int trace_result = ENOTCAPABLE;
+		SDT_PROBE3(capsicum, , , ioctl__check, fd, cmd, trace_result);
+		return (trace_result);
+	}
 }
 
 /*
@@ -536,7 +571,7 @@ kern_cap_ioctls_limit(struct thread *td, int fd, u_long *cmds, size_t ncmds)
 {
 	struct filedesc *fdp;
 	struct filedescent *fdep;
-	u_long *newcmds, *ocmds;
+	u_long *newcmds __unused, *ocmds;
 	int error;
 
 	AUDIT_ARG_FD(fd);
@@ -577,8 +612,8 @@ out_free:
 	return (error);
 }
 
-int
-sys_cap_ioctls_limit(struct thread *td, struct cap_ioctls_limit_args *uap)
+static int
+sys_cap_ioctls_limit_impl(struct thread *td, struct cap_ioctls_limit_args *uap)
 {
 	u_long *cmds;
 	size_t ncmds;
@@ -601,6 +636,17 @@ sys_cap_ioctls_limit(struct thread *td, struct cap_ioctls_limit_args *uap)
 	}
 
 	return (kern_cap_ioctls_limit(td, uap->fd, cmds, ncmds));
+}
+
+int
+sys_cap_ioctls_limit(struct thread *td, struct cap_ioctls_limit_args *uap)
+{
+	int error;
+
+	SDT_PROBE2(capsicum, , , limit__start, "ioctls", uap->fd);
+	error = sys_cap_ioctls_limit_impl(td, uap);
+	SDT_PROBE3(capsicum, , , limit__done, "ioctls", uap->fd, error);
+	return (error);
 }
 
 int
@@ -680,9 +726,17 @@ cap_fcntl_check_fde(struct filedescent *fdep, int cmd)
 	    ("Unsupported fcntl=%d.", cmd));
 
 	if ((fdep->fde_fcntls & fcntlcap) != 0)
-		return (0);
+		{
+		int trace_result = 0;
+		SDT_PROBE3(capsicum, , , fcntl__check, fdep, cmd, trace_result);
+		return (trace_result);
+	}
 
-	return (ENOTCAPABLE);
+	{
+		int trace_result = ENOTCAPABLE;
+		SDT_PROBE3(capsicum, , , fcntl__check, fdep, cmd, trace_result);
+		return (trace_result);
+	}
 }
 
 int
@@ -704,14 +758,14 @@ cap_fcntl_check(struct filedesc *fdp, int fd, int cmd)
 	return (error);
 }
 
-int
-sys_cap_fcntls_limit(struct thread *td, struct cap_fcntls_limit_args *uap)
+static int
+sys_cap_fcntls_limit_impl(struct thread *td, struct cap_fcntls_limit_args *uap)
 {
 	struct filedesc *fdp;
 	struct filedescent *fdep;
 	uint32_t fcntlrights;
 	int error, fd;
-	short ftype;
+	short ftype __unused;
 
 	fd = uap->fd;
 	fcntlrights = uap->fcntlrights;
@@ -755,13 +809,24 @@ out_probe:
 }
 
 int
+sys_cap_fcntls_limit(struct thread *td, struct cap_fcntls_limit_args *uap)
+{
+	int error;
+
+	SDT_PROBE2(capsicum, , , limit__start, "fcntls", uap->fd);
+	error = sys_cap_fcntls_limit_impl(td, uap);
+	SDT_PROBE3(capsicum, , , limit__done, "fcntls", uap->fd, error);
+	return (error);
+}
+
+int
 sys_cap_fcntls_get(struct thread *td, struct cap_fcntls_get_args *uap)
 {
 	struct filedesc *fdp;
 	struct filedescent *fdep;
 	uint32_t rights;
 	int error, fd;
-	short ftype;
+	short ftype __unused;
 
 	fd = uap->fd;
 	rights = 0;
@@ -793,7 +858,7 @@ kern_cap_xfer_limit(struct thread *td, int fd, int state)
 {
 	struct filedesc *fdp;
 	struct filedescent *fdep;
-	int error, old_state = -1;
+	int error, old_state __unused = -1;
 
 	if (state != CAP_XFER_UNLIMITED &&
 	    state != CAP_XFER_ONCE && state != CAP_XFER_NONE)
@@ -825,11 +890,22 @@ out_probe:
 	return (error);
 }
 
-int
-sys_cap_xfer_limit(struct thread *td, struct cap_xfer_limit_args *uap)
+static int
+sys_cap_xfer_limit_impl(struct thread *td, struct cap_xfer_limit_args *uap)
 {
 
 	return (kern_cap_xfer_limit(td, uap->fd, uap->state));
+}
+
+int
+sys_cap_xfer_limit(struct thread *td, struct cap_xfer_limit_args *uap)
+{
+	int error;
+
+	SDT_PROBE2(capsicum, , , limit__start, "xfer", uap->fd);
+	error = sys_cap_xfer_limit_impl(td, uap);
+	SDT_PROBE3(capsicum, , , limit__done, "xfer", uap->fd, error);
+	return (error);
 }
 
 int
@@ -841,6 +917,7 @@ kern_cap_xfer_rights_limit(struct thread *td, int fd,
 	u_long *ioctls;
 	int error;
 
+	SDT_PROBE2(capsicum, , , xfer__rights__start, fd, rights);
 	fdp = td->td_proc->p_fd;
 	ioctls = NULL;
 	FILEDESC_XLOCK(fdp);
@@ -868,11 +945,15 @@ kern_cap_xfer_rights_limit(struct thread *td, int fd,
 out:
 	FILEDESC_XUNLOCK(fdp);
 	free(ioctls, M_FILECAPS);
-	return (error);
+	{
+		int trace_result = error;
+		SDT_PROBE3(capsicum, , , xfer__rights__done, fd, rights, trace_result);
+		return (trace_result);
+	}
 }
 
-int
-sys_cap_xfer_rights_limit(struct thread *td,
+static int
+sys_cap_xfer_rights_limit_impl(struct thread *td,
     struct cap_xfer_rights_limit_args *uap)
 {
 	cap_rights_t rights;
@@ -901,6 +982,18 @@ sys_cap_xfer_rights_limit(struct thread *td,
 }
 
 int
+sys_cap_xfer_rights_limit(struct thread *td,
+    struct cap_xfer_rights_limit_args *uap)
+{
+	int error;
+
+	SDT_PROBE2(capsicum, , , limit__start, "xfer_rights", uap->fd);
+	error = sys_cap_xfer_rights_limit_impl(td, uap);
+	SDT_PROBE3(capsicum, , , limit__done, "xfer_rights", uap->fd, error);
+	return (error);
+}
+
+int
 kern_cap_xfer_ioctls_limit(struct thread *td, int fd, u_long *cmds,
     size_t ncmds)
 {
@@ -909,6 +1002,7 @@ kern_cap_xfer_ioctls_limit(struct thread *td, int fd, u_long *cmds,
 	u_long *oldcmds;
 	int error;
 
+	SDT_PROBE2(capsicum, , , xfer__ioctls__start, fd, ncmds);
 	if (ncmds > IOCTLS_MAX_COUNT) {
 		error = EINVAL;
 		goto out_free;
@@ -941,11 +1035,15 @@ out:
 	FILEDESC_XUNLOCK(fdp);
 out_free:
 	free(cmds, M_FILECAPS);
-	return (error);
+	{
+		int trace_result = error;
+		SDT_PROBE3(capsicum, , , xfer__ioctls__done, fd, ncmds, trace_result);
+		return (trace_result);
+	}
 }
 
-int
-sys_cap_xfer_ioctls_limit(struct thread *td,
+static int
+sys_cap_xfer_ioctls_limit_impl(struct thread *td,
     struct cap_xfer_ioctls_limit_args *uap)
 {
 	u_long *cmds;
@@ -970,14 +1068,31 @@ sys_cap_xfer_ioctls_limit(struct thread *td,
 }
 
 int
+sys_cap_xfer_ioctls_limit(struct thread *td,
+    struct cap_xfer_ioctls_limit_args *uap)
+{
+	int error;
+
+	SDT_PROBE2(capsicum, , , limit__start, "xfer_ioctls", uap->fd);
+	error = sys_cap_xfer_ioctls_limit_impl(td, uap);
+	SDT_PROBE3(capsicum, , , limit__done, "xfer_ioctls", uap->fd, error);
+	return (error);
+}
+
+int
 kern_cap_xfer_fcntls_limit(struct thread *td, int fd, uint32_t rights)
 {
 	struct filedesc *fdp;
 	struct filedescent *fdep;
 	int error;
 
+	SDT_PROBE2(capsicum, , , xfer__fcntls__start, fd, rights);
 	if ((rights & ~CAP_FCNTL_ALL) != 0)
-		return (EINVAL);
+		{
+		int trace_result = EINVAL;
+		SDT_PROBE3(capsicum, , , xfer__fcntls__done, fd, rights, trace_result);
+		return (trace_result);
+	}
 	fdp = td->td_proc->p_fd;
 	FILEDESC_XLOCK(fdp);
 	fdep = fdeget_noref(fdp, fd);
@@ -1000,16 +1115,32 @@ kern_cap_xfer_fcntls_limit(struct thread *td, int fd, uint32_t rights)
 	error = 0;
 out:
 	FILEDESC_XUNLOCK(fdp);
-	return (error);
+	{
+		int trace_result = error;
+		SDT_PROBE3(capsicum, , , xfer__fcntls__done, fd, rights, trace_result);
+		return (trace_result);
+	}
+}
+
+static int
+sys_cap_xfer_fcntls_limit_impl(struct thread *td,
+    struct cap_xfer_fcntls_limit_args *uap)
+{
+
+	return (kern_cap_xfer_fcntls_limit(td, uap->fd,
+	    uap->fcntlrights));
 }
 
 int
 sys_cap_xfer_fcntls_limit(struct thread *td,
     struct cap_xfer_fcntls_limit_args *uap)
 {
+	int error;
 
-	return (kern_cap_xfer_fcntls_limit(td, uap->fd,
-	    uap->fcntlrights));
+	SDT_PROBE2(capsicum, , , limit__start, "xfer_fcntls", uap->fd);
+	error = sys_cap_xfer_fcntls_limit_impl(td, uap);
+	SDT_PROBE3(capsicum, , , limit__done, "xfer_fcntls", uap->fd, error);
+	return (error);
 }
 
 int
@@ -1069,11 +1200,22 @@ out_probe:
 	return (error);
 }
 
-int
-sys_cap_cloexec_limit(struct thread *td, struct cap_cloexec_limit_args *uap)
+static int
+sys_cap_cloexec_limit_impl(struct thread *td, struct cap_cloexec_limit_args *uap)
 {
 
 	return (kern_cap_cloexec_limit(td, uap->fd, uap->state));
+}
+
+int
+sys_cap_cloexec_limit(struct thread *td, struct cap_cloexec_limit_args *uap)
+{
+	int error;
+
+	SDT_PROBE2(capsicum, , , limit__start, "cloexec", uap->fd);
+	error = sys_cap_cloexec_limit_impl(td, uap);
+	SDT_PROBE3(capsicum, , , limit__done, "cloexec", uap->fd, error);
+	return (error);
 }
 
 int
@@ -1133,11 +1275,22 @@ out_probe:
 	return (error);
 }
 
-int
-sys_cap_clofork_limit(struct thread *td, struct cap_clofork_limit_args *uap)
+static int
+sys_cap_clofork_limit_impl(struct thread *td, struct cap_clofork_limit_args *uap)
 {
 
 	return (kern_cap_clofork_limit(td, uap->fd, uap->state));
+}
+
+int
+sys_cap_clofork_limit(struct thread *td, struct cap_clofork_limit_args *uap)
+{
+	int error;
+
+	SDT_PROBE2(capsicum, , , limit__start, "clofork", uap->fd);
+	error = sys_cap_clofork_limit_impl(td, uap);
+	SDT_PROBE3(capsicum, , , limit__done, "clofork", uap->fd, error);
+	return (error);
 }
 
 int
@@ -1146,7 +1299,7 @@ sys_cap_mmap_capmode(struct thread *td, struct cap_mmap_capmode_args *uap)
 	struct filedesc *fdp = td->td_proc->p_fd;
 	struct filedescent *fde;
 	int fd = uap->fd;
-	int error, old_state = -1;
+	int error, old_state __unused = -1;
 
 	AUDIT_ARG_FD(fd);
 	FILEDESC_XLOCK(fdp);
@@ -1178,7 +1331,7 @@ sys_cap_lookup_capmode(struct thread *td, struct cap_lookup_capmode_args *uap)
 	struct filedesc *fdp = td->td_proc->p_fd;
 	struct filedescent *fde;
 	int fd = uap->fd;
-	int error, old_state = -1;
+	int error, old_state __unused = -1;
 
 	AUDIT_ARG_FD(fd);
 	FILEDESC_XLOCK(fdp);

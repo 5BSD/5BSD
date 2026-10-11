@@ -45,6 +45,20 @@
 #include <sys/gtaskqueue.h>
 #include <sys/unistd.h>
 
+#include <sys/sdt.h>
+
+SDT_PROVIDER_DEFINE(gtaskqueue);
+SDT_PROBE_DEFINE2(gtaskqueue, , , enqueue, "void *", "void *");
+SDT_PROBE_DEFINE2(gtaskqueue, , , coalesce, "void *", "void *");
+SDT_PROBE_DEFINE2(gtaskqueue, , , cancel, "void *", "void *");
+SDT_PROBE_DEFINE3(gtaskqueue, , , reject, "void *", "void *", "int");
+SDT_PROBE_DEFINE3(gtaskqueue, , , execute__start, "void *", "void *",
+    "unsigned int");
+SDT_PROBE_DEFINE3(gtaskqueue, , , execute__done, "void *", "void *",
+    "unsigned int");
+SDT_PROBE_DEFINE2(gtaskqueue, , , drain__start, "void *", "void *");
+SDT_PROBE_DEFINE2(gtaskqueue, , , drain__done, "void *", "void *");
+
 static MALLOC_DEFINE(M_GTASKQUEUE, "gtaskqueue", "Group Task Queues");
 static void	gtaskqueue_thread_enqueue(void *);
 static void	gtaskqueue_thread_loop(void *arg);
@@ -198,7 +212,9 @@ grouptask_block(struct grouptask *grouptask)
 #endif
 	TQ_LOCK(queue);
 	gtask->ta_flags |= TASK_NOENQUEUE;
-  	gtaskqueue_drain_locked(queue, gtask);
+	SDT_PROBE2(gtaskqueue, , , drain__start, queue, gtask);
+	gtaskqueue_drain_locked(queue, gtask);
+	SDT_PROBE2(gtaskqueue, , , drain__done, queue, gtask);
 	TQ_UNLOCK(queue);
 }
 
@@ -230,15 +246,18 @@ grouptaskqueue_enqueue(struct gtaskqueue *queue, struct gtask *gtask)
 #endif
 	TQ_LOCK(queue);
 	if (gtask->ta_flags & TASK_ENQUEUED) {
+		SDT_PROBE2(gtaskqueue, , , coalesce, queue, gtask);
 		TQ_UNLOCK(queue);
 		return (0);
 	}
 	if (gtask->ta_flags & TASK_NOENQUEUE) {
+		SDT_PROBE3(gtaskqueue, , , reject, queue, gtask, EAGAIN);
 		TQ_UNLOCK(queue);
 		return (EAGAIN);
 	}
 	STAILQ_INSERT_TAIL(&queue->tq_queue, gtask, ta_link);
 	gtask->ta_flags |= TASK_ENQUEUED;
+	SDT_PROBE2(gtaskqueue, , , enqueue, queue, gtask);
 	TQ_UNLOCK(queue);
 	if ((queue->tq_flags & TQ_FLAGS_BLOCKED) == 0)
 		queue->tq_enqueue(queue->tq_context);
@@ -355,6 +374,8 @@ gtaskqueue_run_locked(struct gtaskqueue *queue)
 		gtask->ta_flags &= ~TASK_ENQUEUED;
 		tb.tb_running = gtask;
 		tb.tb_seq = ++queue->tq_seq;
+		SDT_PROBE3(gtaskqueue, , , execute__start, queue, gtask,
+		    tb.tb_seq);
 		TQ_UNLOCK(queue);
 
 		KASSERT(gtask->ta_func != NULL, ("task->ta_func is NULL"));
@@ -366,6 +387,9 @@ gtaskqueue_run_locked(struct gtaskqueue *queue)
 			epochtasks = 0;
 		}
 		gtask->ta_func(gtask->ta_context);
+		/* The callback may have freed gtask. */
+		SDT_PROBE3(gtaskqueue, , , execute__done, queue, gtask,
+		    tb.tb_seq);
 		if (epochtasks > net_epoch_task_limit) {
 			NET_EPOCH_EXIT(et);
 			epochtasks = 0;
@@ -398,6 +422,7 @@ gtaskqueue_cancel_locked(struct gtaskqueue *queue, struct gtask *gtask)
 
 	if (gtask->ta_flags & TASK_ENQUEUED)
 		STAILQ_REMOVE(&queue->tq_queue, gtask, gtask, ta_link);
+	SDT_PROBE2(gtaskqueue, , , cancel, queue, gtask);
 	gtask->ta_flags &= ~TASK_ENQUEUED;
 	return (task_is_running(queue, gtask) ? EBUSY : 0);
 }
@@ -429,7 +454,9 @@ gtaskqueue_drain(struct gtaskqueue *queue, struct gtask *gtask)
 		WITNESS_WARN(WARN_GIANTOK | WARN_SLEEPOK, NULL, __func__);
 
 	TQ_LOCK(queue);
+	SDT_PROBE2(gtaskqueue, , , drain__start, queue, gtask);
 	gtaskqueue_drain_locked(queue, gtask);
+	SDT_PROBE2(gtaskqueue, , , drain__done, queue, gtask);
 	TQ_UNLOCK(queue);
 }
 

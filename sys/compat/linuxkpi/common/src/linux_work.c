@@ -34,6 +34,18 @@
 
 #include <sys/kernel.h>
 
+#include <sys/queue.h>
+#include <sys/sdt.h>
+
+SDT_PROVIDER_DEFINE(linuxkpi_work);
+SDT_PROBE_DEFINE3(linuxkpi_work, , , state, "void *", "int", "int");
+SDT_PROBE_DEFINE3(linuxkpi_work, , , execute__start, "void *", "void *", "int");
+SDT_PROBE_DEFINE2(linuxkpi_work, , , execute__done, "void *", "void *");
+SDT_PROBE_DEFINE1(linuxkpi_work, , , cancel__start, "void *");
+SDT_PROBE_DEFINE2(linuxkpi_work, , , cancel__done, "void *", "int");
+SDT_PROBE_DEFINE1(linuxkpi_work, , , flush__start, "void *");
+SDT_PROBE_DEFINE2(linuxkpi_work, , , flush__done, "void *", "int");
+
 /*
  * Define all work struct states
  */
@@ -79,6 +91,7 @@ linux_update_state(atomic_t *v, const uint8_t *pstate)
 	while ((old = atomic_cmpxchg(v, c, pstate[c])) != c)
 		c = old;
 
+	SDT_PROBE3(linuxkpi_work, , , state, v, c, pstate[c]);
 	return (c);
 }
 
@@ -306,7 +319,10 @@ linux_work_fn(void *context, int pending)
 			task->work = work;
 
 			/* call work function */
+			SDT_PROBE3(linuxkpi_work, , , execute__start, wq, work,
+			    pending);
 			work->func(work);
+			SDT_PROBE2(linuxkpi_work, , , execute__done, wq, work);
 
 			/* set current work structure */
 			task->work = NULL;
@@ -418,13 +434,16 @@ linux_cancel_work_sync(struct work_struct *work)
 	struct taskqueue *tq;
 	bool retval = false;
 
+	SDT_PROBE1(linuxkpi_work, , , cancel__start, work);
 	WITNESS_WARN(WARN_GIANTOK | WARN_SLEEPOK, NULL,
 	    "linux_cancel_work_sync() might sleep");
 retry:
 	switch (linux_update_state(&work->state, states)) {
 	case WORK_ST_IDLE:
-	case WORK_ST_TIMER:
+	case WORK_ST_TIMER: {
+		SDT_PROBE2(linuxkpi_work, , , cancel__done, work, retval);
 		return (retval);
+	}
 	case WORK_ST_EXEC:
 		tq = work->work_queue->taskqueue;
 		if (taskqueue_cancel(tq, &work->work_task, NULL) != 0)
@@ -588,17 +607,24 @@ linux_flush_work(struct work_struct *work)
 	struct taskqueue *tq;
 	bool retval;
 
+	SDT_PROBE1(linuxkpi_work, , , flush__start, work);
 	WITNESS_WARN(WARN_GIANTOK | WARN_SLEEPOK, NULL,
 	    "linux_flush_work() might sleep");
 
 	switch (atomic_read(&work->state)) {
-	case WORK_ST_IDLE:
+	case WORK_ST_IDLE: {
+		SDT_PROBE2(linuxkpi_work, , , flush__done, work, false);
 		return (false);
+	}
 	default:
 		tq = work->work_queue->taskqueue;
 		retval = taskqueue_poll_is_busy(tq, &work->work_task);
 		taskqueue_drain(tq, &work->work_task);
-		return (retval);
+		{
+			SDT_PROBE2(linuxkpi_work, , , flush__done, work,
+			    retval);
+			return (retval);
+		}
 	}
 }
 

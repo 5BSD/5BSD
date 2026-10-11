@@ -57,6 +57,14 @@
 
 #include <ck_epoch.h>
 
+#include <sys/sdt.h>
+
+SDT_PROVIDER_DEFINE(epoch);
+SDT_PROBE_DEFINE2(epoch, , , wait__start, "void *", "int");
+SDT_PROBE_DEFINE2(epoch, , , wait__done, "void *", "int");
+SDT_PROBE_DEFINE1(epoch, , , drain__start, "void *");
+SDT_PROBE_DEFINE1(epoch, , , drain__done, "void *");
+
 #ifdef __amd64__
 #define EPOCH_ALIGN CACHE_LINE_SIZE*2
 #else
@@ -724,6 +732,7 @@ epoch_wait_preempt(epoch_t epoch)
 	KASSERT(!in_epoch(epoch), ("epoch_wait_preempt() called in the middle "
 	    "of an epoch section of the same epoch"));
 #endif
+	SDT_PROBE2(epoch, , , wait__start, epoch, 1);
 	DROP_GIANT();
 	thread_lock(td);
 
@@ -754,6 +763,7 @@ epoch_wait_preempt(epoch_t epoch)
 	sched_prio(td, old_prio);
 	thread_unlock(td);
 	PICKUP_GIANT();
+	SDT_PROBE2(epoch, , , wait__done, epoch, 1);
 	KASSERT(td->td_locks == locks,
 	    ("%d residual locks held", td->td_locks - locks));
 }
@@ -773,7 +783,9 @@ epoch_wait(epoch_t epoch)
 	INIT_CHECK(epoch);
 	MPASS(epoch->e_flags == 0);
 	critical_enter();
+	SDT_PROBE2(epoch, , , wait__start, epoch, 0);
 	ck_epoch_synchronize_wait(&epoch->e_epoch, epoch_block_handler, NULL);
+	SDT_PROBE2(epoch, , , wait__done, epoch, 0);
 	critical_exit();
 }
 
@@ -979,6 +991,7 @@ epoch_drain_callbacks(epoch_t epoch)
 #endif
 	DROP_GIANT();
 
+	SDT_PROBE1(epoch, , , drain__start, epoch);
 	sx_xlock(&epoch->e_drain_sx);
 	mtx_lock(&epoch->e_drain_mtx);
 
@@ -1027,6 +1040,7 @@ epoch_drain_callbacks(epoch_t epoch)
 
 	mtx_unlock(&epoch->e_drain_mtx);
 	sx_xunlock(&epoch->e_drain_sx);
+	SDT_PROBE1(epoch, , , drain__done, epoch);
 
 	PICKUP_GIANT();
 }

@@ -48,6 +48,14 @@
 #include <sys/kthread.h>
 #include <sys/sched.h>
 
+#include <sys/sdt.h>
+
+SDT_PROVIDER_DEFINE(busdma);
+SDT_PROBE_DEFINE3(busdma, , , reserve__fail, "void *", "void *", "int");
+SDT_PROBE_DEFINE3(busdma, , , defer, "void *", "void *", "int");
+SDT_PROBE_DEFINE2(busdma, , , ready, "void *", "void *");
+SDT_PROBE_DEFINE2(busdma, , , callback, "void *", "void *");
+
 struct bounce_page {
 	char		*vaddr;		/* kva of bounce buffer */
 	bus_addr_t	busaddr;	/* Physical address */
@@ -113,6 +121,8 @@ _bus_dmamap_reserve_pages(bus_dma_tag_t dmat, bus_dmamap_t map, int flags)
 	mtx_lock(&bounce_lock);
 	if (flags & BUS_DMA_NOWAIT) {
 		if (reserve_bounce_pages(dmat, map, 0) != 0) {
+			SDT_PROBE3(busdma, , , reserve__fail, dmat, map,
+			    map->pagesneeded);
 			map->pagesneeded = 0;
 			mtx_unlock(&bounce_lock);
 			return (ENOMEM);
@@ -124,6 +134,8 @@ _bus_dmamap_reserve_pages(bus_dma_tag_t dmat, bus_dmamap_t map, int flags)
 			STAILQ_INSERT_TAIL(&bz->bounce_map_waitinglist, map,
 			    links);
 			map->queued_time = sbinuptime();
+			SDT_PROBE3(busdma, , , defer, dmat, map,
+			    map->pagesneeded);
 			mtx_unlock(&bounce_lock);
 			return (EINPROGRESS);
 		}
@@ -435,6 +447,7 @@ free_bounce_pages(bus_dma_tag_t dmat, bus_dmamap_t map)
 
 		STAILQ_REMOVE_HEAD(&bz->bounce_map_waitinglist, links);
 		STAILQ_INSERT_TAIL(&bounce_map_callbacklist, map, links);
+		SDT_PROBE2(busdma, , , ready, map->dmat, map);
 		bz->total_deferred++;
 		schedule_thread = true;
 	}
@@ -540,6 +553,7 @@ busdma_thread(void *dummy __unused)
 			dmat_lockfunc(dmat)(dmat_lockfuncarg(dmat),
 			    BUS_DMA_LOCK);
 			bz->total_deferred_time += (sbinuptime() - map->queued_time);
+			SDT_PROBE2(busdma, , , callback, dmat, map);
 			bus_dmamap_load_mem(map->dmat, map, &map->mem,
 			    map->callback, map->callback_arg, BUS_DMA_WAITOK);
 			dmat_lockfunc(dmat)(dmat_lockfuncarg(dmat),

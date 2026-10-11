@@ -53,6 +53,8 @@
 #error "no user-serviceable parts inside"
 #endif
 
+#include <sys/queue.h>
+#include <sys/sdt.h>
 #include <sys/lock.h>
 #include <sys/rmlock.h>
 
@@ -316,14 +318,59 @@ int	vn_setlabel(struct vnode *vp, struct label *intlabel,
  * module list and checking with each as to how it feels about the request.
  * Note that it returns its value via 'error' in the scope of the caller.
  */
+/* Argument snapshots are evaluated only at the hook-args patchpoint.
+ * Calls retain their normal short-circuit behavior and evaluate inputs once.
+ * kind 0 denotes a void completion; kind 1 preserves an integer return.
+ */
+SDT_PROBE_DECLARE(mac_framework, , , hook__start);
+SDT_PROBE_DECLARE(mac_framework, , , hook__done);
+SDT_PROBE_DECLARE(mac_framework, , , hook__args);
+SDT_PROBE_DECLARE(mac_framework, , , hook__skip);
+#include <security/mac/mac_trace_args.h>
+
+#define MAC_HOOK_RESULT_INT(hook, policy, args...) __extension__ ({ \
+	int __mac_hook_result; \
+	__mac_hook_result = (policy)->mpc_ops->mpo_ ## hook(args); \
+	SDT_PROBE4(mac_framework, , , hook__done, \
+	    __XSTRING(hook), (policy)->mpc_name, __mac_hook_result, 1); \
+	__mac_hook_result; \
+})
+#define MAC_HOOK_RESULT_VOID(hook, policy, args...) do { \
+	(policy)->mpc_ops->mpo_ ## hook(args); \
+	SDT_PROBE4(mac_framework, , , hook__done, \
+	    __XSTRING(hook), (policy)->mpc_name, 0, 0); \
+} while (0)
+#define MAC_POLICY_CALL_INT(hook, policy, args...) \
+	MAC_HOOK_INVOKE(INT, hook, policy, ##args)
+#define MAC_POLICY_CALL_VOID(hook, policy, args...) \
+	MAC_HOOK_INVOKE(VOID, hook, policy, ##args)
+
+/* Skip reasons: 1 = policy has no callback, 2 = boolean short circuit. */
+#define MAC_POLICY_PRESENT(hook, policy) __extension__ ({ \
+	int __mac_present; \
+	__mac_present = (policy)->mpc_ops->mpo_ ## hook != NULL; \
+	if (!__mac_present) \
+		SDT_PROBE3(mac_framework, , , hook__skip, \
+		    __XSTRING(hook), (policy)->mpc_name, 1); \
+	__mac_present; \
+})
+#define MAC_POLICY_COMPOSE(hook, policy, composition, args...) do { \
+	int __mac_called __unused = 0; \
+	result = result composition (__mac_called = 1, \
+	    MAC_POLICY_CALL_INT(hook, policy, ##args)); \
+	if (!__mac_called) \
+		SDT_PROBE3(mac_framework, , , hook__skip, \
+		    __XSTRING(hook), (policy)->mpc_name, 2); \
+} while (0)
+
 #define	MAC_POLICY_CHECK(check, args...) do {				\
 	struct mac_policy_conf *mpc;					\
 	int __mac_perr;							\
 									\
 	error = 0;							\
 	LIST_FOREACH(mpc, &mac_static_policy_list, mpc_list) {		\
-		if (mpc->mpc_ops->mpo_ ## check != NULL) {		\
-			__mac_perr = mpc->mpc_ops->mpo_ ## check (args);\
+		if (MAC_POLICY_PRESENT(check, mpc)) {		\
+			__mac_perr = MAC_POLICY_CALL_INT(check, mpc, ##args);\
 			MAC_POLICY_CHECK_PROBE(check, mpc, __mac_perr);	\
 			error = mac_error_select(__mac_perr, error);	\
 		}							\
@@ -331,9 +378,9 @@ int	vn_setlabel(struct vnode *vp, struct label *intlabel,
 	if (!LIST_EMPTY(&mac_policy_list)) {				\
 		mac_policy_slock_sleep();				\
 		LIST_FOREACH(mpc, &mac_policy_list, mpc_list) {		\
-			if (mpc->mpc_ops->mpo_ ## check != NULL) {	\
+			if (MAC_POLICY_PRESENT(check, mpc)) {	\
 				__mac_perr =				\
-				    mpc->mpc_ops->mpo_ ## check (args);	\
+				    MAC_POLICY_CALL_INT(check, mpc, ##args);	\
 				MAC_POLICY_CHECK_PROBE(check, mpc,	\
 				    __mac_perr);			\
 				error = mac_error_select(__mac_perr,	\
@@ -350,8 +397,8 @@ int	vn_setlabel(struct vnode *vp, struct label *intlabel,
 									\
 	error = 0;							\
 	LIST_FOREACH(mpc, &mac_static_policy_list, mpc_list) {		\
-		if (mpc->mpc_ops->mpo_ ## check != NULL) {		\
-			__mac_perr = mpc->mpc_ops->mpo_ ## check (args);\
+		if (MAC_POLICY_PRESENT(check, mpc)) {		\
+			__mac_perr = MAC_POLICY_CALL_INT(check, mpc, ##args);\
 			MAC_POLICY_CHECK_PROBE(check, mpc, __mac_perr);	\
 			error = mac_error_select(__mac_perr, error);	\
 		}							\
@@ -361,9 +408,9 @@ int	vn_setlabel(struct vnode *vp, struct label *intlabel,
 									\
 		mac_policy_slock_nosleep(&tracker);			\
 		LIST_FOREACH(mpc, &mac_policy_list, mpc_list) {		\
-			if (mpc->mpc_ops->mpo_ ## check != NULL) {	\
+			if (MAC_POLICY_PRESENT(check, mpc)) {	\
 				__mac_perr =				\
-				    mpc->mpc_ops->mpo_ ## check (args);	\
+				    MAC_POLICY_CALL_INT(check, mpc, ##args);	\
 				MAC_POLICY_CHECK_PROBE(check, mpc,	\
 				    __mac_perr);			\
 				error = mac_error_select(__mac_perr,	\
@@ -386,8 +433,8 @@ int	vn_setlabel(struct vnode *vp, struct label *intlabel,
 									\
 	error = EPERM;							\
 	LIST_FOREACH(mpc, &mac_static_policy_list, mpc_list) {		\
-		if (mpc->mpc_ops->mpo_ ## check != NULL) {		\
-			if (mpc->mpc_ops->mpo_ ## check(args) == 0)	\
+		if (MAC_POLICY_PRESENT(check, mpc)) {		\
+			if (MAC_POLICY_CALL_INT(check, mpc, ##args) == 0)	\
 				error = 0;				\
 		}							\
 	}								\
@@ -396,8 +443,8 @@ int	vn_setlabel(struct vnode *vp, struct label *intlabel,
 									\
 		mac_policy_slock_nosleep(&tracker);			\
 		LIST_FOREACH(mpc, &mac_policy_list, mpc_list) {		\
-			if (mpc->mpc_ops->mpo_ ## check != NULL) {	\
-				if (mpc->mpc_ops->mpo_ ## check (args)	\
+			if (MAC_POLICY_PRESENT(check, mpc)) {	\
+				if (MAC_POLICY_CALL_INT(check, mpc, ##args)	\
 				    == 0)				\
 					error = 0;			\
 			}						\
@@ -417,17 +464,14 @@ int	vn_setlabel(struct vnode *vp, struct label *intlabel,
 	struct mac_policy_conf *mpc;					\
 									\
 	LIST_FOREACH(mpc, &mac_static_policy_list, mpc_list) {		\
-		if (mpc->mpc_ops->mpo_ ## operation != NULL)		\
-			result = result composition			\
-			    mpc->mpc_ops->mpo_ ## operation (args);	\
+		if (MAC_POLICY_PRESENT(operation, mpc))		\
+			MAC_POLICY_COMPOSE(operation, mpc, composition, ##args);	\
 	}								\
 	if (!LIST_EMPTY(&mac_policy_list)) {				\
 		mac_policy_slock_sleep();				\
 		LIST_FOREACH(mpc, &mac_policy_list, mpc_list) {		\
-			if (mpc->mpc_ops->mpo_ ## operation != NULL)	\
-				result = result composition		\
-				    mpc->mpc_ops->mpo_ ## operation	\
-				    (args);				\
+			if (MAC_POLICY_PRESENT(operation, mpc))	\
+				MAC_POLICY_COMPOSE(operation, mpc, composition, ##args);				\
 		}							\
 		mac_policy_sunlock_sleep();				\
 	}								\
@@ -437,19 +481,16 @@ int	vn_setlabel(struct vnode *vp, struct label *intlabel,
 	struct mac_policy_conf *mpc;					\
 									\
 	LIST_FOREACH(mpc, &mac_static_policy_list, mpc_list) {		\
-		if (mpc->mpc_ops->mpo_ ## operation != NULL)		\
-			result = result composition			\
-			    mpc->mpc_ops->mpo_ ## operation (args);	\
+		if (MAC_POLICY_PRESENT(operation, mpc))		\
+			MAC_POLICY_COMPOSE(operation, mpc, composition, ##args);	\
 	}								\
 	if (!LIST_EMPTY(&mac_policy_list)) {				\
 		struct rm_priotracker tracker;				\
 									\
 		mac_policy_slock_nosleep(&tracker);			\
 		LIST_FOREACH(mpc, &mac_policy_list, mpc_list) {		\
-			if (mpc->mpc_ops->mpo_ ## operation != NULL)	\
-				result = result composition		\
-				    mpc->mpc_ops->mpo_ ## operation	\
-				    (args);				\
+			if (MAC_POLICY_PRESENT(operation, mpc))	\
+				MAC_POLICY_COMPOSE(operation, mpc, composition, ##args);				\
 		}							\
 		mac_policy_sunlock_nosleep(&tracker);			\
 	}								\
@@ -544,14 +585,14 @@ int	vn_setlabel(struct vnode *vp, struct label *intlabel,
 	struct mac_policy_conf *mpc;					\
 									\
 	LIST_FOREACH(mpc, &mac_static_policy_list, mpc_list) {		\
-		if (mpc->mpc_ops->mpo_ ## operation != NULL)		\
-			mpc->mpc_ops->mpo_ ## operation (args);		\
+		if (MAC_POLICY_PRESENT(operation, mpc))		\
+			MAC_POLICY_CALL_VOID(operation, mpc, ##args);		\
 	}								\
 	if (!LIST_EMPTY(&mac_policy_list)) {				\
 		mac_policy_slock_sleep();				\
 		LIST_FOREACH(mpc, &mac_policy_list, mpc_list) {		\
-			if (mpc->mpc_ops->mpo_ ## operation != NULL)	\
-				mpc->mpc_ops->mpo_ ## operation (args);	\
+			if (MAC_POLICY_PRESENT(operation, mpc))	\
+				MAC_POLICY_CALL_VOID(operation, mpc, ##args);	\
 		}							\
 		mac_policy_sunlock_sleep();				\
 	}								\
@@ -561,16 +602,16 @@ int	vn_setlabel(struct vnode *vp, struct label *intlabel,
 	struct mac_policy_conf *mpc;					\
 									\
 	LIST_FOREACH(mpc, &mac_static_policy_list, mpc_list) {		\
-		if (mpc->mpc_ops->mpo_ ## operation != NULL)		\
-			mpc->mpc_ops->mpo_ ## operation (args);		\
+		if (MAC_POLICY_PRESENT(operation, mpc))		\
+			MAC_POLICY_CALL_VOID(operation, mpc, ##args);		\
 	}								\
 	if (!LIST_EMPTY(&mac_policy_list)) {				\
 		struct rm_priotracker tracker;				\
 									\
 		mac_policy_slock_nosleep(&tracker);			\
 		LIST_FOREACH(mpc, &mac_policy_list, mpc_list) {		\
-			if (mpc->mpc_ops->mpo_ ## operation != NULL)	\
-				mpc->mpc_ops->mpo_ ## operation (args);	\
+			if (MAC_POLICY_PRESENT(operation, mpc))	\
+				MAC_POLICY_CALL_VOID(operation, mpc, ##args);	\
 		}							\
 		mac_policy_sunlock_nosleep(&tracker);			\
 	}								\

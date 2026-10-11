@@ -50,6 +50,14 @@
  * slot on first use, even if the policy is loaded after the label is
  * allocated for an object.
  */
+SDT_PROVIDER_DEFINE(mac_label);
+SDT_PROBE_DEFINE1(mac_label, , , init, "struct label *");
+SDT_PROBE_DEFINE1(mac_label, , , destroy, "struct label *");
+SDT_PROBE_DEFINE2(mac_label, , , alloc, "struct label *", "int");
+SDT_PROBE_DEFINE1(mac_label, , , free, "struct label *");
+SDT_PROBE_DEFINE3(mac_label, , , set, "struct label *", "int", "intptr_t");
+
+
 static uma_zone_t	zone_label;
 
 static int	mac_labelzone_ctor(void *mem, int size, void *arg, int flags);
@@ -75,12 +83,14 @@ mac_init_label(struct label *label)
 
 	bzero(label, sizeof(*label));
 	label->l_flags = MAC_FLAG_INITIALIZED;
+	SDT_PROBE1(mac_label, , , init, label);
 }
 
 void
 mac_destroy_label(struct label *label)
 {
 
+	SDT_PROBE1(mac_label, , , destroy, label);
 	KASSERT(label->l_flags & MAC_FLAG_INITIALIZED,
 	    ("destroying uninitialized label"));
 
@@ -116,13 +126,18 @@ struct label *
 mac_labelzone_alloc(int flags)
 {
 
-	return (uma_zalloc(zone_label, flags));
+	{
+		struct label * trace_result = uma_zalloc(zone_label, flags);
+		SDT_PROBE2(mac_label, , , alloc, trace_result, flags);
+		return (trace_result);
+	}
 }
 
 void
 mac_labelzone_free(struct label *label)
 {
 
+	SDT_PROBE1(mac_label, , , free, label);
 	uma_zfree(zone_label, label);
 }
 
@@ -145,4 +160,5 @@ mac_label_set(struct label *l, int slot, intptr_t v)
 	KASSERT(l != NULL, ("mac_label_set: NULL label"));
 
 	l->l_perpolicy[slot] = v;
+	SDT_PROBE3(mac_label, , , set, l, slot, v);
 }

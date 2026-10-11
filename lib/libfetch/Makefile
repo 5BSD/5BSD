@@ -78,4 +78,12 @@ MLINKS+= fetch.3 fetchXGetFile.3
 MLINKS+= fetch.3 fetchXGetHTTP.3
 MLINKS+= fetch.3 fetchXGetURL.3
 
+
+.include <src.opts.mk>
+.if ${MK_DTRACE} != "no"
+SRCS+=	fetchio_provider.d
+DTRACE_STATIC_ANCHOR= yes
+CFLAGS+= -DWITH_COVERAGE_DTRACE
+.endif
+
 .include <bsd.lib.mk>

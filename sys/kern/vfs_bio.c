@@ -81,7 +81,9 @@
 #include <sys/vmmeter.h>
 #include <sys/vnode.h>
 #include <sys/watchdog.h>
-#include <geom/geom.h>
+#include <sys/queue.h>
+#include <sys/sdt.h>
+
 #include <vm/vm.h>
 #include <vm/vm_param.h>
 #include <vm/vm_kern.h>
@@ -90,6 +92,21 @@
 #include <vm/vm_pageout.h>
 #include <vm/vm_pager.h>
 #include <vm/vm_extern.h>
+
+#include <geom/geom.h>
+
+SDT_PROVIDER_DEFINE(bufcache);
+SDT_PROBE_DEFINE3(bufcache, , , reclaim, "struct bufdomain *", "int", "int");
+SDT_PROBE_DEFINE3(bufcache, , , space__wait, "struct bufdomain *",
+    "struct vnode *", "int");
+SDT_PROBE_DEFINE2(bufcache, , , space__resume, "struct bufdomain *", "int");
+SDT_PROBE_DEFINE3(bufcache, , , flush__start, "struct vnode *",
+    "struct bufdomain *", "int");
+SDT_PROBE_DEFINE3(bufcache, , , flush__done, "struct vnode *",
+    "struct bufdomain *", "int");
+SDT_PROBE_DEFINE1(bufcache, , , io__wait, "struct buf *");
+SDT_PROBE_DEFINE2(bufcache, , , io__done, "struct buf *", "int");
+
 #include <vm/vm_map.h>
 #include <vm/swap_pager.h>
 
@@ -736,8 +753,10 @@ bufspace_wait(struct bufdomain *bd, struct vnode *vp, int gbflags,
 			if (bd->bd_wanted == 0)
 				break;
 		}
+		SDT_PROBE3(bufcache, , , space__wait, bd, vp, gbflags);
 		error = msleep(&bd->bd_wanted, BD_LOCKPTR(bd),
 		    PVFS | slpflag, "newbuf", slptimeo);
+		SDT_PROBE2(bufcache, , , space__resume, bd, error);
 		if (error != 0)
 			break;
 	}
@@ -1858,12 +1877,18 @@ buf_recycle(struct bufdomain *bd, bool kva)
 		}
 		bp->b_flags |= B_INVAL;
 		brelse(bp);
-		return (0);
+		{
+			SDT_PROBE3(bufcache, , , reclaim, bd, kva, 0);
+			return (0);
+		}
 	}
 	bd->bd_wanted = 1;
 	BQ_UNLOCK(bq);
 
-	return (ENOBUFS);
+	{
+		SDT_PROBE3(bufcache, , , reclaim, bd, kva, ENOBUFS);
+		return (ENOBUFS);
+	}
 }
 
 /*
@@ -3403,6 +3428,7 @@ buf_flush(struct vnode *vp, struct bufdomain *bd, int target)
 {
 	int flushed;
 
+	SDT_PROBE3(bufcache, , , flush__start, vp, bd, target);
 	flushed = flushbufqueues(vp, bd, target, 0);
 	if (flushed == 0) {
 		/*
@@ -3414,6 +3440,7 @@ buf_flush(struct vnode *vp, struct bufdomain *bd, int target)
 			target /= 2;
 		flushbufqueues(vp, bd, target, 1);
 	}
+	SDT_PROBE3(bufcache, , , flush__done, vp, bd, flushed);
 	return (flushed);
 }
 
@@ -4545,20 +4572,32 @@ biotrack_buf(struct bio *bp, const char *location)
 int
 bufwait(struct buf *bp)
 {
+	SDT_PROBE1(bufcache, , , io__wait, bp);
 	if (bp->b_iocmd == BIO_READ)
 		bwait(bp, PRIBIO, "biord");
 	else
 		bwait(bp, PRIBIO, "biowr");
 	if (bp->b_flags & B_EINTR) {
 		bp->b_flags &= ~B_EINTR;
-		return (EINTR);
+		{
+			SDT_PROBE2(bufcache, , , io__done, bp, EINTR);
+			return (EINTR);
+		}
 	}
 	if (bp->b_ioflags & BIO_ERROR) {
 		if ((bp->b_ioflags & BIO_EXTERR) != 0)
 			exterr_set_from(&bp->b_exterr);
-		return (bp->b_error ? bp->b_error : EIO);
+		{
+			int trace_result = (bp->b_error ? bp->b_error : EIO);
+
+			SDT_PROBE2(bufcache, , , io__done, bp, trace_result);
+			return (trace_result);
+		}
 	} else {
-		return (0);
+		{
+			SDT_PROBE2(bufcache, , , io__done, bp, 0);
+			return (0);
+		}
 	}
 }
 

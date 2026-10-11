@@ -284,18 +284,27 @@ Incoming::Validate(uint64_t ordinal, std::optional<uint32_t> txid) const
 	if (!message_ ||
 	    channel_message_length(native()) < sizeof(fidl_message_header_t) ||
 	    channel_message_length(native()) > MAC_CAPABILITY_MAX_MSG ||
-	    channel_message_fd_count(native()) > MAC_CAPABILITY_MAX_FDS)
+	    channel_message_fd_count(native()) > MAC_CAPABILITY_MAX_FDS) {
+		FIDL_BSD_VALIDATION_FAILED(reinterpret_cast<uintptr_t>(this), 0,
+		    ordinal, 1);
 		return EPROTO;
+	}
 	auto h = header();
 	if (fidl_validate_txn_header(&h) != ZX_OK || h.ordinal != ordinal ||
 	    ordinal == 0 ||
 	    (h.at_rest_flags[0] &
 		FIDL_MESSAGE_HEADER_AT_REST_FLAGS_0_USE_VERSION_V2) == 0 ||
-	    (txid && h.txid != *txid))
+	    (txid && h.txid != *txid)) {
+		FIDL_BSD_VALIDATION_FAILED(reinterpret_cast<uintptr_t>(this),
+		    h.txid, h.ordinal, 2);
 		return EPROTO;
+	}
 	bool event = channel_message_kind(native()) == CHANNEL_MESSAGE_EVENT;
-	if ((h.txid == 0) != event)
+	if ((h.txid == 0) != event) {
+		FIDL_BSD_VALIDATION_FAILED(reinterpret_cast<uintptr_t>(this),
+		    h.txid, h.ordinal, 3);
 		return EPROTO;
+	}
 	return 0;
 }
 
@@ -455,6 +464,8 @@ Connection::SendRequest(uint32_t id, uint64_t ordinal, Outgoing &packet,
 	pending->completion = std::move(completion);
 	auto view = packet.MoveView(lock_inherit_);
 	auto *raw = pending.get();
+	FIDL_BSD_TRANSPORT(reinterpret_cast<uintptr_t>(this),
+	    reinterpret_cast<uintptr_t>(channel_), id, ordinal);
 	FIDL_BSD_REQUEST_START(reinterpret_cast<uintptr_t>(this), id, ordinal,
 	    view.length, view.nfds);
 	if (channel_send_request(channel_, &view, OnReply, raw,
@@ -489,6 +500,10 @@ Connection::OnReply(channel_request *request, channel_message *message,
 		error = self->error_;
 	if (!error)
 		error = incoming.Validate(pending->ordinal, pending->id);
+	if (!error)
+		FIDL_BSD_MESSAGE_TOKEN(reinterpret_cast<uintptr_t>(self),
+		    pending->id, pending->ordinal,
+		    channel_message_token(message));
 	FIDL_BSD_REQUEST_DONE(reinterpret_cast<uintptr_t>(self), pending->id,
 	    pending->ordinal, error);
 	if (error == EPROTO || error == ENOMEM)
@@ -514,12 +529,21 @@ Connection::OnMessage(channel *, channel_message *message, void *context)
 			self->Close(EPROTO);
 			return;
 		}
+		FIDL_BSD_TRANSPORT(reinterpret_cast<uintptr_t>(self),
+		    reinterpret_cast<uintptr_t>(self->channel_), h.txid,
+		    h.ordinal);
+		FIDL_BSD_MESSAGE_TOKEN(reinterpret_cast<uintptr_t>(self),
+		    h.txid, h.ordinal,
+		    channel_message_token(incoming->native()));
 		FIDL_BSD_MESSAGE(reinterpret_cast<uintptr_t>(self), h.txid,
 		    h.ordinal);
 		if (h.ordinal == kFidlOrdinalEpitaph) {
 			if (self->role_ != CHANNEL_ROLE_CLIENT || h.txid != 0 ||
 			    channel_message_length(incoming->native()) != 24 ||
 			    channel_message_fd_count(incoming->native()) != 0) {
+				FIDL_BSD_REJECT(reinterpret_cast<uintptr_t>(
+						    self),
+				    h.txid, h.ordinal, 4);
 				self->Close(EPROTO);
 				return;
 			}
@@ -530,14 +554,21 @@ Connection::OnMessage(channel *, channel_message *message, void *context)
 			memcpy(&status, data + 16, 4);
 			memcpy(&padding, data + 20, 4);
 			if (padding != 0) {
+				FIDL_BSD_REJECT(reinterpret_cast<uintptr_t>(
+						    self),
+				    h.txid, h.ordinal, 4);
 				self->Close(EPROTO);
 				return;
 			}
+			FIDL_BSD_EPITAPH(reinterpret_cast<uintptr_t>(self),
+			    status);
 			self->peer_epitaph_ = status;
 			self->Close(EPIPE);
 			return;
 		}
 		if (self->closing_) {
+			FIDL_BSD_REJECT(reinterpret_cast<uintptr_t>(self),
+			    h.txid, h.ordinal, 5);
 			self->Close(EPROTO);
 			return;
 		}
@@ -545,6 +576,8 @@ Connection::OnMessage(channel *, channel_message *message, void *context)
 		auto handler = h.txid ? self->request_handler_ :
 					self->event_handler_;
 		if (!handler) {
+			FIDL_BSD_REJECT(reinterpret_cast<uintptr_t>(self),
+			    h.txid, h.ordinal, 6);
 			self->Close(EPROTO);
 			return;
 		}

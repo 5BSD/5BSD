@@ -33,6 +33,13 @@
 #include <sys/extattr.h>
 #include <fs/nfs/nfsport.h>
 
+#include <sys/sdt.h>
+
+SDT_PROVIDER_DECLARE(nfsserver);
+SDT_PROBE_DEFINE2(nfsserver, , , client__start, "void *", "int");
+SDT_PROBE_DEFINE2(nfsserver, , , client__done, "void *", "int");
+SDT_PROBE_DEFINE1(nfsserver, , , session__replay, "void *");
+
 int nfsrv_issuedelegs = 0;
 int nfsrv_dolocallocks = 0;
 struct nfsv4lock nfsv4rootfs_lock;
@@ -677,6 +684,7 @@ nfsrv_getclient(nfsquad_t clientid, int opflags, struct nfsclient **clpp,
 	bool mlocked, sess_replay;
 	static uint64_t next_sess = 0;
 
+	SDT_PROBE2(nfsserver, , , client__start, (nd), (opflags));
 	if (clpp)
 		*clpp = NULL;
 	if ((nd == NULL || (nd->nd_flag & ND_NFSV41) == 0 ||
@@ -788,6 +796,7 @@ nfsrv_getclient(nfsquad_t clientid, int opflags, struct nfsclient **clpp,
 			else
 			    sessid[0] = clp->lc_prevsess;
 			sess_replay = true;
+		SDT_PROBE1(nfsserver, , , session__replay, (nd));
 		    } else
 			error = NFSERR_SEQMISORDERED;
 		} else if ((nd->nd_flag & ND_NFSV41) == 0 &&
@@ -907,7 +916,12 @@ nfsrv_getclient(nfsquad_t clientid, int opflags, struct nfsclient **clpp,
 
 out:
 	NFSEXITCODE2(error, nd);
-	return (error);
+	{
+		int trace_result = error;
+
+		SDT_PROBE2(nfsserver, , , client__done, (nd), (trace_result));
+		return (trace_result);
+	}
 }
 
 /*

@@ -80,6 +80,18 @@
 
 #include <fs/nfs/nfsport.h>
 
+#include <sys/sdt.h>
+
+SDT_PROVIDER_DEFINE(nfsclient);
+SDT_PROBE_DEFINE2(nfsclient, , , open__start, "void *", "unsigned int");
+SDT_PROBE_DEFINE2(nfsclient, , , open__done, "void *", "int");
+SDT_PROBE_DEFINE1(nfsclient, , , renew__start, "void *");
+SDT_PROBE_DEFINE2(nfsclient, , , renew__done, "void *", "int");
+SDT_PROBE_DEFINE3(nfsclient, , , lock__release, "void *", "int", "int");
+SDT_PROBE_DEFINE1(nfsclient, , , recover__start, "void *");
+SDT_PROBE_DEFINE2(nfsclient, , , recover__done, "void *", "int");
+SDT_PROBE_DEFINE3(nfsclient, , , setclient__result, "void *", "int", "int");
+
 /*
  * Global variables
  */
@@ -224,6 +236,7 @@ nfscl_open(vnode_t vp, u_int8_t *nfhp, int fhlen, u_int32_t amode, int usedeleg,
 	u_int8_t own[NFSV4CL_LOCKNAMELEN];
 	int ret;
 
+	SDT_PROBE2(nfsclient, , , open__start, (vp), (amode));
 	if (newonep != NULL)
 		*newonep = 0;
 	if (opp != NULL)
@@ -247,7 +260,12 @@ nfscl_open(vnode_t vp, u_int8_t *nfhp, int fhlen, u_int32_t amode, int usedeleg,
 		free(nowp, M_NFSCLOWNER);
 		if (nop != NULL)
 			free(nop, M_NFSCLOPEN);
-		return (ret);
+		{
+			int trace_result = ret;
+
+			SDT_PROBE2(nfsclient, , , open__done, (vp), (trace_result));
+			return (trace_result);
+		}
 	}
 
 	/*
@@ -339,7 +357,12 @@ nfscl_open(vnode_t vp, u_int8_t *nfhp, int fhlen, u_int32_t amode, int usedeleg,
 		*owpp = owp;
 	if (opp != NULL)
 		*opp = op;
-	return (0);
+	{
+		int trace_result = 0;
+
+		SDT_PROBE2(nfsclient, , , open__done, (vp), (trace_result));
+		return (trace_result);
+	}
 }
 
 /*
@@ -1583,6 +1606,7 @@ nfscl_lockrelease(struct nfscllockowner *lp, int error, int candelete)
 {
 	struct nfsclclient *clp;
 
+	SDT_PROBE3(nfsclient, , , lock__release, (lp), (error), (candelete));
 	if (lp == NULL)
 		return;
 	NFSLOCKCLSTATE();
@@ -2184,6 +2208,7 @@ nfscl_recover(struct nfsclclient *clp, bool *retokp, struct ucred *cred,
 	 * First, lock the client structure, so everyone else will
 	 * block when trying to use state.
 	 */
+	SDT_PROBE1(nfsclient, , , recover__start, (clp));
 	NFSLOCKCLSTATE();
 	clp->nfsc_flags |= NFSCLFLAGS_RECVRINPROG;
 	do {
@@ -2210,6 +2235,7 @@ nfscl_recover(struct nfsclclient *clp, bool *retokp, struct ucred *cred,
 	tcred = NULL;
 	do {
 		error = nfsrpc_setclient(nmp, clp, 1, retokp, cred, p);
+		SDT_PROBE3(nfsclient, , , setclient__result, (clp), (error), (trycnt));
 	} while ((error == NFSERR_STALECLIENTID ||
 	     error == NFSERR_BADSESSION ||
 	     error == NFSERR_STALEDONTRECOVER) && --trycnt > 0);
@@ -2220,6 +2246,7 @@ nfscl_recover(struct nfsclclient *clp, bool *retokp, struct ucred *cred,
 		wakeup(&clp->nfsc_flags);
 		nfsv4_unlock(&clp->nfsc_lock, 0);
 		NFSUNLOCKCLSTATE();
+		SDT_PROBE2(nfsclient, , , recover__done, (clp), (error));
 		return;
 	}
 	clp->nfsc_flags |= NFSCLFLAGS_HASCLIENTID;
@@ -2524,6 +2551,7 @@ out:
 	NFSUNLOCKCLSTATE();
 	if (tcred != NULL)
 		NFSFREECRED(tcred);
+	SDT_PROBE2(nfsclient, , , recover__done, (clp), (error));
 }
 
 /*
@@ -2817,7 +2845,9 @@ nfscl_renewthread(struct nfsclclient *clp, NFSPROC_T *p)
 		    (clp->nfsc_flags & NFSCLFLAGS_HASCLIENTID)) {
 			clp->nfsc_expire = NFSD_MONOSEC + clp->nfsc_renew;
 			clidrev = clp->nfsc_clientidrev;
+			SDT_PROBE1(nfsclient, , , renew__start, (clp));
 			error = nfsrpc_renew(clp, NULL, cred, p);
+			SDT_PROBE2(nfsclient, , , renew__done, (clp), (error));
 			if (error == NFSERR_CBPATHDOWN)
 			    cbpathdown = 1;
 			else if (error == NFSERR_STALECLIENTID) {

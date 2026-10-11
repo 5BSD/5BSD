@@ -31,6 +31,7 @@
 
 #define _WANT_P_OSREL
 #include <sys/param.h>
+#include "ffscheck_trace.h"
 #include <sys/file.h>
 #include <sys/mount.h>
 #include <sys/resource.h>
@@ -405,7 +406,9 @@ checkfilesys(char *filesys)
 		printf("** Phase 1 - Check Blocks and Sizes\n");
 	}
 	clock_gettime(CLOCK_REALTIME_PRECISE, &startprog);
+	TRACE_FFSCHECK_PHASE__START(1);
 	pass1();
+	TRACE_FFSCHECK_PHASE__DONE(1);
 	IOstats("Pass1");
 
 	/*
@@ -428,7 +431,9 @@ checkfilesys(char *filesys)
 	 */
 	if (preen == 0 || debug)
 		printf("** Phase 2 - Check Pathnames\n");
+	TRACE_FFSCHECK_PHASE__START(2);
 	pass2();
+	TRACE_FFSCHECK_PHASE__DONE(2);
 	IOstats("Pass2");
 
 	/*
@@ -436,7 +441,9 @@ checkfilesys(char *filesys)
 	 */
 	if (preen == 0 || debug)
 		printf("** Phase 3 - Check Connectivity\n");
+	TRACE_FFSCHECK_PHASE__START(3);
 	pass3();
+	TRACE_FFSCHECK_PHASE__DONE(3);
 	IOstats("Pass3");
 
 	/*
@@ -444,7 +451,9 @@ checkfilesys(char *filesys)
 	 */
 	if (preen == 0 || debug)
 		printf("** Phase 4 - Check Reference Counts\n");
+	TRACE_FFSCHECK_PHASE__START(4);
 	pass4();
+	TRACE_FFSCHECK_PHASE__DONE(4);
 	IOstats("Pass4");
 
 	/*
@@ -457,7 +466,9 @@ checkfilesys(char *filesys)
 		printf("PHASE 5 SKIPPED DUE TO CORRUPT CYLINDER GROUP "
 		    "HEADER(S)\n\n");
 	} else {
-		pass5();
+		TRACE_FFSCHECK_PHASE__START(5);
+	pass5();
+	TRACE_FFSCHECK_PHASE__DONE(5);
 		IOstats("Pass5");
 	}
 

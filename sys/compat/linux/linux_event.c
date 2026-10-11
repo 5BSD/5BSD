@@ -49,6 +49,8 @@
 #include <sys/timerfd.h>
 #include <sys/timespec.h>
 #include <sys/user.h>
+#include <sys/queue.h>
+#include <sys/sdt.h>
 
 #include <vm/vm.h>
 #include <vm/pmap.h>
@@ -68,6 +70,13 @@
 #include <compat/linux/linux_signal.h>
 #include <compat/linux/linux_time.h>
 #include <compat/linux/linux_util.h>
+#include <compat/linux/linux_dtrace.h>
+LIN_SDT_PROVIDER_DECLARE(LINUX_DTRACE);
+LIN_SDT_PROBE_DEFINE3(epoll, , deliver, "uintptr_t", "int", "uint32_t");
+LIN_SDT_PROBE_DEFINE4(epoll, , ctl__done, "int", "int", "int", "int");
+LIN_SDT_PROBE_DEFINE4(epoll, , translate, "int", "int", "uint32_t", "int");
+LIN_SDT_PROBE_DEFINE2(epoll, , wait__start, "int", "int");
+LIN_SDT_PROBE_DEFINE3(epoll, , wait__done, "int", "int", "int");
 
 typedef uint64_t	epoll_udata_t;
 
@@ -278,6 +287,8 @@ kevent_to_epoll(struct kevent *kevent, struct epoll_event *l_event)
 
 	if ((kevent->flags & EV_ERROR) != 0) {
 		l_event->events = LINUX_EPOLLERR;
+		LIN_SDT_PROBE3(epoll, , deliver, kevent->ident, kevent->filter,
+		    l_event->events);
 		return;
 	}
 
@@ -294,6 +305,8 @@ kevent_to_epoll(struct kevent *kevent, struct epoll_event *l_event)
 			l_event->events = epoll_eof_events(kevent);
 	break;
 	}
+	LIN_SDT_PROBE3(epoll, , deliver, kevent->ident, kevent->filter,
+	    l_event->events);
 }
 
 /*
@@ -365,14 +378,20 @@ linux_epoll_ctl(struct thread *td, struct linux_epoll_ctl_args *args)
 
 	if (args->op != LINUX_EPOLL_CTL_DEL) {
 		error = copyin(args->event, &le, sizeof(le));
-		if (error != 0)
+		if (error != 0) {
+			LIN_SDT_PROBE4(epoll, , ctl__done, args->epfd, args->fd,
+			    args->op, error);
 			return (error);
+		}
 	}
 
 	error = fget(td, args->epfd,
 	    cap_rights_init_one(&rights, CAP_KQUEUE_CHANGE), &epfp);
-	if (error != 0)
+	if (error != 0) {
+		LIN_SDT_PROBE4(epoll, , ctl__done, args->epfd, args->fd,
+		    args->op, error);
 		return (error);
+	}
 	if (epfp->f_type != DTYPE_KQUEUE) {
 		error = EINVAL;
 		goto leave1;
@@ -438,6 +457,8 @@ linux_epoll_ctl(struct thread *td, struct linux_epoll_ctl_args *args)
 		goto leave0;
 	}
 
+	LIN_SDT_PROBE4(epoll, , translate, args->epfd, args->fd, le.events,
+	    nchanges);
 	error = kern_kevent_fp(td, epfp, nchanges, 0, &k_ops, NULL);
 
 leave0:
@@ -445,6 +466,8 @@ leave0:
 
 leave1:
 	fdrop(epfp, td);
+	LIN_SDT_PROBE4(epoll, , ctl__done, args->epfd, args->fd, args->op,
+	    error);
 	return (error);
 }
 
@@ -467,13 +490,20 @@ linux_epoll_wait_ts(struct thread *td, int epfd, struct epoll_event *events,
 	size_t len;
 	int error;
 
-	if (maxevents <= 0 || maxevents > LINUX_MAX_EVENTS)
+	LIN_SDT_PROBE2(epoll, , wait__start, epfd, maxevents);
+	if (maxevents <= 0 || maxevents > LINUX_MAX_EVENTS) {
+		LIN_SDT_PROBE3(epoll, , wait__done, epfd,
+		    EINVAL == 0 ? td->td_retval[0] : 0, EINVAL);
 		return (EINVAL);
+	}
 
 	error = fget(td, epfd,
 	    cap_rights_init_one(&rights, CAP_KQUEUE_EVENT), &epfp);
-	if (error != 0)
+	if (error != 0) {
+		LIN_SDT_PROBE3(epoll, , wait__done, epfd,
+		    error == 0 ? td->td_retval[0] : 0, error);
 		return (error);
+	}
 	if (epfp->f_type != DTYPE_KQUEUE) {
 		error = EINVAL;
 		goto leave;
@@ -536,6 +566,8 @@ linux_epoll_wait_ts(struct thread *td, int epfd, struct epoll_event *events,
 	}
 leave:
 	fdrop(epfp, td);
+	LIN_SDT_PROBE3(epoll, , wait__done, epfd,
+	    error == 0 ? td->td_retval[0] : 0, error);
 	return (error);
 }
 

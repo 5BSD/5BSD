@@ -30,6 +30,7 @@
  */
 
 #include <sys/param.h>
+#include "mountop_trace.h"
 #define _WANT_MNTOPTNAMES
 #include <sys/mount.h>
 #include <sys/stat.h>
@@ -545,16 +546,25 @@ mountfs(const char *vfstype, const char *spec, const char *name, int flags,
 	char *optbuf, execname[PATH_MAX], mntpath[PATH_MAX];
 	static struct cpa mnt_argv;
 
+	TRACE_MOUNTOP_OPERATION__START(spec);
 	/* resolve the mountpoint with realpath(3) */
 	if (allow_file_mount(vfstype)) {
 		if (checkpath_allow_file(name, mntpath) != 0) {
 			xo_warn("%s", mntpath);
-			return (1);
+			{
+				int trace_result = (1);
+				TRACE_MOUNTOP_OPERATION__DONE(spec, trace_result);
+				return (trace_result);
+			}
 		}
 	} else {
 		if (checkpath(name, mntpath) != 0) {
 			xo_warn("%s", mntpath);
-			return (1);
+			{
+				int trace_result = (1);
+				TRACE_MOUNTOP_OPERATION__DONE(spec, trace_result);
+				return (trace_result);
+			}
 		}
 	}
 	name = mntpath;
@@ -606,7 +616,11 @@ mountfs(const char *vfstype, const char *spec, const char *name, int flags,
 		free(optbuf);
 		free(mountprog);
 		mountprog = NULL;
-		return (0);
+		{
+			int trace_result = (0);
+			TRACE_MOUNTOP_OPERATION__DONE(spec, trace_result);
+			return (trace_result);
+		}
 	}
 
 	if (use_mountprog(vfstype)) {
@@ -622,7 +636,11 @@ mountfs(const char *vfstype, const char *spec, const char *name, int flags,
 	if (verbose) {
 		if (statfs(name, &sf) < 0) {
 			xo_warn("statfs %s", name);
-			return (1);
+			{
+				int trace_result = (1);
+				TRACE_MOUNTOP_OPERATION__DONE(spec, trace_result);
+				return (trace_result);
+			}
 		}
 		if (fstab_style) {
 			xo_open_list("fstab");
@@ -639,7 +657,11 @@ mountfs(const char *vfstype, const char *spec, const char *name, int flags,
 		}
 	}
 
-	return (ret);
+	{
+		int trace_result = (ret);
+		TRACE_MOUNTOP_OPERATION__DONE(spec, trace_result);
+		return (trace_result);
+	}
 }
 
 void

@@ -120,6 +120,13 @@
 
 #include <geom/geom.h>
 
+#include <sys/queue.h>
+#include <sys/sdt.h>
+
+SDT_PROVIDER_DECLARE(swap);
+SDT_PROBE_DEFINE3(swap, , , io__start, "void *", "int", "long");
+SDT_PROBE_DEFINE4(swap, , , io__done, "void *", "int", "long", "int");
+
 /*
  * MAX_PAGEOUT_CLUSTER must be a power of 2 between 1 and 64.
  * The 64-page limit is due to the radix code (kern/subr_blist.c).
@@ -1025,6 +1032,7 @@ swp_pager_strategy(struct buf *bp)
 {
 	struct swdevt *sp;
 
+	SDT_PROBE3(swap, , , io__start, (bp), (bp->b_iocmd), (bp->b_bcount));
 	mtx_lock(&sw_dev_mtx);
 	TAILQ_FOREACH(sp, &swtailq, sw_list) {
 		if (swp_pager_isondev(bp->b_blkno, sp)) {
@@ -1766,6 +1774,7 @@ swp_pager_async_iodone(struct buf *bp)
 	int i;
 	vm_object_t object = NULL;
 
+	SDT_PROBE4(swap, , , io__done, (bp), (bp->b_iocmd), (bp->b_resid), ((bp->b_ioflags & BIO_ERROR) != 0 ? bp->b_error : 0));
 	/*
 	 * Report error - unless we ran out of memory, in which case
 	 * we've already logged it in swapgeom_strategy().

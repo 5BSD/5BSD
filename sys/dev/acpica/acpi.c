@@ -80,6 +80,17 @@
 
 #include <vm/vm_param.h>
 
+#include <sys/queue.h>
+#include <sys/sdt.h>
+
+SDT_PROVIDER_DEFINE(acpi);
+SDT_PROBE_DEFINE2(acpi, , , prepare__start, "void *", "int");
+SDT_PROBE_DEFINE3(acpi, , , prepare__done, "void *", "int", "unsigned int");
+SDT_PROBE_DEFINE2(acpi, , , device__start, "void *", "int");
+SDT_PROBE_DEFINE3(acpi, , , device__done, "void *", "int", "int");
+SDT_PROBE_DEFINE2(acpi, , , sleep__start, "void *", "int");
+SDT_PROBE_DEFINE3(acpi, , , sleep__done, "void *", "int", "unsigned int");
+
 static MALLOC_DEFINE(M_ACPIDEV, "acpidev", "ACPI devices");
 
 /* Hooks for the ACPI CA debugging infrastructure */
@@ -920,24 +931,36 @@ acpi_suspend(device_t dev)
 {
     int error;
 
+    SDT_PROBE2(acpi, , , device__start, (dev), (0));
     bus_topo_assert();
 
     error = bus_generic_suspend(dev);
     if (error == 0)
 	acpi_set_power_children(dev, ACPI_STATE_D3);
 
-    return (error);
+    {
+        int trace_result = error;
+
+        SDT_PROBE3(acpi, , , device__done, (dev), (0), (trace_result));
+        return (trace_result);
+    }
 }
 
 static int
 acpi_resume(device_t dev)
 {
 
+    SDT_PROBE2(acpi, , , device__start, (dev), (1));
     bus_topo_assert();
 
     acpi_set_power_children(dev, ACPI_STATE_D0);
 
-    return (bus_generic_resume(dev));
+    {
+        int trace_result = bus_generic_resume(dev);
+
+        SDT_PROBE3(acpi, , , device__done, (dev), (1), (trace_result));
+        return (trace_result);
+    }
 }
 
 static int
@@ -2705,13 +2728,19 @@ acpi_EnterSleepStatePrep(device_t acpi_dev, UINT8 SleepState)
 {
 	ACPI_STATUS status;
 
+	SDT_PROBE2(acpi, , , prepare__start, (acpi_dev), (SleepState));
 	status = AcpiEnterSleepStatePrep(SleepState);
 	if (ACPI_FAILURE(status))
 		device_printf(acpi_dev,
 		    "AcpiEnterSleepStatePrep(%u) failed - %s\n",
 		    SleepState,
 		    AcpiFormatException(status));
-	return (status);
+	{
+		ACPI_STATUS trace_result = status;
+
+		SDT_PROBE3(acpi, , , prepare__done, (acpi_dev), (SleepState), (trace_result));
+		return (trace_result);
+	}
 }
 
 /* Return from this function indicates failure. */
@@ -3710,14 +3739,25 @@ acpi_EnterSleepState(struct acpi_softc *sc, enum power_stype stype)
     enum acpi_sleep_state slp_state;
     int acpi_sstate;
 
+    SDT_PROBE2(acpi, , , sleep__start, (sc), (stype));
     ACPI_FUNCTION_TRACE_U32((char *)(uintptr_t)__func__, stype);
 
     if (stype <= POWER_STYPE_AWAKE || stype >= POWER_STYPE_COUNT)
-	return_ACPI_STATUS (AE_BAD_PARAMETER);
+	{
+	    ACPI_STATUS trace_status = AE_BAD_PARAMETER;
+
+	    SDT_PROBE3(acpi, , , sleep__done, (sc), (stype), (trace_status));
+	    return_ACPI_STATUS(trace_status);
+	}
     if (!sc->acpi_supported_stypes[stype]) {
 	device_printf(sc->acpi_dev, "Sleep type %s not supported on this "
 	    "platform\n", power_stype_to_name(stype));
-	return (AE_SUPPORT);
+	{
+		ACPI_STATUS trace_result = AE_SUPPORT;
+
+		SDT_PROBE3(acpi, , , sleep__done, (sc), (stype), (trace_result));
+		return (trace_result);
+	}
     }
 
     /* Re-entry once we're suspending is not allowed. */
@@ -3725,7 +3765,12 @@ acpi_EnterSleepState(struct acpi_softc *sc, enum power_stype stype)
     if (ACPI_FAILURE(status)) {
 	device_printf(sc->acpi_dev,
 	    "suspend request ignored (not ready yet)\n");
-	return (status);
+	{
+		ACPI_STATUS trace_result = status;
+
+		SDT_PROBE3(acpi, , , sleep__done, (sc), (stype), (trace_result));
+		return (trace_result);
+	}
     }
 
     if (stype == POWER_STYPE_POWEROFF) {
@@ -3734,7 +3779,12 @@ acpi_EnterSleepState(struct acpi_softc *sc, enum power_stype stype)
 	 * shutdown handlers.
 	 */
 	shutdown_nice(RB_POWEROFF);
-	return_ACPI_STATUS (AE_OK);
+	{
+	    ACPI_STATUS trace_status = AE_OK;
+
+	    SDT_PROBE3(acpi, , , sleep__done, (sc), (stype), (trace_status));
+	    return_ACPI_STATUS(trace_status);
+	}
     }
 
     EVENTHANDLER_INVOKE(power_suspend_early, stype);
@@ -3887,7 +3937,12 @@ backout:
     if (devctl_process_running())
 	acpi_UserNotify("Resume", ACPI_ROOT_OBJECT, stype);
 
-    return_ACPI_STATUS (status);
+    {
+        ACPI_STATUS trace_status = status;
+
+        SDT_PROBE3(acpi, , , sleep__done, (sc), (stype), (trace_status));
+        return_ACPI_STATUS(trace_status);
+    }
 }
 
 static void

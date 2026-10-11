@@ -75,6 +75,9 @@
 #endif
 
 SDT_PROVIDER_DEFINE(ptrace);
+SDT_PROBE_DEFINE4(ptrace, , , request__start, "int", "pid_t", "int", "int");
+SDT_PROBE_DEFINE5(ptrace, , , request__done, "int", "pid_t", "int", "int", "int");
+
 SDT_PROBE_DEFINE3(ptrace, , , deny, "struct proc *", "struct proc *", "int");
 SDT_PROBE_DEFINE3(ptrace, , , attach, "int", "pid_t", "struct proc *");
 SDT_PROBE_DEFINE2(ptrace, , , detach, "pid_t", "struct proc *");
@@ -1111,8 +1114,8 @@ ptrace_sel_coredump_thread(struct proc *p)
 	return (NULL);
 }
 
-int
-ptrace_action(struct thread *td, int req, bool pd_mode, pid_t pid, int pfd,
+static int
+ptrace_action_impl(struct thread *td, int req, bool pd_mode, pid_t pid, int pfd,
     lwpid_t lwpid, void *addr, int data)
 {
 	struct iovec iov;
@@ -2221,6 +2224,20 @@ fail_proctree:
 		fdrop(pfp, td);
 	return (error);
 }
+
+int
+ptrace_action(struct thread *td, int req, bool pd_mode, pid_t pid, int pfd,
+    lwpid_t lwpid, void *addr, int data)
+{
+	int error;
+
+	SDT_PROBE4(ptrace, , , request__start, req, pid, pd_mode, pfd);
+	error = ptrace_action_impl(td, req, pd_mode, pid, pfd, lwpid,
+	    addr, data);
+	SDT_PROBE5(ptrace, , , request__done, req, pid, pd_mode, pfd, error);
+	return (error);
+}
+
 #undef PROC_READ
 #undef PROC_WRITE
 

@@ -39,8 +39,17 @@
  */
 
 #include <fs/nfs/nfsport.h>
-
 #include <security/mac/mac_framework.h>
+
+#include <sys/queue.h>
+#include <sys/sdt.h>
+
+SDT_PROVIDER_DEFINE(nfsserver);
+SDT_PROBE_DEFINE2(nfsserver, , , compound__start, "void *", "unsigned int");
+SDT_PROBE_DEFINE4(nfsserver, , , compound__done, "void *", "unsigned int", "int", "int");
+SDT_PROBE_DEFINE2(nfsserver, , , operation__start, "void *", "int");
+SDT_PROBE_DEFINE4(nfsserver, , , operation__done, "void *", "int", "int", "int");
+
 
 extern struct nfsrvfh nfs_pubfh;
 extern int nfs_pubfhset;
@@ -727,6 +736,7 @@ nfsrvd_compound(struct nfsrv_descript *nd, int isdgram, u_char *tag,
 	char *bpos, *dpos;
 	int bextpg, bextpgsiz;
 
+	SDT_PROBE2(nfsserver, , , compound__start, (nd), (minorvers));
 	p = curthread;
 	rootcred = savecred = NULL;
 
@@ -893,6 +903,7 @@ nfsrvd_compound(struct nfsrv_descript *nd, int isdgram, u_char *tag,
 		}
 
 		binuptime(&start_time);
+		SDT_PROBE2(nfsserver, , , operation__start, (nd), (op));
 		nfsrvd_statstart(op, &start_time);
 		statsinprog = 1;
 
@@ -1372,6 +1383,7 @@ tryagain:
 		nd->nd_flag &= ~ND_ERELOOKUP;
 
 		if (statsinprog != 0) {
+			SDT_PROBE4(nfsserver, , , operation__done, (nd), (op), (nd->nd_repstat), (error));
 			nfsrvd_statend(op, /*bytes*/ 0, /*now*/ NULL,
 			    /*then*/ &start_time);
 			statsinprog = 0;
@@ -1387,6 +1399,7 @@ tryagain:
 	}
 nfsmout:
 	if (statsinprog != 0) {
+		SDT_PROBE4(nfsserver, , , operation__done, (nd), (op), (nd->nd_repstat), (error));
 		nfsrvd_statend(op, /*bytes*/ 0, /*now*/ NULL,
 		    /*then*/ &start_time);
 		statsinprog = 0;
@@ -1416,6 +1429,7 @@ nfsmout:
 	nfsv4_relref(&nfsv4rootfs_lock);
 	NFSUNLOCKV4ROOTMUTEX();
 
+	SDT_PROBE4(nfsserver, , , compound__done, (nd), (retops), (nd->nd_repstat), (error));
 	NFSEXITCODE2(0, nd);
 }
 

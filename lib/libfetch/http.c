@@ -29,6 +29,7 @@
  */
 
 #include <sys/cdefs.h>
+#include "fetchio_trace.h"
 /*
  * The following copyright applies to the base64 code:
  *
@@ -1579,6 +1580,7 @@ http_request_body(struct url *URL, const char *op, struct url_stat *us,
 	http_auth_challenges_t proxy_challenges;
 	size_t body_len;
 
+	TRACE_FETCHIO_REQUEST__START(URL);
 	/* The following calls don't allocate anything */
 	init_http_headerbuf(&headerbuf);
 	init_http_auth_challenges(&server_challenges);
@@ -1617,9 +1619,17 @@ http_request_body(struct url *URL, const char *op, struct url_stat *us,
 		/* were we redirected to an FTP URL? */
 		if (purl == NULL && strcmp(url->scheme, SCHEME_FTP) == 0) {
 			if (strcmp(op, "GET") == 0)
-				return (ftp_request(url, "RETR", us, purl, flags));
+				{
+					FILE * trace_result = (ftp_request(url, "RETR", us, purl, flags));
+					TRACE_FETCHIO_REQUEST__DONE(URL, trace_result != NULL, trace_result == NULL ? fetchLastErrCode : 0);
+					return (trace_result);
+				}
 			else if (strcmp(op, "HEAD") == 0)
-				return (ftp_request(url, "STAT", us, purl, flags));
+				{
+					FILE * trace_result = (ftp_request(url, "STAT", us, purl, flags));
+					TRACE_FETCHIO_REQUEST__DONE(URL, trace_result != NULL, trace_result == NULL ? fetchLastErrCode : 0);
+					return (trace_result);
+				}
 		}
 
 		/* connect to server or proxy */
@@ -2040,7 +2050,11 @@ http_request_body(struct url *URL, const char *op, struct url_stat *us,
 	clean_http_headerbuf(&headerbuf);
 	clean_http_auth_challenges(&server_challenges);
 	clean_http_auth_challenges(&proxy_challenges);
-	return (f);
+	{
+		FILE * trace_result = (f);
+		TRACE_FETCHIO_REQUEST__DONE(URL, trace_result != NULL, trace_result == NULL ? fetchLastErrCode : 0);
+		return (trace_result);
+	}
 
 ouch:
 	if (url != URL)
@@ -2052,7 +2066,11 @@ ouch:
 	clean_http_headerbuf(&headerbuf);
 	clean_http_auth_challenges(&server_challenges);
 	clean_http_auth_challenges(&proxy_challenges);
-	return (NULL);
+	{
+		FILE * trace_result = (NULL);
+		TRACE_FETCHIO_REQUEST__DONE(URL, trace_result != NULL, trace_result == NULL ? fetchLastErrCode : 0);
+		return (trace_result);
+	}
 }
 
 

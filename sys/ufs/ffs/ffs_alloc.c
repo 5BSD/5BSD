@@ -59,9 +59,9 @@
  * SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
 #include "opt_quota.h"
 
+#include <sys/cdefs.h>
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/bio.h>
@@ -82,22 +82,28 @@
 #include <sys/syslog.h>
 #include <sys/taskqueue.h>
 #include <sys/vnode.h>
+#include <sys/queue.h>
+#include <sys/sdt.h>
 
 #include <security/audit/audit.h>
-
 #include <geom/geom.h>
 #include <geom/geom_vfs.h>
-
 #include <ufs/ufs/dir.h>
 #include <ufs/ufs/extattr.h>
 #include <ufs/ufs/quota.h>
 #include <ufs/ufs/inode.h>
 #include <ufs/ufs/ufs_extern.h>
 #include <ufs/ufs/ufsmount.h>
-
 #include <ufs/ffs/fs.h>
 #include <ufs/ffs/ffs_extern.h>
 #include <ufs/ffs/softdep.h>
+
+SDT_PROVIDER_DEFINE(ffs);
+SDT_PROBE_DEFINE4(ffs, , , alloc__fallback, "struct inode *", "uint64_t", "int",
+    "int");
+SDT_PROBE_DEFINE5(ffs, , , alloc__done, "struct inode *", "int64_t", "int",
+    "int64_t", "int");
+SDT_PROBE_DEFINE2(ffs, , , alloc__retry, "struct inode *", "int");
 
 typedef ufs2_daddr_t allocfcn_t(struct inode *ip, uint64_t cg,
 				  ufs2_daddr_t bpref, int size, int rsize);
@@ -183,8 +189,10 @@ retry:
 #ifdef QUOTA
 	UFS_UNLOCK(ump);
 	error = chkdq(ip, btodb(size), cred, 0);
-	if (error)
+	if (error) {
+		SDT_PROBE5(ffs, , , alloc__done, ip, lbn, size, *bnp, error);
 		return (error);
+	}
 	UFS_LOCK(ump);
 #endif
 	if (size == fs->fs_bsize && fs->fs_cstotal.cs_nbfree == 0)
@@ -207,7 +215,11 @@ retry:
 		else
 			UFS_INODE_SET_FLAG(ip, IN_CHANGE | IN_UPDATE);
 		*bnp = bno;
-		return (0);
+		{
+			SDT_PROBE5(ffs, , , alloc__done, ip, lbn, size, *bnp,
+			    0);
+			return (0);
+		}
 	}
 nospace:
 #ifdef QUOTA
@@ -219,13 +231,18 @@ nospace:
 	UFS_LOCK(ump);
 #endif
 	if (reclaimed == 0 && (flags & IO_BUFLOCKED) == 0) {
+		SDT_PROBE2(ffs, , , alloc__retry, ip, size);
 		reclaimed = 1;
 		softdep_request_cleanup(fs, ITOV(ip), cred, FLUSH_BLOCKS_WAIT);
 		goto retry;
 	}
 	if (ffs_fsfail_cleanup_locked(ump, 0)) {
 		UFS_UNLOCK(ump);
-		return (ENXIO);
+		{
+			SDT_PROBE5(ffs, , , alloc__done, ip, lbn, size, *bnp,
+			    ENXIO);
+			return (ENXIO);
+		}
 	}
 	if (reclaimed > 0 &&
 	    ppsratecheck(&ump->um_last_fullmsg, &ump->um_secs_fullmsg, 1)) {
@@ -236,6 +253,7 @@ nospace:
 	} else {
 		UFS_UNLOCK(ump);
 	}
+	SDT_PROBE5(ffs, , , alloc__done, ip, lbn, size, *bnp, ENOSPC);
 	return (ENOSPC);
 }
 
@@ -1677,6 +1695,7 @@ ffs_hashalloc(struct inode *ip,
 	/*
 	 * 2: quadratic rehash
 	 */
+	SDT_PROBE4(ffs, , , alloc__fallback, ip, cg, size, 2);
 	for (i = 1; i < fs->fs_ncg; i *= 2) {
 		cg += i;
 		if (cg >= fs->fs_ncg)
@@ -1690,6 +1709,7 @@ ffs_hashalloc(struct inode *ip,
 	 * Note that we start at i == 2, since 0 was checked initially,
 	 * and 1 is always checked in the quadratic rehash.
 	 */
+	SDT_PROBE4(ffs, , , alloc__fallback, ip, icg, size, 3);
 	cg = (icg + 2) % fs->fs_ncg;
 	for (i = 2; i < fs->fs_ncg; i++) {
 		result = (*allocator)(ip, cg, 0, size, rsize);

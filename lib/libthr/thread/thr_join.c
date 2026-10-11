@@ -27,6 +27,7 @@
  */
 
 #include "namespace.h"
+#include "threadwait_trace.h"
 #include <errno.h>
 #include <pthread.h>
 #include "un-namespace.h"
@@ -181,7 +182,9 @@ join_common(pthread_t pthread, void **thread_return,
 			tsp = &ts2;
 		} else
 			tsp = NULL;
+		TRACE_THREADWAIT_JOIN__START(pthread);
 		ret = _thr_umtx_wait(&pthread->tid, tid, tsp);
+		TRACE_THREADWAIT_JOIN__DONE(pthread, ret);
 		if (ret == ETIMEDOUT)
 			break;
 	}

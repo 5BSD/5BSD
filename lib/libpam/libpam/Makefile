@@ -178,4 +178,13 @@ INCSDIR=	${INCLUDEDIR}/security
 
 .include <src.opts.mk>
 
+
+.include <src.opts.mk>
+.if ${MK_DTRACE} != "no"
+.PATH: ${SRCTOP}/lib/libpam/libpam
+SRCS+=	pamchain_provider.d
+DTRACE_STATIC_ANCHOR= yes
+CFLAGS+= -DWITH_COVERAGE_DTRACE
+.endif
+
 .include <bsd.lib.mk>

@@ -1,0 +1,66 @@
+MAC hook arguments and skipped callbacks
+========================================
+
+The existing mac_framework:::hook-start and hook-done contracts are unchanged.
+A called policy produces start, optional args, callback execution, then done.
+Start/args/done nesting can be correlated by thread and a script-maintained
+stack. Enabling different events mid-call may produce unmatched events.
+
+mac_framework:::hook-args:
+  arg0: kernel string naming the hook (for example vnode_check_open).
+  arg1: kernel string naming the policy.
+  arg2: number of callback arguments, excluding the policy dispatch context.
+  arg3: const uint64_t * containing argument slots in declaration order.
+
+mac-hook-arguments.json provides names, types and encodings for every callback
+slot in mac_policy_ops. It is generated from mac_policy.h together with
+sys/security/mac/mac_trace_args.h. Run mac-hook-arguments.py after ABI edits;
+--check detects stale output. Zero-argument hooks emit argc=0; do not read
+slots in that case. Current callbacks have at most eight arguments.
+
+Each scalar is converted to its declared callback type and then uint64_t;
+signed values can be recovered by casting to their documented type. Pointers
+are converted through uintptr_t. A by-value struct (currently the two timespec
+arguments of vnode_check_setutimes) is encoded as the address of a captured
+copy. That copy and the argument array exist only during this synchronous
+probe. Never retain these array/struct addresses for later dereference.
+Pointers to callback objects have their ordinary kernel lifetimes; copy the
+required fields at hook-args instead of assuming they survive hook-done.
+The probe does not copy strings, label contents, credentials or other objects.
+
+Argument expressions run exactly once per invoked callback, even with multiple
+probes enabled. Snapshot array construction and scalar conversions reside in
+the SDT patchpoint's enabled branch: a disabled hook-args probe does not build
+the array. Snapshot capture does not execute callbacks skipped by composition.
+The extra patchpoints still have a small disabled instrumentation footprint;
+this is not a claim of zero performance cost.
+
+mac_framework:::hook-skip:
+  arg0: hook name; arg1: policy name; arg2: reason.
+  1: this traversed policy has no implementation of the hook.
+  2: a present boolean hook was skipped by && or || short-circuiting.
+
+A skip is not a denial and has no matching start/done or argument snapshot.
+No-policy fast paths and checks that never enter framework dispatch do not
+produce per-policy skips. Policy-specific syscall lookup reports a skip only
+for a matching policy name with no syscall callback. It does not enumerate
+unrelated policy names. Existing MAC result and policy-decision probes still
+carry their original meanings.
+
+BSDInstruments profiles:
+  mac-hooks: per-policy/hook latency and raw results, plus skip reason counts.
+  mac-hook-arguments: prints all argument slots without dereferencing objects.
+
+Example: to inspect vnode_check_open credentials and vnode, filter hook-args
+using stringof(arg0) == "vnode_check_open". Interpret slot 0 as struct ucred *,
+slot 1 as struct vnode *, slot 2 as struct label *, slot 3 as accmode_t.
+For file_check_ioctl the slots are cred, file, fd and command respectively.
+Use the generated contract rather than assuming identical argument positions
+across different hooks.
+
+Validation exercises real dispatch macros with synthetic policies: absent
+callbacks, short circuits, order/locking, one-time argument evaluation, scalar
+width/sign, pointer slots, zero/eight arguments, by-value timespec, and disabled
+argument capture. Kernel compile checks include all MAC framework C files
+with/without KDTRACE_HOOKS. Live probe firing still requires a DTrace-enabled
+kernel and device; the current host does not expose that device.

@@ -52,6 +52,13 @@
 
 #include <net/bpf.h>
 
+#include <sys/sdt.h>
+
+SDT_PROVIDER_DECLARE(wlan);
+SDT_PROBE_DEFINE2(wlan, , , assoc__fail, "void *", "int");
+SDT_PROBE_DEFINE1(wlan, , , assoc__success, "void *");
+SDT_PROBE_DEFINE3(wlan, , , scan__done, "void *", "int", "int");
+
 /*
  * Roaming-related defaults.  RSSI thresholds are as returned by the
  * driver (.5dBm).  Transmit rate thresholds are IEEE rate codes (i.e
@@ -510,6 +517,7 @@ ieee80211_scan_done(struct ieee80211vap *vap)
 
 	IEEE80211_LOCK(ic);
 	ss = ic->ic_scan;
+	SDT_PROBE3(wlan, , , scan__done, vap, ss->ss_next, ss->ss_last);
 	ss->ss_next = ss->ss_last; /* all channels are complete */
 
 	ic->ic_scan_methods->sc_scan_done(vap);
@@ -623,6 +631,8 @@ ieee80211_scan_assoc_success(struct ieee80211vap *vap,
 {
 	struct ieee80211_scan_state *ss = vap->iv_ic->ic_scan;
 
+	SDT_PROBE1(wlan, , , assoc__success, vap);
+
 	if (ss->ss_ops != NULL) {
 		IEEE80211_NOTE_MAC(vap, IEEE80211_MSG_SCAN,
 			mac, "%s",  __func__);
@@ -638,6 +648,8 @@ ieee80211_scan_assoc_fail(struct ieee80211vap *vap,
 	const uint8_t mac[IEEE80211_ADDR_LEN], int reason)
 {
 	struct ieee80211_scan_state *ss = vap->iv_ic->ic_scan;
+
+	SDT_PROBE2(wlan, , , assoc__fail, vap, reason);
 
 	if (ss->ss_ops != NULL) {
 		IEEE80211_NOTE_MAC(vap, IEEE80211_MSG_SCAN, mac,

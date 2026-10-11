@@ -83,6 +83,14 @@
 #include <sys/rwlock.h>
 #endif
 
+#include <sys/queue.h>
+#include <sys/sdt.h>
+
+SDT_PROVIDER_DECLARE(fat);
+SDT_PROBE_DEFINE1(fat, , , integrity, "void *");
+SDT_PROBE_DEFINE1(fat, , , remount__start, "void *");
+SDT_PROBE_DEFINE2(fat, , , remount__done, "void *", "int");
+
 static const char msdosfs_lock_msg[] = "fatlk";
 
 /* Mount options that we support. */
@@ -989,7 +997,9 @@ msdosfs_remount_ro(void *arg, int pending)
 		MSDOSFS_UNLOCK_MP(pmp);
 		printf("%s: remounting read-only due to corruption\n",
 		    pmp->pm_mountp->mnt_stat.f_mntfromname);
+		SDT_PROBE1(fat, , , remount__start, (pmp));
 		error = vfs_remount_ro(pmp->pm_mountp);
+		SDT_PROBE2(fat, , , remount__done, (pmp), (error));
 		if (error != 0)
 			printf("%s: remounting read-only failed: error %d\n",
 			    pmp->pm_mountp->mnt_stat.f_mntfromname, error);
@@ -1011,6 +1021,7 @@ msdosfs_integrity_error(struct msdosfsmount *pmp)
 {
 	int error;
 
+	SDT_PROBE1(fat, , , integrity, (pmp));
 	error = vfs_busy(pmp->pm_mountp, MBF_NOWAIT);
 	if (error == 0) {
 		error = taskqueue_enqueue(taskqueue_thread,

@@ -33,6 +33,7 @@
  */
 
 #include <sys/param.h>
+#include "exports_trace.h"
 #include <sys/conf.h>
 #include <sys/fcntl.h>
 #include <sys/fnv_hash.h>
@@ -1963,6 +1964,7 @@ get_exportlist(int passno)
 	FILE *debug_file;
 	size_t nfs_maxvers_size;
 
+	TRACE_EXPORTS_RELOAD__START(passno);
 	if ((debug_file = fopen(_PATH_MOUNTDDEBUG, "r")) != NULL) {
 		fclose(debug_file);
 		logdebug = 1;
@@ -2113,6 +2115,7 @@ get_exportlist(int passno)
 	/* Resume the nfsd. If they weren't suspended, this is harmless. */
 	(void)nfssvc(NFSSVC_RESUMENFSD, NULL);
 	LOGDEBUG("eo get_exportlist");
+	TRACE_EXPORTS_RELOAD__DONE(passno);
 }
 
 /*

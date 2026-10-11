@@ -60,6 +60,13 @@
 #include <net80211/ieee80211_monitor.h>
 #include <net80211/ieee80211_input.h>
 
+#include <sys/sdt.h>
+
+SDT_PROVIDER_DEFINE(wlan);
+SDT_PROBE_DEFINE4(wlan, , , state__request, "void *", "int", "int", "int");
+SDT_PROBE_DEFINE5(wlan, , , state__result, "void *", "int", "int", "int",
+    "int");
+
 /* XXX tunables */
 #define	AGGRESSIVE_MODE_SWITCH_HYSTERESIS	3	/* pkts / 100ms */
 #define	HIGH_PRI_SWITCH_THRESH			10	/* pkts / 100ms */
@@ -2606,7 +2613,10 @@ ieee80211_newstate_cb(void *xvap, int npending)
 	    "%s: %s -> %s arg %d\n", __func__,
 	    ieee80211_state_name[ostate], ieee80211_state_name[nstate], arg);
 
+	SDT_PROBE4(wlan, , , state__request, vap, ostate, nstate, arg);
 	rc = vap->iv_newstate(vap, nstate, arg);
+	SDT_PROBE5(wlan, , , state__result, vap, ostate, nstate, vap->iv_state,
+	    rc);
 	IEEE80211_LOCK_ASSERT(ic);
 	vap->iv_flags_ext &= ~IEEE80211_FEXT_STATEWAIT;
 	if (rc != 0) {

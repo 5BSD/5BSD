@@ -119,6 +119,15 @@ SUBDIR.${MK_TESTS}+= tests
 # libcompiler_rt on some architectures.
 LIBADD+=	compiler_rt
 
+
+.include <src.opts.mk>
+.if ${MK_DTRACE} != "no"
+SRCS+=	rtldtrace_provider.d
+# The runtime linker must not embed the libc-dependent drti constructor.
+DTRACEFLAGS+= -xlazyload
+CFLAGS+= -DWITH_COVERAGE_DTRACE
+.endif
+
 .include <bsd.prog.mk>
 ${PROG_FULL}:	${VERSION_MAP}
 .include <bsd.symver.mk>

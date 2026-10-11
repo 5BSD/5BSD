@@ -41,6 +41,8 @@
 #include <sys/taskqueue.h>
 #include <sys/sleepqueue.h>
 #include <sys/umtxvar.h>
+#include <sys/queue.h>
+#include <sys/sdt.h>
 
 #include <vm/vm.h>
 #include <vm/vm_object.h>
@@ -58,6 +60,15 @@
 #include <compat/linux/linux_misc.h>
 #include <compat/linux/linux_time.h>
 #include <compat/linux/linux_util.h>
+
+LIN_SDT_PROVIDER_DECLARE(LINUX_DTRACE);
+LIN_SDT_PROBE_DEFINE3(futex, , wait__start, "void *", "uint32_t", "int");
+LIN_SDT_PROBE_DEFINE2(futex, , wait__done, "void *", "int");
+LIN_SDT_PROBE_DEFINE4(futex, , wake__done, "void *", "int", "int", "int");
+LIN_SDT_PROBE_DEFINE5(futex, , requeue__done, "void *", "void *", "int", "int",
+    "int");
+LIN_SDT_PROBE_DEFINE3(futex, , pi__done, "void *", "int", "int");
+LIN_SDT_PROBE_DEFINE3(futex, , owner__death, "void *", "int", "int");
 
 #define	FUTEX_SHARED	0x8     /* shared futex */
 #define	FUTEX_UNOWNED	0
@@ -371,8 +382,10 @@ linux_futex_lock_pi(struct thread *td, bool try, struct linux_futex_args *args)
 	uq = td->td_umtxq;
 	error = futex_key_get(args->uaddr, TYPE_PI_FUTEX, GET_SHARED(args),
 	    &uq->uq_key);
-	if (error != 0)
+	if (error != 0) {
+		LIN_SDT_PROBE3(futex, , pi__done, args->uaddr, 1, error);
 		return (error);
+	}
 	if (!try && args->ts != NULL) {
 		timop = &timo;
 		linux_umtx_abs_timeout_init(timop, args);
@@ -566,6 +579,7 @@ linux_futex_lock_pi(struct thread *td, bool try, struct linux_futex_args *args)
 	umtx_pi_unref(pi);
 	umtxq_unlock(&uq->uq_key);
 	umtx_key_release(&uq->uq_key);
+	LIN_SDT_PROBE3(futex, , pi__done, args->uaddr, 1, error);
 	return (error);
 }
 
@@ -583,14 +597,20 @@ linux_futex_unlock_pi(struct thread *td, bool rb, struct linux_futex_args *args)
 	 * Make sure we own this mtx.
 	 */
 	error = fueword32(args->uaddr, &owner);
-	if (error == -1)
+	if (error == -1) {
+		LIN_SDT_PROBE3(futex, , pi__done, args->uaddr, 2, EFAULT);
 		return (EFAULT);
-	if (!rb && (owner & FUTEX_TID_MASK) != em->em_tid)
+	}
+	if (!rb && (owner & FUTEX_TID_MASK) != em->em_tid) {
+		LIN_SDT_PROBE3(futex, , pi__done, args->uaddr, 2, EPERM);
 		return (EPERM);
+	}
 
 	error = futex_key_get(args->uaddr, TYPE_PI_FUTEX, GET_SHARED(args), &key);
-	if (error != 0)
+	if (error != 0) {
+		LIN_SDT_PROBE3(futex, , pi__done, args->uaddr, 2, error);
 		return (error);
+	}
 	umtxq_lock(&key);
 	umtxq_busy(&key);
 	error = umtx_pi_drop(td, &key, rb, &count);
@@ -598,7 +618,11 @@ linux_futex_unlock_pi(struct thread *td, bool rb, struct linux_futex_args *args)
 		umtxq_unbusy(&key);
 		umtxq_unlock(&key);
 		umtx_key_release(&key);
-		return (error);
+		{
+			LIN_SDT_PROBE3(futex, , pi__done, args->uaddr, 2,
+			    error);
+			return (error);
+		}
 	}
 	umtxq_unlock(&key);
 
@@ -621,10 +645,15 @@ again:
 	}
 	umtxq_unbusy_unlocked(&key);
 	umtx_key_release(&key);
-	if (error == -1)
+	if (error == -1) {
+		LIN_SDT_PROBE3(futex, , pi__done, args->uaddr, 2, EFAULT);
 		return (EFAULT);
-	if (error == 0 && old != owner)
+	}
+	if (error == 0 && old != owner) {
+		LIN_SDT_PROBE3(futex, , pi__done, args->uaddr, 2, EINVAL);
 		return (EINVAL);
+	}
+	LIN_SDT_PROBE3(futex, , pi__done, args->uaddr, 2, error);
 	return (error);
 }
 
@@ -735,23 +764,36 @@ linux_futex_requeue_common(struct thread *td, uint32_t *uaddr, int share,
 	 * queue cannot be requeued onto itself, and it is an incorrect
 	 * usage of the declared ABI, so return EINVAL.
 	 */
-	if (uaddr == uaddr2)
+	if (uaddr == uaddr2) {
+		LIN_SDT_PROBE5(futex, , requeue__done, uaddr, uaddr2, nrwake,
+		    EINVAL == 0 ? td->td_retval[0] : 0, EINVAL);
 		return (EINVAL);
+	}
 
 	/*
 	 * Sanity check to prevent signed integer overflow,
 	 * see Linux CVE-2018-6927
 	 */
-	if (nrwake < 0 || nrrequeue < 0)
+	if (nrwake < 0 || nrrequeue < 0) {
+		LIN_SDT_PROBE5(futex, , requeue__done, uaddr, uaddr2, nrwake,
+		    EINVAL == 0 ? td->td_retval[0] : 0, EINVAL);
 		return (EINVAL);
+	}
 
 	error = futex_key_get(uaddr, TYPE_FUTEX, share, &key);
-	if (error != 0)
+	if (error != 0) {
+		LIN_SDT_PROBE5(futex, , requeue__done, uaddr, uaddr2, nrwake,
+		    error == 0 ? td->td_retval[0] : 0, error);
 		return (error);
+	}
 	error = futex_key_get(uaddr2, TYPE_FUTEX, share2, &key2);
 	if (error != 0) {
 		umtx_key_release(&key);
-		return (error);
+		{
+			LIN_SDT_PROBE5(futex, , requeue__done, uaddr, uaddr2,
+			    nrwake, error == 0 ? td->td_retval[0] : 0, error);
+			return (error);
+		}
 	}
 	umtxq_busy_unlocked(&key);
 	error = fueword32(uaddr, &uval);
@@ -798,6 +840,8 @@ linux_futex_requeue_common(struct thread *td, uint32_t *uaddr, int share,
 	}
 	umtx_key_release(&key2);
 	umtx_key_release(&key);
+	LIN_SDT_PROBE5(futex, , requeue__done, uaddr, uaddr2, nrwake,
+	    error == 0 ? td->td_retval[0] : 0, error);
 	return (error);
 }
 
@@ -807,16 +851,24 @@ linux_futex_op_wake(struct thread *td, struct linux_futex_args *args)
 	struct umtx_key key;
 	int error;
 
-	if (args->val3 == 0)
+	if (args->val3 == 0) {
+		LIN_SDT_PROBE4(futex, , wake__done, args->uaddr, args->val,
+		    EINVAL == 0 ? td->td_retval[0] : 0, EINVAL);
 		return (EINVAL);
+	}
 
 	error = futex_key_get(args->uaddr, TYPE_FUTEX, GET_SHARED(args), &key);
-	if (error != 0)
+	if (error != 0) {
+		LIN_SDT_PROBE4(futex, , wake__done, args->uaddr, args->val,
+		    error == 0 ? td->td_retval[0] : 0, error);
 		return (error);
+	}
 	umtxq_lock(&key);
 	td->td_retval[0] = umtxq_signal_mask(&key, args->val, args->val3);
 	umtxq_unlock(&key);
 	umtx_key_release(&key);
+	LIN_SDT_PROBE4(futex, , wake__done, args->uaddr, args->val,
+	    0 == 0 ? td->td_retval[0] : 0, 0);
 	return (0);
 }
 
@@ -828,14 +880,20 @@ linux_futex_op_wait(struct thread *td, struct linux_futex_args *args)
 	uint32_t uval;
 	int error;
 
-	if (args->val3 == 0)
+	LIN_SDT_PROBE3(futex, , wait__start, args->uaddr, args->val3,
+	    args->flags);
+	if (args->val3 == 0) {
+		LIN_SDT_PROBE2(futex, , wait__done, args->uaddr, EINVAL);
 		return (EINVAL);
+	}
 
 	uq = td->td_umtxq;
 	error = futex_key_get(args->uaddr, TYPE_FUTEX, GET_SHARED(args),
 	    &uq->uq_key);
-	if (error != 0)
+	if (error != 0) {
+		LIN_SDT_PROBE2(futex, , wait__done, args->uaddr, error);
 		return (error);
+	}
 	if (args->ts != NULL)
 		linux_umtx_abs_timeout_init(&timo, args);
 	umtxq_lock(&uq->uq_key);
@@ -872,6 +930,7 @@ linux_futex_op_wait(struct thread *td, struct linux_futex_args *args)
 	if (error == ERESTART && args->ts != NULL &&
 	    args->op == LINUX_FUTEX_WAIT)
 		error = EINTR;
+	LIN_SDT_PROBE2(futex, , wait__done, args->uaddr, error);
 	return (error);
 }
 
@@ -1270,6 +1329,8 @@ retry:
 			goto retry;
 		}
 
+		LIN_SDT_PROBE3(futex, , owner__death, uaddr, pi,
+		    (uval & FUTEX_WAITERS) != 0);
 		if (!pi && (uval & FUTEX_WAITERS)) {
 			error = futex_wake(td, uaddr, 1, true);
 			if (error != 0)
