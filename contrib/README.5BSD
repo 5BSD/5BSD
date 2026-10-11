@@ -52,6 +52,22 @@ Update procedure and detailed build policy: bin/zsh/README and
   bin/zsh/import-build.py. Recheck module choices and function licenses on
   each update; regenerate the native build inputs and run validation.
 
+HardenedBSD
+-----------
+Upstream project: HardenedBSD, https://hardenedbsd.org/
+Repository: https://rad.hardenedbsd.org/z2HLHXgL1xevBNQsf8BmQW7MpJmtm.git
+Revision: 377c16e8de65d1b5885c4aa26e404f37b90aa2ca (audited 2026-09-24)
+Source: no source import; contrib/hardenedbsd/ holds the credit record
+  (README.5BSD) and the HardenedBSD license (LICENSE, BSD-2-Clause, verbatim
+  from the HardenedBSD COPYRIGHT at the pinned revision).
+Adopted: defensive fixes in logger(1), qlnxe and mrsas (d74fc2b15d9), the
+  BIND_NOW default (1d2e8d6e3f2) and jail(8) zeroed allocations
+  (dd099d50037), copied or adapted into native files; contrib/hardenedbsd/
+  README.5BSD lists files and HardenedBSD commit IDs.
+License: BSD-2-Clause. The modified files keep their existing notices.
+Update procedure: record each further adopted change in
+  contrib/hardenedbsd/README.5BSD and cite HardenedBSD in the commit.
+
 Fuchsia FIDL and lowpan/OpenThread integration
 --------------------------------------------
 Source: contrib/fuchsia/

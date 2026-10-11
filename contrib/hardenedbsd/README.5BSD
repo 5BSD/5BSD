@@ -1,0 +1,62 @@
+HardenedBSD contributions in 5BSD
+=================================
+
+5BSD has adopted changes from HardenedBSD, https://hardenedbsd.org/.  We
+thank the HardenedBSD Project and Shawn Webb for this work.
+
+No HardenedBSD source tree is imported here.  The adopted changes were
+ported into the native 5BSD files listed below.  This directory records
+that credit and carries the HardenedBSD license (LICENSE, copied verbatim
+from the HardenedBSD section of the HardenedBSD COPYRIGHT file at the
+pinned revision).  The files they changed keep their existing copyright
+and license notices.
+
+Upstream
+--------
+Repository: https://rad.hardenedbsd.org/z2HLHXgL1xevBNQsf8BmQW7MpJmtm.git
+Pinned revision: 377c16e8de65d1b5885c4aa26e404f37b90aa2ca
+  (hardened/current/master at the 2026-09-24 audit; FreeBSD baseline
+  fc544d3b57f27f1422969fca0002cb2bff30ab17)
+License: LICENSE (BSD-2-Clause, Copyright (c) 2013-2026 The HardenedBSD
+  Project)
+
+Adopted changes
+---------------
+5BSD commit d74fc2b15d9 (2026-09-24), defensive fixes, adapted:
+  usr.bin/logger/logger.c
+    gethostname() failure and unterminated-buffer handling.
+    HardenedBSD 2c4078dd70af and the retained hostname hardening.
+  sys/dev/qlnx/qlnxe/qlnx_os.c
+    qlnx_zalloc(): return NULL instead of passing a failed allocation to
+    bzero().  HardenedBSD 4aefbf23f7bb.
+  sys/dev/mrsas/mrsas.c, sys/modules/mrsas/Makefile
+    mrsas_get_pd_list()/mrsas_get_ld_list(): release the reserved command
+    and return ENOMEM when the temporary DCMD allocation fails.
+    HardenedBSD ca99b1d7e369, 21e1924852dc; adapted (5BSD omits the
+    mrsas_free_tmp_dcmd(NULL) calls and zeroes locally, because 5BSD does
+    not enable HardenedBSD's blanket kernel allocation zeroing).
+  tools/test/hardenedbsd/
+    Fault-injection tests for the three fixes (5BSD-written).
+
+5BSD commit 1d2e8d6e3f2 (2026-09-24), build default:
+  share/mk/bsd.opts.mk, tools/build/options/WITHOUT_BIND_NOW,
+  share/man/man5/src.conf.5
+    BIND_NOW (full RELRO) enabled by default.  The mechanism already
+    existed in FreeBSD; the default follows HardenedBSD acfca02404c1 and
+    444d19dca3bd (Shawn Webb).
+
+5BSD commit dd099d50037 (2026-09-24), jail(8):
+  usr.sbin/jail/{config.c,jail.c,jailp.h,jailparse.y,state.c}
+    emalloc() uses calloc() and erealloc() uses recallocarray().
+    HardenedBSD ff27ee722b55c68f607b0d6b1113e9f9b9dfb9a4, "jail(8): Use
+    safer memory management APIs" (Shawn Webb).
+  usr.sbin/jail/tests/
+    Regression tests (5BSD-written).
+
+Adding to this record
+---------------------
+When another HardenedBSD change is adopted, add it above with the 5BSD
+commit, the files changed, the HardenedBSD commit IDs and whether it was
+copied, adapted, or reimplemented, and cite HardenedBSD in the commit
+message.  If HardenedBSD source files are ever imported verbatim, place
+them under this directory with their own notices.
