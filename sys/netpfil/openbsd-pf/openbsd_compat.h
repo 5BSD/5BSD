@@ -1341,4 +1341,16 @@ SDT_PROBE_DECLARE(pf, table, addr, update);
 #define	pfsyncif	VNET(pfsyncif_vnet)
 #define	pf_trans_set	VNET(pf_trans_set_vnet)
 
+#ifndef OPENBSD_PF_GLUE
+/*
+ * OpenBSD defines the INADDR_* addresses in network byte order inside the
+ * kernel (__IPADDR); 5BSD's are in host order.  The symmetric ones
+ * (INADDR_ANY, INADDR_BROADCAST) need no change.
+ */
+#undef	INADDR_PFSYNC_GROUP
+#define	INADDR_PFSYNC_GROUP	htonl(0xe00000f0)	/* 224.0.0.240 */
+#undef	INADDR_ALLHOSTS_GROUP
+#define	INADDR_ALLHOSTS_GROUP	htonl(0xe0000001)	/* 224.0.0.1 */
+#endif
+
 #endif /* _OPENBSD_PF_COMPAT_H_ */

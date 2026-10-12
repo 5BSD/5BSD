@@ -35,6 +35,12 @@ TEST_METADATA.ftpproxy_test+=	required_user="root" \
 ${PACKAGE}FILES+=	ftpd.py
 ${PACKAGE}FILESMODE_ftpd.py=	0555
 
+# pfsync(4) between two firewalls (vnet jails): sync and failover.
+ATF_TESTS_SH+=	pfsync_test
+TEST_METADATA.pfsync_test+=	required_user="root" \
+				required_programs="python3" \
+				is_exclusive="true"
+
 # 5BSD extension: the "jail" rule option.
 ATF_TESTS_SH+=	jail_test
 TEST_METADATA.jail_test+=	required_user="root" \

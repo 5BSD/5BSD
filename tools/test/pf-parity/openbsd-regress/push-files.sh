@@ -13,8 +13,11 @@ for a in "$@"; do
 		cat $O/$src | $S dut "cat > $dst.new && chmod 555 $dst.new && mv $dst.new $dst" ;;
 	esac
 done
+bt=$($S dut 'sysctl -n kern.boottime')
 $S dut 'shutdown -r now' >/dev/null 2>&1 || true
-sleep 40
-until $S -o ConnectTimeout=10 dut true 2>/dev/null; do sleep 10; done
+sleep 30
+# Wait for the new boot, not the old system shutting down.
+until nbt=$($S -o ConnectTimeout=10 dut 'sysctl -n kern.boottime' 2>/dev/null) &&
+    [ -n "$nbt" ] && [ "$nbt" != "$bt" ]; do sleep 10; done
 $S dut 'sh -s' < $(dirname $0)/setup-dut-5bsd.sh | tail -1
 $S dut 'uname -v; kldstat | grep pf.ko'

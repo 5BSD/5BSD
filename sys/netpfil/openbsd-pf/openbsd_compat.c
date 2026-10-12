@@ -841,11 +841,39 @@ obsd_ifhooks_run(struct ifnet *ifp, int kind)
 {
 	struct obsd_ifhook *h;
 
-	mtx_lock(&obsd_ifhook_mtx);
-	TAILQ_FOREACH(h, &obsd_ifhooks, h_entry)
-		if (h->h_ifp == ifp && h->h_kind == kind)
-			task_add(systq, h->h_task);
-	mtx_unlock(&obsd_ifhook_mtx);
+	struct task *run[16];
+	int i, n;
+
+	if (kind != OBSD_HOOK_DETACH) {
+		mtx_lock(&obsd_ifhook_mtx);
+		TAILQ_FOREACH(h, &obsd_ifhooks, h_entry)
+			if (h->h_ifp == ifp && h->h_kind == kind)
+				task_add(systq, h->h_task);
+		mtx_unlock(&obsd_ifhook_mtx);
+		return;
+	}
+
+	/*
+	 * OpenBSD runs detach hooks synchronously from if_detach() with the
+	 * net lock held: the interface must not go away under them, and they
+	 * (pfsync_syncif_detach()) drop and retake the net lock.  The hooks
+	 * may remove themselves, so collect them first.
+	 */
+	do {
+		n = 0;
+		mtx_lock(&obsd_ifhook_mtx);
+		TAILQ_FOREACH(h, &obsd_ifhooks, h_entry)
+			if (h->h_ifp == ifp && h->h_kind == kind &&
+			    n < (int)nitems(run))
+				run[n++] = h->h_task;
+		mtx_unlock(&obsd_ifhook_mtx);
+		for (i = 0; i < n; i++) {
+			obsd_hook_del(ifp, run[i], kind);
+			NET_LOCK();
+			run[i]->t_func(run[i]->t_arg);
+			NET_UNLOCK();
+		}
+	} while (n == (int)nitems(run));
 }
 
 void
