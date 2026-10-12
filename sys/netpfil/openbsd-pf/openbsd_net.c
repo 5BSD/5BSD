@@ -595,7 +595,9 @@ obsd_ip6_fragment(struct mbuf *m, struct mbuf_list *ml, int hlen,
 	int error;
 
 	ml_init(ml);
-	error = ip6_fragment(NULL, m, hlen, nextproto, mtu - hlen,
+	/* OpenBSD passes the MTU, 5BSD the payload of one fragment. */
+	error = ip6_fragment(NULL, m, hlen, nextproto,
+	    (mtu - hlen - sizeof(struct ip6_frag)) & ~7,
 	    htonl(ip6_randomid()));
 	if (error) {
 		m_freem(m);
