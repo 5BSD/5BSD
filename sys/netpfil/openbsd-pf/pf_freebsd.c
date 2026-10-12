@@ -62,6 +62,7 @@ void	obsd_if_clone_vnet_attach(void);
 void	obsd_if_clone_vnet_detach(void);
 void	obsd_sendq_drain(void);
 void	pf_divert_attach(void);
+void	pf_jail_attach(void);
 extern struct sx pfioctl_rw;
 extern struct pf_pool_limit pf_pool_limits[PF_LIMIT_MAX];
 PF_VNET_DECLARE(struct cpumem *, pf_status_fcounters);
@@ -78,6 +79,13 @@ PF_VNET_DECLARE(int, pfr_ktable_cnt);
  */
 VNET_DEFINE_STATIC(int, pf_fbsd_ready);
 #define	V_pf_fbsd_ready	VNET(pf_fbsd_ready)
+
+int	pf_fbsd_vnet_ready(void);
+int
+pf_fbsd_vnet_ready(void)
+{
+	return (V_pf_fbsd_ready);
+}
 
 /* ------------------------------------------------------------------ */
 /* mbuf and inpcb reference hooks                                      */
@@ -868,6 +876,7 @@ pf_fbsd_load(void)
 	pfsyncattach(1);
 	(void)ipproto_register(IPPROTO_PFSYNC, pf_fbsd_pfsync_input, NULL);
 	pf_divert_attach();
+	pf_jail_attach();
 
 	pf_mbuf_unlink_hook = pf_fbsd_mbuf_unlink;
 	pf_mbuf_link_hook = pf_fbsd_mbuf_link;

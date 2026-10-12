@@ -320,10 +320,19 @@ struct pf_rule_gid {
 	u_int8_t	 op;
 };
 
-/* 5BSD extension: match the jail of the local socket (jail <name|jid>). */
+/*
+ * 5BSD extension: match the jail of the local socket (jail <name|jid>).
+ * A rule that names its jail keeps the name; the kernel keeps jid[] in
+ * step with the jail of that name as jails come and go (PF_JAIL_NOJID
+ * while there is none).
+ */
+#define	PF_JAIL_NAME_SIZE	256	/* MAXHOSTNAMELEN */
+#define	PF_JAIL_NOJID		(-2)
 struct pf_rule_jail {
 	int32_t		 jid[2];
 	u_int8_t	 op;
+	u_int8_t	 byname;
+	char		 name[PF_JAIL_NAME_SIZE];
 };
 
 struct pf_rule_addr {
@@ -1832,6 +1841,8 @@ int	pf_match_port(u_int8_t, u_int16_t, u_int16_t, u_int16_t);
 int	pf_match_uid(u_int8_t, uid_t, uid_t, uid_t);
 int	pf_match_gid(u_int8_t, gid_t, gid_t, gid_t);
 int	pf_match_jail(struct pf_rule *, int32_t); /* 5BSD: jail */
+int	pf_jail_rule_copyin(struct pf_rule *);	/* 5BSD: jail */
+void	pf_jail_rule_copyout(struct pf_rule *);	/* 5BSD: jail */
 
 struct pf_state_scrub *
 	pf_state_scrub_get(void);

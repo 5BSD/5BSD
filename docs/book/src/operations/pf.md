@@ -101,13 +101,23 @@ pass out proto tcp jail 12
 Because the decision is taken from the socket, `jail` separates jails that
 share the host's addresses (`ip4=inherit`), which address rules cannot.
 Packets that are only forwarded have no local socket and never match a
-`jail` rule other than `jail != ...`. `pfctl` resolves names when the
-ruleset is loaded, as `user` does; the rule keeps the jail id, so removing
-the jail leaves a rule that no longer matches anything (and `pfctl -sr`
-prints the number), and loading a ruleset that names a missing jail fails.
-A name such as `outer.inner` addresses a nested jail; a rule for a jail does
-not match its child jails. The `pf:rule:jail:match` DTrace probe fires with
-the rule and the jail id each time the option matches.
+`jail` rule other than `jail != ...`.
+
+A rule that names a jail follows the name, not a particular jail id. The
+kernel keeps the jail's full name with the rule and re-resolves named rules
+in every vnet when a jail is created, renamed or removed, so `jail web0`
+applies to a `web0` created after the rule was loaded and again to a `web0`
+that is destroyed and created anew, without reloading the ruleset. While
+no jail has the name the rule matches no jail (and `jail != web0` matches
+every socket). Numeric jail ids are taken literally. `pfctl -sr` prints the
+name. A name such as `outer.inner` addresses a nested jail, relative to the
+jail `pfctl` runs in; a rule for a jail does not match its child jails.
+Re-resolution runs from a task shortly after the jail event, so a packet in
+that instant may still see the previous state.
+
+DTrace: `pf:rule:jail:match` fires with the rule and the jail id each time
+the option matches, and `pf:rule:jail:resolve` with the rule, the old and
+the new jail id each time a named rule is re-resolved (-2 means no jail).
 
 `jail` is not part of OpenBSD's pf.conf; rulesets that use it do not load
 on OpenBSD.

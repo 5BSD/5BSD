@@ -123,8 +123,8 @@ getrtable(void)
 /* SO_BINDANY is a native 5BSD socket option (sys/socket.h). */
 
 /* 5BSD pf rule option "jail" (pfctl_jail.c). */
-int	pfctl_jail_getid(const char *);
-void	pfctl_print_jail(u_int8_t, int, int);
+struct pf_rule_jail;
+void	pfctl_print_jail(const struct pf_rule_jail *);
 
 /* OpenBSD net/route.h routing table information (rdomains on FIBs). */
 struct rt_tableinfo {

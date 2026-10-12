@@ -591,13 +591,24 @@ This rule only applies to packets of sockets in the specified
 given by name or jail ID; 0 is the host.
 Like
 .Cm user ,
-it applies to TCP and UDP only, accepts lists, ranges and the operators
-of
-.Cm port ,
-and never matches packets that are only forwarded.
-Names are resolved when the ruleset is loaded; a nested jail is named
-.Ar parent . Ns Ar child
-and a rule for a jail does not match its children.
+it applies to TCP and UDP only, accepts lists and never matches packets
+that are only forwarded.
+Jail IDs also take ranges and the operators of
+.Cm port ;
+jail names take
+.Cm =
+and
+.Cm != .
+A rule that names a jail follows whichever jail has that name: it
+applies to a jail created after the rule was loaded and again to a jail
+that is removed and created anew, and while no jail has the name it
+matches no jail.
+A jail ID is taken literally.
+A nested jail is named
+.Ar parent . Ns Ar child ,
+relative to the jail
+.Xr pfctl 8
+runs in, and a rule for a jail does not match its children.
 Because the jail of the socket decides, this also separates jails that
 share the host's addresses.
 This option is a 5BSD extension.

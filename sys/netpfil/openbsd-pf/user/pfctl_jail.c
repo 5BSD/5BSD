@@ -3,48 +3,33 @@
  *
  * Copyright (c) 2026 The 5BSD Project
  *
- * pfctl(8) side of the 5BSD "jail" rule option: resolve jail names to
- * jail ids when a ruleset is parsed and print them back by name.
+ * pfctl(8) side of the 5BSD "jail" rule option: print the option.  A rule
+ * that names its jail prints the name (the kernel keeps the jail id in
+ * step with the jail of that name); a numeric jail id prints as is.
  */
 
 #include <sys/types.h>
-#include <sys/jail.h>
+#include <sys/socket.h>
+#include <net/if.h>
+#include <netinet/in.h>
+#include <net/pfvar.h>
 
-#include <jail.h>
 #include <stdio.h>
-#include <stdlib.h>
 
 void	print_op(u_int8_t, const char *, const char *);
-int	pfctl_jail_getid(const char *);
-void	pfctl_print_jail(u_int8_t, int, int);
-
-/* PF_OP_EQ / PF_OP_NE from net/pfvar.h, without its dependencies. */
-#define	PFJ_OP_EQ	2
-#define	PFJ_OP_NE	3
-
-int
-pfctl_jail_getid(const char *name)
-{
-	/* "0" names the host itself (prison0). */
-	if (name[0] == '0' && name[1] == '\0')
-		return (0);
-	return (jail_getid(name));
-}
+void	pfctl_print_jail(const struct pf_rule_jail *);
 
 void
-pfctl_print_jail(u_int8_t op, int j1, int j2)
+pfctl_print_jail(const struct pf_rule_jail *j)
 {
-	char a1[MAXHOSTNAMELEN], a2[16];
-	char *n = NULL;
+	char a1[16], a2[16];
 
-	if ((op == PFJ_OP_EQ || op == PFJ_OP_NE) && j1 > 0)
-		n = jail_getname(j1);
-	if (n != NULL)
-		snprintf(a1, sizeof(a1), "%s", n);
-	else
-		snprintf(a1, sizeof(a1), "%d", j1);
-	free(n);
-	snprintf(a2, sizeof(a2), "%d", j2);
 	printf(" jail");
-	print_op(op, a1, a2);
+	if (j->byname) {
+		print_op(j->op, j->name, j->name);
+		return;
+	}
+	snprintf(a1, sizeof(a1), "%d", j->jid[0]);
+	snprintf(a2, sizeof(a2), "%d", j->jid[1]);
+	print_op(j->op, a1, a2);
 }

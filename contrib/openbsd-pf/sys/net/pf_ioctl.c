@@ -856,9 +856,13 @@ pf_hash_rule(MD5_CTX *ctx, struct pf_rule *rule)
 	PF_MD5_UPD_HTONL(rule, gid.gid[0], y);
 	PF_MD5_UPD_HTONL(rule, gid.gid[1], y);
 	PF_MD5_UPD(rule, gid.op);
-	PF_MD5_UPD_HTONL(rule, jail.jid[0], y); /* 5BSD: jail */
-	PF_MD5_UPD_HTONL(rule, jail.jid[1], y); /* 5BSD: jail */
-	PF_MD5_UPD(rule, jail.op); /* 5BSD: jail */
+	if (rule->jail.byname)			/* 5BSD: jail; ids vary by host */
+		PF_MD5_UPD_STR(rule, jail.name);
+	else {
+		PF_MD5_UPD_HTONL(rule, jail.jid[0], y);
+		PF_MD5_UPD_HTONL(rule, jail.jid[1], y);
+	}
+	PF_MD5_UPD(rule, jail.op);		/* 5BSD: jail */
 	PF_MD5_UPD_HTONL(rule, rule_flag, y);
 	PF_MD5_UPD(rule, action);
 	PF_MD5_UPD(rule, direction);
@@ -2498,6 +2502,7 @@ pfioctl(dev_t dev, u_long cmd, caddr_t addr, int flags, struct proc *p)
 		}
 		memcpy(&pr->rule, rule, sizeof(struct pf_rule));
 		memset(&pr->rule.entries, 0, sizeof(pr->rule.entries));
+		pf_jail_rule_copyout(&pr->rule);		/* 5BSD: jail */
 		pr->rule.kif = NULL;
 		pr->rule.nat.kif = NULL;
 		pr->rule.rdr.kif = NULL;
@@ -4206,6 +4211,8 @@ pf_rule_copyin(struct pf_rule *from, struct pf_rule *to)
 	to->uid = from->uid;
 	to->gid = from->gid;
 	to->jail = from->jail; /* 5BSD: jail */
+	if (to->jail.byname && pf_jail_rule_copyin(to) != 0)	/* 5BSD: jail */
+		return (EINVAL);
 	to->rule_flag = from->rule_flag;
 	to->action = from->action;
 	to->direction = from->direction;

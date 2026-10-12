@@ -28,7 +28,7 @@ NO_WFORMAT=
 CWARNFLAGS+= -Wno-incompatible-pointer-types-discards-qualifiers
 YFLAGS=
 
-LIBADD=	jail m md
+LIBADD=	m md
 
 HAS_TESTS=
 SUBDIR.${MK_TESTS}+= tests

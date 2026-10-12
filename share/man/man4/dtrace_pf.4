@@ -32,6 +32,8 @@
 .Pp
 .Li pf:table:addr:match,update
 .br
+.Li pf:rule:jail:match,resolve
+.br
 .Li pf:syncookie:cookie:send,validate
 .Pp
 .Li pf:log:pflog:packet
@@ -159,6 +161,23 @@ An address is looked up in table
 .Pq Vt struct pfr_ktable .
 .It Li pf:table:addr:update
 Table statistics are updated for a packet.
+.It Li pf:rule:jail:match
+The 5BSD
+.Cm jail
+rule option of rule
+.Fa args[0]
+.Pq Vt struct pf_rule
+matched a socket of jail ID
+.Fa arg1 .
+.It Li pf:rule:jail:resolve
+Rule
+.Fa args[0]
+names a jail and was re-resolved after a jail was created, renamed or
+removed:
+.Fa arg1
+is the old jail ID and
+.Fa arg2
+the new one, -2 for no jail.
 .It Li pf:syncookie:cookie:send,validate
 A SYN cookie is sent or an ACK is validated against one.
 .It Li pf:log:pflog:packet
