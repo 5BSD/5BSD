@@ -65,6 +65,8 @@
 #include <unistd.h>
 #include <ifaddrs.h>
 
+#include "show.h"
+
 struct fibl {
 	TAILQ_ENTRY(fibl)	fl_next;
 
@@ -87,7 +89,8 @@ char * jail_name;
 #endif
 static struct sockaddr_storage so[RTAX_MAX];
 static int	pid, rtm_addrs;
-static int	nflag, af, aflen, qflag, tflag;
+int	nflag;
+static int	af, aflen, qflag, tflag;
 static int	locking, lockrest;
 static struct rt_metrics rt_metrics;
 static u_long  rtm_inits;
@@ -144,6 +147,7 @@ const char	*routename(struct sockaddr *);
 static int	rtmsg(int, int, int);
 static void	set_metric(char *, int);
 static int	set_sofib(int);
+static int	rdomain_exec(int, char **);
 static void	sockaddr(char *, struct sockaddr *, size_t);
 static void	sodump(struct sockaddr *, const char *);
 static int	fiboptlist_csv(const char *, struct fibl_head_t *);
@@ -166,7 +170,7 @@ usage(const char *cp)
 {
 	if (cp != NULL)
 		warnx("bad keyword: %s", cp);
-	errx(EX_USAGE, "usage: route [-j jail] [-46dnqtvo] command [[modifiers] args]");
+	errx(EX_USAGE, "usage: route [-j jail] [-46dnqtvo] [-T rtable] command [[modifiers] args]");
 	/* NOTREACHED */
 }
 
@@ -174,6 +178,9 @@ int
 main(int argc, char **argv)
 {
 	int ch;
+	int kw, Terr = 0, Tflag = 0;
+	u_int tableid = 0;
+	const char *errstr;
 #ifdef JAIL
 	int jid;
 #endif
@@ -182,7 +189,7 @@ main(int argc, char **argv)
 	if (argc < 2)
 		usage(NULL);
 
-	while ((ch = getopt(argc, argv, "46nqdtvoj:")) != -1)
+	while ((ch = getopt(argc, argv, "46nqdtvoj:T:")) != -1)
 		switch(ch) {
 		case '4':
 #ifdef INET
@@ -217,6 +224,13 @@ main(int argc, char **argv)
 			break;
 		case 'o':
 			nexthop = 1;
+			break;
+		case 'T':
+			/* 5BSD: OpenBSD routing table (rtable) selection */
+			tableid = strtonum(optarg, 0, RT_TABLEID_MAX, &errstr);
+			if (errstr != NULL)
+				errx(1, "invalid table id: %s", errstr);
+			Tflag = 1;
 			break;
 		case 'j':
 #ifdef JAIL
@@ -260,6 +274,35 @@ main(int argc, char **argv)
 	if (sysctlbyname("net.fibs", (void *)&numfibs, &len, NULL, 0) == -1)
 		numfibs = -1;
 
+	/*
+	 * 5BSD: -T rtable (OpenBSD) runs the command on routing table
+	 * (FIB) rtable.  "add" creates a missing table; "exec" runs a
+	 * program in it.
+	 */
+	kw = *argv != NULL ? keyword(*argv) : 0;
+	if (Tflag) {
+		if (numfibs != -1 && tableid >= (u_int)numfibs)
+			Terr = ENOENT;
+		if (Terr != 0 && kw == K_ADD) {
+			uint32_t nfibs = tableid + 1;
+
+			if (sysctlbyname("net.fibs", NULL, NULL, &nfibs,
+			    sizeof(nfibs)) == -1)
+				err(1, "routing table %u", tableid);
+			numfibs = nfibs;
+			Terr = 0;
+		}
+		if (Terr != 0) {
+			errno = Terr;
+			err(1, "routing table %u", tableid);
+		}
+		if (setfib(tableid) == -1)
+			err(1, "setfib");
+		if (kw == K_EXEC)
+			exit(rdomain_exec(argc - 1, argv + 1));
+	} else if (kw == K_EXEC)
+		exit(rdomain_exec(argc - 1, argv + 1));
+
 	len = sizeof(defaultfib);
 	if (numfibs != -1 &&
 	    sysctlbyname("net.my_fibnum", (void *)&defaultfib, &len, NULL,
@@ -268,8 +311,13 @@ main(int argc, char **argv)
 
 	if (*argv != NULL)
 		switch (keyword(*argv)) {
-		case K_GET:
 		case K_SHOW:
+			/* 5BSD: OpenBSD table dump unless a destination is given */
+			if (show(argc, argv, defaultfib != -1 ? defaultfib : 0)
+			    == 0)
+				exit(0);
+			/* FALLTHROUGH */
+		case K_GET:
 			uid = 0;
 			/* FALLTHROUGH */
 
@@ -291,6 +339,17 @@ main(int argc, char **argv)
 		}
 	usage(*argv);
 	/* NOTREACHED */
+}
+
+/* 5BSD: route -T rtable exec command (OpenBSD). */
+static int
+rdomain_exec(int argc, char **argv)
+{
+	if (argc < 1)
+		usage(NULL);
+	execvp(*argv, argv);
+	warn("%s", argv[0]);
+	return (errno == ENOENT ? 127 : 126);
 }
 
 static int
@@ -1272,7 +1331,52 @@ getaddr(int idx, char *str, int nrflags)
 			freeifaddrs(ifap);
 			if (sdl != NULL)
 				return(1);
-			else
+			/*
+			 * 5BSD: OpenBSD -iface takes the address of the
+			 * interface as gateway; the route is still an
+			 * interface route (no RTF_GATEWAY).
+			 */
+			else if (af == AF_INET || af == AF_INET6) {
+				char abuf[sizeof(struct in6_addr)];
+
+				const char *ifn = NULL;
+
+				if (inet_pton(af, str, abuf) != 1)
+					errx(EX_DATAERR,
+					    "interface '%s' does not exist", str);
+				if (getifaddrs(&ifap))
+					err(EX_OSERR, "getifaddrs");
+				for (ifa = ifap; ifa != NULL; ifa = ifa->ifa_next) {
+					if (ifa->ifa_addr == NULL ||
+					    ifa->ifa_addr->sa_family != af)
+						continue;
+					if (memcmp(af == AF_INET ?
+					    (void *)&((struct sockaddr_in *)
+					    (void *)ifa->ifa_addr)->sin_addr :
+					    (void *)&((struct sockaddr_in6 *)
+					    (void *)ifa->ifa_addr)->sin6_addr, abuf,
+					    af == AF_INET ? 4 : 16) == 0) {
+						ifn = ifa->ifa_name;
+						break;
+					}
+				}
+				for (ifa = ifap; ifn != NULL && ifa != NULL;
+				    ifa = ifa->ifa_next) {
+					if (ifa->ifa_addr != NULL &&
+					    ifa->ifa_addr->sa_family == AF_LINK &&
+					    strcmp(ifn, ifa->ifa_name) == 0) {
+						sdl = (struct sockaddr_dl *)
+						    (void *)ifa->ifa_addr;
+						memcpy(sdl0, sdl, sdl->sdl_len);
+						break;
+					}
+				}
+				freeifaddrs(ifap);
+				if (sdl == NULL)
+					errx(EX_DATAERR,
+					    "no interface has address '%s'", str);
+				return (1);
+			} else
 				errx(EX_DATAERR,
 				    "interface '%s' does not exist", str);
 		}
