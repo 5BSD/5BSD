@@ -264,4 +264,4 @@ says what changed where the divergence inventory records it.
 | sglist(9), syscall_helper_register(9) | `sglist_append_*_boundary`; `SYF_CAPREQUIRED` |
 | fstat(1), procstat(1), sockstat(1), libprocstat(3) | the new descriptor types, `AF_VSOCK`, `sockstat -V`, OFD locks |
 | audit_submit(3) | `A_GETKAUDIT` tolerance of `ECAPMODE` |
-| loader.efi(8), efibootmgr(8), menu.4th(8), splash(4), nuageinit(7) | 5BSD branding and boot paths |
+| loader.efi(8), efibootmgr(8), menu.4th(8), nuageinit(7) | 5BSD branding and boot paths |

@@ -74,7 +74,8 @@ When the census turns up a failing call, look it up in section 5 of `docs/linuxu
 ## Starnix batch validation update (2026-10-10)
 
 The earlier pending VM notes for this batch are superseded by the accepted
-pre-Binder audit in [the Starnix inventory](../../../../starnix-linuxulator-inventory.md).
+pre-Binder audit in the Starnix inventory, `docs/starnix-linuxulator-inventory.md`
+in the source tree.
 The amd64 Linux64 broad gate passed 1,191 result rows, including the expanded
 unshare cases; the focused ATF gate passed 98/98 executions. Subsequent procfs
 snapshot and uinput gates passed 16/16 and 12/12 respectively. Native FUSE Kyua
