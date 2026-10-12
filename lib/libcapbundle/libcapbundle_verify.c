@@ -14,6 +14,8 @@
 #include <err.h>
 #include <errno.h>
 #include <fts.h>
+#include <fcntl.h>
+#include <unistd.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -57,10 +59,16 @@ verify_tree_shape(const char *path, char *errbuf, size_t errlen)
 			return (-1);
 		}
 		if (ent->fts_info != FTS_D && ent->fts_info != FTS_F) {
-			if (errbuf != NULL)
-				snprintf(errbuf, errlen,
-				    "%s: symlink or non-regular object is not allowed",
-				    ent->fts_path);
+			if (errbuf != NULL) {
+				if (ent->fts_info == FTS_ERR || ent->fts_info == FTS_NS ||
+				    ent->fts_info == FTS_DNR)
+					snprintf(errbuf, errlen, "%s: traversal failed: %s",
+					    ent->fts_path, strerror(ent->fts_errno));
+				else
+					snprintf(errbuf, errlen,
+					    "%s: symlink or non-regular object is not allowed (fts_info=%d)",
+					    ent->fts_path, ent->fts_info);
+			}
 			(void)fts_close(fts);
 			return (-1);
 		}
@@ -129,6 +137,16 @@ capbundle_verify(const struct capbundle *b, char *errbuf, size_t errlen)
 				    "%s: not executable: %s",
 				    b->name, s->program);
 			return (-1);
+		}
+
+		if (s->signed_image) {
+			int fd = open(s->program, O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_VERIFY);
+			if (fd < 0)
+				return (-1);
+			int verified = capbundle_svc_verify_image(s, fd, b->verification_key, errbuf, errlen);
+			close(fd);
+			if (verified < 0)
+				return (-1);
 		}
 
 		/*

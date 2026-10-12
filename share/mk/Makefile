@@ -49,6 +49,8 @@ FILES=	\
 	bsd.port.pre.mk \
 	bsd.port.subdir.mk \
 	bsd.prog.mk \
+	bsd.capimage.mk \
+	capimage.awk \
 	bsd.progs.mk \
 	bsd.snmpmod.mk \
 	bsd.subdir.mk \

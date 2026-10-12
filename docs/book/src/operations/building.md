@@ -23,7 +23,7 @@ also needs a ports checkout containing at least `ports-mgmt/pkg`; a sparse
 clone is enough:
 
 ```sh
-git clone --depth 1 --sparse https://git.FreeBSD.org/ports.git /usr/ports
+git clone --depth 1 --sparse https://github.com/5BSD/5BSD-ports.git /usr/ports
 cd /usr/ports && git sparse-checkout set ports-mgmt/pkg Mk Templates Keywords
 ```
 

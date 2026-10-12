@@ -33,6 +33,8 @@ CONTROL_POLICYPACKAGE= ${PACKAGE}
 CONTROL_POLICYMODE= 0444
 SYMLINKS+= ${BINDIR}/${PROG} /usr/sbin/${PROG}
 
+CAPIMAGE_MANIFEST= ${CONTROL_POLICY}
+
 .include <bsd.prog.mk>
 
 _proginstall: installdirs-CONTROL_BIN

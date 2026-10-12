@@ -669,6 +669,8 @@ typedef int	(*mpo_vnode_check_lookup_t)(struct ucred *cred,
 typedef int	(*mpo_vnode_check_mmap_t)(struct ucred *cred,
 		    struct vnode *vp, struct label *label, int prot,
 		    int flags, int maxprot);
+typedef int	(*mpo_vnode_check_mmap_image_t)(struct ucred *, struct vnode *,
+		    struct label *, bool *pin);
 typedef void	(*mpo_vnode_check_mmap_downgrade_t)(struct ucred *cred,
 		    struct vnode *vp, struct label *vplabel, int *prot);
 typedef int	(*mpo_vnode_check_mprotect_t)(struct ucred *cred,
@@ -1276,6 +1278,9 @@ struct mac_policy_ops {
 	mpo_zfs_check_key_load_t		mpo_zfs_check_key_load;
 	mpo_zfs_check_key_unload_t		mpo_zfs_check_key_unload;
 	mpo_zfs_check_key_change_t		mpo_zfs_check_key_change;
+	/* A successful policy may request an immutable mapping lifetime.
+	 * Policies may set *pin true, but must never clear another request. */
+	mpo_vnode_check_mmap_image_t		mpo_vnode_check_mmap_image;
 };
 
 /*
@@ -1325,7 +1330,8 @@ struct mac_policy_conf {
  *   8                       16.x (vsock provider ownership hooks)
  *   9                       16.x (vnode_execve_relabel hooks)
  */
-#define	MAC_VERSION	10
+/* Version 11 adds vnode_check_mmap_image lifetime requests. */
+#define	MAC_VERSION	11
 
 #define	MAC_POLICY_SET(mpops, mpname, mpfullname, mpflags, privdata_wanted) \
 	static struct mac_policy_conf mpname##_mac_policy_conf = {	\

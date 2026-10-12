@@ -9,12 +9,18 @@
 #ifndef SWITCHBOARDCTL_H
 #define	SWITCHBOARDCTL_H
 
+#include <stdbool.h>
+#include <stddef.h>
+struct capbundle;
+int cmd_install_personal(const char *);
+int personal_bundle_verify(struct capbundle *, char *, size_t);
+
 /* install.c and deps.c */
 int	cmd_install(const char *bundle_path);
 int	cmd_deps(const char *program);
 
 /* verify.c */
-int	cmd_verify(int argc, char *argv[]);
+int	cmd_verify(int argc, char *argv[], bool personal);
 int	cmd_bundles(void);
 
 /* graph.c */

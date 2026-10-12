@@ -723,6 +723,12 @@ mac_vnode_check_lookup(struct ucred *cred, struct vnode *dvp,
 	return (0);
 }
 
+/* Returns an owned mapping reference, or NULL when no policy requests a pin.
+ * Caller drops it after insertion/failure; a successful mapping retains it. */
+extern bool mac_vnode_check_mmap_image_fp_flag;
+int	mac_vnode_prepare_mmap(struct thread *, struct file *, int,
+	    struct file **);
+
 int	mac_vnode_check_mmap_impl(struct ucred *cred, struct vnode *vp, int prot,
 	    int flags, int maxprot);
 #ifdef MAC

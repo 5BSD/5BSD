@@ -32,6 +32,7 @@
 #include <unistd.h>
 
 #include "switchboard.h"
+#include "scope_target.h"
 #include "authority.h"
 #include "switchboard_audit.h"
 #include "switchboard_ctl.h"
@@ -134,8 +135,12 @@ sctl_cmd_status(struct sctl_reply *reply, char *summary, size_t sumlen)
 			else
 				state = "unknown";
 
-			BUF_APPEND(summary, sumlen, &off,
-			    "  %-20s %-8s", svc->manifest.label, state);
+			if (svc->owner_uid != (uid_t)-1)
+				BUF_APPEND(summary, sumlen, &off, "  user:%ju:%s %-8s",
+				    (uintmax_t)svc->owner_uid, svc->manifest.label, state);
+			else
+				BUF_APPEND(summary, sumlen, &off,
+				    "  %-20s %-8s", svc->manifest.label, state);
 
 			if (svc->state == SVC_STATE_RUNNING ||
 			    svc->state == SVC_STATE_STARTING) {
@@ -324,6 +329,22 @@ sctl_cmd_tree(struct sctl_reply *reply, char *summary, size_t sumlen)
  * bypass. Owners may manage their USER units, and CORE remains protected.
  * Fills reply status, summary length and summary text.
  */
+static struct svc_runtime *
+sctl_target(const char *payload, uid_t caller, bool is_admin)
+{
+	const char *label;
+	uid_t owner;
+	struct svc_runtime *svc;
+	if (strncmp(payload, "user:", 5) == 0) {
+		if (!sb_control_personal_target(payload, caller, is_admin, &owner, &label))
+			return (NULL);
+		return (svc_by_label_scoped(label, owner));
+	}
+	svc = svc_by_label(payload);
+	return (svc != NULL || caller == (uid_t)-1 ? svc :
+	    svc_by_label_scoped(payload, caller));
+}
+
 static void
 sctl_execute_op(uint32_t op, const char *payload, uint32_t datalen,
     bool is_admin, uid_t audit_uid, struct sctl_reply *reply,
@@ -374,6 +395,25 @@ sctl_execute_op(uint32_t op, const char *payload, uint32_t datalen,
 			    "reload: %s", summary);
 		}
 		break;
+	case SCTL_OP_CACHE_STATUS: {
+		struct svc_runtime *svc;
+
+		if (datalen == 0) {
+			reply->status = EINVAL;
+		} else if ((svc = sctl_target(payload, audit_uid, is_admin)) == NULL) {
+			reply->status = ENOENT;
+		} else if (svc->pid <= 0 || (svc->state != SVC_STATE_RUNNING &&
+		    svc->state != SVC_STATE_STARTING)) {
+			reply->status = ESRCH;
+		} else {
+			reply->status = svc_library_cache_status(svc->pid, summary,
+			    summary_cap);
+		}
+		if (reply->status != 0)
+			snprintf(summary, summary_cap, "cache-status: %s",
+			    strerror(reply->status));
+		break;
+	}
 	case SCTL_OP_START_SVC:
 		if (datalen == 0) {
 			reply->status = EINVAL;
@@ -383,7 +423,7 @@ sctl_execute_op(uint32_t op, const char *payload, uint32_t datalen,
 			struct svc_runtime *svc;
 			int error;
 
-			svc = svc_by_label(payload);
+			svc = sctl_target(payload, audit_uid, is_admin);
 			if (svc == NULL) {
 				reply->status = ENOENT;
 				snprintf(summary, summary_cap,
@@ -440,16 +480,8 @@ sctl_execute_op(uint32_t op, const char *payload, uint32_t datalen,
 			    "stop: missing service label");
 		} else {
 			struct svc_runtime *svc;
-			unsigned si;
 
-			svc = NULL;
-			for (si = 0; si < sd.nservices; si++) {
-				if (strcmp(sd.services[si].manifest.label,
-				    payload) == 0) {
-					svc = &sd.services[si];
-					break;
-				}
-			}
+			svc = sctl_target(payload, audit_uid, is_admin);
 			if (svc == NULL) {
 				reply->status = ENOENT;
 				snprintf(summary, summary_cap,
@@ -592,6 +624,7 @@ sctl_cap_request(struct channel *ch __unused, struct channel_message *request,
 			case SCTL_OP_STATUS:
 			case SCTL_OP_SERVICES:
 			case SCTL_OP_TREE:
+			case SCTL_OP_CACHE_STATUS:
 			case SCTL_OP_RELOAD:
 			case SCTL_OP_START_SVC:
 			case SCTL_OP_STOP_SVC:

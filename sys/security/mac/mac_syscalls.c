@@ -48,6 +48,7 @@
 #include <sys/param.h>
 #include <sys/abi_compat.h>
 #include <sys/capsicum.h>
+#include <security/mac_veriexec/mac_veriexec.h>
 #include <sys/fcntl.h>
 #include <sys/jail.h>
 #include <sys/jaildesc.h>
@@ -829,6 +830,13 @@ sys_mac_syscall(struct thread *td, struct mac_syscall_args *uap)
 	if (error)
 		return (error);
 
+	/* Capability mode exposes only read-only verification of a descriptor
+	 * already held by the caller.  Keep every namespace and policy-control
+	 * operation unavailable; the verifier additionally requires CAP_READ. */
+	if (IN_CAPABILITY_MODE(td) &&
+	    (strcmp(target, MAC_VERIEXEC_NAME) != 0 ||
+	    uap->call != MAC_VERIEXEC_CHECK_CAPIMAGE_FD_SYSCALL))
+		return (ECAPMODE);
 
 	error = ENOSYS;
 	LIST_FOREACH(mpc, &mac_static_policy_list, mpc_list) {

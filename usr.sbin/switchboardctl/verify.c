@@ -123,7 +123,7 @@ print_bundle(const struct capbundle *b)
 }
 
 int
-cmd_verify(int argc, char *argv[])
+cmd_verify(int argc, char *argv[], bool personal)
 {
 	struct capbundle **bundles;
 	char errbuf[512];
@@ -137,13 +137,16 @@ cmd_verify(int argc, char *argv[])
 	opened = 0;
 	result = 1;
 	for (i = 0; i < argc; i++) {
-		if (capbundle_open(argv[i], &bundles[i], errbuf,
-		    sizeof(errbuf)) == -1) {
+		if ((personal ? capbundle_open_personal(argv[i], &bundles[i],
+		    errbuf, sizeof(errbuf)) : capbundle_open(argv[i], &bundles[i],
+		    errbuf, sizeof(errbuf))) == -1) {
 			warnx("verify: %s", errbuf);
 			goto out;
 		}
 		opened++;
-		if (capbundle_verify(bundles[i], errbuf, sizeof(errbuf)) == -1) {
+		if ((personal ? personal_bundle_verify(bundles[i], errbuf,
+		    sizeof(errbuf)) : capbundle_verify(bundles[i], errbuf,
+		    sizeof(errbuf))) == -1) {
 			warnx("verify: FAILED — %s", errbuf);
 			goto out;
 		}
@@ -156,6 +159,7 @@ cmd_verify(int argc, char *argv[])
 			}
 		}
 	}
+	printf("Verification scope: %s\n", personal ? "personal (integrity only; no platform trust)" : "global (system trust policy)");
 	printf("Effective configuration:\n\n");
 	for (i = 0; i < argc; i++)
 		print_bundle(bundles[i]);

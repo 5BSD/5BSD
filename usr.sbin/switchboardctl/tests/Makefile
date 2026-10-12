@@ -15,6 +15,7 @@ TESTSDIR=	${TESTSBASE}/usr.sbin/switchboardctl
 .PATH: ${SRCTOP}/usr.sbin/switchboardctl
 
 ATF_TESTS_SH+=	switchboardctl_test
+ATF_TESTS_SH+= personal_install_test
 ATF_TESTS_SH+=	graph_test
 
 PROGS+=		capd_test_guardian
@@ -23,7 +24,7 @@ PROGS+=		switchboardctl_test_bin
 PROGS+=		switchboardctl_success_bin
 BINDIR=		${TESTSDIR}
 
-SRCS.switchboardctl_test_bin=	switchboardctl.c deps.c install.c verify.c graph.c
+SRCS.switchboardctl_test_bin=	switchboardctl.c deps.c install.c personal.c verify.c graph.c
 NO_SHARED.switchboardctl_test_bin=	yes
 CFLAGS.switchboardctl_test_bin+=	-I${SRCTOP}/lib/libcapbundle
 CFLAGS.switchboardctl_test_bin+=	-I${SRCTOP}/lib/libcapsulert
@@ -32,7 +33,7 @@ CFLAGS.switchboardctl_test_bin+=	-I${SRCTOP}/contrib/libucl/include
 LIBADD.switchboardctl_test_bin+=	capbundle service ucl elf md
 
 SRCS.switchboardctl_success_bin=	switchboardctl_success_impl.c \
-	deps_success_impl.c install_success_impl.c verify_success_impl.c \
+	deps_success_impl.c install_success_impl.c personal.c verify_success_impl.c \
 	graph.c fake_service.c
 NO_SHARED.switchboardctl_success_bin=	yes
 CFLAGS.switchboardctl_success_bin+=	-I${SRCTOP}/lib/libcapbundle

@@ -45,6 +45,7 @@ while true; do
 		"System Hardening" "Set security options" \
 		"Time Zone" "Set system timezone" \
 		"Firmware" "Install hardware packages from media or a 5BSD repository" \
+		"Ports" "Fetch the 5BSD ports source tree (requires git and network)" \
 		"Handbook" "Install $OSNAME Handbook (requires network)" 2>&1 1>&5)
 	retval=$?
 	exec 5>&-
@@ -80,6 +81,9 @@ while true; do
 		;;
 	"Firmware")
 		bsdinstall firmware
+		;;
+	"Ports")
+		bsdinstall ports
 		;;
 	"Handbook")
 		bsdinstall docsinstall

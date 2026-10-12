@@ -1,0 +1,23 @@
+#!/bin/sh
+# SPDX-License-Identifier: BSD-2-Clause
+# Optional source checkout for the installed system; never a pkg catalogue URL.
+set -eu
+: "${BSDINSTALL_CHROOT:?set BSDINSTALL_CHROOT to the installation root}"
+: "${BSDINSTALL_PORTS_REPOSITORY:=https://github.com/5BSD/5BSD-ports.git}"
+: "${BSDINSTALL_PORTS_BRANCH:=main}"
+[ "$#" = 0 ] || { echo 'usage: bsdinstall ports' >&2; exit 64; }
+[ -d "$BSDINSTALL_CHROOT" ] && [ ! -L "$BSDINSTALL_CHROOT" ] || { echo 'invalid installation root' >&2; exit 1; }
+root=$(cd "$BSDINSTALL_CHROOT" && pwd -P)
+[ "$root" != / ] || { echo 'ports checkout requires an alternate installation root' >&2; exit 1; }
+for part in usr usr/ports; do
+    [ ! -L "$root/$part" ] || { echo "symlinked installation path: $part" >&2; exit 1; }
+    [ ! -e "$root/$part" ] || [ -d "$root/$part" ] || { echo "invalid installation path: $part" >&2; exit 1; }
+done
+if [ -d "$root/usr/ports" ] && [ -n "$(ls -A "$root/usr/ports")" ]; then
+    echo 'ports destination is not empty; existing checkout left unchanged' >&2
+    exit 1
+fi
+command -v git >/dev/null 2>&1 || { echo 'ports checkout requires git on the installer host' >&2; exit 1; }
+mkdir -p "$root/usr"
+git clone --depth 1 --single-branch --branch "$BSDINSTALL_PORTS_BRANCH" -- "$BSDINSTALL_PORTS_REPOSITORY" "$root/usr/ports"
+printf 'Installed ports sources from %s (%s)\n' "$BSDINSTALL_PORTS_REPOSITORY" "$BSDINSTALL_PORTS_BRANCH"

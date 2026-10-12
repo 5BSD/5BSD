@@ -1,0 +1,46 @@
+# SPDX-License-Identifier: BSD-2-Clause
+# Internal BSD make adapter, interface version 1. Sourced only by build-bsd.
+# Orchestration supplies validated settings; this adapter owns make arguments.
+bsd_make_preflight()
+{
+    if [ "$action" != packages ]; then
+        [ -z "$hardware_profile$distfiles" ] || fail 'hardware profile and distfiles apply only to build or packages'
+        return
+    fi
+    if [ "$action" = packages ]; then
+        [ "$cross" = no ] || fail 'native hardware backend cannot publish a foreign target; use stage for cross compilation and a target-native builder for complete publication'
+        hardware_profile=${hardware_profile:-/usr/src/release/tools/hardware-ports.$target_arch}
+        [ -f "$hardware_profile" ] && [ -r "$hardware_profile" ] || fail 'native hardware backend requires a readable hardware profile for this target'
+        hardware_profile=$(realpath "$hardware_profile")
+        [ -f "$ports/Mk/bsd.port.mk" ] || fail 'ports checkout is missing Mk/bsd.port.mk'
+        ports=$(realpath "$ports")
+        distfiles=${distfiles:-$ports/distfiles}
+        case "$distfiles" in /*) ;; *) fail 'distfiles directory must be absolute';; esac
+        distfiles=$(future_directory "$distfiles")
+    fi
+}
+bsd_make_build()
+{
+    target=$1
+    shift
+    if [ -n "$kernel_dir" ]; then set -- "$@" KERNCONFDIR="$kernel_dir"; fi
+    [ "$build_profile" != debug ] || set -- "$@" DEBUG_FLAGS=-g
+    [ "$allow_debug_publication" != yes ] || set -- "$@" ALLOW_DEBUG_MALLOC=yes
+    if [ "$production" = yes ]; then
+        set -- "$@" WITH_MALLOC_PRODUCTION=yes
+    else
+        set -- "$@" WITHOUT_MALLOC_PRODUCTION=yes
+    fi
+    run_step "$target" make -C /usr/src -j "$jobs" MAKEOBJDIRPREFIX=/usr/obj TARGET="$target_machine" TARGET_ARCH="$target_arch" KERNCONF="$kernel" SRCCONF="$src_conf" __MAKE_CONF="$make_conf" "$@" "$target"
+}
+
+bsd_make_media()
+{
+    if [ -n "$kernel_dir" ]; then set -- "$@" KERNCONFDIR="$kernel_dir"; fi
+    run_step media make -C /usr/src/release -j "$jobs" MAKEOBJDIRPREFIX=/usr/obj \
+        RELEASE_OBJDIR="$stage" TARGET="$target_machine" TARGET_ARCH="$target_arch" \
+        KERNCONF="$kernel" SRCCONF="$src_conf" __MAKE_CONF="$make_conf" \
+        PORTSDIR="$ports" HARDWARE_PYTHON=/usr/local/bin/python3.12 \
+        PKGBASE_SIGNED_REPOSITORY="$repository" PKGBASE_REPO_PUBLIC_KEY="$pkg_public_key" \
+        PKGBASE_CODE_PUBLIC_KEY="$public_key" NOPKGBASE= NODISTSETS=yes NOPKG=yes "$@"
+}

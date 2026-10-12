@@ -95,7 +95,7 @@ svc_by_label(const char *label)
 int
 svc_lifecycle_client(struct svc_runtime *svc __unused,
     struct svc_runtime *provider __unused,
-    struct svc_new_client_msg *msg __unused)
+    struct svc_new_client_msg *msg __unused, uid_t sender_uid __unused)
 {
 	return (0);
 }
@@ -171,6 +171,7 @@ cancel_idle_timer(struct svc_runtime *svc, int kq)
  */
 static struct svc_new_client_msg last_grant;
 static unsigned grant_count;
+static struct svc_runtime *last_grant_provider;
 
 int
 svc_channel_send_event(struct svc_runtime *svc, const void *data, size_t length,
@@ -182,6 +183,7 @@ svc_channel_send_event(struct svc_runtime *svc, const void *data, size_t length,
 	(void)nfds;
 	(void)kq;
 	if (length == sizeof(last_grant)) {
+		last_grant_provider = svc;
 		memcpy(&last_grant, data, sizeof(last_grant));
 		grant_count++;
 	}
@@ -457,6 +459,7 @@ provider_register(struct svc_runtime *svc, const char *label,
 {
 
 	memset(svc, 0, sizeof(*svc));
+	svc->owner_uid = (uid_t)-1;
 	strlcpy(svc->manifest.label, label, sizeof(svc->manifest.label));
 	strlcpy(svc->manifest.provides[0], name,
 	    sizeof(svc->manifest.provides[0]));
@@ -478,6 +481,7 @@ unit_init(struct svc_runtime *unit, const char *label,
 	unsigned i;
 
 	memset(unit, 0, sizeof(*unit));
+	unit->owner_uid = (uid_t)-1;
 	strlcpy(unit->manifest.label, label, sizeof(unit->manifest.label));
 	for (i = 0; i < n; i++)
 		strlcpy(unit->manifest.anointments[i], anointments[i],
@@ -2585,6 +2589,7 @@ ATF_TC_BODY(lookup_helper_names_pure, tc)
 	 * non-holder is refused and audited, the holder connects.
 	 */
 	memset(&provider, 0, sizeof(provider));
+	provider.owner_uid = (uid_t)-1;
 	strlcpy(provider.manifest.label, "org.example.h/h",
 	    sizeof(provider.manifest.label));
 	strlcpy(provider.manifest.provides[0], "helper.org.example.Priv",
@@ -2868,9 +2873,37 @@ ATF_TC_BODY(one_refusal_one_record_on_demand_path, tc)
 	naming_remove_owner(&provider);
 }
 
+ATF_TC_WITHOUT_HEAD(personal_namespace_uses_sender);
+ATF_TC_BODY(personal_namespace_uses_sender, tc)
+{
+ struct svc_runtime *a = calloc(1, sizeof(*a)), *b = calloc(1, sizeof(*b));
+ struct svc_domain domain = { .kind = SVC_DOMAIN_SYSTEM, .uid = 1002 };
+ struct channel_sender sender = { .uid = 1001 };
+ int error, fd;
+ ATF_REQUIRE(a != NULL && b != NULL);
+ provider_register(a, "Same/demo", "org.test.personal", NULL, 0);
+ naming_remove_owner(a);a->owner_uid=1001;
+ ATF_REQUIRE_EQ(0, naming_register("org.test.personal", a, true));
+ *b=*a;b->owner_uid=1002;
+ ATF_REQUIRE_EQ(0, naming_register("org.test.personal", b, true));
+ /* Legacy domain.uid says the other owner; only the kernel stamp selects. */
+ fd=naming_lookup("org.test.personal",NULL,&domain,&sender,&error,NULL);
+ ATF_REQUIRE(fd>=0);close(fd);ATF_CHECK(last_grant_provider==a);
+ sender.uid=1002;domain.uid=1001;
+ fd=naming_lookup("org.test.personal",NULL,&domain,&sender,&error,NULL);
+ ATF_REQUIRE(fd>=0);close(fd);ATF_CHECK(last_grant_provider==b);
+ sender.uid=1003;
+ ATF_CHECK_EQ(-1,naming_lookup("org.test.personal",NULL,&domain,&sender,&error,NULL));
+ sender.uid=0;
+ ATF_CHECK_EQ(-1,naming_lookup("org.test.personal",NULL,&domain,&sender,&error,NULL));
+ ATF_CHECK_EQ(-1,naming_lookup("org.test.personal",NULL,&domain,NULL,&error,NULL));
+ naming_remove_owner(a);naming_remove_owner(b);free(a);free(b);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
+	ATF_TP_ADD_TC(tp, personal_namespace_uses_sender);
 	ATF_TP_ADD_TC(tp, covers_table);
 	ATF_TP_ADD_TC(tp, set_from_manifest);
 	ATF_TP_ADD_TC(tp, endpoint_requires_from_registry);
@@ -2909,4 +2942,24 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, lookup_helper_names_over_minted_channel);
 	ATF_TP_ADD_TC(tp, one_refusal_one_record_on_demand_path);
 	return (atf_no_error());
+}
+
+/* These legacy fixtures model global providers only. */
+int
+bundle_registry_lookup_scoped(const char *name, uid_t owner,
+    unsigned *bi, unsigned *si)
+{
+ return owner == (uid_t)-1 ? bundle_registry_lookup(name, bi, si) : -1;
+}
+int
+bundle_registry_lookup_for_uid(const char *name, uid_t owner,
+    unsigned *bi, unsigned *si)
+{
+ (void)owner; return bundle_registry_lookup(name, bi, si);
+}
+struct svc_runtime *
+svc_by_label_scoped(const char *name, uid_t owner)
+{
+ struct svc_runtime *svc=svc_by_label(name);
+ return svc != NULL && svc->owner_uid == owner ? svc : NULL;
 }

@@ -47,6 +47,7 @@
 #include <errno.h>
 #include <stdarg.h>
 #include <stddef.h>
+#include <stdint.h>
 #include <string.h>
 #include <unistd.h>
 #ifdef IN_RTLD
@@ -79,7 +80,7 @@ union	overhead {
 };
 
 static void morecore(int bucket);
-static int morepages(int n);
+static int morepages(size_t n);
 
 #define	MAGIC		0xef		/* magic # on accounting info */
 #define	AMAGIC		0xdf		/* magic # for aligned alloc */
@@ -90,11 +91,11 @@ static int morepages(int n);
  * area returned to the user.
  */
 #define	LOW_BITS		3
-#define	FIRST_BUCKET_SIZE	(1U << LOW_BITS)
+#define	FIRST_BUCKET_SIZE	((size_t)1 << LOW_BITS)
 #define	NBUCKETS 30
 static	union overhead *nextf[NBUCKETS];
 
-static	int pagesz;			/* page size */
+static	size_t pagesz;			/* page size */
 
 /*
  * The array of supported page sizes is provided by the user, i.e., the
@@ -196,9 +197,9 @@ static void
 morecore(int bucket)
 {
 	union overhead *op;
-	int sz;		/* size of desired block */
-  	int amt;			/* amount to allocate */
-  	int nblks;			/* how many blocks we get */
+	size_t sz;		/* size of desired block */
+	size_t amt;			/* amount to allocate */
+	size_t nblks;		/* how many blocks we get */
 
 	sz = FIRST_BUCKET_SIZE << bucket;
 	if (sz < pagesz) {
@@ -208,7 +209,8 @@ morecore(int bucket)
 		amt = sz;
 		nblks = 1;
 	}
-	if (amt > pagepool_end - pagepool_start)
+	if (pagepool_start == NULL ||
+	    amt > (size_t)(pagepool_end - pagepool_start))
 		if (morepages(amt / pagesz + NPOOLPAGES) == 0 &&
 		    /* Retry with min required size */
 		    morepages(amt / pagesz) == 0)
@@ -250,8 +252,8 @@ __crt_free(void *cp)
 void *
 __crt_realloc(void *cp, size_t nbytes)
 {
-	u_int onb;
-	int i;
+	size_t onb, lower;
+	unsigned int i;
 	union overhead *op;
   	char *res;
 
@@ -261,20 +263,13 @@ __crt_realloc(void *cp, size_t nbytes)
 	if (op->ov_magic != MAGIC)
 		return (NULL);	/* Double-free or bad argument */
 	i = op->ov_index;
-	onb = 1 << (i + 3);
-	if (onb < (u_int)pagesz)
-		onb -= sizeof(*op);
-	else
-		onb += pagesz - sizeof(*op);
+	if (i >= NBUCKETS || FIRST_BUCKET_SIZE > SIZE_MAX >> i)
+		return (NULL);
+	onb = (FIRST_BUCKET_SIZE << i) - sizeof(*op);
 	/* avoid the copy if same size block */
-	if (i != 0) {
-		i = 1 << (i + 2);
-		if (i < pagesz)
-			i -= sizeof(*op);
-		else
-			i += pagesz - sizeof(*op);
-	}
-	if (nbytes <= onb && nbytes > (size_t)i)
+	lower = i == 0 ? 0 :
+	    (FIRST_BUCKET_SIZE << (i - 1)) - sizeof(*op);
+	if (nbytes <= onb && nbytes > lower)
 		return (cp);
   	if ((res = __crt_malloc(nbytes)) == NULL)
 		return (NULL);
@@ -284,12 +279,16 @@ __crt_realloc(void *cp, size_t nbytes)
 }
 
 static int
-morepages(int n)
+morepages(size_t n)
 {
 	caddr_t	addr;
-	int offset;
+	size_t offset, len;
 
-	if (pagepool_end - pagepool_start > pagesz) {
+	if (n == 0 || n > SIZE_MAX / pagesz)
+		return (0);
+	len = n * pagesz;
+	if (pagepool_start != NULL &&
+	    (size_t)(pagepool_end - pagepool_start) > (size_t)pagesz) {
 		addr = roundup2(pagepool_start, pagesz);
 		if (munmap(addr, pagepool_end - addr) != 0) {
 #ifdef IN_RTLD
@@ -303,7 +302,7 @@ morepages(int n)
 	offset = (uintptr_t)pagepool_start - rounddown2(
 	    (uintptr_t)pagepool_start, pagesz);
 
-	addr = mmap(0, n * pagesz, PROT_READ | PROT_WRITE,
+	addr = mmap(0, len, PROT_READ | PROT_WRITE,
 	    MAP_ANON | MAP_PRIVATE, -1, 0);
 	if (addr == MAP_FAILED) {
 #ifdef IN_RTLD
@@ -315,8 +314,8 @@ morepages(int n)
 		return (0);
 	}
 	pagepool_start = addr;
-	pagepool_end = pagepool_start + n * pagesz;
+	pagepool_end = pagepool_start + len;
 	pagepool_start += offset;
 
-	return (n);
+	return (1);
 }

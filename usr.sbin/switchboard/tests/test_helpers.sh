@@ -67,6 +67,12 @@ wait_for_file()
 {
 	local path max i
 	path="$1"
+	# Without an issuer nothing launches; fail fast so atf_fail reports the
+	# skip.
+	if capd_issuer_unavailable; then
+		test -s "$path"
+		return
+	fi
 	max=$(( ${2:-15} * 10 ))
 	i=0
 	while [ ! -s "$path" ] && [ "$i" -lt "$max" ]; do

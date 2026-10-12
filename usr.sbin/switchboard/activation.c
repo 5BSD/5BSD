@@ -901,7 +901,8 @@ activation_register_all(int kq)
 			    capbundle_svc_nactivation_sockets(asvc) == 0)
 				continue;
 
-			svc = svc_by_label(capbundle_svc_label(asvc));
+			svc = svc_by_label_scoped(capbundle_svc_label(asvc),
+			    bundle_registry_owner_uid(bi));
 			if (svc == NULL) {
 				if (sd.nservices >= SWITCHBOARD_MAX_SERVICES) {
 					syslog(LOG_WARNING,

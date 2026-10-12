@@ -154,7 +154,7 @@ svc_anoint_unit_requires(const struct svc_manifest *m, const char *name,
  * a name nobody publishes gates nothing and will fail as unregistered anyway.
  */
 int
-svc_anoint_endpoint_requires(const char *name,
+svc_anoint_endpoint_requires_scoped(const char *name, uid_t sender_uid,
     char (*requires)[SWITCHBOARD_LABEL_MAX], unsigned *nrequires)
 {
 	const struct capbundle_service *s;
@@ -164,7 +164,7 @@ svc_anoint_endpoint_requires(const char *name,
 	int idx;
 
 	*nrequires = 0;
-	if (name == NULL || bundle_registry_lookup(name, &bi, &si) != 0)
+	if (name == NULL || bundle_registry_lookup_for_uid(name, sender_uid, &bi, &si) != 0)
 		return (-1);
 	b = bundle_registry_get(bi);
 	if (b == NULL)
@@ -194,6 +194,13 @@ svc_anoint_endpoint_requires(const char *name,
  * the provider's visible: the provider gated it, so it said who may
  * reach it.  Unknown names are not gated.
  */
+int
+svc_anoint_endpoint_requires(const char *name,
+    char (*requires)[SWITCHBOARD_LABEL_MAX], unsigned *n)
+{
+	return (svc_anoint_endpoint_requires_scoped(name, (uid_t)-1, requires, n));
+}
+
 bool
 svc_anoint_name_gated(const char *name)
 {
@@ -295,7 +302,7 @@ od_anoint_precheck(const char *name, const struct svc_anoint_set *set,
 	char missing[SWITCHBOARD_MAX_REQUIRES * SWITCHBOARD_LABEL_MAX];
 	unsigned n;
 
-	if (svc_anoint_endpoint_requires(name, requires, &n) != 0 || n == 0)
+	if (svc_anoint_endpoint_requires_scoped(name, uid, requires, &n) != 0 || n == 0)
 		return (0);
 	if (svc_anoint_covers(set, requires, n))
 		return (0);

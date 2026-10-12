@@ -171,6 +171,7 @@ TGTS=	all all-man buildenv buildenvvars buildetc buildkernel buildworld \
 	_build-tools _build-metadata _cross-tools _includes _libraries \
 	builddtb xdev xdev-build xdev-install \
 	xdev-links native-xtools native-xtools-install stageworld stagekernel \
+	capimage-stage \
 	stage-packages stage-packages-kernel stage-packages-world stage-packages-source \
 	create-packages-world create-packages-kernel \
 	create-packages-kernel-repo create-packages-world-repo \

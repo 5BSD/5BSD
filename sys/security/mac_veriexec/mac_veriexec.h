@@ -30,6 +30,7 @@
 #define	_SECURITY_MAC_VERIEXEC_H
 
 #include <sys/param.h>
+#include <sys/capimage.h>
 
 #ifdef _KERNEL
 #include <sys/types.h>
@@ -48,6 +49,10 @@
 #define	MAC_VERIEXEC_CHECK_PATH_SYSCALL		2
 #define	MAC_VERIEXEC_GET_PARAMS_PID_SYSCALL	3
 #define	MAC_VERIEXEC_GET_PARAMS_PATH_SYSCALL	4
+/* Require an embedded signature; never treat a missing container as unsigned. */
+#define	MAC_VERIEXEC_CHECK_CAPIMAGE_FD_SYSCALL	5
+/* Returns handle fd + 1, or zero for an absent optional signature. */
+#define	MAC_VERIEXEC_PREPARE_CAPIMAGE_SYSCALL	CAPIMAGE_PREPARE_SYSCALL
 
 #define	VERIEXEC_FPTYPELEN	16	/* hash name */
 

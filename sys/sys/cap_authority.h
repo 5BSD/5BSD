@@ -18,6 +18,65 @@
 #define CAP_AUTH_SET_LIBDIRS   20
 #define CAP_AUTH_GET_LIBDIR    21
 
+/* Pinned, issuer-verified library cache. PREPARE pins a read-only backing
+ * vnode and returns a private-mapping descriptor. PUBLISH atomically selects
+ * that descriptor after userspace verifies its signature. GET selects only a
+ * directory vnode explicitly bound by the issuer. No path/env grants. */
+#define CAP_CACHE_PREPARE 22
+#define CAP_CACHE_PUBLISH 23
+#define CAP_CACHE_GET 24
+struct cap_cache_prepare {
+	int32_t backing_fd;
+	int32_t directory_fds[2];
+	uint32_t reserved;
+};
+struct cap_cache_publish {
+	int32_t cache_fd;
+	uint32_t reserved;
+};
+struct cap_cache_result {
+	uint32_t directory;
+	uint32_t reserved;
+};
+
+/* Optional domain membership is bound by the issuer to a process authority.
+ * GET operations ignore environment and accept fd == -1 only. All descriptors
+ * returned by GET are fresh and owned by the caller, not bootstrap fd slots. */
+#define CAP_CACHE_DOMAIN_CREATE     25
+#define CAP_CACHE_DOMAIN_BIND       26
+#define CAP_CACHE_DOMAIN_GET_LAYOUT 27
+#define CAP_CACHE_DOMAIN_GET_RELRO  28
+#define CAP_CACHE_DOMAIN_PUBLISH    29
+#define CAP_CACHE_DOMAIN_SEED       0x00000001U
+#define CAP_CACHE_DOMAIN_READY      0x00000002U
+struct cap_cache_domain_create {
+	int32_t cache_fd;
+	int32_t layout_fd;
+	int32_t relro_fd;
+	uint32_t reserved;
+};
+struct cap_cache_domain_bind {
+	int32_t token_fd;
+	int32_t domain_fd;
+	uint32_t flags; /* zero for reader, CAP_CACHE_DOMAIN_SEED for seed */
+	uint32_t reserved;
+};
+struct cap_cache_domain_publish {
+	int32_t domain_fd;
+	uint32_t reserved;
+};
+struct cap_cache_domain_result {
+	uint64_t domain_id;
+	uint64_t domain_base;
+	uint64_t cache_device;
+	uint64_t cache_inode;
+	uint64_t cache_size;
+	uint32_t flags;
+	uint32_t reserved;
+};
+_Static_assert(sizeof(struct cap_cache_domain_result) == 48,
+    "cache domain result ABI");
+
 #define CAP_AUTH_VERSION 1
 #define CAP_AUTH_RETIRED_USER 1 /* Reserved wire value; issuance is rejected. */
 #define CAP_AUTH_MANAGED 2

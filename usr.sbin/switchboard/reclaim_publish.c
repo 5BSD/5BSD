@@ -8,8 +8,9 @@
  * Cleanup of per-capability storage is a reconcile, never an event: a provider
  * compares the containers it holds (Data/<bundle>/) against the live set and
  * reaps the rest (docs/book/src/plane/containers-and-storage.md).  The live set is
- * installed OR running.  "Installed" needs no help from switchboard -- it is the
- * pkg-owned System/ and Apps/ directories, which the provider reads directly.
+ * installed OR running.  GLOBAL installed bundles are enumerated from System/ and Apps/. Personal
+ * installed membership is published by switchboard because user roots are
+ * private; the marker keys match the scoped names issued to providers.
  * "Running" is switchboard's to express: this writes one marker per running
  * unit's bundle under /Capabilities/Run/live/, so a bundle whose unit has not
  * yet been unloaded (mid-uninstall) is never mistaken for an orphan.  Markers
@@ -33,6 +34,7 @@
 #include <libcapbundle.h>
 
 #include "switchboard.h"
+#include "scope_storage.h"
 #include "switchboard_probes.h"
 
 #define	BUNDLE_MAX	64
@@ -84,6 +86,11 @@ bundle_of(struct svc_runtime *svc, char *out, size_t outsz)
 	b = bundle_registry_get(svc->bundle_idx);
 	if (b == NULL || (name = capbundle_name(b)) == NULL)
 		return;
+	if (svc->owner_uid != (uid_t)-1) {
+		if (!sb_personal_storage_key("bundle", svc->owner_uid,
+		    capbundle_id(b), out, outsz)) out[0] = '\0';
+		return;
+	}
 	(void)strlcpy(out, name, outsz);
 	len = strlen(out);
 	if (len > 4 && strcmp(out + len - 4, ".cap") == 0)
@@ -171,7 +178,32 @@ svc_reclaim_publish_live(void)
 		(void)close(fd);
 	}
 
-	/* 2. Remove markers for bundles that are no longer running. */
+	/* Providers can enumerate installed GLOBAL roots directly. Personal
+	 * installation roots are private, so publish their accepted registry
+	 * membership here even when every unit is stopped. Otherwise a provider
+	 * would misclassify durable personal storage as an orphan. */
+	for (unsigned bi = 0; bi < bundle_registry_count(); bi++) {
+		uid_t owner = bundle_registry_owner_uid(bi);
+		struct capbundle *b = bundle_registry_get(bi);
+		char key[BUNDLE_MAX];
+		int fd;
+		if (owner == (uid_t)-1 || b == NULL) continue;
+		if (!sb_personal_storage_key("bundle", owner, capbundle_id(b),
+		    key, sizeof(key))) goto incomplete;
+		if (bundle_present(live, nlive, key)) continue;
+		if (nlive == cap) {
+			size_t ncap = cap == 0 ? 16 : cap * 2;
+			void *p = reallocarray(live, ncap, sizeof(*live));
+			if (p == NULL) goto incomplete;
+			live = p; cap = ncap;
+		}
+		(void)strlcpy(live[nlive++], key, BUNDLE_MAX);
+		fd = openat(dfd, key, O_CREAT | O_WRONLY | O_CLOEXEC, 0600);
+		if (fd == -1) goto incomplete;
+		(void)close(fd);
+	}
+
+	/* 2. Remove markers absent from the running/installed-personal set. */
 	d = fdopendir(dfd);
 	if (d != NULL) {
 		while ((de = readdir(d)) != NULL) {
@@ -234,6 +266,13 @@ svc_reclaim_publish_groups(void)
 
 		for (gi = 0; gi < ng; gi++) {
 			const char *g = capbundle_group(b, gi);
+			char personal[BUNDLE_MAX];
+			uid_t owner = bundle_registry_owner_uid(bi);
+			if (owner != (uid_t)-1) {
+				if (!sb_personal_storage_key("group", owner, g,
+				    personal, sizeof(personal))) goto out;
+				g = personal;
+			}
 			int fd;
 
 			if (g == NULL || g[0] == '\0' ||

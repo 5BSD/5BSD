@@ -1684,6 +1684,11 @@
 	    (policy)->mpc_name, 2, \
 	    ((const uint64_t[]){ (uint64_t)(uintptr_t)(struct ucred *)(a0), (uint64_t)(uintptr_t)(const char *)(a1) }))
 
+#define MAC_HOOK_ARGS_vnode_check_mmap_image(policy, a0, a1, a2, a3) \
+	SDT_PROBE4(mac_framework, , , hook__args, "vnode_check_mmap_image", \
+	    (policy)->mpc_name, 4, \
+	    ((const uint64_t[]){ (uint64_t)(uintptr_t)(struct ucred *)(a0), (uint64_t)(uintptr_t)(struct vnode *)(a1), (uint64_t)(uintptr_t)(struct label *)(a2), (uint64_t)(uintptr_t)(bool *)(a3) }))
+
 /* Capture each argument once before exposing it and invoking the policy. */
 #define MAC_HOOK_NARG_( _0, _1, _2, _3, _4, _5, _6, _7, _8, n, ...) n
 #define MAC_HOOK_NARG(...) \

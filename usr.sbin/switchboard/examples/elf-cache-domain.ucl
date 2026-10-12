@@ -1,0 +1,21 @@
+# Copy to /Capabilities/Config/switchboard/elf-cache-domain.ucl explicitly.
+# Common library addresses correlate only these selected system services.
+# Startup uses a signed seed, with a maximum 30-second seed wait.
+# Native amd64 only. No default service is enrolled.
+enabled = false;
+layout = "/usr/libdata/5bsd/cache/elf.layout";
+signature = "/usr/libdata/5bsd/cache/elf.layout.sig";
+# Exact signed unit labels in the base Time and Notify bundles.
+services = ["system.Time/bsdtime", "system.Notify/bsdnotify"];
+# Choose their library dependency set; direct basenames from /lib or /usr/lib.
+libraries = ["libtimecmp.so.1", "libauditcmp.so.1", "libnotify.so.1",
+    "liblogcmp.so.1", "libservice.so.1", "libchannel.so.1",
+    "libprivateucl.so.1", "libfidl_bsd.so.1", "libthr.so.3"];
+
+# For multiple independent domains, replace layout/signature/services/libraries
+# above with domains = [{ layout=...; signature=...; services=[...];
+# libraries=[...]; }, ...]; do not mix the singleton and array forms.
+# At most 8 domains and 64 total service memberships; membership must be unique.
+# Each domain uses a separate real issuer handle and RELRO backing. Reusing the
+# same signed layout/cache is permitted; absolute domain bases remain randomized.
+# See elfcache(8) for the complete syntax and transaction behavior.

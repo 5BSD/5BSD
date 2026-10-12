@@ -251,6 +251,7 @@ rc_adopt_build_unit(const struct rc_unit *u, struct svc_runtime *svc)
 	/* Root-manageable, not core: switchboardctl stop/start/restart works for
 	 * root, but it is not unloadable-as-core (§5). */
 	svc->manifest.management = SVC_MGMT_SYSTEM;
+	svc->owner_uid = (uid_t)-1;
 	/* A supervised system daemon: bring it back if it crashes, but not if
 	 * an operator stops it. */
 	svc->manifest.restart = SVC_RESTART_ON_FAILURE;

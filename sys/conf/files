@@ -5067,7 +5067,7 @@ opencrypto/cbc_mac.c		optional crypto
 opencrypto/criov.c		optional crypto
 opencrypto/crypto.c		optional crypto
 opencrypto/cryptodev.c		optional cryptodev
-opencrypto/cryptodesc_ed25519.c	optional cryptodev
+opencrypto/cryptodesc_ed25519.c	optional crypto
 opencrypto/cryptodesc_kdf.c	optional cryptodev
 opencrypto/cryptodev_if.m	optional crypto
 opencrypto/cryptosoft.c		optional crypto
@@ -5266,6 +5266,7 @@ security/mac_priority/mac_priority.c	optional mac_priority
 security/mac_test/mac_test.c	optional mac_test
 security/mac_grantbylabel/mac_grantbylabel.c		optional mac_grantbylabel
 security/mac_veriexec/mac_veriexec.c			optional mac_veriexec
+security/mac_veriexec/veriexec_capimage.c		optional mac_veriexec mac_veriexec_capimage
 security/mac_veriexec/veriexec_fingerprint.c		optional mac_veriexec
 security/mac_veriexec/veriexec_metadata.c		optional mac_veriexec
 security/mac_veriexec_parser/mac_veriexec_parser.c	optional mac_veriexec mac_veriexec_parser

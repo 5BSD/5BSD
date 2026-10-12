@@ -8,6 +8,8 @@ ATF_TESTS_SH=	config_test \
 		firmware_fetch_test \
 		hostname_test \
 		jail_test \
+		ports_test \
+		repository_test \
 		storage_requirement_test \
 		tzfspool_test
 

@@ -77,6 +77,7 @@ struct svc_lookup_channel {
 	/* A launch identity, never a pointer into the reloadable runtime array. */
 	char owner_label[SWITCHBOARD_LABEL_MAX];
 	uint64_t owner_launch_id;
+	uid_t owner_uid;
 	struct channel			*channel;
 	int				 fd;	/* channel_fd(), registered on kq */
 	struct svc_domain		 domain; /* Legacy metadata, not sender authority. */
@@ -119,6 +120,26 @@ svc_domain_resolves(const struct svc_domain *domain, const char *name)
 		return (true);
 	}
 	return (false);
+}
+
+/* Caller UID must come from kernel-stamped message credentials, not the
+ * inherited discovery channel's legacy domain.uid metadata. */
+bool
+svc_domain_resolves_scoped(const struct svc_domain *domain, const char *name,
+    uid_t sender_uid)
+{
+	unsigned bi, si;
+	if (bundle_registry_lookup(name, &bi, &si) == 0)
+		return (svc_domain_resolves(domain, name));
+	if (name_is_control(name) ||
+	    (domain != NULL && domain->kind == SVC_DOMAIN_CONTROL))
+		return (false);
+	if (sender_uid != (uid_t)-1 &&
+	    bundle_registry_lookup_scoped(name, sender_uid, &bi, &si) == 0)
+		return (true);
+	/* Preserve GLOBAL unknown-name behavior. An unrelated personal name
+	 * still cannot be selected by lookup_for_uid or naming_find_for_uid. */
+	return (svc_domain_resolves(domain, name));
 }
 
 /*
@@ -166,6 +187,17 @@ svc_domain_permits(const struct svc_domain *chan,
 	if (chan != NULL && chan->kind == SVC_DOMAIN_CONTROL)
 		return (false);
 	return (svc_domain_resolves(chan, name));
+}
+
+bool
+svc_domain_permits_scoped(const struct svc_domain *chan,
+    enum svc_domain_kind name_domain, const char *name, uid_t sender_uid)
+{
+	if (name_domain == SVC_DOMAIN_CONTROL)
+		return (chan != NULL && chan->kind == SVC_DOMAIN_CONTROL);
+	if (chan != NULL && chan->kind == SVC_DOMAIN_CONTROL)
+		return (false);
+	return (svc_domain_resolves_scoped(chan, name, sender_uid));
 }
 
 /*
@@ -232,7 +264,8 @@ lookup_channel_requester(const struct svc_lookup_channel *lc)
 		return (NULL);
 	for (i = 0; i < sd.nservices; i++) {
 		struct svc_runtime *svc = &sd.services[i];
-		if (svc->launch_id == lc->owner_launch_id &&
+		if (svc->owner_uid == lc->owner_uid &&
+		    svc->launch_id == lc->owner_launch_id &&
 		    strcmp(svc->manifest.label, lc->owner_label) == 0)
 			return (svc);
 	}
@@ -407,6 +440,7 @@ lookup_channel_register(struct svc_lookup_channel *lc,
 	strlcpy(adopted->owner_label, lc->owner_label,
 	    sizeof(adopted->owner_label));
 	adopted->owner_launch_id = lc->owner_launch_id;
+	adopted->owner_uid = lc->owner_uid;
 	ack.op = SVC_OP_REGISTER_LOOKUP;
 	ack.status = 0;
 	ack.magic = SVC_REGISTER_LOOKUP_MAGIC;

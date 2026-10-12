@@ -67,6 +67,7 @@ ATF_TESTS_C+=	activation_test
 ATF_TESTS_C+=	domain_test
 ATF_TESTS_C+=	anoint_test
 ATF_TESTS_C+=	reclaim_publish_test
+LIBADD.reclaim_publish_test+= md
 ATF_TESTS_C+=	on_demand_test
 ATF_TESTS_C+=	fd_budget_test
 ATF_TESTS_C+=	launch_limits_test
@@ -343,5 +344,49 @@ ATF_TESTS_C+= launch_gate_test
 CFLAGS.launch_gate_test+= -I${SRCTOP}/sys -I${SRCTOP}/lib/libcapsulert -I${SRCTOP}/lib/libcapbundle -I${SRCTOP}/lib/libcapability -I${SRCTOP}/lib/libchannel -I${SRCTOP}/lib/libservice -I${SRCTOP}/contrib/libucl/include -ffunction-sections -fdata-sections
 LDFLAGS.launch_gate_test+= -Wl,--gc-sections
 NO_SHARED.launch_gate_test= yes
+
+ATF_TESTS_C+= library_cache_stats_test
+CFLAGS.library_cache_stats_test+= -I${SRCTOP}/usr.sbin/switchboard
+
+# UID namespace regressions use real private registry/runtime functions.
+PLAIN_TESTS_C+= scope_registry_test scope_runtime_test scope_identity_contract_test scope_storage_test scope_cli_test
+CFLAGS.scope_cli_test+= -I${SRCTOP}/lib/libcapsulert -I${SRCTOP}/lib/libchannel -I${SRCTOP}/lib/libcapability -I${SRCTOP}/lib/libservice -ffunction-sections -fdata-sections
+LDFLAGS.scope_cli_test+= -Wl,--gc-sections
+CFLAGS.scope_storage_test+= -I${SRCTOP}/usr.sbin/switchboard
+LIBADD.scope_storage_test= md
+SRCS.scope_registry_test= scope_registry_test.c bundle_selection.c
+LIBADD.scope_registry_test= capbundle ucl
+CFLAGS.scope_registry_test+= -I${SRCTOP}/usr.sbin/switchboard
+CFLAGS.scope_runtime_test+= -I${SRCTOP}/usr.sbin/switchboard \
+    -I${SRCTOP}/lib/libchannel -I${SRCTOP}/lib/libservice \
+    -I${SRCTOP}/lib/libcapability -I${SRCTOP}/contrib/libucl/include \
+    -ffunction-sections -fdata-sections -Wno-unused-function
+LDFLAGS.scope_runtime_test+= -Wl,--gc-sections
+
+# Compile the gated consumer locally; never enable it in the running broker.
+PLAIN_TESTS_C+= verified_handle_consumer_test
+.PATH: ${SRCTOP}/lib/libcapimage ${SRCTOP}/lib/libcapbundle
+SRCS.verified_handle_consumer_test= verified_handle_consumer_test.c \
+    capimage.c libcapbundle_sign.c authority.c
+CFLAGS.verified_handle_consumer_test+= -DCAPIMAGE_EXPERIMENTAL_CONSUMER \
+    -I${SRCTOP}/usr.sbin/switchboard -I${SRCTOP}/lib/libcapimage \
+    -I${SRCTOP}/lib/libcapbundle -I${SRCTOP}/lib/libcapsulert \
+    -I${SRCTOP}/lib/libchannel -I${SRCTOP}/lib/libcapability \
+    -I${SRCTOP}/lib/libservice -I${SRCTOP}/contrib/libucl/include \
+    -I${SRCTOP}/sys -ffunction-sections -fdata-sections
+LDFLAGS.verified_handle_consumer_test+= -Wl,--gc-sections \
+    -Wl,--wrap=mac_syscall -Wl,--wrap=syscall
+LIBADD.verified_handle_consumer_test= crypto md ucl
+
+# Real parser/transaction with mock issuer and seed callbacks; no kernel proof.
+PLAIN_TESTS_C+= library_cache_policy_test
+CFLAGS.library_cache_policy_test+= -I${SRCTOP}/usr.sbin/switchboard \
+    -I${SRCTOP}/lib/libcapimage -I${SRCTOP}/lib/libcapbundle \
+    -I${SRCTOP}/lib/libcapsulert -I${SRCTOP}/lib/libchannel \
+    -I${SRCTOP}/lib/libcapability -I${SRCTOP}/lib/libservice \
+    -I${SRCTOP}/contrib/libucl/include -I${SRCTOP}/sys \
+    -ffunction-sections -fdata-sections
+LDFLAGS.library_cache_policy_test+= -Wl,--gc-sections
+LIBADD.library_cache_policy_test= ucl
 
 .include <bsd.test.mk>

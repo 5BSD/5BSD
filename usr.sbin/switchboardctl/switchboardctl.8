@@ -1,7 +1,7 @@
 .\"-
 .\" SPDX-License-Identifier: BSD-2-Clause
 .\"
-.Dd September 25, 2026
+.Dd October 11, 2026
 .Dt SWITCHBOARDCTL 8
 .Os
 .Sh NAME
@@ -11,13 +11,13 @@
 .Nm
 .Cm status | services | reload | bundles
 .Nm
-.Cm start | stop | restart Ar label
+.Cm start | stop | restart | cache-status Ar label
 .Nm
 .Cm enable | disable Ar bundle
 .Nm
-.Cm install Ar path.cap
+.Cm install Oo Fl -personal Oc Ar path.cap
 .Nm
-.Cm verify Ar path.cap ...
+.Cm verify Oo Fl -personal Oc Ar path.cap ...
 .Nm
 .Cm deps Ar program
 .Nm
@@ -32,6 +32,16 @@ is the administrative client for
 .Bl -tag -width "verify path.cap ..."
 .It Cm status
 Show daemon and service state.
+.It Cm cache-status Ar label
+Report executable mappings of the system library cache in a supervised unit.
+SwitchBoard queries its child using existing launcher protection authority;
+the caller receives counters, not addresses or debug authority.
+The selected generation is identified by device and inode, so a renamed cache
+is still recognized and an unrelated file with the same name is excluded.
+The loader's read-only index mapping is not counted.
+Virtual mapped bytes are not resident memory or measured savings.
+An unavailable process or denied observation is an error, not a zero count.
+This command requires an attributed control grant, like status.
 .It Cm services
 List loaded service runtimes.
 Each running unit also shows
@@ -136,19 +146,45 @@ Requires the
 attribute on the calling executable's software policy
 .Pq Xr switchboard 5 .
 A UNIX UID alone does not supply this attribute.
-.It Cm install Ar path.cap
+.It Cm install Oo Fl -personal Oc Ar path.cap
 Verify and copy a bundle into
-.Pa /Capabilities/System
-as a root-owned policy tree; the bundle is installed once its directory is in
+.Pa /Capabilities
+as a root-owned global policy tree; the bundle is installed once its directory is in
 place.
 .Ev SWITCHBOARD_LIFECYCLE_ROOT
 selects an offline root and defaults to
 .Pa / .
-Requires root.
-.It Cm verify Ar path.cap ...
+Requires root and honors the system signature requirement.
+.Pp
+With
+.Fl -personal ,
+install for the current real UID under
+.Pa /Capabilities/Users/UID/Agents .
+The account directory must already be provisioned by an administrator, owned by
+that UID, and not writable by group or others.
+The parent Capabilities and Users directories must be root-owned and not writable
+by group or others.
+The tool creates Agents if absent; it cannot select another account or a global
+destination, and refuses changed real/effective credentials.
+Personal bundle files must have safe modes; signed modes are preserved exactly.
+Existing versions are never overwritten.
+An authorized reload is needed before discovery.
+.It Cm verify Oo Fl -personal Oc Ar path.cap ...
 Strictly validate bundle structure, manifests, executables, unique provided
 names, and the combined dependency graph.
 The printed effective view shows activation and local descriptors.
+With
+.Fl -personal ,
+unsigned bundles are accepted even on signed systems; present signatures must
+still verify using their embedded public keys.
+Personal signatures establish integrity, not platform trust.
+Services must declare control=user and domain=user; exec applications declare
+domain=user and have no control field.
+Platform grants, non-default credential overrides, ambient execution, global
+visibility and privileged socket activation are rejected.
+The parser's default account placeholders are resolved to the installation owner
+by Switchboard; they do not grant that default account's credentials.
+Default verification retains system trust policy.
 .It Cm deps Ar program
 Inspect an ELF program and print an advisory
 .Va descriptors
@@ -223,6 +259,33 @@ and
 .Ev SWITCHBOARD_PRINCIPAL_POLICY
 override the registry directories and the policy file.
 .El
+.Sh PERSONAL NAMESPACES
+System and Apps bundles share the global namespace.
+Personal bundles are indexed separately for each authenticated installation
+owner, so two users may install the same bundle identity and service labels.
+An unqualified service label selects a global service first, then the calling
+user's personal service.
+Use
+.Dq user:UID:label
+with start, stop, restart or cache-status to select a personal service
+explicitly.
+Only its owner or a caller with the existing operator grant may manage it;
+a numeric UID of zero alone does not confer that grant.
+Status prints this qualified form for personal services.
+.Pp
+The operator enable and disable commands accept
+.Dq user:UID:bundle-id
+for personal bundles.
+The unqualified bundle identity continues to affect only global bundles.
+The persistent disable file still requires its existing filesystem permission
+and reload requires its existing control grant.
+Personal installation changes are applied by an explicit reload;
+automatic install-folder watches currently cover System and Apps.
+.Pp
+Personal namespaces do not require code signing.
+Kernel-stamped sender credentials select personal service discovery.
+A signature or a caller-supplied label does not select another user's namespace
+or grant system attributes.
 .Sh EXIT STATUS
 .Ex -std
 .Sh EXAMPLES

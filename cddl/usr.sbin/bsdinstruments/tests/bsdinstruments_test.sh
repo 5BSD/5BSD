@@ -176,6 +176,7 @@ profiles_compile_head()
 profiles_compile_body()
 {
 	profiles="capability-services component-ipc shmring-traffic"
+	profiles="${profiles} loader-libraries loader-summary script-exec image-verification"
 	profiles="${profiles} bsdlog-performance biosnoop mac-socket"
 	profiles="${profiles} sctp-state-change sctp tcplife"
 	for profile in $profiles; do
@@ -222,6 +223,53 @@ capability_services_live_probes_body()
 	done
 }
 
+atf_test_case broker_no_fallback
+broker_no_fallback_head()
+{
+    atf_set descr 'Explicit BSDTrace mode never falls back to ambient DTrace access'
+    atf_set require.progs 'cc bsdinstruments'
+}
+broker_no_fallback_body()
+{
+    cat > broker.c <<'SRC'
+#include <dtrace.h>
+#include <errno.h>
+#include <stdio.h>
+dtrace_hdl_t *tracecmp_dtrace_open(int flags, int *error)
+{
+    (void)flags;
+    fputs("BROKER_REQUEST_DENIED\n", stderr);
+    *error = EACCES;
+    return NULL;
+}
+dtrace_hdl_t *dtrace_open(int version, int flags, int *error)
+{
+    (void)version; (void)flags;
+    fputs("AMBIENT_DEVICE_ATTEMPT\n", stderr);
+    *error = EIO;
+    return NULL;
+}
+SRC
+    atf_check -s exit:0 -o empty -e empty cc -Wall -Wextra -Werror -shared -fPIC broker.c -o broker.so
+    printf 'dtrace:::BEGIN { exit(0); }\n' > profile.d
+    atf_check -s exit:1 -o empty -e save:probes-error env LD_PRELOAD="$PWD/broker.so" \
+        bsdinstruments probes --broker
+    atf_check -s exit:1 -o empty -e save:watch-error env LD_PRELOAD="$PWD/broker.so" \
+        bsdinstruments watch --broker -f profile.d
+    for output in probes-error watch-error; do
+        atf_check -s exit:0 -o ignore grep -F BROKER_REQUEST_DENIED "$output"
+        atf_check -s exit:0 -o ignore grep -F 'BSDTrace delegation failed' "$output"
+        atf_check -s exit:1 -o empty grep -F AMBIENT_DEVICE_ATTEMPT "$output"
+    done
+    atf_check -s exit:2 -o empty -e match:usage \
+        bsdinstruments generate --broker -f profile.d
+    # Local mode remains explicit and does not unexpectedly request a broker.
+    atf_check -s exit:1 -o empty -e save:local-error env LD_PRELOAD="$PWD/broker.so" \
+        bsdinstruments probes
+    atf_check -s exit:0 -o ignore grep -F AMBIENT_DEVICE_ATTEMPT local-error
+    atf_check -s exit:1 -o empty grep -F BROKER_REQUEST_DENIED local-error
+}
+
 atf_init_test_cases()
 {
 	atf_add_test_case list_basic
@@ -233,6 +281,7 @@ atf_init_test_cases()
 	atf_add_test_case generate_explicit_file
 	atf_add_test_case shadowing_warning
 	atf_add_test_case watch_conflicting_args
+	atf_add_test_case broker_no_fallback
 	atf_add_test_case profiles_compile
 	atf_add_test_case capability_services_live_probes
 }

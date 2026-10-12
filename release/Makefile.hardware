@@ -8,7 +8,9 @@ REPODIR?= ${MAKEOBJDIRPREFIX:U/usr/obj}${.CURDIR}/repo
 HARDWARE_ABI!= ${PKG_CMD} config ABI
 BASE_REPOSITORY?= ${REPODIR}/${HARDWARE_ABI}/latest-built
 HARDWARE_REPO?= ${BASE_REPOSITORY:tA}.hardware
-COMPLETE_REPOSITORY?= ${BASE_REPOSITORY:tA}.complete
+# Final publication can live independently of disposable base/hardware staging.
+PUBLISH_REPODIR?= ${REPODIR}
+COMPLETE_REPOSITORY?= ${PUBLISH_REPODIR}/${HARDWARE_ABI}/${BASE_REPOSITORY:tA:T}.complete
 KERNBUILDDIR?= ${MAKEOBJDIRPREFIX:U/usr/obj}${.CURDIR}/${MACHINE}.${MACHINE_ARCH}/sys/${KERNCONF}
 HARDWARE_PORT_LIST?= ${.CURDIR}/release/tools/hardware-ports.${MACHINE_ARCH}
 # make(1) treats ':' in WRKDIRPREFIX as a dependency separator, so keep port
@@ -35,6 +37,7 @@ hardware-packages hardware-packages-check: .PHONY
 	    ${.TARGET:Mhardware-packages-check:S/hardware-packages-check/--check/}
 
 publish-packages: .PHONY
+	@mkdir -p ${COMPLETE_REPOSITORY:H:Q}
 	@${MALLOC_PRODUCTION_CHECK} -r ${BASE_REPOSITORY:Q}
 	${HARDWARE_PYTHON} ${.CURDIR}/release/scripts/hardware-packages.py publish \
 	    --repository ${HARDWARE_REPO:Q} --base-repository ${BASE_REPOSITORY:Q} \

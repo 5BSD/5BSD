@@ -399,6 +399,7 @@ set_resp(struct svc_runtime *u, enum svc_responsible_kind kind,
 	memset(&u->responsible, 0, sizeof(u->responsible));
 	u->responsible.parent_fd = -1;
 	u->responsible.kind = kind;
+	u->responsible.owner_uid = u->owner_uid;
 	u->responsible.uid = uid;
 	if (label != NULL)
 		strlcpy(u->responsible.label, label,
@@ -413,11 +414,11 @@ ATF_TC_BODY(constraint_absent_allows_anyone, tc)
 	unit_init(&u, "app/worker", SVC_MGMT_SYSTEM, (uid_t)-1);
 	ATF_CHECK_EQ(0U, u.manifest.nlaunch_responsible);
 	set_resp(&u, SVC_RESP_SESSION, NULL, 1001);
-	ATF_CHECK(svc_responsible_allowed(&u.manifest, &u.responsible));
+	ATF_CHECK(svc_responsible_allowed_scoped(&u.manifest, u.owner_uid, &u.responsible));
 	set_resp(&u, SVC_RESP_SELF, NULL, 0);
-	ATF_CHECK(svc_responsible_allowed(&u.manifest, &u.responsible));
+	ATF_CHECK(svc_responsible_allowed_scoped(&u.manifest, u.owner_uid, &u.responsible));
 	set_resp(&u, SVC_RESP_UNIT, "other/main", 0);
-	ATF_CHECK(svc_responsible_allowed(&u.manifest, &u.responsible));
+	ATF_CHECK(svc_responsible_allowed_scoped(&u.manifest, u.owner_uid, &u.responsible));
 }
 
 ATF_TC_WITHOUT_HEAD(constraint_matches_simple_kinds);
@@ -429,20 +430,20 @@ ATF_TC_BODY(constraint_matches_simple_kinds, tc)
 
 	constrain(&u, "self", NULL);
 	set_resp(&u, SVC_RESP_SELF, NULL, 0);
-	ATF_CHECK(svc_responsible_allowed(&u.manifest, &u.responsible));
+	ATF_CHECK(svc_responsible_allowed_scoped(&u.manifest, u.owner_uid, &u.responsible));
 	set_resp(&u, SVC_RESP_SWITCHBOARD, NULL, 0);
-	ATF_CHECK(!svc_responsible_allowed(&u.manifest, &u.responsible));
+	ATF_CHECK(!svc_responsible_allowed_scoped(&u.manifest, u.owner_uid, &u.responsible));
 
 	constrain(&u, "switchboard", NULL);
 	set_resp(&u, SVC_RESP_SWITCHBOARD, NULL, 0);
-	ATF_CHECK(svc_responsible_allowed(&u.manifest, &u.responsible));
+	ATF_CHECK(svc_responsible_allowed_scoped(&u.manifest, u.owner_uid, &u.responsible));
 	set_resp(&u, SVC_RESP_SELF, NULL, 0);
-	ATF_CHECK(!svc_responsible_allowed(&u.manifest, &u.responsible));
+	ATF_CHECK(!svc_responsible_allowed_scoped(&u.manifest, u.owner_uid, &u.responsible));
 
 	/* An unset party never satisfies a constraint. */
 	constrain(&u, "self", "switchboard");
 	set_resp(&u, SVC_RESP_UNSET, NULL, 0);
-	ATF_CHECK(!svc_responsible_allowed(&u.manifest, &u.responsible));
+	ATF_CHECK(!svc_responsible_allowed_scoped(&u.manifest, u.owner_uid, &u.responsible));
 }
 
 ATF_TC_WITHOUT_HEAD(constraint_session_any_and_by_uid);
@@ -455,19 +456,19 @@ ATF_TC_BODY(constraint_session_any_and_by_uid, tc)
 	/* "session" is any login session. */
 	constrain(&u, "session", NULL);
 	set_resp(&u, SVC_RESP_SESSION, NULL, 1001);
-	ATF_CHECK(svc_responsible_allowed(&u.manifest, &u.responsible));
+	ATF_CHECK(svc_responsible_allowed_scoped(&u.manifest, u.owner_uid, &u.responsible));
 	set_resp(&u, SVC_RESP_SESSION, NULL, 4242);
-	ATF_CHECK(svc_responsible_allowed(&u.manifest, &u.responsible));
+	ATF_CHECK(svc_responsible_allowed_scoped(&u.manifest, u.owner_uid, &u.responsible));
 
 	/* A uid-qualified token is exact. */
 	constrain(&u, "session:uid=1001", NULL);
 	set_resp(&u, SVC_RESP_SESSION, NULL, 1001);
-	ATF_CHECK(svc_responsible_allowed(&u.manifest, &u.responsible));
+	ATF_CHECK(svc_responsible_allowed_scoped(&u.manifest, u.owner_uid, &u.responsible));
 	set_resp(&u, SVC_RESP_SESSION, NULL, 1002);
-	ATF_CHECK(!svc_responsible_allowed(&u.manifest, &u.responsible));
+	ATF_CHECK(!svc_responsible_allowed_scoped(&u.manifest, u.owner_uid, &u.responsible));
 	/* And it does not leak into other kinds. */
 	set_resp(&u, SVC_RESP_SWITCHBOARD, NULL, 1001);
-	ATF_CHECK(!svc_responsible_allowed(&u.manifest, &u.responsible));
+	ATF_CHECK(!svc_responsible_allowed_scoped(&u.manifest, u.owner_uid, &u.responsible));
 }
 
 ATF_TC_WITHOUT_HEAD(constraint_unit_label_and_bundle);
@@ -480,28 +481,33 @@ ATF_TC_BODY(constraint_unit_label_and_bundle, tc)
 	/* An exact label. */
 	constrain(&u, "org.test.app/main", NULL);
 	set_resp(&u, SVC_RESP_UNIT, "org.test.app/main", 0);
-	ATF_CHECK(svc_responsible_allowed(&u.manifest, &u.responsible));
+	ATF_CHECK(svc_responsible_allowed_scoped(&u.manifest, u.owner_uid, &u.responsible));
 	set_resp(&u, SVC_RESP_UNIT, "org.test.app/other", 0);
-	ATF_CHECK(!svc_responsible_allowed(&u.manifest, &u.responsible));
+	ATF_CHECK(!svc_responsible_allowed_scoped(&u.manifest, u.owner_uid, &u.responsible));
 
 	/* "bundle": any unit of this unit's own bundle, and only that one. */
 	constrain(&u, "bundle", NULL);
 	set_resp(&u, SVC_RESP_UNIT, "org.test.app/main", 0);
-	ATF_CHECK(svc_responsible_allowed(&u.manifest, &u.responsible));
+	ATF_CHECK(svc_responsible_allowed_scoped(&u.manifest, u.owner_uid, &u.responsible));
 	set_resp(&u, SVC_RESP_UNIT, "org.test.app/anything", 0);
-	ATF_CHECK(svc_responsible_allowed(&u.manifest, &u.responsible));
+	ATF_CHECK(svc_responsible_allowed_scoped(&u.manifest, u.owner_uid, &u.responsible));
 	set_resp(&u, SVC_RESP_UNIT, "org.test.other/main", 0);
-	ATF_CHECK(!svc_responsible_allowed(&u.manifest, &u.responsible));
+	ATF_CHECK(!svc_responsible_allowed_scoped(&u.manifest, u.owner_uid, &u.responsible));
+	/* A same-label personal caller cannot satisfy a global launch constraint. */
+	set_resp(&u, SVC_RESP_UNIT, "org.test.app/main", 0);
+	u.responsible.owner_uid = 1001;
+	ATF_CHECK(!svc_responsible_allowed_scoped(&u.manifest, u.owner_uid,
+	    &u.responsible));
 	/* A prefix of the bundle id is not the bundle id. */
 	set_resp(&u, SVC_RESP_UNIT, "org.test.ap/main", 0);
-	ATF_CHECK(!svc_responsible_allowed(&u.manifest, &u.responsible));
+	ATF_CHECK(!svc_responsible_allowed_scoped(&u.manifest, u.owner_uid, &u.responsible));
 	set_resp(&u, SVC_RESP_UNIT, "org.test.appx/main", 0);
-	ATF_CHECK(!svc_responsible_allowed(&u.manifest, &u.responsible));
+	ATF_CHECK(!svc_responsible_allowed_scoped(&u.manifest, u.owner_uid, &u.responsible));
 	/* "bundle" does not admit a session or the switchboard. */
 	set_resp(&u, SVC_RESP_SESSION, NULL, 1001);
-	ATF_CHECK(!svc_responsible_allowed(&u.manifest, &u.responsible));
+	ATF_CHECK(!svc_responsible_allowed_scoped(&u.manifest, u.owner_uid, &u.responsible));
 	set_resp(&u, SVC_RESP_SWITCHBOARD, NULL, 0);
-	ATF_CHECK(!svc_responsible_allowed(&u.manifest, &u.responsible));
+	ATF_CHECK(!svc_responsible_allowed_scoped(&u.manifest, u.owner_uid, &u.responsible));
 }
 
 ATF_TC_WITHOUT_HEAD(constraint_any_entry_suffices);
@@ -512,11 +518,11 @@ ATF_TC_BODY(constraint_any_entry_suffices, tc)
 	unit_init(&u, "org.test.app/worker", SVC_MGMT_SYSTEM, (uid_t)-1);
 	constrain(&u, "switchboard", "bundle");
 	set_resp(&u, SVC_RESP_SWITCHBOARD, NULL, 0);
-	ATF_CHECK(svc_responsible_allowed(&u.manifest, &u.responsible));
+	ATF_CHECK(svc_responsible_allowed_scoped(&u.manifest, u.owner_uid, &u.responsible));
 	set_resp(&u, SVC_RESP_UNIT, "org.test.app/main", 0);
-	ATF_CHECK(svc_responsible_allowed(&u.manifest, &u.responsible));
+	ATF_CHECK(svc_responsible_allowed_scoped(&u.manifest, u.owner_uid, &u.responsible));
 	set_resp(&u, SVC_RESP_SESSION, NULL, 1001);
-	ATF_CHECK(!svc_responsible_allowed(&u.manifest, &u.responsible));
+	ATF_CHECK(!svc_responsible_allowed_scoped(&u.manifest, u.owner_uid, &u.responsible));
 }
 
 ATF_TP_ADD_TCS(tp)

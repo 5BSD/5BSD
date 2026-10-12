@@ -89,14 +89,14 @@ service_session_call(struct service_session *session,
 {
 	const struct sctl_request *req;
 	struct sctl_reply rpl;
-	const char *mode, *summary;
+	const char *mode, *summary, *payload;
 	char *end;
 	unsigned long expected;
-	size_t summary_len;
+	size_t summary_len, payload_len;
 
 	if (session != &fake_session || session->fd < 0 || message == NULL ||
 	    message->size != sizeof(*message) ||
-	    message->length != sizeof(*req) || message->data == NULL ||
+	    message->length < sizeof(*req) || message->data == NULL ||
 	    message->nfds != 0 || reply == NULL ||
 	    reply->size != sizeof(*reply) || reply->data == NULL ||
 	    reply->capacity < sizeof(rpl) || options == NULL ||
@@ -109,7 +109,11 @@ service_session_call(struct service_session *session,
 		return (-1);
 	}
 	req = message->data;
-	if (req->flags != 0 || req->datalen != 0) {
+	payload = getenv("SCTL_EXPECT_PAYLOAD");
+	payload_len = payload != NULL ? strlen(payload) : 0;
+	if (req->flags != 0 || req->datalen != payload_len ||
+	    message->length != sizeof(*req) + payload_len ||
+	    (payload_len != 0 && memcmp(req + 1, payload, payload_len) != 0)) {
 		errno = EPROTO;
 		return (-1);
 	}
@@ -125,7 +129,9 @@ service_session_call(struct service_session *session,
 	}
 
 	memset(&rpl, 0, sizeof(rpl));
-	summary = "switchboard-ready\n";
+	summary = getenv("SCTL_SUMMARY");
+	if (summary == NULL)
+		summary = "switchboard-ready\n";
 	summary_len = strlen(summary);
 	mode = getenv("SCTL_REPLY");
 	if (mode != NULL && strcmp(mode, "status") == 0)

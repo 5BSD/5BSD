@@ -369,6 +369,103 @@ def merge_hardware(repository, base, pkg):
     return info
 
 
+def verify_catalogue_public_key(repository, public_key, pkg, abi, osversion=None,
+                                verify_archives=False):
+    """Verify an offline catalogue using only the consumer public trust key.
+
+    The database, cache, trust file, and repository configuration are private;
+    neither host package state nor a permissive ambient repository is used.
+    """
+    if osversion is None:
+        osversion = run(pkg, 'config', 'OSVERSION', capture_output=True).stdout.strip()
+    if not str(osversion).isdigit():
+        raise ValueError('invalid repository OS version')
+    with tempfile.TemporaryDirectory(prefix='5bsd-verify-') as work:
+        work = Path(work)
+        public = work / 'repository.pub'
+        shutil.copyfile(public_key, public)
+        repos = work / 'repos'
+        repos.mkdir()
+        definition = {'bsd_build_verify': {
+            'url': repository.resolve().as_uri(), 'enabled': True,
+            'signature_type': 'pubkey', 'pubkey': str(public),
+            'mirror_type': 'none'}}
+        (repos / 'verify.conf').write_text(json.dumps(definition) + '\n')
+        for name in ('db', 'cache'):
+            (work / name).mkdir()
+        command = [pkg, '-C', '/dev/null', '-R', repos,
+            '-o', 'ABI=' + abi, '-o', 'OSVERSION=' + str(osversion),
+            '-o', 'PKG_DBDIR=' + str(work / 'db'),
+            '-o', 'PKG_CACHEDIR=' + str(work / 'cache'),
+            '-o', 'ENABLE_PLUGINS=no', '-o', 'REPO_AUTOUPDATE=no',
+            '-o', 'INSTALL_AS_USER=yes']
+        result = run(*command, 'update', '-f', '-r', 'bsd_build_verify',
+                     capture_output=True)
+        # Some pkg versions return success after removing an invalidly signed
+        # catalogue. Never interpret that exit status as verification evidence.
+        if result.stderr:
+            raise ValueError('pkg catalogue verification diagnostic: ' + result.stderr.strip())
+        result = run(*command, 'rquery', '-U', '-r', 'bsd_build_verify',
+                     '%n-%v', capture_output=True)
+        if result.stderr:
+            raise ValueError('pkg catalogue query diagnostic: ' + result.stderr.strip())
+        expected = sorted(meta['name'] + '-' + meta['version']
+                          for _, meta in inventory(repository).values())
+        if not expected or sorted(result.stdout.splitlines()) != expected:
+            raise ValueError('verified catalogue package inventory mismatch')
+        if verify_archives:
+            # Fetch through the authenticated catalogue so pkg checks each
+            # archive hash, not merely its unauthenticated manifest name.
+            # The private cache is removed on both success and failure.
+            result = run(*command, 'fetch', '-U', '-y', '-a', '-r',
+                         'bsd_build_verify', capture_output=True)
+            if result.stderr:
+                raise ValueError('pkg archive verification diagnostic: ' + result.stderr.strip())
+
+
+def verify_signed_catalogue(repository, key, pkg, abi, osversion=None):
+    """Verify a publication with the public half of its signing key."""
+    with tempfile.TemporaryDirectory(prefix='.trust-', dir=repository.parent) as work:
+        public = Path(work) / 'repository.pub'
+        run('openssl', 'pkey', '-in', key, '-pubout', '-out', public)
+        verify_catalogue_public_key(repository, public, pkg, abi, osversion,
+                                    verify_archives=True)
+
+
+
+
+def copy_signed_repository(repository, output, public_key, pkg, abi, osversion):
+    """Copy a signed catalogue unchanged into a new offline repository.
+
+    Subsetting or running pkg repo here would discard the original signature.
+    Verify the copied catalogue against explicit consumer trust before exposing
+    the destination. Fetch every copied package into a private temporary cache
+    to check its payload hash against the authenticated catalogue.
+    """
+    repository = repository.resolve(strict=True)
+    output = output.absolute()
+    parent = output.parent.resolve(strict=True)
+    output = parent / output.name
+    if output.exists() or output.is_symlink():
+        raise ValueError('offline repository destination already exists')
+    if output == repository or repository in output.parents:
+        raise ValueError('offline repository cannot be inside its source')
+    for path in repository.rglob('*'):
+        if path.is_symlink() or not (path.is_file() or path.is_dir()):
+            raise ValueError('unsupported offline repository entry: ' + str(path))
+    verify_catalogue_public_key(repository, public_key, pkg, abi, osversion)
+    with tempfile.TemporaryDirectory(prefix='.offline-', dir=parent) as work:
+        candidate = Path(work) / 'repository'
+        shutil.copytree(repository, candidate)
+        verify_catalogue_public_key(candidate, public_key, pkg, abi, osversion,
+                                    verify_archives=True)
+        # Do not merge with a previous generation or overwrite its catalogue.
+        if output.exists() or output.is_symlink():
+            raise ValueError('offline repository destination already exists')
+        candidate.rename(output)
+    return output
+
+
 def publish(args):
     """Publish a complete immutable generation, then atomically advance latest."""
     base = args.base_repository.resolve(strict=True)
@@ -404,6 +501,7 @@ def publish(args):
             closure(combined, list(combined))
             if args.signing_key:
                 run(args.pkg, 'repo', candidate, args.signing_key)
+                verify_signed_catalogue(candidate, args.signing_key, args.pkg, info['abi'], info.get('osversion'))
             verify(candidate)
             (candidate / 'publication.json').write_text(json.dumps({
                 'format': 1, 'kernel_sha256': info['kernel_sha256'],
@@ -457,36 +555,100 @@ def stage(args):
                 kind = ('type=link link=' + str(path.readlink()) if path.is_symlink()
                         else 'type=dir mode=0755' if path.is_dir() else 'type=file mode=0644')
                 metalog.write(name + ' uname=root gname=wheel ' + kind + '\n')
-        live = [r['package'] for n, r in info['packages'].items()
-                if n.startswith(('wifi-firmware-', 'gpu-firmware-')) or
-                n in ('iwmbt-firmware', 'rtlbt-firmware')]
-        if live:
-            # --rootdir redirects payloads only. Explicitly isolate the package
-            # database, cache and repository configuration from the build host.
-            with tempfile.TemporaryDirectory() as config:
-                Path(config, 'hardware.conf').write_text(
-                    '5BSD-base: { url: "file://' + str(args.repository.resolve()) +
-                    '", enabled: yes }\n')
-                target_options = ['-o', 'ABI=' + info['abi']]
-                if info.get('osversion'):
-                    target_options += ['-o', 'OSVERSION=' + str(info['osversion'])]
-                run(args.pkg, '-r', args.media, *target_options,
-                    '-o', 'INSTALL_AS_USER=yes', '-o', 'METALOG=METALOG',
-                    '-o', 'PKG_DBDIR=' + str(args.media / 'var/db/pkg'),
-                    '-o', 'PKG_CACHEDIR=' + str(args.media / 'var/cache/pkg'),
-                    '-o', 'REPOS_DIR=' + config,
-                    'install', '-y', '-r', '5BSD-base', *live)
+        install_live_firmware(args.media, args.repository, args.pkg, info)
 
-        # INSTALL_AS_USER suppresses pkg scripts, including kldxref. Build the
-        # module index explicitly so the live kernel can locate firmware names.
-        modules = args.media / 'boot/modules'
-        if modules.exists() and any(modules.glob('*.ko')):
-            run('kldxref', modules)
-            hints = modules / 'linker.hints'
-            if not hints.is_file():
-                raise ValueError('live hardware modules have no linker.hints')
-            with (args.media / 'METALOG').open('a') as metalog:
-                metalog.write('./boot/modules/linker.hints type=file uname=root gname=wheel mode=0644\n')
+
+def install_live_firmware(media, repository, pkg, info, public_key=None):
+    live = [r['package'] for n, r in info['packages'].items()
+            if n.startswith(('wifi-firmware-', 'gpu-firmware-')) or
+            n in ('iwmbt-firmware', 'rtlbt-firmware')]
+    if live:
+        # --rootdir redirects payloads only. Explicitly isolate the package
+        # database, cache and repository configuration from the build host.
+        with tempfile.TemporaryDirectory() as config:
+            definition = {'url': repository.resolve().as_uri(), 'enabled': True}
+            if public_key is not None:
+                definition.update(signature_type='pubkey', pubkey=str(public_key))
+            Path(config, 'hardware.conf').write_text(
+                json.dumps({'5BSD-base': definition}) + '\n')
+            target_options = ['-o', 'ABI=' + info['abi']]
+            if info.get('osversion'):
+                target_options += ['-o', 'OSVERSION=' + str(info['osversion'])]
+            run(pkg, '-r', media, *target_options,
+                '-o', 'INSTALL_AS_USER=yes', '-o', 'METALOG=METALOG',
+                '-o', 'PKG_DBDIR=' + str(media / 'var/db/pkg'),
+                '-o', 'PKG_CACHEDIR=' + str(media / 'var/cache/pkg'),
+                '-o', 'REPOS_DIR=' + config,
+                'install', '-y', '-r', '5BSD-base', *live)
+
+    # INSTALL_AS_USER suppresses pkg scripts, including kldxref. Build the
+    # module index explicitly so the live kernel can locate firmware names.
+    modules = media / 'boot/modules'
+    if modules.exists() and any(modules.glob('*.ko')):
+        run('kldxref', modules)
+        hints = modules / 'linker.hints'
+        if not hints.is_file():
+            raise ValueError('live hardware modules have no linker.hints')
+        with (media / 'METALOG').open('a') as metalog:
+            metalog.write('./boot/modules/linker.hints type=file uname=root gname=wheel mode=0644\n')
+
+
+def stage_signed_media(args):
+    """Stage a complete signed publication and explicit trust on live media."""
+    if args.media.is_symlink():
+        raise ValueError('media root must not be a symlink')
+    media = args.media.resolve(strict=True)
+    if media == Path('/'):
+        raise ValueError('media requires an alternate root')
+    for name in ('usr', 'boot', 'boot/kernel', 'etc', 'var', 'var/db', 'var/cache'):
+        path = media / name
+        if path.is_symlink() or (path.exists() and not path.is_dir()):
+            raise ValueError('invalid media directory: ' + name)
+    repository = args.repository.resolve(strict=True)
+    info = verify(repository)
+    publication = json.loads((repository / 'publication.json').read_text())
+    if (publication.get('format') != 1 or
+            publication.get('kernel_sha256') != info['kernel_sha256'] or
+            publication.get('hardware_manifest_sha256') != sha256(repository / 'hardware.json')):
+        raise ValueError('inconsistent complete publication')
+    if sha256(media / 'boot/kernel/kernel') != info['kernel_sha256']:
+        raise ValueError('live media kernel does not match the publication')
+    names = inventory(repository)
+    if not {'pkg', '5BSD-set-base'} <= set(names):
+        raise ValueError('media publication must contain pkg and the base set')
+    for key in (args.public_key, args.code_public_key):
+        if key.is_symlink() or not key.is_file():
+            raise ValueError('media trust key must be a regular file')
+    for path in repository.rglob('*'):
+        if any(c.isspace() for c in str(path.relative_to(repository))):
+            raise ValueError('unsupported whitespace in media repository filename')
+    destination = media / 'usr/5bsd-packages'
+    if destination.exists() or destination.is_symlink():
+        raise ValueError('signed media package destination already exists')
+    with tempfile.TemporaryDirectory(prefix='.signed-media-', dir=media / 'usr') as temp:
+        prepared = Path(temp) / 'packages'
+        prepared.mkdir()
+        keys = prepared / 'keys'
+        keys.mkdir()
+        shutil.copyfile(args.public_key, keys / 'repository.pub')
+        shutil.copyfile(args.code_public_key, keys / 'code.pub')
+        copy_signed_repository(repository, prepared / 'offline', keys / 'repository.pub',
+                               args.pkg, info['abi'], info.get('osversion'))
+        verify(prepared / 'offline')
+        repos = prepared / 'repos'
+        repos.mkdir()
+        (repos / '5BSD-base-offline.conf').write_text(json.dumps({'5BSD-base': {
+            'url': 'file:///usr/5bsd-packages/offline', 'enabled': True,
+            'signature_type': 'pubkey', 'pubkey': '/usr/5bsd-packages/keys/repository.pub',
+            'mirror_type': 'none'}}) + '\n')
+        prepared.rename(destination)
+    with (media / 'METALOG').open('a') as metalog:
+        for path in [destination, *sorted(destination.rglob('*'))]:
+            kind = 'dir mode=0755' if path.is_dir() else 'file mode=0644'
+            metalog.write('./' + str(path.relative_to(media)) +
+                          ' type=' + kind + ' uname=root gname=wheel\n')
+    install_live_firmware(media, destination / 'offline', args.pkg, info,
+                          destination / 'keys/repository.pub')
 
 
 def main():
@@ -511,12 +673,29 @@ def main():
     pub.add_argument('--base-repository', type=Path, required=True)
     pub.add_argument('--output', type=Path, required=True)
     pub.add_argument('--signing-key', type=Path)
-    for parser in (b, s, pub):
+    offline = sub.add_parser('copy-signed-repository',
+        help='preserve and verify a complete signed offline catalogue')
+    offline.add_argument('--repository', type=Path, required=True)
+    offline.add_argument('--output', type=Path, required=True)
+    offline.add_argument('--public-key', type=Path, required=True)
+    offline.add_argument('--abi', required=True)
+    offline.add_argument('--osversion', required=True)
+    media = sub.add_parser('stage-signed-media')
+    media.add_argument('--repository', type=Path, required=True)
+    media.add_argument('--media', type=Path, required=True)
+    media.add_argument('--public-key', type=Path, required=True)
+    media.add_argument('--code-public-key', type=Path, required=True)
+    for parser in (b, s, pub, offline, media):
         parser.add_argument('--pkg', default='/usr/local/sbin/pkg-static')
     args = p.parse_args()
     try:
         if args.action == 'build':
             build(args)
+        elif args.action == 'copy-signed-repository':
+            copy_signed_repository(args.repository, args.output,
+                args.public_key, args.pkg, args.abi, args.osversion)
+        elif args.action == 'stage-signed-media':
+            stage_signed_media(args)
         elif args.action == 'publish':
             publish(args)
         else:

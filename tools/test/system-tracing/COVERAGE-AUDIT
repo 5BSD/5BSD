@@ -46,13 +46,8 @@ semantics. Validation artifacts live under /usr/obj/5bsd-dtrace*-validation
 and /usr/obj/5bsd-mac-hook-validation. The isolated commit review records its
 checks under /usr/obj/5bsd-tracing-commit-validation.
 
-Isolated branch verification: 154 kernel compile configurations pass with
--Werror against the branch source; all 98 profile checks and both MAC dispatch
-fixtures pass. The generated argument contracts match all 336 callback slots
-in this branch. Both runtime linkers build and pass ordinary startup, nested
-initializers, dlopen/dlclose and missing-library smoke tests. The earlier
-SIGSYS limitation in the larger working tree does not reproduce here.
-
-Limits: live DTrace firing remains unqualified because the running host does
-not expose the device. No kernel installation, publication or reboot is part
-of this change. The commit excludes unrelated loader and MAC policy changes.
+Limits: the running host does not expose the DTrace device. Ordinary execution
+of the source runtime linker encounters the host's missing cap_process syscall;
+SIGSYS-ignored compatibility smoke tests are explicitly labeled and are not
+normal-host qualification. No kernel installation, package publication or
+reboot is part of this change. Runtime policy enforcement behavior is unchanged.

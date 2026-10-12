@@ -20,6 +20,7 @@
 #include <errno.h>
 #include <limits.h>
 #include <stdbool.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -192,6 +193,21 @@ cmd_status(void)
 }
 
 static int
+cmd_cache_status(const char *label)
+{
+	char summary[SWITCHBOARD_CTL_SUMMARY_MAX] = {0};
+	int error;
+
+	error = sctl_rpc(SCTL_OP_CACHE_STATUS, 0, label, summary, sizeof(summary));
+	if (error != 0) {
+		warnx("cache-status: %s", strerror(error));
+		return (1);
+	}
+	printf("%s", summary);
+	return (0);
+}
+
+static int
 cmd_services(void)
 {
 	char summary[SWITCHBOARD_CTL_SUMMARY_MAX];
@@ -342,6 +358,21 @@ valid_bundle_id(const char *id)
 {
 	size_t i, n;
 
+	/* The disable file is operator-owned. Scope is a key, never authority. */
+	if (strncmp(id, "user:", 5) == 0) {
+		uintmax_t uid = 0;
+		id += 5;
+		if (*id < '0' || *id > '9' ||
+		    (*id == '0' && id[1] != ':')) return (false);
+		while (*id >= '0' && *id <= '9') {
+			unsigned digit = (unsigned)(*id++ - '0');
+			if (uid > ((uintmax_t)(uid_t)-1 - digit) / 10)
+				return (false);
+			uid = uid * 10 + digit;
+		}
+		if (*id++ != ':' || uid == (uintmax_t)(uid_t)-1)
+			return (false);
+	}
 	n = strlen(id);
 	if (n == 0 || n >= 256)
 		return (false);
@@ -463,6 +494,7 @@ usage(void)
 	    "\n"
 	    "commands:\n"
 	    "  status              show switchboard status and service list\n"
+	    "  cache-status label  show a supervised unit's cache mapping counters\n"
 	    "  services            list loaded services\n"
 	    "  tree                show who each running unit exists on behalf of\n"
 	    "  reload              reload service bundles\n"
@@ -471,8 +503,8 @@ usage(void)
 	    "  restart <label>     stop then start a service\n"
 	    "  enable <bundle-id>  clear a bundle's operator-disabled state\n"
 	    "  disable <bundle-id> keep a bundle installed but unregistered\n"
-	    "  install <path.cap>  install a .cap bundle to /Capabilities/\n"
-	    "  verify <path.cap> [...] validate bundles and dependencies\n"
+	    "  install [--personal] <path.cap>  install a .cap bundle to /Capabilities/\n"
+	    "  verify [--personal] <path.cap> [...] validate bundles and dependencies\n"
 	    "  deps <program>      suggest component manifest dependencies\n"
 	    "  bundles             list all registered bundles\n"
 	    "  graph [--text|--dot|--json] [--lint] [--root dir]\n"
@@ -500,6 +532,8 @@ main(int argc, char *argv[])
 
 	cmd = argv[0];
 
+	if (strcmp(cmd, "cache-status") == 0 && argc == 2)
+		return (cmd_cache_status(argv[1]));
 	if (strcmp(cmd, "status") == 0 && argc == 1)
 		return (cmd_status());
 	if (strcmp(cmd, "tree") == 0 && argc == 1)
@@ -534,14 +568,18 @@ main(int argc, char *argv[])
 		return (cmd_enable_disable(argv[1], true));
 	}
 	if (strcmp(cmd, "install") == 0) {
-		if (argc != 2)
+		if (argc == 3 && strcmp(argv[1], "--personal") == 0)
+			return (cmd_install_personal(argv[2]));
+		if (argc != 2 || argv[1][0] == '-')
 			errx(EX_USAGE, "install requires a .cap bundle path");
 		return (cmd_install(argv[1]));
 	}
 	if (strcmp(cmd, "verify") == 0) {
-		if (argc < 2)
+		bool personal = argc > 1 && strcmp(argv[1], "--personal") == 0;
+		if (personal) { argc--; argv++; }
+		if (argc < 2 || argv[1][0] == '-')
 			errx(EX_USAGE, "verify requires a .cap bundle path");
-		return (cmd_verify(argc - 1, argv + 1));
+		return (cmd_verify(argc - 1, argv + 1, personal));
 	}
 	if (strcmp(cmd, "deps") == 0) {
 		if (argc != 2)

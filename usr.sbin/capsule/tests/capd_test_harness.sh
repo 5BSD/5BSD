@@ -28,6 +28,60 @@ capd_paths_init()
 	CAPD_APPS_USER="${CAPD_WORK}/Capabilities"
 }
 
+# ----------------------------------------------------------------------------
+# Authority issuer.
+#
+# Only PID 1 may create the protected authority issuer (CAP_AUTH_ISSUER_CREATE),
+# so a test-local Capsule normally cannot issue unit authority and its
+# switchboard fails every unit launch.  A kernel built with
+# options MAC_CAPABILITY_TEST_RELAX and booted with kern.mac_capability.test_relax=1
+# lets a test-local Capsule create one, loudly logged as TEST MODE; that is the
+# tier these stack cases run in (docs/book/src/develop/testing.md).  On any
+# other kernel a case that would fail after Capsule logged that the issuer is
+# unavailable skips with that reason instead; cases that need no launched unit
+# still run and assert.
+# ----------------------------------------------------------------------------
+
+CAPD_ISSUER_SKIP="requires an authority issuer: a test-local Capsule off PID 1 needs a MAC_CAPABILITY_TEST_RELAX kernel booted with kern.mac_capability.test_relax=1"
+
+capd_test_relax()
+{
+	[ "$(sysctl -n kern.mac_capability.test_relax 2>/dev/null)" = 1 ]
+}
+
+# The issuer condition, as logged by the test-local Capsule itself.
+capd_issuer_unavailable()
+{
+	[ -n "${CAPD_LOG:-}" ] && [ -r "$CAPD_LOG" ] &&
+	    grep -q "protected authority issuer unavailable" "$CAPD_LOG" \
+	    2>/dev/null
+}
+
+# Replace atf-sh's atf_fail: a failure on a stack that could not issue unit
+# authority is the environment, not the behaviour under test.
+_capd_failing=
+atf_fail()
+{
+	if [ -z "$_capd_failing" ] && capd_issuer_unavailable; then
+		_capd_failing=1
+		echo "atf_fail: $*" >&2
+		_atf_create_resfile "skipped: ${CAPD_ISSUER_SKIP}"
+		exit 0
+	fi
+	case "${Expect}" in
+	fail)
+		atf_expected_failure "${@}"
+		;;
+	pass)
+		_atf_create_resfile "failed: ${*}"
+		exit 1
+		;;
+	*)
+		_atf_error 128 "Unreachable"
+		;;
+	esac
+}
+
 capd_require_stack_kmods()
 {
 	local kmods

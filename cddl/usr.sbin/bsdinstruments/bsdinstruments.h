@@ -96,6 +96,7 @@ enum watch_format {
 };
 
 struct watch_opts {
+	int		 broker;
 	enum watch_format format;
 	const char	*endpoint;
 	const char	*bufsize;	/* NULL: default */

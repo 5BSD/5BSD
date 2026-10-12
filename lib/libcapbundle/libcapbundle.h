@@ -25,6 +25,11 @@
 /* Shared syntax for endpoint and attribute names, excluding wildcards. */
 bool capbundle_valid_service_name(const char *, size_t);
 
+/* Validate an in-memory Unit.ucl policy using the runtime unit schema.
+ * Returns 0 or -1 with an optional diagnostic. Does not inspect bundle files,
+ * authenticate signatures, resolve resources or authorize policy claims. */
+int capbundle_validate_unit_policy(const void *, size_t, char *, size_t);
+
 /* Limits */
 #define	CAPBUNDLE_SCHEMA		"org.5bsd.capability-bundle"
 #define	CAPBUNDLE_MAX_SERVICES		32
@@ -193,5 +198,22 @@ int	capbundle_scan_dir(const char *dirpath, capbundle_scan_cb cb, void *ctx);
 #define	CAPBUNDLE_MGMT_SYSTEM		0
 #define	CAPBUNDLE_MGMT_CORE		1
 #define	CAPBUNDLE_MGMT_USER		2
+
+/* Explicit trust for release tools and isolated tests. Runtime callers use
+ * capbundle_open(), which selects the system trust catalogue. */
+/* Personal bundles permit unsigned code and verify signed bytes using their
+ * embedded keys. No platform signer trust is implied. Caller must enforce UID
+ * ownership and user-only authority independently of signed policy requests. */
+int capbundle_open_personal(const char *, struct capbundle **, char *, size_t);
+int capbundle_open_trusted(const char *, const char *, bool,
+    struct capbundle **, char *, size_t);
+int capbundle_svc_verify_image(const struct capbundle_service *, int,
+    const char *, char *, size_t);
+/* Explicit experimental kernel path. Caller owns *handle, retaining it through
+ * same-fd authority adoption. Unsigned registered services return handle=-1.
+ * Unsupported kernels/filesystems and verification errors never fall back. */
+int capbundle_svc_prepare_image(const struct capbundle_service *, int,
+    const char *, int *, char *, size_t);
+int capbundle_seal(const char *, const char *, char *, size_t);
 
 #endif /* LIBCAPBUNDLE_H */

@@ -1,0 +1,54 @@
+# build-bsd --config accepts literal key=value records, without shell quoting.
+# CLI options override this file. No private key bytes belong here.
+arch=native
+board=generic
+jobs=auto
+kernel=GENERIC
+# kernel_dir=/secure/kernel-configs
+src_conf=/etc/src.conf
+make_conf=/etc/make.conf
+incremental=no
+# build/packages default to production malloc and use the maintained pkgbase path.
+signing=unsigned
+# For a persistent locally generated code-signing identity:
+# signing=development
+# development_key=/usr/obj/usr/src/signing-keys/development.pem
+# For an existing Ed25519 code-signing identity:
+# signing=signed
+# key=/secure/code-signing.pem
+# Independent RSA repository signing identity (build/packages only):
+# pkg_key=/secure/pkg-signing.pem
+cache=no
+# library_list=/secure/cache-libraries.txt
+ports=/usr/obj/5BSD-ports
+# hardware_profile=/usr/src/release/tools/hardware-ports.amd64
+# distfiles=/usr/obj/5BSD-ports/distfiles
+# stage only; must be a new private path under /usr/obj:
+# output=/usr/obj/usr/src/stages/test-image
+# relaxed_signatures=yes
+# Read-only verification of an existing signed root:
+# root=/usr/obj/usr/src/stages/test-image
+# public_key=/secure/code-signing.pub
+
+# Separate deployment configuration (explicit deploy command only):
+# repository=/usr/obj/usr/src/repo/FreeBSD:16:amd64/latest
+# pkg_public_key=/secure/pkg-signing.pub
+# public_key=/secure/code-signing.pub
+# bootenv=5bsd-next
+# Or use root=/usr/obj/usr/src/installed-root (must not exist).
+
+# For the media action: all, iso, or memstick.
+# media_format=all
+
+# Build signed amd64 layout artifacts; does not enroll any runtime services.
+# Requires cache=yes and development or signed mode.
+cache_layout=no
+
+# Final combined repository only; base/hardware staging stays under /usr/obj.
+# publish_repository=/var/db/5bsd/repositories/base
+
+# Build policy is independent of code-signing mode.
+# build_profile=production
+# For private staging use development or debug (debug adds compiler symbols).
+# Test-only package publication with either requires:
+# allow_debug_publication=yes

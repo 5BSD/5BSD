@@ -512,6 +512,10 @@ main(int argc, char *argv[])
 	add_signal_event(switchboard_kq, SIGHUP);
 	add_signal_event(switchboard_kq, SIGCHLD);
 
+	if (svc_library_cache_init() < 0) {
+		syslog(LOG_CRIT, "library cache verification failed — aborting");
+		return (1);
+	}
 	/* Initialize bundle registry (scan /Capabilities/System + /Capabilities). */
 	if (bundle_registry_init() == -1) {
 		syslog(LOG_CRIT, "bundle registry init failed — aborting");

@@ -66,7 +66,7 @@ uname -a
 sysctl kern.osreldate
 
 # 2. Get ports
-git clone --depth 1 https://git.FreeBSD.org/ports.git /usr/ports
+git clone --depth 1 https://github.com/5BSD/5BSD-ports.git /usr/ports
 
 # 3. Build against your kernel source
 cd /usr/ports/graphics/drm-kmod

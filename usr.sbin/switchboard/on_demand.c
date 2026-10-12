@@ -48,6 +48,8 @@ struct pending_lookup {
 	struct pending_lookup	*next;
 	char			 name[CAPBUNDLE_NAME_MAX + 1];
 	char			 provider_label[SWITCHBOARD_LABEL_MAX];
+	uid_t provider_owner_uid;
+	uid_t requester_owner_uid;
 	pid_t			 provider_pid;
 	uint64_t		 provider_launch_id;
 	char			 requester_label[SWITCHBOARD_LABEL_MAX];
@@ -74,6 +76,7 @@ pending_provider_matches(const struct pending_lookup *pending,
 {
 
 	if (pending == NULL || provider == NULL ||
+	    pending->provider_owner_uid != provider->owner_uid ||
 	    strcmp(pending->provider_label, provider->manifest.label) != 0)
 		return (false);
 	/*
@@ -92,7 +95,7 @@ pending_requester(const struct pending_lookup *pending)
 {
 	struct svc_runtime *requester;
 
-	requester = svc_by_label(pending->requester_label);
+	requester = svc_by_label_scoped(pending->requester_label, pending->requester_owner_uid);
 	if (requester == NULL || requester->pid != pending->requester_pid ||
 	    requester->launch_id != pending->requester_launch_id ||
 	    requester->channel_fd < 0)
@@ -110,7 +113,7 @@ pending_launch_waiter(const struct pending_lookup *pending)
 {
 	struct svc_runtime *waiter;
 
-	waiter = svc_by_label(pending->requester_label);
+	waiter = svc_by_label_scoped(pending->requester_label, pending->requester_owner_uid);
 	if (waiter == NULL || waiter->state != SVC_STATE_STOPPED)
 		return (NULL);
 	return (waiter);
@@ -282,11 +285,13 @@ on_demand_name_withdraw(struct svc_runtime *svc, const char *name, int kq)
  * that are already STARTING but have no pending lookup yet.
  */
 static struct svc_runtime *
-find_launching_service(const char *name)
+find_launching_service(const char *name, uid_t owner_uid)
 {
 	unsigned i, j;
 
 	for (i = 0; i < sd.nservices; i++) {
+		if (sd.services[i].owner_uid != owner_uid)
+			continue;
 		if (sd.services[i].state != SVC_STATE_STARTING &&
 		    sd.services[i].state != SVC_STATE_RUNNING)
 			continue;
@@ -339,7 +344,8 @@ od_launch_constraint_ok(struct svc_runtime *target, const char *name)
 	char buf[64];
 	const char *who;
 
-	if (svc_responsible_allowed(&target->manifest, &target->responsible))
+	if (svc_responsible_allowed_scoped(&target->manifest, target->owner_uid,
+	    &target->responsible))
 		return (true);
 	who = svc_responsibility_name(&target->responsible, buf, sizeof(buf));
 	syslog(LOG_NOTICE, "on_demand: refusing '%s': %s does not allow %s to "
@@ -353,7 +359,8 @@ od_launch_constraint_ok(struct svc_runtime *target, const char *name)
 }
 
 static bool
-would_deadlock(const char *name, struct svc_runtime *requester)
+would_deadlock(const char *name, struct svc_runtime *requester,
+    uid_t provider_owner_uid)
 {
 	struct pending_lookup *p;
 	unsigned i;
@@ -390,8 +397,8 @@ would_deadlock(const char *name, struct svc_runtime *requester)
 			 * in an unrelated on-demand service (e.g. the audit broker)
 			 * is not circular.
 			 */
-			waiter = svc_by_label(p->requester_label);
-			if (waiter == NULL)
+			waiter = svc_by_label_scoped(p->requester_label, p->requester_owner_uid);
+			if (waiter == NULL || waiter->owner_uid != provider_owner_uid)
 				continue;
 			for (j = 0; j < waiter->manifest.nprovides; j++) {
 				if (strcmp(waiter->manifest.provides[j],
@@ -588,8 +595,14 @@ od_launch(const char *name, struct svc_runtime *requester,
 	struct kevent kev;
 	int saved_errno;
 
-	/* Look up in the provides registry. */
-	if (bundle_registry_lookup(name, &bundle_idx, &service_idx) == -1)
+	/* The kernel sender, not inherited route metadata, selects a user's
+	 * namespace. Internal deferred launches use the authenticated slot owner. */
+	const struct channel_sender *scope_sender = request != NULL ?
+	    channel_message_sender(request) : NULL;
+	uid_t lookup_uid = scope_sender != NULL ? (uid_t)scope_sender->uid :
+	    (request == NULL && requester != NULL ? requester->owner_uid : (uid_t)-1);
+	if (bundle_registry_lookup_for_uid(name, lookup_uid, &bundle_idx,
+	    &service_idx) == -1)
 		return (-1);  /* not found — caller should return ENOENT */
 
 	/*
@@ -607,7 +620,7 @@ od_launch(const char *name, struct svc_runtime *requester,
 		uid_t uid;
 
 		sender = request != NULL ? channel_message_sender(request) : NULL;
-		uid = sender != NULL ? (uid_t)sender->uid : getuid();
+		uid = sender != NULL ? (uid_t)sender->uid : lookup_uid;
 		if (ambient_domain != NULL)
 			set = &ambient_domain->anoint;
 		else if (requester != NULL)
@@ -623,7 +636,8 @@ od_launch(const char *name, struct svc_runtime *requester,
 	}
 
 	/* Circular dependency detection. */
-	if (would_deadlock(name, requester)) {
+	if (would_deadlock(name, requester,
+	    bundle_registry_owner_uid(bundle_idx))) {
 		errno = EDEADLK;
 		return (-1);
 	}
@@ -644,6 +658,8 @@ od_launch(const char *name, struct svc_runtime *requester,
 		syslog(LOG_ERR, "on_demand: calloc pending: %m");
 		return (-1);
 	}
+	pl->requester_owner_uid = requester != NULL ? requester->owner_uid : (uid_t)-1;
+	pl->provider_owner_uid = bundle_registry_owner_uid(bundle_idx);
 	strlcpy(pl->name, name, sizeof(pl->name));
 	if (requester != NULL) {
 		strlcpy(pl->requester_label, requester->manifest.label,
@@ -670,7 +686,7 @@ od_launch(const char *name, struct svc_runtime *requester,
 	}
 
 	/* Check if this service is already running or being launched. */
-	target = find_launching_service(name);
+	target = find_launching_service(name, bundle_registry_owner_uid(bundle_idx));
 	if (target == NULL) {
 		/* Need to actually launch. */
 		b = bundle_registry_get(bundle_idx);
@@ -687,7 +703,8 @@ od_launch(const char *name, struct svc_runtime *requester,
 		 * launch with this activation and leave one instance losing
 		 * its name claims.  Launch through the existing slot instead.
 		 */
-		target = svc_by_label(capbundle_svc_label(asvc));
+		target = svc_by_label_scoped(capbundle_svc_label(asvc),
+		    bundle_registry_owner_uid(bundle_idx));
 		if (target != NULL) {
 			if (target->state == SVC_STATE_STOPPED) {
 				if (on_demand_circuit_open(target)) {
@@ -1088,7 +1105,8 @@ on_demand_requester_gone(struct svc_runtime *svc, int kq)
 		pl = *pp;
 		if (pl->requester_pid != svc->pid ||
 		    pl->requester_launch_id != svc->launch_id ||
-		    strcmp(pl->requester_label, svc->manifest.label) != 0) {
+		    strcmp(pl->requester_label, svc->manifest.label) != 0 ||
+		    pl->requester_owner_uid != svc->owner_uid) {
 			pp = &pl->next;
 			continue;
 		}
@@ -1163,6 +1181,7 @@ on_demand_timeout(uintptr_t ident, int kq)
 	struct pending_lookup **pp, *pl;
 	char expired_name[CAPBUNDLE_NAME_MAX + 1];
 	char expired_provider[SWITCHBOARD_LABEL_MAX];
+	uid_t expired_owner_uid;
 	pid_t expired_pid;
 	uint64_t expired_launch_id;
 
@@ -1181,6 +1200,7 @@ on_demand_timeout(uintptr_t ident, int kq)
 		strlcpy(expired_name, pl->name, sizeof(expired_name));
 		strlcpy(expired_provider, pl->provider_label,
 		    sizeof(expired_provider));
+		expired_owner_uid = pl->provider_owner_uid;
 		expired_pid = pl->provider_pid;
 		expired_launch_id = pl->provider_launch_id;
 
@@ -1201,7 +1221,7 @@ on_demand_timeout(uintptr_t ident, int kq)
 		{
 			struct svc_runtime *target;
 
-			target = svc_by_label(expired_provider);
+			target = svc_by_label_scoped(expired_provider, expired_owner_uid);
 			if (target != NULL && target->lookup_activated &&
 			    target->state == SVC_STATE_STARTING &&
 			    target->pid == expired_pid &&
@@ -1282,7 +1302,7 @@ svc_activate_cleanup_provider(const char *label, int kq)
 		return (errno = ENOSPC, -1);
 	for (unsigned bi = 0; bi < bundle_registry_count(); bi++) {
 		struct capbundle *b = bundle_registry_get(bi);
-		if (b == NULL)
+		if (b == NULL || bundle_registry_owner_uid(bi) != (uid_t)-1)
 			continue;
 		for (unsigned si = 0; si < capbundle_nservices(b); si++) {
 			struct capbundle_service *asvc = capbundle_service(b, si);
@@ -1306,6 +1326,7 @@ svc_activate_cleanup_provider(const char *label, int kq)
 			svc->state = SVC_STATE_STOPPED;
 			svc->bundle_idx = bi;
 			svc->bundle_svc_idx = si;
+			svc_slot_apply_bundle_policy(svc, bi);
 			strlcpy(svc->launched_by, "cleanup", sizeof(svc->launched_by));
 			sd.nservices++;
 			return (svc_launch_or_await(svc, kq));

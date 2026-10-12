@@ -4,7 +4,7 @@ PACKAGE=switchboard
 PROG=	switchboard
 BINDIR=	/usr/libexec
 MAN=	switchboard.5 switchboard.8
-SRCS=	switchboard.c activation.c anoint.c activation_calendar.c bundle_registry.c bundle_selection.c authority.c authority_policy.c boot_authority.c domain.c mac_capability_direct.c execute.c \
+SRCS=	switchboard.c activation.c anoint.c activation_calendar.c bundle_registry.c bundle_selection.c authority.c library_cache.c library_cache_domain.c library_cache_policy.c authority_policy.c boot_authority.c domain.c mac_capability_direct.c execute.c \
 	lifecycle.c reclaim_publish.c registry_watch.c fd_budget.c management.c manifest_compare.c \
 	naming.c on_demand.c capsule_client.c rc_adopt.c responsibility.c \
 	rc_ingest.c \
@@ -31,7 +31,8 @@ ADOPT_CONFDIR=	/Capabilities/Config/switchboard
 ADOPT_CONFPACKAGE=	switchboard
 
 FILESGROUPS+=	CMP_EXAMPLES
-CMP_EXAMPLES=	examples/timer-activation.ucl \
+CMP_EXAMPLES=	examples/elf-cache-domain.ucl \
+		examples/timer-activation.ucl \
 		examples/path-activation.ucl \
 		examples/socket-activation.ucl
 CMP_EXAMPLESDIR=	${SHAREDIR}/examples/switchboard
@@ -44,7 +45,7 @@ CFLAGS+=	-I${SRCTOP}/lib/libcapability
 CFLAGS+=	-I${SRCTOP}/lib/libchannel
 CFLAGS+=	-I${SRCTOP}/lib/libservice
 CFLAGS+=	-I${SRCTOP}/contrib/libucl/include
-LIBADD=		capability capbundle channel capsulert service ucl util bsm
+LIBADD=		capability capimage crypto capbundle channel capsulert service ucl util bsm md
 
 # Emit OpenBSM audit records for security-relevant events (control-socket
 # privileged commands, service exec under changed credentials, capability
@@ -60,3 +61,5 @@ CFLAGS+=	-DWITH_DTRACE
 SRCS+= oom_protect.c
 
 .include <bsd.prog.mk>
+
+CFLAGS+= -I${SRCTOP}/lib/libcapimage -iquote${SRCTOP}/sys

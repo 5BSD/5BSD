@@ -2,7 +2,7 @@
 
 PACKAGE=switchboardctl
 PROG=	switchboardctl
-SRCS=	switchboardctl.c deps.c install.c verify.c graph.c
+SRCS=	switchboardctl.c deps.c install.c personal.c verify.c graph.c
 MAN=	switchboardctl.8
 SCRIPTSDIR=	${LIBEXECDIR}
 
@@ -35,6 +35,8 @@ CONTROL_POLICYDIR= ${CONTROL_UNIT}
 CONTROL_POLICYPACKAGE= ${PACKAGE}
 CONTROL_POLICYMODE= 0444
 SYMLINKS+= ${BINDIR}/${PROG} /usr/sbin/${PROG}
+
+CAPIMAGE_MANIFEST= ${CONTROL_POLICY}
 
 .include <bsd.prog.mk>
 

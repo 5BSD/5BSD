@@ -40,6 +40,8 @@ SRCS+=		bsdaudit_provider.d
 CFLAGS+=	-I${.OBJDIR} -DWITH_DTRACE
 .endif
 
+CAPIMAGE_MANIFEST= ${AUDITCMP_UNIT}
+
 .include <bsd.prog.mk>
 
 _proginstall: installdirs-AUDITCMP_CAP_BIN

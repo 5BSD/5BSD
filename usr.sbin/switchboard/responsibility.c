@@ -93,6 +93,7 @@ svc_responsibility_decide(struct svc_runtime *unit,
 			r->parent_fd = dup_parent(requester->coalition_fd);
 			if (r->parent_fd >= 0) {
 				r->kind = SVC_RESP_UNIT;
+				r->owner_uid = requester->owner_uid;
 				strlcpy(r->label, requester->manifest.label,
 				    sizeof(r->label));
 				r->parent_id = requester->coalition_id;
@@ -130,7 +131,7 @@ svc_responsibility_decide(struct svc_runtime *unit,
  * bundle (any unit of this unit's own bundle), or a full unit label.
  */
 bool
-svc_responsible_allowed(const struct svc_manifest *m,
+svc_responsible_allowed_scoped(const struct svc_manifest *m, uid_t owner_uid,
     const struct svc_responsible *r)
 {
 	char uidtok[32];
@@ -158,6 +159,8 @@ svc_responsible_allowed(const struct svc_manifest *m,
 				return (true);
 			break;
 		case SVC_RESP_UNIT:
+			if (r->owner_uid != owner_uid)
+				break;
 			if (strcmp(t, r->label) == 0)
 				return (true);
 			if (strcmp(t, "bundle") == 0) {
@@ -313,4 +316,12 @@ svc_responsibility_root_init(void)
 		    svc_boot_id(bid, sizeof(bid)), (uintmax_t)sr.id);
 	}
 	return (0);
+}
+
+/* Legacy global callers do not select arbitrary personal identities. */
+bool
+svc_responsible_allowed(const struct svc_manifest *m,
+    const struct svc_responsible *r)
+{
+	return (svc_responsible_allowed_scoped(m, (uid_t)-1, r));
 }

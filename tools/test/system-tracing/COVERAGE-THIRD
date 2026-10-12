@@ -231,12 +231,14 @@ reported as a passing runtime tracing test.
 Current host runtime qualification
 ----------------------------------
 The host exposes no DTrace device, so live enumeration/firing is unqualified.
-The isolated tracing branch passes ordinary loader startup, nested constructors,
-dlopen/dlclose and missing-library smoke tests in both hook-enabled and disabled
-builds. Earlier tests against the larger active worktree encountered SIGSYS
-from its cap_process path and needed an explicitly labeled compatibility run;
-that limitation does not reproduce in the isolated tracing commit. No installed
-loader, kernel or host signal policy is changed by these tests.
+The new source runtime linker also calls pre-existing cap_process (syscall
+1011), which this running kernel does not implement. Default direct loader
+execution raises SIGSYS in BOTH hook-enabled and disabled builds. The smoke
+suite reports this as a host limitation, not a passing native execution test.
+A separate, explicitly named host-compat run inherits SIGSYS ignored so the
+existing ENOSYS fallback can run; both variants pass initial loading, nested
+constructors/dlopen, dlclose, and a missing-library error in that mode. No host
+signal policy, installed loader, kernel, or library is changed by these tests.
 
 The ordinary smoke suite exercises shared and static libarchive (including
 DOF retention in the static consumer), loopback HTTP success/404/connect/TLS
@@ -315,7 +317,7 @@ No claim is made that these are every Capsicum enforcement site.
 New profiles: library-loads, debugger-requests, mac-hooks, capsicum-limits.
 The batch now adds 151 declarations (79 kernel and 72 userspace).
 
-Earlier worktree validation record (2026-10-11)
+Validation record (2026-10-11)
 ------------------------------
 72 kernel translation-unit compiles (36 with/without hooks), including every
 MAC framework C file, pass with -Werror. The GENERIC-NODEBUG kernel links.
@@ -326,9 +328,8 @@ offline compile checks pass. MAC dispatch fixtures using the actual header
 macros verify evaluation count, policy order, return composition, boolean
 short-circuiting and balanced locks with and without probe expansions.
 Loader startup, nested initializers, dlopen/dlclose and missing-library tests
-passed under an explicit host compatibility run in the earlier worktree.
-The isolated-commit loader result supersedes that limitation as described above;
-live DTrace qualification remains unavailable.
+pass under the explicit host compatibility run described above. Ordinary
+loader execution and live DTrace qualification remain blocked as documented.
 Machine-readable results: /usr/obj/5bsd-dtrace-third-validation/validation.json.
 Source inventory: 1862 explicit nonfixture declarations (1210 kernel, 652
 userspace); this excludes dynamic providers and macro-generated declarations.

@@ -112,6 +112,7 @@ _LIBRARIES=	\
 		80211 \
 		alias \
 		capbundle \
+		capimage \
 		cache \
 		capreclaim \
 		cryptocmp \
@@ -337,7 +338,8 @@ LIBVERIEXEC?=	${LIBVERIEXECDIR}/libveriexec.a
 _DP_80211=	sbuf bsdxml
 _DP_9p=		sbuf
 _DP_auditcmp=	service
-_DP_capbundle=	capsulert ucl md
+_DP_capimage=	crypto
+_DP_capbundle=	capsulert ucl md capimage
 _DP_capreclaim=	
 _DP_capsulert=	ucl
 _DP_fidl_bsd=	channel pthread cplusplus

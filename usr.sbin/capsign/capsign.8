@@ -1,0 +1,284 @@
+.\" SPDX-License-Identifier: BSD-2-Clause
+.Dd October 11, 2026
+.Dt CAPSIGN 8
+.Os
+.Sh NAME
+.Nm capsign
+.Nd embed, sign, and inspect program policy
+.Sh SYNOPSIS
+.Nm
+.Cm key-id
+.Fl p Ar public.pem
+.Nm
+.Cm note
+.Fl m Ar policy.ucl
+.Fl o Ar note.S
+.Nm
+.Cm sign
+.Op Fl n
+.Fl k Ar private.pem
+.Op Fl m Ar policy.ucl
+.Op Fl o Ar signed-image
+.Ar image
+.Nm
+.Cm verify
+.Op Fl c
+.Op Fl p Ar public.pem
+.Ar image ...
+.Nm
+.Cm show
+.Op Fl p Ar public.pem
+.Ar image
+.Nm
+.Cm inspect
+.Op Fl p Ar public.pem
+.Ar image
+.Nm
+.Cm validate-policy
+.Ar policy.ucl
+.Nm
+.Cm resign
+.Op Fl n
+.Fl k Ar new-private.pem
+.Op Fl p Ar old-public.pem
+.Op Fl o Ar new-image
+.Ar image
+.Nm
+.Cm resign
+.Fl r
+.Op Fl n
+.Fl k Ar new-private.pem
+.Op Fl p Ar old-public.pem
+.Op Fl o Ar new-tree
+.Ar bundle-or-tree
+.Nm
+.Cm remove
+.Op Fl r
+.Fl o Ar new-output
+.Ar image-or-tree
+.Nm
+.Cm seal
+.Fl k Ar private.pem
+.Fl d Ar domain
+.Fl o Ar signature
+.Ar artifact
+.Nm
+.Cm check
+.Op Fl p Ar public.pem
+.Fl d Ar domain
+.Fl s Ar signature
+.Ar artifact
+.Nm
+.Cm bundle-sign
+.Fl k Ar private.pem
+.Ar bundle.cap
+.Nm
+.Cm bundle-verify
+.Op Fl p Ar public.pem
+.Ar bundle.cap
+.Nm
+.Cm sign
+.Fl r
+.Fl k Ar private.pem
+.Op Fl o Ar new-tree
+.Ar bundle-or-tree
+.Nm
+.Cm verify
+.Fl r
+.Op Fl p Ar public.pem
+.Ar bundle-or-tree
+.Sh DESCRIPTION
+The inspect command verifies an image before emitting a JSON object with
+schema org.5bsd.capsign.image.v1, the canonical container type, signature
+algorithm, domain-separated digest algorithm, selected verification-key
+source, policy byte count, public-key identifier and signed digest.
+It emits no inspection object for unsigned, malformed or untrusted input.
+An explicit verification key establishes the selected signer's identity;
+it does not establish permission to grant runtime attributes.
+Use show to extract the authenticated policy bytes.
+Verification normally stops at the first failing image.
+With
+.Fl c
+or
+.Fl -continue ,
+it checks every image operand, reports each failure on standard error,
+and returns failure if any image failed.
+This option applies to non-recursive image verification.
+Options that do not apply to the selected command are usage errors.
+.Pp
+The key-id command prints the raw Ed25519 public-key identifier used in the
+system trust catalogue.
+.Pp
+The note command emits target assembler containing the exact policy bytes
+in a non-allocated .5bsd.policy build-input section.
+Link this assembler with the program, complete stripping and other binary
+transformations, then sign the final image.
+The source image is not modified and published output files must not
+already exist.
+Outside dry-run mode,
+.Fl o
+is required.
+For non-recursive image signing,
+.Fl n
+or
+.Fl -dry-run
+copies, embeds and signs a private temporary image, then removes it without
+publishing an output.
+.Fl o
+is optional in this mode; when supplied it selects the directory for temporary
+work, and any existing destination remains untouched.
+Without it, temporary work uses /tmp.
+Dry-run validates the signing operation, not whether a later publication can
+succeed; it does not reserve an output name or validate output nonexistence.
+.Pp
+For an ordinary linked ELF binary without a build-input section, pass
+.Fl m
+(or
+.Fl -manifest )
+to sign.
+The tool appends the exact policy, signature header and a bounded footer without
+moving existing ELF headers, segments or sections.
+The whole file, including the footer, is authenticated.
+Both build-time and standalone policy inputs produce this single final
+signature representation, outside every ELF segment.
+When a policy is already embedded, an explicitly supplied manifest must match
+its bytes exactly.
+Complete stripping and debug-link operations before either signing workflow.
+.Pp
+The verify and show commands authenticate the image before reporting identity
+or printing policy bytes.
+Without an explicit public key they use the system key catalogue described in
+.Xr libcapimage 3 .
+An unsigned build-input section is not trusted.
+There is no permissive verification mode.
+.Pp
+The resign command rotates the key of a signed standalone image.
+It authenticates a private copy using the old public key or system trust
+catalogue, preserves the exact embedded policy and original permission bits,
+and signs that copy with the new private key.
+Unsigned, damaged or untrusted input is rejected before publication.
+Manifest replacement is not accepted by this command.
+It requires a new output except with
+.Fl n
+or
+.Fl -dry-run ,
+which exercises verification and signing without publishing an output.
+.Pp
+The resign -r command verifies a private copy of an already signed tree using
+the old public key or system trust catalogue, preserves each executable's
+policy, and signs and seals nested bundles inside out with the new key.
+It requires a new output and does not change the source tree.
+.Pp
+The remove command writes a new unsigned copy, removing the signature container
+and its authenticated policy while restoring the original ELF bytes.
+It requires no signing key and refuses an existing output.
+With -r it also removes nested and enclosing bundle seals in the copied tree.
+The source remains unchanged; removal does not grant authority to the output.
+.Pp
+The seal and check commands authenticate separate immutable artifacts.
+Their protocol domain prevents a signature for one artifact kind from being
+reused for another kind.
+.Pp
+The bundle-sign command seals a sorted inventory of the bundle metadata,
+unit manifests, executable images, resources, directory structure, and modes.
+Sign executable images first; this command creates
+.Pa Signature/Seal
+and refuses to overwrite an existing seal.
+The bundle-verify command requires a valid inventory seal and valid embedded
+image signatures.
+Runtime policy comes exclusively from each signed executable;
+external Unit.ucl files are not read as policy.
+.Pp
+The
+.Fl r
+(or
+.Fl -recursive )
+option to sign or bundle-sign signs every declared native unit program in each
+capability bundle under the input tree, then seals and verifies bundles from the
+inside out.
+It requires a new output directory and leaves the source tree unchanged.
+Each unit retains its own embedded policy; a unit without embedded policy uses
+its Unit.ucl file.
+A global manifest override is rejected for recursive operations.
+Unsigned build inputs are checked for agreement before recursive signing.
+Input trees must be quiescent and unsealed; symlinks, special files and set-ID
+files are rejected.
+Directories in the private copy are made owner-accessible; regular file modes
+are preserved.
+The output root remains mode 0700.
+For a single bundle, the output name must also end in .cap.
+On failure, remove the incomplete output tree before retrying.
+Recursive verify checks every nested bundle seal and its declared images;
+it does not modify the tree.
+.Pp
+Each signed unit bin directory must contain exactly one regular executable
+with an embedded policy; Unit.ucl is unnecessary at runtime.
+A shared executable can carry a profiles object keyed by
+.Ar bundle_id/unit_name ;
+each selected profile is a complete unit policy.
+.Pp
+Base program Makefiles can set
+.Va CAPIMAGE_MANIFEST
+to a policy or profile document.
+The standard program rules emit and link the build-input section without
+executing a target program or accessing a signing key.
+Complete stripping and installation before signing a staged generation.
+Standalone stripping must use --keep-section=.5bsd.policy to retain the build
+input, or the policy must be supplied again with sign -m.
+The maintained base installation rules preserve the input automatically.
+Unsigned development sections do not grant authority; development bundle loading
+still requires the external Unit.ucl policy.
+Creating the root-owned, non-writable-to-others regular file
+.Pa /etc/capability/require-signatures
+requires sealed bundles and trusted image signatures during bundle loading.
+.Ss Offline policy validation
+The validate-policy command checks a standalone unit manifest using the same
+strict schema validator as SwitchBoard.
+It rejects duplicate and unknown keys, invalid field types and program names,
+external includes, NUL bytes and documents larger than one MiB.
+The input must be a regular file, not a symlink.
+Validation requires no signing key and does not modify the input.
+It does not authenticate code, grant attributes, resolve resource references,
+or prove that a complete bundle is deployable.
+Use recursive signing or verification to validate a complete bundle generation.
+.Ss Recursive dry runs
+The sign -r and resign -r commands accept
+.Fl n
+or
+.Fl -dry-run .
+They perform complete signing and verification on a private temporary copy,
+including nested bundles, then remove the copy without publishing a tree.
+Resign verifies the old signatures before replacing them in the private copy.
+The source remains unchanged.
+With
+.Fl o ,
+the proposed output must be a new path; scratch space is created in its parent.
+Without an output path, scratch space uses TMPDIR or /tmp.
+Ordinary failures also clean up the private copy; forced process termination
+can leave a private scratch directory requiring removal.
+A successful dry run does not activate code or install trust keys.
+.Sh EXAMPLES
+.Bd -literal -offset indent
+openssl genpkey -algorithm ed25519 -out private.pem
+openssl pkey -in private.pem -pubout -out public.pem
+capsign note -m manifest.ucl -o policy.S
+cc program.c policy.S -o program
+strip program
+capsign sign -k private.pem -o program.signed program
+capsign verify -p public.pem program.signed
+capsign show -p public.pem program.signed
+# A prebuilt ELF binary:
+capsign sign -m manifest.ucl -k private.pem -o tool.signed tool
+# A bundle, retaining each unit's own policy:
+capsign sign -r -k private.pem -o Signed.cap Input.cap
+capsign verify -r -p public.pem Signed.cap
+.Ed
+.Sh SEE ALSO
+.Xr libcapimage 3 ,
+.Xr elfcache 8
+.Sh SECURITY CONSIDERATIONS
+Private signing keys belong in the release signing environment.
+Do not ship them in a package or guest image.
+Signature validity is separate from permission to assert an attribute.
+The note command preserves policy bytes; it does not validate their schema.
+Runtime policy consumers must use the strict manifest parser.

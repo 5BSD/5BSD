@@ -30,15 +30,22 @@
 #include "switchboard_svc_proto.h"
 
 struct svc_runtime *
-svc_by_label(const char *label)
+svc_by_label_scoped(const char *label, uid_t owner_uid)
 {
 	unsigned i;
 
 	for (i = 0; i < sd.nservices; i++) {
-		if (strcmp(sd.services[i].manifest.label, label) == 0)
+		if (sd.services[i].owner_uid == owner_uid &&
+		    strcmp(sd.services[i].manifest.label, label) == 0)
 			return (&sd.services[i]);
 	}
 	return (NULL);
+}
+
+struct svc_runtime *
+svc_by_label(const char *label)
+{
+	return (svc_by_label_scoped(label, (uid_t)-1));
 }
 
 /*
@@ -105,7 +112,7 @@ bundle_effective_manifest(struct capbundle_service *unit, unsigned bi,
 }
 
 static bool
-bundle_service_manifest(const char *label, struct svc_manifest *m)
+bundle_service_manifest(const char *label, uid_t owner_uid, struct svc_manifest *m)
 {
 	unsigned bi, si;
 	struct capbundle *ab;
@@ -117,7 +124,7 @@ bundle_service_manifest(const char *label, struct svc_manifest *m)
 	 * provides[0].  Fall back to a linear scan to find services whose
 	 * label differs from their provides names.
 	 */
-	if (bundle_registry_lookup(label, &bi, &si) == 0) {
+	if (bundle_registry_lookup_scoped(label, owner_uid, &bi, &si) == 0) {
 		ab = bundle_registry_get(bi);
 		if (ab != NULL) {
 			asvc = capbundle_service(ab, si);
@@ -130,6 +137,8 @@ bundle_service_manifest(const char *label, struct svc_manifest *m)
 	/* Linear scan: label may differ from provides names. */
 	for (bi = 0; bi < bundle_registry_count(); bi++) {
 		ab = bundle_registry_get(bi);
+		if (bundle_registry_owner_uid(bi) != owner_uid)
+			continue;
 		if (ab == NULL)
 			continue;
 		for (si = 0; si < capbundle_nservices(ab); si++) {
@@ -144,9 +153,9 @@ bundle_service_manifest(const char *label, struct svc_manifest *m)
 }
 
 static bool
-desired_service_manifest(const char *label, struct svc_manifest *m)
+desired_service_manifest(const char *label, uid_t owner_uid, struct svc_manifest *m)
 {
-	return (bundle_service_manifest(label, m));
+	return (bundle_service_manifest(label, owner_uid, m));
 }
 
 /*
@@ -283,7 +292,8 @@ supervisor_reload(int kq, char *summary, size_t sumlen)
 		for (unsigned si = 0; si < capbundle_nservices(b); si++) {
 			struct capbundle_service *asvc = capbundle_service(b, si);
 			struct svc_runtime *svc;
-			if (asvc == NULL || (svc = svc_by_label(capbundle_svc_label(asvc))) == NULL ||
+			if (asvc == NULL || (svc = svc_by_label_scoped(capbundle_svc_label(asvc),
+			    bundle_registry_owner_uid(bi))) == NULL ||
 			    svc->kind == SVC_KIND_RC)
 				continue;
 			svc->bundle_idx = bi;
@@ -308,7 +318,7 @@ supervisor_reload(int kq, char *summary, size_t sumlen)
 				continue;
 
 			/* Check if this service's label still exists. */
-			if (desired_service_manifest(svc->manifest.label,
+			if (desired_service_manifest(svc->manifest.label, svc->owner_uid,
 			    &desired)) {
 				/*
 				 * Still provided.  If an earlier rescan had marked
@@ -389,7 +399,7 @@ supervisor_reload(int kq, char *summary, size_t sumlen)
 
 			if (svc->kind == SVC_KIND_RC || svc->remove_pending)
 				continue;
-			if (!desired_service_manifest(svc->manifest.label,
+			if (!desired_service_manifest(svc->manifest.label, svc->owner_uid,
 			    &desired))
 				continue;
 			if (switchboard_manifest_equal(&svc->manifest, &desired))
@@ -479,7 +489,8 @@ supervisor_reload(int kq, char *summary, size_t sumlen)
 				if (asvc == NULL ||
 				    !capbundle_svc_activates_at_boot(asvc))
 					continue;
-				if (svc_by_label(capbundle_svc_label(asvc))
+				if (svc_by_label_scoped(capbundle_svc_label(asvc),
+			    bundle_registry_owner_uid(bi))
 				    != NULL)
 					continue;
 				if (sd.nservices >= SWITCHBOARD_MAX_SERVICES)

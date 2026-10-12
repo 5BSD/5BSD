@@ -430,6 +430,7 @@ options 	MAC_ABAC		# Attribute-based access control MAC policy
 # late-loadable policy.  Inactive unless a verified manifest is supplied and
 # enforcement is explicitly entered.
 options 	MAC_VERIEXEC
+options 	MAC_VERIEXEC_CAPIMAGE # Embedded signed ELF integrity
 options 	MAC_VERIEXEC_SHA256
 device		mac_veriexec_parser
 

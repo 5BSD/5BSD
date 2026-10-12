@@ -153,6 +153,7 @@ struct common_args {
 	int		 with_stack;
 	int		 with_ustack;
 	/* watch only */
+	int broker;
 	enum watch_format format;
 	const char	*endpoint;
 	const char	*bufsize;
@@ -173,7 +174,8 @@ enum {
 	OPT_FORMAT,
 	OPT_ENDPOINT,
 	OPT_BUFSIZE,
-	OPT_SWITCHRATE
+	OPT_SWITCHRATE,
+	OPT_BROKER
 };
 
 static const struct option watch_opts[] = {
@@ -191,6 +193,7 @@ static const struct option watch_opts[] = {
 	{ "endpoint", required_argument, NULL, OPT_ENDPOINT },
 	{ "bufsize", required_argument, NULL, OPT_BUFSIZE },
 	{ "switchrate", required_argument, NULL, OPT_SWITCHRATE },
+	{ "broker", no_argument, NULL, OPT_BROKER },
 	{ NULL, 0, NULL, 0 }
 };
 
@@ -309,6 +312,11 @@ parse_common(int argc, char **argv, struct common_args *ca, int is_watch,
 		case OPT_WITH_USTACK:
 			ca->with_ustack = 1;
 			break;
+		case OPT_BROKER:
+			if (!is_watch)
+				usage_fn();
+			ca->broker = 1;
+			break;
 		case OPT_FORMAT:
 			if (!is_watch)
 				usage_fn();
@@ -395,7 +403,7 @@ watch_usage(void)
 	    "           [--param key=value ...] [--pid n] [--execname name]\n"
 	    "           [--uid n] [--gid n] [--jail jid] [--where predicate]\n"
 	    "           [--duration seconds] [--with-stack] [--with-ustack]\n"
-	    "           [--format text|json|otel|collapsed]\n"
+	    "           [--broker] [--format text|json|otel|collapsed]\n"
 	    "           [--endpoint url] [--bufsize size] "
 	    "[--switchrate rate]\n");
 	exit(2);
@@ -421,6 +429,7 @@ cmd_watch(int argc, char **argv)
 		return (1);
 
 	memset(&wo, 0, sizeof(wo));
+	wo.broker = ca.broker;
 	wo.format = ca.format;
 	wo.endpoint = ca.endpoint;
 	wo.bufsize = ca.bufsize;

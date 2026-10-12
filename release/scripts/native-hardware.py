@@ -24,6 +24,11 @@ def build(args):
     if len(kernels) != 1:
         raise ValueError('select a base generation containing one kernel')
     kernel = kernels[0]
+    kernel_abi = hw.manifest(kernel)['abi']
+    host_abi = hw.run(args.pkg, 'config', 'ABI', capture_output=True).stdout.strip()
+    if kernel_abi.split(':')[-1] != host_abi.split(':')[-1]:
+        raise ValueError('hardware ports require a target-native builder: kernel ABI ' +
+                         kernel_abi + ', builder ABI ' + host_abi)
     digest = hw.kernel_hash(kernel)
     if hw.sha256(args.kernel_build / 'kernel') != digest:
         raise ValueError('kernel objects do not match base package')

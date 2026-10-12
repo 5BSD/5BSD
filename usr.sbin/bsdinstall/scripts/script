@@ -107,6 +107,22 @@ if [ "$BSDINSTALL_LOG" != "${debugFile#+}" ]; then
 	f_dprintf "Began Installation at %s" "$( date )"
 fi
 
+# Resolve signing trust before partitioning, as in the interactive installer.
+. /usr/libexec/bsdinstall/repository.subr
+selected_repos=$(bsdinstall_repository "${BSDINSTALL_PKG_REPOS_DIR:-}" \
+    /usr/5bsd-packages/repos)
+if [ -z "${BSDINSTALL_CODE_PUBLIC_KEY:-}" ]; then
+	BSDINSTALL_CODE_PUBLIC_KEY=$(bsdinstall_media_code_key "$selected_repos" \
+	    /usr/5bsd-packages)
+	export BSDINSTALL_CODE_PUBLIC_KEY
+fi
+if [ -n "${BSDINSTALL_CODE_PUBLIC_KEY:-}" ]; then
+	"${CAPSIGN:-capsign}" key-id -p "$BSDINSTALL_CODE_PUBLIC_KEY" >/dev/null
+fi
+if [ -n "$selected_repos" ]; then
+	export BSDINSTALL_PKG_REPOS_DIR="$selected_repos"
+fi
+
 # Make partitions
 rm -f $PATH_FSTAB
 touch $PATH_FSTAB
@@ -120,6 +136,10 @@ bsdinstall mount
 # 5BSD scripted installations are pkgbase-native, matching the interactive
 # and jail installers.  COMPONENTS selects optional package sets.
 bsdinstall pkgbase --non-interactive
+if [ -n "${BSDINSTALL_CODE_PUBLIC_KEY:-}" ]; then
+	bsdinstall verify-image -r "$BSDINSTALL_CHROOT" \
+	    -p "$BSDINSTALL_CODE_PUBLIC_KEY"
+fi
 
 # Use the exact ZFSBOOT_POOL_NAME accepted by zpool(8), not bsdfilesystem's fallback.
 bsdinstall tzfspool

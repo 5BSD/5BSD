@@ -67,6 +67,8 @@ CFLAGS+=	-I${.OBJDIR} -DWITH_DTRACE
 HAS_TESTS=
 SUBDIR.${MK_TESTS}+=	tests
 
+CAPIMAGE_MANIFEST= ${CAP_UNIT}
+
 .include <bsd.prog.mk>
 
 _proginstall: installdirs-FS_CAP_BIN

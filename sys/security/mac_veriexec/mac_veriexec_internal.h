@@ -65,6 +65,7 @@ SYSCTL_DECL(_security_mac_veriexec);
 
 struct cred;
 struct image_params;
+struct label;
 struct proc;
 struct sbuf;
 struct thread;
@@ -87,6 +88,19 @@ void	mac_veriexec_metadata_print_db(struct sbuf *sbp);
 int	mac_veriexec_metadata_unmounted(dev_t fsid, struct thread *td);
 
 int	mac_veriexec_fingerprint_add_ops(struct mac_veriexec_fpops *fpops);
+
+/* Stable diagnostic operation IDs, not user-supplied policy. */
+enum capimage_check_source {
+	CAPIMAGE_CHECK_EXEC, CAPIMAGE_CHECK_OPEN, CAPIMAGE_CHECK_FD,
+	CAPIMAGE_CHECK_MMAP, CAPIMAGE_CHECK_PREPARE
+};
+int	mac_veriexec_capimage_open_policy(struct ucred *, struct vnode *);
+int	mac_veriexec_capimage_info(struct thread *, void *);
+int	mac_veriexec_capimage_prepare(struct thread *, void *);
+int	mac_veriexec_capimage_check(struct ucred *, struct vnode *, off_t, bool,
+	    enum capimage_check_source);
+int	mac_veriexec_capimage_mmap_check(struct ucred *, struct vnode *,
+	    struct label *, bool *);
 
 int	mac_veriexec_fingerprint_check_image(struct image_params *imgp,
 	    int check_files, struct thread *td);

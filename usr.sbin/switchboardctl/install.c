@@ -90,19 +90,25 @@ remove_staging_tree(const char *path)
 
 /*
  * Make the staged copy registry-safe.  The stage is mode 0700 and owned by
- * this root process, so after cp returns there is no untrusted writer racing
- * this traversal.  Symlinks and all non-directory/non-regular objects are
- * rejected; ownership and writable mode bits are normalized before parsing.
+ * this root process, so after copying there is no untrusted writer racing
+ * this traversal. Authenticated inventory modes survive unchanged if safe;
+ * unsigned development copies retain their historical normalization. Ownership
+ * is always normalized. The caller must establish global trust first when
+ * authenticated is true, then reopen and verify the final staged tree.
  */
 static int
-normalize_staging_tree(const char *path, char *errbuf, size_t errlen)
+normalize_staging_tree(const char *path, bool authenticated, char *errbuf, size_t errlen)
 {
 	FTS *fts;
 	FTSENT *ent;
 	char *paths[2];
-	mode_t mode;
+	mode_t mode, creation_mask;
+	bool preserve;
+	const char *relative;
 	int fd, saved;
 
+	creation_mask = umask(0);
+	(void)umask(creation_mask);
 	paths[0] = __DECONST(char *, path);
 	paths[1] = NULL;
 	fts = fts_open(paths, FTS_PHYSICAL | FTS_NOCHDIR, NULL);
@@ -112,9 +118,27 @@ normalize_staging_tree(const char *path, char *errbuf, size_t errlen)
 	}
 	errno = 0;
 	while ((ent = fts_read(fts)) != NULL) {
+		relative = ent->fts_level == 0 ? "" :
+		    ent->fts_path + strlen(path) + 1;
+		/* Root and Signature are excluded from the seal inventory. */
+		preserve = authenticated && ent->fts_level != 0 &&
+		    strcmp(relative, "Signature") != 0 &&
+		    strncmp(relative, "Signature/", 10) != 0;
+		if (ent->fts_info != FTS_D && ent->fts_info != FTS_DP &&
+		    ent->fts_info != FTS_F) {
+			errno = EINVAL;
+			goto syscall_error;
+		}
+		if (preserve && ((ent->fts_statp->st_mode & 07022) != 0 ||
+		    (ent->fts_statp->st_mode & 0400) == 0 ||
+		    (S_ISDIR(ent->fts_statp->st_mode) &&
+		    (ent->fts_statp->st_mode & 0100) == 0))) {
+			errno = EPERM;
+			goto syscall_error;
+		}
 		if (ent->fts_info == FTS_D) {
-			mode = ent->fts_level == 0 ? 0755 :
-			    ((ent->fts_statp->st_mode & 0555) | 0700);
+			mode = ent->fts_level == 0 ? 0700 : preserve ?
+			    ent->fts_statp->st_mode & 0777 : 0700;
 			if (chown(ent->fts_accpath, 0, 0) == -1 ||
 			    chmod(ent->fts_accpath, mode) == -1)
 				goto syscall_error;
@@ -123,7 +147,9 @@ normalize_staging_tree(const char *path, char *errbuf, size_t errlen)
 		if (ent->fts_info == FTS_DP) {
 			fd = open(ent->fts_accpath, O_RDONLY | O_DIRECTORY |
 			    O_CLOEXEC | O_NOFOLLOW);
-			if (fd == -1 || fsync(fd) == -1) {
+			/* Keep unsafe descendants inaccessible until the entire pass succeeds. */
+			if (fd == -1 || (ent->fts_level == 0 &&
+			    fchmod(fd, 0755) == -1) || fsync(fd) == -1) {
 				if (fd != -1)
 					close(fd);
 				goto syscall_error;
@@ -139,9 +165,8 @@ normalize_staging_tree(const char *path, char *errbuf, size_t errlen)
 			(void)fts_close(fts);
 			return (-1);
 		}
-		mode = ent->fts_statp->st_mode & 0555;
-		if ((mode & 0444) == 0)
-			mode |= 0400;
+		mode = preserve ? ent->fts_statp->st_mode & 0777 :
+		    0400 | (ent->fts_statp->st_mode & 0111 & ~creation_mask);
 		if (chown(ent->fts_accpath, 0, 0) == -1 ||
 		    chmod(ent->fts_accpath, mode) == -1)
 			goto syscall_error;
@@ -175,30 +200,37 @@ static int
 copy_regular_file(const char *source, const char *destination,
     uint64_t *totalp)
 {
-	struct stat sb;
+	struct stat sb, after;
 	char buffer[64 * 1024];
 	ssize_t amount;
 	uint64_t copied;
-	int input, output, saved;
+	int pathfd, input, output, saved;
 
-	input = open(source, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
-	if (input == -1)
+	/* Pin and reject special objects before any device/FIFO IO open. */
+	pathfd = open(source, O_PATH | O_CLOEXEC | O_NOFOLLOW);
+	if (pathfd == -1)
 		return (-1);
-	if (fstat(input, &sb) == -1) {
+	if (fstat(pathfd, &sb) == -1) {
 		saved = errno;
-		close(input);
+		close(pathfd);
 		return (errno = saved, -1);
 	}
 	if (!S_ISREG(sb.st_mode) || sb.st_size < 0) {
-		close(input);
+		close(pathfd);
 		return (errno = EINVAL, -1);
 	}
 	if (*totalp > INSTALL_MAX_TOTAL_SIZE ||
 	    (uint64_t)sb.st_size > INSTALL_MAX_FILE_SIZE ||
 	    (uint64_t)sb.st_size > INSTALL_MAX_TOTAL_SIZE - *totalp) {
-		close(input);
+		close(pathfd);
 		return (errno = EFBIG, -1);
 	}
+	/* Empty-path open retains this object even if its name is replaced. */
+	input = openat(pathfd, "", O_RDONLY | O_EMPTY_PATH | O_CLOEXEC);
+	saved = errno;
+	close(pathfd);
+	if (input == -1)
+		return (errno = saved, -1);
 	output = open(destination, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC |
 	    O_NOFOLLOW, 0600 | (sb.st_mode & 0111));
 	if (output == -1) {
@@ -242,7 +274,20 @@ copy_regular_file(const char *source, const char *destination,
 		copied += (uint64_t)amount;
 		*totalp += (uint64_t)amount;
 	}
-	if (fsync(output) == -1)
+	if (fstat(input, &after) == -1)
+		goto fail;
+	if (sb.st_dev != after.st_dev || sb.st_ino != after.st_ino ||
+	    sb.st_size != after.st_size || sb.st_mode != after.st_mode ||
+	    sb.st_mtim.tv_sec != after.st_mtim.tv_sec ||
+	    sb.st_mtim.tv_nsec != after.st_mtim.tv_nsec ||
+	    sb.st_ctim.tv_sec != after.st_ctim.tv_sec ||
+	    sb.st_ctim.tv_nsec != after.st_ctim.tv_nsec ||
+	    copied != (uint64_t)sb.st_size) {
+		errno = ESTALE;
+		goto fail;
+	}
+	/* Preserve untrusted metadata only inside the private staging root. */
+	if (fchmod(output, sb.st_mode & 07777) == -1 || fsync(output) == -1)
 		goto fail;
 	close(input);
 	close(output);
@@ -310,7 +355,9 @@ copy_bundle(const char *source, const char *stage, char *errbuf, size_t errlen)
 		case FTS_DP:
 			fd = open(destination, O_RDONLY | O_DIRECTORY | O_CLOEXEC |
 			    O_NOFOLLOW);
-			if (fd == -1 || fsync(fd) == -1) {
+			if (fd == -1 || (ent->fts_level != 0 &&
+			    fchmod(fd, ent->fts_statp->st_mode & 07777) == -1) ||
+			    fsync(fd) == -1) {
 				if (fd != -1)
 					close(fd);
 				goto fail;
@@ -345,10 +392,10 @@ int
 cmd_install(const char *bundle_path)
 {
 	struct capbundle *b = NULL;
-	bool published = false;
+	bool published = false, authenticated = false;
 	const char *root;
 	struct stat sb;
-	char errbuf[256], dst[PATH_MAX], stage[PATH_MAX];
+	char errbuf[256], dst[PATH_MAX], stage[PATH_MAX], seal_dir[PATH_MAX];
 	const char *idir;
 	int dfd, saved;
 
@@ -425,7 +472,25 @@ cmd_install(const char *bundle_path)
 		warnx("install: cannot stage bundle: %s", errbuf);
 		goto fail;
 	}
-	if (normalize_staging_tree(stage, errbuf, sizeof(errbuf)) == -1) {
+	/* Presence selects verification order, never trust or permission to skip it. */
+	if (snprintf(seal_dir, sizeof(seal_dir), "%s/Signature", stage) >=
+	    (int)sizeof(seal_dir)) {
+		errno = ENAMETOOLONG;
+		goto fail;
+	}
+	if (lstat(seal_dir, &sb) == 0) {
+		if (capbundle_open(stage, &b, errbuf, sizeof(errbuf)) == -1 ||
+		    capbundle_verify(b, errbuf, sizeof(errbuf)) == -1) {
+			warnx("install: signed staging verification failed: %s", errbuf);
+			goto fail;
+		}
+		authenticated = true;
+		capbundle_close(b);
+		b = NULL;
+	} else if (errno != ENOENT) {
+		goto fail;
+	}
+	if (normalize_staging_tree(stage, authenticated, errbuf, sizeof(errbuf)) == -1) {
 		warnx("install: unsafe staged bundle: %s", errbuf);
 		goto fail;
 	}

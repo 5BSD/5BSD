@@ -1450,7 +1450,11 @@ validate_unit_schema(const ucl_object_t *root, char *errbuf, size_t errlen)
 		return (-1);
 
 	arr = ucl_object_lookup(root, "activation");
-	if (arr == NULL || validate_keys(arr, "activation", activationkeys,
+	if (arr == NULL) {
+		snprintf(errbuf, errlen, "manifest requires an activation object");
+		return (-1);
+	}
+	if (validate_keys(arr, "activation", activationkeys,
 	    nitems(activationkeys), errbuf, errlen) != 0)
 		return (-1);
 	{
@@ -2186,7 +2190,10 @@ capbundle_parse_bundle_ucl(const char *path, struct capbundle *bundle,
 	    UCL_PARSER_DISABLE_MACRO | UCL_PARSER_NO_FILEVARS);
 	if (parser == NULL)
 		return (-1);
-	if (!policy_parse_add(parser, path)) {
+	if (!(bundle->signed_bundle ?
+	    ucl_parser_add_chunk_full(parser, bundle->signed_bundle_text,
+	    bundle->signed_bundle_size, 0, UCL_DUPLICATE_ERROR, UCL_PARSE_UCL) :
+	    policy_parse_add(parser, path))) {
 		if (errbuf != NULL) {
 			const char *detail = ucl_parser_get_error(parser);
 
@@ -2338,12 +2345,10 @@ capbundle_parse_unit_ucl(const char *path, const char *unit_path,
     const struct capbundle *bundle, const char *unit_name,
     struct capbundle_service *svc, char *errbuf, size_t errlen)
 {
-	struct ucl_parser *parser;
 	ucl_object_t *root;
 	const ucl_object_t *v, *activation;
 	const char *program;
 	char bin_path[PATH_MAX];
-	struct stat ucl_sb;
 
 	memset(svc, 0, sizeof(*svc));
 
@@ -2360,59 +2365,9 @@ capbundle_parse_unit_ucl(const char *path, const char *unit_path,
 	}
 	svc->umask_val = -1;
 
-	/* Reject unreasonably large files before parsing. */
-	if (stat(path, &ucl_sb) == -1) {
-		if (errbuf)
-			snprintf(errbuf, errlen, "%s: %s", path,
-			    strerror(errno));
+	if (capbundle_load_unit_policy(path, unit_path, bundle, unit_name,
+	    svc, &root, errbuf, errlen) < 0)
 		return (-1);
-	}
-	if (!S_ISREG(ucl_sb.st_mode)) {
-		if (errbuf)
-			snprintf(errbuf, errlen, "%s: not a regular file",
-			    path);
-		return (-1);
-	}
-	if (ucl_sb.st_size == 0) {
-		if (errbuf != NULL)
-			snprintf(errbuf, errlen, "%s: empty document", path);
-		return (-1);
-	}
-	if (ucl_sb.st_size > CAPBUNDLE_MAX_UCL_SIZE) {
-		if (errbuf)
-			snprintf(errbuf, errlen,
-			    "%s: file too large (%jd bytes, max %d)",
-			    path, (intmax_t)ucl_sb.st_size,
-			    CAPBUNDLE_MAX_UCL_SIZE);
-		return (-1);
-	}
-
-	parser = ucl_parser_new(UCL_PARSER_NO_IMPLICIT_ARRAYS |
-	    UCL_PARSER_DISABLE_MACRO | UCL_PARSER_NO_FILEVARS);
-	if (parser == NULL) {
-		if (errbuf)
-			snprintf(errbuf, errlen, "ucl_parser_new failed");
-		return (-1);
-	}
-
-	if (!policy_parse_add(parser, path)) {
-		if (errbuf) {
-			const char *detail = ucl_parser_get_error(parser);
-
-			snprintf(errbuf, errlen, "%s: %s", path,
-			    detail != NULL ? detail : "empty or invalid document");
-		}
-		ucl_parser_free(parser);
-		return (-1);
-	}
-
-	root = ucl_parser_get_object(parser);
-	ucl_parser_free(parser);
-	if (root == NULL) {
-		if (errbuf)
-			snprintf(errbuf, errlen, "%s: empty document", path);
-		return (-1);
-	}
 
 	if (validate_unit_schema(root, errbuf, errlen) != 0) {
 		ucl_object_unref(root);
@@ -2796,4 +2751,45 @@ capbundle_parse_unit_ucl(const char *path, const char *unit_path,
 
 	ucl_object_unref(root);
 	return (0);
+}
+
+/* Offline schema validation uses the same validator as runtime unit loading.
+ * No external files, bundle identity, trust key or launch authority is used. */
+int
+capbundle_validate_unit_policy(const void *data, size_t size, char *errbuf,
+    size_t errlen)
+{
+	struct ucl_parser *parser;
+	ucl_object_t *root = NULL;
+	char local_error[256];
+	int result = -1;
+
+	if (errbuf == NULL || errlen == 0) {
+		errbuf = local_error;
+		errlen = sizeof(local_error);
+	}
+	if (data == NULL || size == 0 || size > CAPBUNDLE_MAX_UCL_SIZE ||
+	    memchr(data, 0, size) != NULL) {
+		snprintf(errbuf, errlen, "policy must contain 1..%u non-NUL bytes",
+		    CAPBUNDLE_MAX_UCL_SIZE);
+		return (-1);
+	}
+	parser = ucl_parser_new(UCL_PARSER_NO_IMPLICIT_ARRAYS |
+	    UCL_PARSER_DISABLE_MACRO | UCL_PARSER_NO_FILEVARS);
+	if (parser == NULL) {
+		snprintf(errbuf, errlen, "cannot allocate policy parser");
+		return (-1);
+	}
+	if (!ucl_parser_add_chunk_full(parser, data, size, 0,
+	    UCL_DUPLICATE_ERROR, UCL_PARSE_UCL)) {
+		const char *detail = ucl_parser_get_error(parser);
+		snprintf(errbuf, errlen, "%s", detail != NULL ? detail : "invalid policy");
+	} else if ((root = ucl_parser_get_object(parser)) == NULL) {
+		snprintf(errbuf, errlen, "empty policy document");
+	} else {
+		result = validate_unit_schema(root, errbuf, errlen);
+	}
+	if (root != NULL) ucl_object_unref(root);
+	ucl_parser_free(parser);
+	return (result);
 }

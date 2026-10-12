@@ -18,7 +18,7 @@
 #              It is only READ: overlay files live in WORK_DIR and are fed to
 #              makefs through mtree "contents=" (manifest mode).
 #   WORK_DIR   new directory (must not exist); image, serial log, results.
-#   suites     paths relative to /usr/tests, e.g. "usr.sbin/BSDTime
+#   suites     paths or program:case filters relative to /usr/tests, e.g. "usr.sbin/BSDTime
 #              usr.sbin/switchboard".  Each must have a Kyuafile in the stage.
 #   TIMEOUT_S  host-side deadline for the whole VM (default 10800).
 #
@@ -28,6 +28,8 @@
 #   before tests start; default: the twelve core providers that
 #   software-application-guest.sh requires), QEMU, QEMU_DATA,
 #   DRYRUN=1 (build and check the image, do not boot).
+#   ISOLATION_ENFORCE=1 retains production device isolation for deployment
+#   checks; the default 0 permits raw-device provider test fixtures.
 #
 # Why not /etc/rc.local: under Capsule, SwitchBoard runs /etc/rc as a oneshot
 # under a temporary boot grant and launches the native capability units only
@@ -67,6 +69,8 @@ kyua_vars=${KYUA_VARS:-}
 # EXTRA_DIR: a host directory whose regular files are installed executable in
 # the guest under /root/vm-extra.d (for example legacy latency benches).
 plane_off=${PLANE_OFF:-0}
+isolation=${ISOLATION_ENFORCE:-0}
+case "$isolation" in 0|1) ;; *) echo "ISOLATION_ENFORCE must be 0 or 1" >&2; exit 64;; esac
 extra_script=${EXTRA_SCRIPT:-}
 [ -z "$extra_script" ] || [ -f "$extra_script" ] || die "no such EXTRA_SCRIPT: $extra_script"
 extra_dir=${EXTRA_DIR:-}
@@ -77,7 +81,7 @@ units=${REQUIRE_UNITS:-system.Log/bsdlog system.Network/bsdnetwork system.Trace/
 die() { echo "vm-provider: $*" >&2; exit 2; }
 isnum() { case $1 in ''|*[!0-9]*) return 1;; esac; [ "$1" -gt 0 ]; }
 for n in "$timeout" "$cpus" "$mem" "$par" "$gate"; do isnum "$n" || die "not a positive integer: $n"; done
-case $suites in *[!A-Za-z0-9_./\ -]*|'') die "suite list may only contain [A-Za-z0-9_./-] and spaces";; esac
+case $suites in *[!A-Za-z0-9_./:\ -]*|'') die "suite list may only contain [A-Za-z0-9_./:-] and spaces";; esac
 case $units in *[!A-Za-z0-9_./\ -]*) die "REQUIRE_UNITS has unexpected characters";; esac
 case $kyua_vars in *[!A-Za-z0-9_.=\ -]*) die "KYUA_VARS has unexpected characters";; esac
 
@@ -90,8 +94,21 @@ done
 grep -q '^\./Capabilities/Run ' "$stage/METALOG" || die "METALOG has no ./Capabilities/Run"
 grep -qE '^\./etc/rc( |$)' "$stage/METALOG" || die "/etc/rc not in METALOG: stage skipped 'make distribution'"
 for s in $suites; do
-	case $s in /*|*..*) die "suite must be relative to /usr/tests without '..': $s";; esac
-	[ -f "$stage/usr/tests/$s/Kyuafile" ] || [ -x "$stage/usr/tests/$s" ] || die "no such suite in stage: $s"
+	case $s in -*|/*|*..*) die "suite must be relative to /usr/tests without '..' or a leading '-': $s";; esac
+	program=${s%%:*}
+	case $s in
+	*:*)
+		case_name=${s#*:}
+		case $case_name in ''|*[!A-Za-z0-9_]*) die "invalid test case name: $s";; esac
+		[ -n "$program" ] && [ -f "$stage/usr/tests/$program" ] &&
+		    [ -x "$stage/usr/tests/$program" ] || die "no such test program in stage: $s"
+		;;
+	*)
+		[ -f "$stage/usr/tests/$program/Kyuafile" ] ||
+		    { [ -f "$stage/usr/tests/$program" ] && [ -x "$stage/usr/tests/$program" ]; } ||
+		    die "no such suite in stage: $s"
+		;;
+	esac
 done
 [ -n "$qemu" ] || die "no runnable QEMU (set QEMU=)"
 echo "qemu: $qemu ($("$qemu" --version | head -n 1))"
@@ -104,14 +121,14 @@ work=$(cd "$work" && pwd)
 # ---------------------------------------------------------------- overlay ---
 x=$work/extra
 mkdir -p "$x"
-cat > "$x/loader.conf" <<'EOF'
+cat > "$x/loader.conf" <<EOF
 console="comconsole"
 autoboot_delay="1"
 # Plane ON: no capability_plane="NO" here (docs/book/src/develop/testing.md,
 # "VM, plane on").
 # Test mode: Capsule's claim on /dev/mac_capability would otherwise refuse the
 # provider tests' open(2) with EACCES.  Ownership checks stay enforced.
-kern.mac_capability_isolation.enforce="0"
+kern.mac_capability_isolation.enforce="$isolation"
 EOF
 # loader.conf.local is read after loader.conf.d/capsule.conf: no init
 # fallback, so a Capsule that cannot start fails the run instead of silently
@@ -177,6 +194,7 @@ PARALLELISM=$par
 REQUIRE_UNITS="$units"
 KYUA_VARS="$kyua_vars"
 PLANE_OFF=$plane_off
+ISOLATION_ENFORCE=$isolation
 EOF
 cat >> "$x/kyua-planeon.sh" <<'EOF'
 R=/tmp/kyua-results
@@ -195,10 +213,20 @@ cp=$(kenv -q capability_plane || true)
 pgrep -x switchboard >/dev/null || { echo "PLANEON_GATE: no switchboard process"; gate=FAIL; }
 enf=$(sysctl -n kern.mac_capability_isolation.enforce 2>/dev/null || echo unset)
 echo "PLANEON_ISOLATION_ENFORCE=$enf"
-[ "$enf" = 0 ] || { echo "PLANEON_GATE: kern.mac_capability_isolation.enforce=$enf (want 0)"; gate=FAIL; }
-[ -c /dev/mac_capability ] || { echo "PLANEON_GATE: no /dev/mac_capability"; gate=FAIL; }
-sh -c ': 3<>/dev/mac_capability' 2>/dev/null ||
-    { echo "PLANEON_GATE: root cannot open /dev/mac_capability"; gate=FAIL; }
+[ "$enf" = "$ISOLATION_ENFORCE" ] || { echo "PLANEON_GATE: kern.mac_capability_isolation.enforce=$enf (want $ISOLATION_ENFORCE)"; gate=FAIL; }
+if [ "$ISOLATION_ENFORCE" = 1 ]; then
+	if LC_ALL=C sh -c ': 3<>/dev/mac_capability' > "$R/device-open.txt" 2>&1; then
+		echo 'PLANEON_GATE: root unexpectedly opened the claimed capability device'; gate=FAIL
+	elif grep -Eq 'Permission denied|Operation not permitted' "$R/device-open.txt"; then
+		echo PLANEON_DEVICE_ISOLATION_DENIED
+	else
+		echo 'PLANEON_GATE: device open failed for an unexpected reason'; cat "$R/device-open.txt"; gate=FAIL
+	fi
+else
+	[ -c /dev/mac_capability ] || { echo "PLANEON_GATE: no /dev/mac_capability"; gate=FAIL; }
+	sh -c ': 3<>/dev/mac_capability' 2>/dev/null ||
+	    { echo "PLANEON_GATE: root cannot open /dev/mac_capability"; gate=FAIL; }
+fi
 # Bounded wait for provider convergence.
 start=$(date +%s)
 while :; do
@@ -266,24 +294,44 @@ switchboardctl status 2>/dev/null |
 [ "$(pgrep -x BSDTime | head -n 1)" = "$pid1" ] ||
     { echo "BSDTIME: provider process changed"; lc=FAIL; }
 # Many short sessions against the live provider.
-i=0; while [ $i -lt 200 ]; do BSDTimectl get > /dev/null 2>&1 || break; i=$((i + 1)); done
+i=0
+while [ $i -lt 200 ]; do
+	if ! BSDTimectl get > "$R/session.out" 2> "$R/session.err"; then
+		echo "BSDTIME_SESSION_FAILED index=$i: $(cat "$R/session.err")"
+		break
+	fi
+	i=$((i + 1))
+done
 echo "BSDTIME_SESSIONS=$i"
 [ "$i" = 200 ] || lc=FAIL
-t2=$(BSDTimectl get 2>/dev/null)
-awk -v a="${t1%%.*}" -v b="${t2%%.*}" 'BEGIN { exit !(b >= a && a > 0) }' ||
-    { echo "BSDTIME: clock reads not monotonic"; lc=FAIL; }
+if t2=$(BSDTimectl get 2> "$R/get2.err"); then
+	awk -v a="${t1%%.*}" -v b="${t2%%.*}" 'BEGIN { exit !(b >= a && a > 0) }' ||
+	    { echo "BSDTIME: clock reads not monotonic"; lc=FAIL; }
+else
+	echo "BSDTIME: second get failed: $(cat "$R/get2.err")"; lc=FAIL
+fi
 echo "BSDTIME_LIFECYCLE_$lc"
 fi
 if [ -s /root/vm-extra.sh ]; then
 	echo EXTRA_SCRIPT_BEGIN
-	sh /root/vm-extra.sh 2>&1 | tee "$R/extra.out"
+	extra_status=0
+	sh /root/vm-extra.sh > "$R/extra.out" 2>&1 || extra_status=$?
+	cat "$R/extra.out"
+	echo "EXTRA_SCRIPT_STATUS=$extra_status"
 	echo EXTRA_SCRIPT_END
 fi
 cd /usr/tests
 suites=$(cat /root/kyua-planeon.suites)
 vars=; for v in $KYUA_VARS; do vars="$vars -v $v"; done
-kyua -v parallelism="$PARALLELISM" $vars test -r "$R/results.db" $suites > "$R/kyua-test.out" 2>&1 || true
-tail -n 40 "$R/kyua-test.out"
+# Preserve test progress on the serial console as well as the results disk.
+# Suite failures are summarized below; they must not prevent artifact export.
+# Preserve the actual test status across tee without depending on pipefail.
+{
+    test_status=0
+    kyua -v parallelism="$PARALLELISM" $vars test -r "$R/results.db" $suites 2>&1 || test_status=$?
+    printf '%s\n' "$test_status" > "$R/kyua-test.status"
+} | tee "$R/kyua-test.out" || true
+echo "KYUA_TEST_STATUS=$(cat "$R/kyua-test.status")"
 kyua report -r "$R/results.db" --verbose > "$R/report-verbose.txt" 2>&1 || true
 kyua report-junit -r "$R/results.db" --output="$R/results.junit.xml" 2>/dev/null || true
 for kind in failed broken skipped; do

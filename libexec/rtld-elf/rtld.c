@@ -74,6 +74,7 @@
 #include "rtld_printf.h"
 #include "rtld_tls.h"
 #include "rtld_utrace.h"
+#include "elf_cache_profile.h"
 
 /* Types. */
 typedef void (*func_ptr_type)(void);
@@ -143,14 +144,14 @@ static Obj_Entry *dlcheck(void *);
 static int dlclose_locked(void *, RtldLockState *);
 static Obj_Entry *dlopen_object(const char *name, int fd, Obj_Entry *refobj,
     int lo_flags, int mode, RtldLockState *lockstate);
-static Obj_Entry *do_load_object(int, const char *, char *, struct stat *, int);
+static Obj_Entry *do_load_object(int, const char *, char *, struct stat *, int, off_t);
 static int do_search_info(const Obj_Entry *obj, int, struct dl_serinfo *);
 static bool donelist_check(DoneList *, const Obj_Entry *);
 static void dump_auxv(Elf_Auxinfo **aux_info);
 static void errmsg_restore(struct dlerror_save *);
 static struct dlerror_save *errmsg_save(void);
 static void *fill_search_info(const char *, size_t, void *);
-static char *find_library(const char *, const Obj_Entry *, int *);
+static char *find_library(const char *, const Obj_Entry *, int *, struct rtld_cache_image *);
 static const char *gethints(bool);
 static void hold_object(Obj_Entry *);
 static void unhold_object(Obj_Entry *);
@@ -205,8 +206,8 @@ static void *rtld_dlopen(const char *name, int fd, int mode);
 static void rtld_exit(void);
 static void rtld_nop_exit(void);
 static char *search_library_path(const char *, const char *, const char *,
-    int *);
-static char *search_library_pathfds(const char *, const char *, int *);
+    int *, struct rtld_cache_image *);
+static char *search_library_pathfds(const char *, const char *, int *, struct rtld_cache_image *);
 static const void **get_program_var_addr(const char *, RtldLockState *);
 static void set_program_var(const char *, const void *);
 static int symlook_default(SymLook *, const Obj_Entry *refobj);
@@ -900,6 +901,8 @@ _rtld(Elf_Addr *sp, func_ptr_type *exit_proc, Obj_Entry **objp)
 	    obj_main->path, obj_main->valid_hash_sysv, obj_main->valid_hash_gnu,
 	    obj_main->dynsymcount);
 
+	rtld_profile_emit(ELF_PROFILE_EXEC, 0, 0, 0, 0, 0, 0, 0,
+	    obj_main->path, "", "");
 	linkmap_add(obj_main);
 	linkmap_add(&obj_rtld);
 	LD_UTRACE(UTRACE_LOAD_OBJECT, obj_main, obj_main->mapbase,
@@ -1998,7 +2001,8 @@ gnu_hash(const char *s)
  * (1) Handled in digest_dynamic2 - rpath left NULL if runpath defined.
  */
 static char *
-find_library(const char *xname, const Obj_Entry *refobj, int *fdp)
+find_library(const char *xname, const Obj_Entry *refobj, int *fdp,
+    struct rtld_cache_image *cache_image)
 {
 	char *pathname, *refobj_path;
 	const char *name;
@@ -2032,60 +2036,60 @@ find_library(const char *xname, const Obj_Entry *refobj, int *fdp)
 	 */
 	if (objgiven && refobj->rpath != NULL && ld_library_path_rpath) {
 		pathname = search_library_path(name, ld_library_path,
-		    refobj_path, fdp);
+		    refobj_path, fdp, cache_image);
 		if (pathname != NULL)
 			return (pathname);
 		if (refobj != NULL) {
 			pathname = search_library_path(name, refobj->rpath,
-			    refobj_path, fdp);
+			    refobj_path, fdp, cache_image);
 			if (pathname != NULL)
 				return (pathname);
 		}
-		pathname = search_library_pathfds(name, ld_library_dirs, fdp);
+		pathname = search_library_pathfds(name, ld_library_dirs, fdp, cache_image);
 		if (pathname != NULL)
 			return (pathname);
 		pathname = search_library_path(name, gethints(false),
-		    refobj_path, fdp);
+		    refobj_path, fdp, cache_image);
 		if (pathname != NULL)
 			return (pathname);
 		pathname = search_library_path(name, ld_standard_library_path,
-		    refobj_path, fdp);
+		    refobj_path, fdp, cache_image);
 		if (pathname != NULL)
 			return (pathname);
 	} else {
 		nodeflib = objgiven ? refobj->z_nodeflib : false;
 		if (objgiven) {
 			pathname = search_library_path(name, refobj->rpath,
-			    refobj->path, fdp);
+			    refobj->path, fdp, cache_image);
 			if (pathname != NULL)
 				return (pathname);
 		}
 		if (objgiven && refobj->runpath == NULL && refobj != obj_main) {
 			pathname = search_library_path(name, obj_main->rpath,
-			    refobj_path, fdp);
+			    refobj_path, fdp, cache_image);
 			if (pathname != NULL)
 				return (pathname);
 		}
 		pathname = search_library_path(name, ld_library_path,
-		    refobj_path, fdp);
+		    refobj_path, fdp, cache_image);
 		if (pathname != NULL)
 			return (pathname);
 		if (objgiven) {
 			pathname = search_library_path(name, refobj->runpath,
-			    refobj_path, fdp);
+			    refobj_path, fdp, cache_image);
 			if (pathname != NULL)
 				return (pathname);
 		}
-		pathname = search_library_pathfds(name, ld_library_dirs, fdp);
+		pathname = search_library_pathfds(name, ld_library_dirs, fdp, cache_image);
 		if (pathname != NULL)
 			return (pathname);
 		pathname = search_library_path(name, gethints(nodeflib),
-		    refobj_path, fdp);
+		    refobj_path, fdp, cache_image);
 		if (pathname != NULL)
 			return (pathname);
 		if (objgiven && !nodeflib) {
 			pathname = search_library_path(name,
-			    ld_standard_library_path, refobj_path, fdp);
+			    ld_standard_library_path, refobj_path, fdp, cache_image);
 			if (pathname != NULL)
 				return (pathname);
 		}
@@ -2942,9 +2946,13 @@ printable_path(const char *path)
 static Obj_Entry *
 load_object(const char *name, int fd_u, const Obj_Entry *refobj, int flags)
 {
+#ifdef RTLD_CACHE_PROFILE
+	uint64_t profile_start = rtld_profile_clock();
+#endif
 	Obj_Entry *obj;
 	int fd;
 	struct stat sb;
+	struct rtld_cache_image cache_image = {0};
 	char *path;
 
 	TRACE_RTLDTRACE_LOAD__START(name, flags);
@@ -2961,7 +2969,7 @@ load_object(const char *name, int fd_u, const Obj_Entry *refobj, int flags)
 				}
 		}
 
-		path = find_library(name, refobj, &fd);
+		path = find_library(name, refobj, &fd, &cache_image);
 		if (path == NULL)
 			{
 				Obj_Entry * trace_result = (NULL);
@@ -2987,7 +2995,10 @@ load_object(const char *name, int fd_u, const Obj_Entry *refobj, int flags)
 		 * using stat().
 		 */
 		if ((fd = open(path, O_RDONLY | O_CLOEXEC | O_VERIFY)) == -1) {
-			fd = try_fds_open(path, ld_library_dirs);
+			if (errno == ENOENT)
+                fd = rtld_cache_open_path(path, &cache_image);
+            if (fd == -1)
+                fd = try_fds_open(path, ld_library_dirs);
 			if (fd == -1) {
 				_rtld_error("Cannot open \"%s\"", path);
 				free(path);
@@ -3020,10 +3031,23 @@ load_object(const char *name, int fd_u, const Obj_Entry *refobj, int flags)
 			return (trace_result);
 		}
 	}
+	if (fd_u >= 0 && rtld_verify_object_signature(path, fd, &sb, false) < 0) {
+		close(fd);
+		free(path);
+		{
+			Obj_Entry * trace_result = (NULL);
+			TRACE_RTLDTRACE_LOAD__DONE(name, trace_result);
+			return (trace_result);
+		}
+	}
+
 	TAILQ_FOREACH(obj, &obj_list, next) {
 		if (obj->marker || obj->doomed)
 			continue;
-		if (obj->ino == sb.st_ino && obj->dev == sb.st_dev)
+		if (cache_image.selected ?
+            (obj->cache_backing_offset == cache_image.offset &&
+             obj->cache_backing_ino == sb.st_ino && obj->cache_backing_dev == sb.st_dev) :
+            (!obj->cache_only && obj->ino == sb.st_ino && obj->dev == sb.st_dev))
 			break;
 	}
 	if (obj != NULL) {
@@ -3048,7 +3072,52 @@ load_object(const char *name, int fd_u, const Obj_Entry *refobj, int flags)
 	}
 
 	/* First use of this object, so we must map it in */
-	obj = do_load_object(fd, name, path, &sb, flags);
+	int mapfd = fd;
+	off_t file_offset = 0;
+	unsigned cache_reason;
+#ifdef RTLD_CACHE_PROFILE
+	uint64_t profile_lookup = rtld_profile_clock();
+#endif
+	struct stat map_sb = sb;
+	int cache_result;
+    if (cache_image.selected) {
+        file_offset = cache_image.offset;
+        map_sb.st_size = cache_image.size;
+        cache_reason = ELF_CACHE_HIT;
+        cache_result = 1;
+    } else {
+        cache_result = rtld_cache_substitute(path, fd, &sb, &mapfd,
+            &file_offset, &map_sb.st_size, &cache_reason);
+    }
+#ifdef RTLD_CACHE_PROFILE
+	uint64_t profile_cache = rtld_profile_clock();
+#endif
+	obj = cache_result < 0 ? NULL :
+	    do_load_object(mapfd, name, path, &map_sb, flags, file_offset);
+    if (obj != NULL && cache_result > 0) {
+        struct stat backing;
+        if (fstat(mapfd, &backing) == 0) {
+            obj->cache_backing_dev = backing.st_dev;
+            obj->cache_backing_ino = backing.st_ino;
+            obj->cache_backing_offset = file_offset;
+        }
+        obj->cache_only = cache_image.selected;
+    }
+    if (mapfd != fd)
+        close(mapfd);
+#ifdef RTLD_CACHE_PROFILE
+	uint64_t profile_end = rtld_profile_clock();
+	bool clock_ok = profile_start != 0 && profile_lookup >= profile_start &&
+	    profile_cache >= profile_lookup && profile_end >= profile_cache;
+	rtld_profile_emit(((flags & RTLD_LO_DLOPEN) ? ELF_PROFILE_DLOPEN : 0) |
+	    (obj == NULL ? ELF_PROFILE_FAILED : 0) |
+	    (!clock_ok ? ELF_PROFILE_CLOCK_ERROR : 0), cache_reason, cache_image.selected ? cache_image.size : sb.st_size,
+	    clock_ok ? profile_lookup - profile_start : 0,
+	    clock_ok ? profile_cache - profile_lookup : 0,
+	    clock_ok ? profile_end - profile_cache : 0,
+	    (uint64_t)sb.st_dev, (uint64_t)sb.st_ino,
+	    path, name, refobj != NULL ? refobj->path : "");
+#endif
 	if (obj == NULL)
 		free(path);
 	close(fd);
@@ -3062,7 +3131,7 @@ load_object(const char *name, int fd_u, const Obj_Entry *refobj, int flags)
 
 static Obj_Entry *
 do_load_object(int fd, const char *name, char *path, struct stat *sbp,
-    int flags)
+    int flags, off_t file_offset)
 {
 	Obj_Entry *obj;
 	struct statfs fs;
@@ -3080,7 +3149,7 @@ do_load_object(int fd, const char *name, char *path, struct stat *sbp,
 	}
 
 	dbg("loading \"%s\"", printable_path(path));
-	obj = map_object(fd, printable_path(path), sbp, false);
+	obj = map_object_at(fd, printable_path(path), sbp, false, file_offset);
 	if (obj == NULL)
 		return (NULL);
 
@@ -3681,6 +3750,8 @@ resolve_object_ifunc(Obj_Entry *obj, bool bind_now, int flags,
 	    !((obj->bind_now || bind_now) && obj->gnu_ifunc) &&
 	    !obj->non_plt_gnu_ifunc)
 		return (0);
+	/* A resolver may recursively dlopen this still-active object. */
+	obj->cache_domain.resolving = true;
 	if (obj_disable_relro(obj) == -1 ||
 	    (obj->irelative && reloc_iresolve(obj, lockstate) == -1) ||
 	    (obj->irelative_nonplt &&
@@ -3690,8 +3761,11 @@ resolve_object_ifunc(Obj_Entry *obj, bool bind_now, int flags,
 	    (obj->non_plt_gnu_ifunc &&
 	    reloc_non_plt(obj, &obj_rtld, flags | SYMLOOK_IFUNC,
 	    lockstate) == -1) ||
-	    obj_enforce_relro(obj) == -1)
+	    obj_enforce_relro(obj) == -1) {
+		obj->cache_domain.resolving = false;
 		return (-1);
+	}
+	obj->cache_domain.resolving = false;
 	return (0);
 }
 
@@ -3709,6 +3783,9 @@ initlist_objects_ifunc(Objlist *list, bool bind_now, int flags,
 		if (resolve_object_ifunc(obj, bind_now, flags, lockstate) == -1)
 			return (-1);
 	}
+	/* Compare only after every resolver in this load group has run. */
+	STAILQ_FOREACH(elm, list, link)
+		rtld_cache_domain_relro(elm->obj);
 	return (0);
 }
 
@@ -3818,6 +3895,7 @@ path_enumerate(const char *path, path_enum_proc callback,
 }
 
 struct try_library_args {
+	struct rtld_cache_image *cache_image;
 	const char *name;
 	size_t namelen;
 	char *buffer;
@@ -3845,6 +3923,8 @@ try_library_path(const char *dir, size_t dirlen, void *param)
 
 		dbg("  Trying \"%s\"", pathname);
 		fd = open(pathname, O_RDONLY | O_CLOEXEC | O_VERIFY);
+        if (fd < 0 && errno == ENOENT)
+            fd = rtld_cache_open_path(pathname, arg->cache_image);
 		if (fd >= 0) {
 			dbg("  Opened \"%s\", fd %d", pathname, fd);
 			pathname = xmalloc(dirlen + 1 + arg->namelen + 1);
@@ -3861,7 +3941,7 @@ try_library_path(const char *dir, size_t dirlen, void *param)
 
 static char *
 search_library_path(const char *name, const char *path, const char *refobj_path,
-    int *fdp)
+    int *fdp, struct rtld_cache_image *cache_image)
 {
 	char *p;
 	struct try_library_args arg;
@@ -3869,6 +3949,7 @@ search_library_path(const char *name, const char *path, const char *refobj_path,
 	if (path == NULL)
 		return (NULL);
 
+	arg.cache_image = cache_image;
 	arg.name = name;
 	arg.namelen = strlen(name);
 	arg.buffer = xmalloc(PATH_MAX);
@@ -3891,7 +3972,8 @@ search_library_path(const char *name, const char *path, const char *refobj_path,
  * or -1 if the library cannot be found.
  */
 static char *
-search_library_pathfds(const char *name, const char *path, int *fdp)
+search_library_pathfds(const char *name, const char *path, int *fdp,
+    struct rtld_cache_image *cache_image)
 {
 	char *envcopy, *fdstr, *found, *last_token;
 	size_t len;
@@ -3929,6 +4011,8 @@ search_library_pathfds(const char *name, const char *path, int *fdp)
 			break;
 		}
 		fd = __sys_openat(dirfd, name, O_RDONLY | O_CLOEXEC | O_VERIFY);
+        if (fd < 0 && errno == ENOENT)
+            fd = rtld_cache_open_at(dirfd, name, cache_image);
 		if (fd >= 0) {
 			*fdp = fd;
 			len = strlen(fdstr) + strlen(name) + 3;

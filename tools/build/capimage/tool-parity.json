@@ -1,0 +1,214 @@
+{
+  "status": "in-progress; not a parity claim",
+  "review_date": "2026-10-11",
+  "sources": {
+    "codesign": "https://raw.githubusercontent.com/Apple-FOSS-Mirror/security_systemkeychain/master/src/codesign.1",
+    "codesign_source": "https://github.com/Apple-FOSS-Mirror/security_systemkeychain/blob/master/src/codesign.cpp",
+    "dyld_shared_cache_util": "https://github.com/apple-oss-distributions/dyld/blob/main/other-tools/dyld_shared_cache_util.cpp",
+    "cmc": "https://fuchsia.dev/reference/tools/sdk/cmc",
+    "ffx": "https://fuchsia.dev/reference/tools/sdk/ffx"
+  },
+  "limitations": [
+    "The available codesign manual is historical (2011); current Apple documentation and source must supplement it.",
+    "Grouped rows are the initial inventory, not yet an exhaustive current option-by-option audit.",
+    "Implemented describes source and targeted tests, not completed full-world or deployment validation."
+  ],
+  "items": [
+    {
+      "tool": "codesign",
+      "upstream_features": "sign, entitlements",
+      "fivebsd": "capsign sign -m",
+      "status": "implemented",
+      "notes": "Standalone and build-time inputs share one final container."
+    },
+    {
+      "tool": "codesign",
+      "upstream_features": "verify, strict",
+      "fivebsd": "capsign verify",
+      "status": "implemented",
+      "notes": "Cryptographic verification; authority still depends on system trust policy."
+    },
+    {
+      "tool": "codesign",
+      "upstream_features": "display, entitlement extraction",
+      "fivebsd": "capsign inspect / show / verify",
+      "status": "partial",
+      "notes": "Authenticated JSON signer/digest/container summary and policy extraction exist; architecture, process hosting and detailed file layout remain."
+    },
+    {
+      "tool": "codesign",
+      "upstream_features": "remove-signature",
+      "fivebsd": "capsign remove [-r]",
+      "status": "implemented",
+      "notes": "New output; nested image containers and bundle seals removed."
+    },
+    {
+      "tool": "codesign",
+      "upstream_features": "deep / nested code",
+      "fivebsd": "capsign sign -r / verify -r",
+      "status": "implemented",
+      "notes": "Distinct unit policies, inside-out seals, recursive verification/removal, and verified nested key rotation."
+    },
+    {
+      "tool": "codesign",
+      "upstream_features": "force, preserve-metadata",
+      "fivebsd": "capsign sign -o / resign [-r]",
+      "status": "partial",
+      "notes": "Standalone and nested resign authenticate private copies under the old key and preserve embedded policy when rotating keys. Explicit policy replacement and additional identity metadata remain."
+    },
+    {
+      "tool": "codesign",
+      "upstream_features": "multiple operands, continue",
+      "fivebsd": "capsign verify --continue image ...",
+      "status": "partial",
+      "notes": "Batch image verification can continue and returns aggregate failure; batch signing and recursive continue/report modes remain."
+    },
+    {
+      "tool": "codesign",
+      "upstream_features": "dryrun, file-list, verbose",
+      "fivebsd": "capsign sign / resign [-r] --dry-run",
+      "status": "partial",
+      "notes": "Image and nested-tree dry runs execute signing and verification without publication; tree scratch copies are removed on normal/error exit. Changed-file reports and verbosity levels remain."
+    },
+    {
+      "tool": "codesign",
+      "upstream_features": "detached",
+      "fivebsd": "capsign seal / check",
+      "status": "implemented",
+      "notes": "Domain-separated artifact signatures, not implicit runtime policy overrides."
+    },
+    {
+      "tool": "codesign",
+      "upstream_features": "identifier, prefix, requirements, test-requirement",
+      "fivebsd": "pending",
+      "status": "pending",
+      "notes": "Bundle/unit identity exists; explicit signer and identity constraints need a bounded 5BSD design."
+    },
+    {
+      "tool": "codesign",
+      "upstream_features": "architecture, all-architectures, pagesize",
+      "fivebsd": "pending",
+      "status": "partial",
+      "notes": "ELF32/64 and both byte orders parse; ELF architecture queries and page-hash design remain."
+    },
+    {
+      "tool": "codesign",
+      "upstream_features": "hosting, running process validation",
+      "fivebsd": "pending",
+      "status": "pending",
+      "notes": "Needs kernel-pinned image identity introspection; disk verification alone is insufficient."
+    },
+    {
+      "tool": "codesign",
+      "upstream_features": "keychain, extract-certificates, timestamp",
+      "fivebsd": "trust-model review",
+      "status": "pending",
+      "notes": "Current Ed25519 trust catalogue has no certificate chain, keychain service, or timestamp protocol."
+    },
+    {
+      "tool": "codesign",
+      "upstream_features": "resource-rules, ignore-resources",
+      "fivebsd": "whole-bundle inventory",
+      "status": "review",
+      "notes": "Do not report partial resource checks as full bundle validation."
+    },
+    {
+      "tool": "codesign",
+      "upstream_features": "detached-database, bundle-version, option flags, DER entitlements",
+      "fivebsd": "platform mapping",
+      "status": "review",
+      "notes": "Map semantics explicitly; Apple storage formats and framework versions are not native 5BSD concepts."
+    },
+    {
+      "tool": "dyld_shared_cache_util",
+      "upstream_features": "list, map, info, size, statistics",
+      "fivebsd": "elfcache list / map / info",
+      "status": "partial",
+      "notes": "Current map describes file slices, not shared virtual addresses."
+    },
+    {
+      "tool": "dyld_shared_cache_util",
+      "upstream_features": "extract",
+      "fivebsd": "elfcache extract",
+      "status": "implemented",
+      "notes": "Authenticated unsigned ELF extraction; per-library signature containers are excluded from cache v2."
+    },
+    {
+      "tool": "dyld_shared_cache_util",
+      "upstream_features": "dependents, versions",
+      "fivebsd": "tools/test/elfcache/audit.py",
+      "status": "partial",
+      "notes": "Offline dependency coverage exists; integrated direct and reverse queries remain."
+    },
+    {
+      "tool": "dyld_shared_cache_util",
+      "upstream_features": "JSON, identity, address lookup",
+      "fivebsd": "elfcache info -j / verify -j / map -j",
+      "status": "partial",
+      "notes": "Versioned summary and per-image file maps expose sizes, offsets, payload digests and alias relationships; inspection explicitly remains unauthenticated. Segment maps and runtime address translation remain."
+    },
+    {
+      "tool": "dyld_shared_cache_util",
+      "upstream_features": "headers, sections, symbols, function starts",
+      "fivebsd": "pending",
+      "status": "pending",
+      "notes": "ELF equivalents should use bounded parsers and report source/cache offsets."
+    },
+    {
+      "tool": "dyld_shared_cache_util",
+      "upstream_features": "slide, fixups, patch tables, linkedit, roots cost, prewarming",
+      "fivebsd": "cache-format review",
+      "status": "pending",
+      "notes": "Current whole-ELF cache does not implement prebinding or shared relocations; report unsupported mechanisms honestly."
+    },
+    {
+      "tool": "dyld_shared_cache_util",
+      "upstream_features": "Objective-C, Swift, function variants",
+      "fivebsd": "platform mapping",
+      "status": "review",
+      "notes": "Runtime-specific metadata needs actual supported runtimes; not generic ELF cache features."
+    },
+    {
+      "tool": "cmc",
+      "upstream_features": "compile, validate-references",
+      "fivebsd": "capsign validate-policy / embedded UCL / capbundle validation",
+      "status": "partial",
+      "notes": "Standalone bounded unit-policy validation shares the runtime schema; recursive signing checks complete bundle policy. Build-input composition and standalone package-reference diagnostics remain."
+    },
+    {
+      "tool": "cmc",
+      "upstream_features": "merge, include, check-includes, format, stamp",
+      "fivebsd": "build-input tooling",
+      "status": "pending",
+      "notes": "Composition must happen before signing; runtime policy must not expand external files."
+    },
+    {
+      "tool": "ffx package",
+      "upstream_features": "archive / far create, list, cat, extract",
+      "fivebsd": "package/cache tooling",
+      "status": "partial",
+      "notes": "Cache list/extract exist; audit maintained package tools before adding duplicate interfaces."
+    },
+    {
+      "tool": "ffx package",
+      "upstream_features": "archive add, edit, remove",
+      "fivebsd": "private bundle editing",
+      "status": "pending",
+      "notes": "Edits must invalidate parent seals and require explicit re-signing."
+    },
+    {
+      "tool": "ffx package",
+      "upstream_features": "build, depfile, file-hash, blob compression",
+      "fivebsd": "package workflow review",
+      "status": "pending",
+      "notes": "Map to maintained 5BSD package builder; distinguish SHA256 from Fuchsia Merkle identities."
+    },
+    {
+      "tool": "ffx package",
+      "upstream_features": "OTA manifest generation / inspection",
+      "fivebsd": "publication workflow review",
+      "status": "pending",
+      "notes": "Do not conflate executable signing with update repository signing or rollback protection."
+    }
+  ]
+}

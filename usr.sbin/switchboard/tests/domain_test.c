@@ -51,7 +51,7 @@
 int
 svc_lifecycle_client(struct svc_runtime *svc __unused,
     struct svc_runtime *provider __unused,
-    struct svc_new_client_msg *msg __unused)
+    struct svc_new_client_msg *msg __unused, uid_t sender_uid __unused)
 {
 	return (0);
 }
@@ -336,6 +336,7 @@ provider_register(struct svc_runtime *svc, const char *name)
 {
 
 	memset(svc, 0, sizeof(*svc));
+	svc->owner_uid = (uid_t)-1;
 	strlcpy(svc->manifest.label, "org.5bsd.test.provider",
 	    sizeof(svc->manifest.label));
 	strlcpy(svc->manifest.provides[0], name,
@@ -1533,4 +1534,24 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, register_non_channel_fd_rejected);
 	ATF_TP_ADD_TC(tp, register_multi_fd_rejected);
 	return (atf_no_error());
+}
+
+/* These legacy fixtures model global providers only. */
+int
+bundle_registry_lookup_scoped(const char *name, uid_t owner,
+    unsigned *bi, unsigned *si)
+{
+ return owner == (uid_t)-1 ? bundle_registry_lookup(name, bi, si) : -1;
+}
+int
+bundle_registry_lookup_for_uid(const char *name, uid_t owner,
+    unsigned *bi, unsigned *si)
+{
+ (void)owner; return bundle_registry_lookup(name, bi, si);
+}
+struct svc_runtime *
+svc_by_label_scoped(const char *name, uid_t owner)
+{
+ struct svc_runtime *svc=svc_by_label(name);
+ return svc != NULL && svc->owner_uid == owner ? svc : NULL;
 }

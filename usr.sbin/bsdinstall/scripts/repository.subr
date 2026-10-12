@@ -1,0 +1,52 @@
+# SPDX-License-Identifier: BSD-2-Clause
+# Choose installer repository configuration before touching target disks.
+# stdout is the selected directory, or empty for network defaults.
+bsdinstall_repository()
+{
+    local selected media entry found
+    selected=$1
+    media=$2
+    if [ -z "$selected" ]; then
+        [ -f "$media/5BSD-base-offline.conf" ] || return 0
+        selected=$media
+    fi
+    case "$selected" in
+    /*) ;;
+    *) echo 'bsdinstall: repository configuration directory must be absolute' >&2; return 1;;
+    esac
+    [ -d "$selected" ] || {
+        echo 'bsdinstall: repository configuration directory is missing' >&2
+        return 1
+    }
+    found=no
+    for entry in "$selected"/*.conf; do
+        [ -f "$entry" ] && [ -r "$entry" ] || continue
+        found=yes
+    done
+    [ "$found" = yes ] || {
+        echo 'bsdinstall: repository directory has no readable configuration' >&2
+        return 1
+    }
+    printf '%s\n' "$selected"
+}
+
+# Trust embedded on media applies only to that media repository, never to an
+# explicitly selected different repository. An explicit key remains the caller's
+# responsibility and takes precedence in auto.
+bsdinstall_media_code_key()
+{
+    local selected media key
+    selected=${1%/}
+    media=${2%/}
+    key=$media/keys/code.pub
+    [ "$selected" = "$media/repos" ] || return 0
+    if [ ! -e "$key" ] && [ ! -L "$key" ] &&
+        [ ! -e "$media/keys/repository.pub" ] && [ ! -L "$media/keys/repository.pub" ]; then
+        return 0
+    fi
+    [ -f "$key" ] && [ ! -L "$key" ] && [ -r "$key" ] || {
+        echo 'bsdinstall: signed media code trust is missing or invalid' >&2
+        return 1
+    }
+    printf '%s\n' "$key"
+}

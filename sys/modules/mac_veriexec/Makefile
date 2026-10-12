@@ -12,6 +12,7 @@ SRCS += \
 	opt_veriexec.h
 SRCS += \
 	mac_veriexec.c \
+	veriexec_capimage.c \
 	veriexec_fingerprint.c \
 	veriexec_metadata.c
 

@@ -29,6 +29,7 @@
 #include <unistd.h>
 
 #include <dtrace.h>
+#include <tracecmp.h>
 
 #include "otelexport.h"
 #include "bsdinstruments.h"
@@ -1097,10 +1098,12 @@ watch_run(const struct profile *p, const char *rendered,
 	 */
 	keynames = parse_agg_keynames(rendered);
 
-	dtp = dtrace_open(DTRACE_VERSION, 0, &done);
+	dtp = wo->broker ? tracecmp_dtrace_open(0, &done) :
+	    dtrace_open(DTRACE_VERSION, 0, &done);
 	if (dtp == NULL) {
-		fprintf(stderr, "bsdinstruments: failed to open libdtrace: "
-		    "%s. Are you root?\n", dtrace_errmsg(NULL, done));
+		fprintf(stderr, "bsdinstruments: %s failed: %s\n",
+		    wo->broker ? "BSDTrace delegation" : "local DTrace open",
+		    dtrace_errmsg(NULL, done));
 		goto out;
 	}
 

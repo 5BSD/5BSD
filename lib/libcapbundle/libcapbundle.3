@@ -1,6 +1,6 @@
 .\"-
 .\" SPDX-License-Identifier: BSD-2-Clause
-.Dd August 23, 2026
+.Dd October 11, 2026
 .Dt LIBCAPBUNDLE 3
 .Os
 .Sh NAME
@@ -12,12 +12,16 @@
 .In libcapbundle.h
 .Ft int
 .Fn capbundle_open "const char *path" "struct capbundle **bp" "char *errbuf" "size_t errlen"
+.Ft int
+.Fn capbundle_open_personal "const char *path" "struct capbundle **bp" "char *errbuf" "size_t errlen"
 .Ft void
 .Fn capbundle_close "struct capbundle *b"
 .Ft int
 .Fn capbundle_verify "const struct capbundle *b" "char *errbuf" "size_t errlen"
 .Ft int
 .Fn capbundle_scan_dir "const char *path" "capbundle_scan_cb cb" "void *arg"
+.Ft int
+.Fn capbundle_svc_prepare_image "const struct capbundle_service *svc" "int fd" "const char *public_key" "int *handle" "char *error" "size_t error_size"
 .Sh DESCRIPTION
 .Nm
 parses the two-level capability bundle format used by
@@ -99,16 +103,63 @@ Parsing or offline verification alone does not grant this privilege.
 .Nm
 rejects symlinks and special objects but does not establish ownership policy.
 .Xr switchboard 8
-requires registry trees to be root-owned and not group/world writable.
+requires system and local registry trees to be root-owned and personal
+registry trees to be owned by their designated user.
+Group/world writable registry trees are rejected.
 .Xr switchboardctl 8
 normalizes and atomically publishes staged installations.
+.Pp
+.Fn capbundle_open_personal
+accepts unsigned bundles and verifies any present bundle seal or executable
+signature using its embedded public key without system-key enrollment.
+A present invalid signature is rejected; it is not treated as unsigned input.
+The system-wide signature requirement does not disable unsigned personal
+bundles through this entry point.
+The caller must establish the owning user and apply personal-service
+confinement before launching any unit.
+This API does not authorize system attributes or establish publisher trust.
+Subsequent service-image verification retains the selected executable digest;
+replacing or re-signing that image requires a new registry load.
 .Sh RETURN VALUES
 Functions returning
 .Vt int
 return zero on success and -1 on failure.
 When supplied, the error buffer receives an administrative diagnostic.
+.Sh OFFLINE POLICY VALIDATION
+.Ft int
+.Fn capbundle_validate_unit_policy "const void *data" "size_t size" "char *errbuf" "size_t errlen"
+validates an in-memory unit manifest with the runtime schema, returning zero
+on success or minus one with an optional diagnostic on failure.
+Input is limited to one MiB, must be nonempty and cannot contain NUL bytes.
+External includes and duplicate keys are rejected.
+This function does not access bundle resources, authenticate signatures,
+resolve unit identity or authorize requested attributes.
 .Sh SEE ALSO
 .Xr libservice 3 ,
 .Xr switchboard 5 ,
 .Xr switchboard 8 ,
 .Xr switchboardctl 8
+.Sh EXPERIMENTAL PINNED VERIFICATION
+.Fn capbundle_svc_prepare_image
+verifies the supplied executable descriptor against the service's authenticated
+image digest, signer policy, and, when sealed, its distinct whole-file digest.
+Personal services use integrity checks without system signer enrollment.
+The returned handle belongs to the caller and must remain open through adoption
+of the same executable descriptor by the authority consumer.
+Unsigned services return a handle of -1 and retain their ordinary launch rules.
+Errors, including unavailable kernel support, do not trigger a weaker fallback.
+.Pp
+Building libcapbundle and Switchboard with
+.Dv CAPIMAGE_EXPERIMENTAL_CONSUMER
+selects this path for embedded policy discovery and authority handoff.
+This compile-time option is disabled by default pending kernel lifetime tests.
+It does not change global or personal namespace selection or attribute grants.
+Existing execution and
+.Dv O_VERIFY
+checks remain in place.
+.Pp
+The experiment is restricted to the supervisor before entering Capsicum mode.
+The current MAC syscall gate permits only the older verification operation in
+capability mode; the new handle operations return
+.Er ECAPMODE .
+This option does not change that kernel gate.

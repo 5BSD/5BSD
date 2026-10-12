@@ -12,6 +12,7 @@
 #include <sys/stat.h>
 
 #include <atf-c.h>
+#include <capimage.h>
 #include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -21,6 +22,7 @@
 #include <libcapbundle.h>
 
 #include "switchboard.h"
+#include "bundle_policy.h"
 
 const char *switchboard_bundle_dir_system;
 const char *switchboard_bundle_dir_user;
@@ -28,6 +30,19 @@ const char *switchboard_users_dir = "/nonexistent/switchboard-users";
 struct switchboard_state sd;
 
 static char sysroot[PATH_MAX], userroot[PATH_MAX];
+
+/* Test only the system-policy input; parsing and verification stay real.
+ * Never modify the running host's /etc/capability policy. */
+static bool signatures_required;
+int
+capimage_signatures_required(bool *required, char *error, size_t size)
+{
+	(void)error;
+	(void)size;
+	*required = signatures_required;
+	return (0);
+}
+
 
 static void
 roots(void)
@@ -215,6 +230,8 @@ ATF_TC_BODY(vanished_system_root_retains, tc)
 ATF_TC_WITHOUT_HEAD(per_user_agent_loads_with_owner);
 ATF_TC_BODY(per_user_agent_loads_with_owner, tc)
 {
+	struct capbundle *bundle = NULL;
+	char error[256];
 	char cwd[PATH_MAX], usersdir[PATH_MAX], agentdir[PATH_MAX], p[PATH_MAX];
 	uid_t me = getuid();
 
@@ -235,11 +252,30 @@ ATF_TC_BODY(per_user_agent_loads_with_owner, tc)
 
 	mkbundle(agentdir, "Agent", "org.test.agent", "agentd", "");
 
+	/* A strict system must still permit an unsigned personal agent. */
+	signatures_required = true;
+	snprintf(p, sizeof(p), "%s/Agent.cap", agentdir);
+	ATF_REQUIRE_EQ(-1, capbundle_open(p, &bundle, error, sizeof(error)));
+	ATF_REQUIRE(bundle == NULL);
+	ATF_REQUIRE_MSG(capbundle_open_trusted(p, NULL, false, &bundle,
+	    error, sizeof(error)) == 0, "%s", error);
+	capbundle_close(bundle);
+
+
 	ATF_REQUIRE_EQ(0, bundle_registry_init());
-	ATF_CHECK_EQ(1u, bundle_registry_count());
+	ATF_REQUIRE_EQ(1u, bundle_registry_count());
 	ATF_CHECK_STREQ("Agent.cap", capbundle_name(bundle_registry_get(0)));
 	ATF_CHECK_EQ(me, bundle_registry_owner_uid(0));
 	bundle_registry_teardown();
+
+	/* Optional signatures must not mean ignoring a malformed seal. */
+	snprintf(p, sizeof(p), "%s/Agent.cap/Signature", agentdir);
+	ATF_REQUIRE_EQ(0, mkdir(p, 0755));
+	ATF_REQUIRE_EQ(0, bundle_registry_init());
+	ATF_CHECK_EQ(0u, bundle_registry_count());
+	ATF_CHECK_EQ(1u, bundle_registry_quarantined());
+	bundle_registry_teardown();
+
 }
 
 /*
@@ -276,8 +312,77 @@ ATF_TC_BODY(per_user_agent_world_writable_rejected, tc)
 	bundle_registry_teardown();
 }
 
+
+ATF_TC_WITHOUT_HEAD(platform_attribute_scope);
+ATF_TC_BODY(platform_attribute_scope, tc)
+{
+	const char *policies[] = {
+	    "attributes=[\"org.test.protected\"];",
+	    "holds=[\"org.test.protected\"];",
+	    "capabilities { system=[\"sysctl\"]; }",
+	    "capabilities { system=[\"sysctl\"]; isolate=[\"kern.hostname\"]; }",
+	    "ambient=true; protocol=\"unix\";"
+	};
+	char path[PATH_MAX], unit[PATH_MAX], text[1024], error[256];
+	struct capbundle *b;
+	struct svc_manifest m;
+
+	roots();
+	mkbundle(userroot, "Local", "org.test.local", "local", "");
+	snprintf(path, sizeof(path), "%s/Local.cap", userroot);
+	snprintf(unit, sizeof(unit), "%s/Units/local.unit/Unit.ucl", path);
+	for (unsigned i = 0; i < sizeof(policies)/sizeof(policies[0]); i++) {
+		snprintf(text, sizeof(text), "program=\"local\"; "
+		    "activation { boot=true; } %s\n", policies[i]);
+		writef(unit, text, 0644);
+		ATF_REQUIRE_MSG(capbundle_open_trusted(path, NULL, false, &b,
+		    error, sizeof(error)) == 0, "%s", error);
+		ATF_REQUIRE_EQ(0, capbundle_svc_fill_manifest(
+		    capbundle_service(b, 0), &m));
+		ATF_CHECK(bundle_manifest_platform_allowed(&m, true, (uid_t)-1));
+		/* Personal declarations still reach the existing confinement step. */
+		ATF_CHECK(bundle_manifest_platform_allowed(&m, false, getuid()));
+		ATF_CHECK_EQ(i == 4,
+		    bundle_manifest_platform_allowed(&m, false, (uid_t)-1));
+		capbundle_close(b);
+	}
+}
+
+
+ATF_TC(local_platform_grants_quarantined);
+ATF_TC_HEAD(local_platform_grants_quarantined, tc)
+{
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(local_platform_grants_quarantined, tc)
+{
+	char path[PATH_MAX];
+	roots();
+	mkbundle(sysroot, "Base", "org.test.base", "base", "");
+	snprintf(path, sizeof(path), "%s/Base.cap/Units/base.unit/Unit.ucl", sysroot);
+	writef(path, "program=\"base\"; activation { boot=true; } "
+	    "attributes=[\"org.test.protected\"];", 0644);
+	mkbundle(userroot, "Bad", "org.test.bad", "bad", "");
+	snprintf(path, sizeof(path), "%s/Bad.cap/Units/bad.unit/Unit.ucl", userroot);
+	writef(path, "program=\"bad\"; activation { boot=true; } "
+	    "attributes=[\"org.test.protected\"];", 0644);
+	mkbundle(userroot, "Unix", "org.test.unix", "unix", "");
+	snprintf(path, sizeof(path), "%s/Unix.cap/Units/unix.unit/Unit.ucl", userroot);
+	writef(path, "program=\"unix\"; activation { boot=true; } "
+	    "ambient=true; protocol=\"unix\";", 0644);
+	ATF_REQUIRE_EQ(0, bundle_registry_init());
+	ATF_CHECK_EQ(2u, bundle_registry_count());
+	ATF_CHECK_EQ(1u, bundle_registry_quarantined());
+	ATF_CHECK(bundle_registry_is_system(0));
+	ATF_CHECK_STREQ("Base.cap", capbundle_name(bundle_registry_get(0)));
+	ATF_CHECK_STREQ("Unix.cap", capbundle_name(bundle_registry_get(1)));
+	bundle_registry_teardown();
+}
+
 ATF_TP_ADD_TCS(tp)
 {
+	ATF_TP_ADD_TC(tp, local_platform_grants_quarantined);
+	ATF_TP_ADD_TC(tp, platform_attribute_scope);
 	ATF_TP_ADD_TC(tp, user_conflicts_are_quarantined_not_fatal);
 	ATF_TP_ADD_TC(tp, registered_bundle_is_retained_when_unreadable);
 	ATF_TP_ADD_TC(tp, root_spelling_does_not_unregister);

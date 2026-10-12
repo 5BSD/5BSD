@@ -633,6 +633,7 @@ ATF_TC_BODY(idle_timer_fire_stops_provider, tc)
 
 /* Exercise actual compaction without replacing other fixtures' leaf stubs. */
 struct svc_runtime *reload_test_by_label(const char *);
+struct svc_runtime *reload_test_by_label_scoped(const char *, uid_t);
 void reload_test_remove(unsigned);
 void reload_test_reregister(int);
 static int
@@ -644,11 +645,13 @@ reload_test_channel_rebind(struct svc_runtime *svc)
 }
 #define svc_channel_rebind reload_test_channel_rebind
 #define svc_by_label reload_test_by_label
+#define svc_by_label_scoped reload_test_by_label_scoped
 #define svc_remove reload_test_remove
 #define svc_reregister_kevents reload_test_reregister
 #include "../reload.c"
 #undef svc_channel_rebind
 #undef svc_by_label
+#undef svc_by_label_scoped
 #undef svc_remove
 #undef svc_reregister_kevents
 
@@ -1723,4 +1726,17 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, handle_idle_protocol);
 	ATF_TP_ADD_TC(tp, handle_ready_ambient_promotion);
 	return (atf_no_error());
+}
+
+struct svc_runtime *
+svc_by_label_scoped(const char *name, uid_t owner)
+{
+ struct svc_runtime *svc=svc_by_label(name);
+ return svc != NULL && svc->owner_uid == owner ? svc : NULL;
+}
+bool
+svc_responsible_allowed_scoped(const struct svc_manifest *m, uid_t owner,
+    const struct svc_responsible *responsible)
+{
+ (void)owner;return svc_responsible_allowed(m,responsible);
 }

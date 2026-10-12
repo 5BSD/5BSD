@@ -36,8 +36,8 @@ struct channel_sender;
  * current capability-service behavior and every existing code path is
  * unchanged until a unit is explicitly given another kind.
  *
- * The unit's stable identity is its manifest.label: runtime state is keyed
- * by label, so a unit may migrate between kinds (an rc service rewritten as
+ * The unit's stable identity is (installation scope, manifest.label). Runtime
+ * state is keyed by GLOBAL or PERSONAL(owner_uid), then label, so a unit may migrate between kinds (an rc service rewritten as
  * a .cap bundle: RC -> NATIVE) without changing its identity or disturbing
  * consumers.  Units carry no startup ordering; they launch in parallel and
  * satisfy inter-service needs on demand via IPC activation.  bundle_idx is
@@ -152,6 +152,7 @@ struct svc_responsible {
 	enum svc_responsible_kind kind;
 	char		label[SWITCHBOARD_LABEL_MAX];	/* UNIT: parent label */
 	uid_t		uid;				/* SESSION: session uid */
+	uid_t owner_uid; /* UNIT: installation namespace. */
 	uint64_t	parent_id;			/* parent coalition id */
 	int		parent_fd;			/* owned dup, or -1 */
 };
@@ -379,6 +380,8 @@ void	svc_responsibility_apply(struct svc_runtime *svc, int coalition_fd);
 int	svc_responsibility_root_init(void);
 const char *svc_responsibility_name(const struct svc_responsible *r,
 	    char *buf, size_t len);
+bool svc_responsible_allowed_scoped(const struct svc_manifest *, uid_t,
+    const struct svc_responsible *);
 bool	svc_responsible_allowed(const struct svc_manifest *m,
 	    const struct svc_responsible *r);
 const char *svc_boot_id(char *buf, size_t len);
@@ -444,11 +447,16 @@ int	svc_channel_send_event(struct svc_runtime *, const void *, size_t,
 /* reload.c — hot reload logic */
 int	supervisor_reload(int kq, char *summary, size_t sumlen);
 struct svc_runtime *svc_by_label(const char *label);
+struct svc_runtime *svc_by_label_scoped(const char *, uid_t);
+int svc_library_cache_init(void);
+int svc_library_cache_policy_init(int);
+int svc_library_cache_policy_bind(const struct svc_runtime *, int);
+int svc_library_cache_status(pid_t, char *, size_t);
 void	svc_remove(unsigned idx);
 void	svc_reregister_kevents(int kq);
 struct svc_new_client_msg;
 /*
- * Resource-ownership identity.  Ownership is the stable bundle label; these
+ * Resource-ownership identity. Ownership includes the installation namespace; these
  * derive the per-unit id and flat owner key switchboard stamps on a launched
  * unit (svc->installation / svc->resource_owner) and on each client connection
  * (msg->generation / msg->resource_owner).  There is no store and no gate --
@@ -457,7 +465,7 @@ struct svc_new_client_msg;
  */
 int svc_lifecycle_identity(struct svc_runtime *);
 int svc_lifecycle_client(struct svc_runtime *, struct svc_runtime *,
-    struct svc_new_client_msg *);
+    struct svc_new_client_msg *, uid_t);
 
 /* reclaim_publish.c — publish the running-bundle markers under /Capabilities/Run
  * for the container-model reconcile.  The installed set (System/, Apps/) is the
@@ -484,6 +492,8 @@ void registry_watch_fini(void);
 struct capbundle;
 struct capbundle_service;
 int	bundle_registry_init(void);
+int bundle_registry_lookup_scoped(const char *, uid_t, unsigned *, unsigned *);
+int bundle_registry_lookup_for_uid(const char *, uid_t, unsigned *, unsigned *);
 int	bundle_registry_lookup(const char *name, unsigned *bundle_idx,
 	    unsigned *service_idx);
 struct capbundle *bundle_registry_get(unsigned idx);
@@ -576,6 +586,11 @@ void domain_unit_channels_close(const struct svc_runtime *);
 struct svc_runtime *lookup_channel_requester(const struct svc_lookup_channel *);
 bool	lookup_channel_is_live(const struct svc_lookup_channel *lc);
 void	lookup_channel_sync_events(struct svc_lookup_channel *lc, int kq);
+bool svc_domain_resolves_scoped(const struct svc_domain *, const char *, uid_t);
+bool svc_domain_permits_scoped(const struct svc_domain *, enum svc_domain_kind,
+    const char *, uid_t);
+int svc_anoint_endpoint_requires_scoped(const char *, uid_t,
+    char (*)[SWITCHBOARD_LABEL_MAX], unsigned *);
 bool	svc_domain_resolves(const struct svc_domain *domain, const char *name);
 bool	name_is_control(const char *name);
 bool	svc_domain_permits(const struct svc_domain *chan,

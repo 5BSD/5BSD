@@ -24,7 +24,7 @@ LIBSODIUM=${SRCTOP}/sys/contrib/libsodium/src/libsodium
 
 KMOD	= crypto
 SRCS	= crypto.c cryptodev_if.c
-SRCS	+= criov.c cryptosoft.c
+SRCS	+= criov.c cryptosoft.c cryptodesc_ed25519.c
 SRCS	+= xform_aes_cbc.c xform_aes_icm.c xform_aes_xts.c xform_cml.c
 SRCS	+= xform_deflate.c xform_gmac.c xform_null.c xform_rmd160.c
 SRCS	+= xform_sha1.c xform_sha2.c

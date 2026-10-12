@@ -30,5 +30,6 @@ SUBDIR.${MK_TESTS}+= tests
 SRCS+= bsdmemory_provider.d
 CFLAGS+= -I${.OBJDIR} -DWITH_DTRACE
 .endif
+CAPIMAGE_MANIFEST= ${UNIT}
 .include <bsd.prog.mk>
 _proginstall: installdirs-MEMORY_BIN

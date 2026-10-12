@@ -26,6 +26,16 @@ parse_integer_func.c:	${SRCTOP}/libexec/rtld-elf/rtld.c
 	    >parse_integer_func.c
 CLEANFILES+=	parse_integer_func.c
 
+.PATH: ${SRCTOP}/libexec/rtld-elf
+ATF_TESTS_C+= cache_elf_test
+SRCS.cache_elf_test= cache_elf_test.c elf_cache_eligible.c
+CFLAGS.cache_elf_test+= -I${SRCTOP}/libexec/rtld-elf
+
 WARNS?=		3
+
+
+ATF_TESTS_C+= cache_profile_test
+SRCS.cache_profile_test= cache_profile_test.c elf_cache_profile.c
+CFLAGS.cache_profile_test+= -DRTLD_CACHE_PROFILE -I${SRCTOP}/libexec/rtld-elf -I${SRCTOP}/libexec/rtld-elf/rtld-libc
 
 .include <bsd.test.mk>

@@ -106,11 +106,10 @@ env_setup() {
 	SRC_CONF="/dev/null"
 
 	# The number of make(1) jobs, defaults to the number of CPUs available
-	# for buildworld, and half of number of CPUs available for buildkernel
-	# and 'make release'.
+	# for world, kernel and release compilation.
 	WORLD_FLAGS="-j$(sysctl -n hw.ncpu)"
-	KERNEL_FLAGS="-j$(( $(( $(sysctl -n hw.ncpu) + 1 )) / 2))"
-	RELEASE_FLAGS="-j$(( $(( $(sysctl -n hw.ncpu) + 1 )) / 2))"
+	KERNEL_FLAGS="-j$(sysctl -n hw.ncpu)"
+	RELEASE_FLAGS="-j$(sysctl -n hw.ncpu)"
 
 	MAKE_FLAGS="-s"
 

@@ -70,6 +70,8 @@ MLINKS=	BSDBluetooth.8 blued.8
 
 WARNS?=	6
 
+CAPIMAGE_MANIFEST= ${CAP_UNIT}
+
 .include <bsd.prog.mk>
 
 _proginstall: installdirs-BLUED_CAP_BIN

@@ -194,16 +194,26 @@ trap true SIGINT	# This section is optional
 trap error SIGINT	# Catch cntrl-C here
 if [ -z "$BSDINSTALL_SKIP_HOSTNAME" ]; then bsdinstall hostname || error "Set hostname failed"; fi
 
-if [ -f /usr/5bsd-packages/repos/5BSD-base-offline.conf ]; then
+. /usr/libexec/bsdinstall/repository.subr || error "Cannot load repository selection"
+selected_repos=$(bsdinstall_repository "${BSDINSTALL_PKG_REPOS_DIR:-}" \
+    /usr/5bsd-packages/repos) || error "Invalid package repository configuration"
+if [ -z "${BSDINSTALL_CODE_PUBLIC_KEY:-}" ]; then
+	BSDINSTALL_CODE_PUBLIC_KEY=$(bsdinstall_media_code_key "$selected_repos" \
+	    /usr/5bsd-packages) || error "Invalid media code trust"
+	export BSDINSTALL_CODE_PUBLIC_KEY
+fi
+if [ -n "${BSDINSTALL_CODE_PUBLIC_KEY:-}" ]; then
+	"${CAPSIGN:-capsign}" key-id -p "$BSDINSTALL_CODE_PUBLIC_KEY" >/dev/null || \
+	    error "Invalid code-signing public key"
+fi
+if [ -n "$selected_repos" ]; then
+	export BSDINSTALL_PKG_REPOS_DIR="$selected_repos"
 	bsddialog --backtitle "$OSNAME Installer" --title "Network Configuration" \
 	    --yes-label "Configure Network" --no-label "Offline" --yesno \
-	    "The base system will be installed from the packages included in this installation media. Would you like to configure networking for additional downloads? Matching hardware packages are included on full installation media." 0 0
-	if [ $? -eq 1 ]; then
-		export BSDINSTALL_PKG_REPOS_DIR=/usr/5bsd-packages/repos/
-	else
+	    "The base system will be installed from the selected pkgbase repository. Configure networking if that repository requires it, or for additional downloads." 0 0
+	if [ $? -ne 1 ]; then
 		bsdinstall netconfig || error
 		NETCONFIG_DONE=yes
-		export BSDINSTALL_PKG_REPOS_DIR=/usr/5bsd-packages/repos/
 	fi
 else
 	bsddialog --backtitle "$OSNAME Installer" --title "Network Installation" \
@@ -364,6 +374,13 @@ esac
 [ -f /usr/libexec/bsdinstall/local.pre-fetch ] && f_dprintf "Running local.pre-fetch" && sh /usr/libexec/bsdinstall/local.pre-fetch "$BSDINSTALL_CHROOT"
 
 bsdinstall pkgbase || error "Installation of base system packages failed"
+
+# A signed build supplies explicit public trust. Verify packaged executable
+# policies and the cache before configuring or booting the installed system.
+if [ -n "${BSDINSTALL_CODE_PUBLIC_KEY:-}" ]; then
+	bsdinstall verify-image -r "$BSDINSTALL_CHROOT" \
+	    -p "$BSDINSTALL_CODE_PUBLIC_KEY" || error "Installed code signature verification failed"
+fi
 
 # Bind the storage capability provider to the pool selected by guided ZFS.
 # This runs after pkgbase so it edits the complete packaged policy in place.

@@ -82,7 +82,7 @@ Ten more example scripts for the `oes` provider are in
 
 ## bsdinstruments
 
-bsdinstruments(8) is a profile runner over libdtrace: 240 `.d` profiles
+bsdinstruments(8) is a profile runner over libdtrace: 243 `.d` profiles
 with `@bsdinstruments-*` markers and `${param}` substitution, installed in
 `/usr/share/bsdinstruments/profiles` (then `/usr/local/share/bsdinstruments/profiles`,
 then `~/.bsdinstruments/profiles`, later directories overriding earlier
@@ -110,6 +110,16 @@ because a USDT provider exists only while its daemon runs; since `-Z`
 also accepts probes nothing defines, the test separately checks that
 `capability-services.d` names no probe retired with BSDAuth and session
 minting. There is no `bsdinstruments run`; the verb is `watch`.
+
+The `loader-libraries`, `loader-summary`, and `script-exec` profiles support
+cache selection and interpreter workloads. Loader events require an isolated
+VM build with `RTLD_CACHE_PROFILE=yes`; ordinary builds emit none. Capture
+startup/dependency and dlopen/fdlopen activity without setting process tracing
+flags, which would prevent capability authority acquisition. These events are
+untrusted diagnostics and contain no service descriptors or argument strings.
+The script profile observes exec paths and outcomes, including shebang launches;
+it cannot identify every sourced script or interpreter input. See
+`tools/test/elfcache/README.md` for capture, ranking, and observer limitations.
 
 ## hwstat
 

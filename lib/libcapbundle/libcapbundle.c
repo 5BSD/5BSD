@@ -7,6 +7,7 @@
  */
 
 #include <sys/types.h>
+#include <capimage.h>
 #include <sys/stat.h>
 #include <sys/param.h>
 
@@ -17,6 +18,7 @@
 #include <string.h>
 #include <syslog.h>
 #include <unistd.h>
+#include <fcntl.h>
 
 #include "libcapbundle_internal.h"
 
@@ -28,10 +30,39 @@ manifest_copy(const char *src, char *dst, size_t dstsz)
 }
 
 /* --- Public API --- */
+static int open_bundle(const char *, const char *, bool, bool,
+    struct capbundle **, char *, size_t);
+
+int
+capbundle_open_trusted(const char *path, const char *key, bool required,
+    struct capbundle **bp, char *errbuf, size_t errlen)
+{
+	return (open_bundle(path, key, required, false, bp, errbuf, errlen));
+}
+
+int
+capbundle_open_personal(const char *path, struct capbundle **bp,
+    char *errbuf, size_t errlen)
+{
+	return (open_bundle(path, NULL, false, true, bp, errbuf, errlen));
+}
+
 
 int
 capbundle_open(const char *path, struct capbundle **bp,
     char *errbuf, size_t errlen)
+{
+	bool required;
+	if (capimage_signatures_required(&required, errbuf, errlen) < 0) {
+		if (bp != NULL) *bp = NULL;
+		return (-1);
+	}
+	return (capbundle_open_trusted(path, NULL, required, bp, errbuf, errlen));
+}
+
+static int
+open_bundle(const char *path, const char *key, bool required, bool personal,
+    struct capbundle **bp, char *errbuf, size_t errlen)
 {
 	struct capbundle *b;
 	struct stat sb;
@@ -67,6 +98,19 @@ capbundle_open(const char *path, struct capbundle **bp,
 		return (-1);
 	}
 
+	if (key != NULL && (b->verification_key = strdup(key)) == NULL) {
+		capbundle_close(b);
+		return (-1);
+	}
+	b->personal = personal;
+	b->require_signatures = required;
+	if (capbundle_check_seal(path, key, required, b,
+	    errbuf, errlen) < 0) {
+		capbundle_close(b);
+		return (-1);
+	}
+	b->require_signatures |= b->signed_bundle;
+
 	/* Store path and derive name. */
 	if (realpath(path, b->path) == NULL)
 		strlcpy(b->path, path, sizeof(b->path));
@@ -96,7 +140,8 @@ capbundle_open(const char *path, struct capbundle **bp,
 		if (strcmp(de->d_name, ".") == 0 || strcmp(de->d_name, "..") == 0 ||
 		    strcmp(de->d_name, "Bundle.ucl") == 0 ||
 		    strcmp(de->d_name, "Units") == 0 ||
-		    strcmp(de->d_name, "Shared") == 0)
+		    strcmp(de->d_name, "Shared") == 0 ||
+		    strcmp(de->d_name, "Signature") == 0)
 			continue;
 		if (errbuf != NULL)
 			snprintf(errbuf, errlen, "%s: root entry is not allowed: %s",
@@ -184,7 +229,16 @@ capbundle_open(const char *path, struct capbundle **bp,
 void
 capbundle_close(struct capbundle *b)
 {
-
+	if (b != NULL) {
+		struct capbundle_sealed_file *f;
+		while ((f = b->sealed_files) != NULL) {
+			b->sealed_files = f->next;
+			free(f->path);
+			free(f);
+		}
+		free(b->signed_bundle_text);
+		free(b->verification_key);
+	}
 	free(b);
 }
 

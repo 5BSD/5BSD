@@ -1,0 +1,259 @@
+.\" SPDX-License-Identifier: BSD-2-Clause
+.Dd October 11, 2026
+.Dt ELFCACHE 8
+.Os
+.Sh NAME
+.Nm elfcache
+.Nd construct and inspect signed system ELF library caches
+.Sh SYNOPSIS
+.Nm
+.Cm build
+.Fl r Ar staged-root
+.Fl o Ar cache
+.Op Fl k Ar private.pem
+.Op Fl l Ar library-list
+.Nm
+.Cm inspect
+.Ar cache
+.Nm
+.Cm map
+.Op Fl j
+.Ar cache
+.Nm
+.Cm info
+.Op Fl j
+.Ar cache
+.Nm
+.Cm verify
+.Op Fl j
+.Op Fl p Ar public.pem
+.Ar cache
+.Nm
+.Cm extract
+.Op Fl p Ar public.pem
+.Fl o Ar new-directory
+.Ar cache
+.Nm
+.Cm layout
+.Op Fl k Ar private.pem
+.Op Fl p Ar public.pem
+.Fl o Ar sidecar
+.Ar cache
+.Sh DESCRIPTION
+The build command collects ELF shared-library files from the staged root's
+.Pa /lib
+and
+.Pa /usr/lib
+into a deterministic cache.
+It preserves the ELF bytes preceding any per-image signature container,
+aligns image slices to 64 KiB, and
+stores identical input bytes once.
+Library names are scoped to their original directory.
+With
+.Fl l ,
+include only paths named in the newline-separated selection file.
+Entries must be direct /lib or /usr/lib library paths; blank lines and lines
+beginning with # are ignored.
+Duplicate entries, unsafe paths, missing libraries and non-ELF selections
+are errors.
+Selection does not automatically add aliases or dependencies: use the static
+dependency audit and runtime loader profiles to review the chosen set.
+Libraries outside the cache retain ordinary loader behavior.
+Library state, handles, relocations and writable data are not preinitialized.
+.Pp
+The staged root must be quiescent.
+The builder detects source changes while copying and rejects paths escaping
+the staged root.
+Output paths must be new generation names, never active cache files.
+With a signing key, it writes a detached
+.Pa .sig
+file using the library-cache protocol domain.
+Publication of the cache and its signature into an active generation is a
+separate operation.
+.Pp
+The inspect command validates structural bounds and prints entries, offsets
+and sizes; its output is not a claim of authenticity.
+The list and map commands are aliases for inspect: the map describes file
+slices, not fixed process virtual addresses.
+The info command reports entry and unique image counts, total named input
+bytes, unique payload bytes, cache file size and format/alignment overhead.
+These structural commands do not authenticate the cache.
+They reject verification-key options instead of silently ignoring them.
+Options that do not apply to a command are usage errors.
+Alias deduplication is not a memory-saving measurement; ordinary shared
+libraries already share file-backed pages.
+The verify command additionally authenticates the cache signature and checks
+every entry's SHA-256 digest in a private snapshot.
+With
+.Fl j ,
+info and verify emit one JSON object using schema
+.Dq org.5bsd.elfcache.summary.v1 .
+The object includes counts, byte totals, format version, authentication and
+payload-digest verification booleans, and verification-key source.
+Info reports both verification booleans as false; verify reports true only
+after successful authentication and validation of every entry.
+On failure, neither command emits a JSON object.
+Map with
+.Fl j
+emits schema
+.Dq org.5bsd.elfcache.images.v1
+with an image array containing paths, payload SHA-256 digests, cache offsets,
+payload and original source lengths, and zero-based canonical image indexes.
+Aliases refer to the first entry sharing the same payload slice.
+Paths use byte-values encoding: non-ASCII filesystem bytes are escaped as
+U+00xx; consumers recover the original bytes from those values rather than
+encoding them as UTF-8.
+The hashes describe the index and are not verified by structural inspection;
+both verification booleans are false.
+No image JSON is emitted until all index records pass structural checks.
+Offsets locate bytes in the cache file, not process virtual addresses.
+The JSON option is not accepted by other commands.
+These summaries describe stored bytes, not resident memory or runtime
+capability authority.
+.Pp
+The extract command authenticates a private snapshot of the cache and checks
+all entry digests before creating a new destination directory.
+It writes each unsigned ELF payload under
+.Pa lib
+or
+.Pa usr/lib
+and verifies the extracted bytes.
+Aliases become separate byte-identical regular files with mode 0444;
+original symlink relationships and filesystem metadata are not recorded.
+Existing destinations, including symlinks, are refused.
+The destination root has mode 0700.
+On an I/O failure, a partial destination may remain and must be removed before
+retrying; no existing files are overwritten.
+Extraction does not install or activate the libraries.
+Without an explicit public key, verification uses the system trust catalogue.
+.Pp
+Cache format version 2 excludes each source library's appended signature and
+policy container.
+The cache has its own detached signature.
+Extraction produces unsigned ELF files, not the original signed artifacts.
+The loader retains source-file identity and checks cached ELF bytes against
+the source, using separate source and payload lengths.
+.Sh FILES
+.Bl -tag -width /usr/libdata/5bsd/cache/elf.cache.sig
+.It Pa /usr/libdata/5bsd/cache/elf.cache
+System cache generation selected at startup.
+.It Pa /usr/libdata/5bsd/cache/elf.cache.sig
+Detached system cache signature.
+.El
+.Sh OPTIONAL SHARED RELRO DOMAIN
+The
+.Cm layout
+command creates a separate signed relative-layout sidecar bound to the full
+cache generation by SHA-256.
+It leaves cache version 2 unchanged.
+With
+.Fl p ,
+it first verifies the input cache signature.
+The sidecar records eligible ELF64 little-endian amd64 objects, their load
+extents and nonexecutable GNU RELRO ranges.
+Unsupported images retain ordinary loader behavior.
+Its signature uses the distinct
+.Dq org.5bsd.elf-layout.v1
+protocol domain.
+.Pp
+SwitchBoard can explicitly enable this optimization in
+.Pa /Capabilities/Config/switchboard/elf-cache-domain.ucl .
+The root-owned configuration names the signed sidecar, exact system service
+labels, and seed library basenames.
+An example is installed with the SwitchBoard examples.
+The default is disabled; absent configuration enrolls no services.
+An enabled configuration must name at least one service and library.
+.Pp
+The legacy top-level
+.Cm layout , signature , services ,
+and
+.Cm libraries
+fields describe one domain.
+Alternatively,
+.Cm domains
+is an array of up to eight objects, each containing those four fields.
+Do not mix the two forms.
+A service may belong to only one domain; at most 64 exact service labels may
+be selected in total, with up to 64 seed libraries per domain.
+Unknown or duplicate fields, duplicate memberships, invalid strings and
+excessive configurations are rejected before any domain is created.
+The root-owned configuration remains limited to 16 KiB.
+.Pp
+For example, two distinct authenticated domains can use the same signed
+relative layout
+and cache generation:
+.Bd -literal -offset indent
+enabled = true;
+domains = [
+  { layout = "/usr/libdata/5bsd/cache/elf.layout";
+    signature = "/usr/libdata/5bsd/cache/elf.layout.sig";
+    services = ["system.Example/first"];
+    libraries = ["libservice.so.1"]; },
+  { layout = "/usr/libdata/5bsd/cache/elf.layout";
+    signature = "/usr/libdata/5bsd/cache/elf.layout.sig";
+    services = ["system.Example/second"];
+    libraries = ["libservice.so.1"]; }
+];
+.Ed
+.Pp
+Each entry uses a separately created issuer-owned domain and RELRO backing.
+Reusing the signed layout preserves relative library slots.
+The kernel still chooses an independent randomized base for each domain;
+this configuration does not force identical absolute library addresses.
+It does not merge domain identity or alias independent backing.
+The broker exposes the new membership table only after every domain has been
+seeded and published successfully.
+Failure closes staged handles and leaves any previously selected table intact.
+Seeds still have an individual 30-second deadline, so eight domains may require
+up to eight such waits.
+Personal installations are never enrolled by these system service labels.
+.Pp
+The issuer pins and verifies the cache generation and sidecar, creates a
+randomized domain base for the authenticated layout, and launches a signed
+executable-constrained
+.Pa /usr/libexec/elfcache-seed
+helper.
+The helper links only the base C runtime and loads the configured libraries;
+it does not carry the builder's cryptographic dependencies.
+The seed has capture rights only.
+After successful seed exit, the issuer seals the backing against writes,
+growth and truncation and validates it before publication.
+The seed wait is bounded to 30 seconds.
+Configured startup failures are reported as cache initialization failures;
+there is no silently accepted unauthenticated generation.
+.Pp
+Enrolled loaders still verify source signatures, compare cache source bytes,
+perform all ordinary ELF relocations, and resolve IFUNC and TLS state.
+Only exactly equal, locally relocated RELRO pages receive private read-only
+mappings of canonical backing.
+Different symbol bindings, lazy/eager state, TLS offsets, unavailable entries
+and address collisions preserve ordinary private state.
+Main executable, stack and heap randomization remain independent.
+No environment variable selects or grants domain membership.
+.Pp
+Libraries within a domain share addresses, reducing independence of address
+randomization between its members.
+Choose membership accordingly.
+Revocation prevents fresh descriptor acquisition; existing mappings and
+already delegated descriptors retain their lifetime.
+The generation remains pinned until its domains, grants and mappings release
+it.
+Disk packing totals and matching-page counts are not resident-memory savings;
+include canonical backing and page-table costs in measurements.
+.Sh SEE ALSO
+.Xr libcapimage 3 ,
+.Xr capsign 8
+.Sh LAYOUT VERIFICATION
+The
+.Cm layout-verify
+.Fl p Ar public-key
+.Fl l Ar layout
+.Ar cache
+command requires valid signatures on both the layout and cache, checks the
+layout geometry against the cached ELF images, and verifies that the layout
+names the exact cache generation by its full SHA-256 digest.
+It authenticates private temporary copies so verification and parsing inspect
+the same bytes even if the input paths are replaced concurrently.
+Temporary disk space proportional to the cache size is required.
+This command verifies artifacts; it does not enable a sharing domain or grant
+process authority.

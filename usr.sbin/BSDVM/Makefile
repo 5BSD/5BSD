@@ -54,6 +54,8 @@ SRCS+=		bsdvm_provider.d
 CFLAGS+=	-I${.OBJDIR} -DWITH_DTRACE
 .endif
 
+CAPIMAGE_MANIFEST= ${CAP_UNIT}
+
 .include <bsd.prog.mk>
 
 _proginstall: installdirs-WN_CAP_BIN

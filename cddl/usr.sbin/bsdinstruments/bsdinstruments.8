@@ -3,7 +3,7 @@
 .\"
 .\" Copyright (c) 2026 Kory Heard
 .\"
-.Dd August 16, 2026
+.Dd October 11, 2026
 .Dt BSDINSTRUMENTS 8
 .Os
 .Sh NAME
@@ -15,6 +15,7 @@
 .Op Fl -json
 .Nm
 .Cm watch
+.Op Fl -broker
 .Op Ar profile | Fl f Ar script.d
 .Op Fl -param Ar key=value
 .Op Fl -pid Ar n
@@ -36,6 +37,7 @@
 .Op Ar rendering options ...
 .Nm
 .Cm probes
+.Op Fl -broker
 .Op Fl -provider Ar name
 .Op Fl -regex Ar re
 .Op Fl -pid Ar n
@@ -140,6 +142,61 @@ for structured output) and
 .Fl -switchrate
 the buffer drain cadence (default 50ms).
 Increase both for extreme probe rates.
+.Sh BROKER ACCESS
+With
+.Fl -broker ,
+watch and probes request a delegated DTrace consumer from BSDTrace through
+.Xr libtracecmp 3 .
+The caller needs an authorized service connection and a client label explicitly
+allowed by BSDTrace's configuration.
+The tool does not add that authorization or fall back to local device access
+when delegation fails.
+Without this option, the existing local DTrace access path is used.
+The broker must provision the required providers; delegated opening does not
+load kernel modules or reopen provider devices.
+Rendering with generate needs no tracing authority and does not accept this
+option.
+.Pp
+Broker access does not make process attachment harmless: avoid probes --pid
+and ptrace/ktrace attachment when profiling protected capability daemons.
+Use global SDT and syscall profiles through the authorized tracing path.
+.Sh LOADER AND SCRIPT PROFILES
+The loader-libraries profile records bounded library-load events from a
+loader built with RTLD_CACHE_PROFILE=yes.
+The loader-summary profile aggregates load counts, file sizes, lookup time,
+cache-check time and mapping time through the normal exporters.
+These cover the common startup, dependency, dlopen and fdlopen paths in
+native and compatibility ELF loaders, including descriptor-granted lookups.
+Production loaders do not emit these optional events.
+.Pp
+The profiles observe utrace system calls through DTrace, without attaching
+ktrace or ptrace to capability processes.
+Per-process tracing flags deliberately prevent authority acquisition.
+Never relax authority checks to obtain profiling data.
+Events are untrusted diagnostics and do not authorize a cache or executable.
+Descriptor numbers, addresses, argument strings and environment contents are
+not included in these records.
+.Pp
+The script-exec profile records attempted executable paths and exec outcomes.
+For a shebang script, these can be correlated with the interpreter's library
+loads by timestamp and PID.
+Sourced scripts and input evaluated by an already-running interpreter do not
+produce new exec events; use appropriate language probes for that activity.
+Preserve and inspect collector errors and drop reports before drawing coverage
+conclusions, and repeat performance measurements without instrumentation.
+.Pp
+The image-verification profile measures kernel embedded-signature checks:
+operation counts, input and hashed byte counts, error results, and elapsed time.
+Operation IDs are 0 for exec, 1 for O_VERIFY open, 2 for descriptor verification,
+and 3 for executable-capable mmap.
+The recognized field indicates a signature marker, not trusted policy authority.
+Timing includes I/O and scheduling; it is not a cryptography-only CPU benchmark.
+Unpaired completions indicate a check started before tracing was enabled.
+These SDT probes add no profiling clock reads when disabled and record no paths,
+descriptor numbers, public keys, policy contents or kernel addresses.
+They require a kernel built with MAC_VERIEXEC_CAPIMAGE and SDT support.
+Userland signing, detached cache verification and bundle verification are outside
+this profile's coverage.
 .Sh ENVIRONMENT
 The OTLP exporter honors the standard OpenTelemetry variables
 .Ev OTEL_SERVICE_NAME ,

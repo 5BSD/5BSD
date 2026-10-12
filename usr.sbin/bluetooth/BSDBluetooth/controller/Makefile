@@ -14,5 +14,6 @@ FILES=	controller.ucl
 FILESDIR=	${CONTROLLER_UNIT}
 FILESNAME_controller.ucl=	Unit.ucl
 FILESMODE=	0444
+CAPIMAGE_MANIFEST= controller.ucl
 .include <bsd.prog.mk>
 _proginstall: installdirs-CONTROLLER_BIN

@@ -45,6 +45,7 @@ sctl_op_requires_admin(uint32_t op)
 	case SCTL_OP_STATUS:
 	case SCTL_OP_SERVICES:
 	case SCTL_OP_TREE:
+	case SCTL_OP_CACHE_STATUS:
 		return (false);
 	case SCTL_OP_RELOAD:
 	case SCTL_OP_START_SVC:

@@ -59,6 +59,8 @@
 #include <sys/vnode.h>
 #include <sys/mount.h>
 #include <sys/file.h>
+#include <sys/filedesc.h>
+#include <sys/fcntl.h>
 #include <sys/namei.h>
 #include <sys/sdt.h>
 #include <sys/sysctl.h>
@@ -675,6 +677,86 @@ mac_vnode_check_lookup_impl(struct ucred *cred, struct vnode *dvp,
 	MAC_CHECK_PROBE3(vnode_check_lookup, error, cred, dvp, cnp);
 
 	return (error);
+}
+
+/* This internal owner is never installed in a descriptor table.  Its file
+ * reference is inherited/split with VM entries and released after map unlock.
+ * Retaining the original description preserves per-open filesystem state. */
+static int
+mac_mmap_image_close(struct file *fp, struct thread *td)
+{
+	struct file *backing = fp->f_data;
+	struct vnode *vp = backing->f_vnode;
+
+	vn_lock(vp, LK_EXCLUSIVE | LK_RETRY);
+	VOP_UNSET_TEXT_CHECKED(vp);
+	VOP_UNLOCK(vp);
+	fdrop(backing, td);
+	return (0);
+}
+
+static int
+mac_mmap_image_stat(struct file *fp, struct stat *st, struct ucred *cred)
+{
+
+	return (fo_stat(fp->f_data, st, cred));
+}
+
+static int
+mac_mmap_image_kinfo(struct file *fp, struct kinfo_file *kif,
+    struct filedesc *fdp)
+{
+
+	return (fo_fill_kinfo(fp->f_data, kif, fdp));
+}
+
+static struct fileops mac_mmap_image_ops = {
+	.fo_read = invfo_rdwr, .fo_write = invfo_rdwr,
+	.fo_truncate = invfo_truncate, .fo_ioctl = invfo_ioctl,
+	.fo_poll = invfo_poll, .fo_kqfilter = invfo_kqfilter,
+	.fo_stat = mac_mmap_image_stat, .fo_close = mac_mmap_image_close,
+	.fo_chmod = invfo_chmod, .fo_chown = invfo_chown,
+	.fo_sendfile = invfo_sendfile, .fo_fill_kinfo = mac_mmap_image_kinfo,
+};
+
+int
+mac_vnode_prepare_mmap(struct thread *td, struct file *backing, int maxprot,
+    struct file **owner)
+{
+	struct vnode *vp = backing->f_vnode;
+	struct file *fresh;
+	bool pin = false;
+	int error;
+
+	*owner = NULL;
+	/* Include initially non-executable mappings that mprotect can promote. */
+	if (!mac_vnode_check_mmap_image_fp_flag ||
+	    (maxprot & VM_PROT_EXECUTE) == 0 || vp->v_type != VREG)
+		return (0);
+	vn_lock(vp, LK_EXCLUSIVE | LK_RETRY);
+	MAC_POLICY_CHECK(vnode_check_mmap_image, td->td_ucred, vp,
+	    vp->v_label, &pin);
+	if (error == 0 && pin)
+		error = VOP_SET_TEXT(vp);
+	VOP_UNLOCK(vp);
+	if (error != 0 || !pin)
+		return (error);
+	/* Allocate outside vnode/map/filedesc locks.  The text pin now closes
+	 * the verification-to-insertion race, including allocation failures. */
+	error = falloc_noinstall(td, &fresh);
+	if (error == 0 && !fhold(backing)) {
+		fdrop(fresh, td);
+		error = EOVERFLOW;
+	}
+	if (error != 0) {
+		vn_lock(vp, LK_EXCLUSIVE | LK_RETRY);
+		VOP_UNSET_TEXT_CHECKED(vp);
+		VOP_UNLOCK(vp);
+		return (error);
+	}
+	finit(fresh, FREAD, DTYPE_DEV, backing, &mac_mmap_image_ops);
+	*owner = fresh;
+	return (0);
 }
 
 MAC_CHECK_PROBE_DEFINE4(vnode_check_mmap, "struct ucred *", "struct vnode *",

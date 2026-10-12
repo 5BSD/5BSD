@@ -3478,6 +3478,7 @@ vn_mmap(struct file *fp, vm_map_t map, vm_offset_t *addr, vm_size_t size,
 #ifdef HWPMC_HOOKS
 	struct pmckern_map_in pkm;
 #endif
+	struct file *image_owner = NULL, *mapping_owner;
 	struct mount *mp;
 	struct vnode *vp;
 	vm_object_t object;
@@ -3542,17 +3543,28 @@ vn_mmap(struct file *fp, vm_map_t map, vm_offset_t *addr, vm_size_t size,
 	    foff > OFF_MAX - size)
 		return (EINVAL);
 
+#ifdef MAC
+	error = mac_vnode_prepare_mmap(td, fp, maxprot, &image_owner);
+	if (error != 0)
+		return (error);
+#endif
 	writecounted = FALSE;
 	error = vm_mmap_vnode(td, size, prot, &maxprot, &flags, vp,
 	    &foff, &object, &writecounted);
-	if (error != 0)
+	if (error != 0) {
+		if (image_owner != NULL)
+			fdrop(image_owner, td);
 		return (error);
-	/* Linux64 mappings retain the open description through final unmap. */
-	error = vm_mmap_file(map, addr, size, prot, maxprot, flags, object,
-	    foff, writecounted, td,
+	}
+	/* A signed owner also retains the original open description. */
+	mapping_owner = image_owner != NULL ? image_owner :
 	    ((fp->f_ops->fo_flags & DFLAG_VNODE_OPENFILE) != 0 ||
 	    (SV_PROC_ABI(td->td_proc) == SV_ABI_LINUX &&
-	    !SV_PROC_FLAG(td->td_proc, SV_ILP32))) ? fp : NULL);
+	    !SV_PROC_FLAG(td->td_proc, SV_ILP32))) ? fp : NULL;
+	error = vm_mmap_file(map, addr, size, prot, maxprot, flags, object,
+	    foff, writecounted, td, mapping_owner);
+	if (image_owner != NULL)
+		fdrop(image_owner, td);
 	if (error != 0) {
 		/*
 		 * If this mapping was accounted for in the vnode's

@@ -57,6 +57,8 @@ CFLAGS+=	-I${.OBJDIR} -DWITH_DTRACE
 HAS_TESTS=
 SUBDIR.${MK_TESTS}+=	tests
 
+CAPIMAGE_MANIFEST= ${CAP_UNIT}
+
 # Bindings generated at build time (fidl-bindings.mk).
 FIDL_BINDINGS+=	timecmp
 FIDL_SCHEMAS.timecmp=	lib/libtimecmp/timecmp.fidl

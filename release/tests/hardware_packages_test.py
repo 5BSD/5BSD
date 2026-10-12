@@ -57,6 +57,81 @@ class HardwarePackages(unittest.TestCase):
                stdout=subprocess.DEVNULL)
         return self.inputs / (name + '-' + version + '.pkg')
 
+    def test_signed_catalogue_consumer_verification(self):
+        self.package('5BSD-signature-test', {'/bin/test': 'payload'})
+        key = self.base / 'key.pem'
+        wrong = self.base / 'wrong.pem'
+        for path in (key, wrong):
+            hw.run('openssl', 'genpkey', '-algorithm', 'RSA',
+                   '-pkeyopt', 'rsa_keygen_bits:2048', '-out', path,
+                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        hw.run(PKG, 'repo', self.inputs, key)
+        hw.verify_signed_catalogue(self.inputs, key, PKG, ABI)
+        public = self.base / 'repository.pub'
+        hw.run('openssl', 'pkey', '-in', key, '-pubout', '-out', public)
+        # Consumer verification must work without access to a signing key.
+        hidden = key.rename(self.base / 'private-key-unavailable.pem')
+        hw.verify_catalogue_public_key(self.inputs, public, PKG, ABI, OSVERSION)
+        hidden.rename(key)
+        offline = self.base / 'offline'
+        hw.run(sys.executable, SRC / 'release/scripts/hardware-packages.py',
+               'copy-signed-repository', '--repository', self.inputs,
+               '--output', offline, '--public-key', public, '--pkg', PKG,
+               '--abi', ABI, '--osversion', OSVERSION)
+        original = {p.name: hw.sha256(p) for p in self.inputs.iterdir() if p.is_file()}
+        copied = {p.name: hw.sha256(p) for p in offline.iterdir() if p.is_file()}
+        self.assertEqual(original, copied)
+        with self.assertRaisesRegex(ValueError, 'already exists'):
+            hw.copy_signed_repository(self.inputs, offline, public, PKG, ABI, OSVERSION)
+        (self.inputs / 'unexpected-link').symlink_to(key)
+        with self.assertRaisesRegex(ValueError, 'unsupported offline'):
+            hw.copy_signed_repository(self.inputs, self.base / 'rejected-copy',
+                                      public, PKG, ABI, OSVERSION)
+        self.assertFalse((self.base / 'rejected-copy').exists())
+        (self.inputs / 'unexpected-link').unlink()
+        # A valid signed catalogue with a different, well-formed same-name
+        # archive must fail before an offline destination becomes visible.
+        archive = self.inputs / '5BSD-signature-test-1.pkg'
+        original_archive = archive.read_bytes()
+        archive.unlink()
+        self.package('5BSD-signature-test', {'/bin/test': 'changed payload'})
+        with self.assertRaises((subprocess.CalledProcessError, ValueError)):
+            hw.copy_signed_repository(self.inputs, self.base / 'bad-payload',
+                                      public, PKG, ABI, OSVERSION)
+        self.assertFalse((self.base / 'bad-payload').exists())
+        self.assertFalse(list(self.base.glob('.offline-*')))
+        archive.write_bytes(original_archive)
+        wrong_public = self.base / 'wrong.pub'
+        hw.run('openssl', 'pkey', '-in', wrong, '-pubout', '-out', wrong_public)
+        with self.assertRaises((subprocess.CalledProcessError, ValueError)):
+            hw.verify_catalogue_public_key(self.inputs, wrong_public, PKG, ABI, OSVERSION)
+        with self.assertRaises((subprocess.CalledProcessError, ValueError)):
+            hw.verify_signed_catalogue(self.inputs, wrong, PKG, ABI)
+        # Replacing signed catalogues with valid unsigned catalogues must fail.
+        for name in ('data.pkg', 'packagesite.pkg', 'meta.pkg'):
+            (self.inputs / name).unlink(missing_ok=True)
+        hw.run(PKG, 'repo', self.inputs)
+        with self.assertRaises((subprocess.CalledProcessError, ValueError)):
+            hw.verify_signed_catalogue(self.inputs, key, PKG, ABI)
+        self.assertFalse(list(self.base.glob('.verify-*')))
+
+    def test_signature_verification_failure_preserves_latest(self):
+        from unittest.mock import patch
+        kernel, hardware = self.repository()
+        self.publish_repository(kernel, hardware, 'prior')
+        base = self.base / 'prior-base'
+        key = self.base / 'key.pem'
+        hw.run('openssl', 'genpkey', '-algorithm', 'RSA',
+               '-pkeyopt', 'rsa_keygen_bits:2048', '-out', key,
+               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        with patch.object(hw, 'verify_signed_catalogue', side_effect=ValueError('signature rejected')):
+            with self.assertRaisesRegex(ValueError, 'signature rejected'):
+                hw.publish(SimpleNamespace(repository=hardware, base_repository=base,
+                    output=self.base / 'rejected', signing_key=key, pkg=PKG))
+        self.assertEqual((self.base / 'latest').readlink(), Path('prior'))
+        self.assertFalse((self.base / 'rejected').exists())
+        self.assertFalse(list(self.base.glob('.publish-*')))
+
     def test_failed_query_preserves_captured_diagnostics(self):
         import contextlib
         import io
@@ -83,6 +158,22 @@ class HardwarePackages(unittest.TestCase):
             bootstrap=bootstrap, profile=profile, pkg=PKG, check=True,
             output=self.base / 'hardware', distfiles=self.base / 'distfiles',
             work=self.base / 'native-work')
+
+    def test_host_preflight_rejects_foreign_kernel_architecture(self):
+        from unittest.mock import patch
+        args = self.host_inputs()
+        original = hw.run
+        # Only substitute the host ABI query; all package/kernel checks use
+        # actual fixture archives. A foreign builder must refuse before writes.
+        def query(*command, **kwargs):
+            if command == (PKG, 'config', 'ABI'):
+                return SimpleNamespace(stdout='FreeBSD:16:foreign\n')
+            return original(*command, **kwargs)
+        before = sorted(str(p) for p in self.base.rglob('*'))
+        with patch.object(host.hw, 'run', side_effect=query):
+            with self.assertRaisesRegex(ValueError, 'target-native builder'):
+                host.build(args)
+        self.assertEqual(before, sorted(str(p) for p in self.base.rglob('*')))
 
     def test_host_preflight_accepts_custom_ports_without_writes(self):
         args = self.host_inputs()
@@ -150,6 +241,64 @@ class HardwarePackages(unittest.TestCase):
         hw.publish(SimpleNamespace(repository=hardware, base_repository=base,
                                    output=output, signing_key=None, pkg=pkg))
         return output
+
+    def signed_media_fixture(self):
+        import shutil
+        kernel, hardware = self.repository()
+        key = self.base / 'media-private.pem'
+        public = self.base / 'media-public.pem'
+        hw.run('openssl', 'genpkey', '-algorithm', 'RSA',
+               '-pkeyopt', 'rsa_keygen_bits:2048', '-out', key,
+               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        hw.run('openssl', 'pkey', '-in', key, '-pubout', '-out', public)
+        base = self.base / 'media-base'
+        base.mkdir()
+        for archive in (kernel, self.package('pkg', {'/usr/local/sbin/pkg': 'fixture'}),
+                        self.package('5BSD-set-base')):
+            shutil.copy2(archive, base / archive.name)
+        repository = self.base / 'media-publication'
+        hw.publish(SimpleNamespace(repository=hardware, base_repository=base,
+            output=repository, signing_key=key, pkg=PKG))
+        media = self.base / 'media'
+        (media / 'boot/kernel').mkdir(parents=True)
+        (media / 'usr').mkdir()
+        (media / 'boot/kernel/kernel').write_text('old')
+        codekey = self.base / 'code-private.pem'
+        codepublic = self.base / 'code-public.pem'
+        hw.run('openssl', 'genpkey', '-algorithm', 'ED25519', '-out', codekey)
+        hw.run('openssl', 'pkey', '-in', codekey, '-pubout', '-out', codepublic)
+        return SimpleNamespace(repository=repository, media=media,
+            public_key=public, code_public_key=codepublic, pkg=PKG)
+
+    def test_signed_media_preserves_catalogue_and_installs_firmware(self):
+        args = self.signed_media_fixture()
+        before = {p.name: hw.sha256(p) for p in args.repository.iterdir() if p.is_file()}
+        hw.stage_signed_media(args)
+        destination = args.media / 'usr/5bsd-packages'
+        after = {p.name: hw.sha256(p) for p in (destination / 'offline').iterdir() if p.is_file()}
+        self.assertEqual(before, after)
+        config = json.loads((destination / 'repos/5BSD-base-offline.conf').read_text())['5BSD-base']
+        self.assertEqual(config['signature_type'], 'pubkey')
+        self.assertEqual(config['url'], 'file:///usr/5bsd-packages/offline')
+        self.assertEqual((destination / 'keys/repository.pub').read_bytes(), args.public_key.read_bytes())
+        self.assertEqual((args.media / 'boot/firmware/test.bin').read_text(), 'firmware')
+        self.assertIn('./usr/5bsd-packages/keys/code.pub type=file', (args.media / 'METALOG').read_text())
+        with self.assertRaisesRegex(ValueError, 'already exists'):
+            hw.stage_signed_media(args)
+
+    def test_signed_media_rejects_kernel_and_symlink_before_copy(self):
+        args = self.signed_media_fixture()
+        kernel = args.media / 'boot/kernel/kernel'
+        kernel.write_text('wrong')
+        with self.assertRaisesRegex(ValueError, 'kernel does not match'):
+            hw.stage_signed_media(args)
+        self.assertFalse((args.media / 'usr/5bsd-packages').exists())
+        kernel.write_text('old')
+        (args.media / 'usr').rmdir()
+        (args.media / 'usr').symlink_to(self.base)
+        with self.assertRaisesRegex(ValueError, 'invalid media directory'):
+            hw.stage_signed_media(args)
+        self.assertFalse((self.base / '5bsd-packages').exists())
 
     def test_complete_publication_is_one_repository_and_inputs_unchanged(self):
         kernel, hardware = self.repository()

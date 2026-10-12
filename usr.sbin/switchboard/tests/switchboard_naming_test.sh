@@ -81,7 +81,7 @@ arguments = ["provider", "provider-registered.result", "provider.result"];'
 	wait_naming_result provider.result
 	atf_check -s exit:0 -o match:'greeting=hello confined=yes$' cat client.result
 	atf_check -s exit:0 \
-	    -o match:'client_label=org.test.switchboard-ls-client/[^ ]* message=world confined=yes$' \
+	    -o match:'client_label=org.test.switchboard-ls-client/[^ ]* message=world provider_sendable=yes$' \
 	    cat provider.result
 	switchboardctl status > naming-status.result
 	atf_check -s exit:0 -o match:'org.test.switchboard-ls-provider.*conns=1' \
@@ -129,7 +129,7 @@ naming_auto_unregister_on_exit_head()
 naming_auto_unregister_on_exit_body()
 {
 	require_ambient_control
-	local provider_pid
+	local provider_pid before i
 
 	prepare_paths
 	# A name is registered only once a consumer lookup activates the
@@ -151,8 +151,18 @@ arguments = ["provider", "provider-registered.result", "provider.result"];'
 	case "$provider_pid" in
 	''|*[!0-9]*) atf_fail "could not determine the provider PID" ;;
 	esac
+	# naming.c logs "naming: '<name>' auto-unregistered (owner '<label>'
+	# exited)"; count only unregistrations after this kill.
+	before=$(grep -c "'org.test.ls-provider' auto-unregistered" "$logfile")
 	kill "$provider_pid" || atf_fail "could not terminate the provider"
-	if ! wait_for_log 'auto-unregistered.*org.test.ls-provider'; then
+	i=0
+	while [ "$(grep -c "'org.test.ls-provider' auto-unregistered" \
+	    "$logfile")" -le "$before" ] && [ "$i" -lt 150 ]; do
+		i=$((i + 1))
+		sleep 0.1
+	done
+	if [ "$(grep -c "'org.test.ls-provider' auto-unregistered" \
+	    "$logfile")" -le "$before" ]; then
 		capd_dump_diagnostics
 		atf_fail "switchboard did not auto-unregister the exited provider"
 	fi

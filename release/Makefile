@@ -28,6 +28,10 @@
 #            make installkernel installworld.
 #  PKGBASE_PKG_PACKAGE: target-architecture pkg package to embed when building
 #            without a ports tree.  PKGBASE_PKG_SHA256 may pin its checksum.
+#  PKGBASE_SIGNED_REPOSITORY: completed signed publication to snapshot unchanged
+#            for all media, instead of rebuilding/subsetting its catalogue.
+#  PKGBASE_REPO_PUBLIC_KEY / PKGBASE_CODE_PUBLIC_KEY: explicit public trust for
+#            signed publication media; no private key is copied to media.
 #  HARDWARE_REPO: repository produced by scripts/hardware-packages.py build
 #            for this exact release kernel. Required unless hardware support is
 #            explicitly omitted with WITHOUT_HARDWARE_PACKAGES=yes.
@@ -49,12 +53,32 @@
 #  TARGET/TARGET_ARCH: architecture of built release
 #
 
+# Select only release staging; recursive world/kernel make keeps /usr/obj.
+.if defined(RELEASE_OBJDIR) && !empty(RELEASE_OBJDIR)
+.if !exists(${RELEASE_OBJDIR})
+.error RELEASE_OBJDIR must already exist
+.endif
+.OBJDIR: ${RELEASE_OBJDIR}
+.endif
+
 WORLDDIR?=	${.CURDIR:H}
 PORTSDIR?=	/usr/ports
 RELEASE_OSVERSION!= awk '/^\#define[[:space:]]+__FreeBSD_version[[:space:]]/ { print $$3 }' ${WORLDDIR}/sys/sys/param.h
-HARDWARE_PYTHON?= python3
+HARDWARE_PYTHON?= python3.12
 HARDWARE_STAGE= ${HARDWARE_PYTHON} ${.CURDIR}/scripts/hardware-packages.py stage \
 		--pkg ${PKG_CMD:Q} --repository ${HARDWARE_REPO:U:Q}
+
+.if defined(PKGBASE_SIGNED_REPOSITORY) && !empty(PKGBASE_SIGNED_REPOSITORY)
+.if defined(NOPKGBASE) && !empty(NOPKGBASE)
+.error Signed publication media requires pkgbase
+.endif
+.if !defined(PKGBASE_REPO_PUBLIC_KEY) || empty(PKGBASE_REPO_PUBLIC_KEY) || !defined(PKGBASE_CODE_PUBLIC_KEY) || empty(PKGBASE_CODE_PUBLIC_KEY)
+.error Signed publication media requires repository and code public keys
+.endif
+SIGNED_MEDIA_STAGE= ${HARDWARE_PYTHON} ${.CURDIR}/scripts/hardware-packages.py stage-signed-media \
+		--pkg ${PKG_CMD:Q} --repository ${.OBJDIR}/pkgbase-repo/${PKG_ABI}/latest-built \
+		--public-key ${PKGBASE_REPO_PUBLIC_KEY:Q} --code-public-key ${PKGBASE_CODE_PUBLIC_KEY:Q}
+.endif
 
 OSNAME?=	${BRAND}
 
@@ -289,6 +313,15 @@ dvd: ${DVD_STAGING_DEPS}
 
 pkgbase-repo:
 	@${MALLOC_PRODUCTION_CHECK}
+.if defined(PKGBASE_SIGNED_REPOSITORY) && !empty(PKGBASE_SIGNED_REPOSITORY)
+	mkdir -p pkgbase-repo/${PKG_ABI}
+	${HARDWARE_PYTHON} ${.CURDIR}/scripts/hardware-packages.py copy-signed-repository \
+	    --repository ${PKGBASE_SIGNED_REPOSITORY:Q} \
+	    --output ${.OBJDIR}/pkgbase-repo/${PKG_ABI}/verified \
+	    --public-key ${PKGBASE_REPO_PUBLIC_KEY:Q} --pkg ${PKG_CMD:Q} \
+	    --abi ${PKG_ABI} --osversion ${RELEASE_OSVERSION}
+	ln -s verified pkgbase-repo/${PKG_ABI}/latest-built
+.else
 .if !defined(WITHOUT_HARDWARE_PACKAGES) || empty(WITHOUT_HARDWARE_PACKAGES)
 	@test -n ${HARDWARE_REPO:U:Q} && test -f ${HARDWARE_REPO:U:Q}/hardware.json || \
 	    (echo "Build a matching HARDWARE_REPO, or explicitly set WITHOUT_HARDWARE_PACKAGES=yes" >&2; false)
@@ -335,14 +368,22 @@ pkgbase-repo:
 	    ${.OBJDIR}/pkgbase-repo/${PKG_ABI}/latest-built
 .endif
 
+.endif # rebuilding or snapshotting pkgbase
+
 pkgbase-repo.tar: pkgbase-repo
 	tar -cf pkgbase-repo.tar -C pkgbase-repo .
 
 pkgbase-repo-dir: pkgbase-repo
 	mkdir -p pkgbase-repo-dir
+.if defined(PKGBASE_SIGNED_REPOSITORY) && !empty(PKGBASE_SIGNED_REPOSITORY)
+	${HARDWARE_PYTHON} -c 'import json, pathlib, sys; print(json.dumps({"5BSD-base": {"url": pathlib.Path(sys.argv[1]).resolve().as_uri(), "enabled": True, "signature_type": "pubkey", "pubkey": str(pathlib.Path(sys.argv[2]).resolve())}}))' \
+	    ${.OBJDIR}/pkgbase-repo/${PKG_ABI}/latest-built ${PKGBASE_REPO_PUBLIC_KEY:Q} \
+	    > pkgbase-repo-dir/5BSD-base.conf
+.else
 	printf '5BSD-base: { url: "file://%s", enabled: yes }\n' \
 	    ${.OBJDIR}/pkgbase-repo/${PKG_ABI}/latest-built \
 	    > pkgbase-repo-dir/5BSD-base.conf
+.endif
 
 disc1:
 # Install system
@@ -354,7 +395,7 @@ disc1:
 	    MK_TOOLCHAIN=no \
 	    MK_RESCUE=no MK_DICT=no \
 	    MK_KERNEL_SYMBOLS=no MK_TESTS=no MK_DEBUG_FILES=no)
-.if !defined(NOPKGBASE) || empty(NOPKGBASE)
+.if (!defined(NOPKGBASE) || empty(NOPKGBASE)) && (!defined(PKGBASE_SIGNED_REPOSITORY) || empty(PKGBASE_SIGNED_REPOSITORY))
 # Create offline pkgbase repo on release media.
 #
 # Start from an empty offline directory and pkgdb.  pkgbase-stage.lua fetches
@@ -400,7 +441,9 @@ disc1:
 .endif
 	${PKG_CLEAN} || true
 .endif
-.if !defined(WITHOUT_HARDWARE_PACKAGES) || empty(WITHOUT_HARDWARE_PACKAGES)
+.if defined(PKGBASE_SIGNED_REPOSITORY) && !empty(PKGBASE_SIGNED_REPOSITORY)
+	${SIGNED_MEDIA_STAGE} --media ${.OBJDIR}/${.TARGET}
+.elif !defined(WITHOUT_HARDWARE_PACKAGES) || empty(WITHOUT_HARDWARE_PACKAGES)
 	${HARDWARE_STAGE} --media ${.OBJDIR}/${.TARGET}
 	mtree -c -p ${.TARGET}/usr/5bsd-packages | \
 	    mtree -C -k type,mode,link,size | \
@@ -466,7 +509,9 @@ bootonly:
 .endif
 	${PKG_CLEAN} || true
 .endif
-.if !defined(WITHOUT_HARDWARE_PACKAGES) || empty(WITHOUT_HARDWARE_PACKAGES)
+.if defined(PKGBASE_SIGNED_REPOSITORY) && !empty(PKGBASE_SIGNED_REPOSITORY)
+	${SIGNED_MEDIA_STAGE} --media ${.OBJDIR}/${.TARGET}
+.elif !defined(WITHOUT_HARDWARE_PACKAGES) || empty(WITHOUT_HARDWARE_PACKAGES)
 	${HARDWARE_STAGE} --media ${.OBJDIR}/${.TARGET}
 	mtree -c -p ${.TARGET}/usr/5bsd-packages | \
 	    mtree -C -k type,mode,link,size | \
@@ -510,7 +555,7 @@ dvd:
 	( cd ${WORLDDIR} && ${IMAKE} installworld installkernel distribution \
 		DESTDIR=${.OBJDIR}/${.TARGET} MK_RESCUE=no MK_KERNEL_SYMBOLS=no \
 		MK_TESTS=no MK_DEBUG_FILES=no)
-.if !defined(NOPKGBASE) || empty(NOPKGBASE)
+.if (!defined(NOPKGBASE) || empty(NOPKGBASE)) && (!defined(PKGBASE_SIGNED_REPOSITORY) || empty(PKGBASE_SIGNED_REPOSITORY))
 # Create offline pkgbase repo on release media
 	mkdir -p ${.TARGET}/usr/5bsd-packages/repos/
 	env PKG_CMD=${PKG_CMD:Q} ${.CURDIR}/scripts/pkgbase-stage.lua dvd \
@@ -546,7 +591,9 @@ dvd:
 .endif
 	${PKG_CLEAN} || true
 .endif
-.if !defined(WITHOUT_HARDWARE_PACKAGES) || empty(WITHOUT_HARDWARE_PACKAGES)
+.if defined(PKGBASE_SIGNED_REPOSITORY) && !empty(PKGBASE_SIGNED_REPOSITORY)
+	${SIGNED_MEDIA_STAGE} --media ${.OBJDIR}/${.TARGET}
+.elif !defined(WITHOUT_HARDWARE_PACKAGES) || empty(WITHOUT_HARDWARE_PACKAGES)
 	${HARDWARE_STAGE} --media ${.OBJDIR}/${.TARGET}
 	mtree -c -p ${.TARGET}/usr/5bsd-packages | \
 	    mtree -C -k type,mode,link,size | \

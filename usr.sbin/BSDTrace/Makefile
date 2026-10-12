@@ -39,6 +39,8 @@ SRCS+=	bsdtrace_provider.d
 CFLAGS+=	-I${.OBJDIR} -DWITH_DTRACE
 .endif
 
+CAPIMAGE_MANIFEST= ${TRACECMP_UNIT}
+
 .include <bsd.prog.mk>
 
 _proginstall: installdirs-TRACECMP_CAP_BIN

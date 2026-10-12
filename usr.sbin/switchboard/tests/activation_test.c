@@ -785,3 +785,16 @@ ATF_TP_ADD_TCS(tp)
 
 	return (atf_no_error());
 }
+
+struct svc_runtime *
+svc_by_label_scoped(const char *name, uid_t owner)
+{
+ struct svc_runtime *svc=svc_by_label(name);
+ return svc != NULL && svc->owner_uid == owner ? svc : NULL;
+}
+
+uid_t
+bundle_registry_owner_uid(unsigned idx)
+{
+ (void)idx;return (uid_t)-1;
+}

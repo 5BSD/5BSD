@@ -30,6 +30,7 @@ struct capbundle *bundle_registry_get(unsigned idx __unused)
 	return ((struct capbundle *)(uintptr_t)1);
 }
 unsigned bundle_registry_count(void) { return (0); }
+const char *capbundle_id(const struct capbundle *b __unused) { return ("Owner"); }
 const char *capbundle_name(const struct capbundle *b __unused)
 {
 	return ("Owner.cap");
@@ -41,7 +42,7 @@ const char *capbundle_group(const struct capbundle *b __unused,
 ATF_TC_WITHOUT_HEAD(incomplete_publication_preserves_owners);
 ATF_TC_BODY(incomplete_publication_preserves_owners, tc)
 {
-	struct svc_runtime svc = { 0 };
+	struct svc_runtime svc = { .owner_uid = (uid_t)-1 };
 
 	sd.services = &svc;
 	sd.nservices = 1;

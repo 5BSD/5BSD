@@ -32,11 +32,23 @@
  * Retained in static consumers and available in the shared object so
  * switchboardctl deps can suggest, but never authorize, manifest requirements.
  */
-static const char networkcmp_dependency_note[]
-    __attribute__((section(".note.5bsd.descriptors"), used)) =
-    "interface=system.Network\n"
-    "local-name=network\n"
-    "required=true\n";
+#define NETWORKCMP_DEPENDENCY_TEXT \
+    "interface=system.Network\n" \
+    "local-name=network\n" \
+    "required=true\n"
+/* ELF notes have a native-endian header and four-byte padded owner/payload.
+ * Raw text in a .note section is not a valid note and prevents bounded ELF
+ * consumers from walking subsequent records. This is not a signature note. */
+static const struct {
+	uint32_t namesz, descsz, type;
+	char owner[8];
+	char description[(sizeof(NETWORKCMP_DEPENDENCY_TEXT) + 3) & ~3U];
+} networkcmp_dependency_note
+    __attribute__((section(".note.5bsd.descriptors"), used, aligned(4))) = {
+	5, sizeof(NETWORKCMP_DEPENDENCY_TEXT), 0x35424450,
+	"5BSD", NETWORKCMP_DEPENDENCY_TEXT
+};
+#undef NETWORKCMP_DEPENDENCY_TEXT
 
 union networkcmp_buffer {
 	max_align_t align;

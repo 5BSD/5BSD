@@ -30,6 +30,7 @@
 
 #include "opt_capsicum.h"
 #include "opt_mac.h"
+#include "opt_veriexec.h"
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -581,6 +582,12 @@ mac_veriexec_vnode_check_exec(struct ucred *cred __unused,
 	struct thread *td = curthread;
 	int error;
 
+#ifdef MAC_VERIEXEC_CAPIMAGE
+	error = mac_veriexec_capimage_check(td->td_ucred, imgp->vp,
+	    imgp->attr->va_size, false, CAPIMAGE_CHECK_EXEC);
+	if (error != 0)
+		return (error);
+#endif
 	error = mac_veriexec_fingerprint_check_image(imgp, 0, td);
 	return (error);
 }
@@ -674,11 +681,35 @@ mac_veriexec_check_vp(struct ucred *cred, struct vnode *vp, accmode_t accmode)
  *
  * @return 0 if opening the file should be allowed, otherwise an error code.
  */
+/* PREPARE already verified and pinned embedded bytes. Preserve legacy
+ * enrollment/enforcement without running the embedded hash a second time. */
+int
+mac_veriexec_capimage_open_policy(struct ucred *cred, struct vnode *vp)
+{
+	if ((mac_veriexec_state & VERIEXEC_STATE_ENFORCE) == 0)
+		return (0);
+	return (mac_veriexec_check_vp(cred, vp, VREAD | VVERIFY));
+}
+
 static int
 mac_veriexec_vnode_check_open(struct ucred *cred, struct vnode *vp,
 	struct label *label __unused, accmode_t accmode)
 {
 	int error;
+
+#ifdef MAC_VERIEXEC_CAPIMAGE
+	if ((accmode & VVERIFY) != 0) {
+		struct vattr va;
+
+		error = VOP_GETATTR(vp, &va, cred);
+		if (error != 0)
+			return (error);
+		error = mac_veriexec_capimage_check(cred, vp, va.va_size, false,
+		    CAPIMAGE_CHECK_OPEN);
+		if (error != 0)
+			return (error);
+	}
+#endif
 
 	/*
 	 * Look for the file on the fingerprint lists iff it has not been seen
@@ -964,7 +995,20 @@ mac_veriexec_syscall(struct thread *td, int call, void *arg)
 	}
 
 	switch (call) {
+	case CAPIMAGE_HANDLE_INFO_SYSCALL:
+#ifdef MAC_VERIEXEC_CAPIMAGE
+		return (mac_veriexec_capimage_info(td, arg));
+#else
+		return (EOPNOTSUPP);
+#endif
+	case MAC_VERIEXEC_PREPARE_CAPIMAGE_SYSCALL:
+#ifdef MAC_VERIEXEC_CAPIMAGE
+		return (mac_veriexec_capimage_prepare(td, arg));
+#else
+		return (EOPNOTSUPP);
+#endif
 	case MAC_VERIEXEC_CHECK_FD_SYSCALL:
+	case MAC_VERIEXEC_CHECK_CAPIMAGE_FD_SYSCALL:
 		/* Get the vnode associated with the file descriptor passed */
 		error = getvnode(td, (uintptr_t) arg,
 		    cap_rights_init_one(&rights, CAP_READ), &fp);
@@ -995,6 +1039,21 @@ mac_veriexec_syscall(struct thread *td, int call, void *arg)
 		error = VOP_GETATTR(fp->f_vnode, &va,  td->td_ucred);
 		if (error)
 			goto check_done;
+
+		/* Required mode is used when a signed cache inventory establishes
+		 * that this source image must still carry a valid signature. */
+#ifdef MAC_VERIEXEC_CAPIMAGE
+		error = mac_veriexec_capimage_check(td->td_ucred, img.vp,
+		    va.va_size, call == MAC_VERIEXEC_CHECK_CAPIMAGE_FD_SYSCALL,
+		    CAPIMAGE_CHECK_FD);
+		if (error != 0)
+			goto check_done;
+#else
+		if (call == MAC_VERIEXEC_CHECK_CAPIMAGE_FD_SYSCALL) {
+			error = EOPNOTSUPP;
+			goto check_done;
+		}
+#endif
 
 		MAC_VERIEXEC_DBG(2, "mac_veriexec_fingerprint_check_image: "
 		    "va_mode=%o, check_files=%d\n", va.va_mode,
@@ -1116,6 +1175,9 @@ static struct mac_policy_ops mac_veriexec_ops =
 	.mpo_system_check_sysctl = mac_veriexec_sysctl_check,
 	.mpo_vnode_check_exec = mac_veriexec_vnode_check_exec,
 	.mpo_vnode_check_open = mac_veriexec_vnode_check_open,
+#ifdef MAC_VERIEXEC_CAPIMAGE
+	.mpo_vnode_check_mmap_image = mac_veriexec_capimage_mmap_check,
+#endif
 	.mpo_vnode_check_unlink = mac_veriexec_vnode_check_unlink,
 	.mpo_vnode_check_rename_to = mac_veriexec_vnode_check_rename_to,
 	.mpo_vnode_check_rename_from = mac_veriexec_vnode_check_rename_from,
@@ -1125,9 +1187,14 @@ static struct mac_policy_ops mac_veriexec_ops =
 	.mpo_vnode_init_label = mac_veriexec_vnode_init_label,
 };
 
+/* Handle fileops require this policy to remain non-unloadable. Never add
+ * MPC_LOADTIME_FLAG_UNLOADOK without a live-handle exclusion mechanism. */
 MAC_POLICY_SET(&mac_veriexec_ops, mac_veriexec, MAC_VERIEXEC_FULLNAME,
     MPC_LOADTIME_FLAG_NOTLATE, &mac_veriexec_slot);
 MODULE_VERSION(mac_veriexec, MAC_VERIEXEC_VERSION);
+#ifdef MAC_VERIEXEC_CAPIMAGE
+MODULE_DEPEND(mac_veriexec, crypto, 1, 1, 1);
+#endif
 
 static struct vnode *
 mac_veriexec_bottom_vnode(struct vnode *vp)

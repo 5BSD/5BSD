@@ -29,6 +29,7 @@
 #include <libservice.h>
 
 #include "switchboard.h"
+#include "scope_identity.h"
 #include "authority.h"
 #include "switchboard_ctl.h"
 #include "fd_budget.h"
@@ -94,17 +95,31 @@ name_valid(const char *name)
 }
 
 static struct naming_entry *
-naming_find(const char *name)
+naming_find_scoped(const char *name, uid_t owner_uid)
 {
 	struct naming_entry *e;
 	unsigned h;
 
 	h = name_hash(name);
 	for (e = naming_hash[h]; e != NULL; e = e->next) {
-		if (strcmp(e->name, name) == 0)
+		if (strcmp(e->name, name) == 0 && e->owner->owner_uid == owner_uid)
 			return (e);
 	}
 	return (NULL);
+}
+
+static struct naming_entry *
+naming_find(const char *name)
+{
+	return (naming_find_scoped(name, (uid_t)-1));
+}
+
+static struct naming_entry *
+naming_find_for_uid(const char *name, uid_t sender_uid)
+{
+	struct naming_entry *e = naming_find(name);
+	return (e != NULL || sender_uid == (uid_t)-1 ? e :
+	    naming_find_scoped(name, sender_uid));
 }
 
 /*
@@ -184,7 +199,10 @@ naming_register(const char *name, struct svc_runtime *owner, bool sendable)
 		return (ENOSPC);
 	}
 
-	e = naming_find(name);
+	e = naming_find_scoped(name, owner->owner_uid);
+	/* Never publish a personal shadow of a global runtime name. */
+	if (e == NULL && owner->owner_uid != (uid_t)-1)
+		e = naming_find(name);
 	if (e != NULL && e->owner == owner)
 		return (0);
 	if (e != NULL) {
@@ -230,7 +248,8 @@ naming_unregister(const char *name, struct svc_runtime *owner)
 
 	h = name_hash(name);
 	for (pp = &naming_hash[h]; (e = *pp) != NULL; pp = &e->next) {
-		if (strcmp(e->name, name) == 0) {
+		if (strcmp(e->name, name) == 0 &&
+		    e->owner->owner_uid == owner->owner_uid) {
 			if (e->owner != owner) {
 				syslog(LOG_WARNING,
 				    "naming: '%s' unregister denied: "
@@ -390,6 +409,7 @@ naming_lookup(const char *name, struct svc_runtime *requester,
 	char registry_requires[SWITCHBOARD_MAX_REQUIRES][SWITCHBOARD_LABEL_MAX];
 	unsigned nrequires;
 	int provider_end, client_end;
+	uid_t sender_uid = sender != NULL ? (uid_t)sender->uid : (uid_t)-1;
 
 	if (sendablep != NULL)
 		*sendablep = false;
@@ -412,7 +432,7 @@ naming_lookup(const char *name, struct svc_runtime *requester,
 		return (naming_lookup_self_control(name, requester, domain,
 		    sender, true, errp));
 
-	e = naming_find(name);
+	e = naming_find_for_uid(name, sender_uid);
 	/* A name becomes visible only after its independent activation succeeds. */
 	if (e == NULL || !e->owner->protocol_ready ||
 	    e->owner->state != SVC_STATE_RUNNING) {
@@ -441,7 +461,7 @@ naming_lookup(const char *name, struct svc_runtime *requester,
 			else if (ctrl_name)
 				*errp = ENOENT;		/* control<->control */
 			else
-				*errp = svc_domain_resolves(domain, name) ?
+				*errp = svc_domain_resolves_scoped(domain, name, sender_uid) ?
 				    ENOENT : EACCES;	/* service plane */
 		}
 		return (-1);
@@ -456,7 +476,9 @@ naming_lookup(const char *name, struct svc_runtime *requester,
 	 * caller maps it to ENOENT on the wire and does NOT on-demand it): the
 	 * name exists but this channel may never reach it.
 	 */
-	if (!svc_domain_permits(domain, e->domain, name)) {
+	if (!(e->owner->owner_uid == (uid_t)-1 ?
+	    svc_domain_permits(domain, e->domain, name) :
+	    svc_domain_permits_scoped(domain, e->domain, name, sender_uid))) {
 		*errp = EACCES;
 		return (-1);
 	}
@@ -476,7 +498,7 @@ naming_lookup(const char *name, struct svc_runtime *requester,
 	 * claim).  The reverse order let a stale runtime copy keep an endpoint
 	 * open after its policy file gained a requirement (VM-found).
 	 */
-	if (svc_anoint_endpoint_requires(name, registry_requires,
+	if (svc_anoint_endpoint_requires_scoped(name, sender_uid, registry_requires,
 	    &nrequires) == 0) {
 		requires = (const char (*)[SWITCHBOARD_LABEL_MAX])
 		    registry_requires;
@@ -585,7 +607,7 @@ naming_lookup(const char *name, struct svc_runtime *requester,
 	 */
 	notify.client_nonce = sender != NULL ? sender->nonce : 0;
 	notify.client_abi = sender != NULL ? sender->abi : SVC_CLIENT_ABI_UNKNOWN;
-	if (svc_lifecycle_client(requester, provider, &notify) == -1) {
+	if (svc_lifecycle_client(requester, provider, &notify, sender_uid) == -1) {
 		*errp = errno;
 		close(provider_end);
 		close(client_end);

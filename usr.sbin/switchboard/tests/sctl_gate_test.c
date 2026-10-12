@@ -125,6 +125,8 @@ ATF_TC_BODY(unknown_op_requires_admin, tc)
 	/* The responsibility tree is read-only status: any caller. */
 	ATF_CHECK_MSG(!sctl_op_requires_admin(SCTL_OP_TREE),
 	    "TREE must not require admin");
+	ATF_CHECK_MSG(!sctl_op_requires_admin(SCTL_OP_CACHE_STATUS),
+	    "cache counters must remain read-only attributed status");
 	/* Opcode 6 was retired (SCTL_OP_PROVISION_SESSION): still deny. */
 	ATF_CHECK_MSG(sctl_op_requires_admin(6),
 	    "a retired opcode must not become an open read-only op");

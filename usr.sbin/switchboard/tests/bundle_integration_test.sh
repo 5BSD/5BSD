@@ -344,8 +344,9 @@ dtrace_probes_body() {
 		switchboard_pid=$(sed -n \
 		    's/.*bootstrap: started switchboard pid \([0-9][0-9]*\).*/\1/p' \
 		    "$logfile" 2>/dev/null | tail -1)
+		# ps(1), not kill -0: switchboard refuses ambient signals.
 		if [ -n "$switchboard_pid" ] &&
-		    ! kill -0 "$switchboard_pid" 2>/dev/null; then
+		    ! ps -p "$switchboard_pid" >/dev/null 2>&1; then
 			switchboard_pid=
 		fi
 		i=$((i + 1))
@@ -502,7 +503,7 @@ reload_changed_core_refused_body() {
 	prepare_paths
 	bundle=$(create_system_bundle "CoreMorph" "org.test.core-morph" \
 	    "coremorphd" "org.test.core-morph.svc" \
-	    'management = "core"; restart = "never";')
+	    'control = "core"; restart = "never";')
 	unit="${bundle}/Units/coremorphd.unit/Unit.ucl"
 	sed -i '' -e 's/ipc = \[[^]]*\]; //' \
 	    -e 's/arguments = \["compat-ready", "[^"]*"\];/arguments = ["compat-ready"];/' \
@@ -517,7 +518,7 @@ reload_changed_core_refused_body() {
 	cat >"$unit" <<UCL
 directories = ["${WORK}"];
 activation { boot = true; }
-management = "core";
+control = "core";
 restart = "always";
 arguments = ["compat-ready"];
 UCL
@@ -588,27 +589,18 @@ coalition_kill_on_timeout_body() {
 	require_ambient_control
 	prepare_paths
 
-	# Create a stubborn service that ignores SIGTERM
-	local stubdir="${APPS_DIR}/Stubborn.cap"
-	write_test_bundle "$stubdir" org.test.stubborn stubbornd \
-	    'stop_timeout = 2;' 'activation { boot = true; }'
-
-	# UNQUOTED heredoc: ${WORK} is expanded at write time so the absolute
-	# path bakes into the script (services run with a minimal env and do not
-	# inherit WORK).  \$\$ stays a runtime shell variable.
-	cat > "${stubdir}/Units/stubbornd.unit/bin/stubbornd" <<SVCEOF
-#!/bin/sh
-trap "" TERM
-echo \$\$ > "${WORK}/stubbornd.pid"
-while :; do sleep 1; done
-SVCEOF
-	chmod 755 "${stubdir}/Units/stubbornd.unit/bin/stubbornd"
+	# A service that ignores SIGTERM.  Units run born in capability mode, so
+	# a /bin/sh script cannot be one (it exits 127); use the lifecycle
+	# fixture's ignore-term mode, as shutdown_kills_sigterm_ignorer does.
+	make_fixture_svc system org.test.stubbornd 'stop_timeout = 2;' \
+	    lifecycle-ignore-term "${WORK}/stubbornd.pid" >/dev/null
 
 	start_stack
-	wait_for_file "${WORK}/stubbornd.pid" 5
+	wait_for_file "${WORK}/stubbornd.pid" 5 ||
+	    atf_fail "SIGTERM-ignoring service did not start"
 
 	# Stop the service — it will ignore SIGTERM
-	switchboardctl stop "org.test.stubborn/stubbornd"
+	switchboardctl stop "org.test.stubbornd/stubbornd"
 
 	# Wait for stop_timeout + SIGKILL + coalition terminate
 	sleep 4
@@ -734,11 +726,16 @@ UCL
 	cp "${capd_service_fixture}" "${bundle}/Units/lazyd.unit/bin/lazyd"
 	chmod 0555 "${bundle}/Units/eagerd.unit/bin/eagerd" \
 	    "${bundle}/Units/lazyd.unit/bin/lazyd"
-	cat > "${bundle}/Units/eagerd.unit/Unit.ucl" <<'UCL'
+	# Units are born in capability mode: the fixture reaches the work
+	# directory only through the declared directory grant, as every
+	# write_test_bundle() unit does.
+	cat > "${bundle}/Units/eagerd.unit/Unit.ucl" <<UCL
+directories = ["${WORK}"];
 activation { boot = true; }
 arguments = ["compat-ready"];
 UCL
 	cat > "${bundle}/Units/lazyd.unit/Unit.ucl" <<UCL
+directories = ["${WORK}"];
 activation { ipc = ["${endpoint}"]; }
 arguments = ["compat-ready", "${endpoint}"];
 UCL

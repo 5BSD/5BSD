@@ -32,6 +32,7 @@ struct authority_record {
 	uint64_t issuer, identity;
 	unsigned kind;
 	uid_t uid;
+	uid_t owner_uid; /* Installation namespace; distinct from process credentials. */
 	int token;
 	time_t created;
 	struct svc_domain domain;
@@ -110,7 +111,7 @@ svc_authority_constrain_application(const struct svc_runtime *svc, int token)
 	const struct svc_manifest *m = &svc->manifest;
 	struct stat st;
 	unsigned i, opened = 0;
-	int result = -1, saved;
+	int result = -1, saved, image_handle = -1;
 	uid_t image_owner = svc->owner_uid == (uid_t)-1 ? 0 : svc->owner_uid;
 
 	/* User-owned units receive an identity for their supervised process,
@@ -139,12 +140,39 @@ svc_authority_constrain_application(const struct svc_runtime *svc, int token)
 			goto out;
 		}
 	}
+#ifdef CAPIMAGE_EXPERIMENTAL_CONSUMER
+	{
+		struct capbundle *bundle = bundle_registry_get(svc->bundle_idx);
+		struct capbundle_service *unit = capbundle_service(bundle, svc->bundle_svc_idx);
+		if (unit == NULL || strcmp(capbundle_svc_program(unit), m->program) != 0) {
+			errno = EAUTH;
+			goto out;
+		}
+		if (capbundle_svc_prepare_image(unit, constraint.executable_fds[0], NULL,
+		    &image_handle, NULL, 0) < 0)
+			goto out;
+	}
+#endif
 	result = authority_call(CAP_AUTH_CONSTRAIN, sd.authority_issuer_fd,
 	    &constraint);
+#ifndef CAPIMAGE_EXPERIMENTAL_CONSUMER
+	if (result == 0) {
+		struct capbundle *bundle = bundle_registry_get(svc->bundle_idx);
+		struct capbundle_service *unit = capbundle_service(bundle, svc->bundle_svc_idx);
+		char error[256];
+		if (unit == NULL || strcmp(capbundle_svc_program(unit), m->program) != 0 ||
+		    capbundle_svc_verify_image(unit, constraint.executable_fds[0], NULL,
+		    error, sizeof(error)) < 0)
+			result = -1;
+	}
+#endif
 	if (result == 0)
 		result = set_loader_directories(m, token, svc->owner_uid == (uid_t)-1);
+	if (result == 0)
+		result = svc_library_cache_policy_bind(svc, token);
 out:
 	saved = errno;
+	if (image_handle >= 0) close(image_handle);
 	for (i = 0; i < opened; i++)
 		close(constraint.executable_fds[i]);
 	errno = saved;
@@ -259,6 +287,7 @@ issue_record(uid_t uid, struct svc_domain *domain,
 	r->identity = info.identity;
 	r->kind = CAP_AUTH_MANAGED;
 	r->uid = uid;
+	r->owner_uid = svc != NULL ? svc->owner_uid : (uid_t)-1;
 	r->created = monotonic_seconds();
 	r->domain = *domain;
 	r->domain.authority_issuer = info.issuer;
@@ -298,9 +327,11 @@ svc_authority_issue(uid_t uid, struct svc_domain *domain,
 /* Exec policies are not runtime service slots and never own provider names. */
 struct application_policy {
 	struct application_policy *next;
+	const struct capbundle_service *unit;
 	struct svc_domain domain;
 	char label[SWITCHBOARD_LABEL_MAX];
 	int image;
+	int image_handle;
 	dev_t dev;
 	ino_t ino;
 	struct authority_record *retained;
@@ -344,10 +375,8 @@ svc_authority_applications_sync(void)
 			if (!capbundle_svc_activates_on_exec(unit))
 				continue;
 			/* A user's writable agent tree cannot confer software attributes. */
-			if (bundle_registry_owner_uid(bi) != (uid_t)-1) {
-				errno = EPERM;
-				goto invalid;
-			}
+			if (bundle_registry_owner_uid(bi) != (uid_t)-1)
+				continue; /* Personal exec remains ordinary, without grants. */
 			if (++count > 4096) {
 				errno = E2BIG;
 				goto invalid;
@@ -360,6 +389,8 @@ svc_authority_applications_sync(void)
 			if (a == NULL)
 				goto invalid;
 			a->image = -1;
+			a->image_handle = -1;
+			a->unit = unit;
 			a->next = policies;
 			policies = a;
 			strlcpy(a->label, m->label, sizeof(a->label));
@@ -418,10 +449,36 @@ svc_authority_applications_sync(void)
 		}
 	}
 	for (a = policies; a != NULL; a = a->next) {
-		if (a->retained != NULL)
+#ifdef CAPIMAGE_EXPERIMENTAL_CONSUMER
+		if (capbundle_svc_prepare_image(a->unit, a->image, NULL,
+		    &a->image_handle, NULL, 0) < 0) {
+			error = errno;
+			if (a->retained != NULL)
+				remove_application_record(a->retained);
 			continue;
+		}
+#endif
+		if (a->retained != NULL) {
+#ifndef CAPIMAGE_EXPERIMENTAL_CONSUMER
+			char verify_error[256];
+			if (capbundle_svc_verify_image(a->unit, a->image, NULL,
+			    verify_error, sizeof(verify_error)) < 0) {
+				error = errno;
+				remove_application_record(a->retained);
+			}
+#endif
+			if (a->image_handle >= 0) {
+				close(a->image_handle);
+				a->image_handle = -1;
+			}
+			continue;
+		}
 		if (issue_record((uid_t)-1, &a->domain, NULL, a->label, &grant) == -1) {
 			error = errno;
+			if (a->image_handle >= 0) {
+				close(a->image_handle);
+				a->image_handle = -1;
+			}
 			continue;
 		}
 		r = find(a->domain.authority_issuer, a->domain.authority_identity);
@@ -432,6 +489,9 @@ svc_authority_applications_sync(void)
 		registration = (struct cap_authority_application){ grant, 0 };
 		if (authority_call(CAP_AUTH_CONSTRAIN, sd.authority_issuer_fd,
 		    &constraint) == -1 ||
+#ifndef CAPIMAGE_EXPERIMENTAL_CONSUMER
+		    capbundle_svc_verify_image(a->unit, a->image, NULL, NULL, 0) < 0 ||
+#endif
 		    authority_call(CAP_AUTH_REGISTER_APP, sd.authority_issuer_fd,
 		    &registration) == -1) {
 			error = errno;
@@ -441,6 +501,10 @@ svc_authority_applications_sync(void)
 			r->image_ino = a->ino;
 		}
 		close(grant);
+		if (a->image_handle >= 0) {
+			close(a->image_handle);
+			a->image_handle = -1;
+		}
 	}
 	goto out;
 invalid:
@@ -449,6 +513,8 @@ out:
 	saved = error;
 	while ((a = policies) != NULL) {
 		policies = a->next;
+		if (a->image_handle >= 0)
+			close(a->image_handle);
 		if (a->image >= 0)
 			close(a->image);
 		free(a);
@@ -482,7 +548,7 @@ svc_authority_resolve(const struct channel_message *request,
 	    stamp->generation == 0)
 		return (errno = EACCES, -1);
 	if (r->kind == CAP_AUTH_MANAGED && !r->application) {
-		owner = r->boot_owner != NULL ? r->boot_owner : svc_by_label(r->label);
+		owner = r->boot_owner != NULL ? r->boot_owner : svc_by_label_scoped(r->label, r->owner_uid);
 		if (owner == NULL || owner->launch_id != r->launch_id)
 			return (errno = EACCES, -1);
 	}
@@ -527,7 +593,7 @@ svc_authority_revoke_unit(const struct svc_runtime *svc)
 		link = &records[h];
 		while ((r = *link) != NULL) {
 			if (!r->application && r->kind == CAP_AUTH_MANAGED &&
-			    r->launch_id == svc->launch_id &&
+			    r->launch_id == svc->launch_id && r->owner_uid == svc->owner_uid &&
 			    strcmp(r->label, svc->manifest.label) == 0)
 				remove_record(link);
 			else

@@ -1,0 +1,220 @@
+.\" SPDX-License-Identifier: BSD-2-Clause
+.Dd October 11, 2026
+.Dt LIBCAPIMAGE 3
+.Os
+.Sh NAME
+.Nm capimage_prepare_fd ,
+.Nm capimage_prepare_trusted_fd ,
+.Nm capimage_handle_policy ,
+.Nm capimage_verify ,
+.Nm capimage_verify_integrity ,
+.Nm capimage_sign ,
+.Nm capimage_embed ,
+.Nm capimage_remove ,
+.Nm capimage_cache_size ,
+.Nm capimage_note ,
+.Nm capimage_policy_free ,
+.Nm capimage_seal ,
+.Nm capimage_check_seal ,
+.Nm capimage_check_seal_integrity
+.Nd embedded ELF policy signatures and immutable artifact seals
+.Sh LIBRARY
+Library of embedded policy signatures (libcapimage, -lcapimage)
+.Sh SYNOPSIS
+.In capimage.h
+.Ft int
+.Fn capimage_verify "int fd" "const char *public_key" "struct capimage_policy *policy" "char *error" "size_t error_size"
+.Ft int
+.Fn capimage_sign "int fd" "const char *private_key" "char *error" "size_t error_size"
+.Ft int
+.Fn capimage_embed "int fd" "const void *policy" "size_t length" "char *error" "size_t error_size"
+.Ft int
+.Fn capimage_remove "int fd" "char *error" "size_t error_size"
+.Ft int
+.Fn capimage_cache_size "int fd" "off_t *size" "char *error" "size_t error_size"
+.Ft int
+.Fn capimage_note "FILE *out" "const void *policy" "size_t size" "char *error" "size_t error_size"
+.Ft void
+.Fn capimage_policy_free "struct capimage_policy *policy"
+.Ft int
+.Fn capimage_seal "int fd" "int seal_fd" "const char *domain" "const char *private_key" "char *error" "size_t error_size"
+.Ft int
+.Fn capimage_check_seal "int fd" "int seal_fd" "const char *domain" "const char *public_key" "char *error" "size_t error_size"
+.Ft int
+.Fn capimage_verify_integrity "int fd" "struct capimage_policy *policy" "char *error" "size_t error_size"
+.Ft int
+.Fn capimage_check_seal_integrity "int fd" "int seal_fd" "const char *domain" "char *error" "size_t error_size"
+.Ft int
+.Fn capimage_prepare_fd "int fd" "uint32_t flags" "int *handle" "struct capimage_info *info" "char *error" "size_t error_size"
+.Ft int
+.Fn capimage_handle_policy "int handle" "struct capimage_policy *policy" "char *error" "size_t error_size"
+.Ft int
+.Fn capimage_prepare_trusted_fd "int fd" "uint32_t flags" "const char *public_key" "int *handle" "struct capimage_info *info" "char *error" "size_t error_size"
+.Sh DESCRIPTION
+The library authenticates exact policy bytes in one bounded EOF signature
+container outside ELF segments.
+An unsigned non-allocated .5bsd.policy section
+is accepted only as build input to the signer.
+It does not parse UCL or grant attributes.
+Verification returns the policy bytes consumed by the authenticated hash.
+The caller owns that allocation and releases it with
+.Fn capimage_policy_free .
+.Pp
+Images use Ed25519 signatures over a domain-separated SHA-256 digest of every
+file byte, substituting zeros only for the fixed 64-byte signature field.
+The signature covers ELF headers, interpreter and dependency information,
+initial data, the public key, the policy and non-loadable bytes.
+Both ELF classes and byte orders are supported.
+Duplicate build policy sections and malformed bounds are rejected.
+.Pp
+A non-NULL public key explicitly selects a PEM Ed25519 verification key.
+A NULL public key selects the system catalogue
+.Pa /etc/capability/keys .
+Each catalogue file is named by the 64 lowercase hexadecimal digits of the
+raw public key followed by
+.Pa .pub .
+The directory and key files must be root-owned and not group/other writable;
+key files must be regular files and symbolic links are refused.
+Installing a key in this catalogue is an administrative trust decision.
+.Pp
+Detached seals authenticate an entire regular file with a caller-selected
+protocol domain.
+Different artifact protocols must use different domains.
+.Pp
+.Fn capimage_embed
+accepts a private writable copy of a linked ELF image.
+If no policy is present, it appends a header, exact policy bytes and a fixed
+little-endian footer without changing existing ELF offsets.
+The footer is included in whole-file signing.
+If a policy is already present, the supplied bytes must match it exactly.
+An existing unsigned build-input section is retained in the original ELF
+prefix, but is not an alternate source of authenticated runtime policy.
+The caller must sign the result before publication.
+.Pp
+.Fn capimage_remove
+truncates a private writable copy at the start of its appended container,
+restoring the original pre-signing ELF bytes.
+An unsigned build-input section, if originally present, is retained.
+No signing key is required, and the result grants no authority.
+.Pp
+.Fn capimage_cache_size
+returns the length of the ELF prefix preceding the appended container,
+or the entire file length for unsigned input.
+This is a structural check, not signature or trust verification.
+Malformed containers, stacked containers and retired inline signatures are
+rejected rather than copied into a cache.
+Callers must retain an immutable snapshot or content pin while copying this
+prefix; the returned size alone does not protect against concurrent changes.
+A cache built from these prefixes excludes per-image signature containers
+and requires its own integrity signature.
+.Pp
+The system trust catalogue and enforcement marker are accessed through
+root-owned directory descriptors for /etc and /etc/capability, and the keys
+subdirectory when verifying a key.
+Symlinks and group/other writable ancestors are rejected.
+.Pp
+.Fn capimage_verify_integrity
+and
+.Fn capimage_check_seal_integrity
+check the signature against its embedded public key without consulting the
+system trust catalogue.
+They reject unsigned input and invalid signatures.
+They are intended for personal software whose signing key need not be
+administratively enrolled.
+Success proves integrity under the embedded key, not a trusted publisher,
+platform status, or permission to use privileged attributes.
+The image API returns the same authenticated policy representation as
+.Fn capimage_verify ;
+the caller must free it and independently confine the program's authority.
+.Ss Explicit pinned integrity handles
+.Fn capimage_prepare_fd
+requests a kernel-owned text pin before verifying a recognized signed image.
+On success it returns 0 and supplies a close-on-exec handle and fixed-size
+integrity metadata.
+An optional unsigned image returns 0 with
+.Fa handle
+set to -1 and zeroed metadata, without acquiring a persistent pin.
+.Dv CAPIMAGE_PREPARE_REQUIRED
+instead rejects a missing signature with
+.Er ENOATTR .
+.Dv CAPIMAGE_PREPARE_RAW_DIGEST
+also requests the raw whole-file SHA-256 digest used by bundle seals.
+That digest differs from the domain-separated image digest whose signature
+field is replaced by zeros.
+.Dv CAPIMAGE_PREPARE_VVERIFY
+preserves the current veriexec fingerprint enrollment checks of
+.Dv O_VERIFY .
+.Pp
+.Fn capimage_handle_policy
+reads authenticated policy bytes through the pinned handle.
+It checks the kernel descriptor type through the MAC policy syscall and
+validates the returned policy digest.
+No policy-sized copy is retained in kernel memory.
+Close the handle with
+.Xr close 2 ;
+duplicated or inherited references keep the pin until the final close.
+Keep a reference until the intended consumer has pinned the same original
+executable descriptor; reopening its pathname is not an identity handoff.
+.Pp
+These interfaces establish integrity only.
+They do not enroll a signer, confer platform authority, or replace current
+execution permission and MAC checks.
+The existing verification interfaces retain their behavior.
+There is no implicit fallback if the new operation or filesystem is unsupported,
+or if verification fails.
+Reusable handles currently support local UFS and ZFS backends;
+tmpfs and other filesystems return
+.Er EOPNOTSUPP
+for recognized signed images.
+Tmpfs is excluded because its vnode text pin does not exclude existing
+writable shared mappings; no mutable verified handle is returned.
+Unsigned inspection still returns no handle without acquiring a text pin,
+including when writable descriptors or mappings exist.
+Ordinary unsigned execution is unchanged.
+.Pp
+.Fn capimage_prepare_trusted_fd
+adds the existing signer enrollment check to
+.Fn capimage_prepare_fd .
+A null key selects the protected system catalogue; an explicit key selects
+that caller-defined trust policy.
+Personal integrity-only consumers use
+.Fn capimage_prepare_fd
+instead.
+Trust failure closes the temporary handle and returns
+.Er EAUTH .
+The function never falls back to one-shot verification.
+Signer enrollment does not itself authorize restricted policy attributes.
+.Pp
+The current MAC syscall gate rejects handle preparation and metadata operations
+with
+.Er ECAPMODE
+once the caller has entered Capsicum mode.
+The experimental consumer is supervisor-only; positioned-read rights checks
+do not imply that entered capability mode is supported.
+.Sh RETURN VALUES
+The functions return zero on success and -1 on failure, setting errno and
+an optional bounded error message.
+A missing policy returns ENOENT, an unsigned build-input section returns
+ENOATTR, malformed structure returns EFTYPE,
+and an invalid or untrusted signature returns EAUTH.
+.Sh SEE ALSO
+.Xr capsign 8 ,
+.Xr elfcache 8
+.Sh SECURITY CONSIDERATIONS
+The one-shot verification interfaces are not content locks.
+Explicit image handles retain a content pin for their lifetime.
+Runtime callers must retain an immutable snapshot or a kernel content pin
+from before verification until the verified object is used.
+A pathname, inode number, advisory lock or successful signature check alone
+does not provide this lifetime guarantee.
+.Pp
+An authentic signature identifies a signer; it does not authorize that signer
+to claim every attribute.
+The policy consumer must enforce signer authority and library integrity.
+Never parse unauthenticated policy as authority.
+.Pp
+Preparing a handle requires
+.Dv CAP_PREAD
+rights on the source descriptor and does not change its file offset.
+A descriptor restricted to sequential reads cannot be used to obtain a
+handle exposing arbitrary policy offsets.

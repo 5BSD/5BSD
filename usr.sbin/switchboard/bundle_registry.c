@@ -27,6 +27,8 @@
 #include <libcapbundle.h>
 
 #include "bundle_selection.h"
+#include "scope_identity.h"
+#include "bundle_policy.h"
 #include "switchboard.h"
 #include "switchboard_probes.h"
 
@@ -59,8 +61,8 @@ trusted_tree(const char *path, uid_t owner_uid, char *errbuf, size_t errlen)
 	 * A System/Apps bundle (owner_uid == -1) must be entirely root-owned:
 	 * its trust is ownership + verified execution.  A per-user agent must be
 	 * entirely owned by ITS uid, so another user cannot slip a file into it;
-	 * it is not root-owned and is not verified, which is why it is confined
-	 * to management=user + domain=user with no system authority.  Neither may
+	 * it need not be signed, and is confined to management=user + domain=user
+	 * with no system authority even when signed.  Neither may
 	 * contain a symlink, a non-regular object, or a group/world-writable path.
 	 */
 	uid_t want_uid = (owner_uid == (uid_t)-1) ? 0 : owner_uid;
@@ -157,7 +159,7 @@ static unsigned nprev_bundles;
  * two runs never turns a registered bundle into a "new" one.
  */
 static int
-previous_entry(const char *path, bool system)
+previous_entry(const char *path, bool system, uid_t owner_uid)
 {
 	const char *slash = strrchr(path, '/');
 	const char *name = slash != NULL ? slash + 1 : path;
@@ -166,7 +168,8 @@ previous_entry(const char *path, bool system)
 	for (i = 0; i < nprev_bundles; i++) {
 		const struct capbundle *pb = prev_bundles[i].bundle;
 
-		if (pb == NULL || prev_bundles[i].system != system)
+		if (pb == NULL || prev_bundles[i].system != system ||
+		    prev_bundles[i].owner_uid != owner_uid)
 			continue;
 		if (strcmp(capbundle_path(pb), path) == 0 ||
 		    strcmp(capbundle_name(pb), name) == 0)
@@ -196,7 +199,7 @@ static int registry_append(struct capbundle *b, bool system, uid_t owner_uid, in
  * Failing the whole scan is reserved for errors of the scan itself.
  */
 static int
-reject_bundle(const char *path, bool system)
+reject_bundle(const char *path, bool system, uid_t owner_uid)
 {
 	int pi;
 
@@ -208,7 +211,7 @@ reject_bundle(const char *path, bool system)
 		    path);
 		return (0);
 	}
-	pi = previous_entry(path, system);
+	pi = previous_entry(path, system, owner_uid);
 	if (pi >= 0) {
 		struct capbundle *pb = prev_bundles[pi].bundle;
 
@@ -250,7 +253,10 @@ provides_insert(const char *name, unsigned bundle_idx, unsigned service_idx,
 
 	/* Check for duplicates. */
 	for (e = provides_hash[h]; e != NULL; e = e->next) {
-		if (strcmp(e->name, name) == 0) {
+		if (strcmp(e->name, name) == 0 &&
+		    sb_scope_names_conflict(sb_scope_from_registry_owner(
+		    bundles[e->bundle_idx].owner_uid), sb_scope_from_registry_owner(
+		    bundles[bundle_idx].owner_uid))) {
 			syslog(LOG_WARNING,
 			    "bundle_registry: duplicate provides '%s' "
 			    "(bundle %u vs %u)", name,
@@ -355,9 +361,17 @@ disabled_set_load(void)
 }
 
 static bool
-bundle_is_disabled(const char *id)
+bundle_is_disabled(const char *id, uid_t owner_uid)
 {
 	unsigned i;
+	char scoped[CAPBUNDLE_NAME_MAX + 64];
+	if (owner_uid != (uid_t)-1) {
+		if (snprintf(scoped, sizeof(scoped), "user:%ju:%s",
+		    (uintmax_t)owner_uid, id) >= (int)sizeof(scoped))
+			return (false);
+		id = scoped;
+	}
+
 
 	for (i = 0; i < ndisabled; i++)
 		if (strcmp(disabled_ids[i], id) == 0)
@@ -382,13 +396,40 @@ scan_cb(struct capbundle *b, void *ctx)
 
 			strlcpy(path, capbundle_path(b), sizeof(path));
 			capbundle_close(b);
-			return (reject_bundle(path, sc->system));
+			return (reject_bundle(path, sc->system, sc->owner_uid));
 		}
 	}
 
 
+	/* A trusted publisher is not permission to mint platform attributes.
+	 * Reject the entire local bundle, including helper units, rather than
+	 * silently running it with a different declared authority policy. */
+	struct svc_manifest *manifest = calloc(1, sizeof(*manifest));
+	if (manifest == NULL) {
+		capbundle_close(b);
+		return (-1);
+	}
+	for (unsigned i = 0; i < capbundle_nservices(b); i++) {
+		if (capbundle_svc_fill_manifest(capbundle_service(b, i),
+		    manifest) == -1 ||
+		    !bundle_manifest_platform_allowed(manifest, sc->system,
+		    sc->owner_uid)) {
+			char path[PATH_MAX];
+			strlcpy(path, capbundle_path(b), sizeof(path));
+			syslog(LOG_ERR, "bundle_registry: bundle '%s' requests "
+			    "platform attributes outside System scope", path);
+			SWITCHBOARD_PROBE_MANIFEST_REJECT(path,
+			    "platform attributes require System scope",
+			    sc->system ? 1 : 0);
+			free(manifest);
+			capbundle_close(b);
+			return (reject_bundle(path, sc->system, sc->owner_uid));
+		}
+	}
+	free(manifest);
+
 	/* Skip an operator-disabled bundle: installed, but not registered. */
-	if (bundle_is_disabled(capbundle_id(b))) {
+	if (bundle_is_disabled(capbundle_id(b), sc->owner_uid)) {
 		syslog(LOG_INFO, "bundle_registry: %sbundle '%s' disabled by "
 		    "operator, skipping", sc->system ? "SYSTEM " : "",
 		    capbundle_id(b));
@@ -447,6 +488,10 @@ registry_append(struct capbundle *b, bool system, uid_t owner_uid, int carried_f
 	}
 
 	for (i = 0; i < nbundles; i++) {
+		/* Different personal owners have independent version histories. */
+		if (owner_uid != (uid_t)-1 && bundles[i].owner_uid != (uid_t)-1 &&
+		    owner_uid != bundles[i].owner_uid)
+			continue;
 		selection = bundle_selection_compare(
 		    capbundle_id(bundles[i].bundle),
 		    capbundle_sequence(bundles[i].bundle), bundles[i].system,
@@ -540,6 +585,10 @@ registry_prune_user_conflicts(struct svc_manifest *manifest)
 
 			for (bj = 0; bj < bi && why == NULL; bj++) {
 				struct capbundle *o = bundles[bj].bundle;
+				if (!sb_scope_names_conflict(sb_scope_from_registry_owner(
+				    bundles[bi].owner_uid), sb_scope_from_registry_owner(
+				    bundles[bj].owner_uid)))
+					continue;
 
 				for (sj = 0; sj < capbundle_nservices(o) &&
 				    why == NULL; sj++) {
@@ -589,6 +638,10 @@ registry_build_indexes(void)
 				struct capbundle *other = bundles[bj].bundle;
 				unsigned limit = bj == bi ? si :
 				    capbundle_nservices(other);
+				if (!sb_scope_names_conflict(sb_scope_from_registry_owner(
+				    bundles[bi].owner_uid), sb_scope_from_registry_owner(
+				    bundles[bj].owner_uid)))
+					continue;
 
 				for (sj = 0; sj < limit; sj++) {
 					if (strcmp(label, capbundle_svc_label(
@@ -678,17 +731,25 @@ scan_bundle_dir(const char *dirpath, bool system, uid_t owner_uid)
 			    "untrusted: %s", system ? "SYSTEM " : "", path,
 			    errbuf);
 			/* Fail the scan or quarantine: see reject_bundle. */
-			if (reject_bundle(path, system) == -1) {
+			if (reject_bundle(path, system, owner_uid) == -1) {
 				closedir(d);
 				return (-1);
 			}
 			continue;
 		}
-		if (capbundle_open(path, &b, errbuf, sizeof(errbuf)) == -1) {
+		/* Personal agents gain only their owner's authority.  The platform
+		 * signature requirement applies to System/Apps; signatures present
+		 * on personal bundles still authenticate bytes, without granting
+		 * platform signer trust. UID confinement remains mandatory. */
+		ret = owner_uid == (uid_t)-1 ?
+		    capbundle_open(path, &b, errbuf, sizeof(errbuf)) :
+		    capbundle_open_personal(path, &b, errbuf,
+		    sizeof(errbuf));
+		if (ret == -1) {
 			SWITCHBOARD_PROBE_MANIFEST_REJECT(path, errbuf, system ? 1 : 0);
 			syslog(LOG_ERR, "bundle_registry: %sbundle '%s' invalid: %s",
 			    system ? "SYSTEM " : "", path, errbuf);
-			if (reject_bundle(path, system) == -1) {
+			if (reject_bundle(path, system, owner_uid) == -1) {
 				closedir(d);
 				return (-1);
 			}
@@ -878,8 +939,6 @@ bundle_registry_init(void)
 		return (0);
 	}
 	(void)registry_prune_user_conflicts(manifest);
-	if (registry_build_indexes() == -1)
-		goto fail;
 	nservices = 0;
 	for (i = 0; i < nbundles; i++) {
 		nservices += capbundle_nservices(bundles[i].bundle);
@@ -897,6 +956,9 @@ bundle_registry_init(void)
 			goto fail;
 		}
 	}
+	/* All removals must precede indices containing bundle array offsets. */
+	if (registry_build_indexes() == -1)
+		goto fail;
 	for (i = 0; i < nbundles; i++) {
 		unsigned si;
 		struct capbundle *b = bundles[i].bundle;
@@ -946,21 +1008,41 @@ fail:
  * Returns the bundle and service indices, or -1 if not found.
  */
 int
-bundle_registry_lookup(const char *name, unsigned *bundle_idx_out,
-    unsigned *service_idx_out)
+bundle_registry_lookup_scoped(const char *name, uid_t owner_uid,
+    unsigned *bundle_idx_out, unsigned *service_idx_out)
 {
 	unsigned h;
 	struct provides_entry *e;
 
 	h = provides_hashfn(name);
 	for (e = provides_hash[h]; e != NULL; e = e->next) {
-		if (strcmp(e->name, name) == 0) {
+		if (strcmp(e->name, name) == 0 &&
+		    bundles[e->bundle_idx].owner_uid == owner_uid) {
 			*bundle_idx_out = e->bundle_idx;
 			*service_idx_out = e->service_idx;
 			return (0);
 		}
 	}
 	return (-1);
+}
+
+/* Unscoped legacy callers select only the global namespace. */
+int
+bundle_registry_lookup(const char *name, unsigned *bi, unsigned *si)
+{
+	return (bundle_registry_lookup_scoped(name, (uid_t)-1, bi, si));
+}
+
+/* Global names cannot be shadowed by a personal installation. */
+int
+bundle_registry_lookup_for_uid(const char *name, uid_t sender_uid,
+    unsigned *bi, unsigned *si)
+{
+	if (bundle_registry_lookup(name, bi, si) == 0)
+		return (0);
+	if (sender_uid == (uid_t)-1)
+		return (-1);
+	return (bundle_registry_lookup_scoped(name, sender_uid, bi, si));
 }
 
 /*

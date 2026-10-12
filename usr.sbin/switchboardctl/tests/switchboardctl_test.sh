@@ -265,6 +265,69 @@ switchboardctl_reload_nonroot_cleanup()
 	cleanup_common
 }
 
+# Global trust fixtures live entirely inside this disposable chroot.
+# Never add a key or policy marker to the running host.
+global_root_prepare()
+{
+ umask 022
+ global_root="$(pwd)/global-root"
+ global_capsign="$(atf_config_get capsign /usr/sbin/capsign)"
+ local tool="$(atf_get_srcdir)/switchboardctl_test_bin"
+ [ -x "$tool" ] || atf_fail "static real switchboardctl test binary missing"
+ [ -x "$global_capsign" ] || atf_fail "capsign missing"
+ mkdir -p "$global_root/etc/capability/keys" "$global_root/Capabilities"
+ chmod 0755 "$global_root" "$global_root/etc" "$global_root/etc/capability" \
+     "$global_root/etc/capability/keys" "$global_root/Capabilities"
+ cp "$tool" "$global_root/tool"
+ chmod 0555 "$global_root/tool"
+ global_command="$(pwd)/global-command"
+ printf '#!/bin/sh\nexec env -u SWITCHBOARD_LIFECYCLE_ROOT -u SWITCHBOARD_BUNDLE_DIR_USER chroot "%s" /tool "$@"\n' "$global_root" > "$global_command"
+ chmod 0555 "$global_command"
+ openssl genpkey -algorithm ED25519 -out fixture.key >/dev/null 2>&1 || atf_fail keygen
+ openssl pkey -in fixture.key -pubout -out fixture.pub >/dev/null 2>&1 || atf_fail public-key
+ local keyid
+ keyid=$("$global_capsign" key-id -p fixture.pub) || atf_fail key-id
+ cp fixture.pub "$global_root/etc/capability/keys/$keyid.pub"
+ chmod 0444 "$global_root/etc/capability/keys/$keyid.pub"
+ if [ "${1:-signed}" = signed ]; then
+  : > "$global_root/etc/capability/require-signatures"
+  chmod 0444 "$global_root/etc/capability/require-signatures"
+ fi
+}
+
+global_worker()
+{
+ # Strip an appended system policy only in the disposable copy. An unsigned
+ # /usr/bin/true may have nothing to remove; recursive signing still validates
+ # the resulting image and policy, and cannot reuse an incompatible old note.
+ if ! "$global_capsign" remove -o "$1" /usr/bin/true >strip.log 2>&1; then
+  cp /usr/bin/true "$1" || atf_fail worker-copy
+ fi
+ chmod 0755 "$1"
+}
+
+global_sign()
+{
+ local source="$1" destination="$2" mode="${3:-writable}"
+ "$global_capsign" sign -r -k fixture.key -o "$destination" "$source" || atf_fail fixture-sign
+ # Recursive signing already sealed the copied modes. Re-seal after deliberately
+ # selecting the second supported mode profile; image signatures bind bytes.
+ if [ "$mode" = readonly ]; then
+  rm -rf "$destination/Signature"
+  find "$destination" -type d -exec chmod 0555 {} +
+  find "$destination" -type f ! -perm -0100 -exec chmod 0444 {} +
+  find "$destination" -type f -perm -0100 -exec chmod 0555 {} +
+  chmod 0755 "$destination" # Root mode is not part of the seal inventory.
+  "$global_capsign" bundle-sign -k fixture.key "$destination" || atf_fail readonly-seal
+ fi
+ "$global_capsign" bundle-verify -p fixture.pub "$destination" || atf_fail fixture-verify
+}
+
+global_cleanup()
+{
+ rm -rf global-root unsigned-input.cap fixture.key fixture.pub strip.log global-command
+}
+
 # ===================================================================
 # switchboardctl verify — validates a bundle
 # ===================================================================
@@ -272,24 +335,23 @@ switchboardctl_reload_nonroot_cleanup()
 atf_test_case switchboardctl_verify cleanup
 switchboardctl_verify_head()
 {
+	atf_set require.user root
+	atf_set require.progs "openssl chroot"
 	atf_set "descr" "switchboardctl verify validates a .cap bundle"
 }
 switchboardctl_verify_body()
 {
-	find_switchboardctl
-	local bdir="$(pwd)/VerifyTest.cap"
-	write_bundle "$bdir" org.test.verify verifyd 1 \
-	    'activation { ipc = ["org.test.verify.svc"]; }'
-	printf '#!/bin/sh\nexec sleep 3600\n' > \
-	    "${bdir}/Units/verifyd.unit/bin/verifyd"
-	chmod 755 "${bdir}/Units/verifyd.unit/bin/verifyd"
+ global_root_prepare
+ write_bundle unsigned-input.cap org.test.verify verifyd 1 'activation { ipc = ["org.test.verify.svc"]; }'
+ global_worker unsigned-input.cap/Units/verifyd.unit/bin/verifyd
+ global_sign unsigned-input.cap "$global_root/VerifyTest.cap"
+ atf_check -s exit:0 -o match:PASSED "$global_command" verify /VerifyTest.cap
 
-	atf_check -s exit:0 -o match:"PASSED" \
-	    "$switchboardctl_bin" verify "${bdir}"
 }
 switchboardctl_verify_cleanup()
 {
-	rm -rf VerifyTest.cap
+	global_cleanup
+
 }
 
 # ===================================================================
@@ -299,21 +361,33 @@ switchboardctl_verify_cleanup()
 atf_test_case switchboardctl_verify_invalid cleanup
 switchboardctl_verify_invalid_head()
 {
+	atf_set require.user root
+	atf_set require.progs "openssl chroot"
 	atf_set "descr" "switchboardctl verify rejects invalid bundle"
 }
 switchboardctl_verify_invalid_body()
 {
-	find_switchboardctl
-	local bdir="$(pwd)/BadBundle.cap"
-	write_bundle "$bdir" org.test.bad nonexistent 1 \
-	    'activation { boot = true; }'
+ # Preserve the original structural failure independently of signature policy.
+ global_root_prepare development
+ write_bundle "$global_root/MissingWorker.cap" org.test.bad nonexistent 1 'activation { boot = true; }'
+ atf_check -s exit:1 -e match:'FAILED.*binary not found' "$global_command" verify /MissingWorker.cap
+ # Enable mandatory signatures in this disposable root before creating the
+ # separate tamper fixture. No signed-policy root is weakened for development.
+ : > "$global_root/etc/capability/require-signatures"
+ chmod 0444 "$global_root/etc/capability/require-signatures"
+ atf_check -s exit:1 -e match:'signed bundle inventory required' "$global_command" verify /MissingWorker.cap
+ write_bundle unsigned-input.cap org.test.bad nonexistent 1 'activation { boot = true; }'
+ global_worker unsigned-input.cap/Units/nonexistent.unit/bin/nonexistent
+ global_sign unsigned-input.cap "$global_root/BadBundle.cap"
+ printf '\n# unauthorized edit\n' >> "$global_root/BadBundle.cap/Bundle.ucl"
+ atf_check -s exit:1 -e match:'invalid or untrusted artifact signature' "$global_command" verify /BadBundle.cap
+ atf_check test -f "$global_root/etc/capability/require-signatures"
 
-	atf_check -s not-exit:0 -e match:"FAILED" \
-	    "$switchboardctl_bin" verify "${bdir}"
 }
 switchboardctl_verify_invalid_cleanup()
 {
-	rm -rf BadBundle.cap
+	global_cleanup
+
 }
 
 # ===================================================================
@@ -342,39 +416,37 @@ switchboardctl_stop_no_arg_cleanup()
 
 atf_test_case switchboardctl_install_valid cleanup
 switchboardctl_install_valid_head() {
-	atf_set "descr" "install atomically publishes a normalized canonical bundle version"
+	atf_set require.progs "openssl chroot"
+	atf_set "descr" "install atomically publishes a canonical bundle version preserving authenticated modes"
 	atf_set "require.user" "root"
 }
 switchboardctl_install_valid_body() {
-	find_switchboardctl
-	local src="$(pwd)/InstallMe.cap"
-	local idir="$(pwd)/install_target"
-	local dst="${idir}/org.test.install@00000000000000000007.cap"
-	mkdir "$idir"
-	write_bundle "$src" org.test.install instd 7 \
-	    'activation { ipc = ["org.test.install"]; }'
-	write_executable "$src/Units/instd.unit/bin/instd" \
-	    '#!/bin/sh' 'exit 0'
-	chown -R nobody:nobody "$src"
-	chmod -R go+w "$src"
+ global_root_prepare
+ write_bundle unsigned-input.cap org.test.install instd 7 'activation { ipc = ["org.test.install"]; }'
+ global_worker unsigned-input.cap/Units/instd.unit/bin/instd
+ global_sign unsigned-input.cap "$global_root/InstallMe.cap"
+ local dst=/Capabilities/org.test.install@00000000000000000007.cap
+ atf_check -s exit:0 -o match:"published $dst" "$global_command" install /InstallMe.cap
+ atf_check -o inline:'755\n' stat -f %Lp "$global_root$dst/Units/instd.unit/bin/instd"
+ atf_check -o inline:'644\n' stat -f %Lp "$global_root$dst/Bundle.ucl"
+ atf_check -o inline:'0\n' stat -f %u "$global_root$dst/Units/instd.unit/bin/instd"
+ atf_check -s exit:0 -o match:PASSED "$global_command" verify "$dst"
+ atf_check -s exit:0 -o empty find "$global_root/Capabilities" -name '.switchboardctl.*'
+ # Separate destination registry tests readonly signed modes without weakening
+ # the duplicate-sequence rule used by install_versions.
+ global_sign unsigned-input.cap "$global_root/Readonly.cap" readonly
+ mkdir "$global_root/readonly-registry"
+ atf_check -s exit:0 -o match:published env SWITCHBOARD_LIFECYCLE_ROOT=/ \
+     SWITCHBOARD_BUNDLE_DIR_USER=/readonly-registry chroot "$global_root" /tool install /Readonly.cap
+ dst=/readonly-registry/org.test.install@00000000000000000007.cap
+ atf_check -o inline:'555\n' stat -f %Lp "$global_root$dst/Units/instd.unit/bin/instd"
+ atf_check -o inline:'444\n' stat -f %Lp "$global_root$dst/Bundle.ucl"
+ atf_check -s exit:0 -o match:PASSED "$global_command" verify "$dst"
 
-	export SWITCHBOARD_BUNDLE_DIR_USER="$idir"
-	export SWITCHBOARD_LIFECYCLE_ROOT="$(pwd)"
-	atf_check -s exit:0 -o match:"published $dst" \
-	    "$switchboardctl_bin" install "$src"
-	atf_check -s exit:0 test -x "$dst/Units/instd.unit/bin/instd"
-	atf_check -s exit:0 -o inline:'0\n' stat -f %u \
-	    "$dst/Units/instd.unit/bin/instd"
-	atf_check -s exit:0 -o inline:'0\n' sh -c \
-	    'm=0$(stat -f %Lp "$1"); test $((m & 022)) -eq 0; echo $?' sh "$dst"
-	atf_check -s exit:0 -o match:'Verification: PASSED' \
-	    "$switchboardctl_bin" verify "$dst"
-	atf_check -s exit:0 -o empty -e empty sh -c \
-	    'test -z "$(find "$1" -maxdepth 1 -name ".switchboardctl.*" -print -quit)"' \
-	    sh "$idir"
 }
 switchboardctl_install_valid_cleanup() {
-	rm -rf InstallMe.cap install_target
+	global_cleanup
+
 }
 
 # ===================================================================
@@ -383,25 +455,22 @@ switchboardctl_install_valid_cleanup() {
 
 atf_test_case switchboardctl_install_source_name_ignored cleanup
 switchboardctl_install_source_name_ignored_head() {
+	atf_set require.progs "openssl chroot"
 	atf_set "descr" "source basename cannot influence the canonical destination"
 	atf_set "require.user" "root"
 }
 switchboardctl_install_source_name_ignored_body() {
-	find_switchboardctl
-	local src="$(pwd)/..Misleading.cap" idir="$(pwd)/name_target"
-	mkdir "$idir"
-	write_bundle "$src" org.test.canonical worker 9 \
-	    'activation { boot = true; }'
-	write_executable "$src/Units/worker.unit/bin/worker" '#!/bin/sh' 'exit 0'
-	export SWITCHBOARD_BUNDLE_DIR_USER="$idir"
-	export SWITCHBOARD_LIFECYCLE_ROOT="$(pwd)"
-	atf_check -s exit:0 -o match:'org.test.canonical@00000000000000000009.cap' \
-	    "$switchboardctl_bin" install "$src"
-	atf_check -s exit:0 test -d \
-	    "$idir/org.test.canonical@00000000000000000009.cap"
+ global_root_prepare
+ write_bundle unsigned-input.cap org.test.canonical worker 9 'activation { boot = true; }'
+ global_worker unsigned-input.cap/Units/worker.unit/bin/worker
+ global_sign unsigned-input.cap "$global_root/..Misleading.cap"
+ atf_check -s exit:0 -o match:'org.test.canonical@00000000000000000009.cap' "$global_command" install /..Misleading.cap
+ atf_check test -d "$global_root/Capabilities/org.test.canonical@00000000000000000009.cap"
+
 }
 switchboardctl_install_source_name_ignored_cleanup() {
-	rm -rf "..Misleading.cap" name_target
+	global_cleanup
+
 }
 
 # ===================================================================
@@ -410,31 +479,57 @@ switchboardctl_install_source_name_ignored_cleanup() {
 
 atf_test_case switchboardctl_install_versions cleanup
 switchboardctl_install_versions_head() {
+	atf_set require.progs "openssl chroot"
 	atf_set "descr" "immutable versions coexist and duplicate sequences fail"
 	atf_set "require.user" "root"
 }
 switchboardctl_install_versions_body() {
-	find_switchboardctl
-	local src="$(pwd)/Version.cap" idir="$(pwd)/versions"
-	mkdir "$idir"
-	write_bundle "$src" org.test.versioned worker 1 \
-	    'activation { boot = true; }'
-	write_executable "$src/Units/worker.unit/bin/worker" '#!/bin/sh' 'exit 0'
-	export SWITCHBOARD_BUNDLE_DIR_USER="$idir"
-	export SWITCHBOARD_LIFECYCLE_ROOT="$(pwd)"
-	atf_check -s exit:0 -o ignore "$switchboardctl_bin" install "$src"
-	atf_check -s exit:1 -o ignore -e match:'File exists' \
-	    "$switchboardctl_bin" install "$src"
-	sed -i '' 's/version = "1.0.1"/version = "2.0.0"/; s/sequence = 1/sequence = 2/' \
-	    "$src/Bundle.ucl"
-	atf_check -s exit:0 -o ignore "$switchboardctl_bin" install "$src"
-	atf_check -s exit:0 test -d \
-	    "$idir/org.test.versioned@00000000000000000001.cap"
-	atf_check -s exit:0 test -d \
-	    "$idir/org.test.versioned@00000000000000000002.cap"
+ global_root_prepare
+ write_bundle unsigned-input.cap org.test.versioned worker 1 'activation { boot = true; }'
+ global_worker unsigned-input.cap/Units/worker.unit/bin/worker
+ global_sign unsigned-input.cap "$global_root/Version.cap"
+ atf_check -s exit:0 -o ignore "$global_command" install /Version.cap
+ atf_check -s exit:1 -o ignore -e match:'File exists' "$global_command" install /Version.cap
+ sed -i '' 's/version = "1.0.1"/version = "2.0.0"/; s/sequence = 1/sequence = 2/' unsigned-input.cap/Bundle.ucl
+ global_sign unsigned-input.cap "$global_root/Version2.cap"
+ rm -rf "$global_root/Version.cap"
+ mv "$global_root/Version2.cap" "$global_root/Version.cap"
+ atf_check -s exit:0 -o ignore "$global_command" install /Version.cap
+ atf_check test -d "$global_root/Capabilities/org.test.versioned@00000000000000000001.cap"
+ atf_check test -d "$global_root/Capabilities/org.test.versioned@00000000000000000002.cap"
+
 }
 switchboardctl_install_versions_cleanup() {
-	rm -rf Version.cap versions
+	global_cleanup
+
+}
+
+atf_test_case switchboardctl_global_unsigned cleanup
+switchboardctl_global_unsigned_head() {
+ atf_set require.user root
+ atf_set require.progs "openssl chroot"
+ atf_set descr "Global unsigned development compatibility and signed-policy rejection are separate"
+}
+switchboardctl_global_unsigned_body() {
+ global_root_prepare development
+ write_bundle "$global_root/Unsigned.cap" org.test.development worker 1 'activation { boot = true; }'
+ write_executable "$global_root/Unsigned.cap/Units/worker.unit/bin/worker" '#!/bin/sh' 'exit 0'
+ chown -R nobody:nobody "$global_root/Unsigned.cap"
+ chmod -R go+w "$global_root/Unsigned.cap"
+ atf_check -s exit:0 -o match:published "$global_command" install /Unsigned.cap
+ local dst=/Capabilities/org.test.development@00000000000000000001.cap
+ atf_check -s exit:0 -o match:PASSED "$global_command" verify "$dst"
+ atf_check -o inline:'400\n' stat -f %Lp "$global_root$dst/Bundle.ucl"
+ atf_check -o inline:'700\n' stat -f %Lp "$global_root$dst/Units"
+ : > "$global_root/etc/capability/require-signatures"
+ chmod 0444 "$global_root/etc/capability/require-signatures"
+ atf_check -s exit:1 -e match:'signed bundle inventory required' "$global_command" verify /Unsigned.cap
+ atf_check -s exit:1 -e match:'signed bundle inventory required' "$global_command" install /Unsigned.cap
+ atf_check test -f "$global_root/etc/capability/require-signatures"
+ atf_check -s exit:0 -o empty find "$global_root/Capabilities" -name '.switchboardctl.*'
+}
+switchboardctl_global_unsigned_cleanup() {
+ global_cleanup
 }
 
 atf_test_case switchboardctl_install_rejects_unsafe cleanup
@@ -614,8 +709,34 @@ sctl_client_reply_validation_body()
 	done
 }
 
+atf_test_case sctl_client_cache_status
+sctl_client_cache_status_body()
+{
+	tool="$(atf_get_srcdir)/switchboardctl_success_bin"
+	label=system.Time/bsdtime
+	counters='pid=123 cache_selected=1 executable_mappings=3 executable_virtual_bytes=12288'
+
+	atf_check -s exit:0 -o inline:"${counters}\n" -e empty \
+	    env SCTL_EXPECT_OP=8 SCTL_EXPECT_PAYLOAD="$label" \
+	    SCTL_SUMMARY="${counters}
+" "$tool" cache-status "$label"
+	atf_check -s exit:1 -o empty -e match:'cache-status: Device busy' \
+	    env SCTL_EXPECT_OP=8 SCTL_EXPECT_PAYLOAD="$label" \
+	    SCTL_REPLY=status "$tool" cache-status "$label"
+	atf_check -s exit:69 -o empty \
+	    -e match:'cannot reach switchboard control plane.*Input/output error' \
+	    env SCTL_FAIL=call "$tool" cache-status "$label"
+	atf_check -s exit:76 -o empty -e match:'malformed control reply' \
+	    env SCTL_EXPECT_OP=8 SCTL_EXPECT_PAYLOAD="$label" \
+	    SCTL_REPLY=trailing "$tool" cache-status "$label"
+	atf_check -s exit:64 -o empty -e match:'usage:' "$tool" cache-status
+	atf_check -s exit:64 -o empty -e match:'usage:' \
+	    "$tool" cache-status "$label" extra
+}
+
 atf_init_test_cases()
 {
+	atf_add_test_case sctl_client_cache_status
 	atf_add_test_case sctl_client_reply_validation
 	atf_add_test_case sctl_oversized_payload
 	atf_add_test_case switchboardctl_status
@@ -634,6 +755,7 @@ atf_init_test_cases()
 	atf_add_test_case switchboardctl_restart
 
 	# install
+	atf_add_test_case switchboardctl_global_unsigned
 	atf_add_test_case switchboardctl_install_valid
 	atf_add_test_case switchboardctl_install_source_name_ignored
 	atf_add_test_case switchboardctl_install_versions

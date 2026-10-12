@@ -11,8 +11,7 @@
         "int"
       ],
       "source": "sys/nlm/nlm_prot_impl.c",
-      "line": 66,
-      "source_sha256": "75bfe1ab466ec99174b42082353aca5ed36653987d32f2297e941d8af0842cc3"
+      "line": 66
     },
     {
       "provider": "nlm",
@@ -24,8 +23,7 @@
         "int"
       ],
       "source": "sys/nlm/nlm_prot_impl.c",
-      "line": 67,
-      "source_sha256": "75bfe1ab466ec99174b42082353aca5ed36653987d32f2297e941d8af0842cc3"
+      "line": 67
     },
     {
       "provider": "nlm",
@@ -37,8 +35,7 @@
         "int"
       ],
       "source": "sys/nlm/nlm_prot_impl.c",
-      "line": 68,
-      "source_sha256": "75bfe1ab466ec99174b42082353aca5ed36653987d32f2297e941d8af0842cc3"
+      "line": 68
     },
     {
       "provider": "nlm",
@@ -50,8 +47,7 @@
         "int"
       ],
       "source": "sys/nlm/nlm_prot_impl.c",
-      "line": 69,
-      "source_sha256": "75bfe1ab466ec99174b42082353aca5ed36653987d32f2297e941d8af0842cc3"
+      "line": 69
     },
     {
       "provider": "nlm",
@@ -62,8 +58,7 @@
         "struct vnode *"
       ],
       "source": "sys/nlm/nlm_prot_impl.c",
-      "line": 70,
-      "source_sha256": "75bfe1ab466ec99174b42082353aca5ed36653987d32f2297e941d8af0842cc3"
+      "line": 70
     },
     {
       "provider": "kqueue",
@@ -77,8 +72,7 @@
         "struct file *"
       ],
       "source": "sys/kern/kern_event.c",
-      "line": 97,
-      "source_sha256": "95b99b667fe4a10f4b076cb1b21bf55e7bfb6076dd78f8c6172a60872e6c3a3b"
+      "line": 97
     },
     {
       "provider": "kqueue",
@@ -89,8 +83,7 @@
         "struct knote *"
       ],
       "source": "sys/kern/kern_event.c",
-      "line": 99,
-      "source_sha256": "95b99b667fe4a10f4b076cb1b21bf55e7bfb6076dd78f8c6172a60872e6c3a3b"
+      "line": 99
     },
     {
       "provider": "umtx",
@@ -103,8 +96,7 @@
         "int"
       ],
       "source": "sys/kern/kern_umtx.c",
-      "line": 84,
-      "source_sha256": "339306dae43b4318191669825edde03580b1064a4aa5cba82240d0ae07682148"
+      "line": 84
     },
     {
       "provider": "umtx",
@@ -116,8 +108,7 @@
         "int"
       ],
       "source": "sys/kern/kern_umtx.c",
-      "line": 85,
-      "source_sha256": "339306dae43b4318191669825edde03580b1064a4aa5cba82240d0ae07682148"
+      "line": 85
     },
     {
       "provider": "umtx",
@@ -129,8 +120,7 @@
         "int"
       ],
       "source": "sys/kern/kern_umtx.c",
-      "line": 86,
-      "source_sha256": "339306dae43b4318191669825edde03580b1064a4aa5cba82240d0ae07682148"
+      "line": 86
     },
     {
       "provider": "umtx",
@@ -143,8 +133,7 @@
         "int"
       ],
       "source": "sys/kern/kern_umtx.c",
-      "line": 87,
-      "source_sha256": "339306dae43b4318191669825edde03580b1064a4aa5cba82240d0ae07682148"
+      "line": 87
     },
     {
       "provider": "lockf",
@@ -156,8 +145,7 @@
         "int"
       ],
       "source": "sys/kern/kern_lockf.c",
-      "line": 88,
-      "source_sha256": "09a7dedd7e880dbdadfd6e57a0a7e31ac62680adce9383e575152a517535e6e2"
+      "line": 88
     },
     {
       "provider": "lockf",
@@ -171,8 +159,7 @@
         "int64_t"
       ],
       "source": "sys/kern/kern_lockf.c",
-      "line": 89,
-      "source_sha256": "09a7dedd7e880dbdadfd6e57a0a7e31ac62680adce9383e575152a517535e6e2"
+      "line": 89
     },
     {
       "provider": "lockf",
@@ -185,8 +172,7 @@
         "int64_t"
       ],
       "source": "sys/kern/kern_lockf.c",
-      "line": 91,
-      "source_sha256": "09a7dedd7e880dbdadfd6e57a0a7e31ac62680adce9383e575152a517535e6e2"
+      "line": 91
     },
     {
       "provider": "lockf",
@@ -200,8 +186,7 @@
         "int64_t"
       ],
       "source": "sys/kern/kern_lockf.c",
-      "line": 92,
-      "source_sha256": "09a7dedd7e880dbdadfd6e57a0a7e31ac62680adce9383e575152a517535e6e2"
+      "line": 92
     },
     {
       "provider": "lockf",
@@ -214,8 +199,7 @@
         "int"
       ],
       "source": "sys/kern/kern_lockf.c",
-      "line": 94,
-      "source_sha256": "09a7dedd7e880dbdadfd6e57a0a7e31ac62680adce9383e575152a517535e6e2"
+      "line": 94
     },
     {
       "provider": "lockf",
@@ -228,8 +212,7 @@
         "int64_t"
       ],
       "source": "sys/kern/kern_lockf.c",
-      "line": 96,
-      "source_sha256": "09a7dedd7e880dbdadfd6e57a0a7e31ac62680adce9383e575152a517535e6e2"
+      "line": 96
     },
     {
       "provider": "lockf",
@@ -240,8 +223,7 @@
         "struct lockf_entry *"
       ],
       "source": "sys/kern/kern_lockf.c",
-      "line": 98,
-      "source_sha256": "09a7dedd7e880dbdadfd6e57a0a7e31ac62680adce9383e575152a517535e6e2"
+      "line": 98
     },
     {
       "provider": "bufcache",
@@ -254,8 +236,7 @@
         "int"
       ],
       "source": "sys/kern/vfs_bio.c",
-      "line": 99,
-      "source_sha256": "895f09b9e7e7931004749af390a92a041bef1d0d27b7bd30668900a8c95f9e5d"
+      "line": 99
     },
     {
       "provider": "bufcache",
@@ -268,8 +249,7 @@
         "int"
       ],
       "source": "sys/kern/vfs_bio.c",
-      "line": 100,
-      "source_sha256": "895f09b9e7e7931004749af390a92a041bef1d0d27b7bd30668900a8c95f9e5d"
+      "line": 100
     },
     {
       "provider": "bufcache",
@@ -281,8 +261,7 @@
         "int"
       ],
       "source": "sys/kern/vfs_bio.c",
-      "line": 102,
-      "source_sha256": "895f09b9e7e7931004749af390a92a041bef1d0d27b7bd30668900a8c95f9e5d"
+      "line": 102
     },
     {
       "provider": "bufcache",
@@ -295,8 +274,7 @@
         "int"
       ],
       "source": "sys/kern/vfs_bio.c",
-      "line": 103,
-      "source_sha256": "895f09b9e7e7931004749af390a92a041bef1d0d27b7bd30668900a8c95f9e5d"
+      "line": 103
     },
     {
       "provider": "bufcache",
@@ -309,8 +287,7 @@
         "int"
       ],
       "source": "sys/kern/vfs_bio.c",
-      "line": 105,
-      "source_sha256": "895f09b9e7e7931004749af390a92a041bef1d0d27b7bd30668900a8c95f9e5d"
+      "line": 105
     },
     {
       "provider": "bufcache",
@@ -321,8 +298,7 @@
         "struct buf *"
       ],
       "source": "sys/kern/vfs_bio.c",
-      "line": 107,
-      "source_sha256": "895f09b9e7e7931004749af390a92a041bef1d0d27b7bd30668900a8c95f9e5d"
+      "line": 107
     },
     {
       "provider": "bufcache",
@@ -334,8 +310,7 @@
         "int"
       ],
       "source": "sys/kern/vfs_bio.c",
-      "line": 108,
-      "source_sha256": "895f09b9e7e7931004749af390a92a041bef1d0d27b7bd30668900a8c95f9e5d"
+      "line": 108
     },
     {
       "provider": "tty",
@@ -348,8 +323,7 @@
         "int"
       ],
       "source": "sys/kern/tty_ttydisc.c",
-      "line": 51,
-      "source_sha256": "3fa7f56b0f748886c0f3bf7ba426c900ac1ce4746913f911d3842a2a640e05c8"
+      "line": 51
     },
     {
       "provider": "tty",
@@ -361,8 +335,7 @@
         "int"
       ],
       "source": "sys/kern/tty_ttydisc.c",
-      "line": 52,
-      "source_sha256": "3fa7f56b0f748886c0f3bf7ba426c900ac1ce4746913f911d3842a2a640e05c8"
+      "line": 52
     },
     {
       "provider": "tty",
@@ -374,8 +347,7 @@
         "int"
       ],
       "source": "sys/kern/tty_ttydisc.c",
-      "line": 53,
-      "source_sha256": "3fa7f56b0f748886c0f3bf7ba426c900ac1ce4746913f911d3842a2a640e05c8"
+      "line": 53
     },
     {
       "provider": "tty",
@@ -387,8 +359,7 @@
         "int"
       ],
       "source": "sys/kern/tty_ttydisc.c",
-      "line": 54,
-      "source_sha256": "3fa7f56b0f748886c0f3bf7ba426c900ac1ce4746913f911d3842a2a640e05c8"
+      "line": 54
     },
     {
       "provider": "tty",
@@ -400,8 +371,7 @@
         "int"
       ],
       "source": "sys/kern/tty_ttydisc.c",
-      "line": 55,
-      "source_sha256": "3fa7f56b0f748886c0f3bf7ba426c900ac1ce4746913f911d3842a2a640e05c8"
+      "line": 55
     },
     {
       "provider": "tty",
@@ -413,8 +383,7 @@
         "int"
       ],
       "source": "sys/kern/tty_ttydisc.c",
-      "line": 56,
-      "source_sha256": "3fa7f56b0f748886c0f3bf7ba426c900ac1ce4746913f911d3842a2a640e05c8"
+      "line": 56
     },
     {
       "provider": "taskqueue",
@@ -427,8 +396,7 @@
         "int"
       ],
       "source": "sys/kern/subr_taskqueue.c",
-      "line": 53,
-      "source_sha256": "23822a350f223021c97f28a0e0373caaef89bf461547b0fc2c3aaf595484a3f7"
+      "line": 53
     },
     {
       "provider": "taskqueue",
@@ -441,8 +409,7 @@
         "int"
       ],
       "source": "sys/kern/subr_taskqueue.c",
-      "line": 55,
-      "source_sha256": "23822a350f223021c97f28a0e0373caaef89bf461547b0fc2c3aaf595484a3f7"
+      "line": 55
     },
     {
       "provider": "taskqueue",
@@ -456,8 +423,7 @@
         "int"
       ],
       "source": "sys/kern/subr_taskqueue.c",
-      "line": 57,
-      "source_sha256": "23822a350f223021c97f28a0e0373caaef89bf461547b0fc2c3aaf595484a3f7"
+      "line": 57
     },
     {
       "provider": "taskqueue",
@@ -470,8 +436,7 @@
         "u_int"
       ],
       "source": "sys/kern/subr_taskqueue.c",
-      "line": 59,
-      "source_sha256": "23822a350f223021c97f28a0e0373caaef89bf461547b0fc2c3aaf595484a3f7"
+      "line": 59
     },
     {
       "provider": "taskqueue",
@@ -484,8 +449,7 @@
         "int"
       ],
       "source": "sys/kern/subr_taskqueue.c",
-      "line": 61,
-      "source_sha256": "23822a350f223021c97f28a0e0373caaef89bf461547b0fc2c3aaf595484a3f7"
+      "line": 61
     },
     {
       "provider": "taskqueue",
@@ -497,8 +461,7 @@
         "struct task *"
       ],
       "source": "sys/kern/subr_taskqueue.c",
-      "line": 63,
-      "source_sha256": "23822a350f223021c97f28a0e0373caaef89bf461547b0fc2c3aaf595484a3f7"
+      "line": 63
     },
     {
       "provider": "taskqueue",
@@ -510,8 +473,7 @@
         "struct task *"
       ],
       "source": "sys/kern/subr_taskqueue.c",
-      "line": 65,
-      "source_sha256": "23822a350f223021c97f28a0e0373caaef89bf461547b0fc2c3aaf595484a3f7"
+      "line": 65
     },
     {
       "provider": "vfs",
@@ -523,8 +485,7 @@
         "struct vnode *"
       ],
       "source": "sys/kern/vfs_subr.c",
-      "line": 49,
-      "source_sha256": "4c8e81052990cd55de747ae71844d0ad34961dc506956293fc616b692b4946dc"
+      "line": 49
     },
     {
       "provider": "vfs",
@@ -536,8 +497,7 @@
         "struct vnode *"
       ],
       "source": "sys/kern/vfs_subr.c",
-      "line": 50,
-      "source_sha256": "4c8e81052990cd55de747ae71844d0ad34961dc506956293fc616b692b4946dc"
+      "line": 50
     },
     {
       "provider": "vm",
@@ -549,8 +509,7 @@
         "int"
       ],
       "source": "sys/vm/vm_fault.c",
-      "line": 116,
-      "source_sha256": "6e323ca5111e132d5c4f1deed50635fc6128ae65a5233de0f0e81302c0b2e928"
+      "line": 116
     },
     {
       "provider": "vm",
@@ -563,8 +522,7 @@
         "uint64_t"
       ],
       "source": "sys/vm/vm_fault.c",
-      "line": 117,
-      "source_sha256": "6e323ca5111e132d5c4f1deed50635fc6128ae65a5233de0f0e81302c0b2e928"
+      "line": 117
     },
     {
       "provider": "vm",
@@ -576,8 +534,7 @@
         "int"
       ],
       "source": "sys/vm/vm_fault.c",
-      "line": 118,
-      "source_sha256": "6e323ca5111e132d5c4f1deed50635fc6128ae65a5233de0f0e81302c0b2e928"
+      "line": 118
     },
     {
       "provider": "vm",
@@ -589,8 +546,7 @@
         "int"
       ],
       "source": "sys/vm/vm_fault.c",
-      "line": 119,
-      "source_sha256": "6e323ca5111e132d5c4f1deed50635fc6128ae65a5233de0f0e81302c0b2e928"
+      "line": 119
     },
     {
       "provider": "vm",
@@ -601,8 +557,7 @@
         "void *"
       ],
       "source": "sys/vm/vm_fault.c",
-      "line": 120,
-      "source_sha256": "6e323ca5111e132d5c4f1deed50635fc6128ae65a5233de0f0e81302c0b2e928"
+      "line": 120
     },
     {
       "provider": "vm",
@@ -614,8 +569,7 @@
         "int"
       ],
       "source": "sys/vm/vm_fault.c",
-      "line": 121,
-      "source_sha256": "6e323ca5111e132d5c4f1deed50635fc6128ae65a5233de0f0e81302c0b2e928"
+      "line": 121
     },
     {
       "provider": "ffs",
@@ -629,8 +583,7 @@
         "int"
       ],
       "source": "sys/ufs/ffs/ffs_alloc.c",
-      "line": 102,
-      "source_sha256": "cb804a44e547c69ae51393e7da97454c9aed667e664b249e7338cb707ca79ad9"
+      "line": 102
     },
     {
       "provider": "ffs",
@@ -645,8 +598,7 @@
         "int"
       ],
       "source": "sys/ufs/ffs/ffs_alloc.c",
-      "line": 104,
-      "source_sha256": "cb804a44e547c69ae51393e7da97454c9aed667e664b249e7338cb707ca79ad9"
+      "line": 104
     },
     {
       "provider": "ffs",
@@ -658,8 +610,7 @@
         "int"
       ],
       "source": "sys/ufs/ffs/ffs_alloc.c",
-      "line": 106,
-      "source_sha256": "cb804a44e547c69ae51393e7da97454c9aed667e664b249e7338cb707ca79ad9"
+      "line": 106
     },
     {
       "provider": "ffs",
@@ -672,8 +623,7 @@
         "int"
       ],
       "source": "sys/ufs/ffs/ffs_softdep.c",
-      "line": 91,
-      "source_sha256": "2b24d0d707730a5bdde1977421c2f0865301cfc5cbb2784d119d9885d833621b"
+      "line": 91
     },
     {
       "provider": "ffs",
@@ -686,8 +636,7 @@
         "int"
       ],
       "source": "sys/ufs/ffs/ffs_softdep.c",
-      "line": 92,
-      "source_sha256": "2b24d0d707730a5bdde1977421c2f0865301cfc5cbb2784d119d9885d833621b"
+      "line": 92
     },
     {
       "provider": "ffs",
@@ -699,8 +648,7 @@
         "int"
       ],
       "source": "sys/ufs/ffs/ffs_softdep.c",
-      "line": 93,
-      "source_sha256": "2b24d0d707730a5bdde1977421c2f0865301cfc5cbb2784d119d9885d833621b"
+      "line": 93
     },
     {
       "provider": "ffs",
@@ -712,8 +660,7 @@
         "int"
       ],
       "source": "sys/ufs/ffs/ffs_softdep.c",
-      "line": 94,
-      "source_sha256": "2b24d0d707730a5bdde1977421c2f0865301cfc5cbb2784d119d9885d833621b"
+      "line": 94
     },
     {
       "provider": "ffs",
@@ -727,8 +674,7 @@
         "int"
       ],
       "source": "sys/ufs/ffs/ffs_softdep.c",
-      "line": 95,
-      "source_sha256": "2b24d0d707730a5bdde1977421c2f0865301cfc5cbb2784d119d9885d833621b"
+      "line": 95
     },
     {
       "provider": "linuxulator{,32}",
@@ -741,8 +687,7 @@
         "uint32_t"
       ],
       "source": "sys/compat/linux/linux_event.c",
-      "line": 75,
-      "source_sha256": "d5a5b4d4b85499099bacb7a35b5b22f895fdd03dec5c57885af2b5d4aebf1ba4"
+      "line": 75
     },
     {
       "provider": "linuxulator{,32}",
@@ -756,8 +701,7 @@
         "int"
       ],
       "source": "sys/compat/linux/linux_event.c",
-      "line": 76,
-      "source_sha256": "d5a5b4d4b85499099bacb7a35b5b22f895fdd03dec5c57885af2b5d4aebf1ba4"
+      "line": 76
     },
     {
       "provider": "linuxulator{,32}",
@@ -771,8 +715,7 @@
         "int"
       ],
       "source": "sys/compat/linux/linux_event.c",
-      "line": 77,
-      "source_sha256": "d5a5b4d4b85499099bacb7a35b5b22f895fdd03dec5c57885af2b5d4aebf1ba4"
+      "line": 77
     },
     {
       "provider": "linuxulator{,32}",
@@ -784,8 +727,7 @@
         "int"
       ],
       "source": "sys/compat/linux/linux_event.c",
-      "line": 78,
-      "source_sha256": "d5a5b4d4b85499099bacb7a35b5b22f895fdd03dec5c57885af2b5d4aebf1ba4"
+      "line": 78
     },
     {
       "provider": "linuxulator{,32}",
@@ -798,8 +740,7 @@
         "int"
       ],
       "source": "sys/compat/linux/linux_event.c",
-      "line": 79,
-      "source_sha256": "d5a5b4d4b85499099bacb7a35b5b22f895fdd03dec5c57885af2b5d4aebf1ba4"
+      "line": 79
     },
     {
       "provider": "linuxulator{,32}",
@@ -812,8 +753,7 @@
         "int"
       ],
       "source": "sys/compat/linux/linux_futex.c",
-      "line": 65,
-      "source_sha256": "bd11a9ef0da397e5d2db229a670d3ba6203248d7b88ef544a322ab0570a411a2"
+      "line": 65
     },
     {
       "provider": "linuxulator{,32}",
@@ -825,8 +765,7 @@
         "int"
       ],
       "source": "sys/compat/linux/linux_futex.c",
-      "line": 66,
-      "source_sha256": "bd11a9ef0da397e5d2db229a670d3ba6203248d7b88ef544a322ab0570a411a2"
+      "line": 66
     },
     {
       "provider": "linuxulator{,32}",
@@ -840,8 +779,7 @@
         "int"
       ],
       "source": "sys/compat/linux/linux_futex.c",
-      "line": 67,
-      "source_sha256": "bd11a9ef0da397e5d2db229a670d3ba6203248d7b88ef544a322ab0570a411a2"
+      "line": 67
     },
     {
       "provider": "linuxulator{,32}",
@@ -856,8 +794,7 @@
         "int"
       ],
       "source": "sys/compat/linux/linux_futex.c",
-      "line": 68,
-      "source_sha256": "bd11a9ef0da397e5d2db229a670d3ba6203248d7b88ef544a322ab0570a411a2"
+      "line": 68
     },
     {
       "provider": "linuxulator{,32}",
@@ -870,8 +807,7 @@
         "int"
       ],
       "source": "sys/compat/linux/linux_futex.c",
-      "line": 70,
-      "source_sha256": "bd11a9ef0da397e5d2db229a670d3ba6203248d7b88ef544a322ab0570a411a2"
+      "line": 70
     },
     {
       "provider": "linuxulator{,32}",
@@ -884,8 +820,7 @@
         "int"
       ],
       "source": "sys/compat/linux/linux_futex.c",
-      "line": 71,
-      "source_sha256": "bd11a9ef0da397e5d2db229a670d3ba6203248d7b88ef544a322ab0570a411a2"
+      "line": 71
     },
     {
       "provider": "linuxulator{,32}",
@@ -898,8 +833,7 @@
         "int"
       ],
       "source": "sys/compat/linux/linux_socket.c",
-      "line": 94,
-      "source_sha256": "8bee2ef358865aa2a5a019679c559b2d1bdcbcbef8f46851b15de52ec9297860"
+      "line": 94
     },
     {
       "provider": "linuxulator{,32}",
@@ -912,8 +846,7 @@
         "int"
       ],
       "source": "sys/compat/linux/linux_socket.c",
-      "line": 95,
-      "source_sha256": "8bee2ef358865aa2a5a019679c559b2d1bdcbcbef8f46851b15de52ec9297860"
+      "line": 95
     },
     {
       "provider": "linuxulator{,32}",
@@ -927,8 +860,7 @@
         "int"
       ],
       "source": "sys/compat/linux/linux_socket.c",
-      "line": 96,
-      "source_sha256": "8bee2ef358865aa2a5a019679c559b2d1bdcbcbef8f46851b15de52ec9297860"
+      "line": 96
     },
     {
       "provider": "linuxulator{,32}",
@@ -942,8 +874,7 @@
         "int"
       ],
       "source": "sys/compat/linux/linux_socket.c",
-      "line": 97,
-      "source_sha256": "8bee2ef358865aa2a5a019679c559b2d1bdcbcbef8f46851b15de52ec9297860"
+      "line": 97
     },
     {
       "provider": "linuxulator{,32}",
@@ -956,8 +887,7 @@
         "int"
       ],
       "source": "sys/compat/linux/linux_socket.c",
-      "line": 98,
-      "source_sha256": "8bee2ef358865aa2a5a019679c559b2d1bdcbcbef8f46851b15de52ec9297860"
+      "line": 98
     },
     {
       "provider": "linuxulator{,32}",
@@ -969,8 +899,7 @@
         "int"
       ],
       "source": "sys/compat/linux/linux_socket.c",
-      "line": 99,
-      "source_sha256": "8bee2ef358865aa2a5a019679c559b2d1bdcbcbef8f46851b15de52ec9297860"
+      "line": 99
     },
     {
       "provider": "linuxkpi_work",
@@ -983,8 +912,7 @@
         "int"
       ],
       "source": "sys/compat/linuxkpi/common/src/linux_work.c",
-      "line": 41,
-      "source_sha256": "3b6ed1fb3368745c6ec76e23603c8c3600346d709f761a31b0c57a3504a62380"
+      "line": 41
     },
     {
       "provider": "linuxkpi_work",
@@ -997,8 +925,7 @@
         "int"
       ],
       "source": "sys/compat/linuxkpi/common/src/linux_work.c",
-      "line": 42,
-      "source_sha256": "3b6ed1fb3368745c6ec76e23603c8c3600346d709f761a31b0c57a3504a62380"
+      "line": 42
     },
     {
       "provider": "linuxkpi_work",
@@ -1010,8 +937,7 @@
         "void *"
       ],
       "source": "sys/compat/linuxkpi/common/src/linux_work.c",
-      "line": 43,
-      "source_sha256": "3b6ed1fb3368745c6ec76e23603c8c3600346d709f761a31b0c57a3504a62380"
+      "line": 43
     },
     {
       "provider": "linuxkpi_work",
@@ -1022,8 +948,7 @@
         "void *"
       ],
       "source": "sys/compat/linuxkpi/common/src/linux_work.c",
-      "line": 44,
-      "source_sha256": "3b6ed1fb3368745c6ec76e23603c8c3600346d709f761a31b0c57a3504a62380"
+      "line": 44
     },
     {
       "provider": "linuxkpi_work",
@@ -1035,8 +960,7 @@
         "int"
       ],
       "source": "sys/compat/linuxkpi/common/src/linux_work.c",
-      "line": 45,
-      "source_sha256": "3b6ed1fb3368745c6ec76e23603c8c3600346d709f761a31b0c57a3504a62380"
+      "line": 45
     },
     {
       "provider": "linuxkpi_work",
@@ -1047,8 +971,7 @@
         "void *"
       ],
       "source": "sys/compat/linuxkpi/common/src/linux_work.c",
-      "line": 46,
-      "source_sha256": "3b6ed1fb3368745c6ec76e23603c8c3600346d709f761a31b0c57a3504a62380"
+      "line": 46
     },
     {
       "provider": "linuxkpi_work",
@@ -1060,8 +983,7 @@
         "int"
       ],
       "source": "sys/compat/linuxkpi/common/src/linux_work.c",
-      "line": 47,
-      "source_sha256": "3b6ed1fb3368745c6ec76e23603c8c3600346d709f761a31b0c57a3504a62380"
+      "line": 47
     },
     {
       "provider": "iwlwifi",
@@ -1072,8 +994,7 @@
         "const struct device *"
       ],
       "source": "sys/contrib/dev/iwlwifi/iwl-devtrace.c",
-      "line": 85,
-      "source_sha256": "0021c888be5ecb8a43500a31eaea1f3a774c59e308d44693b6f2835f1f190a65"
+      "line": 85
     },
     {
       "provider": "iwlwifi",
@@ -1088,8 +1009,7 @@
         "uint32_t"
       ],
       "source": "sys/contrib/dev/iwlwifi/iwl-devtrace.c",
-      "line": 86,
-      "source_sha256": "0021c888be5ecb8a43500a31eaea1f3a774c59e308d44693b6f2835f1f190a65"
+      "line": 86
     },
     {
       "provider": "iwlwifi",
@@ -1104,8 +1024,7 @@
         "size_t"
       ],
       "source": "sys/contrib/dev/iwlwifi/iwl-devtrace.c",
-      "line": 88,
-      "source_sha256": "0021c888be5ecb8a43500a31eaea1f3a774c59e308d44693b6f2835f1f190a65"
+      "line": 88
     },
     {
       "provider": "bluetooth",
@@ -1119,8 +1038,7 @@
         "int"
       ],
       "source": "sys/netgraph/bluetooth/socket/ng_btsocket_rfcomm.c",
-      "line": 69,
-      "source_sha256": "f830be93b08ec1604e2bd4bfd19c481407e6d40acb343ecd3443e49ad68432f7"
+      "line": 69
     },
     {
       "provider": "bluetooth",
@@ -1134,8 +1052,7 @@
         "int"
       ],
       "source": "sys/netgraph/bluetooth/socket/ng_btsocket_rfcomm.c",
-      "line": 70,
-      "source_sha256": "f830be93b08ec1604e2bd4bfd19c481407e6d40acb343ecd3443e49ad68432f7"
+      "line": 70
     },
     {
       "provider": "bluetooth",
@@ -1149,8 +1066,7 @@
         "int"
       ],
       "source": "sys/netgraph/bluetooth/socket/ng_btsocket_rfcomm.c",
-      "line": 71,
-      "source_sha256": "f830be93b08ec1604e2bd4bfd19c481407e6d40acb343ecd3443e49ad68432f7"
+      "line": 71
     },
     {
       "provider": "bluetooth",
@@ -1165,8 +1081,7 @@
         "int"
       ],
       "source": "sys/netgraph/bluetooth/socket/ng_btsocket_rfcomm.c",
-      "line": 72,
-      "source_sha256": "f830be93b08ec1604e2bd4bfd19c481407e6d40acb343ecd3443e49ad68432f7"
+      "line": 72
     },
     {
       "provider": "bluetooth",
@@ -1181,8 +1096,7 @@
         "int"
       ],
       "source": "sys/netgraph/bluetooth/socket/ng_btsocket_rfcomm.c",
-      "line": 74,
-      "source_sha256": "f830be93b08ec1604e2bd4bfd19c481407e6d40acb343ecd3443e49ad68432f7"
+      "line": 74
     },
     {
       "provider": "bluetooth",
@@ -1194,8 +1108,7 @@
         "int"
       ],
       "source": "sys/netgraph/bluetooth/socket/ng_btsocket_rfcomm.c",
-      "line": 76,
-      "source_sha256": "f830be93b08ec1604e2bd4bfd19c481407e6d40acb343ecd3443e49ad68432f7"
+      "line": 76
     },
     {
       "provider": "mac_capability",
@@ -1209,8 +1122,7 @@
         "uint64_t"
       ],
       "source": "sys/dev/mac_capability/mac_capability_dev.c",
-      "line": 52,
-      "source_sha256": "7ac0339e62824d22d0c3e2dec4bd16daf16712633d8b072e5146c3bf212c8562"
+      "line": 52
     },
     {
       "provider": "mac_capability",
@@ -1223,8 +1135,7 @@
         "int"
       ],
       "source": "sys/dev/mac_capability/mac_capability_dev.c",
-      "line": 54,
-      "source_sha256": "7ac0339e62824d22d0c3e2dec4bd16daf16712633d8b072e5146c3bf212c8562"
+      "line": 54
     },
     {
       "provider": "mac_capability",
@@ -1236,8 +1147,7 @@
         "uint64_t"
       ],
       "source": "sys/dev/mac_capability/mac_capability_dev.c",
-      "line": 56,
-      "source_sha256": "7ac0339e62824d22d0c3e2dec4bd16daf16712633d8b072e5146c3bf212c8562"
+      "line": 56
     },
     {
       "provider": "fidl_bsd$target",
@@ -1250,8 +1160,7 @@
         "uint64_t ordinal",
         "int reason"
       ],
-      "source": "lib/libfidl/fidl_provider.d",
-      "source_sha256": "11e53a86431d3e9ea0564e3f3a8a467c3baddde80a8ff2b388ec747149336a2f"
+      "source": "lib/libfidl/fidl_provider.d"
     },
     {
       "provider": "fidl_bsd$target",
@@ -1264,8 +1173,7 @@
         "uint64_t ordinal",
         "uint64_t token"
       ],
-      "source": "lib/libfidl/fidl_provider.d",
-      "source_sha256": "11e53a86431d3e9ea0564e3f3a8a467c3baddde80a8ff2b388ec747149336a2f"
+      "source": "lib/libfidl/fidl_provider.d"
     },
     {
       "provider": "fidl_bsd$target",
@@ -1276,8 +1184,7 @@
         "uintptr_t connection",
         "int status"
       ],
-      "source": "lib/libfidl/fidl_provider.d",
-      "source_sha256": "11e53a86431d3e9ea0564e3f3a8a467c3baddde80a8ff2b388ec747149336a2f"
+      "source": "lib/libfidl/fidl_provider.d"
     },
     {
       "provider": "fidl_bsd$target",
@@ -1290,8 +1197,7 @@
         "uint64_t ordinal",
         "int reason"
       ],
-      "source": "lib/libfidl/fidl_provider.d",
-      "source_sha256": "11e53a86431d3e9ea0564e3f3a8a467c3baddde80a8ff2b388ec747149336a2f"
+      "source": "lib/libfidl/fidl_provider.d"
     },
     {
       "provider": "fidl_bsd$target",
@@ -1304,8 +1210,7 @@
         "uint32_t txid",
         "uint64_t ordinal"
       ],
-      "source": "lib/libfidl/fidl_provider.d",
-      "source_sha256": "11e53a86431d3e9ea0564e3f3a8a467c3baddde80a8ff2b388ec747149336a2f"
+      "source": "lib/libfidl/fidl_provider.d"
     }
   ]
 }

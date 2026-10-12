@@ -72,6 +72,7 @@ run_rc_bootstrap(int kqunused)
 
 	memset(&rc, 0, sizeof(rc));
 	rc.kind = SVC_KIND_ONESHOT;
+	rc.owner_uid = (uid_t)-1;
 	rc.bundle_idx = (unsigned)-1;
 	strlcpy(rc.manifest.label, "etc-rc", sizeof(rc.manifest.label));
 	/*
@@ -421,7 +422,7 @@ startup_launch_system(int kq)
 	 */
 	/* Run/live must exist before the first launch (delivered as a dirfd). */
 	svc_reclaim_live_prepare();
-	svc_reclaim_publish_groups();
+	svc_reclaim_publish_live();
 	if (!skip_rc)
 		(void)rc_adopt_register(kq);
 	launched += startup_launch_stopped(kq);

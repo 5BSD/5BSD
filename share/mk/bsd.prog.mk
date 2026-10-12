@@ -118,7 +118,8 @@ PROG_FULL=${PROG}.full
     ${BINDIR:C%/libexec(/.*)?%/libexec%} == "/libexec" ||\
     ${BINDIR} == "/sbin" ||\
     ${BINDIR:C%/usr/(bin|bsdinstall|libexec|lpr|sendmail|sm.bin|sbin|tests)(/.*)?%/usr/bin%} == "/usr/bin" ||\
-    ${BINDIR} == "/usr/lib" \
+    ${BINDIR} == "/usr/lib" ||\
+    ${BINDIR:C%/Capabilities(/.*)?%/Capabilities%} == "/Capabilities" \
      )
 DEBUGFILEDIR=	${DEBUGDIR}${BINDIR}
 .else
@@ -136,6 +137,8 @@ PROGNAME?=	${PROG}
 .if ${MK_DEBUG_FILES} != "no"
 DEBUGFILE= ${PROGNAME}.debug
 .endif
+
+.sinclude <bsd.capimage.mk>
 
 .if defined(SRCS)
 
@@ -288,7 +291,7 @@ realinstall: _proginstall _debuginstall
 _proginstall:
 .if defined(PROG)
 	${INSTALL} ${TAG_ARGS} ${STRIP} -o ${BINOWN} -g ${BINGRP} -m ${BINMODE} \
-	    ${_INSTALLFLAGS} ${PROG} ${DESTDIR}${BINDIR}/${PROGNAME}
+	    ${_INSTALLFLAGS} ${_CAPIMAGE_INSTALL:U${PROG}} ${DESTDIR}${BINDIR}/${PROGNAME}
 .endif
 .endif	# !target(realinstall)
 

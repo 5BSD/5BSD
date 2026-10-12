@@ -17,6 +17,7 @@
 #include <string.h>
 
 #include <dtrace.h>
+#include <tracecmp.h>
 
 #include "otelexport.h"
 #include "bsdinstruments.h"
@@ -27,7 +28,7 @@ probes_usage(void)
 
 	fprintf(stderr,
 	    "usage: bsdinstruments probes [--provider name] [--regex re]\n"
-	    "           [--pid n] [--json]\n");
+	    "           [--pid n] [--json] [--broker]\n");
 	exit(2);
 }
 
@@ -80,6 +81,7 @@ cmd_probes(int argc, char **argv)
 		{ "regex", required_argument, NULL, 'r' },
 		{ "pid", required_argument, NULL, 'p' },
 		{ "json", no_argument, NULL, 'j' },
+		{ "broker", no_argument, NULL, 'b' },
 		{ NULL, 0, NULL, 0 }
 	};
 	struct probes_ctx ctx;
@@ -90,7 +92,7 @@ cmd_probes(int argc, char **argv)
 	const char *provider, *pattern;
 	char spec[DTRACE_FULLNAMELEN];
 	pid_t pid;
-	int ch, error, have_pid, json, ret;
+	int ch, error, have_pid, json, ret, broker = 0;
 
 	provider = NULL;
 	pattern = NULL;
@@ -108,6 +110,9 @@ cmd_probes(int argc, char **argv)
 		case 'p':
 			have_pid = 1;
 			pid = (pid_t)strtol(optarg, NULL, 10);
+			break;
+		case 'b':
+			broker = 1;
 			break;
 		case 'j':
 			json = 1;
@@ -133,10 +138,11 @@ cmd_probes(int argc, char **argv)
 		ctx.regex = &regex;
 	}
 
-	dtp = dtrace_open(DTRACE_VERSION, 0, &error);
+	dtp = broker ? tracecmp_dtrace_open(0, &error) :
+	    dtrace_open(DTRACE_VERSION, 0, &error);
 	if (dtp == NULL) {
-		fprintf(stderr, "bsdinstruments probes: failed to open "
-		    "libdtrace (%s). Are you root?\n",
+		fprintf(stderr, "bsdinstruments probes: %s failed: %s\n",
+		    broker ? "BSDTrace delegation" : "local DTrace open",
 		    dtrace_errmsg(NULL, error));
 		if (ctx.regex != NULL)
 			regfree(&regex);

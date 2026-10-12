@@ -50,6 +50,11 @@ _Static_assert(CAPBUNDLE_MAX_PROVIDES == SWITCHBOARD_MAX_PROVIDES,
 
 /* Internal service representation. */
 struct capbundle_service {
+	bool personal; /* Integrity-only signer policy; no platform trust. */
+	bool signed_image;
+	unsigned char image_digest[32];
+	bool sealed_image;
+	unsigned char sealed_image_digest[32];
 	char	program[PATH_MAX];	/* absolute resolved path */
 	char	arguments[SWITCHBOARD_MAX_ARGUMENTS][SWITCHBOARD_ARGUMENT_MAX];
 	unsigned narguments;
@@ -161,7 +166,19 @@ struct capbundle_service {
 };
 
 /* Internal bundle representation. */
+struct capbundle_sealed_file {
+	struct capbundle_sealed_file *next;
+	char *path;
+	unsigned char digest[32];
+};
 struct capbundle {
+	bool personal;
+	char *verification_key; /* NULL selects the runtime system catalogue. */
+	bool require_signatures;
+	bool signed_bundle;
+	unsigned char *signed_bundle_text;
+	size_t signed_bundle_size;
+	struct capbundle_sealed_file *sealed_files;
 	char	path[PATH_MAX];		/* bundle directory */
 	char	name[256];		/* basename of path (e.g. "Mail.cap") */
 	char	bundle_id[CAPBUNDLE_ID_MAX];
@@ -199,5 +216,10 @@ int	capbundle_parse_unit_ucl(const char *path, const char *unit_path,
 	    const struct capbundle *bundle, const char *unit_name,
 	    struct capbundle_service *svc,
 	    char *errbuf, size_t errlen);
+
+struct ucl_object_s;
+int capbundle_load_unit_policy(const char *, const char *, const struct capbundle *,
+    const char *, struct capbundle_service *, struct ucl_object_s **, char *, size_t);
+int capbundle_check_seal(const char *, const char *, bool, struct capbundle *, char *, size_t);
 
 #endif /* LIBCAPBUNDLE_INTERNAL_H */

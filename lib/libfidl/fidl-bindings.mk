@@ -61,6 +61,12 @@ beforebuild: fidlgen
 beforedepend: fidlgen
 CLEANDIRS+=	fidlgen
 
+# The libfidl runtime headers generated code includes (<fidl/bsd/*.h>).
+# Generated objects must not depend on recorded .depend files alone: those
+# can be discarded as stale, and then a change to an inline runtime header
+# (an encoder, a decoder) is not rebuilt into the objects that use it.
+_FIDL_RUNTIME_HEADERS=	${SRCTOP}/lib/libfidl/include/fidl/bsd/*.h
+
 .for _s in ${FIDL_BINDINGS}
 .if empty(FIDL_SCHEMAS.${_s}) || empty(FIDL_LIBRARY.${_s})
 .error FIDL_BINDINGS entry ${_s} needs FIDL_SCHEMAS.${_s} and FIDL_LIBRARY.${_s}
@@ -83,7 +89,8 @@ ${FIDLGEN_SRCS.${_s}} \
 # old time while a header it includes (c/bridge.h) changes: rebuild every
 # object of the set whenever the set is regenerated.
 .for _f in ${FIDLGEN_SRCS.${_s}:R}
-${_f}.o ${_f}.pico ${_f}.po ${_f}.pieo ${_f}.nossppico: fidlgen/${_s}.stamp
+${_f}.o ${_f}.pico ${_f}.po ${_f}.pieo ${_f}.nossppico: fidlgen/${_s}.stamp \
+    ${_FIDL_RUNTIME_HEADERS}
 .endfor
 .endfor
 .endif

@@ -67,6 +67,9 @@ wait_for_helper_outcome()
 	local path max i
 	path="$1"
 	max=$(( ${2:-15} * 10 ))
+	# Without an issuer nothing launches; fail fast so atf_fail reports the
+	# skip.
+	capd_issuer_unavailable && max=0
 	i=0
 	while ! grep -Eq '^helper_open=(ok|failed|connected)$' "$path" \
 	    2>/dev/null && [ "$i" -lt "$max" ]; do

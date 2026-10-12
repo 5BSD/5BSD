@@ -6841,5 +6841,30 @@
         "encoding": "pointer"
       }
     ]
+  },
+  "vnode_check_mmap_image": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "arg0",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "arg1",
+        "type": "struct vnode *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "arg2",
+        "type": "struct label *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "pin",
+        "type": "bool *",
+        "encoding": "pointer"
+      }
+    ]
   }
 }
