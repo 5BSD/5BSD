@@ -45,6 +45,25 @@ int fidl_bsd_connection_wants_write(const struct fidl_bsd_connection *);
 int fidl_bsd_connection_error(const struct fidl_bsd_connection *);
 int fidl_bsd_connection_cancel(struct fidl_bsd_connection *, uint32_t);
 int fidl_bsd_connection_shutdown(struct fidl_bsd_connection *, int32_t);
+/*
+ * C connections deliver sent descriptors with close-on-exec and close-on-fork
+ * locked.  A provider that sets each delivered descriptor's own inheritance
+ * state (for example service_harden_fd(3) CLOFORK_ONCE) asks for that state
+ * to be kept instead.
+ */
+void fidl_bsd_connection_preserve_sent_inheritance(struct fidl_bsd_connection *);
+/*
+ * Provider reactor helper: one kevent(2) wait over a listener and up to 256
+ * server connections, then one bounded dispatch (and flush) per ready slot.
+ * A slot's error is set when its connection failed; the caller destroys it.
+ * *listener_ready is set when the listener (if >= 0) is readable.
+ */
+struct fidl_bsd_connection_slot {
+	struct fidl_bsd_connection *connection;
+	int error;
+};
+int fidl_bsd_connections_wait(int, struct fidl_bsd_connection_slot *, size_t,
+    int, int, int *);
 /* All status returns are errno values, except fd (descriptor or -1). */
 void fidl_bsd_request_retain(struct fidl_bsd_request *);
 void fidl_bsd_request_release(struct fidl_bsd_request *);

@@ -62,7 +62,7 @@ expected={
                         '/usr/share/licenses/libfidl-tests/googletest/LICENSE'},
  '5BSD-libfidl': {'/usr/lib/libfidl_bsd.so.1','/usr/share/licenses/libfidl/LICENSE',
                  '/usr/share/licenses/libfidl/PATENTS'},
- '5BSD-libfidl-dev': {'/usr/include/fidl/bsd/runtime_c.h','/usr/include/fidl/bsd/runtime.h',
+ '5BSD-libfidl-dev': {'/usr/include/fidl/bsd/runtime_c.h','/usr/include/fidl/bsd/sync_c.h','/usr/share/fidl/zx.fidl','/usr/include/fidl/bsd/runtime.h',
                     '/usr/include/fidl/bsd/endpoint.h','/usr/lib/libfidl_bsd.a','/usr/libdata/pkgconfig/fidl.pc'},
  '5BSD-libfidl-tools': {'/usr/bin/fidlc','/usr/bin/fidl-format','/usr/bin/fidl-lint',
                       '/usr/bin/fidlgen-bsd','/usr/libexec/fidl/generate_bsd_c.py','/usr/libexec/fidl/generate_bsd_c_types.py',

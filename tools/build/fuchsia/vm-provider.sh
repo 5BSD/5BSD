@@ -64,9 +64,13 @@ kyua_vars=${KYUA_VARS:-}
 # PLANE_OFF=1: boot with capability_plane="NO" (stock init; the "VM, plane off"
 # tier) for raw kernel-service suites.  EXTRA_SCRIPT: a host shell script run
 # as root in the guest before Kyua; its output is captured in the results.
+# EXTRA_DIR: a host directory whose regular files are installed executable in
+# the guest under /root/vm-extra.d (for example legacy latency benches).
 plane_off=${PLANE_OFF:-0}
 extra_script=${EXTRA_SCRIPT:-}
 [ -z "$extra_script" ] || [ -f "$extra_script" ] || die "no such EXTRA_SCRIPT: $extra_script"
+extra_dir=${EXTRA_DIR:-}
+[ -z "$extra_dir" ] || [ -d "$extra_dir" ] || die "no such EXTRA_DIR: $extra_dir"
 cpus=${CPUS:-4} mem=${MEM_MB:-8192} par=${PARALLELISM:-1} gate=${GATE_TIMEOUT:-600}
 units=${REQUIRE_UNITS:-system.Log/bsdlog system.Network/bsdnetwork system.Trace/bsdtrace system.Filesystem/bsdfilesystem system.Audit/bsdaudit system.Time/bsdtime system.SystemExtension/bsdextension system.Notify/bsdnotify system.Device/bsddevice system.Power/bsdpower system.Sysctl/bsdsysctl system.Crypto/bsdcrypto}
 
@@ -325,6 +329,15 @@ re=$(for p in $over; do printf '%s|' "$p"; done | sed -e 's/|$//' -e 's/\./\\./g
 	m root/kyua-planeon.sh 0555 kyua-planeon.sh
 	m root/kyua-planeon.suites 0444 suites
 	m root/vm-extra.sh 0555 extra.sh
+	if [ -n "$extra_dir" ]; then
+		echo "./root/vm-extra.d type=dir uname=root gname=wheel mode=0755"
+		for f in "$extra_dir"/*; do
+			[ -f "$f" ] || continue
+			b=$(basename "$f")
+			case $b in *[!A-Za-z0-9_.-]*) die "EXTRA_DIR file name: $b";; esac
+			echo "./root/vm-extra.d/$b type=file uname=root gname=wheel mode=0555 contents=$(cd "$extra_dir" && pwd)/$b"
+		done
+	fi
 } | awk 'NR == 1 { print; next } NF { print }' > "$work/METALOG.raw"
 # Keep one record per path (makefs rejects duplicates in manifest mode); the
 # first record wins, and the stage's duplicates differ only in tags=.

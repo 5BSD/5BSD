@@ -10,7 +10,8 @@ FIDL_HEADERS_0= ${.CURDIR}/include/fidl/bsd/c_bridge.h \
     ${.CURDIR}/include/fidl/bsd/empty.h \
     ${.CURDIR}/include/fidl/bsd/endpoint.h \
     ${.CURDIR}/include/fidl/bsd/runtime.h \
-    ${.CURDIR}/include/fidl/bsd/runtime_c.h
+    ${.CURDIR}/include/fidl/bsd/runtime_c.h \
+    ${.CURDIR}/include/fidl/bsd/sync_c.h
 FIDL_HEADERS_0DIR= ${INCLUDEDIR}/fidl/bsd
 _FIDL_HEADERS_0INS: fidl-header-directories
 

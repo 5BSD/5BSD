@@ -293,6 +293,9 @@ class Connection {
 	// Deliver every sent descriptor with close-on-exec and close-on-fork
 	// locked (the C bindings lend private duplicates).
 	void LockSentDescriptorInheritance() { lock_inherit_ = true; }
+	// Deliver sent descriptors with their own close-on-exec/close-on-fork
+	// state (for providers that harden what they hand out themselves).
+	void PreserveSentDescriptorInheritance() { lock_inherit_ = false; }
 	template <typename Req, typename Resp>
 	Result<uint32_t> Call(uint64_t ordinal, Req value,
 	    std::function<void(Result<Resp>)> callback, bool flexible = false)

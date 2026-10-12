@@ -1,5 +1,5 @@
 .\" SPDX-License-Identifier: BSD-2-Clause
-.Dd October 10, 2026
+.Dd October 11, 2026
 .Dt LIBFIDL_BSD 3
 .Os
 .Sh NAME
@@ -37,6 +37,8 @@ Native FIDL library
 .Ft int
 .Fn fidl_bsd_connection_shutdown "struct fidl_bsd_connection *connection" "int32_t epitaph"
 .Ft void
+.Fn fidl_bsd_connection_preserve_sent_inheritance "struct fidl_bsd_connection *connection"
+.Ft void
 .Fn fidl_bsd_request_retain "struct fidl_bsd_request *request"
 .Ft void
 .Fn fidl_bsd_request_release "struct fidl_bsd_request *request"
@@ -44,6 +46,13 @@ Native FIDL library
 .Fn fidl_bsd_take_fd "int *fd"
 .Ft "const struct channel_message *"
 .Fn fidl_bsd_request_native "const struct fidl_bsd_request *request"
+.Ft int
+.Fn fidl_bsd_connections_wait "int kq" "struct fidl_bsd_connection_slot *slots" "size_t count" "int listener" "int timeout_ms" "int *listener_ready"
+.In fidl/bsd/sync_c.h
+.Ft int
+.Fn fidl_bsd_sync_deadline "struct timespec *deadline" "uint32_t timeout_ms"
+.Ft int
+.Fn fidl_bsd_sync_wait "struct fidl_bsd_connection *connection" "const bool *done" "const struct timespec *deadline"
 .Sh DESCRIPTION
 The
 .Nm
@@ -114,6 +123,48 @@ monitor write readiness while
 .Fn fidl_bsd_connection_wants_write
 is nonzero, and call
 .Fn fidl_bsd_connection_dispatch .
+.Pp
+Descriptors sent through a C connection are delivered with close-on-exec and
+close-on-fork locked.
+.Fn fidl_bsd_connection_preserve_sent_inheritance
+keeps each sent descriptor's own inheritance state instead, for providers
+that already harden what they deliver (for example a descriptor that may
+survive exactly one more fork).
+.Pp
+.Fn fidl_bsd_connections_wait
+is the provider-reactor form of that loop, the FIDL analogue of
+.Fn service_channels_wait
+in
+.Xr service_runtime 3 :
+one
+.Xr kevent 2
+wait on
+.Fa kq
+for the listener descriptor (when non-negative) and up to 256 server
+connections in
+.Fa slots ,
+followed by one bounded dispatch and flush for each ready connection.
+Empty slots have a
+.Dv NULL
+connection.
+It sets each slot's
+.Va error
+when that connection failed (the caller destroys it) and
+.Fa *listener_ready
+when the listener is readable.
+A listener error or end-of-file returns
+.Er EPIPE .
+.Pp
+The header-only helpers in
+.In fidl/bsd/sync_c.h
+let a synchronous C client wait for one call's completion flag:
+.Fn fidl_bsd_sync_deadline
+computes a monotonic deadline and
+.Fn fidl_bsd_sync_wait
+polls until the flag is set.
+On a timeout or transport failure the latter closes the connection, which
+completes the pending callback before its stack context expires, and returns
+the error.
 .Pp
 Closing from a callback is supported.
 Destroying the connection object from its own callback is not supported.

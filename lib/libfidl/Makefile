@@ -31,6 +31,13 @@ FIDL_PC= fidl.pc
 FIDL_PCDIR= ${LIBDATADIR}/pkgconfig
 FIDL_PCPACKAGE= libfidl-dev
 
+# Native descriptor type used by provider schemas (zx.Handle), for SDK users
+# compiling the installed /usr/share/fidl schemas.
+FILESGROUPS+= FIDL_ZX
+FIDL_ZX= tests/zx.fidl
+FIDL_ZXDIR= /usr/share/fidl
+FIDL_ZXPACKAGE= libfidl-dev
+
 FILESGROUPS+= FIDL_LICENSES
 FIDL_LICENSES= ${FUCHSIA}/LICENSE ${FUCHSIA}/PATENTS
 FIDL_LICENSESDIR= /usr/share/licenses/libfidl
