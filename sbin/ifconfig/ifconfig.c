@@ -657,7 +657,8 @@ main(int ac, char *av[])
 		ifmaybeload(args, args->ifname);
 
 		char *arg = args_peek(args);
-		if (if_nametoindex(args->ifname) == 0) {
+		if (if_nametoindex(args->ifname) == 0 &&
+		    !ifautocreate(args->ifname, arg)) {
 			/*
 			 * NOTE:  We must special-case the `create' command
 			 * right here as we would otherwise fail when trying
@@ -1845,6 +1846,7 @@ status(if_ctx *ctx, const struct sockaddr_dl *sdl __unused, struct ifaddrs *ifa)
 
 	printf("%s: flags=%x", ctx->ifname, ifa->ifa_flags);
 	print_bits("flags", &ifa->ifa_flags, 1, IFFBITS, nitems(IFFBITS));
+	print_rdomain(ctx);
 	print_metric(ctx);
 	print_mtu(ctx);
 	putchar('\n');

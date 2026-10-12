@@ -28,6 +28,7 @@ SRCS+=	ifclone.c		# clone device support
 SRCS+=	ifmac.c			# MAC support
 SRCS+=	ifmedia.c		# SIOC[GS]IFMEDIA support
 SRCS+=	iffib.c			# non-default FIB support
+SRCS+=	ifrdomain.c		# routing domains (rdomain(4))
 SRCS+=	ifvlan.c		# SIOC[GS]ETVLAN support
 SRCS+=	ifvxlan.c		# VXLAN support
 SRCS+=	ifgre.c			# GRE keys etc
