@@ -74,6 +74,13 @@ NOTE TO PEOPLE WHO THINK THAT FreeBSD 16.x IS SLOW:
 	ping and ping6 accept OpenBSD's -w maxwait.  vmstat -m -v prints
 	OpenBSD's pool listing; vmstat -m alone is unchanged.
 
+	pf queueing (HFSC, FQ-CoDel; OpenBSD "queue" rules) is not available
+	yet: a ruleset with queue definitions fails to load with
+	"DIOCADDQUEUE: Operation not supported" and the running ruleset stays.
+	ALTQ is retired.  Queueing follows in the next pf series.
+
+	The loopback interface MTU is 32768, as on OpenBSD (was 16384).
+
 	The pf manual pages are OpenBSD's: pf(4), pflog(4), pflow(4),
 	pfsync(4), divert(4), pf.conf(5), pf.os(5).  The former divert(4),
 	about ipfw's PF_DIVERT sockets, is now ipdivert(4).

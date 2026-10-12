@@ -78,7 +78,7 @@
 #elif defined(LARGE_LOMTU)
 #define LOMTU	131072
 #else
-#define LOMTU	16384
+#define LOMTU	32768	/* 5BSD: OpenBSD's loopback MTU */
 #endif
 
 #define	LO_CSUM_FEATURES	(CSUM_IP | CSUM_IP_TCP | CSUM_IP_UDP | \
