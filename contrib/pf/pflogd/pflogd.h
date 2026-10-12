@@ -19,7 +19,7 @@
 #include <sys/limits.h>
 #include <pcap.h>
 
-#define DEF_SNAPLEN 116		/* default plus allow for larger header of pflog */
+#define DEF_SNAPLEN 160		/* pfloghdr + ip hdr + proto hdr fit usually */
 #define PCAP_TO_MS 500		/* pcap read timeout (ms) */
 #define PCAP_NUM_PKTS 1000	/* max number of packets to process at each loop */
 #define PCAP_OPT_FIL 1		/* filter optimization */
