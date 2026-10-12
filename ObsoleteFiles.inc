@@ -1,5 +1,6 @@
 # 20261012: OpenBSD PF consumers: OpenBSD <net/pfvar.h>, libpfctl, pf netlink,
-# pflowctl, FreeBSD pf and its pflog/pflow/pfsync modules retired
+# pflowctl, FreeBSD pf and its pflog/pflow/pfsync modules retired; OpenBSD
+# tcpdump(8) (section 8)
 OLD_FILES+= boot/kernel/pflog.ko
 OLD_FILES+= boot/kernel/pflow.ko
 OLD_FILES+= boot/kernel/pfsync.ko
@@ -13,6 +14,7 @@ OLD_FILES+= usr/include/netpfil/pf/pf_nv.h
 OLD_FILES+= usr/include/netpfil/pf/pfsync_nv.h
 OLD_DIRS+= usr/include/netpfil/pf
 OLD_DIRS+= usr/include/netpfil
+OLD_FILES+= usr/share/man/man1/tcpdump.1.gz
 OLD_FILES+= usr/share/man/man8/pflowctl.8.gz
 
 # 20261011: retire native procfs, old ABIs, GEOM classes and optional MAC policies

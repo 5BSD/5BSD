@@ -65,6 +65,16 @@ NOTE TO PEOPLE WHO THINK THAT FreeBSD 16.x IS SLOW:
 	the rescue pfctl were converted.  snmp_pf's pfAltq objects describe
 	pf.conf "queue" definitions.
 
+	tcpdump(8) is OpenBSD's (manual in section 8): its output, options and
+	filter syntax follow OpenBSD, including the pflog(4) and pfsync(4)
+	printers.  FreeBSD tcpdump's long options (--immediate-mode, ...), -U,
+	-Q, -G, -W and -z are not available, and some letters mean something
+	else: -B is OpenBSD's filter drop setting (not the buffer size), -D
+	selects a direction (not the interface list) and -I prints the
+	interface name (not monitor mode).  Live captures are delivered as
+	packets arrive.  pcap and pcapng files are read through libpcap.  The
+	FreeBSD tcpdump remains available from ports (net/tcpdump).
+
 	ifconfig(8) prints interfaces in OpenBSD's format: no "metric 0" in the
 	header line; "lladdr" instead of "ether" for Ethernet addresses; an
 	"index" line; interface specific status, groups, media and link status

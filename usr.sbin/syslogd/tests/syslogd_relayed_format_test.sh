@@ -20,7 +20,7 @@ setup_relayed_format_test()
     confirm_INET_support_or_skip
 
     # Begin packet capture for single packet
-    tcpdump --immediate-mode -c 1 -i lo0 -w "${pcapfile}" dst port \
+    tcpdump -c 1 -i lo0 -w "${pcapfile}" dst port \
         "${SERVER_1_PORT}" &
     tcpdump_pid="$!"
 

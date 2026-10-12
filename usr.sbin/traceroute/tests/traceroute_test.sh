@@ -122,7 +122,7 @@ start_tcpdump()
 	rm -f "${PWD}/traceroute.pcap"
 
 	jexec trrtr daemon -p "${PWD}/tcpdump.pid" \
-	    tcpdump --immediate-mode -w "${PWD}/traceroute.pcap" -nv \
+	    tcpdump -w "${PWD}/traceroute.pcap" -nv \
 	    -i $interface
 
 	# Give tcpdump time to start
@@ -131,8 +131,8 @@ start_tcpdump()
 
 stop_tcpdump()
 {
-	# Sleep to give tcpdump a chance to finish flushing
-	jexec trrtr kill -USR2 $(cat "${PWD}/tcpdump.pid")
+	# tcpdump -w writes each packet unbuffered; give the last ones time
+	# to arrive.
 	sleep 1
 	jexec trrtr kill $(cat "${PWD}/tcpdump.pid")
 
