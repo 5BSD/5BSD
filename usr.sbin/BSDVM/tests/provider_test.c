@@ -3,12 +3,13 @@
  *
  * Copyright (c) 2026 Kory Heard
  *
- * Plane tests for vmd(8)'s per-client request handler.  Each test wires a real
- * mac_capability channel pair, forks a child running vmd's production worker
- * (vmd_test_worker -> vmd_worker -> vmd_request_handler), and drives it as a
- * client with libservice.  They cover request validation over the wire and, when
- * the AF_VSOCK transport is available, that a VSOCK_BIND returns a concrete
- * (cid,port) plus an accept-only, non-re-delegable listening descriptor.
+ * Plane tests for BSDVM's per-client bsd.vm.v1 server.  Each test wires a real
+ * mac_capability channel pair and forks a child running the production worker
+ * (vmd_test_worker -> vmd_worker).  Well-formed requests use the generated
+ * bsd.vm.v1 client bindings (the encoder libvmcmp uses); adversarial frames go
+ * through a raw libservice session.  When the AF_VSOCK transport is available,
+ * Bind returns a concrete (cid,port) plus an accept-only, non-re-delegable
+ * listening descriptor and Connect reaches it.
  */
 
 #include <sys/capsicum.h>
@@ -29,6 +30,8 @@
 #include <string.h>
 #include <unistd.h>
 
+#include <fidl/bsd.vm.v1/c/bsd.h>
+#include <fidl/bsd/sync_c.h>
 #include <libservice.h>
 
 #include "bsdvm_proto.h"
@@ -37,9 +40,33 @@
 #define	TEST_LABEL	"org.test.vm.provider"
 
 struct fixture {
-	struct service_session	*session;
+	struct fidl_bsd_connection *client;	/* generated client */
+	struct service_session	*session;	/* raw frames */
 	pid_t			 child;
 	uint32_t		 base;
+};
+
+/* FIDL v2 transactional message header. */
+struct wire_header {
+	uint32_t txid;
+	uint8_t flags[3], magic;
+	uint64_t ordinal;
+};
+_Static_assert(sizeof(struct wire_header) == 16, "FIDL header");
+
+#define	ORD_INFO	UINT64_C(0x5fb0a5d4bcec8055)
+#define	ORD_BIND	UINT64_C(0x261268ba614cdbf4)
+#define	ORD_CONNECT	UINT64_C(0x13fc03f59c62ccf2)
+#define	ORD_LIST	UINT64_C(0x13829ccfc03499b6)
+
+struct result {
+	bool done;
+	int error;		/* transport error */
+	int status;		/* application errno */
+	uint32_t value;
+	int fd;
+	uint32_t cid, port;
+	struct bsd_vm_v1_Window window;
 };
 
 static void
@@ -100,16 +127,42 @@ channel_pair(int *client, int *provider)
 	ATF_REQUIRE_EQ(1, receive.nfds);
 }
 
+static void
+wait_result(struct fixture *fixture, struct result *r)
+{
+	struct timespec deadline;
+
+	ATF_REQUIRE_EQ(0, fidl_bsd_sync_deadline(&deadline, 5000));
+	if (r->error == 0)
+		r->error = fidl_bsd_sync_wait(fixture->client, &r->done,
+		    &deadline);
+}
+
+static void
+info_done(void *p, int error, struct bsd_vm_v1_ProtocolInfo *v)
+{
+	struct result *r = p;
+
+	r->done = true;
+	r->error = error;
+	if (!error)
+		r->value = v->wire_version;
+}
+
 /*
- * Stand up a worker serving `label` on one end of a fresh channel and a client
- * service_session on the other, exactly as the accept loop would: resolve the
- * label's window in the parent's registry, then hand the forked worker that
- * base.  Does NOT reset the registry, so a test can stand up two DISTINCT labels
- * back to back and observe their windows never alias (scoping regression).
+ * Stand up a worker serving `label` on one end of a fresh channel, exactly as
+ * the accept loop would: resolve the label's window in the parent's registry,
+ * then hand the forked worker that base.  The client end is either a
+ * negotiated generated client or (raw) a libservice session.  Does NOT reset
+ * the registry, so a test can stand up two DISTINCT labels back to back and
+ * observe their windows never alias (scoping regression).
  */
 static void
-fixture_create_label(struct fixture *fixture, const char *label)
+fixture_start(struct fixture *fixture, const char *label, bool raw)
 {
+	struct fidl_bsd_empty empty = { 0 };
+	struct result r = { .fd = -1 };
+	uint32_t txid;
 	int client, provider;
 
 	memset(fixture, 0, sizeof(*fixture));
@@ -125,7 +178,18 @@ fixture_create_label(struct fixture *fixture, const char *label)
 		_exit(vmd_test_worker(provider, label, fixture->base));
 	}
 	close(provider);
-	ATF_REQUIRE_EQ(0, service_session_create(client, &fixture->session));
+	if (raw) {
+		ATF_REQUIRE_EQ(0, service_session_create(client,
+		    &fixture->session));
+		return;
+	}
+	ATF_REQUIRE_EQ(0, fidl_bsd_connection_create(client, FIDL_BSD_CLIENT,
+	    &fixture->client));
+	r.error = bsd_vm_v1_VM_GetProtocolInfo(fixture->client, &empty,
+	    info_done, &r, &txid);
+	wait_result(fixture, &r);
+	ATF_REQUIRE_EQ(0, r.error);
+	ATF_REQUIRE_EQ(VMD_WIRE_VERSION, r.value);
 }
 
 static void
@@ -134,7 +198,7 @@ fixture_create(struct fixture *fixture)
 
 	/* Clean-slate registry, then the canonical single-label fixture. */
 	vmd_test_registry_reset();
-	fixture_create_label(fixture, TEST_LABEL);
+	fixture_start(fixture, TEST_LABEL, false);
 }
 
 static void
@@ -142,115 +206,199 @@ fixture_destroy(struct fixture *fixture)
 {
 	int status;
 
-	service_session_close(fixture->session);
+	if (fixture->client != NULL)
+		fidl_bsd_connection_destroy(fixture->client);
+	if (fixture->session != NULL)
+		service_session_close(fixture->session);
 	ATF_REQUIRE_EQ(fixture->child, waitpid(fixture->child, &status, 0));
 	ATF_CHECK(WIFEXITED(status));
 	ATF_CHECK_EQ(0, WEXITSTATUS(status));
 }
 
-/*
- * Issue one request.  data/length are sent verbatim (so tests can forge a
- * wrong-length message); when send_fd >= 0 it rides along as an SCM descriptor.
- * On return the reply body and any single received descriptor are handed back.
- */
+static void
+bind_done(void *p, int error, struct bsd_vm_v1_VM_Bind_Result *v)
+{
+	struct result *r = p;
+
+	r->done = true;
+	r->error = error;
+	if (error)
+		return;
+	if (v->tag == bsd_vm_v1_VM_Bind_Result_err_tag) {
+		r->status = (int)v->value.err;
+		return;
+	}
+	ATF_REQUIRE_EQ(bsd_vm_v1_VM_Bind_Result_response_tag, v->tag);
+	r->fd = fidl_bsd_take_fd(&v->value.response.listener);
+	r->cid = v->value.response.cid;
+	r->port = v->value.response.port;
+}
+
+static void
+connect_done(void *p, int error, struct bsd_vm_v1_VM_Connect_Result *v)
+{
+	struct result *r = p;
+
+	r->done = true;
+	r->error = error;
+	if (error)
+		return;
+	if (v->tag == bsd_vm_v1_VM_Connect_Result_err_tag) {
+		r->status = (int)v->value.err;
+		return;
+	}
+	ATF_REQUIRE_EQ(bsd_vm_v1_VM_Connect_Result_response_tag, v->tag);
+	r->fd = fidl_bsd_take_fd(&v->value.response.socket);
+}
+
+static void
+list_done(void *p, int error, struct bsd_vm_v1_VM_List_Result *v)
+{
+	struct result *r = p;
+
+	r->done = true;
+	r->error = error;
+	if (error)
+		return;
+	if (v->tag == bsd_vm_v1_VM_List_Result_err_tag) {
+		r->status = (int)v->value.err;
+		return;
+	}
+	ATF_REQUIRE_EQ(bsd_vm_v1_VM_List_Result_response_tag, v->tag);
+	r->window = v->value.response;
+}
+
+/* Bind; returns the application errno with the result in *r. */
 static int
-call_raw(struct fixture *fixture, const void *data, size_t length, int send_fd,
-    struct vmd_reply *reply, int *got_fd)
+vm_bind(struct fixture *fixture, uint32_t index, uint32_t backlog,
+    struct result *r)
+{
+	struct bsd_vm_v1_BindRequest request = { index, backlog };
+	uint32_t txid;
+
+	memset(r, 0, sizeof(*r));
+	r->fd = -1;
+	r->error = bsd_vm_v1_VM_Bind(fixture->client, &request, bind_done, r,
+	    &txid);
+	wait_result(fixture, r);
+	ATF_REQUIRE_EQ(0, r->error);
+	return (r->status);
+}
+
+static int
+vm_connect(struct fixture *fixture, uint32_t cid, uint32_t port,
+    struct result *r)
+{
+	struct bsd_vm_v1_ConnectRequest request = { cid, port };
+	uint32_t txid;
+
+	memset(r, 0, sizeof(*r));
+	r->fd = -1;
+	r->error = bsd_vm_v1_VM_Connect(fixture->client, &request,
+	    connect_done, r, &txid);
+	wait_result(fixture, r);
+	ATF_REQUIRE_EQ(0, r->error);
+	return (r->status);
+}
+
+static int
+vm_list(struct fixture *fixture, struct result *r)
+{
+	struct fidl_bsd_empty empty = { 0 };
+	uint32_t txid;
+
+	memset(r, 0, sizeof(*r));
+	r->fd = -1;
+	r->error = bsd_vm_v1_VM_List(fixture->client, &empty, list_done, r,
+	    &txid);
+	wait_result(fixture, r);
+	ATF_REQUIRE_EQ(0, r->error);
+	return (r->status);
+}
+
+/* Send raw bytes (and optionally one descriptor); return the call result. */
+static int
+send_raw(struct service_session *session, const void *data, size_t length,
+    int attach_fd)
 {
 	struct service_call_options options = SERVICE_CALL_OPTIONS_INITIALIZER;
 	struct service_message outgoing;
 	struct service_reply incoming;
-	int fds[1] = { -1 };
-	int rc;
+	uint8_t reply[128];
+	int fd, received = -1, rc;
 
 	memset(&outgoing, 0, sizeof(outgoing));
 	outgoing.size = sizeof(outgoing);
 	outgoing.data = data;
 	outgoing.length = length;
-	if (send_fd >= 0) {
-		outgoing.fds = &send_fd;
+	if (attach_fd >= 0) {
+		fd = attach_fd;
+		outgoing.fds = &fd;
 		outgoing.nfds = 1;
 	}
 	memset(&incoming, 0, sizeof(incoming));
 	incoming.size = sizeof(incoming);
 	incoming.data = reply;
-	incoming.capacity = sizeof(*reply);
-	incoming.fds = fds;
+	incoming.capacity = sizeof(reply);
+	incoming.fds = &received;
 	incoming.fd_capacity = 1;
-	options.timeout_ms = 5000;
-	memset(reply, 0, sizeof(*reply));
-	rc = service_session_call(fixture->session, &outgoing, &incoming,
-	    &options);
-	if (got_fd != NULL)
-		*got_fd = (incoming.nfds == 1) ? fds[0] : -1;
-	else if (incoming.nfds == 1)
-		close(fds[0]);
+	options.timeout_ms = 2000;
+	rc = service_session_call(session, &outgoing, &incoming, &options);
+	if (rc == 0 && incoming.nfds != 0 && received >= 0)
+		(void)close(received);
 	return (rc);
 }
 
-static struct vmd_request
-bind_request(uint32_t port, uint32_t backlog)
+/* A raw frame: header plus `body` bytes. */
+static int
+send_frame(struct service_session *session, uint64_t ordinal,
+    const void *body, size_t body_length, int attach_fd)
 {
-	struct vmd_request rq;
+	uint8_t frame[128];
+	struct wire_header header = { 3, { 2, 0, 0 }, 1, ordinal };
 
-	memset(&rq, 0, sizeof(rq));
-	rq.op = VMD_OP_VSOCK_BIND;
-	rq.port = port;
-	rq.backlog = backlog;
-	rq.cid = 0;
-	return (rq);
-}
-
-static struct vmd_request
-connect_request(uint32_t cid, uint32_t port)
-{
-	struct vmd_request rq;
-
-	memset(&rq, 0, sizeof(rq));
-	rq.op = VMD_OP_VSOCK_CONNECT;
-	rq.port = port;
-	rq.backlog = 0;
-	rq.cid = cid;
-	return (rq);
-}
-
-static struct vmd_request
-list_request(void)
-{
-	struct vmd_request rq;
-
-	memset(&rq, 0, sizeof(rq));
-	rq.op = VMD_OP_VSOCK_LIST;
-	return (rq);
+	ATF_REQUIRE(sizeof(header) + body_length <= sizeof(frame));
+	memcpy(frame, &header, sizeof(header));
+	if (body_length != 0)
+		memcpy(frame + sizeof(header), body, body_length);
+	return (send_raw(session, frame, sizeof(header) + body_length,
+	    attach_fd));
 }
 
 /*
- * Issue one LIST request and hand back the full (fd-less) list reply.  A
- * correctly framed reply of exactly sizeof(vmd_list_reply) is required.
+ * A raw session that has negotiated, so a rejection is the provider's
+ * decoding or validation, not the negotiation rule.
  */
-static struct vmd_list_reply
-call_list(struct fixture *fixture, const void *data, size_t length)
+static void
+raw_negotiated(struct fixture *fixture)
 {
-	struct service_call_options options = SERVICE_CALL_OPTIONS_INITIALIZER;
-	struct service_message outgoing;
-	struct service_reply incoming;
-	struct vmd_list_reply reply;
 
-	memset(&outgoing, 0, sizeof(outgoing));
-	outgoing.size = sizeof(outgoing);
-	outgoing.data = data;
-	outgoing.length = length;
-	memset(&reply, 0, sizeof(reply));
-	memset(&incoming, 0, sizeof(incoming));
-	incoming.size = sizeof(incoming);
-	incoming.data = &reply;
-	incoming.capacity = sizeof(reply);
-	options.timeout_ms = 5000;
-	ATF_REQUIRE_EQ(0,
-	    service_session_call(fixture->session, &outgoing, &incoming, &options));
-	ATF_REQUIRE_EQ(sizeof(reply), incoming.length);
-	ATF_CHECK_EQ(0, incoming.nfds);
-	return (reply);
+	vmd_test_registry_reset();
+	fixture_start(fixture, TEST_LABEL, true);
+	ATF_REQUIRE_EQ(0, send_frame(fixture->session, ORD_INFO, NULL, 0, -1));
+}
+
+/*
+ * The frame is refused by closing the session: no reply, and nothing later on
+ * the session is honoured.
+ */
+static void
+reject(bool negotiate, uint64_t ordinal, const void *body, size_t length,
+    int attach_fd)
+{
+	struct fixture fixture;
+
+	if (negotiate)
+		raw_negotiated(&fixture);
+	else {
+		vmd_test_registry_reset();
+		fixture_start(&fixture, TEST_LABEL, true);
+	}
+	ATF_CHECK_EQ(-1, send_frame(fixture.session, ordinal, body, length,
+	    attach_fd));
+	ATF_CHECK(errno != ETIMEDOUT);
+	ATF_CHECK_EQ(-1, send_frame(fixture.session, ORD_INFO, NULL, 0, -1));
+	fixture_destroy(&fixture);
 }
 
 ATF_TC(bind_returns_accept_only_listener);
@@ -260,33 +408,27 @@ ATF_TC_HEAD(bind_returns_accept_only_listener, tc)
 	atf_tc_set_md_var(tc, "require.kmods",
 	    "mac_capability mac_capability_channel");
 	atf_tc_set_md_var(tc, "descr",
-	    "A VSOCK_BIND returns a concrete (cid,port) and an accept-only, "
+	    "Bind returns a concrete (cid,port) and an accept-only, "
 	    "non-re-delegable listening descriptor");
 }
 ATF_TC_BODY(bind_returns_accept_only_listener, tc)
 {
 	struct fixture fixture;
-	struct vmd_request rq;
-	struct vmd_reply reply;
+	struct result r;
 	cap_rights_t rights, expected;
-	int fd;
 
 	fixture_create(&fixture);
-	rq = bind_request(0, 0);
-	ATF_REQUIRE_EQ(0, call_raw(&fixture, &rq, sizeof(rq), -1, &reply, &fd));
-
-	if (reply.status != 0) {
+	if (vm_bind(&fixture, 0, 0, &r) != 0) {
 		/* No usable AF_VSOCK transport in this environment. */
-		if (fd >= 0)
-			close(fd);
+		ATF_CHECK_EQ(-1, r.fd);
 		fixture_destroy(&fixture);
 		atf_tc_skip("AF_VSOCK bind unavailable: %s",
-		    strerror(reply.status));
+		    strerror(r.status));
 	}
 
-	ATF_REQUIRE_MSG(fd >= 0, "success reply carried no descriptor");
-	ATF_CHECK_EQ(VMADDR_CID_LOCAL, reply.cid);
-	ATF_CHECK_EQ(fixture.base + 0, reply.port);
+	ATF_REQUIRE_MSG(r.fd >= 0, "success reply carried no descriptor");
+	ATF_CHECK_EQ(VMADDR_CID_LOCAL, r.cid);
+	ATF_CHECK_EQ(fixture.base + 0, r.port);
 
 	/*
 	 * The listener is limited to accept + the data-plane rights that
@@ -294,7 +436,7 @@ ATF_TC_BODY(bind_returns_accept_only_listener, tc)
 	 * {get,set}sockopt/event/fstat), so accepted connections are usable,
 	 * while bind/connect/listen are withheld so it cannot be repurposed.
 	 */
-	ATF_REQUIRE_EQ(0, cap_rights_get(fd, &rights));
+	ATF_REQUIRE_EQ(0, cap_rights_get(r.fd, &rights));
 	cap_rights_init(&expected, CAP_ACCEPT, CAP_EVENT, CAP_FSTAT, CAP_READ,
 	    CAP_WRITE, CAP_SHUTDOWN, CAP_GETSOCKOPT, CAP_SETSOCKOPT);
 	ATF_CHECK(cap_rights_contains(&expected, &rights));
@@ -303,7 +445,7 @@ ATF_TC_BODY(bind_returns_accept_only_listener, tc)
 	ATF_CHECK(!cap_rights_is_set(&rights, CAP_CONNECT));
 	ATF_CHECK(!cap_rights_is_set(&rights, CAP_LISTEN));
 
-	close(fd);
+	close(r.fd);
 	fixture_destroy(&fixture);
 }
 
@@ -314,18 +456,16 @@ ATF_TC_HEAD(connect_reaches_a_bound_listener, tc)
 	atf_tc_set_md_var(tc, "require.kmods",
 	    "mac_capability mac_capability_channel");
 	atf_tc_set_md_var(tc, "descr",
-	    "A VSOCK_CONNECT to a peer's advertised (cid,port) delivers a live "
+	    "Connect to a peer's advertised (cid,port) delivers a live "
 	    "connected socket that carries data end-to-end to the listener, "
 	    "rights-limited to the accept-less data-plane set");
 }
 ATF_TC_BODY(connect_reaches_a_bound_listener, tc)
 {
 	struct fixture fixture;
-	struct vmd_request rq;
-	struct vmd_reply reply;
+	struct result r;
 	cap_rights_t rights, expected;
 	int listener, conn, accepted;
-	uint32_t cid, port;
 	char msg[] = "vsock-peer-ipc";
 	char buf[sizeof(msg)];
 	ssize_t n;
@@ -333,36 +473,23 @@ ATF_TC_BODY(connect_reaches_a_bound_listener, tc)
 	fixture_create(&fixture);
 
 	/* Bind a listener the way a peer would, to learn its concrete address. */
-	rq = bind_request(0, 0);
-	ATF_REQUIRE_EQ(0,
-	    call_raw(&fixture, &rq, sizeof(rq), -1, &reply, &listener));
-	if (reply.status != 0) {
-		/* No usable AF_VSOCK transport in this environment. */
-		if (listener >= 0)
-			close(listener);
+	if (vm_bind(&fixture, 0, 0, &r) != 0) {
 		fixture_destroy(&fixture);
 		atf_tc_skip("AF_VSOCK bind unavailable: %s",
-		    strerror(reply.status));
+		    strerror(r.status));
 	}
-	ATF_REQUIRE_MSG(listener >= 0, "bind reply carried no descriptor");
-	cid = reply.cid;
-	port = reply.port;
+	ATF_REQUIRE_MSG(r.fd >= 0, "bind reply carried no descriptor");
+	listener = r.fd;
 
-	/* Dial that concrete (cid,port): the gap this closes. */
-	rq = connect_request(cid, port);
-	ATF_REQUIRE_EQ(0, call_raw(&fixture, &rq, sizeof(rq), -1, &reply, &conn));
-	if (reply.status != 0) {
+	/* Dial that concrete (cid,port). */
+	if (vm_connect(&fixture, r.cid, r.port, &r) != 0) {
 		close(listener);
-		if (conn >= 0)
-			close(conn);
 		fixture_destroy(&fixture);
 		atf_tc_skip("AF_VSOCK connect unavailable: %s",
-		    strerror(reply.status));
+		    strerror(r.status));
 	}
-	ATF_REQUIRE_MSG(conn >= 0, "connect reply carried no descriptor");
-	/* The reply echoes the concrete target that was reached. */
-	ATF_CHECK_EQ(cid, reply.cid);
-	ATF_CHECK_EQ(port, reply.port);
+	ATF_REQUIRE_MSG(r.fd >= 0, "connect reply carried no descriptor");
+	conn = r.fd;
 
 	/*
 	 * The connected fd is limited to the accept-less data-plane rights:
@@ -398,12 +525,11 @@ ATF_TC_BODY(connect_reaches_a_bound_listener, tc)
 }
 
 /*
- * LIST reports the CALLER'S OWN window and only its own.  The first fixture's
- * LIST must return the concrete range [base, base+PORTS) on the host-local CID,
+ * List reports the CALLER'S OWN window and only its own.  The first fixture's
+ * List must return the concrete range [base, base+PORTS) on the host-local CID,
  * matching the base the parent registry resolved for its label.  A second,
- * DISTINCT label — stood up without resetting the registry — owns a different
- * window, and its LIST reports that different window, never the first caller's.
- * This is the scoping invariant: a Component can never learn another's window.
+ * DISTINCT label -- stood up without resetting the registry -- owns a different
+ * window, and its List reports that different window, never the first caller's.
  */
 ATF_TC(list_reports_only_callers_window);
 ATF_TC_HEAD(list_reports_only_callers_window, tc)
@@ -412,43 +538,66 @@ ATF_TC_HEAD(list_reports_only_callers_window, tc)
 	atf_tc_set_md_var(tc, "require.kmods",
 	    "mac_capability mac_capability_channel");
 	atf_tc_set_md_var(tc, "descr",
-	    "VSOCK_LIST reports the caller's own port window and a distinct "
+	    "List reports the caller's own port window and a distinct "
 	    "label sees a distinct window, never the caller's");
 }
 ATF_TC_BODY(list_reports_only_callers_window, tc)
 {
 	struct fixture fa, fb;
-	struct vmd_list_reply ra, rb;
-	struct vmd_request rq;
+	struct result ra, rb;
 
 	vmd_test_registry_reset();
-	fixture_create_label(&fa, "org.test.vm.alpha");
-	fixture_create_label(&fb, "org.test.vm.bravo");
+	fixture_start(&fa, "org.test.vm.alpha", false);
+	fixture_start(&fb, "org.test.vm.bravo", false);
 
 	/* Two distinct labels must own two distinct windows. */
 	ATF_REQUIRE(fa.base != fb.base);
 
-	rq = list_request();
-	ra = call_list(&fa, &rq, sizeof(rq));
-	ATF_CHECK_EQ(0, ra.status);
-	ATF_CHECK_EQ(VMADDR_CID_LOCAL, ra.cid);
-	ATF_CHECK_EQ(fa.base, ra.port_base);
-	ATF_CHECK_EQ(fa.base + VMD_PORTS_PER_LABEL, ra.port_limit);
-	ATF_CHECK_EQ(VMD_PORTS_PER_LABEL, ra.port_count);
+	ATF_CHECK_EQ(0, vm_list(&fa, &ra));
+	ATF_CHECK_EQ(VMADDR_CID_LOCAL, ra.window.cid);
+	ATF_CHECK_EQ(fa.base, ra.window.port_base);
+	ATF_CHECK_EQ(fa.base + VMD_PORTS_PER_LABEL, ra.window.port_limit);
+	ATF_CHECK_EQ(VMD_PORTS_PER_LABEL, ra.window.port_count);
 
-	rq = list_request();
-	rb = call_list(&fb, &rq, sizeof(rq));
-	ATF_CHECK_EQ(0, rb.status);
-	ATF_CHECK_EQ(fb.base, rb.port_base);
-	ATF_CHECK_EQ(fb.base + VMD_PORTS_PER_LABEL, rb.port_limit);
+	ATF_CHECK_EQ(0, vm_list(&fb, &rb));
+	ATF_CHECK_EQ(fb.base, rb.window.port_base);
+	ATF_CHECK_EQ(fb.base + VMD_PORTS_PER_LABEL, rb.window.port_limit);
 
-	/* Neither caller's LIST ever reports the other's window. */
-	ATF_CHECK(ra.port_base != rb.port_base);
-	ATF_CHECK(ra.port_base != fb.base);
-	ATF_CHECK(rb.port_base != fa.base);
+	/* Neither caller's List ever reports the other's window. */
+	ATF_CHECK(ra.window.port_base != rb.window.port_base);
+	ATF_CHECK(ra.window.port_base != fb.base);
+	ATF_CHECK(rb.window.port_base != fa.base);
 
 	fixture_destroy(&fb);
 	fixture_destroy(&fa);
+}
+
+ATF_TC(invalid_arguments_are_refused);
+ATF_TC_HEAD(invalid_arguments_are_refused, tc)
+{
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "require.kmods",
+	    "mac_capability mac_capability_channel");
+	atf_tc_set_md_var(tc, "descr",
+	    "A Bind outside the caller's window and a Connect to the wildcard "
+	    "CID are refused EINVAL without a descriptor; the session lives");
+}
+ATF_TC_BODY(invalid_arguments_are_refused, tc)
+{
+	struct fixture fixture;
+	struct result r;
+
+	fixture_create(&fixture);
+	ATF_CHECK_EQ(EINVAL, vm_bind(&fixture, VMD_PORTS_PER_LABEL, 0, &r));
+	ATF_CHECK_EQ(-1, r.fd);
+	ATF_CHECK_EQ(EINVAL, vm_bind(&fixture, UINT32_MAX, 0, &r));
+	ATF_CHECK_EQ(-1, r.fd);
+	ATF_CHECK_EQ(EINVAL, vm_connect(&fixture, VMADDR_CID_ANY,
+	    VMD_PORT_BASE, &r));
+	ATF_CHECK_EQ(-1, r.fd);
+	ATF_CHECK_EQ(0, vm_list(&fixture, &r));
+	ATF_CHECK_EQ(fixture.base, r.window.port_base);
+	fixture_destroy(&fixture);
 }
 
 ATF_TC(malformed_requests_are_rejected);
@@ -458,79 +607,56 @@ ATF_TC_HEAD(malformed_requests_are_rejected, tc)
 	atf_tc_set_md_var(tc, "require.kmods",
 	    "mac_capability mac_capability_channel");
 	atf_tc_set_md_var(tc, "descr",
-	    "Wrong length, an unexpected descriptor, an unknown op, a BIND "
-	    "naming a cid, an out-of-window port, and a CONNECT with a bad "
-	    "backlog or wildcard cid are all refused");
+	    "A request before negotiation, an unknown method, a truncated "
+	    "header, a missing or trailing body, a pre-FIDL record and an "
+	    "attached descriptor all close the session");
 }
 ATF_TC_BODY(malformed_requests_are_rejected, tc)
 {
+	uint32_t body[2] = { 0, 0 };
+	struct vmd_request legacy;
 	struct fixture fixture;
-	struct vmd_request rq;
-	struct vmd_reply reply;
-	int nullfd;
+	int pipefd[2];
+	char byte;
 
-	fixture_create(&fixture);
-
-	/* Wrong message length: EPROTO before validation. */
-	rq = bind_request(0, 0);
-	ATF_REQUIRE_EQ(0,
-	    call_raw(&fixture, &rq, sizeof(rq) - 1, -1, &reply, NULL));
-	ATF_CHECK_EQ(EPROTO, reply.status);
-
-	/* An unexpected descriptor on a correctly sized request: EPROTO. */
-	nullfd = open("/dev/null", O_RDONLY | O_CLOEXEC);
-	ATF_REQUIRE(nullfd >= 0);
-	rq = bind_request(0, 0);
-	ATF_REQUIRE_EQ(0,
-	    call_raw(&fixture, &rq, sizeof(rq), nullfd, &reply, NULL));
-	ATF_CHECK_EQ(EPROTO, reply.status);
-	close(nullfd);
-
-	/* Unknown op: EINVAL. */
-	rq = bind_request(0, 0);
-	rq.op = VMD_OP_VSOCK_BIND + 99;
-	ATF_REQUIRE_EQ(0, call_raw(&fixture, &rq, sizeof(rq), -1, &reply, NULL));
-	ATF_CHECK_EQ(EINVAL, reply.status);
-
-	/* A BIND naming a nonzero cid: EINVAL. */
-	rq = bind_request(0, 0);
-	rq.cid = 0xdeadbeefu;
-	ATF_REQUIRE_EQ(0, call_raw(&fixture, &rq, sizeof(rq), -1, &reply, NULL));
-	ATF_CHECK_EQ(EINVAL, reply.status);
-
-	/* Port index outside the caller's window: EINVAL. */
-	rq = bind_request(VMD_PORTS_PER_LABEL, 0);
-	ATF_REQUIRE_EQ(0, call_raw(&fixture, &rq, sizeof(rq), -1, &reply, NULL));
-	ATF_CHECK_EQ(EINVAL, reply.status);
-
-	/* A CONNECT with a nonzero backlog: EINVAL. */
-	rq = connect_request(VMADDR_CID_LOCAL, VMD_PORT_BASE);
-	rq.backlog = 1;
-	ATF_REQUIRE_EQ(0, call_raw(&fixture, &rq, sizeof(rq), -1, &reply, NULL));
-	ATF_CHECK_EQ(EINVAL, reply.status);
-
-	/* A CONNECT to the wildcard CID: EINVAL. */
-	rq = connect_request(VMADDR_CID_ANY, VMD_PORT_BASE);
-	ATF_REQUIRE_EQ(0, call_raw(&fixture, &rq, sizeof(rq), -1, &reply, NULL));
-	ATF_CHECK_EQ(EINVAL, reply.status);
-
-	/* A LIST of the wrong length: EPROTO before validation. */
-	rq = list_request();
-	ATF_REQUIRE_EQ(0,
-	    call_raw(&fixture, &rq, sizeof(rq) - 1, -1, &reply, NULL));
-	ATF_CHECK_EQ(EPROTO, reply.status);
-
-	/* A LIST with a stray nonzero field (LIST owns/scopes nothing): EINVAL. */
-	rq = list_request();
-	rq.port = 1;
-	ATF_REQUIRE_EQ(0, call_raw(&fixture, &rq, sizeof(rq), -1, &reply, NULL));
-	ATF_CHECK_EQ(EINVAL, reply.status);
-	rq = list_request();
-	rq.cid = VMADDR_CID_LOCAL;
-	ATF_REQUIRE_EQ(0, call_raw(&fixture, &rq, sizeof(rq), -1, &reply, NULL));
-	ATF_CHECK_EQ(EINVAL, reply.status);
-
+	/* The well-formed raw List is answered. */
+	raw_negotiated(&fixture);
+	ATF_CHECK_EQ(0, send_frame(fixture.session, ORD_LIST, NULL, 0, -1));
 	fixture_destroy(&fixture);
+
+	/* Before negotiation. */
+	reject(false, ORD_LIST, NULL, 0, -1);
+	/* Unknown strict method. */
+	reject(true, UINT64_C(0x7fff), NULL, 0, -1);
+	/* Truncated header (8 of 16 bytes). */
+	raw_negotiated(&fixture);
+	{
+		struct wire_header h = { 3, { 2, 0, 0 }, 1, ORD_LIST };
+
+		ATF_CHECK_EQ(-1, send_raw(fixture.session, &h, 8, -1));
+	}
+	fixture_destroy(&fixture);
+	/* Bind without its body. */
+	reject(true, ORD_BIND, NULL, 0, -1);
+	/* Connect with a truncated body. */
+	reject(true, ORD_CONNECT, body, 4, -1);
+	/* List (no payload) with trailing bytes. */
+	reject(true, ORD_LIST, body, sizeof(body), -1);
+	/* A pre-FIDL LIST record. */
+	memset(&legacy, 0, sizeof(legacy));
+	legacy.op = VMD_OP_VSOCK_LIST;
+	vmd_test_registry_reset();
+	fixture_start(&fixture, TEST_LABEL, true);
+	ATF_CHECK_EQ(-1, send_raw(fixture.session, &legacy, sizeof(legacy),
+	    -1));
+	fixture_destroy(&fixture);
+	/* An attached descriptor: rejected, and the provider's copy closed. */
+	ATF_REQUIRE_EQ(0, pipe(pipefd));
+	reject(true, ORD_LIST, NULL, 0, pipefd[1]);
+	close(pipefd[1]);
+	ATF_REQUIRE(fcntl(pipefd[0], F_SETFL, O_NONBLOCK) != -1);
+	ATF_CHECK_EQ(0, read(pipefd[0], &byte, 1));
+	close(pipefd[0]);
 }
 
 ATF_TP_ADD_TCS(tp)
@@ -539,6 +665,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, bind_returns_accept_only_listener);
 	ATF_TP_ADD_TC(tp, connect_reaches_a_bound_listener);
 	ATF_TP_ADD_TC(tp, list_reports_only_callers_window);
+	ATF_TP_ADD_TC(tp, invalid_arguments_are_refused);
 	ATF_TP_ADD_TC(tp, malformed_requests_are_rejected);
 	return (atf_no_error());
 }

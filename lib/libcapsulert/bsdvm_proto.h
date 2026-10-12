@@ -3,8 +3,13 @@
  *
  * Copyright (c) 2026 Kory Heard
  *
- * Wire protocol for BSDVM(8) — the virtual-machine component (renamed from
- * vmd; the VMD_* identifiers below are the unchanged wire names).
+ * system.VM constants for BSDVM(8) -- the virtual-machine component (renamed
+ * from vmd) -- and its legacy pre-FIDL wire records.  The current client
+ * (libvmcmp) and provider speak bsd.vm.v1 (lib/libvmcmp/vmcmp.fidl); the
+ * records below (vmd_request and its replies) are retained for source/ABI
+ * compatibility, are rejected by the current provider, and do not describe
+ * the active wire format.  The VMD_OP_* numbers remain the BSDVM DTrace
+ * request probe's operation codes.
  *
  * BSDVM is the VM authority.  For now it brokers vsock (VM socket) endpoints; it
  * will grow to run full virtual machines under bhyve.  It is a socket-free
@@ -45,6 +50,9 @@
 #include <stdint.h>
 
 #define	VMD_SERVICE_NAME	"system.VM"
+
+/* bsd.vm.v1 GetProtocolInfo wire_version. */
+#define	VMD_WIRE_VERSION	1
 
 #define	VMD_OP_VSOCK_BIND	1	/* bind+listen a vsock endpoint for me */
 #define	VMD_OP_VSOCK_CONNECT	2	/* dial a peer's advertised (cid,port) */

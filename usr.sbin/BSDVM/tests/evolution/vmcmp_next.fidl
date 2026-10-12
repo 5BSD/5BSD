@@ -1,0 +1,55 @@
+// SPDX-License-Identifier: BSD-2-Clause
+// Schema-evolution fixture for system.VM.  At bsd:1 this is exactly
+// lib/libvmcmp/vmcmp.fidl (tools/build/fuchsia/test-bindings.py checks
+// it); bsd:2 adds a method, as a future provider release would.  The peer
+// built from bsd:2 is paired with the real bsd:1 client and provider.
+@available(platform="bsd", added=1)
+library bsd.vm.v1;
+
+using zx;
+
+type ProtocolInfo = struct { wire_version uint32; };
+// index: a slot within the caller's own window (0 .. 15); vmd maps it into
+// the label-scoped port range, so it can never name another label's port.
+// backlog: the listen(2) backlog; 0 selects the default, larger values are
+// clamped to SOMAXCONN.
+type BindRequest = struct {
+    index uint32;
+    backlog uint32;
+};
+// A host-local (VMADDR_CID_LOCAL) listening AF_VSOCK socket limited to
+// accept, event, fstat and the data-plane rights its accepted sockets need;
+// it can be transferred no further.
+type Listener = resource struct {
+    listener zx.Handle;
+    cid uint32;
+    port uint32;
+};
+// A concrete peer endpoint, as the peer's own Bind reported it.  cid must
+// not be VMADDR_CID_ANY (0xffffffff).
+type ConnectRequest = struct {
+    cid uint32;
+    port uint32;
+};
+// A connected AF_VSOCK socket limited to data-plane rights; it can be
+// transferred no further.
+type Connected = resource struct {
+    socket zx.Handle;
+};
+// The caller's own window: [port_base, port_limit) on cid.
+type Window = struct {
+    cid uint32;
+    port_base uint32;
+    port_limit uint32;
+    port_count uint32;
+};
+closed protocol VM {
+    strict GetProtocolInfo() -> (ProtocolInfo);
+    // Errors are errno values (EINVAL: bad index or cid).
+    strict Bind(BindRequest) -> (Listener) error uint32;
+    strict Connect(ConnectRequest) -> (Connected) error uint32;
+    strict List() -> (Window) error uint32;
+    // Added in the next revision; unknown to wire-major-1 peers.
+    @available(added=2)
+    strict Probe() -> (ProtocolInfo);
+};

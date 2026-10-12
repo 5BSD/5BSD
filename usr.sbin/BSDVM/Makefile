@@ -36,15 +36,17 @@ CAP_UNITNAME=	Unit.ucl
 CAP_UNITMODE=	0444
 CAP_UNITPACKAGE=	runtime
 
-# bsdvm_proto.h (libcapsulert), AF_VSOCK/sockaddr_vm (sys/sys/vsock.h), and the
-# socket-free service_provider transport (libservice over libchannel).
+# bsdvm_proto.h (libcapsulert), AF_VSOCK/sockaddr_vm (sys/sys/vsock.h), the
+# socket-free service_provider transport (libservice over libchannel) and the
+# bsd.vm.v1 server bindings.
+CFLAGS+=	-I${FIDLGEN.vmcmp} -I${SRCTOP}/lib/libfidl/include
 CFLAGS+=	-I${SRCTOP}/lib/libcapsulert
 CFLAGS+=	-I${SRCTOP}/lib/libservice
 CFLAGS+=	-I${SRCTOP}/lib/libchannel
 CFLAGS+=	-I${SRCTOP}/sys
 
 # pthread: a mutex serializes access to the accept loop's window registry.
-LIBADD=		service channel pthread
+LIBADD=		vmcmp service channel pthread fidl_bsd
 
 # Optional USDT DTrace provider (bsdvm_provider.d -> bsdvm_provider.h).
 # MK_DTRACE-guarded so bsdvm builds identically with and without DTrace; the
@@ -53,6 +55,13 @@ LIBADD=		service channel pthread
 SRCS+=		bsdvm_provider.d
 CFLAGS+=	-I${.OBJDIR} -DWITH_DTRACE
 .endif
+
+# Bindings generated at build time (fidl-bindings.mk).
+FIDL_BINDINGS+=	vmcmp
+FIDL_SCHEMAS.vmcmp=	lib/libfidl/tests/zx.fidl \
+	lib/libvmcmp/vmcmp.fidl
+FIDL_LIBRARY.vmcmp=	bsd.vm.v1
+.include "${SRCTOP}/lib/libfidl/fidl-bindings.mk"
 
 .include <bsd.prog.mk>
 
