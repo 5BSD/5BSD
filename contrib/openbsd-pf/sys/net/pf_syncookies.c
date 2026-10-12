@@ -94,13 +94,14 @@ union pf_syncookie {
 #define	PF_SYNCOOKIE_SECRET_SIZE	SIPHASH_KEY_LENGTH
 #define	PF_SYNCOOKIE_SECRET_LIFETIME	15 /* seconds */
 
-static struct {
+struct pf_syncookie_status_s {					/* 5BSD: VNET */
 	struct timeout	keytimeout;
 	volatile uint	oddeven;
 	SIPHASH_KEY	key[2];
 	uint32_t	hiwat;	/* absolute; # of states */
 	uint32_t	lowat;
-} pf_syncookie_status;
+};
+PF_VNET_DEFINE_STATIC(struct pf_syncookie_status_s, pf_syncookie_status); /* 5BSD: VNET */
 
 void		pf_syncookie_rotate(void *);
 void		pf_syncookie_newkey(void);
@@ -116,6 +117,14 @@ pf_syncookies_init(void)
 	pf_syncookie_status.hiwat = PFSTATE_HIWAT * PF_SYNCOOKIES_HIWATPCT/100;
 	pf_syncookie_status.lowat = PFSTATE_HIWAT * PF_SYNCOOKIES_LOWATPCT/100;
 	pf_syncookies_setmode(PF_SYNCOOKIES_NEVER);
+}
+
+/* 5BSD: VNET - stop the key rotation of a vnet that goes away. */
+void	pf_syncookies_vnet_fini(void);
+void
+pf_syncookies_vnet_fini(void)
+{
+	timeout_del_barrier(&pf_syncookie_status.keytimeout);
 }
 
 int

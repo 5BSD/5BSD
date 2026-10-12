@@ -105,11 +105,13 @@ struct pf_fragment_tag {
 	u_int16_t	 ft_maxlen;	/* maximum fragment payload length */
 };
 
-TAILQ_HEAD(pf_fragqueue, pf_fragment)	pf_fragqueue;
+TAILQ_HEAD(pf_fragqueue, pf_fragment);
+PF_VNET_DEFINE(struct pf_fragqueue, pfn_fragqueue); /* 5BSD: VNET */
 
 static __inline int	 pf_frnode_compare(struct pf_frnode *,
 			    struct pf_frnode *);
-RB_HEAD(pf_frnode_tree, pf_frnode)	pf_frnode_tree;
+RB_HEAD(pf_frnode_tree, pf_frnode);
+PF_VNET_DEFINE(struct pf_frnode_tree, pfn_frnode_tree); /* 5BSD: VNET */
 RB_PROTOTYPE(pf_frnode_tree, pf_frnode, fn_entry, pf_frnode_compare);
 RB_GENERATE(pf_frnode_tree, pf_frnode, fn_entry, pf_frnode_compare);
 
@@ -145,7 +147,7 @@ int			 pf_reassemble6(struct mbuf **, struct ip6_frag *,
 struct pool		 pf_frent_pl, pf_frag_pl, pf_frnode_pl;
 struct pool		 pf_state_scrub_pl;
 
-struct mutex		 pf_frag_mtx;
+PF_VNET_DEFINE(struct mutex, pf_frag_mtx); /* 5BSD: VNET */
 
 #define PF_FRAG_LOCK_INIT()	mtx_init(&pf_frag_mtx, IPL_SOFTNET)
 
@@ -164,9 +166,22 @@ pf_normalize_init(void)
 	pool_sethiwat(&pf_frag_pl, PFFRAG_FRAG_HIWAT);
 	pool_sethardlimit(&pf_frent_pl, PFFRAG_FRENT_HIWAT);
 
-	TAILQ_INIT(&pf_fragqueue);
+	TAILQ_INIT(&pfn_fragqueue);
 
 	PF_FRAG_LOCK_INIT();
+}
+
+/* 5BSD: VNET - free the fragments of a vnet that goes away. */
+void	pf_normalize_vnet_fini(void);
+void
+pf_normalize_vnet_fini(void)
+{
+	struct pf_fragment	*frag;
+
+	PF_FRAG_LOCK();
+	while ((frag = TAILQ_FIRST(&pfn_fragqueue)) != NULL)
+		pf_free_fragment(frag);
+	PF_FRAG_UNLOCK();
 }
 
 static __inline int
@@ -212,7 +227,7 @@ pf_purge_expired_fragments(void)
 	expire = getuptime() - pf_default_rule.timeout[PFTM_FRAG];
 
 	PF_FRAG_LOCK();
-	while ((frag = TAILQ_LAST(&pf_fragqueue, pf_fragqueue)) != NULL) {
+	while ((frag = TAILQ_LAST(&pfn_fragqueue, pf_fragqueue)) != NULL) { /* 5BSD: VNET */
 		if (frag->fr_timeout > expire)
 			break;
 		DPFPRINTF(LOG_NOTICE, "expiring %d(%p)", frag->fr_id, frag);
@@ -234,7 +249,7 @@ pf_flush_fragments(void)
 	DPFPRINTF(LOG_NOTICE, "trying to free > %u frents",
 	    pf_status.fragments - goal);
 	while (goal < pf_status.fragments) {
-		if ((frag = TAILQ_LAST(&pf_fragqueue, pf_fragqueue)) == NULL)
+		if ((frag = TAILQ_LAST(&pfn_fragqueue, pf_fragqueue)) == NULL) /* 5BSD: VNET */
 			break;
 		pf_free_fragment(frag);
 	}
@@ -256,10 +271,10 @@ pf_free_fragment(struct pf_fragment *frag)
 	frnode->fn_fragments--;
 	if (frnode->fn_fragments == 0) {
 		KASSERT(RB_EMPTY(&frnode->fn_tree));
-		RB_REMOVE(pf_frnode_tree, &pf_frnode_tree, frnode);
+		RB_REMOVE(pf_frnode_tree, &pfn_frnode_tree, frnode);
 		pool_put(&pf_frnode_pl, frnode);
 	}
-	TAILQ_REMOVE(&pf_fragqueue, frag, frag_next);
+	TAILQ_REMOVE(&pfn_fragqueue, frag, frag_next);
 
 	/* Free all fragment entries */
 	while ((frent = TAILQ_FIRST(&frag->fr_queue)) != NULL) {
@@ -279,7 +294,7 @@ pf_find_fragment(struct pf_frnode *key, u_int32_t id)
 	struct pf_frnode	*frnode;
 	u_int32_t		 stale;
 
-	frnode = RB_FIND(pf_frnode_tree, &pf_frnode_tree, key);
+	frnode = RB_FIND(pf_frnode_tree, &pfn_frnode_tree, key);
 	pf_status.ncounters[NCNT_FRAG_SEARCH]++;
 	if (frnode == NULL)
 		return (NULL);
@@ -306,8 +321,8 @@ pf_find_fragment(struct pf_frnode *key, u_int32_t id)
 		pf_free_fragment(frag);
 		return (NULL);
 	}
-	TAILQ_REMOVE(&pf_fragqueue, frag, frag_next);
-	TAILQ_INSERT_HEAD(&pf_fragqueue, frag, frag_next);
+	TAILQ_REMOVE(&pfn_fragqueue, frag, frag_next);
+	TAILQ_INSERT_HEAD(&pfn_fragqueue, frag, frag_next);
 
 	return (frag);
 }
@@ -562,7 +577,7 @@ pf_fillup_fragment(struct pf_frnode *key, u_int32_t id,
 				goto drop_fragment;
 			}
 		}
-		frnode = RB_FIND(pf_frnode_tree, &pf_frnode_tree, key);
+		frnode = RB_FIND(pf_frnode_tree, &pfn_frnode_tree, key);
 		if (frnode == NULL) {
 			frnode = pool_get(&pf_frnode_pl, PR_NOWAIT);
 			if (frnode == NULL) {
@@ -592,8 +607,8 @@ pf_fillup_fragment(struct pf_frnode *key, u_int32_t id,
 		RB_INSERT(pf_frag_tree, &frnode->fn_tree, frag);
 		frnode->fn_fragments++;
 		if (frnode->fn_fragments == 1)
-			RB_INSERT(pf_frnode_tree, &pf_frnode_tree, frnode);
-		TAILQ_INSERT_HEAD(&pf_fragqueue, frag, frag_next);
+			RB_INSERT(pf_frnode_tree, &pfn_frnode_tree, frnode);
+		TAILQ_INSERT_HEAD(&pfn_fragqueue, frag, frag_next);
 
 		/* We do not have a previous fragment, cannot fail. */
 		pf_frent_insert(frag, frent, NULL);

@@ -411,6 +411,7 @@ struct obsd_sendq_item {
 #define	OBSD_SEND_ICMP		2
 	int	type, code, param;
 	u_int32_t dest;
+	struct vnet *vnet;	/* vnet of the pf instance that queued it */
 };
 static struct mbuf_queue obsd_sendq;
 static struct task obsd_send_task;
@@ -433,6 +434,7 @@ obsd_send_run(void *arg)
 			continue;
 		}
 		it = (struct obsd_sendq_item *)(mtag + 1);
+		CURVNET_SET(it->vnet);
 		NET_EPOCH_ENTER(et);
 		switch (it->kind) {
 		case OBSD_SEND_OUTPUT:
@@ -467,7 +469,17 @@ obsd_send_run(void *arg)
 			m_freem(m);
 		}
 		NET_EPOCH_EXIT(et);
+		CURVNET_RESTORE();
 	}
+}
+
+/* Send what a vnet's pf queued before that vnet goes away. */
+void	obsd_sendq_drain(void);
+void
+obsd_sendq_drain(void)
+{
+	taskq_del_barrier(systq, &obsd_send_task);
+	obsd_send_run(NULL);
 }
 
 static void
@@ -498,6 +510,7 @@ obsd_sendq_enqueue(struct mbuf *m, int af, int kind, int type, int code,
 	it->code = code;
 	it->dest = dest;
 	it->param = param;
+	it->vnet = curvnet;
 	m_tag_prepend(m, mtag);
 	if (mq_enqueue(&obsd_sendq, m) == 0)
 		task_add(systq, &obsd_send_task);
@@ -655,28 +668,6 @@ if_enqueue(struct ifnet *ifp, struct mbuf *m)
 }
 
 /* ------------------------------------------------------------------ */
-/* divert(4): divert-packet port                                       */
-/* ------------------------------------------------------------------ */
-
-void
-divert_packet(struct mbuf *m, int dir, u_int16_t port)
-{
-	if (ip_divert_ptr == NULL) {
-		m_freem(m);
-		return;
-	}
-	ip_divert_ptr(m, port, dir == PF_IN);
-}
-
-#ifdef INET6
-void
-divert6_packet(struct mbuf *m, int dir, u_int16_t port)
-{
-	divert_packet(m, dir, port);
-}
-#endif
-
-/* ------------------------------------------------------------------ */
 /* pcb lookups: OpenBSD tables are tokens for the 5BSD pcbinfos        */
 /* ------------------------------------------------------------------ */
 
@@ -790,6 +781,19 @@ obsd_if_ioctl(struct ifnet *ifp, u_long cmd, caddr_t data)
 	return (error);
 }
 
+static struct obsd_if_clone *obsd_cloner_byname(const char *);
+
+/* A driver name that outlives the caller (for if_initname()). */
+static const char *
+obsd_strdup_name(const char *name)
+{
+	char *n;
+
+	n = malloc(strlen(name) + 1, M_PF, M_WAITOK);
+	strcpy(n, name);
+	return (n);
+}
+
 void
 obsd_if_attach(struct ifnet *ifp)
 {
@@ -807,7 +811,16 @@ obsd_if_attach(struct ifnet *ifp)
 		;
 	unit = *p != '\0' ? strtol(p, NULL, 10) : 0;
 	name[p - name] = '\0';
-	if_initname(ifp, name, unit);
+	/*
+	 * if_initname() keeps the driver name pointer: use the cloner's
+	 * name, which the 5BSD cloner lookup on destroy compares with.
+	 */
+	{
+		struct obsd_if_clone *oifc = obsd_cloner_byname(name);
+
+		if_initname(ifp, oifc != NULL ? oifc->ifc_name :
+		    obsd_strdup_name(name), unit);
+	}
 	if_attach(ifp);
 }
 
@@ -822,6 +835,9 @@ obsd_if_detach(struct ifnet *ifp)
 
 #define	OBSD_MAX_CLONERS	4
 static struct obsd_if_clone *obsd_cloners[OBSD_MAX_CLONERS];
+/* Cloners are registered once and attached in every vnet. */
+VNET_DEFINE_STATIC(struct if_clone *, obsd_vnet_ifc[OBSD_MAX_CLONERS]);
+#define	V_obsd_vnet_ifc	VNET(obsd_vnet_ifc)
 
 static struct obsd_if_clone *
 obsd_cloner_byname(const char *name)
@@ -842,7 +858,7 @@ obsd_clone_create(struct if_clone *ifc, int unit, caddr_t params)
 
 	oifc = NULL;
 	for (int i = 0; i < OBSD_MAX_CLONERS; i++)
-		if (obsd_cloners[i] != NULL && obsd_cloners[i]->ifc_fbsd == ifc)
+		if (obsd_cloners[i] != NULL && V_obsd_vnet_ifc[i] == ifc)
 			oifc = obsd_cloners[i];
 	if (oifc == NULL)
 		return (ENXIO);
@@ -869,8 +885,6 @@ obsd_if_clone_attach(struct obsd_if_clone *oifc)
 			obsd_cloners[i] = oifc;
 			break;
 		}
-	oifc->ifc_fbsd = if_clone_simple(oifc->ifc_name, obsd_clone_create,
-	    obsd_clone_destroy, 0);
 }
 
 void
@@ -878,12 +892,37 @@ obsd_if_clone_detach(struct obsd_if_clone *oifc)
 {
 	int i;
 
-	if (oifc->ifc_fbsd != NULL)
-		if_clone_detach(oifc->ifc_fbsd);
-	oifc->ifc_fbsd = NULL;
 	for (i = 0; i < OBSD_MAX_CLONERS; i++)
 		if (obsd_cloners[i] == oifc)
 			obsd_cloners[i] = NULL;
+}
+
+/* Attach every registered cloner in the current vnet. */
+void	obsd_if_clone_vnet_attach(void);
+void
+obsd_if_clone_vnet_attach(void)
+{
+	int i;
+
+	for (i = 0; i < OBSD_MAX_CLONERS; i++)
+		if (obsd_cloners[i] != NULL && V_obsd_vnet_ifc[i] == NULL)
+			V_obsd_vnet_ifc[i] = if_clone_simple(
+			    obsd_cloners[i]->ifc_name, obsd_clone_create,
+			    obsd_clone_destroy, 0);
+}
+
+/* Detach the cloners of the current vnet, destroying their interfaces. */
+void	obsd_if_clone_vnet_detach(void);
+void
+obsd_if_clone_vnet_detach(void)
+{
+	int i;
+
+	for (i = 0; i < OBSD_MAX_CLONERS; i++)
+		if (V_obsd_vnet_ifc[i] != NULL) {
+			(if_clone_detach)(V_obsd_vnet_ifc[i]);
+			V_obsd_vnet_ifc[i] = NULL;
+		}
 }
 
 /* ------------------------------------------------------------------ */

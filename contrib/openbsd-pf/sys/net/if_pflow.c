@@ -56,7 +56,8 @@
 #define DPRINTF(x)
 #endif
 
-SMR_SLIST_HEAD(, pflow_softc) pflowif_list;
+SMR_SLIST_HEAD(pflowif_list_head, pflow_softc); /* 5BSD: VNET */
+PF_VNET_DEFINE(struct pflowif_list_head, pflowif_list);
 
 enum pflowstat_counters {
 	pflow_flows,

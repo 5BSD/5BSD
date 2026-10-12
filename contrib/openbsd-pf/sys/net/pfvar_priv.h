@@ -191,7 +191,7 @@ struct pf_state {
 
 RBT_HEAD(pf_state_tree_id, pf_state);
 RBT_PROTOTYPE(pf_state_tree_id, pf_state, entry_id, pf_state_compare_id);
-extern struct pf_state_tree_id tree_id;
+PF_VNET_DECLARE(struct pf_state_tree_id, tree_id); /* 5BSD: VNET */
 
 /*
  * states are linked into a global list to support the following
@@ -282,7 +282,7 @@ extern struct pf_state_tree_id tree_id;
  * 6. pf_state_list.pfs_mtx
  */
 
-struct pf_state_list {
+struct PF_KTAG(pf_state_list) { /* 5BSD: VNET */
 	/* the list of states in the system */
 	struct pf_state_queue		pfs_list;
 
@@ -354,12 +354,12 @@ RBT_PROTOTYPE(pf_statelim_nm_tree, pf_statelim, pfstlim_nm_tree, cmp);
 
 TAILQ_HEAD(pf_statelim_list, pf_statelim);
 
-extern struct pf_statelim_id_tree pf_statelim_id_tree_active;
-extern struct pf_statelim_list pf_statelim_list_active;
+PF_VNET_DECLARE(struct pf_statelim_id_tree, pf_statelim_id_tree_active); /* 5BSD: VNET */
+PF_VNET_DECLARE(struct pf_statelim_list, pf_statelim_list_active); /* 5BSD: VNET */
 
-extern struct pf_statelim_id_tree pf_statelim_id_tree_inactive;
-extern struct pf_statelim_nm_tree pf_statelim_nm_tree_inactive;
-extern struct pf_statelim_list pf_statelim_list_inactive;
+PF_VNET_DECLARE(struct pf_statelim_id_tree, pf_statelim_id_tree_inactive); /* 5BSD: VNET */
+PF_VNET_DECLARE(struct pf_statelim_nm_tree, pf_statelim_nm_tree_inactive); /* 5BSD: VNET */
+PF_VNET_DECLARE(struct pf_statelim_list, pf_statelim_list_inactive); /* 5BSD: VNET */
 
 static inline unsigned int
 pf_statelim_enter(struct pf_statelim *pfstlim)
@@ -484,12 +484,12 @@ RBT_PROTOTYPE(pf_sourcelim_nm_tree, pf_sourcelim, pfsrlim_nm_tree, cmp);
 
 TAILQ_HEAD(pf_sourcelim_list, pf_sourcelim);
 
-extern struct pf_sourcelim_id_tree pf_sourcelim_id_tree_active;
-extern struct pf_sourcelim_list pf_sourcelim_list_active;
+PF_VNET_DECLARE(struct pf_sourcelim_id_tree, pf_sourcelim_id_tree_active); /* 5BSD: VNET */
+PF_VNET_DECLARE(struct pf_sourcelim_list, pf_sourcelim_list_active); /* 5BSD: VNET */
 
-extern struct pf_sourcelim_id_tree pf_sourcelim_id_tree_inactive;
-extern struct pf_sourcelim_nm_tree pf_sourcelim_nm_tree_inactive;
-extern struct pf_sourcelim_list pf_sourcelim_list_inactive;
+PF_VNET_DECLARE(struct pf_sourcelim_id_tree, pf_sourcelim_id_tree_inactive); /* 5BSD: VNET */
+PF_VNET_DECLARE(struct pf_sourcelim_nm_tree, pf_sourcelim_nm_tree_inactive); /* 5BSD: VNET */
+PF_VNET_DECLARE(struct pf_sourcelim_list, pf_sourcelim_list_inactive); /* 5BSD: VNET */
 
 static inline unsigned int
 pf_sourcelim_enter(struct pf_sourcelim *pfsrlim)
@@ -515,6 +515,7 @@ struct pf_pdesc {
 		uid_t	 uid;
 		gid_t	 gid;
 		pid_t	 pid;
+		int32_t	 jid;	/* 5BSD: jail of the socket, -1 unknown */
 	}		 lookup;
 	u_int64_t	 tot_len;	/* Make Mickey money */
 
@@ -587,7 +588,7 @@ enum {
 	PF_NEXT_CHILD
 };
 
-extern struct cpumem *pf_anchor_stack;
+PF_VNET_DECLARE(struct cpumem *, pf_anchor_stack); /* 5BSD: VNET */
 
 enum pf_trans_type {
 	PF_TRANS_NONE,
@@ -613,16 +614,16 @@ struct pf_trans {
 #define pftgr_anchor	u.u_getrule.gr_anchor
 #define pftgr_rule	u.u_getrule.gr_rule
 
-extern struct timeout	pf_purge_states_to;
-extern struct task	pf_purge_task;
-extern struct timeout	pf_purge_to;
+PF_VNET_DECLARE(struct timeout, pf_purge_states_to); /* 5BSD: VNET */
+PF_VNET_DECLARE(struct task, pf_purge_task); /* 5BSD: VNET */
+PF_VNET_DECLARE(struct timeout, pf_purge_to); /* 5BSD: VNET */
 
 struct pf_state		*pf_state_ref(struct pf_state *);
 void			 pf_state_unref(struct pf_state *);
 
 extern struct rwlock	pf_lock;
 extern struct rwlock	pf_state_lock;
-extern struct mutex	pf_frag_mtx;
+PF_VNET_DECLARE(struct mutex, pf_frag_mtx); /* 5BSD: VNET */
 extern struct mutex	pf_inp_mtx;
 
 #define PF_LOCK()		do {			\
@@ -682,7 +683,7 @@ u_int16_t		pf_pkt_hash(sa_family_t, uint8_t,
 
 void			pf_status_init(void);
 void			pf_status_clear(void);
-int			pf_status_read(struct pf_status *);
+int			pf_status_read(struct PF_KTAG(pf_status) *); /* 5BSD: VNET */
 
 #endif /* _KERNEL */
 

@@ -38,6 +38,8 @@ void	pf_mbuf_unlink_state_key(struct mbuf *);
 void	pf_mbuf_unlink_inpcb(struct mbuf *);
 void	pf_mbuf_link_state_key(struct mbuf *, struct pf_state_key *);
 void	pf_mbuf_link_inpcb(struct mbuf *, struct inpcb *);
+int	pf_ouraddr(struct mbuf *);
+struct pf_divert *pf_find_divert(struct mbuf *);
 void	pf_inp_unlink(struct inpcb *);
 void	pf_remove_divert_state(struct inpcb *);
 void	obsd_ifhooks_run(struct ifnet *, int);
@@ -46,7 +48,36 @@ void	pfi_detach_ifnet(struct ifnet *);
 void	pfi_attach_ifgroup(struct ifg_group *);
 void	pfi_detach_ifgroup(struct ifg_group *);
 void	pfi_group_addmember(const char *);
+int	pf_states_clr(struct pfioc_state_kill *);
+int	pf_begin_rules(u_int32_t *, const char *);
+int	pf_commit_rules(u_int32_t, char *);
+void	pf_purge(void *);
+unsigned int pf_purge_expired_states(unsigned int, unsigned int);
+void	pf_osfp_flush(void);
+void	pf_remove_queues(void);
+void	pfi_vnet_fini(void);
+void	pf_normalize_vnet_fini(void);
+void	pf_syncookies_vnet_fini(void);
+void	obsd_if_clone_vnet_attach(void);
+void	obsd_if_clone_vnet_detach(void);
+void	obsd_sendq_drain(void);
+void	pf_divert_attach(void);
 extern struct sx pfioctl_rw;
+extern struct pf_pool_limit pf_pool_limits[PF_LIMIT_MAX];
+PF_VNET_DECLARE(struct cpumem *, pf_status_fcounters);
+PF_VNET_DECLARE(struct pf_statelim_list, pf_statelim_list_active);
+PF_VNET_DECLARE(struct pf_source_list, pf_source_gc);
+PF_VNET_DECLARE(struct task, pf_purge_states_task);
+PF_VNET_DECLARE(int, pfr_ktable_cnt);
+
+/*
+ * VNET: every vnet runs its own OpenBSD pf instance (rulesets, states,
+ * tables, anchors, interfaces, pflog/pfsync/pflow).  Pools, the pf locks
+ * and the tag name space are shared.  pf_fbsd_ready is set once a vnet's
+ * instance is initialised and cleared before it is torn down.
+ */
+VNET_DEFINE_STATIC(int, pf_fbsd_ready);
+#define	V_pf_fbsd_ready	VNET(pf_fbsd_ready)
 
 /* ------------------------------------------------------------------ */
 /* mbuf and inpcb reference hooks                                      */
@@ -90,6 +121,90 @@ pf_fbsd_test(int af, int dir, struct ifnet *ifp, struct mbuf **m)
 	return (action);
 }
 
+/*
+ * Output: OpenBSD passes the sending socket with the packet so pf can
+ * link it to the state (divert-reply, pf_ouraddr()).  The reference is
+ * dropped again if the packet comes back from pf; the caller holds the
+ * pcb, so it is never the last one.
+ */
+static int
+pf_fbsd_test_out(int af, int dir, struct ifnet *ifp, struct mbuf **m,
+    struct inpcb *inp)
+{
+	int action, linked = 0;
+
+	if (inp != NULL && (*m)->m_pkthdr.pf.inp == NULL) {
+		pf_mbuf_link_inpcb(*m, inp);
+		linked = 1;
+	}
+	action = pf_fbsd_test(af, dir, ifp, m);
+	if (linked && *m != NULL && (*m)->m_pkthdr.pf.inp == inp) {
+		(*m)->m_pkthdr.pf.inp = NULL;
+		(void)refcount_release(&inp->inp_refcount);
+	}
+	return (action);
+}
+
+/*
+ * Input: as OpenBSD's in_ouraddr()/pf_ouraddr(), a packet pf diverted
+ * (divert-to) or that belongs to a state linked to a local socket
+ * (divert-reply, non-local SO_BINDANY addresses) is delivered locally.
+ * For divert-to the transport looks up the socket by the divert address
+ * and port, carried as the stack's PACKET_TAG_IPFORWARD next hop (the
+ * port in host order, as that tag stores it).
+ */
+static void
+pf_fbsd_ours(struct mbuf *m, int af)
+{
+	struct pf_divert *divert;
+	struct m_tag *mtag;
+
+	if (pf_ouraddr(m) != 1)
+		return;
+	m->m_flags |= M_FASTFWD_OURS;
+	if ((m->m_pkthdr.pf.flags & PF_TAG_DIVERTED) == 0 ||
+	    (divert = pf_find_divert(m)) == NULL)
+		return;
+	switch (af) {
+#ifdef INET
+	case AF_INET: {
+		struct sockaddr_in *sin;
+
+		mtag = m_tag_get(PACKET_TAG_IPFORWARD, sizeof(*sin), M_NOWAIT);
+		if (mtag == NULL)
+			return;
+		sin = (struct sockaddr_in *)(mtag + 1);
+		memset(sin, 0, sizeof(*sin));
+		sin->sin_len = sizeof(*sin);
+		sin->sin_family = AF_INET;
+		sin->sin_addr = divert->addr.v4;
+		sin->sin_port = ntohs(divert->port);
+		m_tag_prepend(m, mtag);
+		m->m_flags |= M_IP_NEXTHOP;
+		break;
+	}
+#endif
+#ifdef INET6
+	case AF_INET6: {
+		struct sockaddr_in6 *sin6;
+
+		mtag = m_tag_get(PACKET_TAG_IPFORWARD, sizeof(*sin6), M_NOWAIT);
+		if (mtag == NULL)
+			return;
+		sin6 = (struct sockaddr_in6 *)(mtag + 1);
+		memset(sin6, 0, sizeof(*sin6));
+		sin6->sin6_len = sizeof(*sin6);
+		sin6->sin6_family = AF_INET6;
+		sin6->sin6_addr = divert->addr.v6;
+		sin6->sin6_port = ntohs(divert->port);
+		m_tag_prepend(m, mtag);
+		m->m_flags |= M_IP6_NEXTHOP;
+		break;
+	}
+#endif
+	}
+}
+
 static pfil_return_t
 pf_fbsd_result(int action, struct mbuf **m)
 {
@@ -103,20 +218,55 @@ pf_fbsd_result(int action, struct mbuf **m)
 	return (PFIL_PASS);
 }
 
+/*
+ * A packet that re-enters the stack (reflected ICMP errors, loopback)
+ * may still carry the state key linked on its previous input; OpenBSD
+ * drops it in m_resethdr().  Do the same before inbound filtering.
+ */
 static void
 pf_fbsd_in_csum(struct mbuf *m)
 {
+	if (m->m_pkthdr.pf.statekey != NULL)
+		pf_mbuf_unlink_state_key(m);
 	m->m_pkthdr.csum_flags &= ~(CSUM_DATA_VALID | CSUM_PSEUDO_HDR |
 	    CSUM_SCTP_VALID);
 }
 
 #ifdef INET
+/*
+ * OpenBSD always recomputes the IPv4 header checksum on output, so pf
+ * does not maintain ip_sum when it rewrites a header.  The 5BSD stack
+ * forwards with incremental updates; refresh the checksum after pf.
+ */
+static void
+pf_fbsd_ip_hdr_cksum(struct mbuf *m)
+{
+	struct ip *ip;
+
+	if (m->m_pkthdr.csum_flags & CSUM_IP)
+		return;		/* computed by the hardware or ip_output */
+	if (m->m_len < (int)sizeof(struct ip))
+		return;
+	ip = mtod(m, struct ip *);
+	if (m->m_len < (ip->ip_hl << 2))
+		return;
+	ip->ip_sum = 0;
+	ip->ip_sum = in_cksum_hdr(ip);
+}
+
 static pfil_return_t
 pf_fbsd_check_in(struct mbuf **m, struct ifnet *ifp, int flags,
     void *ruleset, struct inpcb *inp)
 {
+	pfil_return_t rv;
+
 	pf_fbsd_in_csum(*m);
-	return (pf_fbsd_result(pf_fbsd_test(AF_INET, PF_IN, ifp, m), m));
+	rv = pf_fbsd_result(pf_fbsd_test(AF_INET, PF_IN, ifp, m), m);
+	if (rv == PFIL_PASS) {
+		pf_fbsd_ip_hdr_cksum(*m);
+		pf_fbsd_ours(*m, AF_INET);
+	}
+	return (rv);
 }
 
 static pfil_return_t
@@ -132,11 +282,12 @@ pf_fbsd_check_out(struct mbuf **m, struct ifnet *ifp, int flags,
 		in_delayed_cksum(n);
 		n->m_pkthdr.csum_flags &= ~CSUM_DELAY_DATA;
 	}
-	rv = pf_fbsd_result(pf_fbsd_test(AF_INET,
-	    (flags & PFIL_FWD) ? PF_FWD : PF_OUT, ifp, m), m);
+	rv = pf_fbsd_result(pf_fbsd_test_out(AF_INET,
+	    (flags & PFIL_FWD) ? PF_FWD : PF_OUT, ifp, m, inp), m);
 	if (rv != PFIL_PASS)
 		return (rv);
 	n = *m;
+	pf_fbsd_ip_hdr_cksum(n);
 	if (n->m_pkthdr.csum_flags & CSUM_TSO) {
 		/* Re-seed the TSO pseudo header after a translation. */
 		ip = mtod(n, struct ip *);
@@ -159,8 +310,13 @@ static pfil_return_t
 pf_fbsd_check6_in(struct mbuf **m, struct ifnet *ifp, int flags,
     void *ruleset, struct inpcb *inp)
 {
+	pfil_return_t rv;
+
 	pf_fbsd_in_csum(*m);
-	return (pf_fbsd_result(pf_fbsd_test(AF_INET6, PF_IN, ifp, m), m));
+	rv = pf_fbsd_result(pf_fbsd_test(AF_INET6, PF_IN, ifp, m), m);
+	if (rv == PFIL_PASS)
+		pf_fbsd_ours(*m, AF_INET6);
+	return (rv);
 }
 
 static pfil_return_t
@@ -176,8 +332,8 @@ pf_fbsd_check6_out(struct mbuf **m, struct ifnet *ifp, int flags,
 		    sizeof(struct ip6_hdr));
 		n->m_pkthdr.csum_flags &= ~CSUM_DELAY_DATA_IPV6;
 	}
-	rv = pf_fbsd_result(pf_fbsd_test(AF_INET6,
-	    (flags & PFIL_FWD) ? PF_FWD : PF_OUT, ifp, m), m);
+	rv = pf_fbsd_result(pf_fbsd_test_out(AF_INET6,
+	    (flags & PFIL_FWD) ? PF_FWD : PF_OUT, ifp, m, inp), m);
 	if (rv != PFIL_PASS)
 		return (rv);
 	n = *m;
@@ -193,8 +349,10 @@ pf_fbsd_check6_out(struct mbuf **m, struct ifnet *ifp, int flags,
  * (sleepable) net lock and pfsync takes sleepable locks, which must not
  * be acquired inside the net epoch of the IP input path.
  */
-static struct mbuf_queue pf_pfsync_inq;
-static struct task pf_pfsync_intask;
+VNET_DEFINE_STATIC(struct mbuf_queue, pf_pfsync_inq);
+VNET_DEFINE_STATIC(struct task, pf_pfsync_intask);
+#define	V_pf_pfsync_inq		VNET(pf_pfsync_inq)
+#define	V_pf_pfsync_intask	VNET(pf_pfsync_intask)
 
 static void
 pf_fbsd_pfsync_intask(void *arg)
@@ -203,7 +361,7 @@ pf_fbsd_pfsync_intask(void *arg)
 	struct mbuf *m;
 	int off;
 
-	mq_delist(&pf_pfsync_inq, &ml);
+	mq_delist(&V_pf_pfsync_inq, &ml);
 	while ((m = ml_dequeue(&ml)) != NULL) {
 		off = mtod(m, struct ip *)->ip_hl << 2;
 		NET_LOCK_SHARED();
@@ -215,14 +373,25 @@ pf_fbsd_pfsync_intask(void *arg)
 static int
 pf_fbsd_pfsync_input(struct mbuf **mp, int *offp, int proto)
 {
-	if (mq_enqueue(&pf_pfsync_inq, *mp) == 0)
-		task_add(systq, &pf_pfsync_intask);
+	if (!V_pf_fbsd_ready) {
+		m_freem(*mp);
+		*mp = NULL;
+		return (IPPROTO_DONE);
+	}
+	if (mq_enqueue(&V_pf_pfsync_inq, *mp) == 0)
+		task_add(systq, &V_pf_pfsync_intask);
 	*mp = NULL;
 	return (IPPROTO_DONE);
 }
 
-static pfil_hook_t pf_ip4_in_hook, pf_ip4_out_hook;
-static pfil_hook_t pf_ip6_in_hook, pf_ip6_out_hook;
+VNET_DEFINE_STATIC(pfil_hook_t, pf_ip4_in_hook);
+VNET_DEFINE_STATIC(pfil_hook_t, pf_ip4_out_hook);
+VNET_DEFINE_STATIC(pfil_hook_t, pf_ip6_in_hook);
+VNET_DEFINE_STATIC(pfil_hook_t, pf_ip6_out_hook);
+#define	pf_ip4_in_hook	VNET(pf_ip4_in_hook)
+#define	pf_ip4_out_hook	VNET(pf_ip4_out_hook)
+#define	pf_ip6_in_hook	VNET(pf_ip6_in_hook)
+#define	pf_ip6_out_hook	VNET(pf_ip6_out_hook)
 
 static void
 pf_fbsd_hook(void)
@@ -280,6 +449,19 @@ pf_fbsd_hook(void)
 #endif
 }
 
+static void
+pf_fbsd_unhook(void)
+{
+#ifdef INET
+	pfil_remove_hook(pf_ip4_in_hook);
+	pfil_remove_hook(pf_ip4_out_hook);
+#endif
+#ifdef INET6
+	pfil_remove_hook(pf_ip6_in_hook);
+	pfil_remove_hook(pf_ip6_out_hook);
+#endif
+}
+
 /* ------------------------------------------------------------------ */
 /* Interface and group events                                          */
 /* ------------------------------------------------------------------ */
@@ -295,14 +477,20 @@ static eventhandler_tag pf_grpchange_tag;
 static void
 pf_fbsd_ifattach(void *arg, struct ifnet *ifp)
 {
-	pfi_attach_ifnet(ifp);
+	CURVNET_SET(ifp->if_vnet);
+	if (V_pf_fbsd_ready)
+		pfi_attach_ifnet(ifp);
+	CURVNET_RESTORE();
 }
 
 static void
 pf_fbsd_ifdetach(void *arg, struct ifnet *ifp)
 {
+	CURVNET_SET(ifp->if_vnet);
 	obsd_ifhooks_run(ifp, OBSD_HOOK_DETACH);
-	pfi_detach_ifnet(ifp);
+	if (V_pf_fbsd_ready)
+		pfi_detach_ifnet(ifp);
+	CURVNET_RESTORE();
 }
 
 static void
@@ -320,19 +508,22 @@ pf_fbsd_iflink(void *arg, struct ifnet *ifp, int state)
 static void
 pf_fbsd_grpattach(void *arg, struct ifg_group *ifg)
 {
-	pfi_attach_ifgroup(ifg);
+	if (V_pf_fbsd_ready)
+		pfi_attach_ifgroup(ifg);
 }
 
 static void
 pf_fbsd_grpdetach(void *arg, struct ifg_group *ifg)
 {
-	pfi_detach_ifgroup(ifg);
+	if (V_pf_fbsd_ready)
+		pfi_detach_ifgroup(ifg);
 }
 
 static void
 pf_fbsd_grpchange(void *arg, const char *gname)
 {
-	pfi_group_addmember(gname);	/* locks; add and delete are alike */
+	if (V_pf_fbsd_ready)
+		pfi_group_addmember(gname); /* locks; add and delete alike */
 }
 
 static void
@@ -369,7 +560,9 @@ MTX_SYSINIT(pf_units_mtx, &pf_units_mtx, "pf units", MTX_DEF);
 static struct cdev *pf_dev;
 
 struct pf_fbsd_open {
-	int	unit;
+	int		 unit;
+	struct vnet	*vnet;	/* the opener's vnet: all ioctls act on it */
+	struct ucred	*cred;	/* holds the prison, and so the vnet */
 };
 
 static dev_t
@@ -383,7 +576,10 @@ pf_fbsd_dtor(void *arg)
 {
 	struct pf_fbsd_open *po = arg;
 
+	CURVNET_SET(po->vnet);
 	(void)pfclose(pf_fbsd_minor(po->unit), 0, 0, curproc);
+	CURVNET_RESTORE();
+	crfree(po->cred);
 	mtx_lock(&pf_units_mtx);
 	bit_clear(pf_units, po->unit);
 	mtx_unlock(&pf_units_mtx);
@@ -407,9 +603,18 @@ pf_fbsd_open(struct cdev *dev, int flags, int fmt, struct thread *td)
 
 	po = malloc(sizeof(*po), M_PF, M_WAITOK | M_ZERO);
 	po->unit = unit;
-	error = pfopen(pf_fbsd_minor(unit), flags, fmt, td->td_proc);
+	po->vnet = TD_TO_VNET(td);
+	CURVNET_SET(po->vnet);
+	error = V_pf_fbsd_ready ? 0 : ENXIO;
 	if (error == 0)
+		error = pfopen(pf_fbsd_minor(unit), flags, fmt, td->td_proc);
+	CURVNET_RESTORE();
+	if (error == 0) {
+		po->cred = crhold(td->td_ucred);
 		error = devfs_set_cdevpriv(po, pf_fbsd_dtor);
+		if (error)
+			crfree(po->cred);
+	}
 	if (error) {
 		mtx_lock(&pf_units_mtx);
 		bit_clear(pf_units, unit);
@@ -417,6 +622,21 @@ pf_fbsd_open(struct cdev *dev, int flags, int fmt, struct thread *td)
 		free(po, M_PF);
 	}
 	return (error);
+}
+
+/*
+ * Pool limits are shared by all vnets.  A vnet other than the default
+ * one may restate the current limit (pfctl loads every limit with each
+ * ruleset) but may not change it.
+ */
+static int
+pf_fbsd_vnet_setlimit(struct pfioc_limit *pl)
+{
+	if (pl->index < 0 || pl->index >= PF_LIMIT_MAX)
+		return (EINVAL);
+	if (pl->limit != pf_pool_limits[pl->index].limit)
+		return (EPERM);
+	return (0);
 }
 
 static int
@@ -429,8 +649,15 @@ pf_fbsd_ioctl(struct cdev *dev, u_long cmd, caddr_t data, int flags,
 	if ((error = devfs_get_cdevpriv((void **)&po)) != 0)
 		return (error);
 	SDT_PROBE2(pf, ioctl, ioctl, entry, cmd, po->unit);
-	error = pfioctl(pf_fbsd_minor(po->unit), cmd, data, flags,
-	    td->td_proc);
+	CURVNET_SET(po->vnet);
+	if (!V_pf_fbsd_ready)
+		error = ENXIO;
+	else if (cmd == DIOCSETLIMIT && !IS_DEFAULT_VNET(curvnet))
+		error = pf_fbsd_vnet_setlimit((struct pfioc_limit *)data);
+	else
+		error = pfioctl(pf_fbsd_minor(po->unit), cmd, data, flags,
+		    td->td_proc);
+	CURVNET_RESTORE();
 	SDT_PROBE3(pf, ioctl, ioctl, return, cmd, po->unit, error);
 	return (error);
 }
@@ -453,9 +680,179 @@ pf_fbsd_locks_init(void)
 	rw_init(&pf_state_lock, "pf_state_lock");
 	rw_init(&pfioctl_rw, "pfioctl_rw");
 	mtx_init(&pf_inp_mtx, IPL_SOFTNET);
+}
+
+static void
+pf_fbsd_vnet_init(void *arg __unused)
+{
 	mtx_init(&pf_state_list.pfs_mtx, IPL_SOFTNET);
 	rw_init(&pf_state_list.pfs_rwl, "pfstates");
+	TAILQ_INIT(&pf_state_list.pfs_list);
+	TAILQ_INIT(&pf_statelim_list_active);
+	TAILQ_INIT(&pf_statelim_list_inactive);
+	TAILQ_INIT(&pf_sourcelim_list_active);
+	TAILQ_INIT(&pf_sourcelim_list_inactive);
+	TAILQ_INIT(&pf_source_gc);
+
+	pfattach(1);
+	mq_init(&V_pf_pfsync_inq, 1024, IPL_SOFTNET);
+	task_set(&V_pf_pfsync_intask, pf_fbsd_pfsync_intask, NULL);
+	obsd_if_clone_vnet_attach();
+
+	V_pf_fbsd_ready = 1;
+	pf_fbsd_attach_existing();
+	pf_fbsd_hook();
 }
+VNET_SYSINIT(pf_fbsd_vnet_init, SI_SUB_PROTO_FIREWALL, SI_ORDER_THIRD,
+    pf_fbsd_vnet_init, NULL);
+
+/* Empty one ruleset (and with it, the anchor once nothing refers to it). */
+static void
+pf_fbsd_flush_ruleset(const char *path)
+{
+	char anchor[MAXPATHLEN];
+	u_int32_t ticket;
+
+	strlcpy(anchor, path, sizeof(anchor));
+	NET_LOCK();
+	PF_LOCK();
+	if (pf_begin_rules(&ticket, anchor) == 0)
+		(void)pf_commit_rules(ticket, anchor);
+	PF_UNLOCK();
+	NET_UNLOCK();
+}
+
+static void
+pf_fbsd_flush_rulesets(void)
+{
+	struct pf_anchor *a;
+	char (*paths)[MAXPATHLEN];
+	int i, n, pass;
+
+	paths = malloc(64 * MAXPATHLEN, M_PF, M_WAITOK);
+	for (pass = 0; pass < 32; pass++) {
+		pf_fbsd_flush_ruleset("");
+		n = 0;
+		PF_LOCK();
+		RB_FOREACH(a, pf_anchor_global, &pf_anchors) {
+			if (n == 64)
+				break;
+			strlcpy(paths[n++], a->path, MAXPATHLEN);
+		}
+		PF_UNLOCK();
+		if (n == 0)
+			break;
+		/* Children first: their removal empties their parents. */
+		for (i = n - 1; i >= 0; i--)
+			pf_fbsd_flush_ruleset(paths[i]);
+	}
+	free(paths, M_PF);
+}
+
+static void
+pf_fbsd_vnet_uninit(void *arg __unused)
+{
+	struct pfioc_state_kill psk;
+	struct pfr_table filter;
+	struct pf_src_node *sn;
+	struct ifg_group *ifg;
+	struct ifnet *ifp;
+	struct epoch_tracker et;
+	int i, ndel;
+
+	/* No new packets for this pf. */
+	pf_fbsd_unhook();
+	NET_EPOCH_WAIT();
+
+	/*
+	 * pflog, pfsync and pflow interfaces of this vnet; their departure
+	 * and group events still reach pf.  Then no more opens or events.
+	 */
+	obsd_if_clone_vnet_detach();
+	V_pf_fbsd_ready = 0;
+
+	NET_LOCK();
+	PF_LOCK();
+	pf_status.running = 0;
+	pf_remove_queues();
+	PF_UNLOCK();
+	NET_UNLOCK();
+
+	/* Rules, anchors, limiters and queues; then tables and states. */
+	pf_fbsd_flush_rulesets();
+	memset(&filter, 0, sizeof(filter));
+	NET_LOCK();
+	PF_LOCK();
+	(void)pfr_clr_tables(&filter, &ndel, PFR_FLAG_ALLRSETS);
+	PF_UNLOCK();
+	NET_UNLOCK();
+	pf_fbsd_flush_rulesets();
+
+	memset(&psk, 0, sizeof(psk));
+	(void)pf_states_clr(&psk);
+	for (i = 0; i < 1000 && pf_status.states != 0; i++)
+		(void)pf_purge_expired_states(UINT_MAX, 1024);
+
+	NET_LOCK();
+	PF_LOCK();
+	RB_FOREACH(sn, pf_src_tree, &tree_src_tracking)
+		sn->expire = 1;
+	PF_UNLOCK();
+	NET_UNLOCK();
+	pf_purge(NULL);
+	pf_osfp_flush();
+	pf_normalize_vnet_fini();
+
+	/* Timers and tasks re-arm each other: stop both twice. */
+	for (i = 0; i < 3; i++) {
+		timeout_del_barrier(&pf_purge_to);
+		timeout_del_barrier(&pf_purge_states_to);
+		taskq_del_barrier(systqmp, &pf_purge_task);
+		taskq_del_barrier(systqmp, &pf_purge_states_task);
+	}
+	pf_syncookies_vnet_fini();
+	taskq_del_barrier(systq, &V_pf_pfsync_intask);
+	mq_purge(&V_pf_pfsync_inq);
+	obsd_sendq_drain();
+
+	/*
+	 * Interfaces still present in this vnet, then their groups:
+	 * pfi_detach_ifnet() updates the kifs of the interface's groups.
+	 */
+	IFNET_RLOCK();
+	CK_STAILQ_FOREACH(ifp, &V_ifnet, if_link) {
+		if_ref(ifp);
+		IFNET_RUNLOCK();
+		pfi_detach_ifnet(ifp);
+		IFNET_RLOCK();
+		if_rele(ifp);
+	}
+	IFNET_RUNLOCK();
+	NET_EPOCH_ENTER(et);
+	CK_STAILQ_FOREACH(ifg, &V_ifg_head, ifg_next)
+		pfi_detach_ifgroup(ifg);
+	NET_EPOCH_EXIT(et);
+
+	if (pf_status.states != 0 || pf_status.src_nodes != 0 ||
+	    pfr_ktable_cnt != 0 || !RB_EMPTY(&pf_anchors))
+		printf("pf: vnet %p torn down with %u states, %u src nodes, "
+		    "%d tables, anchors %s\n", curvnet, pf_status.states,
+		    pf_status.src_nodes, pfr_ktable_cnt,
+		    RB_EMPTY(&pf_anchors) ? "none" : "left");
+
+	pfi_vnet_fini();
+	counters_free(pf_status_fcounters, FCNT_MAX);
+	pf_status_fcounters = NULL;
+	cpumem_free(pf_anchor_stack, M_PF,
+	    sizeof(struct pf_anchor_stackframe) * (PF_ANCHOR_STACK_MAX + 2));
+	pf_anchor_stack = NULL;
+	mtx_destroy(&V_pf_pfsync_inq.mq_mtx.mtx);
+	mtx_destroy(&pf_frag_mtx.mtx);
+	mtx_destroy(&pf_state_list.pfs_mtx.mtx);
+	sx_destroy(&pf_state_list.pfs_rwl);
+}
+VNET_SYSUNINIT(pf_fbsd_vnet_uninit, SI_SUB_PROTO_FIREWALL, SI_ORDER_THIRD,
+    pf_fbsd_vnet_uninit, NULL);
 
 static int
 pf_fbsd_load(void)
@@ -464,13 +861,12 @@ pf_fbsd_load(void)
 	bit_set(pf_units, 0);		/* unit 0 is never handed out */
 	pf_fbsd_locks_init();
 
-	pfattach(1);
+	/* Register the cloners; each vnet attaches them in its init. */
 	pflogattach(1);
 	pflowattach(1);
 	pfsyncattach(1);
-	mq_init(&pf_pfsync_inq, 1024, IPL_SOFTNET);
-	task_set(&pf_pfsync_intask, pf_fbsd_pfsync_intask, NULL);
 	(void)ipproto_register(IPPROTO_PFSYNC, pf_fbsd_pfsync_input, NULL);
+	pf_divert_attach();
 
 	pf_mbuf_unlink_hook = pf_fbsd_mbuf_unlink;
 	pf_mbuf_link_hook = pf_fbsd_mbuf_link;
@@ -490,9 +886,6 @@ pf_fbsd_load(void)
 	    pf_fbsd_grpdetach, NULL, EVENTHANDLER_PRI_ANY);
 	pf_grpchange_tag = EVENTHANDLER_REGISTER(group_change_event,
 	    pf_fbsd_grpchange, NULL, EVENTHANDLER_PRI_ANY);
-	pf_fbsd_attach_existing();
-
-	pf_fbsd_hook();
 
 	pf_dev = make_dev(&pf_cdevsw, 0, UID_ROOT, GID_WHEEL, 0600, "pf");
 	return (0);
@@ -502,15 +895,9 @@ static int
 pf_fbsd_modevent(module_t mod, int type, void *data)
 {
 	switch (type) {
-	case MOD_LOAD: {
-		int error;
-
-		/* pf state is global for now: it filters the default vnet. */
-		CURVNET_SET(vnet0);
-		error = pf_fbsd_load();
-		CURVNET_RESTORE();
-		return (error);
-	}
+	case MOD_LOAD:
+		/* Per-vnet instances start from pf_fbsd_vnet_init(). */
+		return (pf_fbsd_load());
 	case MOD_UNLOAD:
 		/*
 		 * Packets and sockets hold references to pf state keys, so

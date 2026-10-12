@@ -76,8 +76,8 @@ typedef struct pool pool_t;
  *	p	pf_lock
  */
 
-SLIST_HEAD(pf_osfp_list, pf_os_fingerprint) pf_osfp_list =
-    SLIST_HEAD_INITIALIZER(pf_osfp_list);	/* [p] */
+SLIST_HEAD(PF_KTAG(pf_osfp_list), pf_os_fingerprint); /* 5BSD: VNET */
+PF_VNET_DEFINE(struct PF_KTAG(pf_osfp_list), pf_osfp_list);	/* [p] */
 pool_t pf_osfp_entry_pl;			/* [I] */
 pool_t pf_osfp_pl;				/* [I] */
 

@@ -160,6 +160,7 @@ struct pf_rule_field {
     PF_RULE_FIELD(return_icmp6,		NOMERGE),
     PF_RULE_FIELD(uid,			NOMERGE),
     PF_RULE_FIELD(gid,			NOMERGE),
+    PF_RULE_FIELD(jail,			NOMERGE),	/* 5BSD: jail */
     PF_RULE_FIELD(direction,		NOMERGE),
     PF_RULE_FIELD(proto,		NOMERGE),
     PF_RULE_FIELD(type,			NOMERGE),

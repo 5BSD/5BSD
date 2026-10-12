@@ -255,6 +255,7 @@ struct filter_opts {
 #define FOM_SETDELAY	0x4000
 	struct node_uid		*uid;
 	struct node_gid		*gid;
+	struct node_uid		*jail;	/* 5BSD: jail */
 	struct node_if		*rcv;
 	struct {
 		u_int8_t	 b1;
@@ -426,7 +427,8 @@ void		 expand_rule(struct pf_rule *, int, struct node_if *,
 		    struct node_proto *,
 		    struct node_os *, struct node_host *, struct node_port *,
 		    struct node_host *, struct node_port *, struct node_uid *,
-		    struct node_gid *, struct node_if *, struct node_icmp *);
+		    struct node_gid *, struct node_if *, struct node_icmp *,
+		    struct node_uid *);	/* 5BSD: jail */
 int		 expand_queue(char *, struct node_if *, struct queue_opts *);
 int		 expand_skip_interface(struct node_if *);
 
@@ -532,6 +534,7 @@ int	parseport(char *, struct range *r, int);
 %token	ICMP6TYPE CODE KEEP MODULATE STATE PORT BINATTO NODF
 %token	MINTTL ERROR ALLOWOPTS FILENAME ROUTETO DUPTO REPLYTO NO LABEL
 %token	NOROUTE URPFFAILED FRAGMENT USER GROUP MAXMSS MAXIMUM TTL TOS DROP TABLE
+%token	JAIL	/* 5BSD: jail */
 %token	REASSEMBLE ANCHOR SYNCOOKIES
 %token	SET OPTIMIZATION TIMEOUT LIMIT LOGINTERFACE BLOCKPOLICY RANDOMID
 %token	SYNPROXY FINGERPRINTS NOSYNC DEBUG SKIP HOSTID
@@ -573,6 +576,8 @@ int	parseport(char *, struct range *r, int);
 %type	<v.os>			os xos os_list
 %type	<v.port>		portspec port_list port_item
 %type	<v.uid>			uids uid_list uid_item
+%type	<v.uid>			jails jail_list jail_item	/* 5BSD: jail */
+%type	<v.number>		jailid	/* 5BSD: jail */
 %type	<v.gid>			gids gid_list gid_item
 %type	<v.redirection>		redirpool
 %type	<v.string>		label stringall anchorname
@@ -1046,7 +1051,8 @@ anchorrule	: ANCHOR anchorname dir quick interface af proto fromto
 
 			expand_rule(&r, 0, $5, NULL, NULL, NULL, $7, $8.src_os,
 			    $8.src.host, $8.src.port, $8.dst.host, $8.dst.port,
-			    $9.uid, $9.gid, $9.rcv, $9.icmpspec);
+			    $9.uid, $9.gid, $9.rcv, $9.icmpspec,
+			    $9.jail);	/* 5BSD: jail */
 			free($2);
 			pf->astack[pf->asd + 1] = NULL;
 		}
@@ -1200,7 +1206,7 @@ antispoof	: ANTISPOOF logquick antispoof_ifspc af antispoof_opts {
 				if (h != NULL)
 					expand_rule(&r, 0, j, NULL, NULL, NULL,
 					    NULL, NULL, h, NULL, NULL, NULL,
-					    NULL, NULL, NULL, NULL);
+					    NULL, NULL, NULL, NULL, NULL);	/* 5BSD: jail */
 
 				if ((i->ifa_flags & IFF_LOOPBACK) == 0) {
 					bzero(&r, sizeof(r));
@@ -1222,7 +1228,7 @@ antispoof	: ANTISPOOF logquick antispoof_ifspc af antispoof_opts {
 						expand_rule(&r, 0, NULL, NULL,
 						    NULL, NULL, NULL, NULL, h,
 						    NULL, NULL, NULL, NULL,
-						    NULL, NULL, NULL);
+						    NULL, NULL, NULL, NULL);	/* 5BSD: jail */
 				} else
 					free(hh);
 			}
@@ -2334,7 +2340,8 @@ pfrule		: action dir logquick interface af proto fromto
 			expand_rule(&r, 0, $4, &$8.nat, &$8.rdr, &$8.rroute, $6,
 			    $7.src_os,
 			    $7.src.host, $7.src.port, $7.dst.host, $7.dst.port,
-			    $8.uid, $8.gid, $8.rcv, $8.icmpspec);
+			    $8.uid, $8.gid, $8.rcv, $8.icmpspec,
+			    $8.jail);	/* 5BSD: jail */
 		}
 		;
 
@@ -2367,6 +2374,11 @@ filter_opt	: USER uids {
 			if (filter_opts.uid)
 				$2->tail->next = filter_opts.uid;
 			filter_opts.uid = $2;
+		}
+		| JAIL jails {	/* 5BSD: jail */
+			if (filter_opts.jail)
+				$2->tail->next = filter_opts.jail;
+			filter_opts.jail = $2;
 		}
 		| GROUP gids {
 			if (filter_opts.gid)
@@ -3495,6 +3507,71 @@ uid		: STRING			{
 		}
 		;
 
+/* 5BSD: jail <name|jid> matches the jail of the local socket. */
+jails		: jail_item			{ $$ = $1; }
+		| '{' optnl jail_list '}'	{ $$ = $3; }
+		;
+
+jail_list	: jail_item optnl		{ $$ = $1; }
+		| jail_list comma jail_item optnl	{
+			$1->tail->next = $3;
+			$1->tail = $3;
+			$$ = $1;
+		}
+		;
+
+jail_item	: jailid			{
+			$$ = calloc(1, sizeof(struct node_uid));
+			if ($$ == NULL)
+				err(1, "jail_item: calloc");
+			$$->uid[0] = $1;
+			$$->uid[1] = $1;
+			$$->op = PF_OP_EQ;
+			$$->next = NULL;
+			$$->tail = $$;
+		}
+		| unaryop jailid		{
+			$$ = calloc(1, sizeof(struct node_uid));
+			if ($$ == NULL)
+				err(1, "jail_item: calloc");
+			$$->uid[0] = $2;
+			$$->uid[1] = $2;
+			$$->op = $1;
+			$$->next = NULL;
+			$$->tail = $$;
+		}
+		| jailid PORTBINARY jailid	{
+			$$ = calloc(1, sizeof(struct node_uid));
+			if ($$ == NULL)
+				err(1, "jail_item: calloc");
+			$$->uid[0] = $1;
+			$$->uid[1] = $3;
+			$$->op = $2;
+			$$->next = NULL;
+			$$->tail = $$;
+		}
+		;
+
+jailid		: STRING			{
+			int jid;
+
+			if ((jid = pfctl_jail_getid($1)) == -1) {
+				yyerror("unknown jail %s", $1);
+				free($1);
+				YYERROR;
+			}
+			free($1);
+			$$ = jid;
+		}
+		| NUMBER			{
+			if ($1 < 0 || $1 > INT_MAX) {
+				yyerror("illegal jail id %lld", $1);
+				YYERROR;
+			}
+			$$ = $1;
+		}
+		;
+
 gids		: gid_item			{ $$ = $1; }
 		| '{' optnl gid_list '}'	{ $$ = $3; }
 		;
@@ -4368,6 +4445,11 @@ rule_consistent(struct pf_rule *r)
 		yyerror("group only applies to tcp/udp");
 		problems++;
 	}
+	if (r->proto != IPPROTO_TCP && r->proto != IPPROTO_UDP &&
+	    r->jail.op) {	/* 5BSD: jail */
+		yyerror("jail only applies to tcp/udp");
+		problems++;
+	}
 	if (r->proto != IPPROTO_ICMP && r->proto != IPPROTO_ICMPV6 &&
 	    (r->type || r->code)) {
 		yyerror("icmp-type/code only applies to icmp");
@@ -5122,7 +5204,7 @@ expand_rule(struct pf_rule *r, int keeprule, struct node_if *interfaces,
     struct node_host *src_hosts, struct node_port *src_ports,
     struct node_host *dst_hosts, struct node_port *dst_ports,
     struct node_uid *uids, struct node_gid *gids, struct node_if *rcv,
-    struct node_icmp *icmp_types)
+    struct node_icmp *icmp_types, struct node_uid *jails)	/* 5BSD: jail */
 {
 	sa_family_t		 af = r->af;
 	int			 added = 0, error = 0;
@@ -5159,6 +5241,7 @@ expand_rule(struct pf_rule *r, int keeprule, struct node_if *interfaces,
 	LOOP_THROUGH(struct node_os, src_os, src_oses,
 	LOOP_THROUGH(struct node_uid, uid, uids,
 	LOOP_THROUGH(struct node_gid, gid, gids,
+	LOOP_THROUGH(struct node_uid, jail, jails,	/* 5BSD: jail */
 
 		r->af = af;
 
@@ -5255,6 +5338,9 @@ expand_rule(struct pf_rule *r, int keeprule, struct node_if *interfaces,
 		r->gid.op = gid->op;
 		r->gid.gid[0] = gid->gid[0];
 		r->gid.gid[1] = gid->gid[1];
+		r->jail.op = jail->op;	/* 5BSD: jail */
+		r->jail.jid[0] = jail->uid[0];
+		r->jail.jid[1] = jail->uid[1];
 		if (rcv) {
 			strlcpy(r->rcv_ifname, rcv->ifname,
 			    sizeof(r->rcv_ifname));
@@ -5381,7 +5467,7 @@ expand_rule(struct pf_rule *r, int keeprule, struct node_if *interfaces,
 			expand_rule(&rb, 1, interface, NULL, &binat, NULL,
 			    proto,
 			    src_os, dst_host, dst_port, dsth, src_port,
-			    uid, gid, rcv, icmp_type);
+			    uid, gid, rcv, icmp_type, jail);	/* 5BSD: jail */
 		}
 
 		if (osrch && src_host->addr.type == PF_ADDR_DYNIFTL) {
@@ -5392,7 +5478,7 @@ expand_rule(struct pf_rule *r, int keeprule, struct node_if *interfaces,
 			free(dst_host);
 			dst_host = odsth;
 		}
-	))))))))));
+	)))))))))));	/* 5BSD: jail */
 
 	if (!keeprule) {
 		FREE_LIST(struct node_if, interfaces);
@@ -5404,6 +5490,7 @@ expand_rule(struct pf_rule *r, int keeprule, struct node_if *interfaces,
 		FREE_LIST(struct node_port, dst_ports);
 		FREE_LIST(struct node_uid, uids);
 		FREE_LIST(struct node_gid, gids);
+		FREE_LIST(struct node_uid, jails);	/* 5BSD: jail */
 		FREE_LIST(struct node_icmp, icmp_types);
 		if (nat && nat->rdr)
 			FREE_LIST(struct node_host, nat->rdr->host);
@@ -5524,6 +5611,7 @@ lookup(char *s)
 		{ "include",		INCLUDE},
 		{ "inet",		INET},
 		{ "inet6",		INET6},
+		{ "jail",		JAIL},	/* 5BSD: jail */
 		{ "keep",		KEEP},
 		{ "label",		LABEL},
 		{ "least-states",	LEASTSTATES},

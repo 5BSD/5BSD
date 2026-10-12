@@ -14,6 +14,14 @@
 
 MALLOC_DEFINE(M_PF, "pf", "OpenBSD packet filter");
 
+extern struct rwlock pf_lock, pf_state_lock;
+
+int
+obsd_pf_nosleep(void)
+{
+	return (rw_wowned(&pf_lock) || rw_wowned(&pf_state_lock));
+}
+
 struct sx	obsd_net_lock;
 SX_SYSINIT(obsd_net_lock, &obsd_net_lock, "pf netlock");
 
@@ -52,6 +60,9 @@ void
 pool_init(struct pool *pp, size_t size, u_int align, int ipl, int flags,
     const char *wchan, void *palloc)
 {
+	/* Pools are global; per-vnet initialisation calls this again. */
+	if (pp->pr_zone != NULL)
+		return;
 	memset(pp, 0, sizeof(*pp));
 	pp->pr_wchan = wchan;
 	pp->pr_size = size;
@@ -268,7 +279,16 @@ obsd_task_run(void *arg, int pending)
 {
 	struct task *t = arg;
 
+	/* pf state is per vnet: run in the vnet that queued the task. */
+	CURVNET_SET(t->t_vnet != NULL ? t->t_vnet : vnet0);
 	t->t_func(t->t_arg);
+	CURVNET_RESTORE();
+	/*
+	 * OpenBSD task threads yield between tasks, which clears the
+	 * SPCF_SHOULDYIELD condition pf's state purge checks; without it a
+	 * self-requeueing task would spin here.
+	 */
+	maybe_yield();
 }
 
 static void
@@ -299,6 +319,7 @@ task_add(struct taskq *tq, struct task *t)
 	int pending;
 
 	obsd_task_lazy_init(t);
+	t->t_vnet = curvnet;
 	pending = task_pending(t);
 	taskqueue_enqueue(obsd_tq, &t->t_task);
 	return (!pending);
@@ -353,7 +374,9 @@ obsd_timeout_task(void *arg, int pending)
 {
 	struct timeout *to = arg;
 
+	CURVNET_SET(to->to_vnet != NULL ? to->to_vnet : vnet0);
 	to->to_func(to->to_arg);
+	CURVNET_RESTORE();
 }
 
 static void
@@ -400,6 +423,7 @@ obsd_timeout_add_sbt(struct timeout *to, sbintime_t sbt)
 	int pending;
 
 	obsd_timeout_lazy_init(to);
+	to->to_vnet = curvnet;
 	pending = callout_pending(&to->to_callout);
 	callout_reset_sbt(&to->to_callout, sbt, 0, obsd_timeout_fire, to, 0);
 	return (!pending);
@@ -937,4 +961,16 @@ rtlabel_unref(u_int16_t id)
 			break;
 		}
 	mtx_unlock(&obsd_rtlabel_mtx);
+}
+
+/* OpenBSD rn_init() allocates the mask tree; pf calls it per vnet. */
+void	obsd_rn_init(unsigned int);
+void	obsd_rn_init_once(unsigned int);
+void
+obsd_rn_init_once(unsigned int keylen)
+{
+	static int done;
+
+	if (atomic_cmpset_int(&done, 0, 1))
+		obsd_rn_init(keylen);
 }

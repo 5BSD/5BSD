@@ -9,8 +9,10 @@ SRCS=	pf.c pf_if.c pf_ioctl.c pf_lb.c pf_norm.c pf_osfp.c pf_ruleset.c \
 	pf_syncookies.c pf_table.c radix.c inet_nat64.c in4_cksum.c
 SRCS+=	if_pflog.c if_pflow.c if_pfsync.c
 # 5BSD glue
-GLUE=	openbsd_compat.c openbsd_net.c openbsd_ifq.c pf_freebsd.c pf_sdt.c
+GLUE=	openbsd_compat.c openbsd_net.c openbsd_ifq.c pf_freebsd.c pf_sdt.c \
+	pf_divert.c
 SRCS+=	${GLUE}
+CFLAGS.radix.c+=	-DOBSD_RADIX_IMPL
 .for f in ${GLUE}
 CFLAGS.${f}+=	-DOPENBSD_PF_GLUE
 .endfor

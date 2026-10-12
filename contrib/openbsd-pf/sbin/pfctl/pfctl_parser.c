@@ -890,6 +890,8 @@ print_rule(struct pfctl *pf, struct pf_rule *r, const char *anchor_call,
 		print_ugid(r->uid.op, r->uid.uid[0], r->uid.uid[1], "user");
 	if (r->gid.op)
 		print_ugid(r->gid.op, r->gid.gid[0], r->gid.gid[1], "group");
+	if (r->jail.op)		/* 5BSD: jail */
+		pfctl_print_jail(r->jail.op, r->jail.jid[0], r->jail.jid[1]);
 	if (r->flags || r->flagset) {
 		printf(" flags ");
 		print_flags(r->flags);

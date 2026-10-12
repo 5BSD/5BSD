@@ -120,19 +120,11 @@ getrtable(void)
 	return (fib);
 }
 
-/* OpenBSD SO_BINDANY is a socket-level option; 5BSD has per-protocol ones. */
-#define	SO_BINDANY		(-0x5f10)
-static inline int
-obsd_setsockopt(int s, int level, int name, const void *val, socklen_t len)
-{
-	if (level == SOL_SOCKET && name == SO_BINDANY) {
-		if (setsockopt(s, IPPROTO_IP, IP_BINDANY, val, len) == 0)
-			return (0);
-		return (setsockopt(s, IPPROTO_IPV6, IPV6_BINDANY, val, len));
-	}
-	return (setsockopt(s, level, name, val, len));
-}
-#define	setsockopt(s, l, n, v, len)	obsd_setsockopt((s), (l), (n), (v), (len))
+/* SO_BINDANY is a native 5BSD socket option (sys/socket.h). */
+
+/* 5BSD pf rule option "jail" (pfctl_jail.c). */
+int	pfctl_jail_getid(const char *);
+void	pfctl_print_jail(u_int8_t, int, int);
 
 /* OpenBSD net/route.h routing table information (rdomains on FIBs). */
 struct rt_tableinfo {

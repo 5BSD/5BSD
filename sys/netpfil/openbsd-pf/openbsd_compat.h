@@ -545,7 +545,29 @@ int	refcnt_shared(struct refcnt *);
 /* ------------------------------------------------------------------ */
 
 MALLOC_DECLARE(M_PF);
-#define	M_CANFAIL	0
+/*
+ * OpenBSD M_WAITOK|M_CANFAIL may sleep and the caller handles failure.
+ * pf's own locks are not sleepable here, so such an allocation made with
+ * one of them held does not sleep (and may fail).
+ */
+#define	M_CANFAIL	0x40000000
+int	obsd_pf_nosleep(void);
+static __inline int
+obsd_malloc_flags(int flags)
+{
+	if (flags & M_CANFAIL) {
+		flags &= ~M_CANFAIL;
+		if ((flags & M_WAITOK) && obsd_pf_nosleep())
+			flags = (flags & ~M_WAITOK) | M_NOWAIT;
+	}
+	return (flags);
+}
+#ifndef OPENBSD_PF_GLUE
+#undef	malloc
+#define	malloc(s, t, f)		(malloc)((s), (t), obsd_malloc_flags(f))
+#undef	mallocarray
+#define	mallocarray(n, s, t, f)	(mallocarray)((n), (s), (t), obsd_malloc_flags(f))
+#endif
 #define	M_IFADDR	M_PF
 #define	M_IFGROUP	M_PF
 #define	M_IPOPTS	M_PF
@@ -677,6 +699,7 @@ obsd_ifcounters_pkt(counter_u64_t *ic, unsigned int c, unsigned int b,
 struct timeout {
 	void			(*to_func)(void *);
 	void			*to_arg;
+	struct vnet		*to_vnet;	/* vnet of the last timeout_add */
 	int			 to_flags;
 	volatile int		 to_initialized;
 	struct callout		 to_callout;
@@ -705,6 +728,7 @@ struct taskq;
 struct task {
 	void			(*t_func)(void *);
 	void			*t_arg;
+	struct vnet		*t_vnet;	/* vnet of the last task_add */
 	volatile int		 t_initialized;
 	struct __fbsd_task	 t_task;
 };
@@ -1040,7 +1064,6 @@ struct obsd_if_clone {
 	const char	*ifc_name;
 	int		(*ifc_create)(struct obsd_if_clone *, int);
 	int		(*ifc_destroy)(struct ifnet *);
-	void		*ifc_fbsd;	/* 5BSD struct if_clone * */
 };
 #define	if_clone	obsd_if_clone
 #define	IF_CLONE_INITIALIZER(name, create, destroy)			\
@@ -1212,6 +1235,8 @@ void		 obsd_in_pcbunref(struct inpcb *);
 
 /* struct socket credentials under their OpenBSD names */
 #define	so_euid		so_cred->cr_uid
+/* 5BSD jail extension: the jail (prison id) of a socket. */
+#define	PF_SO_JID(so)	((int32_t)(so)->so_cred->cr_prison->pr_id)
 #define	so_egid		so_cred->cr_gid
 
 /* ------------------------------------------------------------------ */
@@ -1248,11 +1273,72 @@ SDT_PROBE_DECLARE(pf, state, state, transition);
 SDT_PROBE_DECLARE(pf, syncookie, cookie, send);
 SDT_PROBE_DECLARE(pf, syncookie, cookie, validate);
 SDT_PROBE_DECLARE(pf, table, addr, match);
+SDT_PROBE_DECLARE(pf, rule, jail, match);
 SDT_PROBE_DECLARE(pf, table, addr, update);
 #define	PF_SDT1(m, f, n, a)		SDT_PROBE1(pf, m, f, n, a)
 #define	PF_SDT2(m, f, n, a, b)		SDT_PROBE2(pf, m, f, n, a, b)
 #define	PF_SDT3(m, f, n, a, b, c)	SDT_PROBE3(pf, m, f, n, a, b, c)
 #define	PF_SDT4(m, f, n, a, b, c, d)	SDT_PROBE4(pf, m, f, n, a, b, c, d)
 #define	PF_SDT_REASON(x)	SDT_PROBE3(pf, , reason, set, (x), __FILE__, __LINE__)
+
+/* ------------------------------------------------------------------ */
+/* VNET: OpenBSD PF globals are per-vnet (see PF_VNET_* in pfvar.h)    */
+/* ------------------------------------------------------------------ */
+#define	PF_VNET_DEFINE(t, n)		VNET_DEFINE(t, n##_vnet)
+#define	PF_VNET_DEFINE_STATIC(t, n)	VNET_DEFINE_STATIC(t, n##_vnet)
+#define	PF_VNET_DEFINE_ARRAY(t, n, d)	VNET_DEFINE(t, n##_vnet[d])
+#define	PF_VNET_DECLARE(t, n)		VNET_DECLARE(t, n##_vnet)
+#define	PF_VNET_DECLARE_ARRAY(t, n, d)	VNET_DECLARE(t, n##_vnet[d])
+/* Struct tags that share a name with a per-vnet variable. */
+#define	PF_KTAG(x)			x##_ktag
+#define	pf_statetbl	VNET(pf_statetbl_vnet)
+#define	pf_queues	VNET(pf_queues_vnet)
+#define	pf_queues_active	VNET(pf_queues_active_vnet)
+#define	pf_queues_inactive	VNET(pf_queues_inactive_vnet)
+#define	pf_status	VNET(pf_status_vnet)
+#define	pf_status_fcounters	VNET(pf_status_fcounters_vnet)
+#define	tree_src_tracking	VNET(tree_src_tracking_vnet)
+#define	tree_id	VNET(tree_id_vnet)
+#define	pf_state_list	VNET(pf_state_list_vnet)
+#define	pf_statelim_id_tree_active	VNET(pf_statelim_id_tree_active_vnet)
+#define	pf_statelim_list_active	VNET(pf_statelim_list_active_vnet)
+#define	pf_statelim_id_tree_inactive	VNET(pf_statelim_id_tree_inactive_vnet)
+#define	pf_statelim_nm_tree_inactive	VNET(pf_statelim_nm_tree_inactive_vnet)
+#define	pf_statelim_list_inactive	VNET(pf_statelim_list_inactive_vnet)
+#define	pf_sourcelim_id_tree_active	VNET(pf_sourcelim_id_tree_active_vnet)
+#define	pf_sourcelim_list_active	VNET(pf_sourcelim_list_active_vnet)
+#define	pf_sourcelim_id_tree_inactive	VNET(pf_sourcelim_id_tree_inactive_vnet)
+#define	pf_sourcelim_nm_tree_inactive	VNET(pf_sourcelim_nm_tree_inactive_vnet)
+#define	pf_sourcelim_list_inactive	VNET(pf_sourcelim_list_inactive_vnet)
+#define	pf_source_gc	VNET(pf_source_gc_vnet)
+#define	pf_purge_states_task	VNET(pf_purge_states_task_vnet)
+#define	pf_purge_states_to	VNET(pf_purge_states_to_vnet)
+#define	pf_purge_to	VNET(pf_purge_to_vnet)
+#define	pf_purge_task	VNET(pf_purge_task_vnet)
+#define	pf_purge_states_limit	VNET(pf_purge_states_limit_vnet)
+#define	pf_purge_states_collect	VNET(pf_purge_states_collect_vnet)
+#define	pf_purge_cur	VNET(pf_purge_cur_vnet)
+#define	pf_default_rule	VNET(pf_default_rule_vnet)
+#define	pf_default_rule_new	VNET(pf_default_rule_new_vnet)
+#define	pf_anchor_stack	VNET(pf_anchor_stack_vnet)
+#define	pfi_all	VNET(pfi_all_vnet)
+#define	pfi_ifs	VNET(pfi_ifs_vnet)
+#define	pfi_update	VNET(pfi_update_vnet)
+#define	pfi_buffer	VNET(pfi_buffer_vnet)
+#define	pfi_buffer_cnt	VNET(pfi_buffer_cnt_vnet)
+#define	pfi_buffer_max	VNET(pfi_buffer_max_vnet)
+#define	pfr_ktables	VNET(pfr_ktables_vnet)
+#define	pfr_ktable_cnt	VNET(pfr_ktable_cnt_vnet)
+#define	pf_anchors	VNET(pf_anchors_vnet)
+#define	pf_main_anchor	VNET(pf_main_anchor_vnet)
+#define	pf_osfp_list	VNET(pf_osfp_list_vnet)
+#define	pfn_fragqueue	VNET(pfn_fragqueue_vnet)
+#define	pfn_frnode_tree	VNET(pfn_frnode_tree_vnet)
+#define	pf_frag_mtx	VNET(pf_frag_mtx_vnet)
+#define	pf_syncookie_status	VNET(pf_syncookie_status_vnet)
+#define	pflog_ifs	VNET(pflog_ifs_vnet)
+#define	pflowif_list	VNET(pflowif_list_vnet)
+#define	pfsyncif	VNET(pfsyncif_vnet)
+#define	pf_trans_set	VNET(pf_trans_set_vnet)
 
 #endif /* _OPENBSD_PF_COMPAT_H_ */

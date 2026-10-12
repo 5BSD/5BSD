@@ -74,8 +74,8 @@ struct pool	pf_anchor_pl;
 #endif /* _KERNEL */
 
 
-struct pf_anchor_global	 pf_anchors;
-struct pf_anchor	 pf_main_anchor;
+PF_VNET_DEFINE(struct pf_anchor_global, pf_anchors); /* 5BSD: VNET */
+PF_VNET_DEFINE(struct pf_anchor, pf_main_anchor); /* 5BSD: VNET */
 
 static __inline int pf_anchor_compare(struct pf_anchor *, struct pf_anchor *);
 

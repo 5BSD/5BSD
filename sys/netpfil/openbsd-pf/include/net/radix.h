@@ -9,7 +9,11 @@
 #define rn_del_radix_mask obsd_rn_del_radix_mask
 #define rn_delete obsd_rn_delete
 #define rn_fixup_nodes obsd_rn_fixup_nodes
+#ifdef OBSD_RADIX_IMPL
 #define rn_init obsd_rn_init
+#else
+#define rn_init obsd_rn_init_once	/* 5BSD: once, pf initialises per vnet */
+#endif
 #define rn_inithead obsd_rn_inithead
 #define rn_initmask obsd_rn_initmask
 #define rn_insert obsd_rn_insert

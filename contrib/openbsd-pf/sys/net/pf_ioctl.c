@@ -123,7 +123,8 @@ void			 pf_init_tgetrule(struct pf_trans *,
 			    struct pf_anchor *, uint32_t, struct pf_rule *);
 void			 pf_cleanup_tgetrule(struct pf_trans *t);
 
-struct pf_rule		 pf_default_rule, pf_default_rule_new;
+PF_VNET_DEFINE(struct pf_rule, pf_default_rule); /* 5BSD: VNET */
+PF_VNET_DEFINE(struct pf_rule, pf_default_rule_new); /* 5BSD: VNET */
 
 void			 pf_statelim_commit();
 void			 pf_statelim_rollback();
@@ -138,13 +139,14 @@ static void		 pf_sourcelim_kstat_attach(struct pf_sourcelim *);
 static void		 pf_sourcelim_kstat_detach(struct pf_sourcelim *);
 #endif /* NKSTAT > 0 */
 
-struct {
+struct pf_trans_set_s { /* 5BSD: VNET */
 	char		statusif[IFNAMSIZ];
 	u_int32_t	debug;
 	u_int32_t	hostid;
 	u_int32_t	reass;
 	u_int32_t	mask;
-} pf_trans_set;
+};
+PF_VNET_DEFINE_STATIC(struct pf_trans_set_s, pf_trans_set); /* 5BSD: VNET */
 
 #define	PF_ORDER_HOST	0
 #define	PF_ORDER_NET	1
@@ -175,7 +177,7 @@ struct rwlock		 pf_lock = RWLOCK_INITIALIZER("pf_lock");
 struct rwlock		 pf_state_lock = RWLOCK_INITIALIZER("pf_state_lock");
 struct sx		 pfioctl_rw = RWLOCK_INITIALIZER("pfioctl_rw"); /* 5BSD: sleepable */
 
-struct cpumem *pf_anchor_stack;
+PF_VNET_DEFINE(struct cpumem *, pf_anchor_stack); /* 5BSD: VNET */
 
 #if (PF_QNAME_SIZE != PF_TAG_NAME_SIZE)
 #error PF_QNAME_SIZE must be equal to PF_TAG_NAME_SIZE
@@ -854,6 +856,9 @@ pf_hash_rule(MD5_CTX *ctx, struct pf_rule *rule)
 	PF_MD5_UPD_HTONL(rule, gid.gid[0], y);
 	PF_MD5_UPD_HTONL(rule, gid.gid[1], y);
 	PF_MD5_UPD(rule, gid.op);
+	PF_MD5_UPD_HTONL(rule, jail.jid[0], y); /* 5BSD: jail */
+	PF_MD5_UPD_HTONL(rule, jail.jid[1], y); /* 5BSD: jail */
+	PF_MD5_UPD(rule, jail.op); /* 5BSD: jail */
 	PF_MD5_UPD_HTONL(rule, rule_flag, y);
 	PF_MD5_UPD(rule, action);
 	PF_MD5_UPD(rule, direction);
@@ -1169,7 +1174,7 @@ static void
 pf_sourcelim_unlink(struct pf_sourcelim *pfsrlim,
     struct pf_state_link_list *garbage)
 {
-	extern struct pf_source_list pf_source_gc;
+	PF_VNET_DECLARE(struct pf_source_list, pf_source_gc); /* 5BSD: VNET */
 	struct pf_source *pfsr;
 	struct pf_state_link *pfl;
 
@@ -1750,7 +1755,7 @@ unlock:
 int
 pf_source_clr(struct pfioc_source_kill *ioc)
 {
-	extern struct pf_source_list pf_source_gc;
+	PF_VNET_DECLARE(struct pf_source_list, pf_source_gc); /* 5BSD: VNET */
 	struct pf_sourcelim plkey = {
 		.pfsrlim_id = ioc->id,
 	};
@@ -2915,7 +2920,7 @@ pfioctl(dev_t dev, u_long cmd, caddr_t addr, int flags, struct proc *p)
 		break;
 
 	case DIOCGETSTATUS:
-		error = pf_status_read((struct pf_status *)addr);
+		error = pf_status_read((struct PF_KTAG(pf_status) *)addr); /* 5BSD: VNET */
 		break;
 
 	case DIOCSETSTATUSIF: {
@@ -4200,6 +4205,7 @@ pf_rule_copyin(struct pf_rule *from, struct pf_rule *to)
 	to->delay = from->delay;
 	to->uid = from->uid;
 	to->gid = from->gid;
+	to->jail = from->jail; /* 5BSD: jail */
 	to->rule_flag = from->rule_flag;
 	to->action = from->action;
 	to->direction = from->direction;
@@ -4277,7 +4283,7 @@ pf_rule_checkaf(struct pf_rule *r)
 int
 pf_sysctl(void *oldp, size_t *oldlenp, void *newp, size_t newlen)
 {
-	struct pf_status	pfs;
+	struct PF_KTAG(pf_status)	pfs; /* 5BSD: VNET */
 	int error;
 
 	error = pf_status_read(&pfs);

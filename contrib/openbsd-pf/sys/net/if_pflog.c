@@ -82,7 +82,8 @@ struct	pflog_softc	*pflog_getif(int);
 struct if_clone			pflog_cloner =
     IF_CLONE_INITIALIZER("pflog", pflog_clone_create, pflog_clone_destroy);
 
-LIST_HEAD(, pflog_softc)	pflog_ifs = LIST_HEAD_INITIALIZER(pflog_ifs);
+LIST_HEAD(pflog_ifs_head, pflog_softc); /* 5BSD: VNET */
+PF_VNET_DEFINE(struct pflog_ifs_head, pflog_ifs);
 
 void
 pflogattach(int npflog)

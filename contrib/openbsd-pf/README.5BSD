@@ -54,10 +54,25 @@ import commits; summary below).  Keep them minimal so an update is close
 to a re-import.
 
 5BSD edits in sys/net (all marked "5BSD"):
+  VNET (marked "5BSD: VNET"): global state is defined with PF_VNET_DEFINE*
+                 and declared with PF_VNET_DECLARE* (pfvar.h; plain
+                 globals outside the kernel), so every vnet runs its own pf;
+                 struct tags that share a variable's name are PF_KTAG()ed;
+                 static initializers of per-vnet lists move to the glue;
+                 pf_norm.c fragment queue/tree are pfn_*; small teardown
+                 helpers pfi_vnet_fini(), pf_normalize_vnet_fini(),
+                 pf_syncookies_vnet_fini()
+  jail (marked "5BSD: jail"): the 5BSD extension "jail <name|jid>":
+                 struct pf_rule_jail and pf_rule.jail (pfvar.h), lookup.jid
+                 (pfvar_priv.h), pf_match_jail() and its rule test (pf.c),
+                 rule copy and checksum (pf_ioctl.c); pfctl parse.y grammar,
+                 pfctl_parser.c printing, pfctl_optimize.c field table
   pfvar.h        REASON_SET fires the pf::reason:set DTrace probe
   pfvar_priv.h   state-list lock is a sleepable lock (struct sx)
   pf.c           receive interface from m_pkthdr.rcvif (no ph_ifidx);
-                 flow id through M_HASHTYPE; DTrace probe hooks
+                 flow id through M_HASHTYPE; DTrace probe hooks;
+                 pf_socket_lookup() uses the outbound packet's socket
+                 (locked by the 5BSD stack) instead of a pcb table lookup
   pf_if.c        CK_STAILQ interface/group lists; allocate before PF_LOCK
   pf_ioctl.c     p_pid; pfioctl_rw is sleepable; overload table PR_NOWAIT
                  under PF_LOCK; DTrace probe hooks

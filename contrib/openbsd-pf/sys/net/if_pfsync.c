@@ -228,7 +228,7 @@ struct pfsync_softc {
 	}			 sc_bulk_snd;
 };
 
-static struct pfsync_softc	*pfsyncif = NULL;
+PF_VNET_DEFINE_STATIC(struct pfsync_softc *, pfsyncif); /* 5BSD: VNET */
 static struct cpumem		*pfsynccounters;
 
 static inline void

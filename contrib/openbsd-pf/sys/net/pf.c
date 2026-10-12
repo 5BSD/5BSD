@@ -96,13 +96,13 @@
 /*
  * Global variables
  */
-struct pf_state_tree	 pf_statetbl;
-struct pf_queuehead	 pf_queues[2];
-struct pf_queuehead	*pf_queues_active;
-struct pf_queuehead	*pf_queues_inactive;
+PF_VNET_DEFINE(struct pf_state_tree, pf_statetbl); /* 5BSD: VNET */
+PF_VNET_DEFINE_ARRAY(struct pf_queuehead, pf_queues, 2); /* 5BSD: VNET */
+PF_VNET_DEFINE(struct pf_queuehead *, pf_queues_active); /* 5BSD: VNET */
+PF_VNET_DEFINE(struct pf_queuehead *, pf_queues_inactive); /* 5BSD: VNET */
 
-struct pf_status	 pf_status;
-static struct cpumem	*pf_status_fcounters;
+PF_VNET_DEFINE(struct PF_KTAG(pf_status), pf_status); /* 5BSD: VNET */
+PF_VNET_DEFINE(struct cpumem *, pf_status_fcounters); /* 5BSD: VNET */ /* not static: freed per vnet */
 
 struct mutex		 pf_inp_mtx = MUTEX_INITIALIZER(IPL_SOFTNET);
 
@@ -328,17 +328,12 @@ pf_statelim_nm_cmp(const struct pf_statelim *a, const struct pf_statelim *b)
 RBT_GENERATE(pf_statelim_nm_tree, pf_statelim, pfstlim_nm_tree,
     pf_statelim_nm_cmp);
 
-struct pf_statelim_id_tree pf_statelim_id_tree_active =
-    RBT_INITIALIZER(pf_statelim_id_tree_active);
-struct pf_statelim_list pf_statelim_list_active =
-    TAILQ_HEAD_INITIALIZER(pf_statelim_list_active);
-
-struct pf_statelim_id_tree pf_statelim_id_tree_inactive =
-    RBT_INITIALIZER(pf_statelim_id_tree_inactive);
-struct pf_statelim_nm_tree pf_statelim_nm_tree_inactive =
-    RBT_INITIALIZER(pf_statelim_nm_tree_inactive);
-struct pf_statelim_list pf_statelim_list_inactive =
-    TAILQ_HEAD_INITIALIZER(pf_statelim_list_inactive);
+/* 5BSD: VNET - trees start empty, lists are initialised per vnet */
+PF_VNET_DEFINE(struct pf_statelim_id_tree, pf_statelim_id_tree_active);
+PF_VNET_DEFINE(struct pf_statelim_list, pf_statelim_list_active);
+PF_VNET_DEFINE(struct pf_statelim_id_tree, pf_statelim_id_tree_inactive);
+PF_VNET_DEFINE(struct pf_statelim_nm_tree, pf_statelim_nm_tree_inactive);
+PF_VNET_DEFINE(struct pf_statelim_list, pf_statelim_list_inactive);
 
 static inline int
 pf_sourcelim_id_cmp(const struct pf_sourcelim *a, const struct pf_sourcelim *b)
@@ -409,17 +404,12 @@ pf_source_ioc_cmp(const struct pf_source *a, const struct pf_source *b)
 
 RBT_GENERATE(pf_source_ioc_tree, pf_source, pfsr_ioc_tree, pf_source_ioc_cmp);
 
-struct pf_sourcelim_id_tree pf_sourcelim_id_tree_active =
-    RBT_INITIALIZER(pf_sourcelim_id_tree_active);
-struct pf_sourcelim_list pf_sourcelim_list_active =
-    TAILQ_HEAD_INITIALIZER(pf_sourcelim_list_active);
-
-struct pf_sourcelim_id_tree pf_sourcelim_id_tree_inactive =
-    RBT_INITIALIZER(pf_sourcelim_id_tree_inactive);
-struct pf_sourcelim_nm_tree pf_sourcelim_nm_tree_inactive =
-    RBT_INITIALIZER(pf_sourcelim_nm_tree_inactive);
-struct pf_sourcelim_list pf_sourcelim_list_inactive =
-    TAILQ_HEAD_INITIALIZER(pf_sourcelim_list_inactive);
+/* 5BSD: VNET - trees start empty, lists are initialised per vnet */
+PF_VNET_DEFINE(struct pf_sourcelim_id_tree, pf_sourcelim_id_tree_active);
+PF_VNET_DEFINE(struct pf_sourcelim_list, pf_sourcelim_list_active);
+PF_VNET_DEFINE(struct pf_sourcelim_id_tree, pf_sourcelim_id_tree_inactive);
+PF_VNET_DEFINE(struct pf_sourcelim_nm_tree, pf_sourcelim_nm_tree_inactive);
+PF_VNET_DEFINE(struct pf_sourcelim_list, pf_sourcelim_list_inactive);
 
 static inline struct pf_statelim *
 pf_statelim_find(uint32_t id)
@@ -445,7 +435,7 @@ pf_sourcelim_find(uint32_t id)
 	    &pf_sourcelim_id_tree_active, &key));
 }
 
-struct pf_source_list pf_source_gc = TAILQ_HEAD_INITIALIZER(pf_source_gc);
+PF_VNET_DEFINE(struct pf_source_list, pf_source_gc); /* 5BSD: VNET */ /* initialised per vnet */
 
 static void
 pf_source_purge(void)
@@ -579,10 +569,10 @@ pf_source_find(struct pf_sourcelim *srlim, const struct pf_source *key)
 	return (RBT_FIND(pf_source_tree, &srlim->pfsrlim_sources, key));
 }
 
-struct pf_src_tree tree_src_tracking;
+PF_VNET_DEFINE(struct pf_src_tree, tree_src_tracking); /* 5BSD: VNET */
 
-struct pf_state_tree_id tree_id;
-struct pf_state_list pf_state_list = PF_STATE_LIST_INITIALIZER(pf_state_list);
+PF_VNET_DEFINE(struct pf_state_tree_id, tree_id); /* 5BSD: VNET */
+PF_VNET_DEFINE(struct PF_KTAG(pf_state_list), pf_state_list); /* 5BSD: VNET */ /* initialised per vnet */
 
 RB_GENERATE(pf_src_tree, pf_src_node, entry, pf_src_compare);
 RBT_GENERATE(pf_state_tree, pf_state_key, sk_entry, pf_state_compare_key);
@@ -713,7 +703,7 @@ pf_check_threshold(struct pf_threshold *threshold)
 }
 
 void
-pf_state_list_insert(struct pf_state_list *pfs, struct pf_state *st)
+pf_state_list_insert(struct PF_KTAG(pf_state_list) *pfs, struct pf_state *st) /* 5BSD: VNET */
 {
 	/*
 	 * we can always put states on the end of the list.
@@ -731,7 +721,7 @@ pf_state_list_insert(struct pf_state_list *pfs, struct pf_state *st)
 }
 
 void
-pf_state_list_remove(struct pf_state_list *pfs, struct pf_state *st)
+pf_state_list_remove(struct PF_KTAG(pf_state_list) *pfs, struct pf_state *st) /* 5BSD: VNET */
 {
 	/* states can only be removed when the write lock is held */
 	rw_assert_wrlock(&pfs->pfs_rwl);
@@ -1897,14 +1887,15 @@ pf_state_import(const struct pfsync_state *sp, int flags)
 /* END state table stuff */
 
 void		 pf_purge_states(void *);
-struct task	 pf_purge_states_task =
-		     TASK_INITIALIZER(pf_purge_states, NULL);
+PF_VNET_DEFINE(struct task, pf_purge_states_task) =
+		     TASK_INITIALIZER(pf_purge_states, NULL); /* 5BSD: VNET */
 
 void		 pf_purge_states_tick(void *);
-struct timeout	 pf_purge_states_to =
-		     TIMEOUT_INITIALIZER(pf_purge_states_tick, NULL);
+PF_VNET_DEFINE(struct timeout, pf_purge_states_to) =
+		     TIMEOUT_INITIALIZER(pf_purge_states_tick, NULL); /* 5BSD: VNET */
 
 unsigned int	 pf_purge_expired_states(unsigned int, unsigned int);
+PF_VNET_DEFINE_STATIC(struct pf_state *, pf_purge_cur); /* 5BSD: VNET */
 
 /*
  * how many states to scan this interval.
@@ -1913,13 +1904,13 @@ unsigned int	 pf_purge_expired_states(unsigned int, unsigned int);
  * task will reschedule itself until the limit is reduced to zero,
  * and then it adds the timeout again.
  */
-unsigned int pf_purge_states_limit;
+PF_VNET_DEFINE(unsigned int, pf_purge_states_limit); /* 5BSD: VNET */
 
 /*
  * limit how many states are processed with locks held per run of
  * the state purge task.
  */
-unsigned int pf_purge_states_collect = 64;
+PF_VNET_DEFINE(unsigned int, pf_purge_states_collect) = 64; /* 5BSD: VNET */
 
  void
 pf_purge_states_tick(void *null)
@@ -1965,11 +1956,11 @@ pf_purge_states(void *null)
 }
 
 void		 pf_purge_tick(void *);
-struct timeout	 pf_purge_to =
+PF_VNET_DEFINE(struct timeout, pf_purge_to) = /* 5BSD: VNET */
 		     TIMEOUT_INITIALIZER(pf_purge_tick, NULL);
 
 void		 pf_purge(void *);
-struct task	 pf_purge_task =
+PF_VNET_DEFINE(struct task, pf_purge_task) = /* 5BSD: VNET */
 		     TASK_INITIALIZER(pf_purge, NULL);
 
 void
@@ -2297,7 +2288,7 @@ pf_purge_expired_states(const unsigned int limit, const unsigned int collect)
 	 * it holds between calls is guaranteed to still be in the
 	 * list.
 	 */
-	static struct pf_state	*cur = NULL;
+#define	cur	pf_purge_cur			/* 5BSD: VNET */
 
 	struct pf_state		*head, *tail;
 	struct pf_state		*st;
@@ -2379,6 +2370,7 @@ pf_purge_expired_states(const unsigned int limit, const unsigned int collect)
 
 	return (scanned);
 }
+#undef	cur					/* 5BSD: VNET */
 
 int
 pf_tbladdr_setup(struct pf_ruleset *rs, struct pf_addr_wrap *aw, int wait)
@@ -3958,6 +3950,20 @@ pf_match_gid(u_int8_t op, gid_t a1, gid_t a2, gid_t g)
 	return (pf_match(op, a1, a2, g));
 }
 
+/* 5BSD: jail */
+int
+pf_match_jail(struct pf_rule *r, int32_t jid)
+{
+	int match;
+
+	if (jid == -1 && r->jail.op != PF_OP_EQ && r->jail.op != PF_OP_NE)
+		return (0);
+	match = pf_match(r->jail.op, r->jail.jid[0], r->jail.jid[1], jid);
+	if (match)
+		PF_SDT2(rule, jail, match, r, jid);
+	return (match);
+}
+
 int
 pf_match_tag(struct mbuf *m, struct pf_rule *r, int *tag)
 {
@@ -4188,6 +4194,7 @@ pf_socket_lookup(struct pf_pdesc *pd)
 	pd->lookup.uid = -1;
 	pd->lookup.gid = -1;
 	pd->lookup.pid = NO_PID;
+	pd->lookup.jid = -1; /* 5BSD: jail */
 	switch (pd->virtual_proto) {
 	case IPPROTO_TCP:
 		sport = pd->hdr.tcp.th_sport;
@@ -4205,6 +4212,18 @@ pf_socket_lookup(struct pf_pdesc *pd)
 		break;
 	default:
 		return (-1);
+	}
+	/*
+	 * 5BSD: an outbound packet carries its socket, which the 5BSD stack
+	 * holds locked while sending; a pcb table lookup would lock it again.
+	 */
+	if (pd->dir == PF_OUT && pd->m->m_pkthdr.pf.inp != NULL) {
+		inp = pd->m->m_pkthdr.pf.inp;
+		pd->lookup.uid = inp->inp_socket->so_euid;
+		pd->lookup.gid = inp->inp_socket->so_egid;
+		pd->lookup.pid = inp->inp_socket->so_cpid;
+		pd->lookup.jid = PF_SO_JID(inp->inp_socket);
+		return (1);
 	}
 	if (pd->dir == PF_IN) {
 		saddr = pd->src;
@@ -4255,6 +4274,7 @@ pf_socket_lookup(struct pf_pdesc *pd)
 	pd->lookup.uid = inp->inp_socket->so_euid;
 	pd->lookup.gid = inp->inp_socket->so_egid;
 	pd->lookup.pid = inp->inp_socket->so_cpid;
+	pd->lookup.jid = PF_SO_JID(inp->inp_socket); /* 5BSD: jail */
 	in_pcbunref(inp);
 	return (1);
 }
@@ -4537,6 +4557,8 @@ enter_ruleset:
 			/* tcp/udp only. {uid|gid}.op always 0 in other cases */
 			PF_TEST_ATTRIB((r->gid.op || r->uid.op),
 				TAILQ_NEXT(r, entries));
+			PF_TEST_ATTRIB((r->jail.op), /* 5BSD: jail */
+				TAILQ_NEXT(r, entries));
 			break;
 
 		case IPPROTO_TCP:
@@ -4572,6 +4594,12 @@ enter_ruleset:
 			    pf_socket_lookup(ctx->pd), 1)) &&
 			    !pf_match_gid(r->gid.op, r->gid.gid[0],
 			    r->gid.gid[1], ctx->pd->lookup.gid)),
+				TAILQ_NEXT(r, entries));
+			/* 5BSD: jail; tcp/udp only, jail.op 0 in other cases */
+			PF_TEST_ATTRIB((r->jail.op && (ctx->pd->lookup.done ||
+			    (ctx->pd->lookup.done =
+			    pf_socket_lookup(ctx->pd), 1)) &&
+			    !pf_match_jail(r, ctx->pd->lookup.jid)),
 				TAILQ_NEXT(r, entries));
 			break;
 
@@ -8454,6 +8482,7 @@ pf_test(sa_family_t af, int fwdir, struct ifnet *ifp, struct mbuf **m0)
 		pd.lookup.uid = -1;
 		pd.lookup.gid = -1;
 		pd.lookup.pid = NO_PID;
+		pd.lookup.jid = -1; /* 5BSD: jail */
 	}
 
 	switch (pd.virtual_proto) {
@@ -9211,7 +9240,7 @@ pf_status_clear(void)
 }
 
 int
-pf_status_read(struct pf_status *pfs)
+pf_status_read(struct PF_KTAG(pf_status) *pfs) /* 5BSD: VNET */
 {
 	uint64_t scratch[FCNT_MAX];
 
@@ -9221,7 +9250,7 @@ pf_status_read(struct pf_status *pfs)
 	NET_LOCK();
 	PF_LOCK();
 	PF_FRAG_LOCK();
-	memcpy(pfs, &pf_status, sizeof(struct pf_status));
+	memcpy(pfs, &pf_status, sizeof(pf_status)); /* 5BSD: VNET */
 	PF_FRAG_UNLOCK();
 	pfi_update_status(pfs->ifname, pfs);
 	PF_UNLOCK();

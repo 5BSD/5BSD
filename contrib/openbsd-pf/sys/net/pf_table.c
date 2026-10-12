@@ -206,9 +206,9 @@ int			 pfr_islinklocal(sa_family_t, struct pf_addr *);
 RB_PROTOTYPE(pfr_ktablehead, pfr_ktable, pfrkt_tree, pfr_ktable_compare);
 RB_GENERATE(pfr_ktablehead, pfr_ktable, pfrkt_tree, pfr_ktable_compare);
 
-struct pfr_ktablehead	 pfr_ktables;
+PF_VNET_DEFINE(struct pfr_ktablehead, pfr_ktables); /* 5BSD: VNET */
 struct pfr_table	 pfr_nulltable;
-int			 pfr_ktable_cnt;
+PF_VNET_DEFINE(int, pfr_ktable_cnt); /* 5BSD: VNET */
 
 int
 pfr_gcd(int m, int n)

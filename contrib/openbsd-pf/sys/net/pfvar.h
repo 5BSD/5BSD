@@ -34,6 +34,16 @@
 #ifndef _NET_PFVAR_H_
 #define _NET_PFVAR_H_
 
+/* 5BSD: VNET - per-vnet globals in the kernel, plain globals elsewhere */
+#ifndef PF_VNET_DEFINE
+#define PF_VNET_DEFINE(t, n)		t n
+#define PF_VNET_DEFINE_STATIC(t, n)	static t n
+#define PF_VNET_DEFINE_ARRAY(t, n, d)	t n[d]
+#define PF_VNET_DECLARE(t, n)		extern t n
+#define PF_VNET_DECLARE_ARRAY(t, n, d)	extern t n[d]
+#define PF_KTAG(x)			x
+#endif
+
 #include <sys/queue.h>
 #include <sys/tree.h>
 #include <sys/syslimits.h>
@@ -307,6 +317,12 @@ struct pf_rule_uid {
 
 struct pf_rule_gid {
 	uid_t		 gid[2];
+	u_int8_t	 op;
+};
+
+/* 5BSD extension: match the jail of the local socket (jail <name|jid>). */
+struct pf_rule_jail {
+	int32_t		 jid[2];
 	u_int8_t	 op;
 };
 
@@ -614,6 +630,8 @@ struct pf_rule {
 	}			divert;
 
 	time_t			 exptime;
+
+	struct pf_rule_jail	 jail;	/* 5BSD extension */
 };
 
 /* rule flags */
@@ -1051,7 +1069,7 @@ struct pfr_ktable {
 RB_HEAD(pfi_ifhead, pfi_kif);
 
 /* state tables */
-extern struct pf_state_tree	 pf_statetbl;
+PF_VNET_DECLARE(struct pf_state_tree, pf_statetbl); /* 5BSD: VNET */
 
 /* keep synced with pfi_kif, used in RB_FIND */
 struct pfi_kif_cmp {
@@ -1217,7 +1235,7 @@ enum pfi_kif_refs {
 		} \
 	} while (0)
 
-struct pf_status {
+struct PF_KTAG(pf_status) { /* 5BSD: VNET */
 	u_int64_t	counters[PFRES_MAX];
 	u_int64_t	lcounters[LCNT_MAX];	/* limit counters */
 	u_int64_t	fcounters[FCNT_MAX];
@@ -1658,7 +1676,7 @@ struct pfioc_source_kill {
 #define DIOCCLRSTATES	_IOWR('D', 18, struct pfioc_state_kill)
 #define DIOCGETSTATE	_IOWR('D', 19, struct pfioc_state)
 #define DIOCSETSTATUSIF _IOWR('D', 20, struct pfioc_iface)
-#define DIOCGETSTATUS	_IOWR('D', 21, struct pf_status)
+#define DIOCGETSTATUS	_IOWR('D', 21, struct PF_KTAG(pf_status)) /* 5BSD: VNET */
 #define DIOCCLRSTATUS	_IOWR('D', 22, struct pfioc_iface)
 #define DIOCNATLOOK	_IOWR('D', 23, struct pfioc_natlook)
 #define DIOCSETDEBUG	_IOWR('D', 24, u_int32_t)
@@ -1729,20 +1747,21 @@ struct pf_pdesc;
 
 RB_HEAD(pf_src_tree, pf_src_node);
 RB_PROTOTYPE(pf_src_tree, pf_src_node, entry, pf_src_compare);
-extern struct pf_src_tree tree_src_tracking;
+PF_VNET_DECLARE(struct pf_src_tree, tree_src_tracking); /* 5BSD: VNET */
 
-extern struct pf_state_list pf_state_list;
+PF_VNET_DECLARE(struct PF_KTAG(pf_state_list), pf_state_list); /* 5BSD: VNET */
 
 TAILQ_HEAD(pf_queuehead, pf_queuespec);
-extern struct pf_queuehead		  pf_queues[2];
-extern struct pf_queuehead		 *pf_queues_active, *pf_queues_inactive;
+PF_VNET_DECLARE_ARRAY(struct pf_queuehead, pf_queues, 2); /* 5BSD: VNET */
+PF_VNET_DECLARE(struct pf_queuehead *, pf_queues_active); /* 5BSD: VNET */
+PF_VNET_DECLARE(struct pf_queuehead *, pf_queues_inactive);
 
 extern struct pool		 pf_src_tree_pl, pf_sn_item_pl, pf_rule_pl;
 extern struct pool		 pf_state_pl, pf_state_key_pl, pf_state_item_pl,
 				    pf_rule_item_pl, pf_queue_pl,
 				    pf_pktdelay_pl, pf_anchor_pl;
 extern struct pool		 pf_state_scrub_pl;
-extern struct pf_rule		 pf_default_rule;
+PF_VNET_DECLARE(struct pf_rule, pf_default_rule); /* 5BSD: VNET */
 
 extern int			 pf_tbladdr_setup(struct pf_ruleset *,
 				    struct pf_addr_wrap *, int);
@@ -1812,6 +1831,7 @@ int	pf_match(u_int8_t, u_int32_t, u_int32_t, u_int32_t);
 int	pf_match_port(u_int8_t, u_int16_t, u_int16_t, u_int16_t);
 int	pf_match_uid(u_int8_t, uid_t, uid_t, uid_t);
 int	pf_match_gid(u_int8_t, gid_t, gid_t, gid_t);
+int	pf_match_jail(struct pf_rule *, int32_t); /* 5BSD: jail */
 
 struct pf_state_scrub *
 	pf_state_scrub_get(void);
@@ -1897,7 +1917,7 @@ int	pfr_ina_define(struct pfr_table *, struct pfr_addr *, int, int *,
 struct pfr_ktable
 	*pfr_ktable_select_active(struct pfr_ktable *);
 
-extern struct pfi_kif		*pfi_all;
+PF_VNET_DECLARE(struct pfi_kif *, pfi_all); /* 5BSD: VNET */
 
 void		 pfi_initialize(void);
 struct pfi_kif	*pfi_kif_alloc(const char *, int);
@@ -1918,7 +1938,7 @@ int		 pfi_match_addr(struct pfi_dynaddr *, struct pf_addr *,
 int		 pfi_dynaddr_setup(struct pf_addr_wrap *, sa_family_t, int);
 void		 pfi_dynaddr_remove(struct pf_addr_wrap *);
 void		 pfi_dynaddr_copyout(struct pf_addr_wrap *);
-void		 pfi_update_status(const char *, struct pf_status *);
+void		 pfi_update_status(const char *, struct PF_KTAG(pf_status) *); /* 5BSD: VNET */
 void		 pfi_get_ifaces(const char *, struct pfi_kif *, int *);
 int		 pfi_set_flags(const char *, int);
 int		 pfi_clear_flags(const char *, int);
@@ -1936,7 +1956,7 @@ int		 pf_addr_compare(const struct pf_addr *,
 const struct pfq_ops
 		*pf_queue_manager(struct pf_queuespec *);
 
-extern struct pf_status	pf_status;
+PF_VNET_DECLARE(struct PF_KTAG(pf_status), pf_status); /* 5BSD: VNET */
 extern struct pool	pf_frent_pl, pf_frag_pl;
 
 /*
@@ -1954,8 +1974,8 @@ extern struct pf_pool_limit	pf_pool_limits[PF_LIMIT_MAX];
 
 #endif /* _KERNEL */
 
-extern struct pf_anchor_global	pf_anchors;
-extern struct pf_anchor		pf_main_anchor;
+PF_VNET_DECLARE(struct pf_anchor_global, pf_anchors); /* 5BSD: VNET */
+PF_VNET_DECLARE(struct pf_anchor, pf_main_anchor); /* 5BSD: VNET */
 #define pf_main_ruleset		pf_main_anchor.ruleset
 
 struct tcphdr;

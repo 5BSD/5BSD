@@ -34,6 +34,7 @@ SDT_PROBE_DEFINE2(pf, nat, transaddr, entry, "struct pf_rule *", "struct pf_pdes
 SDT_PROBE_DEFINE1(pf, pflow, flow, export, "struct pf_state *");
 SDT_PROBE_DEFINE1(pf, pfsync, packet, input, "struct mbuf *");
 SDT_PROBE_DEFINE2(pf, pfsync, packet, send, "void *", "struct mbuf *");
+SDT_PROBE_DEFINE2(pf, rule, jail, match, "struct pf_rule *", "int");
 SDT_PROBE_DEFINE2(pf, state, purge, run, "u_int", "u_int");
 SDT_PROBE_DEFINE3(pf, state, state, create, "struct pf_pdesc *", "struct pf_rule *", "struct pf_rule *");
 SDT_PROBE_DEFINE1(pf, state, state, free, "struct pf_state *");

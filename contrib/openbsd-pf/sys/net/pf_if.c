@@ -63,13 +63,13 @@
 #define islower(c)	((c) >= 'a' && (c) <= 'z')
 #define isalpha(c)	(isupper(c)||islower(c))
 
-struct pfi_kif		 *pfi_all = NULL;
+PF_VNET_DEFINE(struct pfi_kif *, pfi_all); /* 5BSD: VNET */
 struct pool		  pfi_addr_pl;
-struct pfi_ifhead	  pfi_ifs;
-long			  pfi_update = 1;
-struct pfr_addr		 *pfi_buffer;
-int			  pfi_buffer_cnt;
-int			  pfi_buffer_max;
+PF_VNET_DEFINE(struct pfi_ifhead, pfi_ifs); /* 5BSD: VNET */
+PF_VNET_DEFINE(long, pfi_update) = 1; /* 5BSD: VNET */
+PF_VNET_DEFINE(struct pfr_addr *, pfi_buffer); /* 5BSD: VNET */
+PF_VNET_DEFINE(int, pfi_buffer_cnt); /* 5BSD: VNET */
+PF_VNET_DEFINE(int, pfi_buffer_max); /* 5BSD: VNET */
 
 void		 pfi_kif_update(struct pfi_kif *);
 void		 pfi_dynaddr_update(struct pfi_dynaddr *dyn);
@@ -145,6 +145,29 @@ pfi_initialize(void)
 
 	if (RB_INSERT(pfi_ifhead, &pfi_ifs, pfi_all) != NULL)
 		panic("IFG_ALL kif found already");
+}
+
+/* 5BSD: VNET - release the interface table of a vnet that goes away. */
+void	pfi_vnet_fini(void);
+void
+pfi_vnet_fini(void)
+{
+	struct pfi_kif	*kif;
+
+	PF_LOCK();
+	while ((kif = RB_MIN(pfi_ifhead, &pfi_ifs)) != NULL) {
+		RB_REMOVE(pfi_ifhead, &pfi_ifs, kif);
+		if (kif->pfik_ifp != NULL)
+			kif->pfik_ifp->if_pf_kif = NULL;
+		if (kif->pfik_group != NULL)
+			kif->pfik_group->ifg_pf_kif = NULL;
+		free(kif, PFI_MTYPE, sizeof(*kif));
+	}
+	pfi_all = NULL;
+	free(pfi_buffer, PFI_MTYPE, pfi_buffer_max * sizeof(*pfi_buffer));
+	pfi_buffer = NULL;
+	pfi_buffer_max = 0;
+	PF_UNLOCK();
 }
 
 struct pfi_kif *
@@ -722,7 +745,7 @@ pfi_if_compare(struct pfi_kif *p, struct pfi_kif *q)
 }
 
 void
-pfi_update_status(const char *name, struct pf_status *pfs)
+pfi_update_status(const char *name, struct PF_KTAG(pf_status) *pfs) /* 5BSD: VNET */
 {
 	struct pfi_kif		*p;
 	struct pfi_kif_cmp	 key;
