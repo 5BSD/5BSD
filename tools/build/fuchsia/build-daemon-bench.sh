@@ -57,6 +57,15 @@ sysctl)
 	bench=usr.sbin/BSDSysctl/tests/latency_bench.c
 	libs="-lservice -lchannel -lprivateucl"
 	;;
+crypto)
+	paths="usr.sbin/BSDCrypto lib/libcryptocmp"
+	defs="-DBSDCRYPTO_TESTING"
+	incs="usr.sbin/BSDCrypto lib/libcryptocmp"
+	srcs="usr.sbin/BSDCrypto/bsdcrypto.c usr.sbin/BSDCrypto/policy.c"
+	bench=usr.sbin/BSDCrypto/tests/latency_bench.c
+	libs="-lauditcmp -lcryptodesc -lservice -lchannel -lpthread"
+	extra="-I$src/lib/libauditcmp -I$src/lib/libcryptodesc -I$src/lib/liblogcmp -I$src/lib/libcapreclaim"
+	;;
 *)
 	echo "build-daemon-bench: unknown daemon $daemon" >&2; exit 64;;
 esac

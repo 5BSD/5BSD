@@ -1,0 +1,101 @@
+// SPDX-License-Identifier: BSD-2-Clause
+// system.Crypto (BSDCrypto).  The library name, ordinals and layouts are a
+// stable contract for wire major 1; incompatible changes need a new major.
+// The key owner never travels in a payload: every named-key method is scoped
+// to the accepted session's channel label.  Delivered descriptors are
+// DTYPE_CRYPTO sessions or leases whose operation rights are fixed in the
+// kernel; they may be transferred no further.
+library bsd.crypto.v1;
+
+using zx;
+
+type ProtocolInfo = struct { wire_version uint32; };
+// A key name: [A-Za-z0-9._-]{1,63}.
+alias KeyName = string:63;
+// OpenCrypto session parameters (selects an algorithm profile; not a FIPS
+// validation claim).  flags 0x1: NIST-approved algorithms only.
+type GenerateParams = struct {
+    cipher uint32;
+    mac uint32;
+    keylen uint32;
+    mackeylen uint32;
+    rights uint32;
+    ttl uint32;
+    flags uint32;
+    crid int32;
+    ivlen int32;
+    maclen int32;
+};
+type KeyParams = struct {
+    type uint32;
+    rights uint32;
+    ttl uint32;
+    flags uint32;
+};
+type DigestParams = struct {
+    alg uint32;
+    ttl uint32;
+    flags uint32;
+};
+type Session = resource struct { descriptor zx.Handle; };
+type Key = resource struct {
+    descriptor zx.Handle;
+    public_key array<uint8, 32>;
+};
+type NamedCreateRequest = struct {
+    name KeyName;
+    params GenerateParams;
+};
+type NamedLeaseRequest = struct {
+    name KeyName;
+    rights uint32;
+    ttl uint32;
+    flags uint32;
+};
+type NamedControlRequest = struct {
+    name KeyName;
+    flags uint32;
+};
+type Generation = struct { generation uint64; };
+type Lease = resource struct {
+    descriptor zx.Handle;
+    generation uint64;
+};
+type RandomRequest = struct { nbytes uint32; };
+type RandomBytes = struct { data vector<uint8>:1024; };
+type NamedInfo = struct {
+    generation uint64;
+    rights uint32;
+    cipher uint32;
+    mac uint32;
+    keylen uint32;
+    mackeylen uint32;
+};
+type NamedListRequest = struct {
+    cursor uint32;
+    flags uint32;
+};
+type NamedEntry = struct {
+    name KeyName;
+    generation uint64;
+    rights uint32;
+};
+type NamedPage = struct {
+    entries vector<NamedEntry>:16;
+    // 0 at the end of the walk; otherwise the cursor to resume from.
+    next_cursor uint32;
+};
+closed protocol Crypto {
+    strict GetProtocolInfo() -> (ProtocolInfo);
+    // All errors are errno values.
+    strict Generate(GenerateParams) -> (Session) error uint32;
+    strict GenerateKey(KeyParams) -> (Key) error uint32;
+    strict NamedCreate(NamedCreateRequest) -> (Generation) error uint32;
+    strict NamedLease(NamedLeaseRequest) -> (Lease) error uint32;
+    strict NamedRotate(NamedControlRequest) -> (Generation) error uint32;
+    strict NamedDelete(NamedControlRequest) -> (Generation) error uint32;
+    strict Digest(DigestParams) -> (Session) error uint32;
+    strict Random(RandomRequest) -> (RandomBytes) error uint32;
+    strict NamedStat(NamedControlRequest) -> (NamedInfo) error uint32;
+    strict NamedList(NamedListRequest) -> (NamedPage) error uint32;
+};

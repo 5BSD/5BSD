@@ -73,23 +73,43 @@ device, 20 capability mode), listed in BSDCrypto(8).
 
 ## Wire operations
 
-The protocol is `lib/libcryptocmp/cryptocmp_protocol.h`: magic
-`CRYPTOCMP_MAGIC`. Every
-message starts with an 8-byte-aligned `cryptocmp_msg` (magic,
-opcode, status). A descriptor rides back as the reply's SCM_RIGHTS fd.
+The provider and client use `lib/libcryptocmp/cryptocmp.fidl`, library
+`bsd.crypto.v1`, with generated C bindings over native capability channels
+(see [FIDL and Capability IPC](../develop/fidl.md)); the schema installs as
+`/usr/share/fidl/cryptocmp.fidl` and imports `zx.fidl` for the descriptor
+type. The key owner never travels in a payload: every named-key method is
+scoped to the session's channel label. Every error is an errno value in the
+method's result.
 
-| Op | Request | Reply | Errors |
+| Method (probe opcode) | Request | Reply | Errors |
 |---|---|---|---|
-| 1 GENERATE | `cryptocmp_generate` (cipher, mac, keylen, mackeylen, rights, ttl, flags, crid, ivlen, maclen) | header + fd (session descriptor) | `EINVAL` (out of policy), the errno from the kernel mint |
-| 2 GENERATE_KEY | `cryptocmp_key_generate` (type X25519 or Ed25519, rights, ttl, flags) | `cryptocmp_key_reply` (32-byte public key) + fd | `EINVAL` |
-| 3 NAMED_CREATE | `cryptocmp_named_create` (name[64], generate params) | `cryptocmp_named_reply` (generation) | `EINVAL` (name charset), `EEXIST`, `ENOSPC` (owner or global cap) |
-| 4 NAMED_LEASE | `cryptocmp_named_lease` (name, rights, ttl, flags) | `cryptocmp_named_reply` + fd | `ENOENT`, `EINVAL` |
-| 5 NAMED_ROTATE | `cryptocmp_named_control` (name) | `cryptocmp_named_reply` (new generation) | `ENOENT` |
-| 6 NAMED_DELETE | `cryptocmp_named_control` (name) | `cryptocmp_named_reply` | `ENOENT` |
-| 7 DIGEST | `cryptocmp_digest` (alg SHA2-256/384/512, ttl, flags) | header + fd (`CSP_MODE_DIGEST` session with `RIGHT_AUTH`) | `EINVAL` |
-| 8 RANDOM | `cryptocmp_random` (nbytes, at most 1024) | `cryptocmp_random_reply` (nbytes, data) | `EINVAL` |
-| 9 NAMED_STAT | `cryptocmp_named_stat` (name) | `cryptocmp_named_stat_reply` (`cryptocmp_named_info`: generation, rights, cipher, mac, keylen, mackeylen) | `ENOENT` |
-| 10 NAMED_LIST | `cryptocmp_named_list` (cursor, flags) | `cryptocmp_named_list_reply` (count, `next_cursor`, up to 16 entries of name, generation, rights) | none; an out-of-range cursor is an empty page |
+| `GetProtocolInfo` (0) | empty | wire version 1 | none |
+| `Generate` (1) | session parameters (cipher, mac, keylen, mackeylen, rights, ttl, flags, crid, ivlen, maclen) | session descriptor | `EINVAL` (out of policy), the errno from the kernel mint |
+| `GenerateKey` (2) | type X25519 or Ed25519, rights, ttl, flags | descriptor and 32-byte public key | `EINVAL` |
+| `NamedCreate` (3) | name (at most 63 bytes), session parameters | generation | `EINVAL` (name charset), `EEXIST`, `ENOSPC` (owner or global cap) |
+| `NamedLease` (4) | name, rights, ttl, flags | lease descriptor and generation | `ENOENT`, `EINVAL` |
+| `NamedRotate` (5) | name, flags | new generation | `ENOENT` |
+| `NamedDelete` (6) | name, flags | generation | `ENOENT` |
+| `Digest` (7) | alg SHA2-256/384/512, ttl, flags | `CSP_MODE_DIGEST` session descriptor with `RIGHT_AUTH` | `EINVAL`, `EPROTONOSUPPORT` |
+| `Random` (8) | nbytes, at most 1024 | the bytes | `EINVAL` |
+| `NamedStat` (9) | name, flags | generation, rights, cipher, mac, keylen, mackeylen | `ENOENT` |
+| `NamedList` (10) | cursor, flags | up to 16 entries (name, generation, rights) and `next_cursor` | none; an out-of-range cursor is an empty page |
+
+A session must negotiate before any other method. A method before
+negotiation, an unknown method, a malformed, truncated or oversized frame, a
+pre-FIDL record or an attached descriptor ends the session without a reply;
+the worker audits it as `malformed-request` and fires `request-done` with
+`EPROTO`. A name with an embedded NUL is `EINVAL`. Every delivered
+descriptor is hardened before it is sent (transfer once, survive one more
+fork, close-on-exec locked) and the transport keeps that state; a descriptor
+that cannot be hardened is never delivered and the method fails instead. The
+provider scrubs its own key, list and random buffers after replying; the
+encoded reply message itself is owned by the FIDL runtime. The
+`bsd.crypto.v1` ordinals and layouts are a compatibility contract;
+`usr.sbin/BSDCrypto/tests/evolution/cryptocmp_next.fidl` is the same schema at
+`bsd:1` and adds a method at `bsd:2` for the pairing test.
+`cryptocmp_protocol.h` keeps the API records, limits and opcode numbers; its
+message framing is the pre-FIDL wire format (compatibility only).
 
 Rotating or deleting a named key invalidates every outstanding lease and
 its derived lineage, which the holders observe as `NOTE_CRYPTODESC_KEY_*`.
@@ -100,10 +120,18 @@ libcryptocmp(3) (`<cryptocmp.h>`, `-lcryptocmp`) is the consumer API:
 
 | Group | Functions |
 |---|---|
-| Session | `cryptocmp_open(struct cryptocmp_client **)`, `cryptocmp_close` |
+| Session | `cryptocmp_open(struct cryptocmp_client **)`, `cryptocmp_client_create(int fd, struct cryptocmp_client **)`, `cryptocmp_close` |
 | Minting | `cryptocmp_generate(client, const struct cryptocmp_generate *, int *fd)`, `cryptocmp_generate_key(client, const struct cryptocmp_key_generate *, uint8_t public_key[32], int *fd)`, `cryptocmp_digest(client, alg, ttl, flags, int *fd)` |
 | Randomness | `cryptocmp_random(client, void *buf, size_t nbytes)` |
 | Named keys | `cryptocmp_named_create(client, name, params, uint64_t *gen)`, `cryptocmp_named_lease(client, name, rights, ttl, uint64_t *gen, int *fd)`, `cryptocmp_named_rotate`, `cryptocmp_named_delete`, `cryptocmp_named_stat(client, name, struct cryptocmp_named_info *)`, `cryptocmp_named_list(client, cursor, entries, max, uint32_t *count, uint32_t *next_cursor)` |
+
+The first call checks the wire version (`EPROTONOSUPPORT` for an
+incompatible provider); each call is bounded by 30 seconds, shortened by an
+active `service_budget_begin()`; a timeout cancels that call (`ETIMEDOUT`)
+and keeps the session. A transport failure or malformed reply makes the
+client terminal (any received descriptor is closed); policy and kernel errors
+keep it. Calls from several threads on one client are serialized. A client
+inherited across `fork(2)` returns `EINVAL`.
 
 The returned fd is driven with the ordinary OpenCrypto `CIOCCRYPT` family;
 what it may do is its rights mask. libcryptodesc(3) (`<cryptodesc.h>`,
@@ -180,8 +208,8 @@ within the profile set, and every request is audited through
 
 | Suite | Location | Installed under | What it proves |
 |---|---|---|---|
-| `policy_test` (24), `provider_test` (28), `bundle_test.sh` | `usr.sbin/BSDCrypto/tests` | `/usr/tests/usr.sbin/BSDCrypto` | every profile rule and rejection, the worker path under `BSDCRYPTO_TESTING` (mint, lease, rotate-invalidates-lease, owner isolation, reclaim), the installed bundle |
-| `cryptocmp_api_test` (6), `client_protocol_test` (16) | `lib/libcryptocmp/tests` | `/usr/tests/lib/libcryptocmp` | wire encoding of all ten ops against `fake_service` |
+| `policy_test` (24), `provider_test` (11), `evolution_test` (2), `bundle_test.sh` | `usr.sbin/BSDCrypto/tests` | `/usr/tests/usr.sbin/BSDCrypto` | every profile rule and rejection; the worker path under `BSDCRYPTO_TESTING` driven by the generated bindings (digest known answer, random, owner isolation, stat and list, pagination, provider-side name validation) and by hand-built frames (pre-FIDL record, before negotiation, unknown method, truncated or trailing bodies, attached descriptor); the `bsd:1`/`bsd:2` schema pairing; the installed bundle |
+| `cryptocmp_api_test` (6), `client_protocol_test` (7) | `lib/libcryptocmp/tests` | `/usr/tests/lib/libcryptocmp` | argument validation; all ten operations, error mapping, terminal transport and malformed-reply handling (including a lease descriptor that must be closed), a future wire version and fork ownership against a scripted `bsd.crypto.v1` provider |
 | `cryptodesc_api_test` (6) | `lib/libcryptodesc/tests` | `/usr/tests/lib/libcryptodesc` | the ioctl wrappers |
 | `cryptodesc_test` (17) | `tests/sys/opencrypto` | `/usr/tests/sys/opencrypto` | the kernel: rights attenuation, revoke, expiry, HKDF known answers, named-key generations, `EVFILT_CRYPTODESC` |
 
@@ -192,7 +220,9 @@ built in; on the 5BSD kernel it is built in.
 
 ## Status and gaps
 
-Shipped and VM-verified: the descriptor type, named volatile keys, HKDF
+Shipped and VM-verified; FIDL `bsd.crypto.v1` since October 2026 (unit,
+attributes, owner scoping and audit unchanged; provider and libcryptocmp
+ship together): the descriptor type, named volatile keys, HKDF
 derivation, X25519 and Ed25519, the broker with all eleven ops, the
 NIST-approved-only gate, and key reclaim on bundle removal. The system was
 disabled for a time because `cryptodev` was a loadable module the plane

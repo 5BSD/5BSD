@@ -17,9 +17,9 @@
 #include <syslog.h>
 #include <unistd.h>
 #include <capreclaim.h>
-#include <channel.h>
 #include <cryptodesc.h>
-#include <cryptocmp_protocol.h>
+#include <cryptocmp.h>
+#include <fidl/bsd.crypto.v1/c/bsd.h>
 #include <libservice.h>
 #include <service_runtime.h>
 #include <logcmp.h>
@@ -37,6 +37,8 @@ struct crypto_worker {
 	char	owner[CRYPTODESC_KEY_OWNER_MAX];
 	char	actor[64];
 	struct auditcmp_client *audit;
+	bool	negotiated;
+	int	error;		/* a handler-detected protocol or reply failure */
 };
 
 static int
@@ -71,359 +73,564 @@ audit_operation(struct crypto_worker *worker, const char *operation, int error)
 	if (worker->audit != NULL)
 		(void)auditcmp_submit(worker->audit, worker->actor, operation, error);
 }
-static void
-request(struct channel *c __unused, struct channel_message *m, void *arg __unused)
+/*
+ * bsd.crypto.v1 method handlers.  Every method but GetProtocolInfo requires a
+ * negotiated session.  The owner is the session's channel label (never a wire
+ * argument) for every named-key method.  Each method is audited and fires the
+ * request-done probe with the historical CRYPTOCMP_OP_* code; a failed reply
+ * closes the connection.
+ */
+static bool
+session_ready(struct crypto_worker *worker,
+    struct fidl_bsd_connection *connection, uint32_t opcode)
 {
-	const struct cryptocmp_msg *in;
-	const struct cryptocmp_generate *generate;
-	const struct cryptocmp_key_generate *key_generate;
-	const struct cryptocmp_named_create *named_create;
-	const struct cryptocmp_named_lease *named_lease;
-	const struct cryptocmp_named_control *named_control;
-	const struct cryptocmp_named_stat *named_stat;
-	const struct cryptocmp_named_list *named_list;
-	const struct cryptocmp_digest *digest;
-	const struct cryptocmp_random *random_request;
-	struct cryptocmp_msg out;
-	struct cryptocmp_key_reply key_out;
-	struct cryptocmp_named_reply named_out;
-	struct cryptocmp_named_stat_reply stat_out;
-	struct cryptocmp_named_list_reply list_out;
-	struct cryptocmp_random_reply random_out;
-	struct cryptodesc_named_stat stat;
-	struct cryptodesc_named_list_entry list_entries[CRYPTODESC_NAMED_LIST_MAX];
-	uint32_t list_count, list_next_cursor;
-	struct session2_op session;
-	struct crypto_worker *worker;
-	const char *operation;
-	const void *reply_data;
-	size_t reply_length;
-	uint8_t public_key[CRYPTODESC_ED25519_PUBLIC_SIZE];
-	uint64_t generation;
-	uint32_t random_bytes;
-	int fd, error, deliver_fd, transport_error;
 
-	fd = -1;
-	error = EPROTO;
-	operation = "malformed-request";
-	in = channel_message_data(m);
-	memset(&out, 0, sizeof(out));
-	memset(&key_out, 0, sizeof(key_out));
-	memset(&named_out, 0, sizeof(named_out));
-	memset(&stat_out, 0, sizeof(stat_out));
-	memset(&list_out, 0, sizeof(list_out));
-	memset(&random_out, 0, sizeof(random_out));
-	memset(&stat, 0, sizeof(stat));
-	memset(list_entries, 0, sizeof(list_entries));
-	list_count = 0;
-	list_next_cursor = 0;
-	memset(public_key, 0, sizeof(public_key));
-	generation = 0;
-	random_bytes = 0;
-	worker = arg;
-	if (channel_message_length(m) >= sizeof(*in) &&
-	    channel_message_fd_count(m) == 0 &&
-	    in->magic == CRYPTOCMP_MAGIC &&
-	    in->opcode >= CRYPTOCMP_OP_GENERATE &&
-	    in->opcode <= CRYPTOCMP_OP_NAMED_LIST) {
-		out.opcode = in->opcode;
-		if (in->opcode == CRYPTOCMP_OP_GENERATE &&
-		    channel_message_length(m) == sizeof(*in) + sizeof(*generate)) {
-			operation = "descriptor-generate";
-			generate = (const struct cryptocmp_generate *)(in + 1);
-			if (cryptocmp_policy_validate(generate) != 0) {
-				error = errno;
-				goto reply;
-			}
-			memset(&session, 0, sizeof(session));
-			session.cipher = generate->cipher;
-			session.mac = generate->mac;
-			session.keylen = generate->keylen;
-			session.key = NULL;
-			session.mackeylen = generate->mackeylen;
-			session.mackey = NULL;
-			session.crid = generate->crid;
-			session.ivlen = generate->ivlen;
-			session.maclen = generate->maclen;
-			if (cryptodesc_mint_generated(control_fd, &session,
-			    generate->rights, generate->ttl, &fd) == 0)
-				error = 0;
-			else
-				error = errno;
-		} else if (in->opcode == CRYPTOCMP_OP_GENERATE_KEY &&
-		    channel_message_length(m) == sizeof(*in) + sizeof(*key_generate)) {
-			operation = "key-generate";
-			key_generate = (const struct cryptocmp_key_generate *)(in + 1);
-			if (cryptocmp_key_policy_validate(key_generate) != 0) {
-				error = errno;
-				goto reply;
-			}
-			if (cryptodesc_mint_key(control_fd, key_generate->type,
-			    key_generate->rights, key_generate->ttl, public_key, &fd) == 0)
-				error = 0;
-			else
-				error = errno;
-		} else if (in->opcode == CRYPTOCMP_OP_NAMED_CREATE &&
-		    channel_message_length(m) == sizeof(*in) + sizeof(*named_create)) {
-			operation = "named-create";
-			named_create = (const struct cryptocmp_named_create *)(in + 1);
-			if (cryptocmp_named_create_policy_validate(named_create) != 0) {
-				error = errno;
-				goto reply;
-			}
-			memset(&session, 0, sizeof(session));
-			session.cipher = named_create->generate.cipher;
-			session.mac = named_create->generate.mac;
-			session.keylen = named_create->generate.keylen;
-			session.mackeylen = named_create->generate.mackeylen;
-			session.crid = named_create->generate.crid;
-			session.ivlen = named_create->generate.ivlen;
-			session.maclen = named_create->generate.maclen;
-			if (cryptodesc_named_create(control_fd, named_create->name,
-			    worker->owner, &session, named_create->generate.rights,
-			    &generation) == 0)
-				error = 0;
-			else
-				error = errno;
-		} else if (in->opcode == CRYPTOCMP_OP_NAMED_LEASE &&
-		    channel_message_length(m) == sizeof(*in) + sizeof(*named_lease)) {
-			operation = "named-lease";
-			named_lease = (const struct cryptocmp_named_lease *)(in + 1);
-			if (cryptocmp_named_lease_policy_validate(named_lease) != 0) {
-				error = errno;
-				goto reply;
-			}
-			if (cryptodesc_named_lease(control_fd, named_lease->name,
-			    worker->owner, named_lease->rights, named_lease->ttl,
-			    &generation, &fd) == 0)
-				error = 0;
-			else
-				error = errno;
-		} else if ((in->opcode == CRYPTOCMP_OP_NAMED_ROTATE ||
-		    in->opcode == CRYPTOCMP_OP_NAMED_DELETE) &&
-		    channel_message_length(m) == sizeof(*in) + sizeof(*named_control)) {
-			operation = in->opcode == CRYPTOCMP_OP_NAMED_ROTATE ?
-			    "named-rotate" : "named-delete";
-			named_control = (const struct cryptocmp_named_control *)(in + 1);
-			if (cryptocmp_named_control_policy_validate(named_control) != 0) {
-				error = errno;
-				goto reply;
-			}
-			if ((in->opcode == CRYPTOCMP_OP_NAMED_ROTATE ?
-			    cryptodesc_named_rotate(control_fd, named_control->name,
-			    worker->owner, &generation) : cryptodesc_named_delete(control_fd,
-			    named_control->name, worker->owner, &generation)) == 0)
-				error = 0;
-			else
-				error = errno;
-		} else if (in->opcode == CRYPTOCMP_OP_NAMED_STAT &&
-		    channel_message_length(m) == sizeof(*in) + sizeof(*named_stat)) {
-			operation = "named-stat";
-			named_stat = (const struct cryptocmp_named_stat *)(in + 1);
-			if (cryptocmp_named_stat_policy_validate(named_stat) != 0) {
-				error = errno;
-				goto reply;
-			}
-			/*
-			 * Read-only introspection: resolve the key owner-scoped
-			 * on worker->owner (never a wire-supplied owner) and copy
-			 * out its metadata.  No descriptor is minted and the key
-			 * is not mutated; a miss is ENOENT.
-			 */
-			if (cryptodesc_named_stat(control_fd, named_stat->name,
-			    worker->owner, &stat) == 0)
-				error = 0;
-			else
-				error = errno;
-		} else if (in->opcode == CRYPTOCMP_OP_NAMED_LIST &&
-		    channel_message_length(m) == sizeof(*in) + sizeof(*named_list)) {
-			operation = "named-list";
-			named_list = (const struct cryptocmp_named_list *)(in + 1);
-			if (cryptocmp_named_list_policy_validate(named_list) != 0) {
-				error = errno;
-				goto reply;
-			}
-			/*
-			 * Owner-scoped enumeration: resolve the walk on
-			 * worker->owner (never a wire-supplied owner) and copy
-			 * out only names/generations/rights.  No descriptor is
-			 * minted, no key is mutated, and no key material leaves
-			 * the kernel; an out-of-range cursor is an empty page.
-			 */
-			if (cryptodesc_named_list(control_fd, worker->owner,
-			    named_list->cursor, list_entries,
-			    CRYPTODESC_NAMED_LIST_MAX, &list_count,
-			    &list_next_cursor) == 0)
-				error = 0;
-			else
-				error = errno;
-		} else if (in->opcode == CRYPTOCMP_OP_DIGEST &&
-		    channel_message_length(m) == sizeof(*in) + sizeof(*digest)) {
-			operation = "digest";
-			digest = (const struct cryptocmp_digest *)(in + 1);
-			if (cryptocmp_digest_policy_validate(digest) != 0) {
-				error = errno;
-				goto reply;
-			}
-			/*
-			 * An unkeyed hash is an ordinary DIGEST-mode session with
-			 * no cipher and no MAC key.  It reuses the generated-session
-			 * mint path (which randomises nothing when both key lengths
-			 * are zero) and is delivered as a DTYPE_CRYPTO descriptor the
-			 * client streams data through; CRYPTODESC_RIGHT_AUTH is the
-			 * right the kernel requires to compute a digest.
-			 */
-			memset(&session, 0, sizeof(session));
-			session.cipher = 0;
-			session.mac = digest->alg;
-			session.keylen = 0;
-			session.key = NULL;
-			session.mackeylen = 0;
-			session.mackey = NULL;
-			session.crid = 0;
-			session.ivlen = 0;
-			session.maclen = 0;
-			if (cryptodesc_mint_generated(control_fd, &session,
-			    CRYPTODESC_RIGHT_AUTH, digest->ttl, &fd) == 0)
-				error = 0;
-			else
-				error = errno;
-		} else if (in->opcode == CRYPTOCMP_OP_RANDOM &&
-		    channel_message_length(m) == sizeof(*in) + sizeof(*random_request)) {
-			operation = "random";
-			random_request = (const struct cryptocmp_random *)(in + 1);
-			if (cryptocmp_random_policy_validate(random_request) != 0) {
-				error = errno;
-				goto reply;
-			}
-			/*
-			 * CSPRNG bytes are not secret-key material to confine, so
-			 * they are returned inline; the reply buffer is scrubbed
-			 * after the send regardless.
-			 */
-			random_bytes = random_request->nbytes;
-			arc4random_buf(random_out.data, random_bytes);
-			error = 0;
-		}
-	}
+	if (worker->negotiated)
+		return (true);
+	worker->error = EPROTO;
+	audit_operation(worker, "malformed-request", EPROTO);
+	CRYPTO_PROBE_REQUEST_DONE(opcode, -EPROTO, EPROTO);
+	fidl_bsd_connection_close(connection, EPROTO);
+	return (false);
+}
 
-reply:
-	out.magic = CRYPTOCMP_MAGIC;
-	out.status = error == 0 ? 0 : -error;
-	key_out.msg = out;
-	named_out.msg = out;
-	named_out.generation = generation;
-	stat_out.msg = out;
-	if (error == 0 && out.opcode == CRYPTOCMP_OP_NAMED_STAT) {
-		stat_out.info.generation = stat.cd_generation;
-		stat_out.info.rights = stat.cd_rights;
-		stat_out.info.cipher = stat.cd_cipher;
-		stat_out.info.mac = stat.cd_mac;
-		stat_out.info.keylen = stat.cd_keylen;
-		stat_out.info.mackeylen = stat.cd_mackeylen;
-	}
-	list_out.msg = out;
-	if (error == 0 && out.opcode == CRYPTOCMP_OP_NAMED_LIST) {
-		uint32_t i;
+static void
+request_done(struct crypto_worker *worker,
+    struct fidl_bsd_connection *connection, uint32_t opcode,
+    const char *operation, int error, int transport_error)
+{
 
-		list_out.count = list_count;
-		list_out.next_cursor = list_next_cursor;
-		for (i = 0; i < list_count && i < CRYPTOCMP_NAMED_LIST_MAX; i++) {
-			strlcpy(list_out.entries[i].name, list_entries[i].cd_name,
-			    sizeof(list_out.entries[i].name));
-			list_out.entries[i].generation =
-			    list_entries[i].cd_generation;
-			list_out.entries[i].rights = list_entries[i].cd_rights;
-		}
-	}
-	if (out.opcode == CRYPTOCMP_OP_NAMED_LIST)
-		CRYPTO_PROBE_NAMED_LIST(worker->owner, list_count, error);
-	random_out.msg = out;
-	random_out.nbytes = error == 0 ? random_bytes : 0;
 	audit_operation(worker, operation, error);
-	if (out.opcode == CRYPTOCMP_OP_GENERATE_KEY)
-		memcpy(key_out.public_key, public_key, sizeof(key_out.public_key));
-	/*
-	 * Select the reply shape by opcode: keyed-descriptor replies carry the
-	 * public key, named-key replies carry the generation, a random reply
-	 * carries a variable-length inline payload, and everything else (plain
-	 * descriptor mints and malformed requests) uses the bare header.  A
-	 * delivered descriptor accompanies only the successful mint/lease ops.
-	 */
-	switch (out.opcode) {
-	case CRYPTOCMP_OP_GENERATE_KEY:
-		reply_data = &key_out;
-		reply_length = sizeof(key_out);
-		break;
-	case CRYPTOCMP_OP_NAMED_CREATE:
-	case CRYPTOCMP_OP_NAMED_LEASE:
-	case CRYPTOCMP_OP_NAMED_ROTATE:
-	case CRYPTOCMP_OP_NAMED_DELETE:
-		reply_data = &named_out;
-		reply_length = sizeof(named_out);
-		break;
-	case CRYPTOCMP_OP_NAMED_STAT:
-		reply_data = &stat_out;
-		reply_length = sizeof(stat_out);
-		break;
-	case CRYPTOCMP_OP_NAMED_LIST:
-		reply_data = &list_out;
-		reply_length = sizeof(list_out);
-		break;
-	case CRYPTOCMP_OP_RANDOM:
-		reply_data = &random_out;
-		reply_length = offsetof(struct cryptocmp_random_reply, data) +
-		    (error == 0 ? random_bytes : 0);
-		break;
-	default:
-		reply_data = &out;
-		reply_length = sizeof(out);
-		break;
+	if (transport_error != 0) {
+		worker->error = transport_error;
+		fidl_bsd_connection_close(connection, transport_error);
 	}
-	deliver_fd = error == 0 && (out.opcode == CRYPTOCMP_OP_GENERATE ||
-	    out.opcode == CRYPTOCMP_OP_GENERATE_KEY ||
-	    out.opcode == CRYPTOCMP_OP_NAMED_LEASE ||
-	    out.opcode == CRYPTOCMP_OP_DIGEST) ? 1 : 0;
-	/*
-	 * Harden the delivered crypto descriptor (a session or named-key lease) as
-	 * a single-hop capability: this SCM send is the one-and-only delegation
-	 * (CAP_XFER_ONCE -> the client's copy is non-re-delegable, matching the
-	 * owner-scoping the daemon enforces) and close-on-exec.  The descriptor's
-	 * op rights are already fixed in-kernel (cd_rights); this stops it being
-	 * re-sent to an unrelated process or leaked across the client's exec.
-	 */
-	if (deliver_fd != 0 && fd >= 0 &&
-	    service_harden_fd(fd, SERVICE_HARDEN_XFER_ONCE |
-	    SERVICE_HARDEN_CLOFORK_ONCE) == -1) {
-		/*
-		 * Fail closed: a descriptor we could not confine to single-hop /
-		 * cloexec must NOT be delivered as if it were (it would be a
-		 * re-delegable bearer capability, defeating owner-scoping).  Drop it
-		 * -- the client sees the reply carry no descriptor and treats the op
-		 * as failed -- rather than hand out an unconfined capability.
-		 */
-		syslog(LOG_WARNING, "harden delivered descriptor: %m; withholding");
-		(void)close(fd);
-		fd = -1;
-		deliver_fd = 0;
+	CRYPTO_PROBE_REQUEST_DONE(opcode, error == 0 ? 0 : -error,
+	    transport_error);
+}
+
+/*
+ * Harden a delivered crypto descriptor (a session or named-key lease) as a
+ * single-hop capability: this delivery is the one-and-only delegation
+ * (CAP_XFER_ONCE: the client's copy is non-re-delegable, matching the
+ * owner-scoping the daemon enforces), it survives one more fork, and it is
+ * close-on-exec locked.  The op rights are already fixed in-kernel
+ * (cd_rights).  Fail closed: a descriptor that cannot be confined is never
+ * delivered; the method fails instead.  Returns 0 or an errno, consuming *fd
+ * on failure.
+ */
+static int
+harden_delivery(int *fd)
+{
+	int error;
+
+	if (service_harden_fd(*fd, SERVICE_HARDEN_XFER_ONCE |
+	    SERVICE_HARDEN_CLOFORK_ONCE) == 0)
+		return (0);
+	error = errno;
+	syslog(LOG_WARNING, "harden delivered descriptor: %m; withholding");
+	(void)close(*fd);
+	*fd = -1;
+	return (error);
+}
+
+/* A received key name as the policy layer's fixed NUL-terminated field. */
+static int
+copy_name(char *out, size_t size, const char *name, size_t length)
+{
+
+	if (length == 0 || length >= size ||
+	    memchr(name, '\0', length) != NULL)
+		return (EINVAL);
+	memset(out, 0, size);
+	memcpy(out, name, length);
+	return (0);
+}
+
+static void
+generate_session(const struct bsd_crypto_v1_GenerateParams *in,
+    struct cryptocmp_generate *out)
+{
+
+	memset(out, 0, sizeof(*out));
+	out->cipher = in->cipher;
+	out->mac = in->mac;
+	out->keylen = in->keylen;
+	out->mackeylen = in->mackeylen;
+	out->rights = in->rights;
+	out->ttl = in->ttl;
+	out->flags = in->flags;
+	out->crid = in->crid;
+	out->ivlen = in->ivlen;
+	out->maclen = in->maclen;
+}
+
+static void
+session_parameters(const struct cryptocmp_generate *generate,
+    struct session2_op *session)
+{
+
+	memset(session, 0, sizeof(*session));
+	session->cipher = generate->cipher;
+	session->mac = generate->mac;
+	session->keylen = generate->keylen;
+	session->key = NULL;
+	session->mackeylen = generate->mackeylen;
+	session->mackey = NULL;
+	session->crid = generate->crid;
+	session->ivlen = generate->ivlen;
+	session->maclen = generate->maclen;
+}
+
+static void
+protocol_info(void *arg, struct fidl_bsd_connection *connection,
+    struct fidl_bsd_request *request, struct fidl_bsd_empty *empty __unused)
+{
+	struct crypto_worker *worker = arg;
+	struct bsd_crypto_v1_ProtocolInfo info = { CRYPTOCMP_WIRE_VERSION };
+	int error;
+
+	error = bsd_crypto_v1_Crypto_GetProtocolInfo_reply(connection, request,
+	    &info);
+	worker->negotiated = error == 0;
+	if (error != 0) {
+		worker->error = error;
+		fidl_bsd_connection_close(connection, error);
 	}
-	transport_error = channel_send_reply(m, &(struct channel_outgoing){
-	    .size = sizeof(struct channel_outgoing),
-	    .data = reply_data,
-	    .length = reply_length,
-	    .fds = deliver_fd != 0 ? &fd : NULL,
-	    .nfds = deliver_fd }) == -1 ? errno : 0;
-	CRYPTO_PROBE_REQUEST_DONE(out.opcode, out.status, transport_error);
+	CRYPTO_PROBE_REQUEST_DONE(0, 0, error);
+}
+
+/* Reply with a session descriptor (Generate and Digest). */
+static int
+reply_session(struct fidl_bsd_connection *connection,
+    struct fidl_bsd_request *request, uint32_t opcode, int error, int fd)
+{
+	if (opcode == CRYPTOCMP_OP_GENERATE) {
+		struct bsd_crypto_v1_Crypto_Generate_Result reply = { 0 };
+
+		reply.tag = error ? bsd_crypto_v1_Crypto_Generate_Result_err_tag :
+		    bsd_crypto_v1_Crypto_Generate_Result_response_tag;
+		if (error)
+			reply.value.err = (uint32_t)error;
+		else
+			reply.value.response.descriptor = fd;
+		return (bsd_crypto_v1_Crypto_Generate_reply(connection, request,
+		    &reply));
+	} else {
+		struct bsd_crypto_v1_Crypto_Digest_Result reply = { 0 };
+
+		reply.tag = error ? bsd_crypto_v1_Crypto_Digest_Result_err_tag :
+		    bsd_crypto_v1_Crypto_Digest_Result_response_tag;
+		if (error)
+			reply.value.err = (uint32_t)error;
+		else
+			reply.value.response.descriptor = fd;
+		return (bsd_crypto_v1_Crypto_Digest_reply(connection, request,
+		    &reply));
+	}
+}
+
+static void
+generate(void *arg, struct fidl_bsd_connection *connection,
+    struct fidl_bsd_request *request, struct bsd_crypto_v1_GenerateParams *in)
+{
+	struct crypto_worker *worker = arg;
+	struct cryptocmp_generate params;
+	struct session2_op session;
+	int error = 0, fd = -1;
+
+	if (!session_ready(worker, connection, CRYPTOCMP_OP_GENERATE))
+		return;
+	generate_session(in, &params);
+	if (cryptocmp_policy_validate(&params) != 0)
+		error = errno;
+	else {
+		session_parameters(&params, &session);
+		if (cryptodesc_mint_generated(control_fd, &session,
+		    params.rights, params.ttl, &fd) != 0)
+			error = errno;
+		else
+			error = harden_delivery(&fd);
+	}
+	/* The bindings send a private duplicate; ours is closed below. */
+	request_done(worker, connection, CRYPTOCMP_OP_GENERATE,
+	    "descriptor-generate", error, reply_session(connection, request,
+	    CRYPTOCMP_OP_GENERATE, error, fd));
+	if (fd >= 0)
+		close(fd);
+}
+
+static void
+generate_key(void *arg, struct fidl_bsd_connection *connection,
+    struct fidl_bsd_request *request, struct bsd_crypto_v1_KeyParams *in)
+{
+	struct crypto_worker *worker = arg;
+	struct bsd_crypto_v1_Crypto_GenerateKey_Result reply = { 0 };
+	struct cryptocmp_key_generate params;
+	uint8_t public_key[CRYPTODESC_ED25519_PUBLIC_SIZE];
+	int error = 0, fd = -1;
+
+	_Static_assert(sizeof(public_key) ==
+	    sizeof(reply.value.response.public_key), "public key size");
+	if (!session_ready(worker, connection, CRYPTOCMP_OP_GENERATE_KEY))
+		return;
+	memset(public_key, 0, sizeof(public_key));
+	memset(&params, 0, sizeof(params));
+	params.type = in->type;
+	params.rights = in->rights;
+	params.ttl = in->ttl;
+	params.flags = in->flags;
+	if (cryptocmp_key_policy_validate(&params) != 0)
+		error = errno;
+	else if (cryptodesc_mint_key(control_fd, params.type, params.rights,
+	    params.ttl, public_key, &fd) != 0)
+		error = errno;
+	else
+		error = harden_delivery(&fd);
+	reply.tag = error ? bsd_crypto_v1_Crypto_GenerateKey_Result_err_tag :
+	    bsd_crypto_v1_Crypto_GenerateKey_Result_response_tag;
+	if (error)
+		reply.value.err = (uint32_t)error;
+	else {
+		reply.value.response.descriptor = fd;
+		memcpy(reply.value.response.public_key, public_key,
+		    sizeof(public_key));
+	}
+	request_done(worker, connection, CRYPTOCMP_OP_GENERATE_KEY,
+	    "key-generate", error, bsd_crypto_v1_Crypto_GenerateKey_reply(
+	    connection, request, &reply));
 	if (fd >= 0)
 		close(fd);
 	explicit_bzero(public_key, sizeof(public_key));
-	explicit_bzero(&key_out, sizeof(key_out));
-	explicit_bzero(&named_out, sizeof(named_out));
-	explicit_bzero(&stat_out, sizeof(stat_out));
-	explicit_bzero(&list_out, sizeof(list_out));
-	explicit_bzero(list_entries, sizeof(list_entries));
-	explicit_bzero(&random_out, sizeof(random_out));
-	channel_message_free(m);
+	explicit_bzero(&reply, sizeof(reply));
+}
+
+static void
+named_create(void *arg, struct fidl_bsd_connection *connection,
+    struct fidl_bsd_request *request,
+    struct bsd_crypto_v1_NamedCreateRequest *in)
+{
+	struct crypto_worker *worker = arg;
+	struct bsd_crypto_v1_Crypto_NamedCreate_Result reply = { 0 };
+	struct cryptocmp_named_create create;
+	struct session2_op session;
+	uint64_t generation = 0;
+	int error;
+
+	if (!session_ready(worker, connection, CRYPTOCMP_OP_NAMED_CREATE))
+		return;
+	memset(&create, 0, sizeof(create));
+	error = copy_name(create.name, sizeof(create.name), in->name,
+	    in->name_size);
+	if (error == 0) {
+		generate_session(&in->params, &create.generate);
+		if (cryptocmp_named_create_policy_validate(&create) != 0)
+			error = errno;
+		else {
+			session_parameters(&create.generate, &session);
+			if (cryptodesc_named_create(control_fd, create.name,
+			    worker->owner, &session, create.generate.rights,
+			    &generation) != 0)
+				error = errno;
+		}
+	}
+	reply.tag = error ? bsd_crypto_v1_Crypto_NamedCreate_Result_err_tag :
+	    bsd_crypto_v1_Crypto_NamedCreate_Result_response_tag;
+	if (error)
+		reply.value.err = (uint32_t)error;
+	else
+		reply.value.response.generation = generation;
+	request_done(worker, connection, CRYPTOCMP_OP_NAMED_CREATE,
+	    "named-create", error, bsd_crypto_v1_Crypto_NamedCreate_reply(
+	    connection, request, &reply));
+}
+
+static void
+named_lease(void *arg, struct fidl_bsd_connection *connection,
+    struct fidl_bsd_request *request,
+    struct bsd_crypto_v1_NamedLeaseRequest *in)
+{
+	struct crypto_worker *worker = arg;
+	struct bsd_crypto_v1_Crypto_NamedLease_Result reply = { 0 };
+	struct cryptocmp_named_lease lease;
+	uint64_t generation = 0;
+	int error, fd = -1;
+
+	if (!session_ready(worker, connection, CRYPTOCMP_OP_NAMED_LEASE))
+		return;
+	memset(&lease, 0, sizeof(lease));
+	error = copy_name(lease.name, sizeof(lease.name), in->name,
+	    in->name_size);
+	lease.rights = in->rights;
+	lease.ttl = in->ttl;
+	lease.flags = in->flags;
+	if (error == 0 && cryptocmp_named_lease_policy_validate(&lease) != 0)
+		error = errno;
+	else if (error == 0 && cryptodesc_named_lease(control_fd, lease.name,
+	    worker->owner, lease.rights, lease.ttl, &generation, &fd) != 0)
+		error = errno;
+	else if (error == 0)
+		error = harden_delivery(&fd);
+	reply.tag = error ? bsd_crypto_v1_Crypto_NamedLease_Result_err_tag :
+	    bsd_crypto_v1_Crypto_NamedLease_Result_response_tag;
+	if (error)
+		reply.value.err = (uint32_t)error;
+	else {
+		reply.value.response.descriptor = fd;
+		reply.value.response.generation = generation;
+	}
+	request_done(worker, connection, CRYPTOCMP_OP_NAMED_LEASE,
+	    "named-lease", error, bsd_crypto_v1_Crypto_NamedLease_reply(
+	    connection, request, &reply));
+	if (fd >= 0)
+		close(fd);
+}
+
+static void
+named_change(struct crypto_worker *worker,
+    struct fidl_bsd_connection *connection, struct fidl_bsd_request *request,
+    const struct bsd_crypto_v1_NamedControlRequest *in, uint32_t opcode)
+{
+	struct cryptocmp_named_control control;
+	uint64_t generation = 0;
+	int error, reply_error;
+
+	if (!session_ready(worker, connection, opcode))
+		return;
+	memset(&control, 0, sizeof(control));
+	error = copy_name(control.name, sizeof(control.name), in->name,
+	    in->name_size);
+	control.flags = in->flags;
+	if (error == 0 && cryptocmp_named_control_policy_validate(&control) !=
+	    0)
+		error = errno;
+	else if (error == 0 && (opcode == CRYPTOCMP_OP_NAMED_ROTATE ?
+	    cryptodesc_named_rotate(control_fd, control.name, worker->owner,
+	    &generation) : cryptodesc_named_delete(control_fd, control.name,
+	    worker->owner, &generation)) != 0)
+		error = errno;
+	if (opcode == CRYPTOCMP_OP_NAMED_ROTATE) {
+		struct bsd_crypto_v1_Crypto_NamedRotate_Result reply = { 0 };
+
+		reply.tag = error ?
+		    bsd_crypto_v1_Crypto_NamedRotate_Result_err_tag :
+		    bsd_crypto_v1_Crypto_NamedRotate_Result_response_tag;
+		if (error)
+			reply.value.err = (uint32_t)error;
+		else
+			reply.value.response.generation = generation;
+		reply_error = bsd_crypto_v1_Crypto_NamedRotate_reply(connection,
+		    request, &reply);
+	} else {
+		struct bsd_crypto_v1_Crypto_NamedDelete_Result reply = { 0 };
+
+		reply.tag = error ?
+		    bsd_crypto_v1_Crypto_NamedDelete_Result_err_tag :
+		    bsd_crypto_v1_Crypto_NamedDelete_Result_response_tag;
+		if (error)
+			reply.value.err = (uint32_t)error;
+		else
+			reply.value.response.generation = generation;
+		reply_error = bsd_crypto_v1_Crypto_NamedDelete_reply(connection,
+		    request, &reply);
+	}
+	request_done(worker, connection, opcode,
+	    opcode == CRYPTOCMP_OP_NAMED_ROTATE ? "named-rotate" :
+	    "named-delete", error, reply_error);
+}
+
+static void
+named_rotate(void *arg, struct fidl_bsd_connection *connection,
+    struct fidl_bsd_request *request,
+    struct bsd_crypto_v1_NamedControlRequest *in)
+{
+	named_change(arg, connection, request, in, CRYPTOCMP_OP_NAMED_ROTATE);
+}
+
+static void
+named_delete(void *arg, struct fidl_bsd_connection *connection,
+    struct fidl_bsd_request *request,
+    struct bsd_crypto_v1_NamedControlRequest *in)
+{
+	named_change(arg, connection, request, in, CRYPTOCMP_OP_NAMED_DELETE);
+}
+
+static void
+digest(void *arg, struct fidl_bsd_connection *connection,
+    struct fidl_bsd_request *request, struct bsd_crypto_v1_DigestParams *in)
+{
+	struct crypto_worker *worker = arg;
+	struct cryptocmp_digest params;
+	struct session2_op session;
+	int error = 0, fd = -1;
+
+	if (!session_ready(worker, connection, CRYPTOCMP_OP_DIGEST))
+		return;
+	memset(&params, 0, sizeof(params));
+	params.alg = in->alg;
+	params.ttl = in->ttl;
+	params.flags = in->flags;
+	if (cryptocmp_digest_policy_validate(&params) != 0)
+		error = errno;
+	else {
+		/*
+		 * An unkeyed hash is an ordinary DIGEST-mode session with no
+		 * cipher and no MAC key.  It reuses the generated-session mint
+		 * path and is delivered as a DTYPE_CRYPTO descriptor the client
+		 * streams data through; CRYPTODESC_RIGHT_AUTH is the right the
+		 * kernel requires to compute a digest.
+		 */
+		memset(&session, 0, sizeof(session));
+		session.mac = params.alg;
+		if (cryptodesc_mint_generated(control_fd, &session,
+		    CRYPTODESC_RIGHT_AUTH, params.ttl, &fd) != 0)
+			error = errno;
+		else
+			error = harden_delivery(&fd);
+	}
+	request_done(worker, connection, CRYPTOCMP_OP_DIGEST, "digest", error,
+	    reply_session(connection, request, CRYPTOCMP_OP_DIGEST, error, fd));
+	if (fd >= 0)
+		close(fd);
+}
+
+static void
+random_bytes(void *arg, struct fidl_bsd_connection *connection,
+    struct fidl_bsd_request *request, struct bsd_crypto_v1_RandomRequest *in)
+{
+	struct crypto_worker *worker = arg;
+	struct bsd_crypto_v1_Crypto_Random_Result reply = { 0 };
+	struct cryptocmp_random params = { in->nbytes };
+	uint8_t data[CRYPTOCMP_MAX_RANDOM_BYTES];
+	int error = 0;
+
+	if (!session_ready(worker, connection, CRYPTOCMP_OP_RANDOM))
+		return;
+	if (cryptocmp_random_policy_validate(&params) != 0)
+		error = errno;
+	if (error) {
+		reply.tag = bsd_crypto_v1_Crypto_Random_Result_err_tag;
+		reply.value.err = (uint32_t)error;
+	} else {
+		/*
+		 * CSPRNG bytes are not secret-key material to confine, so they
+		 * are returned inline; the local buffer is scrubbed after the
+		 * send.
+		 */
+		arc4random_buf(data, params.nbytes);
+		reply.tag = bsd_crypto_v1_Crypto_Random_Result_response_tag;
+		reply.value.response.data = data;
+		reply.value.response.data_size = params.nbytes;
+	}
+	request_done(worker, connection, CRYPTOCMP_OP_RANDOM, "random", error,
+	    bsd_crypto_v1_Crypto_Random_reply(connection, request, &reply));
+	explicit_bzero(data, sizeof(data));
+}
+
+static void
+named_stat(void *arg, struct fidl_bsd_connection *connection,
+    struct fidl_bsd_request *request,
+    struct bsd_crypto_v1_NamedControlRequest *in)
+{
+	struct crypto_worker *worker = arg;
+	struct bsd_crypto_v1_Crypto_NamedStat_Result reply = { 0 };
+	struct cryptocmp_named_stat params;
+	struct cryptodesc_named_stat stat;
+	int error;
+
+	if (!session_ready(worker, connection, CRYPTOCMP_OP_NAMED_STAT))
+		return;
+	memset(&params, 0, sizeof(params));
+	memset(&stat, 0, sizeof(stat));
+	error = copy_name(params.name, sizeof(params.name), in->name,
+	    in->name_size);
+	params.flags = in->flags;
+	/*
+	 * Read-only introspection: resolve the key owner-scoped on
+	 * worker->owner (never a wire-supplied owner) and copy out its
+	 * metadata.  No descriptor is minted and the key is not mutated; a
+	 * miss is ENOENT.
+	 */
+	if (error == 0 && cryptocmp_named_stat_policy_validate(&params) != 0)
+		error = errno;
+	else if (error == 0 && cryptodesc_named_stat(control_fd, params.name,
+	    worker->owner, &stat) != 0)
+		error = errno;
+	reply.tag = error ? bsd_crypto_v1_Crypto_NamedStat_Result_err_tag :
+	    bsd_crypto_v1_Crypto_NamedStat_Result_response_tag;
+	if (error)
+		reply.value.err = (uint32_t)error;
+	else {
+		reply.value.response.generation = stat.cd_generation;
+		reply.value.response.rights = stat.cd_rights;
+		reply.value.response.cipher = stat.cd_cipher;
+		reply.value.response.mac = stat.cd_mac;
+		reply.value.response.keylen = stat.cd_keylen;
+		reply.value.response.mackeylen = stat.cd_mackeylen;
+	}
+	request_done(worker, connection, CRYPTOCMP_OP_NAMED_STAT, "named-stat",
+	    error, bsd_crypto_v1_Crypto_NamedStat_reply(connection, request,
+	    &reply));
+}
+
+static void
+named_list(void *arg, struct fidl_bsd_connection *connection,
+    struct fidl_bsd_request *request, struct bsd_crypto_v1_NamedListRequest *in)
+{
+	struct crypto_worker *worker = arg;
+	struct bsd_crypto_v1_Crypto_NamedList_Result reply = { 0 };
+	struct cryptocmp_named_list params = { in->cursor, in->flags };
+	struct cryptodesc_named_list_entry list[CRYPTODESC_NAMED_LIST_MAX];
+	struct bsd_crypto_v1_NamedEntry out[CRYPTOCMP_NAMED_LIST_MAX];
+	uint32_t count = 0, next = 0, i;
+	int error = 0;
+
+	if (!session_ready(worker, connection, CRYPTOCMP_OP_NAMED_LIST))
+		return;
+	memset(list, 0, sizeof(list));
+	/*
+	 * Owner-scoped enumeration: resolve the walk on worker->owner (never a
+	 * wire-supplied owner) and copy out only names, generations and
+	 * rights.  No descriptor is minted, no key is mutated, and no key
+	 * material leaves the kernel; an out-of-range cursor is an empty page.
+	 */
+	if (cryptocmp_named_list_policy_validate(&params) != 0)
+		error = errno;
+	else if (cryptodesc_named_list(control_fd, worker->owner,
+	    params.cursor, list, CRYPTODESC_NAMED_LIST_MAX, &count, &next) != 0)
+		error = errno;
+	CRYPTO_PROBE_NAMED_LIST(worker->owner, count, error);
+	if (error) {
+		reply.tag = bsd_crypto_v1_Crypto_NamedList_Result_err_tag;
+		reply.value.err = (uint32_t)error;
+	} else {
+		if (count > CRYPTOCMP_NAMED_LIST_MAX)
+			count = CRYPTOCMP_NAMED_LIST_MAX;
+		for (i = 0; i < count; i++) {
+			out[i].name = list[i].cd_name;
+			out[i].name_size = strnlen(list[i].cd_name,
+			    sizeof(list[i].cd_name));
+			out[i].generation = list[i].cd_generation;
+			out[i].rights = list[i].cd_rights;
+		}
+		reply.tag = bsd_crypto_v1_Crypto_NamedList_Result_response_tag;
+		reply.value.response.entries = out;
+		reply.value.response.entries_size = count;
+		reply.value.response.next_cursor = next;
+	}
+	request_done(worker, connection, CRYPTOCMP_OP_NAMED_LIST, "named-list",
+	    error, bsd_crypto_v1_Crypto_NamedList_reply(connection, request,
+	    &reply));
+	explicit_bzero(list, sizeof(list));
+}
+
+/* A connection the bindings closed for a malformed or unknown frame. */
+static bool
+protocol_rejection(int error)
+{
+
+	return (error != 0 && error != EPIPE && error != ECONNRESET &&
+	    error != ECANCELED && error != ETIMEDOUT && error != ENOTCONN);
 }
 
 /*
@@ -436,52 +643,58 @@ reply:
 static int
 serve_session(int fd, const char *owner, const char *actor, struct auditcmp_client *audit)
 {
-	struct channel_options options = CHANNEL_OPTIONS_INITIALIZER(CHANNEL_ROLE_PROVIDER);
+	static const struct bsd_crypto_v1_Crypto_server handlers = {
+		.GetProtocolInfo = protocol_info,
+		.Generate = generate,
+		.GenerateKey = generate_key,
+		.NamedCreate = named_create,
+		.NamedLease = named_lease,
+		.NamedRotate = named_rotate,
+		.NamedDelete = named_delete,
+		.Digest = digest,
+		.Random = random_bytes,
+		.NamedStat = named_stat,
+		.NamedList = named_list
+	};
+	struct fidl_bsd_options options = FIDL_BSD_OPTIONS_INITIALIZER;
+	struct fidl_bsd_connection *connection;
 	struct crypto_worker state;
-	struct channel *channel;
-	int ready, result, wants_write;
+	int error;
 
 	memset(&state, 0, sizeof(state));
 	strlcpy(state.owner, owner, sizeof(state.owner));
 	strlcpy(state.actor, actor, sizeof(state.actor));
 	state.audit = audit;
-	channel = NULL;
-	result = 1;
-	if (channel_create(fd, &options, &channel) == -1)
-		goto out;
-	if (channel_set_request_handler(channel, request, &state) == -1) {
-		goto out;
+	/* One request at a time; requests carry no descriptors. */
+	options.max_pending_requests = 1;
+	options.max_queued_messages = 8;
+	options.max_queued_bytes = 16 * 1024;
+	options.max_queued_fds = 1;
+	if (fidl_bsd_connection_create_with_options(fd, FIDL_BSD_SERVER,
+	    &options, &connection) != 0) {
+		(void)close(fd);
+		return (1);
+	}
+	/* Delivered descriptors are hardened by harden_delivery(). */
+	fidl_bsd_connection_preserve_sent_inheritance(connection);
+	if (bsd_crypto_v1_Crypto_bind(connection, &handlers, &state) != 0) {
+		fidl_bsd_connection_destroy(connection);
+		return (1);
 	}
 	/*
-	 * A provider-side fault (wait/flush failure) is a meaningful error and is
-	 * reflected in the exit status; a read/dispatch break is the ordinary case
-	 * of the client disconnecting and terminates the worker cleanly.
+	 * The client disconnecting, or a frame the bindings refuse, ends the
+	 * worker cleanly; a refused frame is audited like any malformed
+	 * request.
 	 */
-	result = 0;
-	for (;;) {
-		wants_write = channel_wants_write(channel);
-		if (wants_write == -1) {
-			result = 1;
-			break;
-		}
-		ready = channel_wait(channel, wants_write, -1);
-		if (ready == -1) {
-			result = 1;
-			break;
-		}
-		if ((ready & CHANNEL_WAIT_WRITE) != 0 &&
-		    channel_flush(channel) == -1) {
-			result = 1;
-			break;
-		}
-		if ((ready & CHANNEL_WAIT_READ) != 0 &&
-		    channel_dispatch(channel) == -1)
-			break;
+	do
+		error = fidl_bsd_connection_poll(connection, -1);
+	while (error == 0);
+	if (state.error == 0 && protocol_rejection(error)) {
+		audit_operation(&state, "malformed-request", EPROTO);
+		CRYPTO_PROBE_REQUEST_DONE(0, -EPROTO, 0);
 	}
-out:
-	if (channel != NULL)
-		channel_destroy(channel);
-	return (result);
+	fidl_bsd_connection_destroy(connection);
+	return (0);
 }
 
 /*

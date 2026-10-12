@@ -8,6 +8,7 @@
 
 #include <atf-c.h>
 #include <errno.h>
+#include <poll.h>
 #include <fcntl.h>
 #include <stdint.h>
 #include <string.h>
@@ -98,8 +99,8 @@ ATF_TC_BODY(successful_operation_matrix, tc)
 	    CRYPTOCMP_NAMED_LIST_MAX, &count, &next_cursor));
 	ATF_CHECK_EQ(2, count);
 	ATF_CHECK_EQ(10, fake_service_calls());
-	ATF_CHECK_EQ(0, fake_service_failed());
 	cryptocmp_close(client);
+	ATF_CHECK_EQ(1, fake_service_created());
 	ATF_CHECK_EQ(1, fake_service_closed());
 }
 
@@ -139,9 +140,6 @@ ATF_TC_BODY(error_and_output_contracts, tc)
 	    public_key, &descriptor) == -1);
 	ATF_CHECK_EQ(-1, descriptor);
 	ATF_CHECK_EQ(0, public_key[0]);
-	fake_service_fault_next(FAKE_SERVICE_FAULT_CALL);
-	ATF_CHECK_ERRNO(ECONNRESET,
-	    cryptocmp_generate(client, &request, &descriptor) == -1);
 	/* A STAT error status maps through and leaves the out struct zeroed. */
 	fake_service_status_next(ENOENT);
 	memset(&info, 0xff, sizeof(info));
@@ -158,6 +156,11 @@ ATF_TC_BODY(error_and_output_contracts, tc)
 	    CRYPTOCMP_NAMED_LIST_MAX, &count, &next_cursor) == -1);
 	ATF_CHECK_EQ(0, count);
 	ATF_CHECK_EQ(0, next_cursor);
+	/* A lost provider is terminal for the client. */
+	fake_service_fault_next(FAKE_SERVICE_FAULT_CALL);
+	ATF_CHECK_EQ(-1, cryptocmp_generate(client, &request, &descriptor));
+	ATF_CHECK(errno != 0 && errno != EPROTO);
+	ATF_CHECK_EQ(-1, cryptocmp_generate(client, &request, &descriptor));
 	cryptocmp_close(client);
 }
 
@@ -165,12 +168,8 @@ ATF_TC_WITHOUT_HEAD(malformed_reply_matrix);
 ATF_TC_BODY(malformed_reply_matrix, tc)
 {
 	static const enum fake_service_fault faults[] = {
-		FAKE_SERVICE_FAULT_TRUNCATE,
-		FAKE_SERVICE_FAULT_WRONG_MAGIC,
-		FAKE_SERVICE_FAULT_WRONG_OPCODE,
-		FAKE_SERVICE_FAULT_POSITIVE_STATUS,
-		FAKE_SERVICE_FAULT_INVALID_STATUS,
-		FAKE_SERVICE_FAULT_MISSING_FD,
+		FAKE_SERVICE_FAULT_ZERO_ERRNO,
+		FAKE_SERVICE_FAULT_RANGE_ERRNO,
 	};
 	struct cryptocmp_generate request;
 	struct cryptocmp_client *client;
@@ -194,28 +193,43 @@ ATF_TC_BODY(malformed_reply_matrix, tc)
 		ATF_CHECK_EQ(calls, fake_service_calls());
 		cryptocmp_close(client);
 	}
-	ATF_CHECK_EQ(nitems(faults), fake_service_failed());
+	/* A future wire version is refused before any operation. */
+	ATF_REQUIRE_EQ(0, cryptocmp_open(&client));
+	fake_service_fault_next(FAKE_SERVICE_FAULT_FUTURE_VERSION);
+	ATF_CHECK_ERRNO(EPROTONOSUPPORT,
+	    cryptocmp_generate(client, &request, &descriptor) == -1);
+	cryptocmp_close(client);
 }
 
-ATF_TC_WITHOUT_HEAD(unexpected_descriptor_is_closed);
-ATF_TC_BODY(unexpected_descriptor_is_closed, tc)
+/* A malformed lease reply's descriptor is closed, never handed out. */
+ATF_TC_WITHOUT_HEAD(malformed_lease_descriptor_is_closed);
+ATF_TC_BODY(malformed_lease_descriptor_is_closed, tc)
 {
-	struct cryptocmp_generate request;
 	struct cryptocmp_client *client;
-	int descriptor, fd;
+	uint64_t generation = 99;
+	int descriptor = 99, fd;
+	char byte;
 
 	fake_service_reset();
-	request = generate_request();
 	ATF_REQUIRE_EQ(0, cryptocmp_open(&client));
-	fake_service_status_next(EPERM);
-	fake_service_fault_next(FAKE_SERVICE_FAULT_UNEXPECTED_FD);
-	ATF_CHECK_ERRNO(EPROTO,
-	    cryptocmp_generate(client, &request, &descriptor) == -1);
+	fake_service_fault_next(FAKE_SERVICE_FAULT_LEASE_GENERATION);
+	ATF_CHECK_ERRNO(EPROTO, cryptocmp_named_lease(client, "key", 1, 60,
+	    &generation, &descriptor) == -1);
 	ATF_CHECK_EQ(-1, descriptor);
+	ATF_CHECK_EQ(0, generation);
 	fd = fake_service_last_fd();
 	ATF_REQUIRE(fd >= 0);
-	errno = 0;
-	ATF_CHECK_ERRNO(EBADF, fcntl(fd, F_GETFD) == -1);
+	/*
+	 * Every write end is gone: the client closed its received copy.  The
+	 * fake provider closes its own after replying, so allow it a moment.
+	 */
+	{
+		struct pollfd pfd = { .fd = fd, .events = POLLIN };
+
+		ATF_CHECK_EQ(1, poll(&pfd, 1, 5000));
+	}
+	ATF_REQUIRE(fcntl(fd, F_SETFL, O_NONBLOCK) != -1);
+	ATF_CHECK_EQ(0, read(fd, &byte, 1));
 	cryptocmp_close(client);
 }
 
@@ -231,7 +245,6 @@ ATF_TC_BODY(named_metadata_reply_validation, tc)
 		FAKE_SERVICE_FAULT_LIST_NAME,
 		FAKE_SERVICE_FAULT_LIST_GENERATION,
 		FAKE_SERVICE_FAULT_LIST_RIGHTS,
-		FAKE_SERVICE_FAULT_LIST_PAD,
 	};
 	struct cryptocmp_named_list_entry entries[CRYPTOCMP_NAMED_LIST_MAX];
 	struct cryptocmp_generate request;
@@ -262,8 +275,6 @@ ATF_TC_BODY(named_metadata_reply_validation, tc)
 		    CRYPTOCMP_NAMED_LIST_MAX, &count, &next_cursor) == -1);
 		cryptocmp_close(client);
 	}
-	ATF_CHECK_EQ(1 + nitems(stat_faults) + nitems(list_faults),
-	    fake_service_failed());
 }
 
 ATF_TC_WITHOUT_HEAD(fork_rejects_inherited_client);
@@ -340,16 +351,8 @@ ATF_TC_BODY(digest_and_random_matrix, tc)
 	    cryptocmp_digest(client, CRYPTO_SHA2_256, 0, 0, &descriptor) == -1);
 	ATF_CHECK_EQ(-1, descriptor);
 
-	/* DIGEST malformed replies are terminal and drop any fd. */
-	fake_service_fault_next(FAKE_SERVICE_FAULT_MISSING_FD);
-	descriptor = 99;
-	ATF_CHECK_ERRNO(EPROTO,
-	    cryptocmp_digest(client, CRYPTO_SHA2_256, 0, 0, &descriptor) == -1);
-	ATF_CHECK_EQ(-1, descriptor);
-	cryptocmp_close(client);
-	ATF_REQUIRE_EQ(0, cryptocmp_open(&client));
-	fake_service_fault_next(FAKE_SERVICE_FAULT_UNEXPECTED_FD);
-	fake_service_status_next(EPERM);
+	/* DIGEST malformed replies are terminal. */
+	fake_service_fault_next(FAKE_SERVICE_FAULT_ZERO_ERRNO);
 	descriptor = 99;
 	ATF_CHECK_ERRNO(EPROTO,
 	    cryptocmp_digest(client, CRYPTO_SHA2_256, 0, 0, &descriptor) == -1);
@@ -378,6 +381,12 @@ ATF_TC_BODY(digest_and_random_matrix, tc)
 	fake_service_status_next(EPERM);
 	ATF_CHECK_ERRNO(EPERM, cryptocmp_random(client, buf, sizeof(buf)) == -1);
 	ATF_CHECK_EQ(0, buf[0]);
+	/* A reply of the wrong size is malformed; the buffer stays zeroed. */
+	memset(buf, 0xff, sizeof(buf));
+	fake_service_fault_next(FAKE_SERVICE_FAULT_RANDOM_SIZE);
+	ATF_CHECK_ERRNO(EPROTO, cryptocmp_random(client, buf, sizeof(buf)) ==
+	    -1);
+	ATF_CHECK_EQ(0, buf[0]);
 
 	cryptocmp_close(client);
 }
@@ -388,7 +397,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, digest_and_random_matrix);
 	ATF_TP_ADD_TC(tp, error_and_output_contracts);
 	ATF_TP_ADD_TC(tp, malformed_reply_matrix);
-	ATF_TP_ADD_TC(tp, unexpected_descriptor_is_closed);
+	ATF_TP_ADD_TC(tp, malformed_lease_descriptor_is_closed);
 	ATF_TP_ADD_TC(tp, named_metadata_reply_validation);
 	ATF_TP_ADD_TC(tp, fork_rejects_inherited_client);
 	return (atf_no_error());
