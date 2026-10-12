@@ -230,7 +230,9 @@ in_proto_cksum_out(struct mbuf *m, struct ifnet *ifp)
 		csum = obsd_in4_cksum(m, IPPROTO_UDP, hlen, len);
 		uh->uh_sum = csum == 0 ? 0xffff : csum;
 	}
-	m->m_pkthdr.csum_flags &= ~(CSUM_IP_TCP | CSUM_IP_UDP);
+	/* M_*_CSUM_OUT sets the IPv4 and IPv6 flags: clear both. */
+	m->m_pkthdr.csum_flags &= ~(CSUM_IP_TCP | CSUM_IP_UDP |
+	    CSUM_IP6_TCP | CSUM_IP6_UDP);
 }
 
 #ifdef INET6
@@ -241,8 +243,10 @@ in6_proto_cksum_out(struct mbuf *m, struct ifnet *ifp)
 	int off, nxt, plen;
 	u_int16_t csum;
 
-	if ((m->m_pkthdr.csum_flags & (CSUM_IP6_TCP | CSUM_IP6_UDP)) == 0)
+	if ((m->m_pkthdr.csum_flags & (CSUM_IP6_TCP | CSUM_IP6_UDP)) == 0) {
+		m->m_pkthdr.csum_flags &= ~(CSUM_IP_TCP | CSUM_IP_UDP);
 		return;
+	}
 	nxt = -1;
 	off = ip6_lasthdr(m, 0, IPPROTO_IPV6, &nxt);
 	if (off < (int)sizeof(*ip6))
@@ -267,7 +271,8 @@ in6_proto_cksum_out(struct mbuf *m, struct ifnet *ifp)
 		uh->uh_sum = csum == 0 ? 0xffff : csum;
 	}
 done:
-	m->m_pkthdr.csum_flags &= ~(CSUM_IP6_TCP | CSUM_IP6_UDP);
+	m->m_pkthdr.csum_flags &= ~(CSUM_IP6_TCP | CSUM_IP6_UDP |
+	    CSUM_IP_TCP | CSUM_IP_UDP);
 }
 #endif
 
@@ -437,15 +442,23 @@ obsd_send_run(void *arg)
 		CURVNET_SET(it->vnet);
 		NET_EPOCH_ENTER(et);
 		switch (it->kind) {
-		case OBSD_SEND_OUTPUT:
+		case OBSD_SEND_OUTPUT: {
+			int af = it->af;	/* "it" lives in the tag */
+
 			m_tag_delete(m, mtag);
-			if (it->af == AF_INET)
+			/*
+			 * OpenBSD's M_*_CSUM_OUT asks for the whole checksum;
+			 * the 5BSD stack expects a seeded one.  Compute it.
+			 */
+			obsd_cksum_out(m, af);
+			if (af == AF_INET)
 				ip_output(m, NULL, NULL, 0, NULL, NULL);
 #ifdef INET6
 			else
 				ip6_output(m, NULL, NULL, 0, NULL, NULL, NULL);
 #endif
 			break;
+		}
 		case OBSD_SEND_ICMP:
 			if (it->af == AF_INET) {
 				int type = it->type, code = it->code,
