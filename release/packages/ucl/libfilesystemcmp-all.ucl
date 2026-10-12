@@ -1,0 +1,5 @@
+comment = "system.Filesystem client library"
+
+desc = <<EOD
+The system.Filesystem client: storage claims, versions, transactions and isolated path opens from the BSDFilesystem provider.  Formerly part of libservice.
+EOD

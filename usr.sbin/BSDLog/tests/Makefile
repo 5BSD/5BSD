@@ -8,6 +8,7 @@ NO_SHARED=
 CFLAGS+=	-I${.CURDIR}/..
 CFLAGS+=	-I${SRCTOP}/lib/libcapreclaim
 CFLAGS+=	-I${SRCTOP}/lib/liblogcmp
+CFLAGS+=	-I${SRCTOP}/lib/libfilesystemcmp
 CFLAGS+=	-I${SRCTOP}/lib/libservice
 CFLAGS+=	-I${SRCTOP}/lib/libshmring
 CFLAGS+=	-I${SRCTOP}/contrib/libucl/include
@@ -32,12 +33,12 @@ LIBADD.store_limit_test+=	logcmp md
 
 ATF_TESTS_C+=	storage_test
 SRCS.storage_test=	storage_test.c storage.c store.c
-LIBADD.storage_test+=	logcmp md service shmring capsulert capreclaim
+LIBADD.storage_test+=	logcmp md filesystemcmp service shmring capsulert capreclaim
 CFLAGS.storage_test+= -I${SRCTOP}/lib/libcapsulert
 
 ATF_TESTS_C+= storage_barrier_test
 SRCS.storage_barrier_test= storage_barrier_test.c store.c
-LIBADD.storage_barrier_test+= logcmp md service shmring capsulert capreclaim
+LIBADD.storage_barrier_test+= logcmp md filesystemcmp service shmring capsulert capreclaim
 CFLAGS.storage_barrier_test+= -I${SRCTOP}/lib/libcapsulert
 LDFLAGS.storage_barrier_test+= -Wl,--wrap=shmring_read_record \
     -Wl,--wrap=shmring_consumer_arm -Wl,--wrap=logcmp_store_append \
@@ -49,7 +50,7 @@ CFLAGS.provider_test+=	-DLOGCMP_TESTING
 CFLAGS.provider_test+=	-I${SRCTOP}/lib/libauditcmp
 CFLAGS.provider_test+=	-I${SRCTOP}/lib/libchannel
 CFLAGS.provider_test+=	-I${SRCTOP}/sys
-LIBADD.provider_test=	channel fidl_bsd logcmp service shmring
+LIBADD.provider_test=	channel fidl_bsd logcmp filesystemcmp service shmring
 NO_SHARED.provider_test=	yes
 .PATH:	${.CURDIR}/..
 
@@ -74,7 +75,7 @@ CFLAGS.pool_fairness_test+= -I${SRCTOP}/lib/libauditcmp \
     -I${SRCTOP}/lib/libchannel -I${SRCTOP}/sys \
     -ffunction-sections -fdata-sections
 LDFLAGS.pool_fairness_test+= -Wl,--gc-sections
-LIBADD.pool_fairness_test+= auditcmp channel fidl_bsd logcmp service shmring pthread
+LIBADD.pool_fairness_test+= auditcmp channel fidl_bsd logcmp filesystemcmp service shmring pthread
 NO_SHARED.pool_fairness_test= yes
 
 
@@ -89,7 +90,7 @@ ATF_TESTS_C+= evolution_test
 SRCS.evolution_test= evolution_test.c evolution_test_provider.c session.c logcmp_wakeup.c
 CFLAGS.evolution_test+= -DLOGCMP_TESTING -I${SRCTOP}/lib/libauditcmp \
 	-I${SRCTOP}/lib/libchannel -I${SRCTOP}/sys
-LIBADD.evolution_test= channel fidl_bsd logcmp service shmring
+LIBADD.evolution_test= channel fidl_bsd logcmp filesystemcmp service shmring
 NO_SHARED.evolution_test= yes
 TEST_METADATA.evolution_test+= timeout="120"
 
@@ -112,7 +113,7 @@ SRCS.latency_bench= latency_bench.c latency_bench_provider.c session.c logcmp_wa
 CFLAGS.latency_bench+= -DLOGCMP_TESTING -I${SRCTOP}/lib/libauditcmp \
 	-I${SRCTOP}/lib/libchannel -I${SRCTOP}/sys \
 	-I${SRCTOP}/tools/build/fuchsia
-LIBADD.latency_bench= channel fidl_bsd logcmp service shmring
+LIBADD.latency_bench= channel fidl_bsd logcmp filesystemcmp service shmring
 NO_SHARED.latency_bench= no
 
 .PATH: ${.CURDIR}/evolution ${SRCTOP}/lib/liblogcmp

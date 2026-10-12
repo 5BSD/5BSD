@@ -17,10 +17,11 @@ CFLAGS+=	-I${SRCTOP}/lib/libcapsulert
 CFLAGS+=	-I${SRCTOP}/lib/libcapreclaim
 CFLAGS+=	-I${SRCTOP}/lib/liblogcmp
 CFLAGS+=	-I${SRCTOP}/lib/libservice
+CFLAGS+=	-I${SRCTOP}/lib/libextensioncmp
 CFLAGS+=	-I${SRCTOP}/lib/libchannel
 CFLAGS+=	-I${SRCTOP}/sys
 CFLAGS+=	-I${SRCTOP}/contrib/libucl/include
-LIBADD+=	service channel ucl pthread capreclaim logcmp
+LIBADD+=	extensioncmp service channel ucl pthread capreclaim logcmp
 NO_SHARED=	yes
 
 # allowlist_test: pure unit — the allow-list / name-validation / config-loader

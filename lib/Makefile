@@ -95,6 +95,10 @@ SUBDIR=	${SUBDIR_BOOTSTRAP} \
 	libsysctlcmp \
 	libtimecmp \
 	libpowercmp \
+	libextensioncmp \
+	libfilesystemcmp \
+	libnamespacecmp \
+	libvmcmp \
 	libnv \
 	libnvmf \
 	liboes \
@@ -174,6 +178,10 @@ SUBDIR_DEPEND_libmemstat= libkvm
 SUBDIR_DEPEND_libnetworkcmp= libservice libshmring libfidl
 SUBDIR_DEPEND_libsysctlcmp= libservice libfidl
 SUBDIR_DEPEND_libtimecmp= libservice libfidl
+SUBDIR_DEPEND_libextensioncmp= libservice
+SUBDIR_DEPEND_libfilesystemcmp= libservice libtrustedzfs
+SUBDIR_DEPEND_libnamespacecmp= libservice
+SUBDIR_DEPEND_libvmcmp= libservice
 SUBDIR_DEPEND_libpowercmp= libservice libfidl
 SUBDIR_DEPEND_libdevicecmp= libservice libfidl
 SUBDIR_DEPEND_libcryptocmp= libservice libfidl

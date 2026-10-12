@@ -12,10 +12,11 @@ CFLAGS+=	-I${SRCTOP}/lib/liblogcmp
 CFLAGS+=	-I${FIDLGEN.logcmp}
 CFLAGS+=	-I${SRCTOP}/lib/libfidl/include
 CFLAGS+=	-I${SRCTOP}/lib/libservice
+CFLAGS+=	-I${SRCTOP}/lib/libfilesystemcmp
 CFLAGS+=	-I${SRCTOP}/lib/libshmring
 CFLAGS+=	-I${SRCTOP}/contrib/libucl/include
 CFLAGS+=	-I${SRCTOP}/sys
-LIBADD=		auditcmp capreclaim channel fidl_bsd logcmp md pthread service shmring ucl
+LIBADD=		auditcmp capreclaim channel fidl_bsd filesystemcmp logcmp md pthread service shmring ucl
 
 DIRS+=		LOGCMP_CAP LOGCMP_CAP_UNITS LOGCMP_CAP_UNIT LOGCMP_CAP_BIN \
 		LOGCMP_CAP_CONFIG

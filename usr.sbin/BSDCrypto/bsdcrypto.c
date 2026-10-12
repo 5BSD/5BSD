@@ -21,6 +21,7 @@
 #include <cryptocmp.h>
 #include <fidl/bsd.crypto.v1/c/bsd.h>
 #include <libservice.h>
+#include <extensioncmp.h>
 #include <service_runtime.h>
 #include <logcmp.h>
 

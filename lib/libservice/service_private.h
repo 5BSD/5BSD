@@ -14,9 +14,6 @@
 #include <stdint.h>
 
 struct service_context;
-bool	service_provider_status_valid(int32_t);
-bool	service_provider_all_zero(const void *, size_t);
-bool	service_provider_component_valid(const char *, size_t);
 
 int	service_private_control_fd(struct service_context *);
 

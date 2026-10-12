@@ -1,0 +1,5 @@
+comment = "system.VM client library"
+
+desc = <<EOD
+The system.VM client: host-local vsock listeners and connections through the BSDVM provider.  Formerly part of libservice.
+EOD

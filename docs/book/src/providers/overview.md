@@ -112,7 +112,7 @@ or a topic inside the caller's own scope.
 
 | Wire name | Daemon | Client library | Ctl tool | Launch mode |
 |---|---|---|---|---|
-| system.Filesystem | BSDFilesystem | libbsdfilesystem, libtrustedzfs, libservice storage API | tzfsctl(8) | born in capability mode, root |
+| system.Filesystem | BSDFilesystem | libbsdfilesystem, libtrustedzfs, libfilesystemcmp storage API | tzfsctl(8) | born in capability mode, root |
 | system.Log | BSDLog | liblogcmp | logctl(8) | born in capability mode, `capability` |
 | system.Audit | BSDAudit | libauditcmp | none | born in capability mode, root |
 | system.Crypto | BSDCrypto | libcryptocmp (and libcryptodesc for the descriptor ioctls) | none | born in capability mode, root |
@@ -122,10 +122,10 @@ or a topic inside the caller's own scope.
 | system.Sysctl | BSDSysctl | libsysctlcmp | sysctlcmpctl(8) | born in capability mode, `capability`, gate `sysctl` |
 | system.Time | BSDTime | libtimecmp | BSDTimectl(8) | born in capability mode, `capability`, gate `settime` |
 | system.Power | BSDPower | libpowercmp | BSDPowerctl(8) | born in capability mode, `capability` |
-| system.SystemExtension | BSDExtension | libservice (`service_ensure_extension`) | sysextctl(8) | born in capability mode, `capability`, gates `kldload`, `kldunload` |
-| system.Namespace | BSDNamespace | libservice (`service_enter_namespace`) | none | born in capability mode, `capability`, gate `jail`, on demand |
+| system.SystemExtension | BSDExtension | libextensioncmp (`service_ensure_extension`) | sysextctl(8) | born in capability mode, `capability`, gates `kldload`, `kldunload` |
+| system.Namespace | BSDNamespace | libnamespacecmp (`service_enter_namespace`) | none | born in capability mode, `capability`, gate `jail`, on demand |
 | system.Trace | BSDTrace | libtracecmp | tracectl(8) | born in capability mode, root, requires attribute `system.trace.client` |
-| system.VM | BSDVM | libservice (`service_vsock_listen`, `service_vsock_connect`) | none | ambient, root, on demand |
+| system.VM | BSDVM | libvmcmp (`service_vsock_listen`, `service_vsock_connect`) | none | ambient, root, on demand |
 | system.Bluetooth | BSDBluetooth | libble | bluedctl(8) | born in capability mode, `capability`, on demand |
 
 Fourteen of the fifteen are born in capability mode: switchboard delivers the

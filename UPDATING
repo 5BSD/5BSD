@@ -27,6 +27,17 @@ NOTE TO PEOPLE WHO THINK THAT FreeBSD 16.x IS SLOW:
 	world, or to merely disable the most expensive debugging functionality
 	at runtime, run "ln -s 'abort:false,junk:false' /etc/malloc.conf".)
 
+20261012:
+	libservice no longer contains the system.Filesystem,
+	system.SystemExtension, system.Namespace and system.VM clients.  They
+	moved, with the same names and signatures, to libfilesystemcmp
+	(service_storage_*, service_open_config, service_open_isolated),
+	libextensioncmp (service_ensure_extension, service_extension_*),
+	libnamespacecmp (service_enter_namespace*, service_destroy_namespace,
+	service_namespace_info) and libvmcmp (service_vsock_*).  libservice's
+	major number is now 2 (libservice.so.2); relink consumers and add the
+	new library to LIBADD/LDADD and its header to the includes.
+
 20261011:
 	5BSD has retired native procfs, a.out execution, COMPAT_43TTY and the
 	FreeBSD 4-7 syscall compatibility options. Remove native procfs entries

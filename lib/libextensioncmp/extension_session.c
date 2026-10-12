@@ -2,7 +2,9 @@
 #include <sys/param.h>
 #include <errno.h>
 #include <string.h>
-#include "libservice.h"
+#include <libservice.h>
+#include <libservice_session.h>
+#include "extensioncmp.h"
 #include <sysext_proto.h>
 
 static int

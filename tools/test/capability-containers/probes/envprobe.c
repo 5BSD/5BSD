@@ -19,6 +19,7 @@
 #include <unistd.h>
 
 #include <libservice.h>
+#include <filesystemcmp.h>
 
 static int outfd = -1;
 

@@ -30,6 +30,7 @@
 
 #include <channel.h>
 #include <libservice.h>
+#include <extensioncmp.h>
 
 #include "sysext_proto.h"
 #include "bsdextension.h"

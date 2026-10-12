@@ -17,4 +17,7 @@ PKG_DEPS.bsdnetwork+=	libservice
 PKG_DEPS.bsdnetwork+=	switchboard
 PKG_DEPS.bsdnetwork+=	switchboardctl
 
+# Provider clients moved out of libservice.
+PKG_DEPS.bsdnetwork+=	libfilesystemcmp
+
 .include <bsd.pkg.mk>

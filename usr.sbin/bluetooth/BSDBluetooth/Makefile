@@ -48,11 +48,12 @@ CFLAGS+=	-I${SRCTOP}/contrib/libucl/include
 CFLAGS+=	-I${SRCTOP}/lib/libble
 CFLAGS+=	-I${SRCTOP}/lib/libbluetooth
 CFLAGS+=	-I${SRCTOP}/lib/libservice
+CFLAGS+=	-I${SRCTOP}/lib/libextensioncmp -I${SRCTOP}/lib/libfilesystemcmp
 CFLAGS+=	-I${SRCTOP}/lib/libchannel
 CFLAGS+=	-I${SRCTOP}/lib/libcapreclaim
 CFLAGS+=	-I${SRCTOP}/lib/liblogcmp
 
-LIBADD=	bluetooth crypto pthread service channel capreclaim ucl util logcmp
+LIBADD=	bluetooth crypto pthread extensioncmp filesystemcmp service channel capreclaim ucl util logcmp
 
 .if ${MK_DTRACE} != "no"
 SRCS+=		blued_provider.d

@@ -10,6 +10,7 @@
 #include <sysexits.h>
 #include <unistd.h>
 #include <libservice.h>
+#include <extensioncmp.h>
 
 static void __dead2
 usage(void)

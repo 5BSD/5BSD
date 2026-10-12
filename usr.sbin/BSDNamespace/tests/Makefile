@@ -17,21 +17,22 @@ CFLAGS+=	-I${SRCTOP}/lib/libcapsulert
 CFLAGS+=	-I${SRCTOP}/lib/libcapreclaim
 CFLAGS+=	-I${SRCTOP}/lib/liblogcmp
 CFLAGS+=	-I${SRCTOP}/lib/libchannel
+CFLAGS+=	-I${SRCTOP}/lib/libfilesystemcmp
 CFLAGS+=	-I${SRCTOP}/lib/libjail
 CFLAGS+=	-I${SRCTOP}/lib/libsysctlcmp
 CFLAGS+=	-I${SRCTOP}/lib/libservice
 CFLAGS+=	-I${SRCTOP}/sys
 
 SRCS.jailname_test=	jailname_test.c bsdnamespace.c reclaim.c
-LIBADD.jailname_test=	md jail channel service capreclaim logcmp sysctlcmp
+LIBADD.jailname_test=	md jail channel filesystemcmp service capreclaim logcmp sysctlcmp
 NO_SHARED.jailname_test=	yes
 
 SRCS.provider_test=	provider_test.c bsdnamespace.c reclaim.c
-LIBADD.provider_test=	md jail channel service capreclaim logcmp sysctlcmp
+LIBADD.provider_test=	md jail channel filesystemcmp service capreclaim logcmp sysctlcmp
 NO_SHARED.provider_test=	yes
 
 SRCS.reclaim_test=	reclaim_test.c bsdnamespace.c reclaim.c
-LIBADD.reclaim_test=	md jail channel service capreclaim logcmp sysctlcmp
+LIBADD.reclaim_test=	md jail channel filesystemcmp service capreclaim logcmp sysctlcmp
 NO_SHARED.reclaim_test=	yes
 
 .include <bsd.test.mk>

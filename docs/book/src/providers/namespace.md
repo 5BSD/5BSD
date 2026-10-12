@@ -97,7 +97,8 @@ the jail; a persistent jail reused across a restart reports it clear.
 
 ## Client library
 
-Header `<libservice.h>`, link `-lservice`. Documented in libservice(3).
+Header `<namespacecmp.h>`, link `-lnamespacecmp` (the calls moved out of
+libservice in October 2026 with the same names). Manual: libnamespacecmp(3).
 
 | Group | Functions |
 |---|---|
@@ -113,7 +114,7 @@ the program needs has been obtained.
 
 ```c
 #include <err.h>
-#include <libservice.h>
+#include <namespacecmp.h>
 
 /* Confine this process to /var/empty for the rest of its life. */
 void

@@ -103,8 +103,8 @@ the client label, window bounds and result.
 
 ## Client library
 
-Header `<libservice.h>`, link `-lservice`; the three calls are documented in
-libservice(3) (there is no standalone page).
+Header `<vmcmp.h>`, link `-lvmcmp` (the calls moved out of libservice in
+October 2026 with the same names). Manual: libvmcmp(3).
 
 | Group | Functions |
 |---|---|
@@ -120,7 +120,7 @@ calls share libservice's 30 second timeout.
 #include <sys/socket.h>
 #include <err.h>
 #include <stdio.h>
-#include <libservice.h>
+#include <vmcmp.h>
 
 /* Listen on window slot 0 and serve one peer. */
 void

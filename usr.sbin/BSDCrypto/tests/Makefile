@@ -23,7 +23,7 @@ CFLAGS.provider_test+=	-I${SRCTOP}/lib/libcryptocmp
 CFLAGS.provider_test+=	-I${SRCTOP}/lib/libcryptodesc
 CFLAGS.provider_test+=	-I${SRCTOP}/lib/libservice
 CFLAGS.provider_test+=	-I${SRCTOP}/sys
-LIBADD.provider_test=	auditcmp cryptocmp fidl_bsd channel cryptodesc service
+LIBADD.provider_test=	auditcmp cryptocmp fidl_bsd channel cryptodesc extensioncmp service
 NO_SHARED.provider_test=	yes
 TEST_METADATA.provider_test+= timeout="180"
 
@@ -40,8 +40,8 @@ ATF_TESTS_C+= lifecycle_test
 SRCS.lifecycle_test= lifecycle_test.c policy.c
 CFLAGS.lifecycle_test+= -I${SRCTOP}/lib/libauditcmp -I${SRCTOP}/lib/libchannel
 CFLAGS.lifecycle_test+= -I${SRCTOP}/lib/libcryptodesc -I${SRCTOP}/lib/libservice
-CFLAGS.lifecycle_test+= -I${SRCTOP}/lib/liblogcmp
-LIBADD.lifecycle_test= auditcmp cryptocmp fidl_bsd channel cryptodesc service logcmp capreclaim
+CFLAGS.lifecycle_test+= -I${SRCTOP}/lib/liblogcmp -I${SRCTOP}/lib/libextensioncmp
+LIBADD.lifecycle_test= auditcmp cryptocmp fidl_bsd channel cryptodesc extensioncmp service logcmp capreclaim
 NO_SHARED.lifecycle_test= yes
 
 
@@ -56,7 +56,7 @@ ATF_TESTS_C+= evolution_test
 SRCS.evolution_test= evolution_test.c evolution_test_provider.c policy.c
 CFLAGS.evolution_test+= -DBSDCRYPTO_TESTING -I${SRCTOP}/lib/libauditcmp \
 	-I${SRCTOP}/lib/libcryptodesc -I${SRCTOP}/lib/libservice
-LIBADD.evolution_test= auditcmp cryptocmp fidl_bsd channel cryptodesc service
+LIBADD.evolution_test= auditcmp cryptocmp fidl_bsd channel cryptodesc extensioncmp service
 NO_SHARED.evolution_test= yes
 TEST_METADATA.evolution_test+= timeout="120"
 
@@ -80,7 +80,7 @@ SRCS.latency_bench= latency_bench.c latency_bench_provider.c policy.c
 CFLAGS.latency_bench+= -DBSDCRYPTO_TESTING -I${SRCTOP}/lib/libauditcmp \
 	-I${SRCTOP}/lib/libcryptodesc -I${SRCTOP}/lib/libservice \
 	-I${SRCTOP}/tools/build/fuchsia
-LIBADD.latency_bench= auditcmp cryptocmp fidl_bsd channel cryptodesc service
+LIBADD.latency_bench= auditcmp cryptocmp fidl_bsd channel cryptodesc extensioncmp service
 
 # Production bindings for everything except next_peer.
 .for t in provider_test lifecycle_test quota_test evolution_test latency_bench

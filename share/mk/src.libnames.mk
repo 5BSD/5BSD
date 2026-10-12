@@ -214,6 +214,10 @@ _LIBRARIES=	\
 		sysctlcmp \
 		timecmp \
 		powercmp \
+		extensioncmp \
+		filesystemcmp \
+		namespacecmp \
+		vmcmp \
 		ngatm \
 		nv \
 		nvpair \
@@ -348,6 +352,10 @@ _DP_shmring=
 _DP_networkcmp=	pthread service fidl_bsd cplusplus
 _DP_sysctlcmp=	pthread service fidl_bsd cplusplus
 _DP_timecmp= service fidl_bsd cplusplus
+_DP_extensioncmp=	service
+_DP_filesystemcmp=	service trustedzfs
+_DP_namespacecmp=	service
+_DP_vmcmp=	service
 _DP_powercmp=	service fidl_bsd cplusplus
 _DP_cryptocmp=	pthread service fidl_bsd cplusplus
 _DP_devicecmp=	pthread service fidl_bsd cplusplus

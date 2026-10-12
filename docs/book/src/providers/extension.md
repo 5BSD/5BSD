@@ -119,8 +119,8 @@ edits is not a snapshot. It is a policy view, not an installed-package catalogue
 
 ## Client library
 
-Header `<libservice.h>`, link `-lservice`. The extension calls live in
-libservice(3) rather than a separate `*cmp` library.
+Header `<extensioncmp.h>`, link `-lextensioncmp` (the calls moved out of
+libservice in October 2026 with the same names). Manual: libextensioncmp(3).
 
 | Group | Functions |
 |---|---|
@@ -139,7 +139,7 @@ Session calls have a 30 second timeout.
 ```c
 #include <errno.h>
 #include <stdio.h>
-#include <libservice.h>
+#include <extensioncmp.h>
 
 /* Make sure the zfs module is resident; fail soft if the broker is down. */
 int

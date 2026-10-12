@@ -62,6 +62,10 @@ SUBDIR=	\
 	libsysctlcmp \
 	libtimecmp \
 	libpowercmp \
+	libextensioncmp \
+	libfilesystemcmp \
+	libnamespacecmp \
+	libvmcmp \
 	libcache \
 	libcapreclaim \
 	libnotify \

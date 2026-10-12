@@ -10,6 +10,7 @@ CFLAGS+=	-I${FIDLGEN.networkcmp} -I${SRCTOP}/lib/libfidl/include
 
 CFLAGS+=	-I${.CURDIR}/..
 CFLAGS+=	-I${SRCTOP}/lib/libnetworkcmp
+CFLAGS+=	-I${SRCTOP}/lib/libfilesystemcmp
 CFLAGS+=	-I${SRCTOP}/lib/libfidl/include
 CFLAGS+=	-I${SRCTOP}/lib/libservice
 CFLAGS+=	-I${SRCTOP}/contrib/libucl/include
@@ -22,7 +23,7 @@ SRCS.policy_test=	policy_test.c policy.c
 
 ATF_TESTS_C+=	resolver_test
 SRCS.resolver_test=	resolver_test.c
-LIBADD.resolver_test=	service
+LIBADD.resolver_test=	filesystemcmp service
 
 ATF_TESTS_C+=	config_test
 SRCS.config_test=	config_test.c config.c policy.c
@@ -38,7 +39,7 @@ CFLAGS.provider_test+=	-I${SRCTOP}/lib/libnetworkcmp
 CFLAGS.provider_test+=	-I${SRCTOP}/lib/libservice
 CFLAGS.provider_test+=	-I${SRCTOP}/contrib/libucl/include
 CFLAGS.provider_test+=	-I${SRCTOP}/sys
-LIBADD.provider_test=	auditcmp channel fidl_bsd networkcmp pthread service ucl
+LIBADD.provider_test=	auditcmp channel fidl_bsd networkcmp pthread filesystemcmp service ucl
 NO_SHARED.provider_test=	yes
 
 # The shell contract cases read these source files.  Install them beneath
@@ -53,33 +54,33 @@ SRCTREE_FILES=	usr.sbin/BSDFilesystem/bsdfilesystem.ucl \
 ATF_TESTS_C+= state_test
 CFLAGS.state_test+= -I${SRCTOP}/lib/libchannel -I${SRCTOP}/lib/libnotify
 CFLAGS.state_test+= -I${SRCTOP}/lib/libsysctlcmp -I${SRCTOP}/sys
-LIBADD.state_test+= networkcmp fidl_bsd notify channel service pthread
+LIBADD.state_test+= networkcmp fidl_bsd notify channel filesystemcmp service pthread
 NO_SHARED.state_test= yes
 
 ATF_TESTS_C+= state_plane_test
 CFLAGS.state_plane_test+= -I${SRCTOP}/lib/libchannel -I${SRCTOP}/lib/libnotify
 CFLAGS.state_plane_test+= -I${SRCTOP}/lib/libsysctlcmp -I${SRCTOP}/sys
-LIBADD.state_plane_test+= networkcmp fidl_bsd notify channel service pthread
+LIBADD.state_plane_test+= networkcmp fidl_bsd notify channel filesystemcmp service pthread
 NO_SHARED.state_plane_test= yes
 
 ATF_TESTS_C+= state_sampler_test
 CFLAGS.state_sampler_test+= -I${SRCTOP}/lib/libchannel -I${SRCTOP}/lib/libnotify
 CFLAGS.state_sampler_test+= -I${SRCTOP}/lib/libsysctlcmp -I${SRCTOP}/sys
-LIBADD.state_sampler_test+= networkcmp fidl_bsd notify channel service pthread
+LIBADD.state_sampler_test+= networkcmp fidl_bsd notify channel filesystemcmp service pthread
 NO_SHARED.state_sampler_test= yes
 
 ATF_TESTS_C+= coalesce_test
 SRCS.coalesce_test= coalesce_test.c config.c policy.c resolver.c
 CFLAGS.coalesce_test+= -I${SRCTOP}/lib/libauditcmp -I${SRCTOP}/lib/libchannel
 CFLAGS.coalesce_test+= -I${SRCTOP}/lib/liblogcmp -I${SRCTOP}/sys
-LIBADD.coalesce_test+= auditcmp channel fidl_bsd networkcmp pthread service ucl
+LIBADD.coalesce_test+= auditcmp channel fidl_bsd networkcmp pthread filesystemcmp service ucl
 NO_SHARED.coalesce_test= yes
 
 ATF_TESTS_C+= connect_deadline_test
 SRCS.connect_deadline_test= connect_deadline_test.c config.c policy.c resolver.c
 CFLAGS.connect_deadline_test+= -I${SRCTOP}/lib/libauditcmp -I${SRCTOP}/lib/libchannel
 CFLAGS.connect_deadline_test+= -I${SRCTOP}/lib/liblogcmp -I${SRCTOP}/sys
-LIBADD.connect_deadline_test+= auditcmp channel fidl_bsd networkcmp pthread service ucl
+LIBADD.connect_deadline_test+= auditcmp channel fidl_bsd networkcmp pthread filesystemcmp service ucl
 NO_SHARED.connect_deadline_test= yes
 
 
@@ -90,7 +91,7 @@ SRCS.worker_test= worker_test.c service_runtime.c
 CFLAGS.worker_test+= ${CFLAGS.provider_test:N-DNETWORKCMP_TESTING} \
     -I${SRCTOP}/lib/liblogcmp -I${SRCTOP}/lib/libnotify \
     -I${SRCTOP}/lib/libsysctlcmp -ffunction-sections -fdata-sections
-LIBADD.worker_test+= service
+LIBADD.worker_test+= filesystemcmp service
 LDFLAGS.worker_test+= -Wl,--gc-sections
 NO_SHARED.worker_test= yes
 
@@ -125,7 +126,7 @@ MAN.latency_bench=
 SRCS.latency_bench= latency_bench.c latency_bench_provider.c config.c policy.c resolver.c
 CFLAGS.latency_bench+= ${CFLAGS.provider_test} -I${SRCTOP}/lib/libnetworkcmp \
 	-I${SRCTOP}/tools/build/fuchsia
-LIBADD.latency_bench= auditcmp channel fidl_bsd networkcmp pthread service ucl
+LIBADD.latency_bench= auditcmp channel fidl_bsd networkcmp pthread filesystemcmp service ucl
 
 # Production bindings for everything except next_peer.
 .for t in provider_test state_test state_plane_test state_sampler_test \

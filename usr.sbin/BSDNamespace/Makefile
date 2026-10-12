@@ -41,10 +41,11 @@ CFLAGS+=	-I${SRCTOP}/lib/liblogcmp
 CFLAGS+=	-I${SRCTOP}/lib/libjail
 CFLAGS+=	-I${SRCTOP}/lib/libsysctlcmp
 CFLAGS+=	-I${SRCTOP}/lib/libservice
+CFLAGS+=	-I${SRCTOP}/lib/libfilesystemcmp
 CFLAGS+=	-I${SRCTOP}/lib/libchannel
 CFLAGS+=	-I${SRCTOP}/sys
 
-LIBADD=		service channel jail md pthread capreclaim logcmp sysctlcmp
+LIBADD=		filesystemcmp service channel jail md pthread capreclaim logcmp sysctlcmp
 
 HAS_TESTS=
 SUBDIR.${MK_TESTS}+=	tests

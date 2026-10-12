@@ -39,6 +39,7 @@
 #include <unistd.h>
 
 #include <libservice.h>
+#include <filesystemcmp.h>
 #include "resolver.h"
 
 /* ---- retained pre-cap_enter state ------------------------------------- */

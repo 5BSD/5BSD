@@ -16,4 +16,7 @@ PKG_DEPS.runtime+=	libtimecmp libpowercmp libsysctlcmp libfidl libservice \
 UCLSRC=		common.ucl
 UCLSRC.runtime=	runtime.ucl
 
+# Provider clients moved out of libservice.
+PKG_DEPS.runtime+=	libfilesystemcmp
+
 .include <bsd.pkg.mk>

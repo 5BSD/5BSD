@@ -17,4 +17,7 @@ PKG_DEPS.bsdlog+=	libshmring
 PKG_DEPS.bsdlog+=	switchboard
 PKG_DEPS.bsdlog+=	switchboardctl
 
+# Provider clients moved out of libservice.
+PKG_DEPS.bsdlog+=	libfilesystemcmp
+
 .include <bsd.pkg.mk>

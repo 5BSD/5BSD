@@ -1,0 +1,171 @@
+.\" SPDX-License-Identifier: BSD-2-Clause
+.Dd October 12, 2026
+.Dt LIBEXTENSIONCMP 3
+.Os
+.Sh NAME
+.Nm libextensioncmp
+.Nd system.SystemExtension client: kernel extension loads and policy queries through the BSDExtension provider
+.Sh LIBRARY
+.Pq libextensioncmp, Fl lextensioncmp
+.Sh SYNOPSIS
+.In extensioncmp.h
+.Ft int
+.Fn service_ensure_extension "struct service_context *context" "const char *module"
+.Ft int
+.Fn service_extension_stat "struct service_context *context" "const char *module" "int *loadedp"
+.Ft int
+.Fn service_extension_list "struct service_context *context" "char (*names)[SERVICE_EXTENSION_NAME_MAX]" "size_t max" "size_t *countp"
+.Ft int
+.Fn service_session_extension_load "struct service_session *session" "const char *module"
+.Ft int
+.Fn service_session_extension_stat "struct service_session *session" "const char *module" "int *loadedp"
+.Ft int
+.Fn service_session_extension_list "struct service_session *session" "char (*names)[SERVICE_EXTENSION_NAME_MAX]" "size_t max" "size_t *countp"
+.Ft int
+.Fn service_session_extension_reload "struct service_session *session"
+.Ft int
+.Fn service_session_extension_manage "struct service_session *session" "enum service_extension_action action" "const char *module"
+.Ft int
+.Fn service_session_extension_info "struct service_session *session" "const char *name" "int next" "struct service_extension_info *info"
+.Sh DESCRIPTION
+These calls were part of
+.Xr libservice 3
+and moved to their own library with the same names and semantics.
+Each takes the process's own service context from
+.Xr service_acquire 3 ;
+a context inherited across a fork is refused with
+.Er EINVAL .
+The process-wide broker session is opened on first use, replaced
+when the provider failed or was relaunched, and abandoned in a
+forked child.
+.Pp
+.Fn service_ensure_extension
+asks the
+.Dq system.SystemExtension
+provider
+.Pq Xr BSDExtension 8
+to ensure the kernel extension (module) named
+.Fa module
+is loaded (success includes an already-loaded module).
+.Fa module
+must be a single, safe filename component.
+This is a
+.Dv SYSTEM Ns -domain
+caller only; the discovery domain layer makes the name unresolvable for user
+services, so it fails closed for them.
+.Pp
+.Fn service_extension_stat
+queries whether the kernel extension named
+.Fa module
+is loaded without attempting a load, setting
+.Fa *loadedp
+to 1 (loaded) or 0 (not).
+It is routed and validated exactly like
+.Fn service_ensure_extension ;
+a denied name fails with
+.Er EPERM .
+.Pp
+.Fn service_extension_list
+enumerates the module names
+.Xr BSDExtension 8 Ns 's
+allow-list permits, so a consumer can discover what it may
+.Fn service_ensure_extension
+without probing names blindly.
+It is routed exactly like the other extension calls: a
+.Dv SYSTEM Ns -domain
+caller only.
+The allow-list is global rather than per-label, so every caller sees the same
+set, and the reply reveals only which names may load, never any loaded or
+not-loaded state.
+Up to
+.Fa max
+names are written into
+.Fa names ,
+each a
+.Dv SERVICE_EXTENSION_NAME_MAX Ns -byte
+NUL-terminated buffer, with their number stored in
+.Fa countp .
+The reply holds at most
+.Dv SERVICE_EXTENSION_LIST_MAX
+entries; a larger effective policy fails with
+.Er EOVERFLOW .
+A smaller
+.Fa max
+that cannot hold it fails with
+.Er EMSGSIZE ,
+storing the required count in
+.Fa *countp
+rather than truncating silently.
+.Pp
+.Fn service_session_extension_load ,
+.Fn service_session_extension_stat ,
+and
+.Fn service_session_extension_list
+provide the same typed extension operations using a caller-owned
+.Vt struct service_session
+instead of a service context.
+They neither acquire discovery authority nor close the session.
+The caller opens the SystemExtension service and creates the session.
+Malformed replies poison the session with
+.Er EPROTO .
+Each call has a 30-second timeout.
+.Pp
+.Fn service_session_extension_reload
+takes a session and requests an atomic reload of the broker's configured
+defaults file, preserving persistent administrator overrides.
+It requires ADMIN rights on that service channel.
+It accepts no path or policy contents; failures leave the active policy intact.
+These functions return zero on success and minus one with errno on failure.
+.Pp
+.Fn service_session_extension_manage
+requires ADMIN channel rights and accepts one of
+.Dv SERVICE_EXTENSION_ALLOW ,
+.Dv SERVICE_EXTENSION_DENY ,
+.Dv SERVICE_EXTENSION_RESET ,
+.Dv SERVICE_EXTENSION_ENABLE ,
+.Dv SERVICE_EXTENSION_DISABLE ,
+or
+.Dv SERVICE_EXTENSION_RESTORE .
+ALLOW and DENY persist permission overrides; RESET removes the entire override,
+including desired activation.
+ENABLE records desired boot activation of an already permitted module;
+DISABLE removes activation while retaining permission.
+RESTORE takes no module name (pass NULL) and loads all permitted enabled
+entries.
+Permission and activation edits do not immediately load or forcibly unload code.
+Persistent edits and restoration fail with
+.Er EAGAIN
+until administrator storage is attached, or
+.Er EPERM
+when authority or required permission is absent.
+.Pp
+.Fn service_session_extension_info
+queries a named module with
+.Fa next
+set to zero, or returns the first known policy entry lexically after
+.Fa name
+with
+.Fa next
+set to one.
+Start enumeration with an empty name, advance to each returned name, and stop on
+.Er ENOENT .
+The result contains
+.Fa name , allowed , enabled , loaded , overridden ,
+and
+.Fa ready .
+Loaded state is not disclosed for denied modules; ready indicates attached
+administrator storage.
+Each returned entry is coherent, but enumeration is not a snapshot across
+concurrent policy edits.
+This API avoids the list size limit.
+See
+.Xr sysextctl 8
+for operator commands and persistence semantics.
+.Sh SEE ALSO
+.Xr libservice 3 ,
+.Xr BSDExtension 8
+.Sh HISTORY
+These functions appeared in
+.Xr libservice 3 ;
+.Nm libextensioncmp
+appeared in 5BSD when they moved out of it.

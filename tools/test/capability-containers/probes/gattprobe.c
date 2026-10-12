@@ -24,6 +24,8 @@
 
 #include <ble.h>
 #include <libservice.h>
+#include <filesystemcmp.h>
+#include <extensioncmp.h>
 
 static void
 report(int outfd, const char *line)

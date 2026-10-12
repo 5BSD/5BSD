@@ -1,0 +1,100 @@
+.\" SPDX-License-Identifier: BSD-2-Clause
+.Dd October 12, 2026
+.Dt LIBNAMESPACECMP 3
+.Os
+.Sh NAME
+.Nm libnamespacecmp
+.Nd system.Namespace client: jail (namespace) confinement through the BSDNamespace provider
+.Sh LIBRARY
+.Pq libnamespacecmp, Fl lnamespacecmp
+.Sh SYNOPSIS
+.In namespacecmp.h
+.Ft int
+.Fn service_enter_namespace "struct service_context *context" "const char *path" "const char *hostname" "const char *ip4_addr" "unsigned flags"
+.Ft int
+.Fn service_enter_namespace_ex "struct service_context *context" "const char *path" "const char *hostname" "const char *ip4_addr" "const char *ip6_addr" "unsigned flags"
+.Ft int
+.Fn service_destroy_namespace "struct service_context *context"
+.Ft int
+.Fn service_namespace_info "struct service_context *context" "struct service_namespace_info *out"
+.Sh DESCRIPTION
+These calls were part of
+.Xr libservice 3
+and moved to their own library with the same names and semantics.
+Each takes the process's own service context from
+.Xr service_acquire 3 ;
+a context inherited across a fork is refused with
+.Er EINVAL .
+The process-wide broker session is opened on first use, replaced
+when the provider failed or was relaunched, and abandoned in a
+forked child.
+.Pp
+.Fn service_enter_namespace
+asks the
+.Dq system.Namespace
+provider
+.Pq Xr BSDNamespace 8
+to create a jail rooted at
+.Fa path
+(scoped by this process's channel label) and attaches the calling process to it;
+the returned jail's root credential authorizes the attach, so a non-root caller
+may confine itself.
+.Fa hostname
+and
+.Fa ip4_addr
+may be
+.Dv NULL .
+.Fa flags
+is zero for a persistent jail (reused by label across restarts) or
+.Dv SERVICE_NS_EPHEMERAL
+for a jail whose lifetime is bound to the calling process.
+.Pp
+.Fn service_enter_namespace_ex
+is
+.Fn service_enter_namespace
+with an additional IPv6 address
+.Fa ip6_addr
+.Pq empty or Dv NULL for none
+and the full
+.Dv SERVICE_NS_*
+flag set, including
+.Dv SERVICE_NS_VNET
+for a jail with its own virtual network stack (requires
+.Dv VIMAGE ) .
+.Fn service_enter_namespace
+is this with
+.Fa ip6_addr
+empty.
+.Pp
+.Fn service_destroy_namespace
+destroys the caller's own jail, scoped to the caller's label so it can never
+name another's;
+.Er ENOENT
+is returned when the caller has none.
+.Pp
+.Fn service_namespace_info
+reports the caller's own jail into
+.Fa out .
+A label owns at most one jail:
+.Va out->present
+is 1 with the fields filled, or 0 when the caller has no jail (which is still a
+success).
+.Va out->flags
+carries the
+.Dv SERVICE_NS_*
+bits describing the jail \(em
+.Dv SERVICE_NS_VNET
+when it has its own virtual network stack, and
+.Dv SERVICE_NS_EPHEMERAL
+when this process's own connection is anchoring the jail's lifetime \(em so a
+consumer that lists after a restart can pass them straight back to
+.Fn service_enter_namespace_ex .
+Each address field is empty when the jail has no address of that family.
+.Sh SEE ALSO
+.Xr libservice 3 ,
+.Xr BSDNamespace 8
+.Sh HISTORY
+These functions appeared in
+.Xr libservice 3 ;
+.Nm libnamespacecmp
+appeared in 5BSD when they moved out of it.

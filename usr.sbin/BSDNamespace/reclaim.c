@@ -31,6 +31,7 @@
 #include <jail.h>
 #include <capreclaim.h>
 #include <libservice.h>
+#include <filesystemcmp.h>
 
 #include "bsdnamespace_reclaim.h"
 #include "bsdnamespace_probes.h"

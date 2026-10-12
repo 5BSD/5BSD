@@ -117,7 +117,7 @@ caller input.
 There are three layers. Consumers use the libservice storage API, which is
 the only one that applies the container model:
 
-| Group | Functions (`<libservice.h>`, `-lservice`) |
+| Group | Functions (`<filesystemcmp.h>`, `-lfilesystemcmp`, libfilesystemcmp(3)) |
 |---|---|
 | Claims | `service_storage_open`, `_open_quota`, `_open_cache`, `_open_shared`, `_open_shared_readonly`, `_open_env`, `_open_group` |
 | Reclaim | `service_storage_destroy`, `_destroy_cache`, `_destroy_shared`, `_destroy_group` |
@@ -140,7 +140,7 @@ snapshot before an upgrade:
 #include <err.h>
 #include <fcntl.h>
 #include <unistd.h>
-#include <libservice.h>
+#include <filesystemcmp.h>
 
 static void
 upgrade_store(struct service_context *ctx)
@@ -162,7 +162,7 @@ upgrade_store(struct service_context *ctx)
 }
 ```
 
-Link with `-lservice`. The `dirfd` is a mounted anonymous directory: it
+Link with `-lfilesystemcmp`. The `dirfd` is a mounted anonymous directory: it
 works with `openat(2)`, `fstatat(2)` and `mmap(2)` and has no path.
 
 ## Command-line tool

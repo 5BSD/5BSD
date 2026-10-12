@@ -16,6 +16,8 @@
 #include <unistd.h>
 
 #include <libservice.h>
+#include <filesystemcmp.h>
+#include <namespacecmp.h>
 
 int
 main(int argc, char **argv)

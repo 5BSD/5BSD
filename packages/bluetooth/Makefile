@@ -14,4 +14,8 @@ PKG_DEPS.bluetooth+=	libservice
 PKG_DEPS.bluetooth+=	switchboard
 PKG_DEPS.bluetooth+=	switchboardctl
 
+# Provider clients moved out of libservice.
+PKG_DEPS.bluetooth+=	libextensioncmp
+PKG_DEPS.bluetooth+=	libfilesystemcmp
+
 .include <bsd.pkg.mk>

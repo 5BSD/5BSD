@@ -30,6 +30,7 @@
 #include <channel.h>
 #include <fidl/bsd.log.v1/c/bsd.h>
 #include <libservice.h>
+#include <filesystemcmp.h>
 #include <service_runtime.h>
 #include <logcmp.h>
 #include <logcmp_server.h>
