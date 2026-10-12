@@ -38,6 +38,10 @@ SRCS.allowlist_test=	allowlist_test.c bsdextension.c policy.c reclaim.c
 # provider_test: drives the real bsd.extension.v1 server over a public capability
 # channel via sysext_test_serve(), with libextensioncmp and hand-built frames.
 # Requires the channel syscall, but no privilege.
+ATF_TESTS_C+= inherited_session_test
+SRCS.inherited_session_test= inherited_session_test.c
+TEST_METADATA.inherited_session_test+= timeout="15"
+
 ATF_TESTS_C+=		provider_test
 SRCS.provider_test=	provider_test.c bsdextension.c policy.c reclaim.c
 

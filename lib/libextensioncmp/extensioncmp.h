@@ -53,6 +53,9 @@ int	service_extension_list(struct service_context *,
  * the caller's authority; a transport failure or malformed reply makes the
  * session fail every later call (open a new one).  Calls have a 30-second
  * timeout, shortened by an active service_budget_begin(3).
+ * Explicit sessions belong to their creating process. After fork/pdfork,
+ * operations return ECHILD without touching the inherited session lock;
+ * close releases only the child's wrapper.
  */
 struct extensioncmp_session;
 int	extensioncmp_session_open(struct extensioncmp_session **);

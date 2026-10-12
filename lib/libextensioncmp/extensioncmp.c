@@ -42,6 +42,7 @@ struct extensioncmp_session {
 	pthread_mutex_t		 lock;
 	struct fidl_bsd_connection *connection;
 	pid_t			 owner;
+	pid_t			 creator; /* explicit session: immutable */
 	bool			 negotiated;
 	bool			 reopen;	/* process-wide: replace on failure */
 	int			 failed;	/* explicit session: terminal */
@@ -403,6 +404,7 @@ extensioncmp_session_create(int fd, struct extensioncmp_session **sessionp)
 		free(session);
 		return (errno = error, -1);
 	}
+	session->creator = getpid();
 	*sessionp = session;
 	return (0);
 }
@@ -430,6 +432,11 @@ extensioncmp_session_close(struct extensioncmp_session *session)
 
 	if (session == NULL)
 		return;
+	/* The inherited mutex may be owned by a vanished parent thread. */
+	if (session->creator != getpid()) {
+		free(session);
+		return;
+	}
 	session_drop(session);
 	(void)pthread_mutex_destroy(&session->lock);
 	free(session);
@@ -444,12 +451,17 @@ extensioncmp_session_close(struct extensioncmp_session *session)
 		uint32_t txid_;						\
 		int rc_;						\
 									\
+		if (!(session)->reopen && (session)->creator != getpid()) { \
+			errno = ECHILD;					\
+			rc_ = -1;					\
+		} else {						\
 		pthread_mutex_lock(&(session)->lock);			\
 		rc_ = begin_locked((session), &deadline_);		\
 		if (rc_ == 0)						\
 			rc_ = finish_locked((session), (issue),		\
 			    (result), &deadline_);			\
 		pthread_mutex_unlock(&(session)->lock);			\
+		}							\
 		(void)txid_;						\
 		rc_;							\
 	})
