@@ -34,5 +34,7 @@ const char *fake_service_last_interface(void);
 void	fake_service_refuse_interface(const char *, int);
 /* Number of service_connect() attempts naming interface since reset. */
 unsigned fake_service_connects(const char *);
+/* The fake replacement for libservice's service_open(). */
+int	service_open(const char *, int *);
 
 #endif

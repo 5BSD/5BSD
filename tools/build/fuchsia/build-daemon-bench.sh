@@ -84,6 +84,15 @@ network)
 	libs="-lauditcmp -lprivateucl -lservice -lchannel -lpthread"
 	extra="-I$src/lib/libauditcmp -I$src/lib/liblogcmp -I$src/lib/libnotify -I$src/lib/libsysctlcmp"
 	;;
+notify)
+	paths="usr.sbin/BSDNotify lib/libnotify"
+	defs="-DNOTIFY_BENCH_LEGACY -DNOTIFY_CLIENT_SOURCE=\\\"$old/lib/libnotify/notify.c\\\" -DNOTIFY_SERVER_SOURCE=\\\"$old/usr.sbin/BSDNotify/bsdnotify.c\\\""
+	incs="usr.sbin/BSDNotify lib/libnotify"
+	srcs="usr.sbin/BSDNotify/broker.c usr.sbin/BSDNotify/policy.c usr.sbin/BSDNotify/transport.c"
+	bench="usr.sbin/BSDNotify/tests/latency_bench.c usr.sbin/BSDNotify/tests/latency_bench_server.c"
+	libs="-lauditcmp -llogcmp -lnotify -lprivateucl -lservice -lchannel -lpthread"
+	extra="-I$src/lib/libauditcmp -I$src/lib/liblogcmp"
+	;;
 *)
 	echo "build-daemon-bench: unknown daemon $daemon" >&2; exit 64;;
 esac

@@ -11,6 +11,9 @@
 
 #include "notify_protocol.h"
 
+/* bsd.notify.v1 wire major (notify.fidl). */
+#define	NOTIFY_WIRE_VERSION	1
+
 struct notify_client;
 
 /* Decoded, NUL-terminated form returned by notify_list_subscriptions(). */

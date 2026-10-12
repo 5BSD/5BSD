@@ -1,0 +1,129 @@
+// SPDX-License-Identifier: BSD-2-Clause
+// system.Notify and system.Notify.System (BSDNotify).  The library name,
+// ordinals and layouts are a stable contract for wire major 1; incompatible
+// changes need a new major.  Identity never travels in a payload: the router
+// authorizes every request from the session's admission tier, its label's
+// policy and the rights on the accepted channel.
+library bsd.notify.v1;
+
+type ProtocolInfo = struct { wire_version uint32; };
+
+// A dotted topic: segments of [A-Za-z0-9_-], not starting with a digit.
+alias Topic = string:128;
+
+// NOTIFY_FEATURE_* bits a client asks for (only STATE_WATCH is optional).
+type HelloRequest = struct { features uint32; };
+type Limits = struct {
+    features uint32;
+    max_topic uint32;
+    max_payload uint32;
+    max_subscriptions uint32;
+    queue_depth uint32;
+    max_timers uint32;
+    max_states uint32;
+    // Changes when the router restarts; every event and state carries it.
+    router_epoch uint64;
+};
+
+type TopicRequest = struct { topic Topic; };
+type PublishRequest = struct {
+    topic Topic;
+    payload vector<uint8>:2048;
+};
+
+// timeout_ms 0 polls; UINT32_MAX waits without a deadline (EAGAIN on expiry).
+type NextRequest = struct { timeout_ms uint32; };
+// One delivered event (NOTIFY_EVENT_*).  publisher is the publishing
+// session's label bytes.
+type Event = struct {
+    type uint32;
+    flags uint32;
+    router_epoch uint64;
+    sequence uint64;
+    timestamp_ns uint64;
+    timer_id uint64;
+    generation uint64;
+    state uint64;
+    lost_count uint64;
+    publisher vector<uint8>:64;
+    topic Topic;
+    payload vector<uint8>:2048;
+};
+
+type TimerRequest = struct {
+    timer_id uint64;
+    interval_ms uint32;
+    // NOTIFY_TIMER_F_PERIODIC.
+    flags uint32;
+};
+type TimerCancelRequest = struct { timer_id uint64; };
+
+type StateSetRequest = struct {
+    topic Topic;
+    state uint64;
+};
+type StateValue = struct {
+    router_epoch uint64;
+    generation uint64;
+    state uint64;
+};
+type StateWatchRequest = struct {
+    topic Topic;
+    timeout_ms uint32;
+};
+type StateWatchValue = struct {
+    watch_epoch uint64;
+    generation uint64;
+    state uint64;
+    present bool;
+};
+
+type Stats = struct {
+    published uint64;
+    delivered uint64;
+    dropped uint64;
+    rejected uint64;
+    timer_events uint64;
+};
+
+// cursor 0 starts an enumeration; a reply's next_cursor resumes it (0 when
+// complete).  Only the caller's own subscriptions and timers are listed.
+type ListRequest = struct { cursor uint32; };
+type SubscriptionPage = struct {
+    topics vector<Topic>:24;
+    next_cursor uint32;
+    total uint32;
+};
+type TimerEntry = struct {
+    timer_id uint64;
+    interval_ms uint32;
+    flags uint32;
+    // Best-effort milliseconds until the next expiry.
+    next_fire_ms uint64;
+};
+type TimerPage = struct {
+    timers vector<TimerEntry>:24;
+    next_cursor uint32;
+    total uint32;
+};
+
+// All errors are errno values.  Next and StateWatch are long polls; while
+// one is outstanding every other request on the session fails with EBUSY.
+// A request the session's policy does not allow fails with EACCES.
+closed protocol Notify {
+    strict GetProtocolInfo() -> (ProtocolInfo);
+    strict Hello(HelloRequest) -> (Limits) error uint32;
+    strict Subscribe(TopicRequest) -> () error uint32;
+    strict Unsubscribe(TopicRequest) -> () error uint32;
+    strict Publish(PublishRequest) -> () error uint32;
+    strict Next(NextRequest) -> (Event) error uint32;
+    strict TimerAdd(TimerRequest) -> () error uint32;
+    strict TimerCancel(TimerCancelRequest) -> () error uint32;
+    strict GetStats() -> (Stats) error uint32;
+    strict StateSet(StateSetRequest) -> (StateValue) error uint32;
+    strict StateGet(TopicRequest) -> (StateValue) error uint32;
+    strict StateClear(TopicRequest) -> () error uint32;
+    strict ListSubscriptions(ListRequest) -> (SubscriptionPage) error uint32;
+    strict ListTimers(ListRequest) -> (TimerPage) error uint32;
+    strict StateWatch(StateWatchRequest) -> (StateWatchValue) error uint32;
+};

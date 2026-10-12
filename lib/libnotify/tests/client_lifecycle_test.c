@@ -525,14 +525,17 @@ ATF_TC_BODY(open_tier_never_touches_system_name, tc)
 	{
 		int fd;
 
-		fd = open("/dev/null", O_RDONLY | O_CLOEXEC);
-		ATF_REQUIRE(fd >= 0);
+		/* The adopted session must answer the bsd.notify.v1
+		 * negotiation, so it comes from the fake provider too. */
+		ATF_REQUIRE_EQ(0, service_open(NOTIFY_INTERFACE, &fd));
+		ATF_CHECK_EQ(5, fake_service_connects(NOTIFY_INTERFACE));
 		ATF_REQUIRE_EQ(0, notify_client_adopt(fd, &client));
 		fake_service_fail_next();
 		ATF_REQUIRE_EQ(sizeof(event),
 		    notify_next(client, &event, sizeof(event), 100));
 		ATF_CHECK_EQ(NOTIFY_EVENT_RESET, event.type);
-		ATF_CHECK_EQ(5, fake_service_connects(NOTIFY_INTERFACE));
+		/* The reconnect after the loss uses the open-tier name. */
+		ATF_CHECK_EQ(6, fake_service_connects(NOTIFY_INTERFACE));
 		ATF_CHECK_EQ(0, fake_service_connects(NOTIFY_SYSTEM_INTERFACE));
 		notify_client_close(client);
 	}

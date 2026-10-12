@@ -9,6 +9,16 @@
 
 #include "notify_protocol.h"
 
+struct notify_event;
+
+/*
+ * The event rules shared by the client and the provider: a complete
+ * notify_event record of `length` bytes (header plus publisher, topic and
+ * payload) is well formed.  EPROTO otherwise.
+ */
+int	notify_validate_event(const struct notify_event *, size_t)
+	    __attribute__((visibility("hidden")));
+
 #define	NOTIFY_REPLY_GRACE_MS	1000U
 
 static inline uint32_t

@@ -4,11 +4,13 @@ PACKAGE=	bsdnotify
 PROG=	BSDNotify
 MAN=		BSDNotify.8
 SRCS=		bsdnotify.c broker.c policy.c transport.c
-LIBADD=		auditcmp channel notify pthread service ucl logcmp
+LIBADD=		auditcmp channel fidl_bsd notify pthread service ucl logcmp
 CFLAGS+=	-I${SRCTOP}/lib/liblogcmp
 CFLAGS+=	-I${SRCTOP}/lib/libauditcmp
 CFLAGS+=	-I${SRCTOP}/lib/libchannel
 CFLAGS+=	-I${SRCTOP}/lib/libnotify
+CFLAGS+=	-I${FIDLGEN.notify}
+CFLAGS+=	-I${SRCTOP}/lib/libfidl/include
 CFLAGS+=	-I${SRCTOP}/lib/libservice
 CFLAGS+=	-I${SRCTOP}/contrib/libucl/include
 CFLAGS+=	-I${SRCTOP}/sys
@@ -42,6 +44,12 @@ CONFSDIR=	${NOTIFY_CAP_CONFIG}
 CONFSNAME_capbundle/bsdnotify.conf=	bsdnotify.conf
 CONFSDIRPACKAGE=	bsdnotify
 CONFSPACKAGE=	bsdnotify
+
+# Bindings generated at build time (fidl-bindings.mk).
+FIDL_BINDINGS+=	notify
+FIDL_SCHEMAS.notify=	lib/libnotify/notify.fidl
+FIDL_LIBRARY.notify=	bsd.notify.v1
+.include "${SRCTOP}/lib/libfidl/fidl-bindings.mk"
 
 HAS_TESTS=
 SUBDIR.${MK_TESTS}+=	tests

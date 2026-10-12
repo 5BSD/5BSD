@@ -32,29 +32,53 @@ Source: `usr.sbin/BSDNotify/capbundle/bsdnotify.ucl` and `Bundle.ucl`.
 
 ## Wire operations
 
-Defined in `lib/libnotify/notify_protocol.h`. Header `struct notify_msg` (magic `NTFC`, `opcode`, `flags`, `status`). HELLO returns `notify_hello_reply` with feature bits (`PUBSUB`, `TIMERS`, `BOUNDED_QUEUE`, `STATE`, `LOSS_REPORTING`), the limits (`max_topic` 128, `max_payload` 2048, `max_subscriptions` 64, `queue_depth` 256, `max_timers` 64, `max_states` 4096) and the `router_epoch`. Any operation the tier's policy does not permit fails with `EACCES` and is audited; a second request while a long-poll `NEXT` is outstanding fails with `EBUSY`; a malformed message is `EPROTO`.
+Both endpoints serve the FIDL protocol `Notify` in `lib/libnotify/notify.fidl`
+(library `bsd.notify.v1`, installed as `/usr/share/fidl/notify.fidl`; see
+[FIDL and Capability IPC](../develop/fidl.md)). A session calls
+`GetProtocolInfo` first. `Hello` returns the feature bits (`PUBSUB`, `TIMERS`,
+`BOUNDED_QUEUE`, `STATE`, `LOSS_REPORTING`, and `STATE_WATCH` when asked
+for), the limits (`max_topic` 128, `max_payload` 2048, `max_subscriptions` 64,
+`queue_depth` 256, `max_timers` 64, `max_states` 4096) and the `router_epoch`.
+Any operation the tier's policy does not permit fails with `EACCES` and is
+audited; any request while a long-poll `Next` or `StateWatch` is outstanding
+fails with `EBUSY`. All errors are errno values; the historical opcodes
+remain the DTrace probe arguments.
 
-| Op | Request | Reply | Errors |
+The router rebuilds each request as the historical record
+(`notify_protocol.h`) and applies the same record rules, so a request before
+negotiation, a topic outside the topic grammar, an unknown feature or flag
+bit, a zero timer id or an interval outside 1 ms to 24 h ends the session as a
+protocol violation (`malformed-message` audit), as do an unknown method, a
+malformed frame, a pre-FIDL record and an attached descriptor (previously
+audited separately as `descriptor-attachment`).
+
+| Method (probe opcode) | Request | Reply | Errors |
 |---|---|---|---|
-| `HELLO` (1) | header | `notify_hello_reply` | `EPROTO` |
-| `SUBSCRIBE` (2) | `notify_topic_request` | header | `EACCES`; `EEXIST` already subscribed; `ENOSPC` at 64 |
-| `UNSUBSCRIBE` (3) | `notify_topic_request` | header | `ENOENT` not subscribed |
-| `PUBLISH` (4) | `notify_publish_request` + payload | header (router processed, not durable delivery) | `EACCES`; `EOVERFLOW` sequence exhausted |
-| `NEXT` (5) | `notify_next_request { timeout_ms }` (0 polls, `NOTIFY_TIMEOUT_INFINITE` waits) | one `notify_event` | `EAGAIN` nothing queued in time; `EBUSY` |
-| `TIMER_ADD` (6) | `notify_timer_request { timer_id, interval_ms, flags }` | header | `EACCES` timers off; `EEXIST` id in use; `ENOSPC` at 64; `EINVAL` id 0 or interval outside 1 ms to 24 h |
-| `TIMER_CANCEL` (7) | `notify_timer_cancel_request` | header | `ENOENT` |
-| `STATS` (8) | header | `notify_stats` (published, delivered, dropped, rejected, timer_events) | |
-| `STATE_SET` (9) | `notify_state_set_request { state, topic }` | `notify_state_reply` | `EACCES` (publish policy); `ENOSPC` at 4096 states; `EOVERFLOW` |
-| `STATE_GET` (10) | `notify_topic_request` | `notify_state_reply { router_epoch, generation, state }` | `EACCES` (subscribe policy); `ENOENT` |
-| `STATE_CLEAR` (11) | `notify_topic_request` | header | `ENOENT`; `EACCES` not the owner |
-| `LIST_SUBSCRIPTIONS` (12) | `notify_list_request { cursor }` | `notify_list_reply` + `notify_subscription_entry[]`, at most 24 per page | |
-| `LIST_TIMERS` (13) | `notify_list_request` | `notify_list_reply` + `notify_timer_entry[]` (id, interval, flags, `next_fire_ms`) | |
+| `Hello` (1) | requested features | limits | `EBUSY` |
+| `Subscribe` (2) | topic | empty | `EACCES`; `EEXIST` already subscribed; `ENOSPC` at 64 |
+| `Unsubscribe` (3) | topic | empty | `ENOENT` not subscribed |
+| `Publish` (4) | topic, payload (≤ 2048 bytes) | empty (router processed, not durable delivery) | `EACCES`; `EOVERFLOW` sequence exhausted |
+| `Next` (5) | `timeout_ms` (0 polls, `NOTIFY_TIMEOUT_INFINITE` waits) | one event | `EAGAIN` nothing queued in time; `EBUSY` |
+| `TimerAdd` (6) | `timer_id`, `interval_ms`, `flags` | empty | `EACCES` timers off; `EEXIST` id in use; `ENOSPC` at 64 |
+| `TimerCancel` (7) | `timer_id` | empty | `ENOENT` |
+| `GetStats` (8) | empty | published, delivered, dropped, rejected, timer_events | |
+| `StateSet` (9) | topic, state | `router_epoch`, `generation`, `state` | `EACCES` (publish policy); `ENOSPC` at 4096 states; `EOVERFLOW` |
+| `StateGet` (10) | topic | `router_epoch`, `generation`, `state` | `EACCES` (subscribe policy); `ENOENT` |
+| `StateClear` (11) | topic | empty | `ENOENT`; `EACCES` not the owner |
+| `ListSubscriptions` (12) | `cursor` | up to 24 topics, `next_cursor`, `total` | |
+| `ListTimers` (13) | `cursor` | up to 24 (id, interval, flags, `next_fire_ms`), `next_cursor`, `total` | |
+| `StateWatch` (14) | topic, `timeout_ms` | `watch_epoch`, `generation`, `state`, `present` | `EACCES` (subscribe policy); `EAGAIN`; `EBUSY` |
+
+`usr.sbin/BSDNotify/tests/evolution/notify_next.fidl` is the schema at `bsd:1`
+plus a method at `bsd:2` for the pairing test. The main process still hands
+sessions to the router over its own internal control channel; that private
+record is not a provider protocol.
 
 Event types are `PUBLISH`, `TIMER`, `STATE`, `GAP` and `RESET`; a `notify_event` carries epoch, sequence, timestamp, timer id, generation, state, lost count, then the publisher, topic and payload bytes.
 
 ## Client library
 
-Header `<notify.h>` (installs `notify.h`, `notify_protocol.h`, `notify_server.h`); link with `-lnotify` (`SHLIB_MAJOR 1`, depends on libservice and pthread). Manual: libnotify(3).
+Header `<notify.h>` (installs `notify.h`, `notify_protocol.h`, `notify_server.h`); link with `-lnotify` (`SHLIB_MAJOR 1`, depends on libservice, pthread and the FIDL runtime). Manual: libnotify(3). The record structures in `notify_protocol.h` remain the API's event, state and statistics types; its `NTFC` framing and the `notify_server.h` validators describe the pre-FIDL wire format and are kept for compatibility.
 
 | Group | Functions |
 |---|---|
@@ -64,7 +88,7 @@ Header `<notify.h>` (installs `notify.h`, `notify_protocol.h`, `notify_server.h`
 | Timers | `notify_timer_add` (flag `NOTIFY_TIMER_F_PERIODIC`), `notify_timer_cancel` |
 | Introspection | `notify_stats`, `notify_list_subscriptions`, `notify_list_timers` |
 
-A client is bound to one tier for life, across transparent reconnects. If the provider dies inside `notify_next()`, the library reconnects, restores subscriptions and returns one `NOTIFY_EVENT_RESET`; any other operation that sees peer death returns the transport error because its acceptance is unknown. `notify_list_*` walk every page and return the session's total, which may exceed `capacity` to signal truncation. An inherited client is invalid after `fork(2)`.
+A client is bound to one tier for life, across transparent reconnects. If the provider dies inside `notify_next()`, the library reconnects, restores subscriptions and returns one `NOTIFY_EVENT_RESET`; any other operation that sees peer death returns the transport error because its acceptance is unknown. `notify_list_*` walk every page and return the session's total, which may exceed `capacity` to signal truncation. An inherited client is invalid after `fork(2)`. Calls on one client are serialized; each is bounded by 30 seconds (long polls by their own timeout plus one second), shortened by an active `service_budget_begin()`, and a timeout cancels that call and keeps the session (a timed-out `notify_state_watch()` drops it, so no watch stays pending). A malformed reply or a lost provider drops the session; the next call reconnects.
 
 ```c
 #include <notify.h>
@@ -140,15 +164,15 @@ A session holding `SERVICE_RIGHTS_ADMIN`, which switchboard mints only onto an a
 
 | Where | Programs | What they prove |
 |---|---|---|
-| `usr.sbin/BSDNotify/tests` (package `bsdnotify-tests`, `/usr/tests/usr.sbin/BSDNotify`) | `dispatcher_test` (21 cases), `policy_test` (28), `broker_test` (12), `transport_test` (1), `bundle_test.sh` (9) | dispatcher_test drives the router over real channels: HELLO/STATS/errors, pub/sub/state/next, timers and the pending long-poll, the open-tier default (`user.*` only), the gated default and `clients` narrowing, admin bypass on both tiers, admission-control tier validation and failure classes, timer id wrap, every opcode on the open tier, explicit empty lists denying, one label on both tiers at once, a user session label being nothing special, and a NULL policy failing closed. policy_test covers the parser; broker_test covers queues, gap accounting and state ownership; bundle_test.sh checks the manifest, shipped policy, tier, security, router lifecycle, observability and tier-mismatch audit contracts. |
-| `lib/libnotify/tests` (`libnotify-tests`) | `notify_test` (8), `client_lifecycle_test` (13, fake service) | encoding, reconnect and RESET semantics, list truncation reporting, post-fork invalidation |
+| `usr.sbin/BSDNotify/tests` (package `bsdnotify-tests`, `/usr/tests/usr.sbin/BSDNotify`) | `session_test` (6), `dispatcher_test` (21 cases), `policy_test` (28), `broker_test` (12), `transport_test` (1), `bundle_test.sh` (9) | session_test runs the router's session code with the real libnotify client over capability channels: round trip with open-tier `EACCES` refusals, admin bypass and a timer, the exclusive long poll (`EBUSY`, `EAGAIN`), protocol violations ending only their session, and the `bsd:1`/`bsd:2` pairing both ways. dispatcher_test drives the router's record dispatch through an internal socket: HELLO/STATS/errors, pub/sub/state/next, timers and the pending long-poll, the open-tier default (`user.*` only), the gated default and `clients` narrowing, admin bypass on both tiers, admission-control tier validation and failure classes, timer id wrap, every opcode on the open tier, explicit empty lists denying, one label on both tiers at once, a user session label being nothing special, and a NULL policy failing closed. policy_test covers the parser; broker_test covers queues, gap accounting and state ownership; bundle_test.sh checks the manifest, shipped policy, tier, security, router lifecycle, observability and tier-mismatch audit contracts. |
+| `lib/libnotify/tests` (`libnotify-tests`) | `notify_test` (8), `client_lifecycle_test` (13) | retained record rules and argument checks; against a scripted `bsd.notify.v1` provider over real channels: reconnect and RESET semantics, malformed and timed-out replies, tiers, list truncation reporting, post-fork invalidation |
 | `usr.sbin/notifyctl/tests` | `notifyctl_test.sh` (10) | configtest on `valid.conf`/`invalid.conf`, argument and payload limits, `-s` tier option and its usage errors, operation failures, `--` handling |
 
 Run with `kyua test -k /usr/tests/usr.sbin/BSDNotify/Kyuafile` on a booted plane ([Testing](../develop/testing.md)). The inventory counts 62 daemon cases. The `BSDNotify` DTrace provider exports `session-start`, `session-end`, `session-admit`, `tier-policy`, `subscribe`, `publish`, `deliver`, `timer`, `list` and `reject`; payload bytes are never probe arguments.
 
 ## Status and gaps
 
-Status: shipped; capmode; user `capability`; `visible = ["user"]`; gated tier `requires = ["system.notify.system"]`; 13 ops (inventory section 4).
+Status: shipped; capmode; user `capability`; `visible = ["user"]`; gated tier `requires = ["system.notify.system"]`; 14 operations; FIDL `bsd.notify.v1` since October 2026 (endpoints, tiers, policy and limits unchanged; the provider and libnotify ship together).
 
 Known gaps and drift:
 
