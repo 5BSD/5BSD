@@ -69,6 +69,20 @@ to a re-import.
                  pf_norm.c fragment queue/tree are pfn_*; small teardown
                  helpers pfi_vnet_fini(), pf_normalize_vnet_fini(),
                  pf_syncookies_vnet_fini()
+  m_tag (marked "5BSD: m_tag"): OpenBSD keeps per-packet pf state in
+                 m_pkthdr.pf; 5BSD keeps it in an mbuf tag (PACKET_TAG_PF,
+                 sys/sys/mbuf.h) so MSIZE stays 256.  Every access is
+                 rewritten mechanically:
+                   READ   x->m_pkthdr.pf.F   ->  PF_MTAG_R(x)->F
+                   WRITE  x->m_pkthdr.pf.F = ->  PF_MTAG_W(x)->F =
+                   and pd.m / pd->m / ctx->pd->m  ->  PF_PDTAG_R/W(pd)
+                 (writes are =, |=, &=, ++, --).  Reads never allocate
+                 (no tag: default values); writes allocate the tag; the
+                 PF_PDTAG forms cache it in pf_pdesc (pfh_m, pfh_t).  After
+                 a re-import, apply the same rewrite (see the commit
+                 "pf: OpenBSD per-packet state in an mbuf tag").  The
+                 single exception: PF_TAG_PROCESSED is set only on packets
+                 that already have a tag (nothing reads it on 5BSD).
   jail (marked "5BSD: jail"): the 5BSD extension "jail <name|jid>":
                  struct pf_rule_jail and pf_rule.jail (pfvar.h), lookup.jid
                  (pfvar_priv.h), pf_match_jail() and its rule test (pf.c),

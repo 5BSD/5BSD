@@ -667,10 +667,6 @@ mb_ctor_mbuf(void *mem, int size, void *arg, int how)
 /*
  * The Mbuf primary zone destructor.
  */
-/* Installed by the pf module (OpenBSD PF); see M_PF_UNLINK(). */
-void (*pf_mbuf_unlink_hook)(struct mbuf *);
-void (*pf_mbuf_link_hook)(struct mbuf *, const struct mbuf *);
-
 static void
 mb_dtor_mbuf(void *mem, int size, void *arg)
 {
@@ -684,8 +680,6 @@ mb_dtor_mbuf(void *mem, int size, void *arg)
 	KASSERT((flags & 0x1) == 0, ("%s: obsolete MB_DTOR_SKIP passed", __func__));
 	if ((m->m_flags & M_PKTHDR) && !SLIST_EMPTY(&m->m_pkthdr.tags))
 		m_tag_delete_chain(m, NULL);
-	if (m->m_flags & M_PKTHDR)
-		M_PF_UNLINK(m);
 }
 
 /*
@@ -697,10 +691,8 @@ mb_dtor_pack(void *mem, int size, void *arg)
 	struct mbuf *m;
 
 	m = (struct mbuf *)mem;
-	if ((m->m_flags & M_PKTHDR) != 0) {
+	if ((m->m_flags & M_PKTHDR) != 0)
 		m_tag_delete_chain(m, NULL);
-		M_PF_UNLINK(m);
-	}
 
 	/* Make sure we've got a clean cluster back. */
 	KASSERT((m->m_flags & M_EXT) == M_EXT, ("%s: M_EXT not set", __func__));

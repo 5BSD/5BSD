@@ -1431,7 +1431,7 @@ pf_find_state(struct pf_pdesc *pd, struct pf_state_key_cmp *key,
 	sk = NULL;
 	if (pd->dir == PF_OUT) {
 		/* first if block deals with outbound forwarded packet */
-		pkt_sk = pd->m->m_pkthdr.pf.statekey;
+		pkt_sk = PF_PDTAG_R(pd)->statekey;	/* 5BSD: m_tag */
 
 		if (!pf_state_key_isvalid(pkt_sk)) {
 			pf_mbuf_unlink_state_key(pd->m);
@@ -1442,7 +1442,7 @@ pf_find_state(struct pf_pdesc *pd, struct pf_state_key_cmp *key,
 			sk = pkt_sk->sk_reverse;
 
 		if (pkt_sk == NULL) {
-			struct inpcb *inp = pd->m->m_pkthdr.pf.inp;
+			struct inpcb *inp = PF_PDTAG_R(pd)->inp;	/* 5BSD: m_tag */
 
 			/* here we deal with local outbound packet */
 			if (inp != NULL) {
@@ -1475,7 +1475,7 @@ pf_find_state(struct pf_pdesc *pd, struct pf_state_key_cmp *key,
 		    pf_compare_state_keys(pkt_sk, sk, pd->kif, pd->dir) == 0)
 			pf_state_key_link_reverse(sk, pkt_sk);
 		else if (pd->dir == PF_OUT)
-			pf_state_key_link_inpcb(sk, pd->m->m_pkthdr.pf.inp);
+			pf_state_key_link_inpcb(sk, PF_PDTAG_R(pd)->inp);	/* 5BSD: m_tag */
 	}
 
 	/* remove firewall data from outbound packet */
@@ -3690,13 +3690,13 @@ pf_build_tcp(const struct pf_rule *r, sa_family_t af,
 		return (NULL);
 	}
 	if (tag)
-		m->m_pkthdr.pf.flags |= PF_TAG_GENERATED;
-	m->m_pkthdr.pf.tag = rtag;
+		PF_MTAG_W(m)->flags |= PF_TAG_GENERATED;	/* 5BSD: m_tag */
+	PF_MTAG_W(m)->tag = rtag;	/* 5BSD: m_tag */
 	m->m_pkthdr.ph_rtableid = rdom;
 	if (r && (r->scrub_flags & PFSTATE_SETPRIO))
-		m->m_pkthdr.pf.prio = r->set_prio[0];
+		PF_MTAG_W(m)->prio = r->set_prio[0];	/* 5BSD: m_tag */
 	if (r && r->qid)
-		m->m_pkthdr.pf.qid = r->qid;
+		PF_MTAG_W(m)->qid = r->qid;	/* 5BSD: m_tag */
 	m->m_data += max_linkhdr;
 	m->m_pkthdr.len = m->m_len = len;
 	m->m_pkthdr.rcvif = NULL;	/* 5BSD: ph_ifidx = 0 */
@@ -3815,12 +3815,12 @@ pf_send_icmp(struct mbuf *m, u_int8_t type, u_int8_t code, int param,
 	if ((m0 = m_copym(m, 0, M_COPYALL, M_NOWAIT)) == NULL)
 		return;
 
-	m0->m_pkthdr.pf.flags |= PF_TAG_GENERATED;
+	PF_MTAG_W(m0)->flags |= PF_TAG_GENERATED;	/* 5BSD: m_tag */
 	m0->m_pkthdr.ph_rtableid = rdomain;
 	if (r && (r->scrub_flags & PFSTATE_SETPRIO))
-		m0->m_pkthdr.pf.prio = r->set_prio[0];
+		PF_MTAG_W(m0)->prio = r->set_prio[0];	/* 5BSD: m_tag */
 	if (r && r->qid)
-		m0->m_pkthdr.pf.qid = r->qid;
+		PF_MTAG_W(m0)->qid = r->qid;	/* 5BSD: m_tag */
 
 	switch (af) {
 	case AF_INET:
@@ -3968,7 +3968,7 @@ int
 pf_match_tag(struct mbuf *m, struct pf_rule *r, int *tag)
 {
 	if (*tag == -1)
-		*tag = m->m_pkthdr.pf.tag;
+		*tag = PF_MTAG_R(m)->tag;	/* 5BSD: m_tag */
 
 	return ((!r->match_tag_not && r->match_tag == *tag) ||
 	    (r->match_tag_not && r->match_tag != *tag));
@@ -4011,7 +4011,7 @@ void
 pf_tag_packet(struct mbuf *m, int tag, int rtableid)
 {
 	if (tag > 0)
-		m->m_pkthdr.pf.tag = tag;
+		PF_MTAG_W(m)->tag = tag;	/* 5BSD: m_tag */
 	if (rtableid >= 0)
 		m->m_pkthdr.ph_rtableid = (u_int)rtableid;
 }
@@ -4217,8 +4217,8 @@ pf_socket_lookup(struct pf_pdesc *pd)
 	 * 5BSD: an outbound packet carries its socket, which the 5BSD stack
 	 * holds locked while sending; a pcb table lookup would lock it again.
 	 */
-	if (pd->dir == PF_OUT && pd->m->m_pkthdr.pf.inp != NULL) {
-		inp = pd->m->m_pkthdr.pf.inp;
+	if (pd->dir == PF_OUT && PF_PDTAG_R(pd)->inp != NULL) {	/* 5BSD: m_tag */
+		inp = PF_PDTAG_R(pd)->inp;	/* 5BSD: m_tag */
 		pd->lookup.uid = inp->inp_socket->so_euid;
 		pd->lookup.gid = inp->inp_socket->so_egid;
 		pd->lookup.pid = inp->inp_socket->so_cpid;
@@ -4656,7 +4656,7 @@ enter_ruleset:
 			TAILQ_NEXT(r, entries));
 		PF_TEST_ATTRIB((r->prio &&
 		    (r->prio == PF_PRIO_ZERO ? 0 : r->prio) !=
-		    ctx->pd->m->m_pkthdr.pf.prio),
+		    PF_PDTAG_R(ctx->pd)->prio),	/* 5BSD: m_tag */
 			TAILQ_NEXT(r, entries));
 
 		if (r->statelim.id != PF_STATELIM_ID_NONE) {
@@ -7387,7 +7387,7 @@ pf_route(struct pf_pdesc *pd, struct pf_state *st)
 
 	PF_SDT2(ip, route_to, entry, pd, st);	/* 5BSD: DTrace */
 
-	if (pd->m->m_pkthdr.pf.routed++ > 3) {
+	if (PF_PDTAG_W(pd)->routed++ > 3) {	/* 5BSD: m_tag */
 		m_freem(pd->m);
 		pd->m = NULL;
 		return;
@@ -7508,7 +7508,7 @@ pf_route6(struct pf_pdesc *pd, struct pf_state *st)
 
 	PF_SDT2(ip6, route_to, entry, pd, st);	/* 5BSD: DTrace */
 
-	if (pd->m->m_pkthdr.pf.routed++ > 3) {
+	if (PF_PDTAG_W(pd)->routed++ > 3) {	/* 5BSD: m_tag */
 		m_freem(pd->m);
 		pd->m = NULL;
 		return;
@@ -8417,16 +8417,16 @@ pf_test(sa_family_t af, int fwdir, struct ifnet *ifp, struct mbuf **m0)
 		panic("non-M_PKTHDR is passed to pf_test");
 #endif /* DIAGNOSTIC */
 
-	if ((*m0)->m_pkthdr.pf.flags & PF_TAG_GENERATED)
+	if (PF_MTAG_R(*m0)->flags & PF_TAG_GENERATED)	/* 5BSD: m_tag */
 		return (PF_PASS);
 
-	if ((*m0)->m_pkthdr.pf.flags & PF_TAG_DIVERTED_PACKET) {
-		(*m0)->m_pkthdr.pf.flags &= ~PF_TAG_DIVERTED_PACKET;
+	if (PF_MTAG_R(*m0)->flags & PF_TAG_DIVERTED_PACKET) {	/* 5BSD: m_tag */
+		PF_MTAG_W(*m0)->flags &= ~PF_TAG_DIVERTED_PACKET;	/* 5BSD: m_tag */
 		return (PF_PASS);
 	}
 
-	if ((*m0)->m_pkthdr.pf.flags & PF_TAG_REFRAGMENTED) {
-		(*m0)->m_pkthdr.pf.flags &= ~PF_TAG_REFRAGMENTED;
+	if (PF_MTAG_R(*m0)->flags & PF_TAG_REFRAGMENTED) {	/* 5BSD: m_tag */
+		PF_MTAG_W(*m0)->flags &= ~PF_TAG_REFRAGMENTED;	/* 5BSD: m_tag */
 		return (PF_PASS);
 	}
 
@@ -8471,7 +8471,9 @@ pf_test(sa_family_t af, int fwdir, struct ifnet *ifp, struct mbuf **m0)
 			goto done;
 		}
 	}
-	pd.m->m_pkthdr.pf.flags |= PF_TAG_PROCESSED;
+	/* 5BSD: m_tag; nothing reads PF_TAG_PROCESSED on 5BSD, no tag for it */
+	if (PF_PDTAG_R(&pd) != &m_pf_default)
+		PF_PDTAG_W(&pd)->flags |= PF_TAG_PROCESSED;
 
 	/*
 	 * Avoid pcb-lookups from the forwarding path.  They should never
@@ -8688,38 +8690,38 @@ done:
 			if (pqid || (pd.tos & IPTOS_LOWDELAY)) {
 				qid = st->pqid;
 				if (st->state_flags & PFSTATE_SETPRIO) {
-					pd.m->m_pkthdr.pf.prio =
+					PF_PDTAG_W(&pd)->prio =	/* 5BSD: m_tag */
 					    st->set_prio[1];
 				}
 			} else {
 				qid = st->qid;
 				if (st->state_flags & PFSTATE_SETPRIO) {
-					pd.m->m_pkthdr.pf.prio =
+					PF_PDTAG_W(&pd)->prio =	/* 5BSD: m_tag */
 					    st->set_prio[0];
 				}
 			}
-			pd.m->m_pkthdr.pf.delay = st->delay;
+			PF_PDTAG_W(&pd)->delay = st->delay;	/* 5BSD: m_tag */
 		} else {
 			pf_scrub(pd.m, r->scrub_flags, pd.af, r->min_ttl,
 			    r->set_tos);
 			if (pqid || (pd.tos & IPTOS_LOWDELAY)) {
 				qid = r->pqid;
 				if (r->scrub_flags & PFSTATE_SETPRIO)
-					pd.m->m_pkthdr.pf.prio = r->set_prio[1];
+					PF_PDTAG_W(&pd)->prio = r->set_prio[1];	/* 5BSD: m_tag */
 			} else {
 				qid = r->qid;
 				if (r->scrub_flags & PFSTATE_SETPRIO)
-					pd.m->m_pkthdr.pf.prio = r->set_prio[0];
+					PF_PDTAG_W(&pd)->prio = r->set_prio[0];	/* 5BSD: m_tag */
 			}
-			pd.m->m_pkthdr.pf.delay = r->delay;
+			PF_PDTAG_W(&pd)->delay = r->delay;	/* 5BSD: m_tag */
 		}
 	}
 
 	if (action == PF_PASS && qid)
-		pd.m->m_pkthdr.pf.qid = qid;
+		PF_PDTAG_W(&pd)->qid = qid;	/* 5BSD: m_tag */
 	if (st != NULL) {
 		struct mbuf *m = pd.m;
-		struct inpcb *inp = m->m_pkthdr.pf.inp;
+		struct inpcb *inp = PF_MTAG_R(m)->inp;	/* 5BSD: m_tag */
 
 		if (pd.dir == PF_IN) {
 			KASSERT(inp == NULL);
@@ -8742,10 +8744,10 @@ done:
 		if ((pd.af == AF_INET && (ntohl(pd.dst->v4.s_addr) >>
 		    IN_CLASSA_NSHIFT) == IN_LOOPBACKNET) ||
 		    (pd.af == AF_INET6 && IN6_IS_ADDR_LOOPBACK(&pd.dst->v6)))
-			pd.m->m_pkthdr.pf.flags |= PF_TAG_TRANSLATE_LOCALHOST;
+			PF_PDTAG_W(&pd)->flags |= PF_TAG_TRANSLATE_LOCALHOST;	/* 5BSD: m_tag */
 	/* We need to redo the route lookup on outgoing routes. */
 	if (pd.destchg && pd.dir == PF_OUT)
-		pd.m->m_pkthdr.pf.flags |= PF_TAG_REROUTE;
+		PF_PDTAG_W(&pd)->flags |= PF_TAG_REROUTE;	/* 5BSD: m_tag */
 
 	if (pd.dir == PF_IN && action == PF_PASS &&
 	    (r->divert.type == PF_DIVERT_TO ||
@@ -8753,7 +8755,7 @@ done:
 		struct pf_divert *divert;
 
 		if ((divert = pf_get_divert(pd.m))) {
-			pd.m->m_pkthdr.pf.flags |= PF_TAG_DIVERTED;
+			PF_PDTAG_W(&pd)->flags |= PF_TAG_DIVERTED;	/* 5BSD: m_tag */
 			divert->addr = r->divert.addr;
 			divert->port = r->divert.port;
 			divert->rdomain = pd.rdomain;
@@ -8810,7 +8812,7 @@ done:
 			action = PF_DROP;
 			goto out;
 		}
-		pd.m->m_pkthdr.pf.flags |= PF_TAG_GENERATED;
+		PF_PDTAG_W(&pd)->flags |= PF_TAG_GENERATED;	/* 5BSD: m_tag */
 		switch (pd.naf) {
 		case AF_INET:
 			if (pd.dir == PF_IN) {
@@ -8911,10 +8913,10 @@ pf_ouraddr(struct mbuf *m)
 {
 	struct pf_state_key	*sk;
 
-	if (m->m_pkthdr.pf.flags & PF_TAG_DIVERTED)
+	if (PF_MTAG_R(m)->flags & PF_TAG_DIVERTED)	/* 5BSD: m_tag */
 		return (1);
 
-	sk = m->m_pkthdr.pf.statekey;
+	sk = PF_MTAG_R(m)->statekey;	/* 5BSD: m_tag */
 	if (sk != NULL) {
 		if (READ_ONCE(sk->sk_inp) != NULL)
 			return (1);
@@ -8938,7 +8940,7 @@ struct inpcb *
 pf_inp_lookup(struct mbuf *m)
 {
 	struct inpcb *inp = NULL;
-	struct pf_state_key *sk = m->m_pkthdr.pf.statekey;
+	struct pf_state_key *sk = PF_MTAG_R(m)->statekey;	/* 5BSD: m_tag */
 
 	if (!pf_state_key_isvalid(sk))
 		pf_mbuf_unlink_state_key(m);
@@ -8954,7 +8956,7 @@ pf_inp_lookup(struct mbuf *m)
 void
 pf_inp_link(struct mbuf *m, struct inpcb *inp)
 {
-	struct pf_state_key *sk = m->m_pkthdr.pf.statekey;
+	struct pf_state_key *sk = PF_MTAG_R(m)->statekey;	/* 5BSD: m_tag */
 
 	if (!pf_state_key_isvalid(sk)) {
 		pf_mbuf_unlink_state_key(m);
@@ -9069,17 +9071,17 @@ pf_state_key_isvalid(struct pf_state_key *sk)
 void
 pf_mbuf_link_state_key(struct mbuf *m, struct pf_state_key *sk)
 {
-	KASSERT(m->m_pkthdr.pf.statekey == NULL);
-	m->m_pkthdr.pf.statekey = pf_state_key_ref(sk);
+	KASSERT(PF_MTAG_R(m)->statekey == NULL);	/* 5BSD: m_tag */
+	PF_MTAG_W(m)->statekey = pf_state_key_ref(sk);	/* 5BSD: m_tag */
 }
 
 void
 pf_mbuf_unlink_state_key(struct mbuf *m)
 {
-	struct pf_state_key *sk = m->m_pkthdr.pf.statekey;
+	struct pf_state_key *sk = PF_MTAG_R(m)->statekey;	/* 5BSD: m_tag */
 
 	if (sk != NULL) {
-		m->m_pkthdr.pf.statekey = NULL;
+		PF_MTAG_W(m)->statekey = NULL;	/* 5BSD: m_tag */
 		pf_state_key_unref(sk);
 	}
 }
@@ -9087,17 +9089,17 @@ pf_mbuf_unlink_state_key(struct mbuf *m)
 void
 pf_mbuf_link_inpcb(struct mbuf *m, struct inpcb *inp)
 {
-	KASSERT(m->m_pkthdr.pf.inp == NULL);
-	m->m_pkthdr.pf.inp = in_pcbref(inp);
+	KASSERT(PF_MTAG_R(m)->inp == NULL);	/* 5BSD: m_tag */
+	PF_MTAG_W(m)->inp = in_pcbref(inp);	/* 5BSD: m_tag */
 }
 
 void
 pf_mbuf_unlink_inpcb(struct mbuf *m)
 {
-	struct inpcb *inp = m->m_pkthdr.pf.inp;
+	struct inpcb *inp = PF_MTAG_R(m)->inp;	/* 5BSD: m_tag */
 
 	if (inp != NULL) {
-		m->m_pkthdr.pf.inp = NULL;
+		PF_MTAG_W(m)->inp = NULL;	/* 5BSD: m_tag */
 		in_pcbunref(inp);
 	}
 }
@@ -9198,8 +9200,8 @@ pf_delay_pkt(struct mbuf *m, u_int ifidx)
 	pdy->ifidx = ifidx;
 	pdy->m = m;
 	timeout_set(&pdy->to, pf_pktenqueue_delayed, pdy);
-	timeout_add_msec(&pdy->to, m->m_pkthdr.pf.delay);
-	m->m_pkthdr.pf.delay = 0;
+	timeout_add_msec(&pdy->to, PF_MTAG_R(m)->delay);	/* 5BSD: m_tag */
+	PF_MTAG_W(m)->delay = 0;	/* 5BSD: m_tag */
 	return (0);
 }
 

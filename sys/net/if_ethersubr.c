@@ -378,7 +378,7 @@ ether_output(struct ifnet *ifp, struct mbuf *m,
 	 * reasons and compatibility with the original behavior.
 	 */
 	if ((m->m_flags & M_BCAST) && loop_copy && (ifp->if_flags & IFF_SIMPLEX) &&
-	    m->m_pkthdr.pf.routed == 0) {
+	    m_pf_ro(m)->routed == 0) {
 		struct mbuf *n;
 
 		/*

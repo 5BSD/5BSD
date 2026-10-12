@@ -1356,4 +1356,19 @@ SDT_PROBE_DECLARE(pf, table, addr, update);
 #define	IN_MULTICAST(a)		((ntohl((u_int32_t)(a)) & 0xf0000000) == 0xe0000000)
 #endif
 
+/* ------------------------------------------------------------------ */
+/* m_tag: OpenBSD's m_pkthdr.pf lives in PACKET_TAG_PF (sys/mbuf.h).   */
+/* Vendor code reads it with PF_MTAG_R()/PF_PDTAG_R(), which never     */
+/* allocate (no tag: default values), and writes it with PF_MTAG_W()/  */
+/* PF_PDTAG_W(), which allocate the tag.  PF_PDTAG_* cache the tag in  */
+/* the pf_pdesc so pf_test() looks it up once.                         */
+/* ------------------------------------------------------------------ */
+struct pf_pdesc;
+struct pkthdr_pf *obsd_pf_mtag_w(struct mbuf *);
+struct pkthdr_pf *obsd_pf_pdtag(struct pf_pdesc *, int);
+#define	PF_MTAG_R(m)	m_pf_ro(m)
+#define	PF_MTAG_W(m)	obsd_pf_mtag_w(m)
+#define	PF_PDTAG_R(pd)	((const struct pkthdr_pf *)obsd_pf_pdtag((pd), 0))
+#define	PF_PDTAG_W(pd)	obsd_pf_pdtag((pd), 1)
+
 #endif /* _OPENBSD_PF_COMPAT_H_ */

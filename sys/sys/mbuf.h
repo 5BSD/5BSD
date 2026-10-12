@@ -150,7 +150,10 @@ struct m_snd_tag {
  */
 /*
  * Packet filter (OpenBSD PF) per-packet state.  Layout and flag values
- * follow OpenBSD sys/sys/mbuf.h so the imported PF code uses it as is.
+ * follow OpenBSD sys/sys/mbuf.h.  5BSD keeps it in an mbuf tag
+ * (PACKET_TAG_PF, allocated when pf first sets a field of a packet), so
+ * struct pkthdr and MSIZE are unchanged; a packet without the tag has the
+ * default values (m_pf_default).  See m_pf_find() and m_pf_get().
  */
 struct pf_state_key;
 struct inpcb;
@@ -239,9 +242,6 @@ struct pkthdr {
 		/* Upon allocation: total packet memory consumption. */
 		u_int	memlen;
 	};
-
-	/* Packet filter state (OpenBSD PF, sys/net/pfvar.h). */
-	struct pkthdr_pf pf;
 };
 #define	ether_vtag	PH_per.sixteen[0]
 #define tcp_tun_port	PH_per.sixteen[0] /* outbound */
@@ -1417,7 +1417,7 @@ extern bool		mb_use_ext_pgs;	/* Use ext_pgs for sendfile */
 #define	PACKET_TAG_DIVERT			17 /* divert info */
 #define	PACKET_TAG_IPFORWARD			18 /* ipforward info */
 #define	PACKET_TAG_MACLABEL	(19 | MTAG_PERSISTENT) /* MAC label */
-#define	PACKET_TAG_PF				21 /* PF/ALTQ information */
+#define	PACKET_TAG_PF				21 /* PF: struct pkthdr_pf */
 /* was	PACKET_TAG_RTSOCKFAM			25    rtsock sa family */
 #define	PACKET_TAG_IPOPTIONS			27 /* Saved IP options */
 #define	PACKET_TAG_CARP				28 /* CARP info */
@@ -1550,15 +1550,43 @@ m_snd_tag_rele(struct m_snd_tag *mst)
 }
 
 /*
- * Packet filter references held by a packet header (pkthdr_pf.statekey and
- * pkthdr_pf.inp) are dropped through hooks installed by the pf module.
+ * OpenBSD PF per-packet state in PACKET_TAG_PF.  The tag holds references
+ * on a pf state key and a pcb; the pf module installs the hooks that drop
+ * them (tag freed, M_PF_UNLINK()) and take new ones (tag copied).
  */
-extern void (*pf_mbuf_unlink_hook)(struct mbuf *);
-extern void (*pf_mbuf_link_hook)(struct mbuf *, const struct mbuf *);
+extern const struct pkthdr_pf m_pf_default;
+extern void (*pf_mtag_unlink_hook)(struct pkthdr_pf *);
+extern void (*pf_mtag_copy_hook)(struct pkthdr_pf *);
+struct pkthdr_pf *m_pf_get(struct mbuf *);
+void	m_pf_delete(struct mbuf *);
+
+/* The packet's pf state, or NULL: the packet has the default values. */
+static __inline struct pkthdr_pf *
+m_pf_find(struct mbuf *m)
+{
+	struct m_tag *t;
+
+	if (SLIST_EMPTY(&m->m_pkthdr.tags))
+		return (NULL);
+	t = m_tag_locate(m, MTAG_ABI_COMPAT, PACKET_TAG_PF, NULL);
+	return (t != NULL ? (struct pkthdr_pf *)(t + 1) : NULL);
+}
+
+/* The packet's pf state for reading. */
+static __inline const struct pkthdr_pf *
+m_pf_ro(struct mbuf *m)
+{
+	struct pkthdr_pf *p = m_pf_find(m);
+
+	return (p != NULL ? p : &m_pf_default);
+}
+
+/* Drop pf's state-key and pcb references (OpenBSD pf_pkt_addr_changed). */
 #define	M_PF_UNLINK(m) do {						\
-	if (__predict_false((m)->m_pkthdr.pf.statekey != NULL ||	\
-	    (m)->m_pkthdr.pf.inp != NULL))				\
-		pf_mbuf_unlink_hook(m);					\
+	struct pkthdr_pf *_mpf = m_pf_find(m);				\
+	if (_mpf != NULL && (_mpf->statekey != NULL ||			\
+	    _mpf->inp != NULL) && pf_mtag_unlink_hook != NULL)		\
+		pf_mtag_unlink_hook(_mpf);				\
 } while (0)
 
 static __inline struct mbuf *
@@ -1567,10 +1595,8 @@ m_free(struct mbuf *m)
 	struct mbuf *n = m->m_next;
 
 	MBUF_PROBE1(m__free, m);
-	if ((m->m_flags & (M_PKTHDR|M_NOFREE)) == (M_PKTHDR|M_NOFREE)) {
+	if ((m->m_flags & (M_PKTHDR|M_NOFREE)) == (M_PKTHDR|M_NOFREE))
 		m_tag_delete_chain(m, NULL);
-		M_PF_UNLINK(m);
-	}
 	if (m->m_flags & M_PKTHDR && m->m_pkthdr.csum_flags & CSUM_SND_TAG)
 		m_snd_tag_rele(m->m_pkthdr.snd_tag);
 	if (m->m_flags & M_EXTPG)

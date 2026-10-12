@@ -168,7 +168,7 @@ pf_synflood_check(struct pf_pdesc *pd)
 {
 	KASSERT (pd->proto == IPPROTO_TCP);
 
-	if (pd->m && (pd->m->m_pkthdr.pf.tag & PF_TAG_SYNCOOKIE_RECREATED))
+	if (pd->m && (PF_PDTAG_R(pd)->tag & PF_TAG_SYNCOOKIE_RECREATED))	/* 5BSD: m_tag */
 		return (0);
 
 	if (pf_status.syncookies_mode != PF_SYNCOOKIES_ADAPTIVE)

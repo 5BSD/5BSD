@@ -390,6 +390,9 @@ m_tag_locate(struct mbuf *m, uint32_t cookie, uint16_t type, struct m_tag *t)
 }
 
 /* Copy a single tag. */
+static void	m_pf_tag_free(struct m_tag *);
+static void	m_pf_tag_copied(struct m_tag *);
+
 struct m_tag *
 m_tag_copy(struct m_tag *t, int how)
 {
@@ -415,7 +418,77 @@ m_tag_copy(struct m_tag *t, int how)
 	} else
 #endif
 		bcopy(t + 1, p + 1, t->m_tag_len); /* Copy the data */
+	if (t->m_tag_free == m_pf_tag_free)
+		m_pf_tag_copied(p);
 	return p;
+}
+
+/*
+ * OpenBSD PF per-packet state (struct pkthdr_pf) in PACKET_TAG_PF.  The
+ * tag is allocated when pf first changes a value of a packet; a packet
+ * without it has m_pf_default (OpenBSD m_inithdr(): priority 3).  The tag
+ * holds references on a pf state key and a pcb, which the pf module drops
+ * when the tag is freed and takes again when it is copied.
+ */
+const struct pkthdr_pf m_pf_default = { .prio = 3 };	/* IFQ_DEFPRIO */
+void (*pf_mtag_unlink_hook)(struct pkthdr_pf *);
+void (*pf_mtag_copy_hook)(struct pkthdr_pf *);
+
+static void
+m_pf_tag_free(struct m_tag *t)
+{
+	struct pkthdr_pf *p = (struct pkthdr_pf *)(t + 1);
+
+	if ((p->statekey != NULL || p->inp != NULL) &&
+	    pf_mtag_unlink_hook != NULL)
+		pf_mtag_unlink_hook(p);
+	m_tag_free_default(t);
+}
+
+static void
+m_pf_tag_copied(struct m_tag *t)
+{
+	struct pkthdr_pf *p = (struct pkthdr_pf *)(t + 1);
+
+	t->m_tag_free = m_pf_tag_free;
+	if (p->statekey != NULL || p->inp != NULL) {
+		if (pf_mtag_copy_hook != NULL)
+			pf_mtag_copy_hook(p);
+		else
+			p->statekey = NULL, p->inp = NULL;
+	}
+}
+
+/* The packet's pf state, allocated with default values if it has none. */
+struct pkthdr_pf *
+m_pf_get(struct mbuf *m)
+{
+	struct pkthdr_pf *p;
+	struct m_tag *t;
+
+	if ((p = m_pf_find(m)) != NULL)
+		return (p);
+	t = m_tag_alloc(MTAG_ABI_COMPAT, PACKET_TAG_PF, sizeof(*p), M_NOWAIT);
+	if (t == NULL)
+		return (NULL);
+	t->m_tag_free = m_pf_tag_free;
+	p = (struct pkthdr_pf *)(t + 1);
+	*p = m_pf_default;
+	m_tag_prepend(m, t);
+	return (p);
+}
+
+/* Forget the packet's pf state (a new packet for pf, e.g. an error). */
+void
+m_pf_delete(struct mbuf *m)
+{
+	struct m_tag *t;
+
+	if (SLIST_EMPTY(&m->m_pkthdr.tags))
+		return;
+	t = m_tag_locate(m, MTAG_ABI_COMPAT, PACKET_TAG_PF, NULL);
+	if (t != NULL)
+		m_tag_delete(m, t);
 }
 
 /*

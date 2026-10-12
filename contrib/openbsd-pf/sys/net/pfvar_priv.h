@@ -510,6 +510,8 @@ pf_sourcelim_leave(struct pf_sourcelim *pfsrlim, unsigned int gen)
 extern struct rwlock pf_lock;
 
 struct pf_pdesc {
+	struct mbuf	*pfh_m;		/* 5BSD: m_tag; the mbuf pfh belongs to */
+	struct m_tag	*pfh_t;		/* 5BSD: m_tag; its tag */
 	struct {
 		int	 done;
 		uid_t	 uid;

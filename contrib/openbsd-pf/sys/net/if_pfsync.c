@@ -1951,7 +1951,7 @@ pfsync_defer(struct pf_state *st, struct mbuf *m)
 	pd->pd_m = m;
 	pd->pd_deadline = getnsecuptime() + PFSYNC_DEFER_NSEC;
 
-	m->m_pkthdr.pf.flags |= PF_TAG_GENERATED;
+	PF_MTAG_W(m)->flags |= PF_TAG_GENERATED;	/* 5BSD: m_tag */
 	st->sync_defer = pd;
 
 	sched = s->s_deferred++;

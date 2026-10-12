@@ -1015,7 +1015,7 @@ pf_refragment6(struct mbuf **m0, struct m_tag *mtag, struct sockaddr_in6 *dst,
 	}
 
 	while ((m = ml_dequeue(&ml)) != NULL) {
-		m->m_pkthdr.pf.flags |= PF_TAG_REFRAGMENTED;
+		PF_MTAG_W(m)->flags |= PF_TAG_REFRAGMENTED;	/* 5BSD: m_tag */
 		if (ifp == NULL) {
 			int flags = 0;
 

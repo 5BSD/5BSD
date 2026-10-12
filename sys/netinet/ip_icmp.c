@@ -519,7 +519,7 @@ icmp_input(struct mbuf **mp, int *offp, int proto)
 	 * socket it was diverted to and the stack does not answer it.
 	 * Errors still reach the protocols of the connections they quote.
 	 */
-	if (m->m_pkthdr.pf.flags & PF_TAG_DIVERTED) {
+	if (m_pf_ro(m)->flags & PF_TAG_DIVERTED) {
 		switch (icp->icmp_type) {
 		case ICMP_UNREACH:
 		case ICMP_TIMXCEED:

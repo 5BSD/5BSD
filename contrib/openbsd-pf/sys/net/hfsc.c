@@ -800,7 +800,7 @@ hfsc_enq(struct ifqueue *ifq, struct mbuf *m)
 	struct hfsc_class *cl;
 	struct mbuf *dm;
 
-	if ((cl = hfsc_clh2cph(hif, m->m_pkthdr.pf.qid)) == NULL ||
+	if ((cl = hfsc_clh2cph(hif, PF_MTAG_R(m)->qid)) == NULL ||	/* 5BSD: m_tag */
 	    cl->cl_children != NULL) {
 		cl = hif->hif_defaultclass;
 		if (cl == NULL)

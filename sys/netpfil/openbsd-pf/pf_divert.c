@@ -249,7 +249,7 @@ pfdiv_send4(struct socket *so, struct mbuf *m, struct sockaddr_in *sin)
 	m->m_pkthdr.rcvif = NULL;
 	m->m_nextpkt = NULL;
 	M_SETFIB(m, so->so_fibnum);
-	m->m_pkthdr.pf.flags |= PF_TAG_DIVERTED_PACKET;
+	PF_MTAG_W(m)->flags |= PF_TAG_DIVERTED_PACKET;
 
 	if (sin->sin_addr.s_addr == INADDR_ANY) {
 		if ((error = pfdiv_cksum4(&m, 0)) != 0) {
@@ -354,7 +354,7 @@ pfdiv_send6(struct socket *so, struct mbuf *m, struct sockaddr_in6 *sin6)
 	m->m_pkthdr.rcvif = NULL;
 	m->m_nextpkt = NULL;
 	M_SETFIB(m, so->so_fibnum);
-	m->m_pkthdr.pf.flags |= PF_TAG_DIVERTED_PACKET;
+	PF_MTAG_W(m)->flags |= PF_TAG_DIVERTED_PACKET;
 	if ((error = pfdiv_cksum6(&m)) != 0) {
 		m_freem(m);
 		return (error);

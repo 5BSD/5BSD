@@ -38,6 +38,8 @@ void	pf_mbuf_unlink_state_key(struct mbuf *);
 void	pf_mbuf_unlink_inpcb(struct mbuf *);
 void	pf_mbuf_link_state_key(struct mbuf *, struct pf_state_key *);
 void	pf_mbuf_link_inpcb(struct mbuf *, struct inpcb *);
+struct pf_state_key *pf_state_key_ref(struct pf_state_key *);
+void	pf_state_key_unref(struct pf_state_key *);
 int	pf_ouraddr(struct mbuf *);
 struct pf_divert *pf_find_divert(struct mbuf *);
 void	pf_inp_unlink(struct inpcb *);
@@ -91,20 +93,76 @@ pf_fbsd_vnet_ready(void)
 /* mbuf and inpcb reference hooks                                      */
 /* ------------------------------------------------------------------ */
 
+/* The pf tag of a packet is freed: drop its state-key and pcb references. */
 static void
-pf_fbsd_mbuf_unlink(struct mbuf *m)
+pf_fbsd_mtag_unlink(struct pkthdr_pf *p)
 {
-	pf_mbuf_unlink_state_key(m);
-	pf_mbuf_unlink_inpcb(m);
+	struct pf_state_key *sk = p->statekey;
+	struct inpcb *inp = p->inp;
+
+	p->statekey = NULL;
+	p->inp = NULL;
+	if (sk != NULL)
+		pf_state_key_unref(sk);
+	if (inp != NULL)
+		in_pcbunref(inp);
 }
 
+/* The pf tag was copied with the packet: the copy takes its own references. */
 static void
-pf_fbsd_mbuf_link(struct mbuf *to, const struct mbuf *from)
+pf_fbsd_mtag_copy(struct pkthdr_pf *p)
 {
-	if (from->m_pkthdr.pf.statekey != NULL)
-		pf_mbuf_link_state_key(to, from->m_pkthdr.pf.statekey);
-	if (from->m_pkthdr.pf.inp != NULL)
-		pf_mbuf_link_inpcb(to, from->m_pkthdr.pf.inp);
+	if (p->statekey != NULL)
+		(void)pf_state_key_ref(p->statekey);
+	if (p->inp != NULL)
+		(void)in_pcbref(p->inp);
+}
+
+/* Writes that find no memory for a tag land here and are lost. */
+static struct pkthdr_pf pf_fbsd_mtag_scratch;
+static counter_u64_t pf_fbsd_mtag_nomem;
+
+static struct pkthdr_pf *
+pf_fbsd_mtag_scratch_get(void)
+{
+	counter_u64_add(pf_fbsd_mtag_nomem, 1);
+	pf_fbsd_mtag_scratch = m_pf_default;
+	return (&pf_fbsd_mtag_scratch);
+}
+
+struct pkthdr_pf *
+obsd_pf_mtag_w(struct mbuf *m)
+{
+	struct pkthdr_pf *p = m_pf_get(m);
+
+	return (p != NULL ? p : pf_fbsd_mtag_scratch_get());
+}
+
+struct pkthdr_pf *
+obsd_pf_pdtag(struct pf_pdesc *pd, int write)
+{
+	struct mbuf *m = pd->m;
+	struct pkthdr_pf *p;
+	struct m_tag *t;
+
+	/* The cached tag is valid while it is still the packet's first. */
+	if (pd->pfh_m == m && pd->pfh_t != NULL &&
+	    SLIST_FIRST(&m->m_pkthdr.tags) == pd->pfh_t)
+		return ((struct pkthdr_pf *)(pd->pfh_t + 1));
+	pd->pfh_m = m;
+	pd->pfh_t = NULL;
+	t = SLIST_EMPTY(&m->m_pkthdr.tags) ? NULL :
+	    m_tag_locate(m, MTAG_ABI_COMPAT, PACKET_TAG_PF, NULL);
+	if (t == NULL) {
+		if (!write)
+			return (__DECONST(struct pkthdr_pf *, &m_pf_default));
+		if ((p = m_pf_get(m)) == NULL)
+			return (pf_fbsd_mtag_scratch_get());
+		t = (struct m_tag *)p - 1;
+	}
+	if (SLIST_FIRST(&m->m_pkthdr.tags) == t)
+		pd->pfh_t = t;
+	return ((struct pkthdr_pf *)(t + 1));
 }
 
 static void
@@ -141,13 +199,13 @@ pf_fbsd_test_out(int af, int dir, struct ifnet *ifp, struct mbuf **m,
 {
 	int action, linked = 0;
 
-	if (inp != NULL && (*m)->m_pkthdr.pf.inp == NULL) {
+	if (inp != NULL && PF_MTAG_R(*m)->inp == NULL) {
 		pf_mbuf_link_inpcb(*m, inp);
 		linked = 1;
 	}
 	action = pf_fbsd_test(af, dir, ifp, m);
-	if (linked && *m != NULL && (*m)->m_pkthdr.pf.inp == inp) {
-		(*m)->m_pkthdr.pf.inp = NULL;
+	if (linked && *m != NULL && PF_MTAG_R(*m)->inp == inp) {
+		PF_MTAG_W(*m)->inp = NULL;
 		(void)refcount_release(&inp->inp_refcount);
 	}
 	return (action);
@@ -170,7 +228,7 @@ pf_fbsd_ours(struct mbuf *m, int af)
 	if (pf_ouraddr(m) != 1)
 		return;
 	m->m_flags |= M_FASTFWD_OURS;
-	if ((m->m_pkthdr.pf.flags & PF_TAG_DIVERTED) == 0 ||
+	if ((PF_MTAG_R(m)->flags & PF_TAG_DIVERTED) == 0 ||
 	    (divert = pf_find_divert(m)) == NULL ||
 	    divert->type != PF_DIVERT_TO)	/* divert-reply: own address */
 		return;
@@ -235,7 +293,7 @@ pf_fbsd_result(int action, struct mbuf **m)
 static void
 pf_fbsd_in_csum(struct mbuf *m)
 {
-	if (m->m_pkthdr.pf.statekey != NULL)
+	if (PF_MTAG_R(m)->statekey != NULL)
 		pf_mbuf_unlink_state_key(m);
 	m->m_pkthdr.csum_flags &= ~(CSUM_DATA_VALID | CSUM_PSEUDO_HDR |
 	    CSUM_SCTP_VALID);
@@ -885,8 +943,9 @@ pf_fbsd_load(void)
 	pf_divert_attach();
 	pf_jail_attach();
 
-	pf_mbuf_unlink_hook = pf_fbsd_mbuf_unlink;
-	pf_mbuf_link_hook = pf_fbsd_mbuf_link;
+	pf_fbsd_mtag_nomem = counter_u64_alloc(M_WAITOK);
+	pf_mtag_unlink_hook = pf_fbsd_mtag_unlink;
+	pf_mtag_copy_hook = pf_fbsd_mtag_copy;
 	pf_inpcb_free_hook = pf_fbsd_inpcb_free;
 
 	pf_ifattach_tag = EVENTHANDLER_REGISTER(ifnet_arrival_event,
