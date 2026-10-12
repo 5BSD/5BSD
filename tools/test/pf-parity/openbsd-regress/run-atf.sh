@@ -8,10 +8,10 @@ T=/usr/obj/5BSD-pf-src/tests/sys/netpfil/pf/openbsd
 D=/usr/tests/sys/netpfil/pf/openbsd
 script=$1; shift
 $S "mkdir -p $D"
-for f in $script tproxy.py; do
+for f in $script tproxy.py ftpd.py; do
 	[ -f $T/$f ] && cat $T/$f | $S "cat > $D/$f"
 done
-$S "chmod 555 $D/tproxy.py 2>/dev/null; true"
+$S "chmod 555 $D/tproxy.py $D/ftpd.py 2>/dev/null; true"
 cases="$*"
 [ -n "$cases" ] || cases=$(grep -o 'atf_add_test_case "[a-z_0-9]*"' $T/$script | sed 's/.*"\(.*\)"/\1/')
 for c in $cases; do

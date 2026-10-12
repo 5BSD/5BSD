@@ -57,6 +57,8 @@ to a re-import.
   authpf/authpf.c  without fdescfs(4) on /dev/fd, /dev/fd/N above 2 does
                  not exist: pass /dev/pf to pfctl as standard input
                  (/dev/fd/0) instead.
+  ftp-proxy/ftp-proxy.c, tftp-proxy/tftp-proxy.c  NOPRIV_USER may be set
+                 by the build (5BSD uses the existing "proxy" user)
 
 5BSD edits in sys/net (all marked "5BSD"):
   VNET (marked "5BSD: VNET"): global state is defined with PF_VNET_DEFINE*

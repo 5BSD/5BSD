@@ -27,6 +27,14 @@ ATF_TESTS_SH+=	authpf_test
 TEST_METADATA.authpf_test+=	required_user="root" \
 				is_exclusive="true"
 
+# ftp-proxy(8) on a NAT router, passive and active (+ ftpd.py).
+ATF_TESTS_SH+=	ftpproxy_test
+TEST_METADATA.ftpproxy_test+=	required_user="root" \
+				required_programs="python3" \
+				is_exclusive="true"
+${PACKAGE}FILES+=	ftpd.py
+${PACKAGE}FILESMODE_ftpd.py=	0555
+
 # 5BSD extension: the "jail" rule option.
 ATF_TESTS_SH+=	jail_test
 TEST_METADATA.jail_test+=	required_user="root" \

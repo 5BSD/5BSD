@@ -53,7 +53,9 @@
 #include "filter.h"
 
 #define CHROOT_DIR	"/var/empty"
+#ifndef NOPRIV_USER	/* 5BSD: the build selects the user */
 #define NOPRIV_USER	"_tftp_proxy"
+#endif
 
 #define DEFTRANSWAIT	2
 #define NTOP_BUFS	4

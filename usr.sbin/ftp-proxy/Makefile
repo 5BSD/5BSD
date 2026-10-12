@@ -12,6 +12,8 @@ CFLAGS+= -I${SRCTOP}/sys/netpfil/openbsd-pf/user
 CFLAGS+= -include ${SRCTOP}/sys/netpfil/openbsd-pf/user/openbsd_compat.h
 CFLAGS+= -I${SRCTOP}/contrib/pf/libevent
 NO_WFORMAT=
+# 5BSD runs the proxies as the "proxy" user (OpenBSD: _ftp_proxy, _tftp_proxy).
+CFLAGS+= -DNOPRIV_USER=\"proxy\"
 CWARNFLAGS+= -Wno-sign-compare -Wno-incompatible-pointer-types-discards-qualifiers
 
 LIBADD=	event1

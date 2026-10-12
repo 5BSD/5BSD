@@ -51,7 +51,9 @@
 #define NTOP_BUFS	3
 #define TCP_BACKLOG	10
 
+#ifndef NOPRIV_USER	/* 5BSD: the build selects the user */
 #define NOPRIV_USER	"_ftp_proxy"
+#endif
 
 /* pfctl standard NAT range. */
 #define PF_NAT_PROXY_PORT_LOW	50001
