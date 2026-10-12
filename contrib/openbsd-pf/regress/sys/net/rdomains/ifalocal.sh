@@ -92,27 +92,27 @@ ifconfig vether3 10.0.0.1/24 up
 route -T 4 add -iface -ifp vether3 10.0.0.0/28 10.0.0.1
 rtable_exists 4 || cleanup_and_die "Error: rtable 4 does not exist but should"
 
-local_route_count 10.0.0.1 vether3 3 1 || test_fail
-local_route_count 10.0.0.1 vether3 4 0 || test_fail
+local_route_count 10.0.0.1 vether3 3 1 || fail_test
+local_route_count 10.0.0.1 vether3 4 0 || fail_test
 
 route -T 4 exec ifconfig vether4 10.0.0.2/24 up
-local_route_count 10.0.0.2 vether4 3 1 || test_fail
-local_route_count 10.0.0.2 vether4 4 0 || test_fail
-local_route_count 10.0.0.1 vether3 3 1 || test_fail
-local_route_count 10.0.0.1 vether3 4 0 || test_fail
+local_route_count 10.0.0.2 vether4 3 1 || fail_test
+local_route_count 10.0.0.2 vether4 4 0 || fail_test
+local_route_count 10.0.0.1 vether3 3 1 || fail_test
+local_route_count 10.0.0.1 vether3 4 0 || fail_test
 
 ifconfig vether5 10.0.0.1/24 up
 route -T 6 add -iface -ifp vether5 10.0.0.0/28 10.0.0.1
 rtable_exists 6 || cleanup_and_die "Error: rtable 6 does not exist but should"
 
-local_route_count 10.0.0.1 vether5 5 1 || test_fail
-local_route_count 10.0.0.1 vether5 6 0 || test_fail
+local_route_count 10.0.0.1 vether5 5 1 || fail_test
+local_route_count 10.0.0.1 vether5 6 0 || fail_test
 
 route -T 6 exec ifconfig vether6 10.0.0.2/24 up
-local_route_count 10.0.0.2 vether6 5 1 || test_fail
-local_route_count 10.0.0.2 vether6 6 0 || test_fail
-local_route_count 10.0.0.1 vether5 5 1 || test_fail
-local_route_count 10.0.0.1 vether5 6 0 || test_fail
+local_route_count 10.0.0.2 vether6 5 1 || fail_test
+local_route_count 10.0.0.2 vether6 6 0 || fail_test
+local_route_count 10.0.0.1 vether5 5 1 || fail_test
+local_route_count 10.0.0.1 vether5 6 0 || fail_test
 
 cleanup
 

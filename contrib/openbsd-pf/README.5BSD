@@ -144,3 +144,5 @@ Regression plumbing adjustment (5BSD):
   regress/sys/net/pflog/Makefile uses portable UID shell assignment and
   sysctl -n values so bmake checks the real UID and forwarding settings;
   packet-output expectations and forwarding requirements are unchanged.
+  regress/sys/net/rdomains/ifalocal.sh calls its defined fail_test helper
+  so a failed route-count assertion cannot report success. Expectations unchanged.
