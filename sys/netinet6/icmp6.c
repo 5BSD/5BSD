@@ -1974,6 +1974,9 @@ icmp6_rip6_input(struct mbuf **mp, int off)
 	fib = M_GETFIB(m);
 
 	while ((inp = inp_next(&inpi)) != NULL) {
+		/* 5BSD: raw sockets see their routing domain only. */
+		if (!rt_fib_same_rdomain(fib, inp->inp_inc.inc_fibnum))
+			continue;
 		if (V_rip_bind_all_fibs == 0 && fib != inp->inp_inc.inc_fibnum)
 			/*
 			 * Sockets bound to a specific FIB can only receive

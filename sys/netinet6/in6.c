@@ -1662,6 +1662,18 @@ in6ifa_ifpforlinklocal(struct ifnet *ifp, int ignoreflags)
 struct in6_ifaddr *
 in6ifa_ifwithaddr(const struct in6_addr *addr, uint32_t zoneid, bool referenced)
 {
+
+	return (in6ifa_ifwithaddr_fib(addr, zoneid, referenced, RT_ALL_FIBS));
+}
+
+/*
+ * 5BSD: find the interface address of a given IPv6 address within a FIB
+ * lookup scope (a FIB, RT_ALL_FIBS or a routing domain, see rt_fib_scope()).
+ */
+struct in6_ifaddr *
+in6ifa_ifwithaddr_fib(const struct in6_addr *addr, uint32_t zoneid,
+    bool referenced, int fibnum)
+{
 	struct rm_priotracker in6_ifa_tracker;
 	struct in6_ifaddr *ia;
 
@@ -1670,6 +1682,8 @@ in6ifa_ifwithaddr(const struct in6_addr *addr, uint32_t zoneid, bool referenced)
 		if (IN6_ARE_ADDR_EQUAL(IA6_IN6(ia), addr)) {
 			if (zoneid != 0 &&
 			    zoneid != ia->ia_addr.sin6_scope_id)
+				continue;
+			if (!rt_fib_match(ia->ia_ifp->if_fib, fibnum))
 				continue;
 			if (referenced)
 				ifa_ref(&ia->ia_ifa);

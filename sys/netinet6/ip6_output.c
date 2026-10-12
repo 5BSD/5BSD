@@ -1518,6 +1518,11 @@ ip6_ctloutput(struct socket *so, struct sockopt *sopt)
 				    sizeof(optval), sizeof(optval));
 				if (error != 0)
 					break;
+				/* 5BSD: entering another rdomain is privileged. */
+				error = rt_fib_change_check(curthread,
+				    so->so_fibnum, optval);
+				if (error != 0)
+					break;
 
 				INP_WLOCK(inp);
 				if ((inp->inp_flags & INP_BOUNDFIB) != 0 &&

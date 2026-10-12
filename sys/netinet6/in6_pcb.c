@@ -114,7 +114,8 @@
 
 static struct inpcb *in6_pcblookup_exact(struct inpcbinfo *pcbinfo,
     const struct in6_addr *faddr, u_short fport, const struct in6_addr *laddr,
-    u_short lport, struct inpbucket **bucketp);
+    u_short lport, int fib,
+    struct inpbucket **bucketp);
 static struct inpcb *in6_pcblookup_wild_locked(struct inpcbinfo *pcbinfo,
     const struct in6_addr *laddr, u_short lport, int fib,
     struct inpbucket **bucketp);
@@ -294,7 +295,7 @@ in6_pcbbind_avail(struct inpcbinfo_ctx *ipictx, struct inpcb *inp,
 
 			in6_sin6_2_sin(&sin, sin6);
 			t = in_pcblookup_local(ipictx, sin.sin_addr, lport,
-			    RT_ALL_FIBS, lookupflags, cred);
+			    fib <= -2 ? fib : RT_ALL_FIBS, lookupflags, cred);
 			if (t != NULL && ((reuseport | reuseport_lb) &
 			    t->inp_socket->so_options) == 0 &&
 			    (!in_nullhost(t->inp_laddr) ||
@@ -345,7 +346,7 @@ in6_pcbbind(struct inpcb *inp, struct sockaddr_in6 *sin6, int flags,
 			return (error);
 
 		fib = (flags & INPBIND_FIB) != 0 ? inp->inp_inc.inc_fibnum :
-		    RT_ALL_FIBS;
+		    rt_fib_scope(inp->inp_inc.inc_fibnum);
 
 		/* See if this address/port combo is available. */
 		error = in6_pcbbind_avail(&ipictx, inp, sin6, fib, sooptions,
@@ -502,7 +503,7 @@ in6_pcbconnect(struct inpcb *inp, struct sockaddr_in6 *sin6, struct ucred *cred,
 	} else {
 		if (in6_pcblookup_exact(ipictx.pcbinfo, &sin6->sin6_addr,
 		    sin6->sin6_port, &laddr6.sin6_addr, inp->inp_lport,
-		    &ipictx.ebucket) != NULL) {
+		    rt_fib_scope(inp->inp_inc.inc_fibnum), &ipictx.ebucket) != NULL) {
 			inpcbinfo_ctx_release(&ipictx);
 			return (EADDRINUSE);
 		}
@@ -767,7 +768,7 @@ in6_pcblookup_local(struct inpcbinfo_ctx *ipictx, const struct in6_addr *laddr,
 
 	KASSERT((lookupflags & ~(INPLOOKUP_WILDCARD)) == 0,
 	    ("%s: invalid lookup flags %d", __func__, lookupflags));
-	KASSERT(fib == RT_ALL_FIBS || (fib >= 0 && fib < V_rt_numfibs),
+	KASSERT(fib < 0 || fib < V_rt_numfibs,
 	    ("%s: invalid fib %d", __func__, fib));
 
 	/* See comment in in_pcblookup_local(). */
@@ -783,8 +784,8 @@ in6_pcblookup_local(struct inpcbinfo_ctx *ipictx, const struct in6_addr *laddr,
 			if ((inp->inp_vflag & INP_IPV6) == 0)
 				continue;
 			if (IN6_ARE_ADDR_EQUAL(&inp->in6p_laddr, laddr) &&
-			    inp->inp_lport == lport && (fib == RT_ALL_FIBS ||
-			    inp->inp_inc.inc_fibnum == fib)) {
+			    inp->inp_lport == lport &&
+			    rt_fib_match(inp->inp_inc.inc_fibnum, fib)) {
 				/* Found. */
 				if (prison_equal_ip6(cred->cr_prison,
 				    inp->inp_cred->cr_prison))
@@ -812,8 +813,7 @@ in6_pcblookup_local(struct inpcbinfo_ctx *ipictx, const struct in6_addr *laddr,
 			/* XXX inp locking */
 			if ((inp->inp_vflag & INP_IPV6) == 0)
 				continue;
-			if (fib != RT_ALL_FIBS &&
-			    inp->inp_inc.inc_fibnum != fib)
+			if (!rt_fib_match(inp->inp_inc.inc_fibnum, fib))
 				continue;
 			wildcard = 0;
 			if (!IN6_IS_ADDR_UNSPECIFIED(&inp->in6p_faddr))
@@ -918,7 +918,7 @@ static bool
 in6_pcblookup_lb_match(const struct inpcblbgroup *grp, int domain, int fib)
 {
 	return ((domain == M_NODOM || domain == grp->il_numa_domain) &&
-	    (fib == RT_ALL_FIBS || fib == grp->il_fibnum));
+	    rt_fib_match(grp->il_fibnum, fib));
 }
 
 static struct inpcb *
@@ -1010,8 +1010,11 @@ out:
 
 static bool
 in6_pcblookup_exact_match(const struct inpcb *inp, const struct in6_addr *faddr,
-    u_short fport, const struct in6_addr *laddr, u_short lport)
+    u_short fport, const struct in6_addr *laddr, u_short lport, int fib)
 {
+	/* 5BSD: connections of other routing domains do not match. */
+	if (fib <= -2 && !rt_fib_match(inp->inp_inc.inc_fibnum, fib))
+		return (false);
 	/* XXX inp locking */
 	if ((inp->inp_vflag & INP_IPV6) == 0)
 		return (false);
@@ -1025,7 +1028,7 @@ in6_pcblookup_exact_match(const struct inpcb *inp, const struct in6_addr *faddr,
 static struct inpcb *
 in6_pcblookup_exact(struct inpcbinfo *pcbinfo, const struct in6_addr *faddr,
     u_short fport, const struct in6_addr *laddr, u_short lport,
-    struct inpbucket **bucketp)
+    int fib, struct inpbucket **bucketp)
 {
 	struct inpbucket *bucket;
 	struct inpcb *inp;
@@ -1043,7 +1046,8 @@ in6_pcblookup_exact(struct inpcbinfo *pcbinfo, const struct in6_addr *faddr,
 		INPBUCKET_LOCK(bucket);
 	}
 	CK_LIST_FOREACH(inp, &bucket->head, inp_hash_exact) {
-		if (in6_pcblookup_exact_match(inp, faddr, fport, laddr, lport))
+		if (in6_pcblookup_exact_match(inp, faddr, fport, laddr, lport,
+		    fib))
 			return (inp);
 	}
 	return (NULL);
@@ -1065,7 +1069,7 @@ in6_pcblookup_wild_match(const struct inpcb *inp, const struct in6_addr *laddr,
 	if (!IN6_IS_ADDR_UNSPECIFIED(&inp->in6p_faddr) ||
 	    inp->inp_lport != lport)
 		return (INPLOOKUP_MATCH_NONE);
-	if (fib != RT_ALL_FIBS && inp->inp_inc.inc_fibnum != fib)
+	if (!rt_fib_match(inp->inp_inc.inc_fibnum, fib))
 		return (INPLOOKUP_MATCH_NONE);
 	if (IN6_IS_ADDR_UNSPECIFIED(&inp->in6p_laddr))
 		return (INPLOOKUP_MATCH_WILD);
@@ -1195,7 +1199,7 @@ in6_pcblookup_internal(struct inpcbinfo_ctx *ipictx,
 	    ("%s: invalid local address", __func__));
 
 	inp = in6_pcblookup_exact(ipictx->pcbinfo, faddr, fport, laddr, lport,
-	    &ipictx->ebucket);
+	    fib, &ipictx->ebucket);
 	if (inp != NULL)
 		return (inp);
 
@@ -1256,11 +1260,12 @@ in6_pcblookup_smr(struct inpcbinfo *pcbinfo, const struct in6_addr *faddr,
 	    ("%s: LOCKPCB not set", __func__));
 
 	smr_enter(pcbinfo->ipi_smr);
-	inp = in6_pcblookup_exact(pcbinfo, faddr, fport, laddr, lport, NULL);
+	inp = in6_pcblookup_exact(pcbinfo, faddr, fport, laddr, lport, fib,
+	    NULL);
 	if (inp != NULL) {
 		if (__predict_true(inp_smr_lock(inp, lockflags))) {
 			if (__predict_true(in6_pcblookup_exact_match(inp,
-			    faddr, fport, laddr, lport)))
+			    faddr, fport, laddr, lport, fib)))
 				return (inp);
 			inp_unlock(inp, lockflags);
 		}
@@ -1310,7 +1315,10 @@ in6_pcblookup(struct inpcbinfo *pcbinfo, const struct in6_addr *faddr,
 {
 	int fib;
 
-	fib = (lookupflags & INPLOOKUP_FIB) ? if_getfib(ifp) : RT_ALL_FIBS;
+	if (lookupflags & INPLOOKUP_FIB)
+		fib = if_getfib(ifp);
+	else
+		fib = ifp != NULL ? rt_fib_scope(if_getfib(ifp)) : RT_ALL_FIBS;
 	return (in6_pcblookup_smr(pcbinfo, faddr, fport, laddr, lport,
 	    lookupflags, M_NODOM, fib));
 }
@@ -1323,7 +1331,8 @@ in6_pcblookup_mbuf(struct inpcbinfo *pcbinfo, const struct in6_addr *faddr,
 	int fib;
 
 	M_ASSERTPKTHDR(m);
-	fib = (lookupflags & INPLOOKUP_FIB) ? M_GETFIB(m) : RT_ALL_FIBS;
+	fib = (lookupflags & INPLOOKUP_FIB) ? M_GETFIB(m) :
+	    rt_fib_scope(M_GETFIB(m));
 	return (in6_pcblookup_smr(pcbinfo, faddr, fport, laddr, lport,
 	    lookupflags, m->m_pkthdr.numa_domain, fib));
 }

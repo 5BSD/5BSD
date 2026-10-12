@@ -109,7 +109,9 @@ union sockaddr_union {
 
 /* Routing domains (rdomain(4)) map onto FIBs. */
 #include <netinet/in.h>
+#ifndef SO_RTABLE
 #define	SO_RTABLE		SO_SETFIB
+#endif
 static inline int
 getrtable(void)
 {
@@ -126,12 +128,8 @@ getrtable(void)
 int	pfctl_jail_getid(const char *);
 void	pfctl_print_jail(u_int8_t, int, int);
 
-/* OpenBSD net/route.h routing table information (rdomains on FIBs). */
-struct rt_tableinfo {
-	u_short	rti_tableid;
-	u_short	rti_domainid;
-};
-#define	NET_RT_TABLE		(-0x5f03)
+/* Routing table information (struct rt_tableinfo, NET_RT_TABLE) is native. */
+#include <net/route.h>
 
 /* OpenBSD sysctl MIBs read by pfctl, mapped onto 5BSD names. */
 #define	KERN_MAXCLUSTERS	(-0x5f01)
@@ -152,27 +150,6 @@ obsd_sysctl(const int *mib, u_int n, void *o, size_t *ol, const void *nw,
 			return (-1);
 		*(int64_t *)o = (int64_t)pm;
 		*ol = sizeof(int64_t);
-		return (0);
-	}
-	if (n == 6 && mib[0] == CTL_NET && mib[1] == PF_ROUTE &&
-	    mib[4] == NET_RT_TABLE) {
-		struct rt_tableinfo *rti = o;
-		int fibs;
-		size_t sz = sizeof(fibs);
-
-		if (sysctlbyname("net.fibs", &fibs, &sz, NULL, 0) == -1)
-			return (-1);
-		if (mib[5] < 0 || mib[5] >= fibs) {
-			errno = ENOENT;
-			return (-1);
-		}
-		if (*ol < sizeof(*rti)) {
-			errno = ENOMEM;
-			return (-1);
-		}
-		rti->rti_tableid = mib[5];
-		rti->rti_domainid = mib[5];
-		*ol = sizeof(*rti);
 		return (0);
 	}
 	return (sysctl(mib, n, o, ol, nw, nl));

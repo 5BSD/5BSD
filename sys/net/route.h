@@ -117,11 +117,101 @@ typedef volatile u_int rt_gen_t;	/* tree generation (for adds) */
 
 #define	RT_DEFAULT_FIB	0	/* Explicitly mark fib=0 restricted cases */
 #define	RT_ALL_FIBS	-1	/* Announce event for every fib */
+
+/*
+ * 5BSD: routing domains (rdomain(4)).  A routing table (rtable) is a FIB.
+ * Every FIB belongs to one routing domain; a routing domain is a FIB whose
+ * domain is itself.  FIBs created by FreeBSD means (net.fibs) belong to
+ * routing domain 0, so FreeBSD FIB semantics are unchanged until a routing
+ * domain is created (ifconfig(8) rdomain).  Routing domain numbers are
+ * limited to RT_TABLEID_MAX as on OpenBSD.
+ */
+#define	RT_TABLEID_MAX		255
+
+/* sysctl net.route.0.0.NET_RT_TABLE.<table> (OpenBSD) */
+struct rt_tableinfo {
+	u_short	rti_tableid;	/* routing table (FIB) */
+	u_short	rti_domainid;	/* its routing domain */
+};
+
 #ifdef _KERNEL
 VNET_DECLARE(uint32_t, _rt_numfibs);	/* number of existing route tables */
 #define	V_rt_numfibs		VNET(_rt_numfibs)
 /* temporary compat arg */
 #define	rt_numfibs		V_rt_numfibs
+
+/*
+ * 5BSD: routing domains on FIBs (net/route/route_tables.c).
+ * rt_l2map[fib] holds the routing domain of the FIB (low 16 bits) and, for
+ * a routing domain, the index of its loopback interface (high 16 bits).
+ */
+VNET_DECLARE(u_int, rt_rdomains);	/* routing domains other than 0 */
+#define	V_rt_rdomains		VNET(rt_rdomains)
+VNET_DECLARE(uint32_t, rt_l2map[RT_TABLEID_MAX + 1]);
+#define	V_rt_l2map		VNET(rt_l2map)
+
+/*
+ * Lookup scope of an "any FIB" address or PCB lookup: RT_ALL_FIBS while no
+ * routing domain exists, otherwise a selector for "any FIB of routing
+ * domain rd" (rt_fib_scope()).
+ */
+#define	RT_RDOMAIN_SEL(rd)	(-2 - (int)(rd))
+#define	RT_RDOMAIN_SEL2RD(f)	((u_int)(-2 - (f)))
+
+/* Routing domain of a FIB. */
+static inline u_int
+rt_fib_l2(u_int fib)
+{
+	if (__predict_true(V_rt_rdomains == 0) || fib > RT_TABLEID_MAX)
+		return (0);
+	return (V_rt_l2map[fib] & 0xffff);
+}
+
+/* Scope of an "any FIB" lookup made on behalf of FIB fib. */
+static inline int
+rt_fib_scope(u_int fib)
+{
+	if (__predict_true(V_rt_rdomains == 0))
+		return (RT_ALL_FIBS);
+	return (RT_RDOMAIN_SEL(rt_fib_l2(fib)));
+}
+
+/*
+ * Does an object in FIB have (an interface or PCB; for a PCB load balancing
+ * group also RT_ALL_FIBS or a selector) match the lookup scope want (a FIB,
+ * RT_ALL_FIBS or a routing domain selector)?
+ */
+static inline bool
+rt_fib_match(int have, int want)
+{
+	if (want == RT_ALL_FIBS)
+		return (true);
+	if (want >= 0)
+		return (have == want);
+	if (have == RT_ALL_FIBS)
+		return (RT_RDOMAIN_SEL2RD(want) == 0);
+	if (have >= 0)
+		return (rt_fib_l2(have) == RT_RDOMAIN_SEL2RD(want));
+	return (have == want);
+}
+
+/* Do two FIBs belong to the same routing domain? */
+static inline bool
+rt_fib_same_rdomain(u_int a, u_int b)
+{
+	return (__predict_true(V_rt_rdomains == 0) ||
+	    rt_fib_l2(a) == rt_fib_l2(b));
+}
+
+struct ifnet;
+struct thread;
+int	rt_tables_add(u_int fib);
+int	rt_rdomain_create(u_int rdomain, struct ifnet *ifp);
+int	rt_rdomain_setif(struct ifnet *ifp, u_int fib, bool rdomain);
+struct ifnet *rt_fib_loif(u_int fib);
+bool	rt_rdomain_isloif(struct ifnet *ifp);
+void	rt_rdomain_ifdetach(struct ifnet *ifp);
+int	rt_fib_change_check(struct thread *td, u_int oldfib, u_int newfib);
 VNET_DECLARE(u_int, rt_add_addr_allfibs); /* Announce interfaces to all fibs */
 #define	V_rt_add_addr_allfibs	VNET(rt_add_addr_allfibs)
 

@@ -285,6 +285,9 @@ rip_input(struct mbuf **mp, int *offp, int proto)
 			 */
 			continue;
 		}
+		/* 5BSD: raw sockets see their routing domain only. */
+		if (!rt_fib_same_rdomain(fib, inp->inp_inc.inc_fibnum))
+			continue;
 		if (V_rip_bind_all_fibs == 0 && fib != inp->inp_inc.inc_fibnum)
 			/*
 			 * Sockets bound to a specific FIB can only receive
@@ -306,6 +309,9 @@ rip_input(struct mbuf **mp, int *offp, int proto)
 			 * assume process had PRIV_NETINET_RAW at attach,
 			 * and fall through into normal filter path if so.
 			 */
+			continue;
+		/* 5BSD: raw sockets see their routing domain only. */
+		if (!rt_fib_same_rdomain(fib, inp->inp_inc.inc_fibnum))
 			continue;
 		if (V_rip_bind_all_fibs == 0 && fib != inp->inp_inc.inc_fibnum)
 			continue;
@@ -857,7 +863,7 @@ rip_bind(struct socket *so, struct sockaddr *nam, struct thread *td)
 	KASSERT(inp != NULL, ("rip_bind: inp == NULL"));
 
 	fib = V_rip_bind_all_fibs == 0 ? inp->inp_inc.inc_fibnum :
-	    RT_ALL_FIBS;
+	    rt_fib_scope(inp->inp_inc.inc_fibnum);
 	addr->sin_port = 0;
 	if (CK_STAILQ_EMPTY(&V_ifnet) ||
 	    (addr->sin_family != AF_INET && addr->sin_family != AF_IMPLINK) ||

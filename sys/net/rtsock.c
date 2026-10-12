@@ -451,6 +451,11 @@ rts_ctloutput(struct socket *so, struct sockopt *sopt)
 				    sizeof(optval), sizeof(optval));
 				if (error != 0)
 					break;
+				/* 5BSD: entering another rdomain is privileged. */
+				error = rt_fib_change_check(curthread,
+				    so->so_fibnum, optval);
+				if (error != 0)
+					break;
 				error = sosetfib(so, optval);
 				break;
 			}
@@ -2621,6 +2626,18 @@ sysctl_rtsock(SYSCTL_HANDLER_ARGS)
 	namelen--;
 	if (req->newptr)
 		return (EPERM);
+	if (name[1] == NET_RT_TABLE) {
+		/* 5BSD: OpenBSD routing table information. */
+		struct rt_tableinfo rti;
+
+		if (namelen != 3)
+			return (ENOTDIR);
+		if (name[2] < 0 || name[2] >= rt_numfibs)
+			return (ENOENT);
+		rti.rti_tableid = name[2];
+		rti.rti_domainid = rt_fib_l2(name[2]);
+		return (SYSCTL_OUT(req, &rti, sizeof(rti)));
+	}
 	if (name[1] == NET_RT_DUMP || name[1] == NET_RT_NHOP || name[1] == NET_RT_NHGRP) {
 		if (namelen == 3)
 			fib = req->td->td_proc->p_fibnum;

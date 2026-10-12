@@ -102,6 +102,12 @@ lo_clone_destroy(struct if_clone *ifc, struct ifnet *ifp, uint32_t flags)
 {
 	if (ifp->if_dunit == 0 && (flags & IFC_F_FORCE) == 0)
 		return (EINVAL);
+	/* 5BSD: the loopback of a routing domain stays (OpenBSD). */
+	if (rt_rdomain_isloif(ifp)) {
+		if ((flags & IFC_F_FORCE) == 0)
+			return (EPERM);
+		rt_rdomain_ifdetach(ifp);
+	}
 
 #ifndef VIMAGE
 	/* XXX: destroying lo0 will lead to panics. */
@@ -266,6 +272,12 @@ if_simloop(struct ifnet *ifp, struct mbuf *m, int af, int hlen)
 	M_ASSERTPKTHDR(m);
 	m_tag_delete_nonpersistent(m);
 	m->m_pkthdr.rcvif = ifp;
+	/*
+	 * 5BSD: a packet received on an interface of another routing domain
+	 * enters the domain of that interface (OpenBSD if_input_local()).
+	 */
+	if (!rt_fib_same_rdomain(M_GETFIB(m), ifp->if_fib))
+		M_SETFIB(m, ifp->if_fib);
 
 #ifdef MAC
 	mac_ifnet_create_mbuf(ifp, m);

@@ -4185,6 +4185,7 @@ net/if_mib.c			standard
 net/if_ovpn.c			optional ovpn inet | ovpn inet6
 net/if_stf.c			optional stf inet inet6
 net/if_tuntap.c			optional tuntap
+net/if_vether.c			optional vether
 net/if_vlan.c			optional vlan
 net/if_vxlan.c			optional vxlan inet | vxlan inet6
 net/if_geneve.c			optional geneve inet | geneve inet6
@@ -4209,6 +4210,7 @@ net/route/route_ctl.c		standard
 net/route/route_ddb.c		optional ddb
 net/route/route_helpers.c	standard
 net/route/route_ifaddrs.c	standard
+net/route/route_rdomain.c	standard
 net/route/route_rtentry.c	standard
 net/route/route_subscription.c	standard
 net/route/route_tables.c	standard

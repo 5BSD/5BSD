@@ -790,7 +790,9 @@ passin:
 	 * XXX: For now we keep link-local IPv6 addresses with embedded
 	 *      scope zone id, therefore we use zero zoneid here.
 	 */
-	ia = in6ifa_ifwithaddr(&ip6->ip6_dst, 0 /* XXX */, false);
+	/* 5BSD: addresses are local only in their routing domain. */
+	ia = in6ifa_ifwithaddr_fib(&ip6->ip6_dst, 0 /* XXX */, false,
+	    rt_fib_scope(M_GETFIB(m)));
 	if (ia != NULL) {
 		if (ia->ia6_flags & IN6_IFF_NOTREADY) {
 			char ip6bufs[INET6_ADDRSTRLEN];

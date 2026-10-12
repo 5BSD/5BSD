@@ -171,6 +171,7 @@ typedef	__uintptr_t	uintptr_t;
 #define	SO_LISTENINCQLEN	0x1013	/* int; socket's incomplete queue length */
 #define	SO_FIB		0x1014		/* int; get or set socket FIB */
 #define	SO_SETFIB	SO_FIB		/* backward compat alias */
+#define	SO_RTABLE	SO_FIB		/* OpenBSD name (5BSD: rdomain(4)) */
 #define	SO_USER_COOKIE	0x1015		/* uint32_t; user cookie (dummynet etc.) */
 #define	SO_PROTOCOL	0x1016		/* int; get socket protocol (Linux name) */
 #define	SO_PROTOTYPE	SO_PROTOCOL	/* alias for SO_PROTOCOL (SunOS name) */
@@ -436,6 +437,7 @@ struct sockproto {
 					 * versions of msghdr structs. */
 #define NET_RT_NHOP	6		/* dump routing nexthops */
 #define NET_RT_NHGRP	7		/* dump routing nexthop groups */
+#define	NET_RT_TABLE	1024		/* 5BSD: routing table info (OpenBSD) */
 #endif /* __BSD_VISIBLE */
 
 /*
