@@ -54,6 +54,10 @@ NOTE TO PEOPLE WHO THINK THAT FreeBSD 16.x IS SLOW:
 	ping and ping6 accept OpenBSD's -w maxwait.  vmstat -m -v prints
 	OpenBSD's pool listing; vmstat -m alone is unchanged.
 
+	The pf manual pages are OpenBSD's: pf(4), pflog(4), pflow(4),
+	pfsync(4), divert(4), pf.conf(5), pf.os(5).  The former divert(4),
+	about ipfw's PF_DIVERT sockets, is now ipdivert(4).
+
 20261011:
 	5BSD has retired native procfs, a.out execution, COMPAT_43TTY and the
 	FreeBSD 4-7 syscall compatibility options. Remove native procfs entries
