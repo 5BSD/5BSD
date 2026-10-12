@@ -1,5 +1,11 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * system.Sysctl constants and limits, the interface snapshot record, and the
+ * legacy pre-FIDL wire records.  The current client and provider speak
+ * sysctlcmp.fidl (library bsd.sysctl.v1); the message layouts below are kept
+ * for source/ABI compatibility only and are rejected by the provider.  The
+ * opcode numbers remain the DTrace request probes' operation codes.
  */
 
 #ifndef _SYSCTLCMP_PROTOCOL_H_

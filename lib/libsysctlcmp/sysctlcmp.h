@@ -11,11 +11,16 @@
 
 #include "sysctlcmp_protocol.h"
 
+/* bsd.sysctl.v1 (sysctlcmp.fidl) wire major, checked on a session's first call. */
+#define	SYSCTLCMP_WIRE_VERSION	1
+
 struct sysctlcmp_client;
 
 __BEGIN_DECLS
 /* Acquire the system.Sysctl capability over the lookup channel. */
 int	sysctlcmp_client_open(struct sysctlcmp_client **);
+/* Adopt a held native channel; consumes fd only on success. */
+int	sysctlcmp_client_create(int fd, struct sysctlcmp_client **);
 void	sysctlcmp_client_close(struct sysctlcmp_client *);
 
 /*

@@ -63,6 +63,22 @@ if [ -x /usr/tests/usr.sbin/BSDPower/latency_bench ]; then
 	echo "POWER_LIFECYCLE_$ok"
 fi
 
+# ----------------------------------------------------------- system.Sysctl
+if [ -x /usr/tests/usr.sbin/BSDSysctl/latency_bench ]; then
+	ok=PASS
+	v=$(sysctlcmpctl get kern.ostype 2>&1) || { echo "SYSCTL: get failed: $v"; ok=FAIL; }
+	echo "SYSCTL_GET=$v"
+	[ "$v" = "$(sysctl -n kern.ostype)" ] || { echo "SYSCTL: value differs from sysctl(8)"; ok=FAIL; }
+	n=$(sysctlcmpctl list 2>/dev/null | wc -l | tr -d ' ')
+	echo "SYSCTL_LIST_COUNT=$n"
+	[ "$n" -gt 0 ] || ok=FAIL
+	refused sysctlcmpctl set kern.maxfiles 1000 || ok=FAIL
+	core_restart_denied system.Sysctl/bsdsysctl BSDSysctl || ok=FAIL
+	n=$(sessions 200 sysctlcmpctl get kern.ostype)
+	echo "SYSCTL_SESSIONS=$n"
+	[ "$n" = 200 ] || ok=FAIL
+	echo "SYSCTL_LIFECYCLE_$ok"
+fi
 
 # ------------------------------------- live clients of converted providers
 # Each line runs a shipped tool against the live provider over the plane.

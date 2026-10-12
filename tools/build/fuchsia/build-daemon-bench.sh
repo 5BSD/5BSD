@@ -49,6 +49,14 @@ trace)
 	libs="-lbsm -ldtrace -lservice -lchannel -llogcmp"
 	extra="-I$src/lib/liblogcmp -I$src/cddl/contrib/opensolaris/lib/libdtrace/common"
 	;;
+sysctl)
+	paths="usr.sbin/BSDSysctl lib/libsysctlcmp"
+	defs="-DSYSCTLCMP_TESTING"
+	incs="usr.sbin/BSDSysctl lib/libsysctlcmp"
+	srcs="usr.sbin/BSDSysctl/bsdsysctl.c usr.sbin/BSDSysctl/config.c usr.sbin/BSDSysctl/interfaces.c"
+	bench=usr.sbin/BSDSysctl/tests/latency_bench.c
+	libs="-lservice -lchannel -lprivateucl"
+	;;
 *)
 	echo "build-daemon-bench: unknown daemon $daemon" >&2; exit 64;;
 esac

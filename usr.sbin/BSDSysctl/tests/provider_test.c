@@ -19,17 +19,32 @@
 #include <unistd.h>
 
 #include <libservice.h>
-#include <sysctlcmp_protocol.h>
+#include <sysctlcmp.h>
 
 #include "config.h"
 #include "bsdsysctl_test.h"
 
 #define	TEST_LABEL	"org.test.sysctl"
 
+/*
+ * The real reactor runs in a forked child; the test drives it with the real
+ * libsysctlcmp client (bsd.sysctl.v1), or with hand-built frames on a raw
+ * libservice session.
+ */
 struct raw_fixture {
-	struct service_session	*session;
+	struct sysctlcmp_client	*client;
+	struct service_session	*session;	/* raw-frame cases */
 	pid_t			 child;
 };
+
+/* FIDL v2 transactional message header. */
+struct wire_header {
+	uint32_t txid;
+	uint8_t flags[3], magic;
+	uint64_t ordinal;
+};
+#define ORD_INFO	UINT64_C(0x435c275e0f8b3d3f)
+#define ORD_GET		UINT64_C(0x256a360cdcdb641a)
 
 static void
 require_plane(void)
@@ -108,8 +123,8 @@ make_config(struct sysctlcmp_config *config)
  * and policy, running the real serve/dispatch path over a plane channel.
  */
 static void
-raw_fixture_create(struct raw_fixture *fixture, const char *label,
-    const struct sysctlcmp_config *config)
+fixture_start(struct raw_fixture *fixture, const char *label,
+    const struct sysctlcmp_config *config, bool raw)
 {
 	int client, provider;
 
@@ -122,7 +137,20 @@ raw_fixture_create(struct raw_fixture *fixture, const char *label,
 		_exit(sysctlcmp_test_serve(provider, label, config));
 	}
 	close(provider);
-	ATF_REQUIRE_EQ(0, service_session_create(client, &fixture->session));
+	if (raw)
+		ATF_REQUIRE_EQ(0, service_session_create(client,
+		    &fixture->session));
+	else
+		ATF_REQUIRE_EQ(0, sysctlcmp_client_create(client,
+		    &fixture->client));
+}
+
+static void
+raw_fixture_create(struct raw_fixture *fixture, const char *label,
+    const struct sysctlcmp_config *config)
+{
+
+	fixture_start(fixture, label, config, false);
 }
 
 static void
@@ -130,73 +158,88 @@ raw_fixture_destroy(struct raw_fixture *fixture, int expected_status)
 {
 	int status;
 
-	service_session_close(fixture->session);
+	if (fixture->client != NULL)
+		sysctlcmp_client_close(fixture->client);
+	if (fixture->session != NULL)
+		service_session_close(fixture->session);
 	ATF_REQUIRE_EQ(fixture->child, waitpid(fixture->child, &status, 0));
 	ATF_REQUIRE(WIFEXITED(status));
 	ATF_CHECK_EQ(expected_status, WEXITSTATUS(status));
 }
 
 /*
- * Build and send one sysctlcmp request over the session.  Every opcode carries a NUL-terminated name (and, for SET,
- * the new value bytes).  Returns the daemon's errno-style status (0 on success,
- * positive errno on a policy/kernel rejection).  On a value-bearing success the
- * reply value is copied through out/outlen (outlen carries the buffer size in,
- * the value length out).
+ * One operation through the real client, by historical opcode.  Returns the
+ * provider's errno-style status (0 on success, positive errno on a policy or
+ * kernel rejection).  On a value-bearing success the value is copied through
+ * out/outlen (outlen carries the buffer size in, the value length out);
+ * OIDFMT values are rebuilt in the {kind; format} wire layout.
  */
 static int
-sysctl_op(struct service_session *session, uint16_t opcode, const char *name,
+sysctl_op(struct sysctlcmp_client *client, uint16_t opcode, const char *name,
     const void *newval, size_t newlen, void *out, size_t *outlen)
+{
+	uint8_t scratch[SYSCTLCMP_MAX_VALUE];
+	size_t scratch_len = sizeof(scratch);
+	int result;
+
+	if (out == NULL || outlen == NULL) {
+		out = scratch;
+		outlen = &scratch_len;
+	}
+	switch (opcode) {
+	case SYSCTLCMP_OP_GET:
+		result = sysctlcmp_get(client, name, out, outlen);
+		break;
+	case SYSCTLCMP_OP_SET:
+		result = sysctlcmp_set(client, name, newval, newlen);
+		break;
+	case SYSCTLCMP_OP_OIDFMT: {
+		char fmt[SYSCTLCMP_MAX_NAME];
+		size_t fmtlen = sizeof(fmt);
+		unsigned int kind;
+		uint32_t kind32;
+
+		result = sysctlcmp_oidfmt(client, name, &kind, fmt, &fmtlen);
+		if (result == 0) {
+			kind32 = kind;
+			ATF_REQUIRE(sizeof(kind32) + fmtlen <= *outlen);
+			memcpy(out, &kind32, sizeof(kind32));
+			memcpy((uint8_t *)out + sizeof(kind32), fmt, fmtlen);
+			*outlen = sizeof(kind32) + fmtlen;
+		}
+		break;
+	}
+	case SYSCTLCMP_OP_DESCR:
+		result = sysctlcmp_describe(client, name, out, outlen);
+		break;
+	case SYSCTLCMP_OP_NEXT:
+		result = sysctlcmp_next(client, name, out, outlen);
+		break;
+	default:
+		atf_tc_fail("opcode %u", opcode);
+	}
+	return (result == 0 ? 0 : errno);
+}
+
+/* A raw frame on a raw session; returns the call result. */
+static int
+raw_frame(struct service_session *session, const void *data, size_t length)
 {
 	struct service_call_options options = SERVICE_CALL_OPTIONS_INITIALIZER;
 	struct service_message outgoing;
 	struct service_reply incoming;
-	uint8_t request[SYSCTLCMP_MAX_MESSAGE];
-	uint8_t reply[SYSCTLCMP_MAX_MESSAGE];
-	struct sysctlcmp_msg *msg;
-	struct sysctlcmp_body *body;
-	const struct sysctlcmp_msg *rmsg;
-	const struct sysctlcmp_body *rbody;
-	size_t name_len, length;
+	uint8_t reply[256];
 
-	memset(request, 0, sizeof(request));
-	msg = (void *)request;
-	msg->magic = SYSCTLCMP_MAGIC;
-	msg->opcode = opcode;
-	name_len = strlen(name) + 1;
-	ATF_REQUIRE(name_len <= SYSCTLCMP_MAX_NAME);
-	ATF_REQUIRE(newlen <= SYSCTLCMP_MAX_VALUE);
-	body = (void *)(msg + 1);
-	body->name_length = (uint16_t)name_len;
-	body->value_length = (uint32_t)newlen;
-	memcpy(body + 1, name, name_len);
-	if (newlen != 0)
-		memcpy((uint8_t *)(body + 1) + name_len, newval, newlen);
-	length = sizeof(*msg) + sizeof(*body) + name_len + newlen;
 	memset(&outgoing, 0, sizeof(outgoing));
 	outgoing.size = sizeof(outgoing);
-	outgoing.data = request;
+	outgoing.data = data;
 	outgoing.length = length;
-	memset(reply, 0, sizeof(reply));
 	memset(&incoming, 0, sizeof(incoming));
 	incoming.size = sizeof(incoming);
 	incoming.data = reply;
 	incoming.capacity = sizeof(reply);
-	/* Match the public client's deadline; NEXT may walk the full sysctl tree. */
-	options.timeout_ms = 5000;
-	ATF_REQUIRE_EQ(0, service_session_call(session, &outgoing, &incoming,
-	    &options));
-	rmsg = (const void *)reply;
-	if (rmsg->status != 0)
-		return (-rmsg->status);
-	if (out != NULL && outlen != NULL &&
-	    incoming.length >= sizeof(*rmsg) + sizeof(*rbody)) {
-		rbody = (const void *)(reply + sizeof(*rmsg));
-		if (rbody->value_length <= *outlen)
-			memcpy(out, (const uint8_t *)(rbody + 1) +
-			    rbody->name_length, rbody->value_length);
-		*outlen = rbody->value_length;
-	}
-	return (0);
+	options.timeout_ms = 2000;
+	return (service_session_call(session, &outgoing, &incoming, &options));
 }
 
 /*
@@ -223,7 +266,7 @@ ATF_TC_BODY(policy_gated_get_and_set, tc)
 
 	/* GET of the one permitted variable returns a non-empty value. */
 	len = sizeof(value);
-	ATF_CHECK_EQ(0, sysctl_op(fixture.session, SYSCTLCMP_OP_GET,
+	ATF_CHECK_EQ(0, sysctl_op(fixture.client, SYSCTLCMP_OP_GET,
 	    "kern.ostype", NULL, 0, value, &len));
 	ATF_CHECK(len > 0);
 	ATF_CHECK(len <= sizeof(value));
@@ -231,11 +274,11 @@ ATF_TC_BODY(policy_gated_get_and_set, tc)
 
 	/* GET of a non-permitted variable is denied by policy: EPERM. */
 	len = sizeof(value);
-	ATF_CHECK_EQ(EPERM, sysctl_op(fixture.session, SYSCTLCMP_OP_GET,
+	ATF_CHECK_EQ(EPERM, sysctl_op(fixture.client, SYSCTLCMP_OP_GET,
 	    "kern.osrelease", NULL, 0, value, &len));
 
 	/* SET is denied by policy (no writes granted): EPERM, no write attempted. */
-	ATF_CHECK_EQ(EPERM, sysctl_op(fixture.session, SYSCTLCMP_OP_SET,
+	ATF_CHECK_EQ(EPERM, sysctl_op(fixture.client, SYSCTLCMP_OP_SET,
 	    "kern.ostype", "x", 1, NULL, NULL));
 
 	raw_fixture_destroy(&fixture, 0);
@@ -265,23 +308,23 @@ ATF_TC_BODY(introspection_is_gated, tc)
 
 	/* OIDFMT: at least the leading uint32_t kind word is present. */
 	len = sizeof(value);
-	ATF_CHECK_EQ(0, sysctl_op(fixture.session, SYSCTLCMP_OP_OIDFMT,
+	ATF_CHECK_EQ(0, sysctl_op(fixture.client, SYSCTLCMP_OP_OIDFMT,
 	    "kern.ostype", NULL, 0, value, &len));
 	ATF_CHECK(len >= sizeof(uint32_t));
 
 	/* DESCR: a non-empty, NUL-terminated description string. */
 	len = sizeof(value);
-	ATF_CHECK_EQ(0, sysctl_op(fixture.session, SYSCTLCMP_OP_DESCR,
+	ATF_CHECK_EQ(0, sysctl_op(fixture.client, SYSCTLCMP_OP_DESCR,
 	    "kern.ostype", NULL, 0, value, &len));
 	ATF_CHECK(len > 0);
 	ATF_CHECK_EQ('\0', value[len - 1]);
 
 	/* Both are read gated: a non-permitted name is EPERM. */
 	len = sizeof(value);
-	ATF_CHECK_EQ(EPERM, sysctl_op(fixture.session, SYSCTLCMP_OP_OIDFMT,
+	ATF_CHECK_EQ(EPERM, sysctl_op(fixture.client, SYSCTLCMP_OP_OIDFMT,
 	    "kern.osrelease", NULL, 0, value, &len));
 	len = sizeof(value);
-	ATF_CHECK_EQ(EPERM, sysctl_op(fixture.session, SYSCTLCMP_OP_DESCR,
+	ATF_CHECK_EQ(EPERM, sysctl_op(fixture.client, SYSCTLCMP_OP_DESCR,
 	    "kern.osrelease", NULL, 0, value, &len));
 
 	raw_fixture_destroy(&fixture, 0);
@@ -317,7 +360,7 @@ ATF_TC_BODY(next_never_reveals_denied_names, tc)
 	saw_ostype = false;
 	for (iterations = 0; iterations < 64; iterations++) {
 		len = sizeof(value);
-		status = sysctl_op(fixture.session, SYSCTLCMP_OP_NEXT, name,
+		status = sysctl_op(fixture.client, SYSCTLCMP_OP_NEXT, name,
 		    NULL, 0, value, &len);
 		if (status == ENOENT)
 			break;			/* enumeration exhausted */
@@ -340,59 +383,124 @@ ATF_TC_BODY(next_never_reveals_denied_names, tc)
 }
 
 /*
- * The provider fails closed on a malformed request: a bad magic fails
- * validation, so handle_request() records EPROTO as a terminal session error
- * and tears the session down without a reply (the call fails and the worker
- * exits non-zero) rather than acting on the frame.
+ * The provider fails closed on a malformed request: a pre-FIDL record, a
+ * method before negotiation, an unknown method, a truncated frame or a frame
+ * with trailing bytes closes the session without a reply, and the reactor
+ * reports the protocol failure (the worker exits 1) rather than acting on
+ * the frame.
  */
 ATF_TC(malformed_request_fails_closed);
 ATF_TC_HEAD(malformed_request_fails_closed, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
-	    "A malformed request is rejected fail-closed (EPROTO, session torn down)");
+	    "A malformed request is rejected fail-closed (session torn down)");
 }
 ATF_TC_BODY(malformed_request_fails_closed, tc)
 {
-	struct service_call_options options = SERVICE_CALL_OPTIONS_INITIALIZER;
 	struct sysctlcmp_config config;
 	struct raw_fixture fixture;
-	struct service_message outgoing;
-	struct service_reply incoming;
 	struct {
 		struct sysctlcmp_msg msg;
 		struct sysctlcmp_body body;
 		char name[12];
-	} frame;
-	uint8_t reply[SYSCTLCMP_MAX_MESSAGE];
-	int status;
+	} legacy;
+	struct wire_header info = { 1, { 2, 0, 0 }, 1, ORD_INFO };
+	struct {
+		struct wire_header header;
+		uint64_t size, presence;
+		char name[16];
+	} get = { { 2, { 2, 0, 0 }, 1, ORD_GET }, 11, UINT64_MAX,
+		"kern.ostype" };
+	uint8_t trailing[sizeof(get) + 8];
+	int mode;
 
 	require_plane();
 	make_config(&config);
-	raw_fixture_create(&fixture, TEST_LABEL, &config);
+	for (mode = 0; mode < 6; mode++) {
+		fixture_start(&fixture, TEST_LABEL, &config, true);
+		if (mode >= 2)
+			ATF_REQUIRE_EQ(0, raw_frame(fixture.session, &info,
+			    sizeof(info)));
+		switch (mode) {
+		case 0:	/* A pre-FIDL GET record. */
+			memset(&legacy, 0, sizeof(legacy));
+			legacy.msg.magic = SYSCTLCMP_MAGIC;
+			legacy.msg.opcode = SYSCTLCMP_OP_GET;
+			legacy.body.name_length = sizeof(legacy.name);
+			memcpy(legacy.name, "kern.ostype", sizeof(legacy.name));
+			ATF_CHECK_EQ(-1, raw_frame(fixture.session, &legacy,
+			    sizeof(legacy)));
+			break;
+		case 1:	/* A well-formed Get before negotiation. */
+			ATF_CHECK_EQ(-1, raw_frame(fixture.session, &get,
+			    sizeof(get)));
+			break;
+		case 2:	/* The same Get after negotiation is served. */
+			ATF_CHECK_EQ(0, raw_frame(fixture.session, &get,
+			    sizeof(get)));
+			break;
+		case 3:	/* Unknown strict method. */
+			get.header.ordinal = 0x7fff;
+			ATF_CHECK_EQ(-1, raw_frame(fixture.session, &get,
+			    sizeof(get)));
+			get.header.ordinal = ORD_GET;
+			break;
+		case 4:	/* Truncated (the name is cut short). */
+			ATF_CHECK_EQ(-1, raw_frame(fixture.session, &get,
+			    sizeof(get) - 8));
+			break;
+		case 5:	/* Trailing bytes. */
+			memset(trailing, 0, sizeof(trailing));
+			memcpy(trailing, &get, sizeof(get));
+			ATF_CHECK_EQ(-1, raw_frame(fixture.session, trailing,
+			    sizeof(trailing)));
+			break;
+		}
+		/* A rejected frame was a protocol failure: the worker exits 1. */
+		raw_fixture_destroy(&fixture, mode == 2 ? 0 : 1);
+	}
+}
 
-	/* A header with a corrupted magic: sysctlcmp_validate_message rejects it. */
-	memset(&frame, 0, sizeof(frame));
-	frame.msg.magic = SYSCTLCMP_MAGIC ^ 0xffU;
-	frame.msg.opcode = SYSCTLCMP_OP_GET;
-	frame.body.name_length = sizeof(frame.name);
-	memcpy(frame.name, "kern.ostype", sizeof(frame.name));
-	memset(&outgoing, 0, sizeof(outgoing));
-	outgoing.size = sizeof(outgoing);
-	outgoing.data = &frame;
-	outgoing.length = sizeof(frame);
-	memset(reply, 0, sizeof(reply));
-	memset(&incoming, 0, sizeof(incoming));
-	incoming.size = sizeof(incoming);
-	incoming.data = reply;
-	incoming.capacity = sizeof(reply);
+/* An embedded NUL never truncates a name into a different variable. */
+ATF_TC(embedded_nul_is_einval);
+ATF_TC_HEAD(embedded_nul_is_einval, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "A name with an embedded NUL is EINVAL and keeps the session");
+}
+ATF_TC_BODY(embedded_nul_is_einval, tc)
+{
+	struct sysctlcmp_config config;
+	struct raw_fixture fixture;
+	struct wire_header info = { 1, { 2, 0, 0 }, 1, ORD_INFO };
+	struct {
+		struct wire_header header;
+		uint64_t size, presence;
+		char name[16];
+	} get = { { 2, { 2, 0, 0 }, 1, ORD_GET }, 13, UINT64_MAX,
+		"kern.ostype\0x" };
+	struct service_call_options options = SERVICE_CALL_OPTIONS_INITIALIZER;
+	struct service_message outgoing = { .size = sizeof(outgoing),
+		.data = &get, .length = sizeof(get) };
+	uint8_t reply[64];
+	struct service_reply incoming = { .size = sizeof(incoming),
+		.data = reply, .capacity = sizeof(reply) };
+	uint64_t tag;
+	uint32_t err;
+
+	require_plane();
+	make_config(&config);
+	fixture_start(&fixture, TEST_LABEL, &config, true);
+	ATF_REQUIRE_EQ(0, raw_frame(fixture.session, &info, sizeof(info)));
 	options.timeout_ms = 2000;
-	/* No reply is sent for a rejected frame; the call fails as the session dies. */
-	status = service_session_call(fixture.session, &outgoing, &incoming,
-	    &options);
-	ATF_CHECK_EQ(-1, status);
-
-	/* handle_request set session->error = EPROTO, so the worker exits 1. */
-	raw_fixture_destroy(&fixture, 1);
+	ATF_REQUIRE_EQ(0, service_session_call(fixture.session, &outgoing,
+	    &incoming, &options));
+	ATF_REQUIRE(incoming.length >= 28);
+	memcpy(&tag, reply + 16, sizeof(tag));
+	memcpy(&err, reply + 24, sizeof(err));
+	ATF_CHECK_EQ(2, tag);
+	ATF_CHECK_EQ(EINVAL, err);
+	raw_fixture_destroy(&fixture, 0);
 }
 
 ATF_TC_WITHOUT_HEAD(arguments);
@@ -460,18 +568,18 @@ ATF_TC_BODY(set_encodes_typed_value, tc)
 
 	/* Current value, as a raw 4-byte int. */
 	len = sizeof(cur);
-	ATF_REQUIRE_EQ(0, sysctl_op(fixture.session, SYSCTLCMP_OP_GET,
+	ATF_REQUIRE_EQ(0, sysctl_op(fixture.client, SYSCTLCMP_OP_GET,
 	    "kern.maxfiles", NULL, 0, &cur, &len));
 	ATF_REQUIRE_EQ(sizeof(cur), len);
 
 	/* Write it back as decimal text: proves the text -> int encoding. */
 	snprintf(txt, sizeof(txt), "%d", cur);
-	ATF_CHECK_EQ(0, sysctl_op(fixture.session, SYSCTLCMP_OP_SET,
+	ATF_CHECK_EQ(0, sysctl_op(fixture.client, SYSCTLCMP_OP_SET,
 	    "kern.maxfiles", txt, strlen(txt) + 1, NULL, NULL));
 
 	/* Unchanged: the text encoded to the same binary int. */
 	len = sizeof(again);
-	ATF_REQUIRE_EQ(0, sysctl_op(fixture.session, SYSCTLCMP_OP_GET,
+	ATF_REQUIRE_EQ(0, sysctl_op(fixture.client, SYSCTLCMP_OP_GET,
 	    "kern.maxfiles", NULL, 0, &again, &len));
 	ATF_CHECK_EQ(cur, again);
 
@@ -487,7 +595,7 @@ ATF_TC_HEAD(multiplexed_clients, tc)
 ATF_TC_BODY(multiplexed_clients, tc)
 {
 	struct sysctlcmp_config config;
-	struct service_session *sessions[2];
+	struct sysctlcmp_client *sessions[2];
 	const char *labels[] = { "idle", "denied", TEST_LABEL };
 	int clients[3], providers[3], status;
 	pid_t child;
@@ -512,7 +620,8 @@ ATF_TC_BODY(multiplexed_clients, tc)
 	for (i = 0; i < 3; i++)
 		close(providers[i]);
 	for (i = 0; i < 2; i++)
-		ATF_REQUIRE_EQ(0, service_session_create(clients[i + 1], &sessions[i]));
+		ATF_REQUIRE_EQ(0, sysctlcmp_client_create(clients[i + 1],
+		    &sessions[i]));
 	/* Client zero stays open and silent throughout both request streams. */
 	for (i = 0; i < 4; i++) {
 		length = sizeof(value);
@@ -524,7 +633,7 @@ ATF_TC_BODY(multiplexed_clients, tc)
 		ATF_CHECK(length > 0);
 	}
 	for (i = 0; i < 2; i++)
-		service_session_close(sessions[i]);
+		sysctlcmp_client_close(sessions[i]);
 	close(clients[0]);
 	ATF_REQUIRE_EQ(child, waitpid(child, &status, 0));
 	ATF_REQUIRE(WIFEXITED(status));
@@ -569,6 +678,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, introspection_is_gated);
 	ATF_TP_ADD_TC(tp, next_never_reveals_denied_names);
 	ATF_TP_ADD_TC(tp, malformed_request_fails_closed);
+	ATF_TP_ADD_TC(tp, embedded_nul_is_einval);
 	ATF_TP_ADD_TC(tp, arguments);
 	ATF_TP_ADD_TC(tp, multiplexed_clients);
 	ATF_TP_ADD_TC(tp, idle_session_expires);
