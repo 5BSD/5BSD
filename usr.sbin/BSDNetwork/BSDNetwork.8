@@ -38,12 +38,23 @@ Before acknowledging shutdown, the broker terminates and reaps its tracked
 workers; a teardown failure prevents a successful shutdown acknowledgement.
 Parent process descriptors are locked against transfer and inheritance by
 later workers.
-Name resolution runs in-process: the worker resolves names itself, reading
-.Pa /etc/resolv.conf ,
-.Pa /etc/hosts ,
+Name resolution runs in-process.
+The parent reads
+.Pa /etc/resolv.conf
+through the filesystem provider and periodically publishes nameserver updates
+to existing workers.
+The parent also obtains
+.Pa /etc/hosts
 and
 .Pa /etc/services
-on demand through the filesystem provider.
+through that provider and publishes one-time shared snapshots, bounded to
+64 KiB minus one byte and 1 MiB minus one byte respectively.
+Workers retain read-only access to these snapshots; brokered source descriptors
+are closed before they can be consumed by a single worker fork.
+An initially unavailable file is retried by the parent, and a successful
+snapshot becomes visible to workers that already exist.
+Later edits to a successfully captured hosts or services file require provider
+replacement to refresh the snapshot.
 No Casper channel is involved and nothing resolution-related crosses into the
 consumer.
 .Pp
