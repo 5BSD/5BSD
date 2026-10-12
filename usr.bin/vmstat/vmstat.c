@@ -158,6 +158,7 @@ static int winlines = VMSTAT_DEFAULT_LINES; /* Current number of tty rows. */
 static int	aflag;
 static int	nflag;
 static int	Pflag;
+static int	vflag;
 static int	hflag;
 
 static kvm_t	*kd;
@@ -181,6 +182,7 @@ static void	dosum(void);
 static void	dovmstat(unsigned int, int);
 static void	domemstat_malloc(void);
 static void	domemstat_zone(void);
+static void	domemstat_pools(int);
 static void	kread(int, void *, size_t);
 static void	kreado(int, void *, size_t, size_t);
 static void	kreadptr(uintptr_t, void *, size_t);
@@ -215,7 +217,7 @@ main(int argc, char *argv[])
 
 	hflag = isatty(1);
 
-	while ((c = getopt(argc, argv, "ac:fhHiM:mN:n:oPp:sw:z")) != -1) {
+	while ((c = getopt(argc, argv, "ac:fhHiM:mN:n:oPp:svw:z")) != -1) {
 		switch (c) {
 		case 'a':
 			aflag++;
@@ -264,6 +266,9 @@ main(int argc, char *argv[])
 			break;
 		case 's':
 			todo |= SUMSTAT;
+			break;
+		case 'v':
+			vflag = 1;
 			break;
 		case 'w':
 			/* Convert to milliseconds. */
@@ -362,8 +367,11 @@ nlist_ok:
 
 	if (todo & FORKSTAT)
 		doforkst();
-	if (todo & MEMSTAT)
+	if (todo & MEMSTAT) {
 		domemstat_malloc();
+		if (vflag)	/* OpenBSD -m -v: pool statistics too */
+			domemstat_pools(1);
+	}
 	if (todo & ZMEMSTAT)
 		domemstat_zone();
 	if (todo & SUMSTAT)
@@ -1442,6 +1450,62 @@ domemstat_zone(void)
 	memstat_mtl_free(mtlp);
 	xo_close_list("zone");
 	xo_close_container("memory-zone-statistics");
+}
+
+/*
+ * Memory pool statistics in the OpenBSD "vmstat -m" layout, from the UMA
+ * zones (OpenBSD pool(9) users such as pf allocate from UMA zones named
+ * after their pools).  Printed by -m -v; plain -m output is unchanged.
+ */
+static void
+domemstat_pools(int verbose)
+{
+	struct memory_type_list *mtlp;
+	struct memory_type *mtp;
+
+	mtlp = memstat_mtl_alloc();
+	if (mtlp == NULL) {
+		xo_warn("memstat_mtl_alloc");
+		return;
+	}
+	if (kd == NULL) {
+		if (memstat_sysctl_uma(mtlp, 0) < 0) {
+			memstat_mtl_free(mtlp);
+			return;
+		}
+	} else if (memstat_kvm_uma(mtlp, kd) < 0) {
+		memstat_mtl_free(mtlp);
+		return;
+	}
+	xo_open_container("memory-pool-statistics");
+	xo_emit("\n{T:Memory resource pool statistics}\n");
+	xo_emit("{T:/%-11s} {T:/%5s} {T:/%8s} {T:/%4s} {T:/%8s} {T:/%5s} "
+	    "{T:/%5s} {T:/%5s} {T:/%5s} {T:/%5s} {T:/%5s} {T:/%4s}\n",
+	    "Name", "Size", "Requests", "Fail", "InUse", "Pgreq", "Pgrel",
+	    "Npage", "Hiwat", "Minpg", "Maxpg", "Idle");
+	xo_open_list("pool");
+	for (mtp = memstat_mtl_first(mtlp); mtp != NULL;
+	    mtp = memstat_mtl_next(mtp)) {
+		if (!verbose && memstat_get_numallocs(mtp) == 0)
+			continue;
+		xo_open_instance("pool");
+		xo_emit("{k:name/%-11s} {:size/%5ju} {:requests/%8ju} "
+		    "{:fail/%4ju} {:in-use/%8ju} {:page-requests/%5ju} "
+		    "{:page-releases/%5ju} {:pages/%5ju} {:high-water/%5ju} "
+		    "{:min-pages/%5ju} {:max-pages/%5ju} {:idle/%4ju}\n",
+		    memstat_get_name(mtp),
+		    (uintmax_t)memstat_get_size(mtp),
+		    (uintmax_t)memstat_get_numallocs(mtp),
+		    (uintmax_t)memstat_get_failures(mtp),
+		    (uintmax_t)memstat_get_count(mtp),
+		    (uintmax_t)0, (uintmax_t)0, (uintmax_t)0, (uintmax_t)0,
+		    (uintmax_t)0, (uintmax_t)memstat_get_countlimit(mtp),
+		    (uintmax_t)memstat_get_free(mtp));
+		xo_close_instance("pool");
+	}
+	xo_close_list("pool");
+	xo_close_container("memory-pool-statistics");
+	memstat_mtl_free(mtlp);
 }
 
 static void

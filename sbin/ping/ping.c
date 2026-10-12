@@ -494,6 +494,18 @@ ping(int argc, char *const *argv)
 		case 'v':
 			options |= F_VERBOSE;
 			break;
+		case 'w':		/* OpenBSD: max seconds to wait after the last request */
+			{
+				const char *werr;
+
+				waittime = (int)strtonum(optarg, 1,
+				    INT_MAX / 1000, &werr);
+				if (werr != NULL)
+					errx(EX_USAGE, "maxwait value is %s: %s",
+					    werr, optarg);
+				waittime *= 1000;
+			}
+			break;
 		case 'W':		/* wait ms for answer */
 			t = strtod(optarg, &ep);
 			if (*ep || ep == optarg || t > (double)INT_MAX)

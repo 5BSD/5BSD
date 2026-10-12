@@ -542,6 +542,18 @@ ping6(int argc, char *argv[])
 			options &= ~F_NOUSERDATA;
 			options |= F_FQDNOLD;
 			break;
+		case 'w':		/* OpenBSD: max seconds to wait after the last request */
+			{
+				const char *werr;
+
+				waittime = (int)strtonum(optarg, 1,
+				    INT_MAX / 1000, &werr);
+				if (werr != NULL)
+					errx(EX_USAGE, "maxwait value is %s: %s",
+					    werr, optarg);
+				waittime *= 1000;
+			}
+			break;
 		case 'W':
 			t = strtod(optarg, &e);
 			if (*e || e == optarg || t > (double)INT_MAX)
