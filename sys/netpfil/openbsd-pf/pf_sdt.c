@@ -32,6 +32,7 @@ SDT_PROBE_DEFINE4(pf, log, pflog, packet, "struct pf_pdesc *", "int", "struct pf
 SDT_PROBE_DEFINE1(pf, nat, af_to, translate, "struct pf_pdesc *");
 SDT_PROBE_DEFINE2(pf, nat, transaddr, entry, "struct pf_rule *", "struct pf_pdesc *");
 SDT_PROBE_DEFINE1(pf, pflow, flow, export, "struct pf_state *");
+SDT_PROBE_DEFINE3(pf, queue, packet, delay, "u_int", "u_int", "u_int");
 SDT_PROBE_DEFINE1(pf, pfsync, packet, input, "struct mbuf *");
 SDT_PROBE_DEFINE2(pf, pfsync, packet, send, "void *", "struct mbuf *");
 SDT_PROBE_DEFINE2(pf, rule, jail, match, "struct pf_rule *", "int");

@@ -1262,6 +1262,7 @@ SDT_PROBE_DECLARE(pf, log, pflog, packet);
 SDT_PROBE_DECLARE(pf, nat, af_to, translate);
 SDT_PROBE_DECLARE(pf, nat, transaddr, entry);
 SDT_PROBE_DECLARE(pf, pflow, flow, export);
+SDT_PROBE_DECLARE(pf, queue, packet, delay);
 SDT_PROBE_DECLARE(pf, pfsync, packet, input);
 SDT_PROBE_DECLARE(pf, pfsync, packet, send);
 SDT_PROBE_DECLARE(pf, state, purge, run);

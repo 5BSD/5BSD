@@ -4,11 +4,10 @@
  * (dtrace_pf(4); queue statistics are reported by pfctl -s queue).
  */
 
-fbt::pf_delay_pkt:entry
+pf:queue:packet:delay
 /* @bsdinstruments-predicate */
 {
-	@delayed[args[0]->m_pkthdr.pf.qid, args[0]->m_pkthdr.pf.delay] =
-	    count();
+	@delayed[arg0, arg1] = count();
 }
 
 fbt::pf_pktenqueue_delayed:entry

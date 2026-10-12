@@ -41,6 +41,8 @@
 .Li pf:pfsync:packet:send,input
 .br
 .Li pf:pflow:flow:export
+.br
+.Li pf:queue:packet:delay
 .Pp
 .Li pf:ioctl:ioctl:entry,return
 .br
@@ -152,6 +154,20 @@ A state is unlinked and later freed.
 A purge pass of expired states with
 .Fa arg0
 the scan limit.
+.El
+.Ss Packet delay
+.Bl -tag -width "pf:queue:packet:delay"
+.It Li pf:queue:packet:delay
+A packet has obtained delay storage and is about to be scheduled:
+.Fa arg0
+is the queue ID,
+.Fa arg1
+the requested delay in milliseconds, and
+.Fa arg2
+the interface index.
+The probe exposes packet metadata independently of its storage layout.
+Its availability does not imply that the native output path supports
+.Cm set delay .
 .El
 .Ss Tables, logging, synchronisation and control
 .Bl -tag -width "pf:table:addr:update"
