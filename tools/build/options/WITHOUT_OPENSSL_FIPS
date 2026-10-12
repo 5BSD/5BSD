@@ -1,0 +1,3 @@
+Do not build the OpenSSL FIPS provider or its optional strict configuration.
+The default provider remains available.
+This option does not confer or remove a FIPS validation.

@@ -1,0 +1,24 @@
+This is a native BSD-make integration of the in-tree OpenSSL provider, not a
+validated module. No host Configure/perl/gmake or target execution is required
+by buildworld. The module is self-contained, exports only OSSL_provider_init,
+and must not depend on libcrypto. Portable C implementations deliberately avoid
+reusing libcrypto's non-FIPS objects or architecture-specific defines. Normal
+libcrypto retains its existing assembly acceleration.
+
+Makefile.sources is derived from the recursive sources of providers/libfips.a
+and providers/fips in upstream configdata %unified_info, configured with:
+  Configure BSD-x86_64 enable-fips no-asm no-tests no-acvp-tests
+and base's disabled algorithms. Include ecp_nistp{224,256,384,521}.c and
+ecp_nistputil.c: base's universal configuration enables these on 64-bit little
+endian targets, and the source files guard unsupported targets themselves.
+Keep the full source list, including upstream common implementation sources;
+section garbage collection and the export map discard unreachable helpers.
+Regenerate and rerun self-tests when importing OpenSSL. Do not mix source
+versions or replace this module with a validated module without following that
+module's Security Policy and rechecking application compatibility.
+
+fips_build.h overrides only this provider's inherited disabled POST/security
+checks and assembly selection. Base configuration disables ACVP test hooks.
+All installed module transformations must precede fipsinstall provisioning.
+The existing cache scans only top-level /lib and /usr/lib shared libraries, so
+/usr/lib/ossl-modules/fips.so remains standalone.

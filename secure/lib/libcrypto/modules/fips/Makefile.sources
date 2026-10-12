@@ -1,0 +1,127 @@
+# Generated portable source inventory; see README.
+SRCS+= ecp_nistp224.c ecp_nistp256.c ecp_nistp384.c ecp_nistp521.c
+SRCS+= ecp_nistputil.c der_digests_gen.c der_dsa_gen.c der_ec_gen.c
+SRCS+= der_ecx_gen.c der_ml_dsa_gen.c der_rsa_gen.c der_slh_dsa_gen.c
+SRCS+= der_wrap_gen.c aes_cbc.c aes_core.c aes_ecb.c
+SRCS+= aes_misc.c asn1_dsa.c bn_add.c bn_asm.c
+SRCS+= bn_blind.c bn_const.c bn_conv.c bn_ctx.c
+SRCS+= bn_dh.c bn_div.c bn_exp.c bn_exp2.c
+SRCS+= bn_gcd.c bn_gf2m.c bn_intern.c bn_kron.c
+SRCS+= bn_lib.c bn_mod.c bn_mont.c bn_mpi.c
+SRCS+= bn_mul.c bn_nist.c bn_prime.c bn_rand.c
+SRCS+= bn_recp.c bn_rsa_fips186_4.c bn_shift.c bn_sqr.c
+SRCS+= bn_sqrt.c bn_word.c bsearch.c buffer.c
+SRCS+= cmac.c context.c core_algorithm.c core_fetch.c
+SRCS+= core_namemap.c cpuid.c cryptlib.c ctype.c
+SRCS+= der_writer.c des_enc.c ecb3_enc.c fcrypt_b.c
+SRCS+= set_key.c dh_backend.c dh_check.c dh_gen.c
+SRCS+= dh_group_params.c dh_kdf.c dh_key.c dh_lib.c
+SRCS+= dsa_backend.c dsa_check.c dsa_gen.c dsa_key.c
+SRCS+= dsa_lib.c dsa_ossl.c dsa_sign.c dsa_vrf.c
+SRCS+= curve25519.c f_impl32.c f_impl64.c curve448.c
+SRCS+= curve448_tables.c eddsa.c f_generic.c scalar.c
+SRCS+= ec2_oct.c ec2_smpl.c ec_asn1.c ec_backend.c
+SRCS+= ec_check.c ec_curve.c ec_cvt.c ec_key.c
+SRCS+= ec_kmeth.c ec_lib.c ec_mult.c ec_oct.c
+SRCS+= ecdh_kdf.c ecdh_ossl.c ecdsa_ossl.c ecdsa_sign.c
+SRCS+= ecdsa_vrf.c ecp_mont.c ecp_nist.c ecp_oct.c
+SRCS+= ecp_smpl.c ecx_backend.c ecx_key.c asymcipher.c
+SRCS+= dh_support.c digest.c ec_support.c evp_enc.c
+SRCS+= evp_fetch.c evp_lib.c evp_rand.c evp_utils.c
+SRCS+= exchange.c kdf_lib.c kdf_meth.c kem.c
+SRCS+= keymgmt_lib.c keymgmt_meth.c mac_lib.c mac_meth.c
+SRCS+= p_lib.c pmeth_check.c pmeth_gn.c pmeth_lib.c
+SRCS+= s_lib.c signature.c skeymgmt_meth.c ex_data.c
+SRCS+= ffc_backend.c ffc_dh.c ffc_key_generate.c ffc_key_validate.c
+SRCS+= ffc_params.c ffc_params_generate.c ffc_params_validate.c hashfunc.c
+SRCS+= hashtable.c hmac.c initthread.c lhash.c
+SRCS+= mem_clr.c ml_dsa_encoders.c ml_dsa_key.c ml_dsa_key_compress.c
+SRCS+= ml_dsa_matrix.c ml_dsa_ntt.c ml_dsa_params.c ml_dsa_sample.c
+SRCS+= ml_dsa_sign.c ml_kem.c cbc128.c ccm128.c
+SRCS+= cfb128.c ctr128.c gcm128.c ofb128.c
+SRCS+= wrap128.c xts128.c xts128gb.c o_str.c
+SRCS+= packet.c param_build.c param_build_set.c params.c
+SRCS+= params_dup.c params_from_text.c params_idx.c defn_cache.c
+SRCS+= property.c property_parse.c property_query.c property_string.c
+SRCS+= provider_core.c provider_predefined.c rand_lib.c rsa_backend.c
+SRCS+= rsa_chk.c rsa_crpt.c rsa_gen.c rsa_lib.c
+SRCS+= rsa_mp_names.c rsa_none.c rsa_oaep.c rsa_ossl.c
+SRCS+= rsa_pk1.c rsa_pss.c rsa_schemes.c rsa_sign.c
+SRCS+= rsa_sp800_56b_check.c rsa_sp800_56b_gen.c rsa_x931.c self_test_core.c
+SRCS+= keccak1600.c sha1dgst.c sha256.c sha3.c
+SRCS+= sha512.c slh_adrs.c slh_dsa.c slh_dsa_hash_ctx.c
+SRCS+= slh_dsa_key.c slh_fors.c slh_hash.c slh_hypertree.c
+SRCS+= slh_params.c slh_wots.c slh_xmss.c sparse_array.c
+SRCS+= stack.c api.c thread_none.c thread_posix.c
+SRCS+= thread_win.c arch.c internal.c threads_lib.c
+SRCS+= threads_none.c threads_pthread.c threads_win.c time.c
+SRCS+= bio_prov.c capabilities.c der_dsa_key.c der_dsa_sig.c
+SRCS+= der_ec_key.c der_ec_sig.c der_ecx_key.c der_ml_dsa_key.c
+SRCS+= der_rsa_key.c der_rsa_sig.c der_slh_dsa_key.c digest_to_nid.c
+SRCS+= provider_ctx.c provider_err.c provider_seeding.c provider_util.c
+SRCS+= securitycheck.c securitycheck_fips.c fips_entry.c fipsindicator.c
+SRCS+= fipsprov.c self_test.c self_test_kats.c rsa_enc.c
+SRCS+= cipher_aes.c cipher_aes_cbc_hmac_sha.c cipher_aes_cbc_hmac_sha1_hw.c cipher_aes_cbc_hmac_sha256_hw.c
+SRCS+= cipher_aes_ccm.c cipher_aes_ccm_hw.c cipher_aes_gcm.c cipher_aes_gcm_hw.c
+SRCS+= cipher_aes_hw.c cipher_aes_ocb.c cipher_aes_ocb_hw.c cipher_aes_wrp.c
+SRCS+= cipher_aes_xts.c cipher_aes_xts_fips.c cipher_aes_xts_hw.c cipher_cts.c
+SRCS+= cipher_tdes.c cipher_tdes_common.c cipher_tdes_hw.c ciphercommon.c
+SRCS+= ciphercommon_block.c ciphercommon_ccm.c ciphercommon_ccm_hw.c ciphercommon_gcm.c
+SRCS+= ciphercommon_gcm_hw.c ciphercommon_hw.c digestcommon.c sha2_prov.c
+SRCS+= sha3_prov.c dh_exch.c ecdh_exch.c ecx_exch.c
+SRCS+= kdf_exch.c hkdf.c kbkdf.c pbkdf2.c
+SRCS+= pbkdf2_fips.c sshkdf.c sskdf.c tls1_prf.c
+SRCS+= x942kdf.c ml_kem_kem.c mlx_kem.c rsa_kem.c
+SRCS+= dh_kmgmt.c dsa_kmgmt.c ec_kmgmt.c ecx_kmgmt.c
+SRCS+= kdf_legacy_kmgmt.c mac_legacy_kmgmt.c ml_dsa_kmgmt.c ml_kem_kmgmt.c
+SRCS+= mlx_kmgmt.c rsa_kmgmt.c slh_dsa_kmgmt.c cmac_prov.c
+SRCS+= gmac_prov.c hmac_prov.c kmac_prov.c drbg.c
+SRCS+= drbg_ctr.c drbg_hash.c drbg_hmac.c fips_crng_test.c
+SRCS+= test_rng.c dsa_sig.c ecdsa_sig.c eddsa_sig.c
+SRCS+= mac_legacy_sig.c ml_dsa_sig.c rsa_sig.c slh_dsa_sig.c
+SRCS+= aes_skmgmt.c generic.c ssl3_cbc.c tls_pad.c
+
+.PATH: /usr/obj/usr/src/openssl-fips-integration/upstream-build/providers/common/der
+.PATH: ${LCRYPTO_SRC}/crypto
+.PATH: ${LCRYPTO_SRC}/crypto/aes
+.PATH: ${LCRYPTO_SRC}/crypto/bn
+.PATH: ${LCRYPTO_SRC}/crypto/buffer
+.PATH: ${LCRYPTO_SRC}/crypto/cmac
+.PATH: ${LCRYPTO_SRC}/crypto/des
+.PATH: ${LCRYPTO_SRC}/crypto/dh
+.PATH: ${LCRYPTO_SRC}/crypto/dsa
+.PATH: ${LCRYPTO_SRC}/crypto/ec
+.PATH: ${LCRYPTO_SRC}/crypto/ec/curve448
+.PATH: ${LCRYPTO_SRC}/crypto/ec/curve448/arch_32
+.PATH: ${LCRYPTO_SRC}/crypto/ec/curve448/arch_64
+.PATH: ${LCRYPTO_SRC}/crypto/evp
+.PATH: ${LCRYPTO_SRC}/crypto/ffc
+.PATH: ${LCRYPTO_SRC}/crypto/hashtable
+.PATH: ${LCRYPTO_SRC}/crypto/hmac
+.PATH: ${LCRYPTO_SRC}/crypto/lhash
+.PATH: ${LCRYPTO_SRC}/crypto/ml_dsa
+.PATH: ${LCRYPTO_SRC}/crypto/ml_kem
+.PATH: ${LCRYPTO_SRC}/crypto/modes
+.PATH: ${LCRYPTO_SRC}/crypto/property
+.PATH: ${LCRYPTO_SRC}/crypto/rand
+.PATH: ${LCRYPTO_SRC}/crypto/rsa
+.PATH: ${LCRYPTO_SRC}/crypto/sha
+.PATH: ${LCRYPTO_SRC}/crypto/slh_dsa
+.PATH: ${LCRYPTO_SRC}/crypto/stack
+.PATH: ${LCRYPTO_SRC}/crypto/thread
+.PATH: ${LCRYPTO_SRC}/crypto/thread/arch
+.PATH: ${LCRYPTO_SRC}/providers/common
+.PATH: ${LCRYPTO_SRC}/providers/common/der
+.PATH: ${LCRYPTO_SRC}/providers/fips
+.PATH: ${LCRYPTO_SRC}/providers/implementations/asymciphers
+.PATH: ${LCRYPTO_SRC}/providers/implementations/ciphers
+.PATH: ${LCRYPTO_SRC}/providers/implementations/digests
+.PATH: ${LCRYPTO_SRC}/providers/implementations/exchange
+.PATH: ${LCRYPTO_SRC}/providers/implementations/kdfs
+.PATH: ${LCRYPTO_SRC}/providers/implementations/kem
+.PATH: ${LCRYPTO_SRC}/providers/implementations/keymgmt
+.PATH: ${LCRYPTO_SRC}/providers/implementations/macs
+.PATH: ${LCRYPTO_SRC}/providers/implementations/rands
+.PATH: ${LCRYPTO_SRC}/providers/implementations/signature
+.PATH: ${LCRYPTO_SRC}/providers/implementations/skeymgmt
+.PATH: ${LCRYPTO_SRC}/ssl/record/methods

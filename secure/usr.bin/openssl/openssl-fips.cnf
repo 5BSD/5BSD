@@ -1,0 +1,15 @@
+# Optional per-application strict profile. See openssl-fips(7).
+# First generate /etc/ssl/fipsmodule.cnf for the final installed module.
+config_diagnostics = 1
+openssl_conf = openssl_init
+.include /etc/ssl/fipsmodule.cnf
+[openssl_init]
+providers = providers
+alg_section = algorithms
+[providers]
+fips = fips_sect
+base = base_sect
+[base_sect]
+activate = 1
+[algorithms]
+default_properties = fips=yes

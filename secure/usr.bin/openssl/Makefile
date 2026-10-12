@@ -1,4 +1,10 @@
+.include <src.opts.mk>
+
 CONFS=	openssl.cnf
+.if ${MK_OPENSSL_FIPS} != "no"
+CONFS+= openssl-fips.cnf
+MAN+= openssl-fips.7
+.endif
 CONFSDIR=	/etc/ssl
 PROG=	openssl
 PACKAGE=	openssl

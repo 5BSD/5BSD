@@ -1,0 +1,74 @@
+.\" SPDX-License-Identifier: BSD-2-Clause
+.Dd October 12, 2026
+.Dt OPENSSL-FIPS 7
+.Os
+.Sh NAME
+.Nm openssl-fips
+.Nd optional strict OpenSSL provider profile
+.Sh DESCRIPTION
+5BSD builds and packages a self-contained OpenSSL FIPS provider by default.
+It is not loaded by the normal OpenSSL configuration.
+The 5BSD integration build is not a FIPS-validated cryptographic module;
+it identifies itself as not validated.
+Formal compliance requires a validated module and adherence to its certificate,
+security policy, operating environment, and entropy requirements.
+.Pp
+To provision the optional profile, run on the target system after the final
+module has been installed, stripped, and (if applicable) code-signed:
+.Bd -literal -offset indent
+umask 022
+OPENSSL_CONF=/dev/null openssl fipsinstall \
+    -pedantic -self_test_onload \
+    -module /usr/lib/ossl-modules/fips.so \
+    -out /etc/ssl/fipsmodule.cnf.new
+.Ed
+Only after that command succeeds, publish the configuration:
+.Bd -literal -offset indent
+mv /etc/ssl/fipsmodule.cnf.new /etc/ssl/fipsmodule.cnf
+.Ed
+The destination directory must be writable only by the administrator.
+Provision each target separately; do not copy installation success records
+from a build host or execute target binaries during a cross build.
+The configuration uses on-load self-tests.
+Repeat provisioning after every change to the module, including code signing.
+An update of an already strict installation must provision and test the new
+module and configuration together in its inactive boot environment.
+.Pp
+Select the profile for an application using:
+.Bd -literal -offset indent
+OPENSSL_CONF=/etc/ssl/openssl-fips.cnf application
+.Ed
+The profile loads the FIPS and base providers and requires
+.Li fips=yes
+for default algorithm fetches.
+It does not enable the default or legacy providers.
+Unavailable algorithms fail instead of falling back.
+Applications can override OpenSSL configuration and property queries;
+this profile is not system-wide enforcement and does not cover other crypto
+libraries or low-level APIs.
+Test applications before selecting it, especially TLS peers and old keys.
+.Pp
+The module is kept as its original standalone ELF file.
+Its integrity MAC covers the exact module bytes and is independent of 5BSD
+code-signing trust; it is not a publisher authentication signature.
+Do not strip, repack, or append a signature after generating its configuration.
+.Sh BUILD OPTIONS
+.Va WITHOUT_OPENSSL_FIPS
+omits the provider and profile.
+It does not change the ordinary default provider.
+The portable provider currently uses C implementations; normal OpenSSL's
+assembly implementations are unchanged.
+.Sh FILES
+.Bl -tag -width /usr/lib/ossl-modules/fips.so
+.It Pa /usr/lib/ossl-modules/fips.so
+Optional provider, shipped in the OpenSSL package.
+.It Pa /etc/ssl/openssl-fips.cnf
+Opt-in strict profile.
+.It Pa /etc/ssl/fipsmodule.cnf
+Locally provisioned module integrity configuration.
+.El
+.Sh SEE ALSO
+.Xr openssl-fipsinstall 1 ,
+.Xr config 5 ,
+.Xr fips_config 5 ,
+.Xr fips_module 7
