@@ -279,7 +279,10 @@ echo "BSDTIME_LIFECYCLE_$lc"
 fi
 if [ -s /root/vm-extra.sh ]; then
 	echo EXTRA_SCRIPT_BEGIN
-	sh /root/vm-extra.sh 2>&1 | tee "$R/extra.out"
+	( set +e; sh /root/vm-extra.sh; extra_status=$?
+	  echo "$extra_status" > "$R/extra.exit"; exit 0
+	) 2>&1 | tee "$R/extra.out"
+	echo "EXTRA_SCRIPT_STATUS=$(cat "$R/extra.exit")"
 	echo EXTRA_SCRIPT_END
 fi
 cd /usr/tests
@@ -429,6 +432,8 @@ if [ $forced = 0 ] && [ $rc = 0 ] && [ $guest_off = 1 ] &&
     { [ "$plane_off" = 1 ] && tr -d '\r' < "$log" | grep -aqx 'PLANEOFF_READY' ||
       { tr -d '\r' < "$log" | grep -aqx 'PLANEON_GATE_PASS' &&
         tr -d '\r' < "$log" | grep -aqx 'BSDTIME_LIFECYCLE_PASS'; }; } &&
+    { [ -z "$extra_script" ] ||
+      [ "$(cat "$work/results/kyua-results/extra.exit" 2>/dev/null)" = 0 ]; } &&
     grep -aq 'Powering system off' "$log" && ! grep -aqE "$fatal" "$log"; then
 	verdict=VM_CLEAN
 fi
