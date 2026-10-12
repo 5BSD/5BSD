@@ -159,6 +159,7 @@ MAN=	aac.4 \
 	disc.4 \
 	disk.4 \
 	divert.4 \
+	ipdivert.4 \
 	${_dpms.4} \
 	ds1307.4 \
 	ds3231.4 \
@@ -1177,5 +1178,8 @@ MLINKS+=zyd.4 if_zyd.4
 MANGROUPS+=		MAC_ABAC
 MAC_ABACPACKAGE=	mac-abac
 MAC_ABAC=		mac_abac.4
+
+# OpenBSD PF manual pages (pf, pflog, pflow, pfsync, divert).
+.PATH: ${SRCTOP}/contrib/openbsd-pf/share/man/man4
 
 .include <bsd.prog.mk>

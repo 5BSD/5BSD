@@ -90,6 +90,20 @@ Anchor names with characters after the terminating null byte are
 considered invalid; if used in an ioctl,
 .Er EINVAL
 will be returned.
+.\" 5BSD: VNET
+.Ss Virtual network stacks
+On 5BSD every
+.Xr vnet 9
+runs its own packet filter: rulesets, anchors, states, tables, interfaces
+and the
+.Xr pflog 4 ,
+.Xr pfsync 4
+and
+.Xr pflow 4
+interfaces belong to the vnet, and the
+.Nm
+device acts on the vnet of the process that opened it.
+Memory pool limits are shared; only the host may change them.
 .Sh IOCTL INTERFACE
 .Nm
 supports the following

@@ -584,6 +584,24 @@ Similar to
 this rule only applies to packets of sockets owned by the specified
 .Ar group .
 .Pp
+.\" 5BSD: jail
+.It Cm jail Ar jail
+This rule only applies to packets of sockets in the specified
+.Xr jail 8 ,
+given by name or jail ID; 0 is the host.
+Like
+.Cm user ,
+it applies to TCP and UDP only, accepts lists, ranges and the operators
+of
+.Cm port ,
+and never matches packets that are only forwarded.
+Names are resolved when the ruleset is loaded; a nested jail is named
+.Ar parent . Ns Ar child
+and a rule for a jail does not match its children.
+Because the jail of the socket decides, this also separates jails that
+share the host's addresses.
+This option is a 5BSD extension.
+.Pp
 .It Cm icmp-type Ar type Op Cm code Ar code
 .It Cm icmp6-type Ar type Op Cm code Ar code
 This rule only applies to ICMP or ICMP6 packets with the specified type
