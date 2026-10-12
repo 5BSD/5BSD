@@ -153,6 +153,13 @@ def run_suite(name, s, out, hosts, make):
     prepare = s.get('prepare', [])
     steps = ([invocation + ' ' + ' '.join(map(shlex.quote, prepare))]
              if prepare else [])
+    if s['host'] == 'helper':
+        # setup-helper-openbsd.sh disables PF on the traffic generator.
+        # Reference tests can leave it enabled: stock rules reject extension
+        # headers, and pf_state skips without a local regression anchor.
+        # Restore and verify that baseline before any fixture runs.
+        steps.insert(0, '(pfctl -d >/dev/null 2>&1; '
+                     'pfctl -si | grep -q "^Status: Disabled")')
     steps.append(invocation + ' regress')
     command = 'rm -f %s; touch %s; cd %s/%s && %s; echo REGRESS_EXIT $?' % (
         log, log, GUEST_SRC, s['dir'], ' && '.join(steps))

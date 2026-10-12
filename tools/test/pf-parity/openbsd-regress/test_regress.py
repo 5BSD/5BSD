@@ -16,7 +16,7 @@ spec.loader.exec_module(regress)
 
 class RunnerTests(unittest.TestCase):
     def result(self, console='REGRESS_EXIT 0\n', log='SUCCESS test/one\n',
-               ssh_rc=0, log_rc=0, targets=None, prepare=None):
+               ssh_rc=0, log_rc=0, targets=None, prepare=None, host='dut'):
         commands = []
 
         def transport(host, command, timeout, out=None):
@@ -29,13 +29,13 @@ class RunnerTests(unittest.TestCase):
             out.write_text(console)
             return ssh_rc
 
-        suite = {'host': 'dut', 'dir': 'regress/test'}
+        suite = {'host': host, 'dir': 'regress/test'}
         if targets is not None:
             suite['targets'] = targets
         if prepare is not None:
             suite['prepare'] = prepare
         with tempfile.TemporaryDirectory() as tmp, patch.object(regress, 'ssh', transport):
-            result = regress.run_suite('test', suite, Path(tmp), {'dut': 'dut'}, 'make')
+            result = regress.run_suite('test', suite, Path(tmp), {'dut': 'dut', 'helper': 'helper'}, 'make')
         return result, commands
 
     def test_transport_and_make_failures(self):
@@ -79,6 +79,16 @@ class RunnerTests(unittest.TestCase):
         _, commands = self.result(prepare=['pf_print_host.c'])
         self.assertIn('pf_print_host.c && make ', commands[1])
         self.assertIn(' regress; echo REGRESS_EXIT $?', commands[1])
+
+    def test_helper_baseline_is_verified_before_fixture(self):
+        r, commands = self.result(host='helper')
+        self.assertEqual(r['rc'], 0)
+        self.assertIn('(pfctl -d >/dev/null 2>&1; ', commands[1])
+        self.assertIn('grep -q "^Status: Disabled") && make ', commands[1])
+        r, _ = self.result(host='helper', console='REGRESS_EXIT 1\n', log='')
+        self.assertEqual(r['rc'], 1)
+        self.assertEqual(r['targets'], {})
+        self.assertFalse(r['suite_skipped'])
 
     def test_cli_defaults_and_failure_exit(self):
         for os_name, expected in [('5bsd', 'make -m /usr/local/share/pf-parity/mk -m /usr/share/mk'),
