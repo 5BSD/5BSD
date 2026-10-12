@@ -40,3 +40,14 @@ even when individual targets fail. SKIP and XFAIL remain distinct outcomes.
 The default PF gate excludes the separate route and rtable project.
 Run the transport/accounting tests without guests with:
   python3.12 tools/test/pf-parity/openbsd-regress/test_regress.py
+
+Saved pflow counter evidence
+
+`audit_pflow.py CAPTURE.pcap FLOW_OUTPUT --family 4|6` checks all four
+`flow.pl` export records against saved loopback IP packet lengths and counts.
+It accepts the 5BSD DLT_NULL and OpenBSD DLT_LOOP captures used here and
+rejects truncated packets or inconsistent counters. Preserve the original
+fixture output/diff alongside the capture: an accounting pass does not turn
+a strict fixture failure into a pass. `FIXTURE_EXIT=N`, when recorded in the
+output, is retained separately in the JSON result. This check runs offline
+and measures no timing or performance.
