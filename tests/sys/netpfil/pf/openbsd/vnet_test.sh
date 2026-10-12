@@ -175,6 +175,8 @@ teardown_live_states_head()
 teardown_live_states_body()
 {
 	pf_vnet_init
+	# The host keeps this one-rule ruleset throughout.
+	echo 'pass all' | pfctl -f - >/dev/null 2>&1
 
 	base_states=$(pool_inuse pfstate)
 	base_keys=$(pool_inuse pfstkey)
@@ -197,7 +199,6 @@ teardown_live_states_body()
 		    jexec pfvt$i pfctl -f - >/dev/null 2>&1 ||
 		    atf_fail "ruleset load in pfvt$i"
 		jexec pfvt$i pfctl -e >/dev/null 2>&1
-		echo 'pass all' | pfctl -f - >/dev/null 2>&1
 
 		# ICMP, UDP and a TCP connection that stays open.
 		ping -c 2 -i 0.2 192.0.2.10 >/dev/null 2>&1

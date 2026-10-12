@@ -90,6 +90,10 @@ pool_get(struct pool *pp, int flags)
 			return (NULL);
 	}
 	mflags = (flags & PR_WAITOK) ? M_WAITOK : M_NOWAIT;
+	/* A caller that accepts failure does not sleep under pf's locks. */
+	if ((flags & (PR_WAITOK | PR_LIMITFAIL)) == (PR_WAITOK | PR_LIMITFAIL) &&
+	    obsd_pf_nosleep())
+		mflags = M_NOWAIT;
 	if (flags & PR_ZERO)
 		mflags |= M_ZERO;
 	v = uma_zalloc(pp->pr_zone, mflags);
@@ -797,7 +801,14 @@ obsd_hook_add(struct ifnet *ifp, struct task *t, int kind)
 {
 	struct obsd_ifhook *h;
 
-	h = malloc(sizeof(*h), M_PF, M_WAITOK | M_ZERO);
+	/* pf adds hooks with its (non-sleepable) lock held. */
+	h = malloc(sizeof(*h), M_PF, (obsd_pf_nosleep() ?
+	    M_NOWAIT | M_USE_RESERVE : M_WAITOK) | M_ZERO);
+	if (h == NULL) {
+		printf("pf: no memory for an interface hook on %s\n",
+		    ifp->if_xname);
+		return;
+	}
 	h->h_ifp = ifp;
 	h->h_task = t;
 	h->h_kind = kind;

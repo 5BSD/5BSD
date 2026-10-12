@@ -745,19 +745,68 @@ obsd_in_pcbref(struct inpcb *inp)
 	return (inp);
 }
 
+/*
+ * pf drops pcb references with its own locks held, while the stack holds
+ * the pcb lock when it calls into pf: never take the pcb lock here.  A
+ * reference that is not the last is released directly; the last one (the
+ * stack already freed the pcb) is released from a task.
+ */
+struct obsd_pcbrele {
+	STAILQ_ENTRY(obsd_pcbrele) r_next;
+	struct inpcb	*r_inp;
+};
+static STAILQ_HEAD(, obsd_pcbrele) obsd_pcbrele_q =
+    STAILQ_HEAD_INITIALIZER(obsd_pcbrele_q);
+static struct mtx obsd_pcbrele_mtx;
+MTX_SYSINIT(obsd_pcbrele, &obsd_pcbrele_mtx, "pf pcb release", MTX_DEF);
+static void obsd_pcbrele_run(void *);
+static struct task obsd_pcbrele_task =
+    TASK_INITIALIZER(obsd_pcbrele_run, NULL);
+
+static void
+obsd_pcbrele_run(void *arg)
+{
+	struct obsd_pcbrele *r;
+	struct inpcb *inp;
+
+	for (;;) {
+		mtx_lock(&obsd_pcbrele_mtx);
+		r = STAILQ_FIRST(&obsd_pcbrele_q);
+		if (r != NULL)
+			STAILQ_REMOVE_HEAD(&obsd_pcbrele_q, r_next);
+		mtx_unlock(&obsd_pcbrele_mtx);
+		if (r == NULL)
+			break;
+		inp = r->r_inp;
+		free(r, M_PF);
+		INP_RLOCK(inp);
+		if (!in_pcbrele_rlocked(inp))
+			INP_RUNLOCK(inp);
+	}
+}
+
 void
 obsd_in_pcbunref(struct inpcb *inp)
 {
+	struct obsd_pcbrele *r;
+
 	if (inp == NULL)
 		return;
-	if (rw_wowned(&inp->inp_lock)) {
-		/* Called under the pcb lock (in_pcbfree hook): not the last ref. */
-		(void)refcount_release(&inp->inp_refcount);
+	if (refcount_release_if_not_last(&inp->inp_refcount))
+		return;
+	r = malloc(sizeof(*r), M_PF, M_NOWAIT);
+	if (r == NULL) {
+		/* Last reference and no memory: release it here. */
+		INP_RLOCK(inp);
+		if (!in_pcbrele_rlocked(inp))
+			INP_RUNLOCK(inp);
 		return;
 	}
-	INP_RLOCK(inp);
-	if (!in_pcbrele_rlocked(inp))
-		INP_RUNLOCK(inp);
+	r->r_inp = inp;
+	mtx_lock(&obsd_pcbrele_mtx);
+	STAILQ_INSERT_TAIL(&obsd_pcbrele_q, r, r_next);
+	mtx_unlock(&obsd_pcbrele_mtx);
+	task_add(systq, &obsd_pcbrele_task);
 }
 
 /* ------------------------------------------------------------------ */
