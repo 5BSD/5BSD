@@ -1,5 +1,5 @@
 .\" SPDX-License-Identifier: BSD-2-Clause
-.Dd October 10, 2026
+.Dd October 11, 2026
 .Dt BSDLOG 8
 .Os
 .Sh NAME
@@ -51,6 +51,17 @@ refilling its ring is requeued after its configured drain batch, allowing
 other ready sessions to run.
 This is a work-count bound, not a real-time latency guarantee for storage
 operations or flushes.
+.Pp
+Sessions speak the FIDL library
+.Sy bsd.log.v1
+.Pq Pa /usr/share/fidl/logcmp.fidl ;
+see
+.Xr fidl 7 .
+A session negotiates the wire version first.
+Each request is checked by the record rules of the earlier wire format; a
+request before negotiation or outside those rules, an unknown method, a
+malformed frame, a pre-FIDL record or an unexpected descriptor ends the
+session.
 .Pp
 Retained-record queries are served from the private store and are always
 restricted to the authenticated switchboard client label associated with the
@@ -238,4 +249,5 @@ Existing sessions are preserved; clients must handle connection failure.
 .Xr liblogcmp 3 ,
 .Xr libshmring 3 ,
 .Xr capsicum 4 ,
+.Xr fidl 7 ,
 .Xr switchboard 8

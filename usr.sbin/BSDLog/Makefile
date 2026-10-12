@@ -9,11 +9,13 @@ CFLAGS+=	-I${SRCTOP}/lib/libauditcmp
 CFLAGS+=	-I${SRCTOP}/lib/libcapreclaim
 CFLAGS+=	-I${SRCTOP}/lib/libchannel
 CFLAGS+=	-I${SRCTOP}/lib/liblogcmp
+CFLAGS+=	-I${FIDLGEN.logcmp}
+CFLAGS+=	-I${SRCTOP}/lib/libfidl/include
 CFLAGS+=	-I${SRCTOP}/lib/libservice
 CFLAGS+=	-I${SRCTOP}/lib/libshmring
 CFLAGS+=	-I${SRCTOP}/contrib/libucl/include
 CFLAGS+=	-I${SRCTOP}/sys
-LIBADD=		auditcmp capreclaim channel logcmp md pthread service shmring ucl
+LIBADD=		auditcmp capreclaim channel fidl_bsd logcmp md pthread service shmring ucl
 
 DIRS+=		LOGCMP_CAP LOGCMP_CAP_UNITS LOGCMP_CAP_UNIT LOGCMP_CAP_BIN \
 		LOGCMP_CAP_CONFIG
@@ -43,6 +45,13 @@ CONFSDIR=	${LOGCMP_CAP_CONFIG}
 CONFSNAME_capbundle/bsdlog.conf=	bsdlog.conf
 CONFSDIRPACKAGE=	bsdlog
 CONFSPACKAGE=	bsdlog
+
+# Bindings generated at build time (fidl-bindings.mk).
+FIDL_BINDINGS+=	logcmp
+FIDL_SCHEMAS.logcmp=	lib/libfidl/tests/zx.fidl \
+	lib/liblogcmp/logcmp.fidl
+FIDL_LIBRARY.logcmp=	bsd.log.v1
+.include "${SRCTOP}/lib/libfidl/fidl-bindings.mk"
 
 HAS_TESTS=
 SUBDIR.${MK_TESTS}+=	tests

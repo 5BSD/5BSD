@@ -17,6 +17,8 @@
 #include <string.h>
 #include <unistd.h>
 
+#include <fidl/bsd.log.v1/c/bsd.h>
+#include <fidl/bsd/sync_c.h>
 #include <libservice.h>
 #include <logcmp.h>
 #include <logcmp_server.h>
@@ -30,8 +32,15 @@ union wire_buffer {
 	uint8_t bytes[LOGCMP_MAX_MESSAGE];
 };
 
+/*
+ * The provider is driven with the generated bsd.log.v1 client bindings;
+ * call() keeps the test bodies in historical LOGC records by converting each
+ * request to its method and each result back.  Raw fixtures carry
+ * hand-built frames on a libservice session instead.
+ */
 struct fixture {
-	struct service_session *session;
+	struct fidl_bsd_connection *connection;
+	struct service_session *session;	/* raw fixtures only */
 	pid_t child;
 };
 
@@ -107,9 +116,124 @@ channel_pair(int *client, int *provider)
 	ATF_REQUIRE_EQ(1, receive.nfds);
 }
 
+struct result {
+	bool done;
+	int error;		/* transport */
+	int status;		/* application errno */
+	union wire_buffer *out;
+	size_t length;		/* reply payload bytes */
+};
+
+static void
+on_info(void *context, int error, struct bsd_log_v1_ProtocolInfo *value)
+{
+	struct result *r = context;
+	r->done = true;
+	r->error = error;
+	if (error == 0 && value->wire_version != LOGCMP_WIRE_VERSION)
+		r->error = EPROTONOSUPPORT;
+}
+
+static void
+on_hello(void *context, int error, struct bsd_log_v1_Limits *value)
+{
+	struct result *r = context;
+	struct logcmp_hello_reply *hello = (void *)(r->out->bytes +
+	    sizeof(struct logcmp_msg));
+
+	r->done = true;
+	r->error = error;
+	if (error != 0)
+		return;
+	hello->features = value->features;
+	hello->ring_size = value->ring_size;
+	hello->max_record = value->max_record;
+	hello->max_text = value->max_text;
+	hello->max_fields = value->max_fields;
+	hello->minimum_severity = value->minimum_severity;
+	r->length = (value->features & LOGCMP_FEATURE_INTEREST) != 0 ?
+	    sizeof(*hello) : offsetof(struct logcmp_hello_reply,
+	    minimum_severity);
+}
+
+static void
+on_stats(void *context, int error, struct bsd_log_v1_Stats *value)
+{
+	struct result *r = context;
+	struct logcmp_stats *stats = (void *)(r->out->bytes +
+	    sizeof(struct logcmp_msg));
+
+	r->done = true;
+	r->error = error;
+	if (error != 0)
+		return;
+	stats->accepted = value->accepted;
+	stats->rejected = value->rejected;
+	stats->client_dropped = value->client_dropped;
+	stats->provider_filtered = value->provider_filtered;
+	stats->provider_rate_limited = value->provider_rate_limited;
+	stats->last_sequence = value->last_sequence;
+	r->length = sizeof(*stats);
+}
+
+static void
+on_query(void *context, int error, struct bsd_log_v1_Log_Query_Result *value)
+{
+	struct result *r = context;
+	struct logcmp_query_reply *query = (void *)(r->out->bytes +
+	    sizeof(struct logcmp_msg));
+
+	r->done = true;
+	r->error = error;
+	if (error != 0)
+		return;
+	if (value->tag == bsd_log_v1_Log_Query_Result_err_tag) {
+		r->status = (int)value->value.err;
+		return;
+	}
+	query->cursor.generation = value->value.response.generation;
+	query->cursor.offset = value->value.response.offset;
+	query->result = value->value.response.found;
+	query->record_length = (uint32_t)value->value.response.record_size;
+	memcpy(query + 1, value->value.response.record,
+	    value->value.response.record_size);
+	r->length = sizeof(*query) + value->value.response.record_size;
+}
+
+#define	ON_EMPTY(name, type)						\
+static void								\
+name(void *context, int error, struct type *value)			\
+{									\
+	struct result *r = context;					\
+	r->done = true;							\
+	r->error = error;						\
+	if (error == 0 && value->tag == type##_err_tag)			\
+		r->status = (int)value->value.err;			\
+}
+ON_EMPTY(on_attach, bsd_log_v1_Log_Attach_Result)
+ON_EMPTY(on_write, bsd_log_v1_Log_Write_Result)
+ON_EMPTY(on_flush, bsd_log_v1_Log_Flush_Result)
+ON_EMPTY(on_detach, bsd_log_v1_Log_Detach_Result)
+
+static int
+wait_result(struct fixture *fixture, struct result *r)
+{
+	struct timespec deadline;
+	int error;
+
+	ATF_REQUIRE_EQ(0, fidl_bsd_sync_deadline(&deadline, 5000));
+	error = fidl_bsd_sync_wait(fixture->connection, &r->done, &deadline);
+	if (error == 0)
+		error = r->error;
+	return (error);
+}
+
 static void
 fixture_create(struct fixture *fixture, int backend_error)
 {
+	struct fidl_bsd_empty empty = { 0 };
+	struct result r = { 0 };
+	uint32_t txid;
 	int client, provider;
 
 	memset(fixture, 0, sizeof(*fixture));
@@ -122,6 +246,51 @@ fixture_create(struct fixture *fixture, int backend_error)
 		    64U * 1024, backend_error));
 	}
 	close(provider);
+	ATF_REQUIRE_EQ(0, fidl_bsd_connection_create(client, FIDL_BSD_CLIENT,
+	    &fixture->connection));
+	/* As liblogcmp: ATTACH descriptors keep their own inheritance. */
+	fidl_bsd_connection_preserve_sent_inheritance(fixture->connection);
+	ATF_REQUIRE_EQ(0, bsd_log_v1_Log_GetProtocolInfo(fixture->connection,
+	    &empty, on_info, &r, &txid));
+	ATF_REQUIRE_EQ(0, wait_result(fixture, &r));
+}
+
+/* A fresh provider whose FIDL session has not negotiated. */
+static void
+fixture_create_unnegotiated(struct fixture *fixture)
+{
+	int client, provider;
+
+	memset(fixture, 0, sizeof(*fixture));
+	channel_pair(&client, &provider);
+	fixture->child = fork();
+	ATF_REQUIRE(fixture->child >= 0);
+	if (fixture->child == 0) {
+		close(client);
+		_exit(logcmp_test_serve(provider, "org.test.log",
+		    64U * 1024, 0));
+	}
+	close(provider);
+	ATF_REQUIRE_EQ(0, fidl_bsd_connection_create(client, FIDL_BSD_CLIENT,
+	    &fixture->connection));
+}
+
+/* A fresh provider behind a raw libservice session. */
+static void
+fixture_create_raw(struct fixture *fixture)
+{
+	int client, provider;
+
+	memset(fixture, 0, sizeof(*fixture));
+	channel_pair(&client, &provider);
+	fixture->child = fork();
+	ATF_REQUIRE(fixture->child >= 0);
+	if (fixture->child == 0) {
+		close(client);
+		_exit(logcmp_test_serve(provider, "org.test.log",
+		    64U * 1024, 0));
+	}
+	close(provider);
 	ATF_REQUIRE_EQ(0, service_session_create(client, &fixture->session));
 }
 
@@ -130,46 +299,103 @@ fixture_destroy(struct fixture *fixture, int expected_status)
 {
 	int status;
 
-	service_session_close(fixture->session);
+	if (fixture->connection != NULL)
+		fidl_bsd_connection_destroy(fixture->connection);
+	if (fixture->session != NULL)
+		service_session_close(fixture->session);
 	ATF_REQUIRE_EQ(fixture->child, waitpid(fixture->child, &status, 0));
 	ATF_REQUIRE(WIFEXITED(status));
 	ATF_CHECK_EQ(expected_status, WEXITSTATUS(status));
 }
 
+/*
+ * Send one request record as its bsd.log.v1 method and rebuild the result as
+ * the reply record.  -1 when the session failed.
+ */
 static int
 call(struct fixture *fixture, uint16_t opcode, const void *payload,
     size_t payload_length, const int *fds, size_t nfds,
     union wire_buffer *reply, size_t *reply_length)
 {
-	struct service_call_options options = SERVICE_CALL_OPTIONS_INITIALIZER;
-	struct service_message outgoing;
-	struct service_reply incoming;
-	union wire_buffer request;
+	struct fidl_bsd_empty empty = { 0 };
+	struct result r = { .out = reply };
 	struct logcmp_msg *message;
+	uint32_t txid;
+	int error;
 
-	memset(&request, 0, sizeof(request));
-	message = (void *)request.bytes;
-	ATF_REQUIRE_EQ(0, logcmp_message_init(message, opcode, 0));
-	if (payload_length != 0)
-		memcpy(message + 1, payload, payload_length);
-	ATF_REQUIRE_EQ(0, logcmp_validate_message(message,
-	    sizeof(*message) + payload_length, LOGCMP_MESSAGE_REQUEST));
-	outgoing = (struct service_message){
-		.size = sizeof(outgoing),
-		.data = request.bytes,
-		.length = sizeof(*message) + payload_length,
-		.fds = fds,
-		.nfds = nfds,
-	};
-	memset(&incoming, 0, sizeof(incoming));
-	incoming.size = sizeof(incoming);
-	incoming.data = reply->bytes;
-	incoming.capacity = sizeof(reply->bytes);
-	options.timeout_ms = 2000;
-	if (service_session_call(fixture->session, &outgoing, &incoming,
-	    &options) == -1)
-		return (-1);
-	*reply_length = incoming.length;
+	memset(reply, 0, sizeof(*reply));
+	switch (opcode) {
+	case LOGCMP_OP_HELLO: {
+		const struct logcmp_hello *hello = payload;
+		struct bsd_log_v1_HelloRequest q = { hello->features };
+
+		ATF_REQUIRE_EQ(0, nfds);
+		error = bsd_log_v1_Log_Hello(fixture->connection, &q, on_hello,
+		    &r, &txid);
+		break;
+	}
+	case LOGCMP_OP_ATTACH: {
+		const struct logcmp_attach_request *a = payload;
+		struct bsd_log_v1_AttachRequest q = { a->generation,
+		    a->ring_size, a->max_record, fds[0], fds[1], fds[2],
+		    fds[3], fds[4] };
+
+		ATF_REQUIRE_EQ(LOGCMP_ATTACH_FD_COUNT, nfds);
+		error = bsd_log_v1_Log_Attach(fixture->connection, &q,
+		    on_attach, &r, &txid);
+		break;
+	}
+	case LOGCMP_OP_WRITE: {
+		struct bsd_log_v1_Record q = {
+		    __DECONST(uint8_t *, payload), payload_length };
+
+		error = bsd_log_v1_Log_Write(fixture->connection, &q, on_write,
+		    &r, &txid);
+		break;
+	}
+	case LOGCMP_OP_FLUSH:
+		error = bsd_log_v1_Log_Flush(fixture->connection, &empty,
+		    on_flush, &r, &txid);
+		break;
+	case LOGCMP_OP_STATS:
+		error = bsd_log_v1_Log_GetStats(fixture->connection, &empty,
+		    on_stats, &r, &txid);
+		break;
+	case LOGCMP_OP_DETACH:
+		error = bsd_log_v1_Log_Detach(fixture->connection, &empty,
+		    on_detach, &r, &txid);
+		break;
+	case LOGCMP_OP_QUERY: {
+		const struct logcmp_query_request *query = payload;
+		struct bsd_log_v1_QueryRequest q = {
+			.generation = query->cursor.generation,
+			.offset = query->cursor.offset,
+			.minimum_severity = query->minimum_severity,
+			.match_flags = query->match_flags,
+			.from_ns = query->from_ns,
+			.to_ns = query->to_ns,
+			.subsystem = __DECONST(uint8_t *, query->subsystem),
+			.subsystem_size = query->subsystem_length,
+			.category = __DECONST(uint8_t *, query->category),
+			.category_size = query->category_length
+		};
+
+		error = bsd_log_v1_Log_Query(fixture->connection, &q, on_query,
+		    &r, &txid);
+		break;
+	}
+	default:
+		atf_tc_fail("unexpected opcode %u", opcode);
+	}
+	if (error == 0)
+		error = wait_result(fixture, &r);
+	if (error != 0)
+		return (errno = error, -1);
+	message = (void *)reply->bytes;
+	message->magic = LOGCMP_MAGIC;
+	message->opcode = opcode;
+	message->status = -r.status;
+	*reply_length = sizeof(*message) + (r.status == 0 ? r.length : 0);
 	return (0);
 }
 
@@ -317,7 +543,7 @@ ATF_TC_BODY(provider_dispatch_and_ring_lifecycle, tc)
 	ATF_CHECK_EQ(0, reply_status(&reply, length, LOGCMP_OP_FLUSH));
 
 	attach_ring(&fixture, 10, &first, &first_wake, &status);
-	ATF_REQUIRE_EQ(0, status);
+	ATF_REQUIRE_EQ_MSG(0, status, "attach: %s", strerror(status));
 	attach_ring(&fixture, 11, &duplicate, &duplicate_wake, &status);
 	ATF_CHECK_EQ(EBUSY, status);
 	shmring_close(duplicate);
@@ -440,21 +666,59 @@ ATF_TC_HEAD(provider_malformed_descriptor_is_terminal, tc)
 }
 ATF_TC_BODY(provider_malformed_descriptor_is_terminal, tc)
 {
-	union wire_buffer reply;
+	struct service_call_options options = SERVICE_CALL_OPTIONS_INITIALIZER;
+	/* A GetProtocolInfo frame header: txid, flags {2,0,0}, magic 1. */
+	struct {
+		uint32_t txid;
+		uint8_t flags[3], magic;
+		uint64_t ordinal;
+	} frame = { 1, { 2, 0, 0 }, 1, 1 };
+	struct service_message outgoing = { .size = sizeof(outgoing),
+		.data = &frame, .length = sizeof(frame) };
+	uint8_t storage[64];
+	struct service_reply incoming = { .size = sizeof(incoming),
+		.data = storage, .capacity = sizeof(storage) };
+	struct fidl_bsd_empty empty = { 0 };
+	struct logcmp_msg legacy;
 	struct logcmp_hello hello;
+	union wire_buffer reply;
 	struct fixture fixture;
+	struct result r = { .out = &reply };
 	int pipefd[2];
-	size_t length;
+	uint32_t txid;
 
-	fixture_create(&fixture, 0);
+	options.timeout_ms = 2000;
+	/* An attached descriptor. */
 	ATF_REQUIRE_EQ(0, pipe(pipefd));
-	hello = (struct logcmp_hello){
-		.features = 0,
-	};
-	ATF_CHECK(call(&fixture, LOGCMP_OP_HELLO, &hello, sizeof(hello),
-	    &pipefd[1], 1, &reply, &length) == -1);
+	fixture_create_raw(&fixture);
+	outgoing.fds = &pipefd[1];
+	outgoing.nfds = 1;
+	ATF_CHECK_EQ(-1, service_session_call(fixture.session, &outgoing,
+	    &incoming, &options));
+	fixture_destroy(&fixture, 1);
 	close(pipefd[0]);
 	close(pipefd[1]);
+
+	/* A pre-FIDL HELLO record. */
+	fixture_create_raw(&fixture);
+	ATF_REQUIRE_EQ(0, logcmp_message_init(&legacy, LOGCMP_OP_STATS, 0));
+	outgoing = (struct service_message){ .size = sizeof(outgoing),
+		.data = &legacy, .length = sizeof(legacy) };
+	ATF_CHECK_EQ(-1, service_session_call(fixture.session, &outgoing,
+	    &incoming, &options));
+	fixture_destroy(&fixture, 1);
+
+	/* A method before GetProtocolInfo. */
+	fixture_create_unnegotiated(&fixture);
+	hello = (struct logcmp_hello){ .features = 0 };
+	{
+		struct bsd_log_v1_HelloRequest q = { hello.features };
+
+		ATF_REQUIRE_EQ(0, bsd_log_v1_Log_Hello(fixture.connection, &q,
+		    on_hello, &r, &txid));
+		ATF_CHECK(wait_result(&fixture, &r) != 0);
+	}
+	(void)empty;
 	fixture_destroy(&fixture, 1);
 }
 

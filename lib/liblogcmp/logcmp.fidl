@@ -1,0 +1,89 @@
+// SPDX-License-Identifier: BSD-2-Clause
+// system.Log (BSDLog): the control plane of the logging service.  Records
+// normally travel through a shared-memory ring the client attaches; Write
+// carries them inline before a ring exists.  The library name, ordinals and
+// layouts are a stable contract for wire major 1; incompatible changes need
+// a new major.  Identity never travels in a payload: the provider stamps the
+// accepted session's label and scopes every query to it.
+library bsd.log.v1;
+
+using zx;
+
+type ProtocolInfo = struct { wire_version uint32; };
+
+// LOGCMP_FEATURE_* bits the client supports.
+type HelloRequest = struct { features uint32; };
+type Limits = struct {
+    features uint32;
+    ring_size uint32;
+    max_record uint32;
+    max_text uint32;
+    max_fields uint32;
+    // Advisory producer interest; meaningful with LOGCMP_FEATURE_INTEREST.
+    minimum_severity uint32;
+};
+
+// A shared-memory ring for this session: the consumer ends of its
+// configuration, data, head and tail segments, and the wakeup reader.
+type AttachRequest = resource struct {
+    generation uint64;
+    ring_size uint32;
+    max_record uint32;
+    config zx.Handle;
+    data zx.Handle;
+    head zx.Handle;
+    tail zx.Handle;
+    wake zx.Handle;
+};
+
+// One typed record in the logcmp_record layout (header, then subsystem,
+// category, event name, message and attribute bytes).
+type Record = struct { record vector<uint8>:4096; };
+
+type Stats = struct {
+    accepted uint64;
+    rejected uint64;
+    client_dropped uint64;
+    provider_filtered uint64;
+    provider_rate_limited uint64;
+    last_sequence uint64;
+    client_dropped_by_severity array<uint64, 24>;
+    provider_rate_limited_by_severity array<uint64, 24>;
+};
+
+// A cursor (generation 0 starts at the oldest record), a severity floor,
+// LOGCMP_QUERY_MATCH_* flags, an optional time window (0 is unbounded) and
+// optional subsystem and category fragments.
+type QueryRequest = struct {
+    generation uint64;
+    offset uint64;
+    minimum_severity uint32;
+    match_flags uint32;
+    from_ns uint64;
+    to_ns uint64;
+    subsystem vector<uint8>:96;
+    category vector<uint8>:64;
+};
+// The cursor to resume with and, when found is true, one stored record.
+type QueryResult = struct {
+    generation uint64;
+    offset uint64;
+    found bool;
+    record vector<uint8>:4096;
+};
+
+// All errors are errno values.
+closed protocol Log {
+    strict GetProtocolInfo() -> (ProtocolInfo);
+    strict Hello(HelloRequest) -> (Limits);
+    strict Attach(AttachRequest) -> () error uint32;
+    strict Write(Record) -> () error uint32;
+    // Drain the ring and make accepted records durable.
+    strict Flush() -> () error uint32;
+    strict GetStats() -> (Stats);
+    strict Detach() -> () error uint32;
+    strict Query(QueryRequest) -> (QueryResult) error uint32;
+    // Records are waiting in the ring (the wakeup descriptor normally
+    // carries this edge).
+    strict Notify();
+};

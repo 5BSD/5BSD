@@ -169,7 +169,7 @@ SUBDIR_DEPEND_libgeom= libexpat libsbuf
 SUBDIR_DEPEND_librpcsec_gss= libgssapi
 .endif
 SUBDIR_DEPEND_libmagic= libz
-SUBDIR_DEPEND_liblogcmp= libservice libshmring
+SUBDIR_DEPEND_liblogcmp= libservice libshmring libfidl
 SUBDIR_DEPEND_libmemstat= libkvm
 SUBDIR_DEPEND_libnetworkcmp= libservice libshmring libfidl
 SUBDIR_DEPEND_libsysctlcmp= libservice libfidl

@@ -68,25 +68,34 @@ bundles that are no longer installed or running.
 
 ## Wire operations
 
-The protocol is `lib/liblogcmp/logcmp_protocol.h`: magic `LOGC`,
-Every message begins
-with a 16-byte `logcmp_msg` (magic, opcode, flags, status). A
-session opens with HELLO carrying a
-feature bitmap (`LOGCMP_FEATURE_INLINE`, `SHM_RING`, `TYPED_RECORDS`,
-`PRIVACY`, `TRACE_CONTEXT`, `EDGE_WAKEUP`, `SCOPED_QUERY`); the reply reports the granted features,
-`ring_size`, `max_record` (4096), `max_text`
-(2048) and `max_fields`.
+The control plane is the FIDL protocol `Log` in `lib/liblogcmp/logcmp.fidl`
+(library `bsd.log.v1`, installed as `/usr/share/fidl/logcmp.fidl`; see
+[FIDL and Capability IPC](../develop/fidl.md)); records themselves travel in
+the shared-memory ring. A session calls `GetProtocolInfo` first. `Hello`
+carries the client's feature bitmap (`LOGCMP_FEATURE_INLINE`, `SHM_RING`,
+`TYPED_RECORDS`, `PRIVACY`, `TRACE_CONTEXT`, `EDGE_WAKEUP`, `SCOPED_QUERY`,
+`INTEREST`); the reply reports the granted features, `ring_size`,
+`max_record` (4096), `max_text` (2048), `max_fields` and, with `INTEREST`,
+the advisory `minimum_severity`. Records and queries keep the
+`logcmp_record` layout of `logcmp_protocol.h`, carried as bytes.
 
-| Op | Request | Reply | Errors |
+| Method (probe opcode) | Request | Reply | Errors |
 |---|---|---|---|
-| 1 HELLO | `logcmp_hello` | `logcmp_hello_reply` | malformed request |
-| 2 ATTACH | `logcmp_attach_request` (generation, `ring_size`, `max_record`) + 5 fds in `logcmp_attach_fd_slot` order | header | `EINVAL` (ring shape or `max_record` over the session's limit), `EBUSY` (a ring is already attached) |
-| 3 NOTIFY | header | none (event; the worker drains) | none |
-| 4 WRITE | `logcmp_record` followed by subsystem, category, event name, message and `logcmp_attribute_wire` entries | header | `EINVAL` (malformed; counted as rejected), `EMSGSIZE` (over the session's `max_record`) |
-| 5 FLUSH | header | header, after every earlier record is durable | none |
-| 6 STATS | header | `logcmp_stats` (accepted, rejected, `client_dropped`, `provider_filtered`, `provider_rate_limited`, `last_sequence`, per-severity drop arrays) | none |
-| 7 DETACH | header | header | none |
-| 8 QUERY | `logcmp_query_request` (cursor, `minimum_severity`, `match_flags`, `from_ns`, `to_ns`, subsystem and category fragments) | `logcmp_query_reply` (cursor, result, `record_length`) followed by one record | `EINVAL` (inverted time range); end of scan signalled by result |
+| `Hello` (1) | features | limits | none |
+| `Attach` (2) | generation, `ring_size`, `max_record`, and the ring's config, data, head and tail segments and wakeup reader as descriptors | empty | `EINVAL` (ring shape or `max_record` over the session's limit), `EBUSY` (a ring is already attached) |
+| `Notify` (3) | empty, one-way | none (the worker drains) | none |
+| `Write` (4) | one record | empty | `EINVAL` (malformed; counted as rejected), `EMSGSIZE` (over the session's `max_record`) |
+| `Flush` (5) | empty | empty, after every earlier record is durable | storage errors |
+| `GetStats` (6) | empty | accepted, rejected, `client_dropped`, `provider_filtered`, `provider_rate_limited`, `last_sequence`, per-severity drop arrays | none |
+| `Detach` (7) | empty | empty | storage errors |
+| `Query` (8) | cursor, `minimum_severity`, `match_flags`, `from_ns`, `to_ns`, subsystem and category fragments | cursor, `found`, one record | `EINVAL` (inverted time range); end of scan signalled by `found` |
+
+The provider rebuilds each request as the historical `LOGC` record and checks
+it by the same rules (`logcmp_validate_message()`), so a request before
+negotiation or one those rules refuse ends the session, as do an unknown
+method, a malformed frame, a pre-FIDL record and an attached descriptor on a
+method that takes none. `usr.sbin/BSDLog/tests/evolution/logcmp_next.fidl` is
+the schema at `bsd:1` plus a method at `bsd:2` for the pairing test.
 
 Severities are `TRACE` 1, `DEBUG` 5, `INFO` 9, `WARN` 13, `ERROR` 17,
 `FATAL` 21 on a 1 to 24 scale; record kinds are `LOG`, `EVENT` and three
@@ -225,8 +234,8 @@ label.
 
 | Suite | Location | Installed under | What it proves |
 |---|---|---|---|
-| `config_test`, `session_test`, `store_test`, `store_limit_test`, `storage_test`, `provider_test`, `bundle_test.sh` (88 cases) | `usr.sbin/BSDLog/tests` | `/usr/tests/usr.sbin/BSDLog` | parser bounds, ring attach and drain, segment format and crash recovery, retention pruning, reclaim limits, the provider against `LOGCMP_TESTING` seams, and the installed bundle |
-| `logcmp_test`, `client_lifecycle_test` | `lib/liblogcmp/tests` | `/usr/tests/lib/liblogcmp` | wire encoding, the fake-service handshake, lazy open and fallback of `logcmp_log` |
+| `config_test`, `session_test`, `store_test`, `store_limit_test`, `storage_test`, `provider_test`, `evolution_test`, `bundle_test.sh` | `usr.sbin/BSDLog/tests` | `/usr/tests/usr.sbin/BSDLog` | parser bounds, ring attach and drain, segment format and crash recovery, retention pruning, reclaim limits, the provider's session code over a capability channel with the generated bindings (every method, a duplicate attach, sink failures, backend errors) and hand-built frames (attached descriptor, pre-FIDL record, before negotiation), the `bsd:1`/`bsd:2` pairing, and the installed bundle |
+| `logcmp_test`, `client_lifecycle_test` | `lib/liblogcmp/tests` | `/usr/tests/lib/liblogcmp` | the record rules; against a scripted `bsd.log.v1` provider over real channels that maps and drains the attached ring: lazy ring attach and promotion, reconnect without replay, malformed and timed-out replies, the pre-interest fallback, queries, and `logcmp_log` |
 | `logctl_test.sh` | `usr.sbin/logctl/tests` | `/usr/tests/usr.sbin/logctl` | every verb against `fake_logcmp`, `valid.conf` and `invalid.conf` |
 
 Run with `kyua test -k /usr/tests/usr.sbin/BSDLog/Kyuafile`; the suites are
@@ -239,7 +248,9 @@ provider `bsdlog` exports `session-start`, `record-write`, `record-drop`,
 
 ## Status and gaps
 
-Shipped and VM-proven: inline and ring ingestion, the segmented store with
+Shipped and VM-proven: inline and ring ingestion (control plane on FIDL
+`bsd.log.v1` since October 2026; unit, admission, quotas, storage and the
+ring are unchanged, and the provider and liblogcmp ship together), the segmented store with
 rotation, retention and crash recovery, scoped queries with subsystem,
 category and time filters, privacy classes, the owner reconcile, and the
 `logcmp_log` fallback path.  The inventory lists further query

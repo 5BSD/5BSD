@@ -13,6 +13,9 @@
 
 #include "logcmp_protocol.h"
 
+/* bsd.log.v1 wire major (logcmp.fidl). */
+#define	LOGCMP_WIRE_VERSION	1
+
 struct logcmp_client;
 struct logcmp_logger;
 

@@ -1,5 +1,13 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Scripted system.Log provider for the liblogcmp client tests.  It replaces
+ * libservice's service_open(): each call creates a real capability channel
+ * served by a bsd.log.v1 server on its own thread, which maps an attached
+ * ring and drains it as BSDLog would.  Faults are armed for the next call;
+ * malformed replies are written as raw frames on the request's own reply
+ * token, and transport failures close the session.  service_budget_timeout()
+ * is replaced so an armed timeout costs 300 ms, not the 30 s call deadline.
  */
 
 #include <sys/types.h>
@@ -15,6 +23,9 @@
 #include <string.h>
 #include <unistd.h>
 
+#include <assert.h>
+#include <channel.h>
+#include <fidl/bsd.log.v1/c/bsd.h>
 #include <libservice.h>
 #include <logcmp.h>
 #include <logcmp_server.h>
@@ -23,14 +34,16 @@
 #include "fake_service.h"
 #include "logcmp_wakeup.h"
 
-struct service_context { int unused; };
 struct service_session {
+	struct fidl_bsd_connection *connection;
 	unsigned ident;
 	struct shmring *ring;
 	int wake_fd;
 };
 
-static struct service_context context;
+int service_open(const char *, int *);
+int service_budget_timeout(uint32_t *);
+
 static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
 static unsigned created, closed, writes, concurrent, max_concurrent;
 static unsigned attaches, detaches;
@@ -152,7 +165,6 @@ fake_service_fail_operation(uint16_t opcode, int error)
 	unsigned name(void) { unsigned value; pthread_mutex_lock(&lock); \
 	value = field; pthread_mutex_unlock(&lock); return (value); }
 COUNTER(fake_service_created, created)
-COUNTER(fake_service_closed, closed)
 COUNTER(fake_service_writes, writes)
 COUNTER(fake_service_max_concurrent, max_concurrent)
 COUNTER(fake_service_loss_records, loss_records)
@@ -220,90 +232,12 @@ inspect_record_locked(const struct logcmp_record *record)
 	loss_records++;
 }
 
-int
-service_acquire(struct service_context **result)
-{
-
-	if (result == NULL) {
-		errno = EINVAL;
-		return (-1);
-	}
-	*result = &context;
-	return (0);
-}
-
-void
-service_release(struct service_context *service __unused)
-{
-}
-
-int
-service_connect(struct service_context *service, const char *name, int *fd)
-{
-
-	if (service != &context || name == NULL ||
-	    strcmp(name, LOGCMP_INTERFACE) != 0 || fd == NULL) {
-		errno = EINVAL;
-		return (-1);
-	}
-	*fd = open("/dev/null", O_RDONLY | O_CLOEXEC);
-	return (*fd == -1 ? -1 : 0);
-}
-
-int
-service_open(const char *name, int *fd)
-{
-	struct service_context *ctx;
-	int rv;
-
-	if (service_acquire(&ctx) == -1)
-		return (-1);
-	rv = service_connect(ctx, name, fd);
-	service_release(ctx);
-	return (rv);
-}
-
-int
-service_session_create(int fd, struct service_session **result)
-{
-	struct service_session *session;
-
-	if (fd < 0 || result == NULL) {
-		errno = EINVAL;
-		return (-1);
-	}
-	session = calloc(1, sizeof(*session));
-	if (session == NULL)
-		return (-1);
-	session->wake_fd = -1;
-	close(fd);
-	pthread_mutex_lock(&lock);
-	session->ident = ++created;
-	pthread_mutex_unlock(&lock);
-	*result = session;
-	return (0);
-}
-
-void
-service_session_close(struct service_session *session)
-{
-
-	if (session == NULL)
-		return;
-	shmring_close(session->ring);
-	if (session->wake_fd >= 0)
-		close(session->wake_fd);
-	pthread_mutex_lock(&lock);
-	closed++;
-	pthread_mutex_unlock(&lock);
-	free(session);
-}
-
 static int
 attach_ring(struct service_session *session,
-    const struct service_message *outgoing)
+    const struct bsd_log_v1_AttachRequest *attach)
 {
-	const struct logcmp_attach_request *attach;
+	int fds[LOGCMP_ATTACH_FD_COUNT] = { attach->config, attach->data,
+	    attach->head, attach->tail, attach->wake };
 	struct shmring_fds consumer;
 	int *slots[] = { &consumer.config_fd, &consumer.data_fd,
 	    &consumer.head_fd, &consumer.tail_fd };
@@ -312,20 +246,19 @@ attach_ring(struct service_session *session,
 	int error;
 	uint64_t *tail;
 
-	if (session->ring != NULL || outgoing->nfds != LOGCMP_ATTACH_FD_COUNT)
+	if (session->ring != NULL)
 		return (errno = EPROTO, -1);
-	attach = (const void *)((const struct logcmp_msg *)outgoing->data + 1);
 	if ((attach->ring_size != 16U * 1024 &&
 	    attach->ring_size != 64U * 1024) ||
 	    attach->max_record != LOGCMP_MAX_RECORD || attach->generation == 0)
 		return (errno = EPROTO, -1);
 	memset(&consumer, -1, sizeof(consumer));
 	for (i = 0; i < nitems(slots); i++) {
-		*slots[i] = fcntl(outgoing->fds[i], F_DUPFD_CLOEXEC, 0);
+		*slots[i] = fcntl(fds[i], F_DUPFD_CLOEXEC, 0);
 		if (*slots[i] == -1)
 			goto fail;
 	}
-	session->wake_fd = fcntl(outgoing->fds[LOGCMP_ATTACH_FD_WAKE_READ],
+	session->wake_fd = fcntl(fds[LOGCMP_ATTACH_FD_WAKE_READ],
 	    F_DUPFD_CLOEXEC, 0);
 	if (session->wake_fd == -1 || logcmp_wakeup_validate_consumer(
 	    session->wake_fd) == -1 || shmring_open(&session->ring, &consumer,
@@ -407,154 +340,342 @@ drain_ring(struct service_session *session)
 	}
 }
 
-int
-service_session_fail(struct service_session *session __unused, int error)
-{
 
-	errno = error;
-	return (error > 0 && error <= ELAST ? 0 : -1);
+/* Sessions whose server has ended (waits briefly for teardown). */
+unsigned
+fake_service_closed(void)
+{
+	unsigned value;
+
+	usleep(50000);
+	pthread_mutex_lock(&lock);
+	value = closed;
+	pthread_mutex_unlock(&lock);
+	return (value);
 }
 
 int
-service_session_call(struct service_session *session,
-    const struct service_message *outgoing, struct service_reply *reply,
-    const struct service_call_options *options __unused)
+service_budget_timeout(uint32_t *ms)
 {
-	union {
-		max_align_t align;
-		uint8_t bytes[LOGCMP_MAX_MESSAGE];
-	} storage;
-	struct logcmp_hello_reply *hello;
-	struct logcmp_query_reply *query_reply;
-	struct logcmp_record *record;
-	const struct logcmp_query_request *query_request;
-	struct logcmp_stats *stats;
-	const struct logcmp_msg *request;
-	struct logcmp_msg *response;
-	enum fake_service_fault fault;
-	int failure, operation_error;
-	bool use_ring, old_hello;
-	size_t length;
+	if (ms == NULL)
+		return (errno = EINVAL, -1);
+	pthread_mutex_lock(&lock);
+	if (next_fault == FAKE_SERVICE_FAULT_TIMEOUT && *ms > 300)
+		*ms = 300;
+	pthread_mutex_unlock(&lock);
+	return (0);
+}
 
-	if (session == NULL || outgoing == NULL || reply == NULL ||
-	    outgoing->data == NULL || outgoing->length < sizeof(*request)) {
-		errno = EINVAL;
-		return (-1);
+/* A raw reply frame on the request's own reply token. */
+static void
+raw_reply(struct fidl_bsd_request *request, enum fake_service_fault fault)
+{
+	struct channel_message *native = __DECONST(struct channel_message *,
+	    fidl_bsd_request_native(request));
+	struct {
+		uint32_t txid;
+		uint8_t flags[3], magic;
+		uint64_t ordinal;
+	} header;
+	struct channel_outgoing outgoing;
+	int fd = -1;
+
+	memcpy(&header, channel_message_data(native), sizeof(header));
+	if (fault == FAKE_SERVICE_FAULT_WRONG_OPCODE)
+		header.ordinal ^= 1;
+	outgoing = (struct channel_outgoing)CHANNEL_OUTGOING_INITIALIZER(
+	    &header, fault == FAKE_SERVICE_FAULT_TRUNCATE ? sizeof(header) - 1 :
+	    sizeof(header));
+	if (fault == FAKE_SERVICE_FAULT_ATTACHED_FD) {
+		fd = open("/dev/null", O_RDONLY | O_CLOEXEC);
+		outgoing.fds = &fd;
+		outgoing.nfds = 1;
 	}
-	request = outgoing->data;
+	(void)channel_send_reply(native, &outgoing);
+	if (fd >= 0)
+		close(fd);
+}
+
+/*
+ * The scripted outcome of one request: 0 to reply with *errorp (0 or an
+ * application errno), 1 when it was answered or left unanswered already,
+ * -1 when the session was closed instead.
+ */
+static int
+begin_request(struct service_session *s, struct fidl_bsd_request *request,
+    uint16_t opcode, const struct logcmp_record *record, bool interest,
+    int *errorp, enum fake_service_fault *faultp, bool *legacyp, bool *ringp)
+{
+	enum fake_service_fault fault;
+	int failure;
+
 	pthread_mutex_lock(&lock);
 	concurrent++;
 	if (concurrent > max_concurrent)
 		max_concurrent = concurrent;
-	failure = request->opcode == LOGCMP_OP_WRITE ? fail_write_error : 0;
-	if (request->opcode == LOGCMP_OP_ATTACH && fail_attach_error != 0) {
+	failure = opcode == LOGCMP_OP_WRITE ? fail_write_error : 0;
+	if (opcode == LOGCMP_OP_ATTACH && fail_attach_error != 0) {
 		failure = fail_attach_error;
 		fail_attach_error = 0;
 	}
-	if (request->opcode == fail_opcode && fail_operation_error != 0) {
+	if (opcode == fail_opcode && fail_operation_error != 0) {
 		failure = fail_operation_error;
 		fail_opcode = 0;
 		fail_operation_error = 0;
 	}
 	fault = next_fault;
-	use_ring = ring_enabled;
-	old_hello = legacy_hello;
-	if (old_hello && request->opcode == LOGCMP_OP_HELLO &&
-	    (((const struct logcmp_hello *)(request + 1))->features &
-	    LOGCMP_FEATURE_INTEREST) != 0)
+	*legacyp = legacy_hello;
+	*ringp = ring_enabled;
+	/* A pre-interest provider refuses the request outright. */
+	if (legacy_hello && opcode == LOGCMP_OP_HELLO && interest)
 		failure = EPROTO;
 	next_fault = FAKE_SERVICE_FAULT_NONE;
 	if (failure != 0)
 		fail_write_error = 0;
-	else if (request->opcode == LOGCMP_OP_WRITE) {
-		inspect_record_locked((const void *)(request + 1));
+	else if (opcode == LOGCMP_OP_WRITE) {
+		inspect_record_locked(record);
 		writes++;
 	}
 	/* Model a committed write whose reply is lost with the connection. */
-	if (request->opcode == LOGCMP_OP_WRITE &&
+	if (opcode == LOGCMP_OP_WRITE &&
 	    fault == FAKE_SERVICE_FAULT_COMMITTED_RESET)
 		failure = ECONNRESET;
 	pthread_mutex_unlock(&lock);
 	if (fault == FAKE_SERVICE_FAULT_DELAY)
 		usleep(50000);
-	else if (request->opcode != LOGCMP_OP_HELLO)
+	else if (opcode != LOGCMP_OP_HELLO)
 		usleep(30000);
-	if (failure != 0 || fault == FAKE_SERVICE_FAULT_TIMEOUT) {
-		pthread_mutex_lock(&lock);
-		concurrent--;
-		pthread_mutex_unlock(&lock);
-		errno = failure != 0 ? failure : ETIMEDOUT;
+	*faultp = fault;
+	*errorp = 0;
+	/* Transport failures close the session; the rest are replies. */
+	if (failure == ECONNRESET || failure == EPIPE || failure == EPROTO ||
+	    failure == ENOTCONN) {
+		fidl_bsd_connection_close(s->connection, failure);
 		return (-1);
 	}
-	memset(&storage, 0, sizeof(storage));
-	response = (void *)storage.bytes;
-	if (logcmp_message_init_reply(response, request, 0) == -1)
-		return (-1);
-	length = sizeof(*response);
-	if (request->opcode == LOGCMP_OP_HELLO) {
-		hello = (void *)(response + 1);
-		hello->features = LOGCMP_FEATURE_INLINE |
+	if (fault == FAKE_SERVICE_FAULT_TIMEOUT)
+		return (1);
+	if (fault == FAKE_SERVICE_FAULT_TRUNCATE ||
+	    fault == FAKE_SERVICE_FAULT_WRONG_OPCODE ||
+	    fault == FAKE_SERVICE_FAULT_ATTACHED_FD) {
+		raw_reply(request, fault);
+		return (1);
+	}
+	*errorp = fault == FAKE_SERVICE_FAULT_STATUS ? EPERM : failure;
+	return (0);
+}
+
+static void
+end_request(void)
+{
+	pthread_mutex_lock(&lock);
+	concurrent--;
+	pthread_mutex_unlock(&lock);
+}
+
+static void
+on_info(void *x, struct fidl_bsd_connection *c, struct fidl_bsd_request *r,
+    struct fidl_bsd_empty *e)
+{
+	struct bsd_log_v1_ProtocolInfo v = { LOGCMP_WIRE_VERSION };
+	(void)x;
+	(void)e;
+	assert(bsd_log_v1_Log_GetProtocolInfo_reply(c, r, &v) == 0);
+}
+
+static void
+on_hello(void *x, struct fidl_bsd_connection *c, struct fidl_bsd_request *r,
+    struct bsd_log_v1_HelloRequest *q)
+{
+	struct bsd_log_v1_Limits v = { 0 };
+	enum fake_service_fault fault;
+	bool legacy, ring;
+	int error;
+
+	if (begin_request(x, r, LOGCMP_OP_HELLO, NULL,
+	    (q->features & LOGCMP_FEATURE_INTEREST) != 0, &error, &fault,
+	    &legacy, &ring) == 0) {
+		v.features = LOGCMP_FEATURE_INLINE |
 		    LOGCMP_FEATURE_TYPED_RECORDS | LOGCMP_FEATURE_PRIVACY |
 		    LOGCMP_FEATURE_TRACE_CONTEXT | LOGCMP_FEATURE_EDGE_WAKEUP |
 		    LOGCMP_FEATURE_SCOPED_QUERY;
-		if (!old_hello)
-			hello->features |= LOGCMP_FEATURE_INTEREST;
-		if (use_ring) {
-			hello->features |= LOGCMP_FEATURE_SHM_RING;
-			hello->ring_size = 64U * 1024;
+		if (!legacy)
+			v.features |= LOGCMP_FEATURE_INTEREST;
+		if (ring) {
+			v.features |= LOGCMP_FEATURE_SHM_RING;
+			v.ring_size = 64U * 1024;
 		}
-		hello->max_record = LOGCMP_MAX_RECORD;
-		hello->max_text = LOGCMP_MAX_TEXT;
-		hello->max_fields = LOGCMP_MAX_FIELDS;
-		hello->minimum_severity = LOGCMP_SEVERITY_INFO;
-		length += old_hello ?
-		    offsetof(struct logcmp_hello_reply, minimum_severity) :
-		    sizeof(*hello);
+		v.max_record = LOGCMP_MAX_RECORD;
+		v.max_text = LOGCMP_MAX_TEXT;
+		v.max_fields = LOGCMP_MAX_FIELDS;
+		v.minimum_severity = legacy ? 0 : LOGCMP_SEVERITY_INFO;
 		if (fault == FAKE_SERVICE_FAULT_INVALID_HELLO)
-			hello->features = 0;
-	} else if (request->opcode == LOGCMP_OP_ATTACH) {
-		operation_error = attach_ring(session, outgoing) == -1 ? errno : 0;
-		if (operation_error != 0)
-			response->status = -operation_error;
-	} else if (request->opcode == LOGCMP_OP_DETACH) {
-		operation_error = drain_ring(session) == -1 ? errno : 0;
-		if (operation_error != 0)
-			response->status = -operation_error;
-		else {
-			shmring_close(session->ring);
-			session->ring = NULL;
-			if (session->wake_fd >= 0)
-				close(session->wake_fd);
-			session->wake_fd = -1;
+			v.features = 0;
+		(void)bsd_log_v1_Log_Hello_reply(c, r, &v);
+	}
+	end_request();
+}
+
+#define	EMPTY_RESULT(method, error) {					\
+	.tag = (error) != 0 ? bsd_log_v1_Log_##method##_Result_err_tag :	\
+	    bsd_log_v1_Log_##method##_Result_response_tag,		\
+	.value.err = (uint32_t)(error) }
+
+static void
+on_attach(void *x, struct fidl_bsd_connection *c, struct fidl_bsd_request *r,
+    struct bsd_log_v1_AttachRequest *q)
+{
+	enum fake_service_fault fault;
+	bool legacy, ring;
+	int error;
+
+	if (begin_request(x, r, LOGCMP_OP_ATTACH, NULL, false, &error, &fault,
+	    &legacy, &ring) == 0) {
+		if (error == 0)
+			error = attach_ring(x, q) == -1 ? errno : 0;
+		/*
+		 * Close the received descriptors before replying, as the
+		 * provider does: attach_ring() keeps duplicates, and a broken
+		 * wakeup must be broken when the client sees the reply.
+		 */
+		int *received[] = { &q->config, &q->data, &q->head, &q->tail,
+		    &q->wake };
+		for (size_t i = 0; i < nitems(received); i++) {
+			int fd = fidl_bsd_take_fd(received[i]);
+
+			if (fd >= 0)
+				close(fd);
+		}
+		struct bsd_log_v1_Log_Attach_Result v =
+		    EMPTY_RESULT(Attach, error);
+		(void)bsd_log_v1_Log_Attach_reply(c, r, &v);
+	}
+	end_request();
+}
+
+static void
+on_write(void *x, struct fidl_bsd_connection *c, struct fidl_bsd_request *r,
+    struct bsd_log_v1_Record *q)
+{
+	enum fake_service_fault fault;
+	bool legacy, ring;
+	int error;
+
+	if (q->record_size < sizeof(struct logcmp_record) ||
+	    logcmp_validate_record((const void *)q->record,
+	    q->record_size) == -1) {
+		fidl_bsd_connection_close(c, EPROTO);
+		return;
+	}
+	if (begin_request(x, r, LOGCMP_OP_WRITE, (const void *)q->record,
+	    false, &error, &fault, &legacy, &ring) == 0) {
+		struct bsd_log_v1_Log_Write_Result v = EMPTY_RESULT(Write, error);
+		(void)bsd_log_v1_Log_Write_reply(c, r, &v);
+	}
+	end_request();
+}
+
+static void
+on_flush(void *x, struct fidl_bsd_connection *c, struct fidl_bsd_request *r,
+    struct fidl_bsd_empty *e)
+{
+	struct service_session *s = x;
+	enum fake_service_fault fault;
+	bool legacy, ring;
+	int error;
+	(void)e;
+
+	if (begin_request(s, r, LOGCMP_OP_FLUSH, NULL, false, &error, &fault,
+	    &legacy, &ring) == 0) {
+		if (error == 0 && s->ring != NULL)
+			error = drain_ring(s) == -1 ? errno : 0;
+		struct bsd_log_v1_Log_Flush_Result v = EMPTY_RESULT(Flush, error);
+		(void)bsd_log_v1_Log_Flush_reply(c, r, &v);
+	}
+	end_request();
+}
+
+static void
+on_detach(void *x, struct fidl_bsd_connection *c, struct fidl_bsd_request *r,
+    struct fidl_bsd_empty *e)
+{
+	struct service_session *s = x;
+	enum fake_service_fault fault;
+	bool legacy, ring;
+	int error;
+	(void)e;
+
+	if (begin_request(s, r, LOGCMP_OP_DETACH, NULL, false, &error, &fault,
+	    &legacy, &ring) == 0) {
+		if (error == 0)
+			error = drain_ring(s) == -1 ? errno : 0;
+		if (error == 0) {
+			shmring_close(s->ring);
+			s->ring = NULL;
+			if (s->wake_fd >= 0)
+				close(s->wake_fd);
+			s->wake_fd = -1;
 			pthread_mutex_lock(&lock);
 			detaches++;
 			ring_capacity = 0;
 			ring_shape = 0;
 			pthread_mutex_unlock(&lock);
 		}
-	} else if (request->opcode == LOGCMP_OP_FLUSH && session->ring != NULL) {
-		operation_error = drain_ring(session) == -1 ? errno : 0;
-		if (operation_error != 0)
-			response->status = -operation_error;
-	} else if (request->opcode == LOGCMP_OP_STATS) {
-		stats = (void *)(response + 1);
-		stats->accepted = writes;
-		length += sizeof(*stats);
-	} else if (request->opcode == LOGCMP_OP_QUERY) {
-		static const char subsystem[] = "tests.fake";
-		static const char category[] = "query";
-		static const char message[] = "stored record";
-		uint8_t *cursor;
+		struct bsd_log_v1_Log_Detach_Result v = EMPTY_RESULT(Detach, error);
+		(void)bsd_log_v1_Log_Detach_reply(c, r, &v);
+	}
+	end_request();
+}
 
-		query_request = (const void *)(request + 1);
-		query_reply = (void *)(response + 1);
-		query_reply->cursor.generation = 1;
-		query_reply->cursor.offset = query_request->cursor.offset == 0 ?
-		    128 : 256;
-		length += sizeof(*query_reply);
-		if (query_request->cursor.offset == 0) {
-			query_reply->result = 1;
-			record = (void *)(query_reply + 1);
+static void
+on_stats(void *x, struct fidl_bsd_connection *c, struct fidl_bsd_request *r,
+    struct fidl_bsd_empty *e)
+{
+	struct bsd_log_v1_Stats v;
+	enum fake_service_fault fault;
+	bool legacy, ring;
+	int error;
+	(void)e;
+
+	if (begin_request(x, r, LOGCMP_OP_STATS, NULL, false, &error, &fault,
+	    &legacy, &ring) == 0) {
+		/* GetStats has no error result: a refusal ends the session. */
+		if (error != 0)
+			fidl_bsd_connection_close(c, EPROTO);
+		else {
+			memset(&v, 0, sizeof(v));
+			pthread_mutex_lock(&lock);
+			v.accepted = writes;
+			pthread_mutex_unlock(&lock);
+			(void)bsd_log_v1_Log_GetStats_reply(c, r, &v);
+		}
+	}
+	end_request();
+}
+
+static void
+on_query(void *x, struct fidl_bsd_connection *c, struct fidl_bsd_request *r,
+    struct bsd_log_v1_QueryRequest *q)
+{
+	static const char subsystem[] = "tests.fake";
+	static const char category[] = "query";
+	static const char message[] = "stored record";
+	uint8_t storage[LOGCMP_MAX_RECORD];
+	struct logcmp_record *record = (void *)storage;
+	struct bsd_log_v1_Log_Query_Result v = {
+		.tag = bsd_log_v1_Log_Query_Result_response_tag
+	};
+	enum fake_service_fault fault;
+	bool legacy, ring;
+	uint8_t *cursor;
+	int error;
+
+	if (begin_request(x, r, LOGCMP_OP_QUERY, NULL, false, &error, &fault,
+	    &legacy, &ring) == 0) {
+		v.value.response.generation = 1;
+		v.value.response.offset = q->offset == 0 ? 128 : 256;
+		if (q->offset == 0) {
+			memset(storage, 0, sizeof(storage));
 			record->sequence = 77;
 			record->timestamp_ns = 1;
 			record->severity = LOGCMP_SEVERITY_INFO;
@@ -570,38 +691,80 @@ service_session_call(struct service_session *session,
 			cursor += sizeof(category) - 1;
 			memcpy(cursor, message, sizeof(message) - 1);
 			cursor += sizeof(message) - 1;
-			query_reply->record_length = cursor - (uint8_t *)record;
-			length += query_reply->record_length;
+			v.value.response.found = true;
+			v.value.response.record = storage;
+			v.value.response.record_size = cursor - storage;
 		}
+		if (error != 0) {
+			v.tag = bsd_log_v1_Log_Query_Result_err_tag;
+			v.value.err = (uint32_t)error;
+		}
+		(void)bsd_log_v1_Log_Query_reply(c, r, &v);
 	}
-	if (fault == FAKE_SERVICE_FAULT_TRUNCATE)
-		length = sizeof(*response) - 1;
-	else if (fault == FAKE_SERVICE_FAULT_WRONG_OPCODE)
-		response->opcode = request->opcode == LOGCMP_OP_STATS ?
-		    LOGCMP_OP_FLUSH : LOGCMP_OP_STATS;
-	else if (fault == FAKE_SERVICE_FAULT_STATUS) {
-		response->status = -EPERM;
-		length = sizeof(*response);
-	}
+	end_request();
+}
+
+static void
+on_notify(void *x, struct fidl_bsd_connection *c, struct fidl_bsd_request *r,
+    struct fidl_bsd_empty *e)
+{
+	(void)x;
+	(void)c;
+	(void)r;
+	(void)e;
+}
+
+static void *
+serve(void *argument)
+{
+	static const struct bsd_log_v1_Log_server handlers = {
+		.GetProtocolInfo = on_info,
+		.Hello = on_hello,
+		.Attach = on_attach,
+		.Write = on_write,
+		.Flush = on_flush,
+		.GetStats = on_stats,
+		.Detach = on_detach,
+		.Query = on_query,
+		.Notify = on_notify
+	};
+	struct service_session *s = argument;
+
+	assert(bsd_log_v1_Log_bind(s->connection, &handlers, s) == 0);
+	while (fidl_bsd_connection_poll(s->connection, 10000) == 0)
+		;
+	fidl_bsd_connection_destroy(s->connection);
+	shmring_close(s->ring);
+	if (s->wake_fd >= 0)
+		close(s->wake_fd);
+	free(s);
 	pthread_mutex_lock(&lock);
-	concurrent--;
+	closed++;
 	pthread_mutex_unlock(&lock);
-	if (reply->capacity < length) {
-		errno = EMSGSIZE;
-		return (-1);
-	}
-	memcpy(reply->data, storage.bytes, length);
-	reply->length = length;
-	reply->nfds = fault == FAKE_SERVICE_FAULT_ATTACHED_FD ? 1 : 0;
-	return (0);
+	return (NULL);
 }
 
 int
-service_session_receive_event(struct service_session *session __unused,
-    struct service_reply *reply __unused,
-    const struct service_call_options *options __unused)
+service_open(const char *name, int *fdp)
 {
+	struct service_session *s;
+	pthread_t thread;
+	int ends[2];
 
-	errno = ENOTSUP;
-	return (-1);
+	if (name == NULL || strcmp(name, LOGCMP_INTERFACE) != 0 || fdp == NULL)
+		return (errno = EINVAL, -1);
+	if (mac_capability_channel_create(ends) != 0)
+		return (-1);
+	s = calloc(1, sizeof(*s));
+	assert(s != NULL);
+	s->wake_fd = -1;
+	assert(fidl_bsd_connection_create(ends[1], FIDL_BSD_SERVER,
+	    &s->connection) == 0);
+	pthread_mutex_lock(&lock);
+	s->ident = ++created;
+	pthread_mutex_unlock(&lock);
+	assert(pthread_create(&thread, NULL, serve, s) == 0);
+	assert(pthread_detach(thread) == 0);
+	*fdp = ends[0];
+	return (0);
 }

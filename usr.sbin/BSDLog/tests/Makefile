@@ -1,5 +1,8 @@
 PACKAGE=	bsdlog-tests
 TESTSDIR=	${TESTSBASE}/usr.sbin/BSDLog
+.if !defined(PROG) || ${PROG} != "next_peer"
+CFLAGS+=	-I${FIDLGEN.logcmp} -I${SRCTOP}/lib/libfidl/include
+.endif
 NO_SHARED=
 
 CFLAGS+=	-I${.CURDIR}/..
@@ -46,7 +49,7 @@ CFLAGS.provider_test+=	-DLOGCMP_TESTING
 CFLAGS.provider_test+=	-I${SRCTOP}/lib/libauditcmp
 CFLAGS.provider_test+=	-I${SRCTOP}/lib/libchannel
 CFLAGS.provider_test+=	-I${SRCTOP}/sys
-LIBADD.provider_test=	channel logcmp service shmring
+LIBADD.provider_test=	channel fidl_bsd logcmp service shmring
 NO_SHARED.provider_test=	yes
 .PATH:	${.CURDIR}/..
 
@@ -71,7 +74,7 @@ CFLAGS.pool_fairness_test+= -I${SRCTOP}/lib/libauditcmp \
     -I${SRCTOP}/lib/libchannel -I${SRCTOP}/sys \
     -ffunction-sections -fdata-sections
 LDFLAGS.pool_fairness_test+= -Wl,--gc-sections
-LIBADD.pool_fairness_test+= auditcmp channel logcmp service shmring pthread
+LIBADD.pool_fairness_test+= auditcmp channel fidl_bsd logcmp service shmring pthread
 NO_SHARED.pool_fairness_test= yes
 
 
@@ -79,5 +82,56 @@ ATF_TESTS_C+= quota_test
 CFLAGS.quota_test+= -I${SRCTOP}/lib/libauditcmp -I${SRCTOP}/lib/libcapreclaim -I${SRCTOP}/lib/libchannel -I${SRCTOP}/lib/liblogcmp -I${SRCTOP}/lib/libservice -I${SRCTOP}/lib/libshmring -I${SRCTOP}/contrib/libucl/include -I${SRCTOP}/sys -ffunction-sections -fdata-sections
 LDFLAGS.quota_test+= -Wl,--gc-sections
 NO_SHARED.quota_test= yes
+
+# Schema evolution: the real bsd:1 client and provider paired with next_peer,
+# built from evolution/logcmp_next.fidl at bsd:2 (its own bindings).
+ATF_TESTS_C+= evolution_test
+SRCS.evolution_test= evolution_test.c evolution_test_provider.c session.c logcmp_wakeup.c
+CFLAGS.evolution_test+= -DLOGCMP_TESTING -I${SRCTOP}/lib/libauditcmp \
+	-I${SRCTOP}/lib/libchannel -I${SRCTOP}/sys
+LIBADD.evolution_test= channel fidl_bsd logcmp service shmring
+NO_SHARED.evolution_test= yes
+TEST_METADATA.evolution_test+= timeout="120"
+
+PROGS+= next_peer
+BINDIR_next_peer= ${TESTSDIR}
+MAN.next_peer=
+SRCS.next_peer= next_peer.c ${FIDLGEN_SRCS.logcmp_next}
+CFLAGS.next_peer+= -I${FIDLGEN.logcmp_next}
+CXXSTD.next_peer= c++20
+LIBADD.next_peer= fidl_bsd channel cplusplus
+WARNS.next_peer= 0
+.include "${SRCTOP}/lib/libfidl/runtime-includes.mk"
+
+# VM latency probe (tools/build/fuchsia/daemon_bench.h, vm-daemons.sh);
+# libchannel is linked shared so its USDT request probes reach dtrace -c.
+PROGS+= latency_bench
+BINDIR_latency_bench= ${TESTSDIR}
+MAN.latency_bench=
+SRCS.latency_bench= latency_bench.c latency_bench_provider.c session.c logcmp_wakeup.c
+CFLAGS.latency_bench+= -DLOGCMP_TESTING -I${SRCTOP}/lib/libauditcmp \
+	-I${SRCTOP}/lib/libchannel -I${SRCTOP}/sys \
+	-I${SRCTOP}/tools/build/fuchsia
+LIBADD.latency_bench= channel fidl_bsd logcmp service shmring
+NO_SHARED.latency_bench= no
+
+.PATH: ${.CURDIR}/evolution ${SRCTOP}/lib/liblogcmp
+
+# Static tests embed upstream codec code.
+FILESGROUPS+= FIDL_NOTICE
+FIDL_NOTICE= ${SRCTOP}/contrib/fuchsia/LICENSE ${SRCTOP}/contrib/fuchsia/PATENTS
+FIDL_NOTICEDIR= /usr/share/licenses/bsdlog-tests/fuchsia
+
+# Bindings generated at build time (fidl-bindings.mk).
+FIDL_BINDINGS+=	logcmp
+FIDL_SCHEMAS.logcmp=	lib/libfidl/tests/zx.fidl \
+	lib/liblogcmp/logcmp.fidl
+FIDL_LIBRARY.logcmp=	bsd.log.v1
+FIDL_BINDINGS+=	logcmp_next
+FIDL_SCHEMAS.logcmp_next=	lib/libfidl/tests/zx.fidl \
+	usr.sbin/BSDLog/tests/evolution/logcmp_next.fidl
+FIDL_LIBRARY.logcmp_next=	bsd.log.v1
+FIDL_FLAGS.logcmp_next=	--available bsd:2
+.include "${SRCTOP}/lib/libfidl/fidl-bindings.mk"
 
 .include <bsd.test.mk>

@@ -9,6 +9,7 @@ PKG_DEPS.bsdlog+=	bsdaudit
 PKG_DEPS.bsdlog+=	libauditcmp
 PKG_DEPS.bsdlog+=	libcasper
 PKG_DEPS.bsdlog+=	libchannel
+PKG_DEPS.bsdlog+=	libfidl
 PKG_DEPS.bsdlog+=	liblogcmp
 PKG_DEPS.bsdlog+=	libservice
 PKG_DEPS.bsdlog+=	libucl

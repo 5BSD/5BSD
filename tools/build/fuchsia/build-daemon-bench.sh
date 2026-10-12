@@ -93,6 +93,15 @@ notify)
 	libs="-lauditcmp -llogcmp -lnotify -lprivateucl -lservice -lchannel -lpthread"
 	extra="-I$src/lib/libauditcmp -I$src/lib/liblogcmp"
 	;;
+log)
+	paths="usr.sbin/BSDLog lib/liblogcmp"
+	defs="-DLOGCMP_TESTING -DLOGCMP_CLIENT_SOURCE=\\\"$old/lib/liblogcmp/logcmp.c\\\""
+	incs="usr.sbin/BSDLog lib/liblogcmp"
+	srcs="usr.sbin/BSDLog/logcmp.c usr.sbin/BSDLog/session.c lib/liblogcmp/logcmp_wakeup.c"
+	bench=usr.sbin/BSDLog/tests/latency_bench.c
+	libs="-lshmring -lservice -lchannel -lpthread"
+	extra="-I$src/lib/libauditcmp -I$src/lib/libshmring -I$src/lib/libcapreclaim"
+	;;
 *)
 	echo "build-daemon-bench: unknown daemon $daemon" >&2; exit 64;;
 esac
