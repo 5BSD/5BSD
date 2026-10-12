@@ -66,6 +66,15 @@ crypto)
 	libs="-lauditcmp -lcryptodesc -lservice -lchannel -lpthread"
 	extra="-I$src/lib/libauditcmp -I$src/lib/libcryptodesc -I$src/lib/liblogcmp -I$src/lib/libcapreclaim"
 	;;
+audit)
+	paths="usr.sbin/BSDAudit lib/libauditcmp"
+	defs="-DAUDITCMP_TESTING -DAUDITCMP_CLIENT_SOURCE=\\\"$old/lib/libauditcmp/auditcmp.c\\\""
+	incs="usr.sbin/BSDAudit lib/libauditcmp"
+	srcs="usr.sbin/BSDAudit/auditcmp.c usr.sbin/BSDAudit/auditcmp_rate.c usr.sbin/BSDAudit/auditcmp_submit.c"
+	bench=usr.sbin/BSDAudit/tests/latency_bench.c
+	libs="-lbsm -lservice -lchannel"
+	extra="-I$src/lib/liblogcmp"
+	;;
 *)
 	echo "build-daemon-bench: unknown daemon $daemon" >&2; exit 64;;
 esac

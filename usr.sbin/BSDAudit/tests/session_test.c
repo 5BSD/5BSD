@@ -229,6 +229,92 @@ ATF_TC_BODY(provider_unexpected_descriptor_is_terminal, tc)
 	close(fd);
 	raw_fixture_destroy(&fixture, 1);
 }
+/* FIDL v2 transactional message header. */
+struct wire_header {
+	uint32_t txid;
+	uint8_t flags[3], magic;
+	uint64_t ordinal;
+};
+#define ORD_INFO	UINT64_C(0x3dacb69ab66d2a79)
+#define ORD_SUBMIT	UINT64_C(0x60d80706bc10dc30)
+
+static int
+raw_frame(struct service_session *session, const void *data, size_t length)
+{
+	struct service_call_options options = SERVICE_CALL_OPTIONS_INITIALIZER;
+	struct service_message outgoing = { .size = sizeof(outgoing),
+		.data = data, .length = length };
+	uint8_t reply[AUDITCMP_MAX_MESSAGE];
+	struct service_reply incoming = { .size = sizeof(incoming),
+		.data = reply, .capacity = sizeof(reply) };
+
+	options.timeout_ms = 2000;
+	return (service_session_call(session, &outgoing, &incoming, &options));
+}
+
+/* A Submit frame: error, then two out-of-line strings (8-byte padded). */
+static size_t
+submit_frame(uint8_t *frame, const char *subject, const char *operation)
+{
+	struct wire_header header = { 2, { 2, 0, 0 }, 1, ORD_SUBMIT };
+	uint64_t size, presence = UINT64_MAX;
+	size_t at = sizeof(header), sl = strlen(subject), ol = strlen(operation);
+
+	memset(frame, 0, 256);
+	memcpy(frame, &header, sizeof(header));
+	at += 8;			/* int32 error + padding */
+	size = sl;
+	memcpy(frame + at, &size, 8);
+	memcpy(frame + at + 8, &presence, 8);
+	size = ol;
+	memcpy(frame + at + 16, &size, 8);
+	memcpy(frame + at + 24, &presence, 8);
+	at += 32;
+	memcpy(frame + at, subject, sl);
+	at += (sl + 7) & ~(size_t)7;
+	memcpy(frame + at, operation, ol);
+	at += (ol + 7) & ~(size_t)7;
+	return (at);
+}
+
+ATF_TC(malformed_frames_are_terminal);
+ATF_TC_HEAD(malformed_frames_are_terminal, tc)
+{
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "descr", "A pre-FIDL record, a method before "
+	    "negotiation and a record that breaks the field rules each end "
+	    "the session as a protocol failure");
+}
+ATF_TC_BODY(malformed_frames_are_terminal, tc)
+{
+	struct wire_header info = { 1, { 2, 0, 0 }, 1, ORD_INFO };
+	struct raw_fixture fixture;
+	struct auditcmp_msg legacy;
+	uint8_t frame[256];
+	size_t length;
+
+	/* A pre-FIDL STATS record. */
+	raw_fixture_create(&fixture);
+	ATF_REQUIRE_EQ(0, auditcmp_message_init(&legacy, AUDITCMP_OP_STATS, 0));
+	ATF_CHECK_EQ(-1, raw_frame(fixture.session, &legacy, sizeof(legacy)));
+	raw_fixture_destroy(&fixture, 1);
+
+	/* A well-formed Submit before negotiation. */
+	raw_fixture_create(&fixture);
+	length = submit_frame(frame, "org.test.subject", "create");
+	ATF_CHECK_EQ(-1, raw_frame(fixture.session, frame, length));
+	raw_fixture_destroy(&fixture, 1);
+
+	/* After negotiation the same frame is accepted... */
+	raw_fixture_create(&fixture);
+	ATF_REQUIRE_EQ(0, raw_frame(fixture.session, &info, sizeof(info)));
+	ATF_CHECK_EQ(0, raw_frame(fixture.session, frame, length));
+	/* ...but a subject outside the record character set is not. */
+	length = submit_frame(frame, "org.test subject", "create");
+	ATF_CHECK_EQ(-1, raw_frame(fixture.session, frame, length));
+	raw_fixture_destroy(&fixture, 1);
+}
+
 ATF_TC_BODY(provider_backend_error, tc)
 {
 	struct auditcmp_stats stats;
@@ -266,6 +352,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, provider_submit_and_stats);
 	ATF_TP_ADD_TC(tp, provider_backend_error);
 	ATF_TP_ADD_TC(tp, provider_unexpected_descriptor_is_terminal);
+	ATF_TP_ADD_TC(tp, malformed_frames_are_terminal);
 	ATF_TP_ADD_TC(tp, arguments);
 	return (atf_no_error());
 }

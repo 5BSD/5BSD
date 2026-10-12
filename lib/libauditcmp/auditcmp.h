@@ -11,6 +11,9 @@
 
 #include "auditcmp_protocol.h"
 
+/* bsd.audit.v1 (auditcmp.fidl) wire major, checked on a session's first call. */
+#define	AUDITCMP_WIRE_VERSION	1
+
 struct auditcmp_client;
 
 __BEGIN_DECLS

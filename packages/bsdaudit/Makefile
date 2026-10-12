@@ -8,6 +8,7 @@ UCLSRC.bsdaudit=	bsdaudit.ucl
 PKG_DEPS.bsdaudit+=	audit
 PKG_DEPS.bsdaudit+=	libauditcmp
 PKG_DEPS.bsdaudit+=	libchannel
+PKG_DEPS.bsdaudit+=	libfidl
 PKG_DEPS.bsdaudit+=	libservice
 PKG_DEPS.bsdaudit+=	switchboard
 PKG_DEPS.bsdaudit+=	switchboardctl

@@ -1,5 +1,5 @@
 .\" SPDX-License-Identifier: BSD-2-Clause
-.Dd September 7, 2026
+.Dd October 11, 2026
 .Dt LIBAUDITCMP 3
 .Os
 .Sh NAME
@@ -28,7 +28,7 @@
 The
 .Nm
 library submits bounded policy records to the privileged
-.Xr bsdaudit 8
+.Xr BSDAudit 8
 service.
 The provider maps the switchboard-authenticated caller identity to a fixed BSM
 event; clients cannot choose event numbers, audit user IDs, or provider
@@ -52,6 +52,41 @@ The preparation and adoption calls are provider bootstrap interfaces and are
 therefore declared in
 .In auditcmp_server.h ,
 not the ordinary application header.
+.Pp
+The library speaks the FIDL protocol
+.Sy bsd.audit.v1
+.Pq Pa /usr/share/fidl/auditcmp.fidl ;
+see
+.Xr fidl 7 .
+The first call on a client checks the provider's wire version and fails with
+.Er EPROTONOSUPPORT
+for an incompatible provider.
+.Fn auditcmp_submit
+checks the record rules (field lengths, character set, error range) and fails
+with
+.Er EINVAL
+before sending a record that breaks them.
+Each call is bounded by five seconds, shortened by an active
+.Fn service_budget_begin
+budget
+.Pq Xr service_runtime 3 ;
+a timeout fails that call with
+.Er ETIMEDOUT
+and cancels it, and the session stays usable.
+A transport failure or malformed reply
+.Pq Er EPROTO
+makes the client terminal.
+Calls from several threads on one client are serialized; a client inherited
+across
+.Xr fork 2
+fails with
+.Er ECHILD .
+The message framing in
+.In auditcmp_protocol.h
+and the
+.In auditcmp_server.h
+record helpers describe the pre-FIDL wire format and are kept for
+compatibility.
 .Sh RETURN VALUES
 Functions returning
 .Vt int
@@ -61,4 +96,6 @@ set.
 .Sh SEE ALSO
 .Xr audit 2 ,
 .Xr libservice 3 ,
-.Xr bsdaudit 8
+.Xr service_runtime 3 ,
+.Xr fidl 7 ,
+.Xr BSDAudit 8

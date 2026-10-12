@@ -68,7 +68,7 @@ ATF_TC_BODY(concurrent_independent_sessions, tc)
 		ATF_CHECK_EQ(0, callers[i].error);
 		auditcmp_client_close(clients[i]);
 	}
-	ATF_CHECK(fake_service_max_concurrent() > 1);
+	ATF_CHECK_EQ(nitems(clients), fake_service_submitted());
 }
 
 ATF_TC_WITHOUT_HEAD(concurrent_calls_on_one_session);
@@ -90,7 +90,9 @@ ATF_TC_BODY(concurrent_calls_on_one_session, tc)
 		ATF_REQUIRE_EQ(0, pthread_join(threads[i], NULL));
 		ATF_CHECK_EQ(0, callers[i].error);
 	}
-	ATF_CHECK(fake_service_max_concurrent() > 1);
+	/* Calls on one client are serialized, and every one is delivered. */
+	ATF_CHECK_EQ(nitems(callers), fake_service_submitted());
+	ATF_CHECK_EQ(1, fake_service_created());
 	auditcmp_client_close(client);
 }
 
@@ -128,25 +130,32 @@ ATF_TC_BODY(discovery_transport_and_service_errors, tc)
 {
 	struct auditcmp_client *client;
 	struct auditcmp_stats stats;
+	int first;
 
 	fake_service_reset();
 	fake_service_fail_connect_next(ENOENT);
 	ATF_CHECK_ERRNO(ENOENT, auditcmp_client_open(&client) == -1);
 	ATF_REQUIRE_EQ(0, auditcmp_client_open(&client));
+	/* A timeout cancels that call; the session stays usable. */
+	ATF_REQUIRE_EQ(0, auditcmp_stats(client, &stats));
 	fake_service_fail_next(ETIMEDOUT);
 	ATF_CHECK_ERRNO(ETIMEDOUT, auditcmp_stats(client, &stats) == -1);
 	ATF_REQUIRE_EQ(0, auditcmp_stats(client, &stats));
+	/* An application error keeps the session. */
 	fake_service_reply_mode(FAKE_REPLY_STATUS);
-	ATF_CHECK_ERRNO(EPERM, auditcmp_stats(client, &stats) == -1);
+	ATF_CHECK_ERRNO(EPERM,
+	    auditcmp_submit(client, "org.test.subject", "create", 0) == -1);
+	fake_service_reply_mode(FAKE_REPLY_NORMAL);
 	ATF_REQUIRE_EQ(0, auditcmp_stats(client, &stats));
 	auditcmp_client_close(client);
 
+	/* A lost provider is terminal for the client. */
 	ATF_REQUIRE_EQ(0, auditcmp_client_open(&client));
 	fake_service_fail_next(ECONNRESET);
-	ATF_CHECK_ERRNO(ECONNRESET,
-	    auditcmp_stats(client, &stats) == -1);
-	ATF_CHECK_ERRNO(ECONNRESET,
-	    auditcmp_stats(client, &stats) == -1);
+	ATF_CHECK_EQ(-1, auditcmp_stats(client, &stats));
+	first = errno;
+	ATF_CHECK(first != 0 && first != ETIMEDOUT);
+	ATF_CHECK_ERRNO(first, auditcmp_stats(client, &stats) == -1);
 	auditcmp_client_close(client);
 }
 
@@ -154,8 +163,7 @@ ATF_TC_WITHOUT_HEAD(protocol_errors_fail_closed);
 ATF_TC_BODY(protocol_errors_fail_closed, tc)
 {
 	static const enum fake_reply_mode faults[] = {
-		FAKE_REPLY_BAD_OPCODE, FAKE_REPLY_UNEXPECTED_FD,
-		FAKE_REPLY_BAD_STATS, FAKE_REPLY_TRUNCATED
+		FAKE_REPLY_ZERO_ERRNO, FAKE_REPLY_RANGE_ERRNO
 	};
 	struct auditcmp_client *client;
 	struct auditcmp_stats stats;
@@ -165,12 +173,18 @@ ATF_TC_BODY(protocol_errors_fail_closed, tc)
 		fake_service_reset();
 		ATF_REQUIRE_EQ(0, auditcmp_client_open(&client));
 		fake_service_reply_mode(faults[i]);
-		ATF_CHECK_ERRNO(EPROTO, auditcmp_stats(client, &stats) == -1);
+		ATF_CHECK_ERRNO(EPROTO, auditcmp_submit(client,
+		    "org.test.subject", "create", 0) == -1);
 		ATF_CHECK_ERRNO(EPROTO, auditcmp_stats(client, &stats) == -1);
 		auditcmp_client_close(client);
 	}
+	/* A future wire version is refused before any record is sent. */
 	fake_service_reset();
 	ATF_REQUIRE_EQ(0, auditcmp_client_open(&client));
+	fake_service_reply_mode(FAKE_REPLY_FUTURE_VERSION);
+	ATF_CHECK_ERRNO(EPROTONOSUPPORT, auditcmp_submit(client,
+	    "org.test.subject", "create", 0) == -1);
+	ATF_CHECK_EQ(0, fake_service_submitted());
 	auditcmp_client_close(client);
 }
 
@@ -191,6 +205,8 @@ ATF_TC_BODY(no_constructor_descriptor_leak, tc)
 		ATF_REQUIRE_EQ(0, auditcmp_client_open(&client));
 		auditcmp_client_close(client);
 	}
+	/* The fake provider's threads close their ends asynchronously. */
+	fake_service_reset();
 	for (int fd = 0; fd < 1024; fd++)
 		after_count += fcntl(fd, F_GETFD) != -1;
 	ATF_CHECK_EQ(before_count, after_count);

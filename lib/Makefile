@@ -154,7 +154,7 @@ SUBDIR_DEPEND_libc++:= libcxxrt
 # libssp_nonshared doesn't need to be linked into libc on every arch, but it is
 # small enough to build that this bit of serialization is likely insignificant.
 SUBDIR_DEPEND_libc= libsys libcompiler_rt libssp_nonshared
-SUBDIR_DEPEND_libauditcmp= libservice
+SUBDIR_DEPEND_libauditcmp= libservice libfidl
 SUBDIR_DEPEND_libcam= libsbuf
 SUBDIR_DEPEND_libcasper= libnv
 SUBDIR_DEPEND_libcrypt= libmd

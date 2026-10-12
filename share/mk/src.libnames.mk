@@ -336,7 +336,7 @@ LIBVERIEXEC?=	${LIBVERIEXECDIR}/libveriexec.a
 # 2nd+ order consumers.  Auto-generating this would be better.
 _DP_80211=	sbuf bsdxml
 _DP_9p=		sbuf
-_DP_auditcmp=	service
+_DP_auditcmp=	pthread service fidl_bsd cplusplus
 _DP_capbundle=	capsulert ucl md
 _DP_capreclaim=	
 _DP_capsulert=	ucl

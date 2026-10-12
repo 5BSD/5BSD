@@ -68,13 +68,29 @@ Records reach the trail only when auditd(8) is running; the plane's
 
 ## Wire operations
 
-The protocol is `lib/libauditcmp/auditcmp_protocol.h`: magic `AUDC`. Every message starts
-with a 16-byte `auditcmp_msg` (magic, opcode, flags, status).
+The provider and client use `lib/libauditcmp/auditcmp.fidl`, library
+`bsd.audit.v1`, with generated C bindings over native capability channels
+(see [FIDL and Capability IPC](../develop/fidl.md)); the schema installs as
+`/usr/share/fidl/auditcmp.fidl`.
 
-| Op | Request | Reply | Errors |
+| Method (probe opcode) | Request | Reply | Errors |
 |---|---|---|---|
-| 1 SUBMIT | `auditcmp_submit_request` (140 bytes: `error`, `subject_length`, `operation_length`, `subject[64]`, `operation[64]`) | header with `status` | `EINVAL` (length or character set), `EAGAIN` (rate bucket empty), the errno from audit(2) |
-| 2 STATS | header | `auditcmp_stats` (`submitted`, `rejected`) | none |
+| `GetProtocolInfo` (0) | empty | wire version 1 | none |
+| `Submit` (1) | `error` (0 or an errno), `subject` and `operation` (each 1..64 of `[A-Za-z0-9._/-]`) | empty | `EAGAIN` (rate bucket empty), the errno from audit(2) |
+| `Stats` (2) | empty | `submitted`, `rejected` | none |
+
+A session must negotiate before `Submit` or `Stats`. Both peers apply the
+record rules every release has enforced (lengths, character set, error
+range): the client refuses such a record with `EINVAL` before sending it, and
+the provider treats one that breaks them, a method before negotiation, an
+unknown method, a malformed frame, a pre-FIDL record or an attached
+descriptor as a protocol violation that ends the session, counts a
+rejection and fires the `reject` probe. `auditcmp_protocol.h` keeps the
+record layout and limits; its message framing is the pre-FIDL wire format
+(compatibility only). The `bsd.audit.v1` ordinals and layouts are a
+compatibility contract; `usr.sbin/BSDAudit/tests/evolution/auditcmp_next.fidl`
+is the same schema at `bsd:1` and adds a method at `bsd:2` for the pairing
+test.
 
 The event number is not on the wire in either direction. The daemon's
 compiled table (`usr.sbin/BSDAudit/auditcmp_policy.c`) maps the bundle-id
@@ -92,14 +108,23 @@ admission event, so a record is never dropped for its operation text.
 
 ## Client library
 
-libauditcmp(3) (`<auditcmp.h>`, `-lauditcmp`) has four functions:
+libauditcmp(3) (`<auditcmp.h>`, `-lauditcmp`, depends on libservice and the
+FIDL runtime):
 
 | Function | Purpose |
 |---|---|
 | `auditcmp_client_open(struct auditcmp_client **)` | resolve `system.Audit` with `service_open(3)` |
-| `auditcmp_submit(client, subject, operation, error)` | one SUBMIT; `error` is 0 for success or the errno the audited decision produced |
+| `auditcmp_client_prepare(int *)`, `auditcmp_client_adopt(int, struct auditcmp_client **)` (`<auditcmp_server.h>`) | open the channel before a provider enters capability mode or forks, and adopt it later |
+| `auditcmp_submit(client, subject, operation, error)` | one `Submit`; `error` is 0 for success or the errno the audited decision produced |
 | `auditcmp_stats(client, struct auditcmp_stats *)` | the session's counters |
 | `auditcmp_client_close(client)` | drop the channel |
+
+The first call checks the wire version (`EPROTONOSUPPORT` for an incompatible
+provider). Each call is bounded by five seconds, shortened by an active
+`service_budget_begin()`; a timeout cancels that call (`ETIMEDOUT`) and keeps
+the session, as with the earlier libservice transport. A transport failure or
+malformed reply makes the client terminal. Calls from several threads on one
+client are serialized; a client inherited across `fork(2)` returns `ECHILD`.
 
 A provider that audits a policy refusal, opening its session lazily and
 failing soft when the broker is not yet up:
@@ -158,8 +183,8 @@ code change to `auditcmp_policy.c` plus a new `AUE_*` number in
 
 | Suite | Location | Installed under | What it proves |
 |---|---|---|---|
-| `policy_test` (10), `rate_test` (10), `submit_test` (12), `session_test` (11), `bundle_test.sh` | `usr.sbin/BSDAudit/tests` | `/usr/tests/usr.sbin/BSDAudit` | label-to-event mapping including the `elevate/` and `mint/` split, token-bucket timing and burst recovery across sessions, field validation, worker admission and quiesce under `AUDITCMP_TESTING`, the installed bundle layout |
-| `auditcmp_test` (8), `client_lifecycle_test` (12) | `lib/libauditcmp/tests` | `/usr/tests/lib/libauditcmp` | SUBMIT and STATS encoding against `fake_service`, and reopen after a dead worker |
+| `policy_test` (10), `rate_test` (10), `submit_test` (12), `session_test` (12), `evolution_test` (2), `bundle_test.sh` | `usr.sbin/BSDAudit/tests` | `/usr/tests/usr.sbin/BSDAudit` | label-to-event mapping including the `elevate/` and `mint/` split, token-bucket timing and burst recovery across sessions, field validation, the real worker with the real client (submit, stats, backend errors) and with hand-built frames (attached descriptor, pre-FIDL record, before negotiation, record-rule violation), worker admission and quiesce under `AUDITCMP_TESTING`, the `bsd:1`/`bsd:2` schema pairing, the installed bundle layout |
+| `auditcmp_test` (8), `client_lifecycle_test` (7) | `lib/libauditcmp/tests` | `/usr/tests/lib/libauditcmp` | retained record rules and API checks; against a scripted `bsd.audit.v1` provider: independent and concurrent sessions, serialized calls on one session, fork ownership, a timeout that keeps the session, terminal transport and malformed replies, a future wire version, no descriptor leaks |
 
 Run with `kyua test -k /usr/tests/usr.sbin/BSDAudit/Kyuafile`; the packages
 are `5BSD-bsdaudit-tests` and `5BSD-libauditcmp-tests`. End-to-end proof
@@ -172,7 +197,9 @@ never an arbitrary record.
 
 ## Status and gaps
 
-Shipped. Commit from capability-mode providers works end to end: the
+Shipped; FIDL `bsd.audit.v1` since October 2026 (unit, admission events and
+rate limits unchanged; the provider and libauditcmp ship together, and its
+four daemon clients relink). Commit from capability-mode providers works end to end: the
 blockers the inventory records as fixed were libservice pre-loading the
 timezone and NLS data before `cap_enter(2)`, and libbsm tolerating
 `ECAPMODE` from `auditon(A_GETKAUDIT)` when assembling a record. BSDAudit
