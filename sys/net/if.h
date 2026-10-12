@@ -53,7 +53,7 @@
 #define		IF_NAMESIZE	16
 #if __BSD_VISIBLE
 #define		IFNAMSIZ	IF_NAMESIZE
-#define		IF_MAXUNIT	0x7fff	/* historical value */
+#define		IF_MAXUNIT	9999999	/* 7 digits, as OpenBSD (e.g. lo1000000) */
 #endif
 #if __BSD_VISIBLE
 
@@ -457,6 +457,12 @@ struct ifreq_nv_req {
  * definitions which begin with ifr_name.  The
  * remainder may be interface specific.
  */
+/* Parent interface request (OpenBSD; pfsync syncdev). */
+struct if_parent {
+	char	ifp_name[IFNAMSIZ];
+	char	ifp_parent[IFNAMSIZ];
+};
+
 struct ifreq {
 	char	ifr_name[IFNAMSIZ];		/* if name, e.g. "en0" */
 	union {

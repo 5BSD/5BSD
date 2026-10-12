@@ -205,11 +205,11 @@ CTASSERT(offsetof(struct mbuf, m_pktdat) % 8 == 0);
  */
 #if defined(__LP64__)
 CTASSERT(offsetof(struct mbuf, m_dat) == 32);
-CTASSERT(sizeof(struct pkthdr) == 64);
+CTASSERT(sizeof(struct pkthdr) == 96);
 CTASSERT(sizeof(struct m_ext) == 160);
 #else
 CTASSERT(offsetof(struct mbuf, m_dat) == 24);
-CTASSERT(sizeof(struct pkthdr) == 56);
+CTASSERT(sizeof(struct pkthdr) == 76);
 #if defined(__powerpc__) && defined(BOOKE)
 /* PowerPC booke has 64-bit physical pointers. */
 CTASSERT(sizeof(struct m_ext) == 176);
@@ -291,6 +291,7 @@ m_demote_pkthdr(struct mbuf *m)
 	M_ASSERT_NO_SND_TAG(m);
 
 	m_tag_delete_chain(m, NULL);
+	M_PF_UNLINK(m);
 	m->m_flags &= ~M_PKTHDR;
 	bzero(&m->m_pkthdr, sizeof(struct pkthdr));
 }
@@ -407,6 +408,7 @@ m_pkthdr_init(struct mbuf *m, int how)
 #endif
 	m->m_data = m->m_pktdat;
 	bzero(&m->m_pkthdr, sizeof(m->m_pkthdr));
+	m->m_pkthdr.pf.prio = 3;	/* IFQ_DEFPRIO, as OpenBSD m_inithdr() */
 #ifdef NUMA
 	m->m_pkthdr.numa_domain = M_NODOM;
 #endif
@@ -448,6 +450,8 @@ m_move_pkthdr(struct mbuf *to, struct mbuf *from)
 		to->m_data = to->m_pktdat;
 	to->m_pkthdr = from->m_pkthdr;		/* especially tags */
 	SLIST_INIT(&from->m_pkthdr.tags);	/* purge tags from src */
+	from->m_pkthdr.pf.statekey = NULL;	/* pf references moved */
+	from->m_pkthdr.pf.inp = NULL;
 	from->m_flags &= ~M_PKTHDR;
 	if (from->m_pkthdr.csum_flags & CSUM_SND_TAG) {
 		from->m_pkthdr.csum_flags &= ~CSUM_SND_TAG;
@@ -489,6 +493,12 @@ m_dup_pkthdr(struct mbuf *to, const struct mbuf *from, int how)
 	if (from->m_pkthdr.csum_flags & CSUM_SND_TAG)
 		m_snd_tag_ref(from->m_pkthdr.snd_tag);
 	SLIST_INIT(&to->m_pkthdr.tags);
+	/* Take pf's own references for the copy (OpenBSD m_dup_pkthdr). */
+	to->m_pkthdr.pf.statekey = NULL;
+	to->m_pkthdr.pf.inp = NULL;
+	if (from->m_pkthdr.pf.statekey != NULL ||
+	    from->m_pkthdr.pf.inp != NULL)
+		pf_mbuf_link_hook(to, from);
 	return (m_tag_copy_chain(to, from, how));
 }
 

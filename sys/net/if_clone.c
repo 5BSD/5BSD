@@ -54,8 +54,8 @@
 #include <netlink/netlink_route.h>
 #include <netlink/route/route_var.h>
 
-/* Current IF_MAXUNIT expands maximum to 5 characters. */
-#define	IFCLOSIZ	(IFNAMSIZ - 5)
+/* Current IF_MAXUNIT expands maximum to 7 characters. */
+#define	IFCLOSIZ	(IFNAMSIZ - 7)
 
 /*
  * Structure describing a `cloning' interface.

@@ -496,6 +496,7 @@ struct route_in6 {
 
 #define	IPV6_ORIGDSTADDR	72 /* bool; allow getting dstaddr /port info */
 #define	IPV6_RECVORIGDSTADDR	IPV6_ORIGDSTADDR
+#define	IPV6_RECVDSTPORT	76 /* bool; receive dst port w/dgram (OpenBSD) */
 
 /*
  * The following option is private; do not use it from user applications.

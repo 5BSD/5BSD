@@ -124,6 +124,7 @@ struct socket {
 	struct	sigio *so_sigio;	/* [sg] information for async I/O or
 					   out of band data (SIGURG) */
 	struct	ucred *so_cred;		/* (a) user credentials */
+	pid_t	so_cpid;		/* (a) pid of process that created socket */
 	struct	label *so_label;	/* (b) MAC label for socket */
 	/* NB: generation count must not be first. */
 	so_gen_t so_gencnt;		/* (h) generation count */

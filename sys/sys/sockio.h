@@ -152,4 +152,13 @@
 #define	SIOCSUMBPARAM	 _IOW('i', 158, struct ifreq)	/* set MBIM param */
 #define	SIOCGUMBPARAM	_IOWR('i', 159, struct ifreq)	/* get MBIM param */
 
+/* OpenBSD PF pseudo-interfaces and parent interfaces (OpenBSD numbers). */
+#define	SIOCSIFPARENT	 _IOW('i', 178, struct if_parent) /* set parent if */
+#define	SIOCGIFPARENT	_IOWR('i', 179, struct if_parent) /* get parent if */
+#define	SIOCDIFPARENT	 _IOW('i', 180, struct ifreq)	/* del parent if */
+#define	SIOCSETPFSYNC	 _IOW('i', 247, struct ifreq)
+#define	SIOCGETPFSYNC	_IOWR('i', 248, struct ifreq)
+#define	SIOCSETPFLOW	 _IOW('i', 253, struct ifreq)
+#define	SIOCGETPFLOW	_IOWR('i', 254, struct ifreq)
+
 #endif /* !_SYS_SOCKIO_H_ */

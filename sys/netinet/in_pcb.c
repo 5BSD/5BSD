@@ -1888,6 +1888,9 @@ in_pcbrele_rlock(struct inpcb *inp)
 	return (false);
 }
 
+/* Installed by pf (OpenBSD PF): drop pf state links to a detaching pcb. */
+void (*pf_inpcb_free_hook)(struct inpcb *);
+
 /*
  * Unconditionally schedule an inpcb to be freed by decrementing its
  * reference count, which should occur only after the inpcb has been detached
@@ -1933,6 +1936,8 @@ in_pcbfree(struct inpcb *inp)
 	if (inp->inp_snd_tag != NULL)
 		in_pcbdetach_txrtlmt(inp);
 #endif
+	if (inp->inp_pf_sk != NULL && pf_inpcb_free_hook != NULL)
+		pf_inpcb_free_hook(inp);
 	inp->inp_flags |= INP_FREED;
 	inp->inp_socket->so_pcb = NULL;
 	inp->inp_socket = NULL;

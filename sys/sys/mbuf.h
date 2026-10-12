@@ -148,6 +148,34 @@ struct m_snd_tag {
  * Compile-time assertions in uipc_mbuf.c test these values to ensure that
  * they are correct.
  */
+/*
+ * Packet filter (OpenBSD PF) per-packet state.  Layout and flag values
+ * follow OpenBSD sys/sys/mbuf.h so the imported PF code uses it as is.
+ */
+struct pf_state_key;
+struct inpcb;
+struct pkthdr_pf {
+	struct pf_state_key *statekey;	/* pf stackside statekey */
+	struct inpcb	*inp;		/* connected pcb for outgoing packet */
+	uint32_t	 qid;		/* queue id */
+	uint16_t	 tag;		/* tag id */
+	uint16_t	 delay;		/* delay packet by X ms */
+	uint8_t		 flags;
+	uint8_t		 routed;
+	uint8_t		 prio;
+	uint8_t		 pad[1];
+};
+
+/* pkthdr_pf.flags */
+#define	PF_TAG_GENERATED		0x01
+#define	PF_TAG_SYNCOOKIE_RECREATED	0x02
+#define	PF_TAG_TRANSLATE_LOCALHOST	0x04
+#define	PF_TAG_DIVERTED			0x08
+#define	PF_TAG_DIVERTED_PACKET		0x10
+#define	PF_TAG_REROUTE			0x20
+#define	PF_TAG_REFRAGMENTED		0x40	/* refragmented ipv6 packet */
+#define	PF_TAG_PROCESSED		0x80	/* packet was checked by pf */
+
 struct pkthdr {
 	union {
 		struct m_snd_tag *snd_tag;	/* send tag, if any */
@@ -211,6 +239,9 @@ struct pkthdr {
 		/* Upon allocation: total packet memory consumption. */
 		u_int	memlen;
 	};
+
+	/* Packet filter state (OpenBSD PF, sys/net/pfvar.h). */
+	struct pkthdr_pf pf;
 };
 #define	ether_vtag	PH_per.sixteen[0]
 #define tcp_tun_port	PH_per.sixteen[0] /* outbound */
@@ -1396,6 +1427,7 @@ extern bool		mb_use_ext_pgs;	/* Use ext_pgs for sendfile */
 #define	PACKET_TAG_IPSEC_ACCEL_OUT		32  /* IPSEC accel out */
 #define	PACKET_TAG_IPSEC_ACCEL_IN		33  /* IPSEC accel in */
 #define	PACKET_TAG_OVPN				34 /* if_ovpn */
+#define	PACKET_TAG_PF_DIVERT			35 /* pf divert-to/-reply */
 
 /* Specific cookies and tags. */
 
@@ -1517,14 +1549,28 @@ m_snd_tag_rele(struct m_snd_tag *mst)
 		m_snd_tag_destroy(mst);
 }
 
+/*
+ * Packet filter references held by a packet header (pkthdr_pf.statekey and
+ * pkthdr_pf.inp) are dropped through hooks installed by the pf module.
+ */
+extern void (*pf_mbuf_unlink_hook)(struct mbuf *);
+extern void (*pf_mbuf_link_hook)(struct mbuf *, const struct mbuf *);
+#define	M_PF_UNLINK(m) do {						\
+	if (__predict_false((m)->m_pkthdr.pf.statekey != NULL ||	\
+	    (m)->m_pkthdr.pf.inp != NULL))				\
+		pf_mbuf_unlink_hook(m);					\
+} while (0)
+
 static __inline struct mbuf *
 m_free(struct mbuf *m)
 {
 	struct mbuf *n = m->m_next;
 
 	MBUF_PROBE1(m__free, m);
-	if ((m->m_flags & (M_PKTHDR|M_NOFREE)) == (M_PKTHDR|M_NOFREE))
+	if ((m->m_flags & (M_PKTHDR|M_NOFREE)) == (M_PKTHDR|M_NOFREE)) {
 		m_tag_delete_chain(m, NULL);
+		M_PF_UNLINK(m);
+	}
 	if (m->m_flags & M_PKTHDR && m->m_pkthdr.csum_flags & CSUM_SND_TAG)
 		m_snd_tag_rele(m->m_pkthdr.snd_tag);
 	if (m->m_flags & M_EXTPG)

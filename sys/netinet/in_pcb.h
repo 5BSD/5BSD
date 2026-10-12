@@ -326,6 +326,7 @@ struct xktls_session {
 struct icmp6_filter;
 struct inpcbpolicy;
 struct m_snd_tag;
+struct pf_state_key;
 struct inpcb {
 	union {
 		CK_LIST_ENTRY(inpcb)	inp_hash_exact;
@@ -382,7 +383,7 @@ struct inpcb {
 	};
 	CK_LIST_ENTRY(inpcb) inp_portlist;	/* (r:e/w:h) port list */
 	uint64_t	inp_gencnt;	/* (c) generation count */
-	void		*spare_ptr;	/* Spare pointer. */
+	struct pf_state_key *inp_pf_sk;	/* pf state key linked to socket */
 	rt_gen_t	inp_rt_cookie;	/* generation for route entry */
 	union {				/* cached L3 information */
 		struct route inp_route;
@@ -630,6 +631,8 @@ int	in_pcbbind_setup(struct inpcb *, struct sockaddr_in *, in_addr_t *,
 int	in_pcbconnect(struct inpcb *, struct sockaddr_in *, struct ucred *);
 void	in_pcbdisconnect(struct inpcb *);
 void	in_pcbfree(struct inpcb *);
+/* Installed by pf (OpenBSD PF): drop pf state links to a detaching pcb. */
+extern void (*pf_inpcb_free_hook)(struct inpcb *);
 int	in_pcbladdr(const struct inpcb *, struct in_addr *, struct in_addr *,
 	    struct ucred *);
 int	in_pcblbgroup_numa(struct inpcb *, int arg);

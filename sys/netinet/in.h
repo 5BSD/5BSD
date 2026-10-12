@@ -463,6 +463,7 @@ VNET_DECLARE(uint32_t, in_loopback_mask);
 				     /* unused; was IP_RSS_LISTEN_BUCKET */
 #define	IP_ORIGDSTADDR		27   /* bool; receive IP dst addr/port w/dgram */
 #define	IP_RECVORIGDSTADDR      IP_ORIGDSTADDR
+#define	IP_RECVDSTPORT		33   /* bool; receive IP dst port w/dgram (OpenBSD) */
 
 /*
  * Options for controlling the firewall and dummynet.
