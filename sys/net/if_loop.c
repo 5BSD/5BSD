@@ -229,9 +229,24 @@ looutput(struct ifnet *ifp, struct mbuf *m, const struct sockaddr *dst,
 #endif
 
 	/* BPF writes need to be handled specially. */
-	if (dst->sa_family == AF_UNSPEC || dst->sa_family == pseudo_AF_HDRCMPLT)
+	if (dst->sa_family == AF_UNSPEC || dst->sa_family == pseudo_AF_HDRCMPLT) {
 		bcopy(dst->sa_data, &af, sizeof(af));
-	else
+		/*
+		 * 5BSD: accept OpenBSD's DLT_LOOP header from bpf(4)
+		 * writers too (network byte order, AF_INET6 is 24 there).
+		 */
+		if (af != AF_INET && af != AF_INET6) {
+			switch (ntohl(af)) {
+			case AF_INET:
+				af = AF_INET;
+				break;
+			case 24:
+			case AF_INET6:
+				af = AF_INET6;
+				break;
+			}
+		}
+	} else
 		af = RO_GET_FAMILY(ro, dst);
 
 	switch (af) {
@@ -298,15 +313,22 @@ if_simloop(struct ifnet *ifp, struct mbuf *m, int af, int hlen)
 			bpf_mtap(ifp->if_bpf, m);
 		}
 	} else {
-		if (bpf_peers_present(V_loif->if_bpf)) {
-			if ((m->m_flags & M_MCAST) == 0 || V_loif == ifp) {
+		/*
+		 * 5BSD: a loopback interface other than lo0 (the loopback of
+		 * a routing domain) shows its own traffic, as on OpenBSD.
+		 */
+		struct ifnet *bifp = (ifp->if_flags & IFF_LOOPBACK) ? ifp :
+		    V_loif;
+
+		if (bpf_peers_present(bifp->if_bpf)) {
+			if ((m->m_flags & M_MCAST) == 0 || bifp == ifp) {
 				/* XXX beware sizeof(af) != 4 */
 				u_int32_t af1 = af;
 
 				/*
 				 * We need to prepend the address family.
 				 */
-				bpf_mtap2(V_loif->if_bpf, &af1, sizeof(af1), m);
+				bpf_mtap2(bifp->if_bpf, &af1, sizeof(af1), m);
 			}
 		}
 	}
