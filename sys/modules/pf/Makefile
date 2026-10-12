@@ -18,9 +18,14 @@ CFLAGS.${f}+=	-DOPENBSD_PF_GLUE
 .endfor
 SRCS+=	opt_inet.h opt_inet6.h opt_bpf.h opt_global.h
 
+# Native generated-offset helpers must not include the PF compatibility
+# header before genoffset.c defines GENOFFSET (a self-dependency on offset.inc).
+# Keep wrapper headers before the native sys include directory.
 CFLAGS+=	-I${SRCTOP}/sys/netpfil/openbsd-pf/include
-CFLAGS+=	-include ${SRCTOP}/sys/netpfil/openbsd-pf/openbsd_compat.h
-CFLAGS+=	-DOPENBSD_PF
+.for f in ${SRCS:M*.c}
+CFLAGS.${f}+=	-include ${SRCTOP}/sys/netpfil/openbsd-pf/openbsd_compat.h
+CFLAGS.${f}+=	-DOPENBSD_PF
+.endfor
 
 # OpenBSD code is not written for these 5BSD warning defaults.
 CWARNFLAGS+=	-Wno-missing-prototypes -Wno-strict-prototypes -Wno-format \
