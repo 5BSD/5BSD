@@ -1048,6 +1048,7 @@ _dtrace_provs=	dtrace_audit.4 \
 		dtrace_cam.4 \
 		dtrace_dtmalloc.4 \
 		dtrace_dtrace.4 \
+		dtrace_pf.4 \
 		dtrace_fbt.4 \
 		dtrace_io.4 \
 		dtrace_ip.4 \
