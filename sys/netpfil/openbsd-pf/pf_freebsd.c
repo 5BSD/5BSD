@@ -663,6 +663,13 @@ pf_fbsd_ioctl(struct cdev *dev, u_long cmd, caddr_t data, int flags,
 		error = ENXIO;
 	else if (cmd == DIOCSETLIMIT && !IS_DEFAULT_VNET(curvnet))
 		error = pf_fbsd_vnet_setlimit((struct pfioc_limit *)data);
+	else if (cmd == DIOCADDQUEUE)
+		/*
+		 * Queueing (HFSC, FQ-CoDel) is not attached to the 5BSD
+		 * interface queues yet: refuse queue definitions up front so
+		 * the transaction is rolled back with nothing half-committed.
+		 */
+		error = EOPNOTSUPP;
 	else
 		error = pfioctl(pf_fbsd_minor(po->unit), cmd, data, flags,
 		    td->td_proc);

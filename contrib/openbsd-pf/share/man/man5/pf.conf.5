@@ -1622,6 +1622,13 @@ With 90000 state table entries, the timeout values are scaled to 50%
 restores default values for the following options: debug, all limit options,
 loginterface, reassemble, skip, syncookies, all timeouts.
 .Sh QUEUEING
+.\" 5BSD: queues
+On 5BSD, queueing is not available yet: loading a ruleset that defines
+queues fails with
+.Dq DIOCADDQUEUE: Operation not supported
+and leaves the running ruleset unchanged.
+HFSC and FQ-CoDel queues as described below are planned.
+.Pp
 Packets can be assigned to queues for the purpose of bandwidth
 control.
 At least one declaration is required to configure queues, and later

@@ -111,7 +111,8 @@ Adopted OpenBSD code (pf/parity), all from facc8d7ec5d1:
   share/man/man4 pf.4, pflog.4, pflow.4, pfsync.4, divert.4, share/man/man5
   pf.conf.5, pf.os.5     -> installed by share/man/man4 and man5 (FreeBSD's
                             divert.4 is now ipdivert.4); marked 5BSD
-                            additions: pf.conf.5 jail, pf.4 VNET, divert.4
+                            additions: pf.conf.5 jail and queueing status, pf.4 VNET,
+                            divert.4
   usr.sbin/authpf, ftp-proxy, tftp-proxy -> same programs
   sbin/ifconfig/ifconfig.c pfsync/pflow functions -> sbin/ifconfig/ifpf.c
   sys/sys/mbuf.h struct pkthdr_pf and PF_TAG_* -> 5BSD sys/sys/mbuf.h
