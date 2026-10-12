@@ -530,7 +530,7 @@ port_reuse_body()
 	ifconfig ${epair}a 192.0.2.2/24 up
 
 	jexec alcatraz pfctl -e
-	jexec alcatraz pfctl -x loud
+	jexec alcatraz pfctl -x debug
 	pft_set_rules alcatraz \
 		"set syncookies always" \
 		"pass in" \

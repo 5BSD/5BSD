@@ -61,7 +61,7 @@ dup_to_body()
 	jexec alcatraz pfctl -e
 
 	pft_set_rules alcatraz "pass out on { ${epair_recv}b } \
-	    dup-to (${epair_dupto}b 203.0.113.3)"
+	    dup-to 203.0.113.3"
 
 	atf_check -s exit:0 ${common_dir}/pft_ping.py \
 		--sendif ${epair_send}a \

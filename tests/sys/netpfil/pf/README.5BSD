@@ -1,0 +1,61 @@
+tests/sys/netpfil/pf on 5BSD (OpenBSD PF)
+=========================================
+
+FreeBSD's pf tests, kept where the feature exists in OpenBSD PF and adapted
+to OpenBSD pf.conf syntax and OpenBSD tcpdump/pfctl output; retired where
+they test FreeBSD-only behaviour.  The 5BSD extensions (ether rules,
+dummynet, SCTP multihome, VNET, divert, jail) keep their tests; ether,
+dummynet and SCTP multihome are not yet ported to OpenBSD PF, so those
+tests are expected to fail until they are.  OpenBSD's own suites are in
+openbsd/ (contrib/openbsd-pf/regress).
+
+STATUS: WORK IN PROGRESS.  The conversions below are mechanical and have
+NOT been run in a VM yet; see tools/test/pf-parity/HANDOFF-consumers.md.
+
+Retired (test|disposition|reason):
+altq.sh (all 6)|retired|ALTQ: FreeBSD altq(4) disciplines configured through FreeBSD pf; OpenBSD PF queues (HFSC/FQ-CoDel) replace them
+ridentifier.sh:ridentifier|retired|FreeBSD-only "ridentifier" rule option and its pflog field
+fragmentation_compat.sh (all 7)|retired|legacy "scrub" rules (retired keywords); the same reassembly cases run in fragmentation_pass.sh with "match ... scrub"
+scrub_compat.sh (all 8)|retired|legacy "scrub" rules; covered by scrub_pass.sh with "match ... scrub"
+max_pkt_size.sh (all 2)|retired|FreeBSD-only "max-pkt-size" rule option
+rules_counter.sh:keepcounters, 4G|retired|FreeBSD-only "set keepcounters"
+nat.sh:nested_anchor|retired|legacy nat-anchor and pfctl -sn (FreeBSD translation rulesets)
+nat.sh:endpoint_independent_{compat,exhaust,static_port,pass}|retired|FreeBSD-only "endpoint-independent" NAT option
+nat.sh:map_e_compat, map_e_pass|retired|FreeBSD-only MAP-E port-set option (map-e-portset)
+nat.sh:binat_compat|retired|legacy "binat on" rule; binat_match covers binat-to
+rdr.sh:tcp_v6_compat, srcport_compat|retired|legacy "rdr on" rules; the *_pass cases cover rdr-to
+route_to.sh:prefer_ipv6_nexthop_* (11)|retired|FreeBSD-only "prefer-ipv6-nexthop" pool option
+src_track.sh:sn_types_compat|retired|legacy nat/rdr source-node types
+src_track.sh:mixed_af|retired|uses FreeBSD-only prefer-ipv6-nexthop
+pflow.sh:max_entries|retired|FreeBSD pflowctl sender limit (pflow(4) is a cloned interface)
+pflow.sh:obs_dom|retired|FreeBSD-only IPFIX observation domain setting
+pfsync.sh:route_to_1301, route_to_1301_bad_ruleset, route_to_1301_bad_rpool, route_to_1400_bad_ruleset, route_to_1400_bad_ifname|retired|FreeBSD pfsync message versions 13.01/14.00 ("ifconfig pfsync0 version"); pfsync uses OpenBSD's protocol
+pfsync.sh:altq_queues|retired|ALTQ queue ids in pfsync state
+set_tos.sh, scrub_pass.sh|adapted|legacy "scrub ... set-tos" and "set ( tos )" became OpenBSD "match ... set tos"
+common/{nat,rdr,fragments,tos}.sh (pf variants)|adapted|OpenBSD nat-to/rdr-to/set tos syntax
+pfsync.sh:rt_af|retired|uses FreeBSD-only prefer-ipv6-nexthop
+
+Adapted (unverified):
+anchor, counters, icmp, icmp6, if_enc, killstate, match, nat, proxy, rdr,
+route_to, sctp, src_track, fragmentation_pass, dup, nat64, pfsync,
+unmapped_mbuf: FreeBSD "nat on/rdr on/binat on ... ->" became OpenBSD
+"match/pass ... nat-to/rdr-to/binat-to"; "route-to (if addr)" became
+"route-to addr".
+set_tos, scrub_pass: "scrub ... set-tos", "set ( tos x )" became
+"match ... set tos x".
+pflog: expectations in OpenBSD tcpdump format ("rule N/(reason) action",
+"icmp: echo request"), no --immediate-mode/-U.
+pflow: pflowctl replaced by ifconfig pflow0 flowdst/pflowproto.
+debug: OpenBSD debug levels (err/debug); set limit removed (host-owned).
+pfctl -x loud became pfctl -x debug; ridentifier option dropped (icmp6).
+utils.subr: pflog/pfsync/pflow availability from ifconfig -C (they are
+part of pf.ko).
+pfsync: the FreeBSD "version" parameter removed from the route-to helper.
+common/{nat,rdr,fragments,tos}.sh: pf variants converted the same way.
+
+Not yet reviewed: everything else (pass_block, table, tcp, syncookie,
+synproxy, limiters, limits, max_states, max_pkt_rate, modulate, names,
+once, osfp, prio, rtable, set_skip, snmp, status, tos, get_state,
+loginterface, macro, forward, icmp, mbuf, ether, divert-to, *.py;
+scrub.sh still uses legacy "scrub on"/"no scrub" rules and needs converting
+or retiring).

@@ -174,13 +174,13 @@ ethernet_in_mbuf_len_body()
 	dummymbuf_init
 
 	epair=$(vnet_mkepair)
-	epair_a_mac=$(ifconfig ${epair}a ether | awk '/ether/ { print $2; }')
+	epair_a_mac=$(ifconfig ${epair}a ether | awk '/lladdr/ { print $2; }')
 	ifconfig ${epair}a 192.0.2.1/24 up
 
 	# Set up a simple jail with one interface
 	vnet_mkjail alcatraz ${epair}b
 	jexec alcatraz ifconfig ${epair}b 192.0.2.2/24 up
-	epair_b_mac=$(jexec alcatraz ifconfig ${epair}b ether | awk '/ether/ { print $2; }')
+	epair_b_mac=$(jexec alcatraz ifconfig ${epair}b ether | awk '/lladdr/ { print $2; }')
 
 	# Sanity check
 	atf_check -s exit:0 -o ignore ping -c1 192.0.2.2

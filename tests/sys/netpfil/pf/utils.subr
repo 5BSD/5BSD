@@ -76,7 +76,8 @@ pfsynct_init()
 {
 	pft_init
 
-	if ! kldstat -q -m pfsync; then
+	# pfsync(4), pflog(4) and pflow(4) are part of pf (OpenBSD PF).
+	if ! ifconfig -C | grep -qw pfsync; then
 		atf_skip "This test requires pfsync"
 	fi
 }
@@ -85,7 +86,7 @@ pflog_init()
 {
 	pft_init
 
-	if ! kldstat -q -m pflog; then
+	if ! ifconfig -C | grep -qw pflog; then
 		atf_skip "This test requires pflog"
 	fi
 }
@@ -94,7 +95,7 @@ pflow_init()
 {
 	pft_init
 
-	if ! kldstat -q -m pflow; then
+	if ! ifconfig -C | grep -qw pflow; then
 		atf_skip "This test requires pflow"
 	fi
 }

@@ -64,10 +64,10 @@ ftp_body()
 
 	jexec fwd pfctl -e
 	pft_set_rules fwd \
-		"nat on ${epair_link}a inet from 192.0.2.0/24 to any -> (${epair_link}a)" \
+		"match out on ${epair_link}a inet from 192.0.2.0/24 to any nat-to (${epair_link}a)" \
 		"nat-anchor \"ftp-proxy/*\"" \
 		"rdr-anchor \"ftp-proxy/*\"" \
-		"rdr pass on ${epair_client}b proto tcp from 192.0.2.0/24 to any port 21 -> 127.0.0.1 port 8021" \
+		"pass in on ${epair_client}b proto tcp from 192.0.2.0/24 to any port 21 rdr-to 127.0.0.1 port 8021" \
 		"anchor \"ftp-proxy/*\"" \
 		"pass out proto tcp from 127.0.0.1 to any port 21"
 	jexec fwd /usr/sbin/ftp-proxy
@@ -125,10 +125,10 @@ tftp_body()
 
 	jexec fwd pfctl -e
 	pft_set_rules fwd \
-		"nat on ${epair_link}a inet from 192.0.2.0/24 to any -> (${epair_link}a)" \
+		"match out on ${epair_link}a inet from 192.0.2.0/24 to any nat-to (${epair_link}a)" \
 		"nat-anchor \"tftp-proxy/*\"" \
 		"rdr-anchor \"tftp-proxy/*\"" \
-		"rdr pass on ${epair_client}b proto udp from 192.0.2.0/24 to any port 69 -> 127.0.0.1 port 69" \
+		"pass in on ${epair_client}b proto udp from 192.0.2.0/24 to any port 69 rdr-to 127.0.0.1 port 69" \
 		"anchor \"tftp-proxy/*\"" \
 		"pass out proto udp from 127.0.0.1 to any port 69"
 

@@ -40,7 +40,7 @@ mac_body()
 	pft_init
 
 	epair=$(vnet_mkepair)
-	epair_a_mac=$(ifconfig ${epair}a ether | awk '/ether/ { print $2; }')
+	epair_a_mac=$(ifconfig ${epair}a ether | awk '/lladdr/ { print $2; }')
 
 	ifconfig ${epair}a 192.0.2.1/24 up
 
@@ -138,7 +138,7 @@ proto_body()
 	pft_init
 
 	epair=$(vnet_mkepair)
-	epair_a_mac=$(ifconfig ${epair}a ether | awk '/ether/ { print $2; }')
+	epair_a_mac=$(ifconfig ${epair}a ether | awk '/lladdr/ { print $2; }')
 
 	ifconfig ${epair}a 192.0.2.1/24 up
 
@@ -181,8 +181,8 @@ direction_body()
 	pft_init
 
 	epair=$(vnet_mkepair)
-	epair_a_mac=$(ifconfig ${epair}a ether | awk '/ether/ { print $2; }')
-	epair_b_mac=$(ifconfig ${epair}b ether | awk '/ether/ { print $2; }')
+	epair_a_mac=$(ifconfig ${epair}a ether | awk '/lladdr/ { print $2; }')
+	epair_b_mac=$(ifconfig ${epair}b ether | awk '/lladdr/ { print $2; }')
 
 	ifconfig ${epair}a 192.0.2.1/24 up
 
@@ -257,7 +257,7 @@ captive_body()
 
 	epair_gw=$(vnet_mkepair)
 	epair_srv=$(vnet_mkepair)
-	epair_gw_a_mac=$(ifconfig ${epair_gw}a ether | awk '/ether/ { print $2; }')
+	epair_gw_a_mac=$(ifconfig ${epair_gw}a ether | awk '/lladdr/ { print $2; }')
 
 	vnet_mkjail gw ${epair_gw}b ${epair_srv}a
 	vnet_mkjail srv ${epair_srv}b
@@ -333,7 +333,7 @@ captive_long_body()
 
 	epair_gw=$(vnet_mkepair)
 	epair_srv=$(vnet_mkepair)
-	epair_gw_a_mac=$(ifconfig ${epair_gw}a ether | awk '/ether/ { print $2; }')
+	epair_gw_a_mac=$(ifconfig ${epair_gw}a ether | awk '/lladdr/ { print $2; }')
 
 	vnet_mkjail gw ${epair_gw}b ${epair_srv}a
 	vnet_mkjail srv ${epair_srv}b
@@ -460,7 +460,7 @@ anchor_body()
 	pft_init
 
 	epair=$(vnet_mkepair)
-	epair_a_mac=$(ifconfig ${epair}a ether | awk '/ether/ { print $2; }')
+	epair_a_mac=$(ifconfig ${epair}a ether | awk '/lladdr/ { print $2; }')
 
 	vnet_mkjail alcatraz ${epair}b
 

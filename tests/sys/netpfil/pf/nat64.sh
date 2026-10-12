@@ -1044,7 +1044,7 @@ route_to_body()
 	    "set state-policy if-bound" \
 	    "block log (all)" \
 	    "pass inet6 proto icmp6 icmp6-type { neighbrsol, neighbradv }" \
-	    "pass in on ${epair}b route-to (${epair_link}a 192.0.2.2) inet6 from any to 64:ff9b::/96 af-to inet from (${epair_link}a)"
+	    "pass in on ${epair}b route-to 192.0.2.2 inet6 from any to 64:ff9b::/96 af-to inet from (${epair_link}a)"
 
 	atf_check -s exit:0 -o ignore \
 	    -o match:'3 packets transmitted, 3 packets received, 0.0% packet loss' \
@@ -1102,7 +1102,7 @@ reply_to_body()
 	    "set state-policy if-bound" \
 	    "block" \
 	    "pass inet6 proto icmp6 icmp6-type { neighbrsol, neighbradv }" \
-	    "pass in on ${epair}b reply-to (${epair}b 2001:db8::2) inet6 from any to 64:ff9b::/96 af-to inet from 192.0.2.1"
+	    "pass in on ${epair}b reply-to 2001:db8::2 inet6 from any to 64:ff9b::/96 af-to inet from 192.0.2.1"
 
 	atf_check -s exit:0 -o ignore \
 	    -o match:'3 packets transmitted, 3 packets received, 0.0% packet loss' \

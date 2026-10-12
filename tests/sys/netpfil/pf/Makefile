@@ -4,15 +4,13 @@ TESTSDIR=       ${TESTSBASE}/sys/netpfil/pf
 TESTS_SUBDIRS+=	ioctl
 TESTS_SUBDIRS+=	openbsd
 
-ATF_TESTS_SH+=	altq \
-		anchor \
+ATF_TESTS_SH+=	anchor \
 		counters \
 		debug \
 		divert-to \
 		dup \
 		ether \
 		forward \
-		fragmentation_compat \
 		fragmentation_pass \
 		fragmentation_no_reassembly \
 		get_state \
@@ -26,7 +24,6 @@ ATF_TESTS_SH+=	altq \
 		macro \
 		match \
 		max_pkt_rate \
-		max_pkt_size \
 		max_states \
 		mbuf \
 		modulate \
@@ -42,11 +39,9 @@ ATF_TESTS_SH+=	altq \
 		prio \
 		proxy \
 		rdr \
-		ridentifier \
 		route_to \
 		rtable \
 		rules_counter \
-		scrub_compat \
 		scrub_pass \
 		sctp \
 		set_skip \

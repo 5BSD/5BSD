@@ -191,7 +191,7 @@ v6_route_to_body()
 	pft_set_rules alcatraz \
 		"set reassemble yes" \
 		"pass" \
-		"pass in route-to (${epair_link}a 2001:db8:43::3) inet6 proto icmp6 from any to 2001:db8:43::3 keep state"
+		"pass in route-to 2001:db8:43::3 inet6 proto icmp6 from any to 2001:db8:43::3 keep state"
 
 	# Forwarding test
 	atf_check -s exit:0 -o ignore \
@@ -207,7 +207,7 @@ v6_route_to_body()
 	pft_set_rules alcatraz \
 		"set reassemble no" \
 		"pass" \
-		"pass in route-to (${epair_link}a 2001:db8:43::3) inet6 proto icmp6 from any to 2001:db8:43::3 keep state"
+		"pass in route-to 2001:db8:43::3 inet6 proto icmp6 from any to 2001:db8:43::3 keep state"
 
 	atf_check -s exit:0 -o ignore \
 		ping -6 -c 1 2001:db8:43::3
@@ -593,7 +593,7 @@ dummynet_nat_body()
 	jexec alcatraz pfctl -e
 	pft_set_rules alcatraz \
 		"set reassemble yes" \
-		"nat on ${epair_two}a from 192.0.2.0/24 -> (${epair_two}a)" \
+		"match out on ${epair_two}a from 192.0.2.0/24 nat-to (${epair_two}a)" \
 		"block in" \
 		"pass in inet proto icmp all icmp-type echoreq dnpipe (1, 2)"
 
@@ -750,8 +750,8 @@ direction_test()
 	atf_check -s exit:0 -o ignore jexec router ping $ping_family -c 1 -t 3 ${right_prefix}2
 	jexec router pfctl -e
 	pft_set_rules router 'set reassemble yes' 'set timeout frag 600' 'pass no state'
-	jexec router pfctl -x loud
-	mac=$(jexec router ifconfig ${left}b | awk '/ether/ { print $2 }')
+	jexec router pfctl -x debug
+	mac=$(jexec router ifconfig ${left}b | awk '/lladdr/ { print $2 }')
 	helper=$(atf_get_srcdir)/frag-direction.py
 	ready=$(pwd)/receiver.ready
 	jexec server python3 "$helper" receive --family "$family" --ready "$ready" >receiver.log 2>&1 &

@@ -86,7 +86,7 @@ tcp_v6_common()
 	    jexec ${j}a ping -6 -c 1 2001:db8:b::2
 
 	# capture packets on c so we can look for incorrect checksums
-	jexec ${j}c tcpdump --immediate-mode -w ${PWD}/${j}.pcap tcp and port 8000 &
+	jexec ${j}c tcpdump -w ${PWD}/${j}.pcap tcp and port 8000 &
 	tcpdumppid=$!
 
 	# start a web server and give it a second to start
@@ -108,26 +108,6 @@ tcp_v6_common()
 	# checksums are bad with rdr rules
 	count=$(jexec ${j}c tcpdump -vvvv -r ${PWD}/${j}.pcap | grep incorrect | wc -l)
 	atf_check_equal "       0" "$count"
-}
-
-atf_test_case "tcp_v6_compat" "cleanup"
-tcp_v6_compat_head()
-{
-	atf_set descr 'TCP rdr with IPv6 with NAT rules'
-	atf_set require.user root
-	atf_set require.progs python3
-}
-
-tcp_v6_compat_body()
-{
-	tcp_v6_setup # Sets ${epair_…} variables
-	tcp_v6_common \
-		"rdr on ${epair_one}a proto tcp from any to any port 80 -> 2001:db8:b::2 port 8000"
-}
-
-tcp_v6_compat_cleanup()
-{
-	pft_cleanup
 }
 
 atf_test_case "tcp_v6_pass" "cleanup"
@@ -237,28 +217,6 @@ srcport_common()
 	atf_check -o match:"[0-9]+" -o not-inline:"1234" cat port3
 }
 
-atf_test_case "srcport_compat" "cleanup"
-srcport_compat_head()
-{
-	atf_set descr 'TCP rdr srcport modulation with NAT rules'
-	atf_set require.user root
-	atf_set require.progs python3
-	atf_set timeout 9999
-}
-
-srcport_compat_body()
-{
-	srcport_setup # Sets ${epair_…} variables
-	srcport_common \
-		"nat on ${epair2}a inet from 198.51.100.0/24 to any -> ${epair2}a static-port" \
-		"rdr on ${epair2}b proto tcp from any to ${epair2}b port 7777 -> 203.0.113.50 port 8888"
-}
-
-srcport_compat_cleanup()
-{
-	pft_cleanup
-}
-
 atf_test_case "srcport_pass" "cleanup"
 srcport_pass_head()
 {
@@ -315,8 +273,8 @@ natpass_body()
 
 	jexec alcatraz pfctl -e
 	pft_set_rules alcatraz \
-	    "rdr pass on ${epair}b proto udp from any to 192.0.2.1 port 80 -> 198.51.100.2" \
-	    "nat on ${epair}b inet from 198.51.100.0/24 to any -> 192.0.2.1" \
+	    "pass in on ${epair}b proto udp from any to 192.0.2.1 port 80 rdr-to 198.51.100.2" \
+	    "match out on ${epair}b inet from 198.51.100.0/24 to any nat-to 192.0.2.1" \
 	    "block in proto udp from any to any port 80" \
 	    "pass in proto icmp"
 
@@ -366,7 +324,7 @@ pr290177_body()
 	pft_set_rules alcatraz \
 	    "table <white> { 192.0.2.2 }" \
 	    "no rdr inet proto tcp from <white> to any port 25" \
-	    "rdr pass inet proto tcp from any to any port 25 -> 127.0.0.1 port 2500"
+	    "pass in inet proto tcp from any to any port 25 rdr-to 127.0.0.1 port 2500"
 
 	echo foo | jexec alcatraz nc -N -l 2500 &
 	sleep 1
@@ -391,9 +349,7 @@ pr290177_cleanup()
 atf_init_test_cases()
 {
 	atf_add_test_case "natpass"
-	atf_add_test_case "tcp_v6_compat"
 	atf_add_test_case "tcp_v6_pass"
-	atf_add_test_case "srcport_compat"
 	atf_add_test_case "srcport_pass"
 	atf_add_test_case "pr290177"
 }

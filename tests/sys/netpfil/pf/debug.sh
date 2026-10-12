@@ -39,9 +39,9 @@ basic_body()
 
 	vnet_mkjail debug
 	atf_check -s exit:0 -e ignore \
-	    jexec debug pfctl -x loud
+	    jexec debug pfctl -x debug
 
-	atf_check -s exit:0 -o match:'Debug: Loud' \
+	atf_check -s exit:0 -o match:'Debug: debug' \
 	    jexec debug pfctl -si
 }
 
@@ -63,35 +63,22 @@ reset_body()
 
 	vnet_mkjail debug
 
-	# Default is Urgent
-	atf_check -s exit:0 -o match:'Debug: Urgent' \
+	# Default is err (OpenBSD: syslog level names)
+	atf_check -s exit:0 -o match:'Debug: err' \
 	    jexec debug pfctl -sa
-	state_limit=$(jexec debug pfctl -sa | grep 'states.*hard limit' | awk '{ print $4; }')
-
-	# Change defaults
-	pft_set_rules debug \
-	    "set limit states 42"
+	# Change defaults.  (Limits belong to the host on 5BSD; a vnet jail
+	# cannot change them, see pf(4).)
 	atf_check -s exit:0 -e ignore \
-	    jexec debug pfctl -x loud
+	    jexec debug pfctl -x debug
 
-	atf_check -s exit:0 -o match:'Debug: Loud' \
+	atf_check -s exit:0 -o match:'Debug: debug' \
 	    jexec debug pfctl -sa
-	new_state_limit=$(jexec debug pfctl -sa | grep 'states.*hard limit' | awk '{ print $4; }')
-	if [ $state_limit -eq $new_state_limit ]; then
-		jexec debug pfctl -sa
-		atf_fail "Failed to change state limit"
-	fi
 
 	# Reset
 	atf_check -s exit:0 -o ignore -e ignore \
 	    jexec debug pfctl -FR
-	atf_check -s exit:0 -o match:'Debug: Urgent' \
+	atf_check -s exit:0 -o match:'Debug: err' \
 	    jexec debug pfctl -sa
-	new_state_limit=$(jexec debug pfctl -sa | grep 'states.*hard limit' | awk '{ print $4; }')
-	if [ $state_limit -ne $new_state_limit ]; then
-		jexec debug pfctl -sa
-		atf_fail "Failed to reset state limit"
-	fi
 }
 
 reset_cleanup()

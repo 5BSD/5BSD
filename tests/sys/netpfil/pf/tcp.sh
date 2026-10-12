@@ -67,7 +67,7 @@ rst_body()
 		"pass keep state"
 
 	# Not required, but pf should log the bad RST packet with this set.
-	jexec cl pfctl -x loud
+	jexec cl pfctl -x debug
 
 	vnet_mkjail attack ${epair_attack}b
 	jexec attack ifconfig ${epair_attack}b 192.0.2.3/24 up
@@ -127,8 +127,8 @@ original_ack_test()
 	if [ "$family" = inet6 ]; then
 		while { ifconfig; jexec router ifconfig; } | grep -q tentative; do sleep 1; done
 	fi
-	left_mac=$(ifconfig ${left}a | awk '/ether/ { print $2 }')
-	right_mac=$(ifconfig ${right}a | awk '/ether/ { print $2 }')
+	left_mac=$(ifconfig ${left}a | awk '/lladdr/ { print $2 }')
+	right_mac=$(ifconfig ${right}a | awk '/lladdr/ { print $2 }')
 	if [ "$family" = inet ]; then
 		jexec router arp -s ${lp}10 "$left_mac"
 		jexec router arp -s ${rp}20 "$right_mac"
@@ -136,8 +136,8 @@ original_ack_test()
 		jexec router ndp -s ${lp}10 "$left_mac"
 		jexec router ndp -s ${rp}20 "$right_mac"
 	fi
-	left_mac=$(jexec router ifconfig ${left}b | awk '/ether/ { print $2 }')
-	right_mac=$(jexec router ifconfig ${right}b | awk '/ether/ { print $2 }')
+	left_mac=$(jexec router ifconfig ${left}b | awk '/lladdr/ { print $2 }')
+	right_mac=$(jexec router ifconfig ${right}b | awk '/lladdr/ { print $2 }')
 	jexec router pfctl -e
 	# One filtering interface makes this a single stateful firewall boundary.
 	# Only SYN may create a state; resets cannot fall through to a permissive
