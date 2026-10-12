@@ -161,4 +161,11 @@
 #define	SIOCSETPFLOW	 _IOW('i', 253, struct ifreq)
 #define	SIOCGETPFLOW	_IOWR('i', 254, struct ifreq)
 
+/*
+ * 5BSD: routing domains (rdomain(4)).  OpenBSD numbers 159/160 collide with
+ * SIOCGUMBPARAM, so these use free numbers.
+ */
+#define	SIOCSIFRDOMAIN	 _IOW('i', 240, struct ifreq)	/* set rdomain */
+#define	SIOCGIFRDOMAIN	_IOWR('i', 241, struct ifreq)	/* get rdomain */
+
 #endif /* !_SYS_SOCKIO_H_ */

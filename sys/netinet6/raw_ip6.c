@@ -239,6 +239,9 @@ rip6_input(struct mbuf **mp, int *offp, int proto)
 			 * and fall through into normal filter path if so.
 			 */
 			continue;
+		/* 5BSD: raw sockets see their routing domain only. */
+		if (!rt_fib_same_rdomain(fib, inp->inp_inc.inc_fibnum))
+			continue;
 		if (V_rip_bind_all_fibs == 0 && fib != inp->inp_inc.inc_fibnum)
 			/*
 			 * Sockets bound to a specific FIB can only receive
@@ -779,7 +782,7 @@ rip6_bind(struct socket *so, struct sockaddr *nam, struct thread *td)
 		return (error);
 
 	fib = V_rip_bind_all_fibs == 0 ? inp->inp_inc.inc_fibnum :
-	    RT_ALL_FIBS;
+	    rt_fib_scope(inp->inp_inc.inc_fibnum);
 
 	NET_EPOCH_ENTER(et);
 	if (!IN6_IS_ADDR_UNSPECIFIED(&addr->sin6_addr) &&

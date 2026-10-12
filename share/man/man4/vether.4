@@ -1,0 +1,39 @@
+.\"
+.\" SPDX-License-Identifier: BSD-2-Clause
+.\"
+.\" Copyright (c) 2026 The 5BSD Project
+.\"
+.Dd October 12, 2026
+.Dt VETHER 4
+.Os
+.Sh NAME
+.Nm vether
+.Nd virtual Ethernet interface
+.Sh SYNOPSIS
+.Cd "device vether"
+.Sh DESCRIPTION
+The
+.Nm
+interface simulates an Ethernet interface without hardware.
+It has a random, locally administered link-layer address and supports
+ARP, IPv6 neighbour discovery and multicast.
+Frames sent through it are passed to
+.Xr bpf 4
+and dropped, unless the interface is a member of a
+.Xr bridge 4 .
+.Pp
+Interfaces are created with
+.Nm ifconfig Li vether Ns Ar N Cm create ,
+or implicitly by configuring a
+.Nm
+interface that does not exist yet.
+.Sh SEE ALSO
+.Xr bridge 4 ,
+.Xr rdomain 4 ,
+.Xr ifconfig 8
+.Sh HISTORY
+The
+.Nm
+interface appeared in
+.Ox 4.7
+and in 5BSD in 2026.

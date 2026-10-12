@@ -1,0 +1,114 @@
+.\"
+.\" SPDX-License-Identifier: BSD-2-Clause
+.\"
+.\" Copyright (c) 2026 The 5BSD Project
+.\"
+.Dd October 12, 2026
+.Dt RDOMAIN 4
+.Os
+.Sh NAME
+.Nm rdomain
+.Nd routing domains
+.Sh SYNOPSIS
+.Cd "ifconfig interface rdomain N"
+.Cd "route -T N exec command"
+.Sh DESCRIPTION
+A routing domain is an isolated set of routing tables and interfaces.
+An interface belongs to exactly one routing domain, a routing domain can
+contain several routing tables, and the same network address can be used
+in several routing domains at once.
+.Pp
+On 5BSD a routing table is a FIB
+.Pq Xr setfib 2 .
+Routing domain
+.Ar N
+is FIB
+.Ar N
+made a domain of its own; the other FIBs are routing tables of the
+domain they belong to, which is domain 0 unless stated otherwise.
+FIBs created with
+.Va net.fibs
+or by
+.Nm route Fl T Ar N Cm add
+belong to routing domain 0, so the
+.Fx
+FIB behaviour is unchanged
+until a routing domain is created.
+Routing domain numbers range from 0 to 255.
+.Pp
+A routing domain is created by moving an interface into it with
+.Nm ifconfig Ar interface Cm rdomain Ar N .
+The routing table must not hold routes yet.
+Creating routing domain
+.Ar N
+also creates its loopback interface
+.Li lo Ns Ar N ,
+which stays in the domain and cannot be destroyed.
+Moving an interface to another routing domain removes its addresses and
+the routes through it, since they belong to the old domain.
+.Pp
+Inside a routing domain:
+.Bl -bullet
+.It
+Packets received on an interface use the domain's routing table
+.Pq the interface's FIB .
+.It
+An address is local only in the routing domain of its interface:
+packets for an address of another domain are not delivered locally, and
+sockets can only bind to addresses of their own domain.
+.It
+Sockets only receive packets of their own domain.
+The routing table of a process or socket is selected with
+.Xr setfib 2 ,
+.Xr setfib 1 ,
+.Dv SO_SETFIB
+.Pq also known as Dv SO_RTABLE ,
+.Nm route Fl T Ar N Cm exec
+or
+.Nm ping Fl V Ar N .
+Entering a routing table of another routing domain requires privilege;
+changing tables inside a domain does not.
+.It
+Local traffic is looped through the domain's loopback interface
+.Li lo Ns Ar N .
+.El
+.Pp
+.Xr pf 4
+evaluates rules per routing domain: the
+.Cm on rdomain Ar N
+rule option matches packets of a domain, the
+.Cm rtable Ar N
+option moves packets to another routing table, and state keys include the
+routing domain.
+.Pp
+The routing domain of every routing table is reported by the
+.Dv NET_RT_TABLE
+.Xr sysctl 3
+.Pq Va net.route.0.0.1024.N ,
+which returns a
+.Vt struct rt_tableinfo .
+.Sh EXAMPLES
+Put
+.Li vether0
+into routing domain 3 and run a shell there:
+.Bd -literal -offset indent
+# ifconfig vether0 rdomain 3
+# ifconfig vether0 192.0.2.1/24 up
+# route -T 3 exec sh
+.Ed
+.Sh SEE ALSO
+.Xr setfib 1 ,
+.Xr setfib 2 ,
+.Xr lo 4 ,
+.Xr pf 4 ,
+.Xr vether 4 ,
+.Xr pf.conf 5 ,
+.Xr ifconfig 8 ,
+.Xr ping 8 ,
+.Xr route 8
+.Sh HISTORY
+Routing domains appeared in
+.Ox 4.9 .
+They were added to 5BSD, on top of
+.Fx
+FIBs, in 2026.

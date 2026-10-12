@@ -85,6 +85,10 @@ VNET_DEFINE_STATIC(struct rib_head **, rt_tables);
 
 VNET_DEFINE(uint32_t, _rt_numfibs) = 1;
 
+/* 5BSD: routing domains (rdomain(4)) on FIBs, see net/route.h. */
+VNET_DEFINE(u_int, rt_rdomains) = 0;
+VNET_DEFINE(uint32_t, rt_l2map[RT_TABLEID_MAX + 1]);
+
 /*
  * Handler for net.my_fibnum.
  * Returns current fib of the process.
@@ -154,13 +158,34 @@ sys_setfib(struct thread *td, struct setfib_args *uap)
 	int error = 0;
 
 	CURVNET_SET(TD_TO_VNET(td));
-	if (uap->fibnum >= 0 && uap->fibnum < V_rt_numfibs)
-		td->td_proc->p_fibnum = uap->fibnum;
-	else
+	if (uap->fibnum >= 0 && uap->fibnum < V_rt_numfibs) {
+		/* 5BSD: entering another routing domain is privileged. */
+		error = rt_fib_change_check(td, td->td_proc->p_fibnum,
+		    uap->fibnum);
+		if (error == 0)
+			td->td_proc->p_fibnum = uap->fibnum;
+	} else
 		error = EINVAL;
 	CURVNET_RESTORE();
 
 	return (error);
+}
+
+/*
+ * 5BSD: make sure routing table (FIB) fib exists, growing net.fibs on
+ * demand like OpenBSD's rtable_add().
+ */
+int
+rt_tables_add(u_int fib)
+{
+
+	if (fib > RT_TABLEID_MAX && fib >= V_rt_numfibs)
+		return (EINVAL);
+	RTABLES_LOCK();
+	if (fib >= V_rt_numfibs)
+		grow_rtables(fib + 1);
+	RTABLES_UNLOCK();
+	return (0);
 }
 
 static int

@@ -720,6 +720,9 @@ passin:
 	CK_LIST_FOREACH(ia, INADDR_HASH(ip->ip_dst.s_addr), ia_hash) {
 		if (IA_SIN(ia)->sin_addr.s_addr != ip->ip_dst.s_addr)
 			continue;
+		/* 5BSD: addresses are local only in their routing domain. */
+		if (!rt_fib_same_rdomain(ia->ia_ifp->if_fib, M_GETFIB(m)))
+			continue;
 
 		/*
 		 * net.inet.ip.rfc1122_strong_es: the address matches, verify

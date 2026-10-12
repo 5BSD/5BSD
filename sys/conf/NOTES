@@ -927,6 +927,10 @@ device		disc
 # like interface pair.
 device		epair
 
+# The `vether' device is a virtual Ethernet interface without hardware
+# (OpenBSD vether(4)); frames sent are dropped unless bridged.
+device		vether
+
 #  The `edsc' device implements a minimal Ethernet interface,
 #  which discards all packets sent and receives none.
 device		edsc

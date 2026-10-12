@@ -46,12 +46,14 @@
 static void
 fib_status(if_ctx *ctx)
 {
+	/* 5BSD: the FIB of a routing domain is shown as " rdomain N". */
 	struct ifreq ifr;
 
 	memset(&ifr, 0, sizeof(ifr));
 	strlcpy(ifr.ifr_name, ctx->ifname, sizeof(ifr.ifr_name));
 	if (ioctl_ctx(ctx, SIOCGIFFIB, (caddr_t)&ifr) == 0 &&
-	    ifr.ifr_fib != RT_DEFAULT_FIB)
+	    ifr.ifr_fib != RT_DEFAULT_FIB &&
+	    (int)ifr.ifr_fib != get_rdomain(ctx))
 		printf("\tfib: %u\n", ifr.ifr_fib);
 
 	memset(&ifr, 0, sizeof(ifr));

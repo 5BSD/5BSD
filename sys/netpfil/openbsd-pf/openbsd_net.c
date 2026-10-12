@@ -168,8 +168,8 @@ rtable_exists(unsigned int tableid)
 unsigned int
 rtable_l2(unsigned int tableid)
 {
-	/* Routing domains: every FIB is its own domain until D2 lands. */
-	return (tableid);
+	/* Routing domains on FIBs (rdomain(4), net/route/route_rdomain.c). */
+	return (rt_fib_l2(tableid));
 }
 
 /* Next-hop destination for an interface output call. */

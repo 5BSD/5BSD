@@ -503,6 +503,7 @@ struct ifreq {
 #define	ifr_curcap	ifr_ifru.ifru_cap[1]	/* current capabilities */
 #define	ifr_index	ifr_ifru.ifru_index	/* interface index */
 #define	ifr_fib		ifr_ifru.ifru_fib	/* interface fib */
+#define	ifr_rdomainid	ifr_ifru.ifru_fib	/* routing domain (5BSD) */
 #define	ifr_vlan_pcp	ifr_ifru.ifru_vlan_pcp	/* VLAN priority */
 #define	ifr_lan_pcp	ifr_ifru.ifru_vlan_pcp	/* VLAN priority */
 #define	ifr_cap_nv	ifr_ifru.ifru_nv	/* nv-based cap interface */

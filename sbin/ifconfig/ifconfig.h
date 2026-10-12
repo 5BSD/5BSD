@@ -295,6 +295,10 @@ struct afswtch	*af_getbyfamily(int af);
 void	af_other_status(if_ctx *ctx);
 void	print_ifstatus(if_ctx *ctx);
 void	print_metric(if_ctx *ctx);
+/* 5BSD: routing domains (ifrdomain.c) */
+int	get_rdomain(if_ctx *ctx);
+void	print_rdomain(if_ctx *ctx);
+bool	ifautocreate(const char *name, const char *arg);
 ifType	convert_iftype(ifType iftype);
 
 /* Netlink-related functions */
