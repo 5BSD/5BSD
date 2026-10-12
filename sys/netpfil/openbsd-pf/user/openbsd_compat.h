@@ -88,11 +88,14 @@ obsd_getaddrinfo(const char *host, const char *serv,
 #define	getaddrinfo(h, s, hi, r)	obsd_getaddrinfo((h), (s), (hi), (r))
 
 #include <netinet/in.h>
+#ifndef _SOCKADDR_UNION_DEFINED
+#define	_SOCKADDR_UNION_DEFINED
 union sockaddr_union {
 	struct sockaddr		sa;
 	struct sockaddr_in	sin;
 	struct sockaddr_in6	sin6;
 };
+#endif
 #define	LOGIN_NAME_MAX		MAXLOGNAME
 
 /* OpenBSD strnvis(dst, src, dstsize, flag); 5BSD orders (dst, dstsize, src). */
@@ -155,12 +158,6 @@ obsd_sysctl(const int *mib, u_int n, void *o, size_t *ol, const void *nw,
 	return (sysctl(mib, n, o, ol, nw, nl));
 }
 #define	sysctl(m, n, o, ol, nw, nl)	obsd_sysctl((m), (n), (o), (ol), (nw), (nl))
-#define	RTLABEL_LEN		32
-
-/* Kernel-only structure embedded in a pfvar.h type (pf_pktdelay). */
-struct timeout {
-	void	*to_opaque[8];
-};
 
 /* OpenBSD typed red-black trees (RBT_*) on top of sys/tree.h RB_*. */
 #include <sys/tree.h>

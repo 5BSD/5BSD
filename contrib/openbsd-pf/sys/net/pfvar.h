@@ -44,6 +44,9 @@
 #define PF_KTAG(x)			x
 #endif
 
+#ifndef _KERNEL
+#include <sys/param.h>		/* 5BSD: sys/syslimits.h is not for userland */
+#endif
 #include <sys/queue.h>
 #include <sys/tree.h>
 #include <sys/syslimits.h>
@@ -54,6 +57,26 @@
 
 #include <net/radix.h>
 #include <net/route.h>
+
+#ifndef _KERNEL
+/*
+ * 5BSD: userland - names this header takes from other OpenBSD headers.
+ * sys/socket.h defines PF_DIVERT as the divert(4) protocol family; here it
+ * is the rule action (use AF_DIVERT for the socket family).
+ */
+#undef	PF_DIVERT
+#ifndef RTLABEL_LEN
+#define	RTLABEL_LEN	32		/* OpenBSD net/route.h */
+#endif
+#ifndef _SOCKADDR_UNION_DEFINED
+#define	_SOCKADDR_UNION_DEFINED
+union sockaddr_union {			/* OpenBSD netinet/ip_ipsp.h */
+	struct sockaddr		sa;
+	struct sockaddr_in	sin;
+	struct sockaddr_in6	sin6;
+};
+#endif
+#endif /* !_KERNEL */
 
 struct ip;
 struct ip6_hdr;

@@ -50,8 +50,6 @@
 #include <net/if_dl.h>
 #include <net/ethernet.h>
 #include <net/firewire.h>
-#include <net/if_pflog.h>
-#include <net/if_pfsync.h>
 
 #include <security/mac/mac_framework.h>
 
@@ -129,7 +127,8 @@ bpf_ifnet_write(void *arg, struct mbuf *m, struct mbuf *mc, int flags)
 
 	/* DLT_PFSYNC */
 	case IFT_PFSYNC:
-		hlen = PFSYNC_HDRLEN;
+		/* sizeof(struct pfsync_header), OpenBSD net/if_pfsync.h */
+		hlen = 20;
 		break;
 
 	default:

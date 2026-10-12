@@ -1154,7 +1154,10 @@ pfTablesAddrPktsOutBlock OBJECT-TYPE
 -- --------------------------------------------------------------------------
 
 --
--- Altq information
+-- Altq information.  On 5BSD these objects describe the queues of
+-- pf.conf(5) "queue" rules (OpenBSD PF HFSC classes): the scheduler is
+-- always hfsc, the bandwidth is the link-share bandwidth in bits per
+-- second and the priority is 0.
 --
 
 pfAltqQueueNumber OBJECT-TYPE

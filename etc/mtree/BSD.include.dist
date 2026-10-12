@@ -398,10 +398,6 @@
         route
         ..
     ..
-    netpfil
-        pf              tags=package=pf-dev
-        ..
-    ..
     netsmb
     ..
     nfs

@@ -275,7 +275,6 @@ SUBDIR.${MK_OPENMP}+=	libomp
 SUBDIR.${MK_OPENSSH}+=	libcbor libfido2
 .endif
 SUBDIR.${MK_OPENSSL}+=	libmp
-SUBDIR.${MK_PF}+=	libpfctl
 SUBDIR.${MK_PMC}+=	libpmc libpmcstat
 SUBDIR.${MK_RADIUS_SUPPORT}+=	libradius
 SUBDIR.${MK_SENDMAIL}+=	libmilter libsm libsmdb libsmutil

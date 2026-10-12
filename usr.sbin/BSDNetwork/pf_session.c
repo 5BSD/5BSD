@@ -10,6 +10,9 @@
 #include <sys/capsicum.h>
 #include <sys/param.h>
 #include <sys/event.h>
+#include <sys/socket.h>
+#include <net/if.h>
+#include <netinet/in.h>
 #include <net/pfvar.h>
 
 #include <errno.h>
