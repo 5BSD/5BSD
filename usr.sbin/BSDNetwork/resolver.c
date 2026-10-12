@@ -6,11 +6,12 @@
  * point no path may be opened and libc getaddrinfo(3) is unusable (it opens
  * /etc/resolv.conf, /etc/hosts and /etc/services on demand).  Before
  * workers fork, netresolve_init() reads resolv.conf through the filesystem
- * provider and retains read-only descriptors for /etc/hosts and
- * /etc/services.  The parent periodically refreshes nameservers through the
+ * provider and snapshots /etc/hosts and /etc/services into bounded shared
+ * backing.  The parent periodically refreshes nameservers through the
  * filesystem provider; existing workers read a shared, read-only generation.
- * Startup-missing hosts/services files use one-time anonymous snapshots,
- * populated by the parent after a later successful brokered open.
+ * All hosts/services snapshots are published once; later file edits need
+ * provider replacement. Startup-missing files are populated by the parent
+ * after a later successful brokered open.
  * netresolve() serves lookups in capability mode using retained descriptors,
  * pure in-memory parsing, and fresh UDP or TCP sockets connected to a
  * configured nameserver with connectat(2).
@@ -210,18 +211,17 @@ nameservers_share_init(void)
 }
 
 /*
- * A startup-missing file gets an anonymous backing descriptor BEFORE fork.
- * The parent fills it once after a successful brokered retry, then publishes
- * readiness with release ordering. Existing workers retain that same object.
- * No pathname authority reaches workers and no partially copied bytes are read.
- * Normal startup-opened files retain the original descriptor semantics.
+ * Brokered files permit one fork only. Keep their bounded contents in anonymous
+ * backing shared by every worker, then close the brokered source. Both initial
+ * success and recovery publish a one-time snapshot before marking it ready.
  */
+static void resolver_file_retry(struct service_context *, const char *, int,
+    unsigned int, size_t);
+
 static int
 resolver_file_init(struct service_context *ctx, const char *path, int *fdp,
     unsigned int bit)
 {
-	if (service_open_isolated(ctx, path, SERVICE_OPEN_READ, 0, fdp) == 0)
-		return (0);
 	*fdp = -1;
 	if (g_nameservers == NULL)
 		return (-1);
@@ -229,6 +229,8 @@ resolver_file_init(struct service_context *ctx, const char *path, int *fdp,
 	if (*fdp == -1)
 		return (-1);
 	g_recovery_files |= bit;
+	resolver_file_retry(ctx, path, *fdp, bit,
+	    bit == 1 ? RSLV_HOSTS_BUFSZ : RSLV_SERV_BUFSZ);
 	return (0);
 }
 

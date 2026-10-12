@@ -21,6 +21,8 @@ int mock_open(struct service_context *ctx, const char *path, uint32_t flags,
 		return -1;
 	}
 	*fdp = dup(source);
+	if (*fdp >= 0)
+		ATF_REQUIRE(cap_clofork_limit(*fdp, CAP_CLOFORK_ONCE) == 0);
 	return *fdp < 0 ? -1 : 0;
 }
 static int fdcount(void)
@@ -106,9 +108,10 @@ ATF_TC_BODY(startup_recovery, tc)
 	close(g_servfd);
 	g_servfd = -1;
 	g_recovery_files = 0;
+	atomic_store(&g_nameservers->files_ready, 0);
 	ATF_REQUIRE(resolver_file_init(NULL, "/etc/services", &g_servfd, 2) ==
 		    0);
-	ATF_REQUIRE(g_recovery_files == 0);
+	ATF_REQUIRE(g_recovery_files == 2);
 	ATF_REQUIRE(serv_lookup_file("testsvc", "tcp") == 1234);
 	close(g_servfd);
 	close(source);
@@ -117,8 +120,44 @@ ATF_TC_BODY(startup_recovery, tc)
 	(void)tc;
 }
 
+
+ATF_TC_WITHOUT_HEAD(repeated_workers);
+ATF_TC_BODY(repeated_workers, tc)
+{
+	int status, initial_count;
+	pid_t child;
+
+	(void)tc;
+	source = shm_open(SHM_ANON, O_RDWR, 0600);
+	ATF_REQUIRE(source >= 0);
+	ATF_REQUIRE(ftruncate(source, 16) == 0);
+	ATF_REQUIRE(write(source, "testsvc 1234/tcp\n", 16) == 16);
+	ATF_REQUIRE(nameservers_share_init() == 0);
+	available = 1;
+	initial_count = fdcount();
+	ATF_REQUIRE(resolver_file_init(NULL, "/etc/services", &g_servfd, 2) == 0);
+	ATF_REQUIRE(fdcount() == initial_count + 1);
+	for (int i = 0; i < 8; i++) {
+		child = fork();
+		ATF_REQUIRE(child >= 0);
+		if (child == 0) {
+			ATF_REQUIRE(netresolve_worker_enter() == 0);
+			ATF_REQUIRE(cap_enter() == 0);
+			ATF_REQUIRE(serv_lookup_file("testsvc", "tcp") == 1234);
+			_exit(0);
+		}
+		ATF_REQUIRE(waitpid(child, &status, 0) == child);
+		ATF_REQUIRE(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+		ATF_REQUIRE(fdcount() == initial_count + 1);
+	}
+	ATF_REQUIRE(opens == 1);
+	close(g_servfd);
+	close(source);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, startup_recovery);
+	ATF_TP_ADD_TC(tp, repeated_workers);
 	return (atf_no_error());
 }
