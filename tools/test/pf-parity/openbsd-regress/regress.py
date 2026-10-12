@@ -82,12 +82,15 @@ def suites(dut_os):
         'pf_table': dict(host='dut', dir='regress/sys/net/pf_table'),
         'pf_trans': dict(host='dut', dir='regress/sys/net/pf_trans',
                          vars={'TIMEOUT': '60'}),  # max allowed; TCG guests fork slowly
-        'pf_print': dict(host='dut', dir='regress/sys/net/pf_print'),
+        'pf_print': dict(host='dut', dir='regress/sys/net/pf_print',
+                         prepare=['pf_print_host.c'] if dut_os == '5bsd' else []),
         'pf_policy': dict(host='dut', dir='regress/sys/net/pf_policy',
                           vars={'REMOTE_ADDR': SRC_ADDR}),
         'pf_opts': dict(host='dut', dir='regress/sys/net/pf_opts'),
         'pflog': dict(host='dut', dir='regress/sys/net/pflog'),
-        'pflow': dict(host='dut', dir='regress/sys/net/pflow'),
+        'pflow': dict(host='dut', dir='regress/sys/net/pflow',
+                      vars=({'CFLAGS': '-O2 -pipe -D__dead=__dead2 -I/usr/include/private/event1',
+                             'LDADD': '-lprivateevent1'} if dut_os == '5bsd' else {})),
         'pf_forward': dict(host='helper', dir='regress/sys/net/pf_forward', vars=four, timeout=28800),
         'pf_fragment': dict(host='helper', dir='regress/sys/net/pf_fragment', vars=four, timeout=28800),
         'pf_state': dict(host='helper', dir='regress/sys/net/pf_state', vars=dict(two,
@@ -144,25 +147,43 @@ def run_suite(name, s, out, hosts, make):
     # restore the DUT's baseline pf.conf ("pass; anchor regress") first.
     ssh(hosts['dut'], 'pfctl -a "regress/*" -Fa >/dev/null 2>&1; pfctl -Fa >/dev/null 2>&1; '
         'pfctl -f /etc/pf.conf && pfctl -e >/dev/null 2>&1; true', 300)
-    command = 'rm -f %s; touch %s; cd %s/%s && %s %s regress; echo REGRESS_EXIT $?' % (
-        log, log, GUEST_SRC, s['dir'], make, ' '.join(shlex.quote(w) for w in words))
+    invocation = make + ' ' + ' '.join(shlex.quote(w) for w in words)
+    # Upstream's pf_print prerequisite is attached to .o; 5BSD builds .pieo.
+    # Build generated sources explicitly without changing upstream expectations.
+    prepare = s.get('prepare', [])
+    steps = ([invocation + ' ' + ' '.join(map(shlex.quote, prepare))]
+             if prepare else [])
+    steps.append(invocation + ' regress')
+    command = 'rm -f %s; touch %s; cd %s/%s && %s; echo REGRESS_EXIT $?' % (
+        log, log, GUEST_SRC, s['dir'], ' && '.join(steps))
     started = time.time()
     rc = ssh(host, command, s.get('timeout', 14400), out / (name + '.out'))
-    subprocess.run(['ssh', '-F', SSHCFG, host, 'cat ' + log],
-                   stdout=open(out / (name + '.regress.log'), 'wb'), timeout=600)
+    log_rc = ssh(host, 'cat ' + log, 600, out / (name + '.regress.log'))
     results = {}
     for line in (out / (name + '.regress.log')).read_text(errors='replace').splitlines():
         m = re.match(r'^(SUCCESS|FAIL|SKIP|XFAIL|XPASS) \S*/([^/\s]+)$', line)
         if m:
             results[m.group(2)] = m.group(1)
     for t in s.get('targets', []):
+        t = t.removeprefix('run-regress-')
         if t not in SETUP_TARGETS and t not in results:
             results[t] = 'NOT_RUN'
     for t in SETUP_TARGETS:
         results.pop(t, None)
     text = (out / (name + '.out')).read_text(errors='replace')
     suite_skip = 'SKIPPED' in text and not results
-    return {'rc': rc, 'seconds': round(time.time() - started), 'suite_skipped': suite_skip,
+    # The remote echo succeeds even when make failed. Preserve the SSH
+    # status separately and use the explicit marker for the suite status.
+    exits = re.findall(r'^REGRESS_EXIT ([0-9]+)$', text, re.MULTILINE)
+    make_rc = int(exits[-1]) if exits else None
+    suite_rc = rc or log_rc or (make_rc if make_rc is not None else 125)
+    # bsd.regress.mk returns zero with REGRESS_FAIL_EARLY=no, even on FAIL.
+    if not suite_rc and any(v in {'FAIL', 'XPASS', 'NOT_RUN'} for v in results.values()):
+        suite_rc = 1
+    if not suite_rc and not results and not suite_skip:
+        suite_rc = 125
+    return {'rc': suite_rc, 'ssh_rc': rc, 'log_rc': log_rc, 'make_rc': make_rc,
+            'seconds': round(time.time() - started), 'suite_skipped': suite_skip,
             'targets': results}
 
 
@@ -176,14 +197,20 @@ def main():
     p.add_argument('--helper', default='helper')
     p.add_argument('--rerun-failures', action='store_true',
                    help='rerun only targets that did not succeed in OUT and merge')
-    p.add_argument('--make', default='make',
+    p.add_argument('--make',
                    help='make invocation on the DUT for local suites')
     a = p.parse_args()
+    if a.make is None:
+        a.make = ('make -m /usr/local/share/pf-parity/mk -m /usr/share/mk'
+                  if a.dut_os == '5bsd' else 'make')
     a.out.mkdir(parents=True, exist_ok=True)
     all_s = suites(a.dut_os)
-    names = a.suite or [n for n, x in all_s.items() if x.get('tier', 1) == 1]
+    # The separate routing-table project is outside the PF landing gate.
+    names = a.suite or [n for n, x in all_s.items()
+                        if x.get('tier', 1) == 1 and n not in {'route', 'rtable'}]
     resfile = a.out / 'results.json'
     res = json.loads(resfile.read_text()) if resfile.exists() else {}
+    exit_rc = 0
     for name in names:
         s = dict(all_s[name])
         make = a.make if s['host'] == 'dut' else 'make'
@@ -205,6 +232,9 @@ def main():
             merged.update(r['targets'])
             r['targets'] = merged
             r['rerun'] = sorted(s['targets'])
+        if any(v in {'FAIL', 'XPASS', 'NOT_RUN'} for v in r['targets'].values()):
+            r['rc'] = r['rc'] or 1
+        exit_rc = exit_rc or r['rc']
         res[name] = r
         c = {}
         for v in res[name]['targets'].values():
@@ -212,7 +242,8 @@ def main():
         print('    %s rc=%s %ss skipped=%s' % (c, res[name]['rc'], res[name]['seconds'],
                                              res[name]['suite_skipped']), flush=True)
         resfile.write_text(json.dumps(res, indent=1, sort_keys=True) + '\n')
+    return exit_rc
 
 
 if __name__ == '__main__':
-    main()
+    raise SystemExit(main())

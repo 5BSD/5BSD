@@ -42,7 +42,8 @@ regress:
 	@echo SKIPPED
 .endif
 
-PERL_REQUIRE !=	perl -e 'eval { require Net::Flow } or print $@'
+# 5BSD: preserve Perl's exception variable through bmake expansion.
+PERL_REQUIRE !=	perl -e 'eval { require Net::Flow } or print $$@'
 .if ! empty(PERL_REQUIRE)
 regress:
 	@echo "${PERL_REQUIRE}"

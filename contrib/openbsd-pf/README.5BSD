@@ -137,3 +137,7 @@ Update procedure: fetch the new pinned commit, replace the subtrees,
 regenerate UPSTREAM.json (git rev-parse <commit>:<path>), rerun the reference
 baseline on the matching signed OpenBSD snapshot, and record any expected
 output changes in the PF parity gap report.
+
+Regression plumbing adjustment (5BSD):
+  regress/sys/net/pflow/Makefile escapes Perl $@ as $$@ so bmake does not
+  replace it with its automatic target variable. Test expectations unchanged.

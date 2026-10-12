@@ -22,10 +22,21 @@ numbered target individually (REGRESS_TARGETS override), so totals count
 upstream test cases, not aggregate targets.  Local suites run on the DUT;
 multi-host suites run on the helper with PF_SSH/REMOTE_SSH set to the DUT.
 
-On a 5BSD DUT the upstream Makefiles run through bmake with
-MAKESYSPATH=<bsd.regress.mk dir>:/usr/share/mk.  image-5bsd.sh builds the
+On a 5BSD DUT the runner defaults to bmake with explicit
+`-m /usr/local/share/pf-parity/mk -m /usr/share/mk` include paths.
+It prepares pf_print's generated source for PIE objects and supplies
+pflow's base private event1 include/link settings. No expected outputs change.
+image-5bsd.sh builds the
 DUT disk from a completed buildworld/buildkernel without root (NO_ROOT
 METALOG); test tools (perl5, p5-Socket6, p5-Net-Flow, oksh as /bin/ksh,
 python312, py312-scapy) come from catalogue-verified FreeBSD:16 packages.
 
 Plumbing only: never change expected outputs here.
+
+The JSON records SSH, log-transfer, and make exit statuses separately.
+The effective suite status and CLI exit also fail for FAIL, XPASS, NOT_RUN,
+or missing result evidence: REGRESS_FAIL_EARLY=no can leave make successful
+even when individual targets fail. SKIP and XFAIL remain distinct outcomes.
+The default PF gate excludes the separate route and rtable project.
+Run the transport/accounting tests without guests with:
+  python3.12 tools/test/pf-parity/openbsd-regress/test_regress.py
