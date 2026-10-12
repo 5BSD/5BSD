@@ -189,7 +189,11 @@
  * MCLBYTES must be no larger than PAGE_SIZE.
  */
 #ifndef	MSIZE
-#define	MSIZE		256		/* size of an mbuf */
+/*
+ * 512: the packet header carries OpenBSD PF state (struct pkthdr_pf), so
+ * an mbuf with a packet header and external storage exceeds 256 bytes.
+ */
+#define	MSIZE		512		/* size of an mbuf */
 #endif
 
 #ifndef	MCLSHIFT
