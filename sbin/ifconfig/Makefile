@@ -50,7 +50,9 @@ SRCS+=	ifue.c
 SRCS+=	carp.c			# SIOC[GS]VH support
 SRCS+=	ifgroup.c		# ...
 .if ${MK_PF} != "no"
-SRCS+=	ifpfsync.c		# pfsync(4) support
+SRCS+=	ifpf.c			# pfsync(4) and pflow(4) support (OpenBSD)
+CFLAGS.ifpf.c+=	-I${SRCTOP}/sys/netpfil/openbsd-pf/user -Wno-unused-parameter -Wno-cast-align \
+		-Wno-sign-compare -Wno-shadow
 .endif
 
 SRCS+=	ifbridge.c		# bridge support
