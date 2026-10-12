@@ -873,9 +873,27 @@ obsd_securelevel(void)
 }
 #define	securelevel		obsd_securelevel()
 
-/* OpenBSD sysctl helpers (pf registers 5BSD sysctls in the glue). */
-#define	sysctl_rdstruct(o, ol, n, p, l)	(EOPNOTSUPP)
-#define	sysctl_struct(o, ol, n, nl, p, l)	(EOPNOTSUPP)
+/*
+ * OpenBSD sysctl helpers.  5BSD registers pf's sysctl(9) nodes in the glue
+ * (pf_sysctl.c), which calls the OpenBSD handlers with kernel buffers; these
+ * copy a read-only structure into such a buffer.
+ */
+static __inline int
+obsd_sysctl_rdstruct(void *oldp, size_t *oldlenp, void *newp, const void *sp,
+    size_t len)
+{
+	if (newp != NULL)
+		return (EPERM);
+	if (oldp != NULL) {
+		if (*oldlenp < len)
+			return (ENOMEM);
+		memcpy(oldp, sp, len);
+	}
+	*oldlenp = len;
+	return (0);
+}
+#define	sysctl_rdstruct(o, ol, n, p, l)	obsd_sysctl_rdstruct((o), (ol), (n), (p), (l))
+#define	sysctl_struct(o, ol, n, nl, p, l)	obsd_sysctl_rdstruct((o), (ol), (n), (p), (l))
 #define	NET_PFLOW_STATS		1
 
 /*
