@@ -198,6 +198,19 @@ again:
 		goto bad;
 	}
 
+	/*
+	 * As OpenBSD: the packet filter sees a forwarded packet before a
+	 * reject or blackhole route discards it, so route-to/reply-to rules
+	 * can take it elsewhere.
+	 */
+	if ((nh->nh_flags & (NHF_BLACKHOLE | NHF_REJECT)) != 0 &&
+	    PFIL_HOOKED_OUT(V_inet6_pfil_head)) {
+		if (pfil_mbuf_fwd(V_inet6_pfil_head, &m, nh->nh_ifp, NULL) !=
+		    PFIL_PASS) {
+			m_freem(mcopy);
+			goto out;
+		}
+	}
 	if (nh->nh_flags & (NHF_BLACKHOLE | NHF_REJECT)) {
 		IP6STAT_INC(ip6s_cantforward);
 		if (mcopy != NULL) {
