@@ -46,8 +46,12 @@ CAP_UNITMODE=	0444
 CAP_UNITPACKAGE=	runtime
 
 # bsdfilesystem_proto.h (libcapsulert), tzfs_* verbs (libtrustedzfs), sys/zfshandle.h,
-# the UCL config parser, and the socket-free service_provider transport
-# (libservice over libchannel).
+# the UCL config parser, the socket-free service_provider transport
+# (libservice over libchannel), and the bsd.filesystem.v1 and bsd.oes.v1
+# server bindings (their generated code is linked from libfilesystemcmp and
+# liboes).
+CFLAGS+=	-I${FIDLGEN.filesystemcmp} -I${FIDLGEN.oes_broker}
+CFLAGS+=	-I${SRCTOP}/lib/libfidl/include
 CFLAGS+=	-I${SRCTOP}/lib/libcapsulert
 CFLAGS+=	-I${SRCTOP}/lib/libtrustedzfs
 CFLAGS+=	-I${SRCTOP}/lib/libcapreclaim
@@ -57,7 +61,8 @@ CFLAGS+=	-I${SRCTOP}/lib/libchannel
 CFLAGS+=	-I${SRCTOP}/sys -I${SRCTOP}/lib/liboes
 CFLAGS+=	-I${SRCTOP}/contrib/libucl/include
 
-LIBADD=		trustedzfs ucl nvpair service channel md capreclaim logcmp
+LIBADD=		trustedzfs ucl nvpair service channel md capreclaim logcmp \
+		filesystemcmp oes fidl_bsd
 
 .if ${MK_DTRACE} != "no"
 SRCS+=		bsdfilesystem_provider.d
@@ -66,6 +71,16 @@ CFLAGS+=	-I${.OBJDIR} -DWITH_DTRACE
 
 HAS_TESTS=
 SUBDIR.${MK_TESTS}+=	tests
+
+# Bindings generated at build time (fidl-bindings.mk).
+FIDL_BINDINGS+=	filesystemcmp oes_broker
+FIDL_SCHEMAS.filesystemcmp=	lib/libfidl/tests/zx.fidl \
+	lib/libfilesystemcmp/filesystemcmp.fidl
+FIDL_LIBRARY.filesystemcmp=	bsd.filesystem.v1
+FIDL_SCHEMAS.oes_broker=	lib/libfidl/tests/zx.fidl \
+	lib/liboes/oes_broker.fidl
+FIDL_LIBRARY.oes_broker=	bsd.oes.v1
+.include "${SRCTOP}/lib/libfidl/fidl-bindings.mk"
 
 .include <bsd.prog.mk>
 

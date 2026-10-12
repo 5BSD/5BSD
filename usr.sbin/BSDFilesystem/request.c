@@ -38,6 +38,7 @@
 
 
 #include <channel.h>
+#include <fidl/bsd.filesystem.v1/c/bsd.h>
 #include <libservice.h>
 #include <trustedzfs.h>
 
@@ -59,6 +60,7 @@ struct tzfs_conn {
 						 * "" if the client has no bundle */
 	char			groups[4][64];	/* group containers the bundle may
 						 * claim (Data/Shared/<group>/) */
+	bool			negotiated;	/* GetProtocolInfo answered */
 	/* Stamped sender credentials: the only ownership a store can take. */
 	uid_t			uid;
 	gid_t			gid;
@@ -79,6 +81,51 @@ struct tzfs_conn {
 		bool	ephemeral;		/* destroy the dataset on teardown */
 	}			anchors[BSDFILESYSTEM_CONN_MAX_CLAIMS];
 };
+
+/*
+ * One bsd.filesystem.v1 request rebuilt in its legacy record shape (a
+ * bsdfilesystem_request, _open_request, _list_request or _version_request,
+ * told apart by length as before), the sender's kernel credentials, and the
+ * legacy-shaped reply the request path produced.  The handlers translate that
+ * reply into the method's result, so every validation, authorization and
+ * status decision below is the historical one.
+ */
+struct tzfs_msg {
+	const void			*data;
+	size_t				 length;
+	const struct channel_sender	*sender;
+	union {
+		struct bsdfilesystem_reply		rp;
+		struct bsdfilesystem_list_reply		lrp;
+		struct bsdfilesystem_stat_reply		srp;
+		struct bsdfilesystem_version_reply	vrp;
+		struct bsdfilesystem_versions_reply	vsrp;
+	}				 reply;
+	size_t				 reply_length;
+	int				 reply_fd;	/* owned, or -1 */
+	bool				 replied;
+};
+
+/*
+ * Record the reply.  A delivered descriptor is taken over: the caller's slot
+ * (out->fds points at its local) is set to -1 so its close after "sending" is
+ * skipped and the handler hands the very descriptor the request path hardened
+ * to the bindings.
+ */
+static void
+tzfs_capture(struct tzfs_msg *m, const struct channel_outgoing *out)
+{
+
+	if (m->replied)
+		return;
+	m->replied = true;
+	m->reply_length = MIN(out->length, sizeof(m->reply));
+	memcpy(&m->reply, out->data, m->reply_length);
+	if (out->nfds == 1 && out->fds != NULL && out->fds[0] >= 0) {
+		m->reply_fd = out->fds[0];
+		*(int *)(uintptr_t)out->fds = -1;
+	}
+}
 
 /*
  * Retain `fd` as the anchor of `dataset`.  A re-claim of a dataset already
@@ -1419,7 +1466,7 @@ open_own_ns(struct bsdfilesystem_state *st, struct tzfs_conn *conn,
  */
 static void
 bsdfilesystem_serve_version(struct bsdfilesystem_state *st, struct tzfs_conn *conn,
-    const struct bsdfilesystem_version_request *vrq, struct channel_message *m)
+    const struct bsdfilesystem_version_request *vrq, struct tzfs_msg *m)
 {
 	struct channel_outgoing out;
 	int cfd;
@@ -1472,8 +1519,7 @@ bsdfilesystem_serve_version(struct bsdfilesystem_state *st, struct tzfs_conn *co
 		out.size = sizeof(out);
 		out.data = &vrp;
 		out.length = sizeof(vrp);
-		(void)channel_send_reply(m, &out);
-		channel_message_free(m);
+		tzfs_capture(m, &out);
 		return;
 	}
 	case BSDFILESYSTEM_OP_LIST_VERSIONS: {
@@ -1522,8 +1568,7 @@ bsdfilesystem_serve_version(struct bsdfilesystem_state *st, struct tzfs_conn *co
 		out.size = sizeof(out);
 		out.data = &vrp;
 		out.length = sizeof(vrp);
-		(void)channel_send_reply(m, &out);
-		channel_message_free(m);
+		tzfs_capture(m, &out);
 		return;
 	}
 	case BSDFILESYSTEM_OP_ROLLBACK: {
@@ -1549,8 +1594,7 @@ bsdfilesystem_serve_version(struct bsdfilesystem_state *st, struct tzfs_conn *co
 		out.size = sizeof(out);
 		out.data = &rp;
 		out.length = sizeof(rp);
-		(void)channel_send_reply(m, &out);
-		channel_message_free(m);
+		tzfs_capture(m, &out);
 		return;
 	}
 	case BSDFILESYSTEM_OP_OPEN_VERSION: {
@@ -1668,10 +1712,9 @@ ov_reply:
 				out.nfds = 1;
 			}
 		}
-		(void)channel_send_reply(m, &out);
+		tzfs_capture(m, &out);
 		if (dfd != -1)
 			(void)close(dfd);
-		channel_message_free(m);
 		return;
 	}
 	case BSDFILESYSTEM_OP_TXN_BEGIN: {
@@ -1825,10 +1868,9 @@ tb_reply:
 			out.fds = &dfd;
 			out.nfds = 1;
 		}
-		(void)channel_send_reply(m, &out);
+		tzfs_capture(m, &out);
 		if (dfd != -1)
 			(void)close(dfd);
-		channel_message_free(m);
 		return;
 	}
 	case BSDFILESYSTEM_OP_TXN_COMMIT: {
@@ -2020,8 +2062,7 @@ tc_reply:
 		out.size = sizeof(out);
 		out.data = &rp;
 		out.length = sizeof(rp);
-		(void)channel_send_reply(m, &out);
-		channel_message_free(m);
+		tzfs_capture(m, &out);
 		return;
 	}
 	case BSDFILESYSTEM_OP_TXN_ABORT: {
@@ -2063,8 +2104,7 @@ ta_reply:
 		out.size = sizeof(out);
 		out.data = &rp;
 		out.length = sizeof(rp);
-		(void)channel_send_reply(m, &out);
-		channel_message_free(m);
+		tzfs_capture(m, &out);
 		return;
 	}
 	default:
@@ -2080,20 +2120,19 @@ einval:
 		out.size = sizeof(out);
 		out.data = &rp;
 		out.length = sizeof(rp);
-		(void)channel_send_reply(m, &out);
-		channel_message_free(m);
+		tzfs_capture(m, &out);
 	}
 }
 
 /*
- * Per-client channel request handler.  arg is this worker's bsdfilesystem_state (its
+ * Decide one request in its legacy record shape (the bsd.filesystem.v1
+ * handlers below build it).  conn carries this worker's bsdfilesystem_state (its
  * own copy of the retained handles, plus per-connection lease state).  The
- * reply is a fixed bsdfilesystem_reply; a granted handle rides back as its single fd.
+ * reply is captured in m; a granted handle rides back as its single fd.
  */
 static void
-tzfs_request(struct channel *ch __unused, struct channel_message *m, void *arg)
+tzfs_request(struct tzfs_conn *conn, struct tzfs_msg *m)
 {
-	struct tzfs_conn *conn = arg;
 	struct bsdfilesystem_state *st = conn->st;
 	const struct bsdfilesystem_request *rq;
 	struct bsdfilesystem_reply rp;
@@ -2103,13 +2142,8 @@ tzfs_request(struct channel *ch __unused, struct channel_message *m, void *arg)
 
 	memset(&rp, 0, sizeof(rp));
 
-	BSDFILESYSTEM_PROBE_MSG((uint64_t)channel_message_length(m),
-	    channel_message_fd_count(m));
-
-	if (channel_message_fd_count(m) != 0) {
-		rp.status = EPROTO;
-		goto reply;
-	}
+	/* A decoded request never carries a descriptor. */
+	BSDFILESYSTEM_PROBE_MSG((uint64_t)m->length, 0);
 
 	/*
 	 * Stamp the sender's kernel credentials before ANY dispatch: they are the
@@ -2119,7 +2153,7 @@ tzfs_request(struct channel *ch __unused, struct channel_message *m, void *arg)
 	 * stale/zero uid.
 	 */
 	{
-		const struct channel_sender *sender = channel_message_sender(m);
+		const struct channel_sender *sender = m->sender;
 
 		conn->uid = sender != NULL ? sender->uid : 0;
 		conn->gid = sender != NULL ? sender->gid : 0;
@@ -2129,8 +2163,8 @@ tzfs_request(struct channel *ch __unused, struct channel_message *m, void *arg)
 	 * BSDFILESYSTEM_OP_OPEN carries its own, larger request struct; dispatch it by
 	 * its distinct length before the storage-shaped requests.
 	 */
-	if (channel_message_length(m) == sizeof(struct bsdfilesystem_open_request)) {
-		const struct bsdfilesystem_open_request *orq = channel_message_data(m);
+	if (m->length == sizeof(struct bsdfilesystem_open_request)) {
+		const struct bsdfilesystem_open_request *orq = m->data;
 
 		if (orq->op == BSDFILESYSTEM_OP_OPEN) {
 			handle = grant_open(st, conn->label, orq);
@@ -2155,8 +2189,8 @@ tzfs_request(struct channel *ch __unused, struct channel_message *m, void *arg)
 	 * length here — like OPEN — and send its dedicated reply inline, before the
 	 * storage-shaped request path.
 	 */
-	if (channel_message_length(m) == sizeof(struct bsdfilesystem_list_request)) {
-		const struct bsdfilesystem_list_request *lrq = channel_message_data(m);
+	if (m->length == sizeof(struct bsdfilesystem_list_request)) {
+		const struct bsdfilesystem_list_request *lrq = m->data;
 
 		if (lrq->op == BSDFILESYSTEM_OP_LIST) {
 			struct bsdfilesystem_list_reply lrp;
@@ -2180,8 +2214,7 @@ tzfs_request(struct channel *ch __unused, struct channel_message *m, void *arg)
 			lout.size = sizeof(lout);
 			lout.data = &lrp;
 			lout.length = sizeof(lrp);
-			(void)channel_send_reply(m, &lout);
-			channel_message_free(m);
+			tzfs_capture(m, &lout);
 			return;
 		}
 	}
@@ -2192,8 +2225,8 @@ tzfs_request(struct channel *ch __unused, struct channel_message *m, void *arg)
 	 * storage-shaped request path.  bsdfilesystem_serve_version() sends its reply
 	 * inline and does not return here.
 	 */
-	if (channel_message_length(m) == sizeof(struct bsdfilesystem_version_request)) {
-		const struct bsdfilesystem_version_request *vrq = channel_message_data(m);
+	if (m->length == sizeof(struct bsdfilesystem_version_request)) {
+		const struct bsdfilesystem_version_request *vrq = m->data;
 
 		if (vrq->op == BSDFILESYSTEM_OP_SNAPSHOT ||
 		    vrq->op == BSDFILESYSTEM_OP_LIST_VERSIONS ||
@@ -2207,11 +2240,11 @@ tzfs_request(struct channel *ch __unused, struct channel_message *m, void *arg)
 		}
 	}
 
-	if (channel_message_length(m) != sizeof(*rq)) {
+	if (m->length != sizeof(*rq)) {
 		rp.status = EPROTO;
 		goto reply;
 	}
-	rq = channel_message_data(m);
+	rq = m->data;
 	{
 		int ok = valid_request(rq);
 
@@ -2452,8 +2485,7 @@ tzfs_request(struct channel *ch __unused, struct channel_message *m, void *arg)
 		sout.size = sizeof(sout);
 		sout.data = &srp;
 		sout.length = sizeof(srp);
-		(void)channel_send_reply(m, &sout);
-		channel_message_free(m);
+		tzfs_capture(m, &sout);
 		return;
 	}
 	case BSDFILESYSTEM_OP_SET_QUOTA: {
@@ -2533,10 +2565,574 @@ reply:
 send_reply:
 	if (rp.status != 0)
 		out.nfds = 0;
-	(void)channel_send_reply(m, &out);
+	tzfs_capture(m, &out);
 	if (handle != -1)
 		(void)close(handle);
-	channel_message_free(m);
+}
+
+/*
+ * bsd.filesystem.v1 method handlers.  Each rebuilds its request in the legacy
+ * record shape, runs tzfs_request() on it with the sender's kernel
+ * credentials, and answers with the captured reply.  Every method but
+ * GetProtocolInfo requires a negotiated session; a failed reply closes the
+ * connection.
+ */
+static bool
+fs_ready(struct tzfs_conn *conn, struct fidl_bsd_connection *connection)
+{
+
+	if (conn->negotiated)
+		return (true);
+	fidl_bsd_connection_close(connection, EPROTO);
+	return (false);
+}
+
+static void
+fs_completed(struct fidl_bsd_connection *connection, int transport_error)
+{
+
+	if (transport_error != 0)
+		fidl_bsd_connection_close(connection, transport_error);
+}
+
+static void
+fs_protocol_info(void *argument, struct fidl_bsd_connection *connection,
+    struct fidl_bsd_request *request, struct fidl_bsd_empty *empty __unused)
+{
+	struct tzfs_conn *conn = argument;
+	struct bsd_filesystem_v1_ProtocolInfo info = {
+		BSDFILESYSTEM_WIRE_VERSION
+	};
+	int error;
+
+	error = bsd_filesystem_v1_Filesystem_GetProtocolInfo_reply(connection,
+	    request, &info);
+	conn->negotiated = error == 0;
+	fs_completed(connection, error);
+}
+
+/* Copy a schema-bounded string into a record field; refuse an embedded NUL. */
+static bool
+fs_copy(char *out, size_t outsz, const char *in, size_t length)
+{
+
+	if (length >= outsz || (length != 0 && memchr(in, '\0', length) != NULL))
+		return (false);
+	if (length != 0)
+		memcpy(out, in, length);
+	out[length] = '\0';
+	return (true);
+}
+
+/*
+ * Run one legacy-shaped request.  Returns the reply's status (an errno, or 0);
+ * a request whose strings cannot be represented is EINVAL without reaching
+ * the request path, exactly as the legacy validators answer a malformed name.
+ */
+static int
+fs_run(struct tzfs_conn *conn, struct fidl_bsd_request *request,
+    const void *record, size_t length, bool representable, struct tzfs_msg *m)
+{
+
+	memset(m, 0, sizeof(*m));
+	m->reply_fd = -1;
+	if (!representable) {
+		m->reply.rp.status = EINVAL;
+		m->reply_length = sizeof(m->reply.rp);
+		return (EINVAL);
+	}
+	m->data = record;
+	m->length = length;
+	m->sender = channel_message_sender(fidl_bsd_request_native(request));
+	tzfs_request(conn, m);
+	if (!m->replied || m->reply_length < sizeof(int32_t)) {
+		if (m->reply_fd >= 0)
+			(void)close(m->reply_fd);
+		m->reply_fd = -1;
+		return (EIO);
+	}
+	if (m->reply.rp.status != 0 && m->reply_fd >= 0) {
+		(void)close(m->reply_fd);
+		m->reply_fd = -1;
+	}
+	return (m->reply.rp.status);
+}
+
+/* A claim reference in the legacy request or version record. */
+static bool
+fs_claim(const struct bsd_filesystem_v1_ClaimRef *claim, uint8_t *lifetime,
+    uint8_t *scope, char *dataset, size_t dsz, char *group, size_t gsz)
+{
+
+	*lifetime = claim->lifetime;
+	*scope = claim->scope;
+	return (fs_copy(dataset, dsz, claim->dataset, claim->dataset_size) &&
+	    fs_copy(group, gsz, claim->group, claim->group_size));
+}
+
+static bool
+fs_request_ref(struct bsdfilesystem_request *rq, uint32_t op,
+    const struct bsd_filesystem_v1_ClaimRef *claim)
+{
+
+	memset(rq, 0, sizeof(*rq));
+	rq->op = op;
+	return (fs_claim(claim, &rq->lifetime, &rq->scope, rq->dataset,
+	    sizeof(rq->dataset), rq->group, sizeof(rq->group)));
+}
+
+static bool
+fs_version_ref(struct bsdfilesystem_version_request *vrq, uint32_t op,
+    const struct bsd_filesystem_v1_ClaimRef *claim, const char *version,
+    size_t version_size)
+{
+
+	memset(vrq, 0, sizeof(*vrq));
+	vrq->op = op;
+	return (fs_claim(claim, &vrq->lifetime, &vrq->scope, vrq->dataset,
+	    sizeof(vrq->dataset), vrq->group, sizeof(vrq->group)) &&
+	    fs_copy(vrq->version, sizeof(vrq->version), version, version_size));
+}
+
+/* Answer a method whose success reply is empty. */
+#define	FS_EMPTY_REPLY(method, connection, request, status)		\
+	do {								\
+		struct bsd_filesystem_v1_Filesystem_##method##_Result r_; \
+									\
+		memset(&r_, 0, sizeof(r_));				\
+		if ((status) == 0)					\
+			r_.tag = bsd_filesystem_v1_Filesystem_##method##_Result_response_tag; \
+		else {							\
+			r_.tag = bsd_filesystem_v1_Filesystem_##method##_Result_err_tag; \
+			r_.value.err = (uint32_t)(status);		\
+		}							\
+		fs_completed((connection),				\
+		    bsd_filesystem_v1_Filesystem_##method##_reply(	\
+		    (connection), (request), &r_));			\
+	} while (0)
+
+/* Answer a method whose success reply is one descriptor. */
+#define	FS_FD_REPLY(method, connection, request, status, fd)		\
+	do {								\
+		struct bsd_filesystem_v1_Filesystem_##method##_Result r_; \
+									\
+		memset(&r_, 0, sizeof(r_));				\
+		if ((status) == 0 && (fd) >= 0) {			\
+			r_.tag = bsd_filesystem_v1_Filesystem_##method##_Result_response_tag; \
+			r_.value.response.handle = (fd);		\
+		} else {						\
+			r_.tag = bsd_filesystem_v1_Filesystem_##method##_Result_err_tag; \
+			r_.value.err = (uint32_t)((status) != 0 ? (status) : EIO); \
+		}							\
+		/* The bindings send a private duplicate. */		\
+		fs_completed((connection),				\
+		    bsd_filesystem_v1_Filesystem_##method##_reply(	\
+		    (connection), (request), &r_));			\
+		if ((fd) >= 0)						\
+			(void)close(fd);				\
+	} while (0)
+
+static void
+fs_request(void *argument, struct fidl_bsd_connection *connection,
+    struct fidl_bsd_request *request,
+    struct bsd_filesystem_v1_ClaimRequest *value)
+{
+	struct tzfs_conn *conn = argument;
+	struct bsd_filesystem_v1_Filesystem_Request_Result reply;
+	struct bsdfilesystem_request rq;
+	struct tzfs_msg m;
+	bool ok;
+	int status;
+
+	if (!fs_ready(conn, connection))
+		return;
+	memset(&rq, 0, sizeof(rq));
+	rq.op = BSDFILESYSTEM_OP_REQUEST;
+	rq.flags = value->flags;
+	rq.rights = value->rights;
+	rq.quota = value->quota;
+	rq.lifetime = value->lifetime;
+	rq.deliver = value->deliver;
+	rq.scope = value->scope;
+	rq.owner_uid = value->owner_uid;
+	rq.owner_gid = value->owner_gid;
+	ok = fs_copy(rq.dataset, sizeof(rq.dataset), value->dataset,
+	    value->dataset_size) &&
+	    fs_copy(rq.group, sizeof(rq.group), value->group,
+	    value->group_size);
+	status = fs_run(conn, request, &rq, sizeof(rq), ok, &m);
+	memset(&reply, 0, sizeof(reply));
+	if (status == 0 && m.reply_fd >= 0) {
+		reply.tag = bsd_filesystem_v1_Filesystem_Request_Result_response_tag;
+		reply.value.response.dataset = m.reply.rp.dataset;
+		reply.value.response.dataset_size = strnlen(m.reply.rp.dataset,
+		    sizeof(m.reply.rp.dataset) - 1);
+		reply.value.response.handle = m.reply_fd;
+	} else {
+		reply.tag = bsd_filesystem_v1_Filesystem_Request_Result_err_tag;
+		reply.value.err = (uint32_t)(status != 0 ? status : EIO);
+	}
+	fs_completed(connection, bsd_filesystem_v1_Filesystem_Request_reply(
+	    connection, request, &reply));
+	if (m.reply_fd >= 0)
+		(void)close(m.reply_fd);
+}
+
+static void
+fs_release(void *argument, struct fidl_bsd_connection *connection,
+    struct fidl_bsd_request *request, struct bsd_filesystem_v1_Named *value)
+{
+	struct tzfs_conn *conn = argument;
+	struct bsdfilesystem_request rq;
+	struct tzfs_msg m;
+	int status;
+
+	if (!fs_ready(conn, connection))
+		return;
+	memset(&rq, 0, sizeof(rq));
+	rq.op = BSDFILESYSTEM_OP_RELEASE;
+	status = fs_run(conn, request, &rq, sizeof(rq),
+	    fs_copy(rq.dataset, sizeof(rq.dataset), value->dataset,
+	    value->dataset_size), &m);
+	FS_EMPTY_REPLY(Release, connection, request, status);
+}
+
+static void
+fs_ping(void *argument, struct fidl_bsd_connection *connection,
+    struct fidl_bsd_request *request, struct fidl_bsd_empty *empty __unused)
+{
+	struct tzfs_conn *conn = argument;
+	struct bsdfilesystem_request rq;
+	struct tzfs_msg m;
+	int status;
+
+	if (!fs_ready(conn, connection))
+		return;
+	memset(&rq, 0, sizeof(rq));
+	rq.op = BSDFILESYSTEM_OP_PING;
+	status = fs_run(conn, request, &rq, sizeof(rq), true, &m);
+	FS_EMPTY_REPLY(Ping, connection, request, status);
+}
+
+static void
+fs_begin_session(void *argument, struct fidl_bsd_connection *connection,
+    struct fidl_bsd_request *request, struct bsd_filesystem_v1_Session *value)
+{
+	struct tzfs_conn *conn = argument;
+	struct bsdfilesystem_request rq;
+	struct tzfs_msg m;
+	int status;
+
+	if (!fs_ready(conn, connection))
+		return;
+	memset(&rq, 0, sizeof(rq));
+	rq.op = BSDFILESYSTEM_OP_BEGIN_SESSION;
+	status = fs_run(conn, request, &rq, sizeof(rq),
+	    fs_copy(rq.session, sizeof(rq.session), value->session,
+	    value->session_size), &m);
+	FS_EMPTY_REPLY(BeginSession, connection, request, status);
+}
+
+static void
+fs_open(void *argument, struct fidl_bsd_connection *connection,
+    struct fidl_bsd_request *request, struct bsd_filesystem_v1_OpenRequest *value)
+{
+	struct tzfs_conn *conn = argument;
+	struct bsdfilesystem_open_request *orq;
+	struct tzfs_msg m;
+	int status;
+
+	if (!fs_ready(conn, connection))
+		return;
+	orq = calloc(1, sizeof(*orq));
+	if (orq == NULL) {
+		FS_EMPTY_REPLY(Open, connection, request, ENOMEM);
+		return;
+	}
+	orq->op = BSDFILESYSTEM_OP_OPEN;
+	orq->rights = value->rights;
+	orq->is_dir = value->is_dir ? 1 : 0;
+	status = fs_run(conn, request, orq, sizeof(*orq),
+	    fs_copy(orq->path, sizeof(orq->path), value->path,
+	    value->path_size), &m);
+	free(orq);
+	FS_FD_REPLY(Open, connection, request, status, m.reply_fd);
+}
+
+static void
+fs_destroy(void *argument, struct fidl_bsd_connection *connection,
+    struct fidl_bsd_request *request, struct bsd_filesystem_v1_ClaimRef *value)
+{
+	struct tzfs_conn *conn = argument;
+	struct bsdfilesystem_request rq;
+	struct tzfs_msg m;
+	int status;
+
+	if (!fs_ready(conn, connection))
+		return;
+	status = fs_run(conn, request, &rq, sizeof(rq),
+	    fs_request_ref(&rq, BSDFILESYSTEM_OP_DESTROY, value), &m);
+	FS_EMPTY_REPLY(Destroy, connection, request, status);
+}
+
+static void
+fs_unmount(void *argument, struct fidl_bsd_connection *connection,
+    struct fidl_bsd_request *request, struct bsd_filesystem_v1_ClaimRef *value)
+{
+	struct tzfs_conn *conn = argument;
+	struct bsdfilesystem_request rq;
+	struct tzfs_msg m;
+	int status;
+
+	if (!fs_ready(conn, connection))
+		return;
+	status = fs_run(conn, request, &rq, sizeof(rq),
+	    fs_request_ref(&rq, BSDFILESYSTEM_OP_UNMOUNT, value), &m);
+	FS_EMPTY_REPLY(Unmount, connection, request, status);
+}
+
+static void
+fs_set_quota(void *argument, struct fidl_bsd_connection *connection,
+    struct fidl_bsd_request *request,
+    struct bsd_filesystem_v1_QuotaRequest *value)
+{
+	struct tzfs_conn *conn = argument;
+	struct bsdfilesystem_request rq;
+	struct tzfs_msg m;
+	bool ok;
+	int status;
+
+	if (!fs_ready(conn, connection))
+		return;
+	ok = fs_request_ref(&rq, BSDFILESYSTEM_OP_SET_QUOTA, &value->claim);
+	rq.quota = value->quota;
+	status = fs_run(conn, request, &rq, sizeof(rq), ok, &m);
+	FS_EMPTY_REPLY(SetQuota, connection, request, status);
+}
+
+static void
+fs_stat_claim(void *argument, struct fidl_bsd_connection *connection,
+    struct fidl_bsd_request *request, struct bsd_filesystem_v1_ClaimRef *value)
+{
+	struct tzfs_conn *conn = argument;
+	struct bsd_filesystem_v1_Filesystem_StatClaim_Result reply;
+	struct bsdfilesystem_request rq;
+	struct tzfs_msg m;
+	int status;
+
+	if (!fs_ready(conn, connection))
+		return;
+	status = fs_run(conn, request, &rq, sizeof(rq),
+	    fs_request_ref(&rq, BSDFILESYSTEM_OP_STAT_CLAIM, value), &m);
+	memset(&reply, 0, sizeof(reply));
+	if (status == 0 && m.reply_length == sizeof(m.reply.srp)) {
+		reply.tag = bsd_filesystem_v1_Filesystem_StatClaim_Result_response_tag;
+		reply.value.response.used = m.reply.srp.used;
+		reply.value.response.refquota = m.reply.srp.refquota;
+		reply.value.response.available = m.reply.srp.available;
+	} else {
+		reply.tag = bsd_filesystem_v1_Filesystem_StatClaim_Result_err_tag;
+		reply.value.err = (uint32_t)(status != 0 ? status : EIO);
+	}
+	fs_completed(connection, bsd_filesystem_v1_Filesystem_StatClaim_reply(
+	    connection, request, &reply));
+}
+
+static void
+fs_list(void *argument, struct fidl_bsd_connection *connection,
+    struct fidl_bsd_request *request, struct bsd_filesystem_v1_ListRequest *value)
+{
+	struct tzfs_conn *conn = argument;
+	struct bsd_filesystem_v1_Filesystem_List_Result reply;
+	struct bsd_filesystem_v1_ClaimEntry entries[BSDFILESYSTEM_LIST_MAX];
+	struct bsdfilesystem_list_request lrq;
+	struct tzfs_msg *m;
+	int status;
+
+	if (!fs_ready(conn, connection))
+		return;
+	memset(&reply, 0, sizeof(reply));
+	m = malloc(sizeof(*m));
+	if (m == NULL) {
+		FS_EMPTY_REPLY(List, connection, request, ENOMEM);
+		return;
+	}
+	memset(&lrq, 0, sizeof(lrq));
+	lrq.op = BSDFILESYSTEM_OP_LIST;
+	lrq.cursor = value->cursor;
+	lrq.scope = value->scope;
+	status = fs_run(conn, request, &lrq, sizeof(lrq),
+	    fs_copy(lrq.group, sizeof(lrq.group), value->group,
+	    value->group_size), m);
+	if (status == 0 && m->reply_length == sizeof(m->reply.lrp) &&
+	    m->reply.lrp.count <= BSDFILESYSTEM_LIST_MAX) {
+		for (uint32_t i = 0; i < m->reply.lrp.count; i++) {
+			const struct bsdfilesystem_claim_entry *e =
+			    &m->reply.lrp.entries[i];
+
+			entries[i].name = e->name;
+			entries[i].name_size = strnlen(e->name,
+			    sizeof(e->name) - 1);
+			entries[i].used = e->used;
+			entries[i].refquota = e->refquota;
+			entries[i].lifetime = e->lifetime;
+		}
+		reply.tag = bsd_filesystem_v1_Filesystem_List_Result_response_tag;
+		reply.value.response.entries = entries;
+		reply.value.response.entries_size = m->reply.lrp.count;
+		reply.value.response.next_cursor = m->reply.lrp.next_cursor;
+	} else {
+		reply.tag = bsd_filesystem_v1_Filesystem_List_Result_err_tag;
+		reply.value.err = (uint32_t)(status != 0 ? status : EIO);
+	}
+	fs_completed(connection, bsd_filesystem_v1_Filesystem_List_reply(
+	    connection, request, &reply));
+	free(m);
+}
+
+static void
+fs_snapshot(void *argument, struct fidl_bsd_connection *connection,
+    struct fidl_bsd_request *request, struct bsd_filesystem_v1_ClaimRef *value)
+{
+	struct tzfs_conn *conn = argument;
+	struct bsd_filesystem_v1_Filesystem_Snapshot_Result reply;
+	struct bsdfilesystem_version_request vrq;
+	struct tzfs_msg m;
+	int status;
+
+	if (!fs_ready(conn, connection))
+		return;
+	status = fs_run(conn, request, &vrq, sizeof(vrq),
+	    fs_version_ref(&vrq, BSDFILESYSTEM_OP_SNAPSHOT, value, "", 0), &m);
+	memset(&reply, 0, sizeof(reply));
+	if (status == 0 && m.reply_length == sizeof(m.reply.vrp)) {
+		reply.tag = bsd_filesystem_v1_Filesystem_Snapshot_Result_response_tag;
+		reply.value.response.version = m.reply.vrp.version;
+		reply.value.response.version_size = strnlen(m.reply.vrp.version,
+		    sizeof(m.reply.vrp.version) - 1);
+	} else {
+		reply.tag = bsd_filesystem_v1_Filesystem_Snapshot_Result_err_tag;
+		reply.value.err = (uint32_t)(status != 0 ? status : EIO);
+	}
+	fs_completed(connection, bsd_filesystem_v1_Filesystem_Snapshot_reply(
+	    connection, request, &reply));
+}
+
+static void
+fs_list_versions(void *argument, struct fidl_bsd_connection *connection,
+    struct fidl_bsd_request *request,
+    struct bsd_filesystem_v1_VersionsRequest *value)
+{
+	struct tzfs_conn *conn = argument;
+	struct bsd_filesystem_v1_Filesystem_ListVersions_Result reply;
+	struct bsd_filesystem_v1_Version versions[BSDFILESYSTEM_VERSIONS_MAX];
+	struct bsdfilesystem_version_request vrq;
+	struct tzfs_msg *m;
+	bool ok;
+	int status;
+
+	if (!fs_ready(conn, connection))
+		return;
+	memset(&reply, 0, sizeof(reply));
+	m = malloc(sizeof(*m));
+	if (m == NULL) {
+		FS_EMPTY_REPLY(ListVersions, connection, request, ENOMEM);
+		return;
+	}
+	ok = fs_version_ref(&vrq, BSDFILESYSTEM_OP_LIST_VERSIONS, &value->claim,
+	    "", 0);
+	vrq.cursor = value->cursor;
+	status = fs_run(conn, request, &vrq, sizeof(vrq), ok, m);
+	if (status == 0 && m->reply_length == sizeof(m->reply.vsrp) &&
+	    m->reply.vsrp.count <= BSDFILESYSTEM_VERSIONS_MAX) {
+		for (uint32_t i = 0; i < m->reply.vsrp.count; i++) {
+			versions[i].version = m->reply.vsrp.versions[i];
+			versions[i].version_size = strnlen(
+			    m->reply.vsrp.versions[i], BSDFILESYSTEM_NAME_MAX - 1);
+		}
+		reply.tag = bsd_filesystem_v1_Filesystem_ListVersions_Result_response_tag;
+		reply.value.response.versions = versions;
+		reply.value.response.versions_size = m->reply.vsrp.count;
+		reply.value.response.next_cursor = m->reply.vsrp.next_cursor;
+	} else {
+		reply.tag = bsd_filesystem_v1_Filesystem_ListVersions_Result_err_tag;
+		reply.value.err = (uint32_t)(status != 0 ? status : EIO);
+	}
+	fs_completed(connection, bsd_filesystem_v1_Filesystem_ListVersions_reply(
+	    connection, request, &reply));
+	free(m);
+}
+
+/* Rollback, TxnCommit and TxnAbort: a version reference, empty reply. */
+#define	FS_VERSION_METHOD(fn, method, op)				\
+static void								\
+fn(void *argument, struct fidl_bsd_connection *connection,		\
+    struct fidl_bsd_request *request,					\
+    struct bsd_filesystem_v1_VersionRef *value)			\
+{									\
+	struct tzfs_conn *conn = argument;				\
+	struct bsdfilesystem_version_request vrq;			\
+	struct tzfs_msg m;						\
+	int status;							\
+									\
+	if (!fs_ready(conn, connection))				\
+		return;							\
+	status = fs_run(conn, request, &vrq, sizeof(vrq),		\
+	    fs_version_ref(&vrq, op, &value->claim, value->version,	\
+	    value->version_size), &m);					\
+	FS_EMPTY_REPLY(method, connection, request, status);		\
+}
+FS_VERSION_METHOD(fs_rollback, Rollback, BSDFILESYSTEM_OP_ROLLBACK)
+FS_VERSION_METHOD(fs_txn_commit, TxnCommit, BSDFILESYSTEM_OP_TXN_COMMIT)
+FS_VERSION_METHOD(fs_txn_abort, TxnAbort, BSDFILESYSTEM_OP_TXN_ABORT)
+
+static void
+fs_open_version(void *argument, struct fidl_bsd_connection *connection,
+    struct fidl_bsd_request *request, struct bsd_filesystem_v1_VersionRef *value)
+{
+	struct tzfs_conn *conn = argument;
+	struct bsdfilesystem_version_request vrq;
+	struct tzfs_msg m;
+	int status;
+
+	if (!fs_ready(conn, connection))
+		return;
+	status = fs_run(conn, request, &vrq, sizeof(vrq),
+	    fs_version_ref(&vrq, BSDFILESYSTEM_OP_OPEN_VERSION, &value->claim,
+	    value->version, value->version_size), &m);
+	FS_FD_REPLY(OpenVersion, connection, request, status, m.reply_fd);
+}
+
+static void
+fs_txn_begin(void *argument, struct fidl_bsd_connection *connection,
+    struct fidl_bsd_request *request, struct bsd_filesystem_v1_ClaimRef *value)
+{
+	struct tzfs_conn *conn = argument;
+	struct bsd_filesystem_v1_Filesystem_TxnBegin_Result reply;
+	struct bsdfilesystem_version_request vrq;
+	struct tzfs_msg m;
+	int status;
+
+	if (!fs_ready(conn, connection))
+		return;
+	status = fs_run(conn, request, &vrq, sizeof(vrq),
+	    fs_version_ref(&vrq, BSDFILESYSTEM_OP_TXN_BEGIN, value, "", 0), &m);
+	memset(&reply, 0, sizeof(reply));
+	if (status == 0 && m.reply_length == sizeof(m.reply.vrp) &&
+	    m.reply_fd >= 0) {
+		reply.tag = bsd_filesystem_v1_Filesystem_TxnBegin_Result_response_tag;
+		reply.value.response.txn = m.reply.vrp.version;
+		reply.value.response.txn_size = strnlen(m.reply.vrp.version,
+		    sizeof(m.reply.vrp.version) - 1);
+		reply.value.response.handle = m.reply_fd;
+	} else {
+		reply.tag = bsd_filesystem_v1_Filesystem_TxnBegin_Result_err_tag;
+		reply.value.err = (uint32_t)(status != 0 ? status : EIO);
+	}
+	fs_completed(connection, bsd_filesystem_v1_Filesystem_TxnBegin_reply(
+	    connection, request, &reply));
+	if (m.reply_fd >= 0)
+		(void)close(m.reply_fd);
 }
 
 /*
@@ -2595,15 +3191,33 @@ static int
 tzfs_worker(struct bsdfilesystem_state *st, int fd, const char *client,
     const char *owner, const char *container, const char (*groups)[64])
 {
-	struct channel_options options =
-	    CHANNEL_OPTIONS_INITIALIZER(CHANNEL_ROLE_PROVIDER);
-	struct channel *channel = NULL;
+	static const struct bsd_filesystem_v1_Filesystem_server handlers = {
+		.GetProtocolInfo = fs_protocol_info,
+		.Request = fs_request,
+		.Release = fs_release,
+		.Ping = fs_ping,
+		.BeginSession = fs_begin_session,
+		.Open = fs_open,
+		.Destroy = fs_destroy,
+		.List = fs_list,
+		.StatClaim = fs_stat_claim,
+		.SetQuota = fs_set_quota,
+		.Snapshot = fs_snapshot,
+		.ListVersions = fs_list_versions,
+		.Rollback = fs_rollback,
+		.OpenVersion = fs_open_version,
+		.TxnBegin = fs_txn_begin,
+		.TxnCommit = fs_txn_commit,
+		.TxnAbort = fs_txn_abort,
+		.Unmount = fs_unmount
+	};
+	struct fidl_bsd_connection *connection;
 	struct tzfs_conn conn;
-	int ready, wants_write;
 
 	/* Discard parent authority before serving the worker channel. */
 	service_worker_drop_inherited_authority();
 
+	memset(&conn, 0, sizeof(conn));
 	conn.st = st;
 	conn.uid = 0;		/* stamped per message, see tzfs_request */
 	conn.gid = 0;
@@ -2620,23 +3234,23 @@ tzfs_worker(struct bsdfilesystem_state *st, int fd, const char *client,
 			    sizeof(conn.groups[gi]));
 	}
 
-	if (channel_create(fd, &options, &channel) == -1)
+	if (fidl_bsd_connection_create(fd, FIDL_BSD_SERVER, &connection) != 0)
 		return (1);
-	if (channel_set_request_handler(channel, tzfs_request, &conn) == -1) {
-		channel_destroy(channel);
+	/*
+	 * Every delivered descriptor is hardened by the request path
+	 * (harden_delivery(), service_harden_fd()); keep that state on the
+	 * duplicate the bindings send.
+	 */
+	fidl_bsd_connection_preserve_sent_inheritance(connection);
+	if (bsd_filesystem_v1_Filesystem_bind(connection, &handlers, &conn) !=
+	    0) {
+		fidl_bsd_connection_destroy(connection);
 		return (1);
 	}
-	for (;;) {
-		wants_write = channel_wants_write(channel);
-		if (wants_write == -1 ||
-		    (ready = channel_wait(channel, wants_write, -1)) == -1 ||
-		    ((ready & CHANNEL_WAIT_WRITE) != 0 &&
-		    channel_flush(channel) == -1) ||
-		    ((ready & CHANNEL_WAIT_READ) != 0 &&
-		    channel_dispatch(channel) == -1))
-			break;
-	}
-	channel_destroy(channel);
+	/* Peer close or a protocol violation ends the session. */
+	while (fidl_bsd_connection_poll(connection, -1) == 0)
+		;
+	fidl_bsd_connection_destroy(connection);
 	/*
 	 * Reap ephemeral clones (OPEN_VERSION) first -- destroy the dataset, not
 	 * just unmount it -- then drop any remaining mount anchor: closing the

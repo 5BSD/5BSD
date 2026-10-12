@@ -41,6 +41,8 @@
 #include <unistd.h>
 
 #include <channel.h>
+#include <fidl/bsd.filesystem.v1/c/bsd.h>
+#include <fidl/bsd/sync_c.h>
 #include <trustedzfs.h>
 
 #include "bsdfilesystem.h"
@@ -136,22 +138,70 @@ channel_pair(int *client, int *provider)
 }
 
 struct provider_fixture {
-	struct channel	*client;
+	struct fidl_bsd_connection *fidl;	/* generated client */
+	struct channel	*client;		/* raw frames */
 	pid_t		 child;
 };
+
+/* FIDL v2 transactional message header. */
+struct wire_header {
+	uint32_t txid;
+	uint8_t flags[3], magic;
+	uint64_t ordinal;
+};
+_Static_assert(sizeof(struct wire_header) == 16, "FIDL header");
+
+#define	ORD_INFO	UINT64_C(0x6499245c21be7874)
+#define	ORD_PING	UINT64_C(0x32ebd1eaf3f82aa4)
+#define	ORD_DESTROY	UINT64_C(0x29178bae878787a3)
+#define	ORD_LIST	UINT64_C(0x7010ef6ea130cc2b)
+
+struct result {
+	bool done;
+	int error;		/* transport error */
+	int status;		/* application errno */
+	uint32_t value;
+};
+
+static void
+wait_result(struct provider_fixture *fx, struct result *r)
+{
+	struct timespec deadline;
+
+	ATF_REQUIRE_EQ(0, fidl_bsd_sync_deadline(&deadline, 5000));
+	if (r->error == 0)
+		r->error = fidl_bsd_sync_wait(fx->fidl, &r->done, &deadline);
+	ATF_REQUIRE_EQ(0, r->error);
+}
+
+static void
+info_done(void *p, int error, struct bsd_filesystem_v1_ProtocolInfo *v)
+{
+	struct result *r = p;
+
+	r->done = true;
+	r->error = error;
+	if (!error)
+		r->value = v->wire_version;
+}
 
 /*
  * Fork a worker running bsdfilesystem's single-channel serve loop over its own end of a
  * fresh capability channel, with a zeroed state (every retained handle == -1).
  * The framing/validation the tests exercise is reached before any handle is
- * touched, so the absence of real ZFS state is irrelevant to these cases.
+ * touched, so the absence of real ZFS state is irrelevant to these cases.  The
+ * client end is a negotiated generated client, or (raw) a libchannel client
+ * for hand-built frames.
  */
 static void
-fixture_create(struct provider_fixture *fx)
+fixture_start(struct provider_fixture *fx, bool raw)
 {
 	struct channel_options client_options =
 	    CHANNEL_OPTIONS_INITIALIZER(CHANNEL_ROLE_CLIENT);
 	static struct bsdfilesystem_state st;	/* child-only; zeroed, all fds -1 */
+	struct fidl_bsd_empty empty = { 0 };
+	struct result r = { 0 };
+	uint32_t txid;
 	int client_fd, provider_fd;
 
 	memset(fx, 0, sizeof(*fx));
@@ -168,8 +218,17 @@ fixture_create(struct provider_fixture *fx)
 		_exit(bsdfilesystem_test_worker(&st, provider_fd, "org.test.tenant"));
 	}
 	close(provider_fd);
-	ATF_REQUIRE_EQ(0, channel_create(client_fd, &client_options,
-	    &fx->client));
+	if (raw) {
+		ATF_REQUIRE_EQ(0, channel_create(client_fd, &client_options,
+		    &fx->client));
+		return;
+	}
+	ATF_REQUIRE_EQ(0, fidl_bsd_connection_create(client_fd,
+	    FIDL_BSD_CLIENT, &fx->fidl));
+	r.error = bsd_filesystem_v1_Filesystem_GetProtocolInfo(fx->fidl,
+	    &empty, info_done, &r, &txid);
+	wait_result(fx, &r);
+	ATF_REQUIRE_EQ(BSDFILESYSTEM_WIRE_VERSION, r.value);
 }
 
 static void
@@ -178,7 +237,10 @@ fixture_destroy(struct provider_fixture *fx)
 	int status;
 
 	/* Closing the client channel is EOF to the worker; it exits 0. */
-	channel_destroy(fx->client);
+	if (fx->fidl != NULL)
+		fidl_bsd_connection_destroy(fx->fidl);
+	if (fx->client != NULL)
+		channel_destroy(fx->client);
 	ATF_REQUIRE_EQ(fx->child, waitpid(fx->child, &status, 0));
 	ATF_CHECK(WIFEXITED(status));
 	ATF_CHECK_EQ(0, WEXITSTATUS(status));
@@ -187,7 +249,6 @@ fixture_destroy(struct provider_fixture *fx)
 struct reply_capture {
 	bool	done;
 	int	error;
-	int32_t	status;
 };
 
 static void
@@ -198,25 +259,18 @@ capture_reply(struct channel_request *request, struct channel_message *reply,
 
 	cap->done = true;
 	cap->error = error;
-	if (error == 0 && reply != NULL) {
-		if (channel_message_length(reply) >=
-		    sizeof(struct bsdfilesystem_reply)) {
-			const struct bsdfilesystem_reply *rp =
-			    channel_message_data(reply);
-
-			cap->status = rp->status;
-		}
+	if (reply != NULL)
 		channel_message_free(reply);
-	}
 	channel_request_release(request);
 }
 
 /*
- * Send one request over the client channel and drive it until the reply lands.
- * Returns the bsdfilesystem_reply.status (errno) the provider sent back.
+ * Send one raw frame over the client channel and drive it until it is
+ * answered or the channel fails.  Returns 0 when a reply arrived, -1 when the
+ * provider closed the session instead.
  */
-static int32_t
-call_status(struct channel *client, const void *data, size_t len,
+static int
+call_raw(struct channel *client, const void *data, size_t len,
     const int *fds, size_t nfds)
 {
 	struct reply_capture cap;
@@ -225,28 +279,112 @@ call_status(struct channel *client, const void *data, size_t len,
 	int ready, wants_write;
 
 	memset(&cap, 0, sizeof(cap));
-	cap.status = -1;
 	memset(&out, 0, sizeof(out));
 	out.size = sizeof(out);
 	out.data = data;
 	out.length = len;
 	out.fds = fds;
 	out.nfds = nfds;
-	ATF_REQUIRE_EQ(0, channel_send_request(client, &out, capture_reply,
-	    &cap, &pending));
+	if (channel_send_request(client, &out, capture_reply, &cap,
+	    &pending) != 0)
+		return (-1);
 	while (!cap.done) {
 		wants_write = channel_wants_write(client);
-		ATF_REQUIRE(wants_write != -1);
+		if (wants_write == -1)
+			return (-1);
 		ready = channel_wait(client, wants_write, 5000);
-		ATF_REQUIRE_MSG(ready > 0, "client wait: %s",
-		    ready == 0 ? "timed out" : strerror(errno));
-		if ((ready & CHANNEL_WAIT_WRITE) != 0)
-			ATF_REQUIRE(channel_flush(client) != -1);
-		if ((ready & CHANNEL_WAIT_READ) != 0)
-			ATF_REQUIRE(channel_dispatch(client) != -1);
+		ATF_REQUIRE_MSG(ready != 0, "client wait timed out");
+		if (ready < 0 ||
+		    ((ready & CHANNEL_WAIT_WRITE) != 0 &&
+		    channel_flush(client) == -1) ||
+		    ((ready & CHANNEL_WAIT_READ) != 0 &&
+		    channel_dispatch(client) == -1))
+			return (-1);
 	}
-	ATF_CHECK_EQ(0, cap.error);
-	return (cap.status);
+	return (cap.error == 0 ? 0 : -1);
+}
+
+static int
+call_frame(struct channel *client, uint64_t ordinal, const void *body,
+    size_t body_length, const int *fds, size_t nfds)
+{
+	uint8_t frame[256];
+	struct wire_header header = { 3, { 2, 0, 0 }, 1, ordinal };
+
+	ATF_REQUIRE(sizeof(header) + body_length <= sizeof(frame));
+	memcpy(frame, &header, sizeof(header));
+	if (body_length != 0)
+		memcpy(frame + sizeof(header), body, body_length);
+	return (call_raw(client, frame, sizeof(header) + body_length, fds,
+	    nfds));
+}
+
+/* The frame closes the session: no reply, and nothing later is honoured. */
+static void
+reject(bool negotiate, uint64_t ordinal, const void *body, size_t length,
+    const int *fds, size_t nfds)
+{
+	struct provider_fixture fx;
+
+	fixture_start(&fx, true);
+	if (negotiate)
+		ATF_REQUIRE_EQ(0, call_frame(fx.client, ORD_INFO, NULL, 0,
+		    NULL, 0));
+	ATF_CHECK_EQ(-1, call_frame(fx.client, ordinal, body, length, fds,
+	    nfds));
+	ATF_CHECK_EQ(-1, call_frame(fx.client, ORD_INFO, NULL, 0, NULL, 0));
+	fixture_destroy(&fx);
+}
+
+static void
+empty_done(void *p, int error, struct bsd_filesystem_v1_Filesystem_Destroy_Result *v)
+{
+	struct result *r = p;
+
+	r->done = true;
+	r->error = error;
+	if (!error && v->tag ==
+	    bsd_filesystem_v1_Filesystem_Destroy_Result_err_tag)
+		r->status = (int)v->value.err;
+}
+
+static void
+list_done(void *p, int error, struct bsd_filesystem_v1_Filesystem_List_Result *v)
+{
+	struct result *r = p;
+
+	r->done = true;
+	r->error = error;
+	if (!error && v->tag == bsd_filesystem_v1_Filesystem_List_Result_err_tag)
+		r->status = (int)v->value.err;
+}
+
+static void
+ping_done(void *p, int error, struct bsd_filesystem_v1_Filesystem_Ping_Result *v)
+{
+	struct result *r = p;
+
+	r->done = true;
+	r->error = error;
+	if (!error && v->tag == bsd_filesystem_v1_Filesystem_Ping_Result_err_tag)
+		r->status = (int)v->value.err;
+}
+
+static int
+destroy_claim(struct provider_fixture *fx, const char *dataset,
+    size_t dataset_size)
+{
+	struct bsd_filesystem_v1_ClaimRef ref = {
+		.lifetime = BSDFILESYSTEM_PERSISTENT, .dataset = dataset,
+		.dataset_size = dataset_size, .group = ""
+	};
+	struct result r = { 0 };
+	uint32_t txid;
+
+	r.error = bsd_filesystem_v1_Filesystem_Destroy(fx->fidl, &ref,
+	    empty_done, &r, &txid);
+	wait_result(fx, &r);
+	return (r.status);
 }
 
 ATF_TC(channel_validation_is_fail_closed);
@@ -260,132 +398,76 @@ ATF_TC_HEAD(channel_validation_is_fail_closed, tc)
 }
 ATF_TC_BODY(channel_validation_is_fail_closed, tc)
 {
+	struct bsd_filesystem_v1_ListRequest list = { .group = "" };
+	struct bsdfilesystem_request legacy;
+	struct fidl_bsd_empty empty = { 0 };
 	struct provider_fixture fx;
-	struct bsdfilesystem_request rq;
-	struct bsdfilesystem_open_request orq;
-	int nullfd;
+	struct result r;
+	uint64_t trailing = 0;
+	uint32_t txid;
+	int nullfd, pipefd[2];
+	char byte;
 
 	if (!plane_available())
 		atf_tc_skip("mac_capability device not available");
 
-	fixture_create(&fx);
-
-	/* An unexpected attached descriptor is a protocol error. */
-	nullfd = open("/dev/null", O_RDONLY | O_CLOEXEC);
-	ATF_REQUIRE(nullfd >= 0);
-	memset(&rq, 0, sizeof(rq));
-	rq.op = BSDFILESYSTEM_OP_PING;
-	ATF_CHECK_EQ(EPROTO,
-	    call_status(fx.client, &rq, sizeof(rq), &nullfd, 1));
-	close(nullfd);
-
-	/* A payload of the wrong length is a protocol error. */
+	/* Hand-built frames close the session without a reply. */
+	reject(false, ORD_PING, NULL, 0, NULL, 0);		/* unnegotiated */
+	reject(true, UINT64_C(0x7fff), NULL, 0, NULL, 0);	/* unknown */
+	reject(true, ORD_DESTROY, NULL, 0, NULL, 0);		/* no body */
+	reject(true, ORD_PING, &trailing, sizeof(trailing), NULL, 0);
 	{
-		uint8_t junk[8] = { 0 };
+		/* A truncated header (8 of 16 bytes). */
+		struct wire_header h = { 3, { 2, 0, 0 }, 1, ORD_PING };
 
-		ATF_CHECK_EQ(EPROTO,
-		    call_status(fx.client, junk, sizeof(junk), NULL, 0));
+		fixture_start(&fx, true);
+		ATF_CHECK_EQ(-1, call_raw(fx.client, &h, 8, NULL, 0));
+		fixture_destroy(&fx);
 	}
+	/* A pre-FIDL PING record. */
+	memset(&legacy, 0, sizeof(legacy));
+	legacy.op = BSDFILESYSTEM_OP_PING;
+	fixture_start(&fx, true);
+	ATF_CHECK_EQ(-1, call_raw(fx.client, &legacy, sizeof(legacy), NULL, 0));
+	fixture_destroy(&fx);
+	/* An unexpected attached descriptor; the provider's copy is closed. */
+	ATF_REQUIRE_EQ(0, pipe(pipefd));
+	nullfd = pipefd[1];
+	reject(true, ORD_PING, NULL, 0, &nullfd, 1);
+	close(pipefd[1]);
+	ATF_REQUIRE(fcntl(pipefd[0], F_SETFL, O_NONBLOCK) != -1);
+	ATF_CHECK_EQ(0, read(pipefd[0], &byte, 1));
+	close(pipefd[0]);
 
-	/* A correctly-sized request with a nonzero reserved byte is EINVAL. */
-	memset(&rq, 0, sizeof(rq));
-	rq.op = BSDFILESYSTEM_OP_REQUEST;
-	rq.rights = 1;
-	rq.lifetime = BSDFILESYSTEM_PERSISTENT;
-	(void)strlcpy(rq.dataset, "claim", sizeof(rq.dataset));
-	rq._reserved[0] = 0x01;
-	ATF_CHECK_EQ(EINVAL,
-	    call_status(fx.client, &rq, sizeof(rq), NULL, 0));
-
-	/* A non-canonical is_dir on an OPEN request is EINVAL (message hygiene). */
-	memset(&orq, 0, sizeof(orq));
-	orq.op = BSDFILESYSTEM_OP_OPEN;
-	orq.rights = BSDFILESYSTEM_OPEN_READ;
-	orq.is_dir = 42;
-	(void)strlcpy(orq.path, "/dev/null", sizeof(orq.path));
-	ATF_CHECK_EQ(EINVAL,
-	    call_status(fx.client, &orq, sizeof(orq), NULL, 0));
-
-	/* A DESTROY with a nonzero reserved byte is EINVAL (message hygiene). */
-	memset(&rq, 0, sizeof(rq));
-	rq.op = BSDFILESYSTEM_OP_DESTROY;
-	rq.lifetime = BSDFILESYSTEM_PERSISTENT;
-	(void)strlcpy(rq.dataset, "claim", sizeof(rq.dataset));
-	rq._reserved[0] = 0x01;
-	ATF_CHECK_EQ(EINVAL,
-	    call_status(fx.client, &rq, sizeof(rq), NULL, 0));
-
-	/* A DESTROY carrying rights (which it must not) is EINVAL. */
-	memset(&rq, 0, sizeof(rq));
-	rq.op = BSDFILESYSTEM_OP_DESTROY;
-	rq.lifetime = BSDFILESYSTEM_PERSISTENT;
-	rq.rights = 1;
-	(void)strlcpy(rq.dataset, "claim", sizeof(rq.dataset));
-	ATF_CHECK_EQ(EINVAL,
-	    call_status(fx.client, &rq, sizeof(rq), NULL, 0));
+	fixture_start(&fx, false);
 
 	/*
-	 * A well-formed DESTROY from a bundleless client (the zeroed fixture has
+	 * A well-formed Destroy from a bundleless client (the zeroed fixture has
 	 * no "<bundle>/<unit>" container) holds no durable namespace, so it fails
-	 * closed with EINVAL before touching any ZFS state.
+	 * closed with EINVAL before touching any ZFS state; so does a claim name
+	 * with an embedded NUL.  Both keep the session.
 	 */
-	memset(&rq, 0, sizeof(rq));
-	rq.op = BSDFILESYSTEM_OP_DESTROY;
-	rq.lifetime = BSDFILESYSTEM_PERSISTENT;
-	(void)strlcpy(rq.dataset, "claim", sizeof(rq.dataset));
-	ATF_CHECK_EQ(EINVAL,
-	    call_status(fx.client, &rq, sizeof(rq), NULL, 0));
-
-	/* An attached descriptor on a DESTROY is a protocol error. */
-	nullfd = open("/dev/null", O_RDONLY | O_CLOEXEC);
-	ATF_REQUIRE(nullfd >= 0);
-	ATF_CHECK_EQ(EPROTO,
-	    call_status(fx.client, &rq, sizeof(rq), &nullfd, 1));
-	close(nullfd);
-
-	/* A LIST with an attached descriptor is a protocol error (fd-free op). */
-	nullfd = open("/dev/null", O_RDONLY | O_CLOEXEC);
-	ATF_REQUIRE(nullfd >= 0);
-	{
-		struct bsdfilesystem_list_request lrq;
-
-		memset(&lrq, 0, sizeof(lrq));
-		lrq.op = BSDFILESYSTEM_OP_LIST;
-		ATF_CHECK_EQ(EPROTO,
-		    call_status(fx.client, &lrq, sizeof(lrq), &nullfd, 1));
-	}
-	close(nullfd);
-
-	/* A LIST with a nonzero flags field is EINVAL (message hygiene). */
-	{
-		struct bsdfilesystem_list_request lrq;
-
-		memset(&lrq, 0, sizeof(lrq));
-		lrq.op = BSDFILESYSTEM_OP_LIST;
-		lrq.flags = 1;
-		ATF_CHECK_EQ(EINVAL,
-		    call_status(fx.client, &lrq, sizeof(lrq), NULL, 0));
-	}
+	ATF_CHECK_EQ(EINVAL, destroy_claim(&fx, "claim", 5));
+	ATF_CHECK_EQ(EINVAL, destroy_claim(&fx, "cl\0im", 5));
 
 	/*
-	 * A well-formed LIST reaches the handler but, with no imported pool
-	 * (persistent_fd == -1 in this zeroed fixture), fails closed with ENXIO —
-	 * proving the op is wired into dispatch and scoped to the daemon's own
+	 * A well-formed List reaches the handler but, with no imported pool
+	 * (persistent_fd == -1 in this zeroed fixture), fails closed with ENXIO --
+	 * proving the method is wired into dispatch and scoped to the daemon's own
 	 * retained parent without a live pool.
 	 */
-	{
-		struct bsdfilesystem_list_request lrq;
+	memset(&r, 0, sizeof(r));
+	r.error = bsd_filesystem_v1_Filesystem_List(fx.fidl, &list, list_done,
+	    &r, &txid);
+	wait_result(&fx, &r);
+	ATF_CHECK_EQ(ENXIO, r.status);
 
-		memset(&lrq, 0, sizeof(lrq));
-		lrq.op = BSDFILESYSTEM_OP_LIST;
-		ATF_CHECK_EQ(ENXIO,
-		    call_status(fx.client, &lrq, sizeof(lrq), NULL, 0));
-	}
-
-	/* And a well-formed PING round-trips green — the happy path works. */
-	memset(&rq, 0, sizeof(rq));
-	rq.op = BSDFILESYSTEM_OP_PING;
-	ATF_CHECK_EQ(0, call_status(fx.client, &rq, sizeof(rq), NULL, 0));
+	/* And a well-formed Ping round-trips green -- the happy path works. */
+	memset(&r, 0, sizeof(r));
+	r.error = bsd_filesystem_v1_Filesystem_Ping(fx.fidl, &empty, ping_done,
+	    &r, &txid);
+	wait_result(&fx, &r);
+	ATF_CHECK_EQ(0, r.status);
 
 	fixture_destroy(&fx);
 }

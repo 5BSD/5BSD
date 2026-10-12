@@ -6,6 +6,8 @@
 
 #include <atf-c.h>
 #include <channel.h>
+#include <fidl/bsd.oes.v1/c/bsd.h>
+#include <fidl/bsd/sync_c.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <grp.h>
@@ -42,47 +44,118 @@ wait_factory(pid_t child, int expected)
 	ATF_REQUIRE(WIFEXITED(status));
 	ATF_REQUIRE_EQ(expected, WEXITSTATUS(status));
 }
+struct handoff {
+	bool done;
+	int error;
+	int status;
+	int fd;
+};
+
+static void
+handoff_info(void *p, int error, struct bsd_oes_v1_ProtocolInfo *v)
+{
+	struct handoff *h = p;
+
+	h->done = true;
+	h->error = error;
+	if (!error)
+		h->status = v->wire_version == OES_BROKER_VERSION ? 0 : EPROTO;
+}
+
+static void
+handoff_notify(void *p, int error,
+    struct bsd_oes_v1_Broker_OpenNotify_Result *v)
+{
+	struct handoff *h = p;
+
+	h->done = true;
+	h->error = error;
+	if (error)
+		return;
+	if (v->tag == bsd_oes_v1_Broker_OpenNotify_Result_err_tag)
+		h->status = (int)v->value.err;
+	else
+		h->fd = fidl_bsd_take_fd(&v->value.response.client);
+}
+
+static void
+handoff_wait(struct fidl_bsd_connection *c, struct handoff *h)
+{
+	struct timespec deadline;
+
+	ATF_REQUIRE_EQ(0, fidl_bsd_sync_deadline(&deadline, 5000));
+	if (h->error == 0)
+		h->error = fidl_bsd_sync_wait(c, &h->done, &deadline);
+}
+
+/* A raw OpenNotify carrying a body it does not have closes the session. */
+static void
+malformed_exchange(int input)
+{
+	struct {
+		uint32_t txid;
+		uint8_t flags[3], magic;
+		uint64_t ordinal;
+		uint64_t junk;
+	} frame = { 3, { 2, 0, 0 }, 1, UINT64_C(0x4dba6398e6892924), 0 };
+	struct service_session *session;
+	struct service_message outgoing = { .size = sizeof(outgoing),
+		.data = &frame, .length = sizeof(frame) };
+	uint8_t reply[64];
+	int received = -1;
+	struct service_reply incoming = { .size = sizeof(incoming),
+		.data = reply, .capacity = sizeof(reply), .fds = &received,
+		.fd_capacity = 1 };
+	struct service_call_options options = SERVICE_CALL_OPTIONS_INITIALIZER;
+
+	options.timeout_ms = 5000;
+	ATF_REQUIRE_EQ(0, service_session_create(input, &session));
+	ATF_CHECK_EQ(-1,
+	    service_session_call(session, &outgoing, &incoming, &options));
+	ATF_CHECK(errno != ETIMEDOUT);
+	ATF_CHECK_EQ(-1, received);
+	service_session_close(session);
+}
+
 static void
 exchange(bool malformed, bool nonroot)
 {
-	int input, received = -1;
+	int input, received;
 	pid_t child = start_factory(&input);
-	struct service_session *session;
-	struct oes_broker_message request = { .magic = OES_BROKER_MAGIC,
-		.version = OES_BROKER_VERSION,
-		.operation = OES_BROKER_OPEN_NOTIFY },
-				  reply;
-	struct service_message outgoing = { .size = sizeof(outgoing),
-		.data = &request,
-		.length = sizeof(request) };
-	struct service_reply incoming = { .size = sizeof(incoming),
-		.data = &reply,
-		.capacity = sizeof(reply),
-		.fds = &received,
-		.fd_capacity = 1 };
-	struct service_call_options options = SERVICE_CALL_OPTIONS_INITIALIZER;
-	options.timeout_ms = 5000;
+	struct fidl_bsd_connection *connection;
+	struct fidl_bsd_empty empty = { 0 };
+	struct handoff h = { .fd = -1 };
+	uint32_t txid;
+
 	if (nonroot) {
 		ATF_REQUIRE_EQ(0, setgroups(0, NULL));
 		ATF_REQUIRE_EQ(0, setgid(65534));
 		ATF_REQUIRE_EQ(0, setuid(65534));
 		ATF_REQUIRE_EQ(65534, geteuid());
 	}
-	ATF_REQUIRE_EQ(0, service_session_create(input, &session));
-	ATF_REQUIRE_ERRNO(EBADF, fcntl(input, F_GETFD) == -1);
-	if (malformed)
-		request.reserved = 1;
-	ATF_REQUIRE_EQ(0,
-	    service_session_call(session, &outgoing, &incoming, &options));
-	ATF_REQUIRE_EQ(0,
-	    oes_broker_validate(&reply, incoming.length, incoming.nfds, true));
-	ATF_REQUIRE_EQ(malformed ? EPROTO : 0, reply.status);
-	service_session_close(session);
-	wait_factory(child, 0);
 	if (malformed) {
-		ATF_REQUIRE_EQ(-1, received);
+		malformed_exchange(input);
+		/* The broker served nothing. */
+		wait_factory(child, 1);
 		return;
 	}
+	ATF_REQUIRE_EQ(0, fidl_bsd_connection_create(input, FIDL_BSD_CLIENT,
+	    &connection));
+	ATF_REQUIRE_ERRNO(EBADF, fcntl(input, F_GETFD) == -1);
+	h.error = bsd_oes_v1_Broker_GetProtocolInfo(connection, &empty,
+	    handoff_info, &h, &txid);
+	handoff_wait(connection, &h);
+	ATF_REQUIRE_EQ(0, h.error);
+	ATF_REQUIRE_EQ(0, h.status);
+	h = (struct handoff){ .fd = -1 };
+	h.error = bsd_oes_v1_Broker_OpenNotify(connection, &empty,
+	    handoff_notify, &h, &txid);
+	handoff_wait(connection, &h);
+	ATF_REQUIRE_EQ(0, h.error);
+	ATF_REQUIRE_EQ(0, h.status);
+	received = h.fd;
+	fidl_bsd_connection_destroy(connection);
+	wait_factory(child, 0);
 	ATF_REQUIRE(received >= 0);
 	struct oes_mode_args mode = { 0 };
 	ATF_REQUIRE_EQ(0, ioctl(received, OES_IOC_GET_MODE, &mode));

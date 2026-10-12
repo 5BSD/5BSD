@@ -1,7 +1,10 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
 /*
- * The system.Filesystem client, moved out of libservice: service_storage_*(3), service_open_config(3) and service_open_isolated(3).
- * The record protocol and behaviour are unchanged.
+ * The system.Filesystem client: service_storage_*(3), service_open_config(3)
+ * and service_open_isolated(3) over bsd.filesystem.v1 (filesystemcmp.fidl).
+ * Each call builds its request in the legacy record shape and validates the
+ * legacy-shaped reply exactly as before; filesystem_transact.h carries them
+ * as the schema's methods.
  */
 #include <sys/types.h>
 #include <sys/param.h>
@@ -21,12 +24,10 @@
 #include <trustedzfs.h>
 
 #include <libservice.h>
-#include <libservice_session.h>
 #include <bsdfilesystem_proto.h>
+#include "filesystem_transact.h"
 #include "filesystemcmp.h"
 
-static struct service_session *service_storage_session;
-#define SESSIONS_FORGET() do { service_storage_session = NULL; } while (0)
 static bool
 service_provider_status_valid(int32_t status)
 {
@@ -60,80 +61,102 @@ service_provider_component_valid(const char *name, size_t capacity)
 	return (true);
 }
 
+/*
+ * One process-wide bsd.filesystem.v1 session, opened by name on first use and
+ * shared by every call; calls are serialized on it.  A session that failed --
+ * a transport error, a timeout or a malformed reply -- is dropped and the next
+ * call opens a fresh one (which also replaces a session to a provider that
+ * died or was relaunched; the provider's per-session mount anchors go with
+ * it).  A session inherited across fork or pdfork belongs to the parent and is
+ * abandoned without being closed.
+ */
+static pthread_mutex_t fs_lock = PTHREAD_MUTEX_INITIALIZER;
+static struct fs_transport fs_session;
+
+/* Open or reuse the session.  Caller holds fs_lock. */
 static int
-service_provider_protocol_error(struct service_session *session, int fd)
+fs_session_locked(void)
+{
+
+	if (fs_session.connection != NULL && fs_session.owner != getpid()) {
+		/* Never close an inherited session: it is the parent's. */
+		fs_session.connection = NULL;
+		fs_session.negotiated = false;
+	}
+	if (fs_session.connection != NULL)
+		return (0);
+	return (fs_transport_open(&fs_session));
+}
+
+/* Make sure a session can be opened before building a request. */
+static int
+fs_session_open(void)
+{
+	int rc;
+
+	pthread_mutex_lock(&fs_lock);
+	rc = fs_session_locked();
+	pthread_mutex_unlock(&fs_lock);
+	return (rc);
+}
+
+/* Drop the session after a failure; the next call opens a fresh one. */
+static void
+fs_session_fail(void)
+{
+
+	pthread_mutex_lock(&fs_lock);
+	fs_transport_drop(&fs_session);
+	pthread_mutex_unlock(&fs_lock);
+}
+
+/*
+ * One request/reply in the legacy shapes, as service_session_call(3) did:
+ * -1 with errno when no valid reply arrived (the session is then dropped).
+ */
+static int
+fs_session_call(const struct service_message *outgoing,
+    struct service_reply *incoming, const struct service_call_options *options)
+{
+	size_t length;
+	int error, fd;
+
+	pthread_mutex_lock(&fs_lock);
+	if (fs_session_locked() == -1) {
+		error = errno;
+		pthread_mutex_unlock(&fs_lock);
+		return (errno = error, -1);
+	}
+	error = fs_transact(&fs_session, outgoing->data, outgoing->length,
+	    incoming->data, incoming->capacity, &length, &fd,
+	    options->timeout_ms);
+	if (error == 0 && fd >= 0 && incoming->fd_capacity < 1) {
+		(void)close(fd);
+		error = EPROTO;
+	}
+	if (error != 0)
+		fs_transport_drop(&fs_session);
+	pthread_mutex_unlock(&fs_lock);
+	if (error != 0)
+		return (errno = error, -1);
+	incoming->length = length;
+	incoming->nfds = fd >= 0 ? 1 : 0;
+	if (fd >= 0)
+		incoming->fds[0] = fd;
+	return (0);
+}
+
+static int
+service_provider_protocol_error(int fd)
 {
 
 	if (fd >= 0)
 		(void)close(fd);
-	(void)service_session_fail(session, EPROTO);
+	fs_session_fail();
 	errno = EPROTO;
 	return (-1);
 }
 
-
-/*
- * One process-wide provider session, opened by name on first use.  A
- * session that failed terminally (the provider died or was relaunched) is
- * replaced; a session inherited across fork or pdfork belongs to the parent
- * and is abandoned (libservice's fork handling severs its channel).
- */
-static pthread_mutex_t service_state_lock = PTHREAD_MUTEX_INITIALIZER;
-static pid_t service_session_owner;
-
-static int
-service_cached_session_get(const char *name, struct service_session **slot)
-    __no_lock_analysis
-{
-	struct service_session *candidate;
-	int error, fd;
-
-	error = pthread_mutex_lock(&service_state_lock);
-	if (error != 0)
-		return (errno = error, -1);
-	if (service_session_owner != getpid()) {
-		/* Never close an inherited session: it is the parent's. */
-		SESSIONS_FORGET();
-		service_session_owner = getpid();
-	}
-	if (*slot != NULL) {
-		struct service_session *dead = NULL;
-
-		if (service_session_is_dead(*slot)) {
-			dead = *slot;
-			*slot = NULL;
-		}
-		(void)pthread_mutex_unlock(&service_state_lock);
-		if (dead == NULL)
-			return (0);
-		service_session_close(dead);
-	} else
-		(void)pthread_mutex_unlock(&service_state_lock);
-
-	if (service_open(name, &fd) == -1)
-		return (-1);
-	if (service_session_create(fd, &candidate) == -1) {
-		error = errno;
-		(void)close(fd);
-		errno = error;
-		return (-1);
-	}
-
-	error = pthread_mutex_lock(&service_state_lock);
-	if (error != 0) {
-		service_session_close(candidate);
-		errno = error;
-		return (-1);
-	}
-	if (*slot == NULL) {
-		*slot = candidate;
-		candidate = NULL;
-	}
-	(void)pthread_mutex_unlock(&service_state_lock);
-	if (candidate != NULL)
-		service_session_close(candidate);
-	return (0);
-}
 
 /*
  * Open this service's storage claim and return its mounted directory root.
@@ -206,8 +229,7 @@ storage_open_scoped(struct service_context *context, uint8_t scope,
 	}
 
 	/* Open the system.Filesystem channel by name once; all claims share it. */
-	if (service_cached_session_get(BSDFILESYSTEM_SERVICE_NAME,
-	    &service_storage_session) == -1)
+	if (fs_session_open() == -1)
 		return (-1);
 
 	memset(&rq, 0, sizeof(rq));
@@ -247,11 +269,9 @@ storage_open_scoped(struct service_context *context, uint8_t scope,
 	incoming.fds = &handle;
 	incoming.fd_capacity = 1;
 	options.timeout_ms = SERVICE_STORAGE_CALL_TIMEOUT_MS;
-	if (service_session_call(service_storage_session, &outgoing, &incoming,
-	    &options) == -1) {
+	if (fs_session_call(&outgoing, &incoming, &options) == -1) {
 		if (errno == EMSGSIZE)
-			return (service_provider_protocol_error(
-			    service_storage_session, -1));
+			return (service_provider_protocol_error(-1));
 		/*
 		 * The call itself failed -- no reply within the bound, or the
 		 * transport refused the send: the worker serving this
@@ -264,8 +284,7 @@ storage_open_scoped(struct service_context *context, uint8_t scope,
 		{
 			int saved = errno;
 
-			service_session_fail(service_storage_session,
-			    saved > 0 ? saved : EIO);
+			fs_session_fail();
 			errno = saved;
 		}
 		return (-1);
@@ -277,8 +296,7 @@ storage_open_scoped(struct service_context *context, uint8_t scope,
 	    sizeof(rp.dataset)) == NULL)) ||
 	    (rp.status != 0 && (incoming.nfds != 0 ||
 	    !service_provider_all_zero(rp.dataset, sizeof(rp.dataset)))))
-		return (service_provider_protocol_error(service_storage_session,
-		    incoming.nfds != 0 ? handle : -1));
+		return (service_provider_protocol_error(incoming.nfds != 0 ? handle : -1));
 	if (rp.status != 0) {
 		errno = rp.status;
 		return (-1);
@@ -387,8 +405,7 @@ storage_destroy_scoped(struct service_context *context, uint32_t op,
 	}
 
 	/* Shares the system.Filesystem channel with storage/config claims. */
-	if (service_cached_session_get(BSDFILESYSTEM_SERVICE_NAME,
-	    &service_storage_session) == -1)
+	if (fs_session_open() == -1)
 		return (-1);
 
 	memset(&rq, 0, sizeof(rq));
@@ -417,11 +434,9 @@ storage_destroy_scoped(struct service_context *context, uint32_t op,
 	incoming.data = &rp;
 	incoming.capacity = sizeof(rp);
 	options.timeout_ms = SERVICE_STORAGE_CALL_TIMEOUT_MS;
-	if (service_session_call(service_storage_session, &outgoing, &incoming,
-	    &options) == -1) {
+	if (fs_session_call(&outgoing, &incoming, &options) == -1) {
 		if (errno == EMSGSIZE)
-			return (service_provider_protocol_error(
-			    service_storage_session, -1));
+			return (service_provider_protocol_error(-1));
 		/*
 		 * The call itself failed -- no reply within the bound, or the
 		 * transport refused the send: the worker serving this
@@ -434,8 +449,7 @@ storage_destroy_scoped(struct service_context *context, uint32_t op,
 		{
 			int saved = errno;
 
-			service_session_fail(service_storage_session,
-			    saved > 0 ? saved : EIO);
+			fs_session_fail();
 			errno = saved;
 		}
 		return (-1);
@@ -443,7 +457,7 @@ storage_destroy_scoped(struct service_context *context, uint32_t op,
 	if (incoming.length != sizeof(rp) || incoming.nfds != 0 ||
 	    rp._reserved != 0 || !service_provider_status_valid(rp.status) ||
 	    !service_provider_all_zero(rp.dataset, sizeof(rp.dataset)))
-		return (service_provider_protocol_error(service_storage_session, -1));
+		return (service_provider_protocol_error(-1));
 	if (rp.status != 0) {
 		errno = rp.status;
 		return (-1);
@@ -554,8 +568,7 @@ service_storage_stat(struct service_context *context, const char *name,
 		errno = EINVAL;
 		return (-1);
 	}
-	if (service_cached_session_get(BSDFILESYSTEM_SERVICE_NAME,
-	    &service_storage_session) == -1)
+	if (fs_session_open() == -1)
 		return (-1);
 
 	memset(&rq, 0, sizeof(rq));
@@ -572,18 +585,16 @@ service_storage_stat(struct service_context *context, const char *name,
 	incoming.data = &rp;
 	incoming.capacity = sizeof(rp);
 	options.timeout_ms = SERVICE_STORAGE_CALL_TIMEOUT_MS;
-	if (service_session_call(service_storage_session, &outgoing, &incoming,
-	    &options) == -1) {
+	if (fs_session_call(&outgoing, &incoming, &options) == -1) {
 		int saved = errno;
 
-		service_session_fail(service_storage_session,
-		    saved > 0 ? saved : EIO);
+		fs_session_fail();
 		errno = saved;
 		return (-1);
 	}
 	if (incoming.length != sizeof(rp) || incoming.nfds != 0 ||
 	    rp._reserved != 0 || !service_provider_status_valid(rp.status))
-		return (service_provider_protocol_error(service_storage_session, -1));
+		return (service_provider_protocol_error(-1));
 	if (rp.status != 0) {
 		errno = rp.status;
 		return (-1);
@@ -620,8 +631,7 @@ service_storage_set_quota(struct service_context *context, const char *name,
 		errno = EINVAL;
 		return (-1);
 	}
-	if (service_cached_session_get(BSDFILESYSTEM_SERVICE_NAME,
-	    &service_storage_session) == -1)
+	if (fs_session_open() == -1)
 		return (-1);
 
 	memset(&rq, 0, sizeof(rq));
@@ -639,19 +649,17 @@ service_storage_set_quota(struct service_context *context, const char *name,
 	incoming.data = &rp;
 	incoming.capacity = sizeof(rp);
 	options.timeout_ms = SERVICE_STORAGE_CALL_TIMEOUT_MS;
-	if (service_session_call(service_storage_session, &outgoing, &incoming,
-	    &options) == -1) {
+	if (fs_session_call(&outgoing, &incoming, &options) == -1) {
 		int saved = errno;
 
-		service_session_fail(service_storage_session,
-		    saved > 0 ? saved : EIO);
+		fs_session_fail();
 		errno = saved;
 		return (-1);
 	}
 	if (incoming.length != sizeof(rp) || incoming.nfds != 0 ||
 	    rp._reserved != 0 || !service_provider_status_valid(rp.status) ||
 	    !service_provider_all_zero(rp.dataset, sizeof(rp.dataset)))
-		return (service_provider_protocol_error(service_storage_session, -1));
+		return (service_provider_protocol_error(-1));
 	if (rp.status != 0) {
 		errno = rp.status;
 		return (-1);
@@ -683,8 +691,7 @@ storage_version_call(uint32_t op, const char *name, const char *version,
 		return (-1);
 	}
 	/* The public wrappers checked the caller's own context. */
-	if (service_cached_session_get(BSDFILESYSTEM_SERVICE_NAME,
-	    &service_storage_session) == -1)
+	if (fs_session_open() == -1)
 		return (-1);
 
 	memset(&vrq, 0, sizeof(vrq));
@@ -708,23 +715,19 @@ storage_version_call(uint32_t op, const char *name, const char *version,
 		incoming.fd_capacity = 1;
 	}
 	options.timeout_ms = SERVICE_STORAGE_CALL_TIMEOUT_MS;
-	if (service_session_call(service_storage_session, &outgoing, &incoming,
-	    &options) == -1) {
+	if (fs_session_call(&outgoing, &incoming, &options) == -1) {
 		int saved = errno;
 
-		service_session_fail(service_storage_session,
-		    saved > 0 ? saved : EIO);
+		fs_session_fail();
 		errno = saved;
 		return (-1);
 	}
 	if (incoming.length != reply_len)
-		return (service_provider_protocol_error(service_storage_session,
-		    incoming.nfds != 0 ? handle : -1));
+		return (service_provider_protocol_error(incoming.nfds != 0 ? handle : -1));
 	if (fdp != NULL)
 		*fdp = incoming.nfds == 1 ? handle : -1;
 	else if (incoming.nfds != 0)
-		return (service_provider_protocol_error(service_storage_session,
-		    handle));
+		return (service_provider_protocol_error(handle));
 	return (0);
 }
 
@@ -743,8 +746,7 @@ service_storage_snapshot(struct service_context *context, const char *name,
 		return (-1);
 	if (rp._reserved != 0 || !service_provider_status_valid(rp.status) ||
 	    memchr(rp.version, '\0', sizeof(rp.version)) == NULL)
-		return (service_provider_protocol_error(service_storage_session,
-		    -1));
+		return (service_provider_protocol_error(-1));
 	if (rp.status != 0) {
 		errno = rp.status;
 		return (-1);
@@ -772,8 +774,7 @@ service_storage_rollback(struct service_context *context, const char *name,
 		return (-1);
 	if (rp._reserved != 0 || !service_provider_status_valid(rp.status) ||
 	    !service_provider_all_zero(rp.dataset, sizeof(rp.dataset)))
-		return (service_provider_protocol_error(service_storage_session,
-		    -1));
+		return (service_provider_protocol_error(-1));
 	if (rp.status != 0) {
 		errno = rp.status;
 		return (-1);
@@ -801,8 +802,7 @@ service_storage_open_version(struct service_context *context, const char *name,
 	    (rp.status == 0) != (fd >= 0)) {
 		if (fd >= 0)
 			(void)close(fd);
-		return (service_provider_protocol_error(service_storage_session,
-		    -1));
+		return (service_provider_protocol_error(-1));
 	}
 	if (rp.status != 0) {
 		errno = rp.status;
@@ -837,8 +837,7 @@ service_storage_txn_begin(struct service_context *context, const char *name,
 	    (rp.status == 0) != (fd >= 0)) {
 		if (fd >= 0)
 			(void)close(fd);
-		return (service_provider_protocol_error(service_storage_session,
-		    -1));
+		return (service_provider_protocol_error(-1));
 	}
 	if (rp.status != 0) {
 		errno = rp.status;
@@ -867,8 +866,7 @@ storage_txn_finish(uint32_t op, const char *name, const char *txn_id)
 		return (-1);
 	if (rp._reserved != 0 || !service_provider_status_valid(rp.status) ||
 	    !service_provider_all_zero(rp.dataset, sizeof(rp.dataset)))
-		return (service_provider_protocol_error(service_storage_session,
-		    -1));
+		return (service_provider_protocol_error(-1));
 	if (rp.status != 0) {
 		errno = rp.status;
 		return (-1);
@@ -916,8 +914,7 @@ service_storage_list_versions(struct service_context *context, const char *name,
 		return (-1);
 	if (rp._reserved != 0 || !service_provider_status_valid(rp.status) ||
 	    rp.count > BSDFILESYSTEM_VERSIONS_MAX)
-		return (service_provider_protocol_error(service_storage_session,
-		    -1));
+		return (service_provider_protocol_error(-1));
 	if (rp.status != 0) {
 		errno = rp.status;
 		return (-1);
@@ -925,8 +922,7 @@ service_storage_list_versions(struct service_context *context, const char *name,
 	*countp = 0;
 	for (i = 0; i < rp.count && *countp < max; i++) {
 		if (memchr(rp.versions[i], '\0', BSDFILESYSTEM_NAME_MAX) == NULL)
-			return (service_provider_protocol_error(
-			    service_storage_session, -1));
+			return (service_provider_protocol_error(-1));
 		(void)strlcpy(versions[*countp], rp.versions[i],
 		    SERVICE_STORAGE_VERSION_MAX);
 		(*countp)++;
@@ -975,8 +971,7 @@ storage_list_scoped(struct service_context *context, uint8_t scope,
 	}
 
 	/* Shares the system.Filesystem channel with storage/config claims. */
-	if (service_cached_session_get(BSDFILESYSTEM_SERVICE_NAME,
-	    &service_storage_session) == -1)
+	if (fs_session_open() == -1)
 		return (-1);
 
 	memset(&rq, 0, sizeof(rq));
@@ -998,11 +993,9 @@ storage_list_scoped(struct service_context *context, uint8_t scope,
 	incoming.data = &rp;
 	incoming.capacity = sizeof(rp);
 	options.timeout_ms = SERVICE_STORAGE_CALL_TIMEOUT_MS;
-	if (service_session_call(service_storage_session, &outgoing, &incoming,
-	    &options) == -1) {
+	if (fs_session_call(&outgoing, &incoming, &options) == -1) {
 		if (errno == EMSGSIZE)
-			return (service_provider_protocol_error(
-			    service_storage_session, -1));
+			return (service_provider_protocol_error(-1));
 		/*
 		 * The call itself failed -- no reply within the bound, or the
 		 * transport refused the send: the worker serving this
@@ -1015,8 +1008,7 @@ storage_list_scoped(struct service_context *context, uint8_t scope,
 		{
 			int saved = errno;
 
-			service_session_fail(service_storage_session,
-			    saved > 0 ? saved : EIO);
+			fs_session_fail();
 			errno = saved;
 		}
 		return (-1);
@@ -1029,7 +1021,7 @@ storage_list_scoped(struct service_context *context, uint8_t scope,
 	    !service_provider_all_zero(rp.entries, sizeof(rp.entries)))) ||
 	    (rp.status == 0 && ((rp.count == 0 && rp.next_cursor != 0) ||
 	    (rp.next_cursor != 0 && rp.next_cursor <= rq.cursor))))
-		return (service_provider_protocol_error(service_storage_session, -1));
+		return (service_provider_protocol_error(-1));
 	if (rp.status != 0) {
 		errno = rp.status;
 		return (-1);
@@ -1040,12 +1032,11 @@ storage_list_scoped(struct service_context *context, uint8_t scope,
 		    rp.entries[i].lifetime > BSDFILESYSTEM_CACHE ||
 		    !service_provider_all_zero(rp.entries[i]._reserved,
 		    sizeof(rp.entries[i]._reserved)))
-			return (service_provider_protocol_error(
-			    service_storage_session, -1));
+			return (service_provider_protocol_error(-1));
 	}
 	if (!service_provider_all_zero(&rp.entries[rp.count],
 	    sizeof(rp.entries) - rp.count * sizeof(rp.entries[0])))
-		return (service_provider_protocol_error(service_storage_session, -1));
+		return (service_provider_protocol_error(-1));
 	/* Report the required page size without advancing past uncopied claims. */
 	if (rp.count > max) {
 		*countp = rp.count;
@@ -1153,8 +1144,7 @@ service_open_isolated(struct service_context *context, const char *path,
 	}
 
 	/* Shares the system.Filesystem channel with storage/config claims. */
-	if (service_cached_session_get(BSDFILESYSTEM_SERVICE_NAME,
-	    &service_storage_session) == -1)
+	if (fs_session_open() == -1)
 		return (-1);
 
 	memset(&rq, 0, sizeof(rq));
@@ -1174,11 +1164,9 @@ service_open_isolated(struct service_context *context, const char *path,
 	incoming.fds = &fd;
 	incoming.fd_capacity = 1;
 	options.timeout_ms = SERVICE_STORAGE_CALL_TIMEOUT_MS;
-	if (service_session_call(service_storage_session, &outgoing, &incoming,
-	    &options) == -1) {
+	if (fs_session_call(&outgoing, &incoming, &options) == -1) {
 		if (errno == EMSGSIZE)
-			return (service_provider_protocol_error(
-			    service_storage_session, -1));
+			return (service_provider_protocol_error(-1));
 		/*
 		 * The call itself failed -- no reply within the bound, or the
 		 * transport refused the send: the worker serving this
@@ -1191,8 +1179,7 @@ service_open_isolated(struct service_context *context, const char *path,
 		{
 			int saved = errno;
 
-			service_session_fail(service_storage_session,
-			    saved > 0 ? saved : EIO);
+			fs_session_fail();
 			errno = saved;
 		}
 		return (-1);
@@ -1201,8 +1188,7 @@ service_open_isolated(struct service_context *context, const char *path,
 	    !service_provider_status_valid(rp.status) ||
 	    !service_provider_all_zero(rp.dataset, sizeof(rp.dataset)) ||
 	    (rp.status == 0 ? incoming.nfds != 1 : incoming.nfds != 0))
-		return (service_provider_protocol_error(service_storage_session,
-		    incoming.nfds != 0 ? fd : -1));
+		return (service_provider_protocol_error(incoming.nfds != 0 ? fd : -1));
 	if (rp.status != 0) {
 		errno = rp.status;
 		return (-1);
@@ -1210,3 +1196,4 @@ service_open_isolated(struct service_context *context, const char *path,
 	*fdp = fd;
 	return (0);
 }
+

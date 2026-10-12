@@ -14,7 +14,13 @@
 #define OES_BROKER_VERSION 1
 #define OES_BROKER_OPEN_NOTIFY 1
 
-/* Native local IPC ABI. No request FDs; exactly one FD on successful reply. */
+/*
+ * The broker speaks bsd.oes.v1 (oes_broker.fidl); OES_BROKER_VERSION is its
+ * GetProtocolInfo wire_version.  The record below is the legacy pre-FIDL
+ * message, retained for source/ABI compatibility and rejected by the broker.
+ *
+ * Native local IPC ABI. No request FDs; exactly one FD on successful reply.
+ */
 struct oes_broker_message {
 	uint32_t magic;
 	uint16_t version;

@@ -1,0 +1,122 @@
+// SPDX-License-Identifier: BSD-2-Clause
+// system.Filesystem (BSDFilesystem).  The library name, ordinals and layouts
+// are a stable contract for wire major 1; incompatible changes need a new
+// major.  Identity never travels in a payload: every claim is resolved under
+// the accepted session's own label-derived container (and its declared
+// groups), path opens are decided by the label's policy, and stores take the
+// kernel-stamped credentials of the sending process.  Field meanings, limits
+// and errors are those of lib/libcapsulert/bsdfilesystem_proto.h.
+library bsd.filesystem.v1;
+
+using zx;
+
+type ProtocolInfo = struct { wire_version uint32; };
+// A claim key or group name: one safe path component.
+alias Component = string:63;
+// A claim in the caller's own container.  lifetime: BSDFILESYSTEM_PERSISTENT
+// or _CACHE (_BOOT/_LEASE where the operation allows); scope:
+// BSDFILESYSTEM_SCOPE_UNIT, _SHARED or _GROUP; group names the group exactly
+// when scope is GROUP.
+type ClaimRef = struct {
+    lifetime uint8;
+    scope uint8;
+    dataset Component;
+    group string:63;
+};
+type ClaimRequest = struct {
+    // ZHF_* flags and ZH_* rights to grant.
+    flags uint32;
+    rights uint64;
+    // Refquota in bytes; 0 selects the configured default.
+    quota uint64;
+    lifetime uint8;
+    // BSDFILESYSTEM_DELIVER_HANDLE, _MOUNTED or _MOUNTED_RO.
+    deliver uint8;
+    scope uint8;
+    // Chown the dataset root at mint; 0 skips.
+    owner_uid uint32;
+    owner_gid uint32;
+    dataset Component;
+    group string:63;
+};
+// The delivered descriptor may be transferred no further (the PF descriptor
+// granted to BSDNetwork excepted) and survives one more fork.
+type Claim = resource struct {
+    dataset string:255;
+    handle zx.Handle;
+};
+type Named = struct { dataset Component; };
+// A 128-bit hex lease generation.
+type Session = struct { session string:32; };
+type QuotaRequest = struct {
+    claim ClaimRef;
+    quota uint64;
+};
+// rights: BSDFILESYSTEM_OPEN_* (at least one bit); path is absolute.
+type OpenRequest = struct {
+    rights uint32;
+    is_dir bool;
+    path string:1023;
+};
+type Delivered = resource struct { handle zx.Handle; };
+type ListRequest = struct {
+    // 0 for the first page, else a previous next_cursor.
+    cursor uint32;
+    scope uint8;
+    group string:63;
+};
+type ClaimEntry = struct {
+    name Component;
+    used uint64;
+    refquota uint64;
+    lifetime uint8;
+};
+type ClaimPage = struct {
+    entries vector<ClaimEntry>:32;
+    // 0 on the final page.
+    next_cursor uint32;
+};
+type ClaimUsage = struct {
+    used uint64;
+    refquota uint64;
+    available uint64;
+};
+// A snapshot version id, or a transaction id for TxnCommit and TxnAbort.
+type VersionRef = struct {
+    claim ClaimRef;
+    version string:63;
+};
+type VersionsRequest = struct {
+    claim ClaimRef;
+    cursor uint32;
+};
+type Version = struct { version string:63; };
+type VersionPage = struct {
+    versions vector<Version>:32;
+    next_cursor uint32;
+};
+type Transaction = resource struct {
+    txn string:63;
+    handle zx.Handle;
+};
+closed protocol Filesystem {
+    strict GetProtocolInfo() -> (ProtocolInfo);
+    // Errors are errno values.
+    strict Request(ClaimRequest) -> (Claim) error uint32;
+    strict Release(Named) -> () error uint32;
+    strict Ping() -> () error uint32;
+    strict BeginSession(Session) -> () error uint32;
+    strict Open(OpenRequest) -> (Delivered) error uint32;
+    strict Destroy(ClaimRef) -> () error uint32;
+    strict List(ListRequest) -> (ClaimPage) error uint32;
+    strict StatClaim(ClaimRef) -> (ClaimUsage) error uint32;
+    strict SetQuota(QuotaRequest) -> () error uint32;
+    strict Snapshot(ClaimRef) -> (Version) error uint32;
+    strict ListVersions(VersionsRequest) -> (VersionPage) error uint32;
+    strict Rollback(VersionRef) -> () error uint32;
+    strict OpenVersion(VersionRef) -> (Delivered) error uint32;
+    strict TxnBegin(ClaimRef) -> (Transaction) error uint32;
+    strict TxnCommit(VersionRef) -> () error uint32;
+    strict TxnAbort(VersionRef) -> () error uint32;
+    strict Unmount(ClaimRef) -> () error uint32;
+};

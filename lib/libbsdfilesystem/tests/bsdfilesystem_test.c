@@ -17,12 +17,7 @@
 
 #include "../bsdfilesystem.c"
 
-struct service_session {
-	int fd;
-	int failed;
-};
-
-static struct service_session fake_session;
+static struct fs_transport *fake_transport;
 static struct bsdfilesystem_request last_request;
 static bool fail_open;
 static bool fail_create;
@@ -49,8 +44,7 @@ static void
 reset_fake(void)
 {
 	memset(&last_request, 0, sizeof(last_request));
-	fake_session.fd = -1;
-	fake_session.failed = 0;
+	fake_transport = NULL;
 	fail_open = false;
 	fail_create = false;
 	fail_call = false;
@@ -74,69 +68,54 @@ service_open(const char *name, int *fdp)
 	return (0);
 }
 
-int
-service_session_create(int fd, struct service_session **sessionp)
+/* Adopt the channel; consumes fd only on success. */
+static int
+fs_transport_adopt(struct fs_transport *t, int fd)
 {
 	ATF_REQUIRE(fd >= 0);
-	ATF_REQUIRE(sessionp != NULL);
 	if (fail_create) {
 		errno = EIO;
 		return (-1);
 	}
-	fake_session.fd = fd;
-	fake_session.failed = 0;
-	*sessionp = &fake_session;
+	t->fd = fd;
+	fake_transport = t;
 	return (0);
 }
 
-void
-service_session_close(struct service_session *session)
+/* Each drop of a live session: a protocol failure or the final close. */
+static void
+fs_transport_drop(struct fs_transport *t)
 {
-	ATF_REQUIRE_EQ(&fake_session, session);
-	ATF_REQUIRE(fake_session.fd >= 0);
-	ATF_REQUIRE_EQ(0, close(fake_session.fd));
-	fake_session.fd = -1;
+	ATF_REQUIRE_EQ(fake_transport, t);
+	if (t->fd < 0)
+		return;
+	ATF_REQUIRE_EQ(0, close(t->fd));
+	t->fd = -1;
 	close_called = true;
-}
-
-int
-service_session_fail(struct service_session *session, int error)
-{
-	ATF_REQUIRE_EQ(&fake_session, session);
-	ATF_REQUIRE_EQ(EPROTO, error);
-	fake_session.failed = error;
 	fail_count++;
-	return (0);
 }
 
-int
-service_session_call(struct service_session *session,
-    const struct service_message *message, struct service_reply *reply,
-    const struct service_call_options *options)
+/* One scripted legacy-shaped reply, as the schema transport rebuilds it. */
+static int
+fs_transact(struct fs_transport *t, const void *record, size_t rqlen,
+    void *reply, size_t capacity, size_t *lengthp, int *fdp,
+    uint32_t timeout_ms)
 {
 	struct bsdfilesystem_reply response;
 	bool wants_fd;
-	int fd;
 
-	ATF_REQUIRE_EQ(&fake_session, session);
-	ATF_REQUIRE(message != NULL);
-	ATF_REQUIRE_EQ(sizeof(*message), message->size);
-	ATF_REQUIRE_EQ(sizeof(last_request), message->length);
-	ATF_REQUIRE(message->data != NULL);
-	ATF_REQUIRE_EQ(0, message->nfds);
-	ATF_REQUIRE(reply != NULL);
-	ATF_REQUIRE_EQ(sizeof(*reply), reply->size);
-	ATF_REQUIRE(reply->capacity >= sizeof(response));
-	ATF_REQUIRE_EQ(1, reply->fd_capacity);
-	ATF_REQUIRE(options != NULL);
-	ATF_REQUIRE_EQ(sizeof(*options), options->size);
-	if (fake_session.failed != 0)
-		return (errno = fake_session.failed, -1);
-	memcpy(&last_request, message->data, sizeof(last_request));
-	if (fail_call) {
-		errno = EIO;
-		return (-1);
-	}
+	ATF_REQUIRE_EQ(fake_transport, t);
+	ATF_REQUIRE(t->fd >= 0);
+	ATF_REQUIRE_EQ(sizeof(last_request), rqlen);
+	ATF_REQUIRE(record != NULL);
+	ATF_REQUIRE(capacity >= sizeof(response));
+	ATF_REQUIRE(lengthp != NULL && fdp != NULL);
+	ATF_REQUIRE(timeout_ms > 0);
+	*lengthp = 0;
+	*fdp = -1;
+	memcpy(&last_request, record, sizeof(last_request));
+	if (fail_call)
+		return (EIO);
 
 	memset(&response, 0, sizeof(response));
 	wants_fd = last_request.op == BSDFILESYSTEM_OP_REQUEST;
@@ -153,18 +132,15 @@ service_session_call(struct service_session *session,
 	    reply_mode == REPLY_UNEXPECTED_DATASET)
 		strlcpy(response.dataset, "pool/components/claim",
 		    sizeof(response.dataset));
-	memcpy(reply->data, &response, sizeof(response));
-	reply->length = reply_mode == REPLY_SHORT ? sizeof(response) - 1 :
+	memcpy(reply, &response, sizeof(response));
+	*lengthp = reply_mode == REPLY_SHORT ? sizeof(response) - 1 :
 	    sizeof(response);
-	reply->nfds = 0;
 	if ((wants_fd && response.status == 0 &&
 	    reply_mode != REPLY_MISSING_FD) ||
 	    (!wants_fd && reply_mode == REPLY_UNEXPECTED_FD) ||
 	    reply_mode == REPLY_ERROR_WITH_FD) {
-		fd = open("/dev/null", O_RDONLY | O_CLOEXEC);
-		ATF_REQUIRE(fd >= 0);
-		reply->fds[0] = fd;
-		reply->nfds = 1;
+		*fdp = open("/dev/null", O_RDONLY | O_CLOEXEC);
+		ATF_REQUIRE(*fdp >= 0);
 	}
 	return (0);
 }
@@ -310,6 +286,7 @@ ATF_TC_BODY(reply_validation, tc)
 		ATF_CHECK_ERRNO(EPROTO, bsdfilesystem_ping(client) == -1);
 		bsdfilesystem_close(client);
 	}
+	/* Each malformed reply dropped (poisoned) its session once. */
 	ATF_CHECK_EQ(nitems(modes), fail_count);
 
 	client = open_client();

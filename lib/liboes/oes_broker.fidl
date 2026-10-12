@@ -1,0 +1,20 @@
+// SPDX-License-Identifier: BSD-2-Clause
+// system.OES: the broker that hands an admitted system.oes client its
+// notification descriptor (BSDFilesystem serves it).  The library name,
+// ordinals and layouts are a stable contract for wire major 1; incompatible
+// changes need a new major.  Admission is the session's label and the
+// system.oes attribute, never a payload.  A session answers one OpenNotify.
+library bsd.oes.v1;
+
+using zx;
+
+type ProtocolInfo = struct { wire_version uint32; };
+// An OES client descriptor in notify mode, restricted to its subscriber role:
+// it can neither switch to authorization mode nor widen its scope, and it may
+// be transferred no further.
+type Notify = resource struct { client zx.Handle; };
+closed protocol Broker {
+    strict GetProtocolInfo() -> (ProtocolInfo);
+    // Errors are errno values.
+    strict OpenNotify() -> (Notify) error uint32;
+};
