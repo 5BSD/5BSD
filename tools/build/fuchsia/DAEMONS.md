@@ -210,6 +210,42 @@ last:
 
 ## Progress
 
-| # | Provider | Status | Commits | VM evidence | Latency (p50 before -> after) |
-|---|---|---|---|---|---|
-| 1 | BSDPower | in progress | | | |
+Commits are on `fidl/daemons`, one per provider (after the runtime and
+generator commits).  VM evidence: the plane-on daemon VM (2 vCPUs, all
+provider, client, ctl and runtime suites; `vm-daemons.sh` live and
+lifecycle checks); see VALIDATION.json `fidl_daemons`.
+
+| # | Provider | Status | Latency p50 before -> after (op, µs, 3 rounds, rebased run) |
+|---|---|---|---|
+| 1 | BSDPower | converted | States: 238 -> 275 (1.16x) |
+| 2 | BSDDevice | converted | List: 283 -> 634 (2.24x) |
+| 3 | BSDTrace | converted | Open: 3982 -> 7191 (1.81x) |
+| 4 | BSDSysctl | converted | Get: 389 -> 765 (1.97x) |
+| 5 | BSDCrypto | converted | Random: 231 -> 500 (2.16x) |
+| 6 | BSDAudit | converted | Submit: 239 -> 606 (2.54x) |
+| 7 | BSDNetwork | converted | GetLimits: 248 -> 335 (1.35x) |
+| 8 | BSDNotify | converted | GetStats: 300 -> 427 (1.42x) |
+| 9 | BSDLog | converted | GetStats: 281 -> 293 (1.04x) |
+| - | BSDVM, BSDNamespace, BSDExtension, BSDFilesystem | not converted | user decision: library layout of the libservice-embedded clients |
+| - | BSDBluetooth | not converted | its test matrix compiles the plane/controller sources directly; isolate first |
+| - | system.Network.PF | kept on the record protocol | its only consumer is out of tree (sysutils/5bsd-instruments): user decision |
+
+### Latency
+
+Latency is each bench's own monotonic clock over 2,000 calls on one live
+session, in-process provider and real client library, pre-migration build
+(from `4e87e953034`, `build-daemon-bench.sh`) and FIDL build interleaved in
+the same guest, 3 rounds.  The table is the final run on the rebased branch
+(VM4, 2 vCPUs, QEMU TCG: absolute numbers are far above hardware); two
+earlier runs on the old base (VM2, VM3, busier host) agree in direction.
+
+FIDL calls are slower at p50: about 1.0-1.4x for Log, Power, Network and
+Notify, about 2-2.5x for Audit, Crypto, Device and Sysctl, 1.8x for Trace
+Open.  ktrace of 200 Power calls shows the FIDL client makes *fewer* system
+calls per call (6.0 vs 7.2: 3 ioctl each, 1.5 vs 3 getpid), so the cost is
+user-space work (natural-type encode/decode, the C bridge's copies,
+per-call allocations), which software emulation inflates.  The libchannel
+DTrace probes would separate transport from codec time, but `dtraceall`
+does not load in the plane-on guest (kldload fails), so `vm-daemons.sh`
+reports the bench clock.  Follow-up: profile the slower clients' C bridge
+and codec path on hardware.

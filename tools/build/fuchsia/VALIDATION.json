@@ -660,5 +660,144 @@
     "template_engine_tests": "tools/build/fuchsia/tests/gotemplate_test.py: 11 pass",
     "python_missing": "buildworld with no python3.12 on PATH or LOCALBASE, with PYTHON=python3.99, and with a 3.11 interpreter: _python_check stops before any build step with the package/port message",
     "clean_buildworld": "make -j8 buildworld from an empty objdir (MAKEOBJDIRPREFIX=/usr/obj/5bsd-fidl-gen-clean): fidlc built in bootstrap-tools, bindings generated in beforebuild; completed in 7675 s"
+  },
+  "fidl_daemons": {
+    "date": "2026-10-12",
+    "branch": "fidl/daemons on fix/kldload-broker-guidance 71ec6f81f2e",
+    "converted": [
+      "system.Power",
+      "system.Device",
+      "system.Trace",
+      "system.Sysctl",
+      "system.Crypto",
+      "system.Audit",
+      "system.Network (+Admin, State)",
+      "system.Notify",
+      "system.Log"
+    ],
+    "build": "make -j8 buildworld (8418 s) and buildkernel KERNCONF=GENERIC-NODEBUG (556 s) of the rebased branch: pass",
+    "bindings": "check-bindings: 20 sets, 180 files byte-identical twice; 9 next schemas additive at bsd:1",
+    "vm": {
+      "run": "vm-provider.sh, plane-on, CPUS=2, NO_ROOT-staged world+GENERIC-NODEBUG, EXTRA_SCRIPT vm-daemons.sh",
+      "gates": "PLANEON_GATE_PASS, BSDTIME_LIFECYCLE_PASS, POWER_LIFECYCLE_PASS, SYSCTL_LIFECYCLE_PASS (200 sessions each); live Log/Notify/Network checks pass",
+      "kyua": "895/993 passed, 0 broken, 2 failed, 96 skipped (skips: test-local stacks needing plane-off, time/sysctl writes gated by the live plane)",
+      "failed": "usr.sbin/logctl logctl_test:unavailable and :severity_names expect system.Log to be absent; pre-existing, independent of the protocol",
+      "not_gated": "networkcmpctl resolve localhost fails EAGAIN when BSDFilesystem was not serving /etc/hosts at BSDNetwork start (resolver.c unchanged)",
+      "earlier_runs": "VM1-VM3 on the old base found and fixed: evolution peers holding the test end of the channel; Log ATTACH descriptors locked against BSDLog CLOFORK_ONCE (liblogcmp now preserves sent inheritance); four clients keeping a session the provider had closed; fake-provider races in tests"
+    },
+    "latency": {
+      "method": "per-bench monotonic clock, 2,000 calls x 3 interleaved rounds, pre-migration bench built from 4e87e953034 (build-daemon-bench.sh), same guest; median of rounds",
+      "per_service": {
+        "system.Audit": {
+          "op": "Submit",
+          "rounds": 3,
+          "legacy_p50_us": 239,
+          "fidl_p50_us": 606,
+          "legacy_p90_us": 401,
+          "fidl_p90_us": 1051,
+          "legacy_p99_us": 629,
+          "fidl_p99_us": 1598,
+          "p50_ratio": 2.54
+        },
+        "system.Crypto": {
+          "op": "Random",
+          "rounds": 3,
+          "legacy_p50_us": 231,
+          "fidl_p50_us": 500,
+          "legacy_p90_us": 404,
+          "fidl_p90_us": 782,
+          "legacy_p99_us": 633,
+          "fidl_p99_us": 1176,
+          "p50_ratio": 2.16
+        },
+        "system.Device": {
+          "op": "List",
+          "rounds": 3,
+          "legacy_p50_us": 283,
+          "fidl_p50_us": 634,
+          "legacy_p90_us": 450,
+          "fidl_p90_us": 1086,
+          "legacy_p99_us": 682,
+          "fidl_p99_us": 1645,
+          "p50_ratio": 2.24
+        },
+        "system.Log": {
+          "op": "GetStats",
+          "rounds": 3,
+          "legacy_p50_us": 281,
+          "fidl_p50_us": 293,
+          "legacy_p90_us": 464,
+          "fidl_p90_us": 478,
+          "legacy_p99_us": 711,
+          "fidl_p99_us": 767,
+          "p50_ratio": 1.04
+        },
+        "system.Network": {
+          "op": "GetLimits",
+          "rounds": 3,
+          "legacy_p50_us": 248,
+          "fidl_p50_us": 335,
+          "legacy_p90_us": 419,
+          "fidl_p90_us": 562,
+          "legacy_p99_us": 685,
+          "fidl_p99_us": 868,
+          "p50_ratio": 1.35
+        },
+        "system.Notify": {
+          "op": "GetStats",
+          "rounds": 3,
+          "legacy_p50_us": 300,
+          "fidl_p50_us": 427,
+          "legacy_p90_us": 542,
+          "fidl_p90_us": 780,
+          "legacy_p99_us": 880,
+          "fidl_p99_us": 1297,
+          "p50_ratio": 1.42
+        },
+        "system.Power": {
+          "op": "States",
+          "rounds": 3,
+          "legacy_p50_us": 238,
+          "fidl_p50_us": 275,
+          "legacy_p90_us": 405,
+          "fidl_p90_us": 483,
+          "legacy_p99_us": 683,
+          "fidl_p99_us": 739,
+          "p50_ratio": 1.16
+        },
+        "system.Sysctl": {
+          "op": "Get",
+          "rounds": 3,
+          "legacy_p50_us": 389,
+          "fidl_p50_us": 765,
+          "legacy_p90_us": 681,
+          "fidl_p90_us": 1215,
+          "legacy_p99_us": 954,
+          "fidl_p99_us": 1666,
+          "p50_ratio": 1.97
+        },
+        "system.Trace": {
+          "op": "Open",
+          "rounds": 3,
+          "legacy_p50_us": 3982,
+          "fidl_p50_us": 7191,
+          "legacy_p90_us": 4753,
+          "fidl_p90_us": 9062,
+          "legacy_p99_us": 7565,
+          "fidl_p99_us": 11495,
+          "p50_ratio": 1.81
+        }
+      },
+      "syscalls_per_call": {
+        "power_fidl": 6.0,
+        "power_legacy": 7.2
+      },
+      "note": "TCG guest. FIDL p50 1.04-2.54x the pre-migration client with fewer system calls per call: user-space codec/bridge cost. dtraceall failed to load in the plane-on guest, so libchannel probe timing was unavailable."
+    },
+    "not_converted": {
+      "BSDVM, BSDNamespace, BSDExtension, BSDFilesystem": "user decision: library layout of libservice-embedded clients",
+      "BSDBluetooth": "test matrix compiles plane/controller sources directly; isolate first",
+      "system.Network.PF": "only consumer out of tree; user decision"
+    }
   }
 }

@@ -35,6 +35,13 @@ never installed into base.  `Makefile.inc1` checks for it first
 (`_python_check`; `PYTHON=` overrides).  OpenJDK is approved as a build-only
 prerequisite for Bazel if Bazel is ever reintroduced; Bazel is not used.
 
+## Capability daemons (2026-10-12)
+
+Branch `fidl/daemons`: Power, Device, Trace, Sysctl, Crypto, Audit,
+Network, Notify and Log serve FIDL, each with its clients in one commit.
+Plan, progress and latency: `DAEMONS.md`; evidence: VALIDATION.json
+`fidl_daemons`; open items: `REMAINING.md` section 6.
+
 ## What is validated (2026-10-10)
 
 - Native runtime: 67 C++ runtime tests, C11 integration (including destroy
