@@ -518,6 +518,7 @@ MAN=	aac.4 \
 	ral.4 \
 	random.4 \
 	rctl.4 \
+	rdomain.4 \
 	re.4 \
 	rge.4 \
 	rgephy.4 \
@@ -650,6 +651,7 @@ MAN=	aac.4 \
 	${_vmci.4} \
 	vmgenc.4 \
 	vkbd.4 \
+	vether.4 \
 	vlan.4 \
 	vxlan.4 \
 	${_vmd.4} \
