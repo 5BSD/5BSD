@@ -163,7 +163,8 @@ pf_fbsd_ours(struct mbuf *m, int af)
 		return;
 	m->m_flags |= M_FASTFWD_OURS;
 	if ((m->m_pkthdr.pf.flags & PF_TAG_DIVERTED) == 0 ||
-	    (divert = pf_find_divert(m)) == NULL)
+	    (divert = pf_find_divert(m)) == NULL ||
+	    divert->type != PF_DIVERT_TO)	/* divert-reply: own address */
 		return;
 	switch (af) {
 #ifdef INET

@@ -256,8 +256,11 @@ pfdiv_send4(struct socket *so, struct mbuf *m, struct sockaddr_in *sin)
 			m_freem(m);
 			return (error);
 		}
-		return (ip_output(m, NULL, NULL, IP_ALLOWBROADCAST |
-		    IP_RAWOUTPUT, NULL, NULL));
+		NET_EPOCH_ENTER(et);
+		error = ip_output(m, NULL, NULL, IP_ALLOWBROADCAST |
+		    IP_RAWOUTPUT, NULL, NULL);
+		NET_EPOCH_EXIT(et);
+		return (error);
 	}
 
 	/* Inbound: received on the interface that has the address. */
@@ -357,8 +360,12 @@ pfdiv_send6(struct socket *so, struct mbuf *m, struct sockaddr_in6 *sin6)
 		return (error);
 	}
 
-	if (IN6_IS_ADDR_UNSPECIFIED(&sin6->sin6_addr))
-		return (ip6_output(m, NULL, NULL, 0, NULL, NULL, NULL));
+	if (IN6_IS_ADDR_UNSPECIFIED(&sin6->sin6_addr)) {
+		NET_EPOCH_ENTER(et);
+		error = ip6_output(m, NULL, NULL, 0, NULL, NULL, NULL);
+		NET_EPOCH_EXIT(et);
+		return (error);
+	}
 
 	a = *sin6;
 	a.sin6_port = 0;
@@ -431,15 +438,23 @@ pfdiv_input(int af, struct mbuf *m, int dir, u_int16_t port)
 		CK_STAILQ_FOREACH(ifa, &ifp->if_addrhead, ifa_link) {
 			if (ifa->ifa_addr->sa_family != af)
 				continue;
-			if (af == AF_INET)
+			if (af == AF_INET) {
 				su.sin.sin_addr =
 				    ((struct sockaddr_in *)ifa->ifa_addr)->sin_addr;
-			else {
-				su.sin6.sin6_addr = ((struct sockaddr_in6 *)
-				    ifa->ifa_addr)->sin6_addr;
-				(void)sa6_recoverscope(&su.sin6);
+				break;
 			}
-			break;
+			/*
+			 * Prefer an address that needs no scope: the
+			 * program writes the packet back to this address.
+			 */
+			su.sin6.sin6_addr = ((struct sockaddr_in6 *)
+			    ifa->ifa_addr)->sin6_addr;
+			if (!IN6_IS_SCOPE_LINKLOCAL(&su.sin6.sin6_addr))
+				break;
+		}
+		if (af == AF_INET6) {
+			if (IN6_IS_SCOPE_LINKLOCAL(&su.sin6.sin6_addr))
+				(void)sa6_recoverscope(&su.sin6);
 		}
 	}
 
