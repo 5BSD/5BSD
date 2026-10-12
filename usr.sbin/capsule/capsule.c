@@ -145,22 +145,31 @@ static int  runshutdown(void);
 static char *strk(char *);
 static void runfinal(void);
 
-typedef long (*state_func_t)(void);
-typedef state_func_t (*state_t)(void);
+/*
+ * A state function returns the next state.  C cannot spell a function type
+ * that returns its own type, so the result is wrapped in a struct rather than
+ * cast through an unrelated function pointer type.
+ */
+struct state_next;
+typedef struct state_next (*state_t)(void);
+struct state_next {
+	state_t	next;
+};
+#define	NEXT_STATE(s)	((struct state_next){ .next = (s) })
 
-static state_func_t single_user(void);
-static state_func_t runcom(void);
-static state_func_t establish_capsule(void);
-static state_func_t read_ttys(void);
-static state_func_t multi_user(void);
-static state_func_t clean_ttys(void);
-static state_func_t catatonia(void);
-static state_func_t death(void);
-static state_func_t death_single(void);
-static state_func_t reroot(void);
-static state_func_t reroot_phase_two(void);
+static struct state_next single_user(void);
+static struct state_next runcom(void);
+static struct state_next establish_capsule(void);
+static struct state_next read_ttys(void);
+static struct state_next multi_user(void);
+static struct state_next clean_ttys(void);
+static struct state_next catatonia(void);
+static struct state_next death(void);
+static struct state_next death_single(void);
+static struct state_next reroot(void);
+static struct state_next reroot_phase_two(void);
 
-static state_func_t run_script(const char *);
+static struct state_next run_script(const char *);
 
 static enum { AUTOBOOT, FASTBOOT } runcom_mode = AUTOBOOT;
 
@@ -393,10 +402,10 @@ capsule_main(int argc, char *argv[])
 		warning("init_exec=%s ignored by capsule", kenv_value);
 
 	if (kenv(KENV_GET, "init_script", kenv_value, sizeof(kenv_value)) > 0) {
-		state_func_t next_transition;
+		state_t next_transition;
 
-		if ((next_transition = run_script(kenv_value)) != NULL)
-			initial_transition = (state_t) next_transition;
+		if ((next_transition = run_script(kenv_value).next) != NULL)
+			initial_transition = next_transition;
 	}
 
 	if (kenv(KENV_GET, "init_chroot", kenv_value, sizeof(kenv_value)) > 0) {
@@ -611,7 +620,7 @@ transition(state_t s)
 	current_state = s;
 	for (;;) {
 		CAPSULE_PROBE_CAPSULE_TRANSITION(get_current_state());
-		current_state = (state_t) (*current_state)();
+		current_state = (*current_state)().next;
 	}
 }
 
@@ -779,7 +788,7 @@ mount_tmpfs(const char *fspath)
 	return (0);
 }
 
-static state_func_t
+static struct state_next
 reroot(void)
 {
 	void *buf;
@@ -824,10 +833,10 @@ reroot(void)
 out:
 	emergency("reroot failed; going to single user mode");
 	free(buf);
-	return (state_func_t) single_user;
+	return (NEXT_STATE(single_user));
 }
 
-static state_func_t
+static struct state_next
 reroot_phase_two(void)
 {
 	char init_path[PATH_MAX], *path, *path_component;
@@ -861,13 +870,13 @@ reroot_phase_two(void)
 
 out:
 	emergency("reroot failed; going to single user mode");
-	return (state_func_t) single_user;
+	return (NEXT_STATE(single_user));
 }
 
 /*
  * Bring the system up single user, or perform the final reboot syscall.
  */
-static state_func_t
+static struct state_next
 single_user(void)
 {
 	pid_t pid, wpid;
@@ -983,7 +992,7 @@ single_user(void)
 		emergency("can't fork single-user shell, trying again");
 		while (waitpid(-1, (int *) 0, WNOHANG) > 0)
 			continue;
-		return (state_func_t) single_user;
+		return (NEXT_STATE(single_user));
 	}
 
 	requested_transition = 0;
@@ -994,7 +1003,7 @@ single_user(void)
 			if (errno == EINTR)
 				continue;
 			warning("wait for single-user shell failed: %m; restarting");
-			return (state_func_t) single_user;
+			return (NEXT_STATE(single_user));
 		}
 		if (wpid == pid && WIFSTOPPED(status)) {
 			warning("shell stopped, restarting\n");
@@ -1004,7 +1013,7 @@ single_user(void)
 	} while (wpid != pid && !requested_transition);
 
 	if (requested_transition)
-		return (state_func_t) requested_transition;
+		return (NEXT_STATE(requested_transition));
 
 	if (!WIFEXITED(status)) {
 		if (WTERMSIG(status) == SIGKILL) {
@@ -1024,21 +1033,21 @@ single_user(void)
 			 * the syscall.  Wait quietly instead; if the
 			 * rebooting process died too, recover. */
 			warning("reboot did not arrive; recovering");
-			return (state_func_t) single_user;
+			return (NEXT_STATE(single_user));
 		} else {
 			warning("single user shell terminated, restarting");
-			return (state_func_t) single_user;
+			return (NEXT_STATE(single_user));
 		}
 	}
 
 	runcom_mode = FASTBOOT;
-	return (state_func_t) runcom;
+	return (NEXT_STATE(runcom));
 }
 
 /*
  * Run the system startup script.
  */
-static state_func_t
+static struct state_next
 runcom(void)
 {
 
@@ -1052,7 +1061,7 @@ runcom(void)
 	 */
 	BOOTTRACE("rc startup delegated to switchboard");
 	runcom_mode = AUTOBOOT;
-	return (state_func_t) establish_capsule;
+	return (NEXT_STATE(establish_capsule));
 }
 
 /*
@@ -1063,7 +1072,7 @@ runcom(void)
  * must reach a recovery shell rather than a dead multi-user with no rc
  * world.  This is the converge-or-recover gate.
  */
-static state_func_t
+static struct state_next
 establish_capsule(void)
 {
 	int convergence;
@@ -1072,18 +1081,18 @@ establish_capsule(void)
 	if (!capsule_engine_up) {
 		/* No switchboard => nothing runs /etc/rc.  Recover. */
 		emergency("capability engine did not start; entering recovery");
-		return (state_func_t) single_user;
+		return (NEXT_STATE(single_user));
 	}
 	convergence = capsule_await_convergence();
 	if (convergence > 0)
-		return (state_func_t) requested_transition;
+		return (NEXT_STATE(requested_transition));
 	if (convergence < 0) {
 		emergency("switchboard did not converge; entering recovery");
-		return (state_func_t) single_user;
+		return (NEXT_STATE(single_user));
 	}
 	/* Re-assert the signal shield now that /etc/rc has run (idempotent). */
 	capsule_assert_signal_shield();
-	return (state_func_t) read_ttys;
+	return (NEXT_STATE(read_ttys));
 }
 
 /*
@@ -1521,7 +1530,7 @@ execute_script(char *argv[])
  *    terminated with a signal or exit code != 0.
  *  - death_single if a SIGTERM was delivered.
  */
-static state_func_t
+static struct state_next
 run_script(const char *script)
 {
 	pid_t pid, wpid;
@@ -1549,7 +1558,7 @@ run_script(const char *script)
 		while (waitpid(-1, (int *) 0, WNOHANG) > 0)
 			continue;
 		sleep(STALL_TIMEOUT);
-		return (state_func_t) single_user;
+		return (NEXT_STATE(single_user));
 	}
 
 	requested_transition = 0;
@@ -1558,13 +1567,13 @@ run_script(const char *script)
 			collect_child(wpid);
 		if (requested_transition == death_single ||
 		    requested_transition == reroot)
-			return (state_func_t) requested_transition;
+			return (NEXT_STATE(requested_transition));
 		if (wpid == -1) {
 			if (errno == EINTR)
 				continue;
 			warning("wait for %s on %s failed: %m; going to "
 			    "single user mode", shell, script);
-			return (state_func_t) single_user;
+			return (NEXT_STATE(single_user));
 		}
 		if (wpid == pid && WIFSTOPPED(status)) {
 			warning("%s on %s stopped, restarting\n",
@@ -1587,13 +1596,13 @@ run_script(const char *script)
 	if (!WIFEXITED(status)) {
 		warning("%s on %s terminated abnormally, going to single "
 		    "user mode", shell, script);
-		return (state_func_t) single_user;
+		return (NEXT_STATE(single_user));
 	}
 
 	if (WEXITSTATUS(status))
-		return (state_func_t) single_user;
+		return (NEXT_STATE(single_user));
 
-	return (state_func_t) 0;
+	return (NEXT_STATE(NULL));
 }
 
 static int
@@ -1791,7 +1800,7 @@ setupargv(session_t *sp, struct ttyent *typ)
 	return (1);
 }
 
-static state_func_t
+static struct state_next
 read_ttys(void)
 {
 	session_t *sp, *snext;
@@ -1807,7 +1816,7 @@ read_ttys(void)
 	}
 	sessions = 0;
 	if (start_session_db())
-		return (state_func_t) single_user;
+		return (NEXT_STATE(single_user));
 
 	/*
 	 * Allocate a session entry for each active port.
@@ -1819,7 +1828,7 @@ read_ttys(void)
 
 	endttyent();
 
-	return (state_func_t) multi_user;
+	return (NEXT_STATE(multi_user));
 }
 
 static void
@@ -2102,7 +2111,7 @@ transition_handler(int sig)
  * Capsule engine (control socket, switchboard procdesc/channel, restart
  * timers) is switchboard from PID 1 alongside session reaping.
  */
-static state_func_t
+static struct state_next
 multi_user(void)
 {
 	static bool inmultiuser = false;
@@ -2184,13 +2193,13 @@ multi_user(void)
 		capsule_drain_children();
 	}
 
-	return (state_func_t) requested_transition;
+	return (NEXT_STATE(requested_transition));
 }
 
 /*
  * This is an (n*2)+(n^2) algorithm.  We hope it isn't run often...
  */
-static state_func_t
+static struct state_next
 clean_ttys(void)
 {
 	session_t *sp, *sprev;
@@ -2270,13 +2279,13 @@ clean_ttys(void)
 		}
 	}
 
-	return (state_func_t) multi_user;
+	return (NEXT_STATE(multi_user));
 }
 
 /*
  * Block further logins.
  */
-static state_func_t
+static struct state_next
 catatonia(void)
 {
 	session_t *sp;
@@ -2284,7 +2293,7 @@ catatonia(void)
 	for (sp = sessions; sp; sp = sp->se_next)
 		sp->se_flags |= SE_SHUTDOWN;
 
-	return (state_func_t) multi_user;
+	return (NEXT_STATE(multi_user));
 }
 
 static void
@@ -2301,7 +2310,7 @@ alrm_handler(int sig)
  * switchboard remains available to migrated rc adapters, then stop the
  * managed capability world, then the global process sweep.
  */
-static state_func_t
+static struct state_next
 death(void)
 {
 	int block, blocked;
@@ -2339,14 +2348,14 @@ death(void)
 		sysctlbyname("kern.suspend_blocked", NULL, NULL,
 		    &blocked, sizeof(blocked));
 
-	return (state_func_t) death_single;
+	return (NEXT_STATE(death_single));
 }
 
 /*
  * Do what is necessary to reinitialize single user mode or reboot
  * from an incomplete state.
  */
-static state_func_t
+static struct state_next
 death_single(void)
 {
 	int i;
@@ -2362,7 +2371,7 @@ death_single(void)
 	BOOTTRACE("start killing user processes");
 	for (i = 0; i < 2; ++i) {
 		if (kill(-1, death_sigs[i]) == -1 && errno == ESRCH)
-			return (state_func_t) single_user;
+			return (NEXT_STATE(single_user));
 
 		clang = false;
 		alarm(DEATH_WATCH);
@@ -2372,12 +2381,12 @@ death_single(void)
 		while (!clang && errno != ECHILD);
 
 		if (errno == ECHILD)
-			return (state_func_t) single_user;
+			return (NEXT_STATE(single_user));
 	}
 
 	warning("some processes would not die; ps axl advised");
 
-	return (state_func_t) single_user;
+	return (NEXT_STATE(single_user));
 }
 
 static void
