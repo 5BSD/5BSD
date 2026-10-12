@@ -950,8 +950,13 @@ pf_fbsd_load(void)
 
 	pf_ifattach_tag = EVENTHANDLER_REGISTER(ifnet_arrival_event,
 	    pf_fbsd_ifattach, NULL, EVENTHANDLER_PRI_ANY);
+	/*
+	 * Before netinet's in_ifdetach(): pfsync's detach hook leaves its
+	 * multicast group, which in_purgemaddrs() would otherwise release
+	 * (and free) under it.
+	 */
 	pf_ifdetach_tag = EVENTHANDLER_REGISTER(ifnet_departure_event,
-	    pf_fbsd_ifdetach, NULL, EVENTHANDLER_PRI_ANY);
+	    pf_fbsd_ifdetach, NULL, EVENTHANDLER_PRI_FIRST);
 	pf_ifaddr_tag = EVENTHANDLER_REGISTER(ifaddr_event_ext,
 	    pf_fbsd_ifaddr, NULL, EVENTHANDLER_PRI_ANY);
 	pf_iflink_tag = EVENTHANDLER_REGISTER(ifnet_link_event,
