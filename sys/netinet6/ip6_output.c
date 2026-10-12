@@ -1013,7 +1013,17 @@ nonh6lookup:
 
 	needfiblookup = 0;
 	/* See if destination IP address was changed by packet filter. */
-	if (!IN6_ARE_ADDR_EQUAL(&odst, &ip6->ip6_dst)) {
+	if (!IN6_ARE_ADDR_EQUAL(&odst, &ip6->ip6_dst) &&
+	    (m->m_pkthdr.pf.flags & PF_TAG_REROUTE) != 0) {
+		/*
+		 * As OpenBSD: route again to the new destination and filter
+		 * there, a local one included (through the loopback).
+		 */
+		m->m_pkthdr.pf.flags &= ~PF_TAG_REROUTE;
+		if (ro != NULL)
+			RO_INVALIDATE_CACHE(ro);
+		needfiblookup = 1;
+	} else if (!IN6_ARE_ADDR_EQUAL(&odst, &ip6->ip6_dst)) {
 		m->m_flags |= M_SKIP_FIREWALL;
 		/* If destination is now ourself drop to ip6_input(). */
 		if (in6_localip(&ip6->ip6_dst)) {

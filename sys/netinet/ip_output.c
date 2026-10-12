@@ -136,6 +136,21 @@ ip_output_pfil(struct mbuf **mp, struct ifnet *ifp, int flags,
 	ip = mtod(m, struct ip *);
 
 	/* See if destination IP address was changed by packet filter. */
+	if (odst.s_addr != ip->ip_dst.s_addr &&
+	    (m->m_pkthdr.pf.flags & PF_TAG_REROUTE) != 0) {
+		/*
+		 * As OpenBSD: pf asks for the packet to be routed again to
+		 * its new destination and filtered there, a local one
+		 * included, which it then reaches through the loopback
+		 * interface and pf's inbound rules.
+		 */
+		m->m_pkthdr.pf.flags &= ~PF_TAG_REROUTE;
+		bzero(dst, sizeof(*dst));
+		dst->sin_family = AF_INET;
+		dst->sin_len = sizeof(*dst);
+		dst->sin_addr = ip->ip_dst;
+		return -1; /* Reloop */
+	}
 	if (odst.s_addr != ip->ip_dst.s_addr) {
 		m->m_flags |= M_SKIP_FIREWALL;
 		/* If destination is now ourself drop to ip_input(). */
