@@ -12,6 +12,7 @@ Results: OUT/results.json plus per-suite console output and REGRESS_LOG.
 """
 import argparse
 import json
+import os
 from pathlib import Path
 import re
 import shlex
@@ -20,7 +21,8 @@ import time
 
 HERE = Path(__file__).resolve().parent
 TREE = HERE.parents[3] / 'contrib/openbsd-pf/regress'
-SSHCFG = '/usr/obj/5BSD-pf-parity/keys/ssh_config'
+SSHCFG = os.environ.get('PF_REGRESS_SSH_CONFIG',
+                        '/usr/obj/5BSD-pf-parity/keys/ssh_config')
 GUEST_SRC = '/usr/src'          # upstream layout: /usr/src/regress/...
 DUT_ADDR = '10.188.210.50'
 SRC_ADDR = '10.188.210.10'
@@ -106,6 +108,14 @@ def suites(dut_os):
                      FAKE_NET='10.188.219.0/24', FAKE_NET_ADDR='10.188.219.188',
                      FAKE_NET6=P6 + ':219::/64', FAKE_NET_ADDR6=P6 + ':219::188')),
         'pair': dict(tier=2, host='dut', dir='regress/sys/net/pair'),
+        # Routing domains (rdomain on FIBs) and the routing/interface tools.
+        'rdomains': dict(host='dut', dir='regress/sys/net/rdomains'),
+        'rtable': dict(host='dut', dir='regress/sys/net/rtable'),
+        # bmake reads the upstream "RTTEST_TARGETS+:=" as a different
+        # variable, so list the numbered targets (plumbing only).
+        'route': dict(host='dut', dir='regress/sbin/route',
+                      targets=['netmask'] + ['rttest%d' % n for n in range(1, 39)]),
+        'ifconfig': dict(host='dut', dir='regress/sbin/ifconfig'),
     }
 
 
