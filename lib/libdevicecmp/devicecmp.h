@@ -7,6 +7,9 @@
 
 #include "devicecmp_protocol.h"
 
+/* bsd.device.v1 (devicecmp.fidl) wire major, checked on a session's first call. */
+#define	DEVICECMP_WIRE_VERSION	1
+
 struct service_context;
 
 __BEGIN_DECLS

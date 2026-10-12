@@ -175,6 +175,7 @@ SUBDIR_DEPEND_libnetworkcmp= libservice libshmring
 SUBDIR_DEPEND_libsysctlcmp= libservice
 SUBDIR_DEPEND_libtimecmp= libservice libfidl
 SUBDIR_DEPEND_libpowercmp= libservice libfidl
+SUBDIR_DEPEND_libdevicecmp= libservice libfidl
 SUBDIR_DEPEND_libnotify= libservice
 SUBDIR_DEPEND_libcache= libnotify
 SUBDIR_DEPEND_libpam= libcrypt ${_libradius} librpcsvc libtacplus libutil ${_libypclnt} ${_libcom_err}

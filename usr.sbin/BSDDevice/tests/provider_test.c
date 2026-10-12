@@ -17,15 +17,32 @@
 #include <unistd.h>
 
 #include <libservice.h>
-#include <devicecmp_protocol.h>
+#include <devicecmp.h>
+#include <fidl/bsd.device.v1/c/bsd.h>
+#include <fidl/bsd/sync_c.h>
 
 #include "policy.h"
 #include "bsddevice_test.h"
 
+/*
+ * The test drives BSDDevice's real per-session FIDL server in a forked child.
+ * Well-formed requests use the generated bsd.device.v1 client bindings (the
+ * same encoder libdevicecmp uses); adversarial frames go through a raw
+ * libservice session instead.
+ */
 struct raw_fixture {
-	struct service_session	*session;
+	struct fidl_bsd_connection *client;	/* generated client */
+	struct service_session	*session;	/* raw frames */
 	pid_t			 child;
 };
+
+/* FIDL v2 transactional message header. */
+struct wire_header {
+	uint32_t txid;
+	uint8_t flags[3], magic;
+	uint64_t ordinal;
+};
+_Static_assert(sizeof(struct wire_header) == 16, "FIDL header");
 
 static void
 require_plane(void)
@@ -86,9 +103,44 @@ channel_pair(int *client, int *provider)
  * The policy the worker enforces must already have been installed via
  * bsddevice_test_set_config() before the fork.
  */
+struct result {
+	bool done;
+	int error;		/* transport error */
+	int status;		/* application errno */
+	uint32_t value;
+	int fd;
+	struct devicecmp_list_entry *entries;
+	uint32_t max, count, next;
+};
+
 static void
-raw_fixture_create(struct raw_fixture *fixture, const char *label)
+wait_result(struct raw_fixture *fixture, struct result *r)
 {
+	struct timespec deadline;
+
+	ATF_REQUIRE_EQ(0, fidl_bsd_sync_deadline(&deadline, 5000));
+	if (r->error == 0)
+		r->error = fidl_bsd_sync_wait(fixture->client, &r->done,
+		    &deadline);
+}
+
+static void
+info_done(void *p, int error, struct bsd_device_v1_ProtocolInfo *v)
+{
+	struct result *r = p;
+
+	r->done = true;
+	r->error = error;
+	if (!error)
+		r->value = v->wire_version;
+}
+
+static void
+raw_fixture_start(struct raw_fixture *fixture, const char *label, bool raw)
+{
+	struct fidl_bsd_empty empty = { 0 };
+	struct result r = { .fd = -1 };
+	uint32_t txid;
 	int client, provider;
 
 	memset(fixture, 0, sizeof(*fixture));
@@ -100,7 +152,25 @@ raw_fixture_create(struct raw_fixture *fixture, const char *label)
 		_exit(bsddevice_test_serve(provider, label));
 	}
 	close(provider);
-	ATF_REQUIRE_EQ(0, service_session_create(client, &fixture->session));
+	if (raw) {
+		ATF_REQUIRE_EQ(0, service_session_create(client,
+		    &fixture->session));
+		return;
+	}
+	ATF_REQUIRE_EQ(0, fidl_bsd_connection_create(client, FIDL_BSD_CLIENT,
+	    &fixture->client));
+	r.error = bsd_device_v1_Device_GetProtocolInfo(fixture->client, &empty,
+	    info_done, &r, &txid);
+	wait_result(fixture, &r);
+	ATF_REQUIRE_EQ(0, r.error);
+	ATF_REQUIRE_EQ(DEVICECMP_WIRE_VERSION, r.value);
+}
+
+static void
+raw_fixture_create(struct raw_fixture *fixture, const char *label)
+{
+
+	raw_fixture_start(fixture, label, false);
 }
 
 static void
@@ -108,20 +178,13 @@ raw_fixture_destroy(struct raw_fixture *fixture, int expected_status)
 {
 	int status;
 
-	service_session_close(fixture->session);
+	if (fixture->client != NULL)
+		fidl_bsd_connection_destroy(fixture->client);
+	if (fixture->session != NULL)
+		service_session_close(fixture->session);
 	ATF_REQUIRE_EQ(fixture->child, waitpid(fixture->child, &status, 0));
 	ATF_REQUIRE(WIFEXITED(status));
 	ATF_CHECK_EQ(expected_status, WEXITSTATUS(status));
-}
-
-static void
-raw_fixture_destroy_any(struct raw_fixture *fixture)
-{
-	int status;
-
-	service_session_close(fixture->session);
-	ATF_REQUIRE_EQ(fixture->child, waitpid(fixture->child, &status, 0));
-	ATF_REQUIRE(WIFEXITED(status));
 }
 
 /*
@@ -165,139 +228,115 @@ add_policy(struct devicecmp_config *cfg, const char *label, const char *device,
 	pol->nioctls = 0;
 }
 
+static void
+list_done(void *p, int error, struct bsd_device_v1_Device_List_Result *v)
+{
+	struct result *r = p;
+
+	r->done = true;
+	r->error = error;
+	if (error)
+		return;
+	if (v->tag == bsd_device_v1_Device_List_Result_err_tag) {
+		r->status = (int)v->value.err;
+		return;
+	}
+	ATF_REQUIRE(v->value.response.entries_size <= DEVICECMP_LIST_MAX);
+	r->count = (uint32_t)v->value.response.entries_size;
+	r->next = v->value.response.next_cursor;
+	for (uint32_t i = 0; i < r->count && i < r->max; i++) {
+		const struct bsd_device_v1_DeviceEntry *e =
+		    &v->value.response.entries[i];
+
+		ATF_REQUIRE(e->name_size < DEVICECMP_MAX_NAME);
+		memset(&r->entries[i], 0, sizeof(r->entries[i]));
+		memcpy(r->entries[i].name, e->name, e->name_size);
+		r->entries[i].rights = e->rights;
+		r->entries[i].flags = e->flags;
+	}
+}
+
 /*
- * Send a DEVICECMP_OP_LIST request with the given cursor and return the daemon's
- * errno-style status (0 on success).  On success, the page's entries are copied
- * to entries[] (up to max), *countp gets the count, *nextp the next cursor.
+ * List with the given cursor; return the provider's application errno (0 on
+ * success) and the page.  A transport failure fails the test.
  */
 static int
 device_list(struct raw_fixture *fixture, uint32_t cursor,
     struct devicecmp_list_entry *entries, uint32_t max, uint32_t *countp,
     uint32_t *nextp)
 {
-	struct service_call_options options = SERVICE_CALL_OPTIONS_INITIALIZER;
-	struct service_message outgoing;
-	struct service_reply incoming;
-	struct {
-		struct devicecmp_msg msg;
-		struct devicecmp_list_request body;
-	} request;
-	struct {
-		struct devicecmp_msg msg;
-		struct devicecmp_list_reply body;
-	} reply;
-	uint32_t count;
+	struct bsd_device_v1_ListRequest request = { cursor };
+	struct result r = { .fd = -1, .entries = entries, .max = max };
+	uint32_t txid;
 
-	memset(&request, 0, sizeof(request));
-	request.msg.magic = DEVICECMP_MAGIC;
-	request.msg.opcode = DEVICECMP_OP_LIST;
-	request.body.cursor = cursor;
-
-	memset(&outgoing, 0, sizeof(outgoing));
-	outgoing.size = sizeof(outgoing);
-	outgoing.data = &request;
-	outgoing.length = sizeof(request);
-	memset(&reply, 0, sizeof(reply));
-	memset(&incoming, 0, sizeof(incoming));
-	incoming.size = sizeof(incoming);
-	incoming.data = &reply;
-	incoming.capacity = sizeof(reply);
-	options.timeout_ms = 2000;
-	ATF_REQUIRE_EQ(0, service_session_call(fixture->session, &outgoing,
-	    &incoming, &options));
-	if (reply.msg.status == 0) {
-		ATF_REQUIRE_EQ(sizeof(reply), incoming.length);
-		count = reply.body.count;
-		ATF_REQUIRE(count <= DEVICECMP_LIST_MAX && count <= max);
-		if (entries != NULL)
-			memcpy(entries, reply.body.entries,
-			    (size_t)count * sizeof(entries[0]));
+	r.error = bsd_device_v1_Device_List(fixture->client, &request,
+	    list_done, &r, &txid);
+	wait_result(fixture, &r);
+	ATF_REQUIRE_EQ(0, r.error);
+	if (r.status == 0) {
+		ATF_REQUIRE(r.count <= max);
 		if (countp != NULL)
-			*countp = count;
+			*countp = r.count;
 		if (nextp != NULL)
-			*nextp = reply.body.next_cursor;
+			*nextp = r.next;
 	}
-	return (-reply.msg.status);
+	return (r.status);
+}
+
+static void
+open_done(void *p, int error, struct bsd_device_v1_Device_Open_Result *v)
+{
+	struct result *r = p;
+
+	r->done = true;
+	r->error = error;
+	if (error)
+		return;
+	if (v->tag == bsd_device_v1_Device_Open_Result_err_tag) {
+		r->status = (int)v->value.err;
+		return;
+	}
+	r->fd = fidl_bsd_take_fd(&v->value.response.device);
+	r->value = v->value.response.rights;
 }
 
 /*
- * Send a well-formed DEVICECMP_OP_OPEN request (header + body + NUL-terminated
- * name) and return the daemon's errno-style status (0 on success, positive
- * errno on rejection).  On success the granted-rights mask is returned through
- * granted and the delivered descriptor through out_fd.
+ * Open `name` with `rights`; return the provider's application errno (0 on
+ * success).  On success the granted rights and delivered descriptor are
+ * returned.  A transport failure fails the test.
  */
 static int
 device_open(struct raw_fixture *fixture, const char *name, uint32_t rights,
     uint32_t *granted, int *out_fd)
 {
-	struct service_call_options options = SERVICE_CALL_OPTIONS_INITIALIZER;
-	struct service_message outgoing;
-	struct service_reply incoming;
-	struct devicecmp_msg msg;
-	struct devicecmp_open_body body;
-	struct {
-		struct devicecmp_msg msg;
-		struct devicecmp_open_body body;
-	} reply;
-	uint8_t request[sizeof(struct devicecmp_msg) +
-	    sizeof(struct devicecmp_open_body) + DEVICECMP_MAX_NAME];
-	size_t name_length, length;
-	int fd;
+	struct bsd_device_v1_OpenRequest request = { name, strlen(name),
+		rights };
+	struct result r = { .fd = -1 };
+	uint32_t txid;
 
-	name_length = strlen(name) + 1;
-	ATF_REQUIRE(name_length <= DEVICECMP_MAX_NAME);
-	memset(&msg, 0, sizeof(msg));
-	msg.magic = DEVICECMP_MAGIC;
-	msg.opcode = DEVICECMP_OP_OPEN;
-	memset(&body, 0, sizeof(body));
-	body.rights = rights;
-	body.name_length = (uint16_t)name_length;
-	length = sizeof(msg) + sizeof(body) + name_length;
-	memset(request, 0, sizeof(request));
-	memcpy(request, &msg, sizeof(msg));
-	memcpy(request + sizeof(msg), &body, sizeof(body));
-	memcpy(request + sizeof(msg) + sizeof(body), name, name_length);
-
-	memset(&outgoing, 0, sizeof(outgoing));
-	outgoing.size = sizeof(outgoing);
-	outgoing.data = request;
-	outgoing.length = length;
-	fd = -1;
-	memset(&reply, 0, sizeof(reply));
-	memset(&incoming, 0, sizeof(incoming));
-	incoming.size = sizeof(incoming);
-	incoming.data = &reply;
-	incoming.capacity = sizeof(reply);
-	if (out_fd != NULL) {
-		incoming.fds = &fd;
-		incoming.fd_capacity = 1;
-	}
-	options.timeout_ms = 2000;
-	ATF_REQUIRE_EQ(0, service_session_call(fixture->session, &outgoing,
-	    &incoming, &options));
-	if (out_fd != NULL)
-		*out_fd = fd;
+	r.error = bsd_device_v1_Device_Open(fixture->client, &request,
+	    open_done, &r, &txid);
+	wait_result(fixture, &r);
+	ATF_REQUIRE_EQ(0, r.error);
 	if (granted != NULL)
-		*granted = reply.body.rights;
-	return (-reply.msg.status);
+		*granted = r.value;
+	if (out_fd != NULL)
+		*out_fd = r.fd;
+	else if (r.fd >= 0)
+		close(r.fd);
+	return (r.status);
 }
 
-/*
- * Send an arbitrary (possibly malformed) request; return service_session_call's
- * result and, when a reply arrives, its errno-style status.
- */
+/* Send raw bytes (and optionally one descriptor); return the call result. */
 static int
 send_raw(struct service_session *session, const void *data, size_t length,
-    int attach_fd, int *status)
+    int attach_fd)
 {
 	struct service_call_options options = SERVICE_CALL_OPTIONS_INITIALIZER;
 	struct service_message outgoing;
 	struct service_reply incoming;
-	struct {
-		struct devicecmp_msg msg;
-		struct devicecmp_open_body body;
-	} reply;
-	int rc, fd;
+	uint8_t reply[64];
+	int fd, received = -1, rc;
 
 	memset(&outgoing, 0, sizeof(outgoing));
 	outgoing.size = sizeof(outgoing);
@@ -308,16 +347,49 @@ send_raw(struct service_session *session, const void *data, size_t length,
 		outgoing.fds = &fd;
 		outgoing.nfds = 1;
 	}
-	memset(&reply, 0, sizeof(reply));
 	memset(&incoming, 0, sizeof(incoming));
 	incoming.size = sizeof(incoming);
-	incoming.data = &reply;
+	incoming.data = reply;
 	incoming.capacity = sizeof(reply);
+	incoming.fds = &received;
+	incoming.fd_capacity = 1;
 	options.timeout_ms = 2000;
 	rc = service_session_call(session, &outgoing, &incoming, &options);
-	if (rc == 0 && status != NULL)
-		*status = -reply.msg.status;
+	if (rc == 0 && incoming.nfds != 0 && received >= 0)
+		(void)close(received);
 	return (rc);
+}
+
+#define ORD_INFO	UINT64_C(0x042670afe7b0c259)
+#define ORD_OPEN	UINT64_C(0x75fa02401ef2ac3e)
+#define ORD_LIST	UINT64_C(0x5a28aff45b6caf3d)
+
+/* A raw frame: header plus `body` bytes. */
+static int
+send_frame(struct service_session *session, uint64_t ordinal,
+    const void *body, size_t body_length, int attach_fd)
+{
+	uint8_t frame[128];
+	struct wire_header header = { 3, { 2, 0, 0 }, 1, ordinal };
+
+	ATF_REQUIRE(sizeof(header) + body_length <= sizeof(frame));
+	memcpy(frame, &header, sizeof(header));
+	if (body_length != 0)
+		memcpy(frame + sizeof(header), body, body_length);
+	return (send_raw(session, frame, sizeof(header) + body_length,
+	    attach_fd));
+}
+
+/*
+ * A raw session that has negotiated, so a rejection is the provider's
+ * decoding or validation, not the negotiation rule.
+ */
+static void
+raw_negotiated(struct raw_fixture *fixture, const char *label)
+{
+
+	raw_fixture_start(fixture, label, true);
+	ATF_REQUIRE_EQ(0, send_frame(fixture->session, ORD_INFO, NULL, 0, -1));
 }
 
 /*
@@ -356,6 +428,22 @@ ATF_TC_BODY(granted_open_reads_and_writes, tc)
 	ATF_CHECK_EQ(DEVICECMP_RIGHT_READ | DEVICECMP_RIGHT_WRITE, granted);
 	ATF_CHECK_EQ(1, write(fd, "x", 1));
 	ATF_CHECK_EQ(0, read(fd, buf, 1));
+	/*
+	 * The provider hardens each delivered descriptor to survive exactly one
+	 * more fork, and the FIDL transport keeps that state (it does not lock
+	 * inheritance): a forked child can still use it.
+	 */
+	{
+		pid_t child = fork();
+		int status;
+
+		ATF_REQUIRE(child >= 0);
+		if (child == 0)
+			_exit(write(fd, "x", 1) == 1 ? 0 : 1);
+		ATF_REQUIRE_EQ(child, waitpid(child, &status, 0));
+		ATF_CHECK_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
+		    "delivered descriptor did not survive one fork");
+	}
 	close(fd);
 
 	raw_fixture_destroy(&fixture, 0);
@@ -487,13 +575,41 @@ ATF_TC_BODY(unsafe_names_rejected, tc)
 }
 
 /*
- * The provider fails closed on malformed requests: a bad magic,
- * an out-of-range opcode, a truncated body, a length not matching
- * header+name_length, and a non-NUL-terminated name are all rejected without
- * reaching openat(2).  A bad header (magic/opcode) is EPROTO; a
- * well-formed header with a malformed OPEN body is EINVAL, exactly as request()
- * dictates.  An attached descriptor on any request is EPROTO.
+ * The provider fails closed on malformed requests: a method before
+ * negotiation, an unknown method, a truncated frame, an Open without its body,
+ * a name longer than the schema bound, an out-of-line size that disagrees
+ * with the bytes present, a pre-FIDL record and an attached descriptor all
+ * close the session without reaching openat(2) or replying.  A name with an
+ * embedded NUL decodes but is refused EINVAL, keeping the session.
  */
+static void
+reject(bool negotiate, uint64_t ordinal, const void *body, size_t length,
+    int attach_fd)
+{
+	struct raw_fixture fixture;
+
+	set_single_policy("org.test.dev", "null", DEVICECMP_RIGHT_READ);
+	if (negotiate)
+		raw_negotiated(&fixture, "org.test.dev");
+	else
+		raw_fixture_start(&fixture, "org.test.dev", true);
+	ATF_CHECK_EQ(-1, send_frame(fixture.session, ordinal, body, length,
+	    attach_fd));
+	ATF_CHECK(errno != ETIMEDOUT);
+	/* Nothing later on the session is honoured. */
+	ATF_CHECK_EQ(-1, send_frame(fixture.session, ORD_INFO, NULL, 0, -1));
+	raw_fixture_destroy(&fixture, 0);
+}
+
+/* Open body: string header {size, presence}, rights, then name bytes. */
+struct open_frame {
+	uint64_t size;
+	uint64_t presence;
+	uint32_t rights;
+	uint32_t pad;
+	char name[8];
+};
+
 ATF_TC(malformed_request_is_rejected);
 ATF_TC_HEAD(malformed_request_is_rejected, tc)
 {
@@ -503,102 +619,94 @@ ATF_TC_HEAD(malformed_request_is_rejected, tc)
 }
 ATF_TC_BODY(malformed_request_is_rejected, tc)
 {
-	struct raw_fixture fixture, attach;
-	struct devicecmp_msg msg;
-	struct devicecmp_open_body body;
-	uint8_t request[sizeof(struct devicecmp_msg) +
-	    sizeof(struct devicecmp_open_body) + 8];
-	size_t base;
-	int status, rc, pipefd[2];
+	struct open_frame good = { 4, UINT64_MAX, DEVICECMP_RIGHT_READ, 0,
+		"null" };
+	struct open_frame bad;
+	struct devicecmp_msg legacy;
+	struct raw_fixture fixture;
+	int pipefd[2];
+	char byte;
 
 	require_plane();
+
+	/* The well-formed frame is accepted (and returns a descriptor). */
 	set_single_policy("org.test.dev", "null", DEVICECMP_RIGHT_READ);
-	raw_fixture_create(&fixture, "org.test.dev");
-
-	base = sizeof(msg) + sizeof(body);
-
-	/* Helper builds a valid OPEN of "null" then the case mutates it. */
-	memset(&msg, 0, sizeof(msg));
-	msg.magic = DEVICECMP_MAGIC;
-	msg.opcode = DEVICECMP_OP_OPEN;
-	memset(&body, 0, sizeof(body));
-	body.rights = DEVICECMP_RIGHT_READ;
-	body.name_length = 5;			/* "null\0" */
-	memset(request, 0, sizeof(request));
-	memcpy(request, &msg, sizeof(msg));
-	memcpy(request + sizeof(msg), &body, sizeof(body));
-	memcpy(request + base, "null", 5);
-
-	/* Bad magic: header rejected EPROTO. */
-	msg.magic = DEVICECMP_MAGIC ^ 0xffU;
-	memcpy(request, &msg, sizeof(msg));
-	status = 0;
-	ATF_CHECK_EQ(0, send_raw(fixture.session, request, base + 5, -1,
-	    &status));
-	ATF_CHECK_EQ(EPROTO, status);
-
-	/* Out-of-range opcode: header ok, opcode falls through to EPROTO. */
-	msg.magic = DEVICECMP_MAGIC;
-	msg.opcode = 99;
-	memcpy(request, &msg, sizeof(msg));
-	status = 0;
-	ATF_CHECK_EQ(0, send_raw(fixture.session, request, base + 5, -1,
-	    &status));
-	ATF_CHECK_EQ(EPROTO, status);
-
-	/* Truncated body: an OPEN with only the header present is EPROTO
-	 * (length < header + body, so the OPEN branch is never taken). */
-	msg.opcode = DEVICECMP_OP_OPEN;
-	memcpy(request, &msg, sizeof(msg));
-	status = 0;
-	ATF_CHECK_EQ(0, send_raw(fixture.session, request, sizeof(msg), -1,
-	    &status));
-	ATF_CHECK_EQ(EPROTO, status);
-
-	/* Length does not match header + name_length: name_length says 5 but
-	 * only 4 name bytes are sent.  EINVAL from the OPEN body check. */
-	memcpy(request, &msg, sizeof(msg));
-	body.name_length = 5;
-	memcpy(request + sizeof(msg), &body, sizeof(body));
-	memcpy(request + base, "null", 4);
-	status = 0;
-	ATF_CHECK_EQ(0, send_raw(fixture.session, request, base + 4, -1,
-	    &status));
-	ATF_CHECK_EQ(EINVAL, status);
-
-	/* Name not NUL-terminated: name_length bytes present but last != NUL.
-	 * EINVAL from the OPEN body check. */
-	body.name_length = 4;
-	memcpy(request + sizeof(msg), &body, sizeof(body));
-	memcpy(request + base, "null", 4);
-	status = 0;
-	ATF_CHECK_EQ(0, send_raw(fixture.session, request, base + 4, -1,
-	    &status));
-	ATF_CHECK_EQ(EINVAL, status);
-
+	raw_negotiated(&fixture, "org.test.dev");
+	ATF_CHECK_EQ(0, send_frame(fixture.session, ORD_OPEN, &good,
+	    sizeof(good), -1));
 	raw_fixture_destroy(&fixture, 0);
 
-	/*
-	 * An attached descriptor on an otherwise-valid OPEN must not be
-	 * interpreted: the handler requires fd_count == 0 and replies EPROTO.
-	 * Run on a fresh session so a terminal channel policy cannot mask it.
-	 */
-	set_single_policy("org.test.dev", "null", DEVICECMP_RIGHT_READ);
-	raw_fixture_create(&attach, "org.test.dev");
+	/* Before negotiation. */
+	reject(false, ORD_OPEN, &good, sizeof(good), -1);
+	/* Unknown strict method. */
+	reject(true, UINT64_C(0x7fff), &good, sizeof(good), -1);
+	/* Truncated header (8 of 16 bytes). */
+	{
+		struct raw_fixture f;
+		struct wire_header h = { 3, { 2, 0, 0 }, 1, ORD_OPEN };
+
+		set_single_policy("org.test.dev", "null", DEVICECMP_RIGHT_READ);
+		raw_negotiated(&f, "org.test.dev");
+		ATF_CHECK_EQ(-1, send_raw(f.session, &h, 8, -1));
+		raw_fixture_destroy(&f, 0);
+	}
+	/* Open without its body. */
+	{
+		struct raw_fixture f;
+
+		set_single_policy("org.test.dev", "null", DEVICECMP_RIGHT_READ);
+		raw_negotiated(&f, "org.test.dev");
+		ATF_CHECK_EQ(-1, send_frame(f.session, ORD_OPEN, NULL, 0, -1));
+		raw_fixture_destroy(&f, 0);
+	}
+	/* A name over the 255-byte bound. */
+	bad = good;
+	bad.size = 256;
+	reject(true, ORD_OPEN, &bad, sizeof(bad), -1);
+	/* Declared size larger than the bytes present. */
+	bad = good;
+	bad.size = 9;
+	reject(true, ORD_OPEN, &bad, sizeof(bad), -1);
+	/* A pre-FIDL OPEN record. */
+	{
+		struct raw_fixture f;
+
+		memset(&legacy, 0, sizeof(legacy));
+		legacy.magic = DEVICECMP_MAGIC;
+		legacy.opcode = DEVICECMP_OP_OPEN;
+		set_single_policy("org.test.dev", "null", DEVICECMP_RIGHT_READ);
+		raw_fixture_start(&f, "org.test.dev", true);
+		ATF_CHECK_EQ(-1, send_raw(f.session, &legacy, sizeof(legacy),
+		    -1));
+		raw_fixture_destroy(&f, 0);
+	}
+	/* An attached descriptor: rejected, and the provider's copy closed. */
 	ATF_REQUIRE_EQ(0, pipe(pipefd));
-	body.name_length = 5;
-	memcpy(request, &msg, sizeof(msg));
-	memcpy(request + sizeof(msg), &body, sizeof(body));
-	memcpy(request + base, "null", 5);
-	status = 0;
-	rc = send_raw(attach.session, request, base + 5, pipefd[0], &status);
-	if (rc == 0)
-		ATF_CHECK_EQ(EPROTO, status);
-	else
-		ATF_CHECK_EQ(-1, rc);
-	close(pipefd[0]);
+	reject(true, ORD_OPEN, &good, sizeof(good), pipefd[1]);
 	close(pipefd[1]);
-	raw_fixture_destroy_any(&attach);
+	ATF_REQUIRE(fcntl(pipefd[0], F_SETFL, O_NONBLOCK) != -1);
+	ATF_CHECK_EQ(0, read(pipefd[0], &byte, 1));
+	close(pipefd[0]);
+
+	/* An embedded NUL decodes but is refused EINVAL; the session lives. */
+	set_single_policy("org.test.dev", "null", DEVICECMP_RIGHT_READ);
+	raw_fixture_create(&fixture, "org.test.dev");
+	{
+		struct bsd_device_v1_OpenRequest request = { "nu\0l", 4,
+			DEVICECMP_RIGHT_READ };
+		struct result r = { .fd = -1 };
+		uint32_t txid;
+
+		r.error = bsd_device_v1_Device_Open(fixture.client, &request,
+		    open_done, &r, &txid);
+		wait_result(&fixture, &r);
+		ATF_REQUIRE_EQ(0, r.error);
+		ATF_CHECK_EQ(EINVAL, r.status);
+		ATF_CHECK_EQ(-1, r.fd);
+	}
+	ATF_CHECK_EQ(0, device_open(&fixture, "null", DEVICECMP_RIGHT_READ,
+	    NULL, NULL));
+	raw_fixture_destroy(&fixture, 0);
 }
 
 /* Locate an entry by device name within a returned LIST page. */
@@ -722,58 +830,25 @@ ATF_TC_BODY(list_empty_for_unpolicied_label, tc)
 }
 
 /*
- * A malformed LIST fails closed: a nonzero (reserved) flags word is EINVAL, and
- * a LIST whose length does not match the request struct never yields a success
- * page.
+ * A malformed List fails closed: a missing or trailing body closes the
+ * session without a page.
  */
 ATF_TC(malformed_list_is_rejected);
 ATF_TC_HEAD(malformed_list_is_rejected, tc)
 {
 	atf_tc_set_md_var(tc, "require.user", "root");
 	atf_tc_set_md_var(tc, "descr",
-	    "Malformed LIST requests are rejected fail-closed");
+	    "Malformed List requests are rejected fail-closed");
 }
 ATF_TC_BODY(malformed_list_is_rejected, tc)
 {
-	struct raw_fixture fixture;
-	struct {
-		struct devicecmp_msg msg;
-		struct devicecmp_list_request body;
-	} request;
-	int status;
+	uint8_t body[16] = { 0 };
 
 	require_plane();
-	set_single_policy("org.test.dev", "null", DEVICECMP_RIGHT_READ);
-	raw_fixture_create(&fixture, "org.test.dev");
-
-	memset(&request, 0, sizeof(request));
-	request.msg.magic = DEVICECMP_MAGIC;
-	request.msg.opcode = DEVICECMP_OP_LIST;
-
-	/* Nonzero reserved flags: EINVAL. */
-	request.body.flags = 1;
-	status = 0;
-	ATF_CHECK_EQ(0, send_raw(fixture.session, &request, sizeof(request), -1,
-	    &status));
-	ATF_CHECK_EQ(EINVAL, status);
-
-	/* Nonzero reserved word: EINVAL. */
-	request.body.flags = 0;
-	request.body.reserved[0] = 7;
-	status = 0;
-	ATF_CHECK_EQ(0, send_raw(fixture.session, &request, sizeof(request), -1,
-	    &status));
-	ATF_CHECK_EQ(EINVAL, status);
-
-	/* Wrong length (header only): opcode is LIST but the body is missing,
-	 * so the LIST branch is never taken and the request is EPROTO. */
-	request.body.reserved[0] = 0;
-	status = 0;
-	ATF_CHECK_EQ(0, send_raw(fixture.session, &request,
-	    sizeof(request.msg), -1, &status));
-	ATF_CHECK_EQ(EPROTO, status);
-
-	raw_fixture_destroy(&fixture, 0);
+	/* Missing body. */
+	reject(true, ORD_LIST, NULL, 0, -1);
+	/* Trailing bytes after the 8-byte body. */
+	reject(true, ORD_LIST, body, sizeof(body), -1);
 }
 
 ATF_TC_WITHOUT_HEAD(arguments);

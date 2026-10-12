@@ -33,25 +33,43 @@ Source: `usr.sbin/BSDDevice/capbundle/device.ucl` and `Bundle.ucl`.
 
 ## Wire operations
 
-Defined in `lib/libdevicecmp/devicecmp_protocol.h`. The header is `struct devicecmp_msg` (magic `DEVC`, `opcode`, `flags`, `status` = 0 or negative errno).
+The provider and client use `lib/libdevicecmp/devicecmp.fidl`, library
+`bsd.device.v1`, with generated C bindings over native capability channels
+(see [FIDL and Capability IPC](../develop/fidl.md)). The schema installs as
+`/usr/share/fidl/devicecmp.fidl` and imports `/usr/share/fidl/zx.fidl` for the
+descriptor type. No payload carries an identity: the accepted session's label
+and `device.conf` decide every request.
 
-| Op | Request | Reply | Errors |
+| Method | Request | Reply | Errors |
 |---|---|---|---|
-| `OPEN` (1) | `devicecmp_open_body { rights, name_length }` + NUL-terminated leaf name | same body with `rights` = granted mask, plus one delivered fd | `EINVAL` bad name; `EACCES` no policy entry or empty intersection; `openat(2)` errors such as `ENOENT` |
-| `LIST` (2) | `devicecmp_list_request { cursor, flags = 0, reserved = 0 }` | `devicecmp_list_reply { count, next_cursor, entries[] }`, at most `DEVICECMP_LIST_MAX` (32) per page, no fd | `EINVAL` nonzero additive fields |
+| `GetProtocolInfo` | empty | wire version 1 | none |
+| `Open` | `name` (one /dev leaf, at most 255 bytes) and wanted `rights` | the delivered descriptor and the granted `rights` | `EINVAL` bad name; `EACCES` no policy entry or empty intersection; `openat(2)` errors such as `ENOENT` |
+| `List` | `cursor` | `entries` (at most 32: leaf name, policy-maximum rights, flags) and `next_cursor` | none |
 
-Rights bits are `DEVICECMP_RIGHT_READ`, `WRITE`, `IOCTL`, `MMAP`, `SEEK` and `EVENT` (kqueue/poll). Each `devicecmp_list_entry` carries the leaf name, the policy-maximum rights for this label and device, and `DEVICECMP_LIST_FLAG_IOCTL_WHITELIST` when an ioctl whitelist would further narrow a delivered `IOCTL` descriptor. The list walk is filtered on the connecting channel's unforgeable label, never on a wire argument, and a label with no policy lists empty (count 0) rather than failing.
+Rights bits are `DEVICECMP_RIGHT_READ`, `WRITE`, `IOCTL`, `MMAP`, `SEEK` and `EVENT` (kqueue/poll). Each list entry carries the leaf name, the policy-maximum rights for this label and device, and `DEVICECMP_LIST_FLAG_IOCTL_WHITELIST` when an ioctl whitelist would further narrow a delivered `IOCTL` descriptor. The list walk is filtered on the connecting channel's unforgeable label, never on a wire argument, and a label with no policy lists empty (count 0) rather than failing.
+
+The delivered descriptor is Capsicum-limited to the granted rights (and the
+ioctl whitelist), may be transferred no further, survives exactly one more
+fork, and is close-on-exec locked; the FIDL transport keeps that state
+(`fidl_bsd_connection_preserve_sent_inheritance()`). A session must negotiate
+before any other method. A method before negotiation, an unknown method, a
+malformed, truncated or oversized frame, a pre-FIDL record or an attached
+descriptor closes the session without a reply; a name with a separator, a
+leading dot or an embedded NUL is `EINVAL` and keeps the session. The
+`bsd.device.v1` ordinals and layouts are a compatibility contract;
+`usr.sbin/BSDDevice/tests/evolution/devicecmp_next.fidl` is the same schema at
+`bsd:1` and adds a method at `bsd:2` for the pairing test.
 
 ## Client library
 
-Header `<devicecmp.h>` (installs `devicecmp.h` and `devicecmp_protocol.h`); link with `-ldevicecmp` (`SHLIB_MAJOR 1`, depends on libservice and pthread). Manual: libdevicecmp(3).
+Header `<devicecmp.h>` (installs `devicecmp.h` and the legacy `devicecmp_protocol.h`, which still defines the rights bits, list entry and limits); link with `-ldevicecmp` (`SHLIB_MAJOR 1`, depends on libservice, the FIDL runtime and pthread). Manual: libdevicecmp(3).
 
 | Group | Functions |
 |---|---|
 | Open | `devicecmp_open(ctx, name, want_rights, &granted, &fd)` |
 | Discovery | `devicecmp_list(ctx, cursor, entries, max, &count, &next_cursor)` |
 
-`ctx` is the process libservice context and may be `NULL` for a standalone caller; the `system.Device` session is opened by name once and cached for the process. All three fail closed, returning -1 with `errno` set and leaving `*fdp` at -1. If `max` is smaller than the page the provider returned, `devicecmp_list()` fails with `ENOMEM`, stores the required count in `*countp` and does not advance the cursor.
+`ctx` is the process libservice context and may be `NULL` for a standalone caller; the `system.Device` session is opened by name once, negotiated, and cached for the process (a forked child opens its own). A timeout (30 seconds, shortened by an active `service_budget_begin()`), transport failure or malformed reply drops the cached session; application errors keep it. Both fail closed, returning -1 with `errno` set and leaving `*fdp` at -1. If `max` is smaller than the page the provider returned, `devicecmp_list()` fails with `ENOMEM`, stores the required count in `*countp` and does not advance the cursor.
 
 ```c
 #include <devicecmp.h>
@@ -81,7 +99,7 @@ There is no ctl tool for `system.Device`. The inventory lists none, and because 
 
 ## Policy
 
-Access is default-deny. The compiled-in policy grants nothing, so with no file at all every OPEN fails with `EACCES` and every LIST is empty. The optional `/Capabilities/System/Device.cap/Units/bsddevice.unit/Config/device.conf` is loaded once, before capability mode, through the delivered Config descriptor; a malformed file logs a warning and leaves default-deny standing rather than widening access.
+Access is default-deny. The compiled-in policy grants nothing, so with no file at all every Open fails with `EACCES` and every List is empty. The optional `/Capabilities/System/Device.cap/Units/bsddevice.unit/Config/device.conf` is loaded once, before capability mode, through the delivered Config descriptor; a malformed file logs a warning and leaves default-deny standing rather than widening access.
 
 Each `devices` entry grants one client label access to one `/dev` leaf:
 
@@ -112,14 +130,14 @@ not full endpoint saturation stress.
 
 | Where | Programs | What they prove |
 |---|---|---|
-| `usr.sbin/BSDDevice/tests` (package `bsddevice-tests`, `/usr/tests/usr.sbin/BSDDevice`) | `provider_test` (9 cases), `policy_test` (5) | provider_test drives the real session worker over a channel with the daemon compiled `-DBSDDEVICE_TESTING`: a granted open reads and writes, rights are narrowed to the policy maximum, an ungranted label or device is denied, unsafe names are rejected, malformed OPEN and LIST requests are rejected, LIST is label-scoped and empty for an unpolicied label. policy_test covers the UCL parser and lookup. |
-| `lib/libdevicecmp/tests` (`libdevicecmp-tests`) | `devicecmp_api_test` (3), `client_protocol_test` (6) | argument validation, message encoding, fail-closed behaviour without a provider |
+| `usr.sbin/BSDDevice/tests` (package `bsddevice-tests`, `/usr/tests/usr.sbin/BSDDevice`) | `provider_test` (9 cases), `evolution_test` (2), `policy_test` (5), `lifecycle_test` (2), `quota_test` (1) | provider_test drives the real session worker (the daemon compiled `-DBSDDEVICE_TESTING`) over a channel with the generated client bindings: a granted open reads and writes and its descriptor survives one fork, rights are narrowed to the policy maximum, an ungranted label or device is denied, unsafe names are rejected, malformed Open and List frames (before negotiation, unknown method, truncated, missing body, over-long or mis-sized name, pre-FIDL record, attached descriptor) close the session, an embedded NUL is `EINVAL`, and List is label-scoped and empty for an unpolicied label. evolution_test is the `bsd:1`/`bsd:2` schema pairing in both directions. policy_test covers the UCL parser and lookup. |
+| `lib/libdevicecmp/tests` (`libdevicecmp-tests`) | `devicecmp_api_test` (3), `client_protocol_test` (7) | argument validation; the client against a scripted server: session reuse, reconnection after transport failure, application errors that keep the session, malformed Open and List replies (with no descriptor leak), a future wire version, and a fresh session after fork |
 
 Run with `kyua test -k /usr/tests/usr.sbin/BSDDevice/Kyuafile`. provider_test needs mac_capability channels, so it runs on a booted plane in the VM rig ([Testing](../develop/testing.md)); the inventory records it as VM-verified. The daemon exports the `BSDDevice` DTrace provider with `open` (label, leaf, granted rights, errno) and `list` (label, cursor, count, errno) probes; device contents are never probe arguments.
 
 ## Status and gaps
 
-Status: shipped; capmode; user `capability`; `visible = ["system"]`; ops OPEN, LIST; default-deny `device.conf` (inventory section 4).
+Status: shipped; capmode; user `capability`; `visible = ["system"]`; FIDL `bsd.device.v1` (October 2026) with Open and List; default-deny `device.conf`. Unit attributes, visibility and policy are unchanged by the migration; the provider and libdevicecmp ship together (mixed peers fail at negotiation).
 
 Known gaps and drift:
 

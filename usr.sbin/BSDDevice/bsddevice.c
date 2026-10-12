@@ -10,6 +10,7 @@
  * per-label policy rights, and hands it back over the client's own
  * mac_capability channel.  Default-deny: a label/device pair with no policy
  * entry is refused.  Mirrors bsdcrypto(8)'s accept/pdfork worker structure.
+ * Sessions speak FIDL bsd.device.v1 (lib/libdevicecmp/devicecmp.fidl).
  */
 #include <sys/param.h>
 #include <sys/capsicum.h>
@@ -21,14 +22,15 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <signal.h>
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdlib.h>
 #include <string.h>
 #include <syslog.h>
 #include <unistd.h>
 
-#include <channel.h>
-#include <devicecmp_protocol.h>
+#include <devicecmp.h>
+#include <fidl/bsd.device.v1/c/bsd.h>
 #include <libservice.h>
 #include <service_runtime.h>
 
@@ -46,6 +48,7 @@ static struct devicecmp_config config;	/* compiled default-deny + overlay */
 
 struct device_worker {
 	char	label[DEVICECMP_LABEL_MAX];
+	bool	negotiated;
 };
 
 /*
@@ -55,8 +58,8 @@ struct device_worker {
  * errno (EACCES when policy does not grant the label this device/rights).
  */
 static int
-grant_open(const char *label, const struct devicecmp_open_body *body,
-    const char *name, uint32_t *granted)
+grant_open(const char *label, uint32_t wanted, const char *name,
+    uint32_t *granted)
 {
 	const unsigned long *ioctls;
 	cap_rights_t rights;
@@ -70,7 +73,7 @@ grant_open(const char *label, const struct devicecmp_open_body *body,
 	maxr = devicecmp_policy_lookup(&config, label, name, &ioctls, &nioctls);
 	if (maxr == 0)
 		return (errno = EACCES, -1);
-	effective = body->rights & maxr & DEVICECMP_RIGHT_ALL;
+	effective = wanted & maxr & DEVICECMP_RIGHT_ALL;
 	if (effective == 0)
 		return (errno = EACCES, -1);
 
@@ -143,190 +146,159 @@ fail:
 	return (-1);
 }
 
-/* Per-client channel request handler. */
-static void
-request(struct channel *c __unused, struct channel_message *m, void *arg)
+/*
+ * bsd.device.v1 method handlers.  Every method requires a negotiated session.
+ * A failed reply closes the connection.  The request-done probe keeps the
+ * historical DEVICECMP_OP_* codes (0 is protocol negotiation).
+ */
+static bool
+ready(struct device_worker *worker, struct fidl_bsd_connection *connection,
+    uint32_t opcode)
 {
-	const struct devicecmp_msg *in;
-	const struct devicecmp_open_body *body;
-	struct device_worker *worker = arg;
-	struct devicecmp_msg out;
-	struct {
-		struct devicecmp_msg msg;
-		struct devicecmp_open_body body;
-	} open_out;
-	struct {
-		struct devicecmp_msg msg;
-		struct devicecmp_list_reply list;
-	} list_out;
-	const void *reply_data;
-	size_t reply_length;
-	uint32_t granted;
-	int fd, error, deliver_fd, transport_error;
+	if (worker->negotiated)
+		return (true);
+	BSDDEVICE_PROBE_REQUEST_DONE(opcode, -EPROTO, EPROTO);
+	fidl_bsd_connection_close(connection, EPROTO);
+	return (false);
+}
 
-	fd = -1;
-	error = EPROTO;
-	granted = 0;
-	reply_data = NULL;
-	reply_length = 0;
-	memset(&out, 0, sizeof(out));
-	memset(&open_out, 0, sizeof(open_out));
-	memset(&list_out, 0, sizeof(list_out));
+static void
+completed(struct fidl_bsd_connection *connection, uint32_t opcode, int error,
+    int transport_error)
+{
+	BSDDEVICE_PROBE_REQUEST_DONE(opcode, -error, transport_error);
+	if (transport_error != 0)
+		fidl_bsd_connection_close(connection, transport_error);
+}
 
-	in = channel_message_data(m);
-	if (channel_message_length(m) >= sizeof(*in) &&
-	    channel_message_fd_count(m) == 0 &&
-	    in->magic == DEVICECMP_MAGIC &&
-	    in->flags == 0) {	/* reserved header field, must be zero */
-		out.opcode = in->opcode;
-		if (in->opcode == DEVICECMP_OP_OPEN &&
-		    channel_message_length(m) >= sizeof(*in) + sizeof(*body)) {
-			const char *name;
-			size_t name_length, header;
+static void
+protocol_info(void *argument, struct fidl_bsd_connection *connection,
+    struct fidl_bsd_request *request, struct fidl_bsd_empty *empty __unused)
+{
+	struct device_worker *worker = argument;
+	struct bsd_device_v1_ProtocolInfo info = { DEVICECMP_WIRE_VERSION };
+	int error;
 
-			body = (const struct devicecmp_open_body *)(in + 1);
-			name = (const char *)(body + 1);
-			name_length = body->name_length;
-			header = sizeof(*in) + sizeof(*body);
-			/*
-			 * The name (name_length bytes, trailing NUL included)
-			 * must exactly fill the message and be NUL-terminated.
-			 */
-			if (name_length == 0 ||
-			    name_length > DEVICECMP_MAX_NAME ||
-			    channel_message_length(m) != header + name_length ||
-			    name[name_length - 1] != '\0' ||
-			    body->reserved != 0) {	/* reserved, must be zero */
-				error = EINVAL;
-			} else {
-				fd = grant_open(worker->label, body, name,
-				    &granted);
-				error = fd >= 0 ? 0 : errno;
-				BSDDEVICE_PROBE_OPEN(worker->label, name,
-				    granted, error);
-			}
-		} else if (in->opcode == DEVICECMP_OP_LIST &&
-		    channel_message_length(m) ==
-		    sizeof(*in) + sizeof(struct devicecmp_list_request)) {
-			const struct devicecmp_list_request *lreq;
+	error = bsd_device_v1_Device_GetProtocolInfo_reply(connection, request,
+	    &info);
+	worker->negotiated = error == 0;
+	completed(connection, 0, 0, error);
+}
 
-			lreq = (const struct devicecmp_list_request *)(in + 1);
-			/*
-			 * Additive fields must be zero (message hygiene).  The
-			 * enumeration is strictly label-scoped: it filters on
-			 * worker->label — the connecting channel's unforgeable
-			 * identity — never a wire argument, so a caller can only
-			 * ever see its own devices.  Default-deny holds: a label
-			 * with no policy entry lists empty.
-			 */
-			if (lreq->flags != 0 || lreq->reserved[0] != 0 ||
-			    lreq->reserved[1] != 0) {
-				error = EINVAL;
-			} else {
-				devicecmp_policy_list(&config, worker->label,
-				    lreq->cursor, list_out.list.entries,
-				    DEVICECMP_LIST_MAX, &list_out.list.count,
-				    &list_out.list.next_cursor);
-				error = 0;
-				BSDDEVICE_PROBE_LIST(worker->label,
-				    lreq->cursor, list_out.list.count, error);
-			}
-		}
+static void
+open_device(void *argument, struct fidl_bsd_connection *connection,
+    struct fidl_bsd_request *request, struct bsd_device_v1_OpenRequest *value)
+{
+	struct device_worker *worker = argument;
+	struct bsd_device_v1_Device_Open_Result reply = { 0 };
+	char name[DEVICECMP_MAX_NAME];
+	uint32_t granted = 0;
+	int error, fd = -1;
+
+	if (!ready(worker, connection, DEVICECMP_OP_OPEN))
+		return;
+	/* A single leaf without embedded NULs; the schema bounds the length. */
+	if (value->name_size == 0 || value->name_size >= sizeof(name) ||
+	    memchr(value->name, '\0', value->name_size) != NULL) {
+		name[0] = '\0';
+		error = EINVAL;
+	} else {
+		memcpy(name, value->name, value->name_size);
+		name[value->name_size] = '\0';
+		fd = grant_open(worker->label, value->rights, name, &granted);
+		error = fd >= 0 ? 0 : errno;
+		BSDDEVICE_PROBE_OPEN(worker->label, name, granted, error);
 	}
-
-	out.magic = DEVICECMP_MAGIC;
-	out.status = error == 0 ? 0 : -error;
-
-	switch (out.opcode) {
-	case DEVICECMP_OP_OPEN:
-		if (error == 0) {
-			open_out.msg = out;
-			open_out.body.rights = granted;
-			reply_data = &open_out;
-			reply_length = sizeof(open_out);
-		} else {
-			reply_data = &out;
-			reply_length = sizeof(out);
-		}
-		break;
-	case DEVICECMP_OP_LIST:
-		/*
-		 * Success carries the full fixed-size list body (client
-		 * validates the exact length).  On error reply header-only, so
-		 * a malformed or unauthorized request is never amplified into a
-		 * full-size list buffer.
-		 */
-		if (error == 0) {
-			list_out.msg = out;
-			reply_data = &list_out;
-			reply_length = sizeof(list_out);
-		} else {
-			reply_data = &out;
-			reply_length = sizeof(out);
-		}
-		break;
-	default:
-		reply_data = &out;
-		reply_length = sizeof(out);
-		break;
+	if (error == 0) {
+		reply.tag = bsd_device_v1_Device_Open_Result_response_tag;
+		reply.value.response.device = fd;
+		reply.value.response.rights = granted;
+	} else {
+		reply.tag = bsd_device_v1_Device_Open_Result_err_tag;
+		reply.value.err = (uint32_t)error;
 	}
-
-	deliver_fd = (error == 0 && out.opcode == DEVICECMP_OP_OPEN) ? 1 : 0;
-	transport_error = channel_send_reply(m, &(struct channel_outgoing){
-	    .size = sizeof(struct channel_outgoing),
-	    .data = reply_data,
-	    .length = reply_length,
-	    .fds = deliver_fd != 0 ? &fd : NULL,
-	    .nfds = deliver_fd }) == -1 ? errno : 0;
-	BSDDEVICE_PROBE_REQUEST_DONE(out.opcode, out.status, transport_error);
+	/* The bindings send a private duplicate; ours is closed either way. */
+	completed(connection, DEVICECMP_OP_OPEN, error,
+	    bsd_device_v1_Device_Open_reply(connection, request, &reply));
 	if (fd >= 0)
 		(void)close(fd);
-	channel_message_free(m);
+}
+
+static void
+list_devices(void *argument, struct fidl_bsd_connection *connection,
+    struct fidl_bsd_request *request, struct bsd_device_v1_ListRequest *value)
+{
+	struct device_worker *worker = argument;
+	struct bsd_device_v1_Device_List_Result reply = { 0 };
+	struct devicecmp_list_entry entries[DEVICECMP_LIST_MAX];
+	struct bsd_device_v1_DeviceEntry out[DEVICECMP_LIST_MAX];
+	uint32_t count = 0, next = 0;
+
+	if (!ready(worker, connection, DEVICECMP_OP_LIST))
+		return;
+	/*
+	 * Strictly label-scoped: the walk filters on worker->label -- the
+	 * connecting channel's unforgeable identity -- never a wire argument.
+	 * Default-deny: a label with no policy entry lists empty.
+	 */
+	memset(entries, 0, sizeof(entries));
+	devicecmp_policy_list(&config, worker->label, value->cursor, entries,
+	    DEVICECMP_LIST_MAX, &count, &next);
+	BSDDEVICE_PROBE_LIST(worker->label, value->cursor, count, 0);
+	for (uint32_t i = 0; i < count; i++) {
+		out[i].name = entries[i].name;
+		out[i].name_size = strnlen(entries[i].name,
+		    sizeof(entries[i].name));
+		out[i].rights = entries[i].rights;
+		out[i].flags = entries[i].flags;
+	}
+	reply.tag = bsd_device_v1_Device_List_Result_response_tag;
+	reply.value.response.entries = out;
+	reply.value.response.entries_size = count;
+	reply.value.response.next_cursor = next;
+	completed(connection, DEVICECMP_OP_LIST, 0,
+	    bsd_device_v1_Device_List_reply(connection, request, &reply));
 }
 
 /* Serve one client on its own worker channel until it disconnects. */
 static int
 serve_session(int fd, const char *label)
 {
-	struct channel_options options =
-	    CHANNEL_OPTIONS_INITIALIZER(CHANNEL_ROLE_PROVIDER);
+	static const struct bsd_device_v1_Device_server handlers = {
+		.GetProtocolInfo = protocol_info,
+		.Open = open_device,
+		.List = list_devices
+	};
+	struct fidl_bsd_options options = FIDL_BSD_OPTIONS_INITIALIZER;
+	struct fidl_bsd_connection *connection;
 	struct device_worker state;
-	struct channel *channel;
-	int ready, result, wants_write;
 
 	memset(&state, 0, sizeof(state));
 	strlcpy(state.label, label, sizeof(state.label));
-	channel = NULL;
-	result = 1;
-	if (channel_create(fd, &options, &channel) == -1)
-		goto out;
-	if (channel_set_request_handler(channel, request, &state) == -1)
-		goto out;
-	result = 0;
-	for (;;) {
-		wants_write = channel_wants_write(channel);
-		if (wants_write == -1) {
-			result = 1;
-			break;
-		}
-		ready = channel_wait(channel, wants_write, -1);
-		if (ready == -1) {
-			result = 1;
-			break;
-		}
-		if ((ready & CHANNEL_WAIT_WRITE) != 0 &&
-		    channel_flush(channel) == -1) {
-			result = 1;
-			break;
-		}
-		if ((ready & CHANNEL_WAIT_READ) != 0 &&
-		    channel_dispatch(channel) == -1)
-			break;
+	/* One request at a time; requests carry no descriptors. */
+	options.max_pending_requests = 1;
+	options.max_queued_messages = 16;
+	options.max_queued_bytes = 64 * 1024;
+	options.max_queued_fds = 1;
+	if (fidl_bsd_connection_create_with_options(fd, FIDL_BSD_SERVER,
+	    &options, &connection) != 0) {
+		(void)close(fd);
+		return (1);
 	}
-out:
-	if (channel != NULL)
-		channel_destroy(channel);
-	return (result);
+	/*
+	 * grant_open() hardens each delivered descriptor itself (transfer
+	 * once, survive one more fork, close-on-exec locked); keep that state.
+	 */
+	fidl_bsd_connection_preserve_sent_inheritance(connection);
+	if (bsd_device_v1_Device_bind(connection, &handlers, &state) != 0) {
+		fidl_bsd_connection_destroy(connection);
+		return (1);
+	}
+	/* Peer close or a protocol violation ends the session. */
+	while (fidl_bsd_connection_poll(connection, -1) == 0)
+		;
+	fidl_bsd_connection_destroy(connection);
+	return (0);
 }
 
 #ifdef BSDDEVICE_TESTING

@@ -7,6 +7,7 @@ UCLSRC.bsddevice=bsddevice.ucl
 
 PKG_DEPS.bsddevice+=libchannel
 PKG_DEPS.bsddevice+=libdevicecmp
+PKG_DEPS.bsddevice+=libfidl
 PKG_DEPS.bsddevice+=libservice
 PKG_DEPS.bsddevice+=switchboard
 PKG_DEPS.bsddevice+=switchboardctl

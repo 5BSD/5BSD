@@ -32,6 +32,14 @@ power)
 	bench=usr.sbin/BSDPower/tests/latency_bench.c
 	libs="-lservice -lchannel -lprivateucl"
 	;;
+device)
+	paths="usr.sbin/BSDDevice lib/libdevicecmp"
+	defs="-DBSDDEVICE_TESTING"
+	incs="usr.sbin/BSDDevice lib/libdevicecmp"
+	srcs="usr.sbin/BSDDevice/bsddevice.c usr.sbin/BSDDevice/policy.c"
+	bench=usr.sbin/BSDDevice/tests/latency_bench.c
+	libs="-lservice -lchannel -lprivateucl -lpthread"
+	;;
 *)
 	echo "build-daemon-bench: unknown daemon $daemon" >&2; exit 64;;
 esac

@@ -1,349 +1,399 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * The system.Device client against a scripted bsd.device.v1 server over a
+ * real capability channel (service_open is faked to hand out a fresh
+ * channel to a forked server).  Covers reply validation, session reuse,
+ * reconnection after transport or protocol failure, descriptor cleanup and
+ * version negotiation.
  */
 
 #include <sys/param.h>
+#include <sys/mman.h>
 #include <sys/types.h>
+#include <sys/wait.h>
 
+#include <assert.h>
 #include <atf-c.h>
+#include <channel.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <signal.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 
+static int fake_service_open(const char *, int *);
+#define service_open fake_service_open
 #include "../devicecmp.c"
-
-struct service_session {
-	int failed;
-};
+#undef service_open
 
 enum fault {
 	FAULT_NONE,
-	FAULT_CALL,
-	FAULT_STATUS,
-	FAULT_WRONG_OPCODE,
-	FAULT_NONZERO_FLAGS,
-	FAULT_ERROR_WITH_BODY,
-	FAULT_ERROR_WITH_FD,
+	FAULT_CALL,		/* close the connection instead of replying */
+	FAULT_STATUS,		/* application error EPERM */
+	FAULT_BAD_ERRNO,	/* error 0 is not an errno */
+	FAULT_FUTURE,		/* wire version 2 */
 	FAULT_OPEN_ELEVATED_RIGHTS,
-	FAULT_OPEN_RESERVED,
-	FAULT_OPEN_NAME_LENGTH,
-	FAULT_OPEN_MISSING_FD,
-	FAULT_LIST_RESERVED,
-	FAULT_LIST_COUNT,
-	FAULT_LIST_NAME,
+	FAULT_OPEN_ZERO_RIGHTS,
+	FAULT_OPEN_UNKNOWN_RIGHTS,
+	FAULT_LIST_NAME_SLASH,
+	FAULT_LIST_NAME_DOT,
+	FAULT_LIST_NAME_NUL,
 	FAULT_LIST_RIGHTS,
 	FAULT_LIST_FLAGS,
+	FAULT_LIST_WHITELIST_WITHOUT_IOCTL,
 	FAULT_LIST_CURSOR,
+	FAULT_LIST_EMPTY_WITH_CURSOR,
 };
 
-static enum fault next_fault;
-static unsigned open_count, close_count, fail_count;
-static int last_received_fd = -1;
+/* Shared with the forked servers. */
+static struct script {
+	enum fault fault;
+	unsigned opens;
+} *script;
+static pid_t servers[16];
+static unsigned nservers;
 
 static void
-fake_reset(void)
+info(void *x, struct fidl_bsd_connection *c, struct fidl_bsd_request *r,
+    struct fidl_bsd_empty *e)
 {
-
-	next_fault = FAULT_NONE;
-	open_count = 0;
-	close_count = 0;
-	fail_count = 0;
-	last_received_fd = -1;
+	struct bsd_device_v1_ProtocolInfo v = { DEVICECMP_WIRE_VERSION };
+	(void)x;
+	(void)e;
+	if (script->fault == FAULT_FUTURE)
+		v.wire_version++;
+	assert(bsd_device_v1_Device_GetProtocolInfo_reply(c, r, &v) == 0);
 }
 
 static void
-fake_fault(enum fault fault)
+open_handler(void *x, struct fidl_bsd_connection *c, struct fidl_bsd_request *r,
+    struct bsd_device_v1_OpenRequest *q)
 {
-
-	next_fault = fault;
+	struct bsd_device_v1_Device_Open_Result v = {
+		.tag = bsd_device_v1_Device_Open_Result_response_tag
+	};
+	int fd;
+	(void)x;
+	switch (script->fault) {
+	case FAULT_CALL:
+		fidl_bsd_connection_close(c, EPIPE);
+		return;
+	case FAULT_STATUS:
+	case FAULT_BAD_ERRNO:
+		v.tag = bsd_device_v1_Device_Open_Result_err_tag;
+		v.value.err = script->fault == FAULT_STATUS ? EPERM : 0;
+		assert(bsd_device_v1_Device_Open_reply(c, r, &v) == 0);
+		return;
+	default:
+		break;
+	}
+	fd = open("/dev/null", O_RDONLY | O_CLOEXEC);
+	assert(fd >= 0);
+	v.value.response.device = fd;
+	v.value.response.rights = q->rights;
+	if (script->fault == FAULT_OPEN_ELEVATED_RIGHTS)
+		v.value.response.rights |= DEVICECMP_RIGHT_WRITE;
+	else if (script->fault == FAULT_OPEN_ZERO_RIGHTS)
+		v.value.response.rights = 0;
+	else if (script->fault == FAULT_OPEN_UNKNOWN_RIGHTS)
+		v.value.response.rights |= 0x40000000U;
+	assert(bsd_device_v1_Device_Open_reply(c, r, &v) == 0);
+	close(fd);
 }
 
-int
-service_open(const char *name, int *fdp)
+static void
+list_handler(void *x, struct fidl_bsd_connection *c, struct fidl_bsd_request *r,
+    struct bsd_device_v1_ListRequest *q)
 {
+	struct bsd_device_v1_Device_List_Result v = {
+		.tag = bsd_device_v1_Device_List_Result_response_tag
+	};
+	struct bsd_device_v1_DeviceEntry e[2] = {
+		{ "null", 4, DEVICECMP_RIGHT_READ, 0 },
+		{ "zero", 4, DEVICECMP_RIGHT_READ | DEVICECMP_RIGHT_IOCTL,
+		    DEVICECMP_LIST_FLAG_IOCTL_WHITELIST },
+	};
+	(void)x;
+	v.value.response.entries = e;
+	v.value.response.entries_size = 2;
+	v.value.response.next_cursor = q->cursor + 2;
+	switch (script->fault) {
+	case FAULT_CALL:
+		fidl_bsd_connection_close(c, EPIPE);
+		return;
+	case FAULT_STATUS:
+	case FAULT_BAD_ERRNO:
+		v.tag = bsd_device_v1_Device_List_Result_err_tag;
+		v.value.err = script->fault == FAULT_STATUS ? EPERM : 0;
+		break;
+	case FAULT_LIST_NAME_SLASH:
+		e[0].name = "a/b";
+		e[0].name_size = 3;
+		break;
+	case FAULT_LIST_NAME_DOT:
+		e[0].name = ".x";
+		e[0].name_size = 2;
+		break;
+	case FAULT_LIST_NAME_NUL:
+		e[0].name = "nu\0l";
+		break;
+	case FAULT_LIST_RIGHTS:
+		e[0].rights = 0;
+		break;
+	case FAULT_LIST_FLAGS:
+		e[0].flags = 0x80;
+		break;
+	case FAULT_LIST_WHITELIST_WITHOUT_IOCTL:
+		e[0].flags = DEVICECMP_LIST_FLAG_IOCTL_WHITELIST;
+		break;
+	case FAULT_LIST_CURSOR:
+		v.value.response.next_cursor = q->cursor;
+		break;
+	case FAULT_LIST_EMPTY_WITH_CURSOR:
+		v.value.response.entries_size = 0;
+		break;
+	default:
+		break;
+	}
+	assert(bsd_device_v1_Device_List_reply(c, r, &v) == 0);
+}
+
+static int
+fake_service_open(const char *name, int *fdp)
+{
+	struct bsd_device_v1_Device_server handlers = {
+		.GetProtocolInfo = info,
+		.Open = open_handler,
+		.List = list_handler
+	};
+	struct fidl_bsd_connection *connection;
+	int ends[2];
+	pid_t child;
 
 	ATF_REQUIRE_STREQ(DEVICECMP_INTERFACE, name);
-	ATF_REQUIRE(fdp != NULL);
-	*fdp = open("/dev/null", O_RDONLY | O_CLOEXEC);
-	ATF_REQUIRE(*fdp >= 0);
-	open_count++;
-	return (0);
-}
-
-int
-service_session_create(int fd, struct service_session **sessionp)
-{
-	struct service_session *session;
-
-	ATF_REQUIRE(fd >= 0);
-	ATF_REQUIRE(sessionp != NULL);
-	session = calloc(1, sizeof(*session));
-	ATF_REQUIRE(session != NULL);
-	close(fd);
-	*sessionp = session;
-	return (0);
-}
-
-void
-service_session_close(struct service_session *session)
-{
-
-	if (session != NULL) {
-		close_count++;
-		free(session);
+	ATF_REQUIRE(nservers < nitems(servers));
+	ATF_REQUIRE_EQ(0, mac_capability_channel_create(ends));
+	child = fork();
+	ATF_REQUIRE(child >= 0);
+	if (child == 0) {
+		close(ends[0]);
+		assert(fidl_bsd_connection_create(ends[1], FIDL_BSD_SERVER,
+		    &connection) == 0);
+		assert(bsd_device_v1_Device_bind(connection, &handlers,
+		    NULL) == 0);
+		while (fidl_bsd_connection_poll(connection, 10000) == 0)
+			;
+		_exit(0);
 	}
-}
-
-int
-service_session_fail(struct service_session *session, int error)
-{
-
-	ATF_REQUIRE(session != NULL);
-	ATF_REQUIRE_EQ(EPROTO, error);
-	session->failed = error;
-	fail_count++;
+	close(ends[1]);
+	servers[nservers++] = child;
+	script->opens++;
+	*fdp = ends[0];
 	return (0);
 }
 
 static void
-reply_header(struct devicecmp_msg *reply, uint32_t opcode)
+setup(void)
 {
+	int fd = open("/dev/mac_capability", O_RDWR | O_CLOEXEC);
 
-	memset(reply, 0, sizeof(*reply));
-	reply->magic = DEVICECMP_MAGIC;
-	reply->opcode = opcode;
+	if (fd < 0)
+		atf_tc_skip("capability plane unavailable: %s",
+		    strerror(errno));
+	close(fd);
+	script = mmap(NULL, sizeof(*script), PROT_READ | PROT_WRITE,
+	    MAP_ANON | MAP_SHARED, -1, 0);
+	ATF_REQUIRE(script != MAP_FAILED);
+	memset(script, 0, sizeof(*script));
 }
 
-int
-service_session_call(struct service_session *session,
-    const struct service_message *outgoing, struct service_reply *incoming,
-    const struct service_call_options *options)
+static void
+teardown(void)
 {
-	const struct devicecmp_msg *request;
-	enum fault fault;
-	int fd;
+	int status;
 
-	ATF_REQUIRE(session != NULL);
-	ATF_REQUIRE(outgoing != NULL);
-	ATF_REQUIRE(incoming != NULL);
-	ATF_REQUIRE(options != NULL);
-	if (session->failed != 0)
-		return (errno = session->failed, -1);
-	fault = next_fault;
-	next_fault = FAULT_NONE;
-	if (fault == FAULT_CALL)
-		return (errno = ECONNRESET, -1);
-	request = outgoing->data;
-	incoming->nfds = 0;
-
-	switch (request->opcode) {
-	case DEVICECMP_OP_OPEN: {
-		const struct devicecmp_open_body *body;
-		struct {
-			struct devicecmp_msg msg;
-			struct devicecmp_open_body body;
-		} *reply = incoming->data;
-
-		body = (const void *)(request + 1);
-		memset(reply, 0, sizeof(*reply));
-		reply_header(&reply->msg, request->opcode);
-		reply->body.rights = body->rights;
-		incoming->length = sizeof(*reply);
-		fd = open("/dev/null", O_RDONLY | O_CLOEXEC);
-		ATF_REQUIRE(fd >= 0);
-		last_received_fd = fd;
-		if (incoming->fds != NULL)
-			incoming->fds[0] = fd;
-		incoming->nfds = 1;
-		if (fault == FAULT_STATUS || fault == FAULT_ERROR_WITH_BODY ||
-		    fault == FAULT_ERROR_WITH_FD) {
-			reply->msg.status = -EPERM;
-			if (fault != FAULT_ERROR_WITH_BODY)
-				incoming->length = sizeof(reply->msg);
-			if (fault != FAULT_ERROR_WITH_FD) {
-				close(fd);
-				last_received_fd = -1;
-				incoming->nfds = 0;
-			}
-		} else if (fault == FAULT_OPEN_ELEVATED_RIGHTS) {
-			reply->body.rights |= DEVICECMP_RIGHT_WRITE;
-		} else if (fault == FAULT_OPEN_RESERVED) {
-			reply->body.reserved = 1;
-		} else if (fault == FAULT_OPEN_NAME_LENGTH) {
-			reply->body.name_length = 1;
-		} else if (fault == FAULT_OPEN_MISSING_FD) {
-			close(fd);
-			last_received_fd = -1;
-			incoming->nfds = 0;
-		}
-		break;
+	pthread_mutex_lock(&devicecmp_lock);
+	session_drop();
+	pthread_mutex_unlock(&devicecmp_lock);
+	for (unsigned i = 0; i < nservers; i++) {
+		(void)kill(servers[i], SIGTERM);
+		(void)waitpid(servers[i], &status, 0);
 	}
-	case DEVICECMP_OP_LIST: {
-		struct {
-			struct devicecmp_msg msg;
-			struct devicecmp_list_reply body;
-		} *reply = incoming->data;
-
-		memset(reply, 0, sizeof(*reply));
-		reply_header(&reply->msg, request->opcode);
-		reply->body.count = 2;
-		reply->body.next_cursor = 2;
-		strlcpy(reply->body.entries[0].name, "null",
-		    sizeof(reply->body.entries[0].name));
-		reply->body.entries[0].rights = DEVICECMP_RIGHT_READ;
-		strlcpy(reply->body.entries[1].name, "zero",
-		    sizeof(reply->body.entries[1].name));
-		reply->body.entries[1].rights = DEVICECMP_RIGHT_EVENT;
-		incoming->length = sizeof(*reply);
-		if (fault == FAULT_STATUS) {
-			reply->msg.status = -EPERM;
-			incoming->length = sizeof(reply->msg);
-		} else if (fault == FAULT_LIST_RESERVED) {
-			reply->body.reserved[0] = 1;
-		} else if (fault == FAULT_LIST_COUNT) {
-			reply->body.count = DEVICECMP_LIST_MAX + 1;
-		} else if (fault == FAULT_LIST_NAME) {
-			memset(reply->body.entries[0].name, 'x',
-			    sizeof(reply->body.entries[0].name));
-		} else if (fault == FAULT_LIST_RIGHTS) {
-			reply->body.entries[0].rights = 0x80000000U;
-		} else if (fault == FAULT_LIST_FLAGS) {
-			reply->body.entries[0].flags = 0x80000000U;
-		} else if (fault == FAULT_LIST_CURSOR) {
-			reply->body.next_cursor = 0;
-			reply->body.count = 0;
-			reply->body.next_cursor = 1;
-		}
-		break;
-	}
-	default:
-		ATF_REQUIRE_MSG(0, "unexpected opcode %u", request->opcode);
-	}
-
-	if (fault == FAULT_WRONG_OPCODE)
-		((struct devicecmp_msg *)incoming->data)->opcode++;
-	else if (fault == FAULT_NONZERO_FLAGS)
-		((struct devicecmp_msg *)incoming->data)->flags = 1;
-	return (0);
+	nservers = 0;
 }
 
-/* Cheapest round trip through the client: open "null" read-only. */
-static int
-probe(void)
+static unsigned
+open_descriptors(void)
 {
-	uint32_t granted;
-	int fd, rc;
+	unsigned n = 0;
 
-	rc = devicecmp_open(NULL, "null", DEVICECMP_RIGHT_READ, &granted, &fd);
-	if (rc == 0)
-		close(fd);
-	return (rc);
+	for (int fd = 0; fd < 512; fd++)
+		if (fcntl(fd, F_GETFD) != -1)
+			n++;
+	return (n);
 }
 
 ATF_TC_WITHOUT_HEAD(success_matrix);
 ATF_TC_BODY(success_matrix, tc)
 {
 	struct devicecmp_list_entry entries[2];
-	uint32_t count, granted, next;
-	int fd;
+	uint32_t granted = 0, count = 0, next = 0;
+	int fd = -1;
 
-	fake_reset();
+	setup();
 	ATF_REQUIRE_EQ(0, devicecmp_open(NULL, "null", DEVICECMP_RIGHT_READ,
 	    &granted, &fd));
 	ATF_CHECK_EQ(DEVICECMP_RIGHT_READ, granted);
 	ATF_REQUIRE(fd >= 0);
 	close(fd);
-	memset(entries, 0, sizeof(entries));
 	ATF_CHECK_ERRNO(ENOMEM,
 	    devicecmp_list(NULL, 0, entries, 1, &count, &next) == -1);
 	ATF_CHECK_EQ(2, count);
-	ATF_CHECK_EQ(0, next);
 	ATF_REQUIRE_EQ(0, devicecmp_list(NULL, 0, entries, 2, &count, &next));
 	ATF_CHECK_EQ(2, count);
 	ATF_CHECK_EQ(2, next);
 	ATF_CHECK_STREQ("null", entries[0].name);
 	ATF_CHECK_STREQ("zero", entries[1].name);
-	ATF_CHECK_EQ(1, open_count);
+	ATF_CHECK_EQ(DEVICECMP_LIST_FLAG_IOCTL_WHITELIST, entries[1].flags);
+	/* One session served all of it. */
+	ATF_CHECK_EQ(1, script->opens);
+	teardown();
 }
 
 ATF_TC_WITHOUT_HEAD(transport_failure_reconnects);
 ATF_TC_BODY(transport_failure_reconnects, tc)
 {
+	uint32_t count, next;
+	struct devicecmp_list_entry entries[2];
 
-	fake_reset();
-	fake_fault(FAULT_CALL);
-	ATF_CHECK_ERRNO(ECONNRESET, probe() == -1);
-	ATF_REQUIRE_EQ(0, probe());
-	ATF_CHECK_EQ(2, open_count);
-	ATF_CHECK_EQ(1, close_count);
+	setup();
+	script->fault = FAULT_CALL;
+	ATF_CHECK_EQ(-1, devicecmp_list(NULL, 0, entries, 2, &count, &next));
+	ATF_CHECK(errno != 0 && errno != EPROTO);
+	script->fault = FAULT_NONE;
+	ATF_REQUIRE_EQ(0, devicecmp_list(NULL, 0, entries, 2, &count, &next));
+	ATF_CHECK_EQ(2, script->opens);
+	teardown();
 }
 
 ATF_TC_WITHOUT_HEAD(semantic_error_keeps_session);
 ATF_TC_BODY(semantic_error_keeps_session, tc)
 {
+	uint32_t count, next;
+	struct devicecmp_list_entry entries[2];
+	int fd = -1;
 
-	fake_reset();
-	fake_fault(FAULT_STATUS);
-	ATF_CHECK_ERRNO(EPERM, probe() == -1);
-	ATF_REQUIRE_EQ(0, probe());
-	ATF_CHECK_EQ(1, open_count);
-	ATF_CHECK_EQ(0, fail_count);
+	setup();
+	script->fault = FAULT_STATUS;
+	ATF_CHECK_ERRNO(EPERM, devicecmp_open(NULL, "null",
+	    DEVICECMP_RIGHT_READ, NULL, &fd) == -1);
+	ATF_CHECK_EQ(-1, fd);
+	ATF_CHECK_ERRNO(EPERM,
+	    devicecmp_list(NULL, 0, entries, 2, &count, &next) == -1);
+	script->fault = FAULT_NONE;
+	ATF_REQUIRE_EQ(0, devicecmp_list(NULL, 0, entries, 2, &count, &next));
+	ATF_CHECK_EQ(1, script->opens);
+	teardown();
 }
 
 ATF_TC_WITHOUT_HEAD(open_reply_validation);
 ATF_TC_BODY(open_reply_validation, tc)
 {
 	static const enum fault faults[] = {
-		FAULT_WRONG_OPCODE, FAULT_NONZERO_FLAGS,
-		FAULT_OPEN_ELEVATED_RIGHTS, FAULT_OPEN_RESERVED,
-		FAULT_OPEN_NAME_LENGTH, FAULT_OPEN_MISSING_FD,
-		FAULT_ERROR_WITH_BODY, FAULT_ERROR_WITH_FD,
+		FAULT_BAD_ERRNO,
+		FAULT_OPEN_ELEVATED_RIGHTS,
+		FAULT_OPEN_ZERO_RIGHTS,
+		FAULT_OPEN_UNKNOWN_RIGHTS,
 	};
 	uint32_t granted;
+	unsigned before;
 	int fd;
-	size_t i;
 
-	fake_reset();
-	for (i = 0; i < nitems(faults); i++) {
-		fake_fault(faults[i]);
-		fd = 99;
+	setup();
+	before = open_descriptors();
+	for (size_t i = 0; i < nitems(faults); i++) {
+		script->fault = faults[i];
 		granted = 99;
+		fd = 99;
 		ATF_CHECK_ERRNO(EPROTO, devicecmp_open(NULL, "null",
 		    DEVICECMP_RIGHT_READ, &granted, &fd) == -1);
 		ATF_CHECK_EQ(-1, fd);
 		ATF_CHECK_EQ(0, granted);
 	}
-	ATF_CHECK_EQ(nitems(faults), fail_count);
-	ATF_CHECK_EQ(nitems(faults), close_count);
-	errno = 0;
-	ATF_CHECK_ERRNO(EBADF, fcntl(last_received_fd, F_GETFD) == -1);
+	/* Each malformed reply dropped its session... */
+	ATF_CHECK_EQ(nitems(faults), script->opens);
+	/* ...and no delivered descriptor leaked. */
+	ATF_CHECK_EQ(before, open_descriptors());
+	teardown();
 }
 
 ATF_TC_WITHOUT_HEAD(list_reply_validation);
 ATF_TC_BODY(list_reply_validation, tc)
 {
 	static const enum fault faults[] = {
-		FAULT_WRONG_OPCODE, FAULT_NONZERO_FLAGS, FAULT_LIST_RESERVED,
-		FAULT_LIST_COUNT, FAULT_LIST_NAME, FAULT_LIST_RIGHTS,
-		FAULT_LIST_FLAGS, FAULT_LIST_CURSOR,
+		FAULT_BAD_ERRNO,
+		FAULT_LIST_NAME_SLASH,
+		FAULT_LIST_NAME_DOT,
+		FAULT_LIST_NAME_NUL,
+		FAULT_LIST_RIGHTS,
+		FAULT_LIST_FLAGS,
+		FAULT_LIST_WHITELIST_WITHOUT_IOCTL,
+		FAULT_LIST_CURSOR,
+		FAULT_LIST_EMPTY_WITH_CURSOR,
 	};
-	struct devicecmp_list_entry entry;
+	struct devicecmp_list_entry entries[2];
 	uint32_t count, next;
-	size_t i;
 
-	fake_reset();
-	for (i = 0; i < nitems(faults); i++) {
-		fake_fault(faults[i]);
+	setup();
+	for (size_t i = 0; i < nitems(faults); i++) {
+		script->fault = faults[i];
 		count = next = 99;
-		ATF_CHECK_ERRNO(EPROTO, devicecmp_list(NULL, 1, &entry, 1,
+		ATF_CHECK_ERRNO(EPROTO, devicecmp_list(NULL, 1, entries, 2,
 		    &count, &next) == -1);
 		ATF_CHECK_EQ(0, count);
 		ATF_CHECK_EQ(0, next);
 	}
-	ATF_CHECK_EQ(nitems(faults), fail_count);
+	ATF_CHECK_EQ(nitems(faults), script->opens);
+	teardown();
+}
+
+ATF_TC_WITHOUT_HEAD(future_version_rejected);
+ATF_TC_BODY(future_version_rejected, tc)
+{
+	int fd = -1;
+
+	setup();
+	script->fault = FAULT_FUTURE;
+	ATF_CHECK_ERRNO(EPROTONOSUPPORT, devicecmp_open(NULL, "null",
+	    DEVICECMP_RIGHT_READ, NULL, &fd) == -1);
+	ATF_CHECK_EQ(-1, fd);
+	teardown();
+}
+
+ATF_TC_WITHOUT_HEAD(fork_opens_new_session);
+ATF_TC_BODY(fork_opens_new_session, tc)
+{
+	struct devicecmp_list_entry entries[2];
+	uint32_t count, next;
+	int status;
+	pid_t child;
+
+	setup();
+	ATF_REQUIRE_EQ(0, devicecmp_list(NULL, 0, entries, 2, &count, &next));
+	child = fork();
+	ATF_REQUIRE(child >= 0);
+	if (child == 0)
+		_exit(devicecmp_list(NULL, 0, entries, 2, &count, &next) == 0 &&
+		    script->opens == 2 ? 0 : 1);
+	ATF_REQUIRE_EQ(child, waitpid(child, &status, 0));
+	ATF_CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	/* The parent keeps using its own session. */
+	ATF_REQUIRE_EQ(0, devicecmp_list(NULL, 0, entries, 2, &count, &next));
+	ATF_CHECK_EQ(2, script->opens);
+	teardown();
 }
 
 ATF_TP_ADD_TCS(tp)
@@ -354,5 +404,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, semantic_error_keeps_session);
 	ATF_TP_ADD_TC(tp, open_reply_validation);
 	ATF_TP_ADD_TC(tp, list_reply_validation);
+	ATF_TP_ADD_TC(tp, future_version_rejected);
+	ATF_TP_ADD_TC(tp, fork_opens_new_session);
 	return (atf_no_error());
 }

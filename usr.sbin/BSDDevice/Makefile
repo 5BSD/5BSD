@@ -5,8 +5,9 @@ PROG=	BSDDevice
 MAN=BSDDevice.8
 SRCS=bsddevice.c policy.c
 CFLAGS+=-I${SRCTOP}/lib/libchannel -I${SRCTOP}/lib/libdevicecmp -I${SRCTOP}/lib/libservice -I${SRCTOP}/sys
+CFLAGS+=-I${FIDLGEN.devicecmp} -I${SRCTOP}/lib/libfidl/include
 CFLAGS+=-I${SRCTOP}/contrib/libucl/include
-LIBADD=channel devicecmp service ucl
+LIBADD=channel devicecmp service ucl fidl_bsd
 # Resolve every dynamic symbol at load (BIND_NOW) so nothing is bound lazily
 # after the daemon has entered capability mode.
 LDFLAGS+=	-Wl,-z,now
@@ -50,6 +51,13 @@ SUBDIR.${MK_TESTS}+=tests
 SRCS+=	bsddevice_provider.d
 CFLAGS+=	-I${.OBJDIR} -DWITH_DTRACE
 .endif
+
+# Bindings generated at build time (fidl-bindings.mk).
+FIDL_BINDINGS+=	devicecmp
+FIDL_SCHEMAS.devicecmp=	lib/libfidl/tests/zx.fidl \
+	lib/libdevicecmp/devicecmp.fidl
+FIDL_LIBRARY.devicecmp=	bsd.device.v1
+.include "${SRCTOP}/lib/libfidl/fidl-bindings.mk"
 
 .include <bsd.prog.mk>
 

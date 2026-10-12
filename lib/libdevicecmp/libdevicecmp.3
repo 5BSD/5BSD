@@ -1,6 +1,6 @@
 .\" SPDX-License-Identifier: BSD-2-Clause
 .\" Copyright (c) 2026 Kory Heard
-.Dd September 6, 2026
+.Dd October 11, 2026
 .Dt LIBDEVICECMP 3
 .Os
 .Sh NAME
@@ -68,7 +68,30 @@ is the process
 context and may be
 .Dv NULL
 for a standalone caller; the provider session is opened by name once and cached
-for the process.
+for the process
+.Pq a forked child opens its own .
+The library speaks the FIDL protocol
+.Sy bsd.device.v1
+.Pq Pa /usr/share/fidl/devicecmp.fidl ;
+see
+.Xr fidl 7 .
+The first call on a session checks the provider's wire version and fails
+with
+.Er EPROTONOSUPPORT
+for an incompatible provider.
+A call is bounded by 30 seconds, shortened by an active
+.Fn service_budget_begin
+budget
+.Pq Xr service_runtime 3 ;
+a timeout, transport failure or malformed reply
+.Pq Er EPROTO
+drops the cached session, and the next call opens a new one.
+Application errors such as
+.Er EACCES
+keep it.
+.In devicecmp_protocol.h
+still defines the rights bits, list entry and limits; its message records
+are the pre-FIDL wire format and are rejected by the current provider.
 .Pp
 .Fn devicecmp_list
 enumerates the devices the caller's label is permitted to open, so a consumer
@@ -120,4 +143,6 @@ descriptor.
 .Rv -std devicecmp_open devicecmp_list
 .Sh SEE ALSO
 .Xr libservice 3 ,
-.Xr bsddevice 8
+.Xr service_runtime 3 ,
+.Xr fidl 7 ,
+.Xr BSDDevice 8
