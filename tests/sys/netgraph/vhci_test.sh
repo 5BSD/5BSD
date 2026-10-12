@@ -56,7 +56,8 @@ require_vhci()
 	fi
 }
 
-# Wait up to ~5s for a shell condition to become true.
+# Wait up to ~5s for a shell condition to become true.  This is a shell
+# function, so call it directly: atf_check execs its argument as a program.
 wait_for()
 {
 	local i=0
@@ -85,8 +86,10 @@ bringup_body()
 	$VHCITOOL -n 1 >vhcitool.out 2>&1 &
 	echo $! >vhcitool.pid
 
-	atf_check -o ignore wait_for '[ -c /dev/vhci0 ]'
-	atf_check -o ignore wait_for 'ngctl info vhci0hci: >/dev/null 2>&1'
+	wait_for '[ -c /dev/vhci0 ]' ||
+	    atf_fail "timed out waiting for: [ -c /dev/vhci0 ]"
+	wait_for 'ngctl info vhci0hci: >/dev/null 2>&1' ||
+	    atf_fail "timed out waiting for: ngctl info vhci0hci:"
 
 	# The keystone: a Read_BD_ADDR round-trip through the full stack.
 	atf_check -s exit:0 -o match:'BD_ADDR' \
@@ -115,9 +118,12 @@ linked_pair_body()
 	$VHCITOOL -n 2 -l >vhcitool.out 2>&1 &
 	echo $! >vhcitool.pid
 
-	atf_check -o ignore wait_for '[ -c /dev/vhci0 ] && [ -c /dev/vhci1 ]'
-	atf_check -o ignore wait_for 'ngctl info vhci0hci: >/dev/null 2>&1'
-	atf_check -o ignore wait_for 'ngctl info vhci1hci: >/dev/null 2>&1'
+	wait_for '[ -c /dev/vhci0 ] && [ -c /dev/vhci1 ]' ||
+	    atf_fail "timed out waiting for: [ -c /dev/vhci0 ] && [ -c /dev/vhci1 ]"
+	wait_for 'ngctl info vhci0hci: >/dev/null 2>&1' ||
+	    atf_fail "timed out waiting for: ngctl info vhci0hci:"
+	wait_for 'ngctl info vhci1hci: >/dev/null 2>&1' ||
+	    atf_fail "timed out waiting for: ngctl info vhci1hci:"
 
 	atf_check -s exit:0 -o match:'BD_ADDR' hccontrol -n vhci0 read_bd_addr
 	atf_check -s exit:0 -o match:'BD_ADDR' hccontrol -n vhci1 read_bd_addr
