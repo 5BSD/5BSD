@@ -710,9 +710,14 @@ ATF_TC_BODY(att_central_fixed_channel_opens, tc)
 	ATF_CHECK_EQ_MSG(NG_L2CAP_SUCCESS, op.result,
 	    "the ATT channel did not open: result %#x", op.result);
 	ATF_CHECK_EQ(NG_L2CAP_L2CA_IDTYPE_ATT, op.idtype);
-	ATF_CHECK_EQ_MSG(NG_L2CAP_ATT_CID, op.lcid,
-	    "confirmation names lcid %#x, expected the ATT CID %#x",
-	    op.lcid, NG_L2CAP_ATT_CID);
+	/*
+	 * Fixed channels are named by the connection handle, not by the
+	 * shared ATT CID, so the socket layer can tell connections apart
+	 * (ng_l2cap_l2ca_con_rsp()).
+	 */
+	ATF_CHECK_EQ_MSG(LE_HANDLE, op.lcid,
+	    "confirmation names lcid %#x, expected the connection handle %#x",
+	    op.lcid, LE_HANDLE);
 	free(msg);
 
 	vh_down(&rig);
