@@ -173,7 +173,7 @@ TAILQ_HEAD(pf_tags, pf_tagname)	pf_tags = TAILQ_HEAD_INITIALIZER(pf_tags),
  */
 struct rwlock		 pf_lock = RWLOCK_INITIALIZER("pf_lock");
 struct rwlock		 pf_state_lock = RWLOCK_INITIALIZER("pf_state_lock");
-struct rwlock		 pfioctl_rw = RWLOCK_INITIALIZER("pfioctl_rw");
+struct sx		 pfioctl_rw = RWLOCK_INITIALIZER("pfioctl_rw"); /* 5BSD: sleepable */
 
 struct cpumem *pf_anchor_stack;
 
@@ -570,6 +570,8 @@ pf_begin_rules(u_int32_t *version, const char *anchor)
 	struct pf_ruleset	*rs;
 	struct pf_rule		*rule;
 
+	PF_SDT1(ioctl, xact, begin, anchor);	/* 5BSD: DTrace */
+
 	if ((rs = pf_find_or_create_ruleset(anchor)) == NULL)
 		return (EINVAL);
 	while ((rule = TAILQ_FIRST(rs->rules.inactive.ptr)) != NULL) {
@@ -586,6 +588,8 @@ pf_rollback_rules(u_int32_t version, char *anchor)
 {
 	struct pf_ruleset	*rs;
 	struct pf_rule		*rule;
+
+	PF_SDT2(ioctl, xact, rollback, version, anchor);	/* 5BSD: DTrace */
 
 	rs = pf_find_ruleset(anchor);
 	if (rs == NULL || !rs->rules.inactive.open ||
@@ -876,6 +880,8 @@ pf_commit_rules(u_int32_t version, char *anchor)
 	struct pf_rule		*rule;
 	struct pf_rulequeue	*old_rules;
 	u_int32_t		 old_rcount;
+
+	PF_SDT2(ioctl, xact, commit, version, anchor);	/* 5BSD: DTrace */
 
 	PF_ASSERT_LOCKED();
 
@@ -1510,7 +1516,7 @@ pf_sourcelim_add(const struct pfioc_sourcelim *ioc)
 	if (pfsrlim->pfsrlim_overload.name[0] != '\0') {
 		pfsrlim->pfsrlim_overload.table = pfr_attach_table(
 		    &pf_main_ruleset,
-		    pfsrlim->pfsrlim_overload.name, PR_WAITOK);
+		    pfsrlim->pfsrlim_overload.name, PR_NOWAIT);	/* 5BSD: locked */
 		if (pfsrlim->pfsrlim_overload.table == NULL) {
 			error = EINVAL;
 			goto unlock;
@@ -2356,7 +2362,7 @@ pfioctl(dev_t dev, u_long cmd, caddr_t addr, int flags, struct proc *p)
 			goto fail;
 		}
 		rule->cuid = p->p_ucred->cr_ruid;
-		rule->cpid = p->p_p->ps_pid;
+		rule->cpid = p->p_pid;	/* 5BSD: struct proc is a process here */
 
 		tail = TAILQ_LAST(ruleset->rules.inactive.ptr,
 		    pf_rulequeue);
@@ -2615,7 +2621,7 @@ pfioctl(dev_t dev, u_long cmd, caddr_t addr, int flags, struct proc *p)
 		if (pcr->action != PF_CHANGE_REMOVE) {
 			KASSERT(newrule != NULL);
 			newrule->cuid = p->p_ucred->cr_ruid;
-			newrule->cpid = p->p_p->ps_pid;
+			newrule->cpid = p->p_pid;	/* 5BSD: struct proc is a process here */
 
 			newrule->kif = pf_kif_setup(newrule->kif);
 			newrule->rcv_kif = pf_kif_setup(newrule->rcv_kif);

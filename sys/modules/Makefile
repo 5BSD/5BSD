@@ -308,9 +308,6 @@ SUBDIR=	\
 	${_pchtherm} \
 	${_pcfclock} \
 	${_pf} \
-	${_pflog} \
-	${_pflow} \
-	${_pfsync} \
 	plip \
 	${_pms} \
 	ppbus \

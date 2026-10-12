@@ -773,6 +773,8 @@ pf_reassemble(struct mbuf **m0, int dir, u_int16_t rdomain, u_short *reason)
 	struct pf_frnode	 key;
 	u_int16_t		 total, hdrlen;
 
+	PF_SDT2(frag, reassemble, entry, *m0, dir);	/* 5BSD: DTrace */
+
 	/* Get an entry for the fragment queue */
 	if ((frent = pf_create_fragment(reason)) == NULL)
 		return (PF_DROP);
@@ -845,6 +847,8 @@ pf_reassemble6(struct mbuf **m0, struct ip6_frag *fraghdr, u_int16_t hdrlen,
 	int			 off;
 	u_int16_t		 total, maxlen;
 	u_int8_t		 proto;
+
+	PF_SDT2(frag, reassemble6, entry, *m0, dir);	/* 5BSD: DTrace */
 
 	/* Get an entry for the fragment queue */
 	if ((frent = pf_create_fragment(reason)) == NULL)
@@ -1013,7 +1017,7 @@ pf_refragment6(struct mbuf **m0, struct m_tag *mtag, struct sockaddr_in6 *dst,
 			}
 			ip6_forward(m, NULL, flags);
 		} else if ((u_long)m->m_pkthdr.len <= ifp->if_mtu) {
-			ifp->if_output(ifp, m, sin6tosa(dst), rt);
+			if_output_obsd(ifp, m, sin6tosa(dst), rt); /* 5BSD */
 		} else {
 			icmp6_error(m, ICMP6_PACKET_TOO_BIG, 0, ifp->if_mtu);
 		}

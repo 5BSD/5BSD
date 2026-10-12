@@ -312,11 +312,12 @@ pflow_clone_create(struct if_clone *ifc, int unit)
 	    htons(PFIX_IE_protocolIdentifier);
 	pflowif->sc_tmpl_ipfix.ipv6_tmpl.protocol.len = htons(1);
 
+	pflowif->sc_ifp = if_alloc(IFT_PFLOW);	/* 5BSD */
 	ifp = &pflowif->sc_if;
 	snprintf(ifp->if_xname, sizeof ifp->if_xname, "pflow%d", unit);
 	ifp->if_softc = pflowif;
 	ifp->if_ioctl = pflowioctl;
-	ifp->if_output = pflow_output;
+	ifp->if_output = (if_output_fn_t)pflow_output;	/* 5BSD */
 	ifp->if_start = NULL;
 	ifp->if_xflags = IFXF_CLONED;
 	ifp->if_type = IFT_PFLOW;
@@ -740,7 +741,7 @@ pflow_get_mbuf(struct pflow_softc *sc, u_int16_t set_id)
 	}
 
 	m->m_len = m->m_pkthdr.len = 0;
-	m->m_pkthdr.ph_ifidx = 0;
+	m->m_pkthdr.rcvif = NULL;	/* 5BSD: ph_ifidx = 0 */
 
 	if (sc == NULL)		/* get only a new empty mbuf */
 		return (m);
@@ -944,6 +945,8 @@ export_pflow(struct pf_state *st)
 {
 	struct pflow_softc	*sc = NULL;
 	struct pf_state_key	*sk, *skw;
+
+	PF_SDT1(pflow, flow, export, st);	/* 5BSD: DTrace */
 
 	sk = st->key[st->direction == PF_IN ? PF_SK_WIRE : PF_SK_STACK];
 	skw = st->key[st->direction == PF_OUT ? PF_SK_WIRE : PF_SK_STACK];

@@ -1209,6 +1209,7 @@ enum pfi_kif_refs {
 
 #define REASON_SET(a, x) \
 	do { \
+		PF_SDT_REASON(x);	/* 5BSD: DTrace */ \
 		if ((void *)(a) != NULL) { \
 			*(a) = (x); \
 			if (x < PFRES_MAX) \

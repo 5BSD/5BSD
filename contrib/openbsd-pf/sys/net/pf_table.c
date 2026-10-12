@@ -2441,6 +2441,8 @@ pfr_match_addr(struct pfr_ktable *kt, struct pf_addr *a, sa_family_t af)
 	struct pfr_kentry	*ke = NULL;
 	int			 match;
 
+	PF_SDT3(table, addr, match, kt, a, af);	/* 5BSD: DTrace */
+
 	ke = pfr_kentry_byaddr(kt, a, af, 0);
 
 	match = (ke && !(ke->pfrke_flags & PFRKE_FLAG_NOT));
@@ -2505,6 +2507,8 @@ pfr_update_stats(struct pfr_ktable *kt, struct pf_addr *a, struct pf_pdesc *pd,
 	u_int64_t		 len = pd->tot_len;
 	int			 dir_idx = (pd->dir == PF_OUT);
 	int			 op_idx;
+
+	PF_SDT4(table, addr, update, kt, a, pd, op);	/* 5BSD: DTrace */
 
 	kt = pfr_ktable_select_active(kt);
 	if (kt == NULL)

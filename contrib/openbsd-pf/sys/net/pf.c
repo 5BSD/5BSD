@@ -644,6 +644,7 @@ pf_src_compare(struct pf_src_node *a, struct pf_src_node *b)
 static __inline void
 pf_set_protostate(struct pf_state *st, int which, u_int8_t newstate)
 {
+	PF_SDT3(state, state, transition, st, which, newstate);	/* 5BSD: DTrace */
 	if (which == PF_PEER_DST || which == PF_PEER_BOTH)
 		st->dst.state = newstate;
 	if (which == PF_PEER_DST)
@@ -1318,6 +1319,8 @@ pf_state_insert(struct pfi_kif *kif, struct pf_state_key **skwp,
 	struct pf_state_key *skw = *skwp;
 	struct pf_state_key *sks = *sksp;
 	int same = (skw == sks);
+
+	PF_SDT2(state, state, insert, kif, skwp);	/* 5BSD: DTrace */
 
 	PF_ASSERT_LOCKED();
 
@@ -2088,6 +2091,8 @@ pf_remove_state(struct pf_state *st)
 {
 	struct pf_state_link *pfl;
 
+	PF_SDT1(state, state, remove, st);	/* 5BSD: DTrace */
+
 	PF_ASSERT_LOCKED();
 
 	mtx_enter(&st->mtx);
@@ -2249,6 +2254,8 @@ pf_free_state(struct pf_state *st)
 {
 	struct pf_rule_item *ri;
 
+	PF_SDT1(state, state, free, st);	/* 5BSD: DTrace */
+
 	PF_ASSERT_LOCKED();
 
 #if NPFSYNC > 0
@@ -2283,6 +2290,7 @@ pf_free_state(struct pf_state *st)
 unsigned int
 pf_purge_expired_states(const unsigned int limit, const unsigned int collect)
 {
+	PF_SDT2(state, purge, run, limit, collect);	/* 5BSD: DTrace */
 	/*
 	 * this task/thread/context/whatever is the only thing that
 	 * removes states from the pf_state_list, so the cur reference
@@ -3191,6 +3199,8 @@ pf_translate_af(struct pf_pdesc *pd)
 	u_int16_t		       *pc;
 	u_int8_t			af_proto, naf_proto;
 
+	PF_SDT1(nat, af_to, translate, pd);	/* 5BSD: DTrace */
+
 	hlen = (pd->naf == AF_INET) ? sizeof(*ip4) : sizeof(*ip6);
 	ohlen = pd->off;
 	dlen = pd->tot_len - pd->off;
@@ -3697,7 +3707,7 @@ pf_build_tcp(const struct pf_rule *r, sa_family_t af,
 		m->m_pkthdr.pf.qid = r->qid;
 	m->m_data += max_linkhdr;
 	m->m_pkthdr.len = m->m_len = len;
-	m->m_pkthdr.ph_ifidx = 0;
+	m->m_pkthdr.rcvif = NULL;	/* 5BSD: ph_ifidx = 0 */
 	m->m_pkthdr.csum_flags |= M_TCP_CSUM_OUT;
 	memset(m->m_data, 0, len);
 	switch (af) {
@@ -3964,11 +3974,11 @@ pf_match_rcvif(struct mbuf *m, struct pf_rule *r)
 	struct ifnet *ifp;
 	struct pfi_kif *kif = NULL;
 
-	if (m->m_pkthdr.ph_ifidx == 0)
+	if (m->m_pkthdr.rcvif == NULL)	/* 5BSD: ph_ifidx == 0 */
 		return (0);
 
 	smr_read_enter();
-	ifp = if_get_smr(m->m_pkthdr.ph_ifidx);
+	ifp = m->m_pkthdr.rcvif;	/* 5BSD: if_get_smr(ph_ifidx) */
 	if (ifp != NULL) {
 		kif = (struct pfi_kif *)ifp->if_pf_kif;
 #if NCARP > 0
@@ -4479,6 +4489,8 @@ pf_match_rule(struct pf_test_ctx *ctx, struct pf_ruleset *ruleset)
 	struct pf_anchor *child = NULL;
 	int target;
 
+	PF_SDT2(ip, anchor, enter, ctx, ruleset);	/* 5BSD: DTrace */
+
 	pf_anchor_stack_init();
 enter_ruleset:
 	r = TAILQ_FIRST(ruleset->rules.active.ptr);
@@ -4922,6 +4934,8 @@ pf_test_rule(struct pf_pdesc *pd, struct pf_rule **rm, struct pf_state **sm,
 	struct pf_test_ctx	 ctx;
 	int			 rv;
 
+	PF_SDT1(ip, rules, entry, pd);	/* 5BSD: DTrace */
+
 	PF_ASSERT_LOCKED();
 
 	memset(&ctx, 0, sizeof(ctx));
@@ -5160,6 +5174,8 @@ pf_create_state(struct pf_pdesc *pd, struct pf_rule *r, struct pf_rule *a,
 	struct tcphdr		*th = &pd->hdr.tcp;
 	u_short			 reason;
 	u_int			 i;
+
+	PF_SDT3(state, state, create, pd, r, a);	/* 5BSD: DTrace */
 
 	st = pool_get(&pf_state_pl, PR_NOWAIT | PR_ZERO);
 	if (st == NULL) {
@@ -7341,6 +7357,8 @@ pf_route(struct pf_pdesc *pd, struct pf_state *st)
 	struct ifnet		*ifp = NULL;
 	unsigned int		 rtableid;
 
+	PF_SDT2(ip, route_to, entry, pd, st);	/* 5BSD: DTrace */
+
 	if (pd->m->m_pkthdr.pf.routed++ > 3) {
 		m_freem(pd->m);
 		pd->m = NULL;
@@ -7459,6 +7477,8 @@ pf_route6(struct pf_pdesc *pd, struct pf_state *st)
 	struct ifnet		*ifp = NULL;
 	struct m_tag		*mtag;
 	unsigned int		 rtableid;
+
+	PF_SDT2(ip6, route_to, entry, pd, st);	/* 5BSD: DTrace */
 
 	if (pd->m->m_pkthdr.pf.routed++ > 3) {
 		m_freem(pd->m);
@@ -8678,9 +8698,9 @@ done:
 		} else if (pd.dir == PF_OUT)
 			pf_state_key_link_inpcb(st->key[PF_SK_STACK], inp);
 
-		if (!ISSET(m->m_pkthdr.csum_flags, M_FLOWID)) {
+		if (M_HASHTYPE_GET(m) == M_HASHTYPE_NONE) {	/* 5BSD */
 			m->m_pkthdr.ph_flowid = st->key[PF_SK_WIRE]->hash;
-			SET(m->m_pkthdr.csum_flags, M_FLOWID);
+			M_HASHTYPE_SET(m, M_HASHTYPE_OPAQUE);	/* 5BSD */
 		}
 	}
 

@@ -183,6 +183,8 @@ pf_syncookie_send(struct pf_pdesc *pd, u_short *reason)
 	uint16_t	mss, mssdflt;
 	uint32_t	iss;
 
+	PF_SDT1(syncookie, cookie, send, pd);	/* 5BSD: DTrace */
+
 	mssdflt = atomic_load_int(&tcp_mssdflt);
 	mss = max(pf_get_mss(pd, mssdflt), mssdflt);
 	iss = pf_syncookie_generate(pd, mss);
@@ -198,6 +200,8 @@ pf_syncookie_validate(struct pf_pdesc *pd)
 {
 	uint32_t		 hash, ack, seq;
 	union pf_syncookie	 cookie;
+
+	PF_SDT1(syncookie, cookie, validate, pd);	/* 5BSD: DTrace */
 
 	KASSERT(pd->proto == IPPROTO_TCP);
 

@@ -64,9 +64,10 @@ struct pfloghdr {
 
 struct pflog_softc {
 	LIST_ENTRY(pflog_softc)		sc_entry;
-	struct ifnet			sc_if;		/* the interface */
+	struct ifnet			*sc_ifp;	/* 5BSD: if_alloc()ed */
 	int				sc_unit;
 };
+#define	sc_if	sc_ifp[0]	/* 5BSD: the interface */
 
 #endif /* _KERNEL */
 #endif /* _NET_IF_PFLOG_H_ */

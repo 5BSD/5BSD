@@ -98,12 +98,13 @@ pflog_clone_create(struct if_clone *ifc, int unit)
 
 	pflogif = malloc(sizeof(*pflogif), M_DEVBUF, M_WAITOK|M_ZERO);
 	pflogif->sc_unit = unit;
+	pflogif->sc_ifp = if_alloc(IFT_PFLOG);	/* 5BSD */
 	ifp = &pflogif->sc_if;
 	snprintf(ifp->if_xname, sizeof ifp->if_xname, "pflog%d", unit);
 	ifp->if_softc = pflogif;
 	ifp->if_mtu = PFLOGMTU;
 	ifp->if_ioctl = pflogioctl;
-	ifp->if_output = pflogoutput;
+	ifp->if_output = (if_output_fn_t)pflogoutput;	/* 5BSD */
 	ifp->if_xflags = IFXF_CLONED;
 	ifp->if_type = IFT_PFLOG;
 	ifp->if_hdrlen = PFLOG_HDRLEN;
@@ -180,6 +181,7 @@ int
 pflog_packet(struct pf_pdesc *pd, u_int8_t reason, struct pf_rule *rm,
     struct pf_rule *am, struct pf_ruleset *ruleset, struct pf_rule *trigger)
 {
+	PF_SDT4(log, pflog, packet, pd, reason, rm, am);	/* 5BSD: DTrace */
 #if NBPFILTER > 0
 	struct pflog_softc *pflogif;
 	struct ifnet *ifn;
@@ -194,7 +196,7 @@ pflog_packet(struct pf_pdesc *pd, u_int8_t reason, struct pf_rule *rm,
 	if (pflogif == NULL)
 		return (0);
 	ifn = &pflogif->sc_if;
-	if_bpf = ifn->if_bpf;
+	if_bpf = (caddr_t)ifn->if_bpf;	/* 5BSD */
 	if (!if_bpf)
 		return (0);
 
@@ -245,8 +247,8 @@ pflog_packet(struct pf_pdesc *pd, u_int8_t reason, struct pf_rule *rm,
 	hdr.sport = pd->nsport;
 	hdr.dport = pd->ndport;
 
-	ifn->if_opackets++;
-	ifn->if_obytes += pd->m->m_pkthdr.len;
+	if_inc_counter(ifn, IFCOUNTER_OPACKETS, 1);	/* 5BSD */
+	if_inc_counter(ifn, IFCOUNTER_OBYTES, pd->m->m_pkthdr.len);
 
 	bpf_mtap_hdr(if_bpf, &hdr, sizeof(hdr), pd->m, BPF_DIRECTION_OUT);
 #endif

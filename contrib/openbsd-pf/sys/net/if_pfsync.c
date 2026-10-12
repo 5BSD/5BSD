@@ -188,7 +188,8 @@ struct pfsync_slice {
 #define PFSYNC_NSLICES		 (1 << PFSYNC_SLICE_BITS)
 
 struct pfsync_softc {
-	struct ifnet		 sc_if;
+	struct ifnet		*sc_ifp;	/* 5BSD: if_alloc()ed */
+#define	sc_if	sc_ifp[0]	/* 5BSD */
 	unsigned int		 sc_dead;
 	unsigned int		 sc_up;
 	struct refcnt		 sc_refs;
@@ -209,7 +210,7 @@ struct pfsync_softc {
 	struct pfsync_slice	 sc_slices[PFSYNC_NSLICES];
 
 	struct {
-		struct rwlock			 req_lock;
+		struct sx			 req_lock;	/* 5BSD: sleepable */
 		struct timeout			 req_tmo;
 		enum pfsync_bulk_req_state	 req_state;
 		unsigned int			 req_tries;
@@ -217,7 +218,7 @@ struct pfsync_softc {
 	}			 sc_bulk_req;
 
 	struct {
-		struct rwlock			 snd_lock;
+		struct sx			 snd_lock;	/* 5BSD: sleepable */
 		struct timeout			 snd_tmo;
 		time_t				 snd_requested;
 
@@ -389,13 +390,14 @@ pfsync_clone_create(struct if_clone *ifc, int unit)
 	/* need process context to take net lock to call ip_output */
 	timeout_set_proc(&sc->sc_bulk_snd.snd_tmo, pfsync_bulk_snd_tmo, sc);
 
+	sc->sc_ifp = if_alloc(IFT_PFSYNC);	/* 5BSD */
 	ifp = &sc->sc_if;
 	snprintf(ifp->if_xname, sizeof ifp->if_xname, "%s%d",
 	    ifc->ifc_name, unit);
 	ifp->if_softc = sc;
 	ifp->if_ioctl = pfsync_ioctl;
-	ifp->if_output = pfsync_output;
-	ifp->if_qstart = pfsync_start;
+	ifp->if_output = (if_output_fn_t)pfsync_output;	/* 5BSD */
+	(void)pfsync_start;	/* 5BSD: no ifq start; nothing is queued */
 	ifp->if_type = IFT_PFSYNC;
 	ifp->if_hdrlen = sizeof(struct pfsync_header);
 	ifp->if_mtu = ETHERMTU;
@@ -1523,10 +1525,12 @@ pfsync_sendout(struct pfsync_softc *sc, struct mbuf *m)
 	struct ip_moptions imo;
 	unsigned int len = m->m_pkthdr.len;
 #if NBPFILTER > 0
-	caddr_t if_bpf = sc->sc_if.if_bpf;
+	caddr_t if_bpf = (caddr_t)sc->sc_if.if_bpf;	/* 5BSD */
 	if (if_bpf)
-		bpf_mtap(if_bpf, m, BPF_DIRECTION_OUT);
+		BPF_MTAP(&sc->sc_if, m);	/* 5BSD */
 #endif
+
+	PF_SDT2(pfsync, packet, send, sc, m);	/* 5BSD: DTrace */
 
 	imo.imo_ifidx = sc->sc_sync_ifidx;
 	imo.imo_ttl = PFSYNC_DFLTTL;
@@ -2626,6 +2630,8 @@ pfsync_input(struct mbuf *m, uint8_t ttl, unsigned int hlen)
 	void (*in)(struct pfsync_softc *,
 	    const caddr_t, unsigned int, unsigned int);
 
+	PF_SDT1(pfsync, packet, input, m);	/* 5BSD: DTrace */
+
 	pfsyncstat_inc(pfsyncs_ipackets);
 
 	if (!pf_status.running)
@@ -2639,7 +2645,8 @@ pfsync_input(struct mbuf *m, uint8_t ttl, unsigned int hlen)
 	if (sc == NULL)
 		goto leave;
 
-	if (sc->sc_sync_ifidx != m->m_pkthdr.ph_ifidx) {
+	if (m->m_pkthdr.rcvif == NULL ||	/* 5BSD: ph_ifidx */
+	    sc->sc_sync_ifidx != m->m_pkthdr.rcvif->if_index) {
 		pfsyncstat_inc(pfsyncs_badif);
 		goto leave;
 	}

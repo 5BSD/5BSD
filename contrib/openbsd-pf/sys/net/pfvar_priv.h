@@ -290,7 +290,7 @@ struct pf_state_list {
 	struct mutex			pfs_mtx;
 
 	/* serialise access to pointers between pfs_list entries */
-	struct rwlock			pfs_rwl;
+	struct sx			pfs_rwl;	/* 5BSD: sleepable */
 };
 
 #define PF_STATE_LIST_INITIALIZER(_pfs) {				\

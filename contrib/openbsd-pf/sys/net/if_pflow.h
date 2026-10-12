@@ -227,10 +227,10 @@ struct pflow_ipfix_flow6 {
 
 struct pflow_softc {
 	struct mutex		 sc_mtx;
-	struct rwlock		 sc_lock;
+	struct sx		 sc_lock;	/* 5BSD: sleepable */
 
 	int			 sc_dying;	/* [p] */
-	struct ifnet		 sc_if;
+	struct ifnet		*sc_ifp;	/* 5BSD: if_alloc()ed */
 
 	unsigned int		 sc_count;	/* [m] */
 	unsigned int		 sc_count4;	/* [m] */
@@ -261,6 +261,7 @@ struct pflow_softc {
 						    mbuf */
 	SMR_SLIST_ENTRY(pflow_softc) sc_next;
 };
+#define	sc_if	sc_ifp[0]	/* 5BSD: the interface */
 
 extern struct pflow_softc	*pflowif;
 

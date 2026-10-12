@@ -44,10 +44,32 @@ loop, mpath, snmpd).
 Not present upstream at this revision: regress for pfsync, queues,
 syncookies, authpf, pflogd, ftp-proxy/tftp-proxy.
 
-Local changes: none.  Never edit files here to make a test pass; expected
-outputs change only through a recorded, user-approved compatibility decision,
-and such divergence is kept as a separate, clearly named patch in the glue,
-not as an edit in this directory.
+Local changes: the regress corpus, share/mk and sbin/pfctl are verbatim.
+Never edit the regress files to make a test pass; expected outputs change
+only through a recorded, user-approved compatibility decision kept in the
+glue.  The kernel sources under sys/net carry a small number of edits, each
+marked with a "5BSD" comment, where the compatibility layer cannot express
+the difference (list: git diff of contrib/openbsd-pf/sys/net against the
+import commits; summary below).  Keep them minimal so an update is close
+to a re-import.
+
+5BSD edits in sys/net (all marked "5BSD"):
+  pfvar.h        REASON_SET fires the pf::reason:set DTrace probe
+  pfvar_priv.h   state-list lock is a sleepable lock (struct sx)
+  pf.c           receive interface from m_pkthdr.rcvif (no ph_ifidx);
+                 flow id through M_HASHTYPE; DTrace probe hooks
+  pf_if.c        CK_STAILQ interface/group lists; allocate before PF_LOCK
+  pf_ioctl.c     p_pid; pfioctl_rw is sleepable; overload table PR_NOWAIT
+                 under PF_LOCK; DTrace probe hooks
+  pf_norm.c      refragmented packets leave through if_output_obsd()
+  pf_lb.c, pf_table.c, pf_syncookies.c   DTrace probe hooks
+  if_pflog.[ch], if_pflow.[ch], if_pfsync.c
+                 ifnet is if_alloc()ed (sc_if is a macro over sc_ifp);
+                 if_output casts; interface counters; no ifq start;
+                 sleepable configuration locks; DTrace probe hooks
+The compatibility layer and 5BSD attachment live in sys/netpfil/openbsd-pf
+(openbsd_compat.[ch], openbsd_net.c, openbsd_ifq.c, pf_freebsd.c,
+pf_sdt.c, include/ shadow headers, user/ userland compatibility).
 
 5BSD glue: tests/sys/netpfil/pf/openbsd (Kyua/ATF wrapper; installs this
 corpus beneath its srctree/ through tests/srctree.mk) and
@@ -59,8 +81,16 @@ with provenance and wired in from their native build directories.  Code
 merged into FreeBSD-derived sys/netpfil/pf or sbin/pfctl files is recorded
 below (OpenBSD file, revision, local destination) and in the commit message.
 
-Merged OpenBSD-derived code (pf/parity):
-  (none yet)
+Adopted OpenBSD code (pf/parity), all from facc8d7ec5d1:
+  sys/net pf*.c, if_pflog, if_pflow, if_pfsync, hfsc, fq_codel, radix (for
+  pf tables, renamed obsd_rn_*), sys/netinet in4_cksum.c, inet_nat64.c
+                         -> pf.ko (sys/modules/pf)
+  sbin/pfctl, etc/pf.os  -> /sbin/pfctl, /etc/pf.os
+  usr.sbin/authpf, ftp-proxy, tftp-proxy -> same programs
+  sbin/ifconfig/ifconfig.c pfsync/pflow functions -> sbin/ifconfig/ifpf.c
+  sys/sys/mbuf.h struct pkthdr_pf and PF_TAG_* -> 5BSD sys/sys/mbuf.h
+  sys/sys/sockio.h SIOC[SG]IFPARENT, SIOC[GS]ETPF{SYNC,LOW} numbers and
+  sys/net/if.h struct if_parent -> 5BSD headers
 
 Update procedure: fetch the new pinned commit, replace the subtrees,
 regenerate UPSTREAM.json (git rev-parse <commit>:<path>), rerun the reference

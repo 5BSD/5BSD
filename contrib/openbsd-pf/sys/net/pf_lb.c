@@ -691,6 +691,8 @@ pf_get_transaddr(struct pf_rule *r, struct pf_pdesc *pd,
 	struct pf_addr	naddr;
 	u_int16_t	nport;
 
+	PF_SDT2(nat, transaddr, entry, r, pd);	/* 5BSD: DTrace */
+
 #ifdef INET6
 	if (pd->af != pd->naf)
 		return (pf_get_transaddr_af(r, pd, sns));
