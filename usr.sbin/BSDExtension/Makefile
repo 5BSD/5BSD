@@ -54,9 +54,11 @@ CAP_UNITMODE=	0444
 CAP_UNITPACKAGE=	runtime
 
 # sysext_proto.h (libcapsulert) and the socket-free service_provider transport
-# (libservice over libchannel).  bsdextension holds no /dev/mac_capability handle: its
+# (libservice over libchannel) with the bsd.extension.v1 server bindings.
+# bsdextension holds no /dev/mac_capability handle: its
 # kldload authority arrives as a switchboard-delivered system token, authorized by
 # service_provider_authorize_capabilities(3).
+CFLAGS+=	-I${FIDLGEN.extensioncmp} -I${SRCTOP}/lib/libfidl/include
 CFLAGS+=	-I${SRCTOP}/lib/libcapsulert
 CFLAGS+=	-I${SRCTOP}/lib/libcapreclaim
 CFLAGS+=	-I${SRCTOP}/lib/liblogcmp
@@ -65,7 +67,7 @@ CFLAGS+=	-I${SRCTOP}/lib/libchannel
 CFLAGS+=	-I${SRCTOP}/sys
 CFLAGS+=	-I${SRCTOP}/contrib/libucl/include
 
-LIBADD=		service channel ucl pthread capreclaim logcmp
+LIBADD=		extensioncmp service channel ucl pthread capreclaim logcmp fidl_bsd
 
 HAS_TESTS=
 SUBDIR.${MK_TESTS}+=	tests
@@ -77,6 +79,12 @@ SUBDIR.${MK_TESTS}+=	tests
 SRCS+=		bsdextension_provider.d
 CFLAGS+=	-I${.OBJDIR} -DWITH_DTRACE
 .endif
+
+# Bindings generated at build time (fidl-bindings.mk).
+FIDL_BINDINGS+=	extensioncmp
+FIDL_SCHEMAS.extensioncmp=	lib/libextensioncmp/extensioncmp.fidl
+FIDL_LIBRARY.extensioncmp=	bsd.extension.v1
+.include "${SRCTOP}/lib/libfidl/fidl-bindings.mk"
 
 .include <bsd.prog.mk>
 

@@ -1,96 +1,148 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/*
+ * A scripted libextensioncmp for sysextctl's command-line tests: the session
+ * calls answer from SYSEXT_TEST without a provider.  The wire protocol and the
+ * client's reply validation are covered by the BSDExtension provider and
+ * evolution tests; here a malformed reply is the client's EPROTO.
+ */
 #include <sys/types.h>
 #include <sys/sysctl.h>
 #include <errno.h>
-#include <fcntl.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 #include <libservice.h>
+#include <extensioncmp.h>
 #include <sysext_proto.h>
-struct service_session { int fd; };
-static struct service_session session;
-int
-service_session_fail(struct service_session *s, int error)
+
+struct extensioncmp_session { int open; };
+static struct extensioncmp_session session;
+
+static const char *
+mode(void)
 {
-	(void)s;
-	errno = error;
-	return (-1);
+	const char *m = getenv("SYSEXT_TEST");
+
+	return (m != NULL ? m : "");
 }
-int
-service_open(const char *name, int *fd)
+
+/* The client's own argument rules (extensioncmp.c check_name()). */
+static int
+check(const char *name, int empty_ok)
 {
-	if (strcmp(name, SYSEXT_SERVICE_NAME) != 0) abort();
-	*fd = open("/dev/null", O_RDONLY);
-	return (*fd < 0 ? -1 : 0);
+	size_t length;
+
+	if (name == NULL)
+		return (EINVAL);
+	length = strnlen(name, SYSEXT_NAME_MAX);
+	if (length >= SYSEXT_NAME_MAX)
+		return (ENAMETOOLONG);
+	if (length == 0)
+		return (empty_ok ? 0 : EINVAL);
+	if (strchr(name, '/') != NULL || strcmp(name, ".") == 0 ||
+	    strcmp(name, "..") == 0)
+		return (EINVAL);
+	if (strcmp(name, "linux64") != 0)
+		abort();
+	return (0);
 }
-int
-service_session_create(int fd, struct service_session **out)
+
+/* The outcome every scripted mode shares; 0 lets the call succeed. */
+static int
+outcome(int malformed_modes)
 {
-	session.fd = fd;
+	const char *m = mode();
+
+	if (strcmp(m, "denied") == 0)
+		return (EPERM);
+	if (strcmp(m, "io") == 0)
+		return (EIO);
+	if (malformed_modes && (strcmp(m, "short") == 0 ||
+	    strcmp(m, "count") == 0 || strcmp(m, "name") == 0 ||
+	    strcmp(m, "errno") == 0 || strcmp(m, "state") == 0))
+		return (EPROTO);
+	return (0);
+}
+
+int
+extensioncmp_session_open(struct extensioncmp_session **out)
+{
+	session.open = 1;
 	*out = &session;
 	return (0);
 }
-void
-service_session_close(struct service_session *s)
-{
-	close(s->fd);
-}
-int
-service_session_call(struct service_session *s,
-    const struct service_message *m, struct service_reply *r,
-    const struct service_call_options *o)
-{
-	const struct sysext_request *q = m->data;
-	struct sysext_list_reply *list = r->data;
-	struct sysext_info_reply *info = r->data;
-	struct sysext_stat_reply *basic = r->data;
-	const char *mode = getenv("SYSEXT_TEST");
 
-	if (s != &session || m->length != sizeof(*q) || m->nfds != 0 ||
-	    q->_reserved != 0 || o->timeout_ms != 30000) abort();
-	if (q->op != SYSEXT_OP_LIST && q->op != SYSEXT_OP_RELOAD &&
-	    q->op != SYSEXT_OP_NEXT && q->op != SYSEXT_OP_RESTORE &&
-	    strcmp(q->name, "linux64") != 0) abort();
-	memset(r->data, 0, r->capacity);
-	r->length = sizeof(*basic);
-	if (q->op == SYSEXT_OP_INFO || q->op == SYSEXT_OP_NEXT) {
-		if (q->op == SYSEXT_OP_NEXT && q->name[0] != '\0') {
-			basic->status = ENOENT;
-			return (0);
-		}
-		r->length = sizeof(*info);
-		strlcpy(info->name, "linux64", sizeof(info->name));
-		info->flags = SYSEXT_STATE_ALLOWED | SYSEXT_STATE_LOADED | SYSEXT_STATE_READY;
-	} else if (q->op == SYSEXT_OP_LIST) {
-		r->length = sizeof(*list);
-		list->count = 1;
-		strlcpy(list->names[0], "linux64", sizeof(list->names[0]));
-	} else if (q->op == SYSEXT_OP_STAT)
-		basic->loaded = 1;
-	if (mode == NULL) return (0);
-	if (strcmp(mode, "denied") == 0) {
-		basic->status = EPERM;
-		basic->loaded = 0;
-		r->length = sizeof(*basic);
-	} else if (strcmp(mode, "short") == 0)
-		r->length = 3;
-	else if (strcmp(mode, "count") == 0)
-		info->flags = 0x80000000;
-	else if (strcmp(mode, "name") == 0)
-		memset(info->name, 'x', sizeof(info->name));
-	else if (strcmp(mode, "state") == 0)
-		basic->loaded = 0x80000000;
-	else if (strcmp(mode, "hidden") == 0)
-		info->flags = SYSEXT_STATE_READY;
-	else if (strcmp(mode, "absent") == 0)
-		info->flags &= ~SYSEXT_STATE_LOADED;
-	else if (strcmp(mode, "errno") == 0)
-		basic->status = -1;
-	else if (strcmp(mode, "io") == 0) {
-		errno = EIO;
-		return (-1);
-	}
+void
+extensioncmp_session_close(struct extensioncmp_session *s)
+{
+	if (s != &session || !session.open)
+		abort();
+	session.open = 0;
+}
+
+int
+extensioncmp_load(struct extensioncmp_session *s, const char *name)
+{
+	int error;
+
+	if (s != &session)
+		abort();
+	if ((error = check(name, 0)) != 0 || (error = outcome(1)) != 0)
+		return (errno = error, -1);
+	return (0);
+}
+
+int
+extensioncmp_reload(struct extensioncmp_session *s)
+{
+	int error;
+
+	if (s != &session)
+		abort();
+	if ((error = outcome(1)) != 0)
+		return (errno = error, -1);
+	return (0);
+}
+
+int
+extensioncmp_manage(struct extensioncmp_session *s,
+    enum service_extension_action action, const char *name)
+{
+	int error;
+
+	if (s != &session)
+		abort();
+	if (action != SERVICE_EXTENSION_RESTORE && (error = check(name, 0)) != 0)
+		return (errno = error, -1);
+	if ((error = outcome(1)) != 0)
+		return (errno = error, -1);
+	return (0);
+}
+
+int
+extensioncmp_info(struct extensioncmp_session *s, const char *name, int next,
+    struct service_extension_info *info)
+{
+	const char *m = mode();
+	int error;
+
+	if (s != &session)
+		abort();
+	memset(info, 0, sizeof(*info));
+	if ((error = check(name, next)) != 0)
+		return (errno = error, -1);
+	if (next && name[0] != '\0')
+		return (errno = ENOENT, -1);
+	if ((error = outcome(1)) != 0)
+		return (errno = error, -1);
+	strlcpy(info->name, "linux64", sizeof(info->name));
+	info->allowed = 1;
+	info->ready = 1;
+	info->loaded = 1;
+	if (strcmp(m, "hidden") == 0)
+		info->allowed = info->loaded = 0;
+	else if (strcmp(m, "absent") == 0)
+		info->loaded = 0;
 	return (0);
 }
 

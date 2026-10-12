@@ -72,7 +72,7 @@
 
 #include <ucl.h>
 
-#include <channel.h>
+#include <fidl/bsd.extension.v1/c/bsd.h>
 #include <libservice.h>
 
 #include "sysext_proto.h"
@@ -410,11 +410,6 @@ stat_extension(const char *name, int *loaded)
 	return (errno);
 }
 
-/*
- * Per-client channel request handler.  arg is the connecting client's
- * unforgeable label (for the audit log only; the domain layer already gated
- * reachability).  The reply is a fixed sysext_reply.
- */
 /* Pin before loading, so reclaim cannot race an administrative/boot ensure.
  * Failed loads can retain a conservative boot claim; they never grant a load. */
 static int
@@ -460,88 +455,82 @@ restore_extensions(void)
 }
 
 
-static void
-sysext_request(struct channel *ch __unused, struct channel_message *m, void *arg)
+/* Which reply shape sysext_handle() filled. */
+enum sysext_reply_kind {
+	SYSEXT_REPLY_BASIC,		/* rp: status only */
+	SYSEXT_REPLY_STAT,		/* srp */
+	SYSEXT_REPLY_LIST,		/* lrp */
+	SYSEXT_REPLY_INFO		/* irp */
+};
+
+/*
+ * Decide one request.  The bsd.extension.v1 handlers below build the
+ * request in the legacy record shape (op and a NUL-terminated name), so the
+ * validation, authorization and policy decisions here are the historical ones.
+ */
+static enum sysext_reply_kind
+sysext_handle(const struct sysext_client *identity,
+    const struct sysext_request *rq, struct sysext_reply *rp,
+    struct sysext_stat_reply *srp, struct sysext_list_reply *lrp,
+    struct sysext_info_reply *irp)
 {
-	const struct sysext_client *identity = arg;
 	const char *client = identity->label;
 	struct sysext_config cfg;
-	const struct sysext_request *rq;
-	struct sysext_reply rp;
-	struct sysext_stat_reply srp;
-	struct sysext_list_reply lrp;
-	struct sysext_info_reply irp;
-	struct channel_outgoing out;
-	uint32_t opcode = UINT32_MAX;
-	int loaded, transport_error;
+	int loaded;
 
-	memset(&rp, 0, sizeof(rp));
-	memset(&srp, 0, sizeof(srp));
-
-	if (channel_message_length(m) != sizeof(*rq) ||
-	    channel_message_fd_count(m) != 0) {
-		rp.status = EPROTO;
-		goto reply;
-	}
-	rq = channel_message_data(m);
-	opcode = rq->op;
+	memset(rp, 0, sizeof(*rp));
+	memset(srp, 0, sizeof(*srp));
+	memset(irp, 0, sizeof(*irp));
 	if (rq->_reserved != 0 ||
 	    (rq->op != SYSEXT_OP_ENSURE && rq->op != SYSEXT_OP_STAT &&
 	    rq->op != SYSEXT_OP_LIST && rq->op != SYSEXT_OP_RELOAD &&
 	    (rq->op < SYSEXT_OP_ALLOW || rq->op > SYSEXT_OP_NEXT))) {
-		rp.status = EINVAL;
-		goto reply;
+		rp->status = EINVAL;
+		return (SYSEXT_REPLY_BASIC);
 	}
 	if (rq->op == SYSEXT_OP_LIST || rq->op == SYSEXT_OP_RELOAD ||
 	    rq->op == SYSEXT_OP_RESTORE) {
 		static const char empty[SYSEXT_NAME_MAX];
 		if (memcmp(rq->name, empty, sizeof(empty)) != 0) {
-			rp.status = EINVAL;
-			goto reply;
+			rp->status = EINVAL;
+			return (SYSEXT_REPLY_BASIC);
 		}
 	}
 	if (rq->op >= SYSEXT_OP_ALLOW && rq->op <= SYSEXT_OP_RESTORE) {
 		if (!service_rights_allow(identity->rights, SERVICE_RIGHTS_ADMIN))
-			rp.status = EPERM;
+			rp->status = EPERM;
 		else if (rq->op == SYSEXT_OP_RESTORE)
-			rp.status = restore_extensions();
+			rp->status = restore_extensions();
 		else if (sysext_policy_change(active_policy, rq->op, rq->name,
 		    identity->rights) == -1)
-			rp.status = errno;
-		goto reply;
+			rp->status = errno;
+		return (SYSEXT_REPLY_BASIC);
 	}
 	if (rq->op == SYSEXT_OP_INFO || rq->op == SYSEXT_OP_NEXT) {
 		if (!valid_module_name(rq->name) &&
 		    !(rq->op == SYSEXT_OP_NEXT && rq->name[0] == '\0')) {
-			rp.status = EINVAL;
-			goto reply;
+			rp->status = EINVAL;
+			return (SYSEXT_REPLY_BASIC);
 		}
 		if (sysext_policy_info(active_policy, rq->name,
-		    rq->op == SYSEXT_OP_NEXT, &irp) == -1) {
-			rp.status = errno;
-			goto reply;
+		    rq->op == SYSEXT_OP_NEXT, irp) == -1) {
+			rp->status = errno;
+			return (SYSEXT_REPLY_BASIC);
 		}
 		/* Do not disclose loaded state for a denied module. */
-		if ((irp.flags & SYSEXT_STATE_ALLOWED) != 0) {
-			rp.status = stat_extension(irp.name, &loaded);
-			if (rp.status != 0)
-				goto reply;
+		if ((irp->flags & SYSEXT_STATE_ALLOWED) != 0) {
+			rp->status = stat_extension(irp->name, &loaded);
+			if (rp->status != 0)
+				return (SYSEXT_REPLY_BASIC);
 			if (loaded)
-				irp.flags |= SYSEXT_STATE_LOADED;
+				irp->flags |= SYSEXT_STATE_LOADED;
 		}
-		memset(&out, 0, sizeof(out));
-		out.size = sizeof(out);
-		out.data = &irp;
-		out.length = sizeof(irp);
-		transport_error = channel_send_reply(m, &out) == -1 ? errno : 0;
-		BSDEXTENSION_PROBE_REQUEST_DONE(opcode, irp.status, transport_error);
-		channel_message_free(m);
-		return;
+		return (SYSEXT_REPLY_INFO);
 	}
 	if (rq->op == SYSEXT_OP_RELOAD) {
 		if (!service_rights_allow(identity->rights, SERVICE_RIGHTS_ADMIN)) {
-			rp.status = EPERM;
-			goto reply;
+			rp->status = EPERM;
+			return (SYSEXT_REPLY_BASIC);
 		}
 		/*
 		 * Reload capmode-safely: in production the operator allow-list is read
@@ -555,22 +544,22 @@ sysext_request(struct channel *ch __unused, struct channel_message *m, void *arg
 			if (service_config_open(SYSEXT_CONFIG_NAME, &rfd) == 0) {
 				if (sysext_policy_reload_fd(active_policy, rfd,
 				    identity->rights) == -1)
-					rp.status = errno;
+					rp->status = errno;
 				(void)close(rfd);
 			} else {
-				rp.status = errno;
+				rp->status = errno;
 			}
 		} else if (sysext_policy_reload(active_policy, policy_path,
 		    identity->rights) == -1) {
-			rp.status = errno;
+			rp->status = errno;
 		}
 		syslog(LOG_NOTICE, "RELOAD (client %s) -> %s", client,
-		    rp.status == 0 ? "policy installed" : strerror(rp.status));
-		goto reply;
+		    rp->status == 0 ? "policy installed" : strerror(rp->status));
+		return (SYSEXT_REPLY_BASIC);
 	}
 	if (sysext_policy_snapshot(active_policy, &cfg) == -1) {
-		rp.status = errno;
-		goto reply;
+		rp->status = errno;
+		return (SYSEXT_REPLY_BASIC);
 	}
 	/*
 	 * LIST enumerates the module names the allow-list permits, so a consumer
@@ -584,23 +573,23 @@ sysext_request(struct channel *ch __unused, struct channel_message *m, void *arg
 		size_t i;
 
 		if (cfg.nallow > SYSEXT_LIST_MAX) {
-			rp.status = EOVERFLOW;
-			goto reply;
+			rp->status = EOVERFLOW;
+			return (SYSEXT_REPLY_BASIC);
 		}
-		memset(&lrp, 0, sizeof(lrp));
-		lrp.status = 0;
-		lrp.count = (uint32_t)cfg.nallow;
+		memset(lrp, 0, sizeof(*lrp));
+		lrp->status = 0;
+		lrp->count = (uint32_t)cfg.nallow;
 		for (i = 0; i < cfg.nallow && i < SYSEXT_LIST_MAX; i++)
-			(void)strlcpy(lrp.names[i], cfg.allow[i],
+			(void)strlcpy(lrp->names[i], cfg.allow[i],
 			    SYSEXT_NAME_MAX);
-		BSDEXTENSION_PROBE_LIST(client, lrp.count, 0);
+		BSDEXTENSION_PROBE_LIST(client, lrp->count, 0);
 		syslog(LOG_INFO, "LIST (client %s) -> %u module(s)", client,
-		    lrp.count);
-		goto list_reply;
+		    lrp->count);
+		return (SYSEXT_REPLY_LIST);
 	}
 	if (!valid_module_name(rq->name)) {
-		rp.status = EINVAL;
-		goto reply;
+		rp->status = EINVAL;
+		return (SYSEXT_REPLY_BASIC);
 	}
 	/*
 	 * Default-deny by name, for BOTH operations: even a syntactically valid
@@ -611,58 +600,304 @@ sysext_request(struct channel *ch __unused, struct channel_message *m, void *arg
 	 * denial leaks no information about the module set.
 	 */
 	if (!extension_allowed(&cfg, rq->name)) {
-		rp.status = EPERM;
+		rp->status = EPERM;
 		syslog(LOG_WARNING,
 		    "%s %s (client %s) -> DENIED (not on allow-list)",
 		    rq->op == SYSEXT_OP_STAT ? "STAT" : "ENSURE", rq->name,
 		    client);
-		goto reply;
+		return (SYSEXT_REPLY_BASIC);
 	}
 
 	if (rq->op == SYSEXT_OP_STAT) {
-		srp.status = stat_extension(rq->name, &loaded);
-		srp.loaded = loaded;
-		if (srp.status == 0)
+		srp->status = stat_extension(rq->name, &loaded);
+		srp->loaded = loaded;
+		if (srp->status == 0)
 			syslog(LOG_INFO, "STAT %s (client %s) -> %s", rq->name,
-			    client, srp.loaded ? "loaded" : "not loaded");
+			    client, srp->loaded ? "loaded" : "not loaded");
 		else
 			syslog(LOG_NOTICE, "STAT %s (client %s) -> %s", rq->name,
-			    client, strerror(srp.status));
-		goto stat_reply;
+			    client, strerror(srp->status));
+		return (SYSEXT_REPLY_STAT);
 	}
 
-	rp.status = managed_ensure(rq->name, identity->bundle);
+	rp->status = managed_ensure(rq->name, identity->bundle);
 	syslog(LOG_INFO, "ENSURE %s (client %s): %s", rq->name, client,
-	    rp.status == 0 ? "loaded" : strerror(rp.status));
+	    rp->status == 0 ? "loaded" : strerror(rp->status));
+	return (SYSEXT_REPLY_BASIC);
+}
 
-reply:
-	memset(&out, 0, sizeof(out));
-	out.size = sizeof(out);
-	out.data = &rp;
-	out.length = sizeof(rp);
-	transport_error = channel_send_reply(m, &out) == -1 ? errno : 0;
-	BSDEXTENSION_PROBE_REQUEST_DONE(opcode, rp.status, transport_error);
-	channel_message_free(m);
-	return;
+struct sysext_session {
+	const struct sysext_client *identity;
+	bool negotiated;
+};
 
-stat_reply:
-	memset(&out, 0, sizeof(out));
-	out.size = sizeof(out);
-	out.data = &srp;
-	out.length = sizeof(srp);
-	transport_error = channel_send_reply(m, &out) == -1 ? errno : 0;
-	BSDEXTENSION_PROBE_REQUEST_DONE(opcode, srp.status, transport_error);
-	channel_message_free(m);
-	return;
+/*
+ * bsd.extension.v1 method handlers.  Every method but GetProtocolInfo requires
+ * a negotiated session; a failed reply closes the connection.  The
+ * request-done probe keeps the historical SYSEXT_OP_* codes (0 is protocol
+ * negotiation).
+ */
+static bool
+ext_ready(struct sysext_session *session, struct fidl_bsd_connection *connection,
+    uint32_t opcode)
+{
 
-list_reply:
-	memset(&out, 0, sizeof(out));
-	out.size = sizeof(out);
-	out.data = &lrp;
-	out.length = sizeof(lrp);
-	transport_error = channel_send_reply(m, &out) == -1 ? errno : 0;
-	BSDEXTENSION_PROBE_REQUEST_DONE(opcode, lrp.status, transport_error);
-	channel_message_free(m);
+	if (session->negotiated)
+		return (true);
+	BSDEXTENSION_PROBE_REQUEST_DONE(opcode, EPROTO, EPROTO);
+	fidl_bsd_connection_close(connection, EPROTO);
+	return (false);
+}
+
+static void
+ext_completed(struct fidl_bsd_connection *connection, uint32_t opcode,
+    int status, int transport_error)
+{
+
+	BSDEXTENSION_PROBE_REQUEST_DONE(opcode, status, transport_error);
+	if (transport_error != 0)
+		fidl_bsd_connection_close(connection, transport_error);
+}
+
+static void
+ext_protocol_info(void *argument, struct fidl_bsd_connection *connection,
+    struct fidl_bsd_request *request, struct fidl_bsd_empty *empty __unused)
+{
+	struct sysext_session *session = argument;
+	struct bsd_extension_v1_ProtocolInfo info = { SYSEXT_WIRE_VERSION };
+	int error;
+
+	error = bsd_extension_v1_SystemExtension_GetProtocolInfo_reply(
+	    connection, request, &info);
+	session->negotiated = error == 0;
+	ext_completed(connection, 0, 0, error);
+}
+
+/*
+ * Build the legacy-shaped request; an embedded NUL in the name is refused
+ * (it would silently truncate the module name).
+ */
+static bool
+ext_request(struct sysext_request *rq, uint32_t op, const char *name,
+    size_t length)
+{
+
+	memset(rq, 0, sizeof(*rq));
+	rq->op = op;
+	if (length >= sizeof(rq->name) ||
+	    (length != 0 && memchr(name, '\0', length) != NULL))
+		return (false);
+	if (length != 0)
+		memcpy(rq->name, name, length);
+	return (true);
+}
+
+/*
+ * Run one request and answer it.  `reply` is the method's generated reply
+ * function wrapped below; the decision and every status are sysext_handle()'s.
+ */
+struct ext_outcome {
+	enum sysext_reply_kind kind;
+	int status;
+	struct sysext_reply rp;
+	struct sysext_stat_reply srp;
+	struct sysext_list_reply lrp;
+	struct sysext_info_reply irp;
+};
+
+static void
+ext_decide(struct sysext_session *session, uint32_t op, const char *name,
+    size_t length, struct ext_outcome *out)
+{
+	struct sysext_request rq;
+
+	if (!ext_request(&rq, op, name, length)) {
+		memset(out, 0, sizeof(*out));
+		out->kind = SYSEXT_REPLY_BASIC;
+		out->status = EINVAL;
+		return;
+	}
+	out->kind = sysext_handle(session->identity, &rq, &out->rp, &out->srp,
+	    &out->lrp, &out->irp);
+	switch (out->kind) {
+	case SYSEXT_REPLY_STAT:
+		out->status = out->srp.status;
+		break;
+	case SYSEXT_REPLY_LIST:
+		out->status = out->lrp.status;
+		break;
+	case SYSEXT_REPLY_INFO:
+		out->status = out->irp.status;
+		break;
+	default:
+		out->status = out->rp.status;
+		break;
+	}
+}
+
+/* Methods whose success reply is empty. */
+#define	EXT_EMPTY_METHOD(fn, method, op, has_name)			\
+static void								\
+fn(void *argument, struct fidl_bsd_connection *connection,		\
+    struct fidl_bsd_request *request, EXT_ARG_##has_name)		\
+{									\
+	struct sysext_session *session = argument;			\
+	struct bsd_extension_v1_SystemExtension_##method##_Result reply;\
+	struct ext_outcome *out;					\
+	int status;							\
+									\
+	if (!ext_ready(session, connection, op))			\
+		return;							\
+	memset(&reply, 0, sizeof(reply));				\
+	out = malloc(sizeof(*out));					\
+	if (out == NULL)						\
+		status = ENOMEM;					\
+	else {								\
+		ext_decide(session, op, EXT_NAME_##has_name, out);	\
+		status = out->status;					\
+	}								\
+	if (status == 0)						\
+		reply.tag = bsd_extension_v1_SystemExtension_##method##_Result_response_tag; \
+	else {								\
+		reply.tag = bsd_extension_v1_SystemExtension_##method##_Result_err_tag; \
+		reply.value.err = (uint32_t)status;			\
+	}								\
+	free(out);							\
+	ext_completed(connection, op, status,				\
+	    bsd_extension_v1_SystemExtension_##method##_reply(connection,	\
+	    request, &reply));						\
+}
+#define	EXT_ARG_1	struct bsd_extension_v1_Module *value
+#define	EXT_ARG_0	struct fidl_bsd_empty *value __unused
+#define	EXT_NAME_1	value->name, value->name_size
+#define	EXT_NAME_0	"", 0
+
+EXT_EMPTY_METHOD(ext_ensure, Ensure, SYSEXT_OP_ENSURE, 1)
+EXT_EMPTY_METHOD(ext_reload, Reload, SYSEXT_OP_RELOAD, 0)
+EXT_EMPTY_METHOD(ext_allow, Allow, SYSEXT_OP_ALLOW, 1)
+EXT_EMPTY_METHOD(ext_deny, Deny, SYSEXT_OP_DENY, 1)
+EXT_EMPTY_METHOD(ext_reset, Reset, SYSEXT_OP_RESET, 1)
+EXT_EMPTY_METHOD(ext_enable, Enable, SYSEXT_OP_ENABLE, 1)
+EXT_EMPTY_METHOD(ext_disable, Disable, SYSEXT_OP_DISABLE, 1)
+EXT_EMPTY_METHOD(ext_restore, Restore, SYSEXT_OP_RESTORE, 0)
+
+static void
+ext_stat(void *argument, struct fidl_bsd_connection *connection,
+    struct fidl_bsd_request *request, struct bsd_extension_v1_Module *value)
+{
+	struct sysext_session *session = argument;
+	struct bsd_extension_v1_SystemExtension_Stat_Result reply;
+	struct ext_outcome out;
+
+	if (!ext_ready(session, connection, SYSEXT_OP_STAT))
+		return;
+	memset(&reply, 0, sizeof(reply));
+	ext_decide(session, SYSEXT_OP_STAT, value->name, value->name_size, &out);
+	if (out.status == 0 && out.kind == SYSEXT_REPLY_STAT) {
+		reply.tag = bsd_extension_v1_SystemExtension_Stat_Result_response_tag;
+		reply.value.response.loaded = out.srp.loaded != 0;
+	} else {
+		reply.tag = bsd_extension_v1_SystemExtension_Stat_Result_err_tag;
+		reply.value.err = (uint32_t)(out.status != 0 ? out.status : EIO);
+	}
+	ext_completed(connection, SYSEXT_OP_STAT, out.status,
+	    bsd_extension_v1_SystemExtension_Stat_reply(connection, request,
+	    &reply));
+}
+
+static void
+ext_list(void *argument, struct fidl_bsd_connection *connection,
+    struct fidl_bsd_request *request, struct fidl_bsd_empty *empty __unused)
+{
+	struct sysext_session *session = argument;
+	struct bsd_extension_v1_SystemExtension_List_Result reply;
+	struct bsd_extension_v1_Module modules[SYSEXT_LIST_MAX];
+	struct ext_outcome *out;
+	int status;
+
+	if (!ext_ready(session, connection, SYSEXT_OP_LIST))
+		return;
+	memset(&reply, 0, sizeof(reply));
+	out = malloc(sizeof(*out));
+	if (out == NULL)
+		status = ENOMEM;
+	else {
+		ext_decide(session, SYSEXT_OP_LIST, "", 0, out);
+		status = out->status;
+	}
+	if (status == 0 && out->kind == SYSEXT_REPLY_LIST) {
+		for (uint32_t i = 0; i < out->lrp.count; i++) {
+			modules[i].name = out->lrp.names[i];
+			modules[i].name_size = strnlen(out->lrp.names[i],
+			    SYSEXT_NAME_MAX);
+		}
+		reply.tag = bsd_extension_v1_SystemExtension_List_Result_response_tag;
+		reply.value.response.modules = modules;
+		reply.value.response.modules_size = out->lrp.count;
+	} else {
+		reply.tag = bsd_extension_v1_SystemExtension_List_Result_err_tag;
+		reply.value.err = (uint32_t)(status != 0 ? status : EIO);
+	}
+	ext_completed(connection, SYSEXT_OP_LIST, status,
+	    bsd_extension_v1_SystemExtension_List_reply(connection, request,
+	    &reply));
+	free(out);
+}
+
+static void
+ext_info_reply(struct sysext_session *session,
+    struct fidl_bsd_connection *connection, struct fidl_bsd_request *request,
+    uint32_t op, const char *name, size_t length)
+{
+	struct bsd_extension_v1_SystemExtension_Info_Result reply;
+	struct ext_outcome out;
+	int error;
+
+	memset(&reply, 0, sizeof(reply));
+	ext_decide(session, op, name, length, &out);
+	if (out.status == 0 && out.kind == SYSEXT_REPLY_INFO) {
+		reply.tag = bsd_extension_v1_SystemExtension_Info_Result_response_tag;
+		reply.value.response.name = out.irp.name;
+		reply.value.response.name_size = strnlen(out.irp.name,
+		    sizeof(out.irp.name));
+		reply.value.response.flags = out.irp.flags;
+	} else {
+		reply.tag = bsd_extension_v1_SystemExtension_Info_Result_err_tag;
+		reply.value.err = (uint32_t)(out.status != 0 ? out.status : EIO);
+	}
+	/* Info and Next share the result layout. */
+	if (op == SYSEXT_OP_INFO)
+		error = bsd_extension_v1_SystemExtension_Info_reply(connection,
+		    request, &reply);
+	else
+		error = bsd_extension_v1_SystemExtension_Next_reply(connection,
+		    request,
+		    (struct bsd_extension_v1_SystemExtension_Next_Result *)&reply);
+	ext_completed(connection, op, out.status, error);
+}
+
+static void
+ext_info(void *argument, struct fidl_bsd_connection *connection,
+    struct fidl_bsd_request *request, struct bsd_extension_v1_Module *value)
+{
+	struct sysext_session *session = argument;
+
+	if (!ext_ready(session, connection, SYSEXT_OP_INFO))
+		return;
+	ext_info_reply(session, connection, request, SYSEXT_OP_INFO,
+	    value->name, value->name_size);
+}
+
+static void
+ext_next(void *argument, struct fidl_bsd_connection *connection,
+    struct fidl_bsd_request *request, struct bsd_extension_v1_Cursor *value)
+{
+	struct sysext_session *session = argument;
+
+	if (!ext_ready(session, connection, SYSEXT_OP_NEXT))
+		return;
+	ext_info_reply(session, connection, request, SYSEXT_OP_NEXT,
+	    value->name, value->name_size);
 }
 
 /*
@@ -674,13 +909,26 @@ static int
 sysext_worker(int fd, const char *client, const char *container,
     service_rights_t rights)
 {
-	struct channel_options options =
-	    CHANNEL_OPTIONS_INITIALIZER(CHANNEL_ROLE_PROVIDER);
-	struct channel *channel = NULL;
+	static const struct bsd_extension_v1_SystemExtension_server handlers = {
+		.GetProtocolInfo = ext_protocol_info,
+		.Ensure = ext_ensure,
+		.Stat = ext_stat,
+		.List = ext_list,
+		.Reload = ext_reload,
+		.Allow = ext_allow,
+		.Deny = ext_deny,
+		.Reset = ext_reset,
+		.Enable = ext_enable,
+		.Disable = ext_disable,
+		.Restore = ext_restore,
+		.Info = ext_info,
+		.Next = ext_next
+	};
+	struct fidl_bsd_connection *connection;
 	char label[SYSEXT_NAME_MAX], bundle[64] = "";
 	struct sysext_client identity = { .label = label, .bundle = bundle,
 	    .rights = rights };
-	int ready, wants_write;
+	struct sysext_session session = { .identity = &identity };
 
 	(void)strlcpy(label, client, sizeof(label));
 	/* The stamped container names the bundle; "" for units without one. */
@@ -688,32 +936,26 @@ sysext_worker(int fd, const char *client, const char *container,
 		bundle[0] = '\0';
 
 	/*
-	 * channel_create() consumes (closes) fd on success and leaves it on
+	 * fidl_bsd_connection_create() takes fd on success and leaves it on
 	 * failure -- so close it here only on failure, and NEVER after return.
 	 * The caller (sysext_client_thread) must not close it again: doing so
-	 * closes an fd number channel_create already handed back to the pool, which
-	 * a concurrent accept on another thread may have re-used (double-close race
-	 * that silently drops a co-connecting client).
+	 * closes an fd number this worker already gave up, which a concurrent
+	 * accept on another thread may have re-used (double-close race that
+	 * silently drops a co-connecting client).
 	 */
-	if (channel_create(fd, &options, &channel) == -1) {
+	if (fidl_bsd_connection_create(fd, FIDL_BSD_SERVER, &connection) != 0) {
 		(void)close(fd);
 		return (1);
 	}
-	if (channel_set_request_handler(channel, sysext_request, &identity) == -1) {
-		channel_destroy(channel);
+	if (bsd_extension_v1_SystemExtension_bind(connection, &handlers,
+	    &session) != 0) {
+		fidl_bsd_connection_destroy(connection);
 		return (1);
 	}
-	for (;;) {
-		wants_write = channel_wants_write(channel);
-		if (wants_write == -1 ||
-		    (ready = channel_wait(channel, wants_write, -1)) == -1 ||
-		    ((ready & CHANNEL_WAIT_WRITE) != 0 &&
-		    channel_flush(channel) == -1) ||
-		    ((ready & CHANNEL_WAIT_READ) != 0 &&
-		    channel_dispatch(channel) == -1))
-			break;
-	}
-	channel_destroy(channel);
+	/* Peer close or a protocol violation ends the session. */
+	while (fidl_bsd_connection_poll(connection, -1) == 0)
+		;
+	fidl_bsd_connection_destroy(connection);
 	return (0);
 }
 
@@ -776,7 +1018,7 @@ sysext_client_thread(void *arg)
 {
 	struct sysext_conn *c = arg;
 
-	/* sysext_worker() owns c->fd (channel_create consumes it, or it closes it
+	/* sysext_worker() owns c->fd (its connection takes it, or it closes it
 	 * on failure) -- do NOT close it again here (double-close race). */
 	(void)sysext_worker(c->fd, c->label, c->container, c->rights);
 	free(c);

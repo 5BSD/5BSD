@@ -3,7 +3,7 @@
 .\"
 .\" Copyright (c) 2026 Kory Heard
 .\"
-.Dd October 2, 2026
+.Dd October 12, 2026
 .Dt BSDEXTENSION 8
 .Os
 .Sh NAME
@@ -77,19 +77,37 @@ Because a worker thread shares the daemon's held gate token, its
 passes the gate under the standing claim; no access token is minted or
 delivered, and no socket appears anywhere in the path.
 .Pp
+The protocol is the FIDL library
+.Li bsd.extension.v1
+.Pq Pa /usr/share/fidl/extensioncmp.fidl ;
+a session calls
+.Sy GetProtocolInfo
+first.
+Application errors are
+.Xr errno 2
+values; a method before
+.Sy GetProtocolInfo ,
+an unknown method, a malformed frame, a pre-FIDL record or an attached
+descriptor closes the session without a reply.
+.Pp
 A request names a single kernel module as a safe filename component: a name
+containing an embedded NUL or a slash, or equal to
 containing a slash, or equal to
 .Dq \&.
 or
 .Dq \&.. ,
 is rejected.
-For a load request the module is loaded from the kernel module path with
+For a load request
+.Pq Sy Ensure
+the module is loaded from the kernel module path with
 .Xr kldload 2 ;
 a module that is already present is reported as success, so the load path never
 needs to query and uses only the
 .Dq kldload
 gate.
-A query request instead reports whether the module is loaded, using
+A query request
+.Pq Sy Stat
+instead reports whether the module is loaded, using
 .Xr kldfind 2 ,
 a read-only query; module enumeration is ungated, so no capability is
 needed for it.
@@ -100,15 +118,23 @@ There is deliberately no unload operation; safe removal would require
 explicit consumer release semantics; the service conservatively retains
 session and boot claims until reboot.
 .Pp
-A LIST request enumerates the module allow-list, returning each permitted
+A
+.Sy List
+request enumerates the module allow-list, returning each permitted
 module name and the count.
 The allow-list is global rather than per-label, so every caller sees the same
 set.
-LIST returns EOVERFLOW above 32 permitted names.
-NEXT returns one entry after an exclusive lexical name cursor, supporting
+.Sy List
+returns
+.Er EOVERFLOW
+above 32 permitted names.
+.Sy Next
+returns one entry after an exclusive lexical name cursor, supporting
 bounded discovery of larger allow-lists.
 .Pp
-A RELOAD request requires ADMIN rights on the accepted service channel.
+A
+.Sy Reload
+request requires ADMIN rights on the accepted service channel.
 It rereads the shipped configuration through the delivered Config descriptor.
 Administrator overrides are retained.
 The replacement must be a regular file, not writable by group or others,
@@ -118,7 +144,10 @@ Updates are published atomically to all workers, including existing sessions.
 Requests already admitted under the previous policy may finish.
 Reload does not unload modules or restart the core service.
 .Pp
-ALLOW, DENY, RESET, ENABLE, DISABLE and RESTORE also require ADMIN rights.
+.Sy Allow , Deny , Reset , Enable , Disable
+and
+.Sy Restore
+also require ADMIN rights.
 Permission overrides and desired boot activation are independent of the
 shipped policy and stored in the private administrator configuration directory.
 A successful edit syncs a replacement before publication.
@@ -205,8 +234,14 @@ The per-boot module to bundle owner map the reconcile works from.
 The
 .Dq BSDExtension
 provider exports
+.Sy request-done
+with the historical operation code
+.Pq 0 for negotiation ,
+the status and the transport error, and
 .Sy list ,
-which fires when a LIST request is answered with the client label, the number
+which fires when a
+.Sy List
+request is answered with the client label, the number
 of allow-listed modules reported, and the result.
 The result argument is zero on success or an
 .Xr errno 2
@@ -217,6 +252,7 @@ fires after every reconcile pass with when (0 boot, 1 timer) and the pass's
 live, owned, orphaned, destroyed and failed counts.
 .Sh SEE ALSO
 .Xr kldload 2 ,
+.Xr libextensioncmp 3 ,
 .Xr mac_capability 4 ,
 .Xr capsule 8 ,
 .Xr kldload 8 ,
@@ -231,5 +267,8 @@ It takes over the kernel-module loading duty formerly performed inside the
 .Xr capsule 8
 as part of moving privileged work out of PID 1 and behind named,
 domain-restricted, socket-free services.
+Its record protocol was replaced by
+.Li bsd.extension.v1
+in October 2026.
 .Sh AUTHORS
 .An Kory Heard

@@ -3,7 +3,15 @@
  *
  * Copyright (c) 2026 Kory Heard
  *
- * Wire protocol for bsdextension(8) — the system-extension broker.
+ * system.SystemExtension constants for bsdextension(8) -- the
+ * system-extension broker -- and its legacy pre-FIDL wire records.  The current
+ * client (libextensioncmp) and provider speak bsd.extension.v1
+ * (lib/libextensioncmp/extensioncmp.fidl); the request/reply records below are
+ * retained for source/ABI compatibility (the provider still decides each
+ * method in the sysext_request shape internally), are rejected on the wire,
+ * and do not describe the active wire format.  The SYSEXT_OP_* numbers remain
+ * the DTrace request probe's operation codes.  The historical description
+ * follows.
  *
  * bsdextension owns kernel-module (kernel "system extension") loading, taking it out
  * of PID 1.  It is a socket-free service_provider: clients reach it over a held
@@ -27,6 +35,9 @@
 #include <stdint.h>
 
 #define	SYSEXT_SERVICE_NAME	"system.SystemExtension"
+
+/* bsd.extension.v1 GetProtocolInfo wire_version. */
+#define	SYSEXT_WIRE_VERSION	1
 
 /* A module name is a single, safe filename component. */
 #define	SYSEXT_NAME_MAX		64	/* module name incl. NUL */

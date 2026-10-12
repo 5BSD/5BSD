@@ -80,12 +80,12 @@ print_info(const struct service_extension_info *info)
 int
 main(int argc, char **argv)
 {
-	struct service_session *session;
+	struct extensioncmp_session *session;
 	struct service_extension_info info;
 	enum service_extension_action action = SERVICE_EXTENSION_RESTORE;
 	char cursor[SERVICE_EXTENSION_NAME_MAX] = "";
 	const char *verb, *name = NULL;
-	int fd, error, result = 0, operation;
+	int error, result = 0, operation;
 
 	if (argc < 2)
 		usage();
@@ -121,18 +121,12 @@ main(int argc, char **argv)
 	}
 	if (argc == 3)
 		name = argv[2];
-	if (service_open("system.SystemExtension", &fd) == -1)
+	if (extensioncmp_session_open(&session) == -1)
 		err(EX_UNAVAILABLE, "cannot reach SystemExtension capability");
-	if (service_session_create(fd, &session) == -1) {
-		error = errno;
-		close(fd);
-		errno = error;
-		err(EX_UNAVAILABLE, "SystemExtension session");
-	}
 	switch (operation) {
 	case 0:
 	case 1:
-		while ((result = service_session_extension_info(session, cursor, 1,
+		while ((result = extensioncmp_info(session, cursor, 1,
 		    &info)) == 0) {
 			if (operation == 1)
 				print_info(&info);
@@ -146,22 +140,22 @@ main(int argc, char **argv)
 			result = 0;
 		break;
 	case 2:
-		result = service_session_extension_info(session, name, 0, &info);
+		result = extensioncmp_info(session, name, 0, &info);
 		if (result == 0)
 			print_info(&info);
 		break;
 	case 3:
-		result = service_session_extension_load(session, name);
+		result = extensioncmp_load(session, name);
 		break;
 	case 4:
-		result = service_session_extension_reload(session);
+		result = extensioncmp_reload(session);
 		break;
 	default:
-		result = service_session_extension_manage(session, action, name);
+		result = extensioncmp_manage(session, action, name);
 		break;
 	}
 	error = errno;
-	service_session_close(session);
+	extensioncmp_session_close(session);
 	if (result == -1) {
 		errno = error;
 		if (error == EINVAL || error == ENAMETOOLONG)
