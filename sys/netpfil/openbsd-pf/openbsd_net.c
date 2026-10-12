@@ -573,6 +573,8 @@ obsd_ip_fragment(struct mbuf *m, struct mbuf_list *ml, struct ifnet *ifp,
 
 	ml_init(ml);
 	in_proto_cksum_out(m, NULL);
+	/* ip_fragment() computes header checksums only for CSUM_IP packets. */
+	m->m_pkthdr.csum_flags |= CSUM_IP;
 	error = ip_fragment(ip, &m, mtu, ifp->if_hwassist);
 	if (error) {
 		m_freem(m);
