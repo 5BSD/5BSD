@@ -149,6 +149,7 @@ int (*mrt6_ioctl)(u_long, caddr_t, int);
 
 struct rip6_inp_match_ctx {
 	struct ip6_hdr *ip6;
+	struct in6_addr *laddr;	/* ip6_dst, or where a filter diverted it */
 	int proto;
 };
 
@@ -165,7 +166,7 @@ rip6_inp_match(const struct inpcb *inp, void *v)
 	if (inp->inp_ip_p && inp->inp_ip_p != proto)
 		return (false);
 	if (!IN6_IS_ADDR_UNSPECIFIED(&inp->in6p_laddr) &&
-	    !IN6_ARE_ADDR_EQUAL(&inp->in6p_laddr, &ip6->ip6_dst))
+	    !IN6_ARE_ADDR_EQUAL(&inp->in6p_laddr, c->laddr))
 		return (false);
 	if (!IN6_IS_ADDR_UNSPECIFIED(&inp->in6p_faddr) &&
 	    !IN6_ARE_ADDR_EQUAL(&inp->in6p_faddr, &ip6->ip6_src))
@@ -195,6 +196,20 @@ rip6_input(struct mbuf **mp, int *offp, int proto)
 
 	M_ASSERTPKTHDR(m);
 	NET_EPOCH_ASSERT();
+
+	/*
+	 * A packet filter diverted the packet to a local address (pf
+	 * divert-to): deliver it to raw sockets bound to that address.
+	 */
+	ctx.laddr = &ip6->ip6_dst;
+	if (m->m_flags & M_IP6_NEXTHOP) {
+		struct m_tag *fwd_tag;
+
+		fwd_tag = m_tag_find(m, PACKET_TAG_IPFORWARD, NULL);
+		if (fwd_tag != NULL)
+			ctx.laddr =
+			    &((struct sockaddr_in6 *)(fwd_tag + 1))->sin6_addr;
+	}
 
 	RIP6STAT_INC(rip6s_ipackets);
 

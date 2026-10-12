@@ -514,6 +514,24 @@ icmp_input(struct mbuf **mp, int *offp, int proto)
 	if (icp->icmp_type > ICMP_MAXTYPE)
 		goto raw;
 
+	/*
+	 * As OpenBSD: a message pf diverted (divert-to) belongs to the raw
+	 * socket it was diverted to and the stack does not answer it.
+	 * Errors still reach the protocols of the connections they quote.
+	 */
+	if (m->m_pkthdr.pf.flags & PF_TAG_DIVERTED) {
+		switch (icp->icmp_type) {
+		case ICMP_UNREACH:
+		case ICMP_TIMXCEED:
+		case ICMP_PARAMPROB:
+		case ICMP_SOURCEQUENCH:
+		case ICMP_REDIRECT:
+			break;
+		default:
+			goto raw;
+		}
+	}
+
 	/* Initialize */
 	bzero(&icmpsrc, sizeof(icmpsrc));
 	icmpsrc.sin_len = sizeof(struct sockaddr_in);
@@ -787,6 +805,8 @@ icmp_reflect(struct mbuf *m)
 
 	t = ip->ip_dst;
 	ip->ip_dst = ip->ip_src;
+	/* As OpenBSD: the addresses change, drop pf's link to the state. */
+	M_PF_UNLINK(m);
 
 	/*
 	 * Source selection for ICMP replies:

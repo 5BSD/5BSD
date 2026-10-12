@@ -1614,6 +1614,7 @@ ip6_ctloutput(struct socket *so, struct sockopt *sopt)
 			case IPV6_V6ONLY:
 			case IPV6_AUTOFLOWLABEL:
 			case IPV6_ORIGDSTADDR:
+			case IPV6_RECVDSTPORT:
 			case IPV6_BINDANY:
 			case IPV6_VLAN_PCP:
 				if (optname == IPV6_BINDANY && td != NULL) {
@@ -1784,6 +1785,9 @@ do {									\
 
 				case IPV6_ORIGDSTADDR:
 					OPTSET2(INP_ORIGDSTADDR, optval);
+					break;
+				case IPV6_RECVDSTPORT:
+					OPTSET2(INP_RECVDSTPORT, optval);
 					break;
 				case IPV6_BINDANY:
 					OPTSET(INP_BINDANY);
@@ -2018,6 +2022,7 @@ do {									\
 			case IPV6_RECVTCLASS:
 			case IPV6_AUTOFLOWLABEL:
 			case IPV6_BINDANY:
+			case IPV6_RECVDSTPORT:
 			case IPV6_FLOWID:
 			case IPV6_FLOWTYPE:
 			case IPV6_RECVFLOWID:
@@ -2085,6 +2090,10 @@ do {									\
 
 				case IPV6_ORIGDSTADDR:
 					optval = OPTBIT2(INP_ORIGDSTADDR);
+					break;
+
+				case IPV6_RECVDSTPORT:
+					optval = OPTBIT2(INP_RECVDSTPORT);
 					break;
 
 				case IPV6_BINDANY:

@@ -516,6 +516,24 @@ icmp6_input(struct mbuf **mp, int *offp, int proto)
 		icmp6_ifstat_inc(ifp, ifs6_in_error);
 
 	ip6len = sizeof(struct ip6_hdr) + ntohs(ip6->ip6_plen);
+
+	/*
+	 * As OpenBSD: a message pf diverted (divert-to) belongs to the raw
+	 * socket it was diverted to and the stack does not answer it.
+	 * Errors still reach the protocols of the connections they quote.
+	 */
+	if (m->m_pkthdr.pf.flags & PF_TAG_DIVERTED) {
+		switch (icmp6->icmp6_type) {
+		case ICMP6_DST_UNREACH:
+		case ICMP6_PACKET_TOO_BIG:
+		case ICMP6_TIME_EXCEEDED:
+		case ICMP6_PARAM_PROB:
+			break;
+		default:
+			goto raw;
+		}
+	}
+
 	switch (icmp6->icmp6_type) {
 	case ICMP6_DST_UNREACH:
 		icmp6_ifstat_inc(ifp, ifs6_in_dstunreach);
@@ -904,6 +922,7 @@ icmp6_input(struct mbuf **mp, int *offp, int proto)
 		break;
 	}
 
+raw:
 	/* deliver the packet to appropriate sockets */
 	icmp6_rip6_input(&m, *offp);
 
@@ -1876,17 +1895,23 @@ ni6_store_addrs(struct icmp6_nodeinfo *ni6, struct icmp6_nodeinfo *nni6,
 	return (copied);
 }
 
+struct icmp6_rip6_match_ctx {
+	struct ip6_hdr *ip6;
+	struct in6_addr *laddr;	/* ip6_dst, or where a filter diverted it */
+};
+
 static bool
 icmp6_rip6_match(const struct inpcb *inp, void *v)
 {
-	struct ip6_hdr *ip6 = v;
+	struct icmp6_rip6_match_ctx *c = v;
+	struct ip6_hdr *ip6 = c->ip6;
 
 	if ((inp->inp_vflag & INP_IPV6) == 0)
 		return (false);
 	if (inp->inp_ip_p != IPPROTO_ICMPV6)
 		return (false);
 	if (!IN6_IS_ADDR_UNSPECIFIED(&inp->in6p_laddr) &&
-	   !IN6_ARE_ADDR_EQUAL(&inp->in6p_laddr, &ip6->ip6_dst))
+	   !IN6_ARE_ADDR_EQUAL(&inp->in6p_laddr, c->laddr))
 		return (false);
 	if (!IN6_IS_ADDR_UNSPECIFIED(&inp->in6p_faddr) &&
 	   !IN6_ARE_ADDR_EQUAL(&inp->in6p_faddr, &ip6->ip6_src))
@@ -1902,8 +1927,9 @@ icmp6_rip6_input(struct mbuf **mp, int off)
 {
 	struct mbuf *n, *m = *mp;
 	struct ip6_hdr *ip6 = mtod(m, struct ip6_hdr *);
+	struct icmp6_rip6_match_ctx ctx = { .ip6 = ip6, .laddr = &ip6->ip6_dst };
 	struct inpcb_iterator inpi = INP_ITERATOR(&V_ripcbinfo,
-	    INPLOOKUP_RLOCKPCB, icmp6_rip6_match, ip6);
+	    INPLOOKUP_RLOCKPCB, icmp6_rip6_match, &ctx);
 	struct inpcb *inp;
 	struct sockaddr_in6 fromsa;
 	struct icmp6_hdr *icmp6;
@@ -1912,6 +1938,16 @@ icmp6_rip6_input(struct mbuf **mp, int off)
 
 	/* This is assumed to be safe; icmp6_input() does a pullup. */
 	icmp6 = (struct icmp6_hdr *)((caddr_t)ip6 + off);
+
+	/* pf divert-to: deliver to raw sockets bound to the divert address. */
+	if (m->m_flags & M_IP6_NEXTHOP) {
+		struct m_tag *fwd_tag;
+
+		fwd_tag = m_tag_find(m, PACKET_TAG_IPFORWARD, NULL);
+		if (fwd_tag != NULL)
+			ctx.laddr =
+			    &((struct sockaddr_in6 *)(fwd_tag + 1))->sin6_addr;
+	}
 
 	/*
 	 * XXX: the address may have embedded scope zone ID, which should be
@@ -2010,6 +2046,9 @@ icmp6_reflect(struct mbuf *m, size_t off)
 	struct ifnet *outif = NULL;
 	int plen;
 	int type, code, hlim;
+
+	/* As OpenBSD: the addresses change, drop pf's link to the state. */
+	M_PF_UNLINK(m);
 
 	/* too short to reflect */
 	if (off < sizeof(struct ip6_hdr)) {

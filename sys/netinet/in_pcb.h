@@ -218,7 +218,7 @@ struct xinpgen {
 #define	INP_RECVRSSBUCKETID	0x00000200 /* populate recv datagram with bucket id */
 #define	INP_RATE_LIMIT_CHANGED	0x00000400 /* rate limit needs attention */
 #define	INP_ORIGDSTADDR		0x00000800 /* receive IP dst address/port */
-/*				0x00001000 */
+#define	INP_RECVDSTPORT		0x00001000 /* receive dst port (OpenBSD) */
 /*				0x00002000 */
 /*				0x00004000 */
 /*				0x00008000 */
@@ -234,7 +234,7 @@ struct xinpgen {
 /* inp_flags2 description for use with printf(9) %b identifier. */
 #define	INP_FLAGS2_BITS	"\20" \
     "\11INP_RECVFLOWID\12INP_RECVRSSBUCKETID" \
-    "\13INP_RATE_LIMIT_CHANGED\14INP_ORIGDSTADDR" \
+    "\13INP_RATE_LIMIT_CHANGED\14INP_ORIGDSTADDR\15INP_RECVDSTPORT" \
     "\22INP_2PCP_SET\23INP_2PCP_BIT0\24INP_2PCP_BIT1" \
     "\25INP_2PCP_BIT2"
 

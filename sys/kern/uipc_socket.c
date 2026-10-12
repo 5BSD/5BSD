@@ -1057,14 +1057,19 @@ socreate(int dom, struct socket **aso, int type, int proto,
 	struct socket *so;
 	int error;
 
-#ifdef COMPAT_FREEBSD15
-	/* divert(4) historically abuses PF_INET.  Use PF_DIVERT instead. */
-	if (__predict_false(dom == PF_INET && type == SOCK_RAW &&
-	    proto == __IPPROTO_DIVERT))
-		dom = PF_DIVERT;
-#endif
-
 	prp = pffindproto(dom, type, proto);
+#ifdef COMPAT_FREEBSD15
+	/*
+	 * ipdivert(4) historically abuses PF_INET.  Unless pf provides the
+	 * OpenBSD divert(4) protocol there, use PF_DIVERT instead.
+	 */
+	if (__predict_false(dom == PF_INET && type == SOCK_RAW &&
+	    proto == __IPPROTO_DIVERT &&
+	    (prp == NULL || prp->pr_protocol != __IPPROTO_DIVERT))) {
+		dom = PF_DIVERT;
+		prp = pffindproto(dom, type, proto);
+	}
+#endif
 	if (prp == NULL) {
 		/* No support for domain. */
 		if (pffinddomain(dom) == NULL)
@@ -4027,6 +4032,36 @@ so_setsockopt(struct socket *so, int level, int optname, void *optval,
 	return (sosetopt(so, &sopt));
 }
 
+/*
+ * SO_BINDANY (OpenBSD): allow binding to and sending from addresses that
+ * are not local.  It is the socket-level spelling of IP_BINDANY and
+ * IPV6_BINDANY and is handled by the protocol.
+ */
+static int
+so_bindany_opt(struct socket *so, struct sockopt *sopt)
+{
+	struct sockopt popt;
+
+	popt = *sopt;
+	switch (so->so_proto->pr_domain->dom_family) {
+#ifdef INET
+	case AF_INET:
+		popt.sopt_level = IPPROTO_IP;
+		popt.sopt_name = IP_BINDANY;
+		break;
+#endif
+#ifdef INET6
+	case AF_INET6:
+		popt.sopt_level = IPPROTO_IPV6;
+		popt.sopt_name = IPV6_BINDANY;
+		break;
+#endif
+	default:
+		return (ENOPROTOOPT);
+	}
+	return (so->so_proto->pr_ctloutput(so, &popt));
+}
+
 int
 sosetopt(struct socket *so, struct sockopt *sopt)
 {
@@ -4108,6 +4143,10 @@ stdopt:
 
 		case SO_SETFIB:
 			error = so->so_proto->pr_ctloutput(so, sopt);
+			break;
+
+		case SO_BINDANY:
+			error = so_bindany_opt(so, sopt);
 			break;
 
 		case SO_USER_COOKIE:
@@ -4368,6 +4407,10 @@ integer:
 			optval = so->so_fibnum;
 			SOCK_UNLOCK(so);
 			goto integer;
+
+		case SO_BINDANY:
+			error = so_bindany_opt(so, sopt);
+			break;
 
 		case SO_DOMAIN:
 			optval = so->so_proto->pr_domain->dom_family;

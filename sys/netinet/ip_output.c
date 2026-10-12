@@ -1186,6 +1186,7 @@ ip_ctloutput(struct socket *so, struct sockopt *sopt)
 		case IP_RECVOPTS:
 		case IP_RECVRETOPTS:
 		case IP_ORIGDSTADDR:
+		case IP_RECVDSTPORT:
 		case IP_RECVDSTADDR:
 		case IP_RECVTTL:
 		case IP_RECVIF:
@@ -1250,6 +1251,10 @@ ip_ctloutput(struct socket *so, struct sockopt *sopt)
 
 			case IP_ORIGDSTADDR:
 				OPTSET2(INP_ORIGDSTADDR, optval);
+				break;
+
+			case IP_RECVDSTPORT:
+				OPTSET2(INP_RECVDSTPORT, optval);
 				break;
 
 			case IP_RECVTTL:
@@ -1406,6 +1411,7 @@ ip_ctloutput(struct socket *so, struct sockopt *sopt)
 		case IP_RECVOPTS:
 		case IP_RECVRETOPTS:
 		case IP_ORIGDSTADDR:
+		case IP_RECVDSTPORT:
 		case IP_RECVDSTADDR:
 		case IP_RECVTTL:
 		case IP_RECVIF:
@@ -1452,6 +1458,10 @@ ip_ctloutput(struct socket *so, struct sockopt *sopt)
 
 			case IP_ORIGDSTADDR:
 				optval = OPTBIT2(INP_ORIGDSTADDR);
+				break;
+
+			case IP_RECVDSTPORT:
+				optval = OPTBIT2(INP_RECVDSTPORT);
 				break;
 
 			case IP_RECVTTL:

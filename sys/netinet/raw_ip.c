@@ -204,6 +204,7 @@ rip_append(struct inpcb *inp, struct ip *ip, struct mbuf *m,
 
 struct rip_inp_match_ctx {
 	struct ip *ip;
+	struct in_addr laddr;	/* ip_dst, or where a filter diverted it */
 	int proto;
 };
 
@@ -220,7 +221,7 @@ rip_inp_match(const struct inpcb *inp, void *v)
 		return (false);
 #endif
 	if (!in_nullhost(inp->inp_laddr) &&
-	    !in_hosteq(inp->inp_laddr, ctx->ip->ip_dst))
+	    !in_hosteq(inp->inp_laddr, ctx->laddr))
 		return (false);
 	if (!in_nullhost(inp->inp_faddr) &&
 	    !in_hosteq(inp->inp_faddr, ctx->ip->ip_src))
@@ -248,6 +249,19 @@ rip_input(struct mbuf **mp, int *offp, int proto)
 	int appended, fib;
 
 	M_ASSERTPKTHDR(m);
+
+	/*
+	 * A packet filter diverted the packet to a local address (pf
+	 * divert-to): deliver it to raw sockets bound to that address.
+	 */
+	ctx.laddr = ctx.ip->ip_dst;
+	if (m->m_flags & M_IP_NEXTHOP) {
+		struct m_tag *fwd_tag;
+
+		fwd_tag = m_tag_find(m, PACKET_TAG_IPFORWARD, NULL);
+		if (fwd_tag != NULL)
+			ctx.laddr = ((struct sockaddr_in *)(fwd_tag + 1))->sin_addr;
+	}
 
 	*mp = NULL;
 	appended = 0;
