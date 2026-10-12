@@ -15,8 +15,9 @@ S="ssh -F /usr/obj/5BSD-pf-parity/keys/ssh_config $host"
 C=/usr/local/share/pf-parity/pfctl-compat
 
 $S '[ -f /root/pf-parity-disposable ]' || { echo "not a disposable guest" >&2; exit 1; }
+# Refresh mtimes so generated parser/object files cannot outlive staged inputs.
 tar -C "$src/contrib/openbsd-pf" -cf - regress sbin sys share usr.sbin etc |
-    $S 'mkdir -p /usr/src && tar -C /usr/src -xf -'
+    $S 'mkdir -p /usr/src && tar -m -C /usr/src -xf -'
 tar -C "$src/sys/netpfil/openbsd-pf/user" -cf - openbsd_compat.h util.h sys pfctl_jail.c |
-    $S "rm -rf $C && mkdir -p $C && tar -C $C -xf - &&
-	cc -c -O2 -o $C/pfctl_jail.o $C/pfctl_jail.c && echo STAGED"
+    $S "rm -rf $C && mkdir -p $C && tar -m -C $C -xf - &&
+	cc -c -O2 -fPIE -o $C/pfctl_jail.o $C/pfctl_jail.c && echo STAGED"
