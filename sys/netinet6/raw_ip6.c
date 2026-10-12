@@ -783,7 +783,8 @@ rip6_bind(struct socket *so, struct sockaddr *nam, struct thread *td)
 
 	NET_EPOCH_ENTER(et);
 	if (!IN6_IS_ADDR_UNSPECIFIED(&addr->sin6_addr) &&
-	    (ifa = ifa_ifwithaddr_fib((struct sockaddr *)addr, fib)) == NULL) {
+	    (ifa = ifa_ifwithaddr_fib((struct sockaddr *)addr, fib)) == NULL &&
+	    (inp->inp_flags & INP_BINDANY) == 0) {
 		NET_EPOCH_EXIT(et);
 		return (EADDRNOTAVAIL);
 	}
