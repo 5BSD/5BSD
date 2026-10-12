@@ -281,6 +281,60 @@
       "git_blob": "3eb1e4f06124b2c897debd7598a89509b06bf1f6",
       "local": "usr.sbin/tcpdump/print-pfsync.c",
       "tier": "vendor-source"
+    },
+    {
+      "path": "sys/net/hfsc.h",
+      "git_blob": "1c70a672965a7c3ad3e4199735d7fd320c854cb6",
+      "local": "sys/net/hfsc.h",
+      "tier": "vendor-source"
+    },
+    {
+      "path": "sys/net/hfsc.c",
+      "git_blob": "d88a5e324066fc05c2f7f0014e0593f04c8e33fa",
+      "local": "sys/net/hfsc.c",
+      "tier": "vendor-source"
+    },
+    {
+      "path": "sys/net/fq_codel.h",
+      "git_blob": "97d6ba44943e441ee033ab9d0509a779eed34d01",
+      "local": "sys/net/fq_codel.h",
+      "tier": "vendor-source"
+    },
+    {
+      "path": "sys/net/fq_codel.c",
+      "git_blob": "2ebed88d9ac2459284819517dc4737dd661a37bf",
+      "local": "sys/net/fq_codel.c",
+      "tier": "vendor-source"
+    },
+    {
+      "path": "sys/net/radix.c",
+      "git_blob": "1ba41008c9034fb7389fef725259a9e0653b2050",
+      "local": "sys/net/radix.c",
+      "tier": "vendor-source"
+    },
+    {
+      "path": "sys/net/radix.h",
+      "git_blob": "da9babbbf9ea8b8a30d23784bb0d8861c17ad37a",
+      "local": "sys/net/radix.h",
+      "tier": "vendor-source"
+    },
+    {
+      "path": "sys/netinet/inet_nat64.c",
+      "git_blob": "cc99fe855a7d82b4b61f7bfdff3ece19205c4be8",
+      "local": "sys/netinet/inet_nat64.c",
+      "tier": "vendor-source"
+    },
+    {
+      "path": "sys/netinet/in4_cksum.c",
+      "git_blob": "bbbf50b39c34e53391976ded48d3c15b69c6ddb5",
+      "local": "sys/netinet/in4_cksum.c",
+      "tier": "vendor-source"
+    },
+    {
+      "path": "etc/pf.os",
+      "git_blob": "41c1bc6a482790865e8341ed02c2b331a4800a4a",
+      "local": "etc/pf.os",
+      "tier": "vendor-source"
     }
   ],
   "verification": "git -C <openbsd-src> diff --stat <commit> -- <path> must be empty against the local copy; tree hashes are git tree object IDs at the pinned commit.",
