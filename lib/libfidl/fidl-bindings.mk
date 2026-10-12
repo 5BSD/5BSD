@@ -79,5 +79,11 @@ ${FIDLGEN_SRCS.${_s}} \
     ${_FIDLGEN_HEADERS:@f@fidlgen/${_s}/fidl/${FIDL_LIBRARY.${_s}}/${f}@}: \
     fidlgen/${_s}.stamp
 .NOPATH: fidlgen/${_s}.stamp ${FIDLGEN_SRCS.${_s}}
+# The generator leaves unchanged files untouched, so a source can keep its
+# old time while a header it includes (c/bridge.h) changes: rebuild every
+# object of the set whenever the set is regenerated.
+.for _f in ${FIDLGEN_SRCS.${_s}:R}
+${_f}.o ${_f}.pico ${_f}.po ${_f}.pieo ${_f}.nossppico: fidlgen/${_s}.stamp
+.endfor
 .endfor
 .endif
