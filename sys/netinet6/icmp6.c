@@ -2148,6 +2148,31 @@ icmp6_reflect(struct mbuf *m, size_t off)
 		error = in6_selectsrc_addr(M_GETFIB(m), &dst6,
 		    scopeid, NULL, &src6, &hlim);
 
+		/*
+		 * The way back may be a reject or blackhole route that a
+		 * packet filter overrides (pf reply-to): answer from an
+		 * address of the interface the packet came in on, as
+		 * OpenBSD answers from the route's interface address.
+		 */
+		if ((error == EHOSTUNREACH || error == ENETUNREACH) &&
+		    m->m_pkthdr.rcvif != NULL) {
+			struct ifaddr *ifa;
+			struct in6_addr *a6;
+
+			CK_STAILQ_FOREACH(ifa, &m->m_pkthdr.rcvif->if_addrhead,
+			    ifa_link) {
+				if (ifa->ifa_addr->sa_family != AF_INET6)
+					continue;
+				a6 = &((struct sockaddr_in6 *)
+				    ifa->ifa_addr)->sin6_addr;
+				if (IN6_IS_ADDR_LINKLOCAL(a6))
+					continue;
+				src6 = *a6;
+				hlim = V_ip6_defhlim;
+				error = 0;
+				break;
+			}
+		}
 		if (error) {
 			char ip6buf[INET6_ADDRSTRLEN];
 			nd6log((LOG_DEBUG,
