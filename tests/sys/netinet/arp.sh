@@ -148,7 +148,7 @@ arp_lookup_host_body() {
 
 	# get jail b's MAC address
 	eth="$(ifconfig -j ${jname}b ${epair0}b |
-		sed -nE "s/^\tether ([0-9a-f:]*)$/\1/p")"
+		sed -nE "s/^\tlladdr ([0-9a-f:]*)$/\1/p")"
 
 	# no entry yet
 	atf_check -s exit:1 -o match:"\(${ipb}\) -- no entry" \
@@ -194,7 +194,7 @@ static_body() {
 
 	atf_check ifconfig -j ${jname}a ${epair0}a inet ${ipa}/24
 	eth="$(ifconfig -j ${jname}b ${epair0}b |
-		sed -nE "s/^\tether ([0-9a-f:]*)$/\1/p")"
+		sed -nE "s/^\tlladdr ([0-9a-f:]*)$/\1/p")"
 
 	# Expected outputs
 	permanent=\

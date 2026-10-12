@@ -48,7 +48,7 @@ pndp_add_gu_success_body() {
 	jexec ${jname} ifconfig ${epair0}a up
 
 	jexec ${jname} ifconfig ${epair0}a inet6 2001:db8::1/64
-	proxy_mac=`jexec ${jname} ifconfig ${epair0}a ether | awk '$1~/ether/{print$2}'`
+	proxy_mac=`jexec ${jname} ifconfig ${epair0}a ether | awk '$1~/lladdr/{print$2}'`
 
 	# wait for DAD to complete
 	while [ `jexec ${jname} ifconfig | grep inet6 | grep -c tentative` != "0" ]; do
@@ -90,7 +90,7 @@ pndp_del_gu_success_body() {
 	jexec ${jname} ifconfig ${epair0}a up
 
 	jexec ${jname} ifconfig ${epair0}a inet6 2001:db8::1/64
-	proxy_mac=`jexec ${jname} ifconfig ${epair0}a ether | awk '$1~/ether/{print$2}'`
+	proxy_mac=`jexec ${jname} ifconfig ${epair0}a ether | awk '$1~/lladdr/{print$2}'`
 
 	# wait for DAD to complete
 	while [ `jexec ${jname} ifconfig | grep inet6 | grep -c tentative` != "0" ]; do
@@ -137,7 +137,7 @@ pndp_ifdestroy_success_body() {
 	jexec ${jname} ifconfig ${epair0}a up
 
 	jexec ${jname} ifconfig ${epair0}a inet6 2001:db8::1/64
-	proxy_mac=`jexec ${jname} ifconfig ${epair0}a ether | awk '$1~/ether/{print$2}'`
+	proxy_mac=`jexec ${jname} ifconfig ${epair0}a ether | awk '$1~/lladdr/{print$2}'`
 
 	# wait for DAD to complete
 	while [ `jexec ${jname} ifconfig | grep inet6 | grep -c tentative` != "0" ]; do
@@ -176,7 +176,7 @@ pndp_neighbor_advert_body() {
 	jexec ${jname_a} ndp -i ${epair0}a -- -disabled
 	jexec ${jname_a} ifconfig ${epair0}a up
 	jexec ${jname_a} ifconfig ${epair0}a inet6 2001:db8::1/64
-	proxy_mac=`jexec ${jname_a} ifconfig ${epair0}a ether | awk '$1~/ether/{print$2}'`
+	proxy_mac=`jexec ${jname_a} ifconfig ${epair0}a ether | awk '$1~/lladdr/{print$2}'`
 	# wait for DAD to complete
 	while [ `jexec ${jname_a} ifconfig | grep inet6 | grep -c tentative` != "0" ]; do
 		sleep 0.1

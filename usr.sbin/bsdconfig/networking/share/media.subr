@@ -86,8 +86,12 @@ f_ifconfig_media()
 	ifconfig -m "$interface" 2> /dev/null | awk \
 	'
 		BEGIN { media_found = 0 }
+		( media_found == 1 ) \
 		{
-			if ( media_found == 1 ) { print; next }
+			# Supported media are listed two tabs deep; status
+			# lines (addresses, ...) may follow the list.
+			if ( $0 ~ /^\t\t/ ) { print; next }
+			exit
 		}
 		( $1 $2 == "supported" "media:" ) \
 		{

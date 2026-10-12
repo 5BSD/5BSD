@@ -246,7 +246,7 @@ EOF
 	fi
 	set -- $mynetworks
 	myiface=$1
-	myaddr=$(ifconfig $myiface ether | awk '/ether/ { print $2 }')
+	myaddr=$(ifconfig $myiface ether | awk '/lladdr/ { print $2 }')
 	printf "instance-id: iid-local01\n" > "${PWD}"/media/nuageinit/meta-data
 	cat > media/nuageinit/user-data << EOF
 #cloud-config
@@ -449,7 +449,7 @@ config2_network_body()
 	fi
 	set -- $mynetworks
 	myiface=$1
-	myaddr=$(ifconfig $myiface ether | awk '/ether/ { print $2 }')
+	myaddr=$(ifconfig $myiface ether | awk '/lladdr/ { print $2 }')
 cat > media/nuageinit/network_data.json << EOF
 {
     "links": [
@@ -516,7 +516,7 @@ config2_network_static_v4_body()
 	fi
 	set -- $mynetworks
 	myiface=$1
-	myaddr=$(ifconfig $myiface ether | awk '/ether/ { print $2 }')
+	myaddr=$(ifconfig $myiface ether | awk '/lladdr/ { print $2 }')
 cat > media/nuageinit/network_data.json << EOF
 {
     "links": [
@@ -573,7 +573,7 @@ config2_network_dns_body()
 	fi
 	set -- $mynetworks
 	myiface=$1
-	myaddr=$(ifconfig $myiface ether | awk '/ether/ { print $2 }')
+	myaddr=$(ifconfig $myiface ether | awk '/lladdr/ { print $2 }')
 cat > media/nuageinit/network_data.json << EOF
 {
     "links": [

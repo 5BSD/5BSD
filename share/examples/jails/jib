@@ -223,7 +223,7 @@ derive_mac()
 	# the MAC address will be recalculated to a new, similarly
 	# unique value preventing conflict.
 	#
-	__iface_devid=$( ifconfig $__iface ether | awk '/ether/,$0=$2' )
+	__iface_devid=$( ifconfig $__iface ether | awk '/lladdr/,$0=$2' )
 	# ??:??:??:II:II:II
 	__new_devid=${__iface_devid#??:??:??} # => :II:II:II
 	# => :SS:SS:II:II:II

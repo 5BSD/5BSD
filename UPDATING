@@ -65,6 +65,18 @@ NOTE TO PEOPLE WHO THINK THAT FreeBSD 16.x IS SLOW:
 	the rescue pfctl were converted.  snmp_pf's pfAltq objects describe
 	pf.conf "queue" definitions.
 
+	ifconfig(8) prints interfaces in OpenBSD's format: no "metric 0" in the
+	header line; "lladdr" instead of "ether" for Ethernet addresses; an
+	"index" line; interface specific status, groups, media and link status
+	before the addresses; enabled capabilities ("options="), nd6 options,
+	fib and MAC label last.  Scripts that parse "ether" must look for
+	"lladdr" ("ifconfig IF ether" still selects the link-level address).
+	A missing interface is reported as "IF: no such interface".
+	"ifconfig IF -inet6" disables IPv6 on an interface and removes its IPv6
+	addresses, as on OpenBSD.  The flags in the status line are OpenBSD's
+	IFF_ and IFXF_ bits and names (STATICARP, MONITOR, LRO); 5BSD-only
+	flags such as PPROMISC, STICKYARP, DYING and LOWER_UP are not shown.
+
 20261012:
 	pf is OpenBSD's packet filter (pf/parity).  New and changed interfaces:
 

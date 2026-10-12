@@ -280,7 +280,7 @@ derive_mac()
 	# the MAC address will be recalculated to a new, similarly
 	# unique value preventing conflict.
 	#
-	__iface_devid=$( ifconfig $__iface ether | awk '/ether/,$0=$2' )
+	__iface_devid=$( ifconfig $__iface ether | awk '/lladdr/,$0=$2' )
 	# ??:??:??:II:II:II
 	__new_devid=${__iface_devid#??:??:??} # => :II:II:II
 	# => :SS:SS:II:II:II
@@ -368,14 +368,14 @@ jng_jiface_mac()
 	local __mac
 
 	__mac=$( ifconfig "$__jiface" ether 2> /dev/null |
-		awk '/ether/ { print $2; exit }' )
+		awk '/lladdr/ { print $2; exit }' )
 	if [ ! "$__mac" -a "$__jail" ]; then
 		#
 		# After vnet.interface takes the eiface, it is gone
 		# from the host ifconfig; netgraph node remains.
 		#
 		__mac=$( jexec "$__jail" ifconfig "$__jiface" ether \
-			2> /dev/null | awk '/ether/ { print $2; exit }' )
+			2> /dev/null | awk '/lladdr/ { print $2; exit }' )
 	fi
 	eval $__var_to_set=\"\$__mac\"
 	[ "$__mac" ]
@@ -534,7 +534,7 @@ jng_bridge()
 		jiface_devid=
 		if [ "$clone_mac" ]; then
 			jiface_devid=$( ifconfig $iface ether |
-				awk '/ether/,$0=$2' )
+				awk '/lladdr/,$0=$2' )
 		elif [ ! "$no_derive" ]; then
 			derive_mac $iface "$name" jiface_devid
 		fi
