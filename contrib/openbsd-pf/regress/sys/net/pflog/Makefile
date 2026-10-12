@@ -27,7 +27,8 @@ N =		${N1}
 NUMS =		${N1} ${N2} ${N3}
 IPS =		1 2 3 4 5 6 11 12 14
 
-UID !!=		id -u
+# 5BSD: portable immediate shell assignment (bmake has no !!=).
+UID !=		id -u
 
 .include <bsd.own.mk>
 
@@ -59,8 +60,9 @@ regress:
 	@echo SKIPPED
 .endif
 
-SYSCTL_FORWARDING !=	sysctl net.inet.ip.forwarding
-SYSCTL_FORWARDING6 !=	sysctl net.inet6.ip6.forwarding
+# 5BSD: use values, independent of sysctl output label formatting.
+SYSCTL_FORWARDING !=	sysctl -n net.inet.ip.forwarding
+SYSCTL_FORWARDING6 !=	sysctl -n net.inet6.ip6.forwarding
 .if ${SYSCTL_FORWARDING:C/.*=//} != 1 || ${SYSCTL_FORWARDING6:C/.*=//} != 1
 # Do not skip, but run tests.  Although they fail, their packets are logged.
 REGRESS_EXPECTED_FAILURES =	run-ping-14 run-ping6-14
