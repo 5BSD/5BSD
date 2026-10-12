@@ -28,6 +28,26 @@ NOTE TO PEOPLE WHO THINK THAT FreeBSD 16.x IS SLOW:
 	at runtime, run "ln -s 'abort:false,junk:false' /etc/malloc.conf".)
 
 20261012:
+	Routing domains (rdomain(4)) as on OpenBSD, built on FIBs.  A FIB is
+	a routing table; "ifconfig IF rdomain N" makes FIB N routing domain N
+	with its loopback lo<N> and moves IF into it (dropping its addresses).
+	Inside a domain, addresses are local and sockets receive packets only
+	in that domain, so domains can reuse addresses.  FIBs made with
+	net.fibs stay tables of domain 0: nothing changes until a domain is
+	created.  Entering a FIB of another routing domain (setfib(2),
+	SO_SETFIB, now also called SO_RTABLE) requires privilege.
+
+	New: ifconfig "rdomain N", "-rdomain" and an " rdomain N" field in
+	the status line; ifconfig creates a missing cloneable interface when
+	it is configured (OpenBSD); route -T rtable ("add" creates the table),
+	"route -T N exec cmd" and an OpenBSD-style "route show" table dump;
+	route -iface accepts the interface's address as gateway; ping -V
+	rtable; SIOC[SG]IFRDOMAIN, the sysctl NET_RT_TABLE (struct
+	rt_tableinfo) and the vether(4) interface (device vether, in GENERIC).
+	pf's "on rdomain N", "rtable N" and its state keys use the routing
+	domain.
+
+20261012:
 	pf is OpenBSD's packet filter (pf/parity).  New and changed interfaces:
 
 	Each vnet runs its own pf: a vnet jail has its own rules, states,
