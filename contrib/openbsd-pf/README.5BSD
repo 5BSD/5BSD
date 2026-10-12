@@ -53,6 +53,11 @@ the difference (list: git diff of contrib/openbsd-pf/sys/net against the
 import commits; summary below).  Keep them minimal so an update is close
 to a re-import.
 
+5BSD edits in usr.sbin (marked "5BSD"):
+  authpf/authpf.c  without fdescfs(4) on /dev/fd, /dev/fd/N above 2 does
+                 not exist: pass /dev/pf to pfctl as standard input
+                 (/dev/fd/0) instead.
+
 5BSD edits in sys/net (all marked "5BSD"):
   VNET (marked "5BSD: VNET"): global state is defined with PF_VNET_DEFINE*
                  and declared with PF_VNET_DECLARE* (pfvar.h; plain

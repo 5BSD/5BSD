@@ -795,6 +795,12 @@ change_filter(int add, const char *luser, const char *ipsrc)
 			}
 		}
 		pargv[2] = fdpath;
+		/*
+		 * 5BSD: /dev/fd/N above 2 exists only with fdescfs(4) mounted
+		 * on /dev/fd; otherwise pass the device as standard input.
+		 */
+		if (access(fdpath, F_OK) == -1)
+			pargv[2] = "/dev/fd/0";
 		pargv[5] = rsn;
 		pargv[7] = userstr;
 		if (user_ip) {
@@ -816,6 +822,10 @@ change_filter(int add, const char *luser, const char *ipsrc)
 			if (setresgid(gid, gid, gid) == -1) {
 				err(1, "setregid");
 			}
+			/* 5BSD: see the fdescfs note above */
+			if (strcmp(pargv[2], "/dev/fd/0") == 0 &&
+			    dup2(dev, STDIN_FILENO) == -1)
+				err(1, "dup2");
 			execv(PATH_PFCTL, pargv);
 			warn("exec of %s failed", PATH_PFCTL);
 			_exit(1);

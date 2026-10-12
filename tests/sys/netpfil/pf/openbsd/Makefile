@@ -22,6 +22,11 @@ TEST_METADATA.divert_test+=	required_user="root" \
 				is_exclusive="true"
 ${PACKAGE}FILES+=	tproxy.py
 
+# authpf(8) sessions load and remove their rules.
+ATF_TESTS_SH+=	authpf_test
+TEST_METADATA.authpf_test+=	required_user="root" \
+				is_exclusive="true"
+
 # 5BSD extension: the "jail" rule option.
 ATF_TESTS_SH+=	jail_test
 TEST_METADATA.jail_test+=	required_user="root" \
