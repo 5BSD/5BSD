@@ -577,7 +577,12 @@ obsd_ip_fragment(struct mbuf *m, struct mbuf_list *ml, struct ifnet *ifp,
 	m->m_pkthdr.csum_flags |= CSUM_IP;
 	error = ip_fragment(ip, &m, mtu, ifp->if_hwassist);
 	if (error) {
-		m_freem(m);
+		/* Native failure may leave a partially constructed packet chain. */
+		for (; m != NULL; m = n) {
+			n = m->m_nextpkt;
+			m->m_nextpkt = NULL;
+			m_freem(m);
+		}
 		return (error);
 	}
 	for (; m != NULL; m = n) {
@@ -597,20 +602,28 @@ obsd_ip6_fragment(struct mbuf *m, struct mbuf_list *ml, int hlen,
 	int error;
 
 	ml_init(ml);
+	/* Match OpenBSD's minimum fragment payload; avoid a zero-length loop. */
+	if (mtu < (u_long)hlen + sizeof(struct ip6_frag) + 8) {
+		m_freem(m);
+		return (EMSGSIZE);
+	}
 	/* OpenBSD passes the MTU, 5BSD the payload of one fragment. */
 	error = ip6_fragment(NULL, m, hlen, nextproto,
 	    (mtu - hlen - sizeof(struct ip6_frag)) & ~7,
 	    htonl(ip6_randomid()));
-	if (error) {
-		m_freem(m);
-		return (error);
-	}
-	for (; m != NULL; m = n) {
+	/* Native ip6_fragment() appends fragments after the original packet. */
+	n = m->m_nextpkt;
+	m->m_nextpkt = NULL;
+	m_freem(m);
+	for (m = n; m != NULL; m = n) {
 		n = m->m_nextpkt;
 		m->m_nextpkt = NULL;
-		ml_enqueue(ml, m);
+		if (error != 0)
+			m_freem(m);
+		else
+			ml_enqueue(ml, m);
 	}
-	return (0);
+	return (error);
 }
 #endif
 

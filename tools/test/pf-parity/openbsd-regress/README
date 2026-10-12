@@ -51,3 +51,19 @@ fixture output/diff alongside the capture: an accounting pass does not turn
 a strict fixture failure into a pass. `FIXTURE_EXIT=N`, when recorded in the
 output, is retained separately in the JSON result. This check runs offline
 and measures no timing or performance.
+
+Fragment ownership and packet accounting
+
+`test_fragment_contract.py` compiles the actual IPv4/IPv6 adapters against
+native fragment-chain ownership stubs. It checks original packet ownership,
+partial-allocation cleanup, and the IPv6 minimum payload before calling the
+native fragmenter. This is not kernel allocation-failure injection.
+
+`audit_fragment6.py CAPTURE.pcap --expected-flows 3` checks Ethernet captures
+of the unchanged upstream `run-frag6-ext` case. It requires exactly two
+ICMPv6 fragments per flow with the fixture payload, and rejects extra
+fragment headers of another protocol. Capture on the downstream helper to
+verify actual transmitted packets: an echo reply alone does not detect a
+malformed original emitted alongside the valid fragments. Retain the raw
+fixture status and before/after captures separately. This audit measures no
+timing or performance.
