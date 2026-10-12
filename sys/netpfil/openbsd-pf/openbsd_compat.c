@@ -813,6 +813,20 @@ obsd_hook_add(struct ifnet *ifp, struct task *t, int kind)
 	h->h_task = t;
 	h->h_kind = kind;
 	mtx_lock(&obsd_ifhook_mtx);
+	{
+		/* OpenBSD links the task itself: it is on a list at most once. */
+		struct obsd_ifhook *o;
+
+		TAILQ_FOREACH(o, &obsd_ifhooks, h_entry)
+			if (o->h_ifp == ifp && o->h_task == t &&
+			    o->h_kind == kind)
+				break;
+		if (o != NULL) {
+			mtx_unlock(&obsd_ifhook_mtx);
+			free(h, M_PF);
+			return;
+		}
+	}
 	TAILQ_INSERT_TAIL(&obsd_ifhooks, h, h_entry);
 	mtx_unlock(&obsd_ifhook_mtx);
 }
@@ -827,7 +841,6 @@ obsd_hook_del(struct ifnet *ifp, struct task *t, int kind)
 		if (h->h_ifp == ifp && h->h_task == t && h->h_kind == kind) {
 			TAILQ_REMOVE(&obsd_ifhooks, h, h_entry);
 			free(h, M_PF);
-			break;
 		}
 	}
 	mtx_unlock(&obsd_ifhook_mtx);

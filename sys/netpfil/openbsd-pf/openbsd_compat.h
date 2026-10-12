@@ -1351,6 +1351,9 @@ SDT_PROBE_DECLARE(pf, table, addr, update);
 #define	INADDR_PFSYNC_GROUP	htonl(0xe00000f0)	/* 224.0.0.240 */
 #undef	INADDR_ALLHOSTS_GROUP
 #define	INADDR_ALLHOSTS_GROUP	htonl(0xe0000001)	/* 224.0.0.1 */
+/* Likewise OpenBSD's IN_MULTICAST() takes a network-order address. */
+#undef	IN_MULTICAST
+#define	IN_MULTICAST(a)		((ntohl((u_int32_t)(a)) & 0xf0000000) == 0xe0000000)
 #endif
 
 #endif /* _OPENBSD_PF_COMPAT_H_ */
