@@ -335,6 +335,41 @@
       "git_blob": "41c1bc6a482790865e8341ed02c2b331a4800a4a",
       "local": "etc/pf.os",
       "tier": "vendor-source"
+    },
+    {
+      "path": "share/man/man4/divert.4",
+      "git_blob": "c15772bc635618de030702145470ae069d3d6869",
+      "local": "share/man/man4/divert.4"
+    },
+    {
+      "path": "share/man/man4/pf.4",
+      "git_blob": "e0a506f8a1e662511060946a388c50e7720ea0d6",
+      "local": "share/man/man4/pf.4"
+    },
+    {
+      "path": "share/man/man4/pflog.4",
+      "git_blob": "6fb0c845eb55d16b8de5ccc3add6b9dd662400ee",
+      "local": "share/man/man4/pflog.4"
+    },
+    {
+      "path": "share/man/man4/pflow.4",
+      "git_blob": "bdcf5e959469ca894ec10647db56d8de5e9b0f08",
+      "local": "share/man/man4/pflow.4"
+    },
+    {
+      "path": "share/man/man4/pfsync.4",
+      "git_blob": "59909deb348408aece594d919779fb126a2b2ece",
+      "local": "share/man/man4/pfsync.4"
+    },
+    {
+      "path": "share/man/man5/pf.conf.5",
+      "git_blob": "3a383b23517791d12503adc67f2a3bb5d3b2c778",
+      "local": "share/man/man5/pf.conf.5"
+    },
+    {
+      "path": "share/man/man5/pf.os.5",
+      "git_blob": "aaf432cb3eccc7007b883e138e1a1a0483163019",
+      "local": "share/man/man5/pf.os.5"
     }
   ],
   "verification": "git -C <openbsd-src> diff --stat <commit> -- <path> must be empty against the local copy; tree hashes are git tree object IDs at the pinned commit.",
