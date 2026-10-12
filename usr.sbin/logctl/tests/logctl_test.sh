@@ -77,10 +77,10 @@ severity_names_head()
 }
 severity_names_body()
 {
-	logctl="$(atf_get_srcdir)/logctl_test_bin"
+	logctl="$(atf_get_srcdir)/logctl_success_bin"
 	for severity in trace debug info warn error fatal; do
 		atf_check -s exit:69 -e match:'open system.Log' \
-		    "$logctl" emit tests tool "$severity" message
+		    env CMP_TEST_FAIL=open "$logctl" emit tests tool "$severity" message
 	done
 }
 
@@ -133,11 +133,11 @@ operation_failures_body()
 }
 unavailable_body()
 {
-	logctl="$(atf_get_srcdir)/logctl_test_bin"
-	atf_check -s exit:69 -e match:'open system.Log' "$logctl" stats
-	atf_check -s exit:69 -e match:'open system.Log' "$logctl" flush
+	logctl="$(atf_get_srcdir)/logctl_success_bin"
+	atf_check -s exit:69 -e match:'open system.Log' env CMP_TEST_FAIL=open "$logctl" stats
+	atf_check -s exit:69 -e match:'open system.Log' env CMP_TEST_FAIL=open "$logctl" flush
 	atf_check -s exit:69 -e match:'open system.Log' \
-	    "$logctl" emit tests tool info message
+	    env CMP_TEST_FAIL=open "$logctl" emit tests tool info message
 }
 
 atf_init_test_cases()

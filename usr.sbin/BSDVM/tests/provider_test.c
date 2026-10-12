@@ -185,7 +185,7 @@ fixture_start(struct fixture *fixture, const char *label, bool raw)
 	}
 	ATF_REQUIRE_EQ(0, fidl_bsd_connection_create(client, FIDL_BSD_CLIENT,
 	    &fixture->client));
-	r.error = bsd_vm_v1_VM_GetProtocolInfo(fixture->client, &empty,
+	r.error = bsd_vm_v1_Vm_GetProtocolInfo(fixture->client, &empty,
 	    info_done, &r, &txid);
 	wait_result(fixture, &r);
 	ATF_REQUIRE_EQ(0, r.error);
@@ -278,7 +278,7 @@ vm_bind(struct fixture *fixture, uint32_t index, uint32_t backlog,
 
 	memset(r, 0, sizeof(*r));
 	r->fd = -1;
-	r->error = bsd_vm_v1_VM_Bind(fixture->client, &request, bind_done, r,
+	r->error = bsd_vm_v1_Vm_Bind(fixture->client, &request, bind_done, r,
 	    &txid);
 	wait_result(fixture, r);
 	ATF_REQUIRE_EQ(0, r->error);
@@ -294,7 +294,7 @@ vm_connect(struct fixture *fixture, uint32_t cid, uint32_t port,
 
 	memset(r, 0, sizeof(*r));
 	r->fd = -1;
-	r->error = bsd_vm_v1_VM_Connect(fixture->client, &request,
+	r->error = bsd_vm_v1_Vm_Connect(fixture->client, &request,
 	    connect_done, r, &txid);
 	wait_result(fixture, r);
 	ATF_REQUIRE_EQ(0, r->error);
@@ -309,7 +309,7 @@ vm_list(struct fixture *fixture, struct result *r)
 
 	memset(r, 0, sizeof(*r));
 	r->fd = -1;
-	r->error = bsd_vm_v1_VM_List(fixture->client, &empty, list_done, r,
+	r->error = bsd_vm_v1_Vm_List(fixture->client, &empty, list_done, r,
 	    &txid);
 	wait_result(fixture, r);
 	ATF_REQUIRE_EQ(0, r->error);

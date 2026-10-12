@@ -411,7 +411,7 @@ vmd_protocol_info(void *argument, struct fidl_bsd_connection *connection,
 	struct bsd_vm_v1_ProtocolInfo info = { VMD_WIRE_VERSION };
 	int error;
 
-	error = bsd_vm_v1_VM_GetProtocolInfo_reply(connection, request, &info);
+	error = bsd_vm_v1_Vm_GetProtocolInfo_reply(connection, request, &info);
 	ctx->negotiated = error == 0;
 	vmd_completed(connection, 0, 0, error);
 }
@@ -490,7 +490,7 @@ reply:
 	}
 	/* The bindings send a private duplicate; ours is closed either way. */
 	vmd_completed(connection, VMD_OP_VSOCK_BIND, status,
-	    bsd_vm_v1_VM_Bind_reply(connection, request, &reply));
+	    bsd_vm_v1_Vm_Bind_reply(connection, request, &reply));
 	if (s >= 0)
 		(void)close(s);
 }
@@ -555,7 +555,7 @@ reply:
 		reply.value.err = (uint32_t)status;
 	}
 	vmd_completed(connection, VMD_OP_VSOCK_CONNECT, status,
-	    bsd_vm_v1_VM_Connect_reply(connection, request, &reply));
+	    bsd_vm_v1_Vm_Connect_reply(connection, request, &reply));
 	if (s >= 0)
 		(void)close(s);
 }
@@ -588,14 +588,14 @@ vmd_list(void *argument, struct fidl_bsd_connection *connection,
 	syslog(LOG_INFO, "VSOCK_LIST (client %s) -> base=%u range=[%u,%u)",
 	    ctx->label, window->port_base, window->port_base, window->port_limit);
 	vmd_completed(connection, VMD_OP_VSOCK_LIST, 0,
-	    bsd_vm_v1_VM_List_reply(connection, request, &reply));
+	    bsd_vm_v1_Vm_List_reply(connection, request, &reply));
 }
 
 /* Serve one client on its own worker channel until it closes. */
 static int
 vmd_worker(int fd, const char *client, uint32_t window_base)
 {
-	static const struct bsd_vm_v1_VM_server handlers = {
+	static const struct bsd_vm_v1_Vm_server handlers = {
 		.GetProtocolInfo = vmd_protocol_info,
 		.Bind = vmd_bind,
 		.Connect = vmd_connect,
@@ -618,7 +618,7 @@ vmd_worker(int fd, const char *client, uint32_t window_base)
 	 * state on the duplicate the bindings send.
 	 */
 	fidl_bsd_connection_preserve_sent_inheritance(connection);
-	if (bsd_vm_v1_VM_bind(connection, &handlers, &ctx) != 0) {
+	if (bsd_vm_v1_Vm_bind(connection, &handlers, &ctx) != 0) {
 		fidl_bsd_connection_destroy(connection);
 		return (1);
 	}

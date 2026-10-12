@@ -465,7 +465,7 @@ fs_ref(struct bsd_filesystem_v1_ClaimRef *ref, uint8_t lifetime,
 
 /*
  * Send one legacy-shaped request record as its bsd.filesystem.v1 method.
- * Returns 0 with the legacy-shaped reply in reply/*lengthp and any delivered
+ * Returns 0 with the legacy-shaped reply in reply and *lengthp and any delivered
  * descriptor in *fdp (the reply's status may be an application errno), or an
  * errno on a transport failure, timeout or malformed reply, after which the
  * caller must drop the transport.  A record this client cannot express in the

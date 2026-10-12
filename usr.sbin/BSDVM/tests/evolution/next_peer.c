@@ -78,17 +78,17 @@ run_client(int fd)
 	uint32_t txid;
 
 	CHECK(fidl_bsd_connection_create(fd, FIDL_BSD_CLIENT, &c) == 0);
-	CHECK(bsd_vm_v1_VM_GetProtocolInfo(c, &empty, info_reply, &r,
+	CHECK(bsd_vm_v1_Vm_GetProtocolInfo(c, &empty, info_reply, &r,
 	    &txid) == 0);
 	pump(c, &r);
 	CHECK(r.error == 0 && r.value == 1);
 	r = (struct result){ 0 };
-	CHECK(bsd_vm_v1_VM_List(c, &empty, list_reply, &r, &txid) == 0);
+	CHECK(bsd_vm_v1_Vm_List(c, &empty, list_reply, &r, &txid) == 0);
 	pump(c, &r);
 	CHECK(r.error == 0 && r.value == 16);
 	/* The added strict method is unknown to a bsd:1 provider. */
 	r = (struct result){ 0 };
-	CHECK(bsd_vm_v1_VM_Probe(c, &empty, info_reply, &r, &txid) == 0);
+	CHECK(bsd_vm_v1_Vm_Probe(c, &empty, info_reply, &r, &txid) == 0);
 	pump(c, &r);
 	CHECK(r.error != 0);
 	CHECK(fidl_bsd_connection_error(c) != 0);
@@ -105,7 +105,7 @@ serve_info(void *x, struct fidl_bsd_connection *c, struct fidl_bsd_request *q,
 	struct bsd_vm_v1_ProtocolInfo v = { 1 };
 	(void)x;
 	(void)e;
-	CHECK(bsd_vm_v1_VM_GetProtocolInfo_reply(c, q, &v) == 0);
+	CHECK(bsd_vm_v1_Vm_GetProtocolInfo_reply(c, q, &v) == 0);
 }
 static void
 serve_bind(void *x, struct fidl_bsd_connection *c, struct fidl_bsd_request *q,
@@ -120,7 +120,7 @@ serve_bind(void *x, struct fidl_bsd_connection *c, struct fidl_bsd_request *q,
 	v.value.response.listener = fd;
 	v.value.response.cid = PEER_CID;
 	v.value.response.port = PEER_BASE + e->index;
-	CHECK(bsd_vm_v1_VM_Bind_reply(c, q, &v) == 0);
+	CHECK(bsd_vm_v1_Vm_Bind_reply(c, q, &v) == 0);
 	close(fd);
 }
 static void
@@ -133,7 +133,7 @@ serve_connect(void *x, struct fidl_bsd_connection *c,
 	};
 	(void)x;
 	(void)e;
-	CHECK(bsd_vm_v1_VM_Connect_reply(c, q, &v) == 0);
+	CHECK(bsd_vm_v1_Vm_Connect_reply(c, q, &v) == 0);
 }
 static void
 serve_list(void *x, struct fidl_bsd_connection *c, struct fidl_bsd_request *q,
@@ -148,7 +148,7 @@ serve_list(void *x, struct fidl_bsd_connection *c, struct fidl_bsd_request *q,
 	v.value.response.port_base = PEER_BASE;
 	v.value.response.port_limit = PEER_BASE + 16;
 	v.value.response.port_count = 16;
-	CHECK(bsd_vm_v1_VM_List_reply(c, q, &v) == 0);
+	CHECK(bsd_vm_v1_Vm_List_reply(c, q, &v) == 0);
 }
 static void
 serve_probe(void *x, struct fidl_bsd_connection *c, struct fidl_bsd_request *q,
@@ -157,13 +157,13 @@ serve_probe(void *x, struct fidl_bsd_connection *c, struct fidl_bsd_request *q,
 	struct bsd_vm_v1_ProtocolInfo v = { 2 };
 	(void)x;
 	(void)e;
-	CHECK(bsd_vm_v1_VM_Probe_reply(c, q, &v) == 0);
+	CHECK(bsd_vm_v1_Vm_Probe_reply(c, q, &v) == 0);
 }
 
 static int
 run_server(int fd)
 {
-	struct bsd_vm_v1_VM_server handlers = {
+	struct bsd_vm_v1_Vm_server handlers = {
 		.GetProtocolInfo = serve_info,
 		.Bind = serve_bind,
 		.Connect = serve_connect,
@@ -174,7 +174,7 @@ run_server(int fd)
 	unsigned served = 0;
 
 	CHECK(fidl_bsd_connection_create(fd, FIDL_BSD_SERVER, &c) == 0);
-	CHECK(bsd_vm_v1_VM_bind(c, &handlers, &served) == 0);
+	CHECK(bsd_vm_v1_Vm_bind(c, &handlers, &served) == 0);
 	while (fidl_bsd_connection_poll(c, 10000) == 0)
 		;
 	fidl_bsd_connection_destroy(c);

@@ -2866,12 +2866,13 @@ fs_destroy(void *argument, struct fidl_bsd_connection *connection,
 	struct tzfs_conn *conn = argument;
 	struct bsdfilesystem_request rq;
 	struct tzfs_msg m;
+	bool ok;
 	int status;
 
 	if (!fs_ready(conn, connection))
 		return;
-	status = fs_run(conn, request, &rq, sizeof(rq),
-	    fs_request_ref(&rq, BSDFILESYSTEM_OP_DESTROY, value), &m);
+	ok = fs_request_ref(&rq, BSDFILESYSTEM_OP_DESTROY, value);
+	status = fs_run(conn, request, &rq, sizeof(rq), ok, &m);
 	FS_EMPTY_REPLY(Destroy, connection, request, status);
 }
 
@@ -2882,12 +2883,13 @@ fs_unmount(void *argument, struct fidl_bsd_connection *connection,
 	struct tzfs_conn *conn = argument;
 	struct bsdfilesystem_request rq;
 	struct tzfs_msg m;
+	bool ok;
 	int status;
 
 	if (!fs_ready(conn, connection))
 		return;
-	status = fs_run(conn, request, &rq, sizeof(rq),
-	    fs_request_ref(&rq, BSDFILESYSTEM_OP_UNMOUNT, value), &m);
+	ok = fs_request_ref(&rq, BSDFILESYSTEM_OP_UNMOUNT, value);
+	status = fs_run(conn, request, &rq, sizeof(rq), ok, &m);
 	FS_EMPTY_REPLY(Unmount, connection, request, status);
 }
 
@@ -2918,12 +2920,13 @@ fs_stat_claim(void *argument, struct fidl_bsd_connection *connection,
 	struct bsd_filesystem_v1_Filesystem_StatClaim_Result reply;
 	struct bsdfilesystem_request rq;
 	struct tzfs_msg m;
+	bool ok;
 	int status;
 
 	if (!fs_ready(conn, connection))
 		return;
-	status = fs_run(conn, request, &rq, sizeof(rq),
-	    fs_request_ref(&rq, BSDFILESYSTEM_OP_STAT_CLAIM, value), &m);
+	ok = fs_request_ref(&rq, BSDFILESYSTEM_OP_STAT_CLAIM, value);
+	status = fs_run(conn, request, &rq, sizeof(rq), ok, &m);
 	memset(&reply, 0, sizeof(reply));
 	if (status == 0 && m.reply_length == sizeof(m.reply.srp)) {
 		reply.tag = bsd_filesystem_v1_Filesystem_StatClaim_Result_response_tag;
@@ -2998,12 +3001,13 @@ fs_snapshot(void *argument, struct fidl_bsd_connection *connection,
 	struct bsd_filesystem_v1_Filesystem_Snapshot_Result reply;
 	struct bsdfilesystem_version_request vrq;
 	struct tzfs_msg m;
+	bool ok;
 	int status;
 
 	if (!fs_ready(conn, connection))
 		return;
-	status = fs_run(conn, request, &vrq, sizeof(vrq),
-	    fs_version_ref(&vrq, BSDFILESYSTEM_OP_SNAPSHOT, value, "", 0), &m);
+	ok = fs_version_ref(&vrq, BSDFILESYSTEM_OP_SNAPSHOT, value, "", 0);
+	status = fs_run(conn, request, &vrq, sizeof(vrq), ok, &m);
 	memset(&reply, 0, sizeof(reply));
 	if (status == 0 && m.reply_length == sizeof(m.reply.vrp)) {
 		reply.tag = bsd_filesystem_v1_Filesystem_Snapshot_Result_response_tag;
@@ -3073,13 +3077,14 @@ fn(void *argument, struct fidl_bsd_connection *connection,		\
 	struct tzfs_conn *conn = argument;				\
 	struct bsdfilesystem_version_request vrq;			\
 	struct tzfs_msg m;						\
+	bool ok;							\
 	int status;							\
 									\
 	if (!fs_ready(conn, connection))				\
 		return;							\
-	status = fs_run(conn, request, &vrq, sizeof(vrq),		\
-	    fs_version_ref(&vrq, op, &value->claim, value->version,	\
-	    value->version_size), &m);					\
+	ok = fs_version_ref(&vrq, op, &value->claim, value->version, \
+	    value->version_size);					\
+	status = fs_run(conn, request, &vrq, sizeof(vrq), ok, &m);	\
 	FS_EMPTY_REPLY(method, connection, request, status);		\
 }
 FS_VERSION_METHOD(fs_rollback, Rollback, BSDFILESYSTEM_OP_ROLLBACK)
@@ -3093,13 +3098,14 @@ fs_open_version(void *argument, struct fidl_bsd_connection *connection,
 	struct tzfs_conn *conn = argument;
 	struct bsdfilesystem_version_request vrq;
 	struct tzfs_msg m;
+	bool ok;
 	int status;
 
 	if (!fs_ready(conn, connection))
 		return;
-	status = fs_run(conn, request, &vrq, sizeof(vrq),
-	    fs_version_ref(&vrq, BSDFILESYSTEM_OP_OPEN_VERSION, &value->claim,
-	    value->version, value->version_size), &m);
+	ok = fs_version_ref(&vrq, BSDFILESYSTEM_OP_OPEN_VERSION, &value->claim,
+	    value->version, value->version_size);
+	status = fs_run(conn, request, &vrq, sizeof(vrq), ok, &m);
 	FS_FD_REPLY(OpenVersion, connection, request, status, m.reply_fd);
 }
 
@@ -3111,12 +3117,13 @@ fs_txn_begin(void *argument, struct fidl_bsd_connection *connection,
 	struct bsd_filesystem_v1_Filesystem_TxnBegin_Result reply;
 	struct bsdfilesystem_version_request vrq;
 	struct tzfs_msg m;
+	bool ok;
 	int status;
 
 	if (!fs_ready(conn, connection))
 		return;
-	status = fs_run(conn, request, &vrq, sizeof(vrq),
-	    fs_version_ref(&vrq, BSDFILESYSTEM_OP_TXN_BEGIN, value, "", 0), &m);
+	ok = fs_version_ref(&vrq, BSDFILESYSTEM_OP_TXN_BEGIN, value, "", 0);
+	status = fs_run(conn, request, &vrq, sizeof(vrq), ok, &m);
 	memset(&reply, 0, sizeof(reply));
 	if (status == 0 && m.reply_length == sizeof(m.reply.vrp) &&
 	    m.reply_fd >= 0) {

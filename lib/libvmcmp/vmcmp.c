@@ -263,7 +263,7 @@ begin_locked(struct timespec *deadline)
 		return (-1);
 	if (vmcmp_negotiated)
 		return (0);
-	error = bsd_vm_v1_VM_GetProtocolInfo(vmcmp_connection, &empty,
+	error = bsd_vm_v1_Vm_GetProtocolInfo(vmcmp_connection, &empty,
 	    info_reply, &result, &txid);
 	if (finish_locked(error, &result, deadline) == -1)
 		return (-1);
@@ -304,7 +304,7 @@ service_vsock_listen(struct service_context *context, unsigned port,
 	pthread_mutex_lock(&vmcmp_lock);
 	rc = begin_locked(&deadline);
 	if (rc == 0)
-		rc = finish_locked(bsd_vm_v1_VM_Bind(vmcmp_connection, &request,
+		rc = finish_locked(bsd_vm_v1_Vm_Bind(vmcmp_connection, &request,
 		    bind_reply, &result, &txid), &result, &deadline);
 	pthread_mutex_unlock(&vmcmp_lock);
 	if (rc == -1)
@@ -339,7 +339,7 @@ service_vsock_connect(struct service_context *context, unsigned cid,
 	pthread_mutex_lock(&vmcmp_lock);
 	rc = begin_locked(&deadline);
 	if (rc == 0)
-		rc = finish_locked(bsd_vm_v1_VM_Connect(vmcmp_connection,
+		rc = finish_locked(bsd_vm_v1_Vm_Connect(vmcmp_connection,
 		    &request, connect_reply, &result, &txid), &result,
 		    &deadline);
 	pthread_mutex_unlock(&vmcmp_lock);
@@ -365,7 +365,7 @@ service_vsock_list(struct service_context *context, unsigned *cidp,
 	pthread_mutex_lock(&vmcmp_lock);
 	rc = begin_locked(&deadline);
 	if (rc == 0)
-		rc = finish_locked(bsd_vm_v1_VM_List(vmcmp_connection, &empty,
+		rc = finish_locked(bsd_vm_v1_Vm_List(vmcmp_connection, &empty,
 		    list_reply, &result, &txid), &result, &deadline);
 	pthread_mutex_unlock(&vmcmp_lock);
 	if (rc == -1)
