@@ -28,6 +28,20 @@ NOTE TO PEOPLE WHO THINK THAT FreeBSD 16.x IS SLOW:
 	at runtime, run "ln -s 'abort:false,junk:false' /etc/malloc.conf".)
 
 20261012:
+	system.VM, system.Namespace, system.SystemExtension, system.Filesystem
+	and system.OES now speak FIDL (bsd.vm.v1, bsd.namespace.v1,
+	bsd.extension.v1, bsd.filesystem.v1, bsd.oes.v1; schemas in
+	/usr/share/fidl).  Providers and clients must be updated together:
+	mixed peers fail at protocol negotiation.  The borrowed-session
+	extension calls service_session_extension_load, _stat, _list, _reload,
+	_manage and _info (which took a struct service_session) are replaced in
+	libextensioncmp by extensioncmp_session_open, extensioncmp_session_create
+	and extensioncmp_session_close with extensioncmp_load, _stat, _list,
+	_reload, _manage and _info on a struct extensioncmp_session; the
+	process-wide service_ensure_extension, service_extension_stat and
+	service_extension_list are unchanged.
+
+20261012:
 	libservice no longer contains the system.Filesystem,
 	system.SystemExtension, system.Namespace and system.VM clients.  They
 	moved, with the same names and signatures, to libfilesystemcmp

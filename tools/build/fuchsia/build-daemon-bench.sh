@@ -102,6 +102,41 @@ log)
 	libs="-lshmring -lservice -lchannel -lpthread"
 	extra="-I$src/lib/libauditcmp -I$src/lib/libshmring -I$src/lib/libcapreclaim"
 	;;
+vm)
+	paths="usr.sbin/BSDVM lib/libvmcmp lib/libcapsulert/bsdvm_proto.h"
+	defs="-DVMD_TESTING"
+	incs="usr.sbin/BSDVM lib/libvmcmp lib/libcapsulert"
+	srcs="usr.sbin/BSDVM/bsdvm.c"
+	bench=usr.sbin/BSDVM/tests/latency_bench.c
+	libs="-lservice -lchannel -lpthread"
+	;;
+namespace)
+	paths="usr.sbin/BSDNamespace lib/libnamespacecmp lib/libcapsulert/bsdnamespace_proto.h"
+	defs="-DBSDNAMESPACE_TESTING"
+	incs="usr.sbin/BSDNamespace lib/libnamespacecmp lib/libcapsulert"
+	srcs="usr.sbin/BSDNamespace/bsdnamespace.c usr.sbin/BSDNamespace/reclaim.c"
+	bench=usr.sbin/BSDNamespace/tests/latency_bench.c
+	libs="-lfilesystemcmp -lcapreclaim -llogcmp -lsysctlcmp -ljail -lmd -lservice -lchannel -lpthread"
+	extra="-I$src/lib/libfilesystemcmp -I$src/lib/libcapreclaim -I$src/lib/liblogcmp -I$src/lib/libsysctlcmp -I$src/lib/libjail"
+	;;
+extension)
+	paths="usr.sbin/BSDExtension lib/libextensioncmp lib/libcapsulert/sysext_proto.h"
+	defs="-DBSDEXTENSION_TESTING -DEXTENSIONCMP_CLIENT_SOURCE=\\\"$old/lib/libextensioncmp/extensioncmp.c\\\""
+	incs="usr.sbin/BSDExtension lib/libextensioncmp lib/libcapsulert"
+	srcs="usr.sbin/BSDExtension/bsdextension.c usr.sbin/BSDExtension/policy.c usr.sbin/BSDExtension/reclaim.c lib/libextensioncmp/extension_session.c"
+	bench=usr.sbin/BSDExtension/tests/latency_bench.c
+	libs="-lcapreclaim -llogcmp -lprivateucl -lservice -lchannel -lpthread"
+	extra="-I$src/lib/libcapreclaim -I$src/lib/liblogcmp"
+	;;
+filesystem)
+	paths="usr.sbin/BSDFilesystem lib/libfilesystemcmp lib/libcapsulert/bsdfilesystem_proto.h lib/liboes/oes_broker_protocol.h"
+	defs="-DBSDFILESYSTEM_TESTING -DFILESYSTEMCMP_CLIENT_SOURCE=\\\"$old/lib/libfilesystemcmp/filesystemcmp.c\\\""
+	incs="usr.sbin/BSDFilesystem lib/libfilesystemcmp lib/libcapsulert lib/liboes"
+	srcs="usr.sbin/BSDFilesystem/request.c usr.sbin/BSDFilesystem/layout.c usr.sbin/BSDFilesystem/nvwalk.c usr.sbin/BSDFilesystem/config.c usr.sbin/BSDFilesystem/oes_factory.c usr.sbin/BSDFilesystem/oes_session.c"
+	bench=usr.sbin/BSDFilesystem/tests/latency_bench.c
+	libs="-ltrustedzfs -lprivateucl -lnvpair -lcapreclaim -llogcmp -lmd -lservice -lchannel -lpthread"
+	extra="-I$src/lib/libtrustedzfs -I$src/lib/libcapreclaim -I$src/lib/liblogcmp"
+	;;
 *)
 	echo "build-daemon-bench: unknown daemon $daemon" >&2; exit 64;;
 esac
