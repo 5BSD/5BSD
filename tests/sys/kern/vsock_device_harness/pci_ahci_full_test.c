@@ -879,7 +879,8 @@ ATF_TC_BODY(init_and_config_space, tc)
 
 	/* ABAR (BAR5) allocated, MSI capability + legacy INTx wired. */
 	ATF_CHECK_EQ(PCIBAR_MEM32, g_pi.pi_bar[5].type);
-	ATF_CHECK(g_pi.pi_bar[5].size >= AHCI_OFFSET + sc->ports * AHCI_STEP);
+	ATF_CHECK(g_pi.pi_bar[5].size >=
+	    (uint64_t)(AHCI_OFFSET + sc->ports * AHCI_STEP));
 	ATF_CHECK(g_msicap_msgnum > 0);
 	ATF_CHECK_EQ(1, g_lintr_requests);
 }

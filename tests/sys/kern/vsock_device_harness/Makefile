@@ -351,11 +351,12 @@ LIBADD.pci_nvme_full_test+= pthread
 pci_nvme_full_test: pci_nvme.c
 # pci_ahci_full_test TU-includes pci_ahci.c (copied into ${.OBJDIR}) and mocks
 # its pci_emul/block_if/config/snapshot dependencies; BHYVE_SNAPSHOT compiles
-# the checkpoint codec paths.
+# the checkpoint codec paths.  The mocks are defined before the bhyve headers
+# that declare them are included, hence -Wno-missing-prototypes.
 CFLAGS.pci_ahci_full_test+= -DBHYVE_SNAPSHOT -I${.CURDIR} -I${.OBJDIR} \
 				-I${SRCTOP}/usr.sbin/bhyve -I${SRCTOP}/sys
 CWARNFLAGS.pci_ahci_full_test.c+= -Wno-error -Wno-cast-align \
-				-Wno-thread-safety-analysis
+				-Wno-thread-safety-analysis -Wno-missing-prototypes
 LIBADD.pci_ahci_full_test+= md pthread
 CFLAGS.pci_e82545_model_test+= -I${SRCTOP}/usr.sbin/bhyve
 CFLAGS.pci_fbuf_model_test+= -I${SRCTOP}/usr.sbin/bhyve
