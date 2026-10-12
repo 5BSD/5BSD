@@ -1,6 +1,6 @@
 .\" SPDX-License-Identifier: BSD-2-Clause
 .\" Copyright (c) 2026 Kory Heard
-.Dd October 10, 2026
+.Dd October 11, 2026
 .Dt LIBNETWORKCMP 3
 .Os
 .Sh NAME
@@ -206,8 +206,34 @@ and mapped
 .Dv A
 results are returned.
 .Pp
-Kernel channel reply tokens correlate concurrent calls so threads cannot
-consume one another's replies.
+The library speaks the FIDL protocol
+.Sy bsd.network.v1
+.Pq Pa /usr/share/fidl/networkcmp.fidl ;
+see
+.Xr fidl 7 .
+Opening the process client negotiates the wire version
+.Pq Er EPROTONOSUPPORT No for an incompatible provider
+and reads the session limits.
+Calls from several threads proceed concurrently on the shared session;
+transaction identifiers correlate replies, and one waiting thread at a time
+reads the channel for all of them.
+Each call is bounded by 30 seconds, shortened by an active
+.Fn service_budget_begin
+budget
+.Pq Xr service_runtime 3 ;
+a timeout fails that call with
+.Er ETIMEDOUT
+and cancels it, and the session stays usable.
+A lost provider makes the client terminal with the transport error.
+.Fn networkcmp_hello
+returns the session limits
+.Pq the Sy GetLimits No method .
+The message framing in
+.In networkcmp_protocol.h
+and the validators in
+.In networkcmp_server.h
+describe the pre-FIDL wire format and are kept for compatibility; the
+structures and constants the functions above use remain current.
 The opaque client is process-bound.
 The injected broker session is retained as process-lifetime authority;
 .Fn networkcmp_client_close
@@ -220,8 +246,9 @@ terminal: the failing operation and every later operation return
 without sending another request.
 After
 .Xr fork 2 ,
-the child cannot reuse the parent's session and must open a separately
-injected authority if one exists.
+the child cannot reuse the parent's session
+.Pq Er EINVAL
+and must open a separately injected authority if one exists.
 .Pp
 The broker provides DNS resolution, connected TCP and UDP sockets, and, for a
 label whose
@@ -289,4 +316,7 @@ A matching hosts entry satisfies the lookup before DNS is attempted.
 .Xr cap_net 3 ,
 .Xr getaddrinfo 3 ,
 .Xr libchannel 3 ,
-.Xr libservice 3
+.Xr libservice 3 ,
+.Xr network_state 3 ,
+.Xr service_runtime 3 ,
+.Xr fidl 7

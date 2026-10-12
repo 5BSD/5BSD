@@ -2,6 +2,12 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+/*
+ * system.Audit constants and records.  The client and provider speak
+ * auditcmp.fidl (library bsd.audit.v1); the auditcmp_msg framing below is the
+ * pre-FIDL wire format, kept for source/ABI compatibility (the submit record
+ * still carries the field rules both peers check) and rejected on the wire.
+ */
 #ifndef _AUDITCMP_PROTOCOL_H_
 #define	_AUDITCMP_PROTOCOL_H_
 

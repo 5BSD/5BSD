@@ -1,0 +1,130 @@
+.\" SPDX-License-Identifier: BSD-2-Clause
+.Dd October 12, 2026
+.Dt LIBNAMESPACECMP 3
+.Os
+.Sh NAME
+.Nm libnamespacecmp
+.Nd system.Namespace client: jail (namespace) confinement through the BSDNamespace provider
+.Sh LIBRARY
+.Pq libnamespacecmp, Fl lnamespacecmp
+.Sh SYNOPSIS
+.In namespacecmp.h
+.Ft int
+.Fn service_enter_namespace "struct service_context *context" "const char *path" "const char *hostname" "const char *ip4_addr" "unsigned flags"
+.Ft int
+.Fn service_enter_namespace_ex "struct service_context *context" "const char *path" "const char *hostname" "const char *ip4_addr" "const char *ip6_addr" "unsigned flags"
+.Ft int
+.Fn service_destroy_namespace "struct service_context *context"
+.Ft int
+.Fn service_namespace_info "struct service_context *context" "struct service_namespace_info *out"
+.Sh DESCRIPTION
+These calls were part of
+.Xr libservice 3
+and moved to their own library with the same names and semantics.
+Each takes the process's own service context from
+.Xr service_acquire 3 ;
+a context inherited across a fork is refused with
+.Er EINVAL .
+The calls speak the FIDL library
+.Li bsd.namespace.v1
+.Pq Pa /usr/share/fidl/namespacecmp.fidl
+to the provider.
+The process-wide session is opened by name on first use and negotiated
+once; a forked child abandons the parent's session and opens its own.
+Each call is bounded by 30 seconds, shortened by an active
+.Xr service_budget_begin 3 .
+A timeout, a transport failure or a malformed reply drops the session, and
+the next call opens a new one; an application error keeps it.
+.Pp
+.Fn service_enter_namespace
+asks the
+.Dq system.Namespace
+provider
+.Pq Xr BSDNamespace 8
+to create a jail rooted at
+.Fa path
+(scoped by this process's channel label) and attaches the calling process to it;
+the returned jail's root credential authorizes the attach, so a non-root caller
+may confine itself.
+.Fa hostname
+and
+.Fa ip4_addr
+may be
+.Dv NULL .
+.Fa flags
+is zero for a persistent jail (reused by label across restarts) or
+.Dv SERVICE_NS_EPHEMERAL
+for a jail whose lifetime is bound to the calling process.
+.Pp
+.Fn service_enter_namespace_ex
+is
+.Fn service_enter_namespace
+with an additional IPv6 address
+.Fa ip6_addr
+.Pq empty or Dv NULL for none
+and the full
+.Dv SERVICE_NS_*
+flag set, including
+.Dv SERVICE_NS_VNET
+for a jail with its own virtual network stack (requires
+.Dv VIMAGE ) .
+.Fn service_enter_namespace
+is this with
+.Fa ip6_addr
+empty.
+.Pp
+.Fn service_destroy_namespace
+destroys the caller's own jail, scoped to the caller's label so it can never
+name another's;
+.Er ENOENT
+is returned when the caller has none.
+.Pp
+.Fn service_namespace_info
+reports the caller's own jail into
+.Fa out .
+A label owns at most one jail:
+.Va out->present
+is 1 with the fields filled, or 0 when the caller has no jail (which is still a
+success).
+.Va out->flags
+carries the
+.Dv SERVICE_NS_*
+bits describing the jail \(em
+.Dv SERVICE_NS_VNET
+when it has its own virtual network stack, and
+.Dv SERVICE_NS_EPHEMERAL
+when this process's own connection is anchoring the jail's lifetime \(em so a
+consumer that lists after a restart can pass them straight back to
+.Fn service_enter_namespace_ex .
+Each address field is empty when the jail has no address of that family.
+.Sh RETURN VALUES
+.Rv -std service_enter_namespace service_enter_namespace_ex service_destroy_namespace service_namespace_info
+.Sh ERRORS
+In addition to the provider's
+.Xr errno 2
+values (for example
+.Er EEXIST , EALREADY , ENOENT
+or the jail gate's errors):
+.Bl -tag -width Er
+.It Bq Er EINVAL
+An argument was invalid, or
+.Fa context
+is not this process's own service context.
+.It Bq Er EPROTO
+The provider's reply was malformed; any descriptor it carried was closed.
+.It Bq Er EPROTONOSUPPORT
+The provider speaks a different wire version.
+.It Bq Er ETIMEDOUT
+The provider did not answer in time.
+.El
+.Sh SEE ALSO
+.Xr libservice 3 ,
+.Xr BSDNamespace 8
+.Sh HISTORY
+These functions appeared in
+.Xr libservice 3 ;
+.Nm libnamespacecmp
+appeared in 5BSD when they moved out of it, and its record protocol was
+replaced by
+.Li bsd.namespace.v1
+in October 2026.

@@ -1,10 +1,11 @@
 .\" SPDX-License-Identifier: BSD-2-Clause
 .\" Copyright (c) 2026 Kory Heard
-.Dd September 6, 2026
+.Dd October 11, 2026
 .Dt LIBCRYPTOCMP 3
 .Os
 .Sh NAME
 .Nm cryptocmp_open ,
+.Nm cryptocmp_client_create ,
 .Nm cryptocmp_close ,
 .Nm cryptocmp_generate ,
 .Nm cryptocmp_generate_key ,
@@ -24,6 +25,8 @@
 .In cryptocmp.h
 .Ft int
 .Fn cryptocmp_open "struct cryptocmp_client **client"
+.Ft int
+.Fn cryptocmp_client_create "int fd" "struct cryptocmp_client **client"
 .Ft void
 .Fn cryptocmp_close "struct cryptocmp_client *client"
 .Ft int
@@ -192,6 +195,38 @@ its current
 and its granted
 .Va rights
 mask.
+.Pp
+.Fn cryptocmp_client_create
+adopts an already held system.Crypto channel
+.Fa fd ;
+it consumes the descriptor only on success.
+The library speaks the FIDL protocol
+.Sy bsd.crypto.v1
+.Pq Pa /usr/share/fidl/cryptocmp.fidl ;
+see
+.Xr fidl 7 .
+The first call on a client checks the provider's wire version and fails with
+.Er EPROTONOSUPPORT
+for an incompatible provider.
+Each call is bounded by 30 seconds, shortened by an active
+.Fn service_budget_begin
+budget
+.Pq Xr service_runtime 3 .
+A timeout fails that call with
+.Er ETIMEDOUT
+and cancels it; the session stays usable.
+A transport failure or malformed reply
+.Pq Er EPROTO
+makes the client terminal and closes any descriptor the reply carried;
+policy and kernel errors keep it usable.
+Calls from several threads on one client are serialized.
+A client inherited across
+.Xr fork 2
+fails with
+.Er EINVAL .
+The message framing in
+.In cryptocmp_protocol.h
+is the pre-FIDL wire format, kept for source compatibility only.
 .Sh RETURN VALUES
 Functions returning
 .Vt int
@@ -200,5 +235,7 @@ return zero on success and \-1 on failure with
 set.
 .Sh SEE ALSO
 .Xr libservice 3 ,
+.Xr service_runtime 3 ,
 .Xr crypto 4 ,
-.Xr bsdcrypto 8
+.Xr fidl 7 ,
+.Xr BSDCrypto 8

@@ -1,10 +1,20 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * libnotify: the system.Notify client over the generated bsd.notify.v1
+ * bindings (notify.fidl) on a native capability channel.  Calls on a client
+ * are serialized.  A lost provider or a malformed reply drops the session;
+ * the next call reconnects to the same endpoint and restores the client's
+ * subscriptions (notify_next() reports that as a RESET event).
  */
 
 #include <sys/param.h>
+#include <sys/capsicum.h>
 
 #include <errno.h>
+#include <fcntl.h>
+#include <fidl/bsd.notify.v1/c/bsd.h>
+#include <fidl/bsd/sync_c.h>
 #include <limits.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -16,19 +26,17 @@
 #include <pthread.h>
 
 #include <libservice.h>
+#include <service_runtime.h>
 
 #include "notify.h"
 #include "notify_server.h"
 #include "notify_internal.h"
 #include "notify_probes.h"
 
-union notify_buffer {
-	max_align_t align;
-	uint8_t bytes[NOTIFY_MAX_MESSAGE];
-};
+#define	NOTIFY_CALL_TIMEOUT_MS	30000U
 
 struct notify_client {
-	struct service_session	*channel;
+	struct fidl_bsd_connection *connection;
 	const char		*interface;	/* endpoint name for (re)connects */
 	pid_t			 owner;
 	uint64_t		 router_epoch;
@@ -39,10 +47,34 @@ struct notify_client {
 				     [NOTIFY_MAX_TOPIC + 1];
 };
 
-static int topic_rpc(struct notify_client *, uint16_t, const char *);
-static bool connection_lost(int);
-static bool connection_unusable(int);
-static void disconnect_locked(struct notify_client *);
+/* One call's completion, filled by the generated callbacks. */
+struct call {
+	bool		 done;
+	bool		 malformed;
+	int		 error;		/* transport or application errno */
+	uint32_t	 txid;
+	union {
+		struct bsd_notify_v1_Limits limits;
+		struct bsd_notify_v1_StateValue state;
+		struct bsd_notify_v1_StateWatchValue watch;
+		struct bsd_notify_v1_Stats stats;
+		struct {
+			struct notify_event *event;
+			size_t capacity;
+			size_t length;
+		} next;
+		struct {
+			uint32_t cursor;	/* the cursor sent */
+			uint32_t next_cursor;
+			uint32_t total;
+			size_t count;
+			void *out;		/* subscription or timer info */
+			size_t capacity;
+			size_t offset;		/* entries enumerated so far */
+		} list;
+	} u;
+};
+
 static int reconnect_locked(struct notify_client *);
 
 int
@@ -78,508 +110,410 @@ notify_validate_topic(const char *topic, size_t length)
 	return (0);
 }
 
-static int
-validate_event(const struct notify_event *event, size_t length)
+static void
+malformed(struct call *call)
 {
-	size_t expected, i;
 
-	if (length < sizeof(*event) ||
-	    (event->type < NOTIFY_EVENT_PUBLISH ||
-	    event->type > NOTIFY_EVENT_RESET) ||
-	    (event->flags & ~NOTIFY_EVENT_F_MASK) != 0 ||
-	    event->router_epoch == 0 ||
-	    event->publisher_length > NOTIFY_MAX_PUBLISHER ||
-	    event->topic_length > NOTIFY_MAX_TOPIC ||
-	    event->payload_length > NOTIFY_MAX_PAYLOAD)
-		goto invalid;
-	expected = sizeof(*event) + event->publisher_length +
-	    event->topic_length + event->payload_length;
-	if (expected != length ||
-	    (event->publisher_length != 0 &&
-	    memchr(event->data, '\0', event->publisher_length) != NULL) ||
-	    (event->topic_length != 0 &&
-	    notify_validate_topic((const char *)event->data +
-	    event->publisher_length, event->topic_length) == -1))
-		goto invalid;
-	for (i = 0; i < event->publisher_length; i++)
-		if (event->data[i] < 0x20 || event->data[i] == 0x7f)
-			goto invalid;
-	if ((event->type == NOTIFY_EVENT_PUBLISH ||
-	    event->type == NOTIFY_EVENT_TIMER ||
-	    event->type == NOTIFY_EVENT_STATE) &&
-	    event->publisher_length == 0)
-		goto invalid;
-	if (event->type == NOTIFY_EVENT_TIMER &&
-	    (event->timer_id == 0 || event->topic_length != 0 ||
-	    event->payload_length != 0 || event->generation != 0 ||
-	    event->lost_count != 0))
-		goto invalid;
-	if (event->type == NOTIFY_EVENT_PUBLISH &&
-	    (event->timer_id != 0 || event->topic_length == 0 ||
-	    event->generation != 0 || event->lost_count != 0))
-		goto invalid;
-	if (event->type == NOTIFY_EVENT_STATE &&
-	    (event->timer_id != 0 || event->topic_length == 0 ||
-	    event->payload_length != 0 || event->generation == 0 ||
-	    event->lost_count != 0))
-		goto invalid;
-	if ((event->type == NOTIFY_EVENT_GAP ||
-	    event->type == NOTIFY_EVENT_RESET) &&
-	    (event->publisher_length != 0 || event->topic_length != 0 ||
-	    event->payload_length != 0 || event->timer_id != 0 ||
-	    event->generation != 0 || event->state != 0 ||
-	    (event->type == NOTIFY_EVENT_GAP &&
-	    (event->lost_count == 0 ||
-	    (event->flags & NOTIFY_EVENT_F_GAP) == 0)) ||
-	    (event->type == NOTIFY_EVENT_RESET &&
-	    (event->lost_count != 0 || event->flags != 0))))
-		goto invalid;
-	return (0);
+	call->malformed = true;
+	call->error = EPROTO;
+}
 
-invalid:
-	errno = EPROTO;
-	return (-1);
+/* A result union's error: an errno in 1..ELAST, anything else malformed. */
+static void
+domain_error(struct call *call, uint32_t error)
+{
+
+	if (error == 0 || error > ELAST)
+		malformed(call);
+	else
+		call->error = (int)error;
+}
+
+/* The tag check every result union shares; true when value is a response. */
+#define	RESULT_OK(call, value, type)					\
+	((value) == NULL ? (malformed(call), false) :			\
+	(value)->tag == type##_err_tag ?				\
+	    (domain_error(call, (value)->value.err), false) :		\
+	(value)->tag != type##_response_tag ?				\
+	    (malformed(call), false) : true)
+
+static void
+info_reply(void *context, int error, struct bsd_notify_v1_ProtocolInfo *value)
+{
+	struct call *call = context;
+
+	call->done = true;
+	call->error = error;
+	if (error == 0 && (value == NULL ||
+	    value->wire_version != NOTIFY_WIRE_VERSION)) {
+		call->malformed = true;
+		call->error = EPROTONOSUPPORT;
+	}
+}
+
+static void
+hello_reply(void *context, int error,
+    struct bsd_notify_v1_Notify_Hello_Result *value)
+{
+	struct call *call = context;
+	const struct bsd_notify_v1_Limits *hello;
+
+	call->done = true;
+	call->error = error;
+	if (error != 0 ||
+	    !RESULT_OK(call, value, bsd_notify_v1_Notify_Hello_Result))
+		return;
+	hello = &value->value.response;
+	/* The limits every release has advertised. */
+	if ((hello->features & ~NOTIFY_FEATURE_STATE_WATCH) !=
+	    (NOTIFY_FEATURE_PUBSUB | NOTIFY_FEATURE_TIMERS |
+	    NOTIFY_FEATURE_BOUNDED_QUEUE | NOTIFY_FEATURE_STATE |
+	    NOTIFY_FEATURE_LOSS_REPORTING) ||
+	    hello->max_topic != NOTIFY_MAX_TOPIC ||
+	    hello->max_payload != NOTIFY_MAX_PAYLOAD ||
+	    hello->max_subscriptions != NOTIFY_MAX_SUBSCRIPTIONS ||
+	    hello->queue_depth == 0 || hello->queue_depth > NOTIFY_DEFAULT_QUEUE ||
+	    hello->max_timers != NOTIFY_MAX_TIMERS ||
+	    hello->max_states != NOTIFY_MAX_STATES ||
+	    hello->router_epoch == 0) {
+		malformed(call);
+		return;
+	}
+	call->u.limits = *hello;
+}
+
+#define	EMPTY_REPLY(name, type)						\
+static void								\
+name(void *context, int error, struct type *value)			\
+{									\
+	struct call *call = context;					\
+									\
+	call->done = true;						\
+	call->error = error;						\
+	if (error == 0)							\
+		(void)RESULT_OK(call, value, type);			\
+}
+EMPTY_REPLY(subscribe_reply, bsd_notify_v1_Notify_Subscribe_Result)
+EMPTY_REPLY(unsubscribe_reply, bsd_notify_v1_Notify_Unsubscribe_Result)
+EMPTY_REPLY(publish_reply, bsd_notify_v1_Notify_Publish_Result)
+EMPTY_REPLY(timer_add_reply, bsd_notify_v1_Notify_TimerAdd_Result)
+EMPTY_REPLY(timer_cancel_reply, bsd_notify_v1_Notify_TimerCancel_Result)
+EMPTY_REPLY(state_clear_reply, bsd_notify_v1_Notify_StateClear_Result)
+
+#define	STATE_REPLY(name, type)						\
+static void								\
+name(void *context, int error, struct type *value)			\
+{									\
+	struct call *call = context;					\
+									\
+	call->done = true;						\
+	call->error = error;						\
+	if (error == 0 && RESULT_OK(call, value, type))			\
+		call->u.state = value->value.response;			\
+}
+STATE_REPLY(state_set_reply, bsd_notify_v1_Notify_StateSet_Result)
+STATE_REPLY(state_get_reply, bsd_notify_v1_Notify_StateGet_Result)
+
+static void
+state_watch_reply(void *context, int error,
+    struct bsd_notify_v1_Notify_StateWatch_Result *value)
+{
+	struct call *call = context;
+	const struct bsd_notify_v1_StateWatchValue *state;
+
+	call->done = true;
+	call->error = error;
+	if (error != 0 ||
+	    !RESULT_OK(call, value, bsd_notify_v1_Notify_StateWatch_Result))
+		return;
+	state = &value->value.response;
+	if (state->watch_epoch == 0 || state->generation == 0 ||
+	    (!state->present && state->state != 0)) {
+		malformed(call);
+		return;
+	}
+	call->u.watch = *state;
+}
+
+static void
+stats_reply(void *context, int error,
+    struct bsd_notify_v1_Notify_GetStats_Result *value)
+{
+	struct call *call = context;
+
+	call->done = true;
+	call->error = error;
+	if (error == 0 &&
+	    RESULT_OK(call, value, bsd_notify_v1_Notify_GetStats_Result))
+		call->u.stats = value->value.response;
 }
 
 /*
- * Validate a LIST_SUBSCRIPTIONS / LIST_TIMERS reply body.  Shared by the
- * client (checking an incoming reply) and the daemon (checking a reply before
- * it is sent), so both ends agree on the exact wire shape.  The entry kind is
- * selected by opcode and the payload length must match the advertised count
- * exactly; each entry is validated in full so a caller may trust the contents.
+ * Rebuild the historical notify_event record in the caller's buffer and
+ * apply the same event rules as before.
+ */
+static void
+next_reply(void *context, int error,
+    struct bsd_notify_v1_Notify_Next_Result *value)
+{
+	struct call *call = context;
+	const struct bsd_notify_v1_Event *in;
+	struct notify_event *out;
+	size_t length;
+
+	call->done = true;
+	call->error = error;
+	if (error != 0 ||
+	    !RESULT_OK(call, value, bsd_notify_v1_Notify_Next_Result))
+		return;
+	in = &value->value.response;
+	length = sizeof(*out) + in->publisher_size + in->topic_size +
+	    in->payload_size;
+	if (length > call->u.next.capacity) {
+		/* The caller's buffer, not the provider, is at fault. */
+		call->error = EMSGSIZE;
+		return;
+	}
+	out = call->u.next.event;
+	memset(out, 0, sizeof(*out));
+	out->type = in->type;
+	out->flags = in->flags;
+	out->router_epoch = in->router_epoch;
+	out->sequence = in->sequence;
+	out->timestamp_ns = in->timestamp_ns;
+	out->timer_id = in->timer_id;
+	out->generation = in->generation;
+	out->state = in->state;
+	out->lost_count = in->lost_count;
+	out->publisher_length = (uint16_t)in->publisher_size;
+	out->topic_length = (uint16_t)in->topic_size;
+	out->payload_length = (uint32_t)in->payload_size;
+	memcpy(out->data, in->publisher, in->publisher_size);
+	memcpy(out->data + in->publisher_size, in->topic, in->topic_size);
+	memcpy(out->data + in->publisher_size + in->topic_size, in->payload,
+	    in->payload_size);
+	if (notify_validate_event(out, length) == -1) {
+		malformed(call);
+		return;
+	}
+	call->u.next.length = length;
+}
+
+/* A page must report consistent counts and strictly advance the cursor. */
+static bool
+page_valid(const struct call *call, size_t count, uint32_t next_cursor,
+    uint32_t total)
+{
+
+	return (count <= NOTIFY_LIST_MAX_ENTRIES && count <= total &&
+	    next_cursor <= total &&
+	    (next_cursor == 0 || next_cursor > call->u.list.cursor));
+}
+
+static void
+subscriptions_reply(void *context, int error,
+    struct bsd_notify_v1_Notify_ListSubscriptions_Result *value)
+{
+	struct call *call = context;
+	const struct bsd_notify_v1_SubscriptionPage *page;
+	struct notify_subscription_info *out = call->u.list.out;
+	size_t i;
+
+	call->done = true;
+	call->error = error;
+	if (error != 0 || !RESULT_OK(call, value,
+	    bsd_notify_v1_Notify_ListSubscriptions_Result))
+		return;
+	page = &value->value.response;
+	if (!page_valid(call, page->topics_size, page->next_cursor,
+	    page->total)) {
+		malformed(call);
+		return;
+	}
+	for (i = 0; i < page->topics_size; i++)
+		if (notify_validate_topic(page->topics[i].data,
+		    page->topics[i].data_size) == -1) {
+			malformed(call);
+			return;
+		}
+	for (i = 0; i < page->topics_size; i++) {
+		size_t index = call->u.list.offset + i;
+
+		if (index < call->u.list.capacity) {
+			memcpy(out[index].topic, page->topics[i].data,
+			    page->topics[i].data_size);
+			out[index].topic[page->topics[i].data_size] = '\0';
+		}
+	}
+	call->u.list.count = page->topics_size;
+	call->u.list.next_cursor = page->next_cursor;
+	call->u.list.total = page->total;
+}
+
+static void
+timers_reply(void *context, int error,
+    struct bsd_notify_v1_Notify_ListTimers_Result *value)
+{
+	struct call *call = context;
+	const struct bsd_notify_v1_TimerPage *page;
+	struct notify_timer_info *out = call->u.list.out;
+	size_t i;
+
+	call->done = true;
+	call->error = error;
+	if (error != 0 ||
+	    !RESULT_OK(call, value, bsd_notify_v1_Notify_ListTimers_Result))
+		return;
+	page = &value->value.response;
+	if (!page_valid(call, page->timers_size, page->next_cursor,
+	    page->total)) {
+		malformed(call);
+		return;
+	}
+	for (i = 0; i < page->timers_size; i++)
+		if (page->timers[i].timer_id == 0 ||
+		    page->timers[i].interval_ms == 0 ||
+		    page->timers[i].interval_ms > NOTIFY_MAX_TIMER_INTERVAL_MS ||
+		    (page->timers[i].flags & ~NOTIFY_TIMER_F_MASK) != 0) {
+			malformed(call);
+			return;
+		}
+	for (i = 0; i < page->timers_size; i++) {
+		size_t index = call->u.list.offset + i;
+
+		if (index < call->u.list.capacity) {
+			out[index].timer_id = page->timers[i].timer_id;
+			out[index].interval_ms = page->timers[i].interval_ms;
+			out[index].flags = page->timers[i].flags;
+			out[index].next_fire_ms = page->timers[i].next_fire_ms;
+		}
+	}
+	call->u.list.count = page->timers_size;
+	call->u.list.next_cursor = page->next_cursor;
+	call->u.list.total = page->total;
+}
+
+/*
+ * Wait for an issued call (client lock held).  timeout_ms bounds the wait;
+ * NOTIFY_TIMEOUT_INFINITE waits without one, and a caller's
+ * service_budget_begin() shortens either.  A timeout cancels just this call
+ * and keeps the session.  Returns 0 or an errno value.
  */
 static int
-validate_list_reply(uint16_t opcode, const void *body, size_t payload)
+wait_locked(struct notify_client *client, uint16_t opcode, int issue_error,
+    struct call *call, uint32_t timeout_ms)
 {
-	const struct notify_list_reply *list;
-	const struct notify_subscription_entry *subs;
-	const struct notify_timer_entry *timers;
-	size_t entry_size, i;
+	struct timespec deadline;
+	int error;
 
-	if (payload < sizeof(*list))
-		return (-1);
-	list = body;
-	/*
-	 * next_cursor is an absolute resume offset, so it must not point past
-	 * the reported total; per-call loop-safety (that it strictly advances
-	 * the requested cursor) is enforced by the caller, which knows the
-	 * cursor it sent.
-	 */
-	if (list->reserved != 0 || list->count > NOTIFY_LIST_MAX_ENTRIES ||
-	    list->count > list->total || list->next_cursor > list->total)
-		return (-1);
-	entry_size = opcode == NOTIFY_OP_LIST_SUBSCRIPTIONS ?
-	    sizeof(*subs) : sizeof(*timers);
-	if (payload != sizeof(*list) + (size_t)list->count * entry_size)
-		return (-1);
-	if (opcode == NOTIFY_OP_LIST_SUBSCRIPTIONS) {
-		subs = (const void *)(list + 1);
-		for (i = 0; i < list->count; i++) {
-			if (subs[i].reserved16 != 0 || subs[i].reserved32 != 0 ||
-			    subs[i].topic_length == 0 ||
-			    subs[i].topic_length > sizeof(subs[i].topic) ||
-			    notify_validate_topic(subs[i].topic,
-			    subs[i].topic_length) == -1 ||
-			    memchr(subs[i].topic, '\0',
-			    subs[i].topic_length) != NULL ||
-			    memcmp(subs[i].topic + subs[i].topic_length,
-			    (char[NOTIFY_MAX_TOPIC]){}, sizeof(subs[i].topic) -
-			    subs[i].topic_length) != 0)
-				return (-1);
+	if (issue_error != 0) {
+		NOTIFY_PROBE_RPC(opcode, issue_error);
+		return (issue_error);
+	}
+	if (service_budget_timeout(&timeout_ms) == -1) {
+		error = errno;
+		(void)fidl_bsd_connection_cancel(client->connection, call->txid);
+		return (error);
+	}
+	if (timeout_ms == NOTIFY_TIMEOUT_INFINITE) {
+		error = 0;
+		while (!call->done) {
+			error = fidl_bsd_connection_poll(client->connection, -1);
+			if (error != 0 && !call->done)
+				break;
+			error = 0;
 		}
 	} else {
-		timers = (const void *)(list + 1);
-		for (i = 0; i < list->count; i++) {
-			if (timers[i].timer_id == 0 ||
-			    timers[i].interval_ms == 0 ||
-			    timers[i].interval_ms >
-			    NOTIFY_MAX_TIMER_INTERVAL_MS ||
-			    (timers[i].flags & ~NOTIFY_TIMER_F_MASK) != 0)
-				return (-1);
-		}
+		error = fidl_bsd_sync_deadline(&deadline, timeout_ms);
+		if (error == 0)
+			error = fidl_bsd_sync_wait_txid(client->connection,
+			    &call->done, &deadline, call->txid);
 	}
-	return (0);
+	NOTIFY_PROBE_RPC(opcode, error != 0 ? error : call->error);
+	if (error == 0 && call->malformed) {
+		NOTIFY_PROBE_REJECT(opcode, EPROTO);
+		/* A malformed reply ends the session. */
+		fidl_bsd_connection_close(client->connection, EPROTO);
+		return (call->error);
+	}
+	if (error == 0 && call->error != 0)
+		NOTIFY_PROBE_REJECT(opcode, call->error);
+	return (error != 0 ? error : call->error);
 }
 
+/* The session cannot carry another call: reconnect before the next one. */
+static bool
+session_lost(struct notify_client *client, int error)
+{
+
+	return (error == EPROTO || error == EPROTONOSUPPORT ||
+	    (client->connection != NULL &&
+	    fidl_bsd_connection_error(client->connection) != 0));
+}
+
+static void
+disconnect_locked(struct notify_client *client)
+{
+
+	if (client->connection != NULL)
+		fidl_bsd_connection_destroy(client->connection);
+	client->connection = NULL;
+}
+
+/* Negotiate the wire version and read the session limits. */
 static int
-notify_header_validate(const struct notify_msg *msg, size_t length,
-    enum notify_message_role role)
+hello_locked(struct notify_client *client, uint32_t features,
+    struct bsd_notify_v1_Limits *limits)
 {
+	struct bsd_notify_v1_HelloRequest request = { features };
+	struct call call = { 0 };
+	int error;
 
-	if (msg == NULL || length < sizeof(*msg) ||
-	    length > NOTIFY_MAX_MESSAGE ||
-	    (role != NOTIFY_MESSAGE_REQUEST &&
-	    role != NOTIFY_MESSAGE_REPLY &&
-	    role != NOTIFY_MESSAGE_EVENT) ||
-	    msg->magic != NOTIFY_MAGIC ||
-	    msg->opcode < NOTIFY_OP_HELLO ||
-	    msg->opcode > NOTIFY_OP_MAX ||
-	    (msg->flags & ~NOTIFY_MSG_F_MASK) != 0 ||
-	    (role != NOTIFY_MESSAGE_REPLY && msg->status != 0) ||
-	    (role == NOTIFY_MESSAGE_REPLY &&
-	    (msg->status > 0 || msg->status < -ELAST))) {
-		errno = EPROTO;
-		return (-1);
-	}
+	error = wait_locked(client, NOTIFY_OP_HELLO,
+	    bsd_notify_v1_Notify_Hello(client->connection, &request,
+	    hello_reply, &call, &call.txid), &call, NOTIFY_CALL_TIMEOUT_MS);
+	if (error != 0)
+		return (errno = error, -1);
+	*limits = call.u.limits;
 	return (0);
 }
 
-int
-notify_message_init(struct notify_msg *msg, uint16_t opcode,
-    uint32_t flags)
-{
-
-	if (msg == NULL || opcode < NOTIFY_OP_HELLO ||
-	    opcode > NOTIFY_OP_MAX ||
-	    (flags & ~NOTIFY_MSG_F_MASK) != 0) {
-		errno = EINVAL;
-		return (-1);
-	}
-	memset(msg, 0, sizeof(*msg));
-	msg->magic = NOTIFY_MAGIC;
-	msg->opcode = opcode;
-	msg->flags = flags;
-	return (0);
-}
-
-int
-notify_message_init_reply(struct notify_msg *reply,
-    const struct notify_msg *request, int status)
-{
-
-	if (reply == NULL || request == NULL ||
-	    notify_header_validate(request, sizeof(*request),
-	    NOTIFY_MESSAGE_REQUEST) == -1 ||
-	    status > 0 || status < -ELAST) {
-		errno = EINVAL;
-		return (-1);
-	}
-	memset(reply, 0, sizeof(*reply));
-	reply->magic = NOTIFY_MAGIC;
-	reply->opcode = request->opcode;
-	reply->status = status;
-	return (0);
-}
-
-int
-notify_validate_message(const struct notify_msg *msg, size_t length,
-    enum notify_message_role role)
-{
-	const struct notify_publish_request *publish;
-	const struct notify_timer_request *timer;
-	const struct notify_topic_request *topic;
-	const struct notify_hello_reply *hello;
-	const struct notify_state_set_request *state_set;
-	size_t payload;
-
-	if (notify_header_validate(msg, length, role) == -1)
-		goto invalid;
-	payload = length - sizeof(*msg);
-	if (role == NOTIFY_MESSAGE_REPLY) {
-		if (msg->status != 0 && payload != 0)
-			goto invalid;
-		if (msg->status != 0)
-			return (0);
-		switch (msg->opcode) {
-		case NOTIFY_OP_HELLO:
-			if (payload != sizeof(*hello))
-				goto invalid;
-			hello = (const void *)(msg + 1);
-			if ((hello->features & ~NOTIFY_FEATURE_STATE_WATCH) !=
-			    (NOTIFY_FEATURE_PUBSUB |
-			    NOTIFY_FEATURE_TIMERS |
-			    NOTIFY_FEATURE_BOUNDED_QUEUE |
-			    NOTIFY_FEATURE_STATE |
-			    NOTIFY_FEATURE_LOSS_REPORTING) ||
-			    hello->max_topic != NOTIFY_MAX_TOPIC ||
-			    hello->max_payload != NOTIFY_MAX_PAYLOAD ||
-			    hello->max_subscriptions !=
-			    NOTIFY_MAX_SUBSCRIPTIONS ||
-			    hello->queue_depth == 0 ||
-			    hello->queue_depth > NOTIFY_DEFAULT_QUEUE ||
-			    hello->max_timers != NOTIFY_MAX_TIMERS ||
-			    hello->max_states != NOTIFY_MAX_STATES ||
-			    hello->router_epoch == 0)
-				goto invalid;
-			break;
-		case NOTIFY_OP_NEXT:
-			if (validate_event((const void *)(msg + 1), payload) == -1)
-				goto invalid;
-			break;
-		case NOTIFY_OP_STATS:
-			if (payload != sizeof(struct notify_stats))
-				goto invalid;
-			break;
-		case NOTIFY_OP_STATE_WATCH: {
-			const struct notify_state_watch_reply *state;
-
-			if (payload != sizeof(*state))
-				goto invalid;
-			state = (const void *)(msg + 1);
-			if (state->watch_epoch == 0 || state->generation == 0 ||
-			    state->present > 1 || state->reserved != 0 ||
-			    (state->present == 0 && state->state != 0))
-				goto invalid;
-			break;
-		}
-		case NOTIFY_OP_STATE_SET:
-		case NOTIFY_OP_STATE_GET:
-			if (payload != sizeof(struct notify_state_reply))
-				goto invalid;
-			break;
-		case NOTIFY_OP_LIST_SUBSCRIPTIONS:
-		case NOTIFY_OP_LIST_TIMERS:
-			if (validate_list_reply(msg->opcode, msg + 1,
-			    payload) == -1)
-				goto invalid;
-			break;
-		default:
-			if (payload != 0)
-				goto invalid;
-		}
-		return (0);
-	}
-	if (msg->status != 0)
-		goto invalid;
-	switch (msg->opcode) {
-	case NOTIFY_OP_HELLO:
-		if (payload != 0) {
-			const struct notify_hello_request *hello_request;
-
-			if (payload != sizeof(*hello_request))
-				goto invalid;
-			hello_request = (const void *)(msg + 1);
-			if (hello_request->reserved != 0 ||
-			    (hello_request->features & ~NOTIFY_FEATURE_STATE_WATCH) != 0)
-				goto invalid;
-		}
-		break;
-	case NOTIFY_OP_STATS:
-		if (payload != 0)
-			goto invalid;
-		break;
-	case NOTIFY_OP_SUBSCRIBE:
-	case NOTIFY_OP_UNSUBSCRIBE:
-	case NOTIFY_OP_STATE_GET:
-	case NOTIFY_OP_STATE_CLEAR:
-		if (payload != sizeof(*topic))
-			goto invalid;
-		topic = (const void *)(msg + 1);
-		if (topic->reserved16 != 0 || topic->reserved32 != 0 ||
-		    topic->topic_length == 0 ||
-		    topic->topic_length > sizeof(topic->topic) ||
-		    notify_validate_topic(topic->topic,
-		    topic->topic_length) == -1 ||
-		    memchr(topic->topic, '\0', topic->topic_length) != NULL ||
-		    memcmp(topic->topic + topic->topic_length,
-		    (char[NOTIFY_MAX_TOPIC]){}, sizeof(topic->topic) -
-		    topic->topic_length) != 0)
-			goto invalid;
-		break;
-	case NOTIFY_OP_STATE_WATCH: {
-		const struct notify_state_watch_request *watch;
-
-		if (payload != sizeof(*watch))
-			goto invalid;
-		watch = (const void *)(msg + 1);
-		topic = &watch->topic;
-		if (watch->reserved != 0 || topic->reserved16 != 0 ||
-		    topic->reserved32 != 0 ||
-		    notify_validate_topic(topic->topic, topic->topic_length) == -1 ||
-		    memcmp(topic->topic + topic->topic_length,
-		    (char[NOTIFY_MAX_TOPIC]){}, sizeof(topic->topic) -
-		    topic->topic_length) != 0)
-			goto invalid;
-		break;
-	}
-	case NOTIFY_OP_STATE_SET:
-		if (payload != sizeof(*state_set))
-			goto invalid;
-		state_set = (const void *)(msg + 1);
-		if (state_set->reserved16 != 0 || state_set->reserved32 != 0 ||
-		    state_set->topic_length == 0 ||
-		    state_set->topic_length > sizeof(state_set->topic) ||
-		    notify_validate_topic(state_set->topic,
-		    state_set->topic_length) == -1 ||
-		    memchr(state_set->topic, '\0', state_set->topic_length) != NULL ||
-		    memcmp(state_set->topic + state_set->topic_length,
-		    (char[NOTIFY_MAX_TOPIC]){}, sizeof(state_set->topic) -
-		    state_set->topic_length) != 0)
-			goto invalid;
-		break;
-	case NOTIFY_OP_PUBLISH:
-		if (payload < sizeof(*publish))
-			goto invalid;
-		publish = (const void *)(msg + 1);
-		if (publish->reserved16 != 0 || publish->topic_length == 0 ||
-		    publish->topic_length > sizeof(publish->topic) ||
-		    publish->payload_length > NOTIFY_MAX_PAYLOAD ||
-		    payload != sizeof(*publish) + publish->payload_length ||
-		    notify_validate_topic(publish->topic,
-		    publish->topic_length) == -1 ||
-		    memchr(publish->topic, '\0', publish->topic_length) != NULL ||
-		    memcmp(publish->topic + publish->topic_length,
-		    (char[NOTIFY_MAX_TOPIC]){}, sizeof(publish->topic) -
-		    publish->topic_length) != 0)
-			goto invalid;
-		break;
-	case NOTIFY_OP_NEXT: {
-		const struct notify_next_request *next;
-
-		if (payload != sizeof(*next))
-			goto invalid;
-		next = (const void *)(msg + 1);
-		if (next->reserved != 0)
-			goto invalid;
-		break;
-	}
-	case NOTIFY_OP_TIMER_ADD:
-		if (payload != sizeof(*timer))
-			goto invalid;
-		timer = (const void *)(msg + 1);
-		if (timer->timer_id == 0 || timer->interval_ms == 0 ||
-		    timer->interval_ms > 86400000 ||
-		    (timer->flags & ~NOTIFY_TIMER_F_MASK) != 0)
-			goto invalid;
-		break;
-	case NOTIFY_OP_TIMER_CANCEL: {
-		const struct notify_timer_cancel_request *cancel;
-
-		if (payload != sizeof(*cancel))
-			goto invalid;
-		cancel = (const void *)(msg + 1);
-		if (cancel->timer_id == 0 || cancel->reserved != 0)
-			goto invalid;
-		break;
-	}
-	case NOTIFY_OP_LIST_SUBSCRIPTIONS:
-	case NOTIFY_OP_LIST_TIMERS: {
-		const struct notify_list_request *list;
-
-		if (payload != sizeof(*list))
-			goto invalid;
-		list = (const void *)(msg + 1);
-		if (list->reserved != 0)
-			goto invalid;
-		break;
-	}
-	}
-	return (0);
-
-invalid:
-	errno = EPROTO;
-	return (-1);
-}
-
+/* Adopt fd (consumed) as the client's session and negotiate it. */
 static int
-rpc_locked(struct notify_client *client, uint16_t opcode,
-    const void *payload, size_t payload_length, union notify_buffer *reply,
-    size_t *reply_payload, uint32_t timeout_ms)
+connect_locked(struct notify_client *client, int fd)
 {
-	union notify_buffer request;
-	struct service_call_options options =
-	    SERVICE_CALL_OPTIONS_INITIALIZER;
-	struct service_message outgoing;
-	struct service_reply incoming;
-	struct notify_msg *message;
-	size_t request_length;
-	size_t received;
-	uint16_t received_opcode;
+	struct fidl_bsd_options options = FIDL_BSD_OPTIONS_INITIALIZER;
+	struct bsd_notify_v1_Limits limits;
+	struct fidl_bsd_empty empty = { 0 };
+	struct call call = { 0 };
+	int error;
 
-	memset(&request, 0, sizeof(request));
-	message = (void *)request.bytes;
-	request_length = sizeof(*message) + payload_length;
-	if (notify_message_init(message, opcode, 0) == -1)
-		return (-1);
-	if (payload_length != 0)
-		memcpy(message + 1, payload, payload_length);
-	if (notify_validate_message(message, request_length,
-	    NOTIFY_MESSAGE_REQUEST) == -1)
-		return (-1);
-	memset(&outgoing, 0, sizeof(outgoing));
-	outgoing.size = sizeof(outgoing);
-	outgoing.data = message;
-	outgoing.length = request_length;
-	memset(&incoming, 0, sizeof(incoming));
-	incoming.size = sizeof(incoming);
-	incoming.data = reply->bytes;
-	incoming.capacity = sizeof(*reply);
-	options.timeout_ms = timeout_ms;
-	if (service_session_call(client->channel, &outgoing, &incoming,
-	    &options) == -1) {
-		NOTIFY_PROBE_RPC(opcode, errno);
-		return (-1);
+	options.max_pending_requests = 1;
+	options.max_queued_fds = 0;
+	error = fidl_bsd_connection_create_with_options(fd, FIDL_BSD_CLIENT,
+	    &options, &client->connection);
+	if (error != 0) {
+		(void)close(fd);
+		client->connection = NULL;
+		return (errno = error, -1);
 	}
-	NOTIFY_PROBE_RPC(opcode, 0);
-	received = incoming.length;
-	message = (void *)reply->bytes;
-	received_opcode = received >= sizeof(*message) ? message->opcode : 0;
-	if (incoming.nfds != 0 ||
-	    notify_validate_message(message, received,
-	    NOTIFY_MESSAGE_REPLY) == -1 || message->opcode != opcode) {
-		NOTIFY_PROBE_REJECT(received_opcode, EPROTO);
-		errno = EPROTO;
-		return (-1);
-	}
-	if (message->status != 0) {
-		NOTIFY_PROBE_REJECT(message->opcode, -message->status);
-		errno = -message->status;
-		return (-1);
-	}
-	*reply_payload = received - sizeof(*message);
-	return (0);
-}
-
-static int
-simple_rpc_locked(struct notify_client *client, uint16_t opcode,
-    const void *payload, size_t payload_length)
-{
-	union notify_buffer reply;
-	size_t reply_payload;
-	int result;
-
-	if (client == NULL || client->owner != getpid()) {
-		errno = EINVAL;
-		return (-1);
-	}
-	result = rpc_locked(client, opcode, payload, payload_length, &reply,
-	    &reply_payload, 30000);
-	if (result == 0 && reply_payload != 0) {
-		errno = EPROTO;
-		return (-1);
-	}
-	return (result);
-}
-
-static int
-simple_rpc(struct notify_client *client, uint16_t opcode,
-    const void *payload, size_t payload_length)
-{
-	int error, result;
-
-	if (client == NULL || client->owner != getpid()) {
-		errno = EINVAL;
-		return (-1);
-	}
-	pthread_mutex_lock(&client->lock);
-	if (client->channel == NULL && reconnect_locked(client) == -1)
-		result = -1;
-	else
-		result = simple_rpc_locked(client, opcode, payload, payload_length);
-	error = errno;
-	if (result == -1 && connection_unusable(error))
+	error = wait_locked(client, NOTIFY_OP_HELLO,
+	    bsd_notify_v1_Notify_GetProtocolInfo(client->connection, &empty,
+	    info_reply, &call, &call.txid), &call, NOTIFY_CALL_TIMEOUT_MS);
+	if (error != 0 || hello_locked(client, 0, &limits) == -1) {
+		error = error != 0 ? error : errno;
 		disconnect_locked(client);
-	pthread_mutex_unlock(&client->lock);
-	errno = error;
-	return (result);
+		return (errno = error, -1);
+	}
+	client->router_epoch = limits.router_epoch;
+	client->features = limits.features;
+	return (0);
 }
 
 int
 notify_client_adopt(int fd, struct notify_client **result)
 {
-	union notify_buffer reply;
 	struct notify_client *client;
-	size_t payload;
 	int error;
 
 	if (fd < 0 || result == NULL) {
@@ -600,36 +534,15 @@ notify_client_adopt(int fd, struct notify_client **result)
 		errno = error;
 		return (-1);
 	}
-	if (service_session_create(fd, &client->channel) == -1) {
+	if (connect_locked(client, fd) == -1) {
 		error = errno;
-		(void)close(fd);
+		(void)pthread_mutex_destroy(&client->lock);
+		free(client);
 		errno = error;
-		goto fail;
-	}
-	if (rpc_locked(client, NOTIFY_OP_HELLO, NULL, 0, &reply, &payload,
-	    30000) == -1)
-		goto fail_channel;
-	{
-		struct notify_hello_reply hello;
-
-		memcpy(&hello, (struct notify_msg *)reply.bytes + 1,
-		    sizeof(hello));
-		client->router_epoch = hello.router_epoch;
-		client->features = hello.features;
+		return (-1);
 	}
 	*result = client;
 	return (0);
-
-fail_channel:
-	error = errno;
-	service_session_close(client->channel);
-	errno = error;
-fail:
-	error = errno;
-	(void)pthread_mutex_destroy(&client->lock);
-	free(client);
-	errno = error;
-	return (-1);
 }
 
 /*
@@ -671,35 +584,12 @@ notify_client_open_system(struct notify_client **result)
 	return (notify_client_open_interface(NOTIFY_SYSTEM_INTERFACE, result));
 }
 
-static bool
-connection_lost(int error)
-{
-
-	return (error == ECONNRESET || error == EPIPE || error == ENOTCONN ||
-	    error == ESHUTDOWN);
-}
-
-static bool
-connection_unusable(int error)
-{
-
-	return (connection_lost(error) || error == EPROTO);
-}
-
-static void
-disconnect_locked(struct notify_client *client)
-{
-
-	service_session_close(client->channel);
-	client->channel = NULL;
-}
+static int topic_rpc_locked(struct notify_client *, uint16_t, const char *);
 
 static int
 reconnect_locked(struct notify_client *client)
 {
-	union notify_buffer reply;
-	struct notify_hello_reply hello;
-	size_t i, payload;
+	size_t i;
 	int error, fd;
 
 	disconnect_locked(client);
@@ -709,47 +599,20 @@ reconnect_locked(struct notify_client *client)
 		errno = error;
 		return (-1);
 	}
-	if (service_session_create(fd, &client->channel) == -1) {
-		error = errno;
-		close(fd);
-		errno = error;
-		return (-1);
-	}
-	if (rpc_locked(client, NOTIFY_OP_HELLO, NULL, 0, &reply, &payload,
-	    30000) == -1)
+	if (connect_locked(client, fd) == -1)
 		goto fail;
-	memcpy(&hello, (struct notify_msg *)reply.bytes + 1, sizeof(hello));
-	client->router_epoch = hello.router_epoch;
-	client->features = hello.features;
 	for (i = 0; i < client->nsubscriptions; i++)
-		if (topic_rpc(client, NOTIFY_OP_SUBSCRIBE,
+		if (topic_rpc_locked(client, NOTIFY_OP_SUBSCRIBE,
 		    client->subscriptions[i]) == -1)
 			goto fail;
 	NOTIFY_PROBE_RECONNECT(client->router_epoch, 0);
 	return (0);
 fail:
 	error = errno;
-	service_session_close(client->channel);
-	client->channel = NULL;
+	disconnect_locked(client);
 	NOTIFY_PROBE_RECONNECT(0, error);
 	errno = error;
 	return (-1);
-}
-
-static int
-topic_rpc_managed_locked(struct notify_client *client, uint16_t opcode,
-    const char *topic)
-{
-	int error, result;
-
-	if (client->channel == NULL && reconnect_locked(client) == -1)
-		return (-1);
-	result = topic_rpc(client, opcode, topic);
-	error = result == -1 ? errno : 0;
-	if (result == -1 && connection_unusable(error))
-		disconnect_locked(client);
-	errno = error;
-	return (result);
 }
 
 void
@@ -759,77 +622,125 @@ notify_client_close(struct notify_client *client)
 	if (client == NULL)
 		return;
 	if (client->owner == getpid()) {
-		service_session_close(client->channel);
+		disconnect_locked(client);
 		(void)pthread_mutex_destroy(&client->lock);
 	}
 	memset(client, 0, sizeof(*client));
 	free(client);
 }
 
+/*
+ * Lock the client and make sure it has a session; on failure the lock is
+ * released and -1 returned with errno set.
+ */
 static int
-topic_rpc(struct notify_client *client, uint16_t opcode, const char *name)
+begin(struct notify_client *client) __no_lock_analysis
 {
-	struct notify_topic_request request;
-	size_t length;
+	int error;
 
-	if (name == NULL) {
+	if (client == NULL || client->owner != getpid()) {
 		errno = EINVAL;
 		return (-1);
 	}
-	length = strnlen(name, NOTIFY_MAX_TOPIC + 1);
-	if (notify_validate_topic(name, length) == -1)
+	pthread_mutex_lock(&client->lock);
+	if (client->connection == NULL && reconnect_locked(client) == -1) {
+		error = errno;
+		pthread_mutex_unlock(&client->lock);
+		errno = error;
 		return (-1);
-	memset(&request, 0, sizeof(request));
-	request.topic_length = length;
-	memcpy(request.topic, name, length);
-	return (simple_rpc_locked(client, opcode, &request, sizeof(request)));
+	}
+	return (0);
+}
+
+/* Unlock after a call; a lost session is dropped for the next reconnect. */
+static int
+finish(struct notify_client *client, int error) __no_lock_analysis
+{
+
+	if (error != 0 && session_lost(client, error))
+		disconnect_locked(client);
+	pthread_mutex_unlock(&client->lock);
+	if (error != 0)
+		return (errno = error, -1);
+	return (0);
+}
+
+static int
+topic_check(const char *topic, size_t *length)
+{
+
+	if (topic == NULL)
+		return (errno = EINVAL, -1);
+	*length = strnlen(topic, NOTIFY_MAX_TOPIC + 1);
+	return (notify_validate_topic(topic, *length));
+}
+
+/* SUBSCRIBE or UNSUBSCRIBE on the current session (lock held). */
+static int
+topic_rpc_locked(struct notify_client *client, uint16_t opcode,
+    const char *topic)
+{
+	struct bsd_notify_v1_TopicRequest request;
+	struct call call = { 0 };
+	size_t length;
+	int error;
+
+	if (topic_check(topic, &length) == -1)
+		return (-1);
+	request.topic = topic;
+	request.topic_size = length;
+	error = wait_locked(client, opcode, opcode == NOTIFY_OP_SUBSCRIBE ?
+	    bsd_notify_v1_Notify_Subscribe(client->connection, &request,
+	    subscribe_reply, &call, &call.txid) :
+	    bsd_notify_v1_Notify_Unsubscribe(client->connection, &request,
+	    unsubscribe_reply, &call, &call.txid), &call,
+	    NOTIFY_CALL_TIMEOUT_MS);
+	return (error != 0 ? (errno = error, -1) : 0);
 }
 
 int
 notify_subscribe(struct notify_client *client, const char *topic)
 {
 	size_t length;
-	int error, result;
+	int error;
 
 	if (client == NULL || client->owner != getpid() || topic == NULL) {
 		errno = EINVAL;
 		return (-1);
 	}
-	length = strnlen(topic, NOTIFY_MAX_TOPIC + 1);
-	pthread_mutex_lock(&client->lock);
-	if (client->nsubscriptions == NOTIFY_MAX_SUBSCRIPTIONS) {
-		result = -1;
+	if (topic_check(topic, &length) == -1)
+		return (-1);
+	if (begin(client) == -1)
+		return (-1);
+	if (client->nsubscriptions == NOTIFY_MAX_SUBSCRIPTIONS)
 		error = EOVERFLOW;
-	} else {
-		result = topic_rpc_managed_locked(client,
-		    NOTIFY_OP_SUBSCRIBE, topic);
-		error = errno;
-		if (result == 0) {
-			memcpy(client->subscriptions[client->nsubscriptions], topic,
-			    length + 1);
+	else {
+		error = topic_rpc_locked(client, NOTIFY_OP_SUBSCRIBE, topic) ==
+		    -1 ? errno : 0;
+		if (error == 0) {
+			memcpy(client->subscriptions[client->nsubscriptions],
+			    topic, length + 1);
 			client->nsubscriptions++;
 		}
 	}
-	pthread_mutex_unlock(&client->lock);
-	errno = error;
-	return (result);
+	return (finish(client, error));
 }
 
 int
 notify_unsubscribe(struct notify_client *client, const char *topic)
 {
 	size_t i;
-	int error, result;
+	int error;
 
 	if (client == NULL || client->owner != getpid() || topic == NULL) {
 		errno = EINVAL;
 		return (-1);
 	}
-	pthread_mutex_lock(&client->lock);
-	result = topic_rpc_managed_locked(client, NOTIFY_OP_UNSUBSCRIBE,
-	    topic);
-	error = errno;
-	if (result == 0)
+	if (begin(client) == -1)
+		return (-1);
+	error = topic_rpc_locked(client, NOTIFY_OP_UNSUBSCRIBE, topic) == -1 ?
+	    errno : 0;
+	if (error == 0)
 		for (i = 0; i < client->nsubscriptions; i++)
 			if (strcmp(client->subscriptions[i], topic) == 0) {
 				client->nsubscriptions--;
@@ -838,37 +749,38 @@ notify_unsubscribe(struct notify_client *client, const char *topic)
 				    sizeof(client->subscriptions[i]));
 				break;
 			}
-	pthread_mutex_unlock(&client->lock);
-	errno = error;
-	return (result);
+	return (finish(client, error));
 }
 
 int
 notify_publish(struct notify_client *client, const char *topic,
     const void *data, size_t length)
 {
-	union notify_buffer payload;
-	struct notify_publish_request *request;
+	struct bsd_notify_v1_PublishRequest request;
+	struct call call = { 0 };
 	size_t topic_length;
-	int result;
+	int error, result;
 
 	if (client == NULL || client->owner != getpid() || topic == NULL ||
 	    (length != 0 && data == NULL) || length > NOTIFY_MAX_PAYLOAD) {
 		errno = EINVAL;
 		return (-1);
 	}
-	topic_length = strnlen(topic, NOTIFY_MAX_TOPIC + 1);
-	if (notify_validate_topic(topic, topic_length) == -1)
+	if (topic_check(topic, &topic_length) == -1)
 		return (-1);
-	memset(&payload, 0, sizeof(payload));
-	request = (void *)payload.bytes;
-	request->topic_length = topic_length;
-	request->payload_length = length;
-	memcpy(request->topic, topic, topic_length);
-	if (length != 0)
-		memcpy(request + 1, data, length);
-	result = simple_rpc(client, NOTIFY_OP_PUBLISH, request,
-	    sizeof(*request) + length);
+	if (begin(client) == -1)
+		result = -1;
+	else {
+		request.topic = topic;
+		request.topic_size = topic_length;
+		request.payload = __DECONST(uint8_t *, data);
+		request.payload_size = length;
+		error = wait_locked(client, NOTIFY_OP_PUBLISH,
+		    bsd_notify_v1_Notify_Publish(client->connection, &request,
+		    publish_reply, &call, &call.txid), &call,
+		    NOTIFY_CALL_TIMEOUT_MS);
+		result = finish(client, error);
+	}
 	NOTIFY_PROBE_PUBLISH(__DECONST(char *, topic), length,
 	    result == -1 ? errno : 0);
 	return (result);
@@ -878,181 +790,148 @@ int
 notify_state_set(struct notify_client *client, const char *topic,
     uint64_t value)
 {
-	union notify_buffer reply;
-	struct notify_state_set_request request;
-	struct notify_state_reply *state;
-	size_t length, payload;
-	int error, result;
+	struct bsd_notify_v1_StateSetRequest request;
+	struct call call = { 0 };
+	size_t length;
+	int error;
 
 	if (client == NULL || client->owner != getpid() || topic == NULL) {
 		errno = EINVAL;
 		return (-1);
 	}
-	length = strnlen(topic, NOTIFY_MAX_TOPIC + 1);
-	if (notify_validate_topic(topic, length) == -1)
+	if (topic_check(topic, &length) == -1)
 		return (-1);
-	memset(&request, 0, sizeof(request));
+	if (begin(client) == -1)
+		return (-1);
+	request.topic = topic;
+	request.topic_size = length;
 	request.state = value;
-	request.topic_length = length;
-	memcpy(request.topic, topic, length);
-	pthread_mutex_lock(&client->lock);
-	if (client->channel == NULL && reconnect_locked(client) == -1)
-		result = -1;
-	else
-		result = rpc_locked(client, NOTIFY_OP_STATE_SET, &request,
-		    sizeof(request), &reply, &payload, 30000);
-	if (result == 0) {
-		state = (void *)((struct notify_msg *)reply.bytes + 1);
-		if (payload != sizeof(*state) ||
-		    state->router_epoch != client->router_epoch ||
-		    state->generation == 0 || state->state != value) {
-			errno = EPROTO;
-			result = -1;
-		}
-	}
-	error = result == -1 ? errno : 0;
-	if (result == -1 && connection_unusable(error))
-		disconnect_locked(client);
-	pthread_mutex_unlock(&client->lock);
-	errno = error;
-	return (result);
+	error = wait_locked(client, NOTIFY_OP_STATE_SET,
+	    bsd_notify_v1_Notify_StateSet(client->connection, &request,
+	    state_set_reply, &call, &call.txid), &call, NOTIFY_CALL_TIMEOUT_MS);
+	if (error == 0 && (call.u.state.router_epoch != client->router_epoch ||
+	    call.u.state.generation == 0 || call.u.state.state != value))
+		error = EPROTO;
+	return (finish(client, error));
 }
 
 int
 notify_state_get(struct notify_client *client, const char *topic,
     struct notify_state_reply *state)
 {
-	union notify_buffer reply;
-	struct notify_topic_request request;
-	size_t length, payload;
-	int error, result;
+	struct bsd_notify_v1_TopicRequest request;
+	struct call call = { 0 };
+	size_t length;
+	int error;
 
 	if (client == NULL || client->owner != getpid() || topic == NULL ||
 	    state == NULL) {
 		errno = EINVAL;
 		return (-1);
 	}
-	length = strnlen(topic, NOTIFY_MAX_TOPIC + 1);
-	if (notify_validate_topic(topic, length) == -1)
+	if (topic_check(topic, &length) == -1)
 		return (-1);
-	memset(&request, 0, sizeof(request));
-	request.topic_length = length;
-	memcpy(request.topic, topic, length);
-	pthread_mutex_lock(&client->lock);
-	if (client->channel == NULL && reconnect_locked(client) == -1)
-		result = -1;
-	else
-		result = rpc_locked(client, NOTIFY_OP_STATE_GET, &request,
-		    sizeof(request), &reply, &payload, 30000);
-	if (result == 0) {
-		if (payload != sizeof(*state)) {
-			errno = EPROTO;
-			result = -1;
-		} else {
-			memcpy(state, (struct notify_msg *)reply.bytes + 1,
-			    sizeof(*state));
-			if (state->router_epoch != client->router_epoch ||
-			    state->generation == 0) {
-				errno = EPROTO;
-				result = -1;
-			}
-		}
+	if (begin(client) == -1)
+		return (-1);
+	request.topic = topic;
+	request.topic_size = length;
+	error = wait_locked(client, NOTIFY_OP_STATE_GET,
+	    bsd_notify_v1_Notify_StateGet(client->connection, &request,
+	    state_get_reply, &call, &call.txid), &call, NOTIFY_CALL_TIMEOUT_MS);
+	if (error == 0 && (call.u.state.router_epoch != client->router_epoch ||
+	    call.u.state.generation == 0))
+		error = EPROTO;
+	if (error == 0) {
+		state->router_epoch = call.u.state.router_epoch;
+		state->generation = call.u.state.generation;
+		state->state = call.u.state.state;
 	}
-	error = result == -1 ? errno : 0;
-	if (result == -1 && connection_unusable(error))
-		disconnect_locked(client);
-	pthread_mutex_unlock(&client->lock);
-	errno = error;
-	return (result);
+	return (finish(client, error));
 }
 
 int
 notify_state_watch(struct notify_client *client, const char *topic,
     struct notify_state_watch_reply *state, uint32_t timeout_ms)
 {
-	union notify_buffer reply;
-	struct notify_state_watch_request request;
-	struct notify_hello_request hello_request = {
-	    .features = NOTIFY_FEATURE_STATE_WATCH };
-	struct notify_hello_reply hello;
-	size_t length, payload;
-	int error, result;
+	struct bsd_notify_v1_StateWatchRequest request;
+	struct bsd_notify_v1_Limits hello;
+	struct call call = { 0 };
+	size_t length;
+	int error;
 
 	if (client == NULL || client->owner != getpid() || topic == NULL ||
 	    state == NULL)
 		return (errno = EINVAL, -1);
-	length = strnlen(topic, NOTIFY_MAX_TOPIC + 1);
-	if (notify_validate_topic(topic, length) == -1)
+	if (topic_check(topic, &length) == -1)
 		return (-1);
-	memset(&request, 0, sizeof(request));
-	request.topic.topic_length = length;
-	memcpy(request.topic.topic, topic, length);
-	request.timeout_ms = timeout_ms;
-	pthread_mutex_lock(&client->lock);
-	result = 0;
-	if (client->channel == NULL && reconnect_locked(client) == -1)
-		result = -1;
-	if (result == 0 && (client->features & NOTIFY_FEATURE_STATE_WATCH) == 0) {
-		result = rpc_locked(client, NOTIFY_OP_HELLO, &hello_request,
-		    sizeof(hello_request), &reply, &payload, 30000);
-		if (result == 0) {
-			memcpy(&hello, (struct notify_msg *)reply.bytes + 1,
-			    sizeof(hello));
-			if (hello.router_epoch != client->router_epoch) {
-				errno = EPROTO;
-				result = -1;
-			} else {
-				client->features = hello.features;
-				if ((hello.features & NOTIFY_FEATURE_STATE_WATCH) == 0) {
-					errno = EOPNOTSUPP;
-					result = -1;
-				}
-			}
+	if (begin(client) == -1)
+		return (-1);
+	error = 0;
+	if ((client->features & NOTIFY_FEATURE_STATE_WATCH) == 0) {
+		if (hello_locked(client, NOTIFY_FEATURE_STATE_WATCH,
+		    &hello) == -1)
+			error = errno;
+		else if (hello.router_epoch != client->router_epoch)
+			error = EPROTO;
+		else {
+			client->features = hello.features;
+			if ((hello.features & NOTIFY_FEATURE_STATE_WATCH) == 0)
+				error = EOPNOTSUPP;
 		}
 	}
-	if (result == 0)
-		result = rpc_locked(client, NOTIFY_OP_STATE_WATCH, &request,
-		    sizeof(request), &reply, &payload,
+	if (error == 0) {
+		request.topic = topic;
+		request.topic_size = length;
+		request.timeout_ms = timeout_ms;
+		error = wait_locked(client, NOTIFY_OP_STATE_WATCH,
+		    bsd_notify_v1_Notify_StateWatch(client->connection,
+		    &request, state_watch_reply, &call, &call.txid), &call,
 		    notify_rpc_timeout(timeout_ms));
-	if (result == 0)
-		memcpy(state, (struct notify_msg *)reply.bytes + 1, sizeof(*state));
-	error = result == -1 ? errno : 0;
+	}
+	if (error == 0) {
+		memset(state, 0, sizeof(*state));
+		state->watch_epoch = call.u.watch.watch_epoch;
+		state->generation = call.u.watch.generation;
+		state->state = call.u.watch.state;
+		state->present = call.u.watch.present ? 1 : 0;
+	}
 	/* A transport timeout cannot leave a hidden pending server watch. */
-	if (result == -1 && (connection_unusable(error) || error == ETIMEDOUT))
+	if (error == ETIMEDOUT)
 		disconnect_locked(client);
-	pthread_mutex_unlock(&client->lock);
-	errno = error;
-	return (result);
+	return (finish(client, error));
 }
 
 int
 notify_state_clear(struct notify_client *client, const char *topic)
 {
-	struct notify_topic_request request;
+	struct bsd_notify_v1_TopicRequest request;
+	struct call call = { 0 };
 	size_t length;
+	int error;
 
 	if (client == NULL || client->owner != getpid() || topic == NULL) {
 		errno = EINVAL;
 		return (-1);
 	}
-	length = strnlen(topic, NOTIFY_MAX_TOPIC + 1);
-	if (notify_validate_topic(topic, length) == -1)
+	if (topic_check(topic, &length) == -1)
 		return (-1);
-	memset(&request, 0, sizeof(request));
-	request.topic_length = length;
-	memcpy(request.topic, topic, length);
-	return (simple_rpc(client, NOTIFY_OP_STATE_CLEAR, &request,
-	    sizeof(request)));
+	if (begin(client) == -1)
+		return (-1);
+	request.topic = topic;
+	request.topic_size = length;
+	error = wait_locked(client, NOTIFY_OP_STATE_CLEAR,
+	    bsd_notify_v1_Notify_StateClear(client->connection, &request,
+	    state_clear_reply, &call, &call.txid), &call,
+	    NOTIFY_CALL_TIMEOUT_MS);
+	return (finish(client, error));
 }
 
 ssize_t
 notify_next(struct notify_client *client, struct notify_event *event,
-    size_t capacity, uint32_t timeout_ms)
+    size_t capacity, uint32_t timeout_ms) __no_lock_analysis
 {
-	union notify_buffer reply;
-	struct notify_next_request request;
-	struct notify_msg *message;
-	size_t payload;
+	struct bsd_notify_v1_NextRequest request = { timeout_ms };
+	struct call call = { 0 };
 	ssize_t result;
 	int error;
 
@@ -1061,43 +940,33 @@ notify_next(struct notify_client *client, struct notify_event *event,
 		errno = EINVAL;
 		return (-1);
 	}
-	memset(&request, 0, sizeof(request));
-	request.timeout_ms = timeout_ms;
-	pthread_mutex_lock(&client->lock);
-	if (client->channel == NULL && reconnect_locked(client) == -1) {
-		error = errno;
-		result = -1;
-	} else if (rpc_locked(client, NOTIFY_OP_NEXT, &request,
-	    sizeof(request), &reply, &payload,
-	    notify_rpc_timeout(timeout_ms)) == -1) {
-		error = errno;
-		if (connection_lost(error) && reconnect_locked(client) == 0) {
-			memset(event, 0, sizeof(*event));
-			event->type = NOTIFY_EVENT_RESET;
-			event->router_epoch = client->router_epoch;
-			result = sizeof(*event);
-			error = 0;
-		} else {
-			if (connection_unusable(error))
-				disconnect_locked(client);
-			result = -1;
-		}
-	} else if (payload > capacity) {
-		error = EMSGSIZE;
-		result = -1;
-	} else {
-		message = (void *)reply.bytes;
-		memcpy(event, message + 1, payload);
-		if (event->router_epoch != client->router_epoch) {
-			error = EPROTO;
-			result = -1;
-			disconnect_locked(client);
-		} else {
-			error = 0;
-			result = (ssize_t)payload;
-		}
+	if (begin(client) == -1) {
+		NOTIFY_PROBE_NEXT(timeout_ms, errno);
+		return (-1);
 	}
-	pthread_mutex_unlock(&client->lock);
+	call.u.next.event = event;
+	call.u.next.capacity = capacity;
+	error = wait_locked(client, NOTIFY_OP_NEXT,
+	    bsd_notify_v1_Notify_Next(client->connection, &request, next_reply,
+	    &call, &call.txid), &call, notify_rpc_timeout(timeout_ms));
+	result = -1;
+	if (error == 0 && event->router_epoch != client->router_epoch)
+		error = EPROTO;
+	else if (error == 0)
+		result = (ssize_t)call.u.next.length;
+	else if (error != EPROTO && session_lost(client, error) &&
+	    reconnect_locked(client) == 0) {
+		/* The provider went away: report the fresh session. */
+		memset(event, 0, sizeof(*event));
+		event->type = NOTIFY_EVENT_RESET;
+		event->router_epoch = client->router_epoch;
+		result = sizeof(*event);
+		error = 0;
+	}
+	if (error != 0)
+		(void)finish(client, error);
+	else
+		pthread_mutex_unlock(&client->lock);
 	NOTIFY_PROBE_NEXT(timeout_ms, error);
 	errno = error;
 	return (result);
@@ -1107,7 +976,8 @@ int
 notify_timer_add(struct notify_client *client, uint64_t timer_id,
     uint32_t interval_ms, uint32_t flags)
 {
-	struct notify_timer_request request;
+	struct bsd_notify_v1_TimerRequest request;
+	struct call call = { 0 };
 
 	if (client == NULL || client->owner != getpid() || timer_id == 0 ||
 	    interval_ms == 0 || interval_ms > NOTIFY_MAX_TIMER_INTERVAL_MS ||
@@ -1115,218 +985,126 @@ notify_timer_add(struct notify_client *client, uint64_t timer_id,
 		errno = EINVAL;
 		return (-1);
 	}
-	memset(&request, 0, sizeof(request));
+	if (begin(client) == -1)
+		return (-1);
 	request.timer_id = timer_id;
 	request.interval_ms = interval_ms;
 	request.flags = flags;
-	return (simple_rpc(client, NOTIFY_OP_TIMER_ADD, &request,
-	    sizeof(request)));
+	return (finish(client, wait_locked(client, NOTIFY_OP_TIMER_ADD,
+	    bsd_notify_v1_Notify_TimerAdd(client->connection, &request,
+	    timer_add_reply, &call, &call.txid), &call,
+	    NOTIFY_CALL_TIMEOUT_MS)));
 }
 
 int
 notify_timer_cancel(struct notify_client *client, uint64_t timer_id)
 {
-	struct notify_timer_cancel_request request;
+	struct bsd_notify_v1_TimerCancelRequest request;
+	struct call call = { 0 };
 
 	if (client == NULL || client->owner != getpid() || timer_id == 0) {
 		errno = EINVAL;
 		return (-1);
 	}
-	memset(&request, 0, sizeof(request));
+	if (begin(client) == -1)
+		return (-1);
 	request.timer_id = timer_id;
-	return (simple_rpc(client, NOTIFY_OP_TIMER_CANCEL, &request,
-	    sizeof(request)));
+	return (finish(client, wait_locked(client, NOTIFY_OP_TIMER_CANCEL,
+	    bsd_notify_v1_Notify_TimerCancel(client->connection, &request,
+	    timer_cancel_reply, &call, &call.txid), &call,
+	    NOTIFY_CALL_TIMEOUT_MS)));
 }
 
 /*
- * Fetch a single LIST page.  On success *header points into reply at the
- * decoded list header and *entries at the first entry; the reply was already
- * subjected to notify_validate_message(), so the count/size/entry invariants
- * hold.  Enforces a strictly advancing cursor to bound pagination.
+ * Enumerate the caller's own subscriptions or timers page by page.  Writes
+ * up to capacity entries into out and returns the total the session holds
+ * (more than capacity signals truncation).  Fails closed on any protocol or
+ * transport error.
  */
-static int
-list_page_locked(struct notify_client *client, uint16_t opcode,
-    uint32_t cursor, union notify_buffer *reply,
-    const struct notify_list_reply **header, const void **entries)
+static ssize_t
+list_all(struct notify_client *client, uint16_t opcode, void *out,
+    size_t capacity)
 {
-	const struct notify_msg *message;
-	const struct notify_list_reply *list;
-	struct notify_list_request request;
-	size_t payload;
+	struct bsd_notify_v1_ListRequest request;
+	struct call call;
+	size_t total;
+	uint32_t cursor;
+	int error;
 
-	memset(&request, 0, sizeof(request));
-	request.cursor = cursor;
-	if (rpc_locked(client, opcode, &request, sizeof(request), reply,
-	    &payload, 30000) == -1)
-		return (-1);
-	message = (const void *)reply->bytes;
-	list = (const void *)(message + 1);
-	/* rpc_locked validated the frame; re-check the loop-safety invariant. */
-	if (payload < sizeof(*list) ||
-	    (list->next_cursor != 0 && list->next_cursor <= cursor)) {
-		errno = EPROTO;
+	if (client == NULL || client->owner != getpid() ||
+	    (out == NULL && capacity != 0)) {
+		errno = EINVAL;
 		return (-1);
 	}
-	*header = list;
-	*entries = (const void *)(list + 1);
-	return (0);
+	if (begin(client) == -1)
+		return (-1);
+	total = 0;
+	cursor = 0;
+	for (;;) {
+		memset(&call, 0, sizeof(call));
+		call.u.list.cursor = cursor;
+		call.u.list.out = out;
+		call.u.list.capacity = capacity;
+		call.u.list.offset = total;
+		request.cursor = cursor;
+		error = wait_locked(client, opcode,
+		    opcode == NOTIFY_OP_LIST_SUBSCRIPTIONS ?
+		    bsd_notify_v1_Notify_ListSubscriptions(client->connection,
+		    &request, subscriptions_reply, &call, &call.txid) :
+		    bsd_notify_v1_Notify_ListTimers(client->connection,
+		    &request, timers_reply, &call, &call.txid), &call,
+		    NOTIFY_CALL_TIMEOUT_MS);
+		if (error != 0)
+			break;
+		total += call.u.list.count;
+		cursor = call.u.list.next_cursor;
+		if (cursor == 0)
+			break;
+	}
+	if (finish(client, error) == -1)
+		return (-1);
+	return ((ssize_t)total);
 }
 
-/*
- * Enumerate the caller's own active subscriptions.  Writes up to capacity
- * entries into out and returns the total number the session holds (which may
- * exceed capacity: a return value greater than capacity signals truncation).
- * Fails closed on any protocol or transport error.
- */
 ssize_t
 notify_list_subscriptions(struct notify_client *client,
     struct notify_subscription_info *out, size_t capacity)
 {
-	union notify_buffer reply;
-	const struct notify_list_reply *header;
-	const struct notify_subscription_entry *entries;
-	const void *raw;
-	size_t total, i;
-	uint32_t cursor;
-	int error, result;
 
-	if (client == NULL || client->owner != getpid() ||
-	    (out == NULL && capacity != 0)) {
-		errno = EINVAL;
-		return (-1);
-	}
-	total = 0;
-	cursor = 0;
-	result = 0;
-	error = 0;
-	pthread_mutex_lock(&client->lock);
-	if (client->channel == NULL && reconnect_locked(client) == -1) {
-		error = errno;
-		result = -1;
-	}
-	while (result == 0) {
-		if (list_page_locked(client, NOTIFY_OP_LIST_SUBSCRIPTIONS, cursor,
-		    &reply, &header, &raw) == -1) {
-			error = errno;
-			result = -1;
-			break;
-		}
-		entries = raw;
-		for (i = 0; i < header->count; i++) {
-			size_t length = entries[i].topic_length;
-
-			if (total < capacity) {
-				memcpy(out[total].topic, entries[i].topic, length);
-				out[total].topic[length] = '\0';
-			}
-			total++;
-		}
-		cursor = header->next_cursor;
-		if (cursor == 0)
-			break;
-	}
-	if (result == -1 && connection_unusable(error))
-		disconnect_locked(client);
-	pthread_mutex_unlock(&client->lock);
-	if (result == -1) {
-		errno = error;
-		return (-1);
-	}
-	return ((ssize_t)total);
+	return (list_all(client, NOTIFY_OP_LIST_SUBSCRIPTIONS, out, capacity));
 }
 
-/*
- * Enumerate the caller's own active timers (id, interval, periodic flag and a
- * best-effort next-fire estimate).  Same contract as
- * notify_list_subscriptions().
- */
 ssize_t
 notify_list_timers(struct notify_client *client,
     struct notify_timer_info *out, size_t capacity)
 {
-	union notify_buffer reply;
-	const struct notify_list_reply *header;
-	const struct notify_timer_entry *entries;
-	const void *raw;
-	size_t total, i;
-	uint32_t cursor;
-	int error, result;
 
-	if (client == NULL || client->owner != getpid() ||
-	    (out == NULL && capacity != 0)) {
-		errno = EINVAL;
-		return (-1);
-	}
-	total = 0;
-	cursor = 0;
-	result = 0;
-	error = 0;
-	pthread_mutex_lock(&client->lock);
-	if (client->channel == NULL && reconnect_locked(client) == -1) {
-		error = errno;
-		result = -1;
-	}
-	while (result == 0) {
-		if (list_page_locked(client, NOTIFY_OP_LIST_TIMERS, cursor,
-		    &reply, &header, &raw) == -1) {
-			error = errno;
-			result = -1;
-			break;
-		}
-		entries = raw;
-		for (i = 0; i < header->count; i++) {
-			if (total < capacity) {
-				out[total].timer_id = entries[i].timer_id;
-				out[total].interval_ms = entries[i].interval_ms;
-				out[total].flags = entries[i].flags;
-				out[total].next_fire_ms = entries[i].next_fire_ms;
-			}
-			total++;
-		}
-		cursor = header->next_cursor;
-		if (cursor == 0)
-			break;
-	}
-	if (result == -1 && connection_unusable(error))
-		disconnect_locked(client);
-	pthread_mutex_unlock(&client->lock);
-	if (result == -1) {
-		errno = error;
-		return (-1);
-	}
-	return ((ssize_t)total);
+	return (list_all(client, NOTIFY_OP_LIST_TIMERS, out, capacity));
 }
 
 int
 notify_stats(struct notify_client *client, struct notify_stats *stats)
 {
-	union notify_buffer reply;
-	size_t payload;
-	int error, result;
+	struct fidl_bsd_empty empty = { 0 };
+	struct call call = { 0 };
+	int error;
 
 	if (client == NULL || client->owner != getpid() || stats == NULL) {
 		errno = EINVAL;
 		return (-1);
 	}
-	pthread_mutex_lock(&client->lock);
-	if (client->channel == NULL && reconnect_locked(client) == -1)
-		result = -1;
-	else
-		result = rpc_locked(client, NOTIFY_OP_STATS, NULL, 0, &reply,
-		    &payload, 30000);
-	if (result == -1)
-		error = errno;
-	else if (payload != sizeof(*stats)) {
-		result = -1;
-		error = EPROTO;
-	} else {
-		memcpy(stats, (struct notify_msg *)reply.bytes + 1,
-		    sizeof(*stats));
-		error = 0;
+	if (begin(client) == -1)
+		return (-1);
+	error = wait_locked(client, NOTIFY_OP_STATS,
+	    bsd_notify_v1_Notify_GetStats(client->connection, &empty,
+	    stats_reply, &call, &call.txid), &call, NOTIFY_CALL_TIMEOUT_MS);
+	if (error == 0) {
+		memset(stats, 0, sizeof(*stats));
+		stats->published = call.u.stats.published;
+		stats->delivered = call.u.stats.delivered;
+		stats->dropped = call.u.stats.dropped;
+		stats->rejected = call.u.stats.rejected;
+		stats->timer_events = call.u.stats.timer_events;
 	}
-	if (result == -1 && connection_unusable(error))
-		disconnect_locked(client);
-	pthread_mutex_unlock(&client->lock);
-	errno = error;
-	return (result);
+	return (finish(client, error));
 }

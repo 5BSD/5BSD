@@ -1,11 +1,22 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Scripted system.Notify provider for the libnotify client tests.  It
+ * replaces libservice's service_open(): each call creates a real capability
+ * channel served by a bsd.notify.v1 server on its own thread, with
+ * per-session subscription and timer bookkeeping for the LIST methods.
+ * Faults are armed for the next request; malformed replies are written as
+ * raw frames on the request's channel message.  service_budget_timeout() is
+ * replaced so an armed timeout costs 300 ms, not the 30 s call deadline.
  */
 
 #include <sys/types.h>
 
+#include <assert.h>
+#include <channel.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <fidl/bsd.notify.v1/c/bsd.h>
 #include <pthread.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -13,17 +24,15 @@
 #include <string.h>
 #include <unistd.h>
 
-#include <libservice.h>
 #include <notify.h>
-#include <notify_server.h>
 
 #include "fake_service.h"
 
-struct service_context { int unused; };
-struct service_session { unsigned ident; };
+int service_open(const char *, int *);
+int service_budget_timeout(uint32_t *);
 
-static struct service_context context;
 static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t changed = PTHREAD_COND_INITIALIZER;
 static unsigned created, closed, subscriptions, publishes, concurrent;
 static unsigned max_concurrent;
 static uint16_t fail_opcode;
@@ -36,52 +45,38 @@ static char refused_interface[256];
 static int refused_error;
 static unsigned open_connects, system_connects;
 
-/*
- * Per-session subscription/timer bookkeeping so the fake service can answer
- * the LIST_SUBSCRIPTIONS / LIST_TIMERS enumeration ops.  Indexed by the
- * session ident handed out by service_session_create(); each open client owns
- * a distinct ident, which is what makes the cross-session isolation test
- * meaningful.
- */
-#define	FAKE_MAX_SESSIONS	16
-
 struct fake_timer {
 	uint64_t	id;
 	uint32_t	interval_ms;
 	uint32_t	flags;
 };
 
-struct fake_session_state {
-	bool		active;
+struct session {
+	struct fidl_bsd_connection *connection;
+	unsigned	ident;
 	size_t		ntopics;
-	uint16_t	topic_length[NOTIFY_MAX_SUBSCRIPTIONS];
-	char		topic[NOTIFY_MAX_SUBSCRIPTIONS][NOTIFY_MAX_TOPIC];
+	char		topic[NOTIFY_MAX_SUBSCRIPTIONS][NOTIFY_MAX_TOPIC + 1];
 	size_t		ntimers;
 	struct fake_timer timers[NOTIFY_MAX_TIMERS];
 };
 
-static struct fake_session_state sstate[FAKE_MAX_SESSIONS];
-
-static struct fake_session_state *
-fake_session(const struct service_session *session)
-{
-
-	if (session == NULL || session->ident == 0 ||
-	    session->ident >= FAKE_MAX_SESSIONS)
-		return (NULL);
-	return (&sstate[session->ident]);
-}
-
 void
 fake_service_reset(void)
 {
+	struct timespec deadline;
+
+	/* Let sessions of the previous case finish closing first. */
+	clock_gettime(CLOCK_REALTIME, &deadline);
+	deadline.tv_sec += 2;
 	pthread_mutex_lock(&lock);
+	while (closed < created &&
+	    pthread_cond_timedwait(&changed, &lock, &deadline) == 0)
+		;
 	created = closed = subscriptions = publishes = concurrent = 0;
 	max_concurrent = 0;
 	last_payload_length = 0;
 	fail_opcode = 0;
 	next_fault = FAKE_SERVICE_FAULT_NONE;
-	memset(sstate, 0, sizeof(sstate));
 	last_interface[0] = '\0';
 	refused_interface[0] = '\0';
 	refused_error = 0;
@@ -93,7 +88,6 @@ fake_service_reset(void)
 void
 fake_service_refuse_interface(const char *name, int error)
 {
-
 	pthread_mutex_lock(&lock);
 	(void)strlcpy(refused_interface, name != NULL ? name : "",
 	    sizeof(refused_interface));
@@ -113,18 +107,15 @@ fake_service_connects(const char *name)
 	return (value);
 }
 
-/* Name passed to the most recent service_connect(); "" if none yet. */
 const char *
 fake_service_last_interface(void)
 {
-
 	return (last_interface);
 }
 
 void
 fake_service_fault_next(enum fake_service_fault fault)
 {
-
 	pthread_mutex_lock(&lock);
 	next_fault = fault;
 	pthread_mutex_unlock(&lock);
@@ -141,7 +132,6 @@ fake_service_fail_next(void)
 void
 fake_service_fail_opcode(uint16_t opcode)
 {
-
 	pthread_mutex_lock(&lock);
 	fail_opcode = opcode;
 	pthread_mutex_unlock(&lock);
@@ -151,10 +141,25 @@ fake_service_fail_opcode(uint16_t opcode)
 	unsigned name(void) { unsigned value; pthread_mutex_lock(&lock); \
 	value = field; pthread_mutex_unlock(&lock); return (value); }
 COUNTER(fake_service_created, created)
-COUNTER(fake_service_closed, closed)
 COUNTER(fake_service_subscriptions, subscriptions)
 COUNTER(fake_service_publishes, publishes)
 COUNTER(fake_service_max_concurrent, max_concurrent)
+
+/*
+ * Sessions whose server has ended.  A client drops its channel without
+ * waiting for the provider, so allow the server threads a moment to notice.
+ */
+unsigned
+fake_service_closed(void)
+{
+	unsigned value;
+
+	usleep(50000);
+	pthread_mutex_lock(&lock);
+	value = closed;
+	pthread_mutex_unlock(&lock);
+	return (value);
+}
 
 ssize_t
 fake_service_last_payload(void *buffer, size_t capacity)
@@ -175,32 +180,469 @@ fake_service_last_payload(void *buffer, size_t capacity)
 }
 
 int
-service_acquire(struct service_context **result)
+service_budget_timeout(uint32_t *ms)
 {
-
-	if (result == NULL) {
-		errno = EINVAL;
-		return (-1);
-	}
-	*result = &context;
+	if (ms == NULL)
+		return (errno = EINVAL, -1);
+	pthread_mutex_lock(&lock);
+	if (next_fault == FAKE_SERVICE_FAULT_TIMEOUT && *ms > 300)
+		*ms = 300;
+	pthread_mutex_unlock(&lock);
 	return (0);
 }
 
-void
-service_release(struct service_context *service __unused)
+/*
+ * The scripted outcome for one request: 0 to reply, 1 to leave it
+ * unanswered, -1 when the session was closed instead.
+ */
+static int
+begin_request(struct session *s, struct fidl_bsd_request *request,
+    uint16_t opcode, enum fake_service_fault *faultp)
 {
+	enum fake_service_fault fault;
+	bool fail;
+
+	pthread_mutex_lock(&lock);
+	concurrent++;
+	if (concurrent > max_concurrent)
+		max_concurrent = concurrent;
+	fail = fail_opcode == opcode;
+	if (fail)
+		fail_opcode = 0;
+	fault = next_fault;
+	next_fault = FAKE_SERVICE_FAULT_NONE;
+	if (opcode == NOTIFY_OP_SUBSCRIBE)
+		subscriptions++;
+	if (opcode == NOTIFY_OP_PUBLISH && !fail)
+		publishes++;
+	pthread_mutex_unlock(&lock);
+	if (opcode != NOTIFY_OP_HELLO)
+		usleep((s->ident & 1U) != 0 ? 60000 : 5000);
+	*faultp = fault;
+	if (fail) {
+		fidl_bsd_connection_close(s->connection, ECONNRESET);
+		return (-1);
+	}
+	if (fault == FAKE_SERVICE_FAULT_TIMEOUT)
+		return (1);
+	if (fault == FAKE_SERVICE_FAULT_TRUNCATE ||
+	    fault == FAKE_SERVICE_FAULT_WRONG_OPCODE ||
+	    fault == FAKE_SERVICE_FAULT_ATTACHED_FD) {
+		/* A raw reply frame on the request's own reply token. */
+		struct channel_message *native = __DECONST(
+		    struct channel_message *, fidl_bsd_request_native(request));
+		struct {
+			uint32_t txid;
+			uint8_t flags[3], magic;
+			uint64_t ordinal;
+		} header;
+		struct channel_outgoing outgoing;
+		int fd = -1;
+
+		memcpy(&header, channel_message_data(native), sizeof(header));
+		if (fault == FAKE_SERVICE_FAULT_WRONG_OPCODE)
+			header.ordinal ^= 1;
+		outgoing = (struct channel_outgoing)
+		    CHANNEL_OUTGOING_INITIALIZER(&header,
+		    fault == FAKE_SERVICE_FAULT_TRUNCATE ? sizeof(header) - 1 :
+		    sizeof(header));
+		if (fault == FAKE_SERVICE_FAULT_ATTACHED_FD) {
+			fd = open("/dev/null", O_RDONLY | O_CLOEXEC);
+			outgoing.fds = &fd;
+			outgoing.nfds = 1;
+		}
+		(void)channel_send_reply(native, &outgoing);
+		if (fd >= 0)
+			close(fd);
+		return (1);
+	}
+	return (0);
+}
+
+static void
+end_request(void)
+{
+	pthread_mutex_lock(&lock);
+	concurrent--;
+	pthread_mutex_unlock(&lock);
+}
+
+#define	EMPTY_RESULT(type, fault) {					\
+	.tag = (fault) == FAKE_SERVICE_FAULT_STATUS ? type##_err_tag :	\
+	    type##_response_tag,					\
+	.value.err = (fault) == FAKE_SERVICE_FAULT_STATUS ? EPERM : 0 }
+
+static void
+on_info(void *x, struct fidl_bsd_connection *c, struct fidl_bsd_request *r,
+    struct fidl_bsd_empty *e)
+{
+	struct bsd_notify_v1_ProtocolInfo v = { NOTIFY_WIRE_VERSION };
+	(void)x;
+	(void)e;
+	assert(bsd_notify_v1_Notify_GetProtocolInfo_reply(c, r, &v) == 0);
+}
+
+static void
+on_hello(void *x, struct fidl_bsd_connection *c, struct fidl_bsd_request *r,
+    struct bsd_notify_v1_HelloRequest *q)
+{
+	struct bsd_notify_v1_Notify_Hello_Result v = {
+		.tag = bsd_notify_v1_Notify_Hello_Result_response_tag
+	};
+	enum fake_service_fault fault;
+	int outcome = begin_request(x, r, NOTIFY_OP_HELLO, &fault);
+
+	if (outcome == 0) {
+		v.value.response = (struct bsd_notify_v1_Limits){
+			.features = NOTIFY_FEATURE_PUBSUB | NOTIFY_FEATURE_TIMERS |
+			    NOTIFY_FEATURE_BOUNDED_QUEUE | NOTIFY_FEATURE_STATE |
+			    NOTIFY_FEATURE_LOSS_REPORTING |
+			    (q->features & NOTIFY_FEATURE_STATE_WATCH),
+			.max_topic = NOTIFY_MAX_TOPIC,
+			.max_payload = NOTIFY_MAX_PAYLOAD,
+			.max_subscriptions = NOTIFY_MAX_SUBSCRIPTIONS,
+			.queue_depth = NOTIFY_DEFAULT_QUEUE,
+			.max_timers = NOTIFY_MAX_TIMERS,
+			.max_states = NOTIFY_MAX_STATES,
+			.router_epoch = epoch
+		};
+		if (fault == FAKE_SERVICE_FAULT_INVALID_HELLO)
+			v.value.response.features = 0;
+		(void)bsd_notify_v1_Notify_Hello_reply(c, r, &v);
+	}
+	end_request();
+}
+
+static void
+topic_update(struct session *s, const struct bsd_notify_v1_TopicRequest *q,
+    bool subscribe)
+{
+	char name[NOTIFY_MAX_TOPIC + 1];
+	size_t i;
+
+	memcpy(name, q->topic, q->topic_size);
+	name[q->topic_size] = '\0';
+	for (i = 0; i < s->ntopics; i++)
+		if (strcmp(s->topic[i], name) == 0)
+			break;
+	if (subscribe && i == s->ntopics && s->ntopics < NOTIFY_MAX_SUBSCRIPTIONS)
+		strlcpy(s->topic[s->ntopics++], name, sizeof(s->topic[0]));
+	else if (!subscribe && i < s->ntopics)
+		memcpy(s->topic[i], s->topic[--s->ntopics], sizeof(s->topic[0]));
+}
+
+static void
+on_subscribe(void *x, struct fidl_bsd_connection *c, struct fidl_bsd_request *r,
+    struct bsd_notify_v1_TopicRequest *q)
+{
+	enum fake_service_fault fault;
+
+	if (begin_request(x, r, NOTIFY_OP_SUBSCRIBE, &fault) == 0) {
+		struct bsd_notify_v1_Notify_Subscribe_Result v =
+		    EMPTY_RESULT(bsd_notify_v1_Notify_Subscribe_Result, fault);
+
+		topic_update(x, q, true);
+		(void)bsd_notify_v1_Notify_Subscribe_reply(c, r, &v);
+	}
+	end_request();
+}
+
+static void
+on_unsubscribe(void *x, struct fidl_bsd_connection *c,
+    struct fidl_bsd_request *r, struct bsd_notify_v1_TopicRequest *q)
+{
+	enum fake_service_fault fault;
+
+	if (begin_request(x, r, NOTIFY_OP_UNSUBSCRIBE, &fault) == 0) {
+		struct bsd_notify_v1_Notify_Unsubscribe_Result v =
+		    EMPTY_RESULT(bsd_notify_v1_Notify_Unsubscribe_Result, fault);
+
+		topic_update(x, q, false);
+		(void)bsd_notify_v1_Notify_Unsubscribe_reply(c, r, &v);
+	}
+	end_request();
+}
+
+static void
+on_publish(void *x, struct fidl_bsd_connection *c, struct fidl_bsd_request *r,
+    struct bsd_notify_v1_PublishRequest *q)
+{
+	enum fake_service_fault fault;
+
+	if (begin_request(x, r, NOTIFY_OP_PUBLISH, &fault) == 0) {
+		struct bsd_notify_v1_Notify_Publish_Result v =
+		    EMPTY_RESULT(bsd_notify_v1_Notify_Publish_Result, fault);
+
+		pthread_mutex_lock(&lock);
+		last_payload_length = q->payload_size;
+		memcpy(last_payload, q->payload, q->payload_size);
+		pthread_mutex_unlock(&lock);
+		(void)bsd_notify_v1_Notify_Publish_reply(c, r, &v);
+	}
+	end_request();
+}
+
+static void
+on_next(void *x, struct fidl_bsd_connection *c, struct fidl_bsd_request *r,
+    struct bsd_notify_v1_NextRequest *q)
+{
+	struct bsd_notify_v1_Notify_Next_Result v = {
+		.tag = bsd_notify_v1_Notify_Next_Result_err_tag,
+		.value.err = EAGAIN
+	};
+	enum fake_service_fault fault;
+	(void)q;
+
+	if (begin_request(x, r, NOTIFY_OP_NEXT, &fault) == 0)
+		(void)bsd_notify_v1_Notify_Next_reply(c, r, &v);
+	end_request();
+}
+
+static void
+on_timer_add(void *x, struct fidl_bsd_connection *c, struct fidl_bsd_request *r,
+    struct bsd_notify_v1_TimerRequest *q)
+{
+	struct session *s = x;
+	enum fake_service_fault fault;
+
+	if (begin_request(s, r, NOTIFY_OP_TIMER_ADD, &fault) == 0) {
+		struct bsd_notify_v1_Notify_TimerAdd_Result v =
+		    EMPTY_RESULT(bsd_notify_v1_Notify_TimerAdd_Result, fault);
+
+		if (s->ntimers < NOTIFY_MAX_TIMERS)
+			s->timers[s->ntimers++] = (struct fake_timer){
+			    q->timer_id, q->interval_ms, q->flags };
+		(void)bsd_notify_v1_Notify_TimerAdd_reply(c, r, &v);
+	}
+	end_request();
+}
+
+static void
+on_timer_cancel(void *x, struct fidl_bsd_connection *c,
+    struct fidl_bsd_request *r, struct bsd_notify_v1_TimerCancelRequest *q)
+{
+	struct session *s = x;
+	enum fake_service_fault fault;
+
+	if (begin_request(s, r, NOTIFY_OP_TIMER_CANCEL, &fault) == 0) {
+		struct bsd_notify_v1_Notify_TimerCancel_Result v =
+		    EMPTY_RESULT(bsd_notify_v1_Notify_TimerCancel_Result, fault);
+
+		for (size_t i = 0; i < s->ntimers; i++)
+			if (s->timers[i].id == q->timer_id) {
+				s->timers[i] = s->timers[--s->ntimers];
+				break;
+			}
+		(void)bsd_notify_v1_Notify_TimerCancel_reply(c, r, &v);
+	}
+	end_request();
+}
+
+static void
+on_stats(void *x, struct fidl_bsd_connection *c, struct fidl_bsd_request *r,
+    struct fidl_bsd_empty *e)
+{
+	enum fake_service_fault fault;
+	(void)e;
+
+	if (begin_request(x, r, NOTIFY_OP_STATS, &fault) == 0) {
+		struct bsd_notify_v1_Notify_GetStats_Result v =
+		    EMPTY_RESULT(bsd_notify_v1_Notify_GetStats_Result, fault);
+
+		if (fault != FAKE_SERVICE_FAULT_STATUS)
+			v.value.response = (struct bsd_notify_v1_Stats){ 0 };
+		(void)bsd_notify_v1_Notify_GetStats_reply(c, r, &v);
+	}
+	end_request();
+}
+
+static void
+state_reply(struct fidl_bsd_connection *c, struct fidl_bsd_request *r,
+    uint16_t opcode, uint64_t value, enum fake_service_fault fault)
+{
+	struct bsd_notify_v1_StateValue state = { epoch, 1, value };
+
+	if (fault == FAKE_SERVICE_FAULT_INVALID_STATE)
+		state.generation = 0;
+	if (opcode == NOTIFY_OP_STATE_SET) {
+		struct bsd_notify_v1_Notify_StateSet_Result v = {
+			.tag = bsd_notify_v1_Notify_StateSet_Result_response_tag,
+			.value.response = state
+		};
+		(void)bsd_notify_v1_Notify_StateSet_reply(c, r, &v);
+	} else {
+		struct bsd_notify_v1_Notify_StateGet_Result v = {
+			.tag = bsd_notify_v1_Notify_StateGet_Result_response_tag,
+			.value.response = state
+		};
+		(void)bsd_notify_v1_Notify_StateGet_reply(c, r, &v);
+	}
+}
+
+static void
+on_state_set(void *x, struct fidl_bsd_connection *c, struct fidl_bsd_request *r,
+    struct bsd_notify_v1_StateSetRequest *q)
+{
+	enum fake_service_fault fault;
+
+	if (begin_request(x, r, NOTIFY_OP_STATE_SET, &fault) == 0)
+		state_reply(c, r, NOTIFY_OP_STATE_SET, q->state, fault);
+	end_request();
+}
+
+static void
+on_state_get(void *x, struct fidl_bsd_connection *c, struct fidl_bsd_request *r,
+    struct bsd_notify_v1_TopicRequest *q)
+{
+	enum fake_service_fault fault;
+	(void)q;
+
+	if (begin_request(x, r, NOTIFY_OP_STATE_GET, &fault) == 0)
+		state_reply(c, r, NOTIFY_OP_STATE_GET, 0, fault);
+	end_request();
+}
+
+static void
+on_state_clear(void *x, struct fidl_bsd_connection *c,
+    struct fidl_bsd_request *r, struct bsd_notify_v1_TopicRequest *q)
+{
+	enum fake_service_fault fault;
+	(void)q;
+
+	if (begin_request(x, r, NOTIFY_OP_STATE_CLEAR, &fault) == 0) {
+		struct bsd_notify_v1_Notify_StateClear_Result v =
+		    EMPTY_RESULT(bsd_notify_v1_Notify_StateClear_Result, fault);
+		(void)bsd_notify_v1_Notify_StateClear_reply(c, r, &v);
+	}
+	end_request();
+}
+
+static void
+on_state_watch(void *x, struct fidl_bsd_connection *c,
+    struct fidl_bsd_request *r, struct bsd_notify_v1_StateWatchRequest *q)
+{
+	struct session *s = x;
+	enum fake_service_fault fault;
+	(void)q;
+
+	if (begin_request(s, r, NOTIFY_OP_STATE_WATCH, &fault) == 0) {
+		struct bsd_notify_v1_Notify_StateWatch_Result v = {
+			.tag = bsd_notify_v1_Notify_StateWatch_Result_response_tag,
+			.value.response = { s->ident, 1, 42, true }
+		};
+		/* present = false with a state is the malformed variant. */
+		if (fault == FAKE_SERVICE_FAULT_INVALID_STATE)
+			v.value.response.present = false;
+		(void)bsd_notify_v1_Notify_StateWatch_reply(c, r, &v);
+	}
+	end_request();
+}
+
+static void
+on_list_subscriptions(void *x, struct fidl_bsd_connection *c,
+    struct fidl_bsd_request *r, struct bsd_notify_v1_ListRequest *q)
+{
+	static struct bsd_notify_v1_fidl_string page[NOTIFY_LIST_MAX_ENTRIES];
+	struct session *s = x;
+	enum fake_service_fault fault;
+	size_t n = 0;
+
+	if (begin_request(s, r, NOTIFY_OP_LIST_SUBSCRIPTIONS, &fault) == 0) {
+		while (q->cursor + n < s->ntopics &&
+		    n < NOTIFY_LIST_MAX_ENTRIES) {
+			page[n] = (struct bsd_notify_v1_fidl_string){
+			    s->topic[q->cursor + n],
+			    strlen(s->topic[q->cursor + n]) };
+			n++;
+		}
+		struct bsd_notify_v1_Notify_ListSubscriptions_Result v = {
+			.tag =
+			  bsd_notify_v1_Notify_ListSubscriptions_Result_response_tag,
+			.value.response = { page, n,
+			    q->cursor + n < s->ntopics ?
+			    (uint32_t)(q->cursor + n) : 0,
+			    (uint32_t)s->ntopics }
+		};
+		(void)bsd_notify_v1_Notify_ListSubscriptions_reply(c, r, &v);
+	}
+	end_request();
+}
+
+static void
+on_list_timers(void *x, struct fidl_bsd_connection *c,
+    struct fidl_bsd_request *r, struct bsd_notify_v1_ListRequest *q)
+{
+	static struct bsd_notify_v1_TimerEntry page[NOTIFY_LIST_MAX_ENTRIES];
+	struct session *s = x;
+	enum fake_service_fault fault;
+	size_t n = 0;
+
+	if (begin_request(s, r, NOTIFY_OP_LIST_TIMERS, &fault) == 0) {
+		while (q->cursor + n < s->ntimers &&
+		    n < NOTIFY_LIST_MAX_ENTRIES) {
+			const struct fake_timer *t = &s->timers[q->cursor + n];
+
+			page[n] = (struct bsd_notify_v1_TimerEntry){
+			    t->id, t->interval_ms, t->flags, t->interval_ms };
+			n++;
+		}
+		struct bsd_notify_v1_Notify_ListTimers_Result v = {
+			.tag = bsd_notify_v1_Notify_ListTimers_Result_response_tag,
+			.value.response = { page, n,
+			    q->cursor + n < s->ntimers ?
+			    (uint32_t)(q->cursor + n) : 0,
+			    (uint32_t)s->ntimers }
+		};
+		(void)bsd_notify_v1_Notify_ListTimers_reply(c, r, &v);
+	}
+	end_request();
+}
+
+static void *
+serve(void *argument)
+{
+	static const struct bsd_notify_v1_Notify_server handlers = {
+		.GetProtocolInfo = on_info,
+		.Hello = on_hello,
+		.Subscribe = on_subscribe,
+		.Unsubscribe = on_unsubscribe,
+		.Publish = on_publish,
+		.Next = on_next,
+		.TimerAdd = on_timer_add,
+		.TimerCancel = on_timer_cancel,
+		.GetStats = on_stats,
+		.StateSet = on_state_set,
+		.StateGet = on_state_get,
+		.StateClear = on_state_clear,
+		.ListSubscriptions = on_list_subscriptions,
+		.ListTimers = on_list_timers,
+		.StateWatch = on_state_watch
+	};
+	struct session *s = argument;
+
+	assert(bsd_notify_v1_Notify_bind(s->connection, &handlers, s) == 0);
+	while (fidl_bsd_connection_poll(s->connection, 10000) == 0)
+		;
+	fidl_bsd_connection_destroy(s->connection);
+	free(s);
+	pthread_mutex_lock(&lock);
+	closed++;
+	pthread_cond_broadcast(&changed);
+	pthread_mutex_unlock(&lock);
+	return (NULL);
 }
 
 int
-service_connect(struct service_context *service, const char *name, int *fd)
+service_open(const char *name, int *fdp)
 {
+	struct session *s;
+	pthread_t thread;
+	int ends[2], error;
 
-	if (service != &context || name == NULL || fd == NULL ||
+	if (name == NULL || fdp == NULL ||
 	    (strcmp(name, NOTIFY_INTERFACE) != 0 &&
-	    strcmp(name, NOTIFY_SYSTEM_INTERFACE) != 0)) {
-		errno = EINVAL;
-		return (-1);
-	}
+	    strcmp(name, NOTIFY_SYSTEM_INTERFACE) != 0))
+		return (errno = EINVAL, -1);
 	pthread_mutex_lock(&lock);
 	(void)strlcpy(last_interface, name, sizeof(last_interface));
 	if (strcmp(name, NOTIFY_SYSTEM_INTERFACE) == 0)
@@ -209,349 +651,23 @@ service_connect(struct service_context *service, const char *name, int *fd)
 		open_connects++;
 	if (refused_interface[0] != '\0' &&
 	    strcmp(name, refused_interface) == 0) {
-		int error = refused_error;
-
+		error = refused_error;
 		pthread_mutex_unlock(&lock);
-		*fd = -1;
-		errno = error;
-		return (-1);
+		*fdp = -1;
+		return (errno = error, -1);
 	}
 	pthread_mutex_unlock(&lock);
-	*fd = open("/dev/null", O_RDONLY | O_CLOEXEC);
-	return (*fd == -1 ? -1 : 0);
-}
-
-int
-service_open(const char *name, int *fd)
-{
-	struct service_context *ctx;
-	int rv;
-
-	if (service_acquire(&ctx) == -1)
+	if (mac_capability_channel_create(ends) != 0)
 		return (-1);
-	rv = service_connect(ctx, name, fd);
-	service_release(ctx);
-	return (rv);
-}
-
-int
-service_session_create(int fd, struct service_session **result)
-{
-	struct service_session *session;
-
-	if (fd < 0 || result == NULL) {
-		errno = EINVAL;
-		return (-1);
-	}
-	session = calloc(1, sizeof(*session));
-	if (session == NULL)
-		return (-1);
-	close(fd);
+	s = calloc(1, sizeof(*s));
+	assert(s != NULL);
+	assert(fidl_bsd_connection_create(ends[1], FIDL_BSD_SERVER,
+	    &s->connection) == 0);
 	pthread_mutex_lock(&lock);
-	session->ident = ++created;
-	if (session->ident < FAKE_MAX_SESSIONS)
-		memset(&sstate[session->ident], 0,
-		    sizeof(sstate[session->ident]));
+	s->ident = ++created;
 	pthread_mutex_unlock(&lock);
-	*result = session;
+	assert(pthread_create(&thread, NULL, serve, s) == 0);
+	assert(pthread_detach(thread) == 0);
+	*fdp = ends[0];
 	return (0);
-}
-
-void
-service_session_close(struct service_session *session)
-{
-
-	if (session == NULL)
-		return;
-	pthread_mutex_lock(&lock);
-	closed++;
-	pthread_mutex_unlock(&lock);
-	free(session);
-}
-
-int
-service_session_fail(struct service_session *session __unused, int error)
-{
-
-	errno = error;
-	return (error > 0 && error <= ELAST ? 0 : -1);
-}
-
-static int
-reply_copy(struct service_reply *reply, const void *data, size_t length)
-{
-
-	if (reply == NULL || reply->size != sizeof(*reply) ||
-	    reply->capacity < length) {
-		errno = EMSGSIZE;
-		return (-1);
-	}
-	memcpy(reply->data, data, length);
-	reply->length = length;
-	reply->nfds = 0;
-	return (0);
-}
-
-int
-service_session_call(struct service_session *session,
-    const struct service_message *outgoing, struct service_reply *reply,
-    const struct service_call_options *options __unused)
-{
-	union {
-		max_align_t align;
-		uint8_t bytes[NOTIFY_MAX_MESSAGE];
-	} storage;
-	struct notify_hello_reply *hello;
-	struct notify_state_reply *state;
-	struct notify_state_set_request state_request;
-	const struct notify_msg *request;
-	const struct notify_publish_request *publish_request;
-	struct notify_msg *response;
-	enum fake_service_fault fault;
-	bool fail;
-	int result;
-	size_t length;
-
-	if (session == NULL || outgoing == NULL || reply == NULL ||
-	    outgoing->data == NULL || outgoing->length < sizeof(*request)) {
-		errno = EINVAL;
-		return (-1);
-	}
-	request = outgoing->data;
-	pthread_mutex_lock(&lock);
-	concurrent++;
-	if (concurrent > max_concurrent)
-		max_concurrent = concurrent;
-	fail = fail_opcode == request->opcode;
-	fault = next_fault;
-	next_fault = FAKE_SERVICE_FAULT_NONE;
-	if (fail)
-		fail_opcode = 0;
-	if (request->opcode == NOTIFY_OP_SUBSCRIBE)
-		subscriptions++;
-	if (!fail) {
-		struct fake_session_state *st = fake_session(session);
-
-		if (st != NULL && request->opcode == NOTIFY_OP_SUBSCRIBE &&
-		    outgoing->length >= sizeof(*request) +
-		    sizeof(struct notify_topic_request)) {
-			const struct notify_topic_request *t =
-			    (const void *)(request + 1);
-			bool present = false;
-			size_t i;
-
-			for (i = 0; i < st->ntopics; i++)
-				if (st->topic_length[i] == t->topic_length &&
-				    memcmp(st->topic[i], t->topic,
-				    t->topic_length) == 0)
-					present = true;
-			if (!present && st->ntopics < NOTIFY_MAX_SUBSCRIPTIONS) {
-				st->topic_length[st->ntopics] = t->topic_length;
-				memcpy(st->topic[st->ntopics], t->topic,
-				    t->topic_length);
-				st->ntopics++;
-			}
-		} else if (st != NULL &&
-		    request->opcode == NOTIFY_OP_UNSUBSCRIBE &&
-		    outgoing->length >= sizeof(*request) +
-		    sizeof(struct notify_topic_request)) {
-			const struct notify_topic_request *t =
-			    (const void *)(request + 1);
-			size_t i;
-
-			for (i = 0; i < st->ntopics; i++)
-				if (st->topic_length[i] == t->topic_length &&
-				    memcmp(st->topic[i], t->topic,
-				    t->topic_length) == 0) {
-					st->ntopics--;
-					st->topic_length[i] =
-					    st->topic_length[st->ntopics];
-					memcpy(st->topic[i],
-					    st->topic[st->ntopics],
-					    NOTIFY_MAX_TOPIC);
-					break;
-				}
-		} else if (st != NULL &&
-		    request->opcode == NOTIFY_OP_TIMER_ADD &&
-		    outgoing->length >= sizeof(*request) +
-		    sizeof(struct notify_timer_request)) {
-			const struct notify_timer_request *tr =
-			    (const void *)(request + 1);
-
-			if (st->ntimers < NOTIFY_MAX_TIMERS) {
-				st->timers[st->ntimers].id = tr->timer_id;
-				st->timers[st->ntimers].interval_ms =
-				    tr->interval_ms;
-				st->timers[st->ntimers].flags = tr->flags;
-				st->ntimers++;
-			}
-		} else if (st != NULL &&
-		    request->opcode == NOTIFY_OP_TIMER_CANCEL &&
-		    outgoing->length >= sizeof(*request) +
-		    sizeof(struct notify_timer_cancel_request)) {
-			const struct notify_timer_cancel_request *tc =
-			    (const void *)(request + 1);
-			size_t i;
-
-			for (i = 0; i < st->ntimers; i++)
-				if (st->timers[i].id == tc->timer_id) {
-					st->ntimers--;
-					st->timers[i] = st->timers[st->ntimers];
-					break;
-				}
-		}
-	}
-	if (!fail && request->opcode == NOTIFY_OP_PUBLISH) {
-		publishes++;
-		publish_request = (const void *)(request + 1);
-		if (outgoing->length >= sizeof(*request) +
-		    sizeof(*publish_request) &&
-		    publish_request->payload_length <= sizeof(last_payload) &&
-		    outgoing->length == sizeof(*request) +
-		    sizeof(*publish_request) + publish_request->payload_length) {
-			last_payload_length = publish_request->payload_length;
-			memcpy(last_payload, publish_request + 1,
-			    last_payload_length);
-		}
-	}
-	pthread_mutex_unlock(&lock);
-	if (request->opcode != NOTIFY_OP_HELLO)
-		usleep((session->ident & 1U) != 0 ? 60000 : 5000);
-	if (fail || fault == FAKE_SERVICE_FAULT_TIMEOUT) {
-		pthread_mutex_lock(&lock);
-		concurrent--;
-		pthread_mutex_unlock(&lock);
-		errno = fail ? ECONNRESET : ETIMEDOUT;
-		return (-1);
-	}
-	memset(&storage, 0, sizeof(storage));
-	response = (void *)storage.bytes;
-	if (notify_message_init_reply(response, request, 0) == -1)
-		return (-1);
-	length = sizeof(*response);
-	switch (request->opcode) {
-	case NOTIFY_OP_HELLO:
-		hello = (void *)(response + 1);
-		hello->features = NOTIFY_FEATURE_PUBSUB |
-		    NOTIFY_FEATURE_TIMERS | NOTIFY_FEATURE_BOUNDED_QUEUE |
-		    NOTIFY_FEATURE_STATE | NOTIFY_FEATURE_LOSS_REPORTING;
-		if (outgoing->length > sizeof(*request))
-			hello->features |= NOTIFY_FEATURE_STATE_WATCH;
-		hello->max_topic = NOTIFY_MAX_TOPIC;
-		hello->max_payload = NOTIFY_MAX_PAYLOAD;
-		hello->max_subscriptions = NOTIFY_MAX_SUBSCRIPTIONS;
-		hello->queue_depth = NOTIFY_DEFAULT_QUEUE;
-		hello->max_timers = NOTIFY_MAX_TIMERS;
-		hello->max_states = NOTIFY_MAX_STATES;
-		hello->router_epoch = epoch;
-		length += sizeof(*hello);
-		if (fault == FAKE_SERVICE_FAULT_INVALID_HELLO)
-			hello->features = 0;
-		break;
-	case NOTIFY_OP_STATS:
-		length += sizeof(struct notify_stats);
-		break;
-	case NOTIFY_OP_STATE_WATCH: {
-		struct notify_state_watch_reply *watch = (void *)(response + 1);
-
-		watch->watch_epoch = session->ident;
-		watch->generation = 1;
-		watch->state = 42;
-		watch->present = fault == FAKE_SERVICE_FAULT_INVALID_STATE ? 2 : 1;
-		length += sizeof(*watch);
-		break;
-	}
-	case NOTIFY_OP_STATE_SET:
-	case NOTIFY_OP_STATE_GET:
-		state = (void *)(response + 1);
-		state->router_epoch = epoch;
-		state->generation = 1;
-		if (request->opcode == NOTIFY_OP_STATE_SET) {
-			memcpy(&state_request, request + 1, sizeof(state_request));
-			state->state = state_request.state;
-		}
-		if (fault == FAKE_SERVICE_FAULT_INVALID_STATE)
-			state->generation = 0;
-		length += sizeof(*state);
-		break;
-	case NOTIFY_OP_NEXT:
-		response->status = -EAGAIN;
-		break;
-	case NOTIFY_OP_LIST_SUBSCRIPTIONS: {
-		const struct notify_list_request *lr =
-		    (const void *)(request + 1);
-		struct notify_list_reply *hdr = (void *)(response + 1);
-		struct notify_subscription_entry *ent = (void *)(hdr + 1);
-		struct fake_session_state *st = fake_session(session);
-		size_t total, off, n;
-
-		/* Single-threaded per session for LIST; safe to read here. */
-		total = st != NULL ? st->ntopics : 0;
-		off = lr->cursor;
-		n = 0;
-		while (off + n < total && n < NOTIFY_LIST_MAX_ENTRIES) {
-			ent[n].topic_length = st->topic_length[off + n];
-			memcpy(ent[n].topic, st->topic[off + n],
-			    st->topic_length[off + n]);
-			n++;
-		}
-		hdr->count = (uint32_t)n;
-		hdr->total = (uint32_t)total;
-		hdr->next_cursor = off + n < total ? (uint32_t)(off + n) : 0;
-		length += sizeof(*hdr) + n * sizeof(*ent);
-		break;
-	}
-	case NOTIFY_OP_LIST_TIMERS: {
-		const struct notify_list_request *lr =
-		    (const void *)(request + 1);
-		struct notify_list_reply *hdr = (void *)(response + 1);
-		struct notify_timer_entry *ent = (void *)(hdr + 1);
-		struct fake_session_state *st = fake_session(session);
-		size_t total, off, n;
-
-		total = st != NULL ? st->ntimers : 0;
-		off = lr->cursor;
-		n = 0;
-		while (off + n < total && n < NOTIFY_LIST_MAX_ENTRIES) {
-			ent[n].timer_id = st->timers[off + n].id;
-			ent[n].interval_ms = st->timers[off + n].interval_ms;
-			ent[n].flags = st->timers[off + n].flags;
-			ent[n].next_fire_ms = st->timers[off + n].interval_ms;
-			n++;
-		}
-		hdr->count = (uint32_t)n;
-		hdr->total = (uint32_t)total;
-		hdr->next_cursor = off + n < total ? (uint32_t)(off + n) : 0;
-		length += sizeof(*hdr) + n * sizeof(*ent);
-		break;
-	}
-	default:
-		break;
-	}
-	if (fault == FAKE_SERVICE_FAULT_TRUNCATE)
-		length = sizeof(*response) - 1;
-	else if (fault == FAKE_SERVICE_FAULT_WRONG_OPCODE)
-		response->opcode = request->opcode == NOTIFY_OP_STATS ?
-		    NOTIFY_OP_PUBLISH : NOTIFY_OP_STATS;
-	else if (fault == FAKE_SERVICE_FAULT_STATUS) {
-		response->status = -EPERM;
-		length = sizeof(*response);
-	}
-	pthread_mutex_lock(&lock);
-	concurrent--;
-	pthread_mutex_unlock(&lock);
-	result = reply_copy(reply, storage.bytes, length);
-	if (result == 0 && fault == FAKE_SERVICE_FAULT_ATTACHED_FD)
-		reply->nfds = 1;
-	return (result);
-}
-
-int
-service_session_receive_event(struct service_session *session __unused,
-    struct service_reply *reply __unused,
-    const struct service_call_options *options __unused)
-{
-
-	errno = ENOTSUP;
-	return (-1);
 }

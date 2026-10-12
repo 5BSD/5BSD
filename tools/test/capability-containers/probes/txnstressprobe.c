@@ -24,6 +24,7 @@
 #include <unistd.h>
 
 #include <libservice.h>
+#include <filesystemcmp.h>
 
 int
 main(void)

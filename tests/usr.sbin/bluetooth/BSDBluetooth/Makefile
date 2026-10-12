@@ -198,8 +198,9 @@ CFLAGS+=	-I${SRCTOP}/usr.sbin/bluetooth/BSDBluetooth
 CFLAGS+=	-DBLUED_TEST_SCAN_EXPORT
 CFLAGS+=	-I${SRCTOP}/lib/libble
 CFLAGS+=	-I${SRCTOP}/lib/libbluetooth
-# libble now reaches system.Bluetooth over the plane (ble_open_plane).
-LIBADD+=	service logcmp
+# libble now reaches system.Bluetooth over the plane (ble_open_plane); the
+# daemon sources also use the Filesystem and SystemExtension clients.
+LIBADD+=	filesystemcmp extensioncmp service logcmp
 CFLAGS+=	-I${SRCTOP}/lib/libservice
 CFLAGS+=	-I${SRCTOP}/lib/libchannel
 CFLAGS+=	-I${SRCTOP}/lib/libcapreclaim
@@ -1063,10 +1064,11 @@ BLUED_DAEMON_SRCS=	blued_daemon_stub.c \
 		hci_misc.c hci_log.c \
 		smp.c smp_crypto.c smp_keys.c smp_legacy.c smp_sc.c
 
-# blued_central.c reaches the vhid node through libservice's isolated-open API.
-# The daemon build gets that declaration from the in-tree header; add the same
-# include path here (the installed /usr/include copy can lag the tree).
+# blued_central.c reaches the vhid node through libfilesystemcmp's isolated-open
+# API.  The daemon build gets that declaration from the in-tree header; add the
+# same include paths here (the installed /usr/include copy can lag the tree).
 CFLAGS+=	-I${SRCTOP}/lib/libservice
+CFLAGS+=	-I${SRCTOP}/lib/libfilesystemcmp -I${SRCTOP}/lib/libextensioncmp
 
 # The test build has no DTRACE, so the BLUED_PROBE_* macros compile away and a
 # few locals that exist only to name a probe argument become unused.  This is a

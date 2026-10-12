@@ -33,8 +33,8 @@
 #include <syslog.h>
 #include <unistd.h>
 
-#include <channel.h>
 #include <auditcmp.h>
+#include <fidl/bsd.network.v1/c/bsd.h>
 #include <auditcmp_server.h>
 #include <libservice.h>
 #include <service_runtime.h>
@@ -64,28 +64,27 @@
 #define	BSDNETWORK_ADMIN_NAME	"system.Network.Admin"
 #define	NETWORKCMP_RESOLVER_TIMEOUT_MS	30000U
 
-union provider_buffer {
-	max_align_t align;
-	struct {
-		struct networkcmp_msg msg;
-		uint8_t payload[NETWORKCMP_MAX_MESSAGE -
-		    sizeof(struct networkcmp_msg)];
-	} wire;
-};
-
 #define NETWORKCMP_RESOLVE_WAITERS 16
 struct resolver_job {
-	struct channel_message *requests[NETWORKCMP_RESOLVE_WAITERS];
-	size_t nrequests;
+	/* Identical concurrent RESOLVE requests share one lookup. */
+	struct fidl_bsd_request		*requests[NETWORKCMP_RESOLVE_WAITERS];
+	size_t				 nrequests;
 	const char			*label;
 	struct networkcmp_policy	 policy;
-	struct networkcmp_msg		 request_header;
-	struct networkcmp_resolve_request request;
+	uint32_t			 family;
+	uint32_t			 socket_type;
+	uint32_t			 flags;
+	uint32_t			 max_results;
+	size_t				 host_length;
+	size_t				 service_length;
 	char				 host[NETWORKCMP_NAME_MAX + 1];
 	char				 service[NETWORKCMP_SERVICE_MAX + 1];
-	uint8_t			 payload[NETWORKCMP_MAX_MESSAGE -
-					 sizeof(struct networkcmp_msg)];
-	size_t				 payload_length;
+	struct bsd_network_v1_ResolveResult results[
+					    NETWORKCMP_RESOLVE_MAX_RESULTS];
+	uint32_t			 count;
+	uint32_t			 ttl_seconds;
+	size_t				 canonname_length;
+	char				 canonname[NETWORKCMP_CANONNAME_MAX + 1];
 	int				 notify_fd;
 	int				 error;
 	pthread_t			 thread;
@@ -99,6 +98,7 @@ struct resolver_job {
 struct session_state {
 	struct net_logger	*logchan;	/* system.Log logger, or NULL */
 	struct auditcmp_client	*audit;
+	struct fidl_bsd_connection *connection;
 	/* Immutable session policy; set once at session creation. */
 	struct networkcmp_policy policy;
 	const char		*label;
@@ -107,6 +107,7 @@ struct session_state {
 	uint64_t		 resolver_deadline_ns;
 	uint32_t		 resolver_timeout_ms;
 	int			 terminal_error;
+	bool			 negotiated;
 #ifdef NETWORKCMP_TESTING
 	int			 test_ready_fd;
 	int			 test_release_fd;
@@ -656,52 +657,82 @@ harden_worker_fd(int fd)
 }
 #endif
 
-static int
-send_reply(struct channel_message *request_message,
-    const char *label __unused, const struct networkcmp_msg *request, int error,
-    const void *payload, size_t payload_length, int attached_fd)
+/*
+ * Close out one request: a reply that cannot be sent is terminal for the
+ * session.  The request-done probe keeps the historical NETWORKCMP_OP_*
+ * opcodes and reports the send error, else the application error.
+ */
+static void
+request_done(struct session_state *state, uint32_t opcode __unused,
+    int error __unused, int reply_error)
 {
-	union provider_buffer buffer;
-	struct networkcmp_msg *reply;
-	const int *fds;
-	size_t length, nfds;
-	int result, saved_error;
 
-	memset(&buffer, 0, sizeof(buffer));
-	reply = &buffer.wire.msg;
-	if (networkcmp_message_init_reply(reply, request,
-	    error == 0 ? 0 : -error) == -1) {
-		BSDNETWORK_REQUEST_DONE(__DECONST(char *, label),
-		    request->opcode, errno);
-		return (-1);
+	if (reply_error != 0 && state->terminal_error == 0) {
+		state->terminal_error = reply_error;
+		fidl_bsd_connection_close(state->connection, reply_error);
 	}
-	if (error == 0 && payload_length != 0)
-		memcpy(reply + 1, payload, payload_length);
-	length = sizeof(*reply) + (error == 0 ? payload_length : 0);
-	fds = (error == 0 && attached_fd >= 0) ? &attached_fd : NULL;
-	nfds = (error == 0 && attached_fd >= 0) ? 1 : 0;
-	if (networkcmp_validate_message(reply, length,
-	    NETWORKCMP_MESSAGE_REPLY) == -1 ||
-	    networkcmp_validate_fds(reply, nfds,
-	    NETWORKCMP_MESSAGE_REPLY) == -1) {
-		BSDNETWORK_REQUEST_DONE(__DECONST(char *, label),
-		    request->opcode, errno);
-		return (-1);
+	BSDNETWORK_REQUEST_DONE(__DECONST(char *, state->label), opcode,
+	    reply_error != 0 ? reply_error : error);
+}
+
+/*
+ * A request the record rules refuse (an invalid endpoint or resolve
+ * request, or a method before negotiation) is a protocol violation: the
+ * session ends with EPROTO, as a malformed pre-FIDL record did.
+ */
+static void
+protocol_violation(struct session_state *state)
+{
+
+	if (state->terminal_error != 0)
+		return;
+	state->terminal_error = EPROTO;
+	BSDNETWORK_REJECT(__DECONST(char *, state->label), EPROTO);
+	audit_policy(state->audit, state->logchan, state->label,
+	    "malformed-request", EPROTO);
+	fidl_bsd_connection_close(state->connection, EPROTO);
+}
+
+static bool
+session_ready(struct session_state *state)
+{
+
+	if (state->negotiated)
+		return (true);
+	protocol_violation(state);
+	return (false);
+}
+
+static void
+endpoint_from_wire(const struct bsd_network_v1_Endpoint *in,
+    struct networkcmp_endpoint *out)
+{
+
+	memset(out, 0, sizeof(*out));
+	out->family = in->family;
+	out->prefix = in->prefix;
+	out->port = in->port;
+	out->scope_id = in->scope_id;
+	memcpy(out->address, in->address, sizeof(out->address));
+}
+
+/* The endpoint rules of the pre-FIDL validator. */
+static bool
+endpoint_valid(const struct networkcmp_endpoint *endpoint)
+{
+	static const uint8_t zero[12];
+
+	if (endpoint->prefix != 0)
+		return (false);
+	switch (endpoint->family) {
+	case NETWORKCMP_AF_INET4:
+		return (endpoint->scope_id == 0 &&
+		    memcmp(endpoint->address + 4, zero, sizeof(zero)) == 0);
+	case NETWORKCMP_AF_INET6:
+		return (true);
+	default:
+		return (false);
 	}
-	result = channel_send_reply(request_message,
-	    &(struct channel_outgoing){
-		.size = sizeof(struct channel_outgoing),
-		.data = reply,
-		.length = length,
-		.fds = fds,
-		.nfds = nfds
-	    });
-	saved_error = result == -1 ? errno : error;
-	BSDNETWORK_REQUEST_DONE(__DECONST(char *, label),
-	    request->opcode, saved_error);
-	if (result == -1)
-		errno = saved_error;
-	return (result);
 }
 
 #ifndef NETWORKCMP_TESTING
@@ -731,16 +762,15 @@ gai_to_errno(int error)
 static int
 resolve_perform(struct resolver_job *job)
 {
-	const struct networkcmp_resolve_request *request;
-	struct networkcmp_resolve_reply *reply;
-	struct networkcmp_resolve_result *results;
+	const struct resolver_job *request;
+	struct bsd_network_v1_ResolveResult *results;
 	struct addrinfo hints, *addresses, *ai;
 	char *canonical;
-	size_t canonical_length, payload_length;
+	size_t canonical_length;
 	uint32_t count, maximum, ttl_seconds;
 	int error;
 
-	request = &job->request;
+	request = job;
 	if ((request->family == NETWORKCMP_AF_INET4 && !job->policy.ipv4) ||
 	    (request->family == NETWORKCMP_AF_INET6 && !job->policy.ipv6)) {
 		error = EAFNOSUPPORT;
@@ -809,14 +839,13 @@ resolve_perform(struct resolver_job *job)
 		error = gai_to_errno(error);
 		goto reject_probe;
 	}
-	memset(job->payload, 0, sizeof(job->payload));
-	reply = (void *)job->payload;
-	results = (void *)(reply + 1);
+	memset(job->results, 0, sizeof(job->results));
+	results = job->results;
 	maximum = MIN(request->max_results, job->policy.max_results);
 	canonical = NULL;
 	count = 0;
 	for (ai = addresses; ai != NULL && count < maximum; ai = ai->ai_next) {
-		struct networkcmp_resolve_result *result;
+		struct bsd_network_v1_ResolveResult *result;
 
 		if (ai->ai_family != AF_INET && ai->ai_family != AF_INET6)
 			continue;
@@ -857,17 +886,14 @@ resolve_perform(struct resolver_job *job)
 	canonical_length = canonical != NULL ? strlen(canonical) : 0;
 	if (canonical_length > NETWORKCMP_CANONNAME_MAX)
 		canonical_length = NETWORKCMP_CANONNAME_MAX;
-	reply->result_count = count;
-	reply->canonname_length = (uint32_t)canonical_length;
+	job->count = count;
+	job->canonname_length = canonical_length;
 	/* Conservative remaining lifetime, including CNAMEs and cache age. */
-	reply->ttl_seconds = ttl_seconds;
+	job->ttl_seconds = ttl_seconds;
 	if (canonical_length != 0)
-		memcpy(results + count, canonical, canonical_length);
-	payload_length = sizeof(*reply) + count * sizeof(*results) +
-	    canonical_length;
+		memcpy(job->canonname, canonical, canonical_length);
 	netfreeaddrinfo(addresses);
 	BSDNETWORK_RESOLVE_DONE(__DECONST(char *, job->label), count, 0);
-	job->payload_length = payload_length;
 	return (0);
 
 reject_probe:
@@ -901,7 +927,6 @@ resolve_perform(struct resolver_job *job)
 }
 #endif
 
-#define	NETWORKCMP_DISPATCH_ASYNC	1
 
 static void *
 resolver_thread(void *argument)
@@ -920,65 +945,74 @@ resolver_thread(void *argument)
 	return (NULL);
 }
 
+/*
+ * Start (or join) the session's one resolver job.  An identical request
+ * joins the running lookup (up to NETWORKCMP_RESOLVE_WAITERS waiters); any
+ * other request while one runs fails with EBUSY.  The request stays
+ * retained until finish_resolve() replies.
+ */
 static int
-start_resolve(struct session_state *state,
-    struct channel_message *request_message,
-    const struct networkcmp_msg *message)
+start_resolve(struct session_state *state, struct fidl_bsd_request *request,
+    const struct bsd_network_v1_ResolveRequest *r)
 {
-	const struct networkcmp_resolve_request *request;
-	const char *wire;
 	struct resolver_job *job;
 	int error;
 
-	request = (const void *)(message + 1);
-	wire = (const void *)(request + 1);
 	/* No authoritative configured-address snapshot is available yet. */
-	if ((request->flags & NETWORKCMP_RESOLVE_F_ADDRCONFIG) != 0)
+	if ((r->flags & NETWORKCMP_RESOLVE_F_ADDRCONFIG) != 0)
 		return (errno = EOPNOTSUPP, -1);
 	if (state->resolver != NULL) {
 		job = state->resolver;
 		if (job->nrequests == NETWORKCMP_RESOLVE_WAITERS ||
-		    memcmp(&job->request_header, message, sizeof(*message)) != 0 ||
-		    memcmp(&job->request, request, sizeof(*request)) != 0 ||
-		    memcmp(job->host, wire, request->host_length) != 0 ||
-		    memcmp(job->service, wire + request->host_length,
-		    request->service_length) != 0)
+		    job->family != r->family ||
+		    job->socket_type != r->socket_type ||
+		    job->flags != r->flags ||
+		    job->max_results != r->max_results ||
+		    job->host_length != r->host_size ||
+		    job->service_length != r->service_size ||
+		    memcmp(job->host, r->host, r->host_size) != 0 ||
+		    memcmp(job->service, r->service, r->service_size) != 0)
 			return (errno = EBUSY, -1);
-		job->requests[job->nrequests++] = request_message;
+		fidl_bsd_request_retain(request);
+		job->requests[job->nrequests++] = request;
 		return (0);
 	}
 	job = calloc(1, sizeof(*job));
 	if (job == NULL)
 		return (-1);
-	job->requests[0] = request_message;
-	job->nrequests = 1;
 	job->label = state->label;
 	job->policy = state->policy;
-	job->request_header = *message;
-	job->request = *request;
-	memcpy(job->host, wire, request->host_length);
-	job->host[request->host_length] = '\0';
-	memcpy(job->service, wire + request->host_length,
-	    request->service_length);
-	job->service[request->service_length] = '\0';
+	job->family = r->family;
+	job->socket_type = r->socket_type;
+	job->flags = r->flags;
+	job->max_results = r->max_results;
+	job->host_length = r->host_size;
+	job->service_length = r->service_size;
+	memcpy(job->host, r->host, r->host_size);
+	job->host[r->host_size] = '\0';
+	memcpy(job->service, r->service, r->service_size);
+	job->service[r->service_size] = '\0';
 	job->notify_fd = state->resolver_pipe[1];
 	atomic_init(&job->complete, false);
 #ifdef NETWORKCMP_TESTING
 	job->test_ready_fd = state->test_ready_fd;
 	job->test_release_fd = state->test_release_fd;
 #endif
-	state->resolver = job;
 	state->resolver_deadline_ns = monotonic_ns();
 	if (state->resolver_deadline_ns == 0) {
-		state->resolver = NULL;
 		free(job);
 		return (errno = EIO, -1);
 	}
 	state->resolver_deadline_ns +=
 	    (uint64_t)state->resolver_timeout_ms * 1000000;
+	fidl_bsd_request_retain(request);
+	job->requests[0] = request;
+	job->nrequests = 1;
+	state->resolver = job;
 	error = pthread_create(&job->thread, NULL, resolver_thread, job);
 	if (error != 0) {
 		state->resolver = NULL;
+		fidl_bsd_request_release(request);
 		free(job);
 		errno = error;
 		return (-1);
@@ -987,12 +1021,36 @@ start_resolve(struct session_state *state,
 }
 
 static int
+reply_resolve(struct session_state *state, struct fidl_bsd_request *request,
+    const struct resolver_job *job, int error)
+{
+	struct bsd_network_v1_Network_Resolve_Result result = { 0 };
+
+	if (error == 0) {
+		result.tag = bsd_network_v1_Network_Resolve_Result_response_tag;
+		result.value.response = (struct bsd_network_v1_Resolved){
+			.results = __DECONST(struct bsd_network_v1_ResolveResult *,
+			    job->results),
+			.results_size = job->count,
+			.canonname = job->canonname,
+			.canonname_size = job->canonname_length,
+			.ttl_seconds = job->ttl_seconds
+		};
+	} else {
+		result.tag = bsd_network_v1_Network_Resolve_Result_err_tag;
+		result.value.err = (uint32_t)error;
+	}
+	return (bsd_network_v1_Network_Resolve_reply(state->connection, request,
+	    &result));
+}
+
+static int
 finish_resolve(struct session_state *state)
 {
 	struct resolver_job *job;
 	uint8_t bytes[32];
 	ssize_t amount;
-	int error, result;
+	int error, reply_error;
 
 	for (;;) {
 		amount = read(state->resolver_pipe[0], bytes, sizeof(bytes));
@@ -1013,156 +1071,228 @@ finish_resolve(struct session_state *state)
 	error = pthread_join(job->thread, NULL);
 	if (error != 0)
 		return (errno = error, -1);
-	result = error = 0;
 	for (size_t i = 0; i < job->nrequests; i++) {
-		audit_policy(state->audit, state->logchan, state->label, "resolve", job->error);
-		if (result == 0 && send_reply(job->requests[i], state->label,
-		    &job->request_header, job->error,
-		    job->error == 0 ? job->payload : NULL,
-		    job->error == 0 ? job->payload_length : 0, -1) == -1) {
-			result = -1;
-			error = errno;
+		audit_policy(state->audit, state->logchan, state->label,
+		    "resolve", job->error);
+		if (state->terminal_error == 0) {
+			reply_error = reply_resolve(state, job->requests[i], job,
+			    job->error);
+			request_done(state, NETWORKCMP_OP_RESOLVE, job->error,
+			    reply_error);
 		}
-		channel_message_free(job->requests[i]);
+		fidl_bsd_request_release(job->requests[i]);
 	}
 	state->resolver = NULL;
 	state->resolver_deadline_ns = 0;
 	free(job);
-	errno = error;
-	return (result);
+	return (0);
 }
 
-static int
-dispatch(struct channel_message *request_message,
-    struct session_state *state, const struct networkcmp_msg *message,
-    const char *label)
+/*
+ * bsd.network.v1 Network handlers.  Every method but GetProtocolInfo needs
+ * a negotiated session.  Authority is the immutable session policy chosen
+ * at admission; the request carries no identity.
+ */
+static void
+protocol_info(void *argument, struct fidl_bsd_connection *connection,
+    struct fidl_bsd_request *request, struct fidl_bsd_empty *empty __unused)
 {
-	const struct networkcmp_connect_request *connect_request;
-	struct networkcmp_hello_reply hello;
-	int fd, error, result;
-	bool udp;
+	struct session_state *state = argument;
+	struct bsd_network_v1_ProtocolInfo info = { NETWORKCMP_WIRE_VERSION };
+	int error;
 
-	switch (message->opcode) {
-	case NETWORKCMP_OP_HELLO:
-		memset(&hello, 0, sizeof(hello));
-		hello.features =
-		    (state->policy.resolve ? NETWORKCMP_FEATURE_DNS : 0) |
-		    (state->policy.allow_connect ? NETWORKCMP_FEATURE_TCP : 0) |
-		    (state->policy.allow_udp ? NETWORKCMP_FEATURE_UDP : 0) |
-		    (state->policy.allow_listen ? NETWORKCMP_FEATURE_LISTEN : 0) |
-		    (state->policy.ipv6 ? NETWORKCMP_FEATURE_IPV6 : 0);
-		hello.max_resolve_results = state->policy.max_results;
-		return (send_reply(request_message, label, message, 0, &hello,
-		    sizeof(hello), -1));
-	case NETWORKCMP_OP_CONNECT:
-	case NETWORKCMP_OP_UDP: {
-		char epbuf[INET6_ADDRSTRLEN + 8];
-
-		connect_request = (const void *)(message + 1);
-		udp = message->opcode == NETWORKCMP_OP_UDP;
-		fd = -1;
-		if ((udp && !state->policy.allow_udp) ||
-		    (!udp && !state->policy.allow_connect))
-			error = EACCES;
-		else
-			error = broker_connect(state, message->opcode,
-			    &connect_request->endpoint,
-			    connect_request->timeout_ms, &fd) == -1 ? errno : 0;
-		endpoint_ntop(&connect_request->endpoint, epbuf, sizeof(epbuf));
-		BSDNETWORK_CONNECT_DONE(__DECONST(char *, label), epbuf,
-		    connect_request->timeout_ms, error);
-		audit_policy(state->audit, state->logchan, label, udp ? "udp" : "connect",
-		    error);
-		result = send_reply(request_message, label, message, error,
-		    NULL, 0, error == 0 ? fd : -1);
-		if (fd >= 0)
-			close(fd);
-		return (result);
-	}
-	case NETWORKCMP_OP_LISTEN: {
-		const struct networkcmp_listen_request *lr =
-		    (const void *)(message + 1);
-		struct networkcmp_listen_reply lrep;
-		uint16_t port = 0;
-
-		memset(&lrep, 0, sizeof(lrep));
-		fd = -1;
-		/*
-		 * Defense in depth: the shared validator already sized the
-		 * payload, but never dereference the request without confirming
-		 * it is present (a zero-length payload would otherwise be read).
-		 */
-		if (channel_message_length(request_message) <
-		    sizeof(*message) + sizeof(*lr))
-			error = EINVAL;
-		else if (!state->policy.allow_listen)
-			error = EACCES;
-		else if (lr->reserved0 != 0 || lr->reserved1 != 0)
-			error = EINVAL;
-		else
-			error = broker_listen(lr->backlog, &port, &fd) == -1 ?
-			    errno : 0;
-		lrep.port = port;
-		syslog(LOG_INFO, "LISTEN %s -> %s port=%u", label,
-		    error == 0 ? "granted" : strerror(error), port);
-		audit_policy(state->audit, state->logchan, label, "listen", error);
-		result = send_reply(request_message, label, message, error,
-		    error == 0 ? &lrep : NULL, error == 0 ? sizeof(lrep) : 0,
-		    error == 0 ? fd : -1);
-		if (fd >= 0)
-			close(fd);
-		return (result);
-	}
-	case NETWORKCMP_OP_RESOLVE:
-		if (!state->policy.resolve) {
-			audit_policy(state->audit, state->logchan, label, "resolve", EACCES);
-			return (send_reply(request_message, label, message, EACCES,
-			    NULL, 0, -1));
-		}
-		if (start_resolve(state, request_message, message) == -1) {
-			error = errno;
-			audit_policy(state->audit, state->logchan, label, "resolve", error);
-			return (send_reply(request_message, label, message, error,
-			    NULL, 0, -1));
-		}
-		return (NETWORKCMP_DISPATCH_ASYNC);
-	default:
-		audit_policy(state->audit, state->logchan, label, "unsupported", EOPNOTSUPP);
-		return (send_reply(request_message, label, message, EOPNOTSUPP,
-		    NULL, 0, -1));
-	}
+	error = bsd_network_v1_Network_GetProtocolInfo_reply(connection,
+	    request, &info);
+	state->negotiated = error == 0;
+	request_done(state, NETWORKCMP_OP_HELLO, 0, error);
 }
 
 static void
-handle_request(struct channel *channel __unused,
-    struct channel_message *request_message, void *argument)
+get_limits(void *argument, struct fidl_bsd_connection *connection,
+    struct fidl_bsd_request *request, struct fidl_bsd_empty *empty __unused)
 {
-	struct session_state *state;
-	const struct networkcmp_msg *message;
-	size_t length;
-	int result;
+	struct session_state *state = argument;
+	struct bsd_network_v1_Limits limits;
 
-	state = argument;
-	message = channel_message_data(request_message);
-	length = channel_message_length(request_message);
-	if (networkcmp_validate_message(message, length,
-	    NETWORKCMP_MESSAGE_REQUEST) == -1 ||
-	    networkcmp_validate_fds(message,
-	    channel_message_fd_count(request_message),
-	    NETWORKCMP_MESSAGE_REQUEST) == -1) {
-		state->terminal_error = EPROTO;
-		BSDNETWORK_REJECT(__DECONST(char *, state->label),
-		    EPROTO);
-		audit_policy(state->audit, state->logchan, state->label, "malformed-request",
-		    EPROTO);
-		channel_message_free(request_message);
+	if (!session_ready(state))
+		return;
+	limits.features =
+	    (state->policy.resolve ? NETWORKCMP_FEATURE_DNS : 0) |
+	    (state->policy.allow_connect ? NETWORKCMP_FEATURE_TCP : 0) |
+	    (state->policy.allow_udp ? NETWORKCMP_FEATURE_UDP : 0) |
+	    (state->policy.allow_listen ? NETWORKCMP_FEATURE_LISTEN : 0) |
+	    (state->policy.ipv6 ? NETWORKCMP_FEATURE_IPV6 : 0);
+	limits.max_resolve_results = state->policy.max_results;
+	request_done(state, NETWORKCMP_OP_HELLO, 0,
+	    bsd_network_v1_Network_GetLimits_reply(connection, request,
+	    &limits));
+}
+
+/* CONNECT and UDP: one connected, rights-limited socket. */
+static void
+connect_common(struct session_state *state, struct fidl_bsd_request *request,
+    uint16_t opcode, const struct bsd_network_v1_Endpoint *wire,
+    uint32_t timeout_ms)
+{
+	struct networkcmp_endpoint endpoint;
+	char epbuf[INET6_ADDRSTRLEN + 8];
+	int error, fd, reply_error;
+	bool udp;
+
+	if (!session_ready(state))
+		return;
+	endpoint_from_wire(wire, &endpoint);
+	if (!endpoint_valid(&endpoint)) {
+		protocol_violation(state);
 		return;
 	}
-	result = dispatch(request_message, state, message, state->label);
-	if (result == -1)
-		state->terminal_error = errno;
-	if (result != NETWORKCMP_DISPATCH_ASYNC)
-		channel_message_free(request_message);
+	udp = opcode == NETWORKCMP_OP_UDP;
+	fd = -1;
+	if ((udp && !state->policy.allow_udp) ||
+	    (!udp && !state->policy.allow_connect))
+		error = EACCES;
+	else
+		error = broker_connect(state, opcode, &endpoint, timeout_ms,
+		    &fd) == -1 ? errno : 0;
+	endpoint_ntop(&endpoint, epbuf, sizeof(epbuf));
+	BSDNETWORK_CONNECT_DONE(__DECONST(char *, state->label), epbuf,
+	    timeout_ms, error);
+	audit_policy(state->audit, state->logchan, state->label,
+	    udp ? "udp" : "connect", error);
+	if (udp) {
+		struct bsd_network_v1_Network_Udp_Result result = { 0 };
+
+		if (error == 0) {
+			/* The bindings send a private duplicate. */
+			result.tag = bsd_network_v1_Network_Udp_Result_response_tag;
+			result.value.response.socket = fd;
+		} else {
+			result.tag = bsd_network_v1_Network_Udp_Result_err_tag;
+			result.value.err = (uint32_t)error;
+		}
+		reply_error = bsd_network_v1_Network_Udp_reply(state->connection,
+		    request, &result);
+	} else {
+		struct bsd_network_v1_Network_Connect_Result result = { 0 };
+
+		if (error == 0) {
+			result.tag =
+			    bsd_network_v1_Network_Connect_Result_response_tag;
+			result.value.response.socket = fd;
+		} else {
+			result.tag = bsd_network_v1_Network_Connect_Result_err_tag;
+			result.value.err = (uint32_t)error;
+		}
+		reply_error = bsd_network_v1_Network_Connect_reply(
+		    state->connection, request, &result);
+	}
+	if (fd >= 0)
+		close(fd);
+	request_done(state, opcode, error, reply_error);
+}
+
+static void
+connect_method(void *argument, struct fidl_bsd_connection *connection __unused,
+    struct fidl_bsd_request *request, struct bsd_network_v1_ConnectRequest *r)
+{
+
+	connect_common(argument, request, NETWORKCMP_OP_CONNECT, &r->endpoint,
+	    r->timeout_ms);
+}
+
+static void
+udp_method(void *argument, struct fidl_bsd_connection *connection __unused,
+    struct fidl_bsd_request *request, struct bsd_network_v1_UdpRequest *r)
+{
+
+	/* A UDP "connect" only assigns the peer and never blocks. */
+	connect_common(argument, request, NETWORKCMP_OP_UDP, &r->endpoint, 0);
+}
+
+static void
+listen_method(void *argument, struct fidl_bsd_connection *connection,
+    struct fidl_bsd_request *request, struct bsd_network_v1_ListenRequest *r)
+{
+	struct session_state *state = argument;
+	struct bsd_network_v1_Network_Listen_Result result = { 0 };
+	uint16_t port = 0;
+	int error, fd = -1, reply_error;
+
+	if (!session_ready(state))
+		return;
+	if (!state->policy.allow_listen)
+		error = EACCES;
+	else
+		error = broker_listen(r->backlog, &port, &fd) == -1 ? errno : 0;
+	syslog(LOG_INFO, "LISTEN %s -> %s port=%u", state->label,
+	    error == 0 ? "granted" : strerror(error), port);
+	audit_policy(state->audit, state->logchan, state->label, "listen",
+	    error);
+	if (error == 0) {
+		result.tag = bsd_network_v1_Network_Listen_Result_response_tag;
+		result.value.response.socket = fd;
+		result.value.response.port = port;
+	} else {
+		result.tag = bsd_network_v1_Network_Listen_Result_err_tag;
+		result.value.err = (uint32_t)error;
+	}
+	reply_error = bsd_network_v1_Network_Listen_reply(connection, request,
+	    &result);
+	if (fd >= 0)
+		close(fd);
+	request_done(state, NETWORKCMP_OP_LISTEN, error, reply_error);
+}
+
+/* The resolve-request rules of the pre-FIDL validator. */
+static bool
+resolve_request_valid(const struct bsd_network_v1_ResolveRequest *r)
+{
+
+	return (r->host_size <= NETWORKCMP_NAME_MAX &&
+	    r->service_size <= NETWORKCMP_SERVICE_MAX &&
+	    (r->host_size != 0 || r->service_size != 0) &&
+	    r->family <= NETWORKCMP_AF_INET6 &&
+	    r->socket_type <= NETWORKCMP_SOCK_DGRAM &&
+	    (r->flags & ~NETWORKCMP_RESOLVE_F_MASK) == 0 &&
+	    r->max_results != 0 &&
+	    r->max_results <= NETWORKCMP_RESOLVE_MAX_RESULTS &&
+	    memchr(r->host, '\0', r->host_size) == NULL &&
+	    memchr(r->service, '\0', r->service_size) == NULL);
+}
+
+static void
+resolve_method(void *argument, struct fidl_bsd_connection *connection __unused,
+    struct fidl_bsd_request *request,
+    struct bsd_network_v1_ResolveRequest *r)
+{
+	struct session_state *state = argument;
+	int error;
+
+	if (!session_ready(state))
+		return;
+	if (!resolve_request_valid(r)) {
+		protocol_violation(state);
+		return;
+	}
+	if (!state->policy.resolve)
+		error = EACCES;
+	else if (start_resolve(state, request, r) == -1)
+		error = errno;
+	else
+		return;		/* finish_resolve() replies */
+	audit_policy(state->audit, state->logchan, state->label, "resolve",
+	    error);
+	request_done(state, NETWORKCMP_OP_RESOLVE, error,
+	    reply_resolve(state, request, NULL, error));
+}
+
+/* A connection the provider closed for a malformed or unknown frame. */
+static bool
+protocol_rejection(int error)
+{
+
+	return (error != 0 && error != EPIPE && error != ECONNRESET &&
+	    error != ECANCELED && error != ETIMEDOUT && error != ENOTCONN);
 }
 
 static int
@@ -1175,20 +1305,25 @@ serve_session(int fd,
 #endif
     )
 {
-	struct channel_options options =
-	    CHANNEL_OPTIONS_INITIALIZER(CHANNEL_ROLE_PROVIDER);
+	static const struct bsd_network_v1_Network_server handlers = {
+		.GetProtocolInfo = protocol_info,
+		.GetLimits = get_limits,
+		.Resolve = resolve_method,
+		.Connect = connect_method,
+		.Udp = udp_method,
+		.Listen = listen_method
+	};
+	struct fidl_bsd_options options = FIDL_BSD_OPTIONS_INITIALIZER;
 	struct session_state state;
-	struct channel *channel;
 	struct kevent kev, kout[3];
 	struct timespec ts, *tsp;
-	int kq, nev, i, poll_timeout, result, wants_write;
-	bool chan_read, chan_write, pipe_read;
+	int kq, cfd, nev, i, poll_timeout, result, wants_write, loop_error;
+	bool chan_ready, pipe_read, write_armed;
 	uint64_t now, remaining;
 
 	if (fd < 0 || policy == NULL || label == NULL || label[0] == '\0' ||
 	    resolver_pipe == NULL || resolver_pipe[0] < 0 || resolver_pipe[1] < 0)
 		return (errno = EINVAL, -1);
-	channel = NULL;
 	memset(&state, 0, sizeof(state));
 	state.label = label;
 	state.audit = audit;
@@ -1203,25 +1338,40 @@ serve_session(int fd,
 	state.test_release_fd = test_release_fd;
 #endif
 	state.policy = *policy;
-	if (channel_create(fd, &options, &channel) == -1 ||
-	    channel_set_request_handler(channel, handle_request, &state) ==
-	    -1) {
-		if (channel != NULL)
-			channel_destroy(channel);
+	/* Requests carry no descriptors; each reply carries at most one. */
+	options.max_queued_fds = NETWORKCMP_RESOLVE_WAITERS + 2;
+	loop_error = fidl_bsd_connection_create_with_options(fd,
+	    FIDL_BSD_SERVER, &options, &state.connection);
+	if (loop_error != 0) {
+		close(fd);
+		errno = loop_error;
+		goto fail;
+	}
+	/* Delivered sockets are hardened for exactly this one transfer. */
+	fidl_bsd_connection_preserve_sent_inheritance(state.connection);
+	loop_error = bsd_network_v1_Network_bind(state.connection, &handlers,
+	    &state);
+	if (loop_error != 0) {
+		fidl_bsd_connection_destroy(state.connection);
+		errno = loop_error;
 		goto fail;
 	}
 	/*
-	 * Channels are kqueue-only, and this session also waits on the resolver
-	 * pipe, so watch both fds on one kqueue.  Read interest on the channel
-	 * and pipe is registered once; the channel write filter is toggled per
-	 * iteration to match pending outbound data.
+	 * This session also waits on the resolver pipe, so watch both fds on
+	 * one kqueue.  The channel write filter follows pending outbound data.
 	 */
+	cfd = fidl_bsd_connection_fd(state.connection);
+	write_armed = false;
 	kq = kqueue();
 	if (kq == -1)
 		state.terminal_error = errno;
 	else {
-		EV_SET(&kev, channel_fd(channel), EVFILT_READ, EV_ADD, 0, 0, NULL);
+		EV_SET(&kev, cfd, EVFILT_READ, EV_ADD, 0, 0, NULL);
 		if (kevent(kq, &kev, 1, NULL, 0, NULL) == -1)
+			state.terminal_error = errno;
+		EV_SET(&kev, cfd, EVFILT_WRITE, EV_ADD | EV_DISABLE, 0, 0, NULL);
+		if (state.terminal_error == 0 &&
+		    kevent(kq, &kev, 1, NULL, 0, NULL) == -1)
 			state.terminal_error = errno;
 		EV_SET(&kev, state.resolver_pipe[0], EVFILT_READ, EV_ADD, 0, 0,
 		    NULL);
@@ -1229,13 +1379,17 @@ serve_session(int fd,
 		    kevent(kq, &kev, 1, NULL, 0, NULL) == -1)
 			state.terminal_error = errno;
 	}
-	while (state.terminal_error == 0) {
-		wants_write = channel_wants_write(channel);
-		if (wants_write == -1)
-			break;
-		EV_SET(&kev, channel_fd(channel), EVFILT_WRITE,
-		    wants_write ? EV_ADD : EV_DELETE, 0, 0, NULL);
-		(void)kevent(kq, &kev, 1, NULL, 0, NULL);
+	while (state.terminal_error == 0 && loop_error == 0) {
+		wants_write = fidl_bsd_connection_wants_write(state.connection);
+		if ((bool)wants_write != write_armed) {
+			EV_SET(&kev, cfd, EVFILT_WRITE,
+			    wants_write ? EV_ENABLE : EV_DISABLE, 0, 0, NULL);
+			if (kevent(kq, &kev, 1, NULL, 0, NULL) == -1) {
+				loop_error = errno;
+				break;
+			}
+			write_armed = wants_write;
+		}
 		poll_timeout = -1;
 		if (state.resolver != NULL) {
 			now = monotonic_ns();
@@ -1257,36 +1411,47 @@ serve_session(int fd,
 		do {
 			nev = kevent(kq, NULL, 0, kout, nitems(kout), tsp);
 		} while (nev == -1 && errno == EINTR);
-		if (nev == -1)
+		if (nev == -1) {
+			loop_error = errno;
 			break;
+		}
 		if (nev == 0) {
 			state.terminal_error = ETIMEDOUT;
 			break;
 		}
-		chan_read = chan_write = pipe_read = false;
+		chan_ready = pipe_read = false;
 		for (i = 0; i < nev; i++) {
 			if ((int)kout[i].ident == state.resolver_pipe[0] &&
 			    kout[i].filter == EVFILT_READ)
 				pipe_read = true;
-			else if (kout[i].filter == EVFILT_READ)
-				chan_read = true;
-			else if (kout[i].filter == EVFILT_WRITE)
-				chan_write = true;
+			else
+				chan_ready = true;
 		}
-		if (pipe_read && finish_resolve(&state) == -1)
-			break;
-		if (chan_write && channel_flush(channel) == -1)
-			break;
-		if (chan_read && channel_dispatch(channel) == -1)
-			break;
-		if (state.terminal_error != 0) {
-			errno = state.terminal_error;
+		if (pipe_read && finish_resolve(&state) == -1) {
+			loop_error = errno;
 			break;
 		}
+		/* Reads and flushes in one bounded step. */
+		if (chan_ready || pipe_read)
+			loop_error = fidl_bsd_connection_dispatch(
+			    state.connection);
+	}
+	/* A frame the bindings refused before any handler ran. */
+	if (state.terminal_error == 0 && protocol_rejection(loop_error)) {
+		state.terminal_error = EPROTO;
+		BSDNETWORK_REJECT(__DECONST(char *, label), EPROTO);
+		audit_policy(state.audit, state.logchan, label,
+		    "malformed-request", EPROTO);
 	}
 	if (kq != -1)
 		close(kq);
-	channel_destroy(channel);
+	if (state.resolver != NULL) {
+		/* The thread still owns the job; release only our requests. */
+		for (size_t j = 0; j < state.resolver->nrequests; j++)
+			fidl_bsd_request_release(state.resolver->requests[j]);
+		state.resolver->nrequests = 0;
+	}
+	fidl_bsd_connection_destroy(state.connection);
 	if (state.resolver == NULL) {
 		close(state.resolver_pipe[0]);
 		close(state.resolver_pipe[1]);

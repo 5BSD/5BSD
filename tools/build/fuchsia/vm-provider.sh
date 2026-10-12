@@ -27,7 +27,8 @@
 #   REQUIRE_UNITS (space-separated SwitchBoard labels that must be "running"
 #   before tests start; default: the twelve core providers that
 #   software-application-guest.sh requires), QEMU, QEMU_DATA,
-#   DRYRUN=1 (build and check the image, do not boot).
+#   DRYRUN=1 (build and check the image, do not boot), LOADER_EXTRA (extra
+#   loader.conf lines).
 #   ISOLATION_ENFORCE=1 retains production device isolation for deployment
 #   checks; the default 0 permits raw-device provider test fixtures.
 #
@@ -142,6 +143,8 @@ if [ "$plane_off" = 1 ]; then
 	printf 'capability_plane="NO"\n' >> "$x/loader.conf"
 	: > "$x/loader.conf.local"
 fi
+# LOADER_EXTRA: more loader.conf lines, e.g. dtraceall_load="YES".
+[ -z "${LOADER_EXTRA:-}" ] || printf '%s\n' "$LOADER_EXTRA" >> "$x/loader.conf"
 if [ -n "$extra_script" ]; then cp "$extra_script" "$x/extra.sh"; else : > "$x/extra.sh"; fi
 cat > "$x/fstab" <<'EOF'
 /dev/vtbd0p2	/	ufs	rw	1	1
@@ -314,10 +317,10 @@ echo "BSDTIME_LIFECYCLE_$lc"
 fi
 if [ -s /root/vm-extra.sh ]; then
 	echo EXTRA_SCRIPT_BEGIN
-	extra_status=0
-	sh /root/vm-extra.sh > "$R/extra.out" 2>&1 || extra_status=$?
-	cat "$R/extra.out"
-	echo "EXTRA_SCRIPT_STATUS=$extra_status"
+	( set +e; sh /root/vm-extra.sh; extra_status=$?
+	  echo "$extra_status" > "$R/extra.exit"; exit 0
+	) 2>&1 | tee "$R/extra.out"
+	echo "EXTRA_SCRIPT_STATUS=$(cat "$R/extra.exit")"
 	echo EXTRA_SCRIPT_END
 fi
 cd /usr/tests
@@ -474,6 +477,8 @@ if [ $forced = 0 ] && [ $rc = 0 ] && [ $guest_off = 1 ] &&
     { [ "$plane_off" = 1 ] && tr -d '\r' < "$log" | grep -aqx 'PLANEOFF_READY' ||
       { tr -d '\r' < "$log" | grep -aqx 'PLANEON_GATE_PASS' &&
         tr -d '\r' < "$log" | grep -aqx 'BSDTIME_LIFECYCLE_PASS'; }; } &&
+    { [ -z "$extra_script" ] ||
+      [ "$(cat "$work/results/kyua-results/extra.exit" 2>/dev/null)" = 0 ]; } &&
     grep -aq 'Powering system off' "$log" && ! grep -aqE "$fatal" "$log"; then
 	verdict=VM_CLEAN
 fi

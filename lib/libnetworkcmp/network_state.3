@@ -1,5 +1,5 @@
 .\" SPDX-License-Identifier: BSD-2-Clause
-.Dd October 10, 2026
+.Dd October 11, 2026
 .Dt NETWORK_STATE 3
 .Os
 .Sh NAME
@@ -66,6 +66,24 @@ An unchanged snapshot at the deadline returns
 The transport adds a five-second allowance to finite watch deadlines,
 saturating below the infinite value.
 .Pp
+The client speaks the
+.Sy NetworkState
+protocol of the FIDL library
+.Sy bsd.network.v1
+.Pq Pa /usr/share/fidl/networkcmp.fidl ;
+see
+.Xr fidl 7 .
+Each new session first negotiates the wire version
+.Pq Er EPROTONOSUPPORT .
+The provider applies the record rules of the earlier wire format: indices
+strictly increasing, names one to fifteen bytes without NUL and unique,
+link state at most up, and no records with a source error.
+.Fn network_state_validate_request
+and
+.Fn network_state_validate_reply
+.Pq In network_state_protocol.h
+check the pre-FIDL records and are kept for compatibility.
+.Pp
 Calls on a client are serialized.
 Only one watch may be outstanding per session.
 The provider allows 128 sessions, at most 16 per authenticated label,
@@ -99,5 +117,6 @@ Discovery, authorization, allocation, and channel errors are also returned.
 .Sh SEE ALSO
 .Xr libnetworkcmp 3 ,
 .Xr sysctlcmp_interfaces 3 ,
+.Xr fidl 7 ,
 .Xr BSDNetwork 8 ,
 .Xr networkcmpctl 8

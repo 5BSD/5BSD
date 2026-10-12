@@ -22,6 +22,7 @@
 
 #include <channel.h>
 #include <libservice.h>
+#include <filesystemcmp.h>
 
 #include "pf_protocol.h"
 #include "pf_session.h"

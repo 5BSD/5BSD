@@ -42,8 +42,8 @@ label to a home slot and keeps a registry keyed by the full label,
 relocating on collision, so each active label exclusively owns
 `[VMD_PORT_BASE + offset * 16, VMD_PORT_BASE + (offset + 1) * 16)` with
 `VMD_PORT_BASE = 0x40000000`, 4096 windows and 16 ports per window. The
-wire `port` in BIND is only an index 0 to 15 into that window; a unit
-cannot name another's port. CONNECT scopes nothing: it dials whatever
+`index` in Bind is only an index 0 to 15 into that window; a unit
+cannot name another's port. Connect scopes nothing: it dials whatever
 concrete address the peer advertised, and the listener authorizes its own
 clients, exactly the client/server model. A slot is released when the
 label's last worker exits.
@@ -86,25 +86,41 @@ the daemon `vmd`; the program and bundle are BSDVM.
 
 ## Wire operations
 
-Protocol header: `lib/libcapsulert/bsdvm_proto.h`. The `VMD_*` identifiers
-are the unchanged wire names from before the rename. No HELLO and no
-version field; every request is a 16-byte `struct vmd_request { op, port,
-backlog, cid }` and unused fields must be zero (stray bits fail closed).
+The provider and client use `lib/libvmcmp/vmcmp.fidl`, library `bsd.vm.v1`,
+with generated C bindings over native capability channels (see
+[FIDL and Capability IPC](../develop/fidl.md)). The schema installs as
+`/usr/share/fidl/vmcmp.fidl` and imports `/usr/share/fidl/zx.fidl` for the
+descriptor type. No payload carries an identity: every operation is scoped to
+the window BSDVM's registry resolved for the accepted session's label.
+`lib/libcapsulert/bsdvm_proto.h` keeps the window constants (`VMD_*`, the
+unchanged names from before the rename) and the legacy records.
 
-| Op | Request | Reply | Errors |
+| Method | Request | Reply | Errors |
 |---|---|---|---|
-| `VMD_OP_VSOCK_BIND` (1) | `port` = window index 0..15, `backlog` (0 = default 8, clamped to `SOMAXCONN`), `cid` = 0 | `vmd_reply { status, cid, port }` plus one SCM fd: the listening socket; `cid`/`port` are the concrete host-local address to advertise | `EINVAL` index out of window or stray fields; `EPROTO` malformed; `ENOSPC` registry full (4096 labels active); `EBUSY` label already has 128 sessions; `ENAMETOOLONG` label; socket/bind/listen errnos |
-| `VMD_OP_VSOCK_CONNECT` (2) | `port` = concrete target port, `cid` = target CID (not `VMADDR_CID_ANY`), `backlog` = 0 | `vmd_reply` plus one SCM fd: the connected socket; `cid`/`port` echo the target | `EINVAL` wildcard CID or stray fields; `EPROTO`; connect(2) errnos such as `ECONNREFUSED` |
-| `VMD_OP_VSOCK_LIST` (3) | all fields 0 | `vmd_list_reply { status, cid, port_base, port_limit, port_count }`, data-only | `EINVAL` stray fields; `EPROTO` |
+| `GetProtocolInfo` | empty | wire version 1 | none |
+| `Bind` | `index` (window slot 0..15), `backlog` (0 = default 8, clamped to `SOMAXCONN`) | the listening socket, plus the concrete host-local `cid`/`port` to advertise | `EINVAL` index out of window; `ENOSPC` registry full (4096 labels active); `EBUSY` label already has 128 sessions; `ENAMETOOLONG` label; socket/bind/listen errnos |
+| `Connect` | concrete target `cid` (not `VMADDR_CID_ANY`) and `port` | the connected socket | `EINVAL` wildcard CID; connect(2) errnos such as `ECONNREFUSED` |
+| `List` | empty | `cid`, `port_base`, `port_limit`, `port_count`, data-only | none |
+
+A session must negotiate before any other method. A method before
+negotiation, an unknown method, a malformed, truncated or trailing frame, a
+pre-FIDL record or an attached descriptor closes the session without a reply.
+Delivered sockets keep their Capsicum limits and `CAP_XFER_ONCE`; the FIDL
+transport preserves that state (`fidl_bsd_connection_preserve_sent_inheritance()`).
+The `bsd.vm.v1` ordinals and layouts are a compatibility contract;
+`usr.sbin/BSDVM/tests/evolution/vmcmp_next.fidl` is the same schema at
+`bsd:1` and adds a method at `bsd:2` for the pairing test.
 
 Listeners are bound with `SO_REUSEADDR` so a relaunched unit reclaims its
 port deterministically. The `BSDVM` USDT provider fires `vsock-list` with
-the client label, window bounds and result.
+the client label, window bounds and result, and `request-done` with the
+historical `VMD_OP_*` code (0 for negotiation).
 
 ## Client library
 
-Header `<libservice.h>`, link `-lservice`; the three calls are documented in
-libservice(3) (there is no standalone page).
+Header `<vmcmp.h>`, link `-lvmcmp` (`SHLIB_MAJOR 1`, depends on libservice,
+the FIDL runtime and pthread; the calls moved out of libservice in October
+2026 with the same names). Manual: libvmcmp(3).
 
 | Group | Functions |
 |---|---|
@@ -113,14 +129,17 @@ libservice(3) (there is no standalone page).
 | Discover | `service_vsock_list(ctx, &cid, &port_base, &port_count)` |
 | Constants (from the proto header) | `VMD_PORT_BASE`, `VMD_LABEL_WINDOWS`, `VMD_PORTS_PER_LABEL` |
 
-Descriptors come back close-on-exec. `cidp`/`portp` may be NULL. Session
-calls share libservice's 30 second timeout.
+Descriptors come back close-on-exec. `cidp`/`portp` may be NULL. The
+`system.VM` session is opened by name once, negotiated, and cached for the
+process (a forked child opens its own). A timeout (30 seconds, shortened by an
+active `service_budget_begin()`), transport failure or malformed reply drops
+the cached session; application errors keep it.
 
 ```c
 #include <sys/socket.h>
 #include <err.h>
 #include <stdio.h>
-#include <libservice.h>
+#include <vmcmp.h>
 
 /* Listen on window slot 0 and serve one peer. */
 void
@@ -159,7 +178,7 @@ BSDVM has no policy file. Its rules are structural:
 | Rule | Effect |
 |---|---|
 | SYSTEM-domain only | `system.VM` does not resolve for USER-domain units |
-| Label-scoped window | 16 host-local ports per label, exclusively owned while any session is live; BIND takes an index, never a concrete port |
+| Label-scoped window | 16 host-local ports per label, exclusively owned while any session is live; Bind takes an index, never a concrete port |
 | Connect is unscoped | any concrete (cid, port) except the wildcard CID; the listener is the policy point |
 | Per-label caps | 128 concurrent sessions per label; 4096 active labels |
 | Ambient only for the base bundle | switchboard ignores `ambient` on an application bundle |
@@ -171,13 +190,18 @@ other session of its label.
 ## Tests
 
 `usr.sbin/BSDVM/tests` (package `waspnest-tests`, installed under
-`/usr/tests/usr.sbin/BSDVM`), both compiling `bsdvm.c` with `-DVMD_TESTING`
+`/usr/tests/usr.sbin/BSDVM`), compiling `bsdvm.c` with `-DVMD_TESTING`
 to expose the registry, validators and worker:
 
 | Program | Kind | Proves |
 |---|---|---|
-| `registry_test` | pure unit | distinct labels never share a window, same label is deterministic, full registry refused, slot reclaimed on last release and held while a worker remains, BIND/CONNECT/LIST wire-contract validation, backlog clamp never negative |
-| `provider_test` | plane (real channel, vsock-capable kernel, root) | BIND returns an accept-only listener, CONNECT reaches a bound listener, LIST reports only the caller's window, malformed requests rejected |
+| `registry_test` | pure unit | distinct labels never share a window, same label is deterministic, full registry refused, slot reclaimed on last release and held while a worker remains, Bind/Connect argument validation (on the legacy record shape the worker still uses internally), backlog clamp never negative |
+| `provider_test` | plane (real channel, vsock-capable kernel, root) | with the generated client bindings: Bind returns an accept-only listener, Connect reaches a bound listener, List reports only the caller's window, an out-of-window index or wildcard CID is `EINVAL` and keeps the session; hand-built frames (before negotiation, unknown method, truncated header, missing or trailing body, pre-FIDL record, attached descriptor) close the session |
+| `evolution_test` | plane | the `bsd:1` libvmcmp client against a `bsd:2` peer, and a `bsd:2` client against the real `bsd:1` worker (the added strict method closes only that session) |
+| `lifecycle_test`, `serve_test` | pure unit | worker reaping and window release; the accept loop against a scripted provider |
+
+`latency_bench` (installed beside the tests) times List round trips through
+libvmcmp and the real worker for `tools/build/fuchsia/vm-daemons.sh`.
 
 Run with `kyua test -k /usr/tests/usr.sbin/BSDVM/Kyuafile`. The transport
 itself is exercised by `tests/sys/kern/waspnest_core` (`vsock_test`,
@@ -186,11 +210,13 @@ same package.
 
 ## Status and gaps
 
-Shipped as a vsock broker; the inventory records VSOCK_BIND, CONNECT and
-LIST as VM-proven (11 test cases). Gaps: VM launch and lifecycle are not
+Shipped as a vsock broker; the inventory records Bind, Connect and List as
+VM-proven. FIDL `bsd.vm.v1` (October 2026); unit attributes, visibility and
+the window rules are unchanged by the migration, and the provider and
+libvmcmp ship together (mixed peers fail at negotiation). Gaps: VM launch and lifecycle are not
 provided (the "VM authority" is a title, not yet a function); it is the
 only ambient provider, and the justification is forward-looking (bhyve
-management) rather than required by the vsock role it plays today; BIND is
+management) rather than required by the vsock role it plays today; Bind is
 host-local only, with no brokering of guest-CID listeners; no ctl tool;
 the unit file's comments still name `vmd`. Everything else about
 virtualization, including the honest live-qualification status of the

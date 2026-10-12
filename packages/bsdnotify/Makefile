@@ -8,6 +8,7 @@ UCLSRC.bsdnotify=	bsdnotify.ucl
 PKG_DEPS.bsdnotify+=	bsdaudit
 PKG_DEPS.bsdnotify+=	libauditcmp
 PKG_DEPS.bsdnotify+=	libchannel
+PKG_DEPS.bsdnotify+=	libfidl
 PKG_DEPS.bsdnotify+=	libnotify
 PKG_DEPS.bsdnotify+=	libservice
 PKG_DEPS.bsdnotify+=	libucl

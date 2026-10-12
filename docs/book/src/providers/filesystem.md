@@ -76,48 +76,71 @@ serving begins.
 
 ## Wire operations
 
-The protocol is `lib/libcapsulert/bsdfilesystem_proto.h`. There is no HELLO: the first four
-bytes of every request are the `op`. Opcode 3 is unassigned. A successful
-REQUEST, OPEN, OPEN_VERSION or TXN_BEGIN delivers its descriptor as the
-reply's single SCM_RIGHTS fd. Every claim-addressed op resolves the claim
-under the caller's own container.
+The provider and its clients use `lib/libfilesystemcmp/filesystemcmp.fidl`,
+library `bsd.filesystem.v1`, with generated C bindings over native capability
+channels (see [FIDL and Capability IPC](../develop/fidl.md)). The schema
+installs as `/usr/share/fidl/filesystemcmp.fidl` and imports
+`/usr/share/fidl/zx.fidl` for descriptors. A session calls `GetProtocolInfo`
+first. No payload carries an identity: every claim-addressed method resolves
+the claim under the caller's own container, path opens follow the label's
+policy, and a store takes the kernel-stamped credentials of the sending
+process. The provider rebuilds each request in its legacy record shape
+(`lib/libcapsulert/bsdfilesystem_proto.h`, which keeps the constants and the
+records) and decides it exactly as before, so the field rules, limits and
+errors below are unchanged; the historical opcode numbers are listed for the
+probes and logs.
 
-| Op | Request | Reply | Errors |
+| Method (op) | Request | Reply | Errors |
 |---|---|---|---|
-| 1 REQUEST | `bsdfilesystem_request` (dataset key, `ZH_*` rights, `ZHF_*` flags, lifetime, deliver shape, scope, group, quota, owner uid/gid, session) | `bsdfilesystem_reply` + fd: dataset handle, or a mounted dirfd for `DELIVER_MOUNTED`, read-only for `DELIVER_MOUNTED_RO` | `EINVAL` (quota below 1 MiB, bad name), `EPERM` (group not a declared membership), `ENXIO` (no pool) |
-| 2 RELEASE | `bsdfilesystem_request` (dataset) | `bsdfilesystem_reply` | idempotent; a missing lease claim is success |
-| 4 PING | header | `bsdfilesystem_reply` | none |
-| 5 BEGIN_SESSION | `bsdfilesystem_request` (session id) | `bsdfilesystem_reply` | none |
-| 6 OPEN | `bsdfilesystem_open_request` (absolute path, `BSDFILESYSTEM_OPEN_*` rights, `is_dir`) | `bsdfilesystem_reply` + rights-limited fd | `EACCES` (label not granted the path), `ENOENT` |
-| 7 DESTROY | `bsdfilesystem_request` (dataset, lifetime PERSISTENT or CACHE, scope, group) | `bsdfilesystem_reply` | `ENOENT` (absent; not idempotent) |
-| 8 LIST | `bsdfilesystem_list_request` (scope, group, cursor) | `bsdfilesystem_list_reply`: up to 32 `bsdfilesystem_claim_entry` (name, used, refquota, lifetime), `next_cursor` | none; an empty namespace lists empty |
-| 9 STAT_CLAIM | `bsdfilesystem_request` (dataset, lifetime, scope, group) | `bsdfilesystem_stat_reply` (used, refquota, available) | `ENOENT` |
-| 10 SET_QUOTA | `bsdfilesystem_request` (quota bytes; 0 clears) | `bsdfilesystem_reply` | `EINVAL` (below floor), `ENOENT` |
-| 11 SNAPSHOT | `bsdfilesystem_version_request` (dataset, lifetime, scope, group) | `bsdfilesystem_version_reply` (assigned version id) | `ENOENT`; at most 256 snapshots per claim |
-| 12 LIST_VERSIONS | `bsdfilesystem_version_request` (cursor) | `bsdfilesystem_versions_reply`: up to 32 version ids, `next_cursor` | `ENOENT` |
-| 13 ROLLBACK | `bsdfilesystem_version_request` (version) | `bsdfilesystem_reply` | `EBUSY` (claim still mounted or held), `EINVAL` (reserved version shape), `ENOENT` |
-| 14 OPEN_VERSION | `bsdfilesystem_version_request` (version) | `bsdfilesystem_reply` + read-only mounted dirfd of a clone | `ENXIO` (no BEGIN_SESSION), `ENOENT` |
-| 15 TXN_BEGIN | `bsdfilesystem_version_request` | `bsdfilesystem_version_reply` (txn id in `version`) + writable dirfd of a staging clone | `ENOENT` |
-| 16 TXN_COMMIT | `bsdfilesystem_version_request` (txn id in `version`) | `bsdfilesystem_reply` | `EBUSY` (claim mounted elsewhere), `EINVAL`, `ENOENT` |
-| 17 TXN_ABORT | `bsdfilesystem_version_request` (txn id) | `bsdfilesystem_reply` | `ENOENT` |
-| 18 UNMOUNT | `bsdfilesystem_request` (dataset, lifetime, scope) | `bsdfilesystem_reply` | idempotent |
+| `Request` (1) | dataset key, `ZH_*` rights, `ZHF_*` flags, lifetime, deliver shape, scope, group, quota, owner uid/gid | resolved dataset name + descriptor: dataset handle, or a mounted dirfd for `DELIVER_MOUNTED`, read-only for `DELIVER_MOUNTED_RO` | `EINVAL` (quota below 1 MiB, bad name), `EPERM` (group not a declared membership), `ENXIO` (no pool) |
+| `Release` (2) | dataset | empty | idempotent; a missing lease claim is success |
+| `Ping` (4) | empty | empty | none |
+| `BeginSession` (5) | session id | empty | none |
+| `Open` (6) | absolute path, `BSDFILESYSTEM_OPEN_*` rights, `is_dir` | rights-limited descriptor | `EACCES` (label not granted the path), `ENOENT` |
+| `Destroy` (7) | claim (dataset, lifetime PERSISTENT or CACHE, scope, group) | empty | `ENOENT` (absent; not idempotent) |
+| `List` (8) | scope, group, cursor | up to 32 entries (name, used, refquota, lifetime), `next_cursor` | none; an empty namespace lists empty |
+| `StatClaim` (9) | claim | used, refquota, available | `ENOENT` |
+| `SetQuota` (10) | claim, quota bytes (0 clears) | empty | `EINVAL` (below floor), `ENOENT` |
+| `Snapshot` (11) | claim | assigned version id | `ENOENT`; at most 256 snapshots per claim |
+| `ListVersions` (12) | claim, cursor | up to 32 version ids, `next_cursor` | `ENOENT` |
+| `Rollback` (13) | claim, version | empty | `EBUSY` (claim still mounted or held), `EINVAL` (reserved version shape), `ENOENT` |
+| `OpenVersion` (14) | claim, version | read-only mounted dirfd of a clone | `ENXIO` (no BeginSession), `ENOENT` |
+| `TxnBegin` (15) | claim | txn id + writable dirfd of a staging clone | `ENOENT` |
+| `TxnCommit` (16) | claim, txn id | empty | `EBUSY` (claim mounted elsewhere), `EINVAL`, `ENOENT` |
+| `TxnAbort` (17) | claim, txn id | empty | `ENOENT` |
+| `Unmount` (18) | claim | empty | idempotent |
+
+A method before negotiation, an unknown method, a malformed, truncated or
+oversized frame, a pre-FIDL record or an attached descriptor closes the
+session without a reply; a name with an embedded NUL is `EINVAL` and keeps
+it. Delivered descriptors keep the limits the provider set (one transfer, the
+PF descriptor granted to BSDNetwork excepted, one more fork); the FIDL
+transport preserves that state (`fidl_bsd_connection_preserve_sent_inheritance()`).
+The `bsd.filesystem.v1` ordinals and layouts are a compatibility contract;
+`usr.sbin/BSDFilesystem/tests/evolution/filesystemcmp_next.fidl` is the same
+schema at `bsd:1` and adds a method at `bsd:2` for the pairing test.
 
 Lifetimes are `BSDFILESYSTEM_PERSISTENT` (0), `CACHE` (1), `BOOT` (2) and
 `LEASE` (3); scopes are `UNIT`, `SHARED` and `GROUP`. ROLLBACK discards
 every snapshot newer than the target, as `zfs rollback -r` does. A
 transaction snapshots the claim, clones it read-write as a sibling, and on
-COMMIT promotes the clone and renames it over the claim, whole subtree, all
-or nothing; the caller must UNMOUNT its own claim first or the swap is
+commit promotes the clone and renames it over the claim, whole subtree, all
+or nothing; the caller must unmount its own claim first or the swap is
 `EBUSY`. Version ids of the shape `v<hex>` and names of the shape
 `del-<version>` are reserved for the broker's transients and rejected as
 caller input.
 
 ## Client library
 
-There are three layers. Consumers use the libservice storage API, which is
-the only one that applies the container model:
+There are three layers. Consumers use the libfilesystemcmp storage API
+(`<filesystemcmp.h>`, `-lfilesystemcmp`, libfilesystemcmp(3); the calls moved
+out of libservice in October 2026 with the same names), which is the only one
+that applies the container model. It keeps one process-wide session, opened
+and negotiated on first use; a timeout, transport failure or malformed reply
+drops it and the next call opens a fresh one, and a forked child opens its
+own:
 
-| Group | Functions (`<libservice.h>`, `-lservice`) |
+| Group | Functions (`<filesystemcmp.h>`, `-lfilesystemcmp`) |
 |---|---|
 | Claims | `service_storage_open`, `_open_quota`, `_open_cache`, `_open_shared`, `_open_shared_readonly`, `_open_env`, `_open_group` |
 | Reclaim | `service_storage_destroy`, `_destroy_cache`, `_destroy_shared`, `_destroy_group` |
@@ -127,7 +150,7 @@ the only one that applies the container model:
 | Isolated opens | `service_open_config`, `service_open_isolated`, `service_resource_dir` |
 
 libbsdfilesystem (`<bsdfilesystem.h>`, `-lbsdfilesystem`, libbsdfilesystem(3))
-is the thin owner of a channel for tool authors who want the raw REQUEST
+is the thin owner of a session for tool authors who want the raw request
 shape: `bsdfilesystem_connect`, `_adopt`, `_close`, `_request`,
 `_request_quota`, `_release`, `_destroy`, `_ping`, `_begin_session`, and
 `bsdfilesystem_mount_dir` to turn a handle into a dirfd. libtrustedzfs
@@ -140,7 +163,7 @@ snapshot before an upgrade:
 #include <err.h>
 #include <fcntl.h>
 #include <unistd.h>
-#include <libservice.h>
+#include <filesystemcmp.h>
 
 static void
 upgrade_store(struct service_context *ctx)
@@ -162,7 +185,7 @@ upgrade_store(struct service_context *ctx)
 }
 ```
 
-Link with `-lservice`. The `dirfd` is a mounted anonymous directory: it
+Link with `-lfilesystemcmp`. The `dirfd` is a mounted anonymous directory: it
 works with `openat(2)`, `fstatat(2)` and `mmap(2)` and has no path.
 
 ## Command-line tool
@@ -232,7 +255,10 @@ attributes = ["system.oes"];
 ```
 
 Use `oes_client_create_brokered()` from `liboes` to discover the endpoint and
-obtain an owned client. It returns `NULL` with `errno` on failure and never
+obtain an owned client. The broker speaks `bsd.oes.v1`
+(`lib/liboes/oes_broker.fidl`, installed as `/usr/share/fidl/oes_broker.fidl`):
+`GetProtocolInfo`, then one `OpenNotify` per session, whose reply carries the
+descriptor; anything else closes the session. It returns `NULL` with `errno` on failure and never
 falls back to opening `/dev/oes`. Discovery and delivery share a five-second
 budget, bounded further by an existing caller budget. Destroy the client with
 `oes_client_destroy()` when finished.
@@ -275,9 +301,11 @@ watch registration fails. The separate storage reaper is not an admission worker
 
 | Suite | Location | Installed under | What it proves |
 |---|---|---|---|
-| `namespace_test` (60 cases), `provider_test` (11) | `usr.sbin/BSDFilesystem/tests` | `/usr/tests/usr.sbin/BSDFilesystem` | label-to-dataset derivation, name validation, reserved version shapes, group scoping, the request handlers against a fake service |
+| `namespace_test` (60 cases), `provider_test` | `usr.sbin/BSDFilesystem/tests` | `/usr/tests/usr.sbin/BSDFilesystem` | label-to-dataset derivation, name validation, reserved version shapes, group scoping; the real `bsd.filesystem.v1` worker over a channel with the generated client (bundleless Destroy and embedded NUL are `EINVAL`, List without a pool is `ENXIO`, Ping succeeds) and hand-built frames (before negotiation, unknown method, missing body, trailing bytes, truncated header, pre-FIDL record, attached descriptor) that close the session |
+| `evolution_test` | `usr.sbin/BSDFilesystem/tests` | `/usr/tests/usr.sbin/BSDFilesystem` | the `bsd:1` libfilesystemcmp client against a `bsd:2` peer, and a `bsd:2` client against the real `bsd:1` worker |
+| `oes_session_test`, `oes_handoff_test` | `usr.sbin/BSDFilesystem/tests` | `/usr/tests/usr.sbin/BSDFilesystem` | the `bsd.oes.v1` broker session: negotiation required, one grant per session, factory errors without a descriptor, malformed frames refused; the real factory's restricted descriptor delivered to root and non-root recipients |
 | `quota_test`, `lifecycle_test` | `usr.sbin/BSDFilesystem/tests` | `/usr/tests/usr.sbin/BSDFilesystem` | admission boundaries, real child teardown, busy-quiesce refusal with isolated provider callbacks |
-| `bsdfilesystem_test` (18) | `lib/libbsdfilesystem/tests` | `/usr/tests/lib/libbsdfilesystem` | the client's wire encoding and fd handling |
+| `bsdfilesystem_test` (18) | `lib/libbsdfilesystem/tests` | `/usr/tests/lib/libbsdfilesystem` | the client's request building, reply validation and fd handling against a scripted transport |
 | `trustedzfs_capsicum_test` (27) | `lib/libtrustedzfs/tests` | `/usr/tests/lib/libtrustedzfs` | `tzfs_*` verbs and ioctl-limit profiles under `cap_enter(2)` |
 | ten `zfshandle_*_test` programs | `tests/sys/zfshandle` | `/usr/tests/sys/zfshandle` | kernel rights, derive, pinning, anonymous mounts, pool handles, negative and hardening cases |
 | `tzfsctl_test.sh` | `usr.sbin/tzfsctl/tests` | `/usr/tests/usr.sbin/tzfsctl` | the tool against `fake_bsdfilesystem` |
@@ -291,7 +319,10 @@ harness. Packages: `5BSD-tzfs-tests`, `5BSD-libtrustedzfs-tests`.
 ## Status and gaps
 
 Shipped: the handle model, anonymous and shared anonymous mounts, the
-broker with all eighteen ops, the container model and reconcile, quotas,
+broker with all seventeen methods over FIDL `bsd.filesystem.v1` (October
+2026; unit attributes, visibility, policy and OES admission are unchanged by
+the migration, and the provider ships with libfilesystemcmp,
+libbsdfilesystem and liboes), the container model and reconcile, quotas,
 versions and transactions, and the installer path that writes the pool into
 `bsdfilesystem.ucl`. The inventory's scorecard records BSDFilesystem as the
 least-tested TCB component by test-to-code ratio. tzfsctl(8) exposes only

@@ -16,6 +16,9 @@ CXXFLAGS+= -I${SRCTOP}/contrib/googletest/googletest/include
 BINDING_SRCS= ${FIDLGEN_SRCS.runtime}
 PLAIN_TESTS_C+= c_binding_test
 SRCS.c_binding_test= c_binding_test.c ${BINDING_SRCS}
+# The C bindings' direct wire codec against the natural codec.
+PLAIN_TESTS_CXX+= c_wire_test
+SRCS.c_wire_test= c_wire_test.cc ${BINDING_SRCS}
 .if ${MK_GOOGLETEST} != "no"
 GTESTS+= runtime_test
 SRCS.runtime_test= runtime_test.cc allocation_fault.cc ${BINDING_SRCS}

@@ -2,9 +2,13 @@
 #ifndef _CRYPTOCMP_H_
 #define _CRYPTOCMP_H_
 #include "cryptocmp_protocol.h"
+/* bsd.crypto.v1 (cryptocmp.fidl) wire major, checked on a session's first call. */
+#define CRYPTOCMP_WIRE_VERSION 1
 __BEGIN_DECLS
 struct cryptocmp_client;
 int cryptocmp_open(struct cryptocmp_client **);
+/* Adopt a held native channel; consumes fd only on success. */
+int cryptocmp_client_create(int, struct cryptocmp_client **);
 void cryptocmp_close(struct cryptocmp_client *);
 int cryptocmp_generate(struct cryptocmp_client *, const struct cryptocmp_generate *, int *);
 int cryptocmp_generate_key(struct cryptocmp_client *,

@@ -16,6 +16,7 @@
 #include <unistd.h>
 
 #include <libservice.h>
+#include <filesystemcmp.h>
 #include <logcmp.h>
 
 #ifndef GROUPPROBE_GROUP

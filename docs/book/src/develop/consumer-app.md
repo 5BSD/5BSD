@@ -16,7 +16,7 @@ taken from it.
 |---|---|---|---|
 | Sockets and name resolution | `libnetworkcmp` | `networkcmp.h` | `networkcmp_client_open(3)` |
 | A log sink usable after the seal | `liblogcmp` | `logcmp.h` | `logcmp_log(3)` (lazy, internal) |
-| Mutable storage of its own | `libservice` | `libservice.h` | `service_storage_open(3)` |
+| Mutable storage of its own | `libfilesystemcmp` | `filesystemcmp.h` | `service_storage_open(3)` |
 | The bootstrap or ambient context | `libservice` | `libservice.h` | `service_acquire(3)`, `service_open(3)` |
 
 None of these needs a manifest declaration. `switchboard(5)` says it in one

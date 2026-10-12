@@ -28,7 +28,9 @@
 #include <auditcmp.h>
 #include <auditcmp_server.h>
 #include <channel.h>
+#include <fidl/bsd.log.v1/c/bsd.h>
 #include <libservice.h>
+#include <filesystemcmp.h>
 #include <service_runtime.h>
 #include <logcmp.h>
 #include <logcmp_server.h>
@@ -76,7 +78,7 @@ struct worker_state {
 	int			 source_type;
 	struct worker_state	*next;
 	struct worker_state	*pending_next;
-	struct channel		*channel;
+	struct fidl_bsd_connection *connection;
 	struct logcmp_session	 session;
 	struct auditcmp_client	*audit;
 	struct sink_context	 sink;
@@ -95,6 +97,8 @@ struct worker_state {
 	char			 label[64];
 	char			 actor[64];
 	bool			 active;
+	bool			 negotiated;
+	bool			 write_armed;
 	bool			 drain_pending;
 	bool			 pending_queued;
 	uint32_t		 ring_size;
@@ -343,18 +347,36 @@ harden_worker_fd(int fd)
 }
 #endif
 
+/*
+ * Where one request's reply goes.  Sessions speak bsd.log.v1; each request
+ * is rebuilt as the historical LOGC record so the record rules and the
+ * dispatch below stay as they were, and its reply is converted back.  An
+ * ATTACH request's descriptors travel beside the record in fds (slots as in
+ * enum logcmp_attach_fd_slot); any left there afterwards are closed.
+ */
+struct log_call {
+	struct fidl_bsd_request	*request;
+	struct logcmp_msg	 wire;
+	int			 fds[LOGCMP_ATTACH_FD_COUNT];
+};
+
+/*
+ * Send a reply: build it as the historical record, check it by the same
+ * rules as before, then convert it to the method's bsd.log.v1 result.
+ */
 static int
-send_reply(struct channel_message *request_message,
-    const struct logcmp_msg *request, int error, const void *payload,
-    size_t payload_length)
+send_reply(struct worker_state *state, const struct log_call *call, int error,
+    const void *payload, size_t payload_length)
 {
 	union provider_buffer buffer;
 	struct logcmp_msg *reply;
+	const void *body;
 	size_t length;
+	int reply_error;
 
 	memset(&buffer, 0, sizeof(buffer));
 	reply = &buffer.wire.msg;
-	if (logcmp_message_init_reply(reply, request,
+	if (logcmp_message_init_reply(reply, &call->wire,
 	    error == 0 ? 0 : -error) == -1)
 		return (-1);
 	if (error == 0 && payload_length != 0)
@@ -363,9 +385,89 @@ send_reply(struct channel_message *request_message,
 	if (logcmp_validate_message(reply, length, LOGCMP_MESSAGE_REPLY) == -1 ||
 	    logcmp_validate_fds(reply, 0, LOGCMP_MESSAGE_REPLY) == -1)
 		return (-1);
-	return (channel_send_reply(request_message,
-	    &(struct channel_outgoing)
-	    CHANNEL_OUTGOING_INITIALIZER(reply, length)));
+	body = reply + 1;
+	switch (call->wire.opcode) {
+	case LOGCMP_OP_HELLO: {
+		const struct logcmp_hello_reply *h = body;
+		struct bsd_log_v1_Limits limits = { h->features, h->ring_size,
+		    h->max_record, h->max_text, h->max_fields,
+		    h->minimum_severity };
+
+		if (error != 0)
+			return (errno = EPROTO, -1);
+		reply_error = bsd_log_v1_Log_Hello_reply(state->connection,
+		    call->request, &limits);
+		break;
+	}
+	case LOGCMP_OP_STATS: {
+		const struct logcmp_stats *t = body;
+		struct bsd_log_v1_Stats stats;
+
+		if (error != 0)
+			return (errno = EPROTO, -1);
+		memset(&stats, 0, sizeof(stats));
+		stats.accepted = t->accepted;
+		stats.rejected = t->rejected;
+		stats.client_dropped = t->client_dropped;
+		stats.provider_filtered = t->provider_filtered;
+		stats.provider_rate_limited = t->provider_rate_limited;
+		stats.last_sequence = t->last_sequence;
+		memcpy(stats.client_dropped_by_severity,
+		    t->client_dropped_by_severity,
+		    sizeof(stats.client_dropped_by_severity));
+		memcpy(stats.provider_rate_limited_by_severity,
+		    t->provider_rate_limited_by_severity,
+		    sizeof(stats.provider_rate_limited_by_severity));
+		reply_error = bsd_log_v1_Log_GetStats_reply(state->connection,
+		    call->request, &stats);
+		break;
+	}
+	case LOGCMP_OP_QUERY: {
+		struct bsd_log_v1_Log_Query_Result result = { 0 };
+
+		if (error != 0) {
+			result.tag = bsd_log_v1_Log_Query_Result_err_tag;
+			result.value.err = (uint32_t)error;
+		} else {
+			const struct logcmp_query_reply *q = body;
+
+			result.tag = bsd_log_v1_Log_Query_Result_response_tag;
+			result.value.response = (struct bsd_log_v1_QueryResult){
+				.generation = q->cursor.generation,
+				.offset = q->cursor.offset,
+				.found = q->result != 0,
+				.record = __DECONST(uint8_t *,
+				    (const uint8_t *)(q + 1)),
+				.record_size = q->record_length
+			};
+		}
+		reply_error = bsd_log_v1_Log_Query_reply(state->connection,
+		    call->request, &result);
+		break;
+	}
+#define	EMPTY_REPLY(op, method)						\
+	case op: {							\
+		struct bsd_log_v1_Log_##method##_Result result = {	\
+			.tag = error != 0 ?				\
+			    bsd_log_v1_Log_##method##_Result_err_tag :	\
+			    bsd_log_v1_Log_##method##_Result_response_tag, \
+			.value.err = (uint32_t)error			\
+		};							\
+		reply_error = bsd_log_v1_Log_##method##_reply(		\
+		    state->connection, call->request, &result);		\
+		break;							\
+	}
+	EMPTY_REPLY(LOGCMP_OP_ATTACH, Attach)
+	EMPTY_REPLY(LOGCMP_OP_WRITE, Write)
+	EMPTY_REPLY(LOGCMP_OP_FLUSH, Flush)
+	EMPTY_REPLY(LOGCMP_OP_DETACH, Detach)
+#undef EMPTY_REPLY
+	default:
+		return (errno = EPROTO, -1);
+	}
+	if (reply_error != 0)
+		return (errno = reply_error, -1);
+	return (0);
 }
 
 static int
@@ -503,8 +605,7 @@ close_wakeup(struct worker_state *state)
 }
 
 static int
-attach_wakeup(struct worker_state *state,
-    struct channel_message *request_message)
+attach_wakeup(struct worker_state *state, struct log_call *call)
 {
 	struct kevent change;
 	int fd;
@@ -513,10 +614,10 @@ attach_wakeup(struct worker_state *state,
 		errno = EBUSY;
 		return (-1);
 	}
-	fd = channel_message_take_fd(request_message,
-	    LOGCMP_ATTACH_FD_WAKE_READ);
+	fd = call->fds[LOGCMP_ATTACH_FD_WAKE_READ];
+	call->fds[LOGCMP_ATTACH_FD_WAKE_READ] = -1;
 	if (fd == -1)
-		return (-1);
+		return (errno = EBADF, -1);
 	if (logcmp_wakeup_validate_consumer(fd) == -1 ||
 	    harden_worker_fd(fd) == -1) {
 		int error = errno;
@@ -535,27 +636,20 @@ attach_wakeup(struct worker_state *state,
 	return (0);
 }
 
+/* One-way Notify: records are waiting in the ring. */
 static void
-handle_event(struct channel *channel __unused,
-    struct channel_message *event_message, void *argument)
+on_notify(void *argument, struct fidl_bsd_connection *connection,
+    struct fidl_bsd_request *request __unused,
+    struct fidl_bsd_empty *empty __unused)
 {
-	struct worker_state *state;
-	const struct logcmp_msg *message;
-	size_t length;
+	struct worker_state *state = argument;
 
-	state = argument;
 	/* Dispatch may have more messages queued after a terminal failure. */
-	if (state->terminal_error != 0) {
-		channel_message_free(event_message);
+	if (state->terminal_error != 0)
 		return;
-	}
-	message = channel_message_data(event_message);
-	length = channel_message_length(event_message);
-	if (logcmp_validate_message(message, length, LOGCMP_MESSAGE_EVENT) ==
-	    -1 || logcmp_validate_fds(message,
-	    channel_message_fd_count(event_message), LOGCMP_MESSAGE_EVENT) ==
-	    -1) {
+	if (!state->negotiated) {
 		state->terminal_error = EPROTO;
+		fidl_bsd_connection_close(connection, EPROTO);
 	} else if (drain_session(state, "batch-notify") == -1) {
 		/*
 		 * A wake received before ATTACH is a protocol violation.  Sink
@@ -563,42 +657,31 @@ handle_event(struct channel *channel __unused,
 		 */
 		state->terminal_error = errno;
 	}
-	channel_message_free(event_message);
 }
 
 static void
-handle_request(struct channel *channel __unused,
-    struct channel_message *request_message, void *argument)
+dispatch_request(struct worker_state *state, struct log_call *call,
+    const struct logcmp_msg *message, size_t length)
 {
 	struct logcmp_hello_reply hello;
 	struct logcmp_query_reply query_reply;
 	struct logcmp_store_cursor store_cursor;
 	struct shmring_fds ringfds;
-	struct worker_state *state;
-	const struct logcmp_msg *message;
 	const struct logcmp_hello *hello_request;
 	uint64_t filtered_before, rate_limited_before, rejected_before;
-	size_t length, query_length;
+	size_t query_length;
 	uint8_t query_record[LOGCMP_MAX_RECORD];
 	bool attached, wake_attached, wants_interest;
 	int query_result;
 	int error;
 
-	state = argument;
 	/* Dispatch may have more messages queued after a terminal failure. */
-	if (state->terminal_error != 0) {
-		channel_message_free(request_message);
+	if (state->terminal_error != 0)
 		return;
-	}
-	message = channel_message_data(request_message);
-	length = channel_message_length(request_message);
-	if (logcmp_validate_message(message, length,
-	    LOGCMP_MESSAGE_REQUEST) == -1 ||
-	    logcmp_validate_fds(message,
-	    channel_message_fd_count(request_message),
+	if (!state->negotiated || logcmp_validate_message(message, length,
 	    LOGCMP_MESSAGE_REQUEST) == -1) {
 		state->terminal_error = EPROTO;
-		channel_message_free(request_message);
+		fidl_bsd_connection_close(state->connection, EPROTO);
 		return;
 	}
 
@@ -624,23 +707,18 @@ handle_request(struct channel *channel __unused,
 		hello.max_text = LOGCMP_MAX_TEXT;
 		hello.max_fields = LOGCMP_MAX_FIELDS;
 		hello.minimum_severity = state->session.minimum_severity;
-		if (send_reply(request_message, message, 0, &hello,
+		if (send_reply(state, call, 0, &hello,
 		    wants_interest ? sizeof(hello) :
 		    offsetof(struct logcmp_hello_reply, minimum_severity)) == -1)
 			state->terminal_error = errno;
-		channel_message_free(request_message);
 		return;
 	case LOGCMP_OP_ATTACH:
 		attached = false;
 		wake_attached = false;
-		ringfds.config_fd = channel_message_borrow_fd(request_message,
-		    LOGCMP_ATTACH_FD_CONFIG);
-		ringfds.data_fd = channel_message_borrow_fd(request_message,
-		    LOGCMP_ATTACH_FD_DATA);
-		ringfds.head_fd = channel_message_borrow_fd(request_message,
-		    LOGCMP_ATTACH_FD_HEAD);
-		ringfds.tail_fd = channel_message_borrow_fd(request_message,
-		    LOGCMP_ATTACH_FD_TAIL);
+		ringfds.config_fd = call->fds[LOGCMP_ATTACH_FD_CONFIG];
+		ringfds.data_fd = call->fds[LOGCMP_ATTACH_FD_DATA];
+		ringfds.head_fd = call->fds[LOGCMP_ATTACH_FD_HEAD];
+		ringfds.tail_fd = call->fds[LOGCMP_ATTACH_FD_TAIL];
 		if (ringfds.config_fd == -1 || ringfds.data_fd == -1 ||
 		    ringfds.head_fd == -1 || ringfds.tail_fd == -1 ||
 		    logcmp_session_attach(&state->session,
@@ -649,7 +727,7 @@ handle_request(struct channel *channel __unused,
 			break;
 		}
 		attached = true;
-		if (attach_wakeup(state, request_message) == -1)
+		if (attach_wakeup(state, call) == -1)
 			error = errno != 0 ? errno : EPROTO;
 		else {
 			wake_attached = true;
@@ -699,10 +777,9 @@ handle_request(struct channel *channel __unused,
 		}
 		break;
 	case LOGCMP_OP_STATS:
-		if (send_reply(request_message, message, 0,
+		if (send_reply(state, call, 0,
 		    &state->session.stats, sizeof(state->session.stats)) == -1)
 			state->terminal_error = errno;
-		channel_message_free(request_message);
 		return;
 	case LOGCMP_OP_DETACH:
 		if (drain_session_until_idle(state, "detach",
@@ -758,19 +835,18 @@ handle_request(struct channel *channel __unused,
 			if (query_length != 0)
 				memcpy(response + sizeof(query_reply), query_record,
 				    query_length);
-			if (send_reply(request_message, message, 0, response,
+			if (send_reply(state, call, 0, response,
 			    sizeof(query_reply) + query_length) == -1)
 				state->terminal_error = errno;
 		}
 		BSDLOG_PROBE_QUERY(state->sink.label, store_cursor.generation,
 		    store_cursor.offset, query->minimum_severity,
 		    (uint32_t)query_length, query_result);
-		channel_message_free(request_message);
 		return;
 	}
 	default:
 		state->terminal_error = EPROTO;
-		channel_message_free(request_message);
+		fidl_bsd_connection_close(state->connection, EPROTO);
 		return;
 	}
 	if (state->session.stats.provider_filtered != filtered_before)
@@ -787,10 +863,201 @@ handle_request(struct channel *channel __unused,
 		BSDLOG_PROBE_DROP(state->sink.label,
 		    state->session.stats.last_sequence, error);
 	}
-	if (send_reply(request_message, message, error, NULL, 0) == -1)
+	if (send_reply(state, call, error, NULL, 0) == -1)
 		state->terminal_error = errno;
-	channel_message_free(request_message);
 }
+
+/*
+ * bsd.log.v1 method handlers: each rebuilds the historical record, which the
+ * record rules must accept (a refusal ends the session as before), and
+ * dispatches it.  GetProtocolInfo must come first.
+ */
+static void *
+log_record(union provider_buffer *buffer, uint16_t opcode)
+{
+
+	memset(buffer, 0, sizeof(*buffer));
+	buffer->wire.msg.magic = LOGCMP_MAGIC;
+	buffer->wire.msg.opcode = opcode;
+	return (buffer->wire.payload);
+}
+
+static void
+log_dispatch(struct worker_state *state, struct fidl_bsd_request *request,
+    const union provider_buffer *buffer, size_t payload_length, int *fds)
+{
+	struct log_call call = { .request = request,
+		.wire = buffer->wire.msg };
+	size_t i;
+
+	for (i = 0; i < nitems(call.fds); i++)
+		call.fds[i] = fds != NULL ? fds[i] : -1;
+	dispatch_request(state, &call, &buffer->wire.msg,
+	    sizeof(buffer->wire.msg) + payload_length);
+	for (i = 0; i < nitems(call.fds); i++)
+		if (call.fds[i] >= 0)
+			close(call.fds[i]);
+}
+
+static void
+on_protocol_info(void *argument, struct fidl_bsd_connection *connection,
+    struct fidl_bsd_request *request, struct fidl_bsd_empty *empty __unused)
+{
+	struct worker_state *state = argument;
+	struct bsd_log_v1_ProtocolInfo info = { LOGCMP_WIRE_VERSION };
+	int error;
+
+	if (state->terminal_error != 0)
+		return;
+	error = bsd_log_v1_Log_GetProtocolInfo_reply(connection, request,
+	    &info);
+	if (error != 0)
+		state->terminal_error = error;
+	else
+		state->negotiated = true;
+}
+
+static void
+on_hello(void *argument, struct fidl_bsd_connection *connection __unused,
+    struct fidl_bsd_request *request, struct bsd_log_v1_HelloRequest *q)
+{
+	union provider_buffer buffer;
+	struct logcmp_hello *r = log_record(&buffer, LOGCMP_OP_HELLO);
+
+	r->features = q->features;
+	log_dispatch(argument, request, &buffer, sizeof(*r), NULL);
+}
+
+static void
+on_attach(void *argument, struct fidl_bsd_connection *connection __unused,
+    struct fidl_bsd_request *request, struct bsd_log_v1_AttachRequest *q)
+{
+	union provider_buffer buffer;
+	struct logcmp_attach_request *r = log_record(&buffer, LOGCMP_OP_ATTACH);
+	int fds[LOGCMP_ATTACH_FD_COUNT];
+
+	r->generation = q->generation;
+	r->ring_size = q->ring_size;
+	r->max_record = q->max_record;
+	fds[LOGCMP_ATTACH_FD_CONFIG] = fidl_bsd_take_fd(&q->config);
+	fds[LOGCMP_ATTACH_FD_DATA] = fidl_bsd_take_fd(&q->data);
+	fds[LOGCMP_ATTACH_FD_HEAD] = fidl_bsd_take_fd(&q->head);
+	fds[LOGCMP_ATTACH_FD_TAIL] = fidl_bsd_take_fd(&q->tail);
+	fds[LOGCMP_ATTACH_FD_WAKE_READ] = fidl_bsd_take_fd(&q->wake);
+	log_dispatch(argument, request, &buffer, sizeof(*r), fds);
+}
+
+static void
+on_write(void *argument, struct fidl_bsd_connection *connection __unused,
+    struct fidl_bsd_request *request, struct bsd_log_v1_Record *q)
+{
+	union provider_buffer buffer;
+	uint8_t *r = log_record(&buffer, LOGCMP_OP_WRITE);
+	size_t length = MIN(q->record_size, LOGCMP_MAX_RECORD);
+
+	memcpy(r, q->record, length);
+	log_dispatch(argument, request, &buffer, length, NULL);
+}
+
+static void
+empty_method(struct worker_state *state, struct fidl_bsd_request *request,
+    uint16_t opcode)
+{
+	union provider_buffer buffer;
+
+	(void)log_record(&buffer, opcode);
+	log_dispatch(state, request, &buffer, 0, NULL);
+}
+
+static void
+on_flush(void *argument, struct fidl_bsd_connection *connection __unused,
+    struct fidl_bsd_request *request, struct fidl_bsd_empty *empty __unused)
+{
+	empty_method(argument, request, LOGCMP_OP_FLUSH);
+}
+
+static void
+on_stats(void *argument, struct fidl_bsd_connection *connection __unused,
+    struct fidl_bsd_request *request, struct fidl_bsd_empty *empty __unused)
+{
+	empty_method(argument, request, LOGCMP_OP_STATS);
+}
+
+static void
+on_detach(void *argument, struct fidl_bsd_connection *connection __unused,
+    struct fidl_bsd_request *request, struct fidl_bsd_empty *empty __unused)
+{
+	empty_method(argument, request, LOGCMP_OP_DETACH);
+}
+
+static void
+on_query(void *argument, struct fidl_bsd_connection *connection __unused,
+    struct fidl_bsd_request *request, struct bsd_log_v1_QueryRequest *q)
+{
+	union provider_buffer buffer;
+	struct logcmp_query_request *r = log_record(&buffer, LOGCMP_OP_QUERY);
+
+	r->cursor.generation = q->generation;
+	r->cursor.offset = q->offset;
+	r->minimum_severity = q->minimum_severity;
+	r->match_flags = q->match_flags;
+	r->from_ns = q->from_ns;
+	r->to_ns = q->to_ns;
+	r->subsystem_length = (uint16_t)MIN(q->subsystem_size,
+	    sizeof(r->subsystem));
+	r->category_length = (uint16_t)MIN(q->category_size,
+	    sizeof(r->category));
+	memcpy(r->subsystem, q->subsystem, r->subsystem_length);
+	memcpy(r->category, q->category, r->category_length);
+	log_dispatch(argument, request, &buffer, sizeof(*r), NULL);
+}
+
+static const struct bsd_log_v1_Log_server log_handlers = {
+	.GetProtocolInfo = on_protocol_info,
+	.Hello = on_hello,
+	.Attach = on_attach,
+	.Write = on_write,
+	.Flush = on_flush,
+	.GetStats = on_stats,
+	.Detach = on_detach,
+	.Query = on_query,
+	.Notify = on_notify
+};
+
+/* Adopt fd (consumed) as the session's bsd.log.v1 server connection. */
+static int
+session_connect(struct worker_state *state, int fd)
+{
+	struct fidl_bsd_options options = FIDL_BSD_OPTIONS_INITIALIZER;
+	int error;
+
+	/* Replies carry no descriptors. */
+	options.max_queued_fds = 0;
+	error = fidl_bsd_connection_create_with_options(fd, FIDL_BSD_SERVER,
+	    &options, &state->connection);
+	if (error != 0) {
+		/* The caller still owns fd. */
+		state->connection = NULL;
+		return (errno = error, -1);
+	}
+	error = bsd_log_v1_Log_bind(state->connection, &log_handlers, state);
+	if (error != 0) {
+		fidl_bsd_connection_destroy(state->connection);
+		state->connection = NULL;
+		return (errno = error, -1);
+	}
+	return (0);
+}
+
+/* A connection the bindings closed for a malformed or unknown frame. */
+static bool __unused
+protocol_rejection(int error)
+{
+
+	return (error != 0 && error != EPIPE && error != ECONNRESET &&
+	    error != ECANCELED && error != ETIMEDOUT && error != ENOTCONN);
+}
+
 
 #ifdef LOGCMP_TESTING
 struct test_backend {
@@ -855,12 +1122,9 @@ int
 logcmp_test_serve(int fd, const char *label, uint32_t ring_size,
     int backend_error)
 {
-	struct channel_options options =
-	    CHANNEL_OPTIONS_INITIALIZER(CHANNEL_ROLE_PROVIDER);
 	struct kevent changes[2], event;
 	struct test_backend backend;
 	struct worker_state state;
-	struct channel *channel;
 	int channel_descriptor, result, wants_write;
 
 	if (fd < 0 || label == NULL || label[0] == '\0' ||
@@ -879,14 +1143,11 @@ logcmp_test_serve(int fd, const char *label, uint32_t ring_size,
 	state.storage_query = test_storage_query;
 	state.storage_context = &backend;
 	logcmp_session_init(&state.session, LOGCMP_MAX_RECORD);
-	channel = NULL;
 	if (state.kq == -1 ||
 	    logcmp_session_configure(&state.session, LOGCMP_SEVERITY_TRACE,
-	    0, 0) == -1 || channel_create(fd, &options, &channel) == -1 ||
-	    channel_set_request_handler(channel, handle_request, &state) == -1 ||
-	    channel_set_event_handler(channel, handle_event, &state) == -1)
+	    0, 0) == -1 || session_connect(&state, fd) == -1)
 		goto fail;
-	channel_descriptor = channel_fd(channel);
+	channel_descriptor = fidl_bsd_connection_fd(state.connection);
 	EV_SET(&changes[0], channel_descriptor, EVFILT_READ,
 	    EV_ADD | EV_ENABLE, 0, 0, NULL);
 	EV_SET(&changes[1], channel_descriptor, EVFILT_WRITE,
@@ -895,9 +1156,7 @@ logcmp_test_serve(int fd, const char *label, uint32_t ring_size,
 		goto fail;
 	result = 0;
 	for (;;) {
-		wants_write = channel_wants_write(channel);
-		if (wants_write == -1)
-			break;
+		wants_write = fidl_bsd_connection_wants_write(state.connection);
 		EV_SET(&changes[0], channel_descriptor, EVFILT_WRITE,
 		    wants_write ? EV_ENABLE : EV_DISABLE, 0, 0, NULL);
 		if (kevent(state.kq, changes, 1, &event, 1, NULL) == -1) {
@@ -921,12 +1180,14 @@ logcmp_test_serve(int fd, const char *label, uint32_t ring_size,
 		}
 		if (event.ident != (uintptr_t)channel_descriptor)
 			continue;
-		if (event.filter == EVFILT_WRITE && channel_flush(channel) == -1) {
-			result = 1;
+		/* Reads and flushes in one bounded step. */
+		if (fidl_bsd_connection_dispatch(state.connection) != 0) {
+			/* A refused frame is a protocol failure; EOF is not. */
+			if (protocol_rejection(fidl_bsd_connection_error(
+			    state.connection)))
+				result = 1;
 			break;
 		}
-		if (event.filter == EVFILT_READ && channel_dispatch(channel) == -1)
-			break;
 		if (state.terminal_error != 0) {
 			result = 1;
 			break;
@@ -934,7 +1195,7 @@ logcmp_test_serve(int fd, const char *label, uint32_t ring_size,
 	}
 	close_wakeup(&state);
 	logcmp_session_destroy(&state.session);
-	channel_destroy(channel);
+	fidl_bsd_connection_destroy(state.connection);
 	close(state.kq);
 	return (result);
 
@@ -942,8 +1203,8 @@ fail:
 	result = errno;
 	close_wakeup(&state);
 	logcmp_session_destroy(&state.session);
-	if (channel != NULL)
-		channel_destroy(channel);
+	if (state.connection != NULL)
+		fidl_bsd_connection_destroy(state.connection);
 	if (state.kq >= 0)
 		close(state.kq);
 	errno = result;
@@ -1054,8 +1315,8 @@ pool_remove_session(struct pool_state *pool, struct worker_state *state)
 	    0, 0, NULL);
 	close_wakeup(state);
 	logcmp_session_destroy(&state->session);
-	channel_destroy(state->channel);
-	state->channel = NULL;
+	fidl_bsd_connection_destroy(state->connection);
+	state->connection = NULL;
 	atomic_fetch_sub_explicit(pool->admitted, 1, memory_order_release);
 	BSDLOG_PROBE_SESSION_END(state->sink.label, state->sink.instance, error);
 	state->next = pool->garbage;
@@ -1091,8 +1352,6 @@ pool_actor_admit(const struct worker_state *workers, const char *label)
 static int
 pool_add_session(struct pool_state *pool)
 {
-	struct channel_options options =
-	    CHANNEL_OPTIONS_INITIALIZER(CHANNEL_ROLE_PROVIDER);
 	struct pool_control_message control;
 	struct worker_state *state;
 	int fd, error;
@@ -1177,13 +1436,10 @@ pool_add_session(struct pool_state *pool)
 	    pool->config->rate_limit_interval_ms,
 	    pool->config->rate_limit_burst) == -1 ||
 	    harden_worker_leaf_fd(fd) == -1 ||
-	    channel_create(fd, &options, &state->channel) == -1 ||
-	    channel_set_request_handler(state->channel, handle_request,
-	    state) == -1 || channel_set_event_handler(state->channel,
-	    handle_event, state) == -1) {
+	    session_connect(state, fd) == -1) {
 		error = errno != 0 ? errno : EIO;
-		if (state->channel != NULL)
-			channel_destroy(state->channel);
+		if (state->connection != NULL)
+			fidl_bsd_connection_destroy(state->connection);
 		else
 			close(fd);
 		logcmp_session_destroy(&state->session);
@@ -1191,13 +1447,13 @@ pool_add_session(struct pool_state *pool)
 		atomic_fetch_sub_explicit(pool->admitted, 1, memory_order_release);
 		return (errno = error, -1);
 	}
-	state->channel_fd = channel_fd(state->channel);
+	state->channel_fd = fidl_bsd_connection_fd(state->connection);
 	if (pool_change(pool, state->channel_fd, EVFILT_READ,
 	    EV_ADD | EV_ENABLE, 0, 0, state) == -1 ||
 	    pool_change(pool, state->channel_fd, EVFILT_WRITE,
 	    EV_ADD | EV_DISABLE, 0, 0, state) == -1) {
 		error = errno;
-		channel_destroy(state->channel);
+		fidl_bsd_connection_destroy(state->connection);
 		logcmp_session_destroy(&state->session);
 		free(state);
 		atomic_fetch_sub_explicit(pool->admitted, 1, memory_order_release);
@@ -1310,12 +1566,12 @@ pool_worker(int control_fd, int audit_fd,
 				if (receive_wakeup(state) == -1 ||
 				    drain_session(state, "edge-wakeup") == -1)
 					state->terminal_error = errno;
-			} else if (events[i].filter == EVFILT_WRITE) {
-				if (channel_flush(state->channel) == -1)
-					state->terminal_error = errno;
-			} else if (events[i].filter == EVFILT_READ &&
-			    channel_dispatch(state->channel) == -1)
-				state->terminal_error = errno;
+			} else if ((error = fidl_bsd_connection_dispatch(
+			    state->connection)) != 0 &&
+			    state->terminal_error == 0) {
+				/* Reads and flushes in one bounded step. */
+				state->terminal_error = error;
+			}
 			if (state->terminal_error != 0) {
 				pool_remove_session(&pool, state);
 				continue;
@@ -1325,13 +1581,15 @@ pool_worker(int control_fd, int audit_fd,
 				pool_remove_session(&pool, state);
 				continue;
 			}
-			wants_write = channel_wants_write(state->channel);
-			if (wants_write == -1 || pool_change(&pool,
+			wants_write = fidl_bsd_connection_wants_write(
+			    state->connection);
+			if (wants_write != state->write_armed && pool_change(&pool,
 			    state->channel_fd, EVFILT_WRITE,
 			    wants_write ? EV_ENABLE : EV_DISABLE, 0, 0, state) == -1) {
 				state->terminal_error = errno != 0 ? errno : EIO;
 				pool_remove_session(&pool, state);
-			}
+			} else
+				state->write_armed = wants_write;
 		}
 		pool_collect(&pool);
 	}

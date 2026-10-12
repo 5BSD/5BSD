@@ -35,25 +35,29 @@ It is a plane-on test, not an in-process one: the daemon source is compiled a
 second time with a `*_TESTING` define that guards out `main()` and exports
 the per-session worker, the test creates a real channel through
 `/dev/mac_capability`, forks, runs the worker in the child on the provider
-end, and drives the client end with a libservice(3) session exactly as a
-consumer would. `usr.sbin/BSDTime/tests/Makefile` is the whole recipe:
+end, and drives the client end with the provider's own client library
+exactly as a consumer would (raw libservice(3) sessions carry hand-built
+malformed frames). The core of `usr.sbin/BSDTime/tests/Makefile`:
 
 ```make
-PACKAGE=	runtime-tests
+PACKAGE=	bsdtime-tests
 TESTSDIR=	${TESTSBASE}/usr.sbin/BSDTime
 
-ATF_TESTS_C+=	provider_test
-SRCS.provider_test=	provider_test.c BSDTime.c config.c
-CFLAGS.provider_test+=	-DBSDTIME_TESTING
-CFLAGS.provider_test+=	-I${SRCTOP}/lib/libtimecmp
-CFLAGS.provider_test+=	-I${SRCTOP}/lib/libchannel
-CFLAGS.provider_test+=	-I${SRCTOP}/lib/libservice
-CFLAGS.provider_test+=	-I${SRCTOP}/contrib/libucl/include
-CFLAGS.provider_test+=	-I${SRCTOP}/sys
-LIBADD.provider_test=	timecmp channel service ucl
-NO_SHARED.provider_test=	yes
+ATF_TESTS_C+= provider_test
+CFLAGS+= -I${SRCTOP}/lib/libtimecmp -I${FIDLGEN.timecmp}
+CFLAGS+= -I${SRCTOP}/lib/libfidl/include -I${SRCTOP}/lib/libchannel
+CFLAGS+= -I${SRCTOP}/lib/libservice -I${SRCTOP}/sys
+SRCS.provider_test= provider_test.c BSDTime.c config.c
+CFLAGS.provider_test+= -DBSDTIME_TESTING
+LIBADD.provider_test= timecmp fidl_bsd channel service ucl
+NO_SHARED.provider_test= yes
 
-.PATH:	${SRCTOP}/usr.sbin/BSDTime
+.PATH: ${SRCTOP}/usr.sbin/BSDTime
+# Bindings generated into the object tree (lib/libfidl/fidl-bindings.mk).
+FIDL_BINDINGS+=	timecmp
+FIDL_SCHEMAS.timecmp=	lib/libtimecmp/timecmp.fidl
+FIDL_LIBRARY.timecmp=	bsd.time.v1
+.include "${SRCTOP}/lib/libfidl/fidl-bindings.mk"
 .include <bsd.test.mk>
 ```
 
@@ -68,32 +72,34 @@ without a switchboard. BSDTime goes further and mints a real
 Requirements are set in source rather than in `TEST_METADATA`:
 
 ```c
-ATF_TC(hello_ok);
-ATF_TC_HEAD(hello_ok, tc) { atf_tc_set_md_var(tc, "require.user", "root"); }
-ATF_TC_BODY(hello_ok, tc)
+ATF_TC(states_reports_cached_mask);
+ATF_TC_HEAD(states_reports_cached_mask, tc)
+{ atf_tc_set_md_var(tc, "require.user", "root"); }
+ATF_TC_BODY(states_reports_cached_mask, tc)
 {
 	struct fixture fixture;
 	struct powercmp_config config;
-	struct powercmp_msg reply;
+	uint32_t supported = UINT32_MAX;
 
 	require_plane();
 	make_config(&config, false, NULL);
-	fixture_create(&fixture, &config);
-	ATF_REQUIRE_EQ(0, call(&fixture, POWERCMP_OP_HELLO, NULL,
-	    sizeof(struct powercmp_msg), -1, &reply, NULL));
-	ATF_CHECK_EQ(0, reply.status);
-	ATF_CHECK_EQ(POWERCMP_MAGIC, reply.magic);
+	fixture_create(&fixture, &config);	/* real libpowercmp client */
+	ATF_REQUIRE_EQ(0, powercmp_states(fixture.client, &supported));
+	ATF_CHECK_EQ(TEST_STATES, supported);
 	fixture_destroy(&fixture);
 }
 ```
 
 `require_plane()` opens `/dev/mac_capability` and calls `atf_tc_skip` with
 the errno text when it cannot. The case names in these files are the
-checklist a new provider should copy: `hello_ok`, `*_denied_by_default_policy`,
-`*_allowed_reaches_gate`, `unknown_opcode_is_rejected`,
-`short_message_is_rejected`, `oversized_message_is_rejected`,
-`*_missing_body_is_eproto`, `rejects_attached_fd`,
-`hello_wrong_abi_version_is_rejected`. Positive, negative, malformed-wire and
+checklist a new provider should copy: `*_denied_by_default_policy`,
+`*_allowed_reaches_gate` (or `_reaches_device`), and, for FIDL providers,
+hand-built frames for `method_before_negotiation_is_rejected`,
+`unknown_method_is_rejected`, `short_frame_is_rejected`,
+`trailing_bytes_are_rejected`, `*_missing_body_is_rejected`,
+`legacy_wire_is_rejected` and `rejects_attached_fd`, plus an
+`evolution_test` pairing with a peer built from the next schema version.
+Positive, negative, malformed-wire and
 policy cases sit in one program with section banners.
 
 A minimal program in this shape compiles against the installed headers with

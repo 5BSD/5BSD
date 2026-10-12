@@ -3,7 +3,7 @@
 .\"
 .\" Copyright (c) 2026 Kory Heard
 .\"
-.Dd September 6, 2026
+.Dd October 12, 2026
 .Dt LIBBSDFILESYSTEM 3
 .Os
 .Sh NAME
@@ -234,6 +234,16 @@ set.
 The remaining functions return 0 on success or -1 with
 .Va errno
 set to the daemon-reported error.
+.Sh PROTOCOL
+The client speaks the FIDL library
+.Li bsd.filesystem.v1
+.Pq Pa /usr/share/fidl/filesystemcmp.fidl
+and negotiates on its first call.
+Requests are still built, and replies validated, in the
+.In bsdfilesystem_proto.h
+record shapes.
+A transport failure or malformed reply poisons the client: every later call
+fails with the same error.
 .Sh SEE ALSO
 .Xr libservice 3 ,
 .Xr trustedzfs 3 ,

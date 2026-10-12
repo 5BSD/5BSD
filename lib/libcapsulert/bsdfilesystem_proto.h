@@ -3,10 +3,17 @@
  *
  * Copyright (c) 2026 Kory Heard
  *
- * bsdfilesystem(8) storage daemon protocol.
+ * bsdfilesystem(8) storage daemon constants and legacy records.
+ *
+ * The wire protocol is bsd.filesystem.v1 (lib/libfilesystemcmp/filesystemcmp.fidl).
+ * The records below no longer travel on the wire (the provider rejects
+ * them) and are retained for source/ABI compatibility; the provider and its
+ * clients (libfilesystemcmp, libbsdfilesystem, tzfsctl(8)) still build each
+ * request and reply in these shapes internally, so their field rules, limits
+ * and errors are the protocol's.  The historical description follows.
  *
  * Shared between bsdfilesystem(8) and its clients (libbsdfilesystem, tzfsctl(8), and
- * libservice's service_storage_open(3)).  bsdfilesystem is a socket-free
+ * libfilesystemcmp's service_storage_open(3)).  bsdfilesystem is a socket-free
  * service_provider: there is no AF_UNIX socket and no path to name.  A client
  * reaches it over a held mac_capability channel obtained by name (service_open
  * of BSDFILESYSTEM_SERVICE_NAME), exactly like every other capability-plane daemon;
@@ -28,6 +35,9 @@
 
 /* The well-known name a client resolves with service_open(3) to reach bsdfilesystem. */
 #define	BSDFILESYSTEM_SERVICE_NAME		"system.Filesystem"
+
+/* bsd.filesystem.v1 GetProtocolInfo wire_version. */
+#define	BSDFILESYSTEM_WIRE_VERSION		1
 
 /*
  * Field sizes.  dataset[] matches ORT_STORAGE_DATASET_MAX (== the ZFS max

@@ -3,7 +3,7 @@
 .\"
 .\" Copyright (c) 2026 Kory Heard
 .\"
-.Dd September 6, 2026
+.Dd October 12, 2026
 .Dt BSDVM 8
 .Os
 .Sh NAME
@@ -48,27 +48,31 @@ A process in capability mode cannot bind or connect a vsock address itself
 .Pq it names a global namespace ;
 .Nm ,
 which owns the vsock transport, performs the operation on the caller's behalf
-and returns the resulting descriptor:
-.Bl -tag -width ".Sy VSOCK_CONNECT"
-.It Sy VSOCK_BIND
+and returns the resulting descriptor.
+The protocol is the FIDL library
+.Li bsd.vm.v1
+.Pq Pa /usr/share/fidl/vmcmp.fidl ;
+a session calls
+.Sy GetProtocolInfo
+first, then:
+.Bl -tag -width ".Sy Connect"
+.It Sy Bind
 Bind and listen a host-local
 .Pq Dv VMADDR_CID_LOCAL
 .Dv AF_VSOCK
 socket and return the listening descriptor to
 .Xr accept 2
 on.
-The wire
-.Va port
-is only an
-.Em index
-into the caller's own label-scoped port window, never a concrete port; the
-reply echoes the concrete host-local CID and port bound, which a peer can then
-dial.
-.It Sy VSOCK_CONNECT
+The request's
+.Va index
+is only an index into the caller's own label-scoped port window, never a
+concrete port; the reply carries the concrete host-local CID and port bound,
+which a peer can then dial.
+.It Sy Connect
 Dial a concrete
 .Pq Va cid , Va port
 a peer advertised from its own
-.Sy VSOCK_BIND
+.Sy Bind
 reply and return the connected
 .Dv AF_VSOCK
 socket.
@@ -80,7 +84,7 @@ and
 .Va cid
 must name a real peer, never the wildcard
 .Dv VMADDR_CID_ANY .
-.It Sy VSOCK_LIST
+.It Sy List
 Report the caller's own port window: the host-local
 .Pq Dv VMADDR_CID_LOCAL
 CID, the window's base port, its exclusive upper bound, and the number of ports
@@ -90,6 +94,15 @@ this connecting label, so a worker can only ever report its own label's window
 and never another's.
 This operation is data-only; no descriptor rides the reply.
 .El
+.Pp
+Application errors are
+.Xr errno 2
+values
+.Pq Er EINVAL No for an index outside the window or the wildcard CID .
+A method before
+.Sy GetProtocolInfo ,
+an unknown method, a malformed frame, a pre-FIDL record or an attached
+descriptor closes the session without a reply.
 .Pp
 .Nm
 is never driven by
@@ -103,7 +116,7 @@ not a second isolation authority: it holds the vsock transport and re-delivers
 endpoints, but mints no isolation claims of its own.
 It scopes each caller to a
 .Em port window
-derived from the caller's unforgeable channel label; the wire request names only
+derived from the caller's unforgeable channel label; a request names only
 an index within that window, so one consumer can never name or bind another's
 port.
 .Pp
@@ -164,6 +177,7 @@ Abrupt parent death is outside this controlled-exit cleanup contract.
 .Sh SEE ALSO
 .Xr pdfork 2 ,
 .Xr socket 2 ,
+.Xr libvmcmp 3 ,
 .Xr service_vsock_connect 3 ,
 .Xr service_vsock_listen 3 ,
 .Xr mac_capability 4 ,
@@ -181,5 +195,8 @@ It takes over vsock brokering formerly performed by
 as part of moving privileged work out of PID 1 and behind named,
 domain-restricted, socket-free services, and is the foundation for running full
 virtual machines as a capability-plane component.
+Its record protocol was replaced by
+.Li bsd.vm.v1
+in October 2026.
 .Sh AUTHORS
 .An Kory Heard

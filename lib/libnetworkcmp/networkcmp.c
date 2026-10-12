@@ -2,15 +2,30 @@
  * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2026 Kory Heard
+ *
+ * libnetworkcmp: the system.Network client over the generated bsd.network.v1
+ * bindings (networkcmp.fidl) on a native capability channel.
+ *
+ * One process client is shared by every caller, as before, and calls from
+ * several threads proceed concurrently: one waiting thread at a time reads
+ * the channel (outside the client lock) and dispatches every completion,
+ * the others sleep on a condition variable.  A call that reaches its
+ * deadline (30 seconds, shortened by service_budget_begin()) is cancelled
+ * and fails with ETIMEDOUT; the session survives.  A malformed reply makes
+ * the client terminal (EPROTO); a lost provider makes it terminal with the
+ * transport error.
  */
 
 #include <sys/types.h>
 #include <sys/param.h>
+#include <sys/capsicum.h>
+#include <sys/event.h>
 #include <sys/socket.h>
 
 #include <arpa/inet.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <fidl/bsd.network.v1/c/bsd.h>
 #include <limits.h>
 #include <netdb.h>
 #include <netinet/in.h>
@@ -23,6 +38,7 @@
 #include <unistd.h>
 
 #include <libservice.h>
+#include <service_runtime.h>
 
 #include "networkcmp.h"
 #include "networkcmp_server.h"
@@ -50,21 +66,43 @@ static const struct {
 };
 #undef NETWORKCMP_DEPENDENCY_TEXT
 
-union networkcmp_buffer {
-	max_align_t align;
-	struct {
-		struct networkcmp_msg msg;
-		uint8_t payload[NETWORKCMP_MAX_MESSAGE -
-		    sizeof(struct networkcmp_msg)];
-	} wire;
-};
+#define	NETWORKCMP_CALL_TIMEOUT_MS	30000U
 
 struct networkcmp_client {
-	struct service_session		*channel;
-	struct networkcmp_hello_reply	limits;
+	struct fidl_bsd_connection	*connection;
+	struct networkcmp_hello_reply	 limits;
 	pid_t				 owner;
 	uint32_t			 references;
 	_Atomic int			 terminal_error;
+	pthread_mutex_t			 lock;
+	pthread_cond_t			 completed;
+	int				 kq;
+	bool				 polling;
+	bool				 write_armed;
+	bool				 initialized;
+};
+
+/* One call's completion, filled by the generated callback. */
+struct completion {
+	bool		 done;
+	bool		 malformed;
+	int		 error;		/* transport or application errno */
+	uint32_t	 txid;
+	int		 fd;		/* received descriptor, owned here */
+	union {
+		struct bsd_network_v1_Limits limits;
+		struct {
+			uint16_t port;
+		} listen;
+		struct {
+			struct networkcmp_resolve_result *results;
+			size_t capacity;
+			size_t count;
+			char *canonname;
+			size_t canonname_size;
+			uint32_t ttl_seconds;
+		} resolve;
+	} u;
 };
 
 static pthread_mutex_t networkcmp_registry_lock = PTHREAD_MUTEX_INITIALIZER;
@@ -111,8 +149,374 @@ networkcmp_atfork_init(void)
 	    networkcmp_atfork_parent, networkcmp_atfork_child);
 }
 
+static int
+client_init(struct networkcmp_client *client)
+{
+	pthread_condattr_t attributes;
+	int error;
+
+	client->kq = -1;
+	client->connection = NULL;
+	error = pthread_mutex_init(&client->lock, NULL);
+	if (error != 0)
+		return (errno = error, -1);
+	error = pthread_condattr_init(&attributes);
+	if (error == 0) {
+		error = pthread_condattr_setclock(&attributes, CLOCK_MONOTONIC);
+		if (error == 0)
+			error = pthread_cond_init(&client->completed,
+			    &attributes);
+		(void)pthread_condattr_destroy(&attributes);
+	}
+	if (error != 0) {
+		(void)pthread_mutex_destroy(&client->lock);
+		return (errno = error, -1);
+	}
+	client->initialized = true;
+	return (0);
+}
+
+/* Adopt fd (consumed on success and failure) as the client's connection. */
+static int
+client_connect(struct networkcmp_client *client, int fd)
+{
+	struct fidl_bsd_options options = FIDL_BSD_OPTIONS_INITIALIZER;
+	struct kevent changes[3];
+	int cfd, error;
+
+	if (service_harden_fd(fd, 0) == -1) {
+		error = errno;
+		(void)close(fd);
+		return (errno = error, -1);
+	}
+	/* Up to 64 calls in flight, as many replies, one descriptor each. */
+	options.max_pending_requests = 64;
+	options.max_queued_messages = 128;
+	options.max_queued_fds = 64;
+	error = fidl_bsd_connection_create_with_options(fd, FIDL_BSD_CLIENT,
+	    &options, &client->connection);
+	if (error != 0) {
+		(void)close(fd);
+		return (errno = error, -1);
+	}
+	client->kq = kqueuex(KQUEUE_CLOEXEC);
+	cfd = fidl_bsd_connection_fd(client->connection);
+	if (client->kq == -1 || cfd < 0)
+		return (-1);
+	EV_SET(&changes[0], cfd, EVFILT_READ, EV_ADD | EV_ENABLE, 0, 0, NULL);
+	EV_SET(&changes[1], cfd, EVFILT_WRITE, EV_ADD | EV_DISABLE, 0, 0,
+	    NULL);
+	EV_SET(&changes[2], 0, EVFILT_USER, EV_ADD | EV_CLEAR, 0, 0, NULL);
+	return (kevent(client->kq, changes, nitems(changes), NULL, 0, NULL));
+}
+
+static void
+client_destroy(struct networkcmp_client *client)
+{
+
+	if (client->connection != NULL)
+		fidl_bsd_connection_destroy(client->connection);
+	if (client->kq >= 0)
+		(void)close(client->kq);
+	if (client->initialized) {
+		(void)pthread_cond_destroy(&client->completed);
+		(void)pthread_mutex_destroy(&client->lock);
+	}
+	free(client);
+}
+
+/* Record a terminal error; later calls fail with it. */
+static int
+client_fail_locked(struct networkcmp_client *client, int error)
+{
+	int expected = 0;
+
+	if (error == 0)
+		error = EIO;
+	(void)atomic_compare_exchange_strong(&client->terminal_error,
+	    &expected, error);
+	fidl_bsd_connection_close(client->connection, error);
+	(void)pthread_cond_broadcast(&client->completed);
+	return (atomic_load(&client->terminal_error));
+}
+
+static void
+wake_poller(struct networkcmp_client *client)
+{
+	struct kevent trigger;
+
+	if (!client->polling)
+		return;
+	EV_SET(&trigger, 0, EVFILT_USER, 0, NOTE_TRIGGER, 0, NULL);
+	(void)kevent(client->kq, &trigger, 1, NULL, 0, NULL);
+}
+
+static int64_t
+remaining_ms(const struct timespec *deadline)
+{
+	struct timespec now;
+
+	if (clock_gettime(CLOCK_MONOTONIC, &now) == -1)
+		return (0);
+	return ((deadline->tv_sec - now.tv_sec) * INT64_C(1000) +
+	    (deadline->tv_nsec - now.tv_nsec) / 1000000);
+}
+
+/*
+ * Wait, with client->lock held, until the call completes, the connection
+ * fails or the deadline passes.  Returns 0 or an errno value; a timeout
+ * cancels only this call.
+ */
+static int
+call_wait(struct networkcmp_client *client, struct completion *call,
+    const struct timespec *deadline) __no_lock_analysis
+{
+	struct kevent change, events[4];
+	struct timespec timeout;
+	int64_t ms;
+	int cfd, error, ready, wants_write;
+
+	while (!call->done) {
+		error = fidl_bsd_connection_error(client->connection);
+		if (error != 0)
+			return (client_fail_locked(client, error));
+		ms = remaining_ms(deadline);
+		if (ms <= 0) {
+			if (fidl_bsd_connection_cancel(client->connection,
+			    call->txid) != 0 || !call->done)
+				return (client_fail_locked(client, ETIMEDOUT));
+			return (ETIMEDOUT);
+		}
+		if (client->polling) {
+			(void)pthread_cond_timedwait(&client->completed,
+			    &client->lock, deadline);
+			continue;
+		}
+		client->polling = true;
+		cfd = fidl_bsd_connection_fd(client->connection);
+		wants_write = fidl_bsd_connection_wants_write(client->connection);
+		if (wants_write != client->write_armed) {
+			EV_SET(&change, cfd, EVFILT_WRITE,
+			    wants_write ? EV_ENABLE : EV_DISABLE, 0, 0, NULL);
+			if (kevent(client->kq, &change, 1, NULL, 0, NULL) == -1) {
+				client->polling = false;
+				return (client_fail_locked(client, errno));
+			}
+			client->write_armed = wants_write;
+		}
+		timeout.tv_sec = ms / 1000;
+		timeout.tv_nsec = (long)(ms % 1000) * 1000000L;
+		(void)pthread_mutex_unlock(&client->lock);
+		ready = kevent(client->kq, NULL, 0, events, nitems(events),
+		    &timeout);
+		error = ready == -1 ? errno : 0;
+		(void)pthread_mutex_lock(&client->lock);
+		client->polling = false;
+		if (ready == -1 && error != EINTR) {
+			(void)client_fail_locked(client, error);
+			continue;
+		}
+		if (ready > 0) {
+			error = fidl_bsd_connection_dispatch(client->connection);
+			if (error != 0)
+				(void)client_fail_locked(client, error);
+		}
+		/* Completions for other threads, or a new poller. */
+		(void)pthread_cond_broadcast(&client->completed);
+	}
+	return (0);
+}
+
+/*
+ * Common entry: validate the handle and compute the call's deadline.  On
+ * success the client lock is held.
+ */
+static int
+call_begin(struct networkcmp_client *client, struct timespec *deadline)
+    __no_lock_analysis
+{
+	uint32_t timeout_ms = NETWORKCMP_CALL_TIMEOUT_MS;
+	int error;
+
+	if (client == NULL || client->owner != getpid() ||
+	    client->connection == NULL)
+		return (errno = EINVAL, -1);
+	error = atomic_load(&client->terminal_error);
+	if (error != 0)
+		return (errno = error, -1);
+	if (service_budget_timeout(&timeout_ms) == -1)
+		return (-1);
+	if (clock_gettime(CLOCK_MONOTONIC, deadline) == -1)
+		return (-1);
+	deadline->tv_sec += timeout_ms / 1000;
+	deadline->tv_nsec += (long)(timeout_ms % 1000) * 1000000L;
+	if (deadline->tv_nsec >= 1000000000L) {
+		deadline->tv_sec++;
+		deadline->tv_nsec -= 1000000000L;
+	}
+	error = pthread_mutex_lock(&client->lock);
+	if (error != 0)
+		return (errno = error, -1);
+	return (0);
+}
+
+/*
+ * Finish a call issued under the lock: wait for it, then classify.  A
+ * malformed reply is terminal; an application error keeps the session.
+ * Releases the lock.  Any descriptor in call->fd is closed on failure.
+ */
+static int
+call_finish(struct networkcmp_client *client, uint16_t opcode, int issue_error,
+    struct completion *call, const struct timespec *deadline) __no_lock_analysis
+{
+	int error;
+
+	if (issue_error == 0) {
+		NETWORKCMP_PROBE_SEND(opcode, 0, 0, 0);
+		wake_poller(client);
+		error = call_wait(client, call, deadline);
+	} else
+		error = issue_error;
+	if (error == 0 && call->malformed) {
+		NETWORKCMP_PROBE_REJECT(opcode, 0, call->error);
+		error = client_fail_locked(client, call->error);
+	} else if (error == 0)
+		error = call->error;
+	/* A transport failure is terminal; application errors are not. */
+	if (fidl_bsd_connection_error(client->connection) != 0)
+		error = client_fail_locked(client,
+		    fidl_bsd_connection_error(client->connection));
+	if (error == 0) {
+		NETWORKCMP_PROBE_RECEIVE(opcode, 0, call->fd >= 0 ? 1 : 0, 0);
+	} else if (!call->malformed) {
+		NETWORKCMP_PROBE_REJECT(opcode, 0, error);
+	}
+	(void)pthread_mutex_unlock(&client->lock);
+	if (error != 0) {
+		if (call->fd >= 0)
+			(void)close(call->fd);
+		call->fd = -1;
+		return (errno = error, -1);
+	}
+	return (0);
+}
+
+static void
+malformed(struct completion *call)
+{
+
+	call->malformed = true;
+	call->error = EPROTO;
+}
+
+/* A result union's error: an errno in 1..ELAST, anything else malformed. */
+static void
+domain_error(struct completion *call, uint32_t error)
+{
+
+	if (error == 0 || error > ELAST)
+		malformed(call);
+	else
+		call->error = (int)error;
+}
+
+static void
+info_reply(void *context, int error, struct bsd_network_v1_ProtocolInfo *value)
+{
+	struct completion *call = context;
+
+	call->done = true;
+	call->error = error;
+	if (error == 0 && (value == NULL ||
+	    value->wire_version != NETWORKCMP_WIRE_VERSION)) {
+		call->malformed = true;
+		call->error = EPROTONOSUPPORT;
+	}
+}
+
+static void
+limits_reply(void *context, int error, struct bsd_network_v1_Limits *value)
+{
+	struct completion *call = context;
+
+	call->done = true;
+	call->error = error;
+	if (error != 0)
+		return;
+	/*
+	 * The resolve ceiling tracks the DNS feature: 0 without it, 1..MAX
+	 * with it.  Unknown feature bits or an inconsistent ceiling are a
+	 * malformed reply, as before.
+	 */
+	if (value == NULL || (value->features & ~(NETWORKCMP_FEATURE_TCP |
+	    NETWORKCMP_FEATURE_UDP | NETWORKCMP_FEATURE_IPV6 |
+	    NETWORKCMP_FEATURE_DNS | NETWORKCMP_FEATURE_LISTEN)) != 0 ||
+	    ((value->features & NETWORKCMP_FEATURE_DNS) != 0 ?
+	    (value->max_resolve_results == 0 || value->max_resolve_results >
+	    NETWORKCMP_RESOLVE_MAX_RESULTS) : value->max_resolve_results != 0)) {
+		malformed(call);
+		return;
+	}
+	call->u.limits = *value;
+}
+
+static void
+take_socket(struct completion *call, int *fd)
+{
+	int taken = fidl_bsd_take_fd(fd);
+
+	if (taken < 0)
+		malformed(call);
+	else
+		call->fd = taken;
+}
+
+#define	CONNECTED_REPLY(name, type)					\
+static void								\
+name(void *context, int error, struct type *value)			\
+{									\
+	struct completion *call = context;				\
+									\
+	call->done = true;						\
+	call->error = error;						\
+	if (error != 0)							\
+		return;							\
+	if (value == NULL)						\
+		malformed(call);					\
+	else if (value->tag == type##_err_tag)				\
+		domain_error(call, value->value.err);			\
+	else if (value->tag == type##_response_tag)			\
+		take_socket(call, &value->value.response.socket);	\
+	else								\
+		malformed(call);					\
+}
+CONNECTED_REPLY(connect_reply, bsd_network_v1_Network_Connect_Result)
+CONNECTED_REPLY(udp_reply, bsd_network_v1_Network_Udp_Result)
+
+static void
+listen_reply(void *context, int error,
+    struct bsd_network_v1_Network_Listen_Result *value)
+{
+	struct completion *call = context;
+
+	call->done = true;
+	call->error = error;
+	if (error != 0)
+		return;
+	if (value == NULL)
+		malformed(call);
+	else if (value->tag == bsd_network_v1_Network_Listen_Result_err_tag)
+		domain_error(call, value->value.err);
+	else if (value->tag ==
+	    bsd_network_v1_Network_Listen_Result_response_tag) {
+		take_socket(call, &value->value.response.socket);
+		call->u.listen.port = value->value.response.port;
+	} else
+		malformed(call);
+}
+
 static bool
-networkcmp_endpoint_valid(const struct networkcmp_endpoint *endpoint)
+endpoint_valid(const struct bsd_network_v1_Endpoint *endpoint)
 {
 	static const uint8_t zero[12];
 
@@ -129,381 +533,115 @@ networkcmp_endpoint_valid(const struct networkcmp_endpoint *endpoint)
 	}
 }
 
+static void
+resolve_reply(void *context, int error,
+    struct bsd_network_v1_Network_Resolve_Result *value)
+{
+	struct completion *call = context;
+	const struct bsd_network_v1_Resolved *resolved;
+	size_t i;
+
+	call->done = true;
+	call->error = error;
+	if (error != 0)
+		return;
+	if (value == NULL) {
+		malformed(call);
+		return;
+	}
+	if (value->tag == bsd_network_v1_Network_Resolve_Result_err_tag) {
+		domain_error(call, value->value.err);
+		return;
+	}
+	if (value->tag != bsd_network_v1_Network_Resolve_Result_response_tag) {
+		malformed(call);
+		return;
+	}
+	resolved = &value->value.response;
+	if (resolved->results_size > NETWORKCMP_RESOLVE_MAX_RESULTS ||
+	    resolved->canonname_size > NETWORKCMP_CANONNAME_MAX ||
+	    memchr(resolved->canonname, '\0', resolved->canonname_size) !=
+	    NULL) {
+		malformed(call);
+		return;
+	}
+	for (i = 0; i < resolved->results_size; i++)
+		if (!endpoint_valid(&resolved->results[i].endpoint) ||
+		    resolved->results[i].socket_type > NETWORKCMP_SOCK_DGRAM) {
+			malformed(call);
+			return;
+		}
+	/* Capacity errors are the caller's, not the provider's. */
+	if (resolved->results_size > call->u.resolve.capacity) {
+		call->error = EOVERFLOW;
+		return;
+	}
+	if (call->u.resolve.canonname != NULL &&
+	    resolved->canonname_size + 1 > call->u.resolve.canonname_size) {
+		call->error = ERANGE;
+		return;
+	}
+	for (i = 0; i < resolved->results_size; i++) {
+		struct networkcmp_resolve_result *out =
+		    &call->u.resolve.results[i];
+		const struct bsd_network_v1_ResolveResult *in =
+		    &resolved->results[i];
+
+		memset(out, 0, sizeof(*out));
+		out->endpoint.family = in->endpoint.family;
+		out->endpoint.prefix = in->endpoint.prefix;
+		out->endpoint.port = in->endpoint.port;
+		out->endpoint.scope_id = in->endpoint.scope_id;
+		memcpy(out->endpoint.address, in->endpoint.address,
+		    sizeof(out->endpoint.address));
+		out->socket_type = in->socket_type;
+		out->protocol = in->protocol;
+	}
+	if (call->u.resolve.canonname != NULL) {
+		memcpy(call->u.resolve.canonname, resolved->canonname,
+		    resolved->canonname_size);
+		call->u.resolve.canonname[resolved->canonname_size] = '\0';
+	}
+	call->u.resolve.count = resolved->results_size;
+	call->u.resolve.ttl_seconds = resolved->ttl_seconds;
+}
+
+/* The wire version, checked once when the process client is created. */
 static int
-networkcmp_header_validate(const struct networkcmp_msg *msg, size_t received,
-    enum networkcmp_message_role role)
+negotiate(struct networkcmp_client *client)
 {
+	struct completion call = { .fd = -1 };
+	struct fidl_bsd_empty empty = { 0 };
+	struct timespec deadline;
 
-	if (msg == NULL || received < sizeof(*msg) ||
-	    received > NETWORKCMP_MAX_MESSAGE ||
-	    (role != NETWORKCMP_MESSAGE_REQUEST &&
-	    role != NETWORKCMP_MESSAGE_REPLY &&
-	    role != NETWORKCMP_MESSAGE_EVENT) ||
-	    msg->magic != NETWORKCMP_MAGIC ||
-	    msg->opcode < NETWORKCMP_OP_HELLO ||
-	    msg->opcode > NETWORKCMP_OP_LISTEN ||
-	    (msg->flags & ~NETWORKCMP_MSG_F_MASK) != 0 ||
-	    (role != NETWORKCMP_MESSAGE_REPLY && msg->status != 0) ||
-	    (role == NETWORKCMP_MESSAGE_REPLY &&
-	    (msg->status > 0 || msg->status < -ELAST))) {
-		errno = EPROTO;
+	if (call_begin(client, &deadline) == -1)
 		return (-1);
-	}
-	return (0);
-}
-
-int
-networkcmp_message_init(struct networkcmp_msg *msg, uint16_t opcode,
-    uint32_t flags)
-{
-
-	if (msg == NULL || opcode < NETWORKCMP_OP_HELLO ||
-	    opcode > NETWORKCMP_OP_LISTEN ||
-	    (flags & ~NETWORKCMP_MSG_F_MASK) != 0) {
-		errno = EINVAL;
-		return (-1);
-	}
-	memset(msg, 0, sizeof(*msg));
-	msg->magic = NETWORKCMP_MAGIC;
-	msg->opcode = opcode;
-	msg->flags = flags;
-	return (0);
-}
-
-int
-networkcmp_message_init_reply(struct networkcmp_msg *reply,
-    const struct networkcmp_msg *request, int status)
-{
-
-	if (reply == NULL || request == NULL ||
-	    networkcmp_header_validate(request, sizeof(*request),
-	    NETWORKCMP_MESSAGE_REQUEST) == -1 ||
-	    status > 0 || status < -ELAST) {
-		errno = EINVAL;
-		return (-1);
-	}
-	memset(reply, 0, sizeof(*reply));
-	reply->magic = NETWORKCMP_MAGIC;
-	reply->opcode = request->opcode;
-	reply->status = status;
-	return (0);
-}
-
-int
-networkcmp_validate_message(const struct networkcmp_msg *msg,
-    size_t received, enum networkcmp_message_role role)
-{
-	size_t payload, expected;
-	uint16_t probe_opcode;
-
-	probe_opcode = msg != NULL ? msg->opcode : 0;
-	if (networkcmp_header_validate(msg, received, role) == -1)
-		goto reject;
-	payload = received - sizeof(*msg);
-	if (role == NETWORKCMP_MESSAGE_EVENT)
-		goto reject;
-	if (role == NETWORKCMP_MESSAGE_REPLY && msg->status != 0)
-		expected = 0;
-	else if (role == NETWORKCMP_MESSAGE_REPLY) {
-		switch (msg->opcode) {
-		case NETWORKCMP_OP_HELLO: {
-			const struct networkcmp_hello_reply *hello;
-
-			expected = sizeof(struct networkcmp_hello_reply);
-			if (payload == expected) {
-				hello = (const void *)(msg + 1);
-				if (hello->reserved != 0 ||
-				    (hello->features &
-				    ~(NETWORKCMP_FEATURE_TCP |
-				    NETWORKCMP_FEATURE_UDP |
-				    NETWORKCMP_FEATURE_IPV6 |
-				    NETWORKCMP_FEATURE_DNS |
-				    NETWORKCMP_FEATURE_LISTEN)) != 0)
-					goto reject;
-				/*
-				 * The resolve ceiling tracks the DNS feature: a
-				 * label without resolve advertises 0 results, one
-				 * with it a bounded 1..MAX.  Anything else is an
-				 * inconsistent reply.
-				 */
-				if ((hello->features & NETWORKCMP_FEATURE_DNS) != 0) {
-					if (hello->max_resolve_results == 0 ||
-					    hello->max_resolve_results >
-					    NETWORKCMP_RESOLVE_MAX_RESULTS)
-						goto reject;
-				} else if (hello->max_resolve_results != 0)
-					goto reject;
-			}
-			break;
-		}
-		case NETWORKCMP_OP_CONNECT:
-		case NETWORKCMP_OP_UDP:
-			/* The connected descriptor arrives out of band. */
-			expected = 0;
-			break;
-		case NETWORKCMP_OP_LISTEN:
-			/* Carries listen_reply + the listening socket (OOB). */
-			expected = sizeof(struct networkcmp_listen_reply);
-			if (payload == expected) {
-				const struct networkcmp_listen_reply *l =
-				    (const void *)(msg + 1);
-
-				if (l->reserved0 != 0 || l->reserved1 != 0)
-					goto reject;
-			}
-			break;
-		case NETWORKCMP_OP_RESOLVE: {
-			const struct networkcmp_resolve_reply *resolve;
-			const struct networkcmp_resolve_result *results;
-			const char *canonname;
-			size_t entries;
-			uint32_t i;
-
-			if (payload < sizeof(*resolve))
-				goto reject;
-			resolve = (const void *)(msg + 1);
-			if (resolve->reserved != 0 ||
-			    resolve->result_count >
-			    NETWORKCMP_RESOLVE_MAX_RESULTS ||
-			    resolve->canonname_length >
-			    NETWORKCMP_CANONNAME_MAX)
-				goto reject;
-			entries = (size_t)resolve->result_count *
-			    sizeof(struct networkcmp_resolve_result);
-			expected = sizeof(*resolve) + entries +
-			    resolve->canonname_length;
-			if (payload != expected)
-				goto reject;
-			results = (const void *)(resolve + 1);
-			for (i = 0; i < resolve->result_count; i++)
-				if (!networkcmp_endpoint_valid(
-				    &results[i].endpoint) ||
-				    results[i].socket_type >
-				    NETWORKCMP_SOCK_DGRAM)
-					goto reject;
-			canonname = (const char *)(results +
-			    resolve->result_count);
-			if (memchr(canonname, '\0',
-			    resolve->canonname_length) != NULL)
-				goto reject;
-			break;
-		}
-		default:
-			expected = 0;
-			break;
-		}
-	} else {
-		switch (msg->opcode) {
-		case NETWORKCMP_OP_HELLO: {
-			const struct networkcmp_hello *hello;
-
-			expected = sizeof(struct networkcmp_hello);
-			if (payload == expected) {
-				hello = (const void *)(msg + 1);
-				if (hello->reserved != 0 ||
-				    (hello->features &
-				    ~(NETWORKCMP_FEATURE_TCP |
-				    NETWORKCMP_FEATURE_UDP |
-				    NETWORKCMP_FEATURE_IPV6 |
-				    NETWORKCMP_FEATURE_DNS)) != 0)
-					goto reject;
-			}
-			break;
-		}
-		case NETWORKCMP_OP_CONNECT:
-		case NETWORKCMP_OP_UDP: {
-			const struct networkcmp_connect_request *connect;
-
-			expected = sizeof(struct networkcmp_connect_request);
-			if (payload == expected) {
-				connect = (const void *)(msg + 1);
-				if (!networkcmp_endpoint_valid(
-				    &connect->endpoint) ||
-				    connect->reserved != 0)
-					goto reject;
-			}
-			break;
-		}
-		case NETWORKCMP_OP_LISTEN: {
-			const struct networkcmp_listen_request *l;
-
-			expected = sizeof(struct networkcmp_listen_request);
-			if (payload == expected) {
-				l = (const void *)(msg + 1);
-				if (l->reserved0 != 0 || l->reserved1 != 0)
-					goto reject;
-			}
-			break;
-		}
-		case NETWORKCMP_OP_RESOLVE: {
-			const struct networkcmp_resolve_request *resolve;
-
-			if (payload < sizeof(*resolve))
-				goto reject;
-			resolve = (const void *)(msg + 1);
-			if (resolve->host_length > NETWORKCMP_NAME_MAX ||
-			    resolve->service_length > NETWORKCMP_SERVICE_MAX ||
-			    (resolve->host_length == 0 &&
-			    resolve->service_length == 0) ||
-			    resolve->family > NETWORKCMP_AF_INET6 ||
-			    resolve->socket_type > NETWORKCMP_SOCK_DGRAM ||
-			    (resolve->flags & ~NETWORKCMP_RESOLVE_F_MASK) != 0 ||
-			    resolve->max_results == 0 ||
-			    resolve->max_results >
-			    NETWORKCMP_RESOLVE_MAX_RESULTS)
-				goto reject;
-			expected = sizeof(*resolve) + resolve->host_length +
-			    resolve->service_length;
-			if (payload != expected ||
-			    memchr(resolve + 1, '\0',
-			    resolve->host_length + resolve->service_length) !=
-			    NULL)
-				goto reject;
-			break;
-		}
-		default:
-			goto reject;
-		}
-	}
-	if (expected > NETWORKCMP_MAX_MESSAGE - sizeof(*msg) ||
-	    payload != expected)
-		goto reject;
-	return (0);
-
-reject:
-	errno = EPROTO;
-	NETWORKCMP_PROBE_REJECT(probe_opcode, (uint32_t)received, EPROTO);
-	return (-1);
-}
-
-int
-networkcmp_validate_fds(const struct networkcmp_msg *msg, size_t nfds,
-    enum networkcmp_message_role role)
-{
-	size_t expected;
-
-	if (msg == NULL || (role != NETWORKCMP_MESSAGE_REQUEST &&
-	    role != NETWORKCMP_MESSAGE_REPLY &&
-	    role != NETWORKCMP_MESSAGE_EVENT)) {
-		errno = EINVAL;
-		return (-1);
-	}
-	/*
-	 * Only a successful CONNECT or UDP reply carries exactly one
-	 * descriptor: the connected socket.  Every other message carries none.
-	 */
-	expected = role == NETWORKCMP_MESSAGE_REPLY && msg->status == 0 &&
-	    (msg->opcode == NETWORKCMP_OP_CONNECT ||
-	    msg->opcode == NETWORKCMP_OP_UDP ||
-	    msg->opcode == NETWORKCMP_OP_LISTEN) ? 1 : 0;
-	if (nfds != expected) {
-		errno = EPROTO;
-		return (-1);
-	}
-	return (0);
-}
-
-static int networkcmp_call(struct networkcmp_client *, uint16_t,
-    const void *, size_t, union networkcmp_buffer *, size_t *, int *)
-    __no_lock_analysis;
-
-static int
-networkcmp_call(struct networkcmp_client *client, uint16_t opcode,
-    const void *payload, size_t payload_length,
-    union networkcmp_buffer *reply, size_t *reply_length, int *out_fd)
-{
-	union networkcmp_buffer request;
-	struct service_call_options options =
-	    SERVICE_CALL_OPTIONS_INITIALIZER;
-	struct service_message outgoing;
-	struct service_reply incoming;
-	struct networkcmp_msg *msg;
-	size_t received, request_length;
-	int terminal_error, received_fd;
-
-	if (out_fd != NULL)
-		*out_fd = -1;
-	received_fd = -1;
-	if (client == NULL || client->owner != getpid() ||
-	    client->channel == NULL || payload_length >
-	    NETWORKCMP_MAX_MESSAGE - sizeof(struct networkcmp_msg) ||
-	    (payload_length != 0 && payload == NULL)) {
-		errno = EINVAL;
-		return (-1);
-	}
-	terminal_error = atomic_load(&client->terminal_error);
-	if (terminal_error != 0)
-		return (errno = terminal_error, -1);
-	memset(&request, 0, sizeof(request));
-	msg = &request.wire.msg;
-	if (networkcmp_message_init(msg, opcode, 0) == -1)
-		return (-1);
-	if (payload_length != 0)
-		memcpy(msg + 1, payload, payload_length);
-	request_length = sizeof(*msg) + payload_length;
-	NETWORKCMP_PROBE_SEND(opcode, (uint32_t)request_length, 0, 0);
-	memset(&outgoing, 0, sizeof(outgoing));
-	outgoing.size = sizeof(outgoing);
-	outgoing.data = msg;
-	outgoing.length = request_length;
-	memset(&incoming, 0, sizeof(incoming));
-	incoming.size = sizeof(incoming);
-	incoming.data = reply;
-	incoming.capacity = sizeof(*reply);
-	if (out_fd != NULL) {
-		incoming.fds = &received_fd;
-		incoming.fd_capacity = 1;
-	}
-	options.timeout_ms = 30000;
-	if (service_session_call(client->channel, &outgoing, &incoming,
-	    &options) == -1) {
-		NETWORKCMP_PROBE_REJECT(opcode, 0, errno);
-		return (-1);
-	}
-	received = incoming.length;
-	msg = &reply->wire.msg;
-	if (networkcmp_validate_message(msg, received,
-	    NETWORKCMP_MESSAGE_REPLY) == -1 ||
-	    networkcmp_validate_fds(msg, incoming.nfds,
-	    NETWORKCMP_MESSAGE_REPLY) == -1 || msg->opcode != opcode) {
-		if (incoming.nfds != 0 && received_fd >= 0)
-			(void)close(received_fd);
-		errno = EPROTO;
-		atomic_store(&client->terminal_error, EPROTO);
-		NETWORKCMP_PROBE_REJECT(opcode, (uint32_t)received, EPROTO);
-		return (-1);
-	}
-	NETWORKCMP_PROBE_RECEIVE(opcode, (uint32_t)received,
-	    (uint32_t)incoming.nfds, 0);
-	if (msg->status != 0) {
-		errno = -msg->status;
-		return (-1);
-	}
-	if (out_fd != NULL)
-		*out_fd = received_fd;
-	*reply_length = (size_t)received;
-	return (0);
+	return (call_finish(client, NETWORKCMP_OP_HELLO,
+	    bsd_network_v1_Network_GetProtocolInfo(client->connection, &empty,
+	    info_reply, &call, &call.txid), &call, &deadline));
 }
 
 int
 networkcmp_hello(struct networkcmp_client *client,
     struct networkcmp_hello_reply *reply_value)
 {
-	union networkcmp_buffer reply;
-	struct networkcmp_hello request;
-	size_t length;
+	struct completion call = { .fd = -1 };
+	struct fidl_bsd_empty empty = { 0 };
+	struct timespec deadline;
 
 	if (client == NULL || reply_value == NULL) {
 		errno = EINVAL;
 		return (-1);
 	}
-	memset(&request, 0, sizeof(request));
-	request.features = NETWORKCMP_FEATURE_TCP | NETWORKCMP_FEATURE_UDP |
-	    NETWORKCMP_FEATURE_IPV6 | NETWORKCMP_FEATURE_DNS;
-	if (networkcmp_call(client, NETWORKCMP_OP_HELLO, &request,
-	    sizeof(request), &reply, &length, NULL) == -1)
+	if (call_begin(client, &deadline) == -1)
 		return (-1);
-	memcpy(reply_value, &reply.wire.msg + 1, sizeof(*reply_value));
+	if (call_finish(client, NETWORKCMP_OP_HELLO,
+	    bsd_network_v1_Network_GetLimits(client->connection, &empty,
+	    limits_reply, &call, &call.txid), &call, &deadline) == -1)
+		return (-1);
+	memset(reply_value, 0, sizeof(*reply_value));
+	reply_value->features = call.u.limits.features;
+	reply_value->max_resolve_results = call.u.limits.max_resolve_results;
 	return (0);
 }
 
@@ -557,16 +695,18 @@ networkcmp_client_open_iface(const char *iface,
 	client = calloc(1, sizeof(*client));
 	if (client == NULL)
 		goto fail;
-	if (service_open(iface, &fd) == -1)
-		goto fail;
-	if (service_session_create(fd, &client->channel) == -1) {
-		error = errno;
-		close(fd);
-		errno = error;
+	if (client_init(client) == -1) {
+		free(client);
+		client = NULL;
 		goto fail;
 	}
+	if (service_open(iface, &fd) == -1)
+		goto fail;
+	if (client_connect(client, fd) == -1)
+		goto fail;
 	client->owner = getpid();
-	if (networkcmp_hello(client, &client->limits) == -1)
+	if (negotiate(client) == -1 ||
+	    networkcmp_hello(client, &client->limits) == -1)
 		goto fail;
 	client->references = 1;
 	error = pthread_mutex_lock(&networkcmp_registry_lock);
@@ -585,9 +725,8 @@ networkcmp_client_open_iface(const char *iface,
 
 fail:
 	error = errno;
-	if (client != NULL && client->channel != NULL)
-		service_session_close(client->channel);
-	free(client);
+	if (client != NULL)
+		client_destroy(client);
 	if (pthread_mutex_lock(&networkcmp_registry_lock) == 0) {
 		networkcmp_initializing = false;
 		(void)pthread_cond_broadcast(&networkcmp_registry_ready);
@@ -697,35 +836,53 @@ networkcmp_sockaddr_endpoint(const struct sockaddr *sa, socklen_t salen,
 	}
 }
 
+static void
+endpoint_to_wire(const struct networkcmp_endpoint *in,
+    struct bsd_network_v1_Endpoint *out)
+{
+
+	out->family = in->family;
+	out->prefix = in->prefix;
+	out->port = in->port;
+	out->scope_id = in->scope_id;
+	memcpy(out->address, in->address, sizeof(out->address));
+}
+
 static int
 networkcmp_endpoint_op(struct networkcmp_client *client, uint16_t opcode,
     const struct sockaddr *sa, socklen_t salen, uint32_t timeout_ms, int *out_fd)
 {
-	union networkcmp_buffer reply;
-	struct networkcmp_connect_request request;
-	size_t length;
-	int fd;
+	struct completion call = { .fd = -1 };
+	struct networkcmp_endpoint endpoint;
+	struct timespec deadline;
+	int error;
 
 	if (out_fd == NULL) {
 		errno = EINVAL;
 		return (-1);
 	}
 	*out_fd = -1;
-	memset(&request, 0, sizeof(request));
-	request.timeout_ms = timeout_ms;
-	if (networkcmp_sockaddr_endpoint(sa, salen, &request.endpoint) == -1)
+	if (networkcmp_sockaddr_endpoint(sa, salen, &endpoint) == -1)
 		return (-1);
-	fd = -1;
-	if (networkcmp_call(client, opcode, &request, sizeof(request), &reply,
-	    &length, &fd) == -1)
+	if (call_begin(client, &deadline) == -1)
 		return (-1);
-	if (fd < 0) {
-		/* A successful broker reply must carry the connected socket. */
-		errno = EPROTO;
-		atomic_store(&client->terminal_error, EPROTO);
-		return (-1);
+	if (opcode == NETWORKCMP_OP_UDP) {
+		struct bsd_network_v1_UdpRequest request;
+
+		endpoint_to_wire(&endpoint, &request.endpoint);
+		error = bsd_network_v1_Network_Udp(client->connection, &request,
+		    udp_reply, &call, &call.txid);
+	} else {
+		struct bsd_network_v1_ConnectRequest request;
+
+		endpoint_to_wire(&endpoint, &request.endpoint);
+		request.timeout_ms = timeout_ms;
+		error = bsd_network_v1_Network_Connect(client->connection,
+		    &request, connect_reply, &call, &call.txid);
 	}
-	*out_fd = fd;
+	if (call_finish(client, opcode, error, &call, &deadline) == -1)
+		return (-1);
+	*out_fd = call.fd;
 	return (0);
 }
 
@@ -752,34 +909,24 @@ int
 networkcmp_listen(struct networkcmp_client *client, uint16_t backlog,
     uint16_t *port_out, int *out_fd)
 {
-	union networkcmp_buffer reply;
-	struct networkcmp_listen_request request;
-	const struct networkcmp_listen_reply *lrep;
-	size_t length;
-	int fd = -1;
+	struct completion call = { .fd = -1 };
+	struct bsd_network_v1_ListenRequest request = { backlog };
+	struct timespec deadline;
 
 	if (out_fd == NULL) {
 		errno = EINVAL;
 		return (-1);
 	}
 	*out_fd = -1;
-	memset(&request, 0, sizeof(request));
-	request.backlog = backlog;
-	if (networkcmp_call(client, NETWORKCMP_OP_LISTEN, &request,
-	    sizeof(request), &reply, &length, &fd) == -1)
+	if (call_begin(client, &deadline) == -1)
 		return (-1);
-	if (fd < 0 || length != sizeof(struct networkcmp_msg) +
-	    sizeof(struct networkcmp_listen_reply)) {
-		if (fd >= 0)
-			(void)close(fd);
-		errno = EPROTO;
-		atomic_store(&client->terminal_error, EPROTO);
+	if (call_finish(client, NETWORKCMP_OP_LISTEN,
+	    bsd_network_v1_Network_Listen(client->connection, &request,
+	    listen_reply, &call, &call.txid), &call, &deadline) == -1)
 		return (-1);
-	}
-	lrep = (const void *)reply.wire.payload;
 	if (port_out != NULL)
-		*port_out = lrep->port;
-	*out_fd = fd;
+		*port_out = call.u.listen.port;
+	*out_fd = call.fd;
 	return (0);
 }
 
@@ -799,12 +946,10 @@ networkcmp_resolve(struct networkcmp_client *client, const char *host,
     struct networkcmp_resolve_result *results, size_t *nresults,
     char *canonname, size_t canonname_size, uint32_t *ttl_seconds)
 {
-	union networkcmp_buffer request, reply;
-	struct networkcmp_resolve_request *resolve;
-	const struct networkcmp_resolve_reply *resolved;
-	const struct networkcmp_resolve_result *wire_results;
-	const char *wire_canonname;
-	size_t host_length, service_length, capacity, length;
+	struct completion call = { .fd = -1 };
+	struct bsd_network_v1_ResolveRequest request;
+	struct timespec deadline;
+	size_t host_length, service_length;
 
 	host_length = host != NULL ? strlen(host) : 0;
 	service_length = service != NULL ? strlen(service) : 0;
@@ -824,50 +969,33 @@ networkcmp_resolve(struct networkcmp_client *client, const char *host,
 		errno = EOPNOTSUPP;
 		return (-1);
 	}
-	capacity = *nresults;
-	memset(&request, 0, sizeof(request));
-	resolve = (void *)request.wire.payload;
-	resolve->host_length = (uint32_t)host_length;
-	resolve->service_length = (uint32_t)service_length;
-	resolve->family = family;
-	resolve->socket_type = socket_type;
-	resolve->flags = flags;
-	resolve->max_results = (uint32_t)capacity;
-	if (host_length != 0)
-		memcpy(resolve + 1, host, host_length);
-	if (service_length != 0)
-		memcpy((char *)(resolve + 1) + host_length, service,
-		    service_length);
-	if (networkcmp_call(client, NETWORKCMP_OP_RESOLVE, resolve,
-	    sizeof(*resolve) + host_length + service_length, &reply,
-	    &length, NULL) == -1)
-		return (-1);
-	resolved = (const void *)(&reply.wire.msg + 1);
-	if (resolved->result_count > capacity) {
-		errno = EOVERFLOW;
-		return (-1);
-	}
-	wire_results = (const void *)(resolved + 1);
-	wire_canonname = (const char *)(wire_results + resolved->result_count);
-	if (canonname != NULL &&
-	    resolved->canonname_length + 1 > canonname_size) {
-		errno = ERANGE;
-		return (-1);
-	}
+	request = (struct bsd_network_v1_ResolveRequest){
+		.host = host_length != 0 ? host : "",
+		.host_size = host_length,
+		.service = service_length != 0 ? service : "",
+		.service_size = service_length,
+		.family = family,
+		.socket_type = socket_type,
+		.flags = flags,
+		.max_results = (uint32_t)*nresults
+	};
 	/*
-	 * Validate every caller-provided capacity before publishing any output.
-	 * A failed call therefore leaves results, counts, TTL and canonname
-	 * untouched.
+	 * The callback validates every capacity before writing any output, so
+	 * a failed call leaves results, counts, TTL and canonname untouched.
 	 */
-	memcpy(results, wire_results,
-	    resolved->result_count * sizeof(*wire_results));
-	if (canonname != NULL) {
-		memcpy(canonname, wire_canonname, resolved->canonname_length);
-		canonname[resolved->canonname_length] = '\0';
-	}
-	*nresults = resolved->result_count;
+	call.u.resolve.results = results;
+	call.u.resolve.capacity = *nresults;
+	call.u.resolve.canonname = canonname;
+	call.u.resolve.canonname_size = canonname_size;
+	if (call_begin(client, &deadline) == -1)
+		return (-1);
+	if (call_finish(client, NETWORKCMP_OP_RESOLVE,
+	    bsd_network_v1_Network_Resolve(client->connection, &request,
+	    resolve_reply, &call, &call.txid), &call, &deadline) == -1)
+		return (-1);
+	*nresults = call.u.resolve.count;
 	if (ttl_seconds != NULL)
-		*ttl_seconds = resolved->ttl_seconds;
+		*ttl_seconds = call.u.resolve.ttl_seconds;
 	return (0);
 }
 

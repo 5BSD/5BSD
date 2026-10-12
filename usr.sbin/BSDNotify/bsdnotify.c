@@ -27,6 +27,7 @@
 #include <auditcmp.h>
 #include <auditcmp_server.h>
 #include <channel.h>
+#include <fidl/bsd.notify.v1/c/bsd.h>
 #include <libservice.h>
 #include <service_runtime.h>
 #include <logcmp.h>
@@ -114,18 +115,31 @@ struct router_timer {
 	uint32_t		 flags;
 };
 
+/*
+ * Where one request's reply goes.  Sessions speak bsd.notify.v1; each
+ * request is first rebuilt as the historical NTFC record so the router's
+ * record rules, authorization and dispatch stay as they were, and its reply
+ * is converted back.  request is the retained FIDL request, or NULL for the
+ * router tests' internal socket (NOTIFY_ROUTER_TEST).
+ */
+struct router_call {
+	struct fidl_bsd_request	*request;
+	struct notify_msg	 wire;	/* the request record's header */
+};
+
 struct router_session {
 	struct event_source		 source;
 	struct router_session		*next;
 	struct notify_broker_client	*client;
 	struct router			*router;
-	struct channel			*channel;
+	struct fidl_bsd_connection	*connection;
 	const struct notify_policy	*policy;
 	struct router_timer		*timers;
 	struct router_timer		*next_timer;
-	struct channel_message		*pending;
-	struct notify_msg		 pending_wire;
+	struct router_call		 pending;
 	bool				 pending_active;
+	bool				 negotiated;
+	bool				 write_armed;
 	size_t				 timer_count;
 	int				 terminal_error;
 	int				 fd;
@@ -181,8 +195,8 @@ router_control_valid(const struct router_control *control)
 }
 
 #ifndef NOTIFY_ROUTER_TEST
-static void router_channel_request(struct channel *, struct channel_message *,
-    void *);
+static const struct bsd_notify_v1_Notify_server router_handlers;
+static void router_protocol_rejection(struct router_session *, int);
 static void router_control_request(struct channel *, struct channel_message *,
     void *);
 static int router_sync_write(struct router *, struct router_session *);
@@ -235,18 +249,49 @@ send_reply(int fd, const struct notify_msg *request, int error,
 	    NOTIFY_MESSAGE_REPLY));
 }
 
+static void
+router_release_pending(struct router_session *session)
+{
+
+	if (session->pending_active && session->pending.request != NULL)
+		fidl_bsd_request_release(session->pending.request);
+	session->pending.request = NULL;
+	session->pending_active = false;
+}
+
+#define	FIDL_REPLY(method, type, set)					\
+	do {								\
+		struct type result = { 0 };				\
+									\
+		if (error != 0) {					\
+			result.tag = type##_err_tag;			\
+			result.value.err = (uint32_t)error;		\
+		} else {						\
+			result.tag = type##_response_tag;		\
+			set;						\
+		}							\
+		reply_error = bsd_notify_v1_Notify_##method##_reply(	\
+		    session->connection, call->request, &result);	\
+	} while (0)
+
+/*
+ * Send a reply on the FIDL session.  The reply is first built as the
+ * historical record and checked by the same rules as before, then converted
+ * to the bsd.notify.v1 result of the request's method.
+ */
 static int
-send_channel_reply(struct channel_message *request_message,
-    const struct notify_msg *request, int error, const void *payload,
-    size_t payload_length)
+fidl_send_reply(struct router_session *session, const struct router_call *call,
+    int error, const void *payload, size_t payload_length)
 {
 	union notify_buffer buffer;
 	struct notify_msg *reply;
+	const void *body;
 	size_t length;
+	int reply_error;
 
 	memset(&buffer, 0, sizeof(buffer));
 	reply = (void *)buffer.bytes;
-	if (notify_message_init_reply(reply, request,
+	if (notify_message_init_reply(reply, &call->wire,
 	    error == 0 ? 0 : -error) == -1)
 		return (-1);
 	if (error == 0 && payload_length != 0)
@@ -255,21 +300,143 @@ send_channel_reply(struct channel_message *request_message,
 	if (notify_validate_message(reply, length,
 	    NOTIFY_MESSAGE_REPLY) == -1)
 		return (-1);
-	return (channel_send_reply(request_message,
-	    &(struct channel_outgoing)CHANNEL_OUTGOING_INITIALIZER(reply,
-	    length)));
+	body = reply + 1;
+	reply_error = 0;
+	switch (call->wire.opcode) {
+	case NOTIFY_OP_HELLO: {
+		const struct notify_hello_reply *h = body;
+
+		FIDL_REPLY(Hello, bsd_notify_v1_Notify_Hello_Result,
+		    result.value.response = ((struct bsd_notify_v1_Limits){
+			h->features, h->max_topic, h->max_payload,
+			h->max_subscriptions, h->queue_depth, h->max_timers,
+			h->max_states, h->router_epoch }));
+		break;
+	}
+	case NOTIFY_OP_SUBSCRIBE:
+		FIDL_REPLY(Subscribe, bsd_notify_v1_Notify_Subscribe_Result, );
+		break;
+	case NOTIFY_OP_UNSUBSCRIBE:
+		FIDL_REPLY(Unsubscribe, bsd_notify_v1_Notify_Unsubscribe_Result,
+		    );
+		break;
+	case NOTIFY_OP_PUBLISH:
+		FIDL_REPLY(Publish, bsd_notify_v1_Notify_Publish_Result, );
+		break;
+	case NOTIFY_OP_TIMER_ADD:
+		FIDL_REPLY(TimerAdd, bsd_notify_v1_Notify_TimerAdd_Result, );
+		break;
+	case NOTIFY_OP_TIMER_CANCEL:
+		FIDL_REPLY(TimerCancel, bsd_notify_v1_Notify_TimerCancel_Result,
+		    );
+		break;
+	case NOTIFY_OP_STATE_CLEAR:
+		FIDL_REPLY(StateClear, bsd_notify_v1_Notify_StateClear_Result, );
+		break;
+	case NOTIFY_OP_NEXT: {
+		const struct notify_event *e = body;
+
+		FIDL_REPLY(Next, bsd_notify_v1_Notify_Next_Result,
+		    result.value.response = ((struct bsd_notify_v1_Event){
+			.type = e->type, .flags = e->flags,
+			.router_epoch = e->router_epoch,
+			.sequence = e->sequence,
+			.timestamp_ns = e->timestamp_ns,
+			.timer_id = e->timer_id,
+			.generation = e->generation, .state = e->state,
+			.lost_count = e->lost_count,
+			.publisher = __DECONST(uint8_t *, e->data),
+			.publisher_size = e->publisher_length,
+			.topic = (const char *)e->data + e->publisher_length,
+			.topic_size = e->topic_length,
+			.payload = __DECONST(uint8_t *, e->data +
+			    e->publisher_length + e->topic_length),
+			.payload_size = e->payload_length }));
+		break;
+	}
+	case NOTIFY_OP_STATS: {
+		const struct notify_stats *t = body;
+
+		FIDL_REPLY(GetStats, bsd_notify_v1_Notify_GetStats_Result,
+		    result.value.response = ((struct bsd_notify_v1_Stats){
+			t->published, t->delivered, t->dropped, t->rejected,
+			t->timer_events }));
+		break;
+	}
+	case NOTIFY_OP_STATE_SET:
+	case NOTIFY_OP_STATE_GET: {
+		const struct notify_state_reply *v = body;
+		struct bsd_notify_v1_StateValue value = { 0 };
+
+		if (error == 0)
+			value = (struct bsd_notify_v1_StateValue){
+			    v->router_epoch, v->generation, v->state };
+		if (call->wire.opcode == NOTIFY_OP_STATE_SET)
+			FIDL_REPLY(StateSet, bsd_notify_v1_Notify_StateSet_Result,
+			    result.value.response = value);
+		else
+			FIDL_REPLY(StateGet, bsd_notify_v1_Notify_StateGet_Result,
+			    result.value.response = value);
+		break;
+	}
+	case NOTIFY_OP_STATE_WATCH: {
+		const struct notify_state_watch_reply *w = body;
+
+		FIDL_REPLY(StateWatch, bsd_notify_v1_Notify_StateWatch_Result,
+		    result.value.response = ((struct bsd_notify_v1_StateWatchValue){
+			w->watch_epoch, w->generation, w->state,
+			w->present != 0 }));
+		break;
+	}
+	case NOTIFY_OP_LIST_SUBSCRIPTIONS: {
+		static struct bsd_notify_v1_fidl_string topics[
+		    NOTIFY_LIST_MAX_ENTRIES];
+		const struct notify_list_reply *l = body;
+		const struct notify_subscription_entry *entries =
+		    (const void *)(l + 1);
+
+		for (uint32_t i = 0; error == 0 && i < l->count; i++)
+			topics[i] = (struct bsd_notify_v1_fidl_string){
+			    entries[i].topic, entries[i].topic_length };
+		FIDL_REPLY(ListSubscriptions,
+		    bsd_notify_v1_Notify_ListSubscriptions_Result,
+		    result.value.response = ((struct bsd_notify_v1_SubscriptionPage){
+			topics, l->count, l->next_cursor, l->total }));
+		break;
+	}
+	case NOTIFY_OP_LIST_TIMERS: {
+		static struct bsd_notify_v1_TimerEntry timers[
+		    NOTIFY_LIST_MAX_ENTRIES];
+		const struct notify_list_reply *l = body;
+		const struct notify_timer_entry *entries =
+		    (const void *)(l + 1);
+
+		for (uint32_t i = 0; error == 0 && i < l->count; i++)
+			timers[i] = (struct bsd_notify_v1_TimerEntry){
+			    entries[i].timer_id, entries[i].interval_ms,
+			    entries[i].flags, entries[i].next_fire_ms };
+		FIDL_REPLY(ListTimers, bsd_notify_v1_Notify_ListTimers_Result,
+		    result.value.response = ((struct bsd_notify_v1_TimerPage){
+			timers, l->count, l->next_cursor, l->total }));
+		break;
+	}
+	default:
+		return (errno = EPROTO, -1);
+	}
+	if (reply_error != 0)
+		return (errno = reply_error, -1);
+	return (0);
 }
 
 static int
 router_send_reply(struct router_session *session,
-    struct channel_message *request_message,
-    const struct notify_msg *request, int error, const void *payload,
+    const struct router_call *call, int error, const void *payload,
     size_t payload_length)
 {
 	int result;
 
-	if (request_message != NULL) {
-		result = send_channel_reply(request_message, request, error, payload,
+	if (call->request != NULL) {
+		result = fidl_send_reply(session, call, error, payload,
 		    payload_length);
 #ifndef NOTIFY_ROUTER_TEST
 		if (result == 0)
@@ -277,7 +444,8 @@ router_send_reply(struct router_session *session,
 #endif
 		return (result);
 	}
-	return (send_reply(session->fd, request, error, payload, payload_length));
+	return (send_reply(session->fd, &call->wire, error, payload,
+	    payload_length));
 }
 
 static int
@@ -296,11 +464,14 @@ router_sync_write(struct router *router, struct router_session *session)
 {
 	int wants_write;
 
-	wants_write = channel_wants_write(session->channel);
-	if (wants_write == -1)
+	wants_write = fidl_bsd_connection_wants_write(session->connection);
+	if (wants_write == session->write_armed)
+		return (0);
+	if (router_change(router, session->fd, EVFILT_WRITE,
+	    wants_write ? EV_ENABLE : EV_DISABLE, 0, 0, session) == -1)
 		return (-1);
-	return (router_change(router, session->fd, EVFILT_WRITE,
-	    wants_write ? EV_ENABLE : EV_DISABLE, 0, 0, session));
+	session->write_armed = wants_write;
+	return (0);
 }
 #endif
 
@@ -345,11 +516,10 @@ router_remove_session(struct router *router, struct router_session *session)
 		router_delete_timer(router, session->next_timer);
 	while (session->timers != NULL)
 		router_delete_timer(router, session->timers);
-	if (session->pending != NULL)
-		channel_message_free(session->pending);
+	router_release_pending(session);
 	notify_broker_remove(router->broker, session->client);
-	if (session->channel != NULL)
-		channel_destroy(session->channel);
+	if (session->connection != NULL)
+		fidl_bsd_connection_destroy(session->connection);
 	else if (session->fd >= 0)
 		close(session->fd);
 	if (router->nsessions != 0)
@@ -464,7 +634,7 @@ router_deliver(struct router *router, struct router_session *session)
 
 	if (!session->pending_active)
 		return (0);
-	if (session->pending_wire.opcode == NOTIFY_OP_STATE_WATCH) {
+	if (session->pending.wire.opcode == NOTIFY_OP_STATE_WATCH) {
 		length = notify_broker_watch_next(session->client, &state) == 0 ?
 		    (ssize_t)sizeof(state) : -1;
 		payload = &state;
@@ -477,23 +647,22 @@ router_deliver(struct router *router, struct router_session *session)
 		if (errno == EAGAIN)
 			return (0);
 		error = errno;
-		if (session->pending_wire.opcode == NOTIFY_OP_STATE_WATCH)
+		if (session->pending.wire.opcode == NOTIFY_OP_STATE_WATCH)
 			notify_broker_watch_cancel(session->client);
 	} else
 		error = 0;
 	if (session->next_timer != NULL)
 		router_delete_timer(router, session->next_timer);
-	if (router_send_reply(session, session->pending, &session->pending_wire,
+	if (router_send_reply(session, &session->pending,
 	    error, error == 0 ? payload : NULL,
-	    error == 0 ? (size_t)length : 0) == -1)
+	    error == 0 ? (size_t)length : 0) == -1) {
+		router_release_pending(session);
 		return (-1);
+	}
 	BSDNOTIFY_PROBE_DELIVER(__DECONST(char *, session->label),
-	    error == 0 && session->pending_wire.opcode == NOTIFY_OP_NEXT ?
+	    error == 0 && session->pending.wire.opcode == NOTIFY_OP_NEXT ?
 	    ((const struct notify_event *)payload)->type : 0, error);
-	if (session->pending != NULL)
-		channel_message_free(session->pending);
-	session->pending = NULL;
-	session->pending_active = false;
+	router_release_pending(session);
 	return (0);
 }
 
@@ -523,12 +692,8 @@ router_watch_timeout(struct router *router, struct router_session *session)
 	int result;
 
 	notify_broker_watch_cancel(session->client);
-	result = router_send_reply(session, session->pending,
-	    &session->pending_wire, EAGAIN, NULL, 0);
-	if (session->pending != NULL)
-		channel_message_free(session->pending);
-	session->pending = NULL;
-	session->pending_active = false;
+	result = router_send_reply(session, &session->pending, EAGAIN, NULL, 0);
+	router_release_pending(session);
 	if (session->next_timer != NULL)
 		router_delete_timer(router, session->next_timer);
 	return (result);
@@ -573,7 +738,7 @@ router_timer_remaining_ms(const struct router_timer *timer)
  */
 static int
 router_list_subscriptions(struct router *router __unused,
-    struct router_session *session, struct channel_message *request_message,
+    struct router_session *session, const struct router_call *call,
     const struct notify_msg *message)
 {
 	union notify_buffer buffer;
@@ -605,7 +770,7 @@ router_list_subscriptions(struct router *router __unused,
 	    (uint32_t)(offset + emitted) : 0;
 	BSDNOTIFY_PROBE_LIST(__DECONST(char *, session->label),
 	    message->opcode, (uint64_t)emitted);
-	return (router_send_reply(session, request_message, message, 0, &buffer,
+	return (router_send_reply(session, call, 0, &buffer,
 	    sizeof(*header) + emitted * sizeof(*entries)));
 }
 
@@ -616,7 +781,7 @@ router_list_subscriptions(struct router *router __unused,
 static int
 router_list_timers(struct router *router __unused,
     struct router_session *session,
-    struct channel_message *request_message, const struct notify_msg *message)
+    const struct router_call *call, const struct notify_msg *message)
 {
 	union notify_buffer buffer;
 	struct notify_list_reply *header;
@@ -649,17 +814,20 @@ router_list_timers(struct router *router __unused,
 	    (uint32_t)(offset + emitted) : 0;
 	BSDNOTIFY_PROBE_LIST(__DECONST(char *, session->label),
 	    message->opcode, (uint64_t)emitted);
-	return (router_send_reply(session, request_message, message, 0, &buffer,
+	return (router_send_reply(session, call, 0, &buffer,
 	    sizeof(*header) + emitted * sizeof(*entries)));
 }
 
+/*
+ * Dispatch one request record.  Returns 0, 1 when the request stays pending
+ * (a long poll), or -1 with errno set when the session must end.
+ */
 static int
-router_handle_request(struct router *router, struct router_session *session,
-    struct channel_message *request_message)
+router_dispatch(struct router *router, struct router_session *session,
+    const struct router_call *call, const struct notify_msg *message,
+    size_t message_length)
 {
-	union notify_buffer buffer;
 	struct notify_hello_reply hello;
-	const struct notify_msg *message;
 	const struct notify_publish_request *publish;
 	const struct notify_timer_cancel_request *cancel;
 	const struct notify_timer_request *timer_request;
@@ -669,25 +837,11 @@ router_handle_request(struct router *router, struct router_session *session,
 	const struct notify_state_set_request *state_set;
 	struct router_timer *timer;
 	char topic_name[NOTIFY_MAX_TOPIC + 1];
-	size_t message_length;
 	int error;
 
-	if (request_message == NULL) {
-		ssize_t received;
-
-		received = internal_receive(session->fd, buffer.bytes,
-		    sizeof(buffer), NOTIFY_MESSAGE_REQUEST);
-		if (received == -1)
-			return (-1);
-		message = (const void *)buffer.bytes;
-		message_length = (size_t)received;
-	} else {
-		message = channel_message_data(request_message);
-		message_length = channel_message_length(request_message);
-	}
 	/* Preserve the token of an outstanding long-poll request. */
 	if (session->pending_active)
-		return (router_send_reply(session, request_message, message, EBUSY,
+		return (router_send_reply(session, call, EBUSY,
 		    NULL, 0));
 	error = 0;
 	switch (message->opcode) {
@@ -711,7 +865,7 @@ router_handle_request(struct router *router, struct router_session *session,
 		hello.max_timers = NOTIFY_MAX_TIMERS;
 		hello.max_states = NOTIFY_MAX_STATES;
 		hello.router_epoch = notify_broker_epoch(router->broker);
-		return (router_send_reply(session, request_message, message, 0, &hello,
+		return (router_send_reply(session, call, 0, &hello,
 		    sizeof(hello)));
 	case NOTIFY_OP_SUBSCRIBE:
 	case NOTIFY_OP_UNSUBSCRIBE:
@@ -751,8 +905,8 @@ router_handle_request(struct router *router, struct router_session *session,
 			watch = (const void *)(message + 1);
 			if (notify_broker_watch_begin(router->broker, session->client,
 			    watch->topic.topic, watch->topic.topic_length) == -1)
-				return (router_send_reply(session, request_message,
-				    message, errno, NULL, 0));
+				return (router_send_reply(session, call,
+				    errno, NULL, 0));
 			timeout_ms = watch->timeout_ms;
 		} else {
 			const struct notify_next_request *next_request;
@@ -760,31 +914,30 @@ router_handle_request(struct router *router, struct router_session *session,
 			next_request = (const void *)(message + 1);
 			timeout_ms = next_request->timeout_ms;
 		}
-		session->pending = request_message;
-		session->pending_wire = *message;
+		session->pending = *call;
+		if (call->request != NULL)
+			fidl_bsd_request_retain(call->request);
 		session->pending_active = true;
 		if (router_deliver(router, session) == -1)
 			return (-1);
 		if (!session->pending_active)
-			return (request_message != NULL ? 1 : 0);
+			return (call->request != NULL ? 1 : 0);
 		if (timeout_ms == 0) {
 			notify_broker_watch_cancel(session->client);
-			session->pending = NULL;
-			session->pending_active = false;
-			return (router_send_reply(session, request_message, message,
-			    EAGAIN, NULL, 0));
+			router_release_pending(session);
+			return (router_send_reply(session, call, EAGAIN, NULL,
+			    0));
 		}
 		if (timeout_ms != NOTIFY_TIMEOUT_INFINITE &&
 		    router_add_timer(router, session, 0, timeout_ms, 0,
 		    ROUTER_EVENT_NEXT_TIMER) == -1) {
 			error = errno;
 			notify_broker_watch_cancel(session->client);
-			session->pending = NULL;
-			session->pending_active = false;
-			return (router_send_reply(session, request_message, message,
-			    error, NULL, 0));
+			router_release_pending(session);
+			return (router_send_reply(session, call, error, NULL,
+			    0));
 		}
-		return (request_message != NULL ? 1 : 0);
+		return (call->request != NULL ? 1 : 0);
 	}
 	case NOTIFY_OP_TIMER_ADD:
 		timer_request = (const void *)(message + 1);
@@ -813,14 +966,13 @@ router_handle_request(struct router *router, struct router_session *session,
 		break;
 	case NOTIFY_OP_STATS:
 		notify_broker_stats(session->client, &stats);
-		return (router_send_reply(session, request_message, message, 0, &stats,
+		return (router_send_reply(session, call, 0, &stats,
 		    sizeof(stats)));
 	case NOTIFY_OP_LIST_SUBSCRIPTIONS:
-		return (router_list_subscriptions(router, session,
-		    request_message, message));
-	case NOTIFY_OP_LIST_TIMERS:
-		return (router_list_timers(router, session, request_message,
+		return (router_list_subscriptions(router, session, call,
 		    message));
+	case NOTIFY_OP_LIST_TIMERS:
+		return (router_list_timers(router, session, call, message));
 	case NOTIFY_OP_STATE_SET:
 		state_set = (const void *)(message + 1);
 		error = notify_broker_state_set(router->broker,
@@ -828,7 +980,7 @@ router_handle_request(struct router *router, struct router_session *session,
 		    state_set->state, &state_reply) == -1 ? errno : 0;
 		if (error == 0) {
 			(void)router_deliver_pending(router);
-			return (router_send_reply(session, request_message, message, 0, &state_reply,
+			return (router_send_reply(session, call, 0, &state_reply,
 			    sizeof(state_reply)));
 		}
 		break;
@@ -837,7 +989,7 @@ router_handle_request(struct router *router, struct router_session *session,
 		error = notify_broker_state_get(router->broker, topic->topic,
 		    topic->topic_length, &state_reply) == -1 ? errno : 0;
 		if (error == 0)
-			return (router_send_reply(session, request_message, message, 0, &state_reply,
+			return (router_send_reply(session, call, 0, &state_reply,
 			    sizeof(state_reply)));
 		break;
 	case NOTIFY_OP_STATE_CLEAR:
@@ -852,7 +1004,7 @@ router_handle_request(struct router *router, struct router_session *session,
 	if (error != 0)
 		BSDNOTIFY_PROBE_REJECT(__DECONST(char *, session->label),
 		    message->opcode, error);
-	return (router_send_reply(session, request_message, message, error, NULL,
+	return (router_send_reply(session, call, error, NULL,
 	    0));
 }
 
@@ -950,9 +1102,9 @@ static int
 router_add_session(struct router *router, const struct router_control *control,
     int fd)
 {
-	struct channel_options options =
-	    CHANNEL_OPTIONS_INITIALIZER(CHANNEL_ROLE_PROVIDER);
+	struct fidl_bsd_options options = FIDL_BSD_OPTIONS_INITIALIZER;
 	struct router_session *session;
+	int error;
 
 	if (fd < 0 || !router_control_valid(control)) {
 		if (fd >= 0)
@@ -998,27 +1150,32 @@ router_add_session(struct router *router, const struct router_control *control,
 	}
 	session->client = notify_broker_add(router->broker, session->label,
 	    control->queue_depth);
-	if (session->client == NULL ||
-	    harden_channel(fd, CAP_CLOFORK_LOCKED) == -1 ||
-	    channel_create(fd, &options, &session->channel) == -1 ||
-	    channel_set_request_handler(session->channel,
-	    router_channel_request, session) == -1) {
+	/* One long poll at a time; requests carry no descriptors. */
+	options.max_queued_fds = 0;
+	error = session->client == NULL ? (errno != 0 ? errno : ENOMEM) :
+	    harden_channel(fd, CAP_CLOFORK_LOCKED) == -1 ? errno :
+	    fidl_bsd_connection_create_with_options(fd, FIDL_BSD_SERVER,
+	    &options, &session->connection);
+	if (error == 0)
+		error = bsd_notify_v1_Notify_bind(session->connection,
+		    &router_handlers, session);
+	if (error != 0) {
 		if (session->client != NULL)
 			notify_broker_remove(router->broker, session->client);
-		if (session->channel != NULL)
-			channel_destroy(session->channel);
+		if (session->connection != NULL)
+			fidl_bsd_connection_destroy(session->connection);
 		else
 			close(fd);
 		free(session);
-		return (-1);
+		return (errno = error, -1);
 	}
-	session->fd = channel_fd(session->channel);
+	session->fd = fidl_bsd_connection_fd(session->connection);
 	if (router_change(router, session->fd, EVFILT_READ,
 	    EV_ADD | EV_ENABLE, 0, 0, session) == -1 ||
 	    router_change(router, session->fd, EVFILT_WRITE,
 	    EV_ADD | EV_DISABLE, 0, 0, session) == -1) {
 		notify_broker_remove(router->broker, session->client);
-		channel_destroy(session->channel);
+		fidl_bsd_connection_destroy(session->connection);
 		free(session);
 		return (-1);
 	}
@@ -1061,6 +1218,60 @@ router_control_request(struct channel *channel __unused,
 	channel_message_free(request);
 }
 
+/*
+ * One kqueue event for a session or one of its timers (the control channel
+ * is handled by router_main()).
+ */
+static void
+router_event(struct router *router, struct event_source *source,
+    const struct kevent *event)
+{
+	struct router_session *session;
+	struct router_timer *timer;
+	int error;
+
+	if (source->type == ROUTER_EVENT_SESSION) {
+		session = (void *)source;
+		if ((event->flags & EV_EOF) != 0) {
+			router_remove_session(router, session);
+			return;
+		}
+		/* Reads and flushes in one bounded step. */
+		error = fidl_bsd_connection_dispatch(
+		    session->connection);
+		if (error != 0 && session->terminal_error == 0) {
+			session->terminal_error = error;
+			router_protocol_rejection(session, error);
+		}
+		if (session->terminal_error != 0 ||
+		    router_sync_write(router, session) == -1) {
+			router_remove_session(router, session);
+			return;
+		}
+		return;
+	}
+	timer = (void *)source;
+	session = timer->session;
+	if (source->type == ROUTER_EVENT_NEXT_TIMER) {
+		timer->ident = 0;
+		if (router_watch_timeout(router, session) == -1)
+			router_remove_session(router, session);
+		return;
+	}
+	(void)notify_broker_timer(router->broker,
+	    session->client, timer->user_id);
+	BSDNOTIFY_PROBE_TIMER(
+	    __DECONST(char *, session->label),
+	    timer->user_id, 0);
+	if ((timer->flags & NOTIFY_TIMER_F_PERIODIC) == 0) {
+		/* EV_ONESHOT has already removed the kevent. */
+		timer->ident = 0;
+		router_delete_timer(router, timer);
+	}
+	if (router_deliver(router, session) == -1)
+		router_remove_session(router, session);
+}
+
 static int
 router_main(int control, const struct notify_policy_db *policy_db,
     int audit_fd)
@@ -1071,7 +1282,6 @@ router_main(int control, const struct notify_policy_db *policy_db,
 	struct router router;
 	struct kevent events[64];
 	struct event_source *source;
-	struct router_timer *timer;
 	struct router_session *session;
 	int count, i, wants_write;
 
@@ -1137,49 +1347,7 @@ router_main(int control, const struct notify_policy_db *policy_db,
 					goto shutdown;
 				continue;
 			}
-			if (source->type == ROUTER_EVENT_SESSION) {
-				session = (void *)source;
-				if ((events[i].flags & EV_EOF) != 0) {
-					router_remove_session(&router, session);
-					continue;
-				}
-				if (events[i].filter == EVFILT_WRITE &&
-				    channel_flush(session->channel) == -1)
-					session->terminal_error = errno;
-				else if (events[i].filter == EVFILT_READ &&
-				    channel_dispatch(session->channel) == -1)
-					session->terminal_error = errno;
-				if (session->terminal_error != 0) {
-					router_remove_session(&router, session);
-					continue;
-				}
-				wants_write = channel_wants_write(session->channel);
-				if (wants_write == -1 || router_change(&router, session->fd,
-				    EVFILT_WRITE, wants_write ? EV_ENABLE : EV_DISABLE,
-				    0, 0, session) == -1)
-					router_remove_session(&router, session);
-				continue;
-			}
-			timer = (void *)source;
-			session = timer->session;
-			if (source->type == ROUTER_EVENT_NEXT_TIMER) {
-				timer->ident = 0;
-				if (router_watch_timeout(&router, session) == -1)
-					router_remove_session(&router, session);
-				continue;
-			}
-			(void)notify_broker_timer(router.broker,
-			    session->client, timer->user_id);
-			BSDNOTIFY_PROBE_TIMER(
-			    __DECONST(char *, session->label),
-			    timer->user_id, 0);
-			if ((timer->flags & NOTIFY_TIMER_F_PERIODIC) == 0) {
-				/* EV_ONESHOT has already removed the kevent. */
-				timer->ident = 0;
-				router_delete_timer(&router, timer);
-			}
-			if (router_deliver(&router, session) == -1)
-				router_remove_session(&router, session);
+			router_event(&router, source, &events[i]);
 		}
 		(void)router_deliver_pending(&router);
 		router_collect_garbage(&router);
@@ -1188,12 +1356,10 @@ router_main(int control, const struct notify_policy_db *policy_db,
 shutdown:
 	while ((session = router.sessions) != NULL) {
 		if (session->pending_active) {
-			(void)router_send_reply(session, session->pending,
-			    channel_message_data(session->pending), ESHUTDOWN,
-			    NULL, 0);
-			channel_message_free(session->pending);
-			session->pending = NULL;
-			session->pending_active = false;
+			(void)router_send_reply(session, &session->pending,
+			    ESHUTDOWN, NULL, 0);
+			router_release_pending(session);
+			(void)fidl_bsd_connection_dispatch(session->connection);
 		}
 		router_remove_session(&router, session);
 	}
@@ -1218,26 +1384,52 @@ router_watch(void *argument)
 	return (NULL);
 }
 
+/*
+ * bsd.notify.v1 method handlers.  Each rebuilds the request as the
+ * historical record, which the record rules must accept (a refusal ends the
+ * session as before), authorizes it against the session's tier policy and
+ * rights, and dispatches it.  GetProtocolInfo must come first.
+ */
 static void
-router_channel_request(struct channel *channel __unused,
-    struct channel_message *request_message, void *argument)
+router_violation(struct router_session *session, const char *operation)
 {
-	struct router_session *session;
-	const struct notify_msg *message;
+
+	if (session->terminal_error != 0)
+		return;
+	audit_policy(session->router->audit, session->label, operation, EPROTO);
+	BSDNOTIFY_PROBE_REJECT(__DECONST(char *, session->label), 0, EPROTO);
+	session->terminal_error = EPROTO;
+	fidl_bsd_connection_close(session->connection, EPROTO);
+}
+
+/* A connection the bindings closed for a malformed or unknown frame. */
+static void
+router_protocol_rejection(struct router_session *session, int error)
+{
+
+	if (error == EPIPE || error == ECONNRESET || error == ECANCELED ||
+	    error == ETIMEDOUT || error == ENOTCONN)
+		return;
+	audit_policy(session->router->audit, session->label,
+	    "malformed-message", EPROTO);
+	BSDNOTIFY_PROBE_REJECT(__DECONST(char *, session->label), 0, EPROTO);
+}
+
+static void
+router_request(struct router_session *session, struct fidl_bsd_request *request,
+    const union notify_buffer *buffer, size_t length)
+{
+	const struct notify_msg *message = (const void *)buffer->bytes;
+	struct router_call call = { .request = request, .wire = *message };
 	const char *operation;
 	int result;
 
-	session = argument;
-	message = channel_message_data(request_message);
-	if (channel_message_fd_count(request_message) != 0 ||
-	    notify_validate_message(message,
-	    channel_message_length(request_message),
+	if (session->terminal_error != 0)
+		return;
+	if (!session->negotiated ||
+	    notify_validate_message(message, length,
 	    NOTIFY_MESSAGE_REQUEST) == -1) {
-		audit_policy(session->router->audit, session->label,
-		    channel_message_fd_count(request_message) != 0 ?
-		    "descriptor-attachment" : "malformed-message", EPROTO);
-		session->terminal_error = EPROTO;
-		channel_message_free(request_message);
+		router_violation(session, "malformed-message");
 		return;
 	}
 	if (!router_session_authorized(session, message, &operation)) {
@@ -1245,20 +1437,274 @@ router_channel_request(struct channel *channel __unused,
 		    EACCES);
 		BSDNOTIFY_PROBE_REJECT(__DECONST(char *, session->label),
 		    message->opcode, EACCES);
-		if (send_channel_reply(request_message, message, EACCES, NULL, 0) ==
-		    -1)
-			session->terminal_error = errno;
-		channel_message_free(request_message);
+		if (router_send_reply(session, &call, EACCES, NULL, 0) == -1)
+			session->terminal_error = errno != 0 ? errno : EIO;
 		return;
 	}
-	result = router_handle_request(session->router, session,
-	    request_message);
-	if (result == -1)
+	result = router_dispatch(session->router, session, &call, message,
+	    length);
+	if (result == -1 && session->terminal_error == 0)
 		session->terminal_error = errno != 0 ? errno : EIO;
-	if (result <= 0 && session->pending != request_message)
-		channel_message_free(request_message);
 }
 
+/* Start a record of `opcode` whose fixed payload is `size` bytes. */
+static void *
+record(union notify_buffer *buffer, uint16_t opcode, size_t size)
+{
+	struct notify_msg *message = (void *)buffer->bytes;
+
+	memset(buffer, 0, sizeof(*buffer));
+	message->magic = NOTIFY_MAGIC;
+	message->opcode = opcode;
+	(void)size;
+	return (message + 1);
+}
+
+/* Copy a topic into a fixed record field (the bindings bound it to 128). */
+static uint16_t
+topic_field(char field[NOTIFY_MAX_TOPIC], const char *topic, size_t size)
+{
+
+	memcpy(field, topic, MIN(size, NOTIFY_MAX_TOPIC));
+	return ((uint16_t)MIN(size, NOTIFY_MAX_TOPIC));
+}
+
+static void
+on_protocol_info(void *argument, struct fidl_bsd_connection *connection,
+    struct fidl_bsd_request *request, struct fidl_bsd_empty *empty __unused)
+{
+	struct router_session *session = argument;
+	struct bsd_notify_v1_ProtocolInfo info = { NOTIFY_WIRE_VERSION };
+	int error;
+
+	error = bsd_notify_v1_Notify_GetProtocolInfo_reply(connection, request,
+	    &info);
+	if (error != 0)
+		session->terminal_error = error;
+	else
+		session->negotiated = true;
+	(void)router_sync_write(session->router, session);
+}
+
+static void
+on_hello(void *argument, struct fidl_bsd_connection *connection __unused,
+    struct fidl_bsd_request *request, struct bsd_notify_v1_HelloRequest *q)
+{
+	union notify_buffer buffer;
+	struct notify_hello_request *r;
+
+	r = record(&buffer, NOTIFY_OP_HELLO, sizeof(*r));
+	r->features = q->features;
+	router_request(argument, request, &buffer,
+	    sizeof(struct notify_msg) + sizeof(*r));
+}
+
+static void
+topic_method(struct router_session *session, struct fidl_bsd_request *request,
+    uint16_t opcode, const struct bsd_notify_v1_TopicRequest *q)
+{
+	union notify_buffer buffer;
+	struct notify_topic_request *r;
+
+	r = record(&buffer, opcode, sizeof(*r));
+	r->topic_length = topic_field(r->topic, q->topic, q->topic_size);
+	router_request(session, request, &buffer,
+	    sizeof(struct notify_msg) + sizeof(*r));
+}
+
+static void
+on_subscribe(void *argument, struct fidl_bsd_connection *connection __unused,
+    struct fidl_bsd_request *request, struct bsd_notify_v1_TopicRequest *q)
+{
+	topic_method(argument, request, NOTIFY_OP_SUBSCRIBE, q);
+}
+
+static void
+on_unsubscribe(void *argument, struct fidl_bsd_connection *connection __unused,
+    struct fidl_bsd_request *request, struct bsd_notify_v1_TopicRequest *q)
+{
+	topic_method(argument, request, NOTIFY_OP_UNSUBSCRIBE, q);
+}
+
+static void
+on_state_get(void *argument, struct fidl_bsd_connection *connection __unused,
+    struct fidl_bsd_request *request, struct bsd_notify_v1_TopicRequest *q)
+{
+	topic_method(argument, request, NOTIFY_OP_STATE_GET, q);
+}
+
+static void
+on_state_clear(void *argument, struct fidl_bsd_connection *connection __unused,
+    struct fidl_bsd_request *request, struct bsd_notify_v1_TopicRequest *q)
+{
+	topic_method(argument, request, NOTIFY_OP_STATE_CLEAR, q);
+}
+
+static void
+on_publish(void *argument, struct fidl_bsd_connection *connection __unused,
+    struct fidl_bsd_request *request, struct bsd_notify_v1_PublishRequest *q)
+{
+	union notify_buffer buffer;
+	struct notify_publish_request *r;
+
+	r = record(&buffer, NOTIFY_OP_PUBLISH, sizeof(*r));
+	r->topic_length = topic_field(r->topic, q->topic, q->topic_size);
+	r->payload_length = (uint32_t)MIN(q->payload_size, NOTIFY_MAX_PAYLOAD);
+	memcpy(r->payload, q->payload, r->payload_length);
+	router_request(argument, request, &buffer,
+	    sizeof(struct notify_msg) + sizeof(*r) + r->payload_length);
+}
+
+static void
+on_next(void *argument, struct fidl_bsd_connection *connection __unused,
+    struct fidl_bsd_request *request, struct bsd_notify_v1_NextRequest *q)
+{
+	union notify_buffer buffer;
+	struct notify_next_request *r;
+
+	r = record(&buffer, NOTIFY_OP_NEXT, sizeof(*r));
+	r->timeout_ms = q->timeout_ms;
+	router_request(argument, request, &buffer,
+	    sizeof(struct notify_msg) + sizeof(*r));
+}
+
+static void
+on_timer_add(void *argument, struct fidl_bsd_connection *connection __unused,
+    struct fidl_bsd_request *request, struct bsd_notify_v1_TimerRequest *q)
+{
+	union notify_buffer buffer;
+	struct notify_timer_request *r;
+
+	r = record(&buffer, NOTIFY_OP_TIMER_ADD, sizeof(*r));
+	r->timer_id = q->timer_id;
+	r->interval_ms = q->interval_ms;
+	r->flags = q->flags;
+	router_request(argument, request, &buffer,
+	    sizeof(struct notify_msg) + sizeof(*r));
+}
+
+static void
+on_timer_cancel(void *argument, struct fidl_bsd_connection *connection __unused,
+    struct fidl_bsd_request *request,
+    struct bsd_notify_v1_TimerCancelRequest *q)
+{
+	union notify_buffer buffer;
+	struct notify_timer_cancel_request *r;
+
+	r = record(&buffer, NOTIFY_OP_TIMER_CANCEL, sizeof(*r));
+	r->timer_id = q->timer_id;
+	router_request(argument, request, &buffer,
+	    sizeof(struct notify_msg) + sizeof(*r));
+}
+
+static void
+on_stats(void *argument, struct fidl_bsd_connection *connection __unused,
+    struct fidl_bsd_request *request, struct fidl_bsd_empty *empty __unused)
+{
+	union notify_buffer buffer;
+
+	(void)record(&buffer, NOTIFY_OP_STATS, 0);
+	router_request(argument, request, &buffer, sizeof(struct notify_msg));
+}
+
+static void
+on_state_set(void *argument, struct fidl_bsd_connection *connection __unused,
+    struct fidl_bsd_request *request, struct bsd_notify_v1_StateSetRequest *q)
+{
+	union notify_buffer buffer;
+	struct notify_state_set_request *r;
+
+	r = record(&buffer, NOTIFY_OP_STATE_SET, sizeof(*r));
+	r->state = q->state;
+	r->topic_length = topic_field(r->topic, q->topic, q->topic_size);
+	router_request(argument, request, &buffer,
+	    sizeof(struct notify_msg) + sizeof(*r));
+}
+
+static void
+list_method(struct router_session *session, struct fidl_bsd_request *request,
+    uint16_t opcode, const struct bsd_notify_v1_ListRequest *q)
+{
+	union notify_buffer buffer;
+	struct notify_list_request *r;
+
+	r = record(&buffer, opcode, sizeof(*r));
+	r->cursor = q->cursor;
+	router_request(session, request, &buffer,
+	    sizeof(struct notify_msg) + sizeof(*r));
+}
+
+static void
+on_list_subscriptions(void *argument,
+    struct fidl_bsd_connection *connection __unused,
+    struct fidl_bsd_request *request, struct bsd_notify_v1_ListRequest *q)
+{
+	list_method(argument, request, NOTIFY_OP_LIST_SUBSCRIPTIONS, q);
+}
+
+static void
+on_list_timers(void *argument, struct fidl_bsd_connection *connection __unused,
+    struct fidl_bsd_request *request, struct bsd_notify_v1_ListRequest *q)
+{
+	list_method(argument, request, NOTIFY_OP_LIST_TIMERS, q);
+}
+
+static void
+on_state_watch(void *argument, struct fidl_bsd_connection *connection __unused,
+    struct fidl_bsd_request *request,
+    struct bsd_notify_v1_StateWatchRequest *q)
+{
+	union notify_buffer buffer;
+	struct notify_state_watch_request *r;
+
+	r = record(&buffer, NOTIFY_OP_STATE_WATCH, sizeof(*r));
+	r->topic.topic_length = topic_field(r->topic.topic, q->topic,
+	    q->topic_size);
+	r->timeout_ms = q->timeout_ms;
+	router_request(argument, request, &buffer,
+	    sizeof(struct notify_msg) + sizeof(*r));
+}
+
+static const struct bsd_notify_v1_Notify_server router_handlers = {
+	.GetProtocolInfo = on_protocol_info,
+	.Hello = on_hello,
+	.Subscribe = on_subscribe,
+	.Unsubscribe = on_unsubscribe,
+	.Publish = on_publish,
+	.Next = on_next,
+	.TimerAdd = on_timer_add,
+	.TimerCancel = on_timer_cancel,
+	.GetStats = on_stats,
+	.StateSet = on_state_set,
+	.StateGet = on_state_get,
+	.StateClear = on_state_clear,
+	.ListSubscriptions = on_list_subscriptions,
+	.ListTimers = on_list_timers,
+	.StateWatch = on_state_watch
+};
+#endif
+
+#ifdef NOTIFY_ROUTER_TEST
+/* The router tests drive dispatch with records over an internal socket. */
+static int
+router_handle_request(struct router *router, struct router_session *session,
+    void *unused __unused)
+{
+	union notify_buffer buffer;
+	struct router_call call = { 0 };
+	ssize_t received;
+
+	received = internal_receive(session->fd, buffer.bytes, sizeof(buffer),
+	    NOTIFY_MESSAGE_REQUEST);
+	if (received == -1)
+		return (-1);
+	call.wire = *(const struct notify_msg *)(const void *)buffer.bytes;
+	return (router_dispatch(router, session, &call,
+	    (const void *)buffer.bytes, (size_t)received));
+}
+#endif
+
+#ifndef NOTIFY_ROUTER_TEST
 
 static int
 router_start_session(int fd, const char *peer_label, service_rights_t rights,

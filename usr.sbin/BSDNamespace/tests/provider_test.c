@@ -1,20 +1,22 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
- * Plane tests for bsdnamespace(8)'s per-client request handler.
+ * Plane tests for bsdnamespace(8)'s per-client bsd.namespace.v1 server.
  *
  * A real capability channel is created through /dev/mac_capability; bsdnamespace's
  * worker (bsdnamespace_test_worker) runs the provider end in a forked child while the
- * test drives the client end with a libservice session, exactly as it would in
- * production over a held system.Namespace channel.
+ * test drives the client end with the generated bsd.namespace.v1 client bindings
+ * (the encoder libnamespacecmp uses), exactly as it would in production over a
+ * held system.Namespace channel.  Adversarial frames go through a raw libservice
+ * session.
  *
- * The message-validation cases (bad length, unexpected descriptor, unknown
- * opcode/flag bits, relative path) are decided before any jail is touched, so
- * they need only the channel plane (root + the mac_capability device).  The
- * live-jail cases (definition-mismatch reuse -> EEXIST, a second ephemeral ENTER
- * on one channel -> EALREADY) additionally require the privilege to run
- * jail_set(2) against a real root path; where that is not available under the
- * harness they SKIP with a clear reason rather than fail.
+ * The message-validation cases (malformed frames, unexpected descriptor, unknown
+ * method or flag bits, relative path, embedded NUL) are decided before any jail
+ * is touched, so they need only the channel plane (root + the mac_capability
+ * device).  The live-jail cases (definition-mismatch reuse -> EEXIST, a second
+ * ephemeral Enter on one session -> EALREADY) additionally require the privilege
+ * to run jail_set(2) against a real root path; where that is not available under
+ * the harness they SKIP with a clear reason rather than fail.
  *
  * NOTE: in a non-root or plane-less environment (e.g. an unprivileged build
  * jail) every case here SKIPs at the channel-setup step.  The injectivity and
@@ -40,6 +42,8 @@
 #include <string.h>
 #include <unistd.h>
 
+#include <fidl/bsd.namespace.v1/c/bsd.h>
+#include <fidl/bsd/sync_c.h>
 #include <libservice.h>
 
 #include "bsdnamespace_proto.h"
@@ -48,8 +52,31 @@
 #define	TEST_CLIENT_LABEL	"org.test.bsdnamespace.client"
 
 struct fixture {
-	struct service_session	*session;
+	struct fidl_bsd_connection *client;	/* generated client */
+	struct service_session	*session;	/* raw frames */
 	pid_t			 child;
+};
+
+/* FIDL v2 transactional message header. */
+struct wire_header {
+	uint32_t txid;
+	uint8_t flags[3], magic;
+	uint64_t ordinal;
+};
+_Static_assert(sizeof(struct wire_header) == 16, "FIDL header");
+
+#define	ORD_INFO	UINT64_C(0x11468a93efb7d5cb)
+#define	ORD_ENTER	UINT64_C(0x03c4615a24617c51)
+#define	ORD_DESTROY	UINT64_C(0x7f330ab1fffed03c)
+#define	ORD_LIST	UINT64_C(0x2e2c8e6b0182430d)
+
+struct result {
+	bool done;
+	int error;		/* transport error */
+	int status;		/* application errno */
+	uint32_t value;
+	int fd;
+	struct bsdnamespace_list_reply *list;
 };
 
 /* Open a capability endpoint by well-known name, or -1 (errno preserved). */
@@ -173,8 +200,37 @@ fail:
 }
 
 static void
-fixture_create_labeled(struct fixture *fixture, const char *label)
+wait_result(struct fixture *fixture, struct result *r)
 {
+	struct timespec deadline;
+
+	ATF_REQUIRE_EQ(0, fidl_bsd_sync_deadline(&deadline, 10000));
+	if (r->error == 0)
+		r->error = fidl_bsd_sync_wait(fixture->client, &r->done,
+		    &deadline);
+}
+
+static void
+info_done(void *p, int error, struct bsd_namespace_v1_ProtocolInfo *v)
+{
+	struct result *r = p;
+
+	r->done = true;
+	r->error = error;
+	if (!error)
+		r->value = v->wire_version;
+}
+
+/*
+ * Stand up a worker serving `label` on one end of a fresh channel.  The client
+ * end is a negotiated generated client, or (raw) a libservice session.
+ */
+static void
+fixture_start(struct fixture *fixture, const char *label, bool raw)
+{
+	struct fidl_bsd_empty empty = { 0 };
+	struct result r = { .fd = -1 };
+	uint32_t txid;
 	int client, provider;
 
 	memset(fixture, 0, sizeof(*fixture));
@@ -192,14 +248,25 @@ fixture_create_labeled(struct fixture *fixture, const char *label)
 		_exit(bsdnamespace_test_worker(provider, label));
 	}
 	close(provider);
-	ATF_REQUIRE_EQ(0, service_session_create(client, &fixture->session));
+	if (raw) {
+		ATF_REQUIRE_EQ(0, service_session_create(client,
+		    &fixture->session));
+		return;
+	}
+	ATF_REQUIRE_EQ(0, fidl_bsd_connection_create(client, FIDL_BSD_CLIENT,
+	    &fixture->client));
+	r.error = bsd_namespace_v1_Namespace_GetProtocolInfo(fixture->client,
+	    &empty, info_done, &r, &txid);
+	wait_result(fixture, &r);
+	ATF_REQUIRE_EQ(0, r.error);
+	ATF_REQUIRE_EQ(BSDNAMESPACE_WIRE_VERSION, r.value);
 }
 
 static void
 fixture_create(struct fixture *fixture)
 {
 
-	fixture_create_labeled(fixture, TEST_CLIENT_LABEL);
+	fixture_start(fixture, TEST_CLIENT_LABEL, false);
 }
 
 static void
@@ -207,52 +274,13 @@ fixture_destroy(struct fixture *fixture)
 {
 	int status;
 
-	service_session_close(fixture->session);
+	if (fixture->client != NULL)
+		fidl_bsd_connection_destroy(fixture->client);
+	if (fixture->session != NULL)
+		service_session_close(fixture->session);
 	ATF_REQUIRE_EQ(fixture->child, waitpid(fixture->child, &status, 0));
 	ATF_CHECK(WIFEXITED(status));
 	ATF_CHECK_EQ(0, WEXITSTATUS(status));
-}
-
-/*
- * Issue one request and collect the reply.  length lets a caller send a
- * deliberately wrong-sized message; fd optionally attaches a descriptor.  On a
- * successful transport, returns 0, fills *rp, and (when out_fd != NULL) reports
- * the returned descriptor or -1 if none.
- */
-static int
-request(struct fixture *fixture, const struct bsdnamespace_request *rq, size_t length,
-    int fd, struct bsdnamespace_reply *rp, int *out_fd)
-{
-	struct service_call_options options = SERVICE_CALL_OPTIONS_INITIALIZER;
-	struct service_message outgoing;
-	struct service_reply incoming;
-	uint8_t buffer[sizeof(struct bsdnamespace_reply) + 16];
-	int fdslot[1];
-
-	memset(&outgoing, 0, sizeof(outgoing));
-	outgoing.size = sizeof(outgoing);
-	outgoing.data = rq;
-	outgoing.length = length;
-	if (fd >= 0) {
-		fdslot[0] = fd;
-		outgoing.fds = fdslot;
-		outgoing.nfds = 1;
-	}
-	memset(&incoming, 0, sizeof(incoming));
-	incoming.size = sizeof(incoming);
-	incoming.data = buffer;
-	incoming.capacity = sizeof(buffer);
-	incoming.fds = fdslot;
-	incoming.fd_capacity = 1;
-	options.timeout_ms = 5000;
-	if (service_session_call(fixture->session, &outgoing, &incoming,
-	    &options) == -1)
-		return (-1);
-	ATF_REQUIRE(incoming.length >= sizeof(*rp));
-	memcpy(rp, buffer, sizeof(*rp));
-	if (out_fd != NULL)
-		*out_fd = incoming.nfds >= 1 ? incoming.fds[0] : -1;
-	return (0);
 }
 
 static void
@@ -269,125 +297,302 @@ init_request(struct bsdnamespace_request *rq, uint32_t flags, const char *path,
 	(void)strlcpy(rq->ip6_addr, ip6, sizeof(rq->ip6_addr));
 }
 
+static void
+enter_done(void *p, int error, struct bsd_namespace_v1_Namespace_Enter_Result *v)
+{
+	struct result *r = p;
+
+	r->done = true;
+	r->error = error;
+	if (error)
+		return;
+	if (v->tag == bsd_namespace_v1_Namespace_Enter_Result_err_tag) {
+		r->status = (int)v->value.err;
+		return;
+	}
+	ATF_REQUIRE_EQ(bsd_namespace_v1_Namespace_Enter_Result_response_tag,
+	    v->tag);
+	r->fd = fidl_bsd_take_fd(&v->value.response.jail);
+}
+
 /*
- * Issue a lifecycle-control request (DESTROY or LIST) and collect the reply.
- * length lets a caller send a deliberately wrong-sized message; fd optionally
- * attaches a descriptor.  On a successful transport returns 0 and copies up to
- * rpcap reply bytes into rp (storing the actual length in *rplen when non-NULL);
- * returns -1 when the transport rejects the message (terminal).
+ * Enter with the request's NUL-terminated fields (path_size overrides the
+ * path length when nonzero, to carry an embedded NUL); returns the
+ * application errno and the delivered descriptor (or -1) in *out_fd.
  */
 static int
-control_call(struct fixture *fixture, uint32_t op, size_t length, int fd,
-    void *rp, size_t rpcap, size_t *rplen, int *out_fd)
+enter_sized(struct fixture *fixture, const struct bsdnamespace_request *rq,
+    size_t path_size, int *out_fd)
+{
+	struct bsd_namespace_v1_EnterRequest request;
+	struct result r = { .fd = -1 };
+	uint32_t txid;
+
+	memset(&request, 0, sizeof(request));
+	request.flags = rq->flags;
+	request.path = rq->path;
+	request.path_size = path_size != 0 ? path_size : strlen(rq->path);
+	request.hostname = rq->hostname;
+	request.hostname_size = strlen(rq->hostname);
+	request.ip4_addr = rq->ip4_addr;
+	request.ip4_addr_size = strlen(rq->ip4_addr);
+	request.ip6_addr = rq->ip6_addr;
+	request.ip6_addr_size = strlen(rq->ip6_addr);
+	r.error = bsd_namespace_v1_Namespace_Enter(fixture->client, &request,
+	    enter_done, &r, &txid);
+	wait_result(fixture, &r);
+	ATF_REQUIRE_EQ(0, r.error);
+	if (out_fd != NULL)
+		*out_fd = r.fd;
+	else if (r.fd >= 0)
+		close(r.fd);
+	return (r.status);
+}
+
+static int
+enter(struct fixture *fixture, const struct bsdnamespace_request *rq,
+    int *out_fd)
+{
+
+	return (enter_sized(fixture, rq, 0, out_fd));
+}
+
+static void
+destroy_done(void *p, int error,
+    struct bsd_namespace_v1_Namespace_Destroy_Result *v)
+{
+	struct result *r = p;
+
+	r->done = true;
+	r->error = error;
+	if (!error && v->tag == bsd_namespace_v1_Namespace_Destroy_Result_err_tag)
+		r->status = (int)v->value.err;
+}
+
+static int
+destroy_jail(struct fixture *fixture)
+{
+	struct fidl_bsd_empty empty = { 0 };
+	struct result r = { .fd = -1 };
+	uint32_t txid;
+
+	r.error = bsd_namespace_v1_Namespace_Destroy(fixture->client, &empty,
+	    destroy_done, &r, &txid);
+	wait_result(fixture, &r);
+	ATF_REQUIRE_EQ(0, r.error);
+	return (r.status);
+}
+
+static void
+copy_field(char *out, size_t outsz, const char *in, size_t len)
+{
+
+	ATF_REQUIRE(len < outsz);
+	memcpy(out, in, len);
+	out[len] = '\0';
+}
+
+static void
+list_done(void *p, int error, struct bsd_namespace_v1_Namespace_List_Result *v)
+{
+	struct result *r = p;
+	struct bsdnamespace_list_reply *lr = r->list;
+	const struct bsd_namespace_v1_JailInfo *jail;
+
+	r->done = true;
+	r->error = error;
+	if (error)
+		return;
+	if (v->tag == bsd_namespace_v1_Namespace_List_Result_err_tag) {
+		lr->status = (int32_t)v->value.err;
+		return;
+	}
+	jail = v->value.response.jail;
+	if (jail == NULL)
+		return;
+	lr->present = 1;
+	lr->jid = jail->jid;
+	lr->flags = jail->flags;
+	copy_field(lr->path, sizeof(lr->path), jail->path, jail->path_size);
+	copy_field(lr->hostname, sizeof(lr->hostname), jail->hostname,
+	    jail->hostname_size);
+	copy_field(lr->ip4_addr, sizeof(lr->ip4_addr), jail->ip4_addr,
+	    jail->ip4_addr_size);
+	copy_field(lr->ip6_addr, sizeof(lr->ip6_addr), jail->ip6_addr,
+	    jail->ip6_addr_size);
+}
+
+/* List into *lr (status, present and the definition, as the legacy reply). */
+static void
+list_jail(struct fixture *fixture, struct bsdnamespace_list_reply *lr)
+{
+	struct fidl_bsd_empty empty = { 0 };
+	struct result r = { .fd = -1 };
+	uint32_t txid;
+
+	memset(lr, 0, sizeof(*lr));
+	r.list = lr;
+	r.error = bsd_namespace_v1_Namespace_List(fixture->client, &empty,
+	    list_done, &r, &txid);
+	wait_result(fixture, &r);
+	ATF_REQUIRE_EQ(0, r.error);
+}
+
+/* Send raw bytes (and optionally one descriptor); return the call result. */
+static int
+send_raw(struct service_session *session, const void *data, size_t length,
+    int attach_fd)
 {
 	struct service_call_options options = SERVICE_CALL_OPTIONS_INITIALIZER;
 	struct service_message outgoing;
 	struct service_reply incoming;
-	struct bsdnamespace_control_request creq;
-	uint8_t buffer[sizeof(struct bsdnamespace_list_reply) + 16];
-	int fdslot[1];
+	uint8_t reply[256];
+	int fd, received = -1, rc;
 
-	memset(&creq, 0, sizeof(creq));
-	creq.op = op;
 	memset(&outgoing, 0, sizeof(outgoing));
 	outgoing.size = sizeof(outgoing);
-	outgoing.data = &creq;
+	outgoing.data = data;
 	outgoing.length = length;
-	if (fd >= 0) {
-		fdslot[0] = fd;
-		outgoing.fds = fdslot;
+	if (attach_fd >= 0) {
+		fd = attach_fd;
+		outgoing.fds = &fd;
 		outgoing.nfds = 1;
 	}
 	memset(&incoming, 0, sizeof(incoming));
 	incoming.size = sizeof(incoming);
-	incoming.data = buffer;
-	incoming.capacity = sizeof(buffer);
-	incoming.fds = fdslot;
+	incoming.data = reply;
+	incoming.capacity = sizeof(reply);
+	incoming.fds = &received;
 	incoming.fd_capacity = 1;
 	options.timeout_ms = 5000;
-	if (service_session_call(fixture->session, &outgoing, &incoming,
-	    &options) == -1)
-		return (-1);
-	ATF_REQUIRE(incoming.length <= rpcap);
-	memcpy(rp, buffer, incoming.length);
-	if (rplen != NULL)
-		*rplen = incoming.length;
-	if (out_fd != NULL)
-		*out_fd = incoming.nfds >= 1 ? incoming.fds[0] : -1;
-	return (0);
+	rc = service_session_call(session, &outgoing, &incoming, &options);
+	if (rc == 0 && incoming.nfds != 0 && received >= 0)
+		(void)close(received);
+	return (rc);
 }
 
-ATF_TC(rejects_unexpected_descriptor);
-ATF_TC_HEAD(rejects_unexpected_descriptor, tc)
+/* A raw frame: header plus `body` bytes. */
+static int
+send_frame(struct service_session *session, uint64_t ordinal,
+    const void *body, size_t body_length, int attach_fd)
 {
-	atf_tc_set_md_var(tc, "require.user", "root");
+	uint8_t frame[256];
+	struct wire_header header = { 3, { 2, 0, 0 }, 1, ordinal };
+
+	ATF_REQUIRE(sizeof(header) + body_length <= sizeof(frame));
+	memcpy(frame, &header, sizeof(header));
+	if (body_length != 0)
+		memcpy(frame + sizeof(header), body, body_length);
+	return (send_raw(session, frame, sizeof(header) + body_length,
+	    attach_fd));
 }
-ATF_TC_BODY(rejects_unexpected_descriptor, tc)
+
+/*
+ * The frame is refused by closing the session: no reply, and nothing later on
+ * the session is honoured.  `negotiate` first answers GetProtocolInfo, so the
+ * rejection is the provider's decoding, not the negotiation rule.
+ */
+static void
+reject(bool negotiate, uint64_t ordinal, const void *body, size_t length,
+    int attach_fd)
 {
 	struct fixture fixture;
-	struct bsdnamespace_request rq;
-	struct bsdnamespace_reply rp;
-	int null, out_fd;
 
-	require_plane();
-	fixture_create(&fixture);
-	init_request(&rq, 0, "/jails/example", "", "", "");
-	null = open("/dev/null", O_RDONLY | O_CLOEXEC);
-	ATF_REQUIRE(null >= 0);
-	out_fd = -1;
-	/*
-	 * An unexpected descriptor is a terminal protocol violation.  bsdnamespace's
-	 * worker channel accepts no descriptors (max_queued_fds == 0), so the
-	 * transport rejects the message and tears the channel down rather than
-	 * delivering it to the handler for a soft EPROTO reply -- the call
-	 * therefore fails outright.  Fail-closed either way; this locks in the
-	 * observed terminal behavior (cf. bsdaudit's
-	 * provider_unexpected_descriptor_is_terminal).
-	 */
-	ATF_CHECK(request(&fixture, &rq, sizeof(rq), null, &rp, &out_fd) == -1);
-	ATF_CHECK_EQ(-1, out_fd);
-	close(null);
+	fixture_start(&fixture, TEST_CLIENT_LABEL, true);
+	if (negotiate)
+		ATF_REQUIRE_EQ(0, send_frame(fixture.session, ORD_INFO, NULL, 0,
+		    -1));
+	ATF_CHECK_EQ(-1, send_frame(fixture.session, ordinal, body, length,
+	    attach_fd));
+	ATF_CHECK(errno != ETIMEDOUT);
+	ATF_CHECK_EQ(-1, send_frame(fixture.session, ORD_INFO, NULL, 0, -1));
 	fixture_destroy(&fixture);
 }
 
-ATF_TC(rejects_short_message);
-ATF_TC_HEAD(rejects_short_message, tc)
+/*
+ * A well-formed Enter body for "/x" with every other string empty: flags,
+ * then four string headers, then the out-of-line path bytes (padded).
+ */
+struct enter_frame {
+	uint32_t flags;
+	uint32_t pad;
+	uint64_t path_size, path_presence;
+	uint64_t host_size, host_presence;
+	uint64_t ip4_size, ip4_presence;
+	uint64_t ip6_size, ip6_presence;
+	char path[8];
+};
+
+static const struct enter_frame good_enter = {
+	0, 0, 2, UINT64_MAX, 0, UINT64_MAX, 0, UINT64_MAX, 0, UINT64_MAX,
+	"/x"
+};
+
+/*
+ * Malformed frames close the session without touching a jail: a method before
+ * negotiation, an unknown method, a truncated header, an Enter without or with
+ * a short body, a Destroy or List with trailing bytes, a pre-FIDL record and an
+ * attached descriptor (whose provider copy is closed).
+ */
+ATF_TC(malformed_frames_are_rejected);
+ATF_TC_HEAD(malformed_frames_are_rejected, tc)
 {
 	atf_tc_set_md_var(tc, "require.user", "root");
 }
-ATF_TC_BODY(rejects_short_message, tc)
+ATF_TC_BODY(malformed_frames_are_rejected, tc)
 {
+	struct bsdnamespace_control_request legacy;
 	struct fixture fixture;
-	struct bsdnamespace_request rq;
-	struct bsdnamespace_reply rp;
+	uint64_t trailing = 0;
+	int pipefd[2];
+	char byte;
 
 	require_plane();
-	fixture_create(&fixture);
-	init_request(&rq, 0, "/jails/example", "", "", "");
-	ATF_REQUIRE_EQ(0, request(&fixture, &rq, sizeof(rq.op) + sizeof(rq.flags),
-	    -1, &rp, NULL));
-	ATF_CHECK_EQ(EPROTO, rp.status);
+	/* The well-formed raw List is answered. */
+	fixture_start(&fixture, TEST_CLIENT_LABEL, true);
+	ATF_REQUIRE_EQ(0, send_frame(fixture.session, ORD_INFO, NULL, 0, -1));
+	ATF_CHECK_EQ(0, send_frame(fixture.session, ORD_LIST, NULL, 0, -1));
 	fixture_destroy(&fixture);
-}
 
-ATF_TC(rejects_unknown_opcode);
-ATF_TC_HEAD(rejects_unknown_opcode, tc)
-{
-	atf_tc_set_md_var(tc, "require.user", "root");
-}
-ATF_TC_BODY(rejects_unknown_opcode, tc)
-{
-	struct fixture fixture;
-	struct bsdnamespace_request rq;
-	struct bsdnamespace_reply rp;
+	/* Before negotiation. */
+	reject(false, ORD_LIST, NULL, 0, -1);
+	/* Unknown strict method. */
+	reject(true, UINT64_C(0x7fff), NULL, 0, -1);
+	/* Truncated header (8 of 16 bytes). */
+	fixture_start(&fixture, TEST_CLIENT_LABEL, true);
+	{
+		struct wire_header h = { 3, { 2, 0, 0 }, 1, ORD_LIST };
 
-	require_plane();
-	fixture_create(&fixture);
-	init_request(&rq, 0, "/jails/example", "", "", "");
-	rq.op = 0x4242;
-	ATF_REQUIRE_EQ(0, request(&fixture, &rq, sizeof(rq), -1, &rp, NULL));
-	ATF_CHECK_EQ(EINVAL, rp.status);
+		ATF_CHECK_EQ(-1, send_raw(fixture.session, &h, 8, -1));
+	}
 	fixture_destroy(&fixture);
+	/* Enter without its body, and with the path bytes cut off. */
+	reject(true, ORD_ENTER, NULL, 0, -1);
+	reject(true, ORD_ENTER, &good_enter, sizeof(good_enter) - 8, -1);
+	/* A path over the 1023-byte bound. */
+	{
+		struct enter_frame bad = good_enter;
+
+		bad.path_size = 1024;
+		reject(true, ORD_ENTER, &bad, sizeof(bad), -1);
+	}
+	/* Destroy and List carry no payload: trailing bytes. */
+	reject(true, ORD_DESTROY, &trailing, sizeof(trailing), -1);
+	reject(true, ORD_LIST, &trailing, sizeof(trailing), -1);
+	/* A pre-FIDL LIST record. */
+	memset(&legacy, 0, sizeof(legacy));
+	legacy.op = BSDNAMESPACE_OP_LIST_JAILS;
+	fixture_start(&fixture, TEST_CLIENT_LABEL, true);
+	ATF_CHECK_EQ(-1, send_raw(fixture.session, &legacy, sizeof(legacy),
+	    -1));
+	fixture_destroy(&fixture);
+	/* An attached descriptor: rejected, and the provider's copy closed. */
+	ATF_REQUIRE_EQ(0, pipe(pipefd));
+	reject(true, ORD_DESTROY, NULL, 0, pipefd[1]);
+	close(pipefd[1]);
+	ATF_REQUIRE(fcntl(pipefd[0], F_SETFL, O_NONBLOCK) != -1);
+	ATF_CHECK_EQ(0, read(pipefd[0], &byte, 1));
+	close(pipefd[0]);
 }
 
 ATF_TC(rejects_unknown_flag_bits);
@@ -399,13 +604,13 @@ ATF_TC_BODY(rejects_unknown_flag_bits, tc)
 {
 	struct fixture fixture;
 	struct bsdnamespace_request rq;
-	struct bsdnamespace_reply rp;
+	int out_fd = -1;
 
 	require_plane();
 	fixture_create(&fixture);
 	init_request(&rq, BSDNAMESPACE_F_EPHEMERAL | 0x4u, "/jails/example", "", "", "");
-	ATF_REQUIRE_EQ(0, request(&fixture, &rq, sizeof(rq), -1, &rp, NULL));
-	ATF_CHECK_EQ(EINVAL, rp.status);
+	ATF_CHECK_EQ(EINVAL, enter(&fixture, &rq, &out_fd));
+	ATF_CHECK_EQ(-1, out_fd);
 	fixture_destroy(&fixture);
 }
 
@@ -418,13 +623,36 @@ ATF_TC_BODY(rejects_relative_path, tc)
 {
 	struct fixture fixture;
 	struct bsdnamespace_request rq;
-	struct bsdnamespace_reply rp;
 
 	require_plane();
 	fixture_create(&fixture);
 	init_request(&rq, 0, "relative/path", "", "", "");
-	ATF_REQUIRE_EQ(0, request(&fixture, &rq, sizeof(rq), -1, &rp, NULL));
-	ATF_CHECK_EQ(EINVAL, rp.status);
+	ATF_CHECK_EQ(EINVAL, enter(&fixture, &rq, NULL));
+	/* The session survives an application error. */
+	init_request(&rq, 0, "", "", "", "");
+	ATF_CHECK_EQ(EINVAL, enter(&fixture, &rq, NULL));
+	fixture_destroy(&fixture);
+}
+
+/* An embedded NUL would truncate the path: EINVAL, and the session lives. */
+ATF_TC(rejects_embedded_nul);
+ATF_TC_HEAD(rejects_embedded_nul, tc)
+{
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(rejects_embedded_nul, tc)
+{
+	struct fixture fixture;
+	struct bsdnamespace_request rq;
+	struct bsdnamespace_list_reply lr;
+
+	require_plane();
+	fixture_create(&fixture);
+	init_request(&rq, 0, "/jails/x", "", "", "");
+	rq.path[2] = '\0';
+	ATF_CHECK_EQ(EINVAL, enter_sized(&fixture, &rq, 8, NULL));
+	list_jail(&fixture, &lr);
+	ATF_CHECK_EQ(0, lr.status);
 	fixture_destroy(&fixture);
 }
 
@@ -467,7 +695,7 @@ ATF_TC_BODY(reuse_definition_mismatch_is_eexist, tc)
 {
 	struct fixture fixture;
 	struct bsdnamespace_request rq;
-	struct bsdnamespace_reply rp;
+	struct { int status; } rp;
 	char root[PATH_MAX];
 	int out_fd;
 
@@ -478,7 +706,7 @@ ATF_TC_BODY(reuse_definition_mismatch_is_eexist, tc)
 	/* First ENTER establishes the persistent jail (hostname host-one). */
 	init_request(&rq, 0, root, "host-one", "", "");
 	out_fd = -1;
-	ATF_REQUIRE_EQ(0, request(&fixture, &rq, sizeof(rq), -1, &rp, &out_fd));
+	rp.status = enter(&fixture, &rq, &out_fd);
 	if (rp.status != 0) {
 		fixture_destroy(&fixture);
 		(void)rmdir(root);
@@ -492,7 +720,7 @@ ATF_TC_BODY(reuse_definition_mismatch_is_eexist, tc)
 	fixture_destroy(&fixture);
 	fixture_create(&fixture);
 	out_fd = -1;
-	ATF_REQUIRE_EQ(0, request(&fixture, &rq, sizeof(rq), -1, &rp, &out_fd));
+	rp.status = enter(&fixture, &rq, &out_fd);
 	ATF_REQUIRE_MSG(rp.status == 0, "reuse with empty IP lists: %s",
 	    strerror(rp.status));
 	ATF_REQUIRE(out_fd >= 0);
@@ -501,7 +729,7 @@ ATF_TC_BODY(reuse_definition_mismatch_is_eexist, tc)
 	/* Same channel/label, mismatched definition -> hard EEXIST. */
 	init_request(&rq, 0, root, "host-two", "", "");
 	out_fd = -1;
-	ATF_REQUIRE_EQ(0, request(&fixture, &rq, sizeof(rq), -1, &rp, &out_fd));
+	rp.status = enter(&fixture, &rq, &out_fd);
 	ATF_CHECK_MSG(rp.status == EEXIST,
 	    "reuse with mismatched hostname returned status %d (%s), want EEXIST",
 	    rp.status, strerror(rp.status));
@@ -526,7 +754,7 @@ ATF_TC_BODY(second_ephemeral_enter_is_ealready, tc)
 {
 	struct fixture fixture;
 	struct bsdnamespace_request rq;
-	struct bsdnamespace_reply rp;
+	struct { int status; } rp;
 	char root[PATH_MAX];
 	int out_fd;
 
@@ -536,7 +764,7 @@ ATF_TC_BODY(second_ephemeral_enter_is_ealready, tc)
 
 	init_request(&rq, BSDNAMESPACE_F_EPHEMERAL, root, "", "", "");
 	out_fd = -1;
-	ATF_REQUIRE_EQ(0, request(&fixture, &rq, sizeof(rq), -1, &rp, &out_fd));
+	rp.status = enter(&fixture, &rq, &out_fd);
 	if (rp.status != 0) {
 		fixture_destroy(&fixture);
 		(void)rmdir(root);
@@ -549,7 +777,7 @@ ATF_TC_BODY(second_ephemeral_enter_is_ealready, tc)
 	/* Second ephemeral ENTER on the same channel is refused. */
 	init_request(&rq, BSDNAMESPACE_F_EPHEMERAL, root, "", "", "");
 	out_fd = -1;
-	ATF_REQUIRE_EQ(0, request(&fixture, &rq, sizeof(rq), -1, &rp, &out_fd));
+	rp.status = enter(&fixture, &rq, &out_fd);
 	ATF_CHECK_EQ(EALREADY, rp.status);
 	ATF_CHECK_EQ(-1, out_fd);
 
@@ -574,10 +802,9 @@ ATF_TC_BODY(lifecycle_list_then_destroy, tc)
 {
 	struct fixture fixture;
 	struct bsdnamespace_request rq;
-	struct bsdnamespace_reply rp;
+	struct { int status; } rp;
 	struct bsdnamespace_list_reply lr;
 	char root[PATH_MAX];
-	size_t len;
 	int out_fd;
 
 	require_plane();
@@ -587,7 +814,7 @@ ATF_TC_BODY(lifecycle_list_then_destroy, tc)
 	/* ENTER establishes the persistent jail (hostname host-life). */
 	init_request(&rq, 0, root, "host-life", "", "");
 	out_fd = -1;
-	ATF_REQUIRE_EQ(0, request(&fixture, &rq, sizeof(rq), -1, &rp, &out_fd));
+	rp.status = enter(&fixture, &rq, &out_fd);
 	if (rp.status != 0) {
 		fixture_destroy(&fixture);
 		(void)rmdir(root);
@@ -598,11 +825,7 @@ ATF_TC_BODY(lifecycle_list_then_destroy, tc)
 		close(out_fd);
 
 	/* LIST reports the jail present with its definition. */
-	memset(&lr, 0, sizeof(lr));
-	ATF_REQUIRE_EQ(0, control_call(&fixture, BSDNAMESPACE_OP_LIST_JAILS,
-	    sizeof(struct bsdnamespace_control_request), -1, &lr, sizeof(lr), &len,
-	    NULL));
-	ATF_REQUIRE_EQ(sizeof(lr), len);
+	list_jail(&fixture, &lr);
 	ATF_CHECK_EQ(0, lr.status);
 	ATF_CHECK_EQ(1, lr.present);
 	ATF_CHECK(lr.jid > 0);
@@ -616,25 +839,16 @@ ATF_TC_BODY(lifecycle_list_then_destroy, tc)
 	    lr.flags);
 
 	/* DESTROY removes it. */
-	memset(&rp, 0, sizeof(rp));
-	ATF_REQUIRE_EQ(0, control_call(&fixture, BSDNAMESPACE_OP_DESTROY_JAIL,
-	    sizeof(struct bsdnamespace_control_request), -1, &rp, sizeof(rp), NULL,
-	    NULL));
+	rp.status = destroy_jail(&fixture);
 	ATF_CHECK_EQ(0, rp.status);
 
 	/* A second LIST now reports no jail. */
-	memset(&lr, 0, sizeof(lr));
-	ATF_REQUIRE_EQ(0, control_call(&fixture, BSDNAMESPACE_OP_LIST_JAILS,
-	    sizeof(struct bsdnamespace_control_request), -1, &lr, sizeof(lr), NULL,
-	    NULL));
+	list_jail(&fixture, &lr);
 	ATF_CHECK_EQ(0, lr.status);
 	ATF_CHECK_EQ(0, lr.present);
 
 	/* A second DESTROY is ENOENT — nothing left to remove. */
-	memset(&rp, 0, sizeof(rp));
-	ATF_REQUIRE_EQ(0, control_call(&fixture, BSDNAMESPACE_OP_DESTROY_JAIL,
-	    sizeof(struct bsdnamespace_control_request), -1, &rp, sizeof(rp), NULL,
-	    NULL));
+	rp.status = destroy_jail(&fixture);
 	ATF_CHECK_EQ(ENOENT, rp.status);
 
 	fixture_destroy(&fixture);
@@ -657,10 +871,9 @@ ATF_TC_BODY(enter_with_ip6_lists_back, tc)
 {
 	struct fixture fixture;
 	struct bsdnamespace_request rq;
-	struct bsdnamespace_reply rp;
+	struct { int status; } rp;
 	struct bsdnamespace_list_reply lr;
 	char root[PATH_MAX];
-	size_t len;
 	int out_fd;
 
 	require_plane();
@@ -670,7 +883,7 @@ ATF_TC_BODY(enter_with_ip6_lists_back, tc)
 	/* ENTER establishes a persistent jail carrying an ip6 address. */
 	init_request(&rq, 0, root, "host-v6", "", "fd00::1");
 	out_fd = -1;
-	ATF_REQUIRE_EQ(0, request(&fixture, &rq, sizeof(rq), -1, &rp, &out_fd));
+	rp.status = enter(&fixture, &rq, &out_fd);
 	if (rp.status != 0) {
 		fixture_destroy(&fixture);
 		(void)rmdir(root);
@@ -681,11 +894,7 @@ ATF_TC_BODY(enter_with_ip6_lists_back, tc)
 		close(out_fd);
 
 	/* LIST reports the jail with its ip6 address filled in. */
-	memset(&lr, 0, sizeof(lr));
-	ATF_REQUIRE_EQ(0, control_call(&fixture, BSDNAMESPACE_OP_LIST_JAILS,
-	    sizeof(struct bsdnamespace_control_request), -1, &lr, sizeof(lr), &len,
-	    NULL));
-	ATF_REQUIRE_EQ(sizeof(lr), len);
+	list_jail(&fixture, &lr);
 	ATF_CHECK_EQ(0, lr.status);
 	ATF_CHECK_EQ(1, lr.present);
 	ATF_CHECK_STREQ(root, lr.path);
@@ -713,10 +922,9 @@ ATF_TC_BODY(enter_with_ip4_lists_back, tc)
 {
 	struct fixture fixture;
 	struct bsdnamespace_request rq;
-	struct bsdnamespace_reply rp;
+	struct { int status; } rp;
 	struct bsdnamespace_list_reply lr;
 	char root[PATH_MAX];
-	size_t len;
 	int out_fd;
 
 	require_plane();
@@ -726,7 +934,7 @@ ATF_TC_BODY(enter_with_ip4_lists_back, tc)
 	/* ENTER establishes a persistent jail carrying an ip4 address. */
 	init_request(&rq, 0, root, "host-v4", "10.99.0.1", "");
 	out_fd = -1;
-	ATF_REQUIRE_EQ(0, request(&fixture, &rq, sizeof(rq), -1, &rp, &out_fd));
+	rp.status = enter(&fixture, &rq, &out_fd);
 	if (rp.status != 0) {
 		fixture_destroy(&fixture);
 		(void)rmdir(root);
@@ -737,11 +945,7 @@ ATF_TC_BODY(enter_with_ip4_lists_back, tc)
 		close(out_fd);
 
 	/* LIST reports the jail with its ip4 address filled in and no vnet. */
-	memset(&lr, 0, sizeof(lr));
-	ATF_REQUIRE_EQ(0, control_call(&fixture, BSDNAMESPACE_OP_LIST_JAILS,
-	    sizeof(struct bsdnamespace_control_request), -1, &lr, sizeof(lr), &len,
-	    NULL));
-	ATF_REQUIRE_EQ(sizeof(lr), len);
+	list_jail(&fixture, &lr);
 	ATF_CHECK_EQ(0, lr.status);
 	ATF_CHECK_EQ(1, lr.present);
 	ATF_CHECK_STREQ(root, lr.path);
@@ -772,7 +976,7 @@ ATF_TC_BODY(reuse_ip6_mismatch_is_eexist, tc)
 {
 	struct fixture fixture;
 	struct bsdnamespace_request rq;
-	struct bsdnamespace_reply rp;
+	struct { int status; } rp;
 	char root[PATH_MAX];
 	int out_fd;
 
@@ -783,7 +987,7 @@ ATF_TC_BODY(reuse_ip6_mismatch_is_eexist, tc)
 	/* First ENTER establishes the persistent jail with ip6 fd00::1. */
 	init_request(&rq, 0, root, "host-v6", "", "fd00::1");
 	out_fd = -1;
-	ATF_REQUIRE_EQ(0, request(&fixture, &rq, sizeof(rq), -1, &rp, &out_fd));
+	rp.status = enter(&fixture, &rq, &out_fd);
 	if (rp.status != 0) {
 		fixture_destroy(&fixture);
 		(void)rmdir(root);
@@ -796,7 +1000,7 @@ ATF_TC_BODY(reuse_ip6_mismatch_is_eexist, tc)
 	/* Same channel/label/path/host, mismatched ip6 -> hard EEXIST. */
 	init_request(&rq, 0, root, "host-v6", "", "fd00::2");
 	out_fd = -1;
-	ATF_REQUIRE_EQ(0, request(&fixture, &rq, sizeof(rq), -1, &rp, &out_fd));
+	rp.status = enter(&fixture, &rq, &out_fd);
 	ATF_CHECK_MSG(rp.status == EEXIST,
 	    "reuse with mismatched ip6 returned status %d (%s), want EEXIST",
 	    rp.status, strerror(rp.status));
@@ -824,7 +1028,7 @@ ATF_TC_BODY(enter_with_vnet_creates_vnet_jail, tc)
 {
 	struct fixture fixture;
 	struct bsdnamespace_request rq;
-	struct bsdnamespace_reply rp;
+	struct { int status; } rp;
 	char root[PATH_MAX], name[64], vbuf[16];
 	int out_fd;
 
@@ -835,7 +1039,7 @@ ATF_TC_BODY(enter_with_vnet_creates_vnet_jail, tc)
 	/* ENTER establishes a persistent vnet jail. */
 	init_request(&rq, BSDNAMESPACE_F_VNET, root, "host-vnet", "", "");
 	out_fd = -1;
-	ATF_REQUIRE_EQ(0, request(&fixture, &rq, sizeof(rq), -1, &rp, &out_fd));
+	rp.status = enter(&fixture, &rq, &out_fd);
 	if (rp.status != 0) {
 		fixture_destroy(&fixture);
 		(void)rmdir(root);
@@ -859,13 +1063,8 @@ ATF_TC_BODY(enter_with_vnet_creates_vnet_jail, tc)
 	/* LIST must report the vnet nature back in flags (BSDNAMESPACE_F_VNET). */
 	{
 		struct bsdnamespace_list_reply lr;
-		size_t len;
 
-		memset(&lr, 0, sizeof(lr));
-		ATF_REQUIRE_EQ(0, control_call(&fixture, BSDNAMESPACE_OP_LIST_JAILS,
-		    sizeof(struct bsdnamespace_control_request), -1, &lr, sizeof(lr),
-		    &len, NULL));
-		ATF_REQUIRE_EQ(sizeof(lr), len);
+		list_jail(&fixture, &lr);
 		ATF_CHECK_EQ(1, lr.present);
 		ATF_CHECK_MSG((lr.flags & BSDNAMESPACE_F_VNET) != 0,
 		    "LIST of a vnet jail reported flags 0x%x without BSDNAMESPACE_F_VNET",
@@ -878,7 +1077,7 @@ ATF_TC_BODY(enter_with_vnet_creates_vnet_jail, tc)
 	 */
 	init_request(&rq, 0, root, "host-vnet", "", "");
 	out_fd = -1;
-	ATF_REQUIRE_EQ(0, request(&fixture, &rq, sizeof(rq), -1, &rp, &out_fd));
+	rp.status = enter(&fixture, &rq, &out_fd);
 	ATF_CHECK_MSG(rp.status == EEXIST,
 	    "non-vnet reuse of a vnet jail returned status %d (%s), want EEXIST",
 	    rp.status, strerror(rp.status));
@@ -889,77 +1088,13 @@ ATF_TC_BODY(enter_with_vnet_creates_vnet_jail, tc)
 	(void)rmdir(root);
 }
 
-/*
- * A DESTROY/LIST with a wrong message length (here: only the opcode word, one
- * byte short of a bsdnamespace_control_request) is a soft EPROTO reply — it is decided
- * before any jail is touched, so it needs only the channel plane.
- */
-ATF_TC(control_rejects_short_message);
-ATF_TC_HEAD(control_rejects_short_message, tc)
-{
-	atf_tc_set_md_var(tc, "require.user", "root");
-}
-ATF_TC_BODY(control_rejects_short_message, tc)
-{
-	struct fixture fixture;
-	struct bsdnamespace_reply rp;
-
-	require_plane();
-	fixture_create(&fixture);
-
-	memset(&rp, 0, sizeof(rp));
-	ATF_REQUIRE_EQ(0, control_call(&fixture, BSDNAMESPACE_OP_DESTROY_JAIL,
-	    sizeof(uint32_t), -1, &rp, sizeof(rp), NULL, NULL));
-	ATF_CHECK_EQ(EPROTO, rp.status);
-
-	memset(&rp, 0, sizeof(rp));
-	ATF_REQUIRE_EQ(0, control_call(&fixture, BSDNAMESPACE_OP_LIST_JAILS,
-	    sizeof(uint32_t), -1, &rp, sizeof(rp), NULL, NULL));
-	ATF_CHECK_EQ(EPROTO, rp.status);
-
-	fixture_destroy(&fixture);
-}
-
-/*
- * An unexpected descriptor on a DESTROY is a terminal transport rejection, not
- * a soft reply: bsdnamespace's worker channel accepts no descriptors, so the transport
- * tears the channel down (mirrors rejects_unexpected_descriptor for ENTER).
- */
-ATF_TC(control_rejects_unexpected_descriptor);
-ATF_TC_HEAD(control_rejects_unexpected_descriptor, tc)
-{
-	atf_tc_set_md_var(tc, "require.user", "root");
-}
-ATF_TC_BODY(control_rejects_unexpected_descriptor, tc)
-{
-	struct fixture fixture;
-	struct bsdnamespace_reply rp;
-	int null, out_fd;
-
-	require_plane();
-	fixture_create(&fixture);
-
-	null = open("/dev/null", O_RDONLY | O_CLOEXEC);
-	ATF_REQUIRE(null >= 0);
-	out_fd = -1;
-	memset(&rp, 0, sizeof(rp));
-	ATF_CHECK(control_call(&fixture, BSDNAMESPACE_OP_DESTROY_JAIL,
-	    sizeof(struct bsdnamespace_control_request), null, &rp, sizeof(rp), NULL,
-	    &out_fd) == -1);
-	ATF_CHECK_EQ(-1, out_fd);
-	close(null);
-
-	fixture_destroy(&fixture);
-}
-
 ATF_TP_ADD_TCS(tp)
 {
 
-	ATF_TP_ADD_TC(tp, rejects_unexpected_descriptor);
-	ATF_TP_ADD_TC(tp, rejects_short_message);
-	ATF_TP_ADD_TC(tp, rejects_unknown_opcode);
+	ATF_TP_ADD_TC(tp, malformed_frames_are_rejected);
 	ATF_TP_ADD_TC(tp, rejects_unknown_flag_bits);
 	ATF_TP_ADD_TC(tp, rejects_relative_path);
+	ATF_TP_ADD_TC(tp, rejects_embedded_nul);
 	ATF_TP_ADD_TC(tp, reuse_definition_mismatch_is_eexist);
 	ATF_TP_ADD_TC(tp, enter_with_ip4_lists_back);
 	ATF_TP_ADD_TC(tp, enter_with_ip6_lists_back);
@@ -967,7 +1102,5 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, enter_with_vnet_creates_vnet_jail);
 	ATF_TP_ADD_TC(tp, second_ephemeral_enter_is_ealready);
 	ATF_TP_ADD_TC(tp, lifecycle_list_then_destroy);
-	ATF_TP_ADD_TC(tp, control_rejects_short_message);
-	ATF_TP_ADD_TC(tp, control_rejects_unexpected_descriptor);
 	return (atf_no_error());
 }

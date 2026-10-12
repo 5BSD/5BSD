@@ -9,11 +9,15 @@ PKG_DEPS.bsdnetwork+=	bsdaudit
 PKG_DEPS.bsdnetwork+=	libauditcmp
 PKG_DEPS.bsdnetwork+=	libcasper
 PKG_DEPS.bsdnetwork+=	libchannel
+PKG_DEPS.bsdnetwork+=	libfidl
 PKG_DEPS.bsdnetwork+=	libnotify
 PKG_DEPS.bsdnetwork+=	libsysctlcmp
 PKG_DEPS.bsdnetwork+=	libnetworkcmp
 PKG_DEPS.bsdnetwork+=	libservice
 PKG_DEPS.bsdnetwork+=	switchboard
 PKG_DEPS.bsdnetwork+=	switchboardctl
+
+# Provider clients moved out of libservice.
+PKG_DEPS.bsdnetwork+=	libfilesystemcmp
 
 .include <bsd.pkg.mk>

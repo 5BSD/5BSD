@@ -1,12 +1,20 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Scripted system.Crypto provider for the libcryptocmp client tests.  It
+ * replaces libservice's service_open(): each call creates a real capability
+ * channel and serves the provider end with a bsd.crypto.v1 server on its own
+ * thread, so the client library runs over the native transport.  Each
+ * scripted fault or status applies to the next operation (not negotiation).
  */
-
 #include <sys/param.h>
 #include <sys/types.h>
 
+#include <assert.h>
+#include <channel.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <fidl/bsd.crypto.v1/c/bsd.h>
 #include <pthread.h>
 #include <stdbool.h>
 #include <stddef.h>
@@ -15,25 +23,17 @@
 #include <string.h>
 #include <unistd.h>
 
-#include <libservice.h>
-
 #include <cryptocmp.h>
 
 #include "fake_service.h"
 
-struct service_context {
-	int unused;
-};
+int service_open(const char *, int *);
+int service_budget_timeout(uint32_t *);
 
-struct service_session {
-	unsigned ident;
-	int failed;
-};
-
-static struct service_context context;
 static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t changed = PTHREAD_COND_INITIALIZER;
 static enum fake_service_fault next_fault;
-static unsigned calls, closed, created, failed;
+static unsigned calls, closed, created;
 static int next_status, last_fd = -1;
 
 void
@@ -41,10 +41,15 @@ fake_service_reset(void)
 {
 
 	pthread_mutex_lock(&lock);
+	/* Let earlier sessions' servers notice their clients left. */
+	while (closed < created)
+		pthread_cond_wait(&changed, &lock);
 	next_fault = FAKE_SERVICE_FAULT_NONE;
 	next_status = 0;
+	if (last_fd >= 0)
+		close(last_fd);
 	last_fd = -1;
-	calls = closed = created = failed = 0;
+	calls = closed = created = 0;
 	pthread_mutex_unlock(&lock);
 }
 
@@ -66,14 +71,6 @@ fake_service_status_next(int status)
 	pthread_mutex_unlock(&lock);
 }
 
-#define COUNTER(name, field) \
-	unsigned name(void) { unsigned value; pthread_mutex_lock(&lock); \
-	value = field; pthread_mutex_unlock(&lock); return (value); }
-COUNTER(fake_service_calls, calls)
-COUNTER(fake_service_closed, closed)
-COUNTER(fake_service_created, created)
-COUNTER(fake_service_failed, failed)
-
 int
 fake_service_last_fd(void)
 {
@@ -85,261 +82,321 @@ fake_service_last_fd(void)
 	return (fd);
 }
 
-int
-service_acquire(struct service_context **result)
-{
+#define COUNTER(name, value)                                                  \
+unsigned                                                                      \
+name(void)                                                                    \
+{                                                                             \
+	unsigned result;                                                      \
+	pthread_mutex_lock(&lock);                                            \
+	result = value;                                                       \
+	pthread_mutex_unlock(&lock);                                          \
+	return (result);                                                      \
+}
+COUNTER(fake_service_calls, calls)
+COUNTER(fake_service_created, created)
 
-	if (result == NULL) {
-		errno = EINVAL;
-		return (-1);
-	}
-	*result = &context;
-	return (0);
+/* Sessions whose server saw its client leave (waits briefly for them). */
+unsigned
+fake_service_closed(void)
+{
+	struct timespec deadline;
+	unsigned result;
+
+	clock_gettime(CLOCK_REALTIME, &deadline);
+	deadline.tv_sec += 2;
+	pthread_mutex_lock(&lock);
+	while (closed < created &&
+	    pthread_cond_timedwait(&changed, &lock, &deadline) == 0)
+		;
+	result = closed;
+	pthread_mutex_unlock(&lock);
+	return (result);
 }
 
-void
-service_release(struct service_context *service __unused)
+/* Callers' RPC budgets are not under test here. */
+int
+service_budget_timeout(uint32_t *ms)
 {
+	return (ms == NULL ? (errno = EINVAL, -1) : 0);
 }
 
-int
-service_connect(struct service_context *service, const char *name, int *fd)
+/* The scripted outcome for the next operation. */
+static void
+take(enum fake_service_fault *fault, int *status)
 {
 
-	if (service != &context || name == NULL || fd == NULL ||
-	    strcmp(name, CRYPTOCMP_INTERFACE) != 0) {
-		errno = EINVAL;
-		return (-1);
+	pthread_mutex_lock(&lock);
+	calls++;
+	*fault = next_fault;
+	*status = next_status;
+	next_fault = FAKE_SERVICE_FAULT_NONE;
+	next_status = 0;
+	pthread_mutex_unlock(&lock);
+}
+
+/* Map the script to an error value, or 0 for a normal reply. */
+static uint32_t
+scripted_error(enum fake_service_fault fault, int status)
+{
+
+	if (fault == FAKE_SERVICE_FAULT_ZERO_ERRNO)
+		return (0xffffffffU);	/* sentinel: send err = 0 */
+	if (fault == FAKE_SERVICE_FAULT_RANGE_ERRNO)
+		return (ELAST + 1);
+	return ((uint32_t)status);
+}
+
+#define REPLY_ERROR(method)                                                   \
+	do {                                                                  \
+		struct bsd_crypto_v1_Crypto_##method##_Result e = {           \
+			.tag = bsd_crypto_v1_Crypto_##method##_Result_err_tag \
+		};                                                            \
+		e.value.err = err == 0xffffffffU ? 0 : err;                   \
+		assert(bsd_crypto_v1_Crypto_##method##_reply(c, r, &e) == 0); \
+		return;                                                       \
+	} while (0)
+
+#define PROLOGUE(method)                                                      \
+	enum fake_service_fault fault;                                        \
+	int status;                                                           \
+	uint32_t err;                                                         \
+	(void)x;                                                              \
+	take(&fault, &status);                                                \
+	if (fault == FAKE_SERVICE_FAULT_CALL) {                               \
+		fidl_bsd_connection_close(c, ECONNRESET);                     \
+		return;                                                       \
+	}                                                                     \
+	err = scripted_error(fault, status);                                  \
+	if (err != 0)                                                         \
+		REPLY_ERROR(method);
+
+static void
+info(void *x, struct fidl_bsd_connection *c, struct fidl_bsd_request *r,
+    struct fidl_bsd_empty *e)
+{
+	struct bsd_crypto_v1_ProtocolInfo v = { CRYPTOCMP_WIRE_VERSION };
+	(void)x;
+	(void)e;
+	pthread_mutex_lock(&lock);
+	if (next_fault == FAKE_SERVICE_FAULT_FUTURE_VERSION) {
+		v.wire_version++;
+		next_fault = FAKE_SERVICE_FAULT_NONE;
 	}
-	*fd = open("/dev/null", O_RDONLY | O_CLOEXEC);
-	return (*fd == -1 ? -1 : 0);
+	pthread_mutex_unlock(&lock);
+	assert(bsd_crypto_v1_Crypto_GetProtocolInfo_reply(c, r, &v) == 0);
+}
+
+static int
+null_fd(void)
+{
+	int fd = open("/dev/null", O_RDWR | O_CLOEXEC);
+	assert(fd >= 0);
+	return (fd);
+}
+
+static void
+generate(void *x, struct fidl_bsd_connection *c, struct fidl_bsd_request *r,
+    struct bsd_crypto_v1_GenerateParams *q)
+{
+	struct bsd_crypto_v1_Crypto_Generate_Result v = {
+		.tag = bsd_crypto_v1_Crypto_Generate_Result_response_tag
+	};
+	PROLOGUE(Generate)
+	(void)q;
+	v.value.response.descriptor = null_fd();
+	assert(bsd_crypto_v1_Crypto_Generate_reply(c, r, &v) == 0);
+	close(v.value.response.descriptor);
+}
+
+static void
+generate_key(void *x, struct fidl_bsd_connection *c, struct fidl_bsd_request *r,
+    struct bsd_crypto_v1_KeyParams *q)
+{
+	struct bsd_crypto_v1_Crypto_GenerateKey_Result v = {
+		.tag = bsd_crypto_v1_Crypto_GenerateKey_Result_response_tag
+	};
+	PROLOGUE(GenerateKey)
+	(void)q;
+	v.value.response.descriptor = null_fd();
+	memset(v.value.response.public_key, 0xa5,
+	    sizeof(v.value.response.public_key));
+	assert(bsd_crypto_v1_Crypto_GenerateKey_reply(c, r, &v) == 0);
+	close(v.value.response.descriptor);
+}
+
+#define GENERATION(name, method, request)                                     \
+static void                                                                   \
+name(void *x, struct fidl_bsd_connection *c, struct fidl_bsd_request *r,      \
+    struct request *q)                                                        \
+{                                                                             \
+	struct bsd_crypto_v1_Crypto_##method##_Result v = {                   \
+		.tag = bsd_crypto_v1_Crypto_##method##_Result_response_tag    \
+	};                                                                    \
+	PROLOGUE(method)                                                      \
+	(void)q;                                                              \
+	v.value.response.generation =                                         \
+	    fault == FAKE_SERVICE_FAULT_NAMED_GENERATION ? 0 : 42;            \
+	assert(bsd_crypto_v1_Crypto_##method##_reply(c, r, &v) == 0);         \
+}
+GENERATION(named_create, NamedCreate, bsd_crypto_v1_NamedCreateRequest)
+GENERATION(named_rotate, NamedRotate, bsd_crypto_v1_NamedControlRequest)
+GENERATION(named_delete, NamedDelete, bsd_crypto_v1_NamedControlRequest)
+
+static void
+named_lease(void *x, struct fidl_bsd_connection *c, struct fidl_bsd_request *r,
+    struct bsd_crypto_v1_NamedLeaseRequest *q)
+{
+	struct bsd_crypto_v1_Crypto_NamedLease_Result v = {
+		.tag = bsd_crypto_v1_Crypto_NamedLease_Result_response_tag
+	};
+	int ends[2];
+	PROLOGUE(NamedLease)
+	(void)q;
+	/* Deliver a pipe's write end so a test can tell whether it closed. */
+	assert(pipe(ends) == 0);
+	pthread_mutex_lock(&lock);
+	if (last_fd >= 0)
+		close(last_fd);
+	last_fd = ends[0];
+	pthread_mutex_unlock(&lock);
+	v.value.response.descriptor = ends[1];
+	v.value.response.generation =
+	    fault == FAKE_SERVICE_FAULT_LEASE_GENERATION ? 0 : 42;
+	assert(bsd_crypto_v1_Crypto_NamedLease_reply(c, r, &v) == 0);
+	close(ends[1]);
+}
+
+static void
+digest(void *x, struct fidl_bsd_connection *c, struct fidl_bsd_request *r,
+    struct bsd_crypto_v1_DigestParams *q)
+{
+	struct bsd_crypto_v1_Crypto_Digest_Result v = {
+		.tag = bsd_crypto_v1_Crypto_Digest_Result_response_tag
+	};
+	PROLOGUE(Digest)
+	(void)q;
+	v.value.response.descriptor = null_fd();
+	assert(bsd_crypto_v1_Crypto_Digest_reply(c, r, &v) == 0);
+	close(v.value.response.descriptor);
+}
+
+static void
+random_bytes(void *x, struct fidl_bsd_connection *c, struct fidl_bsd_request *r,
+    struct bsd_crypto_v1_RandomRequest *q)
+{
+	struct bsd_crypto_v1_Crypto_Random_Result v = {
+		.tag = bsd_crypto_v1_Crypto_Random_Result_response_tag
+	};
+	uint8_t data[CRYPTOCMP_MAX_RANDOM_BYTES + 1];
+	PROLOGUE(Random)
+	memset(data, 0x5a, sizeof(data));
+	v.value.response.data = data;
+	v.value.response.data_size = q->nbytes +
+	    (fault == FAKE_SERVICE_FAULT_RANDOM_SIZE ? 1 : 0);
+	assert(bsd_crypto_v1_Crypto_Random_reply(c, r, &v) == 0);
+}
+
+static void
+named_stat(void *x, struct fidl_bsd_connection *c, struct fidl_bsd_request *r,
+    struct bsd_crypto_v1_NamedControlRequest *q)
+{
+	struct bsd_crypto_v1_Crypto_NamedStat_Result v = {
+		.tag = bsd_crypto_v1_Crypto_NamedStat_Result_response_tag
+	};
+	PROLOGUE(NamedStat)
+	(void)q;
+	v.value.response.generation =
+	    fault == FAKE_SERVICE_FAULT_STAT_GENERATION ? 0 : 42;
+	v.value.response.rights =
+	    fault == FAKE_SERVICE_FAULT_STAT_RIGHTS ? 0 : 3;
+	v.value.response.cipher = 11;
+	v.value.response.keylen = 32;
+	assert(bsd_crypto_v1_Crypto_NamedStat_reply(c, r, &v) == 0);
+}
+
+static void
+named_list(void *x, struct fidl_bsd_connection *c, struct fidl_bsd_request *r,
+    struct bsd_crypto_v1_NamedListRequest *q)
+{
+	struct bsd_crypto_v1_Crypto_NamedList_Result v = {
+		.tag = bsd_crypto_v1_Crypto_NamedList_Result_response_tag
+	};
+	struct bsd_crypto_v1_NamedEntry entries[2] = {
+		{ "alpha", 5, 10, 3 },
+		{ "beta", 4, 11, 3 },
+	};
+	PROLOGUE(NamedList)
+	switch (fault) {
+	case FAKE_SERVICE_FAULT_LIST_CURSOR:
+		v.value.response.next_cursor = q->cursor;
+		break;
+	case FAKE_SERVICE_FAULT_LIST_NAME:
+		entries[0].name = "al/pha";
+		entries[0].name_size = 6;
+		break;
+	case FAKE_SERVICE_FAULT_LIST_GENERATION:
+		entries[0].generation = 0;
+		break;
+	case FAKE_SERVICE_FAULT_LIST_RIGHTS:
+		entries[0].rights = 0;
+		break;
+	default:
+		break;
+	}
+	v.value.response.entries = entries;
+	v.value.response.entries_size = 2;
+	assert(bsd_crypto_v1_Crypto_NamedList_reply(c, r, &v) == 0);
+}
+
+static void *
+serve(void *argument)
+{
+	struct bsd_crypto_v1_Crypto_server handlers = {
+		.GetProtocolInfo = info,
+		.Generate = generate,
+		.GenerateKey = generate_key,
+		.NamedCreate = named_create,
+		.NamedLease = named_lease,
+		.NamedRotate = named_rotate,
+		.NamedDelete = named_delete,
+		.Digest = digest,
+		.Random = random_bytes,
+		.NamedStat = named_stat,
+		.NamedList = named_list
+	};
+	struct fidl_bsd_connection *connection;
+	int fd = (int)(intptr_t)argument;
+
+	assert(fidl_bsd_connection_create(fd, FIDL_BSD_SERVER,
+	    &connection) == 0);
+	assert(bsd_crypto_v1_Crypto_bind(connection, &handlers, NULL) == 0);
+	while (fidl_bsd_connection_poll(connection, 10000) == 0)
+		;
+	fidl_bsd_connection_destroy(connection);
+	pthread_mutex_lock(&lock);
+	closed++;
+	pthread_cond_broadcast(&changed);
+	pthread_mutex_unlock(&lock);
+	return (NULL);
 }
 
 int
 service_open(const char *name, int *fd)
 {
-	struct service_context *ctx;
-	int rv;
+	pthread_t thread;
+	int ends[2];
 
-	if (service_acquire(&ctx) == -1)
-		return (-1);
-	rv = service_connect(ctx, name, fd);
-	service_release(ctx);
-	return (rv);
-}
-
-int
-service_session_create(int fd, struct service_session **result)
-{
-	struct service_session *session;
-
-	if (fd < 0 || result == NULL) {
-		errno = EINVAL;
-		return (-1);
-	}
-	session = calloc(1, sizeof(*session));
-	if (session == NULL)
-		return (-1);
-	(void)close(fd);
-	pthread_mutex_lock(&lock);
-	session->ident = ++created;
-	pthread_mutex_unlock(&lock);
-	*result = session;
-	return (0);
-}
-
-void
-service_session_close(struct service_session *session)
-{
-
-	if (session == NULL)
-		return;
-	pthread_mutex_lock(&lock);
-	closed++;
-	pthread_mutex_unlock(&lock);
-	free(session);
-}
-
-int
-service_session_fail(struct service_session *session, int error)
-{
-
-	if (session == NULL || error <= 0)
+	if (name == NULL || strcmp(name, CRYPTOCMP_INTERFACE) != 0 ||
+	    fd == NULL)
 		return (errno = EINVAL, -1);
+	if (mac_capability_channel_create(ends) != 0)
+		return (-1);
+	assert(pthread_create(&thread, NULL, serve,
+	    (void *)(intptr_t)ends[1]) == 0);
+	assert(pthread_detach(thread) == 0);
 	pthread_mutex_lock(&lock);
-	session->failed = error;
-	failed++;
+	created++;
 	pthread_mutex_unlock(&lock);
-	return (0);
-}
-
-int
-service_session_call(struct service_session *session,
-    const struct service_message *outgoing, struct service_reply *reply,
-    const struct service_call_options *options __unused)
-{
-	union {
-		struct cryptocmp_msg msg;
-		struct cryptocmp_key_reply key;
-		struct cryptocmp_named_reply named;
-		struct cryptocmp_named_stat_reply stat;
-		struct cryptocmp_named_list_reply list;
-		struct cryptocmp_random_reply random;
-	} response;
-	const struct cryptocmp_msg *request;
-	enum fake_service_fault fault;
-	size_t length;
-	int fd, status;
-	bool wants_fd;
-
-	if (session == NULL || outgoing == NULL || outgoing->data == NULL ||
-	    outgoing->length < sizeof(*request) || reply == NULL ||
-	    reply->data == NULL) {
-		errno = EINVAL;
-		return (-1);
-	}
-	request = outgoing->data;
-	/* Match the provider's exact wire framing, including no tail padding. */
-	if ((request->opcode == CRYPTOCMP_OP_DIGEST &&
-	    outgoing->length != sizeof(*request) + sizeof(struct cryptocmp_digest)) ||
-	    (request->opcode == CRYPTOCMP_OP_RANDOM &&
-	    outgoing->length != sizeof(*request) + sizeof(struct cryptocmp_random)))
-		return (errno = EPROTO, -1);
-	if (session->failed != 0)
-		return (errno = session->failed, -1);
-	pthread_mutex_lock(&lock);
-	calls++;
-	fault = next_fault;
-	status = next_status;
-	next_fault = FAKE_SERVICE_FAULT_NONE;
-	next_status = 0;
-	pthread_mutex_unlock(&lock);
-	if (fault == FAKE_SERVICE_FAULT_CALL) {
-		errno = ECONNRESET;
-		return (-1);
-	}
-	memset(&response, 0, sizeof(response));
-	response.msg.magic = CRYPTOCMP_MAGIC;
-	response.msg.opcode = request->opcode;
-	response.msg.status = -status;
-	length = sizeof(response.msg);
-	if (request->opcode == CRYPTOCMP_OP_GENERATE_KEY) {
-		length = sizeof(response.key);
-		memset(response.key.public_key, 0xa5,
-		    sizeof(response.key.public_key));
-	} else if (request->opcode >= CRYPTOCMP_OP_NAMED_CREATE &&
-	    request->opcode <= CRYPTOCMP_OP_NAMED_DELETE) {
-		length = sizeof(response.named);
-		response.named.generation = 42;
-	} else if (request->opcode == CRYPTOCMP_OP_NAMED_STAT) {
-		/* Fixed sentinels the client test asserts the wrapper surfaces. */
-		length = sizeof(response.stat);
-		response.stat.info.generation = 42;
-		response.stat.info.rights = 3;
-		response.stat.info.cipher = 11;
-		response.stat.info.mac = 0;
-		response.stat.info.keylen = 32;
-		response.stat.info.mackeylen = 0;
-	} else if (request->opcode == CRYPTOCMP_OP_NAMED_LIST) {
-		/* Two fixed entries the client test asserts the wrapper surfaces. */
-		length = sizeof(response.list);
-		response.list.count = 2;
-		response.list.next_cursor = 0;
-		strlcpy(response.list.entries[0].name, "alpha",
-		    sizeof(response.list.entries[0].name));
-		response.list.entries[0].generation = 10;
-		response.list.entries[0].rights = 3;
-		strlcpy(response.list.entries[1].name, "beta",
-		    sizeof(response.list.entries[1].name));
-		response.list.entries[1].generation = 11;
-		response.list.entries[1].rights = 1;
-	} else if (request->opcode == CRYPTOCMP_OP_RANDOM) {
-		uint32_t nbytes = 0;
-
-		if (outgoing->length >= sizeof(*request) +
-		    sizeof(struct cryptocmp_random))
-			nbytes = ((const struct cryptocmp_random *)
-			    (request + 1))->nbytes;
-		response.random.nbytes = status == 0 ? nbytes : 0;
-		if (status == 0)
-			memset(response.random.data, 0x5a, nbytes);
-		length = offsetof(struct cryptocmp_random_reply, data) +
-		    (status == 0 ? nbytes : 0);
-	}
-	switch (fault) {
-	case FAKE_SERVICE_FAULT_TRUNCATE:
-		length--;
-		break;
-	case FAKE_SERVICE_FAULT_WRONG_MAGIC:
-		response.msg.magic ^= 1;
-		break;
-	case FAKE_SERVICE_FAULT_WRONG_OPCODE:
-		response.msg.opcode++;
-		break;
-	case FAKE_SERVICE_FAULT_POSITIVE_STATUS:
-		response.msg.status = 1;
-		break;
-	case FAKE_SERVICE_FAULT_INVALID_STATUS:
-		response.msg.status = -(ELAST + 1);
-		break;
-	case FAKE_SERVICE_FAULT_NAMED_GENERATION:
-		response.named.generation = 0;
-		break;
-	case FAKE_SERVICE_FAULT_STAT_GENERATION:
-		response.stat.info.generation = 0;
-		break;
-	case FAKE_SERVICE_FAULT_STAT_RIGHTS:
-		response.stat.info.rights = 0x80000000U;
-		break;
-	case FAKE_SERVICE_FAULT_LIST_CURSOR:
-		response.list.next_cursor =
-		    ((const struct cryptocmp_named_list *)(request + 1))->cursor;
-		break;
-	case FAKE_SERVICE_FAULT_LIST_NAME:
-		memset(response.list.entries[0].name, 0x2f,
-		    sizeof(response.list.entries[0].name));
-		break;
-	case FAKE_SERVICE_FAULT_LIST_GENERATION:
-		response.list.entries[0].generation = 0;
-		break;
-	case FAKE_SERVICE_FAULT_LIST_RIGHTS:
-		response.list.entries[0].rights = 0x80000000U;
-		break;
-	case FAKE_SERVICE_FAULT_LIST_PAD:
-		response.list.entries[0].pad = 1;
-		break;
-	default:
-		break;
-	}
-	if (reply->capacity < length) {
-		errno = EMSGSIZE;
-		return (-1);
-	}
-	memcpy(reply->data, &response, length);
-	reply->length = length;
-	reply->nfds = 0;
-	wants_fd = status == 0 && (request->opcode == CRYPTOCMP_OP_GENERATE ||
-	    request->opcode == CRYPTOCMP_OP_GENERATE_KEY ||
-	    request->opcode == CRYPTOCMP_OP_NAMED_LEASE ||
-	    request->opcode == CRYPTOCMP_OP_DIGEST);
-	if (fault == FAKE_SERVICE_FAULT_MISSING_FD)
-		wants_fd = false;
-	if (fault == FAKE_SERVICE_FAULT_UNEXPECTED_FD)
-		wants_fd = true;
-	if (wants_fd) {
-		fd = open("/dev/null", O_RDONLY | O_CLOEXEC);
-		if (fd == -1)
-			return (-1);
-		if (reply->fds == NULL || reply->fd_capacity == 0) {
-			(void)close(fd);
-			errno = EMSGSIZE;
-			return (-1);
-		}
-		reply->fds[0] = fd;
-		reply->nfds = 1;
-		pthread_mutex_lock(&lock);
-		last_fd = fd;
-		pthread_mutex_unlock(&lock);
-	}
+	*fd = ends[0];
 	return (0);
 }

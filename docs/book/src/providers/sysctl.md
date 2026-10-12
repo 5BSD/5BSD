@@ -4,7 +4,7 @@
 
 BSDSysctl is the `system.Sysctl` provider: it reads and, policy permitting, writes kernel sysctl(3) variables by name on behalf of a capability-mode unit. In capability mode `__sysctl(2)` is confined to nodes flagged `CTLFLAG_CAPRD`/`CTLFLAG_CAPWR`, which excludes almost the entire MIB tree, so a sandboxed process cannot read `kern.ostype` for itself and cannot write anything. Instead it holds a `system.Sysctl` channel, names the variable, and the broker performs the operation after a per-label policy check. There is no Casper `cap_sysctl` helper anywhere in the path.
 
-The broker is itself born in capability mode. What lets it reach the tree is a `SYS_GATE_SYSCTL` "system" gate token, minted by [Capsule](../plane/capsule.md) from the unit's veriexec-verified manifest declaration `capabilities { system = ["sysctl"]; }`, delivered by switchboard and authorized with `service_provider_authorize_capabilities(3)`. A GET or SET goes through `service_system_sysctl(3)`, which the kernel executes in kernel context after verifying the held claim (`SCTL_GATED` in `sys/kern/kern_sysctl.c`). The raw syscall stays confined; the gate claim replaces `PRIV_SYSCTL_WRITE`, and the daemon runs as the unprivileged `capability` user. The token is close-on-fork, so BSDSysctl serves every client inline in the single token-holding process rather than from a `pdfork(2)` worker, with a 30 second idle deadline per session so an idle client cannot hold the loop. See [System Gates](../capability/system-gates.md) for the gate mechanism.
+The broker is itself born in capability mode. What lets it reach the tree is a `SYS_GATE_SYSCTL` "system" gate token, minted by [Capsule](../plane/capsule.md) from the unit's veriexec-verified manifest declaration `capabilities { system = ["sysctl"]; }`, delivered by switchboard and authorized with `service_provider_authorize_capabilities(3)`. A `Get` or `Set` goes through `service_system_sysctl(3)`, which the kernel executes in kernel context after verifying the held claim (`SCTL_GATED` in `sys/kern/kern_sysctl.c`). The raw syscall stays confined; the gate claim replaces `PRIV_SYSCTL_WRITE`, and the daemon runs as the unprivileged `capability` user. The token is close-on-fork, so BSDSysctl multiplexes every client in the single token-holding process (one kqueue reactor, at most 128 sessions and 16 per label, one bounded dispatch batch per ready session) rather than using `pdfork(2)` workers, with a 30 second idle deadline per session. See [System Gates](../capability/system-gates.md) for the gate mechanism.
 
 The same manifest also declares `isolate = ["kern.maxfiles"]`. A non-empty `isolate` list makes switchboard ask Capsule to mint the SYSCTL token scoped to exactly those OIDs, and BSDSysctl becomes the sole writer of them outside Capsule: a direct `__sysctl(2)` write to an isolated OID from any other process is denied by the mac_capability sysctl hook, whatever its uid. The isolate set governs only which tunables are protected from other writers; what BSDSysctl may touch through the gate is bounded separately by `sysctl.conf`. The design is `docs/book/src/capability/system-gates.md`.
 
@@ -29,30 +29,54 @@ Source: `usr.sbin/BSDSysctl/capbundle/bsdsysctl.ucl` and `Bundle.ucl`.
 
 ## Wire operations
 
-Defined in `lib/libsysctlcmp/sysctlcmp_protocol.h`. Header `struct sysctlcmp_msg` (magic `SCTP`, `opcode`, `flags`, `status` = 0 or negative errno) followed by `struct sysctlcmp_body { name_length, value_length }` and then the NUL-terminated name and the value bytes. Names are at most `SYSCTLCMP_MAX_NAME` (256), values at most `SYSCTLCMP_MAX_VALUE` (8192). A malformed request, or one carrying an attached fd, is `EPROTO` and ends the session.
+The provider and client use `lib/libsysctlcmp/sysctlcmp.fidl`, library
+`bsd.sysctl.v1`, with generated C bindings over native capability channels
+(see [FIDL and Capability IPC](../develop/fidl.md)); the schema installs as
+`/usr/share/fidl/sysctlcmp.fidl`. Names are at most 255 bytes and may not
+contain a NUL (`EINVAL`); values are at most 8192 bytes. No payload carries an
+identity: the session label and `sysctl.conf` decide.
 
-| Op | Request | Reply | Errors |
+| Method | Request | Reply | Errors |
 |---|---|---|---|
-| `GET` (1) | name, `value_length = 0` | raw value bytes | `EPERM` name outside read policy; `ENOENT` no such OID; `EOVERFLOW` value exceeds 8192 |
-| `SET` (2) | name + value as text | empty body | `EPERM` outside write policy; `EINVAL` text does not parse for the OID's type, or NODE/OPAQUE; `ENOMEM`; kernel errors |
-| `OIDFMT` (3) | name | `sysctlcmp_oidfmt { kind, fmt[] }` (`CTLTYPE` low bits, `CTLFLAG_*` high bits, printf-style format) | `EPERM` read policy |
-| `DESCR` (4) | name | description string (as `sysctl -d`) | `EPERM` read policy |
-| `NEXT` (5) | cursor name (empty = root) | next permitted name | `ENOENT` past the last permitted variable; `ENOMEM` |
+| `GetProtocolInfo` | empty | wire version 1 | none |
+| `Get` | name | raw value bytes | `EPERM` name outside read policy; `ENOENT` no such OID; `ENOMEM` value exceeds 8192 |
+| `Set` | name and value as text | empty | `EPERM` outside write policy; `EINVAL` text does not parse for the OID's type, or NODE/OPAQUE; `ENOMEM`; kernel errors |
+| `OidFormat` | name | `{ uint32 kind; fmt[] }` bytes (`CTLTYPE` low bits, `CTLFLAG_*` high bits, NUL-terminated printf-style format) | `EPERM` read policy |
+| `Describe` | name | NUL-terminated description (as `sysctl -d`) | `EPERM` read policy |
+| `Next` | cursor name (empty = root) | next permitted name, NUL-terminated | `ENOENT` past the last permitted variable; `ENOMEM` |
+| `ListInterfaces` | empty | up to 256 interfaces: index, `IFF_*` flags, MTU, link state, name (no addresses or counters) | `EPERM` unless the label may read `net.routetable` |
 
-The SET value on the wire is text; the broker looks up the OID's kind, encodes the text to the native binary width (int, uint, long, s8 through u64, or a string) and then performs the gated write, so a client never has to know the kernel type. NEXT walks `CTL_SYSCTL_NEXT` and skips every name the label may not read, so enumeration never reveals a name outside the caller's read policy; the cursor itself is not gated. The `bsdsysctl` DTrace provider fires `request-start` and `request-done` (label, opcode, bytes, status, transport error) around every op.
+A session must negotiate before any other method. A method before
+negotiation, an unknown method, a malformed, truncated or oversized frame, a
+pre-FIDL record or an attached descriptor closes that session without a reply
+(the other sessions are unaffected). The `Set` value is text; the broker looks
+up the OID's kind, encodes the text to the native binary width (int, uint,
+long, s8 through u64, or a string) and then performs the gated write, so a
+client never has to know the kernel type. `Next` walks `CTL_SYSCTL_NEXT` and
+skips every name the label may not read, so enumeration never reveals a name
+outside the caller's read policy; the cursor itself is not gated. The
+`bsdsysctl` DTrace provider fires `request-start` and `request-done` (label,
+opcode, bytes, status, transport error) around every method with the
+historical opcodes (0 negotiation, 1 Get, 2 Set, 3 OidFormat, 4 Describe,
+5 Next, 6 ListInterfaces), and with opcode 65535 and `EPROTO` for a frame the
+bindings refused. The `bsd.sysctl.v1` ordinals and layouts are a
+compatibility contract; `usr.sbin/BSDSysctl/tests/evolution/sysctlcmp_next.fidl`
+is the same schema at `bsd:1` and adds a method at `bsd:2` for the pairing
+test. `sysctlcmp_protocol.h` keeps the limits, the interface record and the
+pre-FIDL records (compatibility only).
 
 ## Client library
 
-Header `<sysctlcmp.h>` (installs `sysctlcmp.h`, `sysctlcmp_protocol.h`, `sysctlcmp_server.h`); link with `-lsysctlcmp` (`SHLIB_MAJOR 1`, depends on libservice). Manual: libsysctlcmp(3).
+Header `<sysctlcmp.h>` (installs `sysctlcmp.h`, `sysctlcmp_protocol.h` and the legacy `sysctlcmp_server.h`); link with `-lsysctlcmp` (`SHLIB_MAJOR 1`, depends on libservice and the FIDL runtime). Manual: libsysctlcmp(3).
 
 | Group | Functions |
 |---|---|
-| Session | `sysctlcmp_client_open`, `sysctlcmp_client_close` |
+| Session | `sysctlcmp_client_open`, `sysctlcmp_client_create`, `sysctlcmp_client_close` |
 | Read | `sysctlcmp_get(client, name, buf, &len)`, `sysctlcmp_oidfmt(client, name, &kind, fmt, &fmtlen)`, `sysctlcmp_describe(client, name, buf, &len)` |
 | Write | `sysctlcmp_set(client, name, value, len)` |
-| Enumerate | `sysctlcmp_next(client, name, buf, &len)` |
+| Enumerate | `sysctlcmp_next(client, name, buf, &len)`, `sysctlcmp_interfaces(client, out, &count)` |
 
-`sysctlcmp_get()` follows sysctlbyname(3): `buf == NULL` with `*lenp == 0` queries the size; a value that does not fit fails with `ENOMEM` and `*lenp` holds the needed size, except that a value larger than the transport cap fails with `ENOMEM` and leaves `*lenp` unchanged. Values are opaque bytes; the caller interprets them with the kind from `sysctlcmp_oidfmt()`. A malformed string reply is `EPROTO` and invalidates the session.
+`sysctlcmp_get()` follows sysctlbyname(3): `buf == NULL` with `*lenp == 0` queries the size; a value that does not fit fails with `ENOMEM` and `*lenp` holds the needed size, except that a value larger than the transport cap fails with `ENOMEM` and leaves `*lenp` unchanged. Values are opaque bytes; the caller interprets them with the kind from `sysctlcmp_oidfmt()`. The first call checks the wire version (`EPROTONOSUPPORT` for an incompatible provider). Each call has a five-second deadline, shortened by an active `service_budget_begin()`; a timeout cancels just that call (`ETIMEDOUT`) and the session stays usable, as with the earlier libservice transport. A transport failure or malformed reply (`EPROTO`, including an unterminated or empty string) makes the client terminal; close it and open a new one. Application errors keep it. A client may be shared between threads; its calls are serialized.
 
 ```c
 #include <sysctlcmp.h>
@@ -116,20 +140,20 @@ A missing or malformed file fails soft to the compiled-in default (the same smal
 
 | Where | Programs | What they prove |
 |---|---|---|
-| `usr.sbin/BSDSysctl/tests` (package `libsysctlcmp-tests`, `/usr/tests/usr.sbin/BSDSysctl`) | `provider_test` (6 cases), `config_test` (10), `observability_test.sh` (1) | provider_test drives the inline session handler (`-DSYSCTLCMP_TESTING`) over a channel: policy-gated GET and SET, gated introspection (OIDFMT/DESCR), NEXT never reveals denied names, malformed requests fail closed, argument validation, and SET encodes a typed value from text. config_test covers prefix matching on component boundaries, the closed schema and fail-soft loading. observability_test.sh asserts the `request-start`/`request-done` probes exist, are wired into the bsdinstruments `capability-services.d` profile, and that the binary carries a `.SUNW_dof` section when DTrace is built. |
-| `lib/libsysctlcmp/tests` (`libsysctlcmp-tests`) | `sysctlcmp_test` (6), `client_strings_test` (4) | request encoding, size-query semantics, `EPROTO` on malformed string replies |
+| `usr.sbin/BSDSysctl/tests` (package `libsysctlcmp-tests`, `/usr/tests/usr.sbin/BSDSysctl`) | `provider_test` (9 cases), `reactor_test` (3), `evolution_test` (2), `config_test` (10), `interfaces_test`, `observability_test.sh` (1) | provider_test drives the reactor (`-DSYSCTLCMP_TESTING`) over a channel with the real client: policy-gated `Get` and `Set`, gated introspection, `Next` never reveals denied names, malformed frames (pre-FIDL record, before negotiation, unknown method, truncated, trailing bytes) fail closed while a negotiated frame is served, an embedded NUL is `EINVAL`, argument validation, `Set` encodes a typed value from text, multiplexed clients and idle expiry. reactor_test runs the production reactor with real channels: per-session policy isolation, a malformed peer that cannot stall the others, idle expiry and admission bounds with slot reuse. evolution_test is the `bsd:1`/`bsd:2` schema pairing. config_test covers prefix matching on component boundaries, the closed schema and fail-soft loading. observability_test.sh asserts the `request-start`/`request-done` probes exist, are wired into the bsdinstruments `capability-services.d` profile, and that the binary carries a `.SUNW_dof` section when DTrace is built. |
+| `lib/libsysctlcmp/tests` (`libsysctlcmp-tests`) | `sysctlcmp_test` (7), `client_strings_test` (5) | retained legacy record ABI and argument checks; against a scripted server: NUL-terminated strings, size queries that keep the session, unterminated or empty strings and a future wire version are terminal, interface inventory validation without partial copies |
 | `usr.sbin/sysctlcmpctl/tests` | `sysctlcmpctl_test.sh` (4) | arguments, each verb against a fake provider, `list` from a start name, failure exits |
 
-Run with `kyua test -k /usr/tests/usr.sbin/BSDSysctl/Kyuafile` on a booted plane ([Testing](../develop/testing.md)). The gate itself is exercised only on a real plane where Capsule mints the token; under the test build `gate_sysctl()` falls back to sysctlbyname(3) when no token is held, so the unit tests prove policy and encoding, not the kernel gate.
+Run with `kyua test -k /usr/tests/usr.sbin/BSDSysctl/Kyuafile` on a booted plane ([Testing](../develop/testing.md)). The gate itself is exercised only on a real plane where Capsule mints the token; under the test build `gate_sysctl()` falls back to sysctlbyname(3) when no token is held, so the unit tests prove policy and encoding, not the kernel gate. The provider and libsysctlcmp ship together: `system.Sysctl` is a core unit and mixed peers fail at negotiation.
 
 ## Status and gaps
 
-Status: shipped; capmode; user `capability`; gate `sysctl` plus `isolate`; ops GET, SET, NEXT, OIDFMT, DESCR (inventory section 4). The inventory flags this provider as sitting at the fleet-minimum test count (10 daemon cases).
+Status: shipped; capmode; user `capability`; gate `sysctl` plus `isolate`; FIDL `bsd.sysctl.v1` (October 2026) with Get, Set, OidFormat, Describe, Next and ListInterfaces. Unit attributes, visibility and policy are unchanged by the migration.
 
 Known gaps and drift:
 
 - The provider tests do not cover the gate path or the isolation hook; a foreign-writer-denied test for `kern.maxfiles` exists only as a design requirement in `docs/book/src/capability/system-gates.md`.
-- Inline serving means one slow or malicious client occupies the single process until the 30 second idle deadline; there is no per-client worker and no concurrency.
+- All sessions share the one token-holding process; a slow sysctl handler (for example a long `Next` walk) delays the other sessions' next batch, although no client can hold the loop beyond one bounded dispatch.
 - The book chapter this one replaces described BSDSysctl as an ambient provider; that was true before the gate framework and is no longer accurate.
 - Only one OID is isolated. Extending `isolate` is the intended way to bring more tunables under sole-broker protection, but nothing beyond `kern.maxfiles` has been done.
 - `set` accepts only numeric and string kinds; OPAQUE and NODE values are `EINVAL`.

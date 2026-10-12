@@ -96,6 +96,10 @@ SUBDIR=	${SUBDIR_BOOTSTRAP} \
 	libsysctlcmp \
 	libtimecmp \
 	libpowercmp \
+	libextensioncmp \
+	libfilesystemcmp \
+	libnamespacecmp \
+	libvmcmp \
 	libnv \
 	libnvmf \
 	liboes \
@@ -155,7 +159,7 @@ SUBDIR_DEPEND_libc++:= libcxxrt
 # libssp_nonshared doesn't need to be linked into libc on every arch, but it is
 # small enough to build that this bit of serialization is likely insignificant.
 SUBDIR_DEPEND_libc= libsys libcompiler_rt libssp_nonshared
-SUBDIR_DEPEND_libauditcmp= libservice
+SUBDIR_DEPEND_libauditcmp= libservice libfidl
 SUBDIR_DEPEND_libcam= libsbuf
 SUBDIR_DEPEND_libcasper= libnv
 SUBDIR_DEPEND_libcrypt= libmd
@@ -170,13 +174,20 @@ SUBDIR_DEPEND_libgeom= libexpat libsbuf
 SUBDIR_DEPEND_librpcsec_gss= libgssapi
 .endif
 SUBDIR_DEPEND_libmagic= libz
-SUBDIR_DEPEND_liblogcmp= libservice libshmring
+SUBDIR_DEPEND_liblogcmp= libservice libshmring libfidl
 SUBDIR_DEPEND_libmemstat= libkvm
-SUBDIR_DEPEND_libnetworkcmp= libservice libshmring
-SUBDIR_DEPEND_libsysctlcmp= libservice
+SUBDIR_DEPEND_libnetworkcmp= libservice libshmring libfidl
+SUBDIR_DEPEND_libsysctlcmp= libservice libfidl
 SUBDIR_DEPEND_libtimecmp= libservice libfidl
-SUBDIR_DEPEND_libpowercmp= libservice
-SUBDIR_DEPEND_libnotify= libservice
+SUBDIR_DEPEND_libextensioncmp= libservice libfidl
+SUBDIR_DEPEND_libfilesystemcmp= libservice libtrustedzfs libfidl
+SUBDIR_DEPEND_libnamespacecmp= libservice libfidl
+SUBDIR_DEPEND_liboes= libservice libfidl
+SUBDIR_DEPEND_libvmcmp= libservice libfidl
+SUBDIR_DEPEND_libpowercmp= libservice libfidl
+SUBDIR_DEPEND_libdevicecmp= libservice libfidl
+SUBDIR_DEPEND_libcryptocmp= libservice libfidl
+SUBDIR_DEPEND_libnotify= libservice libfidl
 SUBDIR_DEPEND_libcache= libnotify
 SUBDIR_DEPEND_libpam= libcrypt ${_libradius} librpcsvc libtacplus libutil ${_libypclnt} ${_libcom_err}
 SUBDIR_DEPEND_libpjdlog= libutil
@@ -185,9 +196,9 @@ SUBDIR_DEPEND_libradius= libmd
 SUBDIR_DEPEND_libsmb= libkiconv
 SUBDIR_DEPEND_libcapbundle= libcapsulert libucl libcapimage
 SUBDIR_DEPEND_libservice= libcapability libchannel libtrustedzfs
-SUBDIR_DEPEND_libtracecmp= libservice
+SUBDIR_DEPEND_libtracecmp= libservice libfidl
 SUBDIR_DEPEND_libcapsulert= libucl
-SUBDIR_DEPEND_libbsdfilesystem= libchannel libservice libtrustedzfs
+SUBDIR_DEPEND_libbsdfilesystem= libchannel libservice libtrustedzfs libfilesystemcmp libfidl
 # See comment above about libssp_nonshared
 SUBDIR_DEPEND_libsys= libcompiler_rt libssp_nonshared
 SUBDIR_DEPEND_libtacplus= libmd

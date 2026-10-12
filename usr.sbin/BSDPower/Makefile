@@ -6,10 +6,12 @@ MAN=	BSDPower.8
 SRCS=	BSDPower.c config.c
 
 CFLAGS+=	-I${SRCTOP}/lib/libpowercmp
+CFLAGS+=	-I${FIDLGEN.powercmp}
+CFLAGS+=	-I${SRCTOP}/lib/libfidl/include
 CFLAGS+=	-I${SRCTOP}/lib/libservice
 CFLAGS+=	-I${SRCTOP}/lib/libchannel
 CFLAGS+=	-I${SRCTOP}/contrib/libucl/include
-LIBADD=		powercmp service channel ucl
+LIBADD=		powercmp service channel ucl fidl_bsd
 # Full binding at load so no lazy PLT work remains after startup.
 LDFLAGS+=	-Wl,-z,now
 
@@ -56,6 +58,12 @@ HAS_TESTS=
 SUBDIR.${MK_TESTS}+=	tests
 
 CAPIMAGE_MANIFEST= ${CAP_UNIT}
+
+# Bindings generated at build time (fidl-bindings.mk).
+FIDL_BINDINGS+=	powercmp
+FIDL_SCHEMAS.powercmp=	lib/libpowercmp/powercmp.fidl
+FIDL_LIBRARY.powercmp=	bsd.power.v1
+.include "${SRCTOP}/lib/libfidl/fidl-bindings.mk"
 
 .include <bsd.prog.mk>
 

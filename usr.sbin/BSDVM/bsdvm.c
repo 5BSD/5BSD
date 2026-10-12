@@ -50,7 +50,7 @@
 #include <syslog.h>
 #include <unistd.h>
 
-#include <channel.h>
+#include <fidl/bsd.vm.v1/c/bsd.h>
 #include <libservice.h>
 
 #include "bsdvm_proto.h"
@@ -365,120 +365,90 @@ connect_vsock(uint32_t cid, uint32_t port, int *fdp)
 
 /*
  * Per-client worker context: the connecting client's unforgeable label (for
- * logging) and the concrete port window the parent's registry resolved for it.
- * The worker only ever binds within window_base, so a Component can bind only
- * inside the window its label exclusively owns.
+ * logging), the concrete port window the parent's registry resolved for it, and
+ * whether the session has negotiated.  The worker only ever binds within
+ * window_base, so a Component can bind only inside the window its label
+ * exclusively owns.
  */
 struct vmd_client_ctx {
 	char		label[64];
 	uint32_t	window_base;
+	bool		negotiated;
 };
 
 /*
- * Per-client channel request handler.  arg is this worker's context (label +
- * resolved window).  The reply carries the bound, listening vsock descriptor on
- * success — rights-limited to accept-only and made non-re-delegable.
+ * bsd.vm.v1 method handlers.  Every method but GetProtocolInfo requires a
+ * negotiated session; a failed reply closes the connection.  The request-done
+ * probe keeps the historical VMD_OP_* codes (0 is protocol negotiation).
+ */
+static bool
+vmd_ready(struct vmd_client_ctx *ctx, struct fidl_bsd_connection *connection,
+    uint32_t opcode)
+{
+
+	if (ctx->negotiated)
+		return (true);
+	BSDVM_PROBE_REQUEST_DONE(opcode, EPROTO, EPROTO);
+	fidl_bsd_connection_close(connection, EPROTO);
+	return (false);
+}
+
+static void
+vmd_completed(struct fidl_bsd_connection *connection, uint32_t opcode,
+    int status, int transport_error)
+{
+
+	BSDVM_PROBE_REQUEST_DONE(opcode, status, transport_error);
+	if (transport_error != 0)
+		fidl_bsd_connection_close(connection, transport_error);
+}
+
+static void
+vmd_protocol_info(void *argument, struct fidl_bsd_connection *connection,
+    struct fidl_bsd_request *request, struct fidl_bsd_empty *empty __unused)
+{
+	struct vmd_client_ctx *ctx = argument;
+	struct bsd_vm_v1_ProtocolInfo info = { VMD_WIRE_VERSION };
+	int error;
+
+	error = bsd_vm_v1_Vm_GetProtocolInfo_reply(connection, request, &info);
+	ctx->negotiated = error == 0;
+	vmd_completed(connection, 0, 0, error);
+}
+
+/*
+ * Bind: the reply carries the bound, listening vsock descriptor on success --
+ * rights-limited and made non-re-delegable.
  */
 static void
-vmd_request_handler(struct channel *ch __unused, struct channel_message *m,
-    void *arg)
+vmd_bind(void *argument, struct fidl_bsd_connection *connection,
+    struct fidl_bsd_request *request, struct bsd_vm_v1_BindRequest *value)
 {
-	const struct vmd_client_ctx *ctx = arg;
+	struct vmd_client_ctx *ctx = argument;
 	const char *client = ctx->label;
-	const struct vmd_request *rq;
-	struct vmd_reply rp;
-	struct channel_outgoing out;
+	struct bsd_vm_v1_VM_Bind_Result reply;
+	struct vmd_request rq;
 	cap_rights_t rights;
-	uint32_t port = 0, opcode = UINT32_MAX;
-	int s = -1, transport_error;
+	uint32_t port = 0;
+	int s = -1, status = 0;
 
-	memset(&rp, 0, sizeof(rp));
-
-	if (channel_message_length(m) != sizeof(*rq) ||
-	    channel_message_fd_count(m) != 0) {
-		rp.status = EPROTO;
-		goto reply;
-	}
-	rq = channel_message_data(m);
-	opcode = rq->op;
-	if (!valid_request(rq)) {
-		rp.status = EINVAL;
-		goto reply;
-	}
-
-	if (rq->op == VMD_OP_VSOCK_LIST) {
-		struct vmd_list_reply lrp;
-		struct channel_outgoing lout;
-
-		/*
-		 * Answer strictly from ctx->window_base — the window the parent's
-		 * registry resolved for THIS connecting label and handed the worker
-		 * at fork.  A worker only ever knows its own label's base, so LIST
-		 * can only ever report the caller's own window and never another
-		 * label's.  Data-only: no descriptor rides the reply.
-		 */
-		memset(&lrp, 0, sizeof(lrp));
-		lrp.status = 0;
-		lrp.cid = VMADDR_CID_LOCAL;
-		lrp.port_base = ctx->window_base;
-		lrp.port_limit = ctx->window_base + VMD_PORTS_PER_LABEL;
-		lrp.port_count = VMD_PORTS_PER_LABEL;
-		BSDVM_PROBE_VSOCK_LIST(client, lrp.port_base, lrp.port_limit, 0);
-		syslog(LOG_INFO, "VSOCK_LIST (client %s) -> base=%u range=[%u,%u)",
-		    client, lrp.port_base, lrp.port_base, lrp.port_limit);
-		memset(&lout, 0, sizeof(lout));
-		lout.size = sizeof(lout);
-		lout.data = &lrp;
-		lout.length = sizeof(lrp);
-		transport_error = channel_send_reply(m, &lout) == -1 ? errno : 0;
-		BSDVM_PROBE_REQUEST_DONE(opcode, lrp.status, transport_error);
-		channel_message_free(m);
+	if (!vmd_ready(ctx, connection, VMD_OP_VSOCK_BIND))
 		return;
-	}
-
-	if (rq->op == VMD_OP_VSOCK_CONNECT) {
-		if (connect_vsock(rq->cid, rq->port, &s) == -1) {
-			rp.status = errno;
-			syslog(LOG_ERR, "VSOCK_CONNECT cid=%u port=%u (client "
-			    "%s): %s", rq->cid, rq->port, client,
-			    strerror(rp.status));
-			goto reply;
-		}
-
-		/*
-		 * Harden the delivered connected socket: the Component reads,
-		 * writes, polls, shuts down, and (get/set)sockopts it — but must
-		 * never accept/bind/connect/listen on it — so limit its rights to
-		 * that data-plane set, and attenuate transfer to CAP_XFER_ONCE so
-		 * the reply's own SCM_RIGHTS send exhausts it (no re-delegation).
-		 */
-		cap_rights_init(&rights, CAP_READ, CAP_WRITE, CAP_EVENT,
-		    CAP_SHUTDOWN, CAP_FSTAT, CAP_GETSOCKOPT, CAP_SETSOCKOPT);
-		if (cap_rights_limit(s, &rights) == -1 ||
-		    cap_xfer_limit(s, CAP_XFER_ONCE) == -1) {
-			rp.status = errno != 0 ? errno : EIO;
-			syslog(LOG_ERR, "VSOCK_CONNECT cid=%u port=%u (client "
-			    "%s) -> rights limit: %s", rq->cid, rq->port, client,
-			    strerror(rp.status));
-			(void)close(s);
-			s = -1;
-			goto reply;
-		}
-
-		rp.status = 0;
-		rp.cid = rq->cid;
-		rp.port = rq->port;
-		syslog(LOG_INFO, "VSOCK_CONNECT (client %s) -> cid=%u port=%u",
-		    client, rp.cid, rp.port);
+	memset(&rq, 0, sizeof(rq));
+	rq.op = VMD_OP_VSOCK_BIND;
+	rq.port = value->index;
+	rq.backlog = value->backlog;
+	if (!valid_request(&rq)) {
+		status = EINVAL;
 		goto reply;
 	}
 
-	s = bind_vsock(ctx->window_base, rq->port, rq->backlog, &port);
+	s = bind_vsock(ctx->window_base, rq.port, rq.backlog, &port);
 	if (s < 0) {
-		rp.status = errno;
+		status = errno;
 		syslog(LOG_ERR, "VSOCK_BIND idx=%u (client %s) -> bind %u: %s",
-		    rq->port, client, ctx->window_base + rq->port,
-		    strerror(rp.status));
+		    rq.port, client, ctx->window_base + rq.port,
+		    strerror(status));
 		goto reply;
 	}
 
@@ -497,45 +467,142 @@ vmd_request_handler(struct channel *ch __unused, struct channel_message *m,
 	    CAP_WRITE, CAP_SHUTDOWN, CAP_GETSOCKOPT, CAP_SETSOCKOPT);
 	if (cap_rights_limit(s, &rights) == -1 ||
 	    cap_xfer_limit(s, CAP_XFER_ONCE) == -1) {
-		rp.status = errno != 0 ? errno : EIO;
+		status = errno != 0 ? errno : EIO;
 		syslog(LOG_ERR, "VSOCK_BIND idx=%u (client %s) -> rights limit: "
-		    "%s", rq->port, client, strerror(rp.status));
+		    "%s", rq.port, client, strerror(status));
 		(void)close(s);
 		s = -1;
 		goto reply;
 	}
-
-	rp.status = 0;
-	rp.cid = VMADDR_CID_LOCAL;
-	rp.port = port;
 	syslog(LOG_INFO, "VSOCK_BIND idx=%u (client %s) -> cid=%u port=%u",
-	    rq->port, client, rp.cid, rp.port);
+	    rq.port, client, VMADDR_CID_LOCAL, port);
 
 reply:
-	memset(&out, 0, sizeof(out));
-	out.size = sizeof(out);
-	out.data = &rp;
-	out.length = sizeof(rp);
-	if (s >= 0 && rp.status == 0) {
-		out.fds = &s;
-		out.nfds = 1;
+	memset(&reply, 0, sizeof(reply));
+	if (status == 0) {
+		reply.tag = bsd_vm_v1_VM_Bind_Result_response_tag;
+		reply.value.response.listener = s;
+		reply.value.response.cid = VMADDR_CID_LOCAL;
+		reply.value.response.port = port;
+	} else {
+		reply.tag = bsd_vm_v1_VM_Bind_Result_err_tag;
+		reply.value.err = (uint32_t)status;
 	}
-	transport_error = channel_send_reply(m, &out) == -1 ? errno : 0;
-	BSDVM_PROBE_REQUEST_DONE(opcode, rp.status, transport_error);
+	/* The bindings send a private duplicate; ours is closed either way. */
+	vmd_completed(connection, VMD_OP_VSOCK_BIND, status,
+	    bsd_vm_v1_Vm_Bind_reply(connection, request, &reply));
 	if (s >= 0)
 		(void)close(s);
-	channel_message_free(m);
+}
+
+static void
+vmd_connect(void *argument, struct fidl_bsd_connection *connection,
+    struct fidl_bsd_request *request, struct bsd_vm_v1_ConnectRequest *value)
+{
+	struct vmd_client_ctx *ctx = argument;
+	const char *client = ctx->label;
+	struct bsd_vm_v1_VM_Connect_Result reply;
+	struct vmd_request rq;
+	cap_rights_t rights;
+	int s = -1, status = 0;
+
+	if (!vmd_ready(ctx, connection, VMD_OP_VSOCK_CONNECT))
+		return;
+	memset(&rq, 0, sizeof(rq));
+	rq.op = VMD_OP_VSOCK_CONNECT;
+	rq.port = value->port;
+	rq.cid = value->cid;
+	if (!valid_request(&rq)) {
+		status = EINVAL;
+		goto reply;
+	}
+	if (connect_vsock(rq.cid, rq.port, &s) == -1) {
+		status = errno;
+		syslog(LOG_ERR, "VSOCK_CONNECT cid=%u port=%u (client %s): %s",
+		    rq.cid, rq.port, client, strerror(status));
+		goto reply;
+	}
+
+	/*
+	 * Harden the delivered connected socket: the Component reads, writes,
+	 * polls, shuts down, and (get/set)sockopts it -- but must never
+	 * accept/bind/connect/listen on it -- so limit its rights to that
+	 * data-plane set, and attenuate transfer to CAP_XFER_ONCE so the reply's
+	 * own SCM_RIGHTS send exhausts it (no re-delegation).
+	 */
+	cap_rights_init(&rights, CAP_READ, CAP_WRITE, CAP_EVENT, CAP_SHUTDOWN,
+	    CAP_FSTAT, CAP_GETSOCKOPT, CAP_SETSOCKOPT);
+	if (cap_rights_limit(s, &rights) == -1 ||
+	    cap_xfer_limit(s, CAP_XFER_ONCE) == -1) {
+		status = errno != 0 ? errno : EIO;
+		syslog(LOG_ERR, "VSOCK_CONNECT cid=%u port=%u (client %s) -> "
+		    "rights limit: %s", rq.cid, rq.port, client,
+		    strerror(status));
+		(void)close(s);
+		s = -1;
+		goto reply;
+	}
+	syslog(LOG_INFO, "VSOCK_CONNECT (client %s) -> cid=%u port=%u", client,
+	    rq.cid, rq.port);
+
+reply:
+	memset(&reply, 0, sizeof(reply));
+	if (status == 0) {
+		reply.tag = bsd_vm_v1_VM_Connect_Result_response_tag;
+		reply.value.response.socket = s;
+	} else {
+		reply.tag = bsd_vm_v1_VM_Connect_Result_err_tag;
+		reply.value.err = (uint32_t)status;
+	}
+	vmd_completed(connection, VMD_OP_VSOCK_CONNECT, status,
+	    bsd_vm_v1_Vm_Connect_reply(connection, request, &reply));
+	if (s >= 0)
+		(void)close(s);
+}
+
+/*
+ * List answers strictly from ctx->window_base -- the window the parent's
+ * registry resolved for THIS connecting label and handed the worker at fork.
+ * A worker only ever knows its own label's base, so List can only ever report
+ * the caller's own window and never another label's.  Data-only: no
+ * descriptor rides the reply.
+ */
+static void
+vmd_list(void *argument, struct fidl_bsd_connection *connection,
+    struct fidl_bsd_request *request, struct fidl_bsd_empty *empty __unused)
+{
+	struct vmd_client_ctx *ctx = argument;
+	struct bsd_vm_v1_VM_List_Result reply;
+	struct bsd_vm_v1_Window *window = &reply.value.response;
+
+	if (!vmd_ready(ctx, connection, VMD_OP_VSOCK_LIST))
+		return;
+	memset(&reply, 0, sizeof(reply));
+	reply.tag = bsd_vm_v1_VM_List_Result_response_tag;
+	window->cid = VMADDR_CID_LOCAL;
+	window->port_base = ctx->window_base;
+	window->port_limit = ctx->window_base + VMD_PORTS_PER_LABEL;
+	window->port_count = VMD_PORTS_PER_LABEL;
+	BSDVM_PROBE_VSOCK_LIST(ctx->label, window->port_base, window->port_limit,
+	    0);
+	syslog(LOG_INFO, "VSOCK_LIST (client %s) -> base=%u range=[%u,%u)",
+	    ctx->label, window->port_base, window->port_base, window->port_limit);
+	vmd_completed(connection, VMD_OP_VSOCK_LIST, 0,
+	    bsd_vm_v1_Vm_List_reply(connection, request, &reply));
 }
 
 /* Serve one client on its own worker channel until it closes. */
 static int
 vmd_worker(int fd, const char *client, uint32_t window_base)
 {
-	struct channel_options options =
-	    CHANNEL_OPTIONS_INITIALIZER(CHANNEL_ROLE_PROVIDER);
-	struct channel *channel = NULL;
+	static const struct bsd_vm_v1_Vm_server handlers = {
+		.GetProtocolInfo = vmd_protocol_info,
+		.Bind = vmd_bind,
+		.Connect = vmd_connect,
+		.List = vmd_list
+	};
+	struct fidl_bsd_connection *connection;
 	struct vmd_client_ctx ctx;
-	int ready, wants_write;
 
 	/* Discard parent authority before serving the worker channel. */
 	service_worker_drop_inherited_authority();
@@ -544,24 +611,21 @@ vmd_worker(int fd, const char *client, uint32_t window_base)
 	(void)strlcpy(ctx.label, client, sizeof(ctx.label));
 	ctx.window_base = window_base;
 
-	if (channel_create(fd, &options, &channel) == -1)
+	if (fidl_bsd_connection_create(fd, FIDL_BSD_SERVER, &connection) != 0)
 		return (1);
-	if (channel_set_request_handler(channel, vmd_request_handler,
-	    &ctx) == -1) {
-		channel_destroy(channel);
+	/*
+	 * Each delivered socket is hardened above (CAP_XFER_ONCE); keep that
+	 * state on the duplicate the bindings send.
+	 */
+	fidl_bsd_connection_preserve_sent_inheritance(connection);
+	if (bsd_vm_v1_Vm_bind(connection, &handlers, &ctx) != 0) {
+		fidl_bsd_connection_destroy(connection);
 		return (1);
 	}
-	for (;;) {
-		wants_write = channel_wants_write(channel);
-		if (wants_write == -1 ||
-		    (ready = channel_wait(channel, wants_write, -1)) == -1 ||
-		    ((ready & CHANNEL_WAIT_WRITE) != 0 &&
-		    channel_flush(channel) == -1) ||
-		    ((ready & CHANNEL_WAIT_READ) != 0 &&
-		    channel_dispatch(channel) == -1))
-			break;
-	}
-	channel_destroy(channel);
+	/* Peer close or a protocol violation ends the session. */
+	while (fidl_bsd_connection_poll(connection, -1) == 0)
+		;
+	fidl_bsd_connection_destroy(connection);
 	return (0);
 }
 

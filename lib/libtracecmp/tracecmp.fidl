@@ -1,0 +1,30 @@
+// SPDX-License-Identifier: BSD-2-Clause
+// system.Trace (BSDTrace).  The library name, ordinals and layouts are a
+// stable contract for wire major 1; incompatible changes need a new major.
+// Authority never travels in a payload: the provider decides from the
+// session's switchboard-stamped rights (SERVICE_RIGHTS_ADMIN) and its
+// bsdtrace.allow label policy.
+library bsd.trace.v1;
+
+using zx;
+
+// features: 0x1 (TRACECMP_FEATURE_RAW_DTRACE_FD) when this session may
+// receive a DTrace consumer descriptor.
+type ProtocolInfo = struct {
+    wire_version uint32;
+    features uint32;
+};
+// A /dev/dtrace/dtrace consumer limited to the DTrace consumer ioctls; it may
+// be transferred no further.  At most one per session.
+type Consumer = resource struct { dtrace zx.Handle; };
+type TraceStats = struct {
+    opened uint64;
+    rejected uint64;
+};
+closed protocol Trace {
+    strict GetProtocolInfo() -> (ProtocolInfo);
+    // Errors are errno values (EACCES: not authorized; EALREADY: already
+    // delivered; device errors).
+    strict Open() -> (Consumer) error uint32;
+    strict Stats() -> (TraceStats);
+};

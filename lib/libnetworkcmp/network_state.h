@@ -5,6 +5,8 @@
 
 #include <stdint.h>
 #define NETWORK_STATE_INTERFACE	       "system.Network.State"
+/* bsd.network.v1 NetworkState wire major (networkcmp.fidl). */
+#define NETWORK_STATE_WIRE_VERSION     1
 #define NETWORK_STATE_RIGHT_READ       UINT64_C(1)
 #define NETWORK_STATE_MAX_INTERFACES   256
 #define NETWORK_STATE_TIMEOUT_INFINITE UINT32_MAX

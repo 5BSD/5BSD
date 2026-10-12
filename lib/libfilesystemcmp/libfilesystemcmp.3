@@ -1,0 +1,409 @@
+.\" SPDX-License-Identifier: BSD-2-Clause
+.Dd October 12, 2026
+.Dt LIBFILESYSTEMCMP 3
+.Os
+.Sh NAME
+.Nm libfilesystemcmp
+.Nd system.Filesystem client: storage claims, versions, transactions and isolated path opens from the BSDFilesystem provider
+.Sh LIBRARY
+.Pq libfilesystemcmp, Fl lfilesystemcmp
+.Sh SYNOPSIS
+.In filesystemcmp.h
+.Ft int
+.Fn service_storage_open "struct service_context *context" "const char *name" "int *dirfdp"
+.Ft int
+.Fn service_storage_open_quota "struct service_context *context" "const char *name" "uint64_t quota" "int *dirfdp"
+.Ft int
+.Fn service_storage_open_cache "struct service_context *context" "const char *name" "int *dirfdp"
+.Ft int
+.Fn service_storage_destroy_cache "struct service_context *context" "const char *name"
+.Ft int
+.Fn service_storage_open_shared "struct service_context *context" "const char *name" "int *dirfdp"
+.Ft int
+.Fn service_storage_open_shared_readonly "struct service_context *context" "const char *name" "int *dirfdp"
+.Ft int
+.Fn service_storage_open_env "struct service_context *context" "int *dirfdp"
+.Ft int
+.Fn service_storage_open_group "struct service_context *context" "const char *group" "const char *name" "int *dirfdp"
+.Ft int
+.Fn service_storage_destroy_shared "struct service_context *context" "const char *name"
+.Ft int
+.Fn service_storage_destroy_group "struct service_context *context" "const char *group" "const char *name"
+.Ft int
+.Fn service_storage_destroy "struct service_context *context" "const char *name"
+.Ft int
+.Fn service_storage_list "struct service_context *context" "struct service_storage_claim *claims" "size_t max" "size_t *countp" "uint32_t *cursorp"
+.Ft int
+.Fn service_storage_list_shared "struct service_context *context" "struct service_storage_claim *claims" "size_t max" "size_t *countp" "uint32_t *cursorp"
+.Ft int
+.Fn service_storage_list_group "struct service_context *context" "const char *group" "struct service_storage_claim *claims" "size_t max" "size_t *countp" "uint32_t *cursorp"
+.Ft int
+.Fn service_storage_stat "struct service_context *context" "const char *name" "struct service_storage_stat_result *out"
+.Ft int
+.Fn service_storage_set_quota "struct service_context *context" "const char *name" "uint64_t quota"
+.Ft int
+.Fn service_storage_snapshot "struct service_context *context" "const char *name" "char *version" "size_t vsz"
+.Ft int
+.Fn service_storage_list_versions "struct service_context *context" "const char *name" "char (*versions)[SERVICE_STORAGE_VERSION_MAX]" "size_t max" "size_t *countp" "uint32_t *cursorp"
+.Ft int
+.Fn service_storage_rollback "struct service_context *context" "const char *name" "const char *version"
+.Ft int
+.Fn service_storage_open_version "struct service_context *context" "const char *name" "const char *version" "int *dirfdp"
+.Ft int
+.Fn service_storage_txn_begin "struct service_context *context" "const char *name" "char *txn_id" "size_t tsz" "int *dirfdp"
+.Ft int
+.Fn service_storage_txn_commit "struct service_context *context" "const char *name" "const char *txn_id"
+.Ft int
+.Fn service_storage_txn_abort "struct service_context *context" "const char *name" "const char *txn_id"
+.Ft int
+.Fn service_storage_release "struct service_context *context" "const char *name"
+.Ft int
+.Fn service_storage_release_cache "struct service_context *context" "const char *name"
+.Ft int
+.Fn service_storage_release_shared "struct service_context *context" "const char *name"
+.Ft int
+.Fn service_storage_release_group "struct service_context *context" "const char *group" "const char *name"
+.Ft int
+.Fn service_open_config "struct service_context *context" "int *dirfdp"
+.Ft int
+.Fn service_open_isolated "struct service_context *context" "const char *path" "unsigned rights" "int is_dir" "int *fdp"
+.Sh DESCRIPTION
+These calls were part of
+.Xr libservice 3
+and moved to their own library with the same names and semantics.
+Each takes the process's own service context from
+.Xr service_acquire 3 ;
+a context inherited across a fork is refused with
+.Er EINVAL .
+The calls speak the FIDL library
+.Li bsd.filesystem.v1
+.Pq Pa /usr/share/fidl/filesystemcmp.fidl
+to the provider.
+The process-wide session is opened by name on first use and negotiated
+once; a forked child abandons the parent's session and opens its own.
+Each call is bounded by ten seconds, shortened by an active
+.Xr service_budget_begin 3 .
+A timeout, a transport failure or a malformed reply drops the session, and
+the next call opens a new one; an application error keeps it.
+.Pp
+.Fn service_storage_open
+asks the
+.Dq system.Filesystem
+provider
+.Pq Xr BSDFilesystem 8
+for the owned, type-checked storage claim named
+.Fa name ,
+mounts the delivered rights-limited handle, and returns its directory root in
+.Fa dirfdp .
+The returned descriptor anchors the store's anonymous mount: the store stays
+mounted while the caller holds it
+.Pq or while the provider holds the claim ,
+and is unmounted when the last holder lets go, so a caller keeps it open for
+as long as it uses the store and closes it before
+.Fn service_storage_destroy
+.Pq a mounted store cannot be destroyed .
+Descriptors opened beneath it do not keep the mount alive on their own.
+The caller hardens the returned directory's rights itself.
+.Pp
+.Fn service_storage_open_cache
+claims
+.Fa name
+in the unit's
+.Em cache
+sub-container
+.Pq Pa Data/<bundle>/<unit>/cache/<name> :
+regenerable data, reaped with the unit's container like persistent storage
+but kept apart from it;
+.Fn service_storage_destroy_cache
+drops such a claim.
+.Fn service_storage_open_shared
+claims
+.Fa name
+in the bundle's
+.Em shared
+container
+.Pq Pa Data/<bundle>/shared/persistent/<name> ,
+reachable by every unit of the bundle and reaped with the bundle.
+Several units may hold the same store at the same time: it is mounted once
+and shared, and stays mounted until the last holder lets go.
+.Fn service_storage_open_shared_readonly
+claims the same store but delivers a
+.Em read-only view :
+the directory carries read-only Capsicum rights, so every descriptor derived
+under it can look up, read, stat and map but never write, create, unlink,
+rename or change attributes
+.Pq Er ENOTCAPABLE .
+A read-only claim never changes the store's ownership.
+.Fn service_storage_open_env
+is the conventional shared
+.Em environment :
+the read-only view of the shared store named
+.Dv SERVICE_STORAGE_ENV
+.Pq Dq env ,
+which one designated unit of the bundle writes through
+.Fn service_storage_open_shared
+and every other unit reads.
+.Fn service_storage_open_group
+claims
+.Fa name
+in the cross-bundle
+.Em group
+container
+.Pq Pa Data/Shared/<group>/persistent/<name> :
+the unit's bundle must declare membership in
+.Fa group
+.Pq Bundle.ucl Va groups , see Xr switchboard 5 ,
+which switchboard stamps on the connection and
+.Xr BSDFilesystem 8
+enforces; a non-member is refused with
+.Er EPERM .
+The group container is reaped only when no installed bundle claims the group
+(docs/book/src/plane/containers-and-storage.md).
+.Fa group
+is a single safe component.
+.Fn service_storage_destroy_shared
+and
+.Fn service_storage_destroy_group
+are the symmetric
+.Fn service_storage_destroy
+for those scopes.
+.Pp
+.Fn service_storage_open_quota
+is
+.Fn service_storage_open
+with the persistent claim's
+.Fa refquota
+bounded to
+.Fa quota
+bytes;
+.Fa quota
+of zero selects the daemon's configured default, and a value below the daemon's
+floor is rejected with
+.Er EINVAL .
+.Fn service_storage_open
+is
+.Fn service_storage_open_quota
+with
+.Fa quota
+of zero.
+.Pp
+.Fn service_storage_destroy
+reclaims and destroys the persistent storage claim previously granted under
+.Fa name ,
+freeing its pool space.
+The claim is resolved under the caller's own label-scoped namespace, so a
+caller can never name another's;
+.Er ENOENT
+is returned when the named claim is absent.
+.Pp
+.Fn service_storage_list
+enumerates the caller's own persistent and cache storage claims into
+.Fa claims ,
+storing the number written in
+.Fa countp .
+The walk is scoped to the caller's own label-derived namespace, so it can only
+ever return the caller's claims.
+Enumeration is paged: pass
+.Fa cursorp
+pointing at zero for the first page; on return
+.Fa *cursorp
+is nonzero when more claims remain (re-issue with that value) and zero after the
+last page.
+A buffer of
+.Dv SERVICE_STORAGE_LIST_MAX
+entries always holds a whole page; a smaller
+.Fa max
+that cannot hold the returned page fails with
+.Er EMSGSIZE ,
+stores the required entry count in
+.Fa *countp ,
+and leaves
+.Fa *cursorp
+unchanged so the caller can retry without skipping claims.
+Each returned
+.Vt struct service_storage_claim
+carries the claim's opaque
+.Va name ,
+its
+.Va used
+bytes, and its
+.Va refquota
+ceiling in bytes
+.Pq zero when none .
+.Pp
+.Fn service_storage_list_shared
+and
+.Fn service_storage_list_group
+enumerate the bundle-SHARED container and a per-group container the caller may
+claim in, so a forgotten claim in either scope is discoverable to
+.Fn service_storage_destroy_shared
+or
+.Fn service_storage_destroy_group ;
+they page and owner-scope exactly like
+.Fn service_storage_list .
+The group variant enumerates only a group the caller's bundle declares
+membership in, returning an empty page otherwise.
+.Pp
+.Fn service_storage_stat
+reports one persistent claim's live usage \(em bytes
+.Va used ,
+the
+.Va refquota
+ceiling
+.Pq zero when none ,
+and the bytes still
+.Va available
+under it \(em as an O(1) single-claim query rather than a whole-namespace walk.
+It fills
+.Fa out
+and is owner-scoped;
+.Er ENOENT
+is returned when the claim is absent.
+.Pp
+.Fn service_storage_set_quota
+raises or lowers one of the caller's own persistent claims' refquota after the
+mint:
+.Fa quota
+bytes, or zero to remove the ceiling.
+The same floor and authority as the original claim apply;
+.Er EINVAL
+is returned below the floor and
+.Er ENOENT
+when the claim is absent.
+.Ss Versions and transactions
+A
+.Em version
+is a snapshot of one of the caller's own persistent claims, named by an opaque
+id of at most
+.Dv SERVICE_STORAGE_VERSION_MAX
+bytes including the NUL.
+Every version operation is owner-scoped: a caller can only ever version its own
+storage.
+.Pp
+.Fn service_storage_snapshot
+snapshots
+.Fa name
+now and copies the assigned version id into
+.Fa version .
+.Fn service_storage_list_versions
+pages a claim's version ids into
+.Fa versions ,
+with
+.Fa cursorp
+paging exactly as
+.Fn service_storage_list
+does.
+.Fn service_storage_open_version
+mounts
+.Fa version
+read-only and hands back its directory fd in
+.Fa dirfdp
+without disturbing the live claim; it needs an active session, and the
+read-only clone is reaped with that session.
+.Fn service_storage_rollback
+rolls
+.Fa name
+back to
+.Fa version ,
+destroying any newer versions; it is destructive.
+.Pp
+.Fn service_storage_txn_begin
+hands back a writable staging clone of
+.Fa name
+\(em its directory fd in
+.Fa dirfdp
+\(em plus a transaction id in
+.Fa txn_id .
+The caller edits the clone, then
+.Fn service_storage_txn_commit
+atomically swaps it in over the claim, or
+.Fn service_storage_txn_abort
+discards it.
+.Pp
+Both
+.Fn service_storage_txn_commit
+and
+.Fn service_storage_rollback
+replace or rewind the live claim, so the caller must first RELEASE its mount of
+that claim \(em drop the daemon-side mount anchor and close any delivered
+directory fd for it \(em or the operation fails with
+.Er EBUSY .
+.Fn service_storage_release ,
+.Fn service_storage_release_cache ,
+.Fn service_storage_release_shared ,
+and
+.Fn service_storage_release_group
+drop this process's mount anchor on a UNIT, cache, SHARED, or GROUP claim
+without destroying it; they are idempotent \(em a claim not currently anchored
+is a success \(em and mirror the
+.Fn service_storage_open
+and
+.Fn service_storage_destroy
+scope variants.
+.Pp
+.Fn service_open_config
+opens this service's writable, label-scoped configuration area \(em the
+well-known
+.Dq config
+claim under its per-service home \(em and returns its mounted directory root in
+.Fa dirfdp .
+It is a thin wrapper over
+.Fn service_storage_open
+and takes no object name.
+.Pp
+.Fn service_open_isolated
+opens an existing filesystem
+.Fa path
+through
+.Xr BSDFilesystem 8 Ns 's
+per-label default-deny policy and returns a Capsicum-rights-limited,
+close-on-exec descriptor in
+.Fa fdp .
+It lets a sandboxed service reach a device node, shared directory, or config
+file it cannot open by path itself, with nothing declared in the manifest.
+.Fa rights
+is a mask of
+.Dv SERVICE_OPEN_READ , SERVICE_OPEN_WRITE , SERVICE_OPEN_EXEC ,
+.Dv SERVICE_OPEN_LOOKUP ,
+and
+.Dv SERVICE_OPEN_IOCTL ;
+a non-zero
+.Fa is_dir
+requires that
+.Fa path
+be a directory.
+A path the label is not granted fails with
+.Er EACCES .
+.Sh RETURN VALUES
+The functions return the value 0 if successful; otherwise the value -1 is
+returned and the global variable
+.Va errno
+is set to indicate the error.
+.Sh ERRORS
+In addition to the provider's
+.Xr errno 2
+values (for example
+.Er ENOENT , EACCES , ENXIO No or Er EBUSY Ns ):
+.Bl -tag -width Er
+.It Bq Er EINVAL
+An argument was invalid, or
+.Fa context
+is not this process's own service context.
+.It Bq Er EPROTO
+The provider's reply was malformed; any descriptor it carried was closed.
+.It Bq Er EPROTONOSUPPORT
+The provider speaks a different wire version.
+.It Bq Er ETIMEDOUT
+The provider did not answer in time.
+.El
+.Sh SEE ALSO
+.Xr libservice 3 ,
+.Xr BSDFilesystem 8
+.Sh HISTORY
+These functions appeared in
+.Xr libservice 3 ;
+.Nm libfilesystemcmp
+appeared in 5BSD when they moved out of it, and its record protocol was
+replaced by
+.Li bsd.filesystem.v1
+in October 2026.

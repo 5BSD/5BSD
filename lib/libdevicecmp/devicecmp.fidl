@@ -1,0 +1,45 @@
+// SPDX-License-Identifier: BSD-2-Clause
+// system.Device (BSDDevice).  The library name, ordinals and layouts are a
+// stable contract for wire major 1; incompatible changes need a new major.
+// Identity never travels in a payload: the provider decides from the accepted
+// session's label and its per-label device.conf policy (default-deny), and
+// List is scoped to that label.
+library bsd.device.v1;
+
+using zx;
+
+type ProtocolInfo = struct { wire_version uint32; };
+// A single /dev leaf: no '/', no leading '.', no NUL; at most 255 bytes.
+alias DeviceName = string:255;
+// Rights are a DEVICECMP_RIGHT_* mask (READ 0x1, WRITE 0x2, IOCTL 0x4,
+// MMAP 0x8, SEEK 0x10, EVENT 0x20).  The provider intersects the request with
+// the policy maximum; unknown bits are never granted.
+type OpenRequest = struct {
+    name DeviceName;
+    rights uint32;
+};
+// The delivered descriptor keeps exactly the narrowed Capsicum rights (and
+// ioctl whitelist) the provider applied; it may be transferred no further.
+type Opened = resource struct {
+    device zx.Handle;
+    rights uint32;
+};
+type ListRequest = struct { cursor uint32; };
+type DeviceEntry = struct {
+    name DeviceName;
+    // Policy-maximum rights for this label and device.
+    rights uint32;
+    // 0x1: a per-device ioctl whitelist narrows a delivered IOCTL right.
+    flags uint32;
+};
+type DevicePage = struct {
+    entries vector<DeviceEntry>:32;
+    // 0 on the final page; otherwise the cursor for the next List.
+    next_cursor uint32;
+};
+closed protocol Device {
+    strict GetProtocolInfo() -> (ProtocolInfo);
+    // Errors are errno values (EACCES: not granted; EINVAL: bad name).
+    strict Open(OpenRequest) -> (Opened) error uint32;
+    strict List(ListRequest) -> (DevicePage) error uint32;
+};

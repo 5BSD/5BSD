@@ -1,4 +1,11 @@
 /*- SPDX-License-Identifier: BSD-2-Clause */
+/*
+ * system.Crypto constants and the client API's request/result records.  The
+ * client and provider speak cryptocmp.fidl (library bsd.crypto.v1); the
+ * cryptocmp_msg header and *_reply framing below are the pre-FIDL wire format,
+ * kept for source compatibility and rejected by the provider.  The opcode
+ * numbers remain the DTrace request-done probe's operation codes.
+ */
 #ifndef _CRYPTOCMP_PROTOCOL_H_
 #define _CRYPTOCMP_PROTOCOL_H_
 #include <stdint.h>

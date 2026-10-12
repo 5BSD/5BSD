@@ -29,6 +29,7 @@
 #include <atf-c.h>
 #include <channel.h>
 #include <libservice.h>
+#include <filesystemcmp.h>
 #include <service_runtime.h>
 #include <service_bootstrap.h>
 #include <switchboard_svc_proto.h>
@@ -1269,32 +1270,6 @@ ATF_TC_BODY(resource_directory_colon_path, tc)
 	ATF_CHECK_EQ(ENOENT, errno);
 }
 
-ATF_TC_WITHOUT_HEAD(provider_reply_validation);
-ATF_TC_BODY(provider_reply_validation, tc)
-{
-	char bytes[8], name[8];
-
-	(void)tc;
-	ATF_CHECK(service_provider_status_valid(0));
-	ATF_CHECK(service_provider_status_valid(ELAST));
-	ATF_CHECK(!service_provider_status_valid(-1));
-	ATF_CHECK(!service_provider_status_valid(ELAST + 1));
-
-	memset(bytes, 0, sizeof(bytes));
-	ATF_CHECK(service_provider_all_zero(bytes, sizeof(bytes)));
-	bytes[3] = 1;
-	ATF_CHECK(!service_provider_all_zero(bytes, sizeof(bytes)));
-
-	ATF_CHECK(service_provider_component_valid("state", 6));
-	ATF_CHECK(service_provider_component_valid("if_bridge", 10));
-	ATF_CHECK(!service_provider_component_valid("", 1));
-	ATF_CHECK(!service_provider_component_valid(".", 2));
-	ATF_CHECK(!service_provider_component_valid("..", 3));
-	ATF_CHECK(!service_provider_component_valid("a/b", 4));
-	memset(name, 'x', sizeof(name));
-	ATF_CHECK(!service_provider_component_valid(name, sizeof(name)));
-}
-
 ATF_TC_WITHOUT_HEAD(stale_bootstrap_preserves_descriptor);
 ATF_TC_BODY(stale_bootstrap_preserves_descriptor, tc)
 {
@@ -1360,7 +1335,6 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, service_budget_wire);
 	ATF_TP_ADD_TC(tp, deadline_timer_control);
 	ATF_TP_ADD_TC(tp, capability_rights_algebra);
-	ATF_TP_ADD_TC(tp, provider_reply_validation);
 	ATF_TP_ADD_TC(tp, bootstrap_validation);
 	ATF_TP_ADD_TC(tp, stale_bootstrap_preserves_descriptor);
 	ATF_TP_ADD_TC(tp, shared_context);

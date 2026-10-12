@@ -10,8 +10,12 @@ PKG_DEPS.bsdcrypto+=libauditcmp
 PKG_DEPS.bsdcrypto+=libchannel
 PKG_DEPS.bsdcrypto+=libcryptocmp
 PKG_DEPS.bsdcrypto+=libcryptodesc
+PKG_DEPS.bsdcrypto+=libfidl
 PKG_DEPS.bsdcrypto+=libservice
 PKG_DEPS.bsdcrypto+=switchboard
 PKG_DEPS.bsdcrypto+=switchboardctl
+
+# Provider clients moved out of libservice.
+PKG_DEPS.bsdcrypto+=	libextensioncmp
 
 .include <bsd.pkg.mk>

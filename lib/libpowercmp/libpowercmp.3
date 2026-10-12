@@ -1,13 +1,17 @@
 .\" SPDX-License-Identifier: BSD-2-Clause
 .\" Copyright (c) 2026 Kory Heard
-.Dd October 10, 2026
+.Dd October 11, 2026
 .Dt LIBPOWERCMP 3
 .Os
 .Sh NAME
 .Nm powercmp_client_open ,
+.Nm powercmp_client_create ,
 .Nm powercmp_client_close ,
 .Nm powercmp_states ,
-.Nm powercmp_suspend
+.Nm powercmp_suspend ,
+.Nm powercmp_inhibit ,
+.Nm powercmp_uninhibit ,
+.Nm powercmp_inhibitors
 .Nd client for the system.Power capability
 .Sh LIBRARY
 Power Capability Library (libpowercmp, -lpowercmp)
@@ -15,12 +19,20 @@ Power Capability Library (libpowercmp, -lpowercmp)
 .In powercmp.h
 .Ft int
 .Fn powercmp_client_open "struct powercmp_client **clientp"
+.Ft int
+.Fn powercmp_client_create "int fd" "struct powercmp_client **clientp"
 .Ft void
 .Fn powercmp_client_close "struct powercmp_client *client"
 .Ft int
 .Fn powercmp_states "struct powercmp_client *client" "uint32_t *supported"
 .Ft int
 .Fn powercmp_suspend "struct powercmp_client *client" "uint32_t state"
+.Ft int
+.Fn powercmp_inhibit "struct powercmp_client *client"
+.Ft int
+.Fn powercmp_uninhibit "struct powercmp_client *client"
+.Ft int
+.Fn powercmp_inhibitors "struct powercmp_client *client" "uint32_t *count"
 .Sh DESCRIPTION
 .Nm libpowercmp
  is the client to
@@ -41,6 +53,38 @@ it after a per-label policy check.
 opens a session and returns 0, or -1 with
 .Va errno
 set.
+.Fn powercmp_client_create
+adopts an already held system.Power channel
+.Fa fd ;
+it consumes the descriptor only on success.
+.Pp
+The library speaks the FIDL protocol
+.Sy bsd.power.v1
+.Pq Pa /usr/share/fidl/powercmp.fidl ;
+see
+.Xr fidl 7 .
+The first call on a session checks the provider's wire version and fails
+with
+.Er EPROTONOSUPPORT
+for an incompatible provider before sending any operation.
+Negotiation and the operation share one five-second monotonic deadline,
+shortened by an active
+.Fn service_budget_begin
+budget
+.Pq Xr service_runtime 3 ; on expiry the call fails with
+.Er ETIMEDOUT .
+Timeouts, transport failures and malformed replies
+.Pq Er EPROTO
+make the handle terminal; application errors such as
+.Er EPERM
+leave it usable.
+Requests are never replayed.
+.Pp
+.In powercmp_protocol.h
+and
+.Fn powercmp_validate_message
+describe the pre-FIDL wire records; they are kept only for compatibility and
+are rejected by the current provider.
 .Fn powercmp_suspend
 fails with
 .Er EPERM
@@ -87,7 +131,9 @@ error = powercmp_uninhibit(power);
 powercmp_client_close(power);
 .Ed
 .Sh SEE ALSO
+.Xr service_runtime 3 ,
 .Xr acpi 4 ,
+.Xr fidl 7 ,
 .Xr BSDPower 8
 .Sh AUTHORS
 .An Kory Heard

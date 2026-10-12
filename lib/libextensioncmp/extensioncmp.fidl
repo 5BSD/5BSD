@@ -1,0 +1,47 @@
+// SPDX-License-Identifier: BSD-2-Clause
+// system.SystemExtension (BSDExtension).  The library name, ordinals and
+// layouts are a stable contract for wire major 1; incompatible changes need a
+// new major.  Identity never travels in a payload: the provider decides from
+// the accepted session's rights (ADMIN for policy changes) and the bundle its
+// label belongs to.
+library bsd.extension.v1;
+
+type ProtocolInfo = struct { wire_version uint32; };
+// A kernel module name: no '/', not "." or "..", no NUL.
+alias ModuleName = string:63;
+type Module = struct { name ModuleName; };
+type LoadState = struct { loaded bool; };
+type ModuleList = struct {
+    // The allow-listed names (EOVERFLOW when more than 32 are configured).
+    modules vector<Module>:32;
+};
+// An empty cursor starts a Next enumeration.
+type Cursor = struct { name string:63; };
+type ModuleInfo = struct {
+    name ModuleName;
+    // SYSEXT_STATE_* bits: 0x1 allowed, 0x2 enabled, 0x4 loaded (only
+    // reported for an allowed module), 0x8 override, 0x10 ready.
+    flags uint32;
+};
+closed protocol SystemExtension {
+    strict GetProtocolInfo() -> (ProtocolInfo);
+    // Errors are errno values (EPERM: not allow-listed, or not ADMIN for the
+    // policy methods; EINVAL: bad name).
+    strict Ensure(Module) -> () error uint32;
+    strict Stat(Module) -> (LoadState) error uint32;
+    strict List() -> (ModuleList) error uint32;
+    // ADMIN: reload the configured policy file.
+    strict Reload() -> () error uint32;
+    // ADMIN: durable policy overrides; Enable and Disable affect future
+    // restoration, Restore loads every enabled module now.
+    strict Allow(Module) -> () error uint32;
+    strict Deny(Module) -> () error uint32;
+    strict Reset(Module) -> () error uint32;
+    strict Enable(Module) -> () error uint32;
+    strict Disable(Module) -> () error uint32;
+    strict Restore() -> () error uint32;
+    // One policy entry; Next returns the first entry lexically after the
+    // cursor, ENOENT at the end.
+    strict Info(Module) -> (ModuleInfo) error uint32;
+    strict Next(Cursor) -> (ModuleInfo) error uint32;
+};

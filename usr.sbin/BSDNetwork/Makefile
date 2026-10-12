@@ -13,10 +13,13 @@ LDFLAGS+=	-Wl,-z,now
 CFLAGS+=	-I${SRCTOP}/lib/libauditcmp
 CFLAGS+=	-I${SRCTOP}/lib/libchannel
 CFLAGS+=	-I${SRCTOP}/lib/libnetworkcmp
+CFLAGS+=	-I${FIDLGEN.networkcmp}
+CFLAGS+=	-I${SRCTOP}/lib/libfidl/include
 CFLAGS+=	-I${SRCTOP}/lib/libservice
+CFLAGS+=	-I${SRCTOP}/lib/libfilesystemcmp
 CFLAGS+=	-I${SRCTOP}/contrib/libucl/include
 CFLAGS+=	-I${SRCTOP}/sys
-LIBADD=		auditcmp channel logcmp networkcmp pthread service ucl
+LIBADD=		auditcmp channel fidl_bsd filesystemcmp logcmp networkcmp pthread service ucl
 CFLAGS+=	-I${SRCTOP}/lib/libnotify
 CFLAGS+=	-I${SRCTOP}/lib/libsysctlcmp
 LIBADD+=	notify sysctlcmp
@@ -51,6 +54,13 @@ CONFSDIR=	${NETWORKCMP_CAP_CONFIG}
 CONFSNAME_capbundle/bsdnetwork.conf=	bsdnetwork.conf
 CONFSDIRPACKAGE=	bsdnetwork
 CONFSPACKAGE=	bsdnetwork
+
+# Bindings generated at build time (fidl-bindings.mk).
+FIDL_BINDINGS+=	networkcmp
+FIDL_SCHEMAS.networkcmp=	lib/libfidl/tests/zx.fidl \
+	lib/libnetworkcmp/networkcmp.fidl
+FIDL_LIBRARY.networkcmp=	bsd.network.v1
+.include "${SRCTOP}/lib/libfidl/fidl-bindings.mk"
 
 HAS_TESTS=
 SUBDIR.${MK_TESTS}+=	tests

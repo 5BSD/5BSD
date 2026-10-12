@@ -26,7 +26,7 @@
 #include <time.h>
 #include <unistd.h>
 
-#include <channel.h>
+#include <fidl/bsd.trace.v1/c/bsd.h>
 #include <libservice.h>
 #include <service_runtime.h>
 #include <logcmp.h>
@@ -41,11 +41,6 @@
 
 #define	TRACECMP_PROVIDER_NAME	TRACECMP_INTERFACE
 #define	TRACECMP_CLIENT_TIMEOUT_MS	30000
-
-union tracecmp_buffer {
-	max_align_t align;
-	uint8_t bytes[TRACECMP_MAX_MESSAGE];
-};
 
 static void
 audit_policy(const char *label, const char *operation, int error)
@@ -88,6 +83,7 @@ struct worker_state {
 	bool			 authorized;
 	int			 device_error;
 	int			 terminal_error;
+	bool			 negotiated;
 };
 
 static int
@@ -184,99 +180,93 @@ open_dtrace_directory(void)
 }
 #endif
 
-static int
-send_reply(struct channel_message *request_message,
-    const struct tracecmp_msg *request, int error, const void *payload,
-    size_t payload_length, int attached_fd)
+/*
+ * bsd.trace.v1 method handlers.  Every method but GetProtocolInfo requires a
+ * negotiated session.  A reply that cannot be sent is terminal for the
+ * session.  Probes keep the historical TRACECMP_OP_* codes.
+ */
+static bool
+session_ready(struct worker_state *state,
+    struct fidl_bsd_connection *connection, uint32_t opcode)
 {
-	union tracecmp_buffer buffer;
-	struct tracecmp_msg *reply;
-	const int *fds;
-	size_t nfds;
 
-	memset(&buffer, 0, sizeof(buffer));
-	reply = (void *)buffer.bytes;
-	if (tracecmp_message_init_reply(reply, request,
-	    error == 0 ? 0 : -error) == -1)
-		return (-1);
-	if (error == 0 && payload_length != 0)
-		memcpy(reply + 1, payload, payload_length);
-	fds = attached_fd >= 0 ? &attached_fd : NULL;
-	nfds = attached_fd >= 0 ? 1 : 0;
-	if (tracecmp_validate_message(reply,
-	    sizeof(*reply) + (error == 0 ? payload_length : 0),
-	    TRACECMP_MESSAGE_REPLY) == -1 ||
-	    tracecmp_validate_fds(reply, nfds, TRACECMP_MESSAGE_REPLY) == -1)
-		return (-1);
-	return (channel_send_reply(request_message,
-	    &(struct channel_outgoing){
-		.size = sizeof(struct channel_outgoing),
-		.data = reply,
-		.length = sizeof(*reply) +
-		    (error == 0 ? payload_length : 0),
-		.fds = fds,
-		.nfds = nfds
-	    }));
+	if (state->negotiated)
+		return (true);
+	state->terminal_error = EPROTO;
+	BSDTRACE_PROBE_REQUEST_DONE(opcode, EPROTO, EPROTO);
+	fidl_bsd_connection_close(connection, EPROTO);
+	return (false);
 }
 
 static void
-handle_request(struct channel *channel __unused,
-    struct channel_message *request_message, void *argument)
+request_done(struct worker_state *state, struct fidl_bsd_connection *connection,
+    uint32_t opcode, int error, int reply_error)
 {
-	struct worker_state *state;
-	struct tracecmp_hello_reply hello;
-	const struct tracecmp_msg *message;
-	size_t length;
-	bool admin;
+
+	if (reply_error != 0 && state->terminal_error == 0) {
+		state->terminal_error = reply_error;
+		fidl_bsd_connection_close(connection, reply_error);
+	}
+	BSDTRACE_PROBE_REQUEST_DONE(opcode, error, state->terminal_error);
+}
+
+/*
+ * Authorization is by the rights held on this session, not the caller's uid
+ * (docs/capability-authority-model.md, P5).  switchboard stamps
+ * SERVICE_RIGHTS_ADMIN onto the grant only for an admin login session, and
+ * that right is the capability replacement for the old "root may do anything"
+ * bypass: a session holding it may obtain the raw DTrace consumer fd
+ * regardless of the label allowlist.  Any other session is delegated the fd
+ * only if its client label is in the bsdtrace allowlist (the mechanism that
+ * lets specific unprivileged labels drive DTrace).  The rights ride the
+ * session's grant and cannot be widened by the client.
+ */
+static bool
+session_may_delegate(const struct worker_state *state)
+{
+
+	return (service_rights_allow(state->rights, SERVICE_RIGHTS_ADMIN) ||
+	    state->authorized);
+}
+
+static void
+protocol_info(void *argument, struct fidl_bsd_connection *connection,
+    struct fidl_bsd_request *request, struct fidl_bsd_empty *empty __unused)
+{
+	struct worker_state *state = argument;
+	struct bsd_trace_v1_ProtocolInfo info = { TRACECMP_WIRE_VERSION, 0 };
 	int error;
 
-	state = argument;
-	message = channel_message_data(request_message);
-	length = channel_message_length(request_message);
-	if (tracecmp_validate_message(message, length,
-	    TRACECMP_MESSAGE_REQUEST) == -1 ||
-	    tracecmp_validate_fds(message,
-	    channel_message_fd_count(request_message),
-	    TRACECMP_MESSAGE_REQUEST) == -1) {
-		state->terminal_error = EPROTO;
-		BSDTRACE_PROBE_REQUEST_DONE(UINT32_MAX, EPROTO, 0);
-		channel_message_free(request_message);
+	info.features = session_may_delegate(state) && state->dtrace_fd >= 0 ?
+	    TRACECMP_FEATURE_RAW_DTRACE_FD : 0;
+	error = bsd_trace_v1_Trace_GetProtocolInfo_reply(connection, request,
+	    &info);
+	state->negotiated = error == 0;
+	request_done(state, connection, TRACECMP_OP_HELLO, 0, error);
+}
+
+static void
+open_consumer(void *argument, struct fidl_bsd_connection *connection,
+    struct fidl_bsd_request *request, struct fidl_bsd_empty *empty __unused)
+{
+	struct worker_state *state = argument;
+	struct bsd_trace_v1_Trace_Open_Result reply = { 0 };
+	int error = 0, reply_error;
+
+	if (!session_ready(state, connection, TRACECMP_OP_OPEN))
 		return;
-	}
-
-	/*
-	 * Authorization is by the rights held on this session, not the caller's
-	 * uid (docs/capability-authority-model.md, P5).  switchboard stamps
-	 * SERVICE_RIGHTS_ADMIN onto the grant only for an admin login session, and
-	 * that right is the capability replacement for the old "root may do
-	 * anything" bypass: a session holding it may obtain the raw DTrace consumer
-	 * fd regardless of the label allowlist.  Any other session is delegated the
-	 * fd only if its client label is in the bsdtrace allowlist (the mechanism
-	 * that lets specific unprivileged labels drive DTrace).  The rights ride the
-	 * session's grant and cannot be widened by the client.
-	 */
-	admin = service_rights_allow(state->rights, SERVICE_RIGHTS_ADMIN);
-
-	error = 0;
-	switch (message->opcode) {
-	case TRACECMP_OP_HELLO:
-		memset(&hello, 0, sizeof(hello));
-		hello.features = (admin || state->authorized) &&
-		    state->dtrace_fd >= 0 ? TRACECMP_FEATURE_RAW_DTRACE_FD : 0;
-		if (send_reply(request_message, message, 0, &hello,
-		    sizeof(hello), -1) == -1)
-			state->terminal_error = errno;
-		break;
-	case TRACECMP_OP_OPEN:
-		if (!(admin || state->authorized))
-			error = EACCES;
-		else if (state->dtrace_fd < 0)
-			error = state->device_error != 0 ?
-			    state->device_error : EALREADY;
-		else if (send_reply(request_message, message, 0, NULL, 0,
-		    state->dtrace_fd) == -1)
-			state->terminal_error = errno;
-		else {
+	if (!session_may_delegate(state))
+		error = EACCES;
+	else if (state->dtrace_fd < 0)
+		error = state->device_error != 0 ? state->device_error :
+		    EALREADY;
+	if (error == 0) {
+		/* The bindings send a private duplicate of the consumer. */
+		reply.tag = bsd_trace_v1_Trace_Open_Result_response_tag;
+		reply.value.response.dtrace = state->dtrace_fd;
+		reply_error = bsd_trace_v1_Trace_Open_reply(connection,
+		    request, &reply);
+		if (reply_error == 0) {
 			close(state->dtrace_fd);
 			state->dtrace_fd = -1;
 			state->stats.opened++;
@@ -286,33 +276,43 @@ handle_request(struct channel *channel __unused,
 			audit_policy(state->client_label,
 			    "raw-dtrace-fd-delegated", 0);
 		}
-		break;
-	case TRACECMP_OP_STATS:
-		if (send_reply(request_message, message, 0, &state->stats,
-		    sizeof(state->stats), -1) == -1)
-			state->terminal_error = errno;
-		break;
-	default:
-		state->terminal_error = EPROTO;
-		break;
+		request_done(state, connection, TRACECMP_OP_OPEN, 0,
+		    reply_error);
+		return;
 	}
-	if (error != 0) {
-		if (message->opcode == TRACECMP_OP_OPEN)
-			BSDTRACE_PROBE_DELEGATE(
-			    __DECONST(char *, state->client_label),
-			    state->instance_id, error);
-		state->stats.rejected++;
-		audit_policy(state->client_label, "request-denied", error);
-		BSDTRACE_PROBE_REJECT(
-		    __DECONST(char *, state->client_label),
-		    message->opcode, error);
-		if (send_reply(request_message, message, error, NULL, 0, -1) ==
-		    -1)
-			state->terminal_error = errno;
-	}
-	BSDTRACE_PROBE_REQUEST_DONE(message->opcode, error,
-	    state->terminal_error);
-	channel_message_free(request_message);
+	BSDTRACE_PROBE_DELEGATE(__DECONST(char *, state->client_label),
+	    state->instance_id, error);
+	state->stats.rejected++;
+	audit_policy(state->client_label, "request-denied", error);
+	BSDTRACE_PROBE_REJECT(__DECONST(char *, state->client_label),
+	    TRACECMP_OP_OPEN, error);
+	reply.tag = bsd_trace_v1_Trace_Open_Result_err_tag;
+	reply.value.err = (uint32_t)error;
+	request_done(state, connection, TRACECMP_OP_OPEN, error,
+	    bsd_trace_v1_Trace_Open_reply(connection, request, &reply));
+}
+
+static void
+stats(void *argument, struct fidl_bsd_connection *connection,
+    struct fidl_bsd_request *request, struct fidl_bsd_empty *empty __unused)
+{
+	struct worker_state *state = argument;
+	struct bsd_trace_v1_TraceStats value = { state->stats.opened,
+		state->stats.rejected };
+
+	if (!session_ready(state, connection, TRACECMP_OP_STATS))
+		return;
+	request_done(state, connection, TRACECMP_OP_STATS, 0,
+	    bsd_trace_v1_Trace_Stats_reply(connection, request, &value));
+}
+
+/* A connection the provider closed for a malformed or unknown frame. */
+static bool
+protocol_rejection(int error)
+{
+
+	return (error != 0 && error != EPIPE && error != ECONNRESET &&
+	    error != ECANCELED && error != ETIMEDOUT && error != ENOTCONN);
 }
 
 /*
@@ -330,10 +330,14 @@ serve_session(int fd, int liveness_fd, int dtrace_fd, bool authorized,
     int device_error, const char *client_label, service_rights_t rights,
     uint64_t instance_id)
 {
-	struct channel_options options =
-	    CHANNEL_OPTIONS_INITIALIZER(CHANNEL_ROLE_PROVIDER);
+	static const struct bsd_trace_v1_Trace_server handlers = {
+		.GetProtocolInfo = protocol_info,
+		.Open = open_consumer,
+		.Stats = stats
+	};
+	struct fidl_bsd_options options = FIDL_BSD_OPTIONS_INITIALIZER;
+	struct fidl_bsd_connection *connection;
 	struct worker_state state;
-	struct channel *channel;
 	struct kevent change[3], events[3];
 	struct timespec timeout;
 	int kq, cfd, nchanges, i, ready, loop_error, wants_write;
@@ -347,19 +351,30 @@ serve_session(int fd, int liveness_fd, int dtrace_fd, bool authorized,
 	state.authorized = authorized;
 	state.device_error = device_error;
 	loop_error = 0;
-	if (channel_create(fd, &options, &channel) == -1)
-		return (1);
-	if (channel_set_request_handler(channel, handle_request, &state) ==
-	    -1) {
-		channel_destroy(channel);
+	/* One request at a time; requests carry no descriptors. */
+	options.max_pending_requests = 1;
+	options.max_queued_messages = 8;
+	options.max_queued_bytes = 4096;
+	options.max_queued_fds = 1;
+	if (fidl_bsd_connection_create_with_options(fd, FIDL_BSD_SERVER,
+	    &options, &connection) != 0) {
+		close(fd);
 		if (state.dtrace_fd >= 0)
 			close(state.dtrace_fd);
 		return (1);
 	}
-	cfd = channel_fd(channel);
+	/* The consumer is hardened by open_dtrace_consumer(); keep its state. */
+	fidl_bsd_connection_preserve_sent_inheritance(connection);
+	if (bsd_trace_v1_Trace_bind(connection, &handlers, &state) != 0) {
+		fidl_bsd_connection_destroy(connection);
+		if (state.dtrace_fd >= 0)
+			close(state.dtrace_fd);
+		return (1);
+	}
+	cfd = fidl_bsd_connection_fd(connection);
 	kq = kqueuex(KQUEUE_CLOEXEC);
 	if (kq == -1 || cfd == -1) {
-		channel_destroy(channel);
+		fidl_bsd_connection_destroy(connection);
 		if (kq >= 0)
 			close(kq);
 		if (state.dtrace_fd >= 0)
@@ -381,11 +396,7 @@ serve_session(int fd, int liveness_fd, int dtrace_fd, bool authorized,
 	timeout.tv_sec = TRACECMP_CLIENT_TIMEOUT_MS / 1000;
 	timeout.tv_nsec = (TRACECMP_CLIENT_TIMEOUT_MS % 1000) * 1000000L;
 	while (!done && loop_error == 0) {
-		wants_write = channel_wants_write(channel);
-		if (wants_write == -1) {
-			loop_error = errno;
-			break;
-		}
+		wants_write = fidl_bsd_connection_wants_write(connection);
 		if (wants_write != write_enabled) {
 			EV_SET(&change[0], cfd, EVFILT_WRITE,
 			    wants_write ? EV_ENABLE : EV_DISABLE, 0, 0, NULL);
@@ -415,25 +426,21 @@ serve_session(int fd, int liveness_fd, int dtrace_fd, bool authorized,
 			}
 			if (events[i].ident != (uintptr_t)cfd)
 				continue;
-			if (events[i].filter == EVFILT_WRITE) {
-				if (channel_flush(channel) == -1) {
-					loop_error = errno;
-					break;
-				}
-			} else if (events[i].filter == EVFILT_READ) {
-				if (channel_dispatch(channel) == -1) {
-					loop_error = errno;
-					break;
-				}
-			}
+			/* Dispatch reads and flushes in one bounded step. */
+			loop_error = fidl_bsd_connection_dispatch(connection);
+			if (loop_error != 0)
+				break;
 		}
 		if (loop_error == 0 && state.terminal_error != 0) {
 			loop_error = state.terminal_error;
 			errno = loop_error;
 		}
 	}
+	/* A frame the bindings refused before any handler ran. */
+	if (state.terminal_error == 0 && protocol_rejection(loop_error))
+		BSDTRACE_PROBE_REQUEST_DONE(UINT32_MAX, EPROTO, 0);
 	close(kq);
-	channel_destroy(channel);
+	fidl_bsd_connection_destroy(connection);
 	if (state.dtrace_fd >= 0)
 		close(state.dtrace_fd);
 	BSDTRACE_PROBE_SESSION_END(__DECONST(char *, client_label),

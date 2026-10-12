@@ -1,0 +1,54 @@
+// SPDX-License-Identifier: BSD-2-Clause
+// Schema-evolution fixture for system.Namespace.  At bsd:1 this is exactly
+// lib/libnamespacecmp/namespacecmp.fidl (tools/build/fuchsia/test-bindings.py
+// checks it); bsd:2 adds a method, as a future provider release would.  The
+// peer built from bsd:2 is paired with the real bsd:1 client and provider.
+@available(platform="bsd", added=1)
+library bsd.namespace.v1;
+
+using zx;
+
+type ProtocolInfo = struct { wire_version uint32; };
+// flags: 0x1 EPHEMERAL (the jail's lifetime is bound to this session),
+// 0x2 VNET (the jail gets its own network stack).  Other bits are EINVAL.
+// Strings carry no NUL; path is absolute.  An empty hostname is derived, an
+// empty ip4_addr inherits, an empty ip6_addr means none.
+type EnterRequest = struct {
+    flags uint32;
+    path string:1023;
+    hostname string:63;
+    ip4_addr string:63;
+    ip6_addr string:63;
+};
+// The jail's non-owning attach descriptor (jail_attach_jd(2)); it may be
+// transferred no further and survives one more fork.
+type Entered = resource struct {
+    jail zx.Handle;
+};
+type JailInfo = struct {
+    jid int32;
+    // EPHEMERAL when this session anchors the jail's lifetime; VNET when the
+    // jail owns its network stack.
+    flags uint32;
+    path string:1023;
+    hostname string:63;
+    ip4_addr string:63;
+    ip6_addr string:63;
+};
+type JailList = struct {
+    // Absent when the caller has no jail.
+    jail box<JailInfo>;
+};
+closed protocol Namespace {
+    strict GetProtocolInfo() -> (ProtocolInfo);
+    // Errors are errno values (EINVAL: bad request; EALREADY: this session
+    // already anchors an ephemeral jail; EEXIST: the caller's jail exists
+    // with a different definition).
+    strict Enter(EnterRequest) -> (Entered) error uint32;
+    // ENOENT when the caller has no jail.
+    strict Destroy() -> () error uint32;
+    strict List() -> (JailList) error uint32;
+    // Added in the next revision; unknown to wire-major-1 peers.
+    @available(added=2)
+    strict Probe() -> (ProtocolInfo);
+};

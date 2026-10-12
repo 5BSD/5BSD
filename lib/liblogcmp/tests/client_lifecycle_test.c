@@ -483,7 +483,13 @@ ATF_TC_BODY(repeated_attach_failure_leaks_no_descriptors, tc)
 	}
 	logcmp_logger_destroy(logger);
 	logcmp_client_close(client);
-	ATF_CHECK_EQ(baseline, open_descriptor_count());
+	/* The fake provider's session thread exits asynchronously. */
+	for (i = 0; i < 500 && fake_service_closed() < fake_service_created();
+	    i++)
+		usleep(10000);
+	ATF_CHECK_EQ_MSG(baseline, open_descriptor_count(),
+	    "%u descriptors before, %u after", baseline,
+	    open_descriptor_count());
 }
 
 ATF_TC_WITHOUT_HEAD(corrupt_ring_is_terminal_and_reconnects);
@@ -531,6 +537,9 @@ ATF_TC_BODY(committed_record_survives_wakeup_failure, tc)
 	ATF_REQUIRE_EQ(1, fake_service_attaches());
 	ATF_REQUIRE_EQ(0,
 	    emit_text(logger, "committed before the broken edge"));
+	/* The fake provider's session thread exits asynchronously. */
+	for (i = 0; i < 500 && fake_service_closed() < 1; i++)
+		usleep(10000);
 	ATF_CHECK_EQ(1, fake_service_closed());
 	ATF_REQUIRE_EQ(0, emit_text(logger, "fresh session after broken edge"));
 	ATF_CHECK_EQ(2, fake_service_created());
@@ -696,8 +705,11 @@ ATF_TC_BODY(malformed_replies_invalidate_session, tc)
 		ATF_REQUIRE_EQ(0, logcmp_stats(client, &stats));
 		ATF_CHECK_EQ(i + 2, fake_service_created());
 	}
+	/* An application error keeps the session.  (GetStats has no error
+	 * result in bsd.log.v1, as the provider never failed STATS, so the
+	 * refusal is exercised on Flush.) */
 	fake_service_fault_next(FAKE_SERVICE_FAULT_STATUS);
-	ATF_CHECK_ERRNO(EPERM, logcmp_stats(client, &stats) == -1);
+	ATF_CHECK_ERRNO(EPERM, logcmp_flush(client) == -1);
 	ATF_CHECK_EQ(3, fake_service_closed());
 	ATF_REQUIRE_EQ(0, logcmp_stats(client, &stats));
 	fake_service_fault_next(FAKE_SERVICE_FAULT_TIMEOUT);

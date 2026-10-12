@@ -26,7 +26,7 @@
 
 #include <auditcmp.h>
 #include <auditcmp_server.h>
-#include <channel.h>
+#include <fidl/bsd.audit.v1/c/bsd.h>
 #include <libservice.h>
 #include <service_runtime.h>
 #include <logcmp.h>
@@ -53,6 +53,8 @@ struct session {
 	const char		*provider;
 	int			 event;
 	int			 error;
+	bool			 negotiated;
+	bool			 activity;
 	struct auditcmp_stats	 stats;
 	struct auditcmp_rate	 rate;
 	const struct auditcmp_backend *backend;
@@ -66,33 +68,6 @@ rate_allow(struct session *session)
 	if (clock_gettime(CLOCK_MONOTONIC, &now) == -1)
 		return (false);
 	return (auditcmp_rate_allow_at(&session->rate, &now));
-}
-
-static int
-send_reply(struct channel_message *request_message,
-    const struct auditcmp_msg *request, int error, const void *payload,
-    size_t payload_length)
-{
-	uint8_t buffer[AUDITCMP_MAX_MESSAGE];
-	struct auditcmp_msg *reply;
-	size_t length;
-
-	if (payload_length > sizeof(buffer) - sizeof(*reply))
-		return (errno = EOVERFLOW, -1);
-	memset(buffer, 0, sizeof(buffer));
-	reply = (void *)buffer;
-	if (auditcmp_message_init_reply(reply, request,
-	    error == 0 ? 0 : -error) == -1)
-		return (-1);
-	if (error == 0 && payload_length != 0)
-		memcpy(reply + 1, payload, payload_length);
-	length = sizeof(*reply) + (error == 0 ? payload_length : 0);
-	if (auditcmp_validate_message(reply, length,
-	    AUDITCMP_MESSAGE_REPLY) == -1)
-		return (-1);
-	return (channel_send_reply(request_message,
-	    &(struct channel_outgoing)
-	    CHANNEL_OUTGOING_INITIALIZER(buffer, length)));
 }
 
 #ifndef AUDITCMP_TESTING
@@ -115,73 +90,142 @@ static const struct auditcmp_backend system_backend = {
 };
 #endif
 
+/*
+ * A protocol violation is terminal for the session, counted as a rejection
+ * and visible to the reject and request-done probes (opcode UINT32_MAX when
+ * the bindings refused the frame before any handler ran).
+ */
 static void
-handle_request(struct channel *channel __unused,
-    struct channel_message *message, void *argument)
+protocol_violation(struct session *session,
+    struct fidl_bsd_connection *connection, uint32_t opcode)
 {
-	const struct auditcmp_submit_request *submit;
-	const struct auditcmp_msg *request;
-	struct session *session;
-	uint32_t opcode = UINT32_MAX;
-	int error, result;
 
-	session = argument;
-	request = channel_message_data(message);
-	error = 0;
-	result = 0;
-	if (channel_message_fd_count(message) != 0 ||
-	    auditcmp_validate_message(request,
-	    channel_message_length(message),
+	session->stats.rejected++;
+	BSDAUDIT_PROBE_REJECT(__DECONST(char *, session->provider), EPROTO);
+	session->error = EPROTO;
+	BSDAUDIT_PROBE_REQUEST_DONE(opcode, EPROTO, 0);
+	if (connection != NULL)
+		fidl_bsd_connection_close(connection, EPROTO);
+}
+
+static void
+request_done(struct session *session, struct fidl_bsd_connection *connection,
+    uint32_t opcode, int error, int reply_error)
+{
+
+	if (reply_error != 0) {
+		session->error = reply_error;
+		fidl_bsd_connection_close(connection, reply_error);
+	}
+	BSDAUDIT_PROBE_REQUEST_DONE(opcode, error, reply_error);
+}
+
+static void
+protocol_info(void *argument, struct fidl_bsd_connection *connection,
+    struct fidl_bsd_request *request, struct fidl_bsd_empty *empty __unused)
+{
+	struct session *session = argument;
+	struct bsd_audit_v1_ProtocolInfo info = { AUDITCMP_WIRE_VERSION };
+	int error;
+
+	session->activity = true;
+	error = bsd_audit_v1_Audit_GetProtocolInfo_reply(connection, request,
+	    &info);
+	session->negotiated = error == 0;
+	request_done(session, connection, 0, 0, error);
+}
+
+static void
+submit(void *argument, struct fidl_bsd_connection *connection,
+    struct fidl_bsd_request *request, struct bsd_audit_v1_SubmitRequest *in)
+{
+	struct session *session = argument;
+	struct bsd_audit_v1_Audit_Submit_Result reply = { 0 };
+	struct {
+		struct auditcmp_msg msg;
+		struct auditcmp_submit_request submit;
+	} record;
+	int error;
+
+	session->activity = true;
+	if (!session->negotiated) {
+		protocol_violation(session, connection, AUDITCMP_OP_SUBMIT);
+		return;
+	}
+	/*
+	 * Apply the record rules every release has enforced (lengths,
+	 * character set, NUL padding, error range) to the decoded fields; a
+	 * record that breaks them is a protocol violation, as before.
+	 */
+	memset(&record, 0, sizeof(record));
+	(void)auditcmp_message_init(&record.msg, AUDITCMP_OP_SUBMIT, 0);
+	record.submit.error = in->error;
+	record.submit.subject_length = (uint16_t)in->subject_size;
+	record.submit.operation_length = (uint16_t)in->operation_size;
+	memcpy(record.submit.subject, in->subject, in->subject_size);
+	memcpy(record.submit.operation, in->operation, in->operation_size);
+	if (auditcmp_validate_message(&record.msg, sizeof(record),
 	    AUDITCMP_MESSAGE_REQUEST) == -1) {
+		protocol_violation(session, connection, AUDITCMP_OP_SUBMIT);
+		return;
+	}
+	error = auditcmp_submit_record(session->provider, session->event,
+	    &record.submit, rate_allow(session), session->backend);
+	if (error == 0)
+		session->stats.submitted++;
+	else
 		session->stats.rejected++;
-		BSDAUDIT_PROBE_REJECT(
-		    __DECONST(char *, session->provider), EPROTO);
-		session->error = EPROTO;
-		error = EPROTO;
-		goto out;
+	BSDAUDIT_PROBE_SUBMIT(__DECONST(char *, session->provider),
+	    session->event, record.submit.error, error);
+	reply.tag = error ? bsd_audit_v1_Audit_Submit_Result_err_tag :
+	    bsd_audit_v1_Audit_Submit_Result_response_tag;
+	if (error)
+		reply.value.err = (uint32_t)error;
+	request_done(session, connection, AUDITCMP_OP_SUBMIT, error,
+	    bsd_audit_v1_Audit_Submit_reply(connection, request, &reply));
+}
+
+static void
+stats(void *argument, struct fidl_bsd_connection *connection,
+    struct fidl_bsd_request *request, struct fidl_bsd_empty *empty __unused)
+{
+	struct session *session = argument;
+	struct bsd_audit_v1_AuditStats value;
+
+	session->activity = true;
+	if (!session->negotiated) {
+		protocol_violation(session, connection, AUDITCMP_OP_STATS);
+		return;
 	}
-	opcode = request->opcode;
-	switch (request->opcode) {
-	case AUDITCMP_OP_SUBMIT:
-		submit = (const void *)(request + 1);
-		error = auditcmp_submit_record(session->provider, session->event,
-		    submit, rate_allow(session), session->backend);
-		if (error == 0)
-			session->stats.submitted++;
-		else
-			session->stats.rejected++;
-		BSDAUDIT_PROBE_SUBMIT(
-		    __DECONST(char *, session->provider), session->event,
-		    submit->error, error);
-		result = send_reply(message, request, error, NULL, 0);
-		break;
-	case AUDITCMP_OP_STATS:
-		result = send_reply(message, request, 0, &session->stats,
-		    sizeof(session->stats));
-		break;
-	default:
-		error = EOPNOTSUPP;
-		result = send_reply(message, request, error, NULL, 0);
-		break;
-	}
-	if (result == -1)
-		session->error = errno;
-out:
-	BSDAUDIT_PROBE_REQUEST_DONE(opcode, error,
-	    result == -1 ? session->error : 0);
-	channel_message_free(message);
+	value.submitted = session->stats.submitted;
+	value.rejected = session->stats.rejected;
+	request_done(session, connection, AUDITCMP_OP_STATS, 0,
+	    bsd_audit_v1_Audit_Stats_reply(connection, request, &value));
+}
+
+/* A connection the bindings closed for a malformed or unknown frame. */
+static bool
+protocol_rejection(int error)
+{
+
+	return (error != 0 && error != EPIPE && error != ECONNRESET &&
+	    error != ECANCELED && error != ETIMEDOUT && error != ENOTCONN);
 }
 
 static int
 serve_session(int fd, const char *provider, int event,
     const struct auditcmp_backend *backend)
 {
-	struct channel_options options =
-	    CHANNEL_OPTIONS_INITIALIZER(CHANNEL_ROLE_PROVIDER);
-	struct channel *channel;
+	static const struct bsd_audit_v1_Audit_server handlers = {
+		.GetProtocolInfo = protocol_info,
+		.Submit = submit,
+		.Stats = stats
+	};
+	struct fidl_bsd_options options = FIDL_BSD_OPTIONS_INITIALIZER;
+	struct fidl_bsd_connection *connection;
 	struct session session;
 	struct timespec now, last;
-	int ready, wants_write;
+	int error;
 
 	if (fd < 0 || provider == NULL || provider[0] == '\0' || event == 0 ||
 	    backend == NULL || backend->submit == NULL)
@@ -194,10 +238,16 @@ serve_session(int fd, const char *provider, int event,
 	    auditcmp_rate_init(&session.rate, AUDITCMP_RATE_PER_SECOND,
 	    AUDITCMP_RATE_BURST, &now) == -1)
 		return (-1);
-	if (channel_create(fd, &options, &channel) == -1)
+	/* One request at a time; requests carry no descriptors. */
+	options.max_pending_requests = 1;
+	options.max_queued_messages = 8;
+	options.max_queued_bytes = 4096;
+	options.max_queued_fds = 0;
+	if (fidl_bsd_connection_create_with_options(fd, FIDL_BSD_SERVER,
+	    &options, &connection) != 0)
 		return (1);
-	if (channel_set_request_handler(channel, handle_request, &session) == -1) {
-		channel_destroy(channel);
+	if (bsd_audit_v1_Audit_bind(connection, &handlers, &session) != 0) {
+		fidl_bsd_connection_destroy(connection);
 		return (1);
 	}
 	/*
@@ -205,18 +255,16 @@ serve_session(int fd, const char *provider, int event,
 	 * connects and then never sends (nor closes) cannot pin its pdfork'd
 	 * worker forever: the per-label accept throttle limits the connection
 	 * RATE, not the concurrent COUNT, so without this a slow drip of stalled
-	 * connections would fill all AUDITCMP_MAX_WORKERS slots permanently.  Any
-	 * read/write activity re-arms the deadline; only genuine inactivity for
+	 * connections would fill all AUDITCMP_MAX_WORKERS slots permanently.  A
+	 * request re-arms the deadline; only genuine inactivity for
 	 * AUDITCMP_SESSION_IDLE_SEC drops the session (the consumer reconnects to
 	 * submit its next record).
 	 */
 	last = now;
+	error = 0;
 	for (;;) {
 		long elapsed_ms, remaining_ms;
 
-		wants_write = channel_wants_write(channel);
-		if (wants_write == -1)
-			break;
 		if (clock_gettime(CLOCK_MONOTONIC, &now) == -1)
 			break;
 		elapsed_ms = (now.tv_sec - last.tv_sec) * 1000 +
@@ -224,23 +272,17 @@ serve_session(int fd, const char *provider, int event,
 		remaining_ms = (long)AUDITCMP_SESSION_IDLE_SEC * 1000 - elapsed_ms;
 		if (remaining_ms <= 0)
 			break;			/* idle too long: reap the slot */
-		ready = channel_wait(channel, wants_write,
+		session.activity = false;
+		error = fidl_bsd_connection_poll(connection,
 		    remaining_ms > INT_MAX ? INT_MAX : (int)remaining_ms);
-		if (ready < 0)
+		if (error != 0 || session.error != 0)
 			break;
-		if (ready == 0)
-			break;			/* idle deadline elapsed */
-		last = now;			/* activity: re-arm the deadline */
-		if ((ready & CHANNEL_WAIT_WRITE) != 0 &&
-		    channel_flush(channel) == -1)
-			break;
-		if ((ready & CHANNEL_WAIT_READ) != 0 &&
-		    channel_dispatch(channel) == -1)
-			break;
-		if (session.error != 0)
-			break;
+		if (session.activity)
+			last = now;		/* activity: re-arm the deadline */
 	}
-	channel_destroy(channel);
+	if (session.error == 0 && protocol_rejection(error))
+		protocol_violation(&session, NULL, UINT32_MAX);
+	fidl_bsd_connection_destroy(connection);
 	return (session.error == 0 ? 0 : 1);
 }
 

@@ -4,9 +4,11 @@ PACKAGE=	bsdaudit
 PROG=	BSDAudit
 MAN=		BSDAudit.8
 SRCS=		auditcmp.c auditcmp_policy.c auditcmp_rate.c auditcmp_submit.c
-LIBADD=		auditcmp bsm channel service logcmp
+LIBADD=		auditcmp bsm channel service logcmp fidl_bsd
 CFLAGS+=	-I${SRCTOP}/lib/liblogcmp
 CFLAGS+=	-I${SRCTOP}/lib/libauditcmp
+CFLAGS+=	-I${FIDLGEN.auditcmp}
+CFLAGS+=	-I${SRCTOP}/lib/libfidl/include
 CFLAGS+=	-I${SRCTOP}/lib/libchannel
 CFLAGS+=	-I${SRCTOP}/lib/libservice
 CFLAGS+=	-I${SRCTOP}/sys
@@ -41,6 +43,12 @@ CFLAGS+=	-I${.OBJDIR} -DWITH_DTRACE
 .endif
 
 CAPIMAGE_MANIFEST= ${AUDITCMP_UNIT}
+
+# Bindings generated at build time (fidl-bindings.mk).
+FIDL_BINDINGS+=	auditcmp
+FIDL_SCHEMAS.auditcmp=	lib/libauditcmp/auditcmp.fidl
+FIDL_LIBRARY.auditcmp=	bsd.audit.v1
+.include "${SRCTOP}/lib/libfidl/fidl-bindings.mk"
 
 .include <bsd.prog.mk>
 

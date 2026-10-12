@@ -1,0 +1,5 @@
+comment = "system.SystemExtension client library"
+
+desc = <<EOD
+The system.SystemExtension client: kernel extension loads and policy queries through the BSDExtension provider.  Formerly part of libservice.
+EOD

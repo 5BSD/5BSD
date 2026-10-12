@@ -270,6 +270,62 @@ Outgoing::Prepare(fidl::OutgoingMessage &body, uint32_t txid, uint64_t ordinal,
 	return 0;
 }
 
+int
+Outgoing::RawStart(uint32_t txid, uint64_t ordinal, bool flexible)
+{
+	Reset();
+	return PrepareEmpty(txid, ordinal, flexible);
+}
+size_t
+Outgoing::RawAlloc(size_t size)
+{
+	const size_t offset = RawLength();
+	const size_t aligned = (size + 7) & ~size_t(7);
+	if (size > MAC_CAPABILITY_MAX_MSG || aligned >
+	    MAC_CAPABILITY_MAX_MSG - sizeof(fidl_message_header_t) - offset)
+		return SIZE_MAX;
+	bytes_.resize(bytes_.size() + aligned);
+	return offset;
+}
+int
+Outgoing::RawHandle(int fd, uint32_t type, uint32_t rights)
+{
+	if (fds_.size() >= MAC_CAPABILITY_MAX_FDS)
+		return EMSGSIZE;
+	channel_fd_spec spec {};
+	int error = DescriptorSpec(type, rights, &spec);
+	if (error)
+		return error;
+	fds_.reserve(fds_.size() + 1);
+	specs_.reserve(specs_.size() + 1);
+	owners_.reserve(owners_.size() + 1);
+	int copy = fcntl(fd, F_DUPFD_CLOFORK, 0);
+	if (copy < 0)
+		return errno;
+	owners_.emplace_back(copy);
+	if (!defer_checks_ || rights == 0) {
+		error = ValidateDescriptor(copy, type, rights);
+		if (error) {
+			owners_.pop_back();
+			return error;
+		}
+	}
+	fds_.push_back(copy);
+	specs_.push_back(spec);
+	return 0;
+}
+int
+CheckReceivedDescriptor(int fd, uint32_t type, uint32_t rights,
+    uint32_t reported_type, uint32_t reported_rights)
+{
+	if (type == ZX_OBJ_TYPE_NONE && rights == ZX_RIGHT_SAME_RIGHTS)
+		return 0;
+	if (reported_type & kKernelReported)
+		return CheckReported(fd, type, rights,
+		    { reported_type & ~kKernelReported, reported_rights });
+	return ValidateDescriptor(fd, type, rights);
+}
+
 fidl_message_header_t
 Incoming::header() const
 {

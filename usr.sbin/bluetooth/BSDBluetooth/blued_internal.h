@@ -30,6 +30,8 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <libservice.h>
+#include <extensioncmp.h>
+#include <filesystemcmp.h>
 #include <libutil.h>
 #include <pthread.h>
 #include <signal.h>

@@ -64,7 +64,7 @@
 #include <jail.h>
 #include <sha256.h>
 
-#include <channel.h>
+#include <fidl/bsd.namespace.v1/c/bsd.h>
 #include <libservice.h>
 
 #include "bsdnamespace_proto.h"
@@ -859,78 +859,121 @@ create_jail(const char *name, const struct bsdnamespace_request *rq, int *out_ji
 struct bsdnamespace_conn {
 	char	label[64];		/* the client's unforgeable channel label */
 	int	owning_fd;		/* ephemeral-jail anchor, or -1 */
+	bool	negotiated;		/* GetProtocolInfo answered */
 };
 
-/* Send a status-only reply (no SCM fd): ENTER errors, DESTROY, dispatch. */
-/* Every reply path, including framing rejection and final fd attenuation. */
-static void
-trace_reply(struct channel_message *m, const struct channel_outgoing *out,
-    int status)
+/*
+ * bsd.namespace.v1 method handlers.  Every method but GetProtocolInfo requires
+ * a negotiated session; a failed reply closes the connection.  The
+ * request-done probe keeps the historical BSDNAMESPACE_OP_* codes (0 is
+ * protocol negotiation).
+ */
+static bool
+ns_ready(struct bsdnamespace_conn *conn, struct fidl_bsd_connection *connection,
+    uint32_t opcode)
 {
-	uint32_t opcode = UINT32_MAX;
-	int transport_error;
 
-	if (channel_message_length(m) >= sizeof(opcode))
-		memcpy(&opcode, channel_message_data(m), sizeof(opcode));
-	transport_error = channel_send_reply(m, out) == -1 ? errno : 0;
-	BSDNAMESPACE_PROBE_REQUEST_DONE(opcode, status, transport_error);
+	if (conn->negotiated)
+		return (true);
+	BSDNAMESPACE_PROBE_REQUEST_DONE(opcode, EPROTO, EPROTO);
+	fidl_bsd_connection_close(connection, EPROTO);
+	return (false);
 }
 
 static void
-send_status(struct channel_message *m, int32_t status)
+ns_completed(struct fidl_bsd_connection *connection, uint32_t opcode,
+    int status, int transport_error)
 {
-	struct bsdnamespace_reply rp;
-	struct channel_outgoing out;
 
-	memset(&rp, 0, sizeof(rp));
-	rp.status = status;
-	memset(&out, 0, sizeof(out));
-	out.size = sizeof(out);
-	out.data = &rp;
-	out.length = sizeof(rp);
-	trace_reply(m, &out, status);
+	BSDNAMESPACE_PROBE_REQUEST_DONE(opcode, status, transport_error);
+	if (transport_error != 0)
+		fidl_bsd_connection_close(connection, transport_error);
+}
+
+static void
+ns_protocol_info(void *argument, struct fidl_bsd_connection *connection,
+    struct fidl_bsd_request *request, struct fidl_bsd_empty *empty __unused)
+{
+	struct bsdnamespace_conn *conn = argument;
+	struct bsd_namespace_v1_ProtocolInfo info = {
+		BSDNAMESPACE_WIRE_VERSION
+	};
+	int error;
+
+	error = bsd_namespace_v1_Namespace_GetProtocolInfo_reply(connection,
+	    request, &info);
+	conn->negotiated = error == 0;
+	ns_completed(connection, 0, 0, error);
 }
 
 /*
- * ENTER_JAIL: create or reuse the caller's label-scoped jail and reply with its
- * non-owning descriptor.  arg is the connecting client's unforgeable label,
- * which both scopes the jail name and gates reachability (the domain layer
- * already restricted it to SYSTEM clients).  For an ephemeral request the worker
- * additionally retains the jail's owning descriptor so the jail is torn down
- * when the consumer exits.
+ * Copy one schema-bounded string into a NUL-terminated request field.  An
+ * embedded NUL is refused (it would silently truncate the value).
+ */
+static bool
+ns_copy(char *out, size_t outsz, const char *in, size_t len)
+{
+
+	if (len >= outsz || (len != 0 && memchr(in, '\0', len) != NULL))
+		return (false);
+	if (len != 0)
+		memcpy(out, in, len);
+	out[len] = '\0';
+	return (true);
+}
+
+/*
+ * Enter: create or reuse the caller's label-scoped jail and reply with its
+ * non-owning descriptor.  The connecting client's unforgeable label both scopes
+ * the jail name and gates reachability (the domain layer already restricted it
+ * to SYSTEM clients).  For an ephemeral request the worker additionally retains
+ * the jail's owning descriptor so the jail is torn down when the consumer exits.
  */
 static void
-handle_enter_jail(struct channel_message *m, struct bsdnamespace_conn *conn)
+ns_enter(void *argument, struct fidl_bsd_connection *connection,
+    struct fidl_bsd_request *request,
+    struct bsd_namespace_v1_EnterRequest *value)
 {
+	struct bsdnamespace_conn *conn = argument;
 	const char *client = conn->label;
-	const struct bsdnamespace_request *rq;
-	struct bsdnamespace_reply rp;
-	struct channel_outgoing out;
+	struct bsd_namespace_v1_Namespace_Enter_Result reply;
+	struct bsdnamespace_request *rq;
 	char name[BSDNAMESPACE_JAIL_NAME_MAX];
-	int jd = -1, created_jid = -1;
+	int jd = -1, created_jid = -1, status = 0;
 
-	memset(&rp, 0, sizeof(rp));
-
-	if (channel_message_length(m) != sizeof(*rq)) {
-		rp.status = EPROTO;
+	if (!ns_ready(conn, connection, BSDNAMESPACE_OP_ENTER_JAIL))
+		return;
+	/* The legacy record shape is the validated, NUL-terminated form. */
+	rq = calloc(1, sizeof(*rq));
+	if (rq == NULL) {
+		status = ENOMEM;
 		goto reply;
 	}
-	rq = channel_message_data(m);
-	if (!valid_request(rq) || !jail_name_from_label(client, name,
+	rq->op = BSDNAMESPACE_OP_ENTER_JAIL;
+	rq->flags = value->flags;
+	if (!ns_copy(rq->path, sizeof(rq->path), value->path,
+	    value->path_size) ||
+	    !ns_copy(rq->hostname, sizeof(rq->hostname), value->hostname,
+	    value->hostname_size) ||
+	    !ns_copy(rq->ip4_addr, sizeof(rq->ip4_addr), value->ip4_addr,
+	    value->ip4_addr_size) ||
+	    !ns_copy(rq->ip6_addr, sizeof(rq->ip6_addr), value->ip6_addr,
+	    value->ip6_addr_size) ||
+	    !valid_request(rq) || !jail_name_from_label(client, name,
 	    sizeof(name))) {
-		rp.status = EINVAL;
+		status = EINVAL;
 		goto reply;
 	}
 
 	/*
 	 * conn->owning_fd is a single slot private to this connection's thread.
 	 * If it is already set, this channel has already anchored an ephemeral
-	 * jail; a second ENTER would overwrite the slot and close the first
+	 * jail; a second Enter would overwrite the slot and close the first
 	 * owning fd, tearing that jail down while the consumer is still using
-	 * it.  Reject the second ENTER instead of clobbering.
+	 * it.  Reject the second Enter instead of clobbering.
 	 */
 	if (conn->owning_fd >= 0) {
-		rp.status = EALREADY;
+		status = EALREADY;
 		syslog(LOG_NOTICE, "ENTER (client %s) -> refused: channel "
 		    "already holds an ephemeral jail", client);
 		goto reply;
@@ -941,17 +984,17 @@ handle_enter_jail(struct channel_message *m, struct bsdnamespace_conn *conn)
 		syslog(LOG_INFO, "ENTER %s (client %s) -> reused jd", name,
 		    client);
 	} else if (errno != ENOENT) {
-		rp.status = errno;
+		status = errno;
 		syslog(LOG_NOTICE, "ENTER %s (client %s) -> conflict: %s", name,
-		    client, strerror(rp.status));
+		    client, strerror(status));
 		goto reply;
 	} else {
 		jd = create_jail(name, rq, &created_jid);
 		if (jd < 0) {
-			rp.status = errno;
+			status = errno;
 			syslog(LOG_ERR, "ENTER %s path=%s (client %s) -> "
 			    "jail_set: %s", name, rq->path, client,
-			    strerror(rp.status));
+			    strerror(status));
 			goto reply;
 		}
 		syslog(LOG_INFO, "ENTER %s path=%s (client %s) -> created", name,
@@ -975,59 +1018,58 @@ handle_enter_jail(struct channel_message *m, struct bsdnamespace_conn *conn)
 	if (created_jid >= 0 && (rq->flags & BSDNAMESPACE_F_EPHEMERAL)) {
 		conn->owning_fd = gate_owning_descriptor(name);
 		if (conn->owning_fd < 0) {
-			rp.status = errno != 0 ? errno : EIO;
+			status = errno != 0 ? errno : EIO;
 			syslog(LOG_ERR, "ENTER %s (client %s) -> owning "
 			    "descriptor failed, failing request: %m", name,
 			    client);
-			if (created_jid >= 0)
-				(void)gate_jail_remove(name);
+			(void)gate_jail_remove(name);
 			(void)close(jd);
 			jd = -1;
 			goto reply;
 		}
 	}
 
-reply:
-	BSDNAMESPACE_PROBE_ENTER(client, created_jid, rp.status);
-	memset(&out, 0, sizeof(out));
-	out.size = sizeof(out);
-	out.data = &rp;
-	out.length = sizeof(rp);
-	if (jd >= 0 && rp.status == 0) {
-		/*
-		 * Single-hop delivery of the jail attach descriptor: this SCM send is
-		 * the one-and-only delegation (CAP_XFER_ONCE -> the consumer's copy is
-		 * non-re-delegable), close-on-fork, close-on-exec.  Jail attach is not
-		 * label-gated in the kernel -- any holder of the descriptor can
-		 * jail_attach_jd(2) -- so a re-delegable descriptor would let a
-		 * differently-labelled component attach into a jail it was never
-		 * scoped to, undercutting the per-label jail scoping.
-		 */
-		if (service_harden_fd(jd, SERVICE_HARDEN_XFER_ONCE |
-		    SERVICE_HARDEN_CLOFORK_ONCE) == -1) {
-			/*
-			 * Could not make the descriptor non-re-delegable: fail
-			 * CLOSED rather than hand out an attenuation-less jail
-			 * attach capability.  Drop the fd and report the error.
-			 */
-			rp.status = EPERM;
-			out.length = sizeof(rp);
-		} else {
-			out.fds = &jd;
-			out.nfds = 1;
-		}
+	/*
+	 * Single-hop delivery of the jail attach descriptor: this send is the
+	 * one-and-only delegation (CAP_XFER_ONCE -> the consumer's copy is
+	 * non-re-delegable), close-on-fork, close-on-exec.  Jail attach is not
+	 * label-gated in the kernel -- any holder of the descriptor can
+	 * jail_attach_jd(2) -- so a re-delegable descriptor would let a
+	 * differently-labelled component attach into a jail it was never scoped
+	 * to, undercutting the per-label jail scoping.  Could the descriptor not
+	 * be made non-re-delegable, fail CLOSED rather than hand out an
+	 * attenuation-less jail attach capability.
+	 */
+	if (service_harden_fd(jd, SERVICE_HARDEN_XFER_ONCE |
+	    SERVICE_HARDEN_CLOFORK_ONCE) == -1) {
+		status = EPERM;
+		(void)close(jd);
+		jd = -1;
 	}
-	trace_reply(m, &out, rp.status);
+
+reply:
+	BSDNAMESPACE_PROBE_ENTER(client, created_jid, status);
+	free(rq);
+	memset(&reply, 0, sizeof(reply));
+	if (status == 0) {
+		reply.tag = bsd_namespace_v1_Namespace_Enter_Result_response_tag;
+		reply.value.response.jail = jd;
+	} else {
+		reply.tag = bsd_namespace_v1_Namespace_Enter_Result_err_tag;
+		reply.value.err = (uint32_t)status;
+	}
+	/* The bindings send a private duplicate; ours is closed either way. */
+	ns_completed(connection, BSDNAMESPACE_OP_ENTER_JAIL, status,
+	    bsd_namespace_v1_Namespace_Enter_reply(connection, request, &reply));
 	if (jd >= 0)
 		(void)close(jd);
 }
 
 /*
- * DESTROY_JAIL: remove the caller's label-scoped jail.  Owner-scoped by
- * construction — jail_name_from_label(client) names only the caller's own jail,
- * never another label's — so this can never remove a jail bsdnamespace created for a
- * different consumer.  Replies ENOENT if the caller has no jail, status 0 once
- * removed, or the failure errno.
+ * Destroy: remove the caller's label-scoped jail.  Owner-scoped by
+ * construction -- jail_name_from_label(client) names only the caller's own jail,
+ * never another label's -- so this can never remove a jail bsdnamespace created
+ * for a different consumer.  ENOENT if the caller has no jail.
  *
  * The target is normally a persistent jail (the only kind that leaks).  If it
  * happens to be an ephemeral jail whose lifetime another worker anchors with an
@@ -1035,58 +1077,63 @@ reply:
  * both persist and any structural descriptor reference.
  */
 static void
-handle_destroy_jail(struct channel_message *m, const char *client)
+ns_destroy(void *argument, struct fidl_bsd_connection *connection,
+    struct fidl_bsd_request *request, struct fidl_bsd_empty *empty __unused)
 {
+	struct bsdnamespace_conn *conn = argument;
+	const char *client = conn->label;
+	struct bsd_namespace_v1_Namespace_Destroy_Result reply;
 	char name[BSDNAMESPACE_JAIL_NAME_MAX];
+	int status = 0;
 
-	if (channel_message_length(m) != sizeof(struct bsdnamespace_control_request)) {
-		send_status(m, EPROTO);
+	if (!ns_ready(conn, connection, BSDNAMESPACE_OP_DESTROY_JAIL))
 		return;
-	}
-	if (!jail_name_from_label(client, name, sizeof(name))) {
-		send_status(m, EINVAL);
-		return;
-	}
+	if (!jail_name_from_label(client, name, sizeof(name)))
+		status = EINVAL;
 	/*
 	 * Remove THROUGH the gate (acquire an owning descriptor and close it ->
 	 * prison_remove), the capmode-safe equivalent of jail_remove(2).  ENOENT
 	 * is the ordinary "caller has no jail" answer.
 	 */
-	if (gate_jail_remove(name) < 0) {
-		int status = errno != 0 ? errno : EIO;
-
+	else if (gate_jail_remove(name) < 0) {
+		status = errno != 0 ? errno : EIO;
 		if (status == ENOENT)
 			syslog(LOG_INFO, "DESTROY %s (client %s) -> no such jail",
 			    name, client);
 		else
 			syslog(LOG_ERR, "DESTROY %s (client %s) -> remove: %s",
 			    name, client, strerror(status));
-		send_status(m, status);
-		return;
+	} else
+		syslog(LOG_INFO, "DESTROY %s (client %s) -> removed", name,
+		    client);
+	memset(&reply, 0, sizeof(reply));
+	if (status == 0)
+		reply.tag = bsd_namespace_v1_Namespace_Destroy_Result_response_tag;
+	else {
+		reply.tag = bsd_namespace_v1_Namespace_Destroy_Result_err_tag;
+		reply.value.err = (uint32_t)status;
 	}
-	syslog(LOG_INFO, "DESTROY %s (client %s) -> removed", name, client);
-	send_status(m, 0);
+	ns_completed(connection, BSDNAMESPACE_OP_DESTROY_JAIL, status,
+	    bsd_namespace_v1_Namespace_Destroy_reply(connection, request,
+	    &reply));
 }
 
 /*
- * LIST_JAILS: report the caller's label-scoped jail.  Owner-scoped by the same
- * construction as DESTROY: it can only ever describe the caller's own jail.  A
- * label owns at most one jail, so the answer is present==1 (with the definition)
- * or present==0 (none); status is 0 for both, or an errno on a real lookup
- * failure.
+ * List: report the caller's label-scoped jail.  Owner-scoped by the same
+ * construction as Destroy: it can only ever describe the caller's own jail.  A
+ * label owns at most one jail, so the answer is the jail's definition or
+ * absent; a real lookup failure is an error.
  *
  * This reads the definition back through the gate (gate_jail_get()/
- * jail_get_ip4()) — the same primitives existing_jail_descriptor() uses — but
+ * jail_get_ip4()) -- the same primitives existing_jail_descriptor() uses -- but
  * does NOT request the descriptor ("desc") path, so it neither installs a fd nor
  * anchors anything; the errno seen after a failed gate get here is the real
  * lookup errno (ENOENT == the caller has no jail).
  */
-static void
-handle_list_jails(struct channel_message *m, struct bsdnamespace_conn *conn)
+static int
+ns_lookup(struct bsdnamespace_conn *conn, struct bsdnamespace_list_reply *lr)
 {
 	const char *client = conn->label;
-	struct bsdnamespace_list_reply lr;
-	struct channel_outgoing out;
 	struct jailparam jp[3];
 	static const char *lpn[3] = { "name", "path", "host.hostname" };
 	char name[BSDNAMESPACE_JAIL_NAME_MAX];
@@ -1095,36 +1142,21 @@ handle_list_jails(struct channel_message *m, struct bsdnamespace_conn *conn)
 	int jid, iperr, iperr6, vnet, verr, gerr;
 	unsigned ninit;
 
-	memset(&lr, 0, sizeof(lr));
-	lr.jid = -1;
-
-	/*
-	 * A framing error is answered with the minimal status reply, not the
-	 * large bsdnamespace_list_reply: an error carries no jail definition, and a
-	 * caller that sent a malformed LIST has no reason to size its receive
-	 * buffer for the full reply.
-	 */
-	if (channel_message_length(m) != sizeof(struct bsdnamespace_control_request)) {
-		send_status(m, EPROTO);
-		return;
-	}
-	if (!jail_name_from_label(client, name, sizeof(name))) {
-		lr.status = EINVAL;
-		goto reply;
-	}
+	if (!jail_name_from_label(client, name, sizeof(name)))
+		return (EINVAL);
 
 	for (ninit = 0; ninit < 3; ninit++)
 		if (namespace_param_init(&jp[ninit], lpn[ninit]) < 0)
 			break;
 	if (ninit < 3) {
-		lr.status = errno != 0 ? errno : EINVAL;
+		gerr = errno != 0 ? errno : EINVAL;
 		jailparam_free(jp, ninit);
-		goto reply;
+		return (gerr);
 	}
 	if (jailparam_import(&jp[0], name) < 0) {
-		lr.status = errno != 0 ? errno : EINVAL;
+		gerr = errno != 0 ? errno : EINVAL;
 		jailparam_free(jp, 3);
-		goto reply;
+		return (gerr);
 	}
 	jid = -1;
 	if (gate_jail_get(jp, 3, 0, &jid, NULL) < 0) {
@@ -1132,14 +1164,12 @@ handle_list_jails(struct channel_message *m, struct bsdnamespace_conn *conn)
 		jailparam_free(jp, 3);
 		/* ENOENT is the ordinary "caller has no jail" answer. */
 		if (gerr == ENOENT) {
-			lr.present = 0;
-			lr.status = 0;
-		} else {
-			lr.status = gerr;
-			syslog(LOG_NOTICE, "LIST %s (client %s) -> jail_get: %s",
-			    name, client, strerror(lr.status));
+			lr->present = 0;
+			return (0);
 		}
-		goto reply;
+		syslog(LOG_NOTICE, "LIST %s (client %s) -> jail_get: %s",
+		    name, client, strerror(gerr));
+		return (gerr);
 	}
 	/* gate_jail_get() returns 0 on success; the jid travels via jid_out. */
 	pv = jailparam_export(&jp[1]);
@@ -1153,108 +1183,101 @@ handle_list_jails(struct channel_message *m, struct bsdnamespace_conn *conn)
 	memset(ip4, 0, sizeof(ip4));
 	iperr = jail_get_ip4(name, ip4, sizeof(ip4));
 	if (iperr != 0 && iperr != ENOENT) {
-		lr.status = iperr;
 		syslog(LOG_NOTICE, "LIST %s (client %s) -> ip4: %s", name, client,
 		    strerror(iperr));
-		goto reply;
+		return (iperr);
 	}
 
 	memset(ip6, 0, sizeof(ip6));
 	iperr6 = jail_get_ip6(name, ip6, sizeof(ip6));
 	if (iperr6 != 0 && iperr6 != ENOENT) {
-		lr.status = iperr6;
 		syslog(LOG_NOTICE, "LIST %s (client %s) -> ip6: %s", name, client,
 		    strerror(iperr6));
-		goto reply;
+		return (iperr6);
 	}
 
 	/*
 	 * Report the jail's vnet setting so a consumer can reconstruct a matching
-	 * ENTER after a restart.  jail_get_vnet() reads the same "vnet" jailsys
+	 * Enter after a restart.  jail_get_vnet() reads the same "vnet" jailsys
 	 * parameter existing_jail_descriptor() enforces on reuse; a real lookup
 	 * error is fatal, but ENOENT means "no vnet parameter" (a kernel without
 	 * VIMAGE, or a non-vnet jail) and reads as "not a vnet jail".
 	 */
 	verr = jail_get_vnet(name, &vnet);
 	if (verr != 0 && verr != ENOENT) {
-		lr.status = verr;
 		syslog(LOG_NOTICE, "LIST %s (client %s) -> vnet: %s", name, client,
 		    strerror(verr));
-		goto reply;
+		return (verr);
 	}
 
-	lr.status = 0;
-	lr.present = 1;
-	lr.jid = jid;
-	(void)strlcpy(lr.path, path, sizeof(lr.path));
-	(void)strlcpy(lr.hostname, host, sizeof(lr.hostname));
+	lr->present = 1;
+	lr->jid = jid;
+	(void)strlcpy(lr->path, path, sizeof(lr->path));
+	(void)strlcpy(lr->hostname, host, sizeof(lr->hostname));
 	if (iperr == 0)
-		(void)strlcpy(lr.ip4_addr, ip4, sizeof(lr.ip4_addr));
+		(void)strlcpy(lr->ip4_addr, ip4, sizeof(lr->ip4_addr));
 	if (iperr6 == 0)
-		(void)strlcpy(lr.ip6_addr, ip6, sizeof(lr.ip6_addr));
+		(void)strlcpy(lr->ip6_addr, ip6, sizeof(lr->ip6_addr));
 	/*
-	 * Report the jail's shape as BSDNAMESPACE_F_* bits.  BSDNAMESPACE_F_VNET when the jail
-	 * owns its network stack.  BSDNAMESPACE_F_EPHEMERAL when THIS connection anchors
-	 * the jail's lifetime with an owning descriptor (conn->owning_fd >= 0): that
-	 * is a jail this same channel created ephemerally.  A persistent jail
-	 * reused by a relaunched consumer has no such anchor and reports the flag
-	 * clear -- exactly the persist/ephemeral distinction the consumer needs.
+	 * Report the jail's shape as BSDNAMESPACE_F_* bits.  BSDNAMESPACE_F_VNET
+	 * when the jail owns its network stack.  BSDNAMESPACE_F_EPHEMERAL when THIS
+	 * connection anchors the jail's lifetime with an owning descriptor
+	 * (conn->owning_fd >= 0): that is a jail this same channel created
+	 * ephemerally.  A persistent jail reused by a relaunched consumer has no
+	 * such anchor and reports the flag clear -- exactly the persist/ephemeral
+	 * distinction the consumer needs.
 	 */
-	lr.flags = 0;
+	lr->flags = 0;
 	if (verr == 0 && vnet == JAIL_SYS_NEW)
-		lr.flags |= BSDNAMESPACE_F_VNET;
+		lr->flags |= BSDNAMESPACE_F_VNET;
 	if (conn->owning_fd >= 0)
-		lr.flags |= BSDNAMESPACE_F_EPHEMERAL;
+		lr->flags |= BSDNAMESPACE_F_EPHEMERAL;
 	syslog(LOG_INFO, "LIST %s (client %s) -> present jid=%d flags=0x%x", name,
-	    client, jid, lr.flags);
-
-reply:
-	memset(&out, 0, sizeof(out));
-	out.size = sizeof(out);
-	out.data = &lr;
-	out.length = sizeof(lr);
-	trace_reply(m, &out, lr.status);
+	    client, jid, lr->flags);
+	return (0);
 }
 
-/*
- * Per-client channel request handler.  arg is this connection's state (its
- * unforgeable label plus any ephemeral-jail anchor).  Every op is validated
- * fail-closed: the channel accepts no SCM fds (an attached descriptor is already
- * a terminal transport rejection, so fd_count is never > 0 here in practice, but
- * reject defensively), and the message must be long enough to hold at least the
- * opcode word before it is dispatched.  ENTER requires the full
- * bsdnamespace_request; DESTROY and LIST require a bsdnamespace_control_request;
- * an unknown op is EINVAL.
- */
 static void
-bsdnamespace_request_handler(struct channel *ch __unused, struct channel_message *m,
-    void *arg)
+ns_list(void *argument, struct fidl_bsd_connection *connection,
+    struct fidl_bsd_request *request, struct fidl_bsd_empty *empty __unused)
 {
-	struct bsdnamespace_conn *conn = arg;
-	uint32_t op;
+	struct bsdnamespace_conn *conn = argument;
+	struct bsd_namespace_v1_Namespace_List_Result reply;
+	struct bsd_namespace_v1_JailInfo info;
+	struct bsdnamespace_list_reply *lr;
+	int status;
 
-	if (channel_message_fd_count(m) != 0 ||
-	    channel_message_length(m) < sizeof(uint32_t)) {
-		send_status(m, EPROTO);
-		goto done;
+	if (!ns_ready(conn, connection, BSDNAMESPACE_OP_LIST_JAILS))
+		return;
+	memset(&reply, 0, sizeof(reply));
+	lr = calloc(1, sizeof(*lr));
+	status = lr == NULL ? ENOMEM : ns_lookup(conn, lr);
+	if (status != 0) {
+		reply.tag = bsd_namespace_v1_Namespace_List_Result_err_tag;
+		reply.value.err = (uint32_t)status;
+	} else {
+		reply.tag = bsd_namespace_v1_Namespace_List_Result_response_tag;
+		if (lr->present) {
+			memset(&info, 0, sizeof(info));
+			info.jid = lr->jid;
+			info.flags = lr->flags;
+			info.path = lr->path;
+			info.path_size = strnlen(lr->path, sizeof(lr->path));
+			info.hostname = lr->hostname;
+			info.hostname_size = strnlen(lr->hostname,
+			    sizeof(lr->hostname));
+			info.ip4_addr = lr->ip4_addr;
+			info.ip4_addr_size = strnlen(lr->ip4_addr,
+			    sizeof(lr->ip4_addr));
+			info.ip6_addr = lr->ip6_addr;
+			info.ip6_addr_size = strnlen(lr->ip6_addr,
+			    sizeof(lr->ip6_addr));
+			reply.value.response.jail = &info;
+		}
 	}
-	memcpy(&op, channel_message_data(m), sizeof(op));
-	switch (op) {
-	case BSDNAMESPACE_OP_ENTER_JAIL:
-		handle_enter_jail(m, conn);
-		break;
-	case BSDNAMESPACE_OP_DESTROY_JAIL:
-		handle_destroy_jail(m, conn->label);
-		break;
-	case BSDNAMESPACE_OP_LIST_JAILS:
-		handle_list_jails(m, conn);
-		break;
-	default:
-		send_status(m, EINVAL);
-		break;
-	}
-done:
-	channel_message_free(m);
+	ns_completed(connection, BSDNAMESPACE_OP_LIST_JAILS, status,
+	    bsd_namespace_v1_Namespace_List_reply(connection, request, &reply));
+	free(lr);
 }
 
 /*
@@ -1267,44 +1290,41 @@ done:
 static int
 bsdnamespace_worker(int fd, const char *client)
 {
-	struct channel_options options =
-	    CHANNEL_OPTIONS_INITIALIZER(CHANNEL_ROLE_PROVIDER);
-	struct channel *channel = NULL;
+	static const struct bsd_namespace_v1_Namespace_server handlers = {
+		.GetProtocolInfo = ns_protocol_info,
+		.Enter = ns_enter,
+		.Destroy = ns_destroy,
+		.List = ns_list
+	};
+	struct fidl_bsd_connection *connection;
 	struct bsdnamespace_conn conn;
-	int ready, wants_write;
 
 	memset(&conn, 0, sizeof(conn));
 	conn.owning_fd = -1;
 	(void)strlcpy(conn.label, client, sizeof(conn.label));
 
 	/*
-	 * channel_create() consumes (closes) fd on success and leaves it on
+	 * fidl_bsd_connection_create() takes fd on success and leaves it on
 	 * failure -- so close it here only on failure, and NEVER after return.
 	 * The caller (bsdnamespace_client_thread) must not close it again: doing
-	 * so closes an fd number channel_create already returned to the pool,
-	 * which a concurrent accept on another thread may have re-used (a
-	 * double-close race that silently tears down a co-connecting client).
+	 * so closes an fd number this worker already gave up, which a concurrent
+	 * accept on another thread may have re-used (a double-close race that
+	 * silently tears down a co-connecting client).
 	 */
-	if (channel_create(fd, &options, &channel) == -1) {
+	if (fidl_bsd_connection_create(fd, FIDL_BSD_SERVER, &connection) != 0) {
 		(void)close(fd);
 		return (1);
 	}
-	if (channel_set_request_handler(channel, bsdnamespace_request_handler,
-	    &conn) == -1) {
-		channel_destroy(channel);
+	/* The attach descriptor is hardened above; keep that on the send. */
+	fidl_bsd_connection_preserve_sent_inheritance(connection);
+	if (bsd_namespace_v1_Namespace_bind(connection, &handlers, &conn) != 0) {
+		fidl_bsd_connection_destroy(connection);
 		return (1);
 	}
-	for (;;) {
-		wants_write = channel_wants_write(channel);
-		if (wants_write == -1 ||
-		    (ready = channel_wait(channel, wants_write, -1)) == -1 ||
-		    ((ready & CHANNEL_WAIT_WRITE) != 0 &&
-		    channel_flush(channel) == -1) ||
-		    ((ready & CHANNEL_WAIT_READ) != 0 &&
-		    channel_dispatch(channel) == -1))
-			break;
-	}
-	channel_destroy(channel);
+	/* Peer close or a protocol violation ends the session. */
+	while (fidl_bsd_connection_poll(connection, -1) == 0)
+		;
+	fidl_bsd_connection_destroy(connection);
 	if (conn.owning_fd >= 0)
 		(void)close(conn.owning_fd);	/* tears down the ephemeral jail */
 	return (0);
@@ -1381,7 +1401,7 @@ bsdnamespace_client_thread(void *arg)
 {
 	struct bsdnamespace_client *c = arg;
 
-	/* bsdnamespace_worker() owns c->fd (channel_create consumes it, or it
+	/* bsdnamespace_worker() owns c->fd (its connection takes it, or it
 	 * closes it on failure) -- do NOT close it again here (double-close race). */
 	(void)bsdnamespace_worker(c->fd, c->label);
 	free(c);

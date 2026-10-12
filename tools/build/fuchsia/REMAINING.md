@@ -92,6 +92,25 @@ After each step update `VALIDATION.json`, `HANDOFF.md`, `lib/libfidl/MATURITY`
 and the Desktop checklist `~/Desktop/Fuchsia tests for next VM.txt`
 (strike through passed items with VM evidence).
 
+## 6. Capability daemons on FIDL (branch `fidl/daemons`, 2026-10-12)
+
+Nine providers serve FIDL; see `DAEMONS.md` (Progress) and VALIDATION.json
+`fidl_daemons`.  Open items:
+
+- User decisions: library layout for the libservice-embedded clients
+  (BSDVM, BSDNamespace, BSDExtension, BSDFilesystem); system.Network.PF,
+  whose only consumer is the out-of-tree sysutils/5bsd-instruments.
+- BSDBluetooth: isolate the plane/controller code its test matrix compiles
+  directly, then convert ATTACH and Controller.
+- Latency: FIDL calls are 1.0-2.5x slower at p50 in the TCG guest with
+  fewer system calls per call; profile the C bridge/codec path on hardware.
+  `dtraceall` fails to load in the plane-on guest, which blocks the
+  libchannel probe measurements in `vm-daemons.sh`.
+- Pre-existing, not FIDL: logctl_test `unavailable`/`severity_names`
+  expect no system.Log and fail in any plane-on VM; BSDNetwork resolves
+  `localhost` only if BSDFilesystem served /etc/hosts when it started
+  (resolver.c netresolve_init).
+
 ## Done today (for orientation)
 
 Commits: `9ec24a62c93` IPC speedups, descriptor batching (SENDMSG_V2 /
@@ -112,7 +131,12 @@ imports recorded in `contrib/README.5BSD` and `VALIDATION.json`.
 - Run heavy builds and VMs one at a time (an earlier host hard reset).
 - Plane-off VM runs: `PLANE_OFF=1`; load `mac_capability_test_kernelstore`
   via `EXTRA_SCRIPT` (`/usr/obj/5bsd-fidl-vm/extra-kernelstore.sh`) so the
-  forwarding tests run. Coalition-test failures there belong to the
+  forwarding tests run.  From integrate/dev-20261011 on, that module (and
+  the keystore one) is no longer built or installed with the system
+  modules: build it from tests/sys/mac_capability/fixtures, ship it into the
+  guest (e.g. vm-provider.sh `EXTRA_DIR`) and point
+  `MAC_CAPABILITY_FIXTURE_DIR` at it for the isolated capability tests.
+  Coalition-test failures there belong to the
   coalition agent.
 - Auto mode treats widening service visibility as a permission grant; the
   user approved it explicitly for these three services.

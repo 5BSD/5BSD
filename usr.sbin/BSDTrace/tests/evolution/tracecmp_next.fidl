@@ -1,0 +1,33 @@
+// SPDX-License-Identifier: BSD-2-Clause
+// Schema-evolution fixture for system.Trace.  At bsd:1 this is exactly
+// lib/libtracecmp/tracecmp.fidl (tools/build/fuchsia/test-bindings.py checks
+// it); bsd:2 adds a method, as a future provider release would.  The peer
+// built from bsd:2 is paired with the real bsd:1 client and provider.
+@available(platform="bsd", added=1)
+library bsd.trace.v1;
+
+using zx;
+
+// features: 0x1 (TRACECMP_FEATURE_RAW_DTRACE_FD) when this session may
+// receive a DTrace consumer descriptor.
+type ProtocolInfo = struct {
+    wire_version uint32;
+    features uint32;
+};
+// A /dev/dtrace/dtrace consumer limited to the DTrace consumer ioctls; it may
+// be transferred no further.  At most one per session.
+type Consumer = resource struct { dtrace zx.Handle; };
+type TraceStats = struct {
+    opened uint64;
+    rejected uint64;
+};
+closed protocol Trace {
+    strict GetProtocolInfo() -> (ProtocolInfo);
+    // Errors are errno values (EACCES: not authorized; EALREADY: already
+    // delivered; device errors).
+    strict Open() -> (Consumer) error uint32;
+    strict Stats() -> (TraceStats);
+    // Added in the next revision; unknown to wire-major-1 peers.
+    @available(added=2)
+    strict Probe() -> (TraceStats);
+};

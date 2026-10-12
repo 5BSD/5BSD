@@ -1,9 +1,10 @@
 .\" SPDX-License-Identifier: BSD-2-Clause
-.Dd October 10, 2026
+.Dd October 11, 2026
 .Dt LIBSYSCTLCMP 3
 .Os
 .Sh NAME
 .Nm sysctlcmp_client_open ,
+.Nm sysctlcmp_client_create ,
 .Nm sysctlcmp_client_close ,
 .Nm sysctlcmp_get ,
 .Nm sysctlcmp_set ,
@@ -13,11 +14,13 @@
 .Nm sysctlcmp_interfaces
 .Nd client interface to the system.Sysctl capability
 .Sh LIBRARY
-.Lb libsysctlcmp
+Sysctl Capability Library (libsysctlcmp, -lsysctlcmp)
 .Sh SYNOPSIS
 .In sysctlcmp.h
 .Ft int
 .Fn sysctlcmp_client_open "struct sysctlcmp_client **clientp"
+.Ft int
+.Fn sysctlcmp_client_create "int fd" "struct sysctlcmp_client **clientp"
 .Ft void
 .Fn sysctlcmp_client_close "struct sysctlcmp_client *client"
 .Ft int
@@ -84,8 +87,36 @@ The returned name is NUL-terminated.
 Malformed string replies fail with
 .Er EPROTO
 and invalidate the session.
+.Pp
+.Fn sysctlcmp_client_create
+adopts an already held system.Sysctl channel
+.Fa fd ;
+it consumes the descriptor only on success.
+The library speaks the FIDL protocol
+.Sy bsd.sysctl.v1
+.Pq Pa /usr/share/fidl/sysctlcmp.fidl ;
+see
+.Xr fidl 7 .
+The first call on a client checks the provider's wire version and fails with
+.Er EPROTONOSUPPORT
+for an incompatible provider.
+Each call is bounded by five seconds, shortened by an active
+.Fn service_budget_begin
+budget
+.Pq Xr service_runtime 3 .
+A timeout fails that call with
+.Er ETIMEDOUT
+and cancels it; the session stays usable.
+A transport failure or malformed reply makes the client terminal:
+later calls fail with the same error until it is closed.
+Application errors keep it usable.
+Calls from several threads on one client are serialized.
+.In sysctlcmp_server.h
+and the message records in
+.In sysctlcmp_protocol.h
+describe the pre-FIDL wire format; they are kept for compatibility only.
 .Sh RETURN VALUES
-.Rv -std sysctlcmp_client_open sysctlcmp_get sysctlcmp_set sysctlcmp_oidfmt sysctlcmp_describe sysctlcmp_next
+.Rv -std sysctlcmp_client_open sysctlcmp_client_create sysctlcmp_get sysctlcmp_set sysctlcmp_oidfmt sysctlcmp_describe sysctlcmp_next
 .Sh INTERFACE INVENTORY
 .Fn sysctlcmp_interfaces
 reads a bounded interface inventory through the provider's fixed read-only
@@ -127,10 +158,12 @@ Repeated growth across three collection attempts fails with
 .Er EAGAIN .
 Malformed responses fail with
 .Er EPROTO .
-Older providers may reject the new opcode; no fallback widens authority.
+There is no fallback to another request; no fallback widens authority.
 .Sh SEE ALSO
+.Xr service_runtime 3 ,
 .Xr sysctl 3 ,
-.Xr bsdsysctl 8
+.Xr fidl 7 ,
+.Xr BSDSysctl 8
 .Sh SECURITY CONSIDERATIONS
 Read and write access is scoped per label by the provider; a variable not
 named in the caller's allow-list is refused with

@@ -12,11 +12,11 @@ nor a manifest ever declares one. jail(8) and the rc-driven jail world keep
 working unchanged; that side is covered in [Jails](../compat/jails.md).
 
 A program that decides to confine itself calls
-`service_enter_namespace(3)`. libservice opens `system.Namespace` over the
-process's private lookup channel (pulling BSDNamespace up on demand), sends
-the jail's shape (root path, optional hostname, IPv4 and IPv6 addresses, and
-flags), receives one SCM descriptor, calls jail_attach_jd(2) on it, and
-closes it. The descriptor is a non-owning jail descriptor (jail(2)
+`service_enter_namespace(3)` (libnamespacecmp). The library opens
+`system.Namespace` over the process's private lookup channel (pulling
+BSDNamespace up on demand), sends the jail's shape (root path, optional
+hostname, IPv4 and IPv6 addresses, and flags), receives one descriptor, calls
+jail_attach_jd(2) on it, and closes it. The descriptor is a non-owning jail descriptor (jail(2)
 `JAIL_GET_DESC`, implemented in `sys/kern/kern_jaildesc.c`); the credential
 stored inside it is BSDNamespace's, which is what authorizes the attach.
 Closing it never removes the jail. See jail(2) for `jail_attach_jd` and the
@@ -76,44 +76,67 @@ No `visible` key: the name resolves for SYSTEM-domain clients only.
 
 ## Wire operations
 
-Protocol header: `lib/libcapsulert/bsdnamespace_proto.h`. No HELLO and no
-version field; the request struct and the reply length carry the framing.
-Every string field must be NUL-terminated and `path` must be absolute.
+The provider and client use `lib/libnamespacecmp/namespacecmp.fidl`, library
+`bsd.namespace.v1`, with generated C bindings over native capability channels
+(see [FIDL and Capability IPC](../develop/fidl.md)). The schema installs as
+`/usr/share/fidl/namespacecmp.fidl` and imports `/usr/share/fidl/zx.fidl` for
+the descriptor type. No payload carries an identity: the jail every method
+acts on is named from the accepted session's label.
+`lib/libcapsulert/bsdnamespace_proto.h` keeps the flag bits and the legacy
+records.
 
-| Op | Request | Reply | Errors |
+| Method | Request | Reply | Errors |
 |---|---|---|---|
-| `BSDNAMESPACE_OP_ENTER_JAIL` (1) | `bsdnamespace_request { op, flags, path[PATH_MAX], hostname[64], ip4_addr[64], ip6_addr[64] }` | `bsdnamespace_reply { status }` plus one SCM fd: the non-owning jail descriptor | `EINVAL` relative path, unknown flag bits, short message, attached descriptor; `EEXIST` a jail for this label exists with a different path, hostname, address or vnet setting; `EALREADY` second ephemeral enter on one connection; `E2BIG` parameter vector overflow; jail_set(2) errors (a vnet request on a kernel without VIMAGE fails here) |
-| `BSDNAMESPACE_OP_DESTROY_JAIL` (2) | `bsdnamespace_control_request { op }` | `bsdnamespace_reply { status }` | `ENOENT` no jail for this label; jail_remove(2) errors |
-| `BSDNAMESPACE_OP_LIST_JAILS` (3) | `bsdnamespace_control_request { op }` | `bsdnamespace_list_reply { status, present, jid, flags, path, hostname, ip4_addr, ip6_addr }` | `present == 0` is a success; errno only on a lookup failure |
+| `GetProtocolInfo` | empty | wire version 1 | none |
+| `Enter` | `flags`, `path` (absolute, at most 1023 bytes), `hostname`, `ip4_addr`, `ip6_addr` (each at most 63 bytes, empty = default or none) | the non-owning jail descriptor | `EINVAL` relative path, unknown flag bits, embedded NUL; `EEXIST` a jail for this label exists with a different path, hostname, address or vnet setting; `EALREADY` second ephemeral enter on one session; `E2BIG` parameter vector overflow; jail_set(2) errors (a vnet request on a kernel without VIMAGE fails here) |
+| `Destroy` | empty | empty | `ENOENT` no jail for this label; jail_remove(2) errors |
+| `List` | empty | `jail`, absent when the label has none, else `{ jid, flags, path, hostname, ip4_addr, ip6_addr }` | errno only on a lookup failure |
 
-Flags: `BSDNAMESPACE_F_EPHEMERAL` (0x1) binds the jail to the connection;
+A session must negotiate before any other method. A method before
+negotiation, an unknown method, a malformed, truncated or oversized frame, a
+pre-FIDL record or an attached descriptor closes the session without a
+reply. The delivered descriptor keeps `CAP_XFER_ONCE` and its close-on-fork
+limit; the FIDL transport preserves that state
+(`fidl_bsd_connection_preserve_sent_inheritance()`). The `bsd.namespace.v1`
+ordinals and layouts are a compatibility contract;
+`usr.sbin/BSDNamespace/tests/evolution/namespacecmp_next.fidl` is the same
+schema at `bsd:1` and adds a method at `bsd:2` for the pairing test.
+
+Flags: `BSDNAMESPACE_F_EPHEMERAL` (0x1) binds the jail to the session;
 `BSDNAMESPACE_F_VNET` (0x2) creates it `vnet=new` with its own network
 stack. Both are part of the immutable definition: a reuse whose vnet
 setting differs is `EEXIST`. Without VNET, `ip4_addr` and `ip6_addr` are
 the jail's addresses on the host stack (empty means none of that family);
-with VNET they seed the jail's own stack. LIST reports
-`BSDNAMESPACE_F_EPHEMERAL` only when this same connection's worker anchors
+with VNET they seed the jail's own stack. List reports
+`BSDNAMESPACE_F_EPHEMERAL` only when this same session's worker anchors
 the jail; a persistent jail reused across a restart reports it clear.
 
 ## Client library
 
-Header `<libservice.h>`, link `-lservice`. Documented in libservice(3).
+Header `<namespacecmp.h>`, link `-lnamespacecmp` (`SHLIB_MAJOR 1`, depends on
+libservice, the FIDL runtime and pthread; the calls moved out of libservice in
+October 2026 with the same names). Manual: libnamespacecmp(3).
 
 | Group | Functions |
 |---|---|
 | Enter | `service_enter_namespace(ctx, path, hostname, ip4_addr, flags)`, `service_enter_namespace_ex(ctx, path, hostname, ip4_addr, ip6_addr, flags)` |
 | Lifecycle | `service_destroy_namespace(ctx)`, `service_namespace_info(ctx, &info)` |
 | Types and flags | `struct service_namespace_info { present, jid, flags, path, hostname, ip4_addr, ip6_addr }`, `SERVICE_NS_EPHEMERAL`, `SERVICE_NS_VNET` |
-| Provider side (used by BSDNamespace) | `service_system_jail_set(token_fd, iov, niov, flags, &jid, &descfd)`, `service_system_jail_get(...)` |
+| Provider side (libservice, used by BSDNamespace) | `service_system_jail_set(token_fd, iov, niov, flags, &jid, &descfd)`, `service_system_jail_get(...)` |
 
 `service_enter_namespace` is `_ex` with an empty `ip6_addr`. The attach
 happens inside the library; after a successful return the calling process
 is already inside the jail, so do it before exec and after every descriptor
-the program needs has been obtained.
+the program needs has been obtained. The `system.Namespace` session is
+opened by name once, negotiated, and cached for the process (a forked child
+opens its own); it must stay open while an ephemeral jail is in use, since
+the provider anchors that jail to it. A timeout (30 seconds, shortened by an
+active `service_budget_begin()`), transport failure or malformed reply drops
+the cached session; application errors keep it.
 
 ```c
 #include <err.h>
-#include <libservice.h>
+#include <namespacecmp.h>
 
 /* Confine this process to /var/empty for the rest of its life. */
 void
@@ -146,7 +169,7 @@ wj_3f9a2c...   /var/empty
 ```
 
 Removing one by hand with jail(8) is possible but is undone on the next
-ENTER from its owner (persistent) or already pointless (ephemeral).
+Enter from its owner (persistent) or already pointless (ephemeral).
 
 ## Policy
 
@@ -171,7 +194,8 @@ installed under `/usr/tests/usr.sbin/BSDNamespace`):
 | Program | Kind | Proves |
 |---|---|---|
 | `jailname_test` | pure unit | distinct labels get distinct names, no collisions over generated labels, determinism, name length and charset, empty label and small buffer refused, request shape validation |
-| `provider_test` | plane (real channel, root, jail-capable kernel) | unexpected descriptor, short message, unknown opcode, unknown flag bits and relative path rejected; reuse mismatch is `EEXIST`; second ephemeral enter is `EALREADY`; list-then-destroy lifecycle; ip4 and ip6 round trip through LIST; ip6 mismatch is `EEXIST`; vnet enter creates a vnet jail; control-op framing checks |
+| `provider_test` | plane (real channel, root, jail-capable kernel) | with the generated client bindings: unknown flag bits, relative path and embedded NUL are `EINVAL` and keep the session; reuse mismatch is `EEXIST`; second ephemeral enter is `EALREADY`; list-then-destroy lifecycle; ip4 and ip6 round trip through List; ip6 mismatch is `EEXIST`; vnet enter creates a vnet jail. Hand-built frames (before negotiation, unknown method, truncated header, missing, short or oversized Enter body, trailing bytes on Destroy and List, pre-FIDL record, attached descriptor) close the session |
+| `evolution_test` | plane | the `bsd:1` libnamespacecmp client against a `bsd:2` peer, and a `bsd:2` client against the real `bsd:1` worker (the added strict method closes only that session) |
 | `reclaim_test` | pure unit | owner-map note idempotence, unsafe names rejected, malformed lines dropped, destroy removes only the bundle's entries, bundle-of-container mapping |
 
 Run with `kyua test -k /usr/tests/usr.sbin/BSDNamespace/Kyuafile`; the
@@ -180,8 +204,13 @@ provider cases need the real-plane VM runner (see
 
 ## Status and gaps
 
-Shipped and VM-verified with ENTER, DESTROY and LIST, vnet and ip6 (the
-inventory's API-completeness pass added DESTROY/LIST/ip6/vnet). Gaps: one
+Shipped and VM-verified with Enter, Destroy and List, vnet and ip6 (the
+inventory's API-completeness pass added Destroy/List/ip6/vnet). FIDL
+`bsd.namespace.v1` (October 2026); unit attributes, visibility and the
+per-label jail rules are unchanged by the migration, and the provider and
+libnamespacecmp ship together (mixed peers fail at negotiation).
+`latency_bench` (installed with the tests) times List round trips for
+`tools/build/fuchsia/vm-daemons.sh`. Gaps: one
 jail per label, so a unit that needs several confinement shapes cannot get
 them from the broker; the jail parameter set is fixed (path, hostname,
 ip4.addr, ip6.addr, persist, vnet), with no devfs ruleset, mount or

@@ -1,31 +1,65 @@
-/* SPDX-License-Identifier: BSD-2-Clause */
+/*
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Scripted system.Network provider for the libnetworkcmp client tests.  It
+ * replaces libservice's service_open(): each call creates a real capability
+ * channel served by a bsd.network.v1 server on its own thread.  GetLimits
+ * replies are held for 20 ms so that calls from several client threads
+ * overlap; the highest number held at once is reported.
+ */
 #include <sys/types.h>
+
+#include <assert.h>
+#include <channel.h>
 #include <errno.h>
-#include <fcntl.h>
+#include <fidl/bsd.network.v1/c/bsd.h>
 #include <pthread.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <unistd.h>
-#include <libservice.h>
+
 #include <networkcmp.h>
-#include <networkcmp_server.h>
 #include "fake_service.h"
 
-struct service_context { int unused; };
-struct service_session { int terminal; };
-static struct service_context context;
+int service_open(const char *, int *);
+int service_harden_fd(int, unsigned);
+int service_budget_timeout(uint32_t *);
+
+/* The client's descriptor hardening and call budget, without libservice. */
+int
+service_harden_fd(int fd, unsigned flags)
+{
+	(void)flags;
+	return (fd < 0 ? (errno = EBADF, -1) : 0);
+}
+
+int
+service_budget_timeout(uint32_t *ms)
+{
+	return (ms == NULL ? (errno = EINVAL, -1) : 0);
+}
+
 static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
-static unsigned created, closed, calls, concurrent, maximum;
+static unsigned created, closed, calls, maximum;
 static int next_error;
 static bool next_malformed;
+
+#define HELD_MAX 64
+struct session {
+	struct fidl_bsd_connection *connection;
+	struct fidl_bsd_request *held[HELD_MAX];
+	unsigned nheld;
+	bool malformed[HELD_MAX];
+};
 
 void
 fake_service_reset(void)
 {
 	pthread_mutex_lock(&lock);
-	created = closed = calls = concurrent = maximum = 0;
+	created = closed = calls = maximum = 0;
 	next_error = 0;
 	next_malformed = false;
 	pthread_mutex_unlock(&lock);
@@ -55,153 +89,116 @@ COUNTER(fake_service_closed, closed)
 COUNTER(fake_service_calls, calls)
 COUNTER(fake_service_max_concurrent, maximum)
 
-int
-service_acquire(struct service_context **result)
+static void
+info(void *x, struct fidl_bsd_connection *c, struct fidl_bsd_request *r,
+    struct fidl_bsd_empty *e)
 {
-	if (result == NULL) {
-		errno = EINVAL;
-		return (-1);
-	}
-	*result = &context;
-	return (0);
+	struct bsd_network_v1_ProtocolInfo v = { NETWORKCMP_WIRE_VERSION };
+	(void)x;
+	(void)e;
+	assert(bsd_network_v1_Network_GetProtocolInfo_reply(c, r, &v) == 0);
 }
 
-void
-service_release(struct service_context *service __unused)
+static void
+limits(void *x, struct fidl_bsd_connection *c, struct fidl_bsd_request *r,
+    struct fidl_bsd_empty *e)
 {
-}
-
-int
-service_connect(struct service_context *service, const char *name, int *fd)
-{
-	if (service != &context || strcmp(name, NETWORKCMP_INTERFACE) != 0 ||
-	    fd == NULL) {
-		errno = EINVAL;
-		return (-1);
-	}
-	*fd = open("/dev/null", O_RDONLY | O_CLOEXEC);
-	return (*fd < 0 ? -1 : 0);
-}
-
-int
-service_open(const char *name, int *fd)
-{
-	struct service_context *ctx;
-	int rv;
-
-	if (service_acquire(&ctx) == -1)
-		return (-1);
-	rv = service_connect(ctx, name, fd);
-	service_release(ctx);
-	return (rv);
-}
-
-int
-service_session_create(int fd, struct service_session **result)
-{
-	struct service_session *session;
-
-	if (fd < 0 || result == NULL) {
-		errno = EINVAL;
-		return (-1);
-	}
-	session = calloc(1, sizeof(*session));
-	if (session == NULL)
-		return (-1);
-	close(fd);
+	struct session *s = x;
+	int error;
+	bool malformed;
+	(void)e;
 	pthread_mutex_lock(&lock);
-	created++;
+	calls++;
+	error = next_error;
+	next_error = 0;
+	malformed = next_malformed;
+	next_malformed = false;
 	pthread_mutex_unlock(&lock);
-	*result = session;
-	return (0);
+	if (error != 0) {
+		fidl_bsd_connection_close(c, error);
+		return;
+	}
+	assert(s->nheld < HELD_MAX);
+	fidl_bsd_request_retain(r);
+	s->malformed[s->nheld] = malformed;
+	s->held[s->nheld++] = r;
+	pthread_mutex_lock(&lock);
+	if (s->nheld > maximum)
+		maximum = s->nheld;
+	pthread_mutex_unlock(&lock);
 }
 
-void
-service_session_close(struct service_session *session)
+/* Answer every held GetLimits. */
+static void
+release_held(struct session *s)
 {
-	if (session == NULL)
-		return;
+	struct bsd_network_v1_Limits v = {
+		NETWORKCMP_FEATURE_TCP | NETWORKCMP_FEATURE_UDP |
+		NETWORKCMP_FEATURE_IPV6 | NETWORKCMP_FEATURE_DNS,
+		NETWORKCMP_RESOLVE_MAX_RESULTS
+	};
+	for (unsigned i = 0; i < s->nheld; i++) {
+		struct bsd_network_v1_Limits reply = v;
+		/* An unknown feature bit is a malformed reply. */
+		if (s->malformed[i])
+			reply.features |= 0x80000000u;
+		if (fidl_bsd_connection_error(s->connection) == 0)
+			(void)bsd_network_v1_Network_GetLimits_reply(
+			    s->connection, s->held[i], &reply);
+		fidl_bsd_request_release(s->held[i]);
+	}
+	s->nheld = 0;
+}
+
+static void *
+serve(void *argument)
+{
+	struct bsd_network_v1_Network_server handlers = {
+		.GetProtocolInfo = info,
+		.GetLimits = limits
+	};
+	struct session s = { 0 };
+	int fd = (int)(intptr_t)argument, error;
+
+	assert(fidl_bsd_connection_create(fd, FIDL_BSD_SERVER,
+	    &s.connection) == 0);
+	assert(bsd_network_v1_Network_bind(s.connection, &handlers, &s) == 0);
+	for (;;) {
+		error = fidl_bsd_connection_poll(s.connection,
+		    s.nheld != 0 ? 20 : 10000);
+		if (error != 0)
+			break;
+		if (s.nheld != 0) {
+			/* Collect whatever else arrives within the window. */
+			(void)fidl_bsd_connection_poll(s.connection, 20);
+			release_held(&s);
+		}
+	}
+	release_held(&s);
+	fidl_bsd_connection_destroy(s.connection);
 	pthread_mutex_lock(&lock);
 	closed++;
 	pthread_mutex_unlock(&lock);
-	free(session);
+	return (NULL);
 }
 
 int
-service_session_call(struct service_session *session,
-    const struct service_message *outgoing, struct service_reply *reply,
-    const struct service_call_options *options __unused)
+service_open(const char *name, int *fdp)
 {
-	uint8_t storage[NETWORKCMP_MAX_MESSAGE];
-	const struct networkcmp_msg *request;
-	struct networkcmp_msg *response;
-	struct networkcmp_hello_reply *hello;
-	int error;
-	bool malformed;
-	size_t length;
+	pthread_t thread;
+	int ends[2];
 
-	if (session == NULL || outgoing == NULL || reply == NULL ||
-	    outgoing->length < sizeof(*request)) {
-		errno = EINVAL;
+	if (name == NULL || strcmp(name, NETWORKCMP_INTERFACE) != 0 ||
+	    fdp == NULL)
+		return (errno = EINVAL, -1);
+	if (mac_capability_channel_create(ends) != 0)
 		return (-1);
-	}
-	request = outgoing->data;
+	assert(pthread_create(&thread, NULL, serve,
+	    (void *)(intptr_t)ends[1]) == 0);
+	assert(pthread_detach(thread) == 0);
 	pthread_mutex_lock(&lock);
-	concurrent++;
-	if (concurrent > maximum)
-		maximum = concurrent;
-	calls++;
-	error = session->terminal != 0 ? session->terminal : next_error;
-	malformed = next_malformed;
-	next_malformed = false;
-	if (next_error != 0) {
-		session->terminal = next_error;
-		next_error = 0;
-	}
+	created++;
 	pthread_mutex_unlock(&lock);
-	usleep(20000);
-	if (error != 0)
-		goto fail;
-	memset(storage, 0, sizeof(storage));
-	response = (void *)storage;
-	if (networkcmp_message_init_reply(response, request, 0) == -1)
-		goto fail;
-	if (malformed)
-		response->magic ^= 1;
-	length = sizeof(*response);
-	if (request->opcode == NETWORKCMP_OP_HELLO) {
-		hello = (void *)(response + 1);
-		hello->features = NETWORKCMP_FEATURE_TCP | NETWORKCMP_FEATURE_UDP |
-		    NETWORKCMP_FEATURE_IPV6 | NETWORKCMP_FEATURE_DNS;
-		hello->max_resolve_results = NETWORKCMP_RESOLVE_MAX_RESULTS;
-		length += sizeof(*hello);
-	}
-	if (reply->capacity < length) {
-		error = EMSGSIZE;
-		goto fail;
-	}
-	memcpy(reply->data, storage, length);
-	reply->length = length;
-	reply->nfds = 0;
-	pthread_mutex_lock(&lock);
-	concurrent--;
-	pthread_mutex_unlock(&lock);
+	*fdp = ends[0];
 	return (0);
-fail:
-	if (error == 0)
-		error = errno != 0 ? errno : EIO;
-	pthread_mutex_lock(&lock);
-	concurrent--;
-	pthread_mutex_unlock(&lock);
-	errno = error;
-	return (-1);
-}
-
-int
-service_session_receive_event(struct service_session *session __unused,
-    struct service_reply *reply __unused,
-    const struct service_call_options *options __unused)
-{
-	errno = ENOTSUP;
-	return (-1);
 }

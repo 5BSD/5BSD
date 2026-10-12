@@ -81,65 +81,79 @@ close-on-fork, is shared by every session.
 
 ## Wire operations
 
-Protocol header: `lib/libcapsulert/sysext_proto.h`. There is no HELLO or
-wire-version field. Every request is a fixed `struct sysext_request`
-(`op`, zero reserved field, `name[64]`). Module names are nonempty,
-NUL-terminated single filename components, excluding `.` and `..`.
-Persistent edits additionally restrict names to ASCII letters, digits, `_`,
-`.` and `-`. Requests carrying descriptors are rejected.
+The provider and client use `lib/libextensioncmp/extensioncmp.fidl`, library
+`bsd.extension.v1`, with generated C bindings over native capability channels
+(see [FIDL and Capability IPC](../develop/fidl.md)). The schema installs as
+`/usr/share/fidl/extensioncmp.fidl`. No payload carries an identity: the
+accepted session's rights (ADMIN for policy edits) and the bundle its label
+belongs to decide every request. Module names (`string:63`) are nonempty
+single filename components without NUL, excluding `.` and `..`. Persistent
+edits additionally restrict names to ASCII letters, digits, `_`, `.` and `-`.
+Application errors are errno values.
 
-All replies begin with an errno-style `status` (zero on success). Errors
-can use the short `sysext_reply`; successful replies have the operation's
-specified size. Clients validate framing, reserved fields and returned data.
-
-| Op | Request name | Successful reply | Behavior |
+| Method | Request | Successful reply | Behavior |
 |---|---|---|---|
-| `ENSURE` (1) | module | `sysext_reply` | Load a permitted module; an existing load succeeds; denied names return `EPERM` |
-| `STAT` (2) | module | `sysext_stat_reply { status, loaded }` | Query a permitted module; denied names return `EPERM` without loaded-state disclosure |
-| `LIST` (3) | zero-filled | `sysext_list_reply { status, count, names[32][64] }` | Legacy permitted-name listing; `EOVERFLOW` if more than 32 names are allowed |
-| `RELOAD` (4) | zero-filled | `sysext_reply` | ADMIN: reload shipped defaults, preserving administrator overrides; invalid replacement retains the previous policy |
-| `ALLOW` (5) | module | `sysext_reply` | ADMIN: persist permission; does not install or load code |
-| `DENY` (6) | module | `sysext_reply` | ADMIN: deny future loads and restoration, retaining desired activation |
-| `RESET` (7) | module | `sysext_reply` | ADMIN: remove the entire override, including activation; inherit shipped permission |
-| `ENABLE` (8) | module | `sysext_reply` | ADMIN: persist desired boot activation; `EPERM` unless already permitted |
-| `DISABLE` (9) | module | `sysext_reply` | ADMIN: remove desired activation, retaining permission |
-| `RESTORE` (10) | zero-filled | `sysext_reply` | ADMIN: load permitted entries with desired activation |
-| `INFO` (11) | module | `sysext_info_reply { status, flags, name[64] }` | Query effective policy and permitted loaded state |
-| `NEXT` (12) | exclusive lexical cursor; empty starts | `sysext_info_reply` | Return the next known policy entry; `ENOENT` ends enumeration |
+| `GetProtocolInfo` | empty | wire version 1 | Negotiation; required before any other method |
+| `Ensure` | module | empty | Load a permitted module; an existing load succeeds; denied names return `EPERM` |
+| `Stat` | module | `loaded` | Query a permitted module; denied names return `EPERM` without loaded-state disclosure |
+| `List` | empty | `modules` (at most 32) | Permitted-name listing; `EOVERFLOW` if more than 32 names are allowed |
+| `Reload` | empty | empty | ADMIN: reload shipped defaults, preserving administrator overrides; invalid replacement retains the previous policy |
+| `Allow` | module | empty | ADMIN: persist permission; does not install or load code |
+| `Deny` | module | empty | ADMIN: deny future loads and restoration, retaining desired activation |
+| `Reset` | module | empty | ADMIN: remove the entire override, including activation; inherit shipped permission |
+| `Enable` | module | empty | ADMIN: persist desired boot activation; `EPERM` unless already permitted |
+| `Disable` | module | empty | ADMIN: remove desired activation, retaining permission |
+| `Restore` | empty | empty | ADMIN: load permitted entries with desired activation |
+| `Info` | module | `{ name, flags }` | Query effective policy and permitted loaded state |
+| `Next` | exclusive lexical cursor; empty starts | `{ name, flags }` | Return the next known policy entry; `ENOENT` ends enumeration |
 
-The constants have the prefix `SYSEXT_OP_`. INFO/NEXT flags are
+A method before negotiation, an unknown method, a malformed, truncated or
+oversized frame, a pre-FIDL record or an attached descriptor closes the
+session without a reply; an embedded NUL in a name is `EINVAL` and keeps it.
+The `bsd.extension.v1` ordinals and layouts are a compatibility contract;
+`usr.sbin/BSDExtension/tests/evolution/extensioncmp_next.fidl` is the same
+schema at `bsd:1` and adds a method at `bsd:2` for the pairing test.
+`lib/libcapsulert/sysext_proto.h` keeps the state bits, limits and the legacy
+records; the `SYSEXT_OP_*` numbers remain the DTrace request probe's codes.
+
+Info/Next flags are
 `SYSEXT_STATE_ALLOWED`, `ENABLED`, `LOADED`, `OVERRIDE` and `READY`.
 Denied entries never disclose loaded state. READY means administrator storage
 has been attached. Persistent edits and restoration return `EAGAIN` before
 attachment; production attaches it before serving requests.
 
-NEXT discovers both shipped entries and administrator overrides without the
-legacy LIST limit. Each entry is coherent, but enumeration across concurrent
+Next discovers both shipped entries and administrator overrides without the
+List limit. Each entry is coherent, but enumeration across concurrent
 edits is not a snapshot. It is a policy view, not an installed-package catalogue.
 
 ## Client library
 
-Header `<libservice.h>`, link `-lservice`. The extension calls live in
-libservice(3) rather than a separate `*cmp` library.
+Header `<extensioncmp.h>`, link `-lextensioncmp` (`SHLIB_MAJOR 1`, depends on
+libservice, the FIDL runtime and pthread). The context calls moved out of
+libservice in October 2026 with the same names; the session calls replaced
+`service_session_extension_*` on a borrowed `struct service_session`.
+Manual: libextensioncmp(3).
 
 | Group | Functions |
 |---|---|
 | Context-based (lazy open of `system.SystemExtension`) | `service_ensure_extension(ctx, module)`, `service_extension_stat(ctx, module, &loaded)`, `service_extension_list(ctx, names, max, &count)` |
-| Session-based (caller owns a `struct service_session`) | `service_session_extension_load`, `service_session_extension_stat`, `service_session_extension_list`, `service_session_extension_reload` |
-| Policy and discovery (session-based) | `service_session_extension_manage(session, action, name)`, `service_session_extension_info(session, name, next, &info)` |
+| Explicit session | `extensioncmp_session_open(&session)`, `extensioncmp_session_create(fd, &session)`, `extensioncmp_session_close(session)` |
+| Session operations | `extensioncmp_load`, `extensioncmp_stat`, `extensioncmp_list`, `extensioncmp_reload` |
+| Policy and discovery (session) | `extensioncmp_manage(session, action, name)`, `extensioncmp_info(session, name, next, &info)` |
 | Constants | `SERVICE_EXTENSION_NAME_MAX` (64), `SERVICE_EXTENSION_LIST_MAX` (32) |
-| Provider side (used by BSDExtension itself) | `service_system_kldload(token_fd, name, &fileid)`, `service_system_kldunload(token_fd, fileid, flags)`, `service_system_token_dup` |
+| Provider side (libservice, used by BSDExtension itself) | `service_system_kldload(token_fd, name, &fileid)`, `service_system_kldunload(token_fd, fileid, flags)`, `service_system_token_dup` |
 
 Client-side validation fails with `EINVAL` or `ENAMETOOLONG` before anything
-is sent; a malformed reply poisons the session with `EPROTO`; a
-`service_extension_list` buffer too small for the whole list fails
-`EMSGSIZE` with the required count stored, never a silent truncation.
-Session calls have a 30 second timeout.
+is sent. A transport failure, timeout or malformed reply (`EPROTO`) ends the
+session: the process-wide one is reopened on the next call, an explicit one
+fails every later call. A `List` buffer too small for the whole list fails
+`EMSGSIZE` with the required count stored, never a silent truncation. Calls
+have a 30 second timeout, shortened by an active `service_budget_begin()`.
 
 ```c
 #include <errno.h>
 #include <stdio.h>
-#include <libservice.h>
+#include <extensioncmp.h>
 
 /* Make sure the zfs module is resident; fail soft if the broker is down. */
 int
@@ -256,7 +270,7 @@ because the bundled libucl mis-parses a leading comment inside an array. A
 reload replacement must be a regular file owned by the daemon's effective
 uid and not group- or world-writable; an empty array denies everything.
 Updates are published atomically to all workers; requests already admitted
-finish. ADMIN permits changing the policy, but ENSURE still checks the effective
+finish. ADMIN permits changing the policy, but Ensure still checks the effective
 permission for every caller.
 
 Administrator overrides are versioned state in `/etc/bsdextension/overrides.ucl`,
@@ -283,7 +297,8 @@ installed under `/usr/tests/usr.sbin/BSDExtension`):
 | Program | Kind | Proves |
 |---|---|---|
 | `allowlist_test` | pure unit | allow and deny decisions, name validation (paths rejected, dotted names accepted, NUL termination), malformed/non-object/missing config falls back to defaults, config replaces defaults, STAT shares the ENSURE gate, reload authorization and last-good retention |
-| `provider_test` | real public capability-channel syscall; no privilege | real handler over a real channel: denied module, unknown op, unterminated name, wrong length, attached descriptor, STAT loaded/unloaded/denied, LIST full and empty, management requires ADMIN, discovery beyond the legacy limit |
+| `provider_test` | real public capability-channel syscall; no privilege | the real server over a real channel with libextensioncmp: denied module, Stat loaded/unloaded/denied, List full, empty and too small, reload and management require ADMIN, discovery beyond the List limit; hand-built frames (before negotiation, unknown method, missing, truncated or oversized body, trailing bytes, pre-FIDL record, attached descriptor) close the session and an embedded NUL is `EINVAL` |
+| `evolution_test` | real channel | the `bsd:1` libextensioncmp client against a `bsd:2` peer, and a `bsd:2` client against the real `bsd:1` worker (the added strict method closes only that session) |
 | `reclaim_test` | pure unit | owner-map round trip, dedup, unsafe names, unload only unshared own modules, busy module retried, unknown bundle no-op, epoch recorded, boot ownership retained |
 | `policy_test` | persistent policy | ADMIN enforcement, attachment, persistence and precedence, failed-write retention, corrupt-state rejection, concurrent updates and lexical discovery, writer-death recovery, real capability-mode persistence |
 
@@ -304,6 +319,11 @@ loader retry, devmatch freeze/thaw, and the explicit plane-disabled path.
 
 The broker implements persistent administrator permissions and activation,
 lexical discovery, and boot restoration alongside the original load/status API.
+FIDL `bsd.extension.v1` (October 2026); unit attributes, visibility and policy
+are unchanged by the migration, and the provider, libextensioncmp and
+sysextctl ship together (mixed peers fail at negotiation). `latency_bench`
+(installed with the tests) times Stat round trips for
+`tools/build/fuchsia/vm-daemons.sh`.
 Policy remains global rather than per label, and there is no wire UNLOAD by
 design. Permission does not install or authenticate module code: it must already
 be available through the kernel's module path. Hardware-package compatibility

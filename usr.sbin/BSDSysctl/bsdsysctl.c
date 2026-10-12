@@ -10,7 +10,7 @@
  * enabled, so client channels are multiplexed in the single token-holding process
  * (the gate token is close-on-fork, so a pdfork worker could not inherit it),
  * performing the sysctl directly after a per-label policy check; no Casper is
- * involved.
+ * involved.  Sessions speak FIDL bsd.sysctl.v1 (lib/libsysctlcmp/sysctlcmp.fidl).
  */
 
 #include <sys/param.h>
@@ -22,7 +22,6 @@
 
 #include <net/route.h>
 
-#include <channel.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <libservice.h>
@@ -33,8 +32,8 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <fidl/bsd.sysctl.v1/c/bsd.h>
 #include <sysctlcmp.h>
-#include <sysctlcmp_server.h>
 #include <syslog.h>
 #include <time.h>
 #include <unistd.h>
@@ -99,63 +98,13 @@ read_interfaces(void *context __unused, void *data, size_t *length)
 
 struct session {
 	char				*label;
-	struct channel			*channel;
+	struct fidl_bsd_connection	*connection;
 	uint64_t			 last_request_ms;
 	bool				 activity;
+	bool				 negotiated;
 	const struct sysctlcmp_config	*config;
 	int				 error;
 };
-
-/* Header-only reply (an error status = -errno). */
-static int
-send_status(struct channel_message *request_message,
-    const struct sysctlcmp_msg *request, int status)
-{
-	uint8_t buffer[sizeof(struct sysctlcmp_msg)];
-	struct sysctlcmp_msg *reply;
-
-	reply = (void *)buffer;
-	if (sysctlcmp_message_init_reply(reply, request, status) == -1)
-		return (-1);
-	if (sysctlcmp_validate_message(reply, sizeof(*reply),
-	    SYSCTLCMP_MESSAGE_REPLY) == -1)
-		return (-1);
-	return (channel_send_reply(request_message,
-	    &(struct channel_outgoing)
-	    CHANNEL_OUTGOING_INITIALIZER(buffer, sizeof(*reply))));
-}
-
-/* Success reply carrying value_length bytes (0 for a SET). */
-static int
-send_value(struct channel_message *request_message,
-    const struct sysctlcmp_msg *request, const void *value, size_t value_len)
-{
-	uint8_t buffer[SYSCTLCMP_MAX_MESSAGE];
-	struct sysctlcmp_msg *reply;
-	struct sysctlcmp_body *body;
-	size_t length;
-
-	if (value_len > SYSCTLCMP_MAX_VALUE)
-		return (errno = EOVERFLOW, -1);
-	memset(buffer, 0, sizeof(struct sysctlcmp_msg) +
-	    sizeof(struct sysctlcmp_body));
-	reply = (void *)buffer;
-	if (sysctlcmp_message_init_reply(reply, request, 0) == -1)
-		return (-1);
-	body = (void *)(reply + 1);
-	body->name_length = 0;
-	body->reserved = 0;
-	body->value_length = (uint32_t)value_len;
-	if (value_len != 0)
-		memcpy(body + 1, value, value_len);
-	length = sizeof(*reply) + sizeof(*body) + value_len;
-	if (sysctlcmp_validate_message(reply, length,
-	    SYSCTLCMP_MESSAGE_REPLY) == -1)
-		return (-1);
-	return (channel_send_reply(request_message,
-	    &(struct channel_outgoing)
-	    CHANNEL_OUTGOING_INITIALIZER(buffer, length)));
-}
 
 /*
  * Introspection via the CTL_SYSCTL magic MIBs (all through __sysctl(2), which is
@@ -344,181 +293,176 @@ do_next(const struct session *session, const char *name, char *out,
 	}
 }
 
-static void
-handle_request(struct channel *channel __unused,
-    struct channel_message *message, void *argument)
+/*
+ * bsd.sysctl.v1 method handlers.  Every method but GetProtocolInfo requires a
+ * negotiated session.  A reply that cannot be sent closes the connection, and
+ * the reactor then reclaims the session.  The request probes keep the
+ * historical SYSCTLCMP_OP_* codes (0 is protocol negotiation).
+ */
+static bool
+session_ready(struct session *session, struct fidl_bsd_connection *connection,
+    uint16_t opcode)
 {
-	const struct sysctlcmp_msg *request;
-	const struct sysctlcmp_body *body;
-	struct session *session;
-	const char *name;
-	const void *newp;
-	uint8_t value[SYSCTLCMP_MAX_VALUE];
-	size_t message_len, value_len, newlen;
-	uint32_t bytes;
-	uint16_t opcode;
-	int result, status, transport_error;
 
-	session = argument;
-	request = channel_message_data(message);
-	message_len = channel_message_length(message);
-	opcode = UINT16_MAX;
-	bytes = 0;
-	result = 0;
-	status = 0;
-	transport_error = 0;
-	if (request != NULL && message_len >= sizeof(*request))
-		opcode = request->opcode;
 	BSDSYSCTL_PROBE_REQUEST_START(session->label, opcode);
+	if (session->negotiated) {
+		session->activity = true;
+		return (true);
+	}
+	session->error = EPROTO;
+	BSDSYSCTL_PROBE_REQUEST_DONE(session->label, opcode, 0, EPROTO, 0);
+	fidl_bsd_connection_close(connection, EPROTO);
+	return (false);
+}
 
-	if (channel_message_fd_count(message) != 0 ||
-	    sysctlcmp_validate_message(request, message_len,
-	    SYSCTLCMP_MESSAGE_REQUEST) == -1) {
-		status = EPROTO;
-		session->error = status;
-		goto out;
-	}
-	session->activity = true;
-	switch (request->opcode) {
-	case SYSCTLCMP_OP_INTERFACES: {
-		struct sysctlcmp_interface entries[SYSCTLCMP_MAX_INTERFACES];
-		size_t count;
+static void
+request_done(struct session *session, struct fidl_bsd_connection *connection,
+    uint16_t opcode, uint32_t bytes, int status, int transport_error)
+{
 
-		if (!sysctlcmp_config_permits(session->config, session->label,
-		    SYSCTLCMP_INTERFACES_POLICY, false)) {
-			status = EPERM;
-			result = send_status(message, request, -status);
-			break;
-		}
-		if (sysctlcmp_interfaces_collect(read_interfaces, NULL, entries, &count) == -1) {
-			status = errno;
-			result = send_status(message, request, -status);
-		} else {
-			bytes = count * sizeof(*entries);
-			result = send_value(message, request, entries, bytes);
-		}
-		break;
-	}
-	case SYSCTLCMP_OP_GET:
-		body = (const void *)(request + 1);
-		name = (const char *)(body + 1);
-		if (!sysctlcmp_config_permits(session->config, session->label,
-		    name, false)) {
-			status = EPERM;
-			result = send_status(message, request, -status);
-			break;
-		}
-		value_len = sizeof(value);
-		if (gate_sysctl(name, value, &value_len, NULL, 0) == -1) {
-			status = errno;
-			result = send_status(message, request, -status);
-		} else {
-			bytes = (uint32_t)value_len;
-			result = send_value(message, request, value, value_len);
-		}
-		break;
-	case SYSCTLCMP_OP_SET: {
-		/*
-		 * Size the encode buffer to the protocol's value cap so any write
-		 * the wire accepts can actually be encoded; a smaller fixed buffer
-		 * would reject a valid 513..SYSCTLCMP_MAX_VALUE-byte string write
-		 * with ENOMEM after the protocol had accepted it.
-		 */
-		uint8_t enc[SYSCTLCMP_MAX_VALUE];
-		size_t enclen;
-
-		body = (const void *)(request + 1);
-		name = (const char *)(body + 1);
-		newlen = body->value_length;
-		newp = (const uint8_t *)(body + 1) + body->name_length;
-		bytes = (uint32_t)newlen;
-		if (!sysctlcmp_config_permits(session->config, session->label,
-		    name, true)) {
-			status = EPERM;
-			result = send_status(message, request, -status);
-			break;
-		}
-		/*
-		 * The wire value is text; encode it to the OID's native binary
-		 * type before the (gated) write, or the ASCII bytes would be
-		 * stored as the value.
-		 */
-		if (set_encode_value(name, (const char *)newp, newlen, enc,
-		    sizeof(enc), &enclen) == -1) {
-			status = errno;
-			result = send_status(message, request, -status);
-			break;
-		}
-		if (gate_sysctl(name, NULL, NULL, enc, enclen) == -1) {
-			status = errno;
-			result = send_status(message, request, -status);
-		} else {
-			result = send_value(message, request, NULL, 0);
-		}
-		break;
-	}
-	case SYSCTLCMP_OP_OIDFMT:
-		body = (const void *)(request + 1);
-		name = (const char *)(body + 1);
-		if (!sysctlcmp_config_permits(session->config, session->label,
-		    name, false)) {
-			status = EPERM;
-			result = send_status(message, request, -status);
-			break;
-		}
-		value_len = sizeof(value);
-		if (do_oidfmt(name, value, &value_len) == -1) {
-			status = errno;
-			result = send_status(message, request, -status);
-		} else {
-			bytes = (uint32_t)value_len;
-			result = send_value(message, request, value, value_len);
-		}
-		break;
-	case SYSCTLCMP_OP_DESCR:
-		body = (const void *)(request + 1);
-		name = (const char *)(body + 1);
-		if (!sysctlcmp_config_permits(session->config, session->label,
-		    name, false)) {
-			status = EPERM;
-			result = send_status(message, request, -status);
-			break;
-		}
-		value_len = sizeof(value);
-		if (do_descr(name, value, &value_len) == -1) {
-			status = errno;
-			result = send_status(message, request, -status);
-		} else {
-			bytes = (uint32_t)value_len;
-			result = send_value(message, request, value, value_len);
-		}
-		break;
-	case SYSCTLCMP_OP_NEXT:
-		/* The cursor name is not gated; do_next() filters the results. */
-		body = (const void *)(request + 1);
-		name = (const char *)(body + 1);
-		value_len = sizeof(value);
-		if (do_next(session, name, (char *)value, &value_len) == -1) {
-			status = errno;
-			result = send_status(message, request, -status);
-		} else {
-			bytes = (uint32_t)value_len;
-			result = send_value(message, request, value, value_len);
-		}
-		break;
-	default:
-		status = EOPNOTSUPP;
-		result = send_status(message, request, -status);
-		break;
-	}
-	if (result == -1) {
-		transport_error = errno;
+	if (transport_error != 0) {
 		session->error = transport_error;
+		fidl_bsd_connection_close(connection, transport_error);
 	}
-out:
 	BSDSYSCTL_PROBE_REQUEST_DONE(session->label, opcode, bytes, status,
 	    transport_error);
-	channel_message_free(message);
+}
+
+/*
+ * A received name as a C string: a sysctl name never contains a NUL.  Returns
+ * 0, or EINVAL for an embedded NUL (or, except for Next, an empty name).
+ */
+static int
+request_name(const char *data, size_t size, bool allow_empty, char *out)
+{
+
+	if (size >= SYSCTLCMP_MAX_NAME ||
+	    memchr(data, '\0', size) != NULL || (size == 0 && !allow_empty))
+		return (EINVAL);
+	memcpy(out, data, size);
+	out[size] = '\0';
+	return (0);
+}
+
+static void
+protocol_info(void *argument, struct fidl_bsd_connection *connection,
+    struct fidl_bsd_request *request, struct fidl_bsd_empty *empty __unused)
+{
+	struct session *session = argument;
+	struct bsd_sysctl_v1_ProtocolInfo info = { SYSCTLCMP_WIRE_VERSION };
+	int error;
+
+	BSDSYSCTL_PROBE_REQUEST_START(session->label, 0);
+	session->activity = true;
+	error = bsd_sysctl_v1_Sysctl_GetProtocolInfo_reply(connection, request,
+	    &info);
+	session->negotiated = error == 0;
+	request_done(session, connection, 0, 0, 0, error);
+}
+
+/* Value-returning reads: Get, OidFormat, Describe and Next. */
+#define VALUE_REPLY(method, opcode_value, allow_empty, gated, produce)       static void                                                                  method##_handler(void *argument, struct fidl_bsd_connection *connection,        struct fidl_bsd_request *request, struct bsd_sysctl_v1_NameRequest *in) {                                                                            	struct session *session = argument;                                  	struct bsd_sysctl_v1_Sysctl_##method##_Result reply = { 0 };         	uint8_t value[SYSCTLCMP_MAX_VALUE];                                  	char name[SYSCTLCMP_MAX_NAME];                                       	size_t value_len = sizeof(value);                                    	uint32_t bytes = 0;                                                  	int status;                                                                                                                                       	if (!session_ready(session, connection, opcode_value))               		return;                                                      	status = request_name(in->name, in->name_size, allow_empty, name);   	if (status == 0 && gated &&                                          	    !sysctlcmp_config_permits(session->config, session->label, name, 	    false))                                                          		status = EPERM;                                              	if (status == 0 && produce == -1)                                    		status = errno;                                              	if (status != 0) {                                                   		reply.tag = bsd_sysctl_v1_Sysctl_##method##_Result_err_tag;  		reply.value.err = (uint32_t)status;                          	} else {                                                             		bytes = (uint32_t)value_len;                                 		reply.tag =                                                  		    bsd_sysctl_v1_Sysctl_##method##_Result_response_tag;    		reply.value.response.value = value;                          		reply.value.response.value_size = value_len;                 	}                                                                    	request_done(session, connection, opcode_value, bytes, status,       	    bsd_sysctl_v1_Sysctl_##method##_reply(connection, request,       	    &reply));                                                        }
+VALUE_REPLY(Get, SYSCTLCMP_OP_GET, false, true,
+    gate_sysctl(name, value, &value_len, NULL, 0))
+VALUE_REPLY(OidFormat, SYSCTLCMP_OP_OIDFMT, false, true,
+    do_oidfmt(name, value, &value_len))
+VALUE_REPLY(Describe, SYSCTLCMP_OP_DESCR, false, true,
+    do_descr(name, value, &value_len))
+/* The Next cursor is not gated; do_next() filters the results. */
+VALUE_REPLY(Next, SYSCTLCMP_OP_NEXT, true, false,
+    do_next(session, name, (char *)value, &value_len))
+
+static void
+set_handler(void *argument, struct fidl_bsd_connection *connection,
+    struct fidl_bsd_request *request, struct bsd_sysctl_v1_SetRequest *in)
+{
+	struct session *session = argument;
+	struct bsd_sysctl_v1_Sysctl_Set_Result reply = { 0 };
+	/*
+	 * Size the encode buffer to the protocol's value cap so any write the
+	 * wire accepts can actually be encoded.
+	 */
+	uint8_t enc[SYSCTLCMP_MAX_VALUE];
+	char name[SYSCTLCMP_MAX_NAME];
+	size_t enclen;
+	int status;
+
+	if (!session_ready(session, connection, SYSCTLCMP_OP_SET))
+		return;
+	status = request_name(in->name, in->name_size, false, name);
+	if (status == 0 && !sysctlcmp_config_permits(session->config,
+	    session->label, name, true))
+		status = EPERM;
+	/*
+	 * The wire value is text; encode it to the OID's native binary type
+	 * before the (gated) write, or the ASCII bytes would be stored as the
+	 * value.
+	 */
+	if (status == 0 && set_encode_value(name, (const char *)in->value,
+	    in->value_size, enc, sizeof(enc), &enclen) == -1)
+		status = errno;
+	if (status == 0 && gate_sysctl(name, NULL, NULL, enc, enclen) == -1)
+		status = errno;
+	reply.tag = status != 0 ? bsd_sysctl_v1_Sysctl_Set_Result_err_tag :
+	    bsd_sysctl_v1_Sysctl_Set_Result_response_tag;
+	if (status != 0)
+		reply.value.err = (uint32_t)status;
+	request_done(session, connection, SYSCTLCMP_OP_SET,
+	    (uint32_t)in->value_size, status,
+	    bsd_sysctl_v1_Sysctl_Set_reply(connection, request, &reply));
+}
+
+static void
+interfaces_handler(void *argument, struct fidl_bsd_connection *connection,
+    struct fidl_bsd_request *request, struct fidl_bsd_empty *empty __unused)
+{
+	struct session *session = argument;
+	struct bsd_sysctl_v1_Sysctl_ListInterfaces_Result reply = { 0 };
+	struct sysctlcmp_interface entries[SYSCTLCMP_MAX_INTERFACES];
+	struct bsd_sysctl_v1_Interface out[SYSCTLCMP_MAX_INTERFACES];
+	size_t count = 0;
+	uint32_t bytes = 0;
+	int status = 0;
+
+	if (!session_ready(session, connection, SYSCTLCMP_OP_INTERFACES))
+		return;
+	if (!sysctlcmp_config_permits(session->config, session->label,
+	    SYSCTLCMP_INTERFACES_POLICY, false))
+		status = EPERM;
+	else if (sysctlcmp_interfaces_collect(read_interfaces, NULL, entries,
+	    &count) == -1)
+		status = errno;
+	if (status != 0) {
+		reply.tag = bsd_sysctl_v1_Sysctl_ListInterfaces_Result_err_tag;
+		reply.value.err = (uint32_t)status;
+	} else {
+		for (size_t i = 0; i < count; i++) {
+			out[i].index = entries[i].index;
+			out[i].flags = entries[i].flags;
+			out[i].mtu = entries[i].mtu;
+			out[i].link_state = entries[i].link_state;
+			out[i].name = entries[i].name;
+			out[i].name_size = strnlen(entries[i].name,
+			    sizeof(entries[i].name));
+		}
+		bytes = (uint32_t)(count * sizeof(*entries));
+		reply.tag =
+		    bsd_sysctl_v1_Sysctl_ListInterfaces_Result_response_tag;
+		reply.value.response.interfaces = out;
+		reply.value.response.interfaces_size = count;
+	}
+	request_done(session, connection, SYSCTLCMP_OP_INTERFACES, bytes,
+	    status, bsd_sysctl_v1_Sysctl_ListInterfaces_reply(connection,
+	    request, &reply));
+}
+
+/* A connection the bindings closed for a malformed or unknown frame. */
+static bool
+protocol_rejection(int error)
+{
+
+	return (error != 0 && error != EPIPE && error != ECONNRESET &&
+	    error != ECANCELED && error != ETIMEDOUT && error != ENOTCONN);
 }
 
 static int
@@ -535,8 +479,8 @@ monotonic_ms(uint64_t *result)
 static void
 session_close(struct session *session)
 {
-	if (session->channel != NULL)
-		channel_destroy(session->channel);
+	if (session->connection != NULL)
+		fidl_bsd_connection_destroy(session->connection);
 	free(session->label);
 	memset(session, 0, sizeof(*session));
 }
@@ -546,24 +490,44 @@ static int
 session_open(struct session *session, int fd, const char *label,
     const struct sysctlcmp_config *config)
 {
-	struct channel_options options =
-	    CHANNEL_OPTIONS_INITIALIZER(CHANNEL_ROLE_PROVIDER);
+	static const struct bsd_sysctl_v1_Sysctl_server handlers = {
+		.GetProtocolInfo = protocol_info,
+		.Get = Get_handler,
+		.Set = set_handler,
+		.OidFormat = OidFormat_handler,
+		.Describe = Describe_handler,
+		.Next = Next_handler,
+		.ListInterfaces = interfaces_handler
+	};
+	struct fidl_bsd_options options = FIDL_BSD_OPTIONS_INITIALIZER;
 	int error;
 
 	memset(session, 0, sizeof(*session));
 	session->label = strdup(label);
 	session->config = config;
 	if (session->label == NULL ||
-	    monotonic_ms(&session->last_request_ms) == -1 ||
-	    channel_create(fd, &options, &session->channel) == -1) {
+	    monotonic_ms(&session->last_request_ms) == -1) {
 		error = errno;
 		close(fd);
 		session_close(session);
 		return (errno = error, -1);
 	}
-	if (channel_set_request_handler(session->channel, handle_request,
-	    session) == -1) {
-		error = errno;
+	/* One request at a time; requests carry no descriptors. */
+	options.max_pending_requests = 1;
+	options.max_queued_messages = 8;
+	options.max_queued_bytes = 64 * 1024;
+	options.max_queued_fds = 0;
+	error = fidl_bsd_connection_create_with_options(fd, FIDL_BSD_SERVER,
+	    &options, &session->connection);
+	if (error != 0) {
+		session->connection = NULL;
+		close(fd);
+		session_close(session);
+		return (errno = error, -1);
+	}
+	error = bsd_sysctl_v1_Sysctl_bind(session->connection, &handlers,
+	    session);
+	if (error != 0) {
 		session_close(session);
 		return (errno = error, -1);
 	}
@@ -580,7 +544,7 @@ sessions_admit(struct session *sessions, size_t count, int fd,
 	free_slot = count;
 	matching = 0;
 	for (i = 0; i < count; i++) {
-		if (sessions[i].channel == NULL) {
+		if (sessions[i].connection == NULL) {
 			if (free_slot == count)
 				free_slot = i;
 		} else if (strcmp(sessions[i].label, label) == 0)
@@ -598,13 +562,13 @@ static int
 sessions_wait(int kq, struct session *sessions, size_t count, int listener_fd,
     uint32_t idle_ms, int *failed)
 {
-	struct service_channel_slot slots[BSDSYSCTL_MAX_SESSIONS];
+	struct fidl_bsd_connection_slot slots[BSDSYSCTL_MAX_SESSIONS];
 	uint64_t now = service_monotime_ms(), wait_ms = INT_MAX;
 	size_t i;
 	bool active = false;
-	int ready;
+	int error, ready;
 	for (i = 0; i < count; i++) {
-		if (sessions[i].channel != NULL) {
+		if (sessions[i].connection != NULL) {
 			uint64_t elapsed = now - sessions[i].last_request_ms;
 			if (elapsed >= idle_ms)
 				session_close(&sessions[i]);
@@ -615,20 +579,29 @@ sessions_wait(int kq, struct session *sessions, size_t count, int listener_fd,
 			}
 		}
 		sessions[i].activity = false;
-		slots[i].channel = sessions[i].channel;
+		slots[i].connection = sessions[i].connection;
 	}
 	if (!active && listener_fd == -1)
 		return (0);
-	ready = service_channels_wait(kq, slots, count, listener_fd,
-	    active ? (int)wait_ms : -1);
-	if (ready == -1)
-		return (-1);
+	error = fidl_bsd_connections_wait(kq, slots, count, listener_fd,
+	    active ? (int)wait_ms : -1, &ready);
+	if (error != 0)
+		return (errno = error, -1);
 	now = service_monotime_ms();
 	for (i = 0; i < count; i++) {
 		if (sessions[i].activity)
 			sessions[i].last_request_ms = now;
+		if (slots[i].error != 0 && sessions[i].error == 0 &&
+		    protocol_rejection(slots[i].error)) {
+			/* A frame the bindings refused before any handler. */
+			BSDSYSCTL_PROBE_REQUEST_START(sessions[i].label,
+			    UINT16_MAX);
+			BSDSYSCTL_PROBE_REQUEST_DONE(sessions[i].label,
+			    UINT16_MAX, 0, EPROTO, 0);
+			sessions[i].error = EPROTO;
+		}
 		if (slots[i].error != 0 || sessions[i].error != 0 ||
-		    (sessions[i].channel != NULL &&
+		    (sessions[i].connection != NULL &&
 			now - sessions[i].last_request_ms >= idle_ms)) {
 			if (sessions[i].error != 0)
 				*failed = 1;
@@ -673,7 +646,7 @@ sysctlcmp_test_serve_many(const int *fds, const char *const *labels,
 		}
 		active = false;
 		for (i = 0; i < count; i++)
-			active |= sessions[i].channel != NULL;
+			active |= sessions[i].connection != NULL;
 	} while (active);
 	for (i = 0; i < count; i++)
 		session_close(&sessions[i]);

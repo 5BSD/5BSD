@@ -215,6 +215,10 @@ _LIBRARIES=	\
 		sysctlcmp \
 		timecmp \
 		powercmp \
+		extensioncmp \
+		filesystemcmp \
+		namespacecmp \
+		vmcmp \
 		ngatm \
 		nv \
 		nvpair \
@@ -337,29 +341,33 @@ LIBVERIEXEC?=	${LIBVERIEXECDIR}/libveriexec.a
 # 2nd+ order consumers.  Auto-generating this would be better.
 _DP_80211=	sbuf bsdxml
 _DP_9p=		sbuf
-_DP_auditcmp=	service
+_DP_auditcmp=	pthread service fidl_bsd cplusplus
 _DP_capimage=	crypto
 _DP_capbundle=	capsulert ucl md capimage
 _DP_capreclaim=	
 _DP_capsulert=	ucl
 _DP_fidl_bsd=	channel pthread cplusplus
 _DP_cplusplus=	cxxrt m pthread
-_DP_bsdfilesystem=	trustedzfs service channel
+_DP_bsdfilesystem=	trustedzfs service channel filesystemcmp fidl_bsd
 _DP_service=	capability channel pthread trustedzfs capsulert
 _DP_shmring=
-_DP_networkcmp=	pthread service
-_DP_sysctlcmp=	service
+_DP_networkcmp=	pthread service fidl_bsd cplusplus
+_DP_sysctlcmp=	pthread service fidl_bsd cplusplus
 _DP_timecmp= service fidl_bsd cplusplus
-_DP_powercmp=	service
-_DP_cryptocmp=	pthread service
-_DP_devicecmp=	pthread service
-_DP_logcmp=	pthread service shmring
+_DP_extensioncmp=	pthread service fidl_bsd cplusplus
+_DP_filesystemcmp=	pthread service trustedzfs fidl_bsd cplusplus
+_DP_namespacecmp=	pthread service fidl_bsd cplusplus
+_DP_vmcmp=	pthread service fidl_bsd cplusplus
+_DP_powercmp=	service fidl_bsd cplusplus
+_DP_cryptocmp=	pthread service fidl_bsd cplusplus
+_DP_devicecmp=	pthread service fidl_bsd cplusplus
+_DP_logcmp=	pthread service shmring fidl_bsd cplusplus
 _DP_kldmgr=	service
-_DP_notify=	pthread service
+_DP_notify=	pthread service fidl_bsd cplusplus
 _DP_cache=	notify service pthread
-_DP_oes= service
+_DP_oes= service fidl_bsd cplusplus
 _DP_rebootctl=	service
-_DP_tracecmp=	dtrace service
+_DP_tracecmp=	dtrace service fidl_bsd cplusplus
 _DP_capability=
 .if ${MK_CASPER} != "no"
 _DP_9p+=	casper cap_pwd cap_grp

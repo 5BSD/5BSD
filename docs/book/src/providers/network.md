@@ -31,21 +31,45 @@ Source: `usr.sbin/BSDNetwork/capbundle/bsdnetwork.ucl` and `Bundle.ucl`.
 
 ## Wire operations
 
-Defined in `lib/libnetworkcmp/networkcmp_protocol.h`. Every message starts with `struct networkcmp_msg` (magic `NCMP`, `opcode`, `flags`, `status`); a reply's `status` is 0 or a negative errno. HELLO exchanges features: the client sends `features`, the broker answers with the feature bits its session policy grants (`TCP`, `UDP`, `IPV6`, `DNS`, `LISTEN`) and `max_resolve_results`. A client should treat the HELLO reply as the binding contract for the session.
+`system.Network` and `system.Network.Admin` serve the FIDL protocol `Network`
+in `lib/libnetworkcmp/networkcmp.fidl` (library `bsd.network.v1`, installed as
+`/usr/share/fidl/networkcmp.fidl`; see [FIDL and Capability IPC](../develop/fidl.md)).
+`GetLimits` returns the feature bits the session policy grants (`TCP`, `UDP`,
+`IPV6`, `DNS`, `LISTEN`) and `max_resolve_results`; a client should treat it as
+the binding contract for the session. Application errors are errno values; the
+historical opcodes remain the DTrace probe arguments.
 
-| Op | Request | Reply | Errors |
+| Method (probe opcode) | Request | Reply | Errors |
 |---|---|---|---|
-| `HELLO` (1) | `networkcmp_hello` | `networkcmp_hello_reply` | `EPROTO` malformed |
-| `RESOLVE` (2) | `networkcmp_resolve_request` + host and service bytes | `networkcmp_resolve_reply` + up to `NETWORKCMP_RESOLVE_MAX_RESULTS` (32) `networkcmp_resolve_result` + canonname | `EACCES` resolve off; `EBUSY` one already in flight; `ENOENT` no such name; `EAGAIN` try again; `EPROTONOSUPPORT` bad service or socket type; `EAFNOSUPPORT` pinned family denied; `EIO` |
-| `CONNECT` (3) | `networkcmp_connect_request` (endpoint, `timeout_ms`) | header, plus one delivered fd | `EACCES` connect off or internal range; `EAFNOSUPPORT` family off; `ETIMEDOUT` deadline; kernel connect errors (`ECONNREFUSED`, ...) |
-| `UDP` (4) | `networkcmp_connect_request` (`timeout_ms` ignored) | header, plus one delivered fd | `EACCES` udp off or internal range; `EAFNOSUPPORT` |
-| `LISTEN` (5) | `networkcmp_listen_request` (`backlog`, 0 = `SOMAXCONN`) | `networkcmp_listen_reply` (`port`), plus one delivered fd | `EACCES` listen off; `EINVAL` reserved bits set |
+| `GetProtocolInfo` (1) | empty | wire version 1 | none |
+| `GetLimits` (1, was HELLO) | empty | `features`, `max_resolve_results` | none |
+| `Resolve` (2) | `host` (≤ 253), `service` (≤ 32), `family`, `socket_type`, `flags`, `max_results` (1..32) | up to 32 results (endpoint, socket type, protocol), `canonname`, `ttl_seconds` | `EACCES` resolve off; `EBUSY` a different one in flight; `ENOENT` no such name; `EAGAIN` try again; `EPROTONOSUPPORT` bad service or socket type; `EAFNOSUPPORT` pinned family denied; `EOPNOTSUPP` `ADDRCONFIG`; `EIO` |
+| `Connect` (3) | endpoint, `timeout_ms` | the connected socket | `EACCES` connect off or internal range; `EAFNOSUPPORT` family off; `ETIMEDOUT` deadline; kernel connect errors (`ECONNREFUSED`, ...) |
+| `Udp` (4) | endpoint | the connected socket | `EACCES` udp off or internal range; `EAFNOSUPPORT` |
+| `Listen` (5) | `backlog` (0 = `SOMAXCONN`) | the listening socket and its `port` | `EACCES` listen off |
 
-`timeout_ms` bounds only the TCP handshake; zero selects a blocking connect. A resolve that exceeds the broker's 30 second deadline terminates the client's private worker rather than leaving the session stuck in `EBUSY`; the typed client observes peer death.
+A session negotiates first. The provider keeps the pre-FIDL record rules: a
+request before negotiation, an endpoint with a nonzero prefix or (IPv4)
+nonzero tail bytes, or a resolve request with both names empty, a NUL byte,
+an unknown family, socket type or flag, or `max_results` outside 1..32 ends the
+session as a protocol violation (`malformed-request` audit, `reject` probe), as
+does an unknown method, a malformed frame, a pre-FIDL record or an attached
+descriptor. `networkcmp_protocol.h` keeps the structures the C API uses
+(`networkcmp_endpoint`, `networkcmp_resolve_result`, `networkcmp_hello_reply`,
+feature and flag bits); its `NCMP` message framing and the
+`networkcmp_server.h` validators describe the pre-FIDL wire format and are kept
+for compatibility. `system.Network.State` serves `NetworkState` from the same
+library (see below). `system.Network.PF` still uses its single pre-FIDL
+request (magic `PFS1`): its only consumer is the out-of-tree
+`sysutils/5bsd-instruments` port, which speaks it directly.
+`usr.sbin/BSDNetwork/tests/evolution/networkcmp_next.fidl` is the schema at
+`bsd:1` plus a method at `bsd:2` for the pairing test.
+
+`timeout_ms` bounds only the TCP handshake; zero selects a blocking connect. A resolve that exceeds the broker's 30 second deadline terminates the client's private worker rather than leaving the session stuck in `EBUSY`; the typed client observes peer death. Identical concurrent resolves (up to 16) share one lookup and are each answered.
 
 ## Client library
 
-Header `<networkcmp.h>` (installs `networkcmp.h`, `networkcmp_protocol.h`, `networkcmp_server.h`); link with `-lnetworkcmp` (`SHLIB_MAJOR 1`, depends on libservice and pthread). Manual: libnetworkcmp(3).
+Header `<networkcmp.h>` (installs `networkcmp.h`, `networkcmp_protocol.h`, `networkcmp_server.h`); link with `-lnetworkcmp` (`SHLIB_MAJOR 1`, depends on libservice, pthread and the FIDL runtime). Manual: libnetworkcmp(3).
 
 | Group | Functions |
 |---|---|
@@ -53,7 +77,7 @@ Header `<networkcmp.h>` (installs `networkcmp.h`, `networkcmp_protocol.h`, `netw
 | Sockets | `networkcmp_connect`, `networkcmp_connect_ex` (adds `timeout_ms`), `networkcmp_udp`, `networkcmp_listen` |
 | Resolution | `networkcmp_resolve`, `networkcmp_getaddrinfo`, `networkcmp_freeaddrinfo` |
 
-The library keeps one process-wide session; repeated opens return borrows of it and `networkcmp_client_close()` releases a borrow. `networkcmp_getaddrinfo()` accepts `AI_PASSIVE`, `AI_CANONNAME`, `AI_NUMERICHOST`, `AI_NUMERICSERV`, `AI_V4MAPPED` and `AI_ALL`, returns an `EAI_*` status, and its list must be freed with `networkcmp_freeaddrinfo()`. A malformed reply marks the session terminal: every later call fails with `EPROTO`. A child after `fork(2)` cannot reuse the parent's session.
+The library keeps one process-wide session; repeated opens return borrows of it and `networkcmp_client_close()` releases a borrow. Opening negotiates the wire version (`EPROTONOSUPPORT` for an incompatible provider) and reads the limits. Calls from several threads proceed concurrently on the shared session: one waiting thread reads the channel and completes every caller's reply. Each call is bounded by 30 seconds, shortened by an active `service_budget_begin()`; a timeout cancels that call (`ETIMEDOUT`) and keeps the session. `networkcmp_getaddrinfo()` accepts `AI_PASSIVE`, `AI_CANONNAME`, `AI_NUMERICHOST`, `AI_NUMERICSERV`, `AI_V4MAPPED` and `AI_ALL`, returns an `EAI_*` status, and its list must be freed with `networkcmp_freeaddrinfo()`. A malformed reply marks the session terminal: every later call fails with `EPROTO`; a lost provider makes it terminal with the transport error. A child after `fork(2)` cannot reuse the parent's session (`EINVAL`).
 
 ```c
 #include <networkcmp.h>
@@ -124,17 +148,19 @@ The entry schema is closed (an unknown key, a non-boolean, a duplicate or invali
 
 | Where | Programs | What they prove |
 |---|---|---|
-| `usr.sbin/BSDNetwork/tests` (package `bsdnetwork-tests`, `/usr/tests/usr.sbin/BSDNetwork`) | `provider_test` (16 cases), `config_test` (12), `policy_test` (7), `bundle_test.sh` (3) | provider_test drives the real request handler over a mac_capability channel: HELLO, CONNECT and UDP return a narrowed fd, denied labels get `EACCES`, loopback is refused to non-admin sessions, per-label config denies connect while allowing resolve, connect timeouts succeed/refuse/expire, the resolver does not block the session and its deadline terminates the worker, malformed channel traffic is rejected. config_test and policy_test cover the parser's closed schema and fail-soft behaviour. |
-| `lib/libnetworkcmp/tests` (`libnetworkcmp-tests`) | `networkcmp_test` (8), `client_lifecycle_test` (5, against a fake service) | message encoding, HELLO contract, borrow/release lifecycle, terminal `EPROTO` after a malformed reply |
+| `usr.sbin/BSDNetwork/tests` (package `bsdnetwork-tests`, `/usr/tests/usr.sbin/BSDNetwork`) | `provider_test` (18 cases), `state_test` (4), `state_plane_test` (1), `state_sampler_test`, `coalesce_test` (2), `connect_deadline_test` (1), `worker_test`, `evolution_test` (2), `config_test` (12), `policy_test` (7), `bundle_test.sh` (3) | provider_test drives the real worker with the generated bindings over a mac_capability channel: limits, CONNECT and UDP return a narrowed fd, denied labels get `EACCES`, loopback is refused to non-admin sessions, per-label config denies connect while allowing resolve, connect timeouts succeed/refuse/expire, the resolver does not block the session, identical resolves coalesce, its deadline terminates the worker; hand-built frames (attached descriptor, pre-FIDL record) and record-rule violations end the session. state_test drives the NetworkState reactor over real channels (coalescing watch, `EBUSY`, timeouts, label and total admission, negotiation, idle expiry, provider teardown). evolution_test pairs `bsd:1` and `bsd:2` peers both ways. config_test and policy_test cover the parser's closed schema and fail-soft behaviour. |
+| `lib/libnetworkcmp/tests` (`libnetworkcmp-tests`) | `networkcmp_test` (8), `client_lifecycle_test` (5), `state_client_test` (3) | retained record rules and argument checks before transport; against scripted `bsd.network.v1` providers: borrow/release lifecycle, concurrent calls overlapping on the shared session, fork, terminal transport and `EPROTO` errors, the NetworkState reconnect, timeout and validation rules |
 | `usr.sbin/networkcmpctl/tests` | `networkcmpctl_test.sh` (5) | argument handling, provider-unavailable exit, successful verbs against a fake broker, failure cleanup |
 
 Run with `kyua test -k /usr/tests/usr.sbin/BSDNetwork/Kyuafile` on a booted plane; provider_test needs mac_capability channels and so runs inside the VM rig described in [Testing](../develop/testing.md). The `udp` and `listen` self-tests of networkcmpctl are the live proof that a born-in-capmode broker reaches the kernel connect and bind paths.
 
 ## Status and gaps
 
-Status: shipped, committed on `dev`, VM-proven; the inventory (section 4 and section 10) records it as capmode, user `capability`, Casper retired, ops HELLO/CONNECT/LISTEN/UDP/RESOLVE.
+Status: shipped, committed on `dev`, VM-proven; the inventory (section 4 and section 10) records it as capmode, user `capability`, Casper retired, ops HELLO/CONNECT/LISTEN/UDP/RESOLVE. `system.Network`, `.Admin` and `.State` speak FIDL `bsd.network.v1` since October 2026 (endpoints, attributes, policy and admission unchanged; the provider and libnetworkcmp ship together).
 
 Known gaps and drift:
+
+- `system.Network.PF` still uses its pre-FIDL message; converting it needs the `sysutils/5bsd-instruments` port, which implements that message itself, to move in step.
 
 - `bundle_test.sh` refers to the pre-rename source directory `usr.sbin/bsdnetwork` and binary name, so it skips or fails outside the source tree layout it was written for.
 - A timeout op for resolve (as opposed to the fixed 30 second deadline) is deferred, per the inventory.

@@ -1,0 +1,30 @@
+// SPDX-License-Identifier: BSD-2-Clause
+// Schema-evolution fixture for system.Audit.  At bsd:1 this is exactly
+// lib/libauditcmp/auditcmp.fidl (tools/build/fuchsia/test-bindings.py checks
+// it); bsd:2 adds a method, as a future provider release would.  The peer
+// built from bsd:2 is paired with the real bsd:1 client and provider.
+@available(platform="bsd", added=1)
+library bsd.audit.v1;
+
+type ProtocolInfo = struct { wire_version uint32; };
+// Subjects and operations: [A-Za-z0-9._/-]{1,64}.
+type SubmitRequest = struct {
+    // The audited operation's result: 0 or an errno value.
+    error int32;
+    subject string:64;
+    operation string:64;
+};
+type AuditStats = struct {
+    submitted uint64;
+    rejected uint64;
+};
+closed protocol Audit {
+    strict GetProtocolInfo() -> (ProtocolInfo);
+    // Errors are errno values (EINVAL malformed record, EAGAIN rate limit,
+    // or the audit backend's error).
+    strict Submit(SubmitRequest) -> () error uint32;
+    strict Stats() -> (AuditStats);
+    // Added in the next revision; unknown to wire-major-1 peers.
+    @available(added=2)
+    strict Probe() -> (AuditStats);
+};

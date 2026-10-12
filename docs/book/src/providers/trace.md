@@ -17,7 +17,7 @@ has nothing to do with this provider. This chapter is about BSDTrace, the
 the SDT and USDT catalog) is in [Observability](../operations/observability.md)
 and [Logging, Audit and Trace](../plane/logging-audit-trace.md).
 
-A client opens `system.Trace` over its lookup channel, learns with HELLO whether it may receive a descriptor, and asks OPEN for one independently opened DTrace consumer
+A client opens `system.Trace` over its lookup channel, learns during protocol negotiation whether it may receive a descriptor, and asks `Open` for one independently opened DTrace consumer
 descriptor. BSDTrace forks a capability-mode worker per connection; the
 worker checks the caller's switchboard-authenticated label against the
 allow-list and, if listed, opens `/dev/dtrace` through the delivered `/dev`
@@ -72,18 +72,33 @@ Source: `usr.sbin/BSDTrace/capbundle/Bundle.ucl` and
 
 ## Wire operations
 
-Protocol header: `lib/libtracecmp/tracecmp_protocol.h`. Every message
-starts with a 16-byte `struct tracecmp_msg { magic, opcode, flags,
-status }`; magic is `TRACECMP_MAGIC` (`0x54524343`, "TRCC"), flags must be zero, and a message is at most
-`TRACECMP_MAX_MESSAGE` (256) bytes. Roles are REQUEST, REPLY and EVENT.
+The provider and client use `lib/libtracecmp/tracecmp.fidl`, library
+`bsd.trace.v1`, with generated C bindings over native capability channels
+(see [FIDL and Capability IPC](../develop/fidl.md)). The schema installs as
+`/usr/share/fidl/tracecmp.fidl` and imports `/usr/share/fidl/zx.fidl` for the
+descriptor type. No payload carries an identity or a grant: the session's
+switchboard-stamped rights and the allow-list decide.
 
-| Op | Request | Reply | Errors |
+| Method | Request | Reply | Errors |
 |---|---|---|---|
-| `TRACECMP_OP_HELLO` (1) | header only | `tracecmp_hello_reply { features }`; `TRACECMP_FEATURE_RAW_DTRACE_FD` is set only for a listed label or an ADMIN session | `EPROTO` on a bad header |
-| `TRACECMP_OP_OPEN` (2) | header only | header with one attachment in slot `TRACECMP_OPEN_FD_DTRACE`: the consumer descriptor | `EACCES` label not listed; `EPROTO` malformed or unexpected attached descriptor (poisons the session); a second OPEN on one session is refused (one-shot) |
-| `TRACECMP_OP_STATS` (3) | header only | `tracecmp_stats { opened, rejected }` | `EPROTO` |
+| `GetProtocolInfo` | empty | wire version 1 and `features`; `TRACECMP_FEATURE_RAW_DTRACE_FD` is set only for a listed label or an ADMIN session whose consumer is open | none |
+| `Open` | empty | the consumer descriptor | `EACCES` label not listed; `EALREADY` a second `Open` on one session (one-shot); device errors such as `ENXIO` |
+| `Stats` | empty | `opened`, `rejected` | none |
 
-The client side times out after `TRACECMP_CLIENT_TIMEOUT_MS` (30 s).
+A session must negotiate before `Open` or `Stats`. A method before
+negotiation, an unknown method, a malformed, truncated or oversized frame, a
+pre-FIDL record or an attached descriptor ends the session without a reply
+and without delivering a consumer (the `bsdtrace` provider's `request-done`
+probe still fires with opcode `UINT32_MAX` for a frame the bindings refused).
+The delivered descriptor keeps the provider's hardening (transfer once,
+close-on-exec locked); the client then locks it against further transfer and
+fork. The worker times out an idle session after `TRACECMP_CLIENT_TIMEOUT_MS`
+(30 s); the client bounds each call by the same 30 s, shortened by an active
+`service_budget_begin()`. The `bsd.trace.v1` ordinals and layouts are a
+compatibility contract; `usr.sbin/BSDTrace/tests/evolution/tracecmp_next.fidl`
+is the same schema at `bsd:1` and adds a method at `bsd:2` for the pairing
+test. `tracecmp_protocol.h` keeps the constants and the pre-FIDL records for
+compatibility only.
 
 ## Client library
 
@@ -164,7 +179,7 @@ group- or world-writable, at most 64 KiB, with no NUL bytes, and is opened
 without following symlinks. An absent Config directory or file is an empty
 default-deny policy; an unsafe file is a fatal configuration error. The
 base system does not install a `Config/bsdtrace.allow`, so a fresh install
-denies every OPEN until an operator adds one. The policy names who may
+denies every `Open` until an operator adds one. The policy names who may
 trace, not what they may trace. An ADMIN session on the channel is granted
 the raw-descriptor feature without a listing.
 
@@ -173,9 +188,10 @@ the raw-descriptor feature without a listing.
 | Location | Programs | Proves |
 |---|---|---|
 | `usr.sbin/BSDTrace/tests` (`bsdtrace-provider-tests`, `/usr/tests/usr.sbin/BSDTrace`) | `policy_test` | default deny, exact-label matching (no prefix or child match), wildcard, malformed, duplicate and oversized entries rejected, unsafe and over-size files rejected |
-| same | `session_test` | authorized descriptor is one-shot, authorization and device failures, unexpected descriptor poisons the session, unauthorized OPEN denied without touching the consumer, authorized label receives the fd, worker descriptors cross exactly one fork |
+| same | `session_test` | over the generated bindings: authorized descriptor is one-shot, authorization and device failures, unauthorized `Open` denied without touching the consumer, authorized label receives the fd, worker descriptors cross exactly one fork; with hand-built frames: an attached descriptor, a method before negotiation, an unknown method, a truncated frame, trailing bytes and a pre-FIDL record each end the session |
+| same | `evolution_test` | the `bsd:1`/`bsd:2` schema pairing in both directions |
 | same | `bundle_test.sh` | the built bundle verifies with `switchboardctl verify` and carries (or, without DTrace, lacks) a `.SUNW_dof` section |
-| `lib/libtracecmp/tests` (`libtracecmp-tests`) | `tracecmp_test`, `client_lifecycle_test` | header ABI, validation, API and buffer tuning; concurrent sessions, discovery and peer failures, feature and attachment validation, delegated fd not inherited, repeated open/close, stats counters, all against a fake service |
+| `lib/libtracecmp/tests` (`libtracecmp-tests`) | `tracecmp_test`, `client_lifecycle_test` | retained legacy record ABI, API and buffer tuning; against a scripted `bsd.trace.v1` provider over real channels: concurrent sessions, discovery and peer failures, feature, version and reply validation (including a pre-FIDL provider), delegated fd not inherited, repeated open/close, stats counters |
 | `usr.sbin/tracectl/tests` | `tracectl_test.sh` | valid policy, empty is default-deny, policy errors, argument handling |
 
 Run with `kyua test -k /usr/tests/usr.sbin/BSDTrace/Kyuafile` and the
@@ -184,7 +200,7 @@ matching Kyuafiles under `/usr/tests/lib/libtracecmp` and
 
 ## Status and gaps
 
-Shipped; renamed from `traced`; policy file spelling reconciled across
+Shipped; FIDL `bsd.trace.v1` (October 2026; unit, attributes and policy unchanged; provider and libtracecmp ship together); renamed from `traced`; policy file spelling reconciled across
 BSDTrace.8, libtracecmp.3 and tracectl.8. Gaps recorded in the inventory:
 the policy is coarse (who, not what); the delegated descriptor cannot bound
 D programs, so untrusted consumers still need a broker-owned query and

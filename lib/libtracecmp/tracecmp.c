@@ -14,197 +14,156 @@
 #include <string.h>
 #include <unistd.h>
 
+#include <fidl/bsd.trace.v1/c/bsd.h>
+#include <fidl/bsd/sync_c.h>
 #include <libservice.h>
+#include <service_runtime.h>
+#include <stdbool.h>
 
 #include "tracecmp.h"
-#include "tracecmp_server.h"
 #include "tracecmp_probes.h"
 
-union tracecmp_buffer {
-	max_align_t align;
-	uint8_t bytes[TRACECMP_MAX_MESSAGE];
+/*
+ * One synchronous call: send with the generated binding (send()), then wait
+ * for its completion under the session deadline.  Probes keep the historical
+ * TRACECMP_OP_* codes; the size arguments are the FIDL frame sizes.
+ */
+struct completion {
+	bool done, malformed;
+	int error;
+	uint32_t features;
+	int fd;
+	struct tracecmp_stats stats;
 };
 
-static int
-tracecmp_header_validate(const struct tracecmp_msg *msg, size_t length,
-    enum tracecmp_message_role role)
+static void
+malformed_reply(struct completion *result)
 {
 
-	if (msg == NULL || length < sizeof(*msg) ||
-	    length > TRACECMP_MAX_MESSAGE ||
-	    (role != TRACECMP_MESSAGE_REQUEST &&
-	    role != TRACECMP_MESSAGE_REPLY &&
-	    role != TRACECMP_MESSAGE_EVENT) ||
-	    msg->magic != TRACECMP_MAGIC ||
-	    msg->opcode < TRACECMP_OP_HELLO ||
-	    msg->opcode > TRACECMP_OP_STATS ||
-	    (msg->flags & ~TRACECMP_MSG_F_MASK) != 0 ||
-	    (role != TRACECMP_MESSAGE_REPLY && msg->status != 0) ||
-	    (role == TRACECMP_MESSAGE_REPLY &&
-	    (msg->status > 0 || msg->status < -ELAST))) {
-		errno = EPROTO;
-		return (-1);
-	}
-	return (0);
+	result->malformed = true;
+	result->error = EPROTO;
 }
 
-int
-tracecmp_message_init(struct tracecmp_msg *msg, uint16_t opcode,
-    uint32_t flags)
+static void
+info_reply(void *context, int error, struct bsd_trace_v1_ProtocolInfo *value)
 {
+	struct completion *result = context;
 
-	if (msg == NULL || opcode < TRACECMP_OP_HELLO ||
-	    opcode > TRACECMP_OP_STATS ||
-	    (flags & ~TRACECMP_MSG_F_MASK) != 0) {
-		errno = EINVAL;
-		return (-1);
-	}
-	memset(msg, 0, sizeof(*msg));
-	msg->magic = TRACECMP_MAGIC;
-	msg->opcode = opcode;
-	msg->flags = flags;
-	return (0);
+	result->done = true;
+	result->error = error;
+	if (error)
+		return;
+	if (value == NULL ||
+	    (value->features & ~TRACECMP_FEATURE_RAW_DTRACE_FD) != 0)
+		malformed_reply(result);
+	else if (value->wire_version != TRACECMP_WIRE_VERSION) {
+		result->malformed = true;
+		result->error = EPROTONOSUPPORT;
+	} else
+		result->features = value->features;
 }
 
-int
-tracecmp_message_init_reply(struct tracecmp_msg *reply,
-    const struct tracecmp_msg *request, int status)
+static void
+open_reply(void *context, int error, struct bsd_trace_v1_Trace_Open_Result *v)
 {
+	struct completion *result = context;
 
-	if (reply == NULL || request == NULL ||
-	    tracecmp_header_validate(request, sizeof(*request),
-	    TRACECMP_MESSAGE_REQUEST) == -1 ||
-	    status > 0 || status < -ELAST) {
-		errno = EINVAL;
-		return (-1);
-	}
-	memset(reply, 0, sizeof(*reply));
-	reply->magic = TRACECMP_MAGIC;
-	reply->opcode = request->opcode;
-	reply->status = status;
-	return (0);
+	result->done = true;
+	result->error = error;
+	if (error)
+		return;
+	if (v == NULL)
+		malformed_reply(result);
+	else if (v->tag == bsd_trace_v1_Trace_Open_Result_response_tag)
+		result->fd = fidl_bsd_take_fd(&v->value.response.dtrace);
+	else if (v->tag == bsd_trace_v1_Trace_Open_Result_err_tag &&
+	    v->value.err != 0 && v->value.err <= ELAST)
+		result->error = (int)v->value.err;
+	else
+		malformed_reply(result);
 }
 
-int
-tracecmp_validate_message(const struct tracecmp_msg *msg, size_t length,
-    enum tracecmp_message_role role)
+static void
+stats_reply(void *context, int error, struct bsd_trace_v1_TraceStats *value)
 {
-	size_t payload;
+	struct completion *result = context;
 
-	if (tracecmp_header_validate(msg, length, role) == -1)
-		return (-1);
-	payload = length - sizeof(*msg);
-	if (role == TRACECMP_MESSAGE_EVENT) {
-		errno = EPROTO;
-		return (-1);
+	result->done = true;
+	result->error = error;
+	if (error)
+		return;
+	if (value == NULL) {
+		malformed_reply(result);
+		return;
 	}
-	if (role == TRACECMP_MESSAGE_REQUEST) {
-		if (payload != 0) {
-			errno = EPROTO;
-			return (-1);
-		}
-		return (0);
-	}
-	if (msg->status != 0 && payload != 0) {
-		errno = EPROTO;
-		return (-1);
-	}
-	if (msg->status != 0)
-		return (0);
-	if (msg->opcode == TRACECMP_OP_HELLO) {
-		const struct tracecmp_hello_reply *hello;
-
-		if (payload != sizeof(*hello))
-			goto invalid;
-		hello = (const void *)(msg + 1);
-		if ((hello->features & ~TRACECMP_FEATURE_RAW_DTRACE_FD) != 0 ||
-		    hello->reserved != 0)
-			goto invalid;
-	} else if (msg->opcode == TRACECMP_OP_STATS) {
-		if (payload != sizeof(struct tracecmp_stats))
-			goto invalid;
-	} else if (payload != 0) {
-		goto invalid;
-	}
-	return (0);
-
-invalid:
-	errno = EPROTO;
-	return (-1);
-}
-
-int
-tracecmp_validate_fds(const struct tracecmp_msg *msg, size_t nfds,
-    enum tracecmp_message_role role)
-{
-	size_t expected;
-
-	if (msg == NULL) {
-		errno = EINVAL;
-		return (-1);
-	}
-	expected = role == TRACECMP_MESSAGE_REPLY &&
-	    msg->opcode == TRACECMP_OP_OPEN && msg->status == 0 ? 1 : 0;
-	if (nfds != expected) {
-		errno = EPROTO;
-		return (-1);
-	}
-	return (0);
+	memset(&result->stats, 0, sizeof(result->stats));
+	result->stats.opened = value->opened;
+	result->stats.rejected = value->rejected;
 }
 
 static int
-rpc(struct service_session *client, uint16_t opcode,
-    union tracecmp_buffer *reply,
-    int *returned_fd)
+finish(struct fidl_bsd_connection *connection, uint16_t opcode, int error,
+    struct completion *result, const struct timespec *deadline)
 {
-	struct tracecmp_msg request, *message;
-	struct service_call_options options =
-	    SERVICE_CALL_OPTIONS_INITIALIZER;
-	struct service_message outgoing;
-	struct service_reply incoming;
-	size_t received;
-	uint16_t received_opcode;
 
-	memset(&request, 0, sizeof(request));
-	if (tracecmp_message_init(&request, opcode, 0) == -1)
-		return (-1);
-	memset(&outgoing, 0, sizeof(outgoing));
-	outgoing.size = sizeof(outgoing);
-	outgoing.data = &request;
-	outgoing.length = sizeof(request);
-	memset(&incoming, 0, sizeof(incoming));
-	incoming.size = sizeof(incoming);
-	incoming.data = reply;
-	incoming.capacity = sizeof(*reply);
-	incoming.fds = returned_fd;
-	incoming.fd_capacity = returned_fd != NULL ? 1 : 0;
-	options.timeout_ms = 30000;
-	if (service_session_call(client, &outgoing, &incoming, &options) == -1) {
-		TRACECMP_PROBE_SEND(opcode, sizeof(request), errno);
-		return (-1);
+	TRACECMP_PROBE_SEND(opcode, sizeof(struct tracecmp_msg), error);
+	if (error != 0)
+		return (errno = error, -1);
+	error = fidl_bsd_sync_wait(connection, &result->done, deadline);
+	if (error != 0)
+		return (errno = error, -1);
+	TRACECMP_PROBE_RECEIVE(opcode, sizeof(struct tracecmp_msg), 0);
+	if (result->malformed) {
+		fidl_bsd_connection_close(connection, result->error);
+		TRACECMP_PROBE_REJECT(opcode, result->error);
+		return (errno = result->error, -1);
 	}
-	TRACECMP_PROBE_SEND(opcode, sizeof(request), 0);
-	received = incoming.length;
-	message = (void *)reply;
-	received_opcode = received >= sizeof(*message) ? message->opcode : 0;
-	TRACECMP_PROBE_RECEIVE(received_opcode, received, 0);
-	if (tracecmp_validate_message(message, received,
-	    TRACECMP_MESSAGE_REPLY) == -1 ||
-	    tracecmp_validate_fds(message, incoming.nfds,
-	    TRACECMP_MESSAGE_REPLY) == -1 ||
-	    message->opcode != opcode) {
-		if (incoming.nfds != 0 && returned_fd != NULL)
-			close(*returned_fd);
-		(void)service_session_fail(client, EPROTO);
-		TRACECMP_PROBE_REJECT(received_opcode, EPROTO);
-		errno = EPROTO;
-		return (-1);
+	if (result->error != 0) {
+		TRACECMP_PROBE_REJECT(opcode, result->error);
+		return (errno = result->error, -1);
 	}
-	if (message->status != 0) {
-		TRACECMP_PROBE_REJECT(message->opcode, -message->status);
-		errno = -message->status;
+	return (0);
+}
+
+/* Open a session, negotiate, and return the provider's feature bits. */
+static int
+session_open(struct fidl_bsd_connection **connectionp, uint32_t *features,
+    struct timespec *deadline)
+{
+	struct fidl_bsd_options options = FIDL_BSD_OPTIONS_INITIALIZER;
+	struct completion result = { .fd = -1 };
+	struct fidl_bsd_empty empty = { 0 };
+	uint32_t timeout_ms = 30000, txid;
+	int error, fd;
+
+	*connectionp = NULL;
+	if (service_budget_timeout(&timeout_ms) == -1)
 		return (-1);
+	if ((error = fidl_bsd_sync_deadline(deadline, timeout_ms)) != 0)
+		return (errno = error, -1);
+	fd = -1;
+	if (service_open(TRACECMP_INTERFACE, &fd) == -1)
+		return (-1);
+	options.max_pending_requests = 1;
+	options.max_queued_messages = 2;
+	options.max_queued_bytes = 1024;
+	options.max_queued_fds = 0;
+	error = fidl_bsd_connection_create_with_options(fd, FIDL_BSD_CLIENT,
+	    &options, connectionp);
+	if (error != 0) {
+		*connectionp = NULL;
+		close(fd);
+		return (errno = error, -1);
 	}
+	if (finish(*connectionp, TRACECMP_OP_HELLO,
+	    bsd_trace_v1_Trace_GetProtocolInfo(*connectionp, &empty,
+	    info_reply, &result, &txid), &result, deadline) == -1) {
+		error = errno;
+		fidl_bsd_connection_destroy(*connectionp);
+		*connectionp = NULL;
+		return (errno = error, -1);
+	}
+	*features = result.features;
 	return (0);
 }
 
@@ -313,84 +272,71 @@ tracecmp_apply_tuning(dtrace_hdl_t *dtp)
 int
 tracecmp_open(int *dtracefd)
 {
-	union tracecmp_buffer reply;
-	struct tracecmp_hello_reply *hello;
-	struct service_session *client;
-	int fd, error, result;
+	struct completion result = { .fd = -1 };
+	struct fidl_bsd_connection *connection;
+	struct fidl_bsd_empty empty = { 0 };
+	struct timespec deadline;
+	uint32_t features, txid;
+	int error, rc;
 
 	if (dtracefd == NULL) {
 		errno = EINVAL;
 		return (-1);
 	}
 	*dtracefd = -1;
-	fd = -1;
-	error = service_open(TRACECMP_INTERFACE, &fd) == -1 ? errno : 0;
-	if (error != 0) {
-		errno = error;
-		return (-1);
+	error = 0;
+	rc = session_open(&connection, &features, &deadline);
+	if (rc == 0 && (features & TRACECMP_FEATURE_RAW_DTRACE_FD) == 0) {
+		errno = EOPNOTSUPP;
+		rc = -1;
 	}
-	if (service_session_create(fd, &client) == -1) {
+	if (rc == 0)
+		rc = finish(connection, TRACECMP_OP_OPEN,
+		    bsd_trace_v1_Trace_Open(connection, &empty, open_reply,
+		    &result, &txid), &result, &deadline);
+	if (rc == 0 && (result.fd < 0 || harden_delegated_fd(result.fd) == -1)) {
+		error = result.fd < 0 ? EPROTO : errno;
+		rc = -1;
+	}
+	if (rc == -1 && error == 0)
 		error = errno;
-		close(fd);
-		errno = error;
-		return (-1);
-	}
-	result = rpc(client, TRACECMP_OP_HELLO, &reply, NULL);
-	if (result == 0) {
-		hello = (void *)((struct tracecmp_msg *)reply.bytes + 1);
-		if ((hello->features & TRACECMP_FEATURE_RAW_DTRACE_FD) == 0) {
-			errno = EOPNOTSUPP;
-			result = -1;
-		}
-	}
-	if (result == 0)
-		result = rpc(client, TRACECMP_OP_OPEN, &reply, dtracefd);
-	if (result == 0 && harden_delegated_fd(*dtracefd) == -1) {
-		error = errno;
-		(void)close(*dtracefd);
-		*dtracefd = -1;
-		result = -1;
-	}
-	if (result == -1 && error == 0)
-		error = errno;
-	service_session_close(client);
+	if (rc == -1 && result.fd >= 0)
+		(void)close(result.fd);
+	if (rc == 0)
+		*dtracefd = result.fd;
+	if (connection != NULL)
+		fidl_bsd_connection_destroy(connection);
 	TRACECMP_PROBE_OPEN(__DECONST(char *, TRACECMP_INTERFACE), error);
 	errno = error;
-	return (result);
+	return (rc);
 }
 
 int
 tracecmp_stats(struct tracecmp_stats *stats)
 {
-	union tracecmp_buffer reply;
-	struct service_session *client;
-	int fd, error, result;
+	struct completion result = { .fd = -1 };
+	struct fidl_bsd_connection *connection;
+	struct fidl_bsd_empty empty = { 0 };
+	struct timespec deadline;
+	uint32_t features, txid;
+	int error, rc;
 
 	if (stats == NULL) {
 		errno = EINVAL;
 		return (-1);
 	}
 	memset(stats, 0, sizeof(*stats));
-	fd = -1;
-	error = service_open(TRACECMP_INTERFACE, &fd) == -1 ? errno : 0;
-	if (error != 0) {
-		errno = error;
+	if (session_open(&connection, &features, &deadline) == -1)
 		return (-1);
-	}
-	if (service_session_create(fd, &client) == -1) {
-		error = errno;
-		close(fd);
-		errno = error;
-		return (-1);
-	}
-	result = rpc(client, TRACECMP_OP_STATS, &reply, NULL);
-	if (result == 0)
-		memcpy(stats, (struct tracecmp_msg *)reply.bytes + 1,
-		    sizeof(*stats));
-	error = result == -1 ? errno : 0;
-	service_session_close(client);
+	rc = finish(connection, TRACECMP_OP_STATS,
+	    bsd_trace_v1_Trace_Stats(connection, &empty, stats_reply, &result,
+	    &txid), &result, &deadline);
+	error = rc == -1 ? errno : 0;
+	if (rc == 0)
+		*stats = result.stats;
+	fidl_bsd_connection_destroy(connection);
 	errno = error;
-	return (result);
+	return (rc);
 }
 
 dtrace_hdl_t *

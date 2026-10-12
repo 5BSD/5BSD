@@ -1,4 +1,4 @@
-.Dd August 21, 2026
+.Dd October 12, 2026
 .Dt LIBOES 3
 .Os
 .Sh NAME
@@ -100,6 +100,16 @@ The requesting program must declare
 in its approved unit configuration; the provider endpoint requires that
 software attribute.
 The constructor owns the returned descriptor and closes its factory session.
+The broker protocol is the FIDL library
+.Li bsd.oes.v1
+.Pq Pa /usr/share/fidl/oes_broker.fidl :
+the constructor negotiates, makes one
+.Sy OpenNotify ,
+and fails with
+.Er EPROTO
+on a malformed reply or
+.Er EPROTONOSUPPORT
+on a different wire version.
 It never falls back to an ambient device open or transparently reconnects.
 .Pp
 Discovery and the request use a five-second scoped RPC budget unless the caller

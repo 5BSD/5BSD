@@ -23,15 +23,26 @@ MLINKS+=	libbsdfilesystem.3 bsdfilesystem_connect.3 \
 
 # bsdfilesystem_proto.h lives with the other capability protocols in libcapsulert;
 # trustedzfs.h provides tzfs_mount() for bsdfilesystem_mount_dir(); libservice provides
-# the socket-free channel client (service_open/service_session_call).
+# service_open(3); the bsd.filesystem.v1 client bindings come from
+# libfilesystemcmp (filesystem_transact.h).
+CFLAGS+=	-I${FIDLGEN.filesystemcmp} -I${SRCTOP}/lib/libfilesystemcmp
 CFLAGS+=	-I${SRCTOP}/lib/libcapsulert
 CFLAGS+=	-I${SRCTOP}/lib/libtrustedzfs
 CFLAGS+=	-I${SRCTOP}/lib/libservice
 CFLAGS+=	-I${SRCTOP}/lib/libchannel
 CFLAGS+=	-I${SRCTOP}/sys		# sys/zfshandle.h (via trustedzfs.h)
-LIBADD=		trustedzfs service channel
+LIBADD=		trustedzfs service channel filesystemcmp fidl_bsd
 
 HAS_TESTS=
 SUBDIR.${MK_TESTS}+= tests
+
+# Bindings generated at build time (fidl-bindings.mk); the generated client
+# code itself is linked from libfilesystemcmp.
+FIDL_BINDINGS+=	filesystemcmp
+FIDL_SCHEMAS.filesystemcmp=	lib/libfidl/tests/zx.fidl \
+	lib/libfilesystemcmp/filesystemcmp.fidl
+FIDL_LIBRARY.filesystemcmp=	bsd.filesystem.v1
+.include "${SRCTOP}/lib/libfidl/fidl-bindings.mk"
+.include "../libfidl/runtime-includes.mk"
 
 .include <bsd.lib.mk>

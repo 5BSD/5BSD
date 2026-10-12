@@ -1,3 +1,6 @@
+# 20261012: the Filesystem, Extension, Namespace and VM clients moved out of
+# libservice into libfilesystemcmp, libextensioncmp, libnamespacecmp and libvmcmp
+OLD_LIBS+= usr/lib/libservice.so.1
 # 20261011: retire native procfs, old ABIs, GEOM classes and optional MAC policies
 OLD_FILES+= boot/kernel/aout.ko
 OLD_FILES+= boot/kernel/geom_ccd.ko

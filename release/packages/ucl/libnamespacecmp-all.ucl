@@ -1,0 +1,5 @@
+comment = "system.Namespace client library"
+
+desc = <<EOD
+The system.Namespace client: jail (namespace) confinement through the BSDNamespace provider.  Formerly part of libservice.
+EOD

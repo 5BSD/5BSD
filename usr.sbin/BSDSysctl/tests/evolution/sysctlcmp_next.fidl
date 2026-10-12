@@ -1,0 +1,47 @@
+// SPDX-License-Identifier: BSD-2-Clause
+// Schema-evolution fixture for system.Sysctl.  At bsd:1 this is exactly
+// lib/libsysctlcmp/sysctlcmp.fidl (tools/build/fuchsia/test-bindings.py checks
+// it); bsd:2 adds a method, as a future provider release would.  The peer
+// built from bsd:2 is paired with the real bsd:1 client and provider.
+@available(platform="bsd", added=1)
+library bsd.sysctl.v1;
+
+type ProtocolInfo = struct { wire_version uint32; };
+// A sysctl name (dotted, without a trailing NUL), at most 255 bytes.
+alias Name = string:255;
+type NameRequest = struct { name Name; };
+// Raw value bytes, as sysctl(3) returns them.  OidFormat values are the
+// sysctl(9) oidfmt record {uint32 kind; NUL-terminated format}; Describe and
+// Next values are NUL-terminated strings.
+type Value = struct { value vector<uint8>:8192; };
+// The value is text; the provider encodes it for the variable's type.
+type SetRequest = struct {
+    name Name;
+    value vector<uint8>:8192;
+};
+// One network interface (no addresses or counters).
+type Interface = struct {
+    index uint32;
+    // Native IFF_* interface and driver flags.
+    flags uint32;
+    mtu uint32;
+    // 0 unknown, 1 down, 2 up.
+    link_state uint8;
+    name string:15;
+};
+type Interfaces = struct { interfaces vector<Interface>:256; };
+closed protocol Sysctl {
+    strict GetProtocolInfo() -> (ProtocolInfo);
+    // All errors are errno values; EPERM when the label's ACL refuses.
+    strict Get(NameRequest) -> (Value) error uint32;
+    strict Set(SetRequest) -> () error uint32;
+    strict OidFormat(NameRequest) -> (Value) error uint32;
+    strict Describe(NameRequest) -> (Value) error uint32;
+    // An empty name starts at the root; only permitted names are returned.
+    strict Next(NameRequest) -> (Value) error uint32;
+    // Gated by the read policy for "net.routetable".
+    strict ListInterfaces() -> (Interfaces) error uint32;
+    // Added in the next revision; unknown to wire-major-1 peers.
+    @available(added=2)
+    strict Probe() -> (ProtocolInfo);
+};

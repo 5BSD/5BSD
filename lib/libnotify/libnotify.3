@@ -1,5 +1,5 @@
 .\" SPDX-License-Identifier: BSD-2-Clause
-.Dd October 10, 2026
+.Dd October 11, 2026
 .Dt LIBNOTIFY 3
 .Os
 .Sh NAME
@@ -218,6 +218,35 @@ transport error because its acceptance is unknown and is never replayed.
 The dead session is retired; the next operation opens a fresh session and
 restores subscriptions before sending its own request.
 .Pp
+The library speaks the FIDL protocol
+.Sy bsd.notify.v1
+.Pq Pa /usr/share/fidl/notify.fidl ;
+see
+.Xr fidl 7 .
+Each session first negotiates the wire version
+.Pq Er EPROTONOSUPPORT No for an incompatible provider .
+Calls on one client are serialized.
+Each call is bounded by 30 seconds, and a long poll by its own timeout plus
+one second; an active
+.Fn service_budget_begin
+budget
+.Pq Xr service_runtime 3
+shortens either.
+A timeout fails that call with
+.Er ETIMEDOUT
+and cancels it, keeping the session, except that a timed-out
+.Fn notify_state_watch
+also drops the session so no watch stays pending.
+A malformed reply
+.Pq Er EPROTO
+drops the session in the same way as peer death.
+The record framing in
+.In notify_protocol.h
+and the validators in
+.In notify_server.h
+describe the pre-FIDL wire format and are kept for compatibility; the event,
+state and statistics structures there remain the API types.
+.Pp
 Topics are dot-separated identifiers.
 Empty segments, path syntax, control characters, and embedded NUL bytes are
 rejected.
@@ -242,5 +271,7 @@ deduplication.
 .Sh SEE ALSO
 .Xr kqueue 2 ,
 .Xr libservice 3 ,
+.Xr service_runtime 3 ,
 .Xr capsicum 4 ,
-.Xr bsdnotify 8
+.Xr fidl 7 ,
+.Xr BSDNotify 8

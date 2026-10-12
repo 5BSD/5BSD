@@ -19,7 +19,10 @@
 #include <time.h>
 #include <unistd.h>
 
+#include <fidl/bsd.log.v1/c/bsd.h>
+#include <fidl/bsd/sync_c.h>
 #include <libservice.h>
+#include <service_runtime.h>
 #include <shmring.h>
 
 #include "logcmp.h"
@@ -36,7 +39,7 @@ union logcmp_buffer {
 };
 
 struct logcmp_client {
-	struct service_session	*channel;
+	struct fidl_bsd_connection *channel;	/* bsd.log.v1 session */
 	pid_t			owner;
 	struct shmring		*ring;
 	pthread_mutex_t		lock;
@@ -571,56 +574,282 @@ logcmp_open_channel(void)
 	return (fd);
 }
 
+static bool connection_unusable(int);
+
+/*
+ * One bsd.log.v1 call.  Callers keep speaking in historical LOGC records:
+ * rpc() turns the request record into the method's FIDL request and the
+ * result back into the reply record, which the same rules as before then
+ * check.
+ */
+struct rpc_call {
+	bool			 done;
+	int			 error;		/* transport */
+	int			 status;	/* application errno */
+	union logcmp_buffer	*out;
+	size_t			 length;	/* reply payload bytes */
+};
+
+static void
+rpc_info(void *context, int error, struct bsd_log_v1_ProtocolInfo *value)
+{
+	struct rpc_call *call = context;
+
+	call->done = true;
+	call->error = error;
+	if (error == 0 && value->wire_version != LOGCMP_WIRE_VERSION)
+		call->error = EPROTONOSUPPORT;
+}
+
+static void
+rpc_hello(void *context, int error, struct bsd_log_v1_Limits *value)
+{
+	struct rpc_call *call = context;
+	struct logcmp_hello_reply *hello = (void *)call->out->wire.payload;
+
+	call->done = true;
+	call->error = error;
+	if (error != 0)
+		return;
+	hello->features = value->features;
+	hello->ring_size = value->ring_size;
+	hello->max_record = value->max_record;
+	hello->max_text = value->max_text;
+	hello->max_fields = value->max_fields;
+	hello->minimum_severity = value->minimum_severity;
+	/* Without the interest feature the record ends before the floor. */
+	call->length = (value->features & LOGCMP_FEATURE_INTEREST) != 0 ?
+	    sizeof(*hello) : offsetof(struct logcmp_hello_reply,
+	    minimum_severity);
+}
+
+static void
+rpc_stats(void *context, int error, struct bsd_log_v1_Stats *value)
+{
+	struct rpc_call *call = context;
+	struct logcmp_stats *stats = (void *)call->out->wire.payload;
+
+	call->done = true;
+	call->error = error;
+	if (error != 0)
+		return;
+	stats->accepted = value->accepted;
+	stats->rejected = value->rejected;
+	stats->client_dropped = value->client_dropped;
+	stats->provider_filtered = value->provider_filtered;
+	stats->provider_rate_limited = value->provider_rate_limited;
+	stats->last_sequence = value->last_sequence;
+	memcpy(stats->client_dropped_by_severity,
+	    value->client_dropped_by_severity,
+	    sizeof(stats->client_dropped_by_severity));
+	memcpy(stats->provider_rate_limited_by_severity,
+	    value->provider_rate_limited_by_severity,
+	    sizeof(stats->provider_rate_limited_by_severity));
+	call->length = sizeof(*stats);
+}
+
+static void
+rpc_query(void *context, int error,
+    struct bsd_log_v1_Log_Query_Result *value)
+{
+	struct rpc_call *call = context;
+	struct logcmp_query_reply *query = (void *)call->out->wire.payload;
+
+	call->done = true;
+	call->error = error;
+	if (error != 0)
+		return;
+	if (value->tag == bsd_log_v1_Log_Query_Result_err_tag) {
+		call->status = (int)value->value.err;
+		return;
+	}
+	if (value->tag != bsd_log_v1_Log_Query_Result_response_tag ||
+	    value->value.response.record_size > LOGCMP_MAX_RECORD) {
+		call->status = -1;	/* malformed */
+		return;
+	}
+	query->cursor.generation = value->value.response.generation;
+	query->cursor.offset = value->value.response.offset;
+	query->result = value->value.response.found ? 1 : 0;
+	query->record_length = (uint32_t)value->value.response.record_size;
+	memcpy(query + 1, value->value.response.record,
+	    value->value.response.record_size);
+	call->length = sizeof(*query) + value->value.response.record_size;
+}
+
+#define	RPC_EMPTY(name, type)						\
+static void								\
+name(void *context, int error, struct type *value)			\
+{									\
+	struct rpc_call *call = context;				\
+									\
+	call->done = true;						\
+	call->error = error;						\
+	if (error != 0)							\
+		return;							\
+	if (value->tag == type##_err_tag)				\
+		call->status = (int)value->value.err;			\
+	else if (value->tag != type##_response_tag)			\
+		call->status = -1;	/* malformed */			\
+}
+RPC_EMPTY(rpc_attach, bsd_log_v1_Log_Attach_Result)
+RPC_EMPTY(rpc_write, bsd_log_v1_Log_Write_Result)
+RPC_EMPTY(rpc_flush, bsd_log_v1_Log_Flush_Result)
+RPC_EMPTY(rpc_detach, bsd_log_v1_Log_Detach_Result)
+
+/* Negotiate the wire version of a new session. */
+static int
+rpc_negotiate(struct logcmp_client *client)
+{
+	struct fidl_bsd_empty empty = { 0 };
+	struct rpc_call call = { 0 };
+	struct timespec deadline;
+	uint32_t txid;
+	int error;
+
+	error = fidl_bsd_sync_deadline(&deadline, 30000);
+	if (error == 0)
+		error = bsd_log_v1_Log_GetProtocolInfo(client->channel, &empty,
+		    rpc_info, &call, &txid);
+	if (error == 0)
+		error = fidl_bsd_sync_wait(client->channel, &call.done,
+		    &deadline);
+	if (error == 0)
+		error = call.error;
+	if (error == EPROTONOSUPPORT)
+		fidl_bsd_connection_close(client->channel, EPROTO);
+	return (error != 0 ? (errno = error, -1) : 0);
+}
+
 static int
 rpc(struct logcmp_client *client, uint16_t opcode, const void *payload,
     size_t payload_length, const int *fds, size_t nfds, union logcmp_buffer *out)
 {
-	union logcmp_buffer request;
-	struct service_call_options options =
-	    SERVICE_CALL_OPTIONS_INITIALIZER;
-	struct service_message outgoing;
-	struct service_reply incoming;
-	struct logcmp_msg *msg;
-	size_t received;
-	size_t request_length;
+	struct fidl_bsd_empty empty = { 0 };
+	struct rpc_call call = { .out = out };
+	struct logcmp_msg request, *msg;
+	struct timespec deadline;
+	uint32_t timeout_ms = 30000, txid;
+	size_t received, request_length;
 	uint16_t received_opcode;
+	int error;
 
-	if (payload_length > sizeof(request.wire.payload)) {
+	if (payload_length > sizeof(out->wire.payload)) {
 		errno = EMSGSIZE;
 		return (-1);
 	}
-	memset(&request, 0, sizeof(request));
-	msg = &request.wire.msg;
-	if (logcmp_message_init(msg, opcode, 0) == -1)
+	if (logcmp_message_init(&request, opcode, 0) == -1)
 		return (-1);
-	if (payload_length != 0)
-		memcpy(msg + 1, payload, payload_length);
-	request_length = sizeof(*msg) + payload_length;
-	memset(&outgoing, 0, sizeof(outgoing));
-	outgoing.size = sizeof(outgoing);
-	outgoing.data = msg;
-	outgoing.length = request_length;
-	outgoing.fds = fds;
-	outgoing.nfds = nfds;
-	memset(&incoming, 0, sizeof(incoming));
-	incoming.size = sizeof(incoming);
-	incoming.data = out;
-	incoming.capacity = sizeof(*out);
-	options.timeout_ms = 30000;
-	if (service_session_call(client->channel, &outgoing, &incoming,
-	    &options) == -1) {
-		LOGCMP_PROBE_SEND(opcode, request_length, nfds, errno);
+	request_length = sizeof(request) + payload_length;
+	memset(out, 0, sizeof(*out));
+	/* A caller's service_budget_begin(3) bounds the call. */
+	error = service_budget_timeout(&timeout_ms) == -1 ? errno :
+	    fidl_bsd_sync_deadline(&deadline, timeout_ms);
+	if (error == 0) {
+		switch (opcode) {
+		case LOGCMP_OP_HELLO: {
+			const struct logcmp_hello *hello = payload;
+			struct bsd_log_v1_HelloRequest q = { hello->features };
+
+			error = bsd_log_v1_Log_Hello(client->channel, &q,
+			    rpc_hello, &call, &txid);
+			break;
+		}
+		case LOGCMP_OP_ATTACH: {
+			const struct logcmp_attach_request *attach = payload;
+			struct bsd_log_v1_AttachRequest q = {
+				attach->generation, attach->ring_size,
+				attach->max_record,
+				fds[LOGCMP_ATTACH_FD_CONFIG],
+				fds[LOGCMP_ATTACH_FD_DATA],
+				fds[LOGCMP_ATTACH_FD_HEAD],
+				fds[LOGCMP_ATTACH_FD_TAIL],
+				fds[LOGCMP_ATTACH_FD_WAKE_READ]
+			};
+
+			if (nfds != LOGCMP_ATTACH_FD_COUNT)
+				error = EINVAL;
+			else	/* The bindings send private duplicates. */
+				error = bsd_log_v1_Log_Attach(client->channel,
+				    &q, rpc_attach, &call, &txid);
+			break;
+		}
+		case LOGCMP_OP_WRITE: {
+			struct bsd_log_v1_Record q = {
+				__DECONST(uint8_t *, payload), payload_length };
+
+			error = bsd_log_v1_Log_Write(client->channel, &q,
+			    rpc_write, &call, &txid);
+			break;
+		}
+		case LOGCMP_OP_FLUSH:
+			error = bsd_log_v1_Log_Flush(client->channel, &empty,
+			    rpc_flush, &call, &txid);
+			break;
+		case LOGCMP_OP_STATS:
+			error = bsd_log_v1_Log_GetStats(client->channel, &empty,
+			    rpc_stats, &call, &txid);
+			break;
+		case LOGCMP_OP_DETACH:
+			error = bsd_log_v1_Log_Detach(client->channel, &empty,
+			    rpc_detach, &call, &txid);
+			break;
+		case LOGCMP_OP_QUERY: {
+			const struct logcmp_query_request *query = payload;
+			struct bsd_log_v1_QueryRequest q = {
+				.generation = query->cursor.generation,
+				.offset = query->cursor.offset,
+				.minimum_severity = query->minimum_severity,
+				.match_flags = query->match_flags,
+				.from_ns = query->from_ns,
+				.to_ns = query->to_ns,
+				.subsystem = __DECONST(uint8_t *, query->subsystem),
+				.subsystem_size = query->subsystem_length,
+				.category = __DECONST(uint8_t *, query->category),
+				.category_size = query->category_length
+			};
+
+			error = bsd_log_v1_Log_Query(client->channel, &q,
+			    rpc_query, &call, &txid);
+			break;
+		}
+		default:
+			error = EINVAL;
+		}
+	}
+	if (error == 0) {
+		error = fidl_bsd_sync_wait_txid(client->channel, &call.done,
+		    &deadline, txid);
+		if (error == 0)
+			error = call.error;
+	}
+	/*
+	 * A lost session is peer death (ECONNRESET), whatever the transport
+	 * reported; a malformed exchange stays EPROTO.  Both make the caller
+	 * reconnect.
+	 */
+	if (error != 0 && fidl_bsd_connection_error(client->channel) != 0 &&
+	    error != EPROTO && error != EPROTONOSUPPORT)
+		error = ECONNRESET;
+	if (error != 0) {
+		LOGCMP_PROBE_SEND(opcode, request_length, nfds, error);
+		errno = error;
 		return (-1);
 	}
 	LOGCMP_PROBE_SEND(opcode, request_length, nfds, 0);
-	received = incoming.length;
+	/* The reply as the record it replaces, checked by the same rules. */
 	msg = &out->wire.msg;
-	received_opcode = received >= sizeof(*msg) ? msg->opcode : 0;
-	LOGCMP_PROBE_RECEIVE(received_opcode, received, incoming.nfds, 0);
-	if (incoming.nfds != 0 ||
+	msg->magic = LOGCMP_MAGIC;
+	msg->opcode = opcode;
+	msg->status = call.status > 0 ? -call.status : 0;
+	received = sizeof(*msg) + (call.status == 0 ? call.length : 0);
+	received_opcode = opcode;
+	LOGCMP_PROBE_RECEIVE(received_opcode, received, 0, 0);
+	if (call.status < 0 || call.status > ELAST ||
 	    logcmp_validate_message(msg, received,
-	    LOGCMP_MESSAGE_REPLY) == -1 || msg->opcode != opcode) {
+	    LOGCMP_MESSAGE_REPLY) == -1) {
 		LOGCMP_PROBE_REJECT(received_opcode, received, EPROTO);
+		fidl_bsd_connection_close(client->channel, EPROTO);
 		errno = EPROTO;
 		return (-1);
 	}
@@ -832,7 +1061,7 @@ client_disconnect(struct logcmp_client *client)
 		client->wake_fd = -1;
 	}
 	if (client->channel != NULL) {
-		service_session_close(client->channel);
+		fidl_bsd_connection_destroy(client->channel);
 		client->channel = NULL;
 	}
 }
@@ -881,7 +1110,7 @@ client_attach_ring(struct logcmp_client *client, size_t capacity,
 	    nitems(fds), &reply) == -1) {
 		/* ATTACH may have committed even when its reply was lost. */
 		error = errno;
-		service_session_close(client->channel);
+		fidl_bsd_connection_destroy(client->channel);
 		client->channel = NULL;
 		errno = error;
 		goto fail;
@@ -933,9 +1162,33 @@ client_establish(struct logcmp_client *client)
 		fd = logcmp_open_channel();
 		if (fd == -1)
 			return (-1);
-		if (service_session_create(fd, &client->channel) == -1) {
+		{
+			struct fidl_bsd_options options =
+			    FIDL_BSD_OPTIONS_INITIALIZER;
+
+			/* One call at a time; ATTACH sends five descriptors. */
+			options.max_pending_requests = 1;
+			options.max_queued_fds = LOGCMP_ATTACH_FD_COUNT;
+			error = fidl_bsd_connection_create_with_options(fd,
+			    FIDL_BSD_CLIENT, &options, &client->channel);
+			if (error != 0) {
+				close(fd);
+				client->channel = NULL;
+				errno = error;
+				return (-1);
+			}
+			/*
+			 * Deliver ATTACH's descriptors in the state we hold
+			 * them, as the historical protocol did: BSDLog
+			 * hardens each to close-on-fork once itself, which
+			 * a descriptor already locked by the bindings refuses.
+			 */
+			fidl_bsd_connection_preserve_sent_inheritance(
+			    client->channel);
+		}
+		if (rpc_negotiate(client) == -1) {
 			error = errno;
-			close(fd);
+			client_disconnect(client);
 			errno = error;
 			return (-1);
 		}

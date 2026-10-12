@@ -5,8 +5,10 @@
  *
  * libbsdfilesystem — client to the bsdfilesystem(8) storage provider.  bsdfilesystem is socket-free:
  * clients reach it over a held mac_capability channel obtained by name
- * (service_open(system.Filesystem)), and drive it with the request/reply structs
- * in bsdfilesystem_proto.h carried as channel messages.  See bsdfilesystem.h.
+ * (service_open(system.Filesystem)), and speak bsd.filesystem.v1
+ * (lib/libfilesystemcmp/filesystemcmp.fidl); requests are still built and
+ * replies validated in the bsdfilesystem_proto.h record shapes.  See
+ * bsdfilesystem.h.
  */
 
 #include <sys/types.h>
@@ -21,10 +23,18 @@
 #include <trustedzfs.h>
 
 #include "bsdfilesystem.h"
+#include "filesystem_transact.h"
 
+/*
+ * One bsd.filesystem.v1 session.  Requests are built and replies validated in
+ * the legacy record shapes; filesystem_transact.h carries them as methods.  A
+ * transport failure, timeout or malformed reply poisons the session: every
+ * later call fails with that error.
+ */
 struct bsdfilesystem_client {
-	struct service_session *session;
+	struct fs_transport	 transport;
 	pid_t			 owner;	/* getpid() at open; fail-closed guard */
+	int			 failed;
 };
 
 static struct bsdfilesystem_client *
@@ -36,7 +46,7 @@ client_wrap(int fd)
 	if (c == NULL)
 		return (NULL);
 	c->owner = getpid();
-	if (service_session_create(fd, &c->session) == -1) {
+	if (fs_transport_adopt(&c->transport, fd) == -1) {
 		int saved = errno;
 
 		free(c);
@@ -77,7 +87,7 @@ bsdfilesystem_close(struct bsdfilesystem_client *c)
 
 	if (c == NULL)
 		return;
-	service_session_close(c->session);
+	fs_transport_drop(&c->transport);
 	free(c);
 }
 
@@ -88,7 +98,9 @@ protocol_error(struct bsdfilesystem_client *c, int fd)
 
 	if (fd >= 0)
 		(void)close(fd);
-	(void)service_session_fail(c->session, EPROTO);
+	fs_transport_drop(&c->transport);
+	if (c->failed == 0)
+		c->failed = EPROTO;
 	return (errno = EPROTO, -1);
 }
 
@@ -114,26 +126,25 @@ static int
 bsdfilesystem_call(struct bsdfilesystem_client *c, const struct bsdfilesystem_request *rq,
     struct bsdfilesystem_reply *rp, int *fdp)
 {
-	struct service_message outgoing;
-	struct service_reply incoming;
-	struct service_call_options options = SERVICE_CALL_OPTIONS_INITIALIZER;
-	int fd = -1;
+	struct {
+		size_t length, nfds;
+	} incoming;
+	int error, fd = -1;
 
 	if (fdp != NULL)
 		*fdp = -1;
-	memset(&outgoing, 0, sizeof(outgoing));
-	outgoing.size = sizeof(outgoing);
-	outgoing.data = rq;
-	outgoing.length = sizeof(*rq);
-	memset(&incoming, 0, sizeof(incoming));
-	incoming.size = sizeof(incoming);
-	incoming.data = rp;
-	incoming.capacity = sizeof(*rp);
-	incoming.fds = &fd;
-	incoming.fd_capacity = 1;
-	if (service_session_call(c->session, &outgoing, &incoming, &options) ==
-	    -1)
-		return (-1);
+	if (c->failed != 0)
+		return (errno = c->failed, -1);
+	memset(rp, 0, sizeof(*rp));
+	/* No bound beyond a caller's service_budget_begin(3), as before. */
+	error = fs_transact(&c->transport, rq, sizeof(*rq), rp, sizeof(*rp),
+	    &incoming.length, &fd, UINT32_MAX);
+	if (error != 0) {
+		fs_transport_drop(&c->transport);
+		c->failed = error;
+		return (errno = error, -1);
+	}
+	incoming.nfds = fd >= 0 ? 1 : 0;
 	if (incoming.length != sizeof(*rp) || rp->_reserved != 0 ||
 	    rp->status < 0 || rp->status > ELAST ||
 	    ((rp->status != 0 || rq->op != BSDFILESYSTEM_OP_REQUEST) &&

@@ -6,10 +6,12 @@ MAN=		BSDSysctl.8
 SRCS=		bsdsysctl.c config.c interfaces.c
 
 CFLAGS+=	-I${SRCTOP}/lib/libsysctlcmp
+CFLAGS+=	-I${FIDLGEN.sysctlcmp}
+CFLAGS+=	-I${SRCTOP}/lib/libfidl/include
 CFLAGS+=	-I${SRCTOP}/lib/libservice
 CFLAGS+=	-I${SRCTOP}/lib/libchannel
 CFLAGS+=	-I${SRCTOP}/contrib/libucl/include
-LIBADD=		sysctlcmp service channel ucl
+LIBADD=		sysctlcmp service channel ucl fidl_bsd
 # Full binding at load so no lazy PLT work remains after cap_enter(2).
 LDFLAGS+=	-Wl,-z,now
 
@@ -54,6 +56,12 @@ CFLAGS+=	-I${.OBJDIR} -DWITH_DTRACE
 .endif
 
 CAPIMAGE_MANIFEST= ${CAP_UNIT}
+
+# Bindings generated at build time (fidl-bindings.mk).
+FIDL_BINDINGS+=	sysctlcmp
+FIDL_SCHEMAS.sysctlcmp=	lib/libsysctlcmp/sysctlcmp.fidl
+FIDL_LIBRARY.sysctlcmp=	bsd.sysctl.v1
+.include "${SRCTOP}/lib/libfidl/fidl-bindings.mk"
 
 .include <bsd.prog.mk>
 

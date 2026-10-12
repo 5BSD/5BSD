@@ -48,6 +48,7 @@ _FIDLGEN_TOOLS=	${_FIDLGEN_DIR}/fidlgen-build.py \
 		${_FIDLGEN_DIR}/generate-bsd.py \
 		${_FIDLGEN_DIR}/generate_bsd_c.py \
 		${_FIDLGEN_DIR}/generate_bsd_c_types.py \
+		${_FIDLGEN_DIR}/generate_bsd_c_wire.py \
 		${_FIDLGEN_DIR}/fidlgen_natural.py \
 		${_FIDLGEN_DIR}/fidlgen_reserved.py \
 		${_FIDLGEN_DIR}/gotemplate.py \

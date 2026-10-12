@@ -22,14 +22,34 @@
 #include <opencrypto/cryptodev.h>
 
 #include <libservice.h>
-#include <cryptocmp_protocol.h>
+#include <cryptocmp.h>
+#include <fidl/bsd.crypto.v1/c/bsd.h>
+#include <fidl/bsd/sync_c.h>
 
 #include "bsdcrypto_test.h"
 
+/*
+ * The real per-session bsd.crypto.v1 server runs in a forked child.  The
+ * helpers below drive it with the generated client bindings (bypassing the
+ * client library's own argument checks, so the provider's validation is what
+ * is tested); malformed cases use hand-built frames on a raw session.
+ */
 struct raw_fixture {
-	struct service_session	*session;
+	struct fidl_bsd_connection *client;
+	struct service_session	*session;	/* raw-frame cases */
 	pid_t			 child;
 };
+
+/* FIDL v2 transactional message header. */
+struct wire_header {
+	uint32_t txid;
+	uint8_t flags[3], magic;
+	uint64_t ordinal;
+};
+#define ORD_INFO	UINT64_C(0x56c81469c09d4761)
+#define ORD_GENERATE	UINT64_C(0x575612652a8f195f)
+#define ORD_DIGEST	UINT64_C(0x0b0aa5a69f1218d9)
+#define ORD_RANDOM	UINT64_C(0x6066b5740d95f5d8)
 
 static void
 require_plane(void)
@@ -110,9 +130,49 @@ channel_pair(int *client, int *provider)
  * label.  Each fixture is a distinct worker sharing the one kernel named-key
  * store, so keys minted under one label are invisible to another.
  */
+struct result {
+	bool done;
+	int error;		/* transport */
+	int status;		/* application errno */
+	int fd;
+	uint64_t generation;
+	struct cryptocmp_named_info info;
+	struct cryptocmp_named_list_entry *entries;
+	uint32_t count, next;
+	uint8_t *buf;
+	size_t buflen;
+	uint32_t got;
+};
+
 static void
-raw_fixture_create(struct raw_fixture *fixture, const char *owner)
+wait_for(struct raw_fixture *fixture, struct result *r)
 {
+	struct timespec deadline;
+
+	ATF_REQUIRE_EQ(0, fidl_bsd_sync_deadline(&deadline, 5000));
+	if (r->error == 0)
+		r->error = fidl_bsd_sync_wait(fixture->client, &r->done,
+		    &deadline);
+	ATF_REQUIRE_EQ_MSG(0, r->error, "call failed: %s", strerror(r->error));
+}
+
+static void
+info_done(void *p, int error, struct bsd_crypto_v1_ProtocolInfo *v)
+{
+	struct result *r = p;
+
+	r->done = true;
+	r->error = error;
+	if (!error)
+		ATF_REQUIRE_EQ(CRYPTOCMP_WIRE_VERSION, v->wire_version);
+}
+
+static void
+fixture_start(struct raw_fixture *fixture, const char *owner, bool raw)
+{
+	struct fidl_bsd_empty empty = { 0 };
+	struct result r = { .fd = -1 };
+	uint32_t txid;
 	int client, provider;
 
 	memset(fixture, 0, sizeof(*fixture));
@@ -124,7 +184,28 @@ raw_fixture_create(struct raw_fixture *fixture, const char *owner)
 		_exit(bsdcrypto_test_serve(provider, owner));
 	}
 	close(provider);
-	ATF_REQUIRE_EQ(0, service_session_create(client, &fixture->session));
+	if (raw) {
+		ATF_REQUIRE_EQ(0, service_session_create(client,
+		    &fixture->session));
+		return;
+	}
+	ATF_REQUIRE_EQ(0, fidl_bsd_connection_create(client, FIDL_BSD_CLIENT,
+	    &fixture->client));
+	r.error = bsd_crypto_v1_Crypto_GetProtocolInfo(fixture->client, &empty,
+	    info_done, &r, &txid);
+	wait_for(fixture, &r);
+}
+
+/*
+ * Stand up an owner-scoped provider worker bound to a caller-supplied owner
+ * label.  Each fixture is a distinct worker sharing the one kernel named-key
+ * store, so keys minted under one label are invisible to another.
+ */
+static void
+raw_fixture_create(struct raw_fixture *fixture, const char *owner)
+{
+
+	fixture_start(fixture, owner, false);
 }
 
 static void
@@ -132,166 +213,208 @@ raw_fixture_destroy(struct raw_fixture *fixture, int expected_status)
 {
 	int status;
 
-	service_session_close(fixture->session);
+	if (fixture->client != NULL)
+		fidl_bsd_connection_destroy(fixture->client);
+	if (fixture->session != NULL)
+		service_session_close(fixture->session);
 	ATF_REQUIRE_EQ(fixture->child, waitpid(fixture->child, &status, 0));
 	ATF_REQUIRE(WIFEXITED(status));
 	ATF_CHECK_EQ(expected_status, WEXITSTATUS(status));
 }
 
-static void
-raw_fixture_destroy_any(struct raw_fixture *fixture)
-{
-	int status;
+#define RESULT_HEAD(method)                                                   \
+	struct result *r = p;                                                 \
+	r->done = true;                                                       \
+	r->error = error;                                                     \
+	if (error)                                                            \
+		return;                                                       \
+	if (v->tag == bsd_crypto_v1_Crypto_##method##_Result_err_tag) {       \
+		r->status = (int)v->value.err;                                \
+		return;                                                       \
+	}
 
-	service_session_close(fixture->session);
-	ATF_REQUIRE_EQ(fixture->child, waitpid(fixture->child, &status, 0));
-	ATF_REQUIRE(WIFEXITED(status));
+static void
+generation_done_create(void *p, int error,
+    struct bsd_crypto_v1_Crypto_NamedCreate_Result *v)
+{
+	RESULT_HEAD(NamedCreate)
+	r->generation = v->value.response.generation;
+}
+static void
+generation_done_rotate(void *p, int error,
+    struct bsd_crypto_v1_Crypto_NamedRotate_Result *v)
+{
+	RESULT_HEAD(NamedRotate)
+	r->generation = v->value.response.generation;
+}
+static void
+generation_done_delete(void *p, int error,
+    struct bsd_crypto_v1_Crypto_NamedDelete_Result *v)
+{
+	RESULT_HEAD(NamedDelete)
+	r->generation = v->value.response.generation;
+}
+static void
+lease_done(void *p, int error, struct bsd_crypto_v1_Crypto_NamedLease_Result *v)
+{
+	RESULT_HEAD(NamedLease)
+	r->generation = v->value.response.generation;
+	r->fd = fidl_bsd_take_fd(&v->value.response.descriptor);
+}
+static void
+stat_done(void *p, int error, struct bsd_crypto_v1_Crypto_NamedStat_Result *v)
+{
+	RESULT_HEAD(NamedStat)
+	r->info.generation = v->value.response.generation;
+	r->info.rights = v->value.response.rights;
+	r->info.cipher = v->value.response.cipher;
+	r->info.mac = v->value.response.mac;
+	r->info.keylen = v->value.response.keylen;
+	r->info.mackeylen = v->value.response.mackeylen;
+}
+static void
+list_done(void *p, int error, struct bsd_crypto_v1_Crypto_NamedList_Result *v)
+{
+	RESULT_HEAD(NamedList)
+	ATF_REQUIRE(v->value.response.entries_size <= CRYPTOCMP_NAMED_LIST_MAX);
+	r->count = (uint32_t)v->value.response.entries_size;
+	r->next = v->value.response.next_cursor;
+	for (uint32_t i = 0; r->entries != NULL && i < r->count; i++) {
+		const struct bsd_crypto_v1_NamedEntry *e =
+		    &v->value.response.entries[i];
+
+		ATF_REQUIRE(e->name_size < sizeof(r->entries[i].name));
+		memset(&r->entries[i], 0, sizeof(r->entries[i]));
+		memcpy(r->entries[i].name, e->name, e->name_size);
+		r->entries[i].generation = e->generation;
+		r->entries[i].rights = e->rights;
+	}
+}
+static void
+digest_done(void *p, int error, struct bsd_crypto_v1_Crypto_Digest_Result *v)
+{
+	RESULT_HEAD(Digest)
+	r->fd = fidl_bsd_take_fd(&v->value.response.descriptor);
+}
+static void
+random_done(void *p, int error, struct bsd_crypto_v1_Crypto_Random_Result *v)
+{
+	RESULT_HEAD(Random)
+	r->got = (uint32_t)v->value.response.data_size;
+	if (r->buf != NULL && r->got <= r->buflen)
+		memcpy(r->buf, v->value.response.data, r->got);
 }
 
 /*
- * Send a well-formed named-key request and return the daemon's errno-style
- * status (0 on success, positive errno on rejection).  On a successful lease the
- * delivered descriptor is returned through out_fd.
+ * Send a well-formed named-key request (payload is the cryptocmp_named_*
+ * record for opcode) and return the daemon's errno-style status (0 on
+ * success, positive errno on rejection).  On a successful lease the delivered
+ * descriptor is returned through out_fd.
  */
 static int
 named_op(struct raw_fixture *fixture, uint16_t opcode, const void *payload,
     size_t paylen, uint64_t *generation, int *out_fd)
 {
-	struct service_call_options options = SERVICE_CALL_OPTIONS_INITIALIZER;
-	struct service_message outgoing;
-	struct service_reply incoming;
-	struct cryptocmp_msg msg;
-	struct cryptocmp_named_reply reply;
-	uint8_t request[sizeof(struct cryptocmp_msg) +
-	    sizeof(struct cryptocmp_named_create)];
-	int fd;
+	struct result r = { .fd = -1 };
+	uint32_t txid;
 
-	ATF_REQUIRE(paylen <= sizeof(request) - sizeof(msg));
-	memset(&msg, 0, sizeof(msg));
-	msg.magic = CRYPTOCMP_MAGIC;
-	msg.opcode = opcode;
-	memset(request, 0, sizeof(request));
-	memcpy(request, &msg, sizeof(msg));
-	memcpy(request + sizeof(msg), payload, paylen);
-	memset(&outgoing, 0, sizeof(outgoing));
-	outgoing.size = sizeof(outgoing);
-	outgoing.data = request;
-	outgoing.length = sizeof(msg) + paylen;
-	fd = -1;
-	memset(&reply, 0, sizeof(reply));
-	memset(&incoming, 0, sizeof(incoming));
-	incoming.size = sizeof(incoming);
-	incoming.data = &reply;
-	incoming.capacity = sizeof(reply);
-	if (out_fd != NULL) {
-		incoming.fds = &fd;
-		incoming.fd_capacity = 1;
+	(void)paylen;
+	switch (opcode) {
+	case CRYPTOCMP_OP_NAMED_CREATE: {
+		const struct cryptocmp_named_create *in = payload;
+		struct bsd_crypto_v1_NamedCreateRequest q = { in->name,
+			strnlen(in->name, sizeof(in->name)), {
+			in->generate.cipher, in->generate.mac,
+			in->generate.keylen, in->generate.mackeylen,
+			in->generate.rights, in->generate.ttl,
+			in->generate.flags, in->generate.crid,
+			in->generate.ivlen, in->generate.maclen } };
+
+		r.error = bsd_crypto_v1_Crypto_NamedCreate(fixture->client, &q,
+		    generation_done_create, &r, &txid);
+		break;
 	}
-	options.timeout_ms = 2000;
-	ATF_REQUIRE_EQ(0, service_session_call(fixture->session, &outgoing,
-	    &incoming, &options));
+	case CRYPTOCMP_OP_NAMED_LEASE: {
+		const struct cryptocmp_named_lease *in = payload;
+		struct bsd_crypto_v1_NamedLeaseRequest q = { in->name,
+			strnlen(in->name, sizeof(in->name)), in->rights,
+			in->ttl, in->flags };
+
+		r.error = bsd_crypto_v1_Crypto_NamedLease(fixture->client, &q,
+		    lease_done, &r, &txid);
+		break;
+	}
+	default: {
+		const struct cryptocmp_named_control *in = payload;
+		struct bsd_crypto_v1_NamedControlRequest q = { in->name,
+			strnlen(in->name, sizeof(in->name)), in->flags };
+
+		if (opcode == CRYPTOCMP_OP_NAMED_ROTATE)
+			r.error = bsd_crypto_v1_Crypto_NamedRotate(
+			    fixture->client, &q, generation_done_rotate, &r,
+			    &txid);
+		else
+			r.error = bsd_crypto_v1_Crypto_NamedDelete(
+			    fixture->client, &q, generation_done_delete, &r,
+			    &txid);
+		break;
+	}
+	}
+	wait_for(fixture, &r);
 	if (out_fd != NULL)
-		*out_fd = fd;
+		*out_fd = r.fd;
+	else if (r.fd >= 0)
+		close(r.fd);
 	if (generation != NULL)
-		*generation = reply.generation;
-	return (-reply.msg.status);
+		*generation = r.generation;
+	return (r.status);
 }
 
 /*
- * Read-only introspection: send a NAMED_STAT request for name and return the
- * daemon's errno-style status.  On success the key metadata is returned through
- * info.  No descriptor is ever delivered for a STAT (the reply is data-only), so
- * this helper never receives an fd.
+ * Read-only introspection: NamedStat for name; returns the daemon's
+ * errno-style status and, on success, the key metadata.  No descriptor is
+ * ever delivered for a stat.
  */
 static int
 stat_op(struct raw_fixture *fixture, const char *name,
     struct cryptocmp_named_info *info)
 {
-	struct service_call_options options = SERVICE_CALL_OPTIONS_INITIALIZER;
-	struct service_message outgoing;
-	struct service_reply incoming;
-	struct cryptocmp_msg msg;
-	struct cryptocmp_named_stat req;
-	struct cryptocmp_named_stat_reply reply;
-	uint8_t request[sizeof(struct cryptocmp_msg) +
-	    sizeof(struct cryptocmp_named_stat)];
+	struct bsd_crypto_v1_NamedControlRequest q = { name, strlen(name), 0 };
+	struct result r = { .fd = -1 };
+	uint32_t txid;
 
-	memset(&msg, 0, sizeof(msg));
-	msg.magic = CRYPTOCMP_MAGIC;
-	msg.opcode = CRYPTOCMP_OP_NAMED_STAT;
-	memset(&req, 0, sizeof(req));
-	strlcpy(req.name, name, sizeof(req.name));
-	memcpy(request, &msg, sizeof(msg));
-	memcpy(request + sizeof(msg), &req, sizeof(req));
-	memset(&outgoing, 0, sizeof(outgoing));
-	outgoing.size = sizeof(outgoing);
-	outgoing.data = request;
-	outgoing.length = sizeof(request);
-	memset(&reply, 0, sizeof(reply));
-	memset(&incoming, 0, sizeof(incoming));
-	incoming.size = sizeof(incoming);
-	incoming.data = &reply;
-	incoming.capacity = sizeof(reply);
-	options.timeout_ms = 2000;
-	ATF_REQUIRE_EQ(0, service_session_call(fixture->session, &outgoing,
-	    &incoming, &options));
-	if (reply.msg.status == 0 && info != NULL)
-		*info = reply.info;
-	return (-reply.msg.status);
+	r.error = bsd_crypto_v1_Crypto_NamedStat(fixture->client, &q,
+	    stat_done, &r, &txid);
+	wait_for(fixture, &r);
+	if (r.status == 0 && info != NULL)
+		*info = r.info;
+	return (r.status);
 }
 
 /*
- * Owner-scoped enumeration: send a NAMED_LIST request at the given cursor and
- * return the daemon's errno-style status.  On success up to
- * CRYPTOCMP_NAMED_LIST_MAX entries are copied to entries and the populated
- * count / resume cursor are returned.  The request carries no owner (the daemon
- * scopes to the session label) and the reply is data-only, so no fd arrives.
+ * Owner-scoped enumeration at the given cursor; returns the daemon's
+ * errno-style status and, on success, up to CRYPTOCMP_NAMED_LIST_MAX entries,
+ * the populated count and the resume cursor.  The request carries no owner.
  */
 static int
 list_op(struct raw_fixture *fixture, uint32_t cursor,
     struct cryptocmp_named_list_entry *entries, uint32_t *count,
     uint32_t *next_cursor)
 {
-	struct service_call_options options = SERVICE_CALL_OPTIONS_INITIALIZER;
-	struct service_message outgoing;
-	struct service_reply incoming;
-	struct cryptocmp_msg msg;
-	struct cryptocmp_named_list req;
-	struct cryptocmp_named_list_reply reply;
-	uint8_t request[sizeof(struct cryptocmp_msg) +
-	    sizeof(struct cryptocmp_named_list)];
-	uint32_t i;
+	struct bsd_crypto_v1_NamedListRequest q = { cursor, 0 };
+	struct result r = { .fd = -1, .entries = entries };
+	uint32_t txid;
 
-	memset(&msg, 0, sizeof(msg));
-	msg.magic = CRYPTOCMP_MAGIC;
-	msg.opcode = CRYPTOCMP_OP_NAMED_LIST;
-	memset(&req, 0, sizeof(req));
-	req.cursor = cursor;
-	memcpy(request, &msg, sizeof(msg));
-	memcpy(request + sizeof(msg), &req, sizeof(req));
-	memset(&outgoing, 0, sizeof(outgoing));
-	outgoing.size = sizeof(outgoing);
-	outgoing.data = request;
-	outgoing.length = sizeof(request);
-	memset(&reply, 0, sizeof(reply));
-	memset(&incoming, 0, sizeof(incoming));
-	incoming.size = sizeof(incoming);
-	incoming.data = &reply;
-	incoming.capacity = sizeof(reply);
-	options.timeout_ms = 2000;
-	ATF_REQUIRE_EQ(0, service_session_call(fixture->session, &outgoing,
-	    &incoming, &options));
-	if (reply.msg.status == 0) {
+	r.error = bsd_crypto_v1_Crypto_NamedList(fixture->client, &q,
+	    list_done, &r, &txid);
+	wait_for(fixture, &r);
+	if (r.status == 0) {
 		if (count != NULL)
-			*count = reply.count;
+			*count = r.count;
 		if (next_cursor != NULL)
-			*next_cursor = reply.next_cursor;
-		if (entries != NULL)
-			for (i = 0; i < reply.count &&
-			    i < CRYPTOCMP_NAMED_LIST_MAX; i++)
-				entries[i] = reply.entries[i];
+			*next_cursor = r.next;
 	}
-	return (-reply.msg.status);
+	return (r.status);
 }
 
 /* Return the index of name within a NAMED_LIST result, or -1 if absent. */
@@ -307,17 +430,16 @@ list_find(const struct cryptocmp_named_list_entry *entries, uint32_t count,
 	return (-1);
 }
 
-/* Send an arbitrary (possibly malformed) request; return service_session_call's
- * result and, when a reply arrives, its errno-style status. */
+/* Send an arbitrary (possibly malformed) frame; return the call result. */
 static int
 send_raw(struct service_session *session, const void *data, size_t length,
-    int attach_fd, int *status)
+    int attach_fd)
 {
 	struct service_call_options options = SERVICE_CALL_OPTIONS_INITIALIZER;
 	struct service_message outgoing;
 	struct service_reply incoming;
-	struct cryptocmp_named_reply reply;
-	int rc, fd;
+	uint8_t reply[64];
+	int received = -1, rc, fd;
 
 	memset(&outgoing, 0, sizeof(outgoing));
 	outgoing.size = sizeof(outgoing);
@@ -328,16 +450,42 @@ send_raw(struct service_session *session, const void *data, size_t length,
 		outgoing.fds = &fd;
 		outgoing.nfds = 1;
 	}
-	memset(&reply, 0, sizeof(reply));
 	memset(&incoming, 0, sizeof(incoming));
 	incoming.size = sizeof(incoming);
-	incoming.data = &reply;
+	incoming.data = reply;
 	incoming.capacity = sizeof(reply);
+	incoming.fds = &received;
+	incoming.fd_capacity = 1;
 	options.timeout_ms = 2000;
 	rc = service_session_call(session, &outgoing, &incoming, &options);
-	if (rc == 0 && status != NULL)
-		*status = -reply.msg.status;
+	if (rc == 0 && incoming.nfds != 0 && received >= 0)
+		close(received);
 	return (rc);
+}
+
+/* A raw session that has negotiated, so a rejection is the frame's. */
+static void
+raw_negotiated(struct raw_fixture *fixture, const char *owner)
+{
+	struct wire_header info = { 1, { 2, 0, 0 }, 1, ORD_INFO };
+
+	fixture_start(fixture, owner, true);
+	ATF_REQUIRE_EQ(0, send_raw(fixture->session, &info, sizeof(info), -1));
+}
+
+/* A frame: header plus body bytes. */
+static int
+send_frame(struct service_session *session, uint64_t ordinal,
+    const void *body, size_t length, int attach_fd)
+{
+	uint8_t frame[128];
+	struct wire_header header = { 2, { 2, 0, 0 }, 1, ordinal };
+
+	ATF_REQUIRE(sizeof(header) + length <= sizeof(frame));
+	memcpy(frame, &header, sizeof(header));
+	if (length != 0)
+		memcpy(frame + sizeof(header), body, length);
+	return (send_raw(session, frame, sizeof(header) + length, attach_fd));
 }
 
 /* A documented, policy-valid symmetric profile for a named key. */
@@ -357,95 +505,46 @@ sample_generate(void)
 }
 
 /*
- * Mint an unkeyed-digest session descriptor for the given plain-hash algorithm.
- * Returns the daemon's errno-style status; on success the delivered
- * DTYPE_CRYPTO descriptor is returned through out_fd.
+ * Mint an unkeyed-digest session descriptor for the given plain-hash
+ * algorithm.  Returns the daemon's errno-style status; on success the
+ * delivered DTYPE_CRYPTO descriptor is returned through out_fd.
  */
 static int
 digest_op(struct raw_fixture *fixture, uint32_t alg, uint32_t ttl, int *out_fd)
 {
-	struct service_call_options options = SERVICE_CALL_OPTIONS_INITIALIZER;
-	struct service_message outgoing;
-	struct service_reply incoming;
-	struct cryptocmp_msg msg;
-	struct cryptocmp_digest digest;
-	struct cryptocmp_msg reply;
-	uint8_t request[sizeof(struct cryptocmp_msg) +
-	    sizeof(struct cryptocmp_digest)];
-	int fd;
+	struct bsd_crypto_v1_DigestParams q = { alg, ttl, 0 };
+	struct result r = { .fd = -1 };
+	uint32_t txid;
 
-	memset(&msg, 0, sizeof(msg));
-	msg.magic = CRYPTOCMP_MAGIC;
-	msg.opcode = CRYPTOCMP_OP_DIGEST;
-	memset(&digest, 0, sizeof(digest));
-	digest.alg = alg;
-	digest.ttl = ttl;
-	memcpy(request, &msg, sizeof(msg));
-	memcpy(request + sizeof(msg), &digest, sizeof(digest));
-	memset(&outgoing, 0, sizeof(outgoing));
-	outgoing.size = sizeof(outgoing);
-	outgoing.data = request;
-	outgoing.length = sizeof(request);
-	fd = -1;
-	memset(&reply, 0, sizeof(reply));
-	memset(&incoming, 0, sizeof(incoming));
-	incoming.size = sizeof(incoming);
-	incoming.data = &reply;
-	incoming.capacity = sizeof(reply);
-	incoming.fds = &fd;
-	incoming.fd_capacity = 1;
-	options.timeout_ms = 2000;
-	ATF_REQUIRE_EQ(0, service_session_call(fixture->session, &outgoing,
-	    &incoming, &options));
+	r.error = bsd_crypto_v1_Crypto_Digest(fixture->client, &q, digest_done,
+	    &r, &txid);
+	wait_for(fixture, &r);
 	if (out_fd != NULL)
-		*out_fd = fd;
-	return (-reply.status);
+		*out_fd = r.fd;
+	else if (r.fd >= 0)
+		close(r.fd);
+	return (r.status);
 }
 
 /*
- * Request nbytes of CSPRNG output.  Returns the daemon's errno-style status; on
- * success the reply's declared byte count is returned through got and the bytes
- * are copied into buf (capacity buflen).
+ * Request nbytes of CSPRNG output.  Returns the daemon's errno-style status;
+ * on success the reply's byte count is returned through got and the bytes are
+ * copied into buf (capacity buflen).
  */
 static int
 random_op(struct raw_fixture *fixture, uint32_t nbytes, uint8_t *buf,
     size_t buflen, uint32_t *got)
 {
-	struct service_call_options options = SERVICE_CALL_OPTIONS_INITIALIZER;
-	struct service_message outgoing;
-	struct service_reply incoming;
-	struct cryptocmp_msg msg;
-	struct cryptocmp_random request;
-	struct cryptocmp_random_reply reply;
-	uint8_t reqbuf[sizeof(struct cryptocmp_msg) +
-	    sizeof(struct cryptocmp_random)];
+	struct bsd_crypto_v1_RandomRequest q = { nbytes };
+	struct result r = { .fd = -1, .buf = buf, .buflen = buflen };
+	uint32_t txid;
 
-	memset(&msg, 0, sizeof(msg));
-	msg.magic = CRYPTOCMP_MAGIC;
-	msg.opcode = CRYPTOCMP_OP_RANDOM;
-	memset(&request, 0, sizeof(request));
-	request.nbytes = nbytes;
-	memcpy(reqbuf, &msg, sizeof(msg));
-	memcpy(reqbuf + sizeof(msg), &request, sizeof(request));
-	memset(&outgoing, 0, sizeof(outgoing));
-	outgoing.size = sizeof(outgoing);
-	outgoing.data = reqbuf;
-	outgoing.length = sizeof(reqbuf);
-	memset(&reply, 0, sizeof(reply));
-	memset(&incoming, 0, sizeof(incoming));
-	incoming.size = sizeof(incoming);
-	incoming.data = &reply;
-	incoming.capacity = sizeof(reply);
-	options.timeout_ms = 2000;
-	ATF_REQUIRE_EQ(0, service_session_call(fixture->session, &outgoing,
-	    &incoming, &options));
-	if (reply.msg.status == 0) {
-		if (got != NULL)
-			*got = reply.nbytes;
-		if (buf != NULL && reply.nbytes <= buflen)
-			memcpy(buf, reply.data, reply.nbytes);
-	}
-	return (-reply.msg.status);
+	r.error = bsd_crypto_v1_Crypto_Random(fixture->client, &q, random_done,
+	    &r, &txid);
+	wait_for(fixture, &r);
+	if (r.status == 0 && got != NULL)
+		*got = r.got;
+	return (r.status);
 }
 
 /*
@@ -563,12 +662,9 @@ ATF_TC_HEAD(digest_random_malformed, tc)
 ATF_TC_BODY(digest_random_malformed, tc)
 {
 	struct raw_fixture fixture;
-	struct cryptocmp_msg msg;
-	struct cryptocmp_digest digest;
-	struct cryptocmp_random request;
-	uint8_t reqbuf[sizeof(struct cryptocmp_msg) +
-	    sizeof(struct cryptocmp_digest)];
-	int fd, status, rc, pipefd[2];
+	uint32_t body[4] = { CRYPTO_SHA2_256, 60, 0, 0 };
+	int fd, pipefd[2];
+	char byte;
 
 	require_plane();
 	raw_fixture_create(&fixture, "org.test.dr.malformed");
@@ -584,59 +680,30 @@ ATF_TC_BODY(digest_random_malformed, tc)
 	    NULL, 0, NULL));
 	/* A zero-length random request is rejected. */
 	ATF_CHECK_EQ(EINVAL, random_op(&fixture, 0, NULL, 0, NULL));
-
-	/* A digest request with a truncated body (header only). */
-	memset(&msg, 0, sizeof(msg));
-	msg.magic = CRYPTOCMP_MAGIC;
-	msg.opcode = CRYPTOCMP_OP_DIGEST;
-	memcpy(reqbuf, &msg, sizeof(msg));
-	status = 0;
-	ATF_CHECK_EQ(0, send_raw(fixture.session, reqbuf, sizeof(msg), -1,
-	    &status));
-	ATF_CHECK_EQ(EPROTO, status);
-
-	/* A random request with a trailing byte (wrong length). */
-	msg.opcode = CRYPTOCMP_OP_RANDOM;
-	memset(&request, 0, sizeof(request));
-	request.nbytes = 16;
-	memcpy(reqbuf, &msg, sizeof(msg));
-	memcpy(reqbuf + sizeof(msg), &request, sizeof(request));
-	status = 0;
-	ATF_CHECK_EQ(0, send_raw(fixture.session, reqbuf,
-	    sizeof(msg) + sizeof(request) + 1, -1, &status));
-	ATF_CHECK_EQ(EPROTO, status);
-
 	raw_fixture_destroy(&fixture, 0);
 
-	/* An attached descriptor on a digest request must not be interpreted. */
-	raw_fixture_create(&fixture, "org.test.dr.fd");
+	/* A digest request with a truncated body (header only) ends the session. */
+	raw_negotiated(&fixture, "org.test.dr.malformed");
+	ATF_CHECK_EQ(-1, send_frame(fixture.session, ORD_DIGEST, NULL, 0, -1));
+	raw_fixture_destroy(&fixture, 0);
+
+	/* A random request with trailing bytes (wrong length). */
+	raw_negotiated(&fixture, "org.test.dr.malformed");
+	ATF_CHECK_EQ(-1, send_frame(fixture.session, ORD_RANDOM, body, 16, -1));
+	raw_fixture_destroy(&fixture, 0);
+
+	/* An attached descriptor must not be interpreted; the copy is closed. */
+	raw_negotiated(&fixture, "org.test.dr.fd");
 	ATF_REQUIRE_EQ(0, pipe(pipefd));
-	memset(&msg, 0, sizeof(msg));
-	msg.magic = CRYPTOCMP_MAGIC;
-	msg.opcode = CRYPTOCMP_OP_DIGEST;
-	memset(&digest, 0, sizeof(digest));
-	digest.alg = CRYPTO_SHA2_256;
-	memcpy(reqbuf, &msg, sizeof(msg));
-	memcpy(reqbuf + sizeof(msg), &digest, sizeof(digest));
-	status = 0;
-	rc = send_raw(fixture.session, reqbuf, sizeof(reqbuf), pipefd[0],
-	    &status);
-	if (rc == 0)
-		ATF_CHECK_EQ(EPROTO, status);
-	else
-		ATF_CHECK_EQ(-1, rc);
-	close(pipefd[0]);
+	ATF_CHECK_EQ(-1, send_frame(fixture.session, ORD_DIGEST, body, 16,
+	    pipefd[1]));
+	raw_fixture_destroy(&fixture, 0);
 	close(pipefd[1]);
-	raw_fixture_destroy_any(&fixture);
+	ATF_REQUIRE(fcntl(pipefd[0], F_SETFL, O_NONBLOCK) != -1);
+	ATF_CHECK_EQ(0, read(pipefd[0], &byte, 1));
+	close(pipefd[0]);
 }
 
-/*
- * Crown-jewel isolation regression: named keys are scoped to the owner label
- * bound to the unforgeable channel identity.  A key minted by one owner label is
- * invisible to a session running under a different label — lease/rotate/delete
- * fail closed (ENOENT, the kernel key store's owner-scoped miss) — while the
- * owning label reaches its own key.
- */
 ATF_TC_WITH_CLEANUP(named_key_is_owner_scoped);
 ATF_TC_HEAD(named_key_is_owner_scoped, tc)
 {
@@ -946,70 +1013,78 @@ ATF_TC_HEAD(malformed_request_is_rejected, tc)
 }
 ATF_TC_BODY(malformed_request_is_rejected, tc)
 {
-	struct raw_fixture fixture, attach;
+	struct raw_fixture fixture;
 	struct cryptocmp_msg msg;
 	struct cryptocmp_generate generate;
-	uint8_t request[sizeof(struct cryptocmp_msg) +
+	uint8_t legacy[sizeof(struct cryptocmp_msg) +
 	    sizeof(struct cryptocmp_generate)];
-	int status, rc, pipefd[2];
+	uint32_t body[10];
 
 	require_plane();
-	raw_fixture_create(&fixture, "org.test.malformed");
 	generate = sample_generate();
+	memset(body, 0, sizeof(body));
+	body[0] = generate.cipher;
+	body[2] = generate.keylen;
+	body[4] = generate.rights;
 
-	/* Bad magic. */
+	/* A pre-FIDL GENERATE record. */
+	fixture_start(&fixture, "org.test.malformed", true);
 	memset(&msg, 0, sizeof(msg));
-	msg.magic = CRYPTOCMP_MAGIC ^ 1;
-	msg.opcode = CRYPTOCMP_OP_GENERATE;
-	memset(request, 0, sizeof(request));
-	memcpy(request, &msg, sizeof(msg));
-	memcpy(request + sizeof(msg), &generate, sizeof(generate));
-	status = 0;
-	ATF_CHECK_EQ(0, send_raw(fixture.session, request, sizeof(request), -1,
-	    &status));
-	ATF_CHECK_EQ(EPROTO, status);
-
-	/* Out-of-range opcode. */
 	msg.magic = CRYPTOCMP_MAGIC;
-	msg.opcode = 99;
-	memcpy(request, &msg, sizeof(msg));
-	status = 0;
-	ATF_CHECK_EQ(0, send_raw(fixture.session, request, sizeof(request), -1,
-	    &status));
-	ATF_CHECK_EQ(EPROTO, status);
-
-	/* Valid opcode, but a truncated body (header only). */
 	msg.opcode = CRYPTOCMP_OP_GENERATE;
-	memcpy(request, &msg, sizeof(msg));
-	status = 0;
-	ATF_CHECK_EQ(0, send_raw(fixture.session, request, sizeof(msg), -1,
-	    &status));
-	ATF_CHECK_EQ(EPROTO, status);
-
+	memcpy(legacy, &msg, sizeof(msg));
+	memcpy(legacy + sizeof(msg), &generate, sizeof(generate));
+	ATF_CHECK_EQ(-1, send_raw(fixture.session, legacy, sizeof(legacy), -1));
 	raw_fixture_destroy(&fixture, 0);
 
-	/*
-	 * An attached descriptor on an otherwise-valid request must not be
-	 * interpreted.  The handler requires fd_count == 0 and replies EPROTO;
-	 * on a fresh session so a terminal channel policy cannot mask the check.
-	 */
-	raw_fixture_create(&attach, "org.test.malformed.fd");
-	ATF_REQUIRE_EQ(0, pipe(pipefd));
-	memset(&msg, 0, sizeof(msg));
-	msg.magic = CRYPTOCMP_MAGIC;
-	msg.opcode = CRYPTOCMP_OP_GENERATE;
-	memcpy(request, &msg, sizeof(msg));
-	memcpy(request + sizeof(msg), &generate, sizeof(generate));
-	status = 0;
-	rc = send_raw(attach.session, request, sizeof(request), pipefd[0],
-	    &status);
-	if (rc == 0)
-		ATF_CHECK_EQ(EPROTO, status);
-	else
-		ATF_CHECK_EQ(-1, rc);
-	close(pipefd[0]);
-	close(pipefd[1]);
-	raw_fixture_destroy_any(&attach);
+	/* A well-formed Generate before negotiation. */
+	fixture_start(&fixture, "org.test.malformed", true);
+	ATF_CHECK_EQ(-1, send_frame(fixture.session, ORD_GENERATE, body,
+	    sizeof(body), -1));
+	raw_fixture_destroy(&fixture, 0);
+
+	/* An unknown strict method. */
+	raw_negotiated(&fixture, "org.test.malformed");
+	ATF_CHECK_EQ(-1, send_frame(fixture.session, UINT64_C(0x7fff), body,
+	    sizeof(body), -1));
+	raw_fixture_destroy(&fixture, 0);
+
+	/* Valid method, but a truncated body. */
+	raw_negotiated(&fixture, "org.test.malformed");
+	ATF_CHECK_EQ(-1, send_frame(fixture.session, ORD_GENERATE, body, 8, -1));
+	raw_fixture_destroy(&fixture, 0);
+}
+
+/* Names are validated by the provider, not only by the client library. */
+ATF_TC(provider_validates_names);
+ATF_TC_HEAD(provider_validates_names, tc)
+{
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(provider_validates_names, tc)
+{
+	struct cryptocmp_named_control control;
+	struct raw_fixture fixture;
+
+	require_plane();
+	raw_fixture_create(&fixture, "org.test.names");
+	memset(&control, 0, sizeof(control));
+	strlcpy(control.name, "bad/name", sizeof(control.name));
+	ATF_CHECK(stat_op(&fixture, control.name, NULL) != 0);
+	ATF_CHECK(named_op(&fixture, CRYPTOCMP_OP_NAMED_DELETE, &control,
+	    sizeof(control), NULL, NULL) != 0);
+	/* An embedded NUL never truncates into another key's name. */
+	{
+		struct bsd_crypto_v1_NamedControlRequest q = { "a\0b", 3, 0 };
+		struct result r = { .fd = -1 };
+		uint32_t txid;
+
+		r.error = bsd_crypto_v1_Crypto_NamedStat(fixture.client, &q,
+		    stat_done, &r, &txid);
+		wait_for(&fixture, &r);
+		ATF_CHECK_EQ(EINVAL, r.status);
+	}
+	raw_fixture_destroy(&fixture, 0);
 }
 
 ATF_TC_WITHOUT_HEAD(arguments);
@@ -1066,6 +1141,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, named_key_list);
 	ATF_TP_ADD_TC(tp, named_key_list_paginates);
 	ATF_TP_ADD_TC(tp, malformed_request_is_rejected);
+	ATF_TP_ADD_TC(tp, provider_validates_names);
 	ATF_TP_ADD_TC(tp, digest_descriptor);
 	ATF_TP_ADD_TC(tp, random_bytes);
 	ATF_TP_ADD_TC(tp, digest_random_malformed);
