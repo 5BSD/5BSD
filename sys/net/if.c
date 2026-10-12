@@ -2695,9 +2695,12 @@ ifhwioctl(u_long cmd, struct ifnet *ifp, caddr_t data, struct thread *td)
 		error = priv_check(td, PRIV_NET_SETIFFIB);
 		if (error)
 			return (error);
+		/* Create and join atomically with default-loopback destruction. */
+		sx_xlock(&ifnet_detach_sxlock);
 		error = rt_rdomain_create(ifr->ifr_rdomainid, ifp);
 		if (error == 0 || error == EEXIST)
 			error = rt_rdomain_setif(ifp, ifr->ifr_rdomainid, true);
+		sx_xunlock(&ifnet_detach_sxlock);
 		break;
 
 	case SIOCSIFFLAGS:

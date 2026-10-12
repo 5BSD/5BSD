@@ -28,9 +28,6 @@ create_body()
 	atf_check -o match:'^lo7: flags=.* rdomain 7 ' ifconfig lo7
 	atf_check -o match:'^([89]|[1-9][0-9]+)$' sysctl -n net.fibs
 	atf_check -o match:'^Routing tables' route -T 7 -n show
-	# The loopback of a routing domain stays.
-	atf_check -s not-exit:0 -e match:'Operation not permitted' \
-	    ifconfig lo7 destroy
 	# ifconfig warns (as on OpenBSD) and the loopback stays.
 	atf_check -s ignore -e match:'Operation not permitted' \
 	    ifconfig lo7 -rdomain
@@ -46,6 +43,68 @@ create_body()
 	atf_check -o not-match:'rdomain' ifconfig vether1
 }
 create_cleanup()
+{
+	:
+}
+
+atf_test_case "destroy" "cleanup"
+destroy_head()
+{
+	atf_set descr 'Empty routing domains can be destroyed and recreated; busy domains stay'
+	atf_set require.user root
+}
+destroy_body()
+{
+	rdomain_init
+
+	atf_check -s not-exit:0 -e ignore ifconfig lo0 destroy
+	atf_check -o ignore ifconfig vether0 create rdomain 7
+	atf_check -s not-exit:0 -e match:'Device busy' ifconfig lo7 destroy
+	atf_check ifconfig vether0 destroy
+	atf_check ifconfig lo7 inet 192.0.2.7/32 up
+	atf_check ifconfig lo7 destroy
+	atf_check -s not-exit:0 -e match:'no such interface' ifconfig lo7
+	# Re-creation must not find a stale domain mapping or old addresses.
+	atf_check ifconfig lo7 rdomain 7 up
+	atf_check -o match:'rdomain 7 ' ifconfig lo7
+	atf_check -o not-match:'192.0.2.7' ifconfig lo7
+	atf_check ifconfig lo7 destroy
+}
+destroy_cleanup()
+{
+	:
+}
+
+atf_test_case "destroy_race" "cleanup"
+destroy_race_head()
+{
+	atf_set descr 'Domain destruction serializes with interface membership changes'
+	atf_set require.user root
+	atf_set timeout 60
+}
+destroy_race_body()
+{
+	rdomain_init
+	atf_check -o ignore ifconfig vether0 create rdomain 7
+	(
+		for i in $(jot 20); do
+			ifconfig vether0 rdomain 7 || exit 1
+			ifconfig vether0 -rdomain || exit 1
+		done
+	) > move.out 2> move.err &
+	pid=$!
+	for i in $(jot 20); do
+		ifconfig lo7 destroy 2>> destroy.err || true
+		ifconfig lo7 rdomain 7 up || atf_fail 'domain recreation failed'
+	done
+	wait "$pid" || atf_fail 'interface move failed'
+	atf_check -o not-match:'rdomain' ifconfig vether0
+	atf_check ifconfig vether0 destroy
+	atf_check ifconfig lo7 destroy
+	atf_check ifconfig lo7 rdomain 7 up
+	atf_check ifconfig lo7 destroy
+}
+destroy_race_cleanup()
 {
 	:
 }
@@ -105,9 +164,11 @@ address_isolation_body()
 	    ping -n -c 1 -t 2 -V 1 192.0.2.2
 	atf_check -s not-exit:0 -o ignore -e ignore \
 	    ping -n -c 1 -t 2 192.0.2.1
-	# Binding needs an address of the socket's domain.
-	atf_check -s not-exit:0 -e ignore \
-	    route -T 1 exec nc -z -s 192.0.2.2 192.0.2.1 9
+	# Root nc requests IP_BINDANY, so use an unprivileged client and
+	# require the bind error itself rather than a later connect timeout.
+	atf_check -s ignore -e match:"bind failed: Can't assign requested address" \
+	    route -T 1 exec su -m nobody -c \
+	    'nc -z -w 2 -s 192.0.2.2 192.0.2.1 9'
 }
 address_isolation_cleanup()
 {
@@ -208,6 +269,8 @@ privilege_cleanup()
 atf_init_test_cases()
 {
 	atf_add_test_case "create"
+	atf_add_test_case "destroy"
+	atf_add_test_case "destroy_race"
 	atf_add_test_case "move"
 	atf_add_test_case "address_isolation"
 	atf_add_test_case "socket_isolation"

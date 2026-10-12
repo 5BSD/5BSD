@@ -102,11 +102,12 @@ lo_clone_destroy(struct if_clone *ifc, struct ifnet *ifp, uint32_t flags)
 {
 	if (ifp->if_dunit == 0 && (flags & IFC_F_FORCE) == 0)
 		return (EINVAL);
-	/* 5BSD: the loopback of a routing domain stays (OpenBSD). */
-	if (rt_rdomain_isloif(ifp)) {
-		if ((flags & IFC_F_FORCE) == 0)
-			return (EPERM);
-		rt_rdomain_ifdetach(ifp);
+	/* A nonzero routing domain may go away once its other interfaces do. */
+	if ((flags & IFC_F_FORCE) == 0) {
+		int error = rt_rdomain_can_destroy(ifp);
+
+		if (error != 0)
+			return (error);
 	}
 
 #ifndef VIMAGE
@@ -116,6 +117,7 @@ lo_clone_destroy(struct if_clone *ifc, struct ifnet *ifp, uint32_t flags)
 
 	bpfdetach(ifp);
 	if_detach(ifp);
+	rt_rdomain_ifdetach(ifp);
 	if_free(ifp);
 
 	return (0);

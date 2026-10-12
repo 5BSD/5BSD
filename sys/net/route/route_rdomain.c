@@ -88,7 +88,30 @@ rt_rdomain_isloif(struct ifnet *ifp)
 	return (rd != 0 && (V_rt_l2map[rd] >> 16) == ifp->if_index);
 }
 
-/* The loopback interface of a routing domain goes away (vnet teardown). */
+/* The detach lock also serializes routing-domain interface moves. */
+int
+rt_rdomain_can_destroy(struct ifnet *ifp)
+{
+	struct ifnet *p;
+	u_int rd;
+	int error = 0;
+
+	sx_assert(&ifnet_detach_sxlock, SA_XLOCKED);
+	if (!rt_rdomain_isloif(ifp))
+		return (0);
+	rd = rt_fib_l2(ifp->if_fib);
+	IFNET_RLOCK();
+	CK_STAILQ_FOREACH(p, &V_ifnet, if_link) {
+		if (p != ifp && rt_fib_l2(p->if_fib) == rd) {
+			error = EBUSY;
+			break;
+		}
+	}
+	IFNET_RUNLOCK();
+	return (error);
+}
+
+/* The default loopback has detached; release its routing domain. */
 void
 rt_rdomain_ifdetach(struct ifnet *ifp)
 {
@@ -98,8 +121,11 @@ rt_rdomain_ifdetach(struct ifnet *ifp)
 		return;
 	sx_xlock(&rdomain_lock);
 	rd = rt_fib_l2(ifp->if_fib);
-	if ((V_rt_l2map[rd] >> 16) == ifp->if_index)
-		V_rt_l2map[rd] &= 0xffff;
+	if ((V_rt_l2map[rd] >> 16) == ifp->if_index) {
+		V_rt_l2map[rd] = 0;
+		atomic_thread_fence_rel();
+		V_rt_rdomains--;
+	}
 	sx_xunlock(&rdomain_lock);
 }
 
@@ -123,8 +149,8 @@ rt_fib_change_check(struct thread *td, u_int oldfib, u_int newfib)
  * which may be that loopback interface itself.  EEXIST means the routing
  * domain already exists or the table cannot become one.
  */
-int
-rt_rdomain_create(u_int rdomain, struct ifnet *ifp)
+static int
+rt_rdomain_create_locked(u_int rdomain, struct ifnet *ifp)
 {
 	char loname[IFNAMSIZ];
 	struct ifnet *loifp;
@@ -173,8 +199,8 @@ rt_rdomain_create(u_int rdomain, struct ifnet *ifp)
  * FreeBSD SIOCSIFFIB otherwise).  Leaving a routing domain removes the
  * interface's addresses and routes, as they belong to the old domain.
  */
-int
-rt_rdomain_setif(struct ifnet *ifp, u_int fib, bool rdomain)
+static int
+rt_rdomain_setif_locked(struct ifnet *ifp, u_int fib, bool rdomain)
 {
 	u_int ord, nrd;
 	bool up;
@@ -207,4 +233,27 @@ rt_rdomain_setif(struct ifnet *ifp, u_int fib, bool rdomain)
 	if (up)
 		if_up(ifp);
 	return (0);
+}
+
+/* Serialize creation and moves with clone destruction and VNET moves. */
+int
+rt_rdomain_create(u_int rdomain, struct ifnet *ifp)
+{
+	int error;
+
+	sx_xlock(&ifnet_detach_sxlock);
+	error = rt_rdomain_create_locked(rdomain, ifp);
+	sx_xunlock(&ifnet_detach_sxlock);
+	return (error);
+}
+
+int
+rt_rdomain_setif(struct ifnet *ifp, u_int fib, bool rdomain)
+{
+	int error;
+
+	sx_xlock(&ifnet_detach_sxlock);
+	error = rt_rdomain_setif_locked(ifp, fib, rdomain);
+	sx_xunlock(&ifnet_detach_sxlock);
+	return (error);
 }

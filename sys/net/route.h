@@ -210,6 +210,7 @@ int	rt_rdomain_create(u_int rdomain, struct ifnet *ifp);
 int	rt_rdomain_setif(struct ifnet *ifp, u_int fib, bool rdomain);
 struct ifnet *rt_fib_loif(u_int fib);
 bool	rt_rdomain_isloif(struct ifnet *ifp);
+int	rt_rdomain_can_destroy(struct ifnet *ifp);
 void	rt_rdomain_ifdetach(struct ifnet *ifp);
 int	rt_fib_change_check(struct thread *td, u_int oldfib, u_int newfib);
 VNET_DECLARE(u_int, rt_add_addr_allfibs); /* Announce interfaces to all fibs */
