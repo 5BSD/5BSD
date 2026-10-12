@@ -12,6 +12,10 @@ sed -i '' 's/^hosts:.*/hosts: files/' /etc/nsswitch.conf
 # (group nobody 32767, group sshd 27).
 pw groupmod nobody -g 32767 2>/dev/null || true
 pw groupmod sshd -g 27 2>/dev/null || true
+# Harness plumbing: the pf_divert Perl client hardcodes OpenBSD's
+# SO_BINDANY value (0x1000, SO_ACCEPTFILTER here); 5BSD's is 0x80000.
+f=/usr/src/regress/sys/net/pf_divert/Client.pm
+[ -f $f ] && sed -i '' 's/SO_BINDANY => 0x1000;/SO_BINDANY => 0x80000;/' $f
 p6=fdd7:e83e:66bc
 IFIN=vtnet1 IFOUT=vtnet2 IFCTL=vtnet0
 
@@ -46,7 +50,7 @@ anchor "regress"
 EOF
 pfctl -f /etc/pf.conf
 pfctl -e >/dev/null 2>&1 || true
-# pflog0 is a BPF tap created by the pflog module (no ifnet on 5BSD).
+ifconfig pflog0 create >/dev/null 2>&1 || true
 
 cat > /etc/inetd.conf <<'EOF'
 echo	stream	tcp	nowait	root	internal

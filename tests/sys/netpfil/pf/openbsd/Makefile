@@ -10,6 +10,24 @@ TEST_METADATA.openbsd_regress+=	execenv="jail" \
 				required_user="root" \
 				is_exclusive="true"
 
+# Per-vnet OpenBSD PF instances (5BSD).
+ATF_TESTS_SH+=	vnet_test
+TEST_METADATA.vnet_test+=	required_user="root" \
+				is_exclusive="true"
+
+# Transparent proxying with divert-to (TCP and UDP, IPv4 and IPv6).
+ATF_TESTS_SH+=	divert_test
+TEST_METADATA.divert_test+=	required_user="root" \
+				required_programs="python3" \
+				is_exclusive="true"
+${PACKAGE}FILES+=	tproxy.py
+
+# 5BSD extension: the "jail" rule option.
+ATF_TESTS_SH+=	jail_test
+TEST_METADATA.jail_test+=	required_user="root" \
+				is_exclusive="true"
+${PACKAGE}FILESMODE_tproxy.py=	0555
+
 SRCTREE_FILES!=	cd ${SRCTOP} && find contrib/openbsd-pf -type f \
 		    ! -name README.5BSD | sort
 
