@@ -75,6 +75,15 @@ audit)
 	libs="-lbsm -lservice -lchannel"
 	extra="-I$src/lib/liblogcmp"
 	;;
+network)
+	paths="usr.sbin/BSDNetwork lib/libnetworkcmp"
+	defs="-DNETWORKCMP_TESTING -DNETWORKCMP_CLIENT_SOURCE=\\\"$old/lib/libnetworkcmp/networkcmp.c\\\""
+	incs="usr.sbin/BSDNetwork lib/libnetworkcmp"
+	srcs="usr.sbin/BSDNetwork/networkcmp.c usr.sbin/BSDNetwork/config.c usr.sbin/BSDNetwork/policy.c usr.sbin/BSDNetwork/resolver.c"
+	bench=usr.sbin/BSDNetwork/tests/latency_bench.c
+	libs="-lauditcmp -lprivateucl -lservice -lchannel -lpthread"
+	extra="-I$src/lib/libauditcmp -I$src/lib/liblogcmp -I$src/lib/libnotify -I$src/lib/libsysctlcmp"
+	;;
 *)
 	echo "build-daemon-bench: unknown daemon $daemon" >&2; exit 64;;
 esac

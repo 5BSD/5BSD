@@ -65,25 +65,59 @@ ATF_TC_HEAD(plane_watch, tc)
 	atf_tc_set_md_var(tc, "require.user", "root");
 	atf_tc_set_md_var(tc, "timeout", "15");
 }
+struct call {
+	bool done;
+	int error;
+	int status;
+	int32_t source_error;
+	size_t count;
+};
+
+static void
+info_cb(void *context, int error, struct bsd_network_v1_ProtocolInfo *value)
+{
+	struct call *c = context;
+	c->done = true;
+	c->error = error;
+	if (error == 0)
+		c->status = value->wire_version == NETWORK_STATE_WIRE_VERSION ?
+		    0 : EPROTONOSUPPORT;
+}
+
+static void
+watch_cb(void *context, int error,
+    struct bsd_network_v1_NetworkState_Watch_Result *value)
+{
+	struct call *c = context;
+	c->done = true;
+	c->error = error;
+	if (error != 0)
+		return;
+	if (value->tag == bsd_network_v1_NetworkState_Watch_Result_err_tag)
+		c->status = (int)value->value.err;
+	else {
+		c->source_error = value->value.response.source_error;
+		c->count = value->value.response.interfaces_size;
+	}
+}
+
+static void
+wait_call(struct fidl_bsd_connection *connection, struct call *c)
+{
+	while (!c->done)
+		if (fidl_bsd_connection_poll(connection, 2000) != 0 && !c->done)
+			ATF_REQUIRE_MSG(false, "connection failed");
+}
+
 ATF_TC_BODY(plane_watch, tc)
 {
 	struct network_state_server *server;
-	struct service_session *session;
-	struct network_state_request request = {
-		.header = { .magic = NETWORK_STATE_MAGIC,
-		    .version = 1,
-		    .opcode = 1 },
-		.timeout_ms = 1
-	};
-	struct network_state_reply reply;
-	struct service_message message = { .size = sizeof(message),
-		.data = &request,
-		.length = sizeof(request) };
-	struct service_reply response = { .size = sizeof(response),
-		.data = &reply,
-		.capacity = sizeof(reply) };
-	struct service_call_options options = SERVICE_CALL_OPTIONS_INITIALIZER;
+	struct fidl_bsd_connection *connection;
+	struct bsd_network_v1_WatchRequest request = { 1 };
+	struct fidl_bsd_empty empty = { 0 };
+	struct call info = { 0 }, first = { 0 }, second = { 0 };
 	struct kevent event;
+	uint32_t txid;
 	pid_t child;
 	int client, provider, kq, status;
 
@@ -98,7 +132,7 @@ ATF_TC_BODY(plane_watch, tc)
 		    network_state_server_add(server, provider,
 			"org.test.state") == -1)
 			_exit(1);
-		while (server->sessions[0].channel != NULL) {
+		while (server->sessions[0].connection != NULL) {
 			if (kevent(kq, NULL, 0, &event, 1, NULL) != 1 ||
 			    network_state_server_event(server, &event) != 1)
 				_exit(2);
@@ -108,21 +142,23 @@ ATF_TC_BODY(plane_watch, tc)
 		_exit(0);
 	}
 	close(provider);
-	ATF_REQUIRE_EQ(0, service_session_create(client, &session));
-	options.timeout_ms = 2000;
-	ATF_REQUIRE_EQ(0,
-	    service_session_call(session, &message, &response, &options));
-	ATF_REQUIRE_EQ(0,
-	    network_state_validate_reply(&reply, response.length));
-	ATF_REQUIRE_EQ(0, reply.header.status);
-	ATF_REQUIRE_EQ(EAGAIN, reply.state.source_error);
-	ATF_REQUIRE_EQ(0, reply.state.count);
-	ATF_REQUIRE_EQ(0,
-	    service_session_call(session, &message, &response, &options));
-	ATF_REQUIRE_EQ(0,
-	    network_state_validate_reply(&reply, response.length));
-	ATF_REQUIRE_EQ(-EAGAIN, reply.header.status);
-	service_session_close(session);
+	ATF_REQUIRE_EQ(0, fidl_bsd_connection_create(client, FIDL_BSD_CLIENT,
+	    &connection));
+	ATF_REQUIRE_EQ(0, bsd_network_v1_NetworkState_GetProtocolInfo(
+	    connection, &empty, info_cb, &info, &txid));
+	wait_call(connection, &info);
+	ATF_REQUIRE_EQ(0, info.status);
+	ATF_REQUIRE_EQ(0, bsd_network_v1_NetworkState_Watch(connection,
+	    &request, watch_cb, &first, &txid));
+	wait_call(connection, &first);
+	ATF_REQUIRE_EQ(0, first.status);
+	ATF_REQUIRE_EQ(EAGAIN, first.source_error);
+	ATF_REQUIRE_EQ(0, first.count);
+	ATF_REQUIRE_EQ(0, bsd_network_v1_NetworkState_Watch(connection,
+	    &request, watch_cb, &second, &txid));
+	wait_call(connection, &second);
+	ATF_REQUIRE_EQ(EAGAIN, second.status);
+	fidl_bsd_connection_destroy(connection);
 	ATF_REQUIRE_EQ(child, waitpid(child, &status, 0));
 	ATF_REQUIRE(WIFEXITED(status));
 	ATF_REQUIRE_EQ(0, WEXITSTATUS(status));

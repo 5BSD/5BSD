@@ -3,9 +3,9 @@
 #include <sys/param.h>
 #include <sys/event.h>
 
-#include <channel.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <fidl/bsd.network.v1/c/bsd.h>
 #include <libservice.h>
 #include <service_runtime.h>
 #include <network_state_protocol.h>
@@ -26,11 +26,13 @@
 
 struct state_session {
 	struct network_state_server *server;
-	struct channel *channel;
-	struct channel_message *pending;
+	struct fidl_bsd_connection *connection;
+	struct fidl_bsd_request *pending;
 	struct notify_watcher *watcher;
 	char label[256];
 	int error;
+	bool negotiated;
+	bool write_armed;
 };
 struct network_state_server {
 	int kq, wake[2], stop[2];
@@ -60,41 +62,46 @@ static int
 write_interest(struct state_session *s)
 {
 	struct kevent change;
-	int pending = channel_wants_write(s->channel);
-	if (pending == -1)
-		return (-1);
-	EV_SET(&change, channel_fd(s->channel), EVFILT_WRITE,
+	int pending = fidl_bsd_connection_wants_write(s->connection);
+	if (pending == s->write_armed)
+		return (0);
+	EV_SET(&change, fidl_bsd_connection_fd(s->connection), EVFILT_WRITE,
 	    EV_ADD | (pending ? EV_ENABLE : EV_DISABLE), 0, 0, s->server);
-	return (kevent(s->server->kq, &change, 1, NULL, 0, NULL));
+	if (kevent(s->server->kq, &change, 1, NULL, 0, NULL) == -1)
+		return (-1);
+	s->write_armed = pending;
+	return (0);
 }
 static void
 close_session(struct state_session *s)
 {
-	if (s->channel == NULL)
+	if (s->connection == NULL)
 		return;
 	(void)arm_timer(s, NETWORK_STATE_TIMEOUT_INFINITE);
 	if (s->pending != NULL)
-		channel_message_free(s->pending);
+		fidl_bsd_request_release(s->pending);
 	notify_watch_close(s->watcher);
-	channel_destroy(s->channel);
+	fidl_bsd_connection_destroy(s->connection);
 	memset(s, 0, sizeof(*s));
 }
 static int
-send_error(struct state_session *s, struct channel_message *message, int error)
+send_error(struct state_session *s, struct fidl_bsd_request *request,
+    int error)
 {
-	struct network_state_header h = { .magic = NETWORK_STATE_MAGIC,
-		.version = 1,
-		.opcode = 1,
-		.status = -error };
-	struct channel_outgoing o = CHANNEL_OUTGOING_INITIALIZER(&h, sizeof(h));
-	if (channel_send_reply(message, &o) == -1)
-		return (-1);
+	struct bsd_network_v1_NetworkState_Watch_Result result = {
+		.tag = bsd_network_v1_NetworkState_Watch_Result_err_tag,
+		.value.err = (uint32_t)error
+	};
+	int reply_error = bsd_network_v1_NetworkState_Watch_reply(
+	    s->connection, request, &result);
+	if (reply_error != 0)
+		return (errno = reply_error, -1);
 	return (write_interest(s));
 }
 static void
 finish_pending(struct state_session *s)
 {
-	channel_message_free(s->pending);
+	fidl_bsd_request_release(s->pending);
 	s->pending = NULL;
 	if (arm_timer(s, STATE_IDLE_MS) == -1)
 		s->error = errno;
@@ -102,72 +109,103 @@ finish_pending(struct state_session *s)
 static void
 deliver(struct state_session *s)
 {
-	struct network_state_reply r = { .header = {
-					     .magic = NETWORK_STATE_MAGIC,
-					     .version = 1,
-					     .opcode = 1 } };
+	static struct network_state_snapshot state;
+	static struct bsd_network_v1_Interface interfaces[
+	    NETWORK_STATE_MAX_INTERFACES];
+	struct bsd_network_v1_NetworkState_Watch_Result result = {
+		.tag = bsd_network_v1_NetworkState_Watch_Result_response_tag
+	};
 	struct notify_watch_cursor cursor;
-	struct channel_outgoing o;
 	uint32_t flags;
 	size_t length;
-	int result;
+	int reply_error, take;
 	if (s->pending == NULL)
 		return;
-	result = notify_watch_take(s->watcher, &r.state, sizeof(r.state),
-	    &length, &cursor, &flags);
-	if (result == 0)
+	memset(&state, 0, sizeof(state));
+	take = notify_watch_take(s->watcher, &state, sizeof(state), &length,
+	    &cursor, &flags);
+	if (take == 0)
 		return;
-	if (result == -1) {
+	if (take == -1) {
 		s->error = errno;
 		return;
 	}
-	r.state.epoch = cursor.epoch;
-	r.state.generation = cursor.generation;
-	o = (struct channel_outgoing)CHANNEL_OUTGOING_INITIALIZER(&r,
-	    NETWORK_STATE_REPLY_SIZE(r.state.count));
-	if (channel_send_reply(s->pending, &o) == -1 || write_interest(s) == -1)
+	if (state.count > NETWORK_STATE_MAX_INTERFACES) {
+		s->error = EIO;
+		return;
+	}
+	for (size_t i = 0; i < state.count; i++) {
+		const struct network_state_interface *e = &state.interfaces[i];
+		interfaces[i] = (struct bsd_network_v1_Interface){
+			.index = e->index,
+			.flags = e->flags,
+			.mtu = e->mtu,
+			.link_state = e->link_state,
+			.name = e->name,
+			.name_size = strnlen(e->name, sizeof(e->name) - 1)
+		};
+	}
+	result.value.response = (struct bsd_network_v1_Snapshot){
+		.epoch = cursor.epoch,
+		.generation = cursor.generation,
+		.source_error = state.source_error,
+		.interfaces = interfaces,
+		.interfaces_size = state.count
+	};
+	reply_error = bsd_network_v1_NetworkState_Watch_reply(s->connection,
+	    s->pending, &result);
+	if (reply_error != 0)
+		s->error = reply_error;
+	else if (write_interest(s) == -1)
 		s->error = errno;
 	finish_pending(s);
 }
 static void
-request(struct channel *channel __unused, struct channel_message *message,
-    void *argument)
+protocol_info(void *argument, struct fidl_bsd_connection *connection,
+    struct fidl_bsd_request *request, struct fidl_bsd_empty *empty __unused)
 {
 	struct state_session *s = argument;
-	struct network_state_request r;
-	if (s->error != 0) {
-		channel_message_free(message);
+	struct bsd_network_v1_ProtocolInfo info = { NETWORK_STATE_WIRE_VERSION };
+	int error = bsd_network_v1_NetworkState_GetProtocolInfo_reply(
+	    connection, request, &info);
+	if (error != 0)
+		s->error = error;
+	s->negotiated = error == 0;
+}
+static void
+watch(void *argument, struct fidl_bsd_connection *connection,
+    struct fidl_bsd_request *request,
+    struct bsd_network_v1_WatchRequest *r)
+{
+	struct state_session *s = argument;
+	if (s->error != 0)
 		return;
-	}
-	if (channel_message_fd_count(message) != 0 ||
-	    network_state_validate_request(channel_message_data(message),
-		channel_message_length(message)) == -1) {
+	/* Every session negotiates the wire version first. */
+	if (!s->negotiated) {
 		s->error = EPROTO;
-		channel_message_free(message);
+		fidl_bsd_connection_close(connection, EPROTO);
 		return;
 	}
-	memcpy(&r, channel_message_data(message), sizeof(r));
 	if (s->pending != NULL) {
-		if (send_error(s, message, EBUSY) == -1)
+		if (send_error(s, request, EBUSY) == -1)
 			s->error = errno;
-		channel_message_free(message);
 		return;
 	}
 	if (notify_watch_begin(s->watcher) == -1) {
 		s->error = errno;
-		channel_message_free(message);
 		return;
 	}
-	s->pending = message;
+	fidl_bsd_request_retain(request);
+	s->pending = request;
 	deliver(s);
 	if (s->pending == NULL || s->error != 0)
 		return;
-	if (r.timeout_ms == 0) {
+	if (r->timeout_ms == 0) {
 		(void)notify_watch_cancel(s->watcher);
-		if (send_error(s, message, EAGAIN) == -1)
+		if (send_error(s, s->pending, EAGAIN) == -1)
 			s->error = errno;
 		finish_pending(s);
-	} else if (arm_timer(s, r.timeout_ms) == -1)
+	} else if (arm_timer(s, r->timeout_ms) == -1)
 		s->error = errno;
 }
 static int
@@ -308,8 +346,11 @@ int
 network_state_server_add(struct network_state_server *server, int fd,
     const char *label)
 {
-	struct channel_options options = CHANNEL_OPTIONS_INITIALIZER(
-	    CHANNEL_ROLE_PROVIDER);
+	static const struct bsd_network_v1_NetworkState_server handlers = {
+		.GetProtocolInfo = protocol_info,
+		.Watch = watch
+	};
+	struct fidl_bsd_options options = FIDL_BSD_OPTIONS_INITIALIZER;
 	struct state_session *s = NULL;
 	struct kevent change;
 	size_t same = 0;
@@ -320,7 +361,7 @@ network_state_server_add(struct network_state_server *server, int fd,
 		return (errno = EINVAL, -1);
 	}
 	for (size_t i = 0; i < nitems(server->sessions); i++) {
-		if (server->sessions[i].channel == NULL) {
+		if (server->sessions[i].connection == NULL) {
 			if (s == NULL)
 				s = &server->sessions[i];
 		} else if (strcmp(server->sessions[i].label, label) == 0)
@@ -338,20 +379,26 @@ network_state_server_add(struct network_state_server *server, int fd,
 		memset(s, 0, sizeof(*s));
 		return (errno = error, -1);
 	}
-	if (service_harden_fd(fd, 0) == -1 ||
-	    channel_create(fd, &options, &s->channel) == -1) {
-		error = errno;
+	/* A watch and a refused overlapping one; requests carry no fds. */
+	options.max_queued_fds = 0;
+	error = service_harden_fd(fd, 0) == -1 ? errno :
+	    fidl_bsd_connection_create_with_options(fd, FIDL_BSD_SERVER,
+	    &options, &s->connection);
+	if (error != 0) {
 		close(fd);
 		notify_watch_close(s->watcher);
 		memset(s, 0, sizeof(*s));
 		return (errno = error, -1);
 	}
-	if (channel_set_request_handler(s->channel, request, s) == -1)
+	if ((error = bsd_network_v1_NetworkState_bind(s->connection, &handlers,
+	    s)) != 0) {
+		errno = error;
 		goto fail;
-	EV_SET(&change, channel_fd(s->channel), EVFILT_READ, EV_ADD | EV_ENABLE,
-	    0, 0, server);
+	}
+	EV_SET(&change, fidl_bsd_connection_fd(s->connection), EVFILT_READ,
+	    EV_ADD | EV_ENABLE, 0, 0, server);
 	if (kevent(server->kq, &change, 1, NULL, 0, NULL) == -1 ||
-	    write_interest(s) == -1 || arm_timer(s, STATE_IDLE_MS) == -1)
+	    arm_timer(s, STATE_IDLE_MS) == -1)
 		goto fail;
 	return (0);
 fail:
@@ -374,7 +421,7 @@ network_state_server_event(struct network_state_server *server,
 		}
 		for (size_t i = 0; i < nitems(server->sessions); i++) {
 			s = &server->sessions[i];
-			if (s->channel == NULL)
+			if (s->connection == NULL)
 				continue;
 			deliver(s);
 			if (s->error != 0)
@@ -384,7 +431,7 @@ network_state_server_event(struct network_state_server *server,
 	}
 	for (size_t i = 0; i < nitems(server->sessions); i++) {
 		s = &server->sessions[i];
-		if (s->channel == NULL)
+		if (s->connection == NULL)
 			continue;
 		if (event->filter == EVFILT_TIMER &&
 		    event->ident == (uintptr_t)s) {
@@ -400,18 +447,16 @@ network_state_server_event(struct network_state_server *server,
 			}
 			break;
 		}
-		if (event->filter == EVFILT_TIMER ||
-		    event->ident != (uintptr_t)channel_fd(s->channel))
+		if (event->filter == EVFILT_TIMER || event->ident !=
+		    (uintptr_t)fidl_bsd_connection_fd(s->connection))
 			continue;
-		result = 0;
-		if (event->flags & EV_ERROR)
-			result = -1;
-		else if (event->filter == EVFILT_READ)
-			result = channel_dispatch(s->channel);
-		else if (event->filter == EVFILT_WRITE)
-			result = channel_flush(s->channel);
-		if (result == -1 || s->error != 0 || (event->flags & EV_EOF) ||
-		    write_interest(s) == -1)
+		/* Reads and flushes in one bounded step; a refused frame
+		 * (unknown method, malformed, pre-FIDL record) closes it. */
+		result = (event->flags & EV_ERROR) != 0 ? EIO :
+		    fidl_bsd_connection_dispatch(s->connection);
+		if (result != 0 || s->error != 0 ||
+		    ((event->flags & EV_EOF) != 0 &&
+		    event->filter == EVFILT_READ) || write_interest(s) == -1)
 			close_session(s);
 		break;
 	}

@@ -2,6 +2,7 @@
 #ifndef _NETWORKCMP_FAKE_SERVICE_H_
 #define _NETWORKCMP_FAKE_SERVICE_H_
 void fake_service_reset(void);
+/* The next call closes the session (the provider went away). */
 void fake_service_fail(int);
 void fake_service_malformed_reply(void);
 unsigned fake_service_created(void);

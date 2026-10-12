@@ -1,0 +1,111 @@
+// SPDX-License-Identifier: BSD-2-Clause
+// Schema-evolution fixture for system.Network.  At bsd:1 this is exactly
+// lib/libnetworkcmp/networkcmp.fidl (tools/build/fuchsia/test-bindings.py
+// checks it); bsd:2 adds a method, as a future provider release would.  The
+// peer built from bsd:2 is paired with the real bsd:1 client and provider.
+@available(platform="bsd", added=1)
+library bsd.network.v1;
+
+using zx;
+
+type ProtocolInfo = struct { wire_version uint32; };
+
+// One IPv4 or IPv6 transport endpoint.  family is 1 (IPv4: address bytes
+// 0..3, the rest and scope_id zero) or 2 (IPv6); prefix must be zero; port
+// is in host byte order.
+type Endpoint = struct {
+    family uint8;
+    prefix uint8;
+    port uint16;
+    scope_id uint32;
+    address array<uint8, 16>;
+};
+
+// The session's policy: NETWORKCMP_FEATURE_* bits and the resolve ceiling
+// (0 without the DNS feature, otherwise 1..32).
+type Limits = struct {
+    features uint32;
+    max_resolve_results uint32;
+};
+
+type ConnectRequest = struct {
+    endpoint Endpoint;
+    // Bounds a TCP handshake (ETIMEDOUT); 0 is a blocking connect.
+    timeout_ms uint32;
+};
+type UdpRequest = struct { endpoint Endpoint; };
+// A connected, rights-limited socket owned by the caller.
+type Connected = resource struct { socket zx.Handle; };
+
+// backlog 0 selects SOMAXCONN.
+type ListenRequest = struct { backlog uint16; };
+// A listening loopback socket narrowed to accept, and its OS-assigned port.
+type Listener = resource struct {
+    socket zx.Handle;
+    port uint16;
+};
+
+// host and service are getaddrinfo(3) arguments without terminators; either
+// may be empty, not both.  family 0..2, socket_type 0 (any), 1 (stream) or
+// 2 (datagram), flags NETWORKCMP_RESOLVE_F_*, max_results 1..32.
+type ResolveRequest = struct {
+    host string:253;
+    service string:32;
+    family uint32;
+    socket_type uint32;
+    flags uint32;
+    max_results uint32;
+};
+type ResolveResult = struct {
+    endpoint Endpoint;
+    socket_type uint32;
+    protocol uint32;
+};
+type Resolved = struct {
+    results vector<ResolveResult>:32;
+    canonname string:253;
+    // Conservative remaining lifetime, including CNAMEs and cache age.
+    ttl_seconds uint32;
+};
+
+// The connection broker (system.Network; system.Network.Admin is the same
+// protocol behind the system.network.admin attribute).  It never proxies
+// data.  All errors are errno values.
+closed protocol Network {
+    strict GetProtocolInfo() -> (ProtocolInfo);
+    strict GetLimits() -> (Limits);
+    strict Resolve(ResolveRequest) -> (Resolved) error uint32;
+    strict Connect(ConnectRequest) -> (Connected) error uint32;
+    strict Udp(UdpRequest) -> (Connected) error uint32;
+    strict Listen(ListenRequest) -> (Listener) error uint32;
+    // Added in the next revision; unknown to wire-major-1 peers.
+    @available(added=2)
+    strict Probe() -> (Limits);
+};
+
+// One network interface (no addresses or counters).
+type Interface = struct {
+    index uint32;
+    // Native IFF_* interface and driver flags.
+    flags uint32;
+    mtu uint32;
+    // 0 unknown, 1 down, 2 up.
+    link_state uint8;
+    name string:15;
+};
+// timeout_ms bounds a later watch (EAGAIN); UINT32_MAX waits indefinitely.
+type WatchRequest = struct { timeout_ms uint32; };
+type Snapshot = struct {
+    epoch uint64;
+    generation uint64;
+    // Positive errno when the sampler has no current data (no interfaces).
+    source_error int32;
+    interfaces vector<Interface>:256;
+};
+
+// system.Network.State: the interface table as a coalescing watch.  The
+// first Watch returns at once; later calls return on change.
+closed protocol NetworkState {
+    strict GetProtocolInfo() -> (ProtocolInfo);
+    strict Watch(WatchRequest) -> (Snapshot) error uint32;
+};

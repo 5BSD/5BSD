@@ -15,6 +15,9 @@
 
 #include "networkcmp_protocol.h"
 
+/* bsd.network.v1 Network wire major (networkcmp.fidl). */
+#define	NETWORKCMP_WIRE_VERSION	1
+
 struct addrinfo;
 struct networkcmp_client;
 
