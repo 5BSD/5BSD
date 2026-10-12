@@ -373,6 +373,14 @@ icmp6_error(struct mbuf *m, int type, int code, int param)
 		return;
 	}
 
+	/*
+	 * The error is a new packet for the packet filter: drop the pf marks
+	 * of the packet it quotes (pf marks the packets it translates with
+	 * af-to as generated, which would let the error pass untranslated).
+	 */
+	m->m_pkthdr.pf.flags = 0;
+	m->m_pkthdr.pf.tag = 0;
+
 	nip6 = mtod(m, struct ip6_hdr *);
 	nip6->ip6_src  = oip6->ip6_src;
 	nip6->ip6_dst  = oip6->ip6_dst;
