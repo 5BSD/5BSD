@@ -40,6 +40,8 @@ ATF_TC_HEAD(configure_activation_boundary, tc)
 {
 
 	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "require.arch", "amd64");
+	atf_tc_set_md_var(tc, "require.kmods", "vmm");
 }
 
 ATF_TC_WITH_CLEANUP(generation_run_requires_controller);
@@ -47,6 +49,8 @@ ATF_TC_HEAD(generation_run_requires_controller, tc)
 {
 
 	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "require.arch", "amd64");
+	atf_tc_set_md_var(tc, "require.kmods", "vmm");
 }
 ATF_TC_BODY(generation_run_requires_controller, tc)
 {

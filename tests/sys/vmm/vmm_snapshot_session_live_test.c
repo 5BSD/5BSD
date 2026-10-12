@@ -23,7 +23,10 @@ static void
 require_root(atf_tc_t *tc)
 {
 
+	/* Every case creates a VM, so it needs a loaded vmm(4). */
 	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "require.arch", "amd64");
+	atf_tc_set_md_var(tc, "require.kmods", "vmm");
 }
 
 static void
