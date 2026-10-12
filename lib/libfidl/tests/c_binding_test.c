@@ -338,8 +338,16 @@ test_collections(void)
 	CHECK(bsd_runtime_test_Collections_Echo(client, &value,
 		  collection_reply, &state, &txid) == EINVAL);
 	value.mode = bsd_runtime_test_Mode_ON;
-	CHECK(bsd_runtime_test_Collections_Echo(client, &value,
-		  collection_reply, &state, &txid) == 0);
+	/* A present label may be NULL with size 0: the empty string. */
+	{
+		int rc = bsd_runtime_test_Collections_Echo(client, &value,
+		    collection_reply, &state, &txid);
+
+		if (rc != 0)
+			fprintf(stderr, "Collections.Echo: %s (connection %d)\n",
+			    strerror(rc), fidl_bsd_connection_error(client));
+		CHECK(rc == 0);
+	}
 	pump(client, server);
 	CHECK(state.replies == 1 && state.taken >= 0);
 	CHECK(write(state.taken, "v", 1) == 1);
@@ -642,10 +650,14 @@ main(void)
 	uint32_t txid = 0;
 	struct state state = { .taken_fd = -1 };
 	struct fidl_bsd_connection *client = NULL, *server = NULL;
+	/* Unbuffered, so a test the alarm kills shows how far it got. */
+	setvbuf(stdout, NULL, _IONBF, 0);
 	alarm(20);
 	test_collections();
+	puts("C collections: PASS");
 	test_flexible();
 	test_destroy_with_pending_call();
+	puts("C destroy with a pending call: PASS");
 	CHECK(pipe(pipefd) == 0);
 	CHECK(fidl_bsd_connection_create(pipefd[0], FIDL_BSD_CLIENT, &client) !=
 	    0);
@@ -696,6 +708,7 @@ main(void)
 	CHECK(bsd_runtime_test_Service_Changed(server, &event) == 0);
 	pump(client, server);
 	CHECK(state.notifications == 1 && state.events == 1);
+	puts("C round trip, one-way and events: PASS");
 	CHECK(pipe(pipefd) == 0);
 	CHECK(write(pipefd[1], "C", 1) == 1);
 	close(pipefd[1]);
@@ -738,6 +751,7 @@ main(void)
 	CHECK(read(resource.fd, &retained, 1) == 1 && retained == 'C');
 	close(pipefd[0]);
 	close(pipefd[1]);
+	puts("C descriptor sends: PASS");
 	state.defer = 1;
 	CHECK(bsd_runtime_test_Service_RoundTrip(client, &request, response,
 		  &state, &txid) == 0);
@@ -773,6 +787,7 @@ main(void)
 		  &txid) == EINVAL);
 	CHECK(fidl_bsd_connection_error(client) == 0 &&
 	    fidl_bsd_connection_error(server) == 0);
+	puts("C deferred reply, cancellation and bounds: PASS");
 	struct bsd_runtime_test_Shapes_server shapes = { ping, shape_echo };
 	CHECK(bsd_runtime_test_Shapes_bind(server, &shapes, NULL) == 0);
 	int shape_replies = 0;

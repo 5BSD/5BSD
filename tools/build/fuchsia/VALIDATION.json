@@ -685,7 +685,12 @@
       "not_gated": "networkcmpctl resolve localhost fails EAGAIN when BSDFilesystem was not serving /etc/hosts at BSDNetwork start (resolver.c unchanged)",
       "earlier_runs": "VM1-VM3 on the old base found and fixed: evolution peers holding the test end of the channel; Log ATTACH descriptors locked against BSDLog CLOFORK_ONCE (liblogcmp now preserves sent inheritance); four clients keeping a session the provider had closed; fake-provider races in tests"
     },
-    "latency": {
+    "not_converted": {
+      "BSDVM, BSDNamespace, BSDExtension, BSDFilesystem": "user decision: library layout of libservice-embedded clients",
+      "BSDBluetooth": "test matrix compiles plane/controller sources directly; isolate first",
+      "system.Network.PF": "only consumer out of tree; user decision"
+    },
+    "latency_natural_bridge": {
       "method": "per-bench monotonic clock, 2,000 calls x 3 interleaved rounds, pre-migration bench built from 4e87e953034 (build-daemon-bench.sh), same guest; median of rounds",
       "per_service": {
         "system.Audit": {
@@ -794,10 +799,115 @@
       },
       "note": "TCG guest. FIDL p50 1.04-2.54x the pre-migration client with fewer system calls per call: user-space codec/bridge cost. dtraceall failed to load in the plane-on guest, so libchannel probe timing was unavailable."
     },
-    "not_converted": {
-      "BSDVM, BSDNamespace, BSDExtension, BSDFilesystem": "user decision: library layout of libservice-embedded clients",
-      "BSDBluetooth": "test matrix compiles plane/controller sources directly; isolate first",
-      "system.Network.PF": "only consumer out of tree; user decision"
+    "latency": {
+      "method": "as latency_natural_bridge, after the direct C wire codec (VM7, 2 vCPUs, LOADER_EXTRA dtraceall); median of 3 interleaved rounds",
+      "per_service": {
+        "system.Audit": {
+          "op": "Submit",
+          "rounds": 3,
+          "fidl_p50_us": 146,
+          "fidl_p90_us": 193,
+          "fidl_p99_us": 326,
+          "legacy_p50_us": 131,
+          "legacy_p90_us": 163,
+          "legacy_p99_us": 260,
+          "p50_ratio": 1.11
+        },
+        "system.Crypto": {
+          "op": "Random",
+          "rounds": 3,
+          "fidl_p50_us": 124,
+          "fidl_p90_us": 154,
+          "fidl_p99_us": 247,
+          "legacy_p50_us": 127,
+          "legacy_p90_us": 164,
+          "legacy_p99_us": 279,
+          "p50_ratio": 0.98
+        },
+        "system.Device": {
+          "op": "List",
+          "rounds": 3,
+          "fidl_p50_us": 138,
+          "fidl_p90_us": 177,
+          "fidl_p99_us": 310,
+          "legacy_p50_us": 171,
+          "legacy_p90_us": 215,
+          "legacy_p99_us": 339,
+          "p50_ratio": 0.81
+        },
+        "system.Log": {
+          "op": "GetStats",
+          "rounds": 3,
+          "fidl_p50_us": 144,
+          "fidl_p90_us": 196,
+          "fidl_p99_us": 364,
+          "legacy_p50_us": 137,
+          "legacy_p90_us": 167,
+          "legacy_p99_us": 260,
+          "p50_ratio": 1.05
+        },
+        "system.Network": {
+          "op": "GetLimits",
+          "rounds": 3,
+          "fidl_p50_us": 147,
+          "fidl_p90_us": 190,
+          "fidl_p99_us": 306,
+          "legacy_p50_us": 132,
+          "legacy_p90_us": 170,
+          "legacy_p99_us": 291,
+          "p50_ratio": 1.11
+        },
+        "system.Notify": {
+          "op": "GetStats",
+          "rounds": 3,
+          "fidl_p50_us": 130,
+          "fidl_p90_us": 187,
+          "fidl_p99_us": 370,
+          "legacy_p50_us": 140,
+          "legacy_p90_us": 180,
+          "legacy_p99_us": 291,
+          "p50_ratio": 0.93
+        },
+        "system.Power": {
+          "op": "States",
+          "rounds": 3,
+          "fidl_p50_us": 127,
+          "fidl_p90_us": 158,
+          "fidl_p99_us": 264,
+          "legacy_p50_us": 120,
+          "legacy_p90_us": 141,
+          "legacy_p99_us": 222,
+          "p50_ratio": 1.06
+        },
+        "system.Sysctl": {
+          "op": "Get",
+          "rounds": 3,
+          "fidl_p50_us": 172,
+          "fidl_p90_us": 231,
+          "fidl_p99_us": 374,
+          "legacy_p50_us": 153,
+          "legacy_p90_us": 194,
+          "legacy_p99_us": 308,
+          "p50_ratio": 1.12
+        },
+        "system.Trace": {
+          "op": "Open",
+          "rounds": 3,
+          "fidl_p50_us": 3959,
+          "fidl_p90_us": 4642,
+          "fidl_p99_us": 4739154,
+          "legacy_p50_us": 3159,
+          "legacy_p90_us": 4056,
+          "legacy_p99_us": 4064931,
+          "p50_ratio": 1.25
+        }
+      },
+      "syscalls_per_call": {
+        "fidl": 6.1,
+        "legacy": 7.3,
+        "bench": "BSDPower, ktrace 200 calls"
+      },
+      "note": "system.Trace Open at 1.25x is noisy (1.13x in VM6, p99 in seconds); every other service is within 1.12x"
     }
   }
 }

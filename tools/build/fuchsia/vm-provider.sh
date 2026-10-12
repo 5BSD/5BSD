@@ -27,7 +27,8 @@
 #   REQUIRE_UNITS (space-separated SwitchBoard labels that must be "running"
 #   before tests start; default: the twelve core providers that
 #   software-application-guest.sh requires), QEMU, QEMU_DATA,
-#   DRYRUN=1 (build and check the image, do not boot).
+#   DRYRUN=1 (build and check the image, do not boot), LOADER_EXTRA (extra
+#   loader.conf lines).
 #
 # Why not /etc/rc.local: under Capsule, SwitchBoard runs /etc/rc as a oneshot
 # under a temporary boot grant and launches the native capability units only
@@ -125,6 +126,8 @@ if [ "$plane_off" = 1 ]; then
 	printf 'capability_plane="NO"\n' >> "$x/loader.conf"
 	: > "$x/loader.conf.local"
 fi
+# LOADER_EXTRA: more loader.conf lines, e.g. dtraceall_load="YES".
+[ -z "${LOADER_EXTRA:-}" ] || printf '%s\n' "$LOADER_EXTRA" >> "$x/loader.conf"
 if [ -n "$extra_script" ]; then cp "$extra_script" "$x/extra.sh"; else : > "$x/extra.sh"; fi
 cat > "$x/fstab" <<'EOF'
 /dev/vtbd0p2	/	ufs	rw	1	1

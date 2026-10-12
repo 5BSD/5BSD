@@ -17,7 +17,7 @@ FIDL_COMMANDSDIR= /usr/bin
 FIDL_ADAPTER= generate-bsd.py
 FIDL_ADAPTERNAME= fidlgen-bsd
 FIDL_ADAPTERDIR= /usr/bin
-FIDL_HELPER= generate_bsd_c.py generate_bsd_c_types.py fidlgen_natural.py \
+FIDL_HELPER= generate_bsd_c.py generate_bsd_c_types.py generate_bsd_c_wire.py fidlgen_natural.py \
     fidlgen_reserved.py gotemplate.py
 FIDL_HELPERDIR= /usr/libexec/fidl
 # Upstream's fidlgen_cpp templates for the natural types (fidlgen_natural.py).

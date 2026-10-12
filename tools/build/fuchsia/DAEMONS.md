@@ -215,17 +215,17 @@ generator commits).  VM evidence: the plane-on daemon VM (2 vCPUs, all
 provider, client, ctl and runtime suites; `vm-daemons.sh` live and
 lifecycle checks); see VALIDATION.json `fidl_daemons`.
 
-| # | Provider | Status | Latency p50 before -> after (op, µs, 3 rounds, rebased run) |
+| # | Provider | Status | Latency p50 record protocol -> FIDL (op, µs, VM7, direct C wire codec) |
 |---|---|---|---|
-| 1 | BSDPower | converted | States: 238 -> 275 (1.16x) |
-| 2 | BSDDevice | converted | List: 283 -> 634 (2.24x) |
-| 3 | BSDTrace | converted | Open: 3982 -> 7191 (1.81x) |
-| 4 | BSDSysctl | converted | Get: 389 -> 765 (1.97x) |
-| 5 | BSDCrypto | converted | Random: 231 -> 500 (2.16x) |
-| 6 | BSDAudit | converted | Submit: 239 -> 606 (2.54x) |
-| 7 | BSDNetwork | converted | GetLimits: 248 -> 335 (1.35x) |
-| 8 | BSDNotify | converted | GetStats: 300 -> 427 (1.42x) |
-| 9 | BSDLog | converted | GetStats: 281 -> 293 (1.04x) |
+| 1 | BSDPower | converted | States: 120 -> 127 (1.06x; natural bridge 1.16x) |
+| 2 | BSDDevice | converted | List: 171 -> 138 (0.81x; natural bridge 2.24x) |
+| 3 | BSDTrace | converted | Open: 3159 -> 3959 (1.25x, noisy; natural bridge 1.81x) |
+| 4 | BSDSysctl | converted | Get: 153 -> 172 (1.12x; natural bridge 1.97x) |
+| 5 | BSDCrypto | converted | Random: 127 -> 124 (0.98x; natural bridge 2.16x) |
+| 6 | BSDAudit | converted | Submit: 131 -> 146 (1.11x; natural bridge 2.54x) |
+| 7 | BSDNetwork | converted | GetLimits: 132 -> 147 (1.11x; natural bridge 1.35x) |
+| 8 | BSDNotify | converted | GetStats: 140 -> 130 (0.93x; natural bridge 1.42x) |
+| 9 | BSDLog | converted | GetStats: 137 -> 144 (1.05x; natural bridge 1.04x) |
 | - | BSDVM, BSDNamespace, BSDExtension, BSDFilesystem | not converted | user decision: library layout of the libservice-embedded clients |
 | - | BSDBluetooth | not converted | its test matrix compiles the plane/controller sources directly; isolate first |
 | - | system.Network.PF | kept on the record protocol | its only consumer is out of tree (sysutils/5bsd-instruments): user decision |
@@ -235,17 +235,21 @@ lifecycle checks); see VALIDATION.json `fidl_daemons`.
 Latency is each bench's own monotonic clock over 2,000 calls on one live
 session, in-process provider and real client library, pre-migration build
 (from `4e87e953034`, `build-daemon-bench.sh`) and FIDL build interleaved in
-the same guest, 3 rounds.  The table is the final run on the rebased branch
-(VM4, 2 vCPUs, QEMU TCG: absolute numbers are far above hardware); two
-earlier runs on the old base (VM2, VM3, busier host) agree in direction.
+the same guest, median of 3 rounds (2 vCPUs, QEMU TCG: absolute numbers are
+far above hardware).
 
-FIDL calls are slower at p50: about 1.0-1.4x for Log, Power, Network and
-Notify, about 2-2.5x for Audit, Crypto, Device and Sysctl, 1.8x for Trace
-Open.  ktrace of 200 Power calls shows the FIDL client makes *fewer* system
-calls per call (6.0 vs 7.2: 3 ioctl each, 1.5 vs 3 getpid), so the cost is
-user-space work (natural-type encode/decode, the C bridge's copies,
-per-call allocations), which software emulation inflates.  The libchannel
-DTrace probes would separate transport from codec time, but `dtraceall`
-does not load in the plane-on guest (kldload fails), so `vm-daemons.sh`
-reports the bench clock.  Follow-up: profile the slower clients' C bridge
-and codec path on hardware.
+The first conversion went through natural C++ types: every C call converted
+its structure to natural objects (allocating strings, vectors and union
+state), encoded those, and decoded replies into natural objects only to
+convert them back.  That cost 1.04-2.54x the record protocol (VM4; kept in
+VALIDATION.json as `latency_natural_bridge`).  The C bindings now encode
+and decode directly on the wire (`<fidl/bsd/c_wire.h>`,
+`generate_bsd_c_wire.py`), checked against the natural codec by
+`c_wire_test`; the table is that build (VM7).  Every converted service is
+within 1.12x of the record protocol or faster, except Trace Open at 1.25x,
+whose run-to-run noise is large (1.13x in VM6, p99 in seconds): Open is
+dominated by the provider's DTrace work, not the protocol.  ktrace of 200
+Power calls: 6.1 system calls per FIDL call against 7.3 for the record
+protocol.  `dtraceall` loads with `LOADER_EXTRA='dtraceall_load="YES"'`, so
+`vm-daemons.sh` also reports the libchannel request probes
+(`LATENCY_DTRACE`).

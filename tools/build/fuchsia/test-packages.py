@@ -66,7 +66,7 @@ expected={
                     '/usr/include/fidl/bsd/endpoint.h','/usr/lib/libfidl_bsd.a','/usr/libdata/pkgconfig/fidl.pc'},
  '5BSD-libfidl-tools': {'/usr/bin/fidlc','/usr/bin/fidl-format','/usr/bin/fidl-lint',
                       '/usr/bin/fidlgen-bsd','/usr/libexec/fidl/generate_bsd_c.py','/usr/libexec/fidl/generate_bsd_c_types.py',
-                      '/usr/libexec/fidl/fidlgen_natural.py','/usr/libexec/fidl/fidlgen_reserved.py','/usr/libexec/fidl/gotemplate.py',
+                      '/usr/libexec/fidl/generate_bsd_c_wire.py','/usr/libexec/fidl/fidlgen_natural.py','/usr/libexec/fidl/fidlgen_reserved.py','/usr/libexec/fidl/gotemplate.py',
                       *['/usr/libexec/fidl/templates/'+t+'.tmpl' for t in ('file_markers','file_common_types_header','file_common_types_source','file_natural_types_header','file_natural_types_source','natural_struct','natural_table','natural_union','fragment_enum','fragment_bits','fragment_const','fragment_alias')],
                       '/usr/share/licenses/libfidl-tools/fuchsia/LICENSE',
                       '/usr/share/licenses/libfidl-tools/fuchsia/PATENTS',

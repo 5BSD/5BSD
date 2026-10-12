@@ -12,6 +12,7 @@ extern "C" {
 #include <bit>
 #include <lib/fit/function.h>
 #include <cerrno>
+#include <cstring>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -29,6 +30,10 @@ struct Transport {
 	static const internal::TransportVTable VTable;
 };
 int ValidateDescriptor(int fd, uint32_t type, uint32_t rights);
+// Check a received descriptor against a field's type and rights, using the
+// kernel's report when the metadata carries one (as the codec does).
+int CheckReceivedDescriptor(int fd, uint32_t type, uint32_t rights,
+    uint32_t reported_type, uint32_t reported_rights);
 // Incoming marks metadata entries that carry the kernel's descriptor report
 // (obj_type: tag | CHANNEL_FD_TYPE_*, rights: CHANNEL_FD_RIGHT* bits).
 inline constexpr uint32_t kKernelReported = 0x80000000u;
@@ -121,6 +126,30 @@ class Outgoing {
 	// Leave descriptor type and rights checks to the send system call
 	// (a connection's own packet); standalone packets check on encode.
 	void DeferDescriptorChecks() { defer_checks_ = true; }
+	// Direct wire encoding, used by the generated C bindings
+	// (<fidl/bsd/c_wire.h>): the caller writes the body in place, with
+	// no natural-type objects.  Offsets are relative to the body; RawBody()
+	// moves when RawAlloc() grows the packet.
+	int RawStart(uint32_t txid, uint64_t ordinal, bool flexible);
+	// Append size bytes, zeroed and padded to 8; SIZE_MAX if the message
+	// would exceed the transport limit.
+	size_t RawAlloc(size_t size);
+	uint8_t *RawBody()
+	{
+		return bytes_.data() + sizeof(fidl_message_header_t);
+	}
+	size_t RawLength() const
+	{
+		return bytes_.size() - sizeof(fidl_message_header_t);
+	}
+	size_t RawHandleCount() const { return fds_.size(); }
+	void RawSetTxid(uint32_t txid)
+	{
+		memcpy(bytes_.data(), &txid, sizeof(txid));
+	}
+	// Attach a private duplicate of a borrowed descriptor with the wire
+	// type and rights (C callers lend descriptors).
+	int RawHandle(int fd, uint32_t type, uint32_t rights);
 
     private:
 	int Prepare(fidl::OutgoingMessage &, uint32_t, uint64_t);
@@ -286,6 +315,7 @@ class Connection {
 		if (!event_handler_)
 			event_handler_ = std::move(handler);
 	}
+	bool HasEventHandler() const { return bool(event_handler_); }
 	// Applies unknown-interaction policy and sends a framework-error reply
 	// for an accepted unknown two-way call. The caller owns payload
 	// cleanup.
@@ -338,6 +368,88 @@ class Connection {
 		} catch (const std::bad_alloc &) {
 			return fit::error(ENOMEM);
 		}
+	}
+	// The same operations with a body written in place by encode(Outgoing&)
+	// (the generated C bindings).  encode returns 0 or an errno value.
+	template <typename F>
+	Result<uint32_t> CallRaw(uint64_t ordinal, bool flexible, F &&encode,
+	    Completion completion)
+	{
+		try {
+			// Argument errors come first, as when the C bindings
+			// converted to natural types before calling.
+			int err = scratch_.RawStart(0, ordinal, flexible);
+			if (!err)
+				err = encode(scratch_);
+			if (!err && (role_ != CHANNEL_ROLE_CLIENT || error()))
+				err = error() ? error() : EINVAL;
+			uint32_t id = 0;
+			if (!err && !(id = AllocateId()))
+				err = EOVERFLOW;
+			if (!err) {
+				scratch_.RawSetTxid(id);
+				err = SendRequest(id, ordinal, scratch_,
+				    std::move(completion));
+			}
+			scratch_.Reset();
+			if (err)
+				return fit::error(err);
+			return fit::ok(id);
+		} catch (const std::bad_alloc &) {
+			scratch_.Reset();
+			return fit::error(ENOMEM);
+		}
+	}
+	template <typename F>
+	int SendRaw(uint64_t ordinal, bool flexible, F &&encode)
+	{
+		if (error())
+			return error();
+		if (closing_)
+			return ESHUTDOWN;
+		int err = scratch_.RawStart(0, ordinal, flexible);
+		if (!err)
+			err = encode(scratch_);
+		if (!err) {
+			auto view = scratch_.MoveView(lock_inherit_);
+			err = channel_send_event(channel_, &view) == 0 ? 0 :
+									 errno;
+			if (!err)
+				scratch_.Sent();
+		}
+		scratch_.Reset();
+		return err;
+	}
+	template <typename F>
+	int ReplyRaw(Incoming &request, bool flexible, F &&encode)
+	{
+		if (role_ != CHANNEL_ROLE_PROVIDER || error())
+			return error() ? error() : EINVAL;
+		if (closing_)
+			return ESHUTDOWN;
+		if (request.origin_ != identity_)
+			return EINVAL;
+		if (request.replied_)
+			return EALREADY;
+		auto h = request.header();
+		if (request.Validate(h.ordinal, h.txid) || h.txid == 0)
+			return EPROTO;
+		int err = scratch_.RawStart(h.txid, h.ordinal, flexible);
+		if (!err)
+			err = encode(scratch_);
+		if (!err) {
+			auto view = scratch_.MoveView(lock_inherit_);
+			err = channel_send_reply(request.native(), &view) == 0 ?
+			    0 :
+			    errno;
+			if (!err)
+				scratch_.Sent();
+		}
+		scratch_.Reset();
+		if (err)
+			return err;
+		request.replied_ = true;
+		return 0;
 	}
 	template <typename T>
 	int Send(uint64_t ordinal, T value, bool flexible = false)

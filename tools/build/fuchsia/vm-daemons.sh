@@ -103,7 +103,10 @@ command -v networkcmpctl > /dev/null && live NETWORK_RESOLVE_HOSTS networkcmpctl
 command -v networkcmpctl > /dev/null && live NETWORK_STATE networkcmpctl state-watch 1 0
 
 # ----------------------------------------------------------------- latency
-kld=$(kldload -n dtraceall 2>&1) || echo "LATENCY_KLDLOAD dtraceall: $kld"
+kld=$(kldload -n dtraceall 2>&1) || {
+	echo "LATENCY_KLDLOAD dtraceall: $kld"
+	dmesg | tail -n 5 | sed 's/^/LATENCY_KLDLOAD_DMESG: /'
+}
 dtrace_ok=
 dtrace -l -n 'BEGIN' > /dev/null 2>&1 && dtrace_ok=1
 [ -n "$dtrace_ok" ] || echo "LATENCY_NOTE dtrace unavailable; bench clock only"
@@ -115,11 +118,10 @@ done
 r=1
 while [ "$r" -le "$ROUNDS" ]; do
 	for bench in $benches; do
-		if [ -z "$dtrace_ok" ]; then
-			"$bench" "$CALLS" 2>&1 | grep '^LATENCY ' | \
-			    sed "s|\$| bench=$bench round=$r|"
-			continue
-		fi
+		# The bench clock, uninstrumented; then the libchannel probes.
+		"$bench" "$CALLS" 2>&1 | grep '^LATENCY ' | \
+		    sed "s|\$| bench=$bench round=$r|"
+		[ -n "$dtrace_ok" ] || continue
 		out=$(dtrace -Z -q -x bufsize=4m -n '
 libchannel$target:::request-start { s[arg0, arg1] = timestamp; }
 libchannel$target:::request-done /s[arg0, arg1]/ {
@@ -129,7 +131,6 @@ libchannel$target:::request-done /s[arg0, arg1]/ {
 }
 END { printa("DTRACE_COUNT %@d\n", @n); printa("DTRACE_AVG %@d\n", @a); printa(@q); }' \
 		    -c "$bench $CALLS" 2>&1)
-		echo "$out" | grep '^LATENCY ' | sed "s|\$| bench=$bench round=$r|"
 		count=$(echo "$out" | awk '/^DTRACE_COUNT/ { print $2 }')
 		avg=$(echo "$out" | awk '/^DTRACE_AVG/ { print $2 }')
 		# Median bucket of the quantize() histogram.

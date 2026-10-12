@@ -6,6 +6,7 @@ fidl-header-directories: .EXEC .NOTMAIN
 
 INCSGROUPS+= FIDL_HEADERS_0
 FIDL_HEADERS_0= ${.CURDIR}/include/fidl/bsd/c_bridge.h \
+    ${.CURDIR}/include/fidl/bsd/c_wire.h \
     ${.CURDIR}/include/fidl/bsd/descriptor.h \
     ${.CURDIR}/include/fidl/bsd/empty.h \
     ${.CURDIR}/include/fidl/bsd/endpoint.h \
