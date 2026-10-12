@@ -67,10 +67,15 @@ def main():
 
     # Bind actual installed executables to the qualified clean installation,
     # rather than accepting a matching kernel with stale userland packages.
+    # Resolve each library's current major from its development link, so a
+    # SHLIB_MAJOR bump does not leave the check naming a removed file.
+    def shlib(name):
+        return 'usr/lib/' + os.readlink(fresh / 'usr/lib' / (name + '.so'))
+
     identity_paths = [
         'boot/kernel/kernel', 'sbin/capsule', 'usr/libexec/switchboard',
-        'usr/lib/libservice.so.1', 'usr/lib/libchannel.so.1',
-        'usr/lib/libcapbundle.so.1', 'libexec/ld-elf.so.1',
+        shlib('libservice'), shlib('libchannel'),
+        shlib('libcapbundle'), 'libexec/ld-elf.so.1',
         'usr/bin/login', 'usr/bin/su', 'usr/sbin/sshd',
         'usr/libexec/sshd-session', 'usr/libexec/sshd-auth',
         'Capabilities/System/SwitchBoardControl.cap/Units/switchboardctl.unit/bin/switchboardctl',
