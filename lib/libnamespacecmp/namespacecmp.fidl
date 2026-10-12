@@ -1,0 +1,51 @@
+// SPDX-License-Identifier: BSD-2-Clause
+// system.Namespace (BSDNamespace).  The library name, ordinals and layouts
+// are a stable contract for wire major 1; incompatible changes need a new
+// major.  Identity never travels in a payload: the jail every method acts on
+// is named from the accepted session's label, so a caller can only ever
+// create, attach to, describe or remove its own jail.
+library bsd.namespace.v1;
+
+using zx;
+
+type ProtocolInfo = struct { wire_version uint32; };
+// flags: 0x1 EPHEMERAL (the jail's lifetime is bound to this session),
+// 0x2 VNET (the jail gets its own network stack).  Other bits are EINVAL.
+// Strings carry no NUL; path is absolute.  An empty hostname is derived, an
+// empty ip4_addr inherits, an empty ip6_addr means none.
+type EnterRequest = struct {
+    flags uint32;
+    path string:1023;
+    hostname string:63;
+    ip4_addr string:63;
+    ip6_addr string:63;
+};
+// The jail's non-owning attach descriptor (jail_attach_jd(2)); it may be
+// transferred no further and survives one more fork.
+type Entered = resource struct {
+    jail zx.Handle;
+};
+type JailInfo = struct {
+    jid int32;
+    // EPHEMERAL when this session anchors the jail's lifetime; VNET when the
+    // jail owns its network stack.
+    flags uint32;
+    path string:1023;
+    hostname string:63;
+    ip4_addr string:63;
+    ip6_addr string:63;
+};
+type JailList = struct {
+    // Absent when the caller has no jail.
+    jail box<JailInfo>;
+};
+closed protocol Namespace {
+    strict GetProtocolInfo() -> (ProtocolInfo);
+    // Errors are errno values (EINVAL: bad request; EALREADY: this session
+    // already anchors an ephemeral jail; EEXIST: the caller's jail exists
+    // with a different definition).
+    strict Enter(EnterRequest) -> (Entered) error uint32;
+    // ENOENT when the caller has no jail.
+    strict Destroy() -> () error uint32;
+    strict List() -> (JailList) error uint32;
+};

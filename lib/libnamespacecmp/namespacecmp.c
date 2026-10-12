@@ -1,137 +1,293 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
 /*
- * The system.Namespace client, moved out of libservice: service_enter_namespace(3), service_destroy_namespace(3) and service_namespace_info(3).
- * The record protocol and behaviour are unchanged.
+ * The system.Namespace client: service_enter_namespace(3),
+ * service_enter_namespace_ex(3), service_destroy_namespace(3) and
+ * service_namespace_info(3) over bsd.namespace.v1 (namespacecmp.fidl).
+ *
+ * One process-wide session, opened by name on first use and negotiated with
+ * GetProtocolInfo.  Transport failures, timeouts and malformed replies drop
+ * it (the next call reopens it, which also replaces a session to a provider
+ * that died or was relaunched); application errors keep it.  A session
+ * inherited across fork or pdfork belongs to the parent and is abandoned.
+ * The session must outlive an ephemeral Enter: the provider anchors that
+ * jail's lifetime to it.
  */
 #include <sys/types.h>
 #include <sys/param.h>
-#include <sys/capsicum.h>
+#include <sys/jail.h>
 #include <sys/stat.h>
+
 #include <errno.h>
-#include <fcntl.h>
-#include <limits.h>
+#include <fidl/bsd.namespace.v1/c/bsd.h>
+#include <fidl/bsd/sync_c.h>
 #include <pthread.h>
 #include <stdbool.h>
-#include <stddef.h>
 #include <stdint.h>
-#include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
-#include <sys/jail.h>
 
 #include <libservice.h>
-#include <libservice_session.h>
+#include <service_runtime.h>
 #include <bsdnamespace_proto.h>
+
 #include "namespacecmp.h"
 
 /*
  * Bound for the system.Namespace control calls.  Without a finite
  * timeout a provider that is up-but-wedged (accepted the connection but never
  * replies) would block the calling daemon thread forever.  A crashed provider is
- * already handled -- the channel reset delivers ECONNRESET -- so this only
- * covers the wedged case; 30s is generous for a jail create.
+ * already handled -- the transport reports the reset -- so this only covers
+ * the wedged case; 30s is generous for a jail create.
  */
-#define	SERVICE_CONTROL_CALL_TIMEOUT_MS	30000
+#define	NAMESPACECMP_CALL_TIMEOUT_MS	30000
 
-static struct service_session *service_namespace_session;
-#define SESSIONS_FORGET() do { service_namespace_session = NULL; } while (0)
-static bool
-service_provider_status_valid(int32_t status)
+static pthread_mutex_t namespacecmp_lock = PTHREAD_MUTEX_INITIALIZER;
+static struct fidl_bsd_connection *namespacecmp_connection;
+static pid_t namespacecmp_owner;
+static bool namespacecmp_negotiated;
+
+struct completion {
+	bool done, malformed;
+	int error;
+	int fd;
+	struct service_namespace_info *info;
+};
+
+static void
+malformed(struct completion *result)
 {
-
-	return (status >= 0 && status <= ELAST);
+	result->malformed = true;
+	result->error = EPROTO;
 }
 
-static bool
-service_provider_all_zero(const void *data, size_t length)
+static void
+domain_error(struct completion *result, uint32_t error)
 {
-	const unsigned char *bytes = data;
-	size_t i;
+	if (error == 0 || error > ELAST)
+		malformed(result);
+	else
+		result->error = (int)error;
+}
 
-	for (i = 0; i < length; i++)
-		if (bytes[i] != 0)
-			return (false);
+/* Copy a provider string out, refusing an embedded NUL or overflow. */
+static bool
+copy_string(char *out, size_t outsz, const char *in, size_t len)
+{
+
+	if (len >= outsz || (len != 0 && memchr(in, '\0', len) != NULL))
+		return (false);
+	if (len != 0)
+		memcpy(out, in, len);
+	out[len] = '\0';
 	return (true);
 }
 
-static int
-service_provider_protocol_error(struct service_session *session, int fd)
+static void
+info_reply(void *context, int error,
+    struct bsd_namespace_v1_ProtocolInfo *value)
 {
+	struct completion *result = context;
 
-	if (fd >= 0)
-		(void)close(fd);
-	(void)service_session_fail(session, EPROTO);
-	errno = EPROTO;
-	return (-1);
+	result->done = true;
+	result->error = error;
+	if (!error && (value == NULL ||
+	    value->wire_version != BSDNAMESPACE_WIRE_VERSION)) {
+		result->malformed = true;
+		result->error = EPROTONOSUPPORT;
+	}
 }
 
+static void
+enter_reply(void *context, int error,
+    struct bsd_namespace_v1_Namespace_Enter_Result *v)
+{
+	struct completion *result = context;
+
+	result->done = true;
+	result->error = error;
+	if (error)
+		return;
+	if (v == NULL)
+		malformed(result);
+	else if (v->tag == bsd_namespace_v1_Namespace_Enter_Result_err_tag)
+		domain_error(result, v->value.err);
+	else if (v->tag != bsd_namespace_v1_Namespace_Enter_Result_response_tag)
+		malformed(result);
+	else {
+		result->fd = fidl_bsd_take_fd(&v->value.response.jail);
+		if (result->fd < 0)
+			malformed(result);
+	}
+}
+
+static void
+destroy_reply(void *context, int error,
+    struct bsd_namespace_v1_Namespace_Destroy_Result *v)
+{
+	struct completion *result = context;
+
+	result->done = true;
+	result->error = error;
+	if (error)
+		return;
+	if (v == NULL)
+		malformed(result);
+	else if (v->tag == bsd_namespace_v1_Namespace_Destroy_Result_err_tag)
+		domain_error(result, v->value.err);
+	else if (v->tag !=
+	    bsd_namespace_v1_Namespace_Destroy_Result_response_tag)
+		malformed(result);
+}
+
+static void
+list_reply(void *context, int error,
+    struct bsd_namespace_v1_Namespace_List_Result *v)
+{
+	struct completion *result = context;
+	struct service_namespace_info *out = result->info;
+	const struct bsd_namespace_v1_JailInfo *jail;
+
+	result->done = true;
+	result->error = error;
+	if (error)
+		return;
+	if (v == NULL) {
+		malformed(result);
+		return;
+	}
+	if (v->tag == bsd_namespace_v1_Namespace_List_Result_err_tag) {
+		domain_error(result, v->value.err);
+		return;
+	}
+	if (v->tag != bsd_namespace_v1_Namespace_List_Result_response_tag) {
+		malformed(result);
+		return;
+	}
+	jail = v->value.response.jail;
+	if (jail == NULL)
+		return;			/* the caller has no jail */
+	/* Bound every provider-supplied value before copying it out. */
+	if (jail->jid <= 0 ||
+	    (jail->flags & ~(BSDNAMESPACE_F_VNET | BSDNAMESPACE_F_EPHEMERAL)) !=
+	    0 || jail->path_size == 0 || jail->path[0] != '/' ||
+	    !copy_string(out->path, sizeof(out->path), jail->path,
+	    jail->path_size) ||
+	    !copy_string(out->hostname, sizeof(out->hostname), jail->hostname,
+	    jail->hostname_size) ||
+	    !copy_string(out->ip4_addr, sizeof(out->ip4_addr), jail->ip4_addr,
+	    jail->ip4_addr_size) ||
+	    !copy_string(out->ip6_addr, sizeof(out->ip6_addr), jail->ip6_addr,
+	    jail->ip6_addr_size)) {
+		memset(out, 0, sizeof(*out));
+		malformed(result);
+		return;
+	}
+	out->present = 1;
+	out->jid = jail->jid;
+	/* Map the wire BSDNAMESPACE_F_* bits back to the public SERVICE_NS_* set. */
+	out->flags = 0;
+	if ((jail->flags & BSDNAMESPACE_F_VNET) != 0)
+		out->flags |= SERVICE_NS_VNET;
+	if ((jail->flags & BSDNAMESPACE_F_EPHEMERAL) != 0)
+		out->flags |= SERVICE_NS_EPHEMERAL;
+}
+
+/* Drop the cached session.  Caller holds namespacecmp_lock. */
+static void
+session_drop(void)
+{
+
+	if (namespacecmp_connection != NULL && namespacecmp_owner == getpid())
+		fidl_bsd_connection_destroy(namespacecmp_connection);
+	namespacecmp_connection = NULL;
+	namespacecmp_owner = 0;
+	namespacecmp_negotiated = false;
+}
 
 /*
- * One process-wide provider session, opened by name on first use.  A
- * session that failed terminally (the provider died or was relaunched) is
- * replaced; a session inherited across fork or pdfork belongs to the parent
- * and is abandoned (libservice's fork handling severs its channel).
+ * Open the process-wide session on first use.  A session inherited across
+ * fork is the parent's: forget it without closing it.  Caller holds
+ * namespacecmp_lock.
  */
-static pthread_mutex_t service_state_lock = PTHREAD_MUTEX_INITIALIZER;
-static pid_t service_session_owner;
-
 static int
-service_cached_session_get(const char *name, struct service_session **slot)
-    __no_lock_analysis
+session_get(void)
 {
-	struct service_session *candidate;
 	int error, fd;
 
-	error = pthread_mutex_lock(&service_state_lock);
-	if (error != 0)
-		return (errno = error, -1);
-	if (service_session_owner != getpid()) {
-		/* Never close an inherited session: it is the parent's. */
-		SESSIONS_FORGET();
-		service_session_owner = getpid();
-	}
-	if (*slot != NULL) {
-		struct service_session *dead = NULL;
-
-		if (service_session_is_dead(*slot)) {
-			dead = *slot;
-			*slot = NULL;
-		}
-		(void)pthread_mutex_unlock(&service_state_lock);
-		if (dead == NULL)
-			return (0);
-		service_session_close(dead);
-	} else
-		(void)pthread_mutex_unlock(&service_state_lock);
-
-	if (service_open(name, &fd) == -1)
+	if (namespacecmp_connection != NULL && namespacecmp_owner == getpid())
+		return (0);
+	namespacecmp_connection = NULL;
+	namespacecmp_negotiated = false;
+	if (service_open(BSDNAMESPACE_SERVICE_NAME, &fd) == -1)
 		return (-1);
-	if (service_session_create(fd, &candidate) == -1) {
-		error = errno;
-		(void)close(fd);
-		errno = error;
-		return (-1);
-	}
-
-	error = pthread_mutex_lock(&service_state_lock);
+	error = fidl_bsd_connection_create(fd, FIDL_BSD_CLIENT,
+	    &namespacecmp_connection);
 	if (error != 0) {
-		service_session_close(candidate);
-		errno = error;
+		namespacecmp_connection = NULL;
+		(void)close(fd);
+		return (errno = error, -1);
+	}
+	namespacecmp_owner = getpid();
+	return (0);
+}
+
+/*
+ * Wait for one completion with the lock held.  Transport failures, timeouts
+ * and malformed replies drop the session; application errors keep it.
+ */
+static int
+finish_locked(int error, struct completion *result,
+    const struct timespec *deadline)
+{
+
+	if (error == 0)
+		error = fidl_bsd_sync_wait(namespacecmp_connection,
+		    &result->done, deadline);
+	if (error == 0 && result->malformed)
+		error = result->error;
+	/* A reply failed by the transport (the peer closed) is not an
+	 * application error: the session is gone. */
+	if (error == 0 && result->error != 0 &&
+	    fidl_bsd_connection_error(namespacecmp_connection) != 0)
+		error = result->error;
+	if (error != 0) {
+		session_drop();
+		return (errno = error, -1);
+	}
+	if (result->error != 0)
+		return (errno = result->error, -1);
+	return (0);
+}
+
+/* Open or reuse the session and negotiate.  Caller holds namespacecmp_lock. */
+static int
+begin_locked(struct timespec *deadline)
+{
+	struct completion result = { .fd = -1 };
+	struct fidl_bsd_empty empty = { 0 };
+	uint32_t timeout_ms = NAMESPACECMP_CALL_TIMEOUT_MS, txid;
+	int error;
+
+	/* A caller's service_budget_begin(3) bounds the whole operation. */
+	if (service_budget_timeout(&timeout_ms) == -1)
 		return (-1);
-	}
-	if (*slot == NULL) {
-		*slot = candidate;
-		candidate = NULL;
-	}
-	(void)pthread_mutex_unlock(&service_state_lock);
-	if (candidate != NULL)
-		service_session_close(candidate);
+	if ((error = fidl_bsd_sync_deadline(deadline, timeout_ms)) != 0)
+		return (errno = error, -1);
+	if (session_get() == -1)
+		return (-1);
+	if (namespacecmp_negotiated)
+		return (0);
+	error = bsd_namespace_v1_Namespace_GetProtocolInfo(
+	    namespacecmp_connection, &empty, info_reply, &result, &txid);
+	if (finish_locked(error, &result, deadline) == -1)
+		return (-1);
+	namespacecmp_negotiated = true;
 	return (0);
 }
 
 /*
  * Confine this process to its namespace (jail) via bsdnamespace(8).  Consumer self-
- * service, uniform with storage/modules: libservice opens a system.Namespace
+ * service, uniform with storage/modules: libnamespacecmp opens a system.Namespace
  * channel by name (pulling bsdnamespace up on demand), asks it to create the jail
  * rooted at `path` (named/scoped by this process's unforgeable channel label),
  * and jail_attach_jd(2)s the process to the returned descriptor.  The
@@ -145,7 +301,7 @@ service_cached_session_get(const char *name, struct service_session **slot)
  * SERVICE_NS_EPHEMERAL for a jail whose lifetime is bound to this process.  In
  * the ephemeral case bsdnamespace's per-client worker holds the jail's owning
  * descriptor and drops it when this process disconnects, so the jail is torn
- * down when the process exits; libservice itself only attaches.  Returns 0, or
+ * down when the process exits; this library itself only attaches.  Returns 0, or
  * -1 with errno.
  */
 
@@ -175,26 +331,27 @@ service_enter_namespace_ex(struct service_context *context, const char *path,
     const char *hostname, const char *ip4_addr, const char *ip6_addr,
     unsigned flags)
 {
-	struct bsdnamespace_request rq;
-	struct bsdnamespace_reply rp;
-	struct service_message outgoing;
-	struct service_reply incoming;
-	struct service_call_options options = SERVICE_CALL_OPTIONS_INITIALIZER;
-	options.timeout_ms = SERVICE_CONTROL_CALL_TIMEOUT_MS;
-	int jd = -1, saved;
+	struct completion result = { .fd = -1 };
+	struct bsd_namespace_v1_EnterRequest request;
+	struct timespec deadline;
+	uint32_t txid;
+	int jd, rc, saved;
 
 	if (path == NULL || path[0] != '/' ||
 	    (flags & ~(SERVICE_NS_EPHEMERAL | SERVICE_NS_VNET))) {
 		errno = EINVAL;
 		return (-1);
 	}
-	if (strnlen(path, sizeof(rq.path)) >= sizeof(rq.path) ||
-	    (hostname != NULL &&
-	    strnlen(hostname, sizeof(rq.hostname)) >= sizeof(rq.hostname)) ||
-	    (ip4_addr != NULL &&
-	    strnlen(ip4_addr, sizeof(rq.ip4_addr)) >= sizeof(rq.ip4_addr)) ||
-	    (ip6_addr != NULL &&
-	    strnlen(ip6_addr, sizeof(rq.ip6_addr)) >= sizeof(rq.ip6_addr))) {
+	if (hostname == NULL)
+		hostname = "";
+	if (ip4_addr == NULL)
+		ip4_addr = "";
+	if (ip6_addr == NULL)
+		ip6_addr = "";
+	/* The legacy record's field sizes, NUL included. */
+	if (strnlen(path, PATH_MAX) >= PATH_MAX ||
+	    strnlen(hostname, 64) >= 64 || strnlen(ip4_addr, 64) >= 64 ||
+	    strnlen(ip6_addr, 64) >= 64) {
 		errno = ENAMETOOLONG;
 		return (-1);
 	}
@@ -202,53 +359,35 @@ service_enter_namespace_ex(struct service_context *context, const char *path,
 		errno = EINVAL;
 		return (-1);
 	}
-
-	/* Reuse the process-wide system.Namespace channel. */
-	if (service_cached_session_get(BSDNAMESPACE_SERVICE_NAME,
-	    &service_namespace_session) == -1)
-		return (-1);
-
-	memset(&rq, 0, sizeof(rq));
-	rq.op = BSDNAMESPACE_OP_ENTER_JAIL;
+	memset(&request, 0, sizeof(request));
 	if (flags & SERVICE_NS_EPHEMERAL)
-		rq.flags |= BSDNAMESPACE_F_EPHEMERAL;
+		request.flags |= BSDNAMESPACE_F_EPHEMERAL;
 	if (flags & SERVICE_NS_VNET)
-		rq.flags |= BSDNAMESPACE_F_VNET;
-	(void)strlcpy(rq.path, path, sizeof(rq.path));
-	if (hostname != NULL)
-		(void)strlcpy(rq.hostname, hostname, sizeof(rq.hostname));
-	if (ip4_addr != NULL)
-		(void)strlcpy(rq.ip4_addr, ip4_addr, sizeof(rq.ip4_addr));
-	if (ip6_addr != NULL)
-		(void)strlcpy(rq.ip6_addr, ip6_addr, sizeof(rq.ip6_addr));
+		request.flags |= BSDNAMESPACE_F_VNET;
+	request.path = path;
+	request.path_size = strlen(path);
+	request.hostname = hostname;
+	request.hostname_size = strlen(hostname);
+	request.ip4_addr = ip4_addr;
+	request.ip4_addr_size = strlen(ip4_addr);
+	request.ip6_addr = ip6_addr;
+	request.ip6_addr_size = strlen(ip6_addr);
 
-	memset(&outgoing, 0, sizeof(outgoing));
-	outgoing.size = sizeof(outgoing);
-	outgoing.data = &rq;
-	outgoing.length = sizeof(rq);
-	memset(&rp, 0, sizeof(rp));
-	memset(&incoming, 0, sizeof(incoming));
-	incoming.size = sizeof(incoming);
-	incoming.data = &rp;
-	incoming.capacity = sizeof(rp);
-	incoming.fds = &jd;
-	incoming.fd_capacity = 1;
-	if (service_session_call(service_namespace_session, &outgoing, &incoming,
-	    &options) == -1) {
-		if (errno == EMSGSIZE)
-			return (service_provider_protocol_error(
-			    service_namespace_session, -1));
+	pthread_mutex_lock(&namespacecmp_lock);
+	rc = begin_locked(&deadline);
+	if (rc == 0)
+		rc = finish_locked(bsd_namespace_v1_Namespace_Enter(
+		    namespacecmp_connection, &request, enter_reply, &result,
+		    &txid), &result, &deadline);
+	pthread_mutex_unlock(&namespacecmp_lock);
+	if (rc == -1) {
+		saved = errno;
+		if (result.fd >= 0)
+			(void)close(result.fd);
+		errno = saved;
 		return (-1);
 	}
-	if (incoming.length != sizeof(rp) || rp._reserved != 0 ||
-	    !service_provider_status_valid(rp.status) ||
-	    (rp.status == 0 ? incoming.nfds != 1 : incoming.nfds != 0))
-		return (service_provider_protocol_error(service_namespace_session,
-		    incoming.nfds != 0 ? jd : -1));
-	if (rp.status != 0) {
-		errno = rp.status;
-		return (-1);
-	}
+	jd = result.fd;
 
 	/*
 	 * A process about to be confined must not retain an open directory
@@ -288,7 +427,7 @@ service_enter_namespace_ex(struct service_context *context, const char *path,
 }
 
 /*
- * Destroy the caller's namespace (jail) via bsdnamespace (BSDNAMESPACE_OP_DESTROY_JAIL).
+ * Destroy the caller's namespace (jail) via bsdnamespace.
  * The jail acted on is the ONE scoped by this process's unforgeable channel
  * label (bsdnamespace derives its name), so a caller can never name another's jail.
  * Carries no fd in either direction.  Returns 0 once the jail is gone, or -1
@@ -297,53 +436,28 @@ service_enter_namespace_ex(struct service_context *context, const char *path,
 int
 service_destroy_namespace(struct service_context *context)
 {
-	struct bsdnamespace_control_request rq;
-	struct bsdnamespace_reply rp;
-	struct service_message outgoing;
-	struct service_reply incoming;
-	struct service_call_options options = SERVICE_CALL_OPTIONS_INITIALIZER;
-	options.timeout_ms = SERVICE_CONTROL_CALL_TIMEOUT_MS;
+	struct completion result = { .fd = -1 };
+	struct fidl_bsd_empty empty = { 0 };
+	struct timespec deadline;
+	uint32_t txid;
+	int rc;
 
 	if (service_context_check(context) != 0) {
 		errno = EINVAL;
 		return (-1);
 	}
-
-	/* Reuse the process-wide system.Namespace channel. */
-	if (service_cached_session_get(BSDNAMESPACE_SERVICE_NAME,
-	    &service_namespace_session) == -1)
-		return (-1);
-
-	memset(&rq, 0, sizeof(rq));
-	rq.op = BSDNAMESPACE_OP_DESTROY_JAIL;
-	memset(&outgoing, 0, sizeof(outgoing));
-	outgoing.size = sizeof(outgoing);
-	outgoing.data = &rq;
-	outgoing.length = sizeof(rq);
-	memset(&rp, 0, sizeof(rp));
-	memset(&incoming, 0, sizeof(incoming));
-	incoming.size = sizeof(incoming);
-	incoming.data = &rp;
-	incoming.capacity = sizeof(rp);
-	if (service_session_call(service_namespace_session, &outgoing, &incoming,
-	    &options) == -1) {
-		if (errno == EMSGSIZE)
-			return (service_provider_protocol_error(
-			    service_namespace_session, -1));
-		return (-1);
-	}
-	if (incoming.length != sizeof(rp) || incoming.nfds != 0 ||
-	    rp._reserved != 0 || !service_provider_status_valid(rp.status))
-		return (service_provider_protocol_error(service_namespace_session, -1));
-	if (rp.status != 0) {
-		errno = rp.status;
-		return (-1);
-	}
-	return (0);
+	pthread_mutex_lock(&namespacecmp_lock);
+	rc = begin_locked(&deadline);
+	if (rc == 0)
+		rc = finish_locked(bsd_namespace_v1_Namespace_Destroy(
+		    namespacecmp_connection, &empty, destroy_reply, &result,
+		    &txid), &result, &deadline);
+	pthread_mutex_unlock(&namespacecmp_lock);
+	return (rc);
 }
 
 /*
- * Report the caller's namespace (jail) via bsdnamespace (BSDNAMESPACE_OP_LIST_JAILS).  A
+ * Report the caller's namespace (jail) via bsdnamespace.  A
  * label owns at most one jail, so this reports exactly zero or one: out->present
  * is 1 with jid/path/hostname/ip4_addr/ip6_addr/flags filled when the caller has
  * a jail, 0 (and the other fields zeroed) when it has none.  The op is inherently
@@ -355,12 +469,11 @@ int
 service_namespace_info(struct service_context *context,
     struct service_namespace_info *out)
 {
-	struct bsdnamespace_control_request rq;
-	struct bsdnamespace_list_reply rp;
-	struct service_message outgoing;
-	struct service_reply incoming;
-	struct service_call_options options = SERVICE_CALL_OPTIONS_INITIALIZER;
-	options.timeout_ms = SERVICE_CONTROL_CALL_TIMEOUT_MS;
+	struct completion result = { .fd = -1 };
+	struct fidl_bsd_empty empty = { 0 };
+	struct timespec deadline;
+	uint32_t txid;
+	int rc, saved;
 
 	if (out == NULL) {
 		errno = EINVAL;
@@ -371,75 +484,18 @@ service_namespace_info(struct service_context *context,
 		errno = EINVAL;
 		return (-1);
 	}
-
-	/* Reuse the process-wide system.Namespace channel. */
-	if (service_cached_session_get(BSDNAMESPACE_SERVICE_NAME,
-	    &service_namespace_session) == -1)
-		return (-1);
-
-	memset(&rq, 0, sizeof(rq));
-	rq.op = BSDNAMESPACE_OP_LIST_JAILS;
-	memset(&outgoing, 0, sizeof(outgoing));
-	outgoing.size = sizeof(outgoing);
-	outgoing.data = &rq;
-	outgoing.length = sizeof(rq);
-	memset(&rp, 0, sizeof(rp));
-	memset(&incoming, 0, sizeof(incoming));
-	incoming.size = sizeof(incoming);
-	incoming.data = &rp;
-	incoming.capacity = sizeof(rp);
-	if (service_session_call(service_namespace_session, &outgoing, &incoming,
-	    &options) == -1) {
-		if (errno == EMSGSIZE)
-			return (service_provider_protocol_error(
-			    service_namespace_session, -1));
-		return (-1);
+	result.info = out;
+	pthread_mutex_lock(&namespacecmp_lock);
+	rc = begin_locked(&deadline);
+	if (rc == 0)
+		rc = finish_locked(bsd_namespace_v1_Namespace_List(
+		    namespacecmp_connection, &empty, list_reply, &result,
+		    &txid), &result, &deadline);
+	pthread_mutex_unlock(&namespacecmp_lock);
+	if (rc == -1) {
+		saved = errno;
+		memset(out, 0, sizeof(*out));
+		errno = saved;
 	}
-	if (incoming.length != sizeof(rp) || incoming.nfds != 0 ||
-	    !service_provider_status_valid(rp.status) ||
-	    (rp.flags & ~(BSDNAMESPACE_F_VNET | BSDNAMESPACE_F_EPHEMERAL)) != 0 ||
-	    (rp.status == 0 && rp.present != 0 && rp.present != 1) ||
-	    (rp.status != 0 && (rp.present != 0 || rp.jid != -1 ||
-	    rp.flags != 0 ||
-	    !service_provider_all_zero(rp.path, sizeof(rp.path)) ||
-	    !service_provider_all_zero(rp.hostname, sizeof(rp.hostname)) ||
-	    !service_provider_all_zero(rp.ip4_addr, sizeof(rp.ip4_addr)) ||
-	    !service_provider_all_zero(rp.ip6_addr, sizeof(rp.ip6_addr)))))
-		return (service_provider_protocol_error(service_namespace_session, -1));
-	if (rp.status != 0) {
-		errno = rp.status;
-		return (-1);
-	}
-	if (rp.present == 0) {
-		if (rp.jid != -1 || rp.flags != 0 ||
-		    !service_provider_all_zero(rp.path, sizeof(rp.path)) ||
-		    !service_provider_all_zero(rp.hostname, sizeof(rp.hostname)) ||
-		    !service_provider_all_zero(rp.ip4_addr, sizeof(rp.ip4_addr)) ||
-		    !service_provider_all_zero(rp.ip6_addr, sizeof(rp.ip6_addr)))
-			return (service_provider_protocol_error(
-			    service_namespace_session, -1));
-		return (0);
-	}
-	if (rp.jid <= 0)
-		return (service_provider_protocol_error(service_namespace_session, -1));
-	/* Bound every daemon-supplied string before copying it out. */
-	if (rp.path[0] != '/' ||
-	    strnlen(rp.path, sizeof(rp.path)) >= sizeof(rp.path) ||
-	    strnlen(rp.hostname, sizeof(rp.hostname)) >= sizeof(rp.hostname) ||
-	    strnlen(rp.ip4_addr, sizeof(rp.ip4_addr)) >= sizeof(rp.ip4_addr) ||
-	    strnlen(rp.ip6_addr, sizeof(rp.ip6_addr)) >= sizeof(rp.ip6_addr))
-		return (service_provider_protocol_error(service_namespace_session, -1));
-	out->present = 1;
-	out->jid = rp.jid;
-	/* Map the wire BSDNAMESPACE_F_* bits back to the public SERVICE_NS_* set. */
-	out->flags = 0;
-	if ((rp.flags & BSDNAMESPACE_F_VNET) != 0)
-		out->flags |= SERVICE_NS_VNET;
-	if ((rp.flags & BSDNAMESPACE_F_EPHEMERAL) != 0)
-		out->flags |= SERVICE_NS_EPHEMERAL;
-	(void)strlcpy(out->path, rp.path, sizeof(out->path));
-	(void)strlcpy(out->hostname, rp.hostname, sizeof(out->hostname));
-	(void)strlcpy(out->ip4_addr, rp.ip4_addr, sizeof(out->ip4_addr));
-	(void)strlcpy(out->ip6_addr, rp.ip6_addr, sizeof(out->ip6_addr));
-	return (0);
+	return (rc);
 }

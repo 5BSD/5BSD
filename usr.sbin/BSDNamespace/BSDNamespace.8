@@ -3,7 +3,7 @@
 .\"
 .\" Copyright (c) 2026 Kory Heard
 .\"
-.Dd September 6, 2026
+.Dd October 12, 2026
 .Dt BSDNAMESPACE 8
 .Os
 .Sh NAME
@@ -33,6 +33,7 @@ only for SYSTEM-domain clients.
 Jailing is
 .Em consumer self-service :
 a program confines itself at runtime by calling
+.Xr libnamespacecmp 3 ,
 .Xr service_enter_namespace 3 ,
 whose library resolves
 .Nm
@@ -70,10 +71,22 @@ bundle; it is not started by
 .Xr init 8 ,
 and it is not intended to be run from the command line.
 .Ss Operations
+The protocol is the FIDL library
+.Li bsd.namespace.v1
+.Pq Pa /usr/share/fidl/namespacecmp.fidl ;
+a session calls
+.Sy GetProtocolInfo
+first.
 Each request is scoped to the ONE jail the caller's unforgeable channel label
-names, so no operation takes a jail name or id as a wire argument.
-.Bl -tag -width ".Sy DESTROY_JAIL"
-.It Sy ENTER_JAIL
+names, so no operation takes a jail name or id as an argument.
+Application errors are
+.Xr errno 2
+values; a method before
+.Sy GetProtocolInfo ,
+an unknown method, a malformed frame, a pre-FIDL record or an attached
+descriptor closes the session without a reply.
+.Bl -tag -width ".Sy Destroy"
+.It Sy Enter
 Create
 .Pq or reuse
 the caller's jail rooted at the requested path and return its non-owning
@@ -87,6 +100,12 @@ and an IPv6 address
 .Pq Va ip6_addr ;
 an empty address field means no address of that family.
 The hostname defaults to the derived jail name.
+Unknown flag bits, a relative path or an embedded NUL are
+.Er EINVAL ;
+a second ephemeral
+.Sy Enter
+on a session that already anchors one is
+.Er EALREADY .
 .Pp
 If a matching jail already exists
 .Pq a persistent execution container reused across relaunches
@@ -98,14 +117,14 @@ IPv6 address, and vnet setting.
 A jail's definition is immutable, so any mismatch is a hard
 .Er EEXIST
 rather than a silent reattach into a differently shaped jail.
-.It Sy DESTROY_JAIL
+.It Sy Destroy
 Remove the caller's jail
 .Pq Xr jail_remove 2 .
 It replies
 .Er ENOENT
 when the caller has no jail, and status 0 once the jail is gone.
 An ephemeral jail whose lifetime a worker anchors is torn down regardless.
-.It Sy LIST_JAILS
+.It Sy List
 Report the caller's jail definition: exactly zero or one jail, since a label
 owns at most one.
 When present it reports the jail id, root path, hostname, IPv4 and IPv6
@@ -196,6 +215,7 @@ capability bundle shipping
 .Xr jail_remove 2 ,
 .Xr jail_set 2 ,
 .Xr pdfork 2 ,
+.Xr libnamespacecmp 3 ,
 .Xr service_enter_namespace 3 ,
 .Xr mac_capability 4 ,
 .Xr capsule 8 ,
@@ -211,5 +231,8 @@ It takes over jail construction formerly performed inside
 .Xr capsule 8
 as part of moving privileged work out of PID 1 and behind named,
 domain-restricted, socket-free services.
+Its record protocol was replaced by
+.Li bsd.namespace.v1
+in October 2026.
 .Sh AUTHORS
 .An Kory Heard

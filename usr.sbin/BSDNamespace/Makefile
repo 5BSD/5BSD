@@ -33,8 +33,10 @@ CAP_UNITNAME=	Unit.ucl
 CAP_UNITMODE=	0444
 CAP_UNITPACKAGE=	runtime
 
-# bsdnamespace_proto.h (libcapsulert), jail_set/jail_getv (libjail), and the
-# socket-free service_provider transport (libservice over libchannel).
+# bsdnamespace_proto.h (libcapsulert), jail_set/jail_getv (libjail), the
+# socket-free service_provider transport (libservice over libchannel) and the
+# bsd.namespace.v1 server bindings.
+CFLAGS+=	-I${FIDLGEN.namespacecmp} -I${SRCTOP}/lib/libfidl/include
 CFLAGS+=	-I${SRCTOP}/lib/libcapsulert
 CFLAGS+=	-I${SRCTOP}/lib/libcapreclaim
 CFLAGS+=	-I${SRCTOP}/lib/liblogcmp
@@ -45,7 +47,8 @@ CFLAGS+=	-I${SRCTOP}/lib/libfilesystemcmp
 CFLAGS+=	-I${SRCTOP}/lib/libchannel
 CFLAGS+=	-I${SRCTOP}/sys
 
-LIBADD=		filesystemcmp service channel jail md pthread capreclaim logcmp sysctlcmp
+LIBADD=		namespacecmp filesystemcmp service channel jail md pthread capreclaim \
+		logcmp sysctlcmp fidl_bsd
 
 HAS_TESTS=
 SUBDIR.${MK_TESTS}+=	tests
@@ -57,6 +60,13 @@ SUBDIR.${MK_TESTS}+=	tests
 SRCS+=		bsdnamespace_provider.d
 CFLAGS+=	-I${.OBJDIR} -DWITH_DTRACE
 .endif
+
+# Bindings generated at build time (fidl-bindings.mk).
+FIDL_BINDINGS+=	namespacecmp
+FIDL_SCHEMAS.namespacecmp=	lib/libfidl/tests/zx.fidl \
+	lib/libnamespacecmp/namespacecmp.fidl
+FIDL_LIBRARY.namespacecmp=	bsd.namespace.v1
+.include "${SRCTOP}/lib/libfidl/fidl-bindings.mk"
 
 .include <bsd.prog.mk>
 

@@ -3,7 +3,15 @@
  *
  * Copyright (c) 2026 Kory Heard
  *
- * Wire protocol for bsdnamespace(8) — the namespace (jail) broker.
+ * system.Namespace constants for bsdnamespace(8) -- the namespace (jail)
+ * broker -- and its legacy pre-FIDL wire records.  The current client
+ * (libnamespacecmp) and provider speak bsd.namespace.v1
+ * (lib/libnamespacecmp/namespacecmp.fidl); the request/reply records below are
+ * retained for source/ABI compatibility (the provider still validates an Enter
+ * in the bsdnamespace_request shape internally), are rejected on the wire, and
+ * do not describe the active wire format.  The BSDNAMESPACE_OP_* numbers remain
+ * the DTrace request probe's operation codes.  The historical description
+ * follows.
  *
  * bsdnamespace owns jail construction (jail_set(2)), taking it out of PID 1.  It is a
  * socket-free service_provider: a consumer reaches it over a held mac_capability
@@ -39,6 +47,9 @@
 #include <stdint.h>
 
 #define	BSDNAMESPACE_SERVICE_NAME	"system.Namespace"
+
+/* bsd.namespace.v1 GetProtocolInfo wire_version. */
+#define	BSDNAMESPACE_WIRE_VERSION	1
 
 #define	BSDNAMESPACE_OP_ENTER_JAIL	1	/* create/reuse the caller's jail */
 #define	BSDNAMESPACE_OP_DESTROY_JAIL	2	/* remove the caller's jail */
