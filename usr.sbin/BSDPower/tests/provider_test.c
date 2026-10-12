@@ -4,13 +4,15 @@
  * Plane tests for BSDPower(8)'s per-session request handler.
  *
  * A real capability channel is created through /dev/mac_capability; BSDPower's
- * per-session worker (bsdpower_test_serve_session) runs the provider end in a
- * forked child while the test drives the client end with a libservice session,
- * exactly as it would over a held system.Power channel.
+ * per-session FIDL server (bsdpower_test_serve_session) runs the provider end
+ * in a forked child while the test drives the client end with the real
+ * libpowercmp client (bsd.power.v1 bindings), exactly as it would over a held
+ * system.Power channel.  Adversarial cases hand-build FIDL frames on a raw
+ * libservice session so the provider's own validation is what rejects them.
  *
- * The cases exercise the DAEMON's decision logic -- protocol validation
- * (magic, framing), the per-label suspend policy, and opcode
- * dispatch -- without ever touching /dev/acpi: the worker is started with no
+ * The cases exercise the DAEMON's decision logic -- negotiation, FIDL framing
+ * and decoding, the per-label suspend policy, and method dispatch -- without
+ * ever touching /dev/acpi: the worker is started with no
  * ACPI descriptor, so a SUSPEND that policy lets through is answered ENODEV
  * (the last check before the ioctl), which distinguishes "policy allowed it"
  * from "policy refused it" (EPERM) and from a bad state number (EINVAL)
@@ -39,7 +41,7 @@
 
 #include <libservice.h>
 
-#include "powercmp_protocol.h"
+#include "powercmp.h"
 #include "config.h"
 #include "BSDPower_test.h"
 
@@ -50,9 +52,21 @@
 #define	TEST_STATES	(((uint32_t)1 << 3) | ((uint32_t)1 << 5))
 
 struct fixture {
-	struct service_session	*session;
+	struct powercmp_client	*client;
+	struct service_session	*session;	/* raw-frame cases only */
 	pid_t			 child;
 };
+
+/* FIDL v2 transactional message header. */
+struct wire_header {
+	uint32_t txid;
+	uint8_t flags[3], magic;
+	uint64_t ordinal;
+};
+_Static_assert(sizeof(struct wire_header) == 16, "FIDL header");
+#define ORD_INFO	UINT64_C(0x3f885bd44685314f)
+#define ORD_STATES	UINT64_C(0x0f11f6de81f94c47)
+#define ORD_SUSPEND	UINT64_C(0x77e5c25be901e930)
 
 /* Open a capability endpoint by well-known name, or -1 (errno preserved). */
 static int
@@ -135,7 +149,7 @@ make_config(struct powercmp_config *config, bool allow, const char *grant)
  */
 static void
 fixture_create_as(struct fixture *fixture, const char *label,
-    const struct powercmp_config *config, uint32_t states)
+    const struct powercmp_config *config, uint32_t states, bool raw)
 {
 	int client, provider;
 
@@ -150,14 +164,19 @@ fixture_create_as(struct fixture *fixture, const char *label,
 		_exit(bsdpower_test_serve_session(provider, label, config));
 	}
 	close(provider);
-	ATF_REQUIRE_EQ(0, service_session_create(client, &fixture->session));
+	if (raw)
+		ATF_REQUIRE_EQ(0, service_session_create(client,
+		    &fixture->session));
+	else
+		ATF_REQUIRE_EQ(0, powercmp_client_create(client,
+		    &fixture->client));
 }
 
 static void
 fixture_create(struct fixture *fixture, const struct powercmp_config *config)
 {
 
-	fixture_create_as(fixture, TEST_LABEL, config, TEST_STATES);
+	fixture_create_as(fixture, TEST_LABEL, config, TEST_STATES, false);
 }
 
 static void
@@ -165,24 +184,27 @@ fixture_destroy(struct fixture *fixture)
 {
 	int status;
 
-	service_session_close(fixture->session);
+	if (fixture->client != NULL)
+		powercmp_client_close(fixture->client);
+	if (fixture->session != NULL)
+		service_session_close(fixture->session);
 	ATF_REQUIRE_EQ(fixture->child, waitpid(fixture->child, &status, 0));
+	ATF_REQUIRE(WIFEXITED(status));
+	ATF_CHECK_EQ(0, WEXITSTATUS(status));
 }
 
 /*
  * Send `len` raw bytes (and optionally one descriptor) as a request and
- * collect the reply.  On a successful transport returns 0 and fills *reply
- * (and *reply_body when the reply carries one); returns -1 if the transport
- * itself fails (the provider tore the session down).
+ * collect the reply bytes.  Returns 0 and the reply length, or -1 if the
+ * transport fails (the provider closed the session).
  */
 static int
 call_raw(struct fixture *fixture, const void *data, size_t len, int fd,
-    struct powercmp_msg *reply, struct powercmp_body *reply_body)
+    uint8_t *reply, size_t *reply_len)
 {
 	struct service_call_options options = SERVICE_CALL_OPTIONS_INITIALIZER;
 	struct service_message outgoing;
 	struct service_reply incoming;
-	uint8_t rbuf[POWERCMP_MAX_MESSAGE];
 	int fdslot[1];
 
 	memset(&outgoing, 0, sizeof(outgoing));
@@ -196,48 +218,68 @@ call_raw(struct fixture *fixture, const void *data, size_t len, int fd,
 	}
 	memset(&incoming, 0, sizeof(incoming));
 	incoming.size = sizeof(incoming);
-	incoming.data = rbuf;
-	incoming.capacity = sizeof(rbuf);
+	incoming.data = reply;
+	incoming.capacity = 64;
 	incoming.fds = fdslot;
 	incoming.fd_capacity = 1;
 	options.timeout_ms = 5000;
 	if (service_session_call(fixture->session, &outgoing, &incoming,
 	    &options) == -1)
 		return (-1);
-	ATF_REQUIRE(incoming.length >= sizeof(*reply));
-	memcpy(reply, rbuf, sizeof(*reply));
-	if (reply_body != NULL && incoming.length >= sizeof(*reply) +
-	    sizeof(*reply_body))
-		memcpy(reply_body, rbuf + sizeof(*reply), sizeof(*reply_body));
+	ATF_REQUIRE_EQ(0, incoming.nfds);
+	*reply_len = incoming.length;
 	return (0);
 }
 
+/* A raw FIDL request: header plus `body` bytes. */
+static int
+call_frame(struct fixture *fixture, uint32_t txid, uint64_t ordinal,
+    const void *body, size_t body_len, uint8_t *reply, size_t *reply_len)
+{
+	uint8_t frame[64];
+	struct wire_header header = { txid, { 2, 0, 0 }, 1, ordinal };
+
+	ATF_REQUIRE(sizeof(header) + body_len <= sizeof(frame));
+	memcpy(frame, &header, sizeof(header));
+	if (body_len != 0)
+		memcpy(frame + sizeof(header), body, body_len);
+	return (call_raw(fixture, frame, sizeof(header) + body_len, -1, reply,
+	    reply_len));
+}
+
+static void
+negotiate_raw(struct fixture *fixture)
+{
+	uint8_t reply[64];
+	size_t length;
+	uint32_t version;
+
+	ATF_REQUIRE_EQ(0, call_frame(fixture, 1, ORD_INFO, NULL, 0, reply,
+	    &length));
+	ATF_REQUIRE_EQ(24, length);
+	memcpy(&version, reply + 16, sizeof(version));
+	ATF_REQUIRE_EQ(POWERCMP_WIRE_VERSION, version);
+}
+
 /*
- * Issue one well-formed request: a header (magic, opcode) plus an
- * optional powercmp_body.  hdr_len lets a caller send a deliberately short or
- * long header when body == NULL.
+ * Raw Suspend, bypassing the client's own range check.  Returns the
+ * application errno carried by the result union (0 for success).
  */
 static int
-call(struct fixture *fixture, uint16_t opcode, const struct powercmp_body *body,
-    size_t hdr_len, int fd, struct powercmp_msg *reply,
-    struct powercmp_body *reply_body)
+suspend_raw(struct fixture *fixture, uint32_t txid, uint32_t state)
 {
-	uint8_t obuf[2 * POWERCMP_MAX_MESSAGE];
-	struct powercmp_msg req;
-	size_t len;
+	uint8_t body[8] = { 0 }, reply[64];
+	uint64_t tag;
+	uint32_t value;
+	size_t length;
 
-	ATF_REQUIRE(hdr_len <= sizeof(obuf));
-	memset(obuf, 0, sizeof(obuf));
-	memset(&req, 0, sizeof(req));
-	req.magic = POWERCMP_MAGIC;
-	req.opcode = opcode;
-	memcpy(obuf, &req, sizeof(req));
-	len = hdr_len;
-	if (body != NULL) {
-		memcpy(obuf + sizeof(req), body, sizeof(*body));
-		len = sizeof(req) + sizeof(*body);
-	}
-	return (call_raw(fixture, obuf, len, fd, reply, reply_body));
+	memcpy(body, &state, sizeof(state));
+	ATF_REQUIRE_EQ(0, call_frame(fixture, txid, ORD_SUSPEND, body,
+	    sizeof(body), reply, &length));
+	ATF_REQUIRE_EQ(32, length);
+	memcpy(&tag, reply + 16, sizeof(tag));
+	memcpy(&value, reply + 24, sizeof(value));
+	return (tag == 2 ? (int)value : 0);
 }
 
 /* -------- plane-free: worker argument validation + sysctl parser -------- */
@@ -289,7 +331,7 @@ ATF_TC_BODY(supported_states_matches_sysctl, tc)
 	ATF_CHECK_EQ(0, mask & ~(uint32_t)0x3e);
 }
 
-/* -------- positive: STATES -------- */
+/* -------- positive: States -------- */
 
 ATF_TC(states_reports_cached_mask);
 ATF_TC_HEAD(states_reports_cached_mask, tc)
@@ -298,21 +340,13 @@ ATF_TC_BODY(states_reports_cached_mask, tc)
 {
 	struct fixture fixture;
 	struct powercmp_config config;
-	struct powercmp_msg reply;
-	struct powercmp_body body;
+	uint32_t supported = UINT32_MAX;
 
 	require_plane();
-	make_config(&config, false, NULL);	/* STATES is never gated */
+	make_config(&config, false, NULL);	/* States is never gated */
 	fixture_create(&fixture, &config);
-	memset(&body, 0xff, sizeof(body));
-	ATF_REQUIRE_EQ(0, call(&fixture, POWERCMP_OP_STATES, NULL,
-	    sizeof(struct powercmp_msg), -1, &reply, &body));
-	ATF_CHECK_EQ(0, reply.status);
-	ATF_CHECK_EQ(POWERCMP_OP_STATES, reply.opcode);
-	ATF_CHECK_EQ(TEST_STATES, body.supported);
-	ATF_CHECK_EQ(0, body.state);
-	ATF_CHECK_EQ(0, body.reserved[0]);
-	ATF_CHECK_EQ(0, body.reserved[1]);
+	ATF_REQUIRE_EQ(0, powercmp_states(fixture.client, &supported));
+	ATF_CHECK_EQ(TEST_STATES, supported);
 	fixture_destroy(&fixture);
 }
 
@@ -323,17 +357,13 @@ ATF_TC_BODY(states_reports_zero_without_acpi, tc)
 {
 	struct fixture fixture;
 	struct powercmp_config config;
-	struct powercmp_msg reply;
-	struct powercmp_body body;
+	uint32_t supported = UINT32_MAX;
 
 	require_plane();
 	make_config(&config, false, NULL);
-	fixture_create_as(&fixture, TEST_LABEL, &config, 0);
-	memset(&body, 0xff, sizeof(body));
-	ATF_REQUIRE_EQ(0, call(&fixture, POWERCMP_OP_STATES, NULL,
-	    sizeof(struct powercmp_msg), -1, &reply, &body));
-	ATF_CHECK_EQ(0, reply.status);
-	ATF_CHECK_EQ(0, body.supported);
+	fixture_create_as(&fixture, TEST_LABEL, &config, 0, false);
+	ATF_REQUIRE_EQ(0, powercmp_states(fixture.client, &supported));
+	ATF_CHECK_EQ(0, supported);
 	fixture_destroy(&fixture);
 }
 
@@ -346,17 +376,17 @@ ATF_TC_BODY(suspend_denied_by_default_policy, tc)
 {
 	struct fixture fixture;
 	struct powercmp_config config;
-	struct powercmp_msg reply;
-	struct powercmp_body body;
+	uint32_t count;
 
 	require_plane();
 	make_config(&config, false, NULL);	/* default-deny */
 	fixture_create(&fixture, &config);
-	memset(&body, 0, sizeof(body));
-	body.state = 3;				/* a valid S3; never applied */
-	ATF_REQUIRE_EQ(0, call(&fixture, POWERCMP_OP_SUSPEND, &body, 0, -1,
-	    &reply, NULL));
-	ATF_CHECK_EQ(EPERM, -reply.status);
+	/* A valid S3; never applied. */
+	ATF_CHECK_ERRNO(EPERM, powercmp_suspend(fixture.client, 3) == -1);
+	ATF_CHECK_ERRNO(EPERM, powercmp_inhibit(fixture.client) == -1);
+	/* Policy refusals keep the session usable. */
+	ATF_CHECK_EQ(0, powercmp_inhibitors(fixture.client, &count));
+	ATF_CHECK_EQ(0, count);
 	fixture_destroy(&fixture);
 }
 
@@ -367,22 +397,16 @@ ATF_TC_BODY(suspend_allowed_reaches_device, tc)
 {
 	struct fixture fixture;
 	struct powercmp_config config;
-	struct powercmp_msg reply;
-	struct powercmp_body body;
 
 	require_plane();
 	make_config(&config, true, NULL);	/* allow; no /dev/acpi held */
 	fixture_create(&fixture, &config);
-	memset(&body, 0, sizeof(body));
-	body.state = 3;
-	ATF_REQUIRE_EQ(0, call(&fixture, POWERCMP_OP_SUSPEND, &body, 0, -1,
-	    &reply, NULL));
 	/*
 	 * Policy let the request through to the device step; with no ACPI
 	 * descriptor the daemon answers ENODEV, which proves the request was NOT
 	 * stopped by policy (that would be EPERM) and the host never slept.
 	 */
-	ATF_CHECK_EQ(ENODEV, -reply.status);
+	ATF_CHECK_ERRNO(ENODEV, powercmp_suspend(fixture.client, 3) == -1);
 	fixture_destroy(&fixture);
 }
 
@@ -398,24 +422,16 @@ ATF_TC_BODY(suspend_policy_is_per_label, tc)
 {
 	struct fixture fixture;
 	struct powercmp_config config;
-	struct powercmp_msg reply;
-	struct powercmp_body body;
 
 	require_plane();
 	make_config(&config, false, TEST_LABEL);
 
-	fixture_create_as(&fixture, TEST_LABEL, &config, TEST_STATES);
-	memset(&body, 0, sizeof(body));
-	body.state = 3;
-	ATF_REQUIRE_EQ(0, call(&fixture, POWERCMP_OP_SUSPEND, &body, 0, -1,
-	    &reply, NULL));
-	ATF_CHECK_EQ(ENODEV, -reply.status);
+	fixture_create_as(&fixture, TEST_LABEL, &config, TEST_STATES, false);
+	ATF_CHECK_ERRNO(ENODEV, powercmp_suspend(fixture.client, 3) == -1);
 	fixture_destroy(&fixture);
 
-	fixture_create_as(&fixture, OTHER_LABEL, &config, TEST_STATES);
-	ATF_REQUIRE_EQ(0, call(&fixture, POWERCMP_OP_SUSPEND, &body, 0, -1,
-	    &reply, NULL));
-	ATF_CHECK_EQ(EPERM, -reply.status);
+	fixture_create_as(&fixture, OTHER_LABEL, &config, TEST_STATES, false);
+	ATF_CHECK_ERRNO(EPERM, powercmp_suspend(fixture.client, 3) == -1);
 	fixture_destroy(&fixture);
 }
 
@@ -426,26 +442,22 @@ ATF_TC_BODY(suspend_bad_state_is_einval, tc)
 {
 	struct fixture fixture;
 	struct powercmp_config config;
-	struct powercmp_msg reply;
-	struct powercmp_body body;
 	static const uint32_t bad[] = { 0, 6, 32, UINT32_MAX };
-	size_t i;
+	uint8_t reply[64];
+	size_t i, length;
 
 	require_plane();
 	make_config(&config, true, NULL);	/* allow, so only the range check can fail */
-	fixture_create(&fixture, &config);
-	for (i = 0; i < nitems(bad); i++) {
-		memset(&body, 0, sizeof(body));
-		body.state = bad[i];
-		ATF_REQUIRE_EQ(0, call(&fixture, POWERCMP_OP_SUSPEND, &body, 0,
-		    -1, &reply, NULL));
-		ATF_CHECK_EQ_MSG(EINVAL, -reply.status, "state %u: status %d",
-		    bad[i], reply.status);
-	}
+	fixture_create_as(&fixture, TEST_LABEL, &config, TEST_STATES, true);
+	negotiate_raw(&fixture);
+	/* The provider checks the range itself; the client never sends these. */
+	for (i = 0; i < nitems(bad); i++)
+		ATF_CHECK_EQ_MSG(EINVAL, suspend_raw(&fixture, 2 + i, bad[i]),
+		    "state %u", bad[i]);
 	/* The range check is not terminal: the session still answers. */
-	ATF_REQUIRE_EQ(0, call(&fixture, POWERCMP_OP_STATES, NULL,
-	    sizeof(struct powercmp_msg), -1, &reply, NULL));
-	ATF_CHECK_EQ(0, reply.status);
+	ATF_REQUIRE_EQ(0, call_frame(&fixture, 9, ORD_STATES, NULL, 0, reply,
+	    &length));
+	ATF_CHECK_EQ(24, length);
 	fixture_destroy(&fixture);
 }
 
@@ -460,136 +472,128 @@ ATF_TC_BODY(suspend_denied_before_state_check, tc)
 {
 	struct fixture fixture;
 	struct powercmp_config config;
-	struct powercmp_msg reply;
-	struct powercmp_body body;
 
 	require_plane();
 	make_config(&config, false, NULL);
+	fixture_create_as(&fixture, TEST_LABEL, &config, TEST_STATES, true);
+	negotiate_raw(&fixture);
+	ATF_CHECK_EQ(EPERM, suspend_raw(&fixture, 2, 99));
+	fixture_destroy(&fixture);
+}
+
+ATF_TC(client_rejects_bad_state_locally);
+ATF_TC_HEAD(client_rejects_bad_state_locally, tc)
+{ atf_tc_set_md_var(tc, "require.user", "root"); }
+ATF_TC_BODY(client_rejects_bad_state_locally, tc)
+{
+	struct fixture fixture;
+	struct powercmp_config config;
+	uint32_t supported;
+
+	require_plane();
+	make_config(&config, true, NULL);
 	fixture_create(&fixture, &config);
-	memset(&body, 0, sizeof(body));
-	body.state = 99;
-	ATF_REQUIRE_EQ(0, call(&fixture, POWERCMP_OP_SUSPEND, &body, 0, -1,
-	    &reply, NULL));
-	ATF_CHECK_EQ(EPERM, -reply.status);
+	ATF_CHECK_ERRNO(EINVAL, powercmp_suspend(fixture.client, 0) == -1);
+	ATF_CHECK_ERRNO(EINVAL, powercmp_suspend(fixture.client, 6) == -1);
+	ATF_CHECK_EQ(0, powercmp_states(fixture.client, &supported));
 	fixture_destroy(&fixture);
 }
 
 /* -------- adversarial / edge: malformed framing -------- */
 
 /*
- * A top-level protocol violation (bad magic, unknown opcode, a
- * header truncated below sizeof(powercmp_msg), a message longer than header +
- * body, or an attached SCM descriptor) is rejected AND terminates the session
- * (the handler sets session->error).  The reply, if it arrives, is EPROTO; but
- * the tear-down races the flush, so the client may instead observe the
- * connection closed (call_raw() == -1).  Either is a correct rejection -- the
- * request must never be honoured.
+ * A protocol violation -- a method before negotiation, an unknown strict
+ * method, a truncated or oversized frame, a missing body, a pre-FIDL legacy
+ * record or an attached descriptor -- closes the session without a reply:
+ * the request is never honoured, and nothing later on the session is.
  */
 static void
-check_rejected_raw(const void *data, size_t len, int fd)
+check_rejected_raw(bool negotiate, const void *data, size_t len, int fd)
 {
 	struct fixture fixture;
 	struct powercmp_config config;
-	struct powercmp_msg reply;
-	int rc;
+	uint8_t reply[64];
+	size_t length;
 
 	require_plane();
 	make_config(&config, true, NULL);	/* allow, so only framing can fail */
-	fixture_create(&fixture, &config);
-	rc = call_raw(&fixture, data, len, fd, &reply, NULL);
-	if (rc == 0)
-		ATF_CHECK_EQ(EPROTO, -reply.status);
-	/* rc == -1: the session was torn down -- also a rejection. */
-	ATF_CHECK_EQ(-1, call(&fixture, POWERCMP_OP_STATES, NULL,
-	    sizeof(struct powercmp_msg), -1, &reply, NULL));
+	fixture_create_as(&fixture, TEST_LABEL, &config, TEST_STATES, true);
+	if (negotiate)
+		negotiate_raw(&fixture);
+	ATF_CHECK_EQ(-1, call_raw(&fixture, data, len, fd, reply, &length));
+	ATF_CHECK(errno != ETIMEDOUT);
+	ATF_CHECK_EQ(-1, call_frame(&fixture, 7, ORD_STATES, NULL, 0, reply,
+	    &length));
 	fixture_destroy(&fixture);
 }
 
 static void
-check_rejected(uint16_t opcode, size_t hdr_len, int fd)
+check_rejected_frame(bool negotiate, uint64_t ordinal, size_t body_len,
+    size_t total, int fd)
 {
-	uint8_t obuf[2 * POWERCMP_MAX_MESSAGE];
-	struct powercmp_msg req;
+	uint8_t frame[64] = { 0 };
+	struct wire_header header = { 5, { 2, 0, 0 }, 1, ordinal };
 
-	ATF_REQUIRE(hdr_len <= sizeof(obuf));
-	memset(obuf, 0, sizeof(obuf));
-	memset(&req, 0, sizeof(req));
-	req.magic = POWERCMP_MAGIC;
-	req.opcode = opcode;
-	memcpy(obuf, &req, sizeof(req));
-	check_rejected_raw(obuf, hdr_len, fd);
+	ATF_REQUIRE(total <= sizeof(frame));
+	memcpy(frame, &header, sizeof(header));
+	(void)body_len;
+	check_rejected_raw(negotiate, frame, total, fd);
 }
 
-ATF_TC(wrong_magic_is_rejected);
-ATF_TC_HEAD(wrong_magic_is_rejected, tc)
+ATF_TC(method_before_negotiation_is_rejected);
+ATF_TC_HEAD(method_before_negotiation_is_rejected, tc)
 { atf_tc_set_md_var(tc, "require.user", "root"); }
-ATF_TC_BODY(wrong_magic_is_rejected, tc)
+ATF_TC_BODY(method_before_negotiation_is_rejected, tc)
 {
-	struct powercmp_msg req;
-
-	memset(&req, 0, sizeof(req));
-	req.magic = POWERCMP_MAGIC ^ 0xffU;
-	req.opcode = POWERCMP_OP_STATES;
-	check_rejected_raw(&req, sizeof(req), -1);
+	check_rejected_frame(false, ORD_STATES, 0, 16, -1);
 }
 
-ATF_TC(unknown_opcode_is_rejected);
-ATF_TC_HEAD(unknown_opcode_is_rejected, tc)
+ATF_TC(unknown_method_is_rejected);
+ATF_TC_HEAD(unknown_method_is_rejected, tc)
 { atf_tc_set_md_var(tc, "require.user", "root"); }
-ATF_TC_BODY(unknown_opcode_is_rejected, tc)
+ATF_TC_BODY(unknown_method_is_rejected, tc)
 {
-
-	check_rejected(0x7fff, sizeof(struct powercmp_msg), -1);
+	check_rejected_frame(true, UINT64_C(0x7fff), 0, 16, -1);
 }
 
-ATF_TC(zero_opcode_is_rejected);
-ATF_TC_HEAD(zero_opcode_is_rejected, tc)
+ATF_TC(short_frame_is_rejected);
+ATF_TC_HEAD(short_frame_is_rejected, tc)
 { atf_tc_set_md_var(tc, "require.user", "root"); }
-ATF_TC_BODY(zero_opcode_is_rejected, tc)
+ATF_TC_BODY(short_frame_is_rejected, tc)
 {
-
-	/* Opcodes start at 1; an all-zero opcode field is not a valid op. */
-	check_rejected(0, sizeof(struct powercmp_msg), -1);
+	/* A header truncated below 16 bytes is a framing error. */
+	check_rejected_frame(true, ORD_STATES, 0, 8, -1);
 }
 
-ATF_TC(short_message_is_rejected);
-ATF_TC_HEAD(short_message_is_rejected, tc)
+ATF_TC(trailing_bytes_are_rejected);
+ATF_TC_HEAD(trailing_bytes_are_rejected, tc)
 { atf_tc_set_md_var(tc, "require.user", "root"); }
-ATF_TC_BODY(short_message_is_rejected, tc)
+ATF_TC_BODY(trailing_bytes_are_rejected, tc)
 {
-
-	/* A header truncated below sizeof(powercmp_msg) is a framing error. */
-	check_rejected(POWERCMP_OP_STATES, sizeof(struct powercmp_msg) - 4, -1);
+	/* States takes no body; eight extra bytes are not a legal frame. */
+	check_rejected_frame(true, ORD_STATES, 8, 24, -1);
 }
 
-ATF_TC(oversized_message_is_rejected);
-ATF_TC_HEAD(oversized_message_is_rejected, tc)
+ATF_TC(suspend_missing_body_is_rejected);
+ATF_TC_HEAD(suspend_missing_body_is_rejected, tc)
 { atf_tc_set_md_var(tc, "require.user", "root"); }
-ATF_TC_BODY(oversized_message_is_rejected, tc)
+ATF_TC_BODY(suspend_missing_body_is_rejected, tc)
 {
-
-	/* Longer than header + body: neither legal frame length. */
-	check_rejected(POWERCMP_OP_STATES, POWERCMP_MAX_MESSAGE + 8, -1);
+	check_rejected_frame(true, ORD_SUSPEND, 0, 16, -1);
 }
 
-ATF_TC(partial_body_is_rejected);
-ATF_TC_HEAD(partial_body_is_rejected, tc)
+ATF_TC(legacy_wire_is_rejected);
+ATF_TC_HEAD(legacy_wire_is_rejected, tc)
 { atf_tc_set_md_var(tc, "require.user", "root"); }
-ATF_TC_BODY(partial_body_is_rejected, tc)
+ATF_TC_BODY(legacy_wire_is_rejected, tc)
 {
+	struct powercmp_msg legacy;
 
-	/* Header plus a torn body (between the two legal lengths). */
-	check_rejected(POWERCMP_OP_SUSPEND,
-	    sizeof(struct powercmp_msg) + sizeof(struct powercmp_body) / 2, -1);
-}
-
-ATF_TC(suspend_missing_body_is_eproto);
-ATF_TC_HEAD(suspend_missing_body_is_eproto, tc)
-{ atf_tc_set_md_var(tc, "require.user", "root"); }
-ATF_TC_BODY(suspend_missing_body_is_eproto, tc)
-{
-	/* The fixed-size validator treats a missing body as terminal framing. */
-	check_rejected(POWERCMP_OP_SUSPEND, sizeof(struct powercmp_msg), -1);
+	/* A pre-FIDL STATES record from an old client. */
+	memset(&legacy, 0, sizeof(legacy));
+	legacy.magic = POWERCMP_MAGIC;
+	legacy.opcode = POWERCMP_OP_STATES;
+	check_rejected_raw(false, &legacy, sizeof(legacy), -1);
 }
 
 ATF_TC(rejects_attached_fd);
@@ -597,13 +601,17 @@ ATF_TC_HEAD(rejects_attached_fd, tc)
 { atf_tc_set_md_var(tc, "require.user", "root"); }
 ATF_TC_BODY(rejects_attached_fd, tc)
 {
-	int null;
+	int fds[2];
+	char byte;
 
-	/* An SCM descriptor on any request is a terminal protocol rejection. */
-	null = open("/dev/null", O_RDONLY | O_CLOEXEC);
-	ATF_REQUIRE(null >= 0);
-	check_rejected(POWERCMP_OP_STATES, sizeof(struct powercmp_msg), null);
-	close(null);
+	/* A descriptor on any request is a terminal protocol rejection, and
+	 * the provider closes its received copy. */
+	ATF_REQUIRE_EQ(0, pipe(fds));
+	check_rejected_frame(true, ORD_STATES, 0, 16, fds[1]);
+	close(fds[1]);
+	ATF_REQUIRE(fcntl(fds[0], F_SETFL, O_NONBLOCK) != -1);
+	ATF_CHECK_EQ(0, read(fds[0], &byte, 1));
+	close(fds[0]);
 }
 
 ATF_TP_ADD_TCS(tp)
@@ -618,13 +626,13 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, suspend_policy_is_per_label);
 	ATF_TP_ADD_TC(tp, suspend_bad_state_is_einval);
 	ATF_TP_ADD_TC(tp, suspend_denied_before_state_check);
-	ATF_TP_ADD_TC(tp, wrong_magic_is_rejected);
-	ATF_TP_ADD_TC(tp, unknown_opcode_is_rejected);
-	ATF_TP_ADD_TC(tp, zero_opcode_is_rejected);
-	ATF_TP_ADD_TC(tp, short_message_is_rejected);
-	ATF_TP_ADD_TC(tp, oversized_message_is_rejected);
-	ATF_TP_ADD_TC(tp, partial_body_is_rejected);
-	ATF_TP_ADD_TC(tp, suspend_missing_body_is_eproto);
+	ATF_TP_ADD_TC(tp, client_rejects_bad_state_locally);
+	ATF_TP_ADD_TC(tp, method_before_negotiation_is_rejected);
+	ATF_TP_ADD_TC(tp, unknown_method_is_rejected);
+	ATF_TP_ADD_TC(tp, short_frame_is_rejected);
+	ATF_TP_ADD_TC(tp, trailing_bytes_are_rejected);
+	ATF_TP_ADD_TC(tp, suspend_missing_body_is_rejected);
+	ATF_TP_ADD_TC(tp, legacy_wire_is_rejected);
 	ATF_TP_ADD_TC(tp, rejects_attached_fd);
 
 	return (atf_no_error());

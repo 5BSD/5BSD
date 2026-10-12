@@ -3,8 +3,14 @@
  *
  * Copyright (c) 2026 Kory Heard
  *
- * system.Power wire protocol.  A client holds a system.Power channel and asks
- * the broker for the supported ACPI sleep states (STATES, unprivileged) or, when
+ * Legacy pre-FIDL system.Power wire protocol, retained for source/ABI
+ * compatibility.  The current client and provider use powercmp.fidl (library
+ * bsd.power.v1); these records are rejected by the current provider.  This
+ * header does not describe the active wire format.  The opcode numbers remain
+ * the BSDPower DTrace request probe's operation codes.
+ *
+ * Historical protocol:  A client holds a system.Power channel and asks the
+ * broker for the supported ACPI sleep states (STATES, unprivileged) or, when
  * the per-label policy permits, to enter one (SUSPEND -- privileged, needs
  * PRIV to drive /dev/acpi).  Fixed-size messages.
  */
@@ -54,6 +60,7 @@ struct powercmp_body {
 _Static_assert(sizeof(struct powercmp_msg) == 16, "powercmp header ABI");
 _Static_assert(sizeof(struct powercmp_body) == 16, "powercmp body ABI");
 
+/* Retained for legacy consumers; the native path uses generated validation. */
 int	powercmp_validate_message(const struct powercmp_msg *, size_t length,
 	    enum powercmp_message_role);
 

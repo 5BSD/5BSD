@@ -1,0 +1,29 @@
+// SPDX-License-Identifier: BSD-2-Clause
+// Schema-evolution fixture for system.Power.  At bsd:1 this is exactly
+// lib/libpowercmp/powercmp.fidl (tools/build/fuchsia/test-bindings.py checks
+// it); bsd:2 adds a method, as a future provider release would.  The peer
+// built from bsd:2 is paired with the real bsd:1 client and provider.
+@available(platform="bsd", added=1)
+library bsd.power.v1;
+
+type ProtocolInfo = struct { wire_version uint32; };
+// Bit N set when ACPI sleep state SN is supported (N in 1..5).
+type SleepStates = struct { supported uint32; };
+// Requested ACPI sleep state, 1..5.
+type SleepState = struct { state uint32; };
+type InhibitorCount = struct { count uint32; };
+closed protocol Power {
+    strict GetProtocolInfo() -> (ProtocolInfo);
+    // Unprivileged.
+    strict States() -> (SleepStates);
+    // Policy-gated (suspend); errors are errno values.
+    strict Suspend(SleepState) -> () error uint32;
+    // One session-lifetime inhibitor; policy-gated (inhibit).
+    strict Inhibit() -> () error uint32;
+    strict Uninhibit() -> () error uint32;
+    // Global inhibitor count; unprivileged.
+    strict Inhibitors() -> (InhibitorCount);
+    // Added in the next revision; unknown to wire-major-1 peers.
+    @available(added=2)
+    strict Probe() -> (InhibitorCount);
+};

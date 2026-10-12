@@ -1,6 +1,7 @@
 comment = "PowerCmp protocol library tests"
 
 desc = <<EOD
-Tests for the PowerCmp protocol library (libpowercmp): the wire-contract
-validator shared by the client and the BSDPower provider daemon.
+Tests for the PowerCmp protocol library (libpowercmp): the bsd.power.v1 FIDL
+client against a scripted server over a capability channel, descriptor
+ownership, and the retained pre-FIDL validator ABI.
 EOD

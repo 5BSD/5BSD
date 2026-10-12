@@ -15,7 +15,7 @@
 #include <unistd.h>
 #include <libservice.h>
 #include <service_runtime.h>
-#include <powercmp_protocol.h>
+#include <powercmp.h>
 #include "config.h"
 #include "BSDPower_test.h"
 
@@ -96,32 +96,48 @@ channel_pair(int *client, int *provider)
 	ATF_REQUIRE_EQ(1, receive.nfds);
 }
 
+enum op { INHIBIT, UNINHIBIT, INHIBITORS, SUSPEND };
+/*
+ * One call through the real client.  Returns the application errno (0 for
+ * success), or -1 when the session failed (closed, refused or timed out).
+ */
 static int
-rpc(struct service_session *session, uint16_t opcode, uint32_t *count)
+rpc(struct powercmp_client *client, enum op op, uint32_t *count)
 {
-	struct {
-		struct powercmp_msg header;
-		struct powercmp_body body;
-	} request = { .header = { .magic = POWERCMP_MAGIC } }, reply;
-	struct service_call_options options = SERVICE_CALL_OPTIONS_INITIALIZER;
-	struct service_message outgoing = { .size = sizeof(outgoing) };
-	struct service_reply incoming = { .size = sizeof(incoming) };
-	request.header.opcode = opcode;
-	request.body.state = opcode == POWERCMP_OP_SUSPEND ? 3 : 0;
-	outgoing.data = &request;
-	outgoing.length = opcode == POWERCMP_OP_SUSPEND ?
-	    sizeof(request) : sizeof(request.header);
-	incoming.data = &reply;
-	incoming.capacity = sizeof(reply);
-	options.timeout_ms = 2000;
-	if (service_session_call(session, &outgoing, &incoming, &options) == -1)
+	uint32_t value = 0;
+	int result;
+	ATF_REQUIRE_EQ(0, service_budget_begin(2000));
+	switch (op) {
+	case INHIBIT:
+		result = powercmp_inhibit(client);
+		break;
+	case UNINHIBIT:
+		result = powercmp_uninhibit(client);
+		break;
+	case INHIBITORS:
+		result = powercmp_inhibitors(client, &value);
+		break;
+	default:
+		result = powercmp_suspend(client, 3);
+		break;
+	}
+	service_budget_end();
+	if (result == 0) {
+		if (count != NULL)
+			*count = value;
+		return (0);
+	}
+	switch (errno) {
+	case EPERM:
+	case EALREADY:
+	case ENOENT:
+	case EBUSY:
+	case ENODEV:
+	case ENOTSUP:
+		return (errno);
+	default:
 		return (-1);
-	ATF_REQUIRE_EQ(0, powercmp_validate_message(&reply.header,
-	    incoming.length, POWERCMP_MESSAGE_REPLY));
-	ATF_REQUIRE_EQ(opcode, reply.header.opcode);
-	if (count != NULL && reply.header.status == 0)
-		*count = reply.body.supported;
-	return (-reply.header.status);
+	}
 }
 
 ATF_TC(shared_reactor_leases_and_stop);
@@ -133,7 +149,7 @@ ATF_TC_HEAD(shared_reactor_leases_and_stop, tc)
 ATF_TC_BODY(shared_reactor_leases_and_stop, tc)
 {
 	struct powercmp_config config;
-	struct service_session *clients[3];
+	struct powercmp_client *clients[3];
 	int endpoints[3], control[2], ack[2], status, command;
 	uint32_t count = 0;
 	pid_t child;
@@ -166,54 +182,54 @@ ATF_TC_BODY(shared_reactor_leases_and_stop, tc)
 	close(ack[1]);
 	for (int i = 0; i < 3; i++) {
 		close(providers[i]);
-		ATF_REQUIRE_EQ(0, service_session_create(endpoints[i], &clients[i]));
+		ATF_REQUIRE_EQ(0, powercmp_client_create(endpoints[i], &clients[i]));
 		ATF_REQUIRE_EQ(sizeof(i), write(control[1], &i, sizeof(i)));
 	}
-	ATF_REQUIRE_EQ(0, rpc(clients[0], POWERCMP_OP_INHIBIT, NULL));
-	ATF_REQUIRE_EQ(0, rpc(clients[1], POWERCMP_OP_INHIBIT, NULL));
-	ATF_REQUIRE_EQ(0, rpc(clients[2], POWERCMP_OP_INHIBITORS, &count));
+	ATF_REQUIRE_EQ(0, rpc(clients[0], INHIBIT, NULL));
+	ATF_REQUIRE_EQ(0, rpc(clients[1], INHIBIT, NULL));
+	ATF_REQUIRE_EQ(0, rpc(clients[2], INHIBITORS, &count));
 	ATF_CHECK_EQ(2, count);
-	ATF_CHECK_EQ(EBUSY, rpc(clients[2], POWERCMP_OP_SUSPEND, NULL));
-	service_session_close(clients[1]);
+	ATF_CHECK_EQ(EBUSY, rpc(clients[2], SUSPEND, NULL));
+	powercmp_client_close(clients[1]);
 	for (unsigned i = 0; i < 100; i++) {
-		ATF_REQUIRE_EQ(0, rpc(clients[2], POWERCMP_OP_INHIBITORS, &count));
+		ATF_REQUIRE_EQ(0, rpc(clients[2], INHIBITORS, &count));
 		if (count == 1)
 			break;
 		usleep(10000);
 	}
 	ATF_REQUIRE_EQ(1, count);
-	ATF_REQUIRE_EQ(0, rpc(clients[0], POWERCMP_OP_UNINHIBIT, NULL));
-	ATF_CHECK_EQ(ENODEV, rpc(clients[2], POWERCMP_OP_SUSPEND, NULL));
-	ATF_REQUIRE_EQ(0, rpc(clients[0], POWERCMP_OP_INHIBIT, NULL));
+	ATF_REQUIRE_EQ(0, rpc(clients[0], UNINHIBIT, NULL));
+	ATF_CHECK_EQ(ENODEV, rpc(clients[2], SUSPEND, NULL));
+	ATF_REQUIRE_EQ(0, rpc(clients[0], INHIBIT, NULL));
 	command = -2; /* Ask the real reactor to refuse idle quiesce. */
 	ATF_REQUIRE_EQ(sizeof(command), write(control[1], &command, sizeof(command)));
 	struct pollfd pfd = { .fd = ack[0], .events = POLLIN };
 	ATF_REQUIRE_EQ(1, poll(&pfd, 1, 2000));
 	ATF_REQUIRE_EQ(sizeof(status), read(ack[0], &status, sizeof(status)));
 	ATF_CHECK_EQ(EBUSY, status);
-	ATF_REQUIRE_EQ(0, rpc(clients[2], POWERCMP_OP_INHIBITORS, &count));
+	ATF_REQUIRE_EQ(0, rpc(clients[2], INHIBITORS, &count));
 	ATF_CHECK_EQ(1, count);
 	/* The real 30-second idle limit exempts the session holding a lease. */
 	uint64_t idle_until = service_monotime_ms() + 31000;
 	while (service_monotime_ms() < idle_until)
 		usleep(100000);
-	ATF_CHECK_EQ(-1, rpc(clients[2], POWERCMP_OP_INHIBITORS, &count));
-	ATF_REQUIRE_EQ(0, rpc(clients[0], POWERCMP_OP_INHIBITORS, &count));
+	ATF_CHECK_EQ(-1, rpc(clients[2], INHIBITORS, &count));
+	ATF_REQUIRE_EQ(0, rpc(clients[0], INHIBITORS, &count));
 	ATF_CHECK_EQ(1, count);
 	command = -1; /* Explicit stop wins even with a held inhibitor. */
 	ATF_REQUIRE_EQ(sizeof(command), write(control[1], &command, sizeof(command)));
 	ATF_REQUIRE_EQ(1, poll(&pfd, 1, 2000));
 	ATF_REQUIRE_EQ(sizeof(status), read(ack[0], &status, sizeof(status)));
 	ATF_REQUIRE_EQ(0, status);
-	ATF_CHECK_EQ(-1, rpc(clients[0], POWERCMP_OP_INHIBITORS, &count));
-	ATF_CHECK_EQ(-1, rpc(clients[2], POWERCMP_OP_INHIBITORS, &count));
+	ATF_CHECK_EQ(-1, rpc(clients[0], INHIBITORS, &count));
+	ATF_CHECK_EQ(-1, rpc(clients[2], INHIBITORS, &count));
 	command = 1;
 	ATF_REQUIRE_EQ(sizeof(command), write(control[1], &command, sizeof(command)));
 	ATF_REQUIRE_EQ(child, waitpid(child, &status, 0));
 	ATF_REQUIRE(WIFEXITED(status));
 	ATF_CHECK_EQ(0, WEXITSTATUS(status));
-	service_session_close(clients[0]);
-	service_session_close(clients[2]);
+	powercmp_client_close(clients[0]);
+	powercmp_client_close(clients[2]);
 	close(control[1]);
 	close(ack[0]);
 }
@@ -222,7 +238,7 @@ static void
 admission_limit(bool per_label)
 {
 	struct powercmp_config config;
-	struct service_session *clients[TEST_ENDPOINTS] = { 0 };
+	struct powercmp_client *clients[TEST_ENDPOINTS] = { 0 };
 	int endpoints[TEST_ENDPOINTS], control[2], ack[2];
 	int initial = per_label ? 6 : 65, denied = per_label ? 4 : 64;
 	uint32_t count_expected = per_label ? 5 : 64;
@@ -259,23 +275,23 @@ admission_limit(bool per_label)
 	close(ack[1]);
 	for (int i = 0; i < provider_count; i++) {
 		close(providers[i]);
-		ATF_REQUIRE_EQ(0, service_session_create(endpoints[i], &clients[i]));
+		ATF_REQUIRE_EQ(0, powercmp_client_create(endpoints[i], &clients[i]));
 	}
 	for (int i = 0; i < initial; i++) {
 		ATF_REQUIRE_EQ(sizeof(i), write(control[1], &i, sizeof(i)));
 		if (i == denied) {
-			ATF_CHECK_EQ(-1, rpc(clients[i], POWERCMP_OP_INHIBIT, NULL));
-			service_session_close(clients[i]);
+			ATF_CHECK_EQ(-1, rpc(clients[i], INHIBIT, NULL));
+			powercmp_client_close(clients[i]);
 			clients[i] = NULL;
 		} else
-			ATF_REQUIRE_EQ(0, rpc(clients[i], POWERCMP_OP_INHIBIT, NULL));
+			ATF_REQUIRE_EQ(0, rpc(clients[i], INHIBIT, NULL));
 	}
-	ATF_REQUIRE_EQ(0, rpc(clients[1], POWERCMP_OP_INHIBITORS, &count));
+	ATF_REQUIRE_EQ(0, rpc(clients[1], INHIBITORS, &count));
 	ATF_CHECK_EQ(count_expected, count);
-	service_session_close(clients[0]);
+	powercmp_client_close(clients[0]);
 	clients[0] = NULL;
 	for (unsigned i = 0; i < 100; i++) {
-		ATF_REQUIRE_EQ(0, rpc(clients[1], POWERCMP_OP_INHIBITORS, &count));
+		ATF_REQUIRE_EQ(0, rpc(clients[1], INHIBITORS, &count));
 		if (count == (uint32_t)count_expected - 1)
 			break;
 		usleep(10000);
@@ -283,8 +299,8 @@ admission_limit(bool per_label)
 	ATF_REQUIRE_EQ(count_expected - 1, count);
 	/* Reuse the released slot, including its old provider-assigned owner ID. */
 	ATF_REQUIRE_EQ(sizeof(initial), write(control[1], &initial, sizeof(initial)));
-	ATF_REQUIRE_EQ(0, rpc(clients[initial], POWERCMP_OP_INHIBIT, NULL));
-	ATF_REQUIRE_EQ(0, rpc(clients[1], POWERCMP_OP_INHIBITORS, &count));
+	ATF_REQUIRE_EQ(0, rpc(clients[initial], INHIBIT, NULL));
+	ATF_REQUIRE_EQ(0, rpc(clients[1], INHIBITORS, &count));
 	ATF_CHECK_EQ(count_expected, count);
 	command = -1;
 	ATF_REQUIRE_EQ(sizeof(command), write(control[1], &command, sizeof(command)));
@@ -295,8 +311,8 @@ admission_limit(bool per_label)
 	for (int i = 0; i < provider_count; i++) {
 		if (clients[i] == NULL)
 			continue;
-		ATF_CHECK_EQ(-1, rpc(clients[i], POWERCMP_OP_INHIBITORS, &count));
-		service_session_close(clients[i]);
+		ATF_CHECK_EQ(-1, rpc(clients[i], INHIBITORS, &count));
+		powercmp_client_close(clients[i]);
 	}
 	command = 1;
 	ATF_REQUIRE_EQ(sizeof(command), write(control[1], &command, sizeof(command)));

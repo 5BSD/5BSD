@@ -502,7 +502,13 @@ from descriptor zero. The runtime checks the actual attachment type and
 retains kernel rights enforcement. C keyword and generated size-field
 collisions are escaped deterministically with `_fidl` suffixes.
 
-The first source-tree provider migration is [BSDTime](../providers/time.md).
+The first source-tree provider migration is [BSDTime](../providers/time.md);
+the remaining capability daemons follow the plan in
+`tools/build/fuchsia/DAEMONS.md`, starting with [BSDPower](../providers/power.md).
+Providers serving many sessions use `fidl_bsd_connections_wait()` (the FIDL
+form of `service_channels_wait()`), and synchronous C clients use the
+`<fidl/bsd/sync_c.h>` helpers, which honour a caller's
+`service_budget_begin()` deadline.
 Its public C API remains compatible while its wire protocol uses generated
 bindings. Host-safe policy/adversarial/lifecycle tests use simulated clock gates. In a
 plane-on VM (`tools/build/fuchsia/vm-provider.sh`) the FIDL provider activates

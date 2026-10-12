@@ -24,9 +24,9 @@
 
 #include <dev/acpica/acpiio.h>
 
-#include <channel.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <fidl/bsd.power.v1/c/bsd.h>
 #include <libservice.h>
 #include <service_runtime.h>
 #include <stdbool.h>
@@ -38,7 +38,7 @@
 
 #include "BSDPower_probes.h"
 #include "config.h"
-#include "powercmp_protocol.h"
+#include "powercmp.h"
 
 static int g_acpi_fd = -1;		/* /dev/acpi, narrowed to CAP_IOCTL/REQSLPSTATE */
 static uint32_t g_states;		/* supported sleep-state mask, cached at startup */
@@ -46,12 +46,12 @@ static uint32_t g_states;		/* supported sleep-state mask, cached at startup */
 static struct service_lease_set *g_leases;
 
 struct session {
-	struct channel *channel;
+	struct fidl_bsd_connection	*connection;
 	uint64_t owner, lease, last_ms;
 	char label_storage[256];
 	const char			*label;
 	const struct powercmp_config	*config;
-	int				 error;
+	bool				 negotiated;
 };
 
 /*
@@ -76,185 +76,204 @@ supported_states(void)
 	return (mask);
 }
 
-static void
-init_reply(struct powercmp_msg *reply, const struct powercmp_msg *request,
-    int status)
+/*
+ * Every method requires a negotiated session (GetProtocolInfo first).  A
+ * failed reply closes the connection; the reactor then reclaims the session
+ * and with it any inhibitor lease.  DTrace request probes keep the historical
+ * POWERCMP_OP_* operation codes (0 is protocol negotiation).
+ */
+static bool
+ready(struct session *session, struct fidl_bsd_connection *connection,
+    unsigned opcode)
 {
-
-	memset(reply, 0, sizeof(*reply));
-	reply->magic = POWERCMP_MAGIC;
-	reply->opcode = request->opcode;
-	reply->status = status;
-}
-
-static int
-send_status(struct channel_message *request_message,
-    const struct powercmp_msg *request, int status)
-{
-	struct powercmp_msg reply;
-
-	init_reply(&reply, request, status);
-	if (powercmp_validate_message(&reply, sizeof(reply),
-	    POWERCMP_MESSAGE_REPLY) == -1)
-		return (-1);
-	return (channel_send_reply(request_message,
-	    &(struct channel_outgoing)
-	    CHANNEL_OUTGOING_INITIALIZER(&reply, sizeof(reply))));
-}
-
-static int
-send_body(struct channel_message *request_message,
-    const struct powercmp_msg *request, const struct powercmp_body *value)
-{
-	uint8_t buffer[POWERCMP_MAX_MESSAGE];
-	struct powercmp_msg *reply;
-	struct powercmp_body *body;
-	size_t length;
-
-	memset(buffer, 0, sizeof(buffer));
-	reply = (void *)buffer;
-	init_reply(reply, request, 0);
-	body = (void *)(reply + 1);
-	*body = *value;
-	length = sizeof(*reply) + sizeof(*body);
-	if (powercmp_validate_message(reply, length, POWERCMP_MESSAGE_REPLY) ==
-	    -1)
-		return (-1);
-	return (channel_send_reply(request_message,
-	    &(struct channel_outgoing)
-	    CHANNEL_OUTGOING_INITIALIZER(buffer, length)));
-}
-
-static void
-handle_request(struct channel *channel __unused,
-    struct channel_message *message, void *argument)
-{
-	const struct powercmp_msg *request;
-	const struct powercmp_body *body;
-	struct session *session;
-	struct powercmp_body out;
-	size_t message_len;
-	uint16_t opcode;
-	int result, status;
-
-	session = argument;
-	if (session->error != 0) {
-		channel_message_free(message);
-		return;
-	}
 	session->last_ms = service_monotime_ms();
-	request = channel_message_data(message);
-	message_len = channel_message_length(message);
-	opcode = UINT16_MAX;
-	result = 0;
-	status = 0;
-	if (request != NULL && message_len >= sizeof(*request))
-		opcode = request->opcode;
+	if (session->negotiated)
+		return (true);
+	BSDPOWER_PROBE_REQUEST(session->label, opcode, EPROTO);
+	fidl_bsd_connection_close(connection, EPROTO);
+	return (false);
+}
 
-	if (channel_message_fd_count(message) != 0 ||
-	    powercmp_validate_message(request, message_len,
-	    POWERCMP_MESSAGE_REQUEST) == -1) {
-		status = EPROTO;
-		session->error = status;
-		/* Malformed headers cannot safely be echoed as replies. */
-		goto out;
-	}
-	body = (const void *)(request + 1);
-
-	switch (request->opcode) {
-	case POWERCMP_OP_STATES:
-		memset(&out, 0, sizeof(out));
-		out.supported = g_states;	/* cached pre-capmode at startup */
-		result = send_body(message, request, &out);
-		break;
-	case POWERCMP_OP_INHIBIT:
-		if (!powercmp_config_permits_inhibit(session->config,
-			session->label))
-			status = EPERM;
-		else if (session->lease != 0)
-			status = EALREADY;
-		else if (g_leases == NULL ||
-		    service_lease_acquire(g_leases, session->owner,
-			&session->lease) == -1)
-			status = g_leases == NULL ? ENOTSUP : errno;
-		result = send_status(message, request, -status);
-		break;
-	case POWERCMP_OP_UNINHIBIT:
-		if (session->lease == 0)
-			status = ENOENT;
-		else {
-			(void)service_lease_release(g_leases, session->owner,
-			    session->lease);
-			session->lease = 0;
-		}
-		result = send_status(message, request, -status);
-		break;
-	case POWERCMP_OP_INHIBITORS:
-		memset(&out, 0, sizeof(out));
-		out.supported = g_leases == NULL ?
-		    0 :
-		    service_lease_count(g_leases);
-		result = send_body(message, request, &out);
-		break;
-	case POWERCMP_OP_SUSPEND: {
-		int state;
-
-		if (message_len != sizeof(*request) + sizeof(*body)) {
-			status = EPROTO;
-			result = send_status(message, request, -status);
-			break;
-		}
-		if (!powercmp_config_permits_suspend(session->config,
-		    session->label)) {
-			status = EPERM;
-			result = send_status(message, request, -status);
-			break;
-		}
-		if (body->state < 1 || body->state > 5) {
-			status = EINVAL;
-			result = send_status(message, request, -status);
-			break;
-		}
-		if (g_leases != NULL && service_lease_count(g_leases) != 0) {
-			status = EBUSY;
-			result = send_status(message, request, -status);
-			break;
-		}
-		if (g_acpi_fd < 0) {
-			status = ENODEV;
-			result = send_status(message, request, -status);
-			break;
-		}
-		state = (int)body->state;
-		if (ioctl(g_acpi_fd, ACPIIO_REQSLPSTATE, &state) == -1) {
-			status = errno;
-			result = send_status(message, request, -status);
-			break;
-		}
-		BSDPOWER_PROBE_SUSPEND(session->label, state);
-		syslog(LOG_NOTICE, "suspend to S%d requested by %s", state,
-		    session->label);
-		result = send_status(message, request, 0);
-		break;
-	}
-	default:
-		status = EOPNOTSUPP;
-		result = send_status(message, request, -status);
-		break;
-	}
-	if (result == -1)
-		session->error = errno;
-out:
+static void
+completed(struct session *session, struct fidl_bsd_connection *connection,
+    unsigned opcode, int status, int error)
+{
 	BSDPOWER_PROBE_REQUEST(session->label, opcode, status);
-	channel_message_free(message);
+	if (error != 0)
+		fidl_bsd_connection_close(connection, error);
+}
+
+static void
+protocol_info(void *argument, struct fidl_bsd_connection *connection,
+    struct fidl_bsd_request *request, struct fidl_bsd_empty *empty __unused)
+{
+	struct session *session = argument;
+	struct bsd_power_v1_ProtocolInfo info = { POWERCMP_WIRE_VERSION };
+	int error;
+
+	session->last_ms = service_monotime_ms();
+	error = bsd_power_v1_Power_GetProtocolInfo_reply(connection, request,
+	    &info);
+	session->negotiated = error == 0;
+	completed(session, connection, 0, 0, error);
+}
+
+static void
+states(void *argument, struct fidl_bsd_connection *connection,
+    struct fidl_bsd_request *request, struct fidl_bsd_empty *empty __unused)
+{
+	struct session *session = argument;
+	/* Cached pre-capmode at startup. */
+	struct bsd_power_v1_SleepStates out = { g_states };
+
+	if (!ready(session, connection, POWERCMP_OP_STATES))
+		return;
+	completed(session, connection, POWERCMP_OP_STATES, 0,
+	    bsd_power_v1_Power_States_reply(connection, request, &out));
+}
+
+static void
+inhibitors(void *argument, struct fidl_bsd_connection *connection,
+    struct fidl_bsd_request *request, struct fidl_bsd_empty *empty __unused)
+{
+	struct session *session = argument;
+	struct bsd_power_v1_InhibitorCount out = { g_leases == NULL ? 0 :
+		service_lease_count(g_leases) };
+
+	if (!ready(session, connection, POWERCMP_OP_INHIBITORS))
+		return;
+	completed(session, connection, POWERCMP_OP_INHIBITORS, 0,
+	    bsd_power_v1_Power_Inhibitors_reply(connection, request, &out));
+}
+
+static void
+inhibit(void *argument, struct fidl_bsd_connection *connection,
+    struct fidl_bsd_request *request, struct fidl_bsd_empty *empty __unused)
+{
+	struct session *session = argument;
+	struct bsd_power_v1_Power_Inhibit_Result reply = { 0 };
+	int status = 0;
+
+	if (!ready(session, connection, POWERCMP_OP_INHIBIT))
+		return;
+	if (!powercmp_config_permits_inhibit(session->config, session->label))
+		status = EPERM;
+	else if (session->lease != 0)
+		status = EALREADY;
+	else if (g_leases == NULL ||
+	    service_lease_acquire(g_leases, session->owner,
+		&session->lease) == -1)
+		status = g_leases == NULL ? ENOTSUP : errno;
+	reply.tag = status ? bsd_power_v1_Power_Inhibit_Result_err_tag :
+	    bsd_power_v1_Power_Inhibit_Result_response_tag;
+	if (status)
+		reply.value.err = status;
+	completed(session, connection, POWERCMP_OP_INHIBIT, status,
+	    bsd_power_v1_Power_Inhibit_reply(connection, request, &reply));
+}
+
+static void
+uninhibit(void *argument, struct fidl_bsd_connection *connection,
+    struct fidl_bsd_request *request, struct fidl_bsd_empty *empty __unused)
+{
+	struct session *session = argument;
+	struct bsd_power_v1_Power_Uninhibit_Result reply = { 0 };
+	int status = 0;
+
+	if (!ready(session, connection, POWERCMP_OP_UNINHIBIT))
+		return;
+	if (session->lease == 0)
+		status = ENOENT;
+	else {
+		(void)service_lease_release(g_leases, session->owner,
+		    session->lease);
+		session->lease = 0;
+	}
+	reply.tag = status ? bsd_power_v1_Power_Uninhibit_Result_err_tag :
+	    bsd_power_v1_Power_Uninhibit_Result_response_tag;
+	if (status)
+		reply.value.err = status;
+	completed(session, connection, POWERCMP_OP_UNINHIBIT, status,
+	    bsd_power_v1_Power_Uninhibit_reply(connection, request, &reply));
+}
+
+static void
+suspend(void *argument, struct fidl_bsd_connection *connection,
+    struct fidl_bsd_request *request, struct bsd_power_v1_SleepState *value)
+{
+	struct session *session = argument;
+	struct bsd_power_v1_Power_Suspend_Result reply = { 0 };
+	int state, status = 0;
+
+	if (!ready(session, connection, POWERCMP_OP_SUSPEND))
+		return;
+	/* Policy first, then the state range, as before the FIDL migration. */
+	if (!powercmp_config_permits_suspend(session->config, session->label))
+		status = EPERM;
+	else if (value->state < 1 || value->state > 5)
+		status = EINVAL;
+	else if (g_leases != NULL && service_lease_count(g_leases) != 0)
+		status = EBUSY;
+	else if (g_acpi_fd < 0)
+		status = ENODEV;
+	else {
+		state = (int)value->state;
+		if (ioctl(g_acpi_fd, ACPIIO_REQSLPSTATE, &state) == -1)
+			status = errno;
+		else {
+			BSDPOWER_PROBE_SUSPEND(session->label, state);
+			syslog(LOG_NOTICE, "suspend to S%d requested by %s",
+			    state, session->label);
+		}
+	}
+	reply.tag = status ? bsd_power_v1_Power_Suspend_Result_err_tag :
+	    bsd_power_v1_Power_Suspend_Result_response_tag;
+	if (status)
+		reply.value.err = status;
+	completed(session, connection, POWERCMP_OP_SUSPEND, status,
+	    bsd_power_v1_Power_Suspend_reply(connection, request, &reply));
+}
+
+/* Bind a FIDL server to an accepted descriptor; consumes fd on every path. */
+static int
+session_bind(struct session *session, int fd)
+{
+	static const struct bsd_power_v1_Power_server handlers = {
+		.GetProtocolInfo = protocol_info,
+		.States = states,
+		.Suspend = suspend,
+		.Inhibit = inhibit,
+		.Uninhibit = uninhibit,
+		.Inhibitors = inhibitors
+	};
+	struct fidl_bsd_options options = FIDL_BSD_OPTIONS_INITIALIZER;
+	int error;
+
+	/* One request at a time; no descriptors are part of this protocol. */
+	options.max_pending_requests = 1;
+	options.max_queued_messages = 16;
+	options.max_queued_bytes = 4096;
+	options.max_queued_fds = 0;
+	error = fidl_bsd_connection_create_with_options(fd, FIDL_BSD_SERVER,
+	    &options, &session->connection);
+	if (error != 0) {
+		(void)close(fd);
+		return (errno = error, -1);
+	}
+	error = bsd_power_v1_Power_bind(session->connection, &handlers,
+	    session);
+	if (error != 0)
+		return (errno = error, -1);
+	return (0);
 }
 
 static void
 session_close(struct session *s)
 {
-	if (s->channel != NULL)
-		channel_destroy(s->channel);
-	service_lease_release_owner(g_leases, s->owner);
+	if (s->connection != NULL)
+		fidl_bsd_connection_destroy(s->connection);
+	if (g_leases != NULL)
+		service_lease_release_owner(g_leases, s->owner);
 	memset(s, 0, sizeof(*s));
 }
 
@@ -262,50 +281,26 @@ session_close(struct session *s)
 static int
 serve_session(int fd, const char *label, const struct powercmp_config *config)
 {
-	struct channel_options options =
-	    CHANNEL_OPTIONS_INITIALIZER(CHANNEL_ROLE_PROVIDER);
-	struct channel *channel;
 	struct session session;
-	int ready, wants_write;
 
 	if (fd < 0 || label == NULL || label[0] == '\0' || config == NULL)
 		return (errno = EINVAL, -1);
 	memset(&session, 0, sizeof(session));
 	session.label = label;
 	session.config = config;
-	if (channel_create(fd, &options, &channel) == -1)
-		return (1);
-	if (channel_set_request_handler(channel, handle_request,
-	    &session) == -1) {
-		channel_destroy(channel);
-		return (1);
-	}
-	for (;;) {
-		wants_write = channel_wants_write(channel);
-		if (wants_write == -1)
-			break;
-		ready = channel_wait(channel, wants_write, -1);
-		if (ready <= 0)
-			break;
-		if ((ready & CHANNEL_WAIT_WRITE) != 0 &&
-		    channel_flush(channel) == -1)
-			break;
-		if ((ready & CHANNEL_WAIT_READ) != 0 &&
-		    channel_dispatch(channel) == -1)
-			break;
-		if (session.error != 0)
-			break;
-	}
-	session.channel = channel;
-	if (g_leases != NULL)
+	session.owner = 1;
+	if (session_bind(&session, fd) == -1) {
 		session_close(&session);
-	else
-		channel_destroy(channel);
+		return (1);
+	}
+	while (fidl_bsd_connection_poll(session.connection, -1) == 0)
+		;
+	session_close(&session);
 	return (0);
 }
 
 /*
- * Test entrypoints.  Expose the per-session channel worker and the two
+ * Test entrypoints.  Expose the per-session FIDL server and the two
  * startup-cached globals (the supported-state mask and the narrowed /dev/acpi
  * descriptor) to the ATF suite so a test can drive the real request handler
  * (protocol validation, per-label SUSPEND policy, STATES/SUSPEND
@@ -352,13 +347,11 @@ sessions_run(struct service_provider *provider,
     struct service_listener *listener)
 {
 	struct session sessions[64] = { 0 };
-	struct service_channel_slot slots[64];
+	struct fidl_bsd_connection_slot slots[64];
 	struct service_health health = { 0 };
 	struct service_identity identity;
-	struct channel_options options = CHANNEL_OPTIONS_INITIALIZER(
-	    CHANNEL_ROLE_PROVIDER);
 	size_t i, slot, matching;
-	int fd, ready, kq, result = -1;
+	int error, fd, ready, kq, result = -1;
 	if (service_lease_set_create(64, &g_leases) == -1)
 		return (-1);
 	kq = kqueue();
@@ -380,22 +373,22 @@ sessions_run(struct service_provider *provider,
 			break;
 		}
 		for (i = 0; i < 64; i++) {
-			if (sessions[i].channel != NULL &&
+			if (sessions[i].connection != NULL &&
 			    sessions[i].lease == 0 &&
 			    service_monotime_ms() - sessions[i].last_ms >=
 				30000)
 				session_close(&sessions[i]);
-			slots[i].channel = sessions[i].channel;
+			slots[i].connection = sessions[i].connection;
 		}
-		ready = service_channels_wait(kq, slots, 64,
-		    service_listener_fd(listener), 250);
-		if (ready == -1)
+		error = fidl_bsd_connections_wait(kq, slots, 64,
+		    service_listener_fd(listener), 250, &ready);
+		if (error != 0) {
+			errno = error;
 			break;
+		}
 		for (i = 0; i < 64; i++) {
-			if (slots[i].error != 0 || sessions[i].error != 0) {
-				service_health_record(&health,
-				    slots[i].error != 0 ? slots[i].error :
-							  sessions[i].error);
+			if (slots[i].error != 0) {
+				service_health_record(&health, slots[i].error);
 				session_close(&sessions[i]);
 			}
 		}
@@ -413,7 +406,7 @@ sessions_run(struct service_provider *provider,
 		slot = 64;
 		matching = 0;
 		for (i = 0; i < 64; i++) {
-			if (sessions[i].channel == NULL) {
+			if (sessions[i].connection == NULL) {
 				if (slot == 64)
 					slot = i;
 			} else if (strcmp(sessions[i].label,
@@ -432,13 +425,7 @@ sessions_run(struct service_provider *provider,
 		s->config = &g_config;
 		s->owner = slot + 1;
 		s->last_ms = service_monotime_ms();
-		if (channel_create(fd, &options, &s->channel) == -1) {
-			close(fd);
-			session_close(s);
-			continue;
-		}
-		if (channel_set_request_handler(s->channel, handle_request,
-			s) == -1) {
+		if (session_bind(s, fd) == -1) {
 			session_close(s);
 			continue;
 		}

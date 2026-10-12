@@ -3,66 +3,38 @@
  *
  * Copyright (c) 2026 Kory Heard
  *
- * libpowercmp implementation.  See powercmp.h and powercmp_protocol.h.
+ * libpowercmp: C application API for system.Power, using the generated
+ * bsd.power.v1 bindings (powercmp.fidl) over a native capability channel.
  */
 #include <sys/capsicum.h>
 
 #include <errno.h>
 #include <fcntl.h>
+#include <fidl/bsd.power.v1/c/bsd.h>
+#include <fidl/bsd/sync_c.h>
+#include <libservice.h>
+#include <service_runtime.h>
 #include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 
-#include <libservice.h>
-
 #include "powercmp.h"
 
-union powercmp_buffer {
-	max_align_t	align;
-	uint8_t		bytes[POWERCMP_MAX_MESSAGE];
-};
+#define POWERCMP_CALL_TIMEOUT_MS 5000
 
 struct powercmp_client {
-	struct service_session	*session;
-	pid_t			 owner;
+	struct fidl_bsd_connection *connection;
+	pid_t owner;
+	bool negotiated;
 	int terminal_error;
 };
 
-int
-powercmp_validate_message(const struct powercmp_msg *msg, size_t length,
-    enum powercmp_message_role role)
-{
-	const struct powercmp_body *body;
-	size_t expected;
-	if (msg == NULL || length < sizeof(*msg) ||
-	    msg->magic != POWERCMP_MAGIC ||
-	    (role != POWERCMP_MESSAGE_REQUEST &&
-		role != POWERCMP_MESSAGE_REPLY) ||
-	    msg->flags != 0 || msg->opcode < POWERCMP_OP_STATES ||
-	    msg->opcode > POWERCMP_OP_INHIBITORS ||
-	    (role == POWERCMP_MESSAGE_REQUEST && msg->status != 0) ||
-	    msg->status > 0 || msg->status < -ELAST)
-		return (errno = EPROTO, -1);
-	expected = sizeof(*msg);
-	if ((role == POWERCMP_MESSAGE_REQUEST &&
-		msg->opcode == POWERCMP_OP_SUSPEND) ||
-	    (role == POWERCMP_MESSAGE_REPLY && msg->status == 0 &&
-		(msg->opcode == POWERCMP_OP_STATES ||
-		    msg->opcode == POWERCMP_OP_INHIBITORS)))
-		expected += sizeof(*body);
-	if (length != expected)
-		return (errno = EPROTO, -1);
-	if (expected > sizeof(*msg)) {
-		body = (const void *)(msg + 1);
-		if (body->reserved[0] != 0 || body->reserved[1] != 0 ||
-		    (role == POWERCMP_MESSAGE_REQUEST &&
-			body->supported != 0) ||
-		    (role == POWERCMP_MESSAGE_REPLY && body->state != 0))
-			return (errno = EPROTO, -1);
-	}
-	return (0);
-}
+struct completion {
+	bool done, malformed;
+	int error;
+	uint32_t value;
+};
 
 /* A lost/ambiguous RPC drops the connection and hence every session lease.
  * Keep the error on the handle: callers cannot accidentally reuse or reopen it.
@@ -70,22 +42,123 @@ powercmp_validate_message(const struct powercmp_msg *msg, size_t length,
 static int
 client_disconnect(struct powercmp_client *client, int error)
 {
-	if (client->session != NULL) {
-		service_session_close(client->session);
-		client->session = NULL;
+	if (client->connection != NULL) {
+		fidl_bsd_connection_destroy(client->connection);
+		client->connection = NULL;
 	}
 	client->terminal_error = error != 0 ? error : EIO;
 	return (errno = client->terminal_error, -1);
 }
 
-static int
-call(struct powercmp_client *client, const void *request, size_t req_len,
-    union powercmp_buffer *reply, size_t *reply_len)
+static void
+malformed(struct completion *result)
 {
-	struct service_call_options options = SERVICE_CALL_OPTIONS_INITIALIZER;
-	struct service_message outgoing;
-	struct service_reply incoming;
-	const struct powercmp_msg *qmsg, *rmsg;
+	result->malformed = true;
+	result->error = EPROTO;
+}
+
+static void
+domain_error(struct completion *result, uint32_t error)
+{
+	if (error == 0 || error > ELAST)
+		malformed(result);
+	else
+		result->error = (int)error;
+}
+
+static void
+info_reply(void *context, int error, struct bsd_power_v1_ProtocolInfo *value)
+{
+	struct completion *result = context;
+	result->done = true;
+	result->error = error;
+	if (!error &&
+	    (value == NULL || value->wire_version != POWERCMP_WIRE_VERSION)) {
+		result->malformed = true;
+		result->error = EPROTONOSUPPORT;
+	}
+}
+
+static void
+states_reply(void *context, int error, struct bsd_power_v1_SleepStates *value)
+{
+	struct completion *result = context;
+	result->done = true;
+	result->error = error;
+	if (error)
+		return;
+	/* Only S1..S5 exist; any other bit is a malformed reply. */
+	if (value == NULL || (value->supported & ~UINT32_C(0x3e)) != 0)
+		malformed(result);
+	else
+		result->value = value->supported;
+}
+
+static void
+count_reply(void *context, int error, struct bsd_power_v1_InhibitorCount *value)
+{
+	struct completion *result = context;
+	result->done = true;
+	result->error = error;
+	if (error)
+		return;
+	if (value == NULL)
+		malformed(result);
+	else
+		result->value = value->count;
+}
+
+/* Empty-success results: check the tag; the error is an errno value. */
+#define RESULT_REPLY(name, type)                                        \
+	static void name(void *context, int error, struct type *value)  \
+	{                                                               \
+		struct completion *result = context;                    \
+		result->done = true;                                    \
+		result->error = error;                                  \
+		if (error)                                              \
+			return;                                         \
+		if (value == NULL)                                      \
+			malformed(result);                              \
+		else if (value->tag == type##_err_tag)                  \
+			domain_error(result, value->value.err);         \
+		else if (value->tag != type##_response_tag)             \
+			malformed(result);                              \
+	}
+RESULT_REPLY(suspend_reply, bsd_power_v1_Power_Suspend_Result)
+RESULT_REPLY(inhibit_reply, bsd_power_v1_Power_Inhibit_Result)
+RESULT_REPLY(uninhibit_reply, bsd_power_v1_Power_Uninhibit_Result)
+
+/*
+ * Wait for one completion.  Transport failures, timeouts and malformed
+ * replies make the handle terminal; application errors keep the session.
+ */
+static int
+finish(struct powercmp_client *client, int error, struct completion *result,
+    const struct timespec *deadline)
+{
+	if (error == 0)
+		error = fidl_bsd_sync_wait(client->connection, &result->done,
+		    deadline);
+	if (error != 0)
+		return (client_disconnect(client, error));
+	if (result->malformed)
+		return (client_disconnect(client, result->error));
+	/* A call failed by the transport (the peer closed) ends the session. */
+	if (result->error != 0 &&
+	    fidl_bsd_connection_error(client->connection) != 0)
+		return (client_disconnect(client, result->error));
+	if (result->error != 0)
+		return (errno = result->error, -1);
+	return (0);
+}
+
+static int
+begin(struct powercmp_client *client, struct timespec *deadline)
+{
+	struct completion result = { 0 };
+	struct fidl_bsd_empty empty = { 0 };
+	uint32_t timeout_ms = POWERCMP_CALL_TIMEOUT_MS, txid;
+	int error;
 
 	if (client == NULL)
 		return (errno = EINVAL, -1);
@@ -93,78 +166,75 @@ call(struct powercmp_client *client, const void *request, size_t req_len,
 		return (errno = ECHILD, -1);
 	if (client->terminal_error != 0)
 		return (errno = client->terminal_error, -1);
-	memset(&outgoing, 0, sizeof(outgoing));
-	outgoing.size = sizeof(outgoing);
-	outgoing.data = __DECONST(void *, request);
-	outgoing.length = req_len;
-	memset(&incoming, 0, sizeof(incoming));
-	incoming.size = sizeof(incoming);
-	incoming.data = reply;
-	incoming.capacity = sizeof(*reply);
-	options.timeout_ms = 5000;
-	if (service_session_call(client->session, &outgoing, &incoming,
-	    &options) == -1)
-		return (client_disconnect(client, errno));
-	qmsg = request;
-	rmsg = (const void *)reply->bytes;
-	if (incoming.nfds != 0 ||
-	    powercmp_validate_message(rmsg, incoming.length,
-	    POWERCMP_MESSAGE_REPLY) == -1 || rmsg->opcode != qmsg->opcode) {
-		return (client_disconnect(client, EPROTO));
-	}
-	if (rmsg->status != 0)
-		return (errno = -rmsg->status, -1);
-	if (reply_len != NULL)
-		*reply_len = incoming.length;
+	/* A caller's service_budget_begin(3) bounds the whole operation. */
+	if (service_budget_timeout(&timeout_ms) == -1)
+		return (-1);
+	if ((error = fidl_bsd_sync_deadline(deadline, timeout_ms)) != 0)
+		return (errno = error, -1);
+	if (client->negotiated)
+		return (0);
+	error = bsd_power_v1_Power_GetProtocolInfo(client->connection, &empty,
+	    info_reply, &result, &txid);
+	if (finish(client, error, &result, deadline) == -1)
+		return (-1);
+	client->negotiated = true;
 	return (0);
 }
 
-static void
-build_header(union powercmp_buffer *buf, uint16_t opcode)
+int
+powercmp_client_create(int fd, struct powercmp_client **clientp)
 {
-	struct powercmp_msg *msg = (void *)buf->bytes;
+	struct fidl_bsd_options options = FIDL_BSD_OPTIONS_INITIALIZER;
+	struct powercmp_client *client;
+	int error, owned;
 
-	memset(buf, 0, sizeof(*buf));
-	msg->magic = POWERCMP_MAGIC;
-	msg->opcode = opcode;
+	if (clientp == NULL)
+		return (errno = EINVAL, -1);
+	*clientp = NULL;
+	client = calloc(1, sizeof(*client));
+	if (client == NULL)
+		return (-1);
+	owned = fcntl(fd, F_DUPFD_CLOEXEC, 0);
+	if (owned < 0 || cap_xfer_limit(owned, CAP_XFER_NONE) == -1 ||
+	    cap_cloexec_limit(owned, CAP_CLOEXEC_LOCKED) == -1) {
+		error = errno;
+		if (owned >= 0)
+			(void)close(owned);
+		free(client);
+		return (errno = error, -1);
+	}
+	options.max_pending_requests = 1;
+	options.max_queued_messages = 2;
+	options.max_queued_bytes = 1024;
+	options.max_queued_fds = 0;
+	error = fidl_bsd_connection_create_with_options(owned, FIDL_BSD_CLIENT,
+	    &options, &client->connection);
+	if (error != 0) {
+		(void)close(owned);
+		free(client);
+		return (errno = error, -1);
+	}
+	(void)close(fd);
+	client->owner = getpid();
+	*clientp = client;
+	return (0);
 }
 
 int
 powercmp_client_open(struct powercmp_client **clientp)
 {
-	struct powercmp_client *client;
-	int error, fd, owned;
+	int error, fd;
 
 	if (clientp == NULL)
 		return (errno = EINVAL, -1);
 	*clientp = NULL;
-	fd = -1;
 	if (service_open(POWERCMP_INTERFACE, &fd) == -1)
 		return (-1);
-	if (cap_xfer_limit(fd, CAP_XFER_NONE) == -1 ||
-	    cap_cloexec_limit(fd, CAP_CLOEXEC_LOCKED) == -1) {
+	if (powercmp_client_create(fd, clientp) == -1) {
 		error = errno;
 		(void)close(fd);
 		return (errno = error, -1);
 	}
-	owned = fcntl(fd, F_DUPFD_CLOEXEC, 0);
-	error = owned == -1 ? errno : 0;
-	(void)close(fd);
-	if (error != 0)
-		return (errno = error, -1);
-	client = calloc(1, sizeof(*client));
-	if (client == NULL) {
-		(void)close(owned);
-		return (-1);
-	}
-	client->owner = getpid();
-	if (service_session_create(owned, &client->session) == -1) {
-		error = errno;
-		(void)close(owned);
-		free(client);
-		return (errno = error, -1);
-	}
-	*clientp = client;
 	return (0);
 }
 
@@ -174,81 +244,90 @@ powercmp_client_close(struct powercmp_client *client)
 
 	if (client == NULL)
 		return;
-	if (client->owner == getpid() && client->session != NULL)
-		service_session_close(client->session);
+	/* Locked close-on-fork descriptors may have been reused in a child. */
+	if (client->owner == getpid() && client->connection != NULL)
+		fidl_bsd_connection_destroy(client->connection);
 	free(client);
 }
 
 int
 powercmp_states(struct powercmp_client *client, uint32_t *supported)
 {
-	union powercmp_buffer request, reply;
-	const struct powercmp_body *body;
-	size_t reply_len;
+	struct completion result = { 0 };
+	struct fidl_bsd_empty empty = { 0 };
+	struct timespec deadline;
+	uint32_t txid;
 
 	if (supported == NULL)
 		return (errno = EINVAL, -1);
-	build_header(&request, POWERCMP_OP_STATES);
-	if (call(client, &request, sizeof(struct powercmp_msg), &reply,
-	    &reply_len) == -1)
+	if (begin(client, &deadline) == -1)
 		return (-1);
-	if (reply_len != sizeof(struct powercmp_msg) + sizeof(*body))
-		return (errno = EPROTO, -1);
-	body = (const void *)(reply.bytes + sizeof(struct powercmp_msg));
-	*supported = body->supported;
+	if (finish(client, bsd_power_v1_Power_States(client->connection,
+	    &empty, states_reply, &result, &txid), &result, &deadline) == -1)
+		return (-1);
+	*supported = result.value;
 	return (0);
 }
 
 int
 powercmp_suspend(struct powercmp_client *client, uint32_t state)
 {
-	union powercmp_buffer request, reply;
-	struct powercmp_body *body;
+	struct completion result = { 0 };
+	struct bsd_power_v1_SleepState value = { state };
+	struct timespec deadline;
+	uint32_t txid;
 
 	if (state < 1 || state > 5)
 		return (errno = EINVAL, -1);
-	build_header(&request, POWERCMP_OP_SUSPEND);
-	body = (void *)(request.bytes + sizeof(struct powercmp_msg));
-	body->state = state;
-	return (call(client, &request,
-	    sizeof(struct powercmp_msg) + sizeof(*body), &reply, NULL));
+	if (begin(client, &deadline) == -1)
+		return (-1);
+	return (finish(client, bsd_power_v1_Power_Suspend(client->connection,
+	    &value, suspend_reply, &result, &txid), &result, &deadline));
 }
 
-static int
-inhibitor_call(struct powercmp_client *client, uint32_t opcode, uint32_t *count)
+int
+powercmp_inhibit(struct powercmp_client *client)
 {
-	union powercmp_buffer request, reply;
-	const struct powercmp_body *body;
-	size_t length;
-	build_header(&request, opcode);
-	if (call(client, &request, sizeof(struct powercmp_msg), &reply,
-		&length) == -1)
+	struct completion result = { 0 };
+	struct fidl_bsd_empty empty = { 0 };
+	struct timespec deadline;
+	uint32_t txid;
+
+	if (begin(client, &deadline) == -1)
 		return (-1);
-	if (length !=
-	    sizeof(struct powercmp_msg) + (count != NULL ? sizeof(*body) : 0)) {
-		return (client_disconnect(client, EPROTO));
-	}
-	if (count != NULL) {
-		body = (const void *)(reply.bytes +
-		    sizeof(struct powercmp_msg));
-		*count = body->supported;
-	}
-	return (0);
+	return (finish(client, bsd_power_v1_Power_Inhibit(client->connection,
+	    &empty, inhibit_reply, &result, &txid), &result, &deadline));
 }
+
 int
-powercmp_inhibit(struct powercmp_client *c)
+powercmp_uninhibit(struct powercmp_client *client)
 {
-	return (inhibitor_call(c, POWERCMP_OP_INHIBIT, NULL));
+	struct completion result = { 0 };
+	struct fidl_bsd_empty empty = { 0 };
+	struct timespec deadline;
+	uint32_t txid;
+
+	if (begin(client, &deadline) == -1)
+		return (-1);
+	return (finish(client, bsd_power_v1_Power_Uninhibit(client->connection,
+	    &empty, uninhibit_reply, &result, &txid), &result, &deadline));
 }
+
 int
-powercmp_uninhibit(struct powercmp_client *c)
+powercmp_inhibitors(struct powercmp_client *client, uint32_t *count)
 {
-	return (inhibitor_call(c, POWERCMP_OP_UNINHIBIT, NULL));
-}
-int
-powercmp_inhibitors(struct powercmp_client *c, uint32_t *count)
-{
+	struct completion result = { 0 };
+	struct fidl_bsd_empty empty = { 0 };
+	struct timespec deadline;
+	uint32_t txid;
+
 	if (count == NULL)
 		return (errno = EINVAL, -1);
-	return (inhibitor_call(c, POWERCMP_OP_INHIBITORS, count));
+	if (begin(client, &deadline) == -1)
+		return (-1);
+	if (finish(client, bsd_power_v1_Power_Inhibitors(client->connection,
+	    &empty, count_reply, &result, &txid), &result, &deadline) == -1)
+		return (-1);
+	*count = result.value;
+	return (0);
 }

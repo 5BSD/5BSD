@@ -1,0 +1,25 @@
+// SPDX-License-Identifier: BSD-2-Clause
+// system.Power (BSDPower).  The library name, ordinals and layouts are a
+// stable contract for wire major 1; incompatible changes need a new major.
+// Identity and authority never travel in a payload: the provider decides
+// from the accepted session's label and its per-label power.conf policy.
+library bsd.power.v1;
+
+type ProtocolInfo = struct { wire_version uint32; };
+// Bit N set when ACPI sleep state SN is supported (N in 1..5).
+type SleepStates = struct { supported uint32; };
+// Requested ACPI sleep state, 1..5.
+type SleepState = struct { state uint32; };
+type InhibitorCount = struct { count uint32; };
+closed protocol Power {
+    strict GetProtocolInfo() -> (ProtocolInfo);
+    // Unprivileged.
+    strict States() -> (SleepStates);
+    // Policy-gated (suspend); errors are errno values.
+    strict Suspend(SleepState) -> () error uint32;
+    // One session-lifetime inhibitor; policy-gated (inhibit).
+    strict Inhibit() -> () error uint32;
+    strict Uninhibit() -> () error uint32;
+    // Global inhibitor count; unprivileged.
+    strict Inhibitors() -> (InhibitorCount);
+};

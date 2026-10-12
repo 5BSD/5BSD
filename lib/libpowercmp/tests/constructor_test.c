@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* powercmp_client_open() descriptor ownership, with service_open faked. */
 #include <sys/types.h>
-#include <sys/capsicum.h>
 
 #include <atf-c.h>
 #include <errno.h>
@@ -8,9 +8,7 @@
 #include <libservice.h>
 #include <stdbool.h>
 #include <unistd.h>
-static int passed_fd, session_fd, close_count;
-static bool create_failure;
-static int reused_fd;
+static int passed_fd = -1;
 static int
 fake_open(const char *name, int *fd)
 {
@@ -18,70 +16,36 @@ fake_open(const char *name, int *fd)
 	(void)name;
 	ATF_REQUIRE_EQ(0, pipe(p));
 	close(p[1]);
-	*fd = p[0];
+	*fd = passed_fd = p[0];
 	return (0);
 }
-static int
-fake_limit(int fd, int state)
-{
-	(void)fd;
-	(void)state;
-	return (0);
-}
-static int
-fake_create(int fd, struct service_session **session)
-{
-	passed_fd = fd;
-	if (create_failure)
-		return (errno = ENOMEM, -1);
-	session_fd = dup(fd);
-	ATF_REQUIRE(session_fd >= 0);
-	close(fd);
-	/* Model another thread reusing the consumed descriptor number. */
-	reused_fd = open("/dev/null", O_RDONLY);
-	ATF_REQUIRE_EQ(fd, reused_fd);
-	*session = (void *)1;
-	return (0);
-}
-static void
-fake_close(struct service_session *session)
-{
-	(void)session;
-	close_count++;
-	close(session_fd);
-}
-#define service_open	       fake_open
-#define service_session_create fake_create
-#define service_session_close  fake_close
-#define cap_xfer_limit	       fake_limit
-#define cap_cloexec_limit      fake_limit
+#define service_open fake_open
 #include "../powercmp.c"
-ATF_TC_WITHOUT_HEAD(constructor_releases_input);
-ATF_TC_BODY(constructor_releases_input, tc)
-{
-	struct powercmp_client *client;
-	ATF_REQUIRE_EQ(0, powercmp_client_open(&client));
-	ATF_CHECK(fcntl(reused_fd, F_GETFD) != -1);
-	ATF_CHECK(fcntl(session_fd, F_GETFD) != -1);
-	powercmp_client_close(client);
-	ATF_CHECK_EQ(1, close_count);
-	ATF_CHECK(fcntl(reused_fd, F_GETFD) != -1);
-	close(reused_fd);
-	ATF_CHECK_ERRNO(EBADF, fcntl(session_fd, F_GETFD) == -1);
-}
+
+/* A descriptor that is not a capability channel cannot become a session;
+ * open() must not leak it and must leave the result NULL. */
 ATF_TC_WITHOUT_HEAD(constructor_failure_closes_input);
 ATF_TC_BODY(constructor_failure_closes_input, tc)
 {
 	struct powercmp_client *client = (void *)1;
-	create_failure = true;
-	ATF_CHECK_ERRNO(ENOMEM, powercmp_client_open(&client) == -1);
+	ATF_CHECK_EQ(-1, powercmp_client_open(&client));
 	ATF_CHECK(client == NULL);
 	ATF_CHECK_ERRNO(EBADF, fcntl(passed_fd, F_GETFD) == -1);
-	ATF_CHECK_EQ(0, close_count);
+}
+ATF_TC_WITHOUT_HEAD(null_arguments);
+ATF_TC_BODY(null_arguments, tc)
+{
+	uint32_t value;
+	ATF_CHECK_ERRNO(EINVAL, powercmp_client_open(NULL) == -1);
+	ATF_CHECK_ERRNO(EINVAL, powercmp_client_create(0, NULL) == -1);
+	ATF_CHECK_ERRNO(EINVAL, powercmp_states(NULL, &value) == -1);
+	ATF_CHECK_ERRNO(EINVAL, powercmp_inhibitors(NULL, &value) == -1);
+	ATF_CHECK_ERRNO(EINVAL, powercmp_suspend(NULL, 9) == -1);
+	powercmp_client_close(NULL);
 }
 ATF_TP_ADD_TCS(tp)
 {
-	ATF_TP_ADD_TC(tp, constructor_releases_input);
 	ATF_TP_ADD_TC(tp, constructor_failure_closes_input);
+	ATF_TP_ADD_TC(tp, null_arguments);
 	return (atf_no_error());
 }

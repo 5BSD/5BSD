@@ -11,9 +11,16 @@
 
 #include "powercmp_protocol.h"
 
+/* bsd.power.v1 (powercmp.fidl) wire major, checked on a session's first call. */
+#define POWERCMP_WIRE_VERSION 1
+
 struct powercmp_client;
 
 __BEGIN_DECLS
+
+/* Adopt a held native channel; consumes fd only on success.
+ * Version negotiation occurs on the first operation within its deadline. */
+int	powercmp_client_create(int fd, struct powercmp_client **);
 
 int	powercmp_client_open(struct powercmp_client **);
 void	powercmp_client_close(struct powercmp_client *);
