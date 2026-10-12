@@ -164,6 +164,8 @@ def main():
     p.add_argument('--suite', action='append')
     p.add_argument('--dut', default='dut')
     p.add_argument('--helper', default='helper')
+    p.add_argument('--rerun-failures', action='store_true',
+                   help='rerun only targets that did not succeed in OUT and merge')
     p.add_argument('--make', default='make',
                    help='make invocation on the DUT for local suites')
     a = p.parse_args()
@@ -173,10 +175,27 @@ def main():
     resfile = a.out / 'results.json'
     res = json.loads(resfile.read_text()) if resfile.exists() else {}
     for name in names:
-        s = all_s[name]
+        s = dict(all_s[name])
         make = a.make if s['host'] == 'dut' else 'make'
+        prev = res.get(name, {}).get('targets', {})
+        if a.rerun_failures:
+            failed = [t for t, v in prev.items() if v != 'SUCCESS']
+            if not failed:
+                continue
+            # bsd.regress.mk logs run-regress-PROG targets as PROG.
+            mk = (TREE.parent / s['dir'] / 'Makefile').read_text()
+            progs = set(mkvars('PROG', mk) + mkvars('PROGS', mk))
+            s['targets'] = ['run-regress-' + t if t in progs else t
+                            for t in failed]
         print('==> %s on %s' % (name, s['host']), flush=True)
-        res[name] = run_suite(name, s, a.out, {'dut': a.dut, 'helper': a.helper}, make)
+        r = run_suite(name + ('-rerun' if a.rerun_failures else ''), s, a.out,
+                      {'dut': a.dut, 'helper': a.helper}, make)
+        if a.rerun_failures:
+            merged = dict(prev)
+            merged.update(r['targets'])
+            r['targets'] = merged
+            r['rerun'] = sorted(s['targets'])
+        res[name] = r
         c = {}
         for v in res[name]['targets'].values():
             c[v] = c.get(v, 0) + 1

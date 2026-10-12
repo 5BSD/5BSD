@@ -44,6 +44,8 @@ echo	stream	tcp	nowait	root	internal
 echo	stream	tcp6	nowait	root	internal
 chargen	stream	tcp	nowait	root	internal
 chargen	stream	tcp6	nowait	root	internal
+discard	stream	tcp	nowait	root	internal
+discard	stream	tcp6	nowait	root	internal
 echo	dgram	udp	wait	root	internal
 echo	dgram	udp6	wait	root	internal
 EOF

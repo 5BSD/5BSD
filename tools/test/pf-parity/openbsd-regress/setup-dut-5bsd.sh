@@ -8,6 +8,10 @@ set -eu
 # No DNS in the isolated topology: fail lookups immediately (as NXDOMAIN
 # would) instead of timing out against the unreachable slirp resolver.
 sed -i '' 's/^hosts:.*/hosts: files/' /etc/nsswitch.conf
+# D6 test-image plumbing: OpenBSD group ids printed by the pfctl corpus
+# (group nobody 32767, group sshd 27).
+pw groupmod nobody -g 32767 2>/dev/null || true
+pw groupmod sshd -g 27 2>/dev/null || true
 p6=fdd7:e83e:66bc
 IFIN=vtnet1 IFOUT=vtnet2 IFCTL=vtnet0
 
@@ -49,6 +53,8 @@ echo	stream	tcp	nowait	root	internal
 echo	stream	tcp6	nowait	root	internal
 chargen	stream	tcp	nowait	root	internal
 chargen	stream	tcp6	nowait	root	internal
+discard	stream	tcp	nowait	root	internal
+discard	stream	tcp6	nowait	root	internal
 echo	dgram	udp	wait	root	internal
 echo	dgram	udp6	wait	root	internal
 EOF

@@ -64,9 +64,6 @@ autoboot_delay="1"
 beastie_disable="YES"
 # The capability plane denies late kldload; preload PF modules at boot.
 pf_load="YES"
-pflog_load="YES"
-pfsync_load="YES"
-pflow_load="YES"
 EOF
 put etc/rc.conf 0644 <<'EOF'
 hostname="pf-dut-5bsd"
