@@ -100,6 +100,28 @@ format_cleanup()
 	vnet_cleanup
 }
 
+atf_test_case "extended_flags" "cleanup"
+extended_flags_head()
+{
+	atf_set descr "Extended flags retain their OpenBSD numeric positions"
+	atf_set require.user root
+}
+extended_flags_body()
+{
+	vnet_init
+	vnet_mkjail one
+	atf_check jexec one ifconfig lo0 up monitor
+	atf_check -o match:'^lo0: flags=1008049<UP,LOOPBACK,RUNNING,MULTICAST,MONITOR>' \
+	    jexec one ifconfig lo0
+	atf_check jexec one ifconfig lo0 -monitor
+	atf_check -o match:'^lo0: flags=8049<UP,LOOPBACK,RUNNING,MULTICAST>' \
+	    jexec one ifconfig lo0
+}
+extended_flags_cleanup()
+{
+	vnet_cleanup
+}
+
 atf_test_case "pflow" "cleanup"
 pflow_head()
 {
@@ -133,5 +155,6 @@ atf_init_test_cases()
 	atf_add_test_case autocreate
 	atf_add_test_case nocreate
 	atf_add_test_case format
+	atf_add_test_case extended_flags
 	atf_add_test_case pflow
 }
