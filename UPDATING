@@ -27,6 +27,33 @@ NOTE TO PEOPLE WHO THINK THAT FreeBSD 16.x IS SLOW:
 	world, or to merely disable the most expensive debugging functionality
 	at runtime, run "ln -s 'abort:false,junk:false' /etc/malloc.conf".)
 
+20261012:
+	pf is OpenBSD's packet filter (pf/parity).  New and changed interfaces:
+
+	Each vnet runs its own pf: a vnet jail has its own rules, states,
+	tables, anchors and pflog/pfsync/pflow interfaces, and /dev/pf acts on
+	the vnet of the process that opens it.  "set limit" belongs to the host;
+	a vnet jail may restate the current limits but not change them.
+
+	pf.conf accepts the 5BSD extension "jail <name|jid>", which matches the
+	jail of a TCP or UDP packet's local socket.  OpenBSD does not know it.
+
+	Transparent proxying works as on OpenBSD: divert-to, divert-reply and
+	divert-packet.  New socket interfaces: SO_BINDANY (socket level; its
+	value differs from OpenBSD's, use the name), IP_RECVDSTPORT and
+	IPV6_RECVDSTPORT, and OpenBSD divert(4) sockets
+	(SOCK_RAW/IPPROTO_DIVERT in AF_INET and AF_INET6).  IPPROTO_DIVERT is
+	defined again; an ipdivert(4) program that opens
+	socket(PF_INET, SOCK_RAW, IPPROTO_DIVERT) gets pf's divert(4) while pf
+	is loaded and must use PF_DIVERT.
+
+	Forwarded packets are filtered before a reject or blackhole route
+	discards them, and "too big" ICMP errors for forwarded packets are sent
+	before outbound filtering, as OpenBSD does.
+
+	ping and ping6 accept OpenBSD's -w maxwait.  vmstat -m -v prints
+	OpenBSD's pool listing; vmstat -m alone is unchanged.
+
 20261011:
 	5BSD has retired native procfs, a.out execution, COMPAT_43TTY and the
 	FreeBSD 4-7 syscall compatibility options. Remove native procfs entries
