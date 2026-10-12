@@ -9,6 +9,8 @@
  * provider and retains read-only descriptors for /etc/hosts and
  * /etc/services.  The parent periodically refreshes nameservers through the
  * filesystem provider; existing workers read a shared, read-only generation.
+ * Startup-missing hosts/services files use one-time anonymous snapshots,
+ * populated by the parent after a later successful brokered open.
  * netresolve() serves lookups in capability mode using retained descriptors,
  * pure in-memory parsing, and fresh UDP or TCP sockets connected to a
  * configured nameserver with connectat(2).
@@ -46,6 +48,7 @@
 static struct __res_state	g_res;
 static int			g_hostsfd = -1;
 static int			g_servfd = -1;
+static unsigned int g_recovery_files;
 
 /* ---- tunables / bounds ------------------------------------------------ */
 #define	RSLV_MAX_RESULTS	32	/* cap on collected addresses          */
@@ -116,6 +119,7 @@ struct rslv_port {
 struct rslv_nameservers {
 	_Atomic uint32_t generation;
 	_Atomic uint32_t count;
+	_Atomic unsigned int files_ready;
 	_Atomic unsigned char bytes[sizeof(g_ns)];
 };
 static struct rslv_nameservers *g_nameservers;
@@ -200,8 +204,89 @@ nameservers_share_init(void)
 	g_nameservers_fd = fd;
 	atomic_init(&g_nameservers->generation, 0);
 	atomic_init(&g_nameservers->count, 0);
+	atomic_init(&g_nameservers->files_ready, 0);
 	nameservers_publish(g_ns, g_nns);
 	return (0);
+}
+
+/*
+ * A startup-missing file gets an anonymous backing descriptor BEFORE fork.
+ * The parent fills it once after a successful brokered retry, then publishes
+ * readiness with release ordering. Existing workers retain that same object.
+ * No pathname authority reaches workers and no partially copied bytes are read.
+ * Normal startup-opened files retain the original descriptor semantics.
+ */
+static int
+resolver_file_init(struct service_context *ctx, const char *path, int *fdp,
+    unsigned int bit)
+{
+	if (service_open_isolated(ctx, path, SERVICE_OPEN_READ, 0, fdp) == 0)
+		return (0);
+	*fdp = -1;
+	if (g_nameservers == NULL)
+		return (-1);
+	*fdp = shm_open(SHM_ANON, O_RDWR | O_CLOEXEC, 0600);
+	if (*fdp == -1)
+		return (-1);
+	g_recovery_files |= bit;
+	return (0);
+}
+
+static void
+resolver_file_retry(struct service_context *ctx, const char *path, int backing,
+    unsigned int bit, size_t bound)
+{
+	char *buf;
+	size_t used, written;
+	ssize_t n;
+	int fd;
+
+	if ((g_recovery_files & bit) == 0 || g_nameservers == NULL ||
+	    (atomic_load_explicit(&g_nameservers->files_ready,
+	    memory_order_acquire) & bit) != 0)
+		return;
+	if (service_open_isolated(ctx, path, SERVICE_OPEN_READ, 0, &fd) == -1)
+		return;
+	buf = malloc(bound - 1);
+	if (buf == NULL) {
+		close(fd);
+		return;
+	}
+	used = 0;
+	while (used < bound - 1) {
+		n = pread(fd, buf + used, bound - 1 - used, used);
+		if (n == -1 && errno == EINTR)
+			continue;
+		if (n < 0)
+			goto out;
+		if (n == 0)
+			break;
+		used += n;
+	}
+	if (ftruncate(backing, used) == -1)
+		goto out;
+	written = 0;
+	while (written < used) {
+		n = pwrite(backing, buf + written, used - written, written);
+		if (n == -1 && errno == EINTR)
+			continue;
+		if (n <= 0)
+			goto out;
+		written += n;
+	}
+	atomic_fetch_or_explicit(&g_nameservers->files_ready, bit,
+	    memory_order_release);
+out:
+	free(buf);
+	close(fd);
+}
+
+static bool
+resolver_file_ready(unsigned int bit)
+{
+	return ((g_recovery_files & bit) == 0 || (g_nameservers != NULL &&
+	    (atomic_load_explicit(&g_nameservers->files_ready,
+	    memory_order_acquire) & bit) != 0));
 }
 
 int
@@ -210,6 +295,11 @@ netresolve_worker_enter(void)
 	cap_rights_t rights;
 	void *mapping;
 
+	/* Workers may only pread the retained files, including recovery backing. */
+	cap_rights_init(&rights, CAP_PREAD);
+	if ((g_hostsfd != -1 && cap_rights_limit(g_hostsfd, &rights) == -1) ||
+	    (g_servfd != -1 && cap_rights_limit(g_servfd, &rights) == -1))
+		return (-1);
 	if (g_nameservers == NULL)
 		return (0);
 	if (g_nameservers_fd == -1)
@@ -285,6 +375,9 @@ netresolve_refresh(struct service_context *ctx)
 
 	if (ctx == NULL)
 		return (errno = EINVAL, -1);
+	/* Retry independently of DNS configuration availability, once per timer. */
+	resolver_file_retry(ctx, "/etc/hosts", g_hostsfd, 1, RSLV_HOSTS_BUFSZ);
+	resolver_file_retry(ctx, "/etc/services", g_servfd, 2, RSLV_SERV_BUFSZ);
 	if (nameservers_load(ctx, servers, &count) == -1)
 		return (-1);
 	if (count == g_nns && memcmp(servers, g_ns, sizeof(g_ns)) == 0)
@@ -322,12 +415,12 @@ netresolve_init(struct service_context *ctx)
 	 * capability mode, no path open).  Best-effort: DNS and numeric literals
 	 * still work without them.
 	 */
-	if (service_open_isolated(ctx, "/etc/hosts", SERVICE_OPEN_READ, 0,
-	    &g_hostsfd) == -1)
-		g_hostsfd = -1;
-	if (service_open_isolated(ctx, "/etc/services", SERVICE_OPEN_READ, 0,
-	    &g_servfd) == -1)
-		g_servfd = -1;
+	if (resolver_file_init(ctx, "/etc/hosts", &g_hostsfd, 1) == -1 &&
+	    shared_error == 0)
+		shared_error = errno;
+	if (resolver_file_init(ctx, "/etc/services", &g_servfd, 2) == -1 &&
+	    shared_error == 0)
+		shared_error = errno;
 	if (shared_error != 0)
 		return (errno = shared_error, -1);
 	return (0);
@@ -410,6 +503,8 @@ serv_lookup_file(const char *serv, const char *proto)
 	char *line, *lasts_line;
 	ssize_t got;
 
+	if (!resolver_file_ready(2))
+		return (-1);
 	got = read_snapshot(g_servfd, buf, sizeof(buf));
 	if (got < 0)
 		return (-1);
@@ -545,6 +640,8 @@ hosts_lookup(const char *host, int family, struct rslv_addr *addrs,
 	if (canonsz > 0)
 		canon[0] = '\0';
 
+	if (!resolver_file_ready(1))
+		return (0);
 	got = read_snapshot(g_hostsfd, buf, sizeof(buf));
 	if (got < 0)
 		return (0);

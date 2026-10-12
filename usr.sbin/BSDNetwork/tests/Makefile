@@ -25,6 +25,11 @@ ATF_TESTS_C+=	resolver_test
 SRCS.resolver_test=	resolver_test.c
 LIBADD.resolver_test=	filesystemcmp service
 
+# Actual recovery code, broker-open mock, real fork/Capsicum and descriptor I/O.
+ATF_TESTS_C+=	resolver_recovery_test
+CFLAGS.resolver_recovery_test+= -ffunction-sections -fdata-sections
+LDFLAGS.resolver_recovery_test+= -Wl,--gc-sections
+
 ATF_TESTS_C+=	config_test
 SRCS.config_test=	config_test.c config.c policy.c
 CFLAGS.config_test+=	-I${SRCTOP}/sys
