@@ -122,6 +122,46 @@ the new jail id each time a named rule is re-resolved (-2 means no jail).
 `jail` is not part of OpenBSD's pf.conf; rulesets that use it do not load
 on OpenBSD.
 
+## Tools around pf
+
+The base system talks to pf only through OpenBSD's interfaces: the `/dev/pf`
+ioctls declared in `<net/pfvar.h>`, the pflog(4) and pfsync(4) packet
+formats and the pflow(4) interface. FreeBSD's `libpfctl`, its netlink
+families and `pflowctl` are gone; programs written for OpenBSD's
+`<net/pfvar.h>` build unchanged.
+
+- `tcpdump(8)` is OpenBSD's. Its pflog(4) printer shows the rule, reason and
+  action (`rule 3/(match) block in on vtnet0: ...`), its pfsync(4) printer
+  decodes state updates, and the other printers produce OpenBSD's output
+  (`icmp: echo request`), which is what pf's tests and the OpenBSD PF User's
+  Guide show. Live captures are delivered as packets arrive.
+
+  ```sh
+  tcpdump -n -e -ttt -i pflog0
+  tcpdump -n -v -i pfsync0
+  ```
+
+- pflow(4) senders are interfaces configured with `ifconfig(8)`; configuring
+  one that does not exist creates it, as on OpenBSD:
+
+  ```sh
+  ifconfig pflow0 flowsrc 192.0.2.1 flowdst 192.0.2.10:2055 pflowproto 10
+  ifconfig pfsync0 syncdev vtnet1 up
+  ```
+
+  `ifconfig` prints interfaces in OpenBSD's format (`lladdr`, `index`,
+  `groups:` before the addresses), including the `pfsync:` and `pflow:`
+  lines.
+
+- `netstat -s -p pfsync` and `netstat -s -p pflow` print OpenBSD's pfsync
+  and pflow counters (sysctls `net.pfsync.stats` and `net.pflow.stats`).
+- bsnmpd's `snmp_pf` module serves the BEGEMOT-PF-MIB from the OpenBSD
+  ioctls; its pfAltq objects describe pf.conf `queue` definitions.
+- `system.Network.PF` (BSDNetwork) hands clients a `/dev/pf` descriptor
+  limited to `DIOCGETSTATES`, OpenBSD's state export.
+- `blocklistd-helper` manages its anchors and tables with `pfctl` and needs
+  `anchor "blocklistd/*"` in pf.conf.
+
 ## Status
 
 | Area | State |
