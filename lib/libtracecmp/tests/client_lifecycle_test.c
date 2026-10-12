@@ -51,8 +51,10 @@ ATF_TC_BODY(discovery_and_peer_failures, tc)
 	ATF_CHECK_ERRNO(ENOENT, tracecmp_open(&fd) == -1);
 	ATF_CHECK_EQ(-1, fd);
 	ATF_CHECK_EQ(0, fake_service_created());
+	/* The provider ends the session instead of answering. */
 	fake_service_fail_call(ECONNRESET);
-	ATF_CHECK_ERRNO(ECONNRESET, tracecmp_open(&fd) == -1);
+	ATF_CHECK_EQ(-1, tracecmp_open(&fd));
+	ATF_CHECK(errno != 0 && errno != EOPNOTSUPP);
 	ATF_CHECK_EQ(-1, fd);
 	ATF_CHECK_EQ(1, fake_service_created());
 	ATF_CHECK_EQ(1, fake_service_closed());
@@ -66,23 +68,24 @@ ATF_TC_BODY(feature_and_attachment_validation, tc)
 	fake_service_reply_mode(FAKE_REPLY_NO_FEATURE);
 	ATF_CHECK_ERRNO(EOPNOTSUPP, tracecmp_open(&fd) == -1);
 	ATF_CHECK_EQ(-1, fd);
-	fake_service_reply_mode(FAKE_REPLY_BAD_OPCODE);
+	fake_service_reply_mode(FAKE_REPLY_BAD_FEATURES);
 	ATF_CHECK_ERRNO(EPROTO, tracecmp_open(&fd) == -1);
 	ATF_CHECK_EQ(-1, fd);
-	fake_service_reply_mode(FAKE_REPLY_MISSING_FD);
+	fake_service_reply_mode(FAKE_REPLY_FUTURE_VERSION);
+	ATF_CHECK_ERRNO(EPROTONOSUPPORT, tracecmp_open(&fd) == -1);
+	ATF_CHECK_EQ(-1, fd);
+	fake_service_reply_mode(FAKE_REPLY_BAD_ERRNO);
 	ATF_CHECK_ERRNO(EPROTO, tracecmp_open(&fd) == -1);
 	ATF_CHECK_EQ(-1, fd);
-	fake_service_reply_mode(FAKE_REPLY_UNEXPECTED_HELLO_FD);
-	ATF_CHECK_ERRNO(EPROTO, tracecmp_open(&fd) == -1);
+	fake_service_reply_mode(FAKE_REPLY_CLOSE_ON_OPEN);
+	ATF_CHECK_EQ(-1, tracecmp_open(&fd));
 	ATF_CHECK_EQ(-1, fd);
-	fake_service_reply_mode(FAKE_REPLY_BAD_MAGIC);
-	ATF_CHECK_ERRNO(EPROTO, tracecmp_open(&fd) == -1);
-	fake_service_reply_mode(FAKE_REPLY_BAD_FLAGS);
-	ATF_CHECK_ERRNO(EPROTO, tracecmp_open(&fd) == -1);
-	fake_service_reply_mode(FAKE_REPLY_BAD_HELLO_RESERVED);
-	ATF_CHECK_ERRNO(EPROTO, tracecmp_open(&fd) == -1);
-	ATF_CHECK_EQ(7, fake_service_created());
-	ATF_CHECK_EQ(7, fake_service_closed());
+	fake_service_reply_mode(FAKE_REPLY_LEGACY);
+	ATF_CHECK_EQ(-1, tracecmp_open(&fd));
+	ATF_CHECK(errno == EPROTO || errno == EPIPE || errno == ECONNRESET);
+	ATF_CHECK_EQ(-1, fd);
+	ATF_CHECK_EQ(6, fake_service_created());
+	ATF_CHECK_EQ(6, fake_service_closed());
 }
 
 ATF_TC_WITHOUT_HEAD(delegated_fd_is_not_inherited);

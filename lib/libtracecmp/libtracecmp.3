@@ -1,5 +1,5 @@
 .\" SPDX-License-Identifier: BSD-2-Clause
-.Dd October 8, 2026
+.Dd October 11, 2026
 .Dt LIBTRACECMP 3
 .Os
 .Sh NAME
@@ -98,10 +98,31 @@ Unlisted clients receive
 .Er EACCES .
 Such a descriptor must have a complete DTrace ioctl allowlist, be
 transferable only for its initial delivery, and be closed on fork and exec.
+.Pp
+Each call opens its own session and speaks the FIDL protocol
+.Sy bsd.trace.v1
+.Pq Pa /usr/share/fidl/tracecmp.fidl ;
+see
+.Xr fidl 7 .
+The session first negotiates the wire version, failing with
+.Er EPROTONOSUPPORT
+for an incompatible provider, and is bounded by 30 seconds, shortened by an
+active
+.Fn service_budget_begin
+budget
+.Pq Xr service_runtime 3 .
+A malformed reply fails with
+.Er EPROTO .
+.In tracecmp_protocol.h
+and
+.In tracecmp_server.h
+keep the constants and the pre-FIDL records for compatibility only.
 .Sh SEE ALSO
 .Xr dtrace 1 ,
 .Xr libservice 3 ,
+.Xr service_runtime 3 ,
 .Xr capsicum 4 ,
+.Xr fidl 7 ,
 .Xr BSDTrace 8 ,
 .Xr tracectl 8
 .Sh SECURITY CONSIDERATIONS

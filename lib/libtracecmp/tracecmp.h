@@ -12,6 +12,9 @@
 
 #include "tracecmp_protocol.h"
 
+/* bsd.trace.v1 (tracecmp.fidl) wire major, checked when a session opens. */
+#define	TRACECMP_WIRE_VERSION	1
+
 __BEGIN_DECLS
 int	tracecmp_open(int *);
 int	tracecmp_stats(struct tracecmp_stats *);

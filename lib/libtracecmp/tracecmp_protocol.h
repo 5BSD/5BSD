@@ -1,5 +1,11 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * system.Trace constants (interface name, feature bits, statistics) and the
+ * legacy pre-FIDL wire records.  The current client and provider speak
+ * tracecmp.fidl (library bsd.trace.v1); the record layouts below are kept
+ * for source/ABI compatibility only and are rejected by the provider.  The
+ * opcode numbers remain the DTrace probes' operation codes.
  */
 
 #ifndef _TRACECMP_PROTOCOL_H_

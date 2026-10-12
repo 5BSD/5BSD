@@ -9,6 +9,7 @@ PKG_DEPS.bsdtrace-provider+=	audit
 PKG_DEPS.bsdtrace-provider+=	libchannel
 PKG_DEPS.bsdtrace-provider+=	libservice
 PKG_DEPS.bsdtrace-provider+=	libtracecmp
+PKG_DEPS.bsdtrace-provider+=	libfidl
 PKG_DEPS.bsdtrace-provider+=	switchboard
 PKG_DEPS.bsdtrace-provider+=	switchboardctl
 

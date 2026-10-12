@@ -40,6 +40,15 @@ device)
 	bench=usr.sbin/BSDDevice/tests/latency_bench.c
 	libs="-lservice -lchannel -lprivateucl -lpthread"
 	;;
+trace)
+	paths="usr.sbin/BSDTrace lib/libtracecmp"
+	defs="-DTRACECMP_TESTING -DTRACECMP_CLIENT_SOURCE=\\\"$old/lib/libtracecmp/tracecmp.c\\\""
+	incs="usr.sbin/BSDTrace lib/libtracecmp"
+	srcs="usr.sbin/BSDTrace/tracecmp.c usr.sbin/BSDTrace/tracecmp_policy.c"
+	bench=usr.sbin/BSDTrace/tests/latency_bench.c
+	libs="-lbsm -ldtrace -lservice -lchannel -llogcmp"
+	extra="-I$src/lib/liblogcmp -I$src/cddl/contrib/opensolaris/lib/libdtrace/common"
+	;;
 *)
 	echo "build-daemon-bench: unknown daemon $daemon" >&2; exit 64;;
 esac

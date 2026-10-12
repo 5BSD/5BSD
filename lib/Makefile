@@ -185,7 +185,7 @@ SUBDIR_DEPEND_libradius= libmd
 SUBDIR_DEPEND_libsmb= libkiconv
 SUBDIR_DEPEND_libcapbundle= libcapsulert libucl
 SUBDIR_DEPEND_libservice= libcapability libchannel libtrustedzfs
-SUBDIR_DEPEND_libtracecmp= libservice
+SUBDIR_DEPEND_libtracecmp= libservice libfidl
 SUBDIR_DEPEND_libcapsulert= libucl
 SUBDIR_DEPEND_libbsdfilesystem= libchannel libservice libtrustedzfs
 # See comment above about libssp_nonshared

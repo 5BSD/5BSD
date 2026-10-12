@@ -1,28 +1,61 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/*
+ * Scripted system.Trace provider for the libtracecmp client tests.  It
+ * replaces libservice's service_open(): each call creates a real capability
+ * channel and serves the provider end with a bsd.trace.v1 server on its own
+ * thread (one dispatch thread per connection), so the client library is
+ * exercised over the native transport.
+ */
 #include <sys/types.h>
+
+#include <assert.h>
+#include <channel.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <fidl/bsd.trace.v1/c/bsd.h>
 #include <pthread.h>
+#include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
-#include <libservice.h>
+
 #include <tracecmp.h>
 #include "fake_service.h"
 
-struct service_context { int unused; };
-struct service_session { int unused; };
-static struct service_context context;
+int service_open(const char *, int *);
+int service_budget_timeout(uint32_t *);
+
 static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
-static unsigned created, closed, concurrent, maximum;
+static pthread_t threads[64];
+static unsigned created, closed, joined, concurrent, maximum;
 static int connect_error, call_error;
 static enum fake_reply_mode mode;
+
+struct session {
+	int fd;
+	enum fake_reply_mode mode;
+	int call_error;
+};
+
+static void
+join_all(void)
+{
+	pthread_mutex_lock(&lock);
+	while (joined < created) {
+		pthread_t thread = threads[joined++];
+		pthread_mutex_unlock(&lock);
+		(void)pthread_join(thread, NULL);
+		pthread_mutex_lock(&lock);
+	}
+	pthread_mutex_unlock(&lock);
+}
 
 void
 fake_service_reset(void)
 {
+	join_all();
 	pthread_mutex_lock(&lock);
-	created = closed = concurrent = maximum = 0;
+	created = closed = joined = concurrent = maximum = 0;
 	connect_error = call_error = 0;
 	mode = FAKE_REPLY_NORMAL;
 	pthread_mutex_unlock(&lock);
@@ -31,29 +64,172 @@ fake_service_reset(void)
 void fake_service_fail_connect(int error) { connect_error = error; }
 void fake_service_fail_call(int error) { call_error = error; }
 void fake_service_reply_mode(enum fake_reply_mode value) { mode = value; }
-#define COUNTER(name, value) \
-	unsigned name(void) { unsigned result; pthread_mutex_lock(&lock); \
-	result = value; pthread_mutex_unlock(&lock); return (result); }
-COUNTER(fake_service_created, created)
-COUNTER(fake_service_closed, closed)
-COUNTER(fake_service_max_concurrent, maximum)
 
-int
-service_acquire(struct service_context **result)
+unsigned
+fake_service_created(void)
 {
-	if (result == NULL)
-		return (errno = EINVAL, -1);
-	*result = &context;
-	return (0);
+	unsigned result;
+	pthread_mutex_lock(&lock);
+	result = created;
+	pthread_mutex_unlock(&lock);
+	return (result);
 }
-void service_release(struct service_context *service __unused) { }
+
+/* Sessions whose server saw the connection end (waits for them). */
+unsigned
+fake_service_closed(void)
+{
+	unsigned result;
+	join_all();
+	pthread_mutex_lock(&lock);
+	result = closed;
+	pthread_mutex_unlock(&lock);
+	return (result);
+}
+
+unsigned
+fake_service_max_concurrent(void)
+{
+	unsigned result;
+	join_all();
+	pthread_mutex_lock(&lock);
+	result = maximum;
+	pthread_mutex_unlock(&lock);
+	return (result);
+}
+
+/* Callers' RPC budgets are not under test here. */
+int
+service_budget_timeout(uint32_t *ms)
+{
+	return (ms == NULL ? (errno = EINVAL, -1) : 0);
+}
+
+static void
+info(void *x, struct fidl_bsd_connection *c, struct fidl_bsd_request *r,
+    struct fidl_bsd_empty *e)
+{
+	struct session *s = x;
+	struct bsd_trace_v1_ProtocolInfo v = { TRACECMP_WIRE_VERSION,
+		TRACECMP_FEATURE_RAW_DTRACE_FD };
+	(void)e;
+	if (s->call_error != 0) {
+		fidl_bsd_connection_close(c, s->call_error);
+		return;
+	}
+	/* Let concurrent sessions overlap. */
+	usleep(20000);
+	if (s->mode == FAKE_REPLY_NO_FEATURE)
+		v.features = 0;
+	else if (s->mode == FAKE_REPLY_BAD_FEATURES)
+		v.features |= 0x80000000U;
+	else if (s->mode == FAKE_REPLY_FUTURE_VERSION)
+		v.wire_version++;
+	assert(bsd_trace_v1_Trace_GetProtocolInfo_reply(c, r, &v) == 0);
+}
+
+static void
+open_handler(void *x, struct fidl_bsd_connection *c, struct fidl_bsd_request *r,
+    struct fidl_bsd_empty *e)
+{
+	struct session *s = x;
+	struct bsd_trace_v1_Trace_Open_Result v = {
+		.tag = bsd_trace_v1_Trace_Open_Result_response_tag
+	};
+	int fd;
+	(void)e;
+	if (s->mode == FAKE_REPLY_CLOSE_ON_OPEN) {
+		fidl_bsd_connection_close(c, EPIPE);
+		return;
+	}
+	if (s->mode == FAKE_REPLY_BAD_ERRNO) {
+		v.tag = bsd_trace_v1_Trace_Open_Result_err_tag;
+		v.value.err = 0;
+		assert(bsd_trace_v1_Trace_Open_reply(c, r, &v) == 0);
+		return;
+	}
+	fd = open("/dev/null", O_RDWR | O_CLOEXEC);
+	assert(fd >= 0);
+	v.value.response.dtrace = fd;
+	assert(bsd_trace_v1_Trace_Open_reply(c, r, &v) == 0);
+	close(fd);
+}
+
+static void
+stats_handler(void *x, struct fidl_bsd_connection *c,
+    struct fidl_bsd_request *r, struct fidl_bsd_empty *e)
+{
+	struct bsd_trace_v1_TraceStats v = { FAKE_STATS_OPENED,
+		FAKE_STATS_REJECTED };
+	(void)x;
+	(void)e;
+	assert(bsd_trace_v1_Trace_Stats_reply(c, r, &v) == 0);
+}
+
+static void
+legacy_request(struct channel *channel, struct channel_message *message,
+    void *context)
+{
+	struct tracecmp_msg reply = { .magic = TRACECMP_MAGIC,
+		.opcode = TRACECMP_OP_HELLO };
+	struct channel_outgoing outgoing = CHANNEL_OUTGOING_INITIALIZER(&reply,
+	    sizeof(reply));
+	(void)channel;
+	(void)channel_send_reply(message, &outgoing);
+	channel_message_free(message);
+	*(bool *)context = true;
+}
+
+static void *
+serve(void *argument)
+{
+	struct session *s = argument;
+
+	if (s->mode == FAKE_REPLY_LEGACY) {
+		struct channel_options options =
+		    CHANNEL_OPTIONS_INITIALIZER(CHANNEL_ROLE_PROVIDER);
+		struct channel *channel;
+		bool done = false;
+		assert(channel_create(s->fd, &options, &channel) == 0);
+		assert(channel_set_request_handler(channel, legacy_request,
+		    &done) == 0);
+		while (!done && channel_wait(channel, false, 5000) > 0)
+			(void)channel_dispatch(channel);
+		/* Wait for the client to give up. */
+		while (channel_wait(channel, false, 5000) > 0 &&
+		    channel_dispatch(channel) == 0)
+			;
+		channel_destroy(channel);
+	} else {
+		struct bsd_trace_v1_Trace_server handlers = {
+			.GetProtocolInfo = info,
+			.Open = open_handler,
+			.Stats = stats_handler
+		};
+		struct fidl_bsd_connection *connection;
+		assert(fidl_bsd_connection_create(s->fd, FIDL_BSD_SERVER,
+		    &connection) == 0);
+		assert(bsd_trace_v1_Trace_bind(connection, &handlers, s) == 0);
+		while (fidl_bsd_connection_poll(connection, 10000) == 0)
+			;
+		fidl_bsd_connection_destroy(connection);
+	}
+	free(s);
+	pthread_mutex_lock(&lock);
+	closed++;
+	concurrent--;
+	pthread_mutex_unlock(&lock);
+	return (NULL);
+}
 
 int
-service_connect(struct service_context *service, const char *name, int *fd)
+service_open(const char *name, int *fdp)
 {
-	int error;
-	if (service != &context || strcmp(name, TRACECMP_INTERFACE) != 0 ||
-	    fd == NULL)
+	struct session *s;
+	int ends[2], error;
+
+	if (name == NULL || strcmp(name, TRACECMP_INTERFACE) != 0 ||
+	    fdp == NULL)
 		return (errno = EINVAL, -1);
 	pthread_mutex_lock(&lock);
 	error = connect_error;
@@ -61,145 +237,22 @@ service_connect(struct service_context *service, const char *name, int *fd)
 	pthread_mutex_unlock(&lock);
 	if (error != 0)
 		return (errno = error, -1);
-	*fd = open("/dev/null", O_RDONLY | O_CLOEXEC);
-	return (*fd < 0 ? -1 : 0);
-}
-
-int
-service_open(const char *name, int *fd)
-{
-	struct service_context *ctx;
-	int rv;
-
-	if (service_acquire(&ctx) == -1)
+	if (mac_capability_channel_create(ends) != 0)
 		return (-1);
-	rv = service_connect(ctx, name, fd);
-	service_release(ctx);
-	return (rv);
-}
-
-int
-service_session_create(int fd, struct service_session **result)
-{
-	struct service_session *session;
-	if (fd < 0 || result == NULL)
-		return (errno = EINVAL, -1);
-	session = calloc(1, sizeof(*session));
-	if (session == NULL)
-		return (-1);
-	close(fd);
+	s = calloc(1, sizeof(*s));
+	assert(s != NULL);
+	s->fd = ends[1];
 	pthread_mutex_lock(&lock);
+	s->mode = mode;
+	s->call_error = call_error;
+	call_error = 0;
+	assert(created < sizeof(threads) / sizeof(threads[0]));
+	if (++concurrent > maximum)
+		maximum = concurrent;
+	error = pthread_create(&threads[created], NULL, serve, s);
+	assert(error == 0);
 	created++;
 	pthread_mutex_unlock(&lock);
-	*result = session;
+	*fdp = ends[0];
 	return (0);
-}
-
-void
-service_session_close(struct service_session *session)
-{
-	if (session == NULL)
-		return;
-	pthread_mutex_lock(&lock);
-	closed++;
-	pthread_mutex_unlock(&lock);
-	free(session);
-}
-
-int
-service_session_fail(struct service_session *session, int error)
-{
-
-	if (session == NULL || error <= 0)
-		return (errno = EINVAL, -1);
-	return (0);
-}
-
-int
-service_session_call(struct service_session *session,
-    const struct service_message *outgoing, struct service_reply *reply,
-    const struct service_call_options *options __unused)
-{
-	struct {
-		struct tracecmp_msg msg;
-		union {
-			struct tracecmp_hello_reply hello;
-			struct tracecmp_stats stats;
-		} body;
-	} response;
-	const struct tracecmp_msg *request;
-	enum fake_reply_mode selected;
-	size_t length;
-	int error, fd[2];
-
-	if (session == NULL || outgoing == NULL || reply == NULL ||
-	    outgoing->length != sizeof(*request))
-		return (errno = EINVAL, -1);
-	request = outgoing->data;
-	pthread_mutex_lock(&lock);
-	concurrent++;
-	if (concurrent > maximum)
-		maximum = concurrent;
-	error = call_error;
-	call_error = 0;
-	selected = mode;
-	pthread_mutex_unlock(&lock);
-	usleep(20000);
-	if (error != 0)
-		goto fail;
-	memset(&response, 0, sizeof(response));
-	response.msg.magic = TRACECMP_MAGIC;
-	response.msg.opcode = selected == FAKE_REPLY_BAD_OPCODE ?
-	    TRACECMP_OP_STATS : request->opcode;
-	if (selected == FAKE_REPLY_BAD_MAGIC)
-		response.msg.magic ^= 1;
-	else if (selected == FAKE_REPLY_BAD_FLAGS)
-		response.msg.flags = 1;
-	length = sizeof(response.msg);
-	if (request->opcode == TRACECMP_OP_HELLO) {
-		response.body.hello.features = selected == FAKE_REPLY_NO_FEATURE ?
-		    0 : TRACECMP_FEATURE_RAW_DTRACE_FD;
-		if (selected == FAKE_REPLY_BAD_HELLO_RESERVED)
-			response.body.hello.reserved = 1;
-		length += sizeof(response.body.hello);
-	} else if (request->opcode == TRACECMP_OP_STATS) {
-		response.body.stats.opened = FAKE_STATS_OPENED;
-		response.body.stats.rejected = FAKE_STATS_REJECTED;
-		length += sizeof(response.body.stats);
-	}
-	if (reply->capacity < length) {
-		error = EMSGSIZE;
-		goto fail;
-	}
-	memcpy(reply->data, &response, length);
-	reply->length = length;
-	reply->nfds = 0;
-	if (request->opcode == TRACECMP_OP_HELLO &&
-	    selected == FAKE_REPLY_UNEXPECTED_HELLO_FD)
-		reply->nfds = 1;
-	if (request->opcode == TRACECMP_OP_OPEN &&
-	    selected != FAKE_REPLY_MISSING_FD) {
-		if (pipe(fd) == -1) {
-			error = errno;
-			goto fail;
-		}
-		close(fd[1]);
-		if (reply->fd_capacity == 0) {
-			close(fd[0]);
-			error = EMSGSIZE;
-			goto fail;
-		}
-		reply->fds[0] = fd[0];
-		reply->nfds = 1;
-	}
-	pthread_mutex_lock(&lock);
-	concurrent--;
-	pthread_mutex_unlock(&lock);
-	return (0);
-fail:
-	pthread_mutex_lock(&lock);
-	concurrent--;
-	pthread_mutex_unlock(&lock);
-	errno = error != 0 ? error : EIO;
-	return (-1);
 }

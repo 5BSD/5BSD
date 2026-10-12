@@ -4,8 +4,10 @@ PACKAGE=	bsdtrace-provider
 PROG=	BSDTrace
 MAN=	BSDTrace.8
 SRCS=	tracecmp.c tracecmp_policy.c
-LIBADD=	bsm channel tracecmp service logcmp
+LIBADD=	bsm channel tracecmp service logcmp fidl_bsd
 CFLAGS+=	-I${SRCTOP}/lib/liblogcmp
+CFLAGS+=	-I${FIDLGEN.tracecmp}
+CFLAGS+=	-I${SRCTOP}/lib/libfidl/include
 CFLAGS+=	-I${SRCTOP}/lib/libchannel
 CFLAGS+=	-I${SRCTOP}/lib/libtracecmp
 CFLAGS+=	-I${SRCTOP}/lib/libservice
@@ -38,6 +40,13 @@ SUBDIR.${MK_TESTS}+=	tests
 SRCS+=	bsdtrace_provider.d
 CFLAGS+=	-I${.OBJDIR} -DWITH_DTRACE
 .endif
+
+# Bindings generated at build time (fidl-bindings.mk).
+FIDL_BINDINGS+=	tracecmp
+FIDL_SCHEMAS.tracecmp=	lib/libfidl/tests/zx.fidl \
+	lib/libtracecmp/tracecmp.fidl
+FIDL_LIBRARY.tracecmp=	bsd.trace.v1
+.include "${SRCTOP}/lib/libfidl/fidl-bindings.mk"
 
 .include <bsd.prog.mk>
 

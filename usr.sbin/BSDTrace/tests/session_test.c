@@ -20,21 +20,32 @@
 #include <unistd.h>
 
 #include <channel.h>
+#include <fidl/bsd.trace.v1/c/bsd.h>
+#include <fidl/bsd/sync_c.h>
 #include <libservice.h>
 #include <tracecmp.h>
-#include <tracecmp_server.h>
 
 #include "tracecmp_test.h"
 
-union test_buffer {
-	max_align_t align;
-	uint8_t bytes[TRACECMP_MAX_MESSAGE];
-};
-
+/*
+ * The real per-session bsd.trace.v1 server runs in a forked child; the test
+ * drives it with the generated client bindings (the encoder libtracecmp
+ * uses), or with hand-built frames on a raw libservice session.
+ */
 struct fixture {
-	struct service_session *session;
+	struct fidl_bsd_connection *client;
+	struct service_session *session;	/* raw-frame cases */
 	pid_t child;
 };
+
+/* FIDL v2 transactional message header. */
+struct wire_header {
+	uint32_t txid;
+	uint8_t flags[3], magic;
+	uint64_t ordinal;
+};
+#define ORD_INFO	UINT64_C(0x2e66741ad337c4a3)
+#define ORD_OPEN	UINT64_C(0x0e3e651227c85ded)
 
 static void
 channel_pair(int *client, int *provider)
@@ -78,6 +89,28 @@ fixture_create_full(struct fixture *fixture, bool authorized, int device_error,
 	close(provider);
 	if (dtrace_fd >= 0)
 		close(dtrace_fd);
+	ATF_REQUIRE_EQ(0, fidl_bsd_connection_create(client, FIDL_BSD_CLIENT,
+	    &fixture->client));
+}
+
+static void
+fixture_raw(struct fixture *fixture)
+{
+	int client, provider, dtrace_fd;
+
+	memset(fixture, 0, sizeof(*fixture));
+	channel_pair(&client, &provider);
+	dtrace_fd = open("/dev/null", O_RDONLY | O_CLOEXEC);
+	ATF_REQUIRE(dtrace_fd >= 0);
+	fixture->child = fork();
+	ATF_REQUIRE(fixture->child >= 0);
+	if (fixture->child == 0) {
+		close(client);
+		_exit(tracecmp_test_serve(provider, dtrace_fd, true, 0,
+		    "org.test.trace", SERVICE_RIGHTS_ADMIN));
+	}
+	close(provider);
+	close(dtrace_fd);
 	ATF_REQUIRE_EQ(0, service_session_create(client, &fixture->session));
 }
 
@@ -101,65 +134,143 @@ fixture_destroy(struct fixture *fixture)
 {
 	int status;
 
-	service_session_close(fixture->session);
+	if (fixture->client != NULL)
+		fidl_bsd_connection_destroy(fixture->client);
+	if (fixture->session != NULL)
+		service_session_close(fixture->session);
 	ATF_REQUIRE_EQ(fixture->child, waitpid(fixture->child, &status, 0));
 	ATF_CHECK(WIFEXITED(status));
 	ATF_CHECK_EQ(0, WEXITSTATUS(status));
 }
 
-static size_t
-call(struct service_session *session, uint16_t opcode, union test_buffer *reply,
-    int *fds, size_t fd_capacity, size_t *nfdsp)
-{
-	struct service_call_options options = SERVICE_CALL_OPTIONS_INITIALIZER;
-	struct service_message outgoing;
-	struct service_reply incoming;
-	struct tracecmp_msg request;
+struct result {
+	bool done;
+	int error;		/* transport */
+	int status;		/* application errno */
+	uint32_t features;
+	int fd;
+	uint64_t opened, rejected;
+};
 
-	ATF_REQUIRE_EQ(0, tracecmp_message_init(&request, opcode, 0));
-	memset(&outgoing, 0, sizeof(outgoing));
-	outgoing.size = sizeof(outgoing);
-	outgoing.data = &request;
-	outgoing.length = sizeof(request);
-	memset(&incoming, 0, sizeof(incoming));
-	incoming.size = sizeof(incoming);
-	incoming.data = reply;
-	incoming.capacity = sizeof(*reply);
-	incoming.fds = fds;
-	incoming.fd_capacity = fd_capacity;
-	options.timeout_ms = 2000;
-	ATF_REQUIRE_EQ_MSG(0, service_session_call(session, &outgoing,
-	    &incoming, &options), "call opcode %u: %s", opcode,
-	    strerror(errno));
-	ATF_REQUIRE_EQ(0, tracecmp_validate_message((const void *)reply,
-	    incoming.length, TRACECMP_MESSAGE_REPLY));
-	ATF_REQUIRE_EQ(0, tracecmp_validate_fds((const void *)reply,
-	    incoming.nfds, TRACECMP_MESSAGE_REPLY));
-	if (nfdsp != NULL)
-		*nfdsp = incoming.nfds;
-	return (incoming.length);
+static void
+wait_for(struct fixture *fixture, struct result *r)
+{
+	struct timespec deadline;
+
+	ATF_REQUIRE_EQ(0, fidl_bsd_sync_deadline(&deadline, 5000));
+	if (r->error == 0)
+		r->error = fidl_bsd_sync_wait(fixture->client, &r->done,
+		    &deadline);
+	ATF_REQUIRE_EQ_MSG(0, r->error, "call failed: %s", strerror(r->error));
 }
 
+static void
+info_done(void *p, int error, struct bsd_trace_v1_ProtocolInfo *v)
+{
+	struct result *r = p;
+	r->done = true;
+	r->error = error;
+	if (!error) {
+		ATF_REQUIRE_EQ(TRACECMP_WIRE_VERSION, v->wire_version);
+		r->features = v->features;
+	}
+}
+
+static void
+open_done(void *p, int error, struct bsd_trace_v1_Trace_Open_Result *v)
+{
+	struct result *r = p;
+	r->done = true;
+	r->error = error;
+	if (error)
+		return;
+	if (v->tag == bsd_trace_v1_Trace_Open_Result_err_tag)
+		r->status = (int)v->value.err;
+	else
+		r->fd = fidl_bsd_take_fd(&v->value.response.dtrace);
+}
+
+static void
+stats_done(void *p, int error, struct bsd_trace_v1_TraceStats *v)
+{
+	struct result *r = p;
+	r->done = true;
+	r->error = error;
+	if (!error) {
+		r->opened = v->opened;
+		r->rejected = v->rejected;
+	}
+}
+
+/* Negotiate; returns the advertised features. */
+static uint32_t
+hello(struct fixture *fixture)
+{
+	struct fidl_bsd_empty empty = { 0 };
+	struct result r = { .fd = -1 };
+	uint32_t txid;
+
+	r.error = bsd_trace_v1_Trace_GetProtocolInfo(fixture->client, &empty,
+	    info_done, &r, &txid);
+	wait_for(fixture, &r);
+	return (r.features);
+}
+
+/* Open; returns the application errno and the delivered descriptor. */
 static int
-call_with_attachment(struct service_session *session, uint16_t opcode, int fd)
+open_consumer(struct fixture *fixture, int *fd)
+{
+	struct fidl_bsd_empty empty = { 0 };
+	struct result r = { .fd = -1 };
+	uint32_t txid;
+
+	r.error = bsd_trace_v1_Trace_Open(fixture->client, &empty, open_done,
+	    &r, &txid);
+	wait_for(fixture, &r);
+	*fd = r.fd;
+	return (r.status);
+}
+
+static void
+get_stats(struct fixture *fixture, uint64_t *opened, uint64_t *rejected)
+{
+	struct fidl_bsd_empty empty = { 0 };
+	struct result r = { .fd = -1 };
+	uint32_t txid;
+
+	r.error = bsd_trace_v1_Trace_Stats(fixture->client, &empty,
+	    stats_done, &r, &txid);
+	wait_for(fixture, &r);
+	*opened = r.opened;
+	*rejected = r.rejected;
+}
+
+/* A raw frame (optionally with a descriptor); returns the call result. */
+static int
+raw_frame(struct service_session *session, const void *data, size_t length,
+    int fd)
 {
 	struct service_call_options options = SERVICE_CALL_OPTIONS_INITIALIZER;
 	struct service_message outgoing;
 	struct service_reply incoming;
-	union test_buffer reply;
-	struct tracecmp_msg request;
+	uint8_t reply[64];
+	int received = -1, rc;
 
-	ATF_REQUIRE_EQ(0, tracecmp_message_init(&request, opcode, 0));
 	outgoing = (struct service_message){
-		.size = sizeof(outgoing), .data = &request,
-		.length = sizeof(request), .fds = &fd, .nfds = 1,
+		.size = sizeof(outgoing), .data = data, .length = length,
+		.fds = fd >= 0 ? &fd : NULL, .nfds = fd >= 0 ? 1 : 0,
 	};
 	memset(&incoming, 0, sizeof(incoming));
 	incoming.size = sizeof(incoming);
-	incoming.data = &reply;
+	incoming.data = reply;
 	incoming.capacity = sizeof(reply);
+	incoming.fds = &received;
+	incoming.fd_capacity = 1;
 	options.timeout_ms = 2000;
-	return (service_session_call(session, &outgoing, &incoming, &options));
+	rc = service_session_call(session, &outgoing, &incoming, &options);
+	if (rc == 0 && incoming.nfds != 0 && received >= 0)
+		close(received);
+	return (rc);
 }
 
 ATF_TC(authorized_descriptor_is_one_shot);
@@ -169,36 +280,22 @@ ATF_TC_HEAD(authorized_descriptor_is_one_shot, tc)
 }
 ATF_TC_BODY(authorized_descriptor_is_one_shot, tc)
 {
-	union test_buffer reply;
 	struct fixture fixture;
-	struct tracecmp_hello_reply *hello;
-	struct tracecmp_stats *stats;
-	struct tracecmp_msg *message;
+	uint64_t opened, rejected;
 	int fd;
-	size_t length, nfds;
 
 	fixture_create(&fixture, true, 0);
-	length = call(fixture.session, TRACECMP_OP_HELLO, &reply, NULL, 0,
-	    &nfds);
-	ATF_CHECK_EQ(sizeof(*message) + sizeof(*hello), length);
-	message = (void *)reply.bytes;
-	hello = (void *)(message + 1);
-	ATF_CHECK_EQ(TRACECMP_FEATURE_RAW_DTRACE_FD, hello->features);
-	ATF_CHECK_EQ(0, nfds);
+	ATF_CHECK_EQ(TRACECMP_FEATURE_RAW_DTRACE_FD, hello(&fixture));
 	fd = -1;
-	(void)call(fixture.session, TRACECMP_OP_OPEN, &reply, &fd, 1, &nfds);
-	ATF_CHECK_EQ(0, ((struct tracecmp_msg *)(void *)reply.bytes)->status);
-	ATF_REQUIRE_EQ(1, nfds);
+	ATF_CHECK_EQ(0, open_consumer(&fixture, &fd));
+	ATF_REQUIRE(fd >= 0);
 	ATF_CHECK(fcntl(fd, F_GETFD) >= 0);
 	close(fd);
-	(void)call(fixture.session, TRACECMP_OP_OPEN, &reply, NULL, 0, &nfds);
-	ATF_CHECK_EQ(-EALREADY,
-	    ((struct tracecmp_msg *)(void *)reply.bytes)->status);
-	(void)call(fixture.session, TRACECMP_OP_STATS, &reply, NULL, 0, &nfds);
-	message = (void *)reply.bytes;
-	stats = (void *)(message + 1);
-	ATF_CHECK_EQ(1, stats->opened);
-	ATF_CHECK_EQ(1, stats->rejected);
+	ATF_CHECK_EQ(EALREADY, open_consumer(&fixture, &fd));
+	ATF_CHECK_EQ(-1, fd);
+	get_stats(&fixture, &opened, &rejected);
+	ATF_CHECK_EQ(1, opened);
+	ATF_CHECK_EQ(1, rejected);
 	fixture_destroy(&fixture);
 }
 
@@ -215,50 +312,101 @@ ATF_TC_HEAD(unexpected_descriptor_poison_session, tc)
 }
 ATF_TC_BODY(unexpected_descriptor_poison_session, tc)
 {
+	struct wire_header info = { 1, { 2, 0, 0 }, 1, ORD_INFO };
 	struct fixture fixture;
 	int fd;
 
-	fixture_create(&fixture, true, 0);
+	/* A descriptor on any request ends the session, unanswered. */
+	fixture_raw(&fixture);
 	fd = open("/dev/null", O_RDONLY | O_CLOEXEC);
 	ATF_REQUIRE(fd >= 0);
-	ATF_CHECK(call_with_attachment(fixture.session, TRACECMP_OP_HELLO,
-	    fd) == -1);
+	ATF_CHECK_EQ(-1, raw_frame(fixture.session, &info, sizeof(info), fd));
 	close(fd);
+	ATF_CHECK_EQ(-1, raw_frame(fixture.session, &info, sizeof(info), -1));
 	fixture_destroy(&fixture);
+}
+
+ATF_TC(malformed_frames_end_the_session);
+ATF_TC_HEAD(malformed_frames_end_the_session, tc)
+{
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(malformed_frames_end_the_session, tc)
+{
+	struct wire_header frame;
+	struct tracecmp_msg legacy;
+	struct fixture fixture;
+	int fd, mode;
+
+	for (mode = 0; mode < 5; mode++) {
+		fixture_raw(&fixture);
+		frame = (struct wire_header){ 2, { 2, 0, 0 }, 1, ORD_OPEN };
+		if (mode > 0) {
+			/* Negotiate first, so the rejection is the frame's. */
+			struct wire_header info = { 1, { 2, 0, 0 }, 1,
+				ORD_INFO };
+			ATF_REQUIRE_EQ(0, raw_frame(fixture.session, &info,
+			    sizeof(info), -1));
+		}
+		switch (mode) {
+		case 0:	/* Open before negotiation. */
+			ATF_CHECK_EQ(-1, raw_frame(fixture.session, &frame,
+			    sizeof(frame), -1));
+			break;
+		case 1:	/* Unknown strict method. */
+			frame.ordinal = 0x7fff;
+			ATF_CHECK_EQ(-1, raw_frame(fixture.session, &frame,
+			    sizeof(frame), -1));
+			break;
+		case 2:	/* Truncated header. */
+			ATF_CHECK_EQ(-1, raw_frame(fixture.session, &frame, 8,
+			    -1));
+			break;
+		case 3:	/* Trailing bytes on a body-less method. */
+		{
+			uint8_t bytes[24] = { 0 };
+			memcpy(bytes, &frame, sizeof(frame));
+			ATF_CHECK_EQ(-1, raw_frame(fixture.session, bytes,
+			    sizeof(bytes), -1));
+			break;
+		}
+		case 4:	/* A pre-FIDL OPEN record. */
+			memset(&legacy, 0, sizeof(legacy));
+			legacy.magic = TRACECMP_MAGIC;
+			legacy.opcode = TRACECMP_OP_OPEN;
+			ATF_CHECK_EQ(-1, raw_frame(fixture.session, &legacy,
+			    sizeof(legacy), -1));
+			break;
+		}
+		/* No consumer was delivered and the session is over. */
+		ATF_CHECK_EQ(-1, raw_frame(fixture.session, &frame,
+		    sizeof(frame), -1));
+		fixture_destroy(&fixture);
+	}
+	(void)fd;
 }
 ATF_TC_BODY(authorization_and_device_failures, tc)
 {
-	union test_buffer reply;
 	struct fixture fixture;
-	struct tracecmp_msg *message;
 	int fd;
-	size_t nfds;
 
 	/*
-	 * Root (this test runs as root) bypasses the label allowlist: an
-	 * unauthorized-label session still obtains the raw DTrace fd on OPEN.
-	 * (A non-root, non-allowlisted caller is denied EACCES; that path is not
-	 * exercised here because the harness runs as root, and the label
-	 * allowlist decision itself is covered by the policy tests.)
+	 * A session holding SERVICE_RIGHTS_ADMIN bypasses the label allowlist:
+	 * an unauthorized-label session still obtains the raw DTrace fd.
 	 */
 	fixture_create(&fixture, false, 0);
+	(void)hello(&fixture);
 	fd = -1;
-	(void)call(fixture.session, TRACECMP_OP_OPEN, &reply, &fd, 1, &nfds);
-	message = (void *)reply.bytes;
-	ATF_CHECK_EQ(0, message->status);
-	ATF_CHECK_EQ(1, nfds);
+	ATF_CHECK_EQ(0, open_consumer(&fixture, &fd));
+	ATF_CHECK(fd >= 0);
 	if (fd >= 0)
 		close(fd);
 	fixture_destroy(&fixture);
 
 	fixture_create(&fixture, true, ENXIO);
-	(void)call(fixture.session, TRACECMP_OP_HELLO, &reply, NULL, 0, NULL);
-	message = (void *)reply.bytes;
-	ATF_CHECK_EQ(0,
-	    ((struct tracecmp_hello_reply *)(void *)(message + 1))->features);
-	(void)call(fixture.session, TRACECMP_OP_OPEN, &reply, NULL, 0, NULL);
-	ATF_CHECK_EQ(-ENXIO,
-	    ((struct tracecmp_msg *)(void *)reply.bytes)->status);
+	ATF_CHECK_EQ(0, hello(&fixture));
+	ATF_CHECK_EQ(ENXIO, open_consumer(&fixture, &fd));
+	ATF_CHECK_EQ(-1, fd);
 	fixture_destroy(&fixture);
 }
 
@@ -277,36 +425,20 @@ ATF_TC_HEAD(unauthorized_open_is_denied_without_pinning_consumer, tc)
 }
 ATF_TC_BODY(unauthorized_open_is_denied_without_pinning_consumer, tc)
 {
-	union test_buffer reply;
 	struct fixture fixture;
-	struct tracecmp_hello_reply *hello;
-	struct tracecmp_stats *stats;
-	struct tracecmp_msg *message;
+	uint64_t opened, rejected;
 	int fd;
-	size_t nfds;
 
 	fixture_create_full(&fixture, false, 0, SERVICE_RIGHTS_NONE, false);
-
-	/* HELLO must not advertise the raw-fd feature to an unauthorized peer. */
-	(void)call(fixture.session, TRACECMP_OP_HELLO, &reply, NULL, 0, &nfds);
-	message = (void *)reply.bytes;
-	hello = (void *)(message + 1);
-	ATF_CHECK_EQ(0, hello->features);
-	ATF_CHECK_EQ(0, nfds);
-
-	/* OPEN is refused EACCES with no descriptor delivered. */
+	/* Negotiation must not advertise the raw-fd feature. */
+	ATF_CHECK_EQ(0, hello(&fixture));
+	/* Open is refused EACCES with no descriptor delivered. */
 	fd = -1;
-	(void)call(fixture.session, TRACECMP_OP_OPEN, &reply, &fd, 1, &nfds);
-	ATF_CHECK_EQ(-EACCES,
-	    ((struct tracecmp_msg *)(void *)reply.bytes)->status);
-	ATF_CHECK_EQ(0, nfds);
+	ATF_CHECK_EQ(EACCES, open_consumer(&fixture, &fd));
 	ATF_CHECK_EQ(-1, fd);
-
-	(void)call(fixture.session, TRACECMP_OP_STATS, &reply, NULL, 0, &nfds);
-	message = (void *)reply.bytes;
-	stats = (void *)(message + 1);
-	ATF_CHECK_EQ(0, stats->opened);
-	ATF_CHECK_EQ(1, stats->rejected);
+	get_stats(&fixture, &opened, &rejected);
+	ATF_CHECK_EQ(0, opened);
+	ATF_CHECK_EQ(1, rejected);
 	fixture_destroy(&fixture);
 }
 
@@ -325,23 +457,13 @@ ATF_TC_HEAD(authorized_label_open_delivers_consumer_fd, tc)
 }
 ATF_TC_BODY(authorized_label_open_delivers_consumer_fd, tc)
 {
-	union test_buffer reply;
 	struct fixture fixture;
-	struct tracecmp_hello_reply *hello;
-	struct tracecmp_msg *message;
 	int fd;
-	size_t nfds;
 
 	fixture_create_full(&fixture, true, 0, SERVICE_RIGHTS_NONE, true);
-	(void)call(fixture.session, TRACECMP_OP_HELLO, &reply, NULL, 0, &nfds);
-	message = (void *)reply.bytes;
-	hello = (void *)(message + 1);
-	ATF_CHECK_EQ(TRACECMP_FEATURE_RAW_DTRACE_FD, hello->features);
-
+	ATF_CHECK_EQ(TRACECMP_FEATURE_RAW_DTRACE_FD, hello(&fixture));
 	fd = -1;
-	(void)call(fixture.session, TRACECMP_OP_OPEN, &reply, &fd, 1, &nfds);
-	ATF_CHECK_EQ(0, ((struct tracecmp_msg *)(void *)reply.bytes)->status);
-	ATF_REQUIRE_EQ(1, nfds);
+	ATF_CHECK_EQ(0, open_consumer(&fixture, &fd));
 	ATF_CHECK(fd >= 0 && fcntl(fd, F_GETFD) >= 0);
 	if (fd >= 0)
 		close(fd);
@@ -449,6 +571,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, unauthorized_open_is_denied_without_pinning_consumer);
 	ATF_TP_ADD_TC(tp, authorized_label_open_delivers_consumer_fd);
 	ATF_TP_ADD_TC(tp, unexpected_descriptor_poison_session);
+	ATF_TP_ADD_TC(tp, malformed_frames_end_the_session);
 	ATF_TP_ADD_TC(tp, arguments);
 	ATF_TP_ADD_TC(tp, consumer_open_retains_only_delegated_rights);
 	ATF_TP_ADD_TC(tp, worker_descriptors_cross_exactly_one_fork);
