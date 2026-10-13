@@ -12,17 +12,28 @@ ROOT = Path(__file__).resolve().parents[4]
 
 class PackageSymlink(unittest.TestCase):
     def test_alias_is_staging_relative(self):
-        source = (ROOT/'usr.sbin/switchboardctl/Makefile').read_text()
-        self.assertIn('SYMLINKS+= ../..${BINDIR}/${PROG} /usr/sbin/${PROG}', source)
-        with tempfile.TemporaryDirectory() as temp:
-            stage = Path(temp)
-            target = stage/'Capabilities/System/SwitchBoardControl.cap/Units/switchboardctl.unit/bin/switchboardctl'
-            target.parent.mkdir(parents=True)
-            target.write_text('fixture')
-            alias = stage/'usr/sbin/switchboardctl'
-            alias.parent.mkdir(parents=True)
-            alias.symlink_to('../../Capabilities/System/SwitchBoardControl.cap/Units/switchboardctl.unit/bin/switchboardctl')
-            self.assertEqual(alias.resolve(), target)
+        aliases = [
+            ('usr.sbin/switchboardctl/Makefile',
+             'SYMLINKS+= ../..${BINDIR}/${PROG} /usr/sbin/${PROG}',
+             'SwitchBoardControl.cap/Units/switchboardctl.unit/bin/switchboardctl', 'switchboardctl'),
+            ('usr.sbin/capsulectl/Makefile',
+             'SYMLINKS+= ../..${BINDIR}/${PROG} /usr/sbin/${PROG}',
+             'CapsuleControl.cap/Units/capsulectl.unit/bin/capsulectl', 'capsulectl'),
+            ('usr.sbin/bluetooth/BSDBluetooth/Makefile',
+             'SYMLINKS=\t../..${BLUED_CAP_BIN}/BSDBluetooth /usr/sbin/blued',
+             'Bluetooth.cap/Units/blued.unit/bin/BSDBluetooth', 'blued'),
+        ]
+        for source, definition, executable, name in aliases:
+            with self.subTest(alias=name), tempfile.TemporaryDirectory() as temp:
+                self.assertIn(definition, (ROOT/source).read_text())
+                stage = Path(temp)
+                target = stage/'Capabilities/System'/executable
+                target.parent.mkdir(parents=True)
+                target.write_text('fixture')
+                alias = stage/'usr/sbin'/name
+                alias.parent.mkdir(parents=True)
+                alias.symlink_to('../../Capabilities/System/' + executable)
+                self.assertEqual(alias.resolve(), target)
 
     def test_real_package_has_only_staged_elf_dependencies(self):
         def needed(path):

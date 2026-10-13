@@ -31,7 +31,7 @@ CONTROL_POLICY= capbundle/Unit.ucl
 CONTROL_POLICYDIR= ${CONTROL_UNIT}
 CONTROL_POLICYPACKAGE= ${PACKAGE}
 CONTROL_POLICYMODE= 0444
-SYMLINKS+= ${BINDIR}/${PROG} /usr/sbin/${PROG}
+SYMLINKS+= ../..${BINDIR}/${PROG} /usr/sbin/${PROG}
 
 .include <bsd.prog.mk>
 
