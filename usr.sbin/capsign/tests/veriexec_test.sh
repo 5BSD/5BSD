@@ -369,8 +369,117 @@ SRC
     atf_check -s exit:0 -o ignore -e ignore cc -Wall -Wextra -Werror mmap-probe.c -o mmap-probe
     atf_check -s exit:0 -o inline:'SIGNED_MMAP_LIFETIME_OK\n' ./mmap-probe signed demo damaged
 }
+atf_test_case mmap_open_backing
+mmap_open_backing_head()
+{
+    atf_set descr 'Existing linked/unlinked UFS and tmpfs backing retains unsigned access and signed verification'
+    atf_set require.progs 'cc openssl sysctl'
+    atf_set timeout 300
+}
+mmap_open_backing_body()
+{
+    [ "$(sysctl -n kern.features.veriexec_capimage_mmap 2>/dev/null)" = 1 ] ||
+        atf_skip 'kernel lacks signed mmap lifetime enforcement'
+    capsign=$(atf_config_get capsign /usr/sbin/capsign)
+    atf_check -s exit:0 -o ignore -e ignore openssl genpkey -algorithm ed25519 -out key
+    printf 'program = "demo"; activation { exec = true; }\n' > policy
+    printf 'char padding[32768] = {1}; int main(void) { return padding[0]; }\n' > demo.c
+    atf_check -s exit:0 -o ignore -e ignore cc demo.c -o demo
+    atf_check -s exit:0 "$capsign" sign -m policy -k key -o signed demo
+    atf_check -s exit:0 cp signed damaged
+    printf '\001' | dd of=damaged bs=1 seek=15 conv=notrunc 2>/dev/null
+    cat > mmap-open-backing.c <<'SRC'
+/* SPDX-License-Identifier: BSD-2-Clause */
+#include <sys/types.h>
+#include <sys/mman.h>
+#include <sys/mount.h>
+#include <sys/stat.h>
+#include <err.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+
+static void copy(const char *source, const char *target)
+{
+    char buf[8192];
+    int in = open(source, O_RDONLY);
+    int out = open(target, O_WRONLY | O_CREAT | O_EXCL, 0700);
+    if (in < 0 || out < 0) err(1, "copy open");
+    ssize_t n;
+    while ((n = read(in, buf, sizeof(buf))) > 0)
+        if (write(out, buf, n) != n) err(1, "copy write");
+    if (n < 0 || close(in) != 0 || close(out) != 0) err(1, "copy close");
+}
+
+int main(int argc, char **argv)
+{
+    if (argc != 6) errx(1, "directory unsigned signed damaged filesystem required");
+    struct statfs fs;
+    if (statfs(argv[1], &fs) != 0) err(1, "backing filesystem");
+    if (strcmp(fs.f_fstypename, argv[5]) != 0)
+        errx(1, "expected filesystem %s, got %s", argv[5], fs.f_fstypename);
+    size_t page = (size_t)getpagesize();
+    unsigned count = 0;
+    for (int kind = 0; kind < 3; kind++)
+    for (int shared = 0; shared < 2; shared++)
+    for (int unlinked = 0; unlinked < 2; unlinked++)
+    for (int executable = 0; executable < 2; executable++) {
+        char path[1024];
+        if (snprintf(path, sizeof(path), "%s/probe-%u", argv[1], count) >= (int)sizeof(path))
+            errx(1, "path too long");
+        copy(argv[kind + 2], path);
+        int fd = open(path, O_RDONLY);
+        if (fd < 0) err(1, "backing open");
+        if (unlinked && unlink(path) != 0) err(1, "unlink backing");
+        int prot = PROT_READ | (executable ? PROT_EXEC : 0);
+        errno = 0;
+        void *p = mmap(NULL, page, prot, shared ? MAP_SHARED : MAP_PRIVATE, fd, 0);
+        int saved = errno;
+        if (close(fd) != 0) err(1, "close original backing");
+        if (kind == 2) {
+            if (p != MAP_FAILED || saved != EAUTH)
+                errx(1, "damaged accepted kind=%d shared=%d unlinked=%d exec=%d result=%p errno=%d", kind, shared, unlinked, executable, p, saved);
+        } else {
+            if (p == MAP_FAILED) { errno = saved; err(1, "mmap kind=%d shared=%d unlinked=%d exec=%d", kind, shared, unlinked, executable); }
+            if (*(volatile unsigned char *)p != 0x7f) errx(1, "mapped bytes differ");
+            if (mprotect(p, page, PROT_READ | PROT_EXEC) != 0) err(1, "promote valid mapping");
+            if (kind == 1 && !unlinked) {
+                fd = open(path, O_WRONLY);
+                if (fd != -1 || errno != ETXTBSY) errx(1, "signed backing write open not pinned");
+                if (truncate(path, 0) != -1 || errno != ETXTBSY) errx(1, "signed backing truncate not pinned");
+            }
+            if (munmap(p, page) != 0) err(1, "unmap");
+            if (kind == 1 && !unlinked) {
+                fd = open(path, O_WRONLY);
+                if (fd < 0 || close(fd) != 0) err(1, "pin leaked after unmap");
+            }
+        }
+        if (!unlinked && unlink(path) != 0) err(1, "cleanup");
+        printf("MMAP_OPEN_BACKING kind=%d shared=%d unlinked=%d exec=%d PASS\n", kind, shared, unlinked, executable);
+        count++;
+    }
+    printf("MMAP_OPEN_BACKING_PASS=%u\n", count);
+    return 0;
+}
+SRC
+    atf_check -s exit:0 -o ignore -e ignore cc -Wall -Wextra -Werror mmap-open-backing.c -o mmap-open-backing
+    for filesystem in ufs tmpfs; do
+        case "$filesystem" in
+        ufs) root=$(atf_config_get ufs_mmap_root /var/tmp) ;;
+        tmpfs) root=$(atf_config_get tmpfs_mmap_root /tmp) ;;
+        esac
+        directory=$(mktemp -d "$root/capimage-mmap.XXXXXX") || atf_fail 'create filesystem fixture'
+        atf_check -s exit:0 -o match:'MMAP_OPEN_BACKING_PASS=24' ./mmap-open-backing "$directory" demo signed damaged "$filesystem"
+        atf_check -s exit:0 rmdir "$directory"
+    done
+}
+
 atf_init_test_cases()
 {
     atf_add_test_case exec_integrity
     atf_add_test_case mmap_integrity
+    atf_add_test_case mmap_open_backing
 }

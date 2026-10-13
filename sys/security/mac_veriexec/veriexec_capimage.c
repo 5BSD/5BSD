@@ -74,7 +74,7 @@ capimage_vnode_read(void *context, uint64_t offset, void *data, size_t size)
 static int
 capimage_check(struct ucred *cred, struct vnode *vp, off_t size,
     bool required, bool *signedp, enum capimage_check_source source,
-    struct capimage_info *info, bool raw_digest)
+    struct capimage_info *info, bool raw_digest, bool already_open)
 {
 	struct capimage_elf_info image;
 	struct capimage_vnode_reader reader = { .vp = vp, .cred = cred };
@@ -95,9 +95,13 @@ capimage_check(struct ucred *cred, struct vnode *vp, off_t size,
 		error = required ? EAUTH : 0;
 		goto done;
 	}
-	error = VOP_OPEN(vp, FREAD, cred, curthread, NULL);
-	if (error != 0)
-		goto done;
+	/* mmap holds an existing file description; reopening can reject an
+	 * unlinked tmpfs vnode even though reads through that fd remain valid. */
+	if (!already_open) {
+		error = VOP_OPEN(vp, FREAD, cred, curthread, NULL);
+		if (error != 0)
+			goto done;
+	}
 	buffer = NULL;
 	probe = capimage_elf_probe(capimage_vnode_read, &reader, size, &image);
 	if (probe == 0) {
@@ -172,9 +176,11 @@ capimage_check(struct ucred *cred, struct vnode *vp, off_t size,
 	}
 out:
 	free(buffer, M_VERIEXEC);
-	close_error = VOP_CLOSE(vp, FREAD, cred, curthread);
-	if (error == 0)
-		error = close_error;
+	if (!already_open) {
+		close_error = VOP_CLOSE(vp, FREAD, cred, curthread);
+		if (error == 0)
+			error = close_error;
+	}
 done:
 	SDT_PROBE4(capimage, , verify, done, source, error, recognized,
 	    hashed_bytes);
@@ -185,7 +191,7 @@ mac_veriexec_capimage_check(struct ucred *cred, struct vnode *vp, off_t size,
     bool required, enum capimage_check_source source)
 {
 
-	return (capimage_check(cred, vp, size, required, NULL, source, NULL, false));
+	return (capimage_check(cred, vp, size, required, NULL, source, NULL, false, false));
 }
 
 int
@@ -199,7 +205,7 @@ mac_veriexec_capimage_mmap_check(struct ucred *cred, struct vnode *vp,
 	error = VOP_GETATTR(vp, &va, cred);
 	if (error == 0) {
 		error = capimage_check(cred, vp, va.va_size, false, &signed_image,
-		    CAPIMAGE_CHECK_MMAP, NULL, false);
+		    CAPIMAGE_CHECK_MMAP, NULL, false, true);
 		if (error == 0 && signed_image)
 			*pin = true;
 	}
@@ -465,7 +471,7 @@ mac_veriexec_capimage_prepare(struct thread *td, void *arg)
 	/* Reread and authenticate the complete now-pinned representation. */
 	error = capimage_check(td->td_ucred, vp, va.va_size, true, NULL,
 	    CAPIMAGE_CHECK_PREPARE, &h->info,
-	    (request.flags & CAPIMAGE_PREPARE_RAW_DIGEST) != 0);
+	    (request.flags & CAPIMAGE_PREPARE_RAW_DIGEST) != 0, false);
 	if (error == 0 && (request.flags & CAPIMAGE_PREPARE_VVERIFY) != 0)
 		error = mac_veriexec_capimage_open_policy(td->td_ucred, vp);
 unlock:
