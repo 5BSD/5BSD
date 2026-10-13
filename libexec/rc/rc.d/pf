@@ -82,12 +82,16 @@ pf_resync()
 
 pf_status()
 {
+	local _status
+
 	if ! [ -c /dev/pf ] ; then
 		echo "pf.ko is not loaded"
 		return 1
 	else
-		$pf_program -s info
-		$pf_program -s Running >/dev/null
+		_status=$($pf_program -s info) || return $?
+		printf '%s\n' "$_status"
+		# Vendor pfctl has no native-PF `-s Running` boolean query.
+		printf '%s\n' "$_status" | grep -q '^Status: Enabled'
 	fi
 }
 
