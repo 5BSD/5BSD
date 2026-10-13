@@ -332,7 +332,8 @@ out_body()
 
 	jexec alcatraz pfctl -e
 
-	# Allow up to one source for ICMP.
+	# Exercise admission on an outbound request.  ICMP reply packets do
+	# not create state unless sloppy state tracking is explicitly selected.
 	pft_set_rules alcatraz \
 	    "set timeout icmp.error 120" \
 	    "source limiter \"crash\" id 1 entries 10000 limit 1000" \
@@ -340,8 +341,9 @@ out_body()
 	    "pass out from any to any source limiter \"crash\" keep state"
 
 	atf_check -s exit:0 -o ignore \
-	    ping -S 192.0.2.2 -c 2 192.0.2.1
+	    jexec alcatraz ping -c 2 192.0.2.2
 
+	limiter_counter_nonzero alcatraz Srclimiters 1 ADMIT
 	jexec alcatraz pfctl -Fs
 }
 

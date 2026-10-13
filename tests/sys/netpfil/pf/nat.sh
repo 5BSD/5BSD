@@ -118,10 +118,12 @@ nat6_nolinklocal_body()
 	    "pass" \
 	    "block in inet6 proto icmp6 from fe80::/10 to any icmp6-type echoreq"
 
+	# Keep the inbound leg stateless so it cannot create a floating state
+	# that bypasses the outbound NAT rule.
 	jexec nat pfctl -e
 	pft_set_rules nat \
-	    "pass out on ${epair_echo}a inet6 from 2001:db8::/64 to any nat-to (${epair_echo}a)" \
-	    "pass"
+	    "pass in no state" \
+	    "pass out on ${epair_echo}a inet6 from 2001:db8::/64 to any nat-to (${epair_echo}a)"
 
 	# Sanity check
 	atf_check -s exit:0 -o ignore \
@@ -494,10 +496,10 @@ empty_pool_body()
 
 	# pf_map_addr_sn() won't be able to pick a target address, because
 	# the table used in redireciton pool is empty. Packet will not be
-	# forwarded, error counter will be increased.
+	# forwarded, and the canonical translation failure counter increases.
 	ping_server_check_reply exit:1
 	# Ignore warnings about not-loaded ALTQ
-	atf_check -o "match:map-failed +1 +" -x "jexec router pfctl -qvvsi 2> /dev/null"
+	atf_check -o "match:translate +1 +" -x "jexec router pfctl -qvvsi 2> /dev/null"
 }
 
 empty_pool_cleanup()
@@ -575,12 +577,14 @@ first_match_body()
 
 	jexec echo ifconfig ${epair_echo}b 198.51.100.2/24 up
 
-	# Enable pf!
+	# Match rules select translation; an explicit pass creates the state
+	# needed to apply reverse translation to replies.
 	jexec nat pfctl -e
 	pft_set_rules nat \
 		"table <foo> { 192.0.2.0/24 }" \
 		"match out on ${epair_echo}a inet from <foo> to any nat-to 198.51.100.1" \
-		"match out on ${epair_echo}a inet from 192.0.2.0/24 to any nat-to 198.51.100.3"
+		"match out on ${epair_echo}a inet from 192.0.2.0/24 to any nat-to 198.51.100.3" \
+		"pass out"
 
 	atf_check -s exit:0 -o ignore ping -c 3 198.51.100.2
 	atf_check -s exit:0 -e ignore \
