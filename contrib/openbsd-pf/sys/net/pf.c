@@ -3689,6 +3689,11 @@ pf_build_tcp(const struct pf_rule *r, sa_family_t af,
 		REASON_SET(reason, PFRES_MEMORY);
 		return (NULL);
 	}
+	if (PF_MTAG_W(m) == NULL) {
+		m_freem(m);
+		REASON_SET(reason, PFRES_MEMORY);
+		return (NULL);
+	}
 	if (tag)
 		PF_MTAG_W(m)->flags |= PF_TAG_GENERATED;	/* 5BSD: m_tag */
 	PF_MTAG_W(m)->tag = rtag;	/* 5BSD: m_tag */
@@ -3815,6 +3820,10 @@ pf_send_icmp(struct mbuf *m, u_int8_t type, u_int8_t code, int param,
 	if ((m0 = m_copym(m, 0, M_COPYALL, M_NOWAIT)) == NULL)
 		return;
 
+	if (PF_MTAG_W(m0) == NULL) {
+		m_freem(m0);
+		return;
+	}
 	PF_MTAG_W(m0)->flags |= PF_TAG_GENERATED;	/* 5BSD: m_tag */
 	m0->m_pkthdr.ph_rtableid = rdomain;
 	if (r && (r->scrub_flags & PFSTATE_SETPRIO))
@@ -4007,13 +4016,19 @@ pf_match_rcvif(struct mbuf *m, struct pf_rule *r)
 	return (pfi_kif_match(r->rcv_kif, kif));
 }
 
-void
+int
 pf_tag_packet(struct mbuf *m, int tag, int rtableid)
 {
-	if (tag > 0)
-		PF_MTAG_W(m)->tag = tag;	/* 5BSD: m_tag */
+	struct pkthdr_pf *p;
+
+	if (tag > 0) {
+		if ((p = PF_MTAG_W(m)) == NULL)
+			return (ENOMEM);
+		p->tag = tag;
+	}	/* 5BSD: m_tag */
 	if (rtableid >= 0)
 		m->m_pkthdr.ph_rtableid = (u_int)rtableid;
+	return (0);
 }
 
 void
@@ -5083,7 +5098,10 @@ pf_test_rule(struct pf_pdesc *pd, struct pf_rule **rm, struct pf_state **sm,
 	if (r->action == PF_DROP)
 		goto cleanup;
 
-	pf_tag_packet(pd->m, ctx.tag, ctx.act.rtableid);
+	if (pf_tag_packet(pd->m, ctx.tag, ctx.act.rtableid) != 0) {
+		REASON_SET(&ctx.reason, PFRES_MEMORY);
+		goto cleanup;
+	}
 	if (ctx.act.rtableid >= 0 &&
 	    rtable_l2(ctx.act.rtableid) != pd->rdomain)
 		pd->destchg = 1;
@@ -7387,7 +7405,7 @@ pf_route(struct pf_pdesc *pd, struct pf_state *st)
 
 	PF_SDT2(ip, route_to, entry, pd, st);	/* 5BSD: DTrace */
 
-	if (PF_PDTAG_W(pd)->routed++ > 3) {	/* 5BSD: m_tag */
+	if (PF_PDTAG_W(pd) == NULL || PF_PDTAG_W(pd)->routed++ > 3) {	/* 5BSD: m_tag */
 		m_freem(pd->m);
 		pd->m = NULL;
 		return;
@@ -7508,7 +7526,7 @@ pf_route6(struct pf_pdesc *pd, struct pf_state *st)
 
 	PF_SDT2(ip6, route_to, entry, pd, st);	/* 5BSD: DTrace */
 
-	if (PF_PDTAG_W(pd)->routed++ > 3) {	/* 5BSD: m_tag */
+	if (PF_PDTAG_W(pd) == NULL || PF_PDTAG_W(pd)->routed++ > 3) {	/* 5BSD: m_tag */
 		m_freem(pd->m);
 		pd->m = NULL;
 		return;
@@ -8670,6 +8688,14 @@ pf_test(sa_family_t af, int fwdir, struct ifnet *ifp, struct mbuf **m0)
 	 */
 
 done:
+	if (action == PF_DROP)
+		goto log_packet;
+	/* Every subsequent metadata write must belong to this packet. */
+	if (pd.m != NULL && PF_PDTAG_W(&pd) == NULL) {
+		action = PF_DROP;
+		REASON_SET(&reason, PFRES_MEMORY);
+		goto log_packet;
+	}
 	if (action != PF_DROP) {
 		if (st) {
 			/* The non-state case is handled in pf_test_rule() */
@@ -8686,7 +8712,7 @@ done:
 
 			pf_scrub(pd.m, st->state_flags, pd.af, st->min_ttl,
 			    st->set_tos);
-			pf_tag_packet(pd.m, st->tag, st->rtableid[pd.didx]);
+			(void)pf_tag_packet(pd.m, st->tag, st->rtableid[pd.didx]);
 			if (pqid || (pd.tos & IPTOS_LOWDELAY)) {
 				qid = st->pqid;
 				if (st->state_flags & PFSTATE_SETPRIO) {
@@ -8725,7 +8751,7 @@ done:
 
 		if (pd.dir == PF_IN) {
 			KASSERT(inp == NULL);
-			pf_mbuf_link_state_key(m, st->key[PF_SK_STACK]);
+			(void)pf_mbuf_link_state_key(m, st->key[PF_SK_STACK]);
 		} else if (pd.dir == PF_OUT)
 			pf_state_key_link_inpcb(st->key[PF_SK_STACK], inp);
 
@@ -8766,6 +8792,7 @@ done:
 	if (action == PF_PASS && r->divert.type == PF_DIVERT_PACKET)
 		action = PF_DIVERT;
 
+log_packet:
 #if NPFLOG > 0
 	if (pd.pflog) {
 		struct pf_rule_item	*ri;
@@ -8810,6 +8837,12 @@ done:
 	case PF_AFRT:
 		if (pf_translate_af(&pd)) {
 			action = PF_DROP;
+			goto out;
+		}
+		if (PF_PDTAG_W(&pd) == NULL) {
+			action = PF_DROP;
+			m_freem(pd.m);
+			pd.m = NULL;
 			goto out;
 		}
 		PF_PDTAG_W(&pd)->flags |= PF_TAG_GENERATED;	/* 5BSD: m_tag */
@@ -9068,11 +9101,16 @@ pf_state_key_isvalid(struct pf_state_key *sk)
 	return ((sk != NULL) && (sk->sk_removed == 0));
 }
 
-void
+int
 pf_mbuf_link_state_key(struct mbuf *m, struct pf_state_key *sk)
 {
+	struct pkthdr_pf *p;
+
+	if ((p = PF_MTAG_W(m)) == NULL)
+		return (ENOMEM);
 	KASSERT(PF_MTAG_R(m)->statekey == NULL);	/* 5BSD: m_tag */
-	PF_MTAG_W(m)->statekey = pf_state_key_ref(sk);	/* 5BSD: m_tag */
+	p->statekey = pf_state_key_ref(sk);
+	return (0);
 }
 
 void
@@ -9086,11 +9124,16 @@ pf_mbuf_unlink_state_key(struct mbuf *m)
 	}
 }
 
-void
+int
 pf_mbuf_link_inpcb(struct mbuf *m, struct inpcb *inp)
 {
+	struct pkthdr_pf *p;
+
+	if ((p = PF_MTAG_W(m)) == NULL)
+		return (ENOMEM);
 	KASSERT(PF_MTAG_R(m)->inp == NULL);	/* 5BSD: m_tag */
-	PF_MTAG_W(m)->inp = in_pcbref(inp);	/* 5BSD: m_tag */
+	p->inp = in_pcbref(inp);
+	return (0);
 }
 
 void
@@ -9193,7 +9236,8 @@ pf_delay_pkt(struct mbuf *m, u_int ifidx)
 {
 	struct pf_pktdelay	*pdy;
 
-	if ((pdy = pool_get(&pf_pktdelay_pl, PR_NOWAIT)) == NULL) {
+	if (PF_MTAG_W(m) == NULL ||
+	    (pdy = pool_get(&pf_pktdelay_pl, PR_NOWAIT)) == NULL) {
 		m_freem(m);
 		return (ENOBUFS);
 	}

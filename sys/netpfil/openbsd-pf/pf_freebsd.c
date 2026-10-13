@@ -36,8 +36,8 @@ void	pfsyncattach(int);
 int	pfsync_input4(struct mbuf **, int *, int, int, struct netstack *);
 void	pf_mbuf_unlink_state_key(struct mbuf *);
 void	pf_mbuf_unlink_inpcb(struct mbuf *);
-void	pf_mbuf_link_state_key(struct mbuf *, struct pf_state_key *);
-void	pf_mbuf_link_inpcb(struct mbuf *, struct inpcb *);
+int	pf_mbuf_link_state_key(struct mbuf *, struct pf_state_key *);
+int	pf_mbuf_link_inpcb(struct mbuf *, struct inpcb *);
 struct pf_state_key *pf_state_key_ref(struct pf_state_key *);
 void	pf_state_key_unref(struct pf_state_key *);
 int	pf_ouraddr(struct mbuf *);
@@ -118,16 +118,14 @@ pf_fbsd_mtag_copy(struct pkthdr_pf *p)
 		(void)in_pcbref(p->inp);
 }
 
-/* Writes that find no memory for a tag land here and are lost. */
-static struct pkthdr_pf pf_fbsd_mtag_scratch;
+/* Writable metadata allocation failures must be handled by the caller. */
 static counter_u64_t pf_fbsd_mtag_nomem;
 
 static struct pkthdr_pf *
-pf_fbsd_mtag_scratch_get(void)
+pf_fbsd_mtag_alloc_failed(void)
 {
 	counter_u64_add(pf_fbsd_mtag_nomem, 1);
-	pf_fbsd_mtag_scratch = m_pf_default;
-	return (&pf_fbsd_mtag_scratch);
+	return (NULL);
 }
 
 struct pkthdr_pf *
@@ -135,7 +133,7 @@ obsd_pf_mtag_w(struct mbuf *m)
 {
 	struct pkthdr_pf *p = m_pf_get(m);
 
-	return (p != NULL ? p : pf_fbsd_mtag_scratch_get());
+	return (p != NULL ? p : pf_fbsd_mtag_alloc_failed());
 }
 
 struct pkthdr_pf *
@@ -157,7 +155,7 @@ obsd_pf_pdtag(struct pf_pdesc *pd, int write)
 		if (!write)
 			return (__DECONST(struct pkthdr_pf *, &m_pf_default));
 		if ((p = m_pf_get(m)) == NULL)
-			return (pf_fbsd_mtag_scratch_get());
+			return (pf_fbsd_mtag_alloc_failed());
 		t = (struct m_tag *)p - 1;
 	}
 	if (SLIST_FIRST(&m->m_pkthdr.tags) == t)
@@ -200,7 +198,8 @@ pf_fbsd_test_out(int af, int dir, struct ifnet *ifp, struct mbuf **m,
 	int action, linked = 0;
 
 	if (inp != NULL && PF_MTAG_R(*m)->inp == NULL) {
-		pf_mbuf_link_inpcb(*m, inp);
+		if (pf_mbuf_link_inpcb(*m, inp) != 0)
+			return (PF_DROP);
 		linked = 1;
 	}
 	action = pf_fbsd_test(af, dir, ifp, m);

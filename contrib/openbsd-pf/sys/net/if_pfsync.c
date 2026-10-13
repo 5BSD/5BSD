@@ -1939,6 +1939,9 @@ pfsync_defer(struct pf_state *st, struct mbuf *m)
 	if (sc == NULL || !sc->sc_defer)
 		goto leave;
 
+	if (PF_MTAG_W(m) == NULL)
+		goto leave;
+
 	pd = pool_get(&pfsync_deferrals_pool, M_NOWAIT);
 	if (pd == NULL) {
 		goto leave;

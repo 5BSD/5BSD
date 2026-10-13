@@ -1960,7 +1960,7 @@ u_int16_t	 pf_tagname2tag(char *, int);
 void		 pf_tag2tagname(u_int16_t, char *);
 void		 pf_tag_ref(u_int16_t);
 void		 pf_tag_unref(u_int16_t);
-void		 pf_tag_packet(struct mbuf *, int, int);
+int		 pf_tag_packet(struct mbuf *, int, int);
 int		 pf_addr_compare(const struct pf_addr *,
 		     const struct pf_addr *, sa_family_t);
 
@@ -2034,10 +2034,10 @@ int			 pf_map_addr(sa_family_t, struct pf_rule *,
 			    struct pf_pool *, enum pf_sn_types);
 int			 pf_postprocess_addr(struct pf_state *);
 
-void			 pf_mbuf_link_state_key(struct mbuf *,
+int			 pf_mbuf_link_state_key(struct mbuf *,
 			    struct pf_state_key *);
 void			 pf_mbuf_unlink_state_key(struct mbuf *);
-void			 pf_mbuf_link_inpcb(struct mbuf *, struct inpcb *);
+int			 pf_mbuf_link_inpcb(struct mbuf *, struct inpcb *);
 void			 pf_mbuf_unlink_inpcb(struct mbuf *);
 
 u_int8_t*		 pf_find_tcpopt(u_int8_t *, u_int8_t *, size_t,
