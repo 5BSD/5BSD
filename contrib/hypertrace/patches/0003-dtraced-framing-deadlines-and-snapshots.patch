@@ -1,0 +1,254 @@
+--- a/usr.sbin/dtraced/_dtraced_connection.h
++++ b/usr.sbin/dtraced/_dtraced_connection.h
+@@ -45,6 +45,7 @@
+ #include "dtraced.h"
+ 
+ #include <atomic>
++#include <mutex>
+ #include <string>
+ 
+ #define DTRACED_FDIDENTLEN             128ull
+@@ -66,6 +67,7 @@
+ 	client_fd(const client_fd &) = delete;
+ 	client_fd &operator=(const client_fd &) = delete;
+ 
++	std::mutex output_mtx; /* Serialize complete outbound protocol frames. */
+ 	bool cleaned_up;		/* has this fd been cleaned up */
+ 	uint64_t id;			/* initiator id */
+ 	int kind;			/* consumer/forwarder */
+--- a/usr.sbin/dtraced/dtraced_connection.cc
++++ b/usr.sbin/dtraced/dtraced_connection.cc
+@@ -53,6 +53,7 @@
+ #include <atomic>
+ 
+ #include "dtraced.h"
++#include "dtraced_socket.h"
+ #include "dtraced_connection.h"
+ #include "dtraced_directory.h"
+ #include "dtraced_errmsg.h"
+@@ -189,6 +190,7 @@
+ client_fd::send_ack(void)
+ {
+ 
++	std::lock_guard lk(this->output_mtx);
+ 	unsigned char ack = 1;
+ 	return (this->send(&ack, sizeof(ack)) ? 0 : -1);
+ }
+@@ -197,6 +199,7 @@
+ client_fd::send_nak(void)
+ {
+ 
++	std::lock_guard lk(this->output_mtx);
+ 	unsigned char ack = 0;
+ 	return (this->send(&ack, sizeof(ack)) ? 0 : -1);
+ }
+@@ -212,45 +215,27 @@
+ bool
+ client_fd::send(void *b, size_t len)
+ {
+-	const char *buf = static_cast<const char *>(b);
+-
+-	while (len != 0) {
+-		ssize_t n = ::send(this->fd, buf, len, MSG_NOSIGNAL);
+-		if (n < 0) {
+-			if (errno == EINTR)
+-				continue;
+-			return (false);
+-		}
+-		if (n == 0) {
+-			errno = EPIPE;
+-			return (false);
+-		}
+-		buf += n;
+-		len -= n;
++	bool ok = socket_transfer(this->fd, b, len, true);
++	if (!ok) {
++		/* A partial frame must never be reused as a fresh request. */
++		int error = errno;
++		this->shutdown();
++		errno = error;
+ 	}
+-	return (true);
++	return (ok);
+ }
+ 
+ bool
+ client_fd::recv(void *b, size_t len)
+ {
+-	char *buf = static_cast<char *>(b);
+-
+-	while (len != 0) {
+-		ssize_t n = ::recv(this->fd, buf, len, 0);
+-		if (n < 0) {
+-			if (errno == EINTR)
+-				continue;
+-			return (false);
+-		}
+-		if (n == 0) {
+-			errno = ECONNRESET;
+-			return (false);
+-		}
+-		buf += n;
+-		len -= n;
++	bool ok = socket_transfer(this->fd, b, len, false);
++	if (!ok) {
++		/* A partial frame must never be reused as a fresh request. */
++		int error = errno;
++		this->shutdown();
++		errno = error;
+ 	}
+-	return (true);
++	return (ok);
+ }
+ 
+ int
+--- a/usr.sbin/dtraced/dtraced_job.cc
++++ b/usr.sbin/dtraced/dtraced_job.cc
+@@ -111,6 +111,7 @@
+ bool
+ job::send_elf(void)
+ {
++	std::lock_guard output(this->connsockfd->output_mtx);
+ 	using uchar = unsigned char;
+ 
+ 	__cleanup(closefd_generic) int elffd = -1;
+@@ -184,6 +185,7 @@
+ bool
+ job::send_kill(void)
+ {
++	std::lock_guard output(this->connsockfd->output_mtx);
+ 	dtraced_hdr_t header{};
+ 	client_fd &dfd = *this->connsockfd;
+ 	kill_job &k = this->kill_get();
+@@ -219,13 +221,15 @@
+ bool
+ job::send_info(state &s)
+ {
++	std::lock_guard output(this->connsockfd->output_mtx);
+ 	dtraced_hdr_t hdr{};
+ 	client_fd &dfd = *this->connsockfd;
+-	std::vector<dtraced_infomsg_t> imsgs(s.sockfds.size(), {0, {0}});
++	std::vector<dtraced_infomsg_t> imsgs;
+ 
+ 	size_t i = 0;
+ 	{
+ 		std::lock_guard lk(s.sockfdsmtx);
++		imsgs.resize(s.sockfds.size(), {0, {0}});
+ 		for (client_fd *cp : s.sockfds) {
+ 			imsgs[i].client_kind = cp->kind;
+ 			memcpy(imsgs[i++].client_name, cp->ident,
+@@ -234,11 +238,11 @@
+ 	}
+ 
+ 	hdr.msg_type = DTRACED_MSG_INFO;
+-	hdr.info.count = s.sockfds.size();
++	hdr.info.count = imsgs.size();
+ 
+ 	if (!dfd.send(&hdr, DTRACED_MSGHDRSIZE))
+ 		return (false);
+-	return (dfd.send(&imsgs[0],
++	return (dfd.send(imsgs.data(),
+ 	    hdr.info.count * sizeof(dtraced_infomsg_t)));
+ }
+ 
+@@ -302,6 +306,7 @@
+ bool
+ job::send_cleanup()
+ {
++	std::lock_guard output(this->connsockfd->output_mtx);
+ 	dtraced_hdr_t header{};
+ 	size_t buflen;
+ 	client_fd &dfd = *this->connsockfd;
+--- /dev/null
++++ b/usr.sbin/dtraced/dtraced_socket.h
+@@ -0,0 +1,44 @@
++/* SPDX-License-Identifier: BSD-2-Clause */
++#ifndef DTRACED_SOCKET_H
++#define DTRACED_SOCKET_H
++#include <sys/socket.h>
++#include <poll.h>
++#include <cerrno>
++#include <chrono>
++#include "dtraced.h"
++namespace dtraced {
++/* Absolute deadline, including EINTR and partial progress. No global fd flags. */
++inline bool socket_transfer(int fd, void *data, size_t size, bool writing,
++    std::chrono::milliseconds budget = std::chrono::seconds(10))
++{
++    using clock = std::chrono::steady_clock;
++    auto deadline = clock::now() + budget;
++    auto *p = static_cast<char *>(data);
++    while (size != 0) {
++        auto now = clock::now();
++        if (now >= deadline) { errno = ETIMEDOUT; return false; }
++        ssize_t n = writing ? ::send(fd, p, size, MSG_DONTWAIT | MSG_NOSIGNAL) :
++            ::recv(fd, p, size, MSG_DONTWAIT);
++        if (n > 0) { p += n; size -= n; continue; }
++        if (n == 0) { errno = writing ? EPIPE : ECONNRESET; return false; }
++        if (errno == EINTR) continue;
++        if (errno != EAGAIN && errno != EWOULDBLOCK) return false;
++        auto left = std::chrono::ceil<std::chrono::milliseconds>(deadline - clock::now());
++        if (left.count() <= 0) { errno = ETIMEDOUT; return false; }
++        pollfd event {fd, static_cast<short>(writing ? POLLOUT : POLLIN), 0};
++        int status = poll(&event, 1, static_cast<int>(left.count()));
++        if (status < 0 && errno != EINTR) return false;
++        if (status == 0) { errno = ETIMEDOUT; return false; }
++        if (status > 0 && (event.revents & POLLNVAL)) { errno = EBADF; return false; }
++    }
++    return true;
++}
++inline bool valid_initmsg(const dtd_initmsg_t &msg)
++{
++    constexpr auto allowed = DTD_SUB_READDATA | DTD_SUB_ELFWRITE | DTD_SUB_KILL |
++        DTD_SUB_CLEANUP | DTD_SUB_INFO;
++    return (msg.kind == DTRACED_KIND_CONSUMER || msg.kind == DTRACED_KIND_FORWARDER) &&
++        (msg.subs & ~allowed) == 0;
++}
++}
++#endif
+--- a/usr.sbin/dtraced/dtraced_state.cc
++++ b/usr.sbin/dtraced/dtraced_state.cc
+@@ -53,6 +53,7 @@
+ #include <unistd.h>
+ 
+ #include "dtraced_connection.h"
++#include "dtraced_socket.h"
+ #include "dtraced_directory.h"
+ #include "dtraced_dttransport.h"
+ #include "dtraced_errmsg.h"
+@@ -312,7 +313,7 @@
+ 
+ 	memset(&initmsg, 0, sizeof(initmsg));
+ 
+-	connsockfd = accept(this->sockfd, NULL, 0);
++	connsockfd = accept4(this->sockfd, NULL, NULL, SOCK_CLOEXEC);
+ 	if (connsockfd == -1) {
+ 		ERR("accept() failed: %m");
+ 		return (false);
+@@ -325,14 +326,16 @@
+ 	}
+ 
+ 	initmsg.kind = DTRACED_KIND_DTRACED;
+-	if (send(connsockfd, &initmsg, sizeof(initmsg), 0) < 0) {
++	if (!socket_transfer(connsockfd, &initmsg, sizeof(initmsg), true,
++	    std::chrono::seconds(2))) {
+ 		close(connsockfd);
+ 		ERR("send() initmsg to connsockfd failed: %m");
+ 		return (false);
+ 	}
+ 
+ 	memset(&initmsg, 0, sizeof(initmsg));
+-	if (recv(connsockfd, &initmsg, sizeof(initmsg), 0) < 0) {
++	if (!socket_transfer(connsockfd, &initmsg, sizeof(initmsg), false,
++	    std::chrono::seconds(2)) || !valid_initmsg(initmsg)) {
+ 		close(connsockfd);
+ 		ERR("recv() get initmsg failed: %m");
+ 		return (false);
+@@ -504,7 +507,6 @@
+ 
+ 	if (enable_fd(kq, sockfd, EVFILT_READ, NULL)) {
+ 		ERR("failed to register listening socket kevent: %m");
+-		close(kq);
+ 		broadcast_shutdown(*this);
+ 		return;
+ 	}

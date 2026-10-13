@@ -83,3 +83,39 @@ claimed fixed. dev and the original dirty /usr/src checkout remain separate.
 
 Probe inventories must exclude this unbuilt vendor comparison overlay; it
 is not additional installed 5BSD probe coverage.
+
+Continuation: bounded transfers and concurrent framing
+0003 serializes each full outgoing job frame and ACK/NAK on the connection,
+and builds client-info payload/count from the same locked snapshot. It uses
+nonblocking per-call socket operations plus poll against a steady-clock
+absolute deadline: 10 seconds per data transfer, 2 seconds per handshake
+transfer. Slow progress or EINTR does not reset that deadline. Data-transfer
+failure shuts down the stream so a partial frame cannot be reused. These
+are explicit experimental limits, not an asynchronous event-loop redesign.
+Accept uses close-on-exec descriptors; handshake fields are accepted only
+after an exact read and role/subscription validation. The kqueue setup error
+path no longer closes the descriptor twice.
+
+The round2-final qualification adds sanitized tests with real jobs: 60
+concurrent multipart cleanup frames, 300 info responses during client-list
+churn, silent-peer deadlines, slow-progress deadlines and handshake field
+validation. Earlier component and full-daemon build/link checks are retained.
+Artifacts: /usr/obj/5BSD-hypertrace-validation/round2-final/
+
+Compiler integration probe (not a successful compiler build)
+The pinned fork's cddl/lib/libdtrace was tried in isolated /usr/obj storage
+with current 5BSD make rules and the existing sysroot. It needs explicit
+MK_DTRACE_BENCHMARKS/OPTIMIZED/ASAN/TSAN settings and crypto in _DP_dtrace.
+After supplying those, compilation fails on missing machine/runq.h and the
+old sys/cdefs.h versus current dirent.h __deprecated1 declaration. Merely
+setting SYSROOT for this standalone invocation did not prevent host-header
+inclusion. A coherent staged header/compiler environment is required before
+this can establish compatibility. No ABI declarations were stubbed out and
+no warnings were suppressed to force a misleading successful build.
+Log: /usr/obj/5BSD-hypertrace-validation/compiler/build.log
+
+Still outstanding: event-loop connection retirement and event-pointer lifetime,
+worker cleanup after failed transfers, asynchronous handshake admission,
+guest-session replay/revocation, VM restore epochs and the compiler/VMM port.
+The synchronous accept loop may still wait up to the handshake deadlines for
+one peer; this patch bounds that wait but does not eliminate head-of-line blocking.

@@ -1,2 +1,3 @@
 0001-dtraced-connection-lifetime-and-io.patch
 0002-dtraced-control-message-validation.patch
+0003-dtraced-framing-deadlines-and-snapshots.patch

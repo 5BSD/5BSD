@@ -53,3 +53,8 @@ cmd=['c++','-std=c++17','-Wall','-Wextra','-Werror','-Wno-gcc-compat','-fsanitiz
 r=subprocess.run(cmd,capture_output=True,text=True);(out/'job-lifetime-build.log').write_text(shlex.join(cmd)+'\n'+r.stdout+r.stderr);assert r.returncode==0,r.stderr
 subprocess.run([str(out/'job-lifetime-test')],check=True,timeout=10)
 print('PASS sanitized real-job ownership and reference lifetime checks')
+
+cmd=['c++','-std=c++17','-Wall','-Wextra','-Werror','-Wno-gcc-compat','-fsanitize=address,undefined','-pthread','-I'+str(d),str(root/'tests/transport.cc'),str(d/'dtraced_connection.cc'),str(d/'dtraced_job.cc'),*[r['object'] for r in builds if r['source'] not in ('dtraced.cc','dtraced_connection.cc','dtraced_job.cc')],'-lcrypto','-lutil','-o',str(out/'transport-test')]
+r=subprocess.run(cmd,capture_output=True,text=True);(out/'transport-build.log').write_text(shlex.join(cmd)+'\n'+r.stdout+r.stderr);assert r.returncode==0,r.stderr
+r=subprocess.run([str(out/'transport-test')],capture_output=True,text=True,timeout=30);(out/'transport-test.log').write_text(r.stdout+r.stderr);assert r.returncode==0,r.stderr
+print('PASS absolute deadlines, concurrent complete frames and client snapshots')
