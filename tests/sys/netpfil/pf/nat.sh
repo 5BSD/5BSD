@@ -310,6 +310,7 @@ nat_pass_in_cleanup()
 	pft_cleanup
 }
 
+atf_test_case "nat_pass_out" "cleanup"
 nat_pass_out_head()
 {
 	atf_set descr 'IPv4 NAT on outbound pass rule'
