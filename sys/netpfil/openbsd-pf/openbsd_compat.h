@@ -758,6 +758,8 @@ struct smr_entry {
 void	smr_read_enter(void);
 void	smr_read_leave(void);
 void	smr_barrier(void);
+/* Keep the OpenBSD entry initializer distinct from native SMR startup. */
+#define	smr_init	obsd_pf_smr_init
 void	smr_init(struct smr_entry *);
 void	smr_call(struct smr_entry *, void (*)(void *), void *);
 #define	SMR_ASSERT_CRITICAL()	do { } while (0)
