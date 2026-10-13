@@ -444,7 +444,6 @@ MBUF_STRESS_TEST
 MROUTING		opt_mrouting.h
 NFSLOCKD
 NETLINK			opt_global.h
-PF_DEFAULT_TO_DROP	opt_pf.h
 ROUTETABLES		opt_route.h
 FIB_ALGO		opt_route.h
 RSS			opt_rss.h
