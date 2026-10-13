@@ -3245,17 +3245,29 @@ Default.
 Same as
 .Cm 802.1ad .
 .El
-.It Cm vlanpcp Ar priority_code_point
+.It Cm vlanpcp Ar priority_code_point | Cm auto
 Priority code point
 .Pq Dv PCP
 is an 3-bit field which refers to the IEEE 802.1p
 class of service and maps to the frame priority level.
 .Pp
+The default
+.Cm auto
+selects the packet's internal priority, including a priority assigned by
+.Xr pf.conf 5 .
+Internal priorities zero and one map to PCP one and zero, respectively;
+other priorities retain their value.
+An explicit numeric PCP overrides automatic selection, including an explicit
+zero.
+Use
+.Cm vlanpcp auto
+to restore automatic selection.
+.Pp
 Values in order of priority are:
 .Cm 1
 .Pq Dv Background (lowest) ,
 .Cm 0
-.Pq Dv Best effort (default) ,
+.Pq Dv Best effort ,
 .Cm 2
 .Pq Dv Excellent effort ,
 .Cm 3

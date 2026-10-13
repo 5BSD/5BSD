@@ -55,23 +55,24 @@ SCRIPT
 }
 
 atf_test_case default cleanup
-default_head() { atf_set descr "Untagged PF priority defaults to three"; atf_set require.user root; atf_set is.exclusive true; atf_set require.progs dtrace; }
+priority_head_common() { atf_set require.user root; atf_set is.exclusive true; atf_set require.progs dtrace; }
+default_head() { priority_head_common; atf_set descr "Untagged PF priority defaults to three"; }
 default_body() { priority_check default 3; }
 default_cleanup() { pft_cleanup; }
 atf_test_case four cleanup
-four_head() { default_head; atf_set descr "PF assigns internal priority four without VLAN tags"; }
+four_head() { priority_head_common; atf_set descr "PF assigns internal priority four without VLAN tags"; }
 four_body() { priority_check four 4; }
 four_cleanup() { pft_cleanup; }
 atf_test_case zero cleanup
-zero_head() { default_head; atf_set descr "PF distinguishes explicit priority zero from no assignment"; }
+zero_head() { priority_head_common; atf_set descr "PF distinguishes explicit priority zero from no assignment"; }
 zero_body() { priority_check zero 0; }
 zero_cleanup() { pft_cleanup; }
 atf_test_case transition cleanup
-transition_head() { default_head; atf_set descr "Final rule action replaces earlier priority four with zero"; }
+transition_head() { priority_head_common; atf_set descr "Final rule action replaces earlier priority four with zero"; }
 transition_body() { priority_check transition 0; }
 transition_cleanup() { pft_cleanup; }
 atf_test_case state cleanup
-state_head() { default_head; atf_set descr "PF reuses a single state and its priority on subsequent packets"; }
+state_head() { priority_head_common; atf_set descr "PF reuses a single state and its priority on subsequent packets"; }
 state_body() { priority_check state 5; }
 state_cleanup() { pft_cleanup; }
 atf_init_test_cases() {

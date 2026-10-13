@@ -79,6 +79,7 @@ TEST_METADATA+= execenv_jail_params="vnet allow.raw_sockets allow.read_msgbuf"
 TEST_METADATA.delay+= execenv="" execenv_jail_params="" is_exclusive="true"
 # Priority observes kernel FBT probes while creating its own VNET fixture.
 TEST_METADATA.priority+= execenv="" execenv_jail_params="" is_exclusive="true"
+TEST_METADATA.prio+= execenv="" execenv_jail_params="" is_exclusive="true"
 
 ${PACKAGE}FILES+=	\
 			bsnmpd.conf \
