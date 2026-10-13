@@ -1,0 +1,215 @@
+--- a/usr.sbin/dtraced/dtraced_clientrequest.cc
++++ b/usr.sbin/dtraced/dtraced_clientrequest.cc
+@@ -37,6 +37,7 @@
+  */
+ 
+ #include "dtraced.h"
++#include "dtraced_protocol.h"
+ #include "dtraced_clientrequest.h"
+ #include "dtraced_connection.h"
+ #include "dtraced_directory.h"
+@@ -59,7 +60,11 @@
+ client_request::handle_elfmsg(void)
+ {
+ 	dir *dir;
+-	std::string loc { DTRACED_MSG_LOC(this->hdr) };
++	const char *location = DTRACED_MSG_LOC(this->hdr);
++	if (memchr(location, '\0', DTRACED_LOCSIZE) == nullptr ||
++	    DTRACED_MSG_LEN(this->hdr) != this->buf_size)
++		return (false);
++	std::string loc { location };
+ 
+ 	if (loc == "base")
+ 		dir = this->s.basedir;
+@@ -141,17 +146,12 @@
+ {
+ 	using vecstr = std::vector<std::string>;
+ 
+-	size_t n_entries, len;
+ 	job *j;
+-
+-	n_entries = DTRACED_MSG_NUMENTRIES(this->hdr);
+-	vecstr *p_entries = new vecstr(n_entries, 0);
+-	if (p_entries == nullptr) {
+-		ERR("failed to create new vector(%zu, 0)", n_entries);
+-		abort();
+-	}
+-
+-	vecstr &entries = *p_entries;
++	vecstr entries;
++	if (!parse_cleanup(this->buf, this->buf_size,
++	    DTRACED_MSG_NUMENTRIES(this->hdr), entries))
++		return (false);
++
+ 	std::lock_guard lk(this->s.sockfdsmtx);
+ 	for (client_fd *dfdp : this->s.sockfds) {
+ 		client_fd &dfd = *dfdp;
+@@ -161,17 +161,6 @@
+ 
+ 		if (!dfd.is_subscribed(uint32_t(DTD_SUB_CLEANUP)))
+ 			continue;
+-
+-		for (size_t i = 0; i < n_entries; i++) {
+-			if (!dfd.recv(&len, sizeof(len)))
+-				return (false);
+-
+-			std::vector<char> buf(len);
+-			if (!dfd.recv(&buf[0], len))
+-				return (false);
+-			buf[len - 1] = '\0';
+-			entries[i] = std::string(&buf[0]);
+-		}
+ 
+ 		j = new job(CLEANUP, dfdp);
+ 		if (j == nullptr) {
+@@ -182,7 +171,7 @@
+ 
+ 		// XXX: ugly.
+ 		cleanup_job *&c = j->cleanup_get();
+-		c = p_entries;
++		c = new vecstr(entries);
+ 		{
+ 			std::lock_guard _lk(this->s.joblistmtx);
+ 			this->s.joblist.push_back(j);
+--- a/usr.sbin/dtraced/dtraced_job.cc
++++ b/usr.sbin/dtraced/dtraced_job.cc
+@@ -51,6 +51,7 @@
+ #include <unistd.h>
+ 
+ #include "dtraced_clientrequest.h"
++#include "dtraced_protocol.h"
+ #include "dtraced_connection.h"
+ #include "dtraced_errmsg.h"
+ #include "dtraced_id.h"
+@@ -89,12 +90,17 @@
+ 	}
+ 
+ 	case CLEANUP:
++		delete this->cleanup_get();
++		this->connsockfd->release();
++		break;
++
+ 	case KILL:
+ 	case READ_DATA:
+ 		this->connsockfd->release();
+ 		break;
+ 
+ 	case SEND_INFO:
++		this->connsockfd->release();
+ 		break;
+ 
+ 	default:
+@@ -108,7 +114,7 @@
+ 	using uchar = unsigned char;
+ 
+ 	__cleanup(closefd_generic) int elffd = -1;
+-	dtraced_hdr_t header;
++	dtraced_hdr_t header{};
+ 
+ 	client_fd &dfd = *this->connsockfd;
+ 	notify_elfwrite_job &ne = this->notify_elfwrite_get();
+@@ -178,7 +184,7 @@
+ bool
+ job::send_kill(void)
+ {
+-	dtraced_hdr_t header;
++	dtraced_hdr_t header{};
+ 	client_fd &dfd = *this->connsockfd;
+ 	kill_job &k = this->kill_get();
+ 
+@@ -242,14 +248,14 @@
+ 	using uchar = unsigned char;
+ 
+ 	client_fd &dfd = *this->connsockfd;
+-	dtraced_hdr_t header;
++	dtraced_hdr_t header{};
+ 
+ 	size_t totalbytes;
+ 	if (!dfd.recv(&totalbytes, sizeof(totalbytes)))
+ 		return (false);
+ 
+-	if (totalbytes < DTRACED_MSGHDRSIZE) {
+-		ERR("bytes to receive (%zu) < DTRACED_MSGHDRSIZE (%zu)",
++	if (totalbytes < DTRACED_MSGHDRSIZE || totalbytes > max_request_bytes) {
++		ERR("invalid frame size (%zu), header size (%zu)",
+ 		    totalbytes, DTRACED_MSGHDRSIZE);
+ 		return (false);
+ 	}
+@@ -273,7 +279,7 @@
+ 	 */
+ 	memcpy(&header, &buf[0], DTRACED_MSGHDRSIZE);
+ 
+-	client_request cr(s, header, &buf[DTRACED_MSGHDRSIZE],
++	client_request cr(s, header, buf.data() + DTRACED_MSGHDRSIZE,
+ 	    totalbytes - DTRACED_MSGHDRSIZE);
+ 	if (!dfd.respond(cr.handle())) {
+ 		ERR("sending response failed on %s with: %m", dfd.ident);
+@@ -296,7 +302,7 @@
+ bool
+ job::send_cleanup()
+ {
+-	dtraced_hdr_t header;
++	dtraced_hdr_t header{};
+ 	size_t buflen;
+ 	client_fd &dfd = *this->connsockfd;
+ 	cleanup_job &c = *this->cleanup_get();
+--- /dev/null
++++ b/usr.sbin/dtraced/dtraced_protocol.h
+@@ -0,0 +1,37 @@
++/* SPDX-License-Identifier: BSD-2-Clause */
++#ifndef DTRACED_PROTOCOL_H
++#define DTRACED_PROTOCOL_H
++#include <cstddef>
++#include <cstring>
++#include <string>
++#include <vector>
++namespace dtraced {
++/* Bound the native-ABI local control protocol before allocating. */
++constexpr size_t max_request_bytes = 64 * 1024 * 1024;
++constexpr size_t max_cleanup_entries = 4096;
++constexpr size_t max_cleanup_name = 4096;
++inline bool
++parse_cleanup(const unsigned char *p, size_t size, size_t count,
++    std::vector<std::string> &out)
++{
++    if (count > max_cleanup_entries || count > size / (sizeof(size_t) + 1))
++        return false;
++    std::vector<std::string> entries;
++    entries.reserve(count);
++    for (size_t i = 0; i < count; ++i) {
++        size_t len;
++        if (size < sizeof(len)) return false;
++        std::memcpy(&len, p, sizeof(len));
++        p += sizeof(len); size -= sizeof(len);
++        if (len == 0 || len > max_cleanup_name || len > size ||
++            p[len - 1] != 0 || std::memchr(p, 0, len - 1) != nullptr)
++            return false;
++        entries.emplace_back(reinterpret_cast<const char *>(p), len - 1);
++        p += len; size -= len;
++    }
++    if (size != 0) return false;
++    out.swap(entries);
++    return true;
++}
++}
++#endif
+--- a/usr.sbin/dtraced/dtraced_state.cc
++++ b/usr.sbin/dtraced/dtraced_state.cc
+@@ -111,8 +111,6 @@
+ 		    l);
+ 		close(this->sockfd);
+ 		this->sockfd = -1;
+-		if (err != 0)
+-			ERR("failed to destroy sockmtx: %m");
+ 
+ 		return (false);
+ 	}
+@@ -129,8 +127,6 @@
+ 		ERR("failed to bind to %d: %m", this->sockfd);
+ 		close(this->sockfd);
+ 		this->sockfd = -1;
+-		if (err != 0)
+-			ERR("failed to destroy sockmtx: %m");
+ 
+ 		return (false);
+ 	}

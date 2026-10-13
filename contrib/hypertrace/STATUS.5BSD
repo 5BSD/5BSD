@@ -1,0 +1,85 @@
+HyperTrace experiment: import and daemon repair milestone
+2026-10-13
+
+Branch: experimental/hypertrace
+Parent: dev at 1de2e37e9eff3a80d6605e546339f4ea4ebeb83f
+Public upstream tip: 42466516653b1974ae8d8d3899e9d6972312322b
+Last public commit: 2024-08-23 (committer timestamp).
+No evidence of newer development on the imported public branch. This does
+not establish whether private or other-branch development exists.
+
+Completed
+The complete upstream delta (1957 paths) is preserved, with two additional
+license files, exact hashes, executable modes, and a binary-capable patch.
+The vendor snapshot is an overlay against the pinned FreeBSD base; it does
+not duplicate the entire operating system. upstream/ remains byte-identical
+to the pinned revision. Local changes live in the ordered patches/ series.
+
+0001 repairs connection close/destructor ownership, reference-underflow
+checks, reversed reaper eligibility tests, unterminated peer identity strings,
+partial writes, EINTR handling, SIGPIPE suppression and response status
+semantics. Failed requests previously could send both NAK and ACK; the
+patched dispatcher sends one result. Cleanup eligibility requires job cleanup
+and zero references. This is not a proof of all event-loop lifetime safety.
+The old __maybe_unused macro is renamed to avoid modern sys/cdefs.h collision.
+
+0002 validates and bounds cleanup payloads before queuing work, parses the
+received payload instead of reading from forwarding recipients, gives each
+cleanup job ownership of its own entries, and frees those entries on teardown.
+It releases SEND_INFO references, zeroes outgoing message headers, checks ELF
+payload length and location termination, bounds input frames to 64 MiB, avoids
+one-past-end vector indexing for header-only requests, and removes reads of an
+uninitialized error variable in socket setup. Cleanup limits are 4096 names
+of at most 4096 bytes each. These are explicit experimental resource limits;
+the native-size_t protocol has NOT been made architecture-independent.
+
+Validation
+Run with a NEW, empty output directory under /usr/obj:
+  python3.12 contrib/hypertrace/tests/run.py /usr/obj/hypertrace-check
+The driver verifies vendor hashes, applies both patches to an isolated copy,
+reproduces nine failing upstream connection cases, and runs eleven passing
+patched connection checks. Actual socketpair I/O is used, with linker wrappers
+injecting short writes/EINTR deterministically. The only substituted daemon
+services are logging functions. No daemon or device is started.
+It then compiles all eleven daemon translation units using all logical CPUs,
+links dtraced, and runs cleanup-parser tests with address/undefined-behavior
+sanitizers. Actual SEND_INFO and CLEANUP job ownership/reference lifetimes
+are also exercised with sanitized connection/job code, linked to the real
+daemon dependencies. The upstream Makefile's -Wno-gcc-compat allowance is retained for
+Clang cleanup attributes; other build warnings are errors.
+Successful results: /usr/obj/5BSD-hypertrace-validation/qualified/
+This is component qualification, not end-to-end daemon/VM qualification.
+
+Remaining before a working 5BSD HyperTrace VM
+1. Port the upstream libdtrace/DIF/ELF/type changes to the current compiler
+   and retain existing providers, exporters and probe contracts. Build and
+   run the upstream HyperTrace compiler tests against that port.
+2. Integrate host/guest runtime hooks, tagged guest addresses, page-table
+   walking and virtio transport with the current DTrace and bhyve interfaces.
+   Review all guest lengths, types, addresses, quotas and ownership boundaries.
+3. Implement guest reconnect/replay using explicit session generations and
+   acknowledged program state. Retry must be idempotent; revoked programs
+   must never replay. Test crash before/after acknowledgment, repeated reconnect,
+   partial transfer, host daemon restart and simultaneous guests.
+4. Integrate save/restore/reset: stop or drain tracing before snapshot, create
+   a new restore generation, rebuild probe maps and clock anchors, and reject
+   stale callbacks. Test snapshots with outstanding transport messages and
+   actions, repeated restore, clone, teardown and a disconnected collector.
+5. Qualify ordinary SDT/FBT first, then USDT and kinst explicitly. No blanket
+   provider compatibility is established. Confirm guest/user memory faults
+   remain contained, and exclude early boot and tracing recursion paths.
+6. Finish the daemon protocol/concurrency audit: handshake framing/timeouts,
+   message ordering, active-job re-enqueue after disconnect, kqueue event-batch
+   pointer lifetime, allocation failure, file I/O completeness and socket-info
+   snapshot races remain review areas. The existing synchronous control I/O
+   can block; retrying EINTR does not solve deadlines or nonblocking framing.
+7. Run matched host/guest builds in a disposable qualification environment.
+   Measure VM exits, throughput, p99 application latency and trace loss under
+   increasing event rates, comparing hypercalls with batched guest collection.
+
+Nothing is wired into the default world/kernel build, installed, loaded or
+started by this milestone. Neither reconnect replay nor VM save/restore is
+claimed fixed. dev and the original dirty /usr/src checkout remain separate.
+
+Probe inventories must exclude this unbuilt vendor comparison overlay; it
+is not additional installed 5BSD probe coverage.

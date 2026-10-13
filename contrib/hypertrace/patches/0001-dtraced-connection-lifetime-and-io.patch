@@ -1,0 +1,281 @@
+--- a/usr.sbin/dtraced/_dtraced_connection.h
++++ b/usr.sbin/dtraced/_dtraced_connection.h
+@@ -63,6 +63,8 @@
+ 	client_fd() = delete;
+ 	client_fd(int, int, dtd_initmsg_t);
+ 	~client_fd();
++	client_fd(const client_fd &) = delete;
++	client_fd &operator=(const client_fd &) = delete;
+ 
+ 	bool cleaned_up;		/* has this fd been cleaned up */
+ 	uint64_t id;			/* initiator id */
+@@ -86,10 +88,13 @@
+ 
+ 	int get_fd(void);
+ 	bool is_dead(void);
++	/* Caller holds state::deadfdsmtx, which protects cleaned_up. */
++	bool can_reap(void);
+ 	bool is_subscribed(unsigned long long);
+ 
+ 	bool recv(void *, size_t);
+ 	bool send(void *, size_t);
++	bool respond(bool);
+ 	ssize_t send_ack(void);
+ 	ssize_t send_nak(void);
+ 
+--- a/usr.sbin/dtraced/dtraced.cc
++++ b/usr.sbin/dtraced/dtraced.cc
+@@ -81,7 +81,7 @@
+ {
+ 	sigset_t sigset;
+ 	int err, sig;
+-	__maybe_unused(arg);
++	DTRACED_UNUSED(arg);
+ 
+ 	(void) sigfillset(&sigset);
+ 	err = pthread_sigmask(SIG_BLOCK, &sigset, NULL);
+--- a/usr.sbin/dtraced/dtraced_connection.cc
++++ b/usr.sbin/dtraced/dtraced_connection.cc
+@@ -72,6 +72,7 @@
+     , kind(initmsg.kind)
+ {
+ 	memcpy(this->ident, initmsg.ident, DTRACED_FDIDENTLEN);
++	this->ident[DTRACED_FDIDENTLEN - 1] = '\0';
+ 	this->id = dtraced_genid();
+ }
+ 
+@@ -158,8 +159,11 @@
+ client_fd::close(void)
+ {
+ 
+-	LOG("close(%s)", std::string(*this).c_str());
+-	::close(this->fd);
++	if (this->fd != -1) {
++		LOG("close(%s)", std::string(*this).c_str());
++		::close(this->fd);
++		this->fd = -1;
++	}
+ }
+ 
+ void
+@@ -178,8 +182,7 @@
+ client_fd::~client_fd()
+ {
+ 
+-	LOG("close(%s)", std::string(*this).c_str());
+-	::close(this->fd);
++	this->close();
+ }
+ 
+ ssize_t
+@@ -187,7 +190,7 @@
+ {
+ 
+ 	unsigned char ack = 1;
+-	return (::send(this->fd, &ack, 1, 0) < 0);
++	return (this->send(&ack, sizeof(ack)) ? 0 : -1);
+ }
+ 
+ ssize_t
+@@ -195,39 +198,59 @@
+ {
+ 
+ 	unsigned char ack = 0;
+-	return (::send(this->fd, &ack, 1, 0) < 0);
++	return (this->send(&ack, sizeof(ack)) ? 0 : -1);
++}
++
++bool
++client_fd::respond(bool accepted)
++{
++
++	/* Exactly one status byte for each complete request. */
++	return ((accepted ? this->send_ack() : this->send_nak()) == 0);
+ }
+ 
+ bool
+ client_fd::send(void *b, size_t len)
+ {
+-
+-	return (::send(this->fd, b, len, 0) == static_cast<ssize_t>(len));
++	const char *buf = static_cast<const char *>(b);
++
++	while (len != 0) {
++		ssize_t n = ::send(this->fd, buf, len, MSG_NOSIGNAL);
++		if (n < 0) {
++			if (errno == EINTR)
++				continue;
++			return (false);
++		}
++		if (n == 0) {
++			errno = EPIPE;
++			return (false);
++		}
++		buf += n;
++		len -= n;
++	}
++	return (true);
+ }
+ 
+ bool
+ client_fd::recv(void *b, size_t len)
+ {
+-	size_t nbytes = len;
+-	char *_buf = (char *)b;
+-
+-	for (;;) {
+-		ssize_t rval = ::recv(this->fd, _buf, nbytes, 0);
+-		if (rval < 0) {
+-			ERR("recv() failed on %s with: %m", this->ident);
+-			return (false);
+-		} else if ((size_t)rval == nbytes)
+-			return (true);
+-
+-		if (rval == 0)
+-			return (false);
+-
+-		_buf += rval;
+-		nbytes -= rval;
++	char *buf = static_cast<char *>(b);
++
++	while (len != 0) {
++		ssize_t n = ::recv(this->fd, buf, len, 0);
++		if (n < 0) {
++			if (errno == EINTR)
++				continue;
++			return (false);
++		}
++		if (n == 0) {
++			errno = ECONNRESET;
++			return (false);
++		}
++		buf += n;
++		len -= n;
+ 	}
+-
+-	// Should not be reachable.
+-	return (false);
++	return (true);
+ }
+ 
+ int
+--- a/usr.sbin/dtraced/dtraced_connection.h
++++ b/usr.sbin/dtraced/dtraced_connection.h
+@@ -70,8 +70,8 @@
+ client_fd::release(void)
+ {
+ 	int count = this->count.fetch_sub(1);
+-	if (unlikely(count < 0)) {
+-		ERR("%p count (= %d) < 0: aborting.", this, count);
++	if (unlikely(count <= 0)) {
++		ERR("%p count (= %d) <= 0: aborting.", this, count);
+ 		abort();
+ 	}
+ }
+@@ -81,6 +81,13 @@
+ {
+ 
+ 	return (this->count.load() == 0);
++}
++
++inline bool
++client_fd::can_reap(void)
++{
++
++	return (this->cleaned_up && this->is_dead());
+ }
+ 
+ inline bool
+--- a/usr.sbin/dtraced/dtraced_directory.cc
++++ b/usr.sbin/dtraced/dtraced_directory.cc
+@@ -575,13 +575,13 @@
+ 			struct timespec timeout;
+ 			int status;
+ 
+-			__maybe_unused(status);
++			DTRACED_UNUSED(status);
+ 
+ 			timeout.tv_sec = DTRACED_WAITPID_SLEEPTIME;
+ 			timeout.tv_nsec = 0;
+ 			LOG("waitpid_timeout(%d) (timeout=10s)", pid);
+ 			status = waitpid_timeout(pid, &timeout);
+-			__maybe_unused(status);
++			DTRACED_UNUSED(status);
+ 			LOG("joined %d, status %d", pid, status);
+ 		} else if (pid == 0) {
+ 			int last = 0;
+@@ -690,7 +690,7 @@
+ 	size_t dirpathlen = 0;
+ 	std::string d_name_s, fullpath;
+ 
+-	__maybe_unused(status);
++	DTRACED_UNUSED(status);
+ 
+ 	{
+ 		std::lock_guard lk(dir.dirmtx);
+--- a/usr.sbin/dtraced/dtraced_job.cc
++++ b/usr.sbin/dtraced/dtraced_job.cc
+@@ -275,11 +275,8 @@
+ 
+ 	client_request cr(s, header, &buf[DTRACED_MSGHDRSIZE],
+ 	    totalbytes - DTRACED_MSGHDRSIZE);
+-	if (!cr.handle() && dfd.send_nak() < 0) {
+-		ERR("send_nak() failed on %s with: %m", dfd.ident);
+-		return (false);
+-	} else if (dfd.send_ack() < 0) {
+-		ERR("send_ack() failed on %s with: %m", dfd.ident);
++	if (!dfd.respond(cr.handle())) {
++		ERR("sending response failed on %s with: %m", dfd.ident);
+ 		return (false);
+ 	}
+ 
+--- a/usr.sbin/dtraced/dtraced_misc.h
++++ b/usr.sbin/dtraced/dtraced_misc.h
+@@ -63,7 +63,7 @@
+ #endif /* defined(__has_feature) */
+ 
+ #define __cleanup(fn) __attribute__((__cleanup__(fn)))
+-#define __maybe_unused(x) ((void)x)
++#define DTRACED_UNUSED(x) ((void)x)
+ 
+ #define DTRACED_SLEEPTIME		10000	/* microseconds */
+ #define DTRACED_EVENTSLEEPTIME		1	/* seconds */
+--- a/usr.sbin/dtraced/dtraced_state.cc
++++ b/usr.sbin/dtraced/dtraced_state.cc
+@@ -351,7 +351,6 @@
+ 
+ 	client_fd &dfd = *dfdp;
+ 	if (!dfd.enable_rw((void *)dfdp)) {
+-		close(connsockfd);
+ 		delete dfdp;
+ 		return (false);
+ 	}
+@@ -669,26 +668,13 @@
+ 		     it != this->deadfds.end();) {
+ 			client_fd *dfdp = *it;
+ 
+-			/*
+-			 * If it's still referenced somewhere, we don't close
+-			 * it. We'll pick it up on the next run.
+-			 */
+-			if (dfdp->is_dead()) {
++			/* Jobs must be removed and all active users must release. */
++			if (!dfdp->can_reap()) {
+ 				++it;
+ 				continue;
+ 			}
+ 
+-			if (dfdp->cleaned_up) {
+-				/*
+-				 * We haven't cleaned our jobs up yet. Delay the
+-				 * closing of this file descriptor until we do.
+-				 */
+-				++it;
+-				continue;
+-			}
+-
+ 			it = this->deadfds.erase(it);
+-			dfdp->close();
+ 			delete dfdp;
+ 		}
+ 	}
