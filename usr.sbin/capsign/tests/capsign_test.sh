@@ -404,8 +404,14 @@ stage_sign_body()
     mkdir -p stage/Capabilities/System stage/lib stage/usr/lib
     mv Demo.cap stage/Capabilities/System/
     printf './Capabilities/System/Demo.cap/Bundle.ucl type=file uname=root gname=wheel mode=0444 tags=package=runtime\n' > stage/METALOG
+    image=./Capabilities/System/Demo.cap/Units/demo.unit/bin/demo
+    printf '%s type=file uname=root gname=wheel mode=0555 size=1 tags=package=runtime\n' "$image" >> stage/METALOG
     atf_check -s exit:0 -o ignore -e ignore env CAPSIGN="$capsign" \
         sh "$(atf_get_srcdir)/sign-stage.sh" -e -r stage -k key
+    size=$(stat -f %z "stage/$image")
+    atf_check -s exit:0 awk -v path="$image" -v size="$size" '
+        $1 == path { count++; for (i=2; i<=NF; i++) if ($i == "size=" size) valid++ }
+        END { exit !(count == 1 && valid == 1) }' stage/METALOG
     [ ! -e stage/Capabilities/System/Demo.cap/Units/demo.unit/Unit.ucl ] || atf_fail 'runtime policy file retained'
     [ -f stage/etc/capability/require-signatures ] || atf_fail 'no enforcement marker'
     [ ! -e stage/key ] || atf_fail 'private key copied into stage'
