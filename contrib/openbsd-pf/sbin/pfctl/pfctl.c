@@ -2996,20 +2996,23 @@ pfctl_state_store(int dev, const char *file)
 
 done:
 	free(inbuf);
-	fclose(f);
+	if (fclose(f) == EOF)
+		err(1, "close: %s", file);
 }
 
 void
 pfctl_state_load(int dev, const char *file)
 {
 	FILE *f;
-	struct pfioc_state ps;
+	struct pfioc_state ps = {0};
+	size_t n;
 
 	f = fopen(file, "r");
 	if (f == NULL)
 		err(1, "open: %s", file);
 
-	while (fread(&ps.state, sizeof(ps.state), 1, f) == 1) {
+	while ((n = fread(&ps.state, 1, sizeof(ps.state), f)) ==
+	    sizeof(ps.state)) {
 		if (ioctl(dev, DIOCADDSTATE, &ps) == -1) {
 			switch (errno) {
 			case EEXIST:
@@ -3021,7 +3024,13 @@ pfctl_state_load(int dev, const char *file)
 		}
 	}
 
-	fclose(f);
+	if (ferror(f))
+		err(1, "read: %s", file);
+	if (n != 0)
+		errx(1, "%s: truncated state record", file);
+
+	if (fclose(f) == EOF)
+		err(1, "close: %s", file);
 }
 
 void

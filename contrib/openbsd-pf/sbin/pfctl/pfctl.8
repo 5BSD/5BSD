@@ -309,6 +309,10 @@ firewall with hostid 00000002 use:
 .It Fl L Ar statefile
 Load pf states from the file specified by
 .Ar statefile .
+The file contains raw state records in the layout used by this version.
+Records are imported incrementally; duplicate or invalid states are skipped.
+A read error or truncated final record causes a nonzero exit status,
+but does not remove states already imported.
 .It Fl N
 Do not perform domain name resolution.
 If a name cannot be resolved without DNS, an error will be reported.
