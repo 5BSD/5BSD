@@ -2939,12 +2939,6 @@ pfioctl(dev_t dev, u_long cmd, caddr_t addr, int flags, struct proc *p)
 
 		NET_LOCK();
 		PF_LOCK();
-		if (pi->pfiio_name[0] == 0) {
-			memset(pf_status.ifname, 0, IFNAMSIZ);
-			PF_UNLOCK();
-			NET_UNLOCK();
-			goto fail;
-		}
 		strlcpy(pf_trans_set.statusif, pi->pfiio_name, IFNAMSIZ);
 		pf_trans_set.mask |= PF_TSET_STATUSIF;
 		PF_UNLOCK();
