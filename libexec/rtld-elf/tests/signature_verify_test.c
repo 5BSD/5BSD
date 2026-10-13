@@ -42,6 +42,8 @@ verify_syscall(int operation, ...)
  return 0;
 }
 static void verify_error(const char *format, ...) { (void)format; }
+/* rtld.h is suppressed below to inject the transport; retain its contract. */
+int rtld_verify_object_signature(const char *, int, const struct stat *, bool);
 #define RTLD_H 1
 #define _RTLD_AVOID_LIBC_DEPS_H_ 1
 #define _SYS_CAPIMAGE_ELF_H_ 1
