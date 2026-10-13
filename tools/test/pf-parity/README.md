@@ -62,3 +62,17 @@ A module build against newer source headers does not establish compatibility
 with an inherited kernel. After an upstream sync changes networking layouts,
 build a matching kernel and its modules before attempting runtime qualification.
 The standard object root remains `/usr/obj`; stage only into disposable guests.
+
+PF statistics support exposes read-only `net.pfsync.stats` and
+`net.pflow.stats`, consumed by `netstat -s -p pfsync` and `netstat -s -p pflow`.
+These are host aggregates across VNETs: the vendor counter sets are allocated
+once during global module initialization, survive VNET destruction, and PF
+currently rejects module unload. They are not prison-local counters. Reads
+return `EAGAIN` until initialization publishes counter readiness. If counter
+ownership or unload support changes, this lifetime contract must be revised.
+
+`openbsd-regress/test_stats_contract.py` compiles the actual buffer helper and
+sysctl handlers with a simulated counter backend. It checks initialization,
+read-only enforcement, sizing, copies, and error propagation. This is a native
+component check; actual traffic counters and VNET lifecycle behavior require a
+matching disposable guest and are not established by this test.
