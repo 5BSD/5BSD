@@ -62,6 +62,9 @@ struct linux_emuldata {
 	int ptrace_exec_tid;
 	uint64_t em_proc_start;	/* Thread creation uptime in 100 Hz ticks. */
 	uint64_t em_proc_cookie; /* Unique lifetime identity for procfs. */
+	/* Protected by the proc lock; default is fixed at fork/clone. */
+	uint64_t timer_slack_ns;
+	uint64_t default_timer_slack_ns;
 };
 
 struct linux_emuldata	*em_find(struct thread *);

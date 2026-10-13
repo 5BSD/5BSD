@@ -8,6 +8,7 @@ Linux programs learn about the system by reading files: `/proc/self/cgroup` for 
 |---|---|---|
 | `/proc/<pid>/cgroup` | `0::/` | the cgroup v2 unified root with no controllers; Go, JVM and Node read it for CPU-quota detection and treat an unconstrained root correctly. It is not a cgroup implementation |
 | `/proc/<pid>/cpuset` | `/` | root cpuset |
+| `/proc/<pid>/task/<tid>/{cgroup,cpuset}` and `/proc/thread-self/{cgroup,cpuset}` | same as the process entries | available for leaders and workers; tested by `linux_quickwins_test:thread_cgroup` and `thread_cpuset` |
 | `/proc/<pid>/comm`, `status`, `stat`, `statm` | thread name (`PR_SET_NAME` operates on the calling thread), Tgid and Pid distinguished, `SigPnd`/`ShdPnd`/`SigBlk` correct, VmLck from user-wired mappings, VmLib bounded | some `stat` scheduling, wchan and address fields remain placeholders |
 | `/proc/<pid>/fd/`, `fdinfo/` | real descriptor directories with `socket:[inode]`, `pipe:[inode]`, `anon_inode:inotify` link text; fdinfo carries position, flags, mount id, and type-specific state for eventfd, signalfd, timerfd and epoll | cross-process access is subject to native debugging permission; vnode-less objects report mount id zero |
 | `/proc/<pid>/mem`, `maps`, `auxv`, `cwd`, `root`, `exe` | native-backed | the existing procfs visibility and debugger checks apply |
@@ -23,6 +24,7 @@ Linux programs learn about the system by reading files: `/proc/self/cgroup` for 
 | `/sys/devices/system/cpu/cpuN/topology/{physical_package_id,core_id,thread_siblings,thread_siblings_list,core_siblings,core_siblings_list}`, `online`, `present`, `possible` | the native boot topology and configured CPU set, iterating actual CPU ids (sparse ids are handled); no hotplug |
 | `/sys/class/net/<if>/{address,addr_len,carrier,operstate,flags,ifindex,mtu,type,tx_queue_len,uevent}` and `statistics/{rx,tx}_{bytes,packets,errors,dropped}`, `multicast`, `collisions` | native interface counters, VNET-visible; interfaces appear, rename and disappear live |
 | `/sys/devices/virtual/net/<if>` with `subsystem` and class links | the paths that `NETLINK_KOBJECT_UEVENT` messages name |
+| `/sys/kernel/mm/transparent_hugepage/enabled` | read-only `always madvise [never]`; Linux THP is unavailable, independently of native superpages. `linux_timerhints_test` checks partial reads, seeks and rejected writes |
 | `/sys/kernel/mm/transparent_hugepage/hpage_pmd_size` | the 2 MiB superpage size, read by jemalloc, tcmalloc and the Go runtime |
 | `/sys/bus/pci`, `/sys/devices/pci*`, `/sys/class/drm`, `scsi_host`, `power_supply` | the pre-existing FreeBSD views, unchanged |
 

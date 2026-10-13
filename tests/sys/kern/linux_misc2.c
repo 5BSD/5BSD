@@ -621,12 +621,10 @@ test_prctl(void)
 	/* 118-119: securebits are the default (0); setting them needs CAP_SETPCAP. */
 	if (call(SYS_prctl, 27, 0, 0, 0, 0, 0) != 0) return (118);
 	if (call(SYS_prctl, 28, 0, 0, 0, 0, 0) != -EPERM) return (119);
-	/*
-	 * 120-121: timer slack is not offered at all (nothing to store it
-	 * in, and a made-up GET value would be a lie): EINVAL.
-	 */
-	if (call(SYS_prctl, 29, 1000, 0, 0, 0, 0) != -EINVAL) return (120);
-	if (call(SYS_prctl, 30, 0, 0, 0, 0, 0) != -EINVAL) return (121);
+	/* 120-121: timer slack retains SET and resets to the inherited default. */
+	if (call(SYS_prctl, 29, 1000, 0, 0, 0, 0) != 0) return (120);
+	if (call(SYS_prctl, 30, 0, 0, 0, 0, 0) != 1000) return (121);
+	if (call(SYS_prctl, 29, 0, 0, 0, 0, 0) != 0) return (121);
 	/* 122-124: PR_GET_TID_ADDRESS returns what set_tid_address installed. */
 	tid = call(SYS_set_tid_address, (long)&tidvar, 0, 0, 0, 0, 0);
 	if (tid <= 0) return (122);

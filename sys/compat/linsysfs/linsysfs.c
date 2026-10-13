@@ -654,6 +654,15 @@ linsysfs_thp_pmd_size(PFS_FILL_ARGS)
 	return (0);
 }
 
+/* Linux THP is unavailable; native superpages are a separate facility. */
+static int
+linsysfs_thp_enabled(PFS_FILL_ARGS)
+{
+
+	sbuf_cat(sb, "always madvise [never]\n");
+	return (0);
+}
+
 static int
 linsysfs_init(PFS_INIT_ARGS)
 {
@@ -729,6 +738,8 @@ linsysfs_init(PFS_INIT_ARGS)
 	pfs_create_dir(kernel, &dir, "mm", NULL, NULL, NULL, 0);
 	pfs_create_dir(dir, &dir, "transparent_hugepage", NULL, NULL, NULL, 0);
 	pfs_create_file(dir, NULL, "hpage_pmd_size", &linsysfs_thp_pmd_size,
+	    NULL, NULL, NULL, PFS_RD);
+	pfs_create_file(dir, NULL, "enabled", linsysfs_thp_enabled,
 	    NULL, NULL, NULL, PFS_RD);
 
 	linsysfs_net_init();

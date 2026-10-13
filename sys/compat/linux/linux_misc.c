@@ -1612,6 +1612,24 @@ linux_getrlimit(struct thread *td, struct linux_getrlimit_args *args)
 	return (copyout(&rlim, args->rlim, sizeof(rlim)));
 }
 
+/* The target proc lock serializes scheduler changes with prctl and fork. */
+static void
+linux_sched_update_slack(struct thread *td)
+{
+	struct linux_emuldata *em;
+	struct rtprio rtp;
+
+	PROC_LOCK_ASSERT(td->td_proc, MA_OWNED);
+	em = em_find(td);
+	if (em == NULL)
+		return;
+	pri_to_rtp(td, &rtp);
+	if (RTP_PRIO_IS_REALTIME(rtp.type))
+		em->timer_slack_ns = 0;
+	else if (em->timer_slack_ns == 0)
+		em->timer_slack_ns = em->default_timer_slack_ns;
+}
+
 int
 linux_sched_setscheduler(struct thread *td,
     struct linux_sched_setscheduler_args *args)
@@ -1670,6 +1688,8 @@ linux_sched_setscheduler(struct thread *td,
 		return (ESRCH);
 
 	error = kern_sched_setscheduler(td, tdt, policy, &sched_param);
+	if (error == 0)
+		linux_sched_update_slack(tdt);
 	PROC_UNLOCK(tdt->td_proc);
 	return (error);
 }
@@ -2480,12 +2500,17 @@ linux_prctl(struct thread *td, struct linux_prctl_args *args)
 		break;
 	}
 	case LINUX_PR_SET_NO_NEW_PRIVS:
-		arg = args->arg2 == 1 ?
-		    PROC_NO_NEW_PRIVS_ENABLE : PROC_NO_NEW_PRIVS_DISABLE;
+		if (args->arg2 != 1 || args->arg3 != 0 || args->arg4 != 0 ||
+		    args->arg5 != 0)
+			return (EINVAL);
+		arg = PROC_NO_NEW_PRIVS_ENABLE;
 		error = kern_procctl(td, P_PID, p->p_pid,
 		    PROC_NO_NEW_PRIVS_CTL, &arg);
 		break;
 	case LINUX_PR_GET_NO_NEW_PRIVS:
+		if (args->arg2 != 0 || args->arg3 != 0 || args->arg4 != 0 ||
+		    args->arg5 != 0)
+			return (EINVAL);
 		error = kern_procctl(td, P_PID, p->p_pid,
 		    PROC_NO_NEW_PRIVS_STATUS, &arg);
 		if (error != 0)
@@ -2542,14 +2567,29 @@ linux_prctl(struct thread *td, struct linux_prctl_args *args)
 		/* Linux requires CAP_SETPCAP, which no process here holds. */
 		error = EPERM;
 		break;
-	case LINUX_PR_SET_TIMERSLACK:
-	case LINUX_PR_GET_TIMERSLACK:
+	case LINUX_PR_SET_TIMERSLACK: {
+		struct linux_emuldata *em;
+		struct rtprio rtp;
+
+		/* Linux ignores SET for real-time scheduling policies. */
+		PROC_LOCK(td->td_proc);
+		pri_to_rtp(td, &rtp);
+		em = em_find(td);
+		if (!RTP_PRIO_IS_REALTIME(rtp.type))
+			em->timer_slack_ns = args->arg2 != 0 ? args->arg2 :
+			    em->default_timer_slack_ns;
+		PROC_UNLOCK(td->td_proc);
 		/*
-		 * Timer slack has no native equivalent and we have no
-		 * per-thread storage to make GET reflect SET, so neither is
-		 * offered rather than returning a made-up value.
+		 * Slack permits, but does not require, timer coalescing.
+		 * Keep native deadlines: this ABI state adds no delay.
+		 * Linux ignores the remaining prctl arguments here.
 		 */
-		error = EINVAL;
+		break;
+	}
+	case LINUX_PR_GET_TIMERSLACK:
+		PROC_LOCK(td->td_proc);
+		td->td_retval[0] = em_find(td)->timer_slack_ns;
+		PROC_UNLOCK(td->td_proc);
 		break;
 	case LINUX_PR_GET_TID_ADDRESS: {
 		struct linux_emuldata *em;
@@ -2659,6 +2699,8 @@ linux_sched_setparam(struct thread *td,
 	}
 
 	error = kern_sched_setparam(td, tdt, &sched_param);
+	if (error == 0)
+		linux_sched_update_slack(tdt);
 out:	PROC_UNLOCK(tdt->td_proc);
 	return (error);
 }
@@ -2956,6 +2998,8 @@ linux_sched_setattr(struct thread *td, struct linux_sched_setattr_args *args)
 		error = p_cansched(td, p);
 	else
 		error = kern_sched_setscheduler(td, tdt, policy, &sched_param);
+	if (error == 0)
+		linux_sched_update_slack(tdt);
 out:
 	PROC_UNLOCK(p);
 	if (error == 0 && set_nice) {

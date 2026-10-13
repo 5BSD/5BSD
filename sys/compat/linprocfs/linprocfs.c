@@ -3426,6 +3426,10 @@ linprocfs_init(PFS_INIT_ARGS)
 	pfs_create_dir(dir, &dir, "task", linprocfs_dotaskattr, NULL, NULL, 0);
 	/* Threads share memory views but retain their own identity. */
 	pfs_create_dir(dir, &dir, "tid", NULL, NULL, NULL, PFS_TIDNAME);
+	pfs_create_file(dir, NULL, "cgroup", linprocfs_doproccgroup, NULL,
+	    NULL, NULL, PFS_RD);
+	pfs_create_file(dir, NULL, "cpuset", linprocfs_doproccpuset, NULL,
+	    NULL, NULL, PFS_RD);
 	pfs_create_link(dir, NULL, "cwd", linprocfs_doproccwd, NULL,
 	    linprocfs_common_candebug, NULL, PFS_MAGICLINK);
 	pfs_create_link(dir, NULL, "root", linprocfs_doprocroot, NULL,

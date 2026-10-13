@@ -178,6 +178,16 @@ linux_proc_init(struct thread *td, struct thread *newtd, bool init_thread)
 
 		/* non-exec call */
 		em = malloc(sizeof(*em), M_LINUX, M_WAITOK | M_ZERO);
+		/*
+		 * Seed both values from the creating thread's current slack.
+		 * Native-to-Linux exec starts with Linux's 50 us default;
+		 * Linux-to-Linux exec preserves both values below.
+		 */
+		PROC_LOCK(td->td_proc);
+		em->timer_slack_ns = newtd != td && em_find(td) != NULL ?
+		    em_find(td)->timer_slack_ns : 50000;
+		PROC_UNLOCK(td->td_proc);
+		em->default_timer_slack_ns = em->timer_slack_ns;
 		em->em_proc_cookie = atomic_fetchadd_64(&linux_proc_cookie, 1) +
 		    1;
 		microuptime(&uptime);
