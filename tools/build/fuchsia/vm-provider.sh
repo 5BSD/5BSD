@@ -343,7 +343,9 @@ vars=; for v in $KYUA_VARS; do vars="$vars -v $v"; done
 # Preserve the actual test status across tee without depending on pipefail.
 {
     test_status=0
-    kyua -v parallelism="$PARALLELISM" $vars test -r "$R/results.db" $suites 2>&1 || test_status=$?
+    # Verified file-handle lifetime cases require a disk-backed workdir.
+    # Keep /tmp as tmpfs for cases that explicitly exercise that filesystem.
+    TMPDIR=/var/tmp kyua -v parallelism="$PARALLELISM" $vars test -r "$R/results.db" $suites 2>&1 || test_status=$?
     printf '%s\n' "$test_status" > "$R/kyua-test.status"
 } | tee "$R/kyua-test.out" || true
 echo "KYUA_TEST_STATUS=$(cat "$R/kyua-test.status")"
