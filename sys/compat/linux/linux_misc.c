@@ -2603,31 +2603,19 @@ linux_prctl(struct thread *td, struct linux_prctl_args *args)
 		break;
 	}
 	case LINUX_PR_SET_THP_DISABLE:
-		/*
-		 * Accept anything that's valid: Linux treats any nonzero
-		 * arg2 as "disable", so there's nothing to reject here.
-		 * 5BSD: as on Linux, the unused arg3..arg5 must be zero.
-		 */
-		if (args->arg3 != 0 || args->arg4 != 0 || args->arg5 != 0) {
-			error = EINVAL;
-			break;
-		}
-		td->td_retval[0] = 0;
+		if (args->arg3 != 0 || args->arg4 != 0 || args->arg5 != 0)
+			return (EINVAL);
+		PROC_LOCK(p);
+		pem_find(p)->thp_disabled = args->arg2 != 0;
+		PROC_UNLOCK(p);
 		break;
 	case LINUX_PR_GET_THP_DISABLE:
-		/*
-		 * THP not in play, since FreeBSD doesn't have THP. Although
-		 * similar, superpages don't have the crazy issues THP does, so
-		 * tell the best lie possible: there's no problems with crazy
-		 * latency spikes: this feature is disabled.
-		 * 5BSD: as on Linux, arg2..arg5 must be zero.
-		 */
 		if (args->arg2 != 0 || args->arg3 != 0 || args->arg4 != 0 ||
-		    args->arg5 != 0) {
-			error = EINVAL;
-			break;
-		}
-		td->td_retval[0] = 1;
+		    args->arg5 != 0)
+			return (EINVAL);
+		PROC_LOCK(p);
+		td->td_retval[0] = pem_find(p)->thp_disabled;
+		PROC_UNLOCK(p);
 		break;
 	case LINUX_PR_GET_SPECULATION_CTRL:
 	case LINUX_PR_SET_SPECULATION_CTRL:

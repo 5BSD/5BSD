@@ -102,7 +102,9 @@ struct linux_pemuldata {
 	uint32_t	persona;	/* process execution domain */
 	uint32_t	ptrace_flags;	/* used by ptrace(2) */
 	uint32_t	ptrace_state;	/* internal ptrace lifecycle state */
-	uint32_t	oom_score_adj;	/* /proc/self/oom_score_adj */
+	int		oom_score_adj;	/* proc lock: OOM adjustment state */
+	int		oom_score_adj_min; /* privileged floor, inherited */
+	bool		thp_disabled;	/* proc lock: PR_SET_THP_DISABLE */
 	uint32_t	so_timestamp;	/* requested timeval */
 	uint32_t	so_timestampns;	/* requested timespec */
 	struct linux_pemuldata_md pem_md; /* machine-dependent state */

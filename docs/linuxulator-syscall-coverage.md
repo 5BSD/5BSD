@@ -319,7 +319,8 @@ See section 3.1.
 | sched_setattr | RESET_ON_FORK, RECLAIM, DL_OVERRUN, UTIL_CLAMP_* | rejected-unimplementable | EINVAL; size rules E2BIG with size rewritten to 56; size 0 = VER0 quirk accepted |
 | prctl | PR_GET/SET_TIMING, PR_GET_TSC, PR_GET/SET_SECUREBITS (default 0, set needs CAP_SETPCAP), PR_GET_TID_ADDRESS | mapped | |
 | prctl | PR_SET/GET_TIMERSLACK | mapped | per-thread current/default nanoseconds, zero resets default; fork/clone inherit caller current as default, exec preserves both; FIFO/RR clear slack and ignore SET, returning to OTHER restores default. Native deadlines remain unchanged: no new timer coalescing. Covered by `linux_timerhints_test` |
-| prctl | PR_SET_TSC(SIGSEGV), THP disable, speculation control, PR_SET_MM, PR_CAPBSET_DROP | rejected-unimplementable | EINVAL (speculation control ENODEV, as an arch without it) |
+| prctl | PR_SET/GET_THP_DISABLE | mapped state | process policy is shared by threads, inherited by fork and preserved by exec; GET reflects SET and status THP_enabled is its inverse. Linux THP remains unavailable; nonzero unused arguments are EINVAL |
+| prctl | PR_SET_TSC(SIGSEGV), speculation control, PR_SET_MM, PR_CAPBSET_DROP | rejected-unimplementable | EINVAL (speculation control ENODEV, as an arch without it) |
 | syslog | OPEN/CLOSE, SIZE_BUFFER, READ_ALL (len rules) | mapped | READ_ALL len 0 reads nothing, NULL/negative EINVAL; unknown action EINVAL |
 | syslog | CONSOLE_OFF/ON/LEVEL, READ, SIZE_UNREAD, CLEAR, READ_CLEAR | rejected-correctly | EPERM unprivileged; logged once |
 | setfsuid/setfsgid | any | mapped | returns the current euid/egid, changes nothing (Linux "previous value" contract) |

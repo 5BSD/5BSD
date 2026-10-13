@@ -9,6 +9,10 @@ Linux programs learn about the system by reading files: `/proc/self/cgroup` for 
 | `/proc/<pid>/cgroup` | `0::/` | the cgroup v2 unified root with no controllers; Go, JVM and Node read it for CPU-quota detection and treat an unconstrained root correctly. It is not a cgroup implementation |
 | `/proc/<pid>/cpuset` | `/` | root cpuset |
 | `/proc/<pid>/task/<tid>/{cgroup,cpuset}` and `/proc/thread-self/{cgroup,cpuset}` | same as the process entries | available for leaders and workers; tested by `linux_quickwins_test:thread_cgroup` and `thread_cpuset` |
+| `/proc/<pid>/timerslack_ns` and task/thread-self views | per-thread nanoseconds shared with `prctl`; zero resets the inherited default | access to another thread requires scheduling privilege; real-time policy reports zero. Linux 6.12 exposes the thread equivalent at `/proc/<tid>/timerslack_ns`, so the Linux oracle uses that spelling |
+| `/proc/<pid>/{oom_score_adj,oom_adj}` and task/thread-self views | process-wide adjustment, legacy scaling, checked numeric writes and privileged lowering rules | inherited across fork and preserved by exec; compatibility bookkeeping, not native OOM victim selection |
+| Additional `status` fields | `Umask`, `NoNewPrivs`, `Cpus_allowed`, `Cpus_allowed_list`, `FDSize`, `VmHWM`, context-switch counts, `CapBnd`, `CapAmb`, `THP_enabled` | affinity and context-switch counts select the target thread; `VmHWM` uses sampled native process resource accounting, not exact Linux per-mm peak tracking. Capability fields agree with the existing prctl model; THP policy state does not provide a THP backend |
+| Corrected `stat` fields | RSS resource limit in bytes and parent exit signal | worker exit signal is -1; infinite RSS limits use the Linux unsigned encoding |
 | `/proc/<pid>/comm`, `status`, `stat`, `statm` | thread name (`PR_SET_NAME` operates on the calling thread), Tgid and Pid distinguished, `SigPnd`/`ShdPnd`/`SigBlk` correct, VmLck from user-wired mappings, VmLib bounded | some `stat` scheduling, wchan and address fields remain placeholders |
 | `/proc/<pid>/fd/`, `fdinfo/` | real descriptor directories with `socket:[inode]`, `pipe:[inode]`, `anon_inode:inotify` link text; fdinfo carries position, flags, mount id, and type-specific state for eventfd, signalfd, timerfd and epoll | cross-process access is subject to native debugging permission; vnode-less objects report mount id zero |
 | `/proc/<pid>/mem`, `maps`, `auxv`, `cwd`, `root`, `exe` | native-backed | the existing procfs visibility and debugger checks apply |
@@ -22,6 +26,7 @@ Linux programs learn about the system by reading files: `/proc/self/cgroup` for 
 | Path | Content |
 |---|---|
 | `/sys/devices/system/cpu/cpuN/topology/{physical_package_id,core_id,thread_siblings,thread_siblings_list,core_siblings,core_siblings_list}`, `online`, `present`, `possible` | the native boot topology and configured CPU set, iterating actual CPU ids (sparse ids are handled); no hotplug |
+| `/sys/devices/system/cpu/{offline,kernel_max}` | no offline configured CPUs; maximum supported CPU index from `MAXCPU - 1`. This does not add CPU hotplug |
 | `/sys/class/net/<if>/{address,addr_len,carrier,operstate,flags,ifindex,mtu,type,tx_queue_len,uevent}` and `statistics/{rx,tx}_{bytes,packets,errors,dropped}`, `multicast`, `collisions` | native interface counters, VNET-visible; interfaces appear, rename and disappear live |
 | `/sys/devices/virtual/net/<if>` with `subsystem` and class links | the paths that `NETLINK_KOBJECT_UEVENT` messages name |
 | `/sys/kernel/mm/transparent_hugepage/enabled` | read-only `always madvise [never]`; Linux THP is unavailable, independently of native superpages. `linux_timerhints_test` checks partial reads, seeks and rejected writes |

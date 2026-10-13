@@ -242,6 +242,11 @@ linux_proc_init(struct thread *td, struct thread *newtd, bool init_thread)
 					pem->mdwe = ppem->mdwe;
 				pem->mce_kill = ppem->mce_kill;
 				pem->io_flusher = ppem->io_flusher;
+				PROC_LOCK(td->td_proc);
+				pem->oom_score_adj = ppem->oom_score_adj;
+				pem->oom_score_adj_min = ppem->oom_score_adj_min;
+				pem->thp_disabled = ppem->thp_disabled;
+				PROC_UNLOCK(td->td_proc);
 				/* Sealed ranges live on the mappings: inherited. */
 				LINUX_PEM_SLOCK(ppem);
 				if (ppem->nseals > 0) {
@@ -290,7 +295,7 @@ linux_proc_init(struct thread *td, struct thread *newtd, bool init_thread)
 		 * bug-emulation bits for a secure exec; P_SUGID is not yet
 		 * updated for the new image here.
 		 */
-		pem->oom_score_adj = 0;
+		/* OOM adjustment and THP policy survive exec, as on Linux. */
 		linux_pemuldata_exec_md(pem);
 #ifdef __amd64__
 		linux_aio_proc_release(pem, td);

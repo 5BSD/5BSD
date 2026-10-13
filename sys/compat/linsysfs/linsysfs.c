@@ -524,6 +524,23 @@ linsysfs_cpuonline(PFS_FILL_ARGS)
 	return (0);
 }
 
+/* All configured CPUs are online; there is no Linux hotplug pool. */
+static int
+linsysfs_cpuoffline(PFS_FILL_ARGS)
+{
+
+	sbuf_putc(sb, '\n');
+	return (0);
+}
+
+static int
+linsysfs_cpukernelmax(PFS_FILL_ARGS)
+{
+
+	sbuf_printf(sb, "%d\n", MAXCPU - 1);
+	return (0);
+}
+
 /*
  * Filler function for sys/devices/system/cpu/cpuX/online
  */
@@ -727,6 +744,10 @@ linsysfs_init(PFS_INIT_ARGS)
 	    NULL, PFS_RD);
 	pfs_create_file(cpu, NULL, "present", &linsysfs_cpuonline, NULL, NULL,
 	    NULL, PFS_RD);
+	pfs_create_file(cpu, NULL, "offline", linsysfs_cpuoffline, NULL, NULL,
+	    NULL, PFS_RD);
+	pfs_create_file(cpu, NULL, "kernel_max", linsysfs_cpukernelmax, NULL,
+	    NULL, NULL, PFS_RD);
 
 	linsysfs_listcpus(cpu);
 

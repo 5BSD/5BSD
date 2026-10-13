@@ -634,11 +634,11 @@ test_prctl(void)
 	/* 125: PR_GET_TID_ADDRESS with a bad pointer is EFAULT. */
 	if (call(SYS_prctl, 40, 0, 0, 0, 0, 0) != -EFAULT) return (125);
 	/*
-	 * 126-129: there is no THP, so any SET value is accepted (Linux
-	 * treats every nonzero arg2 as "disable") and GET reports THP as
-	 * disabled (1); the unused arguments must be zero, as on Linux.
+	 * 126-129: THP policy retains SET (every nonzero arg2 disables it).
+	 * The unused arguments must be zero. This does not enable Linux THP.
 	 */
 	if (call(SYS_prctl, 41, 0, 0, 0, 0, 0) != 0) return (126);
+	if (call(SYS_prctl, 42, 0, 0, 0, 0, 0) != 0) return (126);
 	if (call(SYS_prctl, 41, 1, 0, 0, 0, 0) != 0) return (127);
 	if (call(SYS_prctl, 41, 2, 0, 0, 0, 0) != 0) return (127);
 	if (call(SYS_prctl, 41, 0, 1, 0, 0, 0) != -EINVAL) return (127);

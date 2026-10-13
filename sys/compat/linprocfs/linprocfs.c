@@ -47,6 +47,9 @@
 #include <sys/bus.h>
 #include <sys/capsicum.h>
 #include <sys/conf.h>
+#include <sys/ctype.h>
+#include <sys/cpuset.h>
+#include <sys/priv.h>
 #include <sys/exec.h>
 #include <sys/event.h>
 #include <sys/eventfd.h>
@@ -1110,7 +1113,8 @@ linprocfs_doprocstat_thread(PFS_FILL_ARGS, pid_t tid, uint64_t cookie)
 	struct timeval boottime;
 	char state;
 	static int ratelimit = 0;
-	int tty_nr, policy, rtprio;
+	int tty_nr, policy, rtprio, exitsignal;
+	rlim_t rsslim;
 	l_sigset_t pending, blocked, ignored, caught;
 	struct sigacts *ps;
 	uint64_t starttime;
@@ -1165,6 +1169,9 @@ linprocfs_doprocstat_thread(PFS_FILL_ARGS, pid_t tid, uint64_t cookie)
 	thread_unlock(target);
 	PROC_STATUNLOCK(p);
 	tty_nr = linprocfs_get_tty_nr(p);
+	rsslim = lim_cur_proc(p, RLIMIT_RSS);
+	exitsignal = tid != 0 && tid != p->p_pid ? -1 :
+	    bsd_to_linux_signal(p->p_sigparent);
 	sx_sunlock(&proctree_lock);
 	if (p->p_vmspace) {
 	   startcode = (vm_offset_t)p->p_vmspace->vm_taddr;
@@ -1209,7 +1216,8 @@ linprocfs_doprocstat_thread(PFS_FILL_ARGS, pid_t tid, uint64_t cookie)
 	PS_ADD("starttime",	"%ju",	(uintmax_t)starttime);
 	PS_ADD("vsize",		"%ju",	(uintmax_t)kp.ki_size);
 	PS_ADD("rss",		"%ju",	(uintmax_t)kp.ki_rssize);
-	PS_ADD("rlim",		"%lu",	kp.ki_rusage.ru_maxrss);
+	PS_ADD("rlim",		"%ju", (uintmax_t)(rsslim == RLIM_INFINITY ?
+	    UINT64_MAX : rsslim));
 	PS_ADD("startcode",	"%ju",	(uintmax_t)startcode);
 	PS_ADD("endcode",	"%ju",	(uintmax_t)startdata);
 	PS_ADD("startstack",	"%u",	0); /* XXX */
@@ -1222,7 +1230,7 @@ linprocfs_doprocstat_thread(PFS_FILL_ARGS, pid_t tid, uint64_t cookie)
 	PS_ADD("wchan",		"%u",	0); /* XXX */
 	PS_ADD("nswap",		"%lu",	kp.ki_rusage.ru_nswap);
 	PS_ADD("cnswap",	"%lu",	kp.ki_rusage_ch.ru_nswap);
-	PS_ADD("exitsignal",	"%d",	0); /* XXX */
+	PS_ADD("exitsignal",	"%d", exitsignal);
 	PS_ADD("processor",	"%u",	kp.ki_lastcpu);
 	PS_ADD("rt_priority", "%u", rtprio);
 	PS_ADD("policy", "%u", policy);
@@ -1328,7 +1336,13 @@ linprocfs_doprocstatus_thread(PFS_FILL_ARGS, pid_t tid, uint64_t cookie)
 	struct sigacts *ps;
 	l_sigset_t siglist, sigignore, sigcatch, pending, blocked;
 	char name[MAXCOMLEN + 1];
-	int i;
+	struct rusage usage;
+	struct filedesc *fdp;
+	u_short cmask;
+	cpuset_t allowed;
+	uint32_t mask;
+	bool nnp, thp;
+	int i, word, bit, first, last, fdsize;
 
 	sx_slock(&proctree_lock);
 	PROC_LOCK(p);
@@ -1340,7 +1354,10 @@ linprocfs_doprocstatus_thread(PFS_FILL_ARGS, pid_t tid, uint64_t cookie)
 	}
 	bsd_to_linux_sigset(&td2->td_siglist, &pending);
 	bsd_to_linux_sigset(&td2->td_sigmask, &blocked);
+	PROC_STATLOCK(p);
 	thread_lock(td2);
+	rufetchtd(td2, &usage);
+	CPU_COPY(&td2->td_cpuset->cs_mask, &allowed);
 	strlcpy(name, td2->td_name, sizeof(name));
 
 	if (P_SHOULDSTOP(p)) {
@@ -1378,6 +1395,12 @@ linprocfs_doprocstatus_thread(PFS_FILL_ARGS, pid_t tid, uint64_t cookie)
 	}
 
 	thread_unlock(td2);
+	PROC_STATUNLOCK(p);
+	cmask = p->p_pd != NULL ? p->p_pd->pd_cmask : 0;
+	fdp = fdhold(p);
+	nnp = (p->p_flag2 & P2_NO_NEW_PRIVS) != 0;
+	thp = SV_PROC_ABI(p) != SV_ABI_LINUX || pem_find(p) == NULL ||
+	    !pem_find(p)->thp_disabled;
 	fill_kinfo_proc(p, &kp);
 	sx_sunlock(&proctree_lock);
 
@@ -1419,6 +1442,8 @@ linprocfs_doprocstatus_thread(PFS_FILL_ARGS, pid_t tid, uint64_t cookie)
 	sbuf_printf(sb, "VmSize:\t%8ju kB\n",	B2K((uintmax_t)kp.ki_size));
 	sbuf_printf(sb, "VmLck:\t%8ju kB\n", B2K(linprocfs_vmlck(p)));
 	sbuf_printf(sb, "VmRSS:\t%8ju kB\n",	P2K((uintmax_t)kp.ki_rssize));
+	sbuf_printf(sb, "VmHWM:\t%8ju kB\n",
+	    (uintmax_t)MAX(kp.ki_rusage.ru_maxrss, P2K(kp.ki_rssize)));
 	sbuf_printf(sb, "VmData:\t%8ju kB\n",	P2K((uintmax_t)kp.ki_dsize));
 	sbuf_printf(sb, "VmStk:\t%8ju kB\n",	P2K((uintmax_t)kp.ki_ssize));
 	sbuf_printf(sb, "VmExe:\t%8ju kB\n",	P2K((uintmax_t)kp.ki_tsize));
@@ -1452,6 +1477,43 @@ linprocfs_doprocstatus_thread(PFS_FILL_ARGS, pid_t tid, uint64_t cookie)
 	sbuf_printf(sb, "CapInh:\t%016x\n",	0);
 	sbuf_printf(sb, "CapPrm:\t%016x\n",	0);
 	sbuf_printf(sb, "CapEff:\t%016x\n",	0);
+	sbuf_printf(sb, "CapBnd:\t%016jx\n",
+	    (uintmax_t)((UINT64_C(1) << (LINUX_CAP_LAST_CAP + 1)) - 1));
+	sbuf_printf(sb, "CapAmb:\t%016x\n", 0);
+	sbuf_printf(sb, "NoNewPrivs:\t%d\n", nnp);
+	sbuf_printf(sb, "THP_enabled:\t%d\n", thp);
+	sbuf_printf(sb, "voluntary_ctxt_switches:\t%ld\n", usage.ru_nvcsw);
+	sbuf_printf(sb, "nonvoluntary_ctxt_switches:\t%ld\n", usage.ru_nivcsw);
+	sbuf_printf(sb, "Umask:\t%04o\n", cmask);
+	fdsize = 0;
+	if (fdp != NULL) {
+		FILEDESC_SLOCK(fdp);
+		fdsize = fdp->fd_nfiles;
+		FILEDESC_SUNLOCK(fdp);
+		fddrop(fdp);
+	}
+	sbuf_printf(sb, "FDSize:\t%d\n", fdsize);
+	sbuf_cat(sb, "Cpus_allowed:\t");
+	for (word = mp_maxid / 32; word >= 0; word--) {
+		mask = 0;
+		for (bit = 0; bit < 32 && word * 32 + bit < CPU_SETSIZE; bit++)
+			if (CPU_ISSET(word * 32 + bit, &allowed))
+				mask |= 1U << bit;
+		sbuf_printf(sb, "%s%08x", word == mp_maxid / 32 ? "" : ",", mask);
+	}
+	sbuf_cat(sb, "\nCpus_allowed_list:\t");
+	i = 0;
+	for (first = 0; first <= mp_maxid; first = last + 1) {
+		last = first;
+		if (!CPU_ISSET(first, &allowed))
+			continue;
+		while (last < mp_maxid && CPU_ISSET(last + 1, &allowed))
+			last++;
+		sbuf_printf(sb, "%s%d", i++ == 0 ? "" : ",", first);
+		if (last != first)
+			sbuf_printf(sb, "-%d", last);
+	}
+	sbuf_putc(sb, '\n');
 
 	return (0);
 }
@@ -2664,30 +2726,194 @@ out:
 	return (error);
 }
 
-/*
- * Filler function for proc/self/oom_score_adj
- */
+/* Parse the textual proc ABI before taking a process lock. */
+static int
+linprocfs_number(struct uio *uio, bool oom, uint64_t *value, bool *negative)
+{
+	char buf[68], *cp, *end;
+	uint64_t v;
+	size_t n;
+	unsigned base, digit;
+	int error;
+	bool any;
+
+	n = MIN((size_t)uio->uio_resid, oom ? 12 : sizeof(buf) - 1);
+	error = uiomove(buf, n, uio);
+	if (error != 0)
+		return (error);
+	buf[n] = '\0';
+	cp = buf;
+	end = buf + strlen(buf);
+	if (oom) {
+		while (cp < end && isspace(*cp))
+			cp++;
+		while (end > cp && isspace(end[-1]))
+			end--;
+	} else if (end > cp && end[-1] == '\n')
+		end--;
+	*negative = false;
+	if (cp < end && (*cp == '+' || (oom && *cp == '-')))
+		*negative = *cp++ == '-';
+	base = 10;
+	if (oom && cp < end && *cp == '0') {
+		base = 8;
+		if (end - cp > 2 && (cp[1] == 'x' || cp[1] == 'X')) {
+			base = 16;
+			cp += 2;
+		}
+	}
+	v = 0;
+	any = false;
+	for (; cp < end; cp++) {
+		if (*cp >= '0' && *cp <= '9')
+			digit = *cp - '0';
+		else if (*cp >= 'a' && *cp <= 'f')
+			digit = *cp - 'a' + 10;
+		else if (*cp >= 'A' && *cp <= 'F')
+			digit = *cp - 'A' + 10;
+		else
+			return (EINVAL);
+		if (digit >= base)
+			return (EINVAL);
+		if (v > (UINT64_MAX - digit) / base)
+			return (ERANGE);
+		v = v * base + digit;
+		any = true;
+	}
+	if (!any)
+		return (EINVAL);
+	if (oom && v > (uint64_t)INT_MAX + *negative)
+		return (ERANGE);
+	*value = v;
+	return (0);
+}
+
+static int
+linprocfs_oomattr(PFS_ATTR_ARGS)
+{
+
+	vap->va_mode = 0644;
+	return (0);
+}
+
+static int
+linprocfs_slackattr(PFS_ATTR_ARGS)
+{
+
+	vap->va_mode = 0666;
+	return (0);
+}
+
+static int
+linprocfs_doslack_thread(PFS_FILL_ARGS, pid_t tid, uint64_t cookie)
+{
+	struct linux_emuldata *em;
+	struct thread *target;
+	struct rtprio rtp;
+	uint64_t value;
+	bool negative, writing;
+	int error;
+
+	writing = uio != NULL && uio->uio_rw == UIO_WRITE;
+	if (writing) {
+		error = linprocfs_number(uio, false, &value, &negative);
+		if (error != 0)
+			return (error);
+	}
+	PROC_LOCK(p);
+	target = linprocfs_find_thread(p, tid, cookie);
+	if (target == NULL || SV_PROC_ABI(p) != SV_ABI_LINUX ||
+	    (em = em_find(target)) == NULL) {
+		error = ESRCH;
+		goto out;
+	}
+	error = 0;
+	if (target != td) {
+		error = priv_check(td, PRIV_SCHED_SETPOLICY);
+		if (error == 0)
+			error = writing ? p_cansched(td, p) : p_cansee(td, p);
+		if (error != 0)
+			goto out;
+	}
+	if (writing) {
+		pri_to_rtp(target, &rtp);
+		em->timer_slack_ns = RTP_PRIO_IS_REALTIME(rtp.type) ? 0 :
+		    value != 0 ? value : em->default_timer_slack_ns;
+	} else
+		sbuf_printf(sb, "%ju\n", (uintmax_t)em->timer_slack_ns);
+out:
+	PROC_UNLOCK(p);
+	return (error);
+}
+
+static int
+linprocfs_doslack(PFS_FILL_ARGS)
+{
+
+	return (linprocfs_doslack_thread(PFS_FILL_ARGNAMES, 0, 0));
+}
+
+/* OOM adjustment remains Linux bookkeeping, not native OOM policy. */
+static int
+linprocfs_do_oom_thread(PFS_FILL_ARGS, pid_t tid, uint64_t cookie)
+{
+	struct linux_pemuldata *pem;
+	struct thread *target;
+	uint64_t value;
+	int64_t adjustment;
+	int error, floor;
+	bool legacy, negative, privileged, writing;
+
+	legacy = strcmp(pn->pn_name, "oom_adj") == 0;
+	writing = uio != NULL && uio->uio_rw == UIO_WRITE;
+	privileged = false;
+	adjustment = 0;
+	if (writing) {
+		error = linprocfs_number(uio, true, &value, &negative);
+		if (error != 0)
+			return (error);
+		adjustment = negative ? -(int64_t)value : (int64_t)value;
+		if (legacy) {
+			if ((adjustment < -16 || adjustment > 15) && adjustment != -17)
+				return (EINVAL);
+			adjustment = adjustment == 15 ? 1000 : adjustment * 1000 / 17;
+		} else if (adjustment < -1000 || adjustment > 1000)
+			return (EINVAL);
+		privileged = priv_check(td, PRIV_VM_MADV_PROTECT) == 0;
+	}
+	PROC_LOCK(p);
+	target = linprocfs_find_thread(p, tid, cookie);
+	if (target == NULL || SV_PROC_ABI(p) != SV_ABI_LINUX ||
+	    (pem = pem_find(p)) == NULL) {
+		error = ESRCH;
+		goto out;
+	}
+	error = 0;
+	if (writing) {
+		floor = legacy ? pem->oom_score_adj : pem->oom_score_adj_min;
+		if (adjustment < floor && !privileged) {
+			error = EACCES;
+			goto out;
+		}
+		pem->oom_score_adj = adjustment;
+		if (!legacy && privileged)
+			pem->oom_score_adj_min = adjustment;
+	} else {
+		adjustment = pem->oom_score_adj;
+		if (legacy)
+			adjustment = adjustment == 1000 ? 15 : adjustment * 17 / 1000;
+		sbuf_printf(sb, "%jd\n", (intmax_t)adjustment);
+	}
+out:
+	PROC_UNLOCK(p);
+	return (error);
+}
+
 static int
 linprocfs_do_oom_score_adj(PFS_FILL_ARGS)
 {
-	struct linux_pemuldata *pem;
-	long oom;
 
-	pem = pem_find(p);
-	if (pem == NULL || uio == NULL)
-		return (EOPNOTSUPP);
-	if (uio->uio_rw == UIO_READ) {
-		sbuf_printf(sb, "%d\n", pem->oom_score_adj);
-	} else {
-		sbuf_trim(sb);
-		sbuf_finish(sb);
-		oom = strtol(sbuf_data(sb), NULL, 10);
-		if (oom < LINUX_OOM_SCORE_ADJ_MIN ||
-		    oom > LINUX_OOM_SCORE_ADJ_MAX)
-			return (EINVAL);
-		pem->oom_score_adj = oom;
-	}
-	return (0);
+	return (linprocfs_do_oom_thread(PFS_FILL_ARGNAMES, 0, 0));
 }
 
 /*
@@ -3416,8 +3642,12 @@ linprocfs_init(PFS_INIT_ARGS)
 	    &linprocfs_common_candebug, NULL, PFS_RD | PFS_RAWRD);
 	pfs_create_file(dir, NULL, "limits", &linprocfs_doproclimits, NULL,
 	    NULL, NULL, PFS_RD);
-	pfs_create_file(dir, NULL, "oom_score_adj", &linprocfs_do_oom_score_adj,
-	    linprocfs_common_attr_rw, &linprocfs_common_candebug, NULL, PFS_RDWR);
+	pfs_create_file(dir, NULL, "oom_score_adj", linprocfs_do_oom_score_adj,
+	    linprocfs_oomattr, NULL, NULL, PFS_RDWR | PFS_RAWWR);
+	pfs_create_file(dir, NULL, "oom_adj", linprocfs_do_oom_score_adj,
+	    linprocfs_oomattr, NULL, NULL, PFS_RDWR | PFS_RAWWR);
+	pfs_create_file(dir, NULL, "timerslack_ns", linprocfs_doslack,
+	    linprocfs_slackattr, NULL, NULL, PFS_RDWR | PFS_RAWWR);
 
 	pfs_create_file(dir, NULL, "comm", linprocfs_doproccomm,
 	    linprocfs_commattr, NULL, NULL, PFS_RDWR | PFS_RAWWR);
@@ -3426,6 +3656,15 @@ linprocfs_init(PFS_INIT_ARGS)
 	pfs_create_dir(dir, &dir, "task", linprocfs_dotaskattr, NULL, NULL, 0);
 	/* Threads share memory views but retain their own identity. */
 	pfs_create_dir(dir, &dir, "tid", NULL, NULL, NULL, PFS_TIDNAME);
+	pfs_create_file(dir, &threadfile, "timerslack_ns", linprocfs_doslack,
+	    linprocfs_slackattr, NULL, NULL, PFS_RDWR | PFS_RAWWR);
+	threadfile->pn_fill_thread = linprocfs_doslack_thread;
+	pfs_create_file(dir, &threadfile, "oom_score_adj", linprocfs_do_oom_score_adj,
+	    linprocfs_oomattr, NULL, NULL, PFS_RDWR | PFS_RAWWR);
+	threadfile->pn_fill_thread = linprocfs_do_oom_thread;
+	pfs_create_file(dir, &threadfile, "oom_adj", linprocfs_do_oom_score_adj,
+	    linprocfs_oomattr, NULL, NULL, PFS_RDWR | PFS_RAWWR);
+	threadfile->pn_fill_thread = linprocfs_do_oom_thread;
 	pfs_create_file(dir, NULL, "cgroup", linprocfs_doproccgroup, NULL,
 	    NULL, NULL, PFS_RD);
 	pfs_create_file(dir, NULL, "cpuset", linprocfs_doproccpuset, NULL,
