@@ -116,10 +116,6 @@ CRUNCH_PROGS_sbin+= pfctl
 CRUNCH_LIBS_pfctl+= ${LIBPFCTL} ${LIBNV}
 .endif
 
-.if ${MK_ROUTED} != "no"
-CRUNCH_PROGS_sbin+= routed rtquery
-.endif
-
 .if ${MK_ZFS} != "no"
 CRUNCH_PROGS_sbin+= bectl
 CRUNCH_PROGS_sbin+= zfs
@@ -163,19 +159,6 @@ CRUNCH_LIBS+= -lmd
 .endif
 CRUNCH_LIBS+= -lmt -lsbuf -lufs -lz
 
-.if ${MACHINE_CPUARCH} == "i386"
-CRUNCH_PROGS_sbin+= bsdlabel fdisk
-CRUNCH_ALIAS_bsdlabel= disklabel
-#CRUNCH_PROGS+= mount_smbfs
-#CRUNCH_LIBS+= -lsmb
-.endif
-
-.if ${MACHINE_CPUARCH} == "amd64"
-CRUNCH_PROGS_sbin+= bsdlabel fdisk
-CRUNCH_ALIAS_bsdlabel= disklabel
-.endif
-
-CRUNCH_SRCDIR_rtquery= ${SRCTOP}/sbin/routed/rtquery
 .if ${MK_ZFS} != "no"
 CRUNCH_SRCDIR_zfs= ${SRCTOP}/cddl/sbin/zfs
 CRUNCH_SRCDIR_zpool= ${SRCTOP}/cddl/sbin/zpool

@@ -11,6 +11,7 @@ SUBDIR_PARALLEL=
 .if defined(MODULES_OVERRIDE) && !defined(ALL_MODULES)
 SUBDIR=${MODULES_OVERRIDE}
 .else
+# 5BSD omits floppy, parallel-port, CardBus, and AGP modules.
 SUBDIR=	\
 	${_3dfx} \
 	${_3dfx_linux} \
@@ -23,12 +24,9 @@ SUBDIR=	\
 	acl_nfs4 \
 	acl_posix1e \
 	${_acpi} \
-	ae \
 	${_aesni} \
 	age \
-	${_agp} \
 	ahci \
-	aic7xxx \
 	alc \
 	ale \
 	alq \
@@ -44,7 +42,6 @@ SUBDIR=	\
 	${_armv8_rng} \
 	${_apple_bce} \
 	${_asmc} \
-	ata \
 	${_aq} \
 	ath \
 	ath_dfs \
@@ -62,7 +59,6 @@ SUBDIR=	\
 	${_bce} \
 	${_bcm283x_clkman} \
 	${_bcm283x_pwm} \
-	bfe \
 	bge \
 	bhnd \
 	${_bxe} \
@@ -77,10 +73,7 @@ SUBDIR=	\
 	${_bytgpio} \
 	${_chvgpio} \
 	cam \
-	${_cardbus} \
 	${_carp} \
-	cas \
-	${_cbb} \
 	cc \
 	${_ccp} \
 	cd9660 \
@@ -98,7 +91,6 @@ SUBDIR=	\
 	ctl \
 	${_cxgb} \
 	${_cxgbe} \
-	dc \
 	dcons \
 	dcons_crom \
 	${_dpaa2} \
@@ -119,7 +111,6 @@ SUBDIR=	\
 	evdev \
 	${_exca} \
 	ext2fs \
-	fdc \
 	fdescfs \
 	${_felix} \
 	${_ffec} \
@@ -131,8 +122,6 @@ SUBDIR=	\
 	${_ftgpio} \
 	${_ftwd} \
 	fusefs \
-	${_fxp} \
-	gem \
 	geom \
 	${_glxiic} \
 	${_glxsb} \
@@ -155,7 +144,6 @@ SUBDIR=	\
 	${_ice} \
 	${_ice_ddp} \
 	${_irdma} \
-	${_ida} \
 	if_bridge \
 	${_if_cgem} \
 	if_disc \
@@ -188,17 +176,12 @@ SUBDIR=	\
 	${_ipmi} \
 	ip6_mroute_mod \
 	ip_mroute_mod \
-	${_ips} \
 	${_ipsec} \
-	${_ipw} \
-	${_ipwfw} \
 	${_isci} \
 	${_iser} \
 	isp \
 	${_ispfw} \
 	${_itwd} \
-	${_iwi} \
-	${_iwifw} \
 	${_iwlwifi} \
 	${_iwm} \
 	${_iwn} \
@@ -215,10 +198,8 @@ SUBDIR=	\
 	khelp \
 	krpc \
 	ksyms \
-	lge \
 	libalias \
 	libiconv \
-	libmchain \
 	lindebugfs \
 	linuxkpi \
 	${_linuxkpi_sdio} \
@@ -226,7 +207,6 @@ SUBDIR=	\
 	linuxkpi_video \
 	linuxkpi_wlan \
 	${_lio} \
-	lpt \
 	${_mac_ddb} \
 	${_mac_do} \
 	${_mac_ntpd} \
@@ -239,7 +219,6 @@ SUBDIR=	\
 	${_mac_veriexec_sha256} \
 	${_mac_veriexec_sha384} \
 	${_mac_veriexec_sha512} \
-	${_malo} \
 	${_mana} \
 	md \
 	mdio \
@@ -248,7 +227,6 @@ SUBDIR=	\
 	mfi \
 	mii \
 	miiproxy \
-	mlx \
 	mlxfw \
 	${_mlx4} \
 	${_mlx4ib} \
@@ -268,9 +246,6 @@ SUBDIR=	\
 	msdosfs_iconv \
 	msk \
 	${_mthca} \
-	mvs \
-	mwl \
-	${_mwlfw} \
 	mxge \
 	my \
 	${_nctgpio} \
@@ -285,7 +260,6 @@ SUBDIR=	\
 	nfslockd \
 	nfssvc \
 	nlsysevent \
-	nge \
 	nmdm \
 	ntsync \
 	nullfs \
@@ -304,19 +278,12 @@ SUBDIR=	\
 	ow \
 	p9fs \
 	${_padlock} \
-	${_padlock_rng} \
 	${_pchtherm} \
-	${_pcfclock} \
 	${_pf} \
 	${_pflog} \
 	${_pflow} \
 	${_pfsync} \
-	plip \
 	${_pms} \
-	ppbus \
-	ppc \
-	ppi \
-	pps \
 	proto \
 	pseudofs \
 	${_pst} \
@@ -332,8 +299,6 @@ SUBDIR=	\
 	${_qlxgb} \
 	${_qlxgbe} \
 	${_qlnx} \
-	ral \
-	${_ralfw} \
 	${_random_fortuna} \
 	${_random_other} \
 	rc4 \
@@ -342,7 +307,6 @@ SUBDIR=	\
 	${_rdseed_rng} \
 	re \
 	rge \
-	rl \
 	${_rockchip} \
 	rtsx \
 	${_rtw88} \
@@ -369,28 +333,20 @@ SUBDIR=	\
 	${_sgx} \
 	${_sgx_linux} \
 	siftr \
-	siis \
-	sis \
-	sk \
 	${_smartpqi} \
-	smbfs \
 	snp \
 	sound \
 	${_spe} \
 	${_speaker} \
 	spi \
-	ste \
-	stge \
 	${_sume} \
 	${_superio} \
 	${_p2sb} \
-	sym \
 	sysvipc \
 	tarfs \
 	tcp \
 	${_tglhgpio} \
 	${_thunderbolt} \
-	${_ti} \
 	tmpfs \
 	${_toecore} \
 	tpm \
@@ -406,7 +362,6 @@ SUBDIR=	\
 	${_vesa} \
 	${_vf_i2c} \
 	virtio \
-	vge \
 	vsock \
 	${_viawd} \
 	video \
@@ -415,7 +370,6 @@ SUBDIR=	\
 	${_vmd} \
 	${_vmm} \
 	${_vmware} \
-	vr \
 	vte \
 	${_wbwd} \
 	${_wdatwd} \
@@ -428,12 +382,9 @@ SUBDIR=	\
 	wlan_tkip \
 	wlan_wep \
 	wlan_xauth \
-	${_wpi} \
-	${_wpifw} \
 	${_wtap} \
 	${_x86bios} \
 	xdr \
-	xl \
 	xz \
 	zlib
 
@@ -631,12 +582,8 @@ _pfsync=	pfsync
 
 .if ${MK_SOURCELESS_UCODE} != "no"
 _bce=		bce
-_fxp=		fxp
 _ispfw=		ispfw
-_ti=		ti
-_mwlfw=		mwlfw
 _otusfw=	otusfw
-_ralfw=		ralfw
 _rtwnfw=	rtwnfw
 .endif
 
@@ -735,13 +682,10 @@ _imx=		imx
 
 .if ${MACHINE_CPUARCH} == "i386" || ${MACHINE_CPUARCH} == "amd64"
 _aq=		aq
-_agp=		agp
 _bios=		bios
 .if ${MK_SOURCELESS_UCODE} != "no"
 _bxe=		bxe
 .endif
-_cardbus=	cardbus
-_cbb=		cbb
 _cpuctl=	cpuctl
 _cpufreq=	cpufreq
 _dpms=		dpms
@@ -802,25 +746,18 @@ _hptrr=		hptrr
 .endif
 _hyperv=	hyperv
 _ichwd=		ichwd
-_ida=		ida
 _intel_pmc=	intel_pmc
 _intelspi=	intelspi
-_ips=		ips
 _isci=		isci
-_ipw=		ipw
-_iwi=		iwi
 _iwm=		iwm
 _iwn=		iwn
 .if ${MK_SOURCELESS_UCODE} != "no"
-_ipwfw=		ipwfw
-_iwifw=		iwifw
 _iwnfw=		iwnfw
 .endif
 _nfe=		nfe
 _nvram=		nvram
 .if ${MK_CRYPT} != "no" || defined(ALL_MODULES)
 _padlock=	padlock
-_padlock_rng=	padlock_rng
 _rdrand_rng=	rdrand_rng
 _rdseed_rng=	rdseed_rng
 .endif
@@ -832,10 +769,6 @@ _tglhgpio=	tglhgpio
 _vesa=		vesa
 _viawd=		viawd
 _vmd=		vmd
-_wpi=		wpi
-.if ${MK_SOURCELESS_UCODE} != "no"
-_wpifw=		wpifw
-.endif
 .if ${KERN_OPTS:MVIMAGE}
 _wtap=		wtap
 .endif
@@ -894,7 +827,6 @@ _3dfx=		3dfx
 _3dfx_linux=	3dfx_linux
 _glxiic=	glxiic
 _glxsb=		glxsb
-_pcfclock=	pcfclock
 _pst=		pst
 _sbni=		sbni
 .endif
@@ -908,12 +840,6 @@ _cpsw=		cpsw
 _bcm283x_clkman=  bcm283x_clkman
 _bcm283x_pwm=	bcm283x_pwm
 _neta=		neta
-.endif
-
-.if !(${COMPILER_TYPE} == "clang" && ${COMPILER_VERSION} < 110000)
-# LLVM 10 crashes when building if_malo_pci.c, fixed in LLVM11:
-# https://bugs.llvm.org/show_bug.cgi?id=44351
-_malo=	malo
 .endif
 
 .if ${MACHINE_CPUARCH} == "amd64" || ${MACHINE_CPUARCH} == "aarch64"

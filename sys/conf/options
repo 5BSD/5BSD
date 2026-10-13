@@ -710,11 +710,11 @@ SOCKBUF_DEBUG		opt_global.h
 
 
 # vt options (shared generated header name retained)
-MAXCONS			opt_syscons.h
 VT_ALT_TO_ESC_HACK	opt_syscons.h
 VT_FB_MAX_WIDTH		opt_syscons.h
 VT_FB_MAX_HEIGHT	opt_syscons.h
 VT_MAXWINDOWS		opt_syscons.h
+VT_NO_CUTPASTE		opt_syscons.h
 VT_TWOBUTTON_MOUSE	opt_syscons.h
 DEV_VT			opt_syscons.h
 

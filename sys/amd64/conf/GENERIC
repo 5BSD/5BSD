@@ -57,12 +57,7 @@ options 	GEOM_RAID		# Soft RAID functionality.
 options 	GEOM_LABEL		# Provides labelization
 options 	EFIRT			# EFI Runtime Services support
 options 	COMPAT_FREEBSD32	# Compatible with i386 binaries
-options 	COMPAT_FREEBSD9		# Compatible with FreeBSD9
-options 	COMPAT_FREEBSD10	# Compatible with FreeBSD10
-options 	COMPAT_FREEBSD11	# Compatible with FreeBSD11
-options 	COMPAT_FREEBSD12	# Compatible with FreeBSD12
-options 	COMPAT_FREEBSD13	# Compatible with FreeBSD13
-options 	COMPAT_FREEBSD14	# Compatible with FreeBSD14
+# FreeBSD 15 is the oldest supported compatibility ABI.
 options 	COMPAT_FREEBSD15	# Compatible with FreeBSD15
 options 	SCSI_DELAY=5000		# Delay (in ms) before probing SCSI
 options 	KTRACE			# ktrace(1) support
@@ -130,18 +125,10 @@ options 	COMPAT_LINUXKPI
 
 options 	PPS_SYNC
 
-# Floppy drives
-device		fdc
-
-# ATA controllers
+# SATA controllers
 device		ahci			# AHCI-compatible SATA controllers
-device		ata			# Legacy ATA/SATA controllers
-device		mvs			# Marvell 88SX50XX/88SX60XX/88SX70XX/SoC SATA
-device		siis			# SiliconImage SiI3124/SiI3132/SiI3531 SATA
 
 # SCSI Controllers
-device		ahc			# AHA2940 and onboard AIC7xxx devices
-device		ahd			# AHA39320/29320 and onboard AIC79xx devices
 device		hptiop			# Highpoint RocketRaid 3xxx series
 device		isp			# Qlogic family
 #device		ispfw			# Firmware for QLogic HBAs- normally a module
@@ -149,7 +136,6 @@ device		mpt			# LSI-Logic MPT-Fusion
 device		mps			# LSI-Logic MPT-Fusion 2
 device		mpr			# LSI-Logic MPT-Fusion 3
 device		mpi3mr			# LSI-Logic MPT-Fusion 4
-device		sym			# NCR/Symbios Logic
 device		isci			# Intel C600 SAS controller
 device		ocs_fc			# Emulex FC adapters
 device		pvscsi			# VMware PVSCSI
@@ -167,7 +153,6 @@ device		ses			# Enclosure Services (SES and SAF-TE)
 # RAID controllers interfaced to the SCSI subsystem
 device		arcmsr			# Areca SATA II RAID
 device		ciss			# Compaq Smart RAID 5*
-device		ips			# IBM (Adaptec) ServeRAID
 device		smartpqi		# Microsemi smartpqi driver
 device		tws			# LSI 3ware 9750 SATA+SAS 6Gb/s RAID controller
 
@@ -175,9 +160,7 @@ device		tws			# LSI 3ware 9750 SATA+SAS 6Gb/s RAID controller
 device		aac			# Adaptec FSA RAID
 device		aacp			# SCSI passthrough for aac (requires CAM)
 device		aacraid			# Adaptec by PMC RAID
-device		ida			# Compaq Smart RAID
 device		mfi			# LSI MegaRAID SAS
-device		mlx			# Mylex DAC960 family
 device		mrsas			# LSI/Avago MegaRAID SAS/SATA, 6Gb/s and 12Gb/s
 #XXX pointer/int warnings
 #device		pst			# Promise Supertrak SX6000
@@ -208,21 +191,9 @@ device		vt_vga
 device		vt_efifb
 device		vt_vbefb
 
-device		agp			# support several AGP chipsets
-
-# CardBus bridge support
-device		cbb			# CardBus (yenta) bridge
-device		cardbus			# CardBus (32-bit) bus
 
 # Serial (COM) ports
 device		uart			# Generic UART driver
-
-# Parallel port
-device		ppc
-device		ppbus			# Parallel port bus (required)
-device		lpt			# Printer
-device		ppi			# Parallel port interface device
-#device		vpo			# Requires scbus and da
 
 device		puc			# Multi I/O cards and multi-channel UARTs
 
@@ -245,7 +216,6 @@ device		axp			# AMD EPYC integrated NIC (requires miibus)
 device		aq			# Aquantia / Marvell AQC1xx
 device		bxe			# Broadcom NetXtreme II BCM5771X/BCM578XX 10GbE
 device		rge			# Realtek 8125/8126/8127
-device		ti			# Alteon Networks Tigon I/II gigabit Ethernet
 
 # Nvidia/Mellanox Connect-X 4 and later, Ethernet only
 #  o requires COMPAT_LINUXKPI and xz(4)
@@ -257,33 +227,17 @@ device		mlx5en			# Ethernet driver
 # PCI Ethernet NICs that use the common MII bus controller code.
 # NOTE: Be sure to keep the 'device miibus' line in order to use these NICs!
 device		miibus			# MII bus support
-device		ae			# Attansic/Atheros L2 FastEthernet
 device		age			# Attansic/Atheros L1 Gigabit Ethernet
 device		alc			# Atheros AR8131/AR8132 Ethernet
 device		ale			# Atheros AR8121/AR8113/AR8114 Ethernet
 device		bce			# Broadcom BCM5706/BCM5708 Gigabit Ethernet
-device		bfe			# Broadcom BCM440x 10/100 Ethernet
 device		bge			# Broadcom BCM570xx Gigabit Ethernet
-device		cas			# Sun Cassini/Cassini+ and NS DP83065 Saturn
-device		dc			# DEC/Intel 21143 and various workalikes
 device		et			# Agere ET1310 10/100/Gigabit Ethernet
-device		fxp			# Intel EtherExpress PRO/100B (82557, 82558)
-device		gem			# Sun GEM/Sun ERI/Apple GMAC
 device		jme			# JMicron JMC250 Gigabit/JMC260 Fast Ethernet
-device		lge			# Level 1 LXT1001 gigabit Ethernet
 device		msk			# Marvell/SysKonnect Yukon II Gigabit Ethernet
 device		nfe			# nVidia nForce MCP on-board Ethernet
-device		nge			# NatSemi DP83820 gigabit Ethernet
 device		re			# Realtek 8139C+/8169/8169S/8110S
-device		rl			# Realtek 8129/8139
 device		sge			# Silicon Integrated Systems SiS190/191
-device		sis			# Silicon Integrated Systems SiS 900/SiS 7016
-device		sk			# SysKonnect SK-984x & SK-982x gigabit Ethernet
-device		ste			# Sundance ST201 (D-Link DFE-550TX)
-device		stge			# Sundance/Tamarack TC9021 gigabit Ethernet
-device		vge			# VIA VT612x gigabit Ethernet
-device		vr			# VIA Rhine, Rhine II
-device		xl			# 3Com 3c90x (``Boomerang'', ``Cyclone'')
 
 # Wireless NIC cards
 device		wlan			# 802.11 support
@@ -300,13 +254,7 @@ options 	AH_AR5416_INTERRUPT_MITIGATION # AR5416 interrupt mitigation
 device		ath_rate_sample		# SampleRate tx rate control for ath
 #device		bwi			# Broadcom BCM430x/BCM431x wireless NICs.
 #device		bwn			# Broadcom BCM43xx wireless NICs.
-device		ipw			# Intel 2100 wireless NICs.
-device		iwi			# Intel 2200BG/2225BG/2915ABG wireless NICs.
 device		iwn			# Intel 4965/1000/5000/6000 wireless NICs.
-device		malo			# Marvell Libertas wireless NICs.
-device		mwl			# Marvell 88W8363 802.11n wireless NICs.
-device		ral			# Ralink Technology RT2500 wireless NICs.
-device		wpi			# Intel 3945ABG wireless NICs.
 
 # Pseudo devices.
 device		crypto			# core crypto support
@@ -326,7 +274,6 @@ device		xz			# lzma decompression
 device		bpf			# Berkeley packet filter
 
 # random(4)
-device		padlock_rng		# VIA Padlock RNG
 device		rdrand_rng		# Intel Bull Mountain RNG
 device		tpm			# Trusted Platform Module
 options 	RANDOM_ENABLE_TPM	# enable entropy from TPM devices
@@ -350,13 +297,7 @@ device		umass			# Disks/Mass storage - Requires scbus and da
 
 # Sound support
 device		sound			# Generic sound driver (required)
-device		snd_cmi			# CMedia CMI8338/CMI8738
-device		snd_csa			# Crystal Semiconductor CS461x/428x
-device		snd_emu10kx		# Creative SoundBlaster Live! and Audigy
-device		snd_es137x		# Ensoniq AudioPCI ES137x
 device		snd_hda			# Intel High Definition Audio
-device		snd_ich			# Intel, NVidia and other ICH AC'97 Audio
-device		snd_via8233		# VIA VT8233x Audio
 
 # MMC/SD
 device		mmc			# MMC/SD bus

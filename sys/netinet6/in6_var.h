@@ -284,16 +284,6 @@ struct	in6_aliasreq {
 	int	ifra_vhid;
 };
 
-/* pre-10.x compat */
-struct	oin6_aliasreq {
-	char	ifra_name[IFNAMSIZ];
-	struct	sockaddr_in6 ifra_addr;
-	struct	sockaddr_in6 ifra_dstaddr;
-	struct	sockaddr_in6 ifra_prefixmask;
-	int	ifra_flags;
-	struct in6_addrlifetime ifra_lifetime;
-};
-
 /* prefix type macro */
 #define IN6_PREFIX_ND	1
 #define IN6_PREFIX_RR	2
@@ -425,7 +415,6 @@ struct	in6_rrenumreq {
 #define SIOCGIFNETMASK_IN6	_IOWR('i', 37, struct in6_ifreq)
 
 #define SIOCDIFADDR_IN6		 _IOW('i', 25, struct in6_ifreq)
-#define OSIOCAIFADDR_IN6	 _IOW('i', 26, struct oin6_aliasreq)
 #define SIOCAIFADDR_IN6		 _IOW('i', 27, struct in6_aliasreq)
 
 #define SIOCSIFPHYADDR_IN6       _IOW('i', 70, struct in6_aliasreq)

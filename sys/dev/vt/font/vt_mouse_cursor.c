@@ -31,7 +31,7 @@
 #include <sys/cdefs.h>
 #include <dev/vt/vt.h>
 
-#ifndef SC_NO_CUTPASTE
+#ifndef VT_NO_CUTPASTE
 struct vt_mouse_cursor vt_default_mouse_pointer = {
 	.map = {
 		0x00, 0x00, /* "__        " */

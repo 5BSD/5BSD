@@ -2632,52 +2632,6 @@ between interfaces.
 .Pq Vt bool
 The IPv6 equivalent of
 .Va gateway_enable .
-.It Va routed_enable
-.Pq Vt bool
-If set to
-.Dq Li YES ,
-run a routing daemon of some sort, based on the
-settings of
-.Va routed_program
-and
-.Va routed_flags .
-.It Va route6d_enable
-.Pq Vt bool
-The IPv6 equivalent of
-.Va routed_enable .
-If set to
-.Dq Li YES ,
-run a routing daemon of some sort, based on the
-settings of
-.Va route6d_program
-and
-.Va route6d_flags .
-.It Va routed_program
-.Pq Vt str
-If
-.Va routed_enable
-is set to
-.Dq Li YES ,
-this is the name of the routing daemon to use.
-The default is
-.Xr routed 8 .
-.It Va route6d_program
-.Pq Vt str
-The IPv6 equivalent of
-.Va routed_program .
-The default is
-.Xr route6d 8 .
-.It Va routed_flags
-.Pq Vt str
-If
-.Va routed_enable
-is set to
-.Dq Li YES ,
-these are the flags to pass to the routing daemon.
-.It Va route6d_flags
-.Pq Vt str
-The IPv6 equivalent of
-.Va routed_flags .
 .It Va rtadvd_enable
 .Pq Vt bool
 If set to
@@ -4719,8 +4673,6 @@ to
 .Xr rcorder 8 ,
 .Xr rfcomm_pppd 8 ,
 .Xr route 8 ,
-.Xr route6d 8 ,
-.Xr routed 8 ,
 .Xr rpc.lockd 8 ,
 .Xr rpc.statd 8 ,
 .Xr rpc.tlsclntd 8 ,

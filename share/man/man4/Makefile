@@ -197,8 +197,6 @@ MAN=	aac.4 \
 	${_ftwd.4} \
 	full.4 \
 	fusefs.4 \
-	fwe.4 \
-	fwip.4 \
 	fwohci.4 \
 	fxp.4 \
 	gdb.4 \
@@ -555,7 +553,6 @@ MAN=	aac.4 \
 	sk.4 \
 	${_smartpqi.4} \
 	smb.4 \
-	smbfs.4 \
 	smbios.4 \
 	smbus.4 \
 	smp.4 \
@@ -1139,7 +1136,6 @@ MAN+=	\
 	umodem.4 \
 	umoscom.4 \
 	ums.4 \
-	upgt.4 \
 	uplcom.4 \
 	ural.4 \
 	urio.4 \
@@ -1165,7 +1161,6 @@ MLINKS+=run.4 if_run.4
 MLINKS+=u3g.4 u3gstub.4
 MLINKS+=uath.4 if_uath.4
 MLINKS+=udav.4 if_udav.4
-MLINKS+=upgt.4 if_upgt.4
 MLINKS+=ural.4 if_ural.4
 MLINKS+=urndis.4 if_urndis.4
 MLINKS+=${_urtw.4} ${_if_urtw.4}

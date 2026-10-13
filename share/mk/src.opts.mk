@@ -70,8 +70,6 @@ __DEFAULT_YES_OPTIONS = \
     BLOCKLIST \
     BLUETOOTH \
     BOOT \
-    BOOTPARAMD \
-    BOOTPD \
     BSDINSTALL \
     BSNMP \
     CALENDAR \
@@ -94,10 +92,7 @@ __DEFAULT_YES_OPTIONS = \
     ELFTOOLCHAIN_BOOTSTRAP \
     EXAMPLES \
     FILE \
-    FINGER \
-    FLOPPY \
     FORTH \
-    FREEBSD_UPDATE \
     FTP \
     GAMES \
     GOOGLETEST \
@@ -135,7 +130,6 @@ __DEFAULT_YES_OPTIONS = \
     LOADER_ZFS \
     LOCALES \
     LOCATE \
-    LPR \
     LS_COLORS \
     MACHDEP_OPTIMIZATIONS \
     MAIL \
@@ -164,10 +158,7 @@ __DEFAULT_YES_OPTIONS = \
     PTHREADS_ASSERTIONS \
     QUOTAS \
     RADIUS_SUPPORT \
-    RBOOTD \
     RESCUE \
-    ROUTED \
-    SENDMAIL \
     SERVICESDB \
     SETUID_LOGIN \
     SHAREDOCS \
@@ -178,10 +169,8 @@ __DEFAULT_YES_OPTIONS = \
     STATS \
     SYSTEM_COMPILER \
     SYSTEM_LINKER \
-    TALK \
     TCP_WRAPPERS \
     TCSH \
-    TELNET \
     TEXTPROC \
     TFTP \
     UNBOUND \
@@ -195,7 +184,19 @@ __DEFAULT_YES_OPTIONS = \
     ZFS_TESTS \
     ZONEINFO
 
+# 5BSD excludes legacy remote-boot, talk, Telnet, and LPR services by default.
 __DEFAULT_NO_OPTIONS = \
+    ROUTED \
+    FREEBSD_UPDATE \
+    FLOPPY \
+    FINGER \
+    SENDMAIL \
+    BOOTPARAMD \
+    BOOTPD \
+    LPR \
+    RBOOTD \
+    TALK \
+    TELNET \
     BEARSSL \
     CLANG_EXTRAS \
     CLANG_FORMAT \

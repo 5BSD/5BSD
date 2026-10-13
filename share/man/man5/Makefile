@@ -103,10 +103,6 @@ RUNTIMELINKS=	passwd.5 master.passwd.5
 RUNTIMELINKS+=	passwd.5 pwd.db.5
 RUNTIMELINKS+=	passwd.5 spwd.db.5
 
-MANGROUPS+=				SMB
-SMBPACKAGE=				smbutils
-SMB=		nsmb.conf.5
-
 MANGROUPS.${MK_OPENSSH}+=		SSH
 SSHPACKAGE=				ssh
 SSH=		moduli.5

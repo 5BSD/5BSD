@@ -709,7 +709,7 @@ vga_bitblt_one_text_pixels_block(struct vt_device *vd,
 		i += x_count;
 	}
 
-#ifndef SC_NO_CUTPASTE
+#ifndef VT_NO_CUTPASTE
 	/*
 	 * Copy the mouse pointer bitmap if it's over the current pixels
 	 * block.

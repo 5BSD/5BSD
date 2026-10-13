@@ -1,3 +1,50 @@
+# 20261013: retire upgt and base RIP routing tools
+OLD_FILES+= boot/kernel/if_upgt.ko
+OLD_FILES+= usr/share/man/man4/upgt.4.gz
+OLD_FILES+= usr/share/man/man4/if_upgt.4.gz
+OLD_FILES+= etc/rc.d/routed
+OLD_FILES+= etc/rc.d/route6d
+OLD_FILES+= sbin/routed
+OLD_FILES+= sbin/rtquery
+OLD_FILES+= rescue/routed
+OLD_FILES+= rescue/rtquery
+OLD_FILES+= usr/sbin/route6d
+OLD_FILES+= usr/sbin/rip6query
+OLD_FILES+= usr/share/man/man8/routed.8.gz
+OLD_FILES+= usr/share/man/man8/rtquery.8.gz
+OLD_FILES+= usr/share/man/man8/route6d.8.gz
+OLD_FILES+= usr/share/man/man8/rip6query.8.gz
+# 20261013: replace legacy partition tools with gpart; retire lptcontrol
+OLD_FILES+= sbin/bsdlabel
+OLD_FILES+= sbin/disklabel
+OLD_FILES+= sbin/fdisk
+OLD_FILES+= rescue/bsdlabel
+OLD_FILES+= rescue/disklabel
+OLD_FILES+= rescue/fdisk
+OLD_FILES+= usr/sbin/lptcontrol
+OLD_FILES+= usr/share/man/man8/bsdlabel.8.gz
+OLD_FILES+= usr/share/man/man8/disklabel.8.gz
+OLD_FILES+= usr/share/man/man8/fdisk.8.gz
+OLD_FILES+= usr/share/man/man8/lptcontrol.8.gz
+# 20261013: retire SMB1, comcontrol startup hooks, and FireWire networking
+OLD_FILES+= boot/kernel/smbfs.ko
+OLD_FILES+= boot/kernel/libmchain.ko
+OLD_FILES+= boot/kernel/if_fwe.ko
+OLD_FILES+= boot/kernel/if_fwip.ko
+OLD_FILES+= sbin/comcontrol
+OLD_FILES+= etc/rc.d/serial
+OLD_FILES+= usr/bin/smbutil
+OLD_FILES+= usr/sbin/mount_smbfs
+OLD_FILES+= usr/lib/libsmb.a
+OLD_FILES+= usr/lib/libsmb.so
+OLD_FILES+= usr/share/man/man1/smbutil.1.gz
+OLD_FILES+= usr/share/man/man4/smbfs.4.gz
+OLD_FILES+= usr/share/man/man4/fwe.4.gz
+OLD_FILES+= usr/share/man/man4/fwip.4.gz
+OLD_FILES+= usr/share/man/man5/nsmb.conf.5.gz
+OLD_FILES+= usr/share/man/man8/comcontrol.8.gz
+OLD_FILES+= usr/share/man/man8/mount_smbfs.8.gz
+OLD_LIBS+= usr/lib/libsmb.so.4
 # 20261013: retire BSD fixed-name PTYs; /dev/ptmx is now provided by pts
 OLD_FILES+= boot/kernel/pty.ko
 OLD_FILES+= usr/share/man/man4/pty.4.gz

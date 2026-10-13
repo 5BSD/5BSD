@@ -278,7 +278,7 @@ sysmouse_process_event(mouse_info_t *mi)
 
 	sysmouse_buf_store(buf);
 
-#ifndef SC_NO_CUTPASTE
+#ifndef VT_NO_CUTPASTE
 	mtx_unlock(&sysmouse_lock);
 	vt_mouse_event(mi->operation, x, y, mi->u.event.id, mi->u.event.value,
 	    sysmouse_level);

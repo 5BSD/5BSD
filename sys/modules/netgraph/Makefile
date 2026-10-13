@@ -15,7 +15,6 @@ SUBDIR=	async \
 	etf \
 	ether \
 	ether_echo \
-	frame_relay \
 	gif \
 	gif_demux \
 	hole \
@@ -24,7 +23,6 @@ SUBDIR=	async \
 	ip_input \
 	ksocket \
 	l2tp \
-	lmi \
 	macfilter \
 	${_mppc} \
 	nat \
@@ -35,9 +33,7 @@ SUBDIR=	async \
 	pipe \
 	ppp \
 	pppoe \
-	pptpgre \
 	pred1 \
-	rfc1490 \
 	socket \
 	source \
 	split \

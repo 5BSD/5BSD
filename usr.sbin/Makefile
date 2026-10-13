@@ -51,7 +51,6 @@ SUBDIR=	adduser \
 	mfiutil \
 	mlxcontrol \
 	mountd \
-	mount_smbfs \
 	mpsutil \
 	mptutil \
 	mtest \
@@ -101,7 +100,6 @@ SUBDIR=	adduser \
 	rpc.statd \
 	rpc.umntall \
 	rtprio \
-	rwhod \
 	service \
 	policyctl \
 	switchboardctl \
@@ -183,8 +181,6 @@ SUBDIR.${MK_HYPERV}+=	hyperv
 SUBDIR.${MK_INET6}+=	ip6addrctl
 SUBDIR.${MK_INET6}+=	mld6query
 SUBDIR.${MK_INET6}+=	ndp
-SUBDIR.${MK_INET6}+=	rip6query
-SUBDIR.${MK_INET6}+=	route6d
 SUBDIR.${MK_INET6}+=	rrenumd
 SUBDIR.${MK_INET6}+=	rtadvctl
 SUBDIR.${MK_INET6}+=	rtadvd

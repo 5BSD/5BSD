@@ -58,32 +58,13 @@ MODULE_VERSION(snd_driver, 1);
 #if defined(__powerpc__)
 MODULE_DEPEND(snd_driver, snd_ai2s, 1, 1, 1);
 #endif
-MODULE_DEPEND(snd_driver, snd_als4000, 1, 1, 1);
-MODULE_DEPEND(snd_driver, snd_atiixp, 1, 1, 1);
-#if defined(__i386__) || defined(__amd64__)
-MODULE_DEPEND(snd_driver, snd_cmi, 1, 1, 1);
-#endif
-MODULE_DEPEND(snd_driver, snd_cs4281, 1, 1, 1);
-MODULE_DEPEND(snd_driver, snd_csa, 1, 1, 1);
-MODULE_DEPEND(snd_driver, snd_csapcm, 1, 1, 1);
 #if defined(__powerpc__)
 MODULE_DEPEND(snd_driver, snd_davbus, 1, 1, 1);
 #endif
-MODULE_DEPEND(snd_driver, snd_emu10kx, 1, 1, 1);
 MODULE_DEPEND(snd_driver, snd_envy24, 1, 1, 1);
 MODULE_DEPEND(snd_driver, snd_envy24ht, 1, 1, 1);
-MODULE_DEPEND(snd_driver, snd_es137x, 1, 1, 1);
-MODULE_DEPEND(snd_driver, snd_fm801, 1, 1, 1);
 MODULE_DEPEND(snd_driver, snd_hda, 1, 1, 1);
 MODULE_DEPEND(snd_driver, snd_hdsp, 1, 1, 1);
 MODULE_DEPEND(snd_driver, snd_hdspe, 1, 1, 1);
-MODULE_DEPEND(snd_driver, snd_ich, 1, 1, 1);
-MODULE_DEPEND(snd_driver, snd_maestro3, 1, 1, 1);
-MODULE_DEPEND(snd_driver, snd_neomagic, 1, 1, 1);
-MODULE_DEPEND(snd_driver, snd_solo, 1, 1, 1);
 MODULE_DEPEND(snd_driver, snd_spicds, 1, 1, 1);
-MODULE_DEPEND(snd_driver, snd_t4dwave, 1, 1, 1);
-MODULE_DEPEND(snd_driver, snd_via8233, 1, 1, 1);
-MODULE_DEPEND(snd_driver, snd_via82c686, 1, 1, 1);
-MODULE_DEPEND(snd_driver, snd_vibes, 1, 1, 1);
 MODULE_DEPEND(snd_driver, snd_uaudio, 1, 1, 1);

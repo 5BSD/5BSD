@@ -5,7 +5,6 @@
 SUBDIR=	${_atf} \
 	${_atrun} \
 	${_blocklistd-helper} \
-	${_comsat} \
 	${_dma} \
 	flua \
 	getty \
@@ -20,9 +19,6 @@ SUBDIR=	${_atf} \
 	revnetgroup \
 	${_rlogind} \
 	rpc.rquotad \
-	rpc.rstatd \
-	rpc.rusersd \
-	rpc.rwalld \
 	rpc.sprayd \
 	${_rshd} \
 	${_rtld-elf} \
@@ -52,10 +48,6 @@ SUBDIR+=	fingerd
 
 .if ${MK_FREEBSD_UPDATE} != "no"
 _phttpget=	phttpget
-.endif
-
-.if ${MK_MAIL} != "no"
-_comsat=	comsat
 .endif
 
 .if ${MK_DMAGENT} != "no"

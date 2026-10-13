@@ -180,7 +180,7 @@ extern struct vt_font vt_font_default;
 static struct vt_font vt_font_loader;
 static struct vt_font *vt_font_assigned = &vt_font_default;
 
-#ifndef SC_NO_CUTPASTE
+#ifndef VT_NO_CUTPASTE
 extern struct vt_mouse_cursor vt_default_mouse_pointer;
 #endif
 
@@ -193,7 +193,7 @@ static int vt_late_window_switch(struct vt_window *);
 static int vt_proc_alive(struct vt_window *);
 static void vt_resize(struct vt_device *);
 static void vt_update_static(void *);
-#ifndef SC_NO_CUTPASTE
+#ifndef VT_NO_CUTPASTE
 static void vt_mouse_paste(void);
 #endif
 static void vt_suspend_handler(void *priv, enum power_stype stype);
@@ -220,7 +220,7 @@ struct vt_device	vt_consdev = {
 	.vd_curwindow = &vt_conswindow,
 	.vd_kbstate = 0,
 
-#ifndef SC_NO_CUTPASTE
+#ifndef VT_NO_CUTPASTE
 	.vd_pastebuf = {
 		.vpb_buf = NULL,
 		.vpb_bufsz = 0,
@@ -778,7 +778,7 @@ vt_machine_kbdevent(struct vt_device *vd, int c)
 			shutdown_nice(RB_HALT);
 		return (1);
 	case SPCLKEY | PASTE: /* kbdmap(5) keyword `paste`. */
-#ifndef SC_NO_CUTPASTE
+#ifndef VT_NO_CUTPASTE
 		/* Insert text from cut-paste buffer. */
 		vt_mouse_paste();
 #endif
@@ -1198,7 +1198,7 @@ vtterm_fill(struct terminal *tm, const term_rect_t *r, term_char_t c)
 {
 	struct vt_window *vw = tm->tm_softc;
 
-#ifndef SC_NO_CUTPASTE
+#ifndef VT_NO_CUTPASTE
         vtbuf_unmark_on_cross(&vw->vw_buf, r->tr_begin.tp_row,
             r->tr_end.tp_row);
 #endif
@@ -1272,7 +1272,7 @@ vt_determine_colors(term_char_t c, int cursor,
 	}
 }
 
-#ifndef SC_NO_CUTPASTE
+#ifndef VT_NO_CUTPASTE
 int
 vt_is_cursor_in_area(const struct vt_device *vd, const term_rect_t *area)
 {
@@ -1446,7 +1446,7 @@ vt_bitblt_buffer(struct vt_device *vd, const struct vt_window *vw,
 		}
 	}
 
-#ifndef SC_NO_CUTPASTE
+#ifndef VT_NO_CUTPASTE
 	if (!vd->vd_mshown)
 		return;
 
@@ -1489,7 +1489,7 @@ vt_flush(struct vt_device *vd)
 	struct vt_window *vw;
 	struct vt_font *vf;
 	term_rect_t tarea;
-#ifndef SC_NO_CUTPASTE
+#ifndef VT_NO_CUTPASTE
 	int cursor_was_shown, cursor_moved;
 #endif
 	bool needs_refresh;
@@ -1520,7 +1520,7 @@ vt_flush(struct vt_device *vd)
 
 	inside_vt_flush = true;
 
-#ifndef SC_NO_CUTPASTE
+#ifndef VT_NO_CUTPASTE
 	cursor_was_shown = vd->vd_mshown;
 	cursor_moved = (vd->vd_mx != vd->vd_mx_drawn ||
 	    vd->vd_my != vd->vd_my_drawn);
@@ -2313,7 +2313,7 @@ finish_vt_acq(struct vt_window *vw)
 	return (EINVAL);
 }
 
-#ifndef SC_NO_CUTPASTE
+#ifndef VT_NO_CUTPASTE
 static void
 vt_mouse_terminput_button(struct vt_device *vd, int button)
 {
@@ -2876,7 +2876,7 @@ skip_thunk:
 		case MOUSE_HIDE:
 			if (vd->vd_flags & VDF_MOUSECURSOR) {
 				vd->vd_flags &= ~VDF_MOUSECURSOR;
-#ifndef SC_NO_CUTPASTE
+#ifndef VT_NO_CUTPASTE
 				vt_mouse_state(VT_MOUSE_HIDE);
 #endif
 			}
@@ -2886,7 +2886,7 @@ skip_thunk:
 				vd->vd_flags |= VDF_MOUSECURSOR;
 				vd->vd_mx = vd->vd_width / 2;
 				vd->vd_my = vd->vd_height / 2;
-#ifndef SC_NO_CUTPASTE
+#ifndef VT_NO_CUTPASTE
 				vt_mouse_state(VT_MOUSE_SHOW);
 #endif
 			}

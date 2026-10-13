@@ -383,10 +383,6 @@ in_control_ioctl(u_long cmd, void *data, struct ifnet *ifp,
 		error = in_difaddr_ioctl(cmd, data, ifp, cred);
 		sx_xunlock(&in_control_sx);
 		return (error);
-	case OSIOCAIFADDR:	/* 9.x compat */
-		gone_in(17, "%s (pid %d) uses OSIOCAIFADDR",
-		    curproc->p_comm, curproc->p_pid);
-		/* FALLTHROUGH */
 	case SIOCAIFADDR:
 		sx_xlock(&in_control_sx);
 		error = in_aifaddr_ioctl(cmd, data, ifp, cred);

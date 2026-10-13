@@ -285,7 +285,7 @@ ofwfb_bitblt_text(struct vt_device *vd, const struct vt_window *vw,
 		}
 	}
 
-#ifndef SC_NO_CUTPASTE
+#ifndef VT_NO_CUTPASTE
 	if (!vd->vd_mshown)
 		return;
 

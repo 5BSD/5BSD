@@ -26,10 +26,6 @@ GEOM+=		221.backup-gpart \
 		409.status-gconcat
 GEOMPACKAGE=	geom
 
-CONFGROUPS+=	RCMDS
-RCMDS+=		140.clean-rwho
-RCMDSPACKAGE=	rcmds
-
 # NB: keep these sorted by MK_* knobs
 
 .if ${MK_ACCT} != "no"

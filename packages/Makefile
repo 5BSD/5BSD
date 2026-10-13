@@ -102,12 +102,9 @@ SUBDIR=	\
 	powerd \
 	ppp \
 	rc \
-	rcmds \
 	resolvconf \
-	rip \
 	runtime \
 	smart \
-	smbutils \
 	syslogd \
 	tcpd \
 	toolchain \
