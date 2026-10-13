@@ -19,6 +19,8 @@
 SUBDIR=	\
 	bsdaudit \
 	bsdconfig \
+	bsd-build \
+	capsign \
 	bzip2 \
 	clibs \
 	cron \
@@ -52,6 +54,7 @@ SUBDIR=	\
 	libarchive \
 	libcapability \
 	libcapbundle \
+	libcapimage \
 	libchannel \
 	libfidl \
 	libcryptocmp \
@@ -236,5 +239,7 @@ SUBDIR.${MK_ZONEINFO}+=		zoneinfo
 SUBDIR_PARALLEL=
 
 .ORDER:	all stagepackages
+
+SUBDIR.${MK_TESTS}+= libcapimage-tests capsign-tests bsd-build-tests
 
 .include <bsd.subdir.mk>
