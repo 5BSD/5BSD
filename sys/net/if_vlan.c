@@ -1463,7 +1463,7 @@ vlan_transmit(struct ifnet *ifp, struct mbuf *m)
 	/*
 	 * Send it, precisely as ether_output() would have.
 	 */
-	error = (p->if_transmit)(p, m);
+	error = if_transmit(p, m);
 	if (error == 0) {
 		if_inc_counter(ifp, IFCOUNTER_OPACKETS, 1);
 		if_inc_counter(ifp, IFCOUNTER_OBYTES, len);

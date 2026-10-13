@@ -170,6 +170,125 @@ pf_fbsd_inpcb_free(struct inpcb *inp)
 	pf_inp_unlink(inp);
 }
 
+/* Standalone PF delay owns each frame until transmission or VNET teardown. */
+TAILQ_HEAD(pf_fbsd_delay_head, pf_pktdelay);
+VNET_DEFINE_STATIC(struct pf_fbsd_delay_head, pf_fbsd_delays);
+VNET_DEFINE_STATIC(unsigned int, pf_fbsd_delay_count);
+VNET_DEFINE_STATIC(int, pf_fbsd_delay_closing);
+#define V_pf_fbsd_delays VNET(pf_fbsd_delays)
+#define V_pf_fbsd_delay_count VNET(pf_fbsd_delay_count)
+#define V_pf_fbsd_delay_closing VNET(pf_fbsd_delay_closing)
+static struct mtx pf_fbsd_delay_mtx;
+MTX_SYSINIT(pf_fbsd_delay, &pf_fbsd_delay_mtx, "pf delay", MTX_DEF);
+
+static void
+pf_fbsd_delay_release(struct pf_pktdelay *p)
+{
+	if_put(p->ifp);
+	pool_put(&pf_pktdelay_pl, p);
+}
+
+static void
+pf_fbsd_delay_run(void *arg)
+{
+	struct pf_pktdelay *p = arg;
+	struct epoch_tracker et;
+	struct ifnet *ifp;
+
+	mtx_lock(&pf_fbsd_delay_mtx);
+	if (p->cancelled) {
+		mtx_unlock(&pf_fbsd_delay_mtx);
+		return; /* The teardown caller drains this task and frees it. */
+	}
+	TAILQ_REMOVE(&V_pf_fbsd_delays, p, entry);
+	V_pf_fbsd_delay_count--;
+	mtx_unlock(&pf_fbsd_delay_mtx);
+
+	NET_EPOCH_ENTER(et);
+	ifp = if_get(p->ifp->if_index);
+	/* An interface index can be reused while its old reference survives. */
+	if (ifp == p->ifp && (p->m->m_pkthdr.rcvif == NULL ||
+	    m_rcvif_restore(p->m) != NULL))
+		(void)ifp->if_transmit(ifp, p->m);
+	else
+		m_freem(p->m);
+	if_put(ifp);
+	NET_EPOCH_EXIT(et);
+	pf_fbsd_delay_release(p);
+}
+
+int
+obsd_pf_delay_packet(struct mbuf *m, unsigned int ifidx)
+{
+	struct pf_pktdelay *p;
+	struct pkthdr_pf *tag;
+	unsigned int delay;
+
+	tag = PF_MTAG_W(m);
+	if (tag == NULL)
+		goto drop;
+	/* Serialize limit admission with DIOCSETLIMIT and other transmitters. */
+	PF_LOCK();
+	p = pool_get(&pf_pktdelay_pl, PR_NOWAIT | PR_ZERO);
+	PF_UNLOCK();
+	if (p == NULL)
+		goto drop;
+	p->ifp = if_get(ifidx);
+	if (p->ifp == NULL) {
+		pool_put(&pf_pktdelay_pl, p);
+		goto drop;
+	}
+	p->m = m;
+	timeout_set(&p->to, pf_fbsd_delay_run, p);
+	mtx_lock(&pf_fbsd_delay_mtx);
+	if (V_pf_fbsd_delay_closing || !V_pf_fbsd_ready) {
+		mtx_unlock(&pf_fbsd_delay_mtx);
+		pf_fbsd_delay_release(p);
+		goto drop;
+	}
+	delay = tag->delay;
+	PF_SDT3(queue, packet, delay, tag->qid, delay, ifidx);
+	if (m->m_pkthdr.rcvif != NULL)
+		m_rcvif_serialize(m);
+	tag->delay = 0; /* Clear before publication, including a zero-delay race. */
+	TAILQ_INSERT_TAIL(&V_pf_fbsd_delays, p, entry);
+	V_pf_fbsd_delay_count++;
+	timeout_add_msec(&p->to, delay);
+	mtx_unlock(&pf_fbsd_delay_mtx);
+	return (0);
+drop:
+	m_freem(m);
+	return (ENOBUFS);
+}
+
+static int
+pf_fbsd_delay_transmit(struct ifnet *ifp, struct mbuf *m)
+{
+	return (pf_delay_pkt(m, ifp->if_index));
+}
+
+static void
+pf_fbsd_delay_drain(void)
+{
+	struct pf_pktdelay *p;
+
+	mtx_lock(&pf_fbsd_delay_mtx);
+	V_pf_fbsd_delay_closing = 1;
+	while ((p = TAILQ_FIRST(&V_pf_fbsd_delays)) != NULL) {
+		TAILQ_REMOVE(&V_pf_fbsd_delays, p, entry);
+		V_pf_fbsd_delay_count--;
+		p->cancelled = 1;
+		mtx_unlock(&pf_fbsd_delay_mtx);
+		timeout_del_barrier(&p->to);
+		m_freem(p->m);
+		pf_fbsd_delay_release(p);
+		mtx_lock(&pf_fbsd_delay_mtx);
+	}
+	mtx_unlock(&pf_fbsd_delay_mtx);
+	/* A callback may already have removed its frame before closing. */
+	net_tq_barriers("pf delay");
+}
+
 /* ------------------------------------------------------------------ */
 /* pfil hooks                                                          */
 /* ------------------------------------------------------------------ */
@@ -758,6 +877,9 @@ pf_fbsd_locks_init(void)
 static void
 pf_fbsd_vnet_init(void *arg __unused)
 {
+	TAILQ_INIT(&V_pf_fbsd_delays);
+	V_pf_fbsd_delay_count = 0;
+	V_pf_fbsd_delay_closing = 0;
 	mtx_init(&pf_state_list.pfs_mtx, IPL_SOFTNET);
 	rw_init(&pf_state_list.pfs_rwl, "pfstates");
 	TAILQ_INIT(&pf_state_list.pfs_list);
@@ -836,6 +958,7 @@ pf_fbsd_vnet_uninit(void *arg __unused)
 	/* No new packets for this pf. */
 	pf_fbsd_unhook();
 	NET_EPOCH_WAIT();
+	pf_fbsd_delay_drain();
 
 	/*
 	 * pflog, pfsync and pflow interfaces of this vnet; their departure
@@ -946,6 +1069,7 @@ pf_fbsd_load(void)
 	pf_mtag_unlink_hook = pf_fbsd_mtag_unlink;
 	pf_mtag_copy_hook = pf_fbsd_mtag_copy;
 	pf_inpcb_free_hook = pf_fbsd_inpcb_free;
+	pf_delay_transmit_hook = pf_fbsd_delay_transmit;
 
 	pf_ifattach_tag = EVENTHANDLER_REGISTER(ifnet_arrival_event,
 	    pf_fbsd_ifattach, NULL, EVENTHANDLER_PRI_ANY);

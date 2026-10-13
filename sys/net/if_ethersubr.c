@@ -481,7 +481,7 @@ ether_output_frame(struct ifnet *ifp, struct mbuf *m)
 	 * any uninitialized bytes.
 	 */
 	kmsan_check_mbuf(m, "ether_output");
-	return ((ifp->if_transmit)(ifp, m));
+	return (if_transmit(ifp, m));
 }
 
 /*

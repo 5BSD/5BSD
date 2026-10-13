@@ -1364,6 +1364,7 @@ SDT_PROBE_DECLARE(pf, table, addr, update);
 /* PF_PDTAG_W(), which allocate the tag.  PF_PDTAG_* cache the tag in  */
 /* the pf_pdesc so pf_test() looks it up once.                         */
 /* ------------------------------------------------------------------ */
+int obsd_pf_delay_packet(struct mbuf *, unsigned int);
 struct pf_pdesc;
 struct pkthdr_pf *obsd_pf_mtag_w(struct mbuf *);
 struct pkthdr_pf *obsd_pf_pdtag(struct pf_pdesc *, int);

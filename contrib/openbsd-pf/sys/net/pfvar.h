@@ -1379,6 +1379,10 @@ struct pf_pktdelay {
 	struct timeout	 to;
 	struct mbuf	*m;
 	u_int		 ifidx;
+	/* Native deferred transmit ownership and VNET cancellation. */
+	TAILQ_ENTRY(pf_pktdelay) entry;
+	struct ifnet	*ifp;
+	int		 cancelled;
 };
 
 /* Fragment entries reference mbuf clusters, so base the default on that. */

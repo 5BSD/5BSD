@@ -672,6 +672,7 @@ struct vnet *if_getvnet(const if_t ifp);
 void *if_gethandle(u_char);
 void if_vlancap(if_t ifp);
 int if_transmit(if_t ifp, struct mbuf *m);
+extern int (*pf_delay_transmit_hook)(struct ifnet *, struct mbuf *);
 void if_init(if_t ifp, void *ctx);
 int if_ioctl(if_t ifp, u_long cmd, void *data);
 int if_resolvemulti(if_t ifp, struct sockaddr **, struct sockaddr *);

@@ -4956,9 +4956,13 @@ if_input(if_t ifp, struct mbuf* sendmp)
 	(*ifp->if_input)(ifp, sendmp);
 }
 
+int (*pf_delay_transmit_hook)(struct ifnet *, struct mbuf *);
+
 int
 if_transmit(if_t ifp, struct mbuf *m)
 {
+	if (pf_delay_transmit_hook != NULL && m_pf_ro(m)->delay != 0)
+		return (pf_delay_transmit_hook(ifp, m));
 	return ((*ifp->if_transmit)(ifp, m));
 }
 

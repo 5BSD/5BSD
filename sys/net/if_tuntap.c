@@ -1584,7 +1584,7 @@ tunoutput(struct ifnet *ifp, struct mbuf *m0, const struct sockaddr *dst,
 		}
 	}
 
-	error = (ifp->if_transmit)(ifp, m0);
+	error = if_transmit(ifp, m0);
 	if (error)
 		return (ENOBUFS);
 	if_inc_counter(ifp, IFCOUNTER_OPACKETS, 1);

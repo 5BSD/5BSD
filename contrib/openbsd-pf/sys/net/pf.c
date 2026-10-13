@@ -9234,22 +9234,8 @@ pf_state_unref(struct pf_state *st)
 int
 pf_delay_pkt(struct mbuf *m, u_int ifidx)
 {
-	struct pf_pktdelay	*pdy;
-
-	if (PF_MTAG_W(m) == NULL ||
-	    (pdy = pool_get(&pf_pktdelay_pl, PR_NOWAIT)) == NULL) {
-		m_freem(m);
-		return (ENOBUFS);
-	}
-	pdy->ifidx = ifidx;
-	pdy->m = m;
-	/* 5BSD: DTrace; expose metadata without depending on m_tag layout. */
-	PF_SDT3(queue, packet, delay, PF_MTAG_R(m)->qid,
-	    PF_MTAG_R(m)->delay, ifidx);
-	timeout_set(&pdy->to, pf_pktenqueue_delayed, pdy);
-	timeout_add_msec(&pdy->to, PF_MTAG_R(m)->delay);	/* 5BSD: m_tag */
-	PF_MTAG_W(m)->delay = 0;	/* 5BSD: m_tag */
-	return (0);
+	/* Native transmit queue owns allocation, interface identity and teardown. */
+	return (obsd_pf_delay_packet(m, ifidx));
 }
 
 void
