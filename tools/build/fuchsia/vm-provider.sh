@@ -88,6 +88,18 @@ case $kyua_vars in *[!A-Za-z0-9_.=\ -]*) die "KYUA_VARS has unexpected character
 
 stage=$(cd "$stage" 2>/dev/null && pwd) || die "no stage dir"
 [ -f "$stage/METALOG" ] || die "no METALOG in $stage (not a NO_ROOT stage)"
+# makefs does not infer root permissions from the staging directory. Losing
+# the "." record produces a root that unprivileged services cannot traverse;
+# fexecve then fails loading the interpreter after replacing the old vmspace.
+awk '
+    ($1 == "." || $1 == "./") && !seen++ {
+        for (i = 2; i <= NF; i++) {
+            if ($i == "type=dir") directory = 1;
+            if ($i ~ /^mode=0*[0-7]+$/ && $i ~ /[1357]$/) searchable = 1;
+        }
+    }
+    END { exit !(seen && directory && searchable) }
+' "$stage/METALOG" || die "METALOG must explicitly describe a searchable root directory (mode=0755)"
 for f in sbin/capsule boot/kernel/kernel boot/pmbr boot/gptboot usr/bin/kyua usr/tests/Kyuafile; do
 	[ -e "$stage/$f" ] || die "stage lacks /$f"
 done

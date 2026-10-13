@@ -19,6 +19,7 @@
 #include <openssl/evp.h>
 #include <openssl/pem.h>
 #include "capimage.h"
+#include <sys/capimage_elf.h>
 
 static const unsigned char magic[8] = {'5','B','S','D','S','I','G',0};
 static const char image_domain[] = CAPIMAGE_DOMAIN;
@@ -94,19 +95,38 @@ range(uint64_t offset, uint64_t length, uint64_t size)
 {
 	return (offset <= size && length <= size - offset);
 }
-/* The only signed representation is the bounded EOF container. A named,
- * non-allocated section is merely build-time policy input for the signer. */
+static int
+elf_read(void *arg, uint64_t offset, void *data, size_t size)
+{
+	return (read_at(*(int *)arg, data, size, (off_t)offset));
+}
+/* Shared structural probe handles signed formats. The remaining reader below
+ * validates unsigned build-policy inputs and rejects allocated signature notes. */
 static int
 find_note(int fd, struct image_note *result, char *error, size_t error_size)
 {
 	unsigned char eh[sizeof(Elf64_Ehdr)], ph[sizeof(Elf64_Phdr)];
 	unsigned char sh[sizeof(Elf64_Shdr)], strings[sizeof(Elf64_Shdr)];
 	struct stat st;
-	struct capimage_footer footer;
 	uint64_t limit, phoff, shoff, off, length, stroff, strsize;
 	uint16_t count, entsize, shnum, shentsize, strindex;
 	bool little, elf64, found = false;
 	memset(result, 0, sizeof(*result));
+	struct capimage_elf_info info;
+	if (fstat(fd, &st) < 0 || !S_ISREG(st.st_mode) || st.st_size < 0)
+		return (fail(error, error_size, EFTYPE, "invalid image input"));
+	int probe = capimage_elf_probe(elf_read, &fd, st.st_size, &info);
+	if (probe < 0)
+		return (fail(error, error_size, EFTYPE, "malformed ELF signature locator"));
+	if (probe == 1) {
+		result->appended = true;
+		result->offset = info.descriptor_offset;
+		result->file_size = st.st_size;
+		if (read_at(fd, &result->header, sizeof(result->header), result->offset) < 0)
+			return (-1);
+		return (0);
+	}
+
 	if (fstat(fd, &st) < 0 || !S_ISREG(st.st_mode) ||
 	    st.st_size < (off_t)sizeof(eh) || (uint64_t)st.st_size > CAPIMAGE_FILE_MAX ||
 	    read_at(fd, eh, sizeof(eh), 0) < 0)
@@ -118,19 +138,6 @@ find_note(int fd, struct image_note *result, char *error, size_t error_size)
 	little = eh[EI_DATA] == ELFDATA2LSB;
 	elf64 = eh[EI_CLASS] == ELFCLASS64;
 	limit = (uint64_t)st.st_size;
-	if (read_at(fd, &footer, sizeof(footer), st.st_size - sizeof(footer)) < 0)
-		goto malformed;
-	if (memcmp(footer.magic, "5BSDEND", 8) == 0) {
-		uint64_t size = le64toh(footer.size);
-		limit = le64toh(footer.offset);
-		if (le32toh(footer.version) != CAPIMAGE_VERSION || footer.reserved != 0 ||
-		    limit < sizeof(eh) || size < sizeof(result->header) + 1 ||
-		    size > sizeof(result->header) + CAPIMAGE_POLICY_MAX ||
-		    !range(limit, size, (uint64_t)st.st_size - sizeof(footer)) ||
-		    limit + size != (uint64_t)st.st_size - sizeof(footer))
-			goto malformed;
-		result->appended = true;
-	}
 	if (u16(eh + 16, little) != ET_EXEC && u16(eh + 16, little) != ET_DYN)
 		goto malformed;
 	phoff = elf64 ? u64(eh + 32, little) : u32(eh + 28, little);
@@ -146,8 +153,8 @@ find_note(int fd, struct image_note *result, char *error, size_t error_size)
 		length = elf64 ? u64(ph + 32, little) : u32(ph + 16, little);
 		if (length != 0 && !range(off, length, limit))
 			goto malformed;
-		/* Refuse the retired in-segment signature representation. Otherwise
-		 * a cache builder could accidentally retain an old signature. */
+		/* Reject alternate in-segment signature representations so only the
+		 * current ELF signature section supplies authenticated policy. */
 		if (u32(ph, little) == PT_NOTE) {
 			uint64_t end = off + length;
 			unsigned notes = 0;
@@ -172,21 +179,6 @@ find_note(int fd, struct image_note *result, char *error, size_t error_size)
 		}
 	}
 	result->file_size = st.st_size;
-	if (result->appended) {
-		struct capimage_footer previous;
-		if (limit >= sizeof(previous) &&
-		    read_at(fd, &previous, sizeof(previous), limit - sizeof(previous)) == 0 &&
-		    memcmp(previous.magic, "5BSDEND", 8) == 0)
-			goto malformed;
-		if (read_at(fd, &result->header, sizeof(result->header), (off_t)limit) < 0 ||
-		    memcmp(result->header.magic, magic, sizeof(magic)) != 0 ||
-		    le32toh(result->header.version) != CAPIMAGE_VERSION ||
-		    le32toh(result->header.policy_size) == 0 ||
-		    sizeof(result->header) + le32toh(result->header.policy_size) != le64toh(footer.size))
-			goto malformed;
-		result->offset = (off_t)limit;
-		return (0);
-	}
 	/* Section tables are unnecessary for verification of a signed image.
 	 * Unsigned build inputs use a bounded section-name lookup. */
 	shoff = elf64 ? u64(eh + 40, little) : u32(eh + 32, little);
@@ -542,49 +534,127 @@ capimage_embed(int fd, const void *data, size_t size, char *error, size_t error_
 		if (note.appended) return (0);
 	} else if (errno != ENOENT)
 		return (-1);
-	if (fstat(fd, &st) < 0 || st.st_size < 0 ||
-	    (uint64_t)st.st_size > CAPIMAGE_FILE_MAX - sizeof(header) - size - sizeof(footer))
+	/* All writes are to the caller's private output. Keep the original prefix
+	 * intact except for the section table locator in its ELF header. */
+	unsigned char eh[64] = {0}, changed[64], sh[64], nh[20] = {0};
+	struct capimage_elf_original original = {0};
+	if (fstat(fd, &st) < 0 || st.st_size < 64 || read_at(fd, eh, 52, 0) < 0)
+		return (fail(error, error_size, EFTYPE, "invalid ELF input"));
+	bool elf64 = eh[EI_CLASS] == ELFCLASS64, little = eh[EI_DATA] == ELFDATA2LSB;
+	unsigned es = elf64 ? 64 : 52, ss = elf64 ? 64 : 40;
+	if (elf64 && read_at(fd, eh + 52, 12, 52) < 0) return (-1);
+	uint64_t so = capimage_elf_uint(eh + (elf64 ? 40 : 32), elf64 ? 8 : 4, little);
+	unsigned sn = u16(eh + (elf64 ? 60 : 48), little);
+	unsigned si = u16(eh + (elf64 ? 62 : 50), little);
+	uint64_t old_strings = 0, old_strings_size = sizeof("\0.shstrtab");
+	if (sn == 0) {
+		if (so != 0 || si != 0) return (fail(error, error_size, EFTYPE, "extended ELF numbering unsupported"));
+	} else {
+		if (sn >= 8192 || si == 0 || si >= sn ||
+		    u16(eh + (elf64 ? 58 : 46), little) != ss ||
+		    !range(so, (uint64_t)sn * ss, st.st_size) ||
+		    read_at(fd, sh, ss, so + (uint64_t)si * ss) < 0 || u32(sh + 4, little) != SHT_STRTAB)
+			return (fail(error, error_size, EFTYPE, "unsupported ELF section table"));
+		old_strings = capimage_elf_uint(sh + (elf64 ? 24 : 16), elf64 ? 8 : 4, little);
+		old_strings_size = capimage_elf_uint(sh + (elf64 ? 32 : 20), elf64 ? 8 : 4, little);
+		if (old_strings_size == 0 || old_strings_size > CAPIMAGE_POLICY_MAX ||
+		    !range(old_strings, old_strings_size, st.st_size))
+			return (fail(error, error_size, EFTYPE, "invalid ELF string table"));
+	}
+	uint64_t no = ((uint64_t)st.st_size + 3) & ~UINT64_C(3);
+	uint64_t ds = sizeof(header) + size + sizeof(original);
+	uint64_t ns = 20 + ((ds + 3) & ~UINT64_C(3));
+	uint64_t strings = no + ns, strings_size = old_strings_size + sizeof(CAPIMAGE_ELF_SECTION);
+	unsigned new_sn = sn == 0 ? 3 : sn + 1, new_si = sn == 0 ? 1 : si;
+	uint64_t table = (strings + strings_size + 7) & ~UINT64_C(7);
+	uint64_t end = table + (uint64_t)new_sn * ss;
+	if (end + sizeof(footer) > CAPIMAGE_FILE_MAX)
 		return (fail(error, error_size, EFBIG, "embedded image exceeds size bound"));
+	unsigned char *tail = calloc(1, end + sizeof(footer) - st.st_size);
+	if (tail == NULL) return (fail(error, error_size, ENOMEM, "ELF metadata allocation"));
+#define TAIL(o) (tail + ((o) - (uint64_t)st.st_size))
 	memcpy(header.magic, magic, sizeof(magic));
 	header.version = htole32(CAPIMAGE_VERSION);
 	header.policy_size = htole32((uint32_t)size);
+	memcpy(original.magic, "5BSDORIG", 8);
+	original.version = htole32(CAPIMAGE_VERSION);
+	original.header_size = htole32(es);
+	original.original_size = htole64(st.st_size);
+	memcpy(original.original_header, eh, es);
+	capimage_elf_put(nh, 5, 4, little);
+	capimage_elf_put(nh + 4, ds, 4, little);
+	capimage_elf_put(nh + 8, CAPIMAGE_ELF_NOTE_TYPE, 4, little);
+	memcpy(nh + 12, "5BSD", 5);
+	memcpy(TAIL(no), nh, 20);
+	memcpy(TAIL(no + 20), &header, sizeof(header));
+	memcpy(TAIL(no + 20 + sizeof(header)), data, size);
+	memcpy(TAIL(no + 20 + sizeof(header) + size), &original, sizeof(original));
+	if (sn != 0 && (read_at(fd, TAIL(strings), old_strings_size, old_strings) < 0 ||
+	    read_at(fd, TAIL(table), (size_t)sn * ss, so) < 0)) { free(tail); return (-1); }
+	if (sn == 0) memcpy(TAIL(strings), "\0.shstrtab", sizeof("\0.shstrtab"));
+	memcpy(TAIL(strings + old_strings_size), CAPIMAGE_ELF_SECTION, sizeof(CAPIMAGE_ELF_SECTION));
+	unsigned char *sp = TAIL(table + (uint64_t)new_si * ss);
+	if (sn == 0) {
+		capimage_elf_put(sp, 1, 4, little);
+		capimage_elf_put(sp + 4, SHT_STRTAB, 4, little);
+		capimage_elf_put(sp + (elf64 ? 48 : 32), 1, elf64 ? 8 : 4, little);
+	}
+	capimage_elf_put(sp + (elf64 ? 24 : 16), strings, elf64 ? 8 : 4, little);
+	capimage_elf_put(sp + (elf64 ? 32 : 20), strings_size, elf64 ? 8 : 4, little);
+	sp = TAIL(table + (uint64_t)(new_sn - 1) * ss);
+	capimage_elf_put(sp, old_strings_size, 4, little);
+	capimage_elf_put(sp + 4, SHT_NOTE, 4, little);
+	capimage_elf_put(sp + (elf64 ? 24 : 16), no, elf64 ? 8 : 4, little);
+	capimage_elf_put(sp + (elf64 ? 32 : 20), ns, elf64 ? 8 : 4, little);
+	capimage_elf_put(sp + (elf64 ? 48 : 32), 4, elf64 ? 8 : 4, little);
 	memcpy(footer.magic, "5BSDEND", 8);
 	footer.version = htole32(CAPIMAGE_VERSION);
-	footer.offset = htole64((uint64_t)st.st_size);
-	footer.size = htole64(sizeof(header) + size);
-	if (write_at(fd, &header, sizeof(header), st.st_size) < 0 ||
-	    write_at(fd, data, size, st.st_size + sizeof(header)) < 0 ||
-	    write_at(fd, &footer, sizeof(footer), st.st_size + sizeof(header) + size) < 0)
-		return (fail(error, error_size, EIO, "cannot append embedded policy"));
+	footer.offset = htole64(no + 20); footer.size = htole64(ds);
+	memcpy(TAIL(end), &footer, sizeof(footer));
+	memcpy(changed, eh, sizeof(changed));
+	capimage_elf_put(changed + (elf64 ? 40 : 32), table, elf64 ? 8 : 4, little);
+	capimage_elf_put(changed + (elf64 ? 58 : 46), ss, 2, little);
+	capimage_elf_put(changed + (elf64 ? 60 : 48), new_sn, 2, little);
+	capimage_elf_put(changed + (elf64 ? 62 : 50), new_si, 2, little);
+	int rc = write_at(fd, tail, end + sizeof(footer) - st.st_size, st.st_size);
+	free(tail);
+	if (rc < 0 || write_at(fd, changed, es, 0) < 0)
+		return (fail(error, error_size, EIO, "cannot write ELF signature metadata"));
+#undef TAIL
 	return (0);
 }
-/* Structural cache input selection, not signature verification. Runtime
- * library lookup/authority stays attached to the original source file. */
+/* Structural ELF signature information, not signature verification. */
 int
-capimage_cache_size(int fd, off_t *size, char *error, size_t error_size)
+capimage_elf_info_fd(int fd, struct capimage_elf_info *info, char *error, size_t error_size)
 {
-	struct image_note note;
 	struct stat st;
-	if (size == NULL) return (fail(error, error_size, EINVAL, "size result required"));
-	if (find_note(fd, &note, error, error_size) == 0) {
-		*size = note.appended ? note.offset : note.file_size;
-		return (0);
+	if (info == NULL || fstat(fd, &st) < 0 || !S_ISREG(st.st_mode) || st.st_size < 0)
+		return (fail(error, error_size, EFTYPE, "invalid ELF input"));
+	int rc = capimage_elf_probe(elf_read, &fd, st.st_size, info);
+	if (rc < 0) return (fail(error, error_size, EFTYPE, "malformed ELF signature"));
+	if (rc == 0) {
+		/* Preserve unsigned build-input validation and retired-note rejection. */
+		struct image_note note;
+		if (find_note(fd, &note, error, error_size) < 0 && errno != ENOENT) return (-1);
+		info->original_size = st.st_size;
 	}
-	if (errno != ENOENT) return (-1);
-	if (fstat(fd, &st) < 0) return (-1);
-	*size = st.st_size;
 	return (0);
 }
-/* Signature removal restores the original pre-signing ELF bytes. The caller
- * must own a private writable copy; this grants no authority to the result. */
+/* Only a private writable copy may be removed. Authenticated rollback metadata must pass
+ * embedded-key integrity before it controls restoration; this is not trust. */
 int
 capimage_remove(int fd, char *error, size_t error_size)
 {
-	struct image_note note;
-	if (find_note(fd, &note, error, error_size) < 0) return (-1);
-	if (!note.appended)
-		return (fail(error, error_size, ENOENT, "no embedded signature to remove"));
-	if (ftruncate(fd, note.offset) < 0)
+	struct capimage_elf_info info;
+	struct capimage_policy policy;
+	if (capimage_elf_info_fd(fd, &info, error, error_size) < 0) return (-1);
+	if (info.version == 0) return (fail(error, error_size, ENOENT, "no signature to remove"));
+	{
+		if (capimage_verify_integrity(fd, &policy, error, error_size) < 0) return (-1);
+		capimage_policy_free(&policy);
+		if (write_at(fd, info.original_header, info.header_size, 0) < 0) return (-1);
+	}
+	if (ftruncate(fd, info.original_size) < 0)
 		return (fail(error, error_size, errno, "cannot remove signature container"));
 	return (0);
 }
@@ -632,7 +702,7 @@ capimage_seal(int fd, int seal_fd, const char *domain, const char *keypath,
 	if (domain == NULL || domain[0] == '\0' || keypath == NULL)
 		return (fail(error, error_size, EINVAL, "domain and key are required"));
 	memcpy(h.magic, magic, sizeof(magic));
-	h.version = htole32(CAPIMAGE_VERSION);
+	h.version = htole32(CAPIMAGE_SEAL_VERSION);
 	key = read_key(keypath, true);
 	ok = key != NULL && EVP_PKEY_get_raw_public_key(key, h.key, &size) == 1 && size == 32 &&
 	    seal_digest(fd, domain, &h, digest) == 0 && sign_digest(key, digest, h.signature) == 0 &&
@@ -651,7 +721,7 @@ check_seal(int fd, int seal_fd, const char *domain, const char *keypath,
 		return (fail(error, error_size, EINVAL, "signature domain is required"));
 	if (fstat(seal_fd, &st) < 0 || !S_ISREG(st.st_mode) || st.st_size != sizeof(h) ||
 	    read_at(seal_fd, &h, sizeof(h), 0) < 0 || memcmp(h.magic, magic, sizeof(magic)) != 0 ||
-	    le32toh(h.version) != CAPIMAGE_VERSION || h.policy_size != 0)
+	    le32toh(h.version) != CAPIMAGE_SEAL_VERSION || h.policy_size != 0)
 		return (fail(error, error_size, EFTYPE, "invalid detached signature format"));
 	if ((require_trust && trusted_key(h.key, keypath) < 0) || seal_digest(fd, domain, &h, digest) < 0 ||
 	    verify_digest(h.key, digest, h.signature) < 0)
@@ -686,7 +756,7 @@ handle_info(int fd, struct capimage_info *info)
 	return (0);
 }
 
-/* Explicit phase-one interface: legacy verification APIs are unchanged. */
+/* Descriptor-based policy extraction from the verified kernel handle. */
 int
 capimage_prepare_fd(int fd, uint32_t flags, int *handle,
     struct capimage_info *info, char *error, size_t error_size)

@@ -137,7 +137,15 @@ For an ordinary linked ELF binary without a build-input section, pass
 .Fl -manifest )
 to sign.
 The tool appends the exact policy, signature header and a bounded footer without
-moving existing ELF headers, segments or sections.
+moving existing program headers or load segments.
+The signature is a non-allocated
+.Pa .note.5bsd.signature
+ELF note; copied section metadata and an authenticated original-header
+record permit exact signature removal.
+The redundant footer must match the note.
+Use
+.Xr readelf 1
+to inspect the section and note.
 The whole file, including the footer, is authenticated.
 Both build-time and standalone policy inputs produce this single final
 signature representation, outside every ELF segment.
@@ -275,7 +283,6 @@ capsign verify -r -p public.pem Signed.cap
 .Ed
 .Sh SEE ALSO
 .Xr libcapimage 3 ,
-.Xr elfcache 8
 .Sh SECURITY CONSIDERATIONS
 Private signing keys belong in the release signing environment.
 Do not ship them in a package or guest image.

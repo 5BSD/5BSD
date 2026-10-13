@@ -168,8 +168,6 @@ svc_authority_constrain_application(const struct svc_runtime *svc, int token)
 #endif
 	if (result == 0)
 		result = set_loader_directories(m, token, svc->owner_uid == (uid_t)-1);
-	if (result == 0)
-		result = svc_library_cache_policy_bind(svc, token);
 out:
 	saved = errno;
 	if (image_handle >= 0) close(image_handle);

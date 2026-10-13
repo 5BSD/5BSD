@@ -117,12 +117,22 @@ verify_image(const char *path, const char *public, bool show, bool inspect)
 		return (-1);
 	}
 	if (inspect) {
+		struct capimage_elf_info image;
+		if (capimage_elf_info_fd(fd, &image, error, sizeof(error)) < 0) {
+			warnx("%s: %s", path, error);
+			capimage_policy_free(&policy);
+			close(fd);
+			return (-1);
+		}
 		printf("{\n  \"schema\": \"org.5bsd.capsign.image.v1\",\n"
-		    "  \"container\": \"elf-eof\",\n"
+		    "  \"container\": \"%s\",\n"
+		    "  \"container_version\": %u,\n"
 		    "  \"algorithm\": \"Ed25519\",\n"
 		    "  \"digest_algorithm\": \"domain-separated-SHA256\",\n"
 		    "  \"verification_key_selection\": \"%s\",\n"
 		    "  \"policy_bytes\": %zu,\n  \"key_id\": \"",
+		    "elf-note",
+		    image.version,
 		    public != NULL ? "explicit-key" : "system-catalogue", policy.size);
 		for (size_t i = 0; i < sizeof(policy.key); i++) printf("%02x", policy.key[i]);
 		printf("\",\n  \"signed_digest\": \"");

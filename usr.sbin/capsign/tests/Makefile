@@ -2,6 +2,9 @@
 PACKAGE= capsign-tests
 TESTSDIR= ${TESTSBASE}/usr.sbin/capsign
 ATF_TESTS_SH= capsign_test veriexec_test
+ATF_TESTS_C+= elf_signature_test
+CFLAGS.elf_signature_test+= -I${SRCTOP}/lib/libcapimage
+LIBADD.elf_signature_test= capimage crypto
 .PATH: ${SRCTOP}/tools/build/capimage
 SCRIPTS+= sign-stage.sh prepare-stage.sh verify-stage.sh
 SCRIPTSNAME_sign-stage.sh= sign-stage.sh

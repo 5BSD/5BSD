@@ -1,8 +1,7 @@
 # Capability daemons: FIDL migration plan
 
 Status: plan, 2026-10-11.  Branch `fidl/daemons` (worktree
-`/usr/obj/5BSD-fidl-daemons`).  Roadmap item 1, before embedded manifests and
-the shared library cache.  The reference migration is BSDTime (`cf97f876797`,
+`/usr/obj/5BSD-fidl-daemons`).  The reference migration is BSDTime (`cf97f876797`,
 visibility `58977d8dfd1`); every conversion copies its pattern.
 
 ## Inventory (tree at `4e87e953034`)

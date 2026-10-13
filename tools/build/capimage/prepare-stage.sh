@@ -15,8 +15,6 @@ stage=$(cd "$stage" && pwd -P)
 [ "$stage" != / ] && [ -f "$stage/METALOG" ] && [ ! -L "$stage/METALOG" ] || fail 'a private NO_ROOT stage is required'
 mode=${CAPIMAGE_SIGNING_MODE:-auto}
 key=${CAPIMAGE_SIGNING_KEY:-}
-cache=${CAPIMAGE_BUILD_CACHE:-no}
-layout=${CAPIMAGE_BUILD_LAYOUT:-no}
 enforce=${CAPIMAGE_REQUIRE_SIGNATURES:-}
 if [ "$mode" = auto ]; then
     if [ -n "$key" ]; then mode=signed; else mode=unsigned; fi
@@ -24,19 +22,12 @@ fi
 if [ -z "$enforce" ]; then
     if [ "$mode" = unsigned ]; then enforce=no; else enforce=yes; fi
 fi
-case "$cache:$enforce" in yes:yes|yes:no|no:yes|no:no) ;; *) fail 'cache and signature requirement options must be yes or no';; esac
-case "$layout" in yes|no) ;; *) fail 'CAPIMAGE_BUILD_LAYOUT must be yes or no';; esac
-if [ "$layout" = yes ]; then
-    [ "$cache" = yes ] || fail 'layout generation requires CAPIMAGE_BUILD_CACHE=yes'
-    [ "${CAPIMAGE_TARGET_ARCH:-$(uname -p)}" = amd64 ] || fail 'layout generation currently requires target amd64'
-fi
+case "$enforce" in yes|no) ;; *) fail 'signature requirement option must be yes or no';; esac
 case "$mode" in
 unsigned)
     [ -z "$key" ] || fail 'unsigned mode cannot accept a signing key'
     [ "$enforce" = no ] || fail 'unsigned mode cannot require signatures'
-    [ "$cache" = no ] || fail 'the shared cache requires signed or development mode'
-    [ -z "${CAPIMAGE_CACHE_LIST:-}" ] || fail 'unsigned mode cannot select cache libraries'
-    for marker in "$stage/etc/capability/require-signatures" "$stage/usr/libdata/5bsd/cache/elf.cache" "$stage/usr/libdata/5bsd/cache/elf.cache.sig" "$stage"/Capabilities/System/*.cap/Signature; do
+    for marker in "$stage/etc/capability/require-signatures" "$stage"/Capabilities/System/*.cap/Signature; do
         [ ! -e "$marker" ] && [ ! -L "$marker" ] || fail 'unsigned mode requires a fresh stage without signed deployment artifacts'
     done
     echo 'capimage-stage: mode=unsigned; external development manifests retained; no key generated'
@@ -53,11 +44,6 @@ development)
 esac
 capsign=${CAPSIGN:-capsign}
 command -v "$capsign" >/dev/null 2>&1 || fail 'a native CAPSIGN tool is required'
-if [ "$cache" = yes ]; then
-    command -v "${ELFCACHE:-elfcache}" >/dev/null 2>&1 || fail 'a native ELFCACHE tool is required'
-elif [ -n "${CAPIMAGE_CACHE_LIST:-}" ]; then
-    fail 'CAPIMAGE_CACHE_LIST requires CAPIMAGE_BUILD_CACHE=yes'
-fi
 # Canonicalize the parent before placing any private key there. The default
 # directory is persistent across ordinary clean world builds, outside stages.
 parent=$(dirname "$key")
@@ -94,10 +80,7 @@ fi
 permissions=$(stat -f %Lp "$key")
 [ $((0$permissions & 077)) = 0 ] || fail 'private key must not be accessible to group or others'
 [ -r "$key" ] || fail 'private key is not readable by the signing user'
-echo "capimage-stage: mode=$mode; key=$key; require-signatures=$enforce; cache=$cache"
+echo "capimage-stage: mode=$mode; key=$key; require-signatures=$enforce"
 set -- -r "$stage" -k "$key"
 [ "$enforce" = no ] || set -- "$@" -e
-[ "$cache" = no ] || set -- "$@" -c
-[ "$layout" = no ] || set -- "$@" -d
-[ -z "${CAPIMAGE_CACHE_LIST:-}" ] || set -- "$@" -l "$CAPIMAGE_CACHE_LIST"
 CAPSIGN="$capsign" sh "$(dirname "$0")/sign-stage.sh" "$@"

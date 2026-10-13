@@ -4,7 +4,6 @@
   "sources": {
     "codesign": "https://raw.githubusercontent.com/Apple-FOSS-Mirror/security_systemkeychain/master/src/codesign.1",
     "codesign_source": "https://github.com/Apple-FOSS-Mirror/security_systemkeychain/blob/master/src/codesign.cpp",
-    "dyld_shared_cache_util": "https://github.com/apple-oss-distributions/dyld/blob/main/other-tools/dyld_shared_cache_util.cpp",
     "cmc": "https://fuchsia.dev/reference/tools/sdk/cmc",
     "ffx": "https://fuchsia.dev/reference/tools/sdk/ffx"
   },
@@ -120,55 +119,6 @@
       "notes": "Map semantics explicitly; Apple storage formats and framework versions are not native 5BSD concepts."
     },
     {
-      "tool": "dyld_shared_cache_util",
-      "upstream_features": "list, map, info, size, statistics",
-      "fivebsd": "elfcache list / map / info",
-      "status": "partial",
-      "notes": "Current map describes file slices, not shared virtual addresses."
-    },
-    {
-      "tool": "dyld_shared_cache_util",
-      "upstream_features": "extract",
-      "fivebsd": "elfcache extract",
-      "status": "implemented",
-      "notes": "Authenticated unsigned ELF extraction; per-library signature containers are excluded from cache v2."
-    },
-    {
-      "tool": "dyld_shared_cache_util",
-      "upstream_features": "dependents, versions",
-      "fivebsd": "tools/test/elfcache/audit.py",
-      "status": "partial",
-      "notes": "Offline dependency coverage exists; integrated direct and reverse queries remain."
-    },
-    {
-      "tool": "dyld_shared_cache_util",
-      "upstream_features": "JSON, identity, address lookup",
-      "fivebsd": "elfcache info -j / verify -j / map -j",
-      "status": "partial",
-      "notes": "Versioned summary and per-image file maps expose sizes, offsets, payload digests and alias relationships; inspection explicitly remains unauthenticated. Segment maps and runtime address translation remain."
-    },
-    {
-      "tool": "dyld_shared_cache_util",
-      "upstream_features": "headers, sections, symbols, function starts",
-      "fivebsd": "pending",
-      "status": "pending",
-      "notes": "ELF equivalents should use bounded parsers and report source/cache offsets."
-    },
-    {
-      "tool": "dyld_shared_cache_util",
-      "upstream_features": "slide, fixups, patch tables, linkedit, roots cost, prewarming",
-      "fivebsd": "cache-format review",
-      "status": "pending",
-      "notes": "Current whole-ELF cache does not implement prebinding or shared relocations; report unsupported mechanisms honestly."
-    },
-    {
-      "tool": "dyld_shared_cache_util",
-      "upstream_features": "Objective-C, Swift, function variants",
-      "fivebsd": "platform mapping",
-      "status": "review",
-      "notes": "Runtime-specific metadata needs actual supported runtimes; not generic ELF cache features."
-    },
-    {
       "tool": "cmc",
       "upstream_features": "compile, validate-references",
       "fivebsd": "capsign validate-policy / embedded UCL / capbundle validation",
@@ -185,9 +135,9 @@
     {
       "tool": "ffx package",
       "upstream_features": "archive / far create, list, cat, extract",
-      "fivebsd": "package/cache tooling",
+      "fivebsd": "package tooling",
       "status": "partial",
-      "notes": "Cache list/extract exist; audit maintained package tools before adding duplicate interfaces."
+      "notes": "Audit maintained package tools before adding duplicate interfaces."
     },
     {
       "tool": "ffx package",

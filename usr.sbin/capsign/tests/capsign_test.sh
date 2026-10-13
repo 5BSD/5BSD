@@ -322,8 +322,7 @@ bundle_profiles_body()
 stage_mode_setup()
 {
     unset CAPIMAGE_SIGNING_MODE CAPIMAGE_SIGNING_KEY CAPIMAGE_DEVELOPMENT_KEY
-    unset CAPIMAGE_BUILD_CACHE CAPIMAGE_BUILD_LAYOUT CAPIMAGE_TARGET_ARCH
-    unset CAPIMAGE_REQUIRE_SIGNATURES CAPIMAGE_CACHE_LIST
+    unset CAPIMAGE_REQUIRE_SIGNATURES
     bundle_setup
     # Model installworld's unsigned build-input executable, not a sealed output.
     cp demo Demo.cap/Units/demo.unit/bin/demo
@@ -346,7 +345,6 @@ stage_modes_unsigned_body()
     atf_check -s exit:0 cmp before stage/METALOG
     atf_check -s exit:0 cmp demo stage/Capabilities/System/Demo.cap/Units/demo.unit/bin/demo
     [ -f stage/Capabilities/System/Demo.cap/Units/demo.unit/Unit.ucl ] || atf_fail 'removed development manifest'
-    atf_check -s not-exit:0 -o empty -e match:'cache requires' env CAPIMAGE_BUILD_CACHE=yes sh "$prepare" -r stage
     atf_check -s not-exit:0 -o empty -e match:'cannot require signatures' env CAPIMAGE_SIGNING_MODE=unsigned CAPIMAGE_REQUIRE_SIGNATURES=yes sh "$prepare" -r stage
     [ ! -e stage/etc/capability/keys ] || atf_fail 'created a key in unsigned mode'
 }
@@ -403,25 +401,19 @@ stage_sign_head() { atf_set "require.progs" "cc openssl"; }
 stage_sign_body()
 {
     bundle_setup
-    elfcache=$(atf_config_get elfcache /usr/sbin/elfcache)
-    [ -x "$elfcache" ] || atf_skip "elfcache not installed"
     mkdir -p stage/Capabilities/System stage/lib stage/usr/lib
     mv Demo.cap stage/Capabilities/System/
     printf './Capabilities/System/Demo.cap/Bundle.ucl type=file uname=root gname=wheel mode=0444 tags=package=runtime\n' > stage/METALOG
-    printf 'int value(void) { return 9; }\n' > library.c
-    atf_check -s exit:0 -o ignore -e ignore cc -shared -fPIC -nostdlib library.c -o stage/lib/libdemo.so.1
-    printf "/lib/libdemo.so.1\n" > selected
-    atf_check -s exit:0 -o ignore -e ignore env CAPSIGN="$capsign" ELFCACHE="$elfcache" \
-        sh "$(atf_get_srcdir)/sign-stage.sh" -c -e -l selected -r stage -k key
+    atf_check -s exit:0 -o ignore -e ignore env CAPSIGN="$capsign" \
+        sh "$(atf_get_srcdir)/sign-stage.sh" -e -r stage -k key
     [ ! -e stage/Capabilities/System/Demo.cap/Units/demo.unit/Unit.ucl ] || atf_fail 'runtime policy file retained'
     [ -f stage/etc/capability/require-signatures ] || atf_fail 'no enforcement marker'
     [ ! -e stage/key ] || atf_fail 'private key copied into stage'
     id=$("$capsign" key-id -p public)
     atf_check -s exit:0 cmp public "stage/etc/capability/keys/$id.pub"
     atf_check -s exit:0 -o ignore "$capsign" bundle-verify -p public stage/Capabilities/System/Demo.cap
-    atf_check -s exit:0 -o ignore "$elfcache" verify -p public stage/usr/libdata/5bsd/cache/elf.cache
-    atf_check -s not-exit:0 -e match:'already has a cache' env CAPSIGN="$capsign" ELFCACHE="$elfcache" \
-        sh "$(atf_get_srcdir)/sign-stage.sh" -c -e -r stage -k key
+    atf_check -s not-exit:0 -e match:'already has signature enforcement' env CAPSIGN="$capsign" \
+        sh "$(atf_get_srcdir)/sign-stage.sh" -e -r stage -k key
 }
 atf_test_case stage_symlink_preflight
 stage_symlink_preflight_head() { atf_set require.progs 'cc openssl'; }
@@ -430,7 +422,7 @@ stage_symlink_preflight_body()
     stage_mode_setup
     signer="$(atf_get_srcdir)/sign-stage.sh"
     keyid=$("$capsign" key-id -p public)
-    for kind in capabilities system units bin etc var usr usr-libdata usr-5bsd usr-cache metalog cache public-key private-key marker; do
+    for kind in capabilities system units bin etc metalog public-key private-key marker; do
         stage=stage-$kind
         outside="$(pwd)/outside-$kind"
         stage_mode_copy "$stage"
@@ -442,11 +434,8 @@ stage_symlink_preflight_body()
         system) component=Capabilities/System;;
         units) component=Capabilities/System/Demo.cap/Units;;
         bin) component=Capabilities/System/Demo.cap/Units/demo.unit/bin;;
-        etc|var) component=$kind; mkdir "$stage/$component";;
-        usr) component=usr; mkdir -p "$stage/$component";;
-        usr-libdata) component=usr/libdata; mkdir -p "$stage/$component";;
+        etc) component=$kind; mkdir "$stage/$component";;
         usr-5bsd) component=usr/libdata/5bsd; mkdir -p "$stage/$component";;
-        usr-cache) component=usr/libdata/5bsd/cache; mkdir -p "$stage/$component";;
         *) component=;;
         esac
         if [ -n "$component" ]; then
@@ -457,9 +446,6 @@ stage_symlink_preflight_body()
         metalog)
             rm "$stage/METALOG"
             ln -s "$outside/original-metalog" "$stage/METALOG";;
-        cache)
-            mkdir -p "$stage/usr/libdata/5bsd/cache"
-            ln -s "$outside/nonexistent" "$stage/usr/libdata/5bsd/cache/elf.cache";;
         public-key)
             mkdir -p "$stage/etc/capability/keys"
             ln -s "$outside/sentinel" "$stage/etc/capability/keys/$keyid.pub";;
@@ -656,54 +642,39 @@ verify_stage_body()
     atf_check -s not-exit:0 -o empty -e match:'invalid stage directory' env CAPSIGN="$capsign" sh "$helper" -r stage -p public
 }
 
-atf_test_case stage_layout
-stage_layout_head() { atf_set require.progs 'cc openssl'; }
-stage_layout_body()
+# The signature is ordinary inspectable ELF metadata, outside all load segments.
+atf_test_case elf_note_tooling
+elf_note_tooling_head() { atf_set require.progs 'cc openssl readelf objcopy strip'; }
+elf_note_tooling_body()
 {
-    [ "$(uname -p)" = amd64 ] || atf_skip 'layout generation currently supports amd64'
-    stage_mode_setup
-    stage_mode_copy stage
-    elfcache=$(atf_config_get elfcache /usr/sbin/elfcache)
-    [ -x "$elfcache" ] || atf_skip 'elfcache not installed'
-    mkdir -p stage/lib stage/usr/lib stage/usr/libexec
-    atf_check -s exit:0 -o ignore -e ignore cc demo.c -o stage/usr/libexec/elfcache-seed
-    cp stage/usr/libexec/elfcache-seed seed-before
-    printf 'int value(void) { return 9; }\n' > library.c
-    atf_check -s exit:0 -o ignore -e ignore cc -shared -fPIC -nostdlib library.c -o stage/lib/libdemo.so.1
-    printf '/lib/libdemo.so.1\n' > selected
-    chmod 600 key
-    # Validate unsupported inputs before any executable or key metadata changes.
-    for target in aarch64 riscv64; do
-        atf_check -s not-exit:0 -o empty -e match:'requires target amd64' env \
-            CAPIMAGE_SIGNING_MODE=signed CAPIMAGE_SIGNING_KEY="$(pwd)/key" \
-            CAPIMAGE_BUILD_CACHE=yes CAPIMAGE_BUILD_LAYOUT=yes CAPIMAGE_TARGET_ARCH="$target" \
-            CAPSIGN="$capsign" ELFCACHE="$elfcache" sh "$prepare" -r stage
-    done
-    atf_check -s exit:0 cmp seed-before stage/usr/libexec/elfcache-seed
-    atf_check -s exit:0 -o ignore -e ignore env \
-        CAPIMAGE_SIGNING_MODE=signed CAPIMAGE_SIGNING_KEY="$(pwd)/key" \
-        CAPIMAGE_BUILD_CACHE=yes CAPIMAGE_BUILD_LAYOUT=yes CAPIMAGE_TARGET_ARCH=amd64 \
-        CAPIMAGE_CACHE_LIST="$(pwd)/selected" CAPSIGN="$capsign" ELFCACHE="$elfcache" \
-        sh "$prepare" -r stage
-    atf_check -s exit:0 -o ignore env CAPSIGN="$capsign" ELFCACHE="$elfcache" \
-        sh "$(atf_get_srcdir)/verify-stage.sh" -r stage -p public
-    grep '^./usr/libexec/elfcache-seed .*tags=package=elfcache$' stage/METALOG || atf_fail 'seed package metadata missing'
-    grep '^./usr/libdata/5bsd/cache/elf.layout.sig .*tags=package=runtime$' stage/METALOG || atf_fail 'layout package metadata missing'
-    cp stage/usr/libdata/5bsd/cache/elf.layout.sig seal
-    chmod u+w stage/usr/libdata/5bsd/cache/elf.layout.sig
-    printf x >> stage/usr/libdata/5bsd/cache/elf.layout.sig
-    atf_check -s not-exit:0 -o ignore -e ignore env CAPSIGN="$capsign" ELFCACHE="$elfcache" \
-        sh "$(atf_get_srcdir)/verify-stage.sh" -r stage -p public
-    cp seal stage/usr/libdata/5bsd/cache/elf.layout.sig
-    chmod u+w stage/usr/libexec/elfcache-seed
-    printf x >> stage/usr/libexec/elfcache-seed
-    atf_check -s not-exit:0 -o ignore -e ignore env CAPSIGN="$capsign" ELFCACHE="$elfcache" \
-        sh "$(atf_get_srcdir)/verify-stage.sh" -r stage -p public
+    setup
+    atf_check -s exit:0 strip -s demo
+    atf_check -s exit:0 "$capsign" sign -m policy -k key -o signed demo
+    atf_check -s exit:0 -o ignore "$capsign" verify -p public signed
+    atf_check -s exit:0 -o save:sections readelf -SW signed
+    atf_check -s exit:0 -o ignore grep -E '\.note\.5bsd\.signature[[:space:]]+NOTE' sections
+    atf_check -s exit:0 -o save:notes readelf -n signed
+    atf_check -s exit:0 -o ignore grep '5BSD' notes
+    readelf -lW demo | awk '$1 == "LOAD" { print }' > original-loads
+    readelf -lW signed | awk '$1 == "LOAD" { print }' > signed-loads
+    [ -s original-loads ] || atf_fail 'no load segments inspected'
+    atf_check -s exit:0 cmp original-loads signed-loads
+    atf_check -s exit:0 "$capsign" remove -o restored signed
+    atf_check -s exit:0 cmp demo restored
+    atf_check -s exit:0 "$capsign" sign -m policy -k key -o resigned restored
+    atf_check -s exit:0 -o ignore "$capsign" verify -p public resigned
+    printf 'damaged signature note' > damage
+    atf_check -s exit:0 -o ignore -e ignore objcopy --update-section .note.5bsd.signature=damage signed damaged
+    atf_check -s not-exit:0 -e ignore "$capsign" verify -p public damaged
+    # ELF transformations occur before signing. An otherwise harmless section
+    # rename changes authenticated metadata and must require re-signing.
+    atf_check -s exit:0 -o ignore -e ignore objcopy --rename-section .note.5bsd.signature=.note.changed signed renamed
+    atf_check -s not-exit:0 -e ignore "$capsign" verify -p public renamed
 }
 
 atf_init_test_cases()
 {
-    atf_add_test_case stage_layout
+    atf_add_test_case elf_note_tooling
     atf_add_test_case verify_stage
     atf_add_test_case resign_image
     atf_add_test_case remove_signature

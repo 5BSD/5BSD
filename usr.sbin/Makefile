@@ -162,7 +162,7 @@ SUBDIR.${MK_BOOTPARAMD}+=	bootparamd
 SUBDIR.${MK_BSDINSTALL}+=	bsdinstall
 SUBDIR.${MK_BSNMP}+=	bsnmpd
 .if ${MK_CAROOT} != "no"
-SUBDIR.${MK_OPENSSL}+=	certctl capsign elfcache
+SUBDIR.${MK_OPENSSL}+=	certctl capsign
 .endif
 SUBDIR.${MK_CXGBETOOL}+=	cxgbetool
 SUBDIR.${MK_EFI}+=	efivar efidp efibootmgr efitable efiwake

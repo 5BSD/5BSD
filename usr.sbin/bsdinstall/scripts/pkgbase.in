@@ -103,7 +103,7 @@ local function select_components(components, options)
 	-- Determine which components we want to offer the user.
 	local show_component = function (component)
 		-- "pkg" is always installed if present.
-		if component == "pkg" then return false end
+		if component == "pkg" or component == "hardware" then return false end
 
 		-- Don't include individual "-dbg" components, because those
 		-- are handled via the "debug" component, except for kernel-dbg
@@ -213,6 +213,7 @@ local function select_components(components, options)
 
 	if not options.jail then
 		table.insert(selected, "kernel")
+		table.insert(selected, "hardware")
 	end
 
 	for component in output:gmatch("[^\n]+") do
@@ -228,24 +229,29 @@ local function select_packages(pkg, options)
 	-- package sets.
 	local components = {
 		["kernel"] = {},
+		["hardware"] = {},
 		["kernel-dbg"] = {},
 		["debug"] = {},
 	}
 
-	-- Note: if you update this list, you must also update the list in
-	-- release/scripts/pkgbase-stage.lua.
 	local prefix = "5BSD"
-
-	local kernel_packages = {
-		-- The 5BSD kernel is GENERIC: every 5BSD option is compiled into
-		-- it, so most architectures use this
-		[prefix .. "-kernel-generic"] = true,
-		-- PowerPC uses either of these, depending on platform
-		[prefix .. "-kernel-generic64"] = true,
-		[prefix .. "-kernel-generic64le"] = true,
-	}
+	local selected_kernel = os.getenv("BSDINSTALL_KERNEL")
+	if selected_kernel then
+		assert(selected_kernel:match("^[A-Za-z0-9_.%-]+$"),
+		    "invalid BSDINSTALL_KERNEL")
+		selected_kernel = prefix .. "-kernel-" ..
+		    selected_kernel:lower():gsub("_", "-")
+	end
+	local kernel_packages = {}
 
 	local rquery = capture(pkg .. "rquery -U -r " .. prefix .. "-base %n")
+	for package in rquery:gmatch("[^\n]+") do
+		if package:match("^5BSD%-kernel%-.+") and
+		    not package:match("%-dbg$") and
+		    (not selected_kernel or package == selected_kernel) then
+			kernel_packages[package] = true
+		end
+	end
 	local set_pattern = "^" .. prefix:gsub("%-", "%%-") .. "%-set%-(.+)$"
 	for package in rquery:gmatch("[^\n]+") do
 		local setname = package:match(set_pattern)
@@ -257,6 +263,9 @@ local function select_packages(pkg, options)
 			table.insert(components["kernel"], package)
 		elseif kernel_packages[package:match("(.*)%-dbg$")] then
 			table.insert(components["kernel-dbg"], package)
+		elseif package:match("^5BSD%-hw%-.+") or
+		    package:match("^5BSD%-hardware%-abi%-.+") then
+			table.insert(components["hardware"], package)
 		elseif package == "pkg" then
 			components["pkg"] = components["pkg"] or {}
 			table.insert(components["pkg"], package)
@@ -267,7 +276,10 @@ local function select_packages(pkg, options)
 	-- those are both required to install a functional system.  Don't worry
 	-- if other sets are missing (e.g. base or src), which might happen
 	-- when using custom install media.
-	assert(#components["kernel"] == 1)
+	if not options.jail then
+		assert(#components["kernel"] == 1,
+		    "repository must contain exactly one selected kernel; set BSDINSTALL_KERNEL")
+	end
 	assert(#components["minimal"] == 1)
 
 	-- Prompt the user for what to install.

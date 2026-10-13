@@ -111,15 +111,14 @@ also accepts probes nothing defines, the test separately checks that
 `capability-services.d` names no probe retired with BSDAuth and session
 minting. There is no `bsdinstruments run`; the verb is `watch`.
 
-The `loader-libraries`, `loader-summary`, and `script-exec` profiles support
-cache selection and interpreter workloads. Loader events require an isolated
-VM build with `RTLD_CACHE_PROFILE=yes`; ordinary builds emit none. Capture
-startup/dependency and dlopen/fdlopen activity without setting process tracing
-flags, which would prevent capability authority acquisition. These events are
-untrusted diagnostics and contain no service descriptors or argument strings.
-The script profile observes exec paths and outcomes, including shebang launches;
-it cannot identify every sourced script or interpreter input. See
-`tools/test/elfcache/README.md` for capture, ranking, and observer limitations.
+The `loader-libraries` and `loader-summary` profiles use the loader's existing
+`rtldtrace` probes to report requested libraries and successful or failed load
+operations. Counts include requests satisfied by already-loaded objects; they
+are not counts of unique files or resident pages. Probes require a loader built
+with DTrace support and the normal tracing permissions. Do not relax protected
+process tracing restrictions to collect events. The `script-exec` profile
+observes exec paths and outcomes, including shebang launches; it cannot identify
+every sourced script or interpreter input.
 
 ## hwstat
 
